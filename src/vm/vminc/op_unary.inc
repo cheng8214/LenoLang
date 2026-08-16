@@ -26,7 +26,7 @@ OPCODE(OP_NEG) {
         Value result = bigint_neg(ba);
         vm_stack_push(&vm, result);
     } else {
-        throw_runtime_error("操作数必须是数字", GET_CURRENT_LINE());
+        throw_runtime_error_with_operand("取负运算: 操作数必须是数字", "NEG (-)", a, GET_CURRENT_LINE());
         frame = &vm.frames[vm.frame_cnt - 1];
         DISPATCH;
     }
@@ -57,7 +57,7 @@ OPCODE(OP_CAST_FLOAT) {
         // null 保持为 null
         vm_stack_push(&vm, a);
     } else {
-        throw_runtime_error("CAST_FLOAT 操作数必须是数字", GET_CURRENT_LINE());
+        throw_runtime_error_with_operand("类型转换 float: 操作数必须是数字", "CAST_FLOAT", a, GET_CURRENT_LINE());
         frame = &vm.frames[vm.frame_cnt - 1];
         DISPATCH;
     }
@@ -82,7 +82,7 @@ OPCODE(OP_CAST_INT) {
     } else if (val_is_null(a)) {
         vm_stack_push(&vm, a);
     } else {
-        throw_runtime_error("CAST_INT 操作数必须是数字", GET_CURRENT_LINE());
+        throw_runtime_error_with_operand("类型转换 int: 操作数必须是数字", "CAST_INT", a, GET_CURRENT_LINE());
         frame = &vm.frames[vm.frame_cnt - 1];
         DISPATCH;
     }

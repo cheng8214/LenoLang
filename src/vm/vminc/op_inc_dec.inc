@@ -9,7 +9,7 @@ OPCODE(OP_INC) {
     int error;
     Value result = do_inc_dec(a, +1, &error);
     if (error) {
-        throw_runtime_error("++ 操作数必须是数字", GET_CURRENT_LINE());
+        throw_runtime_error_with_operand("自增运算: 操作数必须是数字", "INC (++)", a, GET_CURRENT_LINE());
         frame = &vm.frames[vm.frame_cnt - 1];
         DISPATCH;
     }
@@ -23,7 +23,7 @@ OPCODE(OP_DEC) {
     int error;
     Value result = do_inc_dec(a, -1, &error);
     if (error) {
-        throw_runtime_error("-- 操作数必须是数字", GET_CURRENT_LINE());
+        throw_runtime_error_with_operand("自减运算: 操作数必须是数字", "DEC (--)", a, GET_CURRENT_LINE());
         frame = &vm.frames[vm.frame_cnt - 1];
         DISPATCH;
     }
@@ -38,7 +38,7 @@ OPCODE(OP_INC_LOCAL) {
     Value old_val = get_local_var(frame, slot, &error);
     if (error) return -1;
     if (!val_is_num(old_val)) {
-        throw_runtime_error("++ 操作数必须是数字", GET_CURRENT_LINE());
+        throw_runtime_error_with_operand("后缀自增运算: 操作数必须是数字", "INC_LOCAL (++)", old_val, GET_CURRENT_LINE());
         frame = &vm.frames[vm.frame_cnt - 1];
         DISPATCH;
     }
@@ -55,7 +55,7 @@ OPCODE(OP_DEC_LOCAL) {
     Value old_val = get_local_var(frame, slot, &error);
     if (error) return -1;
     if (!val_is_num(old_val)) {
-        throw_runtime_error("-- 操作数必须是数字", GET_CURRENT_LINE());
+        throw_runtime_error_with_operand("后缀自减运算: 操作数必须是数字", "DEC_LOCAL (--)", old_val, GET_CURRENT_LINE());
         frame = &vm.frames[vm.frame_cnt - 1];
         DISPATCH;
     }
@@ -72,7 +72,7 @@ OPCODE(OP_PRE_INC_LOCAL) {
     Value old_val = get_local_var(frame, slot, &error);
     if (error) return -1;
     if (!val_is_num(old_val)) {
-        throw_runtime_error("++ 操作数必须是数字", GET_CURRENT_LINE());
+        throw_runtime_error_with_operand("前缀自增运算: 操作数必须是数字", "PRE_INC_LOCAL (++)", old_val, GET_CURRENT_LINE());
         frame = &vm.frames[vm.frame_cnt - 1];
         DISPATCH;
     }
@@ -89,7 +89,7 @@ OPCODE(OP_PRE_DEC_LOCAL) {
     Value old_val = get_local_var(frame, slot, &error);
     if (error) return -1;
     if (!val_is_num(old_val)) {
-        throw_runtime_error("-- 操作数必须是数字", GET_CURRENT_LINE());
+        throw_runtime_error_with_operand("前缀自减运算: 操作数必须是数字", "PRE_DEC_LOCAL (--)", old_val, GET_CURRENT_LINE());
         frame = &vm.frames[vm.frame_cnt - 1];
         DISPATCH;
     }
@@ -106,7 +106,7 @@ OPCODE(OP_INC_LOCAL_NOPUSH) {
     Value old_val = get_local_var(frame, slot, &error);
     if (error) return -1;
     if (!val_is_num(old_val)) {
-        throw_runtime_error("++ 操作数必须是数字", GET_CURRENT_LINE());
+        throw_runtime_error_with_operand("自增运算: 操作数必须是数字", "INC_LOCAL_NOPUSH (++)", old_val, GET_CURRENT_LINE());
         frame = &vm.frames[vm.frame_cnt - 1];
         DISPATCH;
     }
@@ -123,7 +123,7 @@ OPCODE(OP_DEC_LOCAL_NOPUSH) {
     Value old_val = get_local_var(frame, slot, &error);
     if (error) return -1;
     if (!val_is_num(old_val)) {
-        throw_runtime_error("-- 操作数必须是数字", GET_CURRENT_LINE());
+        throw_runtime_error_with_operand("自减运算: 操作数必须是数字", "DEC_LOCAL_NOPUSH (--)", old_val, GET_CURRENT_LINE());
         frame = &vm.frames[vm.frame_cnt - 1];
         DISPATCH;
     }

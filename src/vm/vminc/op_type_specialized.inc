@@ -103,12 +103,12 @@ OPCODE(OP_DIV_INT) {
     if (val_is_bigint(vb)) {
         ObjBigInt* bb = val_as_bigint(vb);
         if (bb->limb_count == 1 && bb->limbs[0] == 0) {
-            throw_runtime_error("除零错误", GET_CURRENT_LINE());
+            throw_runtime_error_with_operands("整数除零错误：除数为 0", "DIV_INT", va, vb, GET_CURRENT_LINE());
             frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH;
         }
     } else if (val_is_int(vb) && val_as_int(vb) == 0) {
-        throw_runtime_error("除零错误", GET_CURRENT_LINE());
+        throw_runtime_error_with_operands("整数除零错误：除数为 0", "DIV_INT", va, vb, GET_CURRENT_LINE());
         frame = &vm.frames[vm.frame_cnt - 1];
         DISPATCH;
     }
@@ -133,12 +133,12 @@ OPCODE(OP_MOD_INT) {
     if (val_is_bigint(vb)) {
         ObjBigInt* bb = val_as_bigint(vb);
         if (bb->limb_count == 1 && bb->limbs[0] == 0) {
-            throw_runtime_error("除零错误", GET_CURRENT_LINE());
+            throw_runtime_error_with_operands("取模除零错误：除数为 0", "MOD_INT", va, vb, GET_CURRENT_LINE());
             frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH;
         }
     } else if (val_is_int(vb) && val_as_int(vb) == 0) {
-        throw_runtime_error("除零错误", GET_CURRENT_LINE());
+        throw_runtime_error_with_operands("取模除零错误：除数为 0", "MOD_INT", va, vb, GET_CURRENT_LINE());
         frame = &vm.frames[vm.frame_cnt - 1];
         DISPATCH;
     }
@@ -181,7 +181,7 @@ OPCODE(OP_DIV_FLOAT) {
     double b = val_as_num_ex(vm_stack_pop(&vm));
     double a = val_as_num_ex(vm_stack_pop(&vm));
     if (b == 0.0) {
-        throw_runtime_error("除零错误", GET_CURRENT_LINE());
+        throw_runtime_error("浮点除零错误：除数为 0.0", GET_CURRENT_LINE());
         frame = &vm.frames[vm.frame_cnt - 1];
         DISPATCH;
     }

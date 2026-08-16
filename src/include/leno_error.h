@@ -12,7 +12,7 @@ typedef struct {
     int line;
     int column;                   // 列号（-1 表示未知）
     char filename[BUFFER_SMALL];  // 文件名
-    char msg[BUFFER_MEDIUM];
+    char msg[BUFFER_XXLARGE];  // 扩大缓冲区以支持详细报错信息
     int repeat_count;             // 重复次数（相同错误合并）
 } Error;
 
@@ -44,7 +44,7 @@ typedef struct {
     int line;
     int column;                   // 列号（-1 表示未知）
     char filename[BUFFER_SMALL];  // 文件名
-    char msg[BUFFER_MEDIUM];
+    char msg[BUFFER_XXLARGE];  // 扩大缓冲区以支持详细警告信息
     int repeat_count;             // 重复次数（相同警告合并）
 } Warning;
 

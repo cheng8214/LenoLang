@@ -23,7 +23,7 @@ main()
         div_zero()
     } catch e {
         caught_div_zero = true
-        assert_eq(e.msg, "除零错误")
+        assert_true(e.msg.find("除零") >= 0)
     }
     assert_eq(caught_div_zero, true)
 
@@ -42,7 +42,7 @@ main()
         outer()
     } catch e {
         caught_deep = true
-        assert_eq(e.msg, "除零错误")
+        assert_true(e.msg.find("除零") >= 0)
     }
     assert_eq(caught_deep, true)
 
@@ -102,7 +102,7 @@ main()
     } catch e {
         e_info = e
     }
-    assert_eq(e_info.msg, "除零错误")
+    assert_true(e_info.msg.find("除零") >= 0)
     assert_eq(e_info.file != null, true)
     assert_eq(e_info.stack != null, true)
 

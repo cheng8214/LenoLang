@@ -67,7 +67,7 @@ OPCODE(OP_ADD) {
     
     // null 检查
     if (val_is_null(a) || val_is_null(b)) {
-        throw_runtime_error("null 不能参与算术运算", GET_CURRENT_LINE());
+        throw_runtime_error_with_operands("加法运算: null 不能参与运算", "ADD (+)", a, b, GET_CURRENT_LINE());
         frame = &vm.frames[vm.frame_cnt - 1];
         DISPATCH;
     }
@@ -175,7 +175,7 @@ OPCODE(OP_DIV) {
     if (val_is_int(a) && val_is_int(b)) {
         int64_t b_val = val_as_int(b);
         if (b_val == 0) {
-            throw_runtime_error("除零错误", GET_CURRENT_LINE());
+            throw_runtime_error_with_operands("除零错误：除数为 0", "DIV (/)", a, b, GET_CURRENT_LINE());
             frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH;
         }
@@ -188,7 +188,7 @@ OPCODE(OP_DIV) {
     if (val_is_float(a) || val_is_float(b)) {
         double b_val = val_as_num_ex(b);
         if (b_val == 0) {
-            throw_runtime_error("除零错误", GET_CURRENT_LINE());
+            throw_runtime_error_with_operands("除零错误：除数为 0", "DIV (/)", a, b, GET_CURRENT_LINE());
             frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH;
         }
@@ -202,12 +202,12 @@ OPCODE(OP_DIV) {
         if (val_is_bigint(b)) {
             ObjBigInt* bb = val_as_bigint(b);
             if (bb->limb_count == 1 && bb->limbs[0] == 0) {
-                throw_runtime_error("除零错误", GET_CURRENT_LINE());
+                throw_runtime_error_with_operands("除零错误：除数为 0", "DIV (/)", a, b, GET_CURRENT_LINE());
                 frame = &vm.frames[vm.frame_cnt - 1];
                 DISPATCH;
             }
         } else if (val_as_num(b) == 0) {
-            throw_runtime_error("除零错误", GET_CURRENT_LINE());
+            throw_runtime_error_with_operands("除零错误：除数为 0", "DIV (/)", a, b, GET_CURRENT_LINE());
             frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH;
         }
@@ -238,7 +238,7 @@ OPCODE(OP_MOD) {
     if (val_is_int(a) && val_is_int(b)) {
         int64_t b_val = val_as_int(b);
         if (b_val == 0) {
-            throw_runtime_error("除零错误", GET_CURRENT_LINE());
+            throw_runtime_error_with_operands("取模除零错误：除数为 0", "MOD (%)", a, b, GET_CURRENT_LINE());
             frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH;
         }
@@ -257,7 +257,7 @@ OPCODE(OP_MOD) {
         ObjBigInt* ba = promote_to_bigint(a);
         ObjBigInt* bb = promote_to_bigint(b);
         if (bb->limb_count == 1 && bb->limbs[0] == 0) {
-            throw_runtime_error("除零错误", GET_CURRENT_LINE());
+            throw_runtime_error_with_operands("取模除零错误：除数为 0", "MOD (%)", a, b, GET_CURRENT_LINE());
             frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH;
         }
