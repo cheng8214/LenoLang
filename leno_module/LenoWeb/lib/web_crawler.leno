@@ -484,7 +484,14 @@ export func Crawler(Dict config): Dict {
     if config["max_depth"] is int { c["max_depth"] = config["max_depth"] }
     if config["delay_ms"] is int { c["delay_ms"] = config["delay_ms"] }
     if config["user_agent"] is string { c["user_agent"] = config["user_agent"] }
+    if config["respect_robots"] is bool { c["respect_robots"] = config["respect_robots"] }
+    c["robots_rules"] = ""
     return c
+}
+
+// 设置爬虫的 robots.txt 规则（配合 respect_robots 使用）
+export func setRobots(Dict[string, any] crawler, string robotsText) {
+    crawler["robots_rules"] = robotsText
 }
 
 export func start(Dict[string, any] crawler): Dict {
@@ -518,7 +525,8 @@ export func nextUrl(Dict[string, any] crawler): any {
 func _nextUrlLoop(Dict[string, any] crawler, Array queue): any {
     while queue.len() > 0 {
         var entry = queue[0]
-        crawler["queue"] = queue[1:]
+        queue = queue[1:]
+        crawler["queue"] = queue
         if entry is Dict {
             string url = _s(entry["url"])
             int depth = _i(entry["depth"])
@@ -533,6 +541,17 @@ func _nextUrlLoop(Dict[string, any] crawler, Array queue): any {
             if allowed is Array and allowed.len() > 0 {
                 string d = domain(url)
                 if not allowed.has(d) { continue }
+            }
+            // robots.txt 合规检查
+            var respect = crawler["respect_robots"]
+            if respect is bool and respect {
+                var rrules = crawler["robots_rules"]
+                if rrules is string and rrules != "" {
+                    string ua = _s(crawler["user_agent"])
+                    if not isRobotsAllowed(rrules, ua, url) {
+                        continue
+                    }
+                }
             }
             return entry
         }
@@ -615,4 +634,33 @@ export func extractLinks(Dict[string, any] page): Array[string] {
         }
     }
     return links
+}
+
+// 从站点获取 robots.txt 文本（成功返回文本，失败返回空串）
+export func fetchRobots(string siteUrl, string userAgent): string {
+    string robotsUrl = sitemapUrl(siteUrl).replace("/sitemap.xml", "/robots.txt")
+    HttpClient c = createClient()
+    if userAgent != "" {
+        c.setHeaders(["User-Agent: " + userAgent])
+    }
+    Response r = c.get(robotsUrl)
+    c.close()
+    if r.ok() {
+        return r.body
+    }
+    return ""
+}
+
+// 从站点 sitemap 提取所有 URL 列表
+export func fetchSitemapUrls(string siteUrl, string userAgent): Array[string] {
+    HttpClient c = createClient()
+    if userAgent != "" {
+        c.setHeaders(["User-Agent: " + userAgent])
+    }
+    Response r = c.get(sitemapUrl(siteUrl))
+    c.close()
+    if r.ok() {
+        return parseSitemap(r.body)
+    }
+    return []
 }

@@ -399,6 +399,36 @@ export func createClient(): HttpClient {
     return c
 }
 
+// ==================== 重试请求 ====================
+
+// 带重试的 GET 请求：失败时重试 retries 次，每次间隔 delayMs 毫秒
+export func getWithRetry(string url, int retries, int delayMs): Response {
+    HttpClient c = createClient()
+    Response r = c.get(url)
+    int attempt = 0
+    while not r.ok() and attempt < retries {
+        attempt = attempt + 1
+        sleep(delayMs)
+        r = c.get(url)
+    }
+    c.close()
+    return r
+}
+
+// 带重试的 POST 请求
+export func postWithRetry(string url, string body, int retries, int delayMs): Response {
+    HttpClient c = createClient()
+    Response r = c.post(url, body)
+    int attempt = 0
+    while not r.ok() and attempt < retries {
+        attempt = attempt + 1
+        sleep(delayMs)
+        r = c.post(url, body)
+    }
+    c.close()
+    return r
+}
+
 // ==================== 文件下载 ====================
 
 // 下载 URL 到本地文件，成功返回下载字节数，失败返回 -1
