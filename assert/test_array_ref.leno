@@ -1,0 +1,44 @@
+// test_array_ref.leno — 验证 Leno 数组赋值是"引用"语义（非深拷贝）
+// 重要：这是 web_html.leno 里 _removeRec 的 node.children = keep 逻辑正确性的前提
+
+main() {
+    // 测试1: b = a 后修改 b，a 受影响（引用）
+    Array[int] a = [1, 2, 3]
+    Array[int] b = a
+    b.add(4)
+    assert_eq(a.len(), 4)   // 引用：a 和 b 共享数组，add 后 a 也变
+
+    // 测试2: 修改 b 的已有元素影响 a（引用）
+    Array[int] c = [10, 20, 30]
+    Array[int] d = c
+    d[0] = 99
+    assert_eq(c[0], 99)     // 引用：改元素共享
+
+    // 测试3: 重新赋值后指向新数组（引用）
+    Array[int] e = [1, 2]
+    Array[int] f = [9, 9, 9]
+    e = f
+    f.add(8)
+    assert_eq(e.len(), 4)   // 引用：e 现在指向 f 的新数组
+
+    // 测试4: 函数内修改传入数组影响外部（引用传递）
+    Array[int] g = [1, 2]
+    _mutate(g)
+    assert_eq(g.len(), 3)   // 引用：函数内 add 影响外部
+
+    // 测试5: _removeRec 的模式（node.children = keep 整体替换后，
+    //        新数组引用替换，后续对 keep 的修改不再影响 node.children 之外的语义）
+    Array[int] keep5 = []
+    keep5.add(99)
+    Array[int] original5 = [1, 2, 3]
+    Array[int] children5 = original5
+    children5 = keep5
+    assert_eq(children5[0], 99)  // 整体替换生效
+    assert_eq(children5.len(), 1)
+
+    print("test_array_ref: OK")
+}
+
+func _mutate(Array[int] arr) {
+    arr.add(5)
+}

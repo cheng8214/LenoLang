@@ -73,22 +73,17 @@ export struct HtmlNode {
 
     // 按选择器查询子元素（后代）
     func select(string selector): Array[HtmlNode] {
-        Array parts = _splitSelector(selector)
+        Array[SelectorPart] parts = _splitSelector(selector)
         if parts.len() == 0 { return [] }
         Array[HtmlNode] current = [self]
         int partsLen = parts.len()
         for 0:partsLen-1 to pi {
-            Dict p0 = parts[pi]
+            SelectorPart p0 = parts[pi]
             Array[HtmlNode] next = []
             for current.len() to ci {
                 HtmlNode node = current[ci]
-                var isChildVal = p0["isChild"]
-                if isChildVal is bool {
-                    if isChildVal {
-                        _findDirectChildren(node, p0, next)
-                    } else {
-                        _findDescendants(node, p0, next)
-                    }
+                if p0.isChild {
+                    _findDirectChildren(node, p0, next)
                 } else {
                     _findDescendants(node, p0, next)
                 }
@@ -113,6 +108,25 @@ export struct HtmlNode {
     // 移除匹配选择器的子节点，返回移除数量
     func remove(string selector): int {
         return removeElement(self, selector)
+    }
+}
+
+// CSS 选择器的单个组成部分（tag / id / class / 属性 / 伪类）
+export struct SelectorPart {
+    string tag
+    string id
+    Array[string] classes
+    string attrName
+    string attrValue
+    string attrOp
+    bool hasAttr
+    bool isChild
+    string pseudo
+    string pseudoArg
+
+    // 是否为纯通配/空选择器（匹配所有元素）
+    func isWildcard(): bool {
+        return tag == "" and id == "" and classes.len() == 0 and not hasAttr and pseudo == ""
     }
 }
 
@@ -798,6 +812,7 @@ export func textContent(HtmlNode node): string {
 }
 
 // 提取 HTML 中第一个表格为二维数组（每行=一行，每格=cleanText 后的文本）
+// 每行中 th（表头单元格）排在前、td（数据单元格）排在后，与 pandas read_html 的"表头优先"语义一致
 export func extractTable(HtmlNode root): Array[Array[string]] {
     Array[HtmlNode] tables = select(root, "table")
     Array[Array[string]] tableData = []
@@ -806,14 +821,16 @@ export func extractTable(HtmlNode root): Array[Array[string]] {
         Array[HtmlNode] rows = select(tbl, "tr")
         for rows.len() to i {
             HtmlNode tr = rows[i]
-            Array[HtmlNode] cells = select(tr, "td")
             Array[HtmlNode] thCells = select(tr, "th")
+            Array[HtmlNode] cells = select(tr, "td")
             Array[string] rowData = []
-            for cells.len() to j {
-                rowData.add(cleanText(allText(cells[j])))
-            }
+            // 表头单元格在前
             for thCells.len() to j {
                 rowData.add(cleanText(allText(thCells[j])))
+            }
+            // 数据单元格在后
+            for cells.len() to j {
+                rowData.add(cleanText(allText(cells[j])))
             }
             tableData.add(rowData)
         }
@@ -882,17 +899,17 @@ export func getMetas(HtmlNode root): Dict {
 
 // 从 DOM 中删除所有匹配 selector 的元素（修改传入的 root），返回删除个数
 export func removeElement(HtmlNode root, string selector): int {
-    Array sels = _splitSelector(selector)
+    Array[SelectorPart] sels = _splitSelector(selector)
     if sels.len() == 0 {
         return 0
     }
     return _removeRec(root, sels)
 }
 
-func _removeRec(HtmlNode node, Array sels): int {
+func _removeRec(HtmlNode node, Array[SelectorPart] sels): int {
     int removed = 0
     Array[HtmlNode] keep = []
-    Dict sel = sels[0] as Dict
+    SelectorPart sel = sels[0]
     for node.children.len() to i {
         HtmlNode child = node.children[i]
         if _matchSimple(child, sel) {
@@ -958,13 +975,13 @@ export func getElementById(HtmlNode root, string id): HtmlNode? {
     if id == "" {
         return null
     }
-    Array parts = _splitSelector("#" + id)
+    Array[SelectorPart] parts = _splitSelector("#" + id)
     if parts.len() == 0 {
         return null
     }
     Array[HtmlNode] current = [root]
     for 0:parts.len()-1 to pi {
-        Dict p0 = parts[pi]
+        SelectorPart p0 = parts[pi]
         Array[HtmlNode] next = []
         for current.len() to ci {
             _findDescendants(current[ci], p0, next)
@@ -1036,18 +1053,25 @@ func _collectLinks(HtmlNode node, Array[string] links) {
 
 // ==================== CSS 选择器 ====================
 
-func _parseSimple(string selector): Dict {
-    var r = {tag: "", id: "", classes: [], attrName: "", attrValue: "", attrOp: "=", hasAttr: false, pseudo: ""}
+func _parseSimple(string selector): SelectorPart {
+    SelectorPart r = new SelectorPart()
+    r.tag = ""
+    r.id = ""
+    r.classes = []
+    r.attrName = ""
+    r.attrValue = ""
+    r.attrOp = "="
+    r.hasAttr = false
+    r.isChild = false
+    r.pseudo = ""
+    r.pseudoArg = ""
     int i = 0
     int slen = selector.len()
 
     while i < slen {
         int b = selector.byte(i)
         if _isAlphaNum(b) or b == 42 or b == 45 or b == 95 {
-            var tagRaw = r["tag"]
-            if tagRaw is string {
-                r["tag"] = tagRaw + strings.char(b)
-            }
+            r.tag = r.tag + strings.char(b)
             i = i + 1
         } else {
             break
@@ -1067,10 +1091,7 @@ func _parseSimple(string selector): Dict {
                 cls = cls + strings.char(ch)
                 i = i + 1
             }
-            var classesRaw = r["classes"]
-            if classesRaw is Array {
-                classesRaw.add(cls)
-            }
+            r.classes.add(cls)
         } else if b == 35 {
             i = i + 1
             string idVal = ""
@@ -1082,7 +1103,7 @@ func _parseSimple(string selector): Dict {
                 idVal = idVal + strings.char(ch)
                 i = i + 1
             }
-            r["id"] = idVal
+            r.id = idVal
         } else if b == 91 {
             i = i + 1
             string attrName = ""
@@ -1094,9 +1115,9 @@ func _parseSimple(string selector): Dict {
                 attrName = attrName + strings.char(ch)
                 i = i + 1
             }
-            r["attrName"] = attrName
-            r["hasAttr"] = true
-            r["attrOp"] = "="
+            r.attrName = attrName
+            r.hasAttr = true
+            r.attrOp = "="
             if i < slen {
                 int op = selector.byte(i)
                 if op == 61 {
@@ -1104,15 +1125,15 @@ func _parseSimple(string selector): Dict {
                     i = i + 1
                 } else if op == 94 and i + 1 < slen and selector.byte(i + 1) == 61 {
                     // ^=
-                    r["attrOp"] = "^="
+                    r.attrOp = "^="
                     i = i + 2
                 } else if op == 36 and i + 1 < slen and selector.byte(i + 1) == 61 {
                     // $=
-                    r["attrOp"] = "$="
+                    r.attrOp = "$="
                     i = i + 2
                 } else if op == 42 and i + 1 < slen and selector.byte(i + 1) == 61 {
                     // *=
-                    r["attrOp"] = "*="
+                    r.attrOp = "*="
                     i = i + 2
                 }
                 if i <= slen and i - 1 < slen {
@@ -1126,7 +1147,7 @@ func _parseSimple(string selector): Dict {
                         attrVal = attrVal + strings.char(ch)
                         i = i + 1
                     }
-                    r["attrValue"] = attrVal
+                    r.attrValue = attrVal
                 }
             }
             if i < slen and selector.byte(i) == 93 {
@@ -1144,7 +1165,7 @@ func _parseSimple(string selector): Dict {
                 pseudo = pseudo + strings.char(ch)
                 i = i + 1
             }
-            r["pseudo"] = pseudo
+            r.pseudo = pseudo
             if i < slen and selector.byte(i) == 40 {
                 // nth-child(n)
                 i = i + 1
@@ -1160,7 +1181,7 @@ func _parseSimple(string selector): Dict {
                 if i < slen and selector.byte(i) == 41 {
                     i = i + 1
                 }
-                r["pseudoArg"] = arg
+                r.pseudoArg = arg
             }
         } else {
             break
@@ -1170,8 +1191,8 @@ func _parseSimple(string selector): Dict {
     return r
 }
 
-func _splitSelector(string selector): Array[Dict] {
-    Array[Dict] parts = []
+func _splitSelector(string selector): Array[SelectorPart] {
+    Array[SelectorPart] parts = []
     string current = ""
     int i = 0
     int slen = selector.len()
@@ -1181,8 +1202,8 @@ func _splitSelector(string selector): Array[Dict] {
         int b = selector.byte(i)
         if b == 62 {
             if current != "" {
-                Dict parsed = _parseSimple(current)
-                parsed["isChild"] = false
+                SelectorPart parsed = _parseSimple(current)
+                parsed.isChild = false
                 parts.add(parsed)
                 current = ""
             }
@@ -1190,8 +1211,8 @@ func _splitSelector(string selector): Array[Dict] {
             i = i + 1
         } else if _isSpace(b) {
             if current != "" {
-                Dict parsed = _parseSimple(current)
-                parsed["isChild"] = lastWasChild
+                SelectorPart parsed = _parseSimple(current)
+                parsed.isChild = lastWasChild
                 parts.add(parsed)
                 current = ""
                 lastWasChild = false
@@ -1204,8 +1225,8 @@ func _splitSelector(string selector): Array[Dict] {
     }
 
     if current != "" {
-        Dict parsed = _parseSimple(current)
-        parsed["isChild"] = lastWasChild
+        SelectorPart parsed = _parseSimple(current)
+        parsed.isChild = lastWasChild
         parts.add(parsed)
     }
 
@@ -1239,108 +1260,78 @@ func _hasWord(string str, string word): bool {
 }
 
 // 检查伪类匹配：node 是兄弟中第 idx 个（0 起），total 为兄弟总数
-func _matchPseudo(HtmlNode node, Dict sel, int idx, int total): bool {
-    var p = sel["pseudo"]
-    if not (p is string) {
+func _matchPseudo(HtmlNode node, SelectorPart sel, int idx, int total): bool {
+    if sel.pseudo == "" {
         return true
     }
-    if p == "" {
-        return true
-    }
-    if p == "first-child" {
+    if sel.pseudo == "first-child" {
         return idx == 0
-    } else if p == "last-child" {
+    } else if sel.pseudo == "last-child" {
         return idx == total - 1
-    } else if p == "only-child" {
+    } else if sel.pseudo == "only-child" {
         return total == 1
-    } else if p == "nth-child" {
-        var arg = sel["pseudoArg"]
-        if arg is string {
-            int n = _int(arg)
-            if n > 0 {
-                return idx == n - 1
-            }
+    } else if sel.pseudo == "nth-child" {
+        int n = _int(sel.pseudoArg)
+        if n > 0 {
+            return idx == n - 1
         }
         return false
     }
     return true
 }
 
-func _matchSimple(HtmlNode node, Dict sel): bool {
-    var tagVal = sel["tag"]
-    if tagVal is string {
-        if tagVal != "" and tagVal != "*" {
-            if node.tag != tagVal {
+func _matchSimple(HtmlNode node, SelectorPart sel): bool {
+    // tag
+    if sel.tag != "" and sel.tag != "*" {
+        if node.tag != sel.tag {
+            return false
+        }
+    }
+
+    // id
+    if sel.id != "" {
+        if node.attrs.get("id", "") != sel.id {
+            return false
+        }
+    }
+
+    // class
+    string nodeClass = node.attrs.get("class", "")
+    if nodeClass == "" {
+        if sel.classes.len() > 0 {
+            return false
+        }
+    } else {
+        for sel.classes.len() to ci {
+            if not _hasWord(nodeClass, sel.classes[ci]) {
                 return false
             }
         }
     }
 
-    var idVal = sel["id"]
-    if idVal is string {
-        if idVal != "" {
-            if node.attrs.get("id", "") != idVal {
-                return false
-            }
-        }
-    }
-
-    var classesRaw = sel["classes"]
-    if classesRaw is Array {
-        string nodeClass = node.attrs.get("class", "")
-        if nodeClass == "" {
-            if classesRaw.len() > 0 {
-                return false
-            }
-        } else {
-            for classesRaw.len() to ci {
-                var cls = classesRaw[ci]
-                if cls is string {
-                    if not _hasWord(nodeClass, cls) {
-                        return false
-                    }
+    // 属性
+    if sel.hasAttr and sel.attrName != "" {
+        string actual = node.attrs.get(sel.attrName, "")
+        if sel.attrValue != "" {
+            if sel.attrOp == "=" {
+                if actual != sel.attrValue {
+                    return false
                 }
-            }
-        }
-    }
-
-    var hasAttr = sel["hasAttr"]
-    if hasAttr is bool {
-        if hasAttr {
-            var attrName = sel["attrName"]
-            if attrName is string {
-                if attrName != "" {
-                    string nodeAttrVal = node.attrs.get(attrName, "")
-                    var selAttrVal = sel["attrValue"]
-                    var attrOp = sel["attrOp"]
-                    if attrOp is string {
-                        if selAttrVal is string {
-                            if selAttrVal != "" {
-                                string actual = nodeAttrVal
-                                if attrOp == "=" {
-                                    if actual != selAttrVal {
-                                        return false
-                                    }
-                                } else if attrOp == "^=" {
-                                    if not actual.starts_with(selAttrVal) {
-                                        return false
-                                    }
-                                } else if attrOp == "$=" {
-                                    if not actual.ends_with(selAttrVal) {
-                                        return false
-                                    }
-                                } else if attrOp == "*=" {
-                                    if not actual.has(selAttrVal) {
-                                        return false
-                                    }
-                                } else {
-                                    if actual != selAttrVal {
-                                        return false
-                                    }
-                                }
-                            }
-                        }
-                    }
+            } else if sel.attrOp == "^=" {
+                if not actual.starts_with(sel.attrValue) {
+                    return false
+                }
+            } else if sel.attrOp == "$=" {
+                if not actual.ends_with(sel.attrValue) {
+                    return false
+                }
+            } else if sel.attrOp == "*=" {
+                if not actual.has(sel.attrValue) {
+                    return false
+                }
+            } else {
+                if actual != sel.attrValue {
+                    return false
                 }
             }
         }
@@ -1349,7 +1340,7 @@ func _matchSimple(HtmlNode node, Dict sel): bool {
     return true
 }
 
-func _findDescendants(HtmlNode node, Dict sel, Array[HtmlNode] results) {
+func _findDescendants(HtmlNode node, SelectorPart sel, Array[HtmlNode] results) {
     int total = node.children.len()
     for 0:total-1 to i {
         HtmlNode child = node.children[i]
@@ -1360,7 +1351,7 @@ func _findDescendants(HtmlNode node, Dict sel, Array[HtmlNode] results) {
     }
 }
 
-func _findDirectChildren(HtmlNode node, Dict sel, Array[HtmlNode] results) {
+func _findDirectChildren(HtmlNode node, SelectorPart sel, Array[HtmlNode] results) {
     int total = node.children.len()
     for 0:total-1 to i {
         HtmlNode child = node.children[i]
@@ -1371,7 +1362,7 @@ func _findDirectChildren(HtmlNode node, Dict sel, Array[HtmlNode] results) {
 }
 
 export func select(HtmlNode root, string selector): Array[HtmlNode] {
-    Array parts = _splitSelector(selector)
+    Array[SelectorPart] parts = _splitSelector(selector)
     if parts.len() == 0 {
         return []
     }
@@ -1379,17 +1370,12 @@ export func select(HtmlNode root, string selector): Array[HtmlNode] {
     Array[HtmlNode] current = [root]
     int partsLen = parts.len()
     for 0:partsLen-1 to pi {
-        Dict p0 = parts[pi]
+        SelectorPart p0 = parts[pi]
         Array[HtmlNode] next = []
         for current.len() to ci {
             HtmlNode node = current[ci]
-            var isChildVal = p0["isChild"]
-            if isChildVal is bool {
-                if isChildVal {
-                    _findDirectChildren(node, p0, next)
-                } else {
-                    _findDescendants(node, p0, next)
-                }
+            if p0.isChild {
+                _findDirectChildren(node, p0, next)
             } else {
                 _findDescendants(node, p0, next)
             }
