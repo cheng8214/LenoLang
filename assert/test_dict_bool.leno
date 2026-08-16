@@ -1,33 +1,26 @@
-// test_dict_bool.leno — 最小测试：验证 Dict[string,bool] 类型化 Dict 的行为
-// 断言全部通过才算测试成功。作为 LenoWeb / 语言类型化 Dict 的回归测试。
+// 测试 Dict[string,bool] 类型化字典的行为（回归测试）
+// 覆盖：类型化赋值/读取、下标读不存在键返回 null、.get 默认值、has/remove/keys
 
 main() {
-    print("=== 测试 Dict[string,bool] 行为 ===\n")
-
     // 测试1: 类型化 Dict 赋值和读取
     Dict[string, bool] visited = {}
     visited["a"] = true
     visited["b"] = false
     assert_eq(visited["a"], true)
     assert_eq(visited["b"], false)
-    print("[1] 赋值/读取: OK")
 
-    // 测试2: 下标读取不存在的键 -> 返回 null（注意不是 false）
+    // 测试2: 下标读取不存在的键 -> 返回 null（注意不是该类型默认值 false）
     var vMissing = visited["nonexist"]
     assert_eq(vMissing, null)
-    print("[2] 下标读不存在键返回 null: OK")
 
     // 测试3: .get(key, default) 键存在 -> 返回实际值
     assert_eq(visited.get("a", false), true)
-    print("[3] .get 键存在: OK")
 
     // 测试4: .get(key, default) 键不存在 -> 返回默认值 false
     assert_eq(visited.get("zzz", false), false)
-    print("[4] .get 键不存在默认false: OK")
 
     // 测试5: .get 键不存在且默认 true
     assert_eq(visited.get("zzz", true), true)
-    print("[5] .get 键不存在默认true: OK")
 
     // 测试6: 下标读取不存在的键直接用于 if（null 当 false 用）
     if visited["nonexist"] {
@@ -35,7 +28,6 @@ main() {
     } else {
         assert_true(true)
     }
-    print("[6] if visited[不存在] = false: OK")
 
     // 测试7: .get 结果直接用于 if
     if visited.get("a", false) {
@@ -43,24 +35,20 @@ main() {
     } else {
         assert_true(false)   // 不应走到这里
     }
-    print("[7] if visited.get(a) = true: OK")
 
     // 测试8: keys() 遍历
     var keys = visited.keys()
     assert_eq(keys.has("a"), true)
     assert_eq(keys.has("b"), true)
-    print("[8] keys(): OK")
 
     // 测试9: has() 检查键存在
     assert_eq(visited.has("a"), true)
     assert_eq(visited.has("zzz"), false)
-    print("[9] has(): OK")
 
     // 测试10: remove 删除后 .get 返回默认值
     visited.remove("b")
     assert_eq(visited.get("b", false), false)
     assert_eq(visited.has("b"), false)
-    print("[10] remove + get 默认值: OK")
 
-    print("\n=== 全部断言通过 ===")
+    print("test_dict_bool: OK")
 }
