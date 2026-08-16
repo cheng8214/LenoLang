@@ -6328,6 +6328,69 @@ main() {
 > // 输出顺序: c:3, a:1, b:2（按插入顺序，不是按字母排序）
 > ```
 
+### 类型化字典（`Dict[K, V]`）✅
+
+无类型字典 `Dict` 的值全是 `any`，每次读取都要 `is string` / `is int` 等运行时判断。**类型化字典** `Dict[string, bool]` 把键值类型固定下来，值类型由编译器检查，读取时不再需要收窄判断：
+
+```leno
+main() {
+    // 类型化字典：键是 string，值是 bool
+    Dict[string, bool] visited = {}
+
+    // 赋值（类型检查：只能存 bool）
+    visited["a"] = true
+    visited["b"] = false
+    // visited["c"] = 42        // ❌ 编译报错：不能给 Dict[string,bool] 存 int
+
+    // 读取：下标返回 bool
+    bool v1 = visited["a"]      // true
+    print(v1)
+
+    // 直接用于条件判断，无需 is bool
+    if visited["b"] {
+        // ...
+    }
+}
+```
+
+**⚠️ 下标读取不存在的键返回 `null`（不是该类型的默认值）：**
+
+```leno
+Dict[string, bool] d = {}
+bool v = d["nonexist"]      // ⚠️ 返回 null，不是 false！
+```
+
+**✅ 用 `.get(key, default)` 安全读取，键不存在时返回指定的默认值：**
+
+```leno
+Dict[string, bool] visited = {}
+visited["a"] = true
+
+bool vExist   = visited.get("a", false)     // true   （键存在，返回实际值）
+bool vMissing = visited.get("zzz", false)   // false  （键不存在，返回默认值 false）
+bool vOther   = visited.get("zzz", true)    // true   （默认值也可以是 true）
+```
+
+`.get()` 的类型也由默认值推断：
+
+```leno
+Dict[string, int] counters = {}
+int n = counters.get("hits", 0)         // 默认值 0 → int
+Dict[string, string] names = {}
+string nm = names.get("user", "")       // 默认值 "" → string
+```
+
+**类型化字典非常适合作为 struct 字段**，让对象的键值集合也有强类型：
+
+```leno
+struct Cache {
+    Dict[string, bool] visited        // 已访问标记
+    Dict[string, string] attrs        // 属性表
+}
+```
+
+> **推荐**：当字典的值语义固定（如标记/属性/计数）时，用 `Dict[string, bool]` / `Dict[string, int]` / `Dict[string, string]` 替代无类型 `Dict`，可消除大量 `is X` 运行时判断，让类型错误在编译期暴露。
+
 ### 字典方法
 
 ```leno
