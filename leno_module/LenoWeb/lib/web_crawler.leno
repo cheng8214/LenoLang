@@ -377,7 +377,7 @@ export struct Crawler {
     string user_agent
     bool respect_robots
     string robots_rules
-    Dict visited
+    Dict[string, bool] visited
     Array[CrawlItem] queue
     int page_count
     bool running
@@ -401,9 +401,7 @@ export struct Crawler {
         while queue.len() > 0 {
             CrawlItem entry = queue[0]
             queue.remove(0)
-            if visited[entry.url] is bool {
-                if visited[entry.url] { continue }
-            }
+            if visited.get(entry.url, false) { continue }
             if entry.depth > max_depth { continue }
             if allowed_domains.len() > 0 {
                 string d = domain(entry.url)
@@ -427,9 +425,7 @@ export struct Crawler {
 
     // 入队一个 URL
     func enqueue(string url, int depth) {
-        if visited[url] is bool {
-            if visited[url] { return }
-        }
+        if visited.get(url, false) { return }
         if depth > max_depth { return }
         queue.add(newCrawlItem(url, depth))
     }

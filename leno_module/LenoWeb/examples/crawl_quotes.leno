@@ -3,6 +3,7 @@
 import "../lib/web_html.leno" as htmls
 import "../lib/web_net.leno" as net
 use net.(Response)
+use htmls.HtmlNode
 
 main() {
     print("=== 爬取 quotes.toscrape.com ===\n")
@@ -31,12 +32,12 @@ main() {
     print("----------------------------------------")
     for quotes to quote, i {
         // 名言文本
-        var textEl = htmls.selectOne(quote, "span.text")
+        HtmlNode? textEl = htmls.selectOne(quote, "span.text")
         string quoteText = ""
         if textEl != null { quoteText = htmls.text(textEl) }
 
         // 作者
-        var authorEl = htmls.selectOne(quote, "small.author")
+        HtmlNode? authorEl = htmls.selectOne(quote, "small.author")
         string author = "未知"
         if authorEl != null { author = htmls.text(authorEl) }
 
