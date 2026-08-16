@@ -1,0 +1,35 @@
+import "../lib/crawler.leno" as crawler
+
+main() {
+    // 测试 parseUrl
+    var p1 = crawler.parseUrl("https://example.com/path?q=1#frag")
+    if p1 is Dict {
+        print("scheme: " + p1["scheme"])
+        print("host: " + p1["host"])
+        print("port: " + format("%d", p1["port"]))
+        print("path: " + p1["path"])
+    }
+    print("---")
+    
+    // 测试 domain
+    print("domain: " + crawler.domain("https://quotes.toscrape.com/page/2/"))
+    print("---")
+    
+    // 测试 baseUrl
+    print("baseUrl: " + crawler.baseUrl("https://quotes.toscrape.com/page/2/"))
+    print("---")
+    
+    // 测试 resolveUrl - 相对路径
+    string base = "https://quotes.toscrape.com/page/2/"
+    print("resolve /page/3/: " + crawler.resolveUrl(base, "/page/3/"))
+    print("resolve page/3/: " + crawler.resolveUrl(base, "page/3/"))
+    print("resolve ../page/1/: " + crawler.resolveUrl(base, "../page/1/"))
+    print("resolve //other.com/x: " + crawler.resolveUrl(base, "//other.com/x"))
+    print("resolve absolute: " + crawler.resolveUrl(base, "https://other.com/x"))
+    print("---")
+    
+    // 测试 normalizeUrl
+    print("normalize: " + crawler.normalizeUrl("https://Example.com/path/?q=1#frag"))
+    print("---")
+    
+}

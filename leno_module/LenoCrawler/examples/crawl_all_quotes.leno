@@ -1,0 +1,107 @@
+// 使用 LenoCrawler 爬取 quotes.toscrape.com 全站名言
+
+import "../lib/crawler.leno" as crawler
+import "../../LenoHtml/lib/html.leno" as htmls
+import times
+
+main() {
+    print("=== LenoCrawler 全站爬取演示 ===")
+    print("")
+    
+    Dict[string, any] config = {}
+    config["start_urls"] = ["https://quotes.toscrape.com/"]
+    config["allowed_domains"] = ["quotes.toscrape.com"]
+    config["max_pages"] = 5
+    config["max_depth"] = 5
+    config["delay_ms"] = 500
+    config["user_agent"] = "LenoCrawler/1.0"
+    
+    var c = crawler.Crawler(config)
+    crawler.start(c)
+    
+    int totalQuotes = 0
+    int startTime = times.ms()
+    
+    while not crawler.shouldStop(c) {
+        var entry = crawler.nextUrl(c)
+        if entry == null { break }
+        if entry is Dict {
+            var entryUrl = entry["url"]
+            var entryDepth = entry["depth"]
+            string url = ""
+            if entryUrl is string { url = entryUrl }
+            int depth = 0
+            if entryDepth is int { depth = entryDepth }
+            
+            print("[ Depth " + format("%d", depth) + " ] 抓取: " + url)
+            
+            var page = crawler.fetchPage(url, "LenoCrawler/1.0")
+            if page == null {
+                print("  -> 抓取失败，跳过")
+            } else if page is Dict {
+                var pageStatus = page["status"]
+                int status = 0
+                if pageStatus is int { status = pageStatus }
+                print("  -> 状态码: " + format("%d", status))
+                
+                var quotes = htmls.select(page["html"], ".quote")
+                if quotes is Array {
+                    print("  -> 找到 " + format("%d", quotes.len()) + " 条名言")
+                    int qi = 0
+                    while qi < quotes.len() {
+                        var quote = quotes[qi]
+                        if quote is Dict {
+                            var tagNode = htmls.select(quote, ".text")
+                            var authorNode = htmls.select(quote, ".author")
+                            string text = ""
+                            string author = ""
+                            if tagNode is Array and tagNode.len() > 0 {
+                                text = htmls.allText(tagNode[0])
+                            }
+                            if authorNode is Array and authorNode.len() > 0 {
+                                author = htmls.allText(authorNode[0])
+                            }
+                            totalQuotes = totalQuotes + 1
+                            string showText = text
+                            if showText.len() > 50 {
+                                showText = showText.slice(0, 50) + "..."
+                            }
+                            print("    " + showText + " —— " + author)
+                        }
+                        qi = qi + 1
+                    }
+                }
+                crawler.markVisited(c, url)
+                
+                var links = crawler.extractLinks(page)
+                if links is Array {
+                    int li = 0
+                    while li < links.len() {
+                        var linkStr = links[li]
+                        if linkStr is string {
+                            crawler.enqueue(c, linkStr, depth + 1)
+                        }
+                        li = li + 1
+                    }
+                    print("  -> 提取 " + format("%d", links.len()) + " 个链接")
+                }
+            }
+            
+            var delayMs = c["delay_ms"]
+            if delayMs is int and delayMs > 0 {
+                int waitStart = times.ms()
+                while times.ms() - waitStart < delayMs { }
+            }
+            print("")
+        }
+    }
+    
+    int elapsed = times.ms() - startTime
+    print("=== 爬取完成 ===")
+    var pc = c["page_count"]
+    int pageCount = 0
+    if pc is int { pageCount = pc }
+    print("总访问页面: " + format("%d", pageCount))
+    print("总名言数: " + format("%d", totalQuotes))
+    print("耗时: " + format("%.2f", elapsed / 1000.0) + " 秒")
+}
