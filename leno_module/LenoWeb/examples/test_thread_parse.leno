@@ -53,7 +53,7 @@ main() {
 func _parseAndVerify(string html, string expected): bool {
     var root = htmls.parse(html)
     // 验证标题
-    var h1 = htmls.selectOne(root, "h1")
+    HtmlNode? h1 = htmls.selectOne(root, "h1")
     if h1 == null {
         print("    [verify] h1 为 null!")
         return false
