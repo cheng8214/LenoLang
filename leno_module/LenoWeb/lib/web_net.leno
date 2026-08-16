@@ -50,6 +50,10 @@ export struct Response {
 
     // 判断是否成功（2xx 状态码）
     func ok(): bool { return statusCode >= 200 and statusCode < 300 }
+    func isRedirect(): bool { return statusCode >= 300 and statusCode < 400 }
+    func isClientError(): bool { return statusCode >= 400 and statusCode < 500 }
+    func isServerError(): bool { return statusCode >= 500 and statusCode < 600 }
+    func isError(): bool { return statusCode >= 400 }
 
     // 解析响应体为 JSON 字典
     // 适用于响应是 JSON 对象的场景

@@ -1,0 +1,23 @@
+// 测试 LenoWeb htmlToText HTML 转纯文本
+import "../lib/Web.leno" as web
+use web.(parse, htmlToText)
+
+main() {
+    print("=== htmlToText 测试 ===")
+
+    var html = "<html><body>" +
+               "<h1>My Title</h1>" +
+               "<p>First paragraph with <b>bold</b> text.</p>" +
+               "<h2>Section</h2>" +
+               "<ul>" +
+               "<li>Item one</li>" +
+               "<li>Item two</li>" +
+               "</ul>" +
+               "<p>Another line<br>after break.</p>" +
+               "</body></html>"
+    var root = web.parse(html)
+    string text = web.htmlToText(root)
+    print("=== 转换结果 ===")
+    print(text)
+    print("=== 转换结束 ===")
+}

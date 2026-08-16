@@ -69,6 +69,72 @@ export func parseUrl(string url): Dict {
     return r
 }
 
+// 完整解析 URL：分离 scheme/host/port/path/query/fragment
+export func urlParse(string url): Dict {
+    Dict[string, any] r = {}
+    r["scheme"] = ""
+    r["host"] = ""
+    r["port"] = -1
+    r["path"] = "/"
+    r["query"] = ""
+    r["fragment"] = ""
+
+    int len = url.len()
+    int qi = strings.find(url, "?")
+    int fi = strings.find(url, "#")
+    // 分离 fragment（# 后）
+    string noFrag = url
+    if fi >= 0 {
+        r["fragment"] = url.slice(fi + 1, len)
+        noFrag = url.slice(0, fi)
+    }
+    // 分离 query（? 后，fragment 前）
+    string noQuery = noFrag
+    if qi >= 0 {
+        int qend = noFrag.len()
+        r["query"] = noFrag.slice(qi + 1, qend)
+        noQuery = noFrag.slice(0, qi)
+    }
+    // 解析 scheme://host[:port]/path
+    int pos = 0
+    string scheme = ""
+    while pos < noQuery.len() and noQuery.byte(pos) != 58 {
+        scheme = scheme + strings.char(noQuery.byte(pos))
+        pos = pos + 1
+    }
+    r["scheme"] = scheme
+    if pos + 2 < noQuery.len() and noQuery.byte(pos) == 58 and noQuery.byte(pos + 1) == 47 and noQuery.byte(pos + 2) == 47 {
+        pos = pos + 3
+        string host = ""
+        while pos < noQuery.len() {
+            int b = noQuery.byte(pos)
+            if b == 58 or b == 47 { break }
+            host = host + strings.char(b)
+            pos = pos + 1
+        }
+        r["host"] = host
+        if pos < noQuery.len() and noQuery.byte(pos) == 58 {
+            pos = pos + 1
+            int port = 0
+            while pos < noQuery.len() {
+                int b = noQuery.byte(pos)
+                if b >= 48 and b <= 57 {
+                    port = port * 10 + (b - 48)
+                    pos = pos + 1
+                } else { break }
+            }
+            r["port"] = port
+        }
+        string path = "/"
+        if pos < noQuery.len() {
+            path = noQuery.slice(pos, noQuery.len())
+        }
+        if path == "" { path = "/" }
+        r["path"] = path
+    }
+    return r
+}
+
 export func buildUrl(Dict parts): string {
     string scheme = _s(parts["scheme"])
     string host = _s(parts["host"])

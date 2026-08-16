@@ -1,0 +1,26 @@
+// 测试 LenoWeb stripTags / textContent / removeElement
+import "../lib/Web.leno" as web
+use web.(parse, stripTags, textContent, removeElement, allText, selectOne, select)
+
+main() {
+    print("=== stripTags / textContent / removeElement 测试 ===")
+
+    // 1. stripTags（纯字符串去标签）
+    string raw = "<p>Hi <b>there</b>  world</p>   <div>  next </div>"
+    string stripped = web.stripTags(raw)
+    print("stripTags = [" + stripped + "]")
+
+    // 2. textContent（DOM 提取去空白）
+    var root = web.parse("<div>\n  <p>Hello</p>\n  <p>World</p>\n</div>")
+    string content = web.textContent(root)
+    print("textContent = [" + content + "]")
+
+    // 3. removeElement（删除匹配选择器的节点）
+    var root2 = web.parse("<div><span class='ad'>AD</span><p>Real</p><span class='ad'>AD2</span><p>More</p></div>")
+    int removed = web.removeElement(root2, "span.ad")
+    print("removed count = " + removed)
+    string remaining = web.textContent(root2)
+    print("remaining text = [" + remaining + "]")
+
+    print("=== 测试完成 ===")
+}

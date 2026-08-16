@@ -648,6 +648,131 @@ export func cleanText(string raw): string {
     return out
 }
 
+// HTML 转可读纯文本（仿 html2text）：保留段落/标题/列表/换行结构
+export func htmlToText(any node): string {
+    if node == null {
+        return ""
+    }
+    string result = ""
+    if node is Dict {
+        var t = node["tag"]
+        string tag = ""
+        if t is string {
+            tag = t
+        }
+        // 文本节点
+        if tag == "#text" {
+            var txt = node["text"]
+            if txt is string {
+                return txt
+            }
+        }
+        // 块级标签：段落前后加换行
+        if tag == "p" or tag == "div" or tag == "section" or tag == "article" or tag == "header" or tag == "footer" {
+            result = result + "\n"
+        }
+        // 标题：前后空行，加 # 标记
+        if tag == "h1" {
+            result = result + "\n# "
+        } else if tag == "h2" {
+            result = result + "\n## "
+        } else if tag == "h3" {
+            result = result + "\n### "
+        } else if tag == "h4" or tag == "h5" or tag == "h6" {
+            result = result + "\n#### "
+        }
+        // 列表项：前缀 "- "
+        if tag == "li" {
+            result = result + "- "
+        }
+        var kids = node["children"]
+        if kids is Array {
+            for kids to child {
+                result = result + _toText(child)
+            }
+        }
+        // 块级结束换行
+        if tag == "p" or tag == "div" or tag == "li" or tag == "h1" or tag == "h2" or tag == "h3" or tag == "h4" or tag == "h5" or tag == "h6" {
+            result = result + "\n"
+        }
+    }
+    return result
+}
+
+func _toText(any node): string {
+    if node == null {
+        return ""
+    }
+    string result = ""
+    if node is Dict {
+        var t = node["tag"]
+        string tag = ""
+        if t is string {
+            tag = t
+        }
+        if tag == "#text" {
+            var txt = node["text"]
+            if txt is string {
+                return txt
+            }
+        }
+        if tag == "br" {
+            return "\n"
+        }
+        if tag == "p" or tag == "div" or tag == "section" or tag == "article" {
+            result = result + "\n"
+        }
+        if tag == "h1" {
+            result = result + "\n# "
+        } else if tag == "h2" {
+            result = result + "\n## "
+        } else if tag == "h3" {
+            result = result + "\n### "
+        }
+        if tag == "li" {
+            result = result + "- "
+        }
+        var kids = node["children"]
+        if kids is Array {
+            for kids to child {
+                result = result + _toText(child)
+            }
+        }
+        if tag == "p" or tag == "div" or tag == "li" or tag == "h1" or tag == "h2" or tag == "h3" {
+            result = result + "\n"
+        }
+    }
+    return result
+}
+
+// 去除 HTML 字符串中的所有标签，只保留文本（不解析 DOM，纯字符串处理）
+// 例："<p>Hi <b>there</b></p>" -> "Hi there"
+export func stripTags(string html): string {
+    string out = ""
+    int n = html.len()
+    bool inTag = false
+    for 0:n-1 to i {
+        int b = html.byte(i)
+        if b == 60 {
+            // <
+            inTag = true
+        } else if b == 62 {
+            // >
+            inTag = false
+        } else {
+            if not inTag {
+                out = out + strings.char(b)
+            }
+        }
+    }
+    return cleanText(out)
+}
+
+// 提取节点内所有文本（去标签、合并空白），等价于 allText + cleanText
+export func textContent(any node): string {
+    return cleanText(allText(node))
+}
+
 // 提取 HTML 中第一个表格为二维数组（每行=一行，每格=cleanText 后的文本）
 export func extractTable(any root): Array[Array[string]] {
     var tables = select(root, "table")
@@ -750,6 +875,39 @@ export func getMetas(any root): Dict {
         }
     }
     return result
+}
+
+// 从 DOM 中删除所有匹配 selector 的元素（修改传入的 root），返回删除个数
+export func removeElement(any root, string selector): int {
+    var sels = _splitSelector(selector)
+    if sels.len() == 0 {
+        return 0
+    }
+    return _removeRec(root, sels)
+}
+
+func _removeRec(any node, Array sels): int {
+    if node == null {
+        return 0
+    }
+    int removed = 0
+    if node is Dict {
+        var kids = node["children"]
+        if kids is Array {
+            Array keep = []
+            Dict sel = sels[0] as Dict
+            for kids to child {
+                if _matchSimple(child, sel) {
+                    removed = removed + 1
+                } else {
+                    keep.add(child)
+                    removed = removed + _removeRec(child, sels)
+                }
+            }
+            node["children"] = keep
+        }
+    }
+    return removed
 }
 
 // 提取 HTML 中表单字段为 Dict（name -> value），仿 BeautifulSoup 表单解析

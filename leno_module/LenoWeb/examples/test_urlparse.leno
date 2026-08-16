@@ -1,0 +1,31 @@
+// 测试 LenoWeb urlParse 完整 URL 解析
+import "../lib/Web.leno" as web
+use web.(urlParse)
+
+main() {
+    print("=== urlParse 测试 ===")
+
+    // 完整 URL
+    var u1 = web.urlParse("https://example.com:8080/path/to?a=1&b=2#section")
+    print("scheme = " + u1["scheme"])
+    print("host = " + u1["host"])
+    print("port = " + u1["port"])
+    print("path = " + u1["path"])
+    print("query = " + u1["query"])
+    print("fragment = " + u1["fragment"])
+
+    // 无端口
+    var u2 = web.urlParse("http://example.com/page")
+    print("---")
+    print("u2 host = " + u2["host"])
+    print("u2 port = " + u2["port"])
+    print("u2 path = " + u2["path"])
+
+    // 无 query/fragment
+    var u3 = web.urlParse("https://a.com/")
+    print("---")
+    print("u3 path = " + u3["path"])
+    print("u3 query = [" + u3["query"] + "]")
+
+    print("=== urlParse 测试完成 ===")
+}
