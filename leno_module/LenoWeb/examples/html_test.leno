@@ -130,5 +130,14 @@ main() {
     HtmlNode? nope18 = htmls.selectOne(root18, ".notexist")
     print("  null = " + (nope18 == null))
 
+    // 测试19: 跨模块 var 接收可空 struct + 判空（复现 var 推断缺陷）
+    print("\n[19] 跨模块 var 可空推断")
+    var v19 = htmls.selectOne(root18, ".notexist")
+    if v19 == null {
+        print("  var 可空判空: null 正确")
+    } else {
+        print("  var 可空判空: 非null (异常)")
+    }
+
     print("\n=== 全部测试完成 ===")
 }

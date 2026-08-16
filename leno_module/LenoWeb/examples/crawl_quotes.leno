@@ -32,12 +32,12 @@ main() {
     print("----------------------------------------")
     for quotes to quote, i {
         // 名言文本
-        HtmlNode? textEl = htmls.selectOne(quote, "span.text")
+        var textEl = htmls.selectOne(quote, "span.text")
         string quoteText = ""
         if textEl != null { quoteText = htmls.text(textEl) }
 
         // 作者
-        HtmlNode? authorEl = htmls.selectOne(quote, "small.author")
+        var authorEl = htmls.selectOne(quote, "small.author")
         string author = "未知"
         if authorEl != null { author = htmls.text(authorEl) }
 

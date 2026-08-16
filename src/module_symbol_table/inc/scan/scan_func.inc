@@ -181,6 +181,17 @@
                                 type_len = (int)(after_func - type_start);
                             }
 
+                            // ★ 消费可空返回类型的尾部 '?'（如 HtmlNode?）
+                            // 若不消费，模块函数符号表的返回类型会丢失可空标记，
+                            // 导致跨模块调用时 var 推断成非可空，== null 判断误报
+                            // "struct 值类型默认不为 null" 警告（与 scan_struct.inc 同源 bug）
+                            int return_is_nullable = 0;
+                            while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
+                            if (*after_func == '?') {
+                                return_is_nullable = 1;
+                                after_func++;
+                            }
+
                             if (type_len > 0 && type_len < 128) {
                                 char type_str[128];
                                 strncpy(type_str, type_start, type_len);
@@ -200,6 +211,11 @@
                                         // 回退：仅解析基本类型
                                         return_type = parse_base_type(type_str);
                                     }
+                                }
+
+                                // 应用可空标记（可选链返回、struct 可空等）
+                                if (return_is_nullable && return_type_info) {
+                                    return_type_info->nullable = 1;
                                 }
 
                                 // 用标识符部分（不含泛型参数）检查已知类型

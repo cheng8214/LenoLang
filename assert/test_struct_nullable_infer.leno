@@ -1,0 +1,47 @@
+// test_struct_nullable_infer.leno — 精确复现：var 对 struct 可空类型的推断缺陷
+// 现象：var 对 string? 推断保留可空，但对自定义 struct 的可空（Node?）推断丢失可空
+// 导致 var x = getNode() 后 x != null 报警告
+
+struct Node {
+    string tag
+}
+
+func getNode(): Node? {
+    return null
+}
+
+func getNodeValue(): Node? {
+    Node n = new Node()
+    n.tag = "hello"
+    return n
+}
+
+main() {
+    print("=== var 对 struct 可空类型推断测试 ===\n")
+
+    // [1] var 接收 struct 可空返回值，然后判空
+    var a = getNode()
+    if a == null {
+        print("[1] var a = getNode() 后 a == null 成立 (var 保留可空)")
+    } else {
+        print("[1] var a = getNode() 后 a == null 不成立 (异常)")
+    }
+
+    // [2] var 接收非空 struct，判空
+    var b = getNodeValue()
+    if b == null {
+        print("[2] var b = getNodeValue() 后 b == null 成立 (异常)")
+    } else {
+        print("[2] var b = getNodeValue() 后 b == null 不成立 (var 保留可空)")
+    }
+
+    // [3] 显式可空声明对照
+    Node? c = getNodeValue()
+    if c == null {
+        print("[3] Node? c 后 c == null 成立 (异常)")
+    } else {
+        print("[3] Node? c 后 c == null 不成立 (正常)")
+    }
+
+    print("\n=== 测试完成 ===")
+}
