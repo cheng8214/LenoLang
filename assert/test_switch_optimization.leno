@@ -1,0 +1,88 @@
+// switch 正确性回归测试
+// 确保 OP_SWITCH_LOOKUP 二分查找在所有位置都正确匹配
+
+func testSwitch(int value): int {
+    switch value {
+        case 0 { return 100 }
+        case 1 { return 101 }
+        case 2 { return 102 }
+        case 3 { return 103 }
+        case 4 { return 104 }
+        case 5 { return 105 }
+        case 6 { return 106 }
+        case 7 { return 107 }
+        case 8 { return 108 }
+        case 9 { return 109 }
+        case 10 { return 110 }
+        case 11 { return 111 }
+        case 12 { return 112 }
+        case 13 { return 113 }
+        case 14 { return 114 }
+        case 15 { return 115 }
+        case 16 { return 116 }
+        case 17 { return 117 }
+        case 18 { return 118 }
+        case 19 { return 119 }
+        case 20 { return 120 }
+        case 21 { return 121 }
+        case 22 { return 122 }
+        case 23 { return 123 }
+        case 24 { return 124 }
+        case 25 { return 125 }
+        case 26 { return 126 }
+        case 27 { return 127 }
+        case 28 { return 128 }
+        case 29 { return 129 }
+        default { return -1 }
+    }
+}
+
+main() {
+    // 测试每个 case 值
+    for 0:29 to i {
+        assert_eq(testSwitch(i), 100 + i)
+    }
+
+    // 测试 default
+    assert_eq(testSwitch(30), -1)
+    assert_eq(testSwitch(99), -1)
+    assert_eq(testSwitch(-1), -1)
+
+    // 测试无序 case 值
+    func testUnordered(int v): int {
+        switch v {
+            case 10 { return 1 }
+            case 5 { return 2 }
+            case 20 { return 3 }
+            case 1 { return 4 }
+            case 15 { return 5 }
+            case 25 { return 6 }
+            case 3 { return 7 }
+            case 7 { return 8 }
+            default { return 0 }
+        }
+    }
+    assert_eq(testUnordered(10), 1)
+    assert_eq(testUnordered(5), 2)
+    assert_eq(testUnordered(20), 3)
+    assert_eq(testUnordered(1), 4)
+    assert_eq(testUnordered(15), 5)
+    assert_eq(testUnordered(25), 6)
+    assert_eq(testUnordered(3), 7)
+    assert_eq(testUnordered(7), 8)
+    assert_eq(testUnordered(99), 0)
+
+    // 测试少量 case（< 4，走原始路径）
+    func testSmall(int v): int {
+        switch v {
+            case 0 { return 0 }
+            case 1 { return 1 }
+            default { return -1 }
+        }
+    }
+    assert_eq(testSmall(0), 0)
+    assert_eq(testSmall(1), 1)
+    assert_eq(testSmall(2), -1)
+
+    print("ALL SWITCH TESTS PASSED")
+}

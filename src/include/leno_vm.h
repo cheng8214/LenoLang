@@ -181,6 +181,7 @@ typedef enum {
     OP_DICT_SET_NOPUSH,    // 字典赋值，不压栈（dict[k]=v 语句用）
     OP_INDEX_SET_NOPUSH,   // 通用索引赋值，不压栈（arr[i]=v 语句用）
     OP_CLEAR_LOCAL_RANGE,  // 清零局部变量范围 [base, base+count)，用于内联清理
+    OP_SWITCH_LOOKUP,      // 整数 switch 二分查找：const_idx(2) count(2) default_off(4) [offset(4)]...
 } OpCode;
 
 // ============================================================================

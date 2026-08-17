@@ -198,6 +198,7 @@
         [OP_DICT_SET_NOPUSH] = &&LABEL(OP_DICT_SET_NOPUSH),
 [OP_INDEX_SET_NOPUSH] = &&LABEL(OP_INDEX_SET_NOPUSH),
 [OP_CLEAR_LOCAL_RANGE] = &&LABEL(OP_CLEAR_LOCAL_RANGE),
+[OP_SWITCH_LOOKUP] = &&LABEL(OP_SWITCH_LOOKUP),
 };
 
     // 宏定义：取指令并分发
@@ -368,6 +369,9 @@
 
             // .leno 模块初始化操作码
             #include "op_init_lenomodule.inc"
+
+            // Switch 查找操作码
+            #include "op_switch_lookup.inc"
     #if VM_USE_JUMPTABLE
     #else
         default:

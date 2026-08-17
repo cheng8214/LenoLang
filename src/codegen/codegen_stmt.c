@@ -100,6 +100,182 @@ static void gen_switch(CodeGen* gen, Ast* ast) {
         return;
     }
 
+    // ========================================================================
+    // 优化：整数 case 二分查找 (OP_SWITCH_LOOKUP)
+    // 当所有 case 都是整数常量且数量 >= 4 时，生成二分查找
+    // ========================================================================
+    if (case_count >= 4) {
+        int all_int_const = 1;
+        for (int i = 0; i < case_count; i++) {
+            if (ast->u.switch_.cases[i].is_type_match) {
+                all_int_const = 0;
+                break;
+            }
+            int vc = ast->u.switch_.cases[i].values.count;
+            if (vc != 1) {
+                all_int_const = 0;
+                break;
+            }
+            Ast* val_ast = ast->u.switch_.cases[i].values.items[0];
+            if (val_ast->kind != AST_NUM || val_ast->u.num.is_float) {
+                all_int_const = 0;
+                break;
+            }
+        }
+
+        if (all_int_const) {
+            // 收集 (case_value, case_index) 对，按 case_value 排序
+            typedef struct { int64_t value; int orig_index; } CaseEntry;
+            CaseEntry* entries = malloc(sizeof(CaseEntry) * case_count);
+            for (int i = 0; i < case_count; i++) {
+                Ast* val_ast = ast->u.switch_.cases[i].values.items[0];
+                entries[i].value = val_ast->u.num.value;
+                entries[i].orig_index = i;
+            }
+            // 简单插入排序（稳定）
+            for (int i = 1; i < case_count; i++) {
+                CaseEntry tmp = entries[i];
+                int j = i - 1;
+                while (j >= 0 && entries[j].value > tmp.value) {
+                    entries[j + 1] = entries[j];
+                    j--;
+                }
+                entries[j + 1] = tmp;
+            }
+
+            // 创建排序后的 int 常量数组
+            ObjArray* case_arr = arr_new(case_count);
+            for (int i = 0; i < case_count; i++) {
+                arr_grow(case_arr);
+                case_arr->elements[i] = val_num(entries[i].value);
+                case_arr->count = i + 1;
+            }
+            int const_idx = make_constant(gen, val_obj((Object*)case_arr));
+
+            // 发射 OP_SWITCH_LOOKUP
+            emit_byte(gen, OP_SWITCH_LOOKUP, ast->line);
+            emit_byte(gen, (const_idx >> 8) & 0xff, ast->line);
+            emit_byte(gen, const_idx & 0xff, ast->line);
+            emit_byte(gen, (case_count >> 8) & 0xff, ast->line);
+            emit_byte(gen, case_count & 0xff, ast->line);
+
+            // default offset 占位（4 bytes）
+            int default_offset_pos = gen->chunk->len;
+            emit_byte(gen, 0xff, ast->line);
+            emit_byte(gen, 0xff, ast->line);
+            emit_byte(gen, 0xff, ast->line);
+            emit_byte(gen, 0xff, ast->line);
+
+            // 每个 case 的 body offset 占位（各 4 bytes）
+            int* body_offset_positions = malloc(sizeof(int) * case_count);
+            for (int i = 0; i < case_count; i++) {
+                body_offset_positions[i] = gen->chunk->len;
+                emit_byte(gen, 0xff, ast->line);
+                emit_byte(gen, 0xff, ast->line);
+                emit_byte(gen, 0xff, ast->line);
+                emit_byte(gen, 0xff, ast->line);
+            }
+            // ★ 注意：OP_SWITCH_LOOKUP 读取完 offset 表后 ip 指向此处
+            int after_table = gen->chunk->len;
+
+            // 生成 case body 和 end jumps
+            int* case_end_jumps = malloc(sizeof(int) * case_count);
+            int case_end_jump_count = 0;
+
+            for (int i = 0; i < case_count; i++) {
+                int orig_idx = entries[i].orig_index;
+                // patch body offset：从 offset 表位置到这里的距离
+                int offset_pos = body_offset_positions[i];
+                int body_offset = gen->chunk->len - after_table;
+                gen->chunk->code[offset_pos] = (body_offset >> 24) & 0xff;
+                gen->chunk->code[offset_pos + 1] = (body_offset >> 16) & 0xff;
+                gen->chunk->code[offset_pos + 2] = (body_offset >> 8) & 0xff;
+                gen->chunk->code[offset_pos + 3] = body_offset & 0xff;
+
+                // 解构字段提取（与原始 gen_switch 一致）
+                if (ast->u.switch_.cases[orig_idx].destructure_count > 0 &&
+                    ast->u.switch_.cases[orig_idx].match_type &&
+                    ast->u.switch_.cases[orig_idx].match_type->kind == TYPE_STRUCT &&
+                    ast->u.switch_.cases[orig_idx].match_type->struct_name &&
+                    ast->u.switch_.cases[orig_idx].destructure_indices &&
+                    ast->u.switch_.cases[orig_idx].destructure_field_names) {
+                    for (int di = 0; di < ast->u.switch_.cases[orig_idx].destructure_count; di++) {
+                        const char* var_name = ast->u.switch_.cases[orig_idx].destructure_vars[di];
+                        const char* field_name = ast->u.switch_.cases[orig_idx].destructure_field_names[di];
+                        if (strcmp(var_name, "_") == 0 || !field_name) continue;
+                        int local_idx = ast->u.switch_.cases[orig_idx].destructure_indices[di];
+                        if (local_idx < 0) continue;
+                        SymRef* gref = &ast->u.switch_.cases[orig_idx].guard_var_ref;
+                        if (gref->kind == SYM_UPVALUE) {
+                            emit_bytes_2(gen, OP_GET_UPVALUE, gref->index, ast->line);
+                        } else if (gref->kind == SYM_GLOBAL) {
+                            emit_byte(gen, OP_GET_GLOBAL, ast->line);
+                            int gname_const = make_constant(gen, val_obj((Object*)str_copy(gref->name, strlen(gref->name))));
+                            emit_byte(gen, (gname_const >> 8) & 0xff, ast->line);
+                            emit_byte(gen, gname_const & 0xff, ast->line);
+                        } else {
+                            emit_bytes_2(gen, OP_GET_LOCAL, gref->index, ast->line);
+                        }
+                        ObjString* fname_str = str_copy(field_name, strlen(field_name));
+                        int fname_const = make_constant(gen, val_obj((Object*)fname_str));
+                        emit_byte(gen, OP_CONST, ast->line);
+                        emit_byte(gen, (fname_const >> 8) & 0xff, ast->line);
+                        emit_byte(gen, fname_const & 0xff, ast->line);
+                        emit_byte(gen, OP_INDEX, ast->line);
+                        emit_bytes_2(gen, OP_SET_LOCAL_POP, local_idx, ast->line);
+                    }
+                }
+
+                // 生成 case body
+                // 注意：OP_SWITCH_LOOKUP 已经弹出了 switch 值
+                // 但原始 gen_switch 在每个 case body 前有 OP_POP（弹掉 DUP 的副本）
+                // 这里不需要 OP_POP，因为 OP_SWITCH_LOOKUP 已经处理了
+                if (ast->u.switch_.cases[orig_idx].body->kind == AST_BLOCK) {
+                    gen_block(gen, ast->u.switch_.cases[orig_idx].body);
+                } else {
+                    gen_stmt(gen, ast->u.switch_.cases[orig_idx].body);
+                }
+
+                case_end_jumps[case_end_jump_count++] = emit_jump(gen, OP_JUMP, ast->line);
+            }
+
+            // patch default offset
+            int default_body_start = gen->chunk->len;
+            if (has_default) {
+                if (ast->u.switch_.default_body->kind == AST_BLOCK) {
+                    gen_block(gen, ast->u.switch_.default_body);
+                } else {
+                    gen_stmt(gen, ast->u.switch_.default_body);
+                }
+            }
+
+            // patch default offset
+            int default_off = default_body_start - after_table;
+            gen->chunk->code[default_offset_pos] = (default_off >> 24) & 0xff;
+            gen->chunk->code[default_offset_pos + 1] = (default_off >> 16) & 0xff;
+            gen->chunk->code[default_offset_pos + 2] = (default_off >> 8) & 0xff;
+            gen->chunk->code[default_offset_pos + 3] = default_off & 0xff;
+
+            // patch end jumps
+            for (int i = 0; i < case_end_jump_count; i++) {
+                patch_jump(gen, case_end_jumps[i]);
+            }
+
+            // OP_POP 弹掉 switch 值（OP_SWITCH_LOOKUP 没弹出时的兜底）
+            // 注意：OP_SWITCH_LOOKUP 已经弹出了 switch 值，不需要再 POP
+            // 但如果没有匹配且没有 default，switch 值已被弹出，不需要再处理
+
+            free(entries);
+            free(body_offset_positions);
+            free(case_end_jumps);
+            return;
+        }
+    }
+
+    // ========================================================================
+    // 原始线性扫描路径（非整数 case 或 case 数量太少）
+    // ========================================================================
+
     typedef struct {
         int* match_jumps;
         int match_jump_count;
