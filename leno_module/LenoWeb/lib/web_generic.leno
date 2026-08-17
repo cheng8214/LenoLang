@@ -1,0 +1,220 @@
+// web_generic.leno — LenoWeb 泛型工具库
+// 提供 Result[T] 错误处理、map/filter/reduce 函数式工具、Stack[T]、LinkedList[T]
+// 供 LenoWeb 内部和用户代码使用
+
+// ============================================================================
+// 1. Result[T] — 安全的错误处理模式
+// ============================================================================
+
+export struct Result[T] {
+    T data = null
+    string error = ""
+    bool ok = true
+
+    func isOk(): bool {
+        return self.ok
+    }
+
+    func isError(): bool {
+        return not self.ok
+    }
+
+    func unwrapOr(T defaultVal): T {
+        if self.ok { return self.data }
+        return defaultVal
+    }
+
+    func getError(): string {
+        return self.error
+    }
+
+    func getData(): T {
+        return self.data
+    }
+}
+
+// 构造成功结果
+export func Ok[T](T val): Result[T] {
+    return new Result[T](data=val, ok=true)
+}
+
+// 构造错误结果
+export func Err[T](string msg): Result[T] {
+    return new Result[T](ok=false, error=msg)
+}
+
+// ============================================================================
+// 2. map / filter / reduce — 函数式工具
+// ============================================================================
+
+// map: 将数组每个元素通过函数转换
+export func map[T, U](Array[T] arr, func(T):U fn): Array[U] {
+    Array[U] result = []
+    for arr to item {
+        result.add(fn(item))
+    }
+    return result
+}
+
+// filter: 过滤数组元素
+export func filter[T](Array[T] arr, func(T):bool fn): Array[T] {
+    Array[T] result = []
+    for arr to item {
+        if fn(item) {
+            result.add(item)
+        }
+    }
+    return result
+}
+
+// reduce: 将数组归约为单个值
+export func reduce[T, U](Array[T] arr, U init, func(U, T):U fn): U {
+    U acc = init
+    for arr to item {
+        acc = fn(acc, item)
+    }
+    return acc
+}
+
+// forEach: 遍历数组执行副作用
+export func forEach[T](Array[T] arr, func(T) fn) {
+    for arr to item {
+        fn(item)
+    }
+}
+
+// ============================================================================
+// 3. Stack[T] — 后进先出栈（爬虫 DFS）
+// ============================================================================
+
+export struct Stack[T] {
+    Array items
+    int size = 0
+
+    func init() {
+        self.items = []
+        self.size = 0
+    }
+
+    func push(T val) {
+        self.items.add(val)
+        self.size = self.size + 1
+    }
+
+    func pop(): T {
+        if self.size == 0 { return null }
+        self.size = self.size - 1
+        return self.items.pop()
+    }
+
+    func peek(): T {
+        if self.size == 0 { return null }
+        return self.items[self.size - 1]
+    }
+
+    func isEmpty(): bool {
+        return self.size == 0
+    }
+}
+
+// ============================================================================
+// 4. LinkedList[T] — 链表队列（大规模 URL 队列，O(1) 追加）
+// ============================================================================
+
+export struct ListNode[T] {
+    T data
+    ListNode? next = null
+}
+
+export struct LinkedList[T] {
+    ListNode? head = null
+    ListNode? tail = null
+    int length = 0
+
+    func init() {
+        self.head = null
+        self.tail = null
+        self.length = 0
+    }
+
+    // 在尾部追加（O(1)）
+    func append(T val) {
+        ListNode[T] node = new ListNode[T](data=val)
+        if self.tail == null {
+            self.head = node
+            self.tail = node
+        } else {
+            self.tail.next = node
+            self.tail = node
+        }
+        self.length = self.length + 1
+    }
+
+    // 在头部插入（O(1)）
+    func prepend(T val) {
+        ListNode[T] node = new ListNode[T](data=val)
+        if self.head == null {
+            self.head = node
+            self.tail = node
+        } else {
+            node.next = self.head
+            self.head = node
+        }
+        self.length = self.length + 1
+    }
+
+    // 取出头部元素并移除（O(1)）
+    func shift(): T {
+        if self.head == null { return null }
+        ListNode[T]? node = self.head
+        self.head = self.head.next
+        if self.head == null {
+            self.tail = null
+        }
+        self.length = self.length - 1
+        return node.data
+    }
+
+    // 查看头部元素（不移除）
+    func first(): T {
+        if self.head == null { return null }
+        return self.head.data
+    }
+
+    // 查找元素
+    func contains(T val): bool {
+        ListNode? curr = self.head
+        while curr != null {
+            if curr.data == val { return true }
+            curr = curr.next
+        }
+        return false
+    }
+
+    // 获取指定位置的元素
+    func get(int index): T {
+        if index < 0 or index >= self.length { return null }
+        ListNode? curr = self.head
+        int i = 0
+        while i < index {
+            curr = curr.next
+            i = i + 1
+        }
+        return curr.data
+    }
+
+    // 转为数组
+    func toArray(): Array[T] {
+        Array[T] result = []
+        ListNode? curr = self.head
+        while curr != null {
+            result.add(curr.data)
+            curr = curr.next
+        }
+        return result
+    }
+
+    func isEmpty(): bool {
+        return self.length == 0
+    }
+}

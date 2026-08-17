@@ -1,0 +1,84 @@
+// 泛型系统在 LenoWeb 中的综合场景测试
+// 模拟：爬虫提取链接 -> map 转换 -> filter 过滤 -> reduce 统计
+
+import "../lib/Web.leno" as web
+import "../lib/web_generic.leno" as gen
+use gen.(Result, Ok, Err, Stack, LinkedList, ListNode)
+
+main()
+{
+    print("=== 场景1: 模拟爬虫链接处理 ===")
+
+    // 模拟从网页提取的链接列表
+    var rawUrls = [
+        "https://example.com/page1",
+        "https://example.com/page2",
+        "https://other.com/page3",
+        "https://example.com/page4",
+        "https://spam.com/page5",
+        "https://example.com/page6"
+    ]
+
+    // filter: 过滤 example.com
+    var exampleUrls = web.filter[string](rawUrls, func(string url): bool {
+        return url.has("example.com")
+    })
+    print("example.com 链接数: " + exampleUrls.len())
+
+    // map: 提取路径部分
+    var paths = web.map[string, string](exampleUrls, func(string url): string {
+        int pos = url.len()
+        while pos > 0 and url.byte(pos - 1) != 47 {
+            pos = pos - 1
+        }
+        return url.slice(pos - 1, url.len())
+    })
+    print("路径: " + paths)
+
+    // reduce: 统计总长度
+    var totalLen = web.reduce[string, int](paths, 0, func(int acc, string p): int {
+        return acc + p.len()
+    })
+    print("路径总长度: " + totalLen)
+
+    print("")
+    print("=== 场景2: Result[T] 安全请求 ===")
+
+    // Ok/Err 通过 Web.leno 转发调用
+    var okResult = web.Ok[int](200)
+    print("Ok 值: " + okResult.unwrapOr(0))
+
+    var errResult = web.Err[int]("connection refused")
+    print("Err 消息: " + errResult.getError())
+    print("Err 默认值: " + errResult.unwrapOr(-1))
+
+    print("")
+    print("=== 场景3: Stack[T] DFS 模拟 ===")
+
+    var dfsStack = new Stack[string]()
+    dfsStack.init()
+    dfsStack.push("root")
+    dfsStack.push("child1")
+    dfsStack.push("child2")
+    print("DFS 遍历:")
+    while not dfsStack.isEmpty() {
+        print("  -> " + dfsStack.pop())
+    }
+
+    print("")
+    print("=== 场景4: LinkedList[T] URL 队列 ===")
+
+    var urlQueue = new LinkedList[string]()
+    urlQueue.init()
+    urlQueue.append("url-a")
+    urlQueue.append("url-b")
+    urlQueue.append("url-c")
+    print("队列长度: " + urlQueue.length)
+    print("出队: " + urlQueue.shift())
+    print("出队: " + urlQueue.shift())
+    print("剩余长度: " + urlQueue.length)
+    print("队列内容: " + urlQueue.toArray())
+
+    print("")
+    print("=== ALL TESTS DONE ===")
+}

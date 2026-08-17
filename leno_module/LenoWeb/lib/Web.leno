@@ -7,12 +7,14 @@ import "web_curl_core.leno" as core
 import "web_net.leno" as net
 import "web_html.leno" as htmls
 import "web_crawler.leno" as crawler
+import "web_generic.leno" as generic
 
 // ==================== 重新导出 core 类型 ====================
 use core.(curl, Code, Opt, Info, Global, HttpVersion, SslVersion)
 use net.(Response, HttpClient, Session)
 use htmls.(HtmlNode)
 use crawler.(Url, Crawler, CrawlItem, Page)
+use generic.(Result, Ok, Err, map, filter, reduce, forEach, Stack, LinkedList, ListNode)
 
 // ==================== HTTP 客户端 ====================
 export func createClient(): HttpClient { return net.createClient() }
@@ -119,3 +121,36 @@ export func shouldStop(Crawler c): bool { return c.shouldStop() }
 export func stop(Crawler c) { c.stop() }
 export func fetchPage(string url, string user_agent): Page { return crawler.fetchPage(url, user_agent) }
 export func extractLinks(Page page): Array[string] { return crawler.extractLinks(page) }
+
+// ==================== 泛型工具 ====================
+// Result[T] 构造器转发
+export func Ok[T](T val): Result[T] { return generic.Ok(val) }
+export func Err[T](string msg): Result[T] { return generic.Err(msg) }
+
+// Result[T] 安全请求
+export func safeGet(string url): Result[Response] {
+    Response r = net.get(url)
+    if r.ok() { return Ok[Response](r) }
+    return Err[Response]("HTTP " + r.statusCode + ": " + r.error)
+}
+export func safePost(string url, string body): Result[Response] {
+    Response r = net.post(url, body)
+    if r.ok() { return Ok[Response](r) }
+    return Err[Response]("HTTP " + r.statusCode + ": " + r.error)
+}
+export func safePostJson(string url, string json): Result[Response] {
+    Response r = net.postJson(url, json)
+    if r.ok() { return Ok[Response](r) }
+    return Err[Response]("HTTP " + r.statusCode + ": " + r.error)
+}
+export func safeFetchPage(string url, string ua): Result[Page] {
+    Page? p = crawler.fetchPage(url, ua)
+    if p == null { return Err[Page]("fetch failed: " + url) }
+    return Ok[Page](p)
+}
+
+// 泛型函数式工具直接 re-export
+export func map[T, U](Array[T] arr, func(T):U fn): Array[U] { return generic.map(arr, fn) }
+export func filter[T](Array[T] arr, func(T):bool fn): Array[T] { return generic.filter(arr, fn) }
+export func reduce[T, U](Array[T] arr, U init, func(U, T):U fn): U { return generic.reduce(arr, init, fn) }
+export func forEach[T](Array[T] arr, func(T) fn) { generic.forEach(arr, fn) }

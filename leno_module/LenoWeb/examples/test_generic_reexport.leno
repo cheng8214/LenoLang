@@ -1,0 +1,113 @@
+// 泛型函数 re-export 回归断言测试
+// 防止 Ok[T]/Err[T]/map[T,U]/filter[T]/reduce[T,U] 通过 export func 转发后回归
+
+import "../lib/web_generic.leno" as gen
+import "../lib/Web.leno" as web
+
+main()
+{
+    print("=== generic re-export regression ===")
+
+    // ---------- 1. Ok/Err 直接调用 gen 模块 ----------
+    var ok1 = gen.Ok[int](42)
+    assert_eq(ok1.isOk(), true)
+    assert_eq(ok1.unwrapOr(0), 42)
+
+    var err1 = gen.Err[int]("error msg")
+    assert_eq(err1.isError(), true)
+    assert_eq(err1.getError(), "error msg")
+    assert_eq(err1.unwrapOr(-1), -1)
+
+    // ---------- 2. Ok/Err 通过 Web.leno 转发调用 ----------
+    var ok2 = web.Ok[int](100)
+    assert_eq(ok2.isOk(), true)
+    assert_eq(ok2.unwrapOr(0), 100)
+
+    var err2 = web.Err[int]("web error")
+    assert_eq(err2.isError(), true)
+    assert_eq(err2.getError(), "web error")
+    assert_eq(err2.unwrapOr(-99), -99)
+
+    // ---------- 3. Ok/Err 不同类型参数 ----------
+    var okStr = web.Ok[string]("hello")
+    assert_eq(okStr.unwrapOr(""), "hello")
+
+    // ---------- 4. map 通过 Web.leno 转发 ----------
+    var nums = [1, 2, 3, 4, 5]
+    var squared = web.map[int, int](nums, func(int x): int {
+        return x * x
+    })
+    assert_eq(squared[0], 1)
+    assert_eq(squared[1], 4)
+    assert_eq(squared[2], 9)
+    assert_eq(squared[3], 16)
+    assert_eq(squared[4], 25)
+
+    // ---------- 5. filter 通过 Web.leno 转发 ----------
+    var evens = web.filter[int](nums, func(int x): bool {
+        return x % 2 == 0
+    })
+    assert_eq(evens.len(), 2)
+    assert_eq(evens[0], 2)
+    assert_eq(evens[1], 4)
+
+    // ---------- 6. reduce 通过 Web.leno 转发 ----------
+    var sum = web.reduce[int, int](nums, 0, func(int acc, int x): int {
+        return acc + x
+    })
+    assert_eq(sum, 15)
+
+    // ---------- 7. forEach 通过 Web.leno 转发 ----------
+    var count = 0
+    web.forEach[int](nums, func(int x) {
+        count = count + 1
+    })
+    assert_eq(count, 5)
+
+    // ---------- 8. map 字符串转换 ----------
+    var words = ["hello", "world"]
+    var upper = web.map[string, string](words, func(string s): string {
+        return s.to_upper()
+    })
+    assert_eq(upper[0], "HELLO")
+    assert_eq(upper[1], "WORLD")
+
+    // ---------- 9. reduce 拼接字符串 ----------
+    var parts = ["a", "b", "c"]
+    var joined = web.reduce[string, string](parts, "", func(string acc, string x): string {
+        return acc + x
+    })
+    assert_eq(joined, "abc")
+
+    // ---------- 10. Stack 泛型 ----------
+    var stack = new gen.Stack[int]()
+    stack.init()
+    stack.push(10)
+    stack.push(20)
+    stack.push(30)
+    assert_eq(stack.size, 3)
+    assert_eq(stack.peek(), 30)
+    assert_eq(stack.pop(), 30)
+    assert_eq(stack.pop(), 20)
+    assert_eq(stack.isEmpty(), false)
+    assert_eq(stack.pop(), 10)
+    assert_eq(stack.isEmpty(), true)
+
+    // ---------- 11. LinkedList 泛型 ----------
+    var list = new gen.LinkedList[int]()
+    list.init()
+    list.append(10)
+    list.append(20)
+    list.append(30)
+    list.prepend(5)
+    assert_eq(list.length, 4)
+    assert_eq(list.first(), 5)
+    assert_eq(list.get(2), 20)
+    assert_eq(list.contains(20), true)
+    assert_eq(list.contains(99), false)
+    assert_eq(list.shift(), 5)
+    assert_eq(list.length, 3)
+
+    print("")
+    print("ALL ASSERTIONS PASSED")
+}
