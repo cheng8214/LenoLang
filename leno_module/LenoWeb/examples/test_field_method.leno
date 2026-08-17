@@ -1,0 +1,25 @@
+// test_field_method.leno — 验证 struct 字段与方法同名（text 字段 vs text() 方法）
+import "../lib/web_html.leno" as htmls
+use htmls.HtmlNode
+
+main() {
+    print("=== 字段/方法同名测试 ===\n")
+
+    var root = htmls.parse("<div>hello<b>bold</b>world</div>")
+    var div = htmls.selectOne(root, "div")
+
+    // 测试1: 字段访问 node.text（直接文本）
+    string fieldText = div.text
+    print("[1] div.text (字段) = '" + fieldText + "' (期望 'hello' 等直接文本)")
+
+    // 测试2: 方法调用 node.text()（完整文本？）
+    string methodText = div.text()
+    print("[2] div.text() (方法) = '" + methodText + "'")
+
+    // 测试3: 子节点字段
+    var b = htmls.selectOne(root, "b")
+    string bText = b.text
+    print("[3] b.text (字段) = '" + bText + "' (期望 'bold')")
+
+    print("\n=== 字段/方法同名测试完成 ===")
+}

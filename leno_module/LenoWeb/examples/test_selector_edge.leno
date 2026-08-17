@@ -1,0 +1,39 @@
+// test_selector_edge.leno — 验证选择器的边界问题
+// 1. 属性选择器带空格 div[class="a b"]
+// 2. 连续 > 子选择器
+// 3. 多段空格选择器 "div span"
+import "../lib/web_html.leno" as htmls
+use htmls.HtmlNode
+
+main() {
+    print("=== 选择器边界测试 ===\n")
+
+    // 测试1: 属性选择器值带空格
+    var root1 = htmls.parse("<div class='a b'>x</div>")
+    var r1 = htmls.selectOne(root1, "div[class='a b']")
+    print("[1] div[class='a b'] = " + _tag(r1) + " (期望 div)")
+
+    // 测试2: 连续 > 子选择器
+    var root2 = htmls.parse("<div><span><a>link</a></span></div>")
+    var r2 = htmls.selectOne(root2, "div > span > a")
+    print("[2] div>span>a = " + _tag(r2) + " (期望 a)")
+
+    // 测试3: 多段空格后代选择器
+    var root3 = htmls.parse("<div><section><span>text</span></section></div>")
+    var r3 = htmls.selectOne(root3, "div span")
+    print("[3] div span = " + _tag(r3) + " (期望 span)")
+
+    // 测试4: removeElement 多段选择器
+    var root4 = htmls.parse("<div><p class='x'>1</p><p>2</p></div>")
+    int removed = htmls.removeElement(root4, "p.x")
+    print("[4] removeElement('p.x') removed = " + removed + " (期望 1)")
+    var ps = htmls.select(root4, "p")
+    print("[4] 剩余 p 数 = " + ps.len() + " (期望 1)")
+
+    print("\n=== 选择器边界测试完成 ===")
+}
+
+func _tag(HtmlNode? n): string {
+    if n == null { return "null" }
+    return n.tag
+}
