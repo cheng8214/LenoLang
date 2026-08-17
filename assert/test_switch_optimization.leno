@@ -1,88 +1,230 @@
-// switch 正确性回归测试
-// 确保 OP_SWITCH_LOOKUP 二分查找在所有位置都正确匹配
+// Switch 优化全面回归测试
+// 覆盖：int/float/string case、边界值、default、少量case、无序case
 
-func testSwitch(int value): int {
-    switch value {
-        case 0 { return 100 }
-        case 1 { return 101 }
-        case 2 { return 102 }
-        case 3 { return 103 }
-        case 4 { return 104 }
-        case 5 { return 105 }
-        case 6 { return 106 }
-        case 7 { return 107 }
-        case 8 { return 108 }
-        case 9 { return 109 }
-        case 10 { return 110 }
-        case 11 { return 111 }
-        case 12 { return 112 }
-        case 13 { return 113 }
-        case 14 { return 114 }
-        case 15 { return 115 }
-        case 16 { return 116 }
-        case 17 { return 117 }
-        case 18 { return 118 }
-        case 19 { return 119 }
-        case 20 { return 120 }
-        case 21 { return 121 }
-        case 22 { return 122 }
-        case 23 { return 123 }
-        case 24 { return 124 }
-        case 25 { return 125 }
-        case 26 { return 126 }
-        case 27 { return 127 }
-        case 28 { return 128 }
-        case 29 { return 129 }
+// ============================================================================
+// 1. 整数 switch（正序）
+// ============================================================================
+func testIntOrdered(int v): int {
+    switch v {
+        case 0 { return 0 }
+        case 1 { return 1 }
+        case 2 { return 2 }
+        case 3 { return 3 }
+        case 4 { return 4 }
+        case 5 { return 5 }
+        case 6 { return 6 }
+        case 7 { return 7 }
+        case 8 { return 8 }
+        case 9 { return 9 }
+        case 10 { return 10 }
+        case 11 { return 11 }
+        case 12 { return 12 }
+        case 13 { return 13 }
+        case 14 { return 14 }
+        case 15 { return 15 }
+        case 16 { return 16 }
+        case 17 { return 17 }
+        case 18 { return 18 }
+        case 19 { return 19 }
+        default { return -1 }
+    }
+}
+
+// ============================================================================
+// 2. 整数 switch（无序）
+// ============================================================================
+func testIntUnordered(int v): int {
+    switch v {
+        case 100 { return 100 }
+        case 50 { return 50 }
+        case 200 { return 200 }
+        case 25 { return 25 }
+        case 75 { return 75 }
+        case 150 { return 150 }
+        case 175 { return 175 }
+        case 10 { return 10 }
+        case 90 { return 90 }
+        case 300 { return 300 }
+        default { return -1 }
+    }
+}
+
+// ============================================================================
+// 3. 负数 switch
+// ============================================================================
+func testNegatives(int v): int {
+    switch v {
+        case -5 { return -5 }
+        case -4 { return -4 }
+        case -3 { return -3 }
+        case -2 { return -2 }
+        case -1 { return -1 }
+        case 0 { return 0 }
+        case 1 { return 1 }
+        case 2 { return 2 }
+        case 3 { return 3 }
+        case 4 { return 4 }
+        default { return 99 }
+    }
+}
+
+// ============================================================================
+// 4. 浮点数 switch（无序）
+// ============================================================================
+func testFloat(float v): int {
+    switch v {
+        case 1.5 { return 1 }
+        case 2.5 { return 2 }
+        case 3.5 { return 3 }
+        case 4.5 { return 4 }
+        case 5.5 { return 5 }
+        case 6.5 { return 6 }
+        case 7.5 { return 7 }
+        case 8.5 { return 8 }
+        default { return -1 }
+    }
+}
+
+// ============================================================================
+// 5. 字符串 switch（无序）
+// ============================================================================
+func testString(string v): int {
+    switch v {
+        case "apple" { return 1 }
+        case "banana" { return 2 }
+        case "cherry" { return 3 }
+        case "date" { return 4 }
+        case "elderberry" { return 5 }
+        case "fig" { return 6 }
+        case "grape" { return 7 }
+        case "honeydew" { return 8 }
+        default { return -1 }
+    }
+}
+
+// ============================================================================
+// 6. 字符串 switch（中文）
+// ============================================================================
+func testChineseString(string v): int {
+    switch v {
+        case "苹果" { return 1 }
+        case "香蕉" { return 2 }
+        case "樱桃" { return 3 }
+        case "枣" { return 4 }
+        case "接骨木莓" { return 5 }
+        case "无花果" { return 6 }
+        case "葡萄" { return 7 }
+        case "蜜瓜" { return 8 }
+        default { return -1 }
+    }
+}
+
+// ============================================================================
+// 7. 少量 case（< 4，走原始路径）
+// ============================================================================
+func testSmall(int v): int {
+    switch v {
+        case 0 { return 0 }
+        case 1 { return 1 }
+        case 2 { return 2 }
+        default { return -1 }
+    }
+}
+
+// ============================================================================
+// 8. 只有 default
+// ============================================================================
+func testOnlyDefault(int v): int {
+    switch v {
+        default { return 42 }
+    }
+}
+
+// ============================================================================
+// 9. 大数 switch
+// ============================================================================
+func testLargeNumbers(int v): int {
+    switch v {
+        case 1000 { return 1 }
+        case 2000 { return 2 }
+        case 3000 { return 3 }
+        case 4000 { return 4 }
+        case 5000 { return 5 }
+        case 6000 { return 6 }
+        case 7000 { return 7 }
+        case 8000 { return 8 }
+        case 9000 { return 9 }
+        case 10000 { return 10 }
         default { return -1 }
     }
 }
 
 main() {
-    // 测试每个 case 值
-    for 0:29 to i {
-        assert_eq(testSwitch(i), 100 + i)
+    // --- 整数正序 ---
+    for 0:19 to i {
+        assert_eq(testIntOrdered(i), i)
     }
+    assert_eq(testIntOrdered(20), -1)
+    assert_eq(testIntOrdered(-1), -1)
 
-    // 测试 default
-    assert_eq(testSwitch(30), -1)
-    assert_eq(testSwitch(99), -1)
-    assert_eq(testSwitch(-1), -1)
+    // --- 整数无序 ---
+    assert_eq(testIntUnordered(100), 100)
+    assert_eq(testIntUnordered(50), 50)
+    assert_eq(testIntUnordered(300), 300)
+    assert_eq(testIntUnordered(10), 10)
+    assert_eq(testIntUnordered(90), 90)
+    assert_eq(testIntUnordered(999), -1)
 
-    // 测试无序 case 值
-    func testUnordered(int v): int {
-        switch v {
-            case 10 { return 1 }
-            case 5 { return 2 }
-            case 20 { return 3 }
-            case 1 { return 4 }
-            case 15 { return 5 }
-            case 25 { return 6 }
-            case 3 { return 7 }
-            case 7 { return 8 }
-            default { return 0 }
-        }
+    // --- 负数 ---
+    for -5:4 to i {
+        assert_eq(testNegatives(i), i)
     }
-    assert_eq(testUnordered(10), 1)
-    assert_eq(testUnordered(5), 2)
-    assert_eq(testUnordered(20), 3)
-    assert_eq(testUnordered(1), 4)
-    assert_eq(testUnordered(15), 5)
-    assert_eq(testUnordered(25), 6)
-    assert_eq(testUnordered(3), 7)
-    assert_eq(testUnordered(7), 8)
-    assert_eq(testUnordered(99), 0)
+    assert_eq(testNegatives(5), 99)
+    assert_eq(testNegatives(-6), 99)
 
-    // 测试少量 case（< 4，走原始路径）
-    func testSmall(int v): int {
-        switch v {
-            case 0 { return 0 }
-            case 1 { return 1 }
-            default { return -1 }
-        }
-    }
+    // --- 浮点数 ---
+    assert_eq(testFloat(1.5), 1)
+    assert_eq(testFloat(5.5), 5)
+    assert_eq(testFloat(8.5), 8)
+    assert_eq(testFloat(0.0), -1)
+    assert_eq(testFloat(9.9), -1)
+
+    // --- 字符串 ---
+    assert_eq(testString("apple"), 1)
+    assert_eq(testString("banana"), 2)
+    assert_eq(testString("cherry"), 3)
+    assert_eq(testString("date"), 4)
+    assert_eq(testString("elderberry"), 5)
+    assert_eq(testString("fig"), 6)
+    assert_eq(testString("grape"), 7)
+    assert_eq(testString("honeydew"), 8)
+    assert_eq(testString("zzz"), -1)
+    assert_eq(testString(""), -1)
+
+    // --- 中文字符串 ---
+    assert_eq(testChineseString("苹果"), 1)
+    assert_eq(testChineseString("香蕉"), 2)
+    assert_eq(testChineseString("葡萄"), 7)
+    assert_eq(testChineseString("蜜瓜"), 8)
+    assert_eq(testChineseString("不存在"), -1)
+
+    // --- 少量 case ---
     assert_eq(testSmall(0), 0)
     assert_eq(testSmall(1), 1)
-    assert_eq(testSmall(2), -1)
+    assert_eq(testSmall(2), 2)
+    assert_eq(testSmall(3), -1)
+
+    // --- 只有 default ---
+    assert_eq(testOnlyDefault(0), 42)
+    assert_eq(testOnlyDefault(-1), 42)
+    assert_eq(testOnlyDefault(999), 42)
+
+    // --- 大数 ---
+    assert_eq(testLargeNumbers(1000), 1)
+    assert_eq(testLargeNumbers(5000), 5)
+    assert_eq(testLargeNumbers(10000), 10)
+    assert_eq(testLargeNumbers(999), -1)
+    assert_eq(testLargeNumbers(10001), -1)
 
     print("ALL SWITCH TESTS PASSED")
 }

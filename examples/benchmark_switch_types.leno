@@ -1,0 +1,112 @@
+// benchmark_switch_types.leno
+// 测试 int/float/string switch 的性能
+import times
+
+const int ITERATIONS = 1000000
+
+// 整数 switch
+func testInt(int v): int {
+    switch v {
+        case 0 { return 0 }
+        case 1 { return 1 }
+        case 2 { return 2 }
+        case 3 { return 3 }
+        case 4 { return 4 }
+        case 5 { return 5 }
+        case 6 { return 6 }
+        case 7 { return 7 }
+        case 8 { return 8 }
+        case 9 { return 9 }
+        case 10 { return 10 }
+        case 11 { return 11 }
+        case 12 { return 12 }
+        case 13 { return 13 }
+        case 14 { return 14 }
+        case 15 { return 15 }
+        case 16 { return 16 }
+        case 17 { return 17 }
+        case 18 { return 18 }
+        case 19 { return 19 }
+        default { return -1 }
+    }
+}
+
+// 浮点数 switch
+func testFloat(float v): int {
+    switch v {
+        case 0.1 { return 0 }
+        case 1.1 { return 1 }
+        case 2.1 { return 2 }
+        case 3.1 { return 3 }
+        case 4.1 { return 4 }
+        case 5.1 { return 5 }
+        case 6.1 { return 6 }
+        case 7.1 { return 7 }
+        case 8.1 { return 8 }
+        case 9.1 { return 9 }
+        case 10.1 { return 10 }
+        case 11.1 { return 11 }
+        case 12.1 { return 12 }
+        case 13.1 { return 13 }
+        case 14.1 { return 14 }
+        case 15.1 { return 15 }
+        case 16.1 { return 16 }
+        case 17.1 { return 17 }
+        case 18.1 { return 18 }
+        case 19.1 { return 19 }
+        default { return -1 }
+    }
+}
+
+// 字符串 switch
+func testString(string v): int {
+    switch v {
+        case "s0" { return 0 }
+        case "s1" { return 1 }
+        case "s2" { return 2 }
+        case "s3" { return 3 }
+        case "s4" { return 4 }
+        case "s5" { return 5 }
+        case "s6" { return 6 }
+        case "s7" { return 7 }
+        case "s8" { return 8 }
+        case "s9" { return 9 }
+        case "s10" { return 10 }
+        case "s11" { return 11 }
+        case "s12" { return 12 }
+        case "s13" { return 13 }
+        case "s14" { return 14 }
+        case "s15" { return 15 }
+        case "s16" { return 16 }
+        case "s17" { return 17 }
+        case "s18" { return 18 }
+        case "s19" { return 19 }
+        default { return -1 }
+    }
+}
+
+main() {
+    // 整数
+    int t1 = times.ms()
+    for 0:ITERATIONS-1 to i {
+        testInt(19)
+    }
+    int t2 = times.ms()
+    print("int switch:    " + (t2 - t1) + " ms")
+
+    // 浮点
+    int t3 = times.ms()
+    for 0:ITERATIONS-1 to i {
+        testFloat(19.1)
+    }
+    int t4 = times.ms()
+    print("float switch:  " + (t4 - t3) + " ms")
+
+    // 字符串
+    int t5 = times.ms()
+    for 0:ITERATIONS-1 to i {
+        testString("s19")
+    }
+    int t6 = times.ms()
+    print("string switch: " + (t6 - t5) + " ms")
+}

@@ -101,53 +101,105 @@ static void gen_switch(CodeGen* gen, Ast* ast) {
     }
 
     // ========================================================================
-    // 优化：整数 case 二分查找 (OP_SWITCH_LOOKUP)
-    // 当所有 case 都是整数常量且数量 >= 4 时，生成二分查找
+    // 优化：case 二分查找 (OP_SWITCH_LOOKUP)
+    // 支持类型：int、float、string
+    // 当所有 case 都是同一类型的常量且数量 >= 4 时，生成二分查找
     // ========================================================================
     if (case_count >= 4) {
-        int all_int_const = 1;
+        // 检测 case 类型：0=未定, 1=int, 2=float, 3=string
+        int case_type = 0;
+        int all_same_const = 1;
         for (int i = 0; i < case_count; i++) {
             if (ast->u.switch_.cases[i].is_type_match) {
-                all_int_const = 0;
+                all_same_const = 0;
                 break;
             }
             int vc = ast->u.switch_.cases[i].values.count;
             if (vc != 1) {
-                all_int_const = 0;
+                all_same_const = 0;
                 break;
             }
             Ast* val_ast = ast->u.switch_.cases[i].values.items[0];
-            if (val_ast->kind != AST_NUM || val_ast->u.num.is_float) {
-                all_int_const = 0;
+            int this_type = 0;
+            if (val_ast->kind == AST_NUM && !val_ast->u.num.is_float) {
+                this_type = 1;  // int
+            } else if (val_ast->kind == AST_NUM && val_ast->u.num.is_float) {
+                this_type = 2;  // float
+            } else if (val_ast->kind == AST_STRING) {
+                this_type = 3;  // string
+            } else {
+                all_same_const = 0;
+                break;
+            }
+            if (case_type == 0) {
+                case_type = this_type;
+            } else if (case_type != this_type) {
+                all_same_const = 0;
                 break;
             }
         }
 
-        if (all_int_const) {
-            // 收集 (case_value, case_index) 对，按 case_value 排序
-            typedef struct { int64_t value; int orig_index; } CaseEntry;
+        if (all_same_const && case_type > 0) {
+            // 收集 (case_value, case_index) 对
+            typedef struct { Value value; int orig_index; } CaseEntry;
             CaseEntry* entries = malloc(sizeof(CaseEntry) * case_count);
             for (int i = 0; i < case_count; i++) {
                 Ast* val_ast = ast->u.switch_.cases[i].values.items[0];
-                entries[i].value = val_ast->u.num.value;
+                if (case_type == 1) {
+                    entries[i].value = val_num((int64_t)val_ast->u.num.value);
+                } else if (case_type == 2) {
+                    entries[i].value = val_float(val_ast->u.num.value);
+                } else {
+                    entries[i].value = val_obj((Object*)str_copy(val_ast->u.string.value, val_ast->u.string.len));
+                }
                 entries[i].orig_index = i;
             }
-            // 简单插入排序（稳定）
+
+            // 排序：按值大小（int/float）或字典序（string）
             for (int i = 1; i < case_count; i++) {
                 CaseEntry tmp = entries[i];
                 int j = i - 1;
-                while (j >= 0 && entries[j].value > tmp.value) {
-                    entries[j + 1] = entries[j];
-                    j--;
+                if (case_type == 1) {
+                    // int
+                    while (j >= 0 && val_as_int(entries[j].value) > val_as_int(tmp.value)) {
+                        entries[j + 1] = entries[j];
+                        j--;
+                    }
+                } else if (case_type == 2) {
+                    // float
+                    double tmp_d = val_as_double(tmp.value);
+                    while (j >= 0) {
+                        double j_d = val_as_double(entries[j].value);
+                        if (j_d > tmp_d) {
+                            entries[j + 1] = entries[j];
+                            j--;
+                        } else {
+                            break;
+                        }
+                    }
+                } else {
+                    // string
+                    ObjString* tmp_s = (ObjString*)val_as_obj(tmp.value);
+                    while (j >= 0) {
+                        ObjString* j_s = (ObjString*)val_as_obj(entries[j].value);
+                        int min_len = j_s->len < tmp_s->len ? j_s->len : tmp_s->len;
+                        int cmp = memcmp(j_s->chars, tmp_s->chars, min_len);
+                        if (cmp > 0 || (cmp == 0 && j_s->len > tmp_s->len)) {
+                            entries[j + 1] = entries[j];
+                            j--;
+                        } else {
+                            break;
+                        }
+                    }
                 }
                 entries[j + 1] = tmp;
             }
 
-            // 创建排序后的 int 常量数组
+            // 创建排序后的 Value 常量数组
             ObjArray* case_arr = arr_new(case_count);
             for (int i = 0; i < case_count; i++) {
                 arr_grow(case_arr);
-                case_arr->elements[i] = val_num(entries[i].value);
+                case_arr->elements[i] = entries[i].value;
                 case_arr->count = i + 1;
             }
             int const_idx = make_constant(gen, val_obj((Object*)case_arr));
