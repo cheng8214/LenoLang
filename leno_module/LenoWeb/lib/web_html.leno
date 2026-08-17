@@ -351,11 +351,9 @@ func _parseText(_ParseCtx ctx): string {
 
 // 判断是否为 void 标签（不需要闭合标签）
 func _isVoidTag(string tagName): bool {
-    return tagName == "br" or tagName == "hr" or tagName == "img" or
-           tagName == "input" or tagName == "meta" or tagName == "link" or
-           tagName == "area" or tagName == "base" or tagName == "col" or
-           tagName == "embed" or tagName == "source" or tagName == "track" or
-           tagName == "wbr"
+    // 用 in 简化多标签判断（void 元素：无内容、自闭合）
+    return tagName in ["br", "hr", "img", "input", "meta", "link",
+                       "area", "base", "col", "embed", "source", "track", "wbr"]
 }
 
 // ==================== HTML 实体解码 ====================
@@ -842,7 +840,7 @@ func _toText(HtmlNode node): string {
         return node.text
     }
     // 块级标签：段落前后加换行
-    if tag == "p" or tag == "div" or tag == "section" or tag == "article" or tag == "header" or tag == "footer" {
+    if tag in ["p", "div", "section", "article", "header", "footer"] {
         result = result + "\n"
     }
     // 标题：前后空行，加 # 标记
@@ -852,7 +850,7 @@ func _toText(HtmlNode node): string {
         result = result + "\n## "
     } else if tag == "h3" {
         result = result + "\n### "
-    } else if tag == "h4" or tag == "h5" or tag == "h6" {
+    } else if tag in ["h4", "h5", "h6"] {
         result = result + "\n#### "
     }
     // 列表项：前缀 "- "
@@ -863,7 +861,7 @@ func _toText(HtmlNode node): string {
         result = result + _toText(node.children[i])
     }
     // 块级结束换行
-    if tag == "p" or tag == "div" or tag == "li" or tag == "h1" or tag == "h2" or tag == "h3" or tag == "h4" or tag == "h5" or tag == "h6" {
+    if tag in ["p", "div", "li", "h1", "h2", "h3", "h4", "h5", "h6"] {
         result = result + "\n"
     }
     return result

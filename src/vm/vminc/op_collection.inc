@@ -24,6 +24,14 @@ OPCODE(OP_IN) {
                         } else if (val_is_bool(item) && val_as_bool(item) == val_as_bool(elem)) {
                             found = 1;
                             break;
+                        } else if (val_is_string(item) && val_is_string(elem)) {
+                            // 字符串按内容比较（不同字符串对象指针不同，需 strcmp 内容匹配）
+                            ObjString* istr = (ObjString*)val_as_obj(item);
+                            ObjString* estr = (ObjString*)val_as_obj(elem);
+                            if (istr->len == estr->len && strcmp(istr->chars, estr->chars) == 0) {
+                                found = 1;
+                                break;
+                            }
                         } else if (val_is_obj(item) && val_as_obj(item) == val_as_obj(elem)) {
                             found = 1;
                             break;

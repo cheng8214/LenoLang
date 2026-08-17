@@ -1,0 +1,64 @@
+// test_in_operator.leno — 验证 in / not in / 范围检查 特性的完整能力
+import io
+
+main() {
+    io.print("=== in / not in / 范围 特性测试 ===\n")
+
+    // [1] 数组成员检查
+    var arr = [10, 20, 30]
+    assert_true(20 in arr)
+    assert_true(99 not in arr)
+    io.print("[1] 数组 in/not in: OK")
+
+    // [2] 字典 key 检查
+    var d = {"a": 1, "b": 2}
+    assert_true("a" in d)
+    assert_true("z" not in d)
+    io.print("[2] 字典 key in/not in: OK")
+
+    // [3] 字符串子串
+    var s = "hello world"
+    assert_true("world" in s)
+    assert_true("xyz" not in s)
+    io.print("[3] 字符串子串 in/not in: OK")
+
+    // [4] 整数范围（闭区间）
+    assert_true(5 in 0:9)
+    assert_true(0 in 0:9)
+    assert_true(9 in 0:9)
+    assert_true(10 not in 0:9)
+    assert_true(-1 not in 0:9)
+    io.print("[4] 整数范围(闭区间): OK")
+
+    // [5] 负数范围
+    assert_true(-3 in -5:5)
+    assert_true(-6 not in -5:5)
+    io.print("[5] 负数范围: OK")
+
+    // [6] 范围检查用于条件分支
+    int score = 85
+    string grade = "C"
+    if score in 90:100 { grade = "A" }
+    else if score in 80:89 { grade = "B" }
+    io.print("[6] 范围用于成绩分级 grade = " + grade + " (期望 B)")
+
+    // [7] 数组元素范围过滤
+    var nums = [5, 15, 25, 35, 45]
+    int count10_30 = 0
+    for nums to n {
+        if n in 10:30 {
+            count10_30 = count10_30 + 1
+        }
+    }
+    assert_eq(count10_30, 2)  // 15, 25
+    io.print("[7] 范围过滤计数 = " + count10_30 + " (期望 2)")
+
+    // [8] not in 用于校验
+    var banned = ["admin", "root"]
+    string username = "guest"
+    if username not in banned {
+        io.print("[8] not in 白名单校验: guest 允许")
+    }
+
+    io.print("\n=== 全部 in/范围 测试通过 ===")
+}

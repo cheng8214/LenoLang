@@ -1,0 +1,21 @@
+// test_in_string_array.leno — 探查 in 对字符串数组的真实语义
+import io
+
+main() {
+    io.print("=== 探查 in 字符串数组语义 ===\n")
+
+    var tags = ["p", "div", "li", "h1", "h2"]
+    io.print("[1] 'p' in tags = " + ("p" in tags))
+    io.print("[2] 'h2' in tags = " + ("h2" in tags))
+    io.print("[3] 'table' in tags = " + ("table" in tags))
+    io.print("[4] 'table' not in tags = " + ("table" not in tags))
+    io.print("[5] 'di' in tags = " + ("di" in tags))   // 子串？
+    io.print("[6] 'iv' in tags = " + ("iv" in tags))   // div 的子串
+
+    // 对照：精确整型数组
+    var nums = [10, 20, 30]
+    io.print("[7] 20 in nums = " + (20 in nums))
+    io.print("[8] 99 in nums = " + (99 in nums))
+
+    io.print("\n=== 探查完成 ===")
+}
