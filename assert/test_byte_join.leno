@@ -1,0 +1,23 @@
+// test_byte_join.leno — 验证字节数组 + arrays.join 对 UTF-8 的行为
+import arrays
+import strings
+import io
+
+main() {
+    io.print("=== 字节数组 join UTF-8 探查 ===\n")
+
+    string zh = "你好"
+    // 用 char 逐个取字节？先看有没有字节级遍历方式
+    io.print("[0] '你好'.len() = " + zh.len() + " (字符数)")
+
+    // 方式A: 逐字符用 slice 取完整字符，收集到数组
+    Array[string] chars = []
+    for zh.len() to i {
+        string ch = zh.slice(i, 1)  // 按字符切片
+        chars.add(ch)
+    }
+    string jA = arrays.join(chars, "")
+    io.print("[A] 字符切片收集+join = '" + jA + "' (期望 你好)")
+
+    io.print("\n=== 探查完成 ===")
+}

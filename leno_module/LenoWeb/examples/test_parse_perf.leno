@@ -1,0 +1,35 @@
+// test_parse_perf.leno — 测量 LenoWeb 解析大 HTML 的性能
+import times
+import "../lib/web_html.leno" as htmls
+import "../lib/web_net.leno" as net
+use net.(createClient)
+
+main() {
+    print("=== LenoWeb 解析性能测量 ===\n")
+
+    // 构造一个大 HTML（重复段落，模拟真实网页）
+    string para = "<div class='item'><h2>标题</h2><p>这是一段文本内容，包含一些中文和英文 mixed content 1234567890</p><ul><li>项目一</li><li>item two</li></ul></div>"
+    string html = "<html><body>"
+    for 2000 to i {
+        html = html + para
+    }
+    html = html + "</body></html>"
+    print("[0] HTML 大小 = " + html.len() + " 字符")
+
+    int t1 = times.ms()
+    var root = htmls.parse(html)
+    int dt1 = times.ms() - t1
+    print("[1] parse 耗时 " + dt1 + "ms")
+
+    int t2 = times.ms()
+    var divs = htmls.select(root, "div.item")
+    int dt2 = times.ms() - t2
+    print("[2] select('div.item') " + divs.len() + " 个耗时 " + dt2 + "ms")
+
+    int t3 = times.ms()
+    string allText = htmls.allText(root)
+    int dt3 = times.ms() - t3
+    print("[3] allText " + allText.len() + " 字符耗时 " + dt3 + "ms")
+
+    print("\n=== 性能测量完成 ===")
+}

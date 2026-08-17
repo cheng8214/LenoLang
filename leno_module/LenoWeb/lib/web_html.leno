@@ -785,16 +785,22 @@ export func allText(HtmlNode node): string {
     return _collectText(node)
 }
 
-// 内部：深度优先收集文本
+// 内部：深度优先收集文本（用数组收集 + join 缓冲，避免逐字节 O(n²) 拼接）
 func _collectText(HtmlNode node): string {
-    string result = ""
+    Array[string] parts = []
+    _collectTextInto(node, parts)
+    return strings.join(parts, "")
+}
+
+// 深度优先把文本片段加入 parts（收集完整字符串片段，join 时安全还原含中文）
+func _collectTextInto(HtmlNode node, Array[string] parts) {
     if node.tag == "#text" {
-        return node.text
+        parts.add(node.text)
+        return
     }
     for node.children.len() to i {
-        result = result + _collectText(node.children[i])
+        _collectTextInto(node.children[i], parts)
     }
-    return result
 }
 
 // 清洗文本：合并连续空白（含换行）为单个空格，去首尾空白
@@ -802,29 +808,30 @@ export func cleanText(string raw): string {
     if raw == "" {
         return ""
     }
-    string out = ""
+    Array[string] out = []
     bool lastWasSpace = false
     int n = raw.len()
     for 0:n-1 to i {
         int b = raw.byte(i)
         if _isSpace(b) {
             if not lastWasSpace {
-                out = out + " "
+                out.add(" ")
             }
             lastWasSpace = true
         } else {
-            out = out + strings.char(b)
+            out.add(strings.char(b))
             lastWasSpace = false
         }
     }
+    string result = strings.join(out, "")
     // 去首尾空白
-    while out.len() > 0 and out.byte(0) == 32 {
-        out = out.slice(1, out.len())
+    while result.len() > 0 and result.byte(0) == 32 {
+        result = result.slice(1, result.len())
     }
-    while out.len() > 0 and out.byte(out.len() - 1) == 32 {
-        out = out.slice(0, out.len() - 1)
+    while result.len() > 0 and result.byte(result.len() - 1) == 32 {
+        result = result.slice(0, result.len() - 1)
     }
-    return out
+    return result
 }
 
 // HTML 转可读纯文本（仿 html2text）：保留段落/标题/列表/换行结构
@@ -833,38 +840,43 @@ export func htmlToText(HtmlNode node): string {
 }
 
 func _toText(HtmlNode node): string {
-    string result = ""
+    Array[string] parts = []
+    _toTextInto(node, parts)
+    return strings.join(parts, "")
+}
+
+func _toTextInto(HtmlNode node, Array[string] parts) {
     string tag = node.tag
     // 文本节点
     if tag == "#text" {
-        return node.text
+        parts.add(node.text)
+        return
     }
     // 块级标签：段落前后加换行
     if tag in ["p", "div", "section", "article", "header", "footer"] {
-        result = result + "\n"
+        parts.add("\n")
     }
     // 标题：前后空行，加 # 标记
     if tag == "h1" {
-        result = result + "\n# "
+        parts.add("\n# ")
     } else if tag == "h2" {
-        result = result + "\n## "
+        parts.add("\n## ")
     } else if tag == "h3" {
-        result = result + "\n### "
+        parts.add("\n### ")
     } else if tag in ["h4", "h5", "h6"] {
-        result = result + "\n#### "
+        parts.add("\n#### ")
     }
     // 列表项：前缀 "- "
     if tag == "li" {
-        result = result + "- "
+        parts.add("- ")
     }
     for node.children.len() to i {
-        result = result + _toText(node.children[i])
+        _toTextInto(node.children[i], parts)
     }
     // 块级结束换行
     if tag in ["p", "div", "li", "h1", "h2", "h3", "h4", "h5", "h6"] {
-        result = result + "\n"
+        parts.add("\n")
     }
-    return result
 }
 
 // 去除 HTML 字符串中的所有标签，只保留文本（不解析 DOM，纯字符串处理）

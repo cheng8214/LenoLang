@@ -1,0 +1,22 @@
+// test_join_unicode.leno — 探查 arrays.join 对完整多字节字符数组的行为
+import arrays
+import strings
+import io
+
+main() {
+    io.print("=== arrays.join 多字节字符行为 ===\n")
+
+    // 数组元素是完整字符（通过 char 拼接组成）
+    // "你" = char(228)+char(189)+char(160)
+    string ni = strings.char(228) + strings.char(189) + strings.char(160)
+    string hao = strings.char(229) + strings.char(165) + strings.char(189)  // 好
+    Array[string] arr = [ni, hao]
+    string j = arrays.join(arr, "")
+    io.print("[1] join(['你','好']) = '" + j + "' (期望 你好)")
+
+    // 对照：直接拼接
+    string d = ni + hao
+    io.print("[2] 直接拼接 = '" + d + "' (期望 你好)")
+
+    io.print("\n=== 探查完成 ===")
+}

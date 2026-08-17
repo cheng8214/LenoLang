@@ -1,0 +1,38 @@
+// test_string_buffer.leno — 验证字符串缓冲方案（数组收集 + strings.join）
+// 关键：收集"完整字符串片段"（非单字节）时 join 能正确还原含中文的文本
+import strings
+import io
+
+main() {
+    io.print("=== 字符串缓冲方案验证 ===\n")
+
+    // 方案: 收集完整字符串片段到数组，最后 join 一次拼成
+    Array[string] buf = []
+    string text = "hello world"
+    for text.len() to i {
+        buf.add(text.slice(i, i + 1))   // slice(start,end) 半开区间取单个字符
+    }
+    string result = strings.join(buf, "")
+    assert_eq(result, "hello world")
+    io.print("[1] 字符切片收集 + join = '" + result + "' (期望 hello world)")
+
+    // 含中文：按字符切片收集，join 应正确还原
+    string zh = "你好世界"
+    Array[string] buf2 = []
+    for zh.len() to i {
+        buf2.add(zh.slice(i, i + 1))    // 按字符切片（正确处理多字节 UTF-8）
+    }
+    string zhResult = strings.join(buf2, "")
+    assert_eq(zhResult, "你好世界")
+    io.print("[2] 中文切片收集 + join = '" + zhResult + "' (期望 你好世界)")
+
+    // 直接拼接对照
+    string direct = ""
+    for zh.len() to i {
+        direct = direct + zh.slice(i, i + 1)
+    }
+    assert_eq(direct, "你好世界")
+    io.print("[3] 直接拼接中文 = '" + direct + "' (对照)")
+
+    io.print("\n=== 缓冲方案验证完成 ===")
+}
