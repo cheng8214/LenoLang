@@ -987,20 +987,37 @@ export func removeElement(HtmlNode root, string selector): int {
     if sels.len() == 0 {
         return 0
     }
-    return _removeRec(root, sels)
+    return _removeRec(root, sels, 0, true)
 }
 
-func _removeRec(HtmlNode node, Array[SelectorPart] sels): int {
+// 从 node 的 children 中删除匹配选择器链 sels 的节点。
+// matchIdx：当前要匹配的选择器段索引（从 0 开始，匹配到最后一段则删除）。
+// allowDeep：当前段是否允许在未匹配节点的任意后代中继续查找（空格后代选择器为 true）。
+// 支持多段层级选择器（"div span"、"div > span"、"div > section span"）。
+func _removeRec(HtmlNode node, Array[SelectorPart] sels, int matchIdx, bool allowDeep): int {
     int removed = 0
     Array[HtmlNode] keep = []
-    SelectorPart sel = sels[0]
+    SelectorPart sel = sels[matchIdx]
+    bool lastSeg = (matchIdx == sels.len() - 1)
     for node.children.len() to i {
         HtmlNode child = node.children[i]
         if _matchSimple(child, sel) {
-            removed = removed + 1
+            if lastSeg {
+                // 匹配到选择器链末尾：删除该节点
+                removed = removed + 1
+            } else {
+                // 匹配到中间段：进入 child 内部匹配下一段。
+                // 下一段是否要求"直接子"决定后续递归能否深入非匹配节点的后代
+                bool nextIsChild = sels[matchIdx + 1].isChild
+                removed = removed + _removeRec(child, sels, matchIdx + 1, not nextIsChild)
+                keep.add(child)
+            }
         } else {
             keep.add(child)
-            removed = removed + _removeRec(child, sels)
+            // 未匹配当前段：若当前段允许后代匹配（allowDeep），继续深入 child 后代找该段
+            if allowDeep {
+                removed = removed + _removeRec(child, sels, matchIdx, true)
+            }
         }
     }
     node.children = keep

@@ -1,0 +1,39 @@
+// test_remove_element.leno — 测试 removeElement 的多段层级选择器
+import "../lib/web_html.leno" as htmls
+use htmls.HtmlNode
+
+main() {
+    print("=== removeElement 多段层级测试 ===\n")
+
+    // 场景1: 单段（应删所有 p）
+    var r1 = htmls.parse("<div><p class='x'>1</p><p>2</p><span>3</span></div>")
+    int n1 = htmls.removeElement(r1, "p")
+    print("[1] 单段 p: 删除 " + n1 + " 个 (期望 2), 剩余 p = " + htmls.select(r1, "p").len() + " (期望 0)")
+
+    // 场景2: 空格后代 div p（删 div 内的 p，div 保留）
+    var r2 = htmls.parse("<div><p class='x'>1</p></div><p>2</p>")
+    int n2 = htmls.removeElement(r2, "div p")
+    print("[2] div p: 删除 " + n2 + " 个 (期望 1), 剩余 p = " + htmls.select(r2, "p").len() + " (期望 1, 保留 div 外的)")
+
+    // 场景3: 直接子 div > span（只删 div 直接子的 span）
+    var r3 = htmls.parse("<div><span>1</span><section><span>2</span></section></div>")
+    int n3 = htmls.removeElement(r3, "div > span")
+    print("[3] div>span: 删除 " + n3 + " 个 (期望 1, 只删直接子), 剩余 span = " + htmls.select(r3, "span").len() + " (期望 1, 保留深层)")
+
+    // 场景4: 多层 div span（删任意深度的 span）
+    var r4 = htmls.parse("<div><section><span>deep</span></section><span>direct</span></div>")
+    int n4 = htmls.removeElement(r4, "div span")
+    print("[4] div span: 删除 " + n4 + " 个 (期望 2, 任意深度), 剩余 span = " + htmls.select(r4, "span").len() + " (期望 0)")
+
+    // 场景5: 组合 div > section span
+    var r5 = htmls.parse("<div><section><span>1</span></section></div><div><span>2</span></div>")
+    int n5 = htmls.removeElement(r5, "div > section span")
+    print("[5] div>section span: 删除 " + n5 + " 个 (期望 1), 剩余 span = " + htmls.select(r5, "span").len() + " (期望 1)")
+
+    // 场景6: 按类过滤 p.x（单段 + 类）
+    var r6 = htmls.parse("<div><p class='x'>1</p><p>2</p></div>")
+    int n6 = htmls.removeElement(r6, "p.x")
+    print("[6] p.x: 删除 " + n6 + " 个 (期望 1), 剩余 p = " + htmls.select(r6, "p").len() + " (期望 1)")
+
+    print("\n=== removeElement 测试完成 ===")
+}
