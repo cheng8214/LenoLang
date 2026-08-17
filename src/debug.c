@@ -71,7 +71,8 @@ static const char* opCodeNames[] = {
 "OP_CALL_NATIVE_VOID",
 "OP_DICT_SET_NOPUSH",
 "OP_INDEX_SET_NOPUSH",
-"OP_CLEAR_LOCAL_RANGE"
+"OP_CLEAR_LOCAL_RANGE",
+"OP_SWITCH_LOOKUP"
 };
 
 // 反汇编单条指令
@@ -531,6 +532,13 @@ int disassembleInstruction(Chunk* chunk, int offset) {
             return offset + 1;
         case OP_CLEAR_LOCAL_RANGE:
             return offset + 5;  // opcode + 2 bytes base + 2 bytes count
+        case OP_SWITCH_LOOKUP: {
+            int const_idx = (chunk->code[offset + 1] << 8) | chunk->code[offset + 2];
+            int case_count = (chunk->code[offset + 3] << 8) | chunk->code[offset + 4];
+            printf(" const=%d cases=%d", const_idx, case_count);
+            // opcode(1) + const(2) + count(2) + default_off(4) + offsets(4*case_count)
+            return offset + 9 + case_count * 4;
+        }
         default:
             return offset + 1;
     }
