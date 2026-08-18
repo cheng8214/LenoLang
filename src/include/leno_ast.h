@@ -107,6 +107,7 @@ typedef struct {
 typedef struct {
     char* var_name;        // 被检查的变量名
     char* field_name;      // 被检查的字段名（如 s.age is int 中的 "age"），NULL 表示简单变量守卫
+    char* index_key;      // 被检查的索引键字符串（如 arr[0] is int 中的 "0"，d["name"] is int 中的 "name"），NULL 表示非索引守卫
     TypeInfo* guard_type;  // 检查的完整类型信息（支持 Array[int], Dict[string, int] 等）
 } TypeGuardCond;
 

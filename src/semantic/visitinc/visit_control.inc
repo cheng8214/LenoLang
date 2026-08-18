@@ -1,5 +1,40 @@
         case AST_IF: {
-            visit(s, ast->u.if_.cond);
+            // 如果是 => 绑定 + and/or 链（如 if x is Array => a and a[0] is int），
+            // 需要在 visit(cond) 之前定义绑定变量，否则 cond 中的 a[0] 会报未定义
+            // 创建临时子作用域，在其中定义绑定变量供 visit(cond) 使用
+            if (ast->u.if_.guard_bind_var != NULL && ast->u.if_.cond &&
+                ast->u.if_.cond->kind == AST_BINOP) {
+                Scope* pre_scope = scope_new(s->current, 0);
+                s->current = pre_scope;
+                // 从 cond 左侧（AST_TYPE_CHECK）提取类型
+                TypeInfo* pre_bind_type = NULL;
+                Ast* left = ast->u.if_.cond->u.binop.l;
+                if (left && left->kind == AST_TYPE_CHECK) {
+                    pre_bind_type = left->u.type_check.type;
+                }
+                Symbol* pre_bind_sym = scope_define(s->current, ast->u.if_.guard_bind_var, SYM_LOCAL);
+                if (pre_bind_sym) {
+                    if (pre_bind_type) {
+                        pre_bind_sym->type = type_copy(pre_bind_type);
+                    } else {
+                        pre_bind_sym->type = type_new(TYPE_ANY);
+                    }
+                    pre_bind_sym->index = s->local_index++;
+                    pre_bind_sym->is_initialized = 1;
+                    ast->u.if_.guard_bind_index = pre_bind_sym->index;
+                }
+
+                visit(s, ast->u.if_.cond);
+
+                // 恢复到外层作用域，释放临时作用域
+                s->current = pre_scope->parent;
+                if (!s->is_lsp_mode) {
+                    scope_detach_child(s->current, pre_scope);
+                    scope_free(pre_scope);
+                }
+            } else {
+                visit(s, ast->u.if_.cond);
+            }
 
             // 从条件 AST 树中提取类型守卫（支持复合条件如 x != null and x is Type）
             // 仅在解析器未提取到守卫时（guard_var == NULL && guard_conds.count == 0）才执行
@@ -24,6 +59,7 @@
                             char* gfield_name = NULL;
                             TypeInfo* gtype = node->u.type_check.type;
 
+                            char* gindex_key = NULL;  // 索引守卫的键字符串
                             if (node->u.type_check.expr) {
                                 Ast* expr = node->u.type_check.expr;
                                 if (expr->kind == AST_VAR) {
@@ -31,6 +67,31 @@
                                 } else if (expr->kind == AST_FIELD_ACCESS && expr->u.field_access.obj && expr->u.field_access.obj->kind == AST_VAR) {
                                     gvar_name = expr->u.field_access.obj->u.var.name;
                                     gfield_name = expr->u.field_access.field_name;
+                                } else if (expr->kind == AST_INDEX && expr->u.index.obj && expr->u.index.obj->kind == AST_VAR) {
+                                    // 数组索引守卫：arr[0] is int 或 d["name"] is int
+                                    gvar_name = expr->u.index.obj->u.var.name;
+                                    // 从索引表达式生成键字符串
+                                    Ast* idx = expr->u.index.index;
+                                    if (idx) {
+                                        if (idx->kind == AST_NUM) {
+                                            if (idx->u.num.is_bigint && idx->u.num.bigint_str) {
+                                                gindex_key = strdup(idx->u.num.bigint_str);
+                                            } else if (idx->u.num.is_float) {
+                                                char buf[32];
+                                                snprintf(buf, sizeof(buf), "%g", idx->u.num.value);
+                                                gindex_key = strdup(buf);
+                                            } else {
+                                                char buf[32];
+                                                snprintf(buf, sizeof(buf), "%d", (int)idx->u.num.value);
+                                                gindex_key = strdup(buf);
+                                            }
+                                        } else if (idx->kind == AST_STRING && idx->u.string.value) {
+                                            gindex_key = strdup(idx->u.string.value);
+                                        } else if (idx->kind == AST_VAR && idx->u.var.name) {
+                                            // 动态索引：arr[i] is int
+                                            gindex_key = strdup(idx->u.var.name);
+                                        }
+                                    }
                                 }
                             }
 
@@ -40,6 +101,7 @@
                                 memset(&gc, 0, sizeof(gc));
                                 gc.var_name = strdup(gvar_name);
                                 gc.field_name = gfield_name ? strdup(gfield_name) : NULL;
+                                gc.index_key = gindex_key;  // NULL 或 strdup 后的字符串，直接转移所有权
                                 gc.guard_type = type_copy(gtype);
                                 type_guard_list_add(&ast->u.if_.guard_conds, gc);
 
@@ -151,6 +213,22 @@
                             if (field_guard_sym) {
                                 field_guard_sym->type = type_copy(cond->guard_type);
                                 field_guard_sym->index = -1;
+                            }
+                            free(guard_name);
+                            continue;
+                        }
+
+                        if (cond->index_key != NULL) {
+                            // 数组索引守卫：arr[0] is int 或 d["name"] is int
+                            // 在作用域中创建 "arr[0]" 或 "d[name]" 符号记录收窄类型
+                            // 动态分配足够大的缓冲区
+                            int guard_name_len = strlen(cond->var_name) + strlen(cond->index_key) + 4; // "var[key]" + null
+                            char* guard_name = (char*)malloc(guard_name_len);
+                            snprintf(guard_name, guard_name_len, "%s[%s]", cond->var_name, cond->index_key);
+                            Symbol* idx_guard_sym = scope_define(s->current, guard_name, SYM_LOCAL);
+                            if (idx_guard_sym) {
+                                idx_guard_sym->type = type_copy(cond->guard_type);
+                                idx_guard_sym->index = -1;
                             }
                             free(guard_name);
                             continue;
@@ -298,10 +376,18 @@
                 // if expr is Type => var { ... use(var) ... }
                 // var 的类型是守卫类型（Type），供 then 分支内的代码使用
                 if (ast->u.if_.guard_bind_var != NULL) {
-                    // 从条件中提取守卫类型（AST_TYPE_CHECK 节点的 type）
+                    // 从条件中提取守卫类型
+                    // 情况 1：cond 是 AST_TYPE_CHECK（纯 => 绑定）
+                    // 情况 2：cond 是 AST_BINOP（=> 绑定 + and/or 链），从左侧提取
                     TypeInfo* bind_type = NULL;
                     if (ast->u.if_.cond && ast->u.if_.cond->kind == AST_TYPE_CHECK) {
                         bind_type = ast->u.if_.cond->u.type_check.type;
+                    } else if (ast->u.if_.cond && ast->u.if_.cond->kind == AST_BINOP) {
+                        // => 绑定 + and 链：cond->binop.l 是 AST_TYPE_CHECK
+                        Ast* left = ast->u.if_.cond->u.binop.l;
+                        if (left && left->kind == AST_TYPE_CHECK) {
+                            bind_type = left->u.type_check.type;
+                        }
                     }
                     // 修正 struct -> face/enum（与其他守卫类型修正一致）
                     if (bind_type && bind_type->kind == TYPE_STRUCT && bind_type->struct_name) {

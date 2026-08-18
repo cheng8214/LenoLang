@@ -60,6 +60,9 @@ void type_guard_list_free(TypeGuardList* list) {
         if (list->items[i].field_name) {
             free(list->items[i].field_name);
         }
+        if (list->items[i].index_key) {
+            free(list->items[i].index_key);
+        }
         if (list->items[i].guard_type) {
             type_free(list->items[i].guard_type);
         }

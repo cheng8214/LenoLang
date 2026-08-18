@@ -55,6 +55,8 @@ Ast* parse_if_stmt(Parser* p) {
     Ast* cond = NULL;
     TypeGuardList guard_conds;
     int has_guard_conds = 0;  // 标记是否有类型守卫条件列表
+    char* guard_bind_var = NULL;     // => 绑定变量名（函数级声明，守卫路径和外部都可访问）
+    Ast* guard_bind_expr = NULL;    // => 绑定的表达式
 
     if (p->lex.current.type == TOK_IDENT) {
         // 保存变量名位置
@@ -179,9 +181,28 @@ Ast* parse_if_stmt(Parser* p) {
             free(var_name);
             if (field_name) free(field_name);
 
+            // ===== 先检查 => var 绑定语法 =====
+            // 语法：if expr is Type => var [and/or ...] { ... }
+            // => 绑定必须在 and/or 循环之前处理，因为 => 出现在 and 之前
+            if (p->lex.current.type == TOK_FAT_ARROW && cond && cond->kind == AST_TYPE_CHECK) {
+                lexer_next(&p->lex); // 消费 "=>"
+                if (p->lex.current.type != TOK_IDENT) {
+                    error_add(ERR_SYNTAX, p->lex.current.line, "=> 后面期望标识符作为绑定变量名");
+                    return NULL;
+                }
+                guard_bind_var = (char*)malloc(p->lex.current.len + 1);
+                memcpy(guard_bind_var, p->lex.current.text, p->lex.current.len);
+                guard_bind_var[p->lex.current.len] = '\0';
+                lexer_next(&p->lex); // 消费绑定变量名
+
+                // 提取被检查的表达式（从 AST_TYPE_CHECK 节点）
+                guard_bind_expr = cond->u.type_check.expr;
+            }
+
             // 检查是否有 or/and 连接多个类型守卫条件
             // 如果 or/and 后不是类型守卫，则回退并用普通表达式解析余下部分
             int fallback_to_expr = 0;
+            LenoTokenType fallback_op = TOK_AND;  // 记住 fallback 时的操作符
             while (p->lex.current.type == TOK_OR || p->lex.current.type == TOK_AND) {
                 LenoTokenType op = p->lex.current.type;
                 lexer_next(&p->lex); // 消费 or/and
@@ -257,30 +278,53 @@ Ast* parse_if_stmt(Parser* p) {
                         free(next_var_name);
                         if (next_field_name) free(next_field_name);
                         p->lex = saved_after_op;
+                        fallback_op = op;
                         fallback_to_expr = 1;
                         break;
                     }
                 } else {
                     // or/and 后不是标识符，回退用普通表达式解析
                     p->lex = saved_after_op;
+                    fallback_op = op;
                     fallback_to_expr = 1;
                     break;
                 }
             }
 
-            // 回退：or/and 后跟的是普通表达式，放弃类型守卫路径，
-            // 恢复 lexer 到变量名前，用 parse_expression 重新解析整个条件
-            // 注意：var_name/field_name 已在前面 free（line 178-179），
-            //       guard_conds 中的拷本由 type_guard_list_free 负责释放
+            // 回退：or/and 后跟的是普通表达式
+            // 两种情况：
+            //   A. 无 => 绑定：恢复到 saved_lex，用 parse_expression 重新解析整个条件
+            //   B. 有 => 绑定：不能恢复（会丢失 =>），改用从 and/or 之后继续解析
             if (fallback_to_expr) {
-                type_guard_list_free(&guard_conds);
-                // 清除 guard_var/guard_type，因为条件中混有非类型守卫表达式，
-                // gen_if 不能只生成类型检查字节码，需要完整生成条件表达式
-                if (guard_var) { free(guard_var); guard_var = NULL; }
-                if (guard_type) { type_free(guard_type); guard_type = NULL; }
-                has_guard_conds = 0;
-                p->lex = saved_lex;
-                cond = parse_expression(p);
+                if (guard_bind_var != NULL) {
+                    // 情况 B：有 => 绑定 + and/or 后跟普通表达式
+                    // 不恢复 lexer，从当前位置继续解析余下表达式
+                    // 构建 AST_BINOP(cond, op, right)
+                    LenoTokenType saved_op = fallback_op;
+                    Ast* right = parse_expression(p);
+                    if (right) {
+                        Ast* binop = ast_new(AST_BINOP, var_line);
+                        binop->u.binop.l = cond;
+                        binop->u.binop.r = right;
+                        binop->u.binop.op = saved_op;
+                        cond = binop;
+                    }
+                    // 清除 guard_var/guard_conds，让 visit_control 的回退提取逻辑
+                    // 从 AST_BINOP 中统一提取所有守卫条件（包括 and 右侧的 a[0] is float）
+                    // guard_bind_var/guard_bind_expr 保留不受影响
+                    type_guard_list_free(&guard_conds);
+                    if (guard_var) { free(guard_var); guard_var = NULL; }
+                    if (guard_type) { type_free(guard_type); guard_type = NULL; }
+                    has_guard_conds = 0;
+                } else {
+                    // 情况 A：无 => 绑定，完全回退
+                    type_guard_list_free(&guard_conds);
+                    if (guard_var) { free(guard_var); guard_var = NULL; }
+                    if (guard_type) { type_free(guard_type); guard_type = NULL; }
+                    has_guard_conds = 0;
+                    p->lex = saved_lex;
+                    cond = parse_expression(p);
+                }
             }
         } else {
             // 不是类型守卫，恢复 lexer 位置并正常解析表达式
@@ -297,9 +341,8 @@ Ast* parse_if_stmt(Parser* p) {
 
     // 检查是否是 => var 绑定语法：if expr is Type => var { ... }
     // 条件必须是 AST_TYPE_CHECK（expr is Type 形式）
-    char* guard_bind_var = NULL;
-    Ast* guard_bind_expr = NULL;
-    if (p->lex.current.type == TOK_FAT_ARROW && cond && cond->kind == AST_TYPE_CHECK) {
+    // 仅当守卫路径未处理 => 时才检查（如走的是 parse_expression 路径）
+    if (guard_bind_var == NULL && p->lex.current.type == TOK_FAT_ARROW && cond && cond->kind == AST_TYPE_CHECK) {
         lexer_next(&p->lex); // 消费 "=>"
         if (p->lex.current.type != TOK_IDENT) {
             error_add(ERR_SYNTAX, p->lex.current.line, "=> 后面期望标识符作为绑定变量名");

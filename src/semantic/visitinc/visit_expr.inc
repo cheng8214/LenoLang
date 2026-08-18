@@ -17,6 +17,7 @@
                         if (node->kind == AST_TYPE_CHECK) {
                             char* gvar_name = NULL;
                             char* gfield_name = NULL;
+                            char* gindex_key = NULL;
                             TypeInfo* gtype = node->u.type_check.type;
                             if (node->u.type_check.expr) {
                                 Ast* expr = node->u.type_check.expr;
@@ -25,6 +26,29 @@
                                 } else if (expr->kind == AST_FIELD_ACCESS && expr->u.field_access.obj && expr->u.field_access.obj->kind == AST_VAR) {
                                     gvar_name = expr->u.field_access.obj->u.var.name;
                                     gfield_name = expr->u.field_access.field_name;
+                                } else if (expr->kind == AST_INDEX && expr->u.index.obj && expr->u.index.obj->kind == AST_VAR) {
+                                    // 数组索引守卫：arr[0] is int 或 d["name"] is int
+                                    gvar_name = expr->u.index.obj->u.var.name;
+                                    Ast* idx = expr->u.index.index;
+                                    if (idx) {
+                                        if (idx->kind == AST_NUM) {
+                                            if (idx->u.num.is_bigint && idx->u.num.bigint_str) {
+                                                gindex_key = strdup(idx->u.num.bigint_str);
+                                            } else if (idx->u.num.is_float) {
+                                                char buf[32];
+                                                snprintf(buf, sizeof(buf), "%g", idx->u.num.value);
+                                                gindex_key = strdup(buf);
+                                            } else {
+                                                char buf[32];
+                                                snprintf(buf, sizeof(buf), "%d", (int)idx->u.num.value);
+                                                gindex_key = strdup(buf);
+                                            }
+                                        } else if (idx->kind == AST_STRING && idx->u.string.value) {
+                                            gindex_key = strdup(idx->u.string.value);
+                                        } else if (idx->kind == AST_VAR && idx->u.var.name) {
+                                            gindex_key = strdup(idx->u.var.name);
+                                        }
+                                    }
                                 }
                             }
                             if (gvar_name && gtype) {
@@ -32,6 +56,7 @@
                                 memset(&gc, 0, sizeof(gc));
                                 gc.var_name = strdup(gvar_name);
                                 gc.field_name = gfield_name ? strdup(gfield_name) : NULL;
+                                gc.index_key = gindex_key;  // 转移所有权
                                 gc.guard_type = type_copy(gtype);
                                 type_guard_list_add(&temp_guards, gc);
                             }
@@ -77,6 +102,20 @@
                             if (field_guard_sym) {
                                 field_guard_sym->type = type_copy(cond->guard_type);
                                 field_guard_sym->index = -1;
+                            }
+                            free(guard_name);
+                            continue;
+                        }
+
+                        if (cond->index_key != NULL) {
+                            // 数组索引守卫：arr[0] is int 或 d["name"] is int
+                            int guard_name_len = strlen(cond->var_name) + strlen(cond->index_key) + 4;
+                            char* guard_name = (char*)malloc(guard_name_len);
+                            snprintf(guard_name, guard_name_len, "%s[%s]", cond->var_name, cond->index_key);
+                            Symbol* idx_guard_sym = scope_define(s->current, guard_name, SYM_LOCAL);
+                            if (idx_guard_sym) {
+                                idx_guard_sym->type = type_copy(cond->guard_type);
+                                idx_guard_sym->index = -1;
                             }
                             free(guard_name);
                             continue;

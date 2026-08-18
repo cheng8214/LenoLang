@@ -1,0 +1,41 @@
+// 测试限制 3 完全修复验证
+
+
+
+// 限制 3 场景 1：arr[0] is Dict → var d = arr[0] → d["key"] 可访问
+func test_limit3_dict(any a): string {
+    if a is Array and a[0] is Dict {
+        var d = a[0]        // d 应继承 Dict 类型
+        if d["name"] is string {
+            return d["name"]  // d["name"] 有守卫符号
+        }
+    }
+    return "NOT_FOUND"
+}
+
+// 限制 3 场景 2：arr[0] is int → var n = arr[0] → n 可算术
+func test_limit3_int(any a): int {
+    if a is Array and a[0] is int {
+        var n = a[0]        // n 应继承 int 类型
+        return n + 100       // n 可算术
+    }
+    return -1
+}
+
+// 限制 3 场景 3：d["key"] is Array → var arr = d["key"] → arr[0] 可访问
+func test_limit3_nested(any a): int {
+    if a is Dict and a["items"] is Array {
+        var arr = a["items"]  // arr 应继承 Array 类型
+        if arr[0] is int {
+            return arr[0] + 1  // arr[0] 有索引守卫
+        }
+    }
+    return -1
+}
+
+main() {
+    assert(test_limit3_dict([{"name": "hello"}]) == "hello", "limit3 dict 传导")
+    assert(test_limit3_int([42]) == 142, "limit3 int 传导")
+    assert(test_limit3_nested({"items": [10, 20]}) == 11, "limit3 nested 传导")
+    print("限制 3 收窄传导测试全部通过！")
+}

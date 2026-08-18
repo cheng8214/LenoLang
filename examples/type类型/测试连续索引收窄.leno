@@ -1,0 +1,37 @@
+// 测试限制 2 的替代方案：利用已修复的索引守卫 + 局部变量传导
+
+
+// 方案 1：利用 var 传导 + 嵌套 => 绑定
+func test_continuous_index_v2(any a): string {
+    if a is Array => arr {
+        if arr[0] is Dict => c {
+            // c 已收窄为 Dict
+            if c["a"] is string => d {
+                return d
+            }
+        }
+    }
+    return "NOT_FOUND"
+}
+
+// 方案 2：直接用 and 链 + 索引守卫（限制 2 原始场景）
+func test_continuous_index_and(any a): string {
+    if a is Array and a[0] is Dict and a[0]["a"] is string {
+        // a[0] 有守卫 "a[0]" (Dict)，但 a[0]["a"] 没有守卫符号 "a[0][a]"
+        // 因为当前只支持一级索引守卫
+        // 需要用 var 中间变量
+        var d = a[0]   // d 继承 Dict 类型（限制 3 已修复）
+        var s = d["a"] // d["a"] 是 any，需要再收窄
+        if s is string {
+            return s
+        }
+    }
+    return "NOT_FOUND"
+}
+
+main() {
+    var data = [{"a": "hello"}]
+    assert(test_continuous_index_v2(data) == "hello", "v2: 嵌套 => 绑定")
+    assert(test_continuous_index_and(data) == "hello", "and 链 + var 传导")
+    print("连续索引测试通过！")
+}

@@ -1821,6 +1821,44 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
             return type_new(TYPE_ANY);
         }
         case AST_INDEX: {
+            // 检查是否有索引类型守卫收窄（如 if arr[0] is int）
+            // 构造 "arr[0]" 或 "d[name]" 格式的守卫符号名
+            if (ast->u.index.obj && ast->u.index.obj->kind == AST_VAR &&
+                ast->u.index.index) {
+                const char* var_name = ast->u.index.obj->u.var.name;
+                Ast* idx = ast->u.index.index;
+                char* idx_key_str = NULL;  // 动态分配的索引键字符串
+                if (idx->kind == AST_NUM) {
+                    if (idx->u.num.is_bigint && idx->u.num.bigint_str) {
+                        idx_key_str = strdup(idx->u.num.bigint_str);
+                    } else if (idx->u.num.is_float) {
+                        char buf[32];
+                        snprintf(buf, sizeof(buf), "%g", idx->u.num.value);
+                        idx_key_str = strdup(buf);
+                    } else {
+                        char buf[32];
+                        snprintf(buf, sizeof(buf), "%d", (int)idx->u.num.value);
+                        idx_key_str = strdup(buf);
+                    }
+                } else if (idx->kind == AST_STRING && idx->u.string.value) {
+                    idx_key_str = strdup(idx->u.string.value);
+                } else if (idx->kind == AST_VAR && idx->u.var.name) {
+                    idx_key_str = strdup(idx->u.var.name);
+                }
+                if (idx_key_str) {
+                    int guard_name_len = strlen(var_name) + strlen(idx_key_str) + 4;
+                    char* guard_name = (char*)malloc(guard_name_len);
+                    snprintf(guard_name, guard_name_len, "%s[%s]", var_name, idx_key_str);
+                    Symbol* guard_sym = scope_resolve(s->current, guard_name);
+                    free(guard_name);
+                    free(idx_key_str);
+                    if (guard_sym && guard_sym->type) {
+                        result = type_copy(guard_sym->type);
+                        return result;
+                    }
+                }
+            }
+
             // 检查是否有字段类型守卫收窄（如 if s.age is int）
             // dict 的 s.age 语法被解析为 AST_INDEX（obj=AST_VAR("s"), index=AST_STRING("age")）
             if (ast->u.index.obj && ast->u.index.obj->kind == AST_VAR &&

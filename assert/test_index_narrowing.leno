@@ -1,0 +1,192 @@
+// 索引收窄测试：arr[0] is int / d["name"] is string 的编译期类型收窄
+// 覆盖：数组索引、Dict 索引、大索引、多索引、and 链 + => 绑定、收窄传导到局部变量
+
+// ==================== 测试 1: 数组索引收窄 ====================
+
+func test_array_index_narrow(any x): int {
+    if x is Array => arr {
+        if arr[0] is int {
+            return arr[0] + 1
+        }
+    }
+    return -1
+}
+
+// ==================== 测试 2: 数组索引 => 绑定 ====================
+
+func test_array_index_bind(any x): int {
+    if x is Array => arr {
+        if arr[0] is int => n {
+            return n + 10
+        }
+    }
+    return -1
+}
+
+// ==================== 测试 3: 大索引 ====================
+
+func test_large_index(any x): int {
+    if x is Array => arr {
+        if arr[10] is int {
+            return arr[10] + 100
+        }
+    }
+    return -1
+}
+
+// ==================== 测试 4: Dict 索引收窄 ====================
+
+func test_dict_string_index(any x): string {
+    if x is Dict => d {
+        if d["name"] is string {
+            return d["name"] + "!"
+        }
+    }
+    return "NOT_FOUND"
+}
+
+// ==================== 测试 5: and 链多索引收窄 ====================
+
+func test_dict_multi_key(any x): int {
+    if x is Dict => d {
+        if d["a"] is int and d["b"] is int {
+            return d["a"] + d["b"]
+        }
+    }
+    return -1
+}
+
+// ==================== 测试 6: 嵌套解包 ====================
+
+func test_nested(any x): string {
+    if x is Array => arr {
+        if arr[0] is Dict => c {
+            if c["name"] is string => d {
+                return d
+            }
+        }
+    }
+    return "NOT_FOUND"
+}
+
+// ==================== 测试 7: 多个索引收窄 ====================
+
+func test_multi_index(any x): int {
+    if x is Array => arr {
+        if arr[0] is int {
+            if arr[1] is int {
+                return arr[0] + arr[1]
+            }
+        }
+    }
+    return -1
+}
+
+// ==================== 测试 8: 数组索引收窄为 string ====================
+
+func test_index_narrow_string(any x): string {
+    if x is Array => arr {
+        if arr[0] is string {
+            return arr[0] + "_suffix"
+        }
+    }
+    return "NOT_FOUND"
+}
+
+// ==================== 测试 9: and 链 + => 绑定 ====================
+
+func test_and_chain_int(any x): int {
+    if x is Array => a and a[0] is int {
+        return a[0] + 1
+    }
+    return -1
+}
+
+func test_and_chain_float(any x): float {
+    if x is Array => a and a[0] is float {
+        return a[0] + 0.1
+    }
+    return -1.0
+}
+
+func test_and_chain_string(any x): string {
+    if x is Array => a and a[0] is string {
+        return a[0] + "!"
+    }
+    return "NOT_FOUND"
+}
+
+// ==================== 测试 10: 收窄传导到局部变量 ====================
+
+func test_narrow_to_local_dict(any x): string {
+    if x is Array and x[0] is Dict {
+        var d = x[0]
+        if d["name"] is string {
+            return d["name"]
+        }
+    }
+    return "NOT_FOUND"
+}
+
+func test_narrow_to_local_int(any x): int {
+    if x is Array and x[0] is int {
+        var n = x[0]
+        return n + 100
+    }
+    return -1
+}
+
+func test_narrow_to_local_nested(any x): int {
+    if x is Dict and x["items"] is Array {
+        var arr = x["items"]
+        if arr[0] is int {
+            return arr[0] + 1
+        }
+    }
+    return -1
+}
+
+// ==================== 运行测试 ====================
+
+main() {
+    // 测试 1
+    assert_eq(test_array_index_narrow([10, 20, 30]), 11, "arr[0] is int 收窄")
+    assert_eq(test_array_index_narrow(["hello"]), -1, "非 int 元素")
+
+    // 测试 2
+    assert_eq(test_array_index_bind([5, 10]), 15, "arr[0] is int => n 绑定")
+
+    // 测试 3
+    var big_arr = []
+    for 0:20 to i {
+        big_arr.add(i * 2)
+    }
+    assert_eq(test_large_index(big_arr), 120, "arr[10] is int 大索引")
+
+    // 测试 4
+    assert_eq(test_dict_string_index({"name": "world"}), "world!", "d[name] is string")
+
+    // 测试 5
+    assert_eq(test_dict_multi_key({"a": 10, "b": 20}), 30, "d[a] and d[b] 收窄")
+
+    // 测试 6
+    assert_eq(test_nested([{"name": "Alice"}]), "Alice", "嵌套解包")
+
+    // 测试 7
+    assert_eq(test_multi_index([10, 20, 30]), 30, "多索引收窄")
+
+    // 测试 8
+    assert_eq(test_index_narrow_string(["hello"]), "hello_suffix", "索引收窄为 string")
+
+    // 测试 9
+    assert_eq(test_and_chain_int([42]), 43, "and 链 + => 绑定 (int)")
+    assert_eq(test_and_chain_float([3.14]), 3.24, "and 链 + => 绑定 (float)")
+    assert_eq(test_and_chain_string(["hello"]), "hello!", "and 链 + => 绑定 (string)")
+
+    // 测试 10
+    assert_eq(test_narrow_to_local_dict([{"name": "hello"}]), "hello", "收窄传导 dict")
+    assert_eq(test_narrow_to_local_int([42]), 142, "收窄传导 int")
+    assert_eq(test_narrow_to_local_nested({"items": [10, 20]}), 11, "收窄传导 nested")
+
+    print("所有索引收窄断言测试通过！")
+}
