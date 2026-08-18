@@ -1,0 +1,282 @@
+// test_index_guard_edge.leno — 索引守卫 cached_type 修复的边界测试
+// 核心验证点：then_scope 销毁后 infer_expr_type 重新推断时，
+//   守卫命中的 AST_INDEX 节点应走 cached_type 快速路径，不再回退到 any 报错。
+// 覆盖：3+层连续索引、4层深度、多守卫共存、return 重推断、if 表达式重推断、
+//       守卫传导到局部变量、else 分支隔离、嵌套 if 守卫、=> 绑定 + 连续索引。
+
+func assert_eq(any a, any b, string label) {
+    if a == b {
+        printf("  [PASS] %s\n", label)
+    } else {
+        printf("  [FAIL] %s: expected %s, got %s\n", label, _str(b), _str(a))
+        assert(false, label)
+    }
+}
+
+// ====================================================================
+// 1. 三层连续索引：config["items"][0]["url"] — 原始 bug 场景
+// ====================================================================
+func getFirstUrl(Dict config): string {
+    if config is Dict and config["items"] is Array and config["items"][0] is Dict and config["items"][0]["url"] is string {
+        return config["items"][0]["url"]
+    }
+    return ""
+}
+
+// ====================================================================
+// 2. 三层连续索引 + int 类型
+// ====================================================================
+func getFirstVal(Dict config): int {
+    if config is Dict and config["items"] is Array and config["items"][0] is Dict and config["items"][0]["val"] is int {
+        return config["items"][0]["val"] + 1
+    }
+    return -1
+}
+
+// ====================================================================
+// 3. 四层连续索引：data["list"][0]["meta"]["id"]
+// ====================================================================
+func getDeepId(Dict data): string {
+    if data is Dict and data["list"] is Array and data["list"][0] is Dict and data["list"][0]["meta"] is Dict and data["list"][0]["meta"]["id"] is string {
+        return data["list"][0]["meta"]["id"]
+    }
+    return "NONE"
+}
+
+// ====================================================================
+// 4. 四层连续索引 + 数值索引中间层：arr[0][1]["name"]
+// ====================================================================
+func getNestedArrayName(any x): string {
+    if x is Array and x[0] is Array and x[0][1] is Dict and x[0][1]["name"] is string {
+        return x[0][1]["name"]
+    }
+    return "NOT_FOUND"
+}
+
+// ====================================================================
+// 5. 三层连续索引在 if 语句中赋值给局部变量（触发 AST_IF infer_expr_type 重推断）
+// ====================================================================
+func ifExprThreeLevel(Dict config): string {
+    var url = "default"
+    if config is Dict and config["items"] is Array and config["items"][0] is Dict and config["items"][0]["url"] is string {
+        url = config["items"][0]["url"]
+    }
+    return url
+}
+
+// ====================================================================
+// 6. 多个索引守卫在同一条件链
+// ====================================================================
+func multiIndexGuards(Dict config): int {
+    if config is Dict and config["a"] is int and config["b"] is int and config["c"] is int {
+        return config["a"] + config["b"] + config["c"]
+    }
+    return 0
+}
+
+// ====================================================================
+// 7. 索引守卫 + return 表达式中做运算
+// ====================================================================
+func guardInReturnExpr(Dict d): int {
+    if d is Dict and d["x"] is int and d["y"] is int {
+        return d["x"] * 10 + d["y"]
+    }
+    return -1
+}
+
+// ====================================================================
+// 8. 索引守卫传导到局部变量后 return
+// ====================================================================
+func guardToLocalThenReturn(Dict d): string {
+    if d is Dict and d["name"] is string {
+        var s = d["name"]
+        return s + "!"
+    }
+    return ""
+}
+
+// ====================================================================
+// 9. 索引守卫在嵌套 if 中（外层 if 收窄变量，内层 if 收窄索引）
+// ====================================================================
+func nestedIfIndexGuard(any x): int {
+    if x is Dict {
+        if x["items"] is Array and x["items"][0] is int {
+            return x["items"][0]
+        }
+    }
+    return -1
+}
+
+// ====================================================================
+// 10. => 绑定 + 连续索引守卫
+// ====================================================================
+func bindWithChainedIndex(any x): string {
+    if x is Array => arr and arr[0] is Dict and arr[0]["name"] is string {
+        return arr[0]["name"]
+    }
+    return ""
+}
+
+// ====================================================================
+// 11. 三层连续索引 + float 类型
+// ====================================================================
+func getFloatDeep(Dict config): float {
+    if config is Dict and config["items"] is Array and config["items"][0] is Dict and config["items"][0]["score"] is float {
+        return config["items"][0]["score"] + 0.5
+    }
+    return 0.0
+}
+
+// ====================================================================
+// 12. else 分支不继承守卫（安全检查）
+// ====================================================================
+func elseBranchNoLeak(Dict config): string {
+    if config is Dict and config["name"] is string {
+        return config["name"]
+    } else {
+        // else 分支中 config["name"] 不应被收窄为 string
+        return "fallback"
+    }
+}
+
+// ====================================================================
+// 13. 同一索引在 then 块中被多次访问（cached_type 复用）
+// ====================================================================
+func sameIndexMultipleAccess(Dict config): string {
+    if config is Dict and config["name"] is string {
+        var s1 = config["name"]
+        var s2 = config["name"]
+        return s1 + s2
+    }
+    return ""
+}
+
+// ====================================================================
+// 14. 三层连续索引 + bool 类型守卫
+// ====================================================================
+func getBoolDeep(Dict config): bool {
+    if config is Dict and config["items"] is Array and config["items"][0] is Dict and config["items"][0]["active"] is bool {
+        return config["items"][0]["active"]
+    }
+    return false
+}
+
+// ====================================================================
+// 15. 混合索引类型：dict["key"][0]["sub_key"]（字符串键 + 数值索引 + 字符串键）
+// ====================================================================
+func mixedIndexTypes(Dict d): int {
+    if d is Dict and d["matrix"] is Array and d["matrix"][0] is Dict and d["matrix"][0]["val"] is int {
+        return d["matrix"][0]["val"]
+    }
+    return -1
+}
+
+// ====================================================================
+// 16. if-else if 链中不同层级的索引守卫
+// ====================================================================
+func chainedIfElseIndex(any x): string {
+    if x is Dict and x["type"] is string and x["type"] == "url" {
+        if x["url"] is string {
+            return x["url"]
+        }
+    } else if x is Dict and x["type"] is string and x["type"] == "name" {
+        if x["name"] is string {
+            return x["name"]
+        }
+    }
+    return "unknown"
+}
+
+// ====================================================================
+// 17. 守卫后的索引值参与函数调用
+// ====================================================================
+func doubleIt(int n): int {
+    return n * 2
+}
+
+func guardIndexInCall(Dict d): int {
+    if d is Dict and d["val"] is int {
+        return doubleIt(d["val"])
+    }
+    return 0
+}
+
+// ====================================================================
+// 18. 五层连续索引（压力测试 keys[16] 数组）
+// ====================================================================
+func getFiveLevelDeep(Dict data): int {
+    if data is Dict and data["a"] is Dict and data["a"]["b"] is Dict and data["a"]["b"]["c"] is Dict and data["a"]["b"]["c"]["d"] is int {
+        return data["a"]["b"]["c"]["d"]
+    }
+    return -1
+}
+
+// ====================================================================
+// 运行所有测试
+// ====================================================================
+main() {
+    var config = {items: [{url: "/home", title: "首页", val: 42, score: 3.14, active: true}]}
+
+    // 测试 1: 三层 string
+    assert_eq(getFirstUrl(config), "/home", "三层连续索引 string")
+
+    // 测试 2: 三层 int
+    assert_eq(getFirstVal(config), 43, "三层连续索引 int")
+
+    // 测试 3: 四层 string
+    var deep_data = {list: [{meta: {id: "DEEP_ID"}}]}
+    assert_eq(getDeepId(deep_data), "DEEP_ID", "四层连续索引 string")
+
+    // 测试 4: 四层数值中间层
+    var nested_arr = [[{name: "nested"}, {name: "second"}]]
+    assert_eq(getNestedArrayName(nested_arr), "second", "四层 arr[0][1][name]")
+
+    // 测试 5: if 表达式中的三层索引
+    assert_eq(ifExprThreeLevel(config), "/home", "if 表达式三层索引")
+    assert_eq(ifExprThreeLevel({}), "default", "if 表达式三层索引 fallback")
+
+    // 测试 6: 多索引守卫
+    assert_eq(multiIndexGuards({a: 10, b: 20, c: 30}), 60, "多索引守卫同链")
+
+    // 测试 7: return 表达式运算
+    assert_eq(guardInReturnExpr({x: 3, y: 7}), 37, "守卫 return 运算")
+
+    // 测试 8: 守卫传导局部变量
+    assert_eq(guardToLocalThenReturn({name: "world"}), "world!", "守卫传导 local + return")
+
+    // 测试 9: 嵌套 if 索引守卫
+    assert_eq(nestedIfIndexGuard({items: [99]}), 99, "嵌套 if 索引守卫")
+
+    // 测试 10: => 绑定 + 连续索引
+    assert_eq(bindWithChainedIndex([{name: "bound"}]), "bound", "=> 绑定 + 连续索引")
+
+    // 测试 11: 三层 float
+    assert_eq(getFloatDeep(config), 3.64, "三层连续索引 float")
+
+    // 测试 12: else 分支不泄漏
+    assert_eq(elseBranchNoLeak({name: "ok"}), "ok", "then 分支返回")
+    assert_eq(elseBranchNoLeak({}), "fallback", "else 分支返回 fallback")
+
+    // 测试 13: 同索引多次访问
+    assert_eq(sameIndexMultipleAccess({name: "ab"}), "abab", "同索引多次访问 cached_type")
+
+    // 测试 14: 三层 bool
+    assert_eq(getBoolDeep(config), true, "三层连续索引 bool")
+
+    // 测试 15: 混合索引类型
+    assert_eq(mixedIndexTypes({matrix: [{val: 77}]}), 77, "混合索引类型 dict[0][key]")
+
+    // 测试 16: if-else if 链
+    assert_eq(chainedIfElseIndex({type: "url", url: "http://x"}), "http://x", "if-elseif 链 url")
+    assert_eq(chainedIfElseIndex({type: "name", name: "Alice"}), "Alice", "if-elseif 链 name")
+    assert_eq(chainedIfElseIndex({type: "other"}), "unknown", "if-elseif 链 unknown")
+
+    // 测试 17: 守卫后索引值参与函数调用
+    assert_eq(guardIndexInCall({val: 21}), 42, "守卫索引参与函数调用")
+
+    // 测试 18: 五层深度
+    var five_level = {a: {b: {c: {d: 999}}}}
+    assert_eq(getFiveLevelDeep(five_level), 999, "五层连续索引深度")
+
+    print("=== test_index_guard_edge: ALL PASSED ===")
+}
