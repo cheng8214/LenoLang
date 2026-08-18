@@ -151,6 +151,11 @@ struct Ast {
             SymRef guard_var_ref;  // 被检查变量的符号引用（用于代码生成）
             // 多条件类型守卫支持
             TypeGuardList guard_conds; // 所有类型守卫条件列表
+            // 绑定变量（=> var）：当使用 if expr is Type => var 语法时，
+            // expr 求值一次，类型匹配后赋值给新局部变量 var
+            char* guard_bind_var;       // 绑定的变量名（NULL 表示无绑定）
+            int guard_bind_index;       // 绑定变量的局部变量索引
+            Ast* guard_bind_expr;      // 被绑定的表达式（codegen 使用）
         } if_;
         struct { Ast* cond; Ast* body; } while_;
         struct {

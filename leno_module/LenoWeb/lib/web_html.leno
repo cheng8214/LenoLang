@@ -667,9 +667,8 @@ func _parseElement(_ParseCtx ctx): HtmlNode? {
                 }
                 break
             }
-            HtmlNode? childOpt = _parseElement(ctx)
-            if childOpt != null {
-                children.add(childOpt as HtmlNode)
+            if _parseElement(ctx) is HtmlNode => child {
+                children.add(child)
             }
         } else {
             string text = _parseText(ctx)
@@ -755,9 +754,8 @@ export func parse(string html): HtmlNode {
                 }
                 continue
             }
-            HtmlNode? childOpt = _parseElement(ctx)
-            if childOpt != null {
-                root.children.add(childOpt as HtmlNode)
+            if _parseElement(ctx) is HtmlNode => child {
+                root.children.add(child)
             }
         } else {
             string text = _parseText(ctx)

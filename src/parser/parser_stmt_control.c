@@ -295,6 +295,33 @@ Ast* parse_if_stmt(Parser* p) {
         cond = parse_expression(p);
     }
 
+    // 检查是否是 => var 绑定语法：if expr is Type => var { ... }
+    // 条件必须是 AST_TYPE_CHECK（expr is Type 形式）
+    char* guard_bind_var = NULL;
+    Ast* guard_bind_expr = NULL;
+    if (p->lex.current.type == TOK_FAT_ARROW && cond && cond->kind == AST_TYPE_CHECK) {
+        lexer_next(&p->lex); // 消费 "=>"
+        if (p->lex.current.type != TOK_IDENT) {
+            error_add(ERR_SYNTAX, p->lex.current.line, "=> 后面期望标识符作为绑定变量名");
+            return NULL;
+        }
+        guard_bind_var = (char*)malloc(p->lex.current.len + 1);
+        memcpy(guard_bind_var, p->lex.current.text, p->lex.current.len);
+        guard_bind_var[p->lex.current.len] = '\0';
+        lexer_next(&p->lex); // 消费变量名
+
+        // 提取被检查的表达式（从 AST_TYPE_CHECK 节点）
+        guard_bind_expr = cond->u.type_check.expr;
+
+        // 如果 guard_bind_expr 是简单变量（AST_VAR），且与 guard_var 相同，
+        // 则 => var 只是给已有变量取别名，不需要额外存储 expr
+        // 但对于复杂表达式（函数调用等），需要保存 expr 供 codegen 生成求值代码
+        // 标记此 if 为绑定模式：guard_var 保持为 NULL（没有已存在的变量需要收窄），
+        // 但 guard_bind_var/guard_bind_expr 有值
+        // 注意：如果原来有 guard_var（var is Type => var 形式），
+        // 仍保留 guard_var 用于兼容旧路径，同时设 guard_bind_var
+    }
+
     // if 表达式形式：if cond then expr1 else expr2
     // 出现在语句位置时（如函数体最后一行、独立表达式语句），回退交给
     // parse_if_expr 解析。codegen 的 gen_if 已按 then/else 节点 kind 区分
@@ -347,6 +374,9 @@ Ast* parse_if_stmt(Parser* p) {
     } else {
         type_guard_list_init(&ast->u.if_.guard_conds);
     }
+    ast->u.if_.guard_bind_var = guard_bind_var;
+    ast->u.if_.guard_bind_index = -1;
+    ast->u.if_.guard_bind_expr = guard_bind_expr;
     return ast;
 }
 

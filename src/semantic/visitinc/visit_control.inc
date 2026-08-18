@@ -294,6 +294,39 @@
                     }
                 }
                 
+                // => var 绑定：在 then 分支作用域内定义新局部变量
+                // if expr is Type => var { ... use(var) ... }
+                // var 的类型是守卫类型（Type），供 then 分支内的代码使用
+                if (ast->u.if_.guard_bind_var != NULL) {
+                    // 从条件中提取守卫类型（AST_TYPE_CHECK 节点的 type）
+                    TypeInfo* bind_type = NULL;
+                    if (ast->u.if_.cond && ast->u.if_.cond->kind == AST_TYPE_CHECK) {
+                        bind_type = ast->u.if_.cond->u.type_check.type;
+                    }
+                    // 修正 struct -> face/enum（与其他守卫类型修正一致）
+                    if (bind_type && bind_type->kind == TYPE_STRUCT && bind_type->struct_name) {
+                        Symbol* sym = scope_resolve(s->current, bind_type->struct_name);
+                        if (sym && sym->type && sym->type->kind == TYPE_FACE) {
+                            bind_type->kind = TYPE_FACE;
+                        } else if (sym && sym->type && sym->type->kind == TYPE_ENUM) {
+                            bind_type->kind = TYPE_ENUM;
+                        }
+                    }
+                    
+                    // 定义绑定变量为新的局部变量
+                    Symbol* bind_sym = scope_define(s->current, ast->u.if_.guard_bind_var, SYM_LOCAL);
+                    if (bind_sym) {
+                        bind_sym->index = s->local_index++;
+                        bind_sym->is_initialized = 1;
+                        ast->u.if_.guard_bind_index = bind_sym->index;
+                        if (bind_type) {
+                            bind_sym->type = type_copy(bind_type);
+                        } else {
+                            bind_sym->type = type_new(TYPE_ANY);
+                        }
+                    }
+                }
+                
                 if (ast->u.if_.then->kind == AST_BLOCK) {
                     visit_list(s, &ast->u.if_.then->u.block);
                 } else {

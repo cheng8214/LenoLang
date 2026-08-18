@@ -7,6 +7,11 @@
                 snprintf(msg, sizeof(msg), "C 布局类型 '%s' 不能用于变量声明，请使用 Leno 类型（如 int/float/string）", type_str);
                 error_add(ERR_SEMANTIC, ast->line, msg);
             }
+            // 检查 any 类型：any 只能用于函数参数和返回类型，不能用于变量声明
+            // 变量声明请使用 var（类型推断）或指定具体类型
+            if (ast->u.var_decl.type && ast->u.var_decl.type->kind == TYPE_ANY) {
+                error_add(ERR_SEMANTIC, ast->line, "'any' 类型只能用于函数参数和返回类型，变量声明请使用 'var' 或指定具体类型");
+            }
             // 检查 Ptr[T] 中的 T 是否是 C 布局类型（Ptr[u8] 是合法的）
             // 注意：Ptr[T] 本身是合法的，不检查
 

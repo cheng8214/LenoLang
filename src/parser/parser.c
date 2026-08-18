@@ -97,6 +97,7 @@ Ast* parse_statement(Parser* p) {
         case TOK_THREAD_TYPE:
         case TOK_FUTURE_TYPE:
         case TOK_PTR_TYPE:
+        case TOK_ANY_TYPE:  // any 类型变量声明（语义分析阶段会限制）
         // C 布局类型（i32/u8 等）：允许解析为变量声明，语义分析阶段会限制使用范围
         case TOK_I8:  case TOK_U8:
         case TOK_I16: case TOK_U16:

@@ -51,22 +51,19 @@ main() {
 
 // 内部：HtmlNode? 判空后返回 allText（传非可空参数）
 func _getText(HtmlNode root, string sel): string {
-    HtmlNode? node = htmls.selectOne(root, sel)
-    if node != null {
-        return htmls.allText(node)   // 收窄后传非可空参数
+    if htmls.selectOne(root, sel) is HtmlNode => node {
+        return htmls.allText(node)
     }
     return ""
 }
 
 // 内部：先判空根节点，再判空子节点，嵌套收窄
 func _getFirstText(HtmlNode root, string sel): string {
-    HtmlNode? node = htmls.selectOne(root, sel)
-    if node == null {
-        return ""
-    }
-    HtmlNode? child = node.selectOne("p")   // node 已收窄，能调 selectOne
-    if child != null {
-        return htmls.text(child)
+    if htmls.selectOne(root, sel) is HtmlNode => node {
+        HtmlNode? child = node.selectOne("p")
+        if child is HtmlNode => c {
+            return htmls.text(c)
+        }
     }
     return ""
 }

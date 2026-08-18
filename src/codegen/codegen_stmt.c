@@ -502,6 +502,101 @@ static void gen_switch(CodeGen* gen, Ast* ast) {
 }
 
 void gen_if(CodeGen* gen, Ast* ast) {
+    // => var 绑定模式：if expr is Type => var { ... }
+    // 代码生成流程：
+    //   <expr>                    // 求值表达式 → 栈: [val]
+    //   OP_DUP                    // 栈: [val, val]
+    //   OP_TYPE_CHECK             // 消费栈顶 val, 压入 bool → 栈: [val, bool]
+    //   OP_JUMP_IF_FALSE -> else  // 不消费栈顶，如跳转则栈: [val, bool]
+    //   OP_POP                    // 弹出 bool → 栈: [val]
+    //   OP_SET_LOCAL_POP <bind>   // 消费 val 赋给绑定变量 → 栈: []
+    //   <then body>
+    //   OP_JUMP -> end
+    //   else:
+    //   OP_POP                    // 弹出 bool → 栈: [val]
+    //   OP_POP                    // 弹出未匹配的 val → 栈: []
+    //   <else body>
+    //   end:
+    if (ast->u.if_.guard_bind_var != NULL && ast->u.if_.guard_bind_expr != NULL) {
+        // 1. 求值表达式（压入栈）
+        gen_expr(gen, ast->u.if_.guard_bind_expr);
+        // 2. 复制值（一份给 TYPE_CHECK，一份给绑定变量）
+        emit_byte(gen, OP_DUP, ast->line);
+        // 3. 生成类型检查字节码
+        // 从 AST_TYPE_CHECK 节点获取类型信息
+        TypeInfo* guard_type = NULL;
+        if (ast->u.if_.cond && ast->u.if_.cond->kind == AST_TYPE_CHECK) {
+            guard_type = ast->u.if_.cond->u.type_check.type;
+        }
+        if (guard_type && guard_type->kind == TYPE_FACE && guard_type->struct_name) {
+            ObjString* face_name_str = str_copy(guard_type->struct_name,
+                                                 strlen(guard_type->struct_name));
+            int face_name_const = make_constant(gen, val_obj((Object*)face_name_str));
+            emit_byte(gen, OP_TYPE_CHECK, ast->line);
+            emit_byte(gen, (uint8_t)TYPE_FACE, ast->line);
+            emit_byte(gen, (face_name_const >> 8) & 0xff, ast->line);
+            emit_byte(gen, face_name_const & 0xff, ast->line);
+        } else if (guard_type && guard_type->kind == TYPE_STRUCT && guard_type->struct_name) {
+            ObjString* struct_name_str = str_copy(guard_type->struct_name,
+                                                   strlen(guard_type->struct_name));
+            int struct_name_const = make_constant(gen, val_obj((Object*)struct_name_str));
+            emit_byte(gen, OP_TYPE_CHECK, ast->line);
+            emit_byte(gen, (uint8_t)TYPE_STRUCT, ast->line);
+            emit_byte(gen, (struct_name_const >> 8) & 0xff, ast->line);
+            emit_byte(gen, struct_name_const & 0xff, ast->line);
+        } else if (guard_type && guard_type->kind == TYPE_ENUM && guard_type->struct_name) {
+            ObjString* enum_name_str = str_copy(guard_type->struct_name,
+                                                 strlen(guard_type->struct_name));
+            int enum_name_const = make_constant(gen, val_obj((Object*)enum_name_str));
+            emit_byte(gen, OP_TYPE_CHECK, ast->line);
+            emit_byte(gen, (uint8_t)TYPE_ENUM, ast->line);
+            emit_byte(gen, (enum_name_const >> 8) & 0xff, ast->line);
+            emit_byte(gen, enum_name_const & 0xff, ast->line);
+        } else {
+            emit_byte(gen, OP_TYPE_CHECK, ast->line);
+            if (guard_type) {
+                emit_byte(gen, (uint8_t)guard_type->kind, ast->line);
+                if (guard_type->element_type) {
+                    emit_byte(gen, (uint8_t)guard_type->element_type->kind, ast->line);
+                } else {
+                    emit_byte(gen, (uint8_t)TYPE_ANY, ast->line);
+                }
+            } else {
+                emit_byte(gen, (uint8_t)TYPE_ANY, ast->line);
+                emit_byte(gen, (uint8_t)TYPE_ANY, ast->line);
+            }
+        }
+        // 4. 条件跳转
+        int then_jump = emit_jump(gen, OP_JUMP_IF_FALSE, ast->line);
+        // 5. JUMP_IF_FALSE 不消费栈顶，需要 POP 掉布尔结果
+        //    之后栈顶是 expr 的值（DUP 保留的），赋给绑定变量并弹出
+        emit_byte(gen, OP_POP, ast->line);
+        emit_bytes_2(gen, OP_SET_LOCAL_POP, ast->u.if_.guard_bind_index, ast->line);
+        // 6. then 分支
+        if (ast->u.if_.then->kind == AST_BLOCK) {
+            gen_stmt(gen, ast->u.if_.then);
+        } else {
+            gen_expr(gen, ast->u.if_.then);
+        }
+        // 7. 跳到 end
+        int else_jump = emit_jump(gen, OP_JUMP, ast->line);
+        // 8. else 分支
+        patch_jump(gen, then_jump);
+        // 栈顶是 bool（JUMP_IF_FALSE 未消费），下面是 val（DUP 保留的）
+        // 先弹 bool，再弹 val
+        emit_byte(gen, OP_POP, ast->line);  // 弹掉 bool
+        emit_byte(gen, OP_POP, ast->line);  // 弹掉未匹配的 val
+        if (ast->u.if_.else_) {
+            if (ast->u.if_.else_->kind == AST_BLOCK) {
+                gen_stmt(gen, ast->u.if_.else_);
+            } else {
+                gen_expr(gen, ast->u.if_.else_);
+            }
+        }
+        patch_jump(gen, else_jump);
+        return;
+    }
+
     // 检查是否是类型守卫（if a is type）
     // 或者是否是否定类型守卫（if a not is type）
     int is_negated = 0;

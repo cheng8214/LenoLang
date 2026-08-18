@@ -613,15 +613,19 @@ void lexer_next(Lexer* lex) {
                 lex->current = make_token(lex, TOK_ERROR);
             }
             break;
-        case '=':
-            if (peek_next(lex) == '=') {
-                lex->current = make_token(lex, TOK_EQEQ);
-                advance(lex);
-                advance(lex);
-            } else {
-                lex->current = make_token(lex, TOK_EQ);
-                advance(lex);
-            }
+case '=':
+if (peek_next(lex) == '=') {
+lex->current = make_token(lex, TOK_EQEQ);
+advance(lex);
+advance(lex);
+} else if (peek_next(lex) == '>') {
+lex->current = make_token(lex, TOK_FAT_ARROW);
+advance(lex);
+advance(lex);
+} else {
+lex->current = make_token(lex, TOK_EQ);
+advance(lex);
+}
             break;
         case '!':
             if (peek_next(lex) == '=') {

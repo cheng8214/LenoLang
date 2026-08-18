@@ -169,6 +169,12 @@ static void patch_ast_indices(Ast* ast, int offset) {
             patch_ast_indices(ast->u.if_.then, offset);
             patch_ast_indices(ast->u.if_.else_, offset);
             patch_symref(&ast->u.if_.guard_var_ref, offset);
+            // => var 绑定：patch 绑定变量索引
+            // 注意：guard_bind_expr 不需要单独 patch，因为它就是 cond->u.type_check.expr，
+            // 已被上面的 patch_ast_indices(cond, offset) 处理
+            if (ast->u.if_.guard_bind_index >= 0) {
+                ast->u.if_.guard_bind_index += offset;
+            }
             return;
 
         case AST_WHILE:
@@ -278,6 +284,8 @@ static int body_has_unsupported(Ast* ast) {
             if (body_has_unsupported(ast->u.if_.cond)) return 1;
             if (body_has_unsupported(ast->u.if_.then)) return 1;
             if (body_has_unsupported(ast->u.if_.else_)) return 1;
+            // => var 绑定表达式也需要检查
+            if (ast->u.if_.guard_bind_expr && body_has_unsupported(ast->u.if_.guard_bind_expr)) return 1;
             return 0;
         case AST_WHILE:
         case AST_FOR:
