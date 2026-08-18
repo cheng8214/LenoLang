@@ -498,7 +498,13 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                 }
             }
         }
-        return type_copy(ast->cached_type);
+        // AST_INDEX 的 TYPE_ANY 缓存可能被类型守卫收窄，需要重新检查
+        if (ast->cached_type && ast->cached_type->kind != TYPE_ANY) {
+            return type_copy(ast->cached_type);
+        }
+        if (ast->cached_type && ast->kind != AST_INDEX) {
+            return type_copy(ast->cached_type);
+        }
     }
     
     TypeInfo* result = NULL;
@@ -1821,8 +1827,84 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
             return type_new(TYPE_ANY);
         }
         case AST_INDEX: {
+            // 如果有缓存的类型且不是 any，直接返回（any 可能被守卫收窄，需要重新检查）
+            if (ast->cached_type && ast->cached_type->kind != TYPE_ANY) {
+                return type_copy(ast->cached_type);
+            }
             // 检查是否有索引类型守卫收窄（如 if arr[0] is int）
-            // 构造 "arr[0]" 或 "d[name]" 格式的守卫符号名
+            // 支持任意深度连续索引：a[0]["key"] → "a[0][key]"，config["items"][0]["url"] → "config[items][0][url]"
+            // 递归收集所有索引键，构造完整守卫符号名
+            if (ast->u.index.obj && ast->u.index.index) {
+                // 递归收集变量名和索引键链
+                char* keys[16];   // 最多支持 16 层嵌套
+                int key_count = 0;
+                const char* root_var_name = NULL;
+                Ast* cur = ast;
+                while (cur && cur->kind == AST_INDEX && key_count < 16) {
+                    Ast* idx = cur->u.index.index;
+                    char* key = NULL;
+                    if (idx) {
+                        if (idx->kind == AST_NUM) {
+                            if (idx->u.num.is_bigint && idx->u.num.bigint_str) {
+                                key = strdup(idx->u.num.bigint_str);
+                            } else if (idx->u.num.is_float) {
+                                char buf[32];
+                                snprintf(buf, sizeof(buf), "%g", idx->u.num.value);
+                                key = strdup(buf);
+                            } else {
+                                char buf[32];
+                                snprintf(buf, sizeof(buf), "%d", (int)idx->u.num.value);
+                                key = strdup(buf);
+                            }
+                        } else if (idx->kind == AST_STRING && idx->u.string.value) {
+                            key = strdup(idx->u.string.value);
+                        } else if (idx->kind == AST_VAR && idx->u.var.name) {
+                            key = strdup(idx->u.var.name);
+                        }
+                    }
+                    if (key) {
+                        keys[key_count++] = key;
+                    } else {
+                        break;  // 无法识别的索引类型，停止
+                    }
+                    cur = cur->u.index.obj;
+                    if (cur && cur->kind == AST_VAR) {
+                        root_var_name = cur->u.var.name;
+                        break;
+                    }
+                }
+                // 如果找到了根变量名和至少一个索引键，构造守卫符号名查找
+                if (root_var_name && key_count > 0) {
+                    // keys[0] 是最外层，keys[key_count-1] 是最内层
+                    // 守卫符号格式: "var[innermost][...][outermost]"
+                    // 构造方式：var + [ + innermost + ] + [ + ... + [ + outermost + ]
+                    int total_len = strlen(root_var_name) + 1;  // "var" + null
+                    for (int i = 0; i < key_count; i++) {
+                        total_len += strlen(keys[i]) + 2;  // "[key]"
+                    }
+                    char* guard_name = (char*)malloc(total_len + 1);
+                    guard_name[0] = '\0';
+                    strcat(guard_name, root_var_name);
+                    // 从最内层(key_count-1)到最外层(0)拼接 "[key]"
+                    for (int i = key_count - 1; i >= 0; i--) {
+                        strcat(guard_name, "[");
+                        strcat(guard_name, keys[i]);
+                        strcat(guard_name, "]");
+                    }
+                    Symbol* guard_sym = scope_resolve(s->current, guard_name);
+                    free(guard_name);
+                    for (int i = 0; i < key_count; i++) free(keys[i]);
+                    if (guard_sym && guard_sym->type) {
+                        if (ast->cached_type) type_free(ast->cached_type);
+                        ast->cached_type = type_copy(guard_sym->type);
+                        return type_copy(ast->cached_type);
+                    }
+                } else {
+                    for (int i = 0; i < key_count; i++) free(keys[i]);
+                }
+            }
+
+            // 简单索引守卫查找：arr[0] 或 d["name"]（上面的递归已覆盖，但保留作为回退）
             if (ast->u.index.obj && ast->u.index.obj->kind == AST_VAR &&
                 ast->u.index.index) {
                 const char* var_name = ast->u.index.obj->u.var.name;
@@ -1853,8 +1935,9 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     free(guard_name);
                     free(idx_key_str);
                     if (guard_sym && guard_sym->type) {
-                        result = type_copy(guard_sym->type);
-                        return result;
+                        if (ast->cached_type) type_free(ast->cached_type);
+                        ast->cached_type = type_copy(guard_sym->type);
+                        return type_copy(ast->cached_type);
                     }
                 }
             }
@@ -1871,8 +1954,9 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                 Symbol* guard_sym = scope_resolve(s->current, guard_name);
                 free(guard_name);
                 if (guard_sym && guard_sym->type) {
-                    result = type_copy(guard_sym->type);
-                    return result;
+                    if (ast->cached_type) type_free(ast->cached_type);
+                    ast->cached_type = type_copy(guard_sym->type);
+                    return type_copy(ast->cached_type);
                 }
             }
 

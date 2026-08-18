@@ -26,28 +26,65 @@
                                 } else if (expr->kind == AST_FIELD_ACCESS && expr->u.field_access.obj && expr->u.field_access.obj->kind == AST_VAR) {
                                     gvar_name = expr->u.field_access.obj->u.var.name;
                                     gfield_name = expr->u.field_access.field_name;
-                                } else if (expr->kind == AST_INDEX && expr->u.index.obj && expr->u.index.obj->kind == AST_VAR) {
+                                } else if (expr->kind == AST_INDEX && expr->u.index.obj) {
                                     // 数组索引守卫：arr[0] is int 或 d["name"] is int
-                                    gvar_name = expr->u.index.obj->u.var.name;
-                                    Ast* idx = expr->u.index.index;
-                                    if (idx) {
-                                        if (idx->kind == AST_NUM) {
-                                            if (idx->u.num.is_bigint && idx->u.num.bigint_str) {
-                                                gindex_key = strdup(idx->u.num.bigint_str);
-                                            } else if (idx->u.num.is_float) {
-                                                char buf[32];
-                                                snprintf(buf, sizeof(buf), "%g", idx->u.num.value);
-                                                gindex_key = strdup(buf);
-                                            } else {
-                                                char buf[32];
-                                                snprintf(buf, sizeof(buf), "%d", (int)idx->u.num.value);
-                                                gindex_key = strdup(buf);
+                                    // 支持任意深度连续索引：a[0]["key"] is int, config["items"][0]["url"] is string
+                                    char* keys[16];   // 最多 16 层
+                                    int key_count = 0;
+                                    Ast* cur = expr;
+                                    while (cur && cur->kind == AST_INDEX && key_count < 16) {
+                                        Ast* idx = cur->u.index.index;
+                                        char* key = NULL;
+                                        if (idx) {
+                                            if (idx->kind == AST_NUM) {
+                                                if (idx->u.num.is_bigint && idx->u.num.bigint_str) {
+                                                    key = strdup(idx->u.num.bigint_str);
+                                                } else if (idx->u.num.is_float) {
+                                                    char buf[32];
+                                                    snprintf(buf, sizeof(buf), "%g", idx->u.num.value);
+                                                    key = strdup(buf);
+                                                } else {
+                                                    char buf[32];
+                                                    snprintf(buf, sizeof(buf), "%d", (int)idx->u.num.value);
+                                                    key = strdup(buf);
+                                                }
+                                            } else if (idx->kind == AST_STRING && idx->u.string.value) {
+                                                key = strdup(idx->u.string.value);
+                                            } else if (idx->kind == AST_VAR && idx->u.var.name) {
+                                                key = strdup(idx->u.var.name);
                                             }
-                                        } else if (idx->kind == AST_STRING && idx->u.string.value) {
-                                            gindex_key = strdup(idx->u.string.value);
-                                        } else if (idx->kind == AST_VAR && idx->u.var.name) {
-                                            gindex_key = strdup(idx->u.var.name);
                                         }
+                                        if (key) {
+                                            keys[key_count++] = key;
+                                        } else {
+                                            break;
+                                        }
+                                        cur = cur->u.index.obj;
+                                        if (cur && cur->kind == AST_VAR) {
+                                            gvar_name = cur->u.var.name;
+                                            break;
+                                        }
+                                    }
+                                    // 构造 index_key：从最内层到最外层，格式 "inner][...][outer"
+                                    // 守卫符号最终格式: "var[inner][...][outer]"
+                                    if (gvar_name && key_count > 0) {
+                                        int total_len = 1;
+                                        for (int i = 0; i < key_count; i++) {
+                                            total_len += strlen(keys[i]) + 2;
+                                        }
+                                        gindex_key = (char*)malloc(total_len + 1);
+                                        gindex_key[0] = '\0';
+                                        for (int i = key_count - 1; i >= 0; i--) {
+                                            if (i == key_count - 1) {
+                                                strcat(gindex_key, keys[i]);
+                                            } else {
+                                                strcat(gindex_key, "][");
+                                                strcat(gindex_key, keys[i]);
+                                            }
+                                        }
+                                    }
+                                    for (int i = 0; i < key_count; i++) {
+                                        if (keys[i]) free(keys[i]);
                                     }
                                 }
                             }

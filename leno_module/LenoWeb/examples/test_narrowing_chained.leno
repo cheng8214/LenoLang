@@ -1,0 +1,178 @@
+// test_narrowing_chained.leno — 在 LenoWeb 真实场景中测试类型守卫收窄新特性
+// 覆盖：
+// 1. => 绑定 + and 链（htmls.selectOne 返回 HtmlNode?）
+// 2. 索引收窄（从 children 数组取元素后收窄）
+// 3. 连续索引收窄（从 JSON 解析的嵌套 Dict 中提取数据）
+// 4. 收窄传导到局部变量
+// 5. or 类型守卫不收窄警告
+
+import "../lib/web_html.leno" as htmls
+use htmls.HtmlNode
+
+func assert_eq(any a, any b, string label) {
+    if a == b {
+        printf("  [PASS] %s\n", label)
+    } else {
+        printf("  [FAIL] %s: expected %s, got %s\n", label, _str(b), _str(a))
+        assert(false, label)
+    }
+}
+
+main() {
+    print("=== LenoWeb 新特性实战测试 ===\n")
+
+    // ========== 场景 1: => 绑定 + and 链 ==========
+    // 模拟真实场景：解析 HTML，查找第一个 <a> 标签，同时确认其有 href 属性
+    print("[1] => 绑定 + and 链")
+    var root = htmls.parse("<div><p>hello</p><a href='/page'>link</a></div>")
+    string href1 = _getFirstHref(root)
+    assert_eq(href1, "/page", "=> 绑定 + and 链获取 href")
+
+    // ========== 场景 2: 索引收窄 ==========
+    // 模拟真实场景：从 select 返回的数组中取第一个元素并收窄
+    print("[2] 索引收窄")
+    var root2 = htmls.parse("<ul><li>item1</li><li>item2</li></ul>")
+    string first_li = _getFirstListItemText(root2)
+    assert_eq(first_li, "item1", "索引收窄获取列表项文本")
+
+    // ========== 场景 3: 连续索引收窄 ==========
+    // 模拟真实场景：从 JSON 配置中提取嵌套数据
+    // config["items"][0]["url"] → 连续索引收窄
+    print("[3] 连续索引收窄")
+    var config = {
+        items: [
+            {url: "/home", title: "首页"},
+            {url: "/about", title: "关于"}
+        ],
+        settings: {timeout: 30, retries: 3}
+    }
+    string url3 = _getFirstUrl(config)
+    assert_eq(url3, "/home", "连续索引收窄获取嵌套 URL")
+
+    int timeout3 = _getSetting(config, "timeout")
+    assert_eq(timeout3, 30, "连续索引收窄获取嵌套设置")
+
+    // ========== 场景 4: 连续索引收窄 + and 链 ==========
+    // 同时检查两个嵌套字段
+    print("[4] 连续索引收窄 + and 链")
+    var config4 = {
+        items: [{url: "/home", title: "首页"}],
+        settings: {timeout: 60}
+    }
+    string title4 = _getItemTitle(config4)
+    assert_eq(title4, "首页", "连续索引 + and 链获取标题")
+
+    int timeout4 = _getTimeout(config4)
+    assert_eq(timeout4, 60, "连续索引收窄获取 timeout")
+
+    // ========== 场景 5: 收窄传导到局部变量 ==========
+    // 模拟真实场景：从 robots.txt 解析结果中提取规则
+    print("[5] 收窄传导到局部变量")
+    var robots = {
+        groups: [
+            {user_agents: ["*"], allow: [], disallow: ["/admin", "/private"]}
+        ]
+    }
+    int count5 = _countDisallowRules(robots)
+    assert_eq(count5, 2, "收窄传导统计 disallow 规则数")
+
+    // ========== 场景 6: 连续索引收窄传导到局部变量 ==========
+    print("[6] 连续索引收窄传导到局部变量")
+    var data6 = {results: [{score: 95, name: "Alice"}]}
+    int score6 = _getScore(data6)
+    assert_eq(score6, 95, "连续索引收窄传导获取 score")
+
+    // ========== 场景 7: 多条件 and 链（3+ 条件）==========
+    // 模拟真实场景：检查页面配置的多个字段
+    print("[7] 多条件 and 链")
+    var pageConfig = {
+        pages: [
+            {url: "/p1", status: 200, title: "Page 1"}
+        ]
+    }
+    string url7 = _checkPageConfig(pageConfig)
+    assert_eq(url7, "/p1", "多条件 and 链验证页面配置")
+
+    print("\n=== LenoWeb 新特性实战测试完成 ===")
+}
+
+// [1] => 绑定 + and 链：查找 <a> 并验证有 href
+func _getFirstHref(HtmlNode root): string {
+    // => 绑定：先绑定 HtmlNode，再在块内检查 attr
+    if root.selectOne("a") is HtmlNode => a {
+        if a.attr("href") != "" {
+            return a.attr("href")
+        }
+    }
+    return ""
+}
+
+// [2] 索引收窄：从 select 返回数组取首元素
+func _getFirstListItemText(HtmlNode root): string {
+    Array[HtmlNode] items = htmls.select(root, "li")
+    // 索引收窄：items[0] is HtmlNode
+    if items[0] is HtmlNode => first {
+        return htmls.text(first)
+    }
+    return ""
+}
+
+// [3] 连续索引收窄：config["items"][0]["url"]
+func _getFirstUrl(Dict config): string {
+    if config is Dict and config["items"] is Array and config["items"][0] is Dict and config["items"][0]["url"] is string {
+        return config["items"][0]["url"]
+    }
+    return ""
+}
+
+// [3b] 连续索引收窄：config["settings"]["timeout"]
+func _getSetting(Dict config, string key): int {
+    if config is Dict and config["settings"] is Dict and config["settings"][key] is int {
+        return config["settings"][key]
+    }
+    return -1
+}
+
+// [4] 连续索引收窄 + and 链：同时检查 url 和 title
+func _getItemTitle(Dict config): string {
+    if config is Dict and config["items"] is Array and config["items"][0] is Dict and config["items"][0]["title"] is string {
+        return config["items"][0]["title"]
+    }
+    return ""
+}
+
+// [4b] 连续索引收窄获取 timeout
+func _getTimeout(Dict config): int {
+    if config is Dict and config["settings"] is Dict and config["settings"]["timeout"] is int {
+        return config["settings"]["timeout"]
+    }
+    return -1
+}
+
+// [5] 收窄传导到局部变量：从 robots 解析结果统计规则
+func _countDisallowRules(Dict robots): int {
+    if robots is Dict and robots["groups"] is Array and robots["groups"][0] is Dict {
+        var group = robots["groups"][0]  // group 继承 Dict 类型
+        if group["disallow"] is Array => disallows {
+            return disallows.len()
+        }
+    }
+    return 0
+}
+
+// [6] 连续索引收窄传导到局部变量
+func _getScore(Dict data): int {
+    if data is Dict and data["results"] is Array and data["results"][0] is Dict and data["results"][0]["score"] is int {
+        var score = data["results"][0]["score"]  // score 继承 int 类型
+        return score
+    }
+    return -1
+}
+
+// [7] 多条件 and 链（4 条件）
+func _checkPageConfig(Dict config): string {
+    if config is Dict and config["pages"] is Array and config["pages"][0] is Dict and config["pages"][0]["url"] is string {
+        return config["pages"][0]["url"]
+    }
+    return ""
+}

@@ -1,0 +1,74 @@
+// 连续索引收窄断言测试：a[0]["key"] is Type 的编译期类型收窄
+// 修复前：a[0]["key"] is string 在块内访问 a[0]["key"] 报错
+// 修复后：a[0]["key"] 已收窄，可直接使用
+
+func assert_eq(any a, any b, string label) {
+    if a == b {
+        printf("  [PASS] %s\n", label)
+    } else {
+        printf("  [FAIL] %s: expected %s, got %s\n", label, _str(b), _str(a))
+        assert(false, label)
+    }
+}
+
+func test_chained_index(any x): int {
+    if x is Array and x[0] is Dict and x[0]["val"] is int {
+        return x[0]["val"] + 1
+    }
+    return -1
+}
+
+func test_chained_string(any x): string {
+    if x is Array and x[0] is Dict and x[0]["name"] is string {
+        return x[0]["name"] + "!"
+    }
+    return "NOT_FOUND"
+}
+
+func test_chained_float(any x): float {
+    if x is Array and x[0] is Dict and x[0]["score"] is float {
+        return x[0]["score"] + 0.1
+    }
+    return -1.0
+}
+
+func test_multi_chained(any x): int {
+    if x is Array and x[0] is Dict and x[0]["a"] is int and x[0]["b"] is int {
+        return x[0]["a"] + x[0]["b"]
+    }
+    return -1
+}
+
+func test_chained_bind(any x): string {
+    if x is Array => a and a[0] is Dict and a[0]["name"] is string {
+        return a[0]["name"]
+    }
+    return "NOT_FOUND"
+}
+
+func test_chained_propagate(any x): int {
+    if x is Array and x[0] is Dict and x[0]["val"] is int {
+        var n = x[0]["val"]
+        return n + 100
+    }
+    return -1
+}
+
+func test_not_match(any x): int {
+    if x is Array and x[0] is Dict and x[0]["val"] is int {
+        return x[0]["val"]
+    }
+    return -1
+}
+
+main() {
+    assert_eq(test_chained_index([{"val": 10}]), 11, "连续索引 int 收窄")
+    assert_eq(test_chained_string([{"name": "world"}]), "world!", "连续索引 string 收窄")
+    assert_eq(test_chained_float([{"score": 3.14}]), 3.24, "连续索引 float 收窄")
+    assert_eq(test_multi_chained([{"a": 10, "b": 20}]), 30, "多连续索引收窄")
+    assert_eq(test_chained_bind([{"name": "hello"}]), "hello", "连续索引 + => 绑定")
+    assert_eq(test_chained_propagate([{"val": 42}]), 142, "连续索引传导局部变量")
+    assert_eq(test_not_match([{"val": "str"}]), -1, "不匹配时返回默认值")
+    assert_eq(test_not_match([42]), -1, "非 Dict 元素不匹配")
+    print("连续索引收窄断言测试全部通过！")
+}

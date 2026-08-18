@@ -1,37 +1,75 @@
-// 测试限制 2 的替代方案：利用已修复的索引守卫 + 局部变量传导
+// 测试连续索引收窄：a[0]["key"] is Type 的编译期类型收窄
+// 修复前：a[0]["key"] is string 在块内访问 a[0]["key"] 报错（any 上不能访问字段）
+// 修复后：a[0]["key"] 已收窄，可直接使用
 
 
-// 方案 1：利用 var 传导 + 嵌套 => 绑定
-func test_continuous_index_v2(any a): string {
-    if a is Array => arr {
-        if arr[0] is Dict => c {
-            // c 已收窄为 Dict
-            if c["a"] is string => d {
-                return d
-            }
-        }
+// 测试 1：连续索引收窄 + 直接使用
+func test_chained_index(any x): int {
+    if x is Array and x[0] is Dict and x[0]["val"] is int {
+        return x[0]["val"] + 1   // ✅ x[0]["val"] 已收窄为 int，可算术
+    }
+    return -1
+}
+
+// 测试 2：连续索引收窄为 string
+func test_chained_string(any x): string {
+    if x is Array and x[0] is Dict and x[0]["name"] is string {
+        return x[0]["name"] + "!"  // ✅ x[0]["name"] 已收窄为 string
     }
     return "NOT_FOUND"
 }
 
-// 方案 2：直接用 and 链 + 索引守卫（限制 2 原始场景）
-func test_continuous_index_and(any a): string {
-    if a is Array and a[0] is Dict and a[0]["a"] is string {
-        // a[0] 有守卫 "a[0]" (Dict)，但 a[0]["a"] 没有守卫符号 "a[0][a]"
-        // 因为当前只支持一级索引守卫
-        // 需要用 var 中间变量
-        var d = a[0]   // d 继承 Dict 类型（限制 3 已修复）
-        var s = d["a"] // d["a"] 是 any，需要再收窄
-        if s is string {
-            return s
-        }
+// 测试 3：连续索引收窄为 float
+func test_chained_float(any x): float {
+    if x is Array and x[0] is Dict and x[0]["score"] is float {
+        return x[0]["score"] + 0.1  // ✅ x[0]["score"] 已收窄为 float
+    }
+    return -1.0
+}
+
+// 测试 4：连续索引收窄 + and 链（同时收窄多个连续索引）
+func test_multi_chained(any x): int {
+    if x is Array and x[0] is Dict and x[0]["a"] is int and x[0]["b"] is int {
+        return x[0]["a"] + x[0]["b"]  // ✅ 两个连续索引都已收窄
+    }
+    return -1
+}
+
+// 测试 5：连续索引收窄 + => 绑定
+func test_chained_bind(any x): string {
+    if x is Array => a and a[0] is Dict and a[0]["name"] is string {
+        return a[0]["name"]  // ✅ a[0]["name"] 已收窄为 string
     }
     return "NOT_FOUND"
+}
+
+// 测试 6：连续索引收窄传导到局部变量
+func test_chained_propagate(any x): int {
+    if x is Array and x[0] is Dict and x[0]["val"] is int {
+        var n = x[0]["val"]  // ✅ n 继承 int 类型
+        return n + 100       // ✅ n 可算术
+    }
+    return -1
 }
 
 main() {
-    var data = [{"a": "hello"}]
-    assert(test_continuous_index_v2(data) == "hello", "v2: 嵌套 => 绑定")
-    assert(test_continuous_index_and(data) == "hello", "and 链 + var 传导")
-    print("连续索引测试通过！")
+    // 测试 1
+    assert(test_chained_index([{"val": 10}]) == 11, "test1: 连续索引 int 收窄")
+
+    // 测试 2
+    assert(test_chained_string([{"name": "world"}]) == "world!", "test2: 连续索引 string 收窄")
+
+    // 测试 3
+    assert(test_chained_float([{"score": 3.14}]) == 3.24, "test3: 连续索引 float 收窄")
+
+    // 测试 4
+    assert(test_multi_chained([{"a": 10, "b": 20}]) == 30, "test4: 多连续索引收窄")
+
+    // 测试 5
+    assert(test_chained_bind([{"name": "hello"}]) == "hello", "test5: 连续索引 + => 绑定")
+
+    // 测试 6
+    assert(test_chained_propagate([{"val": 42}]) == 142, "test6: 连续索引传导局部变量")
+
+    print("所有连续索引收窄测试通过！")
 }

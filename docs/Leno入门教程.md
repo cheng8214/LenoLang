@@ -14,6 +14,7 @@
 4. [控制流](#控制流)
    - [`=>` 绑定语法（类型守卫 + 变量绑定）](#-绑定语法类型守卫--变量绑定)
    - [数组/字典索引收窄（`arr[0] is int`、`d["key"] is Type`）](#数组字典索引收窄)
+   - [连续索引收窄（`a[0]["key"] is Type`）](#连续索引收窄)
    - [`and` 链 + `=>` 绑定](#and-链---绑定)
    - [收窄传导到局部变量](#收窄传导到局部变量)
    - [switch 性能优化](#switch-性能优化)
@@ -1938,25 +1939,44 @@ if x is Array => arr {
 }
 ```
 
-> **⚠️ 连续索引不支持收窄**
->
-> `a[0]["a"]` 这种连续索引的收窄暂不支持。需要通过中间变量逐层解包：
->
-> ```leno
-> // ❌ 不支持：a[0]["a"] 连续索引收窄丢失
-> if a is Array and a[0] is Dict and a[0]["a"] is string {
->     return a[0]["a"]   // 报错：不能在 any 上访问
-> }
->
-> // ✅ 正确：逐层绑定
-> if a is Array => arr {
->     if arr[0] is Dict => c {
->         if c["a"] is string => d {
->             return d
->         }
->     }
-> }
-> ```
+#### 连续索引收窄
+
+类型守卫支持**连续索引**收窄，语法为 `a[0]["key"] is Type`，在 `if` 块内 `a[0]["key"]` 自动收窄为 `Type`：
+
+```leno
+var data = [{"name": "张三", "age": 25}]
+
+// 连续索引收窄：a[0]["name"] is string
+if data is Array and data[0] is Dict and data[0]["name"] is string {
+    string name = data[0]["name"]   // ✅ data[0]["name"] 已收窄为 string
+    print(name)
+}
+
+// 连续索引收窄为 int
+if data is Array and data[0] is Dict and data[0]["age"] is int {
+    int age = data[0]["age"]        // ✅ data[0]["age"] 已收窄为 int
+    print(age)
+}
+
+// 连续索引 + and 链（同时收窄多个字段）
+if data is Array and data[0] is Dict and data[0]["name"] is string and data[0]["age"] is int {
+    print(data[0]["name"])          // ✅ string
+    print(data[0]["age"])           // ✅ int
+}
+
+// 连续索引 + => 绑定
+if data is Array => a and a[0] is Dict and a[0]["name"] is string {
+    return a[0]["name"]             // ✅ 已收窄为 string
+}
+
+// 连续索引收窄传导到局部变量
+if data is Array and data[0] is Dict and data[0]["age"] is int {
+    var n = data[0]["age"]          // ✅ n 继承 int 类型
+    return n + 100                  // ✅ 可算术
+}
+```
+
+> **原理**：编译器在符号表中创建 `"a[0][key]"` 格式的守卫符号，类型推断访问 `a[0]["key"]` 时会查到该守卫符号并返回收窄后的类型。
 
 ### `=>` 绑定语法（类型守卫 + 变量绑定）
 

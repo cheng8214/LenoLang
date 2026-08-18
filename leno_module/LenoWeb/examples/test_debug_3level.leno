@@ -1,0 +1,15 @@
+// test_debug_3level.leno — 调试三层连续索引守卫
+
+func _getFirstUrl(Dict config): string {
+    // 三层连续索引：config["items"][0]["url"]
+    if config is Dict and config["items"] is Array and config["items"][0] is Dict and config["items"][0]["url"] is string {
+        return config["items"][0]["url"]
+    }
+    return ""
+}
+
+main() {
+    var config = {items: [{url: "/home", title: "首页"}]}
+    string url = _getFirstUrl(config)
+    printf("url = %s\n", url)
+}
