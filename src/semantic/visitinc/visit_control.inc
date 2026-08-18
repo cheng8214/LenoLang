@@ -115,13 +115,27 @@
                             // and 连接：两边都可能包含类型守卫
                             if (stack_top < 32) stack[stack_top++] = node->u.binop.r;
                             if (stack_top < 32) stack[stack_top++] = node->u.binop.l;
+                        } else if (node->kind == AST_BINOP && node->u.binop.op == TOK_OR) {
+                            // or 连接：检查是否包含类型守卫，给出警告
+                            if (node->u.binop.l && node->u.binop.l->kind == AST_TYPE_CHECK) {
+                                warning_add(WARN_OR_TYPE_GUARD, node->line,
+                                    "or 条件中的类型守卫不会触发类型收窄，"
+                                    "因为 or 的短路语义意味着两侧条件不一定都成立");
+                            }
                         }
-                        // or / 其他节点不递归（or 不安全，其他不包含类型守卫）
+                        // 其他节点不递归
                     }
                 }
             }
 
             if (ast->u.if_.guard_var != NULL) {
+                // 检查条件树中是否有 or 连接的类型守卫（不安全，不收窄）
+                if (ast->u.if_.cond && ast->u.if_.cond->kind == AST_BINOP &&
+                    ast->u.if_.cond->u.binop.op == TOK_OR) {
+                    warning_add(WARN_OR_TYPE_GUARD, ast->u.if_.cond->line,
+                        "or 条件中的类型守卫不会触发类型收窄，"
+                        "因为 or 的短路语义意味着两侧条件不一定都成立");
+                }
                 if (ast->u.if_.guard_type && ast->u.if_.guard_type->kind == TYPE_STRUCT && ast->u.if_.guard_type->struct_name) {
                     Symbol* sym = scope_resolve(s->current, ast->u.if_.guard_type->struct_name);
                     if (sym && sym->type && sym->type->kind == TYPE_FACE) {
@@ -400,11 +414,16 @@
                     }
                     
                     // 定义绑定变量为新的局部变量
+                    // 如果预处理阶段已分配 slot（=> 绑定 + and 链），复用同一 slot
                     Symbol* bind_sym = scope_define(s->current, ast->u.if_.guard_bind_var, SYM_LOCAL);
                     if (bind_sym) {
-                        bind_sym->index = s->local_index++;
+                        if (ast->u.if_.guard_bind_index >= 0) {
+                            bind_sym->index = ast->u.if_.guard_bind_index;
+                        } else {
+                            bind_sym->index = s->local_index++;
+                            ast->u.if_.guard_bind_index = bind_sym->index;
+                        }
                         bind_sym->is_initialized = 1;
-                        ast->u.if_.guard_bind_index = bind_sym->index;
                         if (bind_type) {
                             bind_sym->type = type_copy(bind_type);
                         } else {

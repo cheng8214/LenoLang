@@ -146,6 +146,32 @@ func test_narrow_to_local_nested(any x): int {
     return -1
 }
 
+// ==================== 测试 11: 多条件 and 链（3+ 守卫） ====================
+
+func test_multi_and_three_types(any x): int {
+    if x is Array => a and a[0] is float and a[1] is int and a[2] is Dict {
+        var d = a[2]
+        if d["val"] is int {
+            return _int(a[0]) + a[1] + d["val"]
+        }
+    }
+    return -1
+}
+
+func test_multi_and_dict_keys(any x): string {
+    if x is Dict => d and d["name"] is string and d["age"] is int {
+        return d["name"]
+    }
+    return "NOT_FOUND"
+}
+
+func test_multi_and_short_circuit(any x): int {
+    if x is Array => a and a[0] is float and a[1] is int {
+        return _int(a[0]) + a[1]
+    }
+    return -1
+}
+
 // ==================== 运行测试 ====================
 
 main() {
@@ -187,6 +213,14 @@ main() {
     assert_eq(test_narrow_to_local_dict([{"name": "hello"}]), "hello", "收窄传导 dict")
     assert_eq(test_narrow_to_local_int([42]), 142, "收窄传导 int")
     assert_eq(test_narrow_to_local_nested({"items": [10, 20]}), 11, "收窄传导 nested")
+
+    // 测试 11: 多条件 and 链
+    assert_eq(test_multi_and_three_types([3.14, 42, {"val": 100}]), 145, "三类型 and 链")
+    assert_eq(test_multi_and_three_types([1, 2, 3]), -1, "三类型 and 链短路")
+    assert_eq(test_multi_and_dict_keys({"name": "Alice", "age": 30}), "Alice", "Dict 多键 and 链")
+    assert_eq(test_multi_and_dict_keys({"name": "Bob"}), "NOT_FOUND", "Dict 多键 and 链短路")
+    assert_eq(test_multi_and_short_circuit([3.14, 42]), 45, "两条件 and 链")
+    assert_eq(test_multi_and_short_circuit([1, 2]), -1, "两条件 and 链短路")
 
     print("所有索引收窄断言测试通过！")
 }

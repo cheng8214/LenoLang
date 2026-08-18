@@ -348,7 +348,7 @@ const char* get_similar_name_hint(Scope* scope, const char* name) {
     }
 
     if (best && strcmp(best, name) != 0) {
-        snprintf(hint, sizeof(hint), "\n  \xf0\x9f\x92\xa1 提示: 是否想输入 '%s'？", best);
+        snprintf(hint, sizeof(hint), "\n  提示: 是否想输入 '%s'？", best);
     }
     return hint;
 }

@@ -572,6 +572,14 @@ void gen_if(CodeGen* gen, Ast* ast) {
         //    之后栈顶是 expr 的值（DUP 保留的），赋给绑定变量并弹出
         emit_byte(gen, OP_POP, ast->line);
         emit_bytes_2(gen, OP_SET_LOCAL_POP, ast->u.if_.guard_bind_index, ast->line);
+        // 5a. 如果 cond 是 AST_BINOP（=> 绑定 + and 链），
+        //     生成右侧条件求值（如 a[0] is float and a[1] is int）
+        int extra_cond_jump = -1;
+        if (ast->u.if_.cond && ast->u.if_.cond->kind == AST_BINOP) {
+            gen_expr(gen, ast->u.if_.cond->u.binop.r);
+            extra_cond_jump = emit_jump(gen, OP_JUMP_IF_FALSE, ast->line);
+            emit_byte(gen, OP_POP, ast->line);  // 弹掉右侧条件的 bool
+        }
         // 6. then 分支
         if (ast->u.if_.then->kind == AST_BLOCK) {
             gen_stmt(gen, ast->u.if_.then);
@@ -581,11 +589,20 @@ void gen_if(CodeGen* gen, Ast* ast) {
         // 7. 跳到 end
         int else_jump = emit_jump(gen, OP_JUMP, ast->line);
         // 8. else 分支
+        // 路径1: 类型检查失败（then_jump）——栈顶: [bool, val]
         patch_jump(gen, then_jump);
-        // 栈顶是 bool（JUMP_IF_FALSE 未消费），下面是 val（DUP 保留的）
-        // 先弹 bool，再弹 val
         emit_byte(gen, OP_POP, ast->line);  // 弹掉 bool
         emit_byte(gen, OP_POP, ast->line);  // 弹掉未匹配的 val
+        // 路径2: 右侧 and 条件失败（extra_cond_jump）——栈顶: [bool]
+        //         需要从路径1跳转到 else body
+        if (extra_cond_jump >= 0) {
+            // 跳过路径2的栈清理（路径1已经清理完栈）
+            int to_else_body = emit_jump(gen, OP_JUMP, ast->line);
+            patch_jump(gen, extra_cond_jump);
+            emit_byte(gen, OP_POP, ast->line);  // 弹掉 bool
+            // 跳到 else body（跟路径1汇合）
+            patch_jump(gen, to_else_body);
+        }
         if (ast->u.if_.else_) {
             if (ast->u.if_.else_->kind == AST_BLOCK) {
                 gen_stmt(gen, ast->u.if_.else_);

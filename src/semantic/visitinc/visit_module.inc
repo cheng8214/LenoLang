@@ -749,7 +749,7 @@
                         snprintf(msg, sizeof(msg), "%s.%s 参数数量不匹配: 期望 %d, 实际 %d",
                                  actual_module, ast->u.module_call.method_name, expected_arity, actual_arity);
                         if (strcmp(ast->u.module_call.method_name, "map") == 0 && actual_arity == 1 && expected_arity == 2) {
-                            strncat(msg, "\n  \xf0\x9f\x92\xa1 提示: .map() 会传递 (item, index) 两个参数，\n"
+                            strncat(msg, "\n  提示: .map() 会传递 (item, index) 两个参数，\n"
                                     "     函数签名需加第二个参数，如 func compress(string w, int _): string",
                                     sizeof(msg) - strlen(msg) - 1);
                         }
@@ -1281,7 +1281,7 @@
                                                          method_name, method_param_count, actual_arity);
                                             }
                                             if (strcmp(method_name, "map") == 0 && actual_arity == 1 && method_param_count == 2) {
-                                                strncat(msg, "\n  \xf0\x9f\x92\xa1 提示: .map() 会传递 (item, index) 两个参数，\n"
+                                                strncat(msg, "\n  提示: .map() 会传递 (item, index) 两个参数，\n"
                                                         "     函数签名需加第二个参数，如 func compress(string w, int _): string",
                                                         sizeof(msg) - strlen(msg) - 1);
                                             }

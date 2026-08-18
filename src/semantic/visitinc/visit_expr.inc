@@ -585,7 +585,7 @@
                                                  method_name, expected_arity, actual_arity);
                                     }
                                     if (strcmp(method_name, "map") == 0 && actual_arity == 1 && expected_arity == 2) {
-                                        strncat(msg, "\n  \xf0\x9f\x92\xa1 提示: .map() 会传递 (item, index) 两个参数，"
+                                        strncat(msg, "\n  提示: .map() 会传递 (item, index) 两个参数，"
                                                 "\n     函数签名需加第二个参数，如 func compress(string w, int _): string",
                                                 sizeof(msg) - strlen(msg) - 1);
                                     }

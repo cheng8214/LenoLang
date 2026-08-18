@@ -245,12 +245,16 @@ Ast* parse_if_stmt(Parser* p) {
                         }
 
                         // 添加到类型守卫条件列表
+                        // 注意：or 条件不安全（不收窄），不添加到 guard_conds
                         TypeGuardCond next_cond;
                         memset(&next_cond, 0, sizeof(next_cond));
                         next_cond.var_name = next_var_name;
                         next_cond.field_name = next_field_name;
                         next_cond.guard_type = next_type_info;
-                        type_guard_list_add(&guard_conds, next_cond);
+                        int is_or_cond = (op == TOK_OR);
+                        if (!is_or_cond) {
+                            type_guard_list_add(&guard_conds, next_cond);
+                        }
 
                         // 创建下一个类型守卫的 AST_TYPE_CHECK 节点
                         // （不能用 AST_BOOL(true) 占位，因为 or + true = 恒真）
@@ -266,6 +270,13 @@ Ast* parse_if_stmt(Parser* p) {
                             next_cond_ast->u.type_check.expr->u.var.name = strdup(next_var_name);
                         }
                         next_cond_ast->u.type_check.type = type_copy(next_type_info);
+
+                        // or 条件不收窄，释放 next_cond 的独有资源（AST 节点已 strdup/type_copy）
+                        if (is_or_cond) {
+                            free(next_var_name);
+                            if (next_field_name) free(next_field_name);
+                            type_free(next_type_info);
+                        }
 
                         // 创建二元操作节点
                         Ast* binop = ast_new(AST_BINOP, var_line);
