@@ -13,6 +13,9 @@
 	   - [空值合并运算符 `??`](#空值合并运算符-)
 4. [控制流](#控制流)
    - [`=>` 绑定语法（类型守卫 + 变量绑定）](#-绑定语法类型守卫--变量绑定)
+   - [数组/字典索引收窄（`arr[0] is int`、`d["key"] is Type`）](#数组字典索引收窄)
+   - [`and` 链 + `=>` 绑定](#and-链---绑定)
+   - [收窄传导到局部变量](#收窄传导到局部变量)
    - [switch 性能优化](#switch-性能优化)
 5. [函数](#函数)
    - [泛型约束（T: Face）](#泛型约束t-face)
@@ -1688,6 +1691,9 @@ main() {
 >     }
 > }
 > ```
+>
+> **原因**：`or` 的短路语义意味着两侧条件不一定都成立，无法保证类型安全。
+> 编译器检测到 `or` 条件中包含类型守卫时，会发出**编译警告**提醒不会触发收窄。
 
 #### Dict 字段访问类型守卫
 
@@ -1847,6 +1853,110 @@ func process(any arr) {
     }
 }
 ```
+
+#### 泛型收窄的取值类型差异
+
+收窄成裸 `Array` / `Dict` 和带泛型参数的 `Array[int]` / `Dict[string, int]`，取出元素的类型**不同**：
+
+| 收窄目标类型 | 取出元素/值的类型 | 是否能直接使用 |
+|-------------|------------------|--------------|
+| `Array`（裸） | `any` | ❌ 需再收窄或强转 |
+| `Array[int]` | `int` | ✅ 可直接算术 |
+| `Dict`（裸） | `any` | ❌ 需再收窄或强转 |
+| `Dict[string, int]` | `int` | ✅ 可直接算术 |
+
+```leno
+// 裸 Array：arr[0] 是 any，需再收窄
+if x is Array => arr {
+    if arr[0] is int {
+        return arr[0]        // ✅ arr[0] 已收窄为 int
+    }
+}
+
+// Array[int]：arr[0] 直接是 int，可算术
+if x is Array[int] => arr {
+    return arr[0] + 1       // ✅ 无需再收窄
+}
+
+// 裸 Dict：d["a"] 是 any，需再收窄
+if x is Dict => d {
+    if d["a"] is int {
+        return d["a"]       // ✅ d["a"] 已收窄为 int
+    }
+}
+
+// Dict[string, int]：d["a"] 直接是 int，可算术
+if x is Dict[string, int] => d {
+    return d["a"] + 1       // ✅ 无需再收窄
+}
+```
+
+> **⚠️ `Array[int]` 是运行时全元素检查**
+>
+> `x is Array[int]` 会检查数组的**每个元素**是否为 `int`，混入其他类型即为 `false`。
+> 想只匹配"首个元素是 int"，应使用元素级收窄：`if x is Array => arr { if arr[0] is int { ... } }`
+
+#### 数组/字典索引收窄
+
+类型守卫支持对**数组索引**和**字典键**进行收窄，语法为 `arr[i] is Type`、`d["key"] is Type`：
+
+```leno
+var arr = [10, "hello", 3.14]
+
+// 数组索引收窄
+if arr[0] is int {
+    int n = arr[0] + 1       // ✅ arr[0] 已收窄为 int，可算术
+}
+
+// 字典键收窄
+var d = {"name": "张三", "age": 25}
+if d["age"] is int {
+    int age = d["age"]       // ✅ d["age"] 已收窄为 int
+}
+```
+
+**支持的索引类型：**
+
+| 索引形式 | 示例 | 守卫符号 |
+|---------|------|---------|
+| 数字常量 | `arr[0]`、`arr[10]` | `"arr[0]"`、`"arr[10]"` |
+| 字符串常量 | `d["name"]` | `"d[name]"` |
+| 变量索引 | `arr[i]` | `"arr[i]"` |
+
+**多索引 + `and` 短路收窄：**
+
+```leno
+if x is Array => arr {
+    // and 短路：两个索引同时收窄
+    if arr[0] is int and arr[1] is int {
+        return arr[0] + arr[1]   // ✅ 两个都已收窄为 int
+    }
+    // 大索引也支持
+    if arr[10] is int {
+        return arr[10] + 100     // ✅ arr[10] 已收窄为 int
+    }
+}
+```
+
+> **⚠️ 连续索引不支持收窄**
+>
+> `a[0]["a"]` 这种连续索引的收窄暂不支持。需要通过中间变量逐层解包：
+>
+> ```leno
+> // ❌ 不支持：a[0]["a"] 连续索引收窄丢失
+> if a is Array and a[0] is Dict and a[0]["a"] is string {
+>     return a[0]["a"]   // 报错：不能在 any 上访问
+> }
+>
+> // ✅ 正确：逐层绑定
+> if a is Array => arr {
+>     if arr[0] is Dict => c {
+>         if c["a"] is string => d {
+>             return d
+>         }
+>     }
+> }
+> ```
 
 ### `=>` 绑定语法（类型守卫 + 变量绑定）
 
@@ -2024,6 +2134,114 @@ if x is Admin => a {
 ```
 
 > **一句话总结**：看到 `is` + `as` 同时出现，或者 `?` 类型先判 null 再强转，就换成 `=>`。
+
+#### `and` 链 + `=>` 绑定
+
+`=>` 绑定可以和 `and` 守卫链配合使用，实现"先绑定容器，再收窄元素"的一步到位写法：
+
+```leno
+// ✅ => 绑定 + and 链：先绑定 Array，再收窄 arr[0] 为 float
+if x is Array => a and a[0] is float {
+    return a[0] + 0.1      // ✅ a 是 Array，a[0] 已收窄为 float
+}
+
+// ✅ 也支持 int、string 等
+if x is Array => a and a[0] is int {
+    return a[0] + 1        // ✅ a[0] 已收窄为 int
+}
+
+if x is Array => a and a[0] is string {
+    return a[0] + "!"      // ✅ a[0] 已收窄为 string
+}
+```
+
+**多条件 and 链（3 个以上条件）：**
+
+`and` 链不限于两个条件，可以串联多个类型守卫，实现一步到位的多类型解包：
+
+```leno
+// ✅ 四条件 and 链：Array 绑定 + float + int + Dict 三种元素同时收窄
+func test_multi_chain(any x): int {
+    if x is Array => a and a[0] is float and a[1] is int and a[2] is Dict {
+        var d = a[2]                    // ✅ d 继承 Dict 类型
+        if d["val"] is int {
+            return _int(a[0]) + a[1] + d["val"]   // ✅ 全部已收窄
+        }
+    }
+    return -1
+}
+
+// ✅ Dict 多键 and 链：同时收窄多个字段
+func test_dict_multi_key(any x): string {
+    if x is Dict => d and d["name"] is string and d["age"] is int {
+        return d["name"]                // ✅ d["name"] 已收窄为 string
+    }
+    return "NOT_FOUND"
+}
+
+// ✅ 三类型 and 链：int + string + float
+func test_three_types(any x): string {
+    if x is Array => a and a[0] is int and a[1] is string and a[2] is float {
+        return a[1] + ":" + _str(_int(a[2]))  // ✅ 全部已收窄
+    }
+    return "FAIL"
+}
+```
+
+**`and` 链短路语义：** 条件从左到右依次求值，任一条件为 `false` 则后续条件不再求值。因此可以安全地在右侧条件中引用左侧绑定的变量：
+
+```leno
+// a[0] 不是 float 时，后续条件不会执行
+if x is Array => a and a[0] is float and a[1] is int {
+    // 只有 a[0] 是 float 且 a[1] 是 int 时才进入
+    return _int(a[0]) + a[1]
+}
+```
+
+> **⚠️ `and` 链中 `=>` 绑定的变量只在 `and` 之后的条件和 if 块内有效**
+>
+> 绑定变量 `a` 在 `and` 之后的 `a[0] is float` 中就可以使用，无需先声明。
+> 编译器会在处理 `and` 之前就创建绑定变量的临时作用域。
+
+#### 收窄传导到局部变量
+
+当索引已被守卫收窄后，将其赋值给局部变量，**局部变量会继承守卫类型**：
+
+```leno
+// 场景 1：arr[0] is Dict → var d = arr[0] → d 继承 Dict 类型
+func test_dict(any a): string {
+    if a is Array and a[0] is Dict {
+        var d = a[0]        // ✅ d 继承 Dict 类型
+        if d["name"] is string {
+            return d["name"] // ✅ d["name"] 有守卫
+        }
+    }
+    return "NOT_FOUND"
+}
+
+// 场景 2：arr[0] is int → var n = arr[0] → n 继承 int 类型
+func test_int(any a): int {
+    if a is Array and a[0] is int {
+        var n = a[0]        // ✅ n 继承 int 类型
+        return n + 100      // ✅ n 可算术
+    }
+    return -1
+}
+
+// 场景 3：d["items"] is Array → var arr = d["items"] → arr 继承 Array 类型
+func test_nested(any a): int {
+    if a is Dict and a["items"] is Array {
+        var arr = a["items"] // ✅ arr 继承 Array 类型
+        if arr[0] is int {
+            return arr[0] + 1 // ✅ arr[0] 有索引守卫
+        }
+    }
+    return -1
+}
+```
+
+> **原理**：类型推断在访问 `arr[0]` 时会查到守卫符号 `"arr[0]"` 并返回收窄后的类型，
+> 所以 `var d = arr[0]` 中 `d` 的类型自动继承为守卫类型。
 
 ### 三元表达式
 
