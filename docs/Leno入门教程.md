@@ -12,6 +12,8 @@
 	   - [安全访问运算符 `?.`](#安全访问运算符-)
 	   - [空值合并运算符 `??`](#空值合并运算符-)
 4. [控制流](#控制流)
+   - [`=>` 绑定语法（类型守卫 + 变量绑定）](#-绑定语法类型守卫--变量绑定)
+   - [switch 性能优化](#switch-性能优化)
 5. [函数](#函数)
    - [泛型约束（T: Face）](#泛型约束t-face)
 6. [结构体（Struct）](#结构体struct)
@@ -1846,6 +1848,183 @@ func process(any arr) {
 }
 ```
 
+### `=>` 绑定语法（类型守卫 + 变量绑定）
+
+`=>` 是类型守卫的增强版，一次性解决三个问题：**临时变量泄漏**、**重复求值**、**冗余 `as` 转换**。
+
+#### 基本语法
+
+```leno
+if expr is Type => var {
+    // var 在块内就是 Type 类型，不需要 as
+    // expr 只求值一次
+    // var 只在 {} 内存在，外面访问不到
+    use(var)
+}
+```
+
+#### 写法对比
+
+| 旧写法（不用 =>） | 新写法（用 =>） |
+|---|---|
+| `var a = expr`<br>`if a is Type {`<br>`&emsp;use(a as Type)`<br>`}` | `if expr is Type => a {`<br>`&emsp;use(a)`<br>`}` |
+
+核心差异：
+- `a` **只在 if 的 `{}` 里面存在**，外面看不到
+- `expr` **只求值一次**，即使带副作用也安全
+- `a` 的类型**已经是 Type**，不需要 `as`
+
+#### 使用示例
+
+**1. 函数返回 nullable 的解包：**
+
+```leno
+func selectOne(HtmlNode root, string selector): HtmlNode? { ... }
+
+// 旧写法：临时变量 + as 强转
+HtmlNode? opt = selectOne(root, "title")
+if opt != null {
+    return cleanText(opt as HtmlNode)
+}
+
+// 新写法：=> 绑定
+if selectOne(root, "title") is HtmlNode => title {
+    return cleanText(title)
+}
+```
+
+**2. 泛型容器取值：**
+
+```leno
+// 旧写法
+var val = queue.shift()    // 返回 T?
+if val != null {
+    process(val as Token)
+}
+
+// 新写法
+if queue.shift() is Token => tok {
+    process(tok)
+}
+```
+
+**3. 数组遍历解包：**
+
+```leno
+var arr = [10, "hello", 3.14]
+int sum = 0
+for arr to item {
+    if item is int => n {
+        sum = sum + n     // n 已经是 int，不需要 as
+    }
+}
+```
+
+**4. 嵌套绑定：**
+
+```leno
+func process(any x): int {
+    if x is int => a {
+        if "hello" is string => b {
+            print(a)       // a 是 int
+            print(b)       // b 是 string
+        }
+    }
+    return 0
+}
+```
+
+**5. struct 类型绑定：**
+
+```leno
+struct Point {
+    int x
+    int y
+}
+
+func make_point(): any { ... }
+
+if make_point() is Point => p {
+    print(p.x)             // p 已经是 Point，直接访问字段
+    print(p.y)
+}
+```
+
+**6. 带 else 分支：**
+
+```leno
+func classify(any x): int {
+    if x is int => n {
+        return n           // 匹配 int，n 已绑定
+    } else {
+        return 0           // 不匹配，n 不存在
+    }
+}
+```
+
+#### 什么时候用 `=>`，什么时候不用
+
+| 场景 | 是否适合 | 说明 |
+|------|---------|------|
+| 函数返回 `T?`，需要解包 | ✅ 适合 | `if parse() is HtmlNode => node` |
+| 泛型容器取出 nullable | ✅ 适合 | `if queue.shift() is Token => tok` |
+| 类型转换前先守卫 | ✅ 适合 | `if obj is Admin => admin` |
+| 值判断（`> 0`、`== ""`） | ❌ 不适合 | `=>` 只管类型，不管值 |
+| 需要在 else 里也用变量 | ❌ 不适合 | `=>` 绑定的变量在 else 里不存在 |
+| 变量需要在 if 外面继续用 | ❌ 不适合 | 作用域只在 true 分支内 |
+
+#### 容易踩的坑
+
+**坑 1：else 里访问不到绑定变量**
+
+```leno
+if arr[i] is int => a {
+    print(a)      // ✅ 可以
+} else {
+    print(a)      // ❌ 编译错误，a 不存在
+}
+print(a)          // ❌ 编译错误，a 不存在
+```
+
+**坑 2：和外层变量同名会遮蔽**
+
+```leno
+int a = 10
+if x is int => a {       // 这里的 a 是新的，外面那个 a 被盖住了
+    print(a)             // 输出的是 x 的值，不是 10
+}
+print(a)                 // 输出 10，外面的 a 还在
+```
+
+> **建议**：`=>` 后面的变量名尽量取有意义的名字，别偷懒用 `a`、`x`、`tmp`。
+
+**坑 3：表达式只执行一次**
+
+```leno
+// 假设 getToken() 每次调用都推进游标
+if getToken() is Token => t1 {
+    // t1 是第一个 token
+}
+
+// 下面再调用 getToken() 拿到的是第二个 token
+if getToken() is Token => t2 {
+    // t2 是第二个 token，没问题
+}
+```
+
+> 这其实是好处——`=>` 保证表达式不会偷偷多调用。
+
+**坑 4：别在 `=>` 后面再 `as`**
+
+```leno
+// 多此一举
+if x is Admin => a {
+    var b = a as Admin   // ❌ a 已经是 Admin 了
+}
+```
+
+> **一句话总结**：看到 `is` + `as` 同时出现，或者 `?` 类型先判 null 再强转，就换成 `=>`。
+
 ### 三元表达式
 
 使用 `if ... then ... else`：
@@ -2088,6 +2267,38 @@ switch p {
 ```
 
 > **提示：** 解构可以和类型收窄结合使用——在 `case is Point(a, b)` 分支中，变量 `p` 同时被收窄为 `Point` 类型，可以直接访问 `p.x`、`p.y`。
+
+#### switch 性能优化
+
+当 switch 的所有 case 值类型统一为 `int`、`float` 或 `string`，且 case 数量 ≥ 4 时，编译器会自动生成**二分查找**字节码（`OP_SWITCH_LOOKUP`），将匹配复杂度从 O(n) 降为 O(log n)。
+
+**优化触发条件：**
+
+| 条件 | 说明 |
+|------|------|
+| case 值类型统一 | 所有 case 为同一类型（int/float/string） |
+| case 数量 ≥ 4 | 少于 4 个 case 不值得优化，线性扫描更快 |
+| 无 `case is` 混用 | 值匹配和类型匹配不能在同一次优化中混用 |
+
+**性能对比：**
+
+```leno
+// 20 个 case 的 switch，匹配最后一个
+switch v {
+    case 0 { return 0 }
+    case 1 { return 1 }
+    // ... 中间 17 个 ...
+    case 19 { return 19 }
+    default { return -1 }
+}
+```
+
+| 模式 | 线性扫描（旧） | 二分查找（新） | 提升 |
+|------|--------------|--------------|------|
+| 20 个 case | ~20 次比较 | ~5 次比较 | ~4x |
+| 100 个 case | ~100 次比较 | ~7 次比较 | ~14x |
+
+> **注意：** 优化是自动的，无需修改代码。少量 case（< 4）或类型混合时仍使用线性扫描。
 
 ### while 循环
 
@@ -9555,6 +9766,7 @@ lenolang program.leno
 | if 语句     | `if cond { } eif cond { } else { }`            |
 | 三元表达式     | `if cond then a else b`                        |
 | 类型守卫      | `if a is int { }`, `if a not is string { }`    |
+| => 绑定     | `if expr is Type => var { }` — 一次性求值、绑定、类型收窄 |
 | null 检查   | `if a is null { }`                             |
 | for 计数循环  | `for 5 to i`, `for 0:5 to i`, `for 0:5:2 to i` |
 | for 遍历数组  | `for arr to item`, `for arr to item, index`    |
@@ -9562,6 +9774,7 @@ lenolang program.leno
 | for 遍历字符串 | `for str to char`, `for str to char, index`（按 Unicode 字符遍历） |
 | while 循环  | `while i < 10 { }`                             |
 | switch    | `switch x { case v { } case is Type { } case is Point(a, b) { } default { } }` |
+| switch 优化 | 同类型 case ≥ 4 个时自动二分查找（int/float/string），无需手动干预 |
 
 ### 运算符
 
