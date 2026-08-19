@@ -1,14 +1,12 @@
 import "../lib/web_crawler.leno" as crawler
 
 main() {
-    // 测试 parseUrl
+    // 测试 parseUrl（返回强类型 Url struct）
     var p1 = crawler.parseUrl("https://example.com/path?q=1#frag")
-    if p1 is Dict {
-        print("scheme: " + p1["scheme"])
-        print("host: " + p1["host"])
-        print("port: " + format("%d", p1["port"]))
-        print("path: " + p1["path"])
-    }
+    print("scheme: " + p1.scheme)
+    print("host: " + p1.host)
+    print("port: " + p1.port)
+    print("path: " + p1.path)
     print("---")
     
     // 测试 domain

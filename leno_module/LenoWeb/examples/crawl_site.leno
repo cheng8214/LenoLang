@@ -5,7 +5,7 @@
 // ============================================================
 
 import "../lib/Web.leno" as web
-use web.(Crawler, start, nextUrl, shouldStop, markVisited, enqueue, extractLinks, fetchPage,
+use web.(Crawler, CrawlItem, createCrawler, start, nextUrl, shouldStop, markVisited, enqueue, extractLinks, fetchPage,
          fetchRobots, fetchSitemapUrls, setRobots, getWithRetry, parse,
          getTitle, getMeta, extractTable, textContent, cleanText, attr,
          Response, isRobotsAllowed, globalInit)
@@ -50,11 +50,11 @@ main() {
     config["user_agent"] = ua
     config["respect_robots"] = true
 
-    var crawler = web.Crawler(config)
+    var crawler = web.createCrawler(config)
     if robots != "" {
         web.setRobots(crawler, robots)
     }
-    crawler = web.start(crawler)
+    web.start(crawler)
 
     int totalQuotes = 0
     int startTime = times.ms()
@@ -67,77 +67,69 @@ main() {
         if entry == null {
             break
         }
-        if entry is Dict {
-            string url = ""
-            var eu = entry["url"]
-            if eu is string { url = eu }
-            int depth = 0
-            var ed = entry["depth"]
-            if ed is int { depth = ed }
+        string url = entry.url
+        int depth = entry.depth
 
-            print("  [深度 " + depth + "] " + url)
+        print("  [深度 " + depth + "] " + url)
 
-            // 带重试抓取（失败重试 2 次，间隔 300ms）
-            Response resp = web.getWithRetry(url, 2, 300)
-            if resp.isError() {
-                print("    -> HTTP " + resp.statusCode + " 失败，跳过")
-                web.markVisited(crawler, url)
-                continue
-            }
-
-            // 解析 HTML
-            var root = web.parse(resp.body)
-
-            // 提取元数据（标题/描述）
-            string title = web.getTitle(root)
-            if title != "" {
-                print("    title: " + title)
-            }
-
-            // 提取名言（quotes 站结构）
-            var quotes = web.select(root, ".quote")
-            if quotes is Array {
-                for quotes to quote {
-                    var textNode = web.select(quote, ".text")
-                    var authorNode = web.select(quote, ".author")
-                    string text = ""
-                    string author = ""
-                    if textNode is Array and textNode.len() > 0 {
-                        text = web.textContent(textNode[0])
-                    }
-                    if authorNode is Array and authorNode.len() > 0 {
-                        author = web.textContent(authorNode[0])
-                    }
-                    if text != "" {
-                        totalQuotes = totalQuotes + 1
-                        string show = text
-                        if show.len() > 40 {
-                            show = show.slice(0, 40) + "..."
-                        }
-                        print("      - " + show + "  [" + author + "]")
-                    }
-                }
-            }
-
-            // 提取下一页链接（quotes 站用 .next a）
-            var nexts = web.select(root, ".next a")
-            if nexts is Array and nexts.len() > 0 {
-                string href = web.attr(nexts[0], "href")
-                if href != "" {
-                    web.enqueue(crawler, site + href, depth + 1)
-                }
-            }
-
+        // 带重试抓取（失败重试 2 次，间隔 300ms）
+        Response resp = web.getWithRetry(url, 2, 300)
+        if resp.isError() {
+            print("    -> HTTP " + resp.statusCode + " 失败，跳过")
             web.markVisited(crawler, url)
-            print("")
+            continue
         }
+
+        // 解析 HTML
+        var root = web.parse(resp.body)
+
+        // 提取元数据（标题/描述）
+        string title = web.getTitle(root)
+        if title != "" {
+            print("    title: " + title)
+        }
+
+        // 提取名言（quotes 站结构）
+        var quotes = web.select(root, ".quote")
+        if quotes is Array {
+            for quotes to quote {
+                var textNode = web.select(quote, ".text")
+                var authorNode = web.select(quote, ".author")
+                string text = ""
+                string author = ""
+                if textNode is Array and textNode.len() > 0 {
+                    text = web.textContent(textNode[0])
+                }
+                if authorNode is Array and authorNode.len() > 0 {
+                    author = web.textContent(authorNode[0])
+                }
+                if text != "" {
+                    totalQuotes = totalQuotes + 1
+                    string show = text
+                    if show.len() > 40 {
+                        show = show.slice(0, 40) + "..."
+                    }
+                    print("      - " + show + "  [" + author + "]")
+                }
+            }
+        }
+
+        // 提取下一页链接（quotes 站用 .next a）
+        var nexts = web.select(root, ".next a")
+        if nexts is Array and nexts.len() > 0 {
+            string href = web.attr(nexts[0], "href")
+            if href != "" {
+                web.enqueue(crawler, site + href, depth + 1)
+            }
+        }
+
+        web.markVisited(crawler, url)
+        print("")
     }
 
     int elapsed = times.ms() - startTime
     print("=== 爬取完成 ===")
-    var pc = crawler["page_count"]
-    int pageCount = 0
-    if pc is int { pageCount = pc }
+    int pageCount = crawler.page_count
     print("总访问页面: " + pageCount)
     print("总名言数: " + totalQuotes)
     print("耗时: " + elapsed / 1000 + " 秒")

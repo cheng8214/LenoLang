@@ -111,15 +111,15 @@ export func fetchRobots(string siteUrl, string userAgent): string { return crawl
 export func fetchSitemapUrls(string siteUrl, string userAgent): Array[string] { return crawler.fetchSitemapUrls(siteUrl, userAgent) }
 
 // ==================== 爬虫框架 ====================
-export func Crawler(Dict config): Crawler { return crawler.createCrawler(config) }
+export func createCrawler(Dict config): Crawler { return crawler.createCrawler(config) }
 export func setRobots(Crawler c, string robotsText) { c.setRobots(robotsText) }
 export func start(Crawler c) { c.start() }
-export func nextUrl(Crawler c): CrawlItem { return c.nextUrl() }
+export func nextUrl(Crawler c): CrawlItem? { return c.nextUrl() }
 export func markVisited(Crawler c, string url) { c.markVisited(url) }
 export func enqueue(Crawler c, string url, int depth) { c.enqueue(url, depth) }
 export func shouldStop(Crawler c): bool { return c.shouldStop() }
 export func stop(Crawler c) { c.stop() }
-export func fetchPage(string url, string user_agent): Page { return crawler.fetchPage(url, user_agent) }
+export func fetchPage(string url, string user_agent): Page? { return crawler.fetchPage(url, user_agent) }
 export func extractLinks(Page page): Array[string] { return crawler.extractLinks(page) }
 
 // ==================== 泛型工具 ====================

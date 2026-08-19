@@ -397,7 +397,7 @@ export struct Crawler {
     }
 
     // 取出下一个待抓取的 URL（跳过已访问/超深/域名不符/robots 禁止）
-    func nextUrl(): CrawlItem {
+    func nextUrl(): CrawlItem? {
         while queue.len() > 0 {
             CrawlItem entry = queue[0]
             queue.remove(0)
@@ -798,7 +798,7 @@ export func createCrawler(Dict config): Crawler {
 }
 
 // 抓取页面，返回强类型 Page struct（失败返回 null）
-export func fetchPage(string url, string user_agent): Page {
+export func fetchPage(string url, string user_agent): Page? {
     HttpClient c = createClient()
     c.setHeaders(["User-Agent: " + user_agent])
     Response resp = c.get(url)
