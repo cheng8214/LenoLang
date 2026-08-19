@@ -479,6 +479,8 @@ static int serialize_constant(WriteBuffer* wb, Value val) {
             wb_write_u32(wb, (uint32_t)cdef->field_count);
             wb_write_u32(wb, (uint32_t)cdef->total_size);
             wb_write_u32(wb, (uint32_t)cdef->alignment);
+            wb_write_u8(wb, cdef->is_packed ? 1 : 0);
+            wb_write_u8(wb, (uint8_t)cdef->explicit_align);
             for (int i = 0; i < cdef->field_count; i++) {
                 CStructFieldInfo* f = &cdef->fields[i];
                 wb_write_string(wb, f->name, (uint32_t)strlen(f->name));
@@ -1092,8 +1094,14 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
             !ctx_read_u32(ctx, &total_size) ||
             !ctx_read_u32(ctx, &alignment)) { free(name); return 0; }
 
+        uint8_t is_packed, explicit_align;
+        if (!ctx_read_u8(ctx, &is_packed) ||
+            !ctx_read_u8(ctx, &explicit_align)) { free(name); return 0; }
+
         ObjCStructDef* cdef = cstruct_def_new(name, (int)field_count,
                                                (int)total_size, (int)alignment);
+        cdef->is_packed = (is_packed != 0);
+        cdef->explicit_align = (int)explicit_align;
         free(name);
 
         for (uint32_t i = 0; i < field_count; i++) {

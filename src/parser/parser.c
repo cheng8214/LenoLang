@@ -123,6 +123,9 @@ Ast* parse_statement(Parser* p) {
             break;
 
         // cstruct 定义（C 布局结构体）
+        // packed cstruct / align(N) cstruct 也路由到这里
+        case TOK_PACKED:
+        case TOK_ALIGN:
         case TOK_CSTRUCT:
             stmt = parse_cstruct_stmt(p);
             break;

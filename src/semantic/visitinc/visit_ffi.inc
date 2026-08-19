@@ -31,6 +31,10 @@
                 }
 
                 // 3. 计算 C 布局（字段偏移、总大小、对齐要求）
+                // 读取 packed / align(N) 属性
+                bool is_packed = ast->u.cstruct_def.is_packed;
+                int explicit_align = ast->u.cstruct_def.explicit_align;
+
                 int* field_offsets = (int*)malloc(sizeof(int) * ast->u.cstruct_def.field_count);
                 int current_offset = 0;
                 int max_alignment = 1;
@@ -48,7 +52,16 @@
                             // 使用已存储的 cstruct 布局信息
                             field_size = nested_cstruct->cstruct_size;
                             field_align = nested_cstruct->cstruct_alignment;
+                            // packed 模式下嵌套 cstruct 也按 1 对齐
+                            if (is_packed) {
+                                field_align = 1;
+                            }
                         }
+                    }
+
+                    // packed 模式下所有字段按 1 字节对齐（无 padding）
+                    if (is_packed) {
+                        field_align = 1;
                     }
 
                     // 更新最大对齐要求
@@ -68,13 +81,19 @@
                     current_offset += field_total_size;
                 }
 
-                // 结构体总大小需要按最大对齐要求对齐
-                int total_size = c_layout_align_up(current_offset, max_alignment);
+                // 应用显式对齐：最终对齐 = max(自然对齐, explicit_align)
+                int final_alignment = max_alignment;
+                if (explicit_align > final_alignment) {
+                    final_alignment = explicit_align;
+                }
+
+                // 结构体总大小需要按最终对齐要求对齐
+                int total_size = c_layout_align_up(current_offset, final_alignment);
 
                 // 保存布局信息到 AST
                 ast->u.cstruct_def.field_offsets = field_offsets;
                 ast->u.cstruct_def.total_size = total_size;
-                ast->u.cstruct_def.alignment = max_alignment;
+                ast->u.cstruct_def.alignment = final_alignment;
 
                 // 4. 注册到符号表（或更新已预注册的符号）
                 TypeInfo* cstruct_type = type_new(TYPE_CSTRUCT);
@@ -119,7 +138,9 @@
 
                     // 存储 cstruct 布局信息
                     sym->cstruct_size = total_size;
-                    sym->cstruct_alignment = max_alignment;
+                    sym->cstruct_alignment = final_alignment;
+                    sym->cstruct_is_packed = is_packed;
+                    sym->cstruct_explicit_align = explicit_align;
                     sym->cstruct_field_offsets = (int*)malloc(sizeof(int) * ast->u.cstruct_def.field_count);
                     for (int i = 0; i < ast->u.cstruct_def.field_count; i++) {
                         sym->cstruct_field_offsets[i] = field_offsets[i];

@@ -289,6 +289,46 @@ static void extract_exports(const char* source, ExportList* list) {
             } else if (strncmp(p, "cstruct", 7) == 0 && !isalnum((unsigned char)p[7]) && p[7] != '_') {
                 p += 7;
                 while (*p && (*p == ' ' || *p == '\t')) p++;
+            } else if (strncmp(p, "packed", 6) == 0 && !isalnum((unsigned char)p[6]) && p[6] != '_') {
+                // export packed cstruct / export packed align(N) cstruct
+                p += 6;
+                while (*p && (*p == ' ' || *p == '\t')) p++;
+                // 跳过可选的 align(N)
+                if (strncmp(p, "align", 5) == 0 && !isalnum((unsigned char)p[5]) && p[5] != '_') {
+                    p += 5;
+                    while (*p && (*p == ' ' || *p == '\t')) p++;
+                    if (*p == '(') {
+                        p++;
+                        while (*p && *p != ')') p++;
+                        if (*p == ')') p++;
+                        while (*p && (*p == ' ' || *p == '\t')) p++;
+                    }
+                }
+                // 跳过 cstruct 关键字
+                if (strncmp(p, "cstruct", 7) == 0 && !isalnum((unsigned char)p[7]) && p[7] != '_') {
+                    p += 7;
+                    while (*p && (*p == ' ' || *p == '\t')) p++;
+                }
+            } else if (strncmp(p, "align", 5) == 0 && !isalnum((unsigned char)p[5]) && p[5] != '_') {
+                // export align(N) cstruct / export align(N) packed cstruct
+                p += 5;
+                while (*p && (*p == ' ' || *p == '\t')) p++;
+                if (*p == '(') {
+                    p++;
+                    while (*p && *p != ')') p++;
+                    if (*p == ')') p++;
+                    while (*p && (*p == ' ' || *p == '\t')) p++;
+                }
+                // 跳过可选的 packed
+                if (strncmp(p, "packed", 6) == 0 && !isalnum((unsigned char)p[6]) && p[6] != '_') {
+                    p += 6;
+                    while (*p && (*p == ' ' || *p == '\t')) p++;
+                }
+                // 跳过 cstruct 关键字
+                if (strncmp(p, "cstruct", 7) == 0 && !isalnum((unsigned char)p[7]) && p[7] != '_') {
+                    p += 7;
+                    while (*p && (*p == ' ' || *p == '\t')) p++;
+                }
             } else if (strncmp(p, "struct", 6) == 0 && !isalnum((unsigned char)p[6]) && p[6] != '_') {
                 p += 6;
                 while (*p && (*p == ' ' || *p == '\t')) p++;

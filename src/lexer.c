@@ -142,6 +142,9 @@ static void init_keyword_table(void) {
         {"cfunc", TOK_CFUNC},
         {"str8", TOK_STR8},
         {"str16", TOK_STR16},
+        // cstruct 布局属性关键字
+        {"packed", TOK_PACKED},
+        {"align",  TOK_ALIGN},
     };
     
     int keyword_count = sizeof(keywords) / sizeof(keywords[0]);

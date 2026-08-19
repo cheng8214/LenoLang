@@ -1928,6 +1928,59 @@ Ast* parse_face_stmt(Parser* p) {
 
 Ast* parse_cstruct_stmt(Parser* p) {
     int line = p->lex.current.line;
+
+    // 解析可选的 packed / align(N) 前缀（顺序可互换）
+    bool is_packed = false;
+    int explicit_align = 0;
+
+    // 最多循环两次，处理 packed 和 align 的任意顺序
+    for (int attr_pass = 0; attr_pass < 2; attr_pass++) {
+        if (p->lex.current.type == TOK_PACKED) {
+            if (is_packed) {
+                error_add(ERR_SYNTAX, p->lex.current.line, "packed 重复指定");
+            }
+            is_packed = true;
+            lexer_next(&p->lex); // 消费 'packed'
+        } else if (p->lex.current.type == TOK_ALIGN) {
+            if (explicit_align > 0) {
+                error_add(ERR_SYNTAX, p->lex.current.line, "align 重复指定");
+            }
+            lexer_next(&p->lex); // 消费 'align'
+            if (!consume(p, TOK_LPAREN, "期望 '(' 开始 align 参数")) {
+                return NULL;
+            }
+            if (p->lex.current.type != TOK_NUM || p->lex.current.is_float) {
+                error_add(ERR_SYNTAX, p->lex.current.line, "align 参数必须是正整数");
+                return NULL;
+            }
+            int align_val = (int)p->lex.current.num_val;
+            if (align_val <= 0 || (align_val & (align_val - 1)) != 0) {
+                char msg[128];
+                snprintf(msg, sizeof(msg), "align 参数 %d 不是有效的 2 的幂（1/2/4/8/16/32/64）", align_val);
+                error_add(ERR_SYNTAX, p->lex.current.line, msg);
+                return NULL;
+            }
+            if (align_val > 64) {
+                char msg[128];
+                snprintf(msg, sizeof(msg), "align 参数 %d 超过最大值 64", align_val);
+                error_add(ERR_SYNTAX, p->lex.current.line, msg);
+                return NULL;
+            }
+            explicit_align = align_val;
+            lexer_next(&p->lex); // 消费数字
+            if (!consume(p, TOK_RPAREN, "期望 ')' 结束 align 参数")) {
+                return NULL;
+            }
+        } else {
+            break; // 不是 packed 也不是 align，退出循环
+        }
+    }
+
+    // 现在必须遇到 'cstruct' 关键字
+    if (p->lex.current.type != TOK_CSTRUCT) {
+        error_add(ERR_SYNTAX, p->lex.current.line, "期望 'cstruct' 关键字");
+        return NULL;
+    }
     lexer_next(&p->lex); // 消费 'cstruct'
 
     // 期望 cstruct 名称
@@ -2094,6 +2147,8 @@ Ast* parse_cstruct_stmt(Parser* p) {
     ast->u.cstruct_def.total_size = 0;      // 语义分析时计算
     ast->u.cstruct_def.alignment = 0;       // 语义分析时计算
     ast->u.cstruct_def.field_offsets = NULL; // 语义分析时分配和计算
+    ast->u.cstruct_def.is_packed = is_packed;
+    ast->u.cstruct_def.explicit_align = explicit_align;
     ast->u.cstruct_def.ref.kind = SYM_CSTRUCT;
     ast->u.cstruct_def.ref.index = -1;
     ast->u.cstruct_def.ref.name = strdup(cstruct_name);

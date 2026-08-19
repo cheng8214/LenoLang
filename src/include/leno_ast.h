@@ -307,6 +307,8 @@ struct Ast {
             int alignment;      // 对齐要求（编译期计算）
             int* field_offsets; // 字段偏移量数组（编译期计算）
             int* field_array_dims; // 字段数组维度（0 表示非数组，>0 表示数组大小）
+            bool is_packed;     // 是否 packed（取消所有字段间 padding）
+            int  explicit_align; // 显式对齐要求（0 表示未指定，否则必须是 2 的幂）
             SymRef ref;        // 符号引用信息
         } cstruct_def;
         struct {

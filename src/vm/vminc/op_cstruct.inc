@@ -6,12 +6,15 @@ OPCODE(OP_CSTRUCT_DEF) {
     frame = &vm.frames[vm.frame_cnt - 1];
     // 定义 C 布局结构体
     // 操作数：2字节名称常量索引 + 1字节字段数量 + 2字节总大小 + 1字节对齐要求
+    //          + 1字节is_packed + 1字节explicit_align
     // 每个字段：2字节字段名常量索引 + 1字节类型 + 2字节偏移量 + 2字节数组维度 + 2字节结构体类型名常量索引
     //          如果类型是 TYPE_PTR_GENERIC：+ 1字节元素类型
     uint16_t name_idx = READ_SHORT();
     uint8_t field_count = READ_BYTE();
     uint16_t total_size = READ_SHORT();
     uint8_t alignment = READ_BYTE();
+    uint8_t is_packed = READ_BYTE();
+    uint8_t explicit_align = READ_BYTE();
 
     Value name_val = frame->chunk->constants[name_idx];
     if (!val_is_obj(name_val) || val_as_obj(name_val)->type != OBJ_STRING) {
@@ -22,6 +25,8 @@ OPCODE(OP_CSTRUCT_DEF) {
 
     // 创建 C 布局结构体定义
     ObjCStructDef* def = cstruct_def_new(name->chars, field_count, total_size, alignment);
+    def->is_packed = (is_packed != 0);
+    def->explicit_align = (int)explicit_align;
 
     // 读取字段信息
     for (int i = 0; i < field_count; i++) {

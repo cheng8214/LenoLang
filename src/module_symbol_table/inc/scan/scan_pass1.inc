@@ -80,6 +80,26 @@
             char* after_export = p + 6;
             while (*after_export && (*after_export == ' ' || *after_export == '\t' || *after_export == '\n' || *after_export == '\r')) after_export++;
 
+            // 跳过可选的 packed / align(N) 前缀（cstruct 布局属性）
+            // 最多循环两次，处理两种顺序
+            for (int attr_pass = 0; attr_pass < 2; attr_pass++) {
+                if (strncmp(after_export, "packed", 6) == 0 && (after_export[6] == ' ' || after_export[6] == '\t' || after_export[6] == '\n' || after_export[6] == '\r' || after_export[6] == '\0')) {
+                    after_export += 6;
+                    while (*after_export && (*after_export == ' ' || *after_export == '\t' || *after_export == '\n' || *after_export == '\r')) after_export++;
+                } else if (strncmp(after_export, "align", 5) == 0 && (after_export[5] == ' ' || after_export[5] == '\t' || after_export[5] == '(')) {
+                    after_export += 5;
+                    while (*after_export && (*after_export == ' ' || *after_export == '\t')) after_export++;
+                    if (*after_export == '(') {
+                        after_export++;
+                        while (*after_export && *after_export != ')') after_export++;
+                        if (*after_export == ')') after_export++;
+                        while (*after_export && (*after_export == ' ' || *after_export == '\t' || *after_export == '\n' || *after_export == '\r')) after_export++;
+                    }
+                } else {
+                    break;
+                }
+            }
+
             // 检查 export struct
             if (strncmp(after_export, "struct", 6) == 0 && (after_export[6] == ' ' || after_export[6] == '\t' || after_export[6] == '\n' || after_export[6] == '\r' || after_export[6] == '\0')) {
                 char* after_struct = after_export + 6;

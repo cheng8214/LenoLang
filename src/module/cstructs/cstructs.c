@@ -350,8 +350,21 @@ static Value cstruct_method_to_str(int argc, Value* args) {
         cstruct_instance_to_str(instance, buffer, sizeof(buffer), &offset, 0);
     } else {
         // 定义：使用简化格式
-        offset += snprintf(buffer + offset, sizeof(buffer) - offset,
-                           "cstruct %s {\n", def->name);
+        if (def->is_packed && def->explicit_align > 0) {
+            offset += snprintf(buffer + offset, sizeof(buffer) - offset,
+                               "packed align(%d) cstruct %s {\n",
+                               def->explicit_align, def->name);
+        } else if (def->is_packed) {
+            offset += snprintf(buffer + offset, sizeof(buffer) - offset,
+                               "packed cstruct %s {\n", def->name);
+        } else if (def->explicit_align > 0) {
+            offset += snprintf(buffer + offset, sizeof(buffer) - offset,
+                               "align(%d) cstruct %s {\n",
+                               def->explicit_align, def->name);
+        } else {
+            offset += snprintf(buffer + offset, sizeof(buffer) - offset,
+                               "cstruct %s {\n", def->name);
+        }
         offset += snprintf(buffer + offset, sizeof(buffer) - offset,
                            "  // 总大小: %d 字节, 对齐要求: %d 字节\n",
                            def->total_size, def->alignment);
@@ -535,8 +548,21 @@ static Value cstruct_method_debug(int argc, Value* args) {
     int offset = 0;
     
     // 标题
-    offset += snprintf(buffer + offset, sizeof(buffer) - offset,
-                       "=== cstruct %s 调试信息 ===\n\n", def->name);
+    if (def->is_packed && def->explicit_align > 0) {
+        offset += snprintf(buffer + offset, sizeof(buffer) - offset,
+                           "=== packed align(%d) cstruct %s 调试信息 ===\n\n",
+                           def->explicit_align, def->name);
+    } else if (def->is_packed) {
+        offset += snprintf(buffer + offset, sizeof(buffer) - offset,
+                           "=== packed cstruct %s 调试信息 ===\n\n", def->name);
+    } else if (def->explicit_align > 0) {
+        offset += snprintf(buffer + offset, sizeof(buffer) - offset,
+                           "=== align(%d) cstruct %s 调试信息 ===\n\n",
+                           def->explicit_align, def->name);
+    } else {
+        offset += snprintf(buffer + offset, sizeof(buffer) - offset,
+                           "=== cstruct %s 调试信息 ===\n\n", def->name);
+    }
     
     // 基本信息
     offset += snprintf(buffer + offset, sizeof(buffer) - offset,
@@ -545,6 +571,14 @@ static Value cstruct_method_debug(int argc, Value* args) {
                        "  总大小: %d 字节 (0x%X)\n", def->total_size, def->total_size);
     offset += snprintf(buffer + offset, sizeof(buffer) - offset,
                        "  对齐要求: %d 字节\n", def->alignment);
+    if (def->is_packed) {
+        offset += snprintf(buffer + offset, sizeof(buffer) - offset,
+                           "  packed: 是 (字段间无 padding)\n");
+    }
+    if (def->explicit_align > 0) {
+        offset += snprintf(buffer + offset, sizeof(buffer) - offset,
+                           "  显式对齐: %d 字节\n", def->explicit_align);
+    }
     offset += snprintf(buffer + offset, sizeof(buffer) - offset,
                        "  字段数量: %d\n\n", def->field_count);
     

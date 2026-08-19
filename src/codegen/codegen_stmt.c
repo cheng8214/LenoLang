@@ -2229,6 +2229,9 @@ void gen_stmt(CodeGen* gen, Ast* ast) {
             emit_byte(gen, (ast->u.cstruct_def.total_size >> 8) & 0xff, ast->line);
             emit_byte(gen, ast->u.cstruct_def.total_size & 0xff, ast->line);
             emit_byte(gen, ast->u.cstruct_def.alignment, ast->line);
+            // packed / align(N) 属性
+            emit_byte(gen, ast->u.cstruct_def.is_packed ? 1 : 0, ast->line);
+            emit_byte(gen, (uint8_t)ast->u.cstruct_def.explicit_align, ast->line);
 
             // 为每个字段生成信息
             for (int i = 0; i < ast->u.cstruct_def.field_count; i++) {

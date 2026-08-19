@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdbool.h>
 
 // ============================================================================
 // 基础常量定义
@@ -148,7 +149,10 @@ typedef enum {
     TOK_CFUNC,           // cfunc - C 回调函数签名声明
     // 字符串类型关键字
     TOK_STR8,           // str8 - C char* 字符串指针
-    TOK_STR16,           // str16 - UTF-16 字符串数组
+    TOK_STR16,          // str16 - UTF-16 字符串数组
+    // cstruct 布局属性关键字
+    TOK_PACKED,         // packed - 取消 cstruct 字段间 padding
+    TOK_ALIGN,          // align(N) - 指定 cstruct 整体对齐边界
     // 字符串插值 - 简化设计
     TOK_INTERP_STRING,   // $" 开始
     TOK_INTERP_PART,     // 字符串片段

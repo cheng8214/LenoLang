@@ -504,6 +504,8 @@ ObjModule* compile_module_new(const char* source, const char* module_name,
                             global_index = decl->u.enum_def.ref.index;
                         } else if (decl->kind == AST_STRUCT_DEF && strcmp(decl->u.struct_def.name, export_names[i]) == 0) {
                             global_index = -2; // struct 定义通过 struct_def_find 注册
+                        } else if (decl->kind == AST_CSTRUCT_DEF && strcmp(decl->u.cstruct_def.name, export_names[i]) == 0) {
+                            global_index = decl->u.cstruct_def.ref.index; // cstruct 通过 global var 注册
                         }
                         if (global_index != -1) {
                             int mi = module->export_mapping_count;

@@ -97,6 +97,60 @@ cstruct 结构体名 {
 | `Ptr[T]` | 平台相关 | 类型安全指针 |
 | `str16` | 2 字节/字符 | UTF-16 字符串数组 |
 
+### packed — 取消字段间 padding
+
+默认情况下，cstruct 遵循 C 语言的对齐规则：每个字段按其类型的自然对齐要求排列，中间可能插入填充字节。使用 `packed` 关键字可以取消所有 padding，使字段紧挨排列。
+
+```leno
+// 默认布局（有 padding）
+cstruct Normal {
+    u8  a       // offset 0, size 1
+    // 3 字节 padding
+    i32 b       // offset 4, size 4
+    u8  c       // offset 8, size 1
+    // 3 字节 padding
+}               // total=12, alignment=4
+
+// packed 布局（无 padding）
+packed cstruct PackedDemo {
+    u8  a       // offset 0, size 1
+    i32 b       // offset 1, size 4  ← 无 padding！
+    u8  c       // offset 5, size 1
+}               // total=6, alignment=1
+```
+
+`packed` 等价于 C 语言的 `#pragma pack(1)` 或 `__attribute__((packed))`，常用于：
+- 网络协议头（字段紧挨，无填充）
+- 文件格式解析（二进制结构体精确匹配）
+- 嵌入式系统的紧凑数据结构
+
+### align(N) — 指定结构体整体对齐
+
+`align(N)` 指定结构体的整体对齐要求，N 必须是 2 的幂（1, 2, 4, 8, 16, 32, 64）。字段仍按自然对齐排列，但结构体总大小和起始地址按 N 对齐。
+
+```leno
+// 对齐到 16 字节边界（如缓存行、SIMD）
+align(16) cstruct CacheLine {
+    i64 data    // offset 0, size 8
+    // 8 字节 padding（对齐到 16）
+}               // total=16, alignment=16
+```
+
+`align(N)` 等价于 C 语言的 `alignas(N)` 或 `__declspec(align(N))`。
+
+### packed + align(N) 组合
+
+`packed` 和 `align(N)` 可以组合使用，顺序可互换：
+
+```leno
+// packed 使字段紧挨，align(16) 使结构体整体对齐 16
+packed align(16) cstruct NetworkPacket {
+    u8  magic    // offset 0
+    u16 length   // offset 1  ← packed 使字段紧挨
+    u8  flag     // offset 3
+}                // packed 后 3 字节, align(16) 后 total=16, alignment=16
+```
+
 ### 数组字段
 
 ```leno

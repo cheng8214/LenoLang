@@ -1,0 +1,139 @@
+// 测试 cstruct packed 和 align(N) 属性
+// packed：取消所有字段间 padding，字段紧挨
+// align(N)：指定结构体整体对齐边界
+
+// === 测试1：普通 cstruct（基线） ===
+cstruct Normal {
+    u8  a      // offset 0
+    // 3 padding
+    i32 b      // offset 4
+    u8  c      // offset 8
+    // 3 padding
+}             // total=12, align=4
+
+assert_eq(Normal.size(), 12)
+assert_eq(Normal.alignment(), 4)
+assert_eq(Normal.offset_of("a"), 0)
+assert_eq(Normal.offset_of("b"), 4)
+assert_eq(Normal.offset_of("c"), 8)
+
+// === 测试2：packed cstruct（取消所有 padding） ===
+packed cstruct PackedDemo {
+    u8  a      // offset 0
+    i32 b      // offset 1  ← 无 padding!
+    u8  c      // offset 5
+}             // total=6, align=1
+
+assert_eq(PackedDemo.size(), 6)
+assert_eq(PackedDemo.alignment(), 1)
+assert_eq(PackedDemo.offset_of("a"), 0)
+assert_eq(PackedDemo.offset_of("b"), 1)
+assert_eq(PackedDemo.offset_of("c"), 5)
+
+// === 测试3：align(16) cstruct（指定整体对齐） ===
+align(16) cstruct Aligned16 {
+    i64 x      // offset 0
+}              // total=16, align=16
+
+assert_eq(Aligned16.size(), 16)
+assert_eq(Aligned16.alignment(), 16)
+
+// === 测试4：align(8) cstruct（小于自然对齐时不变） ===
+align(8) cstruct Aligned8 {
+    u8  a       // offset 0
+    // 7 padding
+    i64 b       // offset 8
+}               // total=16, align=8
+
+assert_eq(Aligned8.size(), 16)
+assert_eq(Aligned8.alignment(), 8)
+
+// === 测试5：packed align(16) 组合 ===
+packed align(16) cstruct ComboDemo {
+    u8  magic   // offset 0
+    u16 length  // offset 1  ← packed 使字段紧挨
+    u8  flag    // offset 3
+}               // packed 后 3 字节, align(16) 后 total=16, align=16
+
+assert_eq(ComboDemo.size(), 16)
+assert_eq(ComboDemo.alignment(), 16)
+assert_eq(ComboDemo.offset_of("magic"), 0)
+assert_eq(ComboDemo.offset_of("length"), 1)
+assert_eq(ComboDemo.offset_of("flag"), 3)
+
+// === 测试6：align(2) cstruct ===
+align(2) cstruct Aligned2 {
+    u8 a        // offset 0
+    u8 b        // offset 1
+}               // total=2, align=2
+
+assert_eq(Aligned2.size(), 2)
+assert_eq(Aligned2.alignment(), 2)
+
+// === 测试7：packed cstruct 数组字段 ===
+packed cstruct PackedArray {
+    u8  type     // offset 0
+    u8  data[4]  // offset 1, size 4
+}                // total=5, align=1
+
+assert_eq(PackedArray.size(), 5)
+assert_eq(PackedArray.alignment(), 1)
+assert_eq(PackedArray.offset_of("type"), 0)
+assert_eq(PackedArray.offset_of("data"), 1)
+
+// === 测试8：packed 顺序可互换 ===
+align(16) packed cstruct ReversedOrder {
+    u8 a
+    u8 b
+}               // total=16, align=16
+
+assert_eq(ReversedOrder.size(), 16)
+assert_eq(ReversedOrder.alignment(), 16)
+
+// === 测试9：实例使用 packed cstruct ===
+packed cstruct Packet {
+    u8  type
+    i32 seq
+    u8  flag
+}
+
+func test_packed_instance():int {
+    var p = Packet.malloc()
+    p.type = 0x42
+    p.seq = 123456
+    p.flag = 1
+
+    if p.type != 0x42 { p.free(); return 1 }
+    if p.seq != 123456 { p.free(); return 2 }
+    if p.flag != 1 { p.free(); return 3 }
+    p.free()
+    return 0
+}
+
+assert_eq(test_packed_instance(), 0)
+
+// === 测试10：debug/to_str 输出包含 packed/align 标记 ===
+func test_debug_output():int {
+    // debug() 输出应包含 "packed" 字样
+    var s = PackedDemo.debug()
+    if not s.has("packed") { return 1 }
+
+    // to_str() 输出应包含 "packed" 字样
+    var s2 = PackedDemo.to_str()
+    if not s2.has("packed") { return 2 }
+
+    // align(16) 的 debug 输出应包含 "align(16)"
+    var s3 = Aligned16.debug()
+    if not s3.has("align(16)") { return 3 }
+
+    // 组合的 debug 输出应包含 "packed" 和 "align(16)"
+    var s4 = ComboDemo.debug()
+    if not s4.has("packed") { return 4 }
+    if not s4.has("align(16)") { return 5 }
+
+    return 0
+}
+
+assert_eq(test_debug_output(), 0)
+
+print("test_cstruct_packed_align passed")

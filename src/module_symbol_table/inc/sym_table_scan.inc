@@ -13,6 +13,25 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
             char* after_export = p + 6;
             while (*after_export && (*after_export == ' ' || *after_export == '\t' || *after_export == '\n' || *after_export == '\r')) after_export++;
 
+            // 跳过可选的 packed / align(N) 前缀（cstruct 布局属性）
+            for (int attr_pass = 0; attr_pass < 2; attr_pass++) {
+                if (strncmp(after_export, "packed", 6) == 0 && (after_export[6] == ' ' || after_export[6] == '\t' || after_export[6] == '\n' || after_export[6] == '\r' || after_export[6] == '\0')) {
+                    after_export += 6;
+                    while (*after_export && (*after_export == ' ' || *after_export == '\t' || *after_export == '\n' || *after_export == '\r')) after_export++;
+                } else if (strncmp(after_export, "align", 5) == 0 && (after_export[5] == ' ' || after_export[5] == '\t' || after_export[5] == '(')) {
+                    after_export += 5;
+                    while (*after_export && (*after_export == ' ' || *after_export == '\t')) after_export++;
+                    if (*after_export == '(') {
+                        after_export++;
+                        while (*after_export && *after_export != ')') after_export++;
+                        if (*after_export == ')') after_export++;
+                        while (*after_export && (*after_export == ' ' || *after_export == '\t' || *after_export == '\n' || *after_export == '\r')) after_export++;
+                    }
+                } else {
+                    break;
+                }
+            }
+
             #include "scan/scan_struct.inc"
             #include "scan/scan_cstruct.inc"
             #include "scan/scan_face.inc"

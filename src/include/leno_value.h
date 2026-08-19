@@ -523,6 +523,8 @@ typedef struct {
     int field_count;               // 字段数量
     int total_size;                // 总大小（字节）
     int alignment;                 // 对齐要求（字节）
+    bool is_packed;                 // 是否 packed（取消所有字段间 padding）
+    int  explicit_align;            // 显式对齐要求（0 = 未指定）
     // 字段名哈希表（运行时 O(1) 查找）
     CStructFieldHashEntry** field_hash_table;  // 哈希表数组
     int field_hash_capacity;       // 哈希表容量
