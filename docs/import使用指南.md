@@ -454,12 +454,16 @@ print(cfg.get_config()["debug"])  // true
 ### 6.2 防御性导入
 
 ```leno
-// 使用 try-catch 处理导入错误
+// ⚠️ import 是编译期指令，模块不存在会在编译阶段报错，
+//    try-catch 无法捕获"模块文件找不到"这类编译期错误。
+//    try-catch 只能捕获模块初始化时的运行时异常：
+
+import "optional_module.leno" as opt
+
 try {
-    import "optional_module.leno" as opt
     opt.do_something()
 } catch e {
-    print("可选模块加载失败，使用默认行为")
+    print("模块运行时出错，使用默认行为: " + e)
     // 使用默认实现
 }
 ```
@@ -490,39 +494,59 @@ main() {
 
 ## 7. 高级用法
 
-### 7.1 动态模块选择
+> **💡 编译期语义说明**：`import` 是**编译期指令**，不是运行时动态加载表达式。即使写在函数体或 `if` 块内部，编译器也会在编译阶段完成路径解析、模块编译和缓存。路径必须是编译期可确定的字符串字面量（如 `"db/mysql.leno"`），**不支持**用变量动态构造路径（如 `import path as plugin`）。
+
+### 7.1 模块条件选择
+
+由于 `import` 在编译期处理，函数内的条件 `import` 实际上会在编译阶段把两个模块都编译和缓存。运行时根据条件返回不同的模块引用：
 
 ```leno
 // 根据条件选择不同实现
+// 注意：两个模块都会在编译期加载，运行时只返回选中的引用
 func get_database_module(bool use_mysql) {
     if use_mysql {
-        import "db/mysql.leno" as db
-        return db
+        import "db/mysql.leno" as mysql_db
+        return mysql_db
     } else {
-        import "db/sqlite.leno" as db
-        return db
+        import "db/sqlite.leno" as sqlite_db
+        return sqlite_db
     }
 }
 ```
 
 ### 7.2 插件系统实现
 
+由于 `import` 路径必须是编译期字符串常量，不支持运行时变量路径。插件系统应通过**预注册**模式实现——所有插件在编译期导入，运行时按名称分发：
+
 ```leno
 // plugin_manager.leno
-var plugins = []
+// 编译期导入所有已知插件模块
+import "plugins/plugin_a.leno" as pa
+import "plugins/plugin_b.leno" as pb
 
-func register_plugin(string path) {
-    // 动态加载插件
-    import path as plugin
-    plugins.add(plugin)
+var plugins = {
+    "plugin_a": pa,
+    "plugin_b": pb
+}
+
+func register_plugin(string name) {
+    // 从预注册表中查找插件，而非动态 import
+    if plugins.has(name) {
+        // 插件已可用
+        print("插件 " + name + " 已注册")
+    } else {
+        print("未知插件: " + name)
+    }
 }
 
 func run_all_plugins() {
-    for plugins to p {
-        p.run()
+    for plugins to name, plugin {
+        plugin.run()
     }
 }
 ```
+
+> **⚠️ 不支持运行时动态路径**：`import` 的路径必须是字符串字面量（如 `"plugins/plugin_a.leno"`），不能用变量（如 `import path as plugin`）。如果需要真正的运行时动态加载，考虑用 FFI 调用 `dlopen`/`LoadLibrary` 自行管理。
 
 ### 7.3 模块装饰器模式
 
@@ -612,7 +636,7 @@ main() {
 |------|------|------|
 | `use module.Struct` | ✅ | 导入后可用 `new Struct()` 或 `new Struct[Type]()` |
 | `use module.CStruct` | ✅ | 导入 cstruct 类型，可用 `CStruct.malloc()` |
-| `use module.Clib` | ✅ | 导入 clib 类型到当前作用域（需模块有函数返回该 clib 类型） |
+| `use module.Clib` | ✅ | 导入 clib 类型到当前作用域，可用 `ClibName var = module.loadLib()` |
 | `use module.Face` | ✅ | 导入 face 类型到当前作用域 |
 | `use module.Alias` | ✅ | 导入类型别名到当前作用域，可直接作为类型名使用 |
 | `use module.Enum` | ✅ | 导入 enum 类型，可用 `EnumName.Member` 或链式 `import B; use B.Enum` |
@@ -828,7 +852,7 @@ main() {
 // sdl_base.leno - 底层模块定义 clib
 import ffi
 
-clib renderer_lib {
+export clib renderer_lib {
     i32 do_something(i32 x)
 }
 
@@ -860,12 +884,16 @@ use sdl.renderer_lib
 main() {
     // ✅ clib 类型正确推断
     renderer_lib r = sdl.getRenderer()
-    var result = r.do_something(42) as int  // ⚠️ C返回类型需 as int 转换
+    var result = r.do_something(42)  // ✅ clib 返回值自动展开（i32→int），无需 as 转换
 }
 
 ```
 
-> **⚠️ 重要**：clib 函数返回的是 C 类型（`i32`、`i64`、`f32` 等），参与 Leno 运算时**必须用 `as int` / `as float` 显式转换**。但 **cstruct 字段**（如 `pt.x`、`e.id`）已支持整数自动收窄，无需 `as int`。
+> **💡 零摩擦 FFI**：clib 函数返回值会根据 C 声明类型**自动展开**为 Leno 原生类型（`i32`/`u32`/`i64`→`int`，`f32`/`f64`→`float`，`str8`/`str16`→`string`），**无需 `as` 转换**。详见 [FFI 使用指南 §1.4](FFI使用指南.md#14-使用-clib-声明式调用推荐零摩擦-ffi)。cstruct 字段（如 `pt.x`、`e.id`）同理自动转换。
+>
+> **💡 clib 导出的两种方式**：
+> - **直接导出**：`export clib renderer_lib { ... }`，其他模块可直接 `use base.renderer_lib`
+> - **间接导出**：`clib sdl3 { ... }` + `export func lib(): sdl3 { ... }`，通过返回该 clib 类型的函数让符号表识别（SDL3 项目 sdl_core.leno 即用此方式）
 
 **clib 类型可以用于 struct 字段**：
 
@@ -881,7 +909,7 @@ struct RendererHolder {
 main() {
     var h = new RendererHolder(renderer = base.loadRenderer(), name = "main")
     renderer_lib r = h.renderer              // ✅ 跨模块后类型正确推断
-    var v = r.do_something(10) as int
+    var v = r.do_something(10)               // ✅ 返回值自动展开，无需 as
 }
 ```
 
@@ -975,7 +1003,7 @@ main() {
 
 > **⚠️ 注意**：cstruct 字段值是 C 类型（`u32`、`i32`、`f64` 等），参与 Leno 运算时会自动转换为 `int`/`float`。
 
-### 8.7 类型守卫与跨模块类型
+### 8.8 类型守卫与跨模块类型
 
 ```leno
 // shape.leno
@@ -1081,8 +1109,8 @@ import "math.leno"
 
 1. **运行时动态构造导入路径**
    ```leno
-   // 不推荐
-   import ("module_" + suffix + ".leno")
+   // ❌ 语法错误！import 路径必须是编译期字符串字面量，不接受表达式
+   import ("module_" + suffix + ".leno")  // 编译报错
    ```
 
 2. **模块间紧密耦合**
