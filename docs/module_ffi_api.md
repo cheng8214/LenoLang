@@ -8,6 +8,9 @@
 - [核心概念](#核心概念)
 - [clib 声明式调用](#clib-声明式调用)
 - [动态库操作](#动态库操作)
+  - [load](#loadpath)
+  - [dlsym](#dlsymlib-name)
+  - [free](#freex)
 - [函数调用](#函数调用)
 - [回调函数](#回调函数)
 - [类型守卫](#类型守卫)
@@ -19,6 +22,8 @@
 - [指针操作](#指针操作)
 - [内存读取](#内存读取)
 - [内存写入](#内存写入)
+- [批量读写](#批量读写)
+- [显式字节序读写](#显式字节序读写)
 - [字符串工具](#字符串工具)
 - [类型信息](#类型信息)
 - [类型映射](#类型映射)
@@ -293,6 +298,42 @@ var mylib = ffi.load("C:\\libs\\mylib.dll")
 
 ---
 
+### `dlsym(lib, name)`
+
+显式解析库中的符号地址，返回函数指针。可用于检查函数是否存在，或单独获取函数地址。
+
+**参数**:
+- `lib`: FFI 库对象
+- `name` (string): 函数/符号名
+
+**返回**:
+- 成功: FFI 指针对象（函数地址）
+- 未找到: `null`
+
+**说明**:
+- 内部使用函数地址缓存，首次解析后后续调用直接命中缓存
+- 适合用于检查函数是否存在（`if ffi.dlsym(lib, "func") != null`）
+
+```leno
+var libc = ffi.load("msvcrt.dll")
+
+// 检查函数是否存在
+var ptr = ffi.dlsym(libc, "strlen")
+if ptr != null {
+    print("strlen 存在")
+} else {
+    print("strlen 不存在")
+}
+
+// 检查不存在的函数
+var bogus = ffi.dlsym(libc, "this_function_does_not_exist")
+// bogus == null
+
+ffi.free(libc)
+```
+
+---
+
 ### `free(x)`
 
 统一释放 FFI 资源（指针/库/回调）。释放后的资源不可再使用。
@@ -421,7 +462,9 @@ ffi.free(libc)
 
 ### 通用调用 + 类型守卫
 
-#### `call(lib, name, ...)`
+#### `call(lib, name, ...)`  ⚠️ 已弃用
+
+> **已弃用**：`ffi.call` 与 `ffi.call_int` 完全等价（都返回 `int`），建议使用 `ffi.call_int` 等明确返回类型的函数。使用时会在 `stderr` 输出 deprecation 警告。
 
 调用 C 函数，返回 `any` 类型。
 
@@ -548,7 +591,7 @@ ffi.free(libc)
 **注意事项**:
 - 回调对象用 `ffi.free()` 释放，与指针和库对象使用同一个函数
 - 释放回调后，对应的 C 函数指针不再有效
-- 最多支持 128 个同时存在的回调
+- 最多支持 256 个同时存在的回调
 - `ffi.is_ptr(cb)` 对回调对象返回 `true`
 - 回调函数中 `Ptr` 类型参数需通过 `ffi.read_*` 读取数据
 
@@ -1266,6 +1309,95 @@ ffi.write_string(ptr, "hello")
 
 ---
 
+## 批量读写
+
+### `write_bytes(ptr, off, str)`
+
+批量写入字符串的原始字节到内存中。与 `write_string` 不同，**不写入 `\0` 终止符**。底层一次 `memcpy`，比循环 `write_byte` 快得多。
+
+**参数**:
+- `ptr`: FFI 指针对象
+- `off` (int): 字节偏移量
+- `str` (string): 要写入的字符串
+
+**返回**: `null`
+
+```leno
+var buf = ffi.malloc(64)
+ffi.write_bytes(buf, 0, "ABCDE")
+// 内存中偏移 0-4 为 A B C D E，偏移 5 不是 '\0'
+var s = ffi.read_bytes(buf, 0, 5)  // "ABCDE"
+ffi.free(buf)
+```
+
+### `read_bytes(ptr, off, len)`
+
+批量读取 `len` 字节，返回字符串。底层一次 `memcpy`，比循环 `read_byte` 快得多。
+
+**参数**:
+- `ptr`: FFI 指针对象
+- `off` (int): 字节偏移量
+- `len` (int): 读取的字节数
+
+**返回**: `string` - 读取到的字符串
+
+```leno
+var buf = ffi.malloc(64)
+ffi.write_bytes(buf, 0, "Hello World")
+
+// 读取前 5 字节
+var s = ffi.read_bytes(buf, 0, 5)  // "Hello"
+
+// 读取 0 字节
+var empty = ffi.read_bytes(buf, 0, 0)  // ""
+
+ffi.free(buf)
+```
+
+---
+
+## 显式字节序读写
+
+常规的 `ffi.write_int16` / `ffi.read_int32` 等函数使用**主机字节序**（在 x86/ARM 小端机器上为小端）。跨平台二进制协议（如网络协议、文件格式）需要显式控制字节序时，使用以下函数：
+
+### 小端读写
+
+| 函数 | 参数 | 返回 | 大小 |
+|------|------|------|------|
+| `write_le_i16(ptr, off, val)` | ptr, int, int | null | 2 字节 |
+| `write_le_i32(ptr, off, val)` | ptr, int, int | null | 4 字节 |
+| `read_le_i16(ptr, off)` | ptr, int | int | 2 字节 |
+| `read_le_i32(ptr, off)` | ptr, int | int | 4 字节 |
+
+### 大端读写
+
+| 函数 | 参数 | 返回 | 大小 |
+|------|------|------|------|
+| `write_be_i16(ptr, off, val)` | ptr, int, int | null | 2 字节 |
+| `write_be_i32(ptr, off, val)` | ptr, int, int | null | 4 字节 |
+| `read_be_i16(ptr, off)` | ptr, int | int | 2 字节 |
+| `read_be_i32(ptr, off)` | ptr, int | int | 4 字节 |
+
+```leno
+var buf = ffi.malloc(16)
+
+// 小端写入 0x12345678 = 305419896
+ffi.write_le_i32(buf, 0, 305419896)
+print(ffi.read_le_i32(buf, 0))  // 305419896
+
+// 大端写入同一值
+ffi.write_be_i32(buf, 4, 305419896)
+print(ffi.read_be_i32(buf, 4))  // 305419896
+
+// 交叉验证：大端写 + 小端读 → 值不同
+ffi.write_be_i16(buf, 8, 4660)  // 0x1234, 字节 [12, 34]
+print(ffi.read_le_i16(buf, 8))  // 13330 (0x3412)
+
+ffi.free(buf)
+```
+
+---
+
 ### 字符串工具
 
 #### `string_bytes(str)`
@@ -1685,13 +1817,14 @@ main() {
 | 函数 | 参数 | 返回 | 说明 |
 |------|------|------|------|
 | `load(path)` | string | lib\|null | 加载动态库 |
+| `dlsym(lib, name)` | lib, string | ptr\|null | 显式解析符号地址 |
 | `free(x)` | lib/ptr/callback | null | 统一释放 FFI 资源（指针/库/回调） |
 
 ### 函数调用
 
 | 函数 | 参数 | 返回 | 说明 |
 |------|------|------|------|
-| `call(lib, name, ...)` | lib, string, ... | any | 通用调用（返回 any） |
+| `call(lib, name, ...)` | lib, string, ... | any | 通用调用（⚠️ 已弃用，返回 int） |
 | `call_int(lib, name, ...)` | lib, string, ... | int | 调用（返回 int） |
 | `call_double(lib, name, ...)` | lib, string, ... | float | 调用（返回 double） |
 | `call_void(lib, name, ...)` | lib, string, ... | null | 调用（无返回值） |
@@ -1765,6 +1898,27 @@ main() {
 | `write_double(ptr, off, val)` | ptr, int, float | null | 8 |
 | `write_ptr(ptr, off, val)` | ptr, int, ptr | null | 8 |
 | `write_string(ptr, off, str)` | ptr, int, string | null | - |
+| `write_bytes(ptr, off, str)` | ptr, int, string | null | len 字节 |
+
+### 批量读写
+
+| 函数 | 参数 | 返回 | 说明 |
+|------|------|------|------|
+| `write_bytes(ptr, off, str)` | ptr, int, string | null | 批量写入字节（不含 `\0`） |
+| `read_bytes(ptr, off, len)` | ptr, int, int | string | 批量读取字节 |
+
+### 显式字节序读写
+
+| 函数 | 参数 | 返回 | 说明 |
+|------|------|------|------|
+| `write_le_i16(ptr, off, val)` | ptr, int, int | null | 小端写入 2 字节 |
+| `write_be_i16(ptr, off, val)` | ptr, int, int | null | 大端写入 2 字节 |
+| `write_le_i32(ptr, off, val)` | ptr, int, int | null | 小端写入 4 字节 |
+| `write_be_i32(ptr, off, val)` | ptr, int, int | null | 大端写入 4 字节 |
+| `read_le_i16(ptr, off)` | ptr, int | int | 小端读取 2 字节 |
+| `read_be_i16(ptr, off)` | ptr, int | int | 大端读取 2 字节 |
+| `read_le_i32(ptr, off)` | ptr, int | int | 小端读取 4 字节 |
+| `read_be_i32(ptr, off)` | ptr, int | int | 大端读取 4 字节 |
 
 ### 字符串工具
 
@@ -1793,10 +1947,20 @@ main() {
 
 ---
 
-*文档版本: 3.3*
-*最后更新: 2026-08-14*
+*文档版本: 4.0*
+*最后更新: 2026-08-19*
 
 ### 更新记录
+
+- **v4.0** (2026-08-19):
+  - **符号地址缓存**：`ObjFFILibrary` 新增函数地址缓存表（32 槽），`ffi.call_*`/`clib`/`ffi.dlsym` 首次调用后缓存函数地址，后续调用跳过 `GetProcAddress`/`dlsym`。
+  - **新增 `ffi.dlsym(lib, name)`**：显式解析符号地址，返回 `Ptr` 或 `null`，可用于检查函数是否存在。
+  - **混合参数回退路径浮点 bug 修复**：当 >4 参数含浮点且超出 Win64 精确分发范围时，提前抛出明确错误，而非静默走 broken 回退路径。
+  - **回调数量上限提升**：`MAX_FFI_CALLBACKS` 从 128 增至 256。
+  - **新增 `ffi.write_bytes` / `read_bytes`**：批量字节读写，一次 `memcpy`，替代循环 `write_byte`。
+  - **新增显式字节序函数**：`write_le_i16`/`write_be_i16`/`write_le_i32`/`write_be_i32` 及对应 `read_*`，共 8 个函数。
+  - **`ffi.call` 标记 deprecated**：与 `ffi.call_int` 完全等价，使用时输出 `stderr` 弃用警告。
+  - **代码去重**：合并 `ffi_call_impl` 中 int 和 bigint 的窄化逻辑为统一分支，减少约 60 行重复代码。
 
 - **v3.3** (2026-08-14):
   - **str8 返回值内存泄漏说明**：明确标注 `str8` 返回类型会深拷贝 C `char*` 为 Leno `string`，但原始 C 内存不自动释放。对于需要释放的 C 字符串（如 `curl_easy_escape`），应使用 `call_ptr` + `read_string` + 手动释放三步走方案。

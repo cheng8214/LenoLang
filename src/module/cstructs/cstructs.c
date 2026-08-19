@@ -479,6 +479,43 @@ static Value cstruct_method_alignment(int argc, Value* args) {
     return val_int(def->alignment);
 }
 
+// cstruct.offset_of(field_name) - 返回字段的字节偏移量
+static Value cstruct_method_offset_of(int argc, Value* args) {
+    (void)argc;
+    
+    // receiver 可以是 cstruct 定义或实例
+    ObjCStructDef* def = NULL;
+    
+    if (val_as_obj(args[0])->type == OBJ_CSTRUCT_DEF) {
+        def = (ObjCStructDef*)val_as_obj(args[0]);
+    } else if (val_as_obj(args[0])->type == OBJ_CSTRUCT) {
+        ObjCStruct* instance = (ObjCStruct*)val_as_obj(args[0]);
+        def = instance->def;
+    } else {
+        native_throw_error("offset_of: receiver 必须是 cstruct 定义或实例");
+        return val_null();
+    }
+    
+    // 参数是字段名
+    if (!val_is_obj(args[1]) || val_as_obj(args[1])->type != OBJ_STRING) {
+        native_throw_error("offset_of: 参数必须是字段名字符串");
+        return val_null();
+    }
+    const char* field_name = ((ObjString*)val_as_obj(args[1]))->chars;
+    
+    // 查找字段
+    for (int i = 0; i < def->field_count; i++) {
+        if (strcmp(def->fields[i].name, field_name) == 0) {
+            return val_int(def->fields[i].offset);
+        }
+    }
+    
+    char msg[256];
+    snprintf(msg, sizeof(msg), "offset_of: 字段 '%s' 不存在于结构体 '%s' 中", field_name, def->name ? def->name : "?");
+    native_throw_error(msg);
+    return val_null();
+}
+
 // cstruct.debug() - 显示详细的内存布局、偏移、对齐信息
 static Value cstruct_method_debug(int argc, Value* args) {
     (void)argc;
@@ -766,6 +803,11 @@ void cstructs_init_methods(void) {
     TypeKind alignment_params[] = {};
     cstruct_register_method_with_params("alignment", make_native(cstruct_method_alignment, 1, "alignment"),
                                        0, -1, -1, TYPE_I32, TYPE_UNKNOWN, alignment_params);
+
+    // offset_of(field_name) - 返回字段偏移量
+    TypeKind offset_of_params[] = {TYPE_STRING};
+    cstruct_register_method_with_params("offset_of", make_native(cstruct_method_offset_of, 2, "offset_of"),
+                                       1, -1, -1, TYPE_I32, TYPE_UNKNOWN, offset_of_params);
 
     // debug() - 显示详细的内存布局、偏移、对齐信息
     TypeKind debug_params[] = {};

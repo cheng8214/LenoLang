@@ -79,7 +79,17 @@
 #include <unistd.h>
 #endif
 
-#define MAX_FFI_CALLBACKS 128
+#define MAX_FFI_CALLBACKS 256
+
+/* ===== 函数地址缓存（避免每次调用都 GetProcAddress/dlsym） ===== */
+#define FFI_FUNC_CACHE_SIZE 32
+#define FFI_FUNC_NAME_MAX 63
+
+typedef struct {
+    char name[FFI_FUNC_NAME_MAX + 1];  /* 函数名（截断至 63 字符） */
+    void* addr;                         /* 函数地址（NULL 表示未解析） */
+    int valid;                          /* 槽位是否有效 */
+} FFIFuncCacheEntry;
 
 typedef struct {
     Value func_val;
@@ -114,12 +124,43 @@ typedef struct {
 #else
     void* handle;     /* Linux: dlopen 句柄 */
 #endif
+    FFIFuncCacheEntry func_cache[FFI_FUNC_CACHE_SIZE];  /* 函数地址缓存 */
+    int func_cache_count;                                /* 已缓存函数数 */
 } ObjFFILibrary;
 
 /* ===== 辅助函数：类型判断 ===== */
 
 static ObjFFILibrary* val_as_ffi_lib(Value v) {
     return (ObjFFILibrary*)val_as_obj(v);
+}
+
+/* ===== 函数地址缓存：查找 ===== */
+static void* ffi_cache_lookup(ObjFFILibrary* lib, const char* name) {
+    for (int i = 0; i < FFI_FUNC_CACHE_SIZE; i++) {
+        if (lib->func_cache[i].valid && strcmp(lib->func_cache[i].name, name) == 0)
+            return lib->func_cache[i].addr;
+    }
+    return NULL;
+}
+
+/* ===== 函数地址缓存：插入（满了就丢弃，不报错） ===== */
+static void ffi_cache_insert(ObjFFILibrary* lib, const char* name, void* addr) {
+    /* 先找空槽 */
+    for (int i = 0; i < FFI_FUNC_CACHE_SIZE; i++) {
+        if (!lib->func_cache[i].valid) {
+            strncpy(lib->func_cache[i].name, name, FFI_FUNC_NAME_MAX);
+            lib->func_cache[i].name[FFI_FUNC_NAME_MAX] = '\0';
+            lib->func_cache[i].addr = addr;
+            lib->func_cache[i].valid = 1;
+            lib->func_cache_count++;
+            return;
+        }
+    }
+    /* 全满：覆盖第一个（LRU 简化版） */
+    strncpy(lib->func_cache[0].name, name, FFI_FUNC_NAME_MAX);
+    lib->func_cache[0].name[FFI_FUNC_NAME_MAX] = '\0';
+    lib->func_cache[0].addr = addr;
+    lib->func_cache[0].valid = 1;
 }
 
 static int val_is_ffi_ptr(Value v) {
@@ -435,6 +476,8 @@ static Value ffi_load_func(int argc, Value* args) {
     lib->path = strdup(resolved_path ? resolved_path : path);
     lib->handle = handle;
     lib->freed = 0;
+    memset(lib->func_cache, 0, sizeof(lib->func_cache));
+    lib->func_cache_count = 0;
     free(resolved_path);
 
     return val_obj((Object*)lib);
@@ -459,8 +502,49 @@ Value ffi_reload_library(const char* path) {
     lib->path = strdup(path);
     lib->handle = handle;
     lib->freed = 0;
+    memset(lib->func_cache, 0, sizeof(lib->func_cache));
+    lib->func_cache_count = 0;
 
     return val_obj((Object*)lib);
+}
+
+/* ffi.dlsym(lib, name) - 显式解析符号地址，返回 Ptr 或 null */
+static Value ffi_dlsym_func(int argc, Value* args) {
+    (void)argc;
+    if (val_is_null(args[0]) || !val_is_obj(args[0])) {
+        native_throw_error("dlsym: 库对象为空");
+        return val_null();
+    }
+    ObjFFILibrary* lib = val_as_ffi_lib(args[0]);
+    CHECK_LIB_FREED(lib);
+
+    if (!val_is_obj(args[1]) || val_as_obj(args[1])->type != OBJ_STRING) {
+        native_throw_error("dlsym: 函数名参数必须是字符串");
+        return val_null();
+    }
+    const char* func_name = ((ObjString*)val_as_obj(args[1]))->chars;
+
+    /* 先查缓存 */
+    void* func = ffi_cache_lookup(lib, func_name);
+    if (!func) {
+#ifdef _WIN32
+        func = (void*)GetProcAddress(lib->handle, func_name);
+#else
+        func = (void*)dlsym(lib->handle, func_name);
+#endif
+        if (func) ffi_cache_insert(lib, func_name, func);
+    }
+
+    if (!func) return val_null();
+
+    ObjFFIPointer* ptr = (ObjFFIPointer*)gc_alloc(sizeof(ObjFFIPointer), OBJ_FFI_POINTER);
+    if (!ptr) { native_throw_error("内存不足"); return val_null(); }
+    ptr->ptr = func;
+    ptr->size = 0;
+    ptr->owned = 0;
+    ptr->freed = 0;
+    ptr->element_type = TYPE_PTR;
+    return val_obj((Object*)ptr);
 }
 
 /* ==================== FFI 函数调用 ==================== */
@@ -530,12 +614,16 @@ static Value ffi_call_impl(int argc, Value* args, int ret_type_kind, const int* 
     /* 函数参数从第3个（index=2）开始 */
     int arg_start = 2;
 
-    /* 获取函数地址 */
+    /* 获取函数地址（先查缓存，未命中再调 OS） */
+    void* func = ffi_cache_lookup(lib, func_name);
+    if (!func) {
 #ifdef _WIN32
-    void* func = (void*)GetProcAddress(lib->handle, func_name);
+        func = (void*)GetProcAddress(lib->handle, func_name);
 #else
-    void* func = (void*)dlsym(lib->handle, func_name);
+        func = (void*)dlsym(lib->handle, func_name);
 #endif
+        if (func) ffi_cache_insert(lib, func_name, func);
+    }
     if (!func) {
         char msg[256];
 #ifdef _WIN32
@@ -566,8 +654,8 @@ static Value ffi_call_impl(int argc, Value* args, int ret_type_kind, const int* 
         Value arg = args[i + arg_start];
         TypeKind param_tk = (arg_types && i < FFI_MAX_ARGS) ? (TypeKind)arg_types[i] : TYPE_UNKNOWN;
 
-        if (val_is_int(arg)) {
-            int64_t ival = (int64_t)val_as_int(arg);
+        if (val_is_int(arg) || val_is_bigint(arg)) {
+            int64_t ival = val_is_int(arg) ? (int64_t)val_as_int(arg) : bigint_to_int64(val_as_bigint(arg));
 
             /* 参数窄化：根据 clib 声明的参数类型做范围检查和 FFI 签名设置 */
             switch (param_tk) {
@@ -637,68 +725,6 @@ static Value ffi_call_impl(int argc, Value* args, int ret_type_kind, const int* 
                     break;
                 default:
                     /* 旧路径或未知类型，默认 FFI_TYPE_INT */
-                    sig.arg_types[i] = FFI_TYPE_INT; ffi_args[i].type = FFI_TYPE_INT;
-                    ffi_args[i].value.i = ival;
-                    break;
-            }
-        }
-        else if (val_is_bigint(arg)) {
-            int64_t ival = bigint_to_int64(val_as_bigint(arg));
-            switch (param_tk) {
-                case TYPE_I8:
-                    if (ival < INT8_MIN || ival > INT8_MAX) {
-                        char msg[128]; snprintf(msg, sizeof(msg), "参数 %d 值 %lld 超出 i8 范围", i+1, (long long)ival);
-                        native_throw_error(msg); return val_null();
-                    }
-                    sig.arg_types[i] = FFI_TYPE_INT8; ffi_args[i].type = FFI_TYPE_INT8;
-                    ffi_args[i].value.i = (int64_t)(int8_t)ival;
-                    break;
-                case TYPE_U8:
-                    if (ival < 0 || ival > UINT8_MAX) {
-                        char msg[128]; snprintf(msg, sizeof(msg), "参数 %d 值 %lld 超出 u8 范围", i+1, (long long)ival);
-                        native_throw_error(msg); return val_null();
-                    }
-                    sig.arg_types[i] = FFI_TYPE_UINT8; ffi_args[i].type = FFI_TYPE_UINT8;
-                    ffi_args[i].value.i = (int64_t)(uint8_t)ival;
-                    break;
-                case TYPE_I16:
-                    if (ival < INT16_MIN || ival > INT16_MAX) {
-                        char msg[128]; snprintf(msg, sizeof(msg), "参数 %d 值 %lld 超出 i16 范围", i+1, (long long)ival);
-                        native_throw_error(msg); return val_null();
-                    }
-                    sig.arg_types[i] = FFI_TYPE_INT16; ffi_args[i].type = FFI_TYPE_INT16;
-                    ffi_args[i].value.i = (int64_t)(int16_t)ival;
-                    break;
-                case TYPE_U16:
-                    if (ival < 0 || ival > UINT16_MAX) {
-                        char msg[128]; snprintf(msg, sizeof(msg), "参数 %d 值 %lld 超出 u16 范围", i+1, (long long)ival);
-                        native_throw_error(msg); return val_null();
-                    }
-                    sig.arg_types[i] = FFI_TYPE_UINT16; ffi_args[i].type = FFI_TYPE_UINT16;
-                    ffi_args[i].value.i = (int64_t)(uint16_t)ival;
-                    break;
-                case TYPE_I32:
-                    if (ival < INT32_MIN || ival > INT32_MAX) {
-                        char msg[128]; snprintf(msg, sizeof(msg), "参数 %d 值 %lld 超出 i32 范围", i+1, (long long)ival);
-                        native_throw_error(msg); return val_null();
-                    }
-                    sig.arg_types[i] = FFI_TYPE_INT32; ffi_args[i].type = FFI_TYPE_INT32;
-                    ffi_args[i].value.i = (int64_t)(int32_t)ival;
-                    break;
-                case TYPE_U32:
-                    if (ival < 0 || ival > UINT32_MAX) {
-                        char msg[128]; snprintf(msg, sizeof(msg), "参数 %d 值 %lld 超出 u32 范围", i+1, (long long)ival);
-                        native_throw_error(msg); return val_null();
-                    }
-                    sig.arg_types[i] = FFI_TYPE_UINT32; ffi_args[i].type = FFI_TYPE_UINT32;
-                    ffi_args[i].value.i = (int64_t)(uint32_t)ival;
-                    break;
-                case TYPE_I64:
-                case TYPE_U64:
-                    sig.arg_types[i] = FFI_TYPE_INT; ffi_args[i].type = FFI_TYPE_INT;
-                    ffi_args[i].value.i = ival;
-                    break;
-                default:
                     sig.arg_types[i] = FFI_TYPE_INT; ffi_args[i].type = FFI_TYPE_INT;
                     ffi_args[i].value.i = ival;
                     break;
@@ -774,6 +800,33 @@ static Value ffi_call_impl(int argc, Value* args, int ret_type_kind, const int* 
             sig.arg_types[i] = FFI_TYPE_INT;
             ffi_args[i].type = FFI_TYPE_INT;
             ffi_args[i].value.i = 0;
+        }
+    }
+
+    /* 调用前检查：Win64 下 >4 参数含浮点 → 回退路径不支持 */
+    {
+        int float_count = 0, double_count = 0;
+        for (int i = 0; i < sig.nargs; i++) {
+            if (sig.arg_types[i] == FFI_TYPE_FLOAT) float_count++;
+            if (sig.arg_types[i] == FFI_TYPE_DOUBLE) double_count++;
+        }
+        int total_float = float_count + double_count;
+        /* 路径 3.5 已处理 5 参数 4f32+1ptr 的情况；
+         * 其余 >4 参数含浮点（含 double 的 5 参数、或 >5 参数含任何浮点）走回退路径会出错 */
+        int broken = (sig.nargs > 5 && total_float > 0) ||
+                     (sig.nargs == 5 && double_count > 0) ||
+                     (sig.nargs == 5 && float_count > 0 && float_count < 4);
+        if (broken) {
+            char msg[512];
+            snprintf(msg, sizeof(msg),
+                     "FFI 调用参数 %d 个（含 %d 个浮点）超过 Win64 精确分发上限。\n"
+                     "  当前回退路径无法正确传递 >4 参数中的浮点值（XMM 寄存器不匹配）。\n"
+                     "  解决方案：\n"
+                     "  - 将参数拆分到 ≤4 个的多次调用\n"
+                     "  - 使用 cstruct 将多个浮点打包为结构体指针传递\n"
+                     "  - 减少浮点参数数量", sig.nargs, total_float);
+            native_throw_error(msg);
+            return val_null();
         }
     }
 
@@ -863,6 +916,7 @@ static Value ffi_call_impl(int argc, Value* args, int ret_type_kind, const int* 
 
 /* ffi.call(lib, name, ...) - 调用库中的函数（返回 int） */
 static Value ffi_call_func(int argc, Value* args) {
+    fprintf(stderr, "[FFI Deprecation] ffi.call() 已弃用，请使用 ffi.call_int() 等明确返回类型的函数。\n");
     return ffi_call_impl(argc, args, TYPE_I32, NULL);
 }
 
@@ -1853,7 +1907,148 @@ static Value ffi_write_string_func(int argc, Value* args) {
     return val_null();
 }
 
-/* ffi.string_bytes(str) - 获取字符串的字节长度（UTF-8 编码） */
+/* ffi.write_bytes(ptr, off, str) - 批量写入字符串的原始字节（不含 '\0' 终止符） */
+static Value ffi_write_bytes_func(int argc, Value* args) {
+    (void)argc;
+    ObjFFIPointer* ptr = val_as_ffi_ptr(args[0]);
+    int offset = val_as_int(args[1]);
+    ObjString* str = (ObjString*)val_as_obj(args[2]);
+
+    CHECK_NULL_PTR(ptr);
+
+    size_t str_len = (size_t)str->len;
+    char* dest = (char*)ptr->ptr + offset;
+
+    CHECK_BOUNDS(ptr, offset, str_len);
+    if (str_len > 0)
+        memcpy(dest, str->chars, str_len);
+    return val_null();
+}
+
+/* ffi.read_bytes(ptr, off, len) - 批量读取 len 字节，返回字符串 */
+static Value ffi_read_bytes_func(int argc, Value* args) {
+    (void)argc;
+    ObjFFIPointer* ptr = val_as_ffi_ptr(args[0]);
+    int offset = val_as_int(args[1]);
+    int length = val_as_int(args[2]);
+
+    CHECK_NULL_PTR(ptr);
+    if (length < 0) {
+        native_throw_error("read_bytes: 长度不能为负数");
+        return val_null();
+    }
+
+    CHECK_BOUNDS(ptr, offset, (size_t)length);
+
+    char* src = (char*)ptr->ptr + offset;
+    ObjString* str = str_copy(src, length);
+    return val_obj((Object*)str);
+}
+
+/* ===== 显式字节序读写函数 ===== */
+
+/* 小端 16 位写入 */
+static Value ffi_write_le_i16_func(int argc, Value* args) {
+    (void)argc;
+    ObjFFIPointer* ptr = val_as_ffi_ptr(args[0]);
+    int offset = val_as_int(args[1]);
+    int16_t val = (int16_t)val_as_int(args[2]);
+    CHECK_NULL_PTR(ptr);
+    CHECK_BOUNDS(ptr, offset, 2);
+    uint8_t* p = (uint8_t*)ptr->ptr + offset;
+    p[0] = (uint8_t)(val & 0xFF);
+    p[1] = (uint8_t)((val >> 8) & 0xFF);
+    return val_null();
+}
+
+/* 大端 16 位写入 */
+static Value ffi_write_be_i16_func(int argc, Value* args) {
+    (void)argc;
+    ObjFFIPointer* ptr = val_as_ffi_ptr(args[0]);
+    int offset = val_as_int(args[1]);
+    int16_t val = (int16_t)val_as_int(args[2]);
+    CHECK_NULL_PTR(ptr);
+    CHECK_BOUNDS(ptr, offset, 2);
+    uint8_t* p = (uint8_t*)ptr->ptr + offset;
+    p[0] = (uint8_t)((val >> 8) & 0xFF);
+    p[1] = (uint8_t)(val & 0xFF);
+    return val_null();
+}
+
+/* 小端 32 位写入 */
+static Value ffi_write_le_i32_func(int argc, Value* args) {
+    (void)argc;
+    ObjFFIPointer* ptr = val_as_ffi_ptr(args[0]);
+    int offset = val_as_int(args[1]);
+    int32_t val = (int32_t)val_as_int(args[2]);
+    CHECK_NULL_PTR(ptr);
+    CHECK_BOUNDS(ptr, offset, 4);
+    uint8_t* p = (uint8_t*)ptr->ptr + offset;
+    p[0] = (uint8_t)(val & 0xFF);
+    p[1] = (uint8_t)((val >> 8) & 0xFF);
+    p[2] = (uint8_t)((val >> 16) & 0xFF);
+    p[3] = (uint8_t)((val >> 24) & 0xFF);
+    return val_null();
+}
+
+/* 大端 32 位写入 */
+static Value ffi_write_be_i32_func(int argc, Value* args) {
+    (void)argc;
+    ObjFFIPointer* ptr = val_as_ffi_ptr(args[0]);
+    int offset = val_as_int(args[1]);
+    int32_t val = (int32_t)val_as_int(args[2]);
+    CHECK_NULL_PTR(ptr);
+    CHECK_BOUNDS(ptr, offset, 4);
+    uint8_t* p = (uint8_t*)ptr->ptr + offset;
+    p[0] = (uint8_t)((val >> 24) & 0xFF);
+    p[1] = (uint8_t)((val >> 16) & 0xFF);
+    p[2] = (uint8_t)((val >> 8) & 0xFF);
+    p[3] = (uint8_t)(val & 0xFF);
+    return val_null();
+}
+
+/* 小端 16 位读取 */
+static Value ffi_read_le_i16_func(int argc, Value* args) {
+    ObjFFIPointer* ptr = val_as_ffi_ptr(args[0]);
+    int offset = parse_offset(argc, args, 1);
+    CHECK_NULL_PTR(ptr);
+    CHECK_BOUNDS(ptr, offset, 2);
+    uint8_t* p = (uint8_t*)ptr->ptr + offset;
+    return val_int((int)(int16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8)));
+}
+
+/* 大端 16 位读取 */
+static Value ffi_read_be_i16_func(int argc, Value* args) {
+    ObjFFIPointer* ptr = val_as_ffi_ptr(args[0]);
+    int offset = parse_offset(argc, args, 1);
+    CHECK_NULL_PTR(ptr);
+    CHECK_BOUNDS(ptr, offset, 2);
+    uint8_t* p = (uint8_t*)ptr->ptr + offset;
+    return val_int((int)(int16_t)((uint16_t)p[1] | ((uint16_t)p[0] << 8)));
+}
+
+/* 小端 32 位读取 */
+static Value ffi_read_le_i32_func(int argc, Value* args) {
+    ObjFFIPointer* ptr = val_as_ffi_ptr(args[0]);
+    int offset = parse_offset(argc, args, 1);
+    CHECK_NULL_PTR(ptr);
+    CHECK_BOUNDS(ptr, offset, 4);
+    uint8_t* p = (uint8_t*)ptr->ptr + offset;
+    return val_int((int)(int32_t)((uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+                     ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24)));
+}
+
+/* 大端 32 位读取 */
+static Value ffi_read_be_i32_func(int argc, Value* args) {
+    ObjFFIPointer* ptr = val_as_ffi_ptr(args[0]);
+    int offset = parse_offset(argc, args, 1);
+    CHECK_NULL_PTR(ptr);
+    CHECK_BOUNDS(ptr, offset, 4);
+    uint8_t* p = (uint8_t*)ptr->ptr + offset;
+    return val_int((int)(int32_t)((uint32_t)p[3] | ((uint32_t)p[2] << 8) |
+                     ((uint32_t)p[1] << 16) | ((uint32_t)p[0] << 24)));
+}
+
 static Value ffi_string_bytes_func(int argc, Value* args) {
     (void)argc;
     ObjString* str = (ObjString*)val_as_obj(args[0]);
@@ -2982,6 +3177,10 @@ void ffi_init_module(void) {
     TypeKind load_params[] = {TYPE_STRING};
     native_register_module_method("ffi", "load", ffi_load_func, 1, -1, -1, TYPE_PTR, TYPE_UNKNOWN, load_params);
 
+    /* ===== 符号解析 ===== */
+    TypeKind dlsym_params[] = {TYPE_PTR, TYPE_STRING};  // lib, name
+    native_register_module_method("ffi", "dlsym", ffi_dlsym_func, 2, -1, -1, TYPE_PTR, TYPE_UNKNOWN, dlsym_params);
+
     /* ===== 函数调用 ===== */
     TypeKind call_params[] = {TYPE_PTR, TYPE_STRING};
     /* ffi.call 返回 any 类型，但实际值是 int，需要用 _int()、_ptr() 等转换 */
@@ -3074,6 +3273,26 @@ void ffi_init_module(void) {
 
     TypeKind write_str_params[] = {TYPE_PTR, TYPE_INT, TYPE_STRING};  // ptr, offset, string
     native_register_module_method("ffi", "write_string", ffi_write_string_func, 3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, write_str_params);
+
+    /* write_bytes: 和 write_string 类似但不写 '\0' 终止符 */
+    native_register_module_method("ffi", "write_bytes",  ffi_write_bytes_func,  3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, write_str_params);
+
+    /* read_bytes: 批量读取，返回字符串 */
+    TypeKind read_bytes_params[] = {TYPE_PTR, TYPE_INT, TYPE_INT};  // ptr, offset, length
+    native_register_module_method("ffi", "read_bytes",   ffi_read_bytes_func,   3, -1, -1, TYPE_STRING, TYPE_UNKNOWN, read_bytes_params);
+
+    /* ===== 显式字节序读写 ===== */
+    TypeKind le_be_write_params[] = {TYPE_PTR, TYPE_INT, TYPE_INT};  // ptr, offset, value
+    native_register_module_method("ffi", "write_le_i16", ffi_write_le_i16_func, 3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, le_be_write_params);
+    native_register_module_method("ffi", "write_be_i16", ffi_write_be_i16_func, 3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, le_be_write_params);
+    native_register_module_method("ffi", "write_le_i32", ffi_write_le_i32_func, 3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, le_be_write_params);
+    native_register_module_method("ffi", "write_be_i32", ffi_write_be_i32_func, 3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, le_be_write_params);
+
+    TypeKind le_be_read_params[] = {TYPE_PTR, TYPE_INT};  // ptr, offset
+    native_register_module_method("ffi", "read_le_i16",  ffi_read_le_i16_func,  2, -1, -1, TYPE_INT, TYPE_UNKNOWN, le_be_read_params);
+    native_register_module_method("ffi", "read_be_i16",  ffi_read_be_i16_func,  2, -1, -1, TYPE_INT, TYPE_UNKNOWN, le_be_read_params);
+    native_register_module_method("ffi", "read_le_i32",  ffi_read_le_i32_func,  2, -1, -1, TYPE_INT, TYPE_UNKNOWN, le_be_read_params);
+    native_register_module_method("ffi", "read_be_i32",  ffi_read_be_i32_func,  2, -1, -1, TYPE_INT, TYPE_UNKNOWN, le_be_read_params);
 
     /* ===== Ptr[T] 元素级访问 ===== */
     TypeKind at_params[] = {TYPE_PTR, TYPE_INT, TYPE_ANY};  // ptr, index, value

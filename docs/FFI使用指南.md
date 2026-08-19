@@ -41,6 +41,10 @@ FFI（Foreign Function Interface）是 Leno 语言调用 C 动态库和操作系
   - [8.1 错误处理](#81-错误处理)
   - [8.2 内存管理](#82-内存管理)
   - [8.3 类型安全](#83-类型安全)
+  - [8.4 常见陷阱与注意事项](#84-常见陷阱与注意事项)
+  - [8.5 cstruct 内存对齐与 padding](#85-cstruct-内存对齐与-padding)
+  - [8.6 字节序（Endianness）](#86-字节序endianness)
+  - [8.7 多线程 FFI 调用的安全性](#87-多线程-ffi-调用的安全性)
 
 ---
 
@@ -121,13 +125,18 @@ main() {
 
 **内存布局示意图：**
 ```
-偏移 0:  [42]              <- write_int(buf, 0, 42)
-偏移 4:  [127]             <- write_int8(buf, 4, 127)
-偏移 5:  [1000]            <- write_int16(buf, 5, 1000)
-偏移 7:  [999999]          <- write_int64(buf, 7, 999999)
-偏移 16: [3.14159]         <- write_double(buf, 16, 3.14159)
+偏移 0:  [42]              <- write_int(buf, 0, 42)        // 占 0-3
+偏移 4:  [127]             <- write_int8(buf, 4, 127)      // 占 4
+偏移 5:  [1000]            <- write_int16(buf, 5, 1000)   // 占 5-6
+偏移 7:  [65535]           <- write_uint16(buf, 7, 65535) // 占 7-8
+偏移 9:  [999999]          <- write_int64(buf, 9, 999999) // 占 9-16
+偏移 17: [true]            <- write_bool(buf, 17, true)    // 占 17
+偏移 32: [0xFFFFFFFFFFFFFFFF] <- write_uint64(buf, 32, ...) // 占 32-39
+偏移 16: [3.14159]         <- write_double(buf, 16, 3.14159) // 占 16-23（与 int64 在偏移 16 处重叠）
 偏移 24: ["Hello FFI!"]    <- write_string(buf, 24, "Hello FFI!")
 ```
+
+> **⚠️ 注意：上例存在字段重叠**。`write_int64(buf, 9, ...)` 占偏移 9-16，而 `write_double(buf, 16, ...)` 占偏移 16-23，两者在偏移 16 处有 1 字节重叠（int64 的最高字节被 double 覆盖）。这展示了 FFI 的原始内存操作特性——**FFI 不会自动管理字段布局**，所有偏移由开发者手动计算，写错偏移就会覆盖相邻数据。正式开发时请确保每个字段占据不重叠的区域。
 
 ### 1.3 调用 C 标准库函数
 
@@ -366,7 +375,11 @@ int truncated = big as int32  // 显式截断，丢弃高位
 | 返回值 | 直接是 Leno 类型 | 自动展开为 Leno 类型（零摩擦） |
 | 参数转换 | 自动推断 | 自动窄化 + 运行时范围检查 |
 | str16 自动转换 | **不支持**，需手动 `ffi.utf8_to_utf16()` | **自动转换**，直接传 `string` 即可 |
-| 适用场景 | 快速原型、动态调用 | 正式项目、类型安全要求高 |
+| 符号解析 | 首次调用 `GetProcAddress`/`dlsym`，后续命中缓存 | 同样有缓存 |
+| 调用开销 | 基本相同 | 基本相同 |
+| 适用场景 | 快速原型、动态调用、函数名运行时决定 | 正式项目、类型安全要求高、固定函数集 |
+
+> **性能说明**：v4.0 起，`ObjFFILibrary` 内置函数地址缓存表（32 槽），首次调用执行 `GetProcAddress`/`dlsym` 后缓存，后续调用直接命中缓存跳过符号查找。`clib` 声明式调用与 `ffi.call_*` 底层走同一调用路径（`ffi_call_impl`），两者性能基本相同。`clib` 的优势主要在**类型安全**和**开发体验**（零摩擦类型转换、编译期检查）。
 
 > **推荐**：涉及 Windows Unicode API（`W` 后缀函数）时，优先使用 `clib` 声明式调用，`str16` 参数会自动完成 UTF-8→UTF-16 转换，无需手动处理。
 
@@ -1410,7 +1423,7 @@ ffi.free(cb)  // 释放回调资源
 **注意事项：**
 - 回调对象在 GC 回收时会自动释放，但建议手动 `ffi.free()` 以控制生命周期
 - 释放回调后，对应的 C 函数指针不再有效，继续调用会导致未定义行为
-- 最多支持 128 个同时存在的回调（全局注册表限制）
+- 最多支持 256 个同时存在的回调（全局注册表限制）
 - 回调函数中的参数类型为 `Ptr` 时，需要通过 `ffi.read_*` 读取数据
 
 ### 7.4 跨线程回调
@@ -1921,6 +1934,222 @@ var view = ffi.offset(base, 10)
 ffi.free(base)
 ```
 
+### 8.5 cstruct 内存对齐与 padding
+
+FFI 最隐蔽的坑不是类型转换，而是结构体内存布局与 C 头文件不一致。C 编译器会自动在字段间插入 padding 字节，如果 Leno 的 cstruct 字段顺序或对齐方式与 C 不匹配，传进 API 后数据全乱。
+
+#### cstruct 默认对齐规则
+
+Leno cstruct **按字段自然对齐**（与 C 编译器默认行为一致），不是 packed：
+
+- **基本类型**的对齐要求 = 类型大小（如 `u32` 对齐 4 字节，`u64` 对齐 8 字节）
+- **字段偏移**：每个字段从 `当前偏移` 向上对齐到该字段的对齐要求
+- **结构体总大小**：按所有字段中的最大对齐要求向上取整
+
+```
+字段顺序：u8 a, u32 b, u8 c
+内存布局：
+  偏移 0: a (1 字节)
+  偏移 1-3: padding (3 字节，对齐 b 到 4 字节边界)
+  偏移 4: b (4 字节)
+  偏移 8: c (1 字节)
+  偏移 9-11: padding (3 字节，总大小对齐到 4 字节)
+总大小: 12 字节
+```
+
+> **关键**：字段顺序直接影响结构体大小。`u8, u32, u8` = 12 字节，而 `u8, u8, u32` = 8 字节（前两个 u8 紧凑，padding 在 u32 前 2 字节，无尾部 padding）。
+
+#### 验证结构体布局
+
+使用 `cstruct.size()` 和 `cstruct.alignment()` 验证布局是否与 C 头文件一致：
+
+```leno
+import ffi
+
+// Windows PROCESSENTRY32W 的关键字段（简化版）
+cstruct PROCESSENTRY32W {
+    u32 dwSize              // 偏移 0, 4 字节
+    u32 cntUsage            // 偏移 4, 4 字节
+    u32 th32ProcessID       // 偏移 8, 4 字节
+    u64 th32DefaultHeapID   // 偏移 16, 8 字节 (偏移 12 处有 4 字节 padding)
+    u32 th32ModuleID        // 偏移 24, 4 字节
+    // ... 更多字段（cntThreads, th32ParentProcessID, pcPriClassBase, dwFlags）
+    str16 szExeFile[260]   // 偏移 44, 520 字节 (260 × 2)
+}
+
+main() {
+    // 验证大小与 C 头文件一致
+    int size = PROCESSENTRY32W.size()
+    int align = PROCESSENTRY32W.alignment()
+    print("PROCESSENTRY32W 大小: " + size + " 字节")   // 应与 sizeof(PROCESSENTRY32W) 一致
+    print("对齐要求: " + align + " 字节")               // 8 (u64 的对齐)
+
+    // 获取单个 C 类型的大小和对齐
+    int u32_size = ffi.sizeof_type("u32")    // 4
+    int u64_align = ffi.alignof("u64")       // 8
+    print("u32 大小: " + u32_size + ", u64 对齐: " + u64_align)
+}
+```
+
+#### 检查字段偏移
+
+使用 `cstruct.debug()` 查看各字段的实际偏移和布局，与 C 的 `offsetof` 对比：
+
+```leno
+cstruct POINT { i32 x; i32 y }
+
+main() {
+    POINT.debug()
+    // 输出示例:
+    //   POINT (4 字节, 对齐 4)
+    //     x: offset=0 size=4
+    //     y: offset=4 size=4
+}
+```
+
+> **提示**：`debug()` 方法会打印结构体的完整布局信息（字段名、偏移、大小），方便与 C 头文件的 `offsetof` 结果对照验证。也可以用 `hex()` 以十六进制转储结构体内存。
+
+#### packed 结构体
+
+Leno cstruct 目前**不支持** `#pragma pack` 等价物——所有 cstruct 都按自然对齐。如果 C 库使用了 `#pragma pack(1)` 或 `__attribute__((packed))`，需要在 Leno 侧手动添加 padding 字段来对齐：
+
+```leno
+// C: #pragma pack(1) 的 packed 结构体
+// struct __attribute__((packed)) PackedData {
+//     uint8_t  a;    // 偏移 0
+//     uint32_t b;    // 偏移 1 (无 padding!)
+// };
+
+// Leno 无法直接声明 packed，需手动补 padding 模拟：
+cstruct PackedData {
+    u8 a           // 偏移 0
+    u8 _pad0[3]    // 手动占位（但这样会有 padding）
+    // 注意：Leno 无法完美模拟 packed，建议避免使用 packed 结构体
+}
+```
+
+> **建议**：如果 C 库使用了 packed 结构体，考虑用 `ffi.malloc` + 手动 `write_*`/`read_*` 按偏移操作，而非 cstruct。
+
+### 8.6 字节序（Endianness）
+
+`ffi.write_*` / `ffi.read_*` 系列函数使用**主机字节序**（host-endian）——即直接用 `memcpy` 拷贝 C 本地变量的内存表示，不做任何字节序转换。
+
+| 函数 | 字节序 | 说明 |
+|------|--------|------|
+| `ffi.write_int16` / `read_int16` | 主机字节序 | x86/ARM 小端，PPC 大端 |
+| `ffi.write_int32` / `read_int32` | 主机字节序 | 同上 |
+| `ffi.write_int64` / `read_int64` | 主机字节序 | 同上 |
+| `ffi.write_uint16` / `read_uint16` | 主机字节序 | 同上 |
+| `ffi.write_double` / `read_double` | 主机字节序 | IEEE 754 + 主机字节序 |
+| `ffi.write_string` / `read_string` | 无（字节流） | 字符串本身不涉及字节序 |
+
+> **这意味着**：
+> - 在 x86/ARM（小端）机器上，`ffi.write_int32(buf, 0, 1)` 写入的字节是 `01 00 00 00`
+> - 如果同一程序在 PowerPC（大端）机器上运行，写入的是 `00 00 00 01`
+> - FFI 层**不提供** `write_int_le`/`write_int_be` 等显式字节序函数
+
+**何时需要注意字节序？**
+
+- ✅ **同平台 FFI 调用**（如 Windows API、C 标准库）：无需关心，主机字节序与 C 库一致
+- ✅ **网络协议解析**：大多数网络协议使用大端（network byte order），需要手动转换
+- ✅ **跨平台二进制文件交换**：如 x86 机器写的二进制文件传到 ARM 大端机器上读取
+
+**手动转换示例（小端写入）：**
+
+```leno
+import ffi
+
+// 手动按小端写入 int32（不依赖主机字节序）
+func write_int32_le(Ptr buf, int offset, int value) {
+    ffi.write_byte(buf, offset,     (value >> 0)  & 0xFF)
+    ffi.write_byte(buf, offset + 1, (value >> 8)  & 0xFF)
+    ffi.write_byte(buf, offset + 2, (value >> 16) & 0xFF)
+    ffi.write_byte(buf, offset + 3, (value >> 24) & 0xFF)
+}
+
+// 手动按大端写入 int32
+func write_int32_be(Ptr buf, int offset, int value) {
+    ffi.write_byte(buf, offset,     (value >> 24) & 0xFF)
+    ffi.write_byte(buf, offset + 1, (value >> 16) & 0xFF)
+    ffi.write_byte(buf, offset + 2, (value >> 8)  & 0xFF)
+    ffi.write_byte(buf, offset + 3, (value >> 0)  & 0xFF)
+}
+
+main() {
+    Ptr buf = ffi.malloc(8)
+    write_int32_le(buf, 0, 1)  // 小端: 01 00 00 00
+    write_int32_be(buf, 4, 1)  // 大端: 00 00 00 01
+    ffi.free(buf)
+}
+```
+
+> **提示**：Leno 的 `ffi.write_*` 在 x86/ARM 小端环境下的行为与 `_le` 后缀函数等价。只有在需要确保跨平台一致或显式指定大端时，才需要手动转换。
+
+### 8.7 多线程 FFI 调用的安全性
+
+#### 库句柄的线程安全性
+
+`ffi.load` 返回的库句柄本身是**线程安全**的——多个 Leno Thread 可以同时通过同一个句柄调用 FFI 函数，不会产生数据竞争。`GetProcAddress`/`dlsym` 本身也是线程安全的。
+
+但**被调用的 C 库函数是否线程安全，取决于该 C 库自身的实现**：
+
+| 场景 | 线程安全？ | 说明 |
+|------|-----------|------|
+| 多线程调用 `kernel32.dll` 的 `GetCurrentProcessId` | ✅ 安全 | 只读无状态函数 |
+| 多线程调用 `msvcrt.dll` 的 `malloc`/`free` | ✅ 安全 | CRT 分配器内部加锁 |
+| 多线程调用非线程安全音频库的 `play` | ❌ 不安全 | C 库内部有共享状态无锁 |
+| 多线程调用同一 C 库的有状态函数 | ⚠️ 取决于 C 库 | 需查阅 C 库文档 |
+
+> **核心原则**：FFI 层**不对 C 库函数做任何线程保护**。Leno 只保证库句柄本身的线程安全（符号解析、句柄引用计数），C 函数执行的线程安全性完全由 C 库自身保证。
+
+#### ffi.malloc 的线程安全性
+
+`ffi.malloc` 底层调用 C 标准库的 `malloc`，其线程安全性取决于平台的 CRT 实现：
+
+- **Windows（msvcrt/ucrt）**：✅ 线程安全，内部加锁
+- **Linux glibc**：✅ 线程安全（`ptmalloc` 有锁）
+- **Linux tcmalloc/jemalloc**：✅ 线程安全（更高效的 per-thread arena）
+
+因此多个 Leno Thread 同时 `ffi.malloc` 是安全的，无需额外加锁。
+
+#### Leno Thread 与 FFI
+
+Leno 的 `threads.start()` 创建的线程有独立的 VM，但共享同一个进程地址空间：
+
+- **共享库句柄**：多个 Thread 可以共用同一个 `ffi.load` 返回的句柄
+- **共享内存**：`ffi.malloc` 分配的内存可以在多个 Thread 间传递（通过 `Ptr` 传递）
+- **不共享回调对象**：`ffi.callback` 创建的回调对象绑定到创建它的 VM，跨线程使用需通过跨线程回调编组机制（见 7.4 节）
+
+```leno
+import ffi
+import threads
+
+// 共享库句柄和缓冲区
+kernel32 lib = ffi.load("kernel32.dll")
+Ptr[u32] sharedBuf = ffi.malloc(1024)
+
+// 多线程安全调用
+func worker(int id) {
+    // 多个线程同时调用同一库句柄——安全
+    int pid = ffi.call_int(lib, "GetCurrentProcessId")
+    print("Thread " + id + " sees PID " + pid)
+
+    // 多个线程同时写共享内存——需要自己加锁！
+    // ffi.write_int(sharedBuf, id * 4, id)  // 并发写可能数据竞争
+}
+
+main() {
+    var t1 = threads.start(worker, 1)
+    var t2 = threads.start(worker, 2)
+    threads.join(t1)
+    threads.join(t2)
+    ffi.free(lib)
+    ffi.free(sharedBuf)
+}
+```
+
+> **⚠️ 注意**：如果 C 库本身不是线程安全的（如某些音频编解码库），需要在 Leno 侧用 `threads.Mutex` 或信号量自行加锁保护。
+
 ---
 
 ## 附录：完整 API 速查表
@@ -1979,8 +2208,36 @@ ffi.free(base)
 | `read_ptr(ptr, off)` | `write_ptr(ptr, off, val)` | 8 字节 |
 | `read_string(ptr, off)` | `write_string(ptr, off, str)` | - |
 | `read_string_n(ptr, off, len)` | - | - |
+| `read_bytes(ptr, off, len)` | `write_bytes(ptr, off, str)` | len 字节 |
 
-### 指针操作
+### 显式字节序读写
+
+| 读取函数 | 写入函数 | 大小 |
+|----------|----------|------|
+| `read_le_i16(ptr, off)` | `write_le_i16(ptr, off, val)` | 2 字节（小端） |
+| `read_be_i16(ptr, off)` | `write_be_i16(ptr, off, val)` | 2 字节（大端） |
+| `read_le_i32(ptr, off)` | `write_le_i32(ptr, off, val)` | 4 字节（小端） |
+| `read_be_i32(ptr, off)` | `write_be_i32(ptr, off, val)` | 4 字节（大端） |
+
+### 符号解析
+
+| 函数 | 参数 | 返回 | 说明 |
+|------|------|------|------|
+| `load(path)` | string | Lib | 加载动态库 |
+| `dlsym(lib, name)` | Lib, string | Ptr\|null | 显式解析符号地址（未找到返回 null） |
+
+### 函数调用
+
+> `ffi.call` 已标记 deprecated，请使用 `ffi.call_int` 等明确返回类型的函数。
+
+| 函数 | 参数 | 返回 |
+|------|------|------|
+| `call(lib, name, ...)` | Lib, string, ... | int（已弃用） |
+| `call_int(lib, name, ...)` | Lib, string, ... | int |
+| `call_double(lib, name, ...)` | Lib, string, ... | float |
+| `call_void(lib, name, ...)` | Lib, string, ... | null |
+| `call_ptr(lib, name, ...)` | Lib, string, ... | Ptr |
+| `call_bool(lib, name, ...)` | Lib, string, ... | bool |
 
 | 函数 | 参数 | 返回 | 说明 |
 |------|------|------|------|
@@ -2010,6 +2267,24 @@ ffi.free(base)
 |------|------|------|------|
 | `sizeof_type(type_name)` | string | int | 获取 C 类型大小（字节） |
 | `alignof(type_name)` | string | int | 获取 C 类型对齐（字节） |
+
+### cstruct 方法
+
+| 函数 | 参数 | 返回 | 说明 |
+|------|------|------|------|
+| `malloc()` | - | cstruct | 分配内存 |
+| `from_ptr(ptr)` | Ptr | cstruct | 从指针创建（不拥有内存） |
+| `malloc_array(count)` | int | cstruct[] | 创建结构体数组 |
+| `free()` | - | bool | 释放内存 |
+| `to_ptr()` | - | Ptr | 获取指针 |
+| `to_str()` | - | string | 打印内存布局 |
+| `size()` | - | int | 返回结构体大小（字节） |
+| `alignment()` | - | int | 返回对齐要求（字节） |
+| `offset_of(field_name)` | string | int | 返回字段偏移量（字节） |
+| `debug()` | - | string | 显示详细内存布局、偏移、对齐信息 |
+| `hex()` | - | string | 十六进制格式显示原始字节 |
+| `free_all()` | - | bool | 释放结构体数组 |
+| `len()` | - | int | 返回数组长度（仅 cstruct[]） |
 
 ### clib 声明类型
 
@@ -2053,10 +2328,28 @@ ffi.free(base)
 
 ---
 
-*文档版本: 3.4*
-*最后更新: 2026-08-14*
+*文档版本: 4.0*
+*最后更新: 2026-08-19*
 
 ### 更新记录
+
+- **v4.0** (2026-08-19):
+  - **符号地址缓存**：`ObjFFILibrary` 新增函数地址缓存表（32 槽），`ffi.call_*`/`clib`/`ffi.dlsym` 首次调用后缓存函数地址，后续调用跳过 `GetProcAddress`/`dlsym`。
+  - **混合参数回退路径浮点 bug 修复**：`ffi_call_impl` 调用前检查参数组合，当 >4 参数含浮点且超出 Win64 精确分发范围时，提前抛出明确错误，而非静默走 broken 回退路径。
+  - **回调数量上限提升**：`MAX_FFI_CALLBACKS` 从 128 增至 256。
+  - **新增 `ffi.write_bytes` / `read_bytes`**：批量字节读写，一次 `memcpy`，替代循环 `write_byte`。
+  - **新增 `ffi.dlsym`**：显式符号解析，返回 `Ptr` 或 `null`。
+  - **新增显式字节序函数**：`write_le_i16`/`write_be_i16`/`write_le_i32`/`write_be_i32` 及对应 `read_*`，8.6 节原"不提供 `_le`/`_be`"的说法已过时。
+  - **新增 `cstruct.offset_of(field_name)`**：编程式获取字段偏移量，返回 `int`。
+  - **代码去重**：合并 `ffi_call_impl` 中 int 和 bigint 的窄化逻辑为统一分支，减少约 60 行重复代码，并修复 bigint 的 `u64` 负值检查缺失。
+  - **`ffi.call` 标记 deprecated**：使用时输出 `stderr` 警告，引导使用 `ffi.call_int` 等明确返回类型的函数。
+
+- **v3.5** (2026-08-19):
+  - **修复 1.2 节内存布局示意图**：修正 `write_int64` 偏移 7 与 `write_uint16` 重叠的错误，改为正确的偏移 9，并补充被遗漏的 `write_uint16` 和 `write_bool` 行。新增字段重叠警告说明。
+  - **新增 8.5 cstruct 内存对齐与 padding**：详细说明 cstruct 默认自然对齐规则（对齐=类型大小）、字段顺序对 padding 的影响、如何用 `size()`/`alignment()`/`debug()` 验证布局、以及 packed 结构体的限制。
+  - **新增 8.6 字节序（Endianness）**：明确 `ffi.write_*`/`read_*` 使用主机字节序（memcpy 直接拷贝）。现已提供 `write_le_i16`/`write_be_i32` 等显式字节序函数，可直接使用，无需手动拼装。
+  - **新增 8.7 多线程 FFI 调用的安全性**：说明库句柄本身线程安全但 FFI 层不对 C 库函数做线程保护、`ffi.malloc` 底层 C `malloc` 的线程安全性、Leno Thread 间共享库句柄和内存的规则。
+  - **修正 ffi.call_* vs clib 性能差异**：对比表新增符号解析和调用开销行，如实说明当前实现中两者底层走同一路径（`ffi_call_impl`），都每次调用执行 `GetProcAddress`/`dlsym`，没有在 `ffi.load` 时缓存函数地址。clib 优势在类型安全和开发体验，而非运行时性能。
 
 - **v3.4** (2026-08-14):
   - **str8 返回值内存泄漏说明**：明确标注 `str8` 返回类型会深拷贝 C `char*` 为 Leno `string`，但原始 C 内存不自动释放。对于需要释放的 C 字符串（如 `curl_easy_escape`），应使用 `call_ptr` + `read_string` + 手动释放三步走方案。

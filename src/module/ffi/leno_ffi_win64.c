@@ -413,7 +413,8 @@ FFIValue ffi_call_win64(void* func, const FFISignature* sig, const FFIArg* args)
      */
     if (dcount > 0) {
         fprintf(stderr, "[FFI Warning] 回退调用路径: %d 个参数中含 %d 个浮点参数，"
-                        "浮点参数可能无法正确传递（期望 XMM 寄存器，实际走整数寄存器/栈）\n",
+                        "浮点参数可能无法正确传递（期望 XMM 寄存器，实际走整数寄存器/栈）。\n"
+                        "  提示：上层 ffi_call_impl 应已拦截此场景，如看到此消息请报告 bug。\n",
                 total, dcount);
     }
     {

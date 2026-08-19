@@ -531,6 +531,38 @@ print(Point.alignment())    // 4
 
 ---
 
+#### `offset_of(field_name)`
+
+获取指定字段的字节偏移量。可用于编程式访问结构体字段，而不依赖 `debug()` 的文本输出。
+
+**参数**:
+- `field_name` (string): 字段名称
+
+**返回**: `int` - 字段偏移量（字节）
+
+**说明**:
+- receiver 可以是 cstruct 定义或实例
+- 字段不存在时抛出错误
+
+```leno
+cstruct POINT {
+    i32 x
+    i32 y
+}
+
+// 对定义调用
+print(POINT.offset_of("x"))  // 0
+print(POINT.offset_of("y"))  // 4
+
+// 对实例调用
+var p = POINT.malloc()
+print(p.offset_of("x"))      // 0
+print(p.offset_of("y"))      // 4
+p.free()
+```
+
+---
+
 ## 类型安全指针
 
 ### Ptr[T] 语法
@@ -1048,10 +1080,13 @@ buf.free()
 
 ---
 
-*文档版本: 1.1*  
-*最后更新: 2026-05-17*
+*文档版本: 1.2*  
+*最后更新: 2026-08-19*
 
 ## 更新日志
+
+### v1.2 (2026-08-19)
+- 新增 `offset_of(field_name)` 方法，编程式获取字段偏移量
 
 ### v1.1 (2026-05-17)
 - 新增 **批量操作** 章节
