@@ -36,6 +36,12 @@ ObjStructDef* struct_def_new(const char* name, int field_count, int method_count
     def->const_names = NULL;
     def->const_values = NULL;
     def->const_count = 0;
+
+    // 追踪 fields 和 methods 数组的内存
+    gc_track_memory((Object*)def, 0,
+        (size_t)field_count * sizeof(StructFieldInfo) +
+        (size_t)method_count * sizeof(StructMethodInfo));
+
     return def;
 }
 
@@ -156,6 +162,9 @@ ObjStruct* struct_instance_new_depth(ObjStructDef* def, int depth) {
     obj->declared_face = NULL;
     obj->generic_type_args = NULL;
     obj->generic_type_arg_count = 0;
+
+    // 追踪 field_values 数组的内存（calloc 分配的额外内存 GC 默认不可见）
+    gc_track_memory((Object*)obj, 0, (size_t)def->field_count * sizeof(Value));
 
     // 使用默认值初始化字段
     for (int i = 0; i < def->field_count; i++) {
@@ -289,6 +298,10 @@ ObjEnumDef* enum_def_new(const char* name, int member_count) {
     def->name = strdup(name);
     def->member_count = member_count;
     def->members = (EnumMemberInfo*)calloc(member_count, sizeof(EnumMemberInfo));
+
+    // 追踪 members 数组的内存
+    gc_track_memory((Object*)def, 0, (size_t)member_count * sizeof(EnumMemberInfo));
+
     return def;
 }
 

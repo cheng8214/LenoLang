@@ -162,6 +162,12 @@ ObjCStructDef* cstruct_def_new(const char* name, int field_count, int total_size
     def->field_hash_table = NULL;
     def->field_hash_capacity = 0;
     cstruct_def_init_hash_table(def);
+
+    // 追踪 fields 数组和哈希表的内存
+    gc_track_memory((Object*)def, 0,
+        (size_t)field_count * sizeof(CStructFieldInfo) +
+        (size_t)def->field_hash_capacity * sizeof(CStructFieldHashEntry*));
+
     return def;
 }
 
@@ -263,6 +269,10 @@ ObjCStruct* cstruct_new(ObjCStructDef* def) {
         return NULL;
     }
     obj->owns_memory = 1;
+
+    // 追踪 data 缓冲区的内存
+    gc_track_memory((Object*)obj, 0, def->total_size);
+
     return obj;
 }
 
@@ -532,7 +542,10 @@ ObjCStructArray* cstruct_array_new(ObjCStructDef* def, int count) {
         // 内存分配失败
         return NULL;
     }
-    
+
+    // 追踪 data 缓冲区的内存
+    gc_track_memory((Object*)array, 0, total_size);
+
     return array;
 }
 

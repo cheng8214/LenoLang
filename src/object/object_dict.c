@@ -125,12 +125,18 @@ static void dict_resize(ObjDict* dict, int new_capacity) {
     ObjDictEntry* old_entries = dict->entries;
     int old_capacity = dict->capacity;
 
+    size_t old_size = (size_t)old_capacity * sizeof(ObjDictEntry);
+    size_t new_size = (size_t)new_capacity * sizeof(ObjDictEntry);
+
     dict->entries = (ObjDictEntry*)malloc(new_capacity * sizeof(ObjDictEntry));
     if (!dict->entries) {
         native_throw_error("字典扩容内存分配失败");
         dict->entries = old_entries;
         return;
     }
+
+    // 追踪哈希表内存变化，确保 GC 正确计算字典的内存占用
+    gc_track_memory((Object*)dict, old_size, new_size);
 
     for (int i = 0; i < new_capacity; i++) {
         dict->entries[i].key = NULL_VAL;
@@ -175,11 +181,17 @@ static int dict_array_resize(ObjDict* dict, int new_size) {
     if (new_size <= dict->asize) return 1;
     int capacity = 4;
     while (capacity < new_size) capacity *= 2;
-    Value* new_array = (Value*)realloc(dict->array, capacity * sizeof(Value));
+
+    size_t old_size = (size_t)dict->asize * sizeof(Value);
+    size_t new_cap_size = (size_t)capacity * sizeof(Value);
+
+    Value* new_array = (Value*)realloc(dict->array, new_cap_size);
     if (!new_array) return 0;
     for (int i = dict->asize; i < capacity; i++) {
         new_array[i] = val_null();
     }
+    // 追踪数组部分内存变化，确保 GC 正确计算字典的内存占用
+    gc_track_memory((Object*)dict, old_size, new_cap_size);
     dict->array = new_array;
     dict->asize = capacity;
     return 1;
@@ -223,9 +235,14 @@ ObjDict* dict_new(int capacity) {
 // 添加键到插入顺序数组
 static void dict_add_to_order(ObjDict* dict, Value key) {
     if (dict->order_count >= dict->order_capacity) {
-        int new_capacity = dict->order_capacity < 8 ? 8 : dict->order_capacity * 2;
-        Value* new_order = (Value*)realloc(dict->order, new_capacity * sizeof(Value));
+        int old_capacity = dict->order_capacity;
+        int new_capacity = old_capacity < 8 ? 8 : old_capacity * 2;
+        size_t old_size = (size_t)old_capacity * sizeof(Value);
+        size_t new_size = (size_t)new_capacity * sizeof(Value);
+        Value* new_order = (Value*)realloc(dict->order, new_size);
         if (!new_order) return;
+        // 追踪 order 数组内存变化，确保 GC 正确计算字典的内存占用
+        gc_track_memory((Object*)dict, old_size, new_size);
         dict->order = new_order;
         dict->order_capacity = new_capacity;
     }
@@ -374,10 +391,12 @@ void dict_try_shrink(ObjDict* dict) {
     }
 
     if (dict->order_capacity > 16 && dict->order_count < dict->order_capacity / 4) {
-        int new_cap = dict->order_capacity / 2;
+        int old_cap = dict->order_capacity;
+        int new_cap = old_cap / 2;
         if (new_cap < 8) new_cap = 8;
         Value* new_order = (Value*)realloc(dict->order, new_cap * sizeof(Value));
         if (new_order) {
+            gc_track_memory((Object*)dict, (size_t)old_cap * sizeof(Value), (size_t)new_cap * sizeof(Value));
             dict->order = new_order;
             dict->order_capacity = new_cap;
         }
@@ -402,6 +421,7 @@ void dict_try_shrink(ObjDict* dict) {
         if (new_asize < dict->asize) {
             Value* new_array = (Value*)realloc(dict->array, new_asize * sizeof(Value));
             if (new_array) {
+                gc_track_memory((Object*)dict, (size_t)dict->asize * sizeof(Value), (size_t)new_asize * sizeof(Value));
                 dict->array = new_array;
                 dict->asize = new_asize;
             }
