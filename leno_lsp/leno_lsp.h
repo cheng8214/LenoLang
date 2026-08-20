@@ -248,6 +248,8 @@ char* lsp_get_hover_info(const char* content, LspPosition pos, const char* file_
 // 跳转定义
 char* lsp_handle_definition(LspServer* server, int id, JsonValue* params);
 LspLocation* lsp_get_definition(const char* content, LspPosition pos, int* count, const char* uri);
+LspLocation* lsp_find_definition_by_word(const char* content, const char* word,
+                                         const char* current_file, int* count);
 void lsp_free_locations(LspLocation* locs, int count);
 
 // ==================== 文档管理 ====================

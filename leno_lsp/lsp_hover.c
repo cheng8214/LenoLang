@@ -2457,21 +2457,15 @@ static char* generate_struct_method_doc(const char* struct_name, const char* met
                             memcpy(sig_text, line_start, sig_len);
                             sig_text[sig_len] = '\0';
                             
-                            // 计算行号
-                            int line_num = 1;
-                            for (const char* c = content; c < line_start; c++) {
-                                if (*c == '\n') line_num++;
-                            }
-                            
                             // 构建悬停信息
                             int len = 512 + strlen(struct_name) + strlen(method_name) + sig_len + 64;
                             method_info = (char*)malloc(len);
                             if (method_info) {
                                 snprintf(method_info, len,
-                                         "**%s.%s**\n\n```leno\n%s\n```\n\n%s 结构体方法 (第 %d 行)",
+                                         "**%s.%s**\n\n```leno\n%s\n```\n\n%s 结构体方法",
                                          struct_name, method_name,
                                          sig_text,
-                                         struct_name, line_num);
+                                         struct_name);
                             }
                             break;
                         }
@@ -3039,8 +3033,59 @@ char* lsp_get_hover_info(const char* content, LspPosition pos, const char* file_
         }
     }
 
+    // 6. 如果已找到 hover 信息，尝试附加定义来源（文件名 + 行号）
+    if (info && file_path) {
+        // 确定用于查找定义的 word：
+        // 如果 word 含点号（如 "r.fillRoundedRect"），取最后一段（方法名）
+        const char* def_word = word;
+        char* short_word = NULL;
+        const char* dot = strrchr(word, '.');
+        if (dot && *(dot + 1)) {
+            short_word = strdup(dot + 1);
+            def_word = short_word;
+        }
+
+        int def_count = 0;
+        LspLocation* locations = lsp_find_definition_by_word(content, def_word, file_path, &def_count);
+
+        if (locations && def_count > 0) {
+            LspLocation* loc = &locations[0];
+            int def_line = (int)loc->range.start.line + 1;
+
+            // 从 URI 中提取文件名
+            const char* short_name = loc->uri;
+            if (strncmp(short_name, "file:///", 8) == 0) short_name += 8;
+            const char* slash = strrchr(short_name, '/');
+            const char* backslash = strrchr(short_name, '\\');
+            const char* last_sep = slash > backslash ? slash : backslash;
+            if (last_sep) short_name = last_sep + 1;
+
+            // 判断是否是当前文件
+            char* current_uri = lsp_path_to_uri(file_path);
+            bool is_current_file = (current_uri && strcmp(loc->uri, current_uri) == 0);
+            if (current_uri) free(current_uri);
+
+            // 追加来源信息到 hover 文本
+            size_t old_len = strlen(info);
+            size_t add_len = 256 + strlen(short_name);
+            char* new_info = (char*)malloc(old_len + add_len);
+            if (new_info) {
+                memcpy(new_info, info, old_len);
+                if (is_current_file) {
+                    snprintf(new_info + old_len, add_len, "\n\n---\n%s:%d", short_name, def_line);
+                } else {
+                    snprintf(new_info + old_len, add_len, "\n\n---\n%s:%d（导入模块）", short_name, def_line);
+                }
+                free(info);
+                info = new_info;
+            }
+        }
+        if (locations) lsp_free_locations(locations, def_count);
+        if (short_word) free(short_word);
+    }
+
     free(word);
-    
+
     clock_t t_end = clock();
     fprintf(stderr, "[HOVER] END found=%s time=%.0fms\n",
             info ? "yes" : "no", (double)(t_end - t_start) * 1000.0 / CLOCKS_PER_SEC);

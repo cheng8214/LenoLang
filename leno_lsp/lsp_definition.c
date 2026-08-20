@@ -449,3 +449,51 @@ void lsp_free_locations(LspLocation* locs, int count) {
     
     free(locs);
 }
+
+/**
+ * 按指定 word 查找定义位置（供 hover 提示使用）
+ * 与 lsp_get_definition 不同，此函数接受外部传入的 word，
+ * 而非从 content/pos 中提取（因为 hover 的 word 可能含点号如 "r.method"，
+ * 需要取最后一段方法名来查找定义）。
+ * 返回的 LspLocation* 需由调用者用 lsp_free_locations 释放。
+ */
+LspLocation* lsp_find_definition_by_word(const char* content, const char* word,
+                                         const char* current_file, int* count) {
+    *count = 0;
+    if (!content || !word) return NULL;
+
+    int capacity = 4;
+    LspLocation* locations = (LspLocation*)malloc(sizeof(LspLocation) * capacity);
+    if (!locations) return NULL;
+
+    // 在当前文档中查找定义
+    LspRange range;
+    if (find_definition_in_content(content, word, &range)) {
+        char* uri = current_file ? lsp_path_to_uri(current_file) : strdup("");
+        locations[*count].uri = uri ? uri : strdup("");
+        locations[*count].range = range;
+        (*count)++;
+    }
+
+    // 在导入的模块中查找定义（跨文件）
+    ImportEntry imports[MAX_IMPORTS];
+    int import_count = extract_imports_from_content(content, imports, MAX_IMPORTS);
+    for (int i = 0; i < import_count && *count < capacity; i++) {
+        LspRange mod_range;
+        char full_path[MAX_PATH_LEN];
+        if (find_definition_in_module(imports[i].file_path,
+                                      current_file,
+                                      word, &mod_range, full_path, sizeof(full_path))) {
+            char* def_uri = lsp_path_to_uri(full_path);
+            locations[*count].uri = def_uri ? def_uri : strdup("");
+            locations[*count].range = mod_range;
+            (*count)++;
+        }
+    }
+
+    if (*count == 0) {
+        free(locations);
+        return NULL;
+    }
+    return locations;
+}
