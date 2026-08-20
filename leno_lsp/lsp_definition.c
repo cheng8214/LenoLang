@@ -292,6 +292,17 @@ static bool find_definition_in_module(const char* module_path, const char* curre
     else if (module_symbol_table_find_enum(sym_table, word)) found = true;
     else if (module_symbol_table_find_face(sym_table, word)) found = true;
     else if (module_symbol_table_find_var(sym_table, word)) found = true;
+    // 也查找 clib 函数定义（如 TTF_RenderText_Blended_Wrapped）
+    if (!found) {
+        for (int i = 0; i < sym_table->clib_count && !found; i++) {
+            for (int j = 0; j < sym_table->clibs[i].func_count; j++) {
+                if (strcmp(sym_table->clibs[i].funcs[j].name, word) == 0) {
+                    found = true;
+                    break;
+                }
+            }
+        }
+    }
 
     module_symbol_table_destroy(sym_table);
     if (!found) return false;
@@ -311,16 +322,150 @@ static bool find_definition_in_module(const char* module_path, const char* curre
     return true;
 }
 
-// 在内容中查找定义
-static bool find_definition_in_content(const char* content, const char* word,
-                                       LspRange* range) {
+// 在 clib 定义块内查找函数名定义
+// clib 块内格式: <返回类型> FuncName(params)
+// 如: Ptr[u8]  TTF_RenderText_Blended_Wrapped(Ptr[u8] font, ...)
+static bool find_clib_func_definition(const char* content, const char* word,
+                                      LspRange* range) {
     if (!content || !word) return false;
-    
+
     int word_len = strlen(word);
     const char* p = content;
     int line = 0;
     int col = 0;
-    
+
+    // 先找到 "clib " 或 "export clib " 标记
+    while (*p) {
+        // 检查是否在行首边界
+        bool at_boundary = (p == content ||
+                            isspace((unsigned char)p[-1]) ||
+                            p[-1] == '{');
+
+        if (at_boundary) {
+            const char* clib_kw = NULL;
+
+            // 检查 "export clib "
+            if (strncmp(p, "export clib ", 12) == 0) {
+                clib_kw = p + 12;
+            } else if (strncmp(p, "clib ", 5) == 0) {
+                clib_kw = p + 5;
+            }
+
+            if (clib_kw) {
+                // 找到 clib 块，跳过 clib 名称和 '{'
+                const char* block_start = clib_kw;
+                // 跳过 clib 名称
+                while (*block_start && (isalnum((unsigned char)*block_start) || *block_start == '_')) {
+                    block_start++;
+                }
+                // 查找 '{'
+                while (*block_start && *block_start != '{') {
+                    if (*block_start == '\n') { line++; col = 0; }
+                    else col++;
+                    block_start++;
+                }
+                if (*block_start != '{') continue;  // 没有找到块体
+                block_start++;  // 跳过 '{'
+
+                // 在 clib 块内查找函数名
+                // 每行格式: <返回类型> FuncName(params)
+                const char* line_start = block_start;
+                const char* q = block_start;
+                int block_line = line;
+                int block_col = col;
+
+                while (*q && *q != '}') {
+                    // 跳过空白行
+                    if (*q == '\n') {
+                        block_line++;
+                        block_col = 0;
+                        line_start = q + 1;
+                        q++;
+                        continue;
+                    }
+
+                    // 跳过行首空白
+                    while (*q && (*q == ' ' || *q == '\t')) {
+                        q++;
+                        block_col++;
+                    }
+                    if (!*q || *q == '}' || *q == '\n') continue;
+
+                    // 跳过返回类型（可能是多个词，如 "Ptr[u8]" "bool" 等）
+                    // 类型后面紧跟函数名，函数名后跟 '('
+                    // 策略：在当前行中查找 " word(" 模式
+                    const char* line_end = q;
+                    while (*line_end && *line_end != '\n' && *line_end != '}') line_end++;
+
+                    // 在当前行中查找函数名
+                    const char* search = q;
+                    while (search < line_end) {
+                        // 检查是否匹配函数名（前面是空白或类型字符，后面是 '('）
+                        if (strncmp(search, word, word_len) == 0 &&
+                            (search == line_start || isspace((unsigned char)search[-1]) ||
+                             search[-1] == ']') &&
+                            search[word_len] == '(') {
+                            // 计算行号和列号
+                            // search 相对于 line_start 的偏移
+                            int char_offset = 0;
+                            const char* c = line_start;
+                            while (c < search) { char_offset++; c++; }
+
+                            range->start.line = block_line;
+                            range->start.character = char_offset;
+                            range->end.line = block_line;
+                            range->end.character = char_offset + word_len;
+
+                            return true;
+                        }
+                        search++;
+                    }
+
+                    // 跳到行尾
+                    q = line_end;
+                    if (*q == '\n') {
+                        block_line++;
+                        block_col = 0;
+                        line_start = q + 1;
+                        q++;
+                    }
+                }
+
+                // 更新全局 line/col 到 clib 块结束位置
+                line = block_line;
+                col = block_col;
+                p = q;
+                continue;
+            }
+        }
+
+        if (*p == '\n') {
+            line++;
+            col = 0;
+        } else {
+            col++;
+        }
+        p++;
+    }
+
+    return false;
+}
+
+// 在内容中查找定义
+static bool find_definition_in_content(const char* content, const char* word,
+                                       LspRange* range) {
+    if (!content || !word) return false;
+
+    // 如果 word 以 '.' 开头，去掉前导点号
+    const char* clean_word = word;
+    if (word[0] == '.') clean_word = word + 1;
+    if (!*clean_word) return false;
+
+    int word_len = strlen(clean_word);
+    const char* p = content;
+    int line = 0;
+    int col = 0;
+
     static const struct {
         const char* prefix;
         int len;
@@ -339,30 +484,30 @@ static bool find_definition_in_content(const char* content, const char* word,
         {"var ", 4},
     };
     static const int num_patterns = sizeof(def_patterns) / sizeof(def_patterns[0]);
-    
+
     while (*p) {
         bool at_boundary = (p == content ||
                             isspace((unsigned char)p[-1]) ||
                             p[-1] == '{');
-        
+
         if (at_boundary) {
             for (int i = 0; i < num_patterns; i++) {
                 int plen = def_patterns[i].len;
                 if (strncmp(p, def_patterns[i].prefix, plen) == 0 &&
-                    strncmp(p + plen, word, word_len) == 0 &&
+                    strncmp(p + plen, clean_word, word_len) == 0 &&
                     !isalnum((unsigned char)p[plen + word_len]) &&
                     p[plen + word_len] != '_') {
-                    
+
                     range->start.line = line;
                     range->start.character = col + plen;
                     range->end.line = line;
                     range->end.character = range->start.character + word_len;
-                    
+
                     return true;
                 }
             }
         }
-        
+
         if (*p == '\n') {
             line++;
             col = 0;
@@ -371,8 +516,9 @@ static bool find_definition_in_content(const char* content, const char* word,
         }
         p++;
     }
-    
-    return false;
+
+    // 如果标准定义模式没找到，尝试在 clib 块内查找函数定义
+    return find_clib_func_definition(content, clean_word, range);
 }
 
 // 获取定义位置
@@ -384,6 +530,12 @@ LspLocation* lsp_get_definition(const char* content, LspPosition pos, int* count
     // 获取光标下的单词
     char* word = get_word_at_position(content, pos);
     if (!word) return NULL;
+
+    // 如果 word 以 '.' 开头（函数调用链，如 .TTF_RenderText_Blended_Wrapped），
+    // 去掉前导点号，以便在模块符号表中正确查找
+    const char* lookup_word = word;
+    if (word[0] == '.') lookup_word = word + 1;
+    if (!*lookup_word) { free(word); return NULL; }
     
     // 分配结果数组
     int capacity = 4;
@@ -420,7 +572,7 @@ LspLocation* lsp_get_definition(const char* content, LspPosition pos, int* count
         char full_path[MAX_PATH_LEN];
         if (find_definition_in_module(imports[i].file_path,
                                       file_path[0] ? file_path : NULL,
-                                      word, &mod_range, full_path, sizeof(full_path))) {
+                                      lookup_word, &mod_range, full_path, sizeof(full_path))) {
             // 将文件路径转换为 URI
             char* def_uri = lsp_path_to_uri(full_path);
             locations[*count].uri = def_uri ? def_uri : strdup("");

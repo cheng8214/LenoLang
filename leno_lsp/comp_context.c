@@ -65,25 +65,72 @@ static char* get_word_before_cursor(const char* content, LspPosition pos) {
         if (is_string_literal_before_dot(content, start) >= 0) {
             return strdup("__STRING_LITERAL__");
         }
-        
+
         // 提取点号前的变量名/标识符
         int var_end = start;       // 点号的位置
         start--;
+        // 检查点号前是否是 ')'（函数调用链，如 ttfLib().）
+        if (start >= 0 && content[start] == ')') {
+            // 向前查找匹配的 '('
+            int paren_depth = 1;
+            int p = start - 1;
+            while (p >= 0 && paren_depth > 0) {
+                if (content[p] == ')') paren_depth++;
+                else if (content[p] == '(') paren_depth--;
+                else if (content[p] == '"' || content[p] == '\'') {
+                    char quote = content[p];
+                    p--;
+                    while (p >= 0 && content[p] != quote) {
+                        if (p > 0 && content[p] == '\\') p--;
+                        p--;
+                    }
+                }
+                if (paren_depth > 0) p--;
+            }
+            if (paren_depth == 0 && p > 0) {
+                // p 指向 '('，向前提取函数名
+                p--;
+                while (p >= 0 && isspace((unsigned char)content[p])) p--;
+                int name_end = p + 1;
+                while (p >= 0 && (isalnum((unsigned char)content[p]) || content[p] == '_')) {
+                    p--;
+                }
+                int name_start = p + 1;
+                int name_len = name_end - name_start;
+                if (name_len > 0) {
+                    char* func_name = (char*)malloc(name_len + 1);
+                    if (!func_name) return NULL;
+                    memcpy(func_name, content + name_start, name_len);
+                    func_name[name_len] = '\0';
+                    // 返回 __FUNC_CALL__:funcName 格式，表示函数调用链
+                    const char* fc_prefix = "__FUNC_CALL__:";
+                    size_t plen = strlen(fc_prefix);
+                    char* result = (char*)malloc(plen + name_len + 1);
+                    if (!result) { free(func_name); return NULL; }
+                    memcpy(result, fc_prefix, plen);
+                    memcpy(result + plen, func_name, name_len);
+                    result[plen + name_len] = '\0';
+                    free(func_name);
+                    return result;
+                }
+            }
+            return NULL;
+        }
         while (start >= 0 && (isalnum((unsigned char)content[start]) || content[start] == '_')) {
             start--;
         }
         start++;
-        
+
         int var_len = var_end - start;
         if (var_len <= 0) return NULL;
-        
+
         // 返回标记前缀让上层知道这是点访问上下文
         // 格式: "__DOT__:varname"
         char* var_name = (char*)malloc(var_len + 1);
         if (!var_name) return NULL;
         memcpy(var_name, content + start, var_len);
         var_name[var_len] = '\0';
-        
+
         // 拼接成 __DOT__:varname 格式
         const char* prefix = "__DOT__:";
         size_t prefix_len = strlen(prefix);
@@ -93,7 +140,7 @@ static char* get_word_before_cursor(const char* content, LspPosition pos) {
         memcpy(result + prefix_len, var_name, var_len);
         result[prefix_len + var_len] = '\0';
         free(var_name);
-        
+
         // 注意：暂时不支持 "cs_module.Color." 两层前缀，
         // 这类复杂表达式需要更高级的类型推断
         return result;
@@ -120,6 +167,54 @@ static char* get_word_before_cursor(const char* content, LspPosition pos) {
             // 找到点号，继续向前提取变量名
             int var_end = check_pos;
             int vstart = check_pos - 1;
+            // 检查点号前是否是 ')'（函数调用链，如 ttfLib().method）
+            if (vstart >= 0 && content[vstart] == ')') {
+                // 向前查找匹配的 '('
+                int paren_depth = 1;
+                int p = vstart - 1;
+                while (p >= 0 && paren_depth > 0) {
+                    if (content[p] == ')') paren_depth++;
+                    else if (content[p] == '(') paren_depth--;
+                    else if (content[p] == '"' || content[p] == '\'') {
+                        char quote = content[p];
+                        p--;
+                        while (p >= 0 && content[p] != quote) {
+                            if (p > 0 && content[p] == '\\') p--;
+                            p--;
+                        }
+                    }
+                    if (paren_depth > 0) p--;
+                }
+                if (paren_depth == 0 && p > 0) {
+                    p--;
+                    while (p >= 0 && isspace((unsigned char)content[p])) p--;
+                    int name_end = p + 1;
+                    while (p >= 0 && (isalnum((unsigned char)content[p]) || content[p] == '_')) {
+                        p--;
+                    }
+                    int name_start = p + 1;
+                    int name_len = name_end - name_start;
+                    if (name_len > 0) {
+                        char* func_name = (char*)malloc(name_len + 1);
+                        if (func_name) {
+                            memcpy(func_name, content + name_start, name_len);
+                            func_name[name_len] = '\0';
+                            const char* fc_prefix = "__FUNC_CALL__:";
+                            size_t plen = strlen(fc_prefix);
+                            char* result = (char*)malloc(plen + name_len + 1);
+                            if (result) {
+                                memcpy(result, fc_prefix, plen);
+                                memcpy(result + plen, func_name, name_len);
+                                result[plen + name_len] = '\0';
+                                free(func_name);
+                                free(word);
+                                return result;
+                            }
+                            free(func_name);
+                        }
+                    }
+                }
+            }
             while (vstart >= 0 && (isalnum((unsigned char)content[vstart]) || content[vstart] == '_')) {
                 vstart--;
             }
@@ -472,6 +567,18 @@ CompletionContextInfo comp_detect_context(
         ctx.type = CTX_DOT_ACCESS;
         ctx.module_alias = strdup(prefix + 8);  // 提取变量名/模块别名
         ctx.member_prefix = NULL;  // 无成员前缀
+        free(prefix);
+        return ctx;
+    }
+
+    // 1.6 函数调用链上下文（如 ttfLib().method）
+    //     get_word_before_cursor 返回 "__FUNC_CALL__:funcName" 格式的标记
+    if (prefix && strncmp(prefix, "__FUNC_CALL__:", 14) == 0) {
+        ctx.type = CTX_DOT_ACCESS;
+        ctx.module_alias = strdup(prefix + 14);  // 提取函数名
+        ctx.member_prefix = NULL;
+        // 标记为函数调用链，用于后续补全提供者
+        ctx.is_func_call_chain = 1;
         free(prefix);
         return ctx;
     }

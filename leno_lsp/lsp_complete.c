@@ -229,9 +229,15 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
                 }
             } else {
                 // 变量.成员 补全（类型推断）
-                comp_provider_add_variable_members(set, content, file_path,
-                                                   ctx.module_alias, import_count, import_aliases,
-                                                   pos);
+                // 检查是否是函数调用链（如 ttfLib().）
+                if (ctx.is_func_call_chain) {
+                    comp_provider_add_func_call_chain_members(set, content, file_path,
+                                                                 ctx.module_alias, import_count, import_aliases);
+                } else {
+                    comp_provider_add_variable_members(set, content, file_path,
+                                                       ctx.module_alias, import_count, import_aliases,
+                                                       pos);
+                }
                 
                 // 也尝试 enum 成员
                 // TODO: 解析文件中的 enum 成员

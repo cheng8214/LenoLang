@@ -2773,6 +2773,173 @@ static char* generate_clib_method_doc(const char* clib_type_str, const char* met
     return NULL;
 }
 
+// 从光标位置向前查找函数调用（如 ttfLib()），返回函数名
+// 调用者负责 free 返回的字符串
+// dot_offset: 点号 '.' 的偏移位置
+static char* find_func_call_before_dot(const char* content, int dot_offset) {
+    if (!content || dot_offset <= 0) return NULL;
+
+    // 从点号向前，应该遇到 ')'
+    int pos = dot_offset - 1;
+    while (pos >= 0 && isspace((unsigned char)content[pos])) pos--;
+    if (pos < 0 || content[pos] != ')') return NULL;
+
+    // 向前查找匹配的 '('
+    int paren_depth = 1;
+    pos--;
+    while (pos >= 0 && paren_depth > 0) {
+        if (content[pos] == ')') paren_depth++;
+        else if (content[pos] == '(') paren_depth--;
+        else if (content[pos] == '"' || content[pos] == '\'') {
+            // 跳过字符串
+            char quote = content[pos];
+            pos--;
+            while (pos >= 0 && content[pos] != quote) {
+                if (pos > 0 && content[pos] == '\\') pos--;
+                pos--;
+            }
+        }
+        if (paren_depth > 0) pos--;
+    }
+    if (paren_depth != 0) return NULL;
+
+    // pos 现在指向 '('，向前提取函数名
+    pos--;
+    while (pos >= 0 && isspace((unsigned char)content[pos])) pos--;
+    if (pos < 0) return NULL;
+
+    int name_end = pos + 1;
+    while (pos >= 0 && (isalnum((unsigned char)content[pos]) || content[pos] == '_')) {
+        pos--;
+    }
+    int name_start = pos + 1;
+    int name_len = name_end - name_start;
+    if (name_len <= 0) return NULL;
+
+    char* func_name = (char*)malloc(name_len + 1);
+    if (!func_name) return NULL;
+    memcpy(func_name, content + name_start, name_len);
+    func_name[name_len] = '\0';
+    return func_name;
+}
+
+// 处理函数调用链的悬停（如 ttfLib().TTF_RenderText_Blended_Wrapped）
+// 当 word 以 '.' 开头时，尝试从内容中查找前面的函数调用，解析其返回类型
+static char* handle_func_call_chain_hover(const char* content, const char* word,
+                                            LspPosition pos, const char* file_path) {
+    if (!content || !word || word[0] != '.') return NULL;
+
+    const char* method_name = word + 1;
+    if (!*method_name) return NULL;
+
+    // 获取光标偏移，找到点号位置
+    int cursor_offset = lsp_position_to_offset(content, pos);
+    if (cursor_offset < 0) return NULL;
+
+    // 从光标向前查找点号
+    int dot_offset = -1;
+    int scan = cursor_offset;
+    while (scan >= 0) {
+        char c = content[scan];
+        if (c == '.') { dot_offset = scan; break; }
+        if (isalnum((unsigned char)c) || c == '_') { scan--; continue; }
+        break;
+    }
+    if (dot_offset < 0) return NULL;
+
+    // 查找点号前的函数调用
+    char* func_name = find_func_call_before_dot(content, dot_offset);
+    if (!func_name) return NULL;
+
+    fprintf(stderr, "[HOVER-DEBUG] func call chain: func='%s' method='%s'\n", func_name, method_name);
+    fflush(stderr);
+
+    // 通过编译器解析函数返回类型
+    CompilerContext ctx;
+    compiler_context_init(&ctx);
+    compiler_analyze_with_filename(&ctx, content, file_path);
+
+    char* result = NULL;
+    if (ctx.root_scope) {
+        // 查找函数符号
+        Symbol* func_sym = find_symbol_in_current_function(ctx.root_scope, func_name, content, pos);
+        if (!func_sym) {
+            func_sym = scope_resolve_tree_bfs(ctx.root_scope, func_name);
+        }
+
+        if (func_sym && func_sym->type && func_sym->type->kind == TYPE_FUNCTION &&
+            func_sym->type->return_type) {
+            TypeInfo* ret_type = func_sym->type->return_type;
+
+            fprintf(stderr, "[HOVER-DEBUG] func '%s' return_type kind=%d\n", func_name, ret_type->kind);
+            fflush(stderr);
+
+            // 检查返回类型是否是 clib
+            if (ret_type->kind == TYPE_CLIB && ret_type->struct_name) {
+                // 构造 "clib <name>" 格式
+                char clib_type_str[256];
+                snprintf(clib_type_str, sizeof(clib_type_str), "clib %s", ret_type->struct_name);
+                result = generate_clib_method_doc(clib_type_str, method_name, content, file_path);
+            } else if (ret_type->kind == TYPE_STRUCT && ret_type->struct_name) {
+                // struct 返回类型，生成 struct 方法文档
+                result = generate_struct_method_doc(ret_type->struct_name, method_name, content, file_path);
+                if (!result) {
+                    result = generate_struct_method_doc_from_modules(ret_type->struct_name, method_name, content, file_path);
+                }
+            } else {
+                // 其他返回类型，尝试通过 type_to_string 获取类型字符串
+                const char* type_str = type_to_string(ret_type);
+                fprintf(stderr, "[HOVER-DEBUG] func '%s' return type_str='%s'\n", func_name, type_str ? type_str : "NULL");
+                fflush(stderr);
+            }
+        }
+    }
+    compiler_context_cleanup(&ctx);
+
+    // 如果编译器途径失败，尝试从模块符号表查找函数返回类型
+    if (!result && file_path) {
+        int import_count = 0;
+        ImportAlias* import_aliases = parse_imports(content, &import_count);
+        if (import_aliases && import_count > 0) {
+            for (int i = 0; i < import_count && !result; i++) {
+                const char* mp = find_module_path_by_alias(import_aliases, import_count, import_aliases[i].alias);
+                if (!mp) continue;
+
+                module_symbol_table_reset_scan_stack();
+                ModuleSymbolTable* mtable = module_symbol_table_create(mp);
+                if (!mtable) continue;
+
+                if (module_symbol_table_scan(mtable, file_path) == 0) {
+                    // 在模块符号表中查找函数
+                    for (int j = 0; j < mtable->func_count; j++) {
+                        if (strcmp(mtable->funcs[j].name, func_name) == 0) {
+                            // 检查返回类型是否是 clib
+                            if (mtable->funcs[j].return_struct_name) {
+                                // 尝试 clib
+                                char clib_type_str[256];
+                                snprintf(clib_type_str, sizeof(clib_type_str), "clib %s", mtable->funcs[j].return_struct_name);
+                                result = generate_clib_method_doc(clib_type_str, method_name, content, file_path);
+                                if (result) break;
+
+                                // 尝试 struct
+                                result = generate_struct_method_doc(mtable->funcs[j].return_struct_name, method_name, content, file_path);
+                                if (result) break;
+                                result = generate_struct_method_doc_from_modules(mtable->funcs[j].return_struct_name, method_name, content, file_path);
+                                if (result) break;
+                            }
+                        }
+                    }
+                }
+                module_symbol_table_destroy(mtable);
+            }
+        }
+        if (import_aliases) free_import_aliases(import_aliases, import_count);
+    }
+
+    free(func_name);
+    return result;
+}
+
 // 检查是否是实例方法名（如 add, insert, len 等）
 // 如果是，返回对应的类型名（如 "array", "string", "dict" 等）
 static const char* is_instance_method(const char* method_name) {
@@ -2886,6 +3053,13 @@ char* lsp_get_hover_info(const char* content, LspPosition pos, const char* file_
     //    能显示变量类型信息，而不是方法文档
     if (!info) {
         info = get_symbol_hover_from_compiler(content, word, pos, file_path);
+    }
+
+    // 3.5 处理函数调用链（如 ttfLib().TTF_RenderText_Blended_Wrapped）
+    //     当 word 以 '.' 开头时，parse_module_method 会失败
+    //     此时尝试从内容中查找前面的函数调用，解析其返回类型
+    if (!info && word[0] == '.') {
+        info = handle_func_call_chain_hover(content, word, pos, file_path);
     }
 
     // 4. 检查是否是模块方法调用 (如 "io.print") 或实例方法调用 (如 "s.len")
