@@ -1742,13 +1742,8 @@ static void gen_expr_stmt(CodeGen* gen, Ast* ast) {
         }
     }
 
-    // OP_SET_FIELD(2字节: opcode + field_idx) 已经 pop 了 obj 和 value，栈归零
-    // is_self_field 复合赋值走此路径，末尾是 OP_SET_FIELD，不应再 OP_POP
-    if (gen->chunk->len >= 2 &&
-        gen->chunk->code[gen->chunk->len - 2] == OP_SET_FIELD) {
-        return;
-    }
-
+    // 注意：OP_SET_FIELD 会 pop obj 和 value，然后 push 赋值结果值到栈上
+    // 因此表达式语句仍需要 OP_POP 来弹出这个结果值，否则会导致栈泄漏
     emit_byte(gen, OP_POP, ast->line);
 }
 
