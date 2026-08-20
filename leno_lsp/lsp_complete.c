@@ -233,6 +233,11 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
                 if (ctx.is_func_call_chain) {
                     comp_provider_add_func_call_chain_members(set, content, file_path,
                                                                  ctx.module_alias, import_count, import_aliases);
+                } else if (ctx.is_array_index) {
+                    // 数组索引成员访问（如 _texCache[i].field）
+                    comp_provider_add_array_index_members(set, content, file_path,
+                                                          ctx.module_alias, import_count, import_aliases,
+                                                          pos);
                 } else {
                     comp_provider_add_variable_members(set, content, file_path,
                                                        ctx.module_alias, import_count, import_aliases,

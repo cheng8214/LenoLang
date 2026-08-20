@@ -109,6 +109,7 @@ typedef struct {
     // CTX_DOT_ACCESS（变量成员访问）
     char*  var_type;        // 变量类型（推断结果）
     int    is_func_call_chain;  // 是否是函数调用链（如 ttfLib().method）
+    int    is_array_index;      // 是否是数组索引访问（如 _texCache[i].field）
     
     // CTX_STRING_LITERAL
     // （无额外字段）
@@ -247,6 +248,17 @@ void comp_provider_add_func_call_chain_members(
     const char* func_name,
     int import_count,
     ImportAlias* import_aliases
+);
+
+// CTX_DOT_ACCESS (数组索引访问): 数组元素类型推断 → 成员补全
+void comp_provider_add_array_index_members(
+    CompletionSet* set,
+    const char* content,
+    const char* file_path,
+    const char* var_name,
+    int import_count,
+    ImportAlias* import_aliases,
+    LspPosition pos
 );
 
 // CTX_STRING_LITERAL: 字符串实例方法

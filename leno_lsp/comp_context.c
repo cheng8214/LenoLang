@@ -116,6 +116,53 @@ static char* get_word_before_cursor(const char* content, LspPosition pos) {
             }
             return NULL;
         }
+        // 检查点号前是否是 ']'（数组索引成员访问，如 _texCache[i].）
+        if (start >= 0 && content[start] == ']') {
+            // 向前查找匹配的 '['
+            int bracket_depth = 1;
+            int p = start - 1;
+            while (p >= 0 && bracket_depth > 0) {
+                if (content[p] == ']') bracket_depth++;
+                else if (content[p] == '[') bracket_depth--;
+                else if (content[p] == '"' || content[p] == '\'') {
+                    char quote = content[p];
+                    p--;
+                    while (p >= 0 && content[p] != quote) {
+                        if (p > 0 && content[p] == '\\') p--;
+                        p--;
+                    }
+                }
+                if (bracket_depth > 0) p--;
+            }
+            if (bracket_depth == 0 && p > 0) {
+                // p 指向 '['，向前提取变量名
+                p--;
+                while (p >= 0 && isspace((unsigned char)content[p])) p--;
+                int name_end = p + 1;
+                while (p >= 0 && (isalnum((unsigned char)content[p]) || content[p] == '_')) {
+                    p--;
+                }
+                int name_start = p + 1;
+                int name_len = name_end - name_start;
+                if (name_len > 0) {
+                    char* arr_var = (char*)malloc(name_len + 1);
+                    if (!arr_var) return NULL;
+                    memcpy(arr_var, content + name_start, name_len);
+                    arr_var[name_len] = '\0';
+                    // 返回 __ARRAY_INDEX__:varName 格式，表示数组索引成员访问
+                    const char* ai_prefix = "__ARRAY_INDEX__:";
+                    size_t plen = strlen(ai_prefix);
+                    char* result = (char*)malloc(plen + name_len + 1);
+                    if (!result) { free(arr_var); return NULL; }
+                    memcpy(result, ai_prefix, plen);
+                    memcpy(result + plen, arr_var, name_len);
+                    result[plen + name_len] = '\0';
+                    free(arr_var);
+                    return result;
+                }
+            }
+            return NULL;
+        }
         while (start >= 0 && (isalnum((unsigned char)content[start]) || content[start] == '_')) {
             start--;
         }
@@ -211,6 +258,55 @@ static char* get_word_before_cursor(const char* content, LspPosition pos) {
                                 return result;
                             }
                             free(func_name);
+                        }
+                    }
+                }
+            }
+            // 检查点号前是否是 ']'（数组索引成员访问，如 _texCache[i].method）
+            if (vstart >= 0 && content[vstart] == ']') {
+                // 向前查找匹配的 '['
+                int bracket_depth = 1;
+                int p = vstart - 1;
+                while (p >= 0 && bracket_depth > 0) {
+                    if (content[p] == ']') bracket_depth++;
+                    else if (content[p] == '[') bracket_depth--;
+                    else if (content[p] == '"' || content[p] == '\'') {
+                        char quote = content[p];
+                        p--;
+                        while (p >= 0 && content[p] != quote) {
+                            if (p > 0 && content[p] == '\\') p--;
+                            p--;
+                        }
+                    }
+                    if (bracket_depth > 0) p--;
+                }
+                if (bracket_depth == 0 && p > 0) {
+                    // p 指向 '['，向前提取变量名
+                    p--;
+                    while (p >= 0 && isspace((unsigned char)content[p])) p--;
+                    int name_end = p + 1;
+                    while (p >= 0 && (isalnum((unsigned char)content[p]) || content[p] == '_')) {
+                        p--;
+                    }
+                    int name_start = p + 1;
+                    int name_len = name_end - name_start;
+                    if (name_len > 0) {
+                        char* arr_var = (char*)malloc(name_len + 1);
+                        if (arr_var) {
+                            memcpy(arr_var, content + name_start, name_len);
+                            arr_var[name_len] = '\0';
+                            const char* ai_prefix = "__ARRAY_INDEX__:";
+                            size_t plen = strlen(ai_prefix);
+                            char* result = (char*)malloc(plen + name_len + 1);
+                            if (result) {
+                                memcpy(result, ai_prefix, plen);
+                                memcpy(result + plen, arr_var, name_len);
+                                result[plen + name_len] = '\0';
+                                free(arr_var);
+                                free(word);
+                                return result;
+                            }
+                            free(arr_var);
                         }
                     }
                 }
@@ -579,6 +675,17 @@ CompletionContextInfo comp_detect_context(
         ctx.member_prefix = NULL;
         // 标记为函数调用链，用于后续补全提供者
         ctx.is_func_call_chain = 1;
+        free(prefix);
+        return ctx;
+    }
+
+    // 1.7 数组索引成员访问上下文（如 _texCache[i].method）
+    //     get_word_before_cursor 返回 "__ARRAY_INDEX__:varName" 格式的标记
+    if (prefix && strncmp(prefix, "__ARRAY_INDEX__:", 16) == 0) {
+        ctx.type = CTX_DOT_ACCESS;
+        ctx.module_alias = strdup(prefix + 16);  // 提取数组变量名
+        ctx.member_prefix = NULL;
+        ctx.is_array_index = 1;  // 标记为数组索引访问
         free(prefix);
         return ctx;
     }

@@ -584,7 +584,8 @@ static Symbol* find_symbol_in_current_function(Scope* root_scope, const char* na
 char* detect_closure_param_type_at_position(const char* content, int cursor_offset, const char* var_name);
 
 // 前向声明：文本匹配变量类型推断（定义在本文件后面）
-static char* detect_var_type_from_text(const char* content, const char* var_name);
+// 非 static 以供 comp_symbols.c 等其他模块使用
+char* detect_var_type_from_text(const char* content, const char* var_name);
 
 // 前向声明：struct 方法文档生成
 static char* generate_struct_method_doc(const char* struct_name, const char* method_name,
@@ -593,6 +594,10 @@ static char* generate_struct_method_doc_from_modules(const char* struct_name, co
                                                       const char* content, const char* file_path);
 
 // 从编译器获取符号悬停信息
+/* GCC -Wformat-truncation 误报：snprintf 的 size 参数已确保足够大，
+   但 GCC 无法推断 strlen 结果的上界而报警。此处局部禁用。 */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-truncation"
 static char* get_symbol_hover_from_compiler(const char* content, const char* word, LspPosition pos, const char* file_path) {
     if (!content || !word) return NULL;
 
@@ -729,7 +734,10 @@ static char* get_symbol_hover_from_compiler(const char* content, const char* wor
         if (var_sym) {
             // 找到了变量，构建悬停信息
             const char* type_str = type_to_string(var_sym->type);
-            size_t info_len = 512 + strlen(base_word) + (type_str ? strlen(type_str) : 0);
+            size_t type_len = type_str ? strlen(type_str) : 0;
+            size_t base_len = strlen(base_word);
+            /* info_len 足够容纳所有格式字符串和参数 */
+            size_t info_len = base_len + type_len + 256;
             char* info = (char*)malloc(info_len);
             if (info) {
                 bool is_global = (var_sym->scope == ctx.root_scope);
@@ -738,7 +746,7 @@ static char* get_symbol_hover_from_compiler(const char* content, const char* wor
                 else if (var_sym->kind == SYM_PARAM) kind_str = "参数";
                 else if (var_sym->kind == SYM_MODULE) kind_str = "模块";
 
-                snprintf(info, info_len, "**%s**\n\n"
+                int written = snprintf(info, info_len, "**%s**\n\n"
                          "```leno\n"
                          "%s: %s\n"
                          "```\n\n"
@@ -748,6 +756,7 @@ static char* get_symbol_hover_from_compiler(const char* content, const char* wor
                          type_str ? type_str : "unknown",
                          kind_str,
                          " 变量");
+                (void)written;  /* info_len 已确保足够大 */
             }
             free(base_word);
             compiler_context_cleanup(&ctx);
@@ -944,6 +953,7 @@ static char* get_symbol_hover_from_compiler(const char* content, const char* wor
 
     return info;
 }
+#pragma GCC diagnostic pop  /* -Wformat-truncation */
 
 // 获取关键字文档
 static char* get_keyword_doc(const char* word) {
@@ -1978,7 +1988,7 @@ static char* get_enum_value_hover(const char* content, const char* word) {
 
 // 从源代码文本中检测变量类型（回退方案）
 // 搜索 "Type varname" 声明模式和闭包参数模式 "func(Type varname"
-static char* detect_var_type_from_text(const char* content, const char* var_name) {
+char* detect_var_type_from_text(const char* content, const char* var_name) {
     if (!content || !var_name) return NULL;
     
     int var_len = strlen(var_name);
@@ -2000,6 +2010,44 @@ static char* detect_var_type_from_text(const char* content, const char* var_name
             if (before >= content && *before == '?') {
                 before--;
                 while (before >= content && isspace((unsigned char)*before)) before--;
+            }
+            
+            // 模式0: 泛型类型声明（如 "Array[CachedTex] _texCache", "Dict[string, int] _map"）
+            // 当 before 指向 ']' 时，向前解析整个泛型类型
+            if (before >= content && *before == ']') {
+                // 向前匹配 '['
+                int bracket_depth = 1;
+                const char* bp = before - 1;
+                while (bp >= content && bracket_depth > 0) {
+                    if (*bp == ']') bracket_depth++;
+                    else if (*bp == '[') bracket_depth--;
+                    if (bracket_depth > 0) bp--;
+                }
+                if (bracket_depth == 0 && bp > content) {
+                    // bp 指向 '['，向前提取基础类型名
+                    const char* gt_end = bp;
+                    const char* gt_start = bp - 1;
+                    while (gt_start >= content && (isalnum((unsigned char)*gt_start) || *gt_start == '_')) {
+                        gt_start--;
+                    }
+                    gt_start++;
+                    int base_len = gt_end - gt_start;
+                    if (base_len > 0 && base_len < 64) {
+                        char base_buf[64];
+                        memcpy(base_buf, gt_start, base_len);
+                        base_buf[base_len] = '\0';
+                        // 提取完整的泛型类型字符串（如 "Array[CachedTex]"）
+                        int full_len = before - gt_start + 1;
+                        if (full_len > 0 && full_len < 256) {
+                            char* full_type = (char*)malloc(full_len + 1);
+                            if (full_type) {
+                                memcpy(full_type, gt_start, full_len);
+                                full_type[full_len] = '\0';
+                                return full_type;
+                            }
+                        }
+                    }
+                }
             }
             
             // 模式1: "Type varname" 声明（如 "string a", "Array tokens"）
@@ -2382,6 +2430,7 @@ static char* get_variable_type_from_compiler(const char* content, const char* va
 // 生成用户定义 struct 方法的悬停文档
 static char* generate_struct_method_doc(const char* struct_name, const char* method_name,
                                                       const char* content, const char* file_path) {
+    (void)file_path;  // 保留参数以兼容调用方接口，但此函数不直接使用
     ObjStructDef* sdef = struct_def_find(struct_name);
     if (!sdef) return NULL;
     
@@ -2940,7 +2989,263 @@ static char* handle_func_call_chain_hover(const char* content, const char* word,
     return result;
 }
 
-// 检查是否是实例方法名（如 add, insert, len 等）
+// 从点号位置向前查找数组索引表达式：var[idx]
+// 返回变量名（如 "_texCache"），需要调用者 free
+// 如果不是数组索引模式（点号前不是 ']'），返回 NULL
+static char* find_array_var_before_dot(const char* content, int dot_offset) {
+    if (!content || dot_offset <= 0) return NULL;
+
+    // 从点号向前，跳过空白，应该遇到 ']'
+    int pos = dot_offset - 1;
+    while (pos >= 0 && isspace((unsigned char)content[pos])) pos--;
+    if (pos < 0 || content[pos] != ']') return NULL;
+
+    // 向前查找匹配的 '['
+    int bracket_depth = 1;
+    pos--;
+    while (pos >= 0 && bracket_depth > 0) {
+        if (content[pos] == ']') bracket_depth++;
+        else if (content[pos] == '[') bracket_depth--;
+        else if (content[pos] == '"' || content[pos] == '\'') {
+            // 跳过字符串
+            char quote = content[pos];
+            pos--;
+            while (pos >= 0 && content[pos] != quote) {
+                if (pos > 0 && content[pos] == '\\') pos--;
+                pos--;
+            }
+        }
+        if (bracket_depth > 0) pos--;
+    }
+    if (bracket_depth != 0) return NULL;
+
+    // pos 现在指向 '['，向前提取变量名
+    pos--;
+    while (pos >= 0 && isspace((unsigned char)content[pos])) pos--;
+    if (pos < 0) return NULL;
+
+    int name_end = pos + 1;
+    while (pos >= 0 && (isalnum((unsigned char)content[pos]) || content[pos] == '_')) {
+        pos--;
+    }
+    int name_start = pos + 1;
+    int name_len = name_end - name_start;
+    if (name_len <= 0) return NULL;
+
+    char* var_name = (char*)malloc(name_len + 1);
+    if (!var_name) return NULL;
+    memcpy(var_name, content + name_start, name_len);
+    var_name[name_len] = '\0';
+    return var_name;
+}
+
+// 处理数组索引成员访问的悬停（如 _texCache[i].texture）
+// 当 word 以 '.' 开头时，尝试从内容中查找前面的数组索引表达式，
+// 解析数组变量的元素类型，然后在该元素类型中查找字段/方法
+static char* handle_array_index_member_hover(const char* content, const char* word,
+                                              LspPosition pos, const char* file_path) {
+    if (!content || !word || word[0] != '.') return NULL;
+
+    const char* member_name = word + 1;
+    if (!*member_name) return NULL;
+
+    // 获取光标偏移，找到点号位置
+    int cursor_offset = lsp_position_to_offset(content, pos);
+    if (cursor_offset < 0) return NULL;
+
+    // 从光标向前查找点号
+    int dot_offset = -1;
+    int scan = cursor_offset;
+    while (scan >= 0) {
+        char c = content[scan];
+        if (c == '.') { dot_offset = scan; break; }
+        if (isalnum((unsigned char)c) || c == '_') { scan--; continue; }
+        break;
+    }
+    if (dot_offset < 0) return NULL;
+
+    // 查找点号前的数组索引变量
+    char* var_name = find_array_var_before_dot(content, dot_offset);
+    if (!var_name) return NULL;
+
+    fprintf(stderr, "[HOVER-DEBUG] array index member: var='%s' member='%s'\n", var_name, member_name);
+    fflush(stderr);
+
+    // 通过编译器解析变量类型
+    CompilerContext ctx;
+    compiler_context_init(&ctx);
+    compiler_analyze_with_filename(&ctx, content, file_path);
+
+    char* result = NULL;
+    if (ctx.root_scope) {
+        Symbol* var_sym = find_symbol_in_current_function(ctx.root_scope, var_name, content, pos);
+        if (!var_sym) {
+            var_sym = scope_resolve_tree_bfs(ctx.root_scope, var_name);
+        }
+
+        if (!var_sym) {
+            fprintf(stderr, "[HOVER-DEBUG] array var '%s' NOT FOUND in scope\n", var_name);
+            fflush(stderr);
+        } else if (!var_sym->type) {
+            fprintf(stderr, "[HOVER-DEBUG] array var '%s' found but type is NULL\n", var_name);
+            fflush(stderr);
+        }
+
+        if (var_sym && var_sym->type) {
+            fprintf(stderr, "[HOVER-DEBUG] array var '%s' type kind=%d\n", var_name, var_sym->type->kind);
+            fflush(stderr);
+
+            // 如果是数组类型，获取元素类型
+            TypeInfo* elem_type = NULL;
+            if (var_sym->type->kind == TYPE_ARRAY && var_sym->type->element_type) {
+                elem_type = var_sym->type->element_type;
+            } else {
+                fprintf(stderr, "[HOVER-DEBUG] array var '%s' type kind=%d (not TYPE_ARRAY or no element_type)\n",
+                        var_name, var_sym->type->kind);
+                fflush(stderr);
+            }
+
+            if (elem_type) {
+                fprintf(stderr, "[HOVER-DEBUG] array element type kind=%d struct_name='%s'\n",
+                        elem_type->kind, elem_type->struct_name ? elem_type->struct_name : "NULL");
+                fflush(stderr);
+
+                if (elem_type->kind == TYPE_STRUCT && elem_type->struct_name) {
+                    // struct 元素类型，查找字段
+                    char* type_str = NULL;
+                    bool found = compiler_get_struct_field_info(&ctx, elem_type->struct_name, member_name, &type_str);
+                    if (found && type_str) {
+                        size_t info_len = 512 + strlen(member_name) + strlen(type_str) + strlen(elem_type->struct_name);
+                        result = (char*)malloc(info_len);
+                        if (result) {
+                            snprintf(result, info_len, "**%s**\n\n"
+                                     "```leno\n"
+                                     "%s: %s\n"
+                                     "```\n\n"
+                                     "%s 字段 (%s)",
+                                     member_name, member_name, type_str,
+                                     elem_type->struct_name, elem_type->struct_name);
+                        }
+                        free(type_str);
+                    }
+
+                    if (!result) {
+                        // 尝试 struct 方法
+                        result = generate_struct_method_doc(elem_type->struct_name, member_name, content, file_path);
+                    }
+                    if (!result) {
+                        // 从导入的模块中查找
+                        result = generate_struct_method_doc_from_modules(elem_type->struct_name, member_name, content, file_path);
+                    }
+                } else if (elem_type->kind == TYPE_CLIB && elem_type->struct_name) {
+                    // clib 元素类型
+                    char clib_type_str[256];
+                    snprintf(clib_type_str, sizeof(clib_type_str), "clib %s", elem_type->struct_name);
+                    result = generate_clib_method_doc(clib_type_str, member_name, content, file_path);
+                }
+            }
+        }
+    }
+    compiler_context_cleanup(&ctx);
+
+    // 如果编译器途径失败，尝试从源文件文本中解析变量声明
+    if (!result) {
+        char* var_type_str = detect_var_type_from_text(content, var_name);
+        fprintf(stderr, "[HOVER-DEBUG] detect_var_type_from_text('%s') = '%s'\n",
+                var_name, var_type_str ? var_type_str : "NULL");
+        fflush(stderr);
+        if (var_type_str) {
+            // 解析类型字符串，提取 Array[X] 中的 X
+            const char* arr_prefix = strstr(var_type_str, "Array[");
+            if (arr_prefix) {
+                const char* inner_start = arr_prefix + 6;
+                const char* inner_end = strchr(inner_start, ']');
+                if (inner_end && inner_end > inner_start) {
+                    int elem_len = inner_end - inner_start;
+                    char elem_name[256];
+                    if (elem_len < (int)sizeof(elem_name)) {
+                        memcpy(elem_name, inner_start, elem_len);
+                        elem_name[elem_len] = '\0';
+
+                        // 在导入的模块中查找 struct 定义
+                        if (file_path) {
+                            int import_count = 0;
+                            ImportAlias* import_aliases = parse_imports(content, &import_count);
+                            if (import_aliases && import_count > 0) {
+                                for (int i = 0; i < import_count && !result; i++) {
+                                    const char* mp = find_module_path_by_alias(import_aliases, import_count, import_aliases[i].alias);
+                                    if (!mp) continue;
+                                    module_symbol_table_reset_scan_stack();
+                                    ModuleSymbolTable* mtable = module_symbol_table_create(mp);
+                                    if (!mtable) continue;
+                                    if (module_symbol_table_scan(mtable, file_path) == 0) {
+                                        ModuleStructSymbol* mst = module_symbol_table_find_struct(mtable, elem_name);
+                                        if (mst) {
+                                            for (int k = 0; k < mst->field_count && !result; k++) {
+                                                if (strcmp(mst->fields[k].name, member_name) == 0) {
+                                                    const char* fts = mst->fields[k].struct_name ?
+                                                        mst->fields[k].struct_name : type_kind_to_string(mst->fields[k].type);
+                                                    size_t info_len = 512 + strlen(member_name) + strlen(fts) + strlen(elem_name);
+                                                    result = (char*)malloc(info_len);
+                                                    if (result) {
+                                                        snprintf(result, info_len, "**%s**\n\n"
+                                                                 "```leno\n"
+                                                                 "%s: %s\n"
+                                                                 "```\n\n"
+                                                                 "%s 字段",
+                                                                 member_name, member_name, fts, elem_name);
+                                                    }
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    module_symbol_table_destroy(mtable);
+                                }
+                            }
+                            if (import_aliases) free_import_aliases(import_aliases, import_count);
+                        }
+
+                        // 也扫描当前文件
+                        if (!result && file_path) {
+                            module_symbol_table_reset_scan_stack();
+                            ModuleSymbolTable* cur_table = module_symbol_table_create(file_path);
+                            if (cur_table) {
+                                if (module_symbol_table_scan(cur_table, file_path) == 0) {
+                                    ModuleStructSymbol* mst = module_symbol_table_find_struct(cur_table, elem_name);
+                                    if (mst) {
+                                        for (int k = 0; k < mst->field_count && !result; k++) {
+                                            if (strcmp(mst->fields[k].name, member_name) == 0) {
+                                                const char* fts = mst->fields[k].struct_name ?
+                                                    mst->fields[k].struct_name : type_kind_to_string(mst->fields[k].type);
+                                                size_t info_len = 512 + strlen(member_name) + strlen(fts) + strlen(elem_name);
+                                                result = (char*)malloc(info_len);
+                                                if (result) {
+                                                    snprintf(result, info_len, "**%s**\n\n"
+                                                             "```leno\n"
+                                                             "%s: %s\n"
+                                                             "```\n\n"
+                                                             "%s 字段",
+                                                             member_name, member_name, fts, elem_name);
+                                                }
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                module_symbol_table_destroy(cur_table);
+                            }
+                        }
+                    }
+                }
+            }
+            free(var_type_str);
+        }
+    }
+
+    free(var_name);
+    return result;
+}
 // 如果是，返回对应的类型名（如 "array", "string", "dict" 等）
 static const char* is_instance_method(const char* method_name) {
     // 按优先级检查各类型的实例方法
@@ -3060,6 +3365,13 @@ char* lsp_get_hover_info(const char* content, LspPosition pos, const char* file_
     //     此时尝试从内容中查找前面的函数调用，解析其返回类型
     if (!info && word[0] == '.') {
         info = handle_func_call_chain_hover(content, word, pos, file_path);
+    }
+
+    // 3.6 处理数组索引成员访问（如 _texCache[i].texture）
+    //     当 word 以 '.' 开头且函数调用链处理失败时，
+    //     尝试从内容中查找前面的数组索引表达式，解析元素类型
+    if (!info && word[0] == '.') {
+        info = handle_array_index_member_hover(content, word, pos, file_path);
     }
 
     // 4. 检查是否是模块方法调用 (如 "io.print") 或实例方法调用 (如 "s.len")
