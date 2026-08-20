@@ -60,6 +60,7 @@ char* process_escape_sequences(const char* text, int len, int* out_len);
 char* copy_string(const char* text, int len);
 char* process_raw_string(const char* text, int len, int* out_len);
 int is_type_keyword(LenoTokenType type);
+int is_cstruct_layout_attr(Parser* p);  // 检查当前 token 是否是 packed/align 上下文标识符
 
 // 错误恢复：同步到语句边界
 void parser_synchronize(Parser* p);

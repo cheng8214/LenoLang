@@ -124,8 +124,7 @@ Ast* parse_statement(Parser* p) {
 
         // cstruct 定义（C 布局结构体）
         // packed cstruct / align(N) cstruct 也路由到这里
-        case TOK_PACKED:
-        case TOK_ALIGN:
+        // 注意：packed 和 align 是上下文关键字，在 default 分支中通过文本匹配识别
         case TOK_CSTRUCT:
             stmt = parse_cstruct_stmt(p);
             break;
@@ -166,6 +165,12 @@ Ast* parse_statement(Parser* p) {
                     lexer_next(&p->lex);  // 跳过 this
                     return NULL;
                 }
+            }
+            // 检查是否是 packed/align cstruct 定义
+            // packed 和 align 是上下文关键字，仅在 cstruct 前缀位置才特殊
+            if (is_cstruct_layout_attr(p)) {
+                stmt = parse_cstruct_stmt(p);
+                break;
             }
             // 检查是否是入口函数定义（如 main() { }）
             if (is_entry_function_def(p)) {

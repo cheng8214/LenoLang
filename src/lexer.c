@@ -142,9 +142,10 @@ static void init_keyword_table(void) {
         {"cfunc", TOK_CFUNC},
         {"str8", TOK_STR8},
         {"str16", TOK_STR16},
-        // cstruct 布局属性关键字
-        {"packed", TOK_PACKED},
-        {"align",  TOK_ALIGN},
+        // 注意：packed 和 align 不注册为关键字——它们是"上下文关键字"，
+        // 仅在 cstruct 定义前缀位置才具有特殊含义。
+        // parser 通过 is_cstruct_layout_attr() 进行文本匹配识别。
+        // 这样可以保证 align/packed 在字典键、变量名等位置仍作为普通标识符使用。
     };
     
     int keyword_count = sizeof(keywords) / sizeof(keywords[0]);

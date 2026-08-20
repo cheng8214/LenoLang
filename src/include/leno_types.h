@@ -150,9 +150,10 @@ typedef enum {
     // 字符串类型关键字
     TOK_STR8,           // str8 - C char* 字符串指针
     TOK_STR16,          // str16 - UTF-16 字符串数组
-    // cstruct 布局属性关键字
-    TOK_PACKED,         // packed - 取消 cstruct 字段间 padding
-    TOK_ALIGN,          // align(N) - 指定 cstruct 整体对齐边界
+    // cstruct 布局属性（保留枚举值，不再作为关键字使用）
+    // packed 和 align 现在是"上下文关键字"——在 parser 中通过文本匹配识别
+    TOK_PACKED,         // packed - 取消 cstruct 字段间 padding（保留，未使用）
+    TOK_ALIGN,          // align(N) - 指定 cstruct 整体对齐边界（保留，未使用）
     // 字符串插值 - 简化设计
     TOK_INTERP_STRING,   // $" 开始
     TOK_INTERP_PART,     // 字符串片段

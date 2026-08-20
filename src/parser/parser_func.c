@@ -1934,14 +1934,19 @@ Ast* parse_cstruct_stmt(Parser* p) {
     int explicit_align = 0;
 
     // 最多循环两次，处理 packed 和 align 的任意顺序
+    // packed 和 align 是上下文关键字（普通标识符），通过文本匹配识别
     for (int attr_pass = 0; attr_pass < 2; attr_pass++) {
-        if (p->lex.current.type == TOK_PACKED) {
+        if (p->lex.current.type == TOK_IDENT &&
+            p->lex.current.len == 6 &&
+            strncmp(p->lex.current.text, "packed", 6) == 0) {
             if (is_packed) {
                 error_add(ERR_SYNTAX, p->lex.current.line, "packed 重复指定");
             }
             is_packed = true;
             lexer_next(&p->lex); // 消费 'packed'
-        } else if (p->lex.current.type == TOK_ALIGN) {
+        } else if (p->lex.current.type == TOK_IDENT &&
+                   p->lex.current.len == 5 &&
+                   strncmp(p->lex.current.text, "align", 5) == 0) {
             if (explicit_align > 0) {
                 error_add(ERR_SYNTAX, p->lex.current.line, "align 重复指定");
             }

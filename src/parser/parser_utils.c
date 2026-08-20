@@ -200,3 +200,16 @@ int is_type_keyword(LenoTokenType type) {
            type == TOK_PTR_TYPE ||
            type == TOK_FUNC;
 }
+
+// 检查当前 token 是否是 cstruct 布局属性标识符（packed / align）
+// packed 和 align 不是全局关键字，而是"上下文关键字"——
+// 仅在 cstruct 定义前缀位置才具有特殊含义，其他位置（如字典键、变量名）
+// 仍作为普通标识符使用。
+int is_cstruct_layout_attr(Parser* p) {
+    if (p->lex.current.type != TOK_IDENT) return 0;
+    int len = p->lex.current.len;
+    const char* text = p->lex.current.text;
+    if (len == 6 && strncmp(text, "packed", 6) == 0) return 1;
+    if (len == 5 && strncmp(text, "align", 5) == 0) return 1;
+    return 0;
+}
