@@ -52,7 +52,15 @@ static char* detect_variable_type_from_text(const char* content, const char* var
             // 跳过空白
             while (before >= content && isspace((unsigned char)*before)) before--;
             
+            // 跳过可空类型后缀 '?'（如 "Font? _font" 中的 '?'）
+            // 也处理泛型后缀，如 "Array[int]?" 中的 ']' 后的 '?'
+            if (before >= content && *before == '?') {
+                before--;
+                while (before >= content && isspace((unsigned char)*before)) before--;
+            }
+            
             // 检查 "Type varname" 模式（如 "string a", "Array tokens", "Dict d"）
+            // 也支持 "Type? varname" 模式（如 "Font? _font"）
             if (before >= content && (isalnum((unsigned char)*before) || *before == '_')) {
                 // 提取类型名
                 const char* type_end = before + 1;
@@ -93,12 +101,24 @@ static char* detect_variable_type_from_text(const char* content, const char* var
             }
             
             // 检查闭包参数模式 "func(Type varname" 
+            // 也支持 "func(Type? varname" 模式
             if (before >= content) {
                 const char* check = before;
-                while (check > content && (isalnum((unsigned char)check[-1]) || check[-1] == '_')) check--;
+                // 如果 before 指向 '?'，先跳过它再提取类型名
+                if (*before == '?') {
+                    check = before - 1;
+                    while (check > content && (isalnum((unsigned char)check[-1]) || check[-1] == '_')) check--;
+                } else {
+                    while (check > content && (isalnum((unsigned char)check[-1]) || check[-1] == '_')) check--;
+                }
                 if (check > content) {
                     const char* before_type = check - 1;
                     while (before_type >= content && isspace((unsigned char)*before_type)) before_type--;
+                    // 跳过可能存在的 '?'
+                    if (before_type >= content && *before_type == '?') {
+                        before_type--;
+                        while (before_type >= content && isspace((unsigned char)*before_type)) before_type--;
+                    }
                     if (before_type >= content && *before_type == '(') {
                         int type_len = before - check + 1;
                         if (type_len > 0 && type_len < 64) {
@@ -656,14 +676,49 @@ void comp_provider_add_variable_members(
     if (ctx.root_scope) {
         compiler_get_symbol_info(&ctx, var_name, &type_str, NULL);
     }
+
+    // 回退1：如果编译器分析失败或未找到符号，检查是否是 struct 字段
+    // struct 方法体中可以直接使用字段名（如 _font），编译器会将其转换为 self.field
+    // 但 LSP 的作用域查找可能找不到这些字段，需要通过 struct 定义回退查找
+    if (!type_str && ctx.root_scope) {
+        char** struct_names = NULL;
+        int struct_count = compiler_find_structs_with_field(&ctx, var_name, &struct_names);
+        if (struct_count > 0) {
+            char* field_type_str = NULL;
+            bool found = compiler_get_struct_field_info(&ctx, struct_names[0], var_name, &field_type_str);
+            if (found && field_type_str) {
+                type_str = field_type_str;
+            }
+            // 释放 struct 名称列表
+            for (int i = 0; i < struct_count; i++) {
+                free(struct_names[i]);
+            }
+            free(struct_names);
+        }
+    }
     compiler_context_cleanup(&ctx);
 
-    // 回退：如果编译器分析失败或未找到符号，使用文本匹配推断类型
+    // 回退2：如果仍然未找到，使用文本匹配推断类型
     if (!type_str) {
         type_str = detect_variable_type_from_text(content, var_name);
     }
     
     char* type_resolved = NULL;
+
+    // 剥离可空类型后缀 '?'（如 "Font?" -> "Font"）
+    // 补全逻辑基于基础类型查找成员，可空性不影响成员列表
+    if (type_str) {
+        size_t ts_len = strlen(type_str);
+        while (ts_len > 0 && type_str[ts_len - 1] == '?') {
+            type_str[ts_len - 1] = '\0';
+            ts_len--;
+        }
+        // 如果剥离后为空，释放并置空
+        if (ts_len == 0) {
+            free(type_str);
+            type_str = NULL;
+        }
+    }
     
     if (type_str) {
         if (strstr(type_str, "struct") || strstr(type_str, "cstruct")) {

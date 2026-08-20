@@ -320,7 +320,8 @@ bool compiler_get_struct_field_info(CompilerContext* ctx, const char* struct_nam
 
     // 在作用域中查找 struct 定义
     Symbol* struct_sym = scope_resolve_tree_bfs(ctx->root_scope, struct_name);
-    if (!struct_sym || !struct_sym->type || struct_sym->type->kind != TYPE_STRUCT) {
+    if (!struct_sym || !struct_sym->type ||
+        (struct_sym->type->kind != TYPE_STRUCT && struct_sym->type->kind != TYPE_CSTRUCT)) {
         return false;
     }
 
@@ -350,7 +351,7 @@ int compiler_find_structs_with_field(CompilerContext* ctx, const char* field_nam
     int count = 0;
     for (int i = 0; i < ctx->root_scope->sym_cnt; i++) {
         Symbol* sym = ctx->root_scope->syms[i];
-        if (sym->type && sym->type->kind == TYPE_STRUCT && sym->struct_field_count > 0) {
+        if (sym->type && (sym->type->kind == TYPE_STRUCT || sym->type->kind == TYPE_CSTRUCT) && sym->struct_field_count > 0) {
             for (int j = 0; j < sym->struct_field_count; j++) {
                 if (sym->struct_field_names[j] &&
                     strcmp(sym->struct_field_names[j], field_name) == 0) {
@@ -374,7 +375,7 @@ int compiler_find_structs_with_field(CompilerContext* ctx, const char* field_nam
     int idx = 0;
     for (int i = 0; i < ctx->root_scope->sym_cnt && idx < count; i++) {
         Symbol* sym = ctx->root_scope->syms[i];
-        if (sym->type && sym->type->kind == TYPE_STRUCT && sym->struct_field_count > 0) {
+        if (sym->type && (sym->type->kind == TYPE_STRUCT || sym->type->kind == TYPE_CSTRUCT) && sym->struct_field_count > 0) {
             for (int j = 0; j < sym->struct_field_count; j++) {
                 if (sym->struct_field_names[j] &&
                     strcmp(sym->struct_field_names[j], field_name) == 0) {
