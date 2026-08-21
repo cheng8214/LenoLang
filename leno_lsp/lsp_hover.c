@@ -3936,7 +3936,55 @@ char* lsp_get_hover_info(const char* content, LspPosition pos, const char* file_
                         if (!info) {
                             info = generate_clib_method_doc(var_type, method, content, file_path);
                         }
-                        
+
+                        // 4.4b 链式字段访问解析（如 root.children.add）
+                        //     method 包含 '.' 时，先解析字段，再在字段类型上找方法
+                        if (!info && strchr(method, '.')) {
+                            char* field_dot = strchr(method, '.');
+                            if (field_dot) {
+                                int field_len = field_dot - method;
+                                char field_name[128] = {0};
+                                if (field_len > 0 && field_len < 127) {
+                                    memcpy(field_name, method, field_len);
+                                    field_name[field_len] = '\0';
+                                    const char* remaining_method = field_dot + 1;
+
+                                    // 从 var_type 对应的 struct 中查找字段类型
+                                    CompilerContext fctx;
+                                    compiler_context_init(&fctx);
+                                    if (compiler_analyze_with_filename(&fctx, content, file_path) && fctx.root_scope) {
+                                        char* field_type_str = NULL;
+                                        if (compiler_get_struct_field_info(&fctx, var_type, field_name, &field_type_str)) {
+                                            // 提取基础类型（如 "Array[HtmlNode]" → "Array"）
+                                            char base_type[128] = {0};
+                                            const char* bracket = strchr(field_type_str, '[');
+                                            int bt_len = bracket ? (int)(bracket - field_type_str) : (int)strlen(field_type_str);
+                                            if (bt_len > 0 && bt_len < 127) {
+                                                memcpy(base_type, field_type_str, bt_len);
+                                                base_type[bt_len] = '\0';
+                                            }
+
+                                            if (base_type[0]) {
+                                                // 在字段类型上查找方法
+                                                int f_arity = native_get_instance_method_arity(base_type, remaining_method);
+                                                if (f_arity >= 0) {
+                                                    info = generate_instance_method_doc(base_type, remaining_method);
+                                                }
+                                                if (!info) {
+                                                    info = generate_struct_method_doc(base_type, remaining_method, content, file_path);
+                                                }
+                                                if (!info) {
+                                                    info = generate_struct_method_doc_from_modules(base_type, remaining_method, content, file_path);
+                                                }
+                                            }
+                                            free(field_type_str);
+                                        }
+                                    }
+                                    compiler_context_cleanup(&fctx);
+                                }
+                            }
+                        }
+
                         // 4.5 回退：如果方法查找全部失败但已知变量类型，显示基本成员提示
                         // 这处理 _font.ok 这种字段访问（ok 是 Font 的字段而非方法）
                         if (!info) {
