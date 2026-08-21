@@ -982,7 +982,8 @@ static char* get_symbol_hover_from_compiler(const char* content, const char* wor
         else if (sym->kind == SYM_TYPE) kind_str = "类型别名";
 
         // 对函数类型特殊处理：显示 "func xx(params):ret" 而非 "xx: func(params):ret"
-        if (sym->kind == SYM_GLOBAL_FUNC && type_str && strncmp(type_str, "func", 4) == 0) {
+        bool is_func_sym = (sym->kind == SYM_GLOBAL_FUNC || sym->kind == SYM_MODULE);
+        if (is_func_sym && type_str && strncmp(type_str, "func", 4) == 0) {
             // type_str 格式: "func(params):ret" → 改为 "func xx(params):ret"
             const char* after_func = type_str + 4;  // 跳过 "func"，指向 "(" 或其他
             snprintf(info, info_len, "**%s**\n\n"
@@ -1795,10 +1796,10 @@ static char* get_module_symbol_hover(const char* content, const char* word, cons
                         strcat(tparams, tb);
                     }
                     strcat(tparams, "]");
-                    snprintf(result, len, "**%s**\n\n```leno\n%s%s(%s) -> %s\n```\n\n模块函数",
+                    snprintf(result, len, "**%s**\n\n```leno\nfunc %s%s(%s): %s\n```\n\n模块函数",
                              word, word, tparams, params, ret_str);
                 } else {
-                    snprintf(result, len, "**%s**\n\n```leno\n%s(%s) -> %s\n```\n\n模块函数",
+                    snprintf(result, len, "**%s**\n\n```leno\nfunc %s(%s): %s\n```\n\n模块函数",
                              word, word, params, ret_str);
                 }
             }

@@ -1,4 +1,6 @@
-fix(lsp): 函数悬停提示格式修复
+fix(lsp): 模块内函数悬停格式修复
 
-函数悬停从 "xx: func(params):ret" 改为 "func xx(params):ret"
-与 LenoC 源码中的函数声明语法一致
+模块文件中的函数被标记为 SYM_MODULE 而非 SYM_GLOBAL_FUNC，
+导致函数悬停格式修复不生效。现在对 SYM_MODULE 也应用相同逻辑，
+显示 "func xx(params):ret" 而非 "xx: func(params):ret"。
+同时统一跨模块导入函数的悬停格式。
