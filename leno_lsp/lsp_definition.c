@@ -260,7 +260,9 @@ static bool resolve_import_path(const char* file_path, const char* current_file,
 
 // 前向声明
 static bool find_definition_in_content(const char* content, const char* word,
-                                       LspRange* range);
+LspRange* range);
+static bool find_struct_field_definition(const char* content, const char* word,
+                                          LspRange* range);
 
 /**
  * 在导入的模块中查找符号定义
@@ -476,12 +478,14 @@ static bool find_definition_in_content(const char* content, const char* word,
         {"export enum ", 12},
         {"export face ", 12},
         {"export var ", 11},
+        {"export const ", 13},
         {"cstruct ", 8},
         {"struct ", 7},
         {"func ", 5},
         {"enum ", 5},
         {"face ", 5},
         {"var ", 4},
+        {"const ", 6},
     };
     static const int num_patterns = sizeof(def_patterns) / sizeof(def_patterns[0]);
 
@@ -491,6 +495,7 @@ static bool find_definition_in_content(const char* content, const char* word,
                             p[-1] == '{');
 
         if (at_boundary) {
+            // 先检查标准定义模式
             for (int i = 0; i < num_patterns; i++) {
                 int plen = def_patterns[i].len;
                 if (strncmp(p, def_patterns[i].prefix, plen) == 0 &&
@@ -506,6 +511,107 @@ static bool find_definition_in_content(const char* content, const char* word,
                     return true;
                 }
             }
+            
+            // 检查类型前缀变量声明（如 "Array[X] name", "int name", "string name", "Font name" 等）
+            // 模式: <Type> <word>  其中 Type 可以是简单类型名或泛型类型 Array[X]
+            {
+                // 提取从 p 开始的 token 作为类型名
+                const char* tp = p;
+                // 跳过可能的 "export " 前缀
+                if (strncmp(tp, "export ", 7) == 0) tp += 7;
+                
+                // 提取类型名（字母数字下划线）
+                const char* type_start = tp;
+                while (*tp && (isalnum((unsigned char)*tp) || *tp == '_')) tp++;
+                if (tp > type_start) {
+                    int type_len = tp - type_start;
+                    // 检查类型名是否是有效的类型关键字
+                    // 包括所有编译器内置类型、FFI/系统类型、C布局类型和用户定义类型名
+                    bool is_type = false;
+                    if (type_len <= 32) {
+                        char type_buf[33];
+                        memcpy(type_buf, type_start, type_len);
+                        type_buf[type_len] = '\0';
+                        // 内置类型
+                        if (strcmp(type_buf, "int") == 0 ||
+                            strcmp(type_buf, "float") == 0 ||
+                            strcmp(type_buf, "string") == 0 ||
+                            strcmp(type_buf, "bool") == 0 ||
+                            strcmp(type_buf, "bigint") == 0 ||
+                            strcmp(type_buf, "Array") == 0 ||
+                            strcmp(type_buf, "Dict") == 0 ||
+                            strcmp(type_buf, "any") == 0 ||
+                            strcmp(type_buf, "File") == 0 ||
+                            strcmp(type_buf, "var") == 0 ||
+                            // FFI / 系统类型
+                            strcmp(type_buf, "Ptr") == 0 ||
+                            strcmp(type_buf, "Socket") == 0 ||
+                            strcmp(type_buf, "Channel") == 0 ||
+                            strcmp(type_buf, "Thread") == 0 ||
+                            strcmp(type_buf, "Future") == 0 ||
+                            // C 布局类型
+                            strcmp(type_buf, "i8") == 0 ||
+                            strcmp(type_buf, "u8") == 0 ||
+                            strcmp(type_buf, "i16") == 0 ||
+                            strcmp(type_buf, "u16") == 0 ||
+                            strcmp(type_buf, "i32") == 0 ||
+                            strcmp(type_buf, "u32") == 0 ||
+                            strcmp(type_buf, "i64") == 0 ||
+                            strcmp(type_buf, "u64") == 0 ||
+                            strcmp(type_buf, "f32") == 0 ||
+                            strcmp(type_buf, "f64") == 0 ||
+                            strcmp(type_buf, "c_int") == 0 ||
+                            strcmp(type_buf, "c_uint") == 0 ||
+                            strcmp(type_buf, "c_long") == 0 ||
+                            strcmp(type_buf, "c_ulong") == 0 ||
+                            strcmp(type_buf, "c_longlong") == 0 ||
+                            strcmp(type_buf, "c_ulonglong") == 0 ||
+                            strcmp(type_buf, "c_size") == 0 ||
+                            strcmp(type_buf, "c_ssize") == 0 ||
+                            strcmp(type_buf, "str8") == 0 ||
+                            strcmp(type_buf, "str16") == 0 ||
+                            // 用户定义类型（首字母大写，如 Font, CachedTex）
+                            (isupper((unsigned char)type_buf[0]))) {
+                            is_type = true;
+                        }
+                    }
+                    
+                    if (is_type) {
+                        // 跳过泛型参数部分（如 [CachedTex], [string, int]）
+                        const char* after_type = tp;
+                        if (*after_type == '[') {
+                            // 跳过 [...] 部分
+                            int depth = 1;
+                            after_type++;
+                            while (*after_type && depth > 0) {
+                                if (*after_type == '[') depth++;
+                                else if (*after_type == ']') depth--;
+                                after_type++;
+                            }
+                        }
+                        // 跳过空白
+                        while (*after_type && isspace((unsigned char)*after_type)) after_type++;
+                        // 检查后面是否紧跟目标变量名
+                        if (strncmp(after_type, clean_word, word_len) == 0 &&
+                            (after_type[word_len] == '\0' ||
+                             (!isalnum((unsigned char)after_type[word_len]) && after_type[word_len] != '_'))) {
+                            // 确保再后面是 '=', '(', ';', '\n' 等（变量声明的结尾）
+                            char after_word = after_type[word_len];
+                            if (after_word == '=' || after_word == '\n' || after_word == '\r' ||
+                                after_word == ';' || after_word == '\0' || 
+                                isspace((unsigned char)after_word)) {
+                                // after_type 相对于行首的偏移 = col + (after_type - p)
+                                int name_col = col + (int)(after_type - p);
+                                range->start.line = line;
+                                range->start.character = name_col;
+                                range->end.line = line;
+                                range->end.character = name_col + word_len;
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         if (*p == '\n') {
@@ -518,7 +624,133 @@ static bool find_definition_in_content(const char* content, const char* word,
     }
 
     // 如果标准定义模式没找到，尝试在 clib 块内查找函数定义
-    return find_clib_func_definition(content, clean_word, range);
+    if (find_clib_func_definition(content, clean_word, range)) return true;
+
+    // 尝试在 struct/cstruct 定义块内查找字段定义
+    return find_struct_field_definition(content, clean_word, range);
+}
+
+// 在 struct/cstruct 定义块内查找字段定义
+// struct 块内格式: <Type> fieldName  或  <Type> fieldName;  或  <Type> fieldName = default
+// 如: Ptr[u8] texture  或  string key  或  int w; int h; bool ok
+static bool find_struct_field_definition(const char* content, const char* word,
+                                          LspRange* range) {
+    if (!content || !word) return false;
+
+    int word_len = strlen(word);
+    const char* p = content;
+    int line = 0;
+    int col = 0;
+
+    // 查找 "struct " 或 "cstruct " 或 "export struct " 或 "export cstruct " 标记
+    while (*p) {
+        bool at_boundary = (p == content ||
+                            isspace((unsigned char)p[-1]) ||
+                            p[-1] == '{' || p[-1] == ';');
+
+        if (at_boundary) {
+            const char* struct_kw = NULL;
+
+            if (strncmp(p, "export struct ", 14) == 0) { struct_kw = p + 14; }
+            else if (strncmp(p, "export cstruct ", 15) == 0) { struct_kw = p + 15; }
+            else if (strncmp(p, "cstruct ", 8) == 0) { struct_kw = p + 8; }
+            else if (strncmp(p, "struct ", 7) == 0) { struct_kw = p + 7; }
+
+            if (struct_kw) {
+                // 跳过 struct 名称
+                const char* block_start = struct_kw;
+                while (*block_start && (isalnum((unsigned char)*block_start) || *block_start == '_')) {
+                    block_start++;
+                }
+                // 查找 '{'
+                while (*block_start && *block_start != '{') {
+                    if (*block_start == '\n') { line++; col = 0; }
+                    else col++;
+                    block_start++;
+                }
+                if (*block_start != '{') { p++; continue; }
+                block_start++;  // 跳过 '{'
+
+                // 在 struct 块内查找字段
+                const char* q = block_start;
+                int field_line = line;
+                int field_col = col + (int)(block_start - p);
+
+                while (*q && *q != '}') {
+                    // 跳过空白和注释
+                    while (*q && *q != '}' && isspace((unsigned char)*q)) {
+                        if (*q == '\n') { field_line++; field_col = 0; }
+                        else field_col++;
+                        q++;
+                    }
+                    if (*q == '}' || !*q) break;
+
+                    // 跳过注释行
+                    if (*q == '/' && q[1] == '/') {
+                        while (*q && *q != '\n') q++;
+                        continue;
+                    }
+
+                    // 提取类型名（字母数字下划线）
+                    const char* type_start = q;
+                    while (*q && (isalnum((unsigned char)*q) || *q == '_')) q++;
+                    if (q == type_start) {
+                        if (*q == '\n') { field_line++; field_col = 0; }
+                        else field_col++;
+                        q++;
+                        continue;
+                    }
+
+                    // 跳过泛型参数 [X] 部分
+                    if (*q == '[') {
+                        int depth = 1;
+                        while (*q && depth > 0) {
+                            if (*q == '[') depth++;
+                            else if (*q == ']') depth--;
+                            if (*q == '\n') { field_line++; field_col = 0; }
+                            else field_col++;
+                            q++;
+                        }
+                    }
+                    // 跳过空白
+                    while (*q && *q != '}' && isspace((unsigned char)*q)) {
+                        if (*q == '\n') { field_line++; field_col = 0; }
+                        else field_col++;
+                        q++;
+                    }
+
+                    // 检查是否是目标字段名
+                    if (strncmp(q, word, word_len) == 0 &&
+                        (q[word_len] == '\0' || q[word_len] == '\n' ||
+                         q[word_len] == ';' || q[word_len] == '=' ||
+                         isspace((unsigned char)q[word_len]))) {
+                        // 计算字段名相对于行首的列偏移
+                        // 回溯到行首计算
+                        const char* line_start = q;
+                        while (line_start > content && line_start[-1] != '\n') line_start--;
+                        int name_col = (int)(q - line_start);
+
+                        range->start.line = field_line;
+                        range->start.character = name_col;
+                        range->end.line = field_line;
+                        range->end.character = name_col + word_len;
+                        return true;
+                    }
+
+                    // 跳过到行尾或 ';' 或下一个字段
+                    while (*q && *q != '\n' && *q != ';' && *q != '}') q++;
+                    if (*q == ';') q++;
+                    if (*q == '\n') { field_line++; field_col = 0; q++; }
+                }
+            }
+        }
+
+        if (*p == '\n') { line++; col = 0; }
+        else col++;
+        p++;
+    }
+
+    return false;
 }
 
 // 获取定义位置
@@ -537,20 +769,46 @@ LspLocation* lsp_get_definition(const char* content, LspPosition pos, int* count
     if (word[0] == '.') lookup_word = word + 1;
     if (!*lookup_word) { free(word); return NULL; }
     
+    // 如果 word 含点号（如 SDL3.PIXELFORMAT_RGBA8888），拆分模块名和符号名
+    // 以便在导入的模块中查找符号定义
+    char* module_prefix = NULL;   // 如 "SDL3"
+    char* symbol_name = NULL;     // 如 "PIXELFORMAT_RGBA8888"
+    const char* dot_in_word = strchr(lookup_word, '.');
+    if (dot_in_word && dot_in_word != lookup_word && dot_in_word[1]) {
+        int mod_len = dot_in_word - lookup_word;
+        module_prefix = (char*)malloc(mod_len + 1);
+        memcpy(module_prefix, lookup_word, mod_len);
+        module_prefix[mod_len] = '\0';
+        
+        const char* sym_start = dot_in_word + 1;
+        // 去掉可能的后续点号（如 SDL3.SDL3.PIXELFORMAT...）
+        while (sym_start[0] && sym_start[1] == '.') sym_start++;
+        symbol_name = strdup(sym_start);
+        
+        // 用于后续查找的 lookup_word 改为纯符号名
+        lookup_word = symbol_name;
+    }
+    
     // 分配结果数组
     int capacity = 4;
     LspLocation* locations = (LspLocation*)malloc(sizeof(LspLocation) * capacity);
     if (!locations) {
         free(word);
+        free(module_prefix);
+        free(symbol_name);
         return NULL;
     }
     
     // 在当前文档中查找定义
     LspRange range;
-    if (find_definition_in_content(content, word, &range)) {
-        locations[*count].uri = strdup(uri ? uri : "");
-        locations[*count].range = range;
-        (*count)++;
+    // 对于带模块前缀的表达式（如 SDL3.PIXELFORMAT_RGBA8888），不在当前文档中查找
+    // 而是直接去模块中查找
+    if (!module_prefix) {
+        if (find_definition_in_content(content, word, &range)) {
+            locations[*count].uri = strdup(uri ? uri : "");
+            locations[*count].range = range;
+            (*count)++;
+        }
     }
     
     // 在导入的模块中查找定义（跨文件跳转）
@@ -570,6 +828,13 @@ LspLocation* lsp_get_definition(const char* content, LspPosition pos, int* count
     for (int i = 0; i < import_count && *count < capacity; i++) {
         LspRange mod_range;
         char full_path[MAX_PATH_LEN];
+        
+        // 如果有模块前缀，只在该模块中查找
+        if (module_prefix) {
+            // 检查导入别名是否匹配模块前缀
+            if (strcmp(imports[i].alias, module_prefix) != 0) continue;
+        }
+        
         if (find_definition_in_module(imports[i].file_path,
                                       file_path[0] ? file_path : NULL,
                                       lookup_word, &mod_range, full_path, sizeof(full_path))) {
@@ -582,6 +847,8 @@ LspLocation* lsp_get_definition(const char* content, LspPosition pos, int* count
     }
     
     free(word);
+    free(module_prefix);
+    free(symbol_name);
     
     if (*count == 0) {
         free(locations);
@@ -614,13 +881,21 @@ LspLocation* lsp_find_definition_by_word(const char* content, const char* word,
     *count = 0;
     if (!content || !word) return NULL;
 
+    // 处理带点号的 word（如 SDL3.PIXELFORMAT_RGBA8888 或 .method）
+    // 取最后一个点号后的部分作为查找词
+    const char* clean_word = word;
+    if (word[0] == '.') clean_word = word + 1;  // 去掉前导点号
+    const char* last_dot = strrchr(clean_word, '.');
+    if (last_dot && last_dot[1]) clean_word = last_dot + 1;
+    if (!*clean_word) return NULL;
+
     int capacity = 4;
     LspLocation* locations = (LspLocation*)malloc(sizeof(LspLocation) * capacity);
     if (!locations) return NULL;
 
     // 在当前文档中查找定义
     LspRange range;
-    if (find_definition_in_content(content, word, &range)) {
+    if (find_definition_in_content(content, clean_word, &range)) {
         char* uri = current_file ? lsp_path_to_uri(current_file) : strdup("");
         locations[*count].uri = uri ? uri : strdup("");
         locations[*count].range = range;
@@ -635,7 +910,7 @@ LspLocation* lsp_find_definition_by_word(const char* content, const char* word,
         char full_path[MAX_PATH_LEN];
         if (find_definition_in_module(imports[i].file_path,
                                       current_file,
-                                      word, &mod_range, full_path, sizeof(full_path))) {
+                                      clean_word, &mod_range, full_path, sizeof(full_path))) {
             char* def_uri = lsp_path_to_uri(full_path);
             locations[*count].uri = def_uri ? def_uri : strdup("");
             locations[*count].range = mod_range;

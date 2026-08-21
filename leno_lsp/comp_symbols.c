@@ -83,6 +83,23 @@ static char* detect_variable_type_from_text(const char* content, const char* var
                         strcmp(type_buf, "bigint") == 0) return strdup("number");
                     if (strcmp(type_buf, "bool") == 0) return strdup("bool");
                     if (strcmp(type_buf, "File") == 0) return strdup("File");
+                    if (strcmp(type_buf, "any") == 0) return strdup("any");
+                    if (strcmp(type_buf, "Ptr") == 0) return strdup("Ptr");
+                    if (strcmp(type_buf, "Socket") == 0) return strdup("Socket");
+                    if (strcmp(type_buf, "Channel") == 0) return strdup("Channel");
+                    if (strcmp(type_buf, "Thread") == 0) return strdup("Thread");
+                    if (strcmp(type_buf, "Future") == 0) return strdup("Future");
+                    if (strcmp(type_buf, "i8") == 0 || strcmp(type_buf, "u8") == 0 ||
+                        strcmp(type_buf, "i16") == 0 || strcmp(type_buf, "u16") == 0 ||
+                        strcmp(type_buf, "i32") == 0 || strcmp(type_buf, "u32") == 0 ||
+                        strcmp(type_buf, "i64") == 0 || strcmp(type_buf, "u64") == 0 ||
+                        strcmp(type_buf, "f32") == 0 || strcmp(type_buf, "f64") == 0 ||
+                        strcmp(type_buf, "c_int") == 0 || strcmp(type_buf, "c_uint") == 0 ||
+                        strcmp(type_buf, "c_long") == 0 || strcmp(type_buf, "c_ulong") == 0 ||
+                        strcmp(type_buf, "c_longlong") == 0 || strcmp(type_buf, "c_ulonglong") == 0 ||
+                        strcmp(type_buf, "c_size") == 0 || strcmp(type_buf, "c_ssize") == 0)
+                        return strdup("number");
+                    if (strcmp(type_buf, "str8") == 0 || strcmp(type_buf, "str16") == 0) return strdup("string");
                     // struct/cstruct 类型
                     if (strstr(type_buf, "struct")) return strdup(type_buf);
                     // clib 类型（首字母小写的自定义类型名，如 sqlite3）
@@ -91,7 +108,12 @@ static char* detect_variable_type_from_text(const char* content, const char* var
                         strcmp(type_buf, "void") != 0 &&
                         strcmp(type_buf, "null") != 0 &&
                         strcmp(type_buf, "any") != 0 &&
-                        strcmp(type_buf, "func") != 0) {
+                        strcmp(type_buf, "func") != 0 &&
+                        strcmp(type_buf, "Ptr") != 0 &&
+                        strcmp(type_buf, "Socket") != 0 &&
+                        strcmp(type_buf, "Channel") != 0 &&
+                        strcmp(type_buf, "Thread") != 0 &&
+                        strcmp(type_buf, "Future") != 0) {
                         char* result = (char*)malloc(strlen(type_buf) + 6);
                         sprintf(result, "clib %s", type_buf);
                         return result;
@@ -134,6 +156,23 @@ static char* detect_variable_type_from_text(const char* content, const char* var
                                 strcmp(type_buf, "bigint") == 0) return strdup("number");
                             if (strcmp(type_buf, "bool") == 0) return strdup("bool");
                             if (strcmp(type_buf, "File") == 0) return strdup("File");
+                            if (strcmp(type_buf, "any") == 0) return strdup("any");
+                            if (strcmp(type_buf, "Ptr") == 0) return strdup("Ptr");
+                            if (strcmp(type_buf, "Socket") == 0) return strdup("Socket");
+                            if (strcmp(type_buf, "Channel") == 0) return strdup("Channel");
+                            if (strcmp(type_buf, "Thread") == 0) return strdup("Thread");
+                            if (strcmp(type_buf, "Future") == 0) return strdup("Future");
+                            if (strcmp(type_buf, "i8") == 0 || strcmp(type_buf, "u8") == 0 ||
+                                strcmp(type_buf, "i16") == 0 || strcmp(type_buf, "u16") == 0 ||
+                                strcmp(type_buf, "i32") == 0 || strcmp(type_buf, "u32") == 0 ||
+                                strcmp(type_buf, "i64") == 0 || strcmp(type_buf, "u64") == 0 ||
+                                strcmp(type_buf, "f32") == 0 || strcmp(type_buf, "f64") == 0 ||
+                                strcmp(type_buf, "c_int") == 0 || strcmp(type_buf, "c_uint") == 0 ||
+                                strcmp(type_buf, "c_long") == 0 || strcmp(type_buf, "c_ulong") == 0 ||
+                                strcmp(type_buf, "c_longlong") == 0 || strcmp(type_buf, "c_ulonglong") == 0 ||
+                                strcmp(type_buf, "c_size") == 0 || strcmp(type_buf, "c_ssize") == 0)
+                                return strdup("number");
+                            if (strcmp(type_buf, "str8") == 0 || strcmp(type_buf, "str16") == 0) return strdup("string");
                             if (isupper((unsigned char)type_buf[0])) return strdup(type_buf);
                         }
                     }
@@ -494,6 +533,18 @@ void comp_provider_add_variable_members(
             type_resolved = strdup("bool");
         } else if (strcmp(closure_type, "File") == 0) {
             type_resolved = strdup("File");
+        } else if (strcmp(closure_type, "any") == 0) {
+            type_resolved = strdup("any");
+        } else if (strcmp(closure_type, "Ptr") == 0) {
+            type_resolved = strdup("Ptr");
+        } else if (strcmp(closure_type, "Socket") == 0) {
+            type_resolved = strdup("Socket");
+        } else if (strcmp(closure_type, "Channel") == 0) {
+            type_resolved = strdup("Channel");
+        } else if (strcmp(closure_type, "Thread") == 0) {
+            type_resolved = strdup("Thread");
+        } else if (strcmp(closure_type, "Future") == 0) {
+            type_resolved = strdup("Future");
         } else if (isupper((unsigned char)closure_type[0])) {
             // struct 类型名
             type_resolved = (char*)malloc(strlen(closure_type) + 16);
@@ -738,6 +789,30 @@ void comp_provider_add_variable_members(
             type_resolved = strdup("bool");
         } else if (strcmp(type_str, "File") == 0) {
             type_resolved = strdup("File");
+        } else if (strcmp(type_str, "any") == 0) {
+            type_resolved = strdup("any");
+        } else if (strcmp(type_str, "Ptr") == 0) {
+            type_resolved = strdup("Ptr");
+        } else if (strcmp(type_str, "Socket") == 0) {
+            type_resolved = strdup("Socket");
+        } else if (strcmp(type_str, "Channel") == 0) {
+            type_resolved = strdup("Channel");
+        } else if (strcmp(type_str, "Thread") == 0) {
+            type_resolved = strdup("Thread");
+        } else if (strcmp(type_str, "Future") == 0) {
+            type_resolved = strdup("Future");
+        } else if (strcmp(type_str, "i8") == 0 || strcmp(type_str, "u8") == 0 ||
+                   strcmp(type_str, "i16") == 0 || strcmp(type_str, "u16") == 0 ||
+                   strcmp(type_str, "i32") == 0 || strcmp(type_str, "u32") == 0 ||
+                   strcmp(type_str, "i64") == 0 || strcmp(type_str, "u64") == 0 ||
+                   strcmp(type_str, "f32") == 0 || strcmp(type_str, "f64") == 0 ||
+                   strcmp(type_str, "c_int") == 0 || strcmp(type_str, "c_uint") == 0 ||
+                   strcmp(type_str, "c_long") == 0 || strcmp(type_str, "c_ulong") == 0 ||
+                   strcmp(type_str, "c_longlong") == 0 || strcmp(type_str, "c_ulonglong") == 0 ||
+                   strcmp(type_str, "c_size") == 0 || strcmp(type_str, "c_ssize") == 0) {
+            type_resolved = strdup("number");
+        } else if (strcmp(type_str, "str8") == 0 || strcmp(type_str, "str16") == 0) {
+            type_resolved = strdup("string");
         } else if (isupper((unsigned char)type_str[0])) {
             // 可能是用户定义的 struct 类型名（如 MenuBar, TreeView, Window）
             // 注意：不要求 struct_def_find 成功，因为 struct 可能定义在导入的模块中

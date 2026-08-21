@@ -2071,6 +2071,25 @@ char* detect_var_type_from_text(const char* content, const char* var_name) {
                         strcmp(type_buf, "bigint") == 0) return strdup("number");
                     if (strcmp(type_buf, "bool") == 0) return strdup("bool");
                     if (strcmp(type_buf, "File") == 0) return strdup("File");
+                    if (strcmp(type_buf, "any") == 0) return strdup("any");
+                    if (strcmp(type_buf, "Ptr") == 0) return strdup("Ptr");
+                    if (strcmp(type_buf, "Socket") == 0) return strdup("Socket");
+                    if (strcmp(type_buf, "Channel") == 0) return strdup("Channel");
+                    if (strcmp(type_buf, "Thread") == 0) return strdup("Thread");
+                    if (strcmp(type_buf, "Future") == 0) return strdup("Future");
+                    // C 布局类型统一映射为 number
+                    if (strcmp(type_buf, "i8") == 0 || strcmp(type_buf, "u8") == 0 ||
+                        strcmp(type_buf, "i16") == 0 || strcmp(type_buf, "u16") == 0 ||
+                        strcmp(type_buf, "i32") == 0 || strcmp(type_buf, "u32") == 0 ||
+                        strcmp(type_buf, "i64") == 0 || strcmp(type_buf, "u64") == 0 ||
+                        strcmp(type_buf, "f32") == 0 || strcmp(type_buf, "f64") == 0 ||
+                        strcmp(type_buf, "c_int") == 0 || strcmp(type_buf, "c_uint") == 0 ||
+                        strcmp(type_buf, "c_long") == 0 || strcmp(type_buf, "c_ulong") == 0 ||
+                        strcmp(type_buf, "c_longlong") == 0 || strcmp(type_buf, "c_ulonglong") == 0 ||
+                        strcmp(type_buf, "c_size") == 0 || strcmp(type_buf, "c_ssize") == 0)
+                        return strdup("number");
+                    if (strcmp(type_buf, "str8") == 0) return strdup("string");
+                    if (strcmp(type_buf, "str16") == 0) return strdup("string");
                     // clib 类型（如 "sqlite3" 作为 clib 类型名，首字母小写）
                     // 检查是否是已知的 clib 类型名
                     // 注意：必须排除关键字（if/for/while/return等）避免误判
@@ -2088,6 +2107,23 @@ char* detect_var_type_from_text(const char* content, const char* var_name) {
                         strcmp(type_buf, "Dict") != 0 &&
                         strcmp(type_buf, "File") != 0 &&
                         strcmp(type_buf, "bigint") != 0 &&
+                        strcmp(type_buf, "Ptr") != 0 &&
+                        strcmp(type_buf, "Socket") != 0 &&
+                        strcmp(type_buf, "Channel") != 0 &&
+                        strcmp(type_buf, "Thread") != 0 &&
+                        strcmp(type_buf, "Future") != 0 &&
+                        strcmp(type_buf, "i8") != 0 &&
+                        strcmp(type_buf, "u8") != 0 &&
+                        strcmp(type_buf, "i16") != 0 &&
+                        strcmp(type_buf, "u16") != 0 &&
+                        strcmp(type_buf, "i32") != 0 &&
+                        strcmp(type_buf, "u32") != 0 &&
+                        strcmp(type_buf, "i64") != 0 &&
+                        strcmp(type_buf, "u64") != 0 &&
+                        strcmp(type_buf, "f32") != 0 &&
+                        strcmp(type_buf, "f64") != 0 &&
+                        strcmp(type_buf, "str8") != 0 &&
+                        strcmp(type_buf, "str16") != 0 &&
                         // 排除语言关键字，避免把 "if/for/while/return" 当成 clib 类型
                         strcmp(type_buf, "if") != 0 &&
                         strcmp(type_buf, "else") != 0 &&
@@ -2161,6 +2197,23 @@ char* detect_var_type_from_text(const char* content, const char* var_name) {
                                 strcmp(type_buf, "bigint") == 0) return strdup("number");
                             if (strcmp(type_buf, "bool") == 0) return strdup("bool");
                             if (strcmp(type_buf, "File") == 0) return strdup("File");
+                            if (strcmp(type_buf, "any") == 0) return strdup("any");
+                            if (strcmp(type_buf, "Ptr") == 0) return strdup("Ptr");
+                            if (strcmp(type_buf, "Socket") == 0) return strdup("Socket");
+                            if (strcmp(type_buf, "Channel") == 0) return strdup("Channel");
+                            if (strcmp(type_buf, "Thread") == 0) return strdup("Thread");
+                            if (strcmp(type_buf, "Future") == 0) return strdup("Future");
+                            if (strcmp(type_buf, "i8") == 0 || strcmp(type_buf, "u8") == 0 ||
+                                strcmp(type_buf, "i16") == 0 || strcmp(type_buf, "u16") == 0 ||
+                                strcmp(type_buf, "i32") == 0 || strcmp(type_buf, "u32") == 0 ||
+                                strcmp(type_buf, "i64") == 0 || strcmp(type_buf, "u64") == 0 ||
+                                strcmp(type_buf, "f32") == 0 || strcmp(type_buf, "f64") == 0 ||
+                                strcmp(type_buf, "c_int") == 0 || strcmp(type_buf, "c_uint") == 0 ||
+                                strcmp(type_buf, "c_long") == 0 || strcmp(type_buf, "c_ulong") == 0 ||
+                                strcmp(type_buf, "c_longlong") == 0 || strcmp(type_buf, "c_ulonglong") == 0 ||
+                                strcmp(type_buf, "c_size") == 0 || strcmp(type_buf, "c_ssize") == 0)
+                                return strdup("number");
+                            if (strcmp(type_buf, "str8") == 0 || strcmp(type_buf, "str16") == 0) return strdup("string");
                             // clib 类型（首字母小写的自定义类型名）
                             // 必须排除关键字避免误判
                             if (!isupper((unsigned char)type_buf[0]) &&
@@ -2169,6 +2222,23 @@ char* detect_var_type_from_text(const char* content, const char* var_name) {
                                 strcmp(type_buf, "null") != 0 &&
                                 strcmp(type_buf, "any") != 0 &&
                                 strcmp(type_buf, "func") != 0 &&
+                                strcmp(type_buf, "Ptr") != 0 &&
+                                strcmp(type_buf, "Socket") != 0 &&
+                                strcmp(type_buf, "Channel") != 0 &&
+                                strcmp(type_buf, "Thread") != 0 &&
+                                strcmp(type_buf, "Future") != 0 &&
+                                strcmp(type_buf, "i8") != 0 &&
+                                strcmp(type_buf, "u8") != 0 &&
+                                strcmp(type_buf, "i16") != 0 &&
+                                strcmp(type_buf, "u16") != 0 &&
+                                strcmp(type_buf, "i32") != 0 &&
+                                strcmp(type_buf, "u32") != 0 &&
+                                strcmp(type_buf, "i64") != 0 &&
+                                strcmp(type_buf, "u64") != 0 &&
+                                strcmp(type_buf, "f32") != 0 &&
+                                strcmp(type_buf, "f64") != 0 &&
+                                strcmp(type_buf, "str8") != 0 &&
+                                strcmp(type_buf, "str16") != 0 &&
                                 strcmp(type_buf, "if") != 0 &&
                                 strcmp(type_buf, "for") != 0 &&
                                 strcmp(type_buf, "while") != 0 &&
@@ -2285,6 +2355,23 @@ char* detect_closure_param_type_at_position(const char* content, int cursor_offs
                             strcmp(type_buf, "bigint") == 0) return strdup("number");
                         if (strcmp(type_buf, "bool") == 0) return strdup("bool");
                         if (strcmp(type_buf, "File") == 0) return strdup("File");
+                        if (strcmp(type_buf, "any") == 0) return strdup("any");
+                        if (strcmp(type_buf, "Ptr") == 0) return strdup("Ptr");
+                        if (strcmp(type_buf, "Socket") == 0) return strdup("Socket");
+                        if (strcmp(type_buf, "Channel") == 0) return strdup("Channel");
+                        if (strcmp(type_buf, "Thread") == 0) return strdup("Thread");
+                        if (strcmp(type_buf, "Future") == 0) return strdup("Future");
+                        if (strcmp(type_buf, "i8") == 0 || strcmp(type_buf, "u8") == 0 ||
+                            strcmp(type_buf, "i16") == 0 || strcmp(type_buf, "u16") == 0 ||
+                            strcmp(type_buf, "i32") == 0 || strcmp(type_buf, "u32") == 0 ||
+                            strcmp(type_buf, "i64") == 0 || strcmp(type_buf, "u64") == 0 ||
+                            strcmp(type_buf, "f32") == 0 || strcmp(type_buf, "f64") == 0 ||
+                            strcmp(type_buf, "c_int") == 0 || strcmp(type_buf, "c_uint") == 0 ||
+                            strcmp(type_buf, "c_long") == 0 || strcmp(type_buf, "c_ulong") == 0 ||
+                            strcmp(type_buf, "c_longlong") == 0 || strcmp(type_buf, "c_ulonglong") == 0 ||
+                            strcmp(type_buf, "c_size") == 0 || strcmp(type_buf, "c_ssize") == 0)
+                            return strdup("number");
+                        if (strcmp(type_buf, "str8") == 0 || strcmp(type_buf, "str16") == 0) return strdup("string");
                         // struct 类型名（首字母大写）直接返回
                         if (isupper((unsigned char)type_buf[0])) return strdup(type_buf);
                         return strdup(type_buf);
@@ -3519,20 +3606,15 @@ char* lsp_get_hover_info(const char* content, LspPosition pos, const char* file_
         }
     }
 
-    // 6. 如果已找到 hover 信息，尝试附加定义来源（文件名 + 行号）
-    if (info && file_path) {
-        // 确定用于查找定义的 word：
-        // 如果 word 含点号（如 "r.fillRoundedRect"），取最后一段（方法名）
-        const char* def_word = word;
-        char* short_word = NULL;
-        const char* dot = strrchr(word, '.');
-        if (dot && *(dot + 1)) {
-            short_word = strdup(dot + 1);
-            def_word = short_word;
-        }
-
+    // 6. 尝试附加定义来源（文件名 + 行号）
+    //    即使 info 为 NULL，如果能找到定义，也生成基本的悬停信息
+    if (file_path) {
+        // 直接使用 lsp_get_definition，它与跳转(Go to Definition)使用相同的逻辑
+        // 能正确处理模块前缀（如 fnt.ttfQuit → 在 fnt 模块中查找 ttfQuit）
+        char* current_uri = lsp_path_to_uri(file_path);
         int def_count = 0;
-        LspLocation* locations = lsp_find_definition_by_word(content, def_word, file_path, &def_count);
+        LspLocation* locations = lsp_get_definition(content, pos, &def_count, current_uri);
+        if (current_uri) free(current_uri);
 
         if (locations && def_count > 0) {
             LspLocation* loc = &locations[0];
@@ -3547,27 +3629,47 @@ char* lsp_get_hover_info(const char* content, LspPosition pos, const char* file_
             if (last_sep) short_name = last_sep + 1;
 
             // 判断是否是当前文件
-            char* current_uri = lsp_path_to_uri(file_path);
-            bool is_current_file = (current_uri && strcmp(loc->uri, current_uri) == 0);
-            if (current_uri) free(current_uri);
+            char* cur_uri = lsp_path_to_uri(file_path);
+            bool is_current_file = (cur_uri && strcmp(loc->uri, cur_uri) == 0);
+            if (cur_uri) free(cur_uri);
+
+            // 确定用于显示的 word
+            const char* def_word = word;
+            char* short_word = NULL;
+            const char* dot = strrchr(word, '.');
+            if (dot && *(dot + 1)) {
+                short_word = strdup(dot + 1);
+                def_word = short_word;
+            }
+
+            // 如果 info 为 NULL，生成基本悬停信息
+            if (!info) {
+                size_t base_len = strlen(def_word) + 256;
+                info = (char*)malloc(base_len);
+                if (info) {
+                    snprintf(info, base_len, "**%s**\n\n```leno\n%s\n```", def_word, def_word);
+                }
+            }
 
             // 追加来源信息到 hover 文本
-            size_t old_len = strlen(info);
-            size_t add_len = 256 + strlen(short_name);
-            char* new_info = (char*)malloc(old_len + add_len);
-            if (new_info) {
-                memcpy(new_info, info, old_len);
-                if (is_current_file) {
-                    snprintf(new_info + old_len, add_len, "\n\n---\n%s:%d", short_name, def_line);
-                } else {
-                    snprintf(new_info + old_len, add_len, "\n\n---\n%s:%d（导入模块）", short_name, def_line);
+            if (info) {
+                size_t old_len = strlen(info);
+                size_t add_len = 256 + strlen(short_name);
+                char* new_info = (char*)malloc(old_len + add_len);
+                if (new_info) {
+                    memcpy(new_info, info, old_len);
+                    if (is_current_file) {
+                        snprintf(new_info + old_len, add_len, "\n\n---\n%s:%d", short_name, def_line);
+                    } else {
+                        snprintf(new_info + old_len, add_len, "\n\n---\n%s:%d（导入模块）", short_name, def_line);
+                    }
+                    free(info);
+                    info = new_info;
                 }
-                free(info);
-                info = new_info;
             }
+            if (short_word) free(short_word);
         }
         if (locations) lsp_free_locations(locations, def_count);
-        if (short_word) free(short_word);
     }
 
     free(word);
