@@ -550,16 +550,40 @@ static bool find_definition_in_content(const char* content, const char* word,
                             p[-1] == '{');
 
         if (at_boundary) {
+            // 跳过 packed / align(N) 属性前缀，找到真正的 struct/cstruct 等关键字
+            // 支持: "packed cstruct", "align(16) cstruct", "packed align(16) cstruct" 等
+            const char* attr_start = p;
+            const char* attr_end = p;
+            for (;;) {
+                if (strncmp(attr_end, "packed ", 7) == 0) {
+                    attr_end += 7;
+                } else if (strncmp(attr_end, "align(", 6) == 0) {
+                    // 跳过 align(N) 中的 N 和 )
+                    attr_end += 6;
+                    while (*attr_end && *attr_end != ')') attr_end++;
+                    if (*attr_end == ')') attr_end++;
+                    // 跳过空格
+                    while (*attr_end && isspace((unsigned char)*attr_end)) attr_end++;
+                    continue;
+                } else {
+                    break;
+                }
+            }
+            // 如果跳过了属性前缀，用 attr_end 作为新的 p 检查标准模式
+            const char* check_p = (attr_end > attr_start) ? attr_end : p;
+            // 计算相对于行首的列偏移
+            int check_col = col + (int)(check_p - p);
+            
             // 先检查标准定义模式
             for (int i = 0; i < num_patterns; i++) {
                 int plen = def_patterns[i].len;
-                if (strncmp(p, def_patterns[i].prefix, plen) == 0 &&
-                    strncmp(p + plen, clean_word, word_len) == 0 &&
-                    !isalnum((unsigned char)p[plen + word_len]) &&
-                    p[plen + word_len] != '_') {
+                if (strncmp(check_p, def_patterns[i].prefix, plen) == 0 &&
+                    strncmp(check_p + plen, clean_word, word_len) == 0 &&
+                    !isalnum((unsigned char)check_p[plen + word_len]) &&
+                    check_p[plen + word_len] != '_') {
 
                     range->start.line = line;
-                    range->start.character = col + plen;
+                    range->start.character = check_col + plen;
                     range->end.line = line;
                     range->end.character = range->start.character + word_len;
 
@@ -570,8 +594,8 @@ static bool find_definition_in_content(const char* content, const char* word,
             // 检查类型前缀变量声明（如 "Array[X] name", "int name", "string name", "Font name" 等）
             // 模式: <Type> <word>  其中 Type 可以是简单类型名或泛型类型 Array[X]
             {
-                // 提取从 p 开始的 token 作为类型名
-                const char* tp = p;
+                // 提取从 check_p 开始的 token 作为类型名
+                const char* tp = check_p;
                 // 跳过可能的 "export " 前缀
                 if (strncmp(tp, "export ", 7) == 0) tp += 7;
                 
@@ -657,8 +681,8 @@ static bool find_definition_in_content(const char* content, const char* word,
                             if (after_word == '=' || after_word == '\n' || after_word == '\r' ||
                                 after_word == ';' || after_word == '\0' || 
                                 isspace((unsigned char)after_word)) {
-                                // after_type 相对于行首的偏移 = col + (after_type - p)
-                                int name_col = col + (int)(after_type - p);
+                                // after_type 相对于行首的偏移 = check_col + (after_type - check_p)
+                                int name_col = check_col + (int)(after_type - check_p);
                                 range->start.line = line;
                                 range->start.character = name_col;
                                 range->end.line = line;
@@ -685,7 +709,7 @@ static bool find_definition_in_content(const char* content, const char* word,
                                         after_word == ';' || after_word == '\0' ||
                                         after_word == ',' ||
                                         isspace((unsigned char)after_word)) {
-                                        int name_col = col + (int)(comma_after - p);
+                                        int name_col = check_col + (int)(comma_after - check_p);
                                         range->start.line = line;
                                         range->start.character = name_col;
                                         range->end.line = line;
@@ -738,10 +762,27 @@ static bool find_struct_field_definition(const char* content, const char* word,
         if (at_boundary) {
             const char* struct_kw = NULL;
 
-            if (strncmp(p, "export struct ", 14) == 0) { struct_kw = p + 14; }
-            else if (strncmp(p, "export cstruct ", 15) == 0) { struct_kw = p + 15; }
-            else if (strncmp(p, "cstruct ", 8) == 0) { struct_kw = p + 8; }
-            else if (strncmp(p, "struct ", 7) == 0) { struct_kw = p + 7; }
+            // 跳过 packed / align(N) 属性前缀
+            const char* attr_p = p;
+            for (;;) {
+                if (strncmp(attr_p, "packed ", 7) == 0) {
+                    attr_p += 7;
+                } else if (strncmp(attr_p, "align(", 6) == 0) {
+                    attr_p += 6;
+                    while (*attr_p && *attr_p != ')') attr_p++;
+                    if (*attr_p == ')') attr_p++;
+                    while (*attr_p && isspace((unsigned char)*attr_p)) attr_p++;
+                    continue;
+                } else {
+                    break;
+                }
+            }
+            // 也检查 "export " 前缀（可能在 packed/align 之后或之前）
+            const char* export_p = attr_p;
+            if (strncmp(export_p, "export ", 7) == 0) export_p += 7;
+
+            if (strncmp(export_p, "struct ", 7) == 0) { struct_kw = export_p + 7; }
+            else if (strncmp(export_p, "cstruct ", 8) == 0) { struct_kw = export_p + 8; }
 
             if (struct_kw) {
                 // 跳过 struct 名称

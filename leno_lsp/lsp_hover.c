@@ -319,12 +319,55 @@ static char* find_struct_name_at_position(const char* content, LspPosition pos) 
     int offset = lsp_position_to_offset(content, pos);
     if (offset < 0) return NULL;
 
-    // 从当前位置向前搜索 "struct" 关键字
-    // 我们需要找到最近的一个 "struct Name {" 定义，且该定义在光标之前
+    // 从当前位置向前搜索 "struct" 或 "cstruct" 关键字
+    // 我们需要找到最近的一个 "struct Name {" 或 "cstruct Name {" 定义，且该定义在光标之前
     const char* search_start = content + offset;
 
-    // 向前搜索 "struct" 关键字
+    // 向前搜索 "cstruct" 和 "struct" 关键字
     for (const char* p = search_start; p >= content; p--) {
+        // 先检查 "cstruct"（7个字符，必须先检查长的）
+        if (p + 7 <= search_start &&
+            strncmp(p, "cstruct", 7) == 0 &&
+            (p == content || !isalnum((unsigned char)*(p-1))) &&
+            !isalnum((unsigned char)*(p+7))) {
+
+            // 找到 cstruct 后，解析名称
+            const char* name_start = p + 7;
+
+            // 跳过空白字符
+            while (*name_start && isspace((unsigned char)*name_start)) {
+                name_start++;
+            }
+
+            // 现在 name_start 应该指向 cstruct 名称
+            const char* name_end = name_start;
+            while (*name_end && (isalnum((unsigned char)*name_end) || *name_end == '_')) {
+                name_end++;
+            }
+
+            int name_len = name_end - name_start;
+
+            if (name_len > 0) {
+                // 检查这个 cstruct 定义是否包含光标位置
+                const char* brace = name_end;
+                while (*brace && *brace != '{' && *brace != '\n') {
+                    brace++;
+                }
+
+                if (*brace == '{') {
+                    int brace_offset = brace - content;
+                    if (is_offset_in_block(content, brace_offset, offset)) {
+                        char* struct_name = (char*)malloc(name_len + 1);
+                        if (struct_name) {
+                            strncpy(struct_name, name_start, name_len);
+                            struct_name[name_len] = '\0';
+                            return struct_name;
+                        }
+                    }
+                }
+            }
+        }
+
         // 检查是否是 "struct" 关键字的开始
         if (p + 6 <= search_start &&
             strncmp(p, "struct", 6) == 0 &&
@@ -1012,7 +1055,37 @@ static char* get_keyword_doc(const char* word) {
                      "p.y = 20\n"
                      "p.free()\n"
                      "```\n\n"
-                     "> **注意**: cstruct 实例需要手动管理内存（malloc/free）。");
+                     "> **注意**: cstruct 实例需要手动管理内存（malloc/free）。\n\n"
+                     "> **属性修饰符**: 可使用 `packed` 取消字段间 padding，或使用 `align(N)` 指定整体对齐边界。\n"
+                     "> ```leno\n"
+                     "> packed cstruct PackedData { ... }\n"
+                     "> align(16) cstruct AlignedData { ... }\n"
+                     "> packed align(16) cstruct ComboData { ... }\n"
+                     "> ```");
+    }
+    else if (strcmp(word, "packed") == 0) {
+        return strdup("**packed** - cstruct 属性修饰符\n\n"
+                     "取消结构体中所有字段间的 padding，使字段紧挨排列。\n"
+                     "用于精确控制内存布局，常与二进制协议解析、网络封包等场景配合。\n\n"
+                     "```leno\n"
+                     "packed cstruct Packet {\n"
+                     "    u8  type    // offset 0\n"
+                     "    i32 seq     // offset 1  ← 无 padding!\n"
+                     "    u8  flag    // offset 5\n"
+                     "}               // total=6, align=1\n"
+                     "```\n\n"
+                     "> 可与 `align(N)` 组合使用，顺序可互换: `packed align(16) cstruct` 或 `align(16) packed cstruct`");
+    }
+    else if (strcmp(word, "align") == 0) {
+        return strdup("**align(N)** - cstruct 属性修饰符\n\n"
+                     "指定结构体的整体对齐边界为 N 字节。\n"
+                     "N 必须是 2 的幂（如 1, 2, 4, 8, 16, 32...）。\n\n"
+                     "```leno\n"
+                     "align(16) cstruct CacheLine {\n"
+                     "    i64 data   // offset 0\n"
+                     "}              // total=16, align=16\n"
+                     "```\n\n"
+                     "> 可与 `packed` 组合使用，顺序可互换: `align(16) packed cstruct` 或 `packed align(16) cstruct`");
     }
     else if (strcmp(word, "import") == 0) {
         return strdup("**import** - 模块导入关键字\n\n"
@@ -2519,7 +2592,39 @@ static char* generate_struct_method_doc(const char* struct_name, const char* met
                                                       const char* content, const char* file_path) {
     (void)file_path;  // 保留参数以兼容调用方接口，但此函数不直接使用
     ObjStructDef* sdef = struct_def_find(struct_name);
-    if (!sdef) return NULL;
+    if (!sdef) {
+        // struct_def_find 失败，尝试 cstruct 内置方法
+        // cstruct 的方法注册在 cstructMethodTable 中，struct_def_find 查不到
+        // cstruct 的方法是固定的内置方法，使用硬编码元信息
+        CStructMethodEntry centry = cstruct_find_method_meta(method_name);
+        if (centry.method) {
+            int arity = centry.arity;
+            char params_str[256] = {0};
+            if (arity > 0) {
+                int off = 0;
+                for (int j = 0; j < arity && off < (int)sizeof(params_str) - 20; j++) {
+                    const char* pt_str = type_kind_to_string(centry.param_types[j]);
+                    if (j > 0) off += snprintf(params_str + off, sizeof(params_str) - off, ", ");
+                    off += snprintf(params_str + off, sizeof(params_str) - off, "%s", pt_str);
+                }
+            }
+            const char* ret_str = type_kind_to_string(centry.return_type);
+            int len = 512 + strlen(struct_name) + strlen(method_name) + strlen(params_str) + strlen(ret_str);
+            char* info = (char*)malloc(len);
+            if (!info) return NULL;
+            if (arity == 0) {
+                snprintf(info, len, "**%s.%s()**\n\n```leno\n%s.%s() -> %s\n```\n\n%s 内置方法",
+                         struct_name, method_name, struct_name, method_name, ret_str, struct_name);
+            } else {
+                snprintf(info, len, "**%s.%s(%s)**\n\n```leno\n%s.%s(%s) -> %s\n```\n\n%s 内置方法（%d 个参数）",
+                         struct_name, method_name, params_str,
+                         struct_name, method_name, params_str, ret_str,
+                         struct_name, arity);
+            }
+            return info;
+        }
+        return NULL;
+    }
     
     for (int i = 0; i < sdef->method_count; i++) {
         if (strcmp(sdef->methods[i].name, method_name) == 0) {

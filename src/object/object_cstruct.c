@@ -513,6 +513,11 @@ ObjNative* cstruct_find_method(const char* name) {
     return method_table_find(&cstructMethodTable, name);
 }
 
+// 查找 cstruct 方法的元信息（用于 LSP 悬停）
+CStructMethodEntry cstruct_find_method_meta(const char* name) {
+    return method_table_find_meta(&cstructMethodTable, name);
+}
+
 // 标记 cstruct 方法表中的所有方法（供 GC 使用）
 void cstruct_mark_methods(void) {
     method_table_mark(&cstructMethodTable);
