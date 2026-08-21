@@ -1,8 +1,10 @@
-fix(lsp): 添加 to 关键字悬停文档
+fix(lsp): 悬停格式改为前置类型语法
 
-to 是 for 循环的迭代变量关键字，之前缺少关键字文档导致
-悬停误将 to 当变量名查找，显示错误信息。
-现在悬停 to 显示循环迭代变量用法说明。
+LenoC 使用前置类型声明（如 int a, Array[string] ab, var x），
+悬停提示从错误的 "名字: 类型" 统一改为 "类型 名字"：
+- 变量: Array[string] ab（原来 ab: Array[string]）
+- 字段: int x（原来 x: int）
+- 闭包参数: Renderer r（原来 r: Renderer）
+- enum 值: ColorName red（原来 red: ColorName）
 
-关于 Array[string] ab 的悬停格式 ab: Array[string]：
-这是标准的「名字: 类型」显示格式，与 LenoC 语法一致，属正常行为。
+共修改 10 处 snprintf 格式

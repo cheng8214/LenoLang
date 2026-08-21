@@ -682,10 +682,10 @@ static char* get_symbol_hover_from_compiler(const char* content, const char* wor
                         if (info) {
                             snprintf(info, info_len, "**%s**\n\n"
                                      "```leno\n"
-                                     "%s: %s\n"
+                                     "%s %s\n"
                                      "```\n\n"
                                      "闭包参数",
-                                     base_var, base_var, closure_type);
+                                     base_var, closure_type, base_var);
                         }
                         free(closure_type);
                         return info;
@@ -701,10 +701,10 @@ static char* get_symbol_hover_from_compiler(const char* content, const char* wor
                 if (info) {
                     snprintf(info, info_len, "**%s**\n\n"
                              "```leno\n"
-                             "%s: %s\n"
+                             "%s %s\n"
                              "```\n\n"
                              "闭包参数",
-                             word, word, closure_type);
+                             word, closure_type, word);
                 }
                 free(closure_type);
                 return info;
@@ -791,12 +791,11 @@ static char* get_symbol_hover_from_compiler(const char* content, const char* wor
 
                 int written = snprintf(info, info_len, "**%s**\n\n"
                          "```leno\n"
-                         "%s: %s\n"
+                         "%s %s\n"
                          "```\n\n"
                          "%s%s",
                          base_word,
-                         base_word,
-                         type_str ? type_str : "unknown",
+                         type_str ? type_str : "unknown", base_word,
                          kind_str,
                          " 变量");
                 (void)written;  /* info_len 已确保足够大 */
@@ -867,12 +866,11 @@ static char* get_symbol_hover_from_compiler(const char* content, const char* wor
                 if (info) {
                     snprintf(info, info_len, "**%s**\n\n"
                              "```leno\n"
-                             "%s: %s\n"
+                             "%s %s\n"
                              "```\n\n"
                              "%s 字段 (%s)",
                              word,
-                             word,
-                             type_str,
+                             type_str, word,
                              struct_names[0],
                              struct_names[0]);
                 }
@@ -897,10 +895,10 @@ static char* get_symbol_hover_from_compiler(const char* content, const char* wor
                 if (info) {
                     snprintf(info, info_len, "**%s**\n\n"
                              "```leno\n"
-                             "%s: %s\n"
+                             "%s %s\n"
                              "```\n\n"
                              "字段",
-                             word, word, fallback_type);
+                             word, fallback_type, word);
                 }
                 free(fallback_type);
                 return info;
@@ -949,18 +947,17 @@ static char* get_symbol_hover_from_compiler(const char* content, const char* wor
         if (sym->type->struct_name) {
             snprintf(info, info_len, "**%s**\n\n"
                      "```leno\n"
-                     "%s: %s\n"
+                     "%s %s\n"
                      "```\n\n"
                      "%s enum 值 (%s)",
                      word,
-                     word,
-                     sym->type->struct_name,
+                     sym->type->struct_name, word,
                      is_global ? "全局" : "局部",
                      sym->type->struct_name);
         } else {
             snprintf(info, info_len, "**%s**\n\n"
                      "```leno\n"
-                     "%s: enum\n"
+                     "enum %s\n"
                      "```\n\n"
                      "%s enum 值",
                      word,
@@ -998,12 +995,11 @@ static char* get_symbol_hover_from_compiler(const char* content, const char* wor
         } else {
             snprintf(info, info_len, "**%s**\n\n"
                      "```leno\n"
-                     "%s: %s\n"
+                     "%s %s\n"
                      "```\n\n"
                      "%s",
                      word,
-                     word,
-                     type_str ? type_str : "unknown",
+                     type_str ? type_str : "unknown", word,
                      kind_str);
         }
     }
@@ -3570,10 +3566,10 @@ static char* handle_array_index_member_hover(const char* content, const char* wo
                         if (result) {
                             snprintf(result, info_len, "**%s**\n\n"
                                      "```leno\n"
-                                     "%s: %s\n"
+                                     "%s %s\n"
                                      "```\n\n"
                                      "%s 字段 (%s)",
-                                     member_name, member_name, type_str,
+                                     member_name, type_str, member_name,
                                      elem_type->struct_name, elem_type->struct_name);
                         }
                         free(type_str);
@@ -3984,8 +3980,8 @@ char* lsp_get_hover_info(const char* content, LspPosition pos, const char* file_
                                     info = (char*)malloc(info_len);
                                     if (info) {
                                         snprintf(info, info_len,
-                                                 "**%s**\n\n```leno\n%s: %s\n```\n\n%s 字段",
-                                                 cursor_segment, cursor_segment, field_type_str, var_type);
+                                                 "**%s**\n\n```leno\n%s %s\n```\n\n%s 字段",
+                                                 cursor_segment, field_type_str, cursor_segment, var_type);
                                     }
                                     free(field_type_str);
                                 }
