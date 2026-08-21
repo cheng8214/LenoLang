@@ -120,11 +120,19 @@ char* lsp_handle_definition(LspServer* server, int id, JsonValue* params) {
 
 /**
  * 从源代码中提取 import 语句
- * 支持: import "path" 和 import "path" as alias
+ * 支持以下形式:
+ *   import "path.leno" as alias     — 字符串路径带别名
+ *   import "path.leno"              — 字符串路径无别名（自动从文件名提取）
+ *   import "module_name"            — 字符串模块名（通过包搜索路径解析）
+ *   import module_name              — 标识符形式（通过包搜索路径解析）
+ *   import module_name as alias     — 标识符带别名
  */
 static int extract_imports_from_content(const char* content, ImportEntry* imports, int max_imports) {
     int count = 0;
     if (!content) return 0;
+
+    // 声明 package_resolve_module_file（在 package_resolve.c 中实现）
+    extern int package_resolve_module_file(const char* module_name, char* out_path, int out_len);
 
     const char* p = content;
     while (*p && count < max_imports) {
@@ -146,27 +154,65 @@ static int extract_imports_from_content(const char* content, ImportEntry* import
 
         p += 6;
         while (*p && isspace((unsigned char)*p)) p++;
-        if (*p != '"') {
-            while (*p && *p != '\n') p++;
-            if (*p) p++;
-            continue;
-        }
 
-        p++;
-        const char* path_start = p;
-        while (*p && *p != '"') p++;
-        if (!*p) break;
-
-        int path_len = (int)(p - path_start);
-        if (path_len <= 0 || path_len >= MAX_PATH_LEN) {
+        if (*p == '"') {
+            // 字符串形式: import "path.leno" 或 import "module_name"
             p++;
+            const char* path_start = p;
+            while (*p && *p != '"') p++;
+            if (!*p) break;
+
+            int path_len = (int)(p - path_start);
+            if (path_len <= 0 || path_len >= MAX_PATH_LEN) {
+                p++;
+                while (*p && *p != '\n') p++;
+                if (*p) p++;
+                continue;
+            }
+            memcpy(imports[count].file_path, path_start, path_len);
+            imports[count].file_path[path_len] = '\0';
+            p++;
+
+            // 如果路径不含 .leno，尝试通过包搜索路径解析
+            if (strstr(imports[count].file_path, ".leno") == NULL) {
+                char resolved[MAX_PATH_LEN];
+                if (package_resolve_module_file(imports[count].file_path, resolved, sizeof(resolved)) == 1) {
+                    strncpy(imports[count].file_path, resolved, MAX_PATH_LEN - 1);
+                    imports[count].file_path[MAX_PATH_LEN - 1] = '\0';
+                }
+            }
+        } else if (isalpha((unsigned char)*p) || *p == '_') {
+            // 标识符形式: import module_name 或 import module_name as alias
+            const char* name_start = p;
+            while (*p && (isalnum((unsigned char)*p) || *p == '_')) p++;
+            int name_len = (int)(p - name_start);
+            if (name_len <= 0 || name_len >= MAX_PATH_LEN) {
+                while (*p && *p != '\n') p++;
+                if (*p) p++;
+                continue;
+            }
+
+            // 标识符形式导入：先当作模块名，尝试通过包搜索路径解析为文件路径
+            char module_name[MAX_PATH_LEN];
+            memcpy(module_name, name_start, name_len);
+            module_name[name_len] = '\0';
+
+            char resolved[MAX_PATH_LEN];
+            if (package_resolve_module_file(module_name, resolved, sizeof(resolved)) == 1) {
+                strncpy(imports[count].file_path, resolved, MAX_PATH_LEN - 1);
+                imports[count].file_path[MAX_PATH_LEN - 1] = '\0';
+            } else {
+                // 无法解析为文件路径，跳过（可能是内置模块如 io, maths 等）
+                while (*p && *p != '\n') p++;
+                if (*p) p++;
+                continue;
+            }
+        } else {
+            // 不是字符串也不是标识符，跳过
             while (*p && *p != '\n') p++;
             if (*p) p++;
             continue;
         }
-        memcpy(imports[count].file_path, path_start, path_len);
-        imports[count].file_path[path_len] = '\0';
-        p++;
 
         // 跳过空白，检查 "as alias"
         while (*p && isspace((unsigned char)*p)) p++;

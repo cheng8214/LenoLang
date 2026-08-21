@@ -1788,3 +1788,178 @@ void comp_provider_add_array_index_members(
 
     free(type_resolved);
 }
+
+/* ========== use 语句导入的类型补全 ========== */
+
+void comp_provider_add_use_symbols(
+    CompletionSet* set,
+    const char* content,
+    const char* file_path,
+    int import_count,
+    ImportAlias* import_aliases
+) {
+    if (!set || !content) return;
+
+    const char* p = content;
+    int line = 0;
+
+    while (*p) {
+        while (*p && (*p == ' ' || *p == '\t')) p++;
+        if (!*p) break;
+
+        if (*p == '/' && p[1] == '/') {
+            while (*p && *p != '\n') p++;
+            if (*p) { p++; line++; }
+            continue;
+        }
+
+        if (strncmp(p, "use", 3) != 0 || (p[3] && (isalnum((unsigned char)p[3]) || p[3] == '_'))) {
+            while (*p && *p != '\n') p++;
+            if (*p) { p++; line++; }
+            continue;
+        }
+
+        p += 3;
+        while (*p && (*p == ' ' || *p == '\t')) p++;
+
+        const char* mod_start = p;
+        while (*p && (isalnum((unsigned char)*p) || *p == '_')) p++;
+        int mod_len = (int)(p - mod_start);
+        if (mod_len <= 0 || mod_len >= 64) {
+            while (*p && *p != '\n') p++;
+            if (*p) { p++; line++; }
+            continue;
+        }
+
+        char mod_name[65];
+        memcpy(mod_name, mod_start, mod_len);
+        mod_name[mod_len] = '\0';
+
+        if (*p != '.') {
+            while (*p && *p != '\n') p++;
+            if (*p) { p++; line++; }
+            continue;
+        }
+        p++;
+
+        int batch_mode = (*p == '(');
+        if (batch_mode) p++;
+
+        while (1) {
+            if (batch_mode) {
+                while (*p && (*p == ' ' || *p == '\t')) p++;
+                if (*p == ')') { p++; break; }
+            }
+
+            const char* type_start = p;
+            while (*p && (isalnum((unsigned char)*p) || *p == '_')) p++;
+            int type_len = (int)(p - type_start);
+            if (type_len <= 0 || type_len >= 64) {
+                if (batch_mode) {
+                    while (*p && *p != ',' && *p != ')' && *p != '\n') p++;
+                    if (*p == ',') { p++; continue; }
+                    if (*p == ')') { p++; break; }
+                }
+                break;
+            }
+
+            char type_name[65];
+            memcpy(type_name, type_start, type_len);
+            type_name[type_len] = '\0';
+
+            /* 查找模块路径 */
+            const char* module_path = find_module_path_by_alias(
+                import_aliases, import_count, mod_name);
+
+            char resolved_path[MAX_PATH_LEN] = {0};
+            bool has_resolved = false;
+
+            if (module_path) {
+                has_resolved = true;
+            } else {
+                extern int package_resolve_module_file(const char* mn, char* op, int ol);
+                if (package_resolve_module_file(mod_name, resolved_path, sizeof(resolved_path)) == 1) {
+                    module_path = resolved_path;
+                    has_resolved = true;
+                }
+            }
+
+            if (has_resolved && module_path) {
+                module_symbol_table_reset_scan_stack();
+                ModuleSymbolTable* table = module_symbol_table_create(module_path);
+                if (table && module_symbol_table_scan(table, file_path) == 0) {
+                    ModuleStructSymbol* st = module_symbol_table_find_struct(table, type_name);
+                    if (st) {
+                        char detail[256];
+                        snprintf(detail, sizeof(detail), "%s: %s (use %s.%s)",
+                                 type_name, st->is_cstruct ? "cstruct" : "struct",
+                                 mod_name, type_name);
+                        comp_set_add(set, type_name, LSP_COMP_STRUCT, PRIO_USER_SYM,
+                                     detail, NULL, NULL, NULL);
+                    } else {
+                        ModuleEnumSymbol* en = module_symbol_table_find_enum(table, type_name);
+                        if (en) {
+                            char detail[256];
+                            snprintf(detail, sizeof(detail), "%s: enum (use %s.%s)",
+                                     type_name, mod_name, type_name);
+                            comp_set_add(set, type_name, LSP_COMP_ENUM, PRIO_USER_SYM,
+                                         detail, NULL, NULL, NULL);
+                        } else {
+                            ModuleFaceSymbol* fc = module_symbol_table_find_face(table, type_name);
+                            if (fc) {
+                                char detail[256];
+                                snprintf(detail, sizeof(detail), "%s: face (use %s.%s)",
+                                         type_name, mod_name, type_name);
+                                comp_set_add(set, type_name, LSP_COMP_INTERFACE, PRIO_USER_SYM,
+                                             detail, NULL, NULL, NULL);
+                            } else {
+                                ModuleFuncSymbol* fn = module_symbol_table_find_func(table, type_name);
+                                if (fn) {
+                                    const char* ret_str = type_kind_to_string(fn->return_type);
+                                    char detail[256];
+                                    snprintf(detail, sizeof(detail), "%s() -> %s (use %s.%s)",
+                                             type_name, ret_str, mod_name, type_name);
+                                    comp_set_add(set, type_name, LSP_COMP_FUNCTION, PRIO_USER_SYM,
+                                                 detail, NULL, NULL, NULL);
+                                } else {
+                                    ModuleVarSymbol* var = module_symbol_table_find_var(table, type_name);
+                                    if (var) {
+                                        const char* vt = type_kind_to_string(var->type);
+                                        char detail[256];
+                                        snprintf(detail, sizeof(detail), "%s: %s (use %s.%s)",
+                                                 type_name, vt, mod_name, type_name);
+                                        comp_set_add(set, type_name, LSP_COMP_VARIABLE, PRIO_USER_SYM,
+                                                     detail, NULL, NULL, NULL);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if (table) module_symbol_table_destroy(table);
+            } else {
+                /* 原生模块：检查常量 */
+                extern int native_find_module_const(const char* mod, const char* name, bool* found);
+                bool found = false;
+                int const_val = native_find_module_const(mod_name, type_name, &found);
+                if (found) {
+                    char detail[256];
+                    snprintf(detail, sizeof(detail), "%s = %d (use %s.%s)",
+                             type_name, const_val, mod_name, type_name);
+                    comp_set_add(set, type_name, LSP_COMP_CONSTANT, PRIO_USER_SYM,
+                                 detail, NULL, NULL, NULL);
+                }
+            }
+
+            if (!batch_mode) break;
+
+            while (*p && (*p == ' ' || *p == '\t')) p++;
+            if (*p == ',') p++;
+            while (*p && (*p == ' ' || *p == '\t')) p++;
+            if (*p == ')') { p++; break; }
+        }
+
+        while (*p && *p != '\n') p++;
+        if (*p) { p++; line++; }
+    }
+}

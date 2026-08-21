@@ -75,6 +75,9 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
             // 用户定义符号
             comp_provider_add_user_symbols(set, content, file_path, NULL);
             
+            // use 语句导入的类型
+            comp_provider_add_use_symbols(set, content, file_path, import_count, import_aliases);
+            
             // 原生模块方法
             comp_provider_add_native_modules(set, NULL);
             break;
@@ -82,6 +85,8 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
         case CTX_TYPE_ANNOTATION:
             // 类型注解位置
             comp_provider_add_type_annotation_types(set, content, file_path, import_count, import_aliases);
+            // use 语句导入的类型也应在类型注解位置可用
+            comp_provider_add_use_symbols(set, content, file_path, import_count, import_aliases);
             // 也添加 self（结构体方法体中可能有类型注解 + self）
             comp_provider_add_self_keyword(set, content, pos);
             break;
@@ -89,6 +94,8 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
         case CTX_NEW:
             // new 后补全 struct 名称
             comp_provider_add_new_structs(set, content, file_path, import_count, import_aliases);
+            // use 语句导入的 struct 也应在 new 后可用
+            comp_provider_add_use_symbols(set, content, file_path, import_count, import_aliases);
             break;
             
         case CTX_USE_MODULE:

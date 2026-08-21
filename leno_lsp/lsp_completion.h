@@ -273,6 +273,15 @@ void comp_provider_add_type_annotation_types(
     ImportAlias* import_aliases
 );
 
+// use 语句导入的类型补全（CTX_NORMAL 时调用）
+void comp_provider_add_use_symbols(
+    CompletionSet* set,
+    const char* content,
+    const char* file_path,
+    int import_count,
+    ImportAlias* import_aliases
+);
+
 #ifdef __cplusplus
 }
 #endif

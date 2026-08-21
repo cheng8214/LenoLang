@@ -18,6 +18,9 @@ ImportAlias* parse_imports(const char* content, int* count) {
     *count = 0;
     if (!content) return NULL;
     
+    // 声明 package_resolve_module_file（在 package_resolve.c 中实现）
+    extern int package_resolve_module_file(const char* module_name, char* out_path, int out_len);
+    
     ImportAlias* aliases = (ImportAlias*)malloc(sizeof(ImportAlias) * 64);
     if (!aliases) return NULL;
     
@@ -34,7 +37,7 @@ ImportAlias* parse_imports(const char* content, int* count) {
             if (!*p) break;
             
             char module_name[128] = {0};
-            char full_module_name[128] = {0};
+            char full_module_name[MAX_PATH_LEN] = {0};
             int mod_len = 0;
             int full_mod_len = 0;
             
@@ -49,6 +52,14 @@ ImportAlias* parse_imports(const char* content, int* count) {
                 module_name[mod_len] = '\0';
                 full_module_name[full_mod_len] = '\0';
                 
+                // 如果路径不含 .leno，尝试通过包搜索路径解析
+                if (strstr(full_module_name, ".leno") == NULL) {
+                    char resolved[MAX_PATH_LEN];
+                    if (package_resolve_module_file(full_module_name, resolved, sizeof(resolved)) == 1) {
+                        snprintf(full_module_name, sizeof(full_module_name), "%s", resolved);
+                    }
+                }
+                
                 // 从路径提取文件名用于别名匹配
                 char* slash = strrchr(module_name, '/');
                 char* backslash = strrchr(module_name, '\\');
@@ -58,10 +69,23 @@ ImportAlias* parse_imports(const char* content, int* count) {
                     mod_len = strlen(module_name);
                 }
             } else {
+                // 标识符形式: import module_name
                 while (*p && (isalnum((unsigned char)*p) || *p == '_') && mod_len < 127) {
                     module_name[mod_len++] = *p++;
                 }
                 module_name[mod_len] = '\0';
+                
+                // 复制到 full_module_name（保存原始模块名）
+                snprintf(full_module_name, sizeof(full_module_name), "%s", module_name);
+                full_mod_len = mod_len;
+                
+                // 尝试通过包搜索路径解析为文件路径
+                char resolved[MAX_PATH_LEN];
+                if (package_resolve_module_file(module_name, resolved, sizeof(resolved)) == 1) {
+                    snprintf(full_module_name, sizeof(full_module_name), "%s", resolved);
+                }
+                // 如果无法解析，full_module_name 保持原始模块名
+                // module_symbol_table_scan 内部可能有进一步处理
             }
             
             if (mod_len == 0) continue;
