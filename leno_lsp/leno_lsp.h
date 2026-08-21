@@ -120,6 +120,49 @@ typedef struct {
     char* insertText;
 } LspCompletionItem;
 
+// ==================== 文档符号 (DocumentSymbol) ====================
+
+// LSP SymbolKind 枚举 (与 LSP 协议保持一致)
+typedef enum {
+    LSP_SYM_FILE          = 1,
+    LSP_SYM_MODULE        = 2,
+    LSP_SYM_NAMESPACE     = 3,
+    LSP_SYM_PACKAGE       = 4,
+    LSP_SYM_CLASS         = 5,
+    LSP_SYM_METHOD        = 6,
+    LSP_SYM_PROPERTY      = 7,
+    LSP_SYM_FIELD         = 8,
+    LSP_SYM_CONSTRUCTOR   = 9,
+    LSP_SYM_ENUM          = 10,
+    LSP_SYM_INTERFACE     = 11,
+    LSP_SYM_FUNCTION      = 12,
+    LSP_SYM_VARIABLE      = 13,
+    LSP_SYM_CONSTANT      = 14,
+    LSP_SYM_STRING        = 15,
+    LSP_SYM_NUMBER        = 16,
+    LSP_SYM_BOOLEAN       = 17,
+    LSP_SYM_ARRAY         = 18,
+    LSP_SYM_OBJECT        = 19,
+    LSP_SYM_KEY          = 20,
+    LSP_SYM_NULL         = 21,
+    LSP_SYM_ENUM_MEMBER   = 22,
+    LSP_SYM_STRUCT        = 23,
+    LSP_SYM_EVENT         = 24,
+    LSP_SYM_OPERATOR      = 25,
+    LSP_SYM_TYPE_PARAMETER = 26,
+} LspSymbolKind;
+
+// 文档符号 (支持嵌套，对应 LSP DocumentSymbol)
+typedef struct LspDocumentSymbol {
+    char* name;             // 符号名称
+    LspSymbolKind kind;     // 符号类型
+    char* detail;           // 详细描述 (可选)
+    LspRange range;         // 符号在整个文档中的范围
+    LspRange selectionRange; // 符号名称的精确范围
+    struct LspDocumentSymbol* children;  // 子符号 (数组)
+    int children_count;
+} LspDocumentSymbol;
+
 // 打开的文本文档
 typedef struct LspTextDocument {
     char* uri;
@@ -140,6 +183,7 @@ typedef struct {
     bool hover_provider;
     bool definition_provider;
     bool diagnostic_provider;
+    bool document_symbol_provider;
     
     /* 日志 */
     LspLogLevel log_level;
@@ -251,6 +295,13 @@ LspLocation* lsp_get_definition(const char* content, LspPosition pos, int* count
 LspLocation* lsp_find_definition_by_word(const char* content, const char* word,
                                          const char* current_file, int* count);
 void lsp_free_locations(LspLocation* locs, int count);
+
+// ==================== 文档符号服务 ====================
+
+// 文档符号
+char* lsp_handle_document_symbol(LspServer* server, int id, JsonValue* params);
+LspDocumentSymbol* lsp_get_document_symbols(const char* content, int* count);
+void lsp_free_document_symbols(LspDocumentSymbol* symbols, int count);
 
 // ==================== 文档管理 ====================
 

@@ -283,6 +283,11 @@ char* lsp_handle_initialize(LspServer* server, int id, JsonValue* params) {
         json_object_set(capabilities, "diagnosticProvider", diagnostic);
     }
     
+    // 文档符号提供者 (大纲、面包屑导航、Ctrl+Shift+O)
+    if (server->document_symbol_provider) {
+        json_object_set(capabilities, "documentSymbolProvider", json_bool_new(true));
+    }
+    
     // 构建响应
     JsonValue* result = json_object_new();
     json_object_set(result, "capabilities", capabilities);
@@ -479,6 +484,9 @@ char* lsp_handle_message(LspServer* server, const char* message) {
 	}
 	else if (strcmp(method_name, "textDocument/diagnostic") == 0) {
 		response = lsp_handle_document_diagnostic(server, id, params);
+	}
+	else if (strcmp(method_name, "textDocument/documentSymbol") == 0) {
+		response = lsp_handle_document_symbol(server, id, params);
 	}
 	else {
         // 未知方法

@@ -36,6 +36,7 @@ LspServer* lsp_server_create(void) {
     server->hover_provider = true;
     server->definition_provider = true;
     server->diagnostic_provider = true;
+    server->document_symbol_provider = true;
     
     // 日志文件已禁用
     server->log_file = NULL;

@@ -17,6 +17,7 @@ set LSP_SOURCES=!LSP_SOURCES! lsp_complete.c
 set LSP_SOURCES=!LSP_SOURCES! lsp_hover.c
 set LSP_SOURCES=!LSP_SOURCES! lsp_definition.c
 set LSP_SOURCES=!LSP_SOURCES! lsp_diagnostic.c
+set LSP_SOURCES=!LSP_SOURCES! lsp_document_symbol.c
 set LSP_SOURCES=!LSP_SOURCES! json.c
 set LSP_SOURCES=!LSP_SOURCES! leno_compiler_lib.c
 
