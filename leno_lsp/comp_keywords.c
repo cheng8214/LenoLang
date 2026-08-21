@@ -24,7 +24,7 @@ static const char* leno_keywords[] = {
     "return",
     // 声明
     "var", "func", "struct", "cstruct", "enum", "face", "impl",
-    "alias", "clib", "cfunc",
+    "alias", "clib", "cfunc", "packed", "align",
     // 实例化
     "new",
     // 模块
@@ -81,6 +81,8 @@ static const KeywordInfo keyword_info[] = {
     {"alias", "declaration", "Type alias: `alias Name = ExistingType`"},
     {"clib", "declaration", "C library binding"},
     {"cfunc", "declaration", "C function binding"},
+    {"packed", "declaration", "cstruct attribute: remove field padding (`packed cstruct Name { ... }`)"},
+    {"align", "declaration", "cstruct attribute: set alignment boundary (`align(N) cstruct Name { ... }`)"},
     {"new", "instantiation", "Create struct instance: `new TypeName()`"},
     {"import", "module", "Import module: `import \"path\"` or `import ModuleAlias`"},
     {"export", "module", "Export declaration: `export func ...`"},

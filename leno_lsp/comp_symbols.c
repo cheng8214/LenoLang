@@ -1963,3 +1963,124 @@ void comp_provider_add_use_symbols(
         if (*p) { p++; line++; }
     }
 }
+
+/* ========== cstruct 类型名静态方法补全 ========== */
+
+// cstruct 内置方法表（静态方法和实例方法共用）
+// 这些方法在 src/module/cstructs/cstructs.c 中注册到 cstructMethodTable
+static const struct {
+    const char* name;
+    const char* detail_template;  // %s 会被替换为 type_name
+    bool is_static;  // true = 静态方法（用于类型名），false = 仅实例方法
+} cstruct_builtin_methods[] = {
+    // 静态方法（可用于 cstruct 类型名，如 Normal.malloc()）
+    {"malloc",      "%s.malloc() -> cstruct",       true},
+    {"from_ptr",    "%s.from_ptr(ptr) -> cstruct",  true},
+    {"malloc_array","%s.malloc_array(count) -> array", true},
+    // 通用方法（既可用于类型名，也可用于实例）
+    {"size",        "%s.size() -> int",             true},
+    {"alignment",   "%s.alignment() -> int",        true},
+    {"offset_of",   "%s.offset_of(field) -> int",   true},
+    {"debug",       "%s.debug() -> string",         true},
+    {"to_str",      "%s.to_str() -> string",        true},
+    // 仅实例方法
+    {"free",        "%s.free() -> bool",            false},
+    {"to_ptr",      "%s.to_ptr() -> ptr",           false},
+    {"hex",         "%s.hex() -> string",           false},
+    {"free_all",    "%s.free_all() -> bool",        false},
+    {NULL, NULL, false}
+};
+
+bool comp_provider_add_cstruct_type_methods(
+    CompletionSet* set,
+    const char* content,
+    const char* file_path,
+    const char* type_name,
+    int import_count,
+    ImportAlias* import_aliases
+) {
+    if (!set || !content || !type_name) return false;
+
+    // 检查 type_name 是否是当前文件中定义的 cstruct 类型
+    bool is_cstruct = false;
+    bool is_struct = false;
+
+    // 途径1: 编译器符号表
+    {
+        CompilerContext ctx;
+        compiler_context_init(&ctx);
+        compiler_analyze_with_filename(&ctx, content, file_path);
+
+        if (ctx.root_scope) {
+            Symbol* sym = scope_resolve_tree_bfs(ctx.root_scope, type_name);
+            if (sym && sym->type) {
+                if (sym->type->kind == TYPE_CSTRUCT) {
+                    is_cstruct = true;
+                } else if (sym->type->kind == TYPE_STRUCT) {
+                    is_struct = true;
+                }
+            }
+        }
+        compiler_context_cleanup(&ctx);
+    }
+
+    // 途径2: 模块符号表（导入的模块）
+    if (!is_cstruct && !is_struct) {
+        for (int i = 0; i < import_count; i++) {
+            const char* mp = find_module_path_by_alias(import_aliases, import_count, import_aliases[i].alias);
+            if (!mp) continue;
+            module_symbol_table_reset_scan_stack();
+            ModuleSymbolTable* mtable = module_symbol_table_create(mp);
+            if (!mtable) continue;
+            if (module_symbol_table_scan(mtable, file_path) == 0) {
+                ModuleStructSymbol* mst = module_symbol_table_find_struct(mtable, type_name);
+                if (mst && mst->is_cstruct) {
+                    is_cstruct = true;
+                } else if (mst) {
+                    is_struct = true;
+                }
+            }
+            module_symbol_table_destroy(mtable);
+            if (is_cstruct || is_struct) break;
+        }
+    }
+
+    // 途径3: 扫描当前文件本身（纯文本解析）
+    if (!is_cstruct && !is_struct && file_path) {
+        module_symbol_table_reset_scan_stack();
+        ModuleSymbolTable* cur_table = module_symbol_table_create(file_path);
+        if (cur_table) {
+            if (module_symbol_table_scan(cur_table, file_path) == 0) {
+                ModuleStructSymbol* mst = module_symbol_table_find_struct(cur_table, type_name);
+                if (mst && mst->is_cstruct) {
+                    is_cstruct = true;
+                } else if (mst) {
+                    is_struct = true;
+                }
+            }
+            module_symbol_table_destroy(cur_table);
+        }
+    }
+
+    if (!is_cstruct && !is_struct) return false;
+
+    // 添加 cstruct/struct 方法补全项
+    // 对于 cstruct 类型名：添加静态方法 + 通用方法
+    // 对于 struct 类型名：struct 也有自己的方法（通过 struct_def_find 查找），
+    //   但这里只处理 cstruct 的内置方法
+    if (is_cstruct) {
+        // 添加所有 cstruct 内置方法
+        for (int i = 0; cstruct_builtin_methods[i].name; i++) {
+            char detail[256];
+            snprintf(detail, sizeof(detail), cstruct_builtin_methods[i].detail_template, type_name);
+            comp_set_add(set, cstruct_builtin_methods[i].name, LSP_COMP_METHOD, PRIO_METHOD,
+                         detail, NULL, NULL, NULL);
+        }
+    }
+
+    // 对于 struct 类型名，也添加 struct 相关的通用方法
+    // struct 类型可能也有 size/alignment 等方法（如果编译器支持的话）
+    // 但目前 struct 的方法是通过 struct_def_find 查找的，这里不重复添加
+
+    return true;
+}

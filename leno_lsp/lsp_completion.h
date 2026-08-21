@@ -282,6 +282,19 @@ void comp_provider_add_use_symbols(
     ImportAlias* import_aliases
 );
 
+// CTX_DOT_ACCESS: cstruct 类型名静态方法补全
+// 当 . 前的标识符是 cstruct 类型名时（如 Normal. 中的 Normal），
+// 提供 cstruct 的方法补全（size, alignment, offset_of, malloc, debug, to_str 等）
+// 返回 true 如果 identifier 是一个已定义的 cstruct 类型名
+bool comp_provider_add_cstruct_type_methods(
+    CompletionSet* set,
+    const char* content,
+    const char* file_path,
+    const char* type_name,
+    int import_count,
+    ImportAlias* import_aliases
+);
+
 #ifdef __cplusplus
 }
 #endif

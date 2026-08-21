@@ -236,19 +236,28 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
                 }
             } else {
                 // 变量.成员 补全（类型推断）
-                // 检查是否是函数调用链（如 ttfLib().）
-                if (ctx.is_func_call_chain) {
-                    comp_provider_add_func_call_chain_members(set, content, file_path,
-                                                                 ctx.module_alias, import_count, import_aliases);
-                } else if (ctx.is_array_index) {
-                    // 数组索引成员访问（如 _texCache[i].field）
-                    comp_provider_add_array_index_members(set, content, file_path,
-                                                          ctx.module_alias, import_count, import_aliases,
-                                                          pos);
-                } else {
-                    comp_provider_add_variable_members(set, content, file_path,
-                                                       ctx.module_alias, import_count, import_aliases,
-                                                       pos);
+                // 首先检查是否是 cstruct/struct 类型名（如 Normal. 中的 Normal）
+                // 如果是 cstruct 类型名，提供方法补全（size, alignment, offset_of, malloc 等）
+                bool is_type_name = comp_provider_add_cstruct_type_methods(
+                    set, content, file_path,
+                    ctx.module_alias, import_count, import_aliases);
+
+                if (!is_type_name) {
+                    // 不是 cstruct 类型名，继续检查其他可能性
+                    // 检查是否是函数调用链（如 ttfLib().）
+                    if (ctx.is_func_call_chain) {
+                        comp_provider_add_func_call_chain_members(set, content, file_path,
+                                                                     ctx.module_alias, import_count, import_aliases);
+                    } else if (ctx.is_array_index) {
+                        // 数组索引成员访问（如 _texCache[i].field）
+                        comp_provider_add_array_index_members(set, content, file_path,
+                                                              ctx.module_alias, import_count, import_aliases,
+                                                              pos);
+                    } else {
+                        comp_provider_add_variable_members(set, content, file_path,
+                                                           ctx.module_alias, import_count, import_aliases,
+                                                           pos);
+                    }
                 }
                 
                 // 也尝试 enum 成员
