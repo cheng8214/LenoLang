@@ -93,6 +93,7 @@ bool compiler_analyze_with_filename(CompilerContext* ctx, const char* source, co
     
     // 重置错误状态
     error_clear();
+    warning_clear();
 
     // 设置文件名（用于模块路径解析，read_module_file 依赖此值解析相对路径）
     if (filename) {

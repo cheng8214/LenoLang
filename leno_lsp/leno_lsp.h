@@ -303,6 +303,24 @@ char* lsp_handle_document_symbol(LspServer* server, int id, JsonValue* params);
 LspDocumentSymbol* lsp_get_document_symbols(const char* content, int* count);
 void lsp_free_document_symbols(LspDocumentSymbol* symbols, int count);
 
+// ==================== Signature Help 服务 ====================
+
+// 函数参数提示
+char* lsp_handle_signature_help(LspServer* server, int id, JsonValue* params);
+
+// ==================== References & Rename 服务 ====================
+
+// 查找引用
+char* lsp_handle_references(LspServer* server, int id, JsonValue* params);
+
+// 重命名
+char* lsp_handle_rename(LspServer* server, int id, JsonValue* params);
+
+// ==================== Folding Range 服务 ====================
+
+// 代码折叠
+char* lsp_handle_folding_range(LspServer* server, int id, JsonValue* params);
+
 // ==================== 文档管理 ====================
 
 // 文本文档管理

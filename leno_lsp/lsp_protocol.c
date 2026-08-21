@@ -288,6 +288,25 @@ char* lsp_handle_initialize(LspServer* server, int id, JsonValue* params) {
         json_object_set(capabilities, "documentSymbolProvider", json_bool_new(true));
     }
     
+    // Signature Help 提供者 (函数参数提示)
+    {
+        JsonValue* sig_help = json_object_new();
+        JsonValue* trigger_chars = json_array_new();
+        json_array_add(trigger_chars, json_string_new("("));
+        json_array_add(trigger_chars, json_string_new(","));
+        json_object_set(sig_help, "triggerCharacters", trigger_chars);
+        json_object_set(capabilities, "signatureHelpProvider", sig_help);
+    }
+    
+    // References 提供者 (查找引用)
+    json_object_set(capabilities, "referencesProvider", json_bool_new(true));
+    
+    // Rename 提供者 (重命名)
+    json_object_set(capabilities, "renameProvider", json_bool_new(true));
+    
+    // Folding Range 提供者 (代码折叠)
+    json_object_set(capabilities, "foldingRangeProvider", json_bool_new(true));
+    
     // 构建响应
     JsonValue* result = json_object_new();
     json_object_set(result, "capabilities", capabilities);
@@ -487,6 +506,18 @@ char* lsp_handle_message(LspServer* server, const char* message) {
 	}
 	else if (strcmp(method_name, "textDocument/documentSymbol") == 0) {
 		response = lsp_handle_document_symbol(server, id, params);
+	}
+	else if (strcmp(method_name, "textDocument/signatureHelp") == 0) {
+		response = lsp_handle_signature_help(server, id, params);
+	}
+	else if (strcmp(method_name, "textDocument/references") == 0) {
+		response = lsp_handle_references(server, id, params);
+	}
+	else if (strcmp(method_name, "textDocument/rename") == 0) {
+		response = lsp_handle_rename(server, id, params);
+	}
+	else if (strcmp(method_name, "textDocument/foldingRange") == 0) {
+		response = lsp_handle_folding_range(server, id, params);
 	}
 	else {
         // 未知方法

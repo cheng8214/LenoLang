@@ -7,6 +7,7 @@ if not exist build mkdir build
 
 rem Delete old executable if exists
 if exist build\leno_lsp.exe del /F build\leno_lsp.exe 2>nul
+if exist build\leno_lsp_old.exe del /F build\leno_lsp_old.exe 2>nul
 
 rem === LSP source files ===
 set LSP_SOURCES=
@@ -18,6 +19,9 @@ set LSP_SOURCES=!LSP_SOURCES! lsp_hover.c
 set LSP_SOURCES=!LSP_SOURCES! lsp_definition.c
 set LSP_SOURCES=!LSP_SOURCES! lsp_diagnostic.c
 set LSP_SOURCES=!LSP_SOURCES! lsp_document_symbol.c
+set LSP_SOURCES=!LSP_SOURCES! lsp_signature.c
+set LSP_SOURCES=!LSP_SOURCES! lsp_references.c
+set LSP_SOURCES=!LSP_SOURCES! lsp_folding.c
 set LSP_SOURCES=!LSP_SOURCES! json.c
 set LSP_SOURCES=!LSP_SOURCES! leno_compiler_lib.c
 
@@ -112,11 +116,18 @@ set LENO_SOURCES=!LENO_SOURCES! ../src/package/package_init.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/package/package_resolve.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/package/package_install.c
 
-gcc -o build\leno_lsp.exe !LSP_SOURCES! !LENO_SOURCES! -I../src -Wall -Wextra -std=c99 -O2 -lm -lws2_32
+rem Build to temp file first, then rename (handles file lock from running LSP)
+if exist build\leno_lsp_new.exe del /F build\leno_lsp_new.exe 2>nul
+gcc -o build\leno_lsp_new.exe !LSP_SOURCES! !LENO_SOURCES! -I../src -Wall -Wextra -std=c99 -O2 -lm -lws2_32
 
 if %ERRORLEVEL% neq 0 (
     echo Build failed
     exit /b 1
 )
+
+rem Replace old executable (handles file lock from running LSP)
+if exist build\leno_lsp.exe ren build\leno_lsp.exe leno_lsp_old.exe 2>nul
+ren build\leno_lsp_new.exe leno_lsp.exe 2>nul
+if exist build\leno_lsp_old.exe del /F build\leno_lsp_old.exe 2>nul
 
 echo Build successful: build\leno_lsp.exe

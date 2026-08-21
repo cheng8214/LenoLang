@@ -5,6 +5,7 @@
 
 #include "leno_lsp.h"
 #include "../src/include/lenolang.h"
+#include "../src/include/leno_error.h"
 
 // Global variables needed by LenoC compiler
 int debugMode = 0;
@@ -89,9 +90,15 @@ collect_errors:
         
         // Set position (LenoC uses 1-based line numbers, LSP uses 0-based)
         diags[i].range.start.line = err->line > 0 ? err->line - 1 : 0;
-        diags[i].range.start.character = 0;
+        // 利用编译器的列号精确定位
+        if (err->column > 0) {
+            diags[i].range.start.character = err->column - 1;
+            diags[i].range.end.character = err->column;
+        } else {
+            diags[i].range.start.character = 0;
+            diags[i].range.end.character = 100;
+        }
         diags[i].range.end.line = diags[i].range.start.line;
-        diags[i].range.end.character = 100; // Highlight entire line
         
         // Error code
         diags[i].code = (char*)malloc(16);

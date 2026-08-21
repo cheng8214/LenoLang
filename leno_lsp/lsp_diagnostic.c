@@ -5,6 +5,7 @@
 
 #include "leno_lsp.h"
 #include "leno_compiler_lib.h"
+#include "../src/include/leno_error.h"
 #include <time.h>
 #include <stdio.h>
 
@@ -145,42 +146,78 @@ LspDiagnostic* lsp_compile_and_get_errors_with_filename(const char* content, int
     // 编译分析（不执行代码生成），传入文件名用于模块路径解析
     compiler_analyze_with_filename(&ctx, content, filename);
     
-    // 获取错误信息
+    // 获取错误和警告信息
     int error_count = errors.count;
-    if (error_count == 0) {
+    int warning_count = warnings.count;
+    int total = error_count + warning_count;
+    if (total == 0) {
         compiler_context_cleanup(&ctx);
         return NULL;
     }
     
-    // 分配诊断数组
-    LspDiagnostic* diags = (LspDiagnostic*)malloc(sizeof(LspDiagnostic) * error_count);
+    // 分配诊断数组（错误 + 警告）
+    LspDiagnostic* diags = (LspDiagnostic*)malloc(sizeof(LspDiagnostic) * total);
     if (!diags) {
         compiler_context_cleanup(&ctx);
         return NULL;
     }
+    
+    int idx = 0;
     
     // 转换错误为 LSP 诊断格式
     for (int i = 0; i < error_count; i++) {
         Error* err = &errors.list[i];
         
         // 行号转换为 0-based
-        diags[i].range.start.line = err->line > 0 ? err->line - 1 : 0;
-        diags[i].range.start.character = 0;
-        diags[i].range.end.line = diags[i].range.start.line;
-        diags[i].range.end.character = 100; // 整行高亮
+        diags[idx].range.start.line = err->line > 0 ? err->line - 1 : 0;
+        // 利用编译器的列号精确定位（column 为 1-based，-1 表示未知）
+        if (err->column > 0) {
+            diags[idx].range.start.character = err->column - 1;
+            diags[idx].range.end.character = err->column; // 至少高亮一个字符
+        } else {
+            diags[idx].range.start.character = 0;
+            diags[idx].range.end.character = 100; // 列号未知时整行高亮
+        }
+        diags[idx].range.end.line = diags[idx].range.start.line;
         
-        diags[i].severity = error_type_to_severity(err->type);
+        diags[idx].severity = error_type_to_severity(err->type);
         
         // 错误代码
         char code_buf[16];
         snprintf(code_buf, sizeof(code_buf), "E%03d", err->type);
-        diags[i].code = strdup(code_buf);
+        diags[idx].code = strdup(code_buf);
         
-        diags[i].source = strdup("leno");
-        diags[i].message = strdup(err->msg);
+        diags[idx].source = strdup("leno");
+        diags[idx].message = strdup(err->msg);
+        idx++;
     }
     
-    *count = error_count;
+    // 转换警告为 LSP 诊断格式
+    for (int i = 0; i < warning_count; i++) {
+        Warning* w = &warnings.list[i];
+        
+        diags[idx].range.start.line = w->line > 0 ? w->line - 1 : 0;
+        if (w->column > 0) {
+            diags[idx].range.start.character = w->column - 1;
+            diags[idx].range.end.character = w->column;
+        } else {
+            diags[idx].range.start.character = 0;
+            diags[idx].range.end.character = 100;
+        }
+        diags[idx].range.end.line = diags[idx].range.start.line;
+        
+        diags[idx].severity = LSP_DIAG_WARNING;
+        
+        char code_buf[16];
+        snprintf(code_buf, sizeof(code_buf), "W%03d", w->type);
+        diags[idx].code = strdup(code_buf);
+        
+        diags[idx].source = strdup("leno");
+        diags[idx].message = strdup(w->msg);
+        idx++;
+    }
+    
+    *count = total;
     
     compiler_context_cleanup(&ctx);
     return diags;

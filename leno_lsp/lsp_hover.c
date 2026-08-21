@@ -1485,6 +1485,14 @@ static char* get_keyword_doc(const char* word) {
         return strdup("**Channel** - Channel 类型\n\n"
                      "用于协程间通信，通过 async 模块创建。");
     }
+    else if (strcmp(word, "Socket") == 0) {
+        return strdup("**Socket** - Socket 类型\n\n"
+                     "用于网络通信，通过 sockets 模块创建。");
+    }
+    else if (strcmp(word, "Future") == 0) {
+        return strdup("**Future** - Future 类型\n\n"
+                     "异步操作的结果，通过 async/await 获取。");
+    }
     else if (strcmp(word, "face") == 0) {
         return strdup("**face** - 接口类型\n\n"
                      "定义接口类型，用于声明变量类型和类型守卫。\n\n"

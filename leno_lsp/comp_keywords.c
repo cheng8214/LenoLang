@@ -46,7 +46,7 @@ static const char* leno_types[] = {
     "Array", "Dict", "File", "Ptr", "any", "face",
     "i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64", "f32", "f64",
     "c_int", "c_uint", "c_long", "c_ulong", "c_longlong", "c_ulonglong", "c_size", "c_ssize",
-    "bigint", "str8", "str16", "Thread", "Channel",
+    "bigint", "str8", "str16", "Thread", "Channel", "Socket", "Future",
     NULL
 };
 
