@@ -924,56 +924,79 @@ LspLocation* lsp_get_definition(const char* content, LspPosition pos, int* count
     char* symbol_name = NULL;     // 如 "PIXELFORMAT_RGBA8888"
     const char* dot_in_word = strchr(lookup_word, '.');
     if (dot_in_word && dot_in_word != lookup_word && dot_in_word[1]) {
-        // 判断光标是在点号前（变量部分）还是点号后（方法部分）
-        // 光标在变量部分时，应该用变量名查找定义，而非拆分模块前缀
+        // 判断光标在链式表达式中的哪个段
+        // 对于 root.children.add，需要确定光标在 root / children / add 哪个段上
         int cursor_offset = lsp_position_to_offset(content, pos);
-        bool cursor_before_dot = false;
+
+        // 向前找最近的点号
+        int prev_dot = -1;
         if (cursor_offset >= 0) {
             int scan = cursor_offset;
             while (scan >= 0) {
                 char c = content[scan];
-                if (c == '.') {
-                    // 光标在点号之后（方法部分），正常拆分模块前缀
-                    cursor_before_dot = false;
-                    break;
-                }
-                if (isalnum((unsigned char)c) || c == '_') {
-                    scan--;
-                    continue;
-                }
-                // 遇到非单词非点号字符，说明光标在变量部分（点号之前）
-                cursor_before_dot = true;
-                break;
+                if (c == '.') { prev_dot = scan; break; }
+                if (isalnum((unsigned char)c) || c == '_') { scan--; continue; }
+                scan--;
             }
         }
 
-        if (cursor_before_dot) {
-            // 光标在变量部分，用变量名（点号前的部分）查找定义
-            // 不拆分模块前缀，直接用变量名在当前文档和导入模块中查找
+        if (prev_dot < 0) {
+            // 光标在第一个段（变量名部分），用变量名查找定义
             int var_len = dot_in_word - lookup_word;
             char* var_name = (char*)malloc(var_len + 1);
             if (var_name) {
                 memcpy(var_name, lookup_word, var_len);
                 var_name[var_len] = '\0';
-                // 用变量名替换 word 和 lookup_word，以便后续查找
                 free(word);
                 word = var_name;
                 lookup_word = var_name;
             }
         } else {
-            // 光标在方法部分，正常拆分模块前缀和符号名
-            int mod_len = dot_in_word - lookup_word;
-            module_prefix = (char*)malloc(mod_len + 1);
-            memcpy(module_prefix, lookup_word, mod_len);
-            module_prefix[mod_len] = '\0';
-            
-            const char* sym_start = dot_in_word + 1;
-            // 去掉可能的后续点号（如 SDL3.SDL3.PIXELFORMAT...）
-            while (sym_start[0] && sym_start[1] == '.') sym_start++;
-            symbol_name = strdup(sym_start);
-            
-            // 用于后续查找的 lookup_word 改为纯符号名
-            lookup_word = symbol_name;
+            // 光标在某个点号之后，判断是中间段还是末尾段
+            // 向后找下一个点号
+            int next_dot = -1;
+            {
+                int scan = cursor_offset;
+                while (scan < (int)strlen(content)) {
+                    char c = content[scan];
+                    if (c == '.') { next_dot = scan; break; }
+                    if (isalnum((unsigned char)c) || c == '_') { scan++; continue; }
+                    break;
+                }
+            }
+
+            if (next_dot >= 0) {
+                // 光标在中间段（如 root.children.add 中的 children）
+                // 提取光标所在的段名，用段名作为查找词
+                int seg_start = cursor_offset;
+                int seg_end = cursor_offset;
+                while (seg_start > 0 && (isalnum((unsigned char)content[seg_start-1]) || content[seg_start-1] == '_')) seg_start--;
+                while (seg_end < (int)strlen(content) && (isalnum((unsigned char)content[seg_end]) || content[seg_end] == '_')) seg_end++;
+                int slen = seg_end - seg_start;
+                if (slen > 0) {
+                    char* seg_name = (char*)malloc(slen + 1);
+                    if (seg_name) {
+                        memcpy(seg_name, content + seg_start, slen);
+                        seg_name[slen] = '\0';
+                        free(word);
+                        word = seg_name;
+                        lookup_word = seg_name;
+                    }
+                }
+            } else {
+                // 光标在最后一个段（方法/符号部分），正常拆分
+                int mod_len = dot_in_word - lookup_word;
+                module_prefix = (char*)malloc(mod_len + 1);
+                memcpy(module_prefix, lookup_word, mod_len);
+                module_prefix[mod_len] = '\0';
+                
+                const char* sym_start = dot_in_word + 1;
+                // 去掉可能的后续点号
+                while (sym_start[0] && sym_start[1] == '.') sym_start++;
+                symbol_name = strdup(sym_start);
+                
+                lookup_word = symbol_name;
+            }
         }
     }
     

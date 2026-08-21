@@ -1,9 +1,9 @@
-fix(lsp): 链式访问中字段悬停精确定位
+fix(lsp): 链式访问定义查找和跳转修复
 
-对 root.children.add 这类多层链式访问：
-- 在 children 上悬停时显示字段信息（Array[HtmlNode]）
-  而非误报 add 方法
-- 在 add 上悬停时显示方法信息（Array.add）
+lsp_get_definition 和悬停附加来源信息使用统一的多层链式段定位：
+- root → 变量名查找定义
+- children → 字段名在当前文件和导入模块中查找
+- add → 方法名拆分模块前缀后查找
 
-通过 prev_dot/next_dot 扫描确定光标在哪个段，
-中间段走字段类型解析，末尾段走方法查找
+修复了 root.children.add 在 children 上悬停无来源行号、
+无法跳转的问题

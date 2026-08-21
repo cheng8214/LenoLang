@@ -4162,41 +4162,26 @@ char* lsp_get_hover_info(const char* content, LspPosition pos, const char* file_
             if (cur_uri) free(cur_uri);
 
             // 确定用于显示的 word
-            // 如果光标在变量部分（点号前），使用变量名而非方法名
+            // 提取光标所在的段名（如 root.children.add 中的 children）
             const char* def_word = word;
             char* short_word = NULL;
-            const char* dot = strrchr(word, '.');
-            if (dot && *(dot + 1)) {
-                // 检查光标是否在点号之前（变量部分）
+            {
                 int cur_off = lsp_position_to_offset(content, pos);
-                bool cursor_in_var_part = true;
                 if (cur_off >= 0) {
-                    int scan = cur_off;
-                    while (scan >= 0) {
-                        char c = content[scan];
-                        if (c == '.') {
-                            cursor_in_var_part = false;
-                            break;
+                    // 提取光标所在的段
+                    int seg_start = cur_off;
+                    int seg_end = cur_off;
+                    while (seg_start > 0 && (isalnum((unsigned char)content[seg_start-1]) || content[seg_start-1] == '_')) seg_start--;
+                    while (seg_end < (int)strlen(content) && (isalnum((unsigned char)content[seg_end]) || content[seg_end] == '_')) seg_end++;
+                    int slen = seg_end - seg_start;
+                    if (slen > 0) {
+                        short_word = (char*)malloc(slen + 1);
+                        if (short_word) {
+                            memcpy(short_word, content + seg_start, slen);
+                            short_word[slen] = '\0';
+                            def_word = short_word;
                         }
-                        if (isalnum((unsigned char)c) || c == '_') {
-                            scan--;
-                            continue;
-                        }
-                        break;
                     }
-                }
-                if (cursor_in_var_part) {
-                    // 光标在变量部分，使用点号前的变量名
-                    int base_len = dot - word;
-                    short_word = (char*)malloc(base_len + 1);
-                    if (short_word) {
-                        memcpy(short_word, word, base_len);
-                        short_word[base_len] = '\0';
-                        def_word = short_word;
-                    }
-                } else {
-                    short_word = strdup(dot + 1);
-                    def_word = short_word;
                 }
             }
 
