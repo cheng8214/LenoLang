@@ -650,6 +650,10 @@ CompletionContextInfo comp_detect_context(
     // 获取光标前单词
     char* prefix = get_word_before_cursor(content, pos);
     
+    fprintf(stderr, "[CTX-DEBUG] pos line=%d char=%d offset=%d prefix='%s'\n",
+            pos.line, pos.character, offset, prefix ? prefix : "NULL");
+    fflush(stderr);
+    
     // 1. 字符串字面量
     if (prefix && strcmp(prefix, "__STRING_LITERAL__") == 0) {
         ctx.type = CTX_STRING_LITERAL;

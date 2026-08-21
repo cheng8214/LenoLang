@@ -29,6 +29,213 @@ extern char* detect_var_type_from_text(const char* content, const char* var_name
 
 /* ========== 文本匹配变量类型推断（编译器分析失败时的回退） ========== */
 
+// 从源代码文本中查找 struct 的字段类型（纯文本解析，不依赖编译器）
+// 搜索 "struct StructName { ... FieldType fieldname ... }" 模式
+// 返回字段类型字符串（需调用者 free），未找到返回 NULL
+static char* find_struct_field_type_from_text(const char* content, const char* struct_name, const char* field_name) {
+    if (!content || !struct_name || !field_name) return NULL;
+    
+    // 搜索 "struct StructName" 或 "cstruct StructName"
+    char pattern[256];
+    snprintf(pattern, sizeof(pattern), "struct %s", struct_name);
+    const char* p = content;
+    
+    while ((p = strstr(p, pattern)) != NULL) {
+        // 确保前面不是字母/数字/下划线（避免匹配 "mystruct StructName"）
+        if (p > content && (isalnum((unsigned char)p[-1]) || p[-1] == '_')) {
+            p += strlen(pattern);
+            continue;
+        }
+        // 确保后面是空白或 '{'
+        char after = p[strlen(pattern)];
+        if (!isspace((unsigned char)after) && after != '{') {
+            p += strlen(pattern);
+            continue;
+        }
+        
+        // 找到 struct 定义，查找 '{'
+        const char* brace = p + strlen(pattern);
+        while (*brace && *brace != '{') brace++;
+        if (*brace != '{') {
+            p += strlen(pattern);
+            continue;
+        }
+        
+        // 找到匹配的 '}'
+        int depth = 1;
+        const char* block_start = brace + 1;
+        const char* block_end = block_start;
+        while (*block_end && depth > 0) {
+            if (*block_end == '{') depth++;
+            else if (*block_end == '}') depth--;
+            if (depth > 0) block_end++;
+        }
+        if (depth != 0) {
+            p += strlen(pattern);
+            continue;
+        }
+        
+        // 在 struct 块中查找字段
+        // 字段格式: "Type fieldname" 或 "Type[fieldname]" 或 "Type[] fieldname"
+        // 也需要处理 "Dict[Key, Value] fieldname" 等泛型类型
+        int field_len = strlen(field_name);
+        const char* fp = block_start;
+        
+        while (fp < block_end) {
+            // 跳过空白和注释
+            while (fp < block_end && isspace((unsigned char)*fp)) fp++;
+            if (fp >= block_end) break;
+            
+            // 跳过注释
+            if (fp + 1 < block_end && fp[0] == '/' && fp[1] == '/') {
+                while (fp < block_end && *fp != '\n') fp++;
+                continue;
+            }
+            
+            // 提取类型名（可能包含泛型 [...] 和可空 ?）
+            const char* type_start = fp;
+            while (fp < block_end && (isalnum((unsigned char)*fp) || *fp == '_')) fp++;
+            if (fp == type_start) { fp++; continue; }
+            
+            const char* type_end = fp;
+            
+            // 跳过泛型参数 [...]
+            if (fp < block_end && *fp == '[') {
+                int bdepth = 1; fp++;
+                while (fp < block_end && bdepth > 0) {
+                    if (*fp == '[') bdepth++;
+                    else if (*fp == ']') bdepth--;
+                    if (bdepth > 0) fp++;
+                }
+                if (fp < block_end && *fp == ']') fp++; // 跳过 ']'
+            }
+            
+            // 跳过可空后缀 '?'
+            if (fp < block_end && *fp == '?') fp++;
+            
+            // 跳过空白
+            while (fp < block_end && isspace((unsigned char)*fp)) fp++;
+            
+            // 提取字段名
+            const char* name_start = fp;
+            while (fp < block_end && (isalnum((unsigned char)*fp) || *fp == '_')) fp++;
+            int name_len = fp - name_start;
+            
+            if (name_len == field_len && strncmp(name_start, field_name, name_len) == 0) {
+                // 找到匹配的字段
+                // 提取完整类型字符串（包括泛型参数）
+                // type_end 到 name_start 之间是类型部分（包括泛型和可空后缀）
+                int type_str_len = type_end - type_start;
+                // 包含泛型参数
+                int generic_len = 0;
+                if (type_end < name_start) {
+                    // 从 type_end 到 name_start 之间是 [generic] ? 空白
+                    generic_len = name_start - type_end;
+                }
+                int total_len = type_str_len + generic_len;
+                if (total_len > 0 && total_len < 256) {
+                    char* result = (char*)malloc(total_len + 1);
+                    if (result) {
+                        memcpy(result, type_start, total_len);
+                        result[total_len] = '\0';
+                        // 去除尾部空白
+                        while (total_len > 0 && isspace((unsigned char)result[total_len - 1])) {
+                            result[--total_len] = '\0';
+                        }
+                        return result;
+                    }
+                }
+            }
+            
+            // 跳到行尾（或分号）
+            while (fp < block_end && *fp != '\n' && *fp != ';') fp++;
+            if (fp < block_end && *fp == ';') fp++;
+        }
+        
+        p += strlen(pattern);
+    }
+    
+    // 也搜索 "cstruct StructName"
+    snprintf(pattern, sizeof(pattern), "cstruct %s", struct_name);
+    p = content;
+    while ((p = strstr(p, pattern)) != NULL) {
+        if (p > content && (isalnum((unsigned char)p[-1]) || p[-1] == '_')) {
+            p += strlen(pattern);
+            continue;
+        }
+        char after = p[strlen(pattern)];
+        if (!isspace((unsigned char)after) && after != '{') {
+            p += strlen(pattern);
+            continue;
+        }
+        
+        const char* brace = p + strlen(pattern);
+        while (*brace && *brace != '{') brace++;
+        if (*brace != '{') { p += strlen(pattern); continue; }
+        
+        int depth = 1;
+        const char* block_start = brace + 1;
+        const char* block_end = block_start;
+        while (*block_end && depth > 0) {
+            if (*block_end == '{') depth++;
+            else if (*block_end == '}') depth--;
+            if (depth > 0) block_end++;
+        }
+        if (depth != 0) { p += strlen(pattern); continue; }
+        
+        int field_len = strlen(field_name);
+        const char* fp = block_start;
+        
+        while (fp < block_end) {
+            while (fp < block_end && isspace((unsigned char)*fp)) fp++;
+            if (fp >= block_end) break;
+            if (fp + 1 < block_end && fp[0] == '/' && fp[1] == '/') {
+                while (fp < block_end && *fp != '\n') fp++;
+                continue;
+            }
+            const char* type_start = fp;
+            while (fp < block_end && (isalnum((unsigned char)*fp) || *fp == '_')) fp++;
+            if (fp == type_start) { fp++; continue; }
+            const char* type_end = fp;
+            if (fp < block_end && *fp == '[') {
+                int bdepth = 1; fp++;
+                while (fp < block_end && bdepth > 0) {
+                    if (*fp == '[') bdepth++;
+                    else if (*fp == ']') bdepth--;
+                    if (bdepth > 0) fp++;
+                }
+                if (fp < block_end && *fp == ']') fp++;
+            }
+            if (fp < block_end && *fp == '?') fp++;
+            while (fp < block_end && isspace((unsigned char)*fp)) fp++;
+            const char* name_start = fp;
+            while (fp < block_end && (isalnum((unsigned char)*fp) || *fp == '_')) fp++;
+            int name_len = fp - name_start;
+            if (name_len == field_len && strncmp(name_start, field_name, name_len) == 0) {
+                int type_str_len = type_end - type_start;
+                int generic_len = (type_end < name_start) ? (name_start - type_end) : 0;
+                int total_len = type_str_len + generic_len;
+                if (total_len > 0 && total_len < 256) {
+                    char* result = (char*)malloc(total_len + 1);
+                    if (result) {
+                        memcpy(result, type_start, total_len);
+                        result[total_len] = '\0';
+                        while (total_len > 0 && isspace((unsigned char)result[total_len - 1])) {
+                            result[--total_len] = '\0';
+                        }
+                        return result;
+                    }
+                }
+            }
+            while (fp < block_end && *fp != '\n' && *fp != ';') fp++;
+            if (fp < block_end && *fp == ';') fp++;
+        }
+        p += strlen(pattern);
+    }
+    
+    return NULL;
+}
+
 // 从源代码文本中推断变量类型
 // 搜索 "Type varname" 或 "var varname = value" 模式
 // 返回类型名称字符串（如 "string", "Array", "Dict", "number" 等），需调用者 free
@@ -746,10 +953,24 @@ void comp_provider_add_variable_members(
     CompilerContext ctx;
     compiler_context_init(&ctx);
     compiler_analyze_with_filename(&ctx, content, file_path);
-    
+
     char* type_str = NULL;
     if (ctx.root_scope) {
         compiler_get_symbol_info(&ctx, var_name, &type_str, NULL);
+        fprintf(stderr, "[COMPLETE-DEBUG] var='%s' compiler_get_symbol_info type_str='%s'\n", var_name, type_str ? type_str : "NULL");
+        fflush(stderr);
+        // 如果找到的类型是函数类型（如 "func(struct HtmlNode):Array[...]"），
+        // 这很可能是 scope_resolve_tree_bfs 误匹配了 struct 方法体中的同名符号，
+        // 而不是真正的变量类型。忽略此结果，继续到回退逻辑。
+        if (type_str && strncmp(type_str, "func(", 5) == 0) {
+            fprintf(stderr, "[COMPLETE-DEBUG] var='%s' ignoring func type, will try fallbacks\n", var_name);
+            fflush(stderr);
+            free(type_str);
+            type_str = NULL;
+        }
+    } else {
+        fprintf(stderr, "[COMPLETE-DEBUG] var='%s' root_scope is NULL (parse failed?)\n", var_name);
+        fflush(stderr);
     }
 
     // 回退1：如果编译器分析失败或未找到符号，检查是否是 struct 字段
@@ -758,11 +979,24 @@ void comp_provider_add_variable_members(
     if (!type_str && ctx.root_scope) {
         char** struct_names = NULL;
         int struct_count = compiler_find_structs_with_field(&ctx, var_name, &struct_names);
+        fprintf(stderr, "[COMPLETE-DEBUG] var='%s' fallback1: found %d structs with this field\n", var_name, struct_count);
+        fflush(stderr);
         if (struct_count > 0) {
             char* field_type_str = NULL;
             bool found = compiler_get_struct_field_info(&ctx, struct_names[0], var_name, &field_type_str);
+            fprintf(stderr, "[COMPLETE-DEBUG] var='%s' fallback1: struct='%s' found=%d field_type='%s'\n", var_name, struct_names[0], found, (found && field_type_str) ? field_type_str : "NULL");
+            fflush(stderr);
             if (found && field_type_str) {
-                type_str = field_type_str;
+                // 如果字段类型也是函数类型，忽略它（与 compiler_get_symbol_info 相同的逻辑）
+                // 这会让 fallback1.5 有机会通过链式解析找到正确的类型
+                if (strncmp(field_type_str, "func(", 5) == 0) {
+                    fprintf(stderr, "[COMPLETE-DEBUG] var='%s' fallback1: field_type is func, ignoring\n", var_name);
+                    fflush(stderr);
+                    free(field_type_str);
+                    field_type_str = NULL;
+                } else {
+                    type_str = field_type_str;
+                }
             }
             // 释放 struct 名称列表
             for (int i = 0; i < struct_count; i++) {
@@ -772,6 +1006,9 @@ void comp_provider_add_variable_members(
         }
     }
     compiler_context_cleanup(&ctx);
+
+    fprintf(stderr, "[COMPLETE-DEBUG] var='%s' after fallback1: type_str='%s'\n", var_name, type_str ? type_str : "NULL");
+    fflush(stderr);
 
     // 回退1.5：链式字段访问解析（如 root.children. 中的 children）
     // 从光标位置向前提取完整的链式表达式，解析根变量类型，再逐段解析字段类型
@@ -802,8 +1039,24 @@ void comp_provider_add_variable_members(
         }
 
         // seg_count 段是从后向前收集的
-        // segments[0] = var_name (如 "children")
-        // segments[1] = 前一段 (如 "root")
+        // segments[0] = 最近一段（可能是 var_name 或用户输入的补全前缀）
+        // segments[1] = 前一段 (如 "children")
+        // segments[seg_count-1] = 根变量 (如 "root")
+        
+        // 如果 segments[0] 不等于 var_name，说明它是用户输入的补全前缀（如 "a"），
+        // 需要去掉它，只保留到 var_name 对应的段
+        if (seg_count >= 2 && strcmp(segments[0], var_name) != 0) {
+            // segments[0] 是用户输入的字符，不是字段名
+            // 去掉 segments[0]，将后面的段向前移动
+            for (int i = 0; i < seg_count - 1; i++) {
+                strncpy(segments[i], segments[i + 1], 127);
+                segments[i][127] = '\0';
+            }
+            seg_count--;
+            fprintf(stderr, "[COMPLETE-DEBUG] fallback1.5: removed user prefix segment, seg_count now=%d, segments[0]='%s'\n", seg_count, seg_count > 0 ? segments[0] : "NULL");
+            fflush(stderr);
+        }
+        
         // 如果 seg_count >= 2，说明有链式访问
         if (seg_count >= 2) {
             // 根变量是最后一个段
@@ -815,6 +1068,11 @@ void comp_provider_add_variable_members(
             char* current_type = NULL;
             if (cctx2.root_scope) {
                 compiler_get_symbol_info(&cctx2, root_var, &current_type, NULL);
+                // 如果返回的是函数类型，忽略它
+                if (current_type && strncmp(current_type, "func(", 5) == 0) {
+                    free(current_type);
+                    current_type = NULL;
+                }
             }
             // 回退：如果根变量不是全局变量，尝试 struct 字段查找
             if (!current_type && cctx2.root_scope) {
@@ -823,7 +1081,13 @@ void comp_provider_add_variable_members(
                 if (scount > 0) {
                     char* ft = NULL;
                     if (compiler_get_struct_field_info(&cctx2, snames[0], root_var, &ft)) {
-                        current_type = ft;
+                        // 如果返回的是函数类型，忽略它
+                        if (ft && strncmp(ft, "func(", 5) == 0) {
+                            free(ft);
+                            ft = NULL;
+                        } else {
+                            current_type = ft;
+                        }
                     }
                     for (int i = 0; i < scount; i++) free(snames[i]);
                     free(snames);
@@ -851,6 +1115,11 @@ void comp_provider_add_variable_members(
                     // 在 struct 中查找字段类型
                     if (cctx2.root_scope) {
                         compiler_get_struct_field_info(&cctx2, working_type, field_name, &field_type);
+                        // 如果返回的是函数类型，忽略它
+                        if (field_type && strncmp(field_type, "func(", 5) == 0) {
+                            free(field_type);
+                            field_type = NULL;
+                        }
                     }
 
                     // 也尝试从模块符号表中查找
@@ -878,6 +1147,39 @@ void comp_provider_add_variable_members(
                             module_symbol_table_destroy(mtable);
                             if (field_type) break;
                         }
+                    }
+
+                    // 途径3：扫描当前文件本身（纯文本解析，不依赖编译器）
+                    // 当编译器解析失败时，模块符号表的纯文本扫描仍可工作
+                    if (!field_type && file_path) {
+                        module_symbol_table_reset_scan_stack();
+                        ModuleSymbolTable* cur_table = module_symbol_table_create(file_path);
+                        if (cur_table) {
+                            if (module_symbol_table_scan(cur_table, file_path) == 0) {
+                                ModuleStructSymbol* mst = module_symbol_table_find_struct(cur_table, working_type);
+                                if (mst) {
+                                    for (int j = 0; j < mst->field_count; j++) {
+                                        if (mst->fields[j].name && strcmp(mst->fields[j].name, field_name) == 0) {
+                                            const char* fts = mst->fields[j].struct_name ?
+                                                mst->fields[j].struct_name :
+                                                type_kind_to_string(mst->fields[j].type);
+                                            field_type = strdup(fts);
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            module_symbol_table_destroy(cur_table);
+                        }
+                    }
+
+                    // 途径4：纯文本 struct 字段查找回退
+                    // 当模块符号表也不可用时，直接从源文件文本中搜索 struct 定义
+                    if (!field_type) {
+                        field_type = find_struct_field_type_from_text(content, working_type, field_name);
+                        fprintf(stderr, "[COMPLETE-DEBUG] fallback1.5 text-search: struct='%s' field='%s' field_type='%s'\n",
+                                working_type, field_name, field_type ? field_type : "NULL");
+                        fflush(stderr);
                     }
 
                     if (si == 0) {
@@ -910,9 +1212,14 @@ void comp_provider_add_variable_members(
         }
     }
 
+    fprintf(stderr, "[COMPLETE-DEBUG] var='%s' after fallback1.5: type_str='%s'\n", var_name, type_str ? type_str : "NULL");
+    fflush(stderr);
+
     // 回退2：如果仍然未找到，使用文本匹配推断类型
     if (!type_str) {
         type_str = detect_variable_type_from_text(content, var_name);
+        fprintf(stderr, "[COMPLETE-DEBUG] var='%s' fallback2 text-match: type_str='%s'\n", var_name, type_str ? type_str : "NULL");
+        fflush(stderr);
     }
     
     char* type_resolved = NULL;
@@ -920,6 +1227,27 @@ void comp_provider_add_variable_members(
     // 剥离可空类型后缀 '?'（如 "Font?" -> "Font"）
     // 补全逻辑基于基础类型查找成员，可空性不影响成员列表
     if (type_str) {
+        // 如果类型是函数类型（如 "func(struct HtmlNode):Array[struct HtmlNode]"），
+        // 提取返回类型部分（即 ":" 之后的内容）
+        // 这发生在 compiler_get_symbol_info 和 compiler_get_struct_field_info
+        // 误将 struct 字段识别为 struct 方法（函数）时
+        if (strncmp(type_str, "func(", 5) == 0) {
+            char* colon = strchr(type_str, ':');
+            if (colon) {
+                // 跳过 ":" 和可能的空格
+                char* ret_type = colon + 1;
+                while (*ret_type == ' ') ret_type++;
+                if (*ret_type) {
+                    char* new_type = strdup(ret_type);
+                    if (new_type) {
+                        free(type_str);
+                        type_str = new_type;
+                        fprintf(stderr, "[COMPLETE-DEBUG] var='%s' extracted return type from func: type_str='%s'\n", var_name, type_str);
+                        fflush(stderr);
+                    }
+                }
+            }
+        }
         size_t ts_len = strlen(type_str);
         while (ts_len > 0 && type_str[ts_len - 1] == '?') {
             type_str[ts_len - 1] = '\0';
@@ -933,7 +1261,14 @@ void comp_provider_add_variable_members(
     }
     
     if (type_str) {
-        if (strstr(type_str, "struct") || strstr(type_str, "cstruct")) {
+        // 注意：必须先检查 Array/Dict 等泛型类型，再检查 struct/cstruct
+        // 因为 type_to_string 可能返回 "Array[struct HtmlNode]"，
+        // 其中包含 "struct" 字符串，会导致误匹配到 struct 分支
+        if (strncmp(type_str, "Array", 5) == 0) {
+            type_resolved = strdup("Array");
+        } else if (strncmp(type_str, "Dict", 4) == 0) {
+            type_resolved = strdup("Dict");
+        } else if (strstr(type_str, "struct") || strstr(type_str, "cstruct")) {
             type_resolved = strdup(type_str);
         } else if (strstr(type_str, "face")) {
             type_resolved = strdup(type_str);
@@ -941,10 +1276,6 @@ void comp_provider_add_variable_members(
             type_resolved = strdup("number");
         } else if (strcmp(type_str, "string") == 0) {
             type_resolved = strdup("string");
-        } else if (strncmp(type_str, "Array", 5) == 0) {
-            type_resolved = strdup("Array");
-        } else if (strncmp(type_str, "Dict", 4) == 0) {
-            type_resolved = strdup("Dict");
         } else if (strcmp(type_str, "bool") == 0) {
             type_resolved = strdup("bool");
         } else if (strcmp(type_str, "File") == 0) {
@@ -986,7 +1317,13 @@ void comp_provider_add_variable_members(
         free(type_str);
     }
     
-    if (!type_resolved) return;
+    if (!type_resolved) {
+        fprintf(stderr, "[COMPLETE-DEBUG] var='%s' type_resolved is NULL, returning without completions\n", var_name);
+        fflush(stderr);
+        return;
+    }
+    fprintf(stderr, "[COMPLETE-DEBUG] var='%s' type_resolved='%s', adding methods\n", var_name, type_resolved);
+    fflush(stderr);
     
     // struct 类型：查找字段和方法
     if (strstr(type_resolved, "struct") || strstr(type_resolved, "cstruct")) {
