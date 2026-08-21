@@ -3872,30 +3872,51 @@ char* lsp_get_hover_info(const char* content, LspPosition pos, const char* file_
             // 不是模块方法，尝试作为实例方法
             int offset = lsp_position_to_offset(content, pos);
             if (!is_inside_string_literal(content, offset) && !is_inside_comment(content, offset)) {
-                // 判断光标是在点号前（变量部分）还是点号后（方法部分）
-                // 如果光标在变量部分，应显示变量类型信息而非方法信息
-                bool cursor_before_dot = false;
+                // 判断光标在链式表达式中的哪个段
+                // 对于 root.children.add，需要确定光标在 root / children / add 哪个段上
+                //
+                // 策略：从光标向前扫描到最近的点号（不在嵌套括号内），
+                //   如果没遇到点号 → 光标在第一个段（变量名部分）
+                //   如果遇到点号 → 光标在该点号之后的段中
+                //     再从该点号向后扫描到下一个点号或非单词字符，
+                //     得到光标所在的段名
+
+                // 向前找最近的点号
+                int prev_dot = -1;
                 {
                     int scan = offset;
+                    int bracket_depth = 0;
                     while (scan >= 0) {
                         char c = content[scan];
-                        if (c == '.') {
-                            // 光标在点号之后（方法部分），正常处理方法
-                            cursor_before_dot = false;
+                        if (c == ')' || c == ']') bracket_depth++;
+                        else if (c == '(' || c == '[') bracket_depth--;
+                        else if (c == '.' && bracket_depth == 0) {
+                            prev_dot = scan;
                             break;
                         }
-                        if (isalnum((unsigned char)c) || c == '_') {
-                            scan--;
-                            continue;
-                        }
-                        // 遇到非单词非点号字符，说明光标在变量部分（点号之前）
-                        cursor_before_dot = true;
-                        break;
+                        if (isalnum((unsigned char)c) || c == '_') { scan--; continue; }
+                        scan--;
                     }
                 }
-                if (cursor_before_dot) {
-                    // 光标在变量部分（点号前），显示变量类型信息而非方法信息
-                    // 使用 module（即点号前的变量名）查找类型
+
+                // 提取光标所在的段名
+                char cursor_segment[128] = {0};
+                {
+                    int seg_start = offset;
+                    int seg_end = offset;
+                    // 向前
+                    while (seg_start > 0 && (isalnum((unsigned char)content[seg_start-1]) || content[seg_start-1] == '_')) seg_start--;
+                    // 向后
+                    while (seg_end < (int)strlen(content) && (isalnum((unsigned char)content[seg_end]) || content[seg_end] == '_')) seg_end++;
+                    int slen = seg_end - seg_start;
+                    if (slen > 0 && slen < 127) {
+                        memcpy(cursor_segment, content + seg_start, slen);
+                        cursor_segment[slen] = '\0';
+                    }
+                }
+
+                if (prev_dot < 0) {
+                    // 光标在第一个段（变量名部分），显示变量类型
                     char* var_type = get_variable_type_from_compiler(content, module, file_path, pos);
                     if (var_type) {
                         fprintf(stderr, "[HOVER-DEBUG] var='%s' (cursor on var) resolved type='%s'\n", module, var_type);
@@ -3909,7 +3930,57 @@ char* lsp_get_hover_info(const char* content, LspPosition pos, const char* file_
                         free(var_type);
                     }
                 } else {
-                    // 光标在点号后（方法部分），正常处理方法悬停
+                    // 光标在某个点号之后
+                    // 判断光标在最后一个段（method 部分）还是中间段（字段部分）
+                    // 向后找下一个点号
+                    int next_dot = -1;
+                    {
+                        int scan = offset;
+                        int bracket_depth = 0;
+                        while (scan < (int)strlen(content)) {
+                            char c = content[scan];
+                            if (c == '(' || c == '[') bracket_depth++;
+                            else if (c == ')' || c == ']') bracket_depth--;
+                            else if (c == '.' && bracket_depth == 0) {
+                                next_dot = scan;
+                                break;
+                            }
+                            if (isalnum((unsigned char)c) || c == '_') { scan++; continue; }
+                            break;
+                        }
+                    }
+
+                    if (next_dot >= 0) {
+                        // 光标在中间段（如 root.children.add 中的 children）
+                        // 这是一个字段访问，需要解析字段类型
+                        // module = root（第一个段），cursor_segment = children
+                        char* var_type = get_variable_type_from_compiler(content, module, file_path, pos);
+                        if (var_type) {
+                            fprintf(stderr, "[HOVER-DEBUG] chained field: var='%s' type='%s' field='%s'\n",
+                                    module, var_type, cursor_segment);
+                            fflush(stderr);
+
+                            // 从 var_type 对应的 struct 中查找字段类型
+                            CompilerContext fctx;
+                            compiler_context_init(&fctx);
+                            if (compiler_analyze_with_filename(&fctx, content, file_path) && fctx.root_scope) {
+                                char* field_type_str = NULL;
+                                if (compiler_get_struct_field_info(&fctx, var_type, cursor_segment, &field_type_str)) {
+                                    size_t info_len = 256 + strlen(cursor_segment) + strlen(field_type_str) + strlen(var_type);
+                                    info = (char*)malloc(info_len);
+                                    if (info) {
+                                        snprintf(info, info_len,
+                                                 "**%s**\n\n```leno\n%s: %s\n```\n\n%s 字段",
+                                                 cursor_segment, cursor_segment, field_type_str, var_type);
+                                    }
+                                    free(field_type_str);
+                                }
+                            }
+                            compiler_context_cleanup(&fctx);
+                            free(var_type);
+                        }
+                    } else {
+                        // 光标在最后一个段（方法部分），正常处理方法悬停
                     // 首先尝试使用编译器确定变量类型
                     char* var_type = get_variable_type_from_compiler(content, module, file_path, pos);
                     if (var_type) {
@@ -4010,7 +4081,8 @@ char* lsp_get_hover_info(const char* content, LspPosition pos, const char* file_
                             info = generate_instance_method_doc(type_name, method);
                         }
                     }
-                }
+                    } // end else (光标在最后一个段)
+                } // end else (prev_dot >= 0)
             }
         }
         free(module);

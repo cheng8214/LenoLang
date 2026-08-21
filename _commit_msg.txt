@@ -1,8 +1,9 @@
-fix(lsp): 链式字段访问悬停解析
+fix(lsp): 链式访问中字段悬停精确定位
 
-对 root.children.add 这类链式访问，当方法名包含点号时：
-1. 先从变量类型解析字段（如 children → Array[HtmlNode]）
-2. 提取字段基础类型（如 Array）
-3. 在字段类型上查找方法（如 Array.add）
+对 root.children.add 这类多层链式访问：
+- 在 children 上悬停时显示字段信息（Array[HtmlNode]）
+  而非误报 add 方法
+- 在 add 上悬停时显示方法信息（Array.add）
 
-避免在 struct 上误查 "children.add" 方法名导致 fallback 提示
+通过 prev_dot/next_dot 扫描确定光标在哪个段，
+中间段走字段类型解析，末尾段走方法查找
