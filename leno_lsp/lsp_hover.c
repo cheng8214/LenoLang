@@ -981,15 +981,30 @@ static char* get_symbol_hover_from_compiler(const char* content, const char* wor
         else if (sym->kind == SYM_ENUM) kind_str = "enum 类型";
         else if (sym->kind == SYM_TYPE) kind_str = "类型别名";
 
-        snprintf(info, info_len, "**%s**\n\n"
-                 "```leno\n"
-                 "%s: %s\n"
-                 "```\n\n"
-                 "%s",
-                 word,
-                 word,
-                 type_str ? type_str : "unknown",
-                 kind_str);
+        // 对函数类型特殊处理：显示 "func xx(params):ret" 而非 "xx: func(params):ret"
+        if (sym->kind == SYM_GLOBAL_FUNC && type_str && strncmp(type_str, "func", 4) == 0) {
+            // type_str 格式: "func(params):ret" → 改为 "func xx(params):ret"
+            const char* after_func = type_str + 4;  // 跳过 "func"，指向 "(" 或其他
+            snprintf(info, info_len, "**%s**\n\n"
+                     "```leno\n"
+                     "func %s%s\n"
+                     "```\n\n"
+                     "%s",
+                     word,
+                     word,
+                     after_func,
+                     kind_str);
+        } else {
+            snprintf(info, info_len, "**%s**\n\n"
+                     "```leno\n"
+                     "%s: %s\n"
+                     "```\n\n"
+                     "%s",
+                     word,
+                     word,
+                     type_str ? type_str : "unknown",
+                     kind_str);
+        }
     }
 
     compiler_context_cleanup(&ctx);

@@ -1,0 +1,4 @@
+fix(lsp): 函数悬停提示格式修复
+
+函数悬停从 "xx: func(params):ret" 改为 "func xx(params):ret"
+与 LenoC 源码中的函数声明语法一致
