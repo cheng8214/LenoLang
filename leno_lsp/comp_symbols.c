@@ -59,9 +59,24 @@ static char* detect_variable_type_from_text(const char* content, const char* var
                 before--;
                 while (before >= content && isspace((unsigned char)*before)) before--;
             }
-            
+
+            // 如果 before 指向 ']'，说明是泛型类型（如 "Array[HtmlNode] children"）
+            // 向前跳过 "[...]" 部分，定位到类型名的末尾
+            if (before >= content && *before == ']') {
+                int bracket_depth = 1;
+                before--;
+                while (before >= content && bracket_depth > 0) {
+                    if (*before == ']') bracket_depth++;
+                    else if (*before == '[') bracket_depth--;
+                    if (bracket_depth > 0) before--;
+                }
+                // before 现在指向 '['，再向前提取类型名
+                while (before > content && isspace((unsigned char)*before)) before--;
+            }
+
             // 检查 "Type varname" 模式（如 "string a", "Array tokens", "Dict d"）
             // 也支持 "Type? varname" 模式（如 "Font? _font"）
+            // 也支持泛型类型 "Array[HtmlNode] varname" 模式
             if (before >= content && (isalnum((unsigned char)*before) || *before == '_')) {
                 // 提取类型名
                 const char* type_end = before + 1;
@@ -309,6 +324,14 @@ void comp_provider_add_user_symbols(CompletionSet* set,
         Symbol* sym = ctx.root_scope->syms[i];
         if (!sym || !sym->name) continue;
         
+        // 过滤掉包含非 ASCII 字符的符号名（防止注释/字符串中的中文被误解析为标识符）
+        bool is_valid_name = true;
+        for (const char* p = sym->name; *p; p++) {
+            unsigned char uc = (unsigned char)*p;
+            if (uc > 127) { is_valid_name = false; break; }
+        }
+        if (!is_valid_name) continue;
+
         const char* type_str = type_to_string(sym->type);
         const char* category = "variable";
         int kind = LSP_COMP_VARIABLE;
@@ -749,6 +772,143 @@ void comp_provider_add_variable_members(
         }
     }
     compiler_context_cleanup(&ctx);
+
+    // 回退1.5：链式字段访问解析（如 root.children. 中的 children）
+    // 从光标位置向前提取完整的链式表达式，解析根变量类型，再逐段解析字段类型
+    if (!type_str && cursor_offset > 0) {
+        // 从光标向前扫描，提取链式表达式的前缀部分
+        // 例如光标在 root.children. 的最后，提取 root.children
+        int scan = cursor_offset - 1;
+        // 跳过尾部的点号或空格
+        while (scan >= 0 && (content[scan] == '.' || isspace((unsigned char)content[scan]))) scan--;
+        // 向前扫描标识符
+        // 收集链式表达式的各段（从后向前）
+        char segments[8][128];
+        int seg_count = 0;
+        while (scan >= 0 && seg_count < 8) {
+            // 提取一个标识符段
+            int seg_end = scan + 1;
+            while (scan >= 0 && (isalnum((unsigned char)content[scan]) || content[scan] == '_')) scan--;
+            int seg_start = scan + 1;
+            int slen = seg_end - seg_start;
+            if (slen <= 0) break;
+            if (slen >= 128) slen = 127;
+            memcpy(segments[seg_count], content + seg_start, slen);
+            segments[seg_count][slen] = '\0';
+            seg_count++;
+            // 跳过点号
+            while (scan >= 0 && (content[scan] == '.' || isspace((unsigned char)content[scan]))) scan--;
+            if (scan < 0 || (!isalnum((unsigned char)content[scan]) && content[scan] != '_')) break;
+        }
+
+        // seg_count 段是从后向前收集的
+        // segments[0] = var_name (如 "children")
+        // segments[1] = 前一段 (如 "root")
+        // 如果 seg_count >= 2，说明有链式访问
+        if (seg_count >= 2) {
+            // 根变量是最后一个段
+            const char* root_var = segments[seg_count - 1];
+            // 逐段解析字段类型
+            CompilerContext cctx2;
+            compiler_context_init(&cctx2);
+            compiler_analyze_with_filename(&cctx2, content, file_path);
+            char* current_type = NULL;
+            if (cctx2.root_scope) {
+                compiler_get_symbol_info(&cctx2, root_var, &current_type, NULL);
+            }
+            // 回退：如果根变量不是全局变量，尝试 struct 字段查找
+            if (!current_type && cctx2.root_scope) {
+                char** snames = NULL;
+                int scount = compiler_find_structs_with_field(&cctx2, root_var, &snames);
+                if (scount > 0) {
+                    char* ft = NULL;
+                    if (compiler_get_struct_field_info(&cctx2, snames[0], root_var, &ft)) {
+                        current_type = ft;
+                    }
+                    for (int i = 0; i < scount; i++) free(snames[i]);
+                    free(snames);
+                }
+            }
+            // 回退：文本匹配
+            if (!current_type) {
+                current_type = detect_variable_type_from_text(content, root_var);
+            }
+
+            if (current_type) {
+                // 剥离可空后缀
+                size_t ctlen = strlen(current_type);
+                while (ctlen > 0 && current_type[ctlen - 1] == '?') {
+                    current_type[ctlen - 1] = '\0';
+                    ctlen--;
+                }
+                // 从根变量类型开始，逐段解析字段
+                // seg_count-1 是根变量，seg_count-2 到 0 是字段段
+                char* working_type = current_type;
+                for (int si = seg_count - 2; si >= 0 && working_type; si--) {
+                    const char* field_name = segments[si];
+                    char* field_type = NULL;
+
+                    // 在 struct 中查找字段类型
+                    if (cctx2.root_scope) {
+                        compiler_get_struct_field_info(&cctx2, working_type, field_name, &field_type);
+                    }
+
+                    // 也尝试从模块符号表中查找
+                    if (!field_type) {
+                        for (int i = 0; i < import_count; i++) {
+                            const char* mp = find_module_path_by_alias(import_aliases, import_count, import_aliases[i].alias);
+                            if (!mp) continue;
+                            module_symbol_table_reset_scan_stack();
+                            ModuleSymbolTable* mtable = module_symbol_table_create(mp);
+                            if (!mtable) continue;
+                            if (module_symbol_table_scan(mtable, file_path) == 0) {
+                                ModuleStructSymbol* mst = module_symbol_table_find_struct(mtable, working_type);
+                                if (mst) {
+                                    for (int j = 0; j < mst->field_count; j++) {
+                                        if (mst->fields[j].name && strcmp(mst->fields[j].name, field_name) == 0) {
+                                            const char* fts = mst->fields[j].struct_name ?
+                                                mst->fields[j].struct_name :
+                                                type_kind_to_string(mst->fields[j].type);
+                                            field_type = strdup(fts);
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            module_symbol_table_destroy(mtable);
+                            if (field_type) break;
+                        }
+                    }
+
+                    if (si == 0) {
+                        // 最后一段（即 var_name 对应的字段）
+                        type_str = field_type;
+                    } else {
+                        // 中间段，继续解析
+                        if (field_type) {
+                            // 剥离可空后缀
+                            size_t ftlen = strlen(field_type);
+                            while (ftlen > 0 && field_type[ftlen - 1] == '?') {
+                                field_type[ftlen - 1] = '\0';
+                                ftlen--;
+                            }
+                            free(working_type);
+                            working_type = field_type;
+                        } else {
+                            // 字段未找到，中断链
+                            free(working_type);
+                            working_type = NULL;
+                            break;
+                        }
+                    }
+                }
+                if (working_type && working_type != type_str) {
+                    free(working_type);
+                }
+            }
+            compiler_context_cleanup(&cctx2);
+        }
+    }
 
     // 回退2：如果仍然未找到，使用文本匹配推断类型
     if (!type_str) {

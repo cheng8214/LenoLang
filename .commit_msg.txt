@@ -1,0 +1,13 @@
+fix(lsp): 修复链式访问补全和中文符号过滤问题
+
+1. 链式字段访问补全：在 comp_provider_add_variable_members 中添加回退1.5逻辑，
+   从光标位置向前提取完整链式表达式（如 root.children），解析根变量类型，
+   再逐段解析字段类型，最终获取目标字段类型用于成员补全。
+   修复 root.children. 后无补全建议的问题。
+
+2. 泛型类型文本匹配：修复 detect_variable_type_from_text 无法解析
+   Array[HtmlNode] children 等泛型类型声明的问题。
+   增加对 ']' 字符的检测，向前跳过泛型括号部分定位到类型名。
+
+3. 中文符号过滤：在 comp_provider_add_user_symbols 中过滤包含非 ASCII
+   字符的符号名，防止注释或字符串中的中文被误解析为标识符后出现在补全列表中。
