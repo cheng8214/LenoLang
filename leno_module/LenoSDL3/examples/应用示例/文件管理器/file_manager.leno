@@ -509,7 +509,13 @@ int nid = tree.add_child(id, node)
     func openFile(string path) {
         if path == "" { return }
         if dirs.is_dir(path) { openDir(path); return }
-        string cmd = "cmd /c start \"\" \"" + path + "\""
+        // 跨平台打开文件：Linux 用 xdg-open，Windows 用 cmd /c start
+        string cmd
+        if _os() == "linux" {
+            cmd = "xdg-open \"" + path + "\""
+        } else {
+            cmd = "cmd /c start \"\" \"" + path + "\""
+        }
         var r = _exec(cmd)
         statusLbl.set_text("已打开: " + dirs.basename(path))
     }
