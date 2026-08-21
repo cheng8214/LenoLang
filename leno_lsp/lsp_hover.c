@@ -1160,6 +1160,20 @@ static char* get_keyword_doc(const char* word) {
                      "}\n"
                      "```");
     }
+    else if (strcmp(word, "to") == 0) {
+        return strdup("**to** - 循环迭代变量关键字\n\n"
+                     "用于 for 循环中声明迭代变量。\n\n"
+                     "```leno\n"
+                     "// 范围循环：i 是迭代变量\n"
+                     "for 0:10 to i {\n"
+                     "    print(i)\n"
+                     "}\n\n"
+                     "// 数组遍历：item 是迭代变量\n"
+                     "for arr to item {\n"
+                     "    print(item)\n"
+                     "}\n"
+                     "```");
+    }
     else if (strcmp(word, "while") == 0) {
         return strdup("**while** - 条件循环\n\n"
                      "```leno\n"

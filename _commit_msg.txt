@@ -1,9 +1,8 @@
-fix(lsp): 链式访问定义查找和跳转修复
+fix(lsp): 添加 to 关键字悬停文档
 
-lsp_get_definition 和悬停附加来源信息使用统一的多层链式段定位：
-- root → 变量名查找定义
-- children → 字段名在当前文件和导入模块中查找
-- add → 方法名拆分模块前缀后查找
+to 是 for 循环的迭代变量关键字，之前缺少关键字文档导致
+悬停误将 to 当变量名查找，显示错误信息。
+现在悬停 to 显示循环迭代变量用法说明。
 
-修复了 root.children.add 在 children 上悬停无来源行号、
-无法跳转的问题
+关于 Array[string] ab 的悬停格式 ab: Array[string]：
+这是标准的「名字: 类型」显示格式，与 LenoC 语法一致，属正常行为。
