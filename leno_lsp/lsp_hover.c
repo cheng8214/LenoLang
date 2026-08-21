@@ -1949,7 +1949,8 @@ static char* get_module_symbol_hover(const char* content, const char* word, cons
 }
 
 // 获取当前文件中 enum 值的悬停信息 (如 "Color.red")
-static char* get_enum_value_hover(const char* content, const char* word) {
+// 如果当前文件中找不到，遍历导入的模块查找 enum 定义
+static char* get_enum_value_hover(const char* content, const char* word, const char* file_path) {
     if (!content || !word) return NULL;
 
     // 解析 enum 名称和值名称
@@ -2054,6 +2055,225 @@ static char* get_enum_value_hover(const char* content, const char* word) {
         // 跳过这一行
         while (*p && *p != '\n') p++;
         if (*p == '\n') p++;
+    }
+
+    // 当前文件中未找到 enum 定义，遍历导入的模块查找
+    {
+        // 解析 import 语句，获取所有导入的模块路径
+        extern ImportAlias* parse_imports(const char* content, int* count);
+        extern void free_import_aliases(ImportAlias* aliases, int count);
+        extern const char* find_module_path_by_alias(ImportAlias* aliases, int count, const char* alias);
+        extern int package_resolve_module_file(const char* module_name, char* out_path, int out_len);
+
+        int imp_count = 0;
+        ImportAlias* imports = parse_imports(content, &imp_count);
+
+        for (int i = 0; i < imp_count; i++) {
+            const char* mod_path = find_module_path_by_alias(imports, imp_count, imports[i].alias);
+            char resolved[MAX_PATH_LEN] = {0};
+
+            if (!mod_path) {
+                // 尝试通过包搜索路径解析
+                if (package_resolve_module_file(imports[i].alias, resolved, sizeof(resolved)) == 1) {
+                    mod_path = resolved;
+                }
+            }
+
+            if (!mod_path) continue;
+
+            module_symbol_table_reset_scan_stack();
+            ModuleSymbolTable* table = module_symbol_table_create(mod_path);
+            if (!table) continue;
+
+            if (module_symbol_table_scan(table, file_path) != 0) {
+                module_symbol_table_destroy(table);
+                continue;
+            }
+
+            // 在模块符号表中查找 enum
+            ModuleEnumSymbol* en = module_symbol_table_find_enum(table, enum_name);
+            if (en) {
+                // 查找匹配的成员
+                for (int ei = 0; ei < en->member_count; ei++) {
+                    if (strcmp(en->member_names[ei], value_name) == 0) {
+                        size_t info_len = 512 + strlen(word) + strlen(enum_name);
+                        char* info = (char*)malloc(info_len);
+                        if (info) {
+                            // 构建成员列表
+                            char members[512] = {0};
+                            for (int mi = 0; mi < en->member_count && mi < 12; mi++) {
+                                if (mi > 0) strcat(members, ", ");
+                                strcat(members, en->member_names[mi]);
+                            }
+                            if (en->member_count > 12) strcat(members, ", ...");
+
+                            snprintf(info, info_len, "**%s**\n\n"
+                                     "```leno\n"
+                                     "%s  // %s.%s\n"
+                                     "```\n\n"
+                                     "%s enum 值 (来自模块 %s)\n\n"
+                                     "enum %s { %s }",
+                                     word, word, enum_name, value_name,
+                                     enum_name, imports[i].alias,
+                                     enum_name, members);
+                        }
+                        module_symbol_table_destroy(table);
+                        free_import_aliases(imports, imp_count);
+                        return info;
+                    }
+                }
+            }
+
+            module_symbol_table_destroy(table);
+        }
+
+        free_import_aliases(imports, imp_count);
+    }
+
+    // 也遍历 use 语句导入的模块查找 enum
+    {
+        const char* use_p = content;
+        while (*use_p) {
+            while (*use_p && (*use_p == ' ' || *use_p == '\t')) use_p++;
+            if (!*use_p) break;
+
+            // 跳过注释
+            if (*use_p == '/' && use_p[1] == '/') {
+                while (*use_p && *use_p != '\n') use_p++;
+                if (*use_p) use_p++;
+                continue;
+            }
+
+            // 检测 use 语句
+            if (strncmp(use_p, "use", 3) != 0 || (use_p[3] && (isalnum((unsigned char)use_p[3]) || use_p[3] == '_'))) {
+                while (*use_p && *use_p != '\n') use_p++;
+                if (*use_p) use_p++;
+                continue;
+            }
+
+            use_p += 3;
+            while (*use_p && (*use_p == ' ' || *use_p == '\t')) use_p++;
+
+            // 提取模块名
+            const char* mod_start = use_p;
+            while (*use_p && (isalnum((unsigned char)*use_p) || *use_p == '_')) use_p++;
+            int use_mod_len = (int)(use_p - mod_start);
+            if (use_mod_len <= 0 || use_mod_len >= 64) {
+                while (*use_p && *use_p != '\n') use_p++;
+                if (*use_p) use_p++;
+                continue;
+            }
+
+            char use_mod_name[65];
+            memcpy(use_mod_name, mod_start, use_mod_len);
+            use_mod_name[use_mod_len] = '\0';
+
+            if (*use_p != '.') {
+                while (*use_p && *use_p != '\n') use_p++;
+                if (*use_p) use_p++;
+                continue;
+            }
+            use_p++;
+
+            // 处理批量模式 use module.(A, B, C) 和单个模式 use module.Type
+            int batch_mode = (*use_p == '(');
+            if (batch_mode) use_p++;
+
+            while (1) {
+                if (batch_mode) {
+                    while (*use_p && (*use_p == ' ' || *use_p == '\t')) use_p++;
+                    if (*use_p == ')') { use_p++; break; }
+                }
+
+                // 读取类型名
+                const char* type_start = use_p;
+                while (*use_p && (isalnum((unsigned char)*use_p) || *use_p == '_')) use_p++;
+                int use_type_len = (int)(use_p - type_start);
+                if (use_type_len <= 0 || use_type_len >= 64) {
+                    if (batch_mode) {
+                        while (*use_p && *use_p != ',' && *use_p != ')' && *use_p != '\n') use_p++;
+                        if (*use_p == ',') { use_p++; continue; }
+                        if (*use_p == ')') { use_p++; break; }
+                    }
+                    break;
+                }
+
+                char use_type_name[65];
+                memcpy(use_type_name, type_start, use_type_len);
+                use_type_name[use_type_len] = '\0';
+
+                // 如果 use 导入的类型名与 enum_name 匹配，查找对应模块
+                if (strcmp(use_type_name, enum_name) == 0) {
+                    // 解析模块路径
+                    extern ImportAlias* parse_imports(const char* content, int* count);
+                    extern void free_import_aliases(ImportAlias* aliases, int count);
+                    extern const char* find_module_path_by_alias(ImportAlias* aliases, int count, const char* alias);
+                    extern int package_resolve_module_file(const char* module_name, char* out_path, int out_len);
+
+                    int use_imp_count = 0;
+                    ImportAlias* use_imports = parse_imports(content, &use_imp_count);
+
+                    const char* use_mod_path = find_module_path_by_alias(use_imports, use_imp_count, use_mod_name);
+                    char use_resolved[MAX_PATH_LEN] = {0};
+
+                    if (!use_mod_path) {
+                        if (package_resolve_module_file(use_mod_name, use_resolved, sizeof(use_resolved)) == 1) {
+                            use_mod_path = use_resolved;
+                        }
+                    }
+
+                    if (use_mod_path) {
+                        module_symbol_table_reset_scan_stack();
+                        ModuleSymbolTable* use_table = module_symbol_table_create(use_mod_path);
+                        if (use_table && module_symbol_table_scan(use_table, file_path) == 0) {
+                            ModuleEnumSymbol* use_en = module_symbol_table_find_enum(use_table, enum_name);
+                            if (use_en) {
+                                for (int ei = 0; ei < use_en->member_count; ei++) {
+                                    if (strcmp(use_en->member_names[ei], value_name) == 0) {
+                                        size_t info_len = 512 + strlen(word) + strlen(enum_name);
+                                        char* info = (char*)malloc(info_len);
+                                        if (info) {
+                                            char members[512] = {0};
+                                            for (int mi = 0; mi < use_en->member_count && mi < 12; mi++) {
+                                                if (mi > 0) strcat(members, ", ");
+                                                strcat(members, use_en->member_names[mi]);
+                                            }
+                                            if (use_en->member_count > 12) strcat(members, ", ...");
+
+                                            snprintf(info, info_len, "**%s**\n\n"
+                                                     "```leno\n"
+                                                     "%s  // %s.%s\n"
+                                                     "```\n\n"
+                                                     "%s enum 值 (来自模块 %s, use 导入)\n\n"
+                                                     "enum %s { %s }",
+                                                     word, word, enum_name, value_name,
+                                                     enum_name, use_mod_name,
+                                                     enum_name, members);
+                                        }
+                                        module_symbol_table_destroy(use_table);
+                                        free_import_aliases(use_imports, use_imp_count);
+                                        return info;
+                                    }
+                                }
+                            }
+                        }
+                        if (use_table) module_symbol_table_destroy(use_table);
+                    }
+
+                    free_import_aliases(use_imports, use_imp_count);
+                }
+
+                if (!batch_mode) break;
+
+                while (*use_p && (*use_p == ' ' || *use_p == '\t')) use_p++;
+                if (*use_p == ',') use_p++;
+                while (*use_p && (*use_p == ' ' || *use_p == '\t')) use_p++;
+                if (*use_p == ')') { use_p++; break; }
+            }
+
+            while (*use_p && *use_p != '\n') use_p++;
+            if (*use_p) use_p++;
+        }
     }
 
     return NULL;
@@ -3549,7 +3769,7 @@ char* lsp_get_hover_info(const char* content, LspPosition pos, const char* file_
 
     // 0.5 检查是否是当前文件中的 enum 值 (如 "Color.red")
     if (!info) {
-        info = get_enum_value_hover(content, word);
+        info = get_enum_value_hover(content, word, file_path);
     }
 
     // 1. 尝试获取关键字文档
