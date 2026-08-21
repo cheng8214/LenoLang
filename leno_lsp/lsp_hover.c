@@ -3416,6 +3416,26 @@ char* lsp_get_hover_info(const char* content, LspPosition pos, const char* file_
         return NULL;
     }
     
+    // 如果 word 是数字字面量（如 0, 0.0, 123, 3.14 等），不提供悬停提示
+    // 这处理浮点数字面量被点号分隔器误拆分的情况（如 0.0 → module=0, method=0）
+    {
+        bool is_number = true;
+        bool has_dot = false;
+        for (const char* p = word; *p; p++) {
+            if (*p == '.') {
+                if (has_dot) { is_number = false; break; }  // 多个点号，不是数字
+                has_dot = true;
+            } else if (!isdigit((unsigned char)*p)) {
+                is_number = false;
+                break;
+            }
+        }
+        if (is_number && *word) {
+            free(word);
+            return NULL;
+        }
+    }
+    
     char* info = NULL;
     
     // 0. 检查是否是导入模块的导出符号 (如 "color_module.Color.red")
@@ -3503,56 +3523,95 @@ char* lsp_get_hover_info(const char* content, LspPosition pos, const char* file_
             // 不是模块方法，尝试作为实例方法
             int offset = lsp_position_to_offset(content, pos);
             if (!is_inside_string_literal(content, offset) && !is_inside_comment(content, offset)) {
-                // 首先尝试使用编译器确定变量类型
-                char* var_type = get_variable_type_from_compiler(content, module, file_path, pos);
-                if (var_type) {
-                    fprintf(stderr, "[HOVER-DEBUG] var='%s' resolved type='%s', method='%s'\n", module, var_type, method);
-                    fflush(stderr);
-                    
-                    // 先尝试原生实例方法
-                    int arity = native_get_instance_method_arity(var_type, method);
-                    if (arity >= 0) {
-                        info = generate_instance_method_doc(var_type, method);
-                    }
-                    
-                    // 如果原生方法没找到，尝试用户定义的 struct 方法
-                    if (!info) {
-                        info = generate_struct_method_doc(var_type, method, content, file_path);
-                    }
-                    
-                    // 如果 struct_def_find 也失败，从导入的模块符号表中查找
-                    if (!info) {
-                        info = generate_struct_method_doc_from_modules(var_type, method, content, file_path);
-                    }
-                    
-                    // 如果仍然没找到，尝试 clib 方法
-                    if (!info) {
-                        info = generate_clib_method_doc(var_type, method, content, file_path);
-                    }
-                    
-                    // 4.5 回退：如果方法查找全部失败但已知变量类型，显示基本成员提示
-                    // 这处理 _font.ok 这种字段访问（ok 是 Font 的字段而非方法）
-                    if (!info) {
-                        size_t fallback_len = 256 + strlen(module) + strlen(method) + strlen(var_type);
-                        info = (char*)malloc(fallback_len);
-                        if (info) {
-                            snprintf(info, fallback_len, 
-                                     "**%s.%s**\n\n```leno\n// %s 类型的成员\n```\n\n`%s` 是 `%s` 类型变量的成员",
-                                     module, method, var_type, method, var_type);
+                // 判断光标是在点号前（变量部分）还是点号后（方法部分）
+                // 如果光标在变量部分，应显示变量类型信息而非方法信息
+                bool cursor_before_dot = false;
+                {
+                    int scan = offset;
+                    while (scan >= 0) {
+                        char c = content[scan];
+                        if (c == '.') {
+                            // 光标在点号之后（方法部分），正常处理方法
+                            cursor_before_dot = false;
+                            break;
                         }
+                        if (isalnum((unsigned char)c) || c == '_') {
+                            scan--;
+                            continue;
+                        }
+                        // 遇到非单词非点号字符，说明光标在变量部分（点号之前）
+                        cursor_before_dot = true;
+                        break;
                     }
-                    
-                    free(var_type);
-                } else {
-                    fprintf(stderr, "[HOVER-DEBUG] var='%s' type resolution failed (NULL)\n", module);
-                    fflush(stderr);
                 }
+                if (cursor_before_dot) {
+                    // 光标在变量部分（点号前），显示变量类型信息而非方法信息
+                    // 使用 module（即点号前的变量名）查找类型
+                    char* var_type = get_variable_type_from_compiler(content, module, file_path, pos);
+                    if (var_type) {
+                        fprintf(stderr, "[HOVER-DEBUG] var='%s' (cursor on var) resolved type='%s'\n", module, var_type);
+                        fflush(stderr);
+                        size_t info_len = strlen(module) + strlen(var_type) + 256;
+                        info = (char*)malloc(info_len);
+                        if (info) {
+                            snprintf(info, info_len, "**%s**\n\n```leno\n%s: %s\n```\n\n变量",
+                                     module, module, var_type);
+                        }
+                        free(var_type);
+                    }
+                } else {
+                    // 光标在点号后（方法部分），正常处理方法悬停
+                    // 首先尝试使用编译器确定变量类型
+                    char* var_type = get_variable_type_from_compiler(content, module, file_path, pos);
+                    if (var_type) {
+                        fprintf(stderr, "[HOVER-DEBUG] var='%s' resolved type='%s', method='%s'\n", module, var_type, method);
+                        fflush(stderr);
+                        
+                        // 先尝试原生实例方法
+                        int arity = native_get_instance_method_arity(var_type, method);
+                        if (arity >= 0) {
+                            info = generate_instance_method_doc(var_type, method);
+                        }
+                        
+                        // 如果原生方法没找到，尝试用户定义的 struct 方法
+                        if (!info) {
+                            info = generate_struct_method_doc(var_type, method, content, file_path);
+                        }
+                        
+                        // 如果 struct_def_find 也失败，从导入的模块符号表中查找
+                        if (!info) {
+                            info = generate_struct_method_doc_from_modules(var_type, method, content, file_path);
+                        }
+                        
+                        // 如果仍然没找到，尝试 clib 方法
+                        if (!info) {
+                            info = generate_clib_method_doc(var_type, method, content, file_path);
+                        }
+                        
+                        // 4.5 回退：如果方法查找全部失败但已知变量类型，显示基本成员提示
+                        // 这处理 _font.ok 这种字段访问（ok 是 Font 的字段而非方法）
+                        if (!info) {
+                            size_t fallback_len = 256 + strlen(module) + strlen(method) + strlen(var_type);
+                            info = (char*)malloc(fallback_len);
+                            if (info) {
+                                snprintf(info, fallback_len, 
+                                         "**%s.%s**\n\n```leno\n// %s 类型的成员\n```\n\n`%s` 是 `%s` 类型变量的成员",
+                                         module, method, var_type, method, var_type);
+                            }
+                        }
+                        
+                        free(var_type);
+                    } else {
+                        fprintf(stderr, "[HOVER-DEBUG] var='%s' type resolution failed (NULL)\n", module);
+                        fflush(stderr);
+                    }
 
-                // 如果编译器无法确定类型，使用启发式方法
-                if (!info) {
-                    const char* type_name = is_instance_method(method);
-                    if (type_name) {
-                        info = generate_instance_method_doc(type_name, method);
+                    // 如果编译器无法确定类型，使用启发式方法
+                    if (!info) {
+                        const char* type_name = is_instance_method(method);
+                        if (type_name) {
+                            info = generate_instance_method_doc(type_name, method);
+                        }
                     }
                 }
             }
@@ -3634,12 +3693,42 @@ char* lsp_get_hover_info(const char* content, LspPosition pos, const char* file_
             if (cur_uri) free(cur_uri);
 
             // 确定用于显示的 word
+            // 如果光标在变量部分（点号前），使用变量名而非方法名
             const char* def_word = word;
             char* short_word = NULL;
             const char* dot = strrchr(word, '.');
             if (dot && *(dot + 1)) {
-                short_word = strdup(dot + 1);
-                def_word = short_word;
+                // 检查光标是否在点号之前（变量部分）
+                int cur_off = lsp_position_to_offset(content, pos);
+                bool cursor_in_var_part = true;
+                if (cur_off >= 0) {
+                    int scan = cur_off;
+                    while (scan >= 0) {
+                        char c = content[scan];
+                        if (c == '.') {
+                            cursor_in_var_part = false;
+                            break;
+                        }
+                        if (isalnum((unsigned char)c) || c == '_') {
+                            scan--;
+                            continue;
+                        }
+                        break;
+                    }
+                }
+                if (cursor_in_var_part) {
+                    // 光标在变量部分，使用点号前的变量名
+                    int base_len = dot - word;
+                    short_word = (char*)malloc(base_len + 1);
+                    if (short_word) {
+                        memcpy(short_word, word, base_len);
+                        short_word[base_len] = '\0';
+                        def_word = short_word;
+                    }
+                } else {
+                    short_word = strdup(dot + 1);
+                    def_word = short_word;
+                }
             }
 
             // 如果 info 为 NULL，生成基本悬停信息
