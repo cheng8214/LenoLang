@@ -596,8 +596,26 @@
                                 }
                             }
 
-                            // 当 return_type == TYPE_ANY 且 expected_arity == -1 时表示方法不存在
-                            if (!(return_type == TYPE_ANY && expected_arity == -1)) {
+                            // 检查方法是否真实存在
+                            // native_find_instance_method 返回 NULL 表示原生方法表没有此方法
+                            // expected_arity >= 0 表示通过 func_table 或模块符号表回退找到了方法
+                            // fallback_default_count > 0 同样表示回退找到了方法
+                            // 注意：对于 struct/cstruct 类型，方法可能在跨模块定义中，
+                            // 编译时无法完全确定方法是否存在，所以不报错，留给运行时处理
+                            const InstanceMethodMeta* method_meta = native_find_instance_method(type_name, method_name);
+                            int method_found = (method_meta != NULL) || (expected_arity >= 0) || (fallback_default_count > 0);
+                            // struct/cstruct 的方法可能跨模块定义，编译时无法确定，跳过报错
+                            int is_struct_like = (receiver_type->kind == TYPE_STRUCT || receiver_type->kind == TYPE_CSTRUCT || receiver_type->kind == TYPE_FACE);
+                            if (!method_found && !is_struct_like) {
+                                // 方法不存在，编译时报错
+                                char msg[BUFFER_MEDIUM];
+                                const char* type_str = type_to_string(receiver_type);
+                                snprintf(msg, sizeof(msg),
+                                    "类型 '%s' 没有方法 '%s'\n"
+                                    "  提示: 如果是数组切片，请使用 arr[start:end] 语法而非 .slice()",
+                                    type_str, method_name);
+                                error_add(ERR_SEMANTIC, ast->line, msg);
+                            } else {
                                 // 是实例方法，检查参数
                                 int actual_arity = ast->u.call.args.count;
                                 // 如果第一个参数是 self（方法内部调用 self["method"](self, ...)），

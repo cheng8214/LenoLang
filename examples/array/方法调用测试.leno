@@ -1,0 +1,15 @@
+
+struct cs
+{
+    Array[int] arr =[1,2,3,4,5]
+    func test()
+    {
+        arr.slice(0,2)//这个方法在array是不存在的，测试slice在struct里编译器是否报错
+    }
+}
+
+main()
+{
+ cs a=new cs()
+ a.test()
+}
