@@ -642,6 +642,7 @@ static void check_var_decl_boundary(Parser* p, int decl_line) {
 
 Ast* parse_var_decl_internal(Parser* p) {
     int line = p->lex.current.line;
+    int decl_column = p->lex.current.column;  // 变量声明起始列号
     TypeInfo* shared_type = NULL;
     int is_const = 0;
     
@@ -656,6 +657,7 @@ Ast* parse_var_decl_internal(Parser* p) {
             lexer_next(&p->lex);
             LenoTokenType peek = p->lex.current.type;
             p->lex = saved_lex;
+            error_set_column(saved_lex.current.column);  // 恢复列号
             if (peek == TOK_EQ || peek == TOK_COMMA) {
                 shared_type = type_new(TYPE_INFER);
             }
@@ -718,6 +720,7 @@ Ast* parse_var_decl_internal(Parser* p) {
         
         // 创建变量声明节点
         Ast* ast = ast_new(AST_VAR_DECL, line);
+        ast->column = decl_column;
         ast->u.var_decl.name = name;
         ast->u.var_decl.init = init;
         ast->u.var_decl.type = var_type;
@@ -759,7 +762,7 @@ Ast* parse_var_decl_internal(Parser* p) {
 // ============================================================================
 
 // 解析函数体和创建函数定义 AST
-Ast* parse_func_body_and_create(Parser* p, char* name, int line) {
+Ast* parse_func_body_and_create(Parser* p, char* name, int line, int column) {
     // 解析泛型类型参数: func name[T, U](...) 或 func name[T: FaceName = int](...)
     char** type_params = NULL;
     char** type_param_constraints = NULL;
@@ -909,6 +912,7 @@ Ast* parse_func_body_and_create(Parser* p, char* name, int line) {
     Ast* body = parse_block_internal(p);
 
     Ast* ast = ast_new(AST_FUNC_DEF, line);
+    ast->column = column;
     ast->u.func.name = name;
     ast->u.func.params = params;
     ast->u.func.param_types = param_types;
@@ -935,6 +939,7 @@ Ast* parse_func_body_and_create(Parser* p, char* name, int line) {
 // 解析普通函数定义（带 func 关键字）
 Ast* parse_func_stmt(Parser* p) {
     int line = p->lex.current.line;
+    int func_column = p->lex.current.column;
     int is_async = 0;
     
     // 检查是否是 async 函数
@@ -974,7 +979,7 @@ Ast* parse_func_stmt(Parser* p) {
     
     lexer_next(&p->lex);
 
-    Ast* ast = parse_func_body_and_create(p, name, line);
+    Ast* ast = parse_func_body_and_create(p, name, line, func_column);
     if (ast) {
         ast->u.func.is_async = is_async;
     }
@@ -1008,6 +1013,7 @@ int is_entry_function_def(Parser* p) {
     if (p->lex.current.type != TOK_LPAREN) {
         // 恢复状态
         p->lex = saved_lex;
+            error_set_column(saved_lex.current.column);  // 恢复列号
         return 0;
     }
 
@@ -1018,6 +1024,7 @@ int is_entry_function_def(Parser* p) {
     if (p->lex.current.type != TOK_RPAREN) {
         // 恢复状态
         p->lex = saved_lex;
+            error_set_column(saved_lex.current.column);  // 恢复列号
         return 0;
     }
 
@@ -1029,18 +1036,20 @@ int is_entry_function_def(Parser* p) {
 
     // 恢复状态
     p->lex = saved_lex;
+            error_set_column(saved_lex.current.column);  // 恢复列号
     return result;
 }
 
 // 解析入口函数定义（如 main() { }）
 Ast* parse_entry_func_stmt(Parser* p) {
     int line = p->lex.current.line;
+    int entry_column = p->lex.current.column;
 
     // 获取函数名
     char* name = copy_string(p->lex.current.text, p->lex.current.len);
     lexer_next(&p->lex); // 消费标识符
 
-    return parse_func_body_and_create(p, name, line);
+    return parse_func_body_and_create(p, name, line, entry_column);
 }
 
 // ============================================================================
@@ -1049,6 +1058,7 @@ Ast* parse_entry_func_stmt(Parser* p) {
 
 Ast* parse_anonymous_func(Parser* p) {
     int line = p->lex.current.line;
+    int anon_column = p->lex.current.column;
     
     // 消费 func 关键字
     lexer_next(&p->lex);
@@ -1056,7 +1066,7 @@ Ast* parse_anonymous_func(Parser* p) {
     // 匿名函数使用空字符串作为名称（或生成唯一名称）
     char* name = copy_string("<anonymous>", 11);
     
-    return parse_func_body_and_create(p, name, line);
+    return parse_func_body_and_create(p, name, line, anon_column);
 }
 
 // ============================================================================
@@ -1081,6 +1091,7 @@ static void free_assign_targets(Ast** targets, int count) {
 
 Ast* parse_expression_stmt(Parser* p) {
     int line = p->lex.current.line;
+    int stmt_column = p->lex.current.column;
     
     // 检查是否是并行赋值：a, b = c, d 或 arr[0], arr[4] = x, y
     Ast** left_targets = NULL;
@@ -1101,6 +1112,7 @@ Ast* parse_expression_stmt(Parser* p) {
             // 不是合法的赋值目标，回退并作为普通表达式解析
             if (first_target) ast_free(first_target);
             p->lex = save_lex;
+            error_set_column(save_lex.current.column);  // 恢复列号
             goto normal_parse;
         }
         
@@ -1115,6 +1127,7 @@ Ast* parse_expression_stmt(Parser* p) {
                 // 不是标识符开头，回退
                 free_assign_targets(left_targets, left_count);
                 p->lex = save_lex;
+                error_set_column(save_lex.current.column);  // 恢复列号
                 goto normal_parse;
             }
             
@@ -1126,6 +1139,7 @@ Ast* parse_expression_stmt(Parser* p) {
                 free_assign_targets(left_targets, left_count);
                 if (next_target) ast_free(next_target);
                 p->lex = save_lex;
+                error_set_column(save_lex.current.column);  // 恢复列号
                 goto normal_parse;
             }
             
@@ -1172,6 +1186,7 @@ Ast* parse_expression_stmt(Parser* p) {
                 
                 // 创建复合赋值节点
                 Ast* ast = ast_new(AST_COMPOUND_ASSIGN, line);
+                ast->column = left_targets[0]->column;
                 ast->u.compound_assign.name = strdup(left_targets[0]->u.var.name);
                 ast->u.compound_assign.value = value;
                 ast->u.compound_assign.op = op;
@@ -1184,6 +1199,7 @@ Ast* parse_expression_stmt(Parser* p) {
                 
                 // 包装成表达式语句
                 Ast* expr_stmt = ast_new(AST_EXPR_STMT, line);
+                expr_stmt->column = stmt_column;
                 expr_stmt->u.expr_stmt.expr = ast;
                 return expr_stmt;
             }
@@ -1215,6 +1231,7 @@ Ast* parse_expression_stmt(Parser* p) {
             
             // 创建赋值节点
             Ast* assign_ast = ast_new(AST_ASSIGN, line);
+            assign_ast->column = left_targets[0]->column;  // 用左侧变量名的列号
             assign_ast->u.assign.names = (char**)malloc(sizeof(char*) * left_count);
             assign_ast->u.assign.name_count = left_count;
             assign_ast->u.assign.targets = left_targets;
@@ -1244,6 +1261,7 @@ Ast* parse_expression_stmt(Parser* p) {
             
             // 包装成表达式语句
             Ast* ast = ast_new(AST_EXPR_STMT, line);
+            ast->column = stmt_column;
             ast->u.expr_stmt.expr = assign_ast;
             return ast;
         }
@@ -1251,6 +1269,7 @@ Ast* parse_expression_stmt(Parser* p) {
         // 不是赋值，回退并作为普通表达式解析
         free_assign_targets(left_targets, left_count);
         p->lex = save_lex;
+        error_set_column(save_lex.current.column);  // 恢复列号
     }
     
 normal_parse:
@@ -1266,6 +1285,7 @@ normal_parse:
     }
     
     Ast* ast = ast_new(AST_EXPR_STMT, line);
+    ast->column = stmt_column;
     ast->u.expr_stmt.expr = expr;
     return ast;
 }
@@ -1456,6 +1476,7 @@ Ast* parse_struct_stmt(Parser* p) {
                 lexer_next(&p->lex);
                 LenoTokenType peek = p->lex.current.type;
                 p->lex = saved_lex;
+            error_set_column(saved_lex.current.column);  // 恢复列号
                 if (peek == TOK_EQ || peek == TOK_COMMA) {
                     const_type = type_new(TYPE_INFER);  // 类型推断
                 }
@@ -1561,6 +1582,7 @@ Ast* parse_struct_stmt(Parser* p) {
                 // 函数类型字段，不走方法定义路径，fall through 到下面的字段类型解析
             } else {
             int func_line = p->lex.current.line;
+            int func_col = p->lex.current.column;
             lexer_next(&p->lex); // 消费 'func'
 
             // 检查是否是析构函数（func ~StructName）
@@ -1598,7 +1620,7 @@ Ast* parse_struct_stmt(Parser* p) {
             }
 
             // 解析函数体
-            Ast* func_ast = parse_func_body_and_create(p, method_name, func_line);
+            Ast* func_ast = parse_func_body_and_create(p, method_name, func_line, func_col);
             if (func_ast) {
                 // 设置标志
                 func_ast->u.func.is_async = is_async;

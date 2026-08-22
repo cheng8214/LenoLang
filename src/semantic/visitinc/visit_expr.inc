@@ -317,7 +317,7 @@
                                 "字段 '%s3' 类型不匹配: 期望 '%s1'，实际 '%s2'",
                                 expected_type, value_type,
                                 field_name, NULL);
-                            error_add(ERR_TYPE_MISMATCH, ast->line, msg);
+                            error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                         }
 
                         if (value_type) type_free(value_type);
@@ -371,7 +371,7 @@
             // 检查数组索引赋值的元素类型
             else if (obj_type && obj_type->kind == TYPE_ARRAY) {
                 TypeInfo* value_type = infer_expr_type(s, ast->u.index_assign.value);
-                type_utils_check_array_index_assignment(obj_type, value_type, ast->line);
+                type_utils_check_array_index_assignment(obj_type, value_type, ast->line, ast->column);
                 if (value_type) type_free(value_type);
             }
             // 检查字典值类型和键是否存在
@@ -385,7 +385,7 @@
                     
                     if (sym) {
                         TypeInfo* assign_type = infer_expr_type(s, ast->u.index_assign.value);
-                        type_utils_check_dict_index_assignment(sym, assign_type, ast->line);
+                        type_utils_check_dict_index_assignment(sym, assign_type, ast->line, ast->column);
                         if (assign_type) type_free(assign_type);
                     }
                 }
@@ -454,7 +454,7 @@
                                                     receiver_type->struct_name, method_name);
                                                 char final_msg[BUFFER_MEDIUM];
                                                 snprintf(final_msg, sizeof(final_msg), msg, pi + 1);
-                                                error_add(ERR_TYPE_MISMATCH, ast->line, final_msg);
+                                                error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, final_msg);
                                             }
                                             if (arg_type) type_free(arg_type);
                                         }
@@ -1227,7 +1227,7 @@
                     } else {
                         char msg[BUFFER_MEDIUM];
                         snprintf(msg, sizeof(msg), "未定义的函数: %s", func_name);
-                        error_add(ERR_UNDEFINED_FUNC, ast->line, msg);
+                        error_add_at(ERR_UNDEFINED_FUNC, ast->line, ast->column, msg);
                     }
                 } else {
                     ast->u.call.callee->u.var.ref.type_kind = sym->type ? sym->type->kind : TYPE_ANY;
@@ -1483,7 +1483,7 @@
                                             arg_type->struct_name, check_type->struct_name);
                                         { size_t _ml = strlen(msg); snprintf(msg + _ml, sizeof(msg) - _ml, "%s", hint); }
                                     }
-                                    error_add(ERR_TYPE_MISMATCH, ast->line, msg);
+                                    error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                                 }
                             }
                             if (arg_type) type_free(arg_type);
@@ -1638,7 +1638,7 @@
                     char msg[BUFFER_MEDIUM];
                     snprintf(msg, sizeof(msg), "数组索引必须是整数类型，实际为 %s",
                              type_kind_to_string(index_type->kind));
-                    error_add(ERR_TYPE_MISMATCH, ast->line, msg);
+                    error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                 }
                 if (index_type) type_free(index_type);
             }
@@ -1719,7 +1719,7 @@
                                             "字段 'self.%s' 默认值为 null，访问其成员可能导致运行时错误",
                                             inner_field);
                                     }
-                                    warning_add(WARN_NULL_FIELD_CHAIN, ast->line, msg);
+                                    warning_add_at(WARN_NULL_FIELD_CHAIN, ast->line, ast->column, msg);
                                 }
                                 break;
                             }
@@ -1795,7 +1795,7 @@
                                         "字段 '%s' 默认值为 null，访问其成员可能导致运行时错误",
                                         inner_field);
                                 }
-                                warning_add(WARN_NULL_FIELD_CHAIN, ast->line, msg);
+                                warning_add_at(WARN_NULL_FIELD_CHAIN, ast->line, ast->column, msg);
                             }
                             break;
                         }
@@ -1857,7 +1857,7 @@
                     char msg[BUFFER_MEDIUM];
                     snprintf(msg, sizeof(msg), "切片操作需要数组类型，实际为 %s",
                              type_kind_to_string(slice_obj_type->kind));
-                    error_add(ERR_TYPE_MISMATCH, ast->line, msg);
+                    error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                 }
             }
             if (slice_obj_type) type_free(slice_obj_type);
@@ -1869,7 +1869,7 @@
                     char msg[BUFFER_MEDIUM];
                     snprintf(msg, sizeof(msg), "切片起始索引必须是整数类型，实际为 %s",
                              type_kind_to_string(start_type->kind));
-                    error_add(ERR_TYPE_MISMATCH, ast->line, msg);
+                    error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                 }
                 if (start_type) type_free(start_type);
             }
@@ -1881,7 +1881,7 @@
                     char msg[BUFFER_MEDIUM];
                     snprintf(msg, sizeof(msg), "切片结束索引必须是整数类型，实际为 %s",
                              type_kind_to_string(end_type->kind));
-                    error_add(ERR_TYPE_MISMATCH, ast->line, msg);
+                    error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                 }
                 if (end_type) type_free(end_type);
             }

@@ -20,7 +20,7 @@
                         char msg[BUFFER_MEDIUM];
                         snprintf(msg, sizeof(msg), "返回类型不匹配：期望 %s，实际 %s",
                                  expected_buf, actual_str);
-                        error_add(ERR_TYPE_MISMATCH, ast->line, msg);
+                        error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                     }
                     type_free(return_type_info);
                 }

@@ -459,7 +459,7 @@ void format_detailed_type_error_ex(char* buf, size_t buf_size,
 //   line - 行号（用于错误报告）
 // 返回：
 //   1 = 类型兼容，0 = 类型不兼容（已报告错误）
-int type_utils_check_array_index_assignment(TypeInfo* obj_type, TypeInfo* value_type, int line) {
+int type_utils_check_array_index_assignment(TypeInfo* obj_type, TypeInfo* value_type, int line, int column) {
     if (!obj_type || obj_type->kind != TYPE_ARRAY) {
         return 1;  // 不是数组，不检查
     }
@@ -478,7 +478,7 @@ int type_utils_check_array_index_assignment(TypeInfo* obj_type, TypeInfo* value_
         char msg[BUFFER_MEDIUM];
         format_detailed_type_error(msg, sizeof(msg),
             elem_type, value_type, "数组元素类型不匹配");
-        error_add(ERR_SEMANTIC, line, msg);
+        error_add_at(ERR_SEMANTIC, line, column, msg);
         return 0;
     }
     
@@ -495,7 +495,7 @@ int type_utils_check_array_index_assignment(TypeInfo* obj_type, TypeInfo* value_
     char msg[BUFFER_MEDIUM];
     format_detailed_type_error(msg, sizeof(msg),
         elem_type, value_type, "数组元素类型不匹配");
-    error_add(ERR_SEMANTIC, line, msg);
+    error_add_at(ERR_SEMANTIC, line, column, msg);
     
     return 0;
 }
@@ -511,7 +511,7 @@ int type_utils_check_array_index_assignment(TypeInfo* obj_type, TypeInfo* value_
 //   line - 行号（用于错误报告）
 // 返回：
 //   1 = 类型兼容或已更新类型，0 = 类型不兼容（已报告错误）
-int type_utils_check_dict_index_assignment(Symbol* dict_sym, TypeInfo* assign_type, int line) {
+int type_utils_check_dict_index_assignment(Symbol* dict_sym, TypeInfo* assign_type, int line, int column) {
     if (!dict_sym || !dict_sym->type || dict_sym->type->kind != TYPE_DICT) {
         return 1;  // 不是字典，不检查
     }
@@ -537,7 +537,7 @@ int type_utils_check_dict_index_assignment(Symbol* dict_sym, TypeInfo* assign_ty
         char msg[BUFFER_MEDIUM];
         format_detailed_type_error(msg, sizeof(msg),
             value_type, assign_type, "字典值类型不匹配");
-        error_add(ERR_SEMANTIC, line, msg);
+        error_add_at(ERR_SEMANTIC, line, column, msg);
         return 0;
     }
     
@@ -563,7 +563,7 @@ int type_utils_check_dict_index_assignment(Symbol* dict_sym, TypeInfo* assign_ty
     char msg[BUFFER_MEDIUM];
     format_detailed_type_error(msg, sizeof(msg),
         value_type, assign_type, "字典值类型不匹配");
-    error_add(ERR_SEMANTIC, line, msg);
+    error_add_at(ERR_SEMANTIC, line, column, msg);
     
     return 0;
 }

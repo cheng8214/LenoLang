@@ -83,9 +83,9 @@ void format_detailed_type_error_ex(char* buf, size_t buf_size,
                                 const char* context, const char* var_name);
 
 // 数组索引赋值类型检查工具函数
-int type_utils_check_array_index_assignment(TypeInfo* obj_type, TypeInfo* value_type, int line);
+int type_utils_check_array_index_assignment(TypeInfo* obj_type, TypeInfo* value_type, int line, int column);
 
 // 字典索引赋值类型检查工具函数
-int type_utils_check_dict_index_assignment(Symbol* dict_sym, TypeInfo* assign_type, int line);
+int type_utils_check_dict_index_assignment(Symbol* dict_sym, TypeInfo* assign_type, int line, int column);
 
 #endif // SEMANTIC_INTERNAL_H

@@ -4,7 +4,7 @@
 // 辅助：递归检查 TypeInfo 中是否存在未定义的类型（在 resolve_alias_in_type 之后调用）
 // 此时所有 alias 已被解析，剩余的 TYPE_STRUCT 只能是合法 struct 或未定义类型
 // ============================================================================
-static void check_undefined_type(Semantic* s, TypeInfo* type, int line) {
+static void check_undefined_type(Semantic* s, TypeInfo* type, int line, int column) {
     if (!type) return;
 
     if (type->kind == TYPE_STRUCT && type->struct_name) {
@@ -21,7 +21,7 @@ static void check_undefined_type(Semantic* s, TypeInfo* type, int line) {
         } else {
             snprintf(msg, sizeof(msg), "未定义的类型: %s（请检查是否已通过 use 语句导入该类型，如 use module.%s）", type->struct_name, type->struct_name);
         }
-        error_add(ERR_SEMANTIC, line, msg);
+        error_add_at(ERR_SEMANTIC, line, column, msg);
     }
         // 找到了就是合法的 struct 类型（alias 已在 resolve_alias_in_type 中解析）
     }
@@ -29,16 +29,16 @@ static void check_undefined_type(Semantic* s, TypeInfo* type, int line) {
     // 递归检查子类型
     if (type->generic_args) {
         for (int i = 0; i < type->generic_count; i++) {
-            check_undefined_type(s, type->generic_args[i], line);
+            check_undefined_type(s, type->generic_args[i], line, column);
         }
     }
-    check_undefined_type(s, type->element_type, line);
-    check_undefined_type(s, type->key_type, line);
-    check_undefined_type(s, type->value_type, line);
-    check_undefined_type(s, type->return_type, line);
+    check_undefined_type(s, type->element_type, line, column);
+    check_undefined_type(s, type->key_type, line, column);
+    check_undefined_type(s, type->value_type, line, column);
+    check_undefined_type(s, type->return_type, line, column);
     if (type->param_types) {
         for (int i = 0; i < type->param_count; i++) {
-            check_undefined_type(s, type->param_types[i], line);
+            check_undefined_type(s, type->param_types[i], line, column);
         }
     }
 }
@@ -299,10 +299,10 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
 
     // 4. 检查参数类型中是否有未定义的类型
     for (int i = 0; i < ast->u.func.pcnt; i++) {
-        check_undefined_type(s, ast->u.func.param_types[i], ast->line);
+        check_undefined_type(s, ast->u.func.param_types[i], ast->line, ast->column);
     }
     // 5. 检查返回类型中是否有未定义的类型
-    check_undefined_type(s, ast->u.func.return_type, ast->line);
+    check_undefined_type(s, ast->u.func.return_type, ast->line, ast->column);
 
     // 5.5 检查参数类型和返回类型是否使用了 C 布局类型（i32/u8/f32 等）
     // C 布局类型只能在 clib 声明、cstruct 字段、Ptr[T] 中使用
@@ -421,7 +421,7 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
                                  ast->u.func.params[i],
                                  type_kind_to_string(default_kind),
                                  type_kind_to_string(param_type->kind));
-                        error_add(ERR_TYPE_MISMATCH, ast->line, msg);
+                        error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                     }
                 }
             } else if (param_type && param_type->kind == TYPE_INFER) {

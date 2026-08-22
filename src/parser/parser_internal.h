@@ -138,7 +138,7 @@ Ast* parse_var_decl_internal(Parser* p);
 Ast* parse_func_stmt(Parser* p);
 Ast* parse_entry_func_stmt(Parser* p);
 Ast* parse_anonymous_func(Parser* p);
-Ast* parse_func_body_and_create(Parser* p, char* name, int line);
+Ast* parse_func_body_and_create(Parser* p, char* name, int line, int column);
 Ast* parse_expression_stmt(Parser* p);
 TypeInfo* parse_type(Parser* p);
 int is_entry_function_def(Parser* p);

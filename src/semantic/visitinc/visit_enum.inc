@@ -53,7 +53,7 @@
                     } else {
                         snprintf(msg, sizeof(msg), "enum '%s' 重复定义", ast->u.enum_def.name);
                     }
-                    error_add(ERR_DUPLICATE_VAR, ast->line, msg);
+                    error_add_at(ERR_DUPLICATE_VAR, ast->line, ast->column, msg);
                 }
             }
             break;

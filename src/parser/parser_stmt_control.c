@@ -289,6 +289,7 @@ Ast* parse_if_stmt(Parser* p) {
                         free(next_var_name);
                         if (next_field_name) free(next_field_name);
                         p->lex = saved_after_op;
+            error_set_column(saved_after_op.current.column);  // 恢复列号
                         fallback_op = op;
                         fallback_to_expr = 1;
                         break;
@@ -296,6 +297,7 @@ Ast* parse_if_stmt(Parser* p) {
                 } else {
                     // or/and 后不是标识符，回退用普通表达式解析
                     p->lex = saved_after_op;
+            error_set_column(saved_after_op.current.column);  // 恢复列号
                     fallback_op = op;
                     fallback_to_expr = 1;
                     break;
@@ -334,6 +336,7 @@ Ast* parse_if_stmt(Parser* p) {
                     if (guard_type) { type_free(guard_type); guard_type = NULL; }
                     has_guard_conds = 0;
                     p->lex = saved_lex;
+            error_set_column(saved_lex.current.column);  // 恢复列号
                     cond = parse_expression(p);
                 }
             }
@@ -341,6 +344,7 @@ Ast* parse_if_stmt(Parser* p) {
             // 不是类型守卫，恢复 lexer 位置并正常解析表达式
             if (field_name) free(field_name);
             p->lex = saved_lex;
+            error_set_column(saved_lex.current.column);  // 恢复列号
             free(var_name);
             cond = parse_expression(p);
         }
@@ -507,6 +511,7 @@ Ast* parse_for_stmt(Parser* p) {
             // 其他情况，无法继续解析，报错并恢复
             ast_free(start);
             p->lex = saved_lex;
+            error_set_column(saved_lex.current.column);  // 恢复列号
             start = NULL;
             end = parse_expression(p);
         }

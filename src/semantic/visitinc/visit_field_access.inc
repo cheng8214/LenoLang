@@ -191,7 +191,7 @@
 
                 // 验证操作数是字段访问
                 if (ast->u.address_of.operand->kind != AST_FIELD_ACCESS) {
-                    error_add(ERR_SEMANTIC, ast->line, "& 取地址运算符只能用于 cstruct 字段访问（如 &c.r）");
+                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, "& 取地址运算符只能用于 cstruct 字段访问（如 &c.r）");
                     break;
                 }
 
@@ -199,7 +199,7 @@
                 Ast* field_access = ast->u.address_of.operand;
                 TypeInfo* obj_type = infer_expr_type(s, field_access->u.field_access.obj);
                 if (obj_type && obj_type->kind != TYPE_CSTRUCT) {
-                    error_add(ERR_SEMANTIC, ast->line, "& 取地址运算符仅支持 cstruct 字段（普通 struct 字段无 C 稳定地址）");
+                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, "& 取地址运算符仅支持 cstruct 字段（普通 struct 字段无 C 稳定地址）");
                     type_free(obj_type);
                     break;
                 }
@@ -207,7 +207,7 @@
 
                 // 验证字段索引已解析
                 if (field_access->u.field_access.field_index < 0) {
-                    error_add(ERR_SEMANTIC, ast->line, "无法确定字段索引，& 取地址失败");
+                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, "无法确定字段索引，& 取地址失败");
                     break;
                 }
             }

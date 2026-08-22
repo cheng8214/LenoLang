@@ -156,7 +156,7 @@
                         } else if (node->kind == AST_BINOP && node->u.binop.op == TOK_OR) {
                             // or 连接：检查是否包含类型守卫，给出警告
                             if (node->u.binop.l && node->u.binop.l->kind == AST_TYPE_CHECK) {
-                                warning_add(WARN_OR_TYPE_GUARD, node->line,
+                                warning_add_at(WARN_OR_TYPE_GUARD, node->line, node->column,
                                     "or 条件中的类型守卫不会触发类型收窄，"
                                     "因为 or 的短路语义意味着两侧条件不一定都成立");
                             }
@@ -170,7 +170,7 @@
                 // 检查条件树中是否有 or 连接的类型守卫（不安全，不收窄）
                 if (ast->u.if_.cond && ast->u.if_.cond->kind == AST_BINOP &&
                     ast->u.if_.cond->u.binop.op == TOK_OR) {
-                    warning_add(WARN_OR_TYPE_GUARD, ast->u.if_.cond->line,
+                    warning_add_at(WARN_OR_TYPE_GUARD, ast->u.if_.cond->line, ast->u.if_.cond->column,
                         "or 条件中的类型守卫不会触发类型收窄，"
                         "因为 or 的短路语义意味着两侧条件不一定都成立");
                 }

@@ -10,7 +10,7 @@
             // 检查 any 类型：any 只能用于函数参数和返回类型，不能用于变量声明
             // 变量声明请使用 var（类型推断）或指定具体类型
             if (ast->u.var_decl.type && ast->u.var_decl.type->kind == TYPE_ANY) {
-                error_add(ERR_SEMANTIC, ast->line, "'any' 类型只能用于函数参数和返回类型，变量声明请使用 'var' 或指定具体类型");
+                error_add_at(ERR_SEMANTIC, ast->line, ast->column, "'any' 类型只能用于函数参数和返回类型，变量声明请使用 'var' 或指定具体类型");
             }
             // 检查 Ptr[T] 中的 T 是否是 C 布局类型（Ptr[u8] 是合法的）
             // 注意：Ptr[T] 本身是合法的，不检查
@@ -61,7 +61,7 @@
                 // 重复定义错误 - 报告准确的行号
                 char msg[BUFFER_MEDIUM];
                 snprintf(msg, sizeof(msg), "变量 '%s' 重复定义", ast->u.var_decl.name);
-                error_add(ERR_DUPLICATE_VAR, ast->line, msg);
+                error_add_at(ERR_DUPLICATE_VAR, ast->line, ast->column, msg);
                 break;
             }
 
@@ -116,7 +116,7 @@
                             } else {
                                 snprintf(msg, sizeof(msg), "未定义的类型: %s（请检查是否已通过 use 语句导入该类型，如 use module.%s）", type_name, type_name);
                             }
-                            error_add(ERR_UNDEFINED_VAR, ast->line, msg);
+                            error_add_at(ERR_UNDEFINED_VAR, ast->line, ast->column, msg);
                             declared_type_undefined = 1;
                         } else if (struct_def->kind == SYM_TYPE && struct_def->type) {
                             // 类型是 alias（如 FSize = Dict[string,float]），解析为实际类型
@@ -137,7 +137,7 @@
                             } else {
                                 snprintf(msg, sizeof(msg), "未定义的类型: %s（请检查是否已通过 use 语句导入该类型，如 use module.%s）", type_name, type_name);
                             }
-                            error_add(ERR_UNDEFINED_VAR, ast->line, msg);
+                            error_add_at(ERR_UNDEFINED_VAR, ast->line, ast->column, msg);
                             declared_type_undefined = 1;
                         }
                     }
@@ -160,7 +160,7 @@
                             } else {
                                 char msg[BUFFER_MEDIUM];
                                 snprintf(msg, sizeof(msg), "未定义的类型: %s（请检查是否已通过 use 语句导入该类型，如 use module.%s）", type_name, type_name);
-                                error_add(ERR_UNDEFINED_VAR, ast->line, msg);
+                                error_add_at(ERR_UNDEFINED_VAR, ast->line, ast->column, msg);
                                 declared_type_undefined = 1;
                             }
                         } else if (struct_def && struct_def->type->kind == TYPE_CSTRUCT) {
@@ -194,7 +194,7 @@
                                     init_type->struct_name, ast->u.var_decl.type->struct_name);
                                 { size_t _ml = strlen(msg); snprintf(msg + _ml, sizeof(msg) - _ml, "%s", hint); }
                             }
-                            error_add(ERR_TYPE_MISMATCH, ast->line, msg);
+                            error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                             sym->type = type_copy(ast->u.var_decl.type);
                         } else {
                             // 检查是否需要更新类型（如 Dict -> Dict[string, any]）
@@ -292,7 +292,7 @@
                             char msg[BUFFER_MEDIUM];
                             snprintf(msg, sizeof(msg), "未定义的类型: %s（请检查是否已通过 use 语句导入该类型，如 use module.%s）",
                                      sym->type->struct_name, sym->type->struct_name);
-                            error_add(ERR_UNDEFINED_VAR, ast->line, msg);
+                            error_add_at(ERR_UNDEFINED_VAR, ast->line, ast->column, msg);
                         }
                     }
                 } else {
@@ -317,12 +317,12 @@
                 snprintf(msg, sizeof(msg), "未定义的变量: %s", ast->u.var.name);
                 const char* hint = get_similar_name_hint(s->current, ast->u.var.name);
                 if (hint[0]) strncat(msg, hint, sizeof(msg) - strlen(msg) - 1);
-                error_add(ERR_UNDEFINED_VAR, ast->line, msg);
+                error_add_at(ERR_UNDEFINED_VAR, ast->line, ast->column, msg);
             } else if (sym->is_initialized == 2) {
                 // 变量正在初始化中，不允许引用自身
                 char msg[BUFFER_MEDIUM];
                 snprintf(msg, sizeof(msg), "变量 '%s' 在初始化前使用", ast->u.var.name);
-                error_add(ERR_UNDEFINED_VAR, ast->line, msg);
+                error_add_at(ERR_UNDEFINED_VAR, ast->line, ast->column, msg);
                 // 但仍然设置类型信息（从声明的类型获取），避免后续类型推断产生级联错误
                 if (sym->type) {
                     ast->u.var.ref.type_kind = sym->type->kind;
@@ -402,7 +402,7 @@
                         snprintf(msg, sizeof(msg), "未定义的变量: %s", ast->u.assign.names[i]);
                         const char* hint = get_similar_name_hint(s->current, ast->u.assign.names[i]);
                         if (hint[0]) strncat(msg, hint, sizeof(msg) - strlen(msg) - 1);
-                        error_add(ERR_UNDEFINED_VAR, ast->line, msg);
+                        error_add_at(ERR_UNDEFINED_VAR, ast->line, ast->column, msg);
                     } else {
                         // 检查是否对 const 变量赋值
                         if (sym->is_const) {
@@ -437,7 +437,7 @@
                                 format_detailed_type_error_ex(msg, sizeof(msg),
                                     sym->type, value_type,
                                     "无法将值赋值给变量", ast->u.assign.names[i]);
-                                error_add(ERR_TYPE_MISMATCH, ast->line, msg);
+                                error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                             } else {
                                 // var 声明的变量（类型为 any），第一次赋非 null 值时锁定类型
                                 if (sym->type->kind == TYPE_ANY && value_type->kind != TYPE_NULL) {
@@ -452,14 +452,14 @@
                     // 数组或字典索引赋值的类型检查
                     TypeInfo* obj_type = infer_expr_type(s, target->u.index.obj);
                     if (obj_type && obj_type->kind == TYPE_ARRAY) {
-                        type_utils_check_array_index_assignment(obj_type, value_type, ast->line);
+                        type_utils_check_array_index_assignment(obj_type, value_type, ast->line, ast->column);
                     } else if (obj_type && obj_type->kind == TYPE_DICT) {
                         // 字典索引赋值
                         if (target->u.index.obj->kind == AST_VAR) {
                             const char* var_name = target->u.index.obj->u.var.name;
                             Symbol* sym = scope_resolve(s->current, var_name);
                             if (sym) {
-                                type_utils_check_dict_index_assignment(sym, value_type, ast->line);
+                                type_utils_check_dict_index_assignment(sym, value_type, ast->line, ast->column);
                             }
                         }
                     }
@@ -482,7 +482,7 @@
                                         format_detailed_type_error_ex(msg, sizeof(msg),
                                             field_type, value_type,
                                             "字段赋值类型不匹配", field_name);
-                                        error_add(ERR_TYPE_MISMATCH, ast->line, msg);
+                                        error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                                     }
                                     break;
                                 }
@@ -510,7 +510,7 @@
                     snprintf(msg, sizeof(msg), "未定义的变量: %s", ast->u.compound_assign.name);
                     const char* hint = get_similar_name_hint(s->current, ast->u.compound_assign.name);
                     if (hint[0]) strncat(msg, hint, sizeof(msg) - strlen(msg) - 1);
-                    error_add(ERR_UNDEFINED_VAR, ast->line, msg);
+                    error_add_at(ERR_UNDEFINED_VAR, ast->line, ast->column, msg);
                 }
             } else {
                 // 检查是否对 const 变量复合赋值
@@ -532,7 +532,7 @@
                         format_detailed_type_error_ex(msg, sizeof(msg),
                             sym->type, value_type,
                             "复合赋值类型不匹配", ast->u.compound_assign.name);
-                        error_add(ERR_TYPE_MISMATCH, ast->line, msg);
+                        error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                     }
                     type_free(value_type);
                 }

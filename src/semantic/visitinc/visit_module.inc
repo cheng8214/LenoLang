@@ -43,7 +43,7 @@
                         if (scan_result != 0) {
                             char err_msg[BUFFER_MEDIUM];
                             snprintf(err_msg, sizeof(err_msg), "找不到模块文件: %s", ast->u.import.file_path);
-                            error_add(ERR_SEMANTIC, ast->line, err_msg);
+                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, err_msg);
                             // 标记模块信息为加载失败，避免后续任何注册
                             info->load_failed = 1;
                             // 设置全局标志，抑制下游级联 any 错误
@@ -992,7 +992,7 @@
                                             // 追加参数序号
                                             char final_msg[BUFFER_MEDIUM];
                                             snprintf(final_msg, sizeof(final_msg), msg, pi + 1);
-                                            error_add(ERR_TYPE_MISMATCH, ast->line, final_msg);
+                                            error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, final_msg);
                                         }
                                         if (arg_type) type_free(arg_type);
                                     }
@@ -1814,7 +1814,7 @@
                     snprintf(msg, sizeof(msg), "未定义的变量: %s", ast->u.module_access.module_name);
                     const char* hint = get_similar_name_hint(s->current, ast->u.module_access.module_name);
                     if (hint[0]) strncat(msg, hint, sizeof(msg) - strlen(msg) - 1);
-                    error_add(ERR_UNDEFINED_VAR, ast->line, msg);
+                    error_add_at(ERR_UNDEFINED_VAR, ast->line, ast->column, msg);
                 }
                 if (var_sym && var_sym->type) {
                     var_ast->cached_type = type_copy(var_sym->type);
@@ -1884,7 +1884,7 @@
                         char msg[BUFFER_MEDIUM];
                         snprintf(msg, sizeof(msg), "枚举 '%s' 中没有成员 '%s'",
                                  ast->u.module_access.module_name, mname);
-                        error_add(ERR_UNDEFINED_VAR, ast->line, msg);
+                        error_add_at(ERR_UNDEFINED_VAR, ast->line, ast->column, msg);
                     }
                 } else if (is_struct_type) {
                     // 检查是否是 struct 关联常量访问（StructName.CONST_NAME）

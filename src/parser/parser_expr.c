@@ -631,6 +631,7 @@ Ast* parse_call(Parser* p, Ast* callee) {
 
     // 普通函数调用
     Ast* ast = ast_new(AST_CALL, line);
+    ast->column = callee->column;  // 用函数名的列号
     ast->u.call.callee = callee;
     ast_list_init(&ast->u.call.args);
     ast->u.call.generic_type_args = NULL;
@@ -918,6 +919,7 @@ Ast* parse_index(Parser* p, Ast* obj) {
 
         // 回退词法器状态，按普通索引处理
         p->lex = saved_lex;
+            error_set_column(saved_lex.current.column);  // 恢复列号
     }
 
     // 检查是否是切片语法：arr[start:end]
@@ -955,8 +957,9 @@ Ast* parse_index(Parser* p, Ast* obj) {
     
     // 普通索引
     consume(p, TOK_RBRACKET, "期望 ']'");
-    
+
     Ast* ast = ast_new(AST_INDEX, line);
+    ast->column = obj->column;  // 用数组变量的列号
     ast->u.index.obj = obj;
     ast->u.index.index = first;
     return ast;
@@ -1055,6 +1058,7 @@ Ast* parse_dot(Parser* p, Ast* left) {
         // 检查是否是模块成员访问（如 test.PI）或 struct 字段访问
         // 暂时无法确定，先创建 MODULE_ACCESS，由语义分析阶段判断
         Ast* ast = ast_new(AST_MODULE_ACCESS, line);
+        ast->column = name_column; // 用属性名的列号
         ast->u.module_access.module_name = left->u.var.name;
         ast->u.module_access.member_name = name;
         ast->u.module_access.ref.kind = SYM_GLOBAL;
@@ -1123,6 +1127,7 @@ Ast* parse_safe_dot(Parser* p, Ast* left) {
 // 并行赋值 a, b = c, d 在 parse_expression_stmt 中处理
 Ast* parse_assignment(Parser* p, Ast* left) {
     int line = p->lex.current.line;
+    int left_column = left->column;  // 保存左侧表达式（变量名）的列号
     LenoTokenType op = p->lex.current.type;  // 保存运算符类型
     lexer_next(&p->lex); // 消费 '=' 或 '+=', '-=' 等
 
@@ -1234,6 +1239,7 @@ Ast* parse_assignment(Parser* p, Ast* left) {
         
         // 普通赋值：保留 AST_MODULE_ACCESS，让语义分析阶段决定
         Ast* ast = ast_new(AST_ASSIGN, line);
+        ast->column = left_column;
         ast->u.assign.names = (char**)malloc(sizeof(char*));
         ast->u.assign.name_count = 1;
         ast->u.assign.targets = (Ast**)malloc(sizeof(Ast*));
@@ -1256,6 +1262,7 @@ Ast* parse_assignment(Parser* p, Ast* left) {
         op == TOK_SHLEQ || op == TOK_SHREQ || op == TOK_USHREQ) {
         // 创建复合赋值节点
         Ast* ast = ast_new(AST_COMPOUND_ASSIGN, line);
+        ast->column = left_column;
         ast->u.compound_assign.name = strdup(left->u.var.name);
         ast->u.compound_assign.value = value;
         ast->u.compound_assign.op = op;
@@ -1270,6 +1277,7 @@ Ast* parse_assignment(Parser* p, Ast* left) {
 
     // 普通单个赋值
     Ast* ast = ast_new(AST_ASSIGN, line);
+    ast->column = left_column;
     ast->u.assign.names = (char**)malloc(sizeof(char*));
     ast->u.assign.name_count = 1;
     ast->u.assign.targets = (Ast**)malloc(sizeof(Ast*));

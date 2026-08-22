@@ -37,6 +37,7 @@ Ast* parse_statement(Parser* p) {
             lexer_next(&p->lex);  // 跳过 func
             int is_func_type = (p->lex.current.type == TOK_LPAREN);
             p->lex = saved;  // 恢复
+            error_set_column(saved.current.column);  // 恢复列号
 
             if (is_func_type) {
                 stmt = parse_var_decl_internal(p);
@@ -212,6 +213,7 @@ Ast* parse_statement(Parser* p) {
                     }
                 }
                 p->lex = saved; // 恢复 lexer 状态
+                error_set_column(saved.current.column);  // 恢复列号
 
                 if (is_type_decl) {
                     stmt = parse_var_decl_internal(p);
@@ -376,6 +378,7 @@ static void prescan_struct_definitions(Parser* p) {
 
     // 恢复 lexer 状态
     p->lex = saved;
+            error_set_column(saved.current.column);  // 恢复列号
 }
 
 // 执行解析

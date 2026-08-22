@@ -49,7 +49,7 @@
                                              ast->u.struct_def.name,
                                              ast->u.struct_def.field_names[i],
                                              field_type->struct_name, field_type->struct_name);
-                                    error_add(ERR_UNDEFINED_VAR, ast->line, msg);
+                                    error_add_at(ERR_UNDEFINED_VAR, ast->line, ast->column, msg);
                                 } else if (ref_type->type->kind == TYPE_CLIB) {
                                     // 修正字段类型为 TYPE_CLIB
                                     field_type->kind = TYPE_CLIB;
@@ -131,7 +131,7 @@
                     } else {
                         snprintf(msg, sizeof(msg), "struct '%s' 重复定义", ast->u.struct_def.name);
                     }
-                    error_add(ERR_DUPLICATE_VAR, ast->line, msg);
+                    error_add_at(ERR_DUPLICATE_VAR, ast->line, ast->column, msg);
                 }
 
                 // 处理关联常量：语义检查 + 求值存入 ObjStructDef
@@ -394,14 +394,14 @@
                     for (int i = 0; i < ast->u.struct_def.method_count; i++) {
                         if (ast->u.struct_def.methods[i]->u.func.is_ctor) {
                             if (early_def->has_ctor) {
-                                error_add(ERR_SEMANTIC, ast->line, "结构体不能有多个构造函数");
+                                error_add_at(ERR_SEMANTIC, ast->line, ast->column, "结构体不能有多个构造函数");
                             }
                             early_def->has_ctor = 1;
                             early_def->ctor_index = i;
                         }
                         if (ast->u.struct_def.methods[i]->u.func.is_dtor) {
                             if (early_def->has_dtor) {
-                                error_add(ERR_SEMANTIC, ast->line, "结构体不能有多个析构函数");
+                                error_add_at(ERR_SEMANTIC, ast->line, ast->column, "结构体不能有多个析构函数");
                             }
                             early_def->has_dtor = 1;
                             early_def->dtor_index = i;
@@ -429,14 +429,14 @@
                             // 检查构造/析构函数
                             if (ast->u.struct_def.methods[i]->u.func.is_ctor) {
                                 if (early_def->has_ctor) {
-                                    error_add(ERR_SEMANTIC, ast->line, "结构体不能有多个构造函数");
+                                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, "结构体不能有多个构造函数");
                                 }
                                 early_def->has_ctor = 1;
                                 early_def->ctor_index = i;
                             }
                             if (ast->u.struct_def.methods[i]->u.func.is_dtor) {
                                 if (early_def->has_dtor) {
-                                    error_add(ERR_SEMANTIC, ast->line, "结构体不能有多个析构函数");
+                                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, "结构体不能有多个析构函数");
                                 }
                                 early_def->has_dtor = 1;
                                 early_def->dtor_index = i;
