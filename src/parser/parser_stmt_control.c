@@ -81,10 +81,12 @@ Ast* parse_if_stmt(Parser* p) {
                     free(field_name);
                     field_name = NULL;
                     p->lex = dot_saved_lex;
+                    error_set_column(dot_saved_lex.current.column);
                 }
             } else {
                 // "." 后面不是标识符，恢复
                 p->lex = dot_saved_lex;
+                error_set_column(dot_saved_lex.current.column);
             }
         }
 
@@ -98,6 +100,7 @@ Ast* parse_if_stmt(Parser* p) {
                     is_not_is = 1;
                 } else {
                     p->lex = not_saved_lex;
+                    error_set_column(not_saved_lex.current.column);
                 }
             }
         } else {
@@ -108,6 +111,7 @@ Ast* parse_if_stmt(Parser* p) {
                     is_not_is = 1;
                 } else {
                     p->lex = not_saved_lex;
+                    error_set_column(not_saved_lex.current.column);
                 }
             }
         }
@@ -225,9 +229,11 @@ Ast* parse_if_stmt(Parser* p) {
                                 free(next_field_name);
                                 next_field_name = NULL;
                                 p->lex = dot_saved;
+                                error_set_column(dot_saved.current.column);
                             }
                         } else {
                             p->lex = dot_saved;
+                            error_set_column(dot_saved.current.column);
                         }
                     }
 
@@ -386,6 +392,7 @@ Ast* parse_if_stmt(Parser* p) {
     // 语句块与表达式，因此表达式形式的 AST_IF 在语句位置同样可编译。
     if (p->lex.current.type == TOK_THEN) {
         p->lex = if_start_lex;
+        error_set_column(if_start_lex.current.column);
         return parse_if_expr(p);
     }
 

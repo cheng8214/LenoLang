@@ -1586,6 +1586,7 @@ Ast* parse_struct_stmt(Parser* p) {
             lexer_next(&p->lex);  // 跳过 func
             int is_func_type_field = (p->lex.current.type == TOK_LPAREN);
             p->lex = saved;  // 恢复
+            error_set_column(saved.current.column);  // 恢复列号
 
             if (is_func_type_field) {
                 // 函数类型字段，不走方法定义路径，fall through 到下面的字段类型解析
