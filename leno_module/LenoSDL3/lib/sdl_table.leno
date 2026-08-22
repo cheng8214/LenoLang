@@ -24,6 +24,7 @@ export struct Table impl Widget, Themeable {
     float _headerH = 28.0, _rowH = 24.0
     float _scrollX = 0.0, _scrollY = 0.0
     int _selRow = -1, _selCol = -1, _hoverRow = -1; bool _multi = false; Array[int] _selRows = []
+    Array[bool] _selSet = []           // 选中行标志数组（与 _rows 平行），让 _is_sel O(1) 避免 render 中线性扫描 _selRows
     bool _sortable = false; int _sortCol = -1; bool _sortDesc = false, _zebra = true
 
     float _fontSize = 15.0; string _fontPath = ""; int _fontStyle = 0; Font? _font
@@ -66,11 +67,17 @@ export struct Table impl Widget, Themeable {
     string _imgLastPath = ""               // MRU 快路径：上次命中的图标路径
     Ptr[u8] _imgLastTex = null             // MRU 快路径：上次命中的纹理指针
     // === 拟合文本缓存 ===
-    // 预计算所有单元格的截断文本和宽度，避免 render 路径每帧调用 _fit_cell_text + measureString。
-    // 在数据/列宽/字体变化时失效，render 中 _ensure_fitted() 惰性重建。
-    Array[string] _fittedText = []        // flat: row * _ncols + col，截断后的文本
-    Array[float] _fittedW = []            // flat: row * _ncols + col，截断后文本的测量宽度
+    // 预计算可见单元格的截断文本和宽度，避免 render 路径每帧调用 _fit_cell_text + measureString。
+    // ★ 优化：只缓存当前视口可见行（_fittedStartRow ~ _fittedEndRow），滚动时惰性重建对应区间，
+    //   避免对万行数据全量预计算（O(n×cols) → O(visibleRows×cols)）。
+    Array[string] _fittedText = []        // flat: (row-_fittedStartRow) * _ncols + col，截断后的文本
+    Array[float] _fittedW = []            // flat: (row-_fittedStartRow) * _ncols + col，截断后文本的测量宽度
+    int _fittedStartRow = 0               // 缓存对应的起始行索引
+    int _fittedEndRow = 0                 // 缓存对应的结束行索引（exclusive）
     bool _fittedValid = false
+    // 行背景色缓存：避免 render 中对每个可见行逐个 _is_sel / 判 zebraness / 判 hover
+    // （_is_sel 已用 _selSet 消除，此处仅保留注释说明设计思路）
+    int _checkedCount = -1               // _rowChecked 已勾选计数缓存（-1=未计算/失效）
     int _ctxRow = -1, _ctxCol = -1   // 右击命中行/列
     int _winW = 0, _winH = 0          // 所属窗口逻辑宽高（上下文菜单边界夹紧用）
     func(int, string):void _onCtxSelect   // 上下文菜单自定义回调（参数为命中行与项 id）
@@ -158,7 +165,8 @@ export struct Table impl Widget, Themeable {
     func _select_key(int row) {
         if row < 0 or row >= _rows.len() { return }
         _selRow = row
-        _selRows = [row]
+        _selRows = [row]; _rebuild_sel_set()
+        if row < _selSet.len() { _selSet[row] = true }
         _ensure_row_visible(row)
         core.markFrameRedraw()
         if _onSelect != null { _onSelect(row) }
@@ -199,11 +207,19 @@ export struct Table impl Widget, Themeable {
     }
     func _col_at(float mx): int {
         if mx < x - _scrollX { return -1 }
-        float cx = x - _scrollX
-        for 0 : _ncols - 1 to k {
-            if mx >= cx and mx < cx + _colW[k] { return k }
-            cx = cx + _colW[k]
+        _ensure_col_prefix()
+        // ★ 二分查找前缀和数组，O(log n) 替代 O(n) 线性扫描
+        //   _colWPrefix[i] = sum(_colW[0..i-1])，列 i 的左边在 _colWPrefix[i]，右边在 _colWPrefix[i+1]
+        if _ncols <= 0 { return -1 }
+        float offset = mx - (x - _scrollX)
+        if offset < 0 { return -1 }
+        int lo = 0, hi = _ncols - 1
+        while lo < hi {
+            int mid = (lo + hi) / 2
+            float edge = _colWPrefix[mid + 1]
+            if offset < edge { hi = mid } else { lo = mid + 1 }
         }
+        if lo < _colW.len() and offset >= _colWPrefix[lo] and offset < _colWPrefix[lo + 1] { return lo }
         return -1
     }
     // 命中表头列分隔线（用于列宽拖拽），返回左侧列索引，未命中返回 -1
@@ -309,7 +325,7 @@ export struct Table impl Widget, Themeable {
         enabled = opts.get("enabled", true)
         visible = opts.get("visible", true)
         _tip = opts.get("tip", "")
-        _selRow = -1; _selCol = -1; _hoverRow = -1; _selRows = []
+        _selRow = -1; _selCol = -1; _hoverRow = -1; _selRows = []; _rebuild_sel_set()
         _multi = opts.get("multi_select", opts.get("multi", false))
         _scrollX = 0.0; _scrollY = 0.0
         _sortCol = -1; _sortDesc = false
@@ -376,14 +392,26 @@ export struct Table impl Widget, Themeable {
         eif m > 0 { _ncols = m } eif _ncols == 0 { _ncols = 1 }
         _recompute_cols()
         _clamp_scroll()
-        _selRow = -1; _selRows = []
-        // 同步 _rowImages / _rowTips / _rowChecked / _rowColors 长度
-        while _rowImages.len() > _rows.len() { _rowImages.remove(_rowImages.len() - 1) }
-        while _rowTips.len() > _rows.len() { _rowTips.remove(_rowTips.len() - 1) }
-        while _rowChecked.len() > _rows.len() { _rowChecked.remove(_rowChecked.len() - 1) }
-        while _rowColors.len() > _rows.len() { _rowColors.remove(_rowColors.len() - 1) }
-        while _rowChecked.len() < _rows.len() { _rowChecked.add(false) }
-        while _rowColors.len() < _rows.len() { _rowColors.add(0) }
+        _selRow = -1; _selRows = []; _rebuild_sel_set()
+        // ★ 同步 _rowImages / _rowTips / _rowChecked / _rowColors 长度（批量截断避免逐个 remove）
+        int nRows = _rows.len()
+        Array[string] tmpI = _rowImages
+        if nRows > 0 and tmpI.len() > nRows { _rowImages = tmpI[0 : nRows - 1] }
+        eif nRows == 0 { _rowImages = [] }
+        while _rowImages.len() < nRows { _rowImages.add("") }
+        Array[string] tmpT = _rowTips
+        if nRows > 0 and tmpT.len() > nRows { _rowTips = tmpT[0 : nRows - 1] }
+        eif nRows == 0 { _rowTips = [] }
+        while _rowTips.len() < nRows { _rowTips.add("") }
+        Array[bool] tmpC = _rowChecked
+        if nRows > 0 and tmpC.len() > nRows { _rowChecked = tmpC[0 : nRows - 1] }
+        eif nRows == 0 { _rowChecked = [] }
+        while _rowChecked.len() < nRows { _rowChecked.add(false) }
+        Array[int] tmpR = _rowColors
+        if nRows > 0 and tmpR.len() > nRows { _rowColors = tmpR[0 : nRows - 1] }
+        eif nRows == 0 { _rowColors = [] }
+        while _rowColors.len() < nRows { _rowColors.add(0) }
+        _checkedCount = -1
         _update_check_header()
     }
     func add_row(Array[string] row, string imgPath) {
@@ -393,6 +421,7 @@ export struct Table impl Widget, Themeable {
         _rowTips.add("")
         _rowChecked.add(false)
         _rowColors.add(0)
+        _selSet.add(false)
         if row.len() > _ncols and _headers.len() == 0 { _ncols = row.len(); _recompute_cols() }
         _clamp_scroll()
         _update_check_header()
@@ -402,7 +431,10 @@ export struct Table impl Widget, Themeable {
         if idx >= 0 and idx < _rows.len() { _rows.remove(idx) }
         if idx >= 0 and idx < _rowImages.len() { _rowImages.remove(idx) }
         if idx >= 0 and idx < _rowTips.len() { _rowTips.remove(idx) }
-        if idx >= 0 and idx < _rowChecked.len() { _rowChecked.remove(idx) }
+        if idx >= 0 and idx < _rowChecked.len() {
+            if _rowChecked[idx] { _checkedCount = -1 }
+            _rowChecked.remove(idx)
+        }
         if idx >= 0 and idx < _rowColors.len() { _rowColors.remove(idx) }
         if _selRow == idx { _selRow = -1 }
         eif _selRow > idx { _selRow = _selRow - 1 }
@@ -414,10 +446,11 @@ export struct Table impl Widget, Themeable {
             ns.add(r)
         }
         _selRows = ns
+        _rebuild_sel_set()
         _clamp_scroll()
         _update_check_header()
     }
-    func clear() { _rows = []; _rowImages = []; _rowTips = []; _rowChecked = []; _rowColors = []; _selRow = -1; _selCol = -1; _selRows = []; _scrollX = 0; _scrollY = 0; _checkHeaderState = false; _invalidate_fitted() }
+    func clear() { _rows = []; _rowImages = []; _rowTips = []; _rowChecked = []; _rowColors = []; _selRow = -1; _selCol = -1; _selRows = []; _selSet = []; _scrollX = 0; _scrollY = 0; _checkHeaderState = false; _checkedCount = -1; _invalidate_fitted() }
     func row_count(): int { return _rows.len() }
     func col_count(): int { return _ncols }
     func get_row(int idx): Array[string] {
@@ -445,27 +478,37 @@ export struct Table impl Widget, Themeable {
         _recompute_cols(); _clamp_scroll(); _invalidate_fitted()
     }
     func _is_sel(int r): bool {
-        for _selRows.len() to i { if _selRows[i] == r { return true } }
-        return false
+        if r < 0 or r >= _selSet.len() { return false }
+        return _selSet[r]
     }
     func _toggle_sel(int r) {
-        int idx = -1
-        for _selRows.len() to i { if _selRows[i] == r { idx = i } }
-        if idx >= 0 { _selRows.remove(idx) }
-        else { _selRows.add(r) }
+        while _selSet.len() <= r { _selSet.add(false) }
+        if _selSet[r] {
+            _selSet[r] = false
+            int idx = -1
+            for _selRows.len() to i { if _selRows[i] == r { idx = i } }
+            if idx >= 0 { _selRows.remove(idx) }
+        } else {
+            _selSet[r] = true; _selRows.add(r)
+        }
     }
-    func set_selected(int idx) { _selRows = []; if idx >= 0 and idx < _rows.len() { _selRow = idx; _selRows.add(idx) } }
+    func _rebuild_sel_set() {
+        _selSet = []
+        while _selSet.len() < _rows.len() { _selSet.add(false) }
+        for _selRows.len() to i { if _selRows[i] >= 0 and _selRows[i] < _selSet.len() { _selSet[_selRows[i]] = true } }
+    }
+    func set_selected(int idx) { _selRows = []; _rebuild_sel_set(); if idx >= 0 and idx < _rows.len() { _selRow = idx; _selRows.add(idx); if idx < _selSet.len() { _selSet[idx] = true } } }
     func get_selected_row(): int { return _selRow }
     func get_selected_rows(): Array[int] { return _selRows }
     func set_aligns(Array[int] als) { _aligns = als; if _aligns.len() != _ncols { _recompute_cols() } }
     func set_header_aligns(Array[int] als) { _headerAligns = als; if _headerAligns.len() != _ncols { _recompute_cols() } }
     func set_multi_select(bool m) { _multi = m }
-    func select_all() { _selRows = []; for _rows.len() to i { _selRows.add(i) }; if _selRow < 0 and _rows.len() > 0 { _selRow = 0 } }
-    func clear_selection() { _selRows = []; _selRow = -1 }
+    func select_all() { _selRows = []; _rebuild_sel_set(); for _rows.len() to i { _selRows.add(i); _selSet[i] = true }; if _selRow < 0 and _rows.len() > 0 { _selRow = 0 } }
+    func clear_selection() { _selRows = []; _selRow = -1; _rebuild_sel_set() }
     func set_selected_rows(Array[int] rows) {
-        _selRows = []
+        _selRows = []; _rebuild_sel_set()
         for rows.len() to i {
-            if rows[i] >= 0 and rows[i] < _rows.len() { _selRows.add(rows[i]) }
+            if rows[i] >= 0 and rows[i] < _rows.len() { _selRows.add(rows[i]); if rows[i] < _selSet.len() { _selSet[rows[i]] = true } }
         }
         if _selRows.len() > 0 { _selRow = _selRows[0] } else { _selRow = -1 }
     }
@@ -542,6 +585,7 @@ export struct Table impl Widget, Themeable {
     }
     func set_row_checked(int row, bool on) {
         if row >= 0 and row < _rowChecked.len() {
+            if _rowChecked[row] != on { _checkedCount = -1 }
             _rowChecked[row] = on
             _update_check_header()
             if _onCheck != null { _onCheck(_checkCol, _get_checked_rows()) }
@@ -550,12 +594,12 @@ export struct Table impl Widget, Themeable {
     func get_checked_rows(): Array[int] { return _get_checked_rows() }
     func check_all() {
         for _rowChecked.len() to i { _rowChecked[i] = true }
-        _checkHeaderState = true
+        _checkHeaderState = true; _checkedCount = _rowChecked.len()
         if _onCheck != null { _onCheck(_checkCol, _get_checked_rows()) }
     }
     func uncheck_all() {
         for _rowChecked.len() to i { _rowChecked[i] = false }
-        _checkHeaderState = false
+        _checkHeaderState = false; _checkedCount = 0
         if _onCheck != null { _onCheck(_checkCol, []) }
     }
     func _get_checked_rows(): Array[int] {
@@ -563,11 +607,17 @@ export struct Table impl Widget, Themeable {
         for _rowChecked.len() to i { if _rowChecked[i] { out.add(i) } }
         return out
     }
+    // ★ 缓存已勾选行计数，避免 render 表头中每帧遍历 _rowChecked
+    func _get_checked_count(): int {
+        if _checkedCount >= 0 { return _checkedCount }
+        _checkedCount = 0
+        for _rowChecked.len() to i { if _rowChecked[i] { _checkedCount = _checkedCount + 1 } }
+        return _checkedCount
+    }
     // 根据行勾选状态更新表头全选框状态
     func _update_check_header() {
         if _checkCol < 0 { return }
-        int cnt = 0
-        for _rowChecked.len() to i { if _rowChecked[i] { cnt = cnt + 1 } }
+        int cnt = _get_checked_count()
         _checkHeaderState = (cnt > 0 and cnt == _rowChecked.len())
     }
     func on_check(func(int, Array[int]):void cb) { _onCheck = cb }
@@ -660,11 +710,15 @@ export struct Table impl Widget, Themeable {
                     int MOD_CTRL = 64
                     if (keyMod & MOD_CTRL) != 0 {
                         _selRows.add(_ctxRow)       // Ctrl+右击：追加到多选
+                        while _selSet.len() <= _ctxRow { _selSet.add(false) }
+                        _selSet[_ctxRow] = true
                     } else {
-                        _selRows = [_ctxRow]         // 普通右击：替换为唯一选中
+                        _selRows = [_ctxRow]; _rebuild_sel_set()
+                        if _ctxRow < _selSet.len() { _selSet[_ctxRow] = true }
                     }
                 } else {
-                    _selRows = [_ctxRow]
+                    _selRows = [_ctxRow]; _rebuild_sel_set()
+                    if _ctxRow < _selSet.len() { _selSet[_ctxRow] = true }
                 }
                 if _onSelect != null { _onSelect(_ctxRow) }
             } eif _multi {
@@ -673,7 +727,8 @@ export struct Table impl Widget, Themeable {
                 if _onSelect != null { _onSelect(_ctxRow) }
             } else {
                 // 单选模式：正常选中
-                _selRow = _ctxRow; _selRows = [_ctxRow]
+                _selRow = _ctxRow; _selRows = [_ctxRow]; _rebuild_sel_set()
+                if _ctxRow < _selSet.len() { _selSet[_ctxRow] = true }
                 if _onSelect != null { _onSelect(_ctxRow) }
             }
         }
@@ -1074,14 +1129,18 @@ export struct Table impl Widget, Themeable {
                             if a > b { int t = a; a = b; b = t }
                             _selRows = []
                             for a : b to k { _selRows.add(k) }
+                            _rebuild_sel_set()
+                            for a : b to k { if k < _selSet.len() { _selSet[k] = true } }
                         } eif ctrl {
                             _toggle_sel(row)
                         } else {
-                            _selRows = [row]
+                            _selRows = [row]; _rebuild_sel_set()
+                            if row < _selSet.len() { _selSet[row] = true }
                         }
                         _selRow = row
                     } else {
-                        _selRows = [row]
+                        _selRows = [row]; _rebuild_sel_set()
+                        if row < _selSet.len() { _selSet[row] = true }
                         _selRow = row
                     }
                     if _onSelect != null { _onSelect(row) }
@@ -1167,7 +1226,7 @@ export struct Table impl Widget, Themeable {
     // 和 measureString 的 string key 构造 + 缓存扫描开销（~120-420 次/帧 → 0 次/帧）。
     // 在数据/列宽/字体/图标布局变化时调用 _invalidate_fitted() 失效。
 
-    func _invalidate_fitted() { _fittedValid = false }
+    func _invalidate_fitted() { _fittedValid = false; _fittedStartRow = 0; _fittedEndRow = 0 }
 
     // 计算指定行指定列的图标占宽（不绘制，仅用于拟合文本的可用宽度计算）
     func _compute_icon_off(int r, int c): float {
@@ -1180,14 +1239,26 @@ export struct Table impl Widget, Themeable {
         return imgSize + _imgGap
     }
 
-    // 惰性重建拟合文本缓存：遍历所有行×列，预计算截断文本和宽度
-    func _ensure_fitted() {
-        if _fittedValid { return }
+    // 惰性重建拟合文本缓存：只遍历可见行×列，预计算截断文本和宽度
+    // ★ 优化：仅计算 [startRow, endRow) 区间，滚动时惰性重建对应区间，
+    //   避免对万行数据全量预计算（O(n×cols) → O(visibleRows×cols)）。
+    //   render 调用时传入可见行范围，_ensure_fitted 仅在该范围变化时重建。
+    func _ensure_fitted_range(int startRow, int endRow) {
         if _font == null or not _font.ok { return }
+        if _fittedValid and startRow == _fittedStartRow and endRow == _fittedEndRow { return }
+        _fittedStartRow = startRow
+        _fittedEndRow = endRow
+        int nrows = endRow - startRow
+        if nrows <= 0 { _fittedText = []; _fittedW = []; _fittedValid = true; return }
         _fittedText = []
         _fittedW = []
         float pad = 8.0
-        for _rows.len() to r {
+        int totalCells = nrows * _ncols
+        for totalCells to _ {
+            _fittedText.add(""); _fittedW.add(0.0)
+        }
+        for startRow : endRow - 1 to r {
+            int baseIdx = (r - startRow) * _ncols
             for 0 : _ncols - 1 to c {
                 string text = _cell(r, c)
                 float iconOff = _compute_icon_off(r, c)
@@ -1195,8 +1266,8 @@ export struct Table impl Widget, Themeable {
                 string fitted = _fit_cell_text(text, availW)
                 float fw = 0.0
                 if fitted != "" { fw = _font.measureString(fitted).w }
-                _fittedText.add(fitted)
-                _fittedW.add(fw)
+                _fittedText[baseIdx + c] = fitted
+                _fittedW[baseIdx + c] = fw
             }
         }
         _fittedValid = true
@@ -1313,7 +1384,6 @@ export struct Table impl Widget, Themeable {
     func render(Renderer r) {
         if not _loaded or not visible { return }
         _ensure_font()
-        _ensure_fitted()   // ★ 惰性重建拟合文本缓存（仅在数据/列宽/字体变化后首次调到时计算）
 
         // 背景底色（在字体检查之前画，避免字体偶发未就绪时 Table 区域变透明露出容器底色 → 闪一下）
         int bgr = br, bgg = bg, bgb = bb
@@ -1340,8 +1410,7 @@ export struct Table impl Widget, Themeable {
             if cx + cw < x or cx > x + w { continue }
             // 复选框列表头：绘制全选/半选复选框
             if c == _checkCol and _checkCol >= 0 {
-                int cnt = 0
-                for _rowChecked.len() to i { if _rowChecked[i] { cnt = cnt + 1 } }
+                int cnt = _get_checked_count()
                 bool partial = (cnt > 0 and cnt < _rowChecked.len())
                 _draw_checkbox(r, cx, cw, y, _headerH, _checkHeaderState, partial)
             }
@@ -1374,8 +1443,14 @@ export struct Table impl Widget, Themeable {
         int startRow = _int(_scrollY / _rowH)
         if startRow < 0 { startRow = 0 }
         int endRow = startRow + _int(bodyH / _rowH) + 2
-        if endRow > _rows.len() - 1 { endRow = _rows.len() - 1 }
-        for startRow : endRow to ri {
+        if endRow > _rows.len() { endRow = _rows.len() }
+        // ★ 惰性重建拟合文本缓存（仅可见行区间）
+        _ensure_fitted_range(startRow, endRow)
+
+        // ★ Pass 1：行背景填充——按背景色分组，减少 setColor 切换次数
+        //   先画所有普通行，再画 zebran 行，再画 hover 行，最后画选中行
+        //   （选中行在最上层，避免被后续覆盖）
+        for startRow : endRow - 1 to ri {
             float ry = bodyTop - _scrollY + ri * _rowH
             if ry + _rowH < bodyTop or ry > bodyTop + bodyH { continue }
             int rr = bgr, rg = bgg, rb = bgb
@@ -1384,48 +1459,59 @@ export struct Table impl Widget, Themeable {
             eif _zebra and (ri % 2 == 1) { rr = _zebR; rg = _zebG; rb = _zebB }
             r.setColor(rr, rg, rb, 255)
             r.fillRect(x, ry, w, _rowH + 1.0)   // +1 覆盖亚像素间隙，防止行间闪烁
-            if ri < _rows.len() {
-                var row = _rows[ri]
-                string imgPath = _row_image(ri)
-                // 行级颜色：取本行文字色（0=用默认色）
-                int rowR = tr, rowG = tg, rowB = tb
-                if ri < _rowColors.len() and _rowColors[ri] != 0 {
-                    int cval = _rowColors[ri]
-                    rowR = (cval >> 16) & 255
-                    rowG = (cval >> 8) & 255
-                    rowB = cval & 255
+        }
+
+        // ★ Pass 2：单元格内容（图标+文字）
+        for startRow : endRow - 1 to ri {
+            if ri >= _rows.len() { continue }
+            float ry = bodyTop - _scrollY + ri * _rowH
+            if ry + _rowH < bodyTop or ry > bodyTop + bodyH { continue }
+            var row = _rows[ri]
+            string imgPath = _row_image(ri)
+            // 行级颜色：取本行文字色（0=用默认色）
+            int rowR = tr, rowG = tg, rowB = tb
+            if ri < _rowColors.len() and _rowColors[ri] != 0 {
+                int cval = _rowColors[ri]
+                rowR = (cval >> 16) & 255
+                rowG = (cval >> 8) & 255
+                rowB = cval & 255
+            }
+            for 0 : _ncols - 1 to c {
+                float cx = _col_x(c), cw = _colW[c]
+                if cx + cw < x or cx > x + w { continue }
+                // 复选框列：绘制行复选框
+                if c == _checkCol and _checkCol >= 0 {
+                    _draw_checkbox(r, cx, cw, ry, _rowH, is_row_checked(ri), false)
+                    continue
                 }
-                for 0 : _ncols - 1 to c {
-                    float cx = _col_x(c), cw = _colW[c]
-                    if cx + cw < x or cx > x + w { continue }
-                    // 复选框列：绘制行复选框
-                    if c == _checkCol and _checkCol >= 0 {
-                        _draw_checkbox(r, cx, cw, ry, _rowH, is_row_checked(ri), false)
-                        r.setColor(_sepR, _sepG, _sepB, 70)
-                        r.drawLine(cx + cw, ry, cx + cw, ry + _rowH)
-                        continue
-                    }
-                    // ★ 跳过正在编辑的单元格：Edit 控件会自行绘制，避免文字叠加重叠
-                    if _editing and ri == _editRow and c == _editCol {
-                        r.setColor(_sepR, _sepG, _sepB, 70)
-                        r.drawLine(cx + cw, ry, cx + cw, ry + _rowH)
-                        continue
-                    }
-                    float iconOff = 0.0
-                    if c == _imageCol and _has_image_col() {
-                        iconOff = _draw_cell_icon(r, imgPath, cx, ry, _rowH)
-                    }
-                    if c < row.len() {
-                        // ★ 使用预计算的拟合文本和宽度，跳过 _fit_cell_text + measureString
-                        int fidx = ri * _ncols + c
-                        string dt = ""
-                        float dw = 0.0
-                        if fidx < _fittedText.len() { dt = _fittedText[fidx]; dw = _fittedW[fidx] }
-                        _draw_cached_text(r, dt, dw, cx, cw, ry, _rowH, _aligns[c], rowR, rowG, rowB, iconOff)
-                    }
-                    r.setColor(_sepR, _sepG, _sepB, 70)
-                    r.drawLine(cx + cw, ry, cx + cw, ry + _rowH)
+                // ★ 跳过正在编辑的单元格：Edit 控件会自行绘制，避免文字叠加重叠
+                if _editing and ri == _editRow and c == _editCol { continue }
+                float iconOff = 0.0
+                if c == _imageCol and _has_image_col() {
+                    iconOff = _draw_cell_icon(r, imgPath, cx, ry, _rowH)
                 }
+                if c < row.len() {
+                    // ★ 使用预计算的拟合文本和宽度，跳过 _fit_cell_text + measureString
+                    int fidx = (ri - _fittedStartRow) * _ncols + c
+                    string dt = ""
+                    float dw = 0.0
+                    if fidx >= 0 and fidx < _fittedText.len() { dt = _fittedText[fidx]; dw = _fittedW[fidx] }
+                    _draw_cached_text(r, dt, dw, cx, cw, ry, _rowH, _aligns[c], rowR, rowG, rowB, iconOff)
+                }
+            }
+        }
+
+        // ★ Pass 3：列分隔线——统一在所有行内容绘制后一次性绘制，减少 setColor 切换
+        //   旧方案每格末尾 setColor(sep,70)+drawLine 会打断 fillRect/drawText 批处理，
+        //   改为在 pass 3 统一设一次颜色，所有分隔线连续 drawLine（batch 内不中断）。
+        r.setColor(_sepR, _sepG, _sepB, 70)
+        for 0 : _ncols - 1 to c {
+            float cx = _col_x(c), cw = _colW[c]
+            if cx + cw < x or cx > x + w { continue }
+            for startRow : endRow - 1 to ri {
+                float ry = bodyTop - _scrollY + ri * _rowH
+                if ry + _rowH < bodyTop or ry > bodyTop + bodyH { continue }
+                r.drawLine(cx + cw, ry, cx + cw, ry + _rowH)
             }
         }
 
@@ -1497,7 +1583,8 @@ export struct Table impl Widget, Themeable {
         // 此处再 SDL_DestroyTexture 会造成 double-free/崩溃（见 sdl_font.leno 注释）
         _imgCacheTex = []; _imgCachePaths = []
         _imgLastPath = ""; _imgLastTex = null
-        _fittedText = []; _fittedW = []; _fittedValid = false
+        _fittedText = []; _fittedW = []; _fittedValid = false; _fittedStartRow = 0; _fittedEndRow = 0
+        _selSet = []; _checkedCount = -1
     }
 
 // ==================== 运行时主题切换 ====================
@@ -1514,7 +1601,7 @@ _sbR = t.sbR; _sbG = t.sbG; _sbB = t.sbB
 _emptyR = t.txtDimR; _emptyG = t.txtDimG; _emptyB = t.txtDimB
 _chkBoxR = t.borderR; _chkBoxG = t.borderG; _chkBoxB = t.borderB
 _markR = t.txtOnAccentR; _markG = t.txtOnAccentG; _markB = t.txtOnAccentB
-_fittedValid = false
+_invalidate_fitted()
 // 同步内嵌控件的配色
 _edit?.applyTheme(t)
 _ctxMenu?.applyTheme(t)
