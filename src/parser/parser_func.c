@@ -451,6 +451,9 @@ static TypeInfo* parse_function_type(Parser* p) {
 
 // 内部类型解析 - 支持泛型和可空类型 Type?
 static TypeInfo* parse_type_internal(Parser* p) {
+    // 保存类型起始位置（用于错误报告）
+    int type_line = p->lex.current.line;
+    int type_column = p->lex.current.column;
     TypeInfo* t = NULL;
 
     // 尝试解析函数类型
@@ -468,6 +471,12 @@ static TypeInfo* parse_type_internal(Parser* p) {
     // 解析基础类型
     else {
         t = parse_base_type(p);
+    }
+
+    // 设置位置信息（用于错误报告，如未定义类型）
+    if (t) {
+        t->line = type_line;
+        t->column = type_column;
     }
 
     // 统一检查 ? 后缀（可空类型：Type?）

@@ -7,6 +7,10 @@
 static void check_undefined_type(Semantic* s, TypeInfo* type, int line, int column) {
     if (!type) return;
 
+    // 优先使用 TypeInfo 自身的位置信息（更精确）
+    int err_line = (type->line > 0) ? type->line : line;
+    int err_column = (type->column > 0) ? type->column : column;
+
     if (type->kind == TYPE_STRUCT && type->struct_name) {
         // 在作用域中查找
         Symbol* struct_def = scope_resolve_local(s->current, type->struct_name);
@@ -21,24 +25,24 @@ static void check_undefined_type(Semantic* s, TypeInfo* type, int line, int colu
         } else {
             snprintf(msg, sizeof(msg), "未定义的类型: %s（请检查是否已通过 use 语句导入该类型，如 use module.%s）", type->struct_name, type->struct_name);
         }
-        error_add_at(ERR_SEMANTIC, line, column, msg);
+        error_add_at(ERR_SEMANTIC, err_line, err_column, msg);
     }
         // 找到了就是合法的 struct 类型（alias 已在 resolve_alias_in_type 中解析）
     }
 
-    // 递归检查子类型
+    // 递归检查子类型（传递子类型自己的位置信息）
     if (type->generic_args) {
         for (int i = 0; i < type->generic_count; i++) {
-            check_undefined_type(s, type->generic_args[i], line, column);
+            check_undefined_type(s, type->generic_args[i], err_line, err_column);
         }
     }
-    check_undefined_type(s, type->element_type, line, column);
-    check_undefined_type(s, type->key_type, line, column);
-    check_undefined_type(s, type->value_type, line, column);
-    check_undefined_type(s, type->return_type, line, column);
+    check_undefined_type(s, type->element_type, err_line, err_column);
+    check_undefined_type(s, type->key_type, err_line, err_column);
+    check_undefined_type(s, type->value_type, err_line, err_column);
+    check_undefined_type(s, type->return_type, err_line, err_column);
     if (type->param_types) {
         for (int i = 0; i < type->param_count; i++) {
-            check_undefined_type(s, type->param_types[i], line, column);
+            check_undefined_type(s, type->param_types[i], err_line, err_column);
         }
     }
 }

@@ -233,6 +233,9 @@ struct TypeInfo {
     TypeInfo** generic_args; // 具体类型参数数组
     int generic_count;       // 类型参数数量
     int nullable;            // 可空类型标记：1=Type?，0=Type
+    // 位置信息（用于错误报告）
+    int line;                // 类型在源代码中的行号（1-based），0 表示未知
+    int column;              // 类型在源代码中的列号（1-based），0 表示未知
 };
 
 // 类型系统 API

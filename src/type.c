@@ -244,6 +244,8 @@ TypeInfo* type_copy(TypeInfo* type) {
     }
 
     copy->nullable = type->nullable;
+    copy->line = type->line;
+    copy->column = type->column;
     return copy;
 }
 

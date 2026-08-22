@@ -1,0 +1,1 @@
+Fix TypeInfo position info: add line/column fields to TypeInfo struct, set in parse_type_internal, use in check_undefined_type. test11 now reports correct column 22 (UndefinedType position) instead of column 1 (func keyword). 245 self-tests pass, 18/18 error column tests pass.

@@ -1,6 +1,6 @@
 # 编译器错误列号准确性改进 - 工作进度文档
 
-## 最后更新: 2026-08-22 (第二轮)
+## 最后更新: 2026-08-22 (第三轮 - TypeInfo 修复)
 
 ---
 
@@ -163,14 +163,14 @@
 | test08_for_no_brace.leno | for 缺少大括号 | 第9行第9列 | 第9行第9列 | ✓ |
 | test09_switch_no_brace.leno | switch 缺少大括号 | 第10行第9列 | 第10行第9列 | ✓ |
 | test10_try_no_brace.leno | try 缺少大括号 | 第9行第9列 | 第9行第9列 | ✓ |
-| test11_undef_type.leno | 未定义类型 UndefinedType | 第6行第1列 | 第6行第1列 | ✗ (已知问题) |
+| test11_undef_type.leno | 未定义类型 UndefinedType | 第6行第22列 | 第6行第22列 | ✓ (已修复) |
 | test12_compound_assign.leno | 复合赋值未定义变量 xyz += 10 | 第8行第5列 | 第8行第5列 | ✓ |
 | test13_parallel_assign.leno | 并行赋值未定义变量 a, b = 1, 2 | 第8行第5列 | 第8行第5列 | ✓ |
 | test14_face_missing.leno | face未实现方法 | 第9行第1列 | 第9行第1列 | ✓ (struct位置) |
 | test17_duplicate_var.leno | 重复定义变量 x | 第9行第5列 | 第9行第5列 | ✓ |
 | test18_method_call.leno | 不存在的方法 p.test_nonexist() | 第14行第7列 | 第14行第7列 | ✓ |
 
-**总结**: 18个测试场景中 17个列号准确 ✓，1个已知问题 (TypeInfo 位置信息)。
+**总结**: 18个测试场景全部列号准确 ✓（18/18）。
 
 #### 10.3 LenoSDL3 文件管理器
 - 编译成功，无 `Dict.get` 误报（之前的问题已修复）
@@ -179,11 +179,12 @@
 
 ## 二、已知未完成的问题
 
-### 问题1: TypeInfo 不携带位置信息 (唯一剩余问题)
-- **现象**: `func test_undef_type(UndefinedType x)` 中 `UndefinedType` 从第25列，但报第1列（func 关键字的位置）
-- **原因**: `check_undefined_type` 函数接收 `ast->line` 和 `ast->column`，`ast` 是 `AST_FUNC_DEF`，其 column 是 `func` 关键字的列号（第1列）。而 `UndefinedType` 是参数类型，存储在 `TypeInfo` 中，`TypeInfo` 结构没有 `line` 和 `column` 字段。
-- **修复方案**: 给 `TypeInfo` 结构添加 `line` 和 `column` 字段，在 `parse_type()` 中设置。改动量较大。
-- **测试验证**: test11_undef_type.leno 确认此问题仍存在。
+### ~~问题1: TypeInfo 不携带位置信息~~ (已修复 ✅)
+- **修复内容**: 给 `TypeInfo` 结构添加了 `int line; int column;` 字段（`src/include/leno_types.h`）
+- **设置位置**: 在 `parse_type_internal()` 中保存类型起始位置并设置到 `type->line` 和 `type->column`（`src/parser/parser_func.c`）
+- **使用位置**: `check_undefined_type()` 优先使用 `type->line` 和 `type->column`，回退到 AST 的 `line`/`column`（`src/semantic/semantic_visit_func.c`）
+- **type_copy 同步**: 在 `type_copy()` 中添加了 `copy->line = type->line; copy->column = type->column;`
+- **测试验证**: test11_undef_type.leno 现在报第6行第22列（UndefinedType 的精确位置），之前报第6行第1列（func 关键字位置）。
 
 ---
 

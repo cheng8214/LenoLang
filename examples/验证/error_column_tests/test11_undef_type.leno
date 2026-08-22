@@ -1,7 +1,6 @@
 // 测试11: 未定义类型 (函数参数类型未定义)
-// 注意: 这个测试验证 TypeInfo 位置信息问题
 // 期望错误:
-//   第6行: UndefinedType 未定义 (当前报 func 关键字位置，即第1列)
+//   第6行第22列: UndefinedType 未定义 (UndefinedType 从第22列开始)
 
 func test_undef_type(UndefinedType x) {
     print("test")
