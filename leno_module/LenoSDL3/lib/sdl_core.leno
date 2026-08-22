@@ -591,11 +591,16 @@ export func applyFrameCursor() {
 // 动画控件调用 requestRedraw() 请求下一帧重绘，Window 侧每帧检查并清除
 bool _redrawRequested = false
 
+// 帧计数器（每帧递增，供控件做帧内去重判断）
+int _frameId = 0
+
 export func requestRedraw() { _redrawRequested = true }
 export func consumeRedrawRequest(): bool {
     if _redrawRequested { _redrawRequested = false; return true }
     return false
 }
+export func frameId(): int { return _frameId }
+export func advanceFrame() { _frameId = _frameId + 1 }
 
 // ==================== 弹层事件捕获区 ====================
 // 问题：ComboBox 弹层是覆盖在其它控件之上的 overlay。当弹层展开并压在某 ListBox/Edit 之上时，

@@ -43,9 +43,8 @@ export struct ComboBox impl Widget, Themeable {
     Array[string] _itemImages = []    // 每项图标路径（与 items 平行，空串=无图标）
     float _imgSize = 16.0             // 图标边长
     float _imgGap  = 6.0              // 图标与文字间距
-    // 纹理缓存（避免每帧重载 & 纹理泄漏）
-    Array[string] _imgCachePaths = []
-    Array[Ptr[u8]] _imgCacheTex   = []
+    // 纹理缓存（避免每帧重载 & 纹理泄漏）：Dict O(1) 查找替代旧双数组线性扫描
+    Dict[string, Ptr[u8]] _imgCache = {}
 
     func _ensure_font() {
         if _font == null or not _font.ok {
@@ -182,21 +181,23 @@ export struct ComboBox impl Widget, Themeable {
         _edit?.set_window(hwnd)
     }
 
-    // 纹理缓存：按 path 取/载纹理（对齐 Table._get_tex 模式）
+    // 纹理缓存：按 path 取/载纹理（O(1) Dict 查找，替代旧双数组线性扫描）
     func _get_tex(Renderer r, string path): Ptr[u8] {
-        for _imgCachePaths.len() to i {
-            if _imgCachePaths[i] == path { return _imgCacheTex[i] }
-        }
+        Ptr[u8] cached = _imgCache.get(path, null)
+        if cached != null { return cached }
         Ptr[u8] t = img.loadTexture(r.handle, path)
-        _imgCachePaths.add(path); _imgCacheTex.add(t)
+        _imgCache[path] = t
         return t
     }
     func _free_img_cache() {
         sdl3 _lib = core.lib()
-        for _imgCacheTex.len() to i {
-            if _imgCacheTex[i] != null { _lib.SDL_DestroyTexture(_imgCacheTex[i]) }
+        // 遍历 Dict 释放所有纹理
+        Array[string] keys = _imgCache.keys()
+        for keys.len() to i {
+            Ptr[u8] tex = _imgCache[keys[i]]
+            if tex != null { _lib.SDL_DestroyTexture(tex) }
         }
-        _imgCachePaths = []; _imgCacheTex = []
+        _imgCache = {}
     }
 
     func on_change(func(int):void cb) { _onChange = cb }
@@ -444,6 +445,9 @@ export struct ComboBox impl Widget, Themeable {
         r.pushClipRect(clip.to_ptr())
 
         float radius = 6.0
+        // 行高为常量，循环外测量一次避免每行重复测量
+        float textH = 0.0
+        if _font.ok { textH = _font.measureString("Ag").h }
         for items.len() to i {
             float iy = r.snapY(py - _scroll + i * _itemH)
             if iy + _itemH < py or iy > py + ph { continue }
@@ -468,10 +472,9 @@ export struct ComboBox impl Widget, Themeable {
                 r.fillRect(px, iy, pw, _itemH)
             }
 
-            if _font.ok {
-                float th = _font.measureString("Ag").h
+            if textH > 0.0 {
                 int tcR = tr, tcG = tg, tcB = tb
-                float ty = r.snapY(iy + (_itemH - th) / 2.0)
+                float ty = r.snapY(iy + (_itemH - textH) / 2.0)
                 float tx = r.snapX(px + 8.0)
                 // 每项图标
                 if i < _itemImages.len() and _itemImages[i] != "" {

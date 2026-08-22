@@ -505,8 +505,8 @@ if tp is string { _btnType = tp; _apply_type(tp) }
             }
         }
 
+        // 复用前面已测量的 textH（避免对同一 text 重复调用 measureString）
         if _font.ok {
-            var ms = _font.measureString(text)
             if itex != null and text == "" {
                 // 纯图标（无文字）：整按钮居中绘制
                 float ix = x + (w - isize) / 2.0
@@ -514,7 +514,7 @@ if tp is string { _btnType = tp; _apply_type(tp) }
                 r.drawTextureAt(itex, ix + (isize - dw) / 2.0, iy + (isize - dh) / 2.0, dw, dh)
             } else if itex == null {
                 // 纯文字：整按钮居中
-                float cy = y + (h - ms.h) / 2.0
+                float cy = y + (h - textH) / 2.0
                 r.drawTextCentered(_font, text, x, w, cy, tr2, tg2, tb2)
             } else if _imgPos == IMG_LEFT {
                 // 图标在左（对齐 Material iconGravity=start / WinForms ImageBeforeText）
@@ -523,7 +523,7 @@ if tp is string { _btnType = tp; _apply_type(tp) }
                 r.drawTextureAt(itex, ix + (isize - dw) / 2.0, iy + (isize - dh) / 2.0, dw, dh)
                 float tx = ix + isize + _imgGap
                 float tw = (x + w) - tx - pad
-                float ty = y + (h - ms.h) / 2.0
+                float ty = y + (h - textH) / 2.0
                 r.drawTextCentered(_font, text, tx, tw, ty, tr2, tg2, tb2)
             } else if _imgPos == IMG_RIGHT {
                 // 图标在右（Material iconGravity=end / WinForms TextBeforeImage）
@@ -532,7 +532,7 @@ if tp is string { _btnType = tp; _apply_type(tp) }
                 r.drawTextureAt(itex, ix + (isize - dw) / 2.0, iy + (isize - dh) / 2.0, dw, dh)
                 float tx = x + pad
                 float tw = ix - _imgGap - tx
-                float ty = y + (h - ms.h) / 2.0
+                float ty = y + (h - textH) / 2.0
                 r.drawTextCentered(_font, text, tx, tw, ty, tr2, tg2, tb2)
             } else if _imgPos == IMG_TOP {
                 // 图标在上（Material iconGravity=top / WinForms ImageAboveText）
@@ -541,7 +541,7 @@ if tp is string { _btnType = tp; _apply_type(tp) }
                 r.drawTextureAt(itex, ix + (isize - dw) / 2.0, iy + (isize - dh) / 2.0, dw, dh)
                 float ty = iy + isize + _imgGap
                 float th = (y + h) - ty - pad
-                float cy = ty + (th - ms.h) / 2.0
+                float cy = ty + (th - textH) / 2.0
                 r.drawTextCentered(_font, text, x, w, cy, tr2, tg2, tb2)
             } else {
                 // 图标在下（WinForms TextAboveImage）
@@ -550,7 +550,7 @@ if tp is string { _btnType = tp; _apply_type(tp) }
                 r.drawTextureAt(itex, ix + (isize - dw) / 2.0, iy + (isize - dh) / 2.0, dw, dh)
                 float ty = y + pad
                 float th = iy - _imgGap - ty
-                float cy = ty + (th - ms.h) / 2.0
+                float cy = ty + (th - textH) / 2.0
                 r.drawTextCentered(_font, text, x, w, cy, tr2, tg2, tb2)
             }
         } else if itex != null {

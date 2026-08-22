@@ -86,6 +86,10 @@ bool _drawBorder = true          // 是否绘制边框（嵌入 ComboBox 时设�
     float _maxLineW = 0.0             // 当前最大行宽
     bool _lwDirty = true               // 行宽缓存需全量重算
 
+    // 滚动条尺寸缓存（避免同一帧内重复调用 _compute_sb）
+    Array[float] _sbCache = [0.0, 0.0]   // [sbW, sbH]
+    bool _sbDirty = true                  // 滚动条尺寸需重算
+
     // 文本选取
     int  _selStart = -1               // 选区起始（-1 表示无选区）
     int  _selEnd = 0                 // 选区结束
@@ -112,6 +116,7 @@ bool _drawBorder = true          // 是否绘制边框（嵌入 ComboBox 时设�
             }
             if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
             _cachedMaxW = -1.0       // 字体变了，行宽缓存失效
+            _invalidate_sb()           // 字体变化，行高/行宽变化，滚动条尺寸需重算
             // 缓存行高
             if _font.ok {
                 var ms = _font.measureString("Ag")
@@ -153,6 +158,7 @@ bool _drawBorder = true          // 是否绘制边框（嵌入 ComboBox 时设�
         _cachedMaxW = -1.0
         _drDirty = true
         _lwDirty = true
+        _invalidate_sb()   // 文本结构变化，滚动条尺寸需重算
 
         // 从 text 拆分行（用 split 处理所有 \n，包括末尾换行产生的空行）
         if text == "" { _lines = []; return }
@@ -326,7 +332,7 @@ _drawBorder = opts.get("border", true)
         _dirty = true; _adjust_scroll()
     }
     func set_pos(float px, float py)    { x = px; y = py }
-    func set_size(float sw, float sh)   { w = sw; h = sh; _adjust_scroll() }
+    func set_size(float sw, float sh)   { w = sw; h = sh; _invalidate_sb(); _adjust_scroll() }
     func get_w(): float                 { return w }
     func get_h(): float                 { return h }
     func set_bg(int r, int g, int b)    { cr = r; cg = g; cb = b }
@@ -339,7 +345,7 @@ _drawBorder = opts.get("border", true)
     func set_password(bool pw)  { _password = pw }
     func set_multiline(bool ml) {
         if not ml { text = get_text() }   // 切单行前 flush lines → text
-        _multiline = ml; _dirty = true
+        _multiline = ml; _dirty = true; _invalidate_sb()
     }
     func set_placeholder(string p) { _placeholder = p }
     func set_tip(string t) { _tip = t }
@@ -366,7 +372,7 @@ _drawBorder = opts.get("border", true)
     func isContextMenuOpen(): bool { return _ctxMenu != null and _ctxMenu.isOpen() }
     // 注册上下文菜单自定义回调（内置动作执行之后触发，参数为项 id）
     func on_context_select(func(string):void cb) { _onCtxSelect = cb }
-    func set_word_wrap(bool w)  { _wordWrap = w; _scrollX = 0.0; _drDirty = true }
+    func set_word_wrap(bool w)  { _wordWrap = w; _scrollX = 0.0; _drDirty = true; _invalidate_sb() }
     func focus()    { _focused = true; _blinkTimer?.start() }
     func blur()     { _focused = false; _blinkTimer?.stop() }
 
@@ -422,7 +428,7 @@ _drawBorder = opts.get("border", true)
         } else {
             text = get_text()
         }
-        _drDirty = true; _lwDirty = true
+        _drDirty = true; _lwDirty = true; _invalidate_sb()
         _adjust_scroll()
     }
 
@@ -462,7 +468,7 @@ _drawBorder = opts.get("border", true)
         } else {
             text = get_text()
         }
-        _drDirty = true; _lwDirty = true
+        _drDirty = true; _lwDirty = true; _invalidate_sb()
         _adjust_scroll()
     }
 
@@ -700,8 +706,15 @@ _drawBorder = opts.get("border", true)
     // 一次性计算横/竖滚动条尺寸（双向耦合，用两段式避免相互递归）：
     // 竖条存在会挤占横向轨道宽度，横条存在会挤占竖向轨道高度，
     // 两者“是否出现”需互相参考对方的存在性，否则任一存在时另一个会判断错。
+    // 滚动条尺寸计算结果缓存：避免同一帧内 process/render 多次调用 _compute_sb
+    // （_compute_sb 内部涉及 _content_height → _ensure_layout 等重操作）。
+    // 在文本/尺寸/字体/换行模式变化时通过 _invalidate_sb() 置脏，下次查询时才重算。
+    func _invalidate_sb() { _sbDirty = true }
+
     func _compute_sb(): Array[float] {
-        if not _multiline { return [0.0, 0.0] }
+        if not _sbDirty { return _sbCache }
+        _sbDirty = false
+        if not _multiline { _sbCache = [0.0, 0.0]; return _sbCache }
         float contentH = _content_height()
         float visH0 = h - 16.0
         float visW0 = w - 16.0
@@ -719,18 +732,12 @@ _drawBorder = opts.get("border", true)
             if sbW > 0.0 and _max_line_width() > visW0 - sbW { sbH = 10.0 }
             if sbH > 0.0 and contentH > visH0 - sbH           { sbW = 10.0 }
         }
-        return [sbW, sbH]
+        _sbCache = [sbW, sbH]
+        return _sbCache
     }
 
-    func _sb_width(): float {
-        var s = _compute_sb()
-        return s[0]
-    }
-
-    func _sb_height(): float {
-        var s = _compute_sb()
-        return s[1]
-    }
+    func _sb_width(): float  { return _compute_sb()[0] }
+    func _sb_height(): float { return _compute_sb()[1] }
 
     func _max_line_width(): float {
         _rebuild_lines()

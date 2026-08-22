@@ -16,7 +16,8 @@ export struct ListBox impl Widget {
 
     float x = 0.0, y = 0.0, w = 200.0, h = 200.0
     Array[string] items = []
-    Array[int] _sel = []          // 已选中索引集合
+    Array[int] _sel = []          // 已选中索引集合（保持顺序，供回调使用）
+    Dict[int, bool] _selMap = {}  // 选中索引映射（O(1) 查找，与 _sel 同步维护）
     float _itemH = 24.0          // 行高
     float _scroll = 0.0          // 已向下滚动的像素（0 = 顶部）
     int _hover = -1              // 当前悬停行索引（-1 无）
@@ -88,10 +89,15 @@ export struct ListBox impl Widget {
         return mx >= g[0] - 2.0 and mx <= g[0] + g[1] + 2.0 and my >= g[5] and my <= g[5] + g[4]
     }
 
+    // O(1) 选中判定：直接查 _selMap 映射，避免线性扫描 _sel
     func _is_selected(int idx): bool {
-        for _sel.len() to i { if _sel[i] == idx { return true } }
-        return false
+        return _selMap.get(idx, false)
     }
+
+    // 同步添加选中索引到 _sel 和 _selMap
+    func _sel_add(int idx) { _sel.add(idx); _selMap[idx] = true }
+    // 同步清空选中集合
+    func _sel_clear() { _sel = []; _selMap = {} }
 
     func _total_h(): float { return items.len() * _itemH }
 
@@ -116,13 +122,13 @@ export struct ListBox impl Widget {
 
         var its = opts.get("items", [])
         if its is Array[string] { items = its } else { items = [] }
-        _sel = []
+        _sel_clear()
         var sel = opts.get("selected", -1)
         if sel is Array[int] {
-            for sel.len() to i { _sel.add(sel[i]) }
+            for sel.len() to i { _sel_add(sel[i]) }
         } else {
             int s = _int(sel)
-            if s >= 0 { _sel.add(s) }
+            if s >= 0 { _sel_add(s) }
         }
 
         // 默认颜色见字段声明（br/bg/bb/_bdrR/_selR/_hovR/tr/_sbR 等均有默认，以下仅 opts 覆盖）
@@ -153,7 +159,7 @@ export struct ListBox impl Widget {
 
     // ==================== 设置方法 ====================
     // 刷新数据：清空选择但【保留当前滚动位置】（仅在超出时夹紧），避免列表“跳回顶部”
-    func set_items(Array[string] its) { items = its; _sel = []; _clamp_scroll() }
+    func set_items(Array[string] its) { items = its; _sel_clear(); _clamp_scroll() }
     // 追加单条（不自动滚屏，仅夹紧到有效范围）
     func add_item(string s)           { items.add(s); _clamp_scroll() }
 
@@ -183,17 +189,22 @@ export struct ListBox impl Widget {
 
     func remove_item(int idx) {
         if idx >= 0 and idx < items.len() {
-            // 删除顶部项时整体内容上移一行，把滚动量同步减一行以“冻结”视口内容
+            // 删除顶部项时整体内容上移一行，把滚动量同步减一行以"冻结"视口内容
             if idx == 0 { _scroll = _scroll - _itemH }
             items.remove(idx)
+            // 同步更新选中集合：删除 ==idx 的项，>idx 的项索引减一
+            Array[int] newSel = []
             for _sel.len() to i {
-                if _sel[i] == idx { _sel.remove(i); i = i - 1 }
-                else if _sel[i] > idx { _sel[i] = _sel[i] - 1 }
+                if _sel[i] == idx { continue }   // 删除被移除的项
+                if _sel[i] > idx { newSel.add(_sel[i] - 1) }
+                else { newSel.add(_sel[i]) }
             }
+            _sel_clear()
+            for newSel.len() to i { _sel_add(newSel[i]) }
             _clamp_scroll()
         }
     }
-    func clear() { items = []; _sel = []; _scroll = 0.0; _hover = -1 }
+    func clear() { items = []; _sel_clear(); _scroll = 0.0; _hover = -1 }
     func set_enabled(bool e)     { enabled = e }
     func set_visible(bool v)      { visible = v }
     func is_visible(): bool       { return visible }
@@ -215,7 +226,7 @@ export struct ListBox impl Widget {
     }
     func set_selected(int idx) {
         if idx < 0 or idx >= items.len() { return }
-        _sel = []; _sel.add(idx)
+        _sel_clear(); _sel_add(idx)
         float iy = idx * _itemH
         if iy < _scroll { _scroll = iy }
         else if iy + _itemH > _scroll + h { _scroll = iy + _itemH - h }
@@ -304,13 +315,15 @@ export struct ListBox impl Widget {
             if idx >= 0 {
                 if _mode == MODE_SINGLE {
                     if not _is_selected(idx) {
-                        _sel = []; _sel.add(idx)
+                        _sel_clear(); _sel_add(idx)
                         if _onChange != null { _onChange(_sel) }
                     }
                 } else {
                     if _is_selected(idx) {
+                        // 多选模式取消选中：从 _sel 和 _selMap 同步移除
                         for _sel.len() to i { if _sel[i] == idx { _sel.remove(i); break } }
-                    } else { _sel.add(idx) }
+                        _selMap[idx] = false
+                    } else { _sel_add(idx) }
                     if _onChange != null { _onChange(_sel) }
                 }
             }
@@ -335,6 +348,9 @@ export struct ListBox impl Widget {
 
         float pad = 8.0
         float radius = 6.0
+        // 行高为常量，循环外测量一次避免每行重复测量
+        float textH = 0.0
+        if _font != null and _font.ok { textH = _font.measureString("Ag").h }
         for items.len() to i {
             float iy = r.snapY(y - _scroll + i * _itemH)
             if iy + _itemH < y or iy > y + h { continue }
@@ -361,12 +377,11 @@ export struct ListBox impl Widget {
                 r.fillRect(x, iy, w, _itemH)
             }
 
-            if _font != null and _font.ok and i < items.len() {
+            if textH > 0.0 and i < items.len() {
                 string t = items[i]
-                float th = _font.measureString("Ag").h
                 int tcR = tr, tcG = tg, tcB = tb
                 if not enabled { tcR = tr / 2; tcG = tg / 2; tcB = tb / 2 }
-                float ty = r.snapY(iy + (_itemH - th) / 2.0)
+                float ty = r.snapY(iy + (_itemH - textH) / 2.0)
                 r.drawText(_font, t, r.snapX(x + pad), ty, tcR, tcG, tcB)
             }
         }
@@ -388,8 +403,13 @@ export struct ListBox impl Widget {
             float ratio = _scroll / maxs
             float thH = maths.max(20.0, maths.min(h * h / _total_h(), h - 4.0))
             float thy = y + 2.0 + ratio * (h - 4.0 - thH)
-            r.setColor(_sbR + 60, _sbG + 60, _sbB + 60, 255)
-            if _sbR + 60 > 255 { }
+            int thumbR = _sbR + 60
+            if thumbR > 255 { thumbR = 255 }
+            int thumbG = _sbG + 60
+            if thumbG > 255 { thumbG = 255 }
+            int thumbB = _sbB + 60
+            if thumbB > 255 { thumbB = 255 }
+            r.setColor(thumbR, thumbG, thumbB, 255)
             r.fillRoundedRect(sx, thy, sw, thH, sw / 2.0)
         }
     }

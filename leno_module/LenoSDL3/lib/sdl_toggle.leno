@@ -28,6 +28,7 @@ export struct Toggle impl Widget {
     bool _animate = false
     float _animSpeed = 12.0, _animPos = 0.0, _animTarget = 0.0, _animLast = 0.0
     bool _animating = false
+    float _fontH = 0.0          // 字体行高缓存（字体不变时为常量，避免每帧 measureString）
     func(bool):void _onChange
 
     func _ensure_font() {
@@ -36,6 +37,7 @@ export struct Toggle impl Widget {
             if _fontPath != "" { _font = fnt.acquireFont(_fontPath, _fontSize) }
             else { _font = fnt.acquireFontAuto(_fontSize) }
             if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
+            if _font.ok { _fontH = _font.measureString("Ag").h }
         }
     }
 
@@ -212,7 +214,7 @@ export struct Toggle impl Widget {
 
         // 文字
         if _font != null and _font.ok and text != "" {
-            float cy = y + (h - _font.measureString("Ag").h) / 2.0
+            float cy = y + (h - _fontH) / 2.0
             int tcR = tr, tcG = tg, tcB = tb
             if not enabled { tcR = tr / 2; tcG = tg / 2; tcB = tb / 2 }
             r.drawText(_font, text, x + w + 10.0, cy, tcR, tcG, tcB)

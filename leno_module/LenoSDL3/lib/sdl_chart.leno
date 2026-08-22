@@ -88,6 +88,9 @@ export struct BarChart impl Widget {
     bool _animating = false
     float _animLast = 0.0
     float _animSpeed = 12.0
+    // 标签测量缓存（避免每帧重复 measureString）
+    float _maxCatW = 0.0
+    bool _catDirty = true
     // 主题配色
     int _titleR = 205, _titleG = 218, _titleB = 255
     int _gridR = 60, _gridG = 64, _gridB = 76
@@ -114,6 +117,7 @@ export struct BarChart impl Widget {
     }
     func set_data(Array[string] _cats, Array[float] _vals) {
         cats = _cats; vals = _vals
+        _catDirty = true   // 标签变化，需重算最大宽度
         if _animVals.len() != vals.len() {
             Array[float] nv = []
             for vals.len() to i { nv.add(0.0) }
@@ -176,8 +180,13 @@ export struct BarChart impl Widget {
         if title != "" { r.setColor(_titleR, _titleG, _titleB, 255); r.drawText(f, title, x + 10.0, y + 6.0, _titleR, _titleG, _titleB) }
 
         // 类目标签抽稀：类目过多时只画不重叠的，避免挤在一起
-        float maxCatW = 0.0
-        for cats.len() to i { var m = f.measureString(cats[i]); if m.w > maxCatW { maxCatW = m.w } }
+        // 使用缓存的标签最大宽度（仅在 set_data 时重算），避免每帧 O(n) measureString
+        if _catDirty and f.ok {
+            _maxCatW = 0.0
+            for cats.len() to i { var m = f.measureString(cats[i]); if m.w > _maxCatW { _maxCatW = m.w } }
+            _catDirty = false
+        }
+        float maxCatW = _maxCatW
         float slot = plotW / n
         float bw = slot * 0.6
         int catStride = 1
@@ -320,6 +329,9 @@ export struct LineChart impl Widget {
     bool _animating = false
     float _animLast = 0.0
     float _animSpeed = 12.0
+    // 标签测量缓存（避免每帧重复 measureString）
+    float _maxLabelW = 0.0
+    bool _labelDirty = true
     // 主题配色
     int _titleR = 205, _titleG = 218, _titleB = 255
     int _gridR = 60, _gridG = 64, _gridB = 76
@@ -346,6 +358,7 @@ export struct LineChart impl Widget {
     }
     func set_data(Array[string] _xlabels, Array[Array[float]] _series, Array[string] _names) {
         xlabels = _xlabels; series = _series; seriesNames = _names
+        _labelDirty = true   // 标签变化，需重算最大宽度
         // 同步动画数组结构：已有点保留作起点，新点从 0 长出
         Array[Array[float]] ans = []
         for series.len() to s {
@@ -426,9 +439,14 @@ export struct LineChart impl Widget {
         float stepX = plotW / denom
 
         // X 轴类目标签：类目过多 / 文字过长时按步长抽稀并截断，保证均匀间隔、不重叠
+        // 使用缓存的标签最大宽度（仅在 set_data 时重算），避免每帧 O(n) measureString
+        if _labelDirty and f.ok {
+            _maxLabelW = 0.0
+            for xlabels.len() to i { var m = f.measureString(xlabels[i]); if m.w > _maxLabelW { _maxLabelW = m.w } }
+            _labelDirty = false
+        }
+        float maxLW = _maxLabelW
         float labelGap = 6.0
-        float maxLW = 0.0
-        for xlabels.len() to i { var m = f.measureString(xlabels[i]); if m.w > maxLW { maxLW = m.w } }
         int stride = 1
         if stepX > 0.0 {
             int s = _int((maxLW + labelGap) / stepX) + 1

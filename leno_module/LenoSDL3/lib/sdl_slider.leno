@@ -22,6 +22,7 @@ export struct Slider impl Widget {
     int _cursor = SystemCursor.POINTER
     bool hover = false; bool _wasHover = false; bool _dragging = false; bool enabled = true; bool visible = true; bool _loaded = false
     string _tip = ""           // 悬停提示文本（空 = 不提示）
+    float _fontH = 0.0          // 字体行高缓存（字体不变时为常量，避免每帧 measureString）
     func(float):void _onChange
 
     func _quantize(float v): float {
@@ -35,6 +36,7 @@ export struct Slider impl Widget {
             if _fontPath != "" { _font = fnt.acquireFont(_fontPath, _fontSize) }
             else { _font = fnt.acquireFontAuto(_fontSize) }
             if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
+            if _font.ok { _fontH = _font.measureString("Ag").h }
         }
     }
 
@@ -138,7 +140,6 @@ export struct Slider impl Widget {
 
 
         if ev.isMouseMotion() {
-            float mx = ev.mouseX(), my = ev.mouseY()
             _wasHover = hover
             hover = contains(mx, my)
             // 拖拽中：即使移出控件也要继续更新
@@ -223,7 +224,7 @@ export struct Slider impl Widget {
         // 数值文字
         if _font != null and _font.ok {
             string label = value as string
-            float th = _font.measureString("Ag").h
+            float th = _fontH
             float ty; float tx
             if _vertical { ty = y + h + 6.0; tx = x + w / 2.0 - _font.measureString(label).w / 2.0 }
             else { ty = y + h / 2.0 - th / 2.0; tx = x + w + 8.0 }

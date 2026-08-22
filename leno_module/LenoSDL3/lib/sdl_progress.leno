@@ -22,6 +22,7 @@ export struct ProgressBar impl Widget {
     bool hover = false; bool _wasHover = false; bool _dragging = false; bool enabled = true; bool visible = true; bool _loaded = false
     string _tip = ""
     float _animVal = 0.0, _animTarget = 0.0, _animLast = 0.0, _animSpeed = 12.0; bool _animating = false
+    float _fontH = 0.0          // 字体行高缓存（字体不变时为常量，避免每帧 measureString）
     func(float):void _onChange
 
     func _ratio(): float {
@@ -36,6 +37,7 @@ export struct ProgressBar impl Widget {
             if _fontPath != "" { _font = fnt.acquireFont(_fontPath, _fontSize) }
             else { _font = fnt.acquireFontAuto(_fontSize) }
             if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
+            if _font.ok { _fontH = _font.measureString("Ag").h }
         }
     }
 
@@ -121,15 +123,16 @@ export struct ProgressBar impl Widget {
     func process(Event ev) {
         if not _loaded { return }
         if not visible { return }
-        if ev.isMouseMotion() {
-            float mx = ev.mouseX(); float my = ev.mouseY()
-            bool hit = contains(mx, my)
-            if hit and _tip != "" { tip.tipReport(_tip, mx, my) }
-            _wasHover = hit
-            core.markFrameMotion()
-        }
         if not enabled { hover = false; _dragging = false; return }
-        if not _clickable { hover = false; return }   // 只读时不响应
+        if not _clickable {
+            // 只读模式：仅处理悬停提示，不改变 hover 状态（避免与可交互模式的 hover 冲突）
+            if ev.isMouseMotion() {
+                float mx = ev.mouseX(); float my = ev.mouseY()
+                if contains(mx, my) and _tip != "" { tip.tipReport(_tip, mx, my) }
+                core.markFrameMotion()
+            }
+            hover = false; return
+        }
         // 弹层捕获：事件落在“他人的弹层（如打开的菜单/下拉）范围内时忽略，避免穿透到下层控件
         float mx = ev.mouseX(); float my = ev.mouseY()
         if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
@@ -222,7 +225,7 @@ export struct ProgressBar impl Widget {
             int pct = _int(ratio * 100.0)
             string label = $"{pct}%"
             float tw = _font.measureString(label).w
-            float th = _font.measureString("Ag").h
+            float th = _fontH
             float tx = x + w / 2.0 - tw / 2.0
             float ty = y + h / 2.0 - th / 2.0
             int tcR = tr; int tcG = tg; int tcB = tb

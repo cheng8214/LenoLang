@@ -1047,6 +1047,7 @@ export struct Window {
         int _sizeSyncRemaining = 10   // 安全网：前 N 帧持续检查窗口尺寸（SDL_SyncWindow 已解决主问题）
         while true {
             core.resetFrameCursor()   // 每帧开始：清空本帧光标请求
+            core.advanceFrame()       // 帧计数器递增（供控件做帧内去重）
             bool _hadEvent = false
             // 动态计算等待时长：有重绘请求时节流至目标 FPS，空闲时按定时器触发时刻
             int timeoutMs = 500

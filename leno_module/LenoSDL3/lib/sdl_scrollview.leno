@@ -47,6 +47,7 @@ export struct ScrollView impl Widget {
     bool _autoW = false, _autoH = false      // 自动内容尺寸标志（content_w/h < 0 时启用）
     bool _loaded = false, enabled = true, visible = true
     Ptr[u8]? _hwnd
+    int _frameSynced = -1   // _sync() 帧内去重：记录已同步的帧号，-1 表示从未同步
 
     func set(Dict opts) {
         Theme th = theme.getTheme()
@@ -157,7 +158,11 @@ export struct ScrollView impl Widget {
 
     // 每帧把内容定位到（视口 - 偏移），设定内容尺寸，并刷新滚动条几何
     // 自动内容尺寸模式下，每帧重新测算（子控件可能动态增减）
+    // 帧内去重：process 和 render 各调用一次 _sync()，但同一帧只需执行一次
     func _sync() {
+        int cur = core.frameId()
+        if _frameSynced == cur { return }   // 本帧已同步
+        _frameSynced = cur
         if _autoW and _content != null { _contentW = _measure_w(_content) }
         if _autoH and _content != null { _contentH = _measure_h(_content) }
         _clampScroll()

@@ -26,6 +26,7 @@ export struct CheckBox impl Widget {
     int _cursor = SystemCursor.DEFAULT
     bool hover = false, _wasHover = false, _pressed = false, enabled = true, visible = true, _loaded = false
     string _tip = ""        // 悬停提示文本（空 = 不提示）
+    float _fontH = 0.0          // 字体行高缓存（字体不变时为常量，避免每帧 measureString）
     func(bool):void _onChange
 
     func _ensure_font() {
@@ -34,6 +35,7 @@ export struct CheckBox impl Widget {
             if _fontPath != "" { _font = fnt.acquireFont(_fontPath, _fontSize) }
             else { _font = fnt.acquireFontAuto(_fontSize) }
             if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
+            if _font.ok { _fontH = _font.measureString("Ag").h }
         }
     }
 
@@ -167,7 +169,7 @@ export struct CheckBox impl Widget {
 
         // 文字
         if _font.ok and text != "" {
-            float cy = by + (bs - _font.measureString("Ag").h) / 2.0
+            float cy = by + (bs - _fontH) / 2.0
             int tcR = tr, tcG = tg, tcB = tb
             if not enabled { tcR = tr / 2; tcG = tg / 2; tcB = tb / 2 }
             r.drawText(_font, text, bx + bs + _gap, cy, tcR, tcG, tcB)
