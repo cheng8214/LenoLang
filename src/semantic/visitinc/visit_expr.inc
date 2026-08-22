@@ -653,10 +653,41 @@
                                 // 如果 struct 定义不在当前 AST 中（跨模块导入），跳过编译时检查
                             }
 
-                            // 对于 cstruct/face 类型，方法可能在跨模块定义中，
-                            // 编译时无法完全确定方法是否存在，留给运行时处理
-                            int is_cstruct_or_face = (receiver_type->kind == TYPE_CSTRUCT || receiver_type->kind == TYPE_FACE);
-                            if (!method_found && !is_cstruct_or_face) {
+                            // cstruct 没有方法定义（只有字段），在 AST 中查找 cstruct 定义
+                            // 如果能在 AST 中找到 cstruct 定义，说明方法确实不存在，编译时报错
+                            // 如果找不到 cstruct 定义（跨模块导入），跳过编译时检查
+                            if (!method_found && receiver_type->kind == TYPE_CSTRUCT && receiver_type->struct_name) {
+                                int cstruct_found_in_ast = 0;
+                                for (int si = 0; si < s->root->u.block.count; si++) {
+                                    Ast* stmt = s->root->u.block.items[si];
+                                    if (stmt->kind == AST_CSTRUCT_DEF && stmt->u.cstruct_def.name &&
+                                        strcmp(stmt->u.cstruct_def.name, receiver_type->struct_name) == 0) {
+                                        cstruct_found_in_ast = 1;
+                                        break;
+                                    }
+                                    if (stmt->kind == AST_EXPORT && stmt->u.export.decl &&
+                                        stmt->u.export.decl->kind == AST_CSTRUCT_DEF &&
+                                        stmt->u.export.decl->u.cstruct_def.name &&
+                                        strcmp(stmt->u.export.decl->u.cstruct_def.name, receiver_type->struct_name) == 0) {
+                                        cstruct_found_in_ast = 1;
+                                        break;
+                                    }
+                                }
+                                if (cstruct_found_in_ast) {
+                                    // cstruct 没有方法，编译时报错
+                                    char msg[BUFFER_MEDIUM];
+                                    const char* type_str = type_to_string(receiver_type);
+                                    snprintf(msg, sizeof(msg),
+                                        "类型 '%s' 没有方法 '%s'\n"
+                                        "  提示: cstruct 只有字段，没有方法",
+                                        type_str, method_name);
+                                    error_add(ERR_SEMANTIC, ast->line, msg);
+                                }
+                                // 找不到 cstruct 定义（跨模块），跳过编译时检查
+                            }
+
+                            // face 类型在第521行已做完整检查并 break，到不了这里
+                            if (!method_found && receiver_type->kind != TYPE_CSTRUCT) {
                                 // 方法不存在，编译时报错
                                 char msg[BUFFER_MEDIUM];
                                 const char* type_str = type_to_string(receiver_type);
@@ -665,7 +696,7 @@
                                     "  提示: 如果是数组切片，请使用 arr[start:end] 语法而非 .slice()",
                                     type_str, method_name);
                                 error_add(ERR_SEMANTIC, ast->line, msg);
-                            } else if (method_found || is_cstruct_or_face) {
+                            } else if (method_found) {
                                 // 是实例方法，检查参数
                                 int actual_arity = ast->u.call.args.count;
                                 // 如果第一个参数是 self（方法内部调用 self["method"](self, ...)），
