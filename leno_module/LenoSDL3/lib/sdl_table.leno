@@ -395,20 +395,16 @@ export struct Table impl Widget, Themeable {
         _selRow = -1; _selRows = []; _rebuild_sel_set()
         // ★ 同步 _rowImages / _rowTips / _rowChecked / _rowColors 长度（批量截断避免逐个 remove）
         int nRows = _rows.len()
-        Array[string] tmpI = _rowImages
-        if nRows > 0 and tmpI.len() > nRows { _rowImages = tmpI[0 : nRows - 1] }
+        if nRows > 0 and _rowImages.len() > nRows { _rowImages = _rowImages[0 : nRows - 1] }
         eif nRows == 0 { _rowImages = [] }
         while _rowImages.len() < nRows { _rowImages.add("") }
-        Array[string] tmpT = _rowTips
-        if nRows > 0 and tmpT.len() > nRows { _rowTips = tmpT[0 : nRows - 1] }
+        if nRows > 0 and _rowTips.len() > nRows { _rowTips = _rowTips[0 : nRows - 1] }
         eif nRows == 0 { _rowTips = [] }
         while _rowTips.len() < nRows { _rowTips.add("") }
-        Array[bool] tmpC = _rowChecked
-        if nRows > 0 and tmpC.len() > nRows { _rowChecked = tmpC[0 : nRows - 1] }
+        if nRows > 0 and _rowChecked.len() > nRows { _rowChecked = _rowChecked[0 : nRows - 1] }
         eif nRows == 0 { _rowChecked = [] }
         while _rowChecked.len() < nRows { _rowChecked.add(false) }
-        Array[int] tmpR = _rowColors
-        if nRows > 0 and tmpR.len() > nRows { _rowColors = tmpR[0 : nRows - 1] }
+        if nRows > 0 and _rowColors.len() > nRows { _rowColors = _rowColors[0 : nRows - 1] }
         eif nRows == 0 { _rowColors = [] }
         while _rowColors.len() < nRows { _rowColors.add(0) }
         _checkedCount = -1

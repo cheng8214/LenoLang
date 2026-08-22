@@ -539,6 +539,19 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
                 transform_method_body_ex(ast->u.address_of.operand, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
             }
             break;
+        case AST_SLICE:
+            // 切片表达式：arr[start:end]
+            // 递归处理 obj（可能是 struct 字段名）、start、end 中的裸字段名
+            if (ast->u.slice.obj) {
+                transform_method_body_ex(ast->u.slice.obj, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+            }
+            if (ast->u.slice.start) {
+                transform_method_body_ex(ast->u.slice.start, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+            }
+            if (ast->u.slice.end) {
+                transform_method_body_ex(ast->u.slice.end, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+            }
+            break;
         case AST_SAFE_ACCESS:
             // 安全访问：expr?.field / expr?.method(args)
             // 转换 obj 和 args 中的裸字段名为 self["field"]
