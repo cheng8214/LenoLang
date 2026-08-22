@@ -1,0 +1,9 @@
+import "../../../lib/sdl_core.leno" as core
+use core.Timer
+
+func test_tick(Timer t) {
+    t.tick()
+}
+
+main() {
+}

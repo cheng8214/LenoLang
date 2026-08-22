@@ -90,6 +90,7 @@ typedef enum {
     WARN_NULL_FIELD_CHAIN, // null 字段链式访问
     WARN_STRUCT_EQ_NULL,   // struct 值类型与 null 比较（恒为 false/true）
     WARN_OR_TYPE_GUARD,    // or 条件中的类型守卫不会收窄
+    WARN_GENERIC_NO_CONSTRAINT, // 泛型参数参与运算但无约束
 } WarnType;
 
 // ============================================================================

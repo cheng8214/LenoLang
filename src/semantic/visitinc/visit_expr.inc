@@ -218,8 +218,11 @@
                                     }
                                 }
                                 if (!has_c) {
-                                    fprintf(stderr, "[WARN] %s:%d: 泛型参数 '%s' 参与%s运算无约束\n",
-                                        error_get_filename(), ast->line, gname, is_arith ? "算术" : "比较");
+                                    char wmsg[BUFFER_MEDIUM];
+                                    snprintf(wmsg, sizeof(wmsg),
+                                        "泛型参数 '%s' 参与%s运算无约束",
+                                        gname, is_arith ? "算术" : "比较");
+                                    warning_add(WARN_GENERIC_NO_CONSTRAINT, ast->line, wmsg);
                                 }
                             }
                         }
@@ -600,13 +603,60 @@
                             // native_find_instance_method 返回 NULL 表示原生方法表没有此方法
                             // expected_arity >= 0 表示通过 func_table 或模块符号表回退找到了方法
                             // fallback_default_count > 0 同样表示回退找到了方法
-                            // 注意：对于 struct/cstruct 类型，方法可能在跨模块定义中，
-                            // 编译时无法完全确定方法是否存在，所以不报错，留给运行时处理
                             const InstanceMethodMeta* method_meta = native_find_instance_method(type_name, method_name);
                             int method_found = (method_meta != NULL) || (expected_arity >= 0) || (fallback_default_count > 0);
-                            // struct/cstruct 的方法可能跨模块定义，编译时无法确定，跳过报错
-                            int is_struct_like = (receiver_type->kind == TYPE_STRUCT || receiver_type->kind == TYPE_CSTRUCT || receiver_type->kind == TYPE_FACE);
-                            if (!method_found && !is_struct_like) {
+
+                            // 对于 struct 类型，如果 func_table 没找到方法，尝试在 AST 中查找 struct 定义
+                            // 这覆盖了"struct 定义在调用之后"的前向引用场景（如 tickAllTimers 在 Timer 之前定义）
+                            if (!method_found && receiver_type->kind == TYPE_STRUCT && receiver_type->struct_name) {
+                                Ast* struct_def_ast = NULL;
+                                for (int si = 0; si < s->root->u.block.count; si++) {
+                                    Ast* stmt = s->root->u.block.items[si];
+                                    // 检查普通 struct 定义
+                                    if (stmt->kind == AST_STRUCT_DEF && stmt->u.struct_def.name &&
+                                        strcmp(stmt->u.struct_def.name, receiver_type->struct_name) == 0) {
+                                        struct_def_ast = stmt;
+                                        break;
+                                    }
+                                    // 检查 export struct 定义
+                                    if (stmt->kind == AST_EXPORT && stmt->u.export.decl &&
+                                        stmt->u.export.decl->kind == AST_STRUCT_DEF &&
+                                        stmt->u.export.decl->u.struct_def.name &&
+                                        strcmp(stmt->u.export.decl->u.struct_def.name, receiver_type->struct_name) == 0) {
+                                        struct_def_ast = stmt->u.export.decl;
+                                        break;
+                                    }
+                                }
+                                if (struct_def_ast) {
+                                    // 在 struct 定义中查找方法
+                                    for (int mi = 0; mi < struct_def_ast->u.struct_def.method_count; mi++) {
+                                        Ast* method_ast = struct_def_ast->u.struct_def.methods[mi];
+                                        if (method_ast && method_ast->kind == AST_FUNC_DEF &&
+                                            strcmp(method_ast->u.func.name, method_name) == 0) {
+                                            method_found = 1;
+                                            // 用 AST 中的方法信息更新 expected_arity
+                                            expected_arity = method_ast->u.func.pcnt - 1; // 减去 self
+                                            fallback_default_count = method_ast->u.func.default_count;
+                                            break;
+                                        }
+                                    }
+                                    // 如果 struct 定义在 AST 中找到了但方法没找到，是真正的错误
+                                    if (!method_found) {
+                                        char msg[BUFFER_MEDIUM];
+                                        const char* type_str = type_to_string(receiver_type);
+                                        snprintf(msg, sizeof(msg),
+                                            "类型 '%s' 没有方法 '%s'",
+                                            type_str, method_name);
+                                        error_add(ERR_SEMANTIC, ast->line, msg);
+                                    }
+                                }
+                                // 如果 struct 定义不在当前 AST 中（跨模块导入），跳过编译时检查
+                            }
+
+                            // 对于 cstruct/face 类型，方法可能在跨模块定义中，
+                            // 编译时无法完全确定方法是否存在，留给运行时处理
+                            int is_cstruct_or_face = (receiver_type->kind == TYPE_CSTRUCT || receiver_type->kind == TYPE_FACE);
+                            if (!method_found && !is_cstruct_or_face) {
                                 // 方法不存在，编译时报错
                                 char msg[BUFFER_MEDIUM];
                                 const char* type_str = type_to_string(receiver_type);
@@ -615,7 +665,7 @@
                                     "  提示: 如果是数组切片，请使用 arr[start:end] 语法而非 .slice()",
                                     type_str, method_name);
                                 error_add(ERR_SEMANTIC, ast->line, msg);
-                            } else {
+                            } else if (method_found || is_cstruct_or_face) {
                                 // 是实例方法，检查参数
                                 int actual_arity = ast->u.call.args.count;
                                 // 如果第一个参数是 self（方法内部调用 self["method"](self, ...)），
