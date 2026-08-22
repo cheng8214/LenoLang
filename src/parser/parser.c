@@ -161,7 +161,7 @@ Ast* parse_statement(Parser* p) {
                 int ident_len = p->lex.current.len;
                 const char* ident_text = p->lex.current.text;
                 if (ident_len == 4 && strncmp(ident_text, "this", 4) == 0) {
-                    error_add(ERR_SYNTAX, p->lex.current.line,
+                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
                         "不支持的关键字 'this'，请使用 'self' 引用当前对象");
                     lexer_next(&p->lex);  // 跳过 this
                     return NULL;

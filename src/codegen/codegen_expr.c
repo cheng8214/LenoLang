@@ -37,7 +37,7 @@ void gen_array_add_by_symbol(CodeGen* gen, Symbol* var_sym, Ast* arg_ast, int ne
             emit_bytes_2(gen, OP_GET_UPVALUE, var_sym->index, line);
             break;
         default:
-            error_add(ERR_SEMANTIC, line, "未知的变量类型");
+            error_add_at(ERR_SEMANTIC, line, 0, "未知的变量类型");
             return;
     }
     gen_expr(gen, arg_ast);
@@ -272,7 +272,7 @@ static void gen_binary(CodeGen* gen, Ast* ast) {
             emit_byte(gen, OP_NOT, ast->line);  // not in = in + not
             break;
         default:
-            error_add(ERR_SEMANTIC, ast->line, "未知的二元操作符");
+            error_add_at(ERR_SEMANTIC, ast->line, ast->column, "未知的二元操作符");
             break;
     }
 }
@@ -280,7 +280,7 @@ static void gen_binary(CodeGen* gen, Ast* ast) {
 static void gen_unary(CodeGen* gen, Ast* ast) {
     if (ast->u.unary.op == TOK_INC || ast->u.unary.op == TOK_DEC) {
         if (ast->u.unary.operand->kind != AST_VAR) {
-            error_add(ERR_SEMANTIC, ast->line, "++ 和 -- 只能用于变量");
+            error_add_at(ERR_SEMANTIC, ast->line, ast->column, "++ 和 -- 只能用于变量");
             return;
         }
 
@@ -304,7 +304,7 @@ static void gen_unary(CodeGen* gen, Ast* ast) {
                 emit_bytes_2(gen, OP_SET_UPVALUE, ref->index, ast->line);
                 emit_byte(gen, OP_POP, ast->line);
             } else {
-                error_add(ERR_SEMANTIC, ast->line, "不支持的变量类型用于 ++/--");
+                error_add_at(ERR_SEMANTIC, ast->line, ast->column, "不支持的变量类型用于 ++/--");
                 return;
             }
         } else {
@@ -325,7 +325,7 @@ static void gen_unary(CodeGen* gen, Ast* ast) {
                 emit_bytes_2(gen, OP_SET_UPVALUE, ref->index, ast->line);
                 emit_byte(gen, OP_POP, ast->line);
             } else {
-                error_add(ERR_SEMANTIC, ast->line, "不支持的变量类型用于 ++/--");
+                error_add_at(ERR_SEMANTIC, ast->line, ast->column, "不支持的变量类型用于 ++/--");
                 return;
             }
         }
@@ -349,7 +349,7 @@ static void gen_unary(CodeGen* gen, Ast* ast) {
         case TOK_NOT:    emit_byte(gen, OP_NOT, ast->line); break;
         case TOK_BITNOT: emit_byte(gen, OP_BITNOT, ast->line); break;
         default:
-            error_add(ERR_SEMANTIC, ast->line, "未知的一元操作符");
+            error_add_at(ERR_SEMANTIC, ast->line, ast->column, "未知的一元操作符");
             break;
     }
 }
@@ -358,7 +358,7 @@ static void gen_variable(CodeGen* gen, Ast* ast, int can_assign) {
     (void)can_assign;
     SymRef* ref = &ast->u.var.ref;
     if (!ref->name) {
-        error_add(ERR_SEMANTIC, ast->line, "未解析的变量");
+        error_add_at(ERR_SEMANTIC, ast->line, ast->column, "未解析的变量");
         return;
     }
 
@@ -417,7 +417,7 @@ static void gen_variable(CodeGen* gen, Ast* ast, int can_assign) {
             }
             break;
         default:
-            error_add(ERR_SEMANTIC, ast->line, "未知的符号类型");
+            error_add_at(ERR_SEMANTIC, ast->line, ast->column, "未知的符号类型");
             return;
     }
 }
@@ -860,7 +860,7 @@ static void gen_call(CodeGen* gen, Ast* ast) {
                 char msg[BUFFER_MEDIUM];
                 snprintf(msg, sizeof(msg), "方法 '%s' 调用参数不足: 至少需要 %d 个参数，实际传入 %d 个",
                          method_name, required_args - 1, provided_args - (self_in_args ? 1 : 0));
-                error_add(ERR_SEMANTIC, ast->line, msg);
+                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                 return;
             }
 
@@ -868,7 +868,7 @@ static void gen_call(CodeGen* gen, Ast* ast) {
                 char msg[BUFFER_MEDIUM];
                 snprintf(msg, sizeof(msg), "方法 '%s' 调用参数过多: 最多接受 %d 个参数，实际传入 %d 个",
                          method_name, expected_args - 1, provided_args - (self_in_args ? 1 : 0));
-                error_add(ERR_SEMANTIC, ast->line, msg);
+                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                 return;
             }
 
@@ -995,7 +995,7 @@ static void gen_call(CodeGen* gen, Ast* ast) {
                 snprintf(msg, sizeof(msg), "函数 '%s' 调用参数不足: 至少需要 %d 个参数，实际传入 %d 个",
                          func_name, required_args, provided_args);
             }
-            error_add(ERR_SEMANTIC, ast->line, msg);
+            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
             return;
         }
 
@@ -1008,7 +1008,7 @@ static void gen_call(CodeGen* gen, Ast* ast) {
                 snprintf(msg, sizeof(msg), "函数 '%s' 调用参数过多: 最多接受 %d 个参数，实际传入 %d 个",
                          func_name, expected_args, provided_args);
             }
-            error_add(ERR_SEMANTIC, ast->line, msg);
+            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
             return;
         }
     }
@@ -1299,7 +1299,7 @@ void gen_expr(CodeGen* gen, Ast* ast) {
                 int field_idx = ast->u.index_assign.field_index;
                 
                 if (field_idx < 0) {
-                    error_add(ERR_SEMANTIC, ast->line, "无法确定字段索引，struct 类型可能未定义");
+                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, "无法确定字段索引，struct 类型可能未定义");
                     field_idx = 0; // 使用 0 作为默认值，避免生成无效字节码
                 }
                 
@@ -1551,7 +1551,7 @@ void gen_expr(CodeGen* gen, Ast* ast) {
 
                 Symbol* module_sym = scope_resolve(gen->sem->root_scope, ast->u.module_call.module_name);
                 if (!module_sym || (module_sym->kind != SYM_GLOBAL && module_sym->kind != SYM_MODULE)) {
-                    error_add(ERR_SEMANTIC, ast->line, "未定义的模块");
+                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, "未定义的模块");
                     break;
                 }
 
@@ -1614,7 +1614,7 @@ void gen_expr(CodeGen* gen, Ast* ast) {
             // .leno 用户模块成员访问
             Symbol* module_sym = scope_resolve(gen->sem->root_scope, ast->u.module_access.module_name);
             if (!module_sym || (module_sym->kind != SYM_GLOBAL && module_sym->kind != SYM_MODULE)) {
-                error_add(ERR_SEMANTIC, ast->line, "未定义的模块");
+                error_add_at(ERR_SEMANTIC, ast->line, ast->column, "未定义的模块");
                 break;
             }
 
@@ -1747,7 +1747,7 @@ void gen_expr(CodeGen* gen, Ast* ast) {
                     snprintf(msg, sizeof(msg), "创建结构体 '%s' 时参数数量过多: 期望最多 %d, 实际 %d",
                             ast->u.struct_init.struct_name, struct_sym->struct_field_count, 
                             ast->u.struct_init.field_count);
-                    error_add(ERR_SEMANTIC, ast->line, msg);
+                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                 }
             }
             
@@ -1854,10 +1854,10 @@ void gen_expr(CodeGen* gen, Ast* ast) {
                     emit_byte(gen, OP_GET_FIELD_ADDR, ast->line);
                     emit_byte(gen, (uint8_t)field_idx, ast->line);
                 } else {
-                    error_add(ERR_SEMANTIC, ast->line, "无法确定字段索引，& 取地址失败");
+                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, "无法确定字段索引，& 取地址失败");
                 }
             } else {
-                error_add(ERR_SEMANTIC, ast->line, "& 取地址运算符只能用于字段访问");
+                error_add_at(ERR_SEMANTIC, ast->line, ast->column, "& 取地址运算符只能用于字段访问");
             }
             break;
         }
@@ -1967,7 +1967,7 @@ void gen_expr(CodeGen* gen, Ast* ast) {
             // 1. 生成函数原型
             ObjFunction* func = gen_func_proto(gen, ast);
             if (!func) {
-                error_add(ERR_SEMANTIC, ast->line, "生成匿名函数失败");
+                error_add_at(ERR_SEMANTIC, ast->line, ast->column, "生成匿名函数失败");
                 break;
             }
             
@@ -2041,7 +2041,7 @@ void gen_expr(CodeGen* gen, Ast* ast) {
                 default: ast_type_name = "UNKNOWN_AST_KIND"; break;
             }
             snprintf(msg, sizeof(msg), "未知的表达式类型: %s (kind=%d)", ast_type_name, ast->kind);
-            error_add(ERR_SEMANTIC, ast->line, msg);
+            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
             break;
         }
     }

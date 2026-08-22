@@ -104,7 +104,7 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
         }
         if (off < (int)sizeof(msg) - 32)
             off += snprintf(msg + off, sizeof(msg) - off, "。请使用接口(face)解耦或移除相互导入中的任一方");
-        error_add(ERR_SEMANTIC, 0, msg);
+        error_add_at(ERR_SEMANTIC, 0, 0, msg);
         return -1;
     }
 

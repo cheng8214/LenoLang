@@ -137,7 +137,7 @@ static inline void runtime_error(const char* msg, int line) {
         error_set_filename(filename);
     }
     
-    error_add(ERR_RUNTIME, line, msg);
+    error_add_at(ERR_RUNTIME, line, 0, msg);
     
     // 恢复原来的文件名
     error_set_filename(old_filename);

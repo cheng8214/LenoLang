@@ -1,0 +1,17 @@
+// 测试14: face 接口未实现方法
+// 期望错误:
+//   struct Dog 未实现 face Speaker 的 speak 方法
+
+face Speaker {
+    func speak(): string
+}
+
+struct Dog impl Speaker {
+    string name = ""
+    // 缺少 func speak(): string 方法
+}
+
+main()
+{
+    var d = new Dog()
+}

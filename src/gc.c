@@ -204,7 +204,7 @@ Object* gc_alloc(size_t size, ObjType type) {
     }
 
     if (!obj) {
-        error_add(ERR_RUNTIME, 0, "内存分配失败");
+        error_add_at(ERR_RUNTIME, 0, 0, "内存分配失败");
         return NULL;
     }
 

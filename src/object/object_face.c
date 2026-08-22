@@ -39,7 +39,7 @@ void face_def_set_type_params(ObjFaceDef* def, int count, char** names, char** c
 
 void face_def_register(ObjFaceDef* def) {
     if (face_def_count >= MAX_FACE_DEFS) {
-        error_add(ERR_RUNTIME, 0, "face 定义数量超过上限");
+        error_add_at(ERR_RUNTIME, 0, 0, "face 定义数量超过上限");
         return;
     }
 

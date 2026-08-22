@@ -283,7 +283,7 @@ static Token read_string(Lexer* lex, char quote) {
         tok.len = (lex->src + lex->pos) - tok.text;
         advance(lex);
     } else {
-        error_add(ERR_SYNTAX, lex->line, "未终止的字符串");
+        error_add_at(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1, "未终止的字符串");
     }
 
     return tok;
@@ -295,7 +295,7 @@ static Token read_raw_string(Lexer* lex) {
     advance(lex); // 跳过 @
     
     if (peek(lex) != '"') {
-        error_add(ERR_SYNTAX, lex->line, "原始字符串需要使用 @\"...\"");
+        error_add_at(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1, "原始字符串需要使用 @\"...\"");
         return tok;
     }
     advance(lex); // 跳过 "
@@ -326,7 +326,7 @@ static Token read_raw_string(Lexer* lex) {
         tok.len = raw_len;
         advance(lex); // 跳过结尾的 "
     } else {
-        error_add(ERR_SYNTAX, lex->line, "未终止的原始字符串");
+        error_add_at(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1, "未终止的原始字符串");
     }
     
     return tok;
@@ -606,7 +606,7 @@ void lexer_next(Lexer* lex) {
                 lex->brace_depth = 0;
                 lex->current = make_token(lex, TOK_INTERP_STRING);
             } else {
-                error_add(ERR_SYNTAX, lex->line, "意外的字符 '$'，插值字符串需要使用 $\"...\"");
+                error_add_at(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1, "意外的字符 '$'，插值字符串需要使用 $\"...\"");
                 advance(lex);
                 lex->current = make_token(lex, TOK_ERROR);
             }
@@ -615,7 +615,7 @@ void lexer_next(Lexer* lex) {
             if (peek_next(lex) == '"') {
                 lex->current = read_raw_string(lex);
             } else {
-                error_add(ERR_SYNTAX, lex->line, "意外的字符 '@'，原始字符串需要使用 @\"...\"");
+                error_add_at(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1, "意外的字符 '@'，原始字符串需要使用 @\"...\"");
                 advance(lex);
                 lex->current = make_token(lex, TOK_ERROR);
             }
@@ -640,7 +640,7 @@ advance(lex);
                 advance(lex);
                 advance(lex);
             } else {
-                error_add(ERR_SYNTAX, lex->line, "意外的字符 '!'，请使用 'not' 关键字表示逻辑非");
+                error_add_at(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1, "意外的字符 '!'，请使用 'not' 关键字表示逻辑非");
                 advance(lex);
                 lex->current = make_token(lex, TOK_ERROR);
             }
@@ -694,7 +694,7 @@ advance(lex);
             break;
         case '&':
             if (peek_next(lex) == '&') {
-                error_add(ERR_SYNTAX, lex->line, "意外的字符 '&&'，请使用 'and' 关键字表示逻辑与");
+                error_add_at(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1, "意外的字符 '&&'，请使用 'and' 关键字表示逻辑与");
                 advance(lex);
                 advance(lex);
                 lex->current = make_token(lex, TOK_ERROR);
@@ -709,7 +709,7 @@ advance(lex);
             break;
         case '|':
             if (peek_next(lex) == '|') {
-                error_add(ERR_SYNTAX, lex->line, "意外的字符 '||'，请使用 'or' 关键字表示逻辑或");
+                error_add_at(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1, "意外的字符 '||'，请使用 'or' 关键字表示逻辑或");
                 advance(lex);
                 advance(lex);
                 lex->current = make_token(lex, TOK_ERROR);
@@ -752,7 +752,7 @@ advance(lex);
             break;
         case '#':
             // Leno 不支持 # 开头的语法（注释使用 // 或 /* */）
-            error_add(ERR_SYNTAX, lex->line, "意外的字符 '#'，请使用 // 或 /* */ 进行注释");
+            error_add_at(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1, "意外的字符 '#'，请使用 // 或 /* */ 进行注释");
             advance(lex);
             lex->current = make_token(lex, TOK_ERROR);
             break;
@@ -797,7 +797,7 @@ advance(lex);
                 } else {
                     snprintf(err_msg, sizeof(err_msg), "意外的字符 (0x%02X)", (unsigned char)c);
                 }
-                error_add(ERR_SYNTAX, lex->line, err_msg);
+                error_add_at(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1, err_msg);
                 advance(lex);
                 lex->current = make_token(lex, TOK_ERROR);
             }

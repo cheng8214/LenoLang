@@ -950,7 +950,7 @@ static void gen_for(CodeGen* gen, Ast* ast) {
                      "for 区间 %g:%g 无显式步长，按正向规则不会执行（如需倒序请写 for A:B:-1）",
                      ast->u.for_.start->u.num.value,
                      ast->u.for_.end->u.num.value);
-            warning_add(WARN_FOR_EMPTY_RANGE, ast->line, wbuf);
+            warning_add_at(WARN_FOR_EMPTY_RANGE, ast->line, ast->column, wbuf);
         }
         emit_byte(gen, OP_ONE, ast->line);
         emit_bytes_2(gen, OP_SET_LOCAL_POP, step_slot, ast->line);
@@ -1108,7 +1108,7 @@ static void gen_var_decl(CodeGen* gen, Ast* ast) {
 
     SymRef* ref = &ast->u.var_decl.ref;
     if (!ref->name) {
-        error_add(ERR_SEMANTIC, ast->line, "未解析的变量声明");
+        error_add_at(ERR_SEMANTIC, ast->line, ast->column, "未解析的变量声明");
         return;
     }
 
@@ -1182,7 +1182,7 @@ void gen_assign(CodeGen* gen, Ast* ast) {
                 
                 int field_idx = target->u.field_access.field_index;
                 if (field_idx < 0) {
-                    error_add(ERR_SEMANTIC, ast->line, "无法确定字段索引，struct 类型可能未定义");
+                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, "无法确定字段索引，struct 类型可能未定义");
                     field_idx = 0;
                 }
                 emit_byte(gen, OP_SET_FIELD, ast->line);
@@ -1206,7 +1206,7 @@ void gen_assign(CodeGen* gen, Ast* ast) {
                 emit_bytes_2(gen, OP_GET_LOCAL, val_slot, ast->line);
                 
                 if (!ref->name) {
-                    error_add(ERR_SEMANTIC, ast->line, "未解析的赋值目标");
+                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, "未解析的赋值目标");
                     return;
                 }
                 switch (ref->kind) {
@@ -1227,15 +1227,15 @@ void gen_assign(CodeGen* gen, Ast* ast) {
                     case SYM_STRUCT:
                     case SYM_CSTRUCT:
                     case SYM_ENUM:
-                        error_add(ERR_SEMANTIC, ast->line, "类型定义不能赋值");
+                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, "类型定义不能赋值");
                         return;
                     default:
-                        error_add(ERR_SEMANTIC, ast->line, "未知的符号类型");
+                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, "未知的符号类型");
                         return;
                 }
                 emit_byte(gen, OP_POP, ast->line);
             } else {
-                error_add(ERR_SEMANTIC, ast->line, "不支持的赋值目标类型");
+                error_add_at(ERR_SEMANTIC, ast->line, ast->column, "不支持的赋值目标类型");
                 return;
             }
         }
@@ -1285,7 +1285,7 @@ void gen_assign(CodeGen* gen, Ast* ast) {
             int field_idx = target->u.field_access.field_index;
             
             if (field_idx < 0) {
-                error_add(ERR_SEMANTIC, ast->line, "无法确定字段索引，struct 类型可能未定义");
+                error_add_at(ERR_SEMANTIC, ast->line, ast->column, "无法确定字段索引，struct 类型可能未定义");
                 field_idx = 0; // 使用 0 作为默认值，避免生成无效字节码
             }
             
@@ -1301,7 +1301,7 @@ void gen_assign(CodeGen* gen, Ast* ast) {
         } else if (target->kind == AST_VAR) {
             SymRef* ref = &ast->u.assign.refs[0];
             if (!ref->name) {
-                error_add(ERR_SEMANTIC, ast->line, "未解析的赋值目标");
+                error_add_at(ERR_SEMANTIC, ast->line, ast->column, "未解析的赋值目标");
                 return;
             }
 
@@ -1343,14 +1343,14 @@ void gen_assign(CodeGen* gen, Ast* ast) {
                 case SYM_CSTRUCT:
                 case SYM_ENUM:
                     // 类型定义不能赋值
-                    error_add(ERR_SEMANTIC, ast->line, "类型定义不能赋值");
+                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, "类型定义不能赋值");
                     return;
                 default:
-                    error_add(ERR_SEMANTIC, ast->line, "未知的符号类型");
+                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, "未知的符号类型");
                     return;
             }
         } else {
-            error_add(ERR_SEMANTIC, ast->line, "不支持的赋值目标类型");
+            error_add_at(ERR_SEMANTIC, ast->line, ast->column, "不支持的赋值目标类型");
             return;
         }
     }
@@ -1359,7 +1359,7 @@ void gen_assign(CodeGen* gen, Ast* ast) {
 void gen_compound_assign(CodeGen* gen, Ast* ast) {
     SymRef* ref = &ast->u.compound_assign.ref;
     if (!ref->name) {
-        error_add(ERR_SEMANTIC, ast->line, "未解析的复合赋值目标");
+        error_add_at(ERR_SEMANTIC, ast->line, ast->column, "未解析的复合赋值目标");
         return;
     }
 
@@ -1416,7 +1416,7 @@ void gen_compound_assign(CodeGen* gen, Ast* ast) {
         } else if (ref->kind == SYM_MODULE) {
             emit_bytes_2(gen, OP_GET_MODULE_VAR, ref->index, ast->line);
         } else {
-            error_add(ERR_SEMANTIC, ast->line, "不支持的变量类型用于复合赋值");
+            error_add_at(ERR_SEMANTIC, ast->line, ast->column, "不支持的变量类型用于复合赋值");
             return;
         }
     }
@@ -1463,7 +1463,7 @@ void gen_compound_assign(CodeGen* gen, Ast* ast) {
             else           emit_byte(gen, OP_USHR, ast->line);
             break;
         default:
-            error_add(ERR_SEMANTIC, ast->line, "未知的复合赋值运算符");
+            error_add_at(ERR_SEMANTIC, ast->line, ast->column, "未知的复合赋值运算符");
             return;
     }
 
@@ -1495,10 +1495,10 @@ void gen_compound_assign(CodeGen* gen, Ast* ast) {
             case SYM_CSTRUCT:
             case SYM_ENUM:
                 // 类型定义不能赋值
-                error_add(ERR_SEMANTIC, ast->line, "类型定义不能赋值");
+                error_add_at(ERR_SEMANTIC, ast->line, ast->column, "类型定义不能赋值");
                 return;
             default:
-                error_add(ERR_SEMANTIC, ast->line, "未知的符号类型");
+                error_add_at(ERR_SEMANTIC, ast->line, ast->column, "未知的符号类型");
                 return;
         }
     }
@@ -1855,12 +1855,12 @@ void gen_stmt(CodeGen* gen, Ast* ast) {
             break;
         case AST_BREAK: {
             if (!gen->loop_head) {
-                error_add(ERR_SYNTAX, ast->line, "break 只能在循环中使用");
+                error_add_at(ERR_SYNTAX, ast->line, ast->column, "break 只能在循环中使用");
                 return;
             }
             LoopContext* loop = &gen->loop_head->ctx;
             if (loop->break_count >= MAX_BREAK_JUMPS) {
-                error_add(ERR_RUNTIME, ast->line, "break 太多");
+                error_add_at(ERR_RUNTIME, ast->line, ast->column, "break 太多");
                 return;
             }
             loop->break_jumps[loop->break_count++] = emit_jump(gen, OP_JUMP, ast->line);
@@ -1868,13 +1868,13 @@ void gen_stmt(CodeGen* gen, Ast* ast) {
         }
         case AST_CONTINUE: {
             if (!gen->loop_head) {
-                error_add(ERR_SYNTAX, ast->line, "continue 只能在循环中使用");
+                error_add_at(ERR_SYNTAX, ast->line, ast->column, "continue 只能在循环中使用");
                 return;
             }
             LoopContext* loop = &gen->loop_head->ctx;
             // 对于需要回填的循环（如 for to），使用占位符
             if (loop->continue_count >= MAX_CONTINUE_JUMPS) {
-                error_add(ERR_RUNTIME, ast->line, "continue 太多");
+                error_add_at(ERR_RUNTIME, ast->line, ast->column, "continue 太多");
                 return;
             }
             // 记录跳转位置，稍后回填
@@ -2150,7 +2150,7 @@ void gen_stmt(CodeGen* gen, Ast* ast) {
                             "struct 字段 '%s' 的默认值不是常量表达式（仅支持数字、字符串、bool、null、数组字面量、字典字面量），"
                             "请使用构造器初始化",
                             ast->u.struct_def.field_names[i]);
-                        error_add(ERR_SEMANTIC, ast->line, msg);
+                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                         emit_byte(gen, 0, ast->line); // 无默认值
                     } else {
                         emit_byte(gen, 1, ast->line);
@@ -2548,7 +2548,7 @@ static void gen_struct_module(CodeGen* gen, Ast* ast) {
                     "struct 字段 '%s' 的默认值不是常量表达式（仅支持数字、字符串、bool、null、数组字面量、字典字面量），"
                     "请使用构造器初始化",
                     ast->u.struct_def.field_names[i]);
-                error_add(ERR_SEMANTIC, ast->line, msg);
+                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                 emit_byte(gen, 0, ast->line); // 无默认值
             } else {
                 emit_byte(gen, 1, ast->line);

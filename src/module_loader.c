@@ -652,7 +652,7 @@ ObjModule* load_module_file(const char* file_path, const char* current_file, con
         // 确保根因错误出现在格式化错误输出中，不被下游 any 类型错误掩盖
         char err_msg[BUFFER_MEDIUM];
         snprintf(err_msg, sizeof(err_msg), "找不到模块文件: %s", full_path);
-        error_add(ERR_SEMANTIC, 1, err_msg);
+        error_add_at(ERR_SEMANTIC, 1, 0, err_msg);
         return NULL;
     }
 

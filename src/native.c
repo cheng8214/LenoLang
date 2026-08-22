@@ -1452,7 +1452,7 @@ void native_throw_error(const char* msg) {
 
     ObjString* err_str = str_copy(msg, strlen(msg));
     if (!err_str) {
-        error_add(ERR_RUNTIME, line, msg);
+        error_add_at(ERR_RUNTIME, line, 0, msg);
         return;
     }
 

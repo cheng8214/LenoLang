@@ -99,11 +99,11 @@ static TypeInfo* parse_base_type(Parser* p) {
             lexer_next(&p->lex); // 消费 '['
             TypeInfo* element_type = parse_type_internal(p);
             if (!element_type) {
-                error_add(ERR_SYNTAX, p->lex.current.line, "Ptr 元素类型解析失败");
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "Ptr 元素类型解析失败");
                 return type_ptr_generic(type_new(TYPE_ANY));
             }
             if (p->lex.current.type != TOK_RBRACKET) {
-                error_add(ERR_SYNTAX, p->lex.current.line, "期望 ']' 结束 Ptr 类型");
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 ']' 结束 Ptr 类型");
                 type_free(element_type);
                 return type_ptr_generic(type_new(TYPE_ANY));
             }
@@ -228,7 +228,7 @@ static TypeInfo* parse_base_type(Parser* p) {
             
             snprintf(msg, sizeof(msg), "未知类型 '%s'，您是否想使用 '%s'？", 
                      type_name, correct_name);
-            error_add(ERR_SYNTAX, p->lex.current.line, msg);
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, msg);
             free(type_name);
             lexer_next(&p->lex);
             return type_new(TYPE_ANY); // 返回 any 类型继续解析
@@ -252,7 +252,7 @@ static TypeInfo* parse_base_type(Parser* p) {
                 for (int tp = 0; tp < alias_tp_count; tp++) {
                     TypeInfo* arg_type = parse_type_internal(p);
                     if (!arg_type) {
-                        error_add(ERR_SYNTAX, p->lex.current.line, "泛型类型参数解析失败");
+                        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "泛型类型参数解析失败");
                         type_free(result);
                         free(type_name);
                         return type_new(TYPE_ANY);
@@ -267,7 +267,7 @@ static TypeInfo* parse_base_type(Parser* p) {
                 }
                 
                 if (p->lex.current.type != TOK_RBRACKET) {
-                    error_add(ERR_SYNTAX, p->lex.current.line, "期望 ']' 结束泛型别名参数");
+                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 ']' 结束泛型别名参数");
                     type_free(result);
                     free(type_name);
                     return type_new(TYPE_ANY);
@@ -303,14 +303,14 @@ static TypeInfo* parse_base_type(Parser* p) {
                 }
                 TypeInfo* arg_type = parse_type_internal(p);
                 if (!arg_type) {
-                    error_add(ERR_SYNTAX, p->lex.current.line, "泛型类型参数解析失败");
+                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "泛型类型参数解析失败");
                     break;
                 }
                 struct_type->generic_args[struct_type->generic_count++] = arg_type;
             } while (p->lex.current.type == TOK_COMMA && (lexer_next(&p->lex), 1));
             
             if (p->lex.current.type != TOK_RBRACKET) {
-                error_add(ERR_SYNTAX, p->lex.current.line, "期望 ']' 结束泛型类型参数");
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 ']' 结束泛型类型参数");
             } else {
                 lexer_next(&p->lex); // 消费 ']'
             }
@@ -335,12 +335,12 @@ static TypeInfo* parse_dict_type(Parser* p) {
     // 解析键类型
     TypeInfo* key_type = parse_type_internal(p);
     if (!key_type) {
-        error_add(ERR_SYNTAX, p->lex.current.line, "Dict 键类型解析失败");
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "Dict 键类型解析失败");
         return type_dict(type_new(TYPE_ANY), type_new(TYPE_ANY));
     }
     
     if (p->lex.current.type != TOK_COMMA) {
-        error_add(ERR_SYNTAX, p->lex.current.line, "Dict 类型需要两个参数: Dict[KeyType, ValueType]");
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "Dict 类型需要两个参数: Dict[KeyType, ValueType]");
         type_free(key_type);
         return type_dict(type_new(TYPE_ANY), type_new(TYPE_ANY));
     }
@@ -349,13 +349,13 @@ static TypeInfo* parse_dict_type(Parser* p) {
     // 解析值类型
     TypeInfo* value_type = parse_type_internal(p);
     if (!value_type) {
-        error_add(ERR_SYNTAX, p->lex.current.line, "Dict 值类型解析失败");
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "Dict 值类型解析失败");
         type_free(key_type);
         return type_dict(type_new(TYPE_ANY), type_new(TYPE_ANY));
     }
     
     if (p->lex.current.type != TOK_RBRACKET) {
-        error_add(ERR_SYNTAX, p->lex.current.line, "期望 ']' 结束 Dict 类型");
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 ']' 结束 Dict 类型");
         type_free(key_type);
         type_free(value_type);
         return type_dict(type_new(TYPE_ANY), type_new(TYPE_ANY));
@@ -379,12 +379,12 @@ static TypeInfo* parse_array_type(Parser* p) {
     // 解析元素类型（递归支持 Array[Array[int]]）
     TypeInfo* element_type = parse_type_internal(p);
     if (!element_type) {
-        error_add(ERR_SYNTAX, p->lex.current.line, "Array 元素类型解析失败");
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "Array 元素类型解析失败");
         return type_array(type_new(TYPE_ANY));
     }
     
     if (p->lex.current.type != TOK_RBRACKET) {
-        error_add(ERR_SYNTAX, p->lex.current.line, "期望 ']' 结束 Array 类型");
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 ']' 结束 Array 类型");
         type_free(element_type);
         return type_array(type_new(TYPE_ANY));
     }
@@ -413,7 +413,7 @@ static TypeInfo* parse_function_type(Parser* p) {
             do {
                 TypeInfo* param_type = parse_type_internal(p);
                 if (!param_type) {
-                    error_add(ERR_SYNTAX, p->lex.current.line, "期望参数类型");
+                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望参数类型");
                     break;
                 }
                 
@@ -434,7 +434,7 @@ static TypeInfo* parse_function_type(Parser* p) {
             lexer_next(&p->lex); // 消费 ':'
             return_type = parse_type_internal(p);
             if (!return_type) {
-                error_add(ERR_SYNTAX, p->lex.current.line, "期望返回类型");
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望返回类型");
                 return_type = type_new(TYPE_ANY);
             }
             // void 返回类型转换为 TYPE_NULL
@@ -493,7 +493,7 @@ Ast* parse_alias_stmt(Parser* p) {
     lexer_next(&p->lex); // 跳过 alias
 
     if (p->lex.current.type != TOK_IDENT) {
-        error_add(ERR_SYNTAX, p->lex.current.line, "期望别名名称");
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望别名名称");
         return NULL;
     }
 
@@ -514,7 +514,7 @@ Ast* parse_alias_stmt(Parser* p) {
                 type_params = (char**)realloc(type_params, sizeof(char*) * tp_capacity);
             }
             if (p->lex.current.type != TOK_IDENT) {
-                error_add(ERR_SYNTAX, p->lex.current.line, "期望类型参数名");
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望类型参数名");
                 break;
             }
             type_params[type_param_count] = copy_string(p->lex.current.text, p->lex.current.len);
@@ -526,7 +526,7 @@ Ast* parse_alias_stmt(Parser* p) {
     }
 
     if (!match(p, TOK_EQ)) {
-        error_add(ERR_SYNTAX, p->lex.current.line, "期望 '='");
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 '='");
         free(name);
         for (int i = 0; i < type_param_count; i++) free(type_params[i]);
         free(type_params);
@@ -551,7 +551,7 @@ Ast* parse_alias_stmt(Parser* p) {
             // 这是值别名模式：alias X = EnumName.member
             lexer_next(&p->lex); // 消费 '.'
             if (p->lex.current.type != TOK_IDENT) {
-                error_add(ERR_SYNTAX, p->lex.current.line, "期望枚举成员名");
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望枚举成员名");
                 free(name);
                 free(first_ident);
                 for (int i = 0; i < type_param_count; i++) free(type_params[i]);
@@ -590,7 +590,7 @@ Ast* parse_alias_stmt(Parser* p) {
 
     TypeInfo* type = parse_type(p);
     if (!type) {
-        error_add(ERR_SYNTAX, p->lex.current.line, "期望类型");
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望类型");
         free(name);
         for (int i = 0; i < type_param_count; i++) free(type_params[i]);
         free(type_params);
@@ -636,7 +636,7 @@ static void check_var_decl_boundary(Parser* p, int decl_line) {
             found = "符号";
         }
         snprintf(msg, sizeof(msg), "声明语句后期望换行或 ';'，但同一行出现%s", found);
-        error_add(ERR_SYNTAX, p->lex.current.line, msg);
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, msg);
     }
 }
 
@@ -668,7 +668,7 @@ Ast* parse_var_decl_internal(Parser* p) {
     if (!shared_type) {
         shared_type = parse_type(p);
         if (!shared_type) {
-            error_add(ERR_SYNTAX, p->lex.current.line, "期望类型 (int, float, string, bool, Array, Dict, var)");
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望类型 (int, float, string, bool, Array, Dict, var)");
             return NULL;
         }
     }
@@ -679,9 +679,9 @@ Ast* parse_var_decl_internal(Parser* p) {
             char msg[64];
             snprintf(msg, sizeof(msg), "不能使用关键字(%.*s)作为变量名", 
                      p->lex.current.len, p->lex.current.text);
-            error_add(ERR_SYNTAX, p->lex.current.line, msg);
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, msg);
         } else {
-            error_add(ERR_SYNTAX, p->lex.current.line, "期望变量名");
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望变量名");
         }
         type_free(shared_type);
         return NULL;
@@ -709,7 +709,7 @@ Ast* parse_var_decl_internal(Parser* p) {
         
         // const 声明必须有初始值
         if (is_const && !init) {
-            error_add(ERR_SYNTAX, p->lex.current.line, "const 声明必须有初始值");
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "const 声明必须有初始值");
             type_free(var_type);
             free(name);
             for (int i = 0; i < decl_count; i++) ast_free(decls[i]);
@@ -785,7 +785,7 @@ Ast* parse_func_body_and_create(Parser* p, char* name, int line, int column) {
                 memset(&type_param_defaults[type_param_count], 0, sizeof(char*) * (tp_capacity - type_param_count));
             }
             if (p->lex.current.type != TOK_IDENT) {
-                error_add(ERR_SYNTAX, p->lex.current.line, "期望类型参数名");
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望类型参数名");
                 break;
             }
             type_params[type_param_count] = copy_string(p->lex.current.text, p->lex.current.len);
@@ -795,7 +795,7 @@ Ast* parse_func_body_and_create(Parser* p, char* name, int line, int column) {
             if (p->lex.current.type == TOK_COLON) {
                 lexer_next(&p->lex); // 跳过 ':'
                 if (p->lex.current.type != TOK_IDENT) {
-                    error_add(ERR_SYNTAX, p->lex.current.line, "期望约束类型名（face 名称）");
+                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望约束类型名（face 名称）");
                 } else {
                     type_param_constraints[type_param_count] = copy_string(p->lex.current.text, p->lex.current.len);
                     lexer_next(&p->lex);
@@ -809,7 +809,7 @@ Ast* parse_func_body_and_create(Parser* p, char* name, int line, int column) {
                     p->lex.current.type != TOK_FLOAT_TYPE &&
                     p->lex.current.type != TOK_STRING_TYPE &&
                     p->lex.current.type != TOK_BOOL_TYPE) {
-                    error_add(ERR_SYNTAX, p->lex.current.line, "期望默认类型名");
+                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望默认类型名");
                 } else {
                     type_param_defaults[type_param_count] = copy_string(p->lex.current.text, p->lex.current.len);
                     lexer_next(&p->lex);
@@ -843,17 +843,17 @@ Ast* parse_func_body_and_create(Parser* p, char* name, int line, int column) {
             if (!param_type) {
                 // 检查是否是省略了 var 的情况（如 func test(n)）
                 if (p->lex.current.type == TOK_IDENT) {
-                    error_add(ERR_SYNTAX, p->lex.current.line, 
+                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, 
                         "函数参数需要使用关键字，例如：func test(var a)");
                 } else {
-                    error_add(ERR_SYNTAX, p->lex.current.line, 
+                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, 
                         "期望参数类型（如 var, int, float, string, bool）");
                 }
                 break;
             }
 
             if (p->lex.current.type != TOK_IDENT) {
-                error_add(ERR_SYNTAX, p->lex.current.line, "期望参数名");
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望参数名");
                 type_free(param_type);
                 break;
             }
@@ -905,7 +905,7 @@ Ast* parse_func_body_and_create(Parser* p, char* name, int line, int column) {
                 return_type = type_new(TYPE_NULL);  // TYPE_NULL 表示 void 返回
             }
         } else {
-            error_add(ERR_SYNTAX, p->lex.current.line, "期望返回类型");
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望返回类型");
         }
     }
 
@@ -949,7 +949,7 @@ Ast* parse_func_stmt(Parser* p) {
         
         // async 后面必须是 func
         if (p->lex.current.type != TOK_FUNC) {
-            error_add(ERR_SYNTAX, p->lex.current.line, "async 后面必须是 func 关键字");
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "async 后面必须是 func 关键字");
             return NULL;
         }
     }
@@ -957,7 +957,7 @@ Ast* parse_func_stmt(Parser* p) {
     lexer_next(&p->lex); // func
 
     if (p->lex.current.type != TOK_IDENT) {
-        error_add(ERR_SYNTAX, p->lex.current.line, "期望函数名");
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望函数名");
         return NULL;
     }
 
@@ -965,14 +965,14 @@ Ast* parse_func_stmt(Parser* p) {
     
     // 检查是否是入口函数（如 main），入口函数不需要 func 关键字
     if (strcmp(name, "main") == 0) {
-        error_add(ERR_SYNTAX, p->lex.current.line, "入口函数 main 不需要 func 关键字，直接使用 main() { ... }");
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "入口函数 main 不需要 func 关键字，直接使用 main() { ... }");
         free(name);
         return NULL;
     }
     
     // main 函数不能是 async
     if (is_async && strcmp(name, "main") == 0) {
-        error_add(ERR_SYNTAX, p->lex.current.line, "main 函数不能是 async 函数，请在 main 中启动协程并调用 async.run()");
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "main 函数不能是 async 函数，请在 main 中启动协程并调用 async.run()");
         free(name);
         return NULL;
     }
@@ -1169,13 +1169,13 @@ Ast* parse_expression_stmt(Parser* p) {
                 
                 // 复合赋值只支持单个变量
                 if (left_count != 1) {
-                    error_add(ERR_SYNTAX, line, "复合赋值只支持单个变量");
+                    error_add_at(ERR_SYNTAX, line, p->lex.current.column, "复合赋值只支持单个变量");
                     return NULL;
                 }
                 
                 // 复合赋值只支持简单变量，不支持索引
                 if (left_targets[0]->kind != AST_VAR) {
-                    error_add(ERR_SYNTAX, line, "复合赋值只支持简单变量，请用 arr[i] = arr[i] + val 替代");
+                    error_add_at(ERR_SYNTAX, line, p->lex.current.column, "复合赋值只支持简单变量，请用 arr[i] = arr[i] + val 替代");
                     return NULL;
                 }
                 
@@ -1300,7 +1300,7 @@ Ast* parse_struct_stmt(Parser* p) {
 
     // 期望 struct 名称
     if (p->lex.current.type != TOK_IDENT) {
-        error_add(ERR_SYNTAX, p->lex.current.line, "期望 struct 名称");
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 struct 名称");
         return NULL;
     }
 
@@ -1329,7 +1329,7 @@ Ast* parse_struct_stmt(Parser* p) {
                 memset(&type_param_defaults[type_param_count], 0, sizeof(char*) * (tp_capacity - type_param_count));
             }
             if (p->lex.current.type != TOK_IDENT) {
-                error_add(ERR_SYNTAX, p->lex.current.line, "期望类型参数名");
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望类型参数名");
                 break;
             }
             type_params[type_param_count] = copy_string(p->lex.current.text, p->lex.current.len);
@@ -1339,7 +1339,7 @@ Ast* parse_struct_stmt(Parser* p) {
             if (p->lex.current.type == TOK_COLON) {
                 lexer_next(&p->lex);
                 if (p->lex.current.type != TOK_IDENT) {
-                    error_add(ERR_SYNTAX, p->lex.current.line, "期望约束类型名（face 名称）");
+                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望约束类型名（face 名称）");
                 } else {
                     type_param_constraints[type_param_count] = copy_string(p->lex.current.text, p->lex.current.len);
                     lexer_next(&p->lex);
@@ -1353,7 +1353,7 @@ Ast* parse_struct_stmt(Parser* p) {
                     p->lex.current.type != TOK_FLOAT_TYPE &&
                     p->lex.current.type != TOK_STRING_TYPE &&
                     p->lex.current.type != TOK_BOOL_TYPE) {
-                    error_add(ERR_SYNTAX, p->lex.current.line, "期望默认类型名");
+                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望默认类型名");
                 } else {
                     type_param_defaults[type_param_count] = copy_string(p->lex.current.text, p->lex.current.len);
                     lexer_next(&p->lex);
@@ -1380,7 +1380,7 @@ Ast* parse_struct_stmt(Parser* p) {
 
         while (1) {
             if (p->lex.current.type != TOK_IDENT) {
-                error_add(ERR_SYNTAX, p->lex.current.line, "期望 face 名称");
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 face 名称");
                 break;
             }
             char* iface_name = copy_string(p->lex.current.text, p->lex.current.len);
@@ -1484,7 +1484,7 @@ Ast* parse_struct_stmt(Parser* p) {
             if (!const_type) {
                 const_type = parse_type(p);  // 显式类型
                 if (!const_type) {
-                    error_add(ERR_SYNTAX, p->lex.current.line, "struct 关联常量期望类型或名称");
+                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "struct 关联常量期望类型或名称");
                     while (p->lex.current.type != TOK_SEMI &&
                            p->lex.current.type != TOK_RBRACE &&
                            p->lex.current.type != TOK_EOF) {
@@ -1497,7 +1497,7 @@ Ast* parse_struct_stmt(Parser* p) {
 
             // 解析常量名
             if (p->lex.current.type != TOK_IDENT) {
-                error_add(ERR_SYNTAX, p->lex.current.line, "struct 关联常量期望名称");
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "struct 关联常量期望名称");
                 type_free(const_type);
                 while (p->lex.current.type != TOK_SEMI &&
                        p->lex.current.type != TOK_RBRACE &&
@@ -1515,7 +1515,7 @@ Ast* parse_struct_stmt(Parser* p) {
 
                 // 期望 =
                 if (!match(p, TOK_EQ)) {
-                    error_add(ERR_SYNTAX, p->lex.current.line, "struct 关联常量必须有初始值");
+                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "struct 关联常量必须有初始值");
                     free(cname);
                     type_free(const_type);
                     break;
@@ -1524,7 +1524,7 @@ Ast* parse_struct_stmt(Parser* p) {
                 // 解析常量值表达式
                 Ast* cexpr = parse_expression(p);
                 if (!cexpr) {
-                    error_add(ERR_SYNTAX, p->lex.current.line, "struct 关联常量值解析失败");
+                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "struct 关联常量值解析失败");
                     free(cname);
                     type_free(const_type);
                     break;
@@ -1558,7 +1558,7 @@ Ast* parse_struct_stmt(Parser* p) {
             lexer_next(&p->lex); // 消费 'async'
             // 消费完 async 后，期望 func
             if (p->lex.current.type != TOK_FUNC) {
-                error_add(ERR_SYNTAX, p->lex.current.line, "async 后面必须跟 func");
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "async 后面必须跟 func");
                 // 跳过错误恢复
                 while (p->lex.current.type != TOK_SEMI &&
                        p->lex.current.type != TOK_RBRACE &&
@@ -1595,7 +1595,7 @@ Ast* parse_struct_stmt(Parser* p) {
 
             // 期望方法名
             if (p->lex.current.type != TOK_IDENT) {
-                error_add(ERR_SYNTAX, p->lex.current.line, is_dtor ? "析构函数名必须为 ~StructName" : "期望方法名");
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, is_dtor ? "析构函数名必须为 ~StructName" : "期望方法名");
                 // 跳过错误恢复
                 while (p->lex.current.type != TOK_SEMI &&
                        p->lex.current.type != TOK_RBRACE &&
@@ -1616,7 +1616,7 @@ Ast* parse_struct_stmt(Parser* p) {
             if (is_dtor && strcmp(method_name, struct_name) != 0) {
                 char msg[BUFFER_MEDIUM];
                 snprintf(msg, sizeof(msg), "析构函数名必须为 ~%s，而不是 ~%s", struct_name, method_name);
-                error_add(ERR_SYNTAX, func_line, msg);
+                error_add_at(ERR_SYNTAX, func_line, p->lex.current.column, msg);
             }
 
             // 解析函数体
@@ -1630,7 +1630,7 @@ Ast* parse_struct_stmt(Parser* p) {
                 if ((is_ctor || is_dtor) && func_ast->u.func.pcnt > 0) {
                     char msg[BUFFER_MEDIUM];
                     snprintf(msg, sizeof(msg), "%s不能有参数", is_ctor ? "构造函数" : "析构函数");
-                    error_add(ERR_SYNTAX, func_line, msg);
+                    error_add_at(ERR_SYNTAX, func_line, p->lex.current.column, msg);
                 }
                 // 扩容检查
                 if (method_count >= method_capacity) {
@@ -1653,18 +1653,18 @@ Ast* parse_struct_stmt(Parser* p) {
 
         // struct 字段不能使用 var 或 any，必须有具体类型
         if (p->lex.current.type == TOK_VAR) {
-            error_add(ERR_SYNTAX, p->lex.current.line, "struct 字段不能使用 var，必须使用具体类型");
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "struct 字段不能使用 var，必须使用具体类型");
             lexer_next(&p->lex);
             // 尝试继续解析
         } else if (p->lex.current.type == TOK_ANY_TYPE) {
-            error_add(ERR_SYNTAX, p->lex.current.line, "struct 字段不能使用 any，必须使用具体类型");
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "struct 字段不能使用 any，必须使用具体类型");
             lexer_next(&p->lex);
             // 尝试继续解析
         }
 
         field_type = parse_type(p);
         if (!field_type) {
-            error_add(ERR_SYNTAX, p->lex.current.line, "期望字段类型");
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望字段类型");
             // 跳过错误恢复
             while (p->lex.current.type != TOK_SEMI &&
                    p->lex.current.type != TOK_RBRACE &&
@@ -1679,7 +1679,7 @@ Ast* parse_struct_stmt(Parser* p) {
 
         // 期望字段名（支持逗号分隔多字段：int a, b, c）
         if (p->lex.current.type != TOK_IDENT) {
-            error_add(ERR_SYNTAX, p->lex.current.line, "期望字段名");
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望字段名");
             type_free(field_type);
             break;
         }
@@ -1777,7 +1777,7 @@ Ast* parse_face_stmt(Parser* p) {
     lexer_next(&p->lex); // 消费 'face'
 
     if (p->lex.current.type != TOK_IDENT) {
-        error_add(ERR_SYNTAX, p->lex.current.line, "期望 face 名称");
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 face 名称");
         return NULL;
     }
 
@@ -1802,7 +1802,7 @@ Ast* parse_face_stmt(Parser* p) {
                 memset(&type_param_constraints[type_param_count], 0, sizeof(char*) * (tp_capacity - type_param_count));
             }
             if (p->lex.current.type != TOK_IDENT) {
-                error_add(ERR_SYNTAX, p->lex.current.line, "期望类型参数名");
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望类型参数名");
                 break;
             }
             type_params[type_param_count] = copy_string(p->lex.current.text, p->lex.current.len);
@@ -1839,7 +1839,7 @@ Ast* parse_face_stmt(Parser* p) {
         }
 
         if (p->lex.current.type != TOK_FUNC) {
-            error_add(ERR_SYNTAX, p->lex.current.line, "face 中只允许方法签名");
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "face 中只允许方法签名");
             while (p->lex.current.type != TOK_SEMI &&
                    p->lex.current.type != TOK_RBRACE &&
                    p->lex.current.type != TOK_EOF) {
@@ -1852,7 +1852,7 @@ Ast* parse_face_stmt(Parser* p) {
         lexer_next(&p->lex); // 消费 'func'
 
         if (p->lex.current.type != TOK_IDENT) {
-            error_add(ERR_SYNTAX, p->lex.current.line, "期望方法名");
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望方法名");
             while (p->lex.current.type != TOK_SEMI &&
                    p->lex.current.type != TOK_RBRACE &&
                    p->lex.current.type != TOK_EOF) {
@@ -1873,7 +1873,7 @@ Ast* parse_face_stmt(Parser* p) {
             while (p->lex.current.type != TOK_RPAREN && p->lex.current.type != TOK_EOF) {
                 TypeInfo* ptype = parse_type(p);
                 if (!ptype) {
-                    error_add(ERR_SYNTAX, p->lex.current.line, "期望参数类型");
+                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望参数类型");
                     break;
                 }
                 if (p->lex.current.type == TOK_IDENT) {
@@ -1962,7 +1962,7 @@ Ast* parse_cstruct_stmt(Parser* p) {
             p->lex.current.len == 6 &&
             strncmp(p->lex.current.text, "packed", 6) == 0) {
             if (is_packed) {
-                error_add(ERR_SYNTAX, p->lex.current.line, "packed 重复指定");
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "packed 重复指定");
             }
             is_packed = true;
             lexer_next(&p->lex); // 消费 'packed'
@@ -1970,27 +1970,27 @@ Ast* parse_cstruct_stmt(Parser* p) {
                    p->lex.current.len == 5 &&
                    strncmp(p->lex.current.text, "align", 5) == 0) {
             if (explicit_align > 0) {
-                error_add(ERR_SYNTAX, p->lex.current.line, "align 重复指定");
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "align 重复指定");
             }
             lexer_next(&p->lex); // 消费 'align'
             if (!consume(p, TOK_LPAREN, "期望 '(' 开始 align 参数")) {
                 return NULL;
             }
             if (p->lex.current.type != TOK_NUM || p->lex.current.is_float) {
-                error_add(ERR_SYNTAX, p->lex.current.line, "align 参数必须是正整数");
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "align 参数必须是正整数");
                 return NULL;
             }
             int align_val = (int)p->lex.current.num_val;
             if (align_val <= 0 || (align_val & (align_val - 1)) != 0) {
                 char msg[128];
                 snprintf(msg, sizeof(msg), "align 参数 %d 不是有效的 2 的幂（1/2/4/8/16/32/64）", align_val);
-                error_add(ERR_SYNTAX, p->lex.current.line, msg);
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, msg);
                 return NULL;
             }
             if (align_val > 64) {
                 char msg[128];
                 snprintf(msg, sizeof(msg), "align 参数 %d 超过最大值 64", align_val);
-                error_add(ERR_SYNTAX, p->lex.current.line, msg);
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, msg);
                 return NULL;
             }
             explicit_align = align_val;
@@ -2005,14 +2005,14 @@ Ast* parse_cstruct_stmt(Parser* p) {
 
     // 现在必须遇到 'cstruct' 关键字
     if (p->lex.current.type != TOK_CSTRUCT) {
-        error_add(ERR_SYNTAX, p->lex.current.line, "期望 'cstruct' 关键字");
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 'cstruct' 关键字");
         return NULL;
     }
     lexer_next(&p->lex); // 消费 'cstruct'
 
     // 期望 cstruct 名称
     if (p->lex.current.type != TOK_IDENT) {
-        error_add(ERR_SYNTAX, p->lex.current.line, "期望 cstruct 名称");
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 cstruct 名称");
         return NULL;
     }
 
@@ -2046,7 +2046,7 @@ Ast* parse_cstruct_stmt(Parser* p) {
 
         // cstruct 不支持方法
         if (p->lex.current.type == TOK_FUNC || p->lex.current.type == TOK_ASYNC) {
-            error_add(ERR_SYNTAX, p->lex.current.line, "cstruct 不支持方法定义，请使用普通 struct");
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "cstruct 不支持方法定义，请使用普通 struct");
             // 跳过错误恢复
             while (p->lex.current.type != TOK_SEMI &&
                    p->lex.current.type != TOK_RBRACE &&
@@ -2064,14 +2064,14 @@ Ast* parse_cstruct_stmt(Parser* p) {
 
         // cstruct 字段不能使用 var，必须有具体类型
         if (p->lex.current.type == TOK_VAR) {
-            error_add(ERR_SYNTAX, p->lex.current.line, "cstruct 字段不能使用 var，必须使用 C 布局类型");
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "cstruct 字段不能使用 var，必须使用 C 布局类型");
             lexer_next(&p->lex);
             // 尝试继续解析
         }
 
         field_type = parse_type(p);
         if (!field_type) {
-            error_add(ERR_SYNTAX, p->lex.current.line, "期望字段类型");
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望字段类型");
             // 跳过错误恢复
             while (p->lex.current.type != TOK_SEMI &&
                    p->lex.current.type != TOK_RBRACE &&
@@ -2086,7 +2086,7 @@ Ast* parse_cstruct_stmt(Parser* p) {
 
         // 期望字段名
         if (p->lex.current.type != TOK_IDENT) {
-            error_add(ERR_SYNTAX, p->lex.current.line, "期望字段名");
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望字段名");
             type_free(field_type);
             break;
         }
@@ -2100,7 +2100,7 @@ Ast* parse_cstruct_stmt(Parser* p) {
             lexer_next(&p->lex); // 消费 '['
             
             if (p->lex.current.type != TOK_NUM) {
-                error_add(ERR_SYNTAX, p->lex.current.line, "数组维度必须是整数常量");
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "数组维度必须是整数常量");
                 free(field_name);
                 type_free(field_type);
                 break;
@@ -2108,7 +2108,7 @@ Ast* parse_cstruct_stmt(Parser* p) {
             
             // 检查是否是整数
             if (p->lex.current.is_float) {
-                error_add(ERR_SYNTAX, p->lex.current.line, "数组维度必须是整数，不能是浮点数");
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "数组维度必须是整数，不能是浮点数");
                 free(field_name);
                 type_free(field_type);
                 break;
@@ -2116,7 +2116,7 @@ Ast* parse_cstruct_stmt(Parser* p) {
             
             array_dim = (int)p->lex.current.num_val;
             if (array_dim <= 0) {
-                error_add(ERR_SYNTAX, p->lex.current.line, "数组维度必须是正整数");
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "数组维度必须是正整数");
                 free(field_name);
                 type_free(field_type);
                 break;
@@ -2194,7 +2194,7 @@ Ast* parse_clib_stmt(Parser* p) {
 
     // 期望 clib 名称
     if (p->lex.current.type != TOK_IDENT) {
-        error_add(ERR_SYNTAX, p->lex.current.line, "期望 clib 名称");
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 clib 名称");
         return NULL;
     }
 
@@ -2230,7 +2230,7 @@ Ast* parse_clib_stmt(Parser* p) {
         // 解析返回类型
         TypeInfo* return_type = parse_type(p);
         if (!return_type) {
-            error_add(ERR_SYNTAX, p->lex.current.line, "clib 函数缺少返回类型");
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "clib 函数缺少返回类型");
             break;
         }
 
@@ -2244,7 +2244,7 @@ Ast* parse_clib_stmt(Parser* p) {
 
         // 期望函数名
         if (p->lex.current.type != TOK_IDENT) {
-            error_add(ERR_SYNTAX, p->lex.current.line, "期望函数名");
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望函数名");
             type_free(return_type);
             break;
         }
@@ -2273,7 +2273,7 @@ Ast* parse_clib_stmt(Parser* p) {
             // 解析参数类型
             TypeInfo* param_type = parse_type(p);
             if (!param_type) {
-                error_add(ERR_SYNTAX, p->lex.current.line, "期望参数类型");
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望参数类型");
                 break;
             }
 
@@ -2295,7 +2295,7 @@ Ast* parse_clib_stmt(Parser* p) {
         if (p->lex.current.type == TOK_RPAREN) {
             lexer_next(&p->lex);
         } else {
-            error_add(ERR_SYNTAX, p->lex.current.line, "期望 ')' 结束参数列表");
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 ')' 结束参数列表");
         }
 
         // 扩容函数数组
@@ -2363,7 +2363,7 @@ Ast* parse_cfunc_stmt(Parser* p) {
 
     // 期望 cfunc 名称
     if (p->lex.current.type != TOK_IDENT) {
-        error_add(ERR_SYNTAX, p->lex.current.line, "期望 cfunc 名称");
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 cfunc 名称");
         return NULL;
     }
 
@@ -2391,7 +2391,7 @@ Ast* parse_cfunc_stmt(Parser* p) {
         // 解析参数类型
         TypeInfo* ptype = parse_type(p);
         if (!ptype) {
-            error_add(ERR_SYNTAX, p->lex.current.line, "cfunc 期望参数类型");
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "cfunc 期望参数类型");
             break;
         }
 
@@ -2417,7 +2417,7 @@ Ast* parse_cfunc_stmt(Parser* p) {
     if (p->lex.current.type == TOK_RPAREN) {
         lexer_next(&p->lex);
     } else {
-        error_add(ERR_SYNTAX, p->lex.current.line, "期望 ')' 结束参数列表");
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 ')' 结束参数列表");
     }
 
     // 解析返回类型: ': return_type'
@@ -2426,7 +2426,7 @@ Ast* parse_cfunc_stmt(Parser* p) {
         lexer_next(&p->lex);
         return_type = parse_type(p);
         if (!return_type) {
-            error_add(ERR_SYNTAX, p->lex.current.line, "cfunc 期望返回类型");
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "cfunc 期望返回类型");
         }
         // void 返回类型处理
         if (return_type && return_type->kind == TYPE_STRUCT && return_type->struct_name &&
@@ -2541,7 +2541,7 @@ Ast* parse_enum_stmt(Parser* p) {
 
     // 期望 enum 名称
     if (p->lex.current.type != TOK_IDENT) {
-        error_add(ERR_SYNTAX, p->lex.current.line, "期望 enum 名称");
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 enum 名称");
         return NULL;
     }
 
@@ -2575,7 +2575,7 @@ Ast* parse_enum_stmt(Parser* p) {
 
         // 期望成员名
         if (p->lex.current.type != TOK_IDENT) {
-            error_add(ERR_SYNTAX, p->lex.current.line, "期望 enum 成员名称");
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 enum 成员名称");
             break;
         }
 
@@ -2591,7 +2591,7 @@ Ast* parse_enum_stmt(Parser* p) {
             // 解析常量表达式（支持 0x200000 + 0x0C 等表达式）
             Ast* expr = parse_expression(p);
             if (!expr) {
-                error_add(ERR_SYNTAX, p->lex.current.line, "enum 成员值表达式解析失败");
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "enum 成员值表达式解析失败");
                 free(member_name);
                 break;
             }
@@ -2602,7 +2602,7 @@ Ast* parse_enum_stmt(Parser* p) {
             int eval_ok = 0;
             int64_t val = eval_const_expr(expr, &eval_ok);
             if (!eval_ok) {
-                error_add(ERR_SYNTAX, p->lex.current.line, "enum 成员显式值必须是编译期整数常量表达式");
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "enum 成员显式值必须是编译期整数常量表达式");
                 free(member_name);
                 ast_free(expr);
                 break;

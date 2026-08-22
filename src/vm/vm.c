@@ -487,9 +487,9 @@ int vm_run_coroutine_with_vm(ObjCoroutine* co, VM* vm_ptr) {
                 }
                 // 没有找到异常处理
                 if (co->saved_frames && co->saved_frame_count > 0) {
-                    error_add(ERR_RUNTIME, co->saved_frames[0].chunk->lines[0], "未捕获的异步异常");
+                    error_add_at(ERR_RUNTIME, co->saved_frames[0].chunk->lines[0], 0, "未捕获的异步异常");
                 } else {
-                    error_add(ERR_RUNTIME, 0, "未捕获的异步异常");
+                    error_add_at(ERR_RUNTIME, 0, 0, "未捕获的异步异常");
                 }
             } else {
                 // 手动压入结果到栈（sp 已恢复到挂起时的位置）

@@ -9,7 +9,7 @@
 TypeInfo* type_new(TypeKind kind) {
     TypeInfo* type = (TypeInfo*)calloc(1, sizeof(TypeInfo));
     if (!type) {
-        error_add(ERR_RUNTIME, 0, "内存分配失败");
+        error_add_at(ERR_RUNTIME, 0, 0, "内存分配失败");
         return NULL;
     }
     type->kind = kind;

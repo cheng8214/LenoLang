@@ -61,7 +61,7 @@ void struct_def_set_field(ObjStructDef* def, int index, const char* name, TypeKi
 // 注册结构体定义
 void struct_def_register(ObjStructDef* def) {
     if (struct_def_count >= MAX_STRUCT_DEFS) {
-        error_add(ERR_RUNTIME, 0, "结构体定义数量超过上限");
+        error_add_at(ERR_RUNTIME, 0, 0, "结构体定义数量超过上限");
         return;
     }
 
@@ -324,7 +324,7 @@ int64_t enum_def_get_member_value(ObjEnumDef* def, const char* name) {
 // 注册 enum 定义
 void enum_def_register(ObjEnumDef* def) {
     if (enum_def_count >= MAX_ENUM_DEFS) {
-        error_add(ERR_RUNTIME, 0, "enum 定义数量超过上限");
+        error_add_at(ERR_RUNTIME, 0, 0, "enum 定义数量超过上限");
         return;
     }
 

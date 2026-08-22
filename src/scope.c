@@ -14,7 +14,7 @@ static void scope_add_child(Scope* parent, Scope* child) {
         int new_capacity = parent->child_capacity == 0 ? 8 : parent->child_capacity * 2;
         Scope** new_children = (Scope**)realloc(parent->children, sizeof(Scope*) * new_capacity);
         if (!new_children) {
-            error_add(ERR_RUNTIME, 0, "子作用域数组扩容失败");
+            error_add_at(ERR_RUNTIME, 0, 0, "子作用域数组扩容失败");
             return;
         }
         // 初始化新分配的内存
@@ -31,7 +31,7 @@ static void scope_add_child(Scope* parent, Scope* child) {
 Scope* scope_new(Scope* parent, int is_func) {
     Scope* scope = (Scope*)calloc(1, sizeof(Scope));
     if (!scope) {
-        error_add(ERR_RUNTIME, 0, "内存分配失败");
+        error_add_at(ERR_RUNTIME, 0, 0, "内存分配失败");
         return NULL;
     }
 
@@ -53,7 +53,7 @@ Scope* scope_new(Scope* parent, int is_func) {
     scope->syms = (Symbol**)calloc(scope->sym_capacity, sizeof(Symbol*));
     if (!scope->syms) {
         free(scope);
-        error_add(ERR_RUNTIME, 0, "符号表内存分配失败");
+        error_add_at(ERR_RUNTIME, 0, 0, "符号表内存分配失败");
         return NULL;
     }
 
@@ -165,12 +165,12 @@ int symbol_has_dict_key(Symbol* sym, const char* key) {
 
 Symbol* scope_define(Scope* s, const char* name, SymKind kind) {
     if (!s) {
-        error_add(ERR_SEMANTIC, 0, "作用域为空");
+        error_add_at(ERR_SEMANTIC, 0, 0, "作用域为空");
         return NULL;
     }
     
     if (!name) {
-        error_add(ERR_SEMANTIC, 0, "符号名称为空");
+        error_add_at(ERR_SEMANTIC, 0, 0, "符号名称为空");
         return NULL;
     }
 
@@ -187,7 +187,7 @@ Symbol* scope_define(Scope* s, const char* name, SymKind kind) {
         int new_capacity = s->sym_capacity * 2;
         Symbol** new_syms = (Symbol**)realloc(s->syms, sizeof(Symbol*) * new_capacity);
         if (!new_syms) {
-            error_add(ERR_RUNTIME, 0, "符号表扩容失败");
+            error_add_at(ERR_RUNTIME, 0, 0, "符号表扩容失败");
             return NULL;
         }
         // 初始化新分配的内存
@@ -200,7 +200,7 @@ Symbol* scope_define(Scope* s, const char* name, SymKind kind) {
 
     Symbol* sym = (Symbol*)calloc(1, sizeof(Symbol));
     if (!sym) {
-        error_add(ERR_RUNTIME, 0, "内存分配失败");
+        error_add_at(ERR_RUNTIME, 0, 0, "内存分配失败");
         return NULL;
     }
 

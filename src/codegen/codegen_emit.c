@@ -34,7 +34,7 @@ void patch_jump(CodeGen* gen, int offset) {
     int jump = gen->chunk->len - offset - 4;
     // 使用 int32_t 范围检查，避免编译器警告
     if ((int32_t)jump > 2147483647 || (int32_t)jump < -2147483647 - 1) {
-        error_add(ERR_RUNTIME, 0, "跳转距离过长");
+        error_add_at(ERR_RUNTIME, 0, 0, "跳转距离过长");
         return;
     }
     // 4字节偏移量（大端序）
@@ -48,7 +48,7 @@ void patch_jump_to(CodeGen* gen, int offset, int target) {
     int jump = target - offset - 4;
     // 使用 int32_t 范围检查，避免编译器警告
     if ((int32_t)jump > 2147483647 || (int32_t)jump < -2147483647 - 1) {
-        error_add(ERR_RUNTIME, 0, "跳转距离过长");
+        error_add_at(ERR_RUNTIME, 0, 0, "跳转距离过长");
         return;
     }
     // 4字节偏移量（大端序）
@@ -62,7 +62,7 @@ void emit_loop(CodeGen* gen, int loop_start, int line) {
     emit_byte(gen, OP_LOOP, line);
     int offset = gen->chunk->len - loop_start + 4;
     if (offset > 2147483647) {
-        error_add(ERR_RUNTIME, line, "循环体过大");
+        error_add_at(ERR_RUNTIME, line, 0, "循环体过大");
         return;
     }
     // 4字节偏移量（大端序）

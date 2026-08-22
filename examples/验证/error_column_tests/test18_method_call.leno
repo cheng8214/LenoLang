@@ -1,0 +1,15 @@
+// 测试18: 方法调用错误 - 调用不存在的方法
+// 期望错误:
+//   第14行第7列: test_nonexist 方法不存在 (test_nonexist 从第7列开始)
+
+struct Point {
+    int x
+    int y
+}
+
+main()
+{
+    Point p = new Point(x=1, y=2)
+    // 第14行: p.test_nonexist()，test_nonexist 从第7列
+    p.test_nonexist()
+}

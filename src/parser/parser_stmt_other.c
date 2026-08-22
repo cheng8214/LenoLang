@@ -68,7 +68,7 @@ Ast* parse_try_stmt(Parser* p) {
     
     // try 体必须用大括号包裹
     if (p->lex.current.type != TOK_LBRACE) {
-        error_add(ERR_SYNTAX, p->lex.current.line, "try 语句体必须用大括号 {} 包裹");
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "try 语句体必须用大括号 {} 包裹");
         return NULL;
     }
     
@@ -99,7 +99,7 @@ Ast* parse_try_stmt(Parser* p) {
         // 如果有左括号，需要匹配右括号
         if (has_paren) {
             if (p->lex.current.type != TOK_RPAREN) {
-                error_add(ERR_SYNTAX, p->lex.current.line, "catch 变量后缺少右括号 )");
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "catch 变量后缺少右括号 )");
                 free(catch_var);
                 return NULL;
             }
@@ -108,7 +108,7 @@ Ast* parse_try_stmt(Parser* p) {
         
         // catch 体必须用大括号包裹
         if (p->lex.current.type != TOK_LBRACE) {
-            error_add(ERR_SYNTAX, p->lex.current.line, "catch 语句体必须用大括号 {} 包裹");
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "catch 语句体必须用大括号 {} 包裹");
             free(catch_var);
             return NULL;
         }
@@ -121,7 +121,7 @@ Ast* parse_try_stmt(Parser* p) {
         
         // finally 体必须用大括号包裹
         if (p->lex.current.type != TOK_LBRACE) {
-            error_add(ERR_SYNTAX, p->lex.current.line, "finally 语句体必须用大括号 {} 包裹");
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "finally 语句体必须用大括号 {} 包裹");
             free(catch_var);
             return NULL;
         }
@@ -130,7 +130,7 @@ Ast* parse_try_stmt(Parser* p) {
     
     // 必须至少有一个 catch 或 finally
     if (!catch_body && !finally_body) {
-        error_add(ERR_SYNTAX, line, "try 语句必须至少有一个 catch 或 finally 子句");
+        error_add_at(ERR_SYNTAX, line, p->lex.current.column, "try 语句必须至少有一个 catch 或 finally 子句");
         return NULL;
     }
     

@@ -40,7 +40,7 @@ int chunk_add_const(Chunk* chunk, Value value) {
         int new_capacity = grow_capacity(chunk->const_capacity);
         Value* new_constants = (Value*)realloc(chunk->constants, new_capacity * sizeof(Value));
         if (!new_constants) {
-            error_add(ERR_RUNTIME, 0, "常量表内存分配失败");
+            error_add_at(ERR_RUNTIME, 0, 0, "常量表内存分配失败");
             return 0;
         }
         chunk->constants = new_constants;
@@ -63,7 +63,7 @@ void chunk_write(Chunk* chunk, uint8_t byte, int line) {
         if (!new_code || !new_lines) {
             free(new_code);
             free(new_lines);
-            error_add(ERR_RUNTIME, line, "代码块内存分配失败");
+            error_add_at(ERR_RUNTIME, line, 0, "代码块内存分配失败");
             return;
         }
         

@@ -26,7 +26,7 @@ Ast* parse_import_stmt(Parser* p) {
             lexer_next(&p->lex); // as
             
             if (p->lex.current.type != TOK_IDENT) {
-                error_add(ERR_SYNTAX, p->lex.current.line, "as 后期望别名");
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "as 后期望别名");
                 free(module_name);
                 return NULL;
             }
@@ -38,7 +38,7 @@ Ast* parse_import_stmt(Parser* p) {
                 char err_msg[256];
                 snprintf(err_msg, sizeof(err_msg),
                     "import 别名不能使用内部模块名称: %s", alias);
-                error_add(ERR_SYNTAX, p->lex.current.line, err_msg);
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, err_msg);
                 free(module_name);
                 free(alias);
                 return NULL;
@@ -71,7 +71,7 @@ Ast* parse_import_stmt(Parser* p) {
             lexer_next(&p->lex); // as
 
             if (p->lex.current.type != TOK_IDENT) {
-                error_add(ERR_SYNTAX, p->lex.current.line, "as 后期望别名");
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "as 后期望别名");
                 free(module_name);
                 return NULL;
             }
@@ -83,7 +83,7 @@ Ast* parse_import_stmt(Parser* p) {
                 char err_msg[256];
                 snprintf(err_msg, sizeof(err_msg),
                     "import 别名不能使用内部模块名称: %s", alias);
-                error_add(ERR_SYNTAX, p->lex.current.line, err_msg);
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, err_msg);
                 free(module_name);
                 free(alias);
                 return NULL;
@@ -112,14 +112,14 @@ Ast* parse_import_stmt(Parser* p) {
                 char err_msg[256];
                 snprintf(err_msg, sizeof(err_msg),
                     "import 文件模块隐式别名不能使用内部模块名称: %s，请使用显式别名", alias);
-                error_add(ERR_SYNTAX, line, err_msg);
+                error_add_at(ERR_SYNTAX, line, p->lex.current.column, err_msg);
                 free(module_name);
                 free(alias);
                 return NULL;
             }
         }
     } else {
-        error_add(ERR_SYNTAX, p->lex.current.line, "import 语句期望模块名或文件路径");
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "import 语句期望模块名或文件路径");
         return NULL;
     }
     
@@ -456,11 +456,11 @@ Ast* parse_export_stmt(Parser* p) {
         ast->u.export.decl = decl;
         return ast;
     } else if (p->lex.current.type == TOK_USE) {
-        error_add(ERR_SYNTAX, p->lex.current.line,
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
             "'use' 已自带重导出语义，不需要 'export'，请直接使用 'use module.Type'");
         return NULL;
     } else {
-        error_add(ERR_SYNTAX, p->lex.current.line, "export 后面期望 var、const、func、struct、cstruct、packed、align、clib、enum 或 alias");
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "export 后面期望 var、const、func、struct、cstruct、packed、align、clib、enum 或 alias");
         return NULL;
     }
 }
@@ -477,7 +477,7 @@ Ast* parse_use_stmt(Parser* p) {
 
     // 解析模块名
     if (p->lex.current.type != TOK_IDENT) {
-        error_add(ERR_SYNTAX, p->lex.current.line, "use 语句期望模块名");
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "use 语句期望模块名");
         return NULL;
     }
 
@@ -486,7 +486,7 @@ Ast* parse_use_stmt(Parser* p) {
 
     // 检查是否有 . 符号
     if (p->lex.current.type != TOK_DOT) {
-        error_add(ERR_SYNTAX, p->lex.current.line, "use 语句语法: use module.Type 或 use module.(A, B, C)");
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "use 语句语法: use module.Type 或 use module.(A, B, C)");
         free(module_name);
         return NULL;
     }
@@ -502,7 +502,7 @@ Ast* parse_use_stmt(Parser* p) {
 
         // 括号内至少需要一个符号名
         if (p->lex.current.type == TOK_RPAREN) {
-            error_add(ERR_SYNTAX, p->lex.current.line, "use 批量导入语法: use module.(A, B, C)，括号内不能为空");
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "use 批量导入语法: use module.(A, B, C)，括号内不能为空");
             free(module_name);
             ast_free(block);
             return NULL;
@@ -510,7 +510,7 @@ Ast* parse_use_stmt(Parser* p) {
 
         while (1) {
             if (p->lex.current.type != TOK_IDENT) {
-                error_add(ERR_SYNTAX, p->lex.current.line, "use 批量导入期望类型名");
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "use 批量导入期望类型名");
                 free(module_name);
                 ast_free(block);
                 return NULL;
@@ -538,7 +538,7 @@ Ast* parse_use_stmt(Parser* p) {
                 lexer_next(&p->lex); // )
                 break;
             } else {
-                error_add(ERR_SYNTAX, p->lex.current.line, "use 批量导入语法: 期望 ',' 或 ')'");
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "use 批量导入语法: 期望 ',' 或 ')'");
                 free(module_name);
                 ast_free(block);
                 return NULL;
@@ -560,7 +560,7 @@ Ast* parse_use_stmt(Parser* p) {
 
     // 单模式: use module.Type（原有逻辑）
     if (p->lex.current.type != TOK_IDENT) {
-        error_add(ERR_SYNTAX, p->lex.current.line, "use 语句期望类型名");
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "use 语句期望类型名");
         free(module_name);
         return NULL;
     }

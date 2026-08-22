@@ -21,7 +21,7 @@ int consume(Parser* p, LenoTokenType type, const char* msg) {
         lexer_next(&p->lex);
         return 1;
     }
-    error_add(ERR_SYNTAX, p->lex.current.line, msg);
+    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, msg);
     return 0;
 }
 

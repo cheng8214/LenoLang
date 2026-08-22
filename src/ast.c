@@ -5,7 +5,7 @@
 Ast* ast_new(AstKind kind, int line) {
     Ast* ast = (Ast*)calloc(1, sizeof(Ast));
     if (!ast) {
-        error_add(ERR_RUNTIME, line, "内存分配失败");
+        error_add_at(ERR_RUNTIME, line, 0, "内存分配失败");
         return NULL;
     }
     ast->kind = kind;
@@ -25,7 +25,7 @@ void ast_list_add(AstList* list, Ast* ast) {
         int new_capacity = list->capacity == 0 ? 8 : list->capacity * 2;
         Ast** new_items = (Ast**)realloc(list->items, new_capacity * sizeof(Ast*));
         if (!new_items) {
-            error_add(ERR_RUNTIME, 0, "内存分配失败");
+            error_add_at(ERR_RUNTIME, 0, 0, "内存分配失败");
             return;
         }
         list->items = new_items;
@@ -46,7 +46,7 @@ void type_guard_list_add(TypeGuardList* list, TypeGuardCond cond) {
         int new_capacity = list->capacity == 0 ? 4 : list->capacity * 2;
         TypeGuardCond* new_items = (TypeGuardCond*)realloc(list->items, new_capacity * sizeof(TypeGuardCond));
         if (!new_items) {
-            error_add(ERR_RUNTIME, 0, "内存分配失败");
+            error_add_at(ERR_RUNTIME, 0, 0, "内存分配失败");
             return;
         }
         list->items = new_items;
