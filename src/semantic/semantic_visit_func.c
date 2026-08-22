@@ -313,14 +313,14 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
                 char msg[BUFFER_MEDIUM];
                 const char* type_str = type_kind_to_string(ast->u.func.param_types[i]->kind);
                 snprintf(msg, sizeof(msg), "C 布局类型 '%s' 不能用于函数参数，请使用 Leno 类型（如 int/float/string）", type_str);
-                error_add(ERR_SEMANTIC, ast->line, msg);
+                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
             }
         }
         if (ast->u.func.return_type && is_c_layout_type(ast->u.func.return_type->kind)) {
             char msg[BUFFER_MEDIUM];
             const char* type_str = type_kind_to_string(ast->u.func.return_type->kind);
             snprintf(msg, sizeof(msg), "C 布局类型 '%s' 不能用于函数返回值，请使用 Leno 类型（如 int/float/string）", type_str);
-            error_add(ERR_SEMANTIC, ast->line, msg);
+            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
         }
     }
 
@@ -332,7 +332,7 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
                 char msg[BUFFER_MEDIUM];
                 const char* parent_name = type_kind_to_string(parent_kind);
                 snprintf(msg, sizeof(msg), "var 不能用作类型参数，请改用 any（如 %s[any]）", parent_name);
-                error_add(ERR_SEMANTIC, ast->line, msg);
+                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
             }
         }
     }
@@ -342,7 +342,7 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
             char msg[BUFFER_MEDIUM];
             const char* parent_name = type_kind_to_string(parent_kind);
             snprintf(msg, sizeof(msg), "var 不能用作类型参数，请改用 any（如 %s[any]）", parent_name);
-            error_add(ERR_SEMANTIC, ast->line, msg);
+            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
         }
     }
 
@@ -351,7 +351,7 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
         if (ast->u.func.param_types[i] && ast->u.func.param_types[i]->kind == TYPE_INFER) {
             char msg[BUFFER_MEDIUM];
             snprintf(msg, sizeof(msg), "参数 '%s' 不能使用 var 类型，请改用 any", ast->u.func.params[i]);
-            error_add(ERR_SEMANTIC, ast->line, msg);
+            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
         }
     }
 
@@ -375,7 +375,7 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
             if (!is_literal && !is_const_expr) {
                 char msg[BUFFER_MEDIUM];
                 snprintf(msg, sizeof(msg), "参数 '%s' 的默认值必须是字面量常量或编译期常量表达式", ast->u.func.params[i]);
-                error_add(ERR_SEMANTIC, ast->line, msg);
+                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
             }
             
             // 对非字面量表达式执行语义分析（设置 ref、折叠 enum 常量等）
@@ -454,7 +454,7 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
                 char msg[BUFFER_MEDIUM];
                 snprintf(msg, sizeof(msg), "参数 '%s' 没有默认值，但它位于有默认值的参数之后。所有有默认值的参数必须放在参数列表末尾",
                          ast->u.func.params[i]);
-                error_add(ERR_SEMANTIC, ast->line, msg);
+                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
             }
         }
     }

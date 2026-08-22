@@ -210,6 +210,9 @@ static Token make_token(Lexer* lex, LenoTokenType type) {
     tok.text = NULL;
     tok.len = 0;
     tok.line = lex->line;
+    // 用 current_column（由 lexer_next 在 skip_whitespace 后设置），
+    // 这是 token 开始位置的列号，而非 token 结束后的列号
+    tok.column = error_get_column();
     tok.num_val = 0;
     tok.is_bigint = 0;
     tok.bigint_str = NULL;

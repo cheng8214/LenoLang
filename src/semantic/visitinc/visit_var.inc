@@ -5,7 +5,7 @@
                 char msg[BUFFER_MEDIUM];
                 const char* type_str = type_kind_to_string(ast->u.var_decl.type->kind);
                 snprintf(msg, sizeof(msg), "C 布局类型 '%s' 不能用于变量声明，请使用 Leno 类型（如 int/float/string）", type_str);
-                error_add(ERR_SEMANTIC, ast->line, msg);
+                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
             }
             // 检查 any 类型：any 只能用于函数参数和返回类型，不能用于变量声明
             // 变量声明请使用 var（类型推断）或指定具体类型
@@ -95,7 +95,7 @@
                         char msg[BUFFER_MEDIUM];
                         const char* parent_name = type_kind_to_string(parent_kind);
                         snprintf(msg, sizeof(msg), "var 不能用作类型参数，请改用 any（如 %s[any]）", parent_name);
-                        error_add(ERR_SEMANTIC, ast->line, msg);
+                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                         infer_as_param = 1;
                     }
                 }
@@ -366,7 +366,7 @@
                 char msg[BUFFER_MEDIUM];
                 snprintf(msg, sizeof(msg), "并行赋值数量不匹配：左侧 %d 个变量，右侧 %d 个值",
                          left_count, right_count);
-                error_add(ERR_SEMANTIC, ast->line, msg);
+                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                 break;
             }
             
@@ -408,7 +408,7 @@
                         if (sym->is_const) {
                             char msg[BUFFER_MEDIUM];
                             snprintf(msg, sizeof(msg), "不能对 const 变量 '%s' 重新赋值", ast->u.assign.names[i]);
-                            error_add(ERR_SEMANTIC, ast->line, msg);
+                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                         }
                         ast->u.assign.refs[i].type_kind = sym->type ? sym->type->kind : TYPE_ANY;
                     }
@@ -517,7 +517,7 @@
                 if (sym->is_const) {
                     char msg[BUFFER_MEDIUM];
                     snprintf(msg, sizeof(msg), "不能对 const 变量 '%s' 重新赋值", ast->u.compound_assign.name);
-                    error_add(ERR_SEMANTIC, ast->line, msg);
+                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                 }
                 ast->u.compound_assign.ref.type_kind = sym->type ? sym->type->kind : TYPE_ANY;
             }

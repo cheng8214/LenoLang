@@ -29,7 +29,7 @@
                                 snprintf(msg, sizeof(msg), "clib '%s' 没有声明函数 '%s'",
                                          obj_type->struct_name, func_name);
                             }
-                            error_add(ERR_SEMANTIC, ast->line, msg);
+                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                         }
                     }
                 type_free(obj_type);
@@ -57,7 +57,7 @@
                 if (!found) {
                     char msg[BUFFER_MEDIUM];
                     snprintf(msg, sizeof(msg), "enum '%s' 没有成员 '%s'", obj_type->struct_name, member_name);
-                    error_add(ERR_SEMANTIC, ast->line, msg);
+                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                 }
                 type_free(obj_type);
                 break;
@@ -86,7 +86,7 @@
                                 char msg[BUFFER_MEDIUM];
                                 snprintf(msg, sizeof(msg), "face '%s' 没有字段或方法 '%s'（使用 'as' 转型访问底层 struct）",
                                          obj_type->struct_name, field_name);
-                                error_add(ERR_SEMANTIC, ast->line, msg);
+                                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                 type_free(obj_type);
                                 break;
                             }
@@ -136,7 +136,7 @@
                             char msg[BUFFER_MEDIUM];
                             const char* type_kind_name = (obj_type->kind == TYPE_CSTRUCT) ? "cstruct" : "struct";
                             snprintf(msg, sizeof(msg), "%s 没有字段 '%s'", type_kind_name, field_name);
-                            error_add(ERR_SEMANTIC, ast->line, msg);
+                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                         }
 
                         // 注意：单层字段访问（如 o.inner）不需要检查 null 默认值
@@ -152,7 +152,7 @@
                             } else {
                                 char msg[BUFFER_MEDIUM];
                                 snprintf(msg, sizeof(msg), "cstruct 没有字段 '%s'", field_name);
-                                error_add(ERR_SEMANTIC, ast->line, msg);
+                                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                             }
                         } else {
                             // 全局表可能还没注册（语义分析阶段模块尚未编译执行），从导入模块的符号表查找
@@ -175,7 +175,7 @@
                             if (!found) {
                                 char msg[BUFFER_MEDIUM];
                                 snprintf(msg, sizeof(msg), "cstruct 没有字段 '%s'", field_name);
-                                error_add(ERR_SEMANTIC, ast->line, msg);
+                                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                             }
                         }
                     }
@@ -333,7 +333,7 @@
                                 char msg[BUFFER_MEDIUM];
                                 const char* type_kind_name = (obj_type->kind == TYPE_CSTRUCT) ? "cstruct" : "struct";
                                 snprintf(msg, sizeof(msg), "%s 没有字段 '%s'", type_kind_name, name);
-                                error_add(ERR_SEMANTIC, ast->line, msg);
+                                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                             }
                         }
                     } else if (!struct_sym && obj_type->kind == TYPE_CSTRUCT && obj_type->struct_name) {
@@ -346,7 +346,7 @@
                             } else {
                                 char msg[BUFFER_MEDIUM];
                                 snprintf(msg, sizeof(msg), "cstruct 没有字段 '%s'", name);
-                                error_add(ERR_SEMANTIC, ast->line, msg);
+                                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                             }
                         }
                     }

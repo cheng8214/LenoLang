@@ -237,14 +237,14 @@
             if (!module_info) {
                 char msg[BUFFER_MEDIUM];
                 snprintf(msg, sizeof(msg), "use 语句错误：模块 '%s' 未导入", module_name);
-                error_add(ERR_SEMANTIC, ast->line, msg);
+                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                 break;
             }
 
             if (!module_info->sym_table) {
                 char msg[BUFFER_MEDIUM];
                 snprintf(msg, sizeof(msg), "use 语句错误：模块 '%s' 没有符号表", module_name);
-                error_add(ERR_SEMANTIC, ast->line, msg);
+                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                 break;
             }
 
@@ -273,7 +273,7 @@
                         char msg[BUFFER_MEDIUM];
                         snprintf(msg, sizeof(msg), "use 错误：'%s' 已在当前作用域中定义（来自其他模块的 use），请使用模块名限定访问",
                                  symbol_name);
-                        error_add(ERR_SEMANTIC, ast->line, msg);
+                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     }
                     break;
                 }
@@ -632,7 +632,7 @@
                 if (var_sym && var_sym->is_const) {
                     char msg[BUFFER_MEDIUM];
                     snprintf(msg, sizeof(msg), "use 语句不能导入常量 '%s'，请使用 %s.%s 访问", symbol_name, module_name, symbol_name);
-                    error_add(ERR_SEMANTIC, ast->line, msg);
+                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     break;
                 }
             }
@@ -683,7 +683,7 @@
             // 没有找到 struct、clib、cfunc、face、alias 或函数
             char msg[BUFFER_MEDIUM];
             snprintf(msg, sizeof(msg), "use 语句错误：模块 '%s' 中没有类型或函数 '%s'", module_name, symbol_name);
-            error_add(ERR_SEMANTIC, ast->line, msg);
+            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
             break;
         }
 
@@ -706,7 +706,7 @@
                 char msg[BUFFER_MEDIUM];
                 snprintf(msg, sizeof(msg), "模块 '%s' 未导入，请先使用 'import %s' 导入模块",
                          ast->u.module_call.module_name, ast->u.module_call.module_name);
-                error_add(ERR_SEMANTIC, ast->line, msg);
+                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                 break;
             }
 
@@ -737,7 +737,7 @@
                         snprintf(msg, sizeof(msg), "未找到模块方法: %s.%s",
                                  actual_module, ast->u.module_call.method_name);
                     }
-                    error_add(ERR_SEMANTIC, ast->line, msg);
+                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                 } else {
                     // 方法存在，检查参数数量
                     int expected_arity = meta->arity;
@@ -753,21 +753,21 @@
                                     "     函数签名需加第二个参数，如 func compress(string w, int _): string",
                                     sizeof(msg) - strlen(msg) - 1);
                         }
-                        error_add(ERR_SEMANTIC, ast->line, msg);
+                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     }
                     // arity < 0: 可变参数，检查是否少于 min_arity
                     else if (expected_arity < 0 && meta->min_arity >= 0 && actual_arity < meta->min_arity) {
                         char msg[BUFFER_MEDIUM];
                         snprintf(msg, sizeof(msg), "%s.%s 参数过少: 最少 %d 个, 实际 %d",
                                  actual_module, ast->u.module_call.method_name, meta->min_arity, actual_arity);
-                        error_add(ERR_SEMANTIC, ast->line, msg);
+                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     }
                     // arity < 0: 可变参数，检查是否超过 max_arity
                     else if (expected_arity < 0 && meta->max_arity >= 0 && actual_arity > meta->max_arity) {
                         char msg[BUFFER_MEDIUM];
                         snprintf(msg, sizeof(msg), "%s.%s 参数过多: 最多 %d 个, 实际 %d",
                                  actual_module, ast->u.module_call.method_name, meta->max_arity, actual_arity);
-                        error_add(ERR_SEMANTIC, ast->line, msg);
+                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     }
                     
                     // 检查参数类型
@@ -853,7 +853,7 @@
                                          actual_module, ast->u.module_call.method_name, i + 1,
                                          type_kind_to_string(expected_type), type_to_string(arg_type));
                             }
-                            error_add(ERR_SEMANTIC, ast->line, msg);
+                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                         }
                     }
                     
@@ -880,7 +880,7 @@
                             snprintf(msg, sizeof(msg), "struct '%s.%s' 需要使用 new 关键字实例化，例如: new %s.%s()",
                                     ast->u.module_call.module_name, struct_sym->name,
                                     ast->u.module_call.module_name, struct_sym->name);
-                            error_add(ERR_SEMANTIC, ast->line, msg);
+                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                         }
                     }
                     module_symbol_table_destroy(sym_table);
@@ -894,7 +894,7 @@
                         char msg[BUFFER_MEDIUM];
                         snprintf(msg, sizeof(msg), "模块 '%s' 中没有方法 '%s'",
                                  ast->u.module_call.module_name, ast->u.module_call.method_name);
-                        error_add(ERR_SEMANTIC, ast->line, msg);
+                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     } else if (module_info->sym_table) {
                         // 从模块符号表推断返回类型
                         ModuleFuncSymbol* func_sym = module_symbol_table_find_func(
@@ -916,7 +916,7 @@
                                              ast->u.module_call.module_name, ast->u.module_call.method_name,
                                              expected_cnt, actual_cnt);
                                 }
-                                error_add(ERR_SEMANTIC, ast->line, msg);
+                                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                             }
                             // 推断返回类型
                             if (func_sym->return_type != TYPE_ANY && func_sym->return_type != TYPE_INFER) {
@@ -976,7 +976,7 @@
                                         char msg[BUFFER_MEDIUM];
                                         snprintf(msg, sizeof(msg), "clib '%s' 函数 '%s' 参数数量不匹配: 期望 %d, 实际 %d",
                                                  obj_type->struct_name, method_name, expected_count, actual_count);
-                                        error_add(ERR_SEMANTIC, ast->line, msg);
+                                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                     }
                                     // 检查每个参数类型
                                     for (int pi = 0; pi < actual_count && pi < expected_count; pi++) {
@@ -1014,7 +1014,7 @@
                                 snprintf(msg, sizeof(msg), "clib '%s' 没有声明函数 '%s'",
                                          obj_type->struct_name, method_name);
                             }
-                            error_add(ERR_SEMANTIC, ast->line, msg);
+                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                         } else {
                             // clib 调用验证通过，标记 cached_type 让 codegen 识别
                             ast->cached_type = type_new(TYPE_CLIB);
@@ -1285,7 +1285,7 @@
                                                         "     函数签名需加第二个参数，如 func compress(string w, int _): string",
                                                         sizeof(msg) - strlen(msg) - 1);
                                             }
-                                            error_add(ERR_SEMANTIC, ast->line, msg);
+                                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                         } else {
                                             // 构建泛型参数替换表（包含 struct 的泛型参数和方法的泛型参数）
                                             char** gp_names = NULL;
@@ -1347,7 +1347,7 @@
                                                             "%s3 第 %s4 个参数类型不匹配: 期望 %s1, 实际 %s2",
                                                             check_type, arg_type,
                                                             method_name, idx_str);
-                                                        error_add(ERR_SEMANTIC, ast->line, msg);
+                                                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                                     }
                                                 }
                                                 if (arg_type) type_free(arg_type);
@@ -1462,7 +1462,7 @@
                                 "  提示: 使用 if x is Type { x.%s() } 类型收窄\n"
                                 "  或者将参数声明为具体类型",
                                 method_name, method_name);
-                            error_add(ERR_SEMANTIC, ast->line, msg);
+                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                             expected_arity = -1;
                             return_type = TYPE_ANY;
                         }
@@ -1548,21 +1548,21 @@
                             char msg[BUFFER_MEDIUM];
                             snprintf(msg, sizeof(msg), "调用方法 '%s' 时参数数量不匹配: 期望 %d, 实际 %d",
                                      method_name, expected_arity, actual_arity);
-                            error_add(ERR_SEMANTIC, ast->line, msg);
+                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                         }
                         // arity < 0: 可变参数，检查是否少于 min_arity
                         else if (expected_arity < 0 && inst_meta && inst_meta->min_arity >= 0 && actual_arity < inst_meta->min_arity) {
                             char msg[BUFFER_MEDIUM];
                             snprintf(msg, sizeof(msg), "调用方法 '%s' 时参数过少: 最少 %d 个, 实际 %d",
                                      method_name, inst_meta->min_arity, actual_arity);
-                            error_add(ERR_SEMANTIC, ast->line, msg);
+                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                         }
                         // arity < 0: 可变参数，检查是否超过 max_arity
                         else if (expected_arity < 0 && inst_meta && inst_meta->max_arity >= 0 && actual_arity > inst_meta->max_arity) {
                             char msg[BUFFER_MEDIUM];
                             snprintf(msg, sizeof(msg), "调用方法 '%s' 时参数过多: 最多 %d 个, 实际 %d",
                                      method_name, inst_meta->max_arity, actual_arity);
-                            error_add(ERR_SEMANTIC, ast->line, msg);
+                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                         }
 
                         // 检查参数类型（仅当参数数量匹配或可变参数时）
@@ -1648,7 +1648,7 @@
                                                 snprintf(msg, sizeof(msg), "类型错误: 参数 %d 期望 '%s'，但传入 '%s'",
                                                          i + 1, exp_buf, type_to_string(arg_type));
                                             }
-                                            error_add(ERR_SEMANTIC, ast->line, msg);
+                                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                         }
                                     } else if (expected_param_type != TYPE_ANY) {
                                         // 只有 kind 信息，进行简单类型比较
@@ -1688,7 +1688,7 @@
                                                     snprintf(msg, sizeof(msg), "类型错误: 参数 %d 期望 '%s'，但传入 '%s'",
                                                              i + 1, type_kind_to_string(expected_param_type), type_to_string(arg_type));
                                                 }
-                                                error_add(ERR_SEMANTIC, ast->line, msg);
+                                                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                             }
                                         }
                                     }
@@ -1704,7 +1704,7 @@
                         char msg[BUFFER_MEDIUM];
                         snprintf(msg, sizeof(msg), "不能对未初始化的变量 '%s' 调用方法 '%s'",
                                  ast->u.module_call.module_name, method_name);
-                        error_add(ERR_SEMANTIC, ast->line, msg);
+                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     } else {
                         // 方法不存在于该类型
                         char msg[BUFFER_MEDIUM];
@@ -1727,7 +1727,7 @@
                             snprintf(msg, sizeof(msg), "类型 '%s' 没有方法 '%s'",
                                      type_to_string(obj_sym->type), method_name);
                         }
-                        error_add(ERR_SEMANTIC, ast->line, msg);
+                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     }
 
                     // 转换为实例方法调用：obj.method(args) -> obj["method"](args)
@@ -1766,7 +1766,7 @@
                 // 模块和变量都未定义
                 char msg[BUFFER_MEDIUM];
                 snprintf(msg, sizeof(msg), "未定义的模块或变量: %s", ast->u.module_call.module_name);
-                error_add(ERR_SEMANTIC, ast->line, msg);
+                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
             }
             }
             break;
@@ -2018,7 +2018,7 @@
                         char msg[BUFFER_MEDIUM];
                         snprintf(msg, sizeof(msg), "模块 '%s' 中没有常量 '%s'，如果是方法调用请加括号 ()",
                                  actual_module, ast->u.module_access.member_name);
-                        error_add(ERR_SEMANTIC, ast->line, msg);
+                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     }
                     // 原生模块常量：保留 AST_MODULE_ACCESS，设置类型为 TYPE_INT
                     ast->u.module_access.ref.kind = SYM_MODULE;

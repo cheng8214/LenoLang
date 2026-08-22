@@ -124,6 +124,7 @@ void type_guard_list_free(TypeGuardList* list);
 struct Ast {
     AstKind kind;
     int line;
+    int column;             // 列号（1-based，用于错误报告，-1 表示未知）
     TypeInfo* cached_type;  // 类型推断缓存，避免重复推断同一表达式
     union {
         struct { double value; int is_bigint; char* bigint_str; int is_float; } num;

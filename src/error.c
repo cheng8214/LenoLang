@@ -23,6 +23,10 @@ void error_set_column(int column) {
     current_column = column;
 }
 
+int error_get_column(void) {
+    return current_column;
+}
+
 const char* error_get_filename(void) {
     return current_filename[0] ? current_filename : NULL;
 }
@@ -66,6 +70,13 @@ void error_add(ErrorType type, int line, const char* msg) {
     } else {
         err->filename[0] = '\0';
     }
+}
+
+void error_add_at(ErrorType type, int line, int column, const char* msg) {
+    int saved_column = current_column;
+    current_column = column;
+    error_add(type, line, msg);
+    current_column = saved_column;
 }
 
 int error_has_any(void) {
@@ -170,6 +181,13 @@ void warning_add(WarnType type, int line, const char* msg) {
     } else {
         w->filename[0] = '\0';
     }
+}
+
+void warning_add_at(WarnType type, int line, int column, const char* msg) {
+    int saved_column = current_column;
+    current_column = column;
+    warning_add(type, line, msg);
+    current_column = saved_column;
 }
 
 int warning_has_any(void) {

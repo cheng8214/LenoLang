@@ -13,6 +13,7 @@ typedef struct {
     const char* text;
     int len;
     int line;
+    int column;         // 列号（1-based，用于错误报告）
     double num_val;
     int is_bigint;      // 标记是否是大整数
     char* bigint_str;   // 大整数字符串（当 is_bigint 为 1 时有效）

@@ -24,7 +24,7 @@
                         const char* kind_str = (field_type->kind == TYPE_INFER) ? "var" : "any";
                         snprintf(msg, sizeof(msg), "struct '%s' 的字段 '%s' 不能使用 %s，必须使用具体类型",
                                  ast->u.struct_def.name, ast->u.struct_def.field_names[i], kind_str);
-                        error_add(ERR_SEMANTIC, ast->line, msg);
+                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     }
 
                     // 如果字段类型是 struct/clib/cstruct/face，验证是否已定义
@@ -153,7 +153,7 @@
                                     snprintf(msg, sizeof(msg),
                                         "struct '%s' 的关联常量 '%s' 不是常量表达式（仅支持数字、字符串、bool、null、数组字面量、字典字面量）",
                                         ast->u.struct_def.name, ast->u.struct_def.const_names[ci]);
-                                    error_add(ERR_SEMANTIC, ast->line, msg);
+                                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                 }
                                 cdef->const_values[ci] = cv;
                             } else {
@@ -289,7 +289,7 @@
                                                                  ast->u.struct_def.name, mname, face_name,
                                                                  type_kind_to_string(face_ret),
                                                                  type_kind_to_string(impl_ret));
-                                                        error_add(ERR_SEMANTIC, ast->line, msg);
+                                                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                                     }
                                                 }
                                                 if (mface->methods[j].param_count >= 0 && ast->u.struct_def.methods[k]->u.func.pcnt >= 1) {
@@ -300,7 +300,7 @@
                                                         snprintf(msg, sizeof(msg), "struct '%s' 的方法 '%s' 参数数量与 face '%s' 不匹配: 期望 %d, 实际 %d",
                                                                  ast->u.struct_def.name, mname, face_name,
                                                                  expected_params, actual_params);
-                                                        error_add(ERR_SEMANTIC, ast->line, msg);
+                                                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                                     }
                                                 }
                                                 break;
@@ -310,7 +310,7 @@
                                             char msg[256];
                                             snprintf(msg, sizeof(msg), "struct '%s' 声明 impl '%s' 但缺少方法 '%s'",
                                                      ast->u.struct_def.name, face_name, mname);
-                                            error_add(ERR_SEMANTIC, ast->line, msg);
+                                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                         }
                                     }
                                 }
@@ -319,7 +319,7 @@
                         if (!found_in_module) {
                             char msg[256];
                             snprintf(msg, sizeof(msg), "未定义的 face: '%s'", face_name);
-                            error_add(ERR_SEMANTIC, ast->line, msg);
+                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                         }
                         continue;
                     }
@@ -362,7 +362,7 @@
                                                  ast->u.struct_def.name, mname, face_name,
                                                  type_kind_to_string(expected_kind),
                                                  type_kind_to_string(impl_ret2));
-                                        error_add(ERR_SEMANTIC, ast->line, msg);
+                                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                     }
                                 }
                                 if (fdef->methods[j].param_count >= 0 && ast->u.struct_def.methods[k]->u.func.pcnt >= 0) {
@@ -373,7 +373,7 @@
                                         snprintf(msg, sizeof(msg), "struct '%s' 的方法 '%s' 参数数量与 face '%s' 不匹配: 期望 %d, 实际 %d",
                                                  ast->u.struct_def.name, mname, face_name,
                                                  expected_params, actual_params);
-                                        error_add(ERR_SEMANTIC, ast->line, msg);
+                                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                     }
                                 }
                                 break;
@@ -383,7 +383,7 @@
                             char msg[256];
                             snprintf(msg, sizeof(msg), "struct '%s' 声明 impl '%s' 但缺少方法 '%s'",
                                      ast->u.struct_def.name, face_name, mname);
-                            error_add(ERR_SEMANTIC, ast->line, msg);
+                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                         }
                     }
                 }

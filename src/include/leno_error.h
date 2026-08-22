@@ -25,8 +25,10 @@ extern ErrorCollector errors;
 
 void error_set_filename(const char* filename);
 void error_set_column(int column);
+int error_get_column(void);
 const char* error_get_filename(void);
 void error_add(ErrorType type, int line, const char* msg);
+void error_add_at(ErrorType type, int line, int column, const char* msg);
 int error_has_any(void);
 void error_clear(void);
 void error_print_all(void);
@@ -56,6 +58,7 @@ typedef struct {
 extern WarningCollector warnings;
 
 void warning_add(WarnType type, int line, const char* msg);
+void warning_add_at(WarnType type, int line, int column, const char* msg);
 int warning_has_any(void);
 void warning_clear(void);
 void warning_print_all(void);

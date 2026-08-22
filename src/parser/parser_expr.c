@@ -980,7 +980,8 @@ Ast* parse_dot(Parser* p, Ast* left) {
         return left;
     }
     
-    // 保存方法名/属性名
+    // 保存方法名/属性名及其列号
+    int name_column = p->lex.current.column;
     char* name = copy_string(p->lex.current.text, p->lex.current.len);
     lexer_next(&p->lex); // 消费标识符
     
@@ -991,6 +992,7 @@ Ast* parse_dot(Parser* p, Ast* left) {
             // 变量方法调用：arr.add(...) 或 module.func(...)
             // 统一创建为 MODULE_CALL，由语义分析阶段确定具体类型
             Ast* ast = ast_new(AST_MODULE_CALL, line);
+            ast->column = name_column; // 用方法名的列号，而非 '(' 的列号
             ast->u.module_call.module_name = left->u.var.name;
             ast->u.module_call.method_name = name;
             ast_list_init(&ast->u.module_call.args);
@@ -1028,6 +1030,7 @@ Ast* parse_dot(Parser* p, Ast* left) {
             index_ast->u.index.index = method_str;
             
             Ast* ast = ast_new(AST_CALL, line);
+            ast->column = name_column; // 用方法名的列号
             ast->u.call.callee = index_ast;
             ast_list_init(&ast->u.call.args);
             ast->u.call.is_tail_call = 0;

@@ -10,6 +10,7 @@ Ast* ast_new(AstKind kind, int line) {
     }
     ast->kind = kind;
     ast->line = line;
+    ast->column = error_get_column();
     return ast;
 }
 

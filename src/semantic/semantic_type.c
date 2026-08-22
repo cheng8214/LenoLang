@@ -1815,7 +1815,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                             "不能在 any 类型 '%s' 上直接访问字段 '%s'\n"
                             "  提示: 使用 if %s is Type { %s.%s } 进行类型收窄",
                             var_name, member_name, var_name, var_name, member_name);
-                        error_add(ERR_SEMANTIC, ast->line, msg);
+                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     }
                     ast->cached_type = type_new(TYPE_ANY);
                     return type_copy(ast->cached_type);
@@ -1990,7 +1990,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                                 "不能在 any 类型上进行索引访问\n"
                                 "  提示: 使用 if x is Array { x[i] } 进行类型收窄");
                         }
-                        error_add(ERR_SEMANTIC, ast->line, msg);
+                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     }
                     type_free(obj_type);
                     ast->cached_type = type_new(TYPE_ANY);
