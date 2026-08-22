@@ -106,7 +106,7 @@ export struct ListBox impl Widget {
         Theme th = theme.getTheme()
         br = th.bgR; bg = th.bgG; bb = th.bgB
         _bdrR = th.borderR; _bdrG = th.borderG; _bdrB = th.borderB
-        _selR = th.accentR; _selG = th.accentG; _selB = th.accentB
+        _selR = th.bgSelR; _selG = th.bgSelG; _selB = th.bgSelB
         _hovR = th.bgHoverR; _hovG = th.bgHoverG; _hovB = th.bgHoverB
         tr = th.txtR; tg = th.txtG; tb = th.txtB
         _sbR = th.sbR; _sbG = th.sbG; _sbB = th.sbB

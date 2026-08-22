@@ -252,7 +252,7 @@ export struct Table impl Widget, Themeable {
         Theme th = theme.getTheme()
         br = th.bgR; bg = th.bgG; bb = th.bgB
         _hdrR = th.bgHeaderR; _hdrG = th.bgHeaderG; _hdrB = th.bgHeaderB
-        _selR = th.accentR; _selG = th.accentG; _selB = th.accentB
+        _selR = th.bgSelR; _selG = th.bgSelG; _selB = th.bgSelB
         _hovR = th.bgHoverR; _hovG = th.bgHoverG; _hovB = th.bgHoverB
         _zebR = th.bgZebraR; _zebG = th.bgZebraG; _zebB = th.bgZebraB
         tr = th.txtR; tg = th.txtG; tb = th.txtB
@@ -1600,7 +1600,7 @@ export struct Table impl Widget, Themeable {
 func applyTheme(Theme t) {
 br = t.bgR; bg = t.bgG; bb = t.bgB
 _hdrR = t.bgHeaderR; _hdrG = t.bgHeaderG; _hdrB = t.bgHeaderB
-_selR = t.accentR; _selG = t.accentG; _selB = t.accentB
+_selR = t.bgSelR; _selG = t.bgSelG; _selB = t.bgSelB
 _hovR = t.bgHoverR; _hovG = t.bgHoverG; _hovB = t.bgHoverB
 _zebR = t.bgZebraR; _zebG = t.bgZebraG; _zebB = t.bgZebraB
 tr = t.txtR; tg = t.txtG; tb = t.txtB

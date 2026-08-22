@@ -26,6 +26,7 @@ export struct Theme {
     int bgAltR = 44, bgAltG = 46, bgAltB = 54     // 次级背景（面板/斑马纹/非激活标签）
     int bgInputR = 35, bgInputG = 35, bgInputB = 50  // 输入框背景（略深于主背景）
     int bgHoverR = 70, bgHoverG = 78, bgHoverB = 92   // 悬停行背景
+    int bgSelR = 52, bgSelG = 58, bgSelB = 70        // 选中行背景（比 hover 更深，非蓝色）
     int bgZebraR = 44, bgZebraG = 46, bgZebraB = 54  // 斑马纹行（与 bgAlt 相同）
     int bgHeaderR = 46, bgHeaderG = 48, bgHeaderB = 56  // 表头/标签栏背景
 
@@ -95,6 +96,7 @@ export func lightTheme(): Theme {
     t.bgAltR = 232; t.bgAltG = 232; t.bgAltB = 238
     t.bgInputR = 255; t.bgInputG = 255; t.bgInputB = 255
     t.bgHoverR = 206; t.bgHoverG = 214; t.bgHoverB = 224
+    t.bgSelR = 170; t.bgSelG = 178; t.bgSelB = 190
     t.bgZebraR = 236; t.bgZebraG = 236; t.bgZebraB = 242
     t.bgHeaderR = 226; t.bgHeaderG = 228; t.bgHeaderB = 234
     // 文字
@@ -134,6 +136,7 @@ export func midnightTheme(): Theme {
     t.bgAltR = 28; t.bgAltG = 34; t.bgAltB = 52
     t.bgInputR = 18; t.bgInputG = 24; t.bgInputB = 40
     t.bgHoverR = 40; t.bgHoverG = 52; t.bgHoverB = 80
+    t.bgSelR = 30; t.bgSelG = 40; t.bgSelB = 64
     t.bgZebraR = 28; t.bgZebraG = 34; t.bgZebraB = 52
     t.bgHeaderR = 30; t.bgHeaderG = 38; t.bgHeaderB = 58
     // 文字

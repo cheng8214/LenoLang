@@ -79,7 +79,7 @@ export struct ComboBox impl Widget, Themeable {
         Theme th = theme.getTheme()
         br = th.bgR; bg = th.bgG; bb = th.bgB
         _bdrR = th.borderR; _bdrG = th.borderG; _bdrB = th.borderB
-        _selR = th.accentR; _selG = th.accentG; _selB = th.accentB
+        _selR = th.bgSelR; _selG = th.bgSelG; _selB = th.bgSelB
         _hovR = th.bgHoverR; _hovG = th.bgHoverG; _hovB = th.bgHoverB
         tr = th.txtR; tg = th.txtG; tb = th.txtB
         _sbR = th.sbR; _sbG = th.sbG; _sbB = th.sbB
@@ -528,7 +528,7 @@ export struct ComboBox impl Widget, Themeable {
 func applyTheme(Theme t) {
 br = t.bgR; bg = t.bgG; bb = t.bgB
 _bdrR = t.borderR; _bdrG = t.borderG; _bdrB = t.borderB
-_selR = t.accentR; _selG = t.accentG; _selB = t.accentB
+_selR = t.bgSelR; _selG = t.bgSelG; _selB = t.bgSelB
 _hovR = t.bgHoverR; _hovG = t.bgHoverG; _hovB = t.bgHoverB
 tr = t.txtR; tg = t.txtG; tb = t.txtB
 _sbR = t.sbR; _sbG = t.sbG; _sbB = t.sbB
