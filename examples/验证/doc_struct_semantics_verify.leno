@@ -1,0 +1,51 @@
+// doc_struct_semantics_verify.leno
+// Verify the code example from Leno入门教程.md "结构体引用语义与深拷贝" section
+
+struct Node {
+    int id = 0
+    string name = ""
+    Array[int] data = []
+}
+
+func mutate(Node n) {
+    n.id = 888
+    n.name = "mutated"
+}
+
+main() {
+    // === 1. assign = reference ===
+    Node a = new Node()
+    a.id = 10; a.data.add(1)
+
+    Node b = a
+    b.id = 999; b.data.add(2)
+    print(a.id)          // 999
+    print(a.data.len())  // 2
+
+    // === 2. param = reference ===
+    mutate(a)
+    print(a.id)          // 888
+
+    // === 3. array index = reference ===
+    Array[Node] arr = []
+    Node tmp = new Node()
+    tmp.id = 100
+    arr.add(tmp)
+    var n = arr[0]
+    n.id = 200
+    print(arr[0].id)     // 200
+
+    // === 4. .copy() deep copy ===
+    Node c = a.copy()
+    c.id = 0; c.data.add(99)
+    print(a.id)          // 888
+    print(a.data.len())  // 2
+    print(c.data.len())  // 3
+
+    // === verify all ===
+    if a.id == 888 and a.data.len() == 2 and arr[0].id == 200 and c.data.len() == 3 {
+        print("ALL PASS")
+    } else {
+        print("FAIL")
+    }
+}

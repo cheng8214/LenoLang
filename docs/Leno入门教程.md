@@ -23,6 +23,7 @@
 6. [结构体（Struct）](#结构体struct)
    - [可空类型 `Type?`](#可空类型-type推荐方案)
    - [泛型结构体](#泛型结构体)
+   - [结构体引用语义与深拷贝](#结构体引用语义与深拷贝)
 7. [face（接口）](#face接口)
    - [泛型 face](#泛型-face)
 8. [枚举（Enum）](#枚举enum)
@@ -5613,6 +5614,83 @@ Array arr
 | use 导入 | 支持 `use module.Struct`/`Face`/`Enum`/`Alias`/`Clib`/`CStruct`/`func` 导入，批量用 `use module.(A, B, C)` |
 
 > **核心原则**：自引用设 null，访问先检查，参数用具体类型或 face，优先用字段访问！
+
+### 结构体引用语义与深拷贝
+
+> **⚠️ 重要：struct 是引用类型——赋值、传参、返回、数组下标读取全部为引用传递，不会拷贝。**
+
+与数组一样，struct 实例在赋值给变量、传递给函数参数、作为函数返回值、或从数组中按下标读取时，**传递的是引用（指针），而非值拷贝**。修改新变量会影响原对象。
+
+```leno
+struct Node {
+    int id = 0
+    string name = ""
+    Array[int] data = []
+}
+
+main() {
+    // === 1. 赋值 = 引用传递 ===
+    Node a = new Node()
+    a.id = 10; a.data.add(1)
+
+    Node b = a           // b 和 a 指向同一个对象
+    b.id = 999; b.data.add(2)
+    print(a.id)          // 999（a 也被修改了）
+    print(a.data.len())  // 2
+
+    // === 2. 传参 = 引用传递 ===
+    mutate(a)
+    print(a.id)          // 888（函数内修改影响了 a）
+
+    // === 3. 数组下标读取 = 引用传递 ===
+    Array[Node] arr = []
+    arr.add(new Node(id = 100))
+    var n = arr[0]       // n 和 arr[0] 指向同一个对象
+    n.id = 200
+    print(arr[0].id)     // 200（arr[0] 也被修改了）
+
+    // === 4. .copy() 深拷贝 ===
+    Node c = a.copy()    // c 是独立的深拷贝
+    c.id = 0; c.data.add(99)
+    print(a.id)          // 888（a 不受影响）
+    print(a.data.len())  // 2（a 不受影响）
+    print(c.data.len())  // 3
+}
+
+func mutate(Node n) {
+    n.id = 888
+    n.name = "mutated"
+}
+```
+
+**需要独立副本时使用 `.copy()`**：`.copy()` 方法递归深拷贝结构体所有字段（含嵌套数组、字典、结构体），返回完全独立的副本。
+
+> **💡 与其他语言的对比**
+>
+> | 操作 | Leno | Python | Go | C# |
+> |------|-------|--------|-----|-----|
+> | 赋值 `b = a` | 引用 | 引用 | 值拷贝(struct) | 引用(class) |
+> | 传参 `f(a)` | 引用 | 引用 | 值拷贝(struct) | 引用(class) |
+> | 显式深拷贝 | `.copy()` | `copy.deepcopy()` | 需手写 | `.Clone()` |
+>
+> Leno 的语义类似 Python——对象变量都是引用，赋值不拷贝。与 Go 的值类型 struct 不同，Leno 的 struct 实例始终在堆上，变量持有的是指针。
+
+> **⚠️ 常见陷阱：函数返回后修改**
+>
+> 从函数返回的 struct 实例也是引用，修改它会直接影响原始对象：
+> ```leno
+> func find_node(Array[Node] list, int id): Node {
+>     for list.len() to i {
+>         if list[i].id == id { return list[i] }
+>     }
+>     Node empty = new Node(); return empty
+> }
+>
+> // 调用方
+> Node found = find_node(arr, 2)
+> found.name = "modified"    // 直接修改了 arr 中的原始节点！
+> ```
+> 如果需要只读快照，请用 `.copy()` 或逐字段手动构造新实例。
 
 ***
 

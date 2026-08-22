@@ -12,11 +12,11 @@
 //
 // 数据模型：嵌套 Array[TreeViewNode] 树（_roots）为唯一数据源；节点字段（含 image）即唯一真相。
 // 渲染/命中用的拍平视图（_flatIds/_flatText/...）只是一层"渲染缓存"——基础类型按下标访问安全、
-// 且可避免每帧重建数组（鼠标移动高频重绘抖动的主因），并非因为结构体字段访问不可靠。
-// 历史上的坑：Leno 曾对自递归结构体字段（TreeViewNode.children）的"非循环下标"访问不可靠，
-// 迫使所有读写都绕递归辅助函数；该语言坑已于编译器层面修复（见 test_structarray_probe.leno 验证），
-// 现在 list[i].children / list[i].image 等变量下标访问均可靠，节点字段可直接作为数据源。
-// 下方 _flatten_r 直接读取 list[i].image 即通过结构体字段取值，已无旧坑。
+// 且可避免每帧重建数组（鼠标移动高频重绘抖动的主因）。
+// ★ Leno 结构体语义已验证（见 lang_struct_semantics_test.leno）：
+//   赋值/传参/返回/数组下标读取全部为引用传递（不拷贝），
+//   list[i].children / list[i].image 等变量下标访问可靠，
+//   循环变量下标读取同样可靠。.copy() 方法做显式深拷贝。
 import maths
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
@@ -63,7 +63,8 @@ export struct TreeView impl Widget, Themeable {
     Array[bool] _flatExpanded = []
     Array[string] _flatImage = []      // 每行图片路径（渲染缓存，源在节点 image 字段）
     Array[int] _flatImgMode = []       // 每行图片内容模式（节点 imageMode，<0 时回退全局 _imgMode）
-    bool _flatDirty = true      // 拍平视图是否过期：结构变更后置位，render 时按需重建，避免每帧重建数组
+    Array[bool] _flatSel = []          // 每行是否选中（拍平时从 _sel/_sel2 生成，render 中 O(1) 读取）
+    bool _flatDirty = true      // 拍平视图是否过期：结构/选中变更后置位，render 时按需重建，避免每帧重建数组
 
     // 节点图标（image）绘制参数
     float _imgSize = 0.0      // 图标边长（0 = 自动：取 _rowH - 8）
@@ -72,6 +73,9 @@ export struct TreeView impl Widget, Themeable {
     // 纹理缓存（path -> tex 平行数组）：跨拍平重建持久存在，避免每帧重载与纹理泄漏
     Array[string] _imgCachePaths = []
     Array[Ptr[u8]] _imgCacheTex = []
+    // ★ MRU 快路径：连续多行常共用同一图标（如全部是文件夹），单槽快路径将 O(n) 线性扫描降为 O(1)
+    string _imgLastPath = ""
+    Ptr[u8] _imgLastTex = null
     float _textH = 16.0         // 缓存字体行高，避免渲染时每行重复 measureString
 
     float _rowH = 24.0
@@ -155,7 +159,7 @@ n.imageExpanded = d.get("imageExpanded", "")
         for ds.len() to i { _roots.add(_build_node(ds[i], -1, 0)) }
     }
 
-    // 递归复制整棵子列表（全程用循环变量 list[i] 读取，规避"非循环下标返回零值拷贝"的语言坑）
+    // 递归复制整棵子列表（创建独立快照，供 _find 等返回只读副本避免外部误改原始树）
     func _snap_children(Array[TreeViewNode] list): Array[TreeViewNode] {
         Array[TreeViewNode] out = []
         for list.len() to i {
@@ -168,7 +172,8 @@ n.imageExpanded = d.get("imageExpanded", "")
         }
         return out
     }
-    // 按 id 查找节点：返回现建的快照（结构体跨函数返回为拷贝；且只用循环变量读取字段）
+    // 按 id 查找节点：返回独立快照（逐字段拷贝，避免外部修改影响原始树；Leno 返回值为引用传递，
+    // 此处手动拷贝是设计选择而非语言限制——见 lang_struct_semantics_test.leno 测试 8 验证）
     func _find(int id): TreeViewNode { return _find_r(_roots, id) }
     func _find_r(Array[TreeViewNode] list, int id): TreeViewNode {
         for list.len() to i {
@@ -191,7 +196,7 @@ n.imageExpanded = d.get("imageExpanded", "")
     func _flatten() {
         if not _flatDirty { return }   // 结构未变则跳过，避免每帧重建 8 个数组（鼠标移动高频重绘时抖动/闪烁的主因）
         _flatIds = []; _flatText = []; _flatParent = []; _flatDepth = []
-        _flatHas = []; _flatCheck = []; _flatOn = []; _flatExpanded = []; _flatImage = []; _flatImgMode = []
+        _flatHas = []; _flatCheck = []; _flatOn = []; _flatExpanded = []; _flatImage = []; _flatImgMode = []; _flatSel = []
         _flatten_r(_roots, -1, 0)
         _flatDirty = false
     }
@@ -207,6 +212,11 @@ n.imageExpanded = d.get("imageExpanded", "")
             _flatCheck.add(list[i].checkable)
             _flatOn.add(list[i].checked)
             _flatExpanded.add(list[i].expanded)
+            // ★ 拍平时预计算选中状态，render 中 _is_selected 变为 O(1) 按下标读
+            bool seld = false
+            if _mode == 0 { seld = (list[i].id == _sel) }
+            else { for _sel2.len() to s { if _sel2[s] == list[i].id { seld = true; break } } }
+            _flatSel.add(seld)
             if list[i].expanded {
                 _flatten_r(list[i].children, list[i].id, depth + 1)
             }
@@ -214,12 +224,19 @@ n.imageExpanded = d.get("imageExpanded", "")
     }
 
     // 纹理缓存：按 path 取/载纹理，跨拍平重建持久存在，避免每帧重载与纹理泄漏
+    // ★ MRU 快路径：文件管理器中连续多行常共用同一图标（如全部是文件夹），
+    //   单槽快路径将 O(n) 线性扫描降为 O(1)，消除每行 string 比较开销
     func _get_tex(Renderer r, string path): Ptr[u8] {
+        if path == _imgLastPath and _imgLastTex != null { return _imgLastTex }
         for _imgCachePaths.len() to i {
-            if _imgCachePaths[i] == path { return _imgCacheTex[i] }
+            if _imgCachePaths[i] == path {
+                _imgLastPath = path; _imgLastTex = _imgCacheTex[i]
+                return _imgCacheTex[i]
+            }
         }
         Ptr[u8] t = img.loadTexture(r.handle, path)
         _imgCachePaths.add(path); _imgCacheTex.add(t)
+        _imgLastPath = path; _imgLastTex = t
         return t
     }
 
@@ -302,6 +319,11 @@ n.imageExpanded = d.get("imageExpanded", "")
         if _mode == 0 { return id == _sel }
         for _sel2.len() to i { if _sel2[i] == id { return true } }
         return false
+    }
+    // ★ 拍平后按下标读选中状态，render 中调用，避免 _is_selected 线性扫描
+    func _is_flat_sel(int idx): bool {
+        if idx < 0 or idx >= _flatSel.len() { return false }
+        return _flatSel[idx]
     }
 
     // ==================== set 初始化 ====================
@@ -490,6 +512,7 @@ n.imageExpanded = d.get("imageExpanded", "")
     func select(int id) { _select(id, false) }
     func _select(int id, bool ctrl) {
         if id < 0 { return }
+        _flatDirty = true   // ★ 选中变更后标记拍平视图过期，下次 render 重建 _flatSel
         if _mode == 0 {
             if _sel != id { _sel = id; _ensure_visible(id); if _onChange != null { _onChange([id]) } }
         } else {
@@ -530,7 +553,7 @@ n.imageExpanded = d.get("imageExpanded", "")
         }
         return {}
     }
-    // 增删（支持懒加载）—— 原地递归，避免返回副本写不回
+    // 增删（支持懒加载）—— 原地递归修改树结构
     func add_child(int parentId, Dict d): int {
         int id = _add_child_r(_roots, parentId, d)
         if id >= 0 { _flatDirty = true; _flatten(); _clamp_scroll() }
@@ -713,13 +736,18 @@ n.imageExpanded = d.get("imageExpanded", "")
         clip.w = _int(w) + 1; clip.h = _int(h) + 1   // +1 覆盖浮点截断的亚像素
         r.pushClipRect(clip.to_ptr())
 
-        for _flatIds.len() to i {
+        // ★ 仅遍历可见行区间，避免大树（上万可见行）每帧全量遍历
+        int startRow = _int(_scroll / _rowH)
+        if startRow < 0 { startRow = 0 }
+        int endRow = startRow + _int(h / _rowH) + 2
+        if endRow > _flatIds.len() { endRow = _flatIds.len() }
+        for startRow : endRow - 1 to i {
             int id = _flatIds[i]
             float rowY = r.snapY(y - _scroll + i * _rowH)
             if rowY + _rowH < y or rowY > y + h { continue }
             float checkOff = if _showCheck then 18.0 else 0.0
 
-            bool seld = _is_selected(id)
+            bool seld = _is_flat_sel(i)   // ★ O(1) 按下标读拍平时预计算的选中状态
             int rr = bgr, gg = bgg, bb2 = bgb
             if seld { rr = _selR; gg = _selG; bb2 = _selB }
             else if id == _hover { rr = _hovR; gg = _hovG; bb2 = _hovB }
@@ -850,6 +878,7 @@ n.imageExpanded = d.get("imageExpanded", "")
         // 纹理缓存仅清空引用：其由所属渲染器在销毁时统一释放，
         // 此处再 SDL_DestroyTexture 会造成 double-free/崩溃（见 sdl_font.leno 注释）
         _imgCacheTex = []; _imgCachePaths = []
+        _imgLastPath = ""; _imgLastTex = null
     }
 
 // ==================== 运行时主题切换 ====================

@@ -43,6 +43,9 @@ export struct Table impl Widget, Themeable {
     bool _colWPrefixValid = false
     float _cachedTotalW = -1.0       // _total_w() 缓存，避免 process/render 中多次遍历 _colW
     bool _totalWValid = false
+    // ★ _compute_sb() 结果缓存：process 单帧最多调用 6 次，缓存后只计算 1 次
+    float _cachedSbVw = -1.0, _cachedSbHh = -1.0
+    bool _sbValid = false
     int _hoverColForTip = -1         // 缓存：上次做 tooltip 截断检查的列索引
     string _hoverTipText = ""        // 缓存：当前悬停单元格的 tooltip 文本（空串=无需 tooltip）
     bool _draggingV = false, _draggingH = false; float _vDragOffset = 0.0, _hDragOffset = 0.0
@@ -127,7 +130,9 @@ export struct Table impl Widget, Themeable {
         _cachedTotalW = s; _totalWValid = true
         return s
     }
+    func _invalidate_sb() { _sbValid = false }
     func _compute_sb(): Array[float] {
+        if _sbValid { return [_cachedSbVw, _cachedSbHh] }
         float vw = 0.0, hh = 0.0
         float bodyH0 = h - _headerH - 8.0
         float bodyW0 = w - 8.0
@@ -137,6 +142,7 @@ export struct Table impl Widget, Themeable {
         if tw > bodyW0 { hh = 8.0 }
         if vw > 0.0 and tw > bodyW0 - vw { hh = 8.0 }
         if hh > 0.0 and ch > bodyH0 - hh { vw = 8.0 }
+        _cachedSbVw = vw; _cachedSbHh = hh; _sbValid = true
         return [vw, hh]
     }
     func _max_scroll_y(): float {
@@ -351,6 +357,7 @@ export struct Table impl Widget, Themeable {
     func _recompute_cols() {
         _colWPrefixValid = false
         _totalWValid = false
+        _invalidate_sb()
         _invalidate_fitted()
         int n = _ncols
         if n <= 0 { n = 1 }
@@ -375,17 +382,17 @@ export struct Table impl Widget, Themeable {
     func get_h(): float { return h }
     func get_x(): float { return x }
     func get_y(): float { return y }
-    func set_pos(float px, float py) { x = px; y = py; _clamp_scroll() }
+    func set_pos(float px, float py) { x = px; y = py; _invalidate_sb(); _clamp_scroll() }
     func set_size(float sw, float sh) {
         w = sw; h = sh
-        if _autoCols { _recompute_cols() }
+        if _autoCols { _recompute_cols() } else { _invalidate_sb() }
         _clamp_scroll()
     }
 
     // ==================== 数据操作 ====================
     func set_rows(Array[Array[string]] rs) {
         _rows = rs
-        _invalidate_fitted()
+        _invalidate_fitted(); _invalidate_sb()
         int m = 0
         for _rows.len() to i { if _rows[i].len() > m { m = _rows[i].len() } }
         if _headers.len() > 0 { _ncols = _headers.len() }
@@ -412,7 +419,7 @@ export struct Table impl Widget, Themeable {
     }
     func add_row(Array[string] row, string imgPath) {
         _rows.add(row)
-        _invalidate_fitted()
+        _invalidate_fitted(); _invalidate_sb()
         _rowImages.add(imgPath)
         _rowTips.add("")
         _rowChecked.add(false)
@@ -423,7 +430,7 @@ export struct Table impl Widget, Themeable {
         _update_check_header()
     }
     func remove_row(int idx) {
-        _invalidate_fitted()
+        _invalidate_fitted(); _invalidate_sb()
         if idx >= 0 and idx < _rows.len() { _rows.remove(idx) }
         if idx >= 0 and idx < _rowImages.len() { _rowImages.remove(idx) }
         if idx >= 0 and idx < _rowTips.len() { _rowTips.remove(idx) }
@@ -446,7 +453,7 @@ export struct Table impl Widget, Themeable {
         _clamp_scroll()
         _update_check_header()
     }
-    func clear() { _rows = []; _rowImages = []; _rowTips = []; _rowChecked = []; _rowColors = []; _selRow = -1; _selCol = -1; _selRows = []; _selSet = []; _scrollX = 0; _scrollY = 0; _checkHeaderState = false; _checkedCount = -1; _invalidate_fitted() }
+    func clear() { _rows = []; _rowImages = []; _rowTips = []; _rowChecked = []; _rowColors = []; _selRow = -1; _selCol = -1; _selRows = []; _selSet = []; _scrollX = 0; _scrollY = 0; _checkHeaderState = false; _checkedCount = -1; _invalidate_fitted(); _invalidate_sb() }
     func row_count(): int { return _rows.len() }
     func col_count(): int { return _ncols }
     func get_row(int idx): Array[string] {
@@ -510,31 +517,37 @@ export struct Table impl Widget, Themeable {
     }
 
     // ==================== 排序 ====================
+    // ★ 交换两行数据及所有并行数组（图标/tip/勾选/颜色），保持对齐
+    func _swap_rows(int i, int j) {
+        var tmp = _rows[i]; _rows[i] = _rows[j]; _rows[j] = tmp
+        if i < _rowImages.len() and j < _rowImages.len() {
+            string ti = _rowImages[i]; _rowImages[i] = _rowImages[j]; _rowImages[j] = ti
+        }
+        if i < _rowTips.len() and j < _rowTips.len() {
+            string tt = _rowTips[i]; _rowTips[i] = _rowTips[j]; _rowTips[j] = tt
+        }
+        if i < _rowChecked.len() and j < _rowChecked.len() {
+            bool tb = _rowChecked[i]; _rowChecked[i] = _rowChecked[j]; _rowChecked[j] = tb
+        }
+        if i < _rowColors.len() and j < _rowColors.len() {
+            int tc = _rowColors[i]; _rowColors[i] = _rowColors[j]; _rowColors[j] = tc
+        }
+    }
+    // ★ 选择排序替代冒泡：比较次数减半，交换次数从 O(n²) 降为 O(n)
     func sort_by(int col, bool desc) {
         _sortCol = col; _sortDesc = desc
-        _invalidate_fitted()
-        for 0 : _rows.len() - 1 to i {
-            for i + 1 : _rows.len() - 1 to j {
-                string a = _cell(i, col), b = _cell(j, col)
-                bool lt = (a < b)
-                if desc { lt = (b < a) }
-                if lt {
-                    var tmp = _rows[i]; _rows[i] = _rows[j]; _rows[j] = tmp
-                    // 同步交换行图标/勾选/颜色，保持与行数据对齐
-                    if i < _rowImages.len() and j < _rowImages.len() {
-                        string ti = _rowImages[i]; _rowImages[i] = _rowImages[j]; _rowImages[j] = ti
-                    }
-                    if i < _rowTips.len() and j < _rowTips.len() {
-                        string tt = _rowTips[i]; _rowTips[i] = _rowTips[j]; _rowTips[j] = tt
-                    }
-                    if i < _rowChecked.len() and j < _rowChecked.len() {
-                        bool tb = _rowChecked[i]; _rowChecked[i] = _rowChecked[j]; _rowChecked[j] = tb
-                    }
-                    if i < _rowColors.len() and j < _rowColors.len() {
-                        int tc = _rowColors[i]; _rowColors[i] = _rowColors[j]; _rowColors[j] = tc
-                    }
-                }
+        _invalidate_fitted(); _invalidate_sb()
+        int n = _rows.len()
+        for 0 : n - 1 to i {
+            int best = i
+            string bestVal = _cell(i, col)
+            for i + 1 : n - 1 to j {
+                string cur = _cell(j, col)
+                bool shouldSwap = false
+                if desc { shouldSwap = (cur > bestVal) } else { shouldSwap = (cur < bestVal) }
+                if shouldSwap { best = j; bestVal = cur }
             }
+            if best != i { _swap_rows(i, best) }
         }
     }
 
@@ -929,7 +942,7 @@ export struct Table impl Widget, Themeable {
         if _dragCol >= 0 and ev.isMouseMotion() {
             float nw = _dragStartW + (mx - _dragStartX)
             if nw < 24.0 { nw = 24.0 }
-            if _dragCol >= 0 and _dragCol < _colW.len() { _colW[_dragCol] = nw; _colWPrefixValid = false; _totalWValid = false; _invalidate_fitted() }
+            if _dragCol >= 0 and _dragCol < _colW.len() { _colW[_dragCol] = nw; _colWPrefixValid = false; _totalWValid = false; _invalidate_sb(); _invalidate_fitted() }
             _autoCols = false
             _clamp_scroll()
             core.markFrameRedraw()
@@ -1011,7 +1024,7 @@ export struct Table impl Widget, Themeable {
             if _dragCol >= 0 {
                 float nw = _dragStartW + (mx - _dragStartX)
                 if nw < 24.0 { nw = 24.0 }
-                if _dragCol >= 0 and _dragCol < _colW.len() { _colW[_dragCol] = nw; _colWPrefixValid = false; _totalWValid = false; _invalidate_fitted() }
+                if _dragCol >= 0 and _dragCol < _colW.len() { _colW[_dragCol] = nw; _colWPrefixValid = false; _totalWValid = false; _invalidate_sb(); _invalidate_fitted() }
                 _autoCols = false
                 _clamp_scroll()
                 core.markFrameRedraw()
