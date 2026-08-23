@@ -59,7 +59,12 @@ main() {
         row_reorder: true,
         // ★ 新功能 6: min/max 列宽约束
         min_col_width: 50.0,
-        max_col_width: 300.0
+        max_col_width: 300.0,
+        // ★ 新功能 7: 单元格编辑 — 双击/Enter 进入编辑，Esc 取消，Tab 跳到下一个
+        editable: true,
+        editable_cols: [1, 2, 3, 4],  // 姓名/分数/年龄/等级 可编辑，ID 不可编辑
+        // ★ 新功能 8: 单元格选中模式 — hover/选中高亮单个单元格而非整行
+        cell_select: true
     })
 
     // ★ 新功能 5: 单元格级颜色
@@ -76,6 +81,11 @@ main() {
     // ★ 新功能 4 回调: 行重排回调
     tbl.on_row_reorder(func(int srcIdx, int dstIdx) {
         print("行重排: " + srcIdx + " -> " + dstIdx)
+    })
+
+    // ★ 新功能 7 回调: 编辑提交回调
+    tbl.on_edit_commit(func(int row, int col, string newText) {
+        print("编辑提交: [" + row + "," + col + "] = " + newText)
     })
 
     // ---- 按钮区 ----
@@ -151,6 +161,7 @@ main() {
             r.drawText(font, "Table 高级功能测试 (Esc 退出)", 20, 2, 200, 210, 230)
             r.drawText(font, "功能: 数值排序 | 列拖拽 | 冻结列 | 行拖拽 | 单元格颜色 | 列宽约束", 20, 24, 150, 180, 200)
             r.drawText(font, "操作: 点表头排序 | 拖表头重排列 | 拖行重排行 | 拖分隔线调列宽", 20, 44, 180, 200, 120)
+            r.drawText(font, "编辑: 双击单元格或选中后按Enter | Tab跳下一格 | Esc取消", 20, 630, 180, 200, 120)
         }
     )
 

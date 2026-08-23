@@ -23,7 +23,7 @@ export struct Table impl Widget, Themeable {
     bool _autoCols = true            // 列宽是否按宽度等分（用户未指定 col_widths）
     float _headerH = 28.0, _rowH = 24.0
     float _scrollX = 0.0, _scrollY = 0.0
-    int _selRow = -1, _selCol = -1, _hoverRow = -1; bool _multi = false; Array[int] _selRows = []
+    int _selRow = -1, _selCol = -1, _hoverRow = -1, _hoverCol = -1; bool _multi = false; Array[int] _selRows = []
     Array[bool] _selSet = []           // 选中行标志数组（与 _rows 平行），让 _is_sel O(1) 避免 render 中线性扫描 _selRows
     bool _sortable = false; int _sortCol = -1; bool _sortDesc = false, _zebra = true
     Array[int] _numericCols = []    // 数值排序列索引集合（点击表头时按数值而非字符串比较）
@@ -126,6 +126,8 @@ export struct Table impl Widget, Themeable {
     Edit? _edit
     bool _editing = false
     bool _editable = false          // 是否允许双击进入单元格编辑（默认 false）
+    Array[int] _editableCols = []   // 可编辑列索引集合（空数组=全部可编辑）
+    bool _cellSelect = false        // 单元格选中模式：hover/选中高亮单个单元格而非整行
     int _editRow = -1, _editCol = -1
     int _lastClickTime = -100000
     float _lastClickX = 0.0, _lastClickY = 0.0
@@ -371,6 +373,11 @@ export struct Table impl Widget, Themeable {
         _sortCol = -1; _sortDesc = false
         _draggingV = false; _draggingH = false
         _dragCol = -1
+        _editable = opts.get("editable", false)
+        _cellSelect = opts.get("cell_select", false)
+        // 指定哪些列可编辑（空数组=全部可编辑）
+        var ec = opts.get("editable_cols", [])
+        if ec is Array[int] { _editableCols = ec } else { _editableCols = [] }
         _ensure_font()
         _clamp_scroll()
         // 编辑框（朴素写法：在 sdl_table 内部经模块别名 edt 创建，触发传递加载别名 bug）
@@ -932,6 +939,7 @@ export struct Table impl Widget, Themeable {
     func _begin_edit(int row, int col) {
         if row < 0 or row >= _rows.len() { return }
         if col < 0 or col >= _ncols { return }
+        if not _is_col_editable(col) { return }
         _editRow = row; _editCol = col
         float cx = _col_x(col)
         float ry = y + _headerH - _scrollY + row * _rowH
@@ -956,7 +964,28 @@ export struct Table impl Widget, Themeable {
     func is_editing(): bool { return _editing }
     // 启用/禁用双击进入单元格编辑（默认关闭）
     func set_editable(bool en) { _editable = en }
+    func set_cell_select(bool en) { _cellSelect = en }
     func is_editable(): bool { return _editable }
+    func set_col_editable(int col, bool en) {
+        if en {
+            bool found = false
+            for _editableCols.len() to i { if _editableCols[i] == col { found = true } }
+            if not found { _editableCols.add(col) }
+        } else {
+            int idx = -1
+            for _editableCols.len() to i { if _editableCols[i] == col { idx = i } }
+            if idx >= 0 { _editableCols.remove(idx) }
+        }
+    }
+    // 判断某列是否可编辑
+    func _is_col_editable(int col): bool {
+        if not _editable { return false }
+        if col < 0 { return false }
+        // 空数组=全部可编辑
+        if _editableCols.len() == 0 { return true }
+        for _editableCols.len() to i { if _editableCols[i] == col { return true } }
+        return false
+    }
     // 双击单元格回调：无论是否可编辑都会触发，便于应用层自定义（如文件管理器双击打开）
     func on_dbl_click(func(int, int):void cb) { _onDblClick = cb }
     func edit_debug(): string {
@@ -1004,6 +1033,26 @@ export struct Table impl Widget, Themeable {
         if _editing {
             _edit.process(ev)
             if ev.isKeyDown() and ev.scancode() == core.Scancode.RETURN { _commit_edit() }
+            eif ev.isKeyDown() and ev.scancode() == core.Scancode.ESCAPE {
+                // Esc 取消编辑（不提交）
+                _editing = false
+                _editRow = -1; _editCol = -1
+                _lastClickTime = -100000
+                _edit.blur()
+            }
+            eif ev.isKeyDown() and ev.scancode() == core.Scancode.TAB {
+                // Tab 跳到下一个可编辑单元格
+                _commit_edit()
+                int nr = _editRow, nc = _editCol + 1
+                while nr < _rows.len() {
+                    while nc < _ncols {
+                        if _is_col_editable(nc) { _begin_edit(nr, nc); return }
+                        nc++
+                    }
+                    nc = 0
+                    nr++
+                }
+            }
             eif ev.isMouseButtonDown() and not _edit.contains(ev.mouseX(), ev.mouseY()) {
                 _commit_edit()
             }
@@ -1068,7 +1117,7 @@ export struct Table impl Widget, Themeable {
                 case core.Scancode.RETURN {
                     if _selRow >= 0 and _selRow < _rows.len() {
                         if _onDblClick != null { _onDblClick(_selRow, _selCol) }
-                        if _editable { _begin_edit(_selRow, _selCol) }
+                        if _is_col_editable(_selCol) { _begin_edit(_selRow, _selCol) }
                     }
                     return
                 }
@@ -1249,14 +1298,16 @@ export struct Table impl Widget, Themeable {
                 }
             }
             int prevHover = _hoverRow
+            int prevHoverCol = _hoverCol
             // ★ X 边界检查：_row_at 只验证 Y 坐标，不检查 X。
             if mx >= x and mx <= x + w {
                 _hoverRow = _row_at(my)
+                _hoverCol = _col_at(mx)
             } else {
-                _hoverRow = -1
+                _hoverRow = -1; _hoverCol = -1
             }
             bool hv = _hoverRow >= 0
-            if _hoverRow != prevHover { core.markFrameRedraw() } else { core.markFrameMotion() }
+            if _hoverRow != prevHover or _hoverCol != prevHoverCol { core.markFrameRedraw() } else { core.markFrameMotion() }
             if _dragCol >= 0 {
                 float nw = _dragStartW + (mx - _dragStartX)
                 if nw < 24.0 { nw = 24.0 }
@@ -1366,7 +1417,7 @@ export struct Table impl Widget, Themeable {
                     _lastClickX = mx; _lastClickY = my
                     if isDbl and col >= 0 {
                         if _onDblClick != null { _onDblClick(row, col) }
-                        if _editable { _begin_edit(row, col) }
+                        if _is_col_editable(col) { _begin_edit(row, col) }
                         return
                     }
                     if _multi {
@@ -1392,6 +1443,7 @@ export struct Table impl Widget, Themeable {
                         if row < _selSet.len() { _selSet[row] = true }
                         _selRow = row
                     }
+                    _selCol = col
                     // 行拖拽重排：记录拖拽起点
                     if _rowReorder {
                         _dragReorderRow = row; _rowReorderStartY = my; _rowReorderDragging = false
@@ -1707,11 +1759,45 @@ export struct Table impl Widget, Themeable {
             float ry = bodyTop - _scrollY + ri * _rowH
             if ry + _rowH < bodyTop or ry > bodyTop + bodyH { continue }
             int rr = bgr, rg = bgg, rb = bgb
-            if _is_sel(ri) { rr = _selR; rg = _selG; rb = _selB }
-            eif ri == _hoverRow { rr = _hovR; rg = _hovG; rb = _hovB }
-            eif _zebra and (ri % 2 == 1) { rr = _zebR; rg = _zebG; rb = _zebB }
+            if _cellSelect {
+                // 单元格模式：行背景只画 zebra，hover/选中在 Pass 1.5 中按单元格画
+                if _zebra and (ri % 2 == 1) { rr = _zebR; rg = _zebG; rb = _zebB }
+            } else {
+                if _is_sel(ri) { rr = _selR; rg = _selG; rb = _selB }
+                eif ri == _hoverRow { rr = _hovR; rg = _hovG; rb = _hovB }
+                eif _zebra and (ri % 2 == 1) { rr = _zebR; rg = _zebG; rb = _zebB }
+            }
             r.setColor(rr, rg, rb, 255)
             r.fillRect(x, ry, w, _rowH + 1.0)   // +1 覆盖亚像素间隙，防止行间闪烁
+        }
+
+        // ★ Pass 1.5（仅 _cellSelect 模式）：单元格级 hover/选中高亮
+        if _cellSelect {
+            for startRow : endRow - 1 to ri {
+                float ry = bodyTop - _scrollY + ri * _rowH
+                if ry + _rowH < bodyTop or ry > bodyTop + bodyH { continue }
+                bool isSel = (_selRow == ri and _selCol >= 0)
+                bool isHov = (_hoverRow == ri and _hoverCol >= 0)
+                if isSel or isHov {
+                    // 选中单元格优先于 hover
+                    int hr = _hovR, hg = _hovG, hb = _hovB
+                    if isSel { hr = _selR; hg = _selG; hb = _selB }
+                    // 画选中的整行背景（淡色）+ 选中单元格深色
+                    if isSel {
+                        r.setColor(_selR, _selG, _selB, 80)
+                        r.fillRect(x, ry, w, _rowH + 1.0)
+                    }
+                    // 画 hover/选中单元格高亮
+                    int hc = if isSel then _selCol else _hoverCol
+                    if hc >= 0 and hc < _ncols {
+                        float cx = _col_x(hc), cw = _colW[hc]
+                        if cx + cw >= x and cx <= x + w {
+                            r.setColor(hr, hg, hb, 255)
+                            r.fillRect(cx, ry, cw, _rowH + 1.0)
+                        }
+                    }
+                }
+            }
         }
 
         // ★ Pass 2：单元格内容（图标+文字）
