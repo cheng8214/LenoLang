@@ -22,12 +22,12 @@
 //   show_close      是否显示关闭按钮（默认 true）
 //   btn_width       按钮宽度（默认 40）
 //   btn_spacing     按钮间距（默认 0，紧贴排列）
-//   bg_rgb          背景色 [r,g,b]（默认 [38,40,48]，与主题背景一致）
-//   text_rgb        标题文字色 [r,g,b]（默认 [200,210,225]）
-//   hover_rgb       按钮悬停背景色 [r,g,b]（默认 [55,60,72]）
-//   close_hover_rgb 关闭按钮悬停色 [r,g,b]（默认 [232,17,35]）
-//   icon_rgb        图标线条色 [r,g,b]（默认 [200,205,215]）
-//   separator_rgb   底部分隔线色 [r,g,b]（默认 [55,58,68]，柔和过渡）
+//   bg_color        背景色 #RRGGBBAA（默认从主题读取）
+//   text_color      标题文字色 #RRGGBBAA
+//   hover_color     按钮悬停背景色 #RRGGBBAA
+//   close_hover_color 关闭按钮悬停色 #RRGGBBAA
+//   icon_color      图标线条色 #RRGGBBAA
+//   separator_color 底部分隔线色 #RRGGBBAA
 //   show_separator  是否显示底部分隔线（默认 true）
 //   icon_minimize   最小化图标图片路径（可选，不传则矢量绘制）
 //   icon_maximize   最大化图标图片路径
@@ -83,12 +83,12 @@ export struct TitleBar impl Widget, Themeable {
     bool _showClose = true
 
     // ==================== 颜色 ====================
-    int _bgR = 38,  _bgG = 40,  _bgB = 48
-    int _txR = 200, _txG = 210, _txB = 225
-    int _hovR = 55, _hovG = 60, _hovB = 72
-    int _closeHovR = 232, _closeHovG = 17, _closeHovB = 35
-    int _iconR = 200, _iconG = 205, _iconB = 215
-    int _sepR = 55,  _sepG = 58,  _sepB = 68
+    int _bgColor = #262830FF
+    int _txColor = #C8D1E5FF
+    int _hovColor = #37404CFF
+    int _closeHovColor = #E81123FF
+    int _iconColor = #C8D1E5FF
+    int _sepColor = #373A44FF
     bool _showSeparator = true
 
     // ==================== 图标图片（可选） ====================
@@ -140,18 +140,18 @@ export struct TitleBar impl Widget, Themeable {
         _showClose = opts.get("show_close", true)
         _showSeparator = opts.get("show_separator", true)
 
-        var bg = opts.get("bg_rgb")
-        if bg is Array[int] { _bgR = bg[0]; _bgG = bg[1]; _bgB = bg[2] }
-        var tx = opts.get("text_rgb")
-        if tx is Array[int] { _txR = tx[0]; _txG = tx[1]; _txB = tx[2] }
-        var hv = opts.get("hover_rgb")
-        if hv is Array[int] { _hovR = hv[0]; _hovG = hv[1]; _hovB = hv[2] }
-        var ch = opts.get("close_hover_rgb")
-        if ch is Array[int] { _closeHovR = ch[0]; _closeHovG = ch[1]; _closeHovB = ch[2] }
-        var ic = opts.get("icon_rgb")
-        if ic is Array[int] { _iconR = ic[0]; _iconG = ic[1]; _iconB = ic[2] }
-        var sp = opts.get("separator_rgb")
-        if sp is Array[int] { _sepR = sp[0]; _sepG = sp[1]; _sepB = sp[2] }
+        var bg = opts.get("bg_color")
+        if bg is int { _bgColor = bg }
+        var tx = opts.get("text_color")
+        if tx is int { _txColor = tx }
+        var hv = opts.get("hover_color")
+        if hv is int { _hovColor = hv }
+        var ch = opts.get("close_hover_color")
+        if ch is int { _closeHovColor = ch }
+        var ic = opts.get("icon_color")
+        if ic is int { _iconColor = ic }
+        var sp = opts.get("separator_color")
+        if sp is int { _sepColor = sp }
 
         _imgMin = opts.get("icon_minimize", "")
         _imgMax = opts.get("icon_maximize", "")
@@ -523,17 +523,17 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
         }
 
         // 背景填充
-        r.setColor(_bgR, _bgG, _bgB, 255)
+        r.setColor(_bgColor)
         r.fillRect(x, y, w, h)
 
         // 标题文字
         if _font != null and _font.ok and _title != "" {
             if _titleAlign == ALIGN_CENTER {
                 // 居中（在整个标题栏宽度范围内）
-                r.drawTextCentered(_font, _title, x, w, y + (h - _float(_font.height)) * 0.5, _txR, _txG, _txB)
+                r.drawTextCentered(_font, _title, x, w, y + (h - _float(_font.height)) * 0.5, _txColor)
             } else {
                 // 左对齐
-                r.drawText(_font, _title, x + _titlePad, y + (h - _float(_font.height)) * 0.5, _txR, _txG, _txB)
+                r.drawText(_font, _title, x + _titlePad, y + (h - _float(_font.height)) * 0.5, _txColor)
             }
         }
 
@@ -550,7 +550,7 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
                 _drawIcon(r, _texMin, minP)
             } else {
                 // 矢量：横线
-                r.setColor(_iconR, _iconG, _iconB, 255)
+                r.setColor(_iconColor)
                 r.fillRect(minP + _btnWidth * 0.35, y + h * 0.5, _btnWidth * 0.3, 2.0)
             }
         }
@@ -566,7 +566,7 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
                 _drawIcon(r, _texMax, maxP)
             } else {
                 // 矢量绘制
-                r.setColor(_iconR, _iconG, _iconB, 255)
+                r.setColor(_iconColor)
                 _drawMaxIcon(r, maxP)
             }
         }
@@ -578,7 +578,7 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
                 _drawIcon(r, _texClose, closeP)
             } else {
                 // 矢量：X 叉
-                r.setColor(_iconR, _iconG, _iconB, 255)
+                r.setColor(_iconColor)
                 float cx = closeP + _btnWidth * 0.5
                 float cy = y + h * 0.5
                 float sz = h * 0.25
@@ -589,7 +589,7 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
 
         // 底部分隔线
         if _showSeparator {
-            r.setColor(_sepR, _sepG, _sepB, 255)
+            r.setColor(_sepColor)
             r.fillRect(x, y + h - 1.0, w, 1.0)
         }
     }
@@ -597,7 +597,7 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
     // 普通按钮悬停背景
     func _drawBtnBg(Renderer r, float bx, bool hover) {
         if hover {
-            r.setColor(_hovR, _hovG, _hovB, 255)
+            r.setColor(_hovColor)
             r.fillRect(bx, y, _btnWidth, h)
         }
     }
@@ -605,7 +605,7 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
     // 关闭按钮悬停背景（红色）
     func _drawCloseBtnBg(Renderer r, float bx, bool hover) {
         if hover {
-            r.setColor(_closeHovR, _closeHovG, _closeHovB, 255)
+            r.setColor(_closeHovColor)
             r.fillRect(bx, y, _btnWidth, h)
         }
     }
@@ -617,7 +617,7 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
         float ix = bx + (_btnWidth - sz) * 0.5
         float iy = y + (h - sz) * 0.5
         r.setTextureAlpha(tex, 255)
-        r.setTextureColor(tex, 255, 255, 255)
+        r.setTextureColor(tex, #FFFFFFFF)
         var nats = r.getTextureSize(tex)
         float nw = nats["w"]; float nh = nats["h"]
         float dw = sz; float dh = sz
@@ -661,17 +661,17 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
     func set_height(float hh) { h = hh; core.markFrameRedraw() }
 
     // 设置背景色
-    func set_bg_rgb(int r, int g, int b) { _bgR = r; _bgG = g; _bgB = b; core.markFrameRedraw() }
+    func set_bg_color(int color) { _bgColor = color; core.markFrameRedraw() }
     // 设置标题文字色
-    func set_text_rgb(int r, int g, int b) { _txR = r; _txG = g; _txB = b; core.markFrameRedraw() }
+    func set_text_color(int color) { _txColor = color; core.markFrameRedraw() }
     // 设置按钮悬停色
-    func set_hover_rgb(int r, int g, int b) { _hovR = r; _hovG = g; _hovB = b; core.markFrameRedraw() }
+    func set_hover_color(int color) { _hovColor = color; core.markFrameRedraw() }
     // 设置关闭按钮悬停色
-    func set_close_hover_rgb(int r, int g, int b) { _closeHovR = r; _closeHovG = g; _closeHovB = b; core.markFrameRedraw() }
+    func set_close_hover_color(int color) { _closeHovColor = color; core.markFrameRedraw() }
     // 设置图标线条色
-    func set_icon_rgb(int r, int g, int b) { _iconR = r; _iconG = g; _iconB = b; core.markFrameRedraw() }
+    func set_icon_color(int color) { _iconColor = color; core.markFrameRedraw() }
     // 设置分隔线色
-    func set_separator_rgb(int r, int g, int b) { _sepR = r; _sepG = g; _sepB = b; core.markFrameRedraw() }
+    func set_separator_color(int color) { _sepColor = color; core.markFrameRedraw() }
 
     // 设置图标图片
     func set_icon_minimize(string path) { _releaseTex(_texMin); _texMin = null; _imgMin = path; _loadMin = "" }
@@ -698,11 +698,11 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
 
 // ==================== 运行时主题切换 ====================
 func applyTheme(Theme t) {
-_bgR = t.bgR; _bgG = t.bgG; _bgB = t.bgB
-_txR = t.txtR; _txG = t.txtG; _txB = t.txtB
-_hovR = t.bgHoverR; _hovG = t.bgHoverG; _hovB = t.bgHoverB
-_sepR = t.sepR; _sepG = t.sepG; _sepB = t.sepB
-_iconR = t.txtR * 3 / 4; _iconG = t.txtG * 3 / 4; _iconB = t.txtB * 3 / 4
+_bgColor = t.bg
+_txColor = t.txt
+_hovColor = t.bgHover
+_sepColor = t.sep
+_iconColor = theme.darken(t.txt, 64)
 }
 }
 

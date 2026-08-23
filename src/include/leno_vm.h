@@ -177,8 +177,6 @@ typedef enum {
     OP_INC_LOCAL_NOPUSH,   // 局部变量++，不压栈（i++ 语句用）
     OP_DEC_LOCAL_NOPUSH,   // 局部变量--，不压栈（i-- 语句用）
     OP_MOVE_LOCAL_POP,     // 局部变量间复制：src→dst，不压栈（a=b 语句用）
-    OP_CALL_NATIVE_VOID,   // 调用原生函数，不压栈结果（print() 语句用）
-    OP_DICT_SET_NOPUSH,    // 字典赋值，不压栈（dict[k]=v 语句用）
     OP_INDEX_SET_NOPUSH,   // 通用索引赋值，不压栈（arr[i]=v 语句用）
     OP_CLEAR_LOCAL_RANGE,  // 清零局部变量范围 [base, base+count)，用于内联清理
     OP_SWITCH_LOOKUP,      // 整数 switch 二分查找：const_idx(2) count(2) default_off(4) [offset(4)]...

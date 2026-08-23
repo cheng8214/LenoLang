@@ -6,7 +6,7 @@ import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.SystemCursor
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
-import "sdl_theme.leno" as theme; use theme.Theme
+import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 
 export struct CheckBox impl Widget {
     string text = ""
@@ -18,11 +18,11 @@ export struct CheckBox impl Widget {
     int _fontStyle = 0
     Font? _font
     bool _checked = false
-    int cr = 60, cg = 60, cb = 72     // 未选中框背景
-    int cc = 60, ck = 170, cbl = 245 // 选中框背景
-    int tr = 235, tg = 235, tb = 245 // 文字色
-    int _brdR = 130, _brdG = 130, _brdB = 150 // 框边框色
-    int _markR = 255, _markG = 255, _markB = 255 // 勾选标记颜色
+    int _uncheckedColor = #3C3C48FF     // 未选中框背景
+    int _checkedColor = #3CAAF5FF       // 选中框背景
+    int _txtColor = #EBEBF5FF          // 文字色
+    int _brdColor = #828296FF          // 框边框色
+    int _markColor = #FFFFFFFF         // 勾选标记颜色
     int _cursor = SystemCursor.DEFAULT
     bool hover = false, _wasHover = false, _pressed = false, enabled = true, visible = true, _loaded = false
     string _tip = ""        // 悬停提示文本（空 = 不提示）
@@ -42,11 +42,11 @@ export struct CheckBox impl Widget {
     // ==================== set 初始化 ====================
     func set(Dict opts) {
         Theme th = theme.getTheme()
-        cr = th.bgAltR; cg = th.bgAltG; cb = th.bgAltB
-        cc = th.accentR; ck = th.accentG; cbl = th.accentB
-        tr = th.txtR; tg = th.txtG; tb = th.txtB
-        _brdR = th.borderR; _brdG = th.borderG; _brdB = th.borderB
-        _markR = th.txtOnAccentR; _markG = th.txtOnAccentG; _markB = th.txtOnAccentB
+        _uncheckedColor = th.bgAlt
+        _checkedColor = th.accent
+        _txtColor = th.txt
+        _brdColor = th.border
+        _markColor = th.txtOnAccent
         text      = opts.get("text", "")
         x         = opts.get("x", 0)
         y         = opts.get("y", 0)
@@ -56,17 +56,17 @@ export struct CheckBox impl Widget {
         _fontPath = opts.get("font_path", "")
         _fontStyle = opts.get("font_style", 0)
 
-        // 默认颜色见字段声明（cr/cg/cb/cc/ck/cbl/tr/tg/tb/_brdR 等均有默认，以下仅 opts 覆盖）
+        // 默认颜色见字段声明，以下仅 opts 覆盖
 
-        // 颜色可被 dict 覆盖（[r,g,b]）
-        var unk = opts.get("unchecked_rgb")
-        if unk is Array[int] { cr = unk[0]; cg = unk[1]; cb = unk[2] }
-        var chk = opts.get("checked_rgb")
-        if chk is Array[int] { cc = chk[0]; ck = chk[1]; cbl = chk[2] }
-        var ctc = opts.get("text_rgb")
-        if ctc is Array[int] { tr = ctc[0]; tg = ctc[1]; tb = ctc[2] }
-        var cbd = opts.get("border_rgb")
-        if cbd is Array[int] { _brdR = cbd[0]; _brdG = cbd[1]; _brdB = cbd[2] }
+        // 颜色可被 dict 覆盖
+        var unk = opts.get("unchecked_color")
+        if unk is int { _uncheckedColor = unk }
+        var chk = opts.get("checked_color")
+        if chk is int { _checkedColor = chk }
+        var ctc = opts.get("text_color")
+        if ctc is int { _txtColor = ctc }
+        var cbd = opts.get("border_color")
+        if cbd is int { _brdColor = cbd }
 
         _cursor = _int(opts.get("cursor", SystemCursor.DEFAULT))
         _checked = opts.get("checked", false)
@@ -146,22 +146,21 @@ export struct CheckBox impl Widget {
         float bx = x, by = y, bs = _box
 
         // 框背景
-        int br = cr, bg = cg, bb = cb
-        if _checked { br = cc; bg = ck; bb = cbl }
-        if hover { br = br + 25; bg = bg + 25; bb = bb + 25
-                   if br > 255 { br = 255 }; if bg > 255 { bg = 255 }; if bb > 255 { bb = 255 } }
-        if not enabled { br = cr / 2; bg = cg / 2; bb = cb / 2 }
+        int boxC = _uncheckedColor
+        if _checked { boxC = _checkedColor }
+        if hover { boxC = theme.brighten(boxC, 25) }
+        if not enabled { boxC = theme.packColor(theme.colorR(_uncheckedColor) / 2, theme.colorG(_uncheckedColor) / 2, theme.colorB(_uncheckedColor) / 2) }
 
-        r.setColor(br, bg, bb, 255)
+        r.setColor(boxC)
         r.fillRoundedRect(bx, by, bs, bs, 5.0)
 
         // 边框
-        r.setColor(_brdR, _brdG, _brdB, 220)
+        r.setColor(theme.withAlpha(_brdColor, 220))
         r.drawRoundedRect(bx, by, bs, bs, 5.0)
 
         // 勾
         if _checked {
-            r.setColor(_markR, _markG, _markB, 255)
+            r.setColor(_markColor)
             float p = bs * 0.26
             r.drawLine(bx + p,                by + bs * 0.52, bx + bs * 0.42, by + bs * 0.72)
             r.drawLine(bx + bs * 0.42,        by + bs * 0.72, bx + bs - p,     by + bs * 0.30)
@@ -170,9 +169,9 @@ export struct CheckBox impl Widget {
         // 文字
         if _font.ok and text != "" {
             float cy = by + (bs - _fontH) / 2.0
-            int tcR = tr, tcG = tg, tcB = tb
-            if not enabled { tcR = tr / 2; tcG = tg / 2; tcB = tb / 2 }
-            r.drawText(_font, text, bx + bs + _gap, cy, tcR, tcG, tcB)
+            int tc = _txtColor
+            if not enabled { tc = theme.packColor(theme.colorR(_txtColor) / 2, theme.colorG(_txtColor) / 2, theme.colorB(_txtColor) / 2) }
+            r.drawText(_font, text, bx + bs + _gap, cy, tc)
         }
     }
 

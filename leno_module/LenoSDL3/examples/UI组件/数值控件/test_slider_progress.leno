@@ -46,13 +46,13 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(28, 28, 46, 255)
-            r.drawText(font, "滑块 / 进度条 演示", 20, 12, 255, 220, 80)
+            r.clearColor(#1C1C2EFF)
+            r.drawText(font, "滑块 / 进度条 演示", 20, 12, #FFDC50FF)
 
-            r.drawText(font, "横向滑块: " + hsl.get_value(), 40, 320, 200, 220, 240)
-            r.drawText(font, "纵向滑块: " + vsl.get_value(), 40, 348, 200, 220, 240)
-            r.drawText(font, "进度条(只读): " + pbar.get_value() + "%", 40, 376, 200, 220, 240)
-            r.drawText(font, "点击/拖拽右侧进度条", 280, 376, 140, 140, 140)
+            r.drawText(font, "横向滑块: " + hsl.get_value(), 40, 320, #C8DCF0FF)
+            r.drawText(font, "纵向滑块: " + vsl.get_value(), 40, 348, #C8DCF0FF)
+            r.drawText(font, "进度条(只读): " + pbar.get_value() + "%", 40, 376, #C8DCF0FF)
+            r.drawText(font, "点击/拖拽右侧进度条", 280, 376, #8C8C8CFF)
         }
     )
 

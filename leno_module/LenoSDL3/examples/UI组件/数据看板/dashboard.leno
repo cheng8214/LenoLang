@@ -104,13 +104,13 @@ func updateState(Label stateLbl, bool live) {
 // 关于对话框（模态窗口，显示在现有运行循环之上）
 func showAbout() {
     var dlg = SDL3.createDialogWindow({title:"关于", w:380, h:240})
-    dlg.addLabel({x:190, y:26,  text:"LenoSDL3 数据看板", font_size:18, text_rgb:[225,235,255], align:1})
-    dlg.addLabel({x:190, y:54,  text:"系统监控看板 Demo", font_size:13, text_rgb:[150,165,200], align:1})
-    dlg.addLabel({x:40,  y:96,  text:"版本：v1.0", font_size:13, text_rgb:[200,210,225]})
-    dlg.addLabel({x:40,  y:120, text:"基于 LenoSDL3 即时模式 UI 框架", font_size:13, text_rgb:[200,210,225]})
-    dlg.addLabel({x:40,  y:144, text:"集成图表 / 表格 / 进度条 / 日志 / 滑块", font_size:13, text_rgb:[200,210,225]})
-    dlg.addLabel({x:40,  y:168, text:"© 2026 LenoLang", font_size:12, text_rgb:[150,160,175]})
-    dlg.addButton({x:140, y:192, w:100, h:34, text:"确定", bg_rgb:[70,130,220], text_rgb:[255,255,255]})
+    dlg.addLabel({x:190, y:26,  text:"LenoSDL3 数据看板", font_size:18, text_color: #E1EBFFFF, align:1})
+    dlg.addLabel({x:190, y:54,  text:"系统监控看板 Demo", font_size:13, text_color: #96A5C8FF, align:1})
+    dlg.addLabel({x:40,  y:96,  text:"版本：v1.0", font_size:13, text_color: #C8D2E1FF})
+    dlg.addLabel({x:40,  y:120, text:"基于 LenoSDL3 即时模式 UI 框架", font_size:13, text_color: #C8D2E1FF})
+    dlg.addLabel({x:40,  y:144, text:"集成图表 / 表格 / 进度条 / 日志 / 滑块", font_size:13, text_color: #C8D2E1FF})
+    dlg.addLabel({x:40,  y:168, text:"© 2026 LenoLang", font_size:12, text_color: #96A0AFFF})
+    dlg.addButton({x:140, y:192, w:100, h:34, text:"确定", bg_color: #4682DCFF, text_color: #FFFFFFFF})
 
     SDL3.runModal(dlg,
         func(Event ev): bool {
@@ -124,7 +124,7 @@ func showAbout() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(30, 33, 42, 255)
+            r.clearColor(#1E212AFF)
             core.requestRedraw()
         }
     )
@@ -132,12 +132,12 @@ func showAbout() {
 
 // 构建一张 KPI 卡片（Panel + 标题 + 进度条 + 说明），返回进度条引用
 func buildKpi(Window win, float x, float y, float w, float h, string title, string caption, Array[int] fill): ProgressBar {
-    var p = SDL3.createPanel({x:x, y:y, w:w, h:h, bg_rgb:[28,30,38], radius:10, border_rgb:[70,75,90]})
+    var p = SDL3.createPanel({x:x, y:y, w:w, h:h, bg_color: #1C1E26FF, radius:10, border_color: #464B5AFF})
     win.add(p)
-    p.add(SDL3.createLabel({x:x+16, y:y+14, text:title, font_size:14, text_rgb:[185,205,255]}))
-    var bar = SDL3.createProgressBar({x:x+16, y:y+50, w:w-32, h:20, value:20, show_text:true, fill_rgb:fill, track_rgb:[48,50,58], text_rgb:[235,238,245]})
+    p.add(SDL3.createLabel({x:x+16, y:y+14, text:title, font_size:14, text_color: #B9CDFFFF}))
+    var bar = SDL3.createProgressBar({x:x+16, y:y+50, w:w-32, h:20, value:20, show_text:true, fill_color:fill, track_color: #30323AFF, text_color: #EBEEF5FF})
     p.add(bar)
-    p.add(SDL3.createLabel({x:x+16, y:y+80, text:caption, font_size:12, text_rgb:[150,160,175]}))
+    p.add(SDL3.createLabel({x:x+16, y:y+80, text:caption, font_size:12, text_color: #96A0AFFF}))
     return bar
 }
 
@@ -154,10 +154,10 @@ main() {
     bool wantQuit = false
 
     // ===================== 顶部标题 + 状态 =====================
-    win.add(SDL3.createLabel({x:16, y:42, text:"系统监控看板", font_size:18, text_rgb:[225,235,255]}))
-    var stateLbl = SDL3.createLabel({x:770, y:48, text:"● 实时刷新中", font_size:13, text_rgb:[120,220,150]})
+    win.add(SDL3.createLabel({x:16, y:42, text:"系统监控看板", font_size:18, text_color: #E1EBFFFF}))
+    var stateLbl = SDL3.createLabel({x:770, y:48, text:"● 实时刷新中", font_size:13, text_color: #78DC96FF})
     win.add(stateLbl)
-    var statusLbl = SDL3.createLabel({x:16, y:972, text:"就绪", font_size:13, text_rgb:[170,200,170]})
+    var statusLbl = SDL3.createLabel({x:16, y:972, text:"就绪", font_size:13, text_color: #AAC8AAFF})
     win.add(statusLbl)
 
     // ===================== 顶部菜单栏 =====================
@@ -180,39 +180,39 @@ main() {
     var netBar  = buildKpi(win, 751, 76, 233, 104, "网络吞吐",    "1 Gbps 上行链路",    [190,120,255])
 
     // ===================== 数据表格卡片 =====================
-    var tblCard = SDL3.createPanel({x:16, y:196, w:620, h:312, bg_rgb:[28,30,38], radius:10, border_rgb:[70,75,90], clip:false})
+    var tblCard = SDL3.createPanel({x:16, y:196, w:620, h:312, bg_color: #1C1E26FF, radius:10, border_color: #464B5AFF, clip:false})
     win.add(tblCard)
-    tblCard.add(SDL3.createLabel({x:32, y:212, text:"服务指标监控", font_size:15, text_rgb:[200,215,255]}))
+    tblCard.add(SDL3.createLabel({x:32, y:212, text:"服务指标监控", font_size:15, text_color: #C8D7FFFF}))
     var table = SDL3.createTable({
         x:32, y:248, w:588, h:236,
         headers:["主机","指标","数值","状态","时间"],
         rows:[], sortable:true, zebra:true, row_h:26, header_h:30, font_size:14
     })
     tblCard.add(table)
-    var filterLbl = SDL3.createLabel({x:32, y:486, text:"", font_size:12, text_rgb:[150,160,175]})
+    var filterLbl = SDL3.createLabel({x:32, y:486, text:"", font_size:12, text_color: #96A0AFFF})
     tblCard.add(filterLbl)
 
     // ===================== 系统日志卡片 =====================
-    var logCard = SDL3.createPanel({x:652, y:196, w:332, h:312, bg_rgb:[28,30,38], radius:10, border_rgb:[70,75,90]})
+    var logCard = SDL3.createPanel({x:652, y:196, w:332, h:312, bg_color: #1C1E26FF, radius:10, border_color: #464B5AFF})
     win.add(logCard)
-    logCard.add(SDL3.createLabel({x:668, y:212, text:"系统日志", font_size:15, text_rgb:[200,215,255]}))
+    logCard.add(SDL3.createLabel({x:668, y:212, text:"系统日志", font_size:15, text_color: #C8D7FFFF}))
     var logBox = SDL3.createListBox({x:668, y:248, w:300, h:236, font_size:13, mode:0})
     logCard.add(logBox)
 
     // ===================== 滑块筛选卡片 =====================
-    var fltCard = SDL3.createPanel({x:16, y:524, w:968, h:96, bg_rgb:[28,30,38], radius:10, border_rgb:[70,75,90]})
+    var fltCard = SDL3.createPanel({x:16, y:524, w:968, h:96, bg_color: #1C1E26FF, radius:10, border_color: #464B5AFF})
     win.add(fltCard)
-    fltCard.add(SDL3.createLabel({x:32, y:534, text:"实时筛选（按指标数值阈值）", font_size:14, text_rgb:[200,215,255]}))
+    fltCard.add(SDL3.createLabel({x:32, y:534, text:"实时筛选（按指标数值阈值）", font_size:14, text_color: #C8D7FFFF}))
     var slFilter = SDL3.createSlider({x:32, y:576, w:560, h:24, min:0, max:100, value:30, step:1, tip:"拖动调整数值阈值"})
     fltCard.add(slFilter)
-    var thrLbl = SDL3.createLabel({x:660, y:578, text:"阈值 30", font_size:14, text_rgb:[180,200,255]})
+    var thrLbl = SDL3.createLabel({x:660, y:578, text:"阈值 30", font_size:14, text_color: #B4C8FFFF})
     fltCard.add(thrLbl)
-    fltCard.add(SDL3.createLabel({x:32, y:604, text:"拖动滑块即时过滤上方表格：仅保留数值 ≥ 阈值的记录", font_size:12, text_rgb:[150,160,175]}))
+    fltCard.add(SDL3.createLabel({x:32, y:604, text:"拖动滑块即时过滤上方表格：仅保留数值 ≥ 阈值的记录", font_size:12, text_color: #96A0AFFF}))
 
     // ===================== 可视化图表卡片 =====================
-    var chartCard = SDL3.createPanel({x:16, y:636, w:968, h:320, bg_rgb:[28,30,38], radius:10, border_rgb:[70,75,90]})
+    var chartCard = SDL3.createPanel({x:16, y:636, w:968, h:320, bg_color: #1C1E26FF, radius:10, border_color: #464B5AFF})
     win.add(chartCard)
-    chartCard.add(SDL3.createLabel({x:32, y:652, text:"实时可视化图表", font_size:15, text_rgb:[200,215,255]}))
+    chartCard.add(SDL3.createLabel({x:32, y:652, text:"实时可视化图表", font_size:15, text_color: #C8D7FFFF}))
 
     var barChart  = SDL3.createBarChart({x:32,  y:684, w:300, h:248, title:"各主机请求量(万)", font_size:11})
     var lineChart = SDL3.createLineChart({x:350, y:684, w:300, h:248, title:"CPU / 内存 使用率趋势(%)", font_size:11})
@@ -304,7 +304,7 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(18, 20, 26, 255)
+            r.clearColor(#12141AFF)
         }
     )
 

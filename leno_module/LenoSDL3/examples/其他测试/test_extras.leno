@@ -1,4 +1,4 @@
-﻿// test_extras.leno — 测试 createTexture / lockTexture / setColorScale / mouseGrab / raise
+// test_extras.leno — 测试 createTexture / lockTexture / setColorScale / mouseGrab / raise
 import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
@@ -41,7 +41,7 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(20, 20, 40, 255)
+            r.clearColor(#141428FF)
             r.setColorScale(scale)
 
             // 首次创建动态纹理（TARGET 模式用于离屏渲染）
@@ -50,7 +50,7 @@ main() {
                 if dynTex != null {
                     // 离屏渲染到纹理
                     r.setRenderTarget(dynTex)
-                    r.clearColor(50, 80, 180, 255)
+                    r.clearColor(#3250B4FF)
                     r.setRenderTarget(null)
                     lastMsg = "createTexture 200x150 OK"
                 } else {
@@ -62,14 +62,14 @@ main() {
                 r.drawTextureAt(dynTex, 10, 60, 200, 150)
             }
 
-            r.drawText(font, "Extras — lockTexture & mouseGrab & colorScale", 10, 8, 255, 220, 80)
-            r.drawText(font, "Scale:" + scale + "  Grab:" + grabbed + "  " + lastMsg, 10, 32, 180, 200, 255)
+            r.drawText(font, "Extras — lockTexture & mouseGrab & colorScale", 10, 8, #FFDC50FF)
+            r.drawText(font, "Scale:" + scale + "  Grab:" + grabbed + "  " + lastMsg, 10, 32, #B4C8FFFF)
 
             int ly = 230
-            r.drawText(font, "颜色缩放: UP/DOWN", 10, ly, 150, 150, 150); ly = ly + 22
-            r.drawText(font, "鼠标锁定: G=切换 (鼠标限制在窗口内)", 10, ly, 150, 150, 150); ly = ly + 22
-            r.drawText(font, "窗口前置: T", 10, ly, 150, 150, 150); ly = ly + 22
-            r.drawText(font, "ESC — 退出", 10, ly + 12, 150, 150, 150)
+            r.drawText(font, "颜色缩放: UP/DOWN", 10, ly, #969696FF); ly = ly + 22
+            r.drawText(font, "鼠标锁定: G=切换 (鼠标限制在窗口内)", 10, ly, #969696FF); ly = ly + 22
+            r.drawText(font, "窗口前置: T", 10, ly, #969696FF); ly = ly + 22
+            r.drawText(font, "ESC — 退出", 10, ly + 12, #969696FF)
         }
     )
 

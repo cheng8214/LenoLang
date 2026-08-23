@@ -113,7 +113,7 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.setColor(28, 30, 38, 255)
+            r.setColor(#1C1E26FF)
             r.clear()
         }
     )

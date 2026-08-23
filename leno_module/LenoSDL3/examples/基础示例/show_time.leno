@@ -45,11 +45,11 @@ main() {
         float tm = ((m + s / 60.0) / 60.0) * twoPi
         float ts = (s / 60.0) * twoPi
 
-        ren.clearColor(24, 26, 34, 255)
+        ren.clearColor(#181A22FF)
 
         // ===== 表盘 =====
-        ren.setColor(245, 245, 240, 255); ren.fillCircle(cx, cy, R)
-        ren.setColor(40, 40, 50, 255)
+        ren.setColor(#F5F5F0FF); ren.fillCircle(cx, cy, R)
+        ren.setColor(#282832FF)
         ren.drawCircle(cx, cy, R)
         ren.drawCircle(cx, cy, R - 6.0)
 
@@ -59,37 +59,37 @@ main() {
             bool major = (i % 3 == 0)
             float rO = R - 6.0
             float rI = if major then R - 26.0 else R - 16.0
-            ren.setColor(60, 60, 70, 255)
+            ren.setColor(#3C3C46FF)
             ren.drawLine(_tipX(cx, rI, ang), _tipY(cy, rI, ang),
                          _tipX(cx, rO, ang), _tipY(cy, rO, ang))
             if major {
                 float rn = R - 46.0
                 float nx = _tipX(cx, rn, ang)
                 float ny = _tipY(cy, rn, ang)
-                ren.setColor(40, 40, 50, 255)
+                ren.setColor(#282832FF)
                 ren.drawTextCentered(font, i as string, nx - 20.0, 40.0,
-                                     ny - font.height / 2.0, 40, 40, 50)
+                                     ny - font.height / 2.0, #282832FF)
             }
         }
 
         // ===== 时针 / 分针（深色） =====
-        ren.setColor(30, 30, 40, 255)
+        ren.setColor(#1E1E28FF)
         ren.drawLine(cx, cy, _tipX(cx, R - 80.0, th), _tipY(cy, R - 80.0, th))
         ren.drawLine(cx, cy, _tipX(cx, R - 48.0, tm), _tipY(cy, R - 48.0, tm))
 
         // ===== 秒针（红色，带反向配重） =====
-        ren.setColor(220, 60, 60, 255)
+        ren.setColor(#DC3C3CFF)
         ren.drawLine(_tipX(cx, -18.0, ts), _tipY(cy, -18.0, ts),
                      _tipX(cx, R - 24.0, ts), _tipY(cy, R - 24.0, ts))
 
         // ===== 中心轴 =====
-        ren.setColor(30, 30, 40, 255); ren.fillCircle(cx, cy, 6.0)
-        ren.setColor(220, 60, 60, 255); ren.fillCircle(cx, cy, 3.0)
+        ren.setColor(#1E1E28FF); ren.fillCircle(cx, cy, 6.0)
+        ren.setColor(#DC3C3CFF); ren.fillCircle(cx, cy, 3.0)
 
         // ===== 底部数字时间 =====
         var timeStr = dt[3] + ":" + dt[4] + ":" + dt[5]
-        ren.drawTextCentered(font, timeStr, 0, 400.0, 400.0, 220, 220, 230)
-        ren.drawTextCentered(fontSmall, "按 ESC 退出", 0, 400.0, 432.0, 110, 110, 120)
+        ren.drawTextCentered(font, timeStr, 0, 400.0, 400.0, #DCDCE6FF)
+        ren.drawTextCentered(fontSmall, "按 ESC 退出", 0, 400.0, 432.0, #6E6E78FF)
 
         ren.present()
         SDL3.delay(16)

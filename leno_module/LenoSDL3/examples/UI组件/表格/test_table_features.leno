@@ -104,11 +104,11 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(28, 30, 36, 255)
-            r.drawText(font, "Table 新功能测试 (Esc 退出) — 复选框列 / 行级颜色 / 空状态提示", 20, 2, 200, 210, 230)
-            r.drawText(font, "点表头复选框全选 | 点行复选框切换 | 红=错误 绿=成功 橙=警告", 20, 24, 150, 160, 180)
+            r.clearColor(#1C1E24FF)
+            r.drawText(font, "Table 新功能测试 (Esc 退出) — 复选框列 / 行级颜色 / 空状态提示", 20, 2, #C8D2E6FF)
+            r.drawText(font, "点表头复选框全选 | 点行复选框切换 | 红=错误 绿=成功 橙=警告", 20, 24, #96A0B4FF)
             var checked = tbl.get_checked_rows()
-            r.drawText(font, "已勾选: " + checked.len() + " 行 | 总行数: " + tbl.row_count(), 20, 44, 180, 200, 120)
+            r.drawText(font, "已勾选: " + checked.len() + " 行 | 总行数: " + tbl.row_count(), 20, 44, #B4C878FF)
         }
     )
 

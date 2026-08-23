@@ -1344,7 +1344,7 @@ export struct Window {
                     ren.beginFrame()
                     if not _runTransparent[i] {
                         Theme th = theme.getTheme()
-                        ren.setColor(th.bgR, th.bgG, th.bgB, 255)
+                        ren.setColor(th.bg)
                         ren.fillRect(0, 0, _float(_runW[i]), _float(_runH[i]))
                     }
                     _runRends[i](_runRens[i])

@@ -18,7 +18,7 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.setColor(0, 0, 0, 255)
+            r.setColor(#000000FF)
             r.clear()
             if tex == null {
                 tex = SDL3.loadImageTexture(r.handle, "d:\\1.png")

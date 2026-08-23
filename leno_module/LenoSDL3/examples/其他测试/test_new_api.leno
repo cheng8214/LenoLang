@@ -1,4 +1,4 @@
-﻿// test_new_api.leno — 测试新增 API：窗口控制/纹理调色/截图/剪贴板
+// test_new_api.leno — 测试新增 API：窗口控制/纹理调色/截图/剪贴板
 import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
@@ -80,7 +80,7 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(20, 20, 40, 255)
+            r.clearColor(#141428FF)
 
             if not texLoaded {
                 loadedTex = SDL3.loadImageTexture(r.handle, "d:\\1.png")
@@ -93,21 +93,21 @@ main() {
                 r.drawTextureAt(loadedTex, 480, 280, 200, 180)
             }
 
-            r.drawText(font, "New API — 窗口控制 & 纹理调色 & 截图", 10, 8, 255, 220, 80)
-            r.drawText(font, "Alpha:" + alpha + "  RGB:" + cr + "," + cg + "," + cb + "  光标:" + (if cursorVis then "可见" else "隐藏") + "  操作: " + lastMsg, 10, 32, 180, 200, 255)
+            r.drawText(font, "New API — 窗口控制 & 纹理调色 & 截图", 10, 8, #FFDC50FF)
+            r.drawText(font, "Alpha:" + alpha + "  RGB:" + cr + "," + cg + "," + cb + "  光标:" + (if cursorVis then "可见" else "隐藏") + "  操作: " + lastMsg, 10, 32, #B4C8FFFF)
 
             int ly = 70
-            r.drawText(font, "纹理: 1=半透明 2=不透明 3=红色调 4=正常", 10, ly, 150, 150, 150); ly = ly + 22
-            r.drawText(font, "窗口: W=显示 H=隐藏 M=最大化 N=最小化 R=还原 Z=400x300", 10, ly, 150, 150, 150); ly = ly + 22
-            r.drawText(font, "全屏: F=开启  光标: D=显示 X=隐藏", 10, ly, 150, 150, 150); ly = ly + 22
-            r.drawText(font, "截图: P=保存  剪贴板: C=读取   ESC=退出", 10, ly, 150, 150, 150); ly = ly + 15
+            r.drawText(font, "纹理: 1=半透明 2=不透明 3=红色调 4=正常", 10, ly, #969696FF); ly = ly + 22
+            r.drawText(font, "窗口: W=显示 H=隐藏 M=最大化 N=最小化 R=还原 Z=400x300", 10, ly, #969696FF); ly = ly + 22
+            r.drawText(font, "全屏: F=开启  光标: D=显示 X=隐藏", 10, ly, #969696FF); ly = ly + 22
+            r.drawText(font, "截图: P=保存  剪贴板: C=读取   ESC=退出", 10, ly, #969696FF); ly = ly + 15
 
-            r.drawText(font, "新增 API:", 10, ly, 200, 255, 100); ly = ly + 22
-            r.drawText(font, "  Mouse: showCursor/hideCursor/cursorVisible/warpMouse/getMouseState", 10, ly, 100, 200, 100); ly = ly + 22
-            r.drawText(font, "  Timer: getPerfCounter/getPerfFrequency", 10, ly, 100, 200, 100); ly = ly + 22
-            r.drawText(font, "  Window: setFullscreen/show/hide/maximize/minimize/restore/setOpacity", 10, ly, 100, 200, 100); ly = ly + 22
-            r.drawText(font, "  Renderer: setRenderTarget/setTextureAlpha/setTextureColor/readPixels/flush/drawTexture9Grid/drawTextureTiled", 10, ly, 100, 200, 100); ly = ly + 22
-            r.drawText(font, "  Clipboard: getClipboardText/setClipboardText", 10, ly, 100, 200, 100)
+            r.drawText(font, "新增 API:", 10, ly, #C8FF64FF); ly = ly + 22
+            r.drawText(font, "  Mouse: showCursor/hideCursor/cursorVisible/warpMouse/getMouseState", 10, ly, #64C864FF); ly = ly + 22
+            r.drawText(font, "  Timer: getPerfCounter/getPerfFrequency", 10, ly, #64C864FF); ly = ly + 22
+            r.drawText(font, "  Window: setFullscreen/show/hide/maximize/minimize/restore/setOpacity", 10, ly, #64C864FF); ly = ly + 22
+            r.drawText(font, "  Renderer: setRenderTarget/setTextureAlpha/setTextureColor/readPixels/flush/drawTexture9Grid/drawTextureTiled", 10, ly, #64C864FF); ly = ly + 22
+            r.drawText(font, "  Clipboard: getClipboardText/setClipboardText", 10, ly, #64C864FF)
 
             // 截图：present 之前读取像素并保存
             if needShot {

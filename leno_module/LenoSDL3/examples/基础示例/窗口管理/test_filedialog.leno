@@ -97,11 +97,11 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(24, 24, 32, 255)
-            r.setColor(180, 220, 255, 255)
-            r.drawText(g_fontBig, g_status, 24, 110, 180, 220, 255)
-            r.setColor(140, 140, 150, 255)
-            r.drawText(g_fontSmall, "点击上方按钮打开对应对话框（结果由主线程回调返回）", 24, 150, 140, 140, 150)
+            r.clearColor(#181820FF)
+            r.setColor(#B4DCFFFF)
+            r.drawText(g_fontBig, g_status, 24, 110, #B4DCFFFF)
+            r.setColor(#8C8C96FF)
+            r.drawText(g_fontSmall, "点击上方按钮打开对应对话框（结果由主线程回调返回）", 24, 150, #8C8C96FF)
         }
     )
     print("关闭")

@@ -65,7 +65,7 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(20, 20, 40, 255)
+            r.clearColor(#141428FF)
 
             // 首次加载纹理
             if not texLoaded {
@@ -93,12 +93,12 @@ main() {
             }
 
             // HUD 信息
-            r.drawText(font, "图片缩放测试 — 滚轮放大/缩小", 10, 8, 255, 220, 80)
-            r.drawText(font, "缩放: " + scale + "x  滚轮: " + wheelVal, 10, 30, 180, 200, 255)
-            r.drawText(font, "鼠标: (" + mx + ", " + my + ")", 10, 52, 150, 150, 150)
+            r.drawText(font, "图片缩放测试 — 滚轮放大/缩小", 10, 8, #FFDC50FF)
+            r.drawText(font, "缩放: " + scale + "x  滚轮: " + wheelVal, 10, 30, #B4C8FFFF)
+            r.drawText(font, "鼠标: (" + mx + ", " + my + ")", 10, 52, #969696FF)
 
             int ly = 560
-            r.drawText(font, "滚轮: 放大/缩小  |  左键拖拽: 平移  |  R: 重置  |  ESC: 退出", 10, ly, 120, 120, 120)
+            r.drawText(font, "滚轮: 放大/缩小  |  左键拖拽: 平移  |  R: 重置  |  ESC: 退出", 10, ly, #787878FF)
         }
     )
 

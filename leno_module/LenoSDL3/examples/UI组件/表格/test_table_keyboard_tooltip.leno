@@ -86,9 +86,9 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(28, 30, 36, 255)
-            r.drawText(font, "键盘导航 & Tooltip 测试 (Esc 退出)", 20, 2, 200, 210, 230)
-            r.drawText(font, "↑↓浏览  PageUp/Down翻页  Home/End首末  Enter打开  Ctrl+A全选  悬停看完整文字", 20, 24, 150, 160, 180)
+            r.clearColor(#1C1E24FF)
+            r.drawText(font, "键盘导航 & Tooltip 测试 (Esc 退出)", 20, 2, #C8D2E6FF)
+            r.drawText(font, "↑↓浏览  PageUp/Down翻页  Home/End首末  Enter打开  Ctrl+A全选  悬停看完整文字", 20, 24, #96A0B4FF)
 
             int selRow = tbl.get_selected_row()
             var selRows = tbl.get_selected_rows()
@@ -98,7 +98,7 @@ main() {
             } else {
                 statusText = "未选中（按 ↓ 开始导航）"
             }
-            r.drawText(font, statusText, 20, 44, 180, 200, 120)
+            r.drawText(font, statusText, 20, 44, #B4C878FF)
         }
     )
 

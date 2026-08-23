@@ -24,7 +24,7 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.setColor(20, 20, 40, 255)
+            r.setColor(#141428FF)
             r.clear()
 
             // 只采集一次数据
@@ -33,7 +33,7 @@ main() {
                 outSize = "Output Size: " + sz.get("w", 0) + " x " + sz.get("h", 0)
             }
             if colorInfo == "" {
-                r.setColor(100, 200, 50, 255)
+                r.setColor(#64C832FF)
                 var c = r.getColor()
                 colorInfo = "Color: r=" + c.r + " g=" + c.g + " b=" + c.b + " a=" + c.a
             }
@@ -44,14 +44,14 @@ main() {
                             " b=" + cf.get("b", 0) + " a=" + cf.get("a", 0)
             }
 
-            r.drawText(font, "=== Renderer API Test ===", 10, 10, 255, 255, 100)
-            r.drawText(font, outSize, 10, 40, 200, 200, 255)
-            r.drawText(font, colorInfo, 10, 70, 100, 200, 50)
-            r.drawText(font, floatInfo, 10, 100, 50, 200, 100)
-            r.drawText(font, "Press ESC to exit", 10, 140, 128, 128, 128)
+            r.drawText(font, "=== Renderer API Test ===", 10, 10, #FFFF64FF)
+            r.drawText(font, outSize, 10, 40, #C8C8FFFF)
+            r.drawText(font, colorInfo, 10, 70, #64C832FF)
+            r.drawText(font, floatInfo, 10, 100, #32C864FF)
+            r.drawText(font, "Press ESC to exit", 10, 140, #808080FF)
 
             // 用采集到的颜色画个矩形验证
-            r.setColor(100, 200, 50, 255)
+            r.setColor(#64C832FF)
             r.fillRect(10, 180, 100, 60)
         }
     )

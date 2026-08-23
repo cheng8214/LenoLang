@@ -42,7 +42,7 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(22, 22, 40, 255)
+            r.clearColor(#161628FF)
 
             // 首次加载纹理
             if not texLoaded {
@@ -57,13 +57,13 @@ main() {
             }
 
             // 标题
-            r.drawText(font, "Transform 测试 — 旋转 & 翻转", 10, 8, 255, 220, 80)
+            r.drawText(font, "Transform 测试 — 旋转 & 翻转", 10, 8, #FFDC50FF)
 
             // 状态栏
             var flipName = "无"
             if flip == 1 { flipName = "水平" }
             if flip == 2 { flipName = "垂直" }
-            r.drawText(font, "角度: " + angle + "°  翻转: " + flipName + "  自动旋转: " + (if autoSpin then "开" else "关"), 10, 32, 150, 200, 255)
+            r.drawText(font, "角度: " + angle + "°  翻转: " + flipName + "  自动旋转: " + (if autoSpin then "开" else "关"), 10, 32, #96C8FFFF)
 
             // 绘制图片：多个副本展示不同效果
             if loadedTex != null {
@@ -73,32 +73,32 @@ main() {
                 float tw = iw * scale; float th = ih * scale
 
                 // 1. 原始（不旋转不翻转）— 左上
-                r.drawText(font, "原始", 10, 68, 100, 100, 100)
+                r.drawText(font, "原始", 10, 68, #646464FF)
                 r.drawTextureAt(loadedTex, 10, 90, tw, th)
 
                 // 2. 旋转 — 中间大图
                 float cx = 420.0; float cy = 340.0
                 float bw = tw * 2.0; float bh = th * 2.0
-                r.drawText(font, "旋转 " + angle + "°  翻转:" + flipName, 380, 68, 255, 200, 80)
+                r.drawText(font, "旋转 " + angle + "°  翻转:" + flipName, 380, 68, #FFC850FF)
                 r.drawTextureRotated(loadedTex, cx - bw/2, cy - bh/2, bw, bh,
                                       angle, bw/2, bh/2, flip)
 
                 // 3. 水平翻转（固定）— 右下
-                r.drawText(font, "水平翻转", 680, 68, 100, 100, 100)
+                r.drawText(font, "水平翻转", 680, 68, #646464FF)
                 r.drawTextureRotated(loadedTex, 680, 90, tw, th, 0.0, 0.0, 0.0, Flip.HORIZONTAL)
 
                 // 4. 垂直翻转（固定）— 右下2
-                r.drawText(font, "垂直翻转", 680, 140 + _int(th), 100, 100, 100)
+                r.drawText(font, "垂直翻转", 680, 140 + _int(th), #646464FF)
                 r.drawTextureRotated(loadedTex, 680, 162 + _int(th), tw, th, 0.0, 0.0, 0.0, Flip.VERTICAL)
             }
 
             // 操作说明
-            r.drawText(font, "========================================", 10, 440, 80, 80, 80)
-            r.drawText(font, "操作:", 10, 462, 200, 200, 100)
-            r.drawText(font, "  R — 手动旋转 +15°", 10, 484, 150, 150, 150)
-            r.drawText(font, "  F — 循环翻转 (无→水平→垂直)", 10, 504, 150, 150, 150)
-            r.drawText(font, "  S — 自动旋转 开/关", 10, 524, 150, 150, 150)
-            r.drawText(font, "  ESC — 退出", 10, 544, 150, 150, 150)
+            r.drawText(font, "========================================", 10, 440, #505050FF)
+            r.drawText(font, "操作:", 10, 462, #C8C864FF)
+            r.drawText(font, "  R — 手动旋转 +15°", 10, 484, #969696FF)
+            r.drawText(font, "  F — 循环翻转 (无→水平→垂直)", 10, 504, #969696FF)
+            r.drawText(font, "  S — 自动旋转 开/关", 10, 524, #969696FF)
+            r.drawText(font, "  ESC — 退出", 10, 544, #969696FF)
         }
     )
 

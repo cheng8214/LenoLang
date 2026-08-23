@@ -21,7 +21,7 @@ main() {
     mainWin.addTimerOnce(300, func() { openModal() })
     mainWin.run(
         func(Event e): bool { return true },
-        func(Renderer r) { r.clearColor(20, 20, 40, 255) }
+        func(Renderer r) { r.clearColor(#141428FF) }
     )
     print("DONE")
 }
@@ -32,6 +32,6 @@ func openModal() {
     dlg.raise()
     SDL3.runModal(dlg,
         func(Event e): bool { return true },
-        func(Renderer r) { r.clearColor(40, 15, 15, 255) }
+        func(Renderer r) { r.clearColor(#280F0FFF) }
     )
 }

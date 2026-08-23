@@ -7,7 +7,7 @@ import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.SystemCursor
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
-import "sdl_theme.leno" as theme; use theme.Theme
+import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 
 // 模块级注册表，用于同组互斥（引用语义：dispose 时摘除自身，跨窗口按窗口句柄隔离）
 Array[RadioButton] _radioRegistry = []
@@ -23,10 +23,10 @@ export struct RadioButton impl Widget {
     int _fontStyle = 0
     Font? _font
     bool _checked = false
-    int cr = 60, cg = 60, cb = 72
-    int cc = 60, ck = 170, cbl = 245
-    int tr = 235, tg = 235, tb = 245
-    int _brdR = 130, _brdG = 130, _brdB = 150
+    int _uncheckedColor = #3C3C48FF
+    int _checkedColor = #3CAAF5FF
+    int _txtColor = #EBEBF5FF
+    int _brdColor = #828296FF
     int _cursor = SystemCursor.DEFAULT
     bool hover = false, _wasHover = false, _pressed = false, enabled = true, visible = true, _loaded = false
     string _tip = ""        // 悬停提示文本（空 = 不提示）
@@ -46,10 +46,10 @@ export struct RadioButton impl Widget {
 
     func set(Dict opts) {
         Theme th = theme.getTheme()
-        cr = th.bgAltR; cg = th.bgAltG; cb = th.bgAltB
-        cc = th.accentR; ck = th.accentG; cbl = th.accentB
-        tr = th.txtR; tg = th.txtG; tb = th.txtB
-        _brdR = th.borderR; _brdG = th.borderG; _brdB = th.borderB
+        _uncheckedColor = th.bgAlt
+        _checkedColor = th.accent
+        _txtColor = th.txt
+        _brdColor = th.border
         text      = opts.get("text", "")
         group     = opts.get("group", "default")
         x         = opts.get("x", 0)
@@ -60,17 +60,17 @@ export struct RadioButton impl Widget {
         _fontPath = opts.get("font_path", "")
         _fontStyle = opts.get("font_style", 0)
 
-        // 默认颜色见字段声明（cr/cg/cb/cc/ck/cbl/tr/tg/tb/_brdR 等均有默认，以下仅 opts 覆盖）
+        // 默认颜色见字段声明，以下仅 opts 覆盖
 
-        // 颜色可被 dict 覆盖（[r,g,b]）
-        var unk = opts.get("unchecked_rgb")
-        if unk is Array[int] { cr = unk[0]; cg = unk[1]; cb = unk[2] }
-        var chk = opts.get("checked_rgb")
-        if chk is Array[int] { cc = chk[0]; ck = chk[1]; cbl = chk[2] }
-        var ctc = opts.get("text_rgb")
-        if ctc is Array[int] { tr = ctc[0]; tg = ctc[1]; tb = ctc[2] }
-        var cbd = opts.get("border_rgb")
-        if cbd is Array[int] { _brdR = cbd[0]; _brdG = cbd[1]; _brdB = cbd[2] }
+        // 颜色可被 dict 覆盖
+        var unk = opts.get("unchecked_color")
+        if unk is int { _uncheckedColor = unk }
+        var chk = opts.get("checked_color")
+        if chk is int { _checkedColor = chk }
+        var ctc = opts.get("text_color")
+        if ctc is int { _txtColor = ctc }
+        var cbd = opts.get("border_color")
+        if cbd is int { _brdColor = cbd }
 
         _cursor = _int(opts.get("cursor", SystemCursor.DEFAULT))
         _checked = opts.get("checked", false)
@@ -164,21 +164,20 @@ export struct RadioButton impl Widget {
         float bx = x, by = y, bs = _box
 
         // 外环
-        int br = cr, bg = cg, bb = cb
-        if hover { br = br + 25; bg = bg + 25; bb = bb + 25
-                   if br > 255 { br = 255 }; if bg > 255 { bg = 255 }; if bb > 255 { bb = 255 } }
-        if not enabled { br = cr / 2; bg = cg / 2; bb = cb / 2 }
-        r.setColor(br, bg, bb, 255)
+        int ringC = _uncheckedColor
+        if hover { ringC = theme.brighten(ringC, 25) }
+        if not enabled { ringC = theme.packColor(theme.colorR(_uncheckedColor) / 2, theme.colorG(_uncheckedColor) / 2, theme.colorB(_uncheckedColor) / 2) }
+        r.setColor(ringC)
         r.fillRoundedRect(bx, by, bs, bs, bs / 2.0)
 
-        r.setColor(_brdR, _brdG, _brdB, 220)
+        r.setColor(theme.withAlpha(_brdColor, 220))
         r.drawRoundedRect(bx, by, bs, bs, bs / 2.0)
 
         // 选中内点
         if _checked {
-            int dr = cc, dg = ck, db = cbl
-            if not enabled { dr = cc / 2; dg = ck / 2; db = cbl / 2 }
-            r.setColor(dr, dg, db, 255)
+            int dotC = _checkedColor
+            if not enabled { dotC = theme.packColor(theme.colorR(_checkedColor) / 2, theme.colorG(_checkedColor) / 2, theme.colorB(_checkedColor) / 2) }
+            r.setColor(dotC)
             float ins = bs * 0.30
             r.fillRoundedRect(bx + ins, by + ins, bs - ins * 2.0, bs - ins * 2.0, (bs - ins * 2.0) / 2.0)
         }
@@ -186,9 +185,9 @@ export struct RadioButton impl Widget {
         // 文字
         if _font != null and _font.ok and text != "" {
             float cy = by + (bs - _fontH) / 2.0
-            int tcR = tr, tcG = tg, tcB = tb
-            if not enabled { tcR = tr / 2; tcG = tg / 2; tcB = tb / 2 }
-            r.drawText(_font, text, bx + bs + _gap, cy, tcR, tcG, tcB)
+            int tc = _txtColor
+            if not enabled { tc = theme.packColor(theme.colorR(_txtColor) / 2, theme.colorG(_txtColor) / 2, theme.colorB(_txtColor) / 2) }
+            r.drawText(_font, text, bx + bs + _gap, cy, tc)
         }
     }
 

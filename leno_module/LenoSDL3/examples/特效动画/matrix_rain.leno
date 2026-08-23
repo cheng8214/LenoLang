@@ -245,7 +245,7 @@ main() {
         }
 
         // 1. GPU 拖尾渐隐（一次调用）
-        ren.setColor(0, 0, 0, 40)
+        ren.setColor(#00000028)
         ren.fillRect(0, 0, _float(winW), _float(winH))
 
         // 2. 清空字符缓冲（memset）
@@ -292,8 +292,8 @@ main() {
         // 5. 整帧一次性上传 + 状态文本
         ren.blitBuffer(buf, 0.0, 0.0, _float(winW), _float(winH))
         if showStats and font.ok {
-            ren.drawText(font, "FPS: " + fps + "  Columns: " + numCols + "  Frame: " + frame + "  Charset: " + (if useKana then "KANA" else "ASCII"), 10, 10, 0, 255, 0)
-            ren.drawText(font, "[F1] Stats  [SPACE] Charset  [ESC] Exit", 10, charH + 12, 0, 180, 0)
+            ren.drawText(font, "FPS: " + fps + "  Columns: " + numCols + "  Frame: " + frame + "  Charset: " + (if useKana then "KANA" else "ASCII"), 10, 10, #00FF00FF)
+            ren.drawText(font, "[F1] Stats  [SPACE] Charset  [ESC] Exit", 10, charH + 12, #00B400FF)
         }
 
         ren.present()

@@ -20,53 +20,53 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(30, 30, 50, 255)
+            r.clearColor(#1E1E32FF)
             angle = angle + 0.5; if angle >= 360.0 { angle = 0.0 }
 
             // ---- 标题 ----
-            r.drawText(font, "绘制测试 — 矩形/圆形/三角形/阴影/渐变", 10, 5, 255, 220, 80)
+            r.drawText(font, "绘制测试 — 矩形/圆形/三角形/阴影/渐变", 10, 5, #FFDC50FF)
 
             // ==================== 1. 矩形阴影效果 ====================
-            r.drawText(font, "矩形 + 阴影", 30, 30, 200, 200, 100)
+            r.drawText(font, "矩形 + 阴影", 30, 30, #C8C864FF)
 
             // 阴影（偏移 + 半透明黑）
-            r.setColor(0, 0, 0, 100)
+            r.setColor(#00000064)
             r.fillRect(35, 55, 140, 80)
 
             // 矩形本体
-            r.setColor(255, 100, 50, 255);   r.fillRect(30, 50, 140, 80)
-            r.setColor(255, 200, 180, 255);   r.drawRect(30, 50, 140, 80)
+            r.setColor(#FF6432FF);   r.fillRect(30, 50, 140, 80)
+            r.setColor(#FFC8B4FF);   r.drawRect(30, 50, 140, 80)
 
             // 圆角效果（用 4 个 drawLine 画圆角边）
-            r.setColor(50, 200, 100, 255);    r.fillRect(200, 50, 140, 80)
-            r.setColor(255, 255, 255, 255);   r.drawRect(200, 50, 140, 80)
+            r.setColor(#32C864FF);    r.fillRect(200, 50, 140, 80)
+            r.setColor(#FFFFFFFF);   r.drawRect(200, 50, 140, 80)
 
             // ==================== 2. 圆形 ====================
-            r.drawText(font, "圆形", 430, 30, 200, 200, 100)
+            r.drawText(font, "圆形", 430, 30, #C8C864FF)
 
             // 阴影 + 圆
-            r.setColor(0, 0, 0, 80)
+            r.setColor(#00000050)
             r.fillCircle(505, 95, 45)
-            r.setColor(200, 100, 255, 255)
+            r.setColor(#C864FFFF)
             r.fillCircle(500, 90, 45)
-            r.setColor(255, 255, 255, 255)
+            r.setColor(#FFFFFFFF)
             r.drawCircle(500, 90, 45)
 
             // 空心圆
-            r.setColor(100, 220, 255, 255)
+            r.setColor(#64DCFFFF)
             r.drawCircle(600, 90, 40)
             r.drawCircle(600, 90, 35)
 
             // ==================== 3. 三角形（用线画） ====================
-            r.drawText(font, "三角形 (drawLine)", 30, 155, 200, 200, 100)
+            r.drawText(font, "三角形 (drawLine)", 30, 155, #C8C864FF)
 
             // 三角形填充阴影
             float tx = 120; float ty = 250
-            r.setColor(0, 0, 0, 80)
+            r.setColor(#00000050)
             r.drawLine(tx, ty + 40, tx + 60, ty); r.drawLine(tx + 60, ty, tx + 120, ty + 40); r.drawLine(tx + 120, ty + 40, tx, ty + 40)
 
             // 三角形填充（用多条线逼近）
-            r.setColor(255, 200, 80, 255)
+            r.setColor(#FFC850FF)
             for 0 : 40 to yi {
                 float ratio = _float(yi) / 40.0
                 float lx = tx + 5 + ratio * 60.0
@@ -74,20 +74,20 @@ main() {
                 r.drawLine(lx, ty + 40 - ratio * 40 - 5, rx, ty + 40 - ratio * 40 - 5)
             }
             // 三角边框
-            r.setColor(255, 255, 255, 255)
+            r.setColor(#FFFFFFFF)
             r.drawLine(tx, ty + 40, tx + 60, ty)
             r.drawLine(tx + 60, ty, tx + 120, ty + 40)
             r.drawLine(tx + 120, ty + 40, tx, ty + 40)
 
             // 空心三角
             float t2x = 250; float t2y = 250
-            r.setColor(100, 255, 200, 255)
+            r.setColor(#64FFC8FF)
             r.drawLine(t2x, t2y + 40, t2x + 60, t2y)
             r.drawLine(t2x + 60, t2y, t2x + 120, t2y + 40)
             r.drawLine(t2x + 120, t2y + 40, t2x, t2y + 40)
 
             // 旋转三角形 (drawColorTriangle — 使用 Renderer 方法)
-            r.drawText(font, "旋转三角 (Geometry)", 420, 155, 200, 200, 100)
+            r.drawText(font, "旋转三角 (Geometry)", 420, 155, #C8C864FF)
             // RGB 三顶点渐变
             r.drawTriangleGradient(480, 230, 35.0, angle,
                 1.0, 0.0, 0.0, 1.0,
@@ -95,14 +95,14 @@ main() {
                 0.0, 0.0, 1.0, 1.0)
 
             // ==================== 4. 虚线/网格 ====================
-            r.drawText(font, "虚线 & 网格", 30, 300, 200, 200, 100)
+            r.drawText(font, "虚线 & 网格", 30, 300, #C8C864FF)
 
             // 虚线
-            r.setColor(150, 200, 255, 200)
+            r.setColor(#96C8FFC8)
             for 0 : 10 to i { r.drawLine(30.0 + _float(i * 15), 340.0, 40.0 + _float(i * 15), 340.0) }
 
             // 网格（6x6 点阵 + 连线）
-            r.setColor(100, 150, 200, 180)
+            r.setColor(#6496C8B4)
             for 0 : 6 to xi {
                 for 0 : 6 to yi {
                     float gx = 200.0 + _float(xi) * 25.0
@@ -115,14 +115,14 @@ main() {
             }
 
             // ==================== 5. 渐变条 ====================
-            r.drawText(font, "渐变", 430, 300, 200, 200, 100)
+            r.drawText(font, "渐变", 430, 300, #C8C864FF)
 
             for 0 : 20 to i {
                 float ratio = _float(i) / 20.0
                 int rr = 255 - _int(ratio * 200)
                 int gg = _int(ratio * 255)
                 int bb = 200
-                r.setColor(rr, gg, bb, 255)
+                r.setColor(SDL3.packColor(rr, gg, bb, 255))
                 r.fillRect(430.0 + _float(i * 18), 340.0, 18.0, 60.0)
             }
 
@@ -132,12 +132,12 @@ main() {
                 int rr = _int(ratio * 255)
                 int gg = 100
                 int bb = 255 - _int(ratio * 255)
-                r.setColor(rr, gg, bb, 255)
+                r.setColor(SDL3.packColor(rr, gg, bb, 255))
                 r.drawLine(430.0, 420.0 + _float(i * 2), 790.0, 420.0 + _float(i * 2))
             }
 
             // ==================== 6. 随机点星场 ====================
-            r.setColor(255, 255, 255, 180)
+            r.setColor(#FFFFFFB4)
             for 0 : 80 to i {
                 var px = 30.0 + _float((i * 137 + angle as int) % 340)
                 var py = 470.0 + _float((i * 97 + angle as int) % 100)
@@ -145,7 +145,7 @@ main() {
             }
 
             // ESC 提示
-            r.drawText(font, "ESC 退出", 700, 580, 100, 100, 100)
+            r.drawText(font, "ESC 退出", 700, 580, #646464FF)
         }
     )
 

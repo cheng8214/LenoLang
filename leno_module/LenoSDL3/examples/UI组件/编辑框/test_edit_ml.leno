@@ -46,7 +46,7 @@ main() {
 
     // 发送按钮
     Button btnSend = win.addButton({text: "发送到多行 >", x: 440, y: 330, w: 120, h: 36,
-                                     bg_rgb: [80, 160, 200], type: "primary"})
+                                     bg_color: #50A0C8FF, type: "primary"})
     btnSend.on_click(func() {
         var t = edSL.get_text()
         if t == "" { t = lastSL }
@@ -62,7 +62,7 @@ main() {
 
     // 清空按钮
     Button btnClear = win.addButton({text: "清空", x: 575, y: 330, w: 60, h: 36,
-                                      bg_rgb: [180, 60, 60]})
+                                      bg_color: #B43C3CFF})
     btnClear.on_click(func() {
         ed.set_text("")
         lastMsg = "已清空"
@@ -77,13 +77,13 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(25, 25, 45, 255)
+            r.clearColor(#19192DFF)
 
-            r.drawText(font, "多行 Edit（滚轮/拖动滚动条/选区/Ctrl+V）", 20, 12, 255, 220, 80)
-            r.drawText(font, "单行输入 + 回车/按钮发送:", 20, 298, 150, 150, 180)
+            r.drawText(font, "多行 Edit（滚轮/拖动滚动条/选区/Ctrl+V）", 20, 12, #FFDC50FF)
+            r.drawText(font, "单行输入 + 回车/按钮发送:", 20, 298, #9696B4FF)
 
-            r.drawText(font, "状态: " + lastMsg, 20, 370, 150, 150, 170)
-            r.drawText(font, "ESC 退出", 20, 400, 120, 120, 140)
+            r.drawText(font, "状态: " + lastMsg, 20, 370, #9696AAFF)
+            r.drawText(font, "ESC 退出", 20, 400, #78788CFF)
         }
     )
 

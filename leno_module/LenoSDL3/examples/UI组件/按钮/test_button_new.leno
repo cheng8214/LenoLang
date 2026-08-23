@@ -13,24 +13,24 @@ func genIcons(): bool {
     var r = SDL3.createRenderer(gen.getHandle())
 
     // 状态图片：4 个不同颜色的方块（红=normal 绿=hover 蓝=pressed 灰=disabled）
-    r.clearColor(0, 0, 0, 0)
-    r.setColor(220, 60, 60, 255);  r.fillRect(0,   0, 64, 64)   // normal 红
-    r.setColor(60, 200, 80, 255);  r.fillRect(64,  0, 64, 64)   // hover 绿
-    r.setColor(60, 120, 230, 255); r.fillRect(128, 0, 64, 64)   // pressed 蓝
-    r.setColor(140, 140, 140, 255);r.fillRect(192, 0, 64, 64)   // disabled 灰
+    r.clearColor(#00000000)
+    r.setColor(#DC3C3CFF);  r.fillRect(0,   0, 64, 64)   // normal 红
+    r.setColor(#3CC850FF);  r.fillRect(64,  0, 64, 64)   // hover 绿
+    r.setColor(#3C78E6FF); r.fillRect(128, 0, 64, 64)   // pressed 蓝
+    r.setColor(#8C8C8CFF);r.fillRect(192, 0, 64, 64)   // disabled 灰
 
     // 宽图(128x64，2:1)用于 content mode：蓝底 + 左红圆 + 右黄方 + 白色中线
     // 这样 stretch 会变形、aspectFit 会留边、aspectFill 会裁剪，肉眼可辨
-    r.setColor(30, 90, 150, 255);  r.fillRect(0, 64, 128, 64)
-    r.setColor(230, 70, 70, 255);  r.fillCircle(32.0, 96.0, 22.0)
-    r.setColor(240, 200, 60, 255); r.fillRect(80.0, 80.0, 32.0, 32.0)
-    r.setColor(255, 255, 255, 160);r.fillRect(63.0, 64.0, 2.0, 64.0)
+    r.setColor(#1E5A96FF);  r.fillRect(0, 64, 128, 64)
+    r.setColor(#E64646FF);  r.fillCircle(32.0, 96.0, 22.0)
+    r.setColor(#F0C83CFF); r.fillRect(80.0, 80.0, 32.0, 32.0)
+    r.setColor(#FFFFFFA0);r.fillRect(63.0, 64.0, 2.0, 64.0)
 
     // 背景图(64x64)棋盘格，用于 set_background_image 验证
     for 0 : 8 to i {
         for 0 : 8 to j {
             bool odd = (i + j) % 2 == 0
-            if odd { r.setColor(70, 70, 90, 255) } else { r.setColor(120, 120, 150, 255) }
+            if odd { r.setColor(#46465AFF) } else { r.setColor(#787896FF) }
             r.fillRect(128.0 + _float(i) * 8.0, 64.0 + _float(j) * 8.0, 8.0, 8.0)
         }
     }
@@ -118,7 +118,7 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(30, 32, 40, 255)
+            r.clearColor(#1E2028FF)
         }
     )
 }

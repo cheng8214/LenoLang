@@ -71,7 +71,7 @@ main() {
             if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
             return true
         },
-        func(Renderer r) { r.clearColor(28, 30, 36, 255) }
+        func(Renderer r) { r.clearColor(#1C1E24FF) }
     )
 
     if font.ok { font.close() }

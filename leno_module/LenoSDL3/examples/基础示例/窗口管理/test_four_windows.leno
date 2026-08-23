@@ -95,11 +95,11 @@ main() {
         while i < _wins.len() {
             if _alive[i] and not _pend[i] {
                 var clr = _colors[_color[i]]
-                _rens[i].clearColor(20, 20, 35, 255)
-                _rens[i].setColor(clr[0], clr[1], clr[2], 255)
+                _rens[i].clearColor(#141423FF)
+                _rens[i].setColor((255 << 24) | (clr[0] << 16) | (clr[1] << 8) | clr[2])
                 _rens[i].fillRect(20, 20, 310, 40)
-                _rens[i].setColor(255, 255, 255, 255)
-                _rens[i].drawText(SDL3.createFontAuto(16.0), _titles[_color[i]] + "  ESC=关闭", 30, 30, 255, 255, 255)
+                _rens[i].setColor(#FFFFFFFF)
+                _rens[i].drawText(SDL3.createFontAuto(16.0), _titles[_color[i]] + "  ESC=关闭", 30, 30, #FFFFFFFF)
                 _rens[i].present()
                 c += 1
             }

@@ -18,112 +18,112 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(30, 30, 45, 255)
-            r.drawText(font, "圆角矩形测试 — fillRoundedRect / drawRoundedRect", 10, 5, 255, 220, 80)
+            r.clearColor(#1E1E2DFF)
+            r.drawText(font, "圆角矩形测试 — fillRoundedRect / drawRoundedRect", 10, 5, #FFDC50FF)
 
             // ==================== 1. 不同圆角半径 ====================
-            r.drawText(font, "不同圆角半径", 30, 30, 200, 200, 100)
+            r.drawText(font, "不同圆角半径", 30, 30, #C8C864FF)
 
             // 半径 5
-            r.setColor(255, 80, 80, 255); r.fillRoundedRect(30, 55, 100, 50, 5)
-            r.setColor(255, 255, 255, 200); r.drawRoundedRect(30, 55, 100, 50, 5)
-            r.drawText(font, "r=5", 55, 65, 255, 255, 255)
+            r.setColor(#FF5050FF); r.fillRoundedRect(30, 55, 100, 50, 5)
+            r.setColor(#FFFFFFC8); r.drawRoundedRect(30, 55, 100, 50, 5)
+            r.drawText(font, "r=5", 55, 65, #FFFFFFFF)
 
             // 半径 15
-            r.setColor(80, 255, 80, 255); r.fillRoundedRect(160, 55, 100, 50, 15)
-            r.setColor(255, 255, 255, 200); r.drawRoundedRect(160, 55, 100, 50, 15)
-            r.drawText(font, "r=15", 185, 65, 255, 255, 255)
+            r.setColor(#50FF50FF); r.fillRoundedRect(160, 55, 100, 50, 15)
+            r.setColor(#FFFFFFC8); r.drawRoundedRect(160, 55, 100, 50, 15)
+            r.drawText(font, "r=15", 185, 65, #FFFFFFFF)
 
             // 半径 25（最大 = min(w,h)/2）
-            r.setColor(80, 80, 255, 255); r.fillRoundedRect(290, 55, 100, 50, 25)
-            r.setColor(255, 255, 255, 200); r.drawRoundedRect(290, 55, 100, 50, 25)
-            r.drawText(font, "r=25(半圆)", 305, 65, 255, 255, 255)
+            r.setColor(#5050FFFF); r.fillRoundedRect(290, 55, 100, 50, 25)
+            r.setColor(#FFFFFFC8); r.drawRoundedRect(290, 55, 100, 50, 25)
+            r.drawText(font, "r=25(半圆)", 305, 65, #FFFFFFFF)
 
             // ==================== 2. 纯填充 vs 纯边框 ====================
-            r.drawText(font, "纯填充 / 纯边框", 450, 30, 200, 200, 100)
+            r.drawText(font, "纯填充 / 纯边框", 450, 30, #C8C864FF)
 
             // 纯填充
-            r.setColor(255, 120, 40, 255); r.fillRoundedRect(450, 55, 80, 50, 10)
-            r.drawText(font, "填充", 467, 70, 255, 255, 255)
+            r.setColor(#FF7828FF); r.fillRoundedRect(450, 55, 80, 50, 10)
+            r.drawText(font, "填充", 467, 70, #FFFFFFFF)
 
             // 纯边框（空心）
-            r.setColor(40, 200, 255, 255); r.drawRoundedRect(560, 55, 80, 50, 10)
-            r.drawText(font, "边框", 578, 70, 255, 255, 255)
+            r.setColor(#28C8FFFF); r.drawRoundedRect(560, 55, 80, 50, 10)
+            r.drawText(font, "边框", 578, 70, #FFFFFFFF)
 
             // 填充 + 边框双层
-            r.setColor(180, 120, 255, 255); r.fillRoundedRect(670, 55, 100, 50, 10)
-            r.setColor(255, 255, 255, 220); r.drawRoundedRect(670, 55, 100, 50, 10)
-            r.drawText(font, "填充+边框", 683, 70, 255, 255, 255)
+            r.setColor(#B478FFFF); r.fillRoundedRect(670, 55, 100, 50, 10)
+            r.setColor(#FFFFFFDC); r.drawRoundedRect(670, 55, 100, 50, 10)
+            r.drawText(font, "填充+边框", 683, 70, #FFFFFFFF)
 
             // ==================== 3. 按钮风格 ====================
-            r.drawText(font, "按钮风格", 30, 130, 200, 200, 100)
+            r.drawText(font, "按钮风格", 30, 130, #C8C864FF)
 
             // 普通按钮
-            r.setColor(60, 120, 200, 255); r.fillRoundedRect(30, 155, 120, 40, 8)
-            r.setColor(80, 150, 255, 255); r.fillRoundedRect(32, 153, 116, 36, 7)  // 高光内层
-            r.drawText(font, "确定", 72, 163, 255, 255, 255)
+            r.setColor(#3C78C8FF); r.fillRoundedRect(30, 155, 120, 40, 8)
+            r.setColor(#5096FFFF); r.fillRoundedRect(32, 153, 116, 36, 7)  // 高光内层
+            r.drawText(font, "确定", 72, 163, #FFFFFFFF)
 
             // 红色按钮
-            r.setColor(200, 50, 50, 255); r.fillRoundedRect(170, 155, 120, 40, 8)
-            r.setColor(230, 70, 70, 255); r.fillRoundedRect(172, 153, 116, 36, 7)
-            r.drawText(font, "取消", 210, 163, 255, 255, 255)
+            r.setColor(#C83232FF); r.fillRoundedRect(170, 155, 120, 40, 8)
+            r.setColor(#E64646FF); r.fillRoundedRect(172, 153, 116, 36, 7)
+            r.drawText(font, "取消", 210, 163, #FFFFFFFF)
 
             // 绿色按钮
-            r.setColor(40, 160, 80, 255); r.fillRoundedRect(310, 155, 120, 40, 8)
-            r.setColor(50, 190, 90, 255); r.fillRoundedRect(312, 153, 116, 36, 7)
-            r.drawText(font, "提交", 348, 163, 255, 255, 255)
+            r.setColor(#28A050FF); r.fillRoundedRect(310, 155, 120, 40, 8)
+            r.setColor(#32BE5AFF); r.fillRoundedRect(312, 153, 116, 36, 7)
+            r.drawText(font, "提交", 348, 163, #FFFFFFFF)
 
             // 圆角输入框
-            r.setColor(50, 50, 70, 255); r.fillRoundedRect(460, 155, 200, 40, 6)
-            r.setColor(100, 120, 160, 255); r.drawRoundedRect(460, 155, 200, 40, 6)
-            r.drawText(font, "placeholder...", 470, 165, 120, 140, 180)
+            r.setColor(#323246FF); r.fillRoundedRect(460, 155, 200, 40, 6)
+            r.setColor(#6478A0FF); r.drawRoundedRect(460, 155, 200, 40, 6)
+            r.drawText(font, "placeholder...", 470, 165, #788CB4FF)
 
             // ==================== 4. 卡片/面板 ====================
-            r.drawText(font, "卡片 / 面板", 30, 225, 200, 200, 100)
+            r.drawText(font, "卡片 / 面板", 30, 225, #C8C864FF)
 
             // 半透明卡片
-            r.setColor(0, 0, 0, 120); r.fillRoundedRect(33, 253, 354, 110, 12)  // 阴影
-            r.setColor(40, 45, 65, 255); r.fillRoundedRect(30, 250, 354, 110, 12)
-            r.setColor(60, 70, 100, 200); r.drawRoundedRect(30, 250, 354, 110, 12)
-            r.drawText(font, "卡片标题", 50, 265, 255, 255, 255)
-            r.drawText(font, "这是一个圆角卡片面板，适合做 UI 容器", 50, 285, 180, 190, 220)
-            r.setColor(255, 255, 255, 20); r.drawLine(50, 305, 360, 305)  // 分割线
-            r.drawText(font, "支持嵌套任意内容...", 50, 315, 140, 160, 200)
+            r.setColor(#00000078); r.fillRoundedRect(33, 253, 354, 110, 12)  // 阴影
+            r.setColor(#282D41FF); r.fillRoundedRect(30, 250, 354, 110, 12)
+            r.setColor(#3C4664C8); r.drawRoundedRect(30, 250, 354, 110, 12)
+            r.drawText(font, "卡片标题", 50, 265, #FFFFFFFF)
+            r.drawText(font, "这是一个圆角卡片面板，适合做 UI 容器", 50, 285, #B4BEDCFF)
+            r.setColor(#FFFFFF14); r.drawLine(50, 305, 360, 305)  // 分割线
+            r.drawText(font, "支持嵌套任意内容...", 50, 315, #8CA0C8FF)
 
             // ==================== 5. 超大尺寸 ====================
-            r.drawText(font, "大尺寸测试", 430, 225, 200, 200, 100)
+            r.drawText(font, "大尺寸测试", 430, 225, #C8C864FF)
 
-            r.setColor(200, 80, 140, 255); r.fillRoundedRect(430, 250, 160, 110, 20)
-            r.setColor(255, 255, 255, 220); r.drawRoundedRect(430, 250, 160, 110, 20)
-            r.drawText(font, "r=20", 490, 300, 255, 255, 255)
+            r.setColor(#C8508CFF); r.fillRoundedRect(430, 250, 160, 110, 20)
+            r.setColor(#FFFFFFDC); r.drawRoundedRect(430, 250, 160, 110, 20)
+            r.drawText(font, "r=20", 490, 300, #FFFFFFFF)
 
             // 极高圆角
-            r.setColor(60, 200, 180, 180); r.fillRoundedRect(620, 250, 150, 110, 55)
-            r.setColor(60, 200, 180, 255); r.drawRoundedRect(620, 250, 150, 110, 55)
-            r.drawText(font, "r=55(极高)", 655, 300, 255, 255, 255)
+            r.setColor(#3CC8B4B4); r.fillRoundedRect(620, 250, 150, 110, 55)
+            r.setColor(#3CC8B4FF); r.drawRoundedRect(620, 250, 150, 110, 55)
+            r.drawText(font, "r=55(极高)", 655, 300, #FFFFFFFF)
 
             // ==================== 6. 不同颜色组合 ====================
-            r.drawText(font, "颜色组合（无边框空心效果）", 30, 400, 200, 200, 100)
+            r.drawText(font, "颜色组合（无边框空心效果）", 30, 400, #C8C864FF)
 
-            r.setColor(255, 200, 50, 255);  r.fillRoundedRect(30, 425, 80, 40, 8)
-            r.setColor(50, 255, 200, 255);  r.fillRoundedRect(130, 425, 80, 40, 8)
-            r.setColor(200, 50, 255, 255);  r.fillRoundedRect(230, 425, 80, 40, 8)
-            r.setColor(255, 80, 80, 255);   r.fillRoundedRect(330, 425, 80, 40, 8)
-            r.setColor(80, 80, 255, 255);   r.fillRoundedRect(430, 425, 80, 40, 8)
-            r.setColor(80, 255, 80, 255);   r.fillRoundedRect(530, 425, 80, 40, 8)
-            r.setColor(180, 180, 180, 255); r.fillRoundedRect(630, 425, 80, 40, 8)
+            r.setColor(#FFC832FF);  r.fillRoundedRect(30, 425, 80, 40, 8)
+            r.setColor(#32FFC8FF);  r.fillRoundedRect(130, 425, 80, 40, 8)
+            r.setColor(#C832FFFF);  r.fillRoundedRect(230, 425, 80, 40, 8)
+            r.setColor(#FF5050FF);   r.fillRoundedRect(330, 425, 80, 40, 8)
+            r.setColor(#5050FFFF);   r.fillRoundedRect(430, 425, 80, 40, 8)
+            r.setColor(#50FF50FF);   r.fillRoundedRect(530, 425, 80, 40, 8)
+            r.setColor(#B4B4B4FF); r.fillRoundedRect(630, 425, 80, 40, 8)
 
             // 从左到右递增圆角
             for 0 : 7 to i {
-                r.setColor(255, 255, 255, 100)
+                r.setColor(#FFFFFF64)
                 r.drawRoundedRect(30.0 + _float(i) * 100.0, 425, 80, 40, _float(i) * 3)
             }
 
             // ==================== 7. r=0 回退普通矩形 ====================
-            r.drawText(font, "r=0 → 普通矩形", 30, 490, 200, 200, 100)
-            r.setColor(255, 100, 100, 255); r.fillRoundedRect(30, 515, 60, 25, 0)
-            r.setColor(100, 255, 100, 255); r.fillRoundedRect(100, 515, 60, 25, 0)
-            r.drawText(font, "r=0 回退为普通 fillRect", 170, 518, 180, 180, 220)
+            r.drawText(font, "r=0 → 普通矩形", 30, 490, #C8C864FF)
+            r.setColor(#FF6464FF); r.fillRoundedRect(30, 515, 60, 25, 0)
+            r.setColor(#64FF64FF); r.fillRoundedRect(100, 515, 60, 25, 0)
+            r.drawText(font, "r=0 回退为普通 fillRect", 170, 518, #B4B4DCFF)
         }
     )
 }

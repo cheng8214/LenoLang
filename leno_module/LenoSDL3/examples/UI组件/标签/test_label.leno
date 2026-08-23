@@ -12,21 +12,21 @@ main() {
     SDL3.ttfInit()
 
     // 左对齐（默认）
-    Label lblLeft = win.addLabel({text: "左对齐: Hello Leno!", x: 50, y: 40, font_size: 18, text_rgb: [255, 220, 100]})
+    Label lblLeft = win.addLabel({text: "左对齐: Hello Leno!", x: 50, y: 40, font_size: 18, text_color: #FFDC64FF})
 
     // 居中
     Label lblCenter = win.addLabel({text: "居中对齐: Hello Leno!", x: 300, y: 90, font_size: 20,
-                                     align: 1, text_rgb: [100, 220, 255]})
+                                     align: 1, text_color: #64DCFFFF})
 
     // 右对齐
     Label lblRight = win.addLabel({text: "右对齐: Hello Leno!", x: 550, y: 140, font_size: 20,
-                                    align: 2, text_rgb: [100, 255, 160]})
+                                    align: 2, text_color: #64FFA0FF})
 
     // 大字
-    Label lblBig = win.addLabel({text: "48px 大标题", x: 50, y: 200, font_size: 48, text_rgb: [255, 255, 255]})
+    Label lblBig = win.addLabel({text: "48px 大标题", x: 50, y: 200, font_size: 48, text_color: #FFFFFFFF})
 
     // 小字
-    Label lblSmall = win.addLabel({text: "14px 小字", x: 50, y: 270, font_size: 14, text_rgb: [180, 180, 200]})
+    Label lblSmall = win.addLabel({text: "14px 小字", x: 50, y: 270, font_size: 14, text_color: #B4B4C8FF})
 
     win.run(
         func(Event e): bool {
@@ -35,13 +35,13 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(20, 20, 40, 255)
+            r.clearColor(#141428FF)
 
-            r.setColor(60, 60, 80, 200)
+            r.setColor(#3C3C50C8)
             r.drawLine(15, 180, 585, 180)
             r.drawLine(15, 175, 585, 175)
 
-            r.drawText(SDL3.createFontAuto(16.0), "ESC 退出", 15, 320, 150, 150, 170)
+            r.drawText(SDL3.createFontAuto(16.0), "ESC 退出", 15, 320, #9696AAFF)
         }
     )
 

@@ -157,11 +157,11 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(28, 30, 36, 255)
-            r.drawText(font, "Table 高级功能测试 (Esc 退出)", 20, 2, 200, 210, 230)
-            r.drawText(font, "功能: 数值排序 | 列拖拽 | 冻结列 | 行拖拽 | 单元格颜色 | 列宽约束", 20, 24, 150, 180, 200)
-            r.drawText(font, "操作: 点表头排序 | 拖表头重排列 | 拖行重排行 | 拖分隔线调列宽", 20, 44, 180, 200, 120)
-            r.drawText(font, "编辑: 双击单元格或选中后按Enter | Tab跳下一格 | Esc取消", 20, 630, 180, 200, 120)
+            r.clearColor(#1C1E24FF)
+            r.drawText(font, "Table 高级功能测试 (Esc 退出)", 20, 2, #C8D2E6FF)
+            r.drawText(font, "功能: 数值排序 | 列拖拽 | 冻结列 | 行拖拽 | 单元格颜色 | 列宽约束", 20, 24, #96B4C8FF)
+            r.drawText(font, "操作: 点表头排序 | 拖表头重排列 | 拖行重排行 | 拖分隔线调列宽", 20, 44, #B4C878FF)
+            r.drawText(font, "编辑: 双击单元格或选中后按Enter | Tab跳下一格 | Esc取消", 20, 630, #B4C878FF)
         }
     )
 

@@ -28,12 +28,12 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(20, 22, 40, 255)
-            r.drawText(SDL3.createFontAuto(18.0), "主窗口", 20, 20, 255, 255, 255)
-            r.drawText(SDL3.createFontAuto(14.0), "1=模态对话框  2=非模态对话框  3=嵌套模态", 20, 55, 200, 200, 240)
-            r.drawText(SDL3.createFontAuto(14.0), "ESC=退出主窗口", 20, 80, 150, 150, 180)
-            r.drawText(SDL3.createFontAuto(13.0), "事件计数: " + eventCount, 20, 110, 120, 200, 120)
-            r.drawText(SDL3.createFontAuto(12.0), "模态弹出后此计数应停止增长", 20, 135, 100, 100, 100)
+            r.clearColor(#141628FF)
+            r.drawText(SDL3.createFontAuto(18.0), "主窗口", 20, 20, #FFFFFFFF)
+            r.drawText(SDL3.createFontAuto(14.0), "1=模态对话框  2=非模态对话框  3=嵌套模态", 20, 55, #C8C8F0FF)
+            r.drawText(SDL3.createFontAuto(14.0), "ESC=退出主窗口", 20, 80, #9696B4FF)
+            r.drawText(SDL3.createFontAuto(13.0), "事件计数: " + eventCount, 20, 110, #78C878FF)
+            r.drawText(SDL3.createFontAuto(12.0), "模态弹出后此计数应停止增长", 20, 135, #646464FF)
         }
     )
 }
@@ -43,10 +43,10 @@ func testModal() {
     var dlg = SDL3.createDialogWindow({title:"模态对话框", w:360, h:200})
 
     // 也可以加控件
-    dlg.addLabel({x:180, y:30, text:"这是模态对话框", font_size:16, text_rgb:[255,220,150], align:1})
-    dlg.addLabel({x:180, y:60, text:"不在任务栏显示", font_size:13, text_rgb:[180,190,210], align:1})
-    dlg.addLabel({x:180, y:85, text:"主窗口被阻塞无法操作", font_size:13, text_rgb:[200,100,80], align:1})
-    dlg.addLabel({x:180, y:110,text:"ESC = 关闭此对话框", font_size:13, text_rgb:[150,160,180], align:1})
+    dlg.addLabel({x:180, y:30, text:"这是模态对话框", font_size:16, text_color:#FFDC96FF, align:1})
+    dlg.addLabel({x:180, y:60, text:"不在任务栏显示", font_size:13, text_color:#B4BED2FF, align:1})
+    dlg.addLabel({x:180, y:85, text:"主窗口被阻塞无法操作", font_size:13, text_color:#C86450FF, align:1})
+    dlg.addLabel({x:180, y:110,text:"ESC = 关闭此对话框", font_size:13, text_color:#96A0B4FF, align:1})
 
     SDL3.runModal(dlg,
         func(Event e): bool {
@@ -55,7 +55,7 @@ func testModal() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(35, 28, 38, 255)
+            r.clearColor(#231C26FF)
         }
     )
 }
@@ -64,10 +64,10 @@ func testModal() {
 func testModeless() {
     var dlg = SDL3.createModelessDialog({title:"非模态对话框", w:360, h:200})
 
-    dlg.addLabel({x:180, y:30, text:"这是非模态对话框", font_size:16, text_rgb:[150,220,255], align:1})
-    dlg.addLabel({x:180, y:60, text:"出现在任务栏", font_size:13, text_rgb:[180,190,210], align:1})
-    dlg.addLabel({x:180, y:85, text:"主窗口仍可操作", font_size:13, text_rgb:[100,200,100], align:1})
-    dlg.addLabel({x:180, y:110,text:"ESC = 关闭此对话框", font_size:13, text_rgb:[150,160,180], align:1})
+    dlg.addLabel({x:180, y:30, text:"这是非模态对话框", font_size:16, text_color:#96DCFFFF, align:1})
+    dlg.addLabel({x:180, y:60, text:"出现在任务栏", font_size:13, text_color:#B4BED2FF, align:1})
+    dlg.addLabel({x:180, y:85, text:"主窗口仍可操作", font_size:13, text_color:#64C864FF, align:1})
+    dlg.addLabel({x:180, y:110,text:"ESC = 关闭此对话框", font_size:13, text_color:#96A0B4FF, align:1})
 
     dlg.run(
         func(Event e): bool {
@@ -76,7 +76,7 @@ func testModeless() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(30, 32, 42, 255)
+            r.clearColor(#1E202AFF)
         }
     )
 }
@@ -86,8 +86,8 @@ func testNestedModal() {
     var depth = 1
     var dlg = SDL3.createDialogWindow({title:"嵌套模态 — 第1层", w:380, h:200})
 
-    dlg.addLabel({x:190, y:25, text:"嵌套模态 第1层", font_size:16, text_rgb:[255,200,120], align:1})
-    dlg.addLabel({x:190, y:60, text:"N=打开第2层  ESC=关闭", font_size:13, text_rgb:[180,190,210], align:1})
+    dlg.addLabel({x:190, y:25, text:"嵌套模态 第1层", font_size:16, text_color:#FFC878FF, align:1})
+    dlg.addLabel({x:190, y:60, text:"N=打开第2层  ESC=关闭", font_size:13, text_color:#B4BED2FF, align:1})
 
     SDL3.runModal(dlg,
         func(Event e): bool {
@@ -104,8 +104,8 @@ func testNestedModal() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(40, 25, 35, 255)
-            r.drawText(SDL3.createFontAuto(13.0),"外层模态 — 按 N 弹出内层",20,90,200,180,220)
+            r.clearColor(#281923FF)
+            r.drawText(SDL3.createFontAuto(13.0),"外层模态 — 按 N 弹出内层",20,90,#C8B4DCFF)
         }
     )
 }
@@ -113,9 +113,9 @@ func testNestedModal() {
 func openInnerNested() {
     var inner = SDL3.createDialogWindow({title:"嵌套模态 — 第2层", w:320, h:160})
 
-    inner.addLabel({x:160, y:25, text:"嵌套模态 第2层", font_size:16, text_rgb:[255,150,100], align:1})
-    inner.addLabel({x:160, y:60, text:"ESC=关闭内层 回到外层", font_size:13, text_rgb:[180,190,210], align:1})
-    inner.addLabel({x:160, y:85, text:"外层此时被阻塞", font_size:13, text_rgb:[200,100,80], align:1})
+    inner.addLabel({x:160, y:25, text:"嵌套模态 第2层", font_size:16, text_color:#FF9664FF, align:1})
+    inner.addLabel({x:160, y:60, text:"ESC=关闭内层 回到外层", font_size:13, text_color:#B4BED2FF, align:1})
+    inner.addLabel({x:160, y:85, text:"外层此时被阻塞", font_size:13, text_color:#C86450FF, align:1})
 
     SDL3.runModal(inner,
         func(Event e): bool {
@@ -124,7 +124,7 @@ func openInnerNested() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(50, 20, 30, 255)
+            r.clearColor(#32141EFF)
         }
     )
 }

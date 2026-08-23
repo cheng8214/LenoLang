@@ -8,9 +8,9 @@ import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
 import maths
 import "sdl_edit.leno" as edt; use edt.Edit
-import "sdl_theme.leno" as theme; use theme.Theme
+import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 
-export struct SpinBox impl Widget {
+export struct SpinBox impl Widget, Themeable {
     float x = 0.0, y = 0.0, w = 140.0, h = 34.0
     float _arrowW = 20.0            // 右侧箭头区宽度
     float minV = 0.0, maxV = 100.0, value = 0.0, step = 1.0
@@ -19,11 +19,11 @@ export struct SpinBox impl Widget {
     Edit? _edit   // 内嵌编辑框（文本输入/IME）
     Ptr[u8]? _hwnd
 
-    int br = 38, bg = 40, bb = 48          // 整体背景
-    int _bdrR = 90, _bdrG = 95, _bdrB = 110  // 边框色
-    int _focusR = 100, _focusG = 180, _focusB = 255  // 聚焦边框色
-    int _arrowR = 44, _arrowG = 46, _arrowB = 54  // 箭头区背景
-    int _btnR = 200, _btnG = 205, _btnB = 215  // 箭头符号色
+    int _bgColor = #262830FF       // 整体背景
+    int _bdrColor = #5A5F6EFF      // 边框色
+    int _focusColor = #64B4FFFF     // 聚焦边框色
+    int _arrowColor = #2C2E36FF    // 箭头区背景
+    int _btnColor = #DCE1EBFF     // 箭头符号色
 
     bool _hoverUp = false, _hoverDown = false, _wasUp = false, _wasDown = false
     bool _wasFocused = false
@@ -98,11 +98,11 @@ export struct SpinBox impl Widget {
     // ==================== set 初始化 ====================
     func set(Dict opts) {
         Theme th = theme.getTheme()
-        br = th.bgR; bg = th.bgG; bb = th.bgB
-        _bdrR = th.borderR; _bdrG = th.borderG; _bdrB = th.borderB
-        _focusR = th.accentFocusR; _focusG = th.accentFocusG; _focusB = th.accentFocusB
-        _arrowR = th.bgAltR; _arrowG = th.bgAltG; _arrowB = th.bgAltB
-        _btnR = th.txtR; _btnG = th.txtG; _btnB = th.txtB
+        _bgColor = th.bg
+        _bdrColor = th.border
+        _focusColor = th.accentFocus
+        _arrowColor = th.bgAlt
+        _btnColor = th.txtHeader
         x = opts.get("x", 0)
         y = opts.get("y", 0)
         w = opts.get("w", 140)
@@ -123,23 +123,23 @@ export struct SpinBox impl Widget {
                                 placeholder: opts.get("placeholder", "")})
         _edit.on_change(func() { _try_apply_text() })
 
-        // 默认背景色见字段声明（br/bg/bb）
-        var bgc = opts.get("bg_rgb")
-        if bgc is Array[int] { br = bgc[0]; bg = bgc[1]; bb = bgc[2] }
-        _edit.set_bg(br, bg, bb)
-        _edit.set_text_rgb(th.txtInputR, th.txtInputG, th.txtInputB)
+        // 默认背景色见字段声明（_bgColor）
+        var bgc = opts.get("bg_color")
+        if bgc is int { _bgColor = bgc }
+        _edit.set_bg_color(_bgColor)
+        _edit.set_text_color(th.txtInput)
 
-        // 默认边框色见字段声明（_bdrR/_bdrG/_bdrB）
-        var bdc = opts.get("border_rgb")
-        if bdc is Array[int] { _bdrR = bdc[0]; _bdrG = bdc[1]; _bdrB = bdc[2] }
-        // 默认聚焦色见字段声明（_focusR/_focusG/_focusB）
-        var fc = opts.get("focus_rgb")
-        if fc is Array[int] { _focusR = fc[0]; _focusG = fc[1]; _focusB = fc[2] }
+        // 默认边框色见字段声明（_bdrColor）
+        var bdc = opts.get("border_color")
+        if bdc is int { _bdrColor = bdc }
+        // 默认聚焦色见字段声明（_focusColor）
+        var fc = opts.get("focus_color")
+        if fc is int { _focusColor = fc }
 
-        // 默认箭头区背景见字段声明（_arrowR/_arrowG/_arrowB）
-        var arc = opts.get("arrow_rgb")
-        if arc is Array[int] { _arrowR = arc[0]; _arrowG = arc[1]; _arrowB = arc[2] }
-        // 默认箭头符号色见字段声明（_btnR/_btnG/_btnB）
+        // 默认箭头区背景见字段声明（_arrowColor）
+        var arc = opts.get("arrow_color")
+        if arc is int { _arrowColor = arc }
+        // 默认箭头符号色见字段声明（_btnColor）
 
         _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
         enabled = opts.get("enabled", true)
@@ -253,42 +253,48 @@ export struct SpinBox impl Widget {
         _edit?.render(r)
 
         float ax = x + (w - _arrowW)
-        int aR = _arrowR, aG = _arrowG, aB = _arrowB
-        if _hoverUp or _hoverDown { aR = aR + 10; aG = aG + 10; aB = aB + 10
-            if aR > 255 { aR = 255 }; if aG > 255 { aG = 255 }; if aB > 255 { aB = 255 } }
-        r.setColor(aR, aG, aB, 255)
+        int aC = _arrowColor
+        if _hoverUp or _hoverDown { aC = theme.brighten(_arrowColor, 10) }
+        r.setColor(aC)
         r.fillRect(ax, y, _arrowW, h)
 
-        r.setColor(_bdrR, _bdrG, _bdrB, 200)
+        r.setColor(_bdrColor)
         r.drawLine(ax, y, ax, y + h)
 
         float s = 4.0
         float cxA = ax + _arrowW / 2.0
         // 上箭头
-        int bR = _btnR, bG = _btnG, bB = _btnB
-        if _hoverUp { bR = bR + 40; bG = bG + 40; bB = bB + 40
-            if bR > 255 { bR = 255 }; if bG > 255 { bG = 255 }; if bB > 255 { bB = 255 } }
-        r.setColor(bR, bG, bB, 255)
+        int bC = _btnColor
+        if _hoverUp { bC = theme.brighten(_btnColor, 40) }
+        r.setColor(bC)
         float uy = y + h / 4.0
         r.drawLine(cxA - s, uy + s * 0.5, cxA, uy - s * 0.5)
         r.drawLine(cxA, uy - s * 0.5, cxA + s, uy + s * 0.5)
         // 下箭头
-        int dR = _btnR, dG = _btnG, dB = _btnB
-        if _hoverDown { dR = dR + 40; dG = dG + 40; dB = dB + 40
-            if dR > 255 { dR = 255 }; if dG > 255 { dG = 255 }; if dB > 255 { dB = 255 } }
-        r.setColor(dR, dG, dB, 255)
+        int dC = _btnColor
+        if _hoverDown { dC = theme.brighten(_btnColor, 40) }
+        r.setColor(dC)
         float dy = y + h * 0.75
         r.drawLine(cxA - s, dy - s * 0.5, cxA, dy + s * 0.5)
         r.drawLine(cxA, dy + s * 0.5, cxA + s, dy - s * 0.5)
 
         // 外边框（聚焦高亮）
-        if _edit != null and _edit.is_focused() { r.setColor(_focusR, _focusG, _focusB, 255) }
-        else { r.setColor(_bdrR, _bdrG, _bdrB, 200) }
+        if _edit != null and _edit.is_focused() { r.setColor(_focusColor) }
+        else { r.setColor(_bdrColor) }
         r.drawRect(x, y, w, h)
     }
 
     func dispose() {
         _edit?.dispose(); _edit = null
+    }
+
+    func applyTheme(Theme t) {
+        _bgColor = t.bg
+        _bdrColor = t.border
+        _focusColor = t.accentFocus
+        _arrowColor = t.bgAlt
+        _btnColor = t.txtHeader
+        _edit?.applyTheme(t)
     }
 }
 

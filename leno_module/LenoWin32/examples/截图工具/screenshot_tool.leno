@@ -141,7 +141,7 @@ func onRender(Renderer ren) {
     }
 
     // 清屏
-    ren.setColor(0, 0, 0, 255)
+    ren.setColor(#000000FF)
     ren.clear()
 
     // 绘制桌面截图背景
@@ -157,7 +157,7 @@ func onRender(Renderer ren) {
 
     // 绘制遮罩（选区外变暗）
     ren.setBlendMode(1) // BLEND
-    ren.setColor(0, 0, 0, 120)
+    ren.setColor(#00000078)
     if sw <= 0.0 or sh <= 0.0 {
         ren.fillRect(0.0, 0.0, _float(_screenW), _float(_screenH))
     } else {
@@ -171,12 +171,12 @@ func onRender(Renderer ren) {
         ren.fillRect(x0 + sw, y0, _float(_screenW) - x0 - sw, sh)
 
         // 选区边框（白色实线）
-        ren.setColor(255, 255, 255, 255)
+        ren.setColor(#FFFFFFFF)
         ren.drawRect(x0, y0, sw, sh)
 
         // 选区内部四角小方块（抓手）
         float handleSize = 6.0
-        ren.setColor(255, 255, 255, 200)
+        ren.setColor(#FFFFFFC8)
         ren.fillRect(x0 - handleSize, y0 - handleSize, handleSize * 2.0, handleSize * 2.0)
         ren.fillRect(x0 + sw - handleSize, y0 - handleSize, handleSize * 2.0, handleSize * 2.0)
         ren.fillRect(x0 - handleSize, y0 + sh - handleSize, handleSize * 2.0, handleSize * 2.0)
@@ -190,19 +190,19 @@ func onRender(Renderer ren) {
         float infoY = y0 - infoH - 5.0
         if infoY < 0.0 { infoY = y0 + sh + 5.0 }
         if infoX + infoW > _float(_screenW) { infoX = _float(_screenW) - infoW - 4.0 }
-        ren.setColor(0, 0, 0, 180)
+        ren.setColor(#000000B4)
         ren.fillRect(infoX, infoY, infoW, infoH)
 
         // 尺寸文字（用白色小方块拼数字太麻烦，用系统光标位置提示代替）
         // 简化：绘制坐标点
-        ren.setColor(255, 255, 255, 255)
+        ren.setColor(#FFFFFFFF)
         // 用 1x1 点阵示意？不，直接不显示文字，靠控制台输出
     }
 
     // 底部操作提示
-    ren.setColor(0, 0, 0, 160)
+    ren.setColor(#000000A0)
     ren.fillRect(0.0, _float(_screenH - 28), _float(_screenW), 28.0)
-    ren.setColor(255, 255, 255, 255)
+    ren.setColor(#FFFFFFFF)
     // 简化：不渲染文字，只画提示条
 
     ren.setBlendMode(0) // NONE

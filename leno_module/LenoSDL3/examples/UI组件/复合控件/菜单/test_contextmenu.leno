@@ -51,10 +51,10 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(28, 28, 46, 255)
-            r.drawText(font, "在窗口空白处右键：弹出上下文菜单（含子菜单/禁用项）", 20, 120, 200, 210, 230)
-            r.drawText(font, "左键点菜单项触发回调；点空白/Esc 关闭；左键不会穿透到下层", 20, 150, 200, 210, 230)
-            r.drawText(font, "ESC 退出", 470, 392, 140, 140, 140)
+            r.clearColor(#1C1C2EFF)
+            r.drawText(font, "在窗口空白处右键：弹出上下文菜单（含子菜单/禁用项）", 20, 120, #C8D2E6FF)
+            r.drawText(font, "左键点菜单项触发回调；点空白/Esc 关闭；左键不会穿透到下层", 20, 150, #C8D2E6FF)
+            r.drawText(font, "ESC 退出", 470, 392, #8C8C8CFF)
         }
     )
 

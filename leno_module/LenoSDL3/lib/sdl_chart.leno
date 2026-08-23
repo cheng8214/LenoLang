@@ -9,10 +9,10 @@ import "sdl_core.leno"     as core; use core.SystemCursor; use core.SDL_Rect
 import "sdl_theme.leno"    as theme; use theme.Theme
 
 // ===================== 模块级辅助 =====================
-// 系列配色（与看板风格一致）
-Array[Array[int]] _CHART_PALETTE = [
-    [88,160,255],[80,210,150],[255,170,80],[190,120,255],
-    [255,110,130],[120,210,235],[235,210,110],[170,180,200]
+// 系列配色（与看板风格一致）— 打包 int 颜色 0xAARRGGBB
+Array[int] _CHART_PALETTE = [
+    #58A0FFFF, #50D296FF, #FFAA50FF, #BE78FFFF,
+    #FF6E82FF, #78D2EBFF, #EBD26EFF, #AAB4C8FF
 ]
 
 func _cmin(float a, float b): float { if a < b { return a }; return b }
@@ -30,7 +30,7 @@ func _niceMax(float v): float {
     return step * mag
 }
 
-func _palette(int i): Array[int] {
+func _palette(int i): int {
     int n = _CHART_PALETTE.len()
     return _CHART_PALETTE[i % n]
 }
@@ -62,12 +62,11 @@ func _drawTip(Renderer r, Font f, float mx, float my, string text) {
     float tw = ms.w; float th2 = ms.h
     float bx = mx + 12.0; float by = my + 12.0
     float pad = 6.0
-    r.setColor(th.tipBgR, th.tipBgG, th.tipBgB, 235)
+    r.setColor(theme.withAlpha(th.tipBg, 235))
     r.fillRoundedRect(bx, by, tw + pad * 2.0, th2 + pad * 2.0, 5.0)
-    r.setColor(th.tipBrdR, th.tipBrdG, th.tipBrdB, 255)
+    r.setColor(th.tipBrd)
     r.drawRoundedRect(bx, by, tw + pad * 2.0, th2 + pad * 2.0, 5.0)
-    r.setColor(th.tipTxtR, th.tipTxtG, th.tipTxtB, 255)
-    r.drawText(f, text, bx + pad, by + pad, th.tipTxtR, th.tipTxtG, th.tipTxtB)
+    r.drawText(f, text, bx + pad, by + pad, th.tipTxt)
 }
 
 // ===================== 柱状图 =====================
@@ -91,22 +90,22 @@ export struct BarChart impl Widget {
     // 标签测量缓存（避免每帧重复 measureString）
     float _maxCatW = 0.0
     bool _catDirty = true
-    // 主题配色
-    int _titleR = 205, _titleG = 218, _titleB = 255
-    int _gridR = 60, _gridG = 64, _gridB = 76
-    int _axisR = 90, _axisG = 96, _axisB = 112
-    int _labR = 150, _labG = 160, _labB = 178
-    int _valR = 225, _valG = 230, _valB = 240
-    int _catR = 160, _catG = 170, _catB = 188
+    // 主题配色 — 打包 int 颜色
+    int _titleColor = #CDDAFFFF
+    int _gridColor = #3C404CFF
+    int _axisColor = #5A6070FF
+    int _labColor = #96A0B2FF
+    int _valColor = #E1E6F0FF
+    int _catColor = #A0AABCFF
 
     func set(Dict opts) {
         Theme th = theme.getTheme()
-        _titleR = th.txtR; _titleG = th.txtG; _titleB = th.txtB
-        _gridR = th.sepR; _gridG = th.sepG; _gridB = th.sepB
-        _axisR = th.borderR; _axisG = th.borderG; _axisB = th.borderB
-        _labR = th.txtDimR; _labG = th.txtDimG; _labB = th.txtDimB
-        _valR = th.txtR; _valG = th.txtG; _valB = th.txtB
-        _catR = th.txtDimR; _catG = th.txtDimG; _catB = th.txtDimB
+        _titleColor = th.txt
+        _gridColor = th.sep
+        _axisColor = th.border
+        _labColor = th.txtDim
+        _valColor = th.txt
+        _catColor = th.txtDim
         x = opts.get("x", 0); y = opts.get("y", 0)
         w = opts.get("w", 300); h = opts.get("h", 200)
         title = opts.get("title", "")
@@ -177,7 +176,7 @@ export struct BarChart impl Widget {
         if plotW <= 0 or plotH <= 0 { return }
 
         // 标题固定在最上方
-        if title != "" { r.setColor(_titleR, _titleG, _titleB, 255); r.drawText(f, title, x + 10.0, y + 6.0, _titleR, _titleG, _titleB) }
+        if title != "" { r.setColor(_titleColor); r.drawText(f, title, x + 10.0, y + 6.0, _titleColor) }
 
         // 类目标签抽稀：类目过多时只画不重叠的，避免挤在一起
         // 使用缓存的标签最大宽度（仅在 set_data 时重算），避免每帧 O(n) measureString
@@ -210,12 +209,12 @@ export struct BarChart impl Widget {
             for 0 : ticks to ti {
                 float frac = ti / _float(ticks)
                 float gy = plotY + plotH * (1.0 - frac)
-                r.setColor(_gridR, _gridG, _gridB, 255); r.drawLine(plotX, gy, plotX + plotW, gy)
+                r.setColor(_gridColor); r.drawLine(plotX, gy, plotX + plotW, gy)
             }
         }
 
         // 轴线
-        r.setColor(_axisR, _axisG, _axisB, 255)
+        r.setColor(_axisColor)
         r.drawLine(plotX, plotY, plotX, plotY + plotH)
         r.drawLine(plotX, plotY + plotH, plotX + plotW, plotY + plotH)
 
@@ -224,8 +223,8 @@ export struct BarChart impl Widget {
             float vh = plotH * (_animVals[i] / ymax)
             float bx = plotX + slot * i + (slot - bw) / 2.0
             float by = plotY + plotH - vh
-            Array[int] c = _palette(i)
-            if i == hi { r.setColor(c[0], c[1], c[2], 255) } else { r.setColor(c[0], c[1], c[2], 255) }
+            int c = _palette(i)
+            r.setColor(c)
             r.fillRect(bx, by, bw, vh)
         }
 
@@ -238,8 +237,8 @@ export struct BarChart impl Widget {
             float gy = plotY + plotH * (1.0 - frac)
             string lab = _fmtNum(ymax * frac)
             var ms = f.measureString(lab)
-            r.setColor(_labR, _labG, _labB, 255)
-            r.drawText(f, lab, plotX - 6.0 - ms.w, gy - ms.h / 2.0, _labR, _labG, _labB)
+            r.setColor(_labColor)
+            r.drawText(f, lab, plotX - 6.0 - ms.w, gy - ms.h / 2.0, _labColor)
         }
 
         // 第二遍：数值标签与类目标签
@@ -252,15 +251,15 @@ export struct BarChart impl Widget {
                 var ms = f.measureString(s)
                 // 若标签会顶到上边界（可能压到标题），改为绘制到柱子内部，避免与标题重叠
                 float ly = by - ms.h - 3.0
-                int lr = _valR; int lg = _valG; int lb = _valB
-                if ly < plotY { ly = by + 2.0; lr = _labR; lg = _labG; lb = _labB }
-                r.drawText(f, s, bx + (bw - ms.w) / 2.0, ly, lr, lg, lb)
+                int lc = _valColor
+                if ly < plotY { ly = by + 2.0; lc = _labColor }
+                r.drawText(f, s, bx + (bw - ms.w) / 2.0, ly, lc)
             }
             if i < cats.len() and (i % catStride) == 0 {
                 string cat = _truncLabel(f, cats[i], slot - 4.0)
                 var ms2 = f.measureString(cat)
-                r.setColor(_catR, _catG, _catB, 255)
-                r.drawText(f, cat, bx + (bw - ms2.w) / 2.0, plotY + plotH + 6.0, _catR, _catG, _catB)
+                r.setColor(_catColor)
+                r.drawText(f, cat, bx + (bw - ms2.w) / 2.0, plotY + plotH + 6.0, _catColor)
             }
         }
 
@@ -273,9 +272,9 @@ export struct BarChart impl Widget {
                 if avail < aw { aw = avail }
                 string cat = _truncLabel(f, cats[n - 1], aw)
                 var ms2 = f.measureString(cat)
-                r.setColor(_catR, _catG, _catB, 255)
+                r.setColor(_catColor)
                 float bx = plotX + slot * (n - 1) + (slot - bw) / 2.0
-                r.drawText(f, cat, bx + (bw - ms2.w) / 2.0, plotY + plotH + 6.0, _catR, _catG, _catB)
+                r.drawText(f, cat, bx + (bw - ms2.w) / 2.0, plotY + plotH + 6.0, _catColor)
             }
         }
 
@@ -308,6 +307,15 @@ export struct BarChart impl Widget {
         }
     }
 
+    func applyTheme(Theme t) {
+        _titleColor = t.txt
+        _gridColor = t.sep
+        _axisColor = t.border
+        _labColor = t.txtDim
+        _valColor = t.txt
+        _catColor = t.txtDim
+    }
+
     func dispose() { if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null }
 }
 
@@ -332,22 +340,22 @@ export struct LineChart impl Widget {
     // 标签测量缓存（避免每帧重复 measureString）
     float _maxLabelW = 0.0
     bool _labelDirty = true
-    // 主题配色
-    int _titleR = 205, _titleG = 218, _titleB = 255
-    int _gridR = 60, _gridG = 64, _gridB = 76
-    int _axisR = 90, _axisG = 96, _axisB = 112
-    int _labR = 150, _labG = 160, _labB = 178
-    int _catR = 160, _catG = 170, _catB = 188
-    int _hlR = 255, _hlG = 255, _hlB = 255
+    // 主题配色 — 打包 int 颜色
+    int _titleColor = #CDDAFFFF
+    int _gridColor = #3C404CFF
+    int _axisColor = #5A6070FF
+    int _labColor = #96A0B2FF
+    int _catColor = #A0AABCFF
+    int _hlColor = #FFFFFFFF
 
     func set(Dict opts) {
         Theme th = theme.getTheme()
-        _titleR = th.txtR; _titleG = th.txtG; _titleB = th.txtB
-        _gridR = th.sepR; _gridG = th.sepG; _gridB = th.sepB
-        _axisR = th.borderR; _axisG = th.borderG; _axisB = th.borderB
-        _labR = th.txtDimR; _labG = th.txtDimG; _labB = th.txtDimB
-        _catR = th.txtDimR; _catG = th.txtDimG; _catB = th.txtDimB
-        _hlR = th.txtR; _hlG = th.txtG; _hlB = th.txtB
+        _titleColor = th.txt
+        _gridColor = th.sep
+        _axisColor = th.border
+        _labColor = th.txtDim
+        _catColor = th.txtDim
+        _hlColor = th.txt
         x = opts.get("x", 0); y = opts.get("y", 0)
         w = opts.get("w", 300); h = opts.get("h", 200)
         title = opts.get("title", "")
@@ -414,7 +422,7 @@ export struct LineChart impl Widget {
         if n == 0 { n = maxn }
         if n == 0 { return }
 
-        if title != "" { r.setColor(_titleR, _titleG, _titleB, 255); r.drawText(f, title, x + 10.0, y + 6.0, _titleR, _titleG, _titleB) }
+        if title != "" { r.setColor(_titleColor); r.drawText(f, title, x + 10.0, y + 6.0, _titleColor) }
 
         float ymax = 0.0
         for series.len() to s { for series[s].len() to i { ymax = _cmax(ymax, series[s][i]) } }
@@ -424,13 +432,13 @@ export struct LineChart impl Widget {
         for 0 : ticks to ti {
             float frac = ti / _float(ticks)
             float gy = plotY + plotH * (1.0 - frac)
-            if showGrid { r.setColor(_gridR, _gridG, _gridB, 255); r.drawLine(plotX, gy, plotX + plotW, gy) }
+            if showGrid { r.setColor(_gridColor); r.drawLine(plotX, gy, plotX + plotW, gy) }
             string lab = _fmtNum(ymax * frac)
             var ms = f.measureString(lab)
-            r.setColor(_labR, _labG, _labB, 255)
-            r.drawText(f, lab, plotX - 6.0 - ms.w, gy - ms.h / 2.0, _labR, _labG, _labB)
+            r.setColor(_labColor)
+            r.drawText(f, lab, plotX - 6.0 - ms.w, gy - ms.h / 2.0, _labColor)
         }
-        r.setColor(_axisR, _axisG, _axisB, 255)
+        r.setColor(_axisColor)
         r.drawLine(plotX, plotY, plotX, plotY + plotH)
         r.drawLine(plotX, plotY + plotH, plotX + plotW, plotY + plotH)
 
@@ -459,10 +467,10 @@ export struct LineChart impl Widget {
             if i < xlabels.len() and (i % stride) == 0 {
                 string xl = _truncLabel(f, xlabels[i], slotW)
                 var ms = f.measureString(xl)
-                r.setColor(_catR, _catG, _catB, 255)
+                r.setColor(_catColor)
                 float lx = plotX + stepX * i - ms.w / 2.0
                 lx = _clampf(lx, plotX, plotX + plotW - ms.w)
-                r.drawText(f, xl, lx, plotY + plotH + 6.0, _catR, _catG, _catB)
+                r.drawText(f, xl, lx, plotY + plotH + 6.0, _catColor)
             }
         }
         // 末尾类目：若与上个标签间隔足够则补绘，并截断到可用宽度，避免与上一个重叠
@@ -472,9 +480,9 @@ export struct LineChart impl Widget {
             if avail > 0.0 {
                 string xl = _truncLabel(f, xlabels[n - 1], avail)
                 var ms = f.measureString(xl)
-                r.setColor(_catR, _catG, _catB, 255)
+                r.setColor(_catColor)
                 float lx = plotX + stepX * (n - 1) - ms.w / 2.0
-                r.drawText(f, xl, lx, plotY + plotH + 6.0, _catR, _catG, _catB)
+                r.drawText(f, xl, lx, plotY + plotH + 6.0, _catColor)
             }
         }
 
@@ -496,8 +504,8 @@ export struct LineChart impl Widget {
 
         for series.len() to s {
             Array[float] d = _animSeries[s]
-            Array[int] c = _palette(s)
-            r.setColor(c[0], c[1], c[2], 235)
+            int c = _palette(s)
+            r.setColor(theme.withAlpha(c, 235))
             for 1 : d.len() - 1 to i {
                 float x1 = plotX + stepX * (i - 1); float y1 = plotY + plotH * (1.0 - d[i - 1] / ymax)
                 float x2 = plotX + stepX * i;   float y2 = plotY + plotH * (1.0 - d[i] / ymax)
@@ -507,7 +515,7 @@ export struct LineChart impl Widget {
                 for d.len() to i {
                     float px = plotX + stepX * i; float py = plotY + plotH * (1.0 - d[i] / ymax)
                     bool hl = (s == hiS and i == hiI)
-                    if hl { r.setColor(_hlR, _hlG, _hlB, 255) } else { r.setColor(c[0], c[1], c[2], 255) }
+                    if hl { r.setColor(_hlColor) } else { r.setColor(c) }
                     r.fillCircle(px, py, if hl then 5.0 else 3.0)
                 }
             }
@@ -545,6 +553,15 @@ export struct LineChart impl Widget {
         }
     }
 
+    func applyTheme(Theme t) {
+        _titleColor = t.txt
+        _gridColor = t.sep
+        _axisColor = t.border
+        _labColor = t.txtDim
+        _catColor = t.txtDim
+        _hlColor = t.txt
+    }
+
     func dispose() { if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null }
 }
 
@@ -562,14 +579,14 @@ export struct PieChart impl Widget {
     bool _animating = false
     float _animLast = 0.0
     float _animSpeed = 12.0
-    // 主题配色
-    int _titleR = 205, _titleG = 218, _titleB = 255
-    int _legR = 220, _legG = 225, _legB = 235
+    // 主题配色 — 打包 int 颜色
+    int _titleColor = #CDDAFFFF
+    int _legColor = #DCE1EBFF
 
     func set(Dict opts) {
         Theme th = theme.getTheme()
-        _titleR = th.txtR; _titleG = th.txtG; _titleB = th.txtB
-        _legR = th.txtR; _legG = th.txtG; _legB = th.txtB
+        _titleColor = th.txt
+        _legColor = th.txt
         x = opts.get("x", 0); y = opts.get("y", 0)
         w = opts.get("w", 300); h = opts.get("h", 200)
         title = opts.get("title", "")
@@ -601,7 +618,7 @@ export struct PieChart impl Widget {
             _fontSize = fsize
         }
         Font? f = _font
-        if title != "" { r.setColor(_titleR, _titleG, _titleB, 255); r.drawText(f, title, x + 10.0, y + 6.0, _titleR, _titleG, _titleB) }
+        if title != "" { r.setColor(_titleColor); r.drawText(f, title, x + 10.0, y + 6.0, _titleColor) }
         int n = values.len()
         if n == 0 { return }
         float total = 0.0
@@ -620,13 +637,14 @@ export struct PieChart impl Widget {
         for n to i {
             float frac = _animValues[i] / total
             float a1 = a + frac * 360.0
-            Array[int] c = _palette(i)
-            r.fillPie(cx, cy, rad, a, a1, c[0], c[1], c[2], 255)
+            int c = _palette(i)
+            // fillPie 仍使用 R/G/B/A 分量，从打包色中提取
+            r.fillPie(cx, cy, rad, a, a1, theme.colorR(c), theme.colorG(c), theme.colorB(c), 255)
             // 图例
-            r.setColor(c[0], c[1], c[2], 255); r.fillRect(legendX, ly, 12.0, 12.0)
-            r.setColor(_legR, _legG, _legB, 255)
+            r.setColor(c); r.fillRect(legendX, ly, 12.0, 12.0)
+            r.setColor(_legColor)
             string lab = $"{labels[i]}  {_fmtNum(_animValues[i])}"
-            r.drawText(f, lab, legendX + 18.0, ly - 1.0, _legR, _legG, _legB)
+            r.drawText(f, lab, legendX + 18.0, ly - 1.0, _legColor)
             ly = ly + 20.0
             a = a1
         }
@@ -653,6 +671,11 @@ export struct PieChart impl Widget {
             for values.len() to i { _animValues[i] = values[i] }
             _animating = false
         }
+    }
+
+    func applyTheme(Theme t) {
+        _titleColor = t.txt
+        _legColor = t.txt
     }
 
     func dispose() { if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null }

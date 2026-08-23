@@ -122,43 +122,43 @@ func drawRobot(Renderer r, Robot robot, Font font) {
     
     // === 天线 ===
     float antennaTopY = y - 58.0
-    r.setColor(60, 60, 70, 255)
+    r.setColor(#3C3C46FF)
     r.drawLine(x, y - 44.0, x, antennaTopY)
     int glow = 200 + _int(maths.sin(_float(robot.frame) * 0.2) * 55.0)
-    r.setColor(glow, glow, 50, 255)
+    r.setColor((255 << 24) | (glow << 16) | (glow << 8) | 50)
     r.fillCircle(x, antennaTopY, 4.0)
     
     // === 头部（圆角矩形） ===
     float headW = 46.0, headH = 34.0
     float headX = x - headW / 2.0
     float headY = y - 46.0
-    r.setColor(headR, headG, headB, 255)
+    r.setColor((255 << 24) | (headR << 16) | (headG << 8) | headB)
     fillRoundRect(r, headX, headY, headW, headH, 6.0)
     
     // 头部接缝线
-    r.setColor(accentR, accentG, accentB, 255)
+    r.setColor((255 << 24) | (accentR << 16) | (accentG << 8) | accentB)
     r.drawLine(headX + 4.0, headY + headH - 4.0, headX + headW - 4.0, headY + headH - 4.0)
     
     // === 眼睛（LED 方形，高光朝向行走方向） ===
     float eyeY = headY + 10.0
     float eyeSize = 8.0
     if robot.isBlinking {
-        r.setColor(30, 30, 30, 255)
+        r.setColor(#1E1E1EFF)
         r.fillRect(x - 14.0, eyeY + 3.0, 9.0, 2.0)
         r.fillRect(x + 5.0, eyeY + 3.0, 9.0, 2.0)
     } else {
-        r.setColor(0, 255, 255, 255)
+        r.setColor(#00FFFFFF)
         r.fillRect(x - 14.0, eyeY, eyeSize, eyeSize)
         r.fillRect(x + 6.0, eyeY, eyeSize, eyeSize)
         // 高光（偏向行走方向，体现视线方向）
-        r.setColor(255, 255, 255, 255)
+        r.setColor(#FFFFFFFF)
         float hlOff = 1.0 * s  // 朝右右偏，朝左左偏
         r.fillRect(x - 13.0 + hlOff, eyeY + 1.0, 2.0, 2.0)
         r.fillRect(x + 7.0 + hlOff, eyeY + 1.0, 2.0, 2.0)
     }
     
     // === 嘴巴 ===
-    r.setColor(30, 30, 30, 255)
+    r.setColor(#1E1E1EFF)
     if robot.isHappy {
         r.drawLine(x - 7.0, headY + 24.0, x - 3.0, headY + 27.0)
         r.drawLine(x - 3.0, headY + 27.0, x + 3.0, headY + 27.0)
@@ -168,40 +168,40 @@ func drawRobot(Renderer r, Robot robot, Font font) {
     }
     
     // === 颈部 ===
-    r.setColor(60, 60, 70, 255)
+    r.setColor(#3C3C46FF)
     r.fillRect(x - 5.0, y - 14.0, 10.0, 8.0)
     
     // === 身体（圆角矩形） ===
     float bodyW = 52.0, bodyH = 40.0
     float bodyX = x - bodyW / 2.0
     float bodyY = y - 6.0
-    r.setColor(bodyR, bodyG, bodyB, 255)
+    r.setColor((255 << 24) | (bodyR << 16) | (bodyG << 8) | bodyB)
     fillRoundRect(r, bodyX, bodyY, bodyW, bodyH, 7.0)
     
     // 身体接缝线
-    r.setColor(accentR, accentG, accentB, 255)
+    r.setColor((255 << 24) | (accentR << 16) | (accentG << 8) | accentB)
     r.drawLine(bodyX + 4.0, bodyY + bodyH / 2.0, bodyX + bodyW - 4.0, bodyY + bodyH / 2.0)
     
     // === 方向指示灯（身体前方，体现转身） ===
     float frontX = x + 20.0 * s  // 朝右在右，朝左在左
-    r.setColor(255, 200, 0, 255)
+    r.setColor(#FFC800FF)
     r.fillCircle(frontX, bodyY + 6.0, 3.0)
     
     // === 胸前指示灯（呼吸闪烁） ===
     int ledGlow = 128 + _int(maths.sin(_float(robot.frame) * 0.1) * 100.0)
-    r.setColor(30, 60, 40, 255)
+    r.setColor(#1E3C28FF)
     r.drawCircle(x, bodyY + bodyH / 2.0, 8.0)
-    r.setColor(50, ledGlow, 100, 255)
+    r.setColor((255 << 24) | (50 << 16) | (ledGlow << 8) | 100)
     r.fillCircle(x, bodyY + bodyH / 2.0, 5.0)
-    r.setColor(200, 255, 200, 255)
+    r.setColor(#C8FFC8FF)
     r.fillCircle(x - 1.5, bodyY + bodyH / 2.0 - 1.5, 1.5)
     
     // === 后手臂（固定下垂，在背向方向） ===
     // 朝右时在左侧，朝左时在右侧（位置互换）
     float backArmX = if robot.facing == 1 then bodyX - 7.0 else bodyX + bodyW
-    r.setColor(accentR, accentG, accentB, 255)
+    r.setColor((255 << 24) | (accentR << 16) | (accentG << 8) | accentB)
     r.fillRect(backArmX, bodyY + 5.0, 7.0, 22.0)
-    r.setColor(60, 60, 70, 255)
+    r.setColor(#3C3C46FF)
     r.fillCircle(backArmX + 3.5, bodyY + 5.0, 3.5)
     r.fillCircle(backArmX + 3.5, bodyY + 28.0, 4.5)
     
@@ -212,9 +212,9 @@ func drawRobot(Renderer r, Robot robot, Font font) {
         // 揉脑袋：前手举到头顶画圆揉
         float rubX = x + maths.sin(_float(robot.frame) * 0.5) * 6.0
         float rubY = headY - 4.0 + maths.cos(_float(robot.frame) * 0.5) * 3.0
-        r.setColor(accentR, accentG, accentB, 255)
+        r.setColor((255 << 24) | (accentR << 16) | (accentG << 8) | accentB)
         r.drawLine(frontArmX, bodyY + 6.0, rubX, rubY)
-        r.setColor(60, 60, 70, 255)
+        r.setColor(#3C3C46FF)
         r.fillCircle(frontArmX, bodyY + 6.0, 3.5)
         r.fillCircle(rubX, rubY, 5.0)
     } else if robot.isWaving {
@@ -227,17 +227,17 @@ func drawRobot(Renderer r, Robot robot, Font font) {
         float handX = elbowX + 8.0 * s + waveAngle * 8.0 * s
         float handY = elbowY - 12.0 + waveAngle * 4.0
         
-        r.setColor(accentR, accentG, accentB, 255)
+        r.setColor((255 << 24) | (accentR << 16) | (accentG << 8) | accentB)
         r.drawLine(shoulderX, shoulderY, elbowX, elbowY)
         r.drawLine(elbowX, elbowY, handX, handY)
-        r.setColor(60, 60, 70, 255)
+        r.setColor(#3C3C46FF)
         r.fillCircle(shoulderX, shoulderY, 3.5)
         r.fillCircle(elbowX, elbowY, 3.0)
         r.fillCircle(handX, handY, 5.0)
     } else {
-        r.setColor(accentR, accentG, accentB, 255)
+        r.setColor((255 << 24) | (accentR << 16) | (accentG << 8) | accentB)
         r.fillRect(frontArmX, bodyY + 5.0, 7.0, 22.0)
-        r.setColor(60, 60, 70, 255)
+        r.setColor(#3C3C46FF)
         r.fillCircle(frontArmX + 3.5, bodyY + 5.0, 3.5)
         r.fillCircle(frontArmX + 3.5, bodyY + 28.0, 4.5)
     }
@@ -245,7 +245,7 @@ func drawRobot(Renderer r, Robot robot, Font font) {
     // === 腿（行走时交替移动；蹲下时屈膝缩短） ===
     float legY = bodyY + bodyH
     float legW = 9.0, legH = 16.0 - cd
-    r.setColor(60, 60, 70, 255)
+    r.setColor(#3C3C46FF)
     
     if robot.isJumping {
         r.fillRect(x - 12.0, legY, legW, legH - 6.0)
@@ -272,28 +272,28 @@ func drawRobot(Renderer r, Robot robot, Font font) {
         float bx = x - bw / 2.0
         float by = y - 85.0
         // 背景（白色半透明）
-        r.setColor(255, 255, 255, 220)
+        r.setColor(#FFFFFFDC)
         fillRoundRect(r, bx, by, bw, bh, 5.0)
         // 小三角指向机器人
         r.fillRect(x - 3.0, by + bh, 6.0, 5.0)
         // 文字
-        r.drawText(font, robot.bubbleText, bx + 6.0, by + 5.0, 50, 50, 50)
+        r.drawText(font, robot.bubbleText, bx + 6.0, by + 5.0, #323232FF)
     }
     
     // === 头部起包（被打后头顶鼓包） ===
     if robot.isHeadHurt {
         float bumpSize = 4.0 + maths.sin(_float(robot.headHurtTimer) * 0.15) * 2.0
-        r.setColor(255, 180, 180, 255)
+        r.setColor(#FFB4B4FF)
         r.fillCircle(x, headY - 8.0, bumpSize)
         // 包上的高光
-        r.setColor(255, 220, 220, 255)
+        r.setColor(#FFDCDCFF)
         r.fillCircle(x - 1.0, headY - 9.0, bumpSize * 0.4)
     }
 
     // === 脸红（脸颊红色圆点） ===
     if robot.isBlushing {
         int blushAlpha = 150 + _int(maths.sin(_float(robot.frame) * 0.3) * 50.0)
-        r.setColor(255, 100, 100, blushAlpha)
+        r.setColor((blushAlpha << 24) | (255 << 16) | (100 << 8) | 100)
         r.fillCircle(x - 16.0, eyeY + 6.0, 4.0)
         r.fillCircle(x + 16.0, eyeY + 6.0, 4.0)
     }
@@ -323,7 +323,7 @@ func drawRobot(Renderer r, Robot robot, Font font) {
             if size < 1.0 { size = 1.0 }
             int alpha = 240 - i * 10
             if alpha < 90 { alpha = 90 }
-            r.setColor(255, 255, 100, alpha)
+            r.setColor((alpha << 24) | (255 << 16) | (255 << 8) | 100)
             r.fillCircle(px, py, size)
         }
 
@@ -335,7 +335,7 @@ func drawRobot(Renderer r, Robot robot, Font font) {
             float sx = landX + spread
             float sy = landY - maths.sin(tt * 3.14159) * 7.0
             float sr = 3.2 * (1.0 - tt) + 1.0
-            r.setColor(255, 255, 80, 210)
+            r.setColor(#FFFF50D2)
             r.fillCircle(sx, sy, sr)
         }
     }
@@ -348,7 +348,7 @@ func drawRobot(Renderer r, Robot robot, Font font) {
             if a > 255 { a = 255 }
             if a < 0 { a = 0 }
         }
-        r.setColor(p.r, p.g, p.b, a)
+        r.setColor((a << 24) | (p.r << 16) | (p.g << 8) | p.b)
         r.fillCircle(p.x, p.y, 2.0)
     }
 
@@ -725,7 +725,7 @@ main() {
             robot.fwParticles = fwAlive
             
             // 透明背景
-            r.setColor(0, 0, 0, 0)
+            r.setColor(#00000000)
             r.clear()
             
             // 绘制机器人

@@ -30,9 +30,9 @@ export struct ScrollView impl Widget {
     float _step = 24.0                    // 每格滚轮滚动像素
 
     // 外观
-    int br = 38, bg = 40, bb = 48
-    int _bdrR = 80, _bdrG = 85, _bdrB = 100
-    int _sbR = 120, _sbG = 125, _sbB = 140           // 滚动条颜色
+    int _bgColor = #262830FF
+    int _bdrColor = #505A64FF
+    int _sbColor = #787D8CFF           // 滚动条颜色
     float _radius = 8.0
     int _brdA = 200
     bool _drawBorder = true
@@ -51,19 +51,19 @@ export struct ScrollView impl Widget {
 
     func set(Dict opts) {
         Theme th = theme.getTheme()
-        br = th.bgR; bg = th.bgG; bb = th.bgB
-        _bdrR = th.borderR; _bdrG = th.borderG; _bdrB = th.borderB
-        _sbR = th.sbR; _sbG = th.sbG; _sbB = th.sbB
+        _bgColor = th.bg
+        _bdrColor = th.border
+        _sbColor = th.sb
         x = opts.get("x", 0)
         y = opts.get("y", 0)
         w = opts.get("w", 300)
         h = opts.get("h", 200)
         _radius = opts.get("radius", 8.0)
-        var bgc = opts.get("bg_rgb")
-        if bgc is Array[int] { br = bgc[0]; bg = bgc[1]; bb = bgc[2] }
+        var bgc = opts.get("bg_color")
+        if bgc is int { _bgColor = bgc }
         // 默认色见字段声明，仅当 opts 指定时覆盖
-        var bdc = opts.get("border_rgb")
-        if bdc is Array[int] { _bdrR = bdc[0]; _bdrG = bdc[1]; _bdrB = bdc[2] }
+        var bdc = opts.get("border_color")
+        if bdc is int { _bdrColor = bdc }
         _brdA = opts.get("border_alpha", 200)
         _drawBorder = opts.get("border", true)
         _contentW = opts.get("content_w", -1.0)
@@ -119,7 +119,7 @@ export struct ScrollView impl Widget {
         }
         return c.get_h()
     }
-    func set_bg(int r, int g, int b) { br = r; bg = g; bb = b }
+    func set_bg_color(int color) { _bgColor = color }
 
     // ---- 滚动范围与约束 ----
     func _vmax(): float { return if _contentH - h < 0.0 then 0.0 else _contentH - h }
@@ -320,18 +320,18 @@ export struct ScrollView impl Widget {
             float gw = _barW
             float tx = x + w - gw
             float gh = if _showH() then _barW else 0.0
-            r.setColor(_sbR, _sbG, _sbB, 255)
+            r.setColor(_sbColor)
             r.fillRoundedRect(tx, y, gw, h - gh, gw / 2.0)
-            r.setColor(_sbR + 40, _sbG + 40, _sbB + 40, 255)
+            r.setColor(theme.brighten(_sbColor, 40))
             r.fillRoundedRect(tx + 2.0, _vThumbY, gw - 4.0, _vThumbH, (gw - 4.0) / 2.0)
         }
         if _showH() {
             float gh = _barW
             float ty = y + h - gh
             float gw = if _showV() then _barW else 0.0
-            r.setColor(_sbR, _sbG, _sbB, 255)
+            r.setColor(_sbColor)
             r.fillRoundedRect(x, ty, w - gw, gh, gh / 2.0)
-            r.setColor(_sbR + 40, _sbG + 40, _sbB + 40, 255)
+            r.setColor(theme.brighten(_sbColor, 40))
             r.fillRoundedRect(_hThumbX, ty + 2.0, _hThumbW, gh - 4.0, (gh - 4.0) / 2.0)
         }
     }
@@ -340,7 +340,7 @@ export struct ScrollView impl Widget {
         if not _loaded or not enabled or not visible { return }
         _sync()
         // 背景
-        r.setColor(br, bg, bb, 255)
+        r.setColor(_bgColor)
         r.fillRoundedRect(x, y, w, h, _radius)
         // 裁剪到视口（扣除滚动条槽，避免内容画到槽下）
         float gw = if _showV() then _barW else 0.0
@@ -355,7 +355,7 @@ export struct ScrollView impl Widget {
         _drawScrollbars(r)
         // 边框
         if _drawBorder {
-            r.setColor(_bdrR, _bdrG, _bdrB, _brdA)
+            r.setColor(theme.withAlpha(_bdrColor, _brdA))
             r.drawRoundedRect(x, y, w, h, _radius)
         }
     }

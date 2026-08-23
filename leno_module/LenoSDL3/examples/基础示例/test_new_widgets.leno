@@ -9,12 +9,12 @@ main() {
     win.setResizable(true)
 
     // ================================================================
-    // 1. GroupBox: 分组容器 — 测试 title / radius / bg_rgb / border_rgb / title_rgb / clip
+    // 1. GroupBox: 分组容器 — 测试 title / radius / bg_color / border_color / title_color / clip
     // ================================================================
     var gb1 = win.addGroupBox({
         title: "1. GroupBox 基础属性", x: 10, y: 10, w: 460, h: 200,
-        radius: 10.0, title_pad: 12.0, border_alpha: 220,
-        bg_rgb: [40, 42, 50], border_rgb: [100, 120, 160], title_rgb: [255, 200, 80]
+        radius: 10.0, title_pad: 12.0,
+        bg_color: #282A32FF, border_color: #6478A0DC, title_color: #FFC850FF
     })
 
     // ================================================================
@@ -37,8 +37,8 @@ main() {
         x: 155, y: 40, w: 120, h: 100,
         image_mode: 1,        // stretch
         border: true, radius: 4.0,
-        border_rgb: [200, 80, 80], border_alpha: 255,
-        bg_rgb: [30, 30, 40]
+        border_color: #C85050FF,
+        bg_color: #1E1E28FF
     })
     gb1.add(iv2)
 
@@ -48,7 +48,7 @@ main() {
         image_mode: 2,        // aspectFill
         border: true, radius: 6.0,
         alpha: 180,
-        image_tint: [100, 255, 100]
+        image_tint: #64FF64FF
     })
     gb1.add(iv3)
 
@@ -56,8 +56,8 @@ main() {
     var iv4 = win.addImageView({
         x: 20, y: 150, w: 390, h: 40,
         image_mode: 1,
-        border: true, border_rgb: [60, 60, 80],
-        bg_rgb: [20, 20, 30],
+        border: true, border_color: #3C3C50FF,
+        bg_color: #14141EFF,
         tip: "无图片占位"
     })
     gb1.add(iv4)
@@ -66,9 +66,9 @@ main() {
     // 3. Separator: 分隔线 — 测试水平/垂直 + 粗细 + 颜色 + margin
     // ================================================================
     var sepH1 = win.addSeparator({x: 10, y: 220, w: 460, dir: 0, thickness: 1, margin: 10.0})
-    var sepH2 = win.addSeparator({x: 10, y: 228, w: 460, dir: 0, thickness: 3, rgb: [180, 80, 80], alpha: 255})
-    var sepV1 = win.addSeparator({x: 480, y: 10, dir: 1, h: 350, thickness: 2, margin: 5.0, rgb: [80, 180, 80], alpha: 200})
-    var sepV2 = win.addSeparator({x: 940, y: 10, dir: 1, h: 700, thickness: 1, rgb: [80, 80, 180], alpha: 120})
+    var sepH2 = win.addSeparator({x: 10, y: 228, w: 460, dir: 0, thickness: 3, color: #B45050FF, alpha: 255})
+    var sepV1 = win.addSeparator({x: 480, y: 10, dir: 1, h: 350, thickness: 2, margin: 5.0, color: #50B450FF, alpha: 200})
+    var sepV2 = win.addSeparator({x: 940, y: 10, dir: 1, h: 700, thickness: 1, color: #5050B4FF, alpha: 120})
 
     // ================================================================
     // 4. GroupBox 2: LinkButton 专区
@@ -76,7 +76,7 @@ main() {
     var gb2 = win.addGroupBox({
         title: "2. LinkButton 链接按钮", x: 490, y: 10, w: 460, h: 200,
         radius: 8.0,
-        bg_rgb: [35, 38, 46], border_rgb: [90, 100, 130], title_rgb: [100, 200, 255]
+        bg_color: #23262EFF, border_color: #5A6482FF, title_color: #64C8FFFF
     })
 
     // 4a: 带URL + 始终下划线 + 默认色
@@ -90,7 +90,7 @@ main() {
     gb2.add(lb2)
 
     // 4c: 自定义颜色 + 已访问状态
-    var lb3 = win.addLinkButton({text: "自定义颜色", x: 505, y: 105, font_size: 15, rgb: [255, 200, 0], hover_rgb: [255, 100, 0], visited: true})
+    var lb3 = win.addLinkButton({text: "自定义颜色", x: 505, y: 105, font_size: 15, color: #FFC800FF, hover_color: #FF6400FF, visited: true})
     lb3.on_click(func() { print("[LinkButton] 自定义颜色点击") })
     gb2.add(lb3)
 
@@ -109,7 +109,7 @@ main() {
     var gb3 = win.addGroupBox({
         title: "3. Spinner 加载动画", x: 10, y: 240, w: 460, h: 160,
         radius: 8.0,
-        bg_rgb: [38, 40, 48], border_rgb: [100, 90, 130]
+        bg_color: #262830FF, border_color: #645A82FF
     })
 
     // 5a: 默认运行 + full_track
@@ -117,15 +117,15 @@ main() {
     gb3.add(sp1)
 
     // 5b: 自定义颜色 + 更快速度
-    var sp2 = win.addSpinner({x: 110, y: 290, size: 40, thickness: 4.0, speed: 720.0, running: true, full_track: false, rgb: [255, 100, 50], track_rgb: [60, 60, 60], track_alpha: 120})
+    var sp2 = win.addSpinner({x: 110, y: 290, size: 40, thickness: 4.0, speed: 720.0, running: true, full_track: false, color: #FF6432FF, track_color: #3C3C3CFF, track_alpha: 120})
     gb3.add(sp2)
 
     // 5c: 停止状态
-    var sp3 = win.addSpinner({x: 190, y: 290, size: 40, thickness: 3.0, running: false, full_track: true, rgb: [100, 255, 100]})
+    var sp3 = win.addSpinner({x: 190, y: 290, size: 40, thickness: 3.0, running: false, full_track: true, color: #64FF64FF})
     gb3.add(sp3)
 
     // 5d: 大尺寸 + 慢速
-    var sp4 = win.addSpinner({x: 280, y: 275, size: 60, thickness: 5.0, speed: 90.0, running: true, full_track: true, rgb: [200, 100, 255], track_rgb: [40, 40, 50], track_alpha: 60})
+    var sp4 = win.addSpinner({x: 280, y: 275, size: 60, thickness: 5.0, speed: 90.0, running: true, full_track: true, color: #C864FFFF, track_color: #282832FF, track_alpha: 60})
     gb3.add(sp4)
 
     // ================================================================
@@ -134,19 +134,19 @@ main() {
     var gb4 = win.addGroupBox({
         title: "4. 运行时属性切换 (按 1/2/3/4 切换)", x: 490, y: 220, w: 460, h: 480,
         radius: 8.0,
-        bg_rgb: [30, 32, 40], border_rgb: [80, 120, 160], title_rgb: [255, 255, 100]
+        bg_color: #1E2028FF, border_color: #5078A0FF, title_color: #FFFF64FF
     })
 
     // 6a: 可切换可见性的 ImageView
-    var ivTest = win.addImageView({x: 510, y: 260, w: 200, h: 120, image_mode: 0, border: true, radius: 6.0, border_rgb: [100, 100, 120], tip: "按1切换可见性"})
+    var ivTest = win.addImageView({x: 510, y: 260, w: 200, h: 120, image_mode: 0, border: true, radius: 6.0, border_color: #646478FF, tip: "按1切换可见性"})
     gb4.add(ivTest)
 
     // 6b: 可切换方向的 Separator
-    var sepTest = win.addSeparator({x: 730, y: 260, dir: 1, h: 120, thickness: 2, rgb: [200, 200, 0], alpha: 255})
+    var sepTest = win.addSeparator({x: 730, y: 260, dir: 1, h: 120, thickness: 2, color: #C8C800FF, alpha: 255})
     gb4.add(sepTest)
 
     // 6c: 可切换运行状态的 Spinner
-    var spTest = win.addSpinner({x: 510, y: 400, size: 50, thickness: 4.0, speed: 360.0, running: true, full_track: true, rgb: [100, 200, 255]})
+    var spTest = win.addSpinner({x: 510, y: 400, size: 50, thickness: 4.0, speed: 360.0, running: true, full_track: true, color: #64C8FFFF})
     gb4.add(spTest)
 
     // 6d: 可切换文字的 LinkButton
@@ -155,12 +155,12 @@ main() {
     gb4.add(lbTest)
 
     // 6e: GroupBox 嵌套测试
-    var gbNested = win.addGroupBox({title: "嵌套 GroupBox", x: 510, y: 510, w: 420, h: 170, radius: 6.0, bg_rgb: [50, 52, 60], border_rgb: [120, 80, 160]})
-    var nestedSep = win.addSeparator({x: 525, y: 550, w: 390, dir: 0, thickness: 2, rgb: [160, 80, 160], alpha: 200})
+    var gbNested = win.addGroupBox({title: "嵌套 GroupBox", x: 510, y: 510, w: 420, h: 170, radius: 6.0, bg_color: #32343CFF, border_color: #7850A0FF})
+    var nestedSep = win.addSeparator({x: 525, y: 550, w: 390, dir: 0, thickness: 2, color: #A050A0FF, alpha: 200})
     gbNested.add(nestedSep)
     var nestedLb = win.addLinkButton({text: "嵌套链接", x: 525, y: 570, font_size: 14})
     gbNested.add(nestedLb)
-    var nestedSp = win.addSpinner({x: 650, y: 565, size: 28, thickness: 2.5, speed: 540.0, running: true, full_track: true, rgb: [255, 160, 80]})
+    var nestedSp = win.addSpinner({x: 650, y: 565, size: 28, thickness: 2.5, speed: 540.0, running: true, full_track: true, color: #FFA050FF})
     gbNested.add(nestedSp)
     gb4.add(gbNested)
 
@@ -202,7 +202,7 @@ main() {
                 lbToggle = lbToggle + 1
                 if lbToggle % 3 == 0 { lbTest.set_text("初始文字 (按4切换)") }
                 else if lbToggle % 3 == 1 { lbTest.set_text("已访问状态") ; lbTest.set_visited(true) }
-                else { lbTest.set_text("重置颜色") ; lbTest.set_visited(false) ; lbTest.set_text_rgb(100, 255, 100) }
+                else { lbTest.set_text("重置颜色") ; lbTest.set_visited(false) ; lbTest.set_text_color(#64FF64FF) }
                 print("[切换] LinkButton toggle=" + lbToggle)
             }
         }

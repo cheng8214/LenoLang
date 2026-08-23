@@ -6,7 +6,7 @@ import "sdl_core.leno" as core; use core.(SystemCursor, sdl3)
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_image.leno" as img
 import "sdl_tooltip.leno" as tip
-import "sdl_theme.leno" as theme; use theme.Theme
+import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 
 export struct ImageView impl Widget {
     // ==================== 关联常量 ====================
@@ -20,11 +20,11 @@ export struct ImageView impl Widget {
     int _mode = MODE_ASPECT_FIT    // 内容模式（MODE_ASPECT_FIT/STRETCH/ASPECT_FILL）
     float _radius = 0.0             // 圆角半径
     bool _showBorder = false        // 是否显示边框
-    int _bdrR = 90, _bdrG = 95, _bdrB = 110  // 边框色
+    int _bdrColor = #5A5F6EFF  // 边框色
     int _brdA = 200                 // 边框透明度
-    int _bgR = 0, _bgG = 0, _bgB = 0         // 背景填充色（0=透明不填充）
+    int _bgColor = 0         // 背景填充色（0=透明不填充）
     int _alpha = 255                // 图片透明度 0~255
-    int _tintR = -1, _tintG = -1, _tintB = -1  // 着色（-1=不着色）
+    int _tint = -1  // 着色（-1=不着色，其余为 #RRGGBBAA 着色）
     int _cursor = -1                // 鼠标样式（-1=不改变，SystemCursor.POINTER=手型）
     func():void _onClick            // 点击回调
     bool hover = false, _wasHover = false
@@ -36,7 +36,7 @@ export struct ImageView impl Widget {
 
     func set(Dict opts) {
         Theme th = theme.getTheme()
-        _bdrR = th.borderR; _bdrG = th.borderG; _bdrB = th.borderB
+        _bdrColor = th.border
         x      = opts.get("x", 0)
         y      = opts.get("y", 0)
         _w     = opts.get("w", 100)
@@ -50,13 +50,13 @@ export struct ImageView impl Widget {
         enabled = opts.get("enabled", true)
         visible = opts.get("visible", true)
         _tip = opts.get("tip", "")
-        var bgc = opts.get("bg_rgb")
-        if bgc is Array[int] { _bgR = bgc[0]; _bgG = bgc[1]; _bgB = bgc[2] }
-        var bdc = opts.get("border_rgb")
-        if bdc is Array[int] { _bdrR = bdc[0]; _bdrG = bdc[1]; _bdrB = bdc[2] }
+        var bgc = opts.get("bg_color")
+        if bgc is int { _bgColor = bgc }
+        var bdc = opts.get("border_color")
+        if bdc is int { _bdrColor = bdc }
         _brdA = opts.get("border_alpha", 200)
         var tint = opts.get("image_tint")
-        if tint is Array[int] { _tintR = tint[0]; _tintG = tint[1]; _tintB = tint[2] }
+        if tint is int { _tint = tint }
         _tex = null; _loadedPath = ""
         _loaded = true
     }
@@ -70,7 +70,7 @@ export struct ImageView impl Widget {
     func set_radius(float r) { _radius = r }
     func set_border(bool b) { _showBorder = b }
     func set_alpha(int a) { _alpha = a }
-    func set_tint(int r, int g, int b) { _tintR = r; _tintG = g; _tintB = b }
+    func set_tint(int color) { _tint = color }
     func set_cursor(int c) { _cursor = c }
     func set_enabled(bool e) { enabled = e }
     func set_visible(bool v) { visible = v }
@@ -135,8 +135,8 @@ export struct ImageView impl Widget {
         _ensure_tex(r)
 
         // 背景填充（可选）
-        if _bgR > 0 or _bgG > 0 or _bgB > 0 {
-            r.setColor(_bgR, _bgG, _bgB, 255)
+        if _bgColor != 0 {
+            r.setColor(_bgColor)
             if _radius > 0.0 { r.fillRoundedRect(x, y, _w, _h, _radius) }
             else { r.fillRect(x, y, _w, _h) }
         }
@@ -144,8 +144,8 @@ export struct ImageView impl Widget {
         // 图片绘制
         if _tex != null {
             r.setTextureAlpha(_tex, _alpha)
-            if _tintR >= 0 { r.setTextureColor(_tex, _tintR, _tintG, _tintB) }
-            else { r.setTextureColor(_tex, 255, 255, 255) }
+            if _tint >= 0 { r.setTextureColor(_tex, _tint) }
+            else { r.setTextureColor(_tex, #FFFFFFFF) }
 
             float dw = _w; float dh = _h
             float dx = x; float dy = y
@@ -173,13 +173,11 @@ export struct ImageView impl Widget {
 
         // 边框
         if _showBorder {
-            int br = _bdrR; int bg = _bdrG; int bb = _bdrB
+            int bc = _bdrColor
             int ba = _brdA
-            if hover { br = br + 30; bg = bg + 30; bb = bb + 30
-                       if br > 255 { br = 255 }; if bg > 255 { bg = 255 }; if bb > 255 { bb = 255 }
-                       ba = 255 }
-            if not enabled { br = br / 2; bg = bg / 2; bb = bb / 2 }
-            r.setColor(br, bg, bb, ba)
+            if hover { bc = theme.brighten(_bdrColor, 30); ba = 255 }
+            if not enabled { bc = theme.packColor(theme.colorR(_bdrColor) / 2, theme.colorG(_bdrColor) / 2, theme.colorB(_bdrColor) / 2) }
+            r.setColor(theme.withAlpha(bc, ba))
             if _radius > 0.0 { r.drawRoundedRect(x, y, _w, _h, _radius) }
             else { r.drawRect(x, y, _w, _h) }
         }

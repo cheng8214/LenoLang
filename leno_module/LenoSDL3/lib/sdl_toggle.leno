@@ -6,7 +6,7 @@ import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.SystemCursor
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
-import "sdl_theme.leno" as theme; use theme.Theme
+import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 
 export struct Toggle impl Widget {
     string text = ""
@@ -17,11 +17,11 @@ export struct Toggle impl Widget {
     int _fontStyle = 0
     Font? _font
     bool _on = false
-    int _onR = 60, _onG = 170, _onB = 245
-    int _offR = 70, _offG = 70, _offB = 82
-    int tr = 235, tg = 235, tb = 245
-    int _knobR = 245, _knobG = 245, _knobB = 250       // 滑块填充色
-    int _knobBrdR = 200, _knobBrdG = 200, _knobBrdB = 210 // 滑块边框色（浅色主题下确保可见）
+    int _onColor = #3CAAF5FF
+    int _offColor = #464652FF
+    int _txtColor = #EBEBF5FF
+    int _knobColor = #FFFFFFFF       // 滑块填充色
+    int _knobBrdColor = #C8C8D2FF // 滑块边框色（浅色主题下确保可见）
     int _cursor = SystemCursor.DEFAULT
     bool hover = false, _wasHover = false, _pressed = false, enabled = true, visible = true, _loaded = false
     string _tip = ""           // 悬停提示文本（空 = 不提示）
@@ -43,11 +43,11 @@ export struct Toggle impl Widget {
 
     func set(Dict opts) {
         Theme th = theme.getTheme()
-        _onR = th.accentR; _onG = th.accentG; _onB = th.accentB
-        _offR = th.bgAltR; _offG = th.bgAltG; _offB = th.bgAltB
-        tr = th.txtR; tg = th.txtG; tb = th.txtB
-        _knobR = th.txtOnAccentR; _knobG = th.txtOnAccentG; _knobB = th.txtOnAccentB
-        _knobBrdR = th.borderR; _knobBrdG = th.borderG; _knobBrdB = th.borderB
+        _onColor = th.accent
+        _offColor = th.bgAlt
+        _txtColor = th.txt
+        _knobColor = th.txtOnAccent
+        _knobBrdColor = th.border
         text      = opts.get("text", "")
         x         = opts.get("x", 0)
         y         = opts.get("y", 0)
@@ -57,15 +57,15 @@ export struct Toggle impl Widget {
         _fontPath = opts.get("font_path", "")
         _fontStyle = opts.get("font_style", 0)
 
-        // 默认颜色见字段声明（_onR/_onG/_onB/_offR/_offG/_offB/tr/tg/tb 均有默认，以下仅 opts 覆盖）
+        // 默认颜色见字段声明，以下仅 opts 覆盖
 
-        // 颜色可被 dict 覆盖（[r,g,b]）
-        var onc = opts.get("on_rgb")
-        if onc is Array[int] { _onR = onc[0]; _onG = onc[1]; _onB = onc[2] }
-        var ofc = opts.get("off_rgb")
-        if ofc is Array[int] { _offR = ofc[0]; _offG = ofc[1]; _offB = ofc[2] }
-        var ttc = opts.get("text_rgb")
-        if ttc is Array[int] { tr = ttc[0]; tg = ttc[1]; tb = ttc[2] }
+        // 颜色可被 dict 覆盖
+        var onc = opts.get("on_color")
+        if onc is int { _onColor = onc }
+        var ofc = opts.get("off_color")
+        if ofc is int { _offColor = ofc }
+        var ttc = opts.get("text_color")
+        if ttc is int { _txtColor = ttc }
 
         _cursor = _int(opts.get("cursor", SystemCursor.DEFAULT))
         _on = opts.get("on", false)
@@ -192,13 +192,16 @@ export struct Toggle impl Widget {
         if _animating { core.requestRedraw() }
 
         // 轨道（颜色按动画位置在 关闭色↔开启色 之间平滑过渡）
-        int trkR = _int(_offR + _animPos * (_onR - _offR))
-        int trkG = _int(_offG + _animPos * (_onG - _offG))
-        int trkB = _int(_offB + _animPos * (_onB - _offB))
+        int offR = theme.colorR(_offColor); int offG = theme.colorG(_offColor); int offB = theme.colorB(_offColor)
+        int onR  = theme.colorR(_onColor);  int onG  = theme.colorG(_onColor);  int onB  = theme.colorB(_onColor)
+        int trkR = _int(offR + _animPos * (onR - offR))
+        int trkG = _int(offG + _animPos * (onG - offG))
+        int trkB = _int(offB + _animPos * (onB - offB))
+        int trkA = _int(theme.colorA(_offColor) + _animPos * (theme.colorA(_onColor) - theme.colorA(_offColor)))
         if hover { trkR = trkR + 20; trkG = trkG + 20; trkB = trkB + 20
                    if trkR > 255 { trkR = 255 }; if trkG > 255 { trkG = 255 }; if trkB > 255 { trkB = 255 } }
-        if not enabled { trkR = _offR / 2; trkG = _offG / 2; trkB = _offB / 2 }
-        r.setColor(trkR, trkG, trkB, 255)
+        if not enabled { trkR = offR / 2; trkG = offG / 2; trkB = offB / 2 }
+        r.setColor(theme.packColor(trkR, trkG, trkB, trkA))
         r.fillRoundedRect(x, y, w, h, h / 2.0)
 
         // 滑块（按动画位置在 左↔右 之间平滑滑动）
@@ -206,18 +209,18 @@ export struct Toggle impl Widget {
         float kxOff = x + 3.0
         float kxOn  = x + w - 3.0 - knob
         float kx = kxOff + _animPos * (kxOn - kxOff)
-        r.setColor(_knobR, _knobG, _knobB, 255)
+        r.setColor(_knobColor)
         r.fillRoundedRect(kx, y + 3.0, knob, knob, knob / 2.0)
         // 浅色主题下滑块可能与轨道重合，添加边框确保可见
-        r.setColor(_knobBrdR, _knobBrdG, _knobBrdB, 130)
+        r.setColor(theme.withAlpha(_knobBrdColor, 130))
         r.drawRoundedRect(kx, y + 3.0, knob, knob, knob / 2.0)
 
         // 文字
         if _font != null and _font.ok and text != "" {
             float cy = y + (h - _fontH) / 2.0
-            int tcR = tr, tcG = tg, tcB = tb
-            if not enabled { tcR = tr / 2; tcG = tg / 2; tcB = tb / 2 }
-            r.drawText(_font, text, x + w + 10.0, cy, tcR, tcG, tcB)
+            int tc = _txtColor
+            if not enabled { tc = theme.packColor(theme.colorR(_txtColor) / 2, theme.colorG(_txtColor) / 2, theme.colorB(_txtColor) / 2) }
+            r.drawText(_font, text, x + w + 10.0, cy, tc)
         }
     }
 

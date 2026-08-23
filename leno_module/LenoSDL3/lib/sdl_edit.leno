@@ -22,10 +22,10 @@ bool _drawBorder = true          // 是否绘制边框（嵌入 ComboBox 时设�
     int _fontStyle = 0
     Font? _font                    // 字体缓存
     Ptr[u8]? _hwnd                   // 窗口句柄（IME 定位）
-    int cr = 35, cg = 35, cb = 50                // 背景色（默认深色主题）
-    int tr = 220, tg = 220, tb = 240             // 文字色（默认浅色）
-    int _focusR = 100, _focusG = 180, _focusB = 255 // 聚焦边框色
-    int _sbR = 120, _sbG = 125, _sbB = 140           // 滚动条颜色
+    int _bgColor = #232332FF             // 背景色（默认深色主题）
+    int _txtColor = #DCDCF0FF           // 文字色（默认浅色）
+    int _focusColor = #64B4FFFF          // 聚焦边框色
+    int _sbColor = #787D8CFF             // 滚动条颜色
 
     // 单行模式
     int _cursorPos = 0               // 光标字符位置（单行）
@@ -242,10 +242,10 @@ bool _drawBorder = true          // 是否绘制边框（嵌入 ComboBox 时设�
     func set(Dict opts) {
         // 主题默认配色（opts 覆盖优先级更高）
         Theme th = theme.getTheme()
-        cr = th.bgInputR; cg = th.bgInputG; cb = th.bgInputB
-        tr = th.txtInputR; tg = th.txtInputG; tb = th.txtInputB
-        _focusR = th.accentFocusR; _focusG = th.accentFocusG; _focusB = th.accentFocusB
-        _sbR = th.sbR; _sbG = th.sbG; _sbB = th.sbB
+        _bgColor = th.bgInput
+        _txtColor = th.txtInput
+        _focusColor = th.accentFocus
+        _sbColor = th.sb
         text        = opts.get("text", "")
         x           = opts.get("x", 0)
         y           = opts.get("y", 0)
@@ -259,12 +259,12 @@ _drawBorder = opts.get("border", true)
         _fontStyle  = opts.get("font_style", 0)
 
         // 颜色（默认值见字段声明，仅当 opts 指定时覆盖）
-        var c = opts.get("bg_rgb")
-        if c is Array[int] { cr = c[0]; cg = c[1]; cb = c[2] }
-        var tc = opts.get("text_rgb")
-        if tc is Array[int] { tr = tc[0]; tg = tc[1]; tb = tc[2] }
-        var fc = opts.get("focus_rgb")
-        if fc is Array[int] { _focusR = fc[0]; _focusG = fc[1]; _focusB = fc[2] }
+        var c = opts.get("bg_color")
+        if c is int { _bgColor = c }
+        var tc = opts.get("text_color")
+        if tc is int { _txtColor = tc }
+        var fc = opts.get("focus_color")
+        if fc is int { _focusColor = fc }
 
         _placeholder = opts.get("placeholder", "")
         _tip = opts.get("tip", "")
@@ -335,8 +335,8 @@ _drawBorder = opts.get("border", true)
     func set_size(float sw, float sh)   { w = sw; h = sh; _invalidate_sb(); _adjust_scroll() }
     func get_w(): float                 { return w }
     func get_h(): float                 { return h }
-    func set_bg(int r, int g, int b)    { cr = r; cg = g; cb = b }
-    func set_text_rgb(int r, int g, int b) { tr = r; tg = g; tb = b }
+    func set_bg_color(int color)         { _bgColor = color }
+    func set_text_color(int color)       { _txtColor = color }
     func set_font_size(float s) {
         _fontSize = s
         if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
@@ -1508,14 +1508,14 @@ _drawBorder = opts.get("border", true)
 
         // 背景（由 draw_bg 选项控制：ComboBox/SpinBox 嵌入时可关闭，Table 内嵌时开启以遮住单元格文字）
         if _drawBg {
-            r.setColor(cr, cg, cb, 255)
+            r.setColor(_bgColor)
             r.fillRoundedRect(x, y, w, h, _radius)
         }
 
         // 边框（由 border 选项控制是否绘制）
         if _drawBorder {
-            if _focused { r.setColor(_focusR, _focusG, _focusB, 255) }
-            else         { r.setColor(cr + 40, cg + 40, cb + 40, 220) }
+            if _focused { r.setColor(_focusColor) }
+            else         { r.setColor(theme.brighten(_bgColor, 40)) }
             r.drawRoundedRect(x, y, w, h, _radius)
         }
 
@@ -1558,7 +1558,7 @@ _drawBorder = opts.get("border", true)
             float ex = r.snapX(x + pad + _text_width_to(se) - _scrollX)
             float rx = sx; float rw = ex - sx
             if rw < 0 { rx = ex; rw = -rw }
-            r.setColor(60, 100, 180, 180)
+            r.setColor(#3C64B4B4)
             r.fillRect(rx, r.snapY(ty), rw, textH)
         }
 
@@ -1567,9 +1567,9 @@ _drawBorder = opts.get("border", true)
             var ms = _font.measureString(_placeholder)
             float py = y + (h - ms.h) / 2.0
             r.drawText(_font, _placeholder, r.snapX(x + pad), r.snapY(py),
-                       tr / 2 + 50, tg / 2 + 50, tb / 2 + 50)
+                       theme.darken(_txtColor, 80))
         } else if text != "" {
-            r.drawText(_font, display, r.snapX(x + pad - _scrollX), r.snapY(ty), tr, tg, tb)
+            r.drawText(_font, display, r.snapX(x + pad - _scrollX), r.snapY(ty), _txtColor)
         }
 
         // 光标（与文字同高、垂直对齐；画在裁剪区域内，与 _render_ml 行为一致，
@@ -1578,7 +1578,7 @@ _drawBorder = opts.get("border", true)
             float cx = r.snapX(x + pad + _text_width_to(_cursorPos) - _scrollX)
             if cx < x + pad { cx = x + pad }
             if cx > x + w - pad { cx = x + w - pad }
-            r.setColor(tr, tg, tb, 200)
+            r.setColor(theme.withAlpha(_txtColor, 200))
             r.drawLine(cx, r.snapY(ty), cx, r.snapY(ty + textH))
         }
 
@@ -1635,7 +1635,7 @@ _drawBorder = opts.get("border", true)
                 var ms2 = _font.measureString(full.slice(c0, c0 + colE))
                 float sx = r.snapX(x + pad + ms1.w - _scrollX), ew = ms2.w - ms1.w, sy = r.snapY(y + pad + di * _lineHeight - _scrollY)
                 if ew < 0 { ew = 0 }
-                r.setColor(60, 100, 180, 180)
+                r.setColor(#3C64B4B4)
                 r.fillRect(sx, sy, ew, _lineHeight)
             }
         }
@@ -1649,7 +1649,7 @@ _drawBorder = opts.get("border", true)
                 var wraps = _wrap_line(seg, visW)
                 for wraps.len() to wi {
                     float ly = y + pad + dy * _lineHeight - _scrollY
-                    r.drawText(_font, wraps[wi], r.snapX(x + pad), r.snapY(ly), tr / 2 + 50, tg / 2 + 50, tb / 2 + 50)
+                    r.drawText(_font, wraps[wi], r.snapX(x + pad), r.snapY(ly), theme.darken(_txtColor, 80))
                     dy += 1
                 }
             }
@@ -1660,7 +1660,7 @@ _drawBorder = opts.get("border", true)
                 var seg = _lines[li].slice(c0, c1)
                 if _password { seg = "*".rep(seg.len()) }
                 float ly = y + pad + di * _lineHeight - _scrollY
-                r.drawText(_font, seg, r.snapX(x + pad - _scrollX), r.snapY(ly), tr, tg, tb)
+                r.drawText(_font, seg, r.snapX(x + pad - _scrollX), r.snapY(ly), _txtColor)
             }
         }
 
@@ -1688,7 +1688,7 @@ _drawBorder = opts.get("border", true)
                         cx = cx + _line_width_to(_cursorLine, _cursorCol) - _scrollX
                     }
                     cx = r.snapX(cx)
-                    r.setColor(tr, tg, tb, 200)
+                    r.setColor(theme.withAlpha(_txtColor, 200))
                     r.drawLine(cx, cy, cx, cy + ch)
                 }
             } else {
@@ -1697,7 +1697,7 @@ _drawBorder = opts.get("border", true)
                 var ms = _font.measureString("Ag")
                 float ch = ms.h
                 float cx = r.snapX(x + pad)
-                r.setColor(tr, tg, tb, 200)
+                r.setColor(theme.withAlpha(_txtColor, 200))
                 r.drawLine(cx, cy, cx, cy + ch)
             }
         }
@@ -1709,7 +1709,7 @@ _drawBorder = opts.get("border", true)
             float sbX = x + w - sbW - 4.0
             float contentH = _content_height()
 
-            r.setColor(_sbR, _sbG, _sbB, 180)
+            r.setColor(theme.withAlpha(_sbColor, 180))
             r.fillRoundedRect(sbX, y + pad, sbW, visH, sbW / 2.0)
 
             float thumbH = visH * visH / contentH
@@ -1720,9 +1720,9 @@ _drawBorder = opts.get("border", true)
             if thumbY + thumbH > y + pad + visH { thumbY = y + pad + visH - thumbH }
 
             if _hoverVScroll or _draggingVScroll {
-                r.setColor(_sbR + 40, _sbG + 40, _sbB + 40, 240)
+                r.setColor(theme.brighten(_sbColor, 40))
             } else {
-                r.setColor(_sbR, _sbG, _sbB, 220)
+                r.setColor(theme.withAlpha(_sbColor, 220))
             }
             r.fillRoundedRect(sbX, thumbY, sbW, thumbH, sbW / 2.0)
         }
@@ -1732,7 +1732,7 @@ _drawBorder = opts.get("border", true)
             float sbY = y + h - sbH - 4.0
             float maxLineW = _max_line_width() + 8.0
 
-            r.setColor(_sbR, _sbG, _sbB, 180)
+            r.setColor(theme.withAlpha(_sbColor, 180))
             r.fillRoundedRect(x + pad, sbY, visW, sbH, sbH / 2.0)
 
             float thumbW = visW * visW / maxLineW
@@ -1744,9 +1744,9 @@ _drawBorder = opts.get("border", true)
             if thumbX + thumbW > x + pad + visW { thumbX = x + pad + visW - thumbW }
 
             if _hoverHScroll or _draggingHScroll {
-                r.setColor(_sbR + 40, _sbG + 40, _sbB + 40, 240)
+                r.setColor(theme.brighten(_sbColor, 40))
             } else {
-                r.setColor(_sbR, _sbG, _sbB, 220)
+                r.setColor(theme.withAlpha(_sbColor, 220))
             }
             r.fillRoundedRect(thumbX, sbY, thumbW, sbH, sbH / 2.0)
         }
@@ -1755,7 +1755,7 @@ _drawBorder = opts.get("border", true)
         if sbW > 0.0 and sbH > 0.0 {
             float cornerX = x + w - sbW - 4.0
             float cornerY = y + h - sbH - 4.0
-            r.setColor(_sbR, _sbG, _sbB, 200)
+            r.setColor(theme.withAlpha(_sbColor, 200))
             r.fillRoundedRect(cornerX, cornerY, sbW, sbH, sbW / 2.0)
         }
     }
@@ -1890,10 +1890,10 @@ _drawBorder = opts.get("border", true)
 
 // ==================== 运行时主题切换 ====================
 func applyTheme(Theme t) {
-cr = t.bgInputR; cg = t.bgInputG; cb = t.bgInputB
-tr = t.txtInputR; tg = t.txtInputG; tb = t.txtInputB
-_focusR = t.accentFocusR; _focusG = t.accentFocusG; _focusB = t.accentFocusB
-_sbR = t.sbR; _sbG = t.sbG; _sbB = t.sbB
+    _bgColor = t.bgInput
+    _txtColor = t.txtInput
+    _focusColor = t.accentFocus
+    _sbColor = t.sb
 }
 }
 

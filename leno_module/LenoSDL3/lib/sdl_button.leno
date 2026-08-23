@@ -28,10 +28,10 @@ export struct Button impl Widget, Themeable {
     string _fontPath = ""    // 字体路径（空则自动选择）
     int _fontStyle = 0       // 字体样式（STYLE_BOLD|STYLE_ITALIC 等）
     Font? _font              // 字体缓存
-    int cr = 60, cg = 140, cb = 220   // 背景色（默认 primary）
-    int tr = 255, tg = 255, tb = 255  // 文字色
-    int hvr = 0, hvg = 0, hvb = 0     // 悬停背景色（为 0 时自动计算）
-    int _prR = 0, _prG = 0, _prB = 0   // 按下背景色（为 0 时自动变暗）
+    int _bgColor = #3C8CDCFF   // 背景色（默认 primary）
+    int _txtColor = #FFFFFFFF  // 文字色
+    int _hovColor = 0          // 悬停背景色（为 0 时自动计算）
+    int _prColor = 0           // 按下背景色（为 0 时自动变暗）
     int _cursor = SystemCursor.POINTER   // 悬停鼠标样式（默认手型）
     func():void _onClick    // 点击回调
     bool hover = false
@@ -53,7 +53,7 @@ export struct Button impl Widget, Themeable {
     float  _imgSize = 0.0    // 图标边长（0 = 自动：取 min(h-8, 自然高)）
     float  _imgGap = 6.0     // 图标与文字间距
     int    _imgAlpha = 255   // 图标透明度 0~255
-    int    _imgTintR = -1, _imgTintG = -1, _imgTintB = -1   // 图标着色（-1 = 不着色，其余按 [r,g,b] 着色）
+    int    _imgTint = -1   // 图标着色（-1 = 不着色，其余为 #RRGGBBAA 着色）
     Ptr[u8]? _imgTex   // 图片纹理（懒加载，dispose 释放）
     string _imgLoadPath = "" // 已尝试加载的路径（避免加载失败每帧重试）
 
@@ -74,11 +74,11 @@ export struct Button impl Widget, Themeable {
     func _apply_type(string t) {
         Theme th = theme.getTheme()
         switch t {
-            case "primary"  { cr = th.btnPrimaryR;  cg = th.btnPrimaryG;  cb = th.btnPrimaryB }
-            case "danger"   { cr = th.btnDangerR;   cg = th.btnDangerG;   cb = th.btnDangerB }
-            case "success"  { cr = th.btnSuccessR;  cg = th.btnSuccessG;  cb = th.btnSuccessB }
-            case "warning"  { cr = th.btnWarningR;  cg = th.btnWarningG;  cb = th.btnWarningB }
-            case "dark"     { cr = th.btnDarkR;     cg = th.btnDarkG;     cb = th.btnDarkB }
+            case "primary"  { _bgColor = th.btnPrimary }
+            case "danger"   { _bgColor = th.btnDanger }
+            case "success"  { _bgColor = th.btnSuccess }
+            case "warning"  { _bgColor = th.btnWarning }
+            case "dark"     { _bgColor = th.btnDark }
             default {}
         }
     }
@@ -119,8 +119,8 @@ export struct Button impl Widget, Themeable {
     func set(Dict opts) {
         // 主题默认配色（opts 覆盖优先级更高）
         Theme th = theme.getTheme()
-        cr = th.btnPrimaryR; cg = th.btnPrimaryG; cb = th.btnPrimaryB
-        tr = th.txtOnAccentR; tg = th.txtOnAccentG; tb = th.txtOnAccentB
+        _bgColor = th.btnPrimary
+        _txtColor = th.txtOnAccent
         text = opts.get("text", "Button")
         x    = opts.get("x", 0)
         y    = opts.get("y", 0)
@@ -136,27 +136,27 @@ export struct Button impl Widget, Themeable {
         // 字体样式（粗体/斜体/下划线等）
         _fontStyle = opts.get("font_style", 0)
 
-        // 默认颜色见字段声明（cr/cg/cb/tr/tg/tb/hvr/hvg/hvb 均有默认，以下仅 opts 覆盖）
+        // 默认颜色见字段声明，以下仅 opts 覆盖
 
-// 预设类型（优先级低于显式 rgb）
+// 预设类型（优先级低于显式 color）
 var tp = opts.get("type")
 if tp is string { _btnType = tp; _apply_type(tp) }
 
-        // bg_rgb: 背景色 [r, g, b]
-        var c = opts.get("bg_rgb")
-        if c is Array[int] { cr = c[0]; cg = c[1]; cb = c[2] }
+        // bg_color: 背景色
+        var c = opts.get("bg_color")
+        if c is int { _bgColor = c }
 
-        // text_rgb: 文字色 [r, g, b]
-        var tc = opts.get("text_rgb")
-        if tc is Array[int] { tr = tc[0]; tg = tc[1]; tb = tc[2] }
+        // text_color: 文字色
+        var tc = opts.get("text_color")
+        if tc is int { _txtColor = tc }
 
-        // hover_rgb: 悬停背景色 [r, g, b]（不设置则自动加亮）
-        var hc = opts.get("hover_rgb")
-        if hc is Array[int] { hvr = hc[0]; hvg = hc[1]; hvb = hc[2] }
+        // hover_color: 悬停背景色（不设置则自动加亮）
+        var hc = opts.get("hover_color")
+        if hc is int { _hovColor = hc }
 
-        // pressed_rgb: 按下背景色 [r, g, b]（不设置则自动变暗）
-        var pc = opts.get("pressed_rgb")
-        if pc is Array[int] { _prR = pc[0]; _prG = pc[1]; _prB = pc[2] }
+        // pressed_color: 按下背景色（不设置则自动变暗）
+        var pc = opts.get("pressed_color")
+        if pc is int { _prColor = pc }
 
         // 外观开关
         _showShadow = opts.get("shadow", true)
@@ -187,7 +187,7 @@ if tp is string { _btnType = tp; _apply_type(tp) }
         _imgGap   = opts.get("image_gap", 6.0)
         _imgAlpha = opts.get("image_alpha", 255)
         var tint = opts.get("image_tint")
-        if tint is Array[int] { _imgTintR = tint[0]; _imgTintG = tint[1]; _imgTintB = tint[2] }
+        if tint is int { _imgTint = tint }
 
         // 内容模式 / 状态图片 / 背景图
         _imgMode        = opts.get("image_mode", IMG_ASPECT_FIT)
@@ -213,10 +213,10 @@ if tp is string { _btnType = tp; _apply_type(tp) }
     func set_bounds(float bx, float by, float bw, float bh) {
         x = bx; y = by; w = bw; h = bh
     }
-    func set_bg(int r, int g, int b)    { cr = r; cg = g; cb = b }
-    func set_text_rgb(int r, int g, int b) { tr = r; tg = g; tb = b }
-    func set_hover_rgb(int r, int g, int b) { hvr = r; hvg = g; hvb = b }
-    func set_pressed_rgb(int r, int g, int b) { _prR = r; _prG = g; _prB = b }
+    func set_bg_color(int color)         { _bgColor = color }
+    func set_text_color(int color)       { _txtColor = color }
+    func set_hover_color(int color)      { _hovColor = color }
+    func set_pressed_color(int color)     { _prColor = color }
     func set_font_size(float s) {
         _fontSize = s
         if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
@@ -256,7 +256,7 @@ if tp is string { _btnType = tp; _apply_type(tp) }
     func set_image_size(float s) { _imgSize = s }
     func set_image_gap(float g)  { _imgGap = g }
     func set_image_alpha(int a)  { _imgAlpha = a }
-    func set_image_tint(int r, int g, int b) { _imgTintR = r; _imgTintG = g; _imgTintB = b }
+    func set_image_tint(int color) { _imgTint = color }
     func set_image_hover(string path) { _imgPathHover = path; _imgTexHover = null; _imgLoadHover = "" }
     func set_image_pressed(string path) { _imgPathPressed = path; _imgTexPressed = null; _imgLoadPressed = "" }
     func set_image_disabled(string path) { _imgPathDisabled = path; _imgTexDisabled = null; _imgLoadDisabled = "" }
@@ -363,55 +363,56 @@ if tp is string { _btnType = tp; _apply_type(tp) }
         _ensure_font()
         _ensure_image(r)
 
-        int br = cr; int bg = cg; int bb = cb
-        int tr2 = tr; int tg2 = tg; int tb2 = tb
+        int bgC = _bgColor
+        int txtC = _txtColor
 
         if hover {
-            if hvr > 0 or hvg > 0 or hvb > 0 {
-                br = hvr; bg = hvg; bb = hvb
+            if _hovColor != 0 {
+                bgC = _hovColor
             } else {
-                br = cr + 40; bg = cg + 40; bb = cb + 40
+                bgC = theme.brighten(_bgColor, 40)
             }
         }
         // 按下态：优先级高于 hover，背景变暗（模拟按压凹陷感）
         if _pressed and enabled {
-            if _prR > 0 or _prG > 0 or _prB > 0 {
-                br = _prR; bg = _prG; bb = _prB
+            if _prColor != 0 {
+                bgC = _prColor
             } else {
-                br = cr - 30; bg = cg - 30; bb = cb - 30
-                if br < 0 { br = 0 }; if bg < 0 { bg = 0 }; if bb < 0 { bb = 0 }
+                bgC = theme.darken(_bgColor, 30)
             }
         }
-        if not enabled { br = cr / 2; bg = cg / 2; bb = cb / 2 }
-        if br > 255 { br = 255 }; if bg > 255 { bg = 255 }; if bb > 255 { bb = 255 }
+        if not enabled {
+            int er = theme.colorR(_bgColor) / 2
+            int eg = theme.colorG(_bgColor) / 2
+            int eb = theme.colorB(_bgColor) / 2
+            bgC = theme.packColor(er, eg, eb)
+        }
 
         // 背景/阴影/边框（_showBackground=false 时全部跳过，只显示图标）
         if _showBackground {
             // 阴影（按下时消除阴影，模拟按压贴合感）
             if _showShadow and not (_pressed and enabled) {
-                r.setColor(0, 0, 0, 40)
+                r.setColor(#00000028)
                 r.fillRoundedRect(x + 2, y + 2, w, h, _radius)
             }
 
             // 背景
-            r.setColor(br, bg, bb, 255)
+            r.setColor(bgC)
             r.fillRoundedRect(x, y, w, h, _radius)
 
             // 背景图（对齐 iOS setBackgroundImage / Android background）：覆盖在纯色背景之上、填满按钮矩形
             if _bgTex != null {
                 r.setTextureAlpha(_bgTex, 255)
-                r.setTextureColor(_bgTex, 255, 255, 255)
+                r.setTextureColor(_bgTex, #FFFFFFFF)
                 r.drawTextureAt(_bgTex, x, y, w, h)
             }
 
             // 边框（按下态使用深色内凹边框，区别于 hover 的亮色高亮边框）
             if _showBorder {
-                if _pressed and enabled { r.setColor(0, 0, 0, 150) }
-                else if hover { r.setColor(255, 255, 255, 200) }
+                if _pressed and enabled { r.setColor(#00000096) }
+                else if hover { r.setColor(#FFFFFFC8) }
                 else {
-                    int bbr = br + 30; int bbg = bg + 30; int bbb = bb + 30
-                    if bbr > 255 { bbr = 255 }; if bbg > 255 { bbg = 255 }; if bbb > 255 { bbb = 255 }
-                    r.setColor(bbr, bbg, bbb, 180)
+                    r.setColor(theme.withAlpha(theme.brighten(bgC, 30), 180))
                 }
                 r.drawRoundedRect(x, y, w, h, _radius)
             }
@@ -474,9 +475,9 @@ if tp is string { _btnType = tp; _apply_type(tp) }
             float hw = isize + 6.0
             float hh = isize + 6.0
             if _pressed {
-                r.setColor(0, 0, 0, 60)   // 按下：暗色半透明
+                r.setColor(#0000003C)   // 按下：暗色半透明
             } else {
-                r.setColor(255, 255, 255, 35)  // 悬浮：亮色半透明
+                r.setColor(#FFFFFF23)  // 悬浮：亮色半透明
             }
             r.fillRoundedRect(hx, hy, hw, hh, 4.0)
         }
@@ -487,9 +488,11 @@ if tp is string { _btnType = tp; _apply_type(tp) }
             int effA = _imgAlpha
             if imgAutoDim { effA = _int(_imgAlpha * 0.5) }
             r.setTextureAlpha(itex, effA)
-            if _imgTintR >= 0 { r.setTextureColor(itex, _imgTintR, _imgTintG, _imgTintB) }
-            else if imgAutoDim { r.setTextureColor(itex, 128, 128, 128) }   // 禁用态自动变灰
-            else { r.setTextureColor(itex, 255, 255, 255) }
+            if _imgTint >= 0 {
+                r.setTextureColor(itex, _imgTint)
+            }
+            else if imgAutoDim { r.setTextureColor(itex, #808080FF) }   // 禁用态自动变灰
+            else { r.setTextureColor(itex, #FFFFFFFF) }
             if _imgMode != IMG_STRETCH {   // IMG_ASPECT_FIT / IMG_ASPECT_FILL：保持原始比例
                 var nats = r.getTextureSize(itex)
                 float nw = nats["w"]; float nh = nats["h"]
@@ -515,7 +518,7 @@ if tp is string { _btnType = tp; _apply_type(tp) }
             } else if itex == null {
                 // 纯文字：整按钮居中
                 float cy = y + (h - textH) / 2.0
-                r.drawTextCentered(_font, text, x, w, cy, tr2, tg2, tb2)
+                r.drawTextCentered(_font, text, x, w, cy, txtC)
             } else if _imgPos == IMG_LEFT {
                 // 图标在左（对齐 Material iconGravity=start / WinForms ImageBeforeText）
                 float ix = x + pad
@@ -524,7 +527,7 @@ if tp is string { _btnType = tp; _apply_type(tp) }
                 float tx = ix + isize + _imgGap
                 float tw = (x + w) - tx - pad
                 float ty = y + (h - textH) / 2.0
-                r.drawTextCentered(_font, text, tx, tw, ty, tr2, tg2, tb2)
+                r.drawTextCentered(_font, text, tx, tw, ty, txtC)
             } else if _imgPos == IMG_RIGHT {
                 // 图标在右（Material iconGravity=end / WinForms TextBeforeImage）
                 float ix = x + w - pad - isize
@@ -533,7 +536,7 @@ if tp is string { _btnType = tp; _apply_type(tp) }
                 float tx = x + pad
                 float tw = ix - _imgGap - tx
                 float ty = y + (h - textH) / 2.0
-                r.drawTextCentered(_font, text, tx, tw, ty, tr2, tg2, tb2)
+                r.drawTextCentered(_font, text, tx, tw, ty, txtC)
             } else if _imgPos == IMG_TOP {
                 // 图标在上（Material iconGravity=top / WinForms ImageAboveText）
                 float ix = x + (w - isize) / 2.0
@@ -542,7 +545,7 @@ if tp is string { _btnType = tp; _apply_type(tp) }
                 float ty = iy + isize + _imgGap
                 float th = (y + h) - ty - pad
                 float cy = ty + (th - textH) / 2.0
-                r.drawTextCentered(_font, text, x, w, cy, tr2, tg2, tb2)
+                r.drawTextCentered(_font, text, x, w, cy, txtC)
             } else {
                 // 图标在下（WinForms TextAboveImage）
                 float ix = x + (w - isize) / 2.0
@@ -551,7 +554,7 @@ if tp is string { _btnType = tp; _apply_type(tp) }
                 float ty = y + pad
                 float th = iy - _imgGap - ty
                 float cy = ty + (th - textH) / 2.0
-                r.drawTextCentered(_font, text, x, w, cy, tr2, tg2, tb2)
+                r.drawTextCentered(_font, text, x, w, cy, txtC)
             }
         } else if itex != null {
             // 仅图标、无文字：居中绘制
@@ -576,8 +579,8 @@ _release_all_images()
 
 // ==================== 运行时主题切换 ====================
 func applyTheme(Theme t) {
-cr = t.btnPrimaryR; cg = t.btnPrimaryG; cb = t.btnPrimaryB
-tr = t.txtOnAccentR; tg = t.txtOnAccentG; tb = t.txtOnAccentB
+_bgColor = t.btnPrimary
+_txtColor = t.txtOnAccent
 // 重新应用预设类型颜色
 if _btnType != "" { _apply_type(_btnType) }
 }

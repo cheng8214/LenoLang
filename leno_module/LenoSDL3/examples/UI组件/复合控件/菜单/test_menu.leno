@@ -60,10 +60,10 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(28, 28, 46, 255)
-            r.drawText(font, "顶部菜单栏：点击“文件/编辑/帮助”展开；悬停“最近打开”弹出二级", 20, 130, 200, 210, 230)
-            r.drawText(font, "点击下拉项会触发回调；点击空白/Esc 关闭", 20, 160, 200, 210, 230)
-            r.drawText(font, "ESC 退出", 470, 392, 140, 140, 140)
+            r.clearColor(#1C1C2EFF)
+            r.drawText(font, "顶部菜单栏：点击“文件/编辑/帮助”展开；悬停“最近打开”弹出二级", 20, 130, #C8D2E6FF)
+            r.drawText(font, "点击下拉项会触发回调；点击空白/Esc 关闭", 20, 160, #C8D2E6FF)
+            r.drawText(font, "ESC 退出", 470, 392, #8C8C8CFF)
         }
     )
 

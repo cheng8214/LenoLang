@@ -84,7 +84,7 @@ export func show(string path, bool isDir) {
     int accessR = if exists then 80 else 220
     int accessG = if exists then 200 else 60
     int accessB = if exists then 100 else 60
-    Label av = SDL3.createLabel({x:0, y:0, w:260, h:22, text:accessStr, font_size:13, text_rgb:[accessR,accessG,accessB], max_w:propMaxW, truncate:2})
+    Label av = SDL3.createLabel({x:0, y:0, w:260, h:22, text:accessStr, font_size:13, text_color: SDL3.packColor(accessR, accessG, accessB), max_w:propMaxW, truncate:2})
     accessRow.add(al, {grow:0, shrink:0, basis:80, align:0})
     accessRow.add(av, {grow:1, shrink:1, align:0})
     root.add(accessRow, {grow:0, shrink:0, align:3})
@@ -106,6 +106,6 @@ export func show(string path, bool isDir) {
             if _shouldClose { return false }
             return true
         },
-        func(Renderer r) { var th = theme.getTheme(); r.clearColor(th.bgR, th.bgG, th.bgB, 255) }
+        func(Renderer r) { r.clearColor(theme.getTheme().bg) }
     )
 }

@@ -30,7 +30,7 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(10, 10, 20, 255)
+            r.clearColor(#0A0A14FF)
 
             // ==================== 跳动心率 ====================
             beat += 0.016 * 1.2 * 6.283185  // 72 BPM 左右
@@ -79,7 +79,7 @@ main() {
             ffi.write_float(lineBuf, segs * 8,     cx + sr * heartX(0.0))
             ffi.write_float(lineBuf, segs * 8 + 4, cy + sr * heartY(0.0))
 
-            r.setColor(255, 100, 100, 80)
+            r.setColor(#FF646450)
             r.drawLines(lineBuf, pts)
             ffi.free(lineBuf)
         }

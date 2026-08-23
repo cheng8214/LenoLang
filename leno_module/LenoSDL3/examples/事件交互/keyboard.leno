@@ -145,24 +145,24 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(18, 18, 38, 255)
+            r.clearColor(#121226FF)
 
             // 标题
-            r.drawText(font, "⌨ 键盘事件测试 - 全键覆盖", 10, 8, 255, 220, 100)
-            r.drawText(font, "──────────────────────────────────────", 10, 32, 80, 80, 100)
+            r.drawText(font, "⌨ 键盘事件测试 - 全键覆盖", 10, 8, #FFDC64FF)
+            r.drawText(font, "──────────────────────────────────────", 10, 32, #505064FF)
 
             // 当前按键（长按去重）
             if down {
-                r.drawText(font, "▼ 按下: " + name + "    [scancode=" + code + "]", 10, 55, 100, 255, 100)
+                r.drawText(font, "▼ 按下: " + name + "    [scancode=" + code + "]", 10, 55, #64FF64FF)
             } else {
-                r.drawText(font, "▲ 松开", 10, 55, 180, 220, 255)
+                r.drawText(font, "▲ 松开", 10, 55, #B4DCFFFF)
             }
 
             // 统计
-            r.drawText(font, "按键次数: " + pressed + " / 释放次数: " + released, 10, 90, 180, 220, 255)
+            r.drawText(font, "按键次数: " + pressed + " / 释放次数: " + released, 10, 90, #B4DCFFFF)
 
             // 历史记录 (Array)
-            r.drawText(font, "最近按键:", 10, 125, 180, 220, 255)
+            r.drawText(font, "最近按键:", 10, 125, #B4DCFFFF)
             var hx = 10
             for 0 : lastKeys.len() - 1 to i {
                 var k = lastKeys[i] as string
@@ -174,16 +174,16 @@ main() {
                 }
             }
 
-            r.drawText(font, "──────────────────────────────────────", 10, 180, 80, 80, 100)
+            r.drawText(font, "──────────────────────────────────────", 10, 180, #505064FF)
 
-            r.drawText(font, "基础: Esc Enter 空格 退格 Tab Caps", 10, 200, 180, 220, 255)
-            r.drawText(font, "字母: A B C D E F G H I J K L M N O P Q R S T U V W X Y Z", 10, 225, 180, 220, 255)
-            r.drawText(font, "数字: 0 1 2 3 4 5 6 7 8 9", 10, 250, 180, 220, 255)
-            r.drawText(font, "标点: ` - = [ ] \\ ; ' , . /", 10, 275, 180, 220, 255)
-            r.drawText(font, "方向: ↑ ↓ ← →    编辑: Ins Home PgUp Del End PgDn", 10, 300, 180, 220, 255)
-            r.drawText(font, "修饰: 左/右Shift Ctrl Alt Win   功能: F1-F12", 10, 325, 180, 220, 255)
-            r.drawText(font, "系统: PrtSc ScrLk Pause    小键盘: NumLock KP 0-9 +-*/ = , . Enter", 10, 350, 180, 220, 255)
-            r.drawText(font, "特殊: 右键菜单    按 ESC 退出", 10, 375, 180, 220, 255)
+            r.drawText(font, "基础: Esc Enter 空格 退格 Tab Caps", 10, 200, #B4DCFFFF)
+            r.drawText(font, "字母: A B C D E F G H I J K L M N O P Q R S T U V W X Y Z", 10, 225, #B4DCFFFF)
+            r.drawText(font, "数字: 0 1 2 3 4 5 6 7 8 9", 10, 250, #B4DCFFFF)
+            r.drawText(font, "标点: ` - = [ ] \\ ; ' , . /", 10, 275, #B4DCFFFF)
+            r.drawText(font, "方向: ↑ ↓ ← →    编辑: Ins Home PgUp Del End PgDn", 10, 300, #B4DCFFFF)
+            r.drawText(font, "修饰: 左/右Shift Ctrl Alt Win   功能: F1-F12", 10, 325, #B4DCFFFF)
+            r.drawText(font, "系统: PrtSc ScrLk Pause    小键盘: NumLock KP 0-9 +-*/ = , . Enter", 10, 350, #B4DCFFFF)
+            r.drawText(font, "特殊: 右键菜单    按 ESC 退出", 10, 375, #B4DCFFFF)
         }
     )
 

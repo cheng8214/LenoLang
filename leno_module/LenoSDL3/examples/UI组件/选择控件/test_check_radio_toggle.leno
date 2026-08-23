@@ -52,13 +52,13 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(28, 28, 46, 255)
-            r.drawText(font, "复选框 / 单选 / 开关 演示", 20, 12, 255, 220, 80)
+            r.clearColor(#1C1C2EFF)
+            r.drawText(font, "复选框 / 单选 / 开关 演示", 20, 12, #FFDC50FF)
 
-            r.drawText(font, "复选框状态: " + agree.is_checked(), 40, 360, 200, 220, 240)
-            r.drawText(font, "ref 组当前: " + selectedMode, 40, 388, 200, 220, 240)
-            r.drawText(font, "Wi-Fi: " + wifi.is_on(), 280, 360, 200, 220, 240)
-            r.drawText(font, "点击控件 / ESC 退出", 280, 388, 140, 140, 140)
+            r.drawText(font, "复选框状态: " + agree.is_checked(), 40, 360, #C8DCF0FF)
+            r.drawText(font, "ref 组当前: " + selectedMode, 40, 388, #C8DCF0FF)
+            r.drawText(font, "Wi-Fi: " + wifi.is_on(), 280, 360, #C8DCF0FF)
+            r.drawText(font, "点击控件 / ESC 退出", 280, 388, #8C8C8CFF)
         }
     )
 

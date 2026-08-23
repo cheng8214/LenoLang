@@ -15,11 +15,11 @@ main() {
 
     // 创建三个带背景色的按钮，重叠放置
     var btn1 = SDL3.createButton({x:50, y:50, w:200, h:150, text:"底层(z=0)",
-        font_size:16, bg_rgb:[80,130,220], text_rgb:[255,255,255]})
+        font_size:16, bg_color: #5082DCFF, text_color: #FFFFFFFF})
     var btn2 = SDL3.createButton({x:100, y:100, w:200, h:150, text:"中层(z=5)",
-        font_size:16, bg_rgb:[100,200,100], text_rgb:[255,255,255]})
+        font_size:16, bg_color: #64C864FF, text_color: #FFFFFFFF})
     var btn3 = SDL3.createButton({x:150, y:150, w:200, h:150, text:"顶层(z=10)",
-        font_size:16, bg_rgb:[220,100,100], text_rgb:[255,255,255]})
+        font_size:16, bg_color: #DC6464FF, text_color: #FFFFFFFF})
 
     // 按 z 值添加到窗口（z 越大越在上层）
     win.addZ(btn1, 0.0)
@@ -29,7 +29,7 @@ main() {
     // 提示说明
     win.addLabel({x:20, y:320, w:560, h:60,
         text:"按 1=蓝色置顶  2=绿色置顶  3=红色置顶  ESC=退出",
-        font_size:14, text_rgb:[200,200,200]})
+        font_size:14, text_color: #C8C8C8FF})
 
     win.run(
         func(Event e): bool {

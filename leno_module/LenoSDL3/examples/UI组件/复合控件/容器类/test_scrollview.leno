@@ -18,7 +18,7 @@ main() {
 
     // 滚动容器：视口 300x300；内容 360x640（比视口宽且高 -> 同时出现横/竖滚动条）
     var sv = win.addScrollView({x: 20, y: 20, w: 300, h: 300,
-        content_w: 360, content_h: 640, bg_rgb: [34, 36, 42], border_rgb: [80, 85, 100]})
+        content_w: 360, content_h: 640, bg_color: #22242AFF, border_color: #505564FF})
     // 内容：用 createXxx 创建，不要 win.add（避免被窗口与 ScrollView 双重处理）
     var box = SDL3.createVBox({padX: 10, padY: 10, spacing: 8})
     for 12 to i {
@@ -48,10 +48,10 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(28, 30, 36, 255)
-            r.drawText(font, "ScrollView 测试：悬停滚轮滚动 / 拖右侧·底部滚动条", 20, 350, 200, 210, 230)
+            r.clearColor(#1C1E24FF)
+            r.drawText(font, "ScrollView 测试：悬停滚轮滚动 / 拖右侧·底部滚动条", 20, 350, #C8D2E6FF)
             float curH = sv.get_max_scroll_y() + 300.0
-            r.drawText(font, "当前内容尺寸 360 x " + curH as string + "（ESC 退出）", 20, 374, 160, 170, 190)
+            r.drawText(font, "当前内容尺寸 360 x " + curH as string + "（ESC 退出）", 20, 374, #A0AABEFF)
         }
     )
 

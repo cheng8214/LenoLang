@@ -15,10 +15,10 @@ main() {
     const _c_282830 = #282830    // 期望 0xFF282830
     const _c_000000 = #000000    // 期望 0xFF000000（纯黑不透明）
 
-    // --- #AARRGGBB 格式（显式 Alpha）---
-    const _c_80ff0000 = #80FF0000  // 期望 0x80FF0000（半透明红）
-    const _c_ff000000 = #FF000000  // 期望 0xFF000000（不透明黑）
-    const _c_00ff0000 = #00FF0000  // 期望 0x00FF0000（全透明红）
+    // --- #RRGGBBAA 格式（显式 Alpha，与 CSS #RGBA 一致）---
+    const _c_ff000080 = #FF000080  // 期望 0x80FF0000（半透明红）
+    const _c_000000ff = #000000FF  // 期望 0xFF000000（不透明黑）
+    const _c_ff000000 = #FF000000  // 期望 0x00FF0000（全透明红）
 
     // --- 验证等价性 ---
     assert_eq(_c_f00, 0xFFFF0000)
@@ -32,14 +32,14 @@ main() {
     assert_eq(_c_282830, 0xFF282830)
     assert_eq(_c_000000, 0xFF000000)
 
-    assert_eq(_c_80ff0000, 0x80FF0000)
-    assert_eq(_c_ff000000, 0xFF000000)
-    assert_eq(_c_00ff0000, 0x00FF0000)
+    assert_eq(_c_ff000080, 0x80FF0000)
+    assert_eq(_c_000000ff, 0xFF000000)
+    assert_eq(_c_ff000000, 0x00FF0000)
 
     // --- 混合使用：颜色字面量与十六进制整数运算 ---
     const _colorRed = #FF0000
     const _colorBlue = #3366FF
-    const _colorSemiRed = #80FF0000
+    const _colorSemiRed = #FF000080
 
     assert_eq(_colorRed, 0xFFFF0000)
     assert_eq(_colorBlue, 0xFF3366FF)
@@ -52,7 +52,7 @@ main() {
     assert_eq(_bg & 0xFF, 0x30)           // B
     assert_eq((_bg >> 24) & 0xFF, 0xFF)   // A (默认不透明)
 
-    var _semi = #80FF0000
+    var _semi = #FF000080
     assert_eq((_semi >> 24) & 0xFF, 0x80) // Alpha = 0x80
     assert_eq((_semi >> 16) & 0xFF, 0xFF) // R = 0xFF
 

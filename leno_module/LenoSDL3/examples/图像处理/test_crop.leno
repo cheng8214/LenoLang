@@ -106,7 +106,7 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(20, 20, 40, 255)
+            r.clearColor(#141428FF)
 
             // 首次加载纹理
             if not texLoaded {
@@ -119,7 +119,7 @@ main() {
             }
 
             if loadedTex == null {
-                r.drawText(font, "图片未加载", 400, 300, 255, 100, 100)
+                r.drawText(font, "图片未加载", 400, 300, #FF6464FF)
                 return
             }
 
@@ -178,9 +178,9 @@ main() {
                 rw = (if mouseX > dragSX then mouseX - dragSX else dragSX - mouseX)
                 rh = (if mouseY > dragSY then mouseY - dragSY else dragSY - mouseY)
                 // 虚线效果：画双层边框
-                r.setColor(255, 200, 50, 255)
+                r.setColor(#FFC832FF)
                 r.drawRect(rx, ry, rw, rh)
-                r.setColor(255, 200, 50, 100)
+                r.setColor(#FFC83264)
                 r.drawRect(rx + 1, ry + 1, rw - 2, rh - 2)
             } else if selActive {
                 // 已确认的选区框
@@ -189,13 +189,13 @@ main() {
                 rw = selW * imgScale
                 rh = selH * imgScale
                 // 外层粗线 + 内层细线 = 双线边框效果
-                r.setColor(0, 220, 255, 200)
+                r.setColor(#00DCFFC8)
                 r.drawRect(rx, ry, rw, rh)
                 r.drawRect(rx + 1, ry + 1, rw - 2, rh - 2)
             }
 
             // 图片边框
-            r.setColor(100, 100, 150, 100)
+            r.setColor(#64649664)
             r.drawRect(imgScreenX, imgScreenY, imgScreenW, imgScreenH)
 
 
@@ -208,27 +208,27 @@ main() {
                 float ph = selH * pScale
 
                 // 标签
-                r.drawText(font, "裁剪预览", previewX, imgScreenY - 2, 255, 220, 80)
+                r.drawText(font, "裁剪预览", previewX, imgScreenY - 2, #FFDC50FF)
 
                 // 绘制裁剪后的纹理
                 r.drawTextureFromTo(loadedTex, selX, selY, selW, selH,
                                     previewX, imgScreenY + 20.0, pw, ph)
 
                 // 预览边框
-                r.setColor(0, 200, 255, 150)
+                r.setColor(#00C8FF96)
                 r.drawRect(previewX, imgScreenY + 20.0, pw, ph)
 
                 // 尺寸信息
-                r.drawText(font, _int(selW) + " x " + _int(selH), previewX, imgScreenY + 25.0 + ph, 100, 200, 255)
+                r.drawText(font, _int(selW) + " x " + _int(selH), previewX, imgScreenY + 25.0 + ph, #64C8FFFF)
             }
 
 
             // ---------- HUD ----------
-            r.drawText(font, "图片裁剪 —  原始尺寸: " + _int(texW) + " x " + _int(texH), 10, 600, 150, 150, 150)
-            r.drawText(font, lastMsg, 260, 600, 200, 255, 100)
+            r.drawText(font, "图片裁剪 —  原始尺寸: " + _int(texW) + " x " + _int(texH), 10, 600, #969696FF)
+            r.drawText(font, lastMsg, 260, 600, #C8FF64FF)
 
             int ly = 624
-            r.drawText(font, "左键拖拽: 选裁剪区域  |  S: 保存裁剪图片  |  R: 重置  |  ESC: 退出", 10, ly, 120, 120, 120)
+            r.drawText(font, "左键拖拽: 选裁剪区域  |  S: 保存裁剪图片  |  R: 重置  |  ESC: 退出", 10, ly, #787878FF)
         }
     )
 

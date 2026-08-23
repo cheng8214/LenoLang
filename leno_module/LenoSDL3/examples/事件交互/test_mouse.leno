@@ -1,4 +1,4 @@
-﻿// test_mouse.leno — 测试相对鼠标/最小窗口/闪烁/像素尺寸/纳秒计时
+// test_mouse.leno — 测试相对鼠标/最小窗口/闪烁/像素尺寸/纳秒计时
 import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
@@ -61,18 +61,18 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(20, 20, 40, 255)
-            r.drawText(font, "Mouse & Window — 相对鼠标/锁定/闪烁/像素尺寸", 10, 8, 255, 220, 80)
-            r.drawText(font, "相对:" + relativeOn + " 锁定:" + grabbedOn + " 最小:" + minOn + " " + lastMsg, 10, 32, 180, 200, 255)
-            r.drawText(font, "累计移动 dx:" + mxRel + " dy:" + myRel, 10, 55, 150, 200, 255)
+            r.clearColor(#141428FF)
+            r.drawText(font, "Mouse & Window — 相对鼠标/锁定/闪烁/像素尺寸", 10, 8, #FFDC50FF)
+            r.drawText(font, "相对:" + relativeOn + " 锁定:" + grabbedOn + " 最小:" + minOn + " " + lastMsg, 10, 32, #B4C8FFFF)
+            r.drawText(font, "累计移动 dx:" + mxRel + " dy:" + myRel, 10, 55, #96C8FFFF)
 
             int ly = 90
-            r.drawText(font, "R=相对鼠标模式  G=鼠标锁定  M=最小窗口限制", 10, ly, 150, 150, 150); ly = ly + 22
-            r.drawText(font, "F=短暂闪烁  L=持续闪烁(直到焦点)", 10, ly, 150, 150, 150); ly = ly + 22
-            r.drawText(font, "  (标题栏会闪烁，切回来按 F/L 看效果)", 10, ly, 120, 120, 120); ly = ly + 22
-            r.drawText(font, "新 API: setRelativeMouse / flash / setMinSize /", 10, ly, 100, 200, 100); ly = ly + 22
-            r.drawText(font, "  getSizeInPixels / getTicksNS / hasClipboardText", 10, ly, 100, 200, 100); ly = ly + 22
-            r.drawText(font, "ESC 退出", 10, ly + 15, 150, 150, 150)
+            r.drawText(font, "R=相对鼠标模式  G=鼠标锁定  M=最小窗口限制", 10, ly, #969696FF); ly = ly + 22
+            r.drawText(font, "F=短暂闪烁  L=持续闪烁(直到焦点)", 10, ly, #969696FF); ly = ly + 22
+            r.drawText(font, "  (标题栏会闪烁，切回来按 F/L 看效果)", 10, ly, #787878FF); ly = ly + 22
+            r.drawText(font, "新 API: setRelativeMouse / flash / setMinSize /", 10, ly, #64C864FF); ly = ly + 22
+            r.drawText(font, "  getSizeInPixels / getTicksNS / hasClipboardText", 10, ly, #64C864FF); ly = ly + 22
+            r.drawText(font, "ESC 退出", 10, ly + 15, #969696FF)
         }
     )
 

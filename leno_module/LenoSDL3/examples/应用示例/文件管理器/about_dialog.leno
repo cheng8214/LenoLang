@@ -49,6 +49,6 @@ export func show() {
             if shouldClose { return false }
             return true
         },
-        func(Renderer r) { var th = theme.getTheme(); r.clearColor(th.bgR, th.bgG, th.bgB, 255) }
+        func(Renderer r) { r.clearColor(theme.getTheme().bg) }
     )
 }

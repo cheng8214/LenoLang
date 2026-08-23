@@ -1658,7 +1658,7 @@ static void gen_expr_stmt(CodeGen* gen, Ast* ast) {
         }
     }
 
-    // 窥孔优化：赋值语句到局部变量 → OP_SET_LOCAL_POP（省掉 OP_POP 分发开销）
+    // 优化：赋值语句到局部变量 → OP_SET_LOCAL_POP（省掉 OP_POP 分发开销）
     // 场景1: a = b（两个局部变量）→ OP_MOVE_LOCAL_POP（不压栈）
     // 场景2: a = expr（a 是局部变量）→ gen_expr(expr) + OP_SET_LOCAL_POP
     if (expr->kind == AST_ASSIGN && expr->u.assign.name_count == 1) {
@@ -1685,8 +1685,6 @@ static void gen_expr_stmt(CodeGen* gen, Ast* ast) {
             }
         }
         // 索引赋值语句: obj[index] = value → 直接生成 OP_INDEX_SET_NOPUSH
-        // （不能走后置窥孔，因为 OP_SET_FIELD+field_idx 的 field_idx 字节
-        //   可能与 OP_INDEX_SET 枚举值碰撞，导致误替换）
         if (target && target->kind == AST_INDEX) {
             gen_expr(gen, target->u.index.obj);
             gen_expr(gen, target->u.index.index);
@@ -1701,13 +1699,6 @@ static void gen_expr_stmt(CodeGen* gen, Ast* ast) {
         if (ref->name && (ref->kind == SYM_LOCAL || ref->kind == SYM_PARAM) &&
             strcmp(ref->name, "__self_field__") != 0) {
             gen_expr(gen, expr);
-            // 检查末尾是否是 OP_SET_LOCAL（排除 INC_LOCAL/DEC_LOCAL 提前返回的情况）
-            if (gen->chunk->len >= 3 &&
-                gen->chunk->code[gen->chunk->len - 3] == OP_SET_LOCAL) {
-                gen->chunk->code[gen->chunk->len - 3] = OP_SET_LOCAL_POP;
-                return;  // 跳过 OP_POP
-            }
-            // INC_LOCAL/DEC_LOCAL 等情况仍需 OP_POP
             emit_byte(gen, OP_POP, ast->line);
             return;
         }
@@ -1724,22 +1715,6 @@ static void gen_expr_stmt(CodeGen* gen, Ast* ast) {
     if (gen->inline_no_result) {
         gen->inline_no_result = 0;
         return;
-    }
-
-    // 后置窥孔优化：仅对 AST_CALL 表达式检查，避免误匹配其他指令的操作数
-    if (expr->kind == AST_CALL) {
-        // OP_CALL_NATIVE(5字节) → OP_CALL_NATIVE_VOID（省掉 OP_POP）
-        if (gen->chunk->len >= 5 &&
-            gen->chunk->code[gen->chunk->len - 5] == OP_CALL_NATIVE) {
-            gen->chunk->code[gen->chunk->len - 5] = OP_CALL_NATIVE_VOID;
-            return;
-        }
-        // OP_DICT_SET(1字节) → OP_DICT_SET_NOPUSH
-        if (gen->chunk->len >= 1 &&
-            gen->chunk->code[gen->chunk->len - 1] == OP_DICT_SET) {
-            gen->chunk->code[gen->chunk->len - 1] = OP_DICT_SET_NOPUSH;
-            return;
-        }
     }
 
     // 注意：OP_SET_FIELD 会 pop obj 和 value，然后 push 赋值结果值到栈上

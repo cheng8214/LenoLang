@@ -18,17 +18,17 @@ func genIcons(): bool {
     if not gen.ok { print("[gen] createWindow 失败: " + SDL3.getError()); return false }
     var r = SDL3.createRenderer(gen.getHandle())
 
-    r.clearColor(0, 0, 0, 0)
+    r.clearColor(#00000000)
     // 文件夹（黄）
-    r.setColor(230, 200, 60, 255);  r.fillRoundedRect(0,   8, 64, 52, 6)
+    r.setColor(#E6C83CFF);  r.fillRoundedRect(0,   8, 64, 52, 6)
     // 文件（白）
-    r.setColor(225, 225, 235, 255); r.fillRoundedRect(64,  8, 64, 52, 4)
+    r.setColor(#E1E1EBFF); r.fillRoundedRect(64,  8, 64, 52, 4)
     // 叶子（绿）
-    r.setColor(70, 190, 90, 255);   r.fillCircle(128.0, 32.0, 26.0)
+    r.setColor(#46BE5AFF);   r.fillCircle(128.0, 32.0, 26.0)
     // 宽图(64x32 2:1) 用于 content mode 对比：蓝底+红圆+黄方
-    r.setColor(40, 100, 170, 255);  r.fillRect(0, 32, 64, 32)
-    r.setColor(230, 70, 70, 255);   r.fillCircle(16.0, 48.0, 11.0)
-    r.setColor(240, 200, 60, 255);  r.fillRect(36.0, 40.0, 16.0, 16.0)
+    r.setColor(#2864AAFF);  r.fillRect(0, 32, 64, 32)
+    r.setColor(#E64646FF);   r.fillCircle(16.0, 48.0, 11.0)
+    r.setColor(#F0C83CFF);  r.fillRect(36.0, 40.0, 16.0, 16.0)
 
     SDL3.saveImagePNG(r.readPixelsAt(0,  0, 64, 64), "d:\\tv_folder.png")
     SDL3.saveImagePNG(r.readPixelsAt(64, 0, 64, 64), "d:\\tv_file.png")
@@ -112,10 +112,10 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(28, 30, 36, 255)
-            r.drawText(font, "左树：节点图标 + 复选框 (image / aspectFit)", 30, 30, 200, 210, 230)
-            r.drawText(font, "右树：内容模式 (整树 stretch 演示)", 380, 30, 200, 210, 230)
-            r.drawText(font, "E 展开  C 折叠  A 加带图子节点  D 删除  Esc 退出", 30, 492, 140, 145, 160)
+            r.clearColor(#1C1E24FF)
+            r.drawText(font, "左树：节点图标 + 复选框 (image / aspectFit)", 30, 30, #C8D2E6FF)
+            r.drawText(font, "右树：内容模式 (整树 stretch 演示)", 380, 30, #C8D2E6FF)
+            r.drawText(font, "E 展开  C 折叠  A 加带图子节点  D 删除  Esc 退出", 30, 492, #8C91A0FF)
         }
     )
 

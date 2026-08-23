@@ -5,15 +5,15 @@ import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core
 import "sdl_widget.leno" as wgt; use wgt.Widget
-import "sdl_theme.leno" as theme; use theme.Theme
+import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 import maths
 
 export struct Spinner impl Widget {
     float x = 0.0, y = 0.0
     float _size = 32.0           // 直径
     float _thickness = 3.0       // 线条粗细
-    int _r = 100, _g = 180, _b = 255  // 旋转弧颜色
-    int _trackR = 70, _trackG = 74, _trackB = 84  // 背景轨道色
+    int _color = #64B4FFFF  // 旋转弧颜色
+    int _trackColor = #464A54FF  // 背景轨道色
     int _trackA = 80             // 背景轨道透明度
     float _speed = 270.0         // 旋转速度（度/秒）
     float _angle = 0.0           // 当前旋转角度
@@ -25,9 +25,8 @@ export struct Spinner impl Widget {
 
     func set(Dict opts) {
         Theme th = theme.getTheme()
-        _r = th.accentR + 40; _g = th.accentG + 30; _b = th.accentB
-        if _r > 255 { _r = 255 }; if _g > 255 { _g = 255 }
-        _trackR = th.sepR; _trackG = th.sepG; _trackB = th.sepB
+        _color = theme.brighten(th.accent, 30)
+        _trackColor = th.sep
         x      = opts.get("x", 0)
         y      = opts.get("y", 0)
         _size  = opts.get("size", 32)
@@ -37,10 +36,10 @@ export struct Spinner impl Widget {
         _full = opts.get("full_track", false)
         visible = opts.get("visible", true)
         _tip = opts.get("tip", "")
-        var c = opts.get("rgb")
-        if c is Array[int] { _r = c[0]; _g = c[1]; _b = c[2] }
-        var tc = opts.get("track_rgb")
-        if tc is Array[int] { _trackR = tc[0]; _trackG = tc[1]; _trackB = tc[2] }
+        var c = opts.get("color")
+        if c is int { _color = c }
+        var tc = opts.get("track_color")
+        if tc is int { _trackColor = tc }
         _trackA = opts.get("track_alpha", 80)
         _loaded = true
     }
@@ -48,7 +47,7 @@ export struct Spinner impl Widget {
     // ==================== 设置方法 ====================
     func set_diameter(float s) { _size = s }
     func set_thickness(float t) { _thickness = t }
-    func set_color(int r, int g, int b) { _r = r; _g = g; _b = b }
+    func set_color(int color) { _color = color }
     func set_speed(float s) { _speed = s }
     func start() { _running = true; _lastTick = 0.0 }
     func stop()  { _running = false; _angle = 0.0; _lastTick = 0.0 }
@@ -92,7 +91,7 @@ export struct Spinner impl Widget {
 
         // 背景轨道（整圆）
         if _full or _trackA > 0 {
-            r.setColor(_trackR, _trackG, _trackB, _trackA)
+            r.setColor(theme.withAlpha(_trackColor, _trackA))
             _draw_arc(r, cx, cy, radius, 0.0, 360.0, _thickness)
         }
 
@@ -100,7 +99,7 @@ export struct Spinner impl Widget {
         if _running or _full {
             float a0 = _angle
             float a1 = _angle + 120.0
-            r.setColor(_r, _g, _b, 255)
+            r.setColor(_color)
             _draw_arc(r, cx, cy, radius, a0, a1, _thickness)
         }
     }

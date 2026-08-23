@@ -48,8 +48,8 @@ export struct Splitter impl Widget, Themeable {
     float  _dragStartRatio = 0.0 // 拖拽起始比例（用于计算偏移）
     float  _dragStartMouse = 0.0 // 拖拽起始鼠标坐标
     // 分割条颜色
-    int    _divR = 60, _divG = 65, _divB = 75      // 默认分割条色
-    int    _hovR = 80, _hovG = 140, _hovB = 220     // 悬停/拖拽高亮色
+    int    _divColor = #5A5F6EFF      // 默认分割条色
+    int    _hovColor = #3C96EBFF     // 悬停/拖拽高亮色
     bool   _loaded = false
     bool   enabled = true, visible = true
     Ptr[u8] _hwnd                   // 绑定的窗口句柄
@@ -57,8 +57,8 @@ export struct Splitter impl Widget, Themeable {
 
     func set(Dict opts) {
         Theme th = theme.getTheme()
-        _divR = th.borderR; _divG = th.borderG; _divB = th.borderB
-        _hovR = th.accentR; _hovG = th.accentG; _hovB = th.accentB
+        _divColor = th.border
+        _hovColor = th.accent
         x           = opts.get("x", 0)
         y           = opts.get("y", 0)
         w           = opts.get("w", 400)
@@ -70,10 +70,10 @@ export struct Splitter impl Widget, Themeable {
         _minFirst    = opts.get("min_first", 80)
         _minSecond   = opts.get("min_second", 80)
         // 颜色覆盖
-        var dvc = opts.get("divider_rgb")
-        if dvc is Array[int] { _divR = dvc[0]; _divG = dvc[1]; _divB = dvc[2] }
-        var hvc = opts.get("hover_rgb")
-        if hvc is Array[int] { _hovR = hvc[0]; _hovG = hvc[1]; _hovB = hvc[2] }
+        var dvc = opts.get("divider_color")
+        if dvc is int { _divColor = dvc }
+        var hvc = opts.get("hover_color")
+        if hvc is int { _hovColor = hvc }
         // 构造时传入子控件
         var f = opts.get("first")
         if f is Widget { _first = f }
@@ -270,13 +270,13 @@ export struct Splitter impl Widget, Themeable {
 
         // 渲染分割条
         float dp = _divider_pos()
-        int cr = _divR, cg = _divG, cb = _divB
+        int dc = _divColor
         float dw = _dividerW
         if _hover or _dragging {
-            cr = _hovR; cg = _hovG; cb = _hovB
+            dc = _hovColor
             dw = _dividerW + 1.0   // 悬停/拖拽时稍粗
         }
-        r.setColor(cr, cg, cb, 255)
+        r.setColor(dc)
         if _orientation == HORIZONTAL {
             // 竖向分割条
             r.fillRect(dp - dw / 2.0, y, dw, h)
@@ -293,8 +293,8 @@ export struct Splitter impl Widget, Themeable {
 
 // ==================== 运行时主题切换 ====================
 func applyTheme(Theme t) {
-_divR = t.borderR; _divG = t.borderG; _divB = t.borderB
-_hovR = t.accentR; _hovG = t.accentG; _hovB = t.accentB
+_divColor = t.border
+_hovColor = t.accent
 // 子控件的递归由 Window._applyThemeWidget 统一处理
 }
 }

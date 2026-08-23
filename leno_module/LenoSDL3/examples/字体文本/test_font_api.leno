@@ -55,7 +55,7 @@ main() {
             if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { running = false }
         }
 
-        ren.setColor(30, 30, 50, 255)
+        ren.setColor(#1E1E32FF)
         ren.clear()
 
         func t(string txt, int r, int g, int b, int x, int y) {

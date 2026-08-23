@@ -20,10 +20,10 @@ main() {
                             return true
                         },
                         func(Renderer r) {
-                            r.clearColor(40, 20, 20, 255)
-                            r.setColor(255, 200, 100, 255)
-                            r.drawText(SDL3.createFontAuto(15.0), "模态对话框", 30, 40, 255, 200, 100)
-                            r.drawText(SDL3.createFontAuto(13.0), "ESC 关闭", 30, 80, 200, 200, 200)
+                            r.clearColor(#281414FF)
+                            r.setColor(#FFC864FF)
+                            r.drawText(SDL3.createFontAuto(15.0), "模态对话框", 30, 40, #FFC864FF)
+                            r.drawText(SDL3.createFontAuto(13.0), "ESC 关闭", 30, 80, #C8C8C8FF)
                         }
                     )
                 }
@@ -31,10 +31,10 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(20, 20, 40, 255)
-            r.setColor(255, 255, 255, 255)
-            r.drawText(SDL3.createFontAuto(16.0), "主窗口 — M=弹出模态", 20, 20, 255, 255, 255)
-            r.drawText(SDL3.createFontAuto(14.0), "弹出后主窗口阻塞,点击闪屏", 20, 55, 255, 200, 100)
+            r.clearColor(#141428FF)
+            r.setColor(#FFFFFFFF)
+            r.drawText(SDL3.createFontAuto(16.0), "主窗口 — M=弹出模态", 20, 20, #FFFFFFFF)
+            r.drawText(SDL3.createFontAuto(14.0), "弹出后主窗口阻塞,点击闪屏", 20, 55, #FFC864FF)
         }
     )
     print("关闭")

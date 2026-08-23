@@ -17,7 +17,7 @@ func buildWindow() {
     if _light { SDL3.setTheme(SDL3.lightTheme()) }
     else      { SDL3.setTheme(SDL3.darkTheme()) }
 
-    // 2. 创建窗口（注意：不传 bg_rgb，让窗口内部用主题背景色清屏）
+    // 2. 创建窗口（注意：不传 bg_color，让窗口内部用主题背景色清屏）
     var win = SDL3.createWindow({
         title: "主题测试 " + (if _light then "(Light)" else "(Dark)"),
         w: 880, h: 580

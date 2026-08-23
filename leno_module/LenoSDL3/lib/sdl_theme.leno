@@ -17,49 +17,89 @@
 // 注意：applyTheme 会用新主题覆盖所有主题派生颜色（包括 set() 时通过 opts 设置的）
 import "sdl_widget.leno" as wgt; use wgt.Widget
 
+// ==================== 颜色辅助函数 ====================
+// 颜色格式：#RRGGBBAA（Alpha 在最后，与 CSS 一致）
+// 内部存储：int 0xAARRGGBB（Alpha 在最高字节）
+// 字面量 #RRGGBBAA 被编译器自动转为 0xAARRGGBB
+
+// 从打包色中提取各分量
+export func colorR(int c): int { return (c >> 16) & 0xFF }
+export func colorG(int c): int { return (c >> 8) & 0xFF }
+export func colorB(int c): int { return c & 0xFF }
+export func colorA(int c): int { return (c >> 24) & 0xFF }
+
+// 将 R/G/B/A 分量打包为 0xAARRGGBB 整数（a 默认 255 不透明）
+export func packColor(int r, int g, int b, int a = 255): int {
+    if r > 255 { r = 255 }; if g > 255 { g = 255 }; if b > 255 { b = 255 }; if a > 255 { a = 255 }
+    if r < 0 { r = 0 }; if g < 0 { g = 0 }; if b < 0 { b = 0 }; if a < 0 { a = 0 }
+    return (a << 24) | (r << 16) | (g << 8) | b
+}
+
+// 替换打包色的 Alpha 通道（保留原 RGB，设置新 alpha）
+export func withAlpha(int c, int a): int {
+    if a > 255 { a = 255 }; if a < 0 { a = 0 }
+    return (a << 24) | (c & 0x00FFFFFF)
+}
+
+// 提亮打包色：各通道加 delta，Alpha 不变
+export func brighten(int c, int delta): int {
+    int r = colorR(c) + delta; if r > 255 { r = 255 }
+    int g = colorG(c) + delta; if g > 255 { g = 255 }
+    int b = colorB(c) + delta; if b > 255 { b = 255 }
+    return (c & 0xFF000000) | (r << 16) | (g << 8) | b
+}
+
+// 变暗打包色：各通道减 delta，Alpha 不变
+export func darken(int c, int delta): int {
+    int r = colorR(c) - delta; if r < 0 { r = 0 }
+    int g = colorG(c) - delta; if g < 0 { g = 0 }
+    int b = colorB(c) - delta; if b < 0 { b = 0 }
+    return (c & 0xFF000000) | (r << 16) | (g << 8) | b
+}
+
 // ==================== Theme 结构体 ====================
 export struct Theme {
     string name = "dark"
 
     // === 背景层次（从深到浅） ===
-    int bgR = 38, bgG = 40, bgB = 48              // 控件主背景
-    int bgAltR = 44, bgAltG = 46, bgAltB = 54     // 次级背景（面板/斑马纹/非激活标签）
-    int bgInputR = 35, bgInputG = 35, bgInputB = 50  // 输入框背景（略深于主背景）
-    int bgHoverR = 70, bgHoverG = 78, bgHoverB = 92   // 悬停行背景
-    int bgSelR = 52, bgSelG = 58, bgSelB = 70        // 选中行背景（比 hover 更深，非蓝色）
-    int bgZebraR = 44, bgZebraG = 46, bgZebraB = 54  // 斑马纹行（与 bgAlt 相同）
-    int bgHeaderR = 46, bgHeaderG = 48, bgHeaderB = 56  // 表头/标签栏背景
+    int bg = #262830FF              // 控件主背景
+    int bgAlt = #2C2E36FF           // 次级背景（面板/斑马纹/非激活标签）
+    int bgInput = #232332FF         // 输入框背景（略深于主背景）
+    int bgHover = #464E5CFF         // 悬停行背景
+    int bgSel = #343A46FF           // 选中行背景（比 hover 更深，非蓝色）
+    int bgZebra = #2C2E36FF         // 斑马纹行（与 bgAlt 相同）
+    int bgHeader = #2E3038FF        // 表头/标签栏背景
 
     // === 文字 ===
-    int txtR = 235, txtG = 235, txtB = 245        // 主文字色
-    int txtInputR = 220, txtInputG = 220, txtInputB = 240  // 输入框文字
-    int txtOnAccentR = 255, txtOnAccentG = 255, txtOnAccentB = 255  // 强调色上的白字
-    int txtDimR = 120, txtDimG = 128, txtDimB = 140  // 暗淡/空状态文字
-    int txtHeaderR = 220, txtHeaderG = 225, txtHeaderB = 235  // 表头文字
+    int txt = #EBEBF5FF             // 主文字色
+    int txtInput = #DCDCF0FF        // 输入框文字
+    int txtOnAccent = #FFFFFFFF     // 强调色上的白字
+    int txtDim = #78808CFF          // 暗淡/空状态文字
+    int txtHeader = #DCE1EBFF       // 表头文字
 
     // === 强调/交互色 ===
-    int accentR = 60, accentG = 150, accentB = 235    // 选中/开关/强调主色
-    int accentFocusR = 100, accentFocusG = 180, accentFocusB = 255  // 聚焦边框（比 accent 更亮）
-    int accentBrightR = 80, accentBrightG = 160, accentBrightB = 245  // 更亮的强调色（tab 下划线等）
+    int accent = #3C96EBFF          // 选中/开关/强调主色
+    int accentFocus = #64B4FFFF     // 聚焦边框（比 accent 更亮）
+    int accentBright = #50A0F5FF    // 更亮的强调色（tab 下划线等）
 
     // === 边框/分隔 ===
-    int borderR = 90, borderG = 95, borderB = 110     // 普通边框
-    int sepR = 70, sepG = 74, sepB = 84              // 分隔线/连接线
+    int border = #5A5F6EFF          // 普通边框
+    int sep = #464A54FF             // 分隔线/连接线
 
     // === 滚动条 ===
-    int sbR = 120, sbG = 125, sbB = 140              // 滚动条颜色
+    int sb = #787D8CFF              // 滚动条颜色
 
     // === 预设按钮色 ===
-    int btnPrimaryR = 60, btnPrimaryG = 140, btnPrimaryB = 220
-    int btnDangerR = 220, btnDangerG = 60, btnDangerB = 60
-    int btnSuccessR = 60, btnSuccessG = 200, btnSuccessB = 80
-    int btnWarningR = 240, btnWarningG = 160, btnWarningB = 30
-    int btnDarkR = 60, btnDarkG = 60, btnDarkB = 70
+    int btnPrimary = #3C8CDCFF
+    int btnDanger = #DC3C3CFF
+    int btnSuccess = #3CC850FF
+    int btnWarning = #F0A01EFF
+    int btnDark = #3C3C46FF
 
     // === Tooltip ===
-    int tipBgR = 38, tipBgG = 40, tipBgB = 48
-    int tipTxtR = 232, tipTxtG = 234, tipTxtB = 242
-    int tipBrdR = 110, tipBrdG = 115, tipBrdB = 132
+    int tipBg = #262830FF
+    int tipTxt = #E8EAF2FF
+    int tipBrd = #6E7384FF
 
     // === 字体 ===
     float fontSize = 15.0
@@ -92,38 +132,38 @@ export func lightTheme(): Theme {
     Theme t = new Theme()
     t.name = "light"
     // 背景层次（从浅到略深）
-    t.bgR = 240; t.bgG = 240; t.bgB = 245
-    t.bgAltR = 232; t.bgAltG = 232; t.bgAltB = 238
-    t.bgInputR = 255; t.bgInputG = 255; t.bgInputB = 255
-    t.bgHoverR = 206; t.bgHoverG = 214; t.bgHoverB = 224
-    t.bgSelR = 170; t.bgSelG = 178; t.bgSelB = 190
-    t.bgZebraR = 236; t.bgZebraG = 236; t.bgZebraB = 242
-    t.bgHeaderR = 226; t.bgHeaderG = 228; t.bgHeaderB = 234
+    t.bg = #F0F0F5FF
+    t.bgAlt = #E8E8EEFF
+    t.bgInput = #FFFFFFFF
+    t.bgHover = #CED6E0FF
+    t.bgSel = #AAB2BEFF
+    t.bgZebra = #ECECF2FF
+    t.bgHeader = #E2E4EAFF
     // 文字
-    t.txtR = 30; t.txtG = 30; t.txtB = 40
-    t.txtInputR = 25; t.txtInputG = 25; t.txtInputB = 35
-    t.txtOnAccentR = 255; t.txtOnAccentG = 255; t.txtOnAccentB = 255
-    t.txtDimR = 140; t.txtDimG = 145; t.txtDimB = 155
-    t.txtHeaderR = 40; t.txtHeaderG = 45; t.txtHeaderB = 55
+    t.txt = #1E1E28FF
+    t.txtInput = #191923FF
+    t.txtOnAccent = #FFFFFFFF
+    t.txtDim = #8C919BFF
+    t.txtHeader = #282D37FF
     // 强调/交互
-    t.accentR = 60; t.accentG = 130; t.accentB = 220
-    t.accentFocusR = 80; t.accentFocusG = 150; t.accentFocusB = 230
-    t.accentBrightR = 60; t.accentBrightG = 130; t.accentBrightB = 220
+    t.accent = #3C82DCFF
+    t.accentFocus = #5096E6FF
+    t.accentBright = #3C82DCFF
     // 边框/分隔
-    t.borderR = 200; t.borderG = 205; t.borderB = 212
-    t.sepR = 210; t.sepG = 214; t.sepB = 220
+    t.border = #C8CDD4FF
+    t.sep = #D2D6DCFF
     // 滚动条
-    t.sbR = 160; t.sbG = 165; t.sbB = 175
+    t.sb = #A0A5AFFF
     // 预设按钮色
-    t.btnPrimaryR = 50; t.btnPrimaryG = 120; t.btnPrimaryB = 210
-    t.btnDangerR = 210; t.btnDangerG = 50; t.btnDangerB = 50
-    t.btnSuccessR = 50; t.btnSuccessG = 180; t.btnSuccessB = 70
-    t.btnWarningR = 230; t.btnWarningG = 150; t.btnWarningB = 20
-    t.btnDarkR = 70; t.btnDarkG = 70; t.btnDarkB = 80
+    t.btnPrimary = #3278D2FF
+    t.btnDanger = #D23232FF
+    t.btnSuccess = #32B446FF
+    t.btnWarning = #E69614FF
+    t.btnDark = #464650FF
     // Tooltip
-    t.tipBgR = 250; t.tipBgG = 250; t.tipBgB = 255
-    t.tipTxtR = 30; t.tipTxtG = 30; t.tipTxtB = 40
-    t.tipBrdR = 180; t.tipBrdG = 185; t.tipBrdB = 195
+    t.tipBg = #FAFAFFFF
+    t.tipTxt = #1E1E28FF
+    t.tipBrd = #B4B9C3FF
     return t
 }
 
@@ -132,37 +172,37 @@ export func midnightTheme(): Theme {
     Theme t = new Theme()
     t.name = "midnight"
     // 背景层次（深蓝调）
-    t.bgR = 22; t.bgG = 28; t.bgB = 44
-    t.bgAltR = 28; t.bgAltG = 34; t.bgAltB = 52
-    t.bgInputR = 18; t.bgInputG = 24; t.bgInputB = 40
-    t.bgHoverR = 40; t.bgHoverG = 52; t.bgHoverB = 80
-    t.bgSelR = 30; t.bgSelG = 40; t.bgSelB = 64
-    t.bgZebraR = 28; t.bgZebraG = 34; t.bgZebraB = 52
-    t.bgHeaderR = 30; t.bgHeaderG = 38; t.bgHeaderB = 58
+    t.bg = #161C2CFF
+    t.bgAlt = #1C2234FF
+    t.bgInput = #121828FF
+    t.bgHover = #283450FF
+    t.bgSel = #1E2840FF
+    t.bgZebra = #1C2234FF
+    t.bgHeader = #1E263AFF
     // 文字
-    t.txtR = 200; t.txtG = 215; t.txtB = 240
-    t.txtInputR = 190; t.txtInputG = 205; t.txtInputB = 235
-    t.txtOnAccentR = 255; t.txtOnAccentG = 255; t.txtOnAccentB = 255
-    t.txtDimR = 100; t.txtDimG = 115; t.txtDimB = 145
-    t.txtHeaderR = 190; t.txtHeaderG = 205; t.txtHeaderB = 230
+    t.txt = #C8D7F0FF
+    t.txtInput = #BECDEBFF
+    t.txtOnAccent = #FFFFFFFF
+    t.txtDim = #647391FF
+    t.txtHeader = #BECDE6FF
     // 强调/交互（偏青蓝）
-    t.accentR = 50; t.accentG = 170; t.accentB = 220
-    t.accentFocusR = 80; t.accentFocusG = 200; t.accentFocusB = 255
-    t.accentBrightR = 70; t.accentBrightG = 180; t.accentBrightB = 240
+    t.accent = #32AADCFF
+    t.accentFocus = #50C8FFFF
+    t.accentBright = #46B4F0FF
     // 边框/分隔
-    t.borderR = 60; t.borderG = 75; t.borderB = 110
-    t.sepR = 45; t.sepG = 55; t.sepB = 85
+    t.border = #3C4B6EFF
+    t.sep = #2D3755FF
     // 滚动条
-    t.sbR = 80; t.sbG = 100; t.sbB = 140
+    t.sb = #50648CFF
     // 预设按钮色
-    t.btnPrimaryR = 45; t.btnPrimaryG = 150; t.btnPrimaryB = 210
-    t.btnDangerR = 210; t.btnDangerG = 55; t.btnDangerB = 55
-    t.btnSuccessR = 50; t.btnSuccessG = 185; t.btnSuccessB = 100
-    t.btnWarningR = 235; t.btnWarningG = 155; t.btnWarningB = 25
-    t.btnDarkR = 40; t.btnDarkG = 50; t.btnDarkB = 70
+    t.btnPrimary = #2D96D2FF
+    t.btnDanger = #D23737FF
+    t.btnSuccess = #32B964FF
+    t.btnWarning = #EB9B19FF
+    t.btnDark = #283246FF
     // Tooltip
-    t.tipBgR = 22; t.tipBgG = 28; t.tipBgB = 44
-    t.tipTxtR = 200; t.tipTxtG = 215; t.tipTxtB = 240
-    t.tipBrdR = 70; t.tipBrdG = 85; t.tipBrdB = 120
+    t.tipBg = #161C2CFF
+    t.tipTxt = #C8D7F0FF
+    t.tipBrd = #465578FF
     return t
 }

@@ -22,9 +22,9 @@ import "sdl_combobox.leno" as cbx; use cbx.ComboBox
 import "sdl_panel.leno" as pnl; use pnl.Panel
 import "sdl_table.leno" as tbl; use tbl.Table
 import "sdl_treeview.leno" as tvlib; use tvlib.TreeView
-import "sdl_theme.leno" as theme; use theme.Theme
+import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 
-export struct TabControl impl Widget {
+export struct TabControl impl Widget, Themeable {
     float x = 0.0, y = 0.0, w = 400.0, h = 300.0
     float _tabH = 32.0         // 标签栏高度
     Array[string] _tabs = []     // 各页标题
@@ -41,14 +41,14 @@ export struct TabControl impl Widget {
     float _fontSize = 15.0; string _fontPath = ""; int _fontStyle = 0; Font? _font
 
     // 配色
-    int _bgR = 38, _bgG = 40, _bgB = 48       // 内容区背景
-    int _barR = 30, _barG = 32, _barB = 38    // 标签栏背景
-    int _tabR = 44, _tabG = 46, _tabB = 54    // 非激活标签
-    int _actR = 52, _actG = 120, _actB = 200  // 激活标签
-    int _txtR = 200, _txtG = 205, _txtB = 215 // 文字色（非激活）
-    int _actTxtR = 255, _actTxtG = 255, _actTxtB = 255  // 激活文字色
-    int _accR = 80, _accG = 160, _accB = 245  // 激活标签下划线
-    int _brdR = 90, _brdG = 95, _brdB = 110   // 边框色
+    int _bgColor = #262830FF       // 内容区背景
+    int _barColor = #232332FF      // 标签栏背景
+    int _tabColor = #2C2E36FF      // 非激活标签
+    int _actColor = #3C96EBFF     // 激活标签
+    int _txtColor = #78808CFF     // 文字色（非激活）
+    int _actTxtColor = #EBEBF5FF  // 激活文字色
+    int _accColor = #50A0F5FF     // 激活标签下划线
+    int _brdColor = #5A5F6EFF     // 边框色
     int _cursor = SystemCursor.POINTER
     bool enabled = true, visible = true
     func(int):void _onChange
@@ -64,14 +64,14 @@ export struct TabControl impl Widget {
 
     func set(Dict opts) {
         Theme th = theme.getTheme()
-        _bgR = th.bgR; _bgG = th.bgG; _bgB = th.bgB
-        _barR = th.bgInputR; _barG = th.bgInputG; _barB = th.bgInputB
-        _tabR = th.bgAltR; _tabG = th.bgAltG; _tabB = th.bgAltB
-        _actR = th.accentR; _actG = th.accentG; _actB = th.accentB
-        _txtR = th.txtDimR; _txtG = th.txtDimG; _txtB = th.txtDimB
-        _actTxtR = th.txtR; _actTxtG = th.txtG; _actTxtB = th.txtB
-        _accR = th.accentBrightR; _accG = th.accentBrightG; _accB = th.accentBrightB
-        _brdR = th.borderR; _brdG = th.borderG; _brdB = th.borderB
+        _bgColor = th.bg
+        _barColor = th.bgInput
+        _tabColor = th.bgAlt
+        _actColor = th.accent
+        _txtColor = th.txtDim
+        _actTxtColor = th.txt
+        _accColor = th.accentBright
+        _brdColor = th.border
         x    = opts.get("x", 0)
         y    = opts.get("y", 0)
         w    = opts.get("w", 400)
@@ -99,16 +99,16 @@ export struct TabControl impl Widget {
         _fontPath = opts.get("font_path", "")
         _fontStyle = opts.get("font_style", 0)
 
-        // 默认配色见字段声明（_bgR/_barR/_tabR/_actR/_txtR/_actTxtR/_accR/_brdR 等均有默认，以下仅 opts 覆盖）
+        // 默认配色见字段声明（_bgColor/_brdColor/_actColor/_accColor 等均有默认，以下仅 opts 覆盖）
 
-        var bgc = opts.get("bg_rgb")
-        if bgc is Array[int] { _bgR = bgc[0]; _bgG = bgc[1]; _bgB = bgc[2] }
-        var brc = opts.get("border_rgb")
-        if brc is Array[int] { _brdR = brc[0]; _brdG = brc[1]; _brdB = brc[2] }
-        var actc = opts.get("active_rgb")
-        if actc is Array[int] { _actR = actc[0]; _actG = actc[1]; _actB = actc[2] }
-        var accc = opts.get("accent_rgb")
-        if accc is Array[int] { _accR = accc[0]; _accG = accc[1]; _accB = accc[2] }
+        var bgc = opts.get("bg_color")
+        if bgc is int { _bgColor = bgc }
+        var brc = opts.get("border_color")
+        if brc is int { _brdColor = brc }
+        var actc = opts.get("active_color")
+        if actc is int { _actColor = actc }
+        var accc = opts.get("accent_color")
+        if accc is int { _accColor = accc }
 
         _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
         _hover = -1   // 重置悬停标签（二次 set 时归零）
@@ -326,18 +326,18 @@ export struct TabControl impl Widget {
         _ensure_font()
 
         // 标签栏背景
-        r.setColor(_barR, _barG, _barB, 255)
+        r.setColor(_barColor)
         r.fillRect(x, y, w, _tabH)
 
         // 各标签
         var rs = _tabRects()
         for rs.len() to i {
             var rr = rs[i]
-            int bR = _tabR, bG = _tabG, bB = _tabB
-            int tR = _txtR, tG = _txtG, tB = _txtB
-            if i == _active { bR = _actR; bG = _actG; bB = _actB; tR = _actTxtR; tG = _actTxtG; tB = _actTxtB }
-            else if i == _hover { bR = bR + 15; bG = bG + 15; bB = bB + 15 }
-            r.setColor(bR, bG, bB, 255)
+            int bC = _tabColor
+            int tC = _txtColor
+            if i == _active { bC = _actColor; tC = _actTxtColor }
+            else if i == _hover { bC = theme.brighten(_tabColor, 15) }
+            r.setColor(bC)
             r.fillRect(rr[0], rr[1], rr[2], rr[3])
 
             // 标签文字（居中裁剪）
@@ -346,25 +346,25 @@ export struct TabControl impl Widget {
                 float th = _font.measureString("Ag").h
                 float tx = rr[0] + (rr[2] - tw) / 2.0
                 float ty = rr[1] + (rr[3] - th) / 2.0
-                r.drawText(_font, _tabs[i], r.snapX(tx), r.snapY(ty), tR, tG, tB)
+                r.drawText(_font, _tabs[i], r.snapX(tx), r.snapY(ty), tC)
             }
 
             // 激活标签下划线
             if i == _active {
-                r.setColor(_accR, _accG, _accB, 255)
+                r.setColor(_accColor)
                 r.fillRect(rr[0], rr[1] + rr[3] - 3.0, rr[2], 3.0)
             }
         }
 
         // 标签栏底边
-        r.setColor(_brdR, _brdG, _brdB, 220)
+        r.setColor(_brdColor)
         r.drawLine(x, y + _tabH, x + w, y + _tabH)
 
         // 内容区
         float cx = x, cy = y + _tabH, cw = w, ch = h - _tabH
         if cw < 0 { cw = 0 }
         if ch < 0 { ch = 0 }
-        r.setColor(_bgR, _bgG, _bgB, 255)
+        r.setColor(_bgColor)
         r.fillRect(cx, cy, cw, ch)
 
         // 裁剪到内容区，绘制当前页子控件
@@ -385,7 +385,7 @@ export struct TabControl impl Widget {
         clip.free()
 
         // 内容区边框
-        r.setColor(_brdR, _brdG, _brdB, 200)
+        r.setColor(_brdColor)
         r.drawRect(cx, cy, cw, ch)
     }
 
@@ -395,6 +395,17 @@ export struct TabControl impl Widget {
             for pg to c { c.dispose() }
         }
         if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
+    }
+
+    func applyTheme(Theme t) {
+        _bgColor = t.bg
+        _barColor = t.bgInput
+        _tabColor = t.bgAlt
+        _actColor = t.accent
+        _txtColor = t.txtDim
+        _actTxtColor = t.txt
+        _accColor = t.accentBright
+        _brdColor = t.border
     }
 }
 

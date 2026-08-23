@@ -21,21 +21,21 @@ main() {
                                 var d2 = SDL3.createDialogWindow({title: "模态3-再一层", w: 280, h: 160, flags: WindowFlag.UTILITY})
                                 SDL3.runModal(d2,
                                     func(Event e2): bool { return not (e2.isKeyDown() and e2.scancode() == Scancode.ESCAPE) },
-                                    func(Renderer r) { r.clearColor(60,10,10,255); r.drawText(SDL3.createFontAuto(13.0),"最深层模态",30,40,255,100,100) }
+                                    func(Renderer r) { r.clearColor(#3C0A0AFF); r.drawText(SDL3.createFontAuto(13.0),"最深层模态",30,40,#FF6464FF) }
                                 )
                             }
                             return true
                         },
-                        func(Renderer r) { r.clearColor(60,10,10,255); r.drawText(SDL3.createFontAuto(14.0),"模态3",30,30,255,100,100) }
+                        func(Renderer r) { r.clearColor(#3C0A0AFF); r.drawText(SDL3.createFontAuto(14.0),"模态3",30,30,#FF6464FF) }
                     )
                 }
             }
             return true
         },
         func(Renderer r) {
-            r.clearColor(20,20,40,255)
-            r.drawText(SDL3.createFontAuto(18.0),"主窗口",20,20,255,255,255)
-            r.drawText(SDL3.createFontAuto(14.0),"2=模态2 3=模态3 ESC=退",20,55,200,200,220)
+            r.clearColor(#141428FF)
+            r.drawText(SDL3.createFontAuto(18.0),"主窗口",20,20,#FFFFFFFF)
+            r.drawText(SDL3.createFontAuto(14.0),"2=模态2 3=模态3 ESC=退",20,55,#C8C8F0FF)
         }
     )
     print("全部关闭")
@@ -51,12 +51,12 @@ func showModal2() {
                     var d2 = SDL3.createDialogWindow({title: "模态3 [从2弹出]", w: 280, h: 160, flags: WindowFlag.UTILITY})
                     SDL3.runModal(d2,
                         func(Event e2): bool { return not (e2.isKeyDown() and e2.scancode() == Scancode.ESCAPE) },
-                        func(Renderer r) { r.clearColor(60,15,15,255); r.drawText(SDL3.createFontAuto(13.0),"从模态2弹出的模态3",20,40,255,100,100) }
+                        func(Renderer r) { r.clearColor(#3C0F0FFF); r.drawText(SDL3.createFontAuto(13.0),"从模态2弹出的模态3",20,40,#FF6464FF) }
                     )
                 }
             }
             return true
         },
-        func(Renderer r) { r.clearColor(40,15,15,255); r.drawText(SDL3.createFontAuto(14.0),"模态2 — 3=弹模态3",20,30,255,150,50) }
+        func(Renderer r) { r.clearColor(#280F0FFF); r.drawText(SDL3.createFontAuto(14.0),"模态2 — 3=弹模态3",20,30,#FF9632FF) }
     )
 }

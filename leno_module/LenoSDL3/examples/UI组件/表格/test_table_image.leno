@@ -139,10 +139,10 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(28, 30, 36, 255)
-            r.drawText(font, "Table 行图标测试 (Esc 退出) — 第0列显示[图标+文字]，路径独立存储", 20, 2, 200, 210, 230)
-            r.drawText(font, "点按钮切换 image_mode / image_size | 空路径行只显示文字", 20, 24, 150, 160, 180)
-            r.drawText(font, "当前模式: " + modeName(), 20, 44, 180, 200, 120)
+            r.clearColor(#1C1E24FF)
+            r.drawText(font, "Table 行图标测试 (Esc 退出) — 第0列显示[图标+文字]，路径独立存储", 20, 2, #C8D2E6FF)
+            r.drawText(font, "点按钮切换 image_mode / image_size | 空路径行只显示文字", 20, 24, #96A0B4FF)
+            r.drawText(font, "当前模式: " + modeName(), 20, 44, #B4C878FF)
         }
     )
 

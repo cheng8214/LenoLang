@@ -6,19 +6,19 @@ import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.SystemCursor
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
-import "sdl_theme.leno" as theme; use theme.Theme
+import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 import maths
 
-export struct Slider impl Widget {
+export struct Slider impl Widget, Themeable {
     float x = 0.0, y = 0.0, w = 200.0, h = 24.0
     float minV = 0.0, maxV = 100.0, value = 0.0
     float step = 0.0
     bool _vertical = false
     string _fontPath = ""; float _fontSize = 15.0; int _fontStyle = 0; Font? _font
-    int _trkR = 60, _trkG = 60, _trkB = 72       // 轨道背景色
-    int _fillR = 60, _fillG = 170, _fillB = 245  // 已选填充色
-    int _thumbR = 245, _thumbG = 245, _thumbB = 250 // 滑块色
-    int tr = 235, tg = 235, tb = 245             // 文字色
+    int _trkColor = #2C2E36FF     // 轨道背景色
+    int _fillColor = #3C96EBFF     // 已选填充色
+    int _thumbColor = #EBEBF5FF   // 滑块色
+    int _txtColor = #EBEBF5FF     // 文字色
     int _cursor = SystemCursor.POINTER
     bool hover = false; bool _wasHover = false; bool _dragging = false; bool enabled = true; bool visible = true; bool _loaded = false
     string _tip = ""           // 悬停提示文本（空 = 不提示）
@@ -43,10 +43,10 @@ export struct Slider impl Widget {
     // ==================== set 初始化 ====================
     func set(Dict opts) {
         Theme th = theme.getTheme()
-        _trkR = th.bgAltR; _trkG = th.bgAltG; _trkB = th.bgAltB
-        _fillR = th.accentR; _fillG = th.accentG; _fillB = th.accentB
-        _thumbR = th.txtR; _thumbG = th.txtG; _thumbB = th.txtB
-        tr = th.txtR; tg = th.txtG; tb = th.txtB
+        _trkColor = th.bgAlt
+        _fillColor = th.accent
+        _thumbColor = th.txt
+        _txtColor = th.txt
         x      = opts.get("x", 0)
         y      = opts.get("y", 0)
         w      = opts.get("w", 200)
@@ -60,15 +60,15 @@ export struct Slider impl Widget {
         _fontPath = opts.get("font_path", "")
         _fontStyle = opts.get("font_style", 0)
 
-        // 默认颜色见字段声明（_trkR/_fillR/_thumbR/tr 等均有默认，以下仅 opts 覆盖）
-        var tkc = opts.get("track_rgb")
-        if tkc is Array[int] { _trkR = tkc[0]; _trkG = tkc[1]; _trkB = tkc[2] }
-        var flc = opts.get("fill_rgb")
-        if flc is Array[int] { _fillR = flc[0]; _fillG = flc[1]; _fillB = flc[2] }
-        var thc = opts.get("thumb_rgb")
-        if thc is Array[int] { _thumbR = thc[0]; _thumbG = thc[1]; _thumbB = thc[2] }
-        var txr = opts.get("text_rgb")
-        if txr is Array[int] { tr = txr[0]; tg = txr[1]; tb = txr[2] }
+        // 默认颜色见字段声明（_trkColor/_fillColor/_thumbColor/_txtColor 等均有默认，以下仅 opts 覆盖）
+        var tkc = opts.get("track_color")
+        if tkc is int { _trkColor = tkc }
+        var flc = opts.get("fill_color")
+        if flc is int { _fillColor = flc }
+        var thc = opts.get("thumb_color")
+        if thc is int { _thumbColor = thc }
+        var txr = opts.get("text_color")
+        if txr is int { _txtColor = txr }
 
         _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
         enabled = opts.get("enabled", true)
@@ -184,9 +184,9 @@ export struct Slider impl Widget {
         if _vertical { span = h - 2.0 * rad } else { span = w - 2.0 * rad }
 
         // 轨道背景
-        int tR = _trkR, tG = _trkG, tB = _trkB
-        if not enabled { tR = _trkR / 2; tG = _trkG / 2; tB = _trkB / 2 }
-        r.setColor(tR, tG, tB, 255)
+        int tC = _trkColor
+        if not enabled { tC = theme.darken(_trkColor, 60) }
+        r.setColor(tC)
         if _vertical {
             float tx = x + (w - tk) / 2.0
             r.fillRoundedRect(tx, y + rad, tk, span, tk / 2.0)
@@ -197,9 +197,9 @@ export struct Slider impl Widget {
 
         // 已选填充
         float ratio = _ratio()
-        int fR = _fillR, fG = _fillG, fB = _fillB
-        if not enabled { fR = _fillR / 2; fG = _fillG / 2; fB = _fillB / 2 }
-        r.setColor(fR, fG, fB, 255)
+        int fC = _fillColor
+        if not enabled { fC = theme.darken(_fillColor, 60) }
+        r.setColor(fC)
         if _vertical {
             float tx = x + (w - tk) / 2.0
             float fillH = tk / 2.0 + ratio * span   // 从底向上填充
@@ -214,11 +214,10 @@ export struct Slider impl Widget {
         float cx, cy
         if _vertical { cx = x + w / 2.0; cy = y + h - rad - ratio * span }
         else         { cx = x + rad + ratio * span; cy = y + h / 2.0 }
-        int kR = _thumbR, kG = _thumbG, kB = _thumbB
-        if hover or _dragging { kR = kR + 15; kG = kG + 15; kB = kB + 15
-                               if kR > 255 { kR = 255 }; if kG > 255 { kG = 255 }; if kB > 255 { kB = 255 } }
-        if not enabled { kR = _thumbR / 2; kG = _thumbG / 2; kB = _thumbB / 2 }
-        r.setColor(kR, kG, kB, 255)
+        int kC = _thumbColor
+        if hover or _dragging { kC = theme.brighten(_thumbColor, 15) }
+        if not enabled { kC = theme.darken(_thumbColor, 60) }
+        r.setColor(kC)
         r.fillCircle(cx, cy, rad)
 
         // 数值文字
@@ -228,14 +227,21 @@ export struct Slider impl Widget {
             float ty; float tx
             if _vertical { ty = y + h + 6.0; tx = x + w / 2.0 - _font.measureString(label).w / 2.0 }
             else { ty = y + h / 2.0 - th / 2.0; tx = x + w + 8.0 }
-            int tcR = tr, tcG = tg, tcB = tb
-            if not enabled { tcR = tr / 2; tcG = tg / 2; tcB = tb / 2 }
-            r.drawText(_font, label, tx, ty, tcR, tcG, tcB)
+            int tcC = _txtColor
+            if not enabled { tcC = theme.darken(_txtColor, 60) }
+            r.drawText(_font, label, tx, ty, tcC)
         }
     }
 
     func dispose() {
         if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
+    }
+
+    func applyTheme(Theme t) {
+        _trkColor = t.bgAlt
+        _fillColor = t.accent
+        _thumbColor = t.txt
+        _txtColor = t.txt
     }
 }
 

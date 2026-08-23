@@ -74,60 +74,60 @@ main() {
             if _flash < 0.0 { _flash = 0.0 }
 
             // 3. 渲染
-            r.clearColor(20, 20, 35, 255)
+            r.clearColor(#141423FF)
 
             // 标题
-            r.setColor(255, 220, 100, 255)
-            r.drawText(font_l, "定时器测试 — 空格=切换t2  R=reset  S=停止t1  G=恢复t1", 10, 5, 255, 200, 80)
+            r.setColor(#FFDC64FF)
+            r.drawText(font_l, "定时器测试 — 空格=切换t2  R=reset  S=停止t1  G=恢复t1", 10, 5, #FFC850FF)
 
             // ========== t1: 循环计数器 ==========
-            r.setColor(80, 200, 255, 255)
+            r.setColor(#50C8FFFF)
             r.fillRoundedRect(30, 40, 250, 60, 10)
-            r.setColor(255, 255, 255, 255)
-            r.drawText(font_l, "t1 计数: " + _count as string, 50, 55, 255, 255, 255)
-            r.drawText(font_s, "每秒 +1  (S=暂停 G=恢复)", 50, 78, 180, 200, 220)
+            r.setColor(#FFFFFFFF)
+            r.drawText(font_l, "t1 计数: " + _count as string, 50, 55, #FFFFFFFF)
+            r.drawText(font_s, "每秒 +1  (S=暂停 G=恢复)", 50, 78, #B4C8DCFF)
 
             // ========== t2: 手动控制 ==========
             if _flash > 0.0 {
-                r.setColor(255, 80, 80, 200)
+                r.setColor(#FF5050C8)
                 r.fillRoundedRect(30, 120, 250, 60, 10)
             } else {
-                r.setColor(50, 50, 70, 255)
+                r.setColor(#323246FF)
                 r.drawRoundedRect(30, 120, 250, 60, 10)
             }
-            r.setColor(255, 255, 255, 255)
-            r.drawText(font, "t2: 空格切换  R=reset 500ms", 45, 140, 200, 200, 220)
+            r.setColor(#FFFFFFFF)
+            r.drawText(font, "t2: 空格切换  R=reset 500ms", 45, 140, #C8C8DCFF)
 
             // 状态指示
             if t2.running {
-                r.setColor(100, 255, 100, 255)
+                r.setColor(#64FF64FF)
                 r.fillRoundedRect(295, 128, 20, 20, 4)
             } else {
-                r.setColor(255, 100, 100, 255)
+                r.setColor(#FF6464FF)
                 r.fillRoundedRect(295, 128, 20, 20, 4)
             }
 
             // ========== t3: 一次性 ==========
-            r.setColor(60, 60, 90, 255)
+            r.setColor(#3C3C5AFF)
             r.drawRoundedRect(30, 200, 540, 60, 10)
-            r.setColor(255, 255, 255, 255)
+            r.setColor(#FFFFFFFF)
             if _done {
-                r.drawText(font_l, "t3: 5 秒已到！一次性定时器触发", 45, 218, 100, 255, 100)
+                r.drawText(font_l, "t3: 5 秒已到！一次性定时器触发", 45, 218, #64FF64FF)
             } else {
-                r.drawText(font, "t3: 等待中... 5 秒后自动触发", 45, 218, 200, 200, 220)
+                r.drawText(font, "t3: 等待中... 5 秒后自动触发", 45, 218, #C8C8DCFF)
             }
 
             // ========== 提示消息 ==========
             if _msg != "" {
-                r.setColor(0, 0, 0, 180)
+                r.setColor(#000000B4)
                 r.fillRoundedRect(150, 300, 300, 40, 8)
-                r.setColor(255, 200, 50, 255)
-                r.drawText(font, _msg, 170, 310, 255, 200, 50)
+                r.setColor(#FFC832FF)
+                r.drawText(font, _msg, 170, 310, #FFC832FF)
             }
 
             // ========== 图例 ==========
-            r.setColor(150, 150, 180, 200)
-            r.drawText(font_s, "t1状态:" + t1.running as string + "  t2状态:" + t2.running as string + "  t3状态:" + t3.running as string, 30, 365, 150, 150, 180)
+            r.setColor(#9696B4C8)
+            r.drawText(font_s, "t1状态:" + t1.running as string + "  t2状态:" + t2.running as string + "  t3状态:" + t3.running as string, 30, 365, #9696B4FF)
         }
     )
 }

@@ -1,4 +1,4 @@
-﻿// test_text_input.leno - 测试 isTextInput() 和 text() 函数
+// test_text_input.leno - 测试 isTextInput() 和 text() 函数
 import "../../lib/SDL3.leno" as SDL3
 use SDL3.Event
 use SDL3.Renderer
@@ -39,41 +39,41 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(22, 22, 40, 255)
+            r.clearColor(#161628FF)
 
             // 标题
-            r.drawText(font, "Text Input Test -- isTextInput() & text() 测试", 20, 15, 255, 200, 80)
+            r.drawText(font, "Text Input Test -- isTextInput() & text() 测试", 20, 15, #FFC850FF)
 
             // 分隔线
-            r.drawText(font, "========================================", 20, 42, 100, 100, 100)
+            r.drawText(font, "========================================", 20, 42, #646464FF)
 
             // 实时显示当前输入的文本
-            r.drawText(font, "当前输入内容:", 20, 72, 180, 180, 200)
+            r.drawText(font, "当前输入内容:", 20, 72, #B4B4C8FF)
             if textBuffer == "" {
-                r.drawText(font, "(请开始输入文字...)", 30, 98, 80, 80, 80)
+                r.drawText(font, "(请开始输入文字...)", 30, 98, #505050FF)
             } else {
-                r.drawText(font, "\"" + textBuffer + "\"", 30, 98, 100, 255, 100)
+                r.drawText(font, "\"" + textBuffer + "\"", 30, 98, #64FF64FF)
             }
 
             // 显示最后一次输入
-            r.drawText(font, "最后一次 text() 返回值:", 20, 135, 180, 180, 200)
+            r.drawText(font, "最后一次 text() 返回值:", 20, 135, #B4B4C8FF)
             if lastInput == "" {
-                r.drawText(font, "(无)", 30, 160, 80, 80, 80)
+                r.drawText(font, "(无)", 30, 160, #505050FF)
             } else {
-                r.drawText(font, "\"" + lastInput + "\"", 30, 160, 255, 180, 100)
+                r.drawText(font, "\"" + lastInput + "\"", 30, 160, #FFB464FF)
             }
 
             // 统计信息
-            r.drawText(font, "输入次数 (isTextInput() 为 true 的次数): " + inputCount, 20, 200, 150, 200, 255)
+            r.drawText(font, "输入次数 (isTextInput() 为 true 的次数): " + inputCount, 20, 200, #96C8FFFF)
 
             // 说明
-            r.drawText(font, "========================================", 20, 240, 100, 100, 100)
-            r.drawText(font, "说明:", 20, 268, 200, 200, 100)
-            r.drawText(font, "  1. 输入文字/字母/中文/符号 — isTextInput() 为 true", 20, 292, 150, 150, 150)
-            r.drawText(font, "  2. text() 返回当前输入的字符文本", 20, 314, 150, 150, 150)
-            r.drawText(font, "  3. isTextInput 与 isKeyDown 不同:", 20, 336, 150, 150, 150)
-            r.drawText(font, "     isKeyDown 检测物理按键, isTextInput 检测实际字符", 30, 358, 120, 120, 120)
-            r.drawText(font, "  4. 按 ESC 退出", 20, 380, 150, 150, 150)
+            r.drawText(font, "========================================", 20, 240, #646464FF)
+            r.drawText(font, "说明:", 20, 268, #C8C864FF)
+            r.drawText(font, "  1. 输入文字/字母/中文/符号 — isTextInput() 为 true", 20, 292, #969696FF)
+            r.drawText(font, "  2. text() 返回当前输入的字符文本", 20, 314, #969696FF)
+            r.drawText(font, "  3. isTextInput 与 isKeyDown 不同:", 20, 336, #969696FF)
+            r.drawText(font, "     isKeyDown 检测物理按键, isTextInput 检测实际字符", 30, 358, #787878FF)
+            r.drawText(font, "  4. 按 ESC 退出", 20, 380, #969696FF)
         }
     )
 

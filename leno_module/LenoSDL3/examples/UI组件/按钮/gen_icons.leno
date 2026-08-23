@@ -63,8 +63,8 @@ main() {
     if not win.ok { print("[gen] createWindow 失败: " + SDL3.getError()); return }
 
     var r = SDL3.createRenderer(win.getHandle())
-    r.clearColor(0, 0, 0, 0)                          // 透明背景（按钮着色时会透出按钮底色）
-    r.setColor(255, 255, 255, 255)                    // 白色形状（按钮 image_tint 可染色）
+    r.clearColor(#00000000)                          // 透明背景（按钮着色时会透出按钮底色）
+    r.setColor(#FFFFFFFF)                    // 白色形状（按钮 image_tint 可染色）
 
     drawPlay(r, 0.0)
     drawPause(r, 64.0)

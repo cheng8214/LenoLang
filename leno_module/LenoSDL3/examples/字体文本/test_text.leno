@@ -63,7 +63,7 @@ main() {
         }
 
         // 清屏（黑色背景）
-        ren.setColor(0, 0, 0, 255)
+        ren.setColor(#000000FF)
         ren.clear()
 
         // 绘制文本纹理（白色文字）
@@ -72,10 +72,10 @@ main() {
         }
 
         // 绘制动态文本（每帧更新）
-        ren.drawText(font, "帧数: " + frameCount, 100.0, 150.0, 255, 100, 100)
+        ren.drawText(font, "帧数: " + frameCount, 100.0, 150.0, #FF6464FF)
 
         // 绘制彩色文本
-        ren.drawText(font, "彩色文字测试", 100.0, 200.0, 100, 255, 100)
+        ren.drawText(font, "彩色文字测试", 100.0, 200.0, #64FF64FF)
 
         // 显示渲染结果
         ren.present()

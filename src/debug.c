@@ -68,8 +68,6 @@ static const char* opCodeNames[] = {
 "OP_INC_LOCAL_NOPUSH",
 "OP_DEC_LOCAL_NOPUSH",
 "OP_MOVE_LOCAL_POP",
-"OP_CALL_NATIVE_VOID",
-"OP_DICT_SET_NOPUSH",
 "OP_INDEX_SET_NOPUSH",
 "OP_CLEAR_LOCAL_RANGE",
 "OP_SWITCH_LOOKUP"
@@ -521,13 +519,6 @@ int disassembleInstruction(Chunk* chunk, int offset) {
             printf(" src=%d dst=%d", src, dst);
             return offset + 5;
         }
-        case OP_CALL_NATIVE_VOID: {
-            int name_idx = (chunk->code[offset + 1] << 8) | chunk->code[offset + 2];
-            int arg_count = (chunk->code[offset + 3] << 8) | chunk->code[offset + 4];
-            printf(" name=%d args=%d", name_idx, arg_count);
-            return offset + 5;
-        }
-        case OP_DICT_SET_NOPUSH:
         case OP_INDEX_SET_NOPUSH:
             return offset + 1;
         case OP_CLEAR_LOCAL_RANGE:

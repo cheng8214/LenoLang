@@ -100,10 +100,10 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(28, 30, 36, 255)
-            r.drawText(font, "Table 测试 (Esc 退出) — 定时器每2s刷新表格", 20, 2, 200, 210, 230)
-            r.drawText(font, "点表头排序 | 拖表头列缝改列宽 | 普通点=单选  Ctrl+点=切换  Shift+点=范围", 20, 24, 150, 160, 180)
-            r.drawText(font, "表头居中(header_aligns)，数据列右对齐(aligns)", 20, 44, 150, 160, 180)
+            r.clearColor(#1C1E24FF)
+            r.drawText(font, "Table 测试 (Esc 退出) — 定时器每2s刷新表格", 20, 2, #C8D2E6FF)
+            r.drawText(font, "点表头排序 | 拖表头列缝改列宽 | 普通点=单选  Ctrl+点=切换  Shift+点=范围", 20, 24, #96A0B4FF)
+            r.drawText(font, "表头居中(header_aligns)，数据列右对齐(aligns)", 20, 44, #96A0B4FF)
         }
     )
 

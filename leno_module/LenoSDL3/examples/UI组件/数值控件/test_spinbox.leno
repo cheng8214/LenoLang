@@ -73,8 +73,8 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(28, 30, 36, 255)
-            r.drawText(font, "SpinBox 测试 (Esc 退出，滚轮/箭头/输入均可调值)", 20, 2, 200, 210, 230)
+            r.clearColor(#1C1E24FF)
+            r.drawText(font, "SpinBox 测试 (Esc 退出，滚轮/箭头/输入均可调值)", 20, 2, #C8D2E6FF)
         }
     )
 

@@ -60,8 +60,8 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(28, 28, 46, 255)
-            r.drawText(font, "① 左对齐16px  ② 居中22px(大字号自适应)  ③ 右对齐16px  ④ 竖栏居中18px+项间距12", 12, 440, 200, 210, 230)
+            r.clearColor(#1C1C2EFF)
+            r.drawText(font, "① 左对齐16px  ② 居中22px(大字号自适应)  ③ 右对齐16px  ④ 竖栏居中18px+项间距12", 12, 440, #C8D2E6FF)
         }
     )
 

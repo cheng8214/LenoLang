@@ -50,12 +50,12 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(28, 28, 46, 255)
+            r.clearColor(#1C1C2EFF)
             // 内容区（从 x=200 起，避开左栏 0~180）
-            r.drawText(font, "内容区", 210, 40, 230, 235, 245)
-            r.drawText(font, "选中: [" + curMenu + "] " + curId, 210, 80, 200, 210, 230)
-            r.drawText(font, "左栏竖菜单：点击项 -> 子菜单向右飞出", 210, 120, 160, 170, 190)
-            r.drawText(font, "ESC 退出", 560, 400, 140, 140, 140)
+            r.drawText(font, "内容区", 210, 40, #E6EBF5FF)
+            r.drawText(font, "选中: [" + curMenu + "] " + curId, 210, 80, #C8D2E6FF)
+            r.drawText(font, "左栏竖菜单：点击项 -> 子菜单向右飞出", 210, 120, #A0AABEFF)
+            r.drawText(font, "ESC 退出", 560, 400, #8C8C8CFF)
         }
     )
 

@@ -9,6 +9,7 @@
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_core.leno" as core
+import "sdl_theme.leno" as theme
 
 export struct DragHint {
     // ── 样式配置 ──
@@ -20,11 +21,11 @@ export struct DragHint {
     float _offsetX = 14.0        // 相对鼠标的 X 偏移
     float _offsetY = 14.0        // 相对鼠标的 Y 偏移
     // 背景色（半透明）
-    int _bgR = 30, _bgG = 60, _bgB = 120, _bgA = 220
+    int _bgColor = #1E3C78DC
     // 边框色
-    int _brR = 80, _brG = 140, _brB = 220, _brA = 255
+    int _brColor = #508CDCFF
     // 文字色
-    int _txR = 255, _txG = 255, _txB = 255
+    int _txColor = #FFFFFFFF
 
     // ── 运行时状态 ──
     string _text = ""            // 显示文本
@@ -39,14 +40,16 @@ export struct DragHint {
         _radius = opts.get("radius", 4.0)
         _offsetX = opts.get("offset_x", 14.0)
         _offsetY = opts.get("offset_y", 14.0)
-        _bgA = opts.get("bg_a", 220)
-        _brA = opts.get("border_a", 255)
-        var bg = opts.get("bg_rgb")
-        if bg is Array[int] { _bgR = bg[0]; _bgG = bg[1]; _bgB = bg[2] }
-        var br = opts.get("border_rgb")
-        if br is Array[int] { _brR = br[0]; _brG = br[1]; _brB = br[2] }
-        var tx = opts.get("text_rgb")
-        if tx is Array[int] { _txR = tx[0]; _txG = tx[1]; _txB = tx[2] }
+        var bg = opts.get("bg_color")
+        if bg is int { _bgColor = bg }
+        var br = opts.get("border_color")
+        if br is int { _brColor = br }
+        var bga = opts.get("bg_a")
+        if bga is int { _bgColor = theme.withAlpha(_bgColor, bga) }
+        var bra = opts.get("border_a")
+        if bra is int { _brColor = theme.withAlpha(_brColor, bra) }
+        var tx = opts.get("text_color")
+        if tx is int { _txColor = tx }
     }
 
     // 确保字体已加载
@@ -86,13 +89,13 @@ export struct DragHint {
         float bx = _x + _offsetX
         float by = _y + _offsetY
         // 半透明圆角背景
-        r.setColor(_bgR, _bgG, _bgB, _bgA)
+        r.setColor(_bgColor)
         r.fillRoundedRect(bx, by, boxW, boxH, _radius)
         // 圆角边框
-        r.setColor(_brR, _brG, _brB, _brA)
+        r.setColor(_brColor)
         r.drawRoundedRect(bx, by, boxW, boxH, _radius)
         // 文字
-        r.drawText(_font, _text, bx + _padX, by + _padY, _txR, _txG, _txB)
+        r.drawText(_font, _text, bx + _padX, by + _padY, _txColor)
     }
 
     // 释放字体资源

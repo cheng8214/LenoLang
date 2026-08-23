@@ -423,7 +423,7 @@ func doScreenshot() {
                 tex = ren.createTexture(SDL3.PIXELFORMAT_ARGB8888, 0, _sw, _sh)
                 if tex != null { ren.updateTexture(tex, null, _pixels, _sw * 4) }
             }
-            ren.setColor(0,0,0,255); ren.clear()
+            ren.setColor(#000000FF); ren.clear()
             if tex != null { ren.drawTextureAt(tex, 0.0, 0.0, _float(_sw), _float(_sh)) }
 
             var r = getRect()
@@ -431,7 +431,7 @@ func doScreenshot() {
             float rw = r["w"] as float; float rh = r["h"] as float
 
             // 遮罩
-            ren.setBlendMode(1); ren.setColor(0,0,0,120)
+            ren.setBlendMode(1); ren.setColor(#00000078)
             if not _selDone {
                 // 选区未完成：始终绘制当前拖拽中的遮罩和框
                 // 还没框选好选区
@@ -443,12 +443,12 @@ func doScreenshot() {
                     float ay = if _sy < _ey then _sy else _ey
                     float aw = if _sx > _ex then _sx - _ex else _ex - _sx
                     float ah = if _sy > _ey then _sy - _ey else _ey - _sy
-                    ren.setColor(0,0,0,120)
+                    ren.setColor(#00000078)
                     ren.fillRect(0.0, 0.0, _float(_sw), ay)
                     ren.fillRect(0.0, ay + ah, _float(_sw), _float(_sh) - ay - ah)
                     ren.fillRect(0.0, ay, ax, ah)
                     ren.fillRect(ax + aw, ay, _float(_sw) - ax - aw, ah)
-                    ren.setColor(255,255,255,255); ren.drawRect(ax, ay, aw, ah)
+                    ren.setColor(#FFFFFFFF); ren.drawRect(ax, ay, aw, ah)
                 }
             }
             else if _selDone and rw > 0 {
@@ -458,9 +458,9 @@ func doScreenshot() {
                 ren.fillRect(0.0, y0, x0, rh)
                 ren.fillRect(x0 + rw, y0, _float(_sw) - x0 - rw, rh)
                 // 选区边框
-                ren.setColor(255,255,255,255); ren.drawRect(x0, y0, rw, rh)
+                ren.setColor(#FFFFFFFF); ren.drawRect(x0, y0, rw, rh)
                 // 四角手柄
-                float hs=6; ren.setColor(255,255,255,200)
+                float hs=6; ren.setColor(#FFFFFFC8)
                 ren.fillRect(x0-hs,y0-hs,hs*2,hs*2); ren.fillRect(x0+rw-hs,y0-hs,hs*2,hs*2)
                 ren.fillRect(x0-hs,y0+rh-hs,hs*2,hs*2); ren.fillRect(x0+rw-hs,y0+rh-hs,hs*2,hs*2)
                 // 尺寸
@@ -469,8 +469,8 @@ func doScreenshot() {
                     var sz = font.measureString(ss)
                     float swW=sz.w; float swX=x0+rw/2-swW/2
                     float swY=if y0>28 then y0-24 else y0+rh+4
-                    ren.setColor(0,0,0,200); ren.fillRect(swX-4, swY, swW+8, 20)
-                    ren.drawText(font, ss, swX, swY+2, 255,255,255)
+                    ren.setColor(#000000C8); ren.fillRect(swX-4, swY, swW+8, 20)
+                    ren.drawText(font, ss, swX, swY+2, #FFFFFFFF)
                 }
             }
             ren.setBlendMode(0)
@@ -487,11 +487,11 @@ func doScreenshot() {
                 if bw > 0.0 and bh > 0.0 {
                     ren.setBlendMode(1)
                     // 虚线边框效果（用半透明白色）
-                    ren.setColor(255, 255, 255, 200)
+                    ren.setColor(#FFFFFFC8)
                     ren.drawRect(bx - 3.0, by - 2.0, bw + 6.0, bh + 4.0)
                     // 四角手柄
                     float hs = 4.0
-                    ren.setColor(80, 160, 255, 255)
+                    ren.setColor(#50A0FFFF)
                     ren.fillRect(bx - 3.0 - hs, by - 2.0 - hs, hs*2, hs*2)
                     ren.fillRect(bx + bw + 3.0 - hs, by - 2.0 - hs, hs*2, hs*2)
                     ren.fillRect(bx - 3.0 - hs, by + bh + 2.0 - hs, hs*2, hs*2)
@@ -510,7 +510,7 @@ func doScreenshot() {
 
             // 十字准星（空闲时）
             if not _selDone and not _drawing and not _texting and _tbHoverBtn < 0 {
-                ren.setBlendMode(1); ren.setColor(255,255,255,60)
+                ren.setBlendMode(1); ren.setColor(#FFFFFF3C)
                 ren.fillRect(_mx, 0.0, 1.0, _float(_sh))
                 ren.fillRect(0.0, _my, _float(_sw), 1.0)
                 ren.setBlendMode(0)
@@ -526,10 +526,10 @@ func doScreenshot() {
 
             // 底部状态栏
             if _hint.len() > 0 {
-                float bh=28; ren.setBlendMode(1); ren.setColor(0,0,0,180)
+                float bh=28; ren.setBlendMode(1); ren.setColor(#000000B4)
                 ren.fillRect(0.0, _float(_sh)-bh, _float(_sw), bh)
                 ren.setBlendMode(0)
-                if font.ok { ren.drawText(font, _hint, 10.0, _float(_sh)-21, 255,255,255) }
+                if font.ok { ren.drawText(font, _hint, 10.0, _float(_sh)-21, #FFFFFFFF) }
             }
 
             // 延迟就绪：渲染 5 帧后才接受鼠标操作，确保残留事件被消费
@@ -681,7 +681,7 @@ func _renderAnnos(Renderer ren, Array[Font] fontList) {
         }
         else if a.type == MODE_PEN and a.strokes.len() >= 4 {
             ren.setBlendMode(1)
-            ren.setColor(_r(a.color), _g(a.color), _b(a.color), 255)
+            ren.setColor(SDL3.withAlpha(a.color, 255))
             for 0 : (a.strokes.len()/2 - 2) to i {
                 float x1 = a.strokes[i*2]; float y1 = a.strokes[i*2+1]
                 float x2 = a.strokes[i*2+2]; float y2 = a.strokes[i*2+3]
@@ -697,7 +697,7 @@ func _renderAnnos(Renderer ren, Array[Font] fontList) {
                 ren.setBlendMode(1)
                 float lineH = _float(tf.height)
                 for lines.len() to li {
-                    ren.drawText(tf, lines[li], a.tx, a.ty + li * lineH, _r(a.color), _g(a.color), _b(a.color))
+                    ren.drawText(tf, lines[li], a.tx, a.ty + li * lineH, a.color)
                 }
                 ren.setBlendMode(0)
             }
@@ -710,13 +710,13 @@ func _renderDrawingPreview(Renderer ren) {
     if _mode == MODE_ARROW {
         // 箭头预览
         ren.setBlendMode(1)
-        ren.setColor(_r(_curColor), _g(_curColor), _b(_curColor), 180)
+        ren.setColor(SDL3.withAlpha(_curColor, 180))
         ren.drawLine(_drawX1, _drawY1, _drawX2, _drawY2)
         ren.setBlendMode(0)
     }
     else if _mode == MODE_PEN and _penPts.len() >= 4 {
         ren.setBlendMode(1)
-        ren.setColor(_r(_curColor), _g(_curColor), _b(_curColor), 255)
+        ren.setColor(SDL3.withAlpha(_curColor, 255))
         for 0 : (_penPts.len()/2 - 2) to i {
             float x1=_penPts[i*2]; float y1=_penPts[i*2+1]
             float x2=_penPts[i*2+2]; float y2=_penPts[i*2+3]
@@ -737,7 +737,7 @@ func _renderTextInput(Renderer ren, Array[Font] fontList) {
     if _textStr.len() > 0 {
         ren.setBlendMode(1)
         for lines.len() to li {
-            ren.drawText(tf, lines[li], _textX, _textY + li * lineH, _r(_curColor), _g(_curColor), _b(_curColor))
+            ren.drawText(tf, lines[li], _textX, _textY + li * lineH, _curColor)
         }
         ren.setBlendMode(0)
     }
@@ -753,7 +753,7 @@ func _renderTextInput(Renderer ren, Array[Font] fontList) {
         }
         float cursorY = _textY + lastIdx * lineH
         ren.setBlendMode(1)
-        ren.setColor(_r(_curColor), _g(_curColor), _b(_curColor), 255)
+        ren.setColor(SDL3.withAlpha(_curColor, 255))
         ren.fillRect(cursorX, cursorY, 2.0, lineH)
         ren.setBlendMode(0)
     }
@@ -766,7 +766,7 @@ func _drawArrow(Renderer ren, AnnoItem a, int color) {
     if len < 2.0 { return }
 
     ren.setBlendMode(1)
-    ren.setColor(_r(color), _g(color), _b(color), 255)
+    ren.setColor(SDL3.withAlpha(color, 255))
     // 主线
     ren.drawLine(a.x1, a.y1, a.x2, a.y2)
     // 箭头头部
@@ -788,9 +788,9 @@ func _drawArrow(Renderer ren, AnnoItem a, int color) {
 func _drawToolbar(Renderer ren, Font font) {
     ren.setBlendMode(1)
     // 背景
-    ren.setColor(40, 40, 40, 230)
+    ren.setColor(#282828E6)
     ren.fillRect(_tbX, _tbY, _tbW, _tbH)
-    ren.setColor(60, 60, 60, 255)
+    ren.setColor(#3C3C3CFF)
     ren.drawRect(_tbX, _tbY, _tbW, _tbH)
 
     // 主按钮
@@ -803,13 +803,13 @@ func _drawToolbar(Renderer ren, Font font) {
         bool active = false
         if i < 3 and _mode == i+1 { active = true }
         if i == _tbHoverBtn { active = true }
-        ren.setColor(if active then 80 else 55, if active then 80 else 55, if active then 80 else 55, 255)
+        ren.setColor(SDL3.packColor(if active then 80 else 55, if active then 80 else 55, if active then 80 else 55, 255))
         ren.fillRect(tx, btnTop, bw, bh)
-        ren.setColor(100, 100, 100, 255)
+        ren.setColor(#646464FF)
         ren.drawRect(tx, btnTop, bw, bh)
         if font.ok {
             ren.drawTextCentered(font, labels[i], tx, bw, btnTop + (bh - _float(font.height)) * 0.5,
-                         if active then 255 else 200, if active then 255 else 200, if active then 255 else 200)
+                         SDL3.packColor(if active then 255 else 200, if active then 255 else 200, if active then 255 else 200))
         }
     }
 
@@ -818,16 +818,16 @@ func _drawToolbar(Renderer ren, Font font) {
     float cw = 18.0; float cgap = 2.0
     float colorTop = _tbY + (_tbH - cw) * 0.5   // 颜色块垂直居中
     // 分隔线
-    ren.setColor(80, 80, 80, 255)
+    ren.setColor(#505050FF)
     ren.drawLine(colorStart - 3.0, _tbY + 6, colorStart - 3.0, _tbY + _tbH - 6)
     for 0:5 to i {
         float left = colorStart + i * (cw + cgap)
         int c = _colorList[i]
-        ren.setColor(_r(c), _g(c), _b(c), 255)
+        ren.setColor(SDL3.withAlpha(c, 255))
         ren.fillRect(left, colorTop, cw, cw)
         // 选中边框
         if _curColor == c {
-            ren.setColor(255, 255, 255, 255)
+            ren.setColor(#FFFFFFFF)
             ren.drawRect(left - 1, colorTop - 1, cw + 2, cw + 2)
         }
     }
@@ -837,18 +837,18 @@ func _drawToolbar(Renderer ren, Font font) {
     float sw = 26.0; float sgap = 2.0
     float sizeTop = _tbY + (_tbH - bh) * 0.5   // 字号块垂直居中
     // 分隔线
-    ren.setColor(80, 80, 80, 255)
+    ren.setColor(#505050FF)
     ren.drawLine(sizeStart - 4.0, _tbY + 6, sizeStart - 4.0, _tbY + _tbH - 6)
     for 0:3 to i {
         float left = sizeStart + i * (sw + sgap)
         bool active = _curSizeIdx == i
-        ren.setColor(if active then 80 else 55, if active then 80 else 55, if active then 80 else 55, 255)
+        ren.setColor(SDL3.packColor(if active then 80 else 55, if active then 80 else 55, if active then 80 else 55, 255))
         ren.fillRect(left, sizeTop, sw, bh)
-        ren.setColor(100, 100, 100, 255)
+        ren.setColor(#646464FF)
         ren.drawRect(left, sizeTop, sw, bh)
         if font.ok {
             ren.drawTextCentered(font, _sizeNames[i], left, sw, sizeTop + (bh - _float(font.height)) * 0.5,
-                         if active then 255 else 200, if active then 255 else 200, if active then 255 else 200)
+                         SDL3.packColor(if active then 255 else 200, if active then 255 else 200, if active then 255 else 200))
         }
     }
     ren.setBlendMode(0)
@@ -887,10 +887,10 @@ func _drawMagnifier(Renderer ren, Ptr[u8] magTex) {
         }
         ren.drawTextureAt(magTex, mx, my, ms, ms)
     }
-    ren.setColor(255,255,255,200); ren.drawRect(mx, my, ms, ms)
+    ren.setColor(#FFFFFFC8); ren.drawRect(mx, my, ms, ms)
     // 中心十字
     float mcX=mx+ms*0.5; float mcY=my+ms*0.5
-    ren.setColor(255,80,80,255); ren.fillRect(mcX-5,mcY,11,1); ren.fillRect(mcX,mcY-5,1,11)
+    ren.setColor(#FF5050FF); ren.fillRect(mcX-5,mcY,11,1); ren.fillRect(mcX,mcY-5,1,11)
 }
 
 // ==== 裁剪像素（含标注绘制） ====

@@ -20,8 +20,8 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(25, 25, 45, 255)
-            r.drawText(SDL3.createFontAuto(24), "Button v2 — 两行代码创建", 50, 20, 255, 220, 80)
+            r.clearColor(#19192DFF)
+            r.drawText(SDL3.createFontAuto(24), "Button v2 — 两行代码创建", 50, 20, #FFDC50FF)
         }
     )
 }

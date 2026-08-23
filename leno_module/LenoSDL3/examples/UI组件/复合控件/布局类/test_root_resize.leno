@@ -45,7 +45,7 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(28, 30, 36, 255)
+            r.clearColor(#1C1E24FF)
         }
     )
 

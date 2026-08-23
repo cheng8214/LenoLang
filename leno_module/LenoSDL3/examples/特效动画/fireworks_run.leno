@@ -122,7 +122,7 @@ main() {
             r.setVSync(1)
             frame += 1
 
-            r.setColor(2, 2, 15, 255)
+            r.setColor(#02020FFF)
             r.clear()
 
             // ---- 星空 ----
@@ -130,7 +130,7 @@ main() {
                 var s = stars[si]
                 s.twinkle += 0.03
                 var a = 80 + _int(maths.sin(s.twinkle) * 60.0 + 60.0)
-                r.setColor(s.r, s.g, s.b, a)
+                r.setColor((a << 24) | (s.r << 16) | (s.g << 8) | s.b)
                 r.drawPoint(s.x, s.y)
             }
 
@@ -161,7 +161,7 @@ main() {
                     burst(rk.x + rands.floats(-30.0, 30.0), 595.0, rk.r, rk.g, rk.b, rands.ints(15, 35), 8, 20, 3, 0.5, 3.0)
                     remR(ri)
                 } else {
-                    r.setColor(rk.r, rk.g, rk.b, 200)
+                    r.setColor((200 << 24) | (rk.r << 16) | (rk.g << 8) | rk.b)
                     r.drawPoint(rk.x, rk.y)
                     r.drawPoint(rk.x + 1, rk.y + 2)
                 }
@@ -181,13 +181,13 @@ main() {
                     remP(i)
                 } else {
                     if p.ptype == 1 {
-                        r.setColor(p.r, p.g, p.b, 160)
+                        r.setColor((160 << 24) | (p.r << 16) | (p.g << 8) | p.b)
                         r.drawPoint(p.x, p.y); r.drawPoint(p.x+1, p.y); r.drawPoint(p.x, p.y+1)
                     } else if p.ptype == 3 {
-                        r.setColor(p.r, clamp(p.g+50), p.b, 220)
+                        r.setColor((220 << 24) | (p.r << 16) | (clamp(p.g+50) << 8) | p.b)
                         r.drawPoint(p.x, p.y)
                     } else {
-                        r.setColor(p.r, p.g, p.b, 255)
+                        r.setColor((255 << 24) | (p.r << 16) | (p.g << 8) | p.b)
                         r.drawPoint(p.x, p.y)
                         if p.ptype == 2 and p.life == _int(_float(p.life) * 0.3) and rands.ints(0, 100) < 5 {
                             secBurst(p.x, p.y, p.r, p.g, p.b)
@@ -207,7 +207,7 @@ main() {
 
             // ---- 文字覆盖 ----
             if font.ok {
-                r.drawText(font, "FPS: " + fps + "  粒子: " + pc + "  峰值: " + peak, 10.0, 10.0, 255, 255, 255)
+                r.drawText(font, "FPS: " + fps + "  粒子: " + pc + "  峰值: " + peak, 10.0, 10.0, #FFFFFFFF)
             }
 
             core.requestRedraw()   // 动画需每帧重绘：请求下一帧继续渲染（否则空闲时零重绘会卡住）

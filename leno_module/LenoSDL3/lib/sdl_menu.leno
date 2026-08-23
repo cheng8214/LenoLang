@@ -140,16 +140,16 @@ export struct MenuBar impl Widget, Themeable {
     Array[string]  _imgCachePaths = []   // 纹理缓存路径
     Array[Ptr[u8]] _imgCacheTex = []     // 纹理缓存指针
 
-    // 配色
-    int _barR = 34, _barG = 36, _barB = 44       // 菜单栏背景
-    int _barHovR = 50, _barHovG = 52, _barHovB = 62  // 悬停/激活标题背景
-    int _bgR = 30, _bgG = 32, _bgB = 38           // 下拉面板背景
-    int _hovR = 60, _hovG = 120, _hovB = 200      // 项悬停背景
-    int _txtR = 225, _txtG = 228, _txtB = 235     // 文字色
-    int _disR = 120, _disG = 122, _disB = 130     // 禁用文字色
-    int _sepR = 80, _sepG = 84, _sepB = 96        // 分隔线色
-    int _bdrR = 90, _brdG = 95, _brdB = 110       // 边框色
-    int _accR = 80, _accG = 160, _accB = 245      // 激活下划线
+    // 配色 — 打包 int 颜色
+    int _barColor = #22232CFF       // 菜单栏背景
+    int _barHovColor = #32343EFF    // 悬停/激活标题背景
+    int _bgColor = #1E2026FF        // 下拉面板背景
+    int _hovColor = #3C78C8FF       // 项悬停背景
+    int _txtColor = #E1E4EBFF       // 文字色
+    int _disColor = #787A82FF       // 禁用文字色
+    int _sepColor = #50545CFF       // 分隔线色
+    int _bdrColor = #5A5F6EFF       // 边框色
+    int _accColor = #50A0F5FF       // 激活下划线
     int _cursor = SystemCursor.POINTER
     int _winW = 0, _winH = 0          // 所属窗口逻辑宽高（边界夹紧用；0=未知）
     string _orient = "horizontal"         // 布局方向："horizontal" 顶部栏 / "vertical" 左侧栏
@@ -207,10 +207,20 @@ export struct MenuBar impl Widget, Themeable {
             }
         }
 
-        // 默认配色见字段声明（_barR/_bgR/_hovR/_txtR/_disR/_sepR/_bdrR/_accR 等均有默认，以下仅 opts 覆盖）
-        var bgc = opts.get("bg_rgb");      if bgc is Array[int] { _bgR = bgc[0]; _bgG = bgc[1]; _bgB = bgc[2] }
-        var brc = opts.get("border_rgb");  if brc is Array[int] { _bdrR = brc[0]; _brdG = brc[1]; _brdB = brc[2] }
-        var accc = opts.get("accent_rgb"); if accc is Array[int] { _accR = accc[0]; _accG = accc[1]; _accB = accc[2] }
+        // 默认配色见字段声明，以下仅 opts 覆盖
+        Theme th = theme.getTheme()
+        _barColor = th.bgHeader
+        _barHovColor = th.bgHover
+        _bgColor = th.bgAlt
+        _hovColor = th.accent
+        _txtColor = th.txt
+        _disColor = th.txtDim
+        _sepColor = th.sep
+        _bdrColor = th.border
+        _accColor = th.accentBright
+        var bgc = opts.get("bg_color");      if bgc is int { _bgColor = bgc }
+        var brc = opts.get("border_color");  if brc is int { _bdrColor = brc }
+        var accc = opts.get("accent_color"); if accc is int { _accColor = accc }
 
         _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
         _imgSize = opts.get("image_size", 16.0)
@@ -600,9 +610,9 @@ export struct MenuBar impl Widget, Themeable {
         bool anyTop = false
         for _ctxFlag.len() to i { if not _ctxFlag[i] { anyTop = true; break } }
         if anyTop {
-            r.setColor(_barR, _barG, _barB, 255)
+            r.setColor(_barColor)
             r.fillRect(x, y, w, h)
-            r.setColor(_bdrR, _brdG, _brdB, 220)
+            r.setColor(theme.withAlpha(_bdrColor, 220))
             if _orient == "vertical" { r.drawLine(x + w, y, x + w, y + h) }
             else { r.drawLine(x, y + h, x + w, y + h) }
         }
@@ -613,7 +623,7 @@ export struct MenuBar impl Widget, Themeable {
             var rr = rs[i]
             bool active = (_open == i)
             bool hov = (_hoverTop == i) or active
-            if hov { r.setColor(_barHovR, _barHovG, _barHovB, 255); r.fillRect(rr[0], rr[1], rr[2], rr[3]) }
+            if hov { r.setColor(_barHovColor); r.fillRect(rr[0], rr[1], rr[2], rr[3]) }
             if _font != null and _font.ok and _titles[i] != "" {
                 float th = _font.measureString("Ag").h
                 float tw = _font.measureString(_titles[i]).w
@@ -624,11 +634,11 @@ export struct MenuBar impl Widget, Themeable {
                 else if _align == "right" { tx = rr[0] + rr[2] - tw - 12.0 }
                 else { tx = rr[0] + (rr[2] - tw) / 2.0 }
                 if tx < rr[0] + 2.0 { tx = rr[0] + 2.0 }   // 防止过宽标题溢出左边界
-                r.drawText(_font, _titles[i], r.snapX(tx), r.snapY(ty), _txtR, _txtG, _txtB)
+                r.drawText(_font, _titles[i], r.snapX(tx), r.snapY(ty), _txtColor)
             }
             if active {
-                if _orient == "vertical" { r.setColor(_accR, _accG, _accB, 255); r.fillRect(rr[0], rr[1], 2.0, rr[3]) }
-                else { r.setColor(_accR, _accG, _accB, 255); r.fillRect(rr[0], rr[1] + rr[3] - 2.0, rr[2], 2.0) }
+                if _orient == "vertical" { r.setColor(_accColor); r.fillRect(rr[0], rr[1], 2.0, rr[3]) }
+                else { r.setColor(_accColor); r.fillRect(rr[0], rr[1] + rr[3] - 2.0, rr[2], 2.0) }
             }
         }
     }
@@ -683,7 +693,7 @@ export struct MenuBar impl Widget, Themeable {
         float imgX = px + _imgPad
         float imgY = ry + (_itemH - _imgSize) / 2.0
         r.setTextureAlpha(tex, 255)
-        r.setTextureColor(tex, 255, 255, 255)
+        r.setTextureColor(tex, #FFFFFFFF)
         var nats = r.getTextureSize(tex)
         float nw = nats["w"], nh = nats["h"]
         // aspectFit：保持比例完整显示
@@ -696,7 +706,7 @@ export struct MenuBar impl Widget, Themeable {
 
     func _drawPanel(Renderer r, Array[MenuItem] items, float px, float py, float pw, int hoverIdx) {
         float ph = _panelH(items, _itemH, _itemGap)
-        r.setColor(_bgR, _bgG, _bgB, 255)
+        r.setColor(_bgColor)
         r.fillRoundedRect(px, py, pw, ph, 6.0)
 
         SDL_Rect clip = SDL_Rect.malloc()
@@ -708,7 +718,7 @@ export struct MenuBar impl Widget, Themeable {
         for items.len() to i {
             var it = items[i]
             if it.separator {
-                r.setColor(_sepR, _sepG, _sepB, 200)
+                r.setColor(theme.withAlpha(_sepColor, 200))
                 r.drawLine(px + 10.0, iy + 4.0, px + pw - 10.0, iy + 4.0)
                 iy = iy + 9.0 + (if i < items.len() - 1 then _itemGap else 0.0)
                 continue
@@ -716,7 +726,7 @@ export struct MenuBar impl Widget, Themeable {
             float ry = iy
             bool hov = (i == hoverIdx) and it.enabled
             if hov {
-                r.setColor(_hovR, _hovG, _hovB, 255)
+                r.setColor(_hovColor)
                 // ★ 修复：首尾项的悬停矩形需与面板圆角对齐，否则直角溢出圆角背景。
                 //   对齐 ListBox 的做法：首行/末行用 fillRoundedRect + 填补缺口。
                 float radius = 6.0
@@ -736,21 +746,22 @@ export struct MenuBar impl Widget, Themeable {
                     r.fillRect(px, ry, pw, _itemH)
                 }
             }
-            int lr = _txtR, lg = _txtG, lb2 = _txtB
-            if not it.enabled { lr = _disR; lg = _disG; lb2 = _disB }
+            int lc = _txtColor
+            if not it.enabled { lc = _disColor }
             // 图标
             float iconW = _draw_icon(r, it.image, px, ry)
             if _font != null and _font.ok {
                 float th = _font.measureString("Ag").h
                 float ty = ry + (if th > _itemH then 0.0 else (_itemH - th) / 2.0)
-                r.drawText(_font, it.label, r.snapX(px + 12.0 + iconW), r.snapY(ty), lr, lg, lb2)
+                r.drawText(_font, it.label, r.snapX(px + 12.0 + iconW), r.snapY(ty), lc)
                 if it.shortcut != "" {
                     float sw = _font.measureString(it.shortcut).w
-                    r.drawText(_font, it.shortcut, r.snapX(px + pw - 12.0 - sw), r.snapY(ty), lr, lg, lb2)
+                    r.drawText(_font, it.shortcut, r.snapX(px + pw - 12.0 - sw), r.snapY(ty), lc)
                 }
                 if it.submenu.len() > 0 {
                     float ax = px + pw - 14.0, ay = ry + _itemH / 2.0
-                    r.drawTriangle(ax, ay, 5.0, 90.0, lr, lg, lb2, 255)
+                    // drawTriangle 仍使用 R/G/B 分量，从打包色中提取
+                    r.drawTriangle(ax, ay, 5.0, 90.0, theme.colorR(lc), theme.colorG(lc), theme.colorB(lc), 255)
                 }
             }
             iy = iy + _itemH + (if i < items.len() - 1 then _itemGap else 0.0)
@@ -758,7 +769,7 @@ export struct MenuBar impl Widget, Themeable {
         r.popClipRect()
         clip.free()
 
-        r.setColor(_bdrR, _brdG, _brdB, 220)
+        r.setColor(theme.withAlpha(_bdrColor, 220))
         r.drawRoundedRect(px, py, pw, ph, 6.0)
     }
 
@@ -772,15 +783,15 @@ export struct MenuBar impl Widget, Themeable {
 
 // ==================== 运行时主题切换 ====================
 func applyTheme(Theme t) {
-_barR = t.bgHeaderR; _barG = t.bgHeaderG; _barB = t.bgHeaderB
-_barHovR = t.bgHoverR; _barHovG = t.bgHoverG; _barHovB = t.bgHoverB
-_bgR = t.bgAltR; _bgG = t.bgAltG; _bgB = t.bgAltB
-_hovR = t.accentR; _hovG = t.accentG; _hovB = t.accentB
-_txtR = t.txtR; _txtG = t.txtG; _txtB = t.txtB
-_disR = t.txtDimR; _disG = t.txtDimG; _disB = t.txtDimB
-_sepR = t.sepR; _sepG = t.sepG; _sepB = t.sepB
-_bdrR = t.borderR; _brdG = t.borderG; _brdB = t.borderB
-_accR = t.accentBrightR; _accG = t.accentBrightG; _accB = t.accentBrightB
+    _barColor = t.bgHeader
+    _barHovColor = t.bgHover
+    _bgColor = t.bgAlt
+    _hovColor = t.accent
+    _txtColor = t.txt
+    _disColor = t.txtDim
+    _sepColor = t.sep
+    _bdrColor = t.border
+    _accColor = t.accentBright
 }
 }
 

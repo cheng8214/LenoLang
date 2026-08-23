@@ -22,9 +22,9 @@ export struct GroupBox impl Widget, Themeable {
     Array[Widget] children = []
     Widget? _layoutChild          // 自动布局子控件：每帧自动同步到 GroupBox 内部区域（减去 padding）
     float _layPad = 0.0          // _layoutChild 的内边距
-    int _bgR = 44, _bgG = 46, _bgB = 54        // 背景色
-    int _bdrR = 90, _bdrG = 95, _bdrB = 110    // 边框色
-    int _titleR = 200, _titleG = 205, _titleB = 215  // 标题文字色
+    int _bgColor = #2C2E36FF        // 背景色
+    int _bdrColor = #5A5F6EFF    // 边框色
+    int _titleColor = #C8CDD7FF  // 标题文字色
     int _brdA = 200                            // 边框透明度
     float _radius = 8.0
     float _titlePad = 8.0                      // 标题左右间距
@@ -43,9 +43,9 @@ export struct GroupBox impl Widget, Themeable {
 
     func set(Dict opts) {
         Theme th = theme.getTheme()
-        _bgR = th.bgAltR; _bgG = th.bgAltG; _bgB = th.bgAltB
-        _bdrR = th.borderR; _bdrG = th.borderG; _bdrB = th.borderB
-        _titleR = th.txtHeaderR; _titleG = th.txtHeaderG; _titleB = th.txtHeaderB
+        _bgColor = th.bgAlt
+        _bdrColor = th.border
+        _titleColor = th.txtHeader
         x      = opts.get("x", 0)
         y      = opts.get("y", 0)
         w      = opts.get("w", 300)
@@ -60,12 +60,12 @@ export struct GroupBox impl Widget, Themeable {
         _clip = opts.get("clip", true)
         enabled = opts.get("enabled", true)
         visible = opts.get("visible", true)
-        var bgc = opts.get("bg_rgb")
-        if bgc is Array[int] { _bgR = bgc[0]; _bgG = bgc[1]; _bgB = bgc[2] }
-        var bdc = opts.get("border_rgb")
-        if bdc is Array[int] { _bdrR = bdc[0]; _bdrG = bdc[1]; _bdrB = bdc[2] }
-        var tc = opts.get("title_rgb")
-        if tc is Array[int] { _titleR = tc[0]; _titleG = tc[1]; _titleB = tc[2] }
+        var bgc = opts.get("bg_color")
+        if bgc is int { _bgColor = bgc }
+        var bdc = opts.get("border_color")
+        if bdc is int { _bdrColor = bdc }
+        var tc = opts.get("title_color")
+        if tc is int { _titleColor = tc }
         _ensure_font()
         children = []
         _loaded = true
@@ -107,7 +107,7 @@ export struct GroupBox impl Widget, Themeable {
         }
     }
 
-    func set_bg(int r, int g, int b) { _bgR = r; _bgG = g; _bgB = b }
+    func set_bg_color(int color) { _bgColor = color }
     func set_enabled(bool e) { enabled = e }
     func set_visible(bool v) { visible = v }
     func is_visible(): bool { return visible }
@@ -132,7 +132,7 @@ export struct GroupBox impl Widget, Themeable {
         _ensure_font()
 
         // 背景
-        r.setColor(_bgR, _bgG, _bgB, 255)
+        r.setColor(_bgColor)
         r.fillRoundedRect(x, y, w, h, _radius)
 
         // 裁剪子控件
@@ -150,7 +150,7 @@ export struct GroupBox impl Widget, Themeable {
         cr.free()
 
         // 边框
-        r.setColor(_bdrR, _bdrG, _bdrB, _brdA)
+        r.setColor(theme.withAlpha(_bdrColor, _brdA))
         r.drawRoundedRect(x, y, w, h, _radius)
 
         // 标题：在边框顶部画一段背景色遮断边框，再绘制文字
@@ -159,10 +159,10 @@ export struct GroupBox impl Widget, Themeable {
             float tx = x + _titlePad
             float ty = y - ms.h / 2.0
             // 用背景色画一个矩形遮断边框（标题位置）
-            r.setColor(_bgR, _bgG, _bgB, 255)
+            r.setColor(_bgColor)
             r.fillRect(tx - 3.0, ty, ms.w + 6.0, _float(ms.h))
             // 标题文字
-            r.drawText(_font, _title, tx, ty, _titleR, _titleG, _titleB)
+            r.drawText(_font, _title, tx, ty, _titleColor)
         }
     }
 
@@ -175,9 +175,9 @@ export struct GroupBox impl Widget, Themeable {
 
     // ==================== 运行时主题切换 ====================
     func applyTheme(Theme t) {
-        _bgR = t.bgAltR; _bgG = t.bgAltG; _bgB = t.bgAltB
-        _bdrR = t.borderR; _bdrG = t.borderG; _bdrB = t.borderB
-        _titleR = t.txtHeaderR; _titleG = t.txtHeaderG; _titleB = t.txtHeaderB
+        _bgColor = t.bgAlt
+        _bdrColor = t.border
+        _titleColor = t.txtHeader
     }
 }
 

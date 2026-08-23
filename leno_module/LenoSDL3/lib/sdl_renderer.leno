@@ -275,11 +275,12 @@ export struct Renderer {
     }
 
 
-    // 设置绘制颜色（整数 RGBA，0~255；a 默认完全不透明）
-    func setColor(int r, int g, int b, int a = 255): bool {
-        int rr = r; int gg = g; int bb = b; int aa = a
-        if rr > 255 { rr = 255 }; if gg > 255 { gg = 255 }; if bb > 255 { bb = 255 }; if aa > 255 { aa = 255 }
-        if rr < 0 { rr = 0 }; if gg < 0 { gg = 0 }; if bb < 0 { bb = 0 }; if aa < 0 { aa = 0 }
+    // 设置绘制颜色（#RRGGBBAA 打包整数，Alpha 在最高字节）
+    func setColor(int color): bool {
+        int aa = (color >> 24) & 0xFF
+        int rr = (color >> 16) & 0xFF
+        int gg = (color >> 8) & 0xFF
+        int bb = color & 0xFF
         if not _bxIsFloat and rr == _bxR and gg == _bxG and bb == _bxB and aa == _bxA {
             return true
         }
@@ -625,8 +626,11 @@ export struct Renderer {
     // SSAA 激活时：临时把字号放大到 _ssaaScale 倍渲染，使文字纹理本身为 2x 分辨率，
     // 再按逻辑尺寸绘制（被 setScale 映射回 1:1 的离屏像素），下采样后清晰不糊。
     // 文字纹理经 Font 内部缓存（_getCachedTex），命中时跳过每帧 2x 栅格化与 GPU 上传，显著省 CPU/带宽。
-    func drawText(Font f, string text, float x, float y, int r, int g, int b) {
+    func drawText(Font f, string text, float x, float y, int color) {
         _flushBatches()
+        int r = (color >> 16) & 0xFF
+        int g = (color >> 8) & 0xFF
+        int b = color & 0xFF
         if _ssaa and _ssaaScale > 0.0 {
             float origPt = f._pt
             f.setFontSize(origPt * _ssaaScale)   // _pt 临时变 2x，作为缓存 key 维度
@@ -635,6 +639,8 @@ export struct Renderer {
             if tex.ok {
                 float dw = tex.width  / _ssaaScale
                 float dh = tex.height / _ssaaScale
+                // Alpha 调制：用颜色中的 Alpha 通道
+                if ((color >> 24) & 0xFF) < 255 { _lib.SDL_SetTextureAlphaMod(tex.texture, (color >> 24) & 0xFF) }
                 drawTextureAt(tex.texture, x, y, dw, dh)
             }
             return
@@ -644,28 +650,23 @@ export struct Renderer {
         x = _int(x + 0.5)
         y = _int(y + 0.5)
         TextTexture tex = f._getCachedTex(handle, text, r, g, b)
-        if tex.ok { drawTextureAt(tex.texture, x, y, tex.width, tex.height) }
+        if tex.ok {
+            // Alpha 调制：用颜色中的 Alpha 通道
+            if ((color >> 24) & 0xFF) < 255 { _lib.SDL_SetTextureAlphaMod(tex.texture, (color >> 24) & 0xFF) }
+            drawTextureAt(tex.texture, x, y, tex.width, tex.height)
+        }
     }
 
     // 居中绘制文字（在 [x, x+w] 范围内水平居中）
-    func drawTextCentered(Font f, string text, float x, float w, float y, int r, int g, int b) {
+    func drawTextCentered(Font f, string text, float x, float w, float y, int color) {
         var ms = f.measureString(text)
         float cx = x + (w - ms.w) / 2.0
-        drawText(f, text, cx, y, r, g, b)
-    }
-
-    // 便捷版：使用 [r, g, b] 数组传色（可预定义颜色变量复用）
-    func drawTextRgb(Font f, string text, float x, float y, Array[int] c) {
-        drawText(f, text, x, y, c[0], c[1], c[2])
-    }
-
-    func drawTextCenteredRgb(Font f, string text, float x, float w, float y, Array[int] c) {
-        drawTextCentered(f, text, x, w, y, c[0], c[1], c[2])
+        drawText(f, text, cx, y, color)
     }
 
     // 设置背景色并清屏（setColor + clear 一步完成）
-    func clearColor(int r, int g, int b, int a) {
-        setColor(r, g, b, a); clear()
+    func clearColor(int color) {
+        setColor(color); clear()
     }
 
     // 渲染到纹理（null 恢复渲染到窗口）
@@ -679,8 +680,11 @@ export struct Renderer {
         return _lib.SDL_SetTextureAlphaMod(texture, alpha)
     }
 
-    // 设置纹理颜色调制（RGB 0~255）
-    func setTextureColor(Ptr[u8] texture, int r, int g, int b): bool {
+    // 设置纹理颜色调制（打包色 0xAARRGGBB，提取 RGB 分量传给 SDL）
+    func setTextureColor(Ptr[u8] texture, int color): bool {
+        int r = (color >> 16) & 0xFF
+        int g = (color >> 8) & 0xFF
+        int b = color & 0xFF
         return _lib.SDL_SetTextureColorMod(texture, r, g, b)
     }
 

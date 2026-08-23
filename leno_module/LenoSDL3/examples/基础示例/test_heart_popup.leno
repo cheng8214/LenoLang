@@ -112,15 +112,15 @@ main() {
         }
 
         // 绘制控制窗口
-        ctrlRen.clearColor(15, 15, 30, 255)
-        ctrlRen.setColor(255, 180, 200, 255)
-        ctrlRen.drawText(font, "💖 爱心语录窗阵", 20, 20, 255, 180, 200)
-        ctrlRen.setColor(200, 200, 220, 255)
+        ctrlRen.clearColor(#0F0F1EFF)
+        ctrlRen.setColor(#FFB4C8FF)
+        ctrlRen.drawText(font, "💖 爱心语录窗阵", 20, 20, #FFB4C8FF)
+        ctrlRen.setColor(#C8C8DCFF)
         var alive = 0; var i = 0
         while i < _alive.len() { if _alive[i] { alive += 1 }; i += 1 }
-        ctrlRen.drawText(font, "1 = 生成50个爱心窗   R = 刷新语录   ESC = 退出", 20, 60, 200, 200, 220)
-        ctrlRen.drawText(font, "当前存活: " + alive as string, 20, 95, 200, 220, 100)
-        ctrlRen.drawText(fontS, "(点爱心小窗的 ESC 或 X 关闭单个)", 20, 125, 120, 120, 150)
+        ctrlRen.drawText(font, "1 = 生成50个爱心窗   R = 刷新语录   ESC = 退出", 20, 60, #C8C8DCFF)
+        ctrlRen.drawText(font, "当前存活: " + alive as string, 20, 95, #C8DC64FF)
+        ctrlRen.drawText(fontS, "(点爱心小窗的 ESC 或 X 关闭单个)", 20, 125, #787896FF)
         ctrlRen.present()
 
         // 逐帧生成爱心窗（每帧1个）
@@ -131,9 +131,9 @@ main() {
         while i < _wins.len() {
             if _alive[i] and not _pend[i] {
                 var cr = 200 + i % 56; var cg = 100 + (i * 3) % 156; var cb = 150 + (i * 7) % 106
-                _rens[i].clearColor(cr/5, cg/5, cb/5, 255)
-                _rens[i].setColor(cr, cg, cb, 255)
-                _rens[i].drawText(fontS, _quotes[_qidx[i]], 8, 16, cr, cg, cb)
+                _rens[i].clearColor((255 << 24) | ((cr/5) << 16) | ((cg/5) << 8) | (cb/5))
+                _rens[i].setColor((255 << 24) | (cr << 16) | (cg << 8) | cb)
+                _rens[i].drawText(fontS, _quotes[_qidx[i]], 8, 16, (255 << 24) | (cr << 16) | (cg << 8) | cb)
                 _rens[i].present()
             }
             i += 1

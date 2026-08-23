@@ -25,10 +25,7 @@ float _fontSize  = 12.0
 bool _tipReported = false   // 本帧 mouse motion 事件中是否有控件上报了 tip
 int _tipWindowId = -1       // 当前上报 tip 的窗口 ID（确保 tip 只画在该窗口上）
 
-// 配色（深色半透明浮层）
-int _bgR = 38, _bgG = 40, _bgB = 48
-int _txtR = 232, _txtG = 234, _txtB = 242
-int _brdR = 110, _brdG = 115, _brdB = 132
+// 配色从 theme.getTheme() 动态读取（tipBg/tipBrd/tipTxt）
 
 // ==================== 外部可调 ====================
 export func setTipDelay(int ms) { _tipDelay = ms }
@@ -154,15 +151,15 @@ export func tipRender(Renderer r, float vw, float vh, int wid) {
 
     // 背景
     Theme tm = theme.getTheme()
-    r.setColor(tm.tipBgR, tm.tipBgG, tm.tipBgB, 240)
+    r.setColor(theme.withAlpha(tm.tipBg, 240))
     r.fillRoundedRect(bx, by, bw, bh, 5.0)
     // 边框
-    r.setColor(tm.tipBrdR, tm.tipBrdG, tm.tipBrdB, 220)
+    r.setColor(theme.withAlpha(tm.tipBrd, 220))
     r.drawRoundedRect(bx, by, bw, bh, 5.0)
     // 文字逐行绘制
     float ty = by + padY
     for lines.len() to i {
-        r.drawText(_font, lines[i], r.snapX(bx + padX), r.snapY(ty), tm.tipTxtR, tm.tipTxtG, tm.tipTxtB)
+        r.drawText(_font, lines[i], r.snapX(bx + padX), r.snapY(ty), tm.tipTxt)
         ty = ty + lineH + gapY
     }
 }

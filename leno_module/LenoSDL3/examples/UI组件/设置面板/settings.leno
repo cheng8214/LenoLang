@@ -25,9 +25,9 @@ var TABH = 548.0
 func card(Window win, TabControl tab, int page, float dx, float dy, float w, float h, string title): Panel {
     var px = TABX + dx
     var py = TABY + 32.0 + dy      // 选项卡内容区原点 = (TABX, TABY+tab_h)
-    var p = SDL3.createPanel({x:px, y:py, w:w, h:h, bg_rgb:[28,30,38], radius:10, border_rgb:[80,85,100]})
+    var p = SDL3.createPanel({x:px, y:py, w:w, h:h, bg_color: #1C1E26FF, radius:10, border_color: #505564FF})
     tab.addToPage(page, p, dx, dy)
-    p.add(SDL3.createLabel({x:px+14, y:py+12, text:title, font_size:16, text_rgb:[180,200,255]}))
+    p.add(SDL3.createLabel({x:px+14, y:py+12, text:title, font_size:16, text_color: #B4C8FFFF}))
     return p
 }
 
@@ -39,7 +39,7 @@ main() {
     if not win.ok { SDL3.ttfQuit(); return }
 
     // 状态标签：被各交互回调实时更新，演示回调链路
-    var statusLbl = SDL3.createLabel({x:16, y:618, text:"就绪", font_size:13, text_rgb:[170,200,170]})
+    var statusLbl = SDL3.createLabel({x:16, y:618, text:"就绪", font_size:13, text_color: #AAC8AAFF})
 
     // ===================== 顶部菜单栏 =====================
     var bar = win.addMenuBar({x:0, y:0, w:920, h:30, font_size:14})
@@ -152,13 +152,13 @@ main() {
 
     // ---------- 页 2：关于 ----------
     var cAbout = card(win, tab, 2, 14, 0, 860, 300, "关于本程序")
-    cAbout.add(SDL3.createLabel({x:60, y:128, text:"LenoSDL3 设置面板", font_size:22, text_rgb:[220,230,255]}))
-    cAbout.add(SDL3.createLabel({x:60, y:168, text:"版本 1.0.0  ·  Build 2026.07.12", font_size:13, text_rgb:[150,160,175]}))
-    cAbout.add(SDL3.createLabel({x:60, y:202, text:"本程序用 LenoSDL3 控件库搭建，演示菜单栏、选项卡、开关、滑块、下拉框、单选与数值微调等控件的组合与美观布局。", font_size:13, text_rgb:[190,195,205]}))
+    cAbout.add(SDL3.createLabel({x:60, y:128, text:"LenoSDL3 设置面板", font_size:22, text_color: #DCE6FFFF}))
+    cAbout.add(SDL3.createLabel({x:60, y:168, text:"版本 1.0.0  ·  Build 2026.07.12", font_size:13, text_color: #96A0AFFF}))
+    cAbout.add(SDL3.createLabel({x:60, y:202, text:"本程序用 LenoSDL3 控件库搭建，演示菜单栏、选项卡、开关、滑块、下拉框、单选与数值微调等控件的组合与美观布局。", font_size:13, text_color: #BEC3CDFF}))
     var bCheck = SDL3.createButton({x:60, y:250, w:150, h:36, text:"检查更新", type:"primary", tip:"检查是否有新版本"})
     var bSite = SDL3.createButton({x:230, y:250, w:150, h:36, text:"访问官网"})
     cAbout.add(bCheck); cAbout.add(bSite)
-    cAbout.add(SDL3.createLabel({x:60, y:330, text:"© 2026 LenoSDL3 Demo", font_size:12, text_rgb:[120,125,135]}))
+    cAbout.add(SDL3.createLabel({x:60, y:330, text:"© 2026 LenoSDL3 Demo", font_size:12, text_color: #787D87FF}))
 
     bCheck.on_click(func():void { statusLbl.set_text("已是最新版本 (1.0.0)") })
     bSite.on_click(func():void { statusLbl.set_text("打开: https://lenosdl3.dev") })
@@ -180,7 +180,7 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(18, 20, 26, 255)
+            r.clearColor(#12141AFF)
         }
     )
 

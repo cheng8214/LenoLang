@@ -34,7 +34,7 @@ main() {
     cb.on_change(func(int i) { print("ComboBox 选择 -> idx=" + i + " 文本=" + cb.get_selected_text()) })
 
     // ---------- Panel 容器（含子控件 + 裁剪演示）----------
-    var panel = win.addPanel({x: 260, y: 110, w: 220, h: 160, bg_rgb: [44, 46, 54], border_rgb: [90, 95, 110], radius: 10})
+    var panel = win.addPanel({x: 260, y: 110, w: 220, h: 160, bg_color: #2C2E36FF, border_color: #5A5F6EFF, radius: 10})
     var pTitle = SDL3.createLabel({text: "面板内控件（会被裁剪）", x: 275, y: 120, font_size: 14})
     panel.add(pTitle)
     // 这个按钮故意超出面板右边界，演示裁剪效果
@@ -55,8 +55,8 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(28, 30, 36, 255)
-            r.drawText(font, "ListBox / ComboBox / Panel 演示 (Esc 退出)", 30, 12, 200, 210, 230)
+            r.clearColor(#1C1E24FF)
+            r.drawText(font, "ListBox / ComboBox / Panel 演示 (Esc 退出)", 30, 12, #C8D2E6FF)
         }
     )
 

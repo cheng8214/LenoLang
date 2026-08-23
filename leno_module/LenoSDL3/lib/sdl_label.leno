@@ -25,7 +25,7 @@ export struct Label impl Widget, Themeable {
     string _fontPath = ""        // 字体路径（空则自动匹配）
     int _fontStyle = 0           // 字体样式
     Font? _font                  // 字体缓存
-    int tr = 255, tg = 255, tb = 255  // 文字色
+    int _txtColor = #FFFFFFFF  // 文字色
     int _align = ALIGN_LEFT          // 对齐（ALIGN_LEFT/CENTER/RIGHT）
     float _w = 0.0; float _h = 16.0  // 缓存自然尺寸（供布局使用）
     bool _loaded = false
@@ -56,7 +56,7 @@ export struct Label impl Widget, Themeable {
     // ==================== set 初始化 ====================
     func set(Dict opts) {
         Theme th = theme.getTheme()
-        tr = th.txtR; tg = th.txtG; tb = th.txtB
+        _txtColor = th.txt
         text      = opts.get("text", "")
         x         = opts.get("x", 0)
         y         = opts.get("y", 0)
@@ -64,9 +64,9 @@ export struct Label impl Widget, Themeable {
         _fontPath = opts.get("font_path", "")
         _fontStyle = opts.get("font_style", 0)
 
-        // 文字色见字段声明默认白色（tr/tg/tb），以下仅 opts 覆盖
-        var tc = opts.get("text_rgb")
-        if tc is Array[int] { tr = tc[0]; tg = tc[1]; tb = tc[2] }
+        // 文字色见字段声明默认白色，以下仅 opts 覆盖
+        var tc = opts.get("text_color")
+        if tc is int { _txtColor = tc }
 
         // 对齐
         _align = opts.get("align", ALIGN_LEFT)
@@ -101,7 +101,7 @@ export struct Label impl Widget, Themeable {
             _h = _font.measureString("Ag").h
         }
     }
-    func set_text_rgb(int r, int g, int b) { tr = r; tg = g; tb = b }
+    func set_text_color(int color) { _txtColor = color }
     func set_font_size(float s) {
         _fontSize = s
         if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
@@ -202,12 +202,12 @@ export struct Label impl Widget, Themeable {
                 float drawX = x
                 if _align == ALIGN_CENTER { drawX = x - ms.w / 2.0 }
                 if _align == ALIGN_RIGHT { drawX = x - ms.w }
-                r.drawText(_font, text, drawX, y, tr, tg, tb)
+                r.drawText(_font, text, drawX, y, _txtColor)
                 return
             }
             // 截断绘制
             string truncText = _truncatedText()
-            r.drawText(_font, truncText, x, y, tr, tg, tb)
+            r.drawText(_font, truncText, x, y, _txtColor)
             return
         }
 
@@ -219,7 +219,7 @@ export struct Label impl Widget, Themeable {
                 float drawX = x
                 if _align == ALIGN_CENTER { drawX = x - ms.w / 2.0 }
                 if _align == ALIGN_RIGHT { drawX = x - ms.w }
-                r.drawText(_font, text, drawX, y, tr, tg, tb)
+                r.drawText(_font, text, drawX, y, _txtColor)
                 return
             }
             // 更新滚动偏移
@@ -248,7 +248,7 @@ export struct Label impl Widget, Themeable {
             clip.x = _int(x); clip.y = _int(y)
             clip.w = _int(max_w); clip.h = _int(_h + 2)
             r.pushClipRect(clip)
-            r.drawText(_font, text, x - _scrollOffset, y, tr, tg, tb)
+            r.drawText(_font, text, x - _scrollOffset, y, _txtColor)
             r.popClipRect()
             clip.free()
             core.markFrameRedraw()
@@ -262,7 +262,7 @@ export struct Label impl Widget, Themeable {
         if _align == ALIGN_CENTER { drawX = x - ms.w / 2.0 }     // 居中
         if _align == ALIGN_RIGHT { drawX = x - ms.w }           // 右对齐
 
-        r.drawText(_font, text, drawX, y, tr, tg, tb)
+        r.drawText(_font, text, drawX, y, _txtColor)
     }
 
 // 释放字体资源
@@ -272,7 +272,7 @@ if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
 
 // ==================== 运行时主题切换 ====================
 func applyTheme(Theme t) {
-tr = t.txtR; tg = t.txtG; tb = t.txtB
+_txtColor = t.txt
 }
 }
 

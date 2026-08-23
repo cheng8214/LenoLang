@@ -16,7 +16,7 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.setColor(20, 30, 50, 255)
+            r.setColor(#141E32FF)
             r.clear()
         }
     )

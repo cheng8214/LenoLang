@@ -75,7 +75,7 @@ main() {
         Button btn = w1.addButton({
             text: "发送 [" + c[0] + "," + c[1] + "," + c[2] + "]",
             x: 20, y: btnY + i * 38, w: 350, h: 32,
-            bg_rgb: c, text_rgb: [255, 255, 255], font_size: 14, radius: 6
+            bg_color: (255 << 24) | (c[0] << 16) | (c[1] << 8) | c[2], text_color: #FFFFFFFF, font_size: 14, radius: 6
         })
         btn.on_click(func() {
             var sent = ch.try_send(encodeColor(c[0], c[1], c[2]))
@@ -122,32 +122,32 @@ main() {
 
             // 背景：投放高亮时显示拖拽色
             if dropHover {
-                r.clearColor(dragR, dragG, dragB, 200)
+                r.clearColor((200 << 24) | (dragR << 16) | (dragG << 8) | dragB)
             } else {
-                r.clearColor(w2R, w2G, w2B, 255)
+                r.clearColor((255 << 24) | (w2R << 16) | (w2G << 8) | w2B)
             }
             r.clear()
 
             if dropHover {
-                r.setColor(255, 255, 100, 255)
+                r.setColor(#FFFF64FF)
                 r.drawRect(3, 3, 394, 354)
                 r.drawRect(5, 5, 390, 350)
             }
 
             if font.ok {
-                r.drawText(font, "=== 接收端 ===", 10, 6, 255, 220, 80)
-                r.drawText(font, "已接收: " + w2Recv + " 条 | Buffer: " + ch.len(), 10, 30, 200, 200, 100)
-                r.drawText(font, "当前: [" + w2R + "," + w2G + "," + w2B + "]", 10, 50, 180, 180, 255)
+                r.drawText(font, "=== 接收端 ===", 10, 6, #FFDC50FF)
+                r.drawText(font, "已接收: " + w2Recv + " 条 | Buffer: " + ch.len(), 10, 30, #C8C864FF)
+                r.drawText(font, "当前: [" + w2R + "," + w2G + "," + w2B + "]", 10, 50, #B4B4FFFF)
                 if dropHover {
-                    r.drawText(font, ">>> 释放鼠标投放 <<<", 80, 170, 255, 255, 100)
+                    r.drawText(font, ">>> 释放鼠标投放 <<<", 80, 170, #FFFF64FF)
                 }
                 if dragActive {
-                    r.drawText(font, "拖拽中: [" + dragR + "," + dragG + "," + dragB + "]", 10, 72, dragR, dragG, dragB)
+                    r.drawText(font, "拖拽中: [" + dragR + "," + dragG + "," + dragB + "]", 10, 72, (255 << 24) | (dragR << 16) | (dragG << 8) | dragB)
                 }
-                r.drawText(font, "子线程" + (if stopped then "[结束]" else "[运行]"), 10, 92, 120, 120, 120)
-                r.drawText(font, "ESC 关闭", 10, 112, 120, 120, 120)
+                r.drawText(font, "子线程" + (if stopped then "[结束]" else "[运行]"), 10, 92, #787878FF)
+                r.drawText(font, "ESC 关闭", 10, 112, #787878FF)
                 if not dragActive {
-                    r.drawText(font, "<=  从左侧窗口拖颜色到这里释放", 10, 300, 150, 200, 255)
+                    r.drawText(font, "<=  从左侧窗口拖颜色到这里释放", 10, 300, #96C8FFFF)
                 }
                 // 最近颜色块
                 var yv = 140
@@ -156,7 +156,7 @@ main() {
                 if history.len() > 0 {
                     for start : history.len() - 1 to j {
                         var cv = history[j]
-                        r.setColor(decodeR(cv), decodeG(cv), decodeB(cv), 255)
+                        r.setColor((255 << 24) | (decodeR(cv) << 16) | (decodeG(cv) << 8) | decodeB(cv))
                         r.fillRect(10 + (j - start) * 48, yv, 44, 44)
                     }
                 }
@@ -221,28 +221,28 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(30, 35, 50, 255)
+            r.clearColor(#1E2332FF)
             r.clear()
 
             if font.ok {
-                r.drawText(font, "=== 数据源 ===", 10, 6, 255, 220, 80)
-                r.drawText(font, "已发送: " + w1Sent + " 条 | Buffer: " + ch.len(), 10, 24, 200, 200, 100)
+                r.drawText(font, "=== 数据源 ===", 10, 6, #FFDC50FF)
+                r.drawText(font, "已发送: " + w1Sent + " 条 | Buffer: " + ch.len(), 10, 24, #C8C864FF)
 
                 // 拖拽区域标题
                 int yBase = 340
-                r.setColor(50, 55, 75, 255)
+                r.setColor(#32374BFF)
                 r.fillRect(10, yBase, 375, 30)
                 if dragActive {
-                    r.drawText(font, ">>> 正在拖拽！保持按住，移到 W2 窗口再释放 <<<", 15, yBase + 7, 255, 255, 100)
+                    r.drawText(font, ">>> 正在拖拽！保持按住，移到 W2 窗口再释放 <<<", 15, yBase + 7, #FFFF64FF)
                 } else {
-                    r.drawText(font, "▼  拖拽区域 — 按住颜色条拖到右侧 W2 窗口释放", 15, yBase + 7, 200, 200, 100)
+                    r.drawText(font, "▼  拖拽区域 — 按住颜色条拖到右侧 W2 窗口释放", 15, yBase + 7, #C8C864FF)
                 }
 
                 // 8 个可拖拽颜色条
                 for 0 : 7 to i {
                     var c = colors[i]
                     int yBox = yBase + 35 + i * 10
-                    r.setColor(c[0], c[1], c[2], 255)
+                    r.setColor((255 << 24) | (c[0] << 16) | (c[1] << 8) | c[2])
                     r.fillRect(15, yBox, 360, 8)
                 }
 
@@ -250,14 +250,14 @@ main() {
                 if dragActive {
                     int px = _int(dragMouseX) - 15
                     int py = _int(dragMouseY) - 15
-                    r.setColor(dragR, dragG, dragB, 200)
+                    r.setColor((200 << 24) | (dragR << 16) | (dragG << 8) | dragB)
                     r.fillRect(px, py, 30, 30)
-                    r.setColor(255, 255, 255, 200)
+                    r.setColor(#FFFFFFC8)
                     r.drawRect(px, py, 30, 30)
                 }
 
-                r.drawText(font, "上方按钮=快速发送 | 下方色条=拖放到 W2", 10, 440, 120, 120, 120)
-                r.drawText(font, "ESC 关闭", 10, 455, 120, 120, 120)
+                r.drawText(font, "上方按钮=快速发送 | 下方色条=拖放到 W2", 10, 440, #787878FF)
+                r.drawText(font, "ESC 关闭", 10, 455, #787878FF)
             }
         }
     )

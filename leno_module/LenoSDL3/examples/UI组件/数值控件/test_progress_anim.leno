@@ -22,7 +22,7 @@ main() {
     pA.on_change(func(float v) { print("A 目标 -> " + v) })
 
     // 进度条 B：对比，关闭动画（anim_speed=0，立即到位）
-    var pB = win.addProgressBar({ x: 40, y: 150, w: 460, h: 24, min: 0, max: 100, value: 0, clickable: true, anim_speed: 0.0, fill_rgb: [220, 120, 60] })
+    var pB = win.addProgressBar({ x: 40, y: 150, w: 460, h: 24, min: 0, max: 100, value: 0, clickable: true, anim_speed: 0.0, fill_color: #DC783CFF })
 
     // 一排按钮：跳到固定百分比（A、B 同时设定，便于并排对比）
     var b0 = win.addButton({ x: 40,  y: 210, w: 80, h: 38, text: "0%",   type: "primary" })
@@ -51,14 +51,14 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(28, 28, 46, 255)
-            r.drawText(font, "进度条点击动画：A 带动画 / B 无动画(对比)", 20, 14, 255, 220, 80)
-            r.drawText(font, "点击上方进度条轨道，或点按钮，观察 A 是否平滑过渡", 20, 40, 200, 210, 230)
+            r.clearColor(#1C1C2EFF)
+            r.drawText(font, "进度条点击动画：A 带动画 / B 无动画(对比)", 20, 14, #FFDC50FF)
+            r.drawText(font, "点击上方进度条轨道，或点按钮，观察 A 是否平滑过渡", 20, 40, #C8D2E6FF)
 
-            r.drawText(font, "A 目标: " + pA.get_value() + "  显示: " + pA.get_display_value(), 40, 320, 120, 230, 160)
-            r.drawText(font, "B 目标: " + pB.get_value() + "  显示: " + pB.get_display_value(), 40, 350, 230, 160, 120)
+            r.drawText(font, "A 目标: " + pA.get_value() + "  显示: " + pA.get_display_value(), 40, 320, #78E6A0FF)
+            r.drawText(font, "B 目标: " + pB.get_value() + "  显示: " + pB.get_display_value(), 40, 350, #E6A078FF)
 
-            r.drawText(font, "ESC 退出", 470, 392, 140, 140, 140)
+            r.drawText(font, "ESC 退出", 470, 392, #8C8C8CFF)
         }
     )
 

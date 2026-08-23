@@ -32,7 +32,7 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(20, 20, 35, 255)
+            r.clearColor(#141423FF)
 
             frame += 1
             var now = SDL3.getTicks()
@@ -42,7 +42,7 @@ main() {
                 fpsTime = now
             }
 
-            r.drawText(font, "FPS: " + curFPS + "  长度: " + lastLen + "  ESC退出", 10, 575, 150, 150, 170)
+            r.drawText(font, "FPS: " + curFPS + "  长度: " + lastLen + "  ESC退出", 10, 575, #9696AAFF)
         }
     )
 

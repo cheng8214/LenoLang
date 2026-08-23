@@ -7,7 +7,7 @@ import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.SystemCursor
 import "sdl_widget.leno" as wgt; use wgt.Widget
-import "sdl_theme.leno" as theme; use theme.Theme
+import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 import "sdl_tooltip.leno" as tip
 
 export struct ProgressBar impl Widget {
@@ -15,9 +15,9 @@ export struct ProgressBar impl Widget {
     float minV = 0.0, maxV = 100.0, value = 0.0
     bool _clickable = false, _showText = true
     string _fontPath = ""; float _fontSize = 15.0; int _fontStyle = 0; Font? _font
-    int _trkR = 60, _trkG = 60, _trkB = 72          // 轨道背景色
-    int _fillR = 80, _fillG = 200, _fillB = 120     // 已选填充色
-    int tr = 235, tg = 235, tb = 245                // 文字色
+    int _trkColor = #3C3C48FF          // 轨道背景色
+    int _fillColor = #3CC850FF     // 已选填充色
+    int _txtColor = #EBEBF5FF                // 文字色
     int _cursor = SystemCursor.POINTER
     bool hover = false; bool _wasHover = false; bool _dragging = false; bool enabled = true; bool visible = true; bool _loaded = false
     string _tip = ""
@@ -44,9 +44,9 @@ export struct ProgressBar impl Widget {
     // ==================== set 初始化 ====================
     func set(Dict opts) {
         Theme th = theme.getTheme()
-        _trkR = th.bgAltR; _trkG = th.bgAltG; _trkB = th.bgAltB
-        _fillR = th.btnSuccessR; _fillG = th.btnSuccessG; _fillB = th.btnSuccessB
-        tr = th.txtR; tg = th.txtG; tb = th.txtB
+        _trkColor = th.bgAlt
+        _fillColor = th.btnSuccess
+        _txtColor = th.txt
         x         = opts.get("x", 0)
         y         = opts.get("y", 0)
         w         = opts.get("w", 200)
@@ -60,15 +60,15 @@ export struct ProgressBar impl Widget {
         _fontPath = opts.get("font_path", "")
         _fontStyle = opts.get("font_style", 0)
 
-        // 默认颜色见字段声明（_trkR/_fillR/tr 等均有默认，以下仅 opts 覆盖）
+        // 默认颜色见字段声明，以下仅 opts 覆盖
 
-        // 颜色可被 dict 覆盖（[r,g,b]）
-        var tkc = opts.get("track_rgb")
-        if tkc is Array[int] { _trkR = tkc[0]; _trkG = tkc[1]; _trkB = tkc[2] }
-        var flc = opts.get("fill_rgb")
-        if flc is Array[int] { _fillR = flc[0]; _fillG = flc[1]; _fillB = flc[2] }
-        var ptc = opts.get("text_rgb")
-        if ptc is Array[int] { tr = ptc[0]; tg = ptc[1]; tb = ptc[2] }
+        // 颜色可被 dict 覆盖
+        var tkc = opts.get("track_color")
+        if tkc is int { _trkColor = tkc }
+        var flc = opts.get("fill_color")
+        if flc is int { _fillColor = flc }
+        var ptc = opts.get("text_color")
+        if ptc is int { _txtColor = ptc }
 
         _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
         enabled = opts.get("enabled", true)
@@ -205,18 +205,18 @@ export struct ProgressBar impl Widget {
         if _animating { core.requestRedraw() }
 
         // 轨道背景
-        int tR = _trkR; int tG = _trkG; int tB = _trkB
-        if not enabled { tR = _trkR / 2; tG = _trkG / 2; tB = _trkB / 2 }
-        r.setColor(tR, tG, tB, 255)
+        int trkC = _trkColor
+        if not enabled { trkC = theme.packColor(theme.colorR(_trkColor) / 2, theme.colorG(_trkColor) / 2, theme.colorB(_trkColor) / 2) }
+        r.setColor(trkC)
         r.fillRoundedRect(x, y, w, h, h / 2.0)
 
         // 已选填充
         float ratio = _ratio()
         float fillW = ratio * w
-        int fR = _fillR; int fG = _fillG; int fB = _fillB
-        if not enabled { fR = _fillR / 2; fG = _fillG / 2; fB = _fillB / 2 }
+        int filC = _fillColor
+        if not enabled { filC = theme.packColor(theme.colorR(_fillColor) / 2, theme.colorG(_fillColor) / 2, theme.colorB(_fillColor) / 2) }
         if fillW > 1.0 {
-            r.setColor(fR, fG, fB, 255)
+            r.setColor(filC)
             r.fillRoundedRect(x, y, fillW, h, h / 2.0)
         }
 
@@ -228,9 +228,9 @@ export struct ProgressBar impl Widget {
             float th = _fontH
             float tx = x + w / 2.0 - tw / 2.0
             float ty = y + h / 2.0 - th / 2.0
-            int tcR = tr; int tcG = tg; int tcB = tb
-            if not enabled { tcR = tr / 2; tcG = tg / 2; tcB = tb / 2 }
-            r.drawText(_font, label, tx, ty, tcR, tcG, tcB)
+            int tc = _txtColor
+            if not enabled { tc = theme.packColor(theme.colorR(_txtColor) / 2, theme.colorG(_txtColor) / 2, theme.colorB(_txtColor) / 2) }
+            r.drawText(_font, label, tx, ty, tc)
         }
     }
 

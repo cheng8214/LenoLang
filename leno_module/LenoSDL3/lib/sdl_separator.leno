@@ -4,7 +4,7 @@
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_widget.leno" as wgt; use wgt.Widget
-import "sdl_theme.leno" as theme; use theme.Theme
+import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 
 export struct Separator impl Widget {
     const HORIZONTAL = 0      // 水平方向
@@ -16,14 +16,14 @@ export struct Separator impl Widget {
     float _w = 200.0, _h = 1.0
     int _dir = HORIZONTAL
     int _thickness = DEFAULT_THICKNESS
-    int _r = 70, _g = 74, _b = 84   // 颜色（默认主题分隔色）
+    int _color = #464A54FF   // 颜色（默认主题分隔色）
     int _alpha = DEFAULT_ALPHA
     float _margin = 0.0       // 内缩边距（两端留白）
     bool _loaded = false, visible = true
 
     func set(Dict opts) {
         Theme th = theme.getTheme()
-        _r = th.sepR; _g = th.sepG; _b = th.sepB
+        _color = th.sep
         x      = opts.get("x", 0)
         y      = opts.get("y", 0)
         _dir   = opts.get("dir", Separator.HORIZONTAL)
@@ -34,8 +34,8 @@ export struct Separator impl Widget {
         if _dir == Separator.HORIZONTAL { _w = opts.get("w", 200); _h = _float(_thickness) }
         else { _w = _float(_thickness); _h = opts.get("h", 200) }
         // 颜色覆盖
-        var c = opts.get("rgb")
-        if c is Array[int] { _r = c[0]; _g = c[1]; _b = c[2] }
+        var c = opts.get("color")
+        if c is int { _color = c }
         _alpha = opts.get("alpha", Separator.DEFAULT_ALPHA)
         _loaded = true
     }
@@ -47,7 +47,7 @@ export struct Separator impl Widget {
         _thickness = t
         if _dir == Separator.HORIZONTAL { _h = _float(t) } else { _w = _float(t) }
     }
-    func set_color(int r, int g, int b) { _r = r; _g = g; _b = b }
+    func set_color(int color) { _color = color }
     func set_alpha(int a) { _alpha = a }
     func set_margin(float m) { _margin = m }
     func set_visible(bool v) { visible = v }
@@ -70,7 +70,7 @@ export struct Separator impl Widget {
     // ==================== 渲染 ====================
     func render(Renderer r) {
         if not _loaded or not visible { return }
-        r.setColor(_r, _g, _b, _alpha)
+        r.setColor(theme.withAlpha(_color, _alpha))
         if _dir == Separator.HORIZONTAL {
             // 水平线：沿 x 方向延伸，居中绘制粗细
             float yy = y + (_h - _float(_thickness)) / 2.0

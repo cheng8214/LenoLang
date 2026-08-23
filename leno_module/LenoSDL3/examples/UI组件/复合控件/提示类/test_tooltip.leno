@@ -68,8 +68,8 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(28, 30, 36, 255)
-            r.drawText(font, "Tooltip 测试 (Esc 退出)", 20, 2, 200, 210, 230)
+            r.clearColor(#1C1E24FF)
+            r.drawText(font, "Tooltip 测试 (Esc 退出)", 20, 2, #C8D2E6FF)
         }
     )
 

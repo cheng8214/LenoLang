@@ -29,7 +29,7 @@ use SDL3.Label
 
 // ---- 辅助：创建一个「小节标题」标签 ----
 func sectionTitle(string text): Label {
-    return SDL3.createLabel({text: text, font_size: 16, text_rgb: [120, 200, 255]})
+    return SDL3.createLabel({text: text, font_size: 16, text_color: #78C8FFFF})
 }
 
 main() {
@@ -46,14 +46,14 @@ main() {
     var sv = win.addScrollView({
         x: 16, y: 16, w: 600, h: 688,
         content_w: 560, content_h: 2400,
-        bg_rgb: [34, 36, 42], border_rgb: [80, 85, 100]
+        bg_color: #22242AFF, border_color: #505564FF
     })
 
     // 内容根：VBox，子控件从上到下排列，align:3 让子控件拉伸到 VBox 宽度
     var content = SDL3.createVBox({w: 560, h: 2400, padX: 12, padY: 12, spacing: 10})
 
     // ==================== 右侧：控制面板 ====================
-    win.addLabel({x: 640, y: 16, text: "滚动信息:", font_size: 14, text_rgb: [200, 220, 200]})
+    win.addLabel({x: 640, y: 16, text: "滚动信息:", font_size: 14, text_color: #C8DCC8FF})
 
     win.addButton({x: 640, y: 50, w: 160, h: 34, text: "滚动到顶部"}).on_click(func(): void {
         sv.scroll_to(0, 0)
@@ -80,23 +80,23 @@ main() {
     })
 
     // 状态显示标签（被各控件回调更新，必须用 win.addLabel 注册到窗口才能渲染）
-    var statusLbl = win.addLabel({x: 640, y: 310, text: "状态: 就绪", font_size: 13, text_rgb: [200, 220, 200]})
+    var statusLbl = win.addLabel({x: 640, y: 310, text: "状态: 就绪", font_size: 13, text_color: #C8DCC8FF})
 
     // 说明文字
-    win.addLabel({x: 640, y: 340, text: "说明:", font_size: 14, text_rgb: [180, 200, 255]})
-    win.addLabel({x: 640, y: 362, text: "左侧滚动容器内含全部", font_size: 12, text_rgb: [160, 160, 170]})
-    win.addLabel({x: 640, y: 380, text: "控件和布局，验证滚动裁剪", font_size: 12, text_rgb: [160, 160, 170]})
-    win.addLabel({x: 640, y: 398, text: "事件转发是否正确。", font_size: 12, text_rgb: [160, 160, 170]})
-    win.addLabel({x: 640, y: 424, text: "测试要点:", font_size: 14, text_rgb: [180, 200, 255]})
-    win.addLabel({x: 640, y: 446, text: "1. 滚轮悬停滚动", font_size: 12, text_rgb: [160, 160, 170]})
-    win.addLabel({x: 640, y: 464, text: "2. 拖右侧滚动条", font_size: 12, text_rgb: [160, 160, 170]})
-    win.addLabel({x: 640, y: 482, text: "3. 点击槽翻页", font_size: 12, text_rgb: [160, 160, 170]})
-    win.addLabel({x: 640, y: 500, text: "4. 各控件交互正常", font_size: 12, text_rgb: [160, 160, 170]})
-    win.addLabel({x: 640, y: 518, text: "5. Edit光标IME定位", font_size: 12, text_rgb: [160, 160, 170]})
-    win.addLabel({x: 640, y: 536, text: "6. 嵌套布局跟随滚动", font_size: 12, text_rgb: [160, 160, 170]})
-    win.addLabel({x: 640, y: 554, text: "7. Panel子控件跟随滚动", font_size: 12, text_rgb: [160, 160, 170]})
-    win.addLabel({x: 640, y: 572, text: "8. TabControl跟随滚动", font_size: 12, text_rgb: [160, 160, 170]})
-    win.addLabel({x: 640, y: 600, text: "ESC 退出", font_size: 13, text_rgb: [200, 100, 100]})
+    win.addLabel({x: 640, y: 340, text: "说明:", font_size: 14, text_color: #B4C8FFFF})
+    win.addLabel({x: 640, y: 362, text: "左侧滚动容器内含全部", font_size: 12, text_color: #A0A0AAFF})
+    win.addLabel({x: 640, y: 380, text: "控件和布局，验证滚动裁剪", font_size: 12, text_color: #A0A0AAFF})
+    win.addLabel({x: 640, y: 398, text: "事件转发是否正确。", font_size: 12, text_color: #A0A0AAFF})
+    win.addLabel({x: 640, y: 424, text: "测试要点:", font_size: 14, text_color: #B4C8FFFF})
+    win.addLabel({x: 640, y: 446, text: "1. 滚轮悬停滚动", font_size: 12, text_color: #A0A0AAFF})
+    win.addLabel({x: 640, y: 464, text: "2. 拖右侧滚动条", font_size: 12, text_color: #A0A0AAFF})
+    win.addLabel({x: 640, y: 482, text: "3. 点击槽翻页", font_size: 12, text_color: #A0A0AAFF})
+    win.addLabel({x: 640, y: 500, text: "4. 各控件交互正常", font_size: 12, text_color: #A0A0AAFF})
+    win.addLabel({x: 640, y: 518, text: "5. Edit光标IME定位", font_size: 12, text_color: #A0A0AAFF})
+    win.addLabel({x: 640, y: 536, text: "6. 嵌套布局跟随滚动", font_size: 12, text_color: #A0A0AAFF})
+    win.addLabel({x: 640, y: 554, text: "7. Panel子控件跟随滚动", font_size: 12, text_color: #A0A0AAFF})
+    win.addLabel({x: 640, y: 572, text: "8. TabControl跟随滚动", font_size: 12, text_color: #A0A0AAFF})
+    win.addLabel({x: 640, y: 600, text: "ESC 退出", font_size: 13, text_color: #C86464FF})
 
     // ====================================================================
     //                       滚动容器内容 - 全控件展示
@@ -134,19 +134,19 @@ main() {
 
     // 单行输入
     var editRow1 = SDL3.createHBox({w: 536, h: 30, spacing: 8})
-    editRow1.add(SDL3.createLabel({text: "单行:", font_size: 14, text_rgb: [200, 200, 200]}), {})
+    editRow1.add(SDL3.createLabel({text: "单行:", font_size: 14, text_color: #C8C8C8FF}), {})
     var edit1 = SDL3.createEdit({w: 420, h: 30, placeholder: "请输入文字..."})
     editRow1.add(edit1, {grow: 1})
     content.add(editRow1, {})
 
     // 密码输入
     var editRow2 = SDL3.createHBox({w: 536, h: 30, spacing: 8})
-    editRow2.add(SDL3.createLabel({text: "密码:", font_size: 14, text_rgb: [200, 200, 200]}), {})
+    editRow2.add(SDL3.createLabel({text: "密码:", font_size: 14, text_color: #C8C8C8FF}), {})
     editRow2.add(SDL3.createEdit({w: 420, h: 30, password: true, placeholder: "密码"}), {grow: 1})
     content.add(editRow2, {})
 
     // 多行输入
-    content.add(SDL3.createLabel({text: "多行编辑框:", font_size: 14, text_rgb: [200, 200, 200]}), {})
+    content.add(SDL3.createLabel({text: "多行编辑框:", font_size: 14, text_color: #C8C8C8FF}), {})
     content.add(SDL3.createEdit({
         w: 536, h: 80, multiline: true,
         text: "多行编辑框\n支持换行、选区、撤销/重做、IME\n在滚动容器内测试光标定位"
@@ -181,7 +181,7 @@ main() {
 
     // 水平滑块
     var slRow = SDL3.createHBox({w: 536, h: 24, spacing: 8})
-    var slVal = SDL3.createLabel({text: "50", font_size: 13, text_rgb: [200, 200, 200]})
+    var slVal = SDL3.createLabel({text: "50", font_size: 13, text_color: #C8C8C8FF})
     var sl = SDL3.createSlider({w: 460, h: 24, min: 0, max: 100, value: 50})
     sl.on_change(func(float v): void {
         slVal.set_text((v as string))
@@ -264,7 +264,7 @@ main() {
     content.add(SDL3.createSeparator({dir: 0, w: 536, thickness: 1}), {})
 
     // HBox 等分
-    content.add(SDL3.createLabel({text: "HBox 水平等分 (grow:1):", font_size: 13, text_rgb: [200, 200, 200]}), {})
+    content.add(SDL3.createLabel({text: "HBox 水平等分 (grow:1):", font_size: 13, text_color: #C8C8C8FF}), {})
     var nHBox = SDL3.createHBox({w: 536, h: 36, spacing: 8})
     nHBox.add(SDL3.createButton({text: "H1", w: 80, h: 32}), {grow: 1})
     nHBox.add(SDL3.createButton({text: "H2", w: 80, h: 32}), {grow: 1})
@@ -272,14 +272,14 @@ main() {
     content.add(nHBox, {})
 
     // VBox 嵌套
-    content.add(SDL3.createLabel({text: "VBox 嵌套 (grow:1):", font_size: 13, text_rgb: [200, 200, 200]}), {})
+    content.add(SDL3.createLabel({text: "VBox 嵌套 (grow:1):", font_size: 13, text_color: #C8C8C8FF}), {})
     var nVBox = SDL3.createVBox({w: 536, h: 76, spacing: 6})
     nVBox.add(SDL3.createButton({text: "V1", h: 32}), {grow: 1, align: 3})
     nVBox.add(SDL3.createButton({text: "V2", h: 32}), {grow: 1, align: 3})
     content.add(nVBox, {})
 
     // AnchorBox 锚点
-    content.add(SDL3.createLabel({text: "AnchorBox 锚点:", font_size: 13, text_rgb: [200, 200, 200]}), {})
+    content.add(SDL3.createLabel({text: "AnchorBox 锚点:", font_size: 13, text_color: #C8C8C8FF}), {})
     var nAb = SDL3.createAnchorBox({w: 536, h: 70, padX: 8, padY: 8})
     nAb.add(SDL3.createButton({text: "左上", w: 70, h: 28}), {left: 0, top: 0})
     nAb.add(SDL3.createButton({text: "居中", w: 70, h: 28}), {centerX: true, centerY: true})
@@ -290,11 +290,11 @@ main() {
     content.add(sectionTitle("九、面板 Panel (setLayoutPadded)"), {})
     content.add(SDL3.createSeparator({dir: 0, w: 536, thickness: 1}), {})
 
-    content.add(SDL3.createLabel({text: "Panel 用 setLayoutPadded(VBox)，子控件跟随滚动", font_size: 12, text_rgb: [160, 160, 170]}), {})
+    content.add(SDL3.createLabel({text: "Panel 用 setLayoutPadded(VBox)，子控件跟随滚动", font_size: 12, text_color: #A0A0AAFF}), {})
 
-    var panel = SDL3.createPanel({w: 536, h: 120, bg_rgb: [40, 42, 52], border_rgb: [80, 85, 100], radius: 8})
+    var panel = SDL3.createPanel({w: 536, h: 120, bg_color: #282A34FF, border_color: #505564FF, radius: 8})
     var panelVBox = SDL3.createVBox({w: 520, h: 104, padX: 8, padY: 8, spacing: 6})
-    panelVBox.add(SDL3.createLabel({text: "面板内 Label", font_size: 13, text_rgb: [200, 200, 200]}), {})
+    panelVBox.add(SDL3.createLabel({text: "面板内 Label", font_size: 13, text_color: #C8C8C8FF}), {})
     var panelRow = SDL3.createHBox({w: 520, h: 34, spacing: 8})
     panelRow.add(SDL3.createButton({text: "面板内按钮A", w: 120, h: 32, type: "primary"}), {grow: 1})
     panelRow.add(SDL3.createButton({text: "面板内按钮B", w: 120, h: 32}), {grow: 1})
@@ -309,12 +309,12 @@ main() {
 
     var tab = SDL3.createTabControl({w: 536, h: 180, tabs: ["基础页", "高级页"], active: 0, tab_h: 30})
     // 页0 基础
-    tab.addToPage(0, SDL3.createLabel({text: "基础设置", font_size: 14, text_rgb: [200, 200, 200]}), 16, 12)
+    tab.addToPage(0, SDL3.createLabel({text: "基础设置", font_size: 14, text_color: #C8C8C8FF}), 16, 12)
     tab.addToPage(0, SDL3.createEdit({w: 200, h: 30, placeholder: "用户名"}), 16, 42)
     tab.addToPage(0, SDL3.createCheckBox({text: "启用通知", checked: true}), 16, 82)
     tab.addToPage(0, SDL3.createButton({text: "保存", w: 80, h: 32, type: "primary"}), 16, 114)
     // 页1 高级
-    tab.addToPage(1, SDL3.createLabel({text: "高级设置", font_size: 14, text_rgb: [200, 200, 200]}), 16, 12)
+    tab.addToPage(1, SDL3.createLabel({text: "高级设置", font_size: 14, text_color: #C8C8C8FF}), 16, 12)
     tab.addToPage(1, SDL3.createSlider({w: 300, h: 24, min: 0, max: 100, value: 75}), 16, 42)
     tab.addToPage(1, SDL3.createToggle({text: "实验功能", on: false}), 16, 76)
     tab.addToPage(1, SDL3.createLinkButton({text: "了解更多", font_size: 13}), 16, 110)
@@ -325,11 +325,11 @@ main() {
     content.add(sectionTitle("十一、分组容器 GroupBox (setLayoutPadded)"), {})
     content.add(SDL3.createSeparator({dir: 0, w: 536, thickness: 1}), {})
 
-    content.add(SDL3.createLabel({text: "GroupBox 现已支持 setLayoutPadded，子控件跟随滚动", font_size: 12, text_rgb: [100, 200, 100]}), {})
+    content.add(SDL3.createLabel({text: "GroupBox 现已支持 setLayoutPadded，子控件跟随滚动", font_size: 12, text_color: #64C864FF}), {})
 
-    var gb = SDL3.createGroupBox({w: 536, h: 100, title: "分组示例", bg_rgb: [40, 42, 50], border_rgb: [90, 95, 110]})
+    var gb = SDL3.createGroupBox({w: 536, h: 100, title: "分组示例", bg_color: #282A32FF, border_color: #5A5F6EFF})
     var gbVBox = SDL3.createVBox({w: 520, h: 84, padX: 8, padY: 8, spacing: 6})
-    gbVBox.add(SDL3.createLabel({text: "GroupBox 内 Label（跟随滚动）", font_size: 13, text_rgb: [200, 200, 200]}), {})
+    gbVBox.add(SDL3.createLabel({text: "GroupBox 内 Label（跟随滚动）", font_size: 13, text_color: #C8C8C8FF}), {})
     var gbRow = SDL3.createHBox({w: 520, h: 32, spacing: 8})
     gbRow.add(SDL3.createButton({text: "GB 按钮 A", w: 120, h: 32, type: "primary"}), {grow: 1})
     gbRow.add(SDL3.createButton({text: "GB 按钮 B", w: 120, h: 32}), {grow: 1})
@@ -342,30 +342,30 @@ main() {
     content.add(SDL3.createSeparator({dir: 0, w: 536, thickness: 1}), {})
 
     // 水平分隔线
-    content.add(SDL3.createLabel({text: "水平分隔线 (thickness=2):", font_size: 13, text_rgb: [200, 200, 200]}), {})
-    content.add(SDL3.createSeparator({dir: 0, w: 536, thickness: 2, rgb: [100, 180, 255], alpha: 200}), {})
+    content.add(SDL3.createLabel({text: "水平分隔线 (thickness=2):", font_size: 13, text_color: #C8C8C8FF}), {})
+    content.add(SDL3.createSeparator({dir: 0, w: 536, thickness: 2, color: #64B4FFFF, alpha: 200}), {})
 
     // 垂直分隔线（在 HBox 中）
     var sepRow = SDL3.createHBox({w: 536, h: 40, spacing: 8})
-    sepRow.add(SDL3.createLabel({text: "左侧", font_size: 13, text_rgb: [200, 200, 200]}), {})
-    sepRow.add(SDL3.createSeparator({dir: 1, h: 30, thickness: 2, rgb: [100, 180, 255]}), {})
-    sepRow.add(SDL3.createLabel({text: "中间", font_size: 13, text_rgb: [200, 200, 200]}), {})
-    sepRow.add(SDL3.createSeparator({dir: 1, h: 30, thickness: 2, rgb: [100, 180, 255]}), {})
-    sepRow.add(SDL3.createLabel({text: "右侧", font_size: 13, text_rgb: [200, 200, 200]}), {})
+    sepRow.add(SDL3.createLabel({text: "左侧", font_size: 13, text_color: #C8C8C8FF}), {})
+    sepRow.add(SDL3.createSeparator({dir: 1, h: 30, thickness: 2, color: #64B4FFFF}), {})
+    sepRow.add(SDL3.createLabel({text: "中间", font_size: 13, text_color: #C8C8C8FF}), {})
+    sepRow.add(SDL3.createSeparator({dir: 1, h: 30, thickness: 2, color: #64B4FFFF}), {})
+    sepRow.add(SDL3.createLabel({text: "右侧", font_size: 13, text_color: #C8C8C8FF}), {})
     content.add(sepRow, {})
 
     // ---- 十二B、网格布局 GridLayout (新增容器) ----
     content.add(sectionTitle("十二B、网格布局 GridLayout (新增容器)"), {})
     content.add(SDL3.createSeparator({dir: 0, w: 536, thickness: 1}), {})
 
-    content.add(SDL3.createLabel({text: "3 列网格，子控件自动排列，align 0=左上 1=居中 2=右下 3=撑满", font_size: 12, text_rgb: [100, 200, 100]}), {})
+    content.add(SDL3.createLabel({text: "3 列网格，子控件自动排列，align 0=左上 1=居中 2=右下 3=撑满", font_size: 12, text_color: #64C864FF}), {})
 
     var grid = SDL3.createGridLayout({w: 536, h: 200, cols: 3, spacing: 8, padX: 8, padY: 8})
     grid.add(SDL3.createButton({text: "G(0,0) 左上", w: 120, h: 32}), {align: 0})
     grid.add(SDL3.createButton({text: "G(0,1) 居中", w: 120, h: 32}), {align: 1})
     grid.add(SDL3.createButton({text: "G(0,2) 右下", w: 120, h: 32}), {align: 2})
     grid.add(SDL3.createButton({text: "G(1,0) 撑满", w: 120, h: 32, type: "primary"}), {align: 3})
-    grid.add(SDL3.createLabel({text: "Label(1,1)", font_size: 13, text_rgb: [200, 200, 200]}), {align: 1})
+    grid.add(SDL3.createLabel({text: "Label(1,1)", font_size: 13, text_color: #C8C8C8FF}), {align: 1})
     grid.add(SDL3.createCheckBox({text: "Check(1,2)", w: 120, h: 24}), {align: 1})
     grid.add(SDL3.createToggle({text: "Toggle(2,0)", w: 120, h: 24}), {align: 0})
     grid.add(SDL3.createRadioButton({text: "Radio(2,1)", w: 120, h: 24}), {align: 1})
@@ -399,7 +399,7 @@ main() {
     }
 
     // ---- 结束标记 ----
-    content.add(SDL3.createLabel({text: "— 内容底部 —", font_size: 14, text_rgb: [100, 120, 100]}), {align: 1})
+    content.add(SDL3.createLabel({text: "— 内容底部 —", font_size: 14, text_color: #647864FF}), {align: 1})
 
     // 设置滚动容器内容
     sv.set_content(content)
@@ -412,10 +412,10 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(18, 20, 26, 255)
+            r.clearColor(#12141AFF)
             // 右侧信息面板
             r.drawText(font, "ScrollView Y: " + (sv.get_scroll_y() as string) +
-                " / " + (sv.get_max_scroll_y() as string), 640, 660, 200, 220, 200)
+                " / " + (sv.get_max_scroll_y() as string), 640, 660, #C8DCC8FF)
         }
     )
 

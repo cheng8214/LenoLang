@@ -33,25 +33,25 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(20, 20, 40, 255)
+            r.clearColor(#141428FF)
 
-            r.setColor(255, 220, 100, 255)
+            r.setColor(#FFDC64FF)
             r.fillRoundedRect(30, 10, 440, 30, 6)
-            r.setColor(0, 0, 0, 255)
-            r.drawText(SDL3.createFontAuto(14.0), "光标切换(1-7) | M=消息框 | 可拖入文件测试", 40, 16, 255, 220, 100)
+            r.setColor(#000000FF)
+            r.drawText(SDL3.createFontAuto(14.0), "光标切换(1-7) | M=消息框 | 可拖入文件测试", 40, 16, #FFDC64FF)
 
-            r.setColor(60, 60, 90, 255)
+            r.setColor(#3C3C5AFF)
             r.drawRoundedRect(30, 55, 440, 320, 10)
 
-            r.setColor(200, 200, 220, 255)
-            r.drawText(SDL3.createFontAuto(16.0), "1 = DEFAULT    2 = TEXT(输入)", 45, 70, 200, 220, 255)
-            r.drawText(SDL3.createFontAuto(16.0), "3 = WAIT(等待)  4 = CROSSHAIR", 45, 100, 200, 220, 255)
-            r.drawText(SDL3.createFontAuto(16.0), "5 = POINTER(手) 6 = MOVE(移动)", 45, 130, 200, 220, 255)
-            r.drawText(SDL3.createFontAuto(16.0), "7 = NOT_ALLOWED(禁止)", 45, 160, 200, 220, 255)
-            r.drawText(SDL3.createFontAuto(16.0), "M = 弹出原生消息框", 45, 200, 200, 220, 255)
+            r.setColor(#C8C8DCFF)
+            r.drawText(SDL3.createFontAuto(16.0), "1 = DEFAULT    2 = TEXT(输入)", 45, 70, #C8DCFFFF)
+            r.drawText(SDL3.createFontAuto(16.0), "3 = WAIT(等待)  4 = CROSSHAIR", 45, 100, #C8DCFFFF)
+            r.drawText(SDL3.createFontAuto(16.0), "5 = POINTER(手) 6 = MOVE(移动)", 45, 130, #C8DCFFFF)
+            r.drawText(SDL3.createFontAuto(16.0), "7 = NOT_ALLOWED(禁止)", 45, 160, #C8DCFFFF)
+            r.drawText(SDL3.createFontAuto(16.0), "M = 弹出原生消息框", 45, 200, #C8DCFFFF)
 
-            r.setColor(150, 150, 180, 200)
-            r.drawText(SDL3.createFontAuto(14.0), "拖放: 将文件拖入窗口 → 控制台打印路径", 45, 250, 150, 180, 200)
+            r.setColor(#9696B4C8)
+            r.drawText(SDL3.createFontAuto(14.0), "拖放: 将文件拖入窗口 → 控制台打印路径", 45, 250, #96B4C8FF)
         }
     )
 }

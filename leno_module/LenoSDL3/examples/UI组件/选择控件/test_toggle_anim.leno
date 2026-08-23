@@ -35,12 +35,12 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(28, 28, 46, 255)
-            r.drawText(font, "开关动画：点击切换观察滑块平滑滑动", 20, 14, 255, 220, 80)
-            r.drawText(font, "A 显示位置: " + tA.get_anim_pos(), 240, 88, 150, 230, 160)
-            r.drawText(font, "B 显示位置: " + tB.get_anim_pos(), 240, 148, 150, 230, 160)
-            r.drawText(font, "C 显示位置: " + tC.get_anim_pos(), 240, 208, 200, 200, 200)
-            r.drawText(font, "ESC 退出", 400, 332, 140, 140, 140)
+            r.clearColor(#1C1C2EFF)
+            r.drawText(font, "开关动画：点击切换观察滑块平滑滑动", 20, 14, #FFDC50FF)
+            r.drawText(font, "A 显示位置: " + tA.get_anim_pos(), 240, 88, #96E6A0FF)
+            r.drawText(font, "B 显示位置: " + tB.get_anim_pos(), 240, 148, #96E6A0FF)
+            r.drawText(font, "C 显示位置: " + tC.get_anim_pos(), 240, 208, #C8C8C8FF)
+            r.drawText(font, "ESC 退出", 400, 332, #8C8C8CFF)
         }
     )
 

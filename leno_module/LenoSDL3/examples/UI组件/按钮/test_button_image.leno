@@ -61,7 +61,7 @@ main() {
         text: "半透明+红色着色", x: 30, y: 210, w: 230, h: 50,
         type: "dark",
         image_path: "D:/1.png", image_pos: "left",
-        image_alpha: 120, image_tint: [255, 60, 60]
+        image_alpha: 120, image_tint: #FF3C3CFF
     })
 
     // —— 演示 6：点击动态切换图片（模拟图标状态切换） ——
@@ -105,7 +105,7 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(30, 32, 40, 255)
+            r.clearColor(#1E2028FF)
         }
     )
 }

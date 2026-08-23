@@ -11,19 +11,18 @@
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_theme.leno" as theme
 
 export struct Scrim impl Widget {
     float x = 0.0, y = 0.0
     float _w = 0.0, _h = 0.0
-    int _r = 0, _g = 0, _b = 0     // 遮罩颜色（默认黑色）
+    int _color = #00000000     // 遮罩颜色（默认黑色）
     int _alpha = 120               // 透明度（0=全透明, 255=全不透明）
     bool visible = false            // 默认隐藏（仅在模态对话框打开时显示）
     bool _loaded = true
 
     func set(Dict opts) {
-        _r = opts.get("r", 0)
-        _g = opts.get("g", 0)
-        _b = opts.get("b", 0)
+        _color = opts.get("color", #00000000)
         _alpha = opts.get("alpha", 120)
         visible = opts.get("visible", false)
         _loaded = true
@@ -33,7 +32,7 @@ export struct Scrim impl Widget {
     func show() { visible = true }
     func hide() { visible = false }
     func set_alpha(int a) { _alpha = a }
-    func set_color(int r, int g, int b) { _r = r; _g = g; _b = b }
+    func set_color(int color) { _color = color }
 
     // ==================== Widget 接口 ====================
     func get_w(): float { return _w }
@@ -51,7 +50,7 @@ export struct Scrim impl Widget {
 
     func render(Renderer r) {
         if not _loaded or not visible { return }
-        r.setColor(_r, _g, _b, _alpha)
+        r.setColor(theme.withAlpha(_color, _alpha))
         r.fillRect(x, y, _w, _h)
     }
 

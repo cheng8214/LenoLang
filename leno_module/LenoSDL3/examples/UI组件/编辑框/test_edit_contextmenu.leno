@@ -49,13 +49,13 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(25, 25, 45, 255)
-            r.drawText(font, "Edit 右击上下文菜单", 30, 16, 255, 220, 80)
-            r.drawText(font, "单行:", 30, 48, 150, 150, 180)
-            r.drawText(font, "多行:", 30, 108, 150, 150, 180)
-            r.drawText(font, "只读(无菜单):", 30, 248, 150, 150, 180)
-            r.drawText(font, msg, 30, 320, 180, 200, 220)
-            r.drawText(font, "右键编辑框 -> 复制/剪切/粘贴/全选/撤销/重做 (+自定义)", 30, 340, 120, 120, 140)
+            r.clearColor(#19192DFF)
+            r.drawText(font, "Edit 右击上下文菜单", 30, 16, #FFDC50FF)
+            r.drawText(font, "单行:", 30, 48, #9696B4FF)
+            r.drawText(font, "多行:", 30, 108, #9696B4FF)
+            r.drawText(font, "只读(无菜单):", 30, 248, #9696B4FF)
+            r.drawText(font, msg, 30, 320, #B4C8DCFF)
+            r.drawText(font, "右键编辑框 -> 复制/剪切/粘贴/全选/撤销/重做 (+自定义)", 30, 340, #78788CFF)
         }
     )
 

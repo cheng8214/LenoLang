@@ -42,12 +42,12 @@ export struct Table impl Widget, Themeable {
 
     float _fontSize = 15.0; string _fontPath = ""; int _fontStyle = 0; Font? _font
     float _textH = 16.0         // 缓存字体行高，避免每个单元格重复 measureString
-    int br = 38, bg = 40, bb = 48
-    int _hdrR = 46, _hdrG = 48, _hdrB = 56, _hdrTxtR = 220, _hdrTxtG = 225, _hdrTxtB = 235
-    int _selR = 60, _selG = 150, _selB = 235
-    int _hovR = 70, _hovG = 78, _hovB = 92
-    int _zebR = 44, _zebG = 46, _zebB = 54
-    int tr = 232, tg = 235, tb = 245, _sepR = 70, _sepG = 74, _sepB = 84, _sbR = 120, _sbG = 125, _sbB = 140
+    int _bgColor = #262830FF
+    int _hdrColor = #2E3038FF, _hdrTxtColor = #DCE1EBFF
+    int _selColor = #343A46FF
+    int _hovColor = #464E5CFF
+    int _zebColor = #2C2E36FF
+    int _txtColor = #EBEBF5FF, _sepColor = #464A54FF, _sbColor = #787D8CFF
     int _cursor = SystemCursor.POINTER
     bool enabled = true, visible = true, _loaded = false
     string _tip = ""
@@ -105,9 +105,9 @@ export struct Table impl Widget, Themeable {
     int  _checkCol = -1               // 复选框列索引（-1=无复选框列）
     Array[bool] _rowChecked = []      // 每行勾选状态（与 _rows 平行）
     bool _checkHeaderState = false    // 表头全选框状态（三态：半选用 false 但有部分勾选时渲染半选样式）
-    int  _chkR = 70, _chkG = 178, _chkB = 120   // 勾选框填充色
-    int  _chkBoxR = 90, _chkBoxG = 95, _chkBoxB = 110  // 未勾选时边框色
-    int  _markR = 235, _markG = 240, _markB = 250  // 勾选标记颜色
+    int  _chkColor = #46B278FF   // 勾选框填充色
+    int  _chkBoxColor = #5A5F6EFF  // 未勾选时边框色
+    int  _markColor = #EBEBF5FF  // 勾选标记颜色
 
     // === 行级颜色 ===
     Array[int] _rowColors = []        // 每行文字色 RGB 打包：0xRRGGBB，0=用默认色
@@ -120,7 +120,7 @@ export struct Table impl Widget, Themeable {
 
     // === 空状态 ===
     string _emptyText = "暂无数据"     // 空状态提示文字
-    int _emptyR = 120, _emptyG = 128, _emptyB = 140  // 空状态文字颜色
+    int _emptyColor = #78808CFF  // 空状态文字颜色
 
     // === 双击编辑（默认关闭，由应用按需开启） ===
     Edit? _edit
@@ -279,18 +279,18 @@ export struct Table impl Widget, Themeable {
     func set(Dict opts) {
         // 主题默认配色（opts 覆盖优先级更高）
         Theme th = theme.getTheme()
-        br = th.bgR; bg = th.bgG; bb = th.bgB
-        _hdrR = th.bgHeaderR; _hdrG = th.bgHeaderG; _hdrB = th.bgHeaderB
-        _selR = th.bgSelR; _selG = th.bgSelG; _selB = th.bgSelB
-        _hovR = th.bgHoverR; _hovG = th.bgHoverG; _hovB = th.bgHoverB
-        _zebR = th.bgZebraR; _zebG = th.bgZebraG; _zebB = th.bgZebraB
-        tr = th.txtR; tg = th.txtG; tb = th.txtB
-        _hdrTxtR = th.txtHeaderR; _hdrTxtG = th.txtHeaderG; _hdrTxtB = th.txtHeaderB
-        _sepR = th.sepR; _sepG = th.sepG; _sepB = th.sepB
-        _sbR = th.sbR; _sbG = th.sbG; _sbB = th.sbB
-        _emptyR = th.txtDimR; _emptyG = th.txtDimG; _emptyB = th.txtDimB
-        _chkBoxR = th.borderR; _chkBoxG = th.borderG; _chkBoxB = th.borderB
-        _markR = th.txtOnAccentR; _markG = th.txtOnAccentG; _markB = th.txtOnAccentB
+        _bgColor = th.bg
+        _hdrColor = th.bgHeader
+        _selColor = th.bgSel
+        _hovColor = th.bgHover
+        _zebColor = th.bgZebra
+        _txtColor = th.txt
+        _hdrTxtColor = th.txtHeader
+        _sepColor = th.sep
+        _sbColor = th.sb
+        _emptyColor = th.txtDim
+        _chkBoxColor = th.border
+        _markColor = th.txtOnAccent
         x = opts.get("x", 0)
         y = opts.get("y", 0)
         w = opts.get("w", 360)
@@ -333,15 +333,15 @@ export struct Table impl Widget, Themeable {
         if _ncols == 0 { _ncols = 1 }
         _recompute_cols()
 
-        // 默认配色见字段声明（br/bg/bb/_hdrR/_selR/_hovR/_zebR/tr/_sepR/_sbR 等均有默认，以下仅 opts 覆盖）
-        var bgc = opts.get("bg_rgb")
-        if bgc is Array[int] { br = bgc[0]; bg = bgc[1]; bb = bgc[2] }
-        var hdc = opts.get("header_rgb")
-        if hdc is Array[int] { _hdrR = hdc[0]; _hdrG = hdc[1]; _hdrB = hdc[2] }
-        var slc = opts.get("sel_rgb")
-        if slc is Array[int] { _selR = slc[0]; _selG = slc[1]; _selB = slc[2] }
-        var sc = opts.get("sep_rgb")
-        if sc is Array[int] { _sepR = sc[0]; _sepG = sc[1]; _sepB = sc[2] }
+        // 默认配色见字段声明（_bgColor/_hdrColor/_selColor/_hovColor/_zebColor/_txtColor/_sepColor/_sbColor 等均有默认，以下仅 opts 覆盖）
+        var bgc = opts.get("bg_color")
+        if bgc is int { _bgColor = bgc }
+        var hdc = opts.get("header_color")
+        if hdc is int { _hdrColor = hdc }
+        var slc = opts.get("sel_color")
+        if slc is int { _selColor = slc }
+        var sc = opts.get("sep_color")
+        if sc is int { _sepColor = sc }
 
         // 行图标配置：image_col 指定哪列显示 [图标+文字]，图标路径由 row_images 独立存储
         _imageCol = opts.get("image_col", -1)
@@ -354,11 +354,11 @@ export struct Table impl Widget, Themeable {
 
         // 复选框列配置
         _checkCol = opts.get("check_col", -1)
-        var chkR = opts.get("check_rgb")
-        if chkR is Array[int] { _chkR = chkR[0]; _chkG = chkR[1]; _chkB = chkR[2] }
+        var chkR = opts.get("check_color")
+        if chkR is int { _chkColor = chkR }
         _emptyText = opts.get("empty_text", "暂无数据")
-        var empc = opts.get("empty_rgb")
-        if empc is Array[int] { _emptyR = empc[0]; _emptyG = empc[1]; _emptyB = empc[2] }
+        var empc = opts.get("empty_color")
+        if empc is int { _emptyColor = empc }
         // 初始化行勾选/颜色数组长度
         while _rowChecked.len() < _rows.len() { _rowChecked.add(false) }
         while _rowColors.len() < _rows.len() { _rowColors.add(0) }
@@ -1480,28 +1480,28 @@ export struct Table impl Widget, Themeable {
         float bx = r.snapX(cx + (cw - boxSize) / 2.0)
         float by = r.snapY(ry + (rh - boxSize) / 2.0)
         if checked or partial {
-            int cr = _chkR, cg = _chkG, cb = _chkB
-            if partial { cr = 100; cg = 110; cb = 125 }   // 半选用灰色
-            if not enabled { cr = cr / 2; cg = cg / 2; cb = cb / 2 }
-            r.setColor(cr, cg, cb, 255)
+            int cc = _chkColor
+            if partial { cc = theme.packColor(100, 110, 125) }   // 半选用灰色
+            if not enabled { cc = theme.darken(cc, 64) }
+            r.setColor(cc)
             r.fillRect(bx, by, boxSize, boxSize)
             // 勾号（checked）或横杠（partial 半选）
             if checked {
-                int mr = _markR, mg = _markG, mb = _markB
-                if not enabled { mr = 120; mg = 125; mb = 135 }
-                r.setColor(mr, mg, mb, 255)
+                int mc = _markColor
+                if not enabled { mc = theme.packColor(120, 125, 135) }
+                r.setColor(mc)
                 r.drawLine(bx + 3.0, by + 7.5, bx + 6.0, by + 10.5)
                 r.drawLine(bx + 6.0, by + 10.5, bx + 11.0, by + 4.5)
             } eif partial {
-                int mr = _markR, mg = _markG, mb = _markB
-                if not enabled { mr = 120; mg = 125; mb = 135 }
-                r.setColor(mr, mg, mb, 255)
+                int mc = _markColor
+                if not enabled { mc = theme.packColor(120, 125, 135) }
+                r.setColor(mc)
                 r.drawLine(bx + 3.0, by + 7.0, bx + 11.0, by + 7.0)
             }
         } else {
-            int br2 = _chkBoxR, bg2 = _chkBoxG, bb2 = _chkBoxB
-            if not enabled { br2 = br2 / 2; bg2 = bg2 / 2; bb2 = bb2 / 2 }
-            r.setColor(br2, bg2, bb2, 255)
+            int bc = _chkBoxColor
+            if not enabled { bc = theme.darken(bc, 64) }
+            r.setColor(bc)
             r.drawRect(bx, by, boxSize, boxSize)
         }
     }
@@ -1579,7 +1579,7 @@ export struct Table impl Widget, Themeable {
     }
 
     // 使用预计算的截断文本和宽度绘制单元格文字（跳过 _fit_cell_text 和 measureString）
-    func _draw_cached_text(Renderer r, string dt, float tw, float cx, float cw, float ry, float rh, int align, int R, int G, int B, float iconOff) {
+    func _draw_cached_text(Renderer r, string dt, float tw, float cx, float cw, float ry, float rh, int align, int color, float iconOff) {
         if dt == "" { return }
         float th = _textH
         float ty = ry + (rh - th) / 2.0
@@ -1594,7 +1594,7 @@ export struct Table impl Widget, Themeable {
         float cl = cx; if cl < x { cl = x }
         float crx = cx + cw; if crx > x + w { crx = x + w }
         if tx >= crx { return }
-        r.drawText(_font, dt, r.snapX(tx), r.snapY(ty), R, G, B)
+        r.drawText(_font, dt, r.snapX(tx), r.snapY(ty), color)
     }
 
     // 判断是否启用了图标列
@@ -1635,7 +1635,7 @@ export struct Table impl Widget, Themeable {
         float imgX = cx + _imgPad
         float imgY = ry + (rh - imgSize) / 2.0
         r.setTextureAlpha(tex, 255)
-        r.setTextureColor(tex, 255, 255, 255)
+        r.setTextureColor(tex, #FFFFFFFF)
         var nats = r.getTextureSize(tex)
         float nw = nats["w"], nh = nats["h"]
         switch _imgMode {
@@ -1661,7 +1661,7 @@ export struct Table impl Widget, Themeable {
         return imgSize + _imgGap   // 返回图标总占宽（含间距），文字需右移此量
     }
 
-    func _draw_cell_text(Renderer r, string t, float cx, float cw, float ry, float rh, int align, int R, int G, int B, float iconOff) {
+    func _draw_cell_text(Renderer r, string t, float cx, float cw, float ry, float rh, int align, int color, float iconOff) {
         if _font == null or not _font.ok { return }
         if t == "" { return }
         float th = _textH
@@ -1683,7 +1683,7 @@ export struct Table impl Widget, Themeable {
         float cl = cx; if cl < x { cl = x }
         float crx = cx + cw; if crx > x + w { crx = x + w }
         if tx >= crx { return }
-        r.drawText(_font, dt, r.snapX(tx), r.snapY(ty), R, G, B)
+        r.drawText(_font, dt, r.snapX(tx), r.snapY(ty), color)
     }
 
     func render(Renderer r) {
@@ -1691,9 +1691,9 @@ export struct Table impl Widget, Themeable {
         _ensure_font()
 
         // 背景底色（在字体检查之前画，避免字体偶发未就绪时 Table 区域变透明露出容器底色 → 闪一下）
-        int bgr = br, bgg = bg, bgb = bb
-        if not enabled { bgr = br / 2; bgg = bg / 2; bgb = bb / 2 }
-        r.setColor(bgr, bgg, bgb, 255)
+        int bgC = _bgColor
+        if not enabled { bgC = theme.darken(_bgColor, 64) }
+        r.setColor(bgC)
         r.fillRect(x, y, w, h)
 
         if _font == null or not _font.ok { return }   // 字体无效时仍有背景，只跳过文字
@@ -1707,7 +1707,7 @@ export struct Table impl Widget, Themeable {
         var sb = _compute_sb()
 
         // 表头
-        r.setColor(_hdrR, _hdrG, _hdrB, 255)
+        r.setColor(_hdrColor)
         r.fillRect(x, y, w, _headerH)
         for 0 : _ncols - 1 to c {
             float cx = _col_x(c)
@@ -1721,16 +1721,16 @@ export struct Table impl Widget, Themeable {
             }
             if c < _headers.len() and c != _checkCol {
                 string t = _headers[c]
-                int htcR = _hdrTxtR, htcG = _hdrTxtG, htcB = _hdrTxtB
+                int htc = _hdrTxtColor
                 if c == _sortCol {
                     if _sortDesc { t = $"{t} ▼" } else { t = $"{t} ▲" }
                 }
-                _draw_cell_text(r, t, cx, cw, y, _headerH, _headerAligns[c], htcR, htcG, htcB, 0.0)
+                _draw_cell_text(r, t, cx, cw, y, _headerH, _headerAligns[c], htc, 0.0)
             }
-            r.setColor(_sepR, _sepG, _sepB, 130)
+            r.setColor(theme.withAlpha(_sepColor, 130))
             r.drawLine(cx + cw, y, cx + cw, y + _headerH)
         }
-        r.setColor(_sepR, _sepG, _sepB, 220)
+        r.setColor(theme.withAlpha(_sepColor, 220))
         r.drawLine(x, y + _headerH, x + w, y + _headerH)
 
         // 数据行
@@ -1758,16 +1758,16 @@ export struct Table impl Widget, Themeable {
         for startRow : endRow - 1 to ri {
             float ry = bodyTop - _scrollY + ri * _rowH
             if ry + _rowH < bodyTop or ry > bodyTop + bodyH { continue }
-            int rr = bgr, rg = bgg, rb = bgb
+            int rc = bgC
             if _cellSelect {
                 // 单元格模式：行背景只画 zebra，hover/选中在 Pass 1.5 中按单元格画
-                if _zebra and (ri % 2 == 1) { rr = _zebR; rg = _zebG; rb = _zebB }
+                if _zebra and (ri % 2 == 1) { rc = _zebColor }
             } else {
-                if _is_sel(ri) { rr = _selR; rg = _selG; rb = _selB }
-                eif ri == _hoverRow { rr = _hovR; rg = _hovG; rb = _hovB }
-                eif _zebra and (ri % 2 == 1) { rr = _zebR; rg = _zebG; rb = _zebB }
+                if _is_sel(ri) { rc = _selColor }
+                eif ri == _hoverRow { rc = _hovColor }
+                eif _zebra and (ri % 2 == 1) { rc = _zebColor }
             }
-            r.setColor(rr, rg, rb, 255)
+            r.setColor(rc)
             r.fillRect(x, ry, w, _rowH + 1.0)   // +1 覆盖亚像素间隙，防止行间闪烁
         }
 
@@ -1780,19 +1780,14 @@ export struct Table impl Widget, Themeable {
                 bool isHov = (_hoverRow == ri and _hoverCol >= 0)
                 if isSel or isHov {
                     // 选中单元格优先于 hover
-                    int hr = _hovR, hg = _hovG, hb = _hovB
-                    if isSel { hr = _selR; hg = _selG; hb = _selB }
-                    // 画选中的整行背景（淡色）+ 选中单元格深色
-                    if isSel {
-                        r.setColor(_selR, _selG, _selB, 80)
-                        r.fillRect(x, ry, w, _rowH + 1.0)
-                    }
-                    // 画 hover/选中单元格高亮
-                    int hc = if isSel then _selCol else _hoverCol
-                    if hc >= 0 and hc < _ncols {
-                        float cx = _col_x(hc), cw = _colW[hc]
+                    int hc2 = _hovColor
+                    if isSel { hc2 = _selColor }
+                    // 只画 hover/选中单元格高亮（不画整行背景）
+                    int hcol = if isSel then _selCol else _hoverCol
+                    if hcol >= 0 and hcol < _ncols {
+                        float cx = _col_x(hcol), cw = _colW[hcol]
                         if cx + cw >= x and cx <= x + w {
-                            r.setColor(hr, hg, hb, 255)
+                            r.setColor(hc2)
                             r.fillRect(cx, ry, cw, _rowH + 1.0)
                         }
                     }
@@ -1808,12 +1803,10 @@ export struct Table impl Widget, Themeable {
             var row = _rows[ri]
             string imgPath = _row_image(ri)
             // 行级颜色：取本行文字色（0=用默认色）
-            int rowR = tr, rowG = tg, rowB = tb
+            // ★ _rowColors 存储为 0xRRGGBB（无 alpha），需补 0xFF alpha 否则文字透明
+            int rowC = _txtColor
             if ri < _rowColors.len() and _rowColors[ri] != 0 {
-                int cval = _rowColors[ri]
-                rowR = (cval >> 16) & 255
-                rowG = (cval >> 8) & 255
-                rowB = cval & 255
+                rowC = theme.withAlpha(_rowColors[ri], 255)
             }
             for 0 : _ncols - 1 to c {
                 float cx = _col_x(c), cw = _colW[c]
@@ -1836,23 +1829,19 @@ export struct Table impl Widget, Themeable {
                     float dw = 0.0
                     if fidx >= 0 and fidx < _fittedText.len() { dt = _fittedText[fidx]; dw = _fittedW[fidx] }
                     // 单元格级颜色优先于行级颜色
-                    int cellR = rowR, cellG = rowG, cellB = rowB
+                    // ★ cell fg 存储为 0xRRGGBB（无 alpha），需补 0xFF alpha 否则文字透明
+                    int cellC = rowC
                     int cfg = get_cell_fg(ri, c)
                     if cfg != 0 {
-                        cellR = (cfg >> 16) & 255
-                        cellG = (cfg >> 8) & 255
-                        cellB = cfg & 255
+                        cellC = theme.withAlpha(cfg, 255)
                     }
                     // 单元格背景色
                     int cbg = get_cell_bg(ri, c)
                     if cbg != 0 {
-                        int bgR = (cbg >> 16) & 255
-                        int bgG = (cbg >> 8) & 255
-                        int bgB = cbg & 255
-                        r.setColor(bgR, bgG, bgB, 200)
+                        r.setColor(theme.withAlpha(cbg, 200))
                         r.fillRect(cx, ry, cw, _rowH)
                     }
-                    _draw_cached_text(r, dt, dw, cx, cw, ry, _rowH, _aligns[c], cellR, cellG, cellB, iconOff)
+                    _draw_cached_text(r, dt, dw, cx, cw, ry, _rowH, _aligns[c], cellC, iconOff)
                 }
             }
         }
@@ -1860,7 +1849,7 @@ export struct Table impl Widget, Themeable {
         // ★ Pass 3：列分隔线——统一在所有行内容绘制后一次性绘制，减少 setColor 切换
         //   旧方案每格末尾 setColor(sep,70)+drawLine 会打断 fillRect/drawText 批处理，
         //   改为在 pass 3 统一设一次颜色，所有分隔线连续 drawLine（batch 内不中断）。
-        r.setColor(_sepR, _sepG, _sepB, 70)
+        r.setColor(theme.withAlpha(_sepColor, 70))
         for 0 : _ncols - 1 to c {
             float cx = _col_x(c), cw = _colW[c]
             if cx + cw < x or cx > x + w { continue }
@@ -1876,8 +1865,8 @@ export struct Table impl Widget, Themeable {
             float tw = _font.measureString(_emptyText).w
             float tx = x + (w - tw) / 2.0
             float ty = bodyTop + (bodyH - _textH) / 2.0
-            r.setColor(_emptyR, _emptyG, _emptyB, 255)
-            r.drawText(_font, _emptyText, r.snapX(tx), r.snapY(ty), _emptyR, _emptyG, _emptyB)
+            r.setColor(_emptyColor)
+            r.drawText(_font, _emptyText, r.snapX(tx), r.snapY(ty), _emptyColor)
         }
 
         // 恢复表格整体裁剪区（滚动条/边框需全区域绘制）
@@ -1887,7 +1876,7 @@ export struct Table impl Widget, Themeable {
 
         if _dragCol >= 0 and _dragCol < _colW.len() {
             float ex = _col_x(_dragCol) + _colW[_dragCol]
-            r.setColor(_selR, _selG, _selB, 255)
+            r.setColor(_selColor)
             r.drawLine(ex, y, ex, y + h)
         }
 
@@ -1899,7 +1888,7 @@ export struct Table impl Widget, Themeable {
                 // 鼠标在目标列右半部分时指示线画在右侧
                 float cx = _col_x(targetCol) + _colW[targetCol]
                 if _reorderDragX - tx < _colW[targetCol] / 2.0 { cx = tx }
-                r.setColor(_selR + 40, _selG + 40, _selB + 40, 255)
+                r.setColor(theme.brighten(_selColor, 40))
                 r.drawLine(cx, y, cx, y + h)
             }
         }
@@ -1913,12 +1902,12 @@ export struct Table impl Widget, Themeable {
                 // 鼠标在行下半部分时指示线画在下方
                 float cy = ry + _rowH
                 if _rowReorderDragY - ry < _rowH / 2.0 { cy = ry }
-                r.setColor(_selR + 40, _selG + 40, _selB + 40, 255)
+                r.setColor(theme.brighten(_selColor, 40))
                 r.drawLine(x, cy, x + w, cy)
             }
         }
 
-        r.setColor(_sepR, _sepG, _sepB, 220)
+        r.setColor(theme.withAlpha(_sepColor, 220))
         r.drawRect(x, y, w, h)
 
         if sb[0] > 0.0 { _draw_vscroll(r, sb) }
@@ -1938,9 +1927,9 @@ export struct Table impl Widget, Themeable {
         float contentH = _rows.len() * _rowH; if contentH <= 0 { contentH = 1 }
         float thumbH = maths.max(18.0, maths.min(bodyH * bodyH / contentH, bodyH))
         float thy = y + _headerH + 2.0 + (_scrollY / maxY) * (track - thumbH)
-        r.setColor(_sbR, _sbG, _sbB, 180)
+        r.setColor(theme.withAlpha(_sbColor, 180))
         r.fillRoundedRect(sx, y + _headerH + 2.0, vw, bodyH - 4.0, vw / 2.0)
-        r.setColor(_sbR + 60, _sbG + 60, _sbB + 60, 255)
+        r.setColor(theme.brighten(_sbColor, 60))
         r.fillRoundedRect(sx, thy, vw, thumbH, vw / 2.0)
     }
     func _draw_hscroll(Renderer r, Array[float] sb) {
@@ -1952,9 +1941,9 @@ export struct Table impl Widget, Themeable {
         float tw = _total_w(); if tw <= 0 { tw = 1 }
         float thumbW = maths.max(18.0, maths.min(bodyW * bodyW / tw, bodyW))
         float thx = x + 2.0 + (_scrollX / maxX) * (track - thumbW)
-        r.setColor(_sbR, _sbG, _sbB, 180)
+        r.setColor(theme.withAlpha(_sbColor, 180))
         r.fillRoundedRect(x + 2.0, sy, bodyW - 4.0, hh, hh / 2.0)
-        r.setColor(_sbR + 60, _sbG + 60, _sbB + 60, 255)
+        r.setColor(theme.brighten(_sbColor, 60))
         r.fillRoundedRect(thx, sy, thumbW, hh, hh / 2.0)
     }
 
@@ -1972,18 +1961,18 @@ export struct Table impl Widget, Themeable {
 
 // ==================== 运行时主题切换 ====================
 func applyTheme(Theme t) {
-br = t.bgR; bg = t.bgG; bb = t.bgB
-_hdrR = t.bgHeaderR; _hdrG = t.bgHeaderG; _hdrB = t.bgHeaderB
-_selR = t.bgSelR; _selG = t.bgSelG; _selB = t.bgSelB
-_hovR = t.bgHoverR; _hovG = t.bgHoverG; _hovB = t.bgHoverB
-_zebR = t.bgZebraR; _zebG = t.bgZebraG; _zebB = t.bgZebraB
-tr = t.txtR; tg = t.txtG; tb = t.txtB
-_hdrTxtR = t.txtHeaderR; _hdrTxtG = t.txtHeaderG; _hdrTxtB = t.txtHeaderB
-_sepR = t.sepR; _sepG = t.sepG; _sepB = t.sepB
-_sbR = t.sbR; _sbG = t.sbG; _sbB = t.sbB
-_emptyR = t.txtDimR; _emptyG = t.txtDimG; _emptyB = t.txtDimB
-_chkBoxR = t.borderR; _chkBoxG = t.borderG; _chkBoxB = t.borderB
-_markR = t.txtOnAccentR; _markG = t.txtOnAccentG; _markB = t.txtOnAccentB
+_bgColor = t.bg
+_hdrColor = t.bgHeader
+_selColor = t.bgSel
+_hovColor = t.bgHover
+_zebColor = t.bgZebra
+_txtColor = t.txt
+_hdrTxtColor = t.txtHeader
+_sepColor = t.sep
+_sbColor = t.sb
+_emptyColor = t.txtDim
+_chkBoxColor = t.border
+_markColor = t.txtOnAccent
 _invalidate_fitted()
 // 同步内嵌控件的配色
 _edit?.applyTheme(t)

@@ -698,12 +698,20 @@ static void gen_call(CodeGen* gen, Ast* ast) {
         }
     }
 
-    // 检测 struct 方法调用: obj.method(args)
+    // 检测 struct 方法调用: obj.method(args) 或 obj["method"](args)
     // 使用 OP_GET_METHOD 从 struct 方法表获取方法函数
+    // 支持 AST_INDEX (obj["method"]()) 和 AST_FIELD_ACCESS (obj.method()) 两种语法
+    const char* method_name = NULL;
+    Ast* obj_ast = NULL;
     if (ast->u.call.callee->kind == AST_INDEX &&
         ast->u.call.callee->u.index.index->kind == AST_STRING) {
-        const char* method_name = ast->u.call.callee->u.index.index->u.string.value;
-        Ast* obj_ast = ast->u.call.callee->u.index.obj;
+        method_name = ast->u.call.callee->u.index.index->u.string.value;
+        obj_ast = ast->u.call.callee->u.index.obj;
+    } else if (ast->u.call.callee->kind == AST_FIELD_ACCESS) {
+        method_name = ast->u.call.callee->u.field_access.field_name;
+        obj_ast = ast->u.call.callee->u.field_access.obj;
+    }
+    if (method_name && obj_ast) {
 
         // 推断 receiver 的类型
         TypeInfo* receiver_type = infer_expr_type(gen->sem, obj_ast);

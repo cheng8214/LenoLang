@@ -13,31 +13,31 @@ main() {
     if not r.ok { print("[SMOKE] FAIL: 渲染器创建失败"); return }
 
     // 用例1：100 个同色连续 fillRect -> 应合并为 1 次 SDL_RenderFillRects
-    r.setColor(220, 60, 60, 255)
+    r.setColor(#DC3C3CFF)
     for 0 : 99 to i { r.fillRect(_float(i) * 5.0, 20.0, 3.0, 30.0) }
     r.present()
     int f1 = SDL3.getBatchFillBatched()
     int s1 = SDL3.getBatchFillSubmits()
 
     // 用例2：两色各 50 -> 颜色切换触发 flush，应 2 次提交（累计 3 次）
-    r.setColor(60, 200, 60, 255)
+    r.setColor(#3CC83CFF)
     for 0 : 49 to i { r.fillRect(_float(i) * 5.0, 80.0, 3.0, 30.0) }
-    r.setColor(60, 60, 220, 255)
+    r.setColor(#3C3CDCFF)
     for 0 : 49 to i { r.fillRect(_float(i) * 5.0, 130.0, 3.0, 30.0) }
     r.present()
     int f2 = SDL3.getBatchFillBatched()
     int s2 = SDL3.getBatchFillSubmits()
 
     // 用例3：跨类型顺序（先描边后填充，填充不应覆盖描边）
-    r.setColor(255, 255, 255, 255)
+    r.setColor(#FFFFFFFF)
     r.drawRect(420.0, 30.0, 120.0, 80.0)
-    r.setColor(200, 80, 80, 255)
+    r.setColor(#C85050FF)
     r.fillRect(425.0, 35.0, 110.0, 70.0)
     r.present()
 
     // 用例4：80 条同色连续 drawLine -> 逻辑上合并为 1 次批量提交
     // （刷新时逐条 SDL_RenderLine 提交，避免连续折线把独立线段连成斜线）
-    r.setColor(255, 220, 0, 255)
+    r.setColor(#FFDC00FF)
     for 0 : 79 to i { r.drawLine(0.0, _float(i) * 5.0, 300.0, _float(i) * 5.0) }
     r.present()
     int l4 = SDL3.getBatchLineBatched()

@@ -60,41 +60,41 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(18, 18, 38, 255)
+            r.clearColor(#121226FF)
 
             // 标题
-            r.drawText(font, "Event v2 - Text/Focus/Drop/Drag", 10, 8, 255, 220, 100)
+            r.drawText(font, "Event v2 - Text/Focus/Drop/Drag", 10, 8, #FFDC64FF)
 
             // 状态栏
             var f = if focused then "在" else "丢失"
             var m = if mouseInWindow then "在窗口内" else "已离开"
             var n = if minimized then "是" else "否"
-            r.drawText(font, "状态: 焦点:" + f + "  鼠标:" + m + "  最小化:" + n, 10, 32, 140, 200, 255)
+            r.drawText(font, "状态: 焦点:" + f + "  鼠标:" + m + "  最小化:" + n, 10, 32, #8CC8FFFF)
 
             // 鼠标
-            r.drawText(font, "鼠标: x=" + mx + " y=" + my + "  滚轮: " + wheelVal, 10, 55, 140, 200, 255)
+            r.drawText(font, "鼠标: x=" + mx + " y=" + my + "  滚轮: " + wheelVal, 10, 55, #8CC8FFFF)
 
             // 文本输入
-            r.drawText(font, "文本输入: \"" + textBuffer + "\"", 10, 80, 100, 255, 100)
+            r.drawText(font, "文本输入: \"" + textBuffer + "\"", 10, 80, #64FF64FF)
 
             // 事件历史
-            r.drawText(font, "--- 事件历史 (最近20条) ---", 10, 110, 150, 150, 150)
+            r.drawText(font, "--- 事件历史 (最近20条) ---", 10, 110, #969696FF)
             var ey = 132
             for 0 : events.len() - 1 to i {
-                r.drawText(font, (events.len() - i) + ": " + (events[events.len() - 1 - i] ), 10, ey, 140, 200, 255)
+                r.drawText(font, (events.len() - i) + ": " + (events[events.len() - 1 - i] ), 10, ey, #8CC8FFFF)
                 ey = ey + 20
             }
 
             // 功能说明
-            r.drawText(font, "--- 功能说明 ---", 410, 10, 200, 200, 100)
-            r.drawText(font, "键盘: 按任意键测试 KeyDown/Up/Repeat", 410, 35, 140, 200, 255)
-            r.drawText(font, "鼠标: 移动/点击/滚轮测试", 410, 55, 140, 200, 255)
-            r.drawText(font, "文本: 切换到其他窗口再切回", 410, 75, 140, 200, 255)
-            r.drawText(font, "焦点: 点击窗口标题栏 或 切换窗口", 410, 95, 140, 200, 255)
-            r.drawText(font, "鼠标进入/离开: 移入/移出窗口", 410, 115, 140, 200, 255)
-            r.drawText(font, "拖放: 从文件管理器拖文件到窗口", 410, 135, 140, 200, 255)
-            r.drawText(font, "窗口状态: 最小化/最大化/还原窗口", 410, 155, 140, 200, 255)
-            r.drawText(font, "按 ESC 或关闭窗口退出", 410, 185, 140, 200, 255)
+            r.drawText(font, "--- 功能说明 ---", 410, 10, #C8C864FF)
+            r.drawText(font, "键盘: 按任意键测试 KeyDown/Up/Repeat", 410, 35, #8CC8FFFF)
+            r.drawText(font, "鼠标: 移动/点击/滚轮测试", 410, 55, #8CC8FFFF)
+            r.drawText(font, "文本: 切换到其他窗口再切回", 410, 75, #8CC8FFFF)
+            r.drawText(font, "焦点: 点击窗口标题栏 或 切换窗口", 410, 95, #8CC8FFFF)
+            r.drawText(font, "鼠标进入/离开: 移入/移出窗口", 410, 115, #8CC8FFFF)
+            r.drawText(font, "拖放: 从文件管理器拖文件到窗口", 410, 135, #8CC8FFFF)
+            r.drawText(font, "窗口状态: 最小化/最大化/还原窗口", 410, 155, #8CC8FFFF)
+            r.drawText(font, "按 ESC 或关闭窗口退出", 410, 185, #8CC8FFFF)
         }
     )
 

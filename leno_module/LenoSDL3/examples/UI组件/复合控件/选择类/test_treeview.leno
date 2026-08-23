@@ -105,10 +105,10 @@ main() {
             return true
         },
         func(Renderer r) {
-            r.clearColor(28, 30, 36, 255)
-            r.drawText(font, "左树：单选 + 右键菜单", 30, 30, 200, 210, 230)
-            r.drawText(font, "右树：多选(Ctrl+左键) + 复选框", 370, 30, 200, 210, 230)
-            r.drawText(font, "E 展开全部  C 折叠全部  A 加子节点  D 删除  Esc 退出", 30, 492, 140, 145, 160)
+            r.clearColor(#1C1E24FF)
+            r.drawText(font, "左树：单选 + 右键菜单", 30, 30, #C8D2E6FF)
+            r.drawText(font, "右树：多选(Ctrl+左键) + 复选框", 370, 30, #C8D2E6FF)
+            r.drawText(font, "E 展开全部  C 折叠全部  A 加子节点  D 删除  Esc 退出", 30, 492, #8C91A0FF)
         }
     )
 
