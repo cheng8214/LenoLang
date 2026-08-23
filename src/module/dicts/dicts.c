@@ -110,10 +110,16 @@ static Value dict_method_clear(int argc, Value* args) {
     dict->last_index = 0;
 
     // 清空哈希部分
+    // ★ 不能用 memset(0)：全零字节不是 NULL_VAL（0xFFF8000000000000），
+    //   会导致 dict_find_entry 的 val_is_null 判断失效，引发无限循环/崩溃。
+    //   必须逐个将 key 设为 NULL_VAL。
     dict->count = 0;
     dict->tombstone_count = 0;
     if (dict->entries) {
-        memset(dict->entries, 0, dict->capacity * sizeof(ObjDictEntry));
+        for (int i = 0; i < dict->capacity; i++) {
+            dict->entries[i].key = NULL_VAL;
+            dict->entries[i].value = val_null();
+        }
     }
 
     // 清空插入序

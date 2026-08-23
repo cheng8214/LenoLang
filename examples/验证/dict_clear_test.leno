@@ -1,0 +1,150 @@
+// dict_clear_test.leno — Dict.clear() 和 Array 清空后重新写入测试
+// 验证 Dict.clear() 修复前 memset(0) 导致的 bug：clear 后 get/set 崩溃
+//
+// 运行：leno 本文件
+// 预期：全部输出 OK，无崩溃
+
+// ===== 测试 1: Dict.clear() 后重新写入再读取 =====
+func test_dict_clear_reuse(): bool {
+    Dict[string, int] d = {}
+    d["a"] = 1; d["b"] = 2; d["c"] = 3
+    d.clear()
+    // clear 后重新写入
+    d["x"] = 100; d["y"] = 200; d["z"] = 300
+    // 验证读取正确
+    if d["x"] != 100 { print("FAIL: d[x]=" + d["x"] + " 期望 100"); return false }
+    if d["y"] != 200 { print("FAIL: d[y]=" + d["y"] + " 期望 200"); return false }
+    if d["z"] != 300 { print("FAIL: d[z]=" + d["z"] + " 期望 300"); return false }
+    // 验证旧键不存在
+    if d.has("a") { print("FAIL: d.has(a) 应为 false"); return false }
+    if d.has("b") { print("FAIL: d.has(b) 应为 false"); return false }
+    // 验证 len 正确
+    if d.len() != 3 { print("FAIL: d.len()=" + d.len() + " 期望 3"); return false }
+    print("OK: Dict.clear() 后重新写入读取正确")
+    return true
+}
+
+// ===== 测试 2: Dict.clear() 后反复 clear + 写入 =====
+func test_dict_multi_clear(): bool {
+    Dict[string, int] d = {}
+    for 10 to round {
+        d.clear()
+        for 20 to i { d["k" + i] = i }
+        // 验证
+        if d.len() != 20 { print("FAIL: round " + round + " len=" + d.len() + " 期望 20"); return false }
+        for 20 to i {
+            if d["k" + i] != i { print("FAIL: round " + round + " d[k" + i + "]=" + d["k" + i] + " 期望 " + i); return false }
+        }
+    }
+    print("OK: Dict 多次 clear + 写入正确（10 轮 × 20 键）")
+    return true
+}
+
+// ===== 测试 3: Dict.clear() 后 get 用默认值 =====
+func test_dict_clear_default(): bool {
+    Dict[string, int] d = {}
+    d["a"] = 1; d["b"] = 2
+    d.clear()
+    // get 不存在的键，返回默认值
+    int v = d.get("missing", -1)
+    if v != -1 { print("FAIL: d.get('missing',-1)=" + v + " 期望 -1"); return false }
+    // has 不存在的键
+    if d.has("a") { print("FAIL: d.has(a) 应为 false"); return false }
+    print("OK: Dict.clear() 后 get 默认值正确")
+    return true
+}
+
+// ===== 测试 4: Dict.clear() 后大量键写入（触发 resize） =====
+func test_dict_clear_resize(): bool {
+    Dict[string, int] d = {}
+    // 第一轮：写入大量键触发 resize
+    for 100 to i { d["key_" + i] = i }
+    d.clear()
+    // 第二轮：再写入大量键，确保 resize 后 entries 正确
+    for 100 to i { d["val_" + i] = i * 2 }
+    if d.len() != 100 { print("FAIL: len=" + d.len() + " 期望 100"); return false }
+    for 100 to i {
+        if d["val_" + i] != i * 2 { print("FAIL: d[val_" + i + "]=" + d["val_" + i] + " 期望 " + (i * 2)); return false }
+    }
+    // 确保旧键都不存在
+    for 100 to i {
+        if d.has("key_" + i) { print("FAIL: d.has(key_" + i + ") 应为 false"); return false }
+    }
+    print("OK: Dict.clear() 后大量键写入（触发 resize）正确")
+    return true
+}
+
+// ===== 测试 5: Dict 重新赋值为 {} =====
+func test_dict_reassign_empty(): bool {
+    Dict[string, int] d = {}
+    d["a"] = 1; d["b"] = 2; d["c"] = 3
+    d = {}  // 重新赋值为空 Dict
+    d["x"] = 100; d["y"] = 200
+    if d["x"] != 100 { print("FAIL: d[x]=" + d["x"]); return false }
+    if d["y"] != 200 { print("FAIL: d[y]=" + d["y"]); return false }
+    if d.has("a") { print("FAIL: d.has(a) 应为 false"); return false }
+    if d.len() != 2 { print("FAIL: d.len()=" + d.len() + " 期望 2"); return false }
+    print("OK: Dict 重新赋值为 {} 后写入读取正确")
+    return true
+}
+
+// ===== 测试 6: Array.clear() 后重新写入 =====
+func test_array_clear_reuse(): bool {
+    Array[int] a = [1, 2, 3, 4, 5]
+    a.clear()
+    a.add(100); a.add(200); a.add(300)
+    if a.len() != 3 { print("FAIL: a.len()=" + a.len() + " 期望 3"); return false }
+    if a[0] != 100 { print("FAIL: a[0]=" + a[0]); return false }
+    if a[1] != 200 { print("FAIL: a[1]=" + a[1]); return false }
+    if a[2] != 300 { print("FAIL: a[2]=" + a[2]); return false }
+    print("OK: Array.clear() 后重新写入读取正确")
+    return true
+}
+
+// ===== 测试 7: Array 重新赋值为 [] =====
+func test_array_reassign_empty(): bool {
+    Array[int] a = [1, 2, 3, 4, 5]
+    a = []  // 重新赋值为空 Array
+    a.add(100); a.add(200)
+    if a.len() != 2 { print("FAIL: a.len()=" + a.len() + " 期望 2"); return false }
+    if a[0] != 100 { print("FAIL: a[0]=" + a[0]); return false }
+    if a[1] != 200 { print("FAIL: a[1]=" + a[1]); return false }
+    print("OK: Array 重新赋值为 [] 后写入读取正确")
+    return true
+}
+
+// ===== 测试 8: Dict.clear() 后 keys() / values() =====
+func test_dict_clear_keys_values(): bool {
+    Dict[string, int] d = {}
+    d["a"] = 1; d["b"] = 2; d["c"] = 3
+    d.clear()
+    d["x"] = 10; d["y"] = 20
+    var ks = d.keys()
+    if ks.len() != 2 { print("FAIL: keys.len()=" + ks.len() + " 期望 2"); return false }
+    var vs = d.values()
+    if vs.len() != 2 { print("FAIL: values.len()=" + vs.len() + " 期望 2"); return false }
+    // 验证值正确（顺序可能不固定，检查是否存在）
+    bool found10 = false; bool found20 = false
+    for vs.len() to i {
+        if vs[i] == 10 { found10 = true }
+        if vs[i] == 20 { found20 = true }
+    }
+    if not found10 or not found20 { print("FAIL: values 不包含 10 或 20"); return false }
+    print("OK: Dict.clear() 后 keys()/values() 正确")
+    return true
+}
+
+// ===== 主函数 =====
+main() {
+    print("===== Dict.clear() 和 Array 清空测试 =====")
+    int pass = 0; int fail = 0
+    if test_dict_clear_reuse() { pass++ } else { fail++ }
+    if test_dict_multi_clear() { pass++ } else { fail++ }
+    if test_dict_clear_default() { pass++ } else { fail++ }
+    if test_dict_clear_resize() { pass++ } else { fail++ }
+    if test_dict_reassign_empty() { pass++ } else { fail++ }
+    if test_array_clear_reuse() { pass++ } else { fail++ }
+    if test_array_reassign_empty() { pass++ } else { fail++ }
+    if test_dict_clear_keys_values() { pass++ } else { fail++ }
+    print("===== 结果: " + pass + " 通过, " + fail + " 失败 =====")
+}

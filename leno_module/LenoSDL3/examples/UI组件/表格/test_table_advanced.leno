@@ -1,0 +1,159 @@
+// test_table_advanced.leno — Table 高级功能测试
+// 测试 6 项新功能：
+//   1) numeric_cols: 数值列排序（字符串 "10" < "2" 问题修复）
+//   2) col_reorder: 拖拽表头重排列顺序
+//   3) frozen_cols: 冻结左侧列（不随水平滚动）
+//   4) row_reorder: 拖拽行重排
+//   5) 单元格级颜色: set_cell_fg / set_cell_bg
+//   6) min_col_width / max_col_width: 列宽约束
+//
+// 运行：leno 本文件（Esc 退出）
+// 操作说明：
+//   - 点击"数值排序"按钮，观察数字列按数值大小排序（不是字符串排序）
+//   - 拖动表头列（非分隔线区域）可重排列顺序
+//   - 水平滚动时第 0 列（ID）保持固定不动
+//   - 拖动数据行可重排行顺序
+//   - 第 2 行第 1 列有红色背景 + 白色文字（单元格级颜色）
+//   - 拖动列分隔线时最小宽度 60，最大宽度 200
+
+import "../../../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.Table
+
+main() {
+    var win = SDL3.createWindow({title: "Table 高级功能测试", w: 900, h: 560})
+    if not win.ok { return }
+
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(14.0)
+
+    // 数据：注意 Score 列是字符串数字，测试 numeric 排序
+    Array[string] headers = ["ID", "姓名", "分数", "年龄", "等级"]
+    Array[int] aligns = [1, 0, 2, 2, 1]       // 居中 / 左 / 右 / 右 / 居中
+    Array[int] hAligns = [1, 1, 1, 1, 1]
+    Array[Array[string]] rows = [
+        ["1", "张三", "95",  "22", "A"],
+        ["2", "李四", "100", "21", "A"],
+        ["3", "王五", "85",  "23", "B"],
+        ["4", "赵六", "9",   "20", "C"],
+        ["5", "钱七", "78",  "22", "C"],
+        ["6", "孙八", "110", "24", "A"],
+        ["7", "周九", "65",  "19", "D"],
+        ["8", "吴十", "42",  "25", "F"]
+    ]
+
+    var tbl = win.addTable({
+        x: 20, y: 64, w: 860, h: 340,
+        headers: headers, aligns: aligns, header_aligns: hAligns, rows: rows,
+        col_widths: [50, 160, 120, 100, 100],
+        sortable: true, resizable: true, zebra: true, row_h: 26, header_h: 28,
+        // ★ 新功能 1: numeric_cols — 分数(2)和年龄(3)列按数值排序
+        numeric_cols: [2, 3],
+        // ★ 新功能 2: col_reorder — 允许拖拽表头重排列
+        col_reorder: true,
+        // ★ 新功能 3: frozen_cols — 冻结第 0 列（ID），水平滚动时不动
+        frozen_cols: 1,
+        // ★ 新功能 4: row_reorder — 允许拖拽行重排
+        row_reorder: true,
+        // ★ 新功能 6: min/max 列宽约束
+        min_col_width: 50.0,
+        max_col_width: 300.0
+    })
+
+    // ★ 新功能 5: 单元格级颜色
+    // 第 1 行（李四，100 分）的分数单元格：绿色背景 + 白色文字
+    tbl.set_cell_bg(1, 2, 0x209050)
+    tbl.set_cell_fg(1, 2, 0xFFFFFF)
+    // 第 6 行（吴十，42 分）的分数单元格：红色背景 + 白色文字
+    tbl.set_cell_bg(6, 2, 0xA02020)
+    tbl.set_cell_fg(6, 2, 0xFFFFFF)
+    // 第 6 行的等级单元格：红色背景
+    tbl.set_cell_bg(6, 4, 0xA02020)
+    tbl.set_cell_fg(6, 4, 0xFFFFFF)
+
+    // ★ 新功能 4 回调: 行重排回调
+    tbl.on_row_reorder(func(int srcIdx, int dstIdx) {
+        print("行重排: " + srcIdx + " -> " + dstIdx)
+    })
+
+    // ---- 按钮区 ----
+    // 数值排序测试：升序排分数列
+    win.addButton({x: 20, y: 420, w: 140, h: 32, text: "分数升序排列"}).on_click(func() {
+        tbl.sort_by(2, false)
+        print("按分数列升序排列（数值模式）")
+    })
+    win.addButton({x: 170, y: 420, w: 140, h: 32, text: "分数降序排列"}).on_click(func() {
+        tbl.sort_by(2, true)
+        print("按分数列降序排列（数值模式）— 注意 100 和 110 应排在前面，而非 9")
+    })
+    win.addButton({x: 320, y: 420, w: 140, h: 32, text: "年龄升序"}).on_click(func() {
+        tbl.sort_by(3, false)
+        print("按年龄列升序排列（数值模式）")
+    })
+    win.addButton({x: 470, y: 420, w: 140, h: 32, text: "姓名排序"}).on_click(func() {
+        tbl.sort_by(1, false)
+        print("按姓名列排序（字符串模式）")
+    })
+
+    // 第二排按钮
+    win.addButton({x: 20, y: 460, w: 180, h: 32, text: "清除单元格颜色"}).on_click(func() {
+        tbl.clear_cell_colors()
+        print("已清除所有单元格级颜色")
+    })
+    win.addButton({x: 210, y: 460, w: 160, h: 32, text: "标记低分红色"}).on_click(func() {
+        for tbl.row_count() to i {
+            string scoreStr = tbl.get_cell(i, 2)
+            int score = _int(scoreStr)
+            if score < 70 {
+                tbl.set_cell_bg(i, 2, 0xA02020)
+                tbl.set_cell_fg(i, 2, 0xFFFFFF)
+            }
+        }
+        print("已标记低分(<70)单元格为红色")
+    })
+    win.addButton({x: 380, y: 460, w: 160, h: 32, text: "标记高分绿色"}).on_click(func() {
+        for tbl.row_count() to i {
+            string scoreStr = tbl.get_cell(i, 2)
+            int score = _int(scoreStr)
+            if score >= 90 {
+                tbl.set_cell_bg(i, 2, 0x209050)
+                tbl.set_cell_fg(i, 2, 0xFFFFFF)
+            }
+        }
+        print("已标记高分(>=90)单元格为绿色")
+    })
+    win.addButton({x: 550, y: 460, w: 140, h: 32, text: "设置列宽约束"}).on_click(func() {
+        // 给姓名列设置更严格的约束
+        tbl.set_col_min_width(1, 80.0)
+        tbl.set_col_max_width(1, 150.0)
+        print("姓名列: 最小宽度80 最大宽度150")
+    })
+
+    // 状态信息
+    win.addButton({x: 700, y: 460, w: 120, h: 32, text: "打印数据"}).on_click(func() {
+        print("=== 当前表格数据 ===")
+        for tbl.row_count() to i {
+            Array[string] row = [tbl.get_cell(i, 0), tbl.get_cell(i, 1), tbl.get_cell(i, 2), tbl.get_cell(i, 3), tbl.get_cell(i, 4)]
+            print(row)
+        }
+    })
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(28, 30, 36, 255)
+            r.drawText(font, "Table 高级功能测试 (Esc 退出)", 20, 2, 200, 210, 230)
+            r.drawText(font, "功能: 数值排序 | 列拖拽 | 冻结列 | 行拖拽 | 单元格颜色 | 列宽约束", 20, 24, 150, 180, 200)
+            r.drawText(font, "操作: 点表头排序 | 拖表头重排列 | 拖行重排行 | 拖分隔线调列宽", 20, 44, 180, 200, 120)
+        }
+    )
+
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
+}

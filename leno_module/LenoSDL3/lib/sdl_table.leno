@@ -26,6 +26,19 @@ export struct Table impl Widget, Themeable {
     int _selRow = -1, _selCol = -1, _hoverRow = -1; bool _multi = false; Array[int] _selRows = []
     Array[bool] _selSet = []           // 选中行标志数组（与 _rows 平行），让 _is_sel O(1) 避免 render 中线性扫描 _selRows
     bool _sortable = false; int _sortCol = -1; bool _sortDesc = false, _zebra = true
+    Array[int] _numericCols = []    // 数值排序列索引集合（点击表头时按数值而非字符串比较）
+    bool _colReorder = true         // 是否允许拖拽表头重排列顺序
+    int _dragReorderCol = -1        // 正在拖拽重排的源列索引（-1=无）
+    float _reorderStartX = 0.0     // 拖拽起点 X（用于判断是点击还是拖拽）
+    bool _reorderDragging = false  // 已越过拖拽阈值，进入列重排拖拽状态
+    float _reorderDragX = 0.0      // 当前拖拽鼠标 X（绘制指示线用）
+    int _frozenCols = 0           // 冻结列数量（左侧前 N 列不随水平滚动，0=无冻结）
+    bool _rowReorder = false       // 是否允许拖拽行重排
+    int _dragReorderRow = -1       // 正在拖拽重排的源行索引（-1=无）
+    float _rowReorderStartY = 0.0  // 行拖拽起点 Y
+    bool _rowReorderDragging = false // 已越过拖拽阈值
+    float _rowReorderDragY = 0.0   // 当前拖拽鼠标 Y（绘制指示线用）
+    func(int, int):void _onRowReorder  // 行拖拽重排回调（from, to）
 
     float _fontSize = 15.0; string _fontPath = ""; int _fontStyle = 0; Font? _font
     float _textH = 16.0         // 缓存字体行高，避免每个单元格重复 measureString
@@ -98,6 +111,12 @@ export struct Table impl Widget, Themeable {
 
     // === 行级颜色 ===
     Array[int] _rowColors = []        // 每行文字色 RGB 打包：0xRRGGBB，0=用默认色
+    Dict[string, int] _cellFgColors = {}  // 单元格前景色：键"row,col"，值 0xRRGGBB，0=无
+    Dict[string, int] _cellBgColors = {}  // 单元格背景色：键"row,col"，值 0xRRGGBB，0=无
+    Array[float] _colMinW = []   // 每列最小宽度（空数组=全部用默认 _minColW）
+    Array[float] _colMaxW = []   // 每列最大宽度（空数组=无上限）
+    float _minColW = 24.0        // 默认列最小宽度
+    float _maxColW = 9999.0     // 默认列最大宽度
 
     // === 空状态 ===
     string _emptyText = "暂无数据"     // 空状态提示文字
@@ -133,11 +152,12 @@ export struct Table impl Widget, Themeable {
     func _invalidate_sb() { _sbValid = false }
     func _compute_sb(): Array[float] {
         if _sbValid { return [_cachedSbVw, _cachedSbHh] }
+        float fw = _frozen_w()
         float vw = 0.0, hh = 0.0
         float bodyH0 = h - _headerH - 8.0
-        float bodyW0 = w - 8.0
+        float bodyW0 = w - 8.0 - fw
         float ch = _rows.len() * _rowH
-        float tw = _total_w()
+        float tw = _total_w() - fw
         if ch > bodyH0 { vw = 8.0 }
         if tw > bodyW0 { hh = 8.0 }
         if vw > 0.0 and tw > bodyW0 - vw { hh = 8.0 }
@@ -157,9 +177,9 @@ export struct Table impl Widget, Themeable {
     }
     func _max_scroll_x(): float {
         var sb = _compute_sb()
-        float bodyW = w - sb[0]
+        float bodyW = w - sb[0] - _frozen_w()
         if bodyW < 0 { bodyW = 0 }
-        float m = _total_w() - bodyW
+        float m = _total_w() - _frozen_w() - bodyW
         if m < 0 { m = 0 }
         return m
     }
@@ -202,6 +222,8 @@ export struct Table impl Widget, Themeable {
         if ci < 0 { return x - _scrollX }
         if ci >= _colWPrefix.len() { ci = _colWPrefix.len() - 1 }
         if ci < 0 { return x - _scrollX }
+        // 冻结列不受水平滚动影响
+        if ci < _frozenCols { return x + _colWPrefix[ci] }
         return x - _scrollX + _colWPrefix[ci]
     }
     func _row_at(float my): int {
@@ -212,14 +234,19 @@ export struct Table impl Widget, Themeable {
         return idx
     }
     func _col_at(float mx): int {
-        if mx < x - _scrollX { return -1 }
         _ensure_col_prefix()
-        // ★ 二分查找前缀和数组，O(log n) 替代 O(n) 线性扫描
-        //   _colWPrefix[i] = sum(_colW[0..i-1])，列 i 的左边在 _colWPrefix[i]，右边在 _colWPrefix[i+1]
         if _ncols <= 0 { return -1 }
+        // 先检查冻结列（不受 _scrollX 影响）
+        if _frozenCols > 0 {
+            for _frozenCols to c {
+                if mx >= x + _colWPrefix[c] and mx < x + _colWPrefix[c + 1] { return c }
+            }
+        }
+        // 非冻结列：基于 _scrollX 做二分查找
         float offset = mx - (x - _scrollX)
         if offset < 0 { return -1 }
-        int lo = 0, hi = _ncols - 1
+        int lo = _frozenCols, hi = _ncols - 1
+        if lo > hi { return -1 }
         while lo < hi {
             int mid = (lo + hi) / 2
             float edge = _colWPrefix[mid + 1]
@@ -274,6 +301,13 @@ export struct Table impl Widget, Themeable {
         _sortable = opts.get("sortable", false)
         _resizable = opts.get("resizable", true)
         _zebra = opts.get("zebra", true)
+        _colReorder = opts.get("col_reorder", true)
+        _frozenCols = opts.get("frozen_cols", 0)
+        _rowReorder = opts.get("row_reorder", false)
+        _minColW = opts.get("min_col_width", 24.0)
+        _maxColW = opts.get("max_col_width", 9999.0)
+        var ncs = opts.get("numeric_cols", [])
+        if ncs is Array[int] { _numericCols = ncs } else { _numericCols = [] }
 
         var hs = opts.get("headers", [])
         if hs is Array[string] { _headers = hs } else { _headers = [] }
@@ -532,20 +566,54 @@ export struct Table impl Widget, Themeable {
         if i < _rowColors.len() and j < _rowColors.len() {
             int tc = _rowColors[i]; _rowColors[i] = _rowColors[j]; _rowColors[j] = tc
         }
+        // 同步交换单元格级颜色（fg/bg），键格式 "row,col"
+        if _cellFgColors.len() > 0 or _cellBgColors.len() > 0 {
+            for 0 : _ncols - 1 to c {
+                string ki = $"{i},{c}"; string kj = $"{j},{c}"
+                int fgi = _cellFgColors.get(ki, 0); int fgj = _cellFgColors.get(kj, 0)
+                if fgi != 0 { _cellFgColors[kj] = fgi } else { _cellFgColors.remove(kj) }
+                if fgj != 0 { _cellFgColors[ki] = fgj } else { _cellFgColors.remove(ki) }
+                int bgi = _cellBgColors.get(ki, 0); int bgj = _cellBgColors.get(kj, 0)
+                if bgi != 0 { _cellBgColors[kj] = bgi } else { _cellBgColors.remove(kj) }
+                if bgj != 0 { _cellBgColors[ki] = bgj } else { _cellBgColors.remove(ki) }
+            }
+        }
+    }
+    // 判断列是否为数值排序列
+    func _is_numeric_col(int col): bool {
+        for _numericCols.len() to i { if _numericCols[i] == col { return true } }
+        return false
+    }
+    // 字符串转 float（失败返回 0.0，不抛异常）
+    func _to_float(string s): float {
+        try {
+            return _float(s)
+        } catch {
+            return 0.0
+        }
     }
     // ★ 选择排序替代冒泡：比较次数减半，交换次数从 O(n²) 降为 O(n)
+    // 支持 numeric 模式：数值列按 float 比较，避免字符串排序 "10" < "2" 的问题
     func sort_by(int col, bool desc) {
         _sortCol = col; _sortDesc = desc
         _invalidate_fitted(); _invalidate_sb()
+        bool numeric = _is_numeric_col(col)
         int n = _rows.len()
         for 0 : n - 1 to i {
             int best = i
             string bestVal = _cell(i, col)
+            float bestNum = 0.0
+            if numeric { bestNum = _to_float(bestVal) }
             for i + 1 : n - 1 to j {
                 string cur = _cell(j, col)
                 bool shouldSwap = false
-                if desc { shouldSwap = (cur > bestVal) } else { shouldSwap = (cur < bestVal) }
-                if shouldSwap { best = j; bestVal = cur }
+                if numeric {
+                    float curNum = _to_float(cur)
+                    if desc { shouldSwap = (curNum > bestNum) } else { shouldSwap = (curNum < bestNum) }
+                } else {
+                    if desc { shouldSwap = (cur > bestVal) } else { shouldSwap = (cur < bestVal) }
+                }
+                if shouldSwap { best = j; bestVal = cur; if numeric { bestNum = _to_float(cur) } }
             }
             if best != i { _swap_rows(i, best) }
         }
@@ -553,6 +621,71 @@ export struct Table impl Widget, Themeable {
 
     // ==================== 设置方法 ====================
     func set_font_size(float s) { _fontSize = s; if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null; _invalidate_fitted() }
+    func set_col_reorder(bool r) { _colReorder = r }
+    func set_frozen_cols(int n) { _frozenCols = n; _invalidate_sb(); _clamp_scroll() }
+    func set_row_reorder(bool r) { _rowReorder = r }
+    func on_row_reorder(func(int, int):void cb) { _onRowReorder = cb }
+    // 将行从 srcIdx 移动到 dstIdx 位置（插入到 dstIdx 之前，其他行后移）
+    func _move_row(int srcIdx, int dstIdx) {
+        if srcIdx < 0 or dstIdx < 0 or srcIdx >= _rows.len() or dstIdx >= _rows.len() or srcIdx == dstIdx { return }
+        _invalidate_fitted(); _invalidate_sb()
+        // 提取源行数据
+        var row = _rows[srcIdx]
+        string imgP = ""; string tipP = ""; bool chkP = false; int colP = 0
+        if srcIdx < _rowImages.len() { imgP = _rowImages[srcIdx] }
+        if srcIdx < _rowTips.len() { tipP = _rowTips[srcIdx] }
+        if srcIdx < _rowChecked.len() { chkP = _rowChecked[srcIdx] }
+        if srcIdx < _rowColors.len() { colP = _rowColors[srcIdx] }
+        // 移除源行
+        _rows.remove(srcIdx)
+        if srcIdx < _rowImages.len() { _rowImages.remove(srcIdx) }
+        if srcIdx < _rowTips.len() { _rowTips.remove(srcIdx) }
+        if srcIdx < _rowChecked.len() { _rowChecked.remove(srcIdx) }
+        if srcIdx < _rowColors.len() { _rowColors.remove(srcIdx) }
+        // 插入到目标位置
+        int insertAt = dstIdx
+        if dstIdx > srcIdx { insertAt = dstIdx - 1 }  // 移除后索引偏移
+        _rows.insert(insertAt, row)
+        _rowImages.insert(insertAt, imgP)
+        _rowTips.insert(insertAt, tipP)
+        _rowChecked.insert(insertAt, chkP)
+        _rowColors.insert(insertAt, colP)
+        // 同步选中状态
+        _selRow = insertAt
+        _selRows = [insertAt]; _rebuild_sel_set()
+        if insertAt < _selSet.len() { _selSet[insertAt] = true }
+        _checkedCount = -1
+        _clamp_scroll()
+        if _onRowReorder != null { _onRowReorder(srcIdx, dstIdx) }
+    }
+    // 冻结列总宽度
+    func _frozen_w(): float {
+        _ensure_col_prefix()
+        if _frozenCols <= 0 { return 0.0 }
+        if _frozenCols >= _colWPrefix.len() { return _colWPrefix[_colWPrefix.len() - 1] }
+        return _colWPrefix[_frozenCols]
+    }
+    // 交换两列顺序：同步交换 headers/colW/aligns/headerAligns 及所有行的列数据
+    func _swap_cols(int a, int b) {
+        if a < 0 or b < 0 or a >= _ncols or b >= _ncols or a == b { return }
+        // 交换表头
+        if a < _headers.len() and b < _headers.len() { string th = _headers[a]; _headers[a] = _headers[b]; _headers[b] = th }
+        // 交换列宽
+        if a < _colW.len() and b < _colW.len() { float tw = _colW[a]; _colW[a] = _colW[b]; _colW[b] = tw }
+        // 交换对齐
+        if a < _aligns.len() and b < _aligns.len() { int ta = _aligns[a]; _aligns[a] = _aligns[b]; _aligns[b] = ta }
+        if a < _headerAligns.len() and b < _headerAligns.len() { int ta = _headerAligns[a]; _headerAligns[a] = _headerAligns[b]; _headerAligns[b] = ta }
+        // 交换每行的列数据
+        for _rows.len() to i {
+            if a < _rows[i].len() and b < _rows[i].len() { string tc = _rows[i][a]; _rows[i][a] = _rows[i][b]; _rows[i][b] = tc }
+        }
+        // 交换 numericCols 中的索引
+        for _numericCols.len() to i { if _numericCols[i] == a { _numericCols[i] = b } eif _numericCols[i] == b { _numericCols[i] = a } }
+        // 交换 imageCol / checkCol 引用
+        if _imageCol == a { _imageCol = b } eif _imageCol == b { _imageCol = a }
+        if _checkCol == a { _checkCol = b } eif _checkCol == b { _checkCol = a }
+        _colWPrefixValid = false; _totalWValid = false; _invalidate_sb(); _invalidate_fitted()
+    }
     func set_enabled(bool e) { enabled = e }
     func set_visible(bool v) { visible = v }
     func set_resizable(bool r) { _resizable = r }
@@ -645,6 +778,49 @@ export struct Table impl Widget, Themeable {
     }
     func clear_row_colors() {
         for _rowColors.len() to i { _rowColors[i] = 0 }
+    }
+
+    // ==================== 单元格级颜色 ====================
+    // color 为 0xRRGGBB 整数，0 表示清除该单元格的自定义颜色
+    func set_cell_fg(int row, int col, int color) {
+        if row < 0 or col < 0 { return }
+        _cellFgColors[$"{row},{col}"] = color
+    }
+    func set_cell_bg(int row, int col, int color) {
+        if row < 0 or col < 0 { return }
+        _cellBgColors[$"{row},{col}"] = color
+    }
+    func get_cell_fg(int row, int col): int {
+        return _cellFgColors.get($"{row},{col}", 0)
+    }
+    func get_cell_bg(int row, int col): int {
+        return _cellBgColors.get($"{row},{col}", 0)
+    }
+    func clear_cell_colors() {
+        _cellFgColors.clear(); _cellBgColors.clear()
+    }
+
+    // ==================== 列宽约束 ====================
+    // 设置某列的最小/最大宽度
+    func set_col_min_width(int col, float w) {
+        if col < 0 { return }
+        while _colMinW.len() <= col { _colMinW.add(_minColW) }
+        _colMinW[col] = w
+    }
+    func set_col_max_width(int col, float w) {
+        if col < 0 { return }
+        while _colMaxW.len() <= col { _colMaxW.add(_maxColW) }
+        _colMaxW[col] = w
+    }
+    // 获取某列的有效最小宽度
+    func _col_min_w(int col): float {
+        if col >= 0 and col < _colMinW.len() { return _colMinW[col] }
+        return _minColW
+    }
+    // 获取某列的有效最大宽度
+    func _col_max_w(int col): float {
+        if col >= 0 and col < _colMaxW.len() { return _colMaxW[col] }
+        return _maxColW
     }
 
     // ==================== 空状态 ====================
@@ -909,7 +1085,25 @@ export struct Table impl Widget, Themeable {
         // ★ 拖动状态清理必须在 contains 检查之前：
         //   鼠标拖动滚动条时移出表格区域，若 contains 拦截了 mouse up 事件，
         //   _draggingV/H 不会被清除 → 重新进入表格时无需按住即可拖动滚动条
-        if ev.isMouseButtonUp() { _draggingV = false; _draggingH = false; _dragCol = -1 }
+        if ev.isMouseButtonUp() {
+            // 列重排拖拽结束：确定目标列并执行交换
+            if _reorderDragging and _dragReorderCol >= 0 {
+                int targetCol = _col_at(mx)
+                if targetCol >= 0 and targetCol != _dragReorderCol {
+                    _swap_cols(_dragReorderCol, targetCol)
+                }
+            }
+            // 行重排拖拽结束：确定目标行并执行交换
+            if _rowReorderDragging and _dragReorderRow >= 0 {
+                int targetRow = _row_at(my)
+                if targetRow >= 0 and targetRow != _dragReorderRow {
+                    _move_row(_dragReorderRow, targetRow)
+                }
+            }
+            _draggingV = false; _draggingH = false; _dragCol = -1
+            _dragReorderCol = -1; _reorderDragging = false
+            _dragReorderRow = -1; _rowReorderDragging = false
+        }
 
         // ★ 拖动滚动条时鼠标移出表格区域仍需继续跟随，否则滚动条卡住不动
         if _draggingV and ev.isMouseMotion() {
@@ -941,12 +1135,34 @@ export struct Table impl Widget, Themeable {
         // ★ 列宽拖动中：鼠标移出表格仍继续跟随（与滚动条同理）
         if _dragCol >= 0 and ev.isMouseMotion() {
             float nw = _dragStartW + (mx - _dragStartX)
-            if nw < 24.0 { nw = 24.0 }
+            float minW = _col_min_w(_dragCol)
+            float maxW = _col_max_w(_dragCol)
+            if nw < minW { nw = minW }
+            if nw > maxW { nw = maxW }
             if _dragCol >= 0 and _dragCol < _colW.len() { _colW[_dragCol] = nw; _colWPrefixValid = false; _totalWValid = false; _invalidate_sb(); _invalidate_fitted() }
             _autoCols = false
             _clamp_scroll()
             core.markFrameRedraw()
             core.requestCursor(SystemCursor.EW_RESIZE)
+            return
+        }
+
+        // 列重排拖拽中：跟随鼠标移动绘制指示线
+        if _reorderDragging and ev.isMouseMotion() {
+            _reorderDragX = mx
+            core.markFrameRedraw()
+            return
+        }
+
+        // 行重排拖拽中：跟随鼠标移动绘制指示线
+        if _rowReorderDragging and ev.isMouseMotion() {
+            _rowReorderDragY = my
+            // 自动滚动：拖到视口顶部/底部边缘时滚动
+            float bodyTop = y + _headerH
+            float bodyBot = y + h
+            if my < bodyTop + 30.0 { _scrollY = _scrollY - 3.0 * _rowH; _clamp_scroll() }
+            eif my > bodyBot - 30.0 { _scrollY = _scrollY + 3.0 * _rowH; _clamp_scroll() }
+            core.markFrameRedraw()
             return
         }
 
@@ -1012,6 +1228,26 @@ export struct Table impl Widget, Themeable {
         }
 
         if ev.isMouseMotion() {
+            // 列重排拖拽阈值检测：鼠标移动超过 5px 后进入拖拽状态
+            if _dragReorderCol >= 0 and not _reorderDragging {
+                float dx = mx - _reorderStartX
+                if dx > 5.0 or dx < -5.0 {
+                    _reorderDragging = true
+                    _reorderDragX = mx
+                    core.markFrameRedraw()
+                    return
+                }
+            }
+            // 行重排拖拽阈值检测
+            if _dragReorderRow >= 0 and not _rowReorderDragging {
+                float dy = my - _rowReorderStartY
+                if dy > 5.0 or dy < -5.0 {
+                    _rowReorderDragging = true
+                    _rowReorderDragY = my
+                    core.markFrameRedraw()
+                    return
+                }
+            }
             int prevHover = _hoverRow
             // ★ X 边界检查：_row_at 只验证 Y 坐标，不检查 X。
             if mx >= x and mx <= x + w {
@@ -1108,6 +1344,10 @@ export struct Table impl Widget, Themeable {
                     return
                 }
                 int col = _col_at(mx)
+                // 列重排：记录拖拽起点（延迟到 mouseMotion 超过阈值时才进入拖拽状态）
+                if col >= 0 and _colReorder {
+                    _dragReorderCol = col; _reorderStartX = mx; _reorderDragging = false
+                }
                 if col >= 0 and _sortable { sort_by(col, not (_sortCol == col and _sortDesc)) }
             } else {
                 int row = _row_at(my)
@@ -1151,6 +1391,10 @@ export struct Table impl Widget, Themeable {
                         _selRows = [row]; _rebuild_sel_set()
                         if row < _selSet.len() { _selSet[row] = true }
                         _selRow = row
+                    }
+                    // 行拖拽重排：记录拖拽起点
+                    if _rowReorder {
+                        _dragReorderRow = row; _rowReorderStartY = my; _rowReorderDragging = false
                     }
                     if _onSelect != null { _onSelect(row) }
                     if _onCell != null and col >= 0 { _onCell(row, col) }
@@ -1505,7 +1749,24 @@ export struct Table impl Widget, Themeable {
                     string dt = ""
                     float dw = 0.0
                     if fidx >= 0 and fidx < _fittedText.len() { dt = _fittedText[fidx]; dw = _fittedW[fidx] }
-                    _draw_cached_text(r, dt, dw, cx, cw, ry, _rowH, _aligns[c], rowR, rowG, rowB, iconOff)
+                    // 单元格级颜色优先于行级颜色
+                    int cellR = rowR, cellG = rowG, cellB = rowB
+                    int cfg = get_cell_fg(ri, c)
+                    if cfg != 0 {
+                        cellR = (cfg >> 16) & 255
+                        cellG = (cfg >> 8) & 255
+                        cellB = cfg & 255
+                    }
+                    // 单元格背景色
+                    int cbg = get_cell_bg(ri, c)
+                    if cbg != 0 {
+                        int bgR = (cbg >> 16) & 255
+                        int bgG = (cbg >> 8) & 255
+                        int bgB = cbg & 255
+                        r.setColor(bgR, bgG, bgB, 200)
+                        r.fillRect(cx, ry, cw, _rowH)
+                    }
+                    _draw_cached_text(r, dt, dw, cx, cw, ry, _rowH, _aligns[c], cellR, cellG, cellB, iconOff)
                 }
             }
         }
@@ -1542,6 +1803,33 @@ export struct Table impl Widget, Themeable {
             float ex = _col_x(_dragCol) + _colW[_dragCol]
             r.setColor(_selR, _selG, _selB, 255)
             r.drawLine(ex, y, ex, y + h)
+        }
+
+        // 列重排拖拽指示线：在目标列边界处画竖线
+        if _reorderDragging and _dragReorderCol >= 0 {
+            int targetCol = _col_at(_reorderDragX)
+            if targetCol >= 0 {
+                float tx = _col_x(targetCol)
+                // 鼠标在目标列右半部分时指示线画在右侧
+                float cx = _col_x(targetCol) + _colW[targetCol]
+                if _reorderDragX - tx < _colW[targetCol] / 2.0 { cx = tx }
+                r.setColor(_selR + 40, _selG + 40, _selB + 40, 255)
+                r.drawLine(cx, y, cx, y + h)
+            }
+        }
+
+        // 行重排拖拽指示线：在目标行边界处画横线
+        if _rowReorderDragging and _dragReorderRow >= 0 {
+            int targetRow = _row_at(_rowReorderDragY)
+            if targetRow >= 0 {
+                float bodyTop = y + _headerH
+                float ry = bodyTop - _scrollY + targetRow * _rowH
+                // 鼠标在行下半部分时指示线画在下方
+                float cy = ry + _rowH
+                if _rowReorderDragY - ry < _rowH / 2.0 { cy = ry }
+                r.setColor(_selR + 40, _selG + 40, _selB + 40, 255)
+                r.drawLine(x, cy, x + w, cy)
+            }
         }
 
         r.setColor(_sepR, _sepG, _sepB, 220)
