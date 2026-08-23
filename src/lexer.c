@@ -354,6 +354,77 @@ static Token read_interp_part(Lexer* lex) {
     return tok;
 }
 
+// 读取颜色字面量：#RGB / #RRGGBB / #RRGGBBAA
+// 语义：
+//   #RGB      → 0xFFRRGGBB（每位重复，如 #F00 → 0xFFFF0000）
+//   #RRGGBB   → 0xFFRRGGBB（默认 Alpha=255 不透明）
+//   #RRGGBBAA → 0xAARRGGBB（显式 Alpha，写在最后，与 CSS #RGBA 一致）
+// 内部存储和运算仍走 int（Alpha 在最高字节），零运行时开销。
+static Token read_color(Lexer* lex) {
+    Token tok = make_token(lex, TOK_NUM);
+    const char* start = lex->src + lex->pos;  // 指向 '#'
+
+    advance(lex);  // 跳过 '#'
+
+    // 读取十六进制数字
+    char hex_buf[9];
+    int hex_len = 0;
+    while (isxdigit(peek(lex)) && hex_len < 8) {
+        hex_buf[hex_len++] = advance(lex);
+    }
+    hex_buf[hex_len] = '\0';
+
+    // 校验长度：仅支持 3、6、8 位
+    if (hex_len != 3 && hex_len != 6 && hex_len != 8) {
+        error_add_at(ERR_SYNTAX, lex->line, lex->pos - hex_len - lex->line_start + 1,
+                     "颜色字面量格式错误：# 后需 3(RGB)、6(RRGGBB) 或 8(RRGGBBAA) 位十六进制数字");
+        tok.text = start;
+        tok.len = (lex->src + lex->pos) - start;
+        tok.num_val = 0;
+        tok.is_bigint = 0;
+        tok.bigint_str = NULL;
+        tok.is_float = 0;
+        return tok;
+    }
+
+    // 辅助：将单个十六进制字符转为数值
+    #define HEX_VAL(c) ((c) >= 'a' ? (c) - 'a' + 10 : (c) >= 'A' ? (c) - 'A' + 10 : (c) - '0')
+
+    unsigned int color;
+    if (hex_len == 3) {
+        // #RGB → 每位重复为 #RRGGBB，Alpha 默认 0xFF
+        unsigned int r = HEX_VAL(hex_buf[0]);
+        unsigned int g = HEX_VAL(hex_buf[1]);
+        unsigned int b = HEX_VAL(hex_buf[2]);
+        color = 0xFF000000U
+              | (r << 20) | (r << 16)
+              | (g << 12) | (g << 8)
+              | (b << 4)  | b;
+    } else if (hex_len == 6) {
+        // #RRGGBB → Alpha 默认 0xFF
+        unsigned int r = (HEX_VAL(hex_buf[0]) << 4) | HEX_VAL(hex_buf[1]);
+        unsigned int g = (HEX_VAL(hex_buf[2]) << 4) | HEX_VAL(hex_buf[3]);
+        unsigned int b = (HEX_VAL(hex_buf[4]) << 4) | HEX_VAL(hex_buf[5]);
+        color = 0xFF000000U | (r << 16) | (g << 8) | b;
+    } else {
+        // #RRGGBBAA → Alpha 在最后，与 CSS #RGBA 一致
+        unsigned int r = (HEX_VAL(hex_buf[0]) << 4) | HEX_VAL(hex_buf[1]);
+        unsigned int g = (HEX_VAL(hex_buf[2]) << 4) | HEX_VAL(hex_buf[3]);
+        unsigned int b = (HEX_VAL(hex_buf[4]) << 4) | HEX_VAL(hex_buf[5]);
+        unsigned int a = (HEX_VAL(hex_buf[6]) << 4) | HEX_VAL(hex_buf[7]);
+        color = (a << 24) | (r << 16) | (g << 8) | b;
+    }
+
+    tok.text = start;
+    tok.len = (lex->src + lex->pos) - start;
+    tok.num_val = (double)color;
+    tok.is_bigint = 0;
+    tok.bigint_str = NULL;
+    tok.is_float = 0;
+
+    return tok;
+}
+
 static Token read_number(Lexer* lex) {
     Token tok = make_token(lex, TOK_NUM);
     const char* start = lex->src + lex->pos;
@@ -751,10 +822,15 @@ advance(lex);
             }
             break;
         case '#':
-            // Leno 不支持 # 开头的语法（注释使用 // 或 /* */）
-            error_add_at(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1, "意外的字符 '#'，请使用 // 或 /* */ 进行注释");
-            advance(lex);
-            lex->current = make_token(lex, TOK_ERROR);
+            // 颜色字面量：#RGB / #RRGGBB / #RRGGBBAA
+            // # 后必须跟十六进制数字，否则报错
+            if (isxdigit(peek_next(lex))) {
+                lex->current = read_color(lex);
+            } else {
+                error_add_at(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1, "意外的字符 '#'，颜色字面量需要 # 后跟十六进制数字（如 #FF0000）");
+                advance(lex);
+                lex->current = make_token(lex, TOK_ERROR);
+            }
             break;
         case '%':
             if (peek_next(lex) == '=') {
