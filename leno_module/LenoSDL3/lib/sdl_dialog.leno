@@ -6,7 +6,7 @@ import "sdl_core.leno" as core; use core.WindowFlag
 import "sdl_layout.leno" as lay; use lay.(HBox, VBox)
 import "sdl_label.leno" as lbl; use lbl.Label
 import "sdl_button.leno" as btn; use btn.Button
-import "sdl_theme.leno" as theme; use theme.Theme
+import "sdl_theme.leno" as theme; use theme.(Theme, Color)
 
 // 模态对话框：默认不在任务栏显示（SDL_WINDOW_UTILITY），
 // 创建时隐藏（HIDDEN），首帧渲染完后自动 show，消除闪现。
@@ -68,7 +68,7 @@ export func createModelessDialog(Dict style): Window {
 // ★ 宽度策略：
 //   - align=0 时用 w:300（配合 VBox align:3 stretch 撑满）
 //   - align=1/2 时用 w:1（VBox 用 _natW=文字宽度 来计算居中位置）
-export func dialogLabel(string text, float fontSize, int color = 0, int align = 0): Label {
+export func dialogLabel(string text, float fontSize, Color color = 0, int align = 0): Label {
 // color=0 表示未指定颜色，从主题读取
 if color == 0 { Theme th = theme.getTheme(); color = th.txt }
 float lw = if align == 0 then 300.0 else 1.0
@@ -88,8 +88,8 @@ export func dialogPropRow(string label, string value, float maxW): HBox {
     HBox row = lay.createHBox({x:0, y:0, w:1, h:22, padX:0, padY:0, spacing:8})
     // ★ 从主题读取颜色，确保浅色/深色主题下文字都清晰可见
     Theme th = theme.getTheme()
-    int lc = th.txtDim   // 标签列用暗淡色
-    int vc = th.txt             // 值列用主文字色
+    Color lc = th.txtDim   // 标签列用暗淡色
+    Color vc = th.txt             // 值列用主文字色
     Label l = lbl.createLabel({x:0, y:0, w:80, h:22, text:label, font_size:13, text_color:lc})
     float vmw = maxW
     if vmw <= 0.0 { vmw = 260.0 }

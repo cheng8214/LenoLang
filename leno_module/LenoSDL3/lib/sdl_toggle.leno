@@ -7,6 +7,7 @@ import "sdl_core.leno" as core; use core.SystemCursor
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
+use theme.Color
 
 export struct Toggle impl Widget {
     string text = ""
@@ -17,11 +18,11 @@ export struct Toggle impl Widget {
     int _fontStyle = 0
     Font? _font
     bool _on = false
-    int _onColor = #3CAAF5FF
-    int _offColor = #464652FF
-    int _txtColor = #EBEBF5FF
-    int _knobColor = #FFFFFFFF       // 滑块填充色
-    int _knobBrdColor = #C8C8D2FF // 滑块边框色（浅色主题下确保可见）
+    Color _onColor = #3CAAF5FF
+    Color _offColor = #464652FF
+    Color _txtColor = #EBEBF5FF
+    Color _knobColor = #FFFFFFFF       // 滑块填充色
+    Color _knobBrdColor = #C8C8D2FF // 滑块边框色（浅色主题下确保可见）
     int _cursor = SystemCursor.DEFAULT
     bool hover = false, _wasHover = false, _pressed = false, enabled = true, visible = true, _loaded = false
     string _tip = ""           // 悬停提示文本（空 = 不提示）
@@ -218,7 +219,7 @@ export struct Toggle impl Widget {
         // 文字
         if _font != null and _font.ok and text != "" {
             float cy = y + (h - _fontH) / 2.0
-            int tc = _txtColor
+            Color tc = _txtColor
             if not enabled { tc = theme.packColor(theme.colorR(_txtColor) / 2, theme.colorG(_txtColor) / 2, theme.colorB(_txtColor) / 2) }
             r.drawText(_font, text, x + w + 10.0, cy, tc)
         }

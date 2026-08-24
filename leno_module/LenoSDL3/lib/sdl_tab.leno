@@ -23,6 +23,7 @@ import "sdl_panel.leno" as pnl; use pnl.Panel
 import "sdl_table.leno" as tbl; use tbl.Table
 import "sdl_treeview.leno" as tvlib; use tvlib.TreeView
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
+use theme.Color
 
 export struct TabControl impl Widget, Themeable {
     float x = 0.0, y = 0.0, w = 400.0, h = 300.0
@@ -41,14 +42,14 @@ export struct TabControl impl Widget, Themeable {
     float _fontSize = 15.0; string _fontPath = ""; int _fontStyle = 0; Font? _font
 
     // 配色
-    int _bgColor = #262830FF       // 内容区背景
-    int _barColor = #232332FF      // 标签栏背景
-    int _tabColor = #2C2E36FF      // 非激活标签
-    int _actColor = #3C96EBFF     // 激活标签
-    int _txtColor = #78808CFF     // 文字色（非激活）
-    int _actTxtColor = #EBEBF5FF  // 激活文字色
-    int _accColor = #50A0F5FF     // 激活标签下划线
-    int _brdColor = #5A5F6EFF     // 边框色
+    Color _bgColor = #262830FF       // 内容区背景
+    Color _barColor = #232332FF      // 标签栏背景
+    Color _tabColor = #2C2E36FF      // 非激活标签
+    Color _actColor = #3C96EBFF     // 激活标签
+    Color _txtColor = #78808CFF     // 文字色（非激活）
+    Color _actTxtColor = #EBEBF5FF  // 激活文字色
+    Color _accColor = #50A0F5FF     // 激活标签下划线
+    Color _brdColor = #5A5F6EFF     // 边框色
     int _cursor = SystemCursor.POINTER
     bool enabled = true, visible = true
     func(int):void _onChange
@@ -333,8 +334,8 @@ export struct TabControl impl Widget, Themeable {
         var rs = _tabRects()
         for rs.len() to i {
             var rr = rs[i]
-            int bC = _tabColor
-            int tC = _txtColor
+            Color bC = _tabColor
+            Color tC = _txtColor
             if i == _active { bC = _actColor; tC = _actTxtColor }
             else if i == _hover { bC = theme.brighten(_tabColor, 15) }
             r.setColor(bC)

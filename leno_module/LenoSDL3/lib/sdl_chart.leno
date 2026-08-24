@@ -6,11 +6,11 @@ import "sdl_event.leno"   as evt; use evt.Event
 import "sdl_widget.leno"  as wgt; use wgt.Widget
 import "sdl_font.leno"    as fnt; use fnt.Font
 import "sdl_core.leno"     as core; use core.SystemCursor; use core.SDL_Rect
-import "sdl_theme.leno"    as theme; use theme.Theme
+import "sdl_theme.leno"    as theme; use theme.(Theme, Color)
 
 // ===================== 模块级辅助 =====================
 // 系列配色（与看板风格一致）— 打包 int 颜色 0xAARRGGBB
-Array[int] _CHART_PALETTE = [
+Array[Color] _CHART_PALETTE = [
     #58A0FFFF, #50D296FF, #FFAA50FF, #BE78FFFF,
     #FF6E82FF, #78D2EBFF, #EBD26EFF, #AAB4C8FF
 ]
@@ -30,7 +30,7 @@ func _niceMax(float v): float {
     return step * mag
 }
 
-func _palette(int i): int {
+func _palette(int i): Color {
     int n = _CHART_PALETTE.len()
     return _CHART_PALETTE[i % n]
 }
@@ -91,12 +91,12 @@ export struct BarChart impl Widget {
     float _maxCatW = 0.0
     bool _catDirty = true
     // 主题配色 — 打包 int 颜色
-    int _titleColor = #CDDAFFFF
-    int _gridColor = #3C404CFF
-    int _axisColor = #5A6070FF
-    int _labColor = #96A0B2FF
-    int _valColor = #E1E6F0FF
-    int _catColor = #A0AABCFF
+    Color _titleColor = #CDDAFFFF
+    Color _gridColor = #3C404CFF
+    Color _axisColor = #5A6070FF
+    Color _labColor = #96A0B2FF
+    Color _valColor = #E1E6F0FF
+    Color _catColor = #A0AABCFF
 
     func set(Dict opts) {
         Theme th = theme.getTheme()
@@ -223,7 +223,7 @@ export struct BarChart impl Widget {
             float vh = plotH * (_animVals[i] / ymax)
             float bx = plotX + slot * i + (slot - bw) / 2.0
             float by = plotY + plotH - vh
-            int c = _palette(i)
+            Color c = _palette(i)
             r.setColor(c)
             r.fillRect(bx, by, bw, vh)
         }
@@ -251,7 +251,7 @@ export struct BarChart impl Widget {
                 var ms = f.measureString(s)
                 // 若标签会顶到上边界（可能压到标题），改为绘制到柱子内部，避免与标题重叠
                 float ly = by - ms.h - 3.0
-                int lc = _valColor
+                Color lc = _valColor
                 if ly < plotY { ly = by + 2.0; lc = _labColor }
                 r.drawText(f, s, bx + (bw - ms.w) / 2.0, ly, lc)
             }
@@ -341,12 +341,12 @@ export struct LineChart impl Widget {
     float _maxLabelW = 0.0
     bool _labelDirty = true
     // 主题配色 — 打包 int 颜色
-    int _titleColor = #CDDAFFFF
-    int _gridColor = #3C404CFF
-    int _axisColor = #5A6070FF
-    int _labColor = #96A0B2FF
-    int _catColor = #A0AABCFF
-    int _hlColor = #FFFFFFFF
+    Color _titleColor = #CDDAFFFF
+    Color _gridColor = #3C404CFF
+    Color _axisColor = #5A6070FF
+    Color _labColor = #96A0B2FF
+    Color _catColor = #A0AABCFF
+    Color _hlColor = #FFFFFFFF
 
     func set(Dict opts) {
         Theme th = theme.getTheme()
@@ -504,7 +504,7 @@ export struct LineChart impl Widget {
 
         for series.len() to s {
             Array[float] d = _animSeries[s]
-            int c = _palette(s)
+            Color c = _palette(s)
             r.setColor(theme.withAlpha(c, 235))
             for 1 : d.len() - 1 to i {
                 float x1 = plotX + stepX * (i - 1); float y1 = plotY + plotH * (1.0 - d[i - 1] / ymax)
@@ -580,8 +580,8 @@ export struct PieChart impl Widget {
     float _animLast = 0.0
     float _animSpeed = 12.0
     // 主题配色 — 打包 int 颜色
-    int _titleColor = #CDDAFFFF
-    int _legColor = #DCE1EBFF
+    Color _titleColor = #CDDAFFFF
+    Color _legColor = #DCE1EBFF
 
     func set(Dict opts) {
         Theme th = theme.getTheme()
@@ -637,7 +637,7 @@ export struct PieChart impl Widget {
         for n to i {
             float frac = _animValues[i] / total
             float a1 = a + frac * 360.0
-            int c = _palette(i)
+            Color c = _palette(i)
             // fillPie 仍使用 R/G/B/A 分量，从打包色中提取
             r.fillPie(cx, cy, rad, a, a1, theme.colorR(c), theme.colorG(c), theme.colorB(c), 255)
             // 图例

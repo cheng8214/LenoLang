@@ -9,6 +9,7 @@ import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
 import "sdl_image.leno" as img
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
+use theme.Color
 
 export struct Button impl Widget, Themeable {
     // ==================== 关联常量 ====================
@@ -28,10 +29,10 @@ export struct Button impl Widget, Themeable {
     string _fontPath = ""    // 字体路径（空则自动选择）
     int _fontStyle = 0       // 字体样式（STYLE_BOLD|STYLE_ITALIC 等）
     Font? _font              // 字体缓存
-    int _bgColor = #3C8CDCFF   // 背景色（默认 primary）
-    int _txtColor = #FFFFFFFF  // 文字色
-    int _hovColor = 0          // 悬停背景色（为 0 时自动计算）
-    int _prColor = 0           // 按下背景色（为 0 时自动变暗）
+    Color _bgColor = #3C8CDCFF   // 背景色（默认 primary）
+    Color _txtColor = #FFFFFFFF  // 文字色
+    Color _hovColor = 0          // 悬停背景色（为 0 时自动计算）
+    Color _prColor = 0           // 按下背景色（为 0 时自动变暗）
     int _cursor = SystemCursor.POINTER   // 悬停鼠标样式（默认手型）
     func():void _onClick    // 点击回调
     bool hover = false
@@ -53,7 +54,7 @@ export struct Button impl Widget, Themeable {
     float  _imgSize = 0.0    // 图标边长（0 = 自动：取 min(h-8, 自然高)）
     float  _imgGap = 6.0     // 图标与文字间距
     int    _imgAlpha = 255   // 图标透明度 0~255
-    int    _imgTint = -1   // 图标着色（-1 = 不着色，其余为 #RRGGBBAA 着色）
+    Color    _imgTint = -1   // 图标着色（-1 = 不着色，其余为 #RRGGBBAA 着色）
     Ptr[u8]? _imgTex   // 图片纹理（懒加载，dispose 释放）
     string _imgLoadPath = "" // 已尝试加载的路径（避免加载失败每帧重试）
 
@@ -213,10 +214,10 @@ if tp is string { _btnType = tp; _apply_type(tp) }
     func set_bounds(float bx, float by, float bw, float bh) {
         x = bx; y = by; w = bw; h = bh
     }
-    func set_bg_color(int color)         { _bgColor = color }
-    func set_text_color(int color)       { _txtColor = color }
-    func set_hover_color(int color)      { _hovColor = color }
-    func set_pressed_color(int color)     { _prColor = color }
+    func set_bg_color(Color color)         { _bgColor = color }
+    func set_text_color(Color color)       { _txtColor = color }
+    func set_hover_color(Color color)      { _hovColor = color }
+    func set_pressed_color(Color color)     { _prColor = color }
     func set_font_size(float s) {
         _fontSize = s
         if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
@@ -256,7 +257,7 @@ if tp is string { _btnType = tp; _apply_type(tp) }
     func set_image_size(float s) { _imgSize = s }
     func set_image_gap(float g)  { _imgGap = g }
     func set_image_alpha(int a)  { _imgAlpha = a }
-    func set_image_tint(int color) { _imgTint = color }
+    func set_image_tint(Color color) { _imgTint = color }
     func set_image_hover(string path) { _imgPathHover = path; _imgTexHover = null; _imgLoadHover = "" }
     func set_image_pressed(string path) { _imgPathPressed = path; _imgTexPressed = null; _imgLoadPressed = "" }
     func set_image_disabled(string path) { _imgPathDisabled = path; _imgTexDisabled = null; _imgLoadDisabled = "" }
@@ -363,8 +364,8 @@ if tp is string { _btnType = tp; _apply_type(tp) }
         _ensure_font()
         _ensure_image(r)
 
-        int bgC = _bgColor
-        int txtC = _txtColor
+        Color bgC = _bgColor
+        Color txtC = _txtColor
 
         if hover {
             if _hovColor != 0 {

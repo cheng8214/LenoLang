@@ -25,6 +25,7 @@ import "sdl_core.leno" as core; use core.SystemCursor; use core.SDL_Rect
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
+use theme.Color
 import "sdl_menu.leno" as menu; use menu.MenuBar
 import "sdl_image.leno" as img
 
@@ -88,16 +89,16 @@ export struct TreeView impl Widget, Themeable {
     int _mode = 0
     bool _showCheck = false
     float _fontSize = 15.0; string _fontPath = ""; int _fontStyle = 0; Font? _font
-    int _bgColor = #262830FF
-    int _bdrColor = #5A5F6EFF
-    int _selColor = #343A46FF
-    int _chkColor = #46B278FF   // 勾选框填充色（独立于选中色，避免选中行上蓝框融进蓝背景）
-    int _hovColor = #464E5CFF
-    int _txtColor = #EBEBF5FF
-    int _arrColor = #B0B5C0FF
-    int _markColor = #EBEBF5FF   // 勾选标记颜色
-    int _sbColor = #787D8CFF
-    int _lineColor = #404654FF   // 连接线颜色
+    Color _bgColor = #262830FF
+    Color _bdrColor = #5A5F6EFF
+    Color _selColor = #343A46FF
+    Color _chkColor = #46B278FF   // 勾选框填充色（独立于选中色，避免选中行上蓝框融进蓝背景）
+    Color _hovColor = #464E5CFF
+    Color _txtColor = #EBEBF5FF
+    Color _arrColor = #B0B5C0FF
+    Color _markColor = #EBEBF5FF   // 勾选标记颜色
+    Color _sbColor = #787D8CFF
+    Color _lineColor = #404654FF   // 连接线颜色
     bool _showLines = true                              // 是否显示层级连接线
     int _cursor = SystemCursor.POINTER
     bool enabled = true, visible = true, _loaded = false
@@ -726,7 +727,7 @@ n.imageExpanded = d.get("imageExpanded", "")
         if _font == null or not _font.ok { return }   // 字体无效时跳过渲染，避免"有背景无文字"的闪烁
         _flatten()
 
-        int bgC = _bgColor
+        Color bgC = _bgColor
         if not enabled { bgC = theme.darken(_bgColor, 60) }
         r.setColor(bgC)
         r.fillRoundedRect(x, y, w, h, 6.0)
@@ -748,7 +749,7 @@ n.imageExpanded = d.get("imageExpanded", "")
             float checkOff = if _showCheck then 18.0 else 0.0
 
             bool seld = _is_flat_sel(i)   // ★ O(1) 按下标读拍平时预计算的选中状态
-            int rowC = bgC
+            Color rowC = bgC
             if seld { rowC = _selColor }
             else if id == _hover { rowC = _hovColor }
             if seld or id == _hover { r.setColor(rowC); r.fillRoundedRect(x + 2.0, rowY + 1.0, w - 4.0, _rowH - 2.0, 4.0) }
@@ -782,7 +783,7 @@ n.imageExpanded = d.get("imageExpanded", "")
             if _flatHas[i] {
                 float tcx = x + _padX + depth * _indent + 8.0
                 float tcy = rowY + _rowH / 2.0
-                int ar = _arrColor
+                Color ar = _arrColor
                 if not enabled { ar = theme.darken(_arrColor, 60) }
                 r.setColor(ar)
                 r.drawTriangle(tcx, tcy, 5.0, if _flatExpanded[i] then 180.0 else 90.0,
@@ -793,17 +794,17 @@ n.imageExpanded = d.get("imageExpanded", "")
                 float bx = cx + 18.0
                 float by = rowY + (_rowH - 14.0) / 2.0
                 if _flatOn[i] {
-                    int cr = _chkColor
+                    Color cr = _chkColor
                     if not enabled { cr = theme.darken(_chkColor, 60) }
                     r.setColor(cr)
                     r.fillRoundedRect(bx, by, 14.0, 14.0, 3.0)
-                    int mr = _markColor
+                    Color mr = _markColor
                     if not enabled { mr = theme.darken(_markColor, 60) }
                     r.setColor(mr)
                     r.drawLine(r.snapX(bx + 3.0), r.snapY(by + 7.5), r.snapX(bx + 6.0), r.snapY(by + 10.5))
                     r.drawLine(r.snapX(bx + 6.0), r.snapY(by + 10.5), r.snapX(bx + 11.0), r.snapY(by + 4.5))
                 } else {
-                    int br2 = _bdrColor
+                    Color br2 = _bdrColor
                     if not enabled { br2 = theme.darken(_bdrColor, 60) }
                     r.setColor(br2)
                     r.drawRoundedRect(bx, by, 14.0, 14.0, 3.0)
@@ -846,7 +847,7 @@ n.imageExpanded = d.get("imageExpanded", "")
             if _font != null and _font.ok {
                 float tx = x + _padX + depth * _indent + 16.0 + checkOff + 4.0
                 float th = _textH
-                int tcR = _txtColor
+                Color tcR = _txtColor
                 if not enabled { tcR = theme.darken(_txtColor, 60) }
                 float ty = r.snapY(rowY + (_rowH - th) / 2.0)
                 r.drawText(_font, _flatText[i], r.snapX(tx), ty, tcR)

@@ -28,6 +28,7 @@ import "sdl_panel.leno" as pnl; use pnl.Panel
 import "sdl_table.leno" as tbl; use tbl.Table
 import "sdl_treeview.leno" as tvlib; use tvlib.TreeView
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
+use theme.Color
 
 export struct Splitter impl Widget, Themeable {
     // ==================== 关联常量 ====================
@@ -48,8 +49,8 @@ export struct Splitter impl Widget, Themeable {
     float  _dragStartRatio = 0.0 // 拖拽起始比例（用于计算偏移）
     float  _dragStartMouse = 0.0 // 拖拽起始鼠标坐标
     // 分割条颜色
-    int    _divColor = #5A5F6EFF      // 默认分割条色
-    int    _hovColor = #3C96EBFF     // 悬停/拖拽高亮色
+    Color    _divColor = #5A5F6EFF      // 默认分割条色
+    Color    _hovColor = #3C96EBFF     // 悬停/拖拽高亮色
     bool   _loaded = false
     bool   enabled = true, visible = true
     Ptr[u8] _hwnd                   // 绑定的窗口句柄
@@ -270,7 +271,7 @@ export struct Splitter impl Widget, Themeable {
 
         // 渲染分割条
         float dp = _divider_pos()
-        int dc = _divColor
+        Color dc = _divColor
         float dw = _dividerW
         if _hover or _dragging {
             dc = _hovColor

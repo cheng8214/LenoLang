@@ -7,6 +7,7 @@ import "sdl_core.leno" as core; use core.SystemCursor
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
+use theme.Color
 
 export struct LinkButton impl Widget {
     string text = "Link"
@@ -16,9 +17,9 @@ export struct LinkButton impl Widget {
     string _fontPath = ""
     int _fontStyle = 0
     Font? _font
-    int _color = #64B4FFFF   // 默认链接色（浅蓝）
-    int _hovColor = #82D2FFFF  // 悬停色
-    int _visColor = #78808CFF   // 已访问色（暗淡）
+    Color _color = #64B4FFFF   // 默认链接色（浅蓝）
+    Color _hovColor = #82D2FFFF  // 悬停色
+    Color _visColor = #78808CFF   // 已访问色（暗淡）
     bool _visited = false        // 是否已点击过（变色）
     bool _underline = true       // 是否显示下划线
     bool _ulOnHover = false      // 仅悬停时显示下划线（false=始终显示）
@@ -75,8 +76,8 @@ export struct LinkButton impl Widget {
         }
     }
     func set_url(string u) { _url = u }
-    func set_text_color(int color) { _color = color }
-    func set_hover_color(int color) { _hovColor = color }
+    func set_text_color(Color color) { _color = color }
+    func set_hover_color(Color color) { _hovColor = color }
     func set_visited(bool v) { _visited = v }
     func set_underline(bool u) { _underline = u }
     func set_underline_hover(bool u) { _ulOnHover = u }
@@ -141,7 +142,7 @@ export struct LinkButton impl Widget {
         if text == "" { return }
 
         // 选择颜色
-        int c = _color
+        Color c = _color
         if _visited { c = _visColor }
         if hover { c = _hovColor }
         if not enabled { c = theme.packColor(theme.colorR(c) / 2, theme.colorG(c) / 2, theme.colorB(c) / 2) }

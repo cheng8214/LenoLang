@@ -8,6 +8,7 @@ import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.SystemCursor
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
+use theme.Color
 import "sdl_tooltip.leno" as tip
 
 export struct ProgressBar impl Widget {
@@ -15,9 +16,9 @@ export struct ProgressBar impl Widget {
     float minV = 0.0, maxV = 100.0, value = 0.0
     bool _clickable = false, _showText = true
     string _fontPath = ""; float _fontSize = 15.0; int _fontStyle = 0; Font? _font
-    int _trkColor = #3C3C48FF          // 轨道背景色
-    int _fillColor = #3CC850FF     // 已选填充色
-    int _txtColor = #EBEBF5FF                // 文字色
+    Color _trkColor = #3C3C48FF          // 轨道背景色
+    Color _fillColor = #3CC850FF     // 已选填充色
+    Color _txtColor = #EBEBF5FF                // 文字色
     int _cursor = SystemCursor.POINTER
     bool hover = false; bool _wasHover = false; bool _dragging = false; bool enabled = true; bool visible = true; bool _loaded = false
     string _tip = ""
@@ -205,7 +206,7 @@ export struct ProgressBar impl Widget {
         if _animating { core.requestRedraw() }
 
         // 轨道背景
-        int trkC = _trkColor
+        Color trkC = _trkColor
         if not enabled { trkC = theme.packColor(theme.colorR(_trkColor) / 2, theme.colorG(_trkColor) / 2, theme.colorB(_trkColor) / 2) }
         r.setColor(trkC)
         r.fillRoundedRect(x, y, w, h, h / 2.0)
@@ -213,7 +214,7 @@ export struct ProgressBar impl Widget {
         // 已选填充
         float ratio = _ratio()
         float fillW = ratio * w
-        int filC = _fillColor
+        Color filC = _fillColor
         if not enabled { filC = theme.packColor(theme.colorR(_fillColor) / 2, theme.colorG(_fillColor) / 2, theme.colorB(_fillColor) / 2) }
         if fillW > 1.0 {
             r.setColor(filC)
@@ -228,7 +229,7 @@ export struct ProgressBar impl Widget {
             float th = _fontH
             float tx = x + w / 2.0 - tw / 2.0
             float ty = y + h / 2.0 - th / 2.0
-            int tc = _txtColor
+            Color tc = _txtColor
             if not enabled { tc = theme.packColor(theme.colorR(_txtColor) / 2, theme.colorG(_txtColor) / 2, theme.colorB(_txtColor) / 2) }
             r.drawText(_font, label, tx, ty, tc)
         }

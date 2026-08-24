@@ -8,6 +8,7 @@ import "sdl_core.leno" as core; use core.SystemCursor; use core.SDL_Rect
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
+use theme.Color
 
 export struct ListBox impl Widget, Themeable {
     // ==================== 关联常量 ====================
@@ -23,12 +24,12 @@ export struct ListBox impl Widget, Themeable {
     int _hover = -1              // 当前悬停行索引（-1 无）
     float _fontSize = 15.0; string _fontPath = ""; int _fontStyle = 0; Font? _font
     int _mode = MODE_SINGLE       // 选择模式（MODE_SINGLE/MODE_MULTI）
-    int _bgColor = #262830FF       // 背景色
-    int _bdrColor = #5A5F6EFF      // 边框色
-    int _selColor = #343A46FF      // 选中行底色
-    int _hovColor = #464E5CFF      // 悬停行底色
-    int _txtColor = #EBEBF5FF     // 文字色
-    int _sbColor = #787D8CFF      // 滚动条色
+    Color _bgColor = #262830FF       // 背景色
+    Color _bdrColor = #5A5F6EFF      // 边框色
+    Color _selColor = #343A46FF      // 选中行底色
+    Color _hovColor = #464E5CFF      // 悬停行底色
+    Color _txtColor = #EBEBF5FF     // 文字色
+    Color _sbColor = #787D8CFF      // 滚动条色
     int _cursor = SystemCursor.POINTER
     bool enabled = true, visible = true, _loaded = false
     string _tip = ""
@@ -336,7 +337,7 @@ export struct ListBox impl Widget, Themeable {
         if not visible { return }
         _ensure_font()
 
-        int bgC = _bgColor
+        Color bgC = _bgColor
         if not enabled { bgC = theme.darken(_bgColor, 60) }
         r.setColor(bgC)
         r.fillRoundedRect(x, y, w, h, 6.0)
@@ -354,7 +355,7 @@ export struct ListBox impl Widget, Themeable {
         for items.len() to i {
             float iy = r.snapY(y - _scroll + i * _itemH)
             if iy + _itemH < y or iy > y + h { continue }
-            int rowC = bgC
+            Color rowC = bgC
             if _is_selected(i) { rowC = _selColor }
             else if i == _hover { rowC = _hovColor }
             r.setColor(rowC)
@@ -379,7 +380,7 @@ export struct ListBox impl Widget, Themeable {
 
             if textH > 0.0 and i < items.len() {
                 string t = items[i]
-                int tcC = _txtColor
+                Color tcC = _txtColor
                 if not enabled { tcC = theme.darken(_txtColor, 60) }
                 float ty = r.snapY(iy + (_itemH - textH) / 2.0)
                 r.drawText(_font, t, r.snapX(x + pad), ty, tcC)

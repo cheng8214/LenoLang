@@ -7,6 +7,7 @@ import "sdl_core.leno" as core; use core.(SystemCursor, SDL_Rect, sdl3)
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
+use theme.Color
 import "sdl_image.leno" as img
 import "sdl_edit.leno" as edt; use edt.Edit
 
@@ -21,12 +22,12 @@ export struct ComboBox impl Widget, Themeable {
     float _popupMax = 200.0    // 弹出列表最大高度
     float _fontSize = 15.0; string _fontPath = ""; int _fontStyle = 0; Font? _font
     string _placeholder = "请选择"
-    int _bgColor = #262830FF
-    int _bdrColor = #5A5F6EFF
-    int _selColor = #343A46FF
-    int _hovColor = #464E5CFF
-    int _txtColor = #EBEBF5FF
-    int _sbColor = #787D8CFF
+    Color _bgColor = #262830FF
+    Color _bdrColor = #5A5F6EFF
+    Color _selColor = #343A46FF
+    Color _hovColor = #464E5CFF
+    Color _txtColor = #EBEBF5FF
+    Color _sbColor = #787D8CFF
     int _cursor = SystemCursor.POINTER
     bool enabled = true, visible = true, _loaded = false
     string _tip = ""
@@ -366,7 +367,7 @@ export struct ComboBox impl Widget, Themeable {
         if not visible { return }
         _ensure_font()
 
-        int bgC = _bgColor
+        Color bgC = _bgColor
         if not enabled { bgC = theme.darken(_bgColor, 60) }
         r.setColor(bgC)
         r.fillRoundedRect(x, y, w, h, 6.0)
@@ -379,7 +380,7 @@ export struct ComboBox impl Widget, Themeable {
             _edit.render(r)
             // 下拉箭头
             float aw = 10.0, ax = x + w - aw - 8.0, ay = y + h / 2.0
-            int arrowC = theme.brighten(_bdrColor, 60)
+            Color arrowC = theme.brighten(_bdrColor, 60)
             r.setColor(arrowC)
             r.drawTriangle(ax + aw / 2.0, ay, aw / 2.0, 180.0,
                 theme.colorR(arrowC), theme.colorG(arrowC), theme.colorB(arrowC), 255)
@@ -410,7 +411,7 @@ export struct ComboBox impl Widget, Themeable {
             string t = ""
             if _sel >= 0 and _sel < items.len() { t = items[_sel] } else { t = _placeholder }
             float th = _font.measureString("Ag").h
-            int tcC = _txtColor
+            Color tcC = _txtColor
             if not enabled { tcC = theme.darken(_txtColor, 60) }
             float ty = r.snapY(y + (h - th) / 2.0)
             r.drawText(_font, t, r.snapX(textX), ty, tcC)
@@ -418,7 +419,7 @@ export struct ComboBox impl Widget, Themeable {
 
         // 下拉箭头（向下填充三角）
         float aw = 10.0, ax = x + w - aw - 8.0, ay = y + h / 2.0
-        int arrowC = theme.brighten(_bdrColor, 60)
+        Color arrowC = theme.brighten(_bdrColor, 60)
         r.setColor(arrowC)
         r.drawTriangle(ax + aw / 2.0, ay, aw / 2.0, 180.0,
             theme.colorR(arrowC), theme.colorG(arrowC), theme.colorB(arrowC), 255)
@@ -432,7 +433,7 @@ export struct ComboBox impl Widget, Themeable {
     // 保证下拉层永远盖在其它控件之上，不会被列表中靠后的 ComboBox 挡住）
     func renderPopup(Renderer r) {
         if not _loaded or not visible or not _open or items.len() == 0 { return }
-        int bgC = _bgColor
+        Color bgC = _bgColor
         if not enabled { bgC = theme.darken(_bgColor, 60) }
         var pr = _popup_rect()
         float px = pr[0], py = pr[1], pw = pr[2], ph = pr[3]
@@ -455,7 +456,7 @@ export struct ComboBox impl Widget, Themeable {
         for items.len() to i {
             float iy = r.snapY(py - _scroll + i * _itemH)
             if iy + _itemH < py or iy > py + ph { continue }
-            int rowC = bgC
+            Color rowC = bgC
             if i == _sel { rowC = _selColor }
             else if i == _hover { rowC = _hovColor }
             r.setColor(rowC)
@@ -477,7 +478,7 @@ export struct ComboBox impl Widget, Themeable {
             }
 
             if textH > 0.0 {
-                int tcC = _txtColor
+                Color tcC = _txtColor
                 float ty = r.snapY(iy + (_itemH - textH) / 2.0)
                 float tx = r.snapX(px + 8.0)
                 // 每项图标

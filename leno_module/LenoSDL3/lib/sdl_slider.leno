@@ -7,6 +7,7 @@ import "sdl_core.leno" as core; use core.SystemCursor
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
+use theme.Color
 import maths
 
 export struct Slider impl Widget, Themeable {
@@ -15,10 +16,10 @@ export struct Slider impl Widget, Themeable {
     float step = 0.0
     bool _vertical = false
     string _fontPath = ""; float _fontSize = 15.0; int _fontStyle = 0; Font? _font
-    int _trkColor = #2C2E36FF     // 轨道背景色
-    int _fillColor = #3C96EBFF     // 已选填充色
-    int _thumbColor = #EBEBF5FF   // 滑块色
-    int _txtColor = #EBEBF5FF     // 文字色
+    Color _trkColor = #2C2E36FF     // 轨道背景色
+    Color _fillColor = #3C96EBFF     // 已选填充色
+    Color _thumbColor = #EBEBF5FF   // 滑块色
+    Color _txtColor = #EBEBF5FF     // 文字色
     int _cursor = SystemCursor.POINTER
     bool hover = false; bool _wasHover = false; bool _dragging = false; bool enabled = true; bool visible = true; bool _loaded = false
     string _tip = ""           // 悬停提示文本（空 = 不提示）
@@ -184,7 +185,7 @@ export struct Slider impl Widget, Themeable {
         if _vertical { span = h - 2.0 * rad } else { span = w - 2.0 * rad }
 
         // 轨道背景
-        int tC = _trkColor
+        Color tC = _trkColor
         if not enabled { tC = theme.darken(_trkColor, 60) }
         r.setColor(tC)
         if _vertical {
@@ -197,7 +198,7 @@ export struct Slider impl Widget, Themeable {
 
         // 已选填充
         float ratio = _ratio()
-        int fC = _fillColor
+        Color fC = _fillColor
         if not enabled { fC = theme.darken(_fillColor, 60) }
         r.setColor(fC)
         if _vertical {
@@ -214,7 +215,7 @@ export struct Slider impl Widget, Themeable {
         float cx, cy
         if _vertical { cx = x + w / 2.0; cy = y + h - rad - ratio * span }
         else         { cx = x + rad + ratio * span; cy = y + h / 2.0 }
-        int kC = _thumbColor
+        Color kC = _thumbColor
         if hover or _dragging { kC = theme.brighten(_thumbColor, 15) }
         if not enabled { kC = theme.darken(_thumbColor, 60) }
         r.setColor(kC)
@@ -227,7 +228,7 @@ export struct Slider impl Widget, Themeable {
             float ty; float tx
             if _vertical { ty = y + h + 6.0; tx = x + w / 2.0 - _font.measureString(label).w / 2.0 }
             else { ty = y + h / 2.0 - th / 2.0; tx = x + w + 8.0 }
-            int tcC = _txtColor
+            Color tcC = _txtColor
             if not enabled { tcC = theme.darken(_txtColor, 60) }
             r.drawText(_font, label, tx, ty, tcC)
         }

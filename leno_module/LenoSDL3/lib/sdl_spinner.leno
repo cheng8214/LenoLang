@@ -6,14 +6,15 @@ import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
+use theme.Color
 import maths
 
 export struct Spinner impl Widget {
     float x = 0.0, y = 0.0
     float _size = 32.0           // 直径
     float _thickness = 3.0       // 线条粗细
-    int _color = #64B4FFFF  // 旋转弧颜色
-    int _trackColor = #464A54FF  // 背景轨道色
+    Color _color = #64B4FFFF  // 旋转弧颜色
+    Color _trackColor = #464A54FF  // 背景轨道色
     int _trackA = 80             // 背景轨道透明度
     float _speed = 270.0         // 旋转速度（度/秒）
     float _angle = 0.0           // 当前旋转角度
@@ -47,7 +48,7 @@ export struct Spinner impl Widget {
     // ==================== 设置方法 ====================
     func set_diameter(float s) { _size = s }
     func set_thickness(float t) { _thickness = t }
-    func set_color(int color) { _color = color }
+    func set_color(Color color) { _color = color }
     func set_speed(float s) { _speed = s }
     func start() { _running = true; _lastTick = 0.0 }
     func stop()  { _running = false; _angle = 0.0; _lastTick = 0.0 }

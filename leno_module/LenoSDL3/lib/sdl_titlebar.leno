@@ -42,6 +42,7 @@ import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.(sdl3, SystemCursor)
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
+use theme.Color
 import "sdl_image.leno" as img
 
 export struct TitleBar impl Widget, Themeable {
@@ -83,12 +84,12 @@ export struct TitleBar impl Widget, Themeable {
     bool _showClose = true
 
     // ==================== 颜色 ====================
-    int _bgColor = #262830FF
-    int _txColor = #C8D1E5FF
-    int _hovColor = #37404CFF
-    int _closeHovColor = #E81123FF
-    int _iconColor = #C8D1E5FF
-    int _sepColor = #373A44FF
+    Color _bgColor = #262830FF
+    Color _txColor = #C8D1E5FF
+    Color _hovColor = #37404CFF
+    Color _closeHovColor = #E81123FF
+    Color _iconColor = #C8D1E5FF
+    Color _sepColor = #373A44FF
     bool _showSeparator = true
 
     // ==================== 图标图片（可选） ====================
@@ -661,17 +662,17 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
     func set_height(float hh) { h = hh; core.markFrameRedraw() }
 
     // 设置背景色
-    func set_bg_color(int color) { _bgColor = color; core.markFrameRedraw() }
+    func set_bg_color(Color color) { _bgColor = color; core.markFrameRedraw() }
     // 设置标题文字色
-    func set_text_color(int color) { _txColor = color; core.markFrameRedraw() }
+    func set_text_color(Color color) { _txColor = color; core.markFrameRedraw() }
     // 设置按钮悬停色
-    func set_hover_color(int color) { _hovColor = color; core.markFrameRedraw() }
+    func set_hover_color(Color color) { _hovColor = color; core.markFrameRedraw() }
     // 设置关闭按钮悬停色
-    func set_close_hover_color(int color) { _closeHovColor = color; core.markFrameRedraw() }
+    func set_close_hover_color(Color color) { _closeHovColor = color; core.markFrameRedraw() }
     // 设置图标线条色
-    func set_icon_color(int color) { _iconColor = color; core.markFrameRedraw() }
+    func set_icon_color(Color color) { _iconColor = color; core.markFrameRedraw() }
     // 设置分隔线色
-    func set_separator_color(int color) { _sepColor = color; core.markFrameRedraw() }
+    func set_separator_color(Color color) { _sepColor = color; core.markFrameRedraw() }
 
     // 设置图标图片
     func set_icon_minimize(string path) { _releaseTex(_texMin); _texMin = null; _imgMin = path; _loadMin = "" }

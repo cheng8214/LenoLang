@@ -7,6 +7,7 @@ import "sdl_core.leno" as core; use core.SystemCursor
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
+use theme.Color
 
 export struct CheckBox impl Widget {
     string text = ""
@@ -18,11 +19,11 @@ export struct CheckBox impl Widget {
     int _fontStyle = 0
     Font? _font
     bool _checked = false
-    int _uncheckedColor = #3C3C48FF     // 未选中框背景
-    int _checkedColor = #3CAAF5FF       // 选中框背景
-    int _txtColor = #EBEBF5FF          // 文字色
-    int _brdColor = #828296FF          // 框边框色
-    int _markColor = #FFFFFFFF         // 勾选标记颜色
+    Color _uncheckedColor = #3C3C48FF     // 未选中框背景
+    Color _checkedColor = #3CAAF5FF       // 选中框背景
+    Color _txtColor = #EBEBF5FF          // 文字色
+    Color _brdColor = #828296FF          // 框边框色
+    Color _markColor = #FFFFFFFF         // 勾选标记颜色
     int _cursor = SystemCursor.DEFAULT
     bool hover = false, _wasHover = false, _pressed = false, enabled = true, visible = true, _loaded = false
     string _tip = ""        // 悬停提示文本（空 = 不提示）
@@ -146,7 +147,7 @@ export struct CheckBox impl Widget {
         float bx = x, by = y, bs = _box
 
         // 框背景
-        int boxC = _uncheckedColor
+        Color boxC = _uncheckedColor
         if _checked { boxC = _checkedColor }
         if hover { boxC = theme.brighten(boxC, 25) }
         if not enabled { boxC = theme.packColor(theme.colorR(_uncheckedColor) / 2, theme.colorG(_uncheckedColor) / 2, theme.colorB(_uncheckedColor) / 2) }
@@ -169,7 +170,7 @@ export struct CheckBox impl Widget {
         // 文字
         if _font.ok and text != "" {
             float cy = by + (bs - _fontH) / 2.0
-            int tc = _txtColor
+            Color tc = _txtColor
             if not enabled { tc = theme.packColor(theme.colorR(_txtColor) / 2, theme.colorG(_txtColor) / 2, theme.colorB(_txtColor) / 2) }
             r.drawText(_font, text, bx + bs + _gap, cy, tc)
         }

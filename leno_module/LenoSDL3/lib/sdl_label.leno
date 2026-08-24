@@ -8,6 +8,7 @@ use core.SDL_Rect
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
+use theme.Color
 
 export struct Label impl Widget, Themeable {
     // ==================== 关联常量 ====================
@@ -25,7 +26,7 @@ export struct Label impl Widget, Themeable {
     string _fontPath = ""        // 字体路径（空则自动匹配）
     int _fontStyle = 0           // 字体样式
     Font? _font                  // 字体缓存
-    int _txtColor = #FFFFFFFF  // 文字色
+    Color _txtColor = #FFFFFFFF  // 文字色
     int _align = ALIGN_LEFT          // 对齐（ALIGN_LEFT/CENTER/RIGHT）
     float _w = 0.0; float _h = 16.0  // 缓存自然尺寸（供布局使用）
     bool _loaded = false
@@ -101,7 +102,7 @@ export struct Label impl Widget, Themeable {
             _h = _font.measureString("Ag").h
         }
     }
-    func set_text_color(int color) { _txtColor = color }
+    func set_text_color(Color color) { _txtColor = color }
     func set_font_size(float s) {
         _fontSize = s
         if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null

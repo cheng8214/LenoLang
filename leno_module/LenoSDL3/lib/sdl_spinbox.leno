@@ -9,6 +9,7 @@ import "sdl_tooltip.leno" as tip
 import maths
 import "sdl_edit.leno" as edt; use edt.Edit
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
+use theme.Color
 
 export struct SpinBox impl Widget, Themeable {
     float x = 0.0, y = 0.0, w = 140.0, h = 34.0
@@ -19,11 +20,11 @@ export struct SpinBox impl Widget, Themeable {
     Edit? _edit   // 内嵌编辑框（文本输入/IME）
     Ptr[u8]? _hwnd
 
-    int _bgColor = #262830FF       // 整体背景
-    int _bdrColor = #5A5F6EFF      // 边框色
-    int _focusColor = #64B4FFFF     // 聚焦边框色
-    int _arrowColor = #2C2E36FF    // 箭头区背景
-    int _btnColor = #DCE1EBFF     // 箭头符号色
+    Color _bgColor = #262830FF       // 整体背景
+    Color _bdrColor = #5A5F6EFF      // 边框色
+    Color _focusColor = #64B4FFFF     // 聚焦边框色
+    Color _arrowColor = #2C2E36FF    // 箭头区背景
+    Color _btnColor = #DCE1EBFF     // 箭头符号色
 
     bool _hoverUp = false, _hoverDown = false, _wasUp = false, _wasDown = false
     bool _wasFocused = false
@@ -253,7 +254,7 @@ export struct SpinBox impl Widget, Themeable {
         _edit?.render(r)
 
         float ax = x + (w - _arrowW)
-        int aC = _arrowColor
+        Color aC = _arrowColor
         if _hoverUp or _hoverDown { aC = theme.brighten(_arrowColor, 10) }
         r.setColor(aC)
         r.fillRect(ax, y, _arrowW, h)
@@ -264,14 +265,14 @@ export struct SpinBox impl Widget, Themeable {
         float s = 4.0
         float cxA = ax + _arrowW / 2.0
         // 上箭头
-        int bC = _btnColor
+        Color bC = _btnColor
         if _hoverUp { bC = theme.brighten(_btnColor, 40) }
         r.setColor(bC)
         float uy = y + h / 4.0
         r.drawLine(cxA - s, uy + s * 0.5, cxA, uy - s * 0.5)
         r.drawLine(cxA, uy - s * 0.5, cxA + s, uy + s * 0.5)
         // 下箭头
-        int dC = _btnColor
+        Color dC = _btnColor
         if _hoverDown { dC = theme.brighten(_btnColor, 40) }
         r.setColor(dC)
         float dy = y + h * 0.75

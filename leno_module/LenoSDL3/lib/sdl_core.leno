@@ -135,6 +135,7 @@ export cstruct SDL_Vertex {
 
 // ==================== 返回类型别名 ====================
 
+export alias Color      = int               // 颜色：0xAARRGGBB 打包整数
 export alias FColor     = Dict[string, float]
 export alias Size       = Dict[string, int]
 export alias FSize      = Dict[string, float]

@@ -30,6 +30,7 @@ import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_image.leno" as img
 import "sdl_tooltip.leno" as tip
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
+use theme.Color
 
 // 单个菜单项（可被子菜单嵌套）
 export struct MenuItem {
@@ -141,15 +142,15 @@ export struct MenuBar impl Widget, Themeable {
     Array[Ptr[u8]] _imgCacheTex = []     // 纹理缓存指针
 
     // 配色 — 打包 int 颜色
-    int _barColor = #22232CFF       // 菜单栏背景
-    int _barHovColor = #32343EFF    // 悬停/激活标题背景
-    int _bgColor = #1E2026FF        // 下拉面板背景
-    int _hovColor = #3C78C8FF       // 项悬停背景
-    int _txtColor = #E1E4EBFF       // 文字色
-    int _disColor = #787A82FF       // 禁用文字色
-    int _sepColor = #50545CFF       // 分隔线色
-    int _bdrColor = #5A5F6EFF       // 边框色
-    int _accColor = #50A0F5FF       // 激活下划线
+    Color _barColor = #22232CFF       // 菜单栏背景
+    Color _barHovColor = #32343EFF    // 悬停/激活标题背景
+    Color _bgColor = #1E2026FF        // 下拉面板背景
+    Color _hovColor = #3C78C8FF       // 项悬停背景
+    Color _txtColor = #E1E4EBFF       // 文字色
+    Color _disColor = #787A82FF       // 禁用文字色
+    Color _sepColor = #50545CFF       // 分隔线色
+    Color _bdrColor = #5A5F6EFF       // 边框色
+    Color _accColor = #50A0F5FF       // 激活下划线
     int _cursor = SystemCursor.POINTER
     int _winW = 0, _winH = 0          // 所属窗口逻辑宽高（边界夹紧用；0=未知）
     string _orient = "horizontal"         // 布局方向："horizontal" 顶部栏 / "vertical" 左侧栏
@@ -746,7 +747,7 @@ export struct MenuBar impl Widget, Themeable {
                     r.fillRect(px, ry, pw, _itemH)
                 }
             }
-            int lc = _txtColor
+            Color lc = _txtColor
             if not it.enabled { lc = _disColor }
             // 图标
             float iconW = _draw_icon(r, it.image, px, ry)

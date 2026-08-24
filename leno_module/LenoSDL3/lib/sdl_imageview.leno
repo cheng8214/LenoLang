@@ -7,6 +7,7 @@ import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_image.leno" as img
 import "sdl_tooltip.leno" as tip
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
+use theme.Color
 
 export struct ImageView impl Widget {
     // ==================== 关联常量 ====================
@@ -20,11 +21,11 @@ export struct ImageView impl Widget {
     int _mode = MODE_ASPECT_FIT    // 内容模式（MODE_ASPECT_FIT/STRETCH/ASPECT_FILL）
     float _radius = 0.0             // 圆角半径
     bool _showBorder = false        // 是否显示边框
-    int _bdrColor = #5A5F6EFF  // 边框色
+    Color _bdrColor = #5A5F6EFF  // 边框色
     int _brdA = 200                 // 边框透明度
-    int _bgColor = 0         // 背景填充色（0=透明不填充）
+    Color _bgColor = 0         // 背景填充色（0=透明不填充）
     int _alpha = 255                // 图片透明度 0~255
-    int _tint = -1  // 着色（-1=不着色，其余为 #RRGGBBAA 着色）
+    Color _tint = -1  // 着色（-1=不着色，其余为 #RRGGBBAA 着色）
     int _cursor = -1                // 鼠标样式（-1=不改变，SystemCursor.POINTER=手型）
     func():void _onClick            // 点击回调
     bool hover = false, _wasHover = false
@@ -70,7 +71,7 @@ export struct ImageView impl Widget {
     func set_radius(float r) { _radius = r }
     func set_border(bool b) { _showBorder = b }
     func set_alpha(int a) { _alpha = a }
-    func set_tint(int color) { _tint = color }
+    func set_tint(Color color) { _tint = color }
     func set_cursor(int c) { _cursor = c }
     func set_enabled(bool e) { enabled = e }
     func set_visible(bool v) { visible = v }
@@ -173,7 +174,7 @@ export struct ImageView impl Widget {
 
         // 边框
         if _showBorder {
-            int bc = _bdrColor
+            Color bc = _bdrColor
             int ba = _brdA
             if hover { bc = theme.brighten(_bdrColor, 30); ba = 255 }
             if not enabled { bc = theme.packColor(theme.colorR(_bdrColor) / 2, theme.colorG(_bdrColor) / 2, theme.colorB(_bdrColor) / 2) }

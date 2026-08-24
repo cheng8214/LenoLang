@@ -21,6 +21,7 @@ import "sdl_gridlayout.leno" as grd; use grd.GridLayout
 import "sdl_edit.leno" as edt; use edt.Edit
 import "sdl_panel.leno" as pnl; use pnl.Panel
 import "sdl_theme.leno" as theme; use theme.Theme
+use theme.Color
 
 export struct ScrollView impl Widget {
     float x = 0.0, y = 0.0, w = 300.0, h = 200.0
@@ -30,9 +31,9 @@ export struct ScrollView impl Widget {
     float _step = 24.0                    // 每格滚轮滚动像素
 
     // 外观
-    int _bgColor = #262830FF
-    int _bdrColor = #505A64FF
-    int _sbColor = #787D8CFF           // 滚动条颜色
+    Color _bgColor = #262830FF
+    Color _bdrColor = #505A64FF
+    Color _sbColor = #787D8CFF           // 滚动条颜色
     float _radius = 8.0
     int _brdA = 200
     bool _drawBorder = true
@@ -119,7 +120,7 @@ export struct ScrollView impl Widget {
         }
         return c.get_h()
     }
-    func set_bg_color(int color) { _bgColor = color }
+    func set_bg_color(Color color) { _bgColor = color }
 
     // ---- 滚动范围与约束 ----
     func _vmax(): float { return if _contentH - h < 0.0 then 0.0 else _contentH - h }

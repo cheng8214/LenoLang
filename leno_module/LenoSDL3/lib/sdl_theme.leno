@@ -20,6 +20,8 @@ import "sdl_widget.leno" as wgt; use wgt.Widget
 // ==================== 颜色类型别名 ====================
 // Color 是 int 的语义别名，内部存储 0xAARRGGBB
 // 用法：Color c = #FF0000FF  或  func setBg(Color c)
+// 注：sdl_core.leno 也有 export alias Color = int，供 sdl_renderer 等底层模块使用
+//     Theme 结构体字段用 int 而非 Color，避免跨模块 alias 解析为 any 的编译器问题
 export alias Color = int
 
 // ==================== 颜色辅助函数 ====================
@@ -67,44 +69,45 @@ export struct Theme {
     string name = "dark"
 
     // === 背景层次（从深到浅） ===
-    Color bg = #262830FF              // 控件主背景
-    Color bgAlt = #2C2E36FF           // 次级背景（面板/斑马纹/非激活标签）
-    Color bgInput = #232332FF         // 输入框背景（略深于主背景）
-    Color bgHover = #464E5CFF         // 悬停行背景
-    Color bgSel = #343A46FF           // 选中行背景（比 hover 更深，非蓝色）
-    Color bgZebra = #2C2E36FF         // 斑马纹行（与 bgAlt 相同）
-    Color bgHeader = #2E3038FF        // 表头/标签栏背景
+    // 注：Theme 字段用 int 而非 Color alias，避免跨模块 alias 解析为 any 的编译器问题
+    int bg = #262830FF              // 控件主背景
+    int bgAlt = #2C2E36FF           // 次级背景（面板/斑马纹/非激活标签）
+    int bgInput = #232332FF         // 输入框背景（略深于主背景）
+    int bgHover = #464E5CFF         // 悬停行背景
+    int bgSel = #343A46FF           // 选中行背景（比 hover 更深，非蓝色）
+    int bgZebra = #2C2E36FF         // 斑马纹行（与 bgAlt 相同）
+    int bgHeader = #2E3038FF        // 表头/标签栏背景
 
     // === 文字 ===
-    Color txt = #EBEBF5FF             // 主文字色
-    Color txtInput = #DCDCF0FF        // 输入框文字
-    Color txtOnAccent = #FFFFFFFF     // 强调色上的白字
-    Color txtDim = #78808CFF          // 暗淡/空状态文字
-    Color txtHeader = #DCE1EBFF       // 表头文字
+    int txt = #EBEBF5FF             // 主文字色
+    int txtInput = #DCDCF0FF        // 输入框文字
+    int txtOnAccent = #FFFFFFFF     // 强调色上的白字
+    int txtDim = #78808CFF          // 暗淡/空状态文字
+    int txtHeader = #DCE1EBFF       // 表头文字
 
     // === 强调/交互色 ===
-    Color accent = #3C96EBFF          // 选中/开关/强调主色
-    Color accentFocus = #64B4FFFF     // 聚焦边框（比 accent 更亮）
-    Color accentBright = #50A0F5FF    // 更亮的强调色（tab 下划线等）
+    int accent = #3C96EBFF          // 选中/开关/强调主色
+    int accentFocus = #64B4FFFF     // 聚焦边框（比 accent 更亮）
+    int accentBright = #50A0F5FF    // 更亮的强调色（tab 下划线等）
 
     // === 边框/分隔 ===
-    Color border = #5A5F6EFF          // 普通边框
-    Color sep = #464A54FF             // 分隔线/连接线
+    int border = #5A5F6EFF          // 普通边框
+    int sep = #464A54FF             // 分隔线/连接线
 
     // === 滚动条 ===
-    Color sb = #787D8CFF              // 滚动条颜色
+    int sb = #787D8CFF              // 滚动条颜色
 
     // === 预设按钮色 ===
-    Color btnPrimary = #3C8CDCFF
-    Color btnDanger = #DC3C3CFF
-    Color btnSuccess = #3CC850FF
-    Color btnWarning = #F0A01EFF
-    Color btnDark = #3C3C46FF
+    int btnPrimary = #3C8CDCFF
+    int btnDanger = #DC3C3CFF
+    int btnSuccess = #3CC850FF
+    int btnWarning = #F0A01EFF
+    int btnDark = #3C3C46FF
 
     // === Tooltip ===
-    Color tipBg = #262830FF
-    Color tipTxt = #E8EAF2FF
-    Color tipBrd = #6E7384FF
+    int tipBg = #262830FF
+    int tipTxt = #E8EAF2FF
+    int tipBrd = #6E7384FF
 
     // === 字体 ===
     float fontSize = 15.0

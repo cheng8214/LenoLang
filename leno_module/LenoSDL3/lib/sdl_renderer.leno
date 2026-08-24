@@ -4,7 +4,7 @@ import ffi
 import maths
 import "sdl_core.leno" as core
 import "sdl_font.leno" as font
-use core.(sdl3, SDL_FRect, SDL_Color, SDL_FColor, SDL_FPoint, SDL_Point, SDL_Rect, SDL_Vertex, FColor, Size, FSize, ScaleMode)
+use core.(sdl3, SDL_FRect, SDL_Color, SDL_FColor, SDL_FPoint, SDL_Point, SDL_Rect, SDL_Vertex, Color, FColor, Size, FSize, ScaleMode)
 use font.(Font, TextTexture)
 
 // 模块加载时一次性初始化 DLL，后续直接用 _lib
@@ -276,7 +276,7 @@ export struct Renderer {
 
 
     // 设置绘制颜色（#RRGGBBAA 打包整数，Alpha 在最高字节）
-    func setColor(int color): bool {
+    func setColor(Color color): bool {
         int aa = (color >> 24) & 0xFF
         int rr = (color >> 16) & 0xFF
         int gg = (color >> 8) & 0xFF
@@ -300,10 +300,10 @@ export struct Renderer {
     }
 
     // 获取当前绘制颜色（打包为 0xAARRGGBB 整数）
-    func getColor(): int {
+    func getColor(): Color {
         SDL_Color c = SDL_Color.malloc()
         _lib.SDL_GetRenderDrawColor(handle, &c.r, &c.g, &c.b, &c.a)
-        int d = (c.a << 24) | (c.r << 16) | (c.g << 8) | c.b
+        Color d = (c.a << 24) | (c.r << 16) | (c.g << 8) | c.b
         c.free(); return d
     }
 
@@ -626,7 +626,7 @@ export struct Renderer {
     // SSAA 激活时：临时把字号放大到 _ssaaScale 倍渲染，使文字纹理本身为 2x 分辨率，
     // 再按逻辑尺寸绘制（被 setScale 映射回 1:1 的离屏像素），下采样后清晰不糊。
     // 文字纹理经 Font 内部缓存（_getCachedTex），命中时跳过每帧 2x 栅格化与 GPU 上传，显著省 CPU/带宽。
-    func drawText(Font f, string text, float x, float y, int color) {
+    func drawText(Font f, string text, float x, float y, Color color) {
         _flushBatches()
         int r = (color >> 16) & 0xFF
         int g = (color >> 8) & 0xFF
@@ -658,14 +658,14 @@ export struct Renderer {
     }
 
     // 居中绘制文字（在 [x, x+w] 范围内水平居中）
-    func drawTextCentered(Font f, string text, float x, float w, float y, int color) {
+    func drawTextCentered(Font f, string text, float x, float w, float y, Color color) {
         var ms = f.measureString(text)
         float cx = x + (w - ms.w) / 2.0
         drawText(f, text, cx, y, color)
     }
 
     // 设置背景色并清屏（setColor + clear 一步完成）
-    func clearColor(int color) {
+    func clearColor(Color color) {
         setColor(color); clear()
     }
 
@@ -681,7 +681,7 @@ export struct Renderer {
     }
 
     // 设置纹理颜色调制（打包色 0xAARRGGBB，提取 RGB 分量传给 SDL）
-    func setTextureColor(Ptr[u8] texture, int color): bool {
+    func setTextureColor(Ptr[u8] texture, Color color): bool {
         int r = (color >> 16) & 0xFF
         int g = (color >> 8) & 0xFF
         int b = color & 0xFF

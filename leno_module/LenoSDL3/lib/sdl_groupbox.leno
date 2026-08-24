@@ -11,6 +11,7 @@ import "sdl_layout.leno" as lay; use lay.HBox; use lay.VBox; use lay.AnchorBox
 import "sdl_table.leno" as tbl; use tbl.Table
 import "sdl_treeview.leno" as tvlib; use tvlib.TreeView
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
+use theme.Color
 
 export struct GroupBox impl Widget, Themeable {
     float x = 0.0, y = 0.0, w = 300.0, h = 200.0
@@ -22,9 +23,9 @@ export struct GroupBox impl Widget, Themeable {
     Array[Widget] children = []
     Widget? _layoutChild          // 自动布局子控件：每帧自动同步到 GroupBox 内部区域（减去 padding）
     float _layPad = 0.0          // _layoutChild 的内边距
-    int _bgColor = #2C2E36FF        // 背景色
-    int _bdrColor = #5A5F6EFF    // 边框色
-    int _titleColor = #C8CDD7FF  // 标题文字色
+    Color _bgColor = #2C2E36FF        // 背景色
+    Color _bdrColor = #5A5F6EFF    // 边框色
+    Color _titleColor = #C8CDD7FF  // 标题文字色
     int _brdA = 200                            // 边框透明度
     float _radius = 8.0
     float _titlePad = 8.0                      // 标题左右间距
@@ -107,7 +108,7 @@ export struct GroupBox impl Widget, Themeable {
         }
     }
 
-    func set_bg_color(int color) { _bgColor = color }
+    func set_bg_color(Color color) { _bgColor = color }
     func set_enabled(bool e) { enabled = e }
     func set_visible(bool v) { visible = v }
     func is_visible(): bool { return visible }
