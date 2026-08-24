@@ -633,9 +633,19 @@
                                         fields[field_count].name[field_len] = '\0';
                                         fields[field_count].type = ft;
                                         fields[field_count].struct_name = NULL;
-                                        // 如果是未识别的自定义类型，检查是否是 clib
+                                        // 如果是未识别的自定义类型，检查是否是 alias、clib 或 struct
                                         if (ft == TYPE_ANY) {
-                                            if (is_known_clib(type_str, clib_names, clib_name_count)) {
+                                            // ★ 先检查本地 alias（如 Color = int）
+                                            //   alias 在 scan_alias.inc 中注册到 local_alias 表，
+                                            //   若匹配则直接用 alias 底层类型的 TypeKind
+                                            TypeInfo* alias_ti = FIND_LOCAL_ALIAS(type_str);
+                                            if (alias_ti) {
+                                                fields[field_count].type = alias_ti->kind;
+                                                // alias 可能指向 struct/face/clib（如 Node = TreeNode）
+                                                if (alias_ti->kind == TYPE_STRUCT && alias_ti->struct_name) {
+                                                    fields[field_count].struct_name = strdup(alias_ti->struct_name);
+                                                }
+                                            } else if (is_known_clib(type_str, clib_names, clib_name_count)) {
                                                 fields[field_count].type = TYPE_CLIB;
                                                 fields[field_count].struct_name = strdup(type_str);
                                             } else if (is_known_struct(type_str, struct_names, struct_name_count)) {

@@ -18,6 +18,16 @@
                 for (int i = 0; i < ast->u.struct_def.field_count; i++) {
                     TypeInfo* field_type = ast->u.struct_def.field_types[i];
 
+                    // ★ 解析字段类型中的 alias（如 Color = int）
+                    //   跨模块 use 导入的 alias 在 parser 阶段可能未传导到 parser alias 表，
+                    //   导致字段类型保留为 TYPE_STRUCT + struct_name="Color"。
+                    //   此处与函数参数/变量声明一样调用 resolve_alias_in_type，
+                    //   通过语义作用域中注册的 SYM_TYPE 符号解析为底层类型。
+                    if (field_type) {
+                        resolve_alias_in_type(s, &ast->u.struct_def.field_types[i], ast->line);
+                        field_type = ast->u.struct_def.field_types[i]; // resolve 后指针可能变
+                    }
+
                     // struct 字段不能使用 var 或 any，必须有具体类型
                     if (field_type && (field_type->kind == TYPE_INFER || field_type->kind == TYPE_ANY)) {
                         char msg[BUFFER_MEDIUM];
