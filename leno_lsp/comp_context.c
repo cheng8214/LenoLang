@@ -23,6 +23,100 @@
 
 extern char* read_module_file(const char* file_path, const char* current_file);
 
+// 检查指定位置是否在注释中（行注释 // 或块注释 /* */）
+bool is_inside_comment_at(const char* content, int offset) {
+    if (!content || offset <= 0) return false;
+    
+    int len = (int)strlen(content);
+    if (offset > len) offset = len;
+    
+    bool in_line_comment = false;   // // 注释
+    bool in_block_comment = false;  // /* */ 注释
+    bool in_string = false;         // 字符串中不检测注释标记
+    char quote_char = 0;
+    
+    for (int i = 0; i < offset && i < len; i++) {
+        char c = content[i];
+        char next_c = (i + 1 < len) ? content[i + 1] : 0;
+        
+        if (in_string) {
+            if (c == '\\') {
+                i++;  // 跳过转义字符
+                continue;
+            }
+            if (c == quote_char) {
+                in_string = false;
+                quote_char = 0;
+            }
+            continue;
+        }
+        
+        if (in_line_comment) {
+            if (c == '\n') {
+                in_line_comment = false;
+            }
+            continue;
+        }
+        
+        if (in_block_comment) {
+            if (c == '*' && next_c == '/') {
+                in_block_comment = false;
+                i++;  // 跳过 '/'
+            }
+            continue;
+        }
+        
+        // 不在注释或字符串中，检测注释/字符串开始
+        if (c == '"' || c == '\'') {
+            quote_char = c;
+            in_string = true;
+        } else if (c == '/' && next_c == '/') {
+            in_line_comment = true;
+            i++;
+        } else if (c == '/' && next_c == '*') {
+            in_block_comment = true;
+            i++;
+        }
+    }
+    
+    return in_line_comment || in_block_comment;
+}
+
+// 检查指定位置是否在字符串字面量中
+bool is_inside_string_literal_at(const char* content, int offset) {
+    if (!content || offset <= 0) return false;
+    
+    int len = (int)strlen(content);
+    if (offset > len) offset = len;
+    
+    bool in_string = false;
+    char quote_char = 0;
+    
+    for (int i = 0; i < offset && i < len; i++) {
+        char c = content[i];
+        
+        if (in_string) {
+            if (c == '\\') {
+                i++;  // 跳过转义字符
+                continue;
+            }
+            if (c == quote_char) {
+                in_string = false;
+                quote_char = 0;
+            }
+            continue;
+        }
+        
+        // 检查字符串开始
+        if (c == '"' || c == '\'') {
+            quote_char = c;
+            in_string = true;
+        }
+    }
+    
+    return in_string;
+}
+
 // 字符串字面量检测
 static int is_string_literal_before_dot(const char* content, int dot_pos) {
     if (dot_pos <= 0) return -1;
@@ -646,6 +740,12 @@ CompletionContextInfo comp_detect_context(
     
     int offset = lsp_position_to_offset(content, pos);
     if (offset <= 0) return ctx;
+    
+    // 检查光标是否在注释中 — 注释中不提供补全
+    if (is_inside_comment_at(content, offset)) {
+        ctx.type = CTX_NONE;
+        return ctx;
+    }
     
     // 获取光标前单词
     char* prefix = get_word_before_cursor(content, pos);

@@ -63,6 +63,14 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
     // === 上下文特定补全 ===
     // 基础补全（关键字/类型/内置）只在需要时添加，避免污染点访问上下文
     switch (ctx.type) {
+        case CTX_NONE:
+            // 注释/字符串等非代码位置：不提供任何补全
+            comp_context_free(&ctx);
+            free_import_aliases(import_aliases, import_count);
+            comp_set_destroy(set);
+            *count = 0;
+            return NULL;
+            
         case CTX_NORMAL:
             // 普通位置：关键字 + 类型 + 内置函数 + 符号
             comp_provider_add_keywords(set, NULL);

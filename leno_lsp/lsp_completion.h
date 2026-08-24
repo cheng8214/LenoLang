@@ -35,6 +35,7 @@ typedef enum {
 /* ========== 补全上下文类型 ========== */
 
 typedef enum {
+    CTX_NONE = -1,            // 不提供补全（注释/字符串等非代码位置）
     CTX_NORMAL = 0,           // 普通代码位置
     CTX_TYPE_ANNOTATION,      // 类型注解位置 (var x: |)
     CTX_NEW,                  // new 关键字后
@@ -294,6 +295,14 @@ bool comp_provider_add_cstruct_type_methods(
     int import_count,
     ImportAlias* import_aliases
 );
+
+/* ========== 注释/字符串检测（供上下文检测使用） ========== */
+
+// 检查指定位置是否在注释中（行注释 // 或块注释 /* */）
+bool is_inside_comment_at(const char* content, int offset);
+
+// 检查指定位置是否在字符串字面量中
+bool is_inside_string_literal_at(const char* content, int offset);
 
 #ifdef __cplusplus
 }

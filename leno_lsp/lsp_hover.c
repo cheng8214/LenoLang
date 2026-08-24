@@ -636,6 +636,348 @@ static char* generate_struct_method_doc(const char* struct_name, const char* met
 static char* generate_struct_method_doc_from_modules(const char* struct_name, const char* method_name,
                                                       const char* content, const char* file_path);
 
+// 生成 struct 类型定义的详细悬停信息（包含字段列表和方法列表）
+static char* generate_struct_definition_hover(CompilerContext* ctx, const char* struct_name) {
+    if (!ctx || !struct_name) return NULL;
+    
+    ObjStructDef* sdef = struct_def_find(struct_name);
+    if (!sdef) return NULL;
+    
+    // 计算需要的缓冲区大小
+    int field_count = sdef->field_count;
+    int method_count = sdef->method_count;
+    
+    // 构建字段列表
+    char fields_str[2048] = {0};
+    int foff = 0;
+    for (int i = 0; i < field_count && i < 20; i++) {
+        StructFieldInfo* f = &sdef->fields[i];
+        const char* ftype_str = f->struct_type_name ? f->struct_type_name : type_kind_to_string(f->type);
+        if (foff > 0) foff += snprintf(fields_str + foff, sizeof(fields_str) - foff, "\n    ");
+        foff += snprintf(fields_str + foff, sizeof(fields_str) - foff, "%s %s", ftype_str, f->name);
+    }
+    if (field_count > 20) {
+        foff += snprintf(fields_str + foff, sizeof(fields_str) - foff, "\n    // ... %d more", field_count - 20);
+    }
+    if (field_count == 0) {
+        snprintf(fields_str, sizeof(fields_str), "    // (无字段)");
+    }
+    
+    // 构建方法列表
+    char methods_str[2048] = {0};
+    int moff = 0;
+    for (int i = 0; i < method_count && i < 20; i++) {
+        StructMethodInfo* m = &sdef->methods[i];
+        if (m->func && m->func->name) {
+            int f_arity = m->func->arity;
+            // 构建参数类型列表
+            char params_str[256] = {0};
+            int poff = 0;
+            if (f_arity > 0 && m->func->param_types) {
+                for (int pi = 0; pi < f_arity && pi < 10; pi++) {
+                    if (pi > 0) poff += snprintf(params_str + poff, sizeof(params_str) - poff, ", ");
+                    poff += snprintf(params_str + poff, sizeof(params_str) - poff, "%s", type_kind_to_string(m->func->param_types[pi]));
+                }
+            }
+            if (moff > 0) moff += snprintf(methods_str + moff, sizeof(methods_str) - moff, "\n    ");
+            moff += snprintf(methods_str + moff, sizeof(methods_str) - moff, "func %s(%s)", m->name, params_str);
+        } else {
+            if (moff > 0) moff += snprintf(methods_str + moff, sizeof(methods_str) - moff, "\n    ");
+            moff += snprintf(methods_str + moff, sizeof(methods_str) - moff, "func %s(...)", m->name);
+        }
+    }
+    if (method_count == 0) {
+        snprintf(methods_str, sizeof(methods_str), "    // (无方法)");
+    }
+    
+    // 泛型参数
+    char tparams_str[128] = {0};
+    if (sdef->type_param_count > 0) {
+        int tpoff = 0;
+        tpoff += snprintf(tparams_str + tpoff, sizeof(tparams_str) - tpoff, "[");
+        for (int i = 0; i < sdef->type_param_count; i++) {
+            if (i > 0) tpoff += snprintf(tparams_str + tpoff, sizeof(tparams_str) - tpoff, ", ");
+            tpoff += snprintf(tparams_str + tpoff, sizeof(tparams_str) - tpoff, "%s", sdef->type_param_names[i]);
+        }
+        tpoff += snprintf(tparams_str + tpoff, sizeof(tparams_str) - tpoff, "]");
+    }
+    
+    // impl 列表
+    char impls_str[256] = {0};
+    if (sdef->impl_count > 0) {
+        int ioff = 0;
+        ioff += snprintf(impls_str + ioff, sizeof(impls_str) - ioff, " impl ");
+        for (int i = 0; i < sdef->impl_count; i++) {
+            if (i > 0) ioff += snprintf(impls_str + ioff, sizeof(impls_str) - ioff, ", ");
+            ioff += snprintf(impls_str + ioff, sizeof(impls_str) - ioff, "%s", sdef->impl_names[i]);
+        }
+    }
+    
+    int len = 4096 + strlen(struct_name) + strlen(fields_str) + strlen(methods_str) + strlen(tparams_str) + strlen(impls_str);
+    char* info = (char*)malloc(len);
+    if (!info) return NULL;
+    
+    snprintf(info, len,
+             "**struct %s%s**\n\n"
+             "```leno\n"
+             "struct %s%s%s {\n"
+             "%s\n"
+             "}\n"
+             "```\n\n"
+             "%d 个字段, %d 个方法\n"
+             "```\n%s\n```",
+             struct_name, tparams_str,
+             struct_name, tparams_str, impls_str,
+             fields_str,
+             field_count, method_count,
+             methods_str);
+    
+    return info;
+}
+
+// 生成 cstruct 类型定义的详细悬停信息（包含字段列表、偏移量、大小、对齐）
+static char* generate_cstruct_definition_hover(CompilerContext* ctx, const char* cstruct_name) {
+    if (!ctx || !cstruct_name) return NULL;
+    
+    ObjCStructDef* cdef = cstruct_def_find(cstruct_name);
+    if (!cdef) return NULL;
+    
+    // 构建字段列表（包含偏移量）
+    char fields_str[2048] = {0};
+    int foff = 0;
+    for (int i = 0; i < cdef->field_count && i < 30; i++) {
+        CStructFieldInfo* f = &cdef->fields[i];
+        const char* ftype_str = f->struct_name ? f->struct_name : type_kind_to_string(f->type);
+        if (foff > 0) foff += snprintf(fields_str + foff, sizeof(fields_str) - foff, "\n    ");
+        if (f->array_dim > 0) {
+            foff += snprintf(fields_str + foff, sizeof(fields_str) - foff,
+                             "%s %s[%d]  // offset=%d, size=%d",
+                             ftype_str, f->name, f->array_dim, f->offset, f->size);
+        } else {
+            foff += snprintf(fields_str + foff, sizeof(fields_str) - foff,
+                             "%s %s  // offset=%d, size=%d",
+                             ftype_str, f->name, f->offset, f->size);
+        }
+    }
+    if (cdef->field_count == 0) {
+        snprintf(fields_str, sizeof(fields_str), "    // (无字段)");
+    }
+    
+    // 属性修饰符
+    char attrs_str[128] = {0};
+    if (cdef->is_packed && cdef->explicit_align > 0) {
+        snprintf(attrs_str, sizeof(attrs_str), "packed align(%d) ", cdef->explicit_align);
+    } else if (cdef->is_packed) {
+        snprintf(attrs_str, sizeof(attrs_str), "packed ");
+    } else if (cdef->explicit_align > 0) {
+        snprintf(attrs_str, sizeof(attrs_str), "align(%d) ", cdef->explicit_align);
+    }
+    
+    int len = 4096 + strlen(cstruct_name) + strlen(fields_str) + strlen(attrs_str);
+    char* info = (char*)malloc(len);
+    if (!info) return NULL;
+    
+    snprintf(info, len,
+             "**cstruct %s**\n\n"
+             "```leno\n"
+             "%scstruct %s {\n"
+             "%s\n"
+             "}\n"
+             "```\n\n"
+             "**大小**: %d 字节 | **对齐**: %d 字节 | **字段数**: %d",
+             cstruct_name,
+             attrs_str, cstruct_name,
+             fields_str,
+             cdef->total_size, cdef->alignment, cdef->field_count);
+    
+    return info;
+}
+
+// 生成 enum 类型定义的详细悬停信息（包含成员列表）
+static char* generate_enum_definition_hover(CompilerContext* ctx, const char* enum_name) {
+    if (!ctx || !enum_name) return NULL;
+    
+    ObjEnumDef* edef = enum_def_find(enum_name);
+    if (!edef) return NULL;
+    
+    // 构建成员列表
+    char members_str[2048] = {0};
+    int moff = 0;
+    for (int i = 0; i < edef->member_count && i < 30; i++) {
+        EnumMemberInfo* m = &edef->members[i];
+        if (moff > 0) moff += snprintf(members_str + moff, sizeof(members_str) - moff, "\n    ");
+        moff += snprintf(members_str + moff, sizeof(members_str) - moff, "%s = %lld", m->name, (long long)m->value);
+    }
+    if (edef->member_count == 0) {
+        snprintf(members_str, sizeof(members_str), "    // (无成员)");
+    }
+    
+    int len = 2048 + strlen(enum_name) + strlen(members_str);
+    char* info = (char*)malloc(len);
+    if (!info) return NULL;
+    
+    snprintf(info, len,
+             "**enum %s**\n\n"
+             "```leno\n"
+             "enum %s {\n"
+             "%s\n"
+             "}\n"
+             "```\n\n"
+             "%d 个成员",
+             enum_name,
+             enum_name,
+             members_str,
+             edef->member_count);
+    
+    return info;
+}
+
+// 生成 face 接口定义的详细悬停信息（包含方法签名列表）
+static char* generate_face_definition_hover(CompilerContext* ctx, const char* face_name) {
+    if (!ctx || !face_name) return NULL;
+    
+    ObjFaceDef* fdef = face_def_find(face_name);
+    if (!fdef) return NULL;
+    
+    // 构建方法签名列表
+    char methods_str[2048] = {0};
+    int moff = 0;
+    for (int i = 0; i < fdef->method_count && i < 30; i++) {
+        FaceMethodInfo* m = &fdef->methods[i];
+        const char* ret_str = m->return_type ? type_kind_to_string(m->return_type->kind) : "void";
+        
+        // 构建参数列表
+        char params_str[256] = {0};
+        int poff = 0;
+        for (int j = 0; j < m->param_count && j < 10; j++) {
+            if (j > 0) poff += snprintf(params_str + poff, sizeof(params_str) - poff, ", ");
+            poff += snprintf(params_str + poff, sizeof(params_str) - poff, "%s", type_kind_to_string(m->param_types[j]->kind));
+        }
+        
+        if (moff > 0) moff += snprintf(methods_str + moff, sizeof(methods_str) - moff, "\n    ");
+        moff += snprintf(methods_str + moff, sizeof(methods_str) - moff, "func %s(%s): %s", m->name, params_str, ret_str);
+    }
+    if (fdef->method_count == 0) {
+        snprintf(methods_str, sizeof(methods_str), "    // (无方法)");
+    }
+    
+    // 泛型参数
+    char tparams_str[128] = {0};
+    if (fdef->type_param_count > 0) {
+        int tpoff = 0;
+        tpoff += snprintf(tparams_str + tpoff, sizeof(tparams_str) - tpoff, "[");
+        for (int i = 0; i < fdef->type_param_count; i++) {
+            if (i > 0) tpoff += snprintf(tparams_str + tpoff, sizeof(tparams_str) - tpoff, ", ");
+            tpoff += snprintf(tparams_str + tpoff, sizeof(tparams_str) - tpoff, "%s", fdef->type_param_names[i]);
+        }
+        tpoff += snprintf(tparams_str + tpoff, sizeof(tparams_str) - tpoff, "]");
+    }
+    
+    int len = 2048 + strlen(face_name) + strlen(methods_str) + strlen(tparams_str);
+    char* info = (char*)malloc(len);
+    if (!info) return NULL;
+    
+    snprintf(info, len,
+             "**face %s%s**\n\n"
+             "```leno\n"
+             "face %s%s {\n"
+             "%s\n"
+             "}\n"
+             "```\n\n"
+             "%d 个方法",
+             face_name, tparams_str,
+             face_name, tparams_str,
+             methods_str,
+             fdef->method_count);
+    
+    return info;
+}
+
+// 生成 clib 定义悬停信息（包含函数列表）
+static char* generate_clib_definition_hover(CompilerContext* ctx, const char* clib_name) {
+    if (!ctx || !clib_name) return NULL;
+    (void)ctx;
+    
+    // 从 AST 中查找 clib 定义
+    // clib 的信息在 struct_def_find / cstruct_def_find 中没有，
+    // 但可以通过编译器的 AST 获取
+    // 这里简单返回基本信息
+    int len = 512 + strlen(clib_name);
+    char* info = (char*)malloc(len);
+    if (!info) return NULL;
+    
+    snprintf(info, len,
+             "**clib %s**\n\n"
+             "```leno\n"
+             "clib %s\n"
+             "```\n\n"
+             "C 库绑定",
+             clib_name, clib_name);
+    
+    return info;
+}
+
+// 从 AST 中提取函数定义的完整签名（包含参数名和类型）
+static char* extract_func_signature_from_ast(CompilerContext* ctx, const char* func_name) {
+    if (!ctx || !ctx->ast_root || !func_name) return NULL;
+    
+    Ast* root = ctx->ast_root;
+    if (root->kind != AST_BLOCK || !root->u.block.items) return NULL;
+    
+    for (int i = 0; i < root->u.block.count; i++) {
+        Ast* stmt = root->u.block.items[i];
+        if (!stmt) continue;
+        
+        // 检查是否是 export 语句中嵌套的函数
+        if (stmt->kind == AST_EXPORT) {
+            Ast* inner = stmt->u.export.decl;
+            if (inner && inner->kind == AST_FUNC_DEF && inner->u.func.name &&
+                strcmp(inner->u.func.name, func_name) == 0) {
+                // 构建签名
+                char sig[1024] = {0};
+                int off = 0;
+                off += snprintf(sig + off, sizeof(sig) - off, "func %s(", func_name);
+                for (int j = 0; j < inner->u.func.pcnt && j < 15; j++) {
+                    if (j > 0) off += snprintf(sig + off, sizeof(sig) - off, ", ");
+                    const char* pname = inner->u.func.params[j];
+                    const char* ptype = inner->u.func.param_types[j] ? 
+                        type_kind_to_string(inner->u.func.param_types[j]->kind) : "any";
+                    off += snprintf(sig + off, sizeof(sig) - off, "%s %s", ptype, pname);
+                }
+                off += snprintf(sig + off, sizeof(sig) - off, ")");
+                if (inner->u.func.return_type) {
+                    const char* rtype = type_kind_to_string(inner->u.func.return_type->kind);
+                    off += snprintf(sig + off, sizeof(sig) - off, ": %s", rtype);
+                }
+                return strdup(sig);
+            }
+        }
+        
+        // 直接的函数定义
+        if (stmt->kind == AST_FUNC_DEF && stmt->u.func.name &&
+            strcmp(stmt->u.func.name, func_name) == 0) {
+            char sig[1024] = {0};
+            int off = 0;
+            off += snprintf(sig + off, sizeof(sig) - off, "func %s(", func_name);
+            for (int j = 0; j < stmt->u.func.pcnt && j < 15; j++) {
+                if (j > 0) off += snprintf(sig + off, sizeof(sig) - off, ", ");
+                const char* pname = stmt->u.func.params[j];
+                const char* ptype = stmt->u.func.param_types[j] ? 
+                    type_kind_to_string(stmt->u.func.param_types[j]->kind) : "any";
+                off += snprintf(sig + off, sizeof(sig) - off, "%s %s", ptype, pname);
+            }
+            off += snprintf(sig + off, sizeof(sig) - off, ")");
+            if (stmt->u.func.return_type) {
+                const char* rtype = type_kind_to_string(stmt->u.func.return_type->kind);
+                off += snprintf(sig + off, sizeof(sig) - off, ": %s", rtype);
+            }
+            return strdup(sig);
+        }
+    }
+    
+    return NULL;
+}
+
 // 从编译器获取符号悬停信息
 /* GCC -Wformat-truncation 误报：snprintf 的 size 参数已确保足够大，
    但 GCC 无法推断 strlen 结果的上界而报警。此处局部禁用。 */
@@ -817,12 +1159,12 @@ static char* get_symbol_hover_from_compiler(const char* content, const char* wor
             if (info) {
                 snprintf(info, 4096, "**%s**\n\n"
                          "```leno\n"
-                         "%.100s: %.500s\n"
+                         "%.500s %.100s\n"
                          "```\n\n"
                          "%.100s 字段 (%.100s)",
                          word,
-                         word,
                          type_str ? type_str : "unknown",
+                         word,
                          current_struct_name,
                          current_struct_name);
             }
@@ -932,6 +1274,41 @@ static char* get_symbol_hover_from_compiler(const char* content, const char* wor
 
     // 构建悬停信息
     const char* type_str = type_to_string(sym->type);
+    
+    // 对类型符号，生成详细的类型定义信息（包含字段列表、方法列表等）
+    if (sym->kind == SYM_STRUCT) {
+        char* def_info = generate_struct_definition_hover(&ctx, word);
+        if (def_info) {
+            compiler_context_cleanup(&ctx);
+            return def_info;
+        }
+    } else if (sym->kind == SYM_CSTRUCT) {
+        char* def_info = generate_cstruct_definition_hover(&ctx, word);
+        if (def_info) {
+            compiler_context_cleanup(&ctx);
+            return def_info;
+        }
+    } else if (sym->kind == SYM_ENUM) {
+        char* def_info = generate_enum_definition_hover(&ctx, word);
+        if (def_info) {
+            compiler_context_cleanup(&ctx);
+            return def_info;
+        }
+    } else if (sym->kind == SYM_TYPE) {
+        // SYM_TYPE 可能是 face 或 alias
+        char* def_info = generate_face_definition_hover(&ctx, word);
+        if (def_info) {
+            compiler_context_cleanup(&ctx);
+            return def_info;
+        }
+    } else if (sym->kind == SYM_CLIB) {
+        char* def_info = generate_clib_definition_hover(&ctx, word);
+        if (def_info) {
+            compiler_context_cleanup(&ctx);
+            return def_info;
+        }
+    }
+    
     size_t info_len = 512 + strlen(word) + (type_str ? strlen(type_str) : 0);
     char* info = (char*)malloc(info_len);
     if (!info) {
@@ -980,18 +1357,41 @@ static char* get_symbol_hover_from_compiler(const char* content, const char* wor
 
         // 对函数类型特殊处理：显示 "func xx(params):ret" 而非 "xx: func(params):ret"
         bool is_func_sym = (sym->kind == SYM_GLOBAL_FUNC || sym->kind == SYM_MODULE);
-        if (is_func_sym && type_str && strncmp(type_str, "func", 4) == 0) {
-            // type_str 格式: "func(params):ret" → 改为 "func xx(params):ret"
-            const char* after_func = type_str + 4;  // 跳过 "func"，指向 "(" 或其他
-            snprintf(info, info_len, "**%s**\n\n"
-                     "```leno\n"
-                     "func %s%s\n"
-                     "```\n\n"
-                     "%s",
-                     word,
-                     word,
-                     after_func,
-                     kind_str);
+        if (is_func_sym) {
+            // 优先从 AST 提取完整签名（包含参数名）
+            char* ast_sig = extract_func_signature_from_ast(&ctx, word);
+            if (ast_sig) {
+                snprintf(info, info_len, "**%s**\n\n"
+                         "```leno\n"
+                         "%s\n"
+                         "```\n\n"
+                         "%s",
+                         word,
+                         ast_sig,
+                         kind_str);
+                free(ast_sig);
+            } else if (type_str && strncmp(type_str, "func", 4) == 0) {
+                // 回退：type_str 格式: "func(params):ret" → 改为 "func xx(params):ret"
+                const char* after_func = type_str + 4;  // 跳过 "func"，指向 "(" 或其他
+                snprintf(info, info_len, "**%s**\n\n"
+                         "```leno\n"
+                         "func %s%s\n"
+                         "```\n\n"
+                         "%s",
+                         word,
+                         word,
+                         after_func,
+                         kind_str);
+            } else {
+                snprintf(info, info_len, "**%s**\n\n"
+                         "```leno\n"
+                         "%s %s\n"
+                         "```\n\n"
+                         "%s",
+                         word,
+                         type_str ? type_str : "unknown", word,
+                         kind_str);
+            }
         } else {
             snprintf(info, info_len, "**%s**\n\n"
                      "```leno\n"
@@ -1882,8 +2282,8 @@ static char* get_module_symbol_hover(const char* content, const char* word, cons
                 result = (char*)malloc(len);
                 if (result) {
                     const char* tstr = var->struct_name ? var->struct_name : type_kind_to_string(var->type);
-                    snprintf(result, len, "**%s**\n\n```leno\n%s: %s\n```\n\n模块导出的%s变量",
-                             word, word, tstr, var->is_const ? "常量 " : " ");
+                    snprintf(result, len, "**%s**\n\n```leno\n%s %s\n```\n\n模块导出的%s变量",
+                             word, tstr, word, var->is_const ? "常量 " : " ");
                 }
             }
         }
@@ -1910,8 +2310,8 @@ static char* get_module_symbol_hover(const char* content, const char* word, cons
                 int len = 1024 + strlen(word);
                 result = (char*)malloc(len);
                 if (result) {
-                    snprintf(result, len, "**%s**\n\n```leno\n%s: %s\n```\n\n模块导出的类型别名",
-                             word, word, type_kind_to_string(als->type_info->kind));
+                snprintf(result, len, "**%s**\n\n```leno\nalias %s = %s\n```\n\n模块导出的类型别名",
+                         word, word, type_kind_to_string(als->type_info->kind));
                 }
             }
         }
@@ -1946,8 +2346,8 @@ static char* get_module_symbol_hover(const char* content, const char* word, cons
                         result = (char*)malloc(len);
                         if (result) {
                             const char* fts = st->fields[fi].struct_name ? st->fields[fi].struct_name : type_kind_to_string(st->fields[fi].type);
-                            snprintf(result, len, "**%s**\n\n```leno\n%s: %s\n```\n\n%s 字段 (%s)",
-                                     word, word, fts, type_name, type_name);
+                            snprintf(result, len, "**%s**\n\n```leno\n%s %s\n```\n\n%s 字段 (%s)",
+                                     word, fts, word, type_name, type_name);
                         }
                         break;
                     }
@@ -3636,10 +4036,10 @@ static char* handle_array_index_member_hover(const char* content, const char* wo
                                                     if (result) {
                                                         snprintf(result, info_len, "**%s**\n\n"
                                                                  "```leno\n"
-                                                                 "%s: %s\n"
+                                                                 "%s %s\n"
                                                                  "```\n\n"
                                                                  "%s 字段",
-                                                                 member_name, member_name, fts, elem_name);
+                                                                 member_name, fts, member_name, elem_name);
                                                     }
                                                     break;
                                                 }
@@ -3669,10 +4069,10 @@ static char* handle_array_index_member_hover(const char* content, const char* wo
                                                 if (result) {
                                                     snprintf(result, info_len, "**%s**\n\n"
                                                              "```leno\n"
-                                                             "%s: %s\n"
+                                                             "%s %s\n"
                                                              "```\n\n"
                                                              "%s 字段",
-                                                             member_name, member_name, fts, elem_name);
+                                                             member_name, fts, member_name, elem_name);
                                                 }
                                                 break;
                                             }
@@ -3934,8 +4334,8 @@ char* lsp_get_hover_info(const char* content, LspPosition pos, const char* file_
                         size_t info_len = strlen(module) + strlen(var_type) + 256;
                         info = (char*)malloc(info_len);
                         if (info) {
-                            snprintf(info, info_len, "**%s**\n\n```leno\n%s: %s\n```\n\n变量",
-                                     module, module, var_type);
+                        snprintf(info, info_len, "**%s**\n\n```leno\n%s %s\n```\n\n变量",
+                                 module, var_type, module);
                         }
                         free(var_type);
                     }
