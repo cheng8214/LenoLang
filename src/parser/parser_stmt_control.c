@@ -762,6 +762,16 @@ Ast* parse_switch_stmt(Parser* p) {
                         bvar[p->lex.current.len] = '\0';
                         cases[case_count].guard_bind_var = bvar;
                         lexer_next(&p->lex); // 消费绑定变量名
+
+                        // switch case 不支持 and 守卫（switch 的 codegen 结构无法 fallthrough）
+                        // 如需"类型匹配 + 额外条件"，请用 if-else if 链
+                        if (p->lex.current.type == TOK_AND) {
+                            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                                "switch case 不支持 and 守卫（case is Type => var and ...），请改用 if-else if 链");
+                            free(switch_var_name);
+                            free(cases);
+                            return NULL;
+                        }
                     }
                 }
             } else {
