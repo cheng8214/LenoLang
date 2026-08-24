@@ -141,10 +141,10 @@ export struct Button impl Widget, Themeable {
         if opts.get("type") is string => tp { _btnType = tp; _apply_type(tp) }
 
         // 颜色：opts 未传则保持主题色（_bgColor 等已在上面从 Theme 赋值）
-        _bgColor = opts.get("bg_color", _bgColor)
-        _txtColor = opts.get("text_color", _txtColor)
-        _hovColor = opts.get("hover_color", _hovColor)
-        _prColor = opts.get("pressed_color", _prColor)
+        if opts.get("bg_color") is Color => t { _bgColor = t }
+        if opts.get("text_color") is Color => t { _txtColor = t }
+        if opts.get("hover_color") is Color => t { _hovColor = t }
+        if opts.get("pressed_color") is Color => t { _prColor = t }
 
         // 外观开关
         _showShadow = opts.get("shadow", true)

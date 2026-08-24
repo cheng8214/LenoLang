@@ -61,9 +61,9 @@ export struct GroupBox impl Widget, Themeable {
         _clip = opts.get("clip", true)
         enabled = opts.get("enabled", true)
         visible = opts.get("visible", true)
-        _bgColor = opts.get("bg_color", _bgColor)
-        _bdrColor = opts.get("border_color", _bdrColor)
-        _titleColor = opts.get("title_color", _titleColor)
+        if opts.get("bg_color") is Color => t { _bgColor = t }
+        if opts.get("border_color") is Color => t { _bdrColor = t }
+        if opts.get("title_color") is Color => t { _titleColor = t }
         _ensure_font()
         children = []
         _loaded = true

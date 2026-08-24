@@ -101,10 +101,10 @@ export struct TabControl impl Widget, Themeable {
         _fontStyle = opts.get("font_style", 0)
 
         // 颜色：opts 未传则保持默认值
-        _bgColor = opts.get("bg_color", _bgColor)
-        _brdColor = opts.get("border_color", _brdColor)
-        _actColor = opts.get("active_color", _actColor)
-        _accColor = opts.get("accent_color", _accColor)
+        if opts.get("bg_color") is Color => t { _bgColor = t }
+        if opts.get("border_color") is Color => t { _brdColor = t }
+        if opts.get("active_color") is Color => t { _actColor = t }
+        if opts.get("accent_color") is Color => t { _accColor = t }
 
         _cursor = opts.get("cursor", SystemCursor.POINTER)
         _hover = -1   // 重置悬停标签（二次 set 时归零）

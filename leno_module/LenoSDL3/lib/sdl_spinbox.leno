@@ -125,13 +125,13 @@ export struct SpinBox impl Widget, Themeable {
         _edit.on_change(func() { _try_apply_text() })
 
         // 颜色：opts 未传则保持默认值
-        _bgColor = opts.get("bg_color", _bgColor)
+        if opts.get("bg_color") is Color => t { _bgColor = t }
         _edit.set_bg_color(_bgColor)
         _edit.set_text_color(th.txtInput)
-        _bdrColor = opts.get("border_color", _bdrColor)
-        _focusColor = opts.get("focus_color", _focusColor)
+        if opts.get("border_color") is Color => t { _bdrColor = t }
+        if opts.get("focus_color") is Color => t { _focusColor = t }
 
-        _arrowColor = opts.get("arrow_color", _arrowColor)
+        if opts.get("arrow_color") is Color => t { _arrowColor = t }
         // 默认箭头符号色见字段声明（_btnColor）
 
         _cursor = opts.get("cursor", SystemCursor.POINTER)

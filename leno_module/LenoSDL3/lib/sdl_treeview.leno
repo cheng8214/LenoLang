@@ -359,15 +359,15 @@ n.imageExpanded = d.get("imageExpanded", "")
         _scroll = 0.0; _hover = -1; _sel = -1; _sel2 = []
 
         // 颜色：opts 未传则保持默认值
-        _bgColor = opts.get("bg_color", _bgColor)
-        _bdrColor = opts.get("border_color", _bdrColor)
-        _selColor = opts.get("sel_color", _selColor)
-        _hovColor = opts.get("hover_color", _hovColor)
-        _txtColor = opts.get("text_color", _txtColor)
-        _arrColor = opts.get("arrow_color", _arrColor)
-        _sbColor = opts.get("scroll_color", _sbColor)
-        _lineColor = opts.get("line_color", _lineColor)
-        _chkColor = opts.get("check_color", _chkColor)
+        if opts.get("bg_color") is Color => t { _bgColor = t }
+        if opts.get("border_color") is Color => t { _bdrColor = t }
+        if opts.get("sel_color") is Color => t { _selColor = t }
+        if opts.get("hover_color") is Color => t { _hovColor = t }
+        if opts.get("text_color") is Color => t { _txtColor = t }
+        if opts.get("arrow_color") is Color => t { _arrColor = t }
+        if opts.get("scroll_color") is Color => t { _sbColor = t }
+        if opts.get("line_color") is Color => t { _lineColor = t }
+        if opts.get("check_color") is Color => t { _chkColor = t }
         _showLines = opts.get("show_lines", true)
 
         _cursor = opts.get("cursor", SystemCursor.POINTER)

@@ -37,8 +37,8 @@ export struct Panel impl Widget, Themeable {
         _radius = opts.get("radius", 8.0)
 
         // 颜色：opts 未传则保持默认值
-        _bgColor = opts.get("bg_color", _bgColor)
-        _bdrColor = opts.get("border_color", _bdrColor)
+        if opts.get("bg_color") is Color => t { _bgColor = t }
+        if opts.get("border_color") is Color => t { _bdrColor = t }
 
         _brdA = opts.get("border_alpha", 220)
         _drawBorder = opts.get("border", true)

@@ -60,10 +60,10 @@ export struct CheckBox impl Widget {
         // 默认颜色见字段声明，以下仅 opts 覆盖
 
         // 颜色：opts 未传则保持默认值
-        _uncheckedColor = opts.get("unchecked_color", _uncheckedColor)
-        _checkedColor = opts.get("checked_color", _checkedColor)
-        _txtColor = opts.get("text_color", _txtColor)
-        _brdColor = opts.get("border_color", _brdColor)
+        if opts.get("unchecked_color") is Color => t { _uncheckedColor = t }
+        if opts.get("checked_color") is Color => t { _checkedColor = t }
+        if opts.get("text_color") is Color => t { _txtColor = t }
+        if opts.get("border_color") is Color => t { _brdColor = t }
 
         _cursor = opts.get("cursor", SystemCursor.DEFAULT)
         _checked = opts.get("checked", false)

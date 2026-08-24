@@ -142,12 +142,12 @@ export struct TitleBar impl Widget, Themeable {
         _showSeparator = opts.get("show_separator", true)
 
         // 颜色：opts 未传则保持默认值
-        _bgColor = opts.get("bg_color", _bgColor)
-        _txColor = opts.get("text_color", _txColor)
-        _hovColor = opts.get("hover_color", _hovColor)
-        _closeHovColor = opts.get("close_hover_color", _closeHovColor)
-        _iconColor = opts.get("icon_color", _iconColor)
-        _sepColor = opts.get("separator_color", _sepColor)
+        if opts.get("bg_color") is Color => t { _bgColor = t }
+        if opts.get("text_color") is Color => t { _txColor = t }
+        if opts.get("hover_color") is Color => t { _hovColor = t }
+        if opts.get("close_hover_color") is Color => t { _closeHovColor = t }
+        if opts.get("icon_color") is Color => t { _iconColor = t }
+        if opts.get("separator_color") is Color => t { _sepColor = t }
 
         _imgMin = opts.get("icon_minimize", "")
         _imgMax = opts.get("icon_maximize", "")

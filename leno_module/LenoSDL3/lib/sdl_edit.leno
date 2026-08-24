@@ -260,9 +260,9 @@ _drawBorder = opts.get("border", true)
         _fontStyle  = opts.get("font_style", 0)
 
         // 颜色：opts 未传则保持默认值
-        _bgColor = opts.get("bg_color", _bgColor)
-        _txtColor = opts.get("text_color", _txtColor)
-        _focusColor = opts.get("focus_color", _focusColor)
+        if opts.get("bg_color") is Color => t { _bgColor = t }
+        if opts.get("text_color") is Color => t { _txtColor = t }
+        if opts.get("focus_color") is Color => t { _focusColor = t }
 
         _placeholder = opts.get("placeholder", "")
         _tip = opts.get("tip", "")

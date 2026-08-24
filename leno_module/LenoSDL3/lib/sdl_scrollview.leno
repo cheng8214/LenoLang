@@ -60,8 +60,8 @@ export struct ScrollView impl Widget {
         w = opts.get("w", 300)
         h = opts.get("h", 200)
         _radius = opts.get("radius", 8.0)
-        _bgColor = opts.get("bg_color", _bgColor)
-        _bdrColor = opts.get("border_color", _bdrColor)
+        if opts.get("bg_color") is Color => t { _bgColor = t }
+        if opts.get("border_color") is Color => t { _bdrColor = t }
         _brdA = opts.get("border_alpha", 200)
         _drawBorder = opts.get("border", true)
         _contentW = opts.get("content_w", -1.0)

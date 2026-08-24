@@ -65,7 +65,7 @@ export struct Label impl Widget, Themeable {
         _fontPath = opts.get("font_path", "")
         _fontStyle = opts.get("font_style", 0)
 
-        _txtColor = opts.get("text_color", _txtColor)
+        if opts.get("text_color") is Color => t { _txtColor = t }
 
         // 对齐
         _align = opts.get("align", ALIGN_LEFT)

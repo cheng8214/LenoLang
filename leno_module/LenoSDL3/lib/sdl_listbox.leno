@@ -133,12 +133,12 @@ export struct ListBox impl Widget, Themeable {
         }
 
         // 颜色：opts 未传则保持默认值
-        _bgColor = opts.get("bg_color", _bgColor)
-        _bdrColor = opts.get("border_color", _bdrColor)
-        _selColor = opts.get("sel_color", _selColor)
-        _hovColor = opts.get("hover_color", _hovColor)
-        _txtColor = opts.get("text_color", _txtColor)
-        _sbColor = opts.get("scroll_color", _sbColor)
+        if opts.get("bg_color") is Color => t { _bgColor = t }
+        if opts.get("border_color") is Color => t { _bdrColor = t }
+        if opts.get("sel_color") is Color => t { _selColor = t }
+        if opts.get("hover_color") is Color => t { _hovColor = t }
+        if opts.get("text_color") is Color => t { _txtColor = t }
+        if opts.get("scroll_color") is Color => t { _sbColor = t }
 
         _cursor  = opts.get("cursor", SystemCursor.POINTER)
         enabled  = opts.get("enabled", true)

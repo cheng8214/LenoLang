@@ -37,8 +37,8 @@ export struct Spinner impl Widget {
         _full = opts.get("full_track", false)
         visible = opts.get("visible", true)
         _tip = opts.get("tip", "")
-        _color = opts.get("color", _color)
-        _trackColor = opts.get("track_color", _trackColor)
+        if opts.get("color") is Color => t { _color = t }
+        if opts.get("track_color") is Color => t { _trackColor = t }
         _trackA = opts.get("track_alpha", 80)
         _loaded = true
     }

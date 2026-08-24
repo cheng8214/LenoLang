@@ -220,9 +220,9 @@ export struct MenuBar impl Widget, Themeable {
         _bdrColor = th.border
         _accColor = th.accentBright
         // 颜色：opts 未传则保持默认值
-        _bgColor = opts.get("bg_color", _bgColor)
-        _bdrColor = opts.get("border_color", _bdrColor)
-        _accColor = opts.get("accent_color", _accColor)
+        if opts.get("bg_color") is Color => t { _bgColor = t }
+        if opts.get("border_color") is Color => t { _bdrColor = t }
+        if opts.get("accent_color") is Color => t { _accColor = t }
 
         _cursor = opts.get("cursor", SystemCursor.POINTER)
         _imgSize = opts.get("image_size", 16.0)

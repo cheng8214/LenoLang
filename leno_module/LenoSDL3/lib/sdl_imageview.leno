@@ -51,10 +51,10 @@ export struct ImageView impl Widget {
         enabled = opts.get("enabled", true)
         visible = opts.get("visible", true)
         _tip = opts.get("tip", "")
-        _bgColor = opts.get("bg_color", _bgColor)
-        _bdrColor = opts.get("border_color", _bdrColor)
+        if opts.get("bg_color") is Color => t { _bgColor = t }
+        if opts.get("border_color") is Color => t { _bdrColor = t }
         _brdA = opts.get("border_alpha", 200)
-        _tint = opts.get("image_tint", _tint)
+        if opts.get("image_tint") is Color => t { _tint = t }
         _tex = null; _loadedPath = ""
         _loaded = true
     }

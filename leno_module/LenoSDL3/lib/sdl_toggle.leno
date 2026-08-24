@@ -61,9 +61,9 @@ export struct Toggle impl Widget {
         // 默认颜色见字段声明，以下仅 opts 覆盖
 
         // 颜色：opts 未传则保持默认值
-        _onColor = opts.get("on_color", _onColor)
-        _offColor = opts.get("off_color", _offColor)
-        _txtColor = opts.get("text_color", _txtColor)
+        if opts.get("on_color") is Color => t { _onColor = t }
+        if opts.get("off_color") is Color => t { _offColor = t }
+        if opts.get("text_color") is Color => t { _txtColor = t }
 
         _cursor = opts.get("cursor", SystemCursor.DEFAULT)
         _on = opts.get("on", false)

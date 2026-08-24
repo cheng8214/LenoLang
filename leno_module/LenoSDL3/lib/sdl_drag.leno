@@ -41,13 +41,13 @@ export struct DragHint {
         _radius = opts.get("radius", 4.0)
         _offsetX = opts.get("offset_x", 14.0)
         _offsetY = opts.get("offset_y", 14.0)
-        _bgColor = opts.get("bg_color", _bgColor)
-        _brColor = opts.get("border_color", _brColor)
+        if opts.get("bg_color") is Color => t { _bgColor = t }
+        if opts.get("border_color") is Color => t { _brColor = t }
         var bga = opts.get("bg_a")
         if bga is int { _bgColor = theme.withAlpha(_bgColor, bga) }
         var bra = opts.get("border_a")
         if bra is int { _brColor = theme.withAlpha(_brColor, bra) }
-        _txColor = opts.get("text_color", _txColor)
+        if opts.get("text_color") is Color => t { _txColor = t }
     }
 
     // 确保字体已加载

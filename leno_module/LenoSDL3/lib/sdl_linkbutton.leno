@@ -56,8 +56,8 @@ export struct LinkButton impl Widget {
         enabled = opts.get("enabled", true)
         visible = opts.get("visible", true)
         _tip = opts.get("tip", "")
-        _color = opts.get("color", _color)
-        _hovColor = opts.get("hover_color", _hovColor)
+        if opts.get("color") is Color => t { _color = t }
+        if opts.get("hover_color") is Color => t { _hovColor = t }
         _ensure_font()
         if _font.ok {
             if text != "" { _w = _font.measureString(text).w } else { _w = 0.0 }

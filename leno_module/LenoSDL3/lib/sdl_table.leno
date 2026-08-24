@@ -335,10 +335,10 @@ export struct Table impl Widget, Themeable {
         _recompute_cols()
 
         // 颜色：opts 未传则保持默认值
-        _bgColor = opts.get("bg_color", _bgColor)
-        _hdrColor = opts.get("header_color", _hdrColor)
-        _selColor = opts.get("sel_color", _selColor)
-        _sepColor = opts.get("sep_color", _sepColor)
+        if opts.get("bg_color") is Color => t { _bgColor = t }
+        if opts.get("header_color") is Color => t { _hdrColor = t }
+        if opts.get("sel_color") is Color => t { _selColor = t }
+        if opts.get("sep_color") is Color => t { _sepColor = t }
 
         // 行图标配置：image_col 指定哪列显示 [图标+文字]，图标路径由 row_images 独立存储
         _imageCol = opts.get("image_col", -1)
@@ -351,9 +351,9 @@ export struct Table impl Widget, Themeable {
 
         // 复选框列配置
         _checkCol = opts.get("check_col", -1)
-        _chkColor = opts.get("check_color", _chkColor)
+        if opts.get("check_color") is Color => t { _chkColor = t }
         _emptyText = opts.get("empty_text", "暂无数据")
-        _emptyColor = opts.get("empty_color", _emptyColor)
+        if opts.get("empty_color") is Color => t { _emptyColor = t }
         // 初始化行勾选/颜色数组长度
         while _rowChecked.len() < _rows.len() { _rowChecked.add(false) }
         while _rowColors.len() < _rows.len() { _rowColors.add(0) }
