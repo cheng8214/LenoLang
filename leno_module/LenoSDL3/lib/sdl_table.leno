@@ -884,8 +884,28 @@ export struct Table impl Widget, Themeable {
     }
     // 注册行内编辑提交回调（行,列,新文本）；如用于右键“重命名”后落盘
     func on_edit_commit(func(int, int, string):void cb) { _onEditCommit = cb }
-    // 程序触发进入某行某列的行内编辑（如右键“重命名”）
-    func begin_edit(int row, int col) { _begin_edit(row, col) }
+    // 程序触发进入某行某列的行内编辑（如右键"重命名"、F2 快捷键）
+    // ★ 程序化调用绕过 _editable 全局开关：应用层已明确知道要编辑哪个单元格，
+    //   不应被默认关闭的双击编辑开关拦截。仍受 _editableCols 列级限制约束（若指定）。
+    func begin_edit(int row, int col) {
+        if row < 0 or row >= _rows.len() { return }
+        if col < 0 or col >= _ncols { return }
+        // 列级限制：若指定了可编辑列集合，则仅允许这些列
+        if _editableCols.len() > 0 {
+            bool ok = false
+            for _editableCols.len() to i { if _editableCols[i] == col { ok = true } }
+            if not ok { return }
+        }
+        _editRow = row; _editCol = col
+        float cx = _col_x(col)
+        float ry = y + _headerH - _scrollY + row * _rowH
+        _edit.set_pos(cx, ry)
+        _edit.set_size(_colW[col], _rowH)
+        _edit.set_font_size(_fontSize)
+        _edit.set_text(_cell(row, col))
+        _edit.focus()
+        _editing = true
+    }
 
     // 在 (x,y) 弹出上下文菜单，并记录右击命中的行/列
     func _open_ctx_menu(float x, float y, int keyMod) {
