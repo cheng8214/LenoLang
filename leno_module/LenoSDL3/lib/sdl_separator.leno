@@ -34,9 +34,7 @@ export struct Separator impl Widget {
         // 根据方向设定默认尺寸
         if _dir == Separator.HORIZONTAL { _w = opts.get("w", 200); _h = _float(_thickness) }
         else { _w = _float(_thickness); _h = opts.get("h", 200) }
-        // 颜色覆盖
-        var c = opts.get("color")
-        if c is int { _color = c }
+        _color = opts.get("color", _color)
         _alpha = opts.get("alpha", Separator.DEFAULT_ALPHA)
         _loaded = true
     }

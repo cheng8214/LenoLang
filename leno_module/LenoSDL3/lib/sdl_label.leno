@@ -65,9 +65,7 @@ export struct Label impl Widget, Themeable {
         _fontPath = opts.get("font_path", "")
         _fontStyle = opts.get("font_style", 0)
 
-        // 文字色见字段声明默认白色，以下仅 opts 覆盖
-        var tc = opts.get("text_color")
-        if tc is int { _txtColor = tc }
+        _txtColor = opts.get("text_color", _txtColor)
 
         // 对齐
         _align = opts.get("align", ALIGN_LEFT)

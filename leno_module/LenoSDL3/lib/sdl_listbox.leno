@@ -132,21 +132,13 @@ export struct ListBox impl Widget, Themeable {
             if s >= 0 { _sel_add(s) }
         }
 
-        // 默认颜色见字段声明（_bgColor/_bdrColor/_selColor/_hovColor/_txtColor/_sbColor 等均有默认，以下仅 opts 覆盖）
-
-        // 颜色可被 dict 覆盖
-        var bgc = opts.get("bg_color")
-        if bgc is int { _bgColor = bgc }
-        var bdc = opts.get("border_color")
-        if bdc is int { _bdrColor = bdc }
-        var slc = opts.get("sel_color")
-        if slc is int { _selColor = slc }
-        var hvc = opts.get("hover_color")
-        if hvc is int { _hovColor = hvc }
-        var ctc = opts.get("text_color")
-        if ctc is int { _txtColor = ctc }
-        var sbc = opts.get("scroll_color")
-        if sbc is int { _sbColor = sbc }
+        // 颜色：opts 未传则保持默认值
+        _bgColor = opts.get("bg_color", _bgColor)
+        _bdrColor = opts.get("border_color", _bdrColor)
+        _selColor = opts.get("sel_color", _selColor)
+        _hovColor = opts.get("hover_color", _hovColor)
+        _txtColor = opts.get("text_color", _txtColor)
+        _sbColor = opts.get("scroll_color", _sbColor)
 
         _cursor  = _int(opts.get("cursor", SystemCursor.POINTER))
         enabled  = opts.get("enabled", true)

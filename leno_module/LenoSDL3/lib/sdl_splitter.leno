@@ -70,11 +70,9 @@ export struct Splitter impl Widget, Themeable {
         _hitPad      = opts.get("hit_pad", 4)
         _minFirst    = opts.get("min_first", 80)
         _minSecond   = opts.get("min_second", 80)
-        // 颜色覆盖
-        var dvc = opts.get("divider_color")
-        if dvc is int { _divColor = dvc }
-        var hvc = opts.get("hover_color")
-        if hvc is int { _hovColor = hvc }
+        // 颜色：opts 未传则保持默认值
+        _divColor = opts.get("divider_color", _divColor)
+        _hovColor = opts.get("hover_color", _hovColor)
         // 构造时传入子控件
         var f = opts.get("first")
         if f is Widget { _first = f }

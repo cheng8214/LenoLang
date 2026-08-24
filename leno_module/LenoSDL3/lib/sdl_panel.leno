@@ -36,12 +36,9 @@ export struct Panel impl Widget, Themeable {
         h    = opts.get("h", 150)
         _radius = opts.get("radius", 8.0)
 
-        // 默认背景色/边框色见字段声明，以下仅 opts 覆盖
-        var bgc = opts.get("bg_color")
-        if bgc is int { _bgColor = bgc }
-
-        var bdc = opts.get("border_color")
-        if bdc is int { _bdrColor = bdc }
+        // 颜色：opts 未传则保持默认值
+        _bgColor = opts.get("bg_color", _bgColor)
+        _bdrColor = opts.get("border_color", _bdrColor)
 
         _brdA = opts.get("border_alpha", 220)
         _drawBorder = opts.get("border", true)

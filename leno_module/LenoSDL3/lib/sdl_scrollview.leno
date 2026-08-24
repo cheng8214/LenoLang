@@ -60,11 +60,8 @@ export struct ScrollView impl Widget {
         w = opts.get("w", 300)
         h = opts.get("h", 200)
         _radius = opts.get("radius", 8.0)
-        var bgc = opts.get("bg_color")
-        if bgc is int { _bgColor = bgc }
-        // 默认色见字段声明，仅当 opts 指定时覆盖
-        var bdc = opts.get("border_color")
-        if bdc is int { _bdrColor = bdc }
+        _bgColor = opts.get("bg_color", _bgColor)
+        _bdrColor = opts.get("border_color", _bdrColor)
         _brdA = opts.get("border_alpha", 200)
         _drawBorder = opts.get("border", true)
         _contentW = opts.get("content_w", -1.0)

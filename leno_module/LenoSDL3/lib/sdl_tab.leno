@@ -100,16 +100,11 @@ export struct TabControl impl Widget, Themeable {
         _fontPath = opts.get("font_path", "")
         _fontStyle = opts.get("font_style", 0)
 
-        // 默认配色见字段声明（_bgColor/_brdColor/_actColor/_accColor 等均有默认，以下仅 opts 覆盖）
-
-        var bgc = opts.get("bg_color")
-        if bgc is int { _bgColor = bgc }
-        var brc = opts.get("border_color")
-        if brc is int { _brdColor = brc }
-        var actc = opts.get("active_color")
-        if actc is int { _actColor = actc }
-        var accc = opts.get("accent_color")
-        if accc is int { _accColor = accc }
+        // 颜色：opts 未传则保持默认值
+        _bgColor = opts.get("bg_color", _bgColor)
+        _brdColor = opts.get("border_color", _brdColor)
+        _actColor = opts.get("active_color", _actColor)
+        _accColor = opts.get("accent_color", _accColor)
 
         _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
         _hover = -1   // 重置悬停标签（二次 set 时归零）

@@ -61,15 +61,11 @@ export struct Slider impl Widget, Themeable {
         _fontPath = opts.get("font_path", "")
         _fontStyle = opts.get("font_style", 0)
 
-        // 默认颜色见字段声明（_trkColor/_fillColor/_thumbColor/_txtColor 等均有默认，以下仅 opts 覆盖）
-        var tkc = opts.get("track_color")
-        if tkc is int { _trkColor = tkc }
-        var flc = opts.get("fill_color")
-        if flc is int { _fillColor = flc }
-        var thc = opts.get("thumb_color")
-        if thc is int { _thumbColor = thc }
-        var txr = opts.get("text_color")
-        if txr is int { _txtColor = txr }
+        // 颜色：opts 未传则保持默认值
+        _trkColor = opts.get("track_color", _trkColor)
+        _fillColor = opts.get("fill_color", _fillColor)
+        _thumbColor = opts.get("thumb_color", _thumbColor)
+        _txtColor = opts.get("text_color", _txtColor)
 
         _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
         enabled = opts.get("enabled", true)

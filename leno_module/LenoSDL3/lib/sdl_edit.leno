@@ -259,13 +259,10 @@ _drawBorder = opts.get("border", true)
         _fontPath   = opts.get("font_path", "")
         _fontStyle  = opts.get("font_style", 0)
 
-        // 颜色（默认值见字段声明，仅当 opts 指定时覆盖）
-        var c = opts.get("bg_color")
-        if c is int { _bgColor = c }
-        var tc = opts.get("text_color")
-        if tc is int { _txtColor = tc }
-        var fc = opts.get("focus_color")
-        if fc is int { _focusColor = fc }
+        // 颜色：opts 未传则保持默认值
+        _bgColor = opts.get("bg_color", _bgColor)
+        _txtColor = opts.get("text_color", _txtColor)
+        _focusColor = opts.get("focus_color", _focusColor)
 
         _placeholder = opts.get("placeholder", "")
         _tip = opts.get("tip", "")

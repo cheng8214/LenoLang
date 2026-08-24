@@ -358,15 +358,16 @@ n.imageExpanded = d.get("imageExpanded", "")
 
         _scroll = 0.0; _hover = -1; _sel = -1; _sel2 = []
 
-        var bgc = opts.get("bg_color");      if bgc is int { _bgColor = bgc }
-        var bdc = opts.get("border_color");  if bdc is int { _bdrColor = bdc }
-        var slc = opts.get("sel_color");     if slc is int { _selColor = slc }
-        var hvc = opts.get("hover_color");   if hvc is int { _hovColor = hvc }
-        var ctc = opts.get("text_color");    if ctc is int { _txtColor = ctc }
-        var arc = opts.get("arrow_color");   if arc is int { _arrColor = arc }
-        var sbc = opts.get("scroll_color");  if sbc is int { _sbColor = sbc }
-        var lnc = opts.get("line_color");    if lnc is int { _lineColor = lnc }
-        var chc = opts.get("check_color");   if chc is int { _chkColor = chc }
+        // 颜色：opts 未传则保持默认值
+        _bgColor = opts.get("bg_color", _bgColor)
+        _bdrColor = opts.get("border_color", _bdrColor)
+        _selColor = opts.get("sel_color", _selColor)
+        _hovColor = opts.get("hover_color", _hovColor)
+        _txtColor = opts.get("text_color", _txtColor)
+        _arrColor = opts.get("arrow_color", _arrColor)
+        _sbColor = opts.get("scroll_color", _sbColor)
+        _lineColor = opts.get("line_color", _lineColor)
+        _chkColor = opts.get("check_color", _chkColor)
         _showLines = opts.get("show_lines", true)
 
         _cursor = _int(opts.get("cursor", SystemCursor.POINTER))

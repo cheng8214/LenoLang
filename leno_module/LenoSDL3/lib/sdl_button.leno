@@ -137,27 +137,14 @@ export struct Button impl Widget, Themeable {
         // 字体样式（粗体/斜体/下划线等）
         _fontStyle = opts.get("font_style", 0)
 
-        // 默认颜色见字段声明，以下仅 opts 覆盖
+        // 预设类型（优先级低于显式 color）
+        if opts.get("type") is string => tp { _btnType = tp; _apply_type(tp) }
 
-// 预设类型（优先级低于显式 color）
-var tp = opts.get("type")
-if tp is string { _btnType = tp; _apply_type(tp) }
-
-        // bg_color: 背景色
-        var c = opts.get("bg_color")
-        if c is int { _bgColor = c }
-
-        // text_color: 文字色
-        var tc = opts.get("text_color")
-        if tc is int { _txtColor = tc }
-
-        // hover_color: 悬停背景色（不设置则自动加亮）
-        var hc = opts.get("hover_color")
-        if hc is int { _hovColor = hc }
-
-        // pressed_color: 按下背景色（不设置则自动变暗）
-        var pc = opts.get("pressed_color")
-        if pc is int { _prColor = pc }
+        // 颜色：opts 未传则保持主题色（_bgColor 等已在上面从 Theme 赋值）
+        _bgColor = opts.get("bg_color", _bgColor)
+        _txtColor = opts.get("text_color", _txtColor)
+        _hovColor = opts.get("hover_color", _hovColor)
+        _prColor = opts.get("pressed_color", _prColor)
 
         // 外观开关
         _showShadow = opts.get("shadow", true)

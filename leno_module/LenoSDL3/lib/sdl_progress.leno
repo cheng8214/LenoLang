@@ -61,15 +61,10 @@ export struct ProgressBar impl Widget {
         _fontPath = opts.get("font_path", "")
         _fontStyle = opts.get("font_style", 0)
 
-        // 默认颜色见字段声明，以下仅 opts 覆盖
-
-        // 颜色可被 dict 覆盖
-        var tkc = opts.get("track_color")
-        if tkc is int { _trkColor = tkc }
-        var flc = opts.get("fill_color")
-        if flc is int { _fillColor = flc }
-        var ptc = opts.get("text_color")
-        if ptc is int { _txtColor = ptc }
+        // 颜色：opts 未传则保持默认值
+        _trkColor = opts.get("track_color", _trkColor)
+        _fillColor = opts.get("fill_color", _fillColor)
+        _txtColor = opts.get("text_color", _txtColor)
 
         _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
         enabled = opts.get("enabled", true)

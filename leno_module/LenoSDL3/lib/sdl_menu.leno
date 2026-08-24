@@ -219,9 +219,10 @@ export struct MenuBar impl Widget, Themeable {
         _sepColor = th.sep
         _bdrColor = th.border
         _accColor = th.accentBright
-        var bgc = opts.get("bg_color");      if bgc is int { _bgColor = bgc }
-        var brc = opts.get("border_color");  if brc is int { _bdrColor = brc }
-        var accc = opts.get("accent_color"); if accc is int { _accColor = accc }
+        // 颜色：opts 未传则保持默认值
+        _bgColor = opts.get("bg_color", _bgColor)
+        _bdrColor = opts.get("border_color", _bdrColor)
+        _accColor = opts.get("accent_color", _accColor)
 
         _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
         _imgSize = opts.get("image_size", 16.0)

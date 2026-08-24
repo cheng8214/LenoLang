@@ -60,13 +60,10 @@ export struct Toggle impl Widget {
 
         // 默认颜色见字段声明，以下仅 opts 覆盖
 
-        // 颜色可被 dict 覆盖
-        var onc = opts.get("on_color")
-        if onc is int { _onColor = onc }
-        var ofc = opts.get("off_color")
-        if ofc is int { _offColor = ofc }
-        var ttc = opts.get("text_color")
-        if ttc is int { _txtColor = ttc }
+        // 颜色：opts 未传则保持默认值
+        _onColor = opts.get("on_color", _onColor)
+        _offColor = opts.get("off_color", _offColor)
+        _txtColor = opts.get("text_color", _txtColor)
 
         _cursor = _int(opts.get("cursor", SystemCursor.DEFAULT))
         _on = opts.get("on", false)

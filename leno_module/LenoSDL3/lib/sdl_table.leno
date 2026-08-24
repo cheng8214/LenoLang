@@ -334,15 +334,11 @@ export struct Table impl Widget, Themeable {
         if _ncols == 0 { _ncols = 1 }
         _recompute_cols()
 
-        // 默认配色见字段声明（_bgColor/_hdrColor/_selColor/_hovColor/_zebColor/_txtColor/_sepColor/_sbColor 等均有默认，以下仅 opts 覆盖）
-        var bgc = opts.get("bg_color")
-        if bgc is int { _bgColor = bgc }
-        var hdc = opts.get("header_color")
-        if hdc is int { _hdrColor = hdc }
-        var slc = opts.get("sel_color")
-        if slc is int { _selColor = slc }
-        var sc = opts.get("sep_color")
-        if sc is int { _sepColor = sc }
+        // 颜色：opts 未传则保持默认值
+        _bgColor = opts.get("bg_color", _bgColor)
+        _hdrColor = opts.get("header_color", _hdrColor)
+        _selColor = opts.get("sel_color", _selColor)
+        _sepColor = opts.get("sep_color", _sepColor)
 
         // 行图标配置：image_col 指定哪列显示 [图标+文字]，图标路径由 row_images 独立存储
         _imageCol = opts.get("image_col", -1)
@@ -355,11 +351,9 @@ export struct Table impl Widget, Themeable {
 
         // 复选框列配置
         _checkCol = opts.get("check_col", -1)
-        var chkR = opts.get("check_color")
-        if chkR is int { _chkColor = chkR }
+        _chkColor = opts.get("check_color", _chkColor)
         _emptyText = opts.get("empty_text", "暂无数据")
-        var empc = opts.get("empty_color")
-        if empc is int { _emptyColor = empc }
+        _emptyColor = opts.get("empty_color", _emptyColor)
         // 初始化行勾选/颜色数组长度
         while _rowChecked.len() < _rows.len() { _rowChecked.add(false) }
         while _rowColors.len() < _rows.len() { _rowColors.add(0) }

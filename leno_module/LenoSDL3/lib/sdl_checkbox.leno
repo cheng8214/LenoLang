@@ -59,15 +59,11 @@ export struct CheckBox impl Widget {
 
         // 默认颜色见字段声明，以下仅 opts 覆盖
 
-        // 颜色可被 dict 覆盖
-        var unk = opts.get("unchecked_color")
-        if unk is int { _uncheckedColor = unk }
-        var chk = opts.get("checked_color")
-        if chk is int { _checkedColor = chk }
-        var ctc = opts.get("text_color")
-        if ctc is int { _txtColor = ctc }
-        var cbd = opts.get("border_color")
-        if cbd is int { _brdColor = cbd }
+        // 颜色：opts 未传则保持默认值
+        _uncheckedColor = opts.get("unchecked_color", _uncheckedColor)
+        _checkedColor = opts.get("checked_color", _checkedColor)
+        _txtColor = opts.get("text_color", _txtColor)
+        _brdColor = opts.get("border_color", _brdColor)
 
         _cursor = _int(opts.get("cursor", SystemCursor.DEFAULT))
         _checked = opts.get("checked", false)
