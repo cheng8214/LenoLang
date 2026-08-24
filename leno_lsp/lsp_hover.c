@@ -643,6 +643,16 @@ static char* generate_struct_definition_hover(CompilerContext* ctx, const char* 
     ObjStructDef* sdef = struct_def_find(struct_name);
     if (!sdef) return NULL;
     
+    // LSP 轻量级分析阶段，struct_def_find 返回的是 early_def，
+    // 字段信息（name, type, struct_type_name）全为 NULL/0，
+    // 需要从作用域符号中获取完整的字段信息作为回退。
+    // 同样，方法信息中的 func 指针也为 NULL（未经过 codegen），
+    // 只能依赖 methods[i].name。
+    Symbol* struct_sym = scope_resolve_tree_bfs(ctx->root_scope, struct_name);
+    
+    // 判断 early_def 的字段是否为空壳
+    bool fields_empty = (sdef->field_count > 0 && sdef->fields[0].name == NULL);
+    
     // 计算需要的缓冲区大小
     int field_count = sdef->field_count;
     int method_count = sdef->method_count;
@@ -650,40 +660,64 @@ static char* generate_struct_definition_hover(CompilerContext* ctx, const char* 
     // 构建字段列表
     char fields_str[2048] = {0};
     int foff = 0;
-    for (int i = 0; i < field_count && i < 20; i++) {
-        StructFieldInfo* f = &sdef->fields[i];
-        const char* ftype_str = f->struct_type_name ? f->struct_type_name : type_kind_to_string(f->type);
-        if (foff > 0) foff += snprintf(fields_str + foff, sizeof(fields_str) - foff, "\n    ");
-        foff += snprintf(fields_str + foff, sizeof(fields_str) - foff, "%s %s", ftype_str, f->name);
-    }
-    if (field_count > 20) {
-        foff += snprintf(fields_str + foff, sizeof(fields_str) - foff, "\n    // ... %d more", field_count - 20);
-    }
-    if (field_count == 0) {
-        snprintf(fields_str, sizeof(fields_str), "    // (无字段)");
+    
+    if (fields_empty && struct_sym && struct_sym->struct_field_count > 0) {
+        // 从 Symbol 获取字段信息
+        int sym_field_count = struct_sym->struct_field_count;
+        for (int i = 0; i < sym_field_count && i < 20; i++) {
+            const char* fname = struct_sym->struct_field_names[i];
+            TypeInfo* ftype = struct_sym->struct_field_types[i];
+            const char* ftype_str = ftype ? type_to_string(ftype) : "unknown";
+            if (foff > 0) foff += snprintf(fields_str + foff, sizeof(fields_str) - foff, "\n    ");
+            foff += snprintf(fields_str + foff, sizeof(fields_str) - foff, "%s %s", ftype_str, fname ? fname : "?");
+        }
+        field_count = sym_field_count;
+        if (sym_field_count > 20) {
+            foff += snprintf(fields_str + foff, sizeof(fields_str) - foff, "\n    // ... %d more", sym_field_count - 20);
+        }
+        if (sym_field_count == 0) {
+            snprintf(fields_str, sizeof(fields_str), "    // (无字段)");
+        }
+    } else {
+        // 从 ObjStructDef 获取字段信息（完整路径或空 struct）
+        for (int i = 0; i < field_count && i < 20; i++) {
+            StructFieldInfo* f = &sdef->fields[i];
+            const char* ftype_str = f->struct_type_name ? f->struct_type_name : type_kind_to_string(f->type);
+            if (foff > 0) foff += snprintf(fields_str + foff, sizeof(fields_str) - foff, "\n    ");
+            foff += snprintf(fields_str + foff, sizeof(fields_str) - foff, "%s %s", ftype_str, f->name ? f->name : "?");
+        }
+        if (field_count > 20) {
+            foff += snprintf(fields_str + foff, sizeof(fields_str) - foff, "\n    // ... %d more", field_count - 20);
+        }
+        if (field_count == 0) {
+            snprintf(fields_str, sizeof(fields_str), "    // (无字段)");
+        }
     }
     
     // 构建方法列表
+    // LSP 模式下 m->func 为 NULL（未 codegen），使用 m->name 即可
     char methods_str[2048] = {0};
     int moff = 0;
     for (int i = 0; i < method_count && i < 20; i++) {
         StructMethodInfo* m = &sdef->methods[i];
-        if (m->func && m->func->name) {
-            int f_arity = m->func->arity;
-            // 构建参数类型列表
-            char params_str[256] = {0};
-            int poff = 0;
-            if (f_arity > 0 && m->func->param_types) {
-                for (int pi = 0; pi < f_arity && pi < 10; pi++) {
-                    if (pi > 0) poff += snprintf(params_str + poff, sizeof(params_str) - poff, ", ");
-                    poff += snprintf(params_str + poff, sizeof(params_str) - poff, "%s", type_kind_to_string(m->func->param_types[pi]));
+        if (m->name) {
+            if (moff > 0) moff += snprintf(methods_str + moff, sizeof(methods_str) - moff, "\n    ");
+            if (m->func && m->func->name) {
+                // 完整模式（有 func 信息）
+                int f_arity = m->func->arity;
+                char params_str[256] = {0};
+                int poff = 0;
+                if (f_arity > 0 && m->func->param_types) {
+                    for (int pi = 0; pi < f_arity && pi < 10; pi++) {
+                        if (pi > 0) poff += snprintf(params_str + poff, sizeof(params_str) - poff, ", ");
+                        poff += snprintf(params_str + poff, sizeof(params_str) - poff, "%s", type_kind_to_string(m->func->param_types[pi]));
+                    }
                 }
+                moff += snprintf(methods_str + moff, sizeof(methods_str) - moff, "func %s(%s)", m->name, params_str);
+            } else {
+                // LSP 模式（无 func 信息，只有方法名）
+                moff += snprintf(methods_str + moff, sizeof(methods_str) - moff, "func %s(...)", m->name);
             }
-            if (moff > 0) moff += snprintf(methods_str + moff, sizeof(methods_str) - moff, "\n    ");
-            moff += snprintf(methods_str + moff, sizeof(methods_str) - moff, "func %s(%s)", m->name, params_str);
-        } else {
-            if (moff > 0) moff += snprintf(methods_str + moff, sizeof(methods_str) - moff, "\n    ");
-            moff += snprintf(methods_str + moff, sizeof(methods_str) - moff, "func %s(...)", m->name);
         }
     }
     if (method_count == 0) {
@@ -740,8 +774,62 @@ static char* generate_cstruct_definition_hover(CompilerContext* ctx, const char*
     if (!ctx || !cstruct_name) return NULL;
     
     ObjCStructDef* cdef = cstruct_def_find(cstruct_name);
-    if (!cdef) return NULL;
     
+    // LSP 轻量级分析阶段，cstruct_def_find 可能返回 NULL（未经过 codegen/VM 注册），
+    // 需要从作用域符号中获取字段信息。
+    if (!cdef) {
+        Symbol* csym = scope_resolve_tree_bfs(ctx->root_scope, cstruct_name);
+        if (!csym || !csym->type || csym->type->kind != TYPE_CSTRUCT) return NULL;
+        if (csym->struct_field_count == 0) return NULL;
+        
+        // 从 Symbol 构建字段列表
+        char fields_str[2048] = {0};
+        int foff = 0;
+        for (int i = 0; i < csym->struct_field_count && i < 30; i++) {
+            const char* fname = csym->struct_field_names[i];
+            TypeInfo* ftype = csym->struct_field_types[i];
+            const char* ftype_str = ftype ? type_to_string(ftype) : "unknown";
+            int offset = (csym->cstruct_field_offsets && i < csym->struct_field_count) ? csym->cstruct_field_offsets[i] : 0;
+            if (foff > 0) foff += snprintf(fields_str + foff, sizeof(fields_str) - foff, "\n    ");
+            foff += snprintf(fields_str + foff, sizeof(fields_str) - foff,
+                             "%s %s  // offset=%d",
+                             ftype_str, fname ? fname : "?", offset);
+        }
+        if (csym->struct_field_count == 0) {
+            snprintf(fields_str, sizeof(fields_str), "    // (无字段)");
+        }
+        
+        // 属性修饰符
+        char attrs_str[128] = {0};
+        if (csym->cstruct_is_packed && csym->cstruct_explicit_align > 0) {
+            snprintf(attrs_str, sizeof(attrs_str), "packed align(%d) ", csym->cstruct_explicit_align);
+        } else if (csym->cstruct_is_packed) {
+            snprintf(attrs_str, sizeof(attrs_str), "packed ");
+        } else if (csym->cstruct_explicit_align > 0) {
+            snprintf(attrs_str, sizeof(attrs_str), "align(%d) ", csym->cstruct_explicit_align);
+        }
+        
+        int len = 4096 + strlen(cstruct_name) + strlen(fields_str) + strlen(attrs_str);
+        char* info = (char*)malloc(len);
+        if (!info) return NULL;
+        
+        snprintf(info, len,
+                 "**cstruct %s**\n\n"
+                 "```leno\n"
+                 "%scstruct %s {\n"
+                 "%s\n"
+                 "}\n"
+                 "```\n\n"
+                 "**大小**: %d 字节 | **对齐**: %d 字节 | **字段数**: %d",
+                 cstruct_name,
+                 attrs_str, cstruct_name,
+                 fields_str,
+                 csym->cstruct_size, csym->cstruct_alignment, csym->struct_field_count);
+        
+        return info;
+    }
+    
+    // 完整路径：从全局 cstruct 定义表获取
     // 构建字段列表（包含偏移量）
     char fields_str[2048] = {0};
     int foff = 0;
@@ -798,8 +886,48 @@ static char* generate_enum_definition_hover(CompilerContext* ctx, const char* en
     if (!ctx || !enum_name) return NULL;
     
     ObjEnumDef* edef = enum_def_find(enum_name);
-    if (!edef) return NULL;
     
+    // LSP 轻量级分析阶段，enum_def_find 可能返回 NULL（未经过 codegen/VM 注册），
+    // 需要从作用域符号中获取成员信息。
+    if (!edef) {
+        Symbol* esym = scope_resolve_tree_bfs(ctx->root_scope, enum_name);
+        if (!esym || !esym->type || esym->type->kind != TYPE_ENUM) return NULL;
+        if (esym->enum_value_count == 0) return NULL;
+        
+        // 从 Symbol 构建成员列表
+        char members_str[2048] = {0};
+        int moff = 0;
+        for (int i = 0; i < esym->enum_value_count && i < 30; i++) {
+            if (moff > 0) moff += snprintf(members_str + moff, sizeof(members_str) - moff, "\n    ");
+            moff += snprintf(members_str + moff, sizeof(members_str) - moff, "%s = %lld",
+                             esym->enum_value_names[i] ? esym->enum_value_names[i] : "?",
+                             (long long)esym->enum_values[i]);
+        }
+        if (esym->enum_value_count == 0) {
+            snprintf(members_str, sizeof(members_str), "    // (无成员)");
+        }
+        
+        int len = 2048 + strlen(enum_name) + strlen(members_str);
+        char* info = (char*)malloc(len);
+        if (!info) return NULL;
+        
+        snprintf(info, len,
+                 "**enum %s**\n\n"
+                 "```leno\n"
+                 "enum %s {\n"
+                 "%s\n"
+                 "}\n"
+                 "```\n\n"
+                 "%d 个成员",
+                 enum_name,
+                 enum_name,
+                 members_str,
+                 esym->enum_value_count);
+        
+        return info;
+    }
+    
+    // 完整路径：从全局 enum 定义表获取
     // 构建成员列表
     char members_str[2048] = {0};
     int moff = 0;
@@ -844,14 +972,18 @@ static char* generate_face_definition_hover(CompilerContext* ctx, const char* fa
     int moff = 0;
     for (int i = 0; i < fdef->method_count && i < 30; i++) {
         FaceMethodInfo* m = &fdef->methods[i];
-        const char* ret_str = m->return_type ? type_kind_to_string(m->return_type->kind) : "void";
+        const char* ret_str = (m->return_type) ? type_to_string(m->return_type) : "void";
         
         // 构建参数列表
         char params_str[256] = {0};
         int poff = 0;
         for (int j = 0; j < m->param_count && j < 10; j++) {
             if (j > 0) poff += snprintf(params_str + poff, sizeof(params_str) - poff, ", ");
-            poff += snprintf(params_str + poff, sizeof(params_str) - poff, "%s", type_kind_to_string(m->param_types[j]->kind));
+            if (m->param_types && m->param_types[j]) {
+                poff += snprintf(params_str + poff, sizeof(params_str) - poff, "%s", type_to_string(m->param_types[j]));
+            } else {
+                poff += snprintf(params_str + poff, sizeof(params_str) - poff, "any");
+            }
         }
         
         if (moff > 0) moff += snprintf(methods_str + moff, sizeof(methods_str) - moff, "\n    ");
