@@ -17,32 +17,37 @@
 // 注意：applyTheme 会用新主题覆盖所有主题派生颜色（包括 set() 时通过 opts 设置的）
 import "sdl_widget.leno" as wgt; use wgt.Widget
 
+// ==================== 颜色类型别名 ====================
+// Color 是 int 的语义别名，内部存储 0xAARRGGBB
+// 用法：Color c = #FF0000FF  或  func setBg(Color c)
+export alias Color = int
+
 // ==================== 颜色辅助函数 ====================
 // 颜色格式：#RRGGBBAA（Alpha 在最后，与 CSS 一致）
 // 内部存储：int 0xAARRGGBB（Alpha 在最高字节）
 // 字面量 #RRGGBBAA 被编译器自动转为 0xAARRGGBB
 
 // 从打包色中提取各分量
-export func colorR(int c): int { return (c >> 16) & 0xFF }
-export func colorG(int c): int { return (c >> 8) & 0xFF }
-export func colorB(int c): int { return c & 0xFF }
-export func colorA(int c): int { return (c >> 24) & 0xFF }
+export func colorR(Color c): int { return (c >> 16) & 0xFF }
+export func colorG(Color c): int { return (c >> 8) & 0xFF }
+export func colorB(Color c): int { return c & 0xFF }
+export func colorA(Color c): int { return (c >> 24) & 0xFF }
 
 // 将 R/G/B/A 分量打包为 0xAARRGGBB 整数（a 默认 255 不透明）
-export func packColor(int r, int g, int b, int a = 255): int {
+export func packColor(int r, int g, int b, int a = 255): Color {
     if r > 255 { r = 255 }; if g > 255 { g = 255 }; if b > 255 { b = 255 }; if a > 255 { a = 255 }
     if r < 0 { r = 0 }; if g < 0 { g = 0 }; if b < 0 { b = 0 }; if a < 0 { a = 0 }
     return (a << 24) | (r << 16) | (g << 8) | b
 }
 
 // 替换打包色的 Alpha 通道（保留原 RGB，设置新 alpha）
-export func withAlpha(int c, int a): int {
+export func withAlpha(Color c, int a): Color {
     if a > 255 { a = 255 }; if a < 0 { a = 0 }
     return (a << 24) | (c & 0x00FFFFFF)
 }
 
 // 提亮打包色：各通道加 delta，Alpha 不变
-export func brighten(int c, int delta): int {
+export func brighten(Color c, int delta): Color {
     int r = colorR(c) + delta; if r > 255 { r = 255 }
     int g = colorG(c) + delta; if g > 255 { g = 255 }
     int b = colorB(c) + delta; if b > 255 { b = 255 }
@@ -50,7 +55,7 @@ export func brighten(int c, int delta): int {
 }
 
 // 变暗打包色：各通道减 delta，Alpha 不变
-export func darken(int c, int delta): int {
+export func darken(Color c, int delta): Color {
     int r = colorR(c) - delta; if r < 0 { r = 0 }
     int g = colorG(c) - delta; if g < 0 { g = 0 }
     int b = colorB(c) - delta; if b < 0 { b = 0 }
@@ -62,44 +67,44 @@ export struct Theme {
     string name = "dark"
 
     // === 背景层次（从深到浅） ===
-    int bg = #262830FF              // 控件主背景
-    int bgAlt = #2C2E36FF           // 次级背景（面板/斑马纹/非激活标签）
-    int bgInput = #232332FF         // 输入框背景（略深于主背景）
-    int bgHover = #464E5CFF         // 悬停行背景
-    int bgSel = #343A46FF           // 选中行背景（比 hover 更深，非蓝色）
-    int bgZebra = #2C2E36FF         // 斑马纹行（与 bgAlt 相同）
-    int bgHeader = #2E3038FF        // 表头/标签栏背景
+    Color bg = #262830FF              // 控件主背景
+    Color bgAlt = #2C2E36FF           // 次级背景（面板/斑马纹/非激活标签）
+    Color bgInput = #232332FF         // 输入框背景（略深于主背景）
+    Color bgHover = #464E5CFF         // 悬停行背景
+    Color bgSel = #343A46FF           // 选中行背景（比 hover 更深，非蓝色）
+    Color bgZebra = #2C2E36FF         // 斑马纹行（与 bgAlt 相同）
+    Color bgHeader = #2E3038FF        // 表头/标签栏背景
 
     // === 文字 ===
-    int txt = #EBEBF5FF             // 主文字色
-    int txtInput = #DCDCF0FF        // 输入框文字
-    int txtOnAccent = #FFFFFFFF     // 强调色上的白字
-    int txtDim = #78808CFF          // 暗淡/空状态文字
-    int txtHeader = #DCE1EBFF       // 表头文字
+    Color txt = #EBEBF5FF             // 主文字色
+    Color txtInput = #DCDCF0FF        // 输入框文字
+    Color txtOnAccent = #FFFFFFFF     // 强调色上的白字
+    Color txtDim = #78808CFF          // 暗淡/空状态文字
+    Color txtHeader = #DCE1EBFF       // 表头文字
 
     // === 强调/交互色 ===
-    int accent = #3C96EBFF          // 选中/开关/强调主色
-    int accentFocus = #64B4FFFF     // 聚焦边框（比 accent 更亮）
-    int accentBright = #50A0F5FF    // 更亮的强调色（tab 下划线等）
+    Color accent = #3C96EBFF          // 选中/开关/强调主色
+    Color accentFocus = #64B4FFFF     // 聚焦边框（比 accent 更亮）
+    Color accentBright = #50A0F5FF    // 更亮的强调色（tab 下划线等）
 
     // === 边框/分隔 ===
-    int border = #5A5F6EFF          // 普通边框
-    int sep = #464A54FF             // 分隔线/连接线
+    Color border = #5A5F6EFF          // 普通边框
+    Color sep = #464A54FF             // 分隔线/连接线
 
     // === 滚动条 ===
-    int sb = #787D8CFF              // 滚动条颜色
+    Color sb = #787D8CFF              // 滚动条颜色
 
     // === 预设按钮色 ===
-    int btnPrimary = #3C8CDCFF
-    int btnDanger = #DC3C3CFF
-    int btnSuccess = #3CC850FF
-    int btnWarning = #F0A01EFF
-    int btnDark = #3C3C46FF
+    Color btnPrimary = #3C8CDCFF
+    Color btnDanger = #DC3C3CFF
+    Color btnSuccess = #3CC850FF
+    Color btnWarning = #F0A01EFF
+    Color btnDark = #3C3C46FF
 
     // === Tooltip ===
-    int tipBg = #262830FF
-    int tipTxt = #E8EAF2FF
-    int tipBrd = #6E7384FF
+    Color tipBg = #262830FF
+    Color tipTxt = #E8EAF2FF
+    Color tipBrd = #6E7384FF
 
     // === 字体 ===
     float fontSize = 15.0

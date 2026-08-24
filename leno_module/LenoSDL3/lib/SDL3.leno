@@ -140,7 +140,8 @@ export func dialogSpacer(): Label { return dlg.dialogSpacer() }
 
 // ==================== 重新导出类型别名 ====================
 
-use core.(Color, FColor, Size, FSize, StringSize, GlyphInfo)
+use core.(FColor, Size, FSize, StringSize, GlyphInfo)
+use thm.Color
 
 // ==================== 重新导出枚举 ====================
 use core.(InitFlag, WindowFlag, EventType, Scancode, MouseButton, BlendMode, Flip, SystemCursor, TextureAccess, FlashOp, TrayEntryFlag)
@@ -302,11 +303,11 @@ export func lightTheme(): Theme          { return thm.lightTheme() }
 export func midnightTheme(): Theme       { return thm.midnightTheme() }
 
 // ==================== 颜色工具函数 ====================
-export func brighten(int c, int delta): int  { return thm.brighten(c, delta) }
-export func darken(int c, int delta): int    { return thm.darken(c, delta) }
-export func withAlpha(int c, int a): int     { return thm.withAlpha(c, a) }
-export func packColor(int r, int g, int b, int a = 255): int { return thm.packColor(r, g, b, a) }
-export func colorR(int c): int               { return thm.colorR(c) }
-export func colorG(int c): int               { return thm.colorG(c) }
-export func colorB(int c): int               { return thm.colorB(c) }
-export func colorA(int c): int               { return thm.colorA(c) }
+export func brighten(Color c, int delta): Color  { return thm.brighten(c, delta) }
+export func darken(Color c, int delta): Color    { return thm.darken(c, delta) }
+export func withAlpha(Color c, int a): Color     { return thm.withAlpha(c, a) }
+export func packColor(int r, int g, int b, int a = 255): Color { return thm.packColor(r, g, b, a) }
+export func colorR(Color c): int               { return thm.colorR(c) }
+export func colorG(Color c): int               { return thm.colorG(c) }
+export func colorB(Color c): int               { return thm.colorB(c) }
+export func colorA(Color c): int               { return thm.colorA(c) }

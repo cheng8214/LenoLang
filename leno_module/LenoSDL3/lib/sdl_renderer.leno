@@ -4,7 +4,7 @@ import ffi
 import maths
 import "sdl_core.leno" as core
 import "sdl_font.leno" as font
-use core.(sdl3, SDL_FRect, SDL_Color, SDL_FColor, SDL_FPoint, SDL_Point, SDL_Rect, SDL_Vertex, Color, FColor, Size, FSize, ScaleMode)
+use core.(sdl3, SDL_FRect, SDL_Color, SDL_FColor, SDL_FPoint, SDL_Point, SDL_Rect, SDL_Vertex, FColor, Size, FSize, ScaleMode)
 use font.(Font, TextTexture)
 
 // 模块加载时一次性初始化 DLL，后续直接用 _lib
@@ -299,11 +299,11 @@ export struct Renderer {
         return _lib.SDL_SetRenderDrawColorFloat(handle, r, g, b, a)
     }
 
-    // 获取当前绘制颜色（整数 RGBA），返回 {r, g, b, a}
-    func getColor(): Color {
+    // 获取当前绘制颜色（打包为 0xAARRGGBB 整数）
+    func getColor(): int {
         SDL_Color c = SDL_Color.malloc()
         _lib.SDL_GetRenderDrawColor(handle, &c.r, &c.g, &c.b, &c.a)
-        Color d = {r: c.r, g: c.g, b: c.b, a: c.a}
+        int d = (c.a << 24) | (c.r << 16) | (c.g << 8) | c.b
         c.free(); return d
     }
 
