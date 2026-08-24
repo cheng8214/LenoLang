@@ -430,7 +430,16 @@ static void gen_switch(CodeGen* gen, Ast* ast) {
             patch_jump(gen, case_infos[i].match_jumps[j]);
         }
 
-        emit_byte(gen, OP_POP, ast->line);
+        // OP_JUMP_IF_TRUE 不弹条件，栈顶是类型/值检查的布尔结果，下面是 switch 值
+        emit_byte(gen, OP_POP, ast->line);  // 弹掉布尔结果，栈顶回到 switch 值
+
+        // case is Type => var 绑定：将 switch 值存入绑定变量
+        // 用 OP_SET_LOCAL（不弹栈），switch 值留在栈上由 switch 结尾的 OP_POP 统一弹出
+        if (ast->u.switch_.cases[i].guard_bind_var &&
+            ast->u.switch_.cases[i].guard_bind_index >= 0) {
+            emit_bytes_2(gen, OP_SET_LOCAL,
+                ast->u.switch_.cases[i].guard_bind_index, ast->line);
+        }
 
         // 解构字段提取：case is Point(x, y) → 从 guard_var 提取字段赋给 x, y
         if (ast->u.switch_.cases[i].destructure_count > 0 &&

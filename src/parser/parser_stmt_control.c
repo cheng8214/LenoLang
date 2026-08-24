@@ -646,6 +646,8 @@ Ast* parse_switch_stmt(Parser* p) {
             cases[case_count].match_types = NULL;
             cases[case_count].match_type_count = 0;
             cases[case_count].guard_var = NULL;
+            cases[case_count].guard_bind_var = NULL;
+            cases[case_count].guard_bind_index = -1;
             cases[case_count].destructure_vars = NULL;
             cases[case_count].destructure_count = 0;
             cases[case_count].destructure_indices = NULL;
@@ -735,6 +737,31 @@ Ast* parse_switch_stmt(Parser* p) {
                         consume(p, TOK_RPAREN, "期望 ')'");
                         cases[case_count].destructure_vars = var_names;
                         cases[case_count].destructure_count = var_count;
+                    }
+                }
+
+                // ===== 检查 => 绑定语法：case is Type => var =====
+                // 语法：case is Type => var { ... use(var) ... }
+                // var 在 case 体内即为 Type 类型
+                if (p->lex.current.type == TOK_FAT_ARROW) {
+                    // 逗号合并不允许 => 绑定
+                    if (mt_count > 1) {
+                        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                            "case is 逗号合并不支持 => 绑定（case is A, B 不允许 => var）");
+                    } else {
+                        lexer_next(&p->lex); // 消费 "=>"
+                        if (p->lex.current.type != TOK_IDENT) {
+                            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                                "=> 后面期望标识符作为绑定变量名");
+                            free(switch_var_name);
+                            free(cases);
+                            return NULL;
+                        }
+                        char* bvar = malloc(p->lex.current.len + 1);
+                        memcpy(bvar, p->lex.current.text, p->lex.current.len);
+                        bvar[p->lex.current.len] = '\0';
+                        cases[case_count].guard_bind_var = bvar;
+                        lexer_next(&p->lex); // 消费绑定变量名
                     }
                 }
             } else {

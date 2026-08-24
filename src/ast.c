@@ -167,6 +167,7 @@ void ast_free(Ast* ast) {
                     type_free(ast->u.switch_.cases[i].match_type);
                 }
                 free(ast->u.switch_.cases[i].guard_var);
+                free(ast->u.switch_.cases[i].guard_bind_var);
             }
             free(ast->u.switch_.cases);
             ast_free(ast->u.switch_.default_body);

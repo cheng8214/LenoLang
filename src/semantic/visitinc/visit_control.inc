@@ -792,6 +792,20 @@
                     }
                 }
 
+                // case is Type => var 绑定：在 case 作用域内定义新局部变量
+                // 绑定变量类型为 match_type，供 case 体内使用
+                if (ast->u.switch_.cases[i].guard_bind_var &&
+                    ast->u.switch_.cases[i].match_type) {
+                    Symbol* bind_sym = scope_define(s->current,
+                        ast->u.switch_.cases[i].guard_bind_var, SYM_LOCAL);
+                    if (bind_sym) {
+                        bind_sym->type = type_copy(ast->u.switch_.cases[i].match_type);
+                        bind_sym->index = s->local_index++;
+                        bind_sym->is_initialized = 1;
+                        ast->u.switch_.cases[i].guard_bind_index = bind_sym->index;
+                    }
+                }
+
                 // case is Type 解构：定义解构变量（如 case is Point(x, y)）
                 if (ast->u.switch_.cases[i].destructure_count > 0 &&
                     ast->u.switch_.cases[i].match_type &&

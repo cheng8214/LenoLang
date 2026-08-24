@@ -217,6 +217,8 @@ static void patch_ast_indices(Ast* ast, int offset) {
             patch_ast_indices(ast->u.switch_.expr, offset);
             for (int i = 0; i < ast->u.switch_.case_count; i++) {
                 patch_symref(&ast->u.switch_.cases[i].guard_var_ref, offset);
+                if (ast->u.switch_.cases[i].guard_bind_index >= 0)
+                    ast->u.switch_.cases[i].guard_bind_index += offset;
                 for (int j = 0; j < ast->u.switch_.cases[i].values.count; j++)
                     patch_ast_indices(ast->u.switch_.cases[i].values.items[j], offset);
                 patch_ast_indices(ast->u.switch_.cases[i].body, offset);

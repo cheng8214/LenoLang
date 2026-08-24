@@ -1,0 +1,258 @@
+// switch case is Type => var 绑定测试
+// 覆盖：基本类型绑定、struct 绑定、多分支、作用域隔离、default 分支
+
+// ==================== 测试 1: 基本类型绑定（int） ====================
+
+func test_int_binding(any x): int {
+    switch x {
+        case is int => n {
+            return n + 1
+        }
+        default {
+            return -1
+        }
+    }
+}
+
+// ==================== 测试 2: 基本类型绑定（string） ====================
+
+func test_string_binding(any x): int {
+    switch x {
+        case is string => s {
+            assert_eq(s, "hello")
+            return 1
+        }
+        default {
+            return -1
+        }
+    }
+}
+
+// ==================== 测试 3: 基本类型绑定（float） ====================
+
+func test_float_binding(any x): int {
+    switch x {
+        case is float => f {
+            assert_eq(f, 3.14)
+            return 1
+        }
+        default {
+            return -1
+        }
+    }
+}
+
+// ==================== 测试 4: 基本类型绑定（bool） ====================
+
+func test_bool_binding(any x): int {
+    switch x {
+        case is bool => b {
+            assert_eq(b, true)
+            return 1
+        }
+        default {
+            return -1
+        }
+    }
+}
+
+// ==================== 测试 5: 多分支类型绑定 ====================
+
+func test_multi_branch(any x): int {
+    switch x {
+        case is int => n {
+            return n * 2
+        }
+        case is string => s {
+            assert_eq(s, "text")
+            return 2
+        }
+        case is float => f {
+            assert_eq(f, 1.5)
+            return 3
+        }
+        default {
+            return 0
+        }
+    }
+}
+
+// ==================== 测试 6: struct 类型绑定 ====================
+
+struct Point {
+    int x
+    int y
+}
+
+func make_point(): any {
+    var p = new Point()
+    p.x = 10
+    p.y = 20
+    return p
+}
+
+func test_struct_binding(): int {
+    switch make_point() {
+        case is Point => p {
+            assert_eq(p.x, 10)
+            assert_eq(p.y, 20)
+            return 1
+        }
+        default {
+            return -1
+        }
+    }
+}
+
+// ==================== 测试 7: 不匹配走 default ====================
+
+func test_mismatch_default(any x): int {
+    switch x {
+        case is int => n {
+            return 0
+        }
+        case is string => s {
+            return 0
+        }
+        default {
+            return 99
+        }
+    }
+}
+
+// ==================== 测试 8: 绑定变量在 case 体内可修改 ====================
+
+func test_bind_modify(any x): int {
+    switch x {
+        case is int => n {
+            n = n + 100
+            assert_eq(n, 105)
+            return 1
+        }
+        default {
+            return -1
+        }
+    }
+}
+
+// ==================== 测试 9: switch 表达式为函数调用 ====================
+
+func get_value(): any {
+    return 777
+}
+
+func test_call_expr(): int {
+    switch get_value() {
+        case is int => v {
+            assert_eq(v, 777)
+            return 1
+        }
+        default {
+            return -1
+        }
+    }
+}
+
+// ==================== 测试 10: 混合 is Type => var 和 is Type（无绑定） ====================
+
+func test_mixed_binding(any x): int {
+    switch x {
+        case is int => n {
+            return n
+        }
+        case is string {
+            return 0
+        }
+        case is float => f {
+            return 1
+        }
+        default {
+            return -1
+        }
+    }
+}
+
+// ==================== 测试 11: 绑定变量作用域隔离 ====================
+
+func test_scope_isolation(any x): int {
+    int outer = 999
+    switch x {
+        case is int => outer {
+            // 这里的 outer 是绑定变量，遮蔽外层
+            assert_eq(outer, 42)
+            return 1
+        }
+        default {
+            // outer 在 default 分支中应该还是 999
+            assert_eq(outer, 999)
+            return 2
+        }
+    }
+}
+
+// ==================== 测试 12: null 不匹配任何类型 ====================
+
+func test_null_no_match(any x): int {
+    switch x {
+        case is int => n {
+            return 0
+        }
+        case is string => s {
+            return 0
+        }
+        default {
+            return 1
+        }
+    }
+}
+
+// ==================== 运行所有测试 ====================
+
+// 测试 1: int 绑定
+assert_eq(test_int_binding(42), 43)
+assert_eq(test_int_binding("hello"), -1)
+
+// 测试 2: string 绑定
+assert_eq(test_string_binding("hello"), 1)
+assert_eq(test_string_binding(42), -1)
+
+// 测试 3: float 绑定
+assert_eq(test_float_binding(3.14), 1)
+assert_eq(test_float_binding(42), -1)
+
+// 测试 4: bool 绑定
+assert_eq(test_bool_binding(true), 1)
+assert_eq(test_bool_binding(42), -1)
+
+// 测试 5: 多分支
+assert_eq(test_multi_branch(10), 20)
+assert_eq(test_multi_branch("text"), 2)
+assert_eq(test_multi_branch(1.5), 3)
+assert_eq(test_multi_branch(true), 0)
+
+// 测试 6: struct 绑定
+assert_eq(test_struct_binding(), 1)
+
+// 测试 7: 不匹配走 default
+assert_eq(test_mismatch_default(null), 99)
+
+// 测试 8: 绑定变量修改
+assert_eq(test_bind_modify(5), 1)
+
+// 测试 9: 函数调用表达式
+assert_eq(test_call_expr(), 1)
+
+// 测试 10: 混合绑定
+assert_eq(test_mixed_binding(42), 42)
+assert_eq(test_mixed_binding("hi"), 0)
+assert_eq(test_mixed_binding(1.5), 1)
+assert_eq(test_mixed_binding(true), -1)
+
+// 测试 11: 作用域隔离
+assert_eq(test_scope_isolation(42), 1)
+assert_eq(test_scope_isolation(null), 2)
+
+// 测试 12: null 不匹配
+assert_eq(test_null_no_match(null), 1)
+
+print("test_switch_case_is_binding passed")

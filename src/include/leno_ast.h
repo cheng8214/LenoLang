@@ -186,6 +186,8 @@ struct Ast {
                 int match_type_count;    // 匹配类型数量（1=单类型，>1=逗号合并）
                 char* guard_var;      // switch 表达式变量名（用于类型收窄）
                 SymRef guard_var_ref; // switch 表达式变量的符号引用
+                char* guard_bind_var;      // => 绑定变量名（case is Type => var 模式）
+                int guard_bind_index;      // 绑定变量的局部变量索引（语义分析时填充）
                 char** destructure_vars;      // 解构变量名数组（如 case is Point(x, y) → ["x", "y"]）
                 int destructure_count;        // 解构变量数量（0 = 无解构）
                 int* destructure_indices;     // 解构变量的局部变量索引数组（语义分析时填充）
