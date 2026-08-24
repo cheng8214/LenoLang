@@ -1,0 +1,10 @@
+// 验证 arr.add(x) 模块调用形式作为语句的 OP_ARRAY_APPEND_NOPUSH 优化
+var arr = [1, 2, 3]
+arr.add(4)    // AST_MODULE_CALL 形式，应走 NOPUSH 优化
+arr.add(5)
+print(arr)    // [1, 2, 3, 4, 5]
+
+// 也验证表达式形式（需要返回值）
+int len = arr.add(6)
+print(len)    // 6
+print(arr)    // [1, 2, 3, 4, 5, 6]

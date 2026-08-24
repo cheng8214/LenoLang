@@ -71,6 +71,7 @@ Symbol* resolve_variable_with_upvalue(Semantic* s, const char* name, SymRef* ref
         ref->index = local_sym->index;
         ref->name = strdup(local_sym->name);
         ref->type_kind = local_sym->type ? local_sym->type->kind : TYPE_ANY;
+        ref->element_type_kind = (local_sym->type && local_sym->type->element_type) ? local_sym->type->element_type->kind : TYPE_ANY;
         ref->struct_name = (local_sym->type && local_sym->type->struct_name) ? strdup(local_sym->type->struct_name) : NULL;
         return local_sym;
     }
@@ -99,6 +100,7 @@ Symbol* resolve_variable_with_upvalue(Semantic* s, const char* name, SymRef* ref
                 ref->index = sym->index;
                 ref->name = strdup(sym->name);
                 ref->type_kind = sym->type ? sym->type->kind : TYPE_ANY;
+                ref->element_type_kind = (sym->type && sym->type->element_type) ? sym->type->element_type->kind : TYPE_ANY;
                 ref->struct_name = (sym->type && sym->type->struct_name) ? strdup(sym->type->struct_name) : NULL;
                 return sym;
             }
@@ -108,6 +110,7 @@ Symbol* resolve_variable_with_upvalue(Semantic* s, const char* name, SymRef* ref
                 ref->index = target_sym->index;
                 ref->name = strdup(target_sym->name);
                 ref->type_kind = target_sym->type ? target_sym->type->kind : TYPE_ANY;
+                ref->element_type_kind = (target_sym->type && target_sym->type->element_type) ? target_sym->type->element_type->kind : TYPE_ANY;
                 ref->struct_name = (target_sym->type && target_sym->type->struct_name) ? strdup(target_sym->type->struct_name) : NULL;
                 return target_sym;
             }
@@ -122,6 +125,7 @@ Symbol* resolve_variable_with_upvalue(Semantic* s, const char* name, SymRef* ref
                         ref->index = target_sym->index;
                         ref->name = strdup(target_sym->name);
                         ref->type_kind = target_sym->type ? target_sym->type->kind : TYPE_ANY;
+                        ref->element_type_kind = (target_sym->type && target_sym->type->element_type) ? target_sym->type->element_type->kind : TYPE_ANY;
                         ref->struct_name = (target_sym->type && target_sym->type->struct_name) ? strdup(target_sym->type->struct_name) : NULL;
                         return target_sym;
                     }
@@ -168,6 +172,7 @@ Symbol* resolve_variable_with_upvalue(Semantic* s, const char* name, SymRef* ref
             ref->index = global_sym->index;
             ref->name = strdup(global_sym->name);
             ref->type_kind = global_sym->type ? global_sym->type->kind : TYPE_ANY;
+            ref->element_type_kind = (global_sym->type && global_sym->type->element_type) ? global_sym->type->element_type->kind : TYPE_ANY;
             ref->struct_name = (global_sym->type && global_sym->type->struct_name) ? strdup(global_sym->type->struct_name) : NULL;
             return global_sym;
         }
@@ -221,6 +226,7 @@ Symbol* resolve_variable_with_upvalue(Semantic* s, const char* name, SymRef* ref
     ref->name = strdup(name);
     free(ref->struct_name);
     ref->type_kind = target_sym->type ? target_sym->type->kind : TYPE_ANY;
+    ref->element_type_kind = (target_sym->type && target_sym->type->element_type) ? target_sym->type->element_type->kind : TYPE_ANY;
     ref->struct_name = (target_sym->type && target_sym->type->struct_name) ? strdup(target_sym->type->struct_name) : NULL;
     return target_sym;
 }

@@ -84,6 +84,7 @@ typedef struct {
     int index;
     char* name;
     TypeKind type_kind;
+    TypeKind element_type_kind;  // Ptr[T] 的元素类型（TYPE_ANY 表示无/未知）
     char* struct_name;
 } SymRef;
 

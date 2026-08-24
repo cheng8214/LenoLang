@@ -1213,10 +1213,35 @@ void gen_assign(CodeGen* gen, Ast* ast) {
                 
             } else if (target->kind == AST_VAR) {
                 emit_bytes_2(gen, OP_GET_LOCAL, val_slot, ast->line);
-                
+
                 if (!ref->name) {
                     error_add_at(ERR_SEMANTIC, ast->line, ast->column, "未解析的赋值目标");
                     return;
+                }
+                // 类型转换：与变量声明（gen_var_decl）保持一致
+                if (ref->type_kind == TYPE_FLOAT) {
+                    emit_byte(gen, OP_CAST_FLOAT, ast->line);
+                }
+                else if (ref->type_kind == TYPE_INT) {
+                    emit_byte(gen, OP_CAST_INT, ast->line);
+                }
+                else if (ref->type_kind == TYPE_STRING) {
+                    emit_byte(gen, OP_CAST_STRING, ast->line);
+                }
+                // Ptr[T] 类型：设置运行时 element_type
+                else if (ref->type_kind == TYPE_PTR_GENERIC &&
+                         ref->element_type_kind > TYPE_ANY) {
+                    emit_byte(gen, OP_SET_PTR_ELEM_TYPE, ast->line);
+                    emit_byte(gen, (uint8_t)ref->element_type_kind, ast->line);
+                }
+                // face 类型：设置运行时 declared_face
+                else if (ref->type_kind == TYPE_FACE && ref->struct_name) {
+                    ObjString* face_name_str = str_copy(ref->struct_name,
+                                                         strlen(ref->struct_name));
+                    int face_name_const = make_constant(gen, val_obj((Object*)face_name_str));
+                    emit_byte(gen, OP_SET_DECLARED_FACE, ast->line);
+                    emit_byte(gen, (face_name_const >> 8) & 0xff, ast->line);
+                    emit_byte(gen, face_name_const & 0xff, ast->line);
                 }
                 switch (ref->kind) {
                     case SYM_LOCAL:
@@ -1331,6 +1356,35 @@ void gen_assign(CodeGen* gen, Ast* ast) {
 
             // 普通变量赋值
             gen_expr(gen, ast->u.assign.value);
+
+            // 类型转换：与变量声明（gen_var_decl）保持一致，
+            // 根据目标变量的声明类型插入 cast 指令。
+            // 这样可以在赋值时立即检测类型不匹配（如将数组赋给 int 变量），
+            // 而不是延迟到后续使用该变量时才报错，从而提供准确的错误行号。
+            if (ref->type_kind == TYPE_FLOAT) {
+                emit_byte(gen, OP_CAST_FLOAT, ast->line);
+            }
+            else if (ref->type_kind == TYPE_INT) {
+                emit_byte(gen, OP_CAST_INT, ast->line);
+            }
+            else if (ref->type_kind == TYPE_STRING) {
+                emit_byte(gen, OP_CAST_STRING, ast->line);
+            }
+            // Ptr[T] 类型：设置运行时 element_type
+            else if (ref->type_kind == TYPE_PTR_GENERIC &&
+                     ref->element_type_kind > TYPE_ANY) {
+                emit_byte(gen, OP_SET_PTR_ELEM_TYPE, ast->line);
+                emit_byte(gen, (uint8_t)ref->element_type_kind, ast->line);
+            }
+            // face 类型：设置运行时 declared_face
+            else if (ref->type_kind == TYPE_FACE && ref->struct_name) {
+                ObjString* face_name_str = str_copy(ref->struct_name,
+                                                     strlen(ref->struct_name));
+                int face_name_const = make_constant(gen, val_obj((Object*)face_name_str));
+                emit_byte(gen, OP_SET_DECLARED_FACE, ast->line);
+                emit_byte(gen, (face_name_const >> 8) & 0xff, ast->line);
+                emit_byte(gen, face_name_const & 0xff, ast->line);
+            }
 
             switch (ref->kind) {
                 case SYM_LOCAL:
@@ -1655,6 +1709,21 @@ static void gen_expr_stmt(CodeGen* gen, Ast* ast) {
         }
     }
 
+    // 检测 arr.add(x) 模块调用形式：表达式语句用 OP_ARRAY_APPEND_NOPUSH 省掉 OP_POP
+    // 对应 parser 中 arr.add(x) 创建的 AST_MODULE_CALL（module_name 是数组变量名）
+    if (expr->kind == AST_MODULE_CALL &&
+        expr->u.module_call.args.count == 1 &&
+        strcmp(expr->u.module_call.method_name, "add") == 0) {
+        Symbol* var_sym = scope_resolve(gen->sem->root_scope, expr->u.module_call.module_name);
+        if (!var_sym) {
+            var_sym = scope_resolve(gen->sem->current, expr->u.module_call.module_name);
+        }
+        if (var_sym && var_sym->type && var_sym->type->kind == TYPE_ARRAY) {
+            gen_array_add_by_symbol(gen, var_sym, expr->u.module_call.args.items[0], 0, ast->line);
+            return;
+        }
+    }
+
     // 优化：i++ / i-- 语句（后缀，局部变量）→ OP_INC_LOCAL_NOPUSH / OP_DEC_LOCAL_NOPUSH
     if (expr->kind == AST_UNARY && expr->u.unary.is_postfix &&
         (expr->u.unary.op == TOK_INC || expr->u.unary.op == TOK_DEC) &&
@@ -1687,8 +1756,33 @@ static void gen_expr_stmt(CodeGen* gen, Ast* ast) {
                         return;
                     }
                 }
-                // a = expr → gen_expr(expr) + OP_SET_LOCAL_POP（省一次分发）
+                // a = expr → gen_expr(expr) + cast + OP_SET_LOCAL_POP（省一次分发）
                 gen_expr(gen, expr->u.assign.value);
+                // 类型转换：与变量声明（gen_var_decl）保持一致
+                if (ref->type_kind == TYPE_FLOAT) {
+                    emit_byte(gen, OP_CAST_FLOAT, ast->line);
+                }
+                else if (ref->type_kind == TYPE_INT) {
+                    emit_byte(gen, OP_CAST_INT, ast->line);
+                }
+                else if (ref->type_kind == TYPE_STRING) {
+                    emit_byte(gen, OP_CAST_STRING, ast->line);
+                }
+                // Ptr[T] 类型：设置运行时 element_type
+                else if (ref->type_kind == TYPE_PTR_GENERIC &&
+                         ref->element_type_kind > TYPE_ANY) {
+                    emit_byte(gen, OP_SET_PTR_ELEM_TYPE, ast->line);
+                    emit_byte(gen, (uint8_t)ref->element_type_kind, ast->line);
+                }
+                // face 类型：设置运行时 declared_face
+                else if (ref->type_kind == TYPE_FACE && ref->struct_name) {
+                    ObjString* face_name_str = str_copy(ref->struct_name,
+                                                         strlen(ref->struct_name));
+                    int face_name_const = make_constant(gen, val_obj((Object*)face_name_str));
+                    emit_byte(gen, OP_SET_DECLARED_FACE, ast->line);
+                    emit_byte(gen, (face_name_const >> 8) & 0xff, ast->line);
+                    emit_byte(gen, face_name_const & 0xff, ast->line);
+                }
                 emit_bytes_2(gen, OP_SET_LOCAL_POP, ref->index, ast->line);
                 return;
             }
