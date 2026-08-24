@@ -65,7 +65,7 @@ export struct CheckBox impl Widget {
         _txtColor = opts.get("text_color", _txtColor)
         _brdColor = opts.get("border_color", _brdColor)
 
-        _cursor = _int(opts.get("cursor", SystemCursor.DEFAULT))
+        _cursor = opts.get("cursor", SystemCursor.DEFAULT)
         _checked = opts.get("checked", false)
         enabled = opts.get("enabled", true)
         visible = opts.get("visible", true)

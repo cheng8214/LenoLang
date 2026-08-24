@@ -67,7 +67,7 @@ export struct Slider impl Widget, Themeable {
         _thumbColor = opts.get("thumb_color", _thumbColor)
         _txtColor = opts.get("text_color", _txtColor)
 
-        _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
+        _cursor = opts.get("cursor", SystemCursor.POINTER)
         enabled = opts.get("enabled", true)
         visible = opts.get("visible", true)
         // hover/_wasHover/_dragging 默认见字段声明

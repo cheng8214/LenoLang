@@ -47,7 +47,7 @@ export struct ImageView impl Widget {
         _radius = opts.get("radius", 0.0)
         _showBorder = opts.get("border", false)
         _alpha = opts.get("alpha", 255)
-        _cursor = _int(opts.get("cursor", -1))
+        _cursor = opts.get("cursor", -1)
         enabled = opts.get("enabled", true)
         visible = opts.get("visible", true)
         _tip = opts.get("tip", "")

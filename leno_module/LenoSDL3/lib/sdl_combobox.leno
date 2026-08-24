@@ -114,7 +114,7 @@ export struct ComboBox impl Widget, Themeable {
         _imgSize = opts.get("image_size", 16)
         _imgGap  = opts.get("image_gap", 6)
 
-        _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
+        _cursor = opts.get("cursor", SystemCursor.POINTER)
         enabled = opts.get("enabled", true)
         visible = opts.get("visible", true)
         _tip = opts.get("tip", "")

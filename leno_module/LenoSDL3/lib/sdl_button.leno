@@ -152,7 +152,7 @@ export struct Button impl Widget, Themeable {
         _showBackground = opts.get("background", true)
 
         // 鼠标样式（默认手型，-1 不改变）
-        _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
+        _cursor = opts.get("cursor", SystemCursor.POINTER)
 
         // 状态（hover/_wasHover 默认见字段声明；enabled/visible 有 opts 默认）
         enabled = opts.get("enabled", true)

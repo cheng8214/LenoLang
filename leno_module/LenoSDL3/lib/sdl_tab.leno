@@ -106,7 +106,7 @@ export struct TabControl impl Widget, Themeable {
         _actColor = opts.get("active_color", _actColor)
         _accColor = opts.get("accent_color", _accColor)
 
-        _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
+        _cursor = opts.get("cursor", SystemCursor.POINTER)
         _hover = -1   // 重置悬停标签（二次 set 时归零）
         enabled = opts.get("enabled", true)
         visible = opts.get("visible", true)

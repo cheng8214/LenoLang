@@ -358,7 +358,7 @@ export struct Table impl Widget, Themeable {
         while _rowChecked.len() < _rows.len() { _rowChecked.add(false) }
         while _rowColors.len() < _rows.len() { _rowColors.add(0) }
 
-        _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
+        _cursor = opts.get("cursor", SystemCursor.POINTER)
         enabled = opts.get("enabled", true)
         visible = opts.get("visible", true)
         _tip = opts.get("tip", "")

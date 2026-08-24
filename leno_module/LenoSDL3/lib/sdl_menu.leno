@@ -224,7 +224,7 @@ export struct MenuBar impl Widget, Themeable {
         _bdrColor = opts.get("border_color", _bdrColor)
         _accColor = opts.get("accent_color", _accColor)
 
-        _cursor = _int(opts.get("cursor", SystemCursor.POINTER))
+        _cursor = opts.get("cursor", SystemCursor.POINTER)
         _imgSize = opts.get("image_size", 16.0)
         _imgPad  = opts.get("image_pad", 10.0)
         _imgGap  = opts.get("image_gap", 6.0)

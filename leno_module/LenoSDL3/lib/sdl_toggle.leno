@@ -65,7 +65,7 @@ export struct Toggle impl Widget {
         _offColor = opts.get("off_color", _offColor)
         _txtColor = opts.get("text_color", _txtColor)
 
-        _cursor = _int(opts.get("cursor", SystemCursor.DEFAULT))
+        _cursor = opts.get("cursor", SystemCursor.DEFAULT)
         _on = opts.get("on", false)
         enabled = opts.get("enabled", true)
         visible = opts.get("visible", true)
