@@ -120,8 +120,8 @@ bool _drawBorder = true          // 是否绘制边框（嵌入 ComboBox 时设�
             _invalidate_sb()           // 字体变化，行高/行宽变化，滚动条尺寸需重算
             // 缓存行高
             if _font.ok {
-                var ms = _font.measureString("Ag")
-                _lineHeight = ms.h + 2.0
+                var[float, float](_agw, _agh) = _font.measureString("Ag")
+                _lineHeight = _agh + 2.0
             }
         }
     }
@@ -133,8 +133,8 @@ bool _drawBorder = true          // 是否绘制边框（嵌入 ComboBox 时设�
         if pos > text.len() { pos = text.len() }
         var sub = text.slice(0, pos)
         if _password { sub = "*".rep(pos) }
-        var ms = _font.measureString(sub)
-        return ms.w
+        var[float, float](_msw, _msh) = _font.measureString(sub)
+        return _msw
     }
 
     // 多行：测量某行到某列的宽度
@@ -148,8 +148,8 @@ bool _drawBorder = true          // 是否绘制边框（嵌入 ComboBox 时设�
         if col > ln.len() { col = ln.len() }
         var sub = ln.slice(0, col)
         if _password { sub = "*".rep(col) }
-        var ms = _font.measureString(sub)
-        return ms.w
+        var[float, float](_msw, _msh) = _font.measureString(sub)
+        return _msw
     }
 
     // ==================== 行管理 ====================
@@ -752,7 +752,7 @@ _drawBorder = opts.get("border", true)
         _lineW = []
         _maxLineW = 0.0
         for _lines.len() to li {
-            var w0 = _font.measureString(_lines[li]).w
+            var[float, float](w0, _h0) = _font.measureString(_lines[li])
             _lineW.add(w0)
             if w0 > _maxLineW { _maxLineW = w0 }
         }
@@ -766,7 +766,7 @@ _drawBorder = opts.get("border", true)
         if _font == null or not _font.ok { return }
         if _lineW.len() != _lines.len() { _lwDirty = true }
         _ensure_line_widths()
-        var w0 = _font.measureString(_lines[li]).w
+        var[float, float](w0, _h0) = _font.measureString(_lines[li])
         var old = _lineW[li]
         _lineW[li] = w0
         if w0 > _maxLineW {
@@ -790,8 +790,9 @@ _drawBorder = opts.get("border", true)
             // 菜单已展开时再次右键：编辑框内 → 移动到新位置重开；编辑框外 → 关闭。
             // 否则右键会被 MenuBar.process 静默忽略，导致“旧菜单卡在原地、必须单击关闭再右键”的别扭流程。
             if ev.isMouseButtonDown() and ev.mouseButton() == 3 {
-                if contains(ev.mouseX(), ev.mouseY()) {
-                    _open_ctx_menu(ev.mouseX(), ev.mouseY())
+                var[float, float](_rmx, _rmy) = ev.mousePos()
+                if contains(_rmx, _rmy) {
+                    _open_ctx_menu(_rmx, _rmy)
                 } else {
                     _ctxMenu.close()
                 }
@@ -802,14 +803,14 @@ _drawBorder = opts.get("border", true)
         }
 
         // 弹层捕获：光标落在“他人的下拉弹层”范围内时，本控件忽略该事件（避免穿透到下层）
-        float emx = ev.mouseX(), emy = ev.mouseY()
+        var[float, float](emx, emy) = ev.mousePos()
         if ev.isMouseWheel() { emx = ev.wheelMouseX(); emy = ev.wheelMouseY() }
         if core.inPopupCapture(emx, emy) { return }
 
         // 右键：在编辑框内弹出上下文菜单（复制/剪切/粘贴/全选/撤销/重做）
         if _ctxMenuEnabled and _ctxMenu != null and ev.isMouseButtonDown() and ev.mouseButton() == 3 {
-            if contains(ev.mouseX(), ev.mouseY()) {
-                _open_ctx_menu(ev.mouseX(), ev.mouseY())
+            if contains(emx, emy) {
+                _open_ctx_menu(emx, emy)
                 return
             }
         }
@@ -817,12 +818,12 @@ _drawBorder = opts.get("border", true)
         // ---- 悬停光标：鼠标移入编辑框 → 文本(I型)光标；移出 → 默认光标 ----
         // 走集中式光标决策（requestCursor），由 Window 帧末统一 apply，避免多控件互相覆盖
         if ev.isMouseMotion() {
-            bool hit = _edit_hit(ev.mouseX(), ev.mouseY())
+            bool hit = _edit_hit(emx, emy)
             if hit != _hoverText { core.markFrameRedraw() } else { core.markFrameMotion() }
             _hoverText = hit
             if hit { core.requestCursor(core.SystemCursor.TEXT) }
             // 悬停提示：命中编辑区上报；离开由 tipEndMotion 统一清除
-            if hit and _tip != "" { tip.tipReport(_tip, ev.mouseX(), ev.mouseY()) }
+            if hit and _tip != "" { tip.tipReport(_tip, emx, emy) }
         }
 
         // ---- 鼠标滚轮（所有模式，仅当光标在本控件内才响应）----
@@ -853,15 +854,15 @@ _drawBorder = opts.get("border", true)
             _hoverVScroll = false; _hoverHScroll = false
             if sbW > 0.0 {
                 float vsbX = x + w - sbW - 4.0
-                if ev.mouseX() >= vsbX and ev.mouseX() <= vsbX + sbW
-                   and ev.mouseY() >= y + pad and ev.mouseY() <= y + pad + visH {
+                if emx >= vsbX and emx <= vsbX + sbW
+                   and emy >= y + pad and emy <= y + pad + visH {
                     _hoverVScroll = true
                 }
             }
             if sbH > 0.0 {
                 float hsbY = y + h - sbH - 4.0
-                if ev.mouseY() >= hsbY and ev.mouseY() <= hsbY + sbH
-                   and ev.mouseX() >= x + pad and ev.mouseX() <= x + pad + visW {
+                if emy >= hsbY and emy <= hsbY + sbH
+                   and emx >= x + pad and emx <= x + pad + visW {
                     _hoverHScroll = true
                 }
             }
@@ -877,7 +878,7 @@ _drawBorder = opts.get("border", true)
                     if maxSY < 0 { maxSY = 0 }
                     float thumbH = visH * visH / contentH
                     if thumbH < 20 { thumbH = 20 }
-                    float relY = ev.mouseY() - y - pad
+                    float relY = emy - y - pad
                     _scrollY = relY * maxSY / (visH - thumbH)
                     if _scrollY < 0 { _scrollY = 0 }
                     if _scrollY > maxSY { _scrollY = maxSY }
@@ -901,13 +902,13 @@ _drawBorder = opts.get("border", true)
                 if thumbX + thumbW > trackX1 { thumbX = trackX1 - thumbW }
 
                 if ev.isMouseButtonDown() and not _draggingVScroll {
-                    bool onBar = ev.mouseY() >= hsbY and ev.mouseY() <= hsbY + sbH
-                                and ev.mouseX() >= trackX0 and ev.mouseX() <= trackX1
+                    bool onBar = emy >= hsbY and emy <= hsbY + sbH
+                                and emx >= trackX0 and emx <= trackX1
                     if onBar {
                         _draggingHScroll = true; _mouseDown = false
-                        if ev.mouseX() >= thumbX and ev.mouseX() <= thumbX + thumbW {
+                        if emx >= thumbX and emx <= thumbX + thumbW {
                             _hDragThumb = true
-                            _hDragOffset = ev.mouseX() - thumbX
+                            _hDragOffset = emx - thumbX
                         } else {
                             _hDragThumb = false
                         }
@@ -925,8 +926,8 @@ _drawBorder = opts.get("border", true)
                     float trackX0 = x + pad
                     float trackX1 = x + pad + visW
                     float tx
-                    if _hDragThumb { tx = ev.mouseX() - _hDragOffset }
-                    else { tx = ev.mouseX() - thumbW * 0.5 }
+                    if _hDragThumb { tx = emx - _hDragOffset }
+                    else { tx = emx - thumbW * 0.5 }
                     if tx < trackX0 { tx = trackX0 }
                     if tx > trackX1 - thumbW { tx = trackX1 - thumbW }
                     if maxSX <= 0 { _scrollX = 0 }
@@ -940,19 +941,19 @@ _drawBorder = opts.get("border", true)
 
         // ---- 选区 + 聚焦 ----
         if ev.isMouseButtonDown() {
-            var inside = contains(ev.mouseX(), ev.mouseY())
+            var inside = contains(emx, emy)
             if inside { focus() } else { blur() }
             if inside and not _draggingVScroll and not _draggingHScroll {
                 // 双击检测（400ms 内，位置接近）
                 var now = core.getTicks()
                 var isDbl = now - _lastClickTime < 400
-                        and ev.mouseX() >= _lastClickX - 10 and ev.mouseX() <= _lastClickX + 10
-                        and ev.mouseY() >= _lastClickY - 10 and ev.mouseY() <= _lastClickY + 10
+                        and emx >= _lastClickX - 10 and emx <= _lastClickX + 10
+                        and emy >= _lastClickY - 10 and emy <= _lastClickY + 10
                 _lastClickTime = now
-                _lastClickX = ev.mouseX(); _lastClickY = ev.mouseY()
+                _lastClickX = emx; _lastClickY = emy
                 if isDbl {
-                    if _multiline { _pos_from_xy(ev.mouseX(), ev.mouseY()) }
-                    else { _cursorPos = _pos_from_x(ev.mouseX()) }
+                    if _multiline { _pos_from_xy(emx, emy) }
+                    else { _cursorPos = _pos_from_x(emx) }
                     _select_word()
                     return
                 } else {
@@ -960,9 +961,9 @@ _drawBorder = opts.get("border", true)
                 }
                 if not isDbl and _focused {
                     if _multiline {
-                        _pos_from_xy(ev.mouseX(), ev.mouseY())
+                        _pos_from_xy(emx, emy)
                     } else {
-                        _cursorPos = _pos_from_x(ev.mouseX())
+                        _cursorPos = _pos_from_x(emx)
                     }
                     _selStart = _cursorPos; _selEnd = _cursorPos; _selActive = false
                     _adjust_scroll()
@@ -978,12 +979,12 @@ _drawBorder = opts.get("border", true)
         // 按住拖动扩展选区
         if _mouseDown and ev.isMouseMotion() and _focused and not _draggingVScroll and not _draggingHScroll {
             // ★ 鼠标拖出编辑框时，钳制到边界继续扩展选区（避免选中一半）
-            float mx = ev.mouseX()
+            float mx = emx
             float pad = 8.0
             if mx < x + pad { mx = x + pad }
             if mx > x + w - pad { mx = x + w - pad }
             if _multiline {
-                float my = ev.mouseY()
+                float my = emy
                 if my < y + pad { my = y + pad }
                 if my > y + h - pad { my = y + h - pad }
                 _pos_from_xy(mx, my)
@@ -1535,14 +1536,14 @@ _drawBorder = opts.get("border", true)
         r.pushClipRect(clip.to_ptr())
 
         // 文字几何（先算，供选区/光标对齐）
-        var ms0 = _font.measureString("Ag")
-        float textH = ms0.h
+        var[float, float](_agw, _agh) = _font.measureString("Ag")
+        float textH = _agh
         float ty = y + (h - textH) / 2.0
         var display = text
         if _password and text != "" { display = "*".rep(text.len()) }
         if text != "" {
-            var ms = _font.measureString(display)
-            textH = ms.h
+            var[float, float](_dw, _dh) = _font.measureString(display)
+            textH = _dh
             ty = y + (h - textH) / 2.0
         }
 
@@ -1562,8 +1563,8 @@ _drawBorder = opts.get("border", true)
 
         // 文字（叠在选区之上）
         if text == "" and not _focused and _placeholder != "" {
-            var ms = _font.measureString(_placeholder)
-            float py = y + (h - ms.h) / 2.0
+            var[float, float](_pw, _ph) = _font.measureString(_placeholder)
+            float py = y + (h - _ph) / 2.0
             r.drawText(_font, _placeholder, r.snapX(x + pad), r.snapY(py),
                        theme.darken(_txtColor, 80))
         } else if text != "" {
@@ -1629,9 +1630,9 @@ _drawBorder = opts.get("border", true)
                 var colS = selS - segStart
                 var colE = selE - segStart
                 var full = _lines[li]
-                var ms1 = _font.measureString(full.slice(c0, c0 + colS))
-                var ms2 = _font.measureString(full.slice(c0, c0 + colE))
-                float sx = r.snapX(x + pad + ms1.w - _scrollX), ew = ms2.w - ms1.w, sy = r.snapY(y + pad + di * _lineHeight - _scrollY)
+                var[float, float](ms1w, ms1h) = _font.measureString(full.slice(c0, c0 + colS))
+                var[float, float](ms2w, ms2h) = _font.measureString(full.slice(c0, c0 + colE))
+                float sx = r.snapX(x + pad + ms1w - _scrollX), ew = ms2w - ms1w, sy = r.snapY(y + pad + di * _lineHeight - _scrollY)
                 if ew < 0 { ew = 0 }
                 r.setColor(#3C64B4B4)
                 r.fillRect(sx, sy, ew, _lineHeight)
@@ -1669,8 +1670,8 @@ _drawBorder = opts.get("border", true)
                 var cdi = _disp_row_of(_cursorLine, _cursorCol)
                 float cy = r.snapY(y + pad + cdi * _lineHeight - _scrollY)
                 if cy + _lineHeight > y + pad and cy < y + pad + visH {
-                    var ms = _font.measureString("Ag")
-                    float ch = ms.h
+                    var[float, float](_cagw, _cagh) = _font.measureString("Ag")
+                    float ch = _cagh
                     float cx = x + pad
                     if _wordWrap {
                         // 直接测量段内子串（ln.slice(c0, col)）作为段内偏移，
@@ -1681,7 +1682,7 @@ _drawBorder = opts.get("border", true)
                         if _cursorCol < cm0 { cm0 = _cursorCol }
                         var ln = _lines[_cursorLine]
                         var seg = ln.slice(cm0, _cursorCol)
-                        cx = cx + _font.measureString(seg).w - _scrollX
+                        var[float, float](_segw, _segh) = _font.measureString(seg); cx = cx + _segw - _scrollX
                     } else {
                         cx = cx + _line_width_to(_cursorLine, _cursorCol) - _scrollX
                     }
@@ -1692,8 +1693,8 @@ _drawBorder = opts.get("border", true)
             } else {
                 // 空内容：光标固定在左上角
                 float cy = r.snapY(y + pad)
-                var ms = _font.measureString("Ag")
-                float ch = ms.h
+                var[float, float](_cagw2, _cagh2) = _font.measureString("Ag")
+                float ch = _cagh2
                 float cx = r.snapX(x + pad)
                 r.setColor(theme.withAlpha(_txtColor, 200))
                 r.drawLine(cx, cy, cx, cy + ch)
@@ -1767,7 +1768,7 @@ _drawBorder = opts.get("border", true)
         var curW = 0.0
         for :n to i {
             var ch = ln.slice(i, i + 1)
-            var cw = _font.measureString(ch).w
+            var[float, float](cw, _ch) = _font.measureString(ch)
             if curW + cw > maxW and i > segStart {
                 result.add(ln.slice(segStart, i))
                 segStart = i

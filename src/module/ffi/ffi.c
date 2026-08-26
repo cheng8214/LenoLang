@@ -803,30 +803,57 @@ static Value ffi_call_impl(int argc, Value* args, int ret_type_kind, const int* 
         }
     }
 
-    /* 调用前检查：Win64 下 >4 参数含浮点 → 回退路径不支持 */
+    /* 调用前检查：Win64 下 >4 个参数且前 4 个含浮点 → 回退路径不支持
+     *
+     * Win64 ABI 规则：
+     *   - 前 4 个参数走寄存器（整数/指针→RCX/RDX/R8/R9，浮点→XMM0-3）
+     *   - 第 5+ 个参数走栈（8 字节对齐，double 与 int64 位模式一致）
+     *
+     * ≤4 参数的混合调用走路径 3 精确分发，无需拦截。
+     * >4 参数时，前 4 个参数中如有浮点，回退路径 call_pure_int 会将浮点
+     * 放入整数寄存器而非 XMM，导致错误。若浮点全在第 5+ 位，走栈安全。
+     */
     {
-        int float_count = 0, double_count = 0;
-        for (int i = 0; i < sig.nargs; i++) {
-            if (sig.arg_types[i] == FFI_TYPE_FLOAT) float_count++;
-            if (sig.arg_types[i] == FFI_TYPE_DOUBLE) double_count++;
+        int float_in_reg = 0;  /* 前 4 个参数中的浮点数 */
+        for (int i = 0; i < sig.nargs && i < 4; i++) {
+            if (sig.arg_types[i] == FFI_TYPE_FLOAT ||
+                sig.arg_types[i] == FFI_TYPE_DOUBLE) {
+                float_in_reg++;
+            }
         }
-        int total_float = float_count + double_count;
-        /* 路径 3.5 已处理 5 参数 4f32+1ptr 的情况；
-         * 其余 >4 参数含浮点（含 double 的 5 参数、或 >5 参数含任何浮点）走回退路径会出错 */
-        int broken = (sig.nargs > 5 && total_float > 0) ||
-                     (sig.nargs == 5 && double_count > 0) ||
-                     (sig.nargs == 5 && float_count > 0 && float_count < 4);
-        if (broken) {
-            char msg[512];
-            snprintf(msg, sizeof(msg),
-                     "FFI 调用参数 %d 个（含 %d 个浮点）超过 Win64 精确分发上限。\n"
-                     "  当前回退路径无法正确传递 >4 参数中的浮点值（XMM 寄存器不匹配）。\n"
-                     "  解决方案：\n"
-                     "  - 将参数拆分到 ≤4 个的多次调用\n"
-                     "  - 使用 cstruct 将多个浮点打包为结构体指针传递\n"
-                     "  - 减少浮点参数数量", sig.nargs, total_float);
-            native_throw_error(msg);
-            return val_null();
+        /* 仅当参数 >4 个且前 4 个含浮点时才报错 */
+        if (sig.nargs > 4 && float_in_reg > 0) {
+            /* 例外：5 参数 (int/ptr, f32, f32, f32, f32) 由路径 3.5 精确处理 */
+            int is_path35 = 0;
+            if (sig.nargs == 5 && float_in_reg == 3) {
+                int f32_total = 0;
+                for (int i = 0; i < sig.nargs; i++)
+                    if (sig.arg_types[i] == FFI_TYPE_FLOAT) f32_total++;
+                if (f32_total == 4 && sig.arg_types[0] != FFI_TYPE_FLOAT &&
+                    sig.arg_types[0] != FFI_TYPE_DOUBLE) {
+                    is_path35 = 1;
+                }
+            }
+            if (!is_path35) {
+                char msg[512];
+                int total_float = 0;
+                for (int i = 0; i < sig.nargs; i++)
+                    if (sig.arg_types[i] == FFI_TYPE_FLOAT ||
+                        sig.arg_types[i] == FFI_TYPE_DOUBLE)
+                        total_float++;
+                snprintf(msg, sizeof(msg),
+                         "FFI 调用参数 %d 个（含 %d 个浮点），前 4 个参数中含 %d 个浮点，"
+                         "超过 Win64 精确分发上限。\n"
+                         "  当前回退路径无法正确传递前 4 个参数中的浮点值（XMM 寄存器不匹配）。\n"
+                         "  解决方案：\n"
+                         "  - 将参数拆分到 ≤4 个的多次调用\n"
+                         "  - 使用 cstruct 将多个浮点打包为结构体指针传递\n"
+                         "  - 减少浮点参数数量\n"
+                         "  - 调整参数顺序使浮点参数位于第 5 个或之后",
+                         sig.nargs, total_float, float_in_reg);
+                native_throw_error(msg);
+                return val_null();
+            }
         }
     }
 

@@ -38,7 +38,7 @@ export struct Toggle impl Widget {
             if _fontPath != "" { _font = fnt.acquireFont(_fontPath, _fontSize) }
             else { _font = fnt.acquireFontAuto(_fontSize) }
             if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
-            if _font.ok { _fontH = _font.measureString("Ag").h }
+            if _font.ok { var[float, float](_agw, _agh) = _font.measureString("Ag"); _fontH = _agh }
         }
     }
 
@@ -109,7 +109,7 @@ export struct Toggle impl Widget {
     func get_w(): float {
         _ensure_font()
         float tw = 0.0
-        if _font != null and _font.ok and text != "" { tw = _font.measureString(text).w }
+        if _font != null and _font.ok and text != "" { var[float, float](_tw, _th) = _font.measureString(text); tw = _tw }
         return w + 10.0 + tw
     }
     func get_h(): float          { return h }
@@ -120,7 +120,7 @@ export struct Toggle impl Widget {
 
     func contains(float mx, float my): bool {
         float tw = 0.0
-        if _font != null and _font.ok and text != "" { tw = _font.measureString(text).w }
+        if _font != null and _font.ok and text != "" { var[float, float](_tw, _th) = _font.measureString(text); tw = _tw }
         float totalW = w + 10.0 + tw
         return mx >= x and mx <= x + totalW and my >= y and my <= y + h
     }
@@ -130,19 +130,20 @@ export struct Toggle impl Widget {
         if not visible { return }
         if not enabled { hover = false; _pressed = false; return }
         // 弹层捕获：事件落在“他人的弹层（如打开的菜单/下拉）范围内时忽略，避免穿透到下层控件
-        float mx = ev.mouseX(), my = ev.mouseY()
+        var[float, float](mx, my) = ev.mousePos()
         if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
         if core.inPopupCapture(mx, my) { return }
 
 
         if ev.isMouseMotion() {
             _wasHover = hover
-            hover = contains(ev.mouseX(), ev.mouseY())
+            var[float, float](_hx, _hy) = ev.mousePos()
+            hover = contains(_hx, _hy)
             if _cursor >= 0 {
                 if hover { core.requestCursor(_cursor) }
             }
             // 悬停提示：hover 时上报；离开由 tipEndMotion 统一清除
-            if hover and _tip != "" { tip.tipReport(_tip, ev.mouseX(), ev.mouseY()) }
+            if hover and _tip != "" { var[float, float](_tx, _ty) = ev.mousePos(); tip.tipReport(_tip, _tx, _ty) }
         }
 
         if ev.isMouseButtonUp() { _pressed = false }

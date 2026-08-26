@@ -46,7 +46,8 @@ main() {
             if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
             // 右键：在光标处弹出上下文菜单（onEvent 先于各控件 process，同一帧内即生效）
             if e.isMouseButtonDown() and e.mouseButton() == 3 {
-                bar.openContext(ctx, e.mouseX(), e.mouseY())
+                var[float, float](_mx, _my) = e.mousePos()
+                bar.openContext(ctx, _mx, _my)
             }
             return true
         },

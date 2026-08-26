@@ -249,7 +249,7 @@ export struct ComboBox impl Widget, Themeable {
         if not _loaded { return }
         if not enabled { _open = false; _hover = -1; _draggingScroll = false; return }
 
-        float mx = ev.mouseX(); float my = ev.mouseY()
+        var[float, float](mx, my) = ev.mousePos()
         if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
 
         // ★ 可编辑模式：Edit 聚焦时，键盘/文本事件路由给 Edit
@@ -390,8 +390,7 @@ export struct ComboBox impl Widget, Themeable {
                     if isz > h - 8.0 { isz = h - 8.0 }
                     float iy = y + (h - isz) / 2.0
                     r.setTextureAlpha(tex, 255); r.setTextureColor(tex, #FFFFFFFF)
-                    var nats = r.getTextureSize(tex)
-                    float nw = nats["w"], nh = nats["h"]
+                    var[float, float](nw, nh) = r.getTextureSize(tex)
                     if nw > 0.0 and nh > 0.0 {
                         float s = isz / nw; if isz / nh < s { s = isz / nh }
                         float dw = nw * s, dh = nh * s
@@ -402,7 +401,7 @@ export struct ComboBox impl Widget, Themeable {
             }
             string t = ""
             if _sel >= 0 and _sel < items.len() { t = items[_sel] } else { t = _placeholder }
-            float th = _font.measureString("Ag").h
+            var[float, float](_agw, th) = _font.measureString("Ag")
             Color tcC = _txtColor
             if not enabled { tcC = theme.darken(_txtColor, 60) }
             float ty = r.snapY(y + (h - th) / 2.0)
@@ -444,7 +443,7 @@ export struct ComboBox impl Widget, Themeable {
         float radius = 6.0
         // 行高为常量，循环外测量一次避免每行重复测量
         float textH = 0.0
-        if _font.ok { textH = _font.measureString("Ag").h }
+        if _font.ok { var[float, float](_agw, _agh) = _font.measureString("Ag"); textH = _agh }
         for items.len() to i {
             float iy = r.snapY(py - _scroll + i * _itemH)
             if iy + _itemH < py or iy > py + ph { continue }
@@ -481,8 +480,7 @@ export struct ComboBox impl Widget, Themeable {
                         if isz > _itemH - 4.0 { isz = _itemH - 4.0 }
                         float iy2 = iy + (_itemH - isz) / 2.0
                         r.setTextureAlpha(tex, 255); r.setTextureColor(tex, #FFFFFFFF)
-                        var nats = r.getTextureSize(tex)
-                        float nw = nats["w"], nh = nats["h"]
+                        var[float, float](nw, nh) = r.getTextureSize(tex)
                         if nw > 0.0 and nh > 0.0 {
                             float s = isz / nw; if isz / nh < s { s = isz / nh }
                             float dw = nw * s, dh = nh * s

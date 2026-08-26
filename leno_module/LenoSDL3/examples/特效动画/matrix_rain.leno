@@ -59,8 +59,8 @@ main() {
     var charW = 9.0
     var charH = 16.0
     if font.ok {
-        var ms = font.measureString("M")
-        if ms.w > 0.0 { charW = ms.w }
+        var[float, float](msw, msh) = font.measureString("M")
+        if msw > 0.0 { charW = msw }
         charH = _float(font.height)
         if charH < 1.0 { charH = 16.0 }
     }

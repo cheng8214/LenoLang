@@ -247,7 +247,7 @@ export struct ListBox impl Widget, Themeable {
         if not enabled { _hover = -1; _draggingScroll = false; return }
 
         // 弹层捕获：光标落在“他人的下拉弹层”范围内时，本控件忽略该事件（避免穿透到下层）
-        float mx = ev.mouseX(), my = ev.mouseY()
+        var[float, float](mx, my) = ev.mousePos()
         if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
         if core.inPopupCapture(mx, my) { return }
 
@@ -343,7 +343,7 @@ export struct ListBox impl Widget, Themeable {
         float radius = 6.0
         // 行高为常量，循环外测量一次避免每行重复测量
         float textH = 0.0
-        if _font != null and _font.ok { textH = _font.measureString("Ag").h }
+        if _font != null and _font.ok { var[float, float](_agw, _agh) = _font.measureString("Ag"); textH = _agh }
         for items.len() to i {
             float iy = r.snapY(y - _scroll + i * _itemH)
             if iy + _itemH < y or iy > y + h { continue }

@@ -97,8 +97,8 @@ export struct ImageView impl Widget {
             _tex = img.loadTexture(r.handle, _imagePath)
             _loadedPath = _imagePath
             if _tex != null {
-                var ts = r.getTextureSize(_tex)
-                _natW = ts["w"]; _natH = ts["h"]
+                var[float, float](_nw, _nh) = r.getTextureSize(_tex)
+                _natW = _nw; _natH = _nh
             }
         }
     }
@@ -107,20 +107,20 @@ export struct ImageView impl Widget {
     func process(Event ev) {
         if not _loaded or not visible { return }
         if not enabled { hover = false; return }
-        float mx = ev.mouseX(); float my = ev.mouseY()
+        var[float, float](mx, my) = ev.mousePos()
         if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
         if core.inPopupCapture(mx, my) { return }
 
         if ev.isMouseMotion() {
             _wasHover = hover
-            hover = contains(ev.mouseX(), ev.mouseY())
+            hover = contains(mx, my)
             if hover != _wasHover { core.markFrameRedraw() } else { core.markFrameMotion() }
             if _cursor >= 0 {
                 if hover { core.requestCursor(_cursor) }
             }
-            if hover and _tip != "" { tip.tipReport(_tip, ev.mouseX(), ev.mouseY()) }
+            if hover and _tip != "" { tip.tipReport(_tip, mx, my) }
         }
-        if ev.isMouseButtonDown() and contains(ev.mouseX(), ev.mouseY()) {
+        if ev.isMouseButtonDown() and contains(mx, my) {
             hover = true
             core.markFrameRedraw()
             if _onClick != null { _onClick() }

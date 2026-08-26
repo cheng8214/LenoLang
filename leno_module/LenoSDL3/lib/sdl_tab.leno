@@ -240,7 +240,7 @@ export struct TabControl impl Widget, Themeable {
         float total = 0.0
         for n to i {
             float tw = 60.0
-            if _font != null and _font.ok { tw = _font.measureString(_tabs[i]).w + 28.0 }
+            if _font != null and _font.ok { var[float, float](_tw, _th) = _font.measureString(_tabs[i]); tw = _tw + 28.0 }
             if tw < 48.0 { tw = 48.0 }
             widths.add(tw)
             total = total + tw
@@ -260,7 +260,7 @@ export struct TabControl impl Widget, Themeable {
     func process(Event ev) {
         if not _loaded or not enabled or not visible { return }
         _applyOffsets(_active)
-        float mx = ev.mouseX(), my = ev.mouseY()
+        var[float, float](mx, my) = ev.mousePos()
 
 
         var rs = _tabRects()
@@ -338,8 +338,7 @@ export struct TabControl impl Widget, Themeable {
 
             // 标签文字（居中裁剪）
             if _font != null and _font.ok and _tabs[i] != "" {
-                float tw = _font.measureString(_tabs[i]).w
-                float th = _font.measureString("Ag").h
+                var[float, float](tw, th) = _font.measureString(_tabs[i])
                 float tx = rr[0] + (rr[2] - tw) / 2.0
                 float ty = rr[1] + (rr[3] - th) / 2.0
                 r.drawText(_font, _tabs[i], r.snapX(tx), r.snapY(ty), tC)

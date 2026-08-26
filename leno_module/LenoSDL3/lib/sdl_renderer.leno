@@ -307,20 +307,20 @@ export struct Renderer {
         c.free(); return d
     }
 
-    // 获取当前绘制颜色（浮点 RGBA），返回 {r, g, b, a}
-    func getColorFloat(): FColor {
+    // 获取当前绘制颜色（浮点 RGBA）
+    func getColorFloat(): [float, float, float, float] {
         SDL_FColor c = SDL_FColor.malloc()
         _lib.SDL_GetRenderDrawColorFloat(handle, &c.r, &c.g, &c.b, &c.a)
-        FColor d = {r: c.r, g: c.g, b: c.b, a: c.a}
-        c.free(); return d
+        var r = c.r; var g = c.g; var b = c.b; var a = c.a
+        c.free(); return r, g, b, a
     }
 
-    // 获取渲染器输出尺寸，返回 {w, h}
-    func getOutputSize(): Size {
+    // 获取渲染器输出尺寸
+    func getOutputSize(): [int, int] {
         SDL_Point pt = SDL_Point.malloc()
         _lib.SDL_GetRenderOutputSize(handle, &pt.x, &pt.y)
-        Size d = {w: pt.x, h: pt.y}
-        pt.free(); return d
+        var w = pt.x; var h = pt.y
+        pt.free(); return w, h
     }
 
     // 填充矩形（x, y, w, h）—— 透明自动批处理：同材质连续调用合并为一次 SDL_RenderFillRects
@@ -614,12 +614,12 @@ export struct Renderer {
         dst.free(); center.free(); return ok
     }
 
-    // 获取纹理尺寸，返回 {w, h}（浮点）
-    func getTextureSize(Ptr[u8] texture): FSize {
+    // 获取纹理尺寸（浮点）
+    func getTextureSize(Ptr[u8] texture): [float, float] {
         SDL_FPoint pt = SDL_FPoint.malloc()
         _lib.SDL_GetTextureSize(texture, &pt.x, &pt.y)
-        FSize d = {w: pt.x, h: pt.y}
-        pt.free(); return d
+        var w = pt.x; var h = pt.y
+        pt.free(); return w, h
     }
 
     // 便捷绘制文字（创建/复用纹理→绘制一步完成）
@@ -659,8 +659,8 @@ export struct Renderer {
 
     // 居中绘制文字（在 [x, x+w] 范围内水平居中）
     func drawTextCentered(Font f, string text, float x, float w, float y, Color color) {
-        var ms = f.measureString(text)
-        float cx = x + (w - ms.w) / 2.0
+        var[float, float](msw, msh) = f.measureString(text)
+        float cx = x + (w - msw) / 2.0
         drawText(f, text, cx, y, color)
     }
 
@@ -899,8 +899,7 @@ export struct Renderer {
         if r > 64.0 { segs = 48 }
 
         // 获取当前颜色
-        var col = getColorFloat()
-        float cr = col.r; float cg = col.g; float cb = col.b; float ca = col.a
+        var[float, float, float, float](cr, cg, cb, ca) = getColorFloat()
 
         var half_pi = 1.57079633
         var v_per_corner = 3 * segs  // 每个角需要的顶点数（segs 个三角形 × 3 顶点）

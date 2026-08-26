@@ -1,8 +1,8 @@
-import "../../../lib/sdl_core.leno" as core
-use core.Timer
+import "../../../lib/sdl_timer.leno" as timer
+use timer.Timer
 
 func test_tick(Timer t) {
-    t.tick()
+    timer.tickAllTimers()
 }
 
 main() {

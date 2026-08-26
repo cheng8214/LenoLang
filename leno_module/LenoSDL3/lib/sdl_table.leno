@@ -141,7 +141,8 @@ export struct Table impl Widget, Themeable {
             else { _font = fnt.acquireFontAuto(_fontSize) }
             if _font.ok {
                 if _fontStyle != 0 { _font.setStyle(_fontStyle) }
-                _textH = _font.measureString("Ag").h   // 字体加载时缓存行高，避免每帧渲染中调用 measureString
+                var[float, float](_agw, _agh) = _font.measureString("Ag")
+                _textH = _agh   // 字体加载时缓存行高，避免每帧渲染中调用 measureString
             }
         }
     }
@@ -1019,7 +1020,7 @@ export struct Table impl Widget, Themeable {
             _hoverRow = -1; _draggingV = false; _draggingH = false; _dragCol = -1
             return
         }
-        float mx = ev.mouseX(), my = ev.mouseY()
+        var[float, float](mx, my) = ev.mousePos()
         if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
 
         // 内嵌右击上下文菜单已展开：所有事件先交菜单处理（选择/关闭由菜单自身负责）
@@ -1068,8 +1069,9 @@ export struct Table impl Widget, Themeable {
                     nr++
                 }
             }
-            eif ev.isMouseButtonDown() and not _edit.contains(ev.mouseX(), ev.mouseY()) {
-                _commit_edit()
+            eif ev.isMouseButtonDown() {
+                var[float, float](_ex, _ey) = ev.mousePos()
+                if not _edit.contains(_ex, _ey) { _commit_edit() }
             }
             return
         }
@@ -1375,7 +1377,7 @@ export struct Table impl Widget, Themeable {
                             }
                             float pad = 8.0
                             float availW = _colW[hc] - 2.0 * pad - iconOff
-                            float fullW = _font.measureString(cellText).w
+                            var[float, float](_fw, _fh) = _font.measureString(cellText); float fullW = _fw
                             if fullW > availW { _hoverTipText = cellText }
                         }
                     }
@@ -1526,16 +1528,16 @@ export struct Table impl Widget, Themeable {
     func _fit_cell_text(string t, float availW): string {
         if _font == null or not _font.ok { return t }
         if availW <= 0.0 { return "" }
-        float fullW = _font.measureString(t).w
+        var[float, float](_fw, _fh) = _font.measureString(t); float fullW = _fw
         if fullW <= availW { return t }
-        float eW = _font.measureString("\u2026").w   // "…"
+        var[float, float](_ew, _eh) = _font.measureString("\u2026"); float eW = _ew   // "…"
         float limit = availW - eW
         if limit < 0.0 { return "\u2026" }
         int n = t.len()
         int lo = 0, hi = n
         while lo < hi {
             int mid = (lo + hi + 1) / 2
-            float mw = _font.measureString(t.slice(0, mid)).w
+            var[float, float](_mw, _mh) = _font.measureString(t.slice(0, mid)); float mw = _mw
             if mw <= limit { lo = mid } else { hi = mid - 1 }
         }
         return t.slice(0, lo) + "\u2026"
@@ -1585,7 +1587,7 @@ export struct Table impl Widget, Themeable {
                 float availW = _colW[c] - 2.0 * pad - iconOff
                 string fitted = _fit_cell_text(text, availW)
                 float fw = 0.0
-                if fitted != "" { fw = _font.measureString(fitted).w }
+                if fitted != "" { var[float, float](_fw2, _fh2) = _font.measureString(fitted); fw = _fw2 }
                 _fittedText[baseIdx + c] = fitted
                 _fittedW[baseIdx + c] = fw
             }
@@ -1651,8 +1653,7 @@ export struct Table impl Widget, Themeable {
         float imgY = ry + (rh - imgSize) / 2.0
         r.setTextureAlpha(tex, 255)
         r.setTextureColor(tex, #FFFFFFFF)
-        var nats = r.getTextureSize(tex)
-        float nw = nats["w"], nh = nats["h"]
+        var[float, float](nw, nh) = r.getTextureSize(tex)
         switch _imgMode {
             case 1 {
                 // stretch：直接拉伸填满
@@ -1685,7 +1686,7 @@ export struct Table impl Widget, Themeable {
         float availW = cw - 2.0 * pad - iconOff
         string dt = _fit_cell_text(t, availW)
         if dt == "" { return }
-        float tw = _font.measureString(dt).w
+        var[float, float](_tw, _th) = _font.measureString(dt); float tw = _tw
         float tx
         switch align {
             case 2 { tx = cx + cw - pad - tw }
@@ -1877,7 +1878,7 @@ export struct Table impl Widget, Themeable {
 
         // 空状态提示：无数据时在数据区居中显示
         if _rows.len() == 0 and _emptyText != "" {
-            float tw = _font.measureString(_emptyText).w
+            var[float, float](_tw2, _th2) = _font.measureString(_emptyText); float tw = _tw2
             float tx = x + (w - tw) / 2.0
             float ty = bodyTop + (bodyH - _textH) / 2.0
             r.setColor(_emptyColor)

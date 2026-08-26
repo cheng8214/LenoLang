@@ -403,10 +403,10 @@
                                                     method_return_type_info = type_copy(alias_ti);
                                                     method_return_type = method_return_type_info->kind;
                                                 } else {
-                                                    // 解析完整类型信息
-                                                    method_return_type_info = parse_type_from_string(ret_type_str);
-                                                    if (method_return_type_info) {
-                                                        method_return_type = method_return_type_info->kind;
+                                            // 解析完整类型信息
+                                            method_return_type_info = parse_type_from_string(ret_type_str);
+                                            if (method_return_type_info) {
+                                                method_return_type = method_return_type_info->kind;
                                                     } else {
                                                         method_return_type = parse_base_type(ret_type_str);
                                                     }

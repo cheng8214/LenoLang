@@ -175,19 +175,19 @@ export struct Font {
         return ttfLib().TTF_RenderText_Blended_Wrapped(handle, text, 0, packColor(r, g, b), wrapWidth)
     }
 
-    func measureString(string text): StringSize {
-        if not ok { return {w: 0, h: 0} }
+    func measureString(string text): [float, float] {
+        if not ok { return 0.0, 0.0 }
         // 实际测量字号：SSAA 下为 2x，否则 1x。作为缓存 key 维度，自动区分两种测量方式，
         // 缓存命中时连 TTF_SetFontSize 都省掉（measure 在 Edit 中调用极密集）。
         float mpt = if _aaScale > 0.0 then _pt * _aaScale else _pt
         string key = $"{mpt}\x01{text}"
         // MRU 快路径：同一文字连续调用时直接命中，跳过 256 槽线性扫描
-        if key == _measLastKey { return {w: _measLastW, h: _measLastH} }
+        if key == _measLastKey { return _measLastW, _measLastH }
         for _measCache.len() to i {
             if _measCache[i].key == key {
                 _measLastKey = key
                 _measLastW = _measCache[i].w; _measLastH = _measCache[i].h
-                return {w: _measCache[i].w, h: _measCache[i].h}
+                return _measCache[i].w, _measCache[i].h
             }
         }
         float mw = 0.0
@@ -222,7 +222,7 @@ export struct Font {
             _measHead = (_measHead + 1) % _measCap
         }
         _measLastKey = key; _measLastW = mw; _measLastH = mh
-        return {w: mw, h: mh}
+        return mw, mh
     }
 
     // 设置 SSAA 倍数（与所用 Renderer 的 getSSAA() 一致）；传 0 关闭。

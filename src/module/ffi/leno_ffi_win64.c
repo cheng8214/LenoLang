@@ -406,22 +406,28 @@ FFIValue ffi_call_win64(void* func, const FFISignature* sig, const FFIArg* args)
      * 将所有参数统一为 int64_t 传递（double 转为位模式），
      * 让 C 编译器根据强转后的函数指针类型自动分配寄存器。
      *
-     * ⚠ 警告：此回退路径对浮点参数不保证正确！
-     * int64 位模式通过整数寄存器/栈传递，但被调函数期望
-     * 浮点参数在 XMM 寄存器中，两者不匹配。
-     * 仅当参数全为整数/指针时此路径完全安全。
+     * 此路径在以下条件下安全（上层 ffi.c 已做拦截）：
+     *   - 前 4 个参数不含浮点（走整数寄存器 RCX/RDX/R8/R9，正确）
+     *   - 第 5+ 个参数中的浮点走栈（8 字节对齐，位模式一致，被调函数从栈读取到 XMM，正确）
+     *
+     * 注意：float(f32) 参数在栈上会被当作 8 字节传递（int64 容器），
+     * 被调函数从栈读取时会取低 32 位，这在 Win64 ABI 下是正确的
+     * （栈上参数按 8 字节对齐，f32 占低 4 字节）。
      */
-    if (dcount > 0) {
-        fprintf(stderr, "[FFI Warning] 回退调用路径: %d 个参数中含 %d 个浮点参数，"
-                        "浮点参数可能无法正确传递（期望 XMM 寄存器，实际走整数寄存器/栈）。\n"
-                        "  提示：上层 ffi_call_impl 应已拦截此场景，如看到此消息请报告 bug。\n",
-                total, dcount);
-    }
     {
         int64_t iargs[FFI_MAX_ARGS];
         for (int i = 0; i < total; i++) {
-            if (is_float_type(args[i].type))
+            if (args[i].type == FFI_TYPE_DOUBLE)
                 iargs[i] = double_to_bits(args[i].value.d);
+            else if (args[i].type == FFI_TYPE_FLOAT) {
+                /* f32: Win64 ABI 栈上参数按 8 字节容器传递，f32 占低 32 位
+                 * 将 float 位模式放入 int64 的低 32 位（高 32 位清零）
+                 * 被函数从栈读取低 32 位作为 float */
+                float fval = args[i].value.f;
+                int32_t fbits;
+                memcpy(&fbits, &fval, sizeof(fbits));
+                iargs[i] = (int64_t)(uint32_t)fbits;
+            }
             else if (args[i].type == FFI_TYPE_POINTER)
                 iargs[i] = (int64_t)(intptr_t)args[i].value.p;
             else

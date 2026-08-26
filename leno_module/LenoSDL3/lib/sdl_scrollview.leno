@@ -271,13 +271,14 @@ export struct ScrollView impl Widget {
         _sync()
         // 滚动条交互优先于内容
         if ev.isMouseButtonDown() and ev.mouseButton() == 1 {
-            if _onGutter(ev.mouseX(), ev.mouseY()) { _scrollbarDown(ev.mouseX(), ev.mouseY()); return }
+            var[float, float](_dx, _dy) = ev.mousePos()
+            if _onGutter(_dx, _dy) { _scrollbarDown(_dx, _dy); return }
         }
         if ev.isMouseButtonUp() and ev.mouseButton() == 1 {
             if _dragV != 0 or _dragH != 0 { _dragV = 0; _dragH = 0; return }
         }
         if ev.isMouseMotion() and (_dragV != 0 or _dragH != 0) {
-            _scrollbarDrag(ev.mouseX(), ev.mouseY()); core.markFrameRedraw(); return
+            var[float, float](_dx2, _dy2) = ev.mousePos(); _scrollbarDrag(_dx2, _dy2); core.markFrameRedraw(); return
         }
         // 滚轮：悬停视口内才滚动
         if ev.isMouseWheel() {
@@ -293,7 +294,7 @@ export struct ScrollView impl Widget {
         }
         // 键盘导航：悬停视口时 PageUp/Down 翻页、Home/End 跳首尾
         if ev.isKeyDown() {
-            float kx = ev.mouseX(), ky = ev.mouseY()
+            var[float, float](kx, ky) = ev.mousePos()
             if kx >= x and kx <= x + w and ky >= y and ky <= y + h {
                 int sc = ev.scancode()
                 if sc == 78 {  // PageDown

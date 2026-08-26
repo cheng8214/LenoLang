@@ -67,8 +67,7 @@ main() {
 
             // 绘制图片：多个副本展示不同效果
             if loadedTex != null {
-                var ts = r.getTextureSize(loadedTex)
-                float iw = ts.w; float ih = ts.h
+                var[float, float](iw, ih) = r.getTextureSize(loadedTex)
                 float scale = 90.0 / (if ih > iw then ih else iw)  // 缩放到合适大小
                 float tw = iw * scale; float th = ih * scale
 

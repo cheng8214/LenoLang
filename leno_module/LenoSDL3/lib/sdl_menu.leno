@@ -74,8 +74,8 @@ func _colW(Array[MenuItem] items, Font f, float itemH, float imgSize, float imgP
         var it = items[i]
         if it.separator { continue }
         float w = 60.0
-        if f.ok { w = f.measureString(it.label).w }
-        if it.shortcut != "" and f.ok { w = w + 16.0 + f.measureString(it.shortcut).w }
+        if f.ok { var[float, float](_lw, _lh) = f.measureString(it.label); w = _lw }
+        if it.shortcut != "" and f.ok { var[float, float](_sw, _sh) = f.measureString(it.shortcut); w = w + 16.0 + _sw }
         if it.image != "" and imgSize > 0.0 { w = w + imgPad + imgSize + imgGap }
         if w > mw { mw = w }
     }
@@ -424,7 +424,7 @@ export struct MenuBar impl Widget, Themeable {
                 continue
             }
             float tw = 60.0
-            if _font != null and _font.ok { tw = _font.measureString(_titles[i]).w + 28.0 }
+            if _font != null and _font.ok { var[float, float](_tw, _th) = _font.measureString(_titles[i]); tw = _tw + 28.0 }
             if tw < 40.0 { tw = 40.0 }
             out.add([tx, y, tw, h])
             tx = tx + tw
@@ -522,7 +522,7 @@ export struct MenuBar impl Widget, Themeable {
         if not visible { return }
         if not enabled { close(); return }
 
-        float mx = ev.mouseX(), my = ev.mouseY()
+        var[float, float](mx, my) = ev.mousePos()
 
         if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { close(); return }
 
@@ -627,8 +627,8 @@ export struct MenuBar impl Widget, Themeable {
             bool hov = (_hoverTop == i) or active
             if hov { r.setColor(_barHovColor); r.fillRect(rr[0], rr[1], rr[2], rr[3]) }
             if _font != null and _font.ok and _titles[i] != "" {
-                float th = _font.measureString("Ag").h
-                float tw = _font.measureString(_titles[i]).w
+                var[float, float](_agw, th) = _font.measureString("Ag")
+                var[float, float](tw, _mh) = _font.measureString(_titles[i])
                 float ty = rr[1] + (if th > rr[3] then 0.0 else (rr[3] - th) / 2.0)
                 // 水平对齐：left 缩进 / right 靠右 / center 居中（横栏竖栏共用）
                 float tx
@@ -696,8 +696,7 @@ export struct MenuBar impl Widget, Themeable {
         float imgY = ry + (_itemH - _imgSize) / 2.0
         r.setTextureAlpha(tex, 255)
         r.setTextureColor(tex, #FFFFFFFF)
-        var nats = r.getTextureSize(tex)
-        float nw = nats["w"], nh = nats["h"]
+        var[float, float](nw, nh) = r.getTextureSize(tex)
         // aspectFit：保持比例完整显示
         float s = _imgSize / nw; if _imgSize / nh < s { s = _imgSize / nh }
         float dw = nw * s, dh = nh * s
@@ -753,11 +752,11 @@ export struct MenuBar impl Widget, Themeable {
             // 图标
             float iconW = _draw_icon(r, it.image, px, ry)
             if _font != null and _font.ok {
-                float th = _font.measureString("Ag").h
+                var[float, float](_agw2, th) = _font.measureString("Ag")
                 float ty = ry + (if th > _itemH then 0.0 else (_itemH - th) / 2.0)
                 r.drawText(_font, it.label, r.snapX(px + 12.0 + iconW), r.snapY(ty), lc)
                 if it.shortcut != "" {
-                    float sw = _font.measureString(it.shortcut).w
+                    var[float, float](sw, _sh2) = _font.measureString(it.shortcut)
                     r.drawText(_font, it.shortcut, r.snapX(px + pw - 12.0 - sw), r.snapY(ty), lc)
                 }
                 if it.submenu.len() > 0 {

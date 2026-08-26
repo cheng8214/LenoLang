@@ -41,14 +41,14 @@ func _fmtNum(float v): string { return (_int(v) as string) }
 // 超长标签截断为 availW 宽度并追加省略号（复用 sdl_table 的二分 + slice 范式）
 func _truncLabel(Font f, string t, float availW): string {
     if availW <= 0.0 { return t }
-    var ew = f.measureString("\u2026")   // "…"
-    float limit = availW - ew.w
+    var[float, float](ew_w, ew_h) = f.measureString("\u2026")   // "…"
+    float limit = availW - ew_w
     if limit <= 0.0 { return "\u2026" }
     int n = t.len()
     int lo = 0; int hi = n
     while lo < hi {
         int mid = (lo + hi + 1) / 2
-        float mw = f.measureString(t.slice(0, mid)).w
+        var[float, float](mw, mh) = f.measureString(t.slice(0, mid))
         if mw <= limit { lo = mid } else { hi = mid - 1 }
     }
     if lo >= n { return t }
@@ -58,8 +58,7 @@ func _truncLabel(Font f, string t, float availW): string {
 // 绘制悬停提示气泡（背景圆角框 + 描边 + 文字）
 func _drawTip(Renderer r, Font f, float mx, float my, string text) {
     Theme th = theme.getTheme()
-    var ms = f.measureString(text)
-    float tw = ms.w; float th2 = ms.h
+    var[float, float](tw, th2) = f.measureString(text)
     float bx = mx + 12.0; float by = my + 12.0
     float pad = 6.0
     r.setColor(theme.withAlpha(th.tipBg, 235))
@@ -133,7 +132,7 @@ export struct BarChart impl Widget {
     func process(Event ev) {
         if not _loaded { return }
         if ev.isMouseMotion() {
-            _mx = ev.mouseX(); _my = ev.mouseY()
+            var[float, float](_emx, _emy) = ev.mousePos(); _mx = _emx; _my = _emy
             bool wasHover = _hover
             _hover = _mx >= x and _mx <= x + w and _my >= y and _my <= y + h
             if wasHover != _hover { core.markFrameRedraw() }
@@ -165,8 +164,8 @@ export struct BarChart impl Widget {
         float maxYLabW = 0.0
         for 0 : ticks to ti {
             string lab = _fmtNum(ymax * ti / _float(ticks))
-            var mw = f.measureString(lab)
-            if mw.w > maxYLabW { maxYLabW = mw.w }
+            var[float, float](mww, mwh) = f.measureString(lab)
+            if mww > maxYLabW { maxYLabW = mww }
         }
         float padL = maxYLabW + 12.0
         if padL < 38.0 { padL = 38.0 }
@@ -182,7 +181,7 @@ export struct BarChart impl Widget {
         // 使用缓存的标签最大宽度（仅在 set_data 时重算），避免每帧 O(n) measureString
         if _catDirty and f.ok {
             _maxCatW = 0.0
-            for cats.len() to i { var m = f.measureString(cats[i]); if m.w > _maxCatW { _maxCatW = m.w } }
+            for cats.len() to i { var[float, float](mw, mh) = f.measureString(cats[i]); if mw > _maxCatW { _maxCatW = mw } }
             _catDirty = false
         }
         float maxCatW = _maxCatW
@@ -248,12 +247,12 @@ export struct BarChart impl Widget {
             float by = plotY + plotH - vh
             if showValues {
                 string s = _fmtNum(_animVals[i])
-                var ms = f.measureString(s)
+                var[float, float](msw, msh) = f.measureString(s)
                 // 若标签会顶到上边界（可能压到标题），改为绘制到柱子内部，避免与标题重叠
-                float ly = by - ms.h - 3.0
+                float ly = by - msh - 3.0
                 Color lc = _valColor
                 if ly < plotY { ly = by + 2.0; lc = _labColor }
-                r.drawText(f, s, bx + (bw - ms.w) / 2.0, ly, lc)
+                r.drawText(f, s, bx + (bw - msw) / 2.0, ly, lc)
             }
             if i < cats.len() and (i % catStride) == 0 {
                 string cat = _truncLabel(f, cats[i], slot - 4.0)
@@ -391,7 +390,7 @@ export struct LineChart impl Widget {
     func process(Event ev) {
         if not _loaded { return }
         if ev.isMouseMotion() {
-            _mx = ev.mouseX(); _my = ev.mouseY()
+            var[float, float](_emx, _emy) = ev.mousePos(); _mx = _emx; _my = _emy
             bool wasHover = _hover
             _hover = _mx >= x and _mx <= x + w and _my >= y and _my <= y + h
             if wasHover != _hover { core.markFrameRedraw() }
@@ -450,7 +449,7 @@ export struct LineChart impl Widget {
         // 使用缓存的标签最大宽度（仅在 set_data 时重算），避免每帧 O(n) measureString
         if _labelDirty and f.ok {
             _maxLabelW = 0.0
-            for xlabels.len() to i { var m = f.measureString(xlabels[i]); if m.w > _maxLabelW { _maxLabelW = m.w } }
+            for xlabels.len() to i { var[float, float](mw, mh) = f.measureString(xlabels[i]); if mw > _maxLabelW { _maxLabelW = mw } }
             _labelDirty = false
         }
         float maxLW = _maxLabelW
@@ -466,10 +465,10 @@ export struct LineChart impl Widget {
         for n to i {
             if i < xlabels.len() and (i % stride) == 0 {
                 string xl = _truncLabel(f, xlabels[i], slotW)
-                var ms = f.measureString(xl)
+                var[float, float](msw, msh) = f.measureString(xl)
                 r.setColor(_catColor)
-                float lx = plotX + stepX * i - ms.w / 2.0
-                lx = _clampf(lx, plotX, plotX + plotW - ms.w)
+                float lx = plotX + stepX * i - msw / 2.0
+                lx = _clampf(lx, plotX, plotX + plotW - msw)
                 r.drawText(f, xl, lx, plotY + plotH + 6.0, _catColor)
             }
         }
@@ -479,9 +478,9 @@ export struct LineChart impl Widget {
             float avail = (2.0 * rgap - stride) * stepX + labelGap
             if avail > 0.0 {
                 string xl = _truncLabel(f, xlabels[n - 1], avail)
-                var ms = f.measureString(xl)
+                var[float, float](msw, msh) = f.measureString(xl)
                 r.setColor(_catColor)
-                float lx = plotX + stepX * (n - 1) - ms.w / 2.0
+                float lx = plotX + stepX * (n - 1) - msw / 2.0
                 r.drawText(f, xl, lx, plotY + plotH + 6.0, _catColor)
             }
         }

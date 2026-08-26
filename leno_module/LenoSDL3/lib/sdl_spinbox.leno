@@ -191,7 +191,7 @@ export struct SpinBox impl Widget, Themeable {
             _hoverUp = false; _hoverDown = false
             return
         }
-        float mx = ev.mouseX(), my = ev.mouseY()
+        var[float, float](mx, my) = ev.mousePos()
         if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
         // 弹层捕获：事件落在他人弹层范围内时，跳过自身交互（滚轮/箭头），
         // 但仍转发给内嵌 Edit——Edit 可能拥有该弹层（如右键菜单），需要接收事件。

@@ -118,7 +118,7 @@ func showAbout() {
             if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
             // 点击「确定」按钮区域关闭
             if ev.isMouseButtonUp() {
-                float mx = ev.mouseX(); float my = ev.mouseY()
+                var[float, float](mx, my) = ev.mousePos()
                 if mx >= 140.0 and mx <= 240.0 and my >= 192.0 and my <= 226.0 { return false }
             }
             return true

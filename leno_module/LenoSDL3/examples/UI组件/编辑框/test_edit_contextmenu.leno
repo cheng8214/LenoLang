@@ -34,7 +34,7 @@ main() {
     }
     ed.on_context_select(func(string id) {
         if id == "clear" { ed.set_text("") }
-        else if id == "upper" { ed.set_text(ed.get_text().upper()) }
+        else if id == "upper" { ed.set_text(ed.get_text().to_upper()) }
         msg = "菜单项: " + id
     })
 

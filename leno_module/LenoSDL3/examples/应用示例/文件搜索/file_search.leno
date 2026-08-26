@@ -538,8 +538,7 @@ func pollChannel() {
         bool allDone = true
         int runningCount = 0
         for searchThreads.len() to i {
-            var t = searchThreads[i]
-            if t is Thread {
+            if searchThreads[i] is Thread => t {
                 string st = t.state()
                 if st == "running" {
                     allDone = false

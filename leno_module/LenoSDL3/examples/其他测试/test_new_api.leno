@@ -89,7 +89,7 @@ main() {
 
             if loadedTex != null {
                 r.setTextureAlpha(loadedTex, alpha)
-                r.setTextureColor(loadedTex, cr, cg, cb)
+                r.setTextureColor(loadedTex, _int((cr << 16) | (cg << 8) | cb))
                 r.drawTextureAt(loadedTex, 480, 280, 200, 180)
             }
 

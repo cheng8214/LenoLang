@@ -33,7 +33,7 @@ main() {
             if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
 
             // 鼠标移动
-            if e.isMouseMotion() { mx = e.mouseX(); my = e.mouseY() }
+            if e.isMouseMotion() { var[float, float](_mx, _my) = e.mousePos(); mx = _mx; my = _my }
 
             // 鼠标滚轮：放大/缩小
             if e.isMouseWheel() {
@@ -81,9 +81,9 @@ main() {
 
             // 绘制缩放后的图片
             if loadedTex != null {
-                var ts = r.getTextureSize(loadedTex)
-                float sw = ts.w * scale
-                float sh = ts.h * scale
+                var[float, float](_tsw, _tsh) = r.getTextureSize(loadedTex)
+                float sw = _tsw * scale
+                float sh = _tsh * scale
                 // 居中 + 偏移
                 imgX = 400.0 - sw/2.0 + offsetX
                 imgY = 300.0 - sh/2.0 + offsetY

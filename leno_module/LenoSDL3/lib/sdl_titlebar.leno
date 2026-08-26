@@ -247,8 +247,8 @@ export struct TitleBar impl Widget, Themeable {
         if _winHandle == null { return }
 
         // 同步窗口宽度
-        int winW = core.getWindowW(_winHandle)
-        w = _float(winW)
+        var[int, int](_winW, _winH) = core.getWindowSize(_winHandle)
+        w = _float(_winW)
 
         // 跟踪最大化/还原状态（切换时清除按钮悬停，防止状态残留导致关闭按钮变红）
         // ★ 同时设置 _motionSkipCount：窗口尺寸变化后 OS 会生成合成 MouseMotion 事件，
@@ -257,8 +257,7 @@ export struct TitleBar impl Widget, Themeable {
 if ev.isWindowMaximized() { _maximized = true; _btnHover = BTN_NONE; _motionSkipCount = 2; core.markFrameRedraw() }
 if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkipCount = 2; core.markFrameRedraw() }
 
-        float mx = ev.mouseX()
-        float my = ev.mouseY()
+        var[float, float](mx, my) = ev.mousePos()
 
         // === 手动边缘缩放（非最大化时） ===
         if _resizeEdge != EDGE_NONE {
@@ -276,8 +275,9 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
 
         // 边缘检测（仅在非最大化时）
         if not _maximized and not _dragging {
-            int winH = core.getWindowH(_winHandle)
-            int edge = _detectEdge(mx, my, winW, winH)
+            var[int, int](_winW2, _winH2) = core.getWindowSize(_winHandle)
+            int winH = _winH2
+            int edge = _detectEdge(mx, my, _winW, winH)
             if edge != 0 {
                 // 请求对应的缩放光标
                 _requestResizeCursor(edge)
@@ -292,8 +292,7 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
         // 拖拽中：处理移动和释放
         if _dragging {
             if ev.isMouseMotion() {
-                int curGX = core.getGlobalMouseX()
-                int curGY = core.getGlobalMouseY()
+                var[int, int](curGX, curGY) = core.getGlobalMouse()
                 int newX = _dragStartWinX + (curGX - _dragStartGX)
                 int newY = _dragStartWinY + (curGY - _dragStartGY)
                 core.lib().SDL_SetWindowPosition(_winHandle, newX, newY)
@@ -346,10 +345,10 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
                     if _showMaximize { _doToggleMaximize() }
                 } else {
                     _dragging = true
-                    _dragStartGX = core.getGlobalMouseX()
-                    _dragStartGY = core.getGlobalMouseY()
-                    _dragStartWinX = core.getWindowX(_winHandle)
-                    _dragStartWinY = core.getWindowY(_winHandle)
+                    var[int, int](_dgx, _dgy) = core.getGlobalMouse(); _dragStartGX = _dgx; _dragStartGY = _dgy
+                    var[int, int](_wpx, _wpy) = core.getWindowPos(_winHandle)
+                    _dragStartWinX = _wpx
+                    _dragStartWinY = _wpy
                 }
             }
         }
@@ -426,12 +425,13 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
     // 开始缩放：记录起始状态
     func _startResize(int edge) {
         _resizeEdge = edge
-        _resizeStartGX = core.getGlobalMouseX()
-        _resizeStartGY = core.getGlobalMouseY()
-        _resizeStartWinX = core.getWindowX(_winHandle)
-        _resizeStartWinY = core.getWindowY(_winHandle)
-        _resizeStartW = core.getWindowW(_winHandle)
-        _resizeStartH = core.getWindowH(_winHandle)
+        var[int, int](_rsgx, _rsgy) = core.getGlobalMouse(); _resizeStartGX = _rsgx; _resizeStartGY = _rsgy
+        var[int, int](_rwx, _rwy) = core.getWindowPos(_winHandle)
+        _resizeStartWinX = _rwx
+        _resizeStartWinY = _rwy
+        var[int, int](_rww, _rwh) = core.getWindowSize(_winHandle)
+        _resizeStartW = _rww
+        _resizeStartH = _rwh
         // 强制光标：拖拽中保持缩放光标，防止被其他控件覆盖
         if edge == EDGE_LEFT or edge == EDGE_RIGHT {
             core.forceFrameCursor(SystemCursor.EW_RESIZE)
@@ -446,8 +446,7 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
 
     // 执行缩放：根据 edge 和当前全局鼠标位置调整窗口尺寸/位置
     func _doResize() {
-        int curGX = core.getGlobalMouseX()
-        int curGY = core.getGlobalMouseY()
+        var[int, int](curGX, curGY) = core.getGlobalMouse()
         int dx = curGX - _resizeStartGX
         int dy = curGY - _resizeStartGY
         int newW = _resizeStartW
@@ -514,8 +513,8 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
 
         // 同步窗口宽度
         if _winHandle != null {
-            int winW = core.getWindowW(_winHandle)
-            w = _float(winW)
+            var[int, int](_ww, _wh) = core.getWindowSize(_winHandle)
+            w = _float(_ww)
         }
 
         // 背景填充
@@ -614,8 +613,7 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
         float iy = y + (h - sz) * 0.5
         r.setTextureAlpha(tex, 255)
         r.setTextureColor(tex, #FFFFFFFF)
-        var nats = r.getTextureSize(tex)
-        float nw = nats["w"]; float nh = nats["h"]
+        var[float, float](nw, nh) = r.getTextureSize(tex)
         float dw = sz; float dh = sz
         if nw > 0.0 and nh > 0.0 {
             float s = sz / nw; if sz / nh < s { s = sz / nh }

@@ -135,9 +135,14 @@ static void import_type_deps(Semantic* s, ImportedModuleInfo* module_info, TypeI
                             if (placeholder) {
                                 placeholder->u.func.name = strdup(full_method_name);
                                 placeholder->u.func.pcnt = 1 + ssym->methods[mi].param_count;
-                                placeholder->u.func.return_type = type_new(ssym->methods[mi].return_type);
-                                if (ssym->methods[mi].return_struct_name) {
-                                    placeholder->u.func.return_type->struct_name = strdup(ssym->methods[mi].return_struct_name);
+                                // 优先使用完整的 return_type_info（支持 TYPE_MULTI_RET 等复杂类型）
+                                if (ssym->methods[mi].return_type_info) {
+                                    placeholder->u.func.return_type = type_copy(ssym->methods[mi].return_type_info);
+                                } else {
+                                    placeholder->u.func.return_type = type_new(ssym->methods[mi].return_type);
+                                    if (ssym->methods[mi].return_struct_name) {
+                                        placeholder->u.func.return_type->struct_name = strdup(ssym->methods[mi].return_struct_name);
+                                    }
                                 }
                                 func_table_add(&s->func_table, full_method_name, placeholder);
                             }

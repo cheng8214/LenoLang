@@ -26,8 +26,8 @@ main() {
             if e.isWindowClose()      { ename = "WindowClose"; return false }
             if e.isKeyDown()          { ename = "KeyDown(" + e.scancode() + ")" }
             if e.isKeyUp()            { ename = "KeyUp(" + e.scancode() + ")" }
-            if e.isMouseMotion()      { mx = _int(e.mouseX()); my = _int(e.mouseY()) }
-            if e.isMouseButtonDown()  { ename = "MouseDown(btn=" + e.mouseButton() + " x=" + _int(e.mouseX()) + " y=" + _int(e.mouseY()) + ")" }
+            if e.isMouseMotion()      { var[float, float](_mx, _my) = e.mousePos(); mx = _int(_mx); my = _int(_my) }
+            if e.isMouseButtonDown()  { var[float, float](_mx2, _my2) = e.mousePos(); ename = "MouseDown(btn=" + e.mouseButton() + " x=" + _int(_mx2) + " y=" + _int(_my2) + ")" }
             if e.isMouseButtonUp()    { ename = "MouseUp(btn=" + e.mouseButton() + ")" }
             if e.isMouseWheel()       { wheelVal = wheelVal + _int(e.wheelY()); ename = "Wheel(x=" + _int(e.wheelX()) + " y=" + _int(e.wheelY()) + ")" }
 

@@ -1,0 +1,16 @@
+// mod_a.leno — 定义结构体方法返回多值
+export struct Box {
+    float x
+    float y
+
+    func getPos(): [float, float] {
+        return x, y
+    }
+}
+
+export func makeBox(float px, float py): Box {
+    Box b = new Box()
+    b.x = px
+    b.y = py
+    return b
+}

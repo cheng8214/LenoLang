@@ -60,8 +60,8 @@ export struct LinkButton impl Widget {
         if opts.get("hover_color") is Color => t { _hovColor = t }
         _ensure_font()
         if _font.ok {
-            if text != "" { _w = _font.measureString(text).w } else { _w = 0.0 }
-            _h = _font.measureString("Ag").h
+            if text != "" { var[float, float](_mw, _mh) = _font.measureString(text); _w = _mw } else { _w = 0.0 }
+            var[float, float](_agw, _agh) = _font.measureString("Ag"); _h = _agh
         } else { _w = 0.0; _h = 16.0 }
         _loaded = true
     }
@@ -70,7 +70,7 @@ export struct LinkButton impl Widget {
     func set_text(string t) {
         text = t
         if _font != null and _font.ok {
-            if text != "" { _w = _font.measureString(text).w } else { _w = 0.0 }
+            if text != "" { var[float, float](_mw, _mh) = _font.measureString(text); _w = _mw } else { _w = 0.0 }
         }
     }
     func set_url(string u) { _url = u }
@@ -106,24 +106,24 @@ export struct LinkButton impl Widget {
     func process(Event ev) {
         if not _loaded or not visible { return }
         if not enabled { hover = false; return }
-        float mx = ev.mouseX(); float my = ev.mouseY()
+        var[float, float](mx, my) = ev.mousePos()
         if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
         if core.inPopupCapture(mx, my) { return }
 
         if ev.isMouseMotion() {
             _wasHover = hover
-            hover = contains(ev.mouseX(), ev.mouseY())
+            hover = contains(mx, my)
             if hover != _wasHover { core.markFrameRedraw() } else { core.markFrameMotion() }
             if hover { core.requestCursor(SystemCursor.POINTER) }
             // 悬停提示：hover 时上报；离开由 tipEndMotion 统一清除
-            if hover and _tip != "" { tip.tipReport(_tip, ev.mouseX(), ev.mouseY()) }
+            if hover and _tip != "" { tip.tipReport(_tip, mx, my) }
         }
-        if ev.isMouseButtonDown() and contains(ev.mouseX(), ev.mouseY()) {
+        if ev.isMouseButtonDown() and contains(mx, my) {
             _pressed = true
             core.markFrameRedraw()
         }
         if ev.isMouseButtonUp() {
-            if _pressed and contains(ev.mouseX(), ev.mouseY()) {
+            if _pressed and contains(mx, my) {
                 _visited = true
                 if _onClick != null { _onClick() }
                 core.markFrameRedraw()
@@ -151,12 +151,12 @@ export struct LinkButton impl Widget {
         bool showUl = _underline
         if _ulOnHover { showUl = hover }
         if showUl and text != "" {
-            var ms = _font.measureString(text)
-            float uy = y + ms.h - 1.0
+            var[float, float](msw, msh) = _font.measureString(text)
+            float uy = y + msh - 1.0
             int ulA = 255
             if _pressed { ulA = 200 }
             r.setColor(theme.withAlpha(c, ulA))
-            r.fillRect(x, uy, ms.w, 1.0)
+            r.fillRect(x, uy, msw, 1.0)
         }
     }
 

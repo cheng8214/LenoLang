@@ -127,9 +127,9 @@ export func tipRender(Renderer r, float vw, float vh, int wid) {
     float lineH = 0.0
     float maxW = 0.0
     for lines.len() to i {
-        var ms = _font.measureString(lines[i])
-        if ms.w > maxW { maxW = ms.w }
-        if ms.h > lineH { lineH = ms.h }
+        var[float, float](msw, msh) = _font.measureString(lines[i])
+        if msw > maxW { maxW = msw }
+        if msh > lineH { lineH = msh }
     }
     if lineH == 0.0 { lineH = _fontSize }
     float gapY = 2.0

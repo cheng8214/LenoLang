@@ -153,12 +153,12 @@ export struct GroupBox impl Widget, Themeable {
 
         // 标题：在边框顶部画一段背景色遮断边框，再绘制文字
         if _font != null and _font.ok and _title != "" {
-            var ms = _font.measureString(_title)
+            var[float, float](msw, msh) = _font.measureString(_title)
             float tx = x + _titlePad
-            float ty = y - ms.h / 2.0
+            float ty = y - msh / 2.0
             // 用背景色画一个矩形遮断边框（标题位置）
             r.setColor(_bgColor)
-            r.fillRect(tx - 3.0, ty, ms.w + 6.0, _float(ms.h))
+            r.fillRect(tx - 3.0, ty, msw + 6.0, _float(msh))
             // 标题文字
             r.drawText(_font, _title, tx, ty, _titleColor)
         }

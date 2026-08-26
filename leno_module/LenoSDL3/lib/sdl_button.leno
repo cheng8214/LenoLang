@@ -314,12 +314,12 @@ export struct Button impl Widget, Themeable {
         if not visible { return }
         if not enabled { return }
         // 弹层捕获：事件落在“他人的弹层（如打开的菜单/下拉）范围内时忽略，避免穿透到下层控件
-        float mx = ev.mouseX(); float my = ev.mouseY()
+        var[float, float](mx, my) = ev.mousePos()
         if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
         if core.inPopupCapture(mx, my) { return }
         if ev.isMouseMotion() {
             _wasHover = hover
-            hover = contains(ev.mouseX(), ev.mouseY())
+            hover = contains(mx, my)
             // hover 状态变化需请求重绘：run 循环已优化为 motion 不整窗重绘，
             // 由控件在视觉状态变化时自行 markFrameRedraw()（对齐 table/edit 等控件）
             if hover != _wasHover { core.markFrameRedraw() } else { core.markFrameMotion() }
@@ -328,10 +328,10 @@ export struct Button impl Widget, Themeable {
                 if hover { core.requestCursor(_cursor) }
             }
             // 悬停提示：hover 时上报；离开由 tipEndMotion 统一清除
-            if hover and _tip != "" { tip.tipReport(_tip, ev.mouseX(), ev.mouseY()) }
+            if hover and _tip != "" { tip.tipReport(_tip, mx, my) }
         }
         if ev.isMouseButtonDown() {
-            if contains(ev.mouseX(), ev.mouseY()) {
+            if contains(mx, my) {
                 hover = true
                 _pressed = true
                 core.markFrameRedraw()   // 按下状态变化需重绘
@@ -417,8 +417,8 @@ export struct Button impl Widget, Themeable {
         // 提前测量文字，供图标尺寸自适应（防止图标挤占文字 / 内容溢出按钮）
         float textW = 0.0; float textH = 0.0
         if _font.ok {
-            var ms0 = _font.measureString(text)
-            textW = ms0.w; textH = ms0.h
+            var[float, float](_tw, _th) = _font.measureString(text)
+            textW = _tw; textH = _th
         }
 
         // 选择当前状态的图标纹理（disabled > pressed > hover > normal）
@@ -437,8 +437,8 @@ export struct Button impl Widget, Themeable {
         bool iconOnly = (text == "")
         float isize = _imgSize
         if isize <= 0.0 and itex != null {
-            var ts = r.getTextureSize(itex)
-            isize = ts["h"]
+            var[float, float](_tsw, _tsh) = r.getTextureSize(itex)
+            isize = _tsh
         }
         if isize <= 0.0 { isize = h - 2.0 * pad }
         if isize > w - 2.0 * pad { isize = w - 2.0 * pad }
@@ -482,8 +482,7 @@ export struct Button impl Widget, Themeable {
             else if imgAutoDim { r.setTextureColor(itex, #808080FF) }   // 禁用态自动变灰
             else { r.setTextureColor(itex, #FFFFFFFF) }
             if _imgMode != IMG_STRETCH {   // IMG_ASPECT_FIT / IMG_ASPECT_FILL：保持原始比例
-                var nats = r.getTextureSize(itex)
-                float nw = nats["w"]; float nh = nats["h"]
+                var[float, float](nw, nh) = r.getTextureSize(itex)
                 if nw > 0.0 and nh > 0.0 {
                     if _imgMode == IMG_ASPECT_FILL {   // 覆盖填满（可能裁剪，居中绘制）
                         float s = isize / nw; if isize / nh > s { s = isize / nh }

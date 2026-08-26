@@ -37,7 +37,7 @@ export struct Slider impl Widget, Themeable {
             if _fontPath != "" { _font = fnt.acquireFont(_fontPath, _fontSize) }
             else { _font = fnt.acquireFontAuto(_fontSize) }
             if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
-            if _font.ok { _fontH = _font.measureString("Ag").h }
+            if _font.ok { var[float, float](_agw, _agh) = _font.measureString("Ag"); _fontH = _agh }
         }
     }
 
@@ -131,7 +131,7 @@ export struct Slider impl Widget, Themeable {
         if not visible { return }
         if not enabled { hover = false; _dragging = false; return }
         // 弹层捕获：事件落在“他人的弹层（如打开的菜单/下拉）范围内时忽略，避免穿透到下层控件
-        float mx = ev.mouseX(), my = ev.mouseY()
+        var[float, float](mx, my) = ev.mousePos()
         if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
         if core.inPopupCapture(mx, my) { return }
 
@@ -154,15 +154,16 @@ export struct Slider impl Widget, Themeable {
                 }
             }
             // 悬停提示：hover 时上报；离开由 tipEndMotion 统一清除
-            if hover and _tip != "" { tip.tipReport(_tip, ev.mouseX(), ev.mouseY()) }
+            if hover and _tip != "" { var[float, float](_tx, _ty) = ev.mousePos(); tip.tipReport(_tip, _tx, _ty) }
         }
 
         if ev.isMouseButtonUp() { _dragging = false }
 
         if ev.isMouseButtonDown() and not _dragging {
-            if contains(ev.mouseX(), ev.mouseY()) {
+            var[float, float](_cx, _cy) = ev.mousePos()
+            if contains(_cx, _cy) {
                 _dragging = true
-                if _vertical { value = _value_from_pos(ev.mouseY()) } else { value = _value_from_pos(ev.mouseX()) }
+                if _vertical { value = _value_from_pos(_cy) } else { value = _value_from_pos(_cx) }
                 if _onChange != null { _onChange(value) }
             }
         }
@@ -222,7 +223,7 @@ export struct Slider impl Widget, Themeable {
             string label = value as string
             float th = _fontH
             float ty; float tx
-            if _vertical { ty = y + h + 6.0; tx = x + w / 2.0 - _font.measureString(label).w / 2.0 }
+            if _vertical { ty = y + h + 6.0; var[float, float](_lw, _lh) = _font.measureString(label); tx = x + w / 2.0 - _lw / 2.0 }
             else { ty = y + h / 2.0 - th / 2.0; tx = x + w + 8.0 }
             Color tcC = _txtColor
             if not enabled { tcC = theme.darken(_txtColor, 60) }

@@ -122,7 +122,8 @@ export struct TreeView impl Widget, Themeable {
             else { _font = fnt.acquireFontAuto(_fontSize) }
             if _font != null and _font.ok {
                 if _fontStyle != 0 { _font.setStyle(_fontStyle) }
-                _textH = _font.measureString("Ag").h   // 字体加载时缓存行高，避免每帧渲染中调用 measureString
+                var[float, float](_agw, _agh) = _font.measureString("Ag")   // 字体加载时缓存行高，避免每帧渲染中调用 measureString
+                _textH = _agh
             }
         }
     }
@@ -629,7 +630,8 @@ n.imageExpanded = d.get("imageExpanded", "")
 
         if _ctxMenuEnabled and _ctxMenu != null and _ctxMenu.isOpen() {
             if ev.isMouseButtonDown() and ev.mouseButton() == 3 {
-                if contains(ev.mouseX(), ev.mouseY()) { _open_ctx_menu(ev.mouseX(), ev.mouseY()) }
+                var[float, float](_ctx_mx, _ctx_my) = ev.mousePos()
+                if contains(_ctx_mx, _ctx_my) { _open_ctx_menu(_ctx_mx, _ctx_my) }
                 else { _ctxMenu.close() }
                 return
             }
@@ -637,7 +639,7 @@ n.imageExpanded = d.get("imageExpanded", "")
             return
         }
 
-        float mx = ev.mouseX(), my = ev.mouseY()
+        var[float, float](mx, my) = ev.mousePos()
         if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
         if core.inPopupCapture(mx, my) { return }
 
@@ -824,8 +826,7 @@ n.imageExpanded = d.get("imageExpanded", "")
                     r.setTextureColor(itex, #FFFFFFFF)
                     int mode = _flatImgMode[i]
                     if mode < 0 { mode = _imgMode }   // 节点未指定则用全局模式
-                    var nats = r.getTextureSize(itex)
-                    float nw = nats["w"], nh = nats["h"]
+                    var[float, float](nw, nh) = r.getTextureSize(itex)
                     if mode == 1 {
                         // stretch：直接拉伸填满（会变形）
                         r.drawTextureFromTo(itex, 0.0, 0.0, nw, nh, imgX, imgDrawY, imgSize, imgSize)

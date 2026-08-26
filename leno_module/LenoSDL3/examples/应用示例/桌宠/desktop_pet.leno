@@ -425,16 +425,14 @@ main() {
             
             // 鼠标移动 - 检测悬停
             if ev.isMouseMotion() {
-                float mx = ev.mouseX()
-                float my = ev.mouseY()
+                var[float, float](mx, my) = ev.mousePos()
                 float dx = mx - robot.x
                 float dy = my - robot.y
                 robot.isHover = dx * dx + dy * dy < 2704.0  // 52x52
                 
                 // 拖拽：用全局鼠标坐标计算偏移，避免反馈循环抖动
                 if robot.isDragging {
-                    int curGX = core.getGlobalMouseX()
-                    int curGY = core.getGlobalMouseY()
+                    var[int, int](curGX, curGY) = core.getGlobalMouse()
                     robot.winX = robot.dragStartWinX + (curGX - robot.dragStartGX)
                     robot.winY = robot.dragStartWinY + (curGY - robot.dragStartGY)
                     win.setPosition(robot.winX, robot.winY)
@@ -443,16 +441,16 @@ main() {
             
             // 鼠标按下 - 记录拖拽起始位置
             if ev.isMouseButtonDown() and ev.mouseButton() == 1 {
-                float mx = ev.mouseX()
-                float my = ev.mouseY()
+                var[float, float](mx, my) = ev.mousePos()
                 float dx = mx - robot.x
                 float dy = my - robot.y
                 if dx * dx + dy * dy < 2704.0 {
                     robot.isDragging = true
                     robot.vx = 0.0
                     // 记录全局鼠标和窗口起始位置
-                    robot.dragStartGX = core.getGlobalMouseX()
-                    robot.dragStartGY = core.getGlobalMouseY()
+                    var[int, int](_dgx, _dgy) = core.getGlobalMouse()
+                    robot.dragStartGX = _dgx
+                    robot.dragStartGY = _dgy
                     robot.dragStartWinX = robot.winX
                     robot.dragStartWinY = robot.winY
                 }
@@ -467,9 +465,8 @@ main() {
                     int winDy = robot.winY - robot.dragStartWinY
                     if winDx * winDx + winDy * winDy < 25 {
                         // 点击 → 根据部位触发互动
-                        float mx = ev.mouseX()
-                        float my = ev.mouseY()
-                        int part = hitTest(mx, my, robot.x, robot.y)
+                        var[float, float](_cmx, _cmy) = ev.mousePos()
+                        int part = hitTest(_cmx, _cmy, robot.x, robot.y)
                         if part == 1 {
                             // 点击头部：起包 + 揉脑袋
                             robot.isHeadHurt = true

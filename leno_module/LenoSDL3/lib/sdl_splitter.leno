@@ -197,7 +197,7 @@ export struct Splitter impl Widget, Themeable {
         if not _loaded or not enabled or not visible { return }
         _relayout()
 
-        float mx = ev.mouseX(); float my = ev.mouseY()
+        var[float, float](mx, my) = ev.mousePos()
         if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
 
         // 拖拽中：优先处理（即使鼠标移出分割条区域也继续跟随）

@@ -108,12 +108,9 @@ main() {
             // 拖拽时检查鼠标是否在 W2 上方 → 高亮 + 共享变量
             var dropHover = false
             if dragActive {
-                int gx = core.getGlobalMouseX()
-                int gy = core.getGlobalMouseY()
-                int wx = core.getWindowX(w2.handle)
-                int wy = core.getWindowY(w2.handle)
-                int ww = core.getWindowW(w2.handle)
-                int wh = core.getWindowH(w2.handle)
+                var[int, int](gx, gy) = core.getGlobalMouse()
+                var[int, int](wx, wy) = core.getWindowPos(w2.handle)
+                var[int, int](ww, wh) = core.getWindowSize(w2.handle)
                 if gx >= wx and gx < wx + ww and gy >= wy and gy < wy + wh {
                     dropHover = true
                 }
@@ -173,7 +170,7 @@ main() {
 
             // ---- 拖拽开始 ----
             if e.isMouseButtonDown() and e.mouseButton() == 1 {
-                var mx = e.mouseX(); var my = e.mouseY()
+                var[float, float](mx, my) = e.mousePos()
                 if my >= 370.0 and my < 458.0 {
                     var idx = _int((my - 375.0) / 10.0)
                     if idx >= 0 and idx < 8 {
@@ -189,19 +186,17 @@ main() {
 
             // ---- 拖拽移动 ----
             if e.isMouseMotion() and dragActive {
-                dragMouseX = e.mouseX()
-                dragMouseY = e.mouseY()
+                var[float, float](_dmx, _dmy) = e.mousePos()
+                dragMouseX = _dmx
+                dragMouseY = _dmy
                 return true
             }
 
             // ---- 释放：投放/取消 ----
             if e.isMouseButtonUp() and e.mouseButton() == 1 and dragActive {
-                int gx = core.getGlobalMouseX()
-                int gy = core.getGlobalMouseY()
-                int w2x = core.getWindowX(w2.handle)
-                int w2y = core.getWindowY(w2.handle)
-                int w2w = core.getWindowW(w2.handle)
-                int w2h = core.getWindowH(w2.handle)
+                var[int, int](gx, gy) = core.getGlobalMouse()
+                var[int, int](w2x, w2y) = core.getWindowPos(w2.handle)
+                var[int, int](w2w, w2h) = core.getWindowSize(w2.handle)
                 // 双重确认：全局坐标命中 OR W2 自报悬停
                 var overW2 = (gx >= w2x and gx < w2x + w2w and gy >= w2y and gy < w2y + w2h) or w2DropHover
 

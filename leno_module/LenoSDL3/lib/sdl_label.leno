@@ -72,8 +72,8 @@ export struct Label impl Widget, Themeable {
 
         _ensure_font()
         if _font.ok {
-            if text != "" { _w = _font.measureString(text).w } else { _w = 0.0 }
-            _h = _font.measureString("Ag").h
+            if text != "" { var[float, float](_mw, _mh) = _font.measureString(text); _w = _mw } else { _w = 0.0 }
+            var[float, float](_agw, _agh) = _font.measureString("Ag"); _h = _agh
         } else { _w = 0.0; _h = 16.0 }
         // hover/_wasHover 默认见字段声明
         _tip = opts.get("tip", "")
@@ -96,8 +96,8 @@ export struct Label impl Widget, Themeable {
         _scrollOffset = 0.0
         _scrollLastTick = 0
         if _font != null and _font.ok {
-            if text != "" { _w = _font.measureString(text).w } else { _w = 0.0 }
-            _h = _font.measureString("Ag").h
+            if text != "" { var[float, float](_mw, _mh) = _font.measureString(text); _w = _mw } else { _w = 0.0 }
+            var[float, float](_agw, _agh) = _font.measureString("Ag"); _h = _agh
         }
     }
     func set_text_color(Color color) { _txtColor = color }
@@ -126,12 +126,12 @@ export struct Label impl Widget, Themeable {
     // ── 截断文本：测量并裁剪出适合 max_w 的 "前缀...后缀" 形式 ──
     func _truncatedText(): string {
         if max_w <= 0.0 or _font == null or not _font.ok { return text }
-        var ms = _font.measureString(text)
-        if ms.w <= max_w { return text }
+        var[float, float](msw, msh) = _font.measureString(text)
+        if msw <= max_w { return text }
         // 省略号宽度
         string ellipsis = "..."
-        var es = _font.measureString(ellipsis)
-        float avail = max_w - es.w
+        var[float, float](esw, esh) = _font.measureString(ellipsis)
+        float avail = max_w - esw
         if avail <= 0.0 { return ellipsis }
         // 从尾部截取后缀（约占可用空间的 40%）
         int textLen = text.len()
@@ -139,9 +139,9 @@ export struct Label impl Widget, Themeable {
         float tailW = 0.0
         for textLen - 1 : 0 to i {
             string ch = text.slice(i, i + 1)
-            var cs = _font.measureString(ch)
-            if tailW + cs.w > avail * 0.4 { tailStart = i + 1; break }
-            tailW = tailW + cs.w
+            var[float, float](csw, csh) = _font.measureString(ch)
+            if tailW + csw > avail * 0.4 { tailStart = i + 1; break }
+            tailW = tailW + csw
             tailStart = i
         }
         string tail = text.slice(tailStart, textLen)
@@ -150,9 +150,9 @@ export struct Label impl Widget, Themeable {
         int headEnd = 0
         for 0 : textLen - 1 to i {
             string ch = text.slice(i, i + 1)
-            var cs = _font.measureString(ch)
-            if headW + cs.w > avail - tailW { headEnd = i; break }
-            headW = headW + cs.w
+            var[float, float](csw, csh) = _font.measureString(ch)
+            if headW + csw > avail - tailW { headEnd = i; break }
+            headW = headW + csw
             headEnd = i + 1
         }
         string head = text.slice(0, headEnd)
@@ -172,7 +172,7 @@ export struct Label impl Widget, Themeable {
     func process(Event ev) {
         if not _loaded or not enabled or not visible { return }
         if not ev.isMouseMotion() { return }
-        float mx = ev.mouseX(); float my = ev.mouseY()
+        var[float, float](mx, my) = ev.mousePos()
         // ★ 弹层捕获：与 Button/Toggle 等控件一致，弹层打开时不响应 hover
         if core.inPopupCapture(mx, my) { hover = false; return }
         _wasHover = hover
@@ -195,12 +195,12 @@ export struct Label impl Widget, Themeable {
 
         // ── 截断模式 ──
         if _truncate == TRUNCATE_ELLIPSIS and max_w > 0.0 {
-            var ms = _font.measureString(text)
-            if ms.w <= max_w {
+            var[float, float](msw, msh) = _font.measureString(text)
+            if msw <= max_w {
                 // 不需要截断，正常绘制
                 float drawX = x
-                if _align == ALIGN_CENTER { drawX = x - ms.w / 2.0 }
-                if _align == ALIGN_RIGHT { drawX = x - ms.w }
+                if _align == ALIGN_CENTER { drawX = x - msw / 2.0 }
+                if _align == ALIGN_RIGHT { drawX = x - msw }
                 r.drawText(_font, text, drawX, y, _txtColor)
                 return
             }
@@ -212,12 +212,12 @@ export struct Label impl Widget, Themeable {
 
         // ── 滚动模式 ──
         if _truncate == TRUNCATE_SCROLL and max_w > 0.0 {
-            var ms = _font.measureString(text)
-            if ms.w <= max_w {
+            var[float, float](msw, msh) = _font.measureString(text)
+            if msw <= max_w {
                 // 不需要滚动，正常绘制
                 float drawX = x
-                if _align == ALIGN_CENTER { drawX = x - ms.w / 2.0 }
-                if _align == ALIGN_RIGHT { drawX = x - ms.w }
+                if _align == ALIGN_CENTER { drawX = x - msw / 2.0 }
+                if _align == ALIGN_RIGHT { drawX = x - msw }
                 r.drawText(_font, text, drawX, y, _txtColor)
                 return
             }
@@ -230,7 +230,7 @@ export struct Label impl Widget, Themeable {
                 _scrollLastTick = now
             }
             // 滚动范围：从 0 到 -(textWidth - max_w + 20)
-            float scrollRange = ms.w - max_w + 20.0
+            float scrollRange = msw - max_w + 20.0
             if _scrollDir == 1 {
                 if _scrollOffset >= scrollRange {
                     _scrollOffset = scrollRange
@@ -255,11 +255,11 @@ export struct Label impl Widget, Themeable {
         }
 
         // ── 普通绘制 ──
-        var ms = _font.measureString(text)
+        var[float, float](msw, msh) = _font.measureString(text)
         float drawX = x
         if _align == ALIGN_LEFT { drawX = x }                          // 左对齐
-        if _align == ALIGN_CENTER { drawX = x - ms.w / 2.0 }     // 居中
-        if _align == ALIGN_RIGHT { drawX = x - ms.w }           // 右对齐
+        if _align == ALIGN_CENTER { drawX = x - msw / 2.0 }     // 居中
+        if _align == ALIGN_RIGHT { drawX = x - msw }           // 右对齐
 
         r.drawText(_font, text, drawX, y, _txtColor)
     }

@@ -13,11 +13,11 @@ main() {
 
     print("=== FFI Ptr 类型擦除 Bug 复现 ===\n")
 
-    // ---- 错误路径：SDL_Point (i32) 接收 SDL_GetGlobalMouseState 的 float 写入 ----
-    int badVal = core._bug_globalMouseAsInt()
+    // ---- 错误路径：SDL_GetGlobalMouseState 返回 int（位掩码）----
+    int badVal = core.getGlobalMouseState()
 
-    // ---- 正确路径：用 SDL_FPoint 获取正确的鼠标 X 坐标 ----
-    int goodVal = core.getGlobalMouseX()
+    // ---- 正确路径：用 getGlobalMouse 获取正确的鼠标 X 坐标 ----
+    var[int, int](goodVal, _goodY) = core.getGlobalMouse()
 
     print("[错误] SDL_Point(i32) 读回: " + badVal)
     print("[正确] SDL_FPoint(f32) 读回: " + goodVal + "\n")

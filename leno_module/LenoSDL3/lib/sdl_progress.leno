@@ -38,7 +38,7 @@ export struct ProgressBar impl Widget {
             if _fontPath != "" { _font = fnt.acquireFont(_fontPath, _fontSize) }
             else { _font = fnt.acquireFontAuto(_fontSize) }
             if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
-            if _font.ok { _fontH = _font.measureString("Ag").h }
+            if _font.ok { var[float, float](_agw, _agh) = _font.measureString("Ag"); _fontH = _agh }
         }
     }
 
@@ -123,20 +123,20 @@ export struct ProgressBar impl Widget {
         if not _clickable {
             // 只读模式：仅处理悬停提示，不改变 hover 状态（避免与可交互模式的 hover 冲突）
             if ev.isMouseMotion() {
-                float mx = ev.mouseX(); float my = ev.mouseY()
+                var[float, float](mx, my) = ev.mousePos()
                 if contains(mx, my) and _tip != "" { tip.tipReport(_tip, mx, my) }
                 core.markFrameMotion()
             }
             hover = false; return
         }
         // 弹层捕获：事件落在“他人的弹层（如打开的菜单/下拉）范围内时忽略，避免穿透到下层控件
-        float mx = ev.mouseX(); float my = ev.mouseY()
+        var[float, float](mx, my) = ev.mousePos()
         if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
         if core.inPopupCapture(mx, my) { return }
 
 
         if ev.isMouseMotion() {
-            float mx = ev.mouseX(); float my = ev.mouseY()
+            var[float, float](mx, my) = ev.mousePos()
             _wasHover = hover
             hover = contains(mx, my)
             if _dragging {
@@ -158,9 +158,10 @@ export struct ProgressBar impl Widget {
         if ev.isMouseButtonUp() { _dragging = false }
 
         if ev.isMouseButtonDown() and not _dragging {
-            if contains(ev.mouseX(), ev.mouseY()) {
+            var[float, float](_dmx, _dmy) = ev.mousePos()
+            if contains(_dmx, _dmy) {
                 _dragging = true
-                value = _value_from_x(ev.mouseX())
+                value = _value_from_x(_dmx)
                 _animTarget = value
                 _animating = true          // 单击跳转：从当前显示位置平滑动画过去
                 _animLast = 0.0
@@ -220,8 +221,7 @@ export struct ProgressBar impl Widget {
         if _showText and _font != null and _font.ok {
             int pct = _int(ratio * 100.0)
             string label = $"{pct}%"
-            float tw = _font.measureString(label).w
-            float th = _fontH
+            var[float, float](tw, th) = _font.measureString(label)
             float tx = x + w / 2.0 - tw / 2.0
             float ty = y + h / 2.0 - th / 2.0
             Color tc = _txtColor

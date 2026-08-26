@@ -1208,8 +1208,9 @@ export struct Window {
                 if ev.isMouseButtonDown() and ev.mouseButton() == 3 {
                     for _runWids.len() to j {
                         if _runWids[j] == wid {
-                            if _runCtxIdx[j] >= 0 and not core.inPopupCapture(ev.mouseX(), ev.mouseY()) {
-                                _runCtxBar[j].openContext(_runCtxIdx[j], ev.mouseX(), ev.mouseY())
+                            var[float, float](_cmx, _cmy) = ev.mousePos()
+                            if _runCtxIdx[j] >= 0 and not core.inPopupCapture(_cmx, _cmy) {
+                                _runCtxBar[j].openContext(_runCtxIdx[j], _cmx, _cmy)
                             }
                             break
                         }

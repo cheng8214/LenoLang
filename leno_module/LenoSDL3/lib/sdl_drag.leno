@@ -81,9 +81,9 @@ export struct DragHint {
         if not _visible or _text == "" { return }
         _ensureFont()
         if _font == null or not _font.ok { return }
-        StringSize sz = _font.measureString(_text)
-        float boxW = sz.w + _padX * 2.0
-        float boxH = sz.h + _padY * 2.0
+        var[float, float](szw, szh) = _font.measureString(_text)
+        float boxW = szw + _padX * 2.0
+        float boxH = szh + _padY * 2.0
         float bx = _x + _offsetX
         float by = _y + _offsetY
         // 半透明圆角背景

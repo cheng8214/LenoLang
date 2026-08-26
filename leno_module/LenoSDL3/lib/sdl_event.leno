@@ -103,23 +103,15 @@ export struct Event {
     func isMouseWheel(): bool      { return sdl3_type() == core.EventType.MOUSE_WHEEL }
 
     // 鼠标位置（相对于窗口，浮点精度）
-    func mouseX(): float {
+    func mousePos(): [float, float] {
         SDL_MouseMotionEvent e = SDL_MouseMotionEvent.from_ptr(raw)
-        return e.x
-    }
-    func mouseY(): float {
-        SDL_MouseMotionEvent e = SDL_MouseMotionEvent.from_ptr(raw)
-        return e.y
+        return e.x, e.y
     }
 
     // 鼠标相对移动量（自上一帧的增量）
-    func mouseDX(): float {
+    func mouseDelta(): [float, float] {
         SDL_MouseMotionEvent e = SDL_MouseMotionEvent.from_ptr(raw)
-        return e.xrel
-    }
-    func mouseDY(): float {
-        SDL_MouseMotionEvent e = SDL_MouseMotionEvent.from_ptr(raw)
-        return e.yrel
+        return e.xrel, e.yrel
     }
 
     // 鼠标按钮编号：1=左键, 2=中键, 3=右键

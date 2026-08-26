@@ -369,36 +369,41 @@
                             // pcnt = 参数数量 + 1 (self) + param_count (其他参数)
                             // struct 方法的 pcnt 包含 self 参数
                             placeholder->u.func.pcnt = 1 + struct_sym->methods[mi].param_count;
-                            placeholder->u.func.return_type = type_new(struct_sym->methods[mi].return_type);
-                            if (struct_sym->methods[mi].return_struct_name) {
-                                placeholder->u.func.return_type->struct_name = strdup(struct_sym->methods[mi].return_struct_name);
-                            }
-                            if (struct_sym->methods[mi].return_type == TYPE_GENERIC_PARAM && struct_sym->methods[mi].return_type_param_name) {
-                                placeholder->u.func.return_type->type_param_name = strdup(struct_sym->methods[mi].return_type_param_name);
-                            }
-                            // 设置返回类型的泛型参数（如 Holder[K] 中的 [K]）
-                            if (struct_sym->methods[mi].return_generic_count > 0 && struct_sym->methods[mi].return_generic_param_names) {
-                                placeholder->u.func.return_type->generic_count = struct_sym->methods[mi].return_generic_count;
-                                placeholder->u.func.return_type->generic_args = (TypeInfo**)malloc(sizeof(TypeInfo*) * struct_sym->methods[mi].return_generic_count);
-                                for (int gi = 0; gi < struct_sym->methods[mi].return_generic_count; gi++) {
-                                    // 检查是否是泛型参数名（如 K, V）
-                                    int is_type_param = 0;
-                                    for (int tpi = 0; tpi < struct_sym->type_param_count; tpi++) {
-                                        if (struct_sym->type_param_names[tpi] && strcmp(struct_sym->methods[mi].return_generic_param_names[gi], struct_sym->type_param_names[tpi]) == 0) {
-                                            is_type_param = 1;
-                                            placeholder->u.func.return_type->generic_args[gi] = type_new(TYPE_GENERIC_PARAM);
-                                            placeholder->u.func.return_type->generic_args[gi]->type_param_name = strdup(struct_sym->methods[mi].return_generic_param_names[gi]);
-                                            break;
+                            // 优先使用完整的 return_type_info（支持 TYPE_MULTI_RET 等复杂类型）
+                            if (struct_sym->methods[mi].return_type_info) {
+                                placeholder->u.func.return_type = type_copy(struct_sym->methods[mi].return_type_info);
+                            } else {
+                                placeholder->u.func.return_type = type_new(struct_sym->methods[mi].return_type);
+                                if (struct_sym->methods[mi].return_struct_name) {
+                                    placeholder->u.func.return_type->struct_name = strdup(struct_sym->methods[mi].return_struct_name);
+                                }
+                                if (struct_sym->methods[mi].return_type == TYPE_GENERIC_PARAM && struct_sym->methods[mi].return_type_param_name) {
+                                    placeholder->u.func.return_type->type_param_name = strdup(struct_sym->methods[mi].return_type_param_name);
+                                }
+                                // 设置返回类型的泛型参数（如 Holder[K] 中的 [K]）
+                                if (struct_sym->methods[mi].return_generic_count > 0 && struct_sym->methods[mi].return_generic_param_names) {
+                                    placeholder->u.func.return_type->generic_count = struct_sym->methods[mi].return_generic_count;
+                                    placeholder->u.func.return_type->generic_args = (TypeInfo**)malloc(sizeof(TypeInfo*) * struct_sym->methods[mi].return_generic_count);
+                                    for (int gi = 0; gi < struct_sym->methods[mi].return_generic_count; gi++) {
+                                        // 检查是否是泛型参数名（如 K, V）
+                                        int is_type_param = 0;
+                                        for (int tpi = 0; tpi < struct_sym->type_param_count; tpi++) {
+                                            if (struct_sym->type_param_names[tpi] && strcmp(struct_sym->methods[mi].return_generic_param_names[gi], struct_sym->type_param_names[tpi]) == 0) {
+                                                is_type_param = 1;
+                                                placeholder->u.func.return_type->generic_args[gi] = type_new(TYPE_GENERIC_PARAM);
+                                                placeholder->u.func.return_type->generic_args[gi]->type_param_name = strdup(struct_sym->methods[mi].return_generic_param_names[gi]);
+                                                break;
+                                            }
                                         }
-                                    }
-                                    if (!is_type_param) {
-                                        // 具体类型（如 int, string 等）—— 简单判断
-                                        TypeInfo* arg_type = type_new(TYPE_ANY);
-                                        if (strcmp(struct_sym->methods[mi].return_generic_param_names[gi], "int") == 0) arg_type = type_new(TYPE_INT);
-                                        else if (strcmp(struct_sym->methods[mi].return_generic_param_names[gi], "float") == 0) arg_type = type_new(TYPE_FLOAT);
-                                        else if (strcmp(struct_sym->methods[mi].return_generic_param_names[gi], "string") == 0) arg_type = type_new(TYPE_STRING);
-                                        else if (strcmp(struct_sym->methods[mi].return_generic_param_names[gi], "bool") == 0) arg_type = type_new(TYPE_BOOL);
-                                        placeholder->u.func.return_type->generic_args[gi] = arg_type;
+                                        if (!is_type_param) {
+                                            // 具体类型（如 int, string 等）—— 简单判断
+                                            TypeInfo* arg_type = type_new(TYPE_ANY);
+                                            if (strcmp(struct_sym->methods[mi].return_generic_param_names[gi], "int") == 0) arg_type = type_new(TYPE_INT);
+                                            else if (strcmp(struct_sym->methods[mi].return_generic_param_names[gi], "float") == 0) arg_type = type_new(TYPE_FLOAT);
+                                            else if (strcmp(struct_sym->methods[mi].return_generic_param_names[gi], "string") == 0) arg_type = type_new(TYPE_STRING);
+                                            else if (strcmp(struct_sym->methods[mi].return_generic_param_names[gi], "bool") == 0) arg_type = type_new(TYPE_BOOL);
+                                            placeholder->u.func.return_type->generic_args[gi] = arg_type;
+                                        }
                                     }
                                 }
                             }

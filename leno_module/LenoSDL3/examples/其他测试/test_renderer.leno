@@ -29,19 +29,23 @@ main() {
 
             // 只采集一次数据
             if outSize == "" {
-                var sz = r.getOutputSize()
-                outSize = "Output Size: " + sz.get("w", 0) + " x " + sz.get("h", 0)
+                var[int, int](_ow, _oh) = r.getOutputSize()
+                outSize = "Output Size: " + _ow + " x " + _oh
             }
             if colorInfo == "" {
                 r.setColor(#64C832FF)
-                var c = r.getColor()
-                colorInfo = "Color: r=" + c.r + " g=" + c.g + " b=" + c.b + " a=" + c.a
+                int c = r.getColor()
+                int cr = (c >> 16) & 0xFF
+                int cg = (c >> 8) & 0xFF
+                int cb = c & 0xFF
+                int ca = (c >> 24) & 0xFF
+                colorInfo = "Color: r=" + cr + " g=" + cg + " b=" + cb + " a=" + ca
             }
             if floatInfo == "" {
                 r.setColorFloat(0.2, 0.6, 0.3, 1.0)
-                var cf = r.getColorFloat()
-                floatInfo = "Float: r=" + cf.get("r", 0) + " g=" + cf.get("g", 0) +
-                            " b=" + cf.get("b", 0) + " a=" + cf.get("a", 0)
+                var[float, float, float, float](cfr, cfg, cfb, cfa) = r.getColorFloat()
+                floatInfo = "Float: r=" + cfr + " g=" + cfg +
+                            " b=" + cfb + " a=" + cfa
             }
 
             r.drawText(font, "=== Renderer API Test ===", 10, 10, #FFFF64FF)

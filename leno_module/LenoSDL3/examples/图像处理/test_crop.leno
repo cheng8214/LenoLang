@@ -48,7 +48,7 @@ main() {
             if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
 
             if e.isMouseMotion() {
-                mouseX = e.mouseX(); mouseY = e.mouseY()
+                var[float, float](_mox, _moy) = e.mousePos(); mouseX = _mox; mouseY = _moy
                 if dragging { SDL3.markFrameRedraw() }
             }
 
@@ -112,8 +112,8 @@ main() {
             if not texLoaded {
                 loadedTex = SDL3.loadImageTexture(r.handle, imgPath)
                 if loadedTex != null {
-                    var ts = r.getTextureSize(loadedTex)
-                    texW = ts.w; texH = ts.h
+                    var[float, float](ts_w, ts_h) = r.getTextureSize(loadedTex)
+                    texW = ts_w; texH = ts_h
                 }
                 texLoaded = true
             }

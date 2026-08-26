@@ -56,7 +56,7 @@ main() {
             if e.isKeyDown() and e.scancode() == Scancode.L { win.flash(FlashOp.UNTIL_FOCUSED); lastMsg = "持续闪烁" }
 
             // 相对移动读数
-            if e.isMouseMotion() { mxRel = mxRel + e.mouseDX(); myRel = myRel + e.mouseDY() }
+            if e.isMouseMotion() { var[float, float](_dx, _dy) = e.mouseDelta(); mxRel = mxRel + _dx; myRel = myRel + _dy }
 
             return true
         },
