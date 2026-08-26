@@ -75,7 +75,8 @@ static const char* opCodeNames[] = {
 
 // 反汇编单条指令
 int disassembleInstruction(Chunk* chunk, int offset) {
-    printf("%04d ", offset);
+    int line = (chunk->lines && offset < chunk->len) ? chunk->lines[offset] : 0;
+    printf("%04d %4d ", offset, line);
     
     uint8_t instruction = chunk->code[offset];
     if (instruction < sizeof(opCodeNames) / sizeof(opCodeNames[0])) {
@@ -554,9 +555,9 @@ static void disassembleChunkRecursive(Chunk* chunk, const char* name, int depth,
     printf("\n");
     
     for (int i = 0; i < depth; i++) printf("  ");
-    printf("Offset Instruction          Operand\n");
+    printf("Offset Line Instruction          Operand\n");
     for (int i = 0; i < depth; i++) printf("  ");
-    printf("------ -------------------- -------\n");
+    printf("------ ---- -------------------- -------\n");
     
     int offset = 0;
     while (offset < chunk->len) {
