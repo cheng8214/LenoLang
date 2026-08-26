@@ -117,18 +117,21 @@ void error_print_all(void) {
             default: break;
         }
         
-        // 如果有文件名，显示文件名；如果有列号，显示列号
+        // 输出格式兼容 VSCode/GCC 终端链接（ctrl+点击跳转）
+        // 标准格式: filename(line,column): error: message
+        // 无列号时: filename(line): error: message
+        // 无文件名时退化为简单格式
         if (err->filename[0] && err->column > 0) {
-            fprintf(stderr, "[%s] %s 第 %d 行第 %d 列: %s",
-                    type_str, err->filename, err->line, err->column, err->msg);
+            fprintf(stderr, "%s(%d,%d): error: [%s] %s",
+                    err->filename, err->line, err->column, type_str, err->msg);
         } else if (err->filename[0]) {
-            fprintf(stderr, "[%s] %s 第 %d 行: %s",
-                    type_str, err->filename, err->line, err->msg);
+            fprintf(stderr, "%s(%d): error: [%s] %s",
+                    err->filename, err->line, type_str, err->msg);
         } else if (err->column > 0) {
-            fprintf(stderr, "[%s] 第 %d 行第 %d 列: %s",
-                    type_str, err->line, err->column, err->msg);
+            fprintf(stderr, "<stdin>:%d:%d: error: [%s] %s",
+                    err->line, err->column, type_str, err->msg);
         } else {
-            fprintf(stderr, "[%s] 第 %d 行: %s", type_str, err->line, err->msg);
+            fprintf(stderr, "<stdin>:%d: error: [%s] %s", err->line, type_str, err->msg);
         }
         
         // 如果有重复，显示重复次数
@@ -229,17 +232,19 @@ void warning_print_all(void) {
             default: break;
         }
 
+        // 输出格式兼容 VSCode/GCC 终端链接（ctrl+点击跳转）
+        // 标准格式: filename(line,column): warning: message
         if (w->filename[0] && w->column > 0) {
-            fprintf(stderr, "[%s] %s 第 %d 行第 %d 列: %s",
-                    type_str, w->filename, w->line, w->column, w->msg);
+            fprintf(stderr, "%s(%d,%d): warning: [%s] %s",
+                    w->filename, w->line, w->column, type_str, w->msg);
         } else if (w->filename[0]) {
-            fprintf(stderr, "[%s] %s 第 %d 行: %s",
-                    type_str, w->filename, w->line, w->msg);
+            fprintf(stderr, "%s(%d): warning: [%s] %s",
+                    w->filename, w->line, type_str, w->msg);
         } else if (w->column > 0) {
-            fprintf(stderr, "[%s] 第 %d 行第 %d 列: %s",
-                    type_str, w->line, w->column, w->msg);
+            fprintf(stderr, "<stdin>:%d:%d: warning: [%s] %s",
+                    w->line, w->column, type_str, w->msg);
         } else {
-            fprintf(stderr, "[%s] 第 %d 行: %s", type_str, w->line, w->msg);
+            fprintf(stderr, "<stdin>:%d: warning: [%s] %s", w->line, type_str, w->msg);
         }
 
         if (w->repeat_count > 1) {

@@ -1,11 +1,13 @@
 main(){
 
-    print(test())
+  var[string,string](a,b)=test()
+  print(a)
+  print(b)
 }
 
 func test():[int,string]{
 
     int a=10 
     string b="hello"
-    return b,a
+    return a,b
 }
