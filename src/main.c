@@ -79,6 +79,33 @@ static void debug_restore_stdout(FILE* backup) {
 #endif
 }
 
+// 统一输出全部字节码：主程序 + 所有已加载模块
+// 在编译全部完成后调用，确保缓存命中/未命中的模块都能输出
+static void debug_dump_all_bytecode(Chunk* main_chunk) {
+    FILE* backup = debug_redirect_stdout(debugOutFile);
+
+    // 1. 输出主程序字节码
+    if (main_chunk) {
+        disassembleChunk(main_chunk, "主程序");
+    }
+
+    // 2. 遍历所有已加载模块，输出每个模块的 init_chunk
+    int mod_count = loaded_modules_get_count();
+    for (int i = 0; i < mod_count; i++) {
+        ObjModule* mod = loaded_modules_get(i);
+        if (!mod) continue;
+        if (mod->init_chunk && mod->init_chunk->len > 0) {
+            char label[BUFFER_MEDIUM];
+            snprintf(label, sizeof(label), "模块: %s (%s)",
+                     mod->name ? mod->name : "<unnamed>",
+                     mod->source_path ? mod->source_path : "?");
+            disassembleChunk(mod->init_chunk, label);
+        }
+    }
+
+    debug_restore_stdout(backup);
+}
+
 // 命令行参数（供 _args() 全局函数使用）
 int g_argc = 0;
 char** g_argv = NULL;
@@ -174,11 +201,10 @@ int lenolang_run(const char* source) {
     codegen(&gen, parser.root);
     if (error_has_any()) goto fail;
 
-    // 调试模式：输出字节码
+    // 调试模式：统一输出全部字节码（主程序 + 所有已加载模块）
+    // 此时所有模块已编译完成（含缓存命中和未命中），统一输出
     if (debugMode) {
-        FILE* backup = debug_redirect_stdout(debugOutFile);
-        disassembleChunk(&chunk, "主程序");
-        debug_restore_stdout(backup);
+        debug_dump_all_bytecode(&chunk);
     }
 
     // 4. 内存态序列化运行：编译 → 序列化 → 释放编译器 → 反序列化 → 运行
@@ -300,9 +326,7 @@ int lenolang_run_binary(const char* path) {
 
     if (debugMode) {
         printf("debug模式:从二进制文件加载成功\n");
-        FILE* backup = debug_redirect_stdout(debugOutFile);
-        disassembleChunk(&chunk, "主程序");
-        debug_restore_stdout(backup);
+        debug_dump_all_bytecode(&chunk);
     }
 
     gc_init();
@@ -360,9 +384,7 @@ int lenolang_compile(const char* source, const char* output_path) {
     if (error_has_any()) goto compile_fail;
 
     if (debugMode) {
-        FILE* backup = debug_redirect_stdout(debugOutFile);
-        disassembleChunk(&chunk, "主程序");
-        debug_restore_stdout(backup);
+        debug_dump_all_bytecode(&chunk);
     }
 
     SerializeResult result = chunk_serialize(output_path, &chunk, sem.root_scope);

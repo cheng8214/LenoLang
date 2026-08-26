@@ -18,13 +18,6 @@
         #define GET_CURRENT_LINE() (vm.current_line)
     #endif
 
-    // 调试模式：开始执行跟踪
-#ifndef LENO_VM_ONLY
-    if (debugMode) {
-        printf("===== 执行跟踪 =====\n");
-    }
-#endif
-
     // =========================================================================
     // 跳转表定义（仅 GCC/Clang）
     // =========================================================================
@@ -242,14 +235,6 @@
 
         int offset = (int)(frame->ip - frame->chunk->code);
         vm.current_line = frame->chunk->lines[offset];
-
-#ifndef LENO_VM_ONLY
-        if (debugMode) {
-            debugPrintStack(vm.stack, vm.sp);
-            disassembleInstruction(frame->chunk, offset);
-            printf("\n");
-        }
-#endif
 
         uint8_t instruction;
         switch (instruction = READ_BYTE()) {

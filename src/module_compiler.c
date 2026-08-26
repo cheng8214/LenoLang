@@ -369,12 +369,8 @@ ObjModule* compile_module_new(const char* source, const char* module_name,
     codegen_set_func_dict(NULL);
     codegen_set_module(NULL);
     
-    // 调试模式：打印模块字节码
-    extern int debugMode;
-    if (debugMode) {
-        extern void disassembleChunk(Chunk* chunk, const char* name);
-        disassembleChunk(&chunk, module_name);
-    }
+    // 调试模式：字节码统一输出由 main.c 在编译完成后处理
+    // （此处不输出，因为缓存命中的模块不走此路径，会导致输出不完整）
     
     // 只关注本模块代码生成阶段新增的错误
     if (errors.count > errors_before_codegen) {
