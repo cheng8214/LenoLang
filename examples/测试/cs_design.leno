@@ -1,0 +1,11 @@
+main(){
+
+    print(test())
+}
+
+func test():[int,string]{
+
+    int a=10 
+    string b="hello"
+    return b,a
+}

@@ -66,7 +66,7 @@
                                     snprintf(msg, sizeof(msg),
                                         "返回值 %d 类型不匹配：期望 %s，实际 %s",
                                         i + 1, expected_buf, actual_buf);
-                                    error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
+                                    error_add_at(ERR_TYPE_MISMATCH, ast->u.ret_multi.exprs[i]->line, ast->u.ret_multi.exprs[i]->column, msg);
                                 }
                                 type_free(actual);
                             }

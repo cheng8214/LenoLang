@@ -6,6 +6,7 @@
 
 Ast* parse_return_stmt(Parser* p) {
     int line = p->lex.current.line;
+    int col = p->lex.current.column;
     lexer_next(&p->lex); // return
 
     Ast* value = NULL;
@@ -31,12 +32,14 @@ Ast* parse_return_stmt(Parser* p) {
         }
 
         Ast* ast = ast_new(AST_RETURN_MULTI, line);
+        ast->column = col;
         ast->u.ret_multi.exprs = exprs;
         ast->u.ret_multi.count = count;
         return ast;
     }
 
     Ast* ast = ast_new(AST_RETURN, line);
+    ast->column = col;
     ast->u.ret = value;
     return ast;
 }
