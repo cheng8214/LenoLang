@@ -286,6 +286,38 @@ static void extract_exports(const char* source, ExportList* list) {
             } else if (strncmp(p, "var", 3) == 0 && !isalnum((unsigned char)p[3]) && p[3] != '_') {
                 p += 3;
                 while (*p && (*p == ' ' || *p == '\t')) p++;
+                // 检测解构语法: var[T1, T2](a, b) 或 var{"k": T}(a)
+                if (*p == '[' || *p == '{') {
+                    // 跳过形状部分 [...] 或 {...}
+                    int depth = 1;
+                    p++;
+                    while (*p && depth > 0) {
+                        if (*p == '[' || *p == '{') depth++;
+                        else if (*p == ']' || *p == '}') depth--;
+                        if (depth == 0) { p++; break; }
+                        p++;
+                    }
+                    // 跳过空格
+                    while (*p && (*p == ' ' || *p == '\t')) p++;
+                    // 解析 (name, name, ...)
+                    if (*p == '(') {
+                        p++;
+                        while (*p) {
+                            while (*p && (*p == ' ' || *p == '\t' || *p == ',')) p++;
+                            if (*p == ')') { p++; break; }
+                            const char* dname_start = p;
+                            while (*p && (isalnum((unsigned char)*p) || *p == '_')) p++;
+                            int dlen = (int)(p - dname_start);
+                            if (dlen > 0 && dlen < MAX_EXPORT_NAME && list->count < MAX_EXPORTS) {
+                                strncpy(list->names[list->count], dname_start, dlen);
+                                list->names[list->count][dlen] = '\0';
+                                list->count++;
+                            }
+                        }
+                        continue;  // 已处理完，跳过下方的标识符读取
+                    }
+                    continue;
+                }
             } else if (strncmp(p, "cstruct", 7) == 0 && !isalnum((unsigned char)p[7]) && p[7] != '_') {
                 p += 7;
                 while (*p && (*p == ' ' || *p == '\t')) p++;

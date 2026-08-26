@@ -364,9 +364,14 @@ static void fold_expr(Ast* ast) {
             fold_expr(ast->u.func.body);
             break;
 
-        case AST_RETURN:
-            fold_expr(ast->u.ret);
-            break;
+case AST_RETURN:
+fold_expr(ast->u.ret);
+break;
+case AST_RETURN_MULTI:
+for (int i = 0; i < ast->u.ret_multi.count; i++) {
+fold_expr(ast->u.ret_multi.exprs[i]);
+}
+break;
 
         case AST_ASSIGN:
             fold_expr(ast->u.assign.value);
@@ -376,11 +381,15 @@ static void fold_expr(Ast* ast) {
             fold_expr(ast->u.compound_assign.value);
             break;
 
-        case AST_VAR_DECL:
-            fold_expr(ast->u.var_decl.init);
-            break;
+case AST_VAR_DECL:
+fold_expr(ast->u.var_decl.init);
+break;
 
-        case AST_EXPR_STMT:
+case AST_DESTRUCT_DECL:
+fold_expr(ast->u.destruct_decl.init);
+break;
+
+case AST_EXPR_STMT:
             fold_expr(ast->u.expr_stmt.expr);
             break;
 
@@ -491,8 +500,9 @@ static void fold_expr(Ast* ast) {
 static int is_terminator(Ast* ast) {
     if (!ast) return 0;
     switch (ast->kind) {
-        case AST_RETURN:     // return：函数返回，后续代码不可达
-        case AST_BREAK:      // break：跳出循环，后续代码不可达
+case AST_RETURN:     // return：函数返回，后续代码不可达
+case AST_RETURN_MULTI: // 多值返回：函数返回，后续代码不可达
+case AST_BREAK:      // break：跳出循环，后续代码不可达
         case AST_CONTINUE:   // continue：跳到循环下一轮，后续代码不可达
         case AST_THROW:      // throw：抛出异常，后续代码不可达
             return 1;
@@ -559,9 +569,14 @@ static int dce_expr(Ast* ast) {
             return 0;
 
         // return：递归处理返回值表达式，本身是终止语句
-        case AST_RETURN:
-            if (ast->u.ret) dce_expr(ast->u.ret);
-            return 1;
+case AST_RETURN:
+if (ast->u.ret) dce_expr(ast->u.ret);
+return 1;
+case AST_RETURN_MULTI:
+for (int i = 0; i < ast->u.ret_multi.count; i++) {
+dce_expr(ast->u.ret_multi.exprs[i]);
+}
+return 1;
 
         // throw：递归处理异常表达式，本身是终止语句
         case AST_THROW:
@@ -746,12 +761,16 @@ static int dce_expr(Ast* ast) {
             return 0;
 
         // 变量声明：递归处理初始化表达式
-        case AST_VAR_DECL:
-            if (ast->u.var_decl.init) dce_expr(ast->u.var_decl.init);
-            return 0;
+case AST_VAR_DECL:
+if (ast->u.var_decl.init) dce_expr(ast->u.var_decl.init);
+return 0;
 
-        // 表达式语句：递归处理表达式
-        case AST_EXPR_STMT:
+case AST_DESTRUCT_DECL:
+if (ast->u.destruct_decl.init) dce_expr(ast->u.destruct_decl.init);
+return 0;
+
+// 表达式语句：递归处理表达式
+case AST_EXPR_STMT:
             dce_expr(ast->u.expr_stmt.expr);
             return 0;
 

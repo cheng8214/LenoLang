@@ -198,9 +198,15 @@ void ast_free(Ast* ast) {
             free(ast->u.func.upvalue_is_local);
             free(ast->u.func.upvalue_is_value_capture);
             break;
-        case AST_RETURN:
-            ast_free(ast->u.ret);
-            break;
+case AST_RETURN:
+ast_free(ast->u.ret);
+break;
+case AST_RETURN_MULTI:
+for (int i = 0; i < ast->u.ret_multi.count; i++) {
+ast_free(ast->u.ret_multi.exprs[i]);
+}
+free(ast->u.ret_multi.exprs);
+break;
         case AST_ASSIGN:
             for (int i = 0; i < ast->u.assign.name_count; i++) {
                 free(ast->u.assign.names[i]);
@@ -226,13 +232,31 @@ void ast_free(Ast* ast) {
             free(ast->u.compound_assign.ref.name);
             ast_free(ast->u.compound_assign.value);
             break;
-        case AST_VAR_DECL:
-            free(ast->u.var_decl.name);
-            free(ast->u.var_decl.ref.name);
-            ast_free(ast->u.var_decl.init);
-            type_free(ast->u.var_decl.type);
-            break;
-        case AST_EXPR_STMT:
+    case AST_VAR_DECL:
+        free(ast->u.var_decl.name);
+        free(ast->u.var_decl.ref.name);
+        ast_free(ast->u.var_decl.init);
+        type_free(ast->u.var_decl.type);
+        break;
+    case AST_DESTRUCT_DECL: {
+        for (int i = 0; i < ast->u.destruct_decl.slot_count; i++) {
+            type_free(ast->u.destruct_decl.slot_types[i]);
+            if (ast->u.destruct_decl.slot_keys) {
+                free(ast->u.destruct_decl.slot_keys[i]);
+            }
+            free(ast->u.destruct_decl.names[i]);
+            if (ast->u.destruct_decl.refs[i].name) {
+                free(ast->u.destruct_decl.refs[i].name);
+            }
+        }
+        free(ast->u.destruct_decl.slot_types);
+        free(ast->u.destruct_decl.slot_keys);
+        free(ast->u.destruct_decl.names);
+        free(ast->u.destruct_decl.refs);
+        ast_free(ast->u.destruct_decl.init);
+        break;
+    }
+    case AST_EXPR_STMT:
             ast_free(ast->u.expr_stmt.expr);
             break;
         case AST_IMPORT:

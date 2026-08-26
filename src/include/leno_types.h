@@ -211,6 +211,7 @@ typedef enum {
     TYPE_FUTURE,                // Future 类型（异步结果）
     TYPE_SOCKET,                // Socket 类型
     TYPE_GENERIC_PARAM,         // 泛型类型参数（如 T、U）
+    TYPE_MULTI_RET,             // 多返回值类型 [T1, T2, ...] 或 {"k": T1, ...}
 } TypeKind;
 
 typedef struct TypeInfo TypeInfo;
@@ -246,6 +247,7 @@ TypeInfo* type_ptr_generic(TypeInfo* element_type);
 TypeInfo* type_function(TypeInfo* return_type, TypeInfo** param_types, int param_count);
 TypeInfo* type_generic_param(const char* name);  // 创建泛型类型参数 T, U 等
 TypeInfo* type_generic_param_constrained(const char* name, const char* constraint);  // 创建带约束的泛型类型参数
+TypeInfo* type_multi_ret(TypeInfo** ret_types, int count);  // 创建多返回值类型 [T1, T2, ...]
 int type_has_generic(TypeInfo* type);             // 类型是否包含泛型参数
 int type_has_infer_as_param(TypeInfo* type, TypeKind* out_parent_kind);  // 类型是否将 var 用作了类型参数
 TypeInfo* type_substitute(TypeInfo* type, const char* param_name, TypeInfo* concrete);  // 类型替换

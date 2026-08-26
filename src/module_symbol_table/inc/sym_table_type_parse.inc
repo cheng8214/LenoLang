@@ -76,7 +76,43 @@ static TypeInfo* parse_simple_type_str(const char* s, int len) {
 static TypeInfo* parse_type_from_string_inner(const char** p) {
     skip_ws(p);
     if (!**p) return NULL;
-    
+
+    // 检测多返回值类型: [T1, T2, ...]
+    if (**p == '[') {
+        (*p)++;  // 跳过 '['
+        skip_ws(p);
+
+        TypeInfo* mr = type_new(TYPE_MULTI_RET);
+        TypeInfo** params = NULL;
+        int count = 0;
+        int capacity = 4;
+
+        if (**p != ']') {
+            params = (TypeInfo**)malloc(sizeof(TypeInfo*) * capacity);
+            while (1) {
+                if (count >= capacity) {
+                    capacity *= 2;
+                    params = (TypeInfo**)realloc(params, sizeof(TypeInfo*) * capacity);
+                }
+                TypeInfo* pt = parse_type_from_string_inner(p);
+                if (!pt) break;
+                params[count++] = pt;
+                skip_ws(p);
+                if (**p == ',') {
+                    (*p)++;
+                    skip_ws(p);
+                } else {
+                    break;
+                }
+            }
+        }
+        skip_ws(p);
+        if (**p == ']') (*p)++;  // 跳过 ']'
+        mr->param_types = params;
+        mr->param_count = count;
+        return mr;
+    }
+
     // 读标识符
     const char* name_start = *p;
     const char* name_end;

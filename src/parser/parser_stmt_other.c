@@ -14,6 +14,28 @@ Ast* parse_return_stmt(Parser* p) {
         value = parse_expression(p);
     }
 
+    // 检测多值返回: return expr1, expr2, ...
+    if (value && p->lex.current.type == TOK_COMMA) {
+        int count = 1;
+        int capacity = 4;
+        Ast** exprs = (Ast**)malloc(sizeof(Ast*) * capacity);
+        exprs[0] = value;
+
+        while (match(p, TOK_COMMA)) {
+            Ast* next_expr = parse_expression(p);
+            if (count >= capacity) {
+                capacity *= 2;
+                exprs = (Ast**)realloc(exprs, sizeof(Ast*) * capacity);
+            }
+            exprs[count++] = next_expr;
+        }
+
+        Ast* ast = ast_new(AST_RETURN_MULTI, line);
+        ast->u.ret_multi.exprs = exprs;
+        ast->u.ret_multi.count = count;
+        return ast;
+    }
+
     Ast* ast = ast_new(AST_RETURN, line);
     ast->u.ret = value;
     return ast;

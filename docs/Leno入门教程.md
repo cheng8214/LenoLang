@@ -19,6 +19,7 @@
    - [收窄传导到局部变量](#收窄传导到局部变量)
    - [switch 性能优化](#switch-性能优化)
 5. [函数](#函数)
+   - [多返回值函数](#多返回值函数)
    - [泛型约束（T: Face）](#泛型约束t-face)
 6. [结构体（Struct）](#结构体struct)
    - [可空类型 `Type?`](#可空类型-type推荐方案)
@@ -29,15 +30,16 @@
 8. [枚举（Enum）](#枚举enum)
 9. [数组](#数组)
 10. [字典](#字典)
-11. [字符串](#字符串)
-12. [模块系统](#模块系统)
-13. [异常处理（try-catch-finally）](#异常处理try-catch-finally)
-14. [线程与并发](#线程与并发)
-15. [异步编程](#异步编程)
-16. [FFI 外部函数接口](#ffi-外部函数接口)
+11. [解构声明](#解构声明)
+12. [字符串](#字符串)
+13. [模块系统](#模块系统)
+14. [异常处理（try-catch-finally）](#异常处理try-catch-finally)
+15. [线程与并发](#线程与并发)
+16. [异步编程](#异步编程)
+17. [FFI 外部函数接口](#ffi-外部函数接口)
     - [cstruct 线程支持](#cstruct-线程支持)
-17. [高级特性](#高级特性)
-18. [语法速查表](#语法速查表)
+18. [高级特性](#高级特性)
+19. [语法速查表](#语法速查表)
 
 ***
 
@@ -3659,6 +3661,214 @@ main() {
 > - 非函数值不能赋给函数变量：`a = 10` ❌
 > - 函数类型一旦赋值就不能改变：`var f = foo; f = 10` ❌
 
+### 多返回值函数
+
+Leno 支持函数返回多个值，避免了将多个结果包装成数组或字典导致的类型丢失。
+
+#### 基本语法
+
+用 `[T1, T2, ...]` 声明多返回值类型，`return a, b` 返回多个值：
+
+```leno
+// 声明返回两个值：int 和 string
+func get_user(): [int, string] {
+    return 42, "Alice"
+}
+
+// 声明返回三个值
+func get_record(): [int, string, float] {
+    return 1, "admin", 99.9
+}
+```
+
+#### 解构接收
+
+用 `var[T1, T2](a, b) = func()` 从多返回值中提取各个值：
+
+```leno
+func get_user(): [int, string] {
+    return 42, "Alice"
+}
+
+main() {
+    var[int, string](id, name) = get_user()
+    print(id)      // 42
+    print(name)    // Alice
+}
+```
+
+#### 带键名的多返回值类型
+
+可以用 `{"key": Type}` 形式给每个返回值命名（键名仅用于文档，不影响功能）：
+
+```leno
+func parse_http(): {"code": int, "msg": string} {
+    return 200, "OK"
+}
+
+var{"code": int, "msg": string}(code, msg) = parse_http()
+print(code)    // 200
+print(msg)     // OK
+```
+
+#### 类型转换
+
+槽位类型与返回值类型不同时，自动进行安全转换（如 `int → float`）：
+
+```leno
+func get_dims(): [int, int] {
+    return 800, 600
+}
+
+// int 返回值自动转为 float
+var[float, float](w, h) = get_dims()
+print(w)    // 800.0
+print(h)    // 600.0
+```
+
+`any` 槽位可以接收任何类型的返回值：
+
+```leno
+func get_data(): [int, string, float] {
+    return 1, "hello", 3.14
+}
+
+var[any, any, any](a, b, c) = get_data()
+```
+
+#### 部分接收
+
+接收的变量数可以少于返回值数（多余的返回值自动丢弃）：
+
+```leno
+func get_full(): [int, string, float] {
+    return 1, "admin", 99.9
+}
+
+// 只接收前两个
+var[int, string](id, name) = get_full()
+print(id)      // 1
+print(name)    // admin
+```
+
+接收的变量数也可以多于返回值数（多余的变量补 `null`）：
+
+```leno
+func get_pair(): [int, string] {
+    return 100, "ok"
+}
+
+// 第三个变量补 null
+var[int, string, any](a, b, c) = get_pair()
+print(c)    // null
+```
+
+#### 普通调用
+
+不解构时，多返回值函数只取**第一个返回值**，其余自动弹出：
+
+```leno
+func get_user(): [int, string] {
+    return 42, "Alice"
+}
+
+var id = get_user()       // id = 42，"Alice" 被丢弃
+print(id)                 // 42
+
+// 也可以直接作为表达式语句
+get_user()                // 所有返回值被丢弃
+```
+
+#### 嵌套调用
+
+多返回值函数内部可以调用其他多返回值函数：
+
+```leno
+func inner(int x): [int, int] {
+    return x + 1, x + 2
+}
+
+func outer(int x): [int, int, int] {
+    var[int, int](a, b) = inner(x)
+    return a, b, a + b
+}
+
+main() {
+    var[int, int, int](r1, r2, r3) = outer(10)
+    print(r1)    // 11
+    print(r2)    // 12
+    print(r3)    // 23
+}
+```
+
+#### 在条件分支中返回
+
+多返回值函数可以在 `if` 分支中返回不同结果：
+
+```leno
+func classify(int x): [int, string] {
+    if x > 0 {
+        return 1, "positive"
+    }
+    if x < 0 {
+        return -1, "negative"
+    }
+    return 0, "zero"
+}
+
+main() {
+    var[int, string](code, msg) = classify(5)
+    print($"{code}: {msg}")    // 1: positive
+}
+```
+
+#### 跨模块调用
+
+跨模块调用多返回值函数时，返回类型信息通过模块符号表传递，解构同样有效：
+
+```leno
+// module: data.leno
+export func get_config(): [string, int, bool] {
+    return "localhost", 8080, true
+}
+```
+
+```leno
+// main.leno
+import data
+
+var[string, int, bool](host, port, debug) = data.get_config()
+print(host)     // localhost
+print(port)     // 8080
+print(debug)    // true
+```
+
+#### 错误检测
+
+编译器会检查多返回值的数量和类型：
+
+```leno
+// ❌ 返回值数量不匹配
+func bad(): [int, string] {
+    return 1, "ok", 42    // 错误：声明 2 个，返回了 3 个
+}
+
+// ❌ 返回值类型不匹配
+func wrong(): [int, string] {
+    return "not_int", 42   // 错误：第一个应为 int，给了 string
+}
+
+// ❌ 解构槽位类型不匹配
+var[string, int](a, b) = get_user()   // 错误：槽位 string 与返回值 int 不兼容
+```
+
+> **⚠️ 注意事项：**
+>
+> - 多返回值函数**不会被内联**，始终走真实函数调用路径
+> - 多返回值最多支持 **16 个**返回值
+> - 多返回值函数不能直接作为另一个函数的单个参数传入
+> - 闭包返回多返回值函数时，类型信息可能退化为 `any`
+
 ***
 
 ## 结构体（Struct）
@@ -7002,6 +7212,139 @@ nested.set("level3", {d: "bad"}) // ❌ 错误：期望 Dict[string, int]
 
 ***
 
+## 解构声明
+
+解构声明允许你从数组、字典或多返回值函数调用中，一次性提取多个值到独立变量。
+
+### 数组解构
+
+从数组中按索引提取元素到变量：
+
+```leno
+main() {
+    var data = [10, 20, 30]
+
+    // 按索引解构
+    var[int, int, int](a, b, c) = data
+    print(a)    // 10
+    print(b)    // 20
+    print(c)    // 30
+}
+```
+
+槽位类型可以与数组元素类型不同，自动进行安全转换：
+
+```leno
+var nums = [1, 2, 3]
+
+// int 元素自动转为 float
+var[float, float, float](x, y, z) = nums
+print(x)    // 1.0
+```
+
+### 字典解构
+
+从字典中按键名提取值到变量：
+
+```leno
+main() {
+    var config = {"host": "localhost", "port": 8080}
+
+    // 按键名解构
+    var{"host": string, "port": int}(host, port) = config
+    print(host)    // localhost
+    print(port)    // 8080
+}
+```
+
+### 多返回值解构
+
+从多返回值函数调用中提取返回值（详见[多返回值函数](#多返回值函数)）：
+
+```leno
+func get_user(): [int, string] {
+    return 42, "Alice"
+}
+
+var[int, string](id, name) = get_user()
+print(id)      // 42
+print(name)    // Alice
+```
+
+### 部分解构
+
+接收的变量数可以少于数据源的数量，多余的值自动丢弃：
+
+```leno
+var arr = [1, 2, 3, 4, 5]
+
+// 只取前三个
+var[int, int, int](a, b, c) = arr
+print(a)    // 1
+```
+
+变量数也可以多于数据源数量，多余的变量补 `null`：
+
+```leno
+var pair = [100, 200]
+
+// 第三个变量补 null
+var[int, int, any](a, b, c) = pair
+print(c)    // null
+```
+
+### `any` 槽位
+
+使用 `any` 类型槽位可以接收任何类型的值，跳过类型检查：
+
+```leno
+var mixed = [1, "hello", 3.14]
+
+var[any, any, any](a, b, c) = mixed
+print(a)    // 1
+print(b)    // hello
+print(c)    // 3.14
+```
+
+### `const` 解构
+
+使用 `const` 声明解构变量为常量：
+
+```leno
+var data = [10, 20, 30]
+const[int, int, int](a, b, c) = data
+
+a = 100    // ❌ 错误：const 变量不可修改
+```
+
+### `export` 解构
+
+在模块中，解构声明的变量可以导出供其他模块使用：
+
+```leno
+// module: config.leno
+var data = [10, 20, 30]
+export var[int, int, int](exported_a, exported_b, exported_c) = data
+```
+
+```leno
+// main.leno
+import config
+
+print(config.exported_a)    // 10
+print(config.exported_b)    // 20
+```
+
+> **⚠️ 解构声明规则：**
+>
+> - 数组解构按**索引顺序**提取（第 0 个元素 → 第一个变量）
+> - 字典解构按**键名**提取（`"host"` → 对应槽位）
+> - 多返回值解构按**返回值顺序**提取
+> - 槽位类型与实际类型不兼容时编译报错（`int` 槽位收到 `string` 值）
+> - `any` 槽位跳过类型检查，可以接收任何值
+
+***
+
 ## 字符串
 
 ### 字符串基础
@@ -10072,8 +10415,12 @@ lenolang program.leno
 | 多变量声明 | `var a=10, b, c=1`                  |
 | 并行赋值  | `a, b = b, a`                       |
 | 函数定义  | `func name(int a):int { return a }` |
+| 多返回值   | `func f(): [int, string] { return 1, "ok" }` |
 | 默认参数  | `func add(int x, int y=10)`         |
 | 前向引用  | 函数可以先调用后定义                          |
+| 数组解构  | `var[int, int](a, b) = [10, 20]`     |
+| 字典解构  | `var{"k": int}(a) = {"k": 42}`       |
+| 多返回值解构 | `var[int, string](a, b) = func()`   |
 
 ### 控制流
 

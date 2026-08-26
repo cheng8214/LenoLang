@@ -705,6 +705,101 @@ OPCODE(OP_RETURN) {
 }
 
 // ============================================================================
+// OP_RETURN_MULTI: 多值返回
+// 字节格式: OP_RETURN_MULTI count(1)
+// 栈布局: [ret0][ret1]...[retN-1]（N 个返回值在栈顶）
+// 返回后调用方栈上留下 N 个值
+// ============================================================================
+OPCODE(OP_RETURN_MULTI) {
+    frame = &vm.frames[vm.frame_cnt - 1];
+    int ret_count = READ_BYTE();
+
+    // GC 安全点检查（同 OP_RETURN）
+    if (unlikely(++vm.gc_return_counter >= 256)) {
+        vm.gc_return_counter = 0;
+        if (gc.deferred_gc && gc.enabled && !gc.running) {
+            gc_try_collect_deferred();
+        }
+    }
+
+    // 从栈上弹出 count 个返回值（保存到临时数组）
+    Value results[16];  // 最多支持 16 个返回值
+    if (ret_count > 16) {
+        runtime_error("多返回值数量超过限制（最大 16）", 0);
+        return -1;
+    }
+    for (int i = ret_count - 1; i >= 0; i--) {
+        results[i] = vm_stack_pop_fast(&vm);
+    }
+
+    // 检查是否有 finally 块需要执行（且当前不在 finally 中）
+    // 多返回值 + finally：保存第一个返回值，弹出其余的
+    if (frame->finally_ip != NULL && !frame->in_finally) {
+        // 保存返回值（只保存第一个，finally 后只返回第一个值）
+        frame->try_return_value = results[0];
+        frame->has_try_return = 1;
+        // 跳转到 finally 块
+        frame->ip = frame->finally_ip;
+        // 将 null 压入栈保持栈平衡
+        vm_stack_push(&vm, val_null());
+        DISPATCH;
+    }
+
+    int stack_base = frame->stack_base;
+    Value* locals = frame->locals;
+    int local_count = frame->local_count;
+    int locals_is_dynamic = frame->locals_is_dynamic;
+
+    // 关闭 upvalues
+    if (locals != NULL && local_count > 0 && vm.open_upvalues != NULL) {
+        close_upvalues(locals, local_count, 1);
+    }
+
+    vm.frame_cnt--;
+
+    if (vm.stop_frame_cnt > 0 && vm.frame_cnt <= vm.stop_frame_cnt) {
+        vm.last_return_value = results[0];
+        vm.stop_frame_cnt = 0;
+        if (locals != NULL && locals_is_dynamic) {
+            free(locals);
+        }
+        return 0;
+    }
+
+    if (vm.current_coroutine) {
+        if (vm.frame_cnt < vm.current_coroutine->saved_frame_cnt) {
+            vm.current_coroutine->result = results[0];
+            gc_write_barrier((Object*)vm.current_coroutine, results[0]);
+            if (locals != NULL && locals_is_dynamic) {
+                free(locals);
+            }
+            return 0;
+        }
+    }
+
+    if (vm.frame_cnt == 0) {
+        vm.last_return_value = results[0];
+        if (locals != NULL && locals_is_dynamic) {
+            free(locals);
+        }
+        return 0;
+    }
+
+    // 恢复栈到调用前状态，压入多个返回值
+    vm.sp = stack_base;
+    for (int i = 0; i < ret_count; i++) {
+        vm_stack_push(&vm, results[i]);
+    }
+
+    if (locals != NULL && locals_is_dynamic) {
+        free(locals);
+    }
+
+    frame = &vm.frames[vm.frame_cnt - 1];
+    DISPATCH;
+}
+
+// ============================================================================
 // 全局函数调用合并指令（省掉 OP_GET_GLOBAL_FUNC + OP_CALL 配对）
 // 字节格式: OP_CALL_GLOBAL_FUNC func_slot(2) arg_count(2)
 // 栈布局: [...][arg1][arg2]...[argN]  （无 callee 在栈顶）

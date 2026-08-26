@@ -164,6 +164,33 @@
                             while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
 
                             const char* type_start = after_func;
+
+                            // 检测多返回值类型: [T1, T2, ...] 或 {"k": T1, ...}
+                            if (*after_func == '[' || *after_func == '{') {
+                                // 读取整个多返回值类型表达式
+                                int depth = 0;
+                                while (*after_func) {
+                                    if (*after_func == '[' || *after_func == '{') depth++;
+                                    else if (*after_func == ']' || *after_func == '}') { depth--; if (depth == 0) { after_func++; break; } }
+                                    after_func++;
+                                }
+                                int mr_len = (int)(after_func - type_start);
+                                if (mr_len > 0 && mr_len < 128) {
+                                    char mr_str[128];
+                                    strncpy(mr_str, type_start, mr_len);
+                                    mr_str[mr_len] = '\0';
+                                    // 解析多返回值类型
+                                    return_type_info = parse_type_from_string(mr_str);
+                                    if (return_type_info) {
+                                        return_type = return_type_info->kind;
+                                    } else {
+                                        return_type = TYPE_MULTI_RET;
+                                    }
+                                }
+                                // 跳过后面的可空标记和函数体
+                                goto scan_func_body_skip;
+                            }
+
                             // 先读取标识符部分（如 Dict、Array、int 等）
                             while (*after_func && (isalnum((unsigned char)*after_func) || *after_func == '_')) after_func++;
                             int type_len = (int)(after_func - type_start);
@@ -268,6 +295,7 @@
                             }
                         }
 
+                        scan_func_body_skip:
                         module_symbol_table_add_func(table, func_name, return_type,
                             return_struct_name[0] ? return_struct_name : NULL, func_type_param_count, return_type_info,
                             param_text[0] ? param_text : NULL,

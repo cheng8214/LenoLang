@@ -1,0 +1,179 @@
+// ============================================================
+// 多返回值边界测试
+// ============================================================
+
+// ---------- 1. 零参数多返回值函数 ----------
+func zero_args(): [int, string] {
+    return 0, "zero"
+}
+var[int, string](z1, z2) = zero_args()
+assert_eq(z1, 0)
+assert_eq(z2, "zero")
+
+// ---------- 2. 带参数多返回值函数 ----------
+func with_args(int a, int b): [int, int] {
+    return a + b, a * b
+}
+var[int, int](sum, prod) = with_args(3, 4)
+assert_eq(sum, 7)
+assert_eq(prod, 12)
+
+// ---------- 3. 带默认参数 ----------
+func with_default(int a, int b = 10): [int, int] {
+    return a, b
+}
+var[int, int](d1, d2) = with_default(5)
+assert_eq(d1, 5)
+assert_eq(d2, 10)
+
+var[int, int](d3, d4) = with_default(5, 20)
+assert_eq(d3, 5)
+assert_eq(d4, 20)
+
+// ---------- 4. 返回值为表达式 ----------
+func compute(int x): [int, int, int] {
+    return x * 2, x + 10, x - 1
+}
+var[int, int, int](e1, e2, e3) = compute(5)
+assert_eq(e1, 10)
+assert_eq(e2, 15)
+assert_eq(e3, 4)
+
+// ---------- 5. 返回值为负数 ----------
+func negate(int x): [int, int] {
+    return -x, x
+}
+var[int, int](n1, n2) = negate(7)
+assert_eq(n1, -7)
+assert_eq(n2, 7)
+
+// ---------- 6. 嵌套调用：多返回值函数调用多返回值函数 ----------
+func inner_mr(int x): [int, int] {
+    return x + 1, x + 2
+}
+func outer_mr(int x): [int, int, int] {
+    var[int, int](a, b) = inner_mr(x)
+    return a, b, a + b
+}
+
+var[int, int, int](or1, or2, or3) = outer_mr(10)
+assert_eq(or1, 11)
+assert_eq(or2, 12)
+assert_eq(or3, 23)
+
+// ---------- 7. 多返回值函数中调用其他多返回值函数 ----------
+func inner(): [int, int] {
+    return 10, 20
+}
+func outer(): [int, int, int] {
+    var[int, int](a, b) = inner()
+    return a, b, a + b
+}
+var[int, int, int](o1, o2, o3) = outer()
+assert_eq(o1, 10)
+assert_eq(o2, 20)
+assert_eq(o3, 30)
+
+// ---------- 8. 接收少于返回值数量 ----------
+func four_vals(): [int, int, int, int] {
+    return 1, 2, 3, 4
+}
+var[int, int](few1, few2) = four_vals()
+assert_eq(few1, 1)
+assert_eq(few2, 2)
+
+// ---------- 9. 接收多于返回值数量（多余槽位补 null） ----------
+func two_vals(): [int, string] {
+    return 100, "ok"
+}
+var[int, string, any](more1, more2, more3) = two_vals()
+assert_eq(more1, 100)
+assert_eq(more2, "ok")
+assert_eq(more3, null)
+
+// ---------- 10. 嵌套调用：多返回值作为另一个函数的参数 ----------
+func add(int a, int b): int {
+    return a + b
+}
+func get_pair(): [int, int] {
+    return 3, 4
+}
+// 多返回值函数不能直接展开为参数，需要先解构
+var[int, int](pa, pb) = get_pair()
+var result = add(pa, pb)
+assert_eq(result, 7)
+
+// ---------- 11. 函数体内多次 return ----------
+func classify(int x): [int, string] {
+    if x > 0 {
+        return 1, "positive"
+    }
+    if x < 0 {
+        return -1, "negative"
+    }
+    return 0, "zero"
+}
+var[int, string](cl1a, cl1b) = classify(5)
+assert_eq(cl1a, 1)
+assert_eq(cl1b, "positive")
+
+var[int, string](cl2a, cl2b) = classify(-3)
+assert_eq(cl2a, -1)
+assert_eq(cl2b, "negative")
+
+var[int, string](cl3a, cl3b) = classify(0)
+assert_eq(cl3a, 0)
+assert_eq(cl3b, "zero")
+
+// ---------- 12. 循环中使用多返回值 ----------
+func find(Array[int] arr, int target): [int, bool] {
+    var len = arr.len() - 1
+    for 0:len to i {
+        if arr[i] == target {
+            return i, true
+        }
+    }
+    return -1, false
+}
+var arr = [10, 20, 30, 40, 50]
+var[int, bool](idx, found) = find(arr, 30)
+assert_eq(idx, 2)
+assert_eq(found, true)
+
+var[int, bool](idx2, found2) = find(arr, 99)
+assert_eq(idx2, -1)
+assert_eq(found2, false)
+
+// ---------- 13. any 类型返回 ----------
+func get_any(): [any, any] {
+    return "hello", 42
+}
+var[any, any](any1, any2) = get_any()
+assert_eq(any1, "hello")
+assert_eq(any2, 42)
+
+// ---------- 14. 字符串拼接返回 ----------
+func greet(string name): [string, string] {
+    return "Hello, " + name + "!", "Bye, " + name + "!"
+}
+var[string, string](g1, g2) = greet("World")
+assert_eq(g1, "Hello, World!")
+assert_eq(g2, "Bye, World!")
+
+// ---------- 15. float 精度返回 ----------
+func calc(float x): [float, float, float] {
+    return x * 1.5, x / 2.0, x + 0.1
+}
+var[float, float, float](f1, f2, f3) = calc(10.0)
+assert_eq(f1, 15.0)
+assert_eq(f2, 5.0)
+
+// ---------- 16. 大量返回值（测试上限附近） ----------
+func many(): [int, int, int, int, int, int, int, int] {
+    return 1, 2, 3, 4, 5, 6, 7, 8
+}
+var[int, int, int, int, int, int, int, int](m1, m2, m3, m4, m5, m6, m7, m8) = many()
+assert_eq(m1, 1)
+assert_eq(m8, 8)
+
+print("=== 边界测试全部通过 ===")

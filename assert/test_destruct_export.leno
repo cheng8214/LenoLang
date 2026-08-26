@@ -1,0 +1,11 @@
+// export 解构声明跨模块测试
+import destruct_export_mod
+
+// 访问 export 解构声明的变量
+assert_eq(destruct_export_mod.exported_a, 10)
+assert_eq(destruct_export_mod.exported_b, 20)
+assert_eq(destruct_export_mod.exported_c, 30)
+assert_eq(destruct_export_mod.export_host, 8080)
+assert_eq(destruct_export_mod.export_port, 9090)
+
+print("test_destruct_export passed")

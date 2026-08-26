@@ -393,6 +393,85 @@ static TypeInfo* parse_array_type(Parser* p) {
     return type_array(element_type);
 }
 
+// 解析多返回值类型: [T1, T2, ...] 或 {"k1": T1, "k2": T2, ...}
+// 用于函数返回类型: func f(): [int, string] { return 42, "hello" }
+static TypeInfo* parse_multi_return_type(Parser* p) {
+    int is_named = (p->lex.current.type == TOK_LBRACE);
+    int line = p->lex.current.line;
+    lexer_next(&p->lex);  // 消费 '[' 或 '{'
+
+    TypeInfo** ret_types = NULL;
+    int count = 0;
+    int capacity = 4;
+    ret_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * capacity);
+
+    if (is_named) {
+        // {"k1": T1, "k2": T2, ...} — 键名仅用于文档，忽略
+        if (p->lex.current.type != TOK_RBRACE) {
+            do {
+                // 解析键名（字符串字面量或标识符）
+                if (p->lex.current.type == TOK_STRING) {
+                    lexer_next(&p->lex);  // 消费键名
+                } else if (p->lex.current.type == TOK_IDENT) {
+                    lexer_next(&p->lex);  // 消费标识符作为键名
+                } else {
+                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                        "多返回值类型键名应为字符串或标识符");
+                    free(ret_types);
+                    return NULL;
+                }
+                consume(p, TOK_COLON, "期望 ':' 分隔键名和类型");
+                TypeInfo* t = parse_type_internal(p);
+                if (!t) {
+                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                        "期望返回值类型");
+                    free(ret_types);
+                    return NULL;
+                }
+                if (count >= capacity) {
+                    capacity *= 2;
+                    ret_types = (TypeInfo**)realloc(ret_types, sizeof(TypeInfo*) * capacity);
+                }
+                ret_types[count++] = t;
+            } while (match(p, TOK_COMMA));
+        }
+        consume(p, TOK_RBRACE, "期望 '}'");
+    } else {
+        // [T1, T2, ...]
+        if (p->lex.current.type != TOK_RBRACKET) {
+            do {
+                TypeInfo* t = parse_type_internal(p);
+                if (!t) {
+                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                        "期望返回值类型");
+                    free(ret_types);
+                    return NULL;
+                }
+                if (count >= capacity) {
+                    capacity *= 2;
+                    ret_types = (TypeInfo**)realloc(ret_types, sizeof(TypeInfo*) * capacity);
+                }
+                ret_types[count++] = t;
+            } while (match(p, TOK_COMMA));
+        }
+        consume(p, TOK_RBRACKET, "期望 ']'");
+    }
+
+    if (count == 0) {
+        error_add_at(ERR_SYNTAX, line, 0, "多返回值类型不能为空");
+        free(ret_types);
+        return NULL;
+    }
+
+    TypeInfo* type = type_multi_ret(ret_types, count);
+    // 释放临时数组（type_multi_ret 内部已做深拷贝）
+    for (int i = 0; i < count; i++) {
+        type_free(ret_types[i]);
+    }
+    free(ret_types);
+    return type;
+}
+
 // 解析函数类型: func 或 func():ReturnType 或 func(ParamType1, ParamType2):ReturnType
 static TypeInfo* parse_function_type(Parser* p) {
     lexer_next(&p->lex); // 消费 'func'
@@ -649,6 +728,163 @@ static void check_var_decl_boundary(Parser* p, int decl_line) {
     }
 }
 
+// ============================================================================
+// 解构声明解析: var[T1, T2, ...](a, b, ...) = expr 或 var{"k": T, ...}(a, ...) = expr
+// ============================================================================
+Ast* parse_destruct_decl(Parser* p, TypeInfo* base_type, int is_const, int line, int column) {
+    int is_dict = (p->lex.current.type == TOK_LBRACE) ? 1 : 0;
+
+    // 动态数组
+    int slot_cap = 4;
+    int slot_count = 0;
+    TypeInfo** slot_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * slot_cap);
+    char** slot_keys = NULL;
+    if (is_dict) {
+        slot_keys = (char**)calloc(slot_cap, sizeof(char*));
+    }
+
+    // 消费 '[' 或 '{'
+    lexer_next(&p->lex);
+
+    // 解析槽位
+    do {
+        if (slot_count >= slot_cap) {
+            slot_cap *= 2;
+            slot_types = (TypeInfo**)realloc(slot_types, sizeof(TypeInfo*) * slot_cap);
+            if (is_dict) {
+                slot_keys = (char**)realloc(slot_keys, sizeof(char*) * slot_cap);
+                memset(&slot_keys[slot_count], 0, sizeof(char*) * (slot_cap - slot_count));
+            }
+        }
+
+        if (is_dict) {
+            // 字典解构: "key": Type
+            if (p->lex.current.type != TOK_STRING) {
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                             "字典解构期望字符串键名");
+                break;
+            }
+            slot_keys[slot_count] = copy_string(p->lex.current.text, p->lex.current.len);
+            lexer_next(&p->lex);  // 消费键名
+            if (!match(p, TOK_COLON)) {
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                             "字典解构期望 ':' 分隔键名和类型");
+                break;
+            }
+        }
+
+        TypeInfo* slot_type = parse_type_internal(p);
+        if (!slot_type) {
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                         "解构槽位类型解析失败");
+            slot_type = type_new(TYPE_ANY);
+        }
+        slot_types[slot_count] = slot_type;
+        slot_count++;
+
+    } while (match(p, TOK_COMMA));
+
+    // 消费 ']' 或 '}'
+    if (is_dict) {
+        if (!match(p, TOK_RBRACE)) {
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                         "期望 '}' 结束字典解构形状");
+        }
+    } else {
+        if (!match(p, TOK_RBRACKET)) {
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                         "期望 ']' 结束数组解构形状");
+        }
+    }
+
+    // 解析绑定目标 (name, ...)
+    if (!match(p, TOK_LPAREN)) {
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                     "解构声明期望 '(' 开始变量名列表");
+        // 清理
+        for (int i = 0; i < slot_count; i++) type_free(slot_types[i]);
+        free(slot_types);
+        if (slot_keys) { for (int i = 0; i < slot_count; i++) free(slot_keys[i]); free(slot_keys); }
+        return NULL;
+    }
+
+    int name_cap = 4;
+    int name_count = 0;
+    char** names = (char**)malloc(sizeof(char*) * name_cap);
+
+    do {
+        if (name_count >= name_cap) {
+            name_cap *= 2;
+            names = (char**)realloc(names, sizeof(char*) * name_cap);
+        }
+        if (p->lex.current.type != TOK_IDENT) {
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                         "解构声明期望变量名");
+            break;
+        }
+        names[name_count] = copy_string(p->lex.current.text, p->lex.current.len);
+        name_count++;
+        lexer_next(&p->lex);
+    } while (match(p, TOK_COMMA));
+
+    if (!match(p, TOK_RPAREN)) {
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                     "解构声明期望 ')' 结束变量名列表");
+    }
+
+    // 检查槽位数量与变量名数量一致
+    if (slot_count != name_count) {
+        char msg[128];
+        snprintf(msg, sizeof(msg), "解构槽位数量(%d)与变量数量(%d)不匹配", slot_count, name_count);
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, msg);
+    }
+
+    // 解析 = expr
+    if (!match(p, TOK_EQ)) {
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                     "解构声明期望 '= 表达式'");
+        // 清理
+        for (int i = 0; i < slot_count; i++) type_free(slot_types[i]);
+        free(slot_types);
+        if (slot_keys) { for (int i = 0; i < slot_count; i++) free(slot_keys[i]); free(slot_keys); }
+        for (int i = 0; i < name_count; i++) free(names[i]);
+        free(names);
+        return NULL;
+    }
+
+    Ast* init = parse_expression(p);
+    if (!init) {
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                     "解构声明的初始值表达式解析失败");
+        for (int i = 0; i < slot_count; i++) type_free(slot_types[i]);
+        free(slot_types);
+        if (slot_keys) { for (int i = 0; i < slot_count; i++) free(slot_keys[i]); free(slot_keys); }
+        for (int i = 0; i < name_count; i++) free(names[i]);
+        free(names);
+        return NULL;
+    }
+
+    // const 声明必须有初始值（init 已经解析成功，所以这里总是满足）
+
+    // 创建 AST_DESTRUCT_DECL 节点
+    Ast* ast = ast_new(AST_DESTRUCT_DECL, line);
+    ast->column = column;
+    ast->u.destruct_decl.slot_types = slot_types;
+    ast->u.destruct_decl.slot_keys = slot_keys;
+    ast->u.destruct_decl.slot_count = slot_count;
+    ast->u.destruct_decl.names = names;
+    ast->u.destruct_decl.refs = (SymRef*)calloc(slot_count, sizeof(SymRef));
+    ast->u.destruct_decl.init = init;
+    ast->u.destruct_decl.is_dict = is_dict;
+    ast->u.destruct_decl.is_const = is_const;
+
+    // 检查声明语句边界
+    check_var_decl_boundary(p, line);
+
+    (void)base_type;  // base_type 不再使用（解构有自己的槽位类型）
+    return ast;
+}
+
 Ast* parse_var_decl_internal(Parser* p) {
     int line = p->lex.current.line;
     int decl_column = p->lex.current.column;  // 变量声明起始列号
@@ -671,6 +907,10 @@ Ast* parse_var_decl_internal(Parser* p) {
                 shared_type = type_new(TYPE_INFER);
             }
         }
+        // const 后面直接跟 [ 或 { → 解构声明
+        if (p->lex.current.type == TOK_LBRACKET || p->lex.current.type == TOK_LBRACE) {
+            shared_type = type_new(TYPE_INFER);
+        }
     }
     
     // 解析类型（如果尚未推断）
@@ -681,7 +921,14 @@ Ast* parse_var_decl_internal(Parser* p) {
             return NULL;
         }
     }
-    
+
+    // 检测解构声明语法: var[T1, T2, ...](a, b, ...) = expr 或 var{"k": T, ...}(a, ...) = expr
+    if (p->lex.current.type == TOK_LBRACKET || p->lex.current.type == TOK_LBRACE) {
+        Ast* destruct = parse_destruct_decl(p, shared_type, is_const, line, decl_column);
+        type_free(shared_type);
+        return destruct;
+    }
+
     // 解析第一个变量名
     if (p->lex.current.type != TOK_IDENT) {
         if (is_type_keyword(p->lex.current.type)) {
@@ -897,24 +1144,36 @@ Ast* parse_func_body_and_create(Parser* p, char* name, int line, int column) {
     consume(p, TOK_RPAREN, "期望 ')'");
     
     // 支持可选的返回类型注解: func test(): Array[int] { }
+    // 或多返回值类型: func test(): [int, string] { }
     TypeInfo* return_type = type_new(TYPE_INFER);  // 默认为推断类型
     
     if (p->lex.current.type == TOK_COLON) {
         lexer_next(&p->lex);
         
-        // 解析返回类型
-        TypeInfo* parsed_return = parse_type(p);
-        if (parsed_return) {
-            type_free(return_type);
-            return_type = parsed_return;
-            // void 返回类型转换为 TYPE_NULL
-            if (return_type->kind == TYPE_STRUCT && return_type->struct_name &&
-                strcmp(return_type->struct_name, "void") == 0) {
+        // 检测多返回值类型: [T1, T2, ...] 或 {"k": T1, ...}
+        if (p->lex.current.type == TOK_LBRACKET || p->lex.current.type == TOK_LBRACE) {
+            TypeInfo* multi_ret = parse_multi_return_type(p);
+            if (multi_ret) {
                 type_free(return_type);
-                return_type = type_new(TYPE_NULL);  // TYPE_NULL 表示 void 返回
+                return_type = multi_ret;
+            } else {
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望返回类型");
             }
         } else {
-            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望返回类型");
+            // 解析普通返回类型
+            TypeInfo* parsed_return = parse_type(p);
+            if (parsed_return) {
+                type_free(return_type);
+                return_type = parsed_return;
+                // void 返回类型转换为 TYPE_NULL
+                if (return_type->kind == TYPE_STRUCT && return_type->struct_name &&
+                    strcmp(return_type->struct_name, "void") == 0) {
+                    type_free(return_type);
+                    return_type = type_new(TYPE_NULL);  // TYPE_NULL 表示 void 返回
+                }
+            } else {
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望返回类型");
+            }
         }
     }
 

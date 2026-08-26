@@ -143,12 +143,24 @@ static void patch_ast_indices(Ast* ast, int offset) {
             return;
 
         case AST_RETURN:
-            patch_ast_indices(ast->u.ret, offset);
-            return;
+        patch_ast_indices(ast->u.ret, offset);
+        return;
+        case AST_RETURN_MULTI:
+        for (int i = 0; i < ast->u.ret_multi.count; i++) {
+        patch_ast_indices(ast->u.ret_multi.exprs[i], offset);
+        }
+        return;
 
         case AST_VAR_DECL:
             patch_symref(&ast->u.var_decl.ref, offset);
             patch_ast_indices(ast->u.var_decl.init, offset);
+            return;
+
+        case AST_DESTRUCT_DECL:
+            for (int i = 0; i < ast->u.destruct_decl.slot_count; i++) {
+                patch_symref(&ast->u.destruct_decl.refs[i], offset);
+            }
+            patch_ast_indices(ast->u.destruct_decl.init, offset);
             return;
 
         case AST_ASSIGN:
@@ -292,10 +304,17 @@ static int body_has_unsupported(Ast* ast) {
         case AST_WHILE:
         case AST_FOR:
             return 1;  // 不内联含循环的函数（循环变量索引 patch 复杂）
-        case AST_RETURN:
-            return body_has_unsupported(ast->u.ret);
+case AST_RETURN:
+return body_has_unsupported(ast->u.ret);
+case AST_RETURN_MULTI:
+for (int i = 0; i < ast->u.ret_multi.count; i++) {
+if (body_has_unsupported(ast->u.ret_multi.exprs[i])) return 1;
+}
+return 0;
         case AST_VAR_DECL:
             return body_has_unsupported(ast->u.var_decl.init);
+        case AST_DESTRUCT_DECL:
+            return body_has_unsupported(ast->u.destruct_decl.init);
         case AST_EXPR_STMT:
             return body_has_unsupported(ast->u.expr_stmt.expr);
         case AST_ASSIGN:
@@ -351,6 +370,9 @@ static int can_inline(CodeGen* gen, Ast* func_def, int provided_arg_count) {
     if (func_def->u.func.is_ctor || func_def->u.func.is_dtor) return 0;
     // 泛型函数不能内联
     if (func_def->u.func.type_param_count > 0) return 0;
+    // 多返回值函数不能内联（OP_RETURN_MULTI 需要真实调用帧）
+    if (func_def->u.func.return_type &&
+        func_def->u.func.return_type->kind == TYPE_MULTI_RET) return 0;
     // 嵌套深度限制
     if (gen->inline_depth >= MAX_INLINE_DEPTH) return 0;
     // 递归内联检测：如果函数名已在内联栈中，禁止再内联
@@ -443,6 +465,13 @@ int try_inline_call(CodeGen* gen, Ast* ast, Ast* func_def) {
     if (needed > gen->peak_local_slot) gen->peak_local_slot = needed;
     if (gen->current_func && needed > gen->current_func->local_count)
         gen->current_func->local_count = needed;
+    // 顶层代码内联时 current_func 为 NULL，需更新 chunk->local_count
+    // VM 主帧初始化时根据 chunk->local_count 分配局部变量槽位数
+    if (!gen->current_func) {
+        int top_needed = needed + 1;  // needed 是最大索引，+1 得到 count
+        if (top_needed > gen->chunk->local_count)
+            gen->chunk->local_count = top_needed;
+    }
 
     // 2. Patch AST 中所有局部变量索引
     patch_ast_indices(body, base);

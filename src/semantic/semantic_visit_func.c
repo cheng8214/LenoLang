@@ -183,9 +183,14 @@ static void resolve_generic_in_ast(Semantic* s, Ast* ast, char** type_params, ch
                 resolve_generic_in_ast(s, ast->u.block.items[i], type_params, type_param_constraints, count);
             }
             break;
-        case AST_RETURN:
-            if (ast->u.ret) resolve_generic_in_ast(s, ast->u.ret, type_params, type_param_constraints, count);
-            break;
+case AST_RETURN:
+if (ast->u.ret) resolve_generic_in_ast(s, ast->u.ret, type_params, type_param_constraints, count);
+break;
+case AST_RETURN_MULTI:
+for (int i = 0; i < ast->u.ret_multi.count; i++) {
+resolve_generic_in_ast(s, ast->u.ret_multi.exprs[i], type_params, type_param_constraints, count);
+}
+break;
         case AST_CALL: {
             Ast* callee = ast->u.call.callee;
             if (callee) resolve_generic_in_ast(s, callee, type_params, type_param_constraints, count);
@@ -217,6 +222,13 @@ static void resolve_generic_in_ast(Semantic* s, Ast* ast, char** type_params, ch
         case AST_ASSIGN:
             if (ast->u.assign.value) resolve_generic_in_ast(s, ast->u.assign.value, type_params, type_param_constraints, count);
             break;
+        case AST_DESTRUCT_DECL: {
+            for (int i = 0; i < ast->u.destruct_decl.slot_count; i++) {
+                resolve_generic_in_type(ast->u.destruct_decl.slot_types[i], type_params, type_param_constraints, count);
+            }
+            if (ast->u.destruct_decl.init) resolve_generic_in_ast(s, ast->u.destruct_decl.init, type_params, type_param_constraints, count);
+            break;
+        }
         default:
             // 对于其他节点（字面量等），不需要处理
             break;

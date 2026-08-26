@@ -534,7 +534,215 @@
                             "复合赋值类型不匹配", ast->u.compound_assign.name);
                         error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                     }
-                    type_free(value_type);
+                                        type_free(value_type);
+                }
+            }
+            break;
+        }
+
+        case AST_DESTRUCT_DECL: {
+            // 确定变量符号类型
+            SymKind kind;
+            if (s->current && s->current->parent == NULL) {
+                kind = s->is_module ? SYM_MODULE : SYM_GLOBAL;
+            } else {
+                kind = SYM_LOCAL;
+            }
+
+            // 先注册所有变量到符号表
+            for (int i = 0; i < ast->u.destruct_decl.slot_count; i++) {
+                // 检查是否已被预注册（模块变量前向引用预扫描）
+                Symbol* sym = scope_resolve_local(s->current, ast->u.destruct_decl.names[i]);
+                if (sym && (sym->kind == SYM_GLOBAL || sym->kind == SYM_MODULE) &&
+                    (kind == SYM_GLOBAL || kind == SYM_MODULE)) {
+                    // 已被预注册，更新类型和 ref
+                    ast->u.destruct_decl.refs[i].kind = sym->kind;
+                    ast->u.destruct_decl.refs[i].index = sym->index;
+                    if (!ast->u.destruct_decl.refs[i].name) {
+                        ast->u.destruct_decl.refs[i].name = strdup(sym->name);
+                    }
+                } else {
+                    sym = scope_define(s->current, ast->u.destruct_decl.names[i], kind);
+                }
+                if (sym) {
+                    if (ast->u.destruct_decl.is_const) {
+                        sym->is_const = 1;
+                    }
+                    if (kind == SYM_LOCAL) {
+                        sym->index = allocate_local_index(s);
+                    }
+                    // 设置变量类型为槽位类型
+                    if (sym->type) type_free(sym->type);
+                    sym->type = type_copy(ast->u.destruct_decl.slot_types[i]);
+                    // 如果不是预注册路径已填充 ref，这里填充
+                    if (!ast->u.destruct_decl.refs[i].name) {
+                        ast->u.destruct_decl.refs[i].kind = sym->kind;
+                        ast->u.destruct_decl.refs[i].index = sym->index;
+                        ast->u.destruct_decl.refs[i].name = strdup(sym->name);
+                    }
+                    // 检查循环作用域
+                    Scope* check_scope = s->current;
+                    while (check_scope && !check_scope->is_func) {
+                        if (check_scope->is_loop) {
+                            sym->is_in_loop = 1;
+                            break;
+                        }
+                        check_scope = check_scope->parent;
+                    }
+                    // 递归解析 alias
+                    resolve_alias_in_type(s, &ast->u.destruct_decl.slot_types[i], ast->line);
+                } else {
+                    char msg[BUFFER_MEDIUM];
+                    snprintf(msg, sizeof(msg), "变量 '%s' 重复定义", ast->u.destruct_decl.names[i]);
+                    error_add_at(ERR_DUPLICATE_VAR, ast->line, ast->column, msg);
+                }
+            }
+
+            // 访问初始值表达式
+            if (ast->u.destruct_decl.init) {
+                visit(s, ast->u.destruct_decl.init);
+
+                // ============================================================
+                // 编译时类型检查：检查解构槽位类型与数据源元素类型是否兼容
+                //
+                // ★ 类型检查规则（any 槽位优先）：
+                //   1. any 槽位（TYPE_ANY/TYPE_INFER）：总是兼容，跳过检查，不生成 CAST
+                //      - var[any, any](a, b) = [1, "x"]      ✓ Array[any] + any 槽位
+                //      - var[any](a) = [1, 2, 3]              ✓ Array[int] + any 槽位
+                //   2. 具体类型槽位 + 具体元素类型：走 type_is_compatible 检查
+                //      - var[int, float](a, b) = [1, 2]       ✓ int 兼容 int，int 兼容 float
+                //      - var[string](a) = [1, 2]              ✗ string 与 int 不兼容
+                //   3. 具体类型槽位 + any 元素类型：报错（不能从 any 转具体类型）
+                //      - var[int](a) = [1, "x"]              ✗ Array[any] + int 槽位
+                //   4. 源不是 Array/Dict 且非 any/infer：报错
+                //      - var[int](a) = 42                     ✗ 不是数组
+                //   5. 源是 any/infer（如无返回类型注解的函数）：报错
+                //      - var[any](a) = no_return_type_func()  ✗ 无法确认是 Array
+                // ============================================================
+                TypeInfo* init_type = infer_expr_type(s, ast->u.destruct_decl.init);
+                if (init_type) {
+                    if (init_type->kind == TYPE_MULTI_RET) {
+                        // 多返回值解构：var[T1, T2, ...](a, b, ...) = multi_ret_func()
+                        int ret_count = init_type->param_count;
+                        for (int i = 0; i < ast->u.destruct_decl.slot_count; i++) {
+                            TypeInfo* slot_type = ast->u.destruct_decl.slot_types[i];
+                            if (!slot_type) continue;
+                            TypeKind slot_kind = slot_type->kind;
+                            // any 槽位：总是兼容，跳过检查
+                            if (slot_kind == TYPE_ANY || slot_kind == TYPE_INFER) continue;
+                            // 检查槽位是否超出返回值数量
+                            if (i >= ret_count) {
+                                char msg[BUFFER_MEDIUM];
+                                snprintf(msg, sizeof(msg),
+                                    "解构槽位 %d ('%s') 超出返回值数量 %d",
+                                    i, ast->u.destruct_decl.names[i], ret_count);
+                                error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
+                            } else if (!type_is_compatible(slot_type, init_type->param_types[i])) {
+                                char msg[BUFFER_MEDIUM];
+                                snprintf(msg, sizeof(msg),
+                                    "解构槽位 %d ('%s') 类型 %s 与返回值类型 %s 不兼容",
+                                    i, ast->u.destruct_decl.names[i],
+                                    type_kind_to_string(slot_kind),
+                                    type_kind_to_string(init_type->param_types[i]->kind));
+                                error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
+                            }
+                        }
+                    } else if (ast->u.destruct_decl.is_dict) {
+                        // 字典解构：检查 init 是否为 Dict 类型
+                        if (init_type->kind == TYPE_DICT) {
+                            TypeKind val_kind = init_type->value_type ?
+                                init_type->value_type->kind : TYPE_ANY;
+                            int val_is_any = (val_kind == TYPE_ANY || val_kind == TYPE_INFER);
+                            // 检查每个槽位
+                            for (int i = 0; i < ast->u.destruct_decl.slot_count; i++) {
+                                TypeInfo* slot_type = ast->u.destruct_decl.slot_types[i];
+                                if (!slot_type) continue;
+                                TypeKind slot_kind = slot_type->kind;
+                                // any 槽位：总是兼容，跳过检查
+                                if (slot_kind == TYPE_ANY || slot_kind == TYPE_INFER) continue;
+                                // 具体类型槽位：需要源值类型也是具体类型
+                                if (val_is_any) {
+                                    char msg[BUFFER_MEDIUM];
+                                    snprintf(msg, sizeof(msg),
+                                        "解构声明槽位 %d ('%s') 类型 %s 与字典值类型 %s 不兼容（源值类型为 any，无法转换为具体类型）",
+                                        i, ast->u.destruct_decl.names[i],
+                                        type_kind_to_string(slot_kind),
+                                        type_kind_to_string(val_kind));
+                                    error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
+                                } else if (!type_is_compatible(slot_type, init_type->value_type)) {
+                                    char msg[BUFFER_MEDIUM];
+                                    snprintf(msg, sizeof(msg),
+                                        "解构声明槽位 %d ('%s') 类型 %s 与字典值类型 %s 不兼容",
+                                        i, ast->u.destruct_decl.names[i],
+                                        type_kind_to_string(slot_kind),
+                                        type_kind_to_string(val_kind));
+                                    error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
+                                }
+                            }
+                        } else if (init_type->kind == TYPE_ANY || init_type->kind == TYPE_INFER) {
+                            // 返回类型为 any 或 infer（如无返回类型注解的函数），不允许解构
+                            char msg[BUFFER_MEDIUM];
+                            snprintf(msg, sizeof(msg),
+                                "字典解构要求初始化值为具体类型的 Dict（如 Dict[string, int]），"
+                                "实际类型为 %s，无法保证类型安全",
+                                type_kind_to_string(init_type->kind));
+                            error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
+                        } else if (init_type->kind != TYPE_NULL) {
+                            char msg[BUFFER_MEDIUM];
+                            snprintf(msg, sizeof(msg),
+                                "字典解构要求初始化值为 Dict 类型，实际为 %s",
+                                type_kind_to_string(init_type->kind));
+                            error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
+                        }
+                    } else {
+                        // 数组解构：检查 init 是否为 Array 类型
+                        if (init_type->kind == TYPE_ARRAY) {
+                            TypeKind elem_kind = init_type->element_type ?
+                                init_type->element_type->kind : TYPE_ANY;
+                            int elem_is_any = (elem_kind == TYPE_ANY || elem_kind == TYPE_INFER);
+                            // 检查每个槽位
+                            for (int i = 0; i < ast->u.destruct_decl.slot_count; i++) {
+                                TypeInfo* slot_type = ast->u.destruct_decl.slot_types[i];
+                                if (!slot_type) continue;
+                                TypeKind slot_kind = slot_type->kind;
+                                // any 槽位：总是兼容，跳过检查
+                                if (slot_kind == TYPE_ANY || slot_kind == TYPE_INFER) continue;
+                                // 具体类型槽位：需要源元素类型也是具体类型
+                                if (elem_is_any) {
+                                    char msg[BUFFER_MEDIUM];
+                                    snprintf(msg, sizeof(msg),
+                                        "解构声明槽位 %d ('%s') 类型 %s 与数组元素类型 %s 不兼容（源元素类型为 any，无法转换为具体类型）",
+                                        i, ast->u.destruct_decl.names[i],
+                                        type_kind_to_string(slot_kind),
+                                        type_kind_to_string(elem_kind));
+                                    error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
+                                } else if (!type_is_compatible(slot_type, init_type->element_type)) {
+                                    char msg[BUFFER_MEDIUM];
+                                    snprintf(msg, sizeof(msg),
+                                        "解构声明槽位 %d ('%s') 类型 %s 与数组元素类型 %s 不兼容",
+                                        i, ast->u.destruct_decl.names[i],
+                                        type_kind_to_string(slot_kind),
+                                        type_kind_to_string(elem_kind));
+                                    error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
+                                }
+                            }
+                        } else if (init_type->kind == TYPE_ANY || init_type->kind == TYPE_INFER) {
+                            // 返回类型为 any 或 infer（如无返回类型注解的函数），不允许解构
+                            char msg[BUFFER_MEDIUM];
+                            snprintf(msg, sizeof(msg),
+                                "数组解构要求初始化值为具体类型的 Array（如 Array[int]），"
+                                "实际类型为 %s，无法保证类型安全",
+                                type_kind_to_string(init_type->kind));
+                            error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
+                        } else if (init_type->kind != TYPE_NULL) {
+                            char msg[BUFFER_MEDIUM];
+                            snprintf(msg, sizeof(msg),
+                                "数组解构要求初始化值为 Array 类型，实际为 %s",
+                                type_kind_to_string(init_type->kind));
+                            error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
+                        }
+                    }
+                    type_free(init_type);
                 }
             }
             break;

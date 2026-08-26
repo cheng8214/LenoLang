@@ -135,6 +135,7 @@ Ast* parse_try_stmt(Parser* p);
 // ============================================================================
 
 Ast* parse_var_decl_internal(Parser* p);
+Ast* parse_destruct_decl(Parser* p, TypeInfo* base_type, int is_const, int line, int column);
 Ast* parse_func_stmt(Parser* p);
 Ast* parse_entry_func_stmt(Parser* p);
 Ast* parse_anonymous_func(Parser* p);

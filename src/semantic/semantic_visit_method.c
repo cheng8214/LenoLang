@@ -285,10 +285,18 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
         case AST_RETURN:
             transform_method_body_ex(ast->u.ret, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
             break;
-        case AST_VAR_DECL:
-            transform_method_body_ex(ast->u.var_decl.init, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+        case AST_RETURN_MULTI:
+            for (int i = 0; i < ast->u.ret_multi.count; i++) {
+                transform_method_body_ex(ast->u.ret_multi.exprs[i], field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+            }
             break;
-        case AST_EXPR_STMT:
+    case AST_VAR_DECL:
+        transform_method_body_ex(ast->u.var_decl.init, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+        break;
+    case AST_DESTRUCT_DECL:
+        transform_method_body_ex(ast->u.destruct_decl.init, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+        break;
+    case AST_EXPR_STMT:
             transform_method_body_ex(ast->u.expr_stmt.expr, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
             break;
         case AST_MODULE_CALL: {

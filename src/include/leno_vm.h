@@ -74,6 +74,7 @@ typedef enum {
     OP_TAIL_CALL,   // 尾调用优化：复用当前调用帧
     OP_CLOSURE,
     OP_RETURN,
+    OP_RETURN_MULTI,  // 多值返回: count(1)
     OP_ARRAY,
     OP_ARRAY_GET,
     OP_ARRAY_SET,

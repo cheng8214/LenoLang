@@ -1,0 +1,6 @@
+// export 解构声明测试模块
+var data = [10, 20, 30]
+export var[int, int, int](exported_a, exported_b, exported_c) = data
+
+var config = {"host": 8080, "port": 9090}
+export var{"host": int, "port": int}(export_host, export_port) = config

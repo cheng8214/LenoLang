@@ -30,6 +30,7 @@ typedef enum {
     AST_SWITCH,
     AST_FUNC_DEF,
     AST_RETURN,
+AST_RETURN_MULTI,  // 多值返回: return a, b, c
     AST_BREAK,
     AST_CONTINUE,
     AST_ASSIGN,
@@ -58,6 +59,7 @@ typedef enum {
     AST_ADDRESS_OF,    // 取地址: &obj.field（仅 cstruct 字段）
     AST_AWAIT,         // await 表达式
     AST_SAFE_ACCESS,   // 安全访问: expr?.field / expr?.method()
+    AST_DESTRUCT_DECL, // 解构声明: var[int,float](a,b) = arr / var{"x":int}(a) = dict
 } AstKind;
 
 typedef struct Ast Ast;
@@ -372,7 +374,21 @@ struct Ast {
             int generic_type_count;
             char** generic_type_names;
         } safe_access;
-    } u;
+        struct {
+            TypeInfo** slot_types;  // 槽位类型数组
+            char** slot_keys;      // 键名数组（数组解构为NULL，字典解构有值）
+            int slot_count;        // 槽位数量
+            char** names;          // 变量名数组
+            SymRef* refs;          // 符号引用数组（语义分析填充）
+            Ast* init;             // 数据源表达式
+            int is_dict;           // 0=数组解构, 1=字典解构
+            int is_const;          // const 标记
+} destruct_decl;
+struct {
+    Ast** exprs;        // 返回值表达式数组
+    int count;           // 返回值数量
+} ret_multi;
+} u;
 };
 
 // AST API

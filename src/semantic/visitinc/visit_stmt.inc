@@ -28,6 +28,62 @@
             break;
         }
             
+        case AST_RETURN_MULTI: {
+            // 多值返回: return a, b, c
+            int count = ast->u.ret_multi.count;
+            
+            // 访问每个返回值表达式
+            for (int i = 0; i < count; i++) {
+                visit(s, ast->u.ret_multi.exprs[i]);
+            }
+            
+            if (s->current_func) {
+                TypeInfo* expected_type = s->current_func->u.func.return_type;
+                
+                if (expected_type && expected_type->kind == TYPE_MULTI_RET) {
+                    // 函数声明了多返回值类型，检查数量和类型
+                    if (count != expected_type->param_count) {
+                        char msg[BUFFER_MEDIUM];
+                        snprintf(msg, sizeof(msg),
+                            "多返回值数量不匹配：期望 %d 个，实际 %d 个",
+                            expected_type->param_count, count);
+                        error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
+                    } else {
+                        // 逐个检查类型兼容性
+                        for (int i = 0; i < count; i++) {
+                            TypeInfo* actual = infer_expr_type(s, ast->u.ret_multi.exprs[i]);
+                            if (actual) {
+                                if (!type_is_compatible(expected_type->param_types[i], actual)) {
+                                    // type_to_string 使用线程本地单缓冲区，
+                                    // 连续调用会覆盖，必须先拷贝到独立缓冲区
+                                    char expected_buf[64];
+                                    char actual_buf[64];
+                                    strncpy(expected_buf, type_to_string(expected_type->param_types[i]), 63);
+                                    expected_buf[63] = '\0';
+                                    strncpy(actual_buf, type_to_string(actual), 63);
+                                    actual_buf[63] = '\0';
+                                    char msg[BUFFER_MEDIUM];
+                                    snprintf(msg, sizeof(msg),
+                                        "返回值 %d 类型不匹配：期望 %s，实际 %s",
+                                        i + 1, expected_buf, actual_buf);
+                                    error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
+                                }
+                                type_free(actual);
+                            }
+                        }
+                    }
+                } else if (expected_type && expected_type->kind != TYPE_INFER) {
+                    // 函数声明了单返回值类型但 return 了多个值
+                    char msg[BUFFER_MEDIUM];
+                    snprintf(msg, sizeof(msg),
+                        "函数声明返回单个值，但 return 语句返回了 %d 个值", count);
+                    error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
+                }
+                // TYPE_INFER（无注解）允许多返回值，不报错
+            }
+            break;
+        }
+            
         case AST_EXPR_STMT:
             visit(s, ast->u.expr_stmt.expr);
             break;

@@ -59,14 +59,15 @@ static void sym_cache_write_type_info(FILE* f, TypeInfo* ti) {
             sym_cache_write_type_info(f, ti->key_type);
             sym_cache_write_type_info(f, ti->value_type);
             break;
-        case TYPE_FUNCTION:
-            sym_cache_write_type_info(f, ti->return_type);
-            uint16_t pc = (uint16_t)ti->param_count;
-            fwrite(&pc, 2, 1, f);
-            for (int i = 0; i < ti->param_count; i++) {
-                sym_cache_write_type_info(f, ti->param_types[i]);
-            }
-            break;
+case TYPE_FUNCTION:
+case TYPE_MULTI_RET:
+sym_cache_write_type_info(f, ti->return_type);
+uint16_t pc = (uint16_t)ti->param_count;
+fwrite(&pc, 2, 1, f);
+for (int i = 0; i < ti->param_count; i++) {
+sym_cache_write_type_info(f, ti->param_types[i]);
+}
+break;
         case TYPE_STRUCT:
         case TYPE_FACE:
         case TYPE_CSTRUCT:
@@ -119,19 +120,20 @@ static TypeInfo* sym_cache_read_type_info(FILE* f) {
             ti->value_type = sym_cache_read_type_info(f);
             break;
         }
-        case TYPE_FUNCTION: {
-            ti->return_type = sym_cache_read_type_info(f);
-            uint16_t pc;
-            if (fread(&pc, 2, 1, f) != 1) { type_free(ti); return NULL; }
-            ti->param_count = pc;
-            if (pc > 0) {
-                ti->param_types = (TypeInfo**)calloc(pc, sizeof(TypeInfo*));
-                for (int i = 0; i < pc; i++) {
-                    ti->param_types[i] = sym_cache_read_type_info(f);
-                }
-            }
-            break;
-        }
+case TYPE_FUNCTION:
+case TYPE_MULTI_RET: {
+ti->return_type = sym_cache_read_type_info(f);
+uint16_t pc;
+if (fread(&pc, 2, 1, f) != 1) { type_free(ti); return NULL; }
+ti->param_count = pc;
+if (pc > 0) {
+ti->param_types = (TypeInfo**)calloc(pc, sizeof(TypeInfo*));
+for (int i = 0; i < pc; i++) {
+ti->param_types[i] = sym_cache_read_type_info(f);
+}
+}
+break;
+}
         case TYPE_STRUCT:
         case TYPE_FACE:
         case TYPE_CSTRUCT:

@@ -656,6 +656,49 @@ void semantic_analyze_module(Semantic* s, Ast* ast) {
                         }
                     }
                 }
+            } else if (stmt->kind == AST_DESTRUCT_DECL) {
+                // 预注册解构声明的所有变量
+                for (int j = 0; j < stmt->u.destruct_decl.slot_count; j++) {
+                    const char* dname = stmt->u.destruct_decl.names[j];
+                    if (dname && !scope_resolve_local(s->current, dname)) {
+                        SymKind dkind = s->is_module ? SYM_MODULE : SYM_GLOBAL;
+                        Symbol* dsym = scope_define(s->current, dname, dkind);
+                        if (dsym) {
+                            if (stmt->u.destruct_decl.slot_types[j]) {
+                                dsym->type = type_copy(stmt->u.destruct_decl.slot_types[j]);
+                            } else {
+                                dsym->type = type_new(TYPE_ANY);
+                            }
+                            stmt->u.destruct_decl.refs[j].kind = dsym->kind;
+                            stmt->u.destruct_decl.refs[j].index = dsym->index;
+                            if (!stmt->u.destruct_decl.refs[j].name) {
+                                stmt->u.destruct_decl.refs[j].name = strdup(dsym->name);
+                            }
+                        }
+                    }
+                }
+            } else if (stmt->kind == AST_EXPORT && stmt->u.export.decl &&
+                       stmt->u.export.decl->kind == AST_DESTRUCT_DECL) {
+                Ast* decl = stmt->u.export.decl;
+                for (int j = 0; j < decl->u.destruct_decl.slot_count; j++) {
+                    const char* dname = decl->u.destruct_decl.names[j];
+                    if (dname && !scope_resolve_local(s->current, dname)) {
+                        SymKind dkind = s->is_module ? SYM_MODULE : SYM_GLOBAL;
+                        Symbol* dsym = scope_define(s->current, dname, dkind);
+                        if (dsym) {
+                            if (decl->u.destruct_decl.slot_types[j]) {
+                                dsym->type = type_copy(decl->u.destruct_decl.slot_types[j]);
+                            } else {
+                                dsym->type = type_new(TYPE_ANY);
+                            }
+                            decl->u.destruct_decl.refs[j].kind = dsym->kind;
+                            decl->u.destruct_decl.refs[j].index = dsym->index;
+                            if (!decl->u.destruct_decl.refs[j].name) {
+                                decl->u.destruct_decl.refs[j].name = strdup(dsym->name);
+                            }
+                        }
+                    }
+                }
             }
         }
     }

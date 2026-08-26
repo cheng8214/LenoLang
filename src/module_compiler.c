@@ -477,6 +477,14 @@ ObjModule* compile_module_new(const char* source, const char* module_name,
                     int global_index = -1;
                     if (decl->kind == AST_VAR_DECL && strcmp(decl->u.var_decl.name, export_names[i]) == 0) {
                         global_index = decl->u.var_decl.ref.index;
+                    } else if (decl->kind == AST_DESTRUCT_DECL) {
+                        // 解构声明: 检查所有槽位变量名
+                        for (int k = 0; k < decl->u.destruct_decl.slot_count; k++) {
+                            if (strcmp(decl->u.destruct_decl.names[k], export_names[i]) == 0) {
+                                global_index = decl->u.destruct_decl.refs[k].index;
+                                break;
+                            }
+                        }
                     } else if (decl->kind == AST_ENUM_DEF && strcmp(decl->u.enum_def.name, export_names[i]) == 0) {
                         global_index = decl->u.enum_def.ref.index;
                     } else if (decl->kind == AST_STRUCT_DEF && strcmp(decl->u.struct_def.name, export_names[i]) == 0) {
@@ -500,6 +508,14 @@ ObjModule* compile_module_new(const char* source, const char* module_name,
                         int global_index = -1;
                         if (decl->kind == AST_VAR_DECL && strcmp(decl->u.var_decl.name, export_names[i]) == 0) {
                             global_index = decl->u.var_decl.ref.index;
+                        } else if (decl->kind == AST_DESTRUCT_DECL) {
+                            // 解构声明: 检查所有槽位变量名
+                            for (int k = 0; k < decl->u.destruct_decl.slot_count; k++) {
+                                if (strcmp(decl->u.destruct_decl.names[k], export_names[i]) == 0) {
+                                    global_index = decl->u.destruct_decl.refs[k].index;
+                                    break;
+                                }
+                            }
                         } else if (decl->kind == AST_ENUM_DEF && strcmp(decl->u.enum_def.name, export_names[i]) == 0) {
                             global_index = decl->u.enum_def.ref.index;
                         } else if (decl->kind == AST_STRUCT_DEF && strcmp(decl->u.struct_def.name, export_names[i]) == 0) {

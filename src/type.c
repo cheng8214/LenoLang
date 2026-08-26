@@ -90,6 +90,22 @@ TypeInfo* type_generic_param_constrained(const char* name, const char* constrain
     return type;
 }
 
+// 创建多返回值类型 [T1, T2, ...]
+// 复用 param_types/param_count 字段存储返回值类型列表
+TypeInfo* type_multi_ret(TypeInfo** ret_types, int count) {
+    TypeInfo* type = type_new(TYPE_MULTI_RET);
+    if (type && count > 0 && ret_types) {
+        type->param_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * count);
+        if (type->param_types) {
+            for (int i = 0; i < count; i++) {
+                type->param_types[i] = type_copy(ret_types[i]);
+            }
+            type->param_count = count;
+        }
+    }
+    return type;
+}
+
 // 释放类型信息
 void type_free(TypeInfo* type) {
     if (!type) return;
@@ -176,6 +192,13 @@ int type_equals(TypeInfo* a, TypeInfo* b) {
                 return strcmp(a->type_param_name, b->type_param_name) == 0;
             }
             return a->type_param_name == b->type_param_name;
+        case TYPE_MULTI_RET: {
+            if (a->param_count != b->param_count) return 0;
+            for (int i = 0; i < a->param_count; i++) {
+                if (!type_equals(a->param_types[i], b->param_types[i])) return 0;
+            }
+            return 1;
+        }
         default:
             return 1;
     }
@@ -237,6 +260,17 @@ TypeInfo* type_copy(TypeInfo* type) {
             }
             if (type->constraint_name) {
                 copy->constraint_name = strdup(type->constraint_name);
+            }
+            break;
+        case TYPE_MULTI_RET:
+            if (type->param_count > 0 && type->param_types) {
+                copy->param_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * type->param_count);
+                if (copy->param_types) {
+                    for (int i = 0; i < type->param_count; i++) {
+                        copy->param_types[i] = type_copy(type->param_types[i]);
+                    }
+                    copy->param_count = type->param_count;
+                }
             }
             break;
         default:
@@ -511,6 +545,29 @@ static void build_generic_type_string(TypeInfo* type, char* buf, size_t buf_size
             }
             break;
         }
+        case TYPE_MULTI_RET: {
+            // 输出 [T1, T2, ...]
+            if (*offset + 1 < buf_size) {
+                buf[*offset] = '[';
+                (*offset)++;
+            }
+            for (int i = 0; i < type->param_count; i++) {
+                if (i > 0) {
+                    if (*offset + 2 < buf_size) {
+                        buf[*offset] = ',';
+                        buf[*offset + 1] = ' ';
+                        *offset += 2;
+                    }
+                }
+                build_generic_type_string(type->param_types[i], buf, buf_size, offset);
+            }
+            if (*offset + 1 < buf_size) {
+                buf[*offset] = ']';
+                (*offset)++;
+                buf[*offset] = '\0';
+            }
+            break;
+        }
         default: {
             // 基础类型
             const char* type_str = type_kind_to_string(type->kind);
@@ -599,6 +656,7 @@ const char* type_kind_to_string(TypeKind kind) {
         case TYPE_STR8:     return "str8";
         case TYPE_STR16:    return "str16";
         case TYPE_GENERIC_PARAM: return "generic";
+        case TYPE_MULTI_RET: return "multi-ret";
         default:            return "unknown";
     }
 }

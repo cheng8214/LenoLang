@@ -83,7 +83,9 @@ static TypeKind get_expr_type_kind(Ast* ast) {
 }
 
 static void gen_var_decl(CodeGen* gen, Ast* ast);
+static void gen_destruct_decl(CodeGen* gen, Ast* ast);
 static void gen_return(CodeGen* gen, Ast* ast);
+static void gen_return_multi(CodeGen* gen, Ast* ast);
 static void gen_while(CodeGen* gen, Ast* ast);
 static void gen_for(CodeGen* gen, Ast* ast);
 static void gen_switch(CodeGen* gen, Ast* ast);
@@ -890,6 +892,11 @@ static void gen_for(CodeGen* gen, Ast* ast) {
     if (for_max > gen->peak_local_slot) gen->peak_local_slot = for_max;
     if (gen->current_func && for_max >= gen->current_func->local_count)
         gen->current_func->local_count = for_max + 1;
+    // 顶层代码（非函数内）时 current_func 为 NULL，需更新 chunk->local_count
+    if (!gen->current_func) {
+        if (for_max + 1 > gen->chunk->local_count)
+            gen->chunk->local_count = for_max + 1;
+    }
 
     Ast* end_expr = ast->u.for_.end;
 
@@ -1067,6 +1074,20 @@ static void gen_for(CodeGen* gen, Ast* ast) {
 static void gen_var_decl(CodeGen* gen, Ast* ast) {
     if (ast->u.var_decl.init) {
         gen_expr(gen, ast->u.var_decl.init);
+        
+        // 多返回值函数调用：只取第一个返回值，弹出多余的
+        if (ast->u.var_decl.init->cached_type &&
+            ast->u.var_decl.init->cached_type->kind == TYPE_MULTI_RET) {
+            int ret_count = ast->u.var_decl.init->cached_type->param_count;
+            // 保留栈顶（第一个返回值），弹出其余的
+            // 栈布局: [ret0][ret1]...[retN-1]，retN-1 在栈顶
+            // 需要把 ret0 移到栈顶位置
+            // 先弹出 retN-1 到 ret1
+            for (int i = 0; i < ret_count - 1; i++) {
+                emit_byte(gen, OP_POP, ast->line);
+            }
+            // 现在 ret0 在栈顶
+        }
 
         if (ast->u.var_decl.type) {
             TypeKind var_type = ast->u.var_decl.type->kind;
@@ -1135,6 +1156,163 @@ static void gen_var_decl(CodeGen* gen, Ast* ast) {
         emit_bytes_2(gen, OP_SET_MODULE_VAR, ref->index, ast->line);
         emit_byte(gen, OP_POP, ast->line);
     }
+}
+
+// ============================================================================
+// 解构声明代码生成: var[T1,T2](a,b) = arr / var{"k":T}(a) = dict
+// 策略:
+//   1. 求值 init → 栈顶是数组/字典
+//   2. 对每个槽位:
+//      a. DUP → 栈顶复制一份
+//      b. 推入索引/键 → OP_INDEX → 栈顶是元素值
+//      c. 如果槽位类型是 int/float/string → OP_CAST_xxx
+//      d. OP_SET_LOCAL_POP → 存入变量并弹出
+//   3. 最后 OP_POP 弹掉原始数组/字典
+// ============================================================================
+static void gen_destruct_decl(CodeGen* gen, Ast* ast) {
+    int slot_count = ast->u.destruct_decl.slot_count;
+    int is_dict = ast->u.destruct_decl.is_dict;
+
+    // 检测 init 是否是多返回值函数调用
+    TypeInfo* init_type = ast->u.destruct_decl.init ? ast->u.destruct_decl.init->cached_type : NULL;
+    if (init_type && init_type->kind == TYPE_MULTI_RET) {
+        // 多返回值解构：函数调用后栈上是 N 个返回值
+        int ret_count = init_type->param_count;
+        
+        // 求值 init（函数调用后栈上留下 ret_count 个值）
+        gen_expr(gen, ast->u.destruct_decl.init);
+        
+        // 分配临时槽位（兼容顶层代码 current_func=NULL 的情况）
+        // 使用 local_count 作为基底，因为它反映了所有已声明局部变量的数量
+        int* temp_slots = (int*)malloc(sizeof(int) * ret_count);
+        int slot_base;
+        if (gen->current_func) {
+            slot_base = gen->current_func->local_count;
+        } else {
+            slot_base = gen->chunk->local_count;
+        }
+        for (int i = 0; i < ret_count; i++) {
+            temp_slots[i] = slot_base + i;
+        }
+        int new_max = slot_base + ret_count - 1;
+        if (new_max > gen->max_local_slot) gen->max_local_slot = new_max;
+        if (new_max > gen->peak_local_slot) gen->peak_local_slot = new_max;
+        if (gen->current_func) {
+            gen->current_func->local_count = new_max + 1;
+        } else {
+            if (new_max + 1 > gen->chunk->local_count) {
+                gen->chunk->local_count = new_max + 1;
+            }
+        }
+        
+        // 将 N 个返回值逆序存入临时槽位
+        // 栈布局: [ret0][ret1]...[retN-1]（retN-1 在栈顶）
+        for (int i = ret_count - 1; i >= 0; i--) {
+            emit_bytes_2(gen, OP_SET_LOCAL_POP, temp_slots[i], ast->line);
+        }
+        
+        // 逐槽位从临时槽位加载 + 转换 + 存储
+        for (int i = 0; i < slot_count; i++) {
+            if (i < ret_count) {
+                emit_bytes_2(gen, OP_GET_LOCAL, temp_slots[i], ast->line);
+            } else {
+                // 超出返回值数量，补 null
+                emit_byte(gen, OP_NULL, ast->line);
+            }
+            
+            // 类型转换
+            TypeInfo* slot_type = ast->u.destruct_decl.slot_types[i];
+            if (slot_type) {
+                TypeKind tk = slot_type->kind;
+                if (tk == TYPE_FLOAT) {
+                    emit_byte(gen, OP_CAST_FLOAT, ast->line);
+                } else if (tk == TYPE_INT) {
+                    emit_byte(gen, OP_CAST_INT, ast->line);
+                } else if (tk == TYPE_STRING) {
+                    emit_byte(gen, OP_CAST_STRING, ast->line);
+                }
+            }
+            
+            // 存入变量并弹出
+            SymRef* ref = &ast->u.destruct_decl.refs[i];
+            if (!ref->name) {
+                error_add_at(ERR_SEMANTIC, ast->line, ast->column, "解构声明变量未解析");
+                emit_byte(gen, OP_POP, ast->line);
+                continue;
+            }
+            if (ref->kind == SYM_LOCAL) {
+                emit_bytes_2(gen, OP_SET_LOCAL_POP, ref->index, ast->line);
+            } else if (ref->kind == SYM_GLOBAL) {
+                emit_define_global(gen, ref->index, ast->line);
+            } else if (ref->kind == SYM_MODULE) {
+                emit_bytes_2(gen, OP_SET_MODULE_VAR, ref->index, ast->line);
+                emit_byte(gen, OP_POP, ast->line);
+            }
+        }
+        
+        free(temp_slots);
+        return;
+    }
+
+    // 求值 init → 栈顶是数组/字典
+    gen_expr(gen, ast->u.destruct_decl.init);
+
+    for (int i = 0; i < slot_count; i++) {
+        // DUP: 复制数组/字典引用到栈顶（最后会被弹出）
+        emit_byte(gen, OP_DUP, ast->line);
+
+        // 推入索引或键
+        if (is_dict) {
+            // 字典解构: 使用字符串键
+            const char* key = ast->u.destruct_decl.slot_keys[i];
+            ObjString* key_str = str_copy(key, (int)strlen(key));
+            int key_const = make_constant(gen, val_obj((Object*)key_str));
+            emit_byte(gen, OP_CONST, ast->line);
+            emit_bytes(gen, (key_const >> 8) & 0xff, key_const & 0xff, ast->line);
+        } else {
+            // 数组解构: 使用整数索引
+            Value idx_val = val_int(i);
+            int idx_const = make_constant(gen, idx_val);
+            emit_byte(gen, OP_CONST, ast->line);
+            emit_bytes(gen, (idx_const >> 8) & 0xff, idx_const & 0xff, ast->line);
+        }
+
+        // OP_INDEX: 从数组/字典中取元素 → 栈顶是元素值
+        emit_byte(gen, OP_INDEX, ast->line);
+
+        // 类型转换（如果槽位类型是基本类型）
+        TypeInfo* slot_type = ast->u.destruct_decl.slot_types[i];
+        if (slot_type) {
+            TypeKind tk = slot_type->kind;
+            if (tk == TYPE_FLOAT) {
+                emit_byte(gen, OP_CAST_FLOAT, ast->line);
+            } else if (tk == TYPE_INT) {
+                emit_byte(gen, OP_CAST_INT, ast->line);
+            } else if (tk == TYPE_STRING) {
+                emit_byte(gen, OP_CAST_STRING, ast->line);
+            }
+        }
+
+        // 存入变量并弹出
+        SymRef* ref = &ast->u.destruct_decl.refs[i];
+        if (!ref->name) {
+            error_add_at(ERR_SEMANTIC, ast->line, ast->column, "解构声明变量未解析");
+            // 仍然需要弹出值以保持栈平衡
+            emit_byte(gen, OP_POP, ast->line);
+            continue;
+        }
+        if (ref->kind == SYM_LOCAL) {
+            emit_bytes_2(gen, OP_SET_LOCAL_POP, ref->index, ast->line);
+        } else if (ref->kind == SYM_GLOBAL) {
+            emit_define_global(gen, ref->index, ast->line);
+        } else if (ref->kind == SYM_MODULE) {
+            emit_bytes_2(gen, OP_SET_MODULE_VAR, ref->index, ast->line);
+            emit_byte(gen, OP_POP, ast->line);
+        }
+    }
+
+    // 弹出原始数组/字典
+    emit_byte(gen, OP_POP, ast->line);
 }
 
 void gen_assign(CodeGen* gen, Ast* ast) {
@@ -1691,6 +1869,58 @@ static void gen_return(CodeGen* gen, Ast* ast) {
     }
 }
 
+static void gen_return_multi(CodeGen* gen, Ast* ast) {
+    int count = ast->u.ret_multi.count;
+
+    // 函数内联上下文：不支持多返回值内联（多返回值函数不应被内联）
+    // 如果遇到内联上下文，退化为取第一个返回值
+    if (gen->inline_depth > 0) {
+        if (count > 0) {
+            gen_expr(gen, ast->u.ret_multi.exprs[0]);
+        } else {
+            emit_byte(gen, OP_NULL, ast->line);
+        }
+        emit_bytes_2(gen, OP_SET_LOCAL_POP, gen->inline_result_slot, ast->line);
+        if (gen->inline_return_jump_count < 256) {
+            gen->inline_return_jumps[gen->inline_return_jump_count++] =
+                emit_jump(gen, OP_JUMP, ast->line);
+        }
+        return;
+    }
+
+    // 有析构变量时：将所有返回值存入临时槽位，执行析构，再恢复
+    if (gen->dtor_count > 0) {
+        // 分配临时槽位存储返回值
+        int* temp_slots = (int*)malloc(sizeof(int) * count);
+        for (int i = 0; i < count; i++) {
+            temp_slots[i] = gen->current_func->local_count++;
+            gen_expr(gen, ast->u.ret_multi.exprs[i]);
+            emit_bytes_2(gen, OP_SET_LOCAL_POP, temp_slots[i], ast->line);
+        }
+        // 逆序调用析构函数
+        for (int i = gen->dtor_count - 1; i >= 0; i--) {
+            emit_byte(gen, OP_DTOR_LOCAL, ast->line);
+            emit_byte(gen, (gen->dtor_entries[i].local_slot >> 8) & 0xff, ast->line);
+            emit_byte(gen, gen->dtor_entries[i].local_slot & 0xff, ast->line);
+            emit_byte(gen, OP_POP, ast->line);
+        }
+        // 恢复返回值到栈上
+        for (int i = 0; i < count; i++) {
+            emit_bytes_2(gen, OP_GET_LOCAL, temp_slots[i], ast->line);
+        }
+        free(temp_slots);
+        emit_byte(gen, OP_RETURN_MULTI, ast->line);
+        emit_byte(gen, (uint8_t)count, ast->line);
+    } else {
+        // 正常路径：依次求值所有返回值表达式，压入栈中
+        for (int i = 0; i < count; i++) {
+            gen_expr(gen, ast->u.ret_multi.exprs[i]);
+        }
+        emit_byte(gen, OP_RETURN_MULTI, ast->line);
+        emit_byte(gen, (uint8_t)count, ast->line);
+    }
+}
+
 static void gen_expr_stmt(CodeGen* gen, Ast* ast) {
     Ast* expr = ast->u.expr_stmt.expr;
 
@@ -1820,6 +2050,15 @@ static void gen_expr_stmt(CodeGen* gen, Ast* ast) {
         return;
     }
 
+    // 多返回值函数调用的表达式语句：弹出所有返回值
+    if (expr->cached_type && expr->cached_type->kind == TYPE_MULTI_RET) {
+        int ret_count = expr->cached_type->param_count;
+        for (int i = 0; i < ret_count; i++) {
+            emit_byte(gen, OP_POP, ast->line);
+        }
+        return;
+    }
+
     // 注意：OP_SET_FIELD 会 pop obj 和 value，然后 push 赋值结果值到栈上
     // 因此表达式语句仍需要 OP_POP 来弹出这个结果值，否则会导致栈泄漏
     emit_byte(gen, OP_POP, ast->line);
@@ -1928,9 +2167,12 @@ void gen_stmt(CodeGen* gen, Ast* ast) {
             break;
         case AST_FUNC_DEF:
             break;
-        case AST_RETURN:
-            gen_return(gen, ast);
-            break;
+case AST_RETURN:
+gen_return(gen, ast);
+break;
+case AST_RETURN_MULTI:
+gen_return_multi(gen, ast);
+break;
         case AST_BREAK: {
             if (!gen->loop_head) {
                 error_add_at(ERR_SYNTAX, ast->line, ast->column, "break 只能在循环中使用");
@@ -1961,6 +2203,9 @@ void gen_stmt(CodeGen* gen, Ast* ast) {
         }
         case AST_VAR_DECL:
             gen_var_decl(gen, ast);
+            break;
+        case AST_DESTRUCT_DECL:
+            gen_destruct_decl(gen, ast);
             break;
         case AST_ASSIGN:
             gen_assign(gen, ast);
@@ -2798,16 +3043,22 @@ void gen_stmt_module(CodeGen* gen, Ast* ast) {
         case AST_FUNC_DEF:
             // 函数定义在 gen_block_module 中处理
             break;
-        case AST_RETURN:
-            gen_return(gen, ast);  // 复用普通 return 生成
-            break;
-        case AST_BREAK:
+case AST_RETURN:
+gen_return(gen, ast);  // 复用普通 return 生成
+break;
+case AST_RETURN_MULTI:
+gen_return_multi(gen, ast);  // 复用多值 return 生成
+break;
+case AST_BREAK:
         case AST_CONTINUE:
             // 复用普通 break/continue 生成
             gen_stmt(gen, ast);
             break;
         case AST_VAR_DECL:
             gen_var_decl_module(gen, ast);
+            break;
+        case AST_DESTRUCT_DECL:
+            gen_destruct_decl(gen, ast);  // 解构声明复用普通生成逻辑
             break;
         case AST_ASSIGN:
             gen_assign(gen, ast);  // 复用普通赋值生成
@@ -2829,6 +3080,8 @@ void gen_stmt_module(CodeGen* gen, Ast* ast) {
                     gen_func_module(gen, ast->u.export.decl);
                 } else if (ast->u.export.decl->kind == AST_VAR_DECL) {
                     gen_var_decl_module(gen, ast->u.export.decl);
+                } else if (ast->u.export.decl->kind == AST_DESTRUCT_DECL) {
+                    gen_destruct_decl(gen, ast->u.export.decl);
                 } else if (ast->u.export.decl->kind == AST_STRUCT_DEF) {
                     gen_struct_module(gen, ast->u.export.decl);
                 } else if (ast->u.export.decl->kind == AST_ENUM_DEF) {

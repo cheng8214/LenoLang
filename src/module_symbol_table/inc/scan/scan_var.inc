@@ -11,6 +11,42 @@
                 if (after_var) {
                     while (*after_var && (*after_var == ' ' || *after_var == '\t')) after_var++;
 
+                    // 检测解构声明: var[T1, T2](a, b) = ... 或 var{"k": T}(a) = ...
+                    if (*after_var == '[' || *after_var == '{') {
+                        // 跳过形状部分 [...] 或 {...}
+                        // 使用通用括号匹配（支持嵌套泛型如 Array[Dict[string, int]]）
+                        int depth = 1;
+                        after_var++;
+                        while (*after_var && depth > 0) {
+                            if (*after_var == '[' || *after_var == '{') depth++;
+                            else if (*after_var == ']' || *after_var == '}') depth--;
+                            if (depth == 0) { after_var++; break; }
+                            after_var++;
+                        }
+                        // 跳过空格
+                        while (*after_var && (*after_var == ' ' || *after_var == '\t')) after_var++;
+                        // 期望 '('
+                        if (*after_var == '(') {
+                            after_var++;
+                            // 解析变量名列表
+                            while (*after_var) {
+                                while (*after_var && (*after_var == ' ' || *after_var == '\t' || *after_var == ',')) after_var++;
+                                if (*after_var == ')') { after_var++; break; }
+                                const char* name_start = after_var;
+                                while (*after_var && (isalnum((unsigned char)*after_var) || *after_var == '_')) after_var++;
+                                int name_len = (int)(after_var - name_start);
+                                if (name_len > 0 && name_len < 64) {
+                                    char var_name[64];
+                                    strncpy(var_name, name_start, name_len);
+                                    var_name[name_len] = '\0';
+                                    module_symbol_table_add_var(table, var_name, TYPE_ANY, NULL, is_const_decl);
+                                }
+                            }
+                        }
+                        p = after_var;
+                        continue;
+                    }
+
                     const char* name_start = after_var;
                     while (*after_var && (isalnum((unsigned char)*after_var) || *after_var == '_')) after_var++;
                     int name_len = (int)(after_var - name_start);

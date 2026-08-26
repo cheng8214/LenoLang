@@ -2046,6 +2046,8 @@ void gen_expr(CodeGen* gen, Ast* ast) {
                 case AST_FIELD_ACCESS: ast_type_name = "AST_FIELD_ACCESS"; break;
                 case AST_ADDRESS_OF: ast_type_name = "AST_ADDRESS_OF"; break;
                 case AST_AWAIT: ast_type_name = "AST_AWAIT"; break;
+                case AST_SAFE_ACCESS: ast_type_name = "AST_SAFE_ACCESS"; break;
+                case AST_DESTRUCT_DECL: ast_type_name = "AST_DESTRUCT_DECL"; break;
                 default: ast_type_name = "UNKNOWN_AST_KIND"; break;
             }
             snprintf(msg, sizeof(msg), "未知的表达式类型: %s (kind=%d)", ast_type_name, ast->kind);

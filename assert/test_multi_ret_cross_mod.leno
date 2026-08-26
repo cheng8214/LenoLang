@@ -1,0 +1,40 @@
+// ============================================================
+// 多返回值跨模块测试
+// ============================================================
+import multi_ret_mod
+
+// 1. 跨模块调用多返回值函数
+var[int, string, float](uid, uname, uscore) = multi_ret_mod.get_user_info()
+assert_eq(uid, 1)
+assert_eq(uname, "admin")
+assert_eq(uscore, 99.9)
+
+// 2. 跨模块两值返回
+var[int, int](mx, my) = multi_ret_mod.get_coords()
+assert_eq(mx, 100)
+assert_eq(my, 200)
+
+// 3. 跨模块间接调用（模块内调用多返回值函数再返回）
+var[int, string](hcode, hmsg) = multi_ret_mod.use_helper()
+assert_eq(hcode, 43)
+assert_eq(hmsg, "ok!")
+
+// 4. 跨模块三值返回（string, int, bool 混合类型）
+var[string, int, bool](chost, cport, cdebug) = multi_ret_mod.get_config()
+assert_eq(chost, "localhost")
+assert_eq(cport, 8080)
+assert_eq(cdebug, true)
+
+// 5. 跨模块获取缓存值
+var[int, string](cid, cname) = multi_ret_mod.get_cached()
+assert_eq(cid, 100)
+assert_eq(cname, "module")
+
+// 6. 跨模块调用只取第一个返回值
+var first_id = multi_ret_mod.get_user_info()
+assert_eq(first_id, 1)
+
+// 7. 跨模块调用作为表达式语句（丢弃所有返回值）
+multi_ret_mod.get_coords()
+
+print("=== 跨模块多返回值测试通过 ===")
