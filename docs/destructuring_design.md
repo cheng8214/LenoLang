@@ -744,3 +744,44 @@ var[int, string, float](a, b, c) = f()   // init_type = TYPE_MULTI_RET
 - `TYPE_ARRAY` → 现有数组解构路径
 - `TYPE_DICT` → 现有字典解构路径
 - `TYPE_MULTI_RET` → 新增多返回值解构路径
+
+### 4.7 非解构上下文中的自动退化
+
+当多返回值函数在**非解构上下文**中被调用时（算术运算、条件判断、函数参数、普通变量声明等），
+自动取**第一个返回值**，丢弃其余返回值。
+
+```
+func get_info(): [int, string, float] {
+    return 42, "hello", 3.14
+}
+
+var y = get_info() + 1        // y = 43（取第一个值 42，丢弃 "hello" 和 3.14）
+var first = get_info()         // first = 42
+if get_info() > 0 { ... }     // 42 > 0 = true
+
+func add(int a, int b): int { return a + b }
+var result = add(get_info(), 10)  // add(42, 10) = 52
+```
+
+**实现机制**：
+
+1. **Codegen 层**：`gen_expr` 的 `AST_CALL` case 在 `gen_call` 返回后检查 `cached_type`。
+   如果是 `TYPE_MULTI_RET` 且 `suppress_multi_pop` 未设置，则 emit `OP_POP` 弹出多余的返回值，
+   只保留第一个返回值在栈顶。
+
+2. **调用者控制**：三个调用者通过 `suppress_multi_pop` 标志控制弹出行为：
+   - `gen_var_decl`：设置 `suppress_multi_pop=1`，由自己统一弹出多余值（保留第一个）
+   - `gen_destruct_decl`：设置 `suppress_multi_pop=1`，保留所有返回值用于解构
+   - `gen_expr_stmt`：设置 `suppress_multi_pop=1`，由自己弹出所有返回值
+
+3. **类型系统层**：`type_is_compatible` 在 source 是 `TYPE_MULTI_RET` 时，
+   自动退化为第一个元素类型进行比较，使多返回值函数可以直接作为单参数传递。
+
+### 4.8 已知限制
+
+| 限制 | 性质 | 说明 |
+|------|------|------|
+| 多返回值最多 16 个 | 设计限制 | `OP_RETURN_MULTI` 操作数为 1 byte，最大 255；实际限制为 16 以保持栈安全 |
+| 多返回值函数不被内联 | 设计限制 | `OP_RETURN_MULTI` 需要真实调用帧操作栈，内联会绕过此机制 |
+| 多返回值不能直接解构嵌套 | 设计限制 | 不支持 `var[int, [int, int]](a, b, c) = f()`，无嵌套解构 |
+| 闭包返回多返回值时类型可能退化为 any | 实现限制 | 闭包类型推断不完整时，`cached_type` 可能为 `TYPE_ANY` 而非 `TYPE_MULTI_RET`，导致 codegen 无法弹出多余值。解构声明仍可工作（走 `TYPE_ARRAY` 路径），但非解构上下文中会产生栈上多余值 |

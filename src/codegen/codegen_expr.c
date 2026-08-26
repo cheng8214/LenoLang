@@ -1244,6 +1244,17 @@ void gen_expr(CodeGen* gen, Ast* ast) {
             break;
         case AST_CALL:
             gen_call(gen, ast);
+            // 多返回值函数在非解构上下文中：只保留第一个返回值，弹出多余的
+            // 栈布局: [ret0][ret1]...[retN-1]（retN-1 在栈顶）
+            // 需要弹出 retN-1 到 ret1，只留 ret0 在栈顶
+            if (!gen->suppress_multi_pop &&
+                ast->cached_type && ast->cached_type->kind == TYPE_MULTI_RET &&
+                ast->cached_type->param_count > 1) {
+                int extra = ast->cached_type->param_count - 1;
+                for (int i = 0; i < extra; i++) {
+                    emit_byte(gen, OP_POP, ast->line);
+                }
+            }
             break;
         case AST_INDEX: {
             gen_expr(gen, ast->u.index.obj);

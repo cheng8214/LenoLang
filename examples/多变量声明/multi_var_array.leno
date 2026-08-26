@@ -3,6 +3,6 @@ main()
 {
 	Array[int] b,c
 	print(b,c)
-	b.add("12")
+	b.add("12")//这里会报错，因为b是Array[int]，而add方法的参数是Array[string]
 	print(b)
 }

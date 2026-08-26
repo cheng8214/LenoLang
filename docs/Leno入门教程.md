@@ -3779,6 +3779,22 @@ print(id)                 // 42
 get_user()                // 所有返回值被丢弃
 ```
 
+多返回值函数也可以在算术运算、条件判断和函数参数中使用，自动取第一个返回值：
+
+```leno
+func get_info(): [int, string, float] {
+    return 42, "hello", 3.14
+}
+
+var y = get_info() + 1        // y = 43（42 + 1，丢弃 "hello" 和 3.14）
+if get_info() > 0 {           // 42 > 0 = true
+    print("positive")
+}
+
+func add(int a, int b): int { return a + b }
+var result = add(get_info(), 10)  // add(42, 10) = 52
+```
+
 #### 嵌套调用
 
 多返回值函数内部可以调用其他多返回值函数：
@@ -3866,7 +3882,7 @@ var[string, int](a, b) = get_user()   // 错误：槽位 string 与返回值 int
 >
 > - 多返回值函数**不会被内联**，始终走真实函数调用路径
 > - 多返回值最多支持 **16 个**返回值
-> - 多返回值函数不能直接作为另一个函数的单个参数传入
+> - 在非解构上下文中（算术运算、条件判断、函数参数等），自动取第一个返回值，丢弃其余
 > - 闭包返回多返回值函数时，类型信息可能退化为 `any`
 
 ***

@@ -1072,22 +1072,28 @@ static void gen_for(CodeGen* gen, Ast* ast) {
 }
 
 static void gen_var_decl(CodeGen* gen, Ast* ast) {
-    if (ast->u.var_decl.init) {
-        gen_expr(gen, ast->u.var_decl.init);
-        
-        // 多返回值函数调用：只取第一个返回值，弹出多余的
-        if (ast->u.var_decl.init->cached_type &&
-            ast->u.var_decl.init->cached_type->kind == TYPE_MULTI_RET) {
-            int ret_count = ast->u.var_decl.init->cached_type->param_count;
-            // 保留栈顶（第一个返回值），弹出其余的
-            // 栈布局: [ret0][ret1]...[retN-1]，retN-1 在栈顶
-            // 需要把 ret0 移到栈顶位置
-            // 先弹出 retN-1 到 ret1
-            for (int i = 0; i < ret_count - 1; i++) {
-                emit_byte(gen, OP_POP, ast->line);
-            }
-            // 现在 ret0 在栈顶
-        }
+if (ast->u.var_decl.init) {
+// 多返回值函数调用：禁止 gen_expr 弹出多余值，由这里统一弹出
+if (ast->u.var_decl.init->cached_type &&
+ast->u.var_decl.init->cached_type->kind == TYPE_MULTI_RET) {
+gen->suppress_multi_pop = 1;
+}
+gen_expr(gen, ast->u.var_decl.init);
+gen->suppress_multi_pop = 0;
+
+// 多返回值函数调用：只取第一个返回值，弹出多余的
+if (ast->u.var_decl.init->cached_type &&
+ast->u.var_decl.init->cached_type->kind == TYPE_MULTI_RET) {
+int ret_count = ast->u.var_decl.init->cached_type->param_count;
+// 保留栈顶（第一个返回值），弹出其余的
+// 栈布局: [ret0][ret1]...[retN-1]，retN-1 在栈顶
+// 需要把 ret0 移到栈顶位置
+// 先弹出 retN-1 到 ret1
+for (int i = 0; i < ret_count - 1; i++) {
+emit_byte(gen, OP_POP, ast->line);
+}
+// 现在 ret0 在栈顶
+}
 
         if (ast->u.var_decl.type) {
             TypeKind var_type = ast->u.var_decl.type->kind;
@@ -1180,7 +1186,10 @@ static void gen_destruct_decl(CodeGen* gen, Ast* ast) {
         int ret_count = init_type->param_count;
         
         // 求值 init（函数调用后栈上留下 ret_count 个值）
+        // 设置标志，防止 gen_expr 中的 AST_CALL 弹出多余返回值
+        gen->suppress_multi_pop = 1;
         gen_expr(gen, ast->u.destruct_decl.init);
+        gen->suppress_multi_pop = 0;
         
         // 分配临时槽位（兼容顶层代码 current_func=NULL 的情况）
         // 使用 local_count 作为基底，因为它反映了所有已声明局部变量的数量
@@ -2041,8 +2050,13 @@ static void gen_expr_stmt(CodeGen* gen, Ast* ast) {
     // 设置 discard 标志：内联 void 函数时可省掉 OP_NULL + OP_POP
     gen->inline_discard_result = 1;
     gen->inline_no_result = 0;
+    // 多返回值函数调用的表达式语句：禁止 gen_expr 弹出多余值，由这里统一弹出
+    if (expr->cached_type && expr->cached_type->kind == TYPE_MULTI_RET) {
+        gen->suppress_multi_pop = 1;
+    }
     gen_expr(gen, expr);
     gen->inline_discard_result = 0;
+    gen->suppress_multi_pop = 0;
 
     // 内联 void 函数已跳过 OP_NULL，栈上无值，跳过 OP_POP
     if (gen->inline_no_result) {

@@ -780,6 +780,11 @@ int type_is_compatible(TypeInfo* target, TypeInfo* source) {
     // null 可以赋值给任何类型（允许 int b = null, string c = null）
     if (source->kind == TYPE_NULL) return 1;
 
+    // 多返回值类型在非解构上下文中自动退化为第一个返回值类型
+    if (source->kind == TYPE_MULTI_RET && source->param_count > 0 && source->param_types) {
+        return type_is_compatible(target, source->param_types[0]);
+    }
+
     // nullable 类型兼容性：Type 可赋值给 Type?（非空→可空，安全）
     if (target->nullable && !source->nullable) {
         TypeInfo target_stripped = *target;

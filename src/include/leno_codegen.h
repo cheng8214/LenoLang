@@ -55,6 +55,7 @@ typedef struct {
     int inline_return_jump_count;     // 待回填的 return 跳转数量
     int inline_discard_result;        // 1=当前调用结果将被丢弃（表达式语句）
     int inline_no_result;             // 1=内联未在栈上留下值（void函数+discard）
+int suppress_multi_pop;            // 1=解构声明上下文，不弹出多返回值
 
 } CodeGen;
 

@@ -1,0 +1,22 @@
+// 测试：多返回值函数在嵌套表达式中的行为
+func get_info(): [int, string, float] {
+    return 42, "hello", 3.14
+}
+
+// 情况1: 多返回值函数 + 算术运算
+var y = get_info() + 1
+print(y)
+
+// 情况2: 多返回值函数作为另一个函数的参数
+func add(int a, int b): int {
+    return a + b
+}
+var result = add(get_info(), 10)
+print(result)
+
+// 情况3: 多返回值在条件表达式中
+if get_info() > 0 {
+    print("positive")
+}
+
+print("=== 测试结束 ===")
