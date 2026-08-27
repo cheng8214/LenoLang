@@ -80,7 +80,7 @@ any 槽位不生成 CAST 指令（直接取值）。
 
 ---
 
-## 二、待实现：函数多返回值（Phase 2）
+## 二、已实现：函数多返回值（Phase 2）
 
 ### 2.0 设计动机
 
@@ -616,7 +616,7 @@ Codegen 在 `gen_expr(AST_CALL)` 后压入所有返回值，但 `gen_var_decl` �
 - `test_destruct_export.leno` — 跨模块导出解构
 - `test_destruct_mod_var.leno` — 模块变量解构
 
-### 3.2 待实现测试（Phase 2）
+### 3.2 已实现测试（Phase 2）
 
 ```
 // 基本多返回值
@@ -785,3 +785,107 @@ var result = add(get_info(), 10)  // add(42, 10) = 52
 | 多返回值函数不被内联 | 设计限制 | `OP_RETURN_MULTI` 需要真实调用帧操作栈，内联会绕过此机制 |
 | 多返回值不能直接解构嵌套 | 设计限制 | 不支持 `var[int, [int, int]](a, b, c) = f()`，无嵌套解构 |
 | 闭包返回多返回值时类型可能退化为 any | 实现限制 | 闭包类型推断不完整时，`cached_type` 可能为 `TYPE_ANY` 而非 `TYPE_MULTI_RET`，导致 codegen 无法弹出多余值。解构声明仍可工作（走 `TYPE_ARRAY` 路径），但非解构上下文中会产生栈上多余值 |
+
+---
+
+## 五、已实现：var[] 空形状自动推断（Phase 3）
+
+### 5.0 设计动机
+
+Phase 1/2 的解构声明要求用户在 `[...]` 内显式写出每个槽位的类型：
+
+```leno
+var[float, float, float, float](x, y, w, h) = getRect()
+var[int, string, float](id, name, score) = getUser()
+```
+
+但函数的返回类型已经在声明中写过了，调用方再写一遍是冗余的。`var[]` 空形状语法允许省略类型标注，由编译器自动推断。
+
+### 5.1 语法
+
+```leno
+// 空数组形状：var[](name1, name2, ...) = expr
+// 等价于省略所有槽位类型，编译器从 init_type 自动推断
+
+// 多返回值自动推断
+var[](x, y, w, h) = getRect()     // 等价于 var[float, float, float, float](...)
+
+// 数组解构自动推断
+var[](a, b, c) = [1, 2, 3]        // 等价于 var[int, int, int](...)
+
+// const 也支持
+const[](cx, cy) = getRect()
+
+// 部分解构（只取前 N 个）
+var[](first, second) = getUser()  // 只取前 2 个返回值
+```
+
+### 5.2 不支持的场景
+
+- **字典解构不支持空形状**：`var{}(a, b) = expr` 不合法。字典解构必须写键名，因为它语义上是按键名取值，不是按位置。
+- **无法推断的源类型**：如果 init 的类型是 `TYPE_ANY` 或 `TYPE_INFER`（如无返回类型注解的函数），编译器报错："解构声明要求初始化值为具体类型的 Array 或多返回值函数"。
+
+### 5.3 实现机制
+
+#### 5.3.1 Parser 层
+
+在 `parse_destruct_decl`（`parser_func.c`）中，当 `[` 后直接遇到 `]`（空形状）时：
+
+1. 消费 `]`
+2. 解析 `(name1, name2, ...)` 变量名列表
+3. 根据变量名数量，为每个生成 `TYPE_INFER` 槽位
+4. 解析 `= expr` 初始值
+
+生成的 `AST_DESTRUCT_DECL` 节点与普通解构声明完全一致，只是所有 `slot_types[i]` 为 `TYPE_INFER`。
+
+#### 5.3.2 Semantic 层
+
+在 `visit_var.inc` 的 `AST_DESTRUCT_DECL` 类型检查中，当 `init_type` 为 `TYPE_MULTI_RET` 或 `TYPE_ARRAY` 且槽位为 `TYPE_INFER` 时：
+
+1. 从 `init_type->param_types[i]`（多返回值）或 `init_type->element_type`（数组）获取类型
+2. 回填 `ast->u.destruct_decl.slot_types[i]`（影响 codegen 的 CAST 生成）
+3. 通过 `scope_resolve` 获取符号，回填 `sym->type`（影响后续类型检查）
+
+回填后，槽位类型从 `TYPE_INFER` 变为具体类型（如 `TYPE_FLOAT`、`TYPE_INT`），后续 codegen 会根据回填后的类型生成对应的 CAST 指令。
+
+#### 5.3.3 Codegen 层
+
+**无需修改**。Codegen 在 `gen_destruct_decl` 中根据 `slot_type->kind` 生成 CAST 指令。semantic 层回填类型后，codegen 自动走正确路径。
+
+### 5.4 类型推断链路
+
+```
+函数声明: func getRect(): [float, float, float, float]
+    ↓ type_copy
+模块符号表: ModuleFuncSymbol.return_type_info = TYPE_MULTI_RET{param_types[0..3] = float}
+    ↓ module_symbol_table_find_func
+调用方 infer_expr_type(): 返回 TYPE_MULTI_RET{param_types[0..3] = float}
+    ↓ 回填
+var[](x, y, w, h) → slot_types[0..3] = float, sym->type = float
+    ↓ codegen
+OP_GET_LOCAL + OP_CAST_FLOAT + OP_SET_LOCAL_POP（逐槽位）
+```
+
+### 5.5 测试
+
+| 测试文件 | 内容 |
+|----------|------|
+| `assert/test_destruct_auto_infer.leno` | 基本语法：多返回值、混合类型、数组、float 数组、部分解构、const、旧语法兼容、bool 数组、循环内解构 |
+| `assert/test_destruct_auto_infer_cross.leno` | 跨模块：多返回值、混合类型、float 多返回值、旧语法兼容 |
+| `assert/destruct_auto_infer_mod.leno` | 跨模块测试模块 |
+
+### 5.6 与现有语法的关系
+
+`var[]` 是现有 `var[T1, T2, ...]` 的语法糖，完全向后兼容：
+
+```leno
+// 以下两种写法等价
+var[](x, y, w, h) = getRect()
+var[float, float, float, float](x, y, w, h) = getRect()
+
+// 旧写法完全不受影响
+var[int, string](a, b) = [1, "hello"]
+var{"id": int, "name": string}(a, b) = getUser()
+```
+
+底层走同一套解析、类型检查、codegen 路径，只是空形状时槽位类型从 `TYPE_INFER` → semantic 阶段自动回填为实际类型。

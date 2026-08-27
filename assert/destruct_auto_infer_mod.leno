@@ -1,0 +1,13 @@
+// var[] 跨模块自动推断测试模块
+
+export func getMetrics(): [int, int, int, int] {
+    return 100, 200, 50, 75
+}
+
+export func getUserInfo(): [int, string, bool] {
+    return 1, "test", true
+}
+
+export func getFloats(): [float, float] {
+    return 1.5, 2.5
+}

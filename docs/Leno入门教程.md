@@ -7333,6 +7333,46 @@ const[int, int, int](a, b, c) = data
 a = 100    // ❌ 错误：const 变量不可修改
 ```
 
+### `var[]` 空形状自动推断
+
+当数据源有明确的类型信息（如带返回类型注解的函数、具体类型的数组），可以省略槽位类型，由编译器自动推断：
+
+```leno
+// 多返回值自动推断 —— 等价于 var[float, float, float, float](x, y, w, h)
+func getRect(): [float, float, float, float] {
+    return 10.0, 20.0, 100.0, 200.0
+}
+var[](x, y, w, h) = getRect()
+print(x)    // 10.0
+
+// 混合类型自动推断
+func getUser(): [int, string, float] {
+    return 42, "Alice", 95.5
+}
+var[](id, name, score) = getUser()
+print(id)       // 42
+print(name)     // Alice
+print(score)    // 95.5
+
+// 数组解构自动推断 —— 等价于 var[int, int, int](a, b, c)
+var nums = [10, 20, 30]
+var[](a, b, c) = nums
+print(a)    // 10
+
+// const 也支持
+const[](cx, cy) = getRect()
+
+// 部分解构（只取前 N 个）
+var[](first, second) = getUser()    // 只取 int 和 string
+```
+
+> **⚠️ `var[]` 注意事项：**
+>
+> - 仅数组形状 `var[]` 支持空形状，字典形状 `var{}` **不支持**（字典解构必须写键名）
+> - 数据源必须有明确类型：`TYPE_MULTI_RET`（多返回值函数）或具体类型的 `Array[T]`
+> - 如果数据源类型为 `any`（如无返回类型注解的函数），编译报错
+> - `var[]` 与显式类型标注完全等价，可混合使用
+
 ### `export` 解构
 
 在模块中，解构声明的变量可以导出供其他模块使用：
@@ -10335,6 +10375,7 @@ lenolang program.leno
 | 数组解构  | `var[int, int](a, b) = [10, 20]`     |
 | 字典解构  | `var{"k": int}(a) = {"k": 42}`       |
 | 多返回值解构 | `var[int, string](a, b) = func()`   |
+| 自动推断解构 | `var[](a, b) = func()`  // 类型自动推断  |
 
 ### 控制流
 

@@ -746,6 +746,101 @@ Ast* parse_destruct_decl(Parser* p, TypeInfo* base_type, int is_const, int line,
     // 消费 '[' 或 '{'
     lexer_next(&p->lex);
 
+    // ★ 检测空形状: var[](a, b) 或 var{}(a, b) —— 自动推断
+    // 字典不支持空形状（需要键名），仅数组支持
+    if (is_dict && p->lex.current.type == TOK_RBRACE) {
+        // 空字典形状 var{}(...) —— 明确报错，提示使用 var[]
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                     "空形状自动推断仅支持数组 var[]，不支持字典 var{}。请使用 var[](变量名) 或 var{\"键名\": 类型}(变量名)");
+        free(slot_types);
+        if (slot_keys) free(slot_keys);
+        return NULL;
+    }
+    if (!is_dict && p->lex.current.type == TOK_RBRACKET) {
+        // 空数组形状 var[](...) —— 先消费 ']'，再解析变量名，最后生成 TYPE_INFER 槽位
+        lexer_next(&p->lex);  // 消费 ']'
+
+        // 解析绑定目标 (name, ...)
+        if (!match(p, TOK_LPAREN)) {
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                         "空形状解构声明期望 '(' 开始变量名列表");
+            free(slot_types);
+            return NULL;
+        }
+
+        int name_cap = 4;
+        int name_count = 0;
+        char** names = (char**)malloc(sizeof(char*) * name_cap);
+
+        do {
+            if (name_count >= name_cap) {
+                name_cap *= 2;
+                names = (char**)realloc(names, sizeof(char*) * name_cap);
+            }
+            if (p->lex.current.type != TOK_IDENT) {
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                             "解构声明期望变量名");
+                break;
+            }
+            names[name_count] = copy_string(p->lex.current.text, p->lex.current.len);
+            name_count++;
+            lexer_next(&p->lex);
+        } while (match(p, TOK_COMMA));
+
+        if (!match(p, TOK_RPAREN)) {
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                         "解构声明期望 ')' 结束变量名列表");
+        }
+
+        // 根据变量名数量生成 TYPE_INFER 槽位
+        for (int i = 0; i < name_count; i++) {
+            if (slot_count >= slot_cap) {
+                slot_cap *= 2;
+                slot_types = (TypeInfo**)realloc(slot_types, sizeof(TypeInfo*) * slot_cap);
+            }
+            slot_types[slot_count] = type_new(TYPE_INFER);
+            slot_count++;
+        }
+
+        // 解析 = expr
+        if (!match(p, TOK_EQ)) {
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                         "解构声明期望 '= 表达式'");
+            for (int i = 0; i < slot_count; i++) type_free(slot_types[i]);
+            free(slot_types);
+            for (int i = 0; i < name_count; i++) free(names[i]);
+            free(names);
+            return NULL;
+        }
+
+        Ast* init = parse_expression(p);
+        if (!init) {
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                         "解构声明的初始值表达式解析失败");
+            for (int i = 0; i < slot_count; i++) type_free(slot_types[i]);
+            free(slot_types);
+            for (int i = 0; i < name_count; i++) free(names[i]);
+            free(names);
+            return NULL;
+        }
+
+        // 创建 AST_DESTRUCT_DECL 节点
+        Ast* ast = ast_new(AST_DESTRUCT_DECL, line);
+        ast->column = column;
+        ast->u.destruct_decl.slot_types = slot_types;
+        ast->u.destruct_decl.slot_keys = NULL;
+        ast->u.destruct_decl.slot_count = slot_count;
+        ast->u.destruct_decl.names = names;
+        ast->u.destruct_decl.refs = (SymRef*)calloc(slot_count, sizeof(SymRef));
+        ast->u.destruct_decl.init = init;
+        ast->u.destruct_decl.is_dict = 0;
+        ast->u.destruct_decl.is_const = is_const;
+
+        check_var_decl_boundary(p, line);
+        (void)base_type;
+        return ast;
+    }
+
     // 解析槽位
     do {
         if (slot_count >= slot_cap) {

@@ -634,8 +634,21 @@
                             TypeInfo* slot_type = ast->u.destruct_decl.slot_types[i];
                             if (!slot_type) continue;
                             TypeKind slot_kind = slot_type->kind;
-                            // any 槽位：总是兼容，跳过检查
-                            if (slot_kind == TYPE_ANY || slot_kind == TYPE_INFER) continue;
+                            // any/infer 槽位：总是兼容，跳过检查
+                            if (slot_kind == TYPE_ANY || slot_kind == TYPE_INFER) {
+                                // ★ 自动推断：从返回值类型回填 TYPE_INFER 槽位
+                                if (slot_kind == TYPE_INFER && i < ret_count) {
+                                    type_free(ast->u.destruct_decl.slot_types[i]);
+                                    ast->u.destruct_decl.slot_types[i] = type_copy(init_type->param_types[i]);
+                                    // 同步更新符号类型
+                                    Symbol* sym = scope_resolve(s->current, ast->u.destruct_decl.names[i]);
+                                    if (sym) {
+                                        if (sym->type) type_free(sym->type);
+                                        sym->type = type_copy(init_type->param_types[i]);
+                                    }
+                                }
+                                continue;
+                            }
                             // 检查槽位是否超出返回值数量
                             if (i >= ret_count) {
                                 char msg[BUFFER_MEDIUM];
@@ -711,8 +724,21 @@
                                 TypeInfo* slot_type = ast->u.destruct_decl.slot_types[i];
                                 if (!slot_type) continue;
                                 TypeKind slot_kind = slot_type->kind;
-                                // any 槽位：总是兼容，跳过检查
-                                if (slot_kind == TYPE_ANY || slot_kind == TYPE_INFER) continue;
+                                // any/infer 槽位：总是兼容，跳过检查
+                                if (slot_kind == TYPE_ANY || slot_kind == TYPE_INFER) {
+                                    // ★ 自动推断：从数组元素类型回填 TYPE_INFER 槽位
+                                    if (slot_kind == TYPE_INFER && !elem_is_any && init_type->element_type) {
+                                        type_free(ast->u.destruct_decl.slot_types[i]);
+                                        ast->u.destruct_decl.slot_types[i] = type_copy(init_type->element_type);
+                                        // 同步更新符号类型
+                                        Symbol* sym = scope_resolve(s->current, ast->u.destruct_decl.names[i]);
+                                        if (sym) {
+                                            if (sym->type) type_free(sym->type);
+                                            sym->type = type_copy(init_type->element_type);
+                                        }
+                                    }
+                                    continue;
+                                }
                                 // 具体类型槽位：需要源元素类型也是具体类型
                                 if (elem_is_any) {
                                     char msg[BUFFER_MEDIUM];

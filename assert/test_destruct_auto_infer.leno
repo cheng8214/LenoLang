@@ -1,0 +1,82 @@
+// var[] 空形状自动推断断言测试
+
+// 测试 1: 多返回值 var[] 自动推断
+func getRect(): [float, float, float, float] {
+    return 10.0, 20.0, 100.0, 200.0
+}
+var[](x, y, w, h) = getRect()
+assert(x == 10.0, "var[] 多返回值: x 应为 10.0")
+assert(y == 20.0, "var[] 多返回值: y 应为 20.0")
+assert(w == 100.0, "var[] 多返回值: w 应为 100.0")
+assert(h == 200.0, "var[] 多返回值: h 应为 200.0")
+assert(type(x) == "float", "var[] 多返回值: x 类型应为 float")
+assert(type(w) == "float", "var[] 多返回值: w 类型应为 float")
+
+// 测试 2: 混合类型多返回值
+func getUser(): [int, string, float] {
+    return 42, "Alice", 95.5
+}
+var[](id, name, score) = getUser()
+assert(id == 42, "var[] 混合类型: id 应为 42")
+assert(name == "Alice", "var[] 混合类型: name 应为 Alice")
+assert(score == 95.5, "var[] 混合类型: score 应为 95.5")
+assert(type(id) == "int", "var[] 混合类型: id 类型应为 int")
+assert(type(name) == "string", "var[] 混合类型: name 类型应为 string")
+assert(type(score) == "float", "var[] 混合类型: score 类型应为 float")
+
+// 测试 3: 数组解构 var[] 自动推断
+Array[int] nums = [10, 20, 30]
+var[](a, b, c) = nums
+assert(a == 10, "var[] 数组: a 应为 10")
+assert(b == 20, "var[] 数组: b 应为 20")
+assert(c == 30, "var[] 数组: c 应为 30")
+assert(type(a) == "int", "var[] 数组: a 类型应为 int")
+
+// 测试 4: float 数组解构
+Array[float] fnums = [1.5, 2.5, 3.5]
+var[](fa, fb, fc) = fnums
+assert(fa == 1.5, "var[] float数组: fa 应为 1.5")
+assert(fb == 2.5, "var[] float数组: fb 应为 2.5")
+assert(type(fa) == "float", "var[] float数组: fa 类型应为 float")
+
+// 测试 5: 部分解构（只取前 N 个）
+var[](first, second) = getUser()
+assert(first == 42, "var[] 部分解构: first 应为 42")
+assert(second == "Alice", "var[] 部分解构: second 应为 Alice")
+
+// 测试 6: const var[] 解构
+const[](cx, cy) = getRect()
+assert(cx == 10.0, "const var[]: cx 应为 10.0")
+assert(cy == 20.0, "const var[]: cy 应为 20.0")
+
+// 测试 7: 旧语法仍然工作
+var[float, float, float, float](ox, oy, ow, oh) = getRect()
+assert(ox == 10.0, "旧语法: ox 应为 10.0")
+assert(oh == 200.0, "旧语法: oh 应为 200.0")
+
+// 测试 8: 字符串数组
+Array[string] strs = ["hello", "world"]
+var[](s1, s2) = strs
+assert(s1 == "hello", "var[] string数组: s1 应为 hello")
+assert(s2 == "world", "var[] string数组: s2 应为 world")
+assert(type(s1) == "string", "var[] string数组: s1 类型应为 string")
+
+// 测试 9: bool 数组
+Array[bool] bools = [true, false, true]
+var[](b1, b2, b3) = bools
+assert(b1 == true, "var[] bool数组: b1 应为 true")
+assert(b2 == false, "var[] bool数组: b2 应为 false")
+assert(type(b1) == "bool", "var[] bool数组: b1 类型应为 bool")
+
+// 测试 10: 循环内 var[] 解构
+func getPair(int i): [int, int] {
+    return i, i * 2
+}
+int sum = 0
+for 1:5 to i {
+    var[](a, b) = getPair(i)
+    sum = sum + a + b
+}
+assert(sum == 45, "var[] 循环内: sum 应为 45 (1+2+2+4+3+6+4+8+5+10=45)")
+
+print("test_destruct_auto_infer: 全部通过")
