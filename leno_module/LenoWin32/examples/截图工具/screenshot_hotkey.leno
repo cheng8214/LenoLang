@@ -33,6 +33,7 @@ Array[string] _sizeNames = ["14", "18", "24", "32"]
 
 // ==== 全局状态 ====
 Ptr[u8] _pixels = null; var _sw = 0; var _sh = 0
+Ptr[u8] _magTex = null  // 放大镜纹理（跨帧复用）
 float _mx = 0.0; float _my = 0.0
 float _sx = 0.0; float _sy = 0.0; float _ex = 0.0; float _ey = 0.0
 var _selDone = false    // 选区是否完成
@@ -82,6 +83,13 @@ struct AnnoItem {
     float tx = 0.0, ty = 0.0                   // 文字位置
     int color = 0xFFFF0000                      // 标注颜色
     int fontSize = 18                   // 字号（文字用）
+    // 换行缓存
+    Array[string] cachedLines = []     // 缓存的换行结果
+    string cacheKey = ""               // 缓存键: text + "|" + wrapW
+    // 包围盒缓存
+    float cachedMaxW = 0.0             // 缓存的最大宽度
+    float cachedTotalH = 0.0           // 缓存的总高度
+    string boundsKey = ""              // 包围盒缓存键
 }
 
 // ==== 标注列表 ====
@@ -100,15 +108,15 @@ func resetSel() {
     _leftDown = false; _drawing = false
     _hoverAnno = -1; _dragAnno = -1; _editAnnoIdx = -1
 }
-func getRect(): Dict {
-    return { x: if _sx < _ex then _sx else _ex, y: if _sy < _ey then _sy else _ey,
-             w: if _sx > _ex then _sx - _ex else _ex - _sx,
-             h: if _sy > _ey then _sy - _ey else _ey - _sy }
+func getRect(): [float, float, float, float] {
+    return if _sx < _ex then _sx else _ex, if _sy < _ey then _sy else _ey,
+           if _sx > _ex then _sx - _ex else _ex - _sx,
+           if _sy > _ey then _sy - _ey else _ey - _sy
 }
 
 // ==== 工具栏辅助 ====
-// 主按钮标签
-func _tbLabels(): Array[string] { return ["箭头", "画笔", "文字", "保存", "复制", "退出"] }
+// 主按钮标签（全局常量，避免每帧分配数组）
+const Array[string] _TB_LABELS = ["箭头", "画笔", "文字", "保存", "复制", "退出"]
 
 // 工具栏分区：主按钮 0-5，颜色 6-11，字号 12-15
 // 主按钮宽度 42，颜色块宽度 18，字号块宽度 26
@@ -144,9 +152,7 @@ func _tbHit(float x, float y): int {
 
 // 根据选区重新计算工具栏位置（选区下方，不够则上方）
 func _updateToolbarPos() {
-    var r = getRect()
-    float rx = r["x"] as float; float ry = r["y"] as float
-    float rw = r["w"] as float; float rh = r["h"] as float
+    var[float, float, float, float](rx, ry, rw, rh) = getRect()
     _tbX = rx + (rw - _tbW) * 0.5
     // 选区下方
     _tbY = ry + rh + 8.0
@@ -192,7 +198,6 @@ func doScreenshot() {
     var fontXLarge = SDL3.createFontAuto(32.0)
     Array[Font] fontList = [fontSmall, font, fontLarge, fontXLarge]
     Ptr[u8] tex = null
-    Ptr[u8] magTex = null
 
     win.run(
         func(Event ev): bool {
@@ -250,7 +255,7 @@ func doScreenshot() {
                 if _annos.len() > 0 { _annos.remove(_annos.len() - 1); _hint = "已撤销"; SDL3.markFrameRedraw() }
             }
             if ev.isKeyDown() and ev.scancode() == Scancode.C and (ev.keyMod() & MOD_CTRL) != 0 {
-                if hasSel() { _doCopy(font); _hint = "已复制"; SDL3.markFrameRedraw() }
+                if hasSel() { _doCopy(fontList); _hint = "已复制"; SDL3.markFrameRedraw() }
             }
             // 右键：重置选区或退出
             if ev.isMouseButtonDown() and ev.mouseButton() == MouseButton.RIGHT {
@@ -263,7 +268,7 @@ func doScreenshot() {
 
             // 鼠标移动（_ready 前也更新坐标，用于十字准星和放大镜）
             if ev.isMouseMotion() {
-                _mx = ev.mouseX(); _my = ev.mouseY()
+                var[float, float](_ev_mx, _ev_my) = ev.mousePos(); _mx = _ev_mx; _my = _ev_my
                 _tbHoverBtn = _tbHit(_mx, _my)
                 // _ready 前不允许选区拖拽
                 if _ready and not _selDone and _leftDown {
@@ -297,9 +302,9 @@ func doScreenshot() {
                     else if btn == 2 { _mode = MODE_TEXT; _hint = "文字模式(字号" + _sizeNames[_curSizeIdx] + ")，点击放置文字" }
                     else if btn == 3 {
                         // 保存后直接退出
-                        _doSave(font); return false
+                        _doSave(fontList); return false
                     }
-                    else if btn == 4 { _doCopy(font); _hint = "已复制到剪贴板" }
+                    else if btn == 4 { _doCopy(fontList); _hint = "已复制到剪贴板" }
                     else if btn == 5 { return false }  // 退出
                     // 颜色选择
                     else if btn >= 6 and btn < 12 {
@@ -426,9 +431,7 @@ func doScreenshot() {
             ren.setColor(#000000FF); ren.clear()
             if tex != null { ren.drawTextureAt(tex, 0.0, 0.0, _float(_sw), _float(_sh)) }
 
-            var r = getRect()
-            float x0 = r["x"] as float; float y0 = r["y"] as float
-            float rw = r["w"] as float; float rh = r["h"] as float
+            var[float, float, float, float](x0, y0, rw, rh) = getRect()
 
             // 遮罩
             ren.setBlendMode(1); ren.setColor(#00000078)
@@ -466,8 +469,8 @@ func doScreenshot() {
                 // 尺寸
                 if font.ok {
                     string ss = _int(rw) + " x " + _int(rh)
-                    var sz = font.measureString(ss)
-                    float swW=sz.w; float swX=x0+rw/2-swW/2
+                    var[float, float](sz_w, sz_h) = font.measureString(ss)
+                    float swW=sz_w; float swX=x0+rw/2-swW/2
                     float swY=if y0>28 then y0-24 else y0+rh+4
                     ren.setColor(#000000C8); ren.fillRect(swX-4, swY, swW+8, 20)
                     ren.drawText(font, ss, swX, swY+2, #FFFFFFFF)
@@ -481,9 +484,7 @@ func doScreenshot() {
             // 文字编辑框（悬停或拖拽时显示四边长方形）
             int showBox = if _dragAnno >= 0 then _dragAnno else _hoverAnno
             if showBox >= 0 and showBox < _annos.len() and not _texting {
-                var b = _getTextBounds(showBox, fontList)
-                float bx = b["x"] as float; float by = b["y"] as float
-                float bw = b["w"] as float; float bh = b["h"] as float
+                var[float, float, float, float](bx, by, bw, bh) = _getTextBounds(showBox, fontList)
                 if bw > 0.0 and bh > 0.0 {
                     ren.setBlendMode(1)
                     // 虚线边框效果（用半透明白色）
@@ -518,7 +519,7 @@ func doScreenshot() {
 
             // 放大镜
             if not _drawing and not _texting and _tbHoverBtn < 0 {
-                _drawMagnifier(ren, magTex)
+                _drawMagnifier(ren)
             }
 
             // 工具栏
@@ -542,7 +543,10 @@ func doScreenshot() {
 
     if _texting { SDL3.stopTextInput(win.getHandle()) }
     for fontList to f { if f.ok { f.close() } }
-    if _saveReq and hasSel() { _doSave(font) }
+    if _saveReq and hasSel() { _doSave(fontList) }
+    // 销毁纹理资源
+    if tex != null { SDL3.destroyTexture(tex); tex = null }
+    if _magTex != null { SDL3.destroyTexture(_magTex); _magTex = null }
     ffi.free(_pixels); _pixels = null
     // 强制清零所有状态，防止跨 session 残留（每次截图结束后彻底清理）
     resetSel()
@@ -570,8 +574,7 @@ func _getFont(Array[Font] fontList, int fontSize): Font {
 
 // 计算文字可用宽度（从文字起点到选区右边缘）
 func _getWrapWidth(float tx): float {
-    var r = getRect()
-    float rx = r["x"] as float; float rw = r["w"] as float
+    var[float, float, float, float](rx, _ry, rw, _rh) = getRect()
     float right = rx + rw - 4.0
     float w = right - tx
     if w < 20.0 { w = 20.0 }
@@ -586,8 +589,8 @@ func _wrapLine(string line, Font f, float maxW): Array[string] {
     for line.len() to i {
         string ch = line.slice(i, i+1)
         string test = cur + ch
-        var sz = f.measureString(test)
-        if sz.w > maxW and cur.len() > 0 {
+        var[float, float](sz_w, sz_h) = f.measureString(test)
+        if sz_w > maxW and cur.len() > 0 {
             result.add(cur)
             cur = ch
         } else {
@@ -610,22 +613,40 @@ func _wrapText(string text, Font f, float maxW): Array[string] {
     return result
 }
 
-// 获取文字标注的包围盒（屏幕坐标）: {x, y, w, h}
-func _getTextBounds(int idx, Array[Font] fontList): Dict {
+// 带缓存的换行：避免每帧对相同文字重复计算
+func _wrapTextCached(AnnoItem a, Font f, float maxW): Array[string] {
+    string key = a.text + "|" + _str(a.fontSize) + "|" + _str(_int(maxW))
+    if a.cacheKey == key and a.cachedLines.len() > 0 {
+        return a.cachedLines
+    }
+    a.cachedLines = _wrapText(a.text, f, maxW)
+    a.cacheKey = key
+    return a.cachedLines
+}
+
+// 获取文字标注的包围盒（屏幕坐标）: [x, y, w, h]
+// 使用缓存避免重复调用 measureString
+func _getTextBounds(int idx, Array[Font] fontList): [float, float, float, float] {
     AnnoItem a = _annos[idx]
     Font tf = _getFont(fontList, a.fontSize)
-    if not tf.ok { return {x: a.tx, y: a.ty, w: 0.0, h: 0.0} }
+    if not tf.ok { return a.tx, a.ty, 0.0, 0.0 }
     float wrapW = _getWrapWidth(a.tx)
-    var lines = _wrapText(a.text, tf, wrapW)
+    var lines = _wrapTextCached(a, tf, wrapW)
+    // 检查包围盒缓存
+    string key = a.cacheKey + "|" + _str(tf.height)
+    if a.boundsKey == key {
+        return a.tx, a.ty, a.cachedMaxW, a.cachedTotalH
+    }
     float maxW = 0.0
     for lines to ln {
         if ln.len() > 0 {
-            var sz = tf.measureString(ln)
-            if sz.w > maxW { maxW = sz.w }
+            var[float, float](sz_w, sz_h) = tf.measureString(ln)
+            if sz_w > maxW { maxW = sz_w }
         }
     }
     float totalH = lines.len() * _float(tf.height)
-    return {x: a.tx, y: a.ty, w: maxW, h: totalH}
+    a.cachedMaxW = maxW; a.cachedTotalH = totalH; a.boundsKey = key
+    return a.tx, a.ty, maxW, totalH
 }
 
 // 查找鼠标位置下的文字标注索引（从上层开始查找，后添加的优先）
@@ -636,9 +657,7 @@ func _findTextAnnoAt(float x, float y, Array[Font] fontList): int {
         int i = n - 1 - ri
         if i == _editAnnoIdx { continue }
         if _annos[i].type != MODE_TEXT or _annos[i].text.len() == 0 { continue }
-        var b = _getTextBounds(i, fontList)
-        float bx = b["x"] as float; float by = b["y"] as float
-        float bw = b["w"] as float; float bh = b["h"] as float
+        var[float, float, float, float](bx, by, bw, bh) = _getTextBounds(i, fontList)
         // 扩大 4px 容差方便点击
         if x >= bx - 4.0 and x <= bx + bw + 4.0 and y >= by - 4.0 and y <= by + bh + 4.0 {
             return i
@@ -658,8 +677,8 @@ func _updateIMEPos(Ptr[u8] winHandle, Array[Font] fontList) {
     float lineH = _float(tf.height)
     float cursorX = _textX
     if lastLine.len() > 0 {
-        var sz = tf.measureString(lastLine)
-        cursorX = _textX + sz.w
+        var[float, float](sz_w, sz_h) = tf.measureString(lastLine)
+        cursorX = _textX + sz_w
     }
     float cursorY = _textY + lastIdx * lineH
     // rect 描述文字输入区域，cursor 为光标相对 rect.x 的像素偏移
@@ -693,7 +712,7 @@ func _renderAnnos(Renderer ren, Array[Font] fontList) {
             Font tf = _getFont(fontList, a.fontSize)
             if tf.ok {
                 float wrapW = _getWrapWidth(a.tx)
-                var lines = _wrapText(a.text, tf, wrapW)
+                var lines = _wrapTextCached(a, tf, wrapW)
                 ren.setBlendMode(1)
                 float lineH = _float(tf.height)
                 for lines.len() to li {
@@ -748,8 +767,8 @@ func _renderTextInput(Renderer ren, Array[Font] fontList) {
         string lastLine = lines[lastIdx]
         float cursorX = _textX
         if lastLine.len() > 0 {
-            var sz = tf.measureString(lastLine)
-            cursorX = _textX + sz.w
+            var[float, float](sz_w, sz_h) = tf.measureString(lastLine)
+            cursorX = _textX + sz_w
         }
         float cursorY = _textY + lastIdx * lineH
         ren.setBlendMode(1)
@@ -794,7 +813,7 @@ func _drawToolbar(Renderer ren, Font font) {
     ren.drawRect(_tbX, _tbY, _tbW, _tbH)
 
     // 主按钮
-    var labels = _tbLabels()
+    var labels = _TB_LABELS
     float bx = _tbX + 6.0; float bw = 42.0; float bh = 26.0; float gap = 3.0
     float btnTop = _tbY + (_tbH - bh) * 0.5   // 按钮垂直居中
     for 0:5 to i {
@@ -855,7 +874,7 @@ func _drawToolbar(Renderer ren, Font font) {
 }
 
 // ==== 放大镜 ====
-func _drawMagnifier(Renderer ren, Ptr[u8] magTex) {
+func _drawMagnifier(Renderer ren) {
     float ms=120.0; int magSize=24
     float mx = if _mx > _float(_sw)*0.5 then _mx - ms - 30 else _mx + 30
     float my = if _my > _float(_sh)*0.5 then _my - ms - 30 else _my + 30
@@ -864,28 +883,50 @@ func _drawMagnifier(Renderer ren, Ptr[u8] magTex) {
     if my+ms>_float(_sh) { my=_float(_sh)-ms }
     int cx=_int(_mx); int cy=_int(_my); int half=magSize/2
 
-    if magTex == null { magTex = ren.createTexture(SDL3.PIXELFORMAT_ARGB8888, 1, magSize, magSize) }
-    if magTex != null and _pixels != null {
+    if _magTex == null { _magTex = ren.createTexture(SDL3.PIXELFORMAT_ARGB8888, 1, magSize, magSize) }
+    if _magTex != null and _pixels != null {
         Ptr[u8] magBuf = ffi.malloc(magSize*magSize*4)
         if magBuf != null {
-            for 0:(magSize-1) to dy { for 0:(magSize-1) to dx {
-                int sx=cx+dx-half; int sy=cy+dy-half
-                int di=(dy*magSize+dx)*4
-                if sx>=0 and sx<_sw and sy>=0 and sy<_sh {
-                    int si=sy*_sw*4+sx*4
-                    ffi.write_byte(magBuf,di,ffi.read_byte(_pixels,si))
-                    ffi.write_byte(magBuf,di+1,ffi.read_byte(_pixels,si+1))
-                    ffi.write_byte(magBuf,di+2,ffi.read_byte(_pixels,si+2))
-                    ffi.write_byte(magBuf,di+3,ffi.read_byte(_pixels,si+3))
+            int srcX0 = cx - half; int srcY0 = cy - half
+            int copyBytes = magSize * 4  // 一行字节数
+            for 0:(magSize-1) to dy {
+                int sy = srcY0 + dy
+                int di = dy * copyBytes
+                if sy >= 0 and sy < _sh {
+                    // 判断该行是否有越界像素
+                    int availStart = if srcX0 < 0 then -srcX0 else 0
+                    int availEnd = if srcX0 + magSize > _sw then _sw - srcX0 else magSize
+                    if availStart == 0 and availEnd == magSize {
+                        // 整行完整在屏幕内：memcpy 批量拷贝
+                        int si = (sy * _sw + srcX0) * 4
+                        ffi.memcpy(ffi.offset(magBuf, di), ffi.offset(_pixels, si), copyBytes)
+                    } else {
+                        // 行有越界像素：逐像素处理边界行
+                        for 0:(magSize-1) to dx {
+                            int sx = srcX0 + dx
+                            int dp = di + dx * 4
+                            if sx >= 0 and sx < _sw {
+                                int si = (sy * _sw + sx) * 4
+                                ffi.memcpy(ffi.offset(magBuf, dp), ffi.offset(_pixels, si), 4)
+                            } else {
+                                ffi.write_byte(magBuf, dp, 0); ffi.write_byte(magBuf, dp+1, 0)
+                                ffi.write_byte(magBuf, dp+2, 0); ffi.write_byte(magBuf, dp+3, 255)
+                            }
+                        }
+                    }
                 } else {
-                    ffi.write_byte(magBuf,di,0); ffi.write_byte(magBuf,di+1,0)
-                    ffi.write_byte(magBuf,di+2,0); ffi.write_byte(magBuf,di+3,255)
+                    // 整行在屏幕外：填黑色不透明
+                    for 0:(magSize-1) to dx {
+                        int dp = di + dx * 4
+                        ffi.write_byte(magBuf, dp, 0); ffi.write_byte(magBuf, dp+1, 0)
+                        ffi.write_byte(magBuf, dp+2, 0); ffi.write_byte(magBuf, dp+3, 255)
+                    }
                 }
-            }}
-            ren.updateTexture(magTex, null, magBuf, magSize*4)
+            }
+            ren.updateTexture(_magTex, null, magBuf, magSize*4)
             ffi.free(magBuf)
         }
-        ren.drawTextureAt(magTex, mx, my, ms, ms)
+        ren.drawTextureAt(_magTex, mx, my, ms, ms)
     }
     ren.setColor(#FFFFFFC8); ren.drawRect(mx, my, ms, ms)
     // 中心十字
@@ -894,24 +935,20 @@ func _drawMagnifier(Renderer ren, Ptr[u8] magTex) {
 }
 
 // ==== 裁剪像素（含标注绘制） ====
-func _cropPixels(): Dict {
-    var r = getRect()
-    int x=_int(r["x"] as float); int y=_int(r["y"] as float)
-    int w=_int(r["w"] as float); int h=_int(r["h"] as float)
+func _cropPixels(Array[Font] fontList): Dict {
+    var[float, float, float, float](fx, fy, fw, fh) = getRect()
+    int x=_int(fx); int y=_int(fy); int w=_int(fw); int h=_int(fh)
     if w<=0 or h<=0 { return null }
     if x<0 { x=0 }; if y<0 { y=0 }
     if x+w>_sw { w=_sw-x }; if y+h>_sh { h=_sh-y }
     if w<=0 or h<=0 { return null }
     int sp=_sw*4; int dp=w*4
     Ptr[u8] cp=ffi.malloc(w*h*4); if cp==null { return null }
-    // 复制原始桌面像素
-    for 0:(h-1) to row { for 0:(w-1) to col {
-        int si=(y+row)*sp+(x+col)*4; int di=row*dp+col*4
-        ffi.write_byte(cp,di,ffi.read_byte(_pixels,si))
-        ffi.write_byte(cp,di+1,ffi.read_byte(_pixels,si+1))
-        ffi.write_byte(cp,di+2,ffi.read_byte(_pixels,si+2))
-        ffi.write_byte(cp,di+3,ffi.read_byte(_pixels,si+3))
-    }}
+    // 复制原始桌面像素（按行批量拷贝）
+    for 0:(h-1) to row {
+        int si=(y+row)*sp+x*4; int di=row*dp
+        ffi.memcpy(ffi.offset(cp, di), ffi.offset(_pixels, si), dp)
+    }
     // 将标注绘制到裁剪后的像素缓冲区上
     for _annos to a {
         if a.type == MODE_ARROW {
@@ -919,7 +956,7 @@ func _cropPixels(): Dict {
         } else if a.type == MODE_PEN and a.strokes.len() >= 4 {
             _drawPenOnBuf(cp, w, h, a, a.color, x, y)
         } else if a.type == MODE_TEXT and a.text.len() > 0 {
-            _drawTextOnBuf(cp, w, h, a, x, y)
+            _drawTextOnBuf(cp, w, h, a, x, y, fontList)
         }
     }
     return { pixels: cp, w: w, h: h, dp: dp }
@@ -992,22 +1029,20 @@ func _drawPenOnBuf(Ptr[u8] buf, int bw, int bh, AnnoItem a, int color, int ox, i
     }
 }
 
-// 文字绘制到像素缓冲区：用 TTF 渲染文字到 surface，再读取像素写入缓冲区（支持自动换行）
-func _drawTextOnBuf(Ptr[u8] buf, int bw, int bh, AnnoItem a, int ox, int oy) {
-    int fontSize = a.fontSize
+// 文字绘制到像素缓冲区：复用已有 fontList，避免每次 OpenFont/CloseFont
+func _drawTextOnBuf(Ptr[u8] buf, int bw, int bh, AnnoItem a, int ox, int oy, Array[Font] fontList) {
+    Font tf = _getFont(fontList, a.fontSize)
+    if not tf.ok { return }
     sdl3_ttf ttf = SDL3.ttfLib()
     if ttf == null { return }
-    // 创建临时字体
-    string fontPath = "C:/Windows/Fonts/msyh.ttc"
-    Ptr[u8] tmpFont = ttf.TTF_OpenFont(fontPath, _float(fontSize))
-    if tmpFont == null { return }
+    Ptr[u8] tmpFont = tf.handle  // 复用 fontList 中已加载的字体
 
     int cr = _r(a.color); int cg = _g(a.color); int cb = _b(a.color)
     int color = (255 << 24) | (cb << 16) | (cg << 8) | cr
     // 计算换行宽度（像素）
     int wrapW = bw - (_int(a.tx) - ox) - 4
     if wrapW < 20 { wrapW = 20 }
-    int fontH = ttf.TTF_GetFontHeight(tmpFont)
+    int fontH = tf.height
     // 文字在裁剪缓冲区中的起始位置
     int baseX = _int(a.tx) - ox
     int baseY = _int(a.ty) - oy
@@ -1059,12 +1094,12 @@ func _drawTextOnBuf(Ptr[u8] buf, int bw, int bh, AnnoItem a, int ox, int oy) {
             curY = curY + fontH
         }
     }
-    ttf.TTF_CloseFont(tmpFont)
+    // 不需要 TTF_CloseFont，字体由 fontList 管理
 }
 
 // ==== 保存 ====
-func _doSave(Font font) {
-    var c = _cropPixels()
+func _doSave(Array[Font] fontList) {
+    var c = _cropPixels(fontList)
     if c == null { return }
     Ptr[u8] cp = c["pixels"] as Ptr[u8]
     int w = _int(c["w"]); int h = _int(c["h"]); int dp = _int(c["dp"])
@@ -1079,8 +1114,8 @@ func _doSave(Font font) {
 }
 
 // ==== 复制到剪贴板 ====
-func _doCopy(Font font) {
-    var c = _cropPixels()
+func _doCopy(Array[Font] fontList) {
+    var c = _cropPixels(fontList)
     if c == null { return }
     Ptr[u8] cp = c["pixels"] as Ptr[u8]
     int w = _int(c["w"]); int h = _int(c["h"])
