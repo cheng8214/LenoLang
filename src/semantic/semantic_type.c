@@ -1982,6 +1982,22 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     ast->cached_type = type_new(TYPE_ANY);
                     return type_copy(ast->cached_type);
                 }
+                // 检查：基础类型不支持属性访问（如 float.w）
+                if (ast->u.index.index && ast->u.index.index->kind == AST_STRING) {
+                    TypeKind ok = obj_type->kind;
+                    if (ok != TYPE_ARRAY && ok != TYPE_DICT && ok != TYPE_STRING &&
+                        ok != TYPE_STRUCT && ok != TYPE_CSTRUCT && ok != TYPE_FACE &&
+                        ok != TYPE_ENUM && ok != TYPE_CLIB && ok != TYPE_PTR_GENERIC &&
+                        ok != TYPE_ANY && ok != TYPE_INFER && ok != TYPE_UNKNOWN &&
+                        ok != TYPE_GENERIC_PARAM && ok != TYPE_MULTI_RET) {
+                        const char* field_name = ast->u.index.index->u.string.value;
+                        char msg[256];
+                        snprintf(msg, sizeof(msg),
+                            "类型 '%s' 不支持属性访问 '.%s'（只有 struct、dict、array 等类型才能访问属性）",
+                            type_kind_to_string(ok), field_name);
+                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                    }
+                }
                 if (obj_type->kind == TYPE_ARRAY) {
                     // 返回数组的元素类型
                     if (obj_type->element_type) {
@@ -2426,6 +2442,23 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
         case AST_FIELD_ACCESS: {
             // 字段访问：需要知道对象的类型和字段的类型
             TypeInfo* obj_type = infer_expr_type(s, ast->u.field_access.obj);
+
+            // 检查：基础类型不支持点号属性访问（如 float.w）
+            if (obj_type) {
+                TypeKind ok = obj_type->kind;
+                if (ok != TYPE_ARRAY && ok != TYPE_DICT && ok != TYPE_STRING &&
+                    ok != TYPE_STRUCT && ok != TYPE_CSTRUCT && ok != TYPE_FACE &&
+                    ok != TYPE_ENUM && ok != TYPE_CLIB && ok != TYPE_PTR_GENERIC &&
+                    ok != TYPE_ANY && ok != TYPE_INFER && ok != TYPE_UNKNOWN &&
+                    ok != TYPE_GENERIC_PARAM && ok != TYPE_MULTI_RET) {
+                    const char* field_name = ast->u.field_access.field_name;
+                    char msg[256];
+                    snprintf(msg, sizeof(msg),
+                        "类型 '%s' 不支持属性访问 '.%s'（只有 struct、dict、array 等类型才能访问属性）",
+                        type_kind_to_string(ok), field_name);
+                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                }
+            }
 
             // 初始化字段索引为 -1（未确定）
             ast->u.field_access.field_index = -1;

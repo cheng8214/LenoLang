@@ -88,7 +88,11 @@ export struct BarChart impl Widget {
     float _animSpeed = 12.0
     // 标签测量缓存（避免每帧重复 measureString）
     float _maxCatW = 0.0
+    Array[float] _catW = []         // 每个类目标签宽度缓存（绘制居中用，随 _catDirty 一起重算）
     bool _catDirty = true
+    // Y 轴刻度缓存（避免每帧 measureString）：ymax 不变时 padL/maxYLabW 直接复用
+    float _cachedYMax = -1.0
+    float _cachedMaxYLabW = 0.0
     // 主题配色 — 打包 int 颜色
     Color _titleColor = #CDDAFFFF
     Color _gridColor = #3C404CFF
@@ -116,6 +120,7 @@ export struct BarChart impl Widget {
     func set_data(Array[string] _cats, Array[float] _vals) {
         cats = _cats; vals = _vals
         _catDirty = true   // 标签变化，需重算最大宽度
+        _cachedYMax = -1.0   // 数据变化，Y 轴缓存失效
         if _animVals.len() != vals.len() {
             Array[float] nv = []
             for vals.len() to i { nv.add(0.0) }
@@ -161,13 +166,17 @@ export struct BarChart impl Widget {
         if ymax <= 0.0 { ymax = 1.0 }
 
         // 根据 Y 轴刻度标签的最大宽度动态确定左侧边距，预留距离避免最左侧数字被裁剪
-        float maxYLabW = 0.0
-        for 0 : ticks to ti {
-            string lab = _fmtNum(ymax * ti / _float(ticks))
-            var[float, float](mww, mwh) = f.measureString(lab)
-            if mww > maxYLabW { maxYLabW = mww }
+        // ★ 缓存：ymax 不变时直接复用上次结果，避免每帧 ticks+1 次 measureString
+        if ymax != _cachedYMax {
+            _cachedYMax = ymax
+            _cachedMaxYLabW = 0.0
+            for 0 : ticks to ti {
+                string lab = _fmtNum(ymax * ti / _float(ticks))
+                var[float, float](mww, mwh) = f.measureString(lab)
+                if mww > _cachedMaxYLabW { _cachedMaxYLabW = mww }
+            }
         }
-        float padL = maxYLabW + 12.0
+        float padL = _cachedMaxYLabW + 12.0
         if padL < 38.0 { padL = 38.0 }
 
         float plotX = x + padL; float plotY = y + padT
@@ -181,7 +190,12 @@ export struct BarChart impl Widget {
         // 使用缓存的标签最大宽度（仅在 set_data 时重算），避免每帧 O(n) measureString
         if _catDirty and f.ok {
             _maxCatW = 0.0
-            for cats.len() to i { var[float, float](mw, mh) = f.measureString(cats[i]); if mw > _maxCatW { _maxCatW = mw } }
+            _catW = []
+            for cats.len() to i {
+                var[float, float](mw, mh) = f.measureString(cats[i])
+                _catW.add(mw)
+                if mw > _maxCatW { _maxCatW = mw }
+            }
             _catDirty = false
         }
         float maxCatW = _maxCatW
@@ -235,9 +249,9 @@ export struct BarChart impl Widget {
             float frac = ti / _float(ticks)
             float gy = plotY + plotH * (1.0 - frac)
             string lab = _fmtNum(ymax * frac)
-            var ms = f.measureString(lab)
+            var[float, float](msw, msh) = f.measureString(lab)
             r.setColor(_labColor)
-            r.drawText(f, lab, plotX - 6.0 - ms.w, gy - ms.h / 2.0, _labColor)
+            r.drawText(f, lab, plotX - 6.0 - msw, gy - msh / 2.0, _labColor)
         }
 
         // 第二遍：数值标签与类目标签
@@ -256,9 +270,15 @@ export struct BarChart impl Widget {
             }
             if i < cats.len() and (i % catStride) == 0 {
                 string cat = _truncLabel(f, cats[i], slot - 4.0)
-                var ms2 = f.measureString(cat)
+                // 截断后宽度可能变化，仅在未截断时使用缓存宽度
+                float drawW
+                if cat == cats[i] and i < _catW.len() {
+                    drawW = _catW[i]
+                } else {
+                    var[float, float](_cw, _ch) = f.measureString(cat); drawW = _cw
+                }
                 r.setColor(_catColor)
-                r.drawText(f, cat, bx + (bw - ms2.w) / 2.0, plotY + plotH + 6.0, _catColor)
+                r.drawText(f, cat, bx + (bw - drawW) / 2.0, plotY + plotH + 6.0, _catColor)
             }
         }
 
@@ -270,10 +290,15 @@ export struct BarChart impl Widget {
                 float aw = slot - 4.0
                 if avail < aw { aw = avail }
                 string cat = _truncLabel(f, cats[n - 1], aw)
-                var ms2 = f.measureString(cat)
+                float drawW
+                if cat == cats[n - 1] and (n - 1) < _catW.len() {
+                    drawW = _catW[n - 1]
+                } else {
+                    var[float, float](_cw, _ch) = f.measureString(cat); drawW = _cw
+                }
                 r.setColor(_catColor)
                 float bx = plotX + slot * (n - 1) + (slot - bw) / 2.0
-                r.drawText(f, cat, bx + (bw - ms2.w) / 2.0, plotY + plotH + 6.0, _catColor)
+                r.drawText(f, cat, bx + (bw - drawW) / 2.0, plotY + plotH + 6.0, _catColor)
             }
         }
 
@@ -338,7 +363,12 @@ export struct LineChart impl Widget {
     float _animSpeed = 12.0
     // 标签测量缓存（避免每帧重复 measureString）
     float _maxLabelW = 0.0
+    Array[float] _labelW = []       // 每个X轴标签宽度缓存（绘制居中用，随 _labelDirty 一起重算）
     bool _labelDirty = true
+    // Y 轴刻度缓存（避免每帧 measureString）：ymax 不变时直接复用
+    float _cachedYMax = -1.0
+    Array[float] _cachedYLabW = []  // 各刻度标签宽度缓存
+    float _cachedYLabH = 0.0         // 刻度标签高度缓存
     // 主题配色 — 打包 int 颜色
     Color _titleColor = #CDDAFFFF
     Color _gridColor = #3C404CFF
@@ -366,6 +396,7 @@ export struct LineChart impl Widget {
     func set_data(Array[string] _xlabels, Array[Array[float]] _series, Array[string] _names) {
         xlabels = _xlabels; series = _series; seriesNames = _names
         _labelDirty = true   // 标签变化，需重算最大宽度
+        _cachedYMax = -1.0   // 数据变化，Y 轴缓存失效
         // 同步动画数组结构：已有点保留作起点，新点从 0 长出
         Array[Array[float]] ans = []
         for series.len() to s {
@@ -428,14 +459,31 @@ export struct LineChart impl Widget {
         ymax = _niceMax(ymax); if ymax <= 0.0 { ymax = 1.0 }
 
         int ticks = 4
+        // ★ 缓存 Y 轴刻度标签宽度：ymax 不变时直接复用
+            if ymax != _cachedYMax {
+            _cachedYMax = ymax
+            _cachedYLabW = []
+            _cachedYLabH = 0.0
+            for 0 : ticks to ti {
+                string lab = _fmtNum(ymax * ti / _float(ticks))
+                var[float, float](_w, _h) = f.measureString(lab)
+                _cachedYLabW.add(_w)
+                if _h > _cachedYLabH { _cachedYLabH = _h }
+            }
+        }
         for 0 : ticks to ti {
             float frac = ti / _float(ticks)
             float gy = plotY + plotH * (1.0 - frac)
             if showGrid { r.setColor(_gridColor); r.drawLine(plotX, gy, plotX + plotW, gy) }
             string lab = _fmtNum(ymax * frac)
-            var ms = f.measureString(lab)
+            float labW
+            if ti < _cachedYLabW.len() {
+                labW = _cachedYLabW[ti]
+            } else {
+                var[float, float](_w, _h) = f.measureString(lab); labW = _w
+            }
             r.setColor(_labColor)
-            r.drawText(f, lab, plotX - 6.0 - ms.w, gy - ms.h / 2.0, _labColor)
+            r.drawText(f, lab, plotX - 6.0 - labW, gy - _cachedYLabH / 2.0, _labColor)
         }
         r.setColor(_axisColor)
         r.drawLine(plotX, plotY, plotX, plotY + plotH)
@@ -449,7 +497,12 @@ export struct LineChart impl Widget {
         // 使用缓存的标签最大宽度（仅在 set_data 时重算），避免每帧 O(n) measureString
         if _labelDirty and f.ok {
             _maxLabelW = 0.0
-            for xlabels.len() to i { var[float, float](mw, mh) = f.measureString(xlabels[i]); if mw > _maxLabelW { _maxLabelW = mw } }
+            _labelW = []
+            for xlabels.len() to i {
+                var[float, float](mw, mh) = f.measureString(xlabels[i])
+                _labelW.add(mw)
+                if mw > _maxLabelW { _maxLabelW = mw }
+            }
             _labelDirty = false
         }
         float maxLW = _maxLabelW
@@ -465,10 +518,15 @@ export struct LineChart impl Widget {
         for n to i {
             if i < xlabels.len() and (i % stride) == 0 {
                 string xl = _truncLabel(f, xlabels[i], slotW)
-                var[float, float](msw, msh) = f.measureString(xl)
+                float xlW
+                if xl == xlabels[i] and i < _labelW.len() {
+                    xlW = _labelW[i]
+                } else {
+                    var[float, float](_w, _h) = f.measureString(xl); xlW = _w
+                }
                 r.setColor(_catColor)
-                float lx = plotX + stepX * i - msw / 2.0
-                lx = _clampf(lx, plotX, plotX + plotW - msw)
+                float lx = plotX + stepX * i - xlW / 2.0
+                lx = _clampf(lx, plotX, plotX + plotW - xlW)
                 r.drawText(f, xl, lx, plotY + plotH + 6.0, _catColor)
             }
         }
@@ -478,9 +536,14 @@ export struct LineChart impl Widget {
             float avail = (2.0 * rgap - stride) * stepX + labelGap
             if avail > 0.0 {
                 string xl = _truncLabel(f, xlabels[n - 1], avail)
-                var[float, float](msw, msh) = f.measureString(xl)
+                float xlW
+                if xl == xlabels[n - 1] and (n - 1) < _labelW.len() {
+                    xlW = _labelW[n - 1]
+                } else {
+                    var[float, float](_w, _h) = f.measureString(xl); xlW = _w
+                }
                 r.setColor(_catColor)
-                float lx = plotX + stepX * (n - 1) - msw / 2.0
+                float lx = plotX + stepX * (n - 1) - xlW / 2.0
                 r.drawText(f, xl, lx, plotY + plotH + 6.0, _catColor)
             }
         }

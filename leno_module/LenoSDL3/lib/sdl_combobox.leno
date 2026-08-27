@@ -46,6 +46,7 @@ export struct ComboBox impl Widget, Themeable {
     float _imgGap  = 6.0              // 图标与文字间距
     // 纹理缓存（避免每帧重载 & 纹理泄漏）：Dict O(1) 查找替代旧双数组线性扫描
     Dict[string, Ptr[u8]] _imgCache = {}
+    float _fontH = 0.0             // 字体行高缓存（避免每帧 measureString("Ag")）
 
     func _ensure_font() {
         if _font == null or not _font.ok {
@@ -53,6 +54,7 @@ export struct ComboBox impl Widget, Themeable {
             if _fontPath != "" { _font = fnt.acquireFont(_fontPath, _fontSize) }
             else { _font = fnt.acquireFontAuto(_fontSize) }
             if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
+            if _font.ok { var[float, float](_agw, _agh) = _font.measureString("Ag"); _fontH = _agh }
         }
     }
 
@@ -401,7 +403,7 @@ export struct ComboBox impl Widget, Themeable {
             }
             string t = ""
             if _sel >= 0 and _sel < items.len() { t = items[_sel] } else { t = _placeholder }
-            var[float, float](_agw, th) = _font.measureString("Ag")
+            float th = _fontH
             Color tcC = _txtColor
             if not enabled { tcC = theme.darken(_txtColor, 60) }
             float ty = r.snapY(y + (h - th) / 2.0)
@@ -441,9 +443,8 @@ export struct ComboBox impl Widget, Themeable {
         r.pushClipRect(clip.to_ptr())
 
         float radius = 6.0
-        // 行高为常量，循环外测量一次避免每行重复测量
-        float textH = 0.0
-        if _font.ok { var[float, float](_agw, _agh) = _font.measureString("Ag"); textH = _agh }
+        // 行高为常量，复用 _fontH 缓存避免每行重复测量
+        float textH = _fontH
         for items.len() to i {
             float iy = r.snapY(py - _scroll + i * _itemH)
             if iy + _itemH < py or iy > py + ph { continue }

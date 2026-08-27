@@ -41,6 +41,12 @@ export struct Label impl Widget, Themeable {
     float _scrollOffset = 0.0    // 滚动偏移（像素）
     int _scrollDir = 1           // 滚动方向: 1=右→左, -1=左→右
     int _scrollLastTick = 0      // 上次滚动时间戳
+    // ★ 渲染测量缓存：text 不变时避免每帧 measureString(text)
+    float _cachedTextW = 0.0     // 缓存的文字宽度
+    string _cachedTextKey = "\x01"  // 缓存对应的 text（用不可见字符做初值避免空串歧义）
+    string _cachedTruncText = ""    // _truncatedText 结果缓存
+    string _cachedTruncKey = "\x01" // _truncatedText 对应的 text 键
+    float _cachedTruncW = -1.0
 
     func _ensure_font() {
         if _font == null or not _font.ok {
@@ -95,8 +101,10 @@ export struct Label impl Widget, Themeable {
         _fullText = t
         _scrollOffset = 0.0
         _scrollLastTick = 0
+        _cachedTextKey = "\x01"   // text 变化，缓存失效
+        _cachedTruncKey = "\x01"
         if _font != null and _font.ok {
-            if text != "" { var[float, float](_mw, _mh) = _font.measureString(text); _w = _mw } else { _w = 0.0 }
+            _w = _textWidth()
             var[float, float](_agw, _agh) = _font.measureString("Ag"); _h = _agh
         }
     }
@@ -120,14 +128,28 @@ export struct Label impl Widget, Themeable {
     func is_visible(): bool { return visible }
     func set_enabled(bool e) { enabled = e }
     func is_enabled(): bool { return enabled }
-    func set_max_w(float w) { max_w = w }
-    func set_truncate(int mode) { _truncate = mode; _scrollOffset = 0.0; _scrollLastTick = 0 }
+    func set_max_w(float w) { max_w = w; _cachedTruncKey = "\x01" }
+    func set_truncate(int mode) { _truncate = mode; _scrollOffset = 0.0; _scrollLastTick = 0; _cachedTruncKey = "\x01" }
+
+    // ★ 获取文字宽度（带缓存，text 不变时直接复用）
+    func _textWidth(): float {
+        if text == _cachedTextKey { return _cachedTextW }
+        if _font != null and _font.ok {
+            var[float, float](_mw, _mh) = _font.measureString(text)
+            _cachedTextW = _mw; _cachedTextKey = text
+            return _mw
+        }
+        return 0.0
+    }
 
     // ── 截断文本：测量并裁剪出适合 max_w 的 "前缀...后缀" 形式 ──
     func _truncatedText(): string {
         if max_w <= 0.0 or _font == null or not _font.ok { return text }
+        // ★ 结果缓存：text + max_w 不变时直接复用
+        if text == _cachedTruncKey and max_w == _cachedTruncW { return _cachedTruncText }
+        _cachedTruncKey = text; _cachedTruncW = max_w
         var[float, float](msw, msh) = _font.measureString(text)
-        if msw <= max_w { return text }
+        if msw <= max_w { _cachedTruncText = text; return text }
         // 省略号宽度
         string ellipsis = "..."
         var[float, float](esw, esh) = _font.measureString(ellipsis)
@@ -156,7 +178,9 @@ export struct Label impl Widget, Themeable {
             headEnd = i + 1
         }
         string head = text.slice(0, headEnd)
-        return head + ellipsis + tail
+        string result = head + ellipsis + tail
+        _cachedTruncText = result
+        return result
     }
 
     // ==================== 查询方法 ====================
@@ -195,7 +219,7 @@ export struct Label impl Widget, Themeable {
 
         // ── 截断模式 ──
         if _truncate == TRUNCATE_ELLIPSIS and max_w > 0.0 {
-            var[float, float](msw, msh) = _font.measureString(text)
+            float msw = _textWidth()
             if msw <= max_w {
                 // 不需要截断，正常绘制
                 float drawX = x
@@ -212,7 +236,7 @@ export struct Label impl Widget, Themeable {
 
         // ── 滚动模式 ──
         if _truncate == TRUNCATE_SCROLL and max_w > 0.0 {
-            var[float, float](msw, msh) = _font.measureString(text)
+            float msw = _textWidth()
             if msw <= max_w {
                 // 不需要滚动，正常绘制
                 float drawX = x
@@ -255,7 +279,7 @@ export struct Label impl Widget, Themeable {
         }
 
         // ── 普通绘制 ──
-        var[float, float](msw, msh) = _font.measureString(text)
+        float msw = _textWidth()
         float drawX = x
         if _align == ALIGN_LEFT { drawX = x }                          // 左对齐
         if _align == ALIGN_CENTER { drawX = x - msw / 2.0 }     // 居中

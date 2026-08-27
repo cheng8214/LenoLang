@@ -29,6 +29,10 @@ export struct Button impl Widget, Themeable {
     string _fontPath = ""    // 字体路径（空则自动选择）
     int _fontStyle = 0       // 字体样式（STYLE_BOLD|STYLE_ITALIC 等）
     Font? _font              // 字体缓存
+    // ★ 文字测量缓存：text 不变时避免每帧 measureString
+    float _cachedTextW = 0.0
+    float _cachedTextH = 0.0
+    string _cachedTextKey = "\x01"
     Color _bgColor = #3C8CDCFF   // 背景色（默认 primary）
     Color _txtColor = #FFFFFFFF  // 文字色
     Color _hovColor = 0          // 悬停背景色（为 0 时自动计算）
@@ -93,6 +97,7 @@ export struct Button impl Widget, Themeable {
                 _font = fnt.acquireFontAuto(_fontSize)
             }
             if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
+            _cachedTextKey = "\x01"   // 字体变化，缓存失效
         }
     }
 
@@ -194,7 +199,7 @@ export struct Button impl Widget, Themeable {
     }
 
     // ==================== 设置方法 ====================
-    func set_text(string t)     { text = t }
+    func set_text(string t)     { text = t; _cachedTextKey = "\x01" }
     func set_tip(string t)       { _tip = t }
     func set_pos(float px, float py)      { x = px; y = py }
     func set_size(float sw, float sh)     { w = sw; h = sh }
@@ -415,10 +420,16 @@ export struct Button impl Widget, Themeable {
 
         float pad = 6.0
         // 提前测量文字，供图标尺寸自适应（防止图标挤占文字 / 内容溢出按钮）
+        // ★ 缓存：text 不变时直接复用，避免每帧 measureString
         float textW = 0.0; float textH = 0.0
         if _font.ok {
-            var[float, float](_tw, _th) = _font.measureString(text)
-            textW = _tw; textH = _th
+            if text == _cachedTextKey {
+                textW = _cachedTextW; textH = _cachedTextH
+            } else {
+                var[float, float](_tw, _th) = _font.measureString(text)
+                textW = _tw; textH = _th
+                _cachedTextW = textW; _cachedTextH = textH; _cachedTextKey = text
+            }
         }
 
         // 选择当前状态的图标纹理（disabled > pressed > hover > normal）

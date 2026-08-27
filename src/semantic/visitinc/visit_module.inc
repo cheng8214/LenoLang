@@ -2009,7 +2009,7 @@
                     ast->u.index.obj = var_ast;
                     ast->u.index.index = index_ast;
 
-                    visit(s, index_ast);
+                    visit(s, ast);
                 }
             } else {
                 // 检查是否是原生模块的常量访问

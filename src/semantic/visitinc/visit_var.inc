@@ -221,6 +221,12 @@
                         if (init_type->kind == TYPE_NULL) {
                             type_free(init_type);
                             sym->type = type_new(TYPE_ANY);
+                        } else if (init_type->kind == TYPE_MULTI_RET && init_type->param_count > 0) {
+                            // 多返回值在非解构上下文中退化为第一个返回值类型
+                            // 例如 var ms = measure() 其中 measure 返回 [float, float]
+                            // ms 的类型应为 float（codegen 会弹出多余返回值）
+                            sym->type = type_copy(init_type->param_types[0]);
+                            type_free(init_type);
                         } else {
                             sym->type = init_type; // 使用推断的类型
                         }

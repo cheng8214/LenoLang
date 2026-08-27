@@ -40,6 +40,9 @@ export struct TabControl impl Widget, Themeable {
 
     // 字体（画标签文字）
     float _fontSize = 15.0; string _fontPath = ""; int _fontStyle = 0; Font? _font
+    // 标签宽度缓存（避免每次 _tabRects 都 measureString）
+    Array[float] _tabW = []
+    bool _tabDirty = true
 
     // 配色
     Color _bgColor = #262830FF       // 内容区背景
@@ -60,6 +63,7 @@ export struct TabControl impl Widget, Themeable {
             if _fontPath != "" { _font = fnt.acquireFont(_fontPath, _fontSize) }
             else { _font = fnt.acquireFontAuto(_fontSize) }
             if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
+            _tabDirty = true   // 字体变化，标签宽度需重算
         }
     }
 
@@ -81,6 +85,7 @@ export struct TabControl impl Widget, Themeable {
 
         var ts = opts.get("tabs", [])
         if ts is Array[string] { _tabs = ts as Array[string] } else { _tabs = [] }
+        _tabDirty = true   // 标签列表变化，宽度需重算
         // 每页一个子控件数组 + 对应的相对偏移数组
         _pages = []
         _rel = []
@@ -168,6 +173,7 @@ export struct TabControl impl Widget, Themeable {
         _rel.add([])
         _pageLayouts.add(new VBox())
         _hasLayout.add(false)
+        _tabDirty = true
         return _tabs.len() - 1
     }
     // 从某页移除子控件
@@ -190,7 +196,7 @@ export struct TabControl impl Widget, Themeable {
     func set_enabled(bool e) { enabled = e }
     func set_visible(bool v) { visible = v }
     func is_visible(): bool { return visible }
-    func set_font_size(float s) { _fontSize = s; if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null }
+    func set_font_size(float s) { _fontSize = s; if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null; _tabDirty = true }
     func on_change(func(int):void cb) { _onChange = cb }
     // 绑定窗口句柄（由 Window.addTabControl 调用）
     func _bind_window(Ptr[u8] hwnd) {
@@ -231,27 +237,31 @@ export struct TabControl impl Widget, Themeable {
     }
 
     // 计算各标签矩形：[rx, ry, rw, rh]
+    // ★ 使用缓存的标签宽度，避免每次调用都 measureString
     func _tabRects(): Array[Array[float]] {
         Array[Array[float]] out = []
         int n = _tabs.len()
         if n == 0 { return out }
         _ensure_font()
-        Array[float] widths = []
-        float total = 0.0
-        for n to i {
-            float tw = 60.0
-            if _font != null and _font.ok { var[float, float](_tw, _th) = _font.measureString(_tabs[i]); tw = _tw + 28.0 }
-            if tw < 48.0 { tw = 48.0 }
-            widths.add(tw)
-            total = total + tw
+        if _tabDirty and _font != null and _font.ok {
+            _tabW = []
+            for n to i {
+                float tw = 60.0
+                var[float, float](_tw, _th) = _font.measureString(_tabs[i]); tw = _tw + 28.0
+                if tw < 48.0 { tw = 48.0 }
+                _tabW.add(tw)
+            }
+            _tabDirty = false
         }
+        float total = 0.0
+        for _tabW.len() to i { total = total + _tabW[i] }
         float tx = x
         if total > w {
             // 放不下则等宽分配
             float ew = w / n
             for n to i { out.add([tx, y, ew, _tabH]); tx = tx + ew }
         } else {
-            for n to i { out.add([tx, y, widths[i], _tabH]); tx = tx + widths[i] }
+            for n to i { out.add([tx, y, _tabW[i], _tabH]); tx = tx + _tabW[i] }
         }
         return out
     }

@@ -1536,8 +1536,8 @@ _drawBorder = opts.get("border", true)
         r.pushClipRect(clip.to_ptr())
 
         // 文字几何（先算，供选区/光标对齐）
-        var[float, float](_agw, _agh) = _font.measureString("Ag")
-        float textH = _agh
+        // ★ 复用 _ensure_font 中缓存的 _lineHeight（= _agh + 2.0），避免每帧 measureString
+        float textH = _lineHeight - 2.0
         float ty = y + (h - textH) / 2.0
         var display = text
         if _password and text != "" { display = "*".rep(text.len()) }
@@ -1670,8 +1670,8 @@ _drawBorder = opts.get("border", true)
                 var cdi = _disp_row_of(_cursorLine, _cursorCol)
                 float cy = r.snapY(y + pad + cdi * _lineHeight - _scrollY)
                 if cy + _lineHeight > y + pad and cy < y + pad + visH {
-                    var[float, float](_cagw, _cagh) = _font.measureString("Ag")
-                    float ch = _cagh
+                    // ★ 复用 _lineHeight（= _agh + 2.0），避免每帧 measureString
+                    float ch = _lineHeight - 2.0
                     float cx = x + pad
                     if _wordWrap {
                         // 直接测量段内子串（ln.slice(c0, col)）作为段内偏移，
@@ -1693,8 +1693,8 @@ _drawBorder = opts.get("border", true)
             } else {
                 // 空内容：光标固定在左上角
                 float cy = r.snapY(y + pad)
-                var[float, float](_cagw2, _cagh2) = _font.measureString("Ag")
-                float ch = _cagh2
+                // ★ 复用 _lineHeight（= _agh + 2.0），避免每帧 measureString
+                float ch = _lineHeight - 2.0
                 float cx = r.snapX(x + pad)
                 r.setColor(theme.withAlpha(_txtColor, 200))
                 r.drawLine(cx, cy, cx, cy + ch)

@@ -29,6 +29,19 @@ main() {
     print("测试目录: " + test_dir)
     print("========================================")
 
+    // 测试前删除测试目录下所有 .lenocache 缓存文件夹，避免旧缓存导致测试结果不一致
+    // _exec("cmd /c for /r \"" + test_dir + "\" %d in (.lenocache) do @if exist \"%d\" rmdir /s /q \"%d\" 2>nul")
+    var caches = dirs.walk(test_dir)
+    for caches to cw {
+        var croot = cw[0]
+        var cdirs = cw[1]
+        for cdirs to cd {
+            if cd == ".lenocache" {
+                dirs.delete(croot + "\\" + cd)
+            }
+        }
+    }
+
     int passed = 0
     int failed = 0
 

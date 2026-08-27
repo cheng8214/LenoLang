@@ -20,6 +20,10 @@ export struct GroupBox impl Widget, Themeable {
     string _fontPath = ""
     int _fontStyle = 0
     Font? _font
+    // ★ 标题宽度缓存：标题不变时避免每帧 measureString
+    float _cachedTitleW = 0.0
+    float _cachedTitleH = 0.0
+    string _cachedTitleKey = "\x01"
     Array[Widget] children = []
     Widget? _layoutChild          // 自动布局子控件：每帧自动同步到 GroupBox 内部区域（减去 padding）
     float _layPad = 0.0          // _layoutChild 的内边距
@@ -39,6 +43,7 @@ export struct GroupBox impl Widget, Themeable {
             if _fontPath != "" { _font = fnt.acquireFont(_fontPath, _fontSize) }
             else { _font = fnt.acquireFontAuto(_fontSize) }
             if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
+            _cachedTitleKey = "\x01"   // 字体变化，缓存失效
         }
     }
 
@@ -70,7 +75,7 @@ export struct GroupBox impl Widget, Themeable {
     }
 
     // ==================== 设置方法 ====================
-    func set_title(string t) { _title = t }
+    func set_title(string t) { _title = t; _cachedTitleKey = "\x01" }
     func add(Widget c): Widget {
         children.add(c)
         if _hwnd != null { _pass_hwnd(c, _hwnd) }
@@ -153,7 +158,15 @@ export struct GroupBox impl Widget, Themeable {
 
         // 标题：在边框顶部画一段背景色遮断边框，再绘制文字
         if _font != null and _font.ok and _title != "" {
-            var[float, float](msw, msh) = _font.measureString(_title)
+            // ★ 缓存：标题不变时直接复用
+            float msw, msh
+            if _title == _cachedTitleKey {
+                msw = _cachedTitleW; msh = _cachedTitleH
+            } else {
+                var[float, float](_msw, _msh) = _font.measureString(_title)
+                msw = _msw; msh = _msh
+                _cachedTitleW = msw; _cachedTitleH = msh; _cachedTitleKey = _title
+            }
             float tx = x + _titlePad
             float ty = y - msh / 2.0
             // 用背景色画一个矩形遮断边框（标题位置）

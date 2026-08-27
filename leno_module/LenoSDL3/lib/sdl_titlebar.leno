@@ -107,6 +107,10 @@ export struct TitleBar impl Widget, Themeable {
     int    _dragStartGX = 0, _dragStartGY = 0
     int    _dragStartWinX = 0, _dragStartWinY = 0
     Ptr[u8] _winHandle = null
+    // ★ 窗口尺寸缓存：避免每帧调用 SDL_GetWindowSize（仅在拖拽/缩放后置脏）
+    int _cachedWinW = 0
+    int _cachedWinH = 0
+    bool _winSizeDirty = true
     bool   _loaded = false
     bool   _borderlessApplied = false
     bool   _closeRequested = false  // 关闭按钮被按下（示例查询后重置）
@@ -267,6 +271,7 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
             }
             if ev.isMouseButtonUp() and ev.mouseButton() == 1 {
                 _resizeEdge = EDGE_NONE
+                _winSizeDirty = true   // 缩放结束后刷新窗口尺寸缓存
                 core.forceFrameCursor(SystemCursor.DEFAULT)
                 core.markFrameRedraw()
             }
@@ -275,9 +280,13 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
 
         // 边缘检测（仅在非最大化时）
         if not _maximized and not _dragging {
-            var[int, int](_winW2, _winH2) = core.getWindowSize(_winHandle)
-            int winH = _winH2
-            int edge = _detectEdge(mx, my, _winW, winH)
+            // ★ 复用缓存，避免每帧 getWindowSize
+            if _winSizeDirty and _winHandle != null {
+                var[int, int](_ww, _wh) = core.getWindowSize(_winHandle)
+                _cachedWinW = _ww; _cachedWinH = _wh; _winSizeDirty = false
+            }
+            int winH = _cachedWinH
+            int edge = _detectEdge(mx, my, _cachedWinW, winH)
             if edge != 0 {
                 // 请求对应的缩放光标
                 _requestResizeCursor(edge)
@@ -300,6 +309,7 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
             }
             if ev.isMouseButtonUp() and ev.mouseButton() == 1 {
                 _dragging = false
+                _winSizeDirty = true   // 拖拽结束后刷新窗口尺寸缓存
                 core.markFrameRedraw()
             }
             return  // 拖拽期间不处理其他事件
@@ -361,9 +371,11 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
     func _doToggleMaximize() {
         if _maximized {
             core.lib().SDL_RestoreWindow(_winHandle)
+            _winSizeDirty = true   // 状态切换后刷新窗口尺寸缓存
             _maximized = false
         } else {
             core.lib().SDL_MaximizeWindow(_winHandle)
+            _winSizeDirty = true   // 状态切换后刷新窗口尺寸缓存
             _maximized = true
         }
         _btnHover = BTN_NONE            // ★ 立即清除悬停状态
@@ -480,6 +492,7 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
         if newH < 100 { newH = 100; newY = _resizeStartWinY + (_resizeStartH - 100) }
 
         core.lib().SDL_SetWindowSize(_winHandle, newW, newH)
+            _winSizeDirty = true   // 尺寸变化后刷新缓存
         // 仅当位置变化时才设置（左/上边缘缩放会改变窗口位置）
         if newX != _resizeStartWinX or newY != _resizeStartWinY {
             core.lib().SDL_SetWindowPosition(_winHandle, newX, newY)
@@ -512,9 +525,13 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
         _ensure_images(r)
 
         // 同步窗口宽度
+        // ★ 缓存：仅在脏时查询 SDL，避免每帧 native call
         if _winHandle != null {
-            var[int, int](_ww, _wh) = core.getWindowSize(_winHandle)
-            w = _float(_ww)
+            if _winSizeDirty {
+                var[int, int](_ww, _wh) = core.getWindowSize(_winHandle)
+                _cachedWinW = _ww; _cachedWinH = _wh; _winSizeDirty = false
+            }
+            w = _float(_cachedWinW)
         }
 
         // 背景填充

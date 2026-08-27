@@ -36,6 +36,23 @@
                 break;
             }
 
+            // 检查：基础类型不支持点号属性访问（如 float.w）
+            if (obj_type) {
+                TypeKind ok = obj_type->kind;
+                if (ok != TYPE_ARRAY && ok != TYPE_DICT && ok != TYPE_STRING &&
+                    ok != TYPE_STRUCT && ok != TYPE_CSTRUCT && ok != TYPE_FACE &&
+                    ok != TYPE_ENUM && ok != TYPE_CLIB && ok != TYPE_PTR_GENERIC &&
+                    ok != TYPE_ANY && ok != TYPE_INFER && ok != TYPE_UNKNOWN &&
+                    ok != TYPE_GENERIC_PARAM && ok != TYPE_MULTI_RET) {
+                    char msg[BUFFER_MEDIUM];
+                    const char* field_name = ast->u.field_access.field_name;
+                    snprintf(msg, sizeof(msg),
+                        "类型 '%s' 不支持属性访问 '.%s'（只有 struct、dict、array 等类型才能访问属性）",
+                        type_kind_to_string(ok), field_name);
+                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                }
+            }
+
             // 检查 enum 成员是否存在（跨模块 Module.EnumName.member 访问）
             if (obj_type && obj_type->kind == TYPE_ENUM && obj_type->struct_name) {
                 const char* member_name = ast->u.field_access.field_name;

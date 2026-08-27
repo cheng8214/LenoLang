@@ -140,6 +140,9 @@ export struct MenuBar impl Widget, Themeable {
     float _imgGap = 6.0        // 图标与文字间距
     Array[string]  _imgCachePaths = []   // 纹理缓存路径
     Array[Ptr[u8]] _imgCacheTex = []     // 纹理缓存指针
+    string  _imgLastPath = ""            // MRU 快路径：最近访问的纹理路径
+    Ptr[u8] _imgLastTex = null           // MRU 快路径：最近访问的纹理指针
+    float _fontH = 0.0                   // 字体行高缓存（避免每帧 measureString）
 
     // 配色 — 打包 int 颜色
     Color _barColor = #22232CFF       // 菜单栏背景
@@ -163,6 +166,7 @@ export struct MenuBar impl Widget, Themeable {
             if _fontPath != "" { _font = fnt.acquireFont(_fontPath, _fontSize) }
             else { _font = fnt.acquireFontAuto(_fontSize) }
             if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
+            if _font.ok { var[float, float](_agw, _agh) = _font.measureString("Ag"); _fontH = _agh }
         }
     }
 
@@ -627,7 +631,7 @@ export struct MenuBar impl Widget, Themeable {
             bool hov = (_hoverTop == i) or active
             if hov { r.setColor(_barHovColor); r.fillRect(rr[0], rr[1], rr[2], rr[3]) }
             if _font != null and _font.ok and _titles[i] != "" {
-                var[float, float](_agw, th) = _font.measureString("Ag")
+                float th = _fontH
                 var[float, float](tw, _mh) = _font.measureString(_titles[i])
                 float ty = rr[1] + (if th > rr[3] then 0.0 else (rr[3] - th) / 2.0)
                 // 水平对齐：left 缩进 / right 靠右 / center 居中（横栏竖栏共用）
@@ -671,12 +675,18 @@ export struct MenuBar impl Widget, Themeable {
     }
 
     // 纹理缓存：按 path 取/载纹理，避免每帧重载与纹理泄漏（对齐 Table/ComboBox 模式）
+    // ★ MRU 快路径：连续多行常共用同一图标（如全选复制/粘贴），单槽快路径将 O(n) 线性扫描降为 O(1)
     func _get_tex(Renderer r, string path): Ptr[u8] {
+        if path == _imgLastPath and _imgLastTex != null { return _imgLastTex }
         for _imgCachePaths.len() to i {
-            if _imgCachePaths[i] == path { return _imgCacheTex[i] }
+            if _imgCachePaths[i] == path {
+                _imgLastPath = path; _imgLastTex = _imgCacheTex[i]
+                return _imgCacheTex[i]
+            }
         }
         Ptr[u8] t = img.loadTexture(r.handle, path)
         _imgCachePaths.add(path); _imgCacheTex.add(t)
+        _imgLastPath = path; _imgLastTex = t
         return t
     }
     func _free_img_cache() {
@@ -685,6 +695,7 @@ export struct MenuBar impl Widget, Themeable {
             if _imgCacheTex[i] != null { _lib.SDL_DestroyTexture(_imgCacheTex[i]) }
         }
         _imgCachePaths = []; _imgCacheTex = []
+        _imgLastPath = ""; _imgLastTex = null
     }
 
     // 绘制菜单项图标（aspectFit 模式），返回图标占据的总宽度（含间距），供文字偏移
@@ -752,7 +763,7 @@ export struct MenuBar impl Widget, Themeable {
             // 图标
             float iconW = _draw_icon(r, it.image, px, ry)
             if _font != null and _font.ok {
-                var[float, float](_agw2, th) = _font.measureString("Ag")
+                float th = _fontH
                 float ty = ry + (if th > _itemH then 0.0 else (_itemH - th) / 2.0)
                 r.drawText(_font, it.label, r.snapX(px + 12.0 + iconW), r.snapY(ty), lc)
                 if it.shortcut != "" {
