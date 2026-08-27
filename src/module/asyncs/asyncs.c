@@ -38,7 +38,10 @@ static Value native_async_sleep(int arg_count, Value* args) {
     
     future->waiter = current;
     current->waiting_for = future;
-    
+    // GC 写屏障：Future/协程都可能已晋升老年代，互相持有对方引用
+    gc_write_barrier_obj((Object*)future, (Object*)current);
+    gc_write_barrier_obj((Object*)current, (Object*)future);
+
     return val_obj((Object*)future);
 }
 
@@ -111,7 +114,9 @@ static Value native_async_yield(int arg_count, Value* args) {
     
     ObjFuture* future = future_new();
     future->waiter = current;
-    
+    // GC 写屏障：Future 可能已晋升老年代而协程是新分配的年轻代对象
+    gc_write_barrier_obj((Object*)future, (Object*)current);
+
     VM* target_vm = get_current_vm();
     event_loop_add_ready(target_vm->event_loop, current);
     
@@ -188,13 +193,16 @@ static Value native_async_timeout(int arg_count, Value* args) {
     }
     
     target->waiter = current;
-    
+
     uint64_t wake_time = current_time_ms() + timeout_ms;
     VM* target_vm = get_current_vm();
     event_loop_add_timer(target_vm->event_loop, wake_time, current);
-    
+
     current->waiting_for = target;
-    
+    // GC 写屏障：Future/协程都可能已晋升老年代，互相持有对方引用
+    gc_write_barrier_obj((Object*)target, (Object*)current);
+    gc_write_barrier_obj((Object*)current, (Object*)target);
+
     return val_obj((Object*)target);
 }
 

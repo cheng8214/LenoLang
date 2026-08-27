@@ -14,8 +14,12 @@
 //
 //   写屏障（Write Barrier）：
 //     - 当老年代对象引用年轻代对象时，将老年代对象加入 remembered set
-//     - remembered set 当前未在 GC 标记阶段使用（mark_roots 已覆盖全部可达对象）
-//     - 保留写屏障和 remembered set 基础设施，供未来优化使用
+//     - Minor GC 标记阶段扫描 remembered set 中对象的子引用，
+//       标记老年代对象引用的年轻代对象（老年代对象本身不再递归扫描）
+//     - remembered set 维护（三条不变式）：
+//       1. 晋升：对象晋升老年代时整体加入（sweep_young）
+//       2. 写入：老年代对象获得新的年轻代引用时由写屏障加入
+//       3. 剪枝：每轮 GC 后移除子引用中已无年轻代对象的条目
 //
 // 收集策略：
 //   gc_alloc() → 年轻代分配超阈值 → Minor GC
@@ -122,6 +126,41 @@ void gc_write_barrier_obj(Object* holder, Object* value_obj) {
     if (value_obj->generation == GEN_YOUNG) {
         remembered_set_add(holder);
     }
+}
+
+// ============================================================================
+// remembered set 扫描与维护
+// ============================================================================
+
+// remembered set 扫描标志：scan_remembered_set 执行期间置位。
+// gc_mark_object 据此统计扫描中发现的年轻代子引用数（用于条目剪枝判断）。
+// 计数必须发生在 marked 检查之前：已标记的年轻代对象同样代表老年代条目持有年轻引用。
+static THREAD_LOCAL int in_remembered_scan = 0;
+static THREAD_LOCAL int young_mark_counter = 0;
+
+// 晋升专用入集：无去重直接加入。
+// 新晋升对象此前是年轻代，不可能已在 remembered set 中（集合只持有 GEN_OLD 对象），
+// 跳过去重的 O(n) 线性扫描，避免大批量晋升时的 O(n²) 开销。
+static void remembered_set_add_promoted(Object* obj) {
+    if (gc.remembered_count >= gc.remembered_capacity) {
+        int new_cap = gc.remembered_capacity * 2;
+        if (new_cap < GC_REMEMBERED_INIT) new_cap = GC_REMEMBERED_INIT;
+        Object** new_set = (Object**)realloc(gc.remembered_set, new_cap * sizeof(Object*));
+        if (!new_set) return;
+        gc.remembered_set = new_set;
+        gc.remembered_capacity = new_cap;
+    }
+    gc.remembered_set[gc.remembered_count++] = obj;
+}
+
+// 将老年代对象加入 remembered set（供批量字段写入后保守调用）。
+// 例如协程挂起时整块拷贝 saved_frames（含大量 Value 字段），
+// 逐字段调用写屏障开销大，直接对持有者入集更简单；
+// 若实际不持有年轻代引用，下一轮 GC 的剪枝会将其移出。
+void gc_remember_object(Object* holder) {
+    if (!holder) return;
+    if (holder->generation != GEN_OLD) return;
+    remembered_set_add(holder);
 }
 
 // ============================================================================
@@ -593,6 +632,22 @@ void gc_mark_object(Object* obj) {
         return;  // 无效的对象类型，跳过
     }
 
+    // ★ Minor GC 分代标记核心：老年代对象直接返回，不标记也不扫描子引用。
+    //   其引用的年轻代对象由 scan_remembered_set 扫描 remembered set 覆盖：
+    //   - 晋升时整体加入 remembered set（sweep_young）
+    //   - 后续获得新的年轻代引用时由写屏障重新加入
+    //   老年代对象在 Minor GC 中不参与 sweep，marked 标志无意义。
+    //   这是分代 GC 的本质收益：Minor GC 不再遍历整个老年代对象图。
+    if (gc.mode == GC_MODE_MINOR && obj->generation == GEN_OLD) {
+        return;
+    }
+
+    // remembered set 扫描期间的年轻代引用计数（条目剪枝依据）。
+    // 必须放在 marked 检查之前：子对象已被根标记时同样说明条目持有年轻代引用。
+    if (in_remembered_scan && obj->generation == GEN_YOUNG) {
+        young_mark_counter++;
+    }
+
     // ★ Channel 和 Thread 对象的 marked 标志可能被其他线程的 GC 留下 stale 值：
     // - Channel: malloc 分配，不在任何线程的 GC heap 链表中，clear_all_marks 不会清除
     // - Thread: result/pending_args 中的值可能指向子线程 GC 堆上的对象，
@@ -629,6 +684,43 @@ static void gc_drain_mark_stack(void) {
         Object* obj = mark_stack[--mark_stack_count];
         gc_scan_children(obj);
     }
+}
+
+// ============================================================================
+// remembered set 扫描（Minor GC 分代标记的补充根）与条目维护
+// ============================================================================
+//
+// 每轮 GC 的标记阶段调用（mark_roots 之后）：
+//   1. 扫描每个老年代条目的子引用，标记其引用的年轻代对象。
+//      这弥补了 gc_mark_object 在 Minor 模式下跳过老年代对象导致的标记遗漏。
+//   2. 剪枝：子引用中已无年轻代对象的条目移出集合。
+//      后续若重新获得年轻代引用，写屏障会将其加回，不变式保持成立。
+//
+// 注意：条目本身不作为存活对象标记——不可达的老年代条目由
+// Major GC 的 sweep_old 回收（remembered_set_remove 同步移除）。
+// FULL 模式下跳过未标记的条目（不可达垃圾），避免其子引用被错误保活，
+// 这正是旧版方案"remembered set 标记垃圾导致 sweep_old freed=0"的问题根源。
+static void scan_remembered_set(void) {
+    int j = 0;
+    in_remembered_scan = 1;
+    for (int i = 0; i < gc.remembered_count; i++) {
+        Object* obj = gc.remembered_set[i];
+        if (!obj || !is_valid_obj_type(obj->type) || obj->generation != GEN_OLD) {
+            continue;  // 无效条目：剪枝
+        }
+        if (gc.mode == GC_MODE_FULL && !obj->marked) {
+            continue;  // 不可达老年代条目：将由 sweep_old 回收并移除，剪枝
+        }
+        young_mark_counter = 0;
+        gc_scan_children(obj);
+        gc_drain_mark_stack();
+        if (young_mark_counter > 0) {
+            gc.remembered_set[j++] = obj;  // 仍持有年轻代子引用，保留
+        }
+        // 无年轻代子引用：剪枝（写入路径的写屏障可随时将其加回）
+    }
+    in_remembered_scan = 0;
+    gc.remembered_count = j;
 }
 
 // ============================================================================
@@ -792,13 +884,19 @@ static void mark_roots(void) {
         }
     }
 
-    // 16. 标记事件循环中的就绪队列和定时器协程
+    // 16. 标记事件循环中的就绪队列、定时器协程和失败协程的错误值
     if (gc.vm->event_loop) {
         for (int i = 0; i < gc.vm->event_loop->ready_count; i++) {
             gc_mark_object((Object*)gc.vm->event_loop->ready_queue[i]);
         }
         for (int i = 0; i < gc.vm->event_loop->timer_count; i++) {
             gc_mark_object((Object*)gc.vm->event_loop->timers[i].coroutine);
+        }
+        // 失败协程的错误值：事件循环运行期间 GC 触发时，
+        // errors[] 中的值尚未转移到 vm->exception，必须作为根标记，
+        // 否则会被误回收导致 asyncs.run() 结束后读取悬垂指针
+        for (int i = 0; i < gc.vm->event_loop->error_count; i++) {
+            gc_mark_value(gc.vm->event_loop->errors[i]);
         }
     }
 
@@ -1368,6 +1466,11 @@ static void sweep_young(void) {
                 promote->survived = 0;
                 promote->next = gc.old_heap;
                 gc.old_heap = promote;
+                // ★ 晋升对象加入 remembered set：
+                //   晋升时其子引用中可能仍有年轻代对象（本轮存活但未达晋升年龄），
+                //   Minor GC 中老年代对象不再被扫描，必须通过 remembered set 标记这些子引用。
+                //   若实际无年轻代子引用，下轮 scan_remembered_set 剪枝移出
+                remembered_set_add_promoted(promote);
                 size_t obj_size = promote->size;
                 if (gc.young_allocated >= obj_size)
                     gc.young_allocated -= obj_size;
@@ -1418,17 +1521,18 @@ static void sweep_old(void) {
     }
 }
 
-// GC 后维护 remembered set。
-// 这里只做压缩，清理可能残留的 NULL/无效/已非老年代的槽位。
-static void rebuild_remembered_set(void) {
-    int j = 0;
-    for (int i = 0; i < gc.remembered_count; i++) {
-        Object* obj = gc.remembered_set[i];
-        if (obj && is_valid_obj_type(obj->type) && obj->generation == GEN_OLD) {
-            gc.remembered_set[j++] = obj;
-        }
+// GC 后维护 remembered set 的职责已由 scan_remembered_set 在标记阶段完成
+// （扫描 + 剪枝）；sweep_old 释放老年代对象时通过 remembered_set_remove 同步移除。
+
+// 清除年轻代所有对象的 marked 标志（纯 Minor GC 前调用）
+// 老年代对象在纯 Minor GC 中既不标记也不清扫，无需清标志；
+// FULL 模式（Major GC / Minor 升级路径）仍使用 clear_all_marks
+static void clear_young_marks(void) {
+    Object* obj = gc.young_heap;
+    while (obj) {
+        obj->marked = 0;
+        obj = obj->next;
     }
-    gc.remembered_count = j;
 }
 
 // 清除老年代所有对象的 marked 标志（Minor GC 前调用）
@@ -1471,10 +1575,10 @@ void gc_try_collect_deferred(void) {
 }
 
 // Minor GC：只收集年轻代，若老年代堆积超阈值则顺带清扫
-// 流程：标记根集合 → 清除年轻代 → [清除老年代] → 重建 remembered set
-// 注：不再调用 mark_remembered_set()。mark_roots() 通过递归 gc_mark_object 已经标记了
-// 所有从根可达的对象（包括老年代引用的年轻代对象），因此 remembered set 是多余的。
-// 且 mark_remembered_set 会错误地标记已不可达的垃圾对象，导致 sweep_old freed=0。
+// 流程：清除年轻代标记 → 标记根集合 → 扫描 remembered set → 清除年轻代 → [清除老年代]
+// ★ 分代标记：老年代对象不递归扫描（gc_mark_object 提前返回），
+//   其引用的年轻代对象由 remembered set 扫描覆盖，
+//   Minor GC 的标记成本与年轻代 + remembered set 规模成正比，与老年代规模无关
 void gc_minor_collect(void) {
     if (gc.running || !gc.enabled) return;
 
@@ -1486,10 +1590,14 @@ void gc_minor_collect(void) {
     int do_old_sweep = (gc.old_allocated > GC_OLD_FLUSH_THRESHOLD);
     if (do_old_sweep) {
         gc.mode = GC_MODE_FULL;  // 确保 sweep_young 中晋升对象保持 marked=1
+        clear_all_marks();
+    } else {
+        clear_young_marks();     // 纯 Minor：老年代不标记不清扫，只清年轻代
     }
 
-    clear_all_marks();
     mark_roots();
+    gc_drain_mark_stack();      // 先排空根标记：FULL 模式剪枝依赖 marked 完整性
+    scan_remembered_set();      // 扫描老年代→年轻代引用 + 条目剪枝
     gc_drain_mark_stack();
 
     sweep_young();
@@ -1514,8 +1622,6 @@ void gc_minor_collect(void) {
 #endif
     }
 
-    rebuild_remembered_set();
-
     gc.running = 0;
 
     // 动态调整年轻代阈值
@@ -1528,7 +1634,7 @@ void gc_minor_collect(void) {
 }
 
 // Major GC：收集全部（年轻代 + 老年代）
-// 流程：标记根集合 → 清除年轻代 → 清除老年代 → 重建 remembered set
+// 流程：清除全部标记 → 标记根集合 → 扫描 remembered set（剪枝）→ 清除年轻代 → 清除老年代
 void gc_major_collect(void) {
     if (gc.running || !gc.enabled) return;
 
@@ -1537,6 +1643,8 @@ void gc_major_collect(void) {
 
     clear_all_marks();
     mark_roots();
+    gc_drain_mark_stack();      // 先排空根标记：剪枝依赖 marked 完整性
+    scan_remembered_set();      // FULL 模式全量标记已完成，此处仅做条目维护/剪枝
     gc_drain_mark_stack();
 
     // Major GC：在 sweep 之前清理无引用的内化字符串（此时 marked 标志仍有效）
@@ -1544,8 +1652,6 @@ void gc_major_collect(void) {
 
     sweep_young();
     sweep_old();
-
-    rebuild_remembered_set();
 
     gc.running = 0;
 

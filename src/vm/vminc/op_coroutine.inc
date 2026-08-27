@@ -177,9 +177,16 @@ OPCODE(OP_AWAIT) {
     }
     
     current->waiting_for = future;
-    
+
     // 设置 Future 的等待者
     future->waiter = current;
+    // GC 写屏障：协程和 Future 都可能已晋升老年代，互相持有对方引用
+    gc_write_barrier_obj((Object*)current, (Object*)future);
+    gc_write_barrier_obj((Object*)future, (Object*)current);
+    // 挂起保存的帧内容（locals/闭包/常量池中的值）写入协程：
+    // 协程为老年代时其 saved_frames 可能成为部分年轻代值的唯一引用，
+    // 批量字段写入逐个调用写屏障开销大，直接对持有者保守入集
+    gc_remember_object((Object*)current);
     
     // 注意：不减少 frame_cnt，因为我们需要保持调用帧以便恢复
     // 帧的locals数据保留在原地，不需要拷贝

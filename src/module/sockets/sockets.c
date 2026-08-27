@@ -334,6 +334,8 @@ static Value socket_arecv_func(int argc, Value* args) {
 
     ObjFuture* future = future_new();
     future->waiter = co;
+    // GC 写屏障：Future 可能已晋升老年代而协程是新分配的年轻代对象
+    gc_write_barrier_obj((Object*)future, (Object*)co);
 
     if (async_add(sock, future, ASYNC_OP_RECV, buffer, max_bytes) != 0) {
         free(buffer);
@@ -342,6 +344,8 @@ static Value socket_arecv_func(int argc, Value* args) {
     }
 
     co->waiting_for = future;
+    // GC 写屏障：协程可能已晋升老年代而 Future 是新分配的年轻代对象
+    gc_write_barrier_obj((Object*)co, (Object*)future);
     return val_obj((Object*)future);
 }
 
@@ -372,6 +376,8 @@ static Value socket_aaccept_func(int argc, Value* args) {
 
     ObjFuture* future = future_new();
     future->waiter = co;
+    // GC 写屏障：Future 可能已晋升老年代而协程是新分配的年轻代对象
+    gc_write_barrier_obj((Object*)future, (Object*)co);
 
     if (async_add(sock, future, ASYNC_OP_ACCEPT, NULL, 0) != 0) {
         native_throw_error("注册异步 I/O 失败（可能已达上限）");
@@ -379,6 +385,8 @@ static Value socket_aaccept_func(int argc, Value* args) {
     }
 
     co->waiting_for = future;
+    // GC 写屏障：协程可能已晋升老年代而 Future 是新分配的年轻代对象
+    gc_write_barrier_obj((Object*)co, (Object*)future);
     return val_obj((Object*)future);
 }
 

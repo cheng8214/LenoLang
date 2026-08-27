@@ -371,6 +371,8 @@ int vm_run_coroutine_with_vm(ObjCoroutine* co, VM* vm_ptr) {
         } else if (vm_ptr->has_exception) {
             co->state = COROUTINE_FAILED;
             co->result = vm_ptr->exception;
+            // GC 写屏障：协程可能已晋升老年代，exception 可能是年轻代对象
+            gc_write_barrier((Object*)co, vm_ptr->exception);
             if (co->task_future && !co->task_future->completed) {
                 // 如果有等待者，标记错误已传播
                 if (co->task_future->waiter) {
@@ -385,7 +387,7 @@ int vm_run_coroutine_with_vm(ObjCoroutine* co, VM* vm_ptr) {
                 co->initial_arg_count = 0;
             }
         }
-        
+
         vm_ptr->current_coroutine = saved_current;
         return result;
     }
@@ -551,6 +553,8 @@ int vm_run_coroutine_with_vm(ObjCoroutine* co, VM* vm_ptr) {
         } else if (vm_ptr->has_exception) {
             co->state = COROUTINE_FAILED;
             co->result = vm_ptr->exception;
+            // GC 写屏障：协程可能已晋升老年代，exception 可能是年轻代对象
+            gc_write_barrier((Object*)co, vm_ptr->exception);
             if (co->task_future && !co->task_future->completed) {
                 // 如果有等待者，标记错误已传播
                 if (co->task_future->waiter) {
@@ -565,7 +569,7 @@ int vm_run_coroutine_with_vm(ObjCoroutine* co, VM* vm_ptr) {
                 co->initial_arg_count = 0;
             }
         }
-        
+
         vm_ptr->current_coroutine = saved_current;
         current_exec_vm = saved_vm;  // 恢复之前的 VM
         return result;

@@ -47,6 +47,8 @@ void future_complete(ObjFuture* future, Value result) {
     
     future->completed = 1;
     future->result = result;
+    // GC 写屏障：Future 可能已晋升老年代，result 可能是年轻代对象
+    gc_write_barrier((Object*)future, result);
     
     // 如果有协程在等待，将其加入就绪队列
     // 注意：不清除 waiter->waiting_for，让协程恢复时自己处理
@@ -63,6 +65,8 @@ void future_fail(ObjFuture* future, Value error) {
     
     future->completed = 1;
     future->error = error;
+    // GC 写屏障：Future 可能已晋升老年代，error 可能是年轻代对象
+    gc_write_barrier((Object*)future, error);
     
     // 如果有协程在等待，将其加入就绪队列
     // 注意：不清除 waiter->waiting_for，让 vm_run_coroutine 检查错误

@@ -773,6 +773,8 @@ void gc_free_all(void);
 void gc_track_memory(Object* obj, size_t old_size, size_t new_size);
 void gc_write_barrier(Object* holder, Value value);
 void gc_write_barrier_obj(Object* holder, Object* value_obj);
+// 将老年代对象加入 remembered set（供批量字段写入后保守调用）
+void gc_remember_object(Object* holder);
 
 void gc_set_enabled(int enabled);
 int gc_get_enabled(void);
