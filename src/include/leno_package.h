@@ -231,8 +231,17 @@ void package_cache_add_to_search_paths(void);
 /**
  * 将内置模块目录（exe_dir/leno_module/<包名>/lib/）添加到模块搜索路径。
  * 结构与全局缓存一致，便于随 exe 分发内置包模块（如 LenoSDL3）。
+ * 使用 GetModuleFileName / readlink 获取当前进程 exe 所在目录。
  */
 void package_builtin_add_to_search_paths(void);
+
+/**
+ * 将指定目录下的 leno_module/<包名>/lib/ 添加到模块搜索路径。
+ * 用于 LSP 等场景：LSP 进程与 leno.exe 不在同一目录，
+ * 需要通过 leno.exe 的路径来定位内置模块。
+ * @param leno_exe_path  leno.exe 的完整路径或其所在目录
+ */
+void package_builtin_add_to_search_paths_from(const char* leno_exe_path);
 
 /* ============================================================================
  * 包安装

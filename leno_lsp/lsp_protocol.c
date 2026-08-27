@@ -7,6 +7,8 @@
 #include <stdarg.h>
 #include <time.h>
 #include "../src/include/module_loader.h"
+#include "../src/include/leno_package.h"
+#include "../src/include/leno_types.h"
 
 // 创建 JSON 对象辅助函数
 JsonValue* json_object_new(void) {
@@ -223,6 +225,76 @@ char* lsp_handle_initialize(LspServer* server, int id, JsonValue* params) {
         server->root_path = lsp_uri_to_path(json_string_value(root_uri));
     }
     
+    // 获取 leno.exe 路径（通过 initializationOptions 传递）
+    // 用于定位内置模块（leno_module/），因为 LSP 进程与 leno.exe 不在同一目录
+    char* leno_exe_path = NULL;
+    JsonValue* init_options = json_object_get(params, "initializationOptions");
+    if (init_options && init_options->type == JSON_OBJECT) {
+        JsonValue* exe_path_val = json_object_get(init_options, "lenoExecutablePath");
+        if (exe_path_val && exe_path_val->type == JSON_STRING) {
+            const char* exe_str = json_string_value(exe_path_val);
+            if (exe_str && exe_str[0]) {
+                leno_exe_path = strdup(exe_str);
+                fprintf(stderr, "[LSP-INIT] leno.exe path: %s\n", leno_exe_path);
+                fflush(stderr);
+            }
+        }
+    }
+    if (!leno_exe_path) {
+        // Fallback: 尝试在 PATH 中查找 leno/leno.exe
+        // 这样即使 VS Code 扩展没有传递 initializationOptions，也能定位内置模块
+#ifdef _WIN32
+        const char* path_env = getenv("PATH");
+        const char* exe_suffix = ".exe";
+#else
+        const char* path_env = getenv("PATH");
+        const char* exe_suffix = "";
+#endif
+        if (path_env) {
+            char path_copy[MAX_PATH_LEN * 4];  // PATH 可能很长
+            strncpy(path_copy, path_env, sizeof(path_copy) - 1);
+            path_copy[sizeof(path_copy) - 1] = '\0';
+
+            char* dir = strtok(path_copy,
+#ifdef _WIN32
+                ";"
+#else
+                ":"
+#endif
+            );
+            while (dir && !leno_exe_path) {
+                char candidate[MAX_PATH_LEN];
+                snprintf(candidate, sizeof(candidate), "%s%cleno%s",
+                         dir,
+#ifdef _WIN32
+                         '\\',
+#else
+                         '/',
+#endif
+                         exe_suffix);
+                FILE* fp = fopen(candidate, "r");
+                if (fp) {
+                    fclose(fp);
+                    leno_exe_path = strdup(candidate);
+                    fprintf(stderr, "[LSP-INIT] Found leno.exe in PATH: %s\n", leno_exe_path);
+                    fflush(stderr);
+                }
+                dir = strtok(NULL,
+#ifdef _WIN32
+                    ";"
+#else
+                    ":"
+#endif
+                );
+            }
+        }
+        if (!leno_exe_path) {
+            fprintf(stderr, "[LSP-INIT] leno.exe not found in PATH or initializationOptions, "
+                            "builtin modules may not resolve\n");
+            fflush(stderr);
+        }
+    }
+    
     // 设置模块符号表缓存目录（与编译器共享 .lenocache/ 目录）
     // 这是 LSP 性能的关键：没有缓存目录，每次分析都要重新扫描所有导入的模块源文件
     if (server->root_path) {
@@ -240,6 +312,75 @@ char* lsp_handle_initialize(LspServer* server, int id, JsonValue* params) {
         fprintf(stderr, "[LSP-CACHE] WARNING: root_path is NULL, module cache disabled\n");
         fflush(stderr);
     }
+
+    // 设置模块搜索路径（与编译器 src/main.c 保持一致）
+    // 这是 LSP 正确解析 import 的关键：没有搜索路径，package_resolve_module_file
+    // 无法解析不带 .leno 后缀的模块名（如 import "SDL3" / import "LenoMusic"）
+    {
+        package_search_path_clear();
+
+        // 1. 项目根 lib/ 目录 + leno.toml 依赖
+        if (server->root_path) {
+            // 添加 <项目根>/lib/ 到搜索路径
+            char lib_path[MAX_PATH_LEN];
+            snprintf(lib_path, sizeof(lib_path), "%slib%c", server->root_path,
+#ifdef _WIN32
+                '\\'
+#else
+                '/'
+#endif
+            );
+            package_search_path_add(lib_path);
+
+            // 从 leno.toml 读取依赖，添加依赖包的 lib/ 到搜索路径
+            char toml_path[MAX_PATH_LEN];
+            snprintf(toml_path, sizeof(toml_path), "%sleno.toml", server->root_path);
+            PackageConfig* pkg_cfg = package_config_parse(toml_path);
+            if (pkg_cfg) {
+                for (int di = 0; di < pkg_cfg->dep_count; di++) {
+                    const char* dn = pkg_cfg->dependencies[di].name;
+                    if (!dn) continue;
+                    const char* cache = package_cache_dir();
+                    char dep_lib[MAX_PATH_LEN];
+                    snprintf(dep_lib, sizeof(dep_lib), "%s%s%clib%c",
+                             cache, dn,
+#ifdef _WIN32
+                             '\\',
+#else
+                             '/',
+#endif
+#ifdef _WIN32
+                             '\\'
+#else
+                             '/'
+#endif
+                    );
+                    package_search_path_add(dep_lib);
+                }
+                package_config_free(pkg_cfg);
+            }
+        }
+
+        // 2. 添加内置模块搜索路径（exe_dir/leno_module/<包名>/lib/）
+        //    内置模块优先于全局缓存，确保随 exe 分发的模块版本不被缓存覆盖
+        //    LSP 进程与 leno.exe 不在同一目录，需要用 leno.exe 路径定位内置模块
+        if (leno_exe_path) {
+            package_builtin_add_to_search_paths_from(leno_exe_path);
+        } else {
+            // fallback：尝试用当前进程路径（LSP 自身），大多数情况无效但不影响其他搜索路径
+            package_builtin_add_to_search_paths();
+        }
+
+        // 3. 添加全局缓存中所有已安装包的 lib/ 到搜索路径
+        //    这样 import "包名" 就能直接在缓存中查找（外部安装包）
+        package_cache_add_to_search_paths();
+
+        fprintf(stderr, "[LSP-PATH] search paths initialized: %d paths\n",
+                package_search_path_count());
+        fflush(stderr);
+    }
+    
+    if (leno_exe_path) free(leno_exe_path);
     
     // 构建服务器能力
     JsonValue* capabilities = json_object_new();

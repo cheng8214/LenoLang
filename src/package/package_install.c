@@ -216,6 +216,45 @@ void package_builtin_add_to_search_paths(void) {
     }
 }
 
+/* 内置模块搜索路径（从指定 exe 路径）: leno_exe_dir/leno_module/<包名>/lib/ */
+void package_builtin_add_to_search_paths_from(const char* leno_exe_path) {
+    if (!leno_exe_path || !leno_exe_path[0]) return;
+
+    /* 提取目录部分（去掉文件名） */
+    char exe_dir[MAX_PATH_LEN];
+    strncpy(exe_dir, leno_exe_path, MAX_PATH_LEN - 1);
+    exe_dir[MAX_PATH_LEN - 1] = '\0';
+
+    char* last_sep = strrchr(exe_dir, '\\');
+    if (!last_sep) last_sep = strrchr(exe_dir, '/');
+    if (last_sep) {
+        *(last_sep + 1) = '\0';
+    } else {
+        /* 没有路径分隔符，可能本身就是目录 */
+        size_t dlen = strlen(exe_dir);
+        if (dlen > 0 && exe_dir[dlen - 1] != '\\' && exe_dir[dlen - 1] != '/') {
+            if (dlen + 1 < (size_t)MAX_PATH_LEN) {
+                exe_dir[dlen] = PATH_SEP;
+                exe_dir[dlen + 1] = '\0';
+            }
+        }
+    }
+
+    if (exe_dir[0] == '\0') return;
+
+    /* 拼接 exe_dir + "leno_module/" */
+    size_t elen = strlen(exe_dir);
+    if (elen + 12 >= (size_t)MAX_PATH_LEN) return;
+    char builtin_dir[MAX_PATH_LEN];
+    snprintf(builtin_dir, sizeof(builtin_dir), "%sleno_module%c", exe_dir, PATH_SEP);
+
+    /* 检查内置模块目录存在 */
+    struct stat st;
+    if (stat(builtin_dir, &st) == 0 && (st.st_mode & S_IFDIR)) {
+        add_pkg_lib_search_paths(builtin_dir);
+    }
+}
+
 /* ============================================================================
  * 文件/目录操作工具
  * ============================================================================ */
