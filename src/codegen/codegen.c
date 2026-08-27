@@ -66,7 +66,9 @@ void codegen(CodeGen* gen, Ast* ast) {
     if (main_info.has_main) {
         emit_get_global_func(gen, main_info.main_index, ast->line);
         emit_call(gen, 0, ast->line);
-        emit_byte(gen, OP_POP, ast->line);
+        // main 的返回值作为进程退出码：用 OP_RETURN 结束顶层帧，
+        // 返回值会存入 vm.last_return_value，由 vm_get_exit_code() 读取
+        emit_byte(gen, OP_RETURN, ast->line);
     }
 }
 

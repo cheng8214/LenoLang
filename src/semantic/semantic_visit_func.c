@@ -340,6 +340,21 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
         }
     }
 
+    // 5.7 main 入口函数返回类型检查：返回值将作为进程退出码，只能是 int
+    //    与 codegen 的 find_main_function 保持一致：仅全局作用域的 main 是入口函数
+    int is_entry_main = (!is_struct_method && ast->u.func.name &&
+                         strcmp(ast->u.func.name, "main") == 0 &&
+                         s->current && s->current->parent == NULL);
+    if (is_entry_main && ast->u.func.return_type &&
+        ast->u.func.return_type->kind != TYPE_INFER &&
+        ast->u.func.return_type->kind != TYPE_INT) {
+        char msg[BUFFER_MEDIUM];
+        snprintf(msg, sizeof(msg),
+            "main 函数的返回值将作为进程退出码，只能返回 int，不能返回 %s",
+            type_kind_to_string(ast->u.func.return_type->kind));
+        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+    }
+
     // 6. 检查参数类型和返回类型中是否将 var 用作了类型参数
     for (int i = 0; i < ast->u.func.pcnt; i++) {
         if (ast->u.func.param_types[i] && ast->u.func.param_types[i]->kind != TYPE_INFER) {
@@ -553,6 +568,8 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
     
     // 保存状态
     int prev_local_index = s->local_index;
+    int prev_in_main_func = s->in_main_func;
+    s->in_main_func = is_entry_main;
 
     // 将当前函数压入栈（所有函数都入栈，用于建立upvalue链）
     s->func_stack[s->func_stack_depth++] = ast;
@@ -640,4 +657,5 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
     s->func_stack_depth--;
     s->current_func = (s->func_stack_depth > 0) ? s->func_stack[s->func_stack_depth - 1] : NULL;
     s->local_index = prev_local_index;
+    s->in_main_func = prev_in_main_func;
 }

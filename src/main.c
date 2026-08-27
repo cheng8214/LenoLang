@@ -246,7 +246,8 @@ int lenolang_run(const char* source) {
                     return -1;
                 }
                 warning_print_all();
-                return ret;
+                // main 的返回值作为进程退出码
+                return vm_get_exit_code();
             }
             // 反序列化失败，回退到原路径（需重新编译，因为编译器资源已释放）
             // 这种情况理论上不会发生，但做兜底保护
@@ -281,7 +282,8 @@ int lenolang_run(const char* source) {
     }
 
     warning_print_all();
-    return ret;
+    // main 的返回值作为进程退出码
+    return vm_get_exit_code();
 
 fail:
     if (debugMode) {
@@ -345,7 +347,8 @@ int lenolang_run_binary(const char* path) {
     }
 
     warning_print_all();
-    return ret;
+    // main 的返回值作为进程退出码
+    return vm_get_exit_code();
 }
 
 // 编译源代码到二进制文件

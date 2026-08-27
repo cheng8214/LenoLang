@@ -56,6 +56,7 @@ typedef struct {
     int is_lsp_mode;    // 是否为 LSP 模式（保留所有作用域供符号查询）
     int in_clib;        // 是否在 clib/cfunc 声明上下文中（C 布局类型允许）
     int has_module_load_failure; // 是否有模块加载失败（用于抑制下游级联 any 错误）
+    int in_main_func;   // 是否正在分析入口函数 main 的函数体（返回值必须为 int，作为进程退出码）
 } Semantic;
 
 // 函数表 API

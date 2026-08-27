@@ -245,11 +245,29 @@ int vm_run_chunk(Chunk* chunk) {
 
     // 执行 chunk
     int result = vm_run();
-    
+
     // 恢复状态
     vm.frame_cnt = prev_frame_cnt;
     vm.chunk = prev_chunk;
     vm.ip = prev_ip;
-    
+
     return result;
+}
+
+// ============================================================================
+// 进程退出码
+// ============================================================================
+
+// 读取 main 函数的返回值作为进程退出码
+// 由顶层帧的 OP_RETURN 存入 vm.last_return_value：
+//   - int   → 直接作为退出码
+//   - null  → 0（main 无返回值/隐式返回）
+//   - 其他类型（any 兜底路径）→ 0，不作为错误
+int vm_get_exit_code(void) {
+    extern VM vm;
+    Value v = vm.last_return_value;
+    if (val_is_int(v)) {
+        return (int)val_as_int(v);
+    }
+    return 0;
 }

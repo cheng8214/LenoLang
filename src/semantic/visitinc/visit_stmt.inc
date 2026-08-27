@@ -5,9 +5,24 @@
                 TypeInfo* return_type_info = infer_expr_type(s, ast->u.ret);
                 if (return_type_info) {
                     TypeInfo* expected_type = s->current_func->u.func.return_type;
-                    
+
+                    // main 未声明返回类型时，返回值作为进程退出码，按 int 检查
+                    // （声明为 int 时走下方通用检查；声明为其他类型已在 visit_func_impl 报错）
+                    int main_exit_check = s->in_main_func &&
+                        (!expected_type || expected_type->kind == TYPE_INFER);
+
                     // TYPE_INFER 表示函数声明时未指定返回类型，保持为 any（不推断）
-                    if (!expected_type || expected_type->kind == TYPE_INFER) {
+                    if (main_exit_check) {
+                        if (return_type_info->kind != TYPE_ANY &&
+                            return_type_info->kind != TYPE_INFER &&
+                            return_type_info->kind != TYPE_INT) {
+                            char msg[BUFFER_MEDIUM];
+                            snprintf(msg, sizeof(msg),
+                                "main 函数的返回值将作为进程退出码，只能返回 int，实际 %s",
+                                type_kind_to_string(return_type_info->kind));
+                            error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
+                        }
+                    } else if (!expected_type || expected_type->kind == TYPE_INFER) {
                         // 省略返回类型的函数返回 any，不进行推断
                         // 保持 TYPE_INFER（在类型系统中等同于 any）
                     } else if (!type_is_compatible(expected_type, return_type_info)) {
@@ -31,6 +46,14 @@
         case AST_RETURN_MULTI: {
             // 多值返回: return a, b, c
             int count = ast->u.ret_multi.count;
+
+            // main 的返回值作为进程退出码，不支持多值返回
+            if (s->in_main_func) {
+                char msg[BUFFER_MEDIUM];
+                snprintf(msg, sizeof(msg),
+                    "main 函数的返回值将作为进程退出码，不支持多值返回");
+                error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
+            }
             
             // 访问每个返回值表达式
             for (int i = 0; i < count; i++) {

@@ -131,6 +131,8 @@ static int run_lenb_from_memory(unsigned char* data, size_t size) {
     chunk_free(&chunk);
     // scope 已被 vm_init_with_scope 设为 vm.global_scope，由 gc_free_all 释放
     gc_free_all();
+    // main 的返回值作为进程退出码
+    if (ret == 0) ret = vm_get_exit_code();
     return ret;
 }
 
@@ -167,6 +169,8 @@ int lenolang_run_lenb(const char* filename) {
     int ret = vm_run_chunk(&chunk);
     chunk_free(&chunk);
     gc_free_all();
+    // main 的返回值作为进程退出码
+    if (ret == 0) ret = vm_get_exit_code();
     return ret;
 }
 

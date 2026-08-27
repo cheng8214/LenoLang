@@ -478,6 +478,8 @@ void vm_load(Chunk* c);
 int vm_run(void);
 int vm_run_chunk(Chunk* chunk);
 int vm_run_with_vm(VM* vm_ptr);
+// 读取 main 函数返回值作为进程退出码（int → 退出码，其他 → 0）
+int vm_get_exit_code(void);
 void vm_reset_stack(void);
 void vm_free(void);
 int vm_call_value(Value callee, int arg_count, int line);
