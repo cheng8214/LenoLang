@@ -45,8 +45,9 @@ OPCODE(OP_ARRAY) {
                 }
             }
             if (elem_kind != TYPE_ANY) {
-                TypeInfo* elem_type = type_new(elem_kind);
-                arr->type_info = type_array(elem_type);
+                // 使用驻留类型缓存（Array[int] 等），避免每个数组字面量
+                // 都 calloc 两个 TypeInfo 导致内存线性膨胀
+                arr->type_info = type_get_array_cached(elem_kind);
             }
         }
     }

@@ -212,6 +212,7 @@ typedef enum {
     TYPE_SOCKET,                // Socket 类型
     TYPE_GENERIC_PARAM,         // 泛型类型参数（如 T、U）
     TYPE_MULTI_RET,             // 多返回值类型 [T1, T2, ...] 或 {"k": T1, ...}
+    TYPE_KIND_COUNT,            // TypeKind 枚举数量（用于数组边界检查）
 } TypeKind;
 
 typedef struct TypeInfo TypeInfo;
@@ -236,11 +237,15 @@ struct TypeInfo {
     int nullable;            // 可空类型标记：1=Type?，0=Type
     // 位置信息（用于错误报告）
     int line;                // 类型在源代码中的行号（1-based），0 表示未知
-    int column;              // 类型在源代码中的列号（1-based），0 表示未知
+    int column;               // 类型在源代码中的列号（1-based），0 表示未知
+    // 驻留标记：1=运行时共享的驻留类型（如 Array[int]），不可被 type_free 释放
+    int interned;
 };
 
 // 类型系统 API
 TypeInfo* type_new(TypeKind kind);
+// 获取驻留的数组类型 Array[elem_kind]（每个线程缓存一份，重复调用返回同一实例）
+TypeInfo* type_get_array_cached(TypeKind elem_kind);
 TypeInfo* type_array(TypeInfo* element_type);
 TypeInfo* type_dict(TypeInfo* key_type, TypeInfo* value_type);
 TypeInfo* type_ptr_generic(TypeInfo* element_type);

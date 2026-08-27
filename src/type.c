@@ -31,6 +31,31 @@ TypeInfo* type_array(TypeInfo* element_type) {
     return type;
 }
 
+// 获取驻留的数组类型 Array[elem_kind]：
+// OP_ARRAY 每个数组字面量都要设置 type_info，若每次都 type_new+type_array
+// 会产生 2 次裸 calloc（不走 GC），导致内存随数组字面量数量线性膨胀（约 3 倍）。
+// 这里按元素 TypeKind 驻留缓存，同一线程内重复使用同一实例，零分配。
+// GC 是线程局部的，缓存也用 THREAD_LOCAL 隔离，避免跨线程竞争。
+TypeInfo* type_get_array_cached(TypeKind elem_kind) {
+    // 仅缓存 OP_ARRAY 会产生的基础元素类型
+    if (elem_kind < 0 || elem_kind >= TYPE_KIND_COUNT) return NULL;
+    static THREAD_LOCAL TypeInfo* cache[TYPE_KIND_COUNT];
+    if (!cache[elem_kind]) {
+        TypeInfo* elem_type = type_new(elem_kind);
+        if (!elem_type) return NULL;
+        TypeInfo* arr_type = type_array(elem_type);
+        if (!arr_type) {
+            type_free(elem_type);
+            return NULL;
+        }
+        // 驻留类型标记为不可释放（type_free 跳过），生命周期与线程相同
+        elem_type->interned = 1;
+        arr_type->interned = 1;
+        cache[elem_kind] = arr_type;
+    }
+    return cache[elem_kind];
+}
+
 // 创建字典类型
 TypeInfo* type_dict(TypeInfo* key_type, TypeInfo* value_type) {
     TypeInfo* type = type_new(TYPE_DICT);
@@ -109,6 +134,8 @@ TypeInfo* type_multi_ret(TypeInfo** ret_types, int count) {
 // 释放类型信息
 void type_free(TypeInfo* type) {
     if (!type) return;
+    // 驻留类型（如 OP_ARRAY 缓存的 Array[int]）被多个对象共享，不可释放
+    if (type->interned) return;
     type_free(type->element_type);
     type_free(type->key_type);
     type_free(type->value_type);
