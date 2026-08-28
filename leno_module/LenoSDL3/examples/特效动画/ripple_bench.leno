@@ -1,0 +1,339 @@
+// ripple_bench.leno — 排除法性能定位测试
+//
+// 通过编译期配置逐项开关，定位 Leno 到底慢在哪里。
+// 每项测试跑 15 秒，输出 FPS。
+//
+// 运行：leno ripple_bench.leno
+
+import "../../lib/SDL3.leno" as SDL3
+use SDL3.(SDL_SurfaceInfo)
+import "../../lib/sdl_core.leno" as core
+use core.(sdl3, SDL_FRect, lib)
+import ffi
+import maths
+import rands
+
+// ==================== 配置开关 ====================
+const bool ENABLE_RENDER    = true   // 是否调用 renderRipple
+const bool ENABLE_SDL_DRAW  = true   // 是否调用 SDL 绘制
+const bool ENABLE_RIPPLE_FFI_COPY  = true   // renderRipple 中是否做 ffi.copy4
+const bool ENABLE_RIPPLE_RSQRT    = true   // renderRipple 中是否做 maths.rsqrt
+const bool ENABLE_EVENT_LOOP = true  // 是否处理事件
+const bool ENABLE_AUTO_RIPPLE = true // 是否自动产生波纹
+const bool ENABLE_MEMCPY = true       // renderRipple 开头是否 memcpy
+
+// ==================== 常量 ====================
+const int MAX_RIPPLES = 6
+const float BAND_WIDTH = 16.0
+const int MAX_RIP_W = 384
+
+const int EVENT_QUIT = 0x100
+const int EVENT_WINDOW_CLOSE = 0x210
+const int EVENT_KEY_DOWN = 0x300
+const int EVENT_MOUSE_DOWN = 0x401
+const int SCANCODE_ESCAPE = 41
+
+struct Ripple {
+    float x; float y
+    float radius
+    float maxRadius
+    float speed
+    float life
+    float amplitude
+}
+
+Ptr[u8] srcPix = null
+Ptr[u8] dstPix = null
+int bufW = 0; int bufH = 0; int bufPitch = 0
+int origW = 0; int origH = 0
+float dispScale = 1.0
+float dispX = 0.0; float dispY = 0.0
+float dispImgW = 0.0; float dispImgH = 0.0
+
+Array[Ripple] ripples = []
+
+func addRipple(float x, float y) {
+    if ripples.len() >= MAX_RIPPLES { ripples.remove(0) }
+    ripples.add(new Ripple(
+        x = x, y = y,
+        radius = 0.0,
+        maxRadius = rands.floats(80.0, 150.0),
+        speed = rands.floats(2.0, 3.0),
+        life = 1.0,
+        amplitude = rands.floats(8.0, 16.0)
+    ))
+}
+
+// ==================== 渲染波纹（可逐项禁用）====================
+func renderRipple() {
+    if ENABLE_MEMCPY {
+        ffi.memcpy(dstPix, srcPix, bufW * bufH * 4)
+    }
+    if ripples.len() == 0 { return }
+
+    int w = bufW; int h = bufH; int pitch = bufPitch
+    float bw = BAND_WIDTH
+    float invBw = 1.0 / bw
+
+    for ripples.len() to ri {
+        Ripple rp = ripples[ri]
+        float innerR = rp.radius - bw
+        float outerR = rp.radius + bw
+        if innerR < 0.0 { innerR = 0.0 }
+
+        int x0 = _int(rp.x - outerR)
+        int y0 = _int(rp.y - outerR)
+        int x1 = _int(rp.x + outerR) + 1
+        int y1 = _int(rp.y + outerR) + 1
+        if x0 < 0 { x0 = 0 }
+        if y0 < 0 { y0 = 0 }
+        if x1 > w { x1 = w }
+        if y1 > h { y1 = h }
+
+        float outerR2 = outerR * outerR
+        float innerR2 = innerR * innerR
+        float lifeAmp = rp.amplitude * rp.life
+
+        for y0 : y1 - 1 to y {
+            float fy = _float(y)
+            float dy = fy - rp.y
+            float dy2 = dy * dy
+            int rowBase = y * pitch
+            float rpx = rp.x
+            float fwm1 = w - 1
+            float fhm1 = h - 1
+
+            for x0 : x1 - 1 to x {
+                float fx = _float(x)
+                float dx = fx - rpx
+                float dist2 = dx * dx + dy2
+
+                if dist2 > outerR2 { continue }
+                if dist2 < innerR2 { continue }
+                if dist2 < 0.0001 { continue }
+
+                float invDist = 1.0
+                float dist = dist2
+                if ENABLE_RIPPLE_RSQRT {
+                    invDist = maths.rsqrt(dist2)
+                    dist = dist2 * invDist
+                }
+
+                // 内联 clamp
+                float diff = (dist - rp.radius) * invBw
+                if diff < -1.0 { diff = -1.0 }
+                if diff > 1.0 { diff = 1.0 }
+
+                float adiff = diff
+                if adiff < 0.0 { adiff = -adiff }
+                float tri = 1.0 - adiff
+
+                float diff2 = diff * diff
+                float wave = diff * (1.0 - diff2 * 0.33) * 3.14
+                float amp = lifeAmp * tri * wave
+
+                if dist > 0.5 {
+                    float sxf = fx + dx * invDist * amp
+                    if sxf < 0.0 { sxf = 0.0 }
+                    if sxf > fwm1 { sxf = fwm1 }
+                    int sx = _int(sxf)
+
+                    float syf = fy + dy * invDist * amp
+                    if syf < 0.0 { syf = 0.0 }
+                    if syf > fhm1 { syf = fhm1 }
+                    int sy = _int(syf)
+
+                    if ENABLE_RIPPLE_FFI_COPY {
+                        ffi.copy4(dstPix, rowBase + x * 4, srcPix, sy * pitch + sx * 4)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ==================== 主函数 ====================
+main() {
+    SDL3.initVideo()
+    sdl3 l = lib()
+    if l == null { print("SDL3 加载失败"); return }
+
+    string imagePath = "d:\\sp.png"
+    Ptr[u8] surface = SDL3.loadImage(imagePath)
+    if surface == null { print("无法加载图片"); return }
+
+    SDL_SurfaceInfo info = SDL_SurfaceInfo.from_ptr(surface)
+    origW = info.w; origH = info.h
+    int surfPitch = ffi.read_int(surface, 16)
+    Ptr[u8] surfPixels = ffi.read_ptr(surface, 24)
+    int surfFormat = info.format
+
+    float downgradeScale = 1.0
+    if origW > MAX_RIP_W { downgradeScale = _float(MAX_RIP_W) / _float(origW) }
+    bufW = _int(_float(origW) * downgradeScale)
+    bufH = _int(_float(origH) * downgradeScale)
+    if bufW < 1 { bufW = 1 }
+    if bufH < 1 { bufH = 1 }
+    bufPitch = bufW * 4
+    int pixSize = bufW * bufH * 4
+    print("处理分辨率: " + bufW + " x " + bufH)
+
+    srcPix = ffi.malloc(pixSize)
+    dstPix = ffi.malloc(pixSize)
+
+    // 像素格式转换
+    int bpp = 4
+    if surfPitch == origW * 3 { bpp = 3 }
+    for 0 : bufH - 1 to dy {
+        int srcY = _int(_float(dy) / downgradeScale)
+        if srcY >= origH { srcY = origH - 1 }
+        int srcRow = srcY * surfPitch
+        int dstRow = dy * bufPitch
+        for 0 : bufW - 1 to dx {
+            int srcX = _int(_float(dx) / downgradeScale)
+            if srcX >= origW { srcX = origW - 1 }
+            int si = srcRow + srcX * bpp
+            int di = dstRow + dx * 4
+            int r; int g; int b; int a = 255
+            if bpp == 4 {
+                if surfFormat == 376840196 {
+                    b = ffi.read_byte(surfPixels, si)
+                    g = ffi.read_byte(surfPixels, si + 1)
+                    r = ffi.read_byte(surfPixels, si + 2)
+                } else if surfFormat == 372645892 {
+                    b = ffi.read_byte(surfPixels, si)
+                    g = ffi.read_byte(surfPixels, si + 1)
+                    r = ffi.read_byte(surfPixels, si + 2)
+                    a = ffi.read_byte(surfPixels, si + 3)
+                } else {
+                    a = ffi.read_byte(surfPixels, si)
+                    b = ffi.read_byte(surfPixels, si + 1)
+                    g = ffi.read_byte(surfPixels, si + 2)
+                    r = ffi.read_byte(surfPixels, si + 3)
+                }
+            } else {
+                r = ffi.read_byte(surfPixels, si)
+                g = ffi.read_byte(surfPixels, si + 1)
+                b = ffi.read_byte(surfPixels, si + 2)
+            }
+            ffi.write_int(srcPix, di, (r << 24) | (g << 16) | (b << 8) | a)
+        }
+    }
+    ffi.memcpy(dstPix, srcPix, pixSize)
+    l.SDL_DestroySurface(surface)
+
+    int winW = 900; int winH = 650
+    float scaleX = _float(winW) / _float(bufW)
+    float scaleY = _float(winH) / _float(bufH)
+    dispScale = if scaleX < scaleY then scaleX else scaleY
+    dispImgW = _float(bufW) * dispScale
+    dispImgH = _float(bufH) * dispScale
+    dispX = (_float(winW) - dispImgW) * 0.5
+    dispY = (_float(winH) - dispImgH) * 0.5
+
+    Ptr[u8] win = l.SDL_CreateWindow("Ripple Bench", winW, winH, 0x20)
+    Ptr[u8] ren = l.SDL_CreateRenderer(win, null)
+    l.SDL_SetRenderVSync(ren, 0)
+    Ptr[u8] tex = l.SDL_CreateTexture(ren, 373694468, 1, bufW, bufH)
+
+    Ptr[u8] evBuf = ffi.malloc(128)
+    SDL_FRect dstRect = SDL_FRect.malloc()
+    dstRect.x = dispX; dstRect.y = dispY; dstRect.w = dispImgW; dstRect.h = dispImgH
+
+    // 打印当前配置
+    print("===== 排除法配置 =====")
+    print("ENABLE_RENDER=" + ENABLE_RENDER + " ENABLE_SDL_DRAW=" + ENABLE_SDL_DRAW)
+    print("ENABLE_RIPPLE_FFI_COPY=" + ENABLE_RIPPLE_FFI_COPY + " ENABLE_RIPPLE_RSQRT=" + ENABLE_RIPPLE_RSQRT)
+    print("ENABLE_EVENT_LOOP=" + ENABLE_EVENT_LOOP + " ENABLE_AUTO_RIPPLE=" + ENABLE_AUTO_RIPPLE)
+    print("ENABLE_MEMCPY=" + ENABLE_MEMCPY)
+    print("======================")
+
+    bool running = true
+    int lastAuto = 0
+    int testDuration = 15000
+    int perfStart = l.SDL_GetTicks()
+    int totalFrames = 0
+    int totalMs = 0
+    int minFrameMs = 9999
+    int maxFrameMs = 0
+
+    addRipple(_float(bufW) * 0.3, _float(bufH) * 0.4)
+    addRipple(_float(bufW) * 0.7, _float(bufH) * 0.6)
+
+    while running {
+        int t0 = l.SDL_GetTicks()
+        if t0 - perfStart >= testDuration { running = false }
+
+        if ENABLE_EVENT_LOOP {
+            while l.SDL_PollEvent(evBuf) {
+                int et = ffi.read_int(evBuf, 0)
+                if et == EVENT_QUIT or et == EVENT_WINDOW_CLOSE { running = false }
+                if et == EVENT_KEY_DOWN {
+                    if ffi.read_int(evBuf, 24) == SCANCODE_ESCAPE { running = false }
+                }
+                if et == EVENT_MOUSE_DOWN {
+                    if ffi.read_byte(evBuf, 24) == 1 {
+                        float mx = ffi.read_float(evBuf, 28)
+                        float my = ffi.read_float(evBuf, 32)
+                        float bx = (mx - dispX) / dispScale
+                        float by = (my - dispY) / dispScale
+                        if bx >= 0.0 and bx < _float(bufW) and by >= 0.0 and by < _float(bufH) {
+                            addRipple(bx, by)
+                        }
+                    }
+                }
+            }
+        }
+
+        if ENABLE_AUTO_RIPPLE {
+            if t0 - lastAuto > 2500 {
+                addRipple(rands.floats(20.0, _float(bufW) - 20.0), rands.floats(20.0, _float(bufH) - 20.0))
+                lastAuto = t0
+            }
+        }
+
+        // 更新波纹
+        int rcount = ripples.len()
+        for rcount - 1 : 0 : -1 to i {
+            Ripple rp = ripples[i]
+            rp.radius = rp.radius + rp.speed
+            rp.life = 1.0 - rp.radius / rp.maxRadius
+            if rp.life <= 0.0 { ripples.remove(i) }
+        }
+
+        if ENABLE_RENDER {
+            renderRipple()
+        }
+
+        if ENABLE_SDL_DRAW {
+            l.SDL_SetRenderDrawColor(ren, 0x0A, 0x0F, 0x1E, 0xFF)
+            l.SDL_RenderClear(ren)
+            l.SDL_UpdateTexture(tex, null, dstPix, bufPitch)
+            l.SDL_RenderTexture(ren, tex, null, dstRect.to_ptr())
+            l.SDL_RenderPresent(ren)
+        }
+
+        int elapsed = l.SDL_GetTicks() - t0
+        totalMs = totalMs + elapsed
+        if elapsed < minFrameMs { minFrameMs = elapsed }
+        if elapsed > maxFrameMs { maxFrameMs = elapsed }
+        totalFrames = totalFrames + 1
+    }
+
+    int actualDuration = l.SDL_GetTicks() - perfStart
+    float avgFps = _float(totalFrames) * 1000.0 / _float(actualDuration)
+    float avgFrameMs = _float(totalMs) / _float(totalFrames)
+    print("\n===== 性能结果 =====")
+    print("运行: " + actualDuration + " ms  帧数: " + totalFrames)
+    print("平均 FPS: " + avgFps + "  每帧: " + avgFrameMs + " ms")
+    print("最低: " + minFrameMs + " ms  最高: " + maxFrameMs + " ms")
+    print("====================")
+
+    ffi.free(evBuf)
+    dstRect.free()
+    l.SDL_DestroyTexture(tex)
+    ffi.free(srcPix)
+    ffi.free(dstPix)
+    l.SDL_DestroyRenderer(ren)
+    l.SDL_DestroyWindow(win)
+}

@@ -1283,6 +1283,44 @@ true < false      // ❌ 编译错误：bool 类型不能比较大小
 "abc" < "def"     // ✅ 字典序比较
 ```
 
+### 隐式类型转换规则
+
+Leno 允许部分类型之间的**隐式转换**，规则如下：
+
+| 转换方向 | 允许 | 说明 |
+|---------|:---:|------|
+| `int` → `float` | ✅ | 自动类型提升，无精度损失 |
+| `int` ↔ `bigint` | ✅ | int48 与 BigInt 双向兼容 |
+| `bigint` → `float` | ✅ | 自动提升 |
+| `bool` → `int` | ✅ | `true` → `1`，`false` → `0` |
+| `bool` → `float` | ✅ | `true` → `1.0`，`false` → `0.0` |
+| `bool` → `bigint` | ✅ | `true` → `1`，`false` → `0` |
+| `float` → `int` | ❌ | 需用 `_int()` 显式转换（截断小数） |
+| `int` → `bool` | ❌ | 需用 `_bool()` 显式转换 |
+| `string` → `int`/`float` | ❌ | 需用 `_int()` / `_float()` 显式转换 |
+
+> **⚠️ bool 不能直接参与算术运算**
+>
+> bool 虽然可以隐式转为 int，但**不能直接参与算术运算**（`+`、`-`、`*`、`/` 等）。
+> 如需运算，先赋值给 int 变量或用 `as int` / `_int()` 转换：
+>
+> ```leno
+> true + 1           // ❌ 编译错误：bool 不能参与算术运算
+> int a = true       // ✅ 隐式转换，a = 1
+> a + 1              // ✅ 结果为 2
+> (true as int) + 1  // ✅ 显式转换后运算，结果为 2
+> _int(true) + 1     // ✅ 同上
+> ```
+>
+> **适用场景**：bool 隐式转 int 常用于赋值、传参、数组/字典初始化等场景：
+>
+> ```leno
+> int count = true          // count = 1
+> float ratio = false       // ratio = 0.0
+> Array[int] flags = [true, false, true]  // [1, 0, 1]
+> Dict[string, int] m = {"ok": true, "fail": false}  // {"ok": 1, "fail": 0}
+> ```
+
 ### 成员检查运算符 (in / not in)
 
 `in` 和 `not in` 用于检查成员关系：

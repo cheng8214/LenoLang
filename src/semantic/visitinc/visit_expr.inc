@@ -804,10 +804,13 @@
                                             if (expected_param_type != TYPE_ANY && arg_type && arg_type->kind != TYPE_ANY) {
                                                 if (arg_type->kind != expected_param_type) {
                                                     // 允许 int -> float, bigint -> int, bigint -> float 的隐式转换
+                                                    // 以及 bool -> int/float/bigint 的隐式转换
                                                     bool type_compatible = false;
                                                     if ((expected_param_type == TYPE_FLOAT && arg_type->kind == TYPE_INT) ||
                                                         (expected_param_type == TYPE_INT && arg_type->kind == TYPE_BIGINT) ||
-                                                        (expected_param_type == TYPE_FLOAT && arg_type->kind == TYPE_BIGINT)) {
+                                                        (expected_param_type == TYPE_FLOAT && arg_type->kind == TYPE_BIGINT) ||
+                                                        ((expected_param_type == TYPE_INT || expected_param_type == TYPE_FLOAT || expected_param_type == TYPE_BIGINT) &&
+                                                         arg_type->kind == TYPE_BOOL)) {
                                                         type_compatible = true;
                                                     }
                                                     // 允许 Ptr[T] <-> Ptr 之间的隐式转换
@@ -917,11 +920,13 @@
                                                 } else if (expected_param_type != TYPE_ANY) {
                                                     // 只有 kind 信息，进行简单类型比较
                                                     if (arg_type->kind != expected_param_type) {
-                                                        // 允许 int -> float, bigint -> int, bigint -> float 的隐式转换
+                                                        // 允许 int -> float, bigint -> int, bigint -> float, bool -> int/float/bigint 的隐式转换
                                                         bool type_compatible = false;
                                                         if ((expected_param_type == TYPE_FLOAT && arg_type->kind == TYPE_INT) ||
                                                             (expected_param_type == TYPE_INT && arg_type->kind == TYPE_BIGINT) ||
-                                                            (expected_param_type == TYPE_FLOAT && arg_type->kind == TYPE_BIGINT)) {
+                                                            (expected_param_type == TYPE_FLOAT && arg_type->kind == TYPE_BIGINT) ||
+                                                            ((expected_param_type == TYPE_INT || expected_param_type == TYPE_FLOAT || expected_param_type == TYPE_BIGINT) &&
+                                                             arg_type->kind == TYPE_BOOL)) {
                                                             type_compatible = true;
                                                         }
                                                         // 允许 Ptr[T] <-> Ptr 之间的隐式转换
@@ -1318,11 +1323,13 @@
                                     TypeInfo* arg_type = infer_expr_type(s, arg);
                                     if (arg_type && arg_type->kind != TYPE_ANY) {
                                         if (arg_type->kind != expected_param_type) {
-                                            // 允许 int -> float, bigint -> int, bigint -> float 的隐式转换
+                                            // 允许 int -> float, bigint -> int, bigint -> float, bool -> int/float/bigint 的隐式转换
                                             bool type_compatible = false;
                                             if ((expected_param_type == TYPE_FLOAT && arg_type->kind == TYPE_INT) ||
                                                 (expected_param_type == TYPE_INT && arg_type->kind == TYPE_BIGINT) ||
-                                                (expected_param_type == TYPE_FLOAT && arg_type->kind == TYPE_BIGINT)) {
+                                                (expected_param_type == TYPE_FLOAT && arg_type->kind == TYPE_BIGINT) ||
+                                                ((expected_param_type == TYPE_INT || expected_param_type == TYPE_FLOAT || expected_param_type == TYPE_BIGINT) &&
+                                                 arg_type->kind == TYPE_BOOL)) {
                                                 type_compatible = true;
                                             }
                                             // 允许 Ptr[T] <-> Ptr 之间的隐式转换

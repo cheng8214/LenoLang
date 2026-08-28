@@ -47,6 +47,11 @@ OPCODE(OP_CAST_FLOAT) {
         vm_stack_push(&vm, val_float(val_as_num(a)));
         DISPATCH;
     }
+    // bool 转 float（true→1.0, false→0.0）
+    if (val_is_bool(a)) {
+        vm_stack_push(&vm, val_float(val_as_bool(a) ? 1.0 : 0.0));
+        DISPATCH;
+    }
     // BigInt 转 float
     if (val_is_bigint(a)) {
         double val = bigint_to_double(val_as_bigint(a));
@@ -79,6 +84,9 @@ OPCODE(OP_CAST_INT) {
         }
     } else if (val_is_num(a)) {
         vm_stack_push(&vm, val_int((int64_t)val_as_num(a)));
+    } else if (val_is_bool(a)) {
+        // bool 转 int（true→1, false→0）
+        vm_stack_push(&vm, val_int(val_as_bool(a) ? 1 : 0));
     } else if (val_is_null(a)) {
         vm_stack_push(&vm, a);
     } else {

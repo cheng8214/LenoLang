@@ -1758,6 +1758,25 @@ static Value ffi_write_int_func(int argc, Value* args) {
     return val_null();
 }
 
+/* ffi.copy4(dst_ptr, dst_off, src_ptr, src_off) - 高速 4 字节拷贝
+ * 一次调用完成 read+write，等价于 write_int(dst, dst_off, read_int(src, src_off))
+ * 用于像素密集型场景，减少一半 module call 次数
+ */
+static Value ffi_copy4_func(int argc, Value* args) {
+    (void)argc;
+    ObjFFIPointer* dst = val_as_ffi_ptr(args[0]);
+    int dst_off = val_as_int(args[1]);
+    ObjFFIPointer* src = val_as_ffi_ptr(args[2]);
+    int src_off = val_as_int(args[3]);
+    CHECK_NULL_PTR(dst);
+    CHECK_NULL_PTR(src);
+    CHECK_BOUNDS(dst, dst_off, 4);
+    CHECK_BOUNDS(src, src_off, 4);
+    /* 直接 memcpy 4 字节，一次调用完成读写 */
+    memcpy((char*)dst->ptr + dst_off, (char*)src->ptr + src_off, 4);
+    return val_null();
+}
+
 /* ffi.write_uint(ptr, off, val) - 写入 uint32
  * 支持 int 和 bigint 输入（如 0x80000000 等超过 2^31 的值）
  */
@@ -3284,6 +3303,11 @@ void ffi_init_module(void) {
     native_register_module_method("ffi", "write_int16",  ffi_write_int16_func,  3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, write_byte_params);
     native_register_module_method("ffi", "write_uint16", ffi_write_uint16_func, 3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, write_byte_params);
     native_register_module_method("ffi", "write_int",    ffi_write_int_func,    3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, write_byte_params);
+
+    /* ===== 高速像素拷贝 ===== */
+    TypeKind copy4_params[] = {TYPE_PTR, TYPE_INT, TYPE_PTR, TYPE_INT};  // dst, dst_off, src, src_off
+    native_register_module_method("ffi", "copy4",      ffi_copy4_func,       4, -1, -1, TYPE_NULL, TYPE_UNKNOWN, copy4_params);
+
     native_register_module_method("ffi", "write_uint",   ffi_write_uint_func,   3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, write_byte_params);
     native_register_module_method("ffi", "write_int64",  ffi_write_int64_func,  3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, write_byte_params);
     native_register_module_method("ffi", "write_uint64", ffi_write_uint64_func, 3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, write_byte_params);

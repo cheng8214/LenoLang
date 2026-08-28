@@ -369,7 +369,12 @@ const char* get_type_conversion_hint(TypeKind expected, TypeKind actual) {
     if (actual == TYPE_FLOAT && expected == TYPE_INT) {
         return "提示：float 转 int 会截断小数部分，使用 _int(value) 显式转换";
     }
-    
+
+    // bool 转 int/float（自动提升，但这里报错说明可能需要显式处理）
+    if (actual == TYPE_BOOL && (expected == TYPE_INT || expected == TYPE_FLOAT || expected == TYPE_BIGINT)) {
+        return "提示：bool 可以自动升级为 int/float，检查是否有其他类型问题";
+    }
+
     // int 转 float（自动升级，但这里报错说明可能需要显式处理）
     if (actual == TYPE_INT && expected == TYPE_FLOAT) {
         return "提示：int 可以自动升级为 float，检查是否有其他类型问题";
@@ -485,12 +490,18 @@ int type_utils_check_array_index_assignment(TypeInfo* obj_type, TypeInfo* value_
     if (value_type->kind == elem_type->kind) {
         return 1;  // 类型相同，允许
     }
-    
+
     // int 可以隐式转为 float，但 float 不能转为 int
     if (elem_type->kind == TYPE_FLOAT && value_type->kind == TYPE_INT) {
         return 1;  // int -> float 允许
     }
-    
+
+    // bool 可以隐式转为 int/float/bigint
+    if ((elem_type->kind == TYPE_INT || elem_type->kind == TYPE_FLOAT || elem_type->kind == TYPE_BIGINT) &&
+        value_type->kind == TYPE_BOOL) {
+        return 1;
+    }
+
     // 类型不兼容，报告错误
     char msg[BUFFER_MEDIUM];
     format_detailed_type_error(msg, sizeof(msg),
@@ -558,7 +569,13 @@ int type_utils_check_dict_index_assignment(Symbol* dict_sym, TypeInfo* assign_ty
     if (value_type->kind == TYPE_FLOAT && assign_type->kind == TYPE_INT) {
         return 1;  // int -> float 允许
     }
-    
+
+    // bool 可以隐式转为 int/float/bigint
+    if ((value_type->kind == TYPE_INT || value_type->kind == TYPE_FLOAT || value_type->kind == TYPE_BIGINT) &&
+        assign_type->kind == TYPE_BOOL) {
+        return 1;
+    }
+
     // 类型不兼容，报告错误
     char msg[BUFFER_MEDIUM];
     format_detailed_type_error(msg, sizeof(msg),

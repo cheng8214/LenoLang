@@ -835,6 +835,22 @@ int type_is_compatible(TypeInfo* target, TypeInfo* source) {
         return 1;
     }
 
+    // bool 可以隐式转换为 int（true→1, false→0）
+    // 这是 bool vs int 的核心修复：bool 是 int 的子集语义
+    if (target->kind == TYPE_INT && source->kind == TYPE_BOOL) {
+        return 1;
+    }
+
+    // bool 可以隐式转换为 float（true→1.0, false→0.0）
+    if (target->kind == TYPE_FLOAT && source->kind == TYPE_BOOL) {
+        return 1;
+    }
+
+    // bool 可以隐式转换为 bigint
+    if (target->kind == TYPE_BIGINT && source->kind == TYPE_BOOL) {
+        return 1;
+    }
+
     // int 和 bigint 之间允许双向隐式转换
     // int48 与 Bint 互相兼容（int 内联值 → Bint 堆值）
     if ((target->kind == TYPE_BIGINT && source->kind == TYPE_INT) ||

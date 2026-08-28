@@ -43,6 +43,10 @@ OPCODE(OP_AS_CAST) {
                 // float 转换为 int（截断小数）
                 value = val_num((int64_t)val_as_double(value));
                 matches = 1;
+            } else if (val_is_bool(value)) {
+                // bool 转 int（true→1, false→0）
+                value = val_int(val_as_bool(value) ? 1 : 0);
+                matches = 1;
             } else {
                 matches = 0;
             }
@@ -59,6 +63,10 @@ OPCODE(OP_AS_CAST) {
             } else if (val_is_bigint(value)) {
                 // bigint 转换为 float
                 value = val_float(bigint_to_double(val_as_bigint(value)));
+                matches = 1;
+            } else if (val_is_bool(value)) {
+                // bool 转换为 float（true→1.0, false→0.0）
+                value = val_float(val_as_bool(value) ? 1.0 : 0.0);
                 matches = 1;
             } else {
                 matches = 0;
@@ -265,6 +273,9 @@ OPCODE(OP_AS_CAST) {
             } else if (val_is_float(value)) {
                 value = val_int((int)(int8_t)(int64_t)val_as_double(value));
                 matches = 1;
+            } else if (val_is_bool(value)) {
+                value = val_int(val_as_bool(value) ? 1 : 0);
+                matches = 1;
             } else {
                 matches = 0;
             }
@@ -280,6 +291,9 @@ OPCODE(OP_AS_CAST) {
                 matches = 1;
             } else if (val_is_float(value)) {
                 value = val_int((int)(uint8_t)(int64_t)val_as_double(value));
+                matches = 1;
+            } else if (val_is_bool(value)) {
+                value = val_int(val_as_bool(value) ? 1 : 0);
                 matches = 1;
             } else {
                 matches = 0;
@@ -297,6 +311,9 @@ OPCODE(OP_AS_CAST) {
             } else if (val_is_float(value)) {
                 value = val_int((int)(int16_t)(int64_t)val_as_double(value));
                 matches = 1;
+            } else if (val_is_bool(value)) {
+                value = val_int(val_as_bool(value) ? 1 : 0);
+                matches = 1;
             } else {
                 matches = 0;
             }
@@ -312,6 +329,9 @@ OPCODE(OP_AS_CAST) {
                 matches = 1;
             } else if (val_is_float(value)) {
                 value = val_int((int)(uint16_t)(int64_t)val_as_double(value));
+                matches = 1;
+            } else if (val_is_bool(value)) {
+                value = val_int(val_as_bool(value) ? 1 : 0);
                 matches = 1;
             } else {
                 matches = 0;
@@ -329,6 +349,9 @@ OPCODE(OP_AS_CAST) {
             } else if (val_is_float(value)) {
                 value = val_int((int)(int32_t)(int64_t)val_as_double(value));
                 matches = 1;
+            } else if (val_is_bool(value)) {
+                value = val_int(val_as_bool(value) ? 1 : 0);
+                matches = 1;
             } else {
                 matches = 0;
             }
@@ -345,6 +368,9 @@ OPCODE(OP_AS_CAST) {
             } else if (val_is_float(value)) {
                 value = val_int((int)(uint32_t)(int64_t)val_as_double(value));
                 matches = 1;
+            } else if (val_is_bool(value)) {
+                value = val_int(val_as_bool(value) ? 1 : 0);
+                matches = 1;
             } else {
                 matches = 0;
             }
@@ -360,6 +386,9 @@ OPCODE(OP_AS_CAST) {
             } else if (val_is_float(value)) {
                 value = val_int((int)(int64_t)val_as_double(value));
                 matches = 1;
+            } else if (val_is_bool(value)) {
+                value = val_int(val_as_bool(value) ? 1 : 0);
+                matches = 1;
             } else {
                 matches = 0;
             }
@@ -374,6 +403,9 @@ OPCODE(OP_AS_CAST) {
                 matches = 1;
             } else if (val_is_float(value)) {
                 value = val_int((int)(uint64_t)val_as_double(value));
+                matches = 1;
+            } else if (val_is_bool(value)) {
+                value = val_int(val_as_bool(value) ? 1 : 0);
                 matches = 1;
             } else {
                 matches = 0;
@@ -393,6 +425,9 @@ OPCODE(OP_AS_CAST) {
             } else if (val_is_bigint(value)) {
                 value = val_float((double)(float)bigint_to_double(val_as_bigint(value)));
                 matches = 1;
+            } else if (val_is_bool(value)) {
+                value = val_float(val_as_bool(value) ? 1.0 : 0.0);
+                matches = 1;
             } else {
                 matches = 0;
             }
@@ -407,6 +442,9 @@ OPCODE(OP_AS_CAST) {
                 matches = 1;
             } else if (val_is_bigint(value)) {
                 value = val_float(bigint_to_double(val_as_bigint(value)));
+                matches = 1;
+            } else if (val_is_bool(value)) {
+                value = val_float(val_as_bool(value) ? 1.0 : 0.0);
                 matches = 1;
             } else {
                 matches = 0;
