@@ -82,6 +82,17 @@ static TypeKind get_expr_type_kind(Ast* ast) {
     return ast->cached_type->kind;
 }
 
+// 编译期消除赋值/声明处的基本类型 CAST：
+// 仅当表达式静态类型与目标声明类型完全一致时消除（此时 CAST 不可能失败，是纯开销）；
+// 类型未知（TYPE_ANY/无 cached_type）或不一致时保留 CAST，维持运行时检查与报错行号语义
+static int assign_cast_needed(TypeKind target_kind, Ast* value_ast) {
+    return !value_ast || !value_ast->cached_type ||
+           value_ast->cached_type->kind != target_kind;
+}
+
+// 顶层代码局部槽位记账：确保 chunk->local_count / max_local_slot 覆盖 slot
+static void track_toplevel_local_slot(CodeGen* gen, int slot);
+
 static void gen_var_decl(CodeGen* gen, Ast* ast);
 static void gen_destruct_decl(CodeGen* gen, Ast* ast);
 static void gen_return(CodeGen* gen, Ast* ast);
@@ -1097,14 +1108,22 @@ emit_byte(gen, OP_POP, ast->line);
 
         if (ast->u.var_decl.type) {
             TypeKind var_type = ast->u.var_decl.type->kind;
+            // 编译期消除：初始化表达式静态类型与声明类型一致时跳过 CAST
+            // （如 var float x = 1.0、var int n = fib()（int 返回值））
             if (var_type == TYPE_FLOAT) {
-                emit_byte(gen, OP_CAST_FLOAT, ast->line);
+                if (assign_cast_needed(TYPE_FLOAT, ast->u.var_decl.init)) {
+                    emit_byte(gen, OP_CAST_FLOAT, ast->line);
+                }
             }
             else if (var_type == TYPE_INT) {
-                emit_byte(gen, OP_CAST_INT, ast->line);
+                if (assign_cast_needed(TYPE_INT, ast->u.var_decl.init)) {
+                    emit_byte(gen, OP_CAST_INT, ast->line);
+                }
             }
             else if (var_type == TYPE_STRING) {
-                emit_byte(gen, OP_CAST_STRING, ast->line);
+                if (assign_cast_needed(TYPE_STRING, ast->u.var_decl.init)) {
+                    emit_byte(gen, OP_CAST_STRING, ast->line);
+                }
             }
         }
     } else {
@@ -1152,6 +1171,10 @@ emit_byte(gen, OP_POP, ast->line);
         emit_define_global(gen, ref->index, ast->line);
     } else if (ref->kind == SYM_LOCAL) {
         emit_bytes_2(gen, OP_SET_LOCAL_POP, ref->index, ast->line);
+        // 顶层代码：语义分析分配的局部槽位不会自动反映到 chunk->local_count
+        // （仅 for 内部槽位/内联槽位会更新），这里补齐记账，防止主帧局部槽越界。
+        // 函数内无需处理：func->local_count 来自语义分析的 local_index，已覆盖全部声明
+        track_toplevel_local_slot(gen, ref->index);
         // 追踪需要析构的局部变量（仅 var x = new StructWithDtor() 场景）
         if (ast->u.var_decl.init &&
             ast->u.var_decl.init->kind == AST_STRUCT_INIT &&
@@ -1175,6 +1198,18 @@ emit_byte(gen, OP_POP, ast->line);
 //      d. OP_SET_LOCAL_POP → 存入变量并弹出
 //   3. 最后 OP_POP 弹掉原始数组/字典
 // ============================================================================
+// 顶层代码局部槽位记账：确保 chunk->local_count / max_local_slot 覆盖 slot。
+// 语义分析在顶层分配的局部槽位（如 for 循环体内声明的变量）不会自动反映到
+// chunk->local_count（仅 for 内部槽位/内联槽位会更新），不补齐会导致主帧越界。
+// 函数内无需处理：func->local_count 来自语义分析的 local_index，已覆盖全部声明
+static void track_toplevel_local_slot(CodeGen* gen, int slot) {
+    if (!gen->current_func) {
+        if (slot > gen->max_local_slot) gen->max_local_slot = slot;
+        if (slot + 1 > gen->chunk->local_count)
+            gen->chunk->local_count = slot + 1;
+    }
+}
+
 static void gen_destruct_decl(CodeGen* gen, Ast* ast) {
     int slot_count = ast->u.destruct_decl.slot_count;
     int is_dict = ast->u.destruct_decl.is_dict;
@@ -1184,52 +1219,71 @@ static void gen_destruct_decl(CodeGen* gen, Ast* ast) {
     if (init_type && init_type->kind == TYPE_MULTI_RET) {
         // 多返回值解构：函数调用后栈上是 N 个返回值
         int ret_count = init_type->param_count;
-        
+
         // 求值 init（函数调用后栈上留下 ret_count 个值）
         // 设置标志，防止 gen_expr 中的 AST_CALL 弹出多余返回值
         gen->suppress_multi_pop = 1;
         gen_expr(gen, ast->u.destruct_decl.init);
         gen->suppress_multi_pop = 0;
-        
-        // 分配临时槽位（兼容顶层代码 current_func=NULL 的情况）
-        // 使用 local_count 作为基底，因为它反映了所有已声明局部变量的数量
-        int* temp_slots = (int*)malloc(sizeof(int) * ret_count);
-        int slot_base;
-        if (gen->current_func) {
-            slot_base = gen->current_func->local_count;
-        } else {
-            slot_base = gen->chunk->local_count;
-        }
-        for (int i = 0; i < ret_count; i++) {
-            temp_slots[i] = slot_base + i;
-        }
-        int new_max = slot_base + ret_count - 1;
-        if (new_max > gen->max_local_slot) gen->max_local_slot = new_max;
-        if (new_max > gen->peak_local_slot) gen->peak_local_slot = new_max;
-        if (gen->current_func) {
-            gen->current_func->local_count = new_max + 1;
-        } else {
-            if (new_max + 1 > gen->chunk->local_count) {
-                gen->chunk->local_count = new_max + 1;
-            }
-        }
-        
-        // 将 N 个返回值逆序存入临时槽位
+
+        // 优化：返回值已在栈上，无需中转临时槽位
+        // 直接逆序"转换（如需）→ 存入最终槽位"，省掉
+        // 2×SET_LOCAL_POP(临时) + 2×GET_LOCAL + 类型匹配时的 2×CAST，
+        // 且不再推高函数 local_count（避免把被调函数推过 INLINE_LOCALS_MAX 阈值）
+        //
         // 栈布局: [ret0][ret1]...[retN-1]（retN-1 在栈顶）
-        for (int i = ret_count - 1; i >= 0; i--) {
-            emit_bytes_2(gen, OP_SET_LOCAL_POP, temp_slots[i], ast->line);
+
+        // 超出接收数量的返回值：从栈顶弹出（部分接收语义）
+        for (int i = ret_count - slot_count; i > 0; i--) {
+            emit_byte(gen, OP_POP, ast->line);
         }
-        
-        // 逐槽位从临时槽位加载 + 转换 + 存储
-        for (int i = 0; i < slot_count; i++) {
-            if (i < ret_count) {
-                emit_bytes_2(gen, OP_GET_LOCAL, temp_slots[i], ast->line);
-            } else {
-                // 超出返回值数量，补 null
-                emit_byte(gen, OP_NULL, ast->line);
+
+        // 逆序处理接收槽位：栈顶值即当前槽位对应的返回值
+        int recv = slot_count < ret_count ? slot_count : ret_count;
+        for (int i = recv - 1; i >= 0; i--) {
+            // 类型转换：仅当槽位声明为基本类型、且返回类型与槽位类型不一致时发射。
+            // 类型一致（如 float 槽接 float 返回值）时 CAST 是纯开销，编译期消除
+            TypeInfo* slot_type = ast->u.destruct_decl.slot_types[i];
+            if (slot_type) {
+                TypeKind tk = slot_type->kind;
+                if (tk == TYPE_FLOAT || tk == TYPE_INT || tk == TYPE_STRING) {
+                    TypeInfo* ret_type = (init_type->param_types && i < init_type->param_count)
+                                             ? init_type->param_types[i] : NULL;
+                    if (!ret_type || ret_type->kind != tk) {
+                        if (tk == TYPE_FLOAT) {
+                            emit_byte(gen, OP_CAST_FLOAT, ast->line);
+                        } else if (tk == TYPE_INT) {
+                            emit_byte(gen, OP_CAST_INT, ast->line);
+                        } else if (tk == TYPE_STRING) {
+                            emit_byte(gen, OP_CAST_STRING, ast->line);
+                        }
+                    }
+                }
             }
-            
-            // 类型转换
+
+            // 存入变量并弹出
+            SymRef* ref = &ast->u.destruct_decl.refs[i];
+            if (!ref->name) {
+                error_add_at(ERR_SEMANTIC, ast->line, ast->column, "解构声明变量未解析");
+                emit_byte(gen, OP_POP, ast->line);
+                continue;
+            }
+            if (ref->kind == SYM_LOCAL) {
+                emit_bytes_2(gen, OP_SET_LOCAL_POP, ref->index, ast->line);
+                track_toplevel_local_slot(gen, ref->index);
+            } else if (ref->kind == SYM_GLOBAL) {
+                emit_define_global(gen, ref->index, ast->line);
+            } else if (ref->kind == SYM_MODULE) {
+                emit_bytes_2(gen, OP_SET_MODULE_VAR, ref->index, ast->line);
+                emit_byte(gen, OP_POP, ast->line);
+            }
+        }
+
+        // 槽位多于返回值：尾部槽位补 null（保持与原实现一致的补值语义）
+        for (int i = recv; i < slot_count; i++) {
+            emit_byte(gen, OP_NULL, ast->line);
+
+            // 类型转换（如果槽位类型是基本类型）
             TypeInfo* slot_type = ast->u.destruct_decl.slot_types[i];
             if (slot_type) {
                 TypeKind tk = slot_type->kind;
@@ -1241,8 +1295,7 @@ static void gen_destruct_decl(CodeGen* gen, Ast* ast) {
                     emit_byte(gen, OP_CAST_STRING, ast->line);
                 }
             }
-            
-            // 存入变量并弹出
+
             SymRef* ref = &ast->u.destruct_decl.refs[i];
             if (!ref->name) {
                 error_add_at(ERR_SEMANTIC, ast->line, ast->column, "解构声明变量未解析");
@@ -1251,6 +1304,7 @@ static void gen_destruct_decl(CodeGen* gen, Ast* ast) {
             }
             if (ref->kind == SYM_LOCAL) {
                 emit_bytes_2(gen, OP_SET_LOCAL_POP, ref->index, ast->line);
+                track_toplevel_local_slot(gen, ref->index);
             } else if (ref->kind == SYM_GLOBAL) {
                 emit_define_global(gen, ref->index, ast->line);
             } else if (ref->kind == SYM_MODULE) {
@@ -1258,8 +1312,7 @@ static void gen_destruct_decl(CodeGen* gen, Ast* ast) {
                 emit_byte(gen, OP_POP, ast->line);
             }
         }
-        
-        free(temp_slots);
+
         return;
     }
 
@@ -1312,6 +1365,7 @@ static void gen_destruct_decl(CodeGen* gen, Ast* ast) {
         }
         if (ref->kind == SYM_LOCAL) {
             emit_bytes_2(gen, OP_SET_LOCAL_POP, ref->index, ast->line);
+            track_toplevel_local_slot(gen, ref->index);
         } else if (ref->kind == SYM_GLOBAL) {
             emit_define_global(gen, ref->index, ast->line);
         } else if (ref->kind == SYM_MODULE) {
@@ -1344,7 +1398,9 @@ void gen_assign(CodeGen* gen, Ast* ast) {
         if (needed > gen->peak_local_slot) {
             gen->peak_local_slot = needed;
         }
-        
+        // 并行赋值临时槽位不经 gen_var_decl，顶层需在此记账（同 track 说明）
+        track_toplevel_local_slot(gen, needed);
+
         // 阶段1：求所有右值 → 写入临时槽位
         Ast* arr = ast->u.assign.value;
         int right_count = (arr && arr->kind == AST_ARRAY) ? arr->u.array.count : 0;
@@ -1406,14 +1462,22 @@ void gen_assign(CodeGen* gen, Ast* ast) {
                     return;
                 }
                 // 类型转换：与变量声明（gen_var_decl）保持一致
+                // 编译期消除：右值静态类型与目标声明类型一致时跳过 CAST
+                // （并行赋值的右值已存临时槽位，此处表达式为 AST_VAR，类型不精确，仅在同类型时消除）
                 if (ref->type_kind == TYPE_FLOAT) {
-                    emit_byte(gen, OP_CAST_FLOAT, ast->line);
+                    if (assign_cast_needed(TYPE_FLOAT, ast->u.assign.value)) {
+                        emit_byte(gen, OP_CAST_FLOAT, ast->line);
+                    }
                 }
                 else if (ref->type_kind == TYPE_INT) {
-                    emit_byte(gen, OP_CAST_INT, ast->line);
+                    if (assign_cast_needed(TYPE_INT, ast->u.assign.value)) {
+                        emit_byte(gen, OP_CAST_INT, ast->line);
+                    }
                 }
                 else if (ref->type_kind == TYPE_STRING) {
-                    emit_byte(gen, OP_CAST_STRING, ast->line);
+                    if (assign_cast_needed(TYPE_STRING, ast->u.assign.value)) {
+                        emit_byte(gen, OP_CAST_STRING, ast->line);
+                    }
                 }
                 // Ptr[T] 类型：设置运行时 element_type
                 else if (ref->type_kind == TYPE_PTR_GENERIC &&
@@ -1548,14 +1612,21 @@ void gen_assign(CodeGen* gen, Ast* ast) {
             // 根据目标变量的声明类型插入 cast 指令。
             // 这样可以在赋值时立即检测类型不匹配（如将数组赋给 int 变量），
             // 而不是延迟到后续使用该变量时才报错，从而提供准确的错误行号。
+            // 编译期消除：表达式静态类型与目标声明类型一致时跳过 CAST
             if (ref->type_kind == TYPE_FLOAT) {
-                emit_byte(gen, OP_CAST_FLOAT, ast->line);
+                if (assign_cast_needed(TYPE_FLOAT, ast->u.assign.value)) {
+                    emit_byte(gen, OP_CAST_FLOAT, ast->line);
+                }
             }
             else if (ref->type_kind == TYPE_INT) {
-                emit_byte(gen, OP_CAST_INT, ast->line);
+                if (assign_cast_needed(TYPE_INT, ast->u.assign.value)) {
+                    emit_byte(gen, OP_CAST_INT, ast->line);
+                }
             }
             else if (ref->type_kind == TYPE_STRING) {
-                emit_byte(gen, OP_CAST_STRING, ast->line);
+                if (assign_cast_needed(TYPE_STRING, ast->u.assign.value)) {
+                    emit_byte(gen, OP_CAST_STRING, ast->line);
+                }
             }
             // Ptr[T] 类型：设置运行时 element_type
             else if (ref->type_kind == TYPE_PTR_GENERIC &&
@@ -1998,14 +2069,21 @@ static void gen_expr_stmt(CodeGen* gen, Ast* ast) {
                 // a = expr → gen_expr(expr) + cast + OP_SET_LOCAL_POP（省一次分发）
                 gen_expr(gen, expr->u.assign.value);
                 // 类型转换：与变量声明（gen_var_decl）保持一致
+                // 编译期消除：表达式静态类型与目标声明类型一致时跳过 CAST
                 if (ref->type_kind == TYPE_FLOAT) {
-                    emit_byte(gen, OP_CAST_FLOAT, ast->line);
+                    if (assign_cast_needed(TYPE_FLOAT, expr->u.assign.value)) {
+                        emit_byte(gen, OP_CAST_FLOAT, ast->line);
+                    }
                 }
                 else if (ref->type_kind == TYPE_INT) {
-                    emit_byte(gen, OP_CAST_INT, ast->line);
+                    if (assign_cast_needed(TYPE_INT, expr->u.assign.value)) {
+                        emit_byte(gen, OP_CAST_INT, ast->line);
+                    }
                 }
                 else if (ref->type_kind == TYPE_STRING) {
-                    emit_byte(gen, OP_CAST_STRING, ast->line);
+                    if (assign_cast_needed(TYPE_STRING, expr->u.assign.value)) {
+                        emit_byte(gen, OP_CAST_STRING, ast->line);
+                    }
                 }
                 // Ptr[T] 类型：设置运行时 element_type
                 else if (ref->type_kind == TYPE_PTR_GENERIC &&
@@ -2291,6 +2369,8 @@ break;
                     int var_idx = ast->u.try_.catch_var_ref.index;
                     // 将栈顶的异常值存入局部变量
                     emit_bytes_2(gen, OP_SET_LOCAL_POP, var_idx, ast->line);
+                    // catch 变量槽位不经 gen_var_decl，顶层需在此记账（同 track 说明）
+                    track_toplevel_local_slot(gen, var_idx);
                 } else {
                     // 没有 catch 变量，直接弹出异常值
                     emit_byte(gen, OP_POP, ast->line);

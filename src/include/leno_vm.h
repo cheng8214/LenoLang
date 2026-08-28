@@ -211,7 +211,11 @@ void chunk_write(Chunk* chunk, uint8_t byte, int line);
 
 // 内联 locals 数组大小 - 小函数直接使用栈上空间，避免 malloc/free
 // 经验值：大多数函数的局部变量不超过 8 个
-#define INLINE_LOCALS_MAX 8
+// 性能修复：8 太小——7 参函数（如 sphereHit 16 槽、trace 18 槽）每次调用
+// 都会 malloc/free，光追测试中 1600 万次调用的堆分配开销是输给 Python 的主因
+// （见 docs/函数调用性能优化_调用帧与多返回值解构.md）。32 覆盖典型函数，
+// CallFrame 增大 ~190B，对帧池内存和缓存压力的影响可忽略
+#define INLINE_LOCALS_MAX 32
 
 typedef struct CallFrame {
     Chunk* chunk;

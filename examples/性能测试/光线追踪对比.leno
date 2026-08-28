@@ -1,0 +1,198 @@
+import times
+import maths
+
+// 光线追踪对比测试（标量优化版，SoA 布局，无对象创建）
+// 三段式：
+//   Phase A: 数组索引微基准
+//   Phase B: sphereHit 多返回值调用微基准
+//   Phase C: 完整递归 trace 光线追踪
+
+int NS = 10
+int NUM_RAYS = 300000
+int HITCALLS = 3000000
+
+var scx = []
+var scy = []
+var scz = []
+var sr = []
+
+func initScene() {
+    for 0:NS-1 to i {
+        scx.add(i * 2.0 - 9.0)
+        scy.add(((i * 37) % 11 - 5) * 0.7)
+        scz.add(12.0 + (i % 3) * 4.0)
+        sr.add(1.0 + (i % 3) * 0.5)
+    }
+}
+
+// ==================== Phase A: 数组索引微基准 ====================
+func benchIndex() {
+    var t1 = times.ms()
+    var sum = 0.0
+    var si = 0
+    for HITCALLS {
+        sum += scx[si] + scy[si] + scz[si] + sr[si]
+        si++
+        if si >= NS {
+            si = 0
+        }
+    }
+    var t2 = times.ms()
+    print($"Phase A 数组索引: {HITCALLS}次循环(4次索引/轮): " + (t2 - t1) + "ms (sum=" + sum + ")")
+}
+
+// ==================== Phase B: sphereHit 多返回值调用 ====================
+func sphereHit(float ox,float oy,float oz, float dx,float dy,float dz, int si): [float, int] {
+    var ocx = ox - scx[si]
+    var ocy = oy - scy[si]
+    var ocz = oz - scz[si]
+    var r = sr[si]
+    var b = ocx*dx + ocy*dy + ocz*dz
+    var c = ocx*ocx + ocy*ocy + ocz*ocz - r*r
+    var disc = b*b - c
+    if disc < 0.0 {
+        return -1.0, 0
+    }
+    var sq = maths.sqrt(disc)
+    var t = -b - sq
+    if t > 0.001 {
+        return t, 1
+    }
+    t = -b + sq
+    if t > 0.001 {
+        return t, 1
+    }
+    return -1.0, 0
+}
+
+func benchHit() {
+    var t1 = times.ms()
+    var hits = 0
+    var si = 0
+    var ox = 0.0
+    var oy = 0.0
+    var oz = 0.0
+    var dx = 0.15
+    var dy = 0.1
+    var dz = 1.0
+    for HITCALLS {
+        var[float,int](t, hit) = sphereHit(ox,oy,oz,dx,dy,dz,si)
+        hits += hit
+        si++
+        if si >= NS {
+            si = 0
+        }
+    }
+    var t2 = times.ms()
+    print($"Phase B sphereHit多返回值: {HITCALLS}次调用: " + (t2 - t1) + "ms (hits=" + hits + ")")
+}
+
+// 单返回值版：t < 0 表示未命中，用于隔离"多返回值打包"的开销
+func sphereHitSingle(float ox,float oy,float oz, float dx,float dy,float dz, int si): float {
+    var ocx = ox - scx[si]
+    var ocy = oy - scy[si]
+    var ocz = oz - scz[si]
+    var r = sr[si]
+    var b = ocx*dx + ocy*dy + ocz*dz
+    var c = ocx*ocx + ocy*ocy + ocz*ocz - r*r
+    var disc = b*b - c
+    if disc < 0.0 {
+        return -1.0
+    }
+    var sq = maths.sqrt(disc)
+    var t = -b - sq
+    if t > 0.001 {
+        return t
+    }
+    t = -b + sq
+    if t > 0.001 {
+        return t
+    }
+    return -1.0
+}
+
+func benchHitSingle() {
+    var t1 = times.ms()
+    var hits = 0
+    var si = 0
+    var ox = 0.0
+    var oy = 0.0
+    var oz = 0.0
+    var dx = 0.15
+    var dy = 0.1
+    var dz = 1.0
+    for HITCALLS {
+        var t = sphereHitSingle(ox,oy,oz,dx,dy,dz,si)
+        if t > 0.0 {
+            hits++
+        }
+        si++
+        if si >= NS {
+            si = 0
+        }
+    }
+    var t2 = times.ms()
+    print($"Phase B2 sphereHit单返回值: {HITCALLS}次调用: " + (t2 - t1) + "ms (hits=" + hits + ")")
+}
+
+// ==================== Phase C: 递归 trace 光线追踪 ====================
+func trace(float ox,float oy,float oz, float dx,float dy,float dz, int depth): int {
+    if depth <= 0 {
+        return 0
+    }
+    var tmin = 1000000000.0
+    var hitIdx = -1
+    for 0:NS-1 to si {
+        var[float,int](t, hit) = sphereHit(ox,oy,oz,dx,dy,dz,si)
+        if hit == 1 {
+            if t < tmin {
+                tmin = t
+                hitIdx = si
+            }
+        }
+    }
+    if hitIdx < 0 {
+        return 0
+    }
+    // 命中点
+    var hx = ox + dx * tmin
+    var hy = oy + dy * tmin
+    var hz = oz + dz * tmin
+    // 法线（除以半径）
+    var r = sr[hitIdx]
+    var nx = (hx - scx[hitIdx]) / r
+    var ny = (hy - scy[hitIdx]) / r
+    var nz = (hz - scz[hitIdx]) / r
+    // 反射方向
+    var dot = dx*nx + dy*ny + dz*nz
+    var rdx = dx - 2.0*dot*nx
+    var rdy = dy - 2.0*dot*ny
+    var rdz = dz - 2.0*dot*nz
+    // 递归
+    return 1 + trace(hx,hy,hz, rdx,rdy,rdz, depth - 1)
+}
+
+func benchTrace() {
+    var t1 = times.ms()
+    var hits = 0
+    for NUM_RAYS to idx {
+        var dx = (idx % 600 - 300) / 600.0
+        var dy = (idx % 1000 - 500) / 1000.0
+        hits += trace(0.0, 0.0, 0.0, dx, dy, 1.0, 5)
+    }
+    var t2 = times.ms()
+    print($"Phase C 递归trace: {NUM_RAYS}条射线(depth=5, {NS}球): " + (t2 - t1) + "ms (hits=" + hits + ")")
+}
+
+main() {
+    initScene()
+    print("======== 光线追踪对比（标量优化版，无对象创建）========")
+    print("")
+    benchIndex()
+    benchHit()
+    benchHitSingle()
+    benchTrace()
+    print("")
+    print("======== 完成 ========")
+    return 0
+}

@@ -24,6 +24,18 @@ OPCODE(OP_INDEX) {
 
     switch (val_as_obj(obj_val)->type) {
         case OBJ_ARRAY: {
+            ObjArray* arr = (ObjArray*)val_as_obj(obj_val);
+            // 快速路径：int 索引（绝大多数场景），避免 val_is_num 的多分支判断
+            // 和 value_to_double 的 int64→double→int32 往返转换；
+            // 无符号比较同时覆盖 index < 0 和 index >= count 两种越界
+            if (likely(val_is_int(index_val))) {
+                int64_t index = val_as_int(index_val);
+                if (likely((uint64_t)index < (uint64_t)arr->count)) {
+                    vm_stack_push(&vm, arr->elements[index]);
+                    break;
+                }
+                // int 索引越界：落入下方通用路径，保持报错信息不变
+            }
             if (!val_is_num(index_val)) {
                 char msg[256];
                 snprintf(msg, sizeof(msg), "数组索引必须是数字，但实际类型为 '%s'", value_type_desc(index_val));
@@ -32,7 +44,6 @@ OPCODE(OP_INDEX) {
                 break;
             }
             int index = (int)value_to_double(index_val);
-            ObjArray* arr = (ObjArray*)val_as_obj(obj_val);
             if (index < 0 || index >= arr->count) {
                 char msg[256];
                 snprintf(msg, sizeof(msg), "数组索引越界: 索引=%d, 数组长度=%d", index, arr->count);
@@ -482,12 +493,13 @@ OPCODE(OP_ITER_GET) {
     switch (val_as_obj(obj_val)->type) {
         case OBJ_ARRAY: {
             ObjArray* arr = (ObjArray*)val_as_obj(obj_val);
-            if (index < 0 || index >= arr->count) {
-                throw_runtime_error("数组索引越界", GET_CURRENT_LINE());
-                frame = &vm.frames[vm.frame_cnt - 1];
+            // 快速路径：无符号比较同时覆盖负索引与上界越界（同 OP_INDEX 数组快速路径）
+            if (likely((uint64_t)index < (uint64_t)arr->count)) {
+                vm_stack_push(&vm, arr->elements[index]);
                 break;
             }
-            vm_stack_push(&vm, arr->elements[index]);
+            throw_runtime_error("数组索引越界", GET_CURRENT_LINE());
+            frame = &vm.frames[vm.frame_cnt - 1];
             break;
         }
         case OBJ_STRING: {
