@@ -1,0 +1,26 @@
+import maths
+
+struct Hit {
+    float t = -1.0
+    int hit = 0
+}
+
+struct Sphere {
+    float cx = 0.0
+
+    func hit(float ox, float dx): Hit {
+        var ocx = ox - cx
+        var b = ocx * dx
+        if b < 0.0 {
+            return new Hit(t = -1.0, hit = 0)
+        }
+        return new Hit(t = b, hit = 1)
+    }
+}
+
+main() {
+    var s = new Sphere(cx = 1.0)
+    var h = s.hit(2.0, 0.5)
+    print(h.t)
+    return 0
+}
