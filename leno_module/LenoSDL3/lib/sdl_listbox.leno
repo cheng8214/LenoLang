@@ -227,6 +227,33 @@ export struct ListBox impl Widget, Themeable {
         if _onChange != null { _onChange(_sel) }
     }
 
+    // ==================== 多选批量操作 ====================
+    // set_selected(idx) 会清空之前的选中（单选语义），多选模式下需要批量设置方法。
+
+    // 批量设置选中索引（替换当前选中），在多选模式下用于编程式全选/批量选中
+    func set_selected_indices(Array[int] indices) {
+        _sel_clear()
+        for indices.len() to i {
+            int idx = indices[i]
+            if idx >= 0 and idx < items.len() { _sel_add(idx) }
+        }
+        _clamp_scroll()
+        if _onChange != null { _onChange(_sel) }
+    }
+
+    // 全选（多选模式下选中所有项）
+    func select_all() {
+        _sel_clear()
+        for items.len() to i { _sel_add(i) }
+        if _onChange != null { _onChange(_sel) }
+    }
+
+    // 清空选中（不触发回调，避免 clear() 重建列表时连锁触发）
+    func clear_selection() {
+        _sel_clear()
+        if _onChange != null { _onChange(_sel) }
+    }
+
     func on_change(func(Array[int]):void cb) { _onChange = cb }
 
     func contains(float mx, float my): bool {

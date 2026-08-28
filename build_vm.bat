@@ -58,6 +58,7 @@ set SOURCES=!SOURCES! src\module\regexs\regexs.c
 set SOURCES=!SOURCES! src\platform\platform_thread.c
 set SOURCES=!SOURCES! src\serialize\serialize.c
 
+REM 1. 控制台版 leno_vm.exe（命令行调试用）
 gcc -o build\leno_vm.exe !SOURCES! -Isrc -Wall -Wextra -std=c99 -O2 -DLENO_VM_ONLY -lm -municode -lws2_32
 
 if %ERRORLEVEL% neq 0 (
@@ -65,7 +66,19 @@ if %ERRORLEVEL% neq 0 (
     exit /b 1
 )
 
+REM 2. 无控制台版 leno_vm_gui.exe（GUI 打包用，-mwindows 链接）
+REM    GUI 程序打包时嵌入此版本，启动时无黑窗口
+REM    脚本仍可通过 _console(true) 动态分配控制台（AllocConsole）
+gcc -o build\leno_vm_gui.exe !SOURCES! -Isrc -Wall -Wextra -std=c99 -O2 -DLENO_VM_ONLY -lm -municode -lws2_32 -mwindows
+
+if %ERRORLEVEL% neq 0 (
+    echo VM GUI build failed
+    exit /b 1
+)
+
 echo VM build successful
+echo   leno_vm.exe     - console version (debug/cli)
+echo   leno_vm_gui.exe - GUI version (no console, for packaging)
 echo.
 echo Usage: build\leno_vm.exe ^<file.lenb^>
 echo Self:  build\leno_vm.exe --self

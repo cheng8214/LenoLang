@@ -1,0 +1,180 @@
+// test_listbox_multi.leno — ListBox 多选模式测试
+//
+// 测试重点：
+//   1. 多选模式（mode: 1）下鼠标点击切换选中/取消选中
+//   2. 编程式 API：select_all() / clear_selection() / set_selected_indices()
+//   3. on_change 回调正确返回选中索引数组
+//   4. get_selected_indices() / get_selected_index() / get_selected_text()
+//
+// 操作说明：
+//   - 点击列表项：切换该行的选中状态
+//   - "全选" 按钮：调用 select_all() 选中所有项
+//   - "全不选" 按钮：调用 clear_selection() 清空选中
+//   - "反选" 按钮：编程式反转选中状态（用 set_selected_indices）
+//   - "查看选中" 按钮：打印当前选中索引和文本
+//
+// 运行：leno test_listbox_multi.leno
+import "../../../lib/SDL3.leno" as SDL3
+use SDL3.(Event, Renderer, Window, TitleBar, Button, ListBox, Label, HBox, VBox, Scancode)
+
+// ==================== 全局状态 ====================
+Window win
+TitleBar titleBar
+ListBox lb
+Button selectAllBtn
+Button clearBtn
+Button invertBtn
+Button printBtn
+Label statusLbl
+Label countLbl
+
+// 测试数据
+Array[string] data = [
+    "Apple", "Banana", "Cherry", "Date", "Elderberry",
+    "Fig", "Grape", "Honeydew", "Kiwi", "Lemon",
+    "Mango", "Nectarine", "Orange", "Peach", "Quince"
+]
+
+// ==================== 事件回调 ====================
+
+func updateStatus() {
+    Array[int] sel = lb.get_selected_indices()
+    int cnt = sel.len()
+    string first = lb.get_selected_text()
+    if first == "" { first = "(无)" }
+    countLbl.set_text("选中: " + cnt + "/" + data.len() + "  首项: " + first)
+    SDL3.markFrameRedraw()
+}
+
+func onListChange(Array[int] selIndices) {
+    updateStatus()
+}
+
+func onSelectAll() {
+    lb.select_all()
+    updateStatus()
+}
+
+func onClearSelection() {
+    lb.clear_selection()
+    updateStatus()
+}
+
+func onInvert() {
+    Array[int] cur = lb.get_selected_indices()
+    // 构建反选索引：不在 cur 中的全部选中
+    Array[int] inverted = []
+    int curIdx = 0
+    for data.len() to i {
+        bool inCur = false
+        for cur.len() to j {
+            if cur[j] == i { inCur = true; break }
+        }
+        if not inCur { inverted.add(i) }
+    }
+    lb.set_selected_indices(inverted)
+    updateStatus()
+}
+
+func onPrint() {
+    Array[int] sel = lb.get_selected_indices()
+    print("=== 当前选中 ===")
+    print("数量: " + sel.len())
+    for sel.len() to i {
+        int idx = sel[i]
+        if idx >= 0 and idx < data.len() {
+            print("  [" + idx + "] " + data[idx])
+        }
+    }
+    statusLbl.set_text("已输出到控制台 (选中 " + sel.len() + " 项)")
+    SDL3.markFrameRedraw()
+}
+
+// ==================== UI 构建 ====================
+
+func setupUI() {
+    float PAD = 12.0
+    float W = 600.0
+    float H = 500.0
+    float TOOLBAR_H = 36.0
+
+    // 标题栏
+    titleBar = SDL3.createTitleBar({title: "ListBox 多选测试", height: 32, font_size: 14})
+    win.add(titleBar)
+    float titleH = titleBar.get_h()
+
+    // 工具栏
+    var toolbar = SDL3.createHBox({x: 0, y: 0, w: 100, h: TOOLBAR_H, padX: 4, padY: 2, spacing: 6})
+
+    selectAllBtn = SDL3.createButton({x: 0, y: 0, w: 70, h: 28, text: "全选", font_size: 14})
+    toolbar.add(selectAllBtn, {grow: 0, shrink: 0, basis: 70, align: 3})
+    selectAllBtn.on_click(func() { onSelectAll() })
+
+    clearBtn = SDL3.createButton({x: 0, y: 0, w: 70, h: 28, text: "全不选", font_size: 14})
+    toolbar.add(clearBtn, {grow: 0, shrink: 0, basis: 70, align: 3})
+    clearBtn.on_click(func() { onClearSelection() })
+
+    invertBtn = SDL3.createButton({x: 0, y: 0, w: 70, h: 28, text: "反选", font_size: 14})
+    toolbar.add(invertBtn, {grow: 0, shrink: 0, basis: 70, align: 3})
+    invertBtn.on_click(func() { onInvert() })
+
+    printBtn = SDL3.createButton({x: 0, y: 0, w: 90, h: 28, text: "打印选中", font_size: 14})
+    toolbar.add(printBtn, {grow: 0, shrink: 0, basis: 90, align: 3})
+    printBtn.on_click(func() { onPrint() })
+
+    // 状态栏
+    var statusBar = SDL3.createHBox({x: 0, y: 0, w: 100, h: 24, padX: 0, padY: 0, spacing: 12})
+    statusLbl = SDL3.createLabel({x: 0, y: 0, text: "点击列表项切换选中状态", font_size: 13})
+    statusBar.add(statusLbl, {grow: 1, shrink: 1, align: 1})
+    countLbl = SDL3.createLabel({x: 0, y: 0, text: "选中: 0/" + data.len() + "  首项: (无)", font_size: 13})
+    statusBar.add(countLbl, {grow: 0, shrink: 1, basis: 260, align: 2})
+
+    // ListBox（多选模式 mode=1）
+    lb = SDL3.createListBox({x: 0, y: 0, w: 100, h: 100, font_size: 14, mode: 1})
+    for data.len() to i { lb.add_item(data[i]) }
+    lb.on_change(func(Array[int] selIndices) { onListChange(selIndices) })
+
+    // 默认选中前 3 项（测试 set_selected_indices）
+    lb.set_selected_indices([0, 1, 2])
+
+    // 根布局
+    var root = SDL3.createVBox({x: 0, y: 0, w: W, h: H, padX: PAD, padY: PAD, spacing: 4})
+    root.add(toolbar, {grow: 0, shrink: 0, align: 3})
+    root.add(statusBar, {grow: 0, shrink: 0, align: 3})
+    root.add(lb, {grow: 1, shrink: 1, align: 3})
+    win.setRootAt(root, 0, titleH)
+}
+
+// ==================== 事件处理 ====================
+
+func handleEvent(Event ev): bool {
+    if ev.isQuit() or ev.isWindowClose() { return false }
+    if titleBar.is_close_requested() {
+        titleBar.clear_close_request()
+        return false
+    }
+    if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
+    return true
+}
+
+// ==================== 主函数 ====================
+
+main() {
+    SDL3.ttfInit()
+
+    int flags = 0x20  // RESIZABLE
+    win = SDL3.createWindow({title: "ListBox 多选测试", w: 600, h: 500, flags: flags})
+    if not win.ok { SDL3.ttfQuit(); return }
+
+    win.setMinSize(400, 300)
+
+    setupUI()
+    updateStatus()
+
+    win.run(
+        func(Event ev): bool { return handleEvent(ev) },
+        func(Renderer r) { }
+    )
+
+    SDL3.ttfQuit()
+}

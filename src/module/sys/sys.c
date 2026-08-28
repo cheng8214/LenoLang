@@ -129,6 +129,9 @@ static Value native_clear(int argCount, Value* args) {
 }
 
 // _console(show) - 显示/隐藏控制台窗口（Windows）
+// show=true:  显示控制台（无控制台 exe 会先 AllocConsole 分配）
+// show=false: 隐藏控制台
+// 无参数:     返回当前可见状态
 static Value native_console(int argCount, Value* args) {
     #ifdef _WIN32
         if (argCount > 0) {
@@ -139,8 +142,28 @@ static Value native_console(int argCount, Value* args) {
                 show = (val_as_num(args[0]) != 0);
             }
             HWND hwnd = GetConsoleWindow();
-            if (hwnd != NULL) {
-                ShowWindow(hwnd, show ? SW_SHOW : SW_HIDE);
+            if (show) {
+                // 显示控制台：无控制台版 exe（-mwindows）需要先 AllocConsole
+                if (hwnd == NULL) {
+                    if (AllocConsole()) {
+                        // 重定向标准流到新控制台
+                        freopen("CONIN$", "r", stdin);
+                        freopen("CONOUT$", "w", stdout);
+                        freopen("CONOUT$", "w", stderr);
+                        // 设置 UTF-8 编码
+                        SetConsoleOutputCP(CP_UTF8);
+                        SetConsoleCP(CP_UTF8);
+                        hwnd = GetConsoleWindow();
+                    }
+                }
+                if (hwnd != NULL) {
+                    ShowWindow(hwnd, SW_SHOW);
+                }
+            } else {
+                // 隐藏控制台
+                if (hwnd != NULL) {
+                    ShowWindow(hwnd, SW_HIDE);
+                }
             }
         }
         // 返回当前控制台窗口是否可见

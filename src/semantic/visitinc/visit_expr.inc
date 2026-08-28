@@ -1213,6 +1213,16 @@
                 if (callee_def && callee_def->kind == AST_FUNC_DEF && callee_def->u.func.is_async) {
                     ast->u.call.callee_is_async = 1;
                 }
+                // 编译器检测：_console(false) → 标记使用无控制台 GUI 模式
+                // 语义分析阶段遍历 AST，自动设置全局标志，供 --pack 打包时使用
+                if (strcmp(func_name, "_console") == 0 && ast->u.call.args.count > 0) {
+                    Ast* arg0 = ast->u.call.args.items[0];
+                    if (arg0->kind == AST_BOOL && !arg0->u.boolean) {
+                        g_use_gui_vm = 1;
+                    } else if (arg0->kind == AST_NUM && arg0->u.num.value == 0) {
+                        g_use_gui_vm = 1;
+                    }
+                }
                 // 使用resolve_variable_with_upvalue处理函数调用，支持闭包
                 sym = resolve_variable_with_upvalue(s, func_name, &ast->u.call.callee->u.var.ref);
                 if (!sym) {

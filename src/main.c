@@ -36,6 +36,7 @@ static int packMode = 0;
 static int initMode = 0;
 static int installMode = 0;
 static char* debugOutFile = NULL;  // --debug-out 指定的输出文件路径
+int g_use_gui_vm = 0;  // 语义分析阶段检测到 _console(false) 时置为 1
 
 // 字节码输出重定向辅助（Windows 用 _dup/_dup2 保存/恢复 stdout 句柄）
 #ifdef _WIN32
@@ -647,6 +648,8 @@ int lenolang_run_file(const char* path) {
             return -1;
         }
         clock_t pack_t0 = clock();
+
+        // 先编译：语义分析阶段会自动检测 _console(false) 并设置 g_use_gui_vm
         int result = lenolang_compile(source, bin_path);
         free(source);
         if (result != 0) {
@@ -654,6 +657,13 @@ int lenolang_run_file(const char* path) {
             return result;
         }
         clock_t pack_compile_end = clock();
+
+        // 编译完成后 g_use_gui_vm 已确定，选择对应的 VM 运行时
+#ifdef _WIN32
+        if (g_use_gui_vm) {
+            printf("[pack] 检测到 _console(false)，使用无控制台版 leno_vm_gui.exe\n");
+        }
+#endif
 
         // 生成输出路径：与源文件同目录
         char out_exe[MAX_PATH_LEN];
@@ -668,6 +678,7 @@ int lenolang_run_file(const char* path) {
 #endif
 
         // 查找 leno_vm：先在与 leno 同目录下找
+        // g_use_gui_vm=1 时用无控制台版 leno_vm_gui.exe（脚本调用了 _console(false)）
         char vm_exe[MAX_PATH_LEN];
 #ifdef _WIN32
         // 获取当前 exe 所在目录
@@ -675,19 +686,19 @@ int lenolang_run_file(const char* path) {
         GetModuleFileNameA(NULL, exe_dir, MAX_PATH_LEN);
         exe_dir[MAX_PATH_LEN - 1] = '\0';
         char* last_sep = strrchr(exe_dir, '\\');
+        const char* vm_name = g_use_gui_vm ? "leno_vm_gui.exe" : "leno_vm.exe";
         if (last_sep) {
             *(last_sep + 1) = '\0';
             size_t dir_len = strlen(exe_dir);
-            const char* vm_name = "leno_vm.exe";
             size_t vm_name_len = strlen(vm_name);
             if (dir_len + vm_name_len < MAX_PATH_LEN) {
                 memcpy(vm_exe, exe_dir, dir_len);
                 memcpy(vm_exe + dir_len, vm_name, vm_name_len + 1);
             } else {
-                strcpy(vm_exe, "leno_vm.exe");
+                strcpy(vm_exe, vm_name);
             }
         } else {
-            strcpy(vm_exe, "leno_vm.exe");
+            strcpy(vm_exe, vm_name);
         }
 #else
         // Linux/macOS：获取当前可执行文件所在目录
