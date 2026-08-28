@@ -95,7 +95,7 @@ func renderRipple() {
         float lifeAmp = rp.amplitude * rp.life
 
         for y0 : y1 - 1 to y {
-            float fy = _float(y)
+            float fy = y  // int 赋值给 float 自动提升
             float dy = fy - rp.y
             float dy2 = dy * dy
             int rowBase = y * pitch
@@ -104,7 +104,7 @@ func renderRipple() {
             float fhm1 = h - 1
 
             for x0 : x1 - 1 to x {
-                float fx = _float(x)
+                float fx = x  // int 赋值给 float 自动提升
                 float dx = fx - rpx
                 float dist2 = dx * dx + dy2
 
@@ -169,9 +169,9 @@ main() {
     int surfFormat = info.format
 
     float downgradeScale = 1.0
-    if origW > MAX_RIP_W { downgradeScale = _float(MAX_RIP_W) / _float(origW) }
-    bufW = _int(_float(origW) * downgradeScale)
-    bufH = _int(_float(origH) * downgradeScale)
+    if origW > MAX_RIP_W { downgradeScale = MAX_RIP_W * 1.0 / origW }  // 先 *1.0 提升 float 再除
+    bufW = _int(origW * downgradeScale)  // int*float→float→_int
+    bufH = _int(origH * downgradeScale)
     if bufW < 1 { bufW = 1 }
     if bufH < 1 { bufH = 1 }
     bufPitch = bufW * 4
@@ -185,12 +185,12 @@ main() {
     int bpp = 4
     if surfPitch == origW * 3 { bpp = 3 }
     for 0 : bufH - 1 to dy {
-        int srcY = _int(_float(dy) / downgradeScale)
+        int srcY = _int(dy / downgradeScale)  // int/float→float→_int
         if srcY >= origH { srcY = origH - 1 }
         int srcRow = srcY * surfPitch
         int dstRow = dy * bufPitch
         for 0 : bufW - 1 to dx {
-            int srcX = _int(_float(dx) / downgradeScale)
+            int srcX = _int(dx / downgradeScale)
             if srcX >= origW { srcX = origW - 1 }
             int si = srcRow + srcX * bpp
             int di = dstRow + dx * 4
@@ -223,13 +223,13 @@ main() {
     l.SDL_DestroySurface(surface)
 
     int winW = 900; int winH = 650
-    float scaleX = _float(winW) / _float(bufW)
-    float scaleY = _float(winH) / _float(bufH)
+float scaleX = winW * 1.0 / bufW  // 先 *1.0 提升 float 再除
+float scaleY = winH * 1.0 / bufH
     dispScale = if scaleX < scaleY then scaleX else scaleY
-    dispImgW = _float(bufW) * dispScale
-    dispImgH = _float(bufH) * dispScale
-    dispX = (_float(winW) - dispImgW) * 0.5
-    dispY = (_float(winH) - dispImgH) * 0.5
+dispImgW = bufW * dispScale  // int*float 自动提升
+dispImgH = bufH * dispScale
+dispX = (winW - dispImgW) * 0.5  // int-float 运算自动提升
+dispY = (winH - dispImgH) * 0.5
 
     Ptr[u8] win = l.SDL_CreateWindow("Ripple Bench", winW, winH, 0x20)
     Ptr[u8] ren = l.SDL_CreateRenderer(win, null)
@@ -257,8 +257,8 @@ main() {
     int minFrameMs = 9999
     int maxFrameMs = 0
 
-    addRipple(_float(bufW) * 0.3, _float(bufH) * 0.4)
-    addRipple(_float(bufW) * 0.7, _float(bufH) * 0.6)
+addRipple(bufW * 0.3, bufH * 0.4)  // int*float 自动提升
+addRipple(bufW * 0.7, bufH * 0.6)
 
     while running {
         int t0 = l.SDL_GetTicks()
@@ -277,7 +277,7 @@ main() {
                         float my = ffi.read_float(evBuf, 32)
                         float bx = (mx - dispX) / dispScale
                         float by = (my - dispY) / dispScale
-                        if bx >= 0.0 and bx < _float(bufW) and by >= 0.0 and by < _float(bufH) {
+                        if bx >= 0.0 and bx < bufW and by >= 0.0 and by < bufH {  // float<int 自动提升
                             addRipple(bx, by)
                         }
                     }
@@ -287,7 +287,7 @@ main() {
 
         if ENABLE_AUTO_RIPPLE {
             if t0 - lastAuto > 2500 {
-                addRipple(rands.floats(20.0, _float(bufW) - 20.0), rands.floats(20.0, _float(bufH) - 20.0))
+                addRipple(rands.floats(20.0, bufW - 20.0), rands.floats(20.0, bufH - 20.0))  // int-20.0 自动提升
                 lastAuto = t0
             }
         }
@@ -321,8 +321,8 @@ main() {
     }
 
     int actualDuration = l.SDL_GetTicks() - perfStart
-    float avgFps = _float(totalFrames) * 1000.0 / _float(actualDuration)
-    float avgFrameMs = _float(totalMs) / _float(totalFrames)
+float avgFps = totalFrames * 1000.0 / actualDuration  // int*float 自动提升
+float avgFrameMs = totalMs * 1.0 / totalFrames  // 先 *1.0 提升
     print("\n===== 性能结果 =====")
     print("运行: " + actualDuration + " ms  帧数: " + totalFrames)
     print("平均 FPS: " + avgFps + "  每帧: " + avgFrameMs + " ms")

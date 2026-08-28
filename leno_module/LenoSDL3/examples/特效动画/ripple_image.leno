@@ -105,13 +105,13 @@ func renderRipple() {
 
         // 遍历外接矩形内的像素
         for y0 : y1 - 1 to y {
-            float fy = _float(y)
+            float fy = y
             float dy = fy - rp.y
             float dy2 = dy * dy
             int rowBase = y * pitch
 
             for x0 : x1 - 1 to x {
-                float fx = _float(x)
+                float fx = x
                 float dx = fx - rp.x
                 float dist2 = dx * dx + dy2
 
@@ -134,8 +134,8 @@ func renderRipple() {
                 float amp = lifeAmp * tri * wave
                 if dist > 0.5 {
                     // 沿径向方向位移，从 srcBuf 采样
-                    int sx = _int(maths.clamp(_float(x) + dx * invDist * amp, 0.0, _float(w - 1)))
-                    int sy = _int(maths.clamp(_float(y) + dy * invDist * amp, 0.0, _float(h - 1)))
+                    int sx = _int(maths.clamp(x+ dx * invDist * amp, 0.0, w - 1))
+                    int sy = _int(maths.clamp(y + dy * invDist * amp, 0.0, h - 1))
 
                     int srcOff = sy * pitch + sx * 4
                     int dstOff = rowBase + x * 4
