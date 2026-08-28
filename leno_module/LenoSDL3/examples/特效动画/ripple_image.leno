@@ -1,0 +1,313 @@
+// ripple_image.leno — 图片水波纹扭曲特效
+//
+// 加载 d:\sp.png 图片，鼠标点击在图片上产生水波纹扭曲效果。
+// 波纹从点击位置向外扩散，经过的像素产生扭曲位移。
+// 自动随机产生波纹，也可点击交互。
+// ESC 退出
+//
+// 性能优化策略（对齐 fireworks.leno 模式）：
+//   1. ffi.malloc 直接管理像素内存（不用 PixelBuffer struct，减少方法调用开销）
+//   2. ffi.memcpy 整块拷贝原图到输出缓冲（C 级 memcpy，极快）
+//   3. 只遍历波纹影响区域（波前附近的矩形带），不全图遍历
+//   4. ren.updateTexture 一次性上传纹理
+//
+// 运行：leno ripple_image.leno
+
+import "../../lib/SDL3.leno" as SDL3
+use SDL3.(Event, Renderer, Scancode, WindowFlag, BlendMode, Font, SDL_SurfaceInfo, Window)
+import ffi
+import maths
+import rands
+
+// ==================== 波纹结构 ====================
+struct Ripple {
+    float x; float y           // 圆心（图片像素坐标）
+    float radius               // 当前半径
+    float maxRadius            // 最大半径
+    float speed                // 扩散速度（像素/帧）
+    float life                 // 生命值 0~1（1=新生，0=消亡）
+    float amplitude            // 扭曲振幅（像素）
+}
+
+// ==================== 全局状态 ====================
+Ptr[u8] srcPix = null          // 原始图片像素（只读， ffi.malloc）
+Ptr[u8] dstPix = null          // 输出像素（每帧重写， ffi.malloc）
+int imgW = 0; int imgH = 0
+int imgPitch = 0               // 每行字节数 = imgW * 4
+float dispScale = 1.0          // 显示缩放
+float dispX = 0.0; float dispY = 0.0  // 显示偏移（居中）
+float dispImgW = 0.0; float dispImgH = 0.0
+
+Array[Ripple] ripples = []
+
+// 添加波纹
+func addRipple(float x, float y) {
+    ripples.add(new Ripple(
+        x = x, y = y,
+        radius = 0.0,
+        maxRadius = rands.floats(80.0, 160.0),
+        speed = rands.floats(1.5, 2.8),
+        life = 1.0,
+        amplitude = rands.floats(6.0, 14.0)
+    ))
+}
+
+// ==================== 渲染扭曲图像（只处理波纹影响区域） ====================
+func renderRipple() {
+    // 先整块拷贝原图到输出缓冲（memcpy 极快）
+    ffi.memcpy(dstPix, srcPix, imgW * imgH * 4)
+
+    // 无波纹时直接返回
+    if ripples.len() == 0 { return }
+
+    float bandWidth = 14.0   // 波前影响带宽
+    int w = imgW; int h = imgH; int pitch = imgPitch
+
+    // 对每个波纹，只遍历其波前附近的环形带区域
+    for ripples.len() to ri {
+        Ripple rp = ripples[ri]
+
+        // 波前环形带的内外半径
+        float innerR = rp.radius - bandWidth
+        float outerR = rp.radius + bandWidth
+        if innerR < 0.0 { innerR = 0.0 }
+
+        // 计算影响区域的外接矩形（裁剪到图片范围）
+        int x0 = _int(rp.x - outerR)
+        int y0 = _int(rp.y - outerR)
+        int x1 = _int(rp.x + outerR)
+        int y1 = _int(rp.y + outerR)
+        if x0 < 0 { x0 = 0 }
+        if y0 < 0 { y0 = 0 }
+        if x1 >= w { x1 = w - 1 }
+        if y1 >= h { y1 = h - 1 }
+
+        float outerR2 = outerR * outerR
+        float innerR2 = innerR * innerR
+        float bw2 = bandWidth * bandWidth
+
+        // 遍历外接矩形内的像素
+        for y0 : y1 to y {
+            float fy = _float(y)
+            float dy = fy - rp.y
+            float dy2 = dy * dy
+            int rowBase = y * pitch
+
+            for x0 : x1 to x {
+                float fx = _float(x)
+                float dx = fx - rp.x
+                float dist2 = dx * dx + dy2
+
+                // 只处理环形带内的像素
+                if dist2 > outerR2 { continue }
+                if dist2 < innerR2 { continue }
+
+                float dist = maths.sqrt(dist2)
+                float diff = dist - rp.radius
+
+                // 高斯衰减
+                float gaussian = maths.exp(-(diff * diff) / (2.0 * bw2 * 0.3))
+                float wave = maths.sin(diff * 0.5)
+                float amp = rp.amplitude * rp.life * gaussian * wave
+
+                if dist > 0.5 {
+                    // 沿径向方向位移，从 srcBuf 采样
+                    int sx = x + _int((dx / dist) * amp)
+                    int sy = y + _int((dy / dist) * amp)
+                    if sx < 0 { sx = 0 }
+                    if sx >= w { sx = w - 1 }
+                    if sy < 0 { sy = 0 }
+                    if sy >= h { sy = h - 1 }
+
+                    int srcOff = sy * pitch + sx * 4
+                    int dstOff = rowBase + x * 4
+                    ffi.write_int(dstPix, dstOff, ffi.read_int(srcPix, srcOff))
+                }
+            }
+        }
+    }
+}
+
+// ==================== 坐标转换：屏幕 → 图片像素 ====================
+func screenToImage(float sx, float sy): [float, float] {
+    return (sx - dispX) / dispScale, (sy - dispY) / dispScale
+}
+
+// ==================== 主函数 ====================
+main() {
+    SDL3.initVideo()
+
+    string imagePath = "d:\\sp.png"
+
+    // ---- 加载图片 ----
+    Ptr[u8] surface = SDL3.loadImage(imagePath)
+    if surface == null {
+        print("无法加载图片: " + imagePath)
+        print("SDL Error: " + SDL3.getError())
+        return
+    }
+
+    // 读取 Surface 信息（SDL_SurfaceInfo: w@offset8, h@offset12）
+    SDL_SurfaceInfo info = SDL_SurfaceInfo.from_ptr(surface)
+    imgW = info.w; imgH = info.h
+    int surfPitch = ffi.read_int(surface, 16)
+    Ptr[u8] surfPixels = ffi.read_ptr(surface, 24)
+
+    if imgW <= 0 or imgH <= 0 or surfPixels == null {
+        print("图片数据无效")
+        SDL3.destroySurface(surface)
+        return
+    }
+    print("图片已加载: " + imgW + " x " + imgH)
+
+    // 分配像素缓冲（ffi.malloc 直接管理，对齐 fireworks 模式）
+    imgPitch = imgW * 4
+    int pixSize = imgW * imgH * 4
+    srcPix = ffi.malloc(pixSize)
+    dstPix = ffi.malloc(pixSize)
+    if srcPix == null or dstPix == null {
+        print("内存分配失败")
+        SDL3.destroySurface(surface)
+        return
+    }
+
+    // 拷贝像素数据（逐行 memcpy，处理 pitch 可能不同的情况）
+    for 0 : imgH - 1 to row {
+        ffi.memcpy(
+            ffi.offset(srcPix, row * imgPitch),
+            ffi.offset(surfPixels, row * surfPitch),
+            imgPitch
+        )
+    }
+    // 初始 dstPix = srcPix
+    ffi.memcpy(dstPix, srcPix, pixSize)
+
+    // 释放 SDL Surface（像素已拷贝出来）
+    SDL3.destroySurface(surface)
+
+    // ---- 创建窗口 ----
+    int winW = 900; int winH = 650
+    // 计算显示缩放：图片适配窗口
+    float scaleX = _float(winW) / _float(imgW)
+    float scaleY = _float(winH) / _float(imgH)
+    dispScale = if scaleX < scaleY then scaleX else scaleY
+    dispImgW = _float(imgW) * dispScale
+    dispImgH = _float(imgH) * dispScale
+    dispX = (_float(winW) - dispImgW) * 0.5
+    dispY = (_float(winH) - dispImgH) * 0.5
+
+    Window win = SDL3.createWindow({
+        title: "图片水波纹 Ripple Image - 点击产生扭曲",
+        w: winW, h: winH,
+        flags: WindowFlag.RESIZABLE
+    })
+    if not win.ok { ffi.free(srcPix); ffi.free(dstPix); return }
+
+    Renderer ren = SDL3.createRenderer(win.handle)
+    if not ren.ok { ffi.free(srcPix); ffi.free(dstPix); win.destroy(); return }
+    ren.setVSync(1)
+
+    // 流式纹理（全程复用，对齐 fireworks 模式）
+    Ptr[u8] pixelTex = ren.createTexture(SDL3.PIXELFORMAT_RGBA8888, 1, imgW, imgH)
+    if pixelTex == null {
+        print("纹理创建失败")
+        ffi.free(srcPix); ffi.free(dstPix); ren.destroy(); win.destroy(); return
+    }
+
+    Font font = SDL3.acquireFontAuto(16.0)
+
+    Event ev = SDL3.createEvent()
+    bool running = true
+    int lastAuto = 0
+    int fpsCount = 0; int curFps = 0; int lastFpsTime = 0
+
+    // 初始产生几个波纹
+    addRipple(_float(imgW) * 0.3, _float(imgH) * 0.4)
+    addRipple(_float(imgW) * 0.7, _float(imgH) * 0.6)
+
+    while running {
+        int t0 = SDL3.getTicks()
+
+        // ---- 事件处理 ----
+        while ev.poll() {
+            if ev.isQuit() or ev.isWindowClose() { running = false }
+            if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { running = false }
+            if ev.isMouseButtonDown() and ev.mouseButton() == 1 {
+                var[float, float](mx, my) = ev.mousePos()
+                var[float, float](ix, iy) = screenToImage(mx, my)
+                if ix >= 0.0 and ix < _float(imgW) and iy >= 0.0 and iy < _float(imgH) {
+                    addRipple(ix, iy)
+                }
+            }
+        }
+
+        // ---- 自动产生波纹（每 2 秒随机位置）----
+        if t0 - lastAuto > 2000 {
+            addRipple(
+                rands.floats(20.0, _float(imgW) - 20.0),
+                rands.floats(20.0, _float(imgH) - 20.0)
+            )
+            lastAuto = t0
+        }
+
+        // ---- 更新波纹（倒序删除消亡的波纹）----
+        int rcount = ripples.len()
+        for rcount - 1 : 0 : -1 to i {
+            Ripple rp = ripples[i]
+            rp.radius = rp.radius + rp.speed
+            rp.life = 1.0 - rp.radius / rp.maxRadius
+            if rp.life <= 0.0 {
+                ripples.remove(i)
+            }
+        }
+
+        // ---- 渲染扭曲图像 ----
+        renderRipple()
+
+        // ---- 绘制 ----
+        ren.setColor(#0A0F1EFF)
+        ren.clear()
+
+        // 整帧像素缓冲一次性上传纹理并绘制（对齐 fireworks 模式）
+        ren.updateTexture(pixelTex, null, dstPix, imgPitch)
+        ren.drawTextureAt(pixelTex, dispX, dispY, dispImgW, dispImgH)
+
+        // 波纹中心标记
+        ren.setBlendMode(BlendMode.BLEND)
+        for ripples.len() to i {
+            Ripple rp = ripples[i]
+            float sx = rp.x * dispScale + dispX
+            float sy = rp.y * dispScale + dispY
+            int a = _int(rp.life * 120.0)
+            if a > 0 {
+                ren.setColor(SDL3.packColor(100, 200, 255, a))
+                ren.drawCircle(sx, sy, rp.radius * dispScale)
+            }
+        }
+        ren.setBlendMode(BlendMode.NONE)
+
+        // ---- 提示文字 ----
+        ren.drawText(font, "图片水波纹扭曲  |  点击产生扭曲  |  ESC 退出  |  " + ripples.len() + " 波纹  " + curFps + " FPS", 16.0, 12.0, #8090B0FF)
+
+        ren.present()
+
+        // ---- 帧率控制 + FPS 统计 ----
+        fpsCount = fpsCount + 1
+        if t0 - lastFpsTime >= 1000 {
+            curFps = fpsCount
+            fpsCount = 0
+            lastFpsTime = t0
+        }
+
+        int elapsed = SDL3.getTicks() - t0
+        if elapsed < 16 { SDL3.delay(16 - elapsed) }
+    }
+
+    SDL3.releaseFont(font)
+    SDL3.destroyTexture(pixelTex)
+    ffi.free(srcPix)
+    ffi.free(dstPix)
+    ren.destroy()
+    win.destroy()
+    print("退出成功")
+}

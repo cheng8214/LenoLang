@@ -1,0 +1,194 @@
+// ripple.leno — 水波纹效果
+//
+// 鼠标点击产生扩散的水波纹，多层圆环叠加 + HSV渐变色 + 透明度衰减
+// 自动随机产生波纹，也可点击交互
+// ESC 退出
+//
+// 运行：leno ripple.leno
+
+import "../../lib/SDL3.leno" as SDL3
+use SDL3.(Event, Renderer, Scancode, WindowFlag, BlendMode, Color, Window, Font)
+import maths
+import rands
+
+// ==================== 波纹结构 ====================
+struct Ripple {
+    float x; float y           // 圆心
+    float radius               // 当前半径
+    float maxRadius            // 最大半径
+    float speed                // 扩散速度（像素/帧）
+    float life                 // 生命值 0~1（1=新生，0=消亡）
+    int hue                    // 色相 0~360
+}
+
+// HSV → RGB（返回 [r,g,b] 0~255）
+// h: 0~360, s/v: 0.0~1.0
+func hsvToRgb(float h, float s, float v): [int, int, int] {
+    float c = v * s
+    float hp = h / 60.0     // 0~6
+    // 计算 hp mod 2（不用 maths.fmod，手动实现）
+    float hp2 = hp
+    while hp2 >= 2.0 { hp2 = hp2 - 2.0 }
+    float xv = c * (1.0 - maths.abs(hp2 - 1.0))
+    float r = 0.0; float g = 0.0; float b = 0.0
+    if hp < 1.0      { r = c;  g = xv; b = 0.0 }
+    else if hp < 2.0 { r = xv; g = c;  b = 0.0 }
+    else if hp < 3.0 { r = 0.0; g = c;  b = xv }
+    else if hp < 4.0 { r = 0.0; g = xv; b = c  }
+    else if hp < 5.0 { r = xv; g = 0.0; b = c  }
+    else             { r = c;  g = 0.0; b = xv }
+    float m = v - c
+    return _int((r + m) * 255.0), _int((g + m) * 255.0), _int((b + m) * 255.0)
+}
+
+main() {
+    int W = 900; int H = 600
+
+    Window win = SDL3.createWindow({title: "水波纹 Ripple - 点击产生波纹", w: W, h: H, flags: WindowFlag.RESIZABLE})
+    if not win.ok { return }
+
+    Renderer ren = SDL3.createRenderer(win.handle)
+    if not ren.ok { win.destroy(); return }
+
+    ren.setVSync(1)
+
+    // 字体（用于绘制提示文字）
+    Font font = SDL3.acquireFontAuto(16.0)
+
+    Array[Ripple] ripples = []
+
+    // 添加一个波纹
+    func addRipple(float x, float y, int hue) {
+        ripples.add(new Ripple(
+            x = x, y = y,
+            radius = 0.0,
+            maxRadius = rands.floats(120.0, 220.0),
+            speed = rands.floats(1.5, 3.5),
+            life = 1.0,
+            hue = hue
+        ))
+    }
+
+    // 随机色相（步进37避免重复，覆盖360度）
+    int _hue = 0
+    func nextHue(): int {
+        _hue = _hue + 37
+        if _hue >= 360 { _hue = _hue - 360 }
+        return _hue
+    }
+
+    // 初始产生几个波纹
+    addRipple(300.0, 300.0, 200)
+    addRipple(600.0, 350.0, 30)
+
+    Event ev = SDL3.createEvent()
+    bool running = true
+    int lastAuto = 0
+
+    while running {
+        int t0 = SDL3.getTicks()
+
+        // ---- 事件处理 ----
+        while ev.poll() {
+            if ev.isQuit() or ev.isWindowClose() { running = false }
+            if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { running = false }
+            if ev.isMouseButtonDown() and ev.mouseButton() == 1 {
+                var[float, float](mx, my) = ev.mousePos()
+                addRipple(mx, my, nextHue())
+            }
+        }
+
+        // ---- 自动产生波纹（每 1.5 秒随机位置）----
+        if t0 - lastAuto > 1500 {
+            addRipple(rands.floats(100.0, _float(W - 100)), rands.floats(100.0, _float(H - 100)), nextHue())
+            lastAuto = t0
+        }
+
+        // ---- 更新波纹（倒序删除消亡的波纹）----
+        int rcount = ripples.len()
+        for rcount - 1 : 0 : -1 to i {
+            Ripple rp = ripples[i]
+            rp.radius = rp.radius + rp.speed
+            rp.life = 1.0 - rp.radius / rp.maxRadius
+            if rp.life <= 0.0 {
+                ripples.remove(i)
+            }
+        }
+
+        // ==================== 渲染 ====================
+
+        // 深色背景
+        ren.setColor(#0A0F1EFF)
+        ren.clear()
+
+        // 背景网格点（装饰）
+        ren.setColor(#1A2540FF)
+        for 0 : H : 40 to gy {
+            for 0 : W : 40 to gx {
+                ren.drawPoint(_float(gx), _float(gy))
+            }
+        }
+
+        // 使用 BLEND 混合模式绘制波纹（透明效果）
+        ren.setBlendMode(BlendMode.BLEND)
+
+        for ripples.len() to i {
+            Ripple rp = ripples[i]
+            var[int, int, int](cr, cg, cb) = hsvToRgb(_float(rp.hue), 0.75, 1.0)
+
+            // ---- 多层同心圆环（从内到外，透明度递减）----
+            int rings = 5
+            for 0 : rings - 1 to ri {
+                float ringRadius = rp.radius - _float(ri) * 6.0
+                if ringRadius <= 0.0 { continue }
+
+                // 透明度：基于生命周期 + 环偏移
+                float alpha = rp.life * (1.0 - _float(ri) / _float(rings))
+                int a = _int(alpha * 200.0)
+                if a < 0 { a = 0 }
+                if a > 255 { a = 255 }
+
+                ren.setColor(SDL3.packColor(cr, cg, cb, a))
+                ren.drawCircle(rp.x, rp.y, ringRadius)
+            }
+
+            // ---- 中心光点（新生波纹高亮）----
+            if rp.life > 0.3 {
+                int ca = _int(rp.life * 255.0)
+                if ca > 255 { ca = 255 }
+                ren.setColor(SDL3.packColor(255, 255, 255, ca))
+                ren.fillCircle(rp.x, rp.y, 3.0)
+            }
+
+            // ---- 内圈半透明填充（模拟水波内部光晕）----
+            float innerR = rp.radius * 0.15
+            if innerR > 0.5 {
+                int ia = _int(rp.life * 40.0)
+                if ia > 255 { ia = 255 }
+                ren.setColor(SDL3.packColor(cr, cg, cb, ia))
+                ren.fillCircle(rp.x, rp.y, innerR)
+            }
+        }
+
+        // 中心呼吸圈（装饰）
+        float breath = maths.sin(_float(t0) * 0.003) * 2.0
+        ren.setColor(SDL3.packColor(100, 200, 255, 60))
+        ren.drawCircle(_float(W / 2), _float(H / 2), 20.0 + breath)
+
+        ren.setBlendMode(BlendMode.NONE)
+
+        // ---- 提示文字 ----
+        ren.drawText(font, "水波纹 Ripple Effect  |  点击产生波纹  |  ESC 退出", 16.0, 12.0, #8090B0FF)
+
+        ren.present()
+
+        // ---- 帧率控制 ----
+        int elapsed = SDL3.getTicks() - t0
+        if elapsed < 16 { SDL3.delay(16 - elapsed) }
+    }
+
+    SDL3.releaseFont(font)
+    ren.destroy()
+    win.destroy()
+    print("退出成功")
+}
