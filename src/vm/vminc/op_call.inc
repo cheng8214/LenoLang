@@ -124,13 +124,16 @@ OPCODE(OP_TAIL_CALL) {
         
         frame->local_count = local_count;
         frame->slot_count = local_count;
-        frame->catch_ip = NULL;
-        frame->finally_ip = NULL;
-        frame->prev_catch_ip = NULL;
-        frame->prev_finally_ip = NULL;
-        frame->in_finally = 0;
-        frame->try_return_value = val_null();
-        frame->has_try_return = 0;
+        // 帧复用优化：无 try 的函数跳过 try 字段初始化（读取点用 FRAME_TRY_VALID 守护）
+        if (function->has_try) {
+            frame->catch_ip = NULL;
+            frame->finally_ip = NULL;
+            frame->prev_catch_ip = NULL;
+            frame->prev_finally_ip = NULL;
+            frame->in_finally = 0;
+            frame->try_return_value = val_null();
+            frame->has_try_return = 0;
+        }
         frame->module = function->module;
 
         // 应用待处理的泛型类型参数到 closure
@@ -295,13 +298,16 @@ OPCODE(OP_TAIL_CALL) {
 
             frame->local_count = local_count;
             frame->slot_count = local_count;
-            frame->catch_ip = NULL;
-            frame->finally_ip = NULL;
-            frame->prev_catch_ip = NULL;
-            frame->prev_finally_ip = NULL;
-            frame->in_finally = 0;
-            frame->try_return_value = val_null();
-            frame->has_try_return = 0;
+            // 帧复用优化：无 try 的函数跳过 try 字段初始化（读取点用 FRAME_TRY_VALID 守护）
+            if (func->has_try) {
+                frame->catch_ip = NULL;
+                frame->finally_ip = NULL;
+                frame->prev_catch_ip = NULL;
+                frame->prev_finally_ip = NULL;
+                frame->in_finally = 0;
+                frame->try_return_value = val_null();
+                frame->has_try_return = 0;
+            }
             frame->module = func->module;
             frame->has_captures = (closure->upvalue_count > 0) ? 1 : 0;
 
@@ -637,7 +643,8 @@ OPCODE(OP_RETURN) {
     }
 
     // 检查是否有 finally 块需要执行（且当前不在 finally 中）
-    if (frame->finally_ip != NULL && !frame->in_finally) {
+    // FRAME_TRY_VALID：无 try 函数跳过了 try 字段初始化，finally_ip 为脏值
+    if (FRAME_TRY_VALID(frame) && frame->finally_ip != NULL && !frame->in_finally) {
         // 保存返回值
         frame->try_return_value = result;
         frame->has_try_return = 1;
@@ -734,7 +741,8 @@ OPCODE(OP_RETURN_MULTI) {
 
     // 检查是否有 finally 块需要执行（且当前不在 finally 中）
     // 多返回值 + finally：保存第一个返回值，弹出其余的
-    if (frame->finally_ip != NULL && !frame->in_finally) {
+    // FRAME_TRY_VALID：无 try 函数跳过了 try 字段初始化，finally_ip 为脏值
+    if (FRAME_TRY_VALID(frame) && frame->finally_ip != NULL && !frame->in_finally) {
         // 保存返回值（只保存第一个，finally 后只返回第一个值）
         frame->try_return_value = results[0];
         frame->has_try_return = 1;

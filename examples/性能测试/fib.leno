@@ -1,0 +1,17 @@
+import times
+
+// 递归斐波那契：帧建立开销基准（对比 fib.py）
+func fib(int n): int {
+    if n < 2 {
+        return n
+    }
+    return fib(n - 1) + fib(n - 2)
+}
+
+main() {
+    var t1 = times.ms()
+    var r = fib(32)
+    var t2 = times.ms()
+    print("fib(32) = " + r + ", 耗时 " + (t2 - t1) + "ms")
+    return 0
+}

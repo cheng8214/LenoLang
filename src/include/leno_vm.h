@@ -245,6 +245,24 @@ typedef struct CallFrame {
 } CallFrame;
 
 // ============================================================================
+// 帧复用：try 字段有效性守护宏
+//
+// 性能优化（结构短板 B）：call() 仅在 function->has_try 时才初始化帧的 7 个
+// try 字段（catch_ip/finally_ip/prev_catch_ip/prev_finally_ip/in_finally/
+// try_return_value/has_try_return，~50B/次），无 try 的函数（绝大多数）跳过。
+// 帧槽（vm.frames[]）被复用，跳过初始化时这些字段是上一次调用的脏值，
+// 读取前必须用本宏守护，否则脏的 catch_ip/finally_ip 会导致异常误捕获、
+// OP_RETURN 误跳 finally、GC 扫描脏 try_return_value 而崩溃。
+//
+// 字段有效的两种情况：
+// - 主帧 / 线程帧：vm_load / vm_init 显式初始化（closure 或 function 为 NULL）
+// - 函数帧：function->has_try == 1 时 call() 初始化
+// ============================================================================
+#define FRAME_TRY_VALID(frame) \
+    ((frame)->closure == NULL || (frame)->closure->function == NULL || \
+     (frame)->closure->function->has_try)
+
+// ============================================================================
 // 模块帧 - 模块执行时的上下文
 // ============================================================================
 

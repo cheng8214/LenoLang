@@ -195,12 +195,14 @@
 };
 
     // 宏定义：取指令并分发
+    // FRAME_TRY_VALID：无 try 函数的帧 catch_ip/finally_ip 为脏值（帧复用优化），
+    // 异常传播时视为不可捕获
     #define FETCH_DISPATCH() do { \
         if (frame->ip >= frame->chunk->code + frame->chunk->len) { \
             return 0; \
         } \
         if (unlikely(vm.has_exception)) { \
-            if (!frame->catch_ip && !frame->finally_ip) { \
+            if (!FRAME_TRY_VALID(frame) || (!frame->catch_ip && !frame->finally_ip)) { \
                 return -1; \
             } \
         } \
@@ -209,7 +211,7 @@
     } while(0)
 
     #define CHECK_EXCEPTION() do { \
-        if (vm.has_exception && !frame->catch_ip && !frame->finally_ip) { \
+        if (vm.has_exception && (!FRAME_TRY_VALID(frame) || (!frame->catch_ip && !frame->finally_ip))) { \
             return -1; \
         } \
     } while(0)
@@ -230,7 +232,7 @@
     while (frame->ip < frame->chunk->code + frame->chunk->len) {
         frame = &vm.frames[vm.frame_cnt - 1];
 
-        if (vm.has_exception && !frame->catch_ip && !frame->finally_ip) {
+        if (vm.has_exception && (!FRAME_TRY_VALID(frame) || (!frame->catch_ip && !frame->finally_ip))) {
             return -1;
         }
 

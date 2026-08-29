@@ -627,7 +627,8 @@ void gc_scan_children(Object* obj) {
                             gc_mark_value(frame_copy->locals[i]);
                         }
                     }
-                    if (frame_copy->has_try_return) {
+                    // FRAME_TRY_VALID：无 try 函数的帧 has_try_return 为脏值（帧复用优化）
+                    if (FRAME_TRY_VALID(frame_copy) && frame_copy->has_try_return) {
                         gc_mark_value(frame_copy->try_return_value);
                     }
                     if (frame_copy->module) {
@@ -888,7 +889,9 @@ static void mark_roots(void) {
                 gc_mark_value(frame->locals[j]);
             }
         }
-        if (frame->has_try_return) {
+        // FRAME_TRY_VALID：无 try 函数的帧 has_try_return 为脏值（帧复用优化），
+        // 误扫脏 try_return_value 会导致 GC 崩溃
+        if (FRAME_TRY_VALID(frame) && frame->has_try_return) {
             gc_mark_value(frame->try_return_value);
         }
         if (frame->module) {

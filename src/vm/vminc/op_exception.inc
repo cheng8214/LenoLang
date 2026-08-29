@@ -84,7 +84,8 @@ OPCODE(OP_END_TRY) {
         } else if (vm.frame_cnt > 1) {
             // 当前帧没有异常处理器，返回到上层调用
             CallFrame* prev_frame = &vm.frames[vm.frame_cnt - 2];
-            if (prev_frame->catch_ip || prev_frame->finally_ip) {
+            // FRAME_TRY_VALID：上层若是无 try 函数，其 catch_ip/finally_ip 为脏值（帧复用优化）
+            if (FRAME_TRY_VALID(prev_frame) && (prev_frame->catch_ip || prev_frame->finally_ip)) {
                 // 上层有异常处理
                 vm.has_exception = 1;
                 vm_stack_push(&vm, vm.exception);
@@ -202,7 +203,8 @@ OPCODE(OP_THROW) {
     // 注意：如果当前在 finally 块中执行 throw，需要清除当前帧的 finally_ip
     // 防止再次跳转到同一个 finally
     CallFrame* current_frame = &vm.frames[vm.frame_cnt - 1];
-    if (current_frame->in_finally && current_frame->finally_ip) {
+    // FRAME_TRY_VALID：无 try 函数也可包含 throw 语句，其 in_finally/finally_ip 为脏值
+    if (FRAME_TRY_VALID(current_frame) && current_frame->in_finally && current_frame->finally_ip) {
         current_frame->finally_ip = NULL;
     }
 

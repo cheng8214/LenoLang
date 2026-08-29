@@ -133,13 +133,17 @@ static inline int call(ObjClosure* closure, int arg_count, int line) {
     frame->locals = locals;
     frame->local_count = local_count;
     frame->locals_is_dynamic = locals_is_dynamic;
-    frame->catch_ip = NULL;
-    frame->finally_ip = NULL;
-    frame->prev_catch_ip = NULL;
-    frame->prev_finally_ip = NULL;
-    frame->in_finally = 0;
-    frame->try_return_value = val_null();
-    frame->has_try_return = 0;
+    // 帧复用优化：无 try 的函数跳过 7 个 try 字段初始化（~50B/次），
+    // 读取点必须用 FRAME_TRY_VALID 守护（脏值会导致异常误捕获/误跳 finally）
+    if (func->has_try) {
+        frame->catch_ip = NULL;
+        frame->finally_ip = NULL;
+        frame->prev_catch_ip = NULL;
+        frame->prev_finally_ip = NULL;
+        frame->in_finally = 0;
+        frame->try_return_value = val_null();
+        frame->has_try_return = 0;
+    }
     frame->module = func->module;
     frame->has_captures = (closure->upvalue_count > 0) ? 1 : 0;
 

@@ -53,7 +53,8 @@ OPCODE(OP_GET_PROPERTY) {
                         throw_runtime_error(msg, GET_CURRENT_LINE());
                         free(msg);
                         frame = &vm.frames[vm.frame_cnt - 1];
-                        if (frame->catch_ip || frame->finally_ip) {
+                        // FRAME_TRY_VALID：无 try 函数的帧 catch_ip/finally_ip 为脏值（帧复用优化）
+                        if (FRAME_TRY_VALID(frame) && (frame->catch_ip || frame->finally_ip)) {
                             DISPATCH;
                         }
                         return -1;
@@ -254,7 +255,8 @@ OPCODE(OP_GET_PROPERTY) {
                         throw_runtime_error(msg, GET_CURRENT_LINE());
                         free(msg);
                         frame = &vm.frames[vm.frame_cnt - 1];
-                        if (frame->catch_ip || frame->finally_ip) {
+                        // FRAME_TRY_VALID：无 try 函数的帧 catch_ip/finally_ip 为脏值（帧复用优化）
+                        if (FRAME_TRY_VALID(frame) && (frame->catch_ip || frame->finally_ip)) {
                             DISPATCH;
                         }
                         return -1;
@@ -311,7 +313,8 @@ OPCODE(OP_GET_PROPERTY) {
                         throw_runtime_error(msg, GET_CURRENT_LINE());
                         free(msg);
                         frame = &vm.frames[vm.frame_cnt - 1];
-                        if (frame->catch_ip || frame->finally_ip) {
+                        // FRAME_TRY_VALID：无 try 函数的帧 catch_ip/finally_ip 为脏值（帧复用优化）
+                        if (FRAME_TRY_VALID(frame) && (frame->catch_ip || frame->finally_ip)) {
                             DISPATCH;
                         }
                         return -1;
