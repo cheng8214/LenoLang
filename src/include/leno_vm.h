@@ -181,6 +181,8 @@ typedef enum {
     OP_INDEX_SET_NOPUSH,   // 通用索引赋值，不压栈（arr[i]=v 语句用）
     OP_CLEAR_LOCAL_RANGE,  // 清零局部变量范围 [base, base+count)，用于内联清理
     OP_SWITCH_LOOKUP,      // 整数 switch 二分查找：const_idx(2) count(2) default_off(4) [offset(4)]...
+    // struct 方法调用融合指令（省掉 receiver 二次求值 + OP_GET_METHOD 分发开销）
+    OP_INVOKE_METHOD,      // 直接调用 struct 方法: name_const(2) arg_count(2)，receiver 在参数区首位
 } OpCode;
 
 // ============================================================================
@@ -416,6 +418,32 @@ typedef struct {
 #define IC_MODULE_CACHE_SIZE 2048   // 必须是 2 的幂
 
 // ============================================================================
+// 内联缓存：struct 方法查找 (OP_GET_METHOD) 与 struct 定义查找 (OP_STRUCT_INIT)
+// 缓存 (struct def 指针, 方法名哈希) → 方法闭包，避免每次调用线性 strcmp 遍历方法表
+// 安全性：ObjStructDef 由 struct_def_mark_all() 作为 GC 根标记（gc.c），
+//         def->methods[i].closure 经 def 可达，缓存裸指针不会悬空；
+//         Leno GC 为非移动式（晋升仅翻转 generation 标志），指针地址稳定
+// ============================================================================
+typedef struct {
+    int valid;
+    ObjStructDef* def;       // receiver 的 struct 定义（精确匹配，含继承语义下的区分）
+    uint32_t name_hash;      // 方法名的 FNV-1a 哈希
+    uint32_t gen;            // 写入缓存时的 struct 定义表代数（防同名 def 被覆盖后拿到旧方法）
+    ObjClosure* closure;     // 缓存的方法闭包（仅缓存预创建闭包，upvalue 方法不缓存）
+} InlineMethodCacheEntry;
+
+#define IC_METHOD_CACHE_SIZE 2048  // 必须是 2 的幂
+
+typedef struct {
+    int valid;
+    uint32_t name_hash;      // struct 名的 FNV-1a 哈希
+    uint32_t gen;            // 写入缓存时的 struct 定义表代数（防同名 def 被覆盖后拿到旧 def）
+    ObjStructDef* def;       // 缓存的 struct 定义（struct_def_find 的结果）
+} InlineStructDefCacheEntry;
+
+#define IC_STRUCTDEF_CACHE_SIZE 1024  // 必须是 2 的幂（分配点远少于方法调用点）
+
+// ============================================================================
 // 虚拟机
 // ============================================================================
 
@@ -450,6 +478,8 @@ typedef struct VM {
     InlineCacheEntry ic_cache[IC_CACHE_SIZE];           // 属性访问缓存表 (OP_GET_PROPERTY)
     InlineNativeCacheEntry ic_native_cache[IC_NATIVE_CACHE_SIZE];   // 全局 Native 函数缓存 (OP_GET_NATIVE)
     InlineModuleCallCacheEntry ic_module_cache[IC_MODULE_CACHE_SIZE]; // 模块方法缓存 (OP_MODULE_CALL)
+    InlineMethodCacheEntry ic_method_cache[IC_METHOD_CACHE_SIZE];   // struct 方法缓存 (OP_GET_METHOD)
+    InlineStructDefCacheEntry ic_structdef_cache[IC_STRUCTDEF_CACHE_SIZE]; // struct 定义缓存 (OP_STRUCT_INIT)
     int ic_hits;               // 缓存命中次数（统计用）
     int ic_misses;             // 缓存未命中次数（统计用）
     // 协程系统

@@ -45,6 +45,19 @@ void vm_init_with_scope(Scope* global_scope) {
         vm.ic_module_cache[i].combined_hash = 0;
         vm.ic_module_cache[i].meta = NULL;
     }
+    for (int i = 0; i < IC_METHOD_CACHE_SIZE; i++) {
+        vm.ic_method_cache[i].valid = 0;
+        vm.ic_method_cache[i].def = NULL;
+        vm.ic_method_cache[i].name_hash = 0;
+        vm.ic_method_cache[i].gen = 0;
+        vm.ic_method_cache[i].closure = NULL;
+    }
+    for (int i = 0; i < IC_STRUCTDEF_CACHE_SIZE; i++) {
+        vm.ic_structdef_cache[i].valid = 0;
+        vm.ic_structdef_cache[i].name_hash = 0;
+        vm.ic_structdef_cache[i].gen = 0;
+        vm.ic_structdef_cache[i].def = NULL;
+    }
     vm.ic_hits = 0;
     vm.ic_misses = 0;
 

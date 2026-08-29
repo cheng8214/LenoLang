@@ -59,6 +59,13 @@ void struct_def_set_field(ObjStructDef* def, int index, const char* name, TypeKi
 }
 
 // 注册结构体定义
+// 注册（含同名覆盖）时递增代数计数器，供 VM 内联缓存校验 def 是否被重定义
+static uint32_t struct_def_gen = 0;
+
+uint32_t struct_def_generation(void) {
+    return struct_def_gen;
+}
+
 void struct_def_register(ObjStructDef* def) {
     if (struct_def_count >= MAX_STRUCT_DEFS) {
         error_add_at(ERR_RUNTIME, 0, 0, "结构体定义数量超过上限");
@@ -83,11 +90,13 @@ void struct_def_register(ObjStructDef* def) {
             old_def->const_count = 0;
 
             struct_def_table[i] = def;
+            struct_def_gen++;
             return;
         }
     }
 
     struct_def_table[struct_def_count++] = def;
+    struct_def_gen++;
 }
 
 // 更新所有结构体方法函数的 module 指针
@@ -156,15 +165,17 @@ ObjStruct* struct_instance_new_depth(ObjStructDef* def, int depth) {
         return NULL;
     }
 
-    ObjStruct* obj = (ObjStruct*)gc_alloc(sizeof(ObjStruct), OBJ_STRUCT);
+    // 头 + 字段数组一次分配：小对象（如 2 字段 Hit）从 2 次系统分配降为 1 次，
+    // 尾部内联数组被 obj->size 覆盖（GC 记账/清零自动正确），无需 gc_track_memory
+    // （对象版光线追踪实测：struct 分配慢于 Python 的主因之一）
+    size_t total_size = sizeof(ObjStruct) + (size_t)def->field_count * sizeof(Value);
+    ObjStruct* obj = (ObjStruct*)gc_alloc(total_size, OBJ_STRUCT);
     obj->def = def;
-    obj->field_values = (Value*)calloc(def->field_count, sizeof(Value));
+    obj->field_values = (Value*)((char*)obj + sizeof(ObjStruct));
     obj->declared_face = NULL;
     obj->generic_type_args = NULL;
     obj->generic_type_arg_count = 0;
-
-    // 追踪 field_values 数组的内存（calloc 分配的额外内存 GC 默认不可见）
-    gc_track_memory((Object*)obj, 0, (size_t)def->field_count * sizeof(Value));
+    obj->fields_inline = 1;
 
     // 使用默认值初始化字段
     for (int i = 0; i < def->field_count; i++) {

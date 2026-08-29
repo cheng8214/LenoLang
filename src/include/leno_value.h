@@ -584,10 +584,11 @@ typedef struct {
 typedef struct {
     Object header;
     ObjStructDef* def;             // 结构体定义
-    Value* field_values;           // 字段值数组
+    Value* field_values;           // 字段值数组（fields_inline=1 时指向对象尾部内联数组）
     ObjString* declared_face;      // 声明时的 face 类型名称（如 "Speaker"），NULL 表示未通过 face 声明
     char** generic_type_args;      // 泛型参数类型名数组（如 ["int"]），NULL 表示非泛型实例
     int generic_type_arg_count;    // 泛型参数数量
+    int fields_inline;             // 字段数组是否内联在对象内存尾部（1=随对象一次分配，释放时不可单独 free）
 } ObjStruct;
 
 // face 方法签名
@@ -1141,6 +1142,9 @@ ObjStructDef* struct_def_find(const char* name);
 
 // 注册结构体定义
 void struct_def_register(ObjStructDef* def);
+
+// 当前结构体定义表代数（每次注册/覆盖递增），供 VM 内联缓存校验 def 是否被重定义
+uint32_t struct_def_generation(void);
 
 // 跨线程：返回当前线程结构体定义表数量（主线程抓取快照）
 int struct_def_get_count(void);

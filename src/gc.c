@@ -1297,7 +1297,10 @@ static void free_object_resources(Object* obj) {
         // 结构体实例：释放字段值数组和泛型类型参数
         case OBJ_STRUCT: {
             ObjStruct* struct_obj = (ObjStruct*)obj;
-            free(struct_obj->field_values);
+            // 内联字段数组随对象整体分配，不可单独 free
+            if (!struct_obj->fields_inline) {
+                free(struct_obj->field_values);
+            }
             if (struct_obj->generic_type_args) {
                 for (int i = 0; i < struct_obj->generic_type_arg_count; i++) {
                     free(struct_obj->generic_type_args[i]);

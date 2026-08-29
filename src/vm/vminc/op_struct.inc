@@ -249,6 +249,10 @@ OPCODE(OP_STRUCT_INIT) {
     // 操作数：2字节结构体名称常量索引 + 1字节参数字段数量 + 1字节泛型参数数量 + 泛型参数常量索引
     // 每个参数：1字节字段索引（编译期确定，避免运行时线性搜索）
     uint16_t name_idx = READ_SHORT();
+#ifndef VM_USE_THREAD_LOCAL
+    // 记录指令地址（opcode + 2 字节操作数 = 3 字节），供 struct 定义缓存索引
+    uint8_t* sd_ic_ip = frame->ip - 3;
+#endif
     uint8_t arg_count = READ_BYTE();
 
     // 读取泛型参数信息
@@ -407,7 +411,29 @@ OPCODE(OP_STRUCT_INIT) {
     }
     ObjString* name = (ObjString*)val_as_obj(name_val);
 
+    // 查找结构体定义：优先走内联缓存，避免每次分配都做 struct_def_find
+    // 全局字符串查找（对象版光线追踪实测：这是 struct 分配慢于 Python 的主因之一）
+#ifndef VM_USE_THREAD_LOCAL
+    int sd_cache_idx = ((uintptr_t)sd_ic_ip >> 2) & (IC_STRUCTDEF_CACHE_SIZE - 1);
+    InlineStructDefCacheEntry* sd_cache = &vm.ic_structdef_cache[sd_cache_idx];
+    ObjStructDef* def = NULL;
+    if (sd_cache->valid && sd_cache->name_hash == name->hash &&
+        sd_cache->gen == struct_def_generation()) {
+        vm.ic_hits++;
+        def = sd_cache->def;
+    } else {
+        vm.ic_misses++;
+        def = struct_def_find(name->chars);
+        if (def) {
+            sd_cache->valid = 1;
+            sd_cache->name_hash = name->hash;
+            sd_cache->gen = struct_def_generation();
+            sd_cache->def = def;
+        }
+    }
+#else
     ObjStructDef* def = struct_def_find(name->chars);
+#endif
     if (!def) {
         char _undef_msg[256];
         snprintf(_undef_msg, sizeof(_undef_msg), "未定义的结构体 '%s'", name->chars);
@@ -861,7 +887,24 @@ OPCODE(OP_GET_METHOD) {
     if (obj->type == OBJ_STRUCT) {
         ObjStruct* s = (ObjStruct*)obj;
         ObjStructDef* def = s->def;
-        
+
+#ifndef VM_USE_THREAD_LOCAL
+        // 内联缓存：命中时 O(1) 取预创建方法闭包，避免每次调用线性 strcmp 遍历方法表
+        // （对象版光线追踪实测：这是 struct 方法调用慢于 Python 的主因之一）
+        uint8_t* ip_before = frame->ip - 3;  // OP_GET_METHOD = 3 字节 (opcode + 2)
+        int mcache_idx = ((uintptr_t)ip_before >> 2) & (IC_METHOD_CACHE_SIZE - 1);
+        InlineMethodCacheEntry* mcache = &vm.ic_method_cache[mcache_idx];
+        uint32_t mname_hash = method_name->hash;
+
+        if (mcache->valid && mcache->def == def && mcache->name_hash == mname_hash &&
+            mcache->gen == struct_def_generation()) {
+            vm.ic_hits++;
+            vm_stack_push(&vm, val_obj((Object*)mcache->closure));
+            DISPATCH;
+        }
+        vm.ic_misses++;
+#endif
+
         // 在方法表中查找
         ObjClosure* closure = NULL;
         ObjFunction* func = NULL;
@@ -878,6 +921,14 @@ OPCODE(OP_GET_METHOD) {
 
         if (func) {
             if (closure) {
+#ifndef VM_USE_THREAD_LOCAL
+                // 更新内联缓存：仅缓存预创建闭包（def 为 GC 根，closure 经 def 可达，指针稳定）
+                mcache->valid = 1;
+                mcache->def = def;
+                mcache->name_hash = mname_hash;
+                mcache->gen = struct_def_generation();
+                mcache->closure = closure;
+#endif
                 vm_stack_push(&vm, val_obj((Object*)closure));
                 DISPATCH;
             } else {
@@ -966,4 +1017,113 @@ OPCODE(OP_GET_METHOD) {
         runtime_error(_msg3, GET_CURRENT_LINE());
     }
     return -1;
+}
+
+// ============================================================================
+// struct 方法调用融合指令（省掉 receiver 二次求值 + OP_GET_METHOD 分发开销）
+// 字节格式: OP_INVOKE_METHOD name_const(2) arg_count(2)
+// 栈布局: [recv][arg1]...[argN][default_args...]（arg_count 含 self，receiver 在参数区首位，
+//         peek 不弹出；查找方法闭包压栈后交给 call()，与旧路径 [recv][args][closure] 完全一致）
+// 仅由 codegen 在编译期确认 struct 方法（非 async）时发射
+// ============================================================================
+
+OPCODE(OP_INVOKE_METHOD) {
+    frame = &vm.frames[vm.frame_cnt - 1];
+    uint16_t method_name_idx = READ_SHORT();
+    int arg_count = READ_SHORT();
+
+    Value method_name_val = frame->chunk->constants[method_name_idx];
+    if (!val_is_obj(method_name_val) || val_as_obj(method_name_val)->type != OBJ_STRING) {
+        runtime_error("方法名必须是字符串", GET_CURRENT_LINE());
+        return -1;
+    }
+    ObjString* method_name = (ObjString*)val_as_obj(method_name_val);
+
+    if (unlikely(vm.sp < arg_count)) {
+        runtime_error("栈下溢", GET_CURRENT_LINE());
+        return -1;
+    }
+    // receiver 位于参数区首位（arg_count 含 self）
+    Value obj_val = vm.stack[vm.sp - arg_count];
+
+    if (!val_is_obj(obj_val) || val_as_obj(obj_val)->type != OBJ_STRUCT) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "尝试在非 struct 类型上调用方法 '%s'", method_name->chars);
+        runtime_error(msg, GET_CURRENT_LINE());
+        return -1;
+    }
+
+    ObjStructDef* def = ((ObjStruct*)val_as_obj(obj_val))->def;
+
+    ObjClosure* closure = NULL;
+
+#ifndef VM_USE_THREAD_LOCAL
+    // 内联缓存（与 OP_GET_METHOD 同一张表，以指令地址哈希区分）
+    uint8_t* ip_before = frame->ip - 5;  // OP_INVOKE_METHOD = 5 字节 (opcode + 2 + 2)
+    int mcache_idx = ((uintptr_t)ip_before >> 2) & (IC_METHOD_CACHE_SIZE - 1);
+    InlineMethodCacheEntry* mcache = &vm.ic_method_cache[mcache_idx];
+    uint32_t mname_hash = method_name->hash;
+
+    if (mcache->valid && mcache->def == def && mcache->name_hash == mname_hash &&
+        mcache->gen == struct_def_generation()) {
+        vm.ic_hits++;
+        closure = mcache->closure;
+    } else {
+        vm.ic_misses++;
+#endif
+        // 在方法表中查找（跳过构造/析构函数，与 OP_GET_METHOD 语义一致）
+        ObjFunction* func = NULL;
+        for (int i = 0; i < def->method_count; i++) {
+            if (strcmp(def->methods[i].name, method_name->chars) == 0) {
+                if (def->has_ctor && i == def->ctor_index) continue;
+                if (def->has_dtor && i == def->dtor_index) continue;
+                closure = def->methods[i].closure;
+                func = def->methods[i].func;
+                break;
+            }
+        }
+
+        if (!func) {
+            char _msg[256];
+            snprintf(_msg, sizeof(_msg), "类型 '%s' 没有方法 '%s'",
+                     def->name ? def->name : "?", method_name->chars);
+            runtime_error(_msg, GET_CURRENT_LINE());
+            return -1;
+        }
+
+        if (!closure) {
+            // 需要 upvalue 的方法：动态创建闭包（与 OP_GET_METHOD 一致，不入缓存）
+            ObjClosure* new_closure = (ObjClosure*)gc_alloc(sizeof(ObjClosure), OBJ_CLOSURE);
+            if (!new_closure) {
+                runtime_error("内存不足，无法创建方法闭包", GET_CURRENT_LINE());
+                return -1;
+            }
+            new_closure->function = func;
+            new_closure->upvalue_count = func->upvalue_count;
+            for (int i = 0; i < func->upvalue_count; i++) {
+                new_closure->upvalues[i] = NULL;
+            }
+            closure = new_closure;
+        }
+#ifndef VM_USE_THREAD_LOCAL
+        else {
+            // 更新内联缓存：仅缓存预创建闭包
+            mcache->valid = 1;
+            mcache->def = def;
+            mcache->name_hash = mname_hash;
+            mcache->gen = struct_def_generation();
+            mcache->closure = closure;
+        }
+    }
+#endif
+
+    // 压入 callee 供 call() 读取：[recv][args...][closure] -> call
+    vm_stack_push(&vm, val_obj((Object*)closure));
+    if (!call(closure, arg_count, 0)) {
+        if (!vm.has_exception) {
+            return -1;
+        }
+    }
+    frame = &vm.frames[vm.frame_cnt - 1];
+    DISPATCH;
 }

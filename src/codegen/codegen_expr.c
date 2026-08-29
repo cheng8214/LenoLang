@@ -946,21 +946,35 @@ static void gen_call(CodeGen* gen, Ast* ast) {
                         }
                     }
 
-                    // 压入 receiver，OP_GET_METHOD 获取方法闭包压入栈顶
-                    gen_expr(gen, obj_ast);
-
+                    // 查找/调用方法
                     ObjString* method_name_str = str_copy(method_name, strlen(method_name));
                     int method_name_const = make_constant(gen, val_obj((Object*)method_name_str));
-                    emit_byte(gen, OP_GET_METHOD, ast->line);
-                    emit_byte(gen, (method_name_const >> 8) & 0xff, ast->line);
-                    emit_byte(gen, method_name_const & 0xff, ast->line);
 
-                    if (has_method_def && method_def && method_def->u.func.is_async) {
-                        emit_byte(gen, OP_ASYNC_CALL, ast->line);
+                    if (has_method_def && method_def && !method_def->u.func.is_async) {
+                        // 融合指令：receiver 只求值一次（避免 spheres[si] 二次求值），
+                        // 方法查找 + 调用一条指令完成（内联缓存在指令内）
+                        // 栈布局: [self][args...][defaults...] -> OP_INVOKE_METHOD -> 结果
+                        emit_byte(gen, OP_INVOKE_METHOD, ast->line);
+                        emit_byte(gen, (method_name_const >> 8) & 0xff, ast->line);
+                        emit_byte(gen, method_name_const & 0xff, ast->line);
                         emit_byte(gen, (expected_args >> 8) & 0xff, ast->line);
                         emit_byte(gen, expected_args & 0xff, ast->line);
                     } else {
-                        emit_call(gen, expected_args, ast->line);
+                        // async 方法或未知方法定义：走旧路径
+                        // 压入 receiver，OP_GET_METHOD 获取方法闭包压入栈顶
+                        gen_expr(gen, obj_ast);
+
+                        emit_byte(gen, OP_GET_METHOD, ast->line);
+                        emit_byte(gen, (method_name_const >> 8) & 0xff, ast->line);
+                        emit_byte(gen, method_name_const & 0xff, ast->line);
+
+                        if (has_method_def && method_def && method_def->u.func.is_async) {
+                            emit_byte(gen, OP_ASYNC_CALL, ast->line);
+                            emit_byte(gen, (expected_args >> 8) & 0xff, ast->line);
+                            emit_byte(gen, expected_args & 0xff, ast->line);
+                        } else {
+                            emit_call(gen, expected_args, ast->line);
+                        }
                     }
                 }
             }
