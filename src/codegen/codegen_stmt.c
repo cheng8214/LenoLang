@@ -83,11 +83,24 @@ static TypeKind get_expr_type_kind(Ast* ast) {
 }
 
 // 编译期消除赋值/声明处的基本类型 CAST：
-// 仅当表达式静态类型与目标声明类型完全一致时消除（此时 CAST 不可能失败，是纯开销）；
-// 类型未知（TYPE_ANY/无 cached_type）或不一致时保留 CAST，维持运行时检查与报错行号语义
+// 仅限字面量（AST_NUM/AST_STRING/AST_BOOL/AST_NULL）且静态类型与目标声明完全一致——
+// 字面量的 cached_type 由词法/语义分析直接确定，codegen 发射的就是该类型常量，运行时类型有保证。
+// 其余节点（方法调用、字段访问、算术结果等）的 cached_type 只是推断结果，不保证运行时
+// 实际类型一致（如隐式 int→float、var/any 流入），必须保留 CAST 做运行时校验与规范化。
+// 【回归教训】曾放宽到"任意静态类型一致即消除"，导致 GUI 布局收到未规范的值、
+// 对话框尺寸算错只剩关闭按钮（file_manager 属性对话框）
 static int assign_cast_needed(TypeKind target_kind, Ast* value_ast) {
-    return !value_ast || !value_ast->cached_type ||
-           value_ast->cached_type->kind != target_kind;
+    if (!value_ast) return 1;
+    switch (value_ast->kind) {
+        case AST_NUM:
+        case AST_STRING:
+        case AST_BOOL:
+        case AST_NULL:
+            return !value_ast->cached_type ||
+                   value_ast->cached_type->kind != target_kind;
+        default:
+            return 1;
+    }
 }
 
 // 顶层代码局部槽位记账：确保 chunk->local_count / max_local_slot 覆盖 slot

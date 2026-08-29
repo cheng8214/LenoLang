@@ -1,0 +1,67 @@
+// 复现 file_manager 属性对话框 bug 的最小模式集（非 GUI）
+// 覆盖 8a848f2f 的三个改动点：CAST 消除 / 多返回值解构去临时槽 / 顶层槽位记账
+
+func mousePos(): [float, float] {
+    return 123.5, 67.25
+}
+
+func getStat(int seed): Dict[string, any] {
+    var d = {size: seed * 100, mtime: 1700000000, exists: seed > 0}
+    return d
+}
+
+func fmtSize(int b): string {
+    if b < 1024 { return b + " B" }
+    float kb = _float(b) / 1024.0
+    if kb < 1024.0 { return _int(kb) + " KB" }
+    return "big"
+}
+
+main() {
+    // --- 模式1: float 声明 + 算术（CAST 消除路径） ---
+    float dlgW = 470.0
+    float dlgH = 380.0
+    float padX = 30.0
+    float innerW = dlgW - padX * 2.0
+    float propMaxW = innerW - 80.0 - 8.0
+    print("innerW=" + innerW + " propMaxW=" + propMaxW)  // 期望 410.0 / 322.0
+
+    // --- 模式2: if 表达式赋 int（CAST 消除路径） ---
+    bool exists = true
+    int accessR = if exists then 80 else 220
+    int accessG = if exists then 200 else 60
+    print("accessR=" + accessR + " accessG=" + accessG)  // 期望 80 / 200
+
+    // --- 模式3: 字典 get + _int 转换（CAST 消除路径） ---
+    Dict[string, any] st = getStat(5)
+    int szb = _int(st.get("size", 0))
+    int mt = _int(st.get("mtime", 0))
+    string szStr = fmtSize(szb) + " (" + szb + " 字节)"
+    string mtStr = if mt > 0 then (mt as string) else "N/A"
+    print("szb=" + szb + " szStr=" + szStr)  // 期望 500 / "500 B (500 字节)"
+    print("mtStr=" + mtStr)
+
+    // --- 模式4: 函数内多返回值解构（去临时槽路径） ---
+    var[float, float](mx, my) = mousePos()
+    print("mx=" + mx + " my=" + my)  // 期望 123.5 / 67.25
+
+    // --- 模式6: 布尔/字符串赋值 ---
+    string kind = "文件"
+    string e = ".txt"
+    kind = if e != "" then ("文件 " + e) else "文件"
+    print("kind=" + kind)  // 期望 "文件 .txt"
+
+    // --- 模式7: catch 变量（顶层槽位记账路径） ---
+    int caught = 0
+    try {
+        int z = _int("not_a_number")
+        caught = z
+    } catch e {
+        caught = -1
+    }
+    print("caught=" + caught)
+}
+
+// --- 顶层多返回值解构（file_manager.leno:1198 同款） ---
+var[float, float](_mx3, _my3) = mousePos()
+print("toplevel _mx3=" + _mx3 + " _my3=" + _my3)
