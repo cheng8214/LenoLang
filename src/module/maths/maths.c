@@ -1,6 +1,7 @@
 #include "include/native.h"
 #include <math.h>
 #include <stdlib.h>
+#include <string.h>
 
 // Windows 数学常量定义
 #ifndef M_PI
@@ -200,9 +201,11 @@ static Value math_rsqrt(int argc, Value* args) {
     // 经典快速反平方根（Quake III 算法）
     float xf = (float)x;
     float xhalf = 0.5f * xf;
-    int i = *(int*)&xf;          // 按位转 int
-    i = 0x5f3759df - (i >> 1);   // 魔法常数
-    float result = *(float*)&i;
+    int i;
+    memcpy(&i, &xf, sizeof(i));      // 按位转 int
+    i = 0x5f3759df - (i >> 1);       // 魔法常数
+    float result;
+    memcpy(&result, &i, sizeof(result));
     result = result * (1.5f - xhalf * result * result);  // 一次牛顿迭代
     return val_float((double)result);
 }

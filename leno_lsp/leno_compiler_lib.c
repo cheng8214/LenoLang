@@ -18,6 +18,10 @@
 #include <unistd.h>
 #endif
 
+// LSP 构建不链接 main.c，这里补定义 g_use_gui_vm（lenolang.h 中 extern 声明）。
+// 语义分析 visit_expr.inc 会读写该标志；LSP 仅做静态分析，始终为 0 即可。
+int g_use_gui_vm = 0;
+
 // LSP 分析时临时抑制 stderr（防止 "错误收集器已满" 洪水输出导致 CPU 飙升）
 static int lsp_saved_stderr_fd = -1;
 
