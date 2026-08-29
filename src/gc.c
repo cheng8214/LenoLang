@@ -216,6 +216,77 @@ void gc_pop_root(void) {
 }
 
 // ============================================================================
+// 小对象 size-class 池
+//
+// 目标：消除高频小对象（struct 实例如 Hit、闭包、短字符串头等）的系统
+// malloc/free 开销（对象版光线追踪实测：Hit 分配 ~114ns vs Python pymalloc
+// ~84ns 的主要差距来源，见 docs/函数调用性能优化_调用帧与多返回值解构.md 方向 5）
+//
+// 设计：
+//   - 仅池化 [16B, 256B] 的对象，按 16B 对齐分 16 个 size-class
+//   - 每类维护 free-list（复用对象头的 next 指针串链）
+//   - free-list 空时分配新块（头部 16B + 64 槽），整块切割入链
+//   - 池持有内存上限 GC_POOL_MEM_LIMIT，超限回退系统 malloc
+//     （池化内存不归还 OS，靠上限防止常驻内存无限膨胀）
+//
+// 安全性：
+//   - 池类别编码在 Object.flags（0x80=池化位 | 低 4 位=class 索引），
+//     不依赖 obj->size——gc_track_memory 会改写 size（如字符串/字典扩容
+//     记账），若按 size 反推 class 会把槽挂错链导致堆损坏
+//   - OBJ_ARRAY 不池化：数组有自己的 header 回收列表（arr_try_recycle），
+//     且 arr_new 复用时会将 flags 清零，双重持有会破坏池链
+//   - GC 非移动（晋升仅翻转 generation 标志），槽地址稳定
+//   - 与 gc_free_all：遍历池块列表统一 free，槽内存随块释放
+// ============================================================================
+
+#define GC_POOL_ALIGN        16                       // 对齐粒度（同时也是最小池化尺寸）
+#define GC_POOL_MAX_SIZE     256                      // 池化对象尺寸上限
+#define GC_POOL_CLASSES      (GC_POOL_MAX_SIZE / GC_POOL_ALIGN)  // 16 类
+#define GC_POOL_BLOCK_SLOTS  64                       // 每块槽数
+#define GC_POOL_MEM_LIMIT    (4 * 1024 * 1024)        // 池持有内存上限 4MB
+#define OBJ_FLAG_POOLED      0x80                     // flags 位：池化对象
+#define GC_POOL_CLASS_MASK   0x0F                     // flags 低 4 位：class 索引
+
+typedef struct PoolBlockHdr {
+    struct PoolBlockHdr* next;   // 块链表（gc_free_all 统一释放）
+    size_t slot_size;            // 本块槽大小（调试/统计）
+} PoolBlockHdr;                  // 恰好 16B，保证槽起始 16B 对齐
+
+static THREAD_LOCAL Object*  pool_free_list[GC_POOL_CLASSES];  // 各 class 的空闲槽链
+static THREAD_LOCAL PoolBlockHdr* pool_block_list;             // 全部池块（跨 class）
+static THREAD_LOCAL size_t   pool_total;                       // 池持有字节（块计）
+
+// 释放对象内存：池化对象归还 free-list，否则系统 free
+// （sweep_young / sweep_old / gc_free_all 共用；free_object_resources 已先行调用）
+static void gc_free_object(Object* obj) {
+    if ((obj->flags & OBJ_FLAG_POOLED) != 0) {
+        uint32_t idx = obj->flags & GC_POOL_CLASS_MASK;
+        size_t slot_size = (size_t)(idx + 1) * GC_POOL_ALIGN;
+        memset(obj, 0, slot_size);              // 清零整个槽（含对象头，防悬挂数据）
+        obj->next = pool_free_list[idx];        // 复用 next 串空闲链
+        pool_free_list[idx] = obj;
+    } else {
+        free(obj);
+    }
+}
+
+// gc_free_all 收尾：释放所有池块并重置池状态
+// （调用前所有对象已走 gc_free_object，槽内存归块所有，直接 free 块即可）
+static void gc_pool_free_all(void) {
+    PoolBlockHdr* blk = pool_block_list;
+    while (blk) {
+        PoolBlockHdr* next = blk->next;
+        free(blk);
+        blk = next;
+    }
+    pool_block_list = NULL;
+    pool_total = 0;
+    for (int i = 0; i < GC_POOL_CLASSES; i++) {
+        pool_free_list[i] = NULL;
+    }
+}
+
+// ============================================================================
 // 对象分配
 // ============================================================================
 
@@ -229,8 +300,48 @@ Object* gc_alloc(size_t size, ObjType type) {
         gc.deferred_gc = 1;
     }
 
-    Object* obj = (Object*)malloc(size);
-    if (obj) memset(obj, 0, size);
+    Object* obj = NULL;
+    uint8_t pooled_flags = 0;
+
+    // 小对象 size-class 池快速路径：命中 free-list 时免系统 malloc/free
+    // （OBJ_ARRAY 不池化，见池设计注释；类型见下方安全性说明）
+    if (size >= GC_POOL_ALIGN && size <= GC_POOL_MAX_SIZE && type != OBJ_ARRAY) {
+        uint32_t idx = (uint32_t)((size + GC_POOL_ALIGN - 1) / GC_POOL_ALIGN) - 1;  // 0..15
+        size_t slot_size = (size_t)(idx + 1) * GC_POOL_ALIGN;
+
+        obj = pool_free_list[idx];
+        if (obj != NULL) {
+            pool_free_list[idx] = obj->next;     // 摘链（槽已在上次归还时清零）
+            memset(obj, 0, slot_size);
+            pooled_flags = (uint8_t)(OBJ_FLAG_POOLED | idx);
+        } else if (pool_total + GC_POOL_BLOCK_SLOTS * slot_size <= GC_POOL_MEM_LIMIT) {
+            // free-list 空：分配新块整块切割（头部 16B + 64 槽）
+            PoolBlockHdr* blk = (PoolBlockHdr*)malloc(sizeof(PoolBlockHdr) + GC_POOL_BLOCK_SLOTS * slot_size);
+            if (blk) {
+                char* base = (char*)blk + sizeof(PoolBlockHdr);
+                // 除首槽外全部入 free-list（倒序链接，首槽本次使用）
+                for (int i = GC_POOL_BLOCK_SLOTS - 1; i >= 1; i--) {
+                    Object* s = (Object*)(base + (size_t)i * slot_size);
+                    memset(s, 0, slot_size);
+                    s->next = pool_free_list[idx];
+                    pool_free_list[idx] = s;
+                }
+                blk->next = pool_block_list;
+                blk->slot_size = slot_size;
+                pool_block_list = blk;
+                pool_total += GC_POOL_BLOCK_SLOTS * slot_size;
+                obj = (Object*)base;
+                memset(obj, 0, slot_size);
+                pooled_flags = (uint8_t)(OBJ_FLAG_POOLED | idx);
+            }
+        }
+        // 池超限或块分配失败：回退系统 malloc 路径
+    }
+
+    if (!obj) {
+        obj = (Object*)malloc(size);
+        if (obj) memset(obj, 0, size);
+    }
 
     // 分配失败时尝试 Major GC 释放内存
     if (!obj && gc.enabled && !gc.running) {
@@ -253,7 +364,7 @@ Object* gc_alloc(size_t size, ObjType type) {
     // 存活对象在下轮 GC 时会被 mark_roots 重新标记；已失效对象会被 clear_all_marks
     // 清零后在下轮 sweep 中回收。额外的存活一个 GC 周期不会导致明显的内存浪费。
     obj->marked = 1;
-    obj->flags = 0;
+    obj->flags = pooled_flags;   // 池化位 + class 索引（malloc 路径为 0）
     obj->generation = GEN_YOUNG;
     obj->survived = 0;
     obj->size = size;
@@ -1440,7 +1551,7 @@ static void sweep_young(void) {
             Object* invalid = *obj;
             *obj = invalid->next;
             gc.young_allocated -= invalid->size;
-            free(invalid);
+            gc_free_object(invalid);   // flags 池化位可信（除 type 外字段未破坏时）
             continue;
         }
         if (!(*obj)->marked) {
@@ -1456,7 +1567,7 @@ static void sweep_young(void) {
                 continue;
             }
             free_object_resources(unreached);
-            free(unreached);
+            gc_free_object(unreached);
         } else {
             (*obj)->survived++;
             if ((*obj)->survived >= gc.promote_age) {
@@ -1500,7 +1611,7 @@ static void sweep_old(void) {
             else
                 gc.old_allocated = 0;
             remembered_set_remove(invalid);
-            free(invalid);
+            gc_free_object(invalid);   // flags 池化位可信（除 type 外字段未破坏时）
             continue;
         }
         if (!(*obj)->marked) {
@@ -1516,7 +1627,7 @@ static void sweep_old(void) {
             }
             remembered_set_remove(unreached);
             free_object_resources(unreached);
-            free(unreached);
+            gc_free_object(unreached);
         } else {
             (*obj)->marked = 0;
             obj = &(*obj)->next;
@@ -1763,7 +1874,7 @@ void gc_free_all(void) {
     while (obj) {
         Object* next = obj->next;
         free_object_resources(obj);
-        free(obj);
+        gc_free_object(obj);
         obj = next;
     }
 
@@ -1772,9 +1883,12 @@ void gc_free_all(void) {
     while (obj) {
         Object* next = obj->next;
         free_object_resources(obj);
-        free(obj);
+        gc_free_object(obj);
         obj = next;
     }
+
+    // 释放所有池块（池化对象槽内存随块释放）
+    gc_pool_free_all();
 
     // 释放内化字符串表
     intern_table_free();
