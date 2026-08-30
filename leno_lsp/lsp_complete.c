@@ -126,9 +126,9 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
                         const char* ret_str = type_kind_to_string(metas[i].return_type);
                         char detail[512];
                         if (metas[i].arity == 0) {
-                            snprintf(detail, sizeof(detail), "%s.%s() -> %s", ctx.module_alias, metas[i].method_name, ret_str);
+                            snprintf(detail, sizeof(detail), "%s.%s() : %s", ctx.module_alias, metas[i].method_name, ret_str);
                         } else {
-                            snprintf(detail, sizeof(detail), "%s.%s(...) -> %s", ctx.module_alias, metas[i].method_name, ret_str);
+                            snprintf(detail, sizeof(detail), "%s.%s(...) : %s", ctx.module_alias, metas[i].method_name, ret_str);
                         }
                         comp_set_add(set, metas[i].method_name, LSP_COMP_METHOD, PRIO_METHOD,
                                      detail, NULL, NULL, NULL);
@@ -172,9 +172,9 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
                         const char* ret_str = type_kind_to_string(metas[i].return_type);
                         char detail[512];
                         if (metas[i].arity == 0) {
-                            snprintf(detail, sizeof(detail), "%s.%s() -> %s", ctx.module_alias, metas[i].method_name, ret_str);
+                            snprintf(detail, sizeof(detail), "%s.%s() : %s", ctx.module_alias, metas[i].method_name, ret_str);
                         } else {
-                            snprintf(detail, sizeof(detail), "%s.%s(...) -> %s", ctx.module_alias, metas[i].method_name, ret_str);
+                            snprintf(detail, sizeof(detail), "%s.%s(...) : %s", ctx.module_alias, metas[i].method_name, ret_str);
                         }
                         char doc[1024];
                         snprintf(doc, sizeof(doc), "```leno\n%s\n```", detail);
@@ -207,9 +207,9 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
                         const char* ret_str = type_kind_to_string(metas[i].return_type);
                         char detail[512];
                         if (metas[i].arity == 0) {
-                            snprintf(detail, sizeof(detail), "%s.%s() -> %s", ctx.module_alias, metas[i].method_name, ret_str);
+                            snprintf(detail, sizeof(detail), "%s.%s() : %s", ctx.module_alias, metas[i].method_name, ret_str);
                         } else if (metas[i].arity < 0) {
-                            snprintf(detail, sizeof(detail), "%s.%s(...) -> %s", ctx.module_alias, metas[i].method_name, ret_str);
+                            snprintf(detail, sizeof(detail), "%s.%s(...) : %s", ctx.module_alias, metas[i].method_name, ret_str);
                         } else {
                             char params[256] = "";
                             int off = 0;
@@ -218,7 +218,7 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
                                 if (pp > 0) off += snprintf(params + off, sizeof(params) - off, ", ");
                                 off += snprintf(params + off, sizeof(params) - off, "%s", pt);
                             }
-                            snprintf(detail, sizeof(detail), "%s.%s(%s) -> %s", ctx.module_alias, metas[i].method_name, params, ret_str);
+                            snprintf(detail, sizeof(detail), "%s.%s(%s) : %s", ctx.module_alias, metas[i].method_name, params, ret_str);
                         }
                         char doc[1024];
                         snprintf(doc, sizeof(doc), "```leno\n%s\n```", detail);

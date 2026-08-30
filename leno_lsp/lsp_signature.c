@@ -145,9 +145,9 @@ static char* build_native_module_signature(const char* module, const char* metho
     char params_str[256] = {0};
 
     if (arity == 0) {
-        snprintf(label, sizeof(label), "%s.%s() -> %s", module, method, ret_str);
+        snprintf(label, sizeof(label), "%s.%s() : %s", module, method, ret_str);
     } else if (arity < 0) {
-        snprintf(label, sizeof(label), "%s.%s(...) -> %s", module, method, ret_str);
+        snprintf(label, sizeof(label), "%s.%s(...) : %s", module, method, ret_str);
     } else {
         int off = 0;
         for (int i = 0; i < arity && i < MAX_METHOD_PARAMS; i++) {
@@ -155,7 +155,7 @@ static char* build_native_module_signature(const char* module, const char* metho
             if (i > 0) off += snprintf(params_str + off, sizeof(params_str) - off, ", ");
             off += snprintf(params_str + off, sizeof(params_str) - off, "%s p%d", pt, i + 1);
         }
-        snprintf(label, sizeof(label), "%s.%s(%s) -> %s", module, method, params_str, ret_str);
+        snprintf(label, sizeof(label), "%s.%s(%s) : %s", module, method, params_str, ret_str);
     }
 
     // 构建参数 labels
@@ -197,7 +197,7 @@ static char* build_user_func_signature(const char* func_name, const char* param_
                                        int param_count, const char* return_str,
                                        int active_param) {
     char label[512];
-    snprintf(label, sizeof(label), "func %s(%s) -> %s", func_name,
+    snprintf(label, sizeof(label), "func %s(%s) : %s", func_name,
              param_text ? param_text : "", return_str ? return_str : "void");
 
     // 构建参数 labels（从 param_text 简单分割）

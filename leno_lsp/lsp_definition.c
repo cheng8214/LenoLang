@@ -283,16 +283,16 @@ static bool resolve_import_path(const char* file_path, const char* current_file,
     char normalized_current[MAX_PATH_LEN];
     strncpy(normalized_current, current_file, MAX_PATH_LEN - 1);
     normalized_current[MAX_PATH_LEN - 1] = '\0';
-#ifdef _WIN32
-    for (int i = 0; normalized_current[i]; i++)
-        if (normalized_current[i] == '/') normalized_current[i] = '\\';
-    const char* last_slash = strrchr(normalized_current, '\\');
-#else
+    // 统一处理路径分隔符（同时检查 / 和 \）
     const char* last_slash = strrchr(normalized_current, '/');
-#endif
+    const char* last_backslash = strrchr(normalized_current, '\\');
+    const char* last_sep = NULL;
+    if (last_slash && last_backslash) last_sep = last_slash > last_backslash ? last_slash : last_backslash;
+    else if (last_slash) last_sep = last_slash;
+    else if (last_backslash) last_sep = last_backslash;
 
-    if (last_slash) {
-        size_t dir_len = last_slash - normalized_current + 1;
+    if (last_sep) {
+        size_t dir_len = last_sep - normalized_current + 1;
         if (dir_len + strlen(file_path) >= (size_t)out_len) return false;
         memcpy(out_full_path, normalized_current, dir_len);
         out_full_path[dir_len] = '\0';
@@ -310,6 +310,11 @@ static bool find_definition_in_content(const char* content, const char* word,
 LspRange* range);
 static bool find_struct_field_definition(const char* content, const char* word,
                                           LspRange* range);
+
+// 从 lsp_hover.c 引入的追溯函数
+extern int trace_method_source(const char* module_path, const char* current_file,
+                                const char* struct_name, const char* method_name,
+                                int in_line, int* out_line, const char** out_short);
 
 /**
  * 在导入的模块中查找符号定义
@@ -362,9 +367,63 @@ static bool find_definition_in_module(const char* module_path, const char* curre
             const char* sep = strstr(mname, "::");
             if (sep) sep += 2; else sep = mname;
             if (strcmp(sep, word) == 0 && st->methods[j].line > 0) {
-                out_range->start.line = st->methods[j].line - 1;
+                int method_line = st->methods[j].line;
+                // 追溯方法真实定义所在的文件（可能通过 use 传导）
+                int traced_line = 0;
+                const char* traced_short = NULL;
+                if (trace_method_source(module_path, current_file, st->name, word,
+                                         method_line, &traced_line, &traced_short)) {
+                    // 构建真实来源文件的完整路径
+                    // traced_short 是短名（如 sdl_renderer.leno）
+                    // 需要找到该文件的实际路径
+                    // 尝试在 module_path 所在目录查找
+                    char dir_path[MAX_PATH_LEN];
+                    strncpy(dir_path, full_path, MAX_PATH_LEN - 1);
+                    dir_path[MAX_PATH_LEN - 1] = '\0';
+                    // 统一处理路径分隔符（同时检查 / 和 \）
+                    char* last_slash = strrchr(dir_path, '/');
+                    char* last_backslash = strrchr(dir_path, '\\');
+                    // 安全选取最后一个路径分隔符
+                    char* last_sep = NULL;
+                    if (last_slash && last_backslash) last_sep = last_slash > last_backslash ? last_slash : last_backslash;
+                    else if (last_slash) last_sep = last_slash;
+                    else if (last_backslash) last_sep = last_backslash;
+                    if (last_sep) {
+                        *(last_sep + 1) = '\0';
+                        char real_full_path[MAX_PATH_LEN];
+                        snprintf(real_full_path, sizeof(real_full_path), "%s%s", dir_path, traced_short);
+                        // 验证文件是否存在
+                        FILE* test = fopen(real_full_path, "r");
+                        if (test) {
+                            fclose(test);
+                            out_range->start.line = traced_line - 1;
+                            out_range->start.character = 0;
+                            out_range->end.line = traced_line - 1;
+                            out_range->end.character = (int)strlen(word);
+                            size_t copy_len = strlen(real_full_path);
+                            if (copy_len >= (size_t)full_path_len) copy_len = full_path_len - 1;
+                            memcpy(out_full_path, real_full_path, copy_len);
+                            out_full_path[copy_len] = '\0';
+                            module_symbol_table_destroy(sym_table);
+                            return true;
+                        }
+                    }
+                    // 文件验证失败，回退到行号 + 当前模块路径
+                    out_range->start.line = traced_line - 1;
+                    out_range->start.character = 0;
+                    out_range->end.line = traced_line - 1;
+                    out_range->end.character = (int)strlen(word);
+                    size_t copy_len = strlen(full_path);
+                    if (copy_len >= (size_t)full_path_len) copy_len = full_path_len - 1;
+                    memcpy(out_full_path, full_path, copy_len);
+                    out_full_path[copy_len] = '\0';
+                    module_symbol_table_destroy(sym_table);
+                    return true;
+                }
+                // 追溯失败，用原始行号和模块路径
+                out_range->start.line = method_line - 1;
                 out_range->start.character = 0;
-                out_range->end.line = st->methods[j].line - 1;
+                out_range->end.line = method_line - 1;
                 out_range->end.character = (int)strlen(word);
                 size_t copy_len = strlen(full_path);
                 if (copy_len >= (size_t)full_path_len) copy_len = full_path_len - 1;
@@ -1168,6 +1227,11 @@ LspLocation* lsp_get_definition(const char* content, LspPosition pos, int* count
                             (*count)++;
                         }
                         // 查找 struct 方法行号
+                        // 注意：当前文件符号表中的方法可能通过 use 传导而来
+                        // 如果 find_definition_in_content 已返回 false，说明方法不在当前文件中定义
+                        // 此时不应使用当前文件作为来源，应跳过让导入模块搜索处理
+                        // 但为了兼容方法确实在当前文件中定义但文本搜索漏掉的情况，
+                        // 验证符号表行号处是否确实有 func 定义
                         if (*count == 0) {
                             for (int i = 0; i < cur_table->struct_count && *count == 0; i++) {
                                 ModuleStructSymbol* st = &cur_table->structs[i];
@@ -1176,12 +1240,41 @@ LspLocation* lsp_get_definition(const char* content, LspPosition pos, int* count
                                     const char* sep = strstr(mname, "::");
                                     if (sep) sep += 2; else sep = mname;
                                     if (strcmp(sep, lookup_word) == 0 && st->methods[j].line > 0) {
-                                        locations[*count].uri = strdup(uri ? uri : "");
-                                        locations[*count].range.start.line = st->methods[j].line - 1;
-                                        locations[*count].range.start.character = 0;
-                                        locations[*count].range.end.line = st->methods[j].line - 1;
-                                        locations[*count].range.end.character = (int)strlen(lookup_word);
-                                        (*count)++;
+                                        // 验证当前文件该行号处是否真的有 func 定义
+                                        int target_line = st->methods[j].line;
+                                        int cur_l = 1;
+                                        const char* vp = content;
+                                        while (*vp && cur_l < target_line) {
+                                            if (*vp == '\n') cur_l++;
+                                            vp++;
+                                        }
+                                        char func_pat[256];
+                                        snprintf(func_pat, sizeof(func_pat), "func %s", lookup_word);
+                                        const char* search_back = vp;
+                                        int bt = 200;
+                                        while (search_back > content && bt > 0) { search_back--; bt--; }
+                                        const char* fhit = strstr(search_back, func_pat);
+                                        int verified = 0;
+                                        if (fhit) {
+                                            if (fhit > content && (isalnum((unsigned char)fhit[-1]) || fhit[-1] == '_')) {
+                                                fhit = NULL;
+                                            } else {
+                                                char nx = fhit[strlen(func_pat)];
+                                                if (nx == ' ' || nx == '\t' || nx == '\n' || nx == '\r' || nx == '(') {
+                                                    verified = 1;
+                                                }
+                                            }
+                                        }
+                                        if (verified) {
+                                            // 方法确实在当前文件中定义
+                                            locations[*count].uri = strdup(uri ? uri : "");
+                                            locations[*count].range.start.line = target_line - 1;
+                                            locations[*count].range.start.character = 0;
+                                            locations[*count].range.end.line = target_line - 1;
+                                            locations[*count].range.end.character = (int)strlen(lookup_word);
+                                            (*count)++;
+                                        }
+                                        // verified=0 时跳过，让导入模块搜索处理
                                         break;
                                     }
                                 }

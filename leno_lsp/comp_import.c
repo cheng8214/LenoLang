@@ -63,7 +63,7 @@ ImportAlias* parse_imports(const char* content, int* count) {
                 // 从路径提取文件名用于别名匹配
                 char* slash = strrchr(module_name, '/');
                 char* backslash = strrchr(module_name, '\\');
-                char* last_sep = slash > backslash ? slash : backslash;
+                char* last_sep = (slash && backslash) ? (slash > backslash ? slash : backslash) : (slash ? slash : (backslash ? backslash : NULL));
                 if (last_sep) {
                     memmove(module_name, last_sep + 1, strlen(last_sep + 1) + 1);
                     mod_len = strlen(module_name);

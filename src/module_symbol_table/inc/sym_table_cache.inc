@@ -4,7 +4,7 @@
 // ============================================================================
 
 #define LENOSYMC_MAGIC   0x4D59534C  // "LSYM" little-endian
-#define LENOSYMC_VERSION 0x0000000E  // v14: 添加 cfunc 符号序列化/反序列化
+#define LENOSYMC_VERSION 0x0000000F  // v15: 添加方法 line/字段 line/struct def_line 序列化
 
 // 字符串序列化辅助函数（需在 TypeInfo 序列化之前定义）
 static void sym_cache_write_string(FILE* f, const char* s) {
@@ -264,6 +264,9 @@ sym_cache_write_string(f, table->funcs[i].param_default_texts[k]);
             fwrite(&nl, 1, 1, f);
             sym_cache_write_string(f, ss->fields[j].struct_name);
             sym_cache_write_string(f, ss->fields[j].element_struct_name);
+            // v15: 序列化字段行号
+            uint32_t fl = (uint32_t)ss->fields[j].line;
+            fwrite(&fl, 4, 1, f);
         }
         uint32_t mc = (uint32_t)ss->method_count;
         fwrite(&mc, 4, 1, f);
@@ -294,6 +297,9 @@ sym_cache_write_string(f, table->funcs[i].param_default_texts[k]);
                     sym_cache_write_string(f, sm->param_generic_names[k]);
                 }
             }
+            // v15: 序列化方法行号
+            uint32_t ml = (uint32_t)sm->line;
+            fwrite(&ml, 4, 1, f);
         }
         uint8_t is_cs = (uint8_t)ss->is_cstruct;
         fwrite(&is_cs, 1, 1, f);
@@ -319,6 +325,9 @@ sym_cache_write_string(f, table->funcs[i].param_default_texts[k]);
                 sym_cache_write_string(f, "");
             }
         }
+        // v15: 序列化 struct 定义行号
+        uint32_t sdl = (uint32_t)ss->def_line;
+        fwrite(&sdl, 4, 1, f);
     }
 
     // enums
@@ -629,6 +638,9 @@ table->func_count++;
             ss->fields[j].nullable = nl ? 1 : 0;
             ss->fields[j].struct_name = sym_cache_read_string(f);
             ss->fields[j].element_struct_name = sym_cache_read_string(f);
+            // v15: 反序列化字段行号
+            uint32_t fl; if (fread(&fl, 4, 1, f) != 1) goto fail;
+            ss->fields[j].line = (int)fl;
         }
         uint32_t mc; if (fread(&mc, 4, 1, f) != 1) goto fail;
         ss->method_count = (int)mc;
@@ -661,6 +673,9 @@ table->func_count++;
                     sm->param_generic_names[k] = sym_cache_read_string(f);
                 }
             }
+            // v15: 反序列化方法行号
+            uint32_t ml; if (fread(&ml, 4, 1, f) != 1) goto fail;
+            sm->line = (int)ml;
         }
         uint8_t is_cs; if (fread(&is_cs, 1, 1, f) != 1) goto fail;
         ss->is_cstruct = is_cs;
@@ -692,6 +707,9 @@ table->func_count++;
                 ss->const_value_strs[j] = NULL;
             }
         }
+        // v15: 反序列化 struct 定义行号
+        uint32_t sdl; if (fread(&sdl, 4, 1, f) != 1) goto fail;
+        ss->def_line = (int)sdl;
         table->struct_count++;
     }
 

@@ -457,9 +457,9 @@ void comp_provider_add_native_modules(CompletionSet* set, const char* filter) {
                 char detail[512];
                 
                 if (metas[i].arity == 0) {
-                    snprintf(detail, sizeof(detail), "%s.%s() -> %s", mod_name, metas[i].method_name, ret_str);
+                    snprintf(detail, sizeof(detail), "%s.%s() : %s", mod_name, metas[i].method_name, ret_str);
                 } else if (metas[i].arity < 0) {
-                    snprintf(detail, sizeof(detail), "%s.%s(...) -> %s", mod_name, metas[i].method_name, ret_str);
+                    snprintf(detail, sizeof(detail), "%s.%s(...) : %s", mod_name, metas[i].method_name, ret_str);
                 } else {
                     char params[256] = "";
                     int off = 0;
@@ -468,7 +468,7 @@ void comp_provider_add_native_modules(CompletionSet* set, const char* filter) {
                         if (pp > 0) off += snprintf(params + off, sizeof(params) - off, ", ");
                         off += snprintf(params + off, sizeof(params) - off, "%s", pt);
                     }
-                    snprintf(detail, sizeof(detail), "%s.%s(%s) -> %s", mod_name, metas[i].method_name, params, ret_str);
+                    snprintf(detail, sizeof(detail), "%s.%s(%s) : %s", mod_name, metas[i].method_name, params, ret_str);
                 }
                 
                 char doc[1024];
@@ -623,7 +623,7 @@ void comp_provider_add_module_symbols(
         const char* ret_str = type_kind_to_string(func->return_type);
         
         char detail[256];
-        snprintf(detail, sizeof(detail), "%s.%s() -> %s", module_alias, func->name, ret_str);
+        snprintf(detail, sizeof(detail), "%s.%s() : %s", module_alias, func->name, ret_str);
         
         comp_set_add(set, func->name, LSP_COMP_FUNCTION, PRIO_MODULE,
                      detail, NULL, NULL, NULL);
@@ -850,9 +850,9 @@ void comp_provider_add_variable_members(
                                 int pc = clib_sym->clib_func_param_counts[i];
                                 char detail[512];
                                 if (pc == 0) {
-                                    snprintf(detail, sizeof(detail), "%s.%s() -> %s", var_name, fname, rt_str);
+                                    snprintf(detail, sizeof(detail), "%s.%s() : %s", var_name, fname, rt_str);
                                 } else {
-                                    snprintf(detail, sizeof(detail), "%s.%s(...) -> %s", var_name, fname, rt_str);
+                                    snprintf(detail, sizeof(detail), "%s.%s(...) : %s", var_name, fname, rt_str);
                                 }
                                 comp_set_add(set, fname, LSP_COMP_METHOD, PRIO_METHOD,
                                              detail, NULL, NULL, NULL);
@@ -879,9 +879,9 @@ void comp_provider_add_variable_members(
                                         int pc = mclib->funcs[j].param_count;
                                         char detail[512];
                                         if (pc == 0) {
-                                            snprintf(detail, sizeof(detail), "%s.%s() -> %s", var_name, fname, rt_str);
+                                            snprintf(detail, sizeof(detail), "%s.%s() : %s", var_name, fname, rt_str);
                                         } else {
-                                            snprintf(detail, sizeof(detail), "%s.%s(...) -> %s", var_name, fname, rt_str);
+                                            snprintf(detail, sizeof(detail), "%s.%s(...) : %s", var_name, fname, rt_str);
                                         }
                                         comp_set_add(set, fname, LSP_COMP_METHOD, PRIO_METHOD,
                                                      detail, NULL, NULL, NULL);
@@ -908,9 +908,9 @@ void comp_provider_add_variable_members(
                                         int pc = mclib->funcs[j].param_count;
                                         char detail[512];
                                         if (pc == 0) {
-                                            snprintf(detail, sizeof(detail), "%s.%s() -> %s", var_name, fname, rt_str);
+                                            snprintf(detail, sizeof(detail), "%s.%s() : %s", var_name, fname, rt_str);
                                         } else {
-                                            snprintf(detail, sizeof(detail), "%s.%s(...) -> %s", var_name, fname, rt_str);
+                                            snprintf(detail, sizeof(detail), "%s.%s(...) : %s", var_name, fname, rt_str);
                                         }
                                         comp_set_add(set, fname, LSP_COMP_METHOD, PRIO_METHOD,
                                                      detail, NULL, NULL, NULL);
@@ -932,11 +932,11 @@ void comp_provider_add_variable_members(
                         const char* rt_str = type_kind_to_string(rt);
                         char detail[256];
                         if (arity == 0) {
-                            snprintf(detail, sizeof(detail), "%s.%s() -> %s", var_name, methods[i], rt_str);
+                            snprintf(detail, sizeof(detail), "%s.%s() : %s", var_name, methods[i], rt_str);
                         } else if (arity < 0) {
-                            snprintf(detail, sizeof(detail), "%s.%s(...) -> %s", var_name, methods[i], rt_str);
+                            snprintf(detail, sizeof(detail), "%s.%s(...) : %s", var_name, methods[i], rt_str);
                         } else {
-                            snprintf(detail, sizeof(detail), "%s.%s(...) -> %s", var_name, methods[i], rt_str);
+                            snprintf(detail, sizeof(detail), "%s.%s(...) : %s", var_name, methods[i], rt_str);
                         }
                         comp_set_add(set, methods[i], LSP_COMP_METHOD, PRIO_METHOD,
                                      detail, NULL, NULL, NULL);
@@ -1438,7 +1438,7 @@ void comp_provider_add_variable_members(
                         int pc = clib_sym->clib_func_param_counts[i];
                         char detail[512];
                         if (pc == 0) {
-                            snprintf(detail, sizeof(detail), "%s.%s() -> %s", var_name, fname, rt_str);
+                            snprintf(detail, sizeof(detail), "%s.%s() : %s", var_name, fname, rt_str);
                         } else {
                             char params[256] = "";
                             int off = 0;
@@ -1448,7 +1448,7 @@ void comp_provider_add_variable_members(
                                 if (j > 0) off += snprintf(params + off, sizeof(params) - off, ", ");
                                 off += snprintf(params + off, sizeof(params) - off, "%s", pt_str);
                             }
-                            snprintf(detail, sizeof(detail), "%s.%s(%s) -> %s", var_name, fname, params, rt_str);
+                            snprintf(detail, sizeof(detail), "%s.%s(%s) : %s", var_name, fname, params, rt_str);
                         }
                         char doc[1024];
                         snprintf(doc, sizeof(doc), "```leno\n%s\n```", detail);
@@ -1478,7 +1478,7 @@ void comp_provider_add_variable_members(
                                 int pc = mclib->funcs[j].param_count;
                                 char detail[512];
                                 if (pc == 0) {
-                                    snprintf(detail, sizeof(detail), "%s.%s() -> %s", var_name, fname, rt_str);
+                                    snprintf(detail, sizeof(detail), "%s.%s() : %s", var_name, fname, rt_str);
                                 } else {
                                     char params[256] = "";
                                     int off = 0;
@@ -1487,7 +1487,7 @@ void comp_provider_add_variable_members(
                                         if (k > 0) off += snprintf(params + off, sizeof(params) - off, ", ");
                                         off += snprintf(params + off, sizeof(params) - off, "%s", pt_str);
                                     }
-                                    snprintf(detail, sizeof(detail), "%s.%s(%s) -> %s", var_name, fname, params, rt_str);
+                                    snprintf(detail, sizeof(detail), "%s.%s(%s) : %s", var_name, fname, params, rt_str);
                                 }
                                 char doc[1024];
                                 snprintf(doc, sizeof(doc), "```leno\n%s\n```", detail);
@@ -1517,7 +1517,7 @@ void comp_provider_add_variable_members(
                                 int pc = mclib->funcs[j].param_count;
                                 char detail[512];
                                 if (pc == 0) {
-                                    snprintf(detail, sizeof(detail), "%s.%s() -> %s", var_name, fname, rt_str);
+                                    snprintf(detail, sizeof(detail), "%s.%s() : %s", var_name, fname, rt_str);
                                 } else {
                                     char params[256] = "";
                                     int off = 0;
@@ -1526,7 +1526,7 @@ void comp_provider_add_variable_members(
                                         if (k > 0) off += snprintf(params + off, sizeof(params) - off, ", ");
                                         off += snprintf(params + off, sizeof(params) - off, "%s", pt_str);
                                     }
-                                    snprintf(detail, sizeof(detail), "%s.%s(%s) -> %s", var_name, fname, params, rt_str);
+                                    snprintf(detail, sizeof(detail), "%s.%s(%s) : %s", var_name, fname, params, rt_str);
                                 }
                                 char doc[1024];
                                 snprintf(doc, sizeof(doc), "```leno\n%s\n```", detail);
@@ -1552,11 +1552,11 @@ void comp_provider_add_variable_members(
                 
                 char detail[256];
                 if (arity == 0) {
-                    snprintf(detail, sizeof(detail), "%s.%s() -> %s", var_name, methods[i], rt_str);
+                    snprintf(detail, sizeof(detail), "%s.%s() : %s", var_name, methods[i], rt_str);
                 } else if (arity < 0) {
-                    snprintf(detail, sizeof(detail), "%s.%s(...) -> %s", var_name, methods[i], rt_str);
+                    snprintf(detail, sizeof(detail), "%s.%s(...) : %s", var_name, methods[i], rt_str);
                 } else {
-                    snprintf(detail, sizeof(detail), "%s.%s(...) -> %s", var_name, methods[i], rt_str);
+                    snprintf(detail, sizeof(detail), "%s.%s(...) : %s", var_name, methods[i], rt_str);
                 }
                 
                 comp_set_add(set, methods[i], LSP_COMP_METHOD, PRIO_METHOD,
@@ -1711,9 +1711,9 @@ void comp_provider_add_func_call_chain_members(
                         int pc = clib_sym->clib_func_param_counts[i];
                         char detail[512];
                         if (pc == 0) {
-                            snprintf(detail, sizeof(detail), "%s.%s() -> %s", func_name, fname, rt_str);
+                            snprintf(detail, sizeof(detail), "%s.%s() : %s", func_name, fname, rt_str);
                         } else {
-                            snprintf(detail, sizeof(detail), "%s.%s(...) -> %s", func_name, fname, rt_str);
+                            snprintf(detail, sizeof(detail), "%s.%s(...) : %s", func_name, fname, rt_str);
                         }
                         comp_set_add(set, fname, LSP_COMP_METHOD, PRIO_METHOD,
                                      detail, NULL, NULL, NULL);
@@ -1741,9 +1741,9 @@ void comp_provider_add_func_call_chain_members(
                                 int pc = mclib->funcs[j].param_count;
                                 char detail[512];
                                 if (pc == 0) {
-                                    snprintf(detail, sizeof(detail), "%s.%s() -> %s", func_name, fname, rt_str);
+                                    snprintf(detail, sizeof(detail), "%s.%s() : %s", func_name, fname, rt_str);
                                 } else {
-                                    snprintf(detail, sizeof(detail), "%s.%s(...) -> %s", func_name, fname, rt_str);
+                                    snprintf(detail, sizeof(detail), "%s.%s(...) : %s", func_name, fname, rt_str);
                                 }
                                 comp_set_add(set, fname, LSP_COMP_METHOD, PRIO_METHOD,
                                              detail, NULL, NULL, NULL);
@@ -1769,9 +1769,9 @@ void comp_provider_add_func_call_chain_members(
                                 int pc = mclib->funcs[j].param_count;
                                 char detail[512];
                                 if (pc == 0) {
-                                    snprintf(detail, sizeof(detail), "%s.%s() -> %s", func_name, fname, rt_str);
+                                    snprintf(detail, sizeof(detail), "%s.%s() : %s", func_name, fname, rt_str);
                                 } else {
-                                    snprintf(detail, sizeof(detail), "%s.%s(...) -> %s", func_name, fname, rt_str);
+                                    snprintf(detail, sizeof(detail), "%s.%s(...) : %s", func_name, fname, rt_str);
                                 }
                                 comp_set_add(set, fname, LSP_COMP_METHOD, PRIO_METHOD,
                                              detail, NULL, NULL, NULL);
@@ -1853,9 +1853,9 @@ void comp_provider_add_func_call_chain_members(
                 const char* rt_str = type_kind_to_string(rt);
                 char detail[256];
                 if (arity == 0) {
-                    snprintf(detail, sizeof(detail), "%s.%s() -> %s", func_name, methods[i], rt_str);
+                    snprintf(detail, sizeof(detail), "%s.%s() : %s", func_name, methods[i], rt_str);
                 } else {
-                    snprintf(detail, sizeof(detail), "%s.%s(...) -> %s", func_name, methods[i], rt_str);
+                    snprintf(detail, sizeof(detail), "%s.%s(...) : %s", func_name, methods[i], rt_str);
                 }
                 comp_set_add(set, methods[i], LSP_COMP_METHOD, PRIO_METHOD,
                              detail, NULL, NULL, NULL);
@@ -1884,9 +1884,9 @@ void comp_provider_add_string_methods(CompletionSet* set) {
             
             char detail[256];
             if (arity == 0) {
-                snprintf(detail, sizeof(detail), "%s.%s() -> %s", display, methods[i], rt_str);
+                snprintf(detail, sizeof(detail), "%s.%s() : %s", display, methods[i], rt_str);
             } else {
-                snprintf(detail, sizeof(detail), "%s.%s(...) -> %s", display, methods[i], rt_str);
+                snprintf(detail, sizeof(detail), "%s.%s(...) : %s", display, methods[i], rt_str);
             }
             
             comp_set_add(set, methods[i], LSP_COMP_METHOD, PRIO_METHOD,
@@ -2190,9 +2190,9 @@ void comp_provider_add_array_index_members(
                         int pc = clib_sym->clib_func_param_counts[i];
                         char detail[512];
                         if (pc == 0) {
-                            snprintf(detail, sizeof(detail), "%s[i].%s() -> %s", var_name, fname, rt_str);
+                            snprintf(detail, sizeof(detail), "%s[i].%s() : %s", var_name, fname, rt_str);
                         } else {
-                            snprintf(detail, sizeof(detail), "%s[i].%s(...) -> %s", var_name, fname, rt_str);
+                            snprintf(detail, sizeof(detail), "%s[i].%s(...) : %s", var_name, fname, rt_str);
                         }
                         comp_set_add(set, fname, LSP_COMP_METHOD, PRIO_METHOD,
                                      detail, NULL, NULL, NULL);
@@ -2220,9 +2220,9 @@ void comp_provider_add_array_index_members(
                                 int pc = mclib->funcs[j].param_count;
                                 char detail[512];
                                 if (pc == 0) {
-                                    snprintf(detail, sizeof(detail), "%s[i].%s() -> %s", var_name, fname, rt_str);
+                                    snprintf(detail, sizeof(detail), "%s[i].%s() : %s", var_name, fname, rt_str);
                                 } else {
-                                    snprintf(detail, sizeof(detail), "%s[i].%s(...) -> %s", var_name, fname, rt_str);
+                                    snprintf(detail, sizeof(detail), "%s[i].%s(...) : %s", var_name, fname, rt_str);
                                 }
                                 comp_set_add(set, fname, LSP_COMP_METHOD, PRIO_METHOD,
                                              detail, NULL, NULL, NULL);
@@ -2248,9 +2248,9 @@ void comp_provider_add_array_index_members(
                                 int pc = mclib->funcs[j].param_count;
                                 char detail[512];
                                 if (pc == 0) {
-                                    snprintf(detail, sizeof(detail), "%s[i].%s() -> %s", var_name, fname, rt_str);
+                                    snprintf(detail, sizeof(detail), "%s[i].%s() : %s", var_name, fname, rt_str);
                                 } else {
-                                    snprintf(detail, sizeof(detail), "%s[i].%s(...) -> %s", var_name, fname, rt_str);
+                                    snprintf(detail, sizeof(detail), "%s[i].%s(...) : %s", var_name, fname, rt_str);
                                 }
                                 comp_set_add(set, fname, LSP_COMP_METHOD, PRIO_METHOD,
                                              detail, NULL, NULL, NULL);
@@ -2272,9 +2272,9 @@ void comp_provider_add_array_index_members(
                 const char* rt_str = type_kind_to_string(rt);
                 char detail[256];
                 if (arity == 0) {
-                    snprintf(detail, sizeof(detail), "%s[i].%s() -> %s", var_name, methods[i], rt_str);
+                    snprintf(detail, sizeof(detail), "%s[i].%s() : %s", var_name, methods[i], rt_str);
                 } else {
-                    snprintf(detail, sizeof(detail), "%s[i].%s(...) -> %s", var_name, methods[i], rt_str);
+                    snprintf(detail, sizeof(detail), "%s[i].%s(...) : %s", var_name, methods[i], rt_str);
                 }
                 comp_set_add(set, methods[i], LSP_COMP_METHOD, PRIO_METHOD,
                              detail, NULL, NULL, NULL);
@@ -2414,7 +2414,7 @@ void comp_provider_add_use_symbols(
                                 if (fn) {
                                     const char* ret_str = type_kind_to_string(fn->return_type);
                                     char detail[256];
-                                    snprintf(detail, sizeof(detail), "%s() -> %s (use %s.%s)",
+                                    snprintf(detail, sizeof(detail), "%s() : %s (use %s.%s)",
                                              type_name, ret_str, mod_name, type_name);
                                     comp_set_add(set, type_name, LSP_COMP_FUNCTION, PRIO_USER_SYM,
                                                  detail, NULL, NULL, NULL);
@@ -2471,20 +2471,20 @@ static const struct {
     bool is_static;  // true = 静态方法（用于类型名），false = 仅实例方法
 } cstruct_builtin_methods[] = {
     // 静态方法（可用于 cstruct 类型名，如 Normal.malloc()）
-    {"malloc",      "%s.malloc() -> cstruct",       true},
-    {"from_ptr",    "%s.from_ptr(ptr) -> cstruct",  true},
-    {"malloc_array","%s.malloc_array(count) -> array", true},
+    {"malloc",      "%s.malloc() : cstruct",       true},
+    {"from_ptr",    "%s.from_ptr(ptr) : cstruct",  true},
+    {"malloc_array","%s.malloc_array(count) : array", true},
     // 通用方法（既可用于类型名，也可用于实例）
-    {"size",        "%s.size() -> int",             true},
-    {"alignment",   "%s.alignment() -> int",        true},
-    {"offset_of",   "%s.offset_of(field) -> int",   true},
-    {"debug",       "%s.debug() -> string",         true},
-    {"to_str",      "%s.to_str() -> string",        true},
+    {"size",        "%s.size() : int",             true},
+    {"alignment",   "%s.alignment() : int",        true},
+    {"offset_of",   "%s.offset_of(field) : int",   true},
+    {"debug",       "%s.debug() : string",         true},
+    {"to_str",      "%s.to_str() : string",        true},
     // 仅实例方法
-    {"free",        "%s.free() -> bool",            false},
-    {"to_ptr",      "%s.to_ptr() -> ptr",           false},
-    {"hex",         "%s.hex() -> string",           false},
-    {"free_all",    "%s.free_all() -> bool",        false},
+    {"free",        "%s.free() : bool",            false},
+    {"to_ptr",      "%s.to_ptr() : ptr",           false},
+    {"hex",         "%s.hex() : string",           false},
+    {"free_all",    "%s.free_all() : bool",        false},
     {NULL, NULL, false}
 };
 
