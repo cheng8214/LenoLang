@@ -229,10 +229,15 @@ func onScan() {
     SDL3.markFrameRedraw()
 
     // 执行扫描（同步，大目录可能稍慢但 Leno 单线程下足够快）
-    scanDir(currentDir)
+    try {
+        scanDir(currentDir)
+    } catch e {
+        // 扫描中出现权限/IO 错误时保留已收集的部分结果，不中断后续恢复流程
+    }
 
-    // 扫描完成
+    // 扫描完成：必须重新启用扫描按钮，否则扫描过一次后就永远无法再次扫描
     scanning = false
+    scanBtn.set_enabled(true)
     progressBar.set_value(100.0)
     refreshTable()
     updateCount()
@@ -315,6 +320,8 @@ func onClean() {
         selectAllBtn.set_enabled(false)
         selectNoneBtn.set_enabled(false)
     }
+    // 清理后扫描按钮恢复可用（目录仍存在时），避免停留在禁用状态
+    scanBtn.set_enabled(currentDir != "" and dirs.exists(currentDir))
     updateCount()
 
     string msg = "清理完成: 删除 " + cleaned + " 项"
