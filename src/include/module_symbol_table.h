@@ -14,6 +14,7 @@ typedef struct {
     int param_count;            // 参数总数量
     int default_count;          // 有默认值的参数数量
     char** param_default_texts; // 每个参数的默认值文本（NULL 表示该参数无默认值）
+    int line;                   // 函数定义所在行号（1-based，0 表示未知）
 } ModuleFuncSymbol;
 
 // 模块 struct 字段
@@ -24,6 +25,7 @@ typedef struct {
     char* struct_name;          // 类型名（当 type 为 TYPE_STRUCT/TYPE_CLIB/TYPE_CSTRUCT/TYPE_FACE 时）
     char* element_struct_name;  // Array[T]/Dict[K,V] 中 T/V 的类型名（当 element_type 为 TYPE_STRUCT/TYPE_FACE/TYPE_CSTRUCT/TYPE_CLIB 时）
     int nullable;               // 可空字段标记：1=Type?，0=Type
+    int line;                   // 字段定义所在行号（1-based，0 表示未知）
 } ModuleStructField;
 
 // 模块 struct 方法
@@ -38,6 +40,7 @@ typedef struct {
     int param_count;            // 参数数量（不包括 self）
     TypeKind* param_types;      // 参数类型数组（不包括 self）
     char** param_generic_names; // 参数泛型类型参数名（如 "T", "K"），用于泛型方法参数类型检查
+    int line;                   // 方法定义所在行号（1-based，0 表示未知）
 } ModuleStructMethod;
 
 // 模块 struct 符号
@@ -56,6 +59,7 @@ typedef struct {
     char** const_names;         // 关联常量名数组
     char** const_value_strs;    // 关联常量值字符串（原始文本，导入时解析）
     int const_count;            // 关联常量数量
+    int def_line;               // struct 定义所在行号（1-based，0 表示未知）
 } ModuleStructSymbol;
 
 // 模块 enum 符号

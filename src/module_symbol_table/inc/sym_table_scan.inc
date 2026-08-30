@@ -41,7 +41,7 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
             #include "scan/scan_alias.inc"
         }
 
-
+        if (*p == '\n') cur_line++;
         p++;
     }
 

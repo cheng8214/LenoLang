@@ -296,10 +296,24 @@
                         }
 
                         scan_func_body_skip:
-                        module_symbol_table_add_func(table, func_name, return_type,
-                            return_struct_name[0] ? return_struct_name : NULL, func_type_param_count, return_type_info,
-                            param_text[0] ? param_text : NULL,
-                            parsed_param_count, parsed_default_count, parsed_default_texts);
+                        // 即时计算函数定义行号（从 source 开头数到 p 的换行数 +1）
+                        // p 指向 "export" 关键字开头
+                        {
+                            int func_def_line = 1;
+                            for (const char* c = source; c < p; c++) {
+                                if (*c == '\n') func_def_line++;
+                            }
+                            // 临时存储行号，通过全局变量传递（add_func 不接受 line 参数）
+                            // 这里先调用 add_func，再通过 find_func 设置行号
+                            module_symbol_table_add_func(table, func_name, return_type,
+                                return_struct_name[0] ? return_struct_name : NULL, func_type_param_count, return_type_info,
+                                param_text[0] ? param_text : NULL,
+                                parsed_param_count, parsed_default_count, parsed_default_texts);
+                            ModuleFuncSymbol* added_func = module_symbol_table_find_func(table, func_name);
+                            if (added_func) {
+                                added_func->line = func_def_line;
+                            }
+                        }
                         if (return_type_info) { type_free(return_type_info); return_type_info = NULL; }
                         // 释放临时的默认值文本（add_func 内部已 strdup）
                         for (int i = 0; i < 32; i++) {

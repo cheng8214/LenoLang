@@ -3376,7 +3376,6 @@ static char* get_variable_type_from_compiler(const char* content, const char* va
 // 生成用户定义 struct 方法的悬停文档
 static char* generate_struct_method_doc(const char* struct_name, const char* method_name,
                                                       const char* content, const char* file_path) {
-    (void)file_path;  // 保留参数以兼容调用方接口，但此函数不直接使用
     ObjStructDef* sdef = struct_def_find(struct_name);
     if (!sdef) {
         // struct_def_find 失败，尝试 cstruct 内置方法
@@ -3412,9 +3411,13 @@ static char* generate_struct_method_doc(const char* struct_name, const char* met
         return NULL;
     }
     
+    fprintf(stderr, "[HOVER-DEBUG] generate_struct_method_doc: sdef found, method_count=%d, looking for '%s'\n", sdef->method_count, method_name);
+    fflush(stderr);
     for (int i = 0; i < sdef->method_count; i++) {
         if (strcmp(sdef->methods[i].name, method_name) == 0) {
             ObjFunction* fn = sdef->methods[i].func;
+            fprintf(stderr, "[HOVER-DEBUG]   matched method[%d] name='%s' fn=%s\n", i, sdef->methods[i].name, fn ? "NOT NULL" : "NULL");
+            fflush(stderr);
             
             if (fn) {
                 int arity = fn->arity;
@@ -3428,22 +3431,168 @@ static char* generate_struct_method_doc(const char* struct_name, const char* met
                     }
                 }
                 
-                int len = 512 + strlen(struct_name) + strlen(method_name) + strlen(params_str);
+                // 从当前文件的模块符号表获取方法定义行号
+                int method_line = 0;
+                const char* src_short = NULL;
+                fprintf(stderr, "[HOVER-DEBUG] generate_struct_method_doc: looking for line, struct='%s' method='%s' file_path='%s'\n",
+                        struct_name, method_name, file_path ? file_path : "NULL");
+                fflush(stderr);
+                if (file_path) {
+                    module_symbol_table_reset_scan_stack();
+                    ModuleSymbolTable* cur_mtable = module_symbol_table_create(file_path);
+                    if (cur_mtable) {
+                        if (module_symbol_table_scan(cur_mtable, file_path) == 0) {
+                            ModuleStructMethod* cm = module_symbol_table_find_struct_method(cur_mtable, struct_name, method_name);
+                            if (cm) {
+                                method_line = cm->line;
+                                fprintf(stderr, "[HOVER-DEBUG]   found in current file: line=%d\n", method_line);
+                                fflush(stderr);
+                            }
+                        }
+                        module_symbol_table_destroy(cur_mtable);
+                    }
+                    // 如果当前文件没找到，在导入的模块符号表中查找
+                    if (method_line == 0 && content) {
+                        int imp_count = 0;
+                        ImportAlias* imp_aliases = parse_imports(content, &imp_count);
+                        fprintf(stderr, "[HOVER-DEBUG]   not in current file, trying %d imports\n", imp_count);
+                        fflush(stderr);
+                        if (imp_aliases && imp_count > 0) {
+                            for (int ii = 0; ii < imp_count && method_line == 0; ii++) {
+                                const char* mp = find_module_path_by_alias(imp_aliases, imp_count, imp_aliases[ii].alias);
+                                if (!mp) continue;
+                                fprintf(stderr, "[HOVER-DEBUG]   import[%d] alias='%s' path='%s'\n", ii, imp_aliases[ii].alias, mp);
+                                fflush(stderr);
+                                module_symbol_table_reset_scan_stack();
+                                ModuleSymbolTable* imtable = module_symbol_table_create(mp);
+                                if (imtable) {
+                                    if (module_symbol_table_scan(imtable, file_path) == 0) {
+                                        ModuleStructMethod* im = module_symbol_table_find_struct_method(imtable, struct_name, method_name);
+                                        if (im) {
+                                            method_line = im->line;
+                                            fprintf(stderr, "[HOVER-DEBUG]   FOUND in import: line=%d\n", method_line);
+                                            fflush(stderr);
+                                            // 提取导入模块文件短名
+                                            const char* slash_i = strrchr(mp, '/');
+                                            const char* backslash_i = strrchr(mp, '\\');
+                                            const char* last_sep_i = slash_i > backslash_i ? slash_i : backslash_i;
+                                            src_short = last_sep_i ? last_sep_i + 1 : mp;
+                                        } else {
+                                            fprintf(stderr, "[HOVER-DEBUG]   not found in this module\n");
+                                            fflush(stderr);
+                                        }
+                                    }
+                                    module_symbol_table_destroy(imtable);
+                                }
+                            }
+                        }
+                        if (imp_aliases) free_import_aliases(imp_aliases, imp_count);
+                    }
+                    // 如果导入模块没找到，用当前文件短名
+                    if (method_line > 0 && !src_short) {
+                        const char* slash_c = strrchr(file_path, '/');
+                        const char* backslash_c = strrchr(file_path, '\\');
+                        const char* last_sep_c = slash_c > backslash_c ? slash_c : backslash_c;
+                        src_short = last_sep_c ? last_sep_c + 1 : file_path;
+                    }
+                }
+                
+                int len = 512 + strlen(struct_name) + strlen(method_name) + strlen(params_str) + (src_short ? strlen(src_short) : 0);
                 char* info = (char*)malloc(len);
                 if (!info) return NULL;
                 
-                if (arity == 0) {
-                    snprintf(info, len, "**%s.%s()**\n\n```leno\n%s.%s()\n```\n\n%s 结构体方法",
-                             struct_name, method_name, struct_name, method_name, struct_name);
+                if (method_line > 0 && src_short) {
+                    if (arity == 0) {
+                        snprintf(info, len, "**%s.%s()**\n\n```leno\n%s.%s()\n```\n\n%s 结构体方法\n\n---\n%s:%d",
+                                 struct_name, method_name, struct_name, method_name, struct_name,
+                                 src_short, method_line);
+                    } else {
+                        snprintf(info, len, "**%s.%s(%s)**\n\n```leno\n%s.%s(%s)\n```\n\n%s 结构体方法（%d 个参数）\n\n---\n%s:%d",
+                                 struct_name, method_name, params_str,
+                                 struct_name, method_name, params_str,
+                                 struct_name, arity,
+                                 src_short, method_line);
+                    }
                 } else {
-                    snprintf(info, len, "**%s.%s(%s)**\n\n```leno\n%s.%s(%s)\n```\n\n%s 结构体方法（%d 个参数）",
-                             struct_name, method_name, params_str,
-                             struct_name, method_name, params_str,
-                             struct_name, arity);
+                    if (arity == 0) {
+                        snprintf(info, len, "**%s.%s()**\n\n```leno\n%s.%s()\n```\n\n%s 结构体方法",
+                                 struct_name, method_name, struct_name, method_name, struct_name);
+                    } else {
+                        snprintf(info, len, "**%s.%s(%s)**\n\n```leno\n%s.%s(%s)\n```\n\n%s 结构体方法（%d 个参数）",
+                                 struct_name, method_name, params_str,
+                                 struct_name, method_name, params_str,
+                                 struct_name, arity);
+                    }
                 }
                 return info;
             } else {
                 // fn 为 NULL（LSP 模式下未生成 ObjFunction），从源文件解析方法签名
+                fprintf(stderr, "[HOVER-DEBUG]   fn is NULL, parsing from source content\n");
+                fflush(stderr);
+
+                // 先从符号表获取方法定义行号和来源文件（与 fn!=NULL 分支逻辑相同）
+                int method_line = 0;
+                const char* src_short = NULL;
+                if (file_path) {
+                    module_symbol_table_reset_scan_stack();
+                    ModuleSymbolTable* cur_mtable = module_symbol_table_create(file_path);
+                    if (cur_mtable) {
+                        if (module_symbol_table_scan(cur_mtable, file_path) == 0) {
+                            ModuleStructMethod* cm = module_symbol_table_find_struct_method(cur_mtable, struct_name, method_name);
+                            if (cm) {
+                                method_line = cm->line;
+                                fprintf(stderr, "[HOVER-DEBUG]   [fn=NULL] found in current file: line=%d\n", method_line);
+                                fflush(stderr);
+                            }
+                        }
+                        module_symbol_table_destroy(cur_mtable);
+                    }
+                    // 如果当前文件没找到，在导入的模块符号表中查找
+                    if (method_line == 0 && content) {
+                        int imp_count = 0;
+                        ImportAlias* imp_aliases = parse_imports(content, &imp_count);
+                        fprintf(stderr, "[HOVER-DEBUG]   [fn=NULL] not in current file, trying %d imports\n", imp_count);
+                        fflush(stderr);
+                        if (imp_aliases && imp_count > 0) {
+                            for (int ii = 0; ii < imp_count && method_line == 0; ii++) {
+                                const char* mp = find_module_path_by_alias(imp_aliases, imp_count, imp_aliases[ii].alias);
+                                if (!mp) continue;
+                                fprintf(stderr, "[HOVER-DEBUG]   [fn=NULL] import[%d] alias='%s' path='%s'\n", ii, imp_aliases[ii].alias, mp);
+                                fflush(stderr);
+                                module_symbol_table_reset_scan_stack();
+                                ModuleSymbolTable* imtable = module_symbol_table_create(mp);
+                                if (imtable) {
+                                    if (module_symbol_table_scan(imtable, file_path) == 0) {
+                                        ModuleStructMethod* im = module_symbol_table_find_struct_method(imtable, struct_name, method_name);
+                                        if (im) {
+                                            method_line = im->line;
+                                            fprintf(stderr, "[HOVER-DEBUG]   [fn=NULL] FOUND in import: line=%d\n", method_line);
+                                            fflush(stderr);
+                                            // 提取导入模块文件短名
+                                            const char* slash_i = strrchr(mp, '/');
+                                            const char* backslash_i = strrchr(mp, '\\');
+                                            const char* last_sep_i = slash_i > backslash_i ? slash_i : backslash_i;
+                                            src_short = last_sep_i ? last_sep_i + 1 : mp;
+                                        } else {
+                                            fprintf(stderr, "[HOVER-DEBUG]   [fn=NULL] not found in this module\n");
+                                            fflush(stderr);
+                                        }
+                                    }
+                                    module_symbol_table_destroy(imtable);
+                                }
+                            }
+                        }
+                        if (imp_aliases) free_import_aliases(imp_aliases, imp_count);
+                    }
+                    // 如果导入模块没找到，用当前文件短名
+                    if (method_line > 0 && !src_short) {
+                        const char* slash_c = strrchr(file_path, '/');
+                        const char* backslash_c = strrchr(file_path, '\\');
+                        const char* last_sep_c = slash_c > backslash_c ? slash_c : backslash_c;
+                        src_short = last_sep_c ? last_sep_c + 1 : file_path;
+                    }
+                }
+
                 // 格式: func method_name(params): return_type {  或  func method_name(params) {
                 char* method_info = NULL;
                 if (content) {
@@ -3484,15 +3633,24 @@ static char* generate_struct_method_doc(const char* struct_name, const char* met
                             memcpy(sig_text, line_start, sig_len);
                             sig_text[sig_len] = '\0';
                             
-                            // 构建悬停信息
-                            int len = 512 + strlen(struct_name) + strlen(method_name) + sig_len + 64;
+                            // 构建悬停信息（如果找到行号则附加来源）
+                            int len = 512 + strlen(struct_name) + strlen(method_name) + sig_len + 64 + (src_short ? strlen(src_short) : 0);
                             method_info = (char*)malloc(len);
                             if (method_info) {
-                                snprintf(method_info, len,
-                                         "**%s.%s**\n\n```leno\n%s\n```\n\n%s 结构体方法",
-                                         struct_name, method_name,
-                                         sig_text,
-                                         struct_name);
+                                if (method_line > 0 && src_short) {
+                                    snprintf(method_info, len,
+                                             "**%s.%s**\n\n```leno\n%s\n```\n\n%s 结构体方法\n\n---\n%s:%d",
+                                             struct_name, method_name,
+                                             sig_text,
+                                             struct_name,
+                                             src_short, method_line);
+                                } else {
+                                    snprintf(method_info, len,
+                                             "**%s.%s**\n\n```leno\n%s\n```\n\n%s 结构体方法",
+                                             struct_name, method_name,
+                                             sig_text,
+                                             struct_name);
+                                }
                             }
                             break;
                         }
@@ -3500,7 +3658,29 @@ static char* generate_struct_method_doc(const char* struct_name, const char* met
                     }
                 }
                 
+                // 如果从源文件解析了签名且有行号但没附加（签名在导入模块中），单独附加行号
+                if (method_info && method_line > 0 && src_short && !strstr(method_info, "\n---\n")) {
+                    size_t cur_len = strlen(method_info);
+                    size_t add_len = 64 + strlen(src_short);
+                    char* new_info = (char*)realloc(method_info, cur_len + add_len);
+                    if (new_info) {
+                        method_info = new_info;
+                        snprintf(method_info + cur_len, add_len, "\n\n---\n%s:%d", src_short, method_line);
+                    }
+                }
+                
                 if (method_info) return method_info;
+                
+                // 如果源文件解析失败，但有行号信息，生成带来源的基本信息
+                if (method_line > 0 && src_short) {
+                    int len = 256 + strlen(struct_name) + strlen(method_name) + strlen(src_short);
+                    char* info = (char*)malloc(len);
+                    if (!info) return NULL;
+                    snprintf(info, len, "**%s.%s()**\n\n```leno\n%s.%s()\n```\n\n%s 结构体方法\n\n---\n%s:%d",
+                             struct_name, method_name, struct_name, method_name, struct_name,
+                             src_short, method_line);
+                    return info;
+                }
                 
                 // 如果源文件解析失败，回退到基本信息
                 int len = 256 + strlen(struct_name) + strlen(method_name);
@@ -3595,17 +3775,39 @@ static char* generate_struct_method_doc_from_modules(const char* struct_name, co
                             }
                         }
                         
-                        int len = 512 + strlen(struct_name) + strlen(method_name) + strlen(params_str) + strlen(ret_str);
+                        int method_line = mst->methods[j].line;
+                        // 提取模块文件短名
+                        const char* src_short = mp;
+                        const char* slash_m = strrchr(src_short, '/');
+                        const char* backslash_m = strrchr(src_short, '\\');
+                        const char* last_sep_m = slash_m > backslash_m ? slash_m : backslash_m;
+                        if (last_sep_m) src_short = last_sep_m + 1;
+
+                        int len = 512 + strlen(struct_name) + strlen(method_name) + strlen(params_str) + strlen(ret_str) + (src_short ? strlen(src_short) : 0);
                         result = (char*)malloc(len);
                         if (result) {
-                            if (arity == 0) {
-                                snprintf(result, len, "**%s.%s()**\n\n```leno\n%s.%s() -> %s\n```\n\n%s 结构体方法",
-                                         struct_name, method_name, struct_name, method_name, ret_str, struct_name);
+                            if (method_line > 0) {
+                                if (arity == 0) {
+                                    snprintf(result, len, "**%s.%s()**\n\n```leno\n%s.%s() -> %s\n```\n\n%s 结构体方法\n\n---\n%s:%d",
+                                             struct_name, method_name, struct_name, method_name, ret_str, struct_name,
+                                             src_short, method_line);
+                                } else {
+                                    snprintf(result, len, "**%s.%s(%s)**\n\n```leno\n%s.%s(%s) -> %s\n```\n\n%s 结构体方法（%d 个参数）\n\n---\n%s:%d",
+                                             struct_name, method_name, params_str,
+                                             struct_name, method_name, params_str, ret_str,
+                                             struct_name, arity,
+                                             src_short, method_line);
+                                }
                             } else {
-                                snprintf(result, len, "**%s.%s(%s)**\n\n```leno\n%s.%s(%s) -> %s\n```\n\n%s 结构体方法（%d 个参数）",
-                                         struct_name, method_name, params_str,
-                                         struct_name, method_name, params_str, ret_str,
-                                         struct_name, arity);
+                                if (arity == 0) {
+                                    snprintf(result, len, "**%s.%s()**\n\n```leno\n%s.%s() -> %s\n```\n\n%s 结构体方法",
+                                             struct_name, method_name, struct_name, method_name, ret_str, struct_name);
+                                } else {
+                                    snprintf(result, len, "**%s.%s(%s)**\n\n```leno\n%s.%s(%s) -> %s\n```\n\n%s 结构体方法（%d 个参数）",
+                                             struct_name, method_name, params_str,
+                                             struct_name, method_name, params_str, ret_str,
+                                             struct_name, arity);
+                                }
                             }
                         }
                         break;
@@ -4598,8 +4800,186 @@ char* lsp_get_hover_info(const char* content, LspPosition pos, const char* file_
                             }
                         }
 
-                        // 4.5 回退：如果方法查找全部失败但已知变量类型，显示基本成员提示
-                        // 这处理 _font.ok 这种字段访问（ok 是 Font 的字段而非方法）
+                        // 4.5 尝试将成员作为 struct 字段查找
+                        // 这处理 font.height 这种字段访问（height 是 Font 的字段而非方法）
+                        if (!info) {
+                            // 途径1：通过编译器上下文查找（当前文件中定义的 struct 或 use 导入的 struct）
+                            CompilerContext fctx2;
+                            compiler_context_init(&fctx2);
+                            if (compiler_analyze_with_filename(&fctx2, content, file_path) && fctx2.root_scope) {
+                                char* field_type_str = NULL;
+                                if (compiler_get_struct_field_info(&fctx2, var_type, method, &field_type_str)) {
+                                    // 查找字段定义行号：先查当前文件，再查导入模块
+                                    int def_line = -1;
+                                    const char* src_short = NULL;
+                                    module_symbol_table_reset_scan_stack();
+                                    ModuleSymbolTable* cur_mtable = module_symbol_table_create(file_path);
+                                    if (cur_mtable) {
+                                        if (module_symbol_table_scan(cur_mtable, file_path) == 0) {
+                                            ModuleStructSymbol* cur_mst = module_symbol_table_find_struct(cur_mtable, var_type);
+                                            if (cur_mst) {
+                                                for (int fk = 0; fk < cur_mst->field_count; fk++) {
+                                                    if (cur_mst->fields[fk].name && strcmp(cur_mst->fields[fk].name, method) == 0) {
+                                                        def_line = cur_mst->fields[fk].line;
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        module_symbol_table_destroy(cur_mtable);
+                                    }
+                                    // 如果当前文件没找到，在导入模块中查找字段行号
+                                    if (def_line <= 0 && content) {
+                                        int imp_count2 = 0;
+                                        ImportAlias* imp_aliases2 = parse_imports(content, &imp_count2);
+                                        if (imp_aliases2 && imp_count2 > 0) {
+                                            for (int ii = 0; ii < imp_count2 && def_line <= 0; ii++) {
+                                                const char* mp = find_module_path_by_alias(imp_aliases2, imp_count2, imp_aliases2[ii].alias);
+                                                if (!mp) continue;
+                                                module_symbol_table_reset_scan_stack();
+                                                ModuleSymbolTable* imtable = module_symbol_table_create(mp);
+                                                if (imtable) {
+                                                    if (module_symbol_table_scan(imtable, file_path) == 0) {
+                                                        ModuleStructSymbol* imst = module_symbol_table_find_struct(imtable, var_type);
+                                                        if (imst) {
+                                                            for (int fk = 0; fk < imst->field_count; fk++) {
+                                                                if (imst->fields[fk].name && strcmp(imst->fields[fk].name, method) == 0) {
+                                                                    def_line = imst->fields[fk].line;
+                                                                    const char* slash_i = strrchr(mp, '/');
+                                                                    const char* backslash_i = strrchr(mp, '\\');
+                                                                    const char* last_sep_i = slash_i > backslash_i ? slash_i : backslash_i;
+                                                                    src_short = last_sep_i ? last_sep_i + 1 : mp;
+                                                                    break;
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    module_symbol_table_destroy(imtable);
+                                                }
+                                            }
+                                        }
+                                        if (imp_aliases2) free_import_aliases(imp_aliases2, imp_count2);
+                                    }
+                                    // 如果没从导入模块获取短名，用当前文件短名
+                                    if (def_line > 0 && !src_short && file_path) {
+                                        const char* slash = strrchr(file_path, '/');
+                                        const char* backslash = strrchr(file_path, '\\');
+                                        const char* last_sep = slash > backslash ? slash : backslash;
+                                        src_short = last_sep ? last_sep + 1 : file_path;
+                                    }
+                                    size_t info_len = 512 + strlen(method) + strlen(field_type_str) + strlen(var_type) + (src_short ? strlen(src_short) : 0);
+                                    info = (char*)malloc(info_len);
+                                    if (info) {
+                                        if (def_line > 0 && src_short) {
+                                            snprintf(info, info_len,
+                                                     "**%s**\n\n```leno\n%s %s\n```\n\n%s 字段 (%s)\n\n---\n%s:%d",
+                                                     method, field_type_str, method, var_type, var_type,
+                                                     src_short, def_line);
+                                        } else {
+                                            snprintf(info, info_len,
+                                                     "**%s**\n\n```leno\n%s %s\n```\n\n%s 字段 (%s)",
+                                                     method, field_type_str, method, var_type, var_type);
+                                        }
+                                    }
+                                    free(field_type_str);
+                                }
+                            }
+                            compiler_context_cleanup(&fctx2);
+
+                            // 途径2：通过模块符号表查找导入模块中的 struct 字段
+                            if (!info && file_path) {
+                                int import_count = 0;
+                                ImportAlias* import_aliases = parse_imports(content, &import_count);
+                                if (import_aliases && import_count > 0) {
+                                    for (int i = 0; i < import_count && !info; i++) {
+                                        const char* mp = find_module_path_by_alias(import_aliases, import_count, import_aliases[i].alias);
+                                        if (!mp) continue;
+                                        module_symbol_table_reset_scan_stack();
+                                        ModuleSymbolTable* mtable = module_symbol_table_create(mp);
+                                        if (!mtable) continue;
+                                        if (module_symbol_table_scan(mtable, file_path) == 0) {
+                                            ModuleStructSymbol* mst = module_symbol_table_find_struct(mtable, var_type);
+                                            if (mst) {
+                                                for (int k = 0; k < mst->field_count && !info; k++) {
+                                                    if (mst->fields[k].name && strcmp(mst->fields[k].name, method) == 0) {
+                                                        const char* fts = mst->fields[k].struct_name ?
+                                                            mst->fields[k].struct_name : type_kind_to_string(mst->fields[k].type);
+                                                        // 直接从符号表获取字段定义行号
+                                                        int def_line = mst->fields[k].line;
+                                                        // 提取模块文件短名
+                                                        const char* src_short = mp;
+                                                        const char* slash = strrchr(src_short, '/');
+                                                        const char* backslash = strrchr(src_short, '\\');
+                                                        const char* last_sep = slash > backslash ? slash : backslash;
+                                                        if (last_sep) src_short = last_sep + 1;
+                                                        size_t info_len = 512 + strlen(method) + strlen(fts) + strlen(var_type);
+                                                        info = (char*)malloc(info_len);
+                                                        if (info) {
+                                                            if (def_line > 0) {
+                                                                snprintf(info, info_len,
+                                                                         "**%s**\n\n```leno\n%s %s\n```\n\n%s 字段 (%s)\n\n---\n%s:%d",
+                                                                         method, fts, method, var_type, var_type,
+                                                                         src_short, def_line);
+                                                            } else {
+                                                                snprintf(info, info_len,
+                                                                         "**%s**\n\n```leno\n%s %s\n```\n\n%s 字段 (%s)",
+                                                                         method, fts, method, var_type, var_type);
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        module_symbol_table_destroy(mtable);
+                                    }
+                                }
+                                if (import_aliases) free_import_aliases(import_aliases, import_count);
+
+                                // 途径3：扫描当前文件本身
+                                if (!info) {
+                                    module_symbol_table_reset_scan_stack();
+                                    ModuleSymbolTable* cur_table = module_symbol_table_create(file_path);
+                                    if (cur_table) {
+                                        if (module_symbol_table_scan(cur_table, file_path) == 0) {
+                                            ModuleStructSymbol* mst = module_symbol_table_find_struct(cur_table, var_type);
+                                            if (mst) {
+                                                for (int k = 0; k < mst->field_count && !info; k++) {
+                                                    if (mst->fields[k].name && strcmp(mst->fields[k].name, method) == 0) {
+                                                        const char* fts = mst->fields[k].struct_name ?
+                                                            mst->fields[k].struct_name : type_kind_to_string(mst->fields[k].type);
+                                                        // 直接从符号表获取字段定义行号
+                                                        int def_line = mst->fields[k].line;
+                                                        // 提取当前文件短名
+                                                        const char* src_short = file_path;
+                                                        const char* slash = strrchr(src_short, '/');
+                                                        const char* backslash = strrchr(src_short, '\\');
+                                                        const char* last_sep = slash > backslash ? slash : backslash;
+                                                        if (last_sep) src_short = last_sep + 1;
+                                                        size_t info_len = 512 + strlen(method) + strlen(fts) + strlen(var_type);
+                                                        info = (char*)malloc(info_len);
+                                                        if (info) {
+                                                            if (def_line > 0) {
+                                                                snprintf(info, info_len,
+                                                                         "**%s**\n\n```leno\n%s %s\n```\n\n%s 字段 (%s)\n\n---\n%s:%d",
+                                                                         method, fts, method, var_type, var_type,
+                                                                         src_short, def_line);
+                                                            } else {
+                                                                snprintf(info, info_len,
+                                                                         "**%s**\n\n```leno\n%s %s\n```\n\n%s 字段 (%s)",
+                                                                         method, fts, method, var_type, var_type);
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        module_symbol_table_destroy(cur_table);
+                                    }
+                                }
+                            }
+                        }
+
+                        // 4.5b 回退：如果字段查找和方法查找全部失败但已知变量类型，显示基本成员提示
                         if (!info) {
                             size_t fallback_len = 256 + strlen(module) + strlen(method) + strlen(var_type);
                             info = (char*)malloc(fallback_len);
@@ -4677,10 +5057,11 @@ char* lsp_get_hover_info(const char* content, LspPosition pos, const char* file_
     }
 
     // 6. 尝试附加定义来源（文件名 + 行号）
-    //    即使 info 为 NULL，如果能找到定义，也生成基本的悬停信息
-    if (file_path) {
-        // 直接使用 lsp_get_definition，它与跳转(Go to Definition)使用相同的逻辑
-        // 能正确处理模块前缀（如 fnt.ttfQuit → 在 fnt 模块中查找 ttfQuit）
+    //    无论 info 是否已有内容，都尝试通过 lsp_get_definition 获取定义位置
+    //    - 如果 info 已有内容且找到了定义位置：追加来源到末尾
+    //    - 如果 info 为 NULL 且找到了定义位置：生成基本悬停信息+来源
+    //    - 如果 info 已包含 "---\n" 来源标记（已由前面路径附加），跳过避免重复
+    if (file_path && (!info || !strstr(info, "\n---\n"))) {
         char* current_uri = lsp_path_to_uri(file_path);
         int def_count = 0;
         LspLocation* locations = lsp_get_definition(content, pos, &def_count, current_uri);
@@ -4703,56 +5084,54 @@ char* lsp_get_hover_info(const char* content, LspPosition pos, const char* file_
             bool is_current_file = (cur_uri && strcmp(loc->uri, cur_uri) == 0);
             if (cur_uri) free(cur_uri);
 
-            // 确定用于显示的 word
-            // 提取光标所在的段名（如 root.children.add 中的 children）
-            const char* def_word = word;
-            char* short_word = NULL;
-            {
-                int cur_off = lsp_position_to_offset(content, pos);
-                if (cur_off >= 0) {
-                    // 提取光标所在的段
-                    int seg_start = cur_off;
-                    int seg_end = cur_off;
-                    while (seg_start > 0 && (isalnum((unsigned char)content[seg_start-1]) || content[seg_start-1] == '_')) seg_start--;
-                    while (seg_end < (int)strlen(content) && (isalnum((unsigned char)content[seg_end]) || content[seg_end] == '_')) seg_end++;
-                    int slen = seg_end - seg_start;
-                    if (slen > 0) {
-                        short_word = (char*)malloc(slen + 1);
-                        if (short_word) {
-                            memcpy(short_word, content + seg_start, slen);
-                            short_word[slen] = '\0';
-                            def_word = short_word;
+            if (info) {
+                // info 已有内容，追加来源信息到末尾
+                size_t cur_len = strlen(info);
+                size_t add_len = 64 + strlen(short_name);
+                char* new_info = (char*)realloc(info, cur_len + add_len);
+                if (new_info) {
+                    info = new_info;
+                    snprintf(info + cur_len, add_len, "\n\n---\n%s:%d%s",
+                             short_name, def_line,
+                             is_current_file ? "" : "（导入模块）");
+                }
+            } else {
+                // info 为 NULL，生成基本悬停信息+来源
+                // 确定用于显示的 word
+                const char* def_word = word;
+                char* short_word = NULL;
+                {
+                    int cur_off = lsp_position_to_offset(content, pos);
+                    if (cur_off >= 0) {
+                        int seg_start = cur_off;
+                        int seg_end = cur_off;
+                        while (seg_start > 0 && (isalnum((unsigned char)content[seg_start-1]) || content[seg_start-1] == '_')) seg_start--;
+                        while (seg_end < (int)strlen(content) && (isalnum((unsigned char)content[seg_end]) || content[seg_end] == '_')) seg_end++;
+                        int slen = seg_end - seg_start;
+                        if (slen > 0) {
+                            short_word = (char*)malloc(slen + 1);
+                            if (short_word) {
+                                memcpy(short_word, content + seg_start, slen);
+                                short_word[slen] = '\0';
+                                def_word = short_word;
+                            }
                         }
                     }
                 }
-            }
 
-            // 如果 info 为 NULL，生成基本悬停信息
-            if (!info) {
-                size_t base_len = strlen(def_word) + 256;
+                size_t base_len = strlen(def_word) + 256 + strlen(short_name);
                 info = (char*)malloc(base_len);
                 if (info) {
-                    snprintf(info, base_len, "**%s**\n\n```leno\n%s\n```", def_word, def_word);
-                }
-            }
-
-            // 追加来源信息到 hover 文本
-            if (info) {
-                size_t old_len = strlen(info);
-                size_t add_len = 256 + strlen(short_name);
-                char* new_info = (char*)malloc(old_len + add_len);
-                if (new_info) {
-                    memcpy(new_info, info, old_len);
                     if (is_current_file) {
-                        snprintf(new_info + old_len, add_len, "\n\n---\n%s:%d", short_name, def_line);
+                        snprintf(info, base_len, "**%s**\n\n```leno\n%s\n```\n\n---\n%s:%d",
+                                 def_word, def_word, short_name, def_line);
                     } else {
-                        snprintf(new_info + old_len, add_len, "\n\n---\n%s:%d（导入模块）", short_name, def_line);
+                        snprintf(info, base_len, "**%s**\n\n```leno\n%s\n```\n\n---\n%s:%d（导入模块）",
+                                 def_word, def_word, short_name, def_line);
                     }
-                    free(info);
-                    info = new_info;
                 }
+                if (short_word) free(short_word);
             }
-            if (short_word) free(short_word);
         }
         if (locations) lsp_free_locations(locations, def_count);
     }

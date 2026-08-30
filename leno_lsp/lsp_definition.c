@@ -4,6 +4,7 @@
  */
 
 #include "leno_lsp.h"
+#include "lsp_completion.h"
 #include "../src/include/module_symbol_table.h"
 #include "../src/include/module_loader.h"
 #include "../src/include/leno_types.h"
@@ -335,6 +336,62 @@ static bool find_definition_in_module(const char* module_path, const char* curre
     }
 
     bool found = false;
+    
+    // 优先：在符号表中直接查找行号（函数、struct方法）
+    // 如果符号表中已存储了行号，直接返回，无需文本搜索
+    {
+        ModuleFuncSymbol* func_sym = module_symbol_table_find_func(sym_table, word);
+        if (func_sym && func_sym->line > 0) {
+            out_range->start.line = func_sym->line - 1;  // LSP 用 0-based
+            out_range->start.character = 0;
+            out_range->end.line = func_sym->line - 1;
+            out_range->end.character = (int)strlen(word);
+            size_t copy_len = strlen(full_path);
+            if (copy_len >= (size_t)full_path_len) copy_len = full_path_len - 1;
+            memcpy(out_full_path, full_path, copy_len);
+            out_full_path[copy_len] = '\0';
+            module_symbol_table_destroy(sym_table);
+            return true;
+        }
+    }
+    // 查找 struct 方法行号
+    for (int i = 0; i < sym_table->struct_count; i++) {
+        ModuleStructSymbol* st = &sym_table->structs[i];
+        for (int j = 0; j < st->method_count; j++) {
+            const char* mname = st->methods[j].name;
+            const char* sep = strstr(mname, "::");
+            if (sep) sep += 2; else sep = mname;
+            if (strcmp(sep, word) == 0 && st->methods[j].line > 0) {
+                out_range->start.line = st->methods[j].line - 1;
+                out_range->start.character = 0;
+                out_range->end.line = st->methods[j].line - 1;
+                out_range->end.character = (int)strlen(word);
+                size_t copy_len = strlen(full_path);
+                if (copy_len >= (size_t)full_path_len) copy_len = full_path_len - 1;
+                memcpy(out_full_path, full_path, copy_len);
+                out_full_path[copy_len] = '\0';
+                module_symbol_table_destroy(sym_table);
+                return true;
+            }
+        }
+        // 查找 struct 字段行号
+        for (int j = 0; j < st->field_count; j++) {
+            if (st->fields[j].name && strcmp(st->fields[j].name, word) == 0 && st->fields[j].line > 0) {
+                out_range->start.line = st->fields[j].line - 1;
+                out_range->start.character = 0;
+                out_range->end.line = st->fields[j].line - 1;
+                out_range->end.character = (int)strlen(word);
+                size_t copy_len = strlen(full_path);
+                if (copy_len >= (size_t)full_path_len) copy_len = full_path_len - 1;
+                memcpy(out_full_path, full_path, copy_len);
+                out_full_path[copy_len] = '\0';
+                module_symbol_table_destroy(sym_table);
+                return true;
+            }
+        }
+    }
+
+    // 记录符号是否存在（用于后续文本搜索判断）
     if (module_symbol_table_find_func(sym_table, word)) found = true;
     else if (module_symbol_table_find_struct(sym_table, word)) found = true;
     else if (module_symbol_table_find_enum(sym_table, word)) found = true;
@@ -370,13 +427,77 @@ static bool find_definition_in_module(const char* module_path, const char* curre
     bool found_def = find_definition_in_content(module_content, word, out_range);
     free(module_content);
 
-    if (!found_def) return false;
+    if (found_def) {
+        size_t copy_len = strlen(full_path);
+        if (copy_len >= (size_t)full_path_len) copy_len = full_path_len - 1;
+        memcpy(out_full_path, full_path, copy_len);
+        out_full_path[copy_len] = '\0';
+        return true;
+    }
 
-    size_t copy_len = strlen(full_path);
-    if (copy_len >= (size_t)full_path_len) copy_len = full_path_len - 1;
-    memcpy(out_full_path, full_path, copy_len);
-    out_full_path[copy_len] = '\0';
-    return true;
+    // 在当前模块文件内容中没找到定义
+    // 检查符号表中是否有 struct 字段或方法的行号
+    // （字段/方法可能定义在子模块中，但符号表通过 use/import 已传导）
+    // 重新扫描符号表以获取字段/方法行号
+    module_symbol_table_reset_scan_stack();
+    ModuleSymbolTable* field_table = module_symbol_table_create(full_path);
+    if (field_table) {
+        if (module_symbol_table_scan(field_table, current_file) == 0) {
+            // 遍历所有 struct 查找字段
+            for (int i = 0; i < field_table->struct_count; i++) {
+                ModuleStructSymbol* st = &field_table->structs[i];
+                for (int j = 0; j < st->field_count; j++) {
+                    if (st->fields[j].name && strcmp(st->fields[j].name, word) == 0 && st->fields[j].line > 0) {
+                        out_range->start.line = st->fields[j].line - 1;  // LSP 用 0-based
+                        out_range->start.character = 0;
+                        out_range->end.line = st->fields[j].line - 1;
+                        out_range->end.character = (int)strlen(word);
+                        size_t copy_len2 = strlen(full_path);
+                        if (copy_len2 >= (size_t)full_path_len) copy_len2 = full_path_len - 1;
+                        memcpy(out_full_path, full_path, copy_len2);
+                        out_full_path[copy_len2] = '\0';
+                        module_symbol_table_destroy(field_table);
+                        return true;
+                    }
+                }
+                // 查找 struct 方法
+                for (int j = 0; j < st->method_count; j++) {
+                    const char* mname = st->methods[j].name;
+                    const char* sep = strstr(mname, "::");
+                    if (sep) sep += 2; else sep = mname;
+                    if (strcmp(sep, word) == 0 && st->methods[j].line > 0) {
+                        out_range->start.line = st->methods[j].line - 1;  // LSP 用 0-based
+                        out_range->start.character = 0;
+                        out_range->end.line = st->methods[j].line - 1;
+                        out_range->end.character = (int)strlen(word);
+                        size_t copy_len2 = strlen(full_path);
+                        if (copy_len2 >= (size_t)full_path_len) copy_len2 = full_path_len - 1;
+                        memcpy(out_full_path, full_path, copy_len2);
+                        out_full_path[copy_len2] = '\0';
+                        module_symbol_table_destroy(field_table);
+                        return true;
+                    }
+                }
+            }
+            // 查找函数行号
+            ModuleFuncSymbol* func_sym = module_symbol_table_find_func(field_table, word);
+            if (func_sym && func_sym->line > 0) {
+                out_range->start.line = func_sym->line - 1;
+                out_range->start.character = 0;
+                out_range->end.line = func_sym->line - 1;
+                out_range->end.character = (int)strlen(word);
+                size_t copy_len2 = strlen(full_path);
+                if (copy_len2 >= (size_t)full_path_len) copy_len2 = full_path_len - 1;
+                memcpy(out_full_path, full_path, copy_len2);
+                out_full_path[copy_len2] = '\0';
+                module_symbol_table_destroy(field_table);
+                return true;
+            }
+        }
+        module_symbol_table_destroy(field_table);
+    }
+
+    return false;
 }
 
 // 在 clib 定义块内查找函数名定义
@@ -1014,11 +1135,79 @@ LspLocation* lsp_get_definition(const char* content, LspPosition pos, int* count
     LspRange range;
     // 对于带模块前缀的表达式（如 SDL3.PIXELFORMAT_RGBA8888），不在当前文档中查找
     // 而是直接去模块中查找
-    if (!module_prefix) {
-        if (find_definition_in_content(content, word, &range)) {
+    // 但对于实例方法（如 win.destroy，win 是变量不是导入别名），也需在当前文档中查找
+    if (!module_prefix || (module_prefix && !strchr(module_prefix, ' '))) {
+        // 使用 lookup_word（已去除点号前缀的纯方法名）在当前文件中查找
+        if (find_definition_in_content(content, lookup_word, &range)) {
             locations[*count].uri = strdup(uri ? uri : "");
             locations[*count].range = range;
             (*count)++;
+        }
+        // 如果文本搜索没找到，尝试通过当前文件的模块符号表查找方法行号
+        if (*count == 0 && uri) {
+            char cur_file[MAX_PATH_LEN] = "";
+            char* converted = lsp_uri_to_path(uri);
+            if (converted) {
+                strncpy(cur_file, converted, MAX_PATH_LEN - 1);
+                cur_file[MAX_PATH_LEN - 1] = '\0';
+                free(converted);
+            }
+            if (cur_file[0]) {
+                module_symbol_table_reset_scan_stack();
+                ModuleSymbolTable* cur_table = module_symbol_table_create(cur_file);
+                if (cur_table) {
+                    if (module_symbol_table_scan(cur_table, cur_file) == 0) {
+                        // 查找函数行号
+                        ModuleFuncSymbol* func_sym = module_symbol_table_find_func(cur_table, lookup_word);
+                        if (func_sym && func_sym->line > 0) {
+                            locations[*count].uri = strdup(uri ? uri : "");
+                            locations[*count].range.start.line = func_sym->line - 1;
+                            locations[*count].range.start.character = 0;
+                            locations[*count].range.end.line = func_sym->line - 1;
+                            locations[*count].range.end.character = (int)strlen(lookup_word);
+                            (*count)++;
+                        }
+                        // 查找 struct 方法行号
+                        if (*count == 0) {
+                            for (int i = 0; i < cur_table->struct_count && *count == 0; i++) {
+                                ModuleStructSymbol* st = &cur_table->structs[i];
+                                for (int j = 0; j < st->method_count; j++) {
+                                    const char* mname = st->methods[j].name;
+                                    const char* sep = strstr(mname, "::");
+                                    if (sep) sep += 2; else sep = mname;
+                                    if (strcmp(sep, lookup_word) == 0 && st->methods[j].line > 0) {
+                                        locations[*count].uri = strdup(uri ? uri : "");
+                                        locations[*count].range.start.line = st->methods[j].line - 1;
+                                        locations[*count].range.start.character = 0;
+                                        locations[*count].range.end.line = st->methods[j].line - 1;
+                                        locations[*count].range.end.character = (int)strlen(lookup_word);
+                                        (*count)++;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        // 查找 struct 字段行号
+                        if (*count == 0) {
+                            for (int i = 0; i < cur_table->struct_count && *count == 0; i++) {
+                                ModuleStructSymbol* st = &cur_table->structs[i];
+                                for (int j = 0; j < st->field_count; j++) {
+                                    if (st->fields[j].name && strcmp(st->fields[j].name, lookup_word) == 0 && st->fields[j].line > 0) {
+                                        locations[*count].uri = strdup(uri ? uri : "");
+                                        locations[*count].range.start.line = st->fields[j].line - 1;
+                                        locations[*count].range.start.character = 0;
+                                        locations[*count].range.end.line = st->fields[j].line - 1;
+                                        locations[*count].range.end.character = (int)strlen(lookup_word);
+                                        (*count)++;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    module_symbol_table_destroy(cur_table);
+                }
+            }
         }
     }
     

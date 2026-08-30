@@ -130,6 +130,14 @@
                                     fields[field_count].name[field_len] = '\0';
                                     fields[field_count].type = ft;
                                     fields[field_count].struct_name = NULL;
+                                    // 即时计算字段定义行号
+                                    {
+                                        int fl = 1;
+                                        for (const char* c = source; c < field_start; c++) {
+                                            if (*c == '\n') fl++;
+                                        }
+                                        fields[field_count].line = fl;
+                                    }
                                     if (ft == TYPE_ANY) {
                                         if (is_known_clib(type_str, clib_names, clib_name_count)) {
                                             fields[field_count].type = TYPE_CLIB;

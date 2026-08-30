@@ -1,5 +1,6 @@
     // 第二遍：解析所有符号（struct 和函数）
     p = source;
+    int cur_line = 1;  // 当前行号（1-based），用于记录 struct/字段定义位置
 
     // 本地别名解析表（支持 alias B = A 链式引用）
     char* local_alias_names[MOD_MAX_ALIASES] = {0};
@@ -20,7 +21,10 @@
 
     while (*p) {
         // 跳过空白、注释、字符串
-        while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) p++;
+        while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) {
+            if (*p == '\n') cur_line++;
+            p++;
+        }
         if (!*p) break;
 
         if (*p == '/' && *(p+1) == '/') {
@@ -29,15 +33,19 @@
         }
         if (*p == '/' && *(p+1) == '*') {
             p += 2;
-            while (*p && !(*p == '*' && *(p+1) == '/')) p++;
+            while (*p && !(*p == '*' && *(p+1) == '/')) {
+                if (*p == '\n') cur_line++;
+                p++;
+            }
             if (*p) p += 2;
             continue;
         }
         if (*p == '"') {
             p++;
             while (*p && *p != '"') {
-                if (*p == '\\' && *(p+1)) p += 2;
-                else p++;
+                if (*p == '\\' && *(p+1)) { p += 2; continue; }
+                if (*p == '\n') cur_line++;
+                p++;
             }
             if (*p) p++;
             continue;

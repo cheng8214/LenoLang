@@ -503,9 +503,16 @@
                                         }
 
                                         // 添加方法（使用 struct_name::method_name 格式）
+                                        // 即时计算方法定义行号（从 source 开头数到 after_struct 的换行数 +1）
+                                        // after_struct 指向 "func" 关键字开头
+                                        int method_def_line = 1;
+                                        for (const char* c = source; c < after_struct; c++) {
+                                            if (*c == '\n') method_def_line++;
+                                        }
                                         methods[method_count].name = (char*)malloc(method_key_len + 1);
                                         memcpy(methods[method_count].name, method_key, method_key_len);
                                         methods[method_count].name[method_key_len] = '\0';
+                                        methods[method_count].line = method_def_line;
                                         methods[method_count].return_type = method_return_type;
                                         methods[method_count].return_type_info = method_return_type_info ? type_copy(method_return_type_info) : NULL;
                                         // 释放临时 method_return_type_info（已复制到 methods 数组）
@@ -633,6 +640,14 @@
                                         fields[field_count].name[field_len] = '\0';
                                         fields[field_count].type = ft;
                                         fields[field_count].struct_name = NULL;
+                                        // 即时计算字段定义行号（从 source 开头数到 field_start 的换行数 +1）
+                                        {
+                                            int fl = 1;
+                                            for (const char* c = source; c < field_start; c++) {
+                                                if (*c == '\n') fl++;
+                                            }
+                                            fields[field_count].line = fl;
+                                        }
                                         // 如果是未识别的自定义类型，检查是否是 alias、clib 或 struct
                                         if (ft == TYPE_ANY) {
                                             // ★ 先检查本地 alias（如 Color = int）
@@ -742,20 +757,28 @@
                         // 添加 struct 到符号表（包括字段和方法）
                         module_symbol_table_add_struct(table, struct_name, field_count, fields, method_count, methods, 0, type_param_count, type_param_names);
 
-                        // 设置 impl 信息
-                        ModuleStructSymbol* added_struct = module_symbol_table_find_struct(table, struct_name);
-                        if (added_struct && impl_count > 0) {
-                            added_struct->impl_count = impl_count;
-                            added_struct->impl_names = (char**)malloc(sizeof(char*) * impl_count);
-                            for (int i = 0; i < impl_count; i++) {
-                                added_struct->impl_names[i] = impl_names[i];
-                            }
-                        } else {
-                            // 释放临时分配的 impl_names
-                            for (int i = 0; i < impl_count; i++) {
-                                free(impl_names[i]);
-                            }
-                        }
+        // 设置 impl 信息
+        ModuleStructSymbol* added_struct = module_symbol_table_find_struct(table, struct_name);
+        if (added_struct) {
+            // 即时计算 struct 定义行号
+            int sdl = 1;
+            for (const char* c = source; c < p; c++) {
+                if (*c == '\n') sdl++;
+            }
+            added_struct->def_line = sdl;
+            if (impl_count > 0) {
+                added_struct->impl_count = impl_count;
+                added_struct->impl_names = (char**)malloc(sizeof(char*) * impl_count);
+                for (int i = 0; i < impl_count; i++) {
+                    added_struct->impl_names[i] = impl_names[i];
+                }
+            }
+        } else {
+            // 释放临时分配的 impl_names
+            for (int i = 0; i < impl_count; i++) {
+                free(impl_names[i]);
+            }
+        }
 
                         // 设置关联常量信息
                         if (added_struct && const_count_tmp > 0) {

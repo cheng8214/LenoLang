@@ -21,6 +21,7 @@ void module_symbol_table_add_func(ModuleSymbolTable* table, const char* name, Ty
     func->param_count = param_count;
     func->default_count = default_count;
     func->param_default_texts = NULL;
+    func->line = 0;  // 默认值，由 scan_func.inc 设置
     if (param_count > 0) {
         func->param_default_texts = (char**)calloc(param_count, sizeof(char*));
         for (int i = 0; i < param_count; i++) {
@@ -58,6 +59,7 @@ void module_symbol_table_add_struct(ModuleSymbolTable* table, const char* name, 
     st->const_names = NULL;
     st->const_value_strs = NULL;
     st->const_count = 0;
+    st->def_line = 0;  // 默认值，由 scan_struct.inc 设置
     if (type_param_count > 0 && type_param_names) {
         st->type_param_names = (char**)malloc(sizeof(char*) * type_param_count);
         for (int i = 0; i < type_param_count; i++) {
@@ -74,6 +76,7 @@ void module_symbol_table_add_struct(ModuleSymbolTable* table, const char* name, 
             st->fields[i].element_type = fields[i].element_type;
             st->fields[i].element_struct_name = fields[i].element_struct_name ? strdup(fields[i].element_struct_name) : NULL;
             st->fields[i].nullable = fields[i].nullable;
+            st->fields[i].line = fields[i].line;
         }
     }
 
@@ -96,6 +99,7 @@ void module_symbol_table_add_struct(ModuleSymbolTable* table, const char* name, 
             st->methods[i].param_count = methods[i].param_count;
             st->methods[i].param_types = NULL;
             st->methods[i].param_generic_names = NULL;
+            st->methods[i].line = methods[i].line;
             if (methods[i].param_count > 0 && methods[i].param_types) {
                 st->methods[i].param_types = (TypeKind*)malloc(sizeof(TypeKind) * methods[i].param_count);
                 for (int j = 0; j < methods[i].param_count; j++) {
