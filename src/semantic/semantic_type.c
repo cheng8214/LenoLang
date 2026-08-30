@@ -301,6 +301,46 @@ TypeInfo* infer_field_type(Semantic* s, TypeInfo* obj_type, const char* field_na
                     }
                 }
             }
+
+            // 跨模块 struct 查找：当 struct 定义在导入模块中时（如 use SDL3.Font），
+            // scope_resolve 可能找不到（或找到的符号没有字段信息），需要从导入模块的符号表查找。
+            // 这与 TYPE_CSTRUCT 分支的跨模块查找逻辑一致。
+            for (int mi = 0; mi < s->imported_module_count; mi++) {
+                ImportedModuleInfo* mod = &s->imported_modules[mi];
+                if (mod->sym_table) {
+                    ModuleStructSymbol* ssym = module_symbol_table_find_struct(mod->sym_table, obj_type->struct_name);
+                    if (ssym && !ssym->is_cstruct && ssym->field_count > 0) {
+                        for (int fi = 0; fi < ssym->field_count; fi++) {
+                            if (strcmp(ssym->fields[fi].name, field_name) == 0) {
+                                if (out_field_index) *out_field_index = fi;
+                                // 从模块符号表的字段类型构建 TypeInfo
+                                TypeInfo* result = type_new(ssym->fields[fi].type);
+                                if (ssym->fields[fi].struct_name) {
+                                    result->struct_name = strdup(ssym->fields[fi].struct_name);
+                                }
+                                // 如果字段有元素类型（如 Array[T], Ptr[T]），构建 element_type
+                                if (ssym->fields[fi].element_type != TYPE_ANY && ssym->fields[fi].element_type != 0) {
+                                    result->element_type = type_new(ssym->fields[fi].element_type);
+                                    if (ssym->fields[fi].element_struct_name) {
+                                        result->element_type->struct_name = strdup(ssym->fields[fi].element_struct_name);
+                                    }
+                                }
+                                // 泛型参数替换
+                                if (obj_type->generic_count > 0 && obj_type->generic_args &&
+                                    ssym->type_param_count > 0 && ssym->type_param_names) {
+                                    for (int j = 0; j < ssym->type_param_count && j < obj_type->generic_count; j++) {
+                                        TypeInfo* substituted = type_substitute(result,
+                                            ssym->type_param_names[j], obj_type->generic_args[j]);
+                                        type_free(result);
+                                        result = substituted;
+                                    }
+                                }
+                                return result;
+                            }
+                        }
+                    }
+                }
+            }
         }
         // 变量符号回退查找
         return NULL;

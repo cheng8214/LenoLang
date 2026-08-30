@@ -61,7 +61,7 @@ main() {
     if font.ok {
         var[float, float](msw, msh) = font.measureString("M")
         if msw > 0.0 { charW = msw }
-        charH = _float(font.height)
+        charH = font.height
         if charH < 1.0 { charH = 16.0 }
     }
 
@@ -128,11 +128,11 @@ main() {
     var colX = []; var colY = []; var colSpeed = []; var colChar = []; var colBright = []; var colFlicker = []
 
     func initCols(int w) {
-        numCols = _int(_float(w) / charW) + 1
+        numCols = _int(w / charW) + 1
         if numCols < 1 { numCols = 1 }
         colX = []; colY = []; colSpeed = []; colChar = []; colBright = []; colFlicker = []
         for 0 : numCols to i {
-            colX.add(_float(i) * charW)
+            colX.add(i * charW)
             colY.add(_float(rands.ints(-winH, 0)))
             colSpeed.add(rands.floats(2.0, 8.0))
             colChar.add(randCharIdx())
@@ -301,7 +301,7 @@ main() {
         // 记录性能
         if drawn > peakDrawn { peakDrawn = drawn }
         perfLogs.add(drawn)
-        perfMs.add(_int(_float(times.ns() - t0) / 1000000.0))
+        perfMs.add(_int((times.ns() - t0) / 1000000.0))
     }
 
     // 清理
@@ -360,7 +360,7 @@ func _pad(int v): string {
 func _padf(float v): string {
     // 手动保留 1 位小数，避免 _str 无小数位控制
     var iv = _int(v)
-    var dec = _int((v - _float(iv)) * 10.0)
+    var dec = _int((v - iv) * 10.0)
     if dec < 0 { dec = -dec }
     var s = "" + iv + "." + dec
     var len_ = s.len()
