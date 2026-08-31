@@ -1,0 +1,344 @@
+// ide_layout.leno — VSCode 风格三布局（Splitter 嵌套演示）
+//
+// 布局结构（VSCode 风格：菜单嵌入标题栏）：
+//   Window
+//   ├── TitleBar（自绘标题栏，含嵌入式 MenuBar + 居中标题）
+//   │   ├── 标题文字（居中）
+//   │   ├── MenuBar（嵌入为 center_widget，菜单项横排）
+//   │   └── 窗口按钮（最小化/最大化/关闭，右侧）
+//   └── Splitter mainSplit (HORIZONTAL, 左右)
+//       ├── TreeView sidebar（左侧导航树）
+//       └── Splitter rightSplit (VERTICAL, 上下)
+//           ├── Edit editor（中间编辑区，多行）
+//           └── ListBox output（底部输出面板）
+//
+// 交互：
+//   - 拖拽左右分割条：调整侧边栏宽度
+//   - 拖拽上下分割条：调整编辑区/输出区高度
+//   - 标题栏菜单"视图"可切换侧边栏/输出面板的显隐
+//   - 双击 TreeView 叶子节点把文件名插入编辑器
+//   - 编辑器内容变化时实时更新底部状态栏
+//
+// 运行：leno ide_layout.leno
+import "../../../lib/SDL3.leno" as SDL3
+use SDL3.(Event, Renderer, Window, WindowFlag, TitleBar, MenuBar, Splitter, TreeView, TreeViewNode, Edit, ListBox, Label, Scancode)
+import "../../../lib/sdl_menu.leno" as menuLib
+import dirs
+
+// ==================== IDE 结构体 ====================
+struct IDE {
+    // ===== UI 控件引用 =====
+    Window   win
+    TitleBar titleBar
+    MenuBar  menuBar
+    Splitter mainSplit     // 左右分割（TreeView | 右侧上下分割）
+    Splitter rightSplit    // 上下分割（Edit | ListBox）
+    TreeView sidebar
+    Edit     editor
+    ListBox  output
+    Label    statusLbl
+
+    // ===== 状态 =====
+    bool sidebarVisible = true
+    bool outputVisible  = true
+    bool _wantQuit      = false
+
+    // ==================== UI 构建 ====================
+
+    func setupUI() {
+        float PAD = 1.0  // 微小内边距，让控件边框与窗口边缘有视觉间隔
+
+        // ★ 标题栏（VSCode 风格：高度加大以容纳菜单栏，标题居中）
+        titleBar = SDL3.createTitleBar({
+            title: "LenoIDE - ide_layout",
+            height: 36,
+            font_size: 12,
+            title_align: "center"
+        })
+        win.add(titleBar)
+        float titleH = titleBar.get_h()
+
+        // ★ 菜单栏（创建后嵌入到标题栏中间，而非独立一行）
+        //   用内部模块的 createMenuBar 创建，然后通过 set_center_menu 嵌入标题栏
+        //   关键：transparent=true 不画菜单栏背景（与标题栏融为一体）
+        //         auto_width=true 自动根据菜单项计算宽度（不会过长）
+        menuBar = menuLib.createMenuBar({x: 0, y: 0, w: 0, h: titleH - 8, font_size: 12, transparent: true, auto_width: true})
+        menuBar.setWindowHandle(win.handle)  // 手动设置窗口句柄供弹层定位
+
+        int mFile = menuBar.addMenu("文件")
+        menuBar.addItem(mFile, {label: "新建", id: "new", shortcut: "Ctrl+N"})
+        menuBar.addItem(mFile, {label: "打开...", id: "open", shortcut: "Ctrl+O"})
+        menuBar.addSeparator(mFile)
+        menuBar.addItem(mFile, {label: "保存", id: "save", shortcut: "Ctrl+S"})
+        menuBar.addItem(mFile, {label: "退出", id: "exit", shortcut: "Alt+F4"})
+
+        int mView = menuBar.addMenu("视图")
+        menuBar.addItem(mView, {label: "切换侧边栏", id: "toggle_sidebar", shortcut: "Ctrl+B"})
+        menuBar.addItem(mView, {label: "切换输出面板", id: "toggle_output", shortcut: "Ctrl+J"})
+        menuBar.addSeparator(mView)
+        menuBar.addItem(mView, {label: "重置布局", id: "reset_layout"})
+
+        int mHelp = menuBar.addMenu("帮助")
+        menuBar.addItem(mHelp, {label: "关于", id: "about"})
+
+        menuBar.on_select(func(string menu, string id) { onMenuSelect(menu, id) })
+
+        // ★ 将菜单栏嵌入标题栏中间（VSCode 风格）
+        //   用 set_center_menu 而非 set_center_widget，确保下拉弹出层能正常渲染
+        titleBar.set_center_menu(menuBar)
+
+        // ===== 侧边栏 TreeView =====
+        sidebar = SDL3.createTreeView({font_size: 14})
+        buildSidebarTree()
+
+        sidebar.on_change(func(Array[int] ids) {
+            if ids.len() > 0 { onTreeNodeSelect(ids[0]) }
+        })
+
+        // ===== 编辑器 Edit（多行）=====
+        editor = SDL3.createEdit({
+            multiline: true,
+            font_size: 14,
+            placeholder: "// 在这里编辑代码...\n// 试试拖拽左右和上下的分割条\n// Ctrl+B 切换侧边栏 / Ctrl+J 切换输出"
+        })
+        // 预填一些内容
+        editor.set_text("// main.leno — 示例代码\nfunc hello() {\n    print(\"Hello, Leno IDE!\")\n}\n\nhello()")
+
+        editor.on_change(func() {
+            int len = editor.get_text_length()
+            statusLbl.set_text("就绪  |  字符数: " + len + "  |  行数: " + countLines(editor.get_text()))
+            SDL3.markFrameRedraw()
+        })
+
+        // ===== 输出面板 ListBox =====
+        output = SDL3.createListBox({font_size: 13})
+        output.add_item("=== IDE 布局已就绪 ===")
+        output.add_item("提示: 拖拽分割条调整区域大小")
+        output.add_item("提示: Ctrl+B 切换侧边栏 / Ctrl+J 切换输出")
+        output.add_item("提示: 点击左侧树节点查看文件")
+        output.add_item("---")
+
+        // ===== 状态栏 =====
+        statusLbl = SDL3.createLabel({text: "就绪", font_size: 13})
+
+        // ===== 布局：Splitter 嵌套 =====
+        // 上下分割：editor(上) + output(下)，ratio 0.7 表示编辑区占 70%
+        rightSplit = SDL3.createSplitter({
+            orientation: 1,  // VERTICAL（上下）
+            ratio: 0.7,
+            min_first: 100,
+            min_second: 60,
+            divider_width: 4,
+            hit_pad: 4
+        })
+        rightSplit.set_first(editor)
+        rightSplit.set_second(output)
+
+        // 左右分割：sidebar(左) + rightSplit(右)，ratio 0.2 表示侧边栏占 20%
+        mainSplit = SDL3.createSplitter({
+            orientation: 0,  // HORIZONTAL（左右）
+            ratio: 0.2,
+            min_first: 120,
+            min_second: 200,
+            divider_width: 4,
+            hit_pad: 4
+        })
+        mainSplit.set_first(sidebar)
+        mainSplit.set_second(rightSplit)
+
+        // 根布局：VBox（状态栏固定底部，mainSplit 填满剩余）
+        // ★ 不再有独立的 menuH，菜单已嵌入标题栏
+        float topOffset = titleH
+        var root = SDL3.createVBox({padX: PAD, padY: PAD, spacing: 0})
+        root.add(statusLbl, {grow: 0, shrink: 0, basis: 22, align: 3})
+        root.add(mainSplit, {grow: 1, shrink: 1, align: 3})
+        win.setRootAt(root, 0, topOffset)
+    }
+
+    // ==================== 侧边栏树构建 ====================
+
+    func buildSidebarTree() {
+        Array[Dict] roots = [
+            {text: "项目", expanded: true, children: [
+                {text: "src", expanded: true, children: [
+                    {text: "main.leno"},
+                    {text: "utils.leno"},
+                    {text: "parser.leno"}
+                ]},
+                {text: "lib", expanded: false, children: [
+                    {text: "SDL3.leno"},
+                    {text: "sdl_core.leno"},
+                    {text: "sdl_edit.leno"}
+                ]},
+                {text: "examples", expanded: false, children: [
+                    {text: "ide_layout.leno"},
+                    {text: "file_search.leno"},
+                    {text: "cache_cleaner.leno"}
+                ]}
+            ]},
+            {text: "文档", expanded: false, children: [
+                {text: "README.md"},
+                {text: "CHANGELOG.md"}
+            ]}
+        ]
+        sidebar.set_items(roots)
+    }
+
+    // ==================== 事件回调 ====================
+
+    // 树节点选择
+    func onTreeNodeSelect(int node) {
+        TreeViewNode n = sidebar.get_node(node)
+        if n.id < 0 { return }
+        string label = n.text
+        // 叶子节点（无子节点）→ 插入到编辑器
+        if n.children.len() == 0 {
+            string current = editor.get_text()
+            string line = "\n// --- 打开: " + label + " ---\n"
+            editor.set_text(current + line)
+            output.add_item("[打开] " + label)
+            output.scroll_to_bottom()
+        } else {
+            output.add_item("[展开/折叠] " + label)
+        }
+        statusLbl.set_text("选中: " + label)
+        SDL3.markFrameRedraw()
+    }
+
+    // 菜单选择
+    func onMenuSelect(string menu, string id) {
+        if id == "exit" {
+            _wantQuit = true
+            return
+        }
+        if id == "toggle_sidebar" {
+            toggleSidebar()
+            return
+        }
+        if id == "toggle_output" {
+            toggleOutput()
+            return
+        }
+        if id == "reset_layout" {
+            mainSplit.set_ratio(0.2)
+            rightSplit.set_ratio(0.7)
+            output.add_item("[布局] 已重置")
+            output.scroll_to_bottom()
+            SDL3.markFrameRedraw()
+            return
+        }
+        if id == "about" {
+            output.add_item("=== 关于 ===")
+            output.add_item("Leno IDE 布局演示 — Splitter 嵌套")
+            output.add_item("展示 VSCode 风格三栏可拖拽布局")
+            output.add_item("---")
+            output.scroll_to_bottom()
+            SDL3.markFrameRedraw()
+            return
+        }
+        // 其他菜单项
+        output.add_item("[菜单] " + menu + " -> " + id)
+        output.scroll_to_bottom()
+        SDL3.markFrameRedraw()
+    }
+
+    // 切换侧边栏
+    func toggleSidebar() {
+        sidebarVisible = not sidebarVisible
+        if sidebarVisible {
+            mainSplit.set_first(sidebar)
+            mainSplit.set_ratio(0.2)
+        } else {
+            // 隐藏侧边栏：设 first 为 null（Splitter 会自动让 second 占满）
+            // 这里用 ratio 0 来模拟隐藏效果
+            mainSplit.set_ratio(0.0)
+        }
+        output.add_item("[视图] 侧边栏: " + (if sidebarVisible then "显示" else "隐藏"))
+        output.scroll_to_bottom()
+        SDL3.markFrameRedraw()
+    }
+
+    // 切换输出面板
+    func toggleOutput() {
+        outputVisible = not outputVisible
+        if outputVisible {
+            rightSplit.set_ratio(0.7)
+        } else {
+            rightSplit.set_ratio(1.0)
+        }
+        output.add_item("[视图] 输出面板: " + (if outputVisible then "显示" else "隐藏"))
+        output.scroll_to_bottom()
+        SDL3.markFrameRedraw()
+    }
+
+    // ==================== 事件处理 ====================
+
+    func handleEvent(Event ev): bool {
+        if _wantQuit { return false }
+        if ev.isQuit() or ev.isWindowClose() { return false }
+        if titleBar.is_close_requested() {
+            titleBar.clear_close_request()
+            return false
+        }
+        if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
+
+        // Ctrl+B 切换侧边栏（keyMod 位掩码：Ctrl=64/128）
+        if ev.isKeyDown() and ev.scancode() == Scancode.B {
+            int mod = ev.keyMod()
+            if (mod & 64) != 0 or (mod & 128) != 0 {
+                toggleSidebar()
+                return true
+            }
+        }
+        // Ctrl+J 切换输出
+        if ev.isKeyDown() and ev.scancode() == Scancode.J {
+            int mod2 = ev.keyMod()
+            if (mod2 & 64) != 0 or (mod2 & 128) != 0 {
+                toggleOutput()
+                return true
+            }
+        }
+
+        return true
+    }
+
+    // ==================== 工具方法 ====================
+
+    func countLines(string text): int {
+        if text == "" { return 0 }
+        int n = 1
+        for text.len() to i {
+            if text[i] == '\n' { n = n + 1 }
+        }
+        return n
+    }
+
+    // ==================== 主入口 ====================
+
+    func run() {
+        SDL3.ttfInit()
+
+        win = SDL3.createWindow({
+            title: "Leno IDE 布局演示",
+            w: 1000, h: 680,
+            flags: WindowFlag.RESIZABLE
+        })
+        if not win.ok { SDL3.ttfQuit(); return }
+        win.setMinSize(600, 400)
+
+        setupUI()
+
+        win.run(
+            func(Event ev): bool { return handleEvent(ev) },
+            func(Renderer r) { }
+        )
+
+        SDL3.ttfQuit()
+    }
+}
+
+// ==================== 程序入口 ====================
+main() {
+    IDE app = new IDE()
+    app.run()
+}

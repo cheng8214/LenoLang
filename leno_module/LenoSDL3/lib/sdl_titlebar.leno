@@ -22,6 +22,7 @@
 //   show_close      是否显示关闭按钮（默认 true）
 //   btn_width       按钮宽度（默认 40）
 //   btn_spacing     按钮间距（默认 0，紧贴排列）
+//   btn_align       按钮组位置: "right"（默认，右侧）或 "left"（左侧，macOS 风格）
 //   bg_color        背景色 #RRGGBBAA（默认从主题读取）
 //   text_color      标题文字色 #RRGGBBAA
 //   hover_color     按钮悬停背景色 #RRGGBBAA
@@ -36,6 +37,13 @@
 //   icon_size       图标图片显示尺寸（默认 16）
 //   title_align     标题对齐: "left"（默认）或 "center"
 //   title_pad       标题水平内边距（默认 12）
+//
+// 中间控件（VS Code 风格标题栏）：
+//   通过 set_center_widget(Widget) 在标题栏中间插入自定义控件（如路径栏、搜索框等）。
+//   控件会自动定位在标题/按钮之间的剩余空间内，并随窗口缩放自适应宽度。
+//   用法：
+//     var pathEdit = SDL3.createEdit({font_size:13, placeholder:"搜索或输入路径"})
+//     titleBar.set_center_widget(pathEdit)
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
@@ -44,11 +52,15 @@ import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 use theme.Color
 import "sdl_image.leno" as img
+import "sdl_menu.leno" as mnu; use mnu.MenuBar
 
 export struct TitleBar impl Widget, Themeable {
     // ==================== 关联常量 ====================
     const ALIGN_LEFT   = 0   // 标题左对齐
     const ALIGN_CENTER = 1   // 标题居中对齐
+
+    const BTN_ALIGN_RIGHT = 0   // 按钮组在右侧（Windows/Linux 默认）
+    const BTN_ALIGN_LEFT  = 1   // 按钮组在左侧（macOS 风格）
 
     const BTN_NONE  = 0   // 无悬停按钮
     const BTN_MIN   = 1   // 最小化按钮
@@ -77,6 +89,14 @@ export struct TitleBar impl Widget, Themeable {
     float  _btnSpacing = 0.0      // 按钮之间的间距
     float  _titlePad = 12.0       // 标题水平内边距
     int    _titleAlign = ALIGN_LEFT   // 标题对齐（ALIGN_LEFT/ALIGN_CENTER）
+    int    _btnAlign = BTN_ALIGN_RIGHT // 按钮组位置（BTN_ALIGN_RIGHT/BTN_ALIGN_LEFT）
+
+    // 中间控件（VS Code 风格：在标题和按钮之间插入自定义控件）
+    Widget? _centerWidget = null
+
+    // 嵌入式 MenuBar 专用引用（用于 renderPopup 转发）
+    MenuBar? _embeddedMenu = null
+    bool _centerIsMenu = false
 
     // 按钮可见性
     bool _showMinimize = true
@@ -139,6 +159,10 @@ export struct TitleBar impl Widget, Themeable {
         var align = opts.get("title_align", "left")
         if align is string {
             if align == "center" { _titleAlign = ALIGN_CENTER } else { _titleAlign = ALIGN_LEFT }
+        }
+        var balign = opts.get("btn_align", "right")
+        if balign is string {
+            if balign == "left" { _btnAlign = BTN_ALIGN_LEFT } else { _btnAlign = BTN_ALIGN_RIGHT }
         }
         _showMinimize = opts.get("show_minimize", true)
         _showMaximize = opts.get("show_maximize", true)
@@ -213,34 +237,87 @@ export struct TitleBar impl Widget, Themeable {
     }
 
     // ==================== 按钮位置计算 ====================
-    // 从右到左排列按钮，返回各按钮的起始 X 坐标（-1 表示该按钮不显示）
+    // 根据 _btnAlign 从右到左（BTN_ALIGN_RIGHT）或从左到右（BTN_ALIGN_LEFT）排列按钮
+    // 返回各按钮的起始 X 坐标（-1 表示该按钮不显示）
     func _btnPositions(): Dict {
-        float curX = w - _btnWidth
         Dict pos = {}
-        if _showClose {
-            pos["close"] = curX
-            curX = curX - _btnWidth - _btnSpacing
-        } else { pos["close"] = -1.0 }
-        if _showMaximize {
-            pos["maximize"] = curX
-            curX = curX - _btnWidth - _btnSpacing
-        } else { pos["maximize"] = -1.0 }
-        if _showMinimize {
-            pos["minimize"] = curX
-        } else { pos["minimize"] = -1.0 }
+        if _btnAlign == BTN_ALIGN_LEFT {
+            // macOS 风格：按钮在左侧，从左到右排列
+            float curX = x
+            if _showMinimize {
+                pos["minimize"] = curX
+                curX = curX + _btnWidth + _btnSpacing
+            } else { pos["minimize"] = -1.0 }
+            if _showMaximize {
+                pos["maximize"] = curX
+                curX = curX + _btnWidth + _btnSpacing
+            } else { pos["maximize"] = -1.0 }
+            if _showClose {
+                pos["close"] = curX
+            } else { pos["close"] = -1.0 }
+        } else {
+            // Windows/Linux 风格：按钮在右侧，从右到左排列
+            float curX = w - _btnWidth
+            if _showClose {
+                pos["close"] = curX
+                curX = curX - _btnWidth - _btnSpacing
+            } else { pos["close"] = -1.0 }
+            if _showMaximize {
+                pos["maximize"] = curX
+                curX = curX - _btnWidth - _btnSpacing
+            } else { pos["maximize"] = -1.0 }
+            if _showMinimize {
+                pos["minimize"] = curX
+            } else { pos["minimize"] = -1.0 }
+        }
         return pos
+    }
+
+    // 返回按钮组占据的总宽度
+    func _btnTotalWidth(): float {
+        int count = 0
+        if _showMinimize { count = count + 1 }
+        if _showMaximize { count = count + 1 }
+        if _showClose { count = count + 1 }
+        if count == 0 { return 0.0 }
+        return _float(count) * _btnWidth + _float(count - 1) * _btnSpacing
+    }
+
+    // 返回按钮区域的左边界 X 坐标
+    func _btnAreaLeft(): float {
+        if _btnAlign == BTN_ALIGN_LEFT { return x }
+        var pos = _btnPositions()
+        float minP = pos.get("minimize", w)
+        if _showMinimize and minP >= 0.0 { return minP }
+        float maxP = pos.get("maximize", w)
+        if _showMaximize and maxP >= 0.0 { return maxP }
+        float closeP = pos.get("close", w)
+        if _showClose and closeP >= 0.0 { return closeP }
+        return w
+    }
+
+    // 返回按钮区域的右边界 X 坐标（不含 padding）
+    func _btnAreaRight(): float {
+        if _btnAlign == BTN_ALIGN_LEFT { return x + _btnTotalWidth() }
+        return w
     }
 
     // 判断鼠标在哪个按钮上：0=无, 1=min, 2=max, 3=close
     func _hitTestBtn(float mx): int {
-        if mx < w - _btnWidth * 3.0 - _btnSpacing * 2.0 { return 0 }
         var pos = _btnPositions()
         float minP = pos.get("minimize", -1.0)
         float maxP = pos.get("maximize", -1.0)
         float closeP = pos.get("close", -1.0)
-        if _showClose and mx >= closeP { return 3 }
-        if _showMaximize and mx >= maxP { return 2 }
-        if _showMinimize and mx >= minP { return 1 }
+        // 检查是否在任何按钮的 X 范围内
+        bool inBtnArea = false
+        if _showClose and closeP >= 0.0 and mx >= closeP and mx < closeP + _btnWidth { inBtnArea = true }
+        if not inBtnArea and _showMaximize and maxP >= 0.0 and mx >= maxP and mx < maxP + _btnWidth { inBtnArea = true }
+        if not inBtnArea and _showMinimize and minP >= 0.0 and mx >= minP and mx < minP + _btnWidth { inBtnArea = true }
+        if not inBtnArea { return 0 }
+        // 精确判断是哪个按钮（从外到内，后绘制的在上层优先）
+        if _showClose and mx >= closeP and mx < closeP + _btnWidth { return 3 }
+        if _showMaximize and mx >= maxP and mx < maxP + _btnWidth { return 2 }
+        if _showMinimize and mx >= minP and mx < minP + _btnWidth { return 1 }
         return 0
     }
 
@@ -315,11 +392,18 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
             return  // 拖拽期间不处理其他事件
         }
 
-        // 非拖拽：仅在标题栏区域处理事件
+        // 非拖拽：处理事件
+        // ★ 当嵌入的 MenuBar 展开时（isOpen），即使鼠标在标题栏外（下拉区域），
+        //   也要继续转发事件给 MenuBar，否则下拉菜单无法响应 hover/click
+        bool menuOpen = (_centerIsMenu and _embeddedMenu != null and _embeddedMenu.isOpen())
         if not (my >= y and my < y + h and mx >= x) {
             if _btnHover != BTN_NONE { _btnHover = BTN_NONE; core.markFrameRedraw() }
+            if menuOpen and _centerWidget != null { _centerWidget.process(ev) }
             return
         }
+
+        // ★ 中间控件事件转发（让嵌入的 Edit/Button/MenuBar 等控件能接收输入）
+        if _centerWidget != null { _centerWidget.process(ev) }
 
         // 鼠标移动：更新按钮悬停状态
         // ★ 窗口状态切换后的合成 Motion 事件跳过 hover 更新（_motionSkipCount > 0 时递减并跳过），
@@ -525,7 +609,7 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
         _ensure_images(r)
 
         // 同步窗口宽度
-        // ★ 缓存：仅在脏时查询 SDL，避免每帧 native call
+        // 缓存：仅在脏时查询 SDL，避免每帧 native call
         if _winHandle != null {
             if _winSizeDirty {
                 var[int, int](_ww, _wh) = core.getWindowSize(_winHandle)
@@ -538,14 +622,69 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
         r.setColor(_bgColor)
         r.fillRect(x, y, w, h)
 
-        // 标题文字
+        // 按钮区域边界（供标题和中间控件布局参考）
+        float btnLeft = _btnAreaLeft()
+        float btnRight = _btnAreaRight()
+
+        // 计算中间控件的布局位置（先计算，用于确定标题区域）
+        float centerW = 0.0
+        float cLeft = x + _titlePad
+        float cActualW = 0.0
+        if _centerWidget != null {
+            centerW = _centerWidget.get_w()
+            cActualW = centerW
+            if cActualW <= 0.0 { cActualW = 200.0 }
+            cLeft = x + _titlePad  // 默认靠左
+            float cRight = cLeft + cActualW
+            // 如果和右侧按钮重叠，则调整
+            if _btnAlign == BTN_ALIGN_RIGHT and cRight > btnRight - 4.0 {
+                cLeft = btnRight - cActualW - 4.0
+                if cLeft < x + _titlePad { cLeft = x + _titlePad; cActualW = btnRight - cLeft - 4.0 }
+            }
+        }
+
+        // 标题文字区域：在中间控件和按钮组之间的空白处居中
+        float titleLeft = x + _titlePad
+        float titleRight = w - _titlePad
+        float centerRightEdge = cLeft + cActualW
+        if cActualW > 0.0 {
+            if _btnAlign == BTN_ALIGN_RIGHT {
+                // 按钮在右：标题在菜单右侧、按钮左侧之间居中
+                titleLeft = centerRightEdge + 8.0
+                titleRight = btnRight - 8.0
+            } else {
+                // 按钮在左：标题在按钮右侧、菜单左侧之间居中
+                titleLeft = btnLeft + 8.0
+                titleRight = cLeft - 8.0
+            }
+        } else {
+            if _btnAlign == BTN_ALIGN_RIGHT { titleRight = btnRight - _titlePad }
+            else { titleLeft = btnLeft + _titlePad }
+        }
+        if titleLeft > titleRight { titleLeft = x + _titlePad; titleRight = w - _titlePad }
+
+        // 中间控件渲染（VS Code 风格：路径栏/搜索框/菜单栏等）
+        if _centerWidget != null {
+            float cw = cActualW
+            // 设置中间控件位置并渲染（使用上面计算的 cLeft）
+            _centerWidget.set_pos(cLeft, y + (h - _centerWidget.get_h()) * 0.5)
+            _centerWidget.set_size(cw, _centerWidget.get_h())
+            _centerWidget.render(r)
+        }
+
+        // 标题文字（在中间控件之后绘制，确保层级正确）
         if _font != null and _font.ok and _title != "" {
-            if _titleAlign == ALIGN_CENTER {
-                // 居中（在整个标题栏宽度范围内）
-                r.drawTextCentered(_font, _title, x, w, y + (h - _float(_font.height)) * 0.5, _txColor)
+            var[float, float](tw, th) = _font.measureString(_title)
+            float textY = y + (h - _float(_font.height)) * 0.5
+            if _titleAlign == ALIGN_CENTER or _centerWidget != null {
+                // 居中：在 titleLeft ~ titleRight 范围内居中
+                float tcx = titleLeft + (titleRight - titleLeft - tw) * 0.5
+                if tcx < titleLeft { tcx = titleLeft }
+                if tcx + tw > titleRight { tcx = titleRight - tw }
+                r.drawText(_font, _title, r.snapX(tcx), r.snapY(textY), _txColor)
             } else {
                 // 左对齐
-                r.drawText(_font, _title, x + _titlePad, y + (h - _float(_font.height)) * 0.5, _txColor)
+                r.drawText(_font, _title, r.snapX(titleLeft), r.snapY(textY), _txColor)
             }
         }
 
@@ -605,6 +744,72 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
             r.fillRect(x, y + h - 1.0, w, 1.0)
         }
     }
+
+    // ==================== 弹层渲染（第二遍，画在最上层） ====================
+    // ★ 当 center_widget 是 MenuBar 时，需要转发 renderPopup 以绘制下拉弹出层
+    func renderPopup(Renderer r) {
+        if not _loaded { return }
+        if _centerWidget != null {
+            // 尝试调用 center_widget 的 renderPopup（MenuBar 有此方法）
+            // 用类型检查确保安全
+            var w = _centerWidget
+            // MenuBar 的 renderPopup 在展开时绘制下拉层
+            // 由于 Leno 的动态分发限制，这里通过检查 isOpen 状态来决定是否需要弹层渲染
+            // 实际上 MenuBar 的 renderPopup 是独立方法，我们需要直接调用
+            // 这里用内联方式处理：检查是否是 MenuBar 并调用其 renderPopup
+            _renderCenterPopup(r)
+        }
+    }
+
+    // 内部方法：尝试渲染 center_widget 的弹层（MenuBar 下拉菜单）
+    func _renderCenterPopup(Renderer r) {
+        // 由于 Leno 不支持动态类型转换到具体类型调用方法，
+        // 我们在 TitleBar 层面记录 center_widget 是否是 MenuBar 类型
+        // 通过 _centerIsMenu 标志位判断
+        if _centerIsMenu and _centerWidget != null {
+            // 手动调用 MenuBar 的 renderPopup 逻辑
+            // MenuBar 的 renderPopup 检查 _open >= 0 后绘制下拉面板
+            _drawMenuBarPopup(r)
+        }
+    }
+
+    // 绘制嵌入的 MenuBar 的下拉弹出层
+    func _drawMenuBarPopup(Renderer r) {
+        // 通过访问 MenuBar 内部状态来判断是否需要绘制弹层
+        // 这里我们依赖 MenuBar 自身的 render 方法已经处理了本体，
+        // 而 renderPopup 需要额外绘制下拉面板
+        // 由于跨模块访问限制，我们在 set_center_widget 时记录类型信息
+        // 实际绘制委托给一个回调或直接调用已知接口
+        // 当前方案：让嵌入的 MenuBar 也注册到窗口的 _menus 列表
+        // 但这需要在 Window 层面支持。作为替代方案：
+        // 我们在 TitleBar 内部模拟 MenuBar 的 renderPopup 行为
+        // 这需要访问 MenuBar 的内部字段，不太理想。
+        // 
+        // ★ 最佳方案：让 set_center_widget(MenuBar) 时自动将 MenuBar 注册到一个
+        //   全局/窗口级别的 "嵌入式菜单" 列表，由 win.run 的 renderPopup 阶段遍历。
+        //   但这需要修改 sdl_window.leno。
+        //
+        // ★ 当前可行方案：TitleBar 自己维护一个 _embeddedMenu 引用，
+        //   在 renderPopup 中直接调用它的 renderPopup 方法。
+        //   问题：Leno 的 Widget 基类没有 renderPopup 方法。
+        //
+        // ★ 最终方案：在 TitleBar 中存储 MenuBar 类型的引用（非 Widget?），
+        //   提供 set_center_menu(MenuBar) 专用方法。
+        if _embeddedMenu != null {
+            _embeddedMenu.renderPopup(r)
+        }
+    }
+
+    // ★ 专用方法：设置嵌入的 MenuBar（相比通用 set_center_widget，
+    //   这个方法会额外处理 renderPopup 转发，确保下拉菜单能正常弹出）
+    func set_center_menu(MenuBar bar) {
+        _centerWidget = bar as Widget
+        _embeddedMenu = bar
+        _centerIsMenu = true
+        core.markFrameRedraw()
+    }
+
+    func get_center_menu(): MenuBar? { return _embeddedMenu }
 
     // 普通按钮悬停背景
     func _drawBtnBg(Renderer r, float bx, bool hover) {
@@ -670,6 +875,17 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
     func set_show_maximize(bool v) { _showMaximize = v; core.markFrameRedraw() }
     func set_show_close(bool v) { _showClose = v; core.markFrameRedraw() }
     func set_height(float hh) { h = hh; core.markFrameRedraw() }
+
+    // 设置按钮组位置："right"（默认，Windows/Linux）或 "left"（macOS 风格）
+    func set_btn_align(string align) {
+        if align == "left" { _btnAlign = BTN_ALIGN_LEFT } else { _btnAlign = BTN_ALIGN_RIGHT }
+        core.markFrameRedraw()
+    }
+
+    // ★ 设置中间控件（VS Code 风格：在标题和按钮之间插入自定义控件）
+    //   传入 null 可移除中间控件
+    func set_center_widget(Widget? widget) { _centerWidget = widget; core.markFrameRedraw() }
+    func get_center_widget(): Widget? { return _centerWidget }
 
     // 设置背景色
     func set_bg_color(Color color) { _bgColor = color; core.markFrameRedraw() }

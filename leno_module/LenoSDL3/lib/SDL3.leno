@@ -73,7 +73,7 @@ use spb.SpinBox
 use tbl.Table
 use menu.MenuBar
 use scv.ScrollView
-use tv.TreeView
+use tv.(TreeView, TreeViewNode)
 use lay.(HBox, VBox, AnchorBox)
 use wgt.Widget
 use cht.(BarChart, LineChart, PieChart)
@@ -100,7 +100,11 @@ export func createPanel(Dict opts): Panel        { return pnl.createPanel(opts) 
 export func createTabControl(Dict opts): TabControl { return tab.createTabControl(opts) }
 export func createSpinBox(Dict opts): SpinBox { return spb.createSpinBox(opts) }
 export func createTable(Dict opts): Table      { return tbl.createTable(opts) }
-export func createMenuBar(Dict opts): MenuBar      { return menu.createMenuBar(opts) }
+//    不导出 createMenuBar！MenuBar 有下拉弹层（renderPopup），必须通过 win.addMenuBar() 创建，
+//    才能同时注册到 _widgets（render/process）和 _menus（renderPopup 绘制下拉层）。
+//    若用 createMenuBar + win.add()，只注册到 _widgets，导致：标题栏正常显示、点击事件能响应，
+//    但下拉菜单永远不会弹出（因为 renderPopup 只遍历 _menus 列表）。
+//    此工厂函数保留供内部控件（TreeView/Table/Edit）创建私有右键菜单使用，不暴露给用户。
 export func createScrollView(Dict opts): ScrollView { return scv.createScrollView(opts) }
 export func createTreeView(Dict opts): TreeView { return tv.createTreeView(opts) }
 export func createBarChart(Dict opts): BarChart { return cht.createBarChart(opts) }

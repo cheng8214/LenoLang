@@ -1381,6 +1381,11 @@ export struct Window {
                     // 第二遍：所有展开的下拉菜单画在最上层
                     var mns = _runMenus[i]
                     for mns to mn { mn.renderPopup(_runRens[i]) }
+                    // ★ 第二遍：TitleBar 的嵌入式 MenuBar 弹层（set_center_menu 嵌入的菜单下拉）
+                    var ws2 = _runWidgets[i]
+                    for ws2 to w2 {
+                        if w2 is TitleBar { TitleBar tb2 = w2; tb2.renderPopup(_runRens[i]) }
+                    }
                     // 第二遍：所有展开的控件内嵌右击上下文菜单（Edit 经 panel.add 添加时未进 _menus，
                     // 在此兜底绘制到最上层，避免被同级控件遮挡）
                     menu.renderContextMenus(_runRens[i], _runHnds[i], _runW[i], _runH[i])

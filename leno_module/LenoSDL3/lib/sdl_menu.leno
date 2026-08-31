@@ -22,6 +22,10 @@
 //     ]
 //   })
 //   bar.on_select(func(string menu, string id) { print($"{menu} -> {id}") })
+//
+// 额外选项：
+//   transparent     是否透明背景（默认 false，不画菜单栏背景，嵌入标题栏时推荐 true）
+//   auto_width      是否自动计算宽度（默认 false，使用 opts.w；true 时根据菜单项自适应）
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
@@ -159,6 +163,8 @@ export struct MenuBar impl Widget, Themeable {
     string _orient = "horizontal"         // 布局方向："horizontal" 顶部栏 / "vertical" 左侧栏
     string _align = ""                    // 顶级标题对齐："left" / "center" / "right"
     bool enabled = true, visible = true, _loaded = false
+    bool _transparent = false             // 透明背景（不画菜单栏背景）
+    bool _autoWidth = false               // 自动根据内容计算宽度
     func(string, string):void _onSelect
     func _ensure_font() {
         if _font == null or not _font.ok {
@@ -235,6 +241,8 @@ export struct MenuBar impl Widget, Themeable {
         _open = -1; _hoverTop = -1; _hoverItem = -1; _openSub = -1; _hoverSub = -1   // 重置所有展开/悬停索引
         enabled = opts.get("enabled", true)
         visible = opts.get("visible", true)
+        _transparent = opts.get("transparent", false)
+        _autoWidth = opts.get("auto_width", false)
         _ensure_font()
         _loaded = true
 
@@ -272,6 +280,27 @@ export struct MenuBar impl Widget, Themeable {
     func setWindowHandle(Ptr[u8] hwnd) { _winHnd = hwnd }
     func getWindowHandle(): Ptr[u8] { return _winHnd }
     func close() { _open = -1; _openSub = -1; _hoverItem = -1; _hoverSub = -1; _clearActiveMenu(self) }
+    // 设置透明背景（嵌入标题栏时推荐开启）
+    func set_transparent(bool t) { _transparent = t; core.markFrameRedraw() }
+    // 设置自动宽度
+    func set_auto_width(bool aw) { _autoWidth = aw; core.markFrameRedraw() }
+
+    // ★ 根据所有顶级菜单标题计算所需宽度（仅计算非上下文菜单项）
+    func _recalcAutoWidth() {
+        if _titles.len() == 0 or _font == null or not _font.ok { return }
+        float totalW = 0.0
+        float fontH = _float(_font.height)
+        for _titles.len() to i {
+            if i < _ctxFlag.len() and _ctxFlag[i] { continue }  // 跳过上下文菜单
+            var[float, float](tw, th) = _font.measureString(_titles[i])
+            float itemW = tw + 28.0  // 内边距（与 _topRects 一致）
+            if itemW < 40.0 { itemW = 40.0 }
+            totalW = totalW + itemW
+        }
+        if totalW > 0.0 and totalW != w {
+            w = totalW
+        }
+    }
     // 是否有菜单（含上下文菜单）处于展开状态
     func isOpen(): bool { return _open >= 0 }
 
@@ -612,10 +641,13 @@ export struct MenuBar impl Widget, Themeable {
         if not _loaded or not visible { return }
         _ensure_font()
 
-        // 仅当存在“顶部菜单”时才绘制菜单栏背景；纯上下文菜单管理器无需画栏
+        // ★ 自动宽度：根据菜单项标题计算所需宽度
+        if _autoWidth { _recalcAutoWidth() }
+
+        // 仅当存在"顶部菜单"时才绘制菜单栏背景；纯上下文菜单管理器无需画栏
         bool anyTop = false
         for _ctxFlag.len() to i { if not _ctxFlag[i] { anyTop = true; break } }
-        if anyTop {
+        if anyTop and not _transparent {
             r.setColor(_barColor)
             r.fillRect(x, y, w, h)
             r.setColor(theme.withAlpha(_bdrColor, 220))

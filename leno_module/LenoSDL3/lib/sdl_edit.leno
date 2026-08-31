@@ -162,7 +162,8 @@ bool _drawBorder = true          // 是否绘制边框（嵌入 ComboBox 时设�
         _invalidate_sb()   // 文本结构变化，滚动条尺寸需重算
 
         // 从 text 拆分行（用 split 处理所有 \n，包括末尾换行产生的空行）
-        if text == "" { _lines = []; return }
+        // ★ 空文本时保持 _lines = [""] 而非 []，确保 _process_ml 等处访问 _lines[0] 不越界
+        if text == "" { _lines = [""]; return }
         _lines = text.replace("\r", "").split("\n")
     }
 
@@ -327,7 +328,7 @@ _drawBorder = opts.get("border", true)
     func set_text(string t) {
         text = t; _cursorPos = text.len(); _cursorLine = 0; _cursorCol = 0
         _scrollX = 0.0   // ★ 强制归零：避免短文本替换长文本时 scroll 残留导致显示不完整
-        _dirty = true; _adjust_scroll()
+        _dirty = true; _invalidate_sb(); _adjust_scroll()
     }
     func set_pos(float px, float py)    { x = px; y = py }
     func set_size(float sw, float sh)   { w = sw; h = sh; _invalidate_sb(); _adjust_scroll() }
@@ -519,7 +520,7 @@ _drawBorder = opts.get("border", true)
             _save_undo(); _mergeUndo = false; _del_sel_lines()
             _cachedLen = -1; _cachedMaxW = -1; _lwDirty = true; _drDirty = true
             _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
-            _textDirty = true; _on_text_changed()
+            _textDirty = true; _invalidate_sb(); _on_text_changed()
         } else {
             _cursorPos = _del_sel(); _dirty = true; _on_text_changed()
         }
@@ -547,7 +548,7 @@ _drawBorder = opts.get("border", true)
             _cursorCol = (plines[plines.len() - 1] as string).len()
             _cachedLen = -1; _cachedMaxW = -1; _lwDirty = true; _drDirty = true
             _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
-            _textDirty = true; _on_text_changed()
+            _textDirty = true; _invalidate_sb(); _on_text_changed()
         } else {
             paste = paste.replace("\r", "").replace("\n", " ")
             _cursorPos = _del_sel()
@@ -1281,6 +1282,7 @@ _drawBorder = opts.get("border", true)
                 if _dirtyLine < 0 { _drDirty = true }
                 _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
                 _textDirty = true
+                _invalidate_sb()   // 文本变化 → 内容高度/宽度可能变 → 滚动条尺寸需重算
                 _adjust_scroll()
                 _showCursor = true; _blinkTime = core.getTicks()
                 _update_ime()
@@ -1310,6 +1312,7 @@ _drawBorder = opts.get("border", true)
                 _dirtyLine = _cursorLine
                 _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
                 _textDirty = true
+                _invalidate_sb()   // 文本变化 → 内容高度/宽度可能变 → 滚动条尺寸需重算
                 _adjust_scroll()
                 _showCursor = true; _blinkTime = core.getTicks()
                 _update_ime()
