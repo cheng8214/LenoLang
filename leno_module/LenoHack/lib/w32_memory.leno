@@ -10,6 +10,7 @@
 //   - readBytes 有 size 上限检查
 //   - 地址 0 检查
 import ffi
+import strings
 
 // ==================== KERNEL32 ====================
 clib kernel32 {
@@ -316,13 +317,15 @@ export struct MemoryHandle {
                     // 用预分配 _readBuf 读前 16 字节（零分配）
                     int ok = _lib().ReadProcessMemory(handle, ffi.ptr_from_int(baseAddr), _readBuf, 16, null)
                     if ok != 0 {
-                        string hexDump = ""
+                        // 优化: 先收集到数组, 再用 strings.join 一次性拼接
+                        Array[string] parts = []
                         for 0:15 to i {
                             int b = ffi.read_byte(_readBuf, i)
                             string hx = _str(b)
                             if b < 16 { hx = "0" + hx }
-                            hexDump = hexDump + hx + " "
+                            parts.add(hx)
                         }
+                        string hexDump = strings.join(parts, " ")
                         results.add({base: baseAddr, size: regionSize, protect: protect, hex: hexDump})
                         regionCount = regionCount + 1
                     }
@@ -371,6 +374,8 @@ export struct MemoryHandle {
                     Ptr[u8] buf = readBytes(baseAddr, regionSize)
                     if buf != null {
                         // 逐 4 字节扫描，步长 4
+                        // ffi.read_int 是本地缓冲区读取（非系统调用），开销远低于 ReadProcessMemory
+                        // 如果未来 Leno 支持 Ptr[int] 类型转换，可进一步消除 FFI 边界调用
                         int maxOff = regionSize - 4
                         for 0:maxOff:4 to off {
                             int val = ffi.read_int(buf, off)
