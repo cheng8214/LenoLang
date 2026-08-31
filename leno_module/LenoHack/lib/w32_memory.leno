@@ -18,6 +18,7 @@
 //   - 地址 0 检查
 import ffi
 import strings
+import maths
 
 // ==================== KERNEL32 ====================
 clib kernel32 {
@@ -887,15 +888,32 @@ export struct MemoryHandle {
         // 6. 等待远程线程完成
         _lib().WaitForSingleObject(threadHandle, INJECT_TIMEOUT)
 
-        // 7. 清理
+        // 7. 检查 LoadLibraryA 的执行结果
+        //    LoadLibraryA 成功返回模块句柄（非 0），失败返回 0
+        Ptr[u8] exitCodeBuf = ffi.malloc(4)
+        if exitCodeBuf != null {
+            _lib().GetExitCodeThread(threadHandle, exitCodeBuf)
+            int exitCode = ffi.read_int(exitCodeBuf, 0)
+            ffi.free(exitCodeBuf)
+            if exitCode == 0 {
+                print("[w32_memory] injectDll: LoadLibraryA 在目标进程中失败（DLL 路径错误或无权限加载）")
+                _lib().CloseHandle(threadHandle)
+                _lib().VirtualFreeEx(handle, remoteAddr, 0, 0x8000)
+                return false
+            }
+        }
+
+        // 8. 清理
         _lib().CloseHandle(threadHandle)
         _lib().VirtualFreeEx(handle, remoteAddr, 0, 0x8000)
         return true
     }
 
-    // 写入 Shellcode 到目标进程并执行
+    // 写入 Shellcode 到目标进程的指定地址
     // address: 写入地址（需已分配可执行内存）, code: 字节码, size: 大小
-    // 返回远程线程句柄（失败返回 null）
+    // 返回写入是否成功（true=成功, false=失败）
+    // 注意：此函数仅写入字节码，不创建远程线程执行
+    //       如需执行，请配合 allocRemote + writeShellcode + CreateRemoteThread 使用
     func writeShellcode(int address, Ptr[u8] code, int size): bool {
         if not valid or address == 0 { return false }
         if size <= 0 { return false }
@@ -934,13 +952,24 @@ export struct MemoryHandle {
 
     // ==================== 数学辅助 ====================
 
-    // 计算两点间的 3D 距离
+    // 计算两点间的 3D 距离平方（无 sqrt 开销，用于比较距离大小）
     // x1,y1,z1: 点1, x2,y2,z2: 点2
+    // 返回 (dx*dx + dy*dy + dz*dz)，不需要开方时用此函数
+    func dist3dSq(float x1, float y1, float z1, float x2, float y2, float z2): float {
+        float dx = x2 - x1
+        float dy = y2 - y1
+        float dz = z2 - z1
+        return dx * dx + dy * dy + dz * dz
+    }
+
+    // 计算两点间的 3D 距离（精确，含 sqrt）
+    // x1,y1,z1: 点1, x2,y2,z2: 点2
+    // 性能敏感的比较场景请用 dist3dSq
     func dist3d(float x1, float y1, float z1, float x2, float y2, float z2): float {
         float dx = x2 - x1
         float dy = y2 - y1
         float dz = z2 - z1
-        return (dx * dx + dy * dy + dz * dz) * 0.5  // 简化，无 sqrt
+        return maths.sqrt(dx * dx + dy * dy + dz * dz)
     }
 }
 
