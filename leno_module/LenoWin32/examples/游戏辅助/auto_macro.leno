@@ -1,0 +1,205 @@
+// auto_macro.leno — 实战：自动按键宏 + 鼠标连点器
+// 不需要管理员权限，直接可用！
+// 功能：
+//   F1 — 自动连按 1 键（模拟游戏技能连发）
+//   F2 — 自动连按空格键（模拟跳跃）
+//   F3 — 鼠标左键连点（模拟攻击/射击）
+//   F4 — 组合键连发 Ctrl+A（全选）
+//   F5 — 停止所有自动操作
+//   F6 — 打印当前按键状态
+//   Ctrl+Shift+Q — 退出程序
+import ffi
+import strings
+import "../../lib/w32_input.leno" as inp
+import times
+
+// 全局运行标志
+var _running = true
+var _autoKey = false    // 自动按键开关
+var _autoClick = false // 自动点击开关
+int _autoVk = 0        // 自动按键的 VK
+int _autoInterval = 100 // 自动按键间隔(ms)
+
+// 自动按键线程（简化版：在主循环中轮询）
+func doAutoAction() {
+    if _autoKey and _autoVk > 0 {
+        inp.keyPress(_autoVk)
+    }
+    if _autoClick {
+        inp.leftClick()
+    }
+}
+
+main() {
+    print("========================================")
+    print("    Leno 自动按键宏 + 鼠标连点器")
+    print("========================================")
+    print("")
+    print("热键说明:")
+    print("  F1 — 连按 1 键(技能连发) 间隔100ms")
+    print("  F2 — 连按空格(跳跃)      间隔200ms")
+    print("  F3 — 鼠标左键连点         间隔50ms")
+    print("  F4 — Ctrl+A 组合键(全选)  单次")
+    print("  F5 — 停止所有自动操作")
+    print("  F6 — 打印按键状态")
+    print("  F7 — 快速测试: 输出 Hello 到当前窗口")
+    print("  Ctrl+Shift+Q — 退出")
+    print("")
+    print("提示: 打开记事本，按 F7 自动打字！")
+    print("      打开任意游戏，按 F1 连发技能！")
+    print("")
+    print("[已启动] 等待热键...")
+    print("")
+
+    // 记录上次按键状态（用于边沿检测）— 多变量声明
+    bool _f1Prev, _f2Prev, _f3Prev, _f4Prev
+    bool _f5Prev, _f6Prev, _f7Prev, _quitPrev
+    _f1Prev = false; _f2Prev = false; _f3Prev = false; _f4Prev = false
+    _f5Prev = false; _f6Prev = false; _f7Prev = false; _quitPrev = false
+
+    while _running {
+        // ==================== 边沿检测触发 ====================
+        
+        // F1: 连按 1 键
+        bool f1 = inp.isKeyDown(inp.VK_F1)
+        if f1 and not _f1Prev {
+            _autoKey = true
+            _autoClick = false
+            _autoVk = inp.VK_1
+            _autoInterval = 100
+            print("[F1] 自动连按 1 键已启动 (间隔" + _autoInterval + "ms)")
+        }
+        _f1Prev = f1
+
+        // F2: 连按空格
+        bool f2 = inp.isKeyDown(inp.VK_F2)
+        if f2 and not _f2Prev {
+            _autoKey = true
+            _autoClick = false
+            _autoVk = inp.VK_SPACE
+            _autoInterval = 200
+            print("[F2] 自动连按空格已启动 (间隔" + _autoInterval + "ms)")
+        }
+        _f2Prev = f2
+
+        // F3: 鼠标连点
+        bool f3 = inp.isKeyDown(inp.VK_F3)
+        if f3 and not _f3Prev {
+            _autoKey = false
+            _autoClick = true
+            _autoInterval = 50
+            print("[F3] 鼠标连点已启动 (间隔" + _autoInterval + "ms)")
+        }
+        _f3Prev = f3
+
+        // F4: 组合键 Ctrl+A
+        bool f4 = inp.isKeyDown(inp.VK_F4)
+        if f4 and not _f4Prev {
+            _autoKey = false
+            _autoClick = false
+            print("[F4] 发送 Ctrl+A 组合键")
+            inp.keyCombo([inp.VK_CONTROL, inp.VK_A])
+        }
+        _f4Prev = f4
+
+        // F5: 停止
+        bool f5 = inp.isKeyDown(inp.VK_F5)
+        if f5 and not _f5Prev {
+            _autoKey = false
+            _autoClick = false
+            print("[F5] 已停止所有自动操作")
+        }
+        _f5Prev = f5
+
+        // F6: 打印状态
+        bool f6 = inp.isKeyDown(inp.VK_F6)
+        if f6 and not _f6Prev {
+            print("=== 当前状态 ===")
+            // 三元表达式正确语法: if cond then A else B
+            print("  自动按键: " + (if _autoKey then "true (VK=0x" + _str(_autoVk) + " 间隔=" + _autoInterval + "ms)" else "false"))
+            print("  鼠标连点: " + _autoClick)
+            print("  运行中:   " + _running)
+            // 检测当前按键
+            print("  --- 当前按键状态 ---")
+            if inp.isKeyDown(inp.VK_SHIFT)   { print("  Shift: 按下") }
+            if inp.isKeyDown(inp.VK_CONTROL) { print("  Ctrl:  按下") }
+            if inp.isKeyDown(inp.VK_MENU)    { print("  Alt:   按下") }
+            if inp.isKeyDown(inp.VK_SPACE)   { print("  Space: 按下") }
+            if inp.isKeyDown(inp.VK_RETURN)  { print("  Enter: 按下") }
+            print("================")
+        }
+        _f6Prev = f6
+
+        // F7: 自动打字 "Hello, World!"
+        bool f7 = inp.isKeyDown(inp.VK_F7)
+        if f7 and not _f7Prev {
+            _autoKey = false
+            _autoClick = false
+            print("[F7] 自动打字: Hello, World!")
+            // 使用 strings.byte() 获取字符的 ASCII 码，再映射到 VK 码
+            // 大写字母 A-Z: VK = ASCII 码 (0x41-0x5A)
+            // 小写字母 a-z: VK = ASCII 码 - 32 (转大写)
+            // 数字 0-9: VK = ASCII 码 (0x30-0x39)
+            // 空格: VK = 0x20
+            string text = "Hello, World!"
+            for text.byte_len() to i {
+                int b = text.byte(i)
+                int vk = 0
+                bool needShift = false
+                if b >= 0x41 and b <= 0x5A {       // A-Z (大写)
+                    vk = b
+                    needShift = true              // 大写需要 Shift
+                } else if b >= 0x61 and b <= 0x7A { // a-z (小写)
+                    vk = b - 32                   // VK 码 = 大写字母码
+                    needShift = false             // 不按 Shift 输出小写
+                } else if b >= 0x30 and b <= 0x39 { // 0-9
+                    vk = b
+                    needShift = if b == 0x31 then true else false  // '!' 需要 Shift+1
+                } else if b == 0x20 {              // 空格
+                    vk = 0x20
+                    needShift = false
+                } else if b == 0x2C {              // 逗号 ','
+                    vk = 0xBA                     // VK_OEM_COMMA
+                    needShift = false
+                }
+                if vk > 0 {
+                    if needShift {
+                        inp.keyDown(inp.VK_SHIFT)
+                        sleep(30)
+                        inp.keyPress(vk)
+                        sleep(30)
+                        inp.keyUp(inp.VK_SHIFT)
+                    } else {
+                        inp.keyPress(vk)
+                    }
+                    sleep(80)
+                }
+            }
+            print("[F7] 打字完成")
+        }
+        _f7Prev = f7
+
+        // Ctrl+Shift+Q: 退出
+        bool ctrl, shift, q
+        ctrl = inp.isKeyDown(inp.VK_CONTROL)
+        shift = inp.isKeyDown(inp.VK_SHIFT)
+        q = inp.isKeyDown(inp.VK_Q)
+        bool quit = ctrl and shift and q
+        if quit and not _quitPrev {
+            print("[退出] Ctrl+Shift+Q 已按下，正在退出...")
+            _running = false
+        }
+        _quitPrev = quit
+
+        // ==================== 执行自动操作 ====================
+        if _autoKey or _autoClick {
+            doAutoAction()
+            sleep(_autoInterval)
+        } else {
+            sleep(10)  // 空闲时低负载轮询
+        }
+    }
+
+    print("")
+    print("[已退出] 程序结束")
+}

@@ -1,0 +1,434 @@
+// GameHelper.leno — LenoWin32 游戏辅助统一入口
+// 参考：易语言的外挂辅助模块、AutoHotKey 的游戏宏、CE 的内存修改
+// 功能：进程附加 + 内存读写 + 模拟按键/鼠标 + 热键触发 + 自动循环
+// 
+// 典型用法:
+//   import "GameHelper.leno" as gh
+//   var bot = gh.attach("game.exe")
+//   bot.setHotkey(0x73, func() {            // F4 启动
+//       bot.autoHeal(0x12345678, 100, 50)    // 血量<100时按1补血
+//   })
+//   bot.run()  // 进入热键循环
+
+import "w32_memory.leno" as mem
+import "w32_input.leno" as inp
+import "w32_process.leno" as proc
+import "w32_hotkey.leno" as hotkey
+import "w32_message.leno" as msg
+
+use mem.MemoryHandle
+
+// ==================== GameBot 游戏辅助主体 ====================
+
+export struct GameBot {
+    // 进程信息
+    MemoryHandle? memHandle = null
+    int pid = 0
+    string processName = ""
+    bool attached = false
+
+    // 热键回调
+    Array[Dict] hotkeys = []
+    bool running = false
+
+    // ==================== 进程附加 ====================
+
+    // 附加到目标进程（按 PID）
+    func attachPid(int targetPid): bool {
+        pid = targetPid
+        memHandle = new MemoryHandle()
+        bool ok = memHandle.open(pid)
+        if ok {
+            attached = true
+        }
+        return ok
+    }
+
+    // 附加到目标进程（按进程名）
+    func attach(string processName): bool {
+        self.processName = processName
+        var pm = new proc.StandardProcessManager()
+        var result = pm.findByName(processName)
+        if result.found {
+            return attachPid(result.pid)
+        }
+        return false
+    }
+
+    // 分离（关闭句柄）
+    func detach() {
+        if memHandle != null {
+            memHandle.close()
+            memHandle = null
+        }
+        attached = false
+    }
+
+    // ==================== 内存操作（便捷封装）====================
+
+    // 读取 int32
+    func readInt(int address): int {
+        if not attached { return 0 }
+        return memHandle.readInt(address)
+    }
+
+    // 读取 float
+    func readFloat(int address): float {
+        if not attached { return 0.0 }
+        return memHandle.readFloat(address)
+    }
+
+    // 读取多级指针
+    func readPointer(int base, Array[int] offsets): int {
+        if not attached { return 0 }
+        return memHandle.readPointerChain(base, offsets)
+    }
+
+    // 读取多级指针指向的 int
+    func readIntChain(int base, Array[int] offsets): int {
+        if not attached { return 0 }
+        return memHandle.readIntChain(base, offsets)
+    }
+
+    // 写入 int32
+    func writeInt(int address, int value): bool {
+        if not attached { return false }
+        return memHandle.writeInt(address, value)
+    }
+
+    // 写入 float
+    func writeFloat(int address, float value): bool {
+        if not attached { return false }
+        return memHandle.writeFloat(address, value)
+    }
+
+    // 写入多级指针指向的 int
+    func writeIntChain(int base, Array[int] offsets, int value): bool {
+        if not attached { return false }
+        return memHandle.writeIntChain(base, offsets, value)
+    }
+
+    // ==================== 内存扫描（封装 VirtualQueryEx）=====================
+
+    // 扫描可读内存区域（类似 CE 的内存区域浏览）
+    // maxRegions: 最多扫描的区域数（默认 200）
+    // 返回区域信息数组: [{base, size, protect, hex}]
+    func scanRegions(int maxRegions): Array[Dict] {
+        if not attached { return [] }
+        return memHandle.scanRegions(maxRegions)
+    }
+
+    // 在可读区域中搜索 int32 值（类似 CE 的 First Scan）
+    // targetValue: 要搜索的值, maxRegions: 最多扫描区域数（默认 500）
+    // 返回匹配地址数组: [{address, value}]
+    func searchValue(int targetValue, int maxRegions): Array[Dict] {
+        if not attached { return [] }
+        return memHandle.searchValue(targetValue, maxRegions)
+    }
+
+    // 监控地址值的变化（类似 CE 的内存监控）
+    // address: 监控地址, duration: 监控时长(ms), interval: 检查间隔(ms)
+    // 返回变化记录数组: [{time, oldVal, newVal}]
+    func watchValue(int address, int duration, int interval): Array[Dict] {
+        if not attached { return [] }
+        return memHandle.watchValue(address, duration, interval)
+    }
+
+    // ==================== 模拟输入（便捷封装）====================
+
+    // 按键
+    func pressKey(int vk): bool {
+        return inp.keyPress(vk)
+    }
+
+    // 按键（带延迟）
+    func pressKeyDelay(int vk, int delayMs): bool {
+        return inp.keyPressDelay(vk, delayMs)
+    }
+
+    // 组合键
+    func combo(Array[int] keys): bool {
+        return inp.keyCombo(keys)
+    }
+
+    // 连按
+    func repeatKey(int vk, int count, int intervalMs): bool {
+        return inp.keyRepeat(vk, count, intervalMs)
+    }
+
+    // 左键单击
+    func click(): bool {
+        return inp.leftClick()
+    }
+
+    // 右键单击
+    func rightClick(): bool {
+        return inp.rightClick()
+    }
+
+    // 左键双击
+    func doubleClick(): bool {
+        return inp.leftDoubleClick()
+    }
+
+    // 鼠标移动
+    func mouseMove(int dx, int dy): bool {
+        return inp.moveRelative(dx, dy)
+    }
+
+    // 鼠标绝对移动
+    func mouseMoveTo(int x, int y, int screenW, int screenH): bool {
+        return inp.moveAbsolute(x, y, screenW, screenH)
+    }
+
+    // 滚轮
+    func wheel(int delta): bool {
+        return inp.mouseWheel(delta)
+    }
+
+    // ==================== 高级宏 ====================
+
+    // 自动补血/补蓝
+    // address: 血量/蓝量地址, threshold: 低于此值触发, healKey: 补血按键
+    func autoHeal(int address, int threshold, int healKey): bool {
+        int current = readInt(address)
+        if current > 0 and current < threshold {
+            return pressKey(healKey)
+        }
+        return false
+    }
+
+    // 自动补血（多级指针版）
+    func autoHealChain(int base, Array[int] offsets, int threshold, int healKey): bool {
+        int current = readIntChain(base, offsets)
+        if current > 0 and current < threshold {
+            return pressKey(healKey)
+        }
+        return false
+    }
+
+    // 自动连点（按键）
+    // vk: 按键, count: 次数, intervalMs: 间隔
+    func autoClick(int vk, int count, int intervalMs) {
+        repeatKey(vk, count, intervalMs)
+    }
+
+    // 锁定数值（内存锁定）
+    // address: 地址, value: 目标值, intervalMs: 检查间隔
+    func lockValue(int address, int value, int intervalMs) {
+        while running {
+            int current = readInt(address)
+            if current != value {
+                writeInt(address, value)
+            }
+            sleep(intervalMs)
+        }
+    }
+
+    // 锁定数值（浮点数）
+    func lockFloat(int address, float value, int intervalMs) {
+        while running {
+            float current = readFloat(address)
+            // 简单比较：差值小于 0.01 视为相等
+            float diff = current - value
+            if diff < 0.0 { diff = -diff }
+            if diff > 0.01 {
+                writeFloat(address, value)
+            }
+            sleep(intervalMs)
+        }
+    }
+
+    // ==================== 热键管理 ====================
+
+    // 注册热键回调
+    // vk: 虚拟键码, callback: 回调函数
+    func setHotkey(int vk, func() callback) {
+        // 使用 GetAsyncKeyState 轮询方式
+        Dict hk = {vk: vk, callback: callback, wasDown: false}
+        hotkeys.add(hk)
+    }
+
+    // 注册组合键回调（Ctrl+Shift+vk 等）
+    // modKeys: 修饰键数组, vk: 主键, callback: 回调
+    func setComboHotkey(Array[int] modKeys, int vk, func() callback) {
+        Dict hk = {modKeys: modKeys, vk: vk, callback: callback, wasDown: false}
+        hotkeys.add(hk)
+    }
+
+    // 检查所有热键
+    func _checkHotkeys() {
+        for hotkeys to hk {
+            if hk is Dict {
+                func() cb = hk["callback"] as func()
+                bool wasDown = hk["wasDown"] as bool
+
+                // 组合键模式
+                if "modKeys" in hk {
+                    Array[int] mods = hk["modKeys"] as Array[int]
+                    int vk = _int(hk["vk"])
+                    bool allModsDown = true
+                    for mods to m {
+                        if not inp.isKeyDown(m) { allModsDown = false }
+                    }
+                    bool mainDown = inp.isKeyDown(vk)
+                    bool triggered = allModsDown and mainDown
+
+                    if triggered and not wasDown {
+                        if cb != null { cb() }
+                    }
+                    hk["wasDown"] = triggered
+                } else {
+                    // 单键模式
+                    int vk = _int(hk["vk"])
+                    bool nowDown = inp.isKeyDown(vk)
+                    if nowDown and not wasDown {
+                        if cb != null { cb() }
+                    }
+                    hk["wasDown"] = nowDown
+                }
+            }
+        }
+    }
+
+    // ==================== 主循环 ====================
+
+    // 进入主循环（阻塞）
+    // 默认每 10ms 轮询一次热键状态
+    // 按 Ctrl+Shift+Q 退出循环
+    func run() {
+        running = true
+        print("[GameHelper] 主循环已启动，Ctrl+Shift+Q 退出")
+        print("[GameHelper] 已注册 " + hotkeys.len() + " 个热键")
+
+        while running {
+            _checkHotkeys()
+
+            // 检查退出键 Ctrl+Shift+Q
+bool ctrl = inp.isKeyDown(inp.VK_CONTROL)
+bool shift = inp.isKeyDown(inp.VK_SHIFT)
+bool q = inp.isKeyDown(inp.VK_Q)
+            if ctrl and shift and q {
+                running = false
+                print("[GameHelper] 收到退出信号")
+                break
+            }
+
+            sleep(10)
+        }
+
+        // 清理
+        if memHandle != null {
+            detach()
+        }
+        print("[GameHelper] 已退出")
+    }
+
+    // 停止主循环
+    func stop() {
+        running = false
+    }
+
+    // ==================== 调试辅助 ====================
+
+    // 打印进程信息
+    func info() {
+        print("===== GameBot 信息 =====")
+        print("进程名: " + processName)
+        print("PID: " + pid)
+        print("已附加: " + attached)
+        print("热键数量: " + hotkeys.len())
+        print("运行中: " + running)
+        print("========================")
+    }
+
+    // 读取并打印地址处的值（调试用）
+    func dump(int address, int count) {
+        print("--- 内存 dump @ 0x" + _str(address) + " ---")
+        for 0:(count-1) to i {
+            int addr = address + i * 4
+            int val = readInt(addr)
+            print("  [0x" + _str(addr) + "] = " + val + " (0x" + _str(val) + ")")
+        }
+        print("--- dump 结束 ---")
+    }
+}
+
+// ==================== 便捷工厂函数 ====================
+
+// 附加到进程（按名称）
+export func attach(string processName): GameBot {
+    GameBot bot = new GameBot()
+    if bot.attach(processName) {
+        print("[GameHelper] 已附加到 " + processName + " (PID=" + bot.pid + ")")
+    } else {
+        print("[GameHelper] 附加失败: " + processName)
+    }
+    return bot
+}
+
+// 附加到进程（按 PID）
+export func attachPid(int pid): GameBot {
+    GameBot bot = new GameBot()
+    if bot.attachPid(pid) {
+        print("[GameHelper] 已附加到 PID=" + pid)
+    } else {
+        print("[GameHelper] 附加失败: PID=" + pid)
+    }
+    return bot
+}
+
+// ==================== 虚拟键码常量透传 ====================
+export const VK_1 = inp.VK_1
+export const VK_2 = inp.VK_2
+export const VK_3 = inp.VK_3
+export const VK_4 = inp.VK_4
+export const VK_5 = inp.VK_5
+export const VK_6 = inp.VK_6
+export const VK_7 = inp.VK_7
+export const VK_8 = inp.VK_8
+export const VK_9 = inp.VK_9
+export const VK_0 = inp.VK_0
+export const VK_Q = inp.VK_Q
+export const VK_W = inp.VK_W
+export const VK_E = inp.VK_E
+export const VK_R = inp.VK_R
+export const VK_T = inp.VK_T
+export const VK_Y = inp.VK_Y
+export const VK_U = inp.VK_U
+export const VK_I = inp.VK_I
+export const VK_O = inp.VK_O
+export const VK_P = inp.VK_P
+export const VK_A = inp.VK_A
+export const VK_S = inp.VK_S
+export const VK_D = inp.VK_D
+export const VK_F = inp.VK_F
+export const VK_G = inp.VK_G
+export const VK_H = inp.VK_H
+export const VK_J = inp.VK_J
+export const VK_K = inp.VK_K
+export const VK_L = inp.VK_L
+export const VK_Z = inp.VK_Z
+export const VK_X = inp.VK_X
+export const VK_C = inp.VK_C
+export const VK_V = inp.VK_V
+export const VK_B = inp.VK_B
+export const VK_N = inp.VK_N
+export const VK_M = inp.VK_M
+export const VK_F1  = inp.VK_F1
+export const VK_F2  = inp.VK_F2
+export const VK_F3  = inp.VK_F3
+export const VK_F4  = inp.VK_F4
+export const VK_F5  = inp.VK_F5
+export const VK_F6  = inp.VK_F6
+export const VK_F7  = inp.VK_F7
+export const VK_F8  = inp.VK_F8
+export const VK_F9  = inp.VK_F9
+export const VK_F10 = inp.VK_F10
+export const VK_F11 = inp.VK_F11
+export const VK_F12 = inp.VK_F12
+export const VK_SPACE   = inp.VK_SPACE
+export const VK_RETURN  = inp.VK_RETURN
+export const VK_ESCAPE  = inp.VK_ESCAPE
+export const VK_SHIFT   = inp.VK_SHIFT
+export const VK_CONTROL = inp.VK_CONTROL

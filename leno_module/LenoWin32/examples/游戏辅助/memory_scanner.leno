@@ -1,0 +1,123 @@
+// memory_scanner.leno — 实战：进程内存区域扫描 + 值搜索
+// 所有核心逻辑已封装到 w32_memory.leno 中，本文件仅做调用演示
+//
+// 功能：
+//   1. 扫描目标进程的可读内存区域（VirtualQueryEx）
+//   2. 在可读区域中搜索特定 int32 值（类似 CE 的 First Scan）
+//   3. 监控地址值的变化（类似 CE 的内存监控）
+import ffi
+import "../../lib/w32_process.leno" as proc
+import "../../lib/w32_memory.leno" as mem
+
+use mem.MemoryHandle
+
+// ==================== 主函数 ====================
+main() {
+    print("========================================")
+    print("    Leno 内存扫描器 — VirtualQueryEx 实战")
+    print("========================================")
+    print("")
+
+    // 1. 查找目标进程
+    print("[步骤1] 查找目标进程...")
+    var pm = new proc.StandardProcessManager()
+
+    // 依次尝试：notepad, calc, Calculator
+    Array[string] targets = ["notepad.exe", "calc.exe", "Calculator.exe"]
+    int pid = 0; string procName = ""
+
+    for targets to name {
+        var r = pm.findByName(name)
+        if r.found {
+            pid = _int(r.pid)
+            procName = name
+            break
+        }
+    }
+
+    if pid == 0 {
+        print("  未找到任何目标进程！")
+        print("  请先打开记事本或计算器")
+        return
+    }
+
+    print("  目标: " + procName + " PID=" + pid)
+    print("")
+
+    // 2. 打开进程
+    print("[步骤2] 打开进程句柄...")
+    MemoryHandle? h = mem.open(pid)
+    if h == null or not h.valid {
+        print("  打开失败！请以管理员权限运行")
+        return
+    }
+    print("  句柄获取成功! valid=" + h.valid)
+    print("")
+
+    // 3. 扫描可读区域
+    print("[步骤3] 扫描可读内存区域...")
+    var regions = h.scanRegions(200)
+    print("  共发现 " + regions.len() + " 个可读区域")
+    // 只显示前 30 个
+    int showCount = regions.len()
+    if showCount > 30 { showCount = 30 }
+    for 0:showCount to i {
+        var r = regions[i]
+        int base = _int(r["base"])
+        int size = _int(r["size"])
+        int prot = _int(r["protect"])
+        string hex = r["hex"] as string
+        print("  [0x" + _str(base) + "] size=" + size + " prot=0x" + _str(prot) + " hex: " + hex)
+    }
+    // 统计总可读内存
+    int totalReadable = 0
+    for regions to r {
+        totalReadable = totalReadable + _int(r["size"])
+    }
+    print("  可读内存总计: " + _int(totalReadable / 1024) + " KB (" + _int(totalReadable / 1048576) + " MB)")
+    print("")
+
+    // 4. 搜索特定值
+    print("[步骤4] 搜索值 0 (很多未初始化内存)...")
+    var results = h.searchValue(0, 500)
+    print("  搜索完成，共找到 " + results.len() + " 个匹配")
+    int showResults = results.len()
+    if showResults > 20 { showResults = 20 }
+    for 0:showResults to i {
+        int addr = _int(results[i]["address"])
+        int val = _int(results[i]["value"])
+        print("  找到! [0x" + _str(addr) + "] = " + val)
+    }
+    if results.len() > 20 {
+        print("  (仅显示前 20 个结果)")
+    }
+    print("")
+
+    // 5. 搜索一个有趣的值
+    print("[步骤5] 搜索值 1 (常见计数器)...")
+    var results2 = h.searchValue(1, 500)
+    print("  搜索完成，共找到 " + results2.len() + " 个匹配")
+    print("")
+
+    // 6. 监控某个地址的变化
+    if results2.len() > 0 {
+        int watchAddr = _int(results2[0]["address"])
+        print("[步骤6] 监控地址 0x" + _str(watchAddr) + " 的变化(3秒)...")
+        var changes = h.watchValue(watchAddr, 3000, 100)
+        if changes.len() == 0 {
+            print("  3秒内无变化")
+        }
+        for changes to c {
+            int t = _int(c["time"])
+            int oldV = _int(c["oldVal"])
+            int newV = _int(c["newVal"])
+            print("  变化! t=" + t + "ms 旧值=" + oldV + " -> 新值=" + newV)
+        }
+        print("  监控结束")
+    }
+    print("")
+
+    // 7. 清理
+    h.close()
+    print("[完成] 句柄已关闭，扫描结束")
+}

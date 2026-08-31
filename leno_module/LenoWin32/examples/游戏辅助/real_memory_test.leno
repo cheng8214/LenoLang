@@ -1,0 +1,115 @@
+// real_memory_test.leno — 真实内存读写实战
+// 目标：附加 target_app.exe，读取/修改其中的全局变量
+//
+// target_app.exe 会打印出 PID 和各变量地址，本脚本读取并修改这些值
+import ffi
+import "../../lib/w32_process.leno" as proc
+import "../../lib/w32_memory.leno" as mem
+
+use mem.MemoryHandle
+
+// ==================== 配置区 ====================
+// target_app.exe 打印的地址（每次运行会变，这里用运行时的值）
+// 如果重新运行 target_app.exe，需要替换为新的地址
+const TARGET_PID = 23160
+const ADDR_HP    = 0x00007FF7D6E33000
+const ADDR_MP    = 0x00007FF7D6E33004
+const ADDR_COIN  = 0x00007FF7D6E33008
+const ADDR_LVL   = 0x00007FF7D6E3300C
+const ADDR_SPD   = 0x00007FF7D6E33010
+const ADDR_NAME  = 0x00007FF7D6E33020
+
+main() {
+    print("========================================")
+    print("    Leno 内存读写实战 — target_app.exe")
+    print("========================================")
+    print("")
+
+    // 1. 打开进程
+    print("[1] 打开进程 PID=" + TARGET_PID + " ...")
+    MemoryHandle? h = mem.open(TARGET_PID)
+    if h == null or not h.valid {
+        print("  打开失败！")
+        print("  可能原因: 1) PID 不对  2) 需要管理员权限  3) 进程已退出")
+        return
+    }
+    print("  成功! handle valid=" + h.valid)
+    print("")
+
+    // 2. 读取当前值
+    print("[2] 读取 target_app 的变量:")
+    int hp    = h.readInt(ADDR_HP)
+    int mp    = h.readInt(ADDR_MP)
+    int coins = h.readInt(ADDR_COIN)
+    int level = h.readInt(ADDR_LVL)
+    float spd = h.readFloat(ADDR_SPD)
+    print("  hp    = " + hp + "  (应该=100)")
+    print("  mp    = " + mp + "  (应该=50)")
+    print("  coins = " + coins + "  (应该=1000)")
+    print("  level = " + level + "  (应该=1)")
+    print("  speed = " + spd + "  (应该=5.5)")
+    print("")
+
+    // 3. 读取 name 字符串（手动读 4 字节 * 8 = 32 字节）
+    print("[3] 读取 name 字符串:")
+    Ptr[u8] nameBuf = h.readBytes(ADDR_NAME, 32)
+    if nameBuf != null {
+        string name = ffi.read_string(nameBuf, 0)
+        print("  name  = '" + name + "'  (应该='Player01')")
+        ffi.free(nameBuf)
+    } else {
+        print("  读取 name 失败")
+    }
+    print("")
+
+    // 4. 修改值！
+    print("[4] 写入新值:")
+    bool ok1 = h.writeInt(ADDR_HP, 999)     // 改血量为 999
+    bool ok2 = h.writeInt(ADDR_COIN, 99999) // 改金币为 99999
+    bool ok3 = h.writeInt(ADDR_LVL, 99)    // 改等级为 99
+    bool ok4 = h.writeFloat(ADDR_SPD, 10.5)// 改速度为 10.5
+    print("  写入 hp=999:    " + ok1)
+    print("  写入 coins=99999: " + ok2)
+    print("  写入 level=99:  " + ok3)
+    print("  写入 speed=10.5: " + ok4)
+    print("")
+
+    // 5. 回读验证
+    print("[5] 回读验证修改是否生效:")
+    int newHp    = h.readInt(ADDR_HP)
+    int newCoin  = h.readInt(ADDR_COIN)
+    int newLvl   = h.readInt(ADDR_LVL)
+    float newSpd = h.readFloat(ADDR_SPD)
+    print("  hp    = " + newHp + "  (应该=999)")
+    print("  coins = " + newCoin + "  (应该=99999)")
+    print("  level = " + newLvl + "  (应该=99)")
+    print("  speed = " + newSpd + "  (应该=10.5)")
+    bool allOK = (newHp == 999 and newCoin == 99999 and newLvl == 99)
+    print("  结果: " + (if allOK then "✓ 全部写入成功!" else "✗ 部分失败"))
+    print("")
+    print("请查看 target_app.exe 窗口，它的输出应该已变化!")
+    print("(target_app 每秒会打印 hp/coins/level/speed 的当前值)")
+    print("")
+
+    // 6. 监控 hp 变化（target_app 每5秒自动回血+1）
+    print("[6] 监控 hp 地址 5 秒(target_app 每5秒回血+1)...")
+    var changes = h.watchValue(ADDR_HP, 5000, 500)
+    if changes.len() == 0 {
+        print("  5秒内无变化(hp 可能已经满了不再回血)")
+    }
+    for changes to c {
+        int t = _int(c["time"])
+        int oldV = _int(c["oldVal"])
+        int newV = _int(c["newVal"])
+        print("  t=" + t + "ms: " + oldV + " -> " + newV)
+    }
+    print("")
+
+    // 7. 清理
+    h.close()
+    print("[7] 句柄已关闭")
+    print("")
+    print("========================================")
+    print("    实战测试完成!")
+    print("========================================")
+}

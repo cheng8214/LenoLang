@@ -1,0 +1,96 @@
+// auto_macro_test.leno — 实战：自动按键宏(自测版)
+// 不需要外部热键触发，程序启动后自动演示
+// 3秒后开始自动打字到当前焦点窗口
+import ffi
+import strings
+import "../../lib/w32_input.leno" as inp
+
+main() {
+    print("========================================")
+    print("    Leno 自动按键宏 — 自测版")
+    print("========================================")
+    print("")
+    print("3秒后开始自动打字，请切换到记事本窗口！")
+    print("倒计时:")
+    
+    for 3:1:-1 to i {
+        print("  " + (4 - i) + "...")
+        sleep(1000)
+    }
+    print("")
+    
+    print("=== 开始打字: Hello, World! ===")
+    
+    // 使用 strings.byte() 获取字符 ASCII 码，再映射到 VK 码
+    // 大写字母 A-Z: VK = ASCII 码 (0x41-0x5A)
+    // 小写字母 a-z: VK = ASCII 码 - 32 (转大写)
+    // 数字 0-9: VK = ASCII 码 (0x30-0x39)
+    // 空格: VK = 0x20
+    string text = "Hello, World!"
+    for text.byte_len() to i {
+        int b = text.byte(i)
+        int vk = 0
+        bool needShift = false
+        if b >= 0x41 and b <= 0x5A {       // A-Z (大写)
+            vk = b
+            needShift = true              // 大写需要 Shift
+        } else if b >= 0x61 and b <= 0x7A { // a-z (小写)
+            vk = b - 32                   // VK 码 = 大写字母码
+            needShift = false             // 不按 Shift 输出小写
+        } else if b >= 0x30 and b <= 0x39 { // 0-9
+            vk = b
+            needShift = if b == 0x31 then true else false  // '!' 需要 Shift+1
+        } else if b == 0x20 {              // 空格
+            vk = 0x20
+            needShift = false
+        } else if b == 0x2C {              // 逗号 ','
+            vk = 0xBA                     // VK_OEM_COMMA
+            needShift = false
+        }
+        if vk > 0 {
+            if needShift {
+                inp.keyDown(inp.VK_SHIFT)
+                sleep(30)
+                inp.keyPress(vk)
+                sleep(30)
+                inp.keyUp(inp.VK_SHIFT)
+            } else {
+                inp.keyPress(vk)
+            }
+            sleep(100)
+            print("  发送: '" + strings.char(b) + "' (VK=0x" + _str(vk) + " shift=" + needShift + ")")
+        }
+    }
+    
+    print("")
+    print("=== 打字完成! 请查看记事本窗口 ===")
+    print("")
+    
+    // 鼠标连点演示
+    print("2秒后开始鼠标连点(10次)...")
+    sleep(2000)
+    print("=== 鼠标左键连点 x10 ===")
+    for 0:9 to i {
+        inp.leftClick()
+        print("  点击 " + (i + 1) + "/10")
+        sleep(100)
+    }
+    print("=== 鼠标连点完成 ===")
+    print("")
+    
+    // 组合键演示
+    print("2秒后发送 Ctrl+A (全选)...")
+    sleep(2000)
+    inp.keyCombo([inp.VK_CONTROL, inp.VK_A])
+    print("  Ctrl+A 已发送")
+    sleep(500)
+    
+    // 再发送 Ctrl+C (复制)
+    inp.keyCombo([inp.VK_CONTROL, inp.VK_C])
+    print("  Ctrl+C 已发送(复制选中文本)")
+    print("")
+    
+    print("========================================")
+    print("    所有测试完成!")
+    print("========================================")
+}

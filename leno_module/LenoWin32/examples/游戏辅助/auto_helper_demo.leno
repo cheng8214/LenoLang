@@ -1,0 +1,170 @@
+// auto_helper_demo.leno — LenoWin32 游戏辅助演示
+// 这是一个教学/研究用的演示程序，展示如何用 Leno 语言编写游戏辅助工具
+// 
+// 功能演示：
+//   1. 查找目标游戏进程并附加
+//   2. 读取/修改游戏内存（血量、金币等）
+//   3. 模拟按键（自动补血、自动技能）
+//   4. 热键触发功能（F1-F8 各绑定不同操作）
+//   5. 内存锁定（血量锁定为 99999）
+//
+// 热键说明：
+//   F1  — 读取当前血量/金币并显示
+//   F2  — 补血到满（写入 99999）
+//   F3  — 自动补血（血量<30%时按1键）
+//   F4  — 连按技能键（按5键10次，间隔200ms）
+//   F5  — 鼠标连点（左键50次，间隔100ms）
+//   F6  — 内存锁定血量（每50ms检查并写回99999）
+//   F7  — 解除内存锁定
+//   F8  — dump 内存（打印附近地址的值）
+//   Ctrl+Shift+Q — 退出程序
+
+import "../../lib/GameHelper.leno" as gh
+import "../../lib/w32_input.leno" as inp
+
+use gh.GameBot
+
+// ==================== 配置区 ====================
+// 在这里填入你的游戏信息（地址仅为示例，需用 CE 等工具查找）
+const GAME_PROCESS = "notepad.exe"    // 目标进程名（示例用记事本）
+const ADDR_HP       = 0x00400000       // 血量地址（示例，需替换为真实地址）
+const ADDR_COIN     = 0x00400004       // 金币地址（示例，需替换为真实地址）
+const HEAL_KEY      = gh.VK_1          // 补血快捷键
+const SKILL_KEY     = gh.VK_5          // 技能快捷键
+const FULL_HP       = 99999            // 满血值
+
+// ==================== 全局状态 ====================
+var _lockRunning = false
+
+// ==================== 热键回调 ====================
+
+// F1: 读取并显示血量/金币
+func onReadInfo(GameBot bot) {
+    print("=== 角色信息 ===")
+    int hp = bot.readInt(ADDR_HP)
+    int coin = bot.readInt(ADDR_COIN)
+    print("血量: " + hp)
+    print("金币: " + coin)
+    print("================")
+}
+
+// F2: 补血到满
+func onFullHeal(GameBot bot) {
+    bool ok = bot.writeInt(ADDR_HP, FULL_HP)
+    if ok {
+        print("[补给] 血量已设置为 " + FULL_HP)
+    } else {
+        print("[补给] 写入失败")
+    }
+}
+
+// F3: 自动补血（血量低于阈值时按键）
+func onAutoHeal(GameBot bot) {
+    int hp = bot.readInt(ADDR_HP)
+    int threshold = _int(FULL_HP * 30 / 100)  // 30% 以下触发
+    if hp > 0 and hp < threshold {
+        bot.pressKey(HEAL_KEY)
+        print("[自动补血] 血量=" + hp + " < " + threshold + "，已按键 " + HEAL_KEY)
+    } else {
+        print("[自动补血] 血量充足(" + hp + ")，无需补给")
+    }
+}
+
+// F4: 连按技能键
+func onSkillSpam(GameBot bot) {
+    print("[技能连发] 按5键 x10次")
+    bot.autoClick(SKILL_KEY, 10, 200)
+}
+
+// F5: 鼠标连点
+func onMouseSpam(GameBot bot) {
+    print("[鼠标连点] 左键 x50次")
+    for 0:49 to i {
+        bot.click()
+        sleep(100)
+    }
+    print("[鼠标连点] 完成")
+}
+
+// F6: 锁定血量
+func onLockHP(GameBot bot) {
+    if _lockRunning {
+        print("[锁定] 已在运行中")
+        return
+    }
+    _lockRunning = true
+    print("[锁定] 开始锁定血量 = " + FULL_HP)
+    // 在后台循环锁定
+    while _lockRunning {
+        int hp = bot.readInt(ADDR_HP)
+        if hp != FULL_HP {
+            bot.writeInt(ADDR_HP, FULL_HP)
+        }
+        sleep(50)
+    }
+    print("[锁定] 已停止")
+}
+
+// F7: 解除锁定
+func onUnlock(GameBot bot) {
+    _lockRunning = false
+    print("[锁定] 已解除")
+}
+
+// F8: dump 内存
+func onDump(GameBot bot) {
+    bot.dump(ADDR_HP, 8)
+}
+
+// ==================== 主函数 ====================
+
+main() {
+    print("========================================")
+    print("    Leno 游戏辅助演示工具")
+    print("    教学与研究用途，请勿用于商业外挂")
+    print("========================================")
+    print("")
+    print("热键说明:")
+    print("  F1  — 读取血量/金币")
+    print("  F2  — 补血到满 (99999)")
+    print("  F3  — 自动补血 (血量<30%)")
+    print("  F4  — 技能连发 x10")
+    print("  F5  — 鼠标连点 x50")
+    print("  F6  — 锁定血量")
+    print("  F7  — 解除锁定")
+    print("  F8  — dump 内存")
+    print("  Ctrl+Shift+Q — 退出")
+    print("")
+
+    // 1. 附加到目标进程
+    print("正在查找进程: " + GAME_PROCESS)
+    GameBot bot = gh.attach(GAME_PROCESS)
+    if not bot.attached {
+        print("附加失败！请确认:")
+        print("  1. 目标进程正在运行")
+        print("  2. 以管理员权限运行本程序")
+        print("")
+        print("将以演示模式运行（内存操作无效，但热键和模拟输入可用）")
+        print("")
+    }
+
+    // 2. 注册热键
+    bot.setHotkey(gh.VK_F1, func() { onReadInfo(bot) })
+    bot.setHotkey(gh.VK_F2, func() { onFullHeal(bot) })
+    bot.setHotkey(gh.VK_F3, func() { onAutoHeal(bot) })
+    bot.setHotkey(gh.VK_F4, func() { onSkillSpam(bot) })
+    bot.setHotkey(gh.VK_F5, func() { onMouseSpam(bot) })
+    bot.setHotkey(gh.VK_F6, func() { onLockHP(bot) })
+    bot.setHotkey(gh.VK_F7, func() { onUnlock(bot) })
+    bot.setHotkey(gh.VK_F8, func() { onDump(bot) })
+
+    print("已注册 " + bot.hotkeys.len() + " 个热键")
+    print("")
+
+    // 3. 显示初始信息
+    bot.info()
+    print("")
+
+    // 4. 进入主循环
+    bot.run()
+}

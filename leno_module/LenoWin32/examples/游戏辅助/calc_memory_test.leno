@@ -1,0 +1,152 @@
+// calc_memory_test.leno — 实战：读写计算器进程内存
+// 目标：附加到 Windows 计算器(calc.exe)，读取基础内存信息，验证读写能力
+// 这是真实的内存操作实战，不是空谈
+import ffi
+import "../../lib/w32_process.leno" as proc
+import "../../lib/w32_memory.leno" as mem
+import "../../lib/w32_input.leno" as inp
+
+use mem.MemoryHandle
+
+main() {
+    print("========================================")
+    print("    Leno 游戏辅助实战 — 计算器内存操作")
+    print("========================================")
+    print("")
+
+    // 1. 查找计算器进程
+    print("[步骤1] 查找 calc.exe 进程...")
+    var pm = new proc.StandardProcessManager()
+    var findResult = pm.findByName("calc.exe")
+    
+    int pid = 0
+    if findResult.found {
+        pid = _int(findResult.pid)
+        print("  找到! PID = " + pid)
+    } else {
+        // Windows 10 可能是 calculator.exe
+        print("  calc.exe 未找到，尝试 Calculator.exe...")
+        var findResult2 = pm.findByName("Calculator.exe")
+        if findResult2.found {
+            pid = _int(findResult2.pid)
+            print("  找到! PID = " + pid)
+        } else {
+            print("  未找到计算器进程！")
+            print("  请先打开 Windows 计算器，再运行本程序")
+            return
+        }
+    }
+    print("")
+
+    // 2. 获取进程内存信息
+    print("[步骤2] 获取进程内存使用情况...")
+    var memInfo = proc.getProcessMemory(pid)
+    if memInfo.errorCode == 0 {
+        print("  工作集内存: " + memInfo.workingSet + " KB (" + _int(memInfo.workingSet / 1024) + " MB)")
+        print("  峰值工作集: " + memInfo.peakWorkingSet + " KB (" + _int(memInfo.peakWorkingSet / 1024) + " MB)")
+    }
+    print("")
+
+    // 3. 打开进程内存句柄
+    print("[步骤3] 打开进程内存句柄(读+写权限)...")
+    MemoryHandle? h = mem.open(pid)
+    if h == null or not h.valid {
+        print("  打开失败！可能需要管理员权限")
+        return
+    }
+    print("  句柄已获取，valid = " + h.valid)
+    print("")
+
+    // 4. 读取进程内存 — 扫描可读区域
+    print("[步骤4] 内存读取测试...")
+    print("  尝试读取几个常见地址范围...")
+    
+    // 尝试读取 PE 头部区域（进程基址通常在 0x00400000 附近）
+    Array[int] testAddrs = [0x00400000, 0x00401000, 0x007F0000]
+    for testAddrs to addr {
+        int val = h.readInt(addr)
+        int err = mem.lastError()
+        print("  [0x" + _str(addr) + "] = " + val + " (0x" + _str(val) + ") err=" + err)
+    }
+    print("")
+
+    // 5. dump 内存 — 读取 PE 头部
+    print("[步骤5] Dump 进程基址内存(PE头)...")
+    print("  --- 读取 0x00400000 处 16 个 int ---")
+    for 0:15 to i {
+        int addr = 0x00400000 + i * 4
+        int val = h.readInt(addr)
+        // 显示为 hex
+        string hex = _str(val)
+        print("  [0x" + _str(addr) + "] = " + val + " (0x" + hex + ")")
+    }
+    print("  --- dump 结束 ---")
+    print("")
+
+    // 6. 读取字节数组
+    print("[步骤6] 读取字节数组(PE签名验证)...")
+    Ptr[u8] bytes = h.readBytes(0x00400000, 64)
+    if bytes != null {
+        // PE 文件头前两个字节应该是 "MZ" (0x4D, 0x5A)
+        int b0 = ffi.read_byte(bytes, 0)
+        int b1 = ffi.read_byte(bytes, 1)
+        print("  字节[0] = 0x" + _str(b0) + " (" + (if b0 == 0x4D then "M" else "?") + ")")
+        print("  字节[1] = 0x" + _str(b1) + " (" + (if b1 == 0x5A then "Z" else "?") + ")")
+        if b0 == 0x4D and b1 == 0x5A {
+            print("  ✓ PE 文件头验证成功！这是一个有效的可执行映像")
+        } else {
+            print("  ✗ 非 MZ 头，该地址可能不是 PE 映像基址")
+        }
+        // 显示前 16 字节的 hex dump
+        string hexDump = ""
+        for 0:15 to i {
+            int b = ffi.read_byte(bytes, i)
+            string h = _str(b)
+            if b < 16 { h = "0" + h }
+            hexDump = hexDump + h + " "
+        }
+        print("  Hex dump: " + hexDump)
+        ffi.free(bytes)
+    } else {
+        print("  读取字节数组失败")
+    }
+    print("")
+
+    // 7. 模拟输入测试 — 发送按键到计算器
+    print("[步骤7] 模拟输入测试...")
+    print("  发送 Alt+Shift 切换输入法(测试模拟按键)...")
+    inp.keyPress(inp.VK_SPACE)
+    print("  已发送 Space 键")
+    print("")
+
+    // 8. 热键监听演示
+    print("[步骤8] 热键监听(5秒)...")
+    print("  按任意键测试 GetAsyncKeyState 轮询...")
+    int elapsed = 0
+    while elapsed < 50 {
+        // 检测常用按键
+        if inp.isKeyDown(inp.VK_SPACE)   { print("  [检测] Space 被按下") }
+        if inp.isKeyDown(inp.VK_RETURN)  { print("  [检测] Enter 被按下") }
+        if inp.isKeyDown(inp.VK_ESCAPE)  { print("  [检测] Escape 被按下 → 退出"); break }
+        if inp.isKeyDown(inp.VK_CONTROL) { print("  [检测] Ctrl 被按下") }
+        if inp.isKeyDown(inp.VK_SHIFT)   { print("  [检测] Shift 被按下") }
+        if inp.isKeyDown(inp.VK_A)       { print("  [检测] A 被按下") }
+        if inp.isKeyDown(inp.VK_F1)      { print("  [检测] F1 被按下") }
+        sleep(100)
+        elapsed = elapsed + 1
+    }
+    if elapsed >= 50 {
+        print("  5秒超时，结束监听")
+    }
+    print("")
+
+    // 9. 清理
+    print("[步骤9] 清理资源...")
+    h.close()
+    print("  进程句柄已关闭")
+    print("")
+
+    print("========================================")
+    print("    实战测试完成！")
+    print("========================================")
+}

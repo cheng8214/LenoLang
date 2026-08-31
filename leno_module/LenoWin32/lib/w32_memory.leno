@@ -1,0 +1,442 @@
+// w32_memory.leno — Windows 进程内存读写
+// 封装 kernel32.dll 的 OpenProcess / ReadProcessMemory / WriteProcessMemory
+// 参考：易语言的「读写内存」模块、CE (Cheat Engine) 的内存操作
+// 用途：读取/修改目标进程的内存数据（如血量、金币、坐标等）
+//
+// 性能优化:
+//   - MemoryHandle 预分配 _readBuf/_writeBuf, 读写操作零堆分配
+//   - bytesRead 参数传 null (不需要返回值时不分配)
+//   - readPointerChain 内联解引用, 不重复调用 readInt
+//   - readBytes 有 size 上限检查
+//   - 地址 0 检查
+import ffi
+
+// ==================== KERNEL32 ====================
+clib kernel32 {
+    Ptr OpenProcess(u32 access, i32 inherit, i32 pid)
+    i32 CloseHandle(Ptr handle)
+    i32 ReadProcessMemory(Ptr hProcess, Ptr baseAddress, Ptr buffer, u64 size, Ptr bytesRead)
+    i32 WriteProcessMemory(Ptr hProcess, Ptr baseAddress, Ptr buffer, u64 size, Ptr bytesWritten)
+    i32 VirtualQueryEx(Ptr hProcess, Ptr address, Ptr buffer, i32 length)
+    u32 GetLastError()
+}
+
+// ==================== MEMORY_BASIC_INFORMATION ====================
+// Windows x64 结构 (48 bytes)
+// layout: BaseAddress(8) + AllocationBase(8) + AllocationProtect(4) +
+//         RegionSize(8) + State(4) + Protect(4) + Type(4) + pad(4) = 48
+export cstruct MBI {
+    u64 BaseAddress
+    u64 AllocationBase
+    u32 AllocationProtect
+    u64 RegionSize
+    u32 State
+    u32 Protect
+    u32 Type
+    u32 pad
+}
+
+// ==================== 内存常量 ====================
+// 内存状态
+export const MEM_COMMIT  = 0x1000
+export const MEM_FREE    = 0x10000
+export const MEM_RESERVE = 0x2000
+
+// 页面保护
+export const PAGE_NOACCESS          = 0x01
+export const PAGE_READONLY          = 0x02
+export const PAGE_READWRITE         = 0x04
+export const PAGE_EXECUTE           = 0x10
+export const PAGE_EXECUTE_READ      = 0x20
+export const PAGE_EXECUTE_READWRITE = 0x40
+
+// 可读的保护标志
+export const READABLE_MASK = PAGE_READONLY | PAGE_READWRITE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE
+
+// 单次 readBytes 最大 100MB
+const MAX_READ_SIZE = 1048576 * 100
+
+kernel32 _krnl = null
+func _lib(): kernel32 {
+    if _krnl == null { _krnl = ffi.load("kernel32.dll") }
+    return _krnl
+}
+
+// ==================== 常量 ====================
+// 进程访问权限
+const PROCESS_VM_READ  = 0x0010
+const PROCESS_VM_WRITE = 0x0020
+const PROCESS_VM_OPERATION = 0x0008
+const PROCESS_QUERY_INFORMATION = 0x0400
+// 读+写+操作+查询 = 全权限
+const PROCESS_ALL_ACCESS_NEEDED = PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION | PROCESS_QUERY_INFORMATION
+
+// ==================== MemoryHandle 结构 ====================
+// 封装进程句柄和 PID，类似易语言的「进程句柄」
+// 性能优化: 预分配读写缓冲区，高频调用时零堆分配
+export struct MemoryHandle {
+    Ptr handle = null
+    int pid = 0
+    string processName = ""
+    bool valid = false
+
+    // 预分配缓冲区 — 高频读写时零分配
+    // 16 字节够放 int/int64/float/double
+    Ptr[u8] _readBuf = null
+    Ptr[u8] _writeBuf = null
+
+    // 打开目标进程（读+写权限）
+    func open(int targetPid): bool {
+        pid = targetPid
+        handle = _lib().OpenProcess(PROCESS_ALL_ACCESS_NEEDED, 0, pid)
+        if handle == null {
+            valid = false
+            return false
+        }
+        valid = true
+        // 预分配读写缓冲区
+        _readBuf = ffi.malloc(16)
+        _writeBuf = ffi.malloc(16)
+        return true
+    }
+
+    // 关闭句柄
+    func close() {
+        if handle != null {
+            _lib().CloseHandle(handle)
+            handle = null
+            valid = false
+        }
+        if _readBuf != null {
+            ffi.free(_readBuf)
+            _readBuf = null
+        }
+        if _writeBuf != null {
+            ffi.free(_writeBuf)
+            _writeBuf = null
+        }
+    }
+
+    // ==================== 读取内存（零分配）====================
+
+    // 读取 4 字节整数 (int32)
+    // 优化: 用预分配 _readBuf, bytesRead 传 null, 无堆操作
+    func readInt(int address): int {
+        if not valid or address == 0 { return 0 }
+        int ok = _lib().ReadProcessMemory(handle, ffi.ptr_from_int(address), _readBuf, 4, null)
+        if ok != 0 {
+            return ffi.read_int(_readBuf, 0)
+        }
+        return 0
+    }
+
+    // 读取 8 字节整数 (int64)
+    func readInt64(int address): int {
+        if not valid or address == 0 { return 0 }
+        int ok = _lib().ReadProcessMemory(handle, ffi.ptr_from_int(address), _readBuf, 8, null)
+        if ok != 0 {
+            return ffi.read_int64(_readBuf, 0)
+        }
+        return 0
+    }
+
+    // 读取 4 字节浮点数 (float)
+    func readFloat(int address): float {
+        if not valid or address == 0 { return 0.0 }
+        int ok = _lib().ReadProcessMemory(handle, ffi.ptr_from_int(address), _readBuf, 4, null)
+        if ok != 0 {
+            return ffi.read_float(_readBuf, 0)
+        }
+        return 0.0
+    }
+
+    // 读取 8 字节双精度 (double)
+    func readDouble(int address): float {
+        if not valid or address == 0 { return 0.0 }
+        int ok = _lib().ReadProcessMemory(handle, ffi.ptr_from_int(address), _readBuf, 8, null)
+        if ok != 0 {
+            return ffi.read_double(_readBuf, 0)
+        }
+        return 0.0
+    }
+
+    // 读取 2 字节短整数 (int16)
+    func readShort(int address): int {
+        if not valid or address == 0 { return 0 }
+        int ok = _lib().ReadProcessMemory(handle, ffi.ptr_from_int(address), _readBuf, 2, null)
+        if ok != 0 {
+            return ffi.read_int16(_readBuf, 0)
+        }
+        return 0
+    }
+
+    // 读取 1 字节 (byte)
+    func readByte(int address): int {
+        if not valid or address == 0 { return 0 }
+        int ok = _lib().ReadProcessMemory(handle, ffi.ptr_from_int(address), _readBuf, 1, null)
+        if ok != 0 {
+            return ffi.read_byte(_readBuf, 0)
+        }
+        return 0
+    }
+
+    // 读取字节数组（返回 Ptr[u8]，调用者需 ffi.free）
+    // size 上限: 100MB
+    func readBytes(int address, int size): Ptr[u8] {
+        if not valid or address == 0 { return null }
+        if size <= 0 or size > MAX_READ_SIZE { return null }
+        Ptr[u8] buf = ffi.malloc(size)
+        if buf == null { return null }
+        int ok = _lib().ReadProcessMemory(handle, ffi.ptr_from_int(address), buf, size, null)
+        if ok == 0 {
+            ffi.free(buf)
+            return null
+        }
+        return buf
+    }
+
+    // ==================== 写入内存（零分配）====================
+
+    // 写入 4 字节整数 (int32)
+    // 优化: 用预分配 _writeBuf, bytesWritten 传 null
+    func writeInt(int address, int value): bool {
+        if not valid or address == 0 { return false }
+        ffi.write_int(_writeBuf, 0, value)
+        int ok = _lib().WriteProcessMemory(handle, ffi.ptr_from_int(address), _writeBuf, 4, null)
+        return ok != 0
+    }
+
+    // 写入 8 字节整数 (int64)
+    func writeInt64(int address, int value): bool {
+        if not valid or address == 0 { return false }
+        ffi.write_int64(_writeBuf, 0, value)
+        int ok = _lib().WriteProcessMemory(handle, ffi.ptr_from_int(address), _writeBuf, 8, null)
+        return ok != 0
+    }
+
+    // 写入 4 字节浮点数 (float)
+    func writeFloat(int address, float value): bool {
+        if not valid or address == 0 { return false }
+        ffi.write_float(_writeBuf, 0, value)
+        int ok = _lib().WriteProcessMemory(handle, ffi.ptr_from_int(address), _writeBuf, 4, null)
+        return ok != 0
+    }
+
+    // 写入 8 字节双精度 (double)
+    func writeDouble(int address, float value): bool {
+        if not valid or address == 0 { return false }
+        ffi.write_double(_writeBuf, 0, value)
+        int ok = _lib().WriteProcessMemory(handle, ffi.ptr_from_int(address), _writeBuf, 8, null)
+        return ok != 0
+    }
+
+    // 写入 2 字节短整数 (int16)
+    func writeShort(int address, int value): bool {
+        if not valid or address == 0 { return false }
+        ffi.write_int16(_writeBuf, 0, value)
+        int ok = _lib().WriteProcessMemory(handle, ffi.ptr_from_int(address), _writeBuf, 2, null)
+        return ok != 0
+    }
+
+    // 写入 1 字节 (byte)
+    func writeByte(int address, int value): bool {
+        if not valid or address == 0 { return false }
+        ffi.write_byte(_writeBuf, 0, value)
+        int ok = _lib().WriteProcessMemory(handle, ffi.ptr_from_int(address), _writeBuf, 1, null)
+        return ok != 0
+    }
+
+    // 写入字节数组
+    func writeBytes(int address, Ptr[u8] data, int size): bool {
+        if not valid or address == 0 { return false }
+        if size <= 0 or size > MAX_READ_SIZE { return false }
+        int ok = _lib().WriteProcessMemory(handle, ffi.ptr_from_int(address), data, size, null)
+        return ok != 0
+    }
+
+    // ==================== 便捷操作 ====================
+
+    // 读取多级指针（类似 CE 的指针追踪）
+    // base: 基地址, offsets: 偏移列表，如 [0x10, 0x20, 0x30]
+    // 返回最终地址，失败返回 0
+    // 优化: 直接用 _readBuf 内联解引用, 不重复调用 readInt
+    func readPointerChain(int base, Array[int] offsets): int {
+        if not valid or base == 0 { return 0 }
+        int addr = base
+        for offsets to off {
+            if addr == 0 { return 0 }
+            // 内联 readInt — 直接用 _readBuf, 零分配
+            int ok = _lib().ReadProcessMemory(handle, ffi.ptr_from_int(addr), _readBuf, 4, null)
+            if ok == 0 { return 0 }
+            addr = ffi.read_int(_readBuf, 0)
+            addr = addr + off
+        }
+        return addr
+    }
+
+    // 读取多级指针指向的 int 值
+    func readIntChain(int base, Array[int] offsets): int {
+        int addr = readPointerChain(base, offsets)
+        if addr == 0 { return 0 }
+        return readInt(addr)
+    }
+
+    // 写入多级指针指向的 int 值
+    func writeIntChain(int base, Array[int] offsets, int value): bool {
+        int addr = readPointerChain(base, offsets)
+        if addr == 0 { return false }
+        return writeInt(addr, value)
+    }
+
+    // ==================== 内存区域扫描 ====================
+
+    // 扫描可读内存区域（类似 CE 的内存区域浏览）
+    // maxRegions: 最多扫描的区域数
+    // 返回区域信息数组: [{base, size, protect, hex}]
+    func scanRegions(int maxRegions): Array[Dict] {
+        Array[Dict] results = []
+        MBI mbi = MBI.malloc()
+        int address = 0, regionCount = 0
+
+        try {
+            while address < 0x7FFFFFFFFFFF and regionCount < maxRegions {
+                int queryResult = _lib().VirtualQueryEx(handle, ffi.ptr_from_int(address), mbi.to_ptr(), 48)
+
+                if queryResult == 0 {
+                    address = address + 0x1000
+                    continue
+                }
+
+                int regionSize = _int(mbi.RegionSize)
+                int state = mbi.State
+                int protect = mbi.Protect
+                int baseAddr = _int(mbi.BaseAddress)
+
+                if state == MEM_COMMIT and (protect & READABLE_MASK) != 0 and regionSize > 0 {
+                    // 用预分配 _readBuf 读前 16 字节（零分配）
+                    int ok = _lib().ReadProcessMemory(handle, ffi.ptr_from_int(baseAddr), _readBuf, 16, null)
+                    if ok != 0 {
+                        string hexDump = ""
+                        for 0:15 to i {
+                            int b = ffi.read_byte(_readBuf, i)
+                            string hx = _str(b)
+                            if b < 16 { hx = "0" + hx }
+                            hexDump = hexDump + hx + " "
+                        }
+                        results.add({base: baseAddr, size: regionSize, protect: protect, hex: hexDump})
+                        regionCount = regionCount + 1
+                    }
+                }
+
+                // 移动到下一个区域
+                if regionSize <= 0 { regionSize = 0x1000 }
+                address = baseAddr + regionSize
+            }
+        } finally {
+            mbi.free()
+        }
+
+        return results
+    }
+
+    // 在可读区域中搜索 int32 值（类似 CE 的 First Scan）
+    // targetValue: 要搜索的值
+    // maxRegions: 最多扫描的区域数
+    // 返回匹配地址数组: [{address, value}]
+    func searchValue(int targetValue, int maxRegions): Array[Dict] {
+        Array[Dict] results = []
+        MBI mbi = MBI.malloc()
+        int address = 0, scannedRegions = 0
+
+        try {
+            while address < 0x7FFFFFFFFFFF and scannedRegions < maxRegions {
+                int queryResult = _lib().VirtualQueryEx(handle, ffi.ptr_from_int(address), mbi.to_ptr(), 48)
+
+                if queryResult == 0 {
+                    address = address + 0x1000
+                    continue
+                }
+
+                int regionSize = _int(mbi.RegionSize)
+                int state = mbi.State
+                int protect = mbi.Protect
+                int baseAddr = _int(mbi.BaseAddress)
+
+                // 只搜索可读写区域
+                if state == MEM_COMMIT and
+                   (protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE)) != 0 and
+                   regionSize > 0 and regionSize < 1048576 * 10 {
+
+                    // 用 readBytes 批量读取整个区域
+                    Ptr[u8] buf = readBytes(baseAddr, regionSize)
+                    if buf != null {
+                        // 逐 4 字节扫描，步长 4
+                        int maxOff = regionSize - 4
+                        for 0:maxOff:4 to off {
+                            int val = ffi.read_int(buf, off)
+                            if val == targetValue {
+                                int foundAddr = baseAddr + off
+                                results.add({address: foundAddr, value: val})
+                            }
+                        }
+                        ffi.free(buf)
+                    }
+                }
+
+                scannedRegions = scannedRegions + 1
+                if regionSize <= 0 { regionSize = 0x1000 }
+                address = baseAddr + regionSize
+            }
+        } finally {
+            mbi.free()
+        }
+
+        return results
+    }
+
+    // 监控地址值的变化（类似 CE 的内存监控）
+    // address: 监控地址, duration: 监控时长(ms), interval: 检查间隔(ms)
+    // 返回变化记录数组: [{time, oldVal, newVal}]
+    func watchValue(int address, int duration, int interval): Array[Dict] {
+        Array[Dict] changes = []
+        int oldVal = readInt(address)
+        int elapsed = 0
+        while elapsed < duration {
+            int newVal = readInt(address)
+            if newVal != oldVal {
+                changes.add({time: elapsed, oldVal: oldVal, newVal: newVal})
+                oldVal = newVal
+            }
+            sleep(interval)
+            elapsed = elapsed + interval
+        }
+        return changes
+    }
+}
+
+// ==================== 便捷函数 ====================
+
+// 打开进程内存句柄（按 PID）
+export func open(int pid): MemoryHandle {
+    MemoryHandle mh = new MemoryHandle()
+    mh.open(pid)
+    return mh
+}
+
+// 打开进程内存句柄（按进程名，需配合 w32_process 使用）
+// 使用示例:
+//   var result = Win32.findProcess("game.exe")
+//   if result.found {
+//       var mem = w32_memory.open(result.pid)
+//       int hp = mem.readInt(0x12345678)
+//       mem.writeInt(0x12345678, 99999)
+//       mem.close()
+//   }
+export func openByPid(int pid): MemoryHandle {
+    return open(pid)
+}
+
+// 获取最后的系统错误码
+export func lastError(): int {
+    return _int(_lib().GetLastError())
+}
