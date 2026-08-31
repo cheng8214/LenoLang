@@ -59,7 +59,9 @@ set SOURCES=!SOURCES! src\platform\platform_thread.c
 set SOURCES=!SOURCES! src\serialize\serialize.c
 
 REM 1. 控制台版 leno_vm.exe（命令行调试用）
-gcc -o build\leno_vm.exe !SOURCES! -Isrc -Wall -Wextra -std=c99 -O2 -DLENO_VM_ONLY -lm -municode -lws2_32
+REM    -s: 剥离符号表和调试信息，避免暴露函数名/变量名/类型结构
+REM    如需调试 VM 本身，去掉 -s 重新 build_vm.bat 即可
+gcc -o build\leno_vm.exe !SOURCES! -Isrc -Wall -Wextra -std=c99 -O2 -s -DLENO_VM_ONLY -lm -municode -lws2_32
 
 if %ERRORLEVEL% neq 0 (
     echo VM build failed
@@ -69,7 +71,7 @@ if %ERRORLEVEL% neq 0 (
 REM 2. 无控制台版 leno_vm_gui.exe（GUI 打包用，-mwindows 链接）
 REM    GUI 程序打包时嵌入此版本，启动时无黑窗口
 REM    脚本仍可通过 _console(true) 动态分配控制台（AllocConsole）
-gcc -o build\leno_vm_gui.exe !SOURCES! -Isrc -Wall -Wextra -std=c99 -O2 -DLENO_VM_ONLY -lm -municode -lws2_32 -mwindows
+gcc -o build\leno_vm_gui.exe !SOURCES! -Isrc -Wall -Wextra -std=c99 -O2 -s -DLENO_VM_ONLY -lm -municode -lws2_32 -mwindows
 
 if %ERRORLEVEL% neq 0 (
     echo VM GUI build failed

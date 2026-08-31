@@ -1141,9 +1141,11 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     // async 函数返回 Future 而非声明的返回类型
                     if (func_def->u.func.is_async) {
                         ret = type_new(TYPE_FUTURE);
-                    } else if (func_def->u.func.return_type) {
+                    } else if (func_def->u.func.return_type &&
+                               func_def->u.func.return_type->kind != TYPE_INFER) {
                         ret = type_copy(func_def->u.func.return_type);
                     } else {
+                        // 无返回类型注解（TYPE_INFER）或无返回类型：统一返回 any
                         ret = type_new(TYPE_ANY);
                     }
 

@@ -98,13 +98,15 @@ fi
 CC=${CC:-gcc}
 
 # debug.c 仅包含反汇编函数，VM 运行时不需要，通过 LENO_VM_ONLY 条件编译排除
-$CC $CFLAGS -o build/leno_vm$EXE $SOURCES -Isrc -Wall -Wextra -std=c99 -O2 -DLENO_VM_ONLY $LIBS
+# -s: 剥离符号表和调试信息，避免暴露函数名/变量名/类型结构
+#      如需调试 VM 本身，去掉 -s 重新 build_vm.sh 即可
+$CC $CFLAGS -o build/leno_vm$EXE $SOURCES -Isrc -Wall -Wextra -std=c99 -O2 -s -DLENO_VM_ONLY $LIBS
 
 echo "VM build successful: build/leno_vm$EXE"
 
 # Windows: 额外构建无控制台版 leno_vm_gui.exe（-mwindows，GUI 打包用）
 if [ "$PLATFORM" = "windows" ]; then
-  $CC $CFLAGS -o build/leno_vm_gui.exe $SOURCES -Isrc -Wall -Wextra -std=c99 -O2 -DLENO_VM_ONLY $LIBS -mwindows
+  $CC $CFLAGS -o build/leno_vm_gui.exe $SOURCES -Isrc -Wall -Wextra -std=c99 -O2 -s -DLENO_VM_ONLY $LIBS -mwindows
   if [ $? -ne 0 ]; then
     echo "VM GUI build failed"
     exit 1
