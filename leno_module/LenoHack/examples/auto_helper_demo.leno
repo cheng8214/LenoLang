@@ -19,8 +19,8 @@
 //   F8  — dump 内存（打印附近地址的值）
 //   Ctrl+Shift+Q — 退出程序
 
-import "../../lib/GameHelper.leno" as gh
-import "../../lib/w32_input.leno" as inp
+import "../lib/GameHelper.leno" as gh
+import "../lib/w32_input.leno" as inp
 
 use gh.GameBot
 

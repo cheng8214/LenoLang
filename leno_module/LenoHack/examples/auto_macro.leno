@@ -10,7 +10,7 @@
 //   Ctrl+Shift+Q — 退出程序
 import ffi
 import strings
-import "../../lib/w32_input.leno" as inp
+import "../lib/w32_input.leno" as inp
 import times
 
 // 全局运行标志

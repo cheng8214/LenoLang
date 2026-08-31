@@ -1,4 +1,4 @@
-// GameHelper.leno — LenoWin32 游戏辅助统一入口
+// GameHelper.leno — LenoHack 统一入口
 // 参考：易语言的外挂辅助模块、AutoHotKey 的游戏宏、CE 的内存修改
 // 功能：进程附加 + 内存读写 + 模拟按键/鼠标 + 热键触发 + 自动循环
 // 
@@ -12,9 +12,9 @@
 
 import "w32_memory.leno" as mem
 import "w32_input.leno" as inp
-import "w32_process.leno" as proc
-import "w32_hotkey.leno" as hotkey
-import "w32_message.leno" as msg
+import "../../LenoWin32/lib/w32_process.leno" as proc
+import "../../LenoWin32/lib/w32_hotkey.leno" as hotkey
+import "../../LenoWin32/lib/w32_message.leno" as msg
 
 use mem.MemoryHandle
 

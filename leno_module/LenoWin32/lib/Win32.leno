@@ -1,6 +1,5 @@
 // Win32.leno — LenoWin32 统一入口模块
 // Windows 系统 API 封装：桌面截屏、全局热键、进程管理、注册表操作等
-// 游戏辅助：进程内存读写、模拟按键/鼠标、热键触发自动化
 // 非 Windows 平台无法使用
 import "w32_capture.leno" as cap
 import "w32_process.leno" as proc
@@ -8,10 +7,6 @@ import "w32_reg.leno" as reg
 import "w32_hotkey.leno" as hotkey
 import "w32_message.leno" as msg
 import "w32_clipboard.leno" as cb
-import "w32_memory.leno" as mem
-import "w32_input.leno" as inp
-
-use mem.MemoryHandle
 
 // ── OS 守卫 ──
 export func _is_supported(): bool { return _os() == "windows" }
@@ -131,77 +126,6 @@ export func processExists(int pid):bool {
 export func getProcessMemory(int pid) {
     if not _is_supported() { return {workingSet: 0, peakWorkingSet: 0, errorCode: -1} }
     return proc.getProcessMemory(pid)
-}
-
-// ==================== 游戏辅助：进程内存读写 ====================
-// 便捷函数，完整 API 请直接 import "w32_memory.leno" as mem
-
-// 打开目标进程内存句柄（读+写权限）
-export func openMemory(int pid): MemoryHandle? {
-    if not _is_supported() { return null }
-    return mem.open(pid)
-}
-
-// 读取进程内存中的 int32 值
-export func readMemoryInt(MemoryHandle h, int address): int {
-    if not _is_supported() { return 0 }
-    return h.readInt(address)
-}
-
-// 写入进程内存中的 int32 值
-export func writeMemoryInt(MemoryHandle h, int address, int value): bool {
-    if not _is_supported() { return false }
-    return h.writeInt(address, value)
-}
-
-// ==================== 游戏辅助：内存扫描 ====================
-
-// 扫描进程可读内存区域
-// 返回区域信息数组: [{base, size, protect, hex}]
-export func scanMemoryRegions(MemoryHandle h, int maxRegions): Array[Dict] {
-    if not _is_supported() { return [] }
-    return h.scanRegions(maxRegions)
-}
-
-// 在进程内存中搜索 int32 值
-// 返回匹配地址数组: [{address, value}]
-export func searchMemoryValue(MemoryHandle h, int targetValue, int maxRegions): Array[Dict] {
-    if not _is_supported() { return [] }
-    return h.searchValue(targetValue, maxRegions)
-}
-
-// 监控进程内存地址值的变化
-// 返回变化记录数组: [{time, oldVal, newVal}]
-export func watchMemoryValue(MemoryHandle h, int address, int duration, int interval): Array[Dict] {
-    if not _is_supported() { return [] }
-    return h.watchValue(address, duration, interval)
-}
-
-// ==================== 游戏辅助：模拟输入 ====================
-// 便捷函数，完整 API 请直接 import "w32_input.leno" as inp
-
-// 模拟按键（按下后释放）
-export func sendKey(int vk): bool {
-    if not _is_supported() { return false }
-    return inp.keyPress(vk)
-}
-
-// 模拟组合键（如 Ctrl+C）
-export func sendCombo(Array[int] keys): bool {
-    if not _is_supported() { return false }
-    return inp.keyCombo(keys)
-}
-
-// 模拟鼠标左键单击
-export func sendClick(): bool {
-    if not _is_supported() { return false }
-    return inp.leftClick()
-}
-
-// 模拟鼠标移动（相对）
-export func sendMouseMove(int dx, int dy): bool {
-    if not _is_supported() { return false }
-    return inp.moveRelative(dx, dy)
 }
 
 // ==================== 注册表操作 ====================

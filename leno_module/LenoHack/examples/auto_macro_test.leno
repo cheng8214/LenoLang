@@ -3,7 +3,7 @@
 // 3秒后开始自动打字到当前焦点窗口
 import ffi
 import strings
-import "../../lib/w32_input.leno" as inp
+import "../lib/w32_input.leno" as inp
 
 main() {
     print("========================================")
@@ -58,7 +58,7 @@ main() {
                 inp.keyPress(vk)
             }
             sleep(100)
-            print("  发送: '" + strings.char(b) + "' (VK=0x" + _str(vk) + " shift=" + needShift + ")")
+            print("  发送: '" + strings.char(b) + "' (VK=" + vk + " shift=" + needShift + ")")
         }
     }
     

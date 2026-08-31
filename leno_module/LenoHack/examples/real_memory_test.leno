@@ -3,8 +3,8 @@
 //
 // target_app.exe 会打印出 PID 和各变量地址，本脚本读取并修改这些值
 import ffi
-import "../../lib/w32_process.leno" as proc
-import "../../lib/w32_memory.leno" as mem
+import "../../LenoWin32/lib/w32_process.leno" as proc
+import "../lib/w32_memory.leno" as mem
 
 use mem.MemoryHandle
 
