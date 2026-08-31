@@ -266,12 +266,17 @@ export struct Label impl Widget, Themeable {
                     _scrollDir = 1
                 }
             }
-            // 用裁剪矩形绘制
+            // 用裁剪矩形绘制（同样需要垂直居中）
+            float scrollDrawY = y
+            if _font != null and _font.ok and _h > 0.0 {
+                var[float, float](fh2, _) = _font.measureString("Ag")
+                if fh2 < _h { scrollDrawY = y + (_h - fh2) / 2.0 }
+            }
             SDL_Rect clip = SDL_Rect.malloc()
             clip.x = _int(x); clip.y = _int(y)
             clip.w = _int(max_w); clip.h = _int(_h + 2)
             r.pushClipRect(clip)
-            r.drawText(_font, text, x - _scrollOffset, y, _txtColor)
+            r.drawText(_font, text, x - _scrollOffset, scrollDrawY, _txtColor)
             r.popClipRect()
             clip.free()
             core.markFrameRedraw()
@@ -285,7 +290,17 @@ export struct Label impl Widget, Themeable {
         if _align == ALIGN_CENTER { drawX = x - msw / 2.0 }     // 居中
         if _align == ALIGN_RIGHT { drawX = x - msw }           // 右对齐
 
-        r.drawText(_font, text, drawX, y, _txtColor)
+        // ★ 垂直居中：当控件高度 _h 大于文字自然高度时，文字垂直居中于控件区域内
+        //    解决 HBox/VBox align:3(stretch) 或 align:1(center) 时 Label 文字与 Button 不对齐的问题
+        float drawY = y
+        if _font != null and _font.ok and _h > 0.0 {
+            var[float, float](fh, _) = _font.measureString("Ag")  // 文字行高（ascender+descender）
+            if fh < _h {
+                drawY = y + (_h - fh) / 2.0
+            }
+        }
+
+        r.drawText(_font, text, drawX, drawY, _txtColor)
     }
 
 // 释放字体资源

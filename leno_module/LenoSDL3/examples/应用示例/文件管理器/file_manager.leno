@@ -42,16 +42,9 @@ import "props_dialog.leno" as props
 import dirs
 import files
 import jsons
-use SDL3.Event
-use SDL3.Renderer
-use SDL3.Font
+use SDL3.(Event, Renderer, Window, TitleBar, MenuBar, VBox, HBox, Splitter, Panel, TreeView, Table, Label, Edit, ComboBox, Button)
 use SDL3.StringSize
-use SDL3.Window
-use SDL3.Panel
-use SDL3.TreeView
-use SDL3.Table
-use SDL3.Label
-use SDL3.Edit
+use SDL3.Font
 use SDL3.Button
 use SDL3.MenuBar
 use SDL3.ComboBox

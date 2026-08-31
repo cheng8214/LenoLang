@@ -1,4 +1,4 @@
-// cache_cleaner.leno — Leno 缓存清理工具
+// cache_cleaner.leno — Leno 缓存清理工具（struct 工程化版）
 //
 // 功能：
 //   1. 选择一个目录，递归扫描其中的 .lenb 文件和 .lenocache 文件夹
@@ -23,420 +23,427 @@ import "../../../lib/sdl_filedialog.leno" as fdlg
 use SDL3.(Event, Renderer, Window, TitleBar, Button, Table, Label, ProgressBar, HBox, VBox, Scancode)
 import dirs
 
-// ==================== 全局状态 ====================
-Window win
-TitleBar titleBar
-Label dirLbl
-Button browseBtn
-Button scanBtn
-Button selectAllBtn
-Button selectNoneBtn
-Button cleanBtn
-ProgressBar progressBar
-Label statusLbl
-Label countLbl
-Table resultTable
+// ==================== 缓存清理器结构体 ====================
+struct CacheCleaner {
+    // ===== 布局常量 =====
+    float PAD = 12.0
 
-// 扫描结果：每项 = {path, type, size}
-Array[Dict] cacheItems = []
-string currentDir = ""
-bool scanning = false
+    // ===== UI 控件引用 =====
+    Window      win
+    TitleBar    titleBar
+    Label       dirLbl
+    Button      browseBtn
+    Button      scanBtn
+    Button      selectAllBtn
+    Button      selectNoneBtn
+    Button      cleanBtn
+    ProgressBar progressBar
+    Label       statusLbl
+    Label       countLbl
+    Table       resultTable
 
-// ==================== 工具方法 ====================
+    // ===== 业务状态 =====
+    // 扫描结果：每项 = {path, type, size}
+    Array[Dict] cacheItems = []
+    string currentDir = ""
+    bool scanning = false
 
-// 人类可读大小
-func fmtSize(int b): string {
-    if b < 1024 { return b + " B" }
-    float kb = _float(b) / 1024.0
-    if kb < 1024.0 { return _int(kb) + " KB" }
-    float mb = kb / 1024.0
-    if mb < 1024.0 { return _int(mb) + " MB" }
-    float gb = mb / 1024.0
-    int gbInt = _int(gb)
-    int tenths = _int((gb - _float(gbInt)) * 10.0)
-    if tenths == 0 { return gbInt + " GB" }
-    return gbInt + "." + tenths + " GB"
-}
+    // ==================== 工具方法 ====================
 
-// 获取文件大小（通过 dirs.stat）
-func getFileSize(string path): int {
-    var st = dirs.stat(path)
-    if st is Dict {
-        var s = st.get("size", 0)
-        if s is int { return s }
+    // 人类可读大小
+    func fmtSize(int b): string {
+        if b < 1024 { return b + " B" }
+        float kb = _float(b) / 1024.0
+        if kb < 1024.0 { return _int(kb) + " KB" }
+        float mb = kb / 1024.0
+        if mb < 1024.0 { return _int(mb) + " MB" }
+        float gb = mb / 1024.0
+        int gbInt = _int(gb)
+        int tenths = _int((gb - _float(gbInt)) * 10.0)
+        if tenths == 0 { return gbInt + " GB" }
+        return gbInt + "." + tenths + " GB"
     }
-    return 0
-}
 
-// 递归计算目录大小
-func calcDirSize(string path): int {
-    int total = 0
-    var entries = null
-    try {
-        entries = dirs.listdir(path)
-    } catch e {
+    // 获取文件大小（通过 dirs.stat）
+    func getFileSize(string path): int {
+        var st = dirs.stat(path)
+        if st is Dict {
+            var s = st.get("size", 0)
+            if s is int { return s }
+        }
         return 0
     }
-    if entries == null { return 0 }
-    for entries to entry {
-        if not (entry is string) { continue }
-        string entryName = _str(entry)
-        if entryName == "" { continue }
-        string fullpath = ""
+
+    // 递归计算目录大小
+    func calcDirSize(string path): int {
+        int total = 0
+        var entries = null
         try {
-            fullpath = dirs.join(path, entryName)
+            entries = dirs.listdir(path)
         } catch e {
-            continue
+            return 0
         }
-        if fullpath == "" { continue }
+        if entries == null { return 0 }
+        for entries to entry {
+            if not (entry is string) { continue }
+            string entryName = _str(entry)
+            if entryName == "" { continue }
+            string fullpath = ""
+            try {
+                fullpath = dirs.join(path, entryName)
+            } catch e {
+                continue
+            }
+            if fullpath == "" { continue }
+            try {
+                if dirs.is_dir(fullpath) {
+                    total = total + calcDirSize(fullpath)
+                } else {
+                    total = total + getFileSize(fullpath)
+                }
+            } catch e {
+                // 跳过权限不足的条目
+            }
+        }
+        return total
+    }
+
+    // 递归扫描目录，收集 .lenb 文件和 .lenocache 文件夹
+    func scanDir(string path) {
+        var entries = null
         try {
-            if dirs.is_dir(fullpath) {
-                total = total + calcDirSize(fullpath)
+            entries = dirs.listdir(path)
+        } catch e {
+            return
+        }
+        if entries == null { return }
+
+        for entries to entry {
+            if not (entry is string) { continue }
+            string entryName = _str(entry)
+            if entryName == "" { continue }
+
+            string fullpath = ""
+            try {
+                fullpath = dirs.join(path, entryName)
+            } catch e {
+                continue
+            }
+            if fullpath == "" { continue }
+
+            var isDir = false
+            try {
+                isDir = dirs.is_dir(fullpath)
+            } catch e {
+                continue
+            }
+
+            if isDir {
+                // 检查是否为 .lenocache 文件夹
+                if entryName == ".lenocache" {
+                    int sz = calcDirSize(fullpath)
+                    cacheItems.add({path: fullpath, type: "文件夹", size: sz})
+                    // 不再递归进入 .lenocache 内部（整体作为一个清理单元）
+                } else {
+                    // 递归扫描子目录
+                    scanDir(fullpath)
+                }
             } else {
-                total = total + getFileSize(fullpath)
-            }
-        } catch e {
-            // 跳过权限不足的条目
-        }
-    }
-    return total
-}
-
-// 递归扫描目录，收集 .lenb 文件和 .lenocache 文件夹
-func scanDir(string path) {
-    var entries = null
-    try {
-        entries = dirs.listdir(path)
-    } catch e {
-        return
-    }
-    if entries == null { return }
-
-    for entries to entry {
-        if not (entry is string) { continue }
-        string entryName = _str(entry)
-        if entryName == "" { continue }
-
-        string fullpath = ""
-        try {
-            fullpath = dirs.join(path, entryName)
-        } catch e {
-            continue
-        }
-        if fullpath == "" { continue }
-
-        var isDir = false
-        try {
-            isDir = dirs.is_dir(fullpath)
-        } catch e {
-            continue
-        }
-
-        if isDir {
-            // 检查是否为 .lenocache 文件夹
-            if entryName == ".lenocache" {
-                int sz = calcDirSize(fullpath)
-                cacheItems.add({path: fullpath, type: "文件夹", size: sz})
-                // 不再递归进入 .lenocache 内部（整体作为一个清理单元）
-            } else {
-                // 递归扫描子目录
-                scanDir(fullpath)
-            }
-        } else {
-            // 检查是否为 .lenb 文件
-            string ext = dirs.extname(entryName)
-            if ext == ".lenb" {
-                int sz = getFileSize(fullpath)
-                cacheItems.add({path: fullpath, type: "文件", size: sz})
+                // 检查是否为 .lenb 文件
+                string ext = dirs.extname(entryName)
+                if ext == ".lenb" {
+                    int sz = getFileSize(fullpath)
+                    cacheItems.add({path: fullpath, type: "文件", size: sz})
+                }
             }
         }
     }
-}
 
-// 刷新 Table 数据
-func refreshTable() {
-    if cacheItems.len() == 0 {
-        resultTable.set_rows([])
-        return
-    }
-    Array[Array[string]] rows = []
-    for cacheItems.len() to i {
-        Dict item = cacheItems[i]
-        string tp = item.get("type", "")
-        int sz = item.get("size", 0)
-        string path = item.get("path", "")
-        rows.add(["", tp, fmtSize(sz), path])
-    }
-    resultTable.set_rows(rows)
-    // 默认全部勾选
-    resultTable.check_all()
-}
-
-// 更新统计标签（从 Table 的勾选行读取）
-func updateCount() {
-    int total = cacheItems.len()
-    Array[int] checkedRows = resultTable.get_checked_rows()
-    int selCount = checkedRows.len()
-    int selSize = 0
-    for checkedRows to idx {
-        if idx >= 0 and idx < cacheItems.len() {
-            selSize = selSize + cacheItems[idx].get("size", 0)
+    // 刷新 Table 数据
+    func refreshTable() {
+        if cacheItems.len() == 0 {
+            resultTable.set_rows([])
+            return
         }
-    }
-    countLbl.set_text("选中: " + selCount + "/" + total + "  大小: " + fmtSize(selSize))
-    // 没有勾选时禁用清理按钮
-    cleanBtn.set_enabled(selCount > 0)
-}
-
-// ==================== 事件回调 ====================
-
-// 浏览目录
-func onBrowse() {
-    fdlg.showOpenFolderDialog(win, func(Array[string] paths, int filter) {
-        if paths != null and paths.len() > 0 {
-            currentDir = paths[0]
-            dirLbl.set_text("目录: " + currentDir)
-            scanBtn.set_enabled(true)
-            statusLbl.set_text("已选择目录，点击[扫描]开始查找缓存")
-            SDL3.markFrameRedraw()
-        }
-    }, {default_location: currentDir})
-}
-
-// 扫描缓存
-func onScan() {
-    if scanning { return }
-    if currentDir == "" {
-        statusLbl.set_text("请先选择目录")
-        SDL3.markFrameRedraw()
-        return
-    }
-    if not dirs.exists(currentDir) or not dirs.is_dir(currentDir) {
-        statusLbl.set_text("错误: 目录不存在或不是目录")
-        SDL3.markFrameRedraw()
-        return
-    }
-
-    scanning = true
-    cacheItems = []
-    resultTable.set_rows([])
-    scanBtn.set_enabled(false)
-    cleanBtn.set_enabled(false)
-    selectAllBtn.set_enabled(false)
-    selectNoneBtn.set_enabled(false)
-    progressBar.set_value(50.0)
-    statusLbl.set_text("扫描中...")
-    SDL3.markFrameRedraw()
-
-    // 执行扫描（同步，大目录可能稍慢但 Leno 单线程下足够快）
-    try {
-        scanDir(currentDir)
-    } catch e {
-        // 扫描中出现权限/IO 错误时保留已收集的部分结果，不中断后续恢复流程
-    }
-
-    // 扫描完成：必须重新启用扫描按钮，否则扫描过一次后就永远无法再次扫描
-    scanning = false
-    scanBtn.set_enabled(true)
-    progressBar.set_value(100.0)
-    refreshTable()
-    updateCount()
-
-    if cacheItems.len() == 0 {
-        statusLbl.set_text("扫描完成: 未发现缓存文件")
-    } else {
-        int totalSize = 0
+        Array[Array[string]] rows = []
         for cacheItems.len() to i {
-            totalSize = totalSize + cacheItems[i].get("size", 0)
-        }
-        statusLbl.set_text("扫描完成: 发现 " + cacheItems.len() + " 个缓存项 (" + fmtSize(totalSize) + ")")
-        cleanBtn.set_enabled(true)
-        selectAllBtn.set_enabled(true)
-        selectNoneBtn.set_enabled(true)
-    }
-    SDL3.markFrameRedraw()
-}
-
-// 全选
-func onSelectAll() {
-    resultTable.check_all()
-    updateCount()
-    SDL3.markFrameRedraw()
-}
-
-// 全不选
-func onSelectNone() {
-    resultTable.uncheck_all()
-    updateCount()
-    SDL3.markFrameRedraw()
-}
-
-// 复选框变化回调
-func onCheckChange(int col, Array[int] checkedRows) {
-    updateCount()
-    SDL3.markFrameRedraw()
-}
-
-// 清理勾选的缓存项
-func onClean() {
-    Array[int] checkedRows = resultTable.get_checked_rows()
-    if checkedRows.len() == 0 {
-        statusLbl.set_text("请先勾选要清理的缓存项")
-        SDL3.markFrameRedraw()
-        return
-    }
-
-    int cleaned = 0
-    int failed = 0
-    int freedSize = 0
-
-    for checkedRows to idx {
-        if idx >= 0 and idx < cacheItems.len() {
-            Dict item = cacheItems[idx]
-            string p = item.get("path", "")
+            Dict item = cacheItems[i]
+            string tp = item.get("type", "")
             int sz = item.get("size", 0)
-            if dirs.delete(p) {
-                cleaned = cleaned + 1
-                freedSize = freedSize + sz
-            } else {
-                failed = failed + 1
+            string path = item.get("path", "")
+            rows.add(["", tp, fmtSize(sz), path])
+        }
+        resultTable.set_rows(rows)
+        // 默认全部勾选
+        resultTable.check_all()
+    }
+
+    // 更新统计标签（从 Table 的勾选行读取）
+    func updateCount() {
+        int total = cacheItems.len()
+        Array[int] checkedRows = resultTable.get_checked_rows()
+        int selCount = checkedRows.len()
+        int selSize = 0
+        for checkedRows to idx {
+            if idx >= 0 and idx < cacheItems.len() {
+                selSize = selSize + cacheItems[idx].get("size", 0)
             }
         }
+        countLbl.set_text("选中: " + selCount + "/" + total + "  大小: " + fmtSize(selSize))
+        // 没有勾选时禁用清理按钮
+        cleanBtn.set_enabled(selCount > 0)
     }
 
-    // 重新扫描以刷新列表（已删除的项不再存在）
-    cacheItems = []
-    if currentDir != "" and dirs.exists(currentDir) {
-        scanDir(currentDir)
-    }
-    refreshTable()
+    // ==================== 事件回调 ====================
 
-    if cacheItems.len() > 0 {
-        selectAllBtn.set_enabled(true)
-        selectNoneBtn.set_enabled(true)
-        cleanBtn.set_enabled(true)
-    } else {
+    // 浏览目录
+    func onBrowse() {
+        fdlg.showOpenFolderDialog(win, func(Array[string] paths, int filter) {
+            if paths != null and paths.len() > 0 {
+                currentDir = paths[0]
+                dirLbl.set_text("目录: " + currentDir)
+                scanBtn.set_enabled(true)
+                statusLbl.set_text("已选择目录，点击[扫描]开始查找缓存")
+                SDL3.markFrameRedraw()
+            }
+        }, {default_location: currentDir})
+    }
+
+    // 扫描缓存
+    func onScan() {
+        if scanning { return }
+        if currentDir == "" {
+            statusLbl.set_text("请先选择目录")
+            SDL3.markFrameRedraw()
+            return
+        }
+        if not dirs.exists(currentDir) or not dirs.is_dir(currentDir) {
+            statusLbl.set_text("错误: 目录不存在或不是目录")
+            SDL3.markFrameRedraw()
+            return
+        }
+
+        scanning = true
+        cacheItems = []
+        resultTable.set_rows([])
+        scanBtn.set_enabled(false)
         cleanBtn.set_enabled(false)
         selectAllBtn.set_enabled(false)
         selectNoneBtn.set_enabled(false)
-    }
-    // 清理后扫描按钮恢复可用（目录仍存在时），避免停留在禁用状态
-    scanBtn.set_enabled(currentDir != "" and dirs.exists(currentDir))
-    updateCount()
+        progressBar.set_value(50.0)
+        statusLbl.set_text("扫描中...")
+        SDL3.markFrameRedraw()
 
-    string msg = "清理完成: 删除 " + cleaned + " 项"
-    if failed > 0 {
-        msg = msg + "，失败 " + failed + " 项"
+        // 执行扫描（同步，大目录可能稍慢但 Leno 单线程下足够快）
+        try {
+            scanDir(currentDir)
+        } catch e {
+            // 扫描中出现权限/IO 错误时保留已收集的部分结果，不中断后续恢复流程
+        }
+
+        // 扫描完成：必须重新启用扫描按钮，否则扫描过一次后就永远无法再次扫描
+        scanning = false
+        scanBtn.set_enabled(true)
+        progressBar.set_value(100.0)
+        refreshTable()
+        updateCount()
+
+        if cacheItems.len() == 0 {
+            statusLbl.set_text("扫描完成: 未发现缓存文件")
+        } else {
+            int totalSize = 0
+            for cacheItems.len() to i {
+                totalSize = totalSize + cacheItems[i].get("size", 0)
+            }
+            statusLbl.set_text("扫描完成: 发现 " + cacheItems.len() + " 个缓存项 (" + fmtSize(totalSize) + ")")
+            cleanBtn.set_enabled(true)
+            selectAllBtn.set_enabled(true)
+            selectNoneBtn.set_enabled(true)
+        }
+        SDL3.markFrameRedraw()
     }
-    msg = msg + "，释放 " + fmtSize(freedSize)
-    statusLbl.set_text(msg)
-    SDL3.markFrameRedraw()
+
+    // 全选
+    func onSelectAll() {
+        resultTable.check_all()
+        updateCount()
+        SDL3.markFrameRedraw()
+    }
+
+    // 全不选
+    func onSelectNone() {
+        resultTable.uncheck_all()
+        updateCount()
+        SDL3.markFrameRedraw()
+    }
+
+    // 复选框变化回调
+    func onCheckChange(int col, Array[int] checkedRows) {
+        updateCount()
+        SDL3.markFrameRedraw()
+    }
+
+    // 清理勾选的缓存项
+    func onClean() {
+        Array[int] checkedRows = resultTable.get_checked_rows()
+        if checkedRows.len() == 0 {
+            statusLbl.set_text("请先勾选要清理的缓存项")
+            SDL3.markFrameRedraw()
+            return
+        }
+
+        int cleaned = 0
+        int failed = 0
+        int freedSize = 0
+
+        for checkedRows to idx {
+            if idx >= 0 and idx < cacheItems.len() {
+                Dict item = cacheItems[idx]
+                string p = item.get("path", "")
+                int sz = item.get("size", 0)
+                if dirs.delete(p) {
+                    cleaned = cleaned + 1
+                    freedSize = freedSize + sz
+                } else {
+                    failed = failed + 1
+                }
+            }
+        }
+
+        // 重新扫描以刷新列表（已删除的项不再存在）
+        cacheItems = []
+        if currentDir != "" and dirs.exists(currentDir) {
+            scanDir(currentDir)
+        }
+        refreshTable()
+
+        if cacheItems.len() > 0 {
+            selectAllBtn.set_enabled(true)
+            selectNoneBtn.set_enabled(true)
+            cleanBtn.set_enabled(true)
+        } else {
+            cleanBtn.set_enabled(false)
+            selectAllBtn.set_enabled(false)
+            selectNoneBtn.set_enabled(false)
+        }
+        // 清理后扫描按钮恢复可用（目录仍存在时），避免停留在禁用状态
+        scanBtn.set_enabled(currentDir != "" and dirs.exists(currentDir))
+        updateCount()
+
+        string msg = "清理完成: 删除 " + cleaned + " 项"
+        if failed > 0 {
+            msg = msg + "，失败 " + failed + " 项"
+        }
+        msg = msg + "，释放 " + fmtSize(freedSize)
+        statusLbl.set_text(msg)
+        SDL3.markFrameRedraw()
+    }
+
+    // ==================== UI 构建 ====================
+
+    func setupUI() {
+        // 标题栏
+        titleBar = SDL3.createTitleBar({title: "Leno 缓存清理工具 - 清理 .lenb 和 .lenocache", height: 32, font_size: 14})
+        win.add(titleBar)
+        float titleH = titleBar.get_h()
+
+        // 顶部工具栏（自动布局：不指定 x/y/w，由父 VBox 分配）
+        var toolbar = SDL3.createHBox({h: 36, padX: 4, padY: 2, spacing: 6})
+
+        browseBtn = SDL3.createButton({w: 80, h: 28, text: "浏览...", font_size: 14})
+        toolbar.add(browseBtn, {grow: 0, shrink: 0, basis: 80, align: 3})
+        browseBtn.on_click(func() { onBrowse() })
+
+        dirLbl = SDL3.createLabel({text: "目录: (未选择)", font_size: 13})
+        toolbar.add(dirLbl, {grow: 1, shrink: 1, align: 3})
+
+        scanBtn = SDL3.createButton({w: 70, h: 28, text: "扫描", font_size: 14})
+        toolbar.add(scanBtn, {grow: 0, shrink: 0, basis: 70, align: 3})
+        scanBtn.set_enabled(false)
+        scanBtn.on_click(func() { onScan() })
+
+        selectAllBtn = SDL3.createButton({w: 60, h: 28, text: "全选", font_size: 14})
+        toolbar.add(selectAllBtn, {grow: 0, shrink: 0, basis: 60, align: 3})
+        selectAllBtn.set_enabled(false)
+        selectAllBtn.on_click(func() { onSelectAll() })
+
+        selectNoneBtn = SDL3.createButton({w: 70, h: 28, text: "全不选", font_size: 14})
+        toolbar.add(selectNoneBtn, {grow: 0, shrink: 0, basis: 70, align: 3})
+        selectNoneBtn.set_enabled(false)
+        selectNoneBtn.on_click(func() { onSelectNone() })
+
+        cleanBtn = SDL3.createButton({w: 90, h: 28, text: "清理选中", font_size: 14})
+        toolbar.add(cleanBtn, {grow: 0, shrink: 0, basis: 90, align: 3})
+        cleanBtn.set_enabled(false)
+        cleanBtn.on_click(func() { onClean() })
+
+        // 进度条（w 由 VBox stretch 自动分配）
+        progressBar = SDL3.createProgressBar({h: 6, show_text: false})
+        progressBar.set_value(0.0)
+
+        // 状态栏（自动布局）
+        var statusBar = SDL3.createHBox({h: 24, padX: 0, padY: 0, spacing: 12})
+        statusLbl = SDL3.createLabel({text: "就绪 - 点击[浏览...]选择要清理的目录", font_size: 13})
+        statusBar.add(statusLbl, {grow: 1, shrink: 1, align: 1})
+        countLbl = SDL3.createLabel({text: "选中: 0/0  大小: 0 B", font_size: 13})
+        statusBar.add(countLbl, {grow: 0, shrink: 1, basis: 220, align: 2})
+
+        // 结果表格（第 0 列为复选框列；w/h 由 VBox grow:1 自动分配填满剩余空间）
+        resultTable = SDL3.createTable({
+            headers: ["", "类型", "大小", "路径"],
+            col_widths: [40.0, 80.0, 100.0, 600.0],
+            sortable: true, zebra: true, row_h: 26, header_h: 30, font_size: 14,
+            check_col: 0,
+            col_reorder: false, resizable: true
+        })
+        resultTable.on_check(func(int col, Array[int] checkedRows) { onCheckChange(col, checkedRows) })
+
+        // 设置根布局（w/h 由 setRootAt 根据窗口尺寸自动设置）
+        var root = SDL3.createVBox({padX: PAD, padY: PAD, spacing: 4})
+        root.add(toolbar, {grow: 0, shrink: 0, align: 3})
+        root.add(progressBar, {grow: 0, shrink: 0, align: 3})
+        root.add(statusBar, {grow: 0, shrink: 0, align: 3})
+        root.add(resultTable, {grow: 1, shrink: 1, align: 3})
+        win.setRootAt(root, 0, titleH)
+    }
+
+    // ==================== 事件处理 ====================
+
+    func handleEvent(Event ev): bool {
+        if ev.isQuit() or ev.isWindowClose() { return false }
+        if titleBar.is_close_requested() {
+            titleBar.clear_close_request()
+            return false
+        }
+        if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
+        return true
+    }
+
+    // ==================== 主入口 ====================
+
+    func run() {
+        _console(false)
+        SDL3.ttfInit()
+
+        int flags = 0x20  // RESIZABLE
+        win = SDL3.createWindow({title: "Leno 缓存清理工具", w: 900, h: 600, flags: flags})
+        if not win.ok { SDL3.ttfQuit(); return }
+
+        win.setMinSize(600, 400)
+
+        setupUI()
+
+        win.run(
+            func(Event ev): bool { return handleEvent(ev) },
+            func(Renderer r) { }
+        )
+
+        SDL3.ttfQuit()
+    }
 }
 
-// ==================== UI 构建 ====================
-
-func setupUI() {
-    float PAD = 12.0
-    float W = 900.0
-    float H = 600.0
-    float TOOLBAR_H = 36.0
-
-    // 标题栏
-    titleBar = SDL3.createTitleBar({title: "Leno 缓存清理工具 - 清理 .lenb 和 .lenocache", height: 32, font_size: 14})
-    win.add(titleBar)
-    float titleH = titleBar.get_h()
-
-    // 顶部工具栏
-    var toolbar = SDL3.createHBox({x: 0, y: 0, w: 100, h: TOOLBAR_H, padX: 4, padY: 2, spacing: 6})
-
-    browseBtn = SDL3.createButton({x: 0, y: 0, w: 80, h: 28, text: "浏览...", font_size: 14})
-    toolbar.add(browseBtn, {grow: 0, shrink: 0, basis: 80, align: 3})
-    browseBtn.on_click(func() { onBrowse() })
-
-    dirLbl = SDL3.createLabel({x: 0, y: 0, text: "目录: (未选择)", font_size: 13})
-    toolbar.add(dirLbl, {grow: 1, shrink: 1, align: 1})
-
-    scanBtn = SDL3.createButton({x: 0, y: 0, w: 70, h: 28, text: "扫描", font_size: 14})
-    toolbar.add(scanBtn, {grow: 0, shrink: 0, basis: 70, align: 3})
-    scanBtn.set_enabled(false)
-    scanBtn.on_click(func() { onScan() })
-
-    selectAllBtn = SDL3.createButton({x: 0, y: 0, w: 60, h: 28, text: "全选", font_size: 14})
-    toolbar.add(selectAllBtn, {grow: 0, shrink: 0, basis: 60, align: 3})
-    selectAllBtn.set_enabled(false)
-    selectAllBtn.on_click(func() { onSelectAll() })
-
-    selectNoneBtn = SDL3.createButton({x: 0, y: 0, w: 70, h: 28, text: "全不选", font_size: 14})
-    toolbar.add(selectNoneBtn, {grow: 0, shrink: 0, basis: 70, align: 3})
-    selectNoneBtn.set_enabled(false)
-    selectNoneBtn.on_click(func() { onSelectNone() })
-
-    cleanBtn = SDL3.createButton({x: 0, y: 0, w: 90, h: 28, text: "清理选中", font_size: 14})
-    toolbar.add(cleanBtn, {grow: 0, shrink: 0, basis: 90, align: 3})
-    cleanBtn.set_enabled(false)
-    cleanBtn.on_click(func() { onClean() })
-
-    // 进度条
-    progressBar = SDL3.createProgressBar({x: 0, y: 0, w: 100, h: 6, show_text: false})
-    progressBar.set_value(0.0)
-
-    // 状态栏
-    var statusBar = SDL3.createHBox({x: 0, y: 0, w: 100, h: 24, padX: 0, padY: 0, spacing: 12})
-    statusLbl = SDL3.createLabel({x: 0, y: 0, text: "就绪 - 点击[浏览...]选择要清理的目录", font_size: 13})
-    statusBar.add(statusLbl, {grow: 1, shrink: 1, align: 1})
-    countLbl = SDL3.createLabel({x: 0, y: 0, text: "选中: 0/0  大小: 0 B", font_size: 13})
-    statusBar.add(countLbl, {grow: 0, shrink: 1, basis: 220, align: 2})
-
-    // 结果表格（第 0 列为复选框列）
-    resultTable = SDL3.createTable({
-        x: 0, y: 0, w: 100, h: 100,
-        headers: ["", "类型", "大小", "路径"],
-        col_widths: [40.0, 80.0, 100.0, 600.0],
-        sortable: true, zebra: true, row_h: 26, header_h: 30, font_size: 14,
-        check_col: 0,
-        col_reorder: false, resizable: true
-    })
-    resultTable.on_check(func(int col, Array[int] checkedRows) { onCheckChange(col, checkedRows) })
-
-    // 设置根布局
-    var root = SDL3.createVBox({x: 0, y: 0, w: W, h: H, padX: PAD, padY: PAD, spacing: 4})
-    root.add(toolbar, {grow: 0, shrink: 0, align: 3})
-    root.add(progressBar, {grow: 0, shrink: 0, align: 3})
-    root.add(statusBar, {grow: 0, shrink: 0, align: 3})
-    root.add(resultTable, {grow: 1, shrink: 1, align: 3})
-    win.setRootAt(root, 0, titleH)
-}
-
-// ==================== 事件处理 ====================
-
-func handleEvent(Event ev): bool {
-    if ev.isQuit() or ev.isWindowClose() { return false }
-    if titleBar.is_close_requested() {
-        titleBar.clear_close_request()
-        return false
-    }
-    if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
-    return true
-}
-
-// ==================== 主函数 ====================
-
+// ==================== 程序入口 ====================
 main() {
-    _console(false)
-    SDL3.ttfInit()
-
-    int flags = 0x20  // RESIZABLE
-    win = SDL3.createWindow({title: "Leno 缓存清理工具", w: 900, h: 600, flags: flags})
-    if not win.ok { SDL3.ttfQuit(); return }
-
-    win.setMinSize(600, 400)
-
-    setupUI()
-
-    win.run(
-        func(Event ev): bool { return handleEvent(ev) },
-        func(Renderer r) { }
-    )
-
-    SDL3.ttfQuit()
+    CacheCleaner app = new CacheCleaner()
+    app.run()
 }

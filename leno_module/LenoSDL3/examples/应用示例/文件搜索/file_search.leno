@@ -1,4 +1,4 @@
-// file_search.leno — 多线程文件搜索器（测试 threads + UI 交互）
+// file_search.leno — 多线程文件搜索器（struct 工程化版）
 //
 // 功能：
 //   1. 输入搜索目录和关键词，点击"搜索"启动后台线程递归扫描文件
@@ -19,6 +19,15 @@
 //   - 取消：主线程 close channel，工作线程检测 is_closed() 退出
 //   - 完成：主线程用 thread.state() 检测所有线程结束，再 join() 取返回值
 //
+// 布局结构：
+//   Window
+//   ├── TitleBar（自绘标题栏）
+//   └── VBox root
+//       ├── HBox toolbar（目录标签 + 目录输入 + 关键词标签 + 关键词输入 + 搜索/停止/清空）
+//       ├── ProgressBar（搜索活跃指示）
+//       ├── HBox statusBar（状态文字 + 统计文字）
+//       └── ListBox（搜索结果列表）
+//
 // 运行：leno file_search.leno
 import "../../../lib/SDL3.leno" as SDL3
 use SDL3.(Event, Renderer, WindowFlag, Scancode, Timer)
@@ -27,92 +36,9 @@ import threads
 import dirs
 import times as ti
 
-// ==================== 全局状态 ====================
-Window win
-TitleBar titleBar
-Edit searchDirEdit
-Edit keywordEdit
-Button searchBtn
-Button stopBtn
-Button clearBtn
-ListBox resultBox
-Label statusLbl
-Label countLbl
-ProgressBar progressBar
-Timer pollTimer
+// ==================== 全局线程入口（必须全局，线程无法捕获 struct 方法）====================
 
-// 搜索控制（仅主线程读写，不跨线程共享）
-Channel searchChannel = null    // channel: 线程→主线程 发送文件路径
-var searchThreads = []      // 活跃线程列表
-var searchActive = false    // 是否正在搜索
-var totalFound = 0          // 已找到的匹配数（主线程聚合）
-var totalScanned = 0        // 已扫描的文件数（主线程聚合）
-var expectedThreads = 0     // 预期线程总数
-var searchStartTime = 0     // 开始时间（毫秒）
-var uiReceived = 0          // UI 线程从 channel 累计接收的条数
-
-// ==================== 目录收集 ====================
-
-// 递归收集目录下所有子目录（非文件），用于均匀分配给工作线程
-// 只展开两层子目录，避免收集阶段耗时过长，同时让大目录树拆分得更均匀
-func _collect_subdirs(string dir, int depth): Array[string] {
-    var result = []
-
-    if depth <= 0 {
-        result.add(dir)
-        return result
-    }
-
-    var entries = null
-    try {
-        entries = dirs.listdir(dir)
-    } catch e {
-        result.add(dir)
-        return result
-    }
-    if entries == null {
-        result.add(dir)
-        return result
-    }
-
-    var has_subdir = false
-    for entries to entry {
-        if not (entry is string) { continue }
-        string entryName = _str(entry)
-        if entryName == "" { continue }
-        if entryName.starts_with("$") or entryName.starts_with(".") { continue }
-        string fullpath = ""
-        try {
-            fullpath = dirs.join(dir, entryName)
-        } catch e {
-            continue
-        }
-        if fullpath == "" { continue }
-        try {
-            if dirs.is_dir(fullpath) {
-                has_subdir = true
-                // 递归收集子目录
-                var sub = _collect_subdirs(fullpath, depth - 1)
-                for sub.len() to i {
-                    result.add(sub[i])
-                }
-            }
-        } catch e {
-            // 跳过权限不足的目录
-        }
-    }
-
-    // 如果没有子目录，把自己作为工作单元
-    if not has_subdir {
-        result.add(dir)
-    }
-
-    return result
-}
-
-// ==================== 工作线程函数 ====================
-
-// 递归扫描目录，返回 [scanned, found]
+// 递归扫描目录，返回 [scanned, found, sent]
 // 每个目录操作都独立 try-catch，权限错误只跳过当前目录，不影响兄弟目录
 func _scan_recursive(any ch, string dir, string keyword, int depth): Array[int] {
     int scanned = 0
@@ -208,7 +134,7 @@ func _scan_recursive(any ch, string dir, string keyword, int depth): Array[int] 
 }
 
 // 批量目录搜索线程入口：扫描多个子目录，返回合计 [scanned, found]
-func scan_batch_worker(any ch, Array dirs_to_scan, string keyword, int wid): Array[int] {
+func _scan_batch_worker(any ch, Array dirs_to_scan, string keyword, int wid): Array[int] {
     var total_scanned = 0
     var total_found = 0
     var total_sent = 0
@@ -237,397 +163,488 @@ func scan_batch_worker(any ch, Array dirs_to_scan, string keyword, int wid): Arr
 
 // 工作线程入口（具名全局函数，避免匿名闭包被主线程 GC 提前回收导致 use-after-free）
 func _worker_entry(any c, Array dirs_arr, string k, int w): Array[int] {
-    return scan_batch_worker(c, dirs_arr, k, w)
+    return _scan_batch_worker(c, dirs_arr, k, w)
 }
 
-// ==================== UI 构建 ====================
-
-func setupUI() {
+// ==================== 文件搜索器结构体 ====================
+struct FileSearcher {
+    // ===== 布局常量 =====
     float PAD = 12.0
-    float W = 900.0
-    float H = 600.0
-    float TOOLBAR_H = 36.0
 
-    // 标题栏
-    titleBar = SDL3.createTitleBar({title: "多线程文件搜索 - Leno threads + SDL3 UI", height: 32, font_size: 14})
-    win.add(titleBar)
-    float titleH = titleBar.get_h()
+    // ===== UI 控件引用 =====
+    Window      win
+    TitleBar    titleBar
+    Edit        searchDirEdit
+    Edit        keywordEdit
+    Button      searchBtn
+    Button      stopBtn
+    Button      clearBtn
+    ListBox     resultBox
+    Label       statusLbl
+    Label       countLbl
+    ProgressBar progressBar
+    Timer       pollTimer
 
-    // 顶部工具栏（搜索目录 + 关键词 + 按钮）
-    var toolbar = SDL3.createHBox({x: PAD, y: titleH + PAD, w: W - PAD * 2, h: TOOLBAR_H, padX: 4, padY: 2, spacing: 6})
+    // ===== 搜索控制（仅主线程读写，不跨线程共享）=====
+    Channel searchChannel = null    // channel: 线程→主线程 发送文件路径
+    Array[Thread] searchThreads = []  // 活跃线程列表
+    bool searchActive = false       // 是否正在搜索
+    int totalFound = 0              // 已找到的匹配数（主线程聚合）
+    int totalScanned = 0            // 已扫描的文件数（主线程聚合）
+    int expectedThreads = 0         // 预期线程总数
+    int searchStartTime = 0         // 开始时间（毫秒）
+    int uiReceived = 0              // UI 线程从 channel 累计接收的条数
 
-    var dirLabel = SDL3.createLabel({x: 0, y: 0, text: "目录:", font_size: 14})
-    toolbar.add(dirLabel, {grow: 0, shrink: 0, align: 1})
+    // ==================== 工具方法 ====================
 
-    searchDirEdit = SDL3.createEdit({x: 0, y: 0, w: 300, h: 28, font_size: 13, placeholder: "搜索目录..."})
-    searchDirEdit.set_text(dirs.dirname(dirs.script_dir()))
-    toolbar.add(searchDirEdit, {grow: 1, shrink: 1, align: 3})
+    // 递归收集目录下所有子目录（非文件），用于均匀分配给工作线程
+    // 只展开两层子目录，避免收集阶段耗时过长，同时让大目录树拆分得更均匀
+    func collectSubdirs(string dir, int depth): Array[string] {
+        var result = []
 
-    var kwLabel = SDL3.createLabel({x: 0, y: 0, text: "关键词:", font_size: 14})
-    toolbar.add(kwLabel, {grow: 0, shrink: 0, align: 1})
-
-    keywordEdit = SDL3.createEdit({x: 0, y: 0, w: 150, h: 28, font_size: 13, placeholder: "文件名关键词..."})
-    toolbar.add(keywordEdit, {grow: 0, shrink: 0, basis: 150, align: 3})
-
-    searchBtn = SDL3.createButton({x: 0, y: 0, w: 70, h: 28, text: "搜索", font_size: 14})
-    toolbar.add(searchBtn, {grow: 0, shrink: 0, basis: 70, align: 3})
-    searchBtn.on_click(func() { startSearch() })
-
-    stopBtn = SDL3.createButton({x: 0, y: 0, w: 70, h: 28, text: "停止", font_size: 14})
-    toolbar.add(stopBtn, {grow: 0, shrink: 0, basis: 70, align: 3})
-    stopBtn.set_enabled(false)
-    stopBtn.on_click(func() { stopSearch() })
-
-    clearBtn = SDL3.createButton({x: 0, y: 0, w: 70, h: 28, text: "清空", font_size: 14})
-    toolbar.add(clearBtn, {grow: 0, shrink: 0, basis: 70, align: 3})
-    clearBtn.on_click(func() { clearResults() })
-
-    // 进度条（搜索中设为 100% 表示活跃，空闲设为 0%）
-    progressBar = SDL3.createProgressBar({x: PAD, y: titleH + PAD + TOOLBAR_H + 4, w: W - PAD * 2, h: 6, show_text: false})
-    progressBar.set_value(0.0)
-
-    // 状态栏
-    var statusBar = SDL3.createHBox({x: PAD, y: titleH + PAD + TOOLBAR_H + 14, w: W - PAD * 2, h: 24, padX: 0, padY: 0, spacing: 12})
-    statusLbl = SDL3.createLabel({x: 0, y: 0, text: "就绪 - 输入目录和关键词后点击搜索", font_size: 13})
-    statusBar.add(statusLbl, {grow: 1, shrink: 1, align: 1})
-    countLbl = SDL3.createLabel({x: 0, y: 0, text: "找到: 0  扫描: 0  线程: 0", font_size: 13})
-    statusBar.add(countLbl, {grow: 0, shrink: 1, basis: 200, align: 2})
-
-    // 结果列表
-    resultBox = SDL3.createListBox({x: PAD, y: titleH + PAD + TOOLBAR_H + 44, w: W - PAD * 2, h: H - titleH - PAD * 3 - TOOLBAR_H - 44 - PAD, font_size: 13})
-
-    // 设置根布局
-    var root = SDL3.createVBox({x: 0, y: 0, w: W, h: H, padX: PAD, padY: PAD, spacing: 4})
-    root.add(toolbar, {grow: 0, shrink: 0, align: 3})
-    root.add(progressBar, {grow: 0, shrink: 0, align: 3})
-    root.add(statusBar, {grow: 0, shrink: 0, align: 3})
-    root.add(resultBox, {grow: 1, shrink: 1, align: 3})
-    win.setRootAt(root, 0, titleH)
-}
-
-// ==================== 匹配检查 ====================
-
-func matchKeyword(string entry, string keyword): bool {
-    if keyword == "" { return true }
-    var lowerEntry = entry.to_lower()
-    var lowerKeyword = keyword.to_lower()
-    return lowerEntry.has(lowerKeyword)
-}
-
-// ==================== 搜索控制 ====================
-
-func startSearch() {
-    if searchActive { return }
-
-    string dirPath = searchDirEdit.get_text()
-    string keyword = keywordEdit.get_text()
-
-    if dirPath == "" {
-        statusLbl.set_text("错误: 请输入搜索目录")
-        SDL3.markFrameRedraw()
-        return
-    }
-
-    if not dirs.exists(dirPath) or not dirs.is_dir(dirPath) {
-        statusLbl.set_text("错误: 目录不存在或不是目录")
-        SDL3.markFrameRedraw()
-        return
-    }
-
-    // 重置状态
-    searchActive = true
-    totalFound = 0
-    totalScanned = 0
-    expectedThreads = 0
-    uiReceived = 0
-    searchStartTime = ti.ms()
-    searchThreads = []
-    resultBox.clear()
-    resultBox.add_item("=== 搜索开始 ===")
-    resultBox.add_item("目录: " + dirPath)
-    if keyword != "" {
-        resultBox.add_item("关键词: " + keyword)
-    } else {
-        resultBox.add_item("关键词: (全部文件)")
-    }
-
-    statusLbl.set_text("收集子目录中...")
-    // 启动定时器（搜索完成后会 stop，避免空转触发 requestRedraw 浪费 CPU）
-    pollTimer.reset(50)
-    SDL3.markFrameRedraw()
-
-    // 创建 channel（大缓冲，减少 try_send 丢弃）
-    searchChannel = threads.channel(65536)
-
-    // 递归收集所有子目录（展开 2 层，让大目录树拆分得更均匀）
-    var allDirs = _collect_subdirs(dirPath, 2)
-
-    resultBox.add_item("子目录数: " + allDirs.len())
-    resultBox.add_item("---")
-
-    var ch = searchChannel
-
-    // 将所有子目录均匀分配给最多 8 个线程
-    var maxThreads = 8
-    if allDirs.len() < maxThreads { maxThreads = allDirs.len() }
-    if maxThreads < 1 { maxThreads = 1 }
-
-    if allDirs.len() == 0 {
-        // 没有子目录，单线程搜索整个目录
-        var t = threads.start(_worker_entry, ch, [dirPath], keyword, 1)
-        searchThreads.add(t)
-        expectedThreads = 1
-    } else {
-        int perThread = allDirs.len() / maxThreads
-        int remainder = allDirs.len() % maxThreads
-        int idx = 0
-
-        for maxThreads to i {
-            var batch = []
-            int count = perThread
-            if i < remainder { count = count + 1 }
-            for count to j {
-                if idx < allDirs.len() {
-                    batch.add(allDirs[idx])
-                    idx = idx + 1
-                }
-            }
-            if batch.len() == 0 {
-                continue
-            }
-
-            var t = threads.start(_worker_entry, ch, batch, keyword, i)
-            searchThreads.add(t)
-            expectedThreads = expectedThreads + 1
+        if depth <= 0 {
+            result.add(dir)
+            return result
         }
-    }
 
-    // 处理顶层文件（主线程直接扫描）
-    var topEntries = null
-    try {
-        topEntries = dirs.listdir(dirPath)
-    } catch e {
-        topEntries = null
-    }
-    if topEntries != null {
-        for topEntries to entry {
+        var entries = null
+        try {
+            entries = dirs.listdir(dir)
+        } catch e {
+            result.add(dir)
+            return result
+        }
+        if entries == null {
+            result.add(dir)
+            return result
+        }
+
+        bool hasSubdir = false
+        for entries to entry {
             if not (entry is string) { continue }
             string entryName = _str(entry)
             if entryName == "" { continue }
             if entryName.starts_with("$") or entryName.starts_with(".") { continue }
             string fullpath = ""
             try {
-                fullpath = dirs.join(dirPath, entryName)
+                fullpath = dirs.join(dir, entryName)
             } catch e {
                 continue
             }
             if fullpath == "" { continue }
-            var isDir = false
-            try { isDir = dirs.is_dir(fullpath) } catch e { continue }
-            if not isDir {
-                totalScanned = totalScanned + 1
-                if matchKeyword(entryName, keyword) {
-                    totalFound = totalFound + 1
-                    if ch is Channel {
-                        ch.try_send(fullpath)
+            try {
+                if dirs.is_dir(fullpath) {
+                    hasSubdir = true
+                    // 递归收集子目录
+                    var sub = collectSubdirs(fullpath, depth - 1)
+                    for sub.len() to i {
+                        result.add(sub[i])
+                    }
+                }
+            } catch e {
+                // 跳过权限不足的目录
+            }
+        }
+
+        // 如果没有子目录，把自己作为工作单元
+        if not hasSubdir {
+            result.add(dir)
+        }
+
+        return result
+    }
+
+    // 匹配关键词（不区分大小写）
+    func matchKeyword(string entry, string keyword): bool {
+        if keyword == "" { return true }
+        var lowerEntry = entry.to_lower()
+        var lowerKeyword = keyword.to_lower()
+        return lowerEntry.has(lowerKeyword)
+    }
+
+    // ==================== 搜索控制 ====================
+
+    func startSearch() {
+        if searchActive { return }
+
+        string dirPath = searchDirEdit.get_text()
+        string keyword = keywordEdit.get_text()
+
+        if dirPath == "" {
+            statusLbl.set_text("错误: 请输入搜索目录")
+            SDL3.markFrameRedraw()
+            return
+        }
+
+        if not dirs.exists(dirPath) or not dirs.is_dir(dirPath) {
+            statusLbl.set_text("错误: 目录不存在或不是目录")
+            SDL3.markFrameRedraw()
+            return
+        }
+
+        // 重置状态
+        searchActive = true
+        totalFound = 0
+        totalScanned = 0
+        expectedThreads = 0
+        uiReceived = 0
+        searchStartTime = ti.ms()
+        searchThreads = []
+        resultBox.clear()
+        resultBox.add_item("=== 搜索开始 ===")
+        resultBox.add_item("目录: " + dirPath)
+        if keyword != "" {
+            resultBox.add_item("关键词: " + keyword)
+        } else {
+            resultBox.add_item("关键词: (全部文件)")
+        }
+
+        statusLbl.set_text("收集子目录中...")
+        // 启动定时器（搜索完成后会 stop，避免空转触发 requestRedraw 浪费 CPU）
+        pollTimer.reset(50)
+        SDL3.markFrameRedraw()
+
+        // 创建 channel（大缓冲，减少 try_send 丢弃）
+        searchChannel = threads.channel(65536)
+
+        // 递归收集所有子目录（展开 2 层，让大目录树拆分得更均匀）
+        var allDirs = collectSubdirs(dirPath, 2)
+
+        resultBox.add_item("子目录数: " + allDirs.len())
+        resultBox.add_item("---")
+
+        var ch = searchChannel
+
+        // 将所有子目录均匀分配给最多 8 个线程
+        int maxThreads = 8
+        if allDirs.len() < maxThreads { maxThreads = allDirs.len() }
+        if maxThreads < 1 { maxThreads = 1 }
+
+        if allDirs.len() == 0 {
+            // 没有子目录，单线程搜索整个目录
+            var t = threads.start(_worker_entry, ch, [dirPath], keyword, 1)
+            searchThreads.add(t)
+            expectedThreads = 1
+        } else {
+            int perThread = allDirs.len() / maxThreads
+            int remainder = allDirs.len() % maxThreads
+            int idx = 0
+
+            for maxThreads to i {
+                var batch = []
+                int count = perThread
+                if i < remainder { count = count + 1 }
+                for count to j {
+                    if idx < allDirs.len() {
+                        batch.add(allDirs[idx])
+                        idx = idx + 1
+                    }
+                }
+                if batch.len() == 0 {
+                    continue
+                }
+
+                var t = threads.start(_worker_entry, ch, batch, keyword, i)
+                searchThreads.add(t)
+                expectedThreads = expectedThreads + 1
+            }
+        }
+
+        // 处理顶层文件（主线程直接扫描）
+        var topEntries = null
+        try {
+            topEntries = dirs.listdir(dirPath)
+        } catch e {
+            topEntries = null
+        }
+        if topEntries != null {
+            for topEntries to entry {
+                if not (entry is string) { continue }
+                string entryName = _str(entry)
+                if entryName == "" { continue }
+                if entryName.starts_with("$") or entryName.starts_with(".") { continue }
+                string fullpath = ""
+                try {
+                    fullpath = dirs.join(dirPath, entryName)
+                } catch e {
+                    continue
+                }
+                if fullpath == "" { continue }
+                bool isDir = false
+                try { isDir = dirs.is_dir(fullpath) } catch e { continue }
+                if not isDir {
+                    totalScanned = totalScanned + 1
+                    if matchKeyword(entryName, keyword) {
+                        totalFound = totalFound + 1
+                        if ch is Channel {
+                            ch.try_send(fullpath)
+                        }
                     }
                 }
             }
         }
+
+        statusLbl.set_text("搜索中... " + expectedThreads + " 个线程并行")
+        countLbl.set_text("找到: " + totalFound + "  扫描: " + totalScanned + "  线程: " + expectedThreads)
+        searchBtn.set_enabled(false)
+        stopBtn.set_enabled(true)
+        progressBar.set_value(100.0)
+        SDL3.markFrameRedraw()
     }
 
-    statusLbl.set_text("搜索中... " + expectedThreads + " 个线程并行")
-    countLbl.set_text("找到: " + totalFound + "  扫描: " + totalScanned + "  线程: " + expectedThreads)
-    searchBtn.set_enabled(false)
-    stopBtn.set_enabled(true)
-    progressBar.set_value(100.0)
-    SDL3.markFrameRedraw()
-}
-
-func stopSearch() {
-    if not searchActive { return }
-    if searchChannel is Channel {
-        searchChannel.close()
-    }
-    statusLbl.set_text("正在停止...")
-    SDL3.markFrameRedraw()
-}
-
-func clearResults() {
-    if searchActive { return }
-    resultBox.clear()
-    totalFound = 0
-    totalScanned = 0
-    uiReceived = 0
-    countLbl.set_text("找到: 0  扫描: 0  线程: 0")
-    statusLbl.set_text("就绪")
-    SDL3.markFrameRedraw()
-}
-
-func finishSearch() {
-    searchActive = false
-
-    // join 所有线程并获取返回值 [scanned, found, sent]
-    for searchThreads.len() to i {
-        var t = searchThreads[i]
-        if t is Thread {
-            try {
-                var result = t.join()
-                if result is Array[int] {
-                    totalScanned = totalScanned + result[0]
-                    totalFound = totalFound + result[1]
-                }
-            } catch e {
-                // 线程异常，跳过
-            }
-        }
-    }
-    searchThreads = []
-
-    // 关闭 channel（pollChannel 已逐步排空，无需同步 drain）
-    if searchChannel is Channel {
-        searchChannel.close()
-    }
-
-    // 计算耗时
-    int elapsed = ti.ms() - searchStartTime
-    if elapsed < 0 { elapsed = 0 }
-
-    resultBox.add_item("---")
-    resultBox.add_item("=== 搜索完成 ===")
-    resultBox.add_item("耗时: " + elapsed + "ms  匹配: " + totalFound + "  扫描: " + totalScanned)
-    resultBox.scroll_to_bottom()
-
-    statusLbl.set_text("搜索完成 - 耗时 " + elapsed + "ms")
-    countLbl.set_text("找到: " + totalFound + "  扫描: " + totalScanned + "  线程: 0")
-    searchBtn.set_enabled(true)
-    stopBtn.set_enabled(false)
-    progressBar.set_value(0.0)
-    // 停止定时器：搜索结束后不再需要轮询 channel，避免每 50ms 触发 requestRedraw 空转耗 CPU
-    pollTimer.stop()
-    SDL3.markFrameRedraw()
-}
-
-// ==================== 每帧轮询 channel（UI 线程）====================
-
-func pollChannel() {
-    if not searchActive { return }
-
-    try {
-        // 1. 排空 channel 中的文件路径结果
-        if searchChannel is Channel {
-            var ch = searchChannel
-            int received = 0
-            int maxPerFrame = 2000
-
-            while received < maxPerFrame {
-                var msg = ch.try_receive()
-                if msg == null { break }
-                string s = _str(msg)
-                resultBox.add_item(s)
-                received = received + 1
-                uiReceived = uiReceived + 1
-            }
-
-            if received > 0 {
-                resultBox.scroll_to_bottom()
-            }
-        }
-
-        // 2. 用 thread.state() 检测所有线程是否已完成
-        bool allDone = true
-        int runningCount = 0
-        for searchThreads.len() to i {
-            if searchThreads[i] is Thread => t {
-                string st = t.state()
-                if st == "running" {
-                    allDone = false
-                    runningCount = runningCount + 1
-                }
-            }
-        }
-
-        // 更新计数显示
-        countLbl.set_text("找到: " + totalFound + "  扫描: " + totalScanned + "  线程: " + runningCount + "/" + expectedThreads)
-
-        // 3. 所有线程完成且 channel 排空 → join 取返回值并结束搜索
-        if allDone {
-            if searchChannel is Channel {
-                if searchChannel.len() > 0 {
-                    return
-                }
-            }
-            finishSearch()
-        }
-    } catch e {
-        // 防止 timer 回调中的异常导致整个程序崩溃
-        searchActive = false
+    func stopSearch() {
+        if not searchActive { return }
         if searchChannel is Channel {
             searchChannel.close()
         }
-        pollTimer.stop()
-        statusLbl.set_text("错误: " + _str(e))
+        statusLbl.set_text("正在停止...")
+        SDL3.markFrameRedraw()
+    }
+
+    func clearResults() {
+        if searchActive { return }
+        resultBox.clear()
+        totalFound = 0
+        totalScanned = 0
+        uiReceived = 0
+        countLbl.set_text("找到: 0  扫描: 0  线程: 0")
+        statusLbl.set_text("就绪")
+        SDL3.markFrameRedraw()
+    }
+
+    func finishSearch() {
+        searchActive = false
+
+        // join 所有线程并获取返回值 [scanned, found, sent]
+        for searchThreads.len() to i {
+            var t = searchThreads[i]
+            if t is Thread {
+                try {
+                    var result = t.join()
+                    if result is Array[int] {
+                        totalScanned = totalScanned + result[0]
+                        totalFound = totalFound + result[1]
+                    }
+                } catch e {
+                    // 线程异常，跳过
+                }
+            }
+        }
+        searchThreads = []
+
+        // 关闭 channel（pollChannel 已逐步排空，无需同步 drain）
+        if searchChannel is Channel {
+            searchChannel.close()
+        }
+
+        // 计算耗时
+        int elapsed = ti.ms() - searchStartTime
+        if elapsed < 0 { elapsed = 0 }
+
+        resultBox.add_item("---")
+        resultBox.add_item("=== 搜索完成 ===")
+        resultBox.add_item("耗时: " + elapsed + "ms  匹配: " + totalFound + "  扫描: " + totalScanned)
+        resultBox.scroll_to_bottom()
+
+        statusLbl.set_text("搜索完成 - 耗时 " + elapsed + "ms")
+        countLbl.set_text("找到: " + totalFound + "  扫描: " + totalScanned + "  线程: 0")
         searchBtn.set_enabled(true)
         stopBtn.set_enabled(false)
         progressBar.set_value(0.0)
+        // 停止定时器：搜索结束后不再需要轮询 channel，避免每 50ms 触发 requestRedraw 空转耗 CPU
+        pollTimer.stop()
         SDL3.markFrameRedraw()
     }
-}
 
-// ==================== 事件处理 ====================
+    // ==================== 每帧轮询 channel（UI 线程）====================
 
-func handleEvent(Event ev): bool {
-    if ev.isQuit() or ev.isWindowClose() { return false }
-    if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
+    func pollChannel() {
+        if not searchActive { return }
 
-    // 检查标题栏关闭按钮（自定义 TitleBar 不触发系统 WindowClose 事件）
-    if titleBar.is_close_requested() {
-        titleBar.clear_close_request()
-        return false
-    }
+        try {
+            // 1. 排空 channel 中的文件路径结果
+            if searchChannel is Channel {
+                var ch = searchChannel
+                int received = 0
+                int maxPerFrame = 2000
 
-    // 回车触发搜索
-    if ev.isKeyDown() and ev.scancode() == Scancode.RETURN {
-        if keywordEdit.is_focused() or searchDirEdit.is_focused() {
-            startSearch()
+                while received < maxPerFrame {
+                    var msg = ch.try_receive()
+                    if msg == null { break }
+                    string s = _str(msg)
+                    resultBox.add_item(s)
+                    received = received + 1
+                    uiReceived = uiReceived + 1
+                }
+
+                if received > 0 {
+                    resultBox.scroll_to_bottom()
+                }
+            }
+
+            // 2. 用 thread.state() 检测所有线程是否已完成
+            bool allDone = true
+            int runningCount = 0
+            for searchThreads.len() to i {
+                if searchThreads[i] is Thread => t {
+                    string st = t.state()
+                    if st == "running" {
+                        allDone = false
+                        runningCount = runningCount + 1
+                    }
+                }
+            }
+
+            // 更新计数显示
+            countLbl.set_text("找到: " + totalFound + "  扫描: " + totalScanned + "  线程: " + runningCount + "/" + expectedThreads)
+
+            // 3. 所有线程完成且 channel 排空 → join 取返回值并结束搜索
+            if allDone {
+                if searchChannel is Channel {
+                    if searchChannel.len() > 0 {
+                        return
+                    }
+                }
+                finishSearch()
+            }
+        } catch e {
+            // 防止 timer 回调中的异常导致整个程序崩溃
+            searchActive = false
+            if searchChannel is Channel {
+                searchChannel.close()
+            }
+            pollTimer.stop()
+            statusLbl.set_text("错误: " + _str(e))
+            searchBtn.set_enabled(true)
+            stopBtn.set_enabled(false)
+            progressBar.set_value(0.0)
+            SDL3.markFrameRedraw()
         }
     }
 
-    return true
+    // ==================== UI 构建 ====================
+
+    func setupUI() {
+        // 标题栏
+        titleBar = SDL3.createTitleBar({title: "多线程文件搜索 - Leno threads + SDL3 UI", height: 32, font_size: 14})
+        win.add(titleBar)
+        float titleH = titleBar.get_h()
+
+        // 顶部工具栏（自动布局：由父 VBox 分配位置和宽度）
+        var toolbar = SDL3.createHBox({h: 36, padX: 4, padY: 2, spacing: 6})
+
+        var dirLabel = SDL3.createLabel({text: "目录:", font_size: 14})
+        toolbar.add(dirLabel, {grow: 0, shrink: 0, align: 1})
+
+        searchDirEdit = SDL3.createEdit({w: 300, h: 28, font_size: 13, placeholder: "搜索目录..."})
+        searchDirEdit.set_text(dirs.dirname(dirs.script_dir()))
+        toolbar.add(searchDirEdit, {grow: 1, shrink: 1, align: 3})
+
+        var kwLabel = SDL3.createLabel({text: "关键词:", font_size: 14})
+        toolbar.add(kwLabel, {grow: 0, shrink: 0, align: 1})
+
+        keywordEdit = SDL3.createEdit({w: 150, h: 28, font_size: 13, placeholder: "文件名关键词..."})
+        toolbar.add(keywordEdit, {grow: 0, shrink: 0, basis: 150, align: 3})
+
+        searchBtn = SDL3.createButton({w: 70, h: 28, text: "搜索", font_size: 14})
+        toolbar.add(searchBtn, {grow: 0, shrink: 0, basis: 70, align: 3})
+        searchBtn.on_click(func() { startSearch() })
+
+        stopBtn = SDL3.createButton({w: 70, h: 28, text: "停止", font_size: 14})
+        toolbar.add(stopBtn, {grow: 0, shrink: 0, basis: 70, align: 3})
+        stopBtn.set_enabled(false)
+        stopBtn.on_click(func() { stopSearch() })
+
+        clearBtn = SDL3.createButton({w: 70, h: 28, text: "清空", font_size: 14})
+        toolbar.add(clearBtn, {grow: 0, shrink: 0, basis: 70, align: 3})
+        clearBtn.on_click(func() { clearResults() })
+
+        // 进度条（搜索中设为 100% 表示活跃，空闲设为 0%）
+        progressBar = SDL3.createProgressBar({h: 6, show_text: false})
+        progressBar.set_value(0.0)
+
+        // 状态栏（自动布局）
+        var statusBar = SDL3.createHBox({h: 24, padX: 0, padY: 0, spacing: 12})
+        statusLbl = SDL3.createLabel({text: "就绪 - 输入目录和关键词后点击搜索", font_size: 13})
+        statusBar.add(statusLbl, {grow: 1, shrink: 1, align: 1})
+        countLbl = SDL3.createLabel({text: "找到: 0  扫描: 0  线程: 0", font_size: 13})
+        statusBar.add(countLbl, {grow: 0, shrink: 1, basis: 200, align: 2})
+
+        // 结果列表
+        resultBox = SDL3.createListBox({font_size: 13})
+
+        // 设置根布局（w/h 由 setRootAt 根据窗口尺寸自动设置）
+        var root = SDL3.createVBox({padX: PAD, padY: PAD, spacing: 4})
+        root.add(toolbar, {grow: 0, shrink: 0, align: 3})
+        root.add(progressBar, {grow: 0, shrink: 0, align: 3})
+        root.add(statusBar, {grow: 0, shrink: 0, align: 3})
+        root.add(resultBox, {grow: 1, shrink: 1, align: 3})
+        win.setRootAt(root, 0, titleH)
+    }
+
+    // ==================== 事件处理 ====================
+
+    func handleEvent(Event ev): bool {
+        if ev.isQuit() or ev.isWindowClose() { return false }
+        if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
+
+        // 检查标题栏关闭按钮（自定义 TitleBar 不触发系统 WindowClose 事件）
+        if titleBar.is_close_requested() {
+            titleBar.clear_close_request()
+            return false
+        }
+
+        // 回车触发搜索
+        if ev.isKeyDown() and ev.scancode() == Scancode.RETURN {
+            if keywordEdit.is_focused() or searchDirEdit.is_focused() {
+                startSearch()
+            }
+        }
+
+        return true
+    }
+
+    // ==================== 主入口 ====================
+
+    func run() {
+        win = SDL3.createWindow({title: "多线程文件搜索", w: 900, h: 600, flags: WindowFlag.RESIZABLE})
+        if not win.ok { return }
+
+        win.setMinSize(600, 400)
+
+        setupUI()
+
+        // 创建定时器：初始不启动（ms=0），搜索时 pollTimer.reset(50) 启动，搜索完成时 stop()
+        // 避免空闲时每 50ms 触发 tickAllTimers → requestRedraw → 全量重绘 → CPU 25%
+        pollTimer = win.addTimer(0, func() {
+            pollChannel()
+        })
+
+        win.run(
+            func(Event ev): bool { return handleEvent(ev) },
+            func(Renderer r) {
+                // 定时器回调在主循环中驱动，此处无需额外处理
+            }
+        )
+
+        // 清理：关闭 channel 通知工作线程停止，再 join 等待退出
+        pollTimer.stop()
+        if searchChannel is Channel {
+            searchChannel.close()
+        }
+        for searchThreads.len() to i {
+            var t = searchThreads[i]
+            if t is Thread {
+                try { t.join() } catch e {}
+            }
+        }
+
+        SDL3.quit()
+    }
 }
 
-// ==================== 主函数 ====================
-
+// ==================== 程序入口 ====================
 main() {
-    win = SDL3.createWindow({title: "多线程文件搜索", w: 900, h: 600, flags: WindowFlag.RESIZABLE})
-    if not win.ok { return }
-
-    setupUI()
-
-    // 创建定时器：初始不启动（ms=0），搜索时 pollTimer.reset(50) 启动，搜索完成时 stop()
-    // 避免空闲时每 50ms 触发 tickAllTimers → requestRedraw → 全量重绘 → CPU 25%
-    pollTimer = win.addTimer(0, func() {
-        pollChannel()
-    })
-
-    win.run(
-        func(Event ev): bool { return handleEvent(ev) },
-        func(Renderer r) {
-            // 定时器回调在主循环中驱动，此处无需额外处理
-        }
-    )
-
-    // 清理：关闭 channel 通知工作线程停止，再 join 等待退出
-    pollTimer.stop()
-    if searchChannel is Channel {
-        searchChannel.close()
-    }
-    for searchThreads.len() to i {
-        var t = searchThreads[i]
-        if t is Thread {
-            try { t.join() } catch e {}
-        }
-    }
-
-    SDL3.quit()
+    FileSearcher app = new FileSearcher()
+    app.run()
 }
