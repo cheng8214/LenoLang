@@ -6,7 +6,7 @@
 //   2. 在可读区域中搜索特定 int32 值（类似 CE 的 First Scan）
 //   3. 监控地址值的变化（类似 CE 的内存监控）
 import ffi
-import "../../LenoWin32/lib/w32_process.leno" as proc
+import "../lib/w32_process.leno" as proc
 import "../lib/w32_memory.leno" as mem
 
 use mem.MemoryHandle

@@ -235,6 +235,55 @@ strings.len("abc")   // 返回 3
 "Hello, World! Hello!".find("xyz")          // -1
 ```
 
+#### `byte_find(pattern, start?)`
+
+在字符串中**二进制安全**地搜索字节序列，返回首次匹配的字节偏移量。
+
+与 `find()` 的关键区别：
+
+- 使用 `memcmp` 逐字节比较，**不会在 `\x00` 处截断**
+- 返回**字节偏移量**（非字符索引）
+- `start` 参数也是字节偏移量
+- 不支持模式匹配（`^` / `$`），始终为纯文本匹配
+
+**参数**:
+
+- `pattern` (string): 要查找的字节序列
+- `start` (int, 可选): 开始查找的字节偏移（0-based，默认为0）
+
+**返回**: `int` - 找到的字节偏移（0-based），未找到返回 -1
+
+```leno
+"Hello, World".byte_find("World")        // 7
+"Hello, World".byte_find("o")            // 4
+"Hello, World".byte_find("o", 5)         // 8 (从字节偏移5开始找)
+"Hello, World".byte_find("xyz")          // -1
+```
+
+**二进制数据处理示例**（含 null 字节的搜索）：
+
+```leno
+// 在含 null 字节的二进制数据中搜索
+var data = strings.char(0x00, 0x01, 0x00, 0x02, 0x00, 0x03)
+var pattern = strings.char(0x00, 0x02)
+print(data.byte_find(pattern))  // 2 (字节偏移)
+
+// find() 在这个场景下会失败（strstr 遇 \x00 截断）
+print(data.find(pattern))       // -1 (找不到)
+```
+
+**多次搜索**（找到所有匹配位置）：
+
+```leno
+var text = "ababab"
+var pos = text.byte_find("ab")
+while pos >= 0 {
+    print("found at: " + pos)
+    pos = text.byte_find("ab", pos + 1)
+}
+// 输出: found at: 0, found at: 2, found at: 4
+```
+
 ---
 
 ### 子串提取
@@ -608,6 +657,7 @@ print(s.byte_len())  // 9    - 6字节(中文) + 5字节(ASCII) = 9字节
 - `sub_str()` - start 参数为字符索引
 - `byte()` - pos 参数为字节偏移
 - `byte_slice()` - start 和 end 参数为字节偏移
+- `byte_find()` - 返回的字节偏移和 start 参数都是 0-based 字节偏移
 
 ### 负数索引
 
@@ -635,6 +685,7 @@ print(s.byte_len())  // 9    - 6字节(中文) + 5字节(ASCII) = 9字节
 | 大小写转换 | `s.to_upper()` | `s:upper()` | 命名不同 |
 | 子串提取 | `s.slice(s, e)` | `s:sub(i, j)` | 索引不同（0-based vs 1-based） |
 | 查找 | `s.find(p, i)` | `s:find(p, i)` | 相似 |
+| 二进制查找 | `s.byte_find(p, s)` | 需自定义 | LenoC 特有 |
 | 重复 | `s.rep(n)` | `s:rep(n)` | 相同 |
 | 反转 | `s.reverse()` | 需自定义 | LenoC 特有 |
 | 修剪 | `s.trim()` | 需自定义 | LenoC 特有 |
@@ -699,5 +750,5 @@ main() {
 
 ---
 
-*文档版本: 1.5*  
-*最后更新: 2026-06-17*
+*文档版本: 1.6*  
+*最后更新: 2026-08-31*

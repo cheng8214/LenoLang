@@ -1,0 +1,245 @@
+// patch_title.leno — LenoHack 静态 Patch EXE 文件中的窗口标题
+// 原理:
+//   1. 以 rb 模式读取整个 exe 到内存
+//   2. 搜索旧标题的 XOR(LENO) 编码字节序列
+//   3. 备份原 exe 到 .bak
+//   4. 以 r+b 模式打开，原地替换匹配位置
+//
+// 用法:
+//   leno patch_title.leno <exe路径> [新标题] [旧标题]
+//   leno patch_title.leno target_app.exe "DuMate 破解版!" "Leno Cleaner"
+//   leno patch_title.leno target_app.exe               # 使用默认标题
+//
+// 参数说明:
+//   exe路径 — 目标可执行文件路径 (必填)
+//   新标题  — 要设置的新窗口标题 (默认: DuMate 破解版-Crack!)
+//   旧标题  — 当前窗口的原始标题 (默认: Leno Cleaner)
+
+import ffi
+import files
+
+// ---- XOR 编码：将 UTF-8 字节序列与 key 循环异或 ----
+// LENO = 4C 45 4E 4F
+func xorEncode(string s, Array[int] key): Array[int] {
+    Array[int] result = []
+    int blen = s.byte_len()
+    if blen == 0 { return result }
+    int keyLen = key.len()
+    for 0:blen-1 to i {
+        int b = s.byte(i)
+        result.add(b ^ key[i % keyLen])
+    }
+    return result
+}
+
+// ---- XOR 解码（与编码相同，XOR 自反）----
+func xorDecode(Array[int] encoded, Array[int] key): string {
+    string result = ""
+    int keyLen = key.len()
+    for encoded to b {
+        int decoded = b ^ key[result.len() % keyLen]
+        result = result + char(decoded)
+    }
+    return result
+}
+
+// ---- 将字节数组转为十六进制字符串（调试用）----
+func _bytes_to_hex(Array[int] bytes): string {
+    string s = ""
+    for bytes to b {
+        string hex = _str(b)
+        if b < 16 { hex = "0" + hex }
+        s = s + hex + " "
+    }
+    return s
+}
+
+// ---- 在字节数组中搜索子序列，返回所有匹配位置 ----
+func findAllPattern(Array[int] data, Array[int] pattern): Array[int] {
+    Array[int] results = []
+    int dLen = data.len()
+    int pLen = pattern.len()
+    if pLen == 0 or dLen < pLen { return results }
+
+    int pos = 0
+    int maxPos = dLen - pLen
+    while pos <= maxPos {
+        bool match = true
+        for 0:pLen-1 to i {
+            if data[pos + i] != pattern[i] {
+                match = false
+                break
+            }
+        }
+        if match {
+            results.add(pos)
+            pos = pos + pLen  // 匹配后跳跃，避免重叠
+        } else {
+            pos = pos + 1
+        }
+    }
+    return results
+}
+
+// ---- 备份文件 ----
+func backupFile(string path): bool {
+    string backup = path + ".bak"
+    var src = files.open(path, "rb")
+    if src == null { return false }
+    var dst = files.open(backup, "wb")
+    if dst == null { src.close(); return false }
+
+    // 分块复制
+    int chunkSize = 4096
+    while true {
+        var chunk = src.read(chunkSize)
+        if chunk == null or chunk.len() == 0 { break }
+        dst.write(chunk)
+    }
+    src.close()
+    dst.close()
+    return true
+}
+
+main() {
+    // ---- 解析命令行参数 ----
+    Array[string] args = _args()
+    if args.len() < 1 {
+        print("用法: leno patch_title.leno <exe路径> [新标题] [旧标题]")
+        return
+    }
+
+    string exePath = args[0]
+    string oldTitle = "Leno Cleaner"
+    string newTitle = "DuMate 破解版-Crack!"
+
+    if args.len() >= 2 { newTitle = args[1] }
+    if args.len() >= 3 { oldTitle = args[2] }
+
+    print("========================================")
+    print("  LenoHack 静态 Patch EXE 标题")
+    print("  目标文件: " + exePath)
+    print("  旧标题:   " + oldTitle)
+    print("  新标题:   " + newTitle)
+    print("========================================")
+    print("")
+
+    // ---- XOR 编码密钥 ----
+    Array[int] xorKey = [0x4C, 0x45, 0x4E, 0x4F]  // "LENO"
+    print("[1] XOR 密钥: LENO (4C 45 4E 4F)")
+
+    // ---- 编码旧标题 ----
+    print("[2] 编码旧标题...")
+    Array[int] oldPattern = xorEncode(oldTitle, xorKey)
+    int oldLen = oldPattern.len()
+    print("  旧标题 UTF-8 字节数: " + oldTitle.byte_len())
+    print("  编码后 pattern: " + _bytes_to_hex(oldPattern))
+
+    // ---- 编码新标题 ----
+    print("[3] 编码新标题...")
+    Array[int] newPattern = xorEncode(newTitle, xorKey)
+    int newLen = newPattern.len()
+    print("  新标题 UTF-8 字节数: " + newTitle.byte_len())
+    print("  编码后 pattern: " + _bytes_to_hex(newPattern))
+    print("")
+
+    // ---- 长度检查 ----
+    if newLen > oldLen {
+        print("  x 新标题比旧标题长 (" + newLen + " > " + oldLen + ")")
+        print("    静态 patch 不支持扩展长度（会破坏 EXE 结构）")
+        print("    请缩短新标题或使用动态 hack_title.leno")
+        return
+    }
+    print("  v 长度检查通过 (" + newLen + " <= " + oldLen + ")")
+    print("")
+
+    // ---- 读取 EXE 文件 ----
+    print("[4] 读取 EXE 文件...")
+    var f = files.open(exePath, "rb")
+    if f == null {
+        print("  x 无法打开文件: " + exePath)
+        return
+    }
+
+    // 读取整个文件到字节数组
+    Array[int] fileData = []
+    int chunkSize = 8192
+    while true {
+        var chunk = f.read(chunkSize)
+        if chunk == null or chunk.byte_len() == 0 { break }
+        int clen = chunk.byte_len()
+        for 0:clen-1 to i {
+            fileData.add(chunk.byte(i))
+        }
+    }
+    f.close()
+    int fileSize = fileData.len()
+    print("  文件大小: " + fileSize + " 字节")
+    print("")
+
+    // ---- 搜索编码后的旧标题 ----
+    print("[5] 搜索 XOR 编码标题...")
+    Array[int] matches = findAllPattern(fileData, oldPattern)
+    print("  找到 " + matches.len() + " 处匹配")
+
+    if matches.len() == 0 {
+        print("  x 未找到匹配的编码标题")
+        print("    可能原因：")
+        print("    1. 旧标题不正确")
+        print("    2. XOR 密钥不是 LENO")
+        print("    3. 标题未被 XOR 编码（明文存储）")
+        return
+    }
+
+    for 0:matches.len()-1 to mi {
+        print("  匹配 #" + (mi + 1) + " @ 偏移 0x" + _str(matches[mi]))
+    }
+    print("")
+
+    // ---- 备份原文件 ----
+    print("[6] 备份原文件...")
+    if backupFile(exePath) {
+        print("  v 已备份到 " + exePath + ".bak")
+    } else {
+        print("  x 备份失败! 放继续 patch")
+        print("    （建议手动备份后再运行）")
+    }
+    print("")
+
+    // ---- 写入新标题 ----
+    print("[7] 写入新标题...")
+    var wf = files.open(exePath, "r+b")
+    if wf == null {
+        print("  x 无法以读写模式打开文件: " + exePath)
+        return
+    }
+
+    int patchCount = 0
+    for matches to offset {
+        // 定位到匹配位置
+        wf.seek(offset, "set")
+
+        // 写入新标题编码字节 + null 填充
+        string patchStr = ""
+        for 0:newLen-1 to i {
+            patchStr = patchStr + char(newPattern[i])
+        }
+        // 如果新标题比旧标题短，用 0x00 填充到旧标题长度
+        for newLen:oldLen-1 to i {
+            patchStr = patchStr + char(0x00)
+        }
+
+        wf.write(patchStr)
+        patchCount = patchCount + 1
+        print("  v 已 patch 偏移 0x" + _str(offset) + " (" + oldLen + " 字节)")
+    }
+
+    wf.close()
+    print("")
+    print("  v 共 patch " + patchCount + " 处")
+    print("")
+    print("========================================")
+    print("  静态 Patch 完成!")
+    print("  新标题: " + newTitle)
+    print("========================================")
+}

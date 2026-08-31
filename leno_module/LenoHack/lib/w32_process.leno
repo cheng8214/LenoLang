@@ -1,0 +1,280 @@
+// w32_process.leno — Windows 进程管理
+// 封装 kernel32.dll 和 psapi.dll 的进程相关 API
+// 提供 ProcessManager face 及 StandardProcessManager / SafeProcessManager 实现
+import ffi
+
+// ==================== KERNEL32 ====================
+clib kernel32 {
+    Ptr OpenProcess(u32 access, i32 inherit, i32 pid)
+    i32 CloseHandle(Ptr handle)
+    i32 TerminateProcess(Ptr hProcess, i32 exitCode)
+    i32 GetExitCodeProcess(Ptr hProcess, Ptr exitCode)
+    i32 GetCurrentProcessId()
+}
+
+kernel32 _krnl = null
+func _krnlLib(): kernel32 {
+    if _krnl == null { _krnl = ffi.load("kernel32.dll") }
+    return _krnl
+}
+
+// ==================== PSAPI ====================
+clib psapi {
+    i32 EnumProcesses(Ptr lpidProcess, i32 cb, Ptr lpcbNeeded)
+    i32 GetModuleBaseNameW(Ptr hProcess, Ptr hModule, Ptr lpBaseName, i32 nSize)
+    i32 GetProcessMemoryInfo(Ptr hProcess, Ptr ppsmemCounters, i32 cb)
+}
+
+psapi _psapi = null
+func _psapiLib(): psapi {
+    if _psapi == null { _psapi = ffi.load("psapi.dll") }
+    return _psapi
+}
+
+// ==================== CSTRUCT ====================
+// Windows PROCESS_MEMORY_COUNTERS 结构 (4 + 4 + 8*8 = 72 bytes)
+cstruct PROCESS_MEMORY_COUNTERS {
+    u32 cb
+    u32 PageFaultCount
+    u64 PeakWorkingSetSize
+    u64 WorkingSetSize
+    u64 QuotaPeakPagedPoolUsage
+    u64 QuotaPagedPoolUsage
+    u64 QuotaPeakNonPagedPoolUsage
+    u64 QuotaNonPagedPoolUsage
+    u64 PagefileUsage
+    u64 PeakPagefileUsage
+}
+
+// ==================== 常量 ====================
+// 进程访问权限
+const PROCESS_QUERY_INFORMATION = 0x0400
+const PROCESS_VM_READ           = 0x0010
+const PROCESS_TERMINATE         = 0x0001
+const STILL_ACTIVE              = 259
+
+// ==================== face 定义 ==========================
+
+// 进程管理器接口
+export face ProcessManager {
+    // 获取进程列表
+    func listProcesses():Dict
+
+    // 根据名称查找进程
+    func findByName(string name):Dict
+
+    // 终止进程
+    func terminate(int pid):Dict
+
+    // 检查进程是否存在
+    func exists(int pid):bool
+}
+
+// ==================== 内部辅助函数 ====================
+
+// 枚举所有进程 PID
+func _enumProcesses():Dict {
+    Ptr[u32] buffer = ffi.malloc(4096)
+    Ptr[u32] needed = ffi.malloc(4)
+
+    try {
+        int result = _psapiLib().EnumProcesses(buffer, 4096, needed)
+
+        if result == 0 {
+            return {pids: [], errorCode: 5}
+        }
+
+        int count = _int(ffi.read_int(needed, 0) / 4)
+        var pids = []
+
+        for 0 : count - 1 to i {
+            int pid = ffi.read_int(buffer, i * 4)
+            if pid > 0 {
+                pids.add(pid)
+            }
+        }
+
+        return {pids: pids, errorCode: 0}
+    } finally {
+        ffi.free(buffer)
+        ffi.free(needed)
+    }
+}
+
+// 获取进程名称（通过 PID 打开进程后读取模块名）
+func _getProcessName(int pid):string {
+    if pid == 0 { return "System Idle Process" }
+
+    Ptr hProcess = _krnlLib().OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, 0, pid)
+
+    if not hProcess {
+        return ""
+    }
+
+    try {
+        Ptr[u16] buffer = ffi.malloc(512)
+        try {
+            int result = _psapiLib().GetModuleBaseNameW(hProcess, null, buffer, 256)
+
+            if result > 0 {
+                return ffi.utf16_to_utf8(buffer)
+            }
+            return ""
+        } finally {
+            ffi.free(buffer)
+        }
+    } finally {
+        _krnlLib().CloseHandle(hProcess)
+    }
+}
+
+// ==================== StandardProcessManager ==========================
+
+// 标准进程管理器实现
+export struct StandardProcessManager impl ProcessManager {
+
+    // 获取进程列表（包含 PID 和名称）
+    func listProcesses():Dict {
+        var enumResult = _enumProcesses()
+        if enumResult.errorCode != 0 {
+            return {processes: [], errorCode: enumResult.errorCode}
+        }
+
+        var processes = []
+
+        for enumResult.pids to pid {
+            if pid is int {
+                var name = _getProcessName(pid)
+                if name != "" {
+                    processes.add({pid: pid, name: name})
+                }
+            }
+        }
+
+        return {processes: processes, errorCode: 0}
+    }
+
+    // 根据名称查找进程（不区分大小写）
+    func findByName(string name):Dict {
+        var result = listProcesses()
+
+        for result.processes to proc {
+            if proc is Dict {
+                if proc.name is string {
+                    var pname = proc.name
+                    if pname.to_lower() == name.to_lower() {
+                        return {found: true, pid: proc.pid}
+                    }
+                }
+            }
+        }
+
+        return {found: false, pid: 0}
+    }
+
+    // 终止进程
+    func terminate(int pid):Dict {
+        Ptr hProcess = _krnlLib().OpenProcess(PROCESS_TERMINATE, 0, pid)
+
+        if not hProcess {
+            return {success: false, errorCode: 5}
+        }
+
+        try {
+            int result = _krnlLib().TerminateProcess(hProcess, 0)
+            return {success: result != 0, errorCode: 0}
+        } finally {
+            _krnlLib().CloseHandle(hProcess)
+        }
+    }
+
+    // 检查进程是否存在（通过退出码判断）
+    func exists(int pid):bool {
+        Ptr hProcess = _krnlLib().OpenProcess(PROCESS_QUERY_INFORMATION, 0, pid)
+
+        if not hProcess {
+            return false
+        }
+
+        Ptr[u32] exitCodePtr = ffi.malloc(4)
+        int result = _krnlLib().GetExitCodeProcess(hProcess, exitCodePtr)
+        int exitCode = ffi.read_int(exitCodePtr, 0)
+        ffi.free(exitCodePtr)
+
+        _krnlLib().CloseHandle(hProcess)
+
+        if result == 0 {
+            return false
+        }
+
+        return exitCode == STILL_ACTIVE
+    }
+}
+
+// ==================== SafeProcessManager ==========================
+
+// 安全的进程管理器（只读操作，不允许终止进程）
+export struct SafeProcessManager impl ProcessManager {
+
+    // 获取进程列表
+    func listProcesses():Dict {
+        var std = new StandardProcessManager()
+        return std.listProcesses()
+    }
+
+    // 根据名称查找进程
+    func findByName(string name):Dict {
+        var std = new StandardProcessManager()
+        return std.findByName(name)
+    }
+
+    // 终止进程 — 安全版本不允许终止
+    func terminate(int pid):Dict {
+        return {success: false, errorCode: 5, message: "SafeProcessManager does not support terminate"}
+    }
+
+    // 检查进程是否存在
+    func exists(int pid):bool {
+        var std = new StandardProcessManager()
+        return std.exists(pid)
+    }
+}
+
+// ==================== 辅助函数 ==========================
+
+// 获取进程内存信息（KB 单位）
+export func getProcessMemory(int pid):Dict {
+    Ptr hProcess = _krnlLib().OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, 0, pid)
+
+    if not hProcess {
+        return {workingSet: 0, peakWorkingSet: 0, errorCode: 5}
+    }
+
+    try {
+        var memCounters = PROCESS_MEMORY_COUNTERS.malloc()
+
+        try {
+            memCounters.cb = PROCESS_MEMORY_COUNTERS.size()
+
+            int result = _psapiLib().GetProcessMemoryInfo(hProcess, memCounters.to_ptr(), PROCESS_MEMORY_COUNTERS.size())
+
+            if result != 0 {
+                return {
+                    workingSet: _int(memCounters.WorkingSetSize / 1024),
+                    peakWorkingSet: _int(memCounters.PeakWorkingSetSize / 1024),
+                    errorCode: 0
+                }
+            }
+            return {workingSet: 0, peakWorkingSet: 0, errorCode: 5}
+        } finally {
+            memCounters.free()
+        }
+    } finally {
+        _krnlLib().CloseHandle(hProcess)
+    }
+}
+
+// 获取当前进程 PID
+export func getCurrentPid():int {
+    return _krnlLib().GetCurrentProcessId()
+}

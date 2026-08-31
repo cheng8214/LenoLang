@@ -18,7 +18,7 @@
 //   旧标题  — 当前窗口的原始标题，用于内存搜索 (默认: Leno 缓存清理工具)
 
 import ffi
-import "../../LenoWin32/lib/w32_process.leno" as proc
+import "../lib/w32_process.leno" as proc
 import "../lib/w32_memory.leno" as mem
 
 use mem.MemoryHandle
@@ -49,18 +49,15 @@ func _bytes_to_hex(Array[int] bytes, int count): string {
 }
 
 // ---- 将 string 转为 UTF-8 字节数组 ----
+// 使用 string.byte_len() + string.byte(i) 直接获取 UTF-8 字节
+// 注意：不能用 s.len()，它返回字符数（中文多字节），不是字节数
 func _str_to_bytes(string s): Array[int] {
     Array[int] bytes = []
-    if s.len() == 0 { return bytes }
-    // 利用 ffi 将字符串写入临时缓冲区，再逐字节读回
-    int slen = s.len()
-    Ptr[u8] buf = ffi.malloc(slen + 1)
-    if buf == null { return bytes }
-    ffi.write_string(buf, 0, s)
-    for 0:slen-1 to i {
-        bytes.add(ffi.read_byte(buf, i))
+    int blen = s.byte_len()
+    if blen == 0 { return bytes }
+    for 0:blen-1 to i {
+        bytes.add(s.byte(i))
     }
-    ffi.free(buf)
     return bytes
 }
 
@@ -160,21 +157,30 @@ main() {
         int newLen = newBytes.len()
         print("  新标题 UTF-8 字节数: " + newLen)
 
-        // 如果新标题比旧标题短，用 0 填充剩余空间；如果更长，只写旧标题长度的字节
-        int writeLen = newLen
-        if writeLen > oldLen { writeLen = oldLen }
-
-        Ptr[u8] wbuf = ffi.malloc(writeLen)
-        if wbuf != null {
-            for 0:writeLen-1 to i {
-                ffi.write_byte(wbuf, i, newBytes[i])
-            }
-            bool ok = h.writeBytes(patchAddr, wbuf, writeLen)
-            ffi.free(wbuf)
-            if ok {
-                print("  v 内存补丁写入成功! (" + writeLen + " 字节)")
-            } else {
-                print("  x 内存写入失败!")
+        if newLen > oldLen {
+            // 新标题比旧标题长：内存补丁会导致后续字符串表错位或缺少 null 终止符
+            // 跳过内存补丁，仅靠 SetWindowTextW 刷新窗口标题
+            print("  ! 新标题比旧标题长 (" + newLen + " > " + oldLen + ")，跳过内存补丁")
+            print("    （仅靠 SetWindowTextW 刷新，进程重启后标题恢复）")
+        } else {
+            // 新标题等于或短于旧标题：写入旧标题长度，不足部分用 0x00 填充
+            int writeLen = oldLen
+            Ptr[u8] wbuf = ffi.malloc(writeLen)
+            if wbuf != null {
+                for 0:writeLen-1 to i {
+                    if i < newLen {
+                        ffi.write_byte(wbuf, i, newBytes[i])
+                    } else {
+                        ffi.write_byte(wbuf, i, 0x00)  // null 填充剩余空间
+                    }
+                }
+                bool ok = h.writeBytes(patchAddr, wbuf, writeLen)
+                ffi.free(wbuf)
+                if ok {
+                    print("  v 内存补丁写入成功! (" + writeLen + " 字节, 含 " + (oldLen - newLen) + " 字节 null 填充)")
+                } else {
+                    print("  x 内存写入失败!")
+                }
             }
         }
     } else {

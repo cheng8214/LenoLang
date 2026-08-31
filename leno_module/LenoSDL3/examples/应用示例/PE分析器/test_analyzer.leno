@@ -1,0 +1,145 @@
+// test_analyzer.leno — PE 分析器逻辑测试（命令行版）
+// 验证 PE 尾部 LENB 检测和 XOR 字符串搜索逻辑
+import files
+import strings
+
+// LENB 魔数 0x424E454C ("LENB" little-endian)
+const LENB_MAGIC = 0x424E454C
+
+func xorKey(int i): int {
+    if i == 0 { return 0x4C }
+    if i == 1 { return 0x45 }
+    if i == 2 { return 0x4E }
+    return 0x4F
+}
+
+func readU32(string data, int off): int {
+    int val = 0
+    for 0:3 to i {
+        val = val | (data.byte(off + i) << (i * 8))
+    }
+    return val
+}
+
+const HEX_CHARS = "0123456789ABCDEF"
+
+func toHex8(int v): string {
+    string s = ""
+    for 7:0:-1 to i {
+        int nibble = (v >> (i * 4)) & 0xF
+        s = s + HEX_CHARS[nibble]
+    }
+    return s
+}
+
+func toHex2(int v): string {
+    int hi = (v >> 4) & 0xF
+    int lo = v & 0xF
+    return HEX_CHARS[hi] + HEX_CHARS[lo]
+}
+
+main() {
+    string exePath = "leno_module/LenoSDL3/examples/基础示例/hello_window.exe"
+    
+    print("========================================")
+    print("  Leno PE 分析器 — 逻辑测试")
+    print("  目标: " + exePath)
+    print("========================================")
+    print("")
+    
+    if not files.exists(exePath) {
+        print("文件不存在!")
+        return
+    }
+    
+    File f = files.open(exePath, "rb")
+    int fileSize = f.len()
+    string data = f.read(fileSize)
+    f.close()
+    
+    print("文件大小: " + fileSize + " bytes (" + fileSize / 1024 + " KB)")
+    print("")
+    
+    // 1. 检测 LENB 尾部
+    print("[1] 检测 LENB 尾部...")
+    if fileSize < 8 {
+        print("  x 文件太小，无法包含 LENB 尾部")
+        return
+    }
+    
+    int magicOff = fileSize - 4
+    int sizeOff = fileSize - 8
+    
+    int magic = readU32(data, magicOff)
+    int lenbSize = readU32(data, sizeOff)
+    
+    print("  尾部 Magic: 0x" + toHex8(magic))
+    print("  LENB Magic: 0x" + toHex8(LENB_MAGIC))
+    print("  匹配: " + (magic == LENB_MAGIC))
+    
+    if magic == LENB_MAGIC {
+        int lenbOffset = fileSize - 8 - lenbSize
+        print("  LENB 大小: " + lenbSize + " bytes")
+        print("  LENB 偏移: 0x" + toHex8(lenbOffset))
+        
+        // 解析 LENB 头部
+        int lenbMagic = readU32(data, lenbOffset)
+        int lenbVersion = readU32(data, lenbOffset + 4)
+        int lenbFlags = readU32(data, lenbOffset + 8)
+        int lenbSrcHash = readU32(data, lenbOffset + 12)
+        int globalVars = readU32(data, lenbOffset + 20)
+        int globalFuncs = readU32(data, lenbOffset + 24)
+        
+        print("")
+        print("[2] LENB 头部信息:")
+        print("  Magic:    0x" + toHex8(lenbMagic) + " (LENB)")
+        print("  Version:  0x" + toHex8(lenbVersion))
+        print("  Flags:    0x" + toHex8(lenbFlags))
+        print("  SrcHash:  0x" + toHex8(lenbSrcHash))
+        print("  全局变量: " + globalVars)
+        print("  全局函数: " + globalFuncs)
+    }
+    print("")
+    
+    // 3. XOR 字符串搜索
+    print("[3] XOR 字符串搜索 (密钥: LENO)...")
+    int pos = 0
+    int maxPos = fileSize - 12
+    int found = 0
+    
+    while pos < maxPos {
+        int runStart = pos
+        int runLen = 0
+        string decrypted = ""
+        
+        while pos + runLen < fileSize and runLen < 256 {
+            int b = data.byte(pos + runLen)
+            int keyByte = xorKey(runLen % 4)
+            int dec = b ^ keyByte
+            
+            if (dec >= 0x20 and dec <= 0x7E) or dec >= 0x80 {
+                decrypted = decrypted + strings.char(dec)
+                runLen = runLen + 1
+            } else {
+                break
+            }
+        }
+        
+        if runLen >= 12 {
+            found = found + 1
+            if found <= 20 {
+                print("  [" + found + "] 偏移: 0x" + toHex8(runStart) + "  长度: " + runLen + "  解密: " + decrypted)
+            }
+            pos = runStart + runLen
+        } else {
+            pos = pos + 1
+        }
+    }
+    
+    print("  ...")
+    print("  总计找到: " + found + " 个 XOR 加密字符串")
+    print("")
+    print("========================================")
+    print("  分析完成!")
+    print("========================================")
+}

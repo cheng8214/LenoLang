@@ -534,6 +534,45 @@ static Value str_find(int argc, Value* args) {
     return val_int(-1);  // 未找到返回 -1
 }
 
+// 10b. 新增：二进制安全的字节序列查找
+// 与 find() 的区别：使用 memcmp 而非 strstr，不会在 \x00 处截断
+// 返回字节偏移量（非字符索引），start 参数也是字节偏移
+static Value str_byte_find(int argc, Value* args) {
+    (void)argc;
+    ObjString* str = (ObjString*)val_as_obj(args[0]);
+    ObjString* pattern = (ObjString*)val_as_obj(args[1]);
+
+    // 起始字节偏移（可选，默认为0）
+    int start = 0;
+    if (argc >= 3) {
+        start = val_as_int(args[2]);
+    }
+
+    // 处理负数起始位置（基于字节长度）
+    int byte_len = str->len;
+    if (start < 0) start = byte_len + start;
+    if (start < 0) start = 0;
+
+    if (start > byte_len) {
+        return val_int(-1);
+    }
+
+    if (pattern->len == 0) {
+        // 空模式匹配起始位置
+        return val_int(start);
+    }
+
+    // 二进制安全搜索：使用 memcmp 逐字节比较
+    int max_off = byte_len - pattern->len;
+    for (int i = start; i <= max_off; i++) {
+        if (memcmp(str->chars + i, pattern->chars, pattern->len) == 0) {
+            return val_int(i);
+        }
+    }
+
+    return val_int(-1);  // 未找到返回 -1
+}
+
 // 11. 新增：字符串格式化
 
 static Value str_format(int argc, Value* args) {
@@ -1363,6 +1402,10 @@ void strings_init_module(void) {
     TypeKind find_params[] = {TYPE_STRING, TYPE_STRING, TYPE_INT, TYPE_BOOL};
     native_register_module_method("strings", "find", str_find, -1, 2, 4, TYPE_INT, TYPE_UNKNOWN, find_params);
 
+    // 10b. 新增：二进制安全的字节序列查找（支持2-3个可变参数）
+    TypeKind byte_find_params[] = {TYPE_STRING, TYPE_STRING, TYPE_INT};
+    native_register_module_method("strings", "byte_find", str_byte_find, -1, 2, 3, TYPE_INT, TYPE_UNKNOWN, byte_find_params);
+
     // 11. 新增：字符串格式化（可变参数）
     TypeKind format_params[] = {TYPE_STRING};
     native_register_module_method("strings", "format", str_format, -1, 1, -1, TYPE_STRING, TYPE_UNKNOWN, format_params);
@@ -1443,6 +1486,10 @@ void strings_init_instance_methods(void) {
     // 10. 新增：查找子串位置
     TypeKind str_int_bool_params[] = {TYPE_STRING, TYPE_INT, TYPE_BOOL};
     string_register_method_with_params("find", make_native(str_find, 4, "find"), -1, 1, 3, TYPE_INT, TYPE_UNKNOWN, str_int_bool_params);
+
+    // 10b. 新增：二进制安全的字节序列查找（实例方法）
+    TypeKind str_int_find_params[] = {TYPE_STRING, TYPE_INT};
+    string_register_method_with_params("byte_find", make_native(str_byte_find, 3, "byte_find"), -1, 1, 2, TYPE_INT, TYPE_UNKNOWN, str_int_find_params);
 
     // 12. 新增：字符串分割（实例方法）
     TypeKind split_sep_params[] = {TYPE_STRING};

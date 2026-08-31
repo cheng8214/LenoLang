@@ -2,7 +2,7 @@
 // 目标：附加到 Windows 计算器(calc.exe)，读取基础内存信息，验证读写能力
 // 这是真实的内存操作实战，不是空谈
 import ffi
-import "../../LenoWin32/lib/w32_process.leno" as proc
+import "../lib/w32_process.leno" as proc
 import "../lib/w32_memory.leno" as mem
 import "../lib/w32_input.leno" as inp
 

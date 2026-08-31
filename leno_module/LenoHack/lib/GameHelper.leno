@@ -16,9 +16,9 @@ import "w32_memory.leno" as mem
 import "w32_input.leno" as inp
 import "hack_log.leno" as log
 import "offsets_config.leno" as cfg
-import "../../LenoWin32/lib/w32_process.leno" as proc
-import "../../LenoWin32/lib/w32_hotkey.leno" as hotkey
-import "../../LenoWin32/lib/w32_message.leno" as msg
+import "w32_process.leno" as proc
+import "w32_hotkey.leno" as hotkey
+import "w32_message.leno" as msg
 
 use mem.MemoryHandle
 use cfg.OffsetConfig
