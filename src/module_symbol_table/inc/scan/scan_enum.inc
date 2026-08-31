@@ -26,6 +26,13 @@
                                 while (*after_enum && *after_enum != '\n') after_enum++;
                                 continue;
                             }
+                            // 跳过多行注释 /* ... */
+                            if (*after_enum == '/' && *(after_enum+1) == '*') {
+                                after_enum += 2;
+                                while (*after_enum && !(*after_enum == '*' && *(after_enum+1) == '/')) after_enum++;
+                                if (*after_enum) after_enum += 2;
+                                continue;
+                            }
                             const char* m_start = after_enum;
                             while (*after_enum && (isalnum((unsigned char)*after_enum) || *after_enum == '_')) after_enum++;
                             int m_len = (int)(after_enum - m_start);

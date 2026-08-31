@@ -45,6 +45,13 @@
                                 while (*after_face && *after_face != '\n') after_face++;
                                 continue;
                             }
+                            // 跳过多行注释 /* ... */
+                            if (*after_face == '/' && *(after_face+1) == '*') {
+                                after_face += 2;
+                                while (*after_face && !(*after_face == '*' && *(after_face+1) == '/')) after_face++;
+                                if (*after_face) after_face += 2;
+                                continue;
+                            }
 
                             // 检查是否是方法声明 (func 关键字)
                             if (strncmp(after_face, "func", 4) == 0 && (after_face[4] == ' ' || after_face[4] == '\t')) {
@@ -65,6 +72,17 @@
                                         int paren_depth = 1;
                                         int has_param = 0;
                                         while (*after_func && paren_depth > 0) {
+                                            // 跳过注释
+                                            if (*after_func == '/' && *(after_func+1) == '/') {
+                                                while (*after_func && *after_func != '\n') after_func++;
+                                                continue;
+                                            }
+                                            if (*after_func == '/' && *(after_func+1) == '*') {
+                                                after_func += 2;
+                                                while (*after_func && !(*after_func == '*' && *(after_func+1) == '/')) after_func++;
+                                                if (*after_func) after_func += 2;
+                                                continue;
+                                            }
                                             if (*after_func == '(') paren_depth++;
                                             else if (*after_func == ')') paren_depth--;
                                             else if (paren_depth == 1) {
@@ -184,7 +202,19 @@
                             }
 
                             // 跳过其他内容
-                            while (*after_face && *after_face != '\n' && *after_face != '}') after_face++;
+                            while (*after_face && *after_face != '\n' && *after_face != '}') {
+                                if (*after_face == '/' && *(after_face+1) == '/') {
+                                    while (*after_face && *after_face != '\n') after_face++;
+                                    break;
+                                }
+                                if (*after_face == '/' && *(after_face+1) == '*') {
+                                    after_face += 2;
+                                    while (*after_face && !(*after_face == '*' && *(after_face+1) == '/')) after_face++;
+                                    if (*after_face) after_face += 2;
+                                    continue;
+                                }
+                                after_face++;
+                            }
                         }
 
                         // 添加 face 到符号表

@@ -231,6 +231,9 @@
                             after_cfunc++;
                             while (*after_cfunc && *after_cfunc != ')' && param_count < MOD_MAX_PARAMS) {
                                 while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t' || *after_cfunc == ',' || *after_cfunc == '\n' || *after_cfunc == '\r')) after_cfunc++;
+                                // 跳过注释
+                                if (*after_cfunc == '/' && *(after_cfunc+1) == '/') { while (*after_cfunc && *after_cfunc != '\n') after_cfunc++; continue; }
+                                if (*after_cfunc == '/' && *(after_cfunc+1) == '*') { after_cfunc += 2; while (*after_cfunc && !(*after_cfunc == '*' && *(after_cfunc+1) == '/')) after_cfunc++; if (*after_cfunc) after_cfunc += 2; continue; }
                                 if (*after_cfunc == ')' || *after_cfunc == '\0') break;
 
                                 // 解析参数类型（支持 Ptr[T] 语法）
@@ -265,6 +268,9 @@
                                 }
                                 // 跳过空白
                                 while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t')) after_cfunc++;
+                                // 跳过注释
+                                if (*after_cfunc == '/' && *(after_cfunc+1) == '/') { while (*after_cfunc && *after_cfunc != '\n') after_cfunc++; }
+                                else if (*after_cfunc == '/' && *(after_cfunc+1) == '*') { after_cfunc += 2; while (*after_cfunc && !(*after_cfunc == '*' && *(after_cfunc+1) == '/')) after_cfunc++; if (*after_cfunc) after_cfunc += 2; }
                                 // 解析参数名
                                 const char* pname_start = after_cfunc;
                                 while (*after_cfunc && (isalnum((unsigned char)*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
@@ -460,6 +466,9 @@
                             after_clib++;
                             while (*after_clib && *after_clib != ')') {
                                 while (*after_clib && (*after_clib == ' ' || *after_clib == '\t' || *after_clib == ',' || *after_clib == '\n' || *after_clib == '\r')) after_clib++;
+                                // 跳过注释
+                                if (*after_clib == '/' && *(after_clib+1) == '/') { while (*after_clib && *after_clib != '\n') after_clib++; continue; }
+                                if (*after_clib == '/' && *(after_clib+1) == '*') { after_clib += 2; while (*after_clib && !(*after_clib == '*' && *(after_clib+1) == '/')) after_clib++; if (*after_clib) after_clib += 2; continue; }
                                 if (*after_clib == ')' || *after_clib == '\0') break;
 
                                 const char* pt_start = after_clib;
@@ -498,6 +507,9 @@
                                     }
                                 }
                                 while (*after_clib && (*after_clib == ' ' || *after_clib == '\t')) after_clib++;
+                                // 跳过注释
+                                if (*after_clib == '/' && *(after_clib+1) == '/') { while (*after_clib && *after_clib != '\n') after_clib++; }
+                                else if (*after_clib == '/' && *(after_clib+1) == '*') { after_clib += 2; while (*after_clib && !(*after_clib == '*' && *(after_clib+1) == '/')) after_clib++; if (*after_clib) after_clib += 2; }
                                 // 跳过参数名
                                 while (*after_clib && (isalnum((unsigned char)*after_clib) || *after_clib == '_')) after_clib++;
                             }
@@ -811,6 +823,9 @@
                                                     int param_count = 0;
                                                     while (*after_clib && *after_clib != ')' && param_count < MOD_MAX_PARAMS) {
                                                         while (*after_clib && (*after_clib == ' ' || *after_clib == '\t')) after_clib++;
+                                                        // 跳过注释
+                                                        if (*after_clib == '/' && *(after_clib+1) == '/') { while (*after_clib && *after_clib != '\n') after_clib++; continue; }
+                                                        if (*after_clib == '/' && *(after_clib+1) == '*') { after_clib += 2; while (*after_clib && !(*after_clib == '*' && *(after_clib+1) == '/')) after_clib++; if (*after_clib) after_clib += 2; continue; }
                                                         const char* pt_start = after_clib;
                                                         while (*after_clib && *after_clib != ',' && *after_clib != ')' && *after_clib != ' ' && *after_clib != '\t') after_clib++;
                                                         int pt_len = (int)(after_clib - pt_start);
@@ -838,6 +853,9 @@
                                                             param_count++;
                                                         }
                                                         while (*after_clib && (*after_clib == ' ' || *after_clib == '\t')) after_clib++;
+                                                        // 跳过注释
+                                                        if (*after_clib == '/' && *(after_clib+1) == '/') { while (*after_clib && *after_clib != '\n') after_clib++; }
+                                                        else if (*after_clib == '/' && *(after_clib+1) == '*') { after_clib += 2; while (*after_clib && !(*after_clib == '*' && *(after_clib+1) == '/')) after_clib++; if (*after_clib) after_clib += 2; }
                                                         // 跳过参数名
                                                         while (*after_clib && *after_clib != ',' && *after_clib != ')') after_clib++;
                                                         if (*after_clib == ',') after_clib++;
@@ -942,6 +960,9 @@
                                                         param_count++;
                                                     }
                                                     while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t')) after_cfunc++;
+                                                    // 跳过注释
+                                                    if (*after_cfunc == '/' && *(after_cfunc+1) == '/') { while (*after_cfunc && *after_cfunc != '\n') after_cfunc++; }
+                                                    else if (*after_cfunc == '/' && *(after_cfunc+1) == '*') { after_cfunc += 2; while (*after_cfunc && !(*after_cfunc == '*' && *(after_cfunc+1) == '/')) after_cfunc++; if (*after_cfunc) after_cfunc += 2; }
                                                     // 解析参数名
                                                     const char* pname_start = after_cfunc;
                                                     while (*after_cfunc && (isalnum((unsigned char)*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
@@ -1034,6 +1055,9 @@
                                             after_cfunc++;
                                             while (*after_cfunc && *after_cfunc != ')' && param_count < MOD_MAX_PARAMS) {
                                                 while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t' || *after_cfunc == ',' || *after_cfunc == '\n' || *after_cfunc == '\r')) after_cfunc++;
+                                                // 跳过注释
+                                                if (*after_cfunc == '/' && *(after_cfunc+1) == '/') { while (*after_cfunc && *after_cfunc != '\n') after_cfunc++; continue; }
+                                                if (*after_cfunc == '/' && *(after_cfunc+1) == '*') { after_cfunc += 2; while (*after_cfunc && !(*after_cfunc == '*' && *(after_cfunc+1) == '/')) after_cfunc++; if (*after_cfunc) after_cfunc += 2; continue; }
                                                 if (*after_cfunc == ')' || *after_cfunc == '\0') break;
 
                                                 const char* pt_start = after_cfunc;
@@ -1066,6 +1090,9 @@
                                                     param_count++;
                                                 }
                                                 while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t')) after_cfunc++;
+                                                // 跳过注释
+                                                if (*after_cfunc == '/' && *(after_cfunc+1) == '/') { while (*after_cfunc && *after_cfunc != '\n') after_cfunc++; }
+                                                else if (*after_cfunc == '/' && *(after_cfunc+1) == '*') { after_cfunc += 2; while (*after_cfunc && !(*after_cfunc == '*' && *(after_cfunc+1) == '/')) after_cfunc++; if (*after_cfunc) after_cfunc += 2; }
                                                 // 解析参数名
                                                 const char* pname_start = after_cfunc;
                                                 while (*after_cfunc && (isalnum((unsigned char)*after_cfunc) || *after_cfunc == '_')) after_cfunc++;

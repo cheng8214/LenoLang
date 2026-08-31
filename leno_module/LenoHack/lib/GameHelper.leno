@@ -1,22 +1,27 @@
 // GameHelper.leno — LenoHack 统一入口
 // 参考：易语言的外挂辅助模块、AutoHotKey 的游戏宏、CE 的内存修改
-// 功能：进程附加 + 内存读写 + 模拟按键/鼠标 + 热键触发 + 自动循环
+// 功能：进程附加 + 内存读写 + AOB扫描 + 模块基址 + 代码注入 + 模拟按键/鼠标 + 热键触发 + 日志 + 配置管理
 // 
 // 典型用法:
 //   import "GameHelper.leno" as gh
 //   var bot = gh.attach("game.exe")
+//   bot.loadConfig("offsets.json")
+//   int hpAddr = bot.getModuleBase("game.exe") + bot.getOffset("game.exe", "hp_offset")
 //   bot.setHotkey(0x73, func() {            // F4 启动
-//       bot.autoHeal(0x12345678, 100, 50)    // 血量<100时按1补血
+//       bot.autoHeal(hpAddr, 100, 50)        // 血量<100时按1补血
 //   })
 //   bot.run()  // 进入热键循环
 
 import "w32_memory.leno" as mem
 import "w32_input.leno" as inp
+import "hack_log.leno" as log
+import "offsets_config.leno" as cfg
 import "../../LenoWin32/lib/w32_process.leno" as proc
 import "../../LenoWin32/lib/w32_hotkey.leno" as hotkey
 import "../../LenoWin32/lib/w32_message.leno" as msg
 
 use mem.MemoryHandle
+use cfg.OffsetConfig
 
 // ==================== GameBot 游戏辅助主体 ====================
 
@@ -26,6 +31,9 @@ export struct GameBot {
     int pid = 0
     string processName = ""
     bool attached = false
+
+    // 偏移配置
+    OffsetConfig? config = null
 
     // 热键回调
     Array[Dict] hotkeys = []
@@ -132,6 +140,178 @@ export struct GameBot {
     func watchValue(int address, int duration, int interval): Array[Dict] {
         if not attached { return [] }
         return memHandle.watchValue(address, duration, interval)
+    }
+
+    // ==================== AOB 扫描（特征码扫描）====================
+
+    // 特征码扫描（全内存）
+    // pattern: 如 "48 8B 05 ?? ?? ?? ?? 89 45 FC"
+    // 返回匹配地址数组: [{address, region}]
+    func aobScan(string pattern, int maxRegions): Array[Dict] {
+        if not attached { return [] }
+        return memHandle.aobScan(pattern, maxRegions)
+    }
+
+    // 特征码扫描，返回第一个匹配地址（便捷版）
+    // 失败返回 0
+    func aobScanFirst(string pattern, int maxRegions): int {
+        if not attached { return 0 }
+        return memHandle.aobScanFirst(pattern, maxRegions)
+    }
+
+    // 在指定模块内进行 AOB 扫描（比全内存快得多）
+    // moduleName: 如 "game.exe", pattern: 特征码
+    // 返回第一个匹配地址，失败返回 0
+    func aobScanModule(string moduleName, string pattern): int {
+        if not attached { return 0 }
+        return memHandle.aobScanModule(moduleName, pattern)
+    }
+
+    // 从配置中获取特征码并扫描
+    // sigName: 配置中的特征码名
+    // 返回第一个匹配地址，失败返回 0
+    func aobScanFromConfig(string sigName, int maxRegions): int {
+        if not attached or config == null { return 0 }
+        if config is OffsetConfig {
+            string pattern = _str(config.getSignature(sigName))
+            if pattern == "" { return 0 }
+            return aobScanFirst(pattern, maxRegions)
+        }
+        return 0
+    }
+
+    // ==================== 模块操作 ====================
+
+    // 获取模块基址
+    // moduleName: 如 "game.exe" 或 "unityplayer.dll"
+    func getModuleBase(string moduleName): int {
+        if not attached { return 0 }
+        return memHandle.getModuleBase(moduleName)
+    }
+
+    // 获取模块大小
+    func getModuleSize(string moduleName): int {
+        if not attached { return 0 }
+        return memHandle.getModuleSize(moduleName)
+    }
+
+    // 获取所有模块列表
+    // 返回 [{name, base, size, entry}]
+    func getModuleList(): Array[Dict] {
+        if not attached { return [] }
+        return memHandle.getModuleList()
+    }
+
+    // ==================== 内存保护 ====================
+
+    // 修改内存页保护属性
+    // 返回旧保护值（用于恢复），失败返回 0
+    func protect(int address, int size, int newProtect): int {
+        if not attached { return 0 }
+        return memHandle.protect(address, size, newProtect)
+    }
+
+    // 恢复内存页保护属性
+    func restoreProtect(int address, int size, int oldProtect): bool {
+        if not attached { return false }
+        return memHandle.restoreProtect(address, size, oldProtect)
+    }
+
+    // 临时修改保护属性，执行写操作，然后恢复
+    func writeWithProtect(int address, Ptr[u8] data, int size, int tempProtect): bool {
+        if not attached { return false }
+        return memHandle.writeWithProtect(address, data, size, tempProtect)
+    }
+
+    // ==================== 代码注入 ====================
+
+    // DLL 注入
+    // dllPath: DLL 完整路径
+    func injectDll(string dllPath): bool {
+        if not attached { return false }
+        return memHandle.injectDll(dllPath)
+    }
+
+    // 写入 Shellcode 到目标进程
+    func writeShellcode(int address, Ptr[u8] code, int size): bool {
+        if not attached { return false }
+        return memHandle.writeShellcode(address, code, size)
+    }
+
+    // 在目标进程分配远程内存
+    func allocRemote(int size, int prot): int {
+        if not attached { return 0 }
+        return memHandle.allocRemote(size, prot)
+    }
+
+    // 释放远程内存
+    func freeRemote(int address): bool {
+        if not attached { return false }
+        return memHandle.freeRemote(address)
+    }
+
+    // ==================== 配置管理 ====================
+
+    // 加载偏移配置文件
+    // path: JSON 文件路径
+    func loadConfig(string path): bool {
+        config = cfg.loadConfig(path)
+        return config != null
+    }
+
+    // 从配置获取模块偏移
+    // moduleName + fieldName → 偏移值
+    func getOffset(string moduleName, string fieldName): int {
+        if config == null { return 0 }
+        if config is OffsetConfig {
+            return _int(config.getOffset(moduleName, fieldName))
+        }
+        return 0
+    }
+
+    // 从配置获取特征码
+    func getSignature(string sigName): string {
+        if config == null { return "" }
+        if config is OffsetConfig {
+            return _str(config.getSignature(sigName))
+        }
+        return ""
+    }
+
+    // 热重载配置
+    func reloadConfig(): bool {
+        if config == null { return false }
+        if config is OffsetConfig {
+            return _bool(config.reload())
+        }
+        return false
+    }
+
+    // ==================== 日志 ====================
+
+    // 记录调试日志
+    func logDebug(string message) {
+        log.debug("Bot", message)
+    }
+
+    // 记录信息日志
+    func logInfo(string message) {
+        log.info("Bot", message)
+    }
+
+    // 记录警告日志
+    func logWarn(string message) {
+        log.warn("Bot", message)
+    }
+
+    // 记录错误日志
+    func logError(string message) {
+        log.error("Bot", message)
+    }
+
+    // 记录错误并附带系统错误码
+    func logErrorWithCode(string message) {
+        log.error("Bot", message + " — " + log.lastErrorString())
     }
 
     // ==================== 模拟输入（便捷封装）====================

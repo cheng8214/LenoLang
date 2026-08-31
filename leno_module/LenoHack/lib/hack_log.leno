@@ -1,0 +1,188 @@
+// hack_log.leno — 分级日志系统
+// 外挂调试需要分级日志、文件输出、错误码转可读字符串
+// 参考：各类外挂框架的 log 模块、Python logging
+//
+// 功能:
+//   - 4 级日志: DEBUG / INFO / WARN / ERROR
+//   - 控制台彩色输出 + 文件追加写入
+//   - GetLastError 转可读错误字符串
+//   - 可配置日志级别（过滤低级别日志）
+//
+// 用法:
+//   import "hack_log.leno" as log
+//   log.init("hack.log", log.LEVEL_DEBUG)
+//   log.info("已附加到进程")
+//   log.error("读取失败: " + log.lastErrorString())
+import ffi
+import files
+import strings
+import times
+
+// ==================== 日志级别 ====================
+
+export const LEVEL_DEBUG = 0
+export const LEVEL_INFO  = 1
+export const LEVEL_WARN  = 2
+export const LEVEL_ERROR = 3
+export const LEVEL_NONE  = 99   // 静默
+
+// ==================== 日志状态 ====================
+
+string _logFile = ""
+int _logLevel = LEVEL_INFO
+bool _consoleOutput = true
+bool _fileOutput = false
+
+// 级别名转字符串
+func _levelStr(int level): string {
+    if level == LEVEL_DEBUG { return "DEBUG" }
+    if level == LEVEL_INFO  { return "INFO" }
+    if level == LEVEL_WARN  { return "WARN" }
+    if level == LEVEL_ERROR { return "ERROR" }
+    return "????"
+}
+
+// 获取时间戳（简化版，用系统时间）
+func _timestamp(): string {
+    return "[" + _str(times.now()) + "]"
+}
+
+// ==================== 初始化 ====================
+
+// 初始化日志系统
+// filePath: 日志文件路径（空字符串 = 不写文件）
+// level: 最低输出级别（低于此级别的日志不输出）
+export func init(string filePath, int level) {
+    _logFile = filePath
+    _logLevel = level
+    _consoleOutput = true
+    _fileOutput = filePath.len() > 0
+    info("Log", "=== 日志系统初始化 ===")
+    if _fileOutput {
+        info("Log", "日志文件: " + filePath)
+    }
+    info("Log", "日志级别: " + _levelStr(level))
+}
+
+// 设置控制台输出
+export func setConsole(bool enabled) {
+    _consoleOutput = enabled
+}
+
+// 设置日志级别
+export func setLevel(int level) {
+    _logLevel = level
+}
+
+// ==================== 核心日志函数 ====================
+
+// 内部输出函数
+func _log(int level, string tag, string message) {
+    if level < _logLevel { return }
+
+    string line = _timestamp() + " [" + _levelStr(level) + "] " + tag + " — " + message
+
+    // 控制台输出
+    if _consoleOutput {
+        print(line)
+    }
+
+    // 文件输出（追加模式）
+    if _fileOutput and _logFile.len() > 0 {
+        _appendToFile(_logFile, line + "\n")
+    }
+}
+
+// 追加写入文件
+func _appendToFile(string path, string content) {
+    // 读取现有内容
+    string old = ""
+    if files.exists(path) {
+        old = files.read(path)
+    }
+    files.write(path, old + content)
+}
+
+// ==================== 公开 API ====================
+
+export func debug(string tag, string message) {
+    _log(LEVEL_DEBUG, tag, message)
+}
+
+export func info(string tag, string message) {
+    _log(LEVEL_INFO, tag, message)
+}
+
+export func warn(string tag, string message) {
+    _log(LEVEL_WARN, tag, message)
+}
+
+export func error(string tag, string message) {
+    _log(LEVEL_ERROR, tag, message)
+}
+
+// 简便版（tag 自动设为 "Hack"）
+export func debugMsg(string message) {
+    _log(LEVEL_DEBUG, "Hack", message)
+}
+
+export func infoMsg(string message) {
+    _log(LEVEL_INFO, "Hack", message)
+}
+
+export func warnMsg(string message) {
+    _log(LEVEL_WARN, "Hack", message)
+}
+
+export func errorMsg(string message) {
+    _log(LEVEL_ERROR, "Hack", message)
+}
+
+// ==================== KERNEL32 (仅 GetLastError) ====================
+clib kernel32 {
+    u32 GetLastError()
+}
+
+kernel32 _krnl = null
+func _lib(): kernel32 {
+    if _krnl == null { _krnl = ffi.load("kernel32.dll") }
+    return _krnl
+}
+
+// ==================== 错误码辅助 ====================
+
+// 获取最后的系统错误码 (GetLastError)
+export func lastError(): int {
+    return _int(_lib().GetLastError())
+}
+
+// 将常见 Windows 错误码转为可读字符串
+// 覆盖外挂开发中最常见的错误码
+export func errorString(int errorCode): string {
+    if errorCode == 0   { return "成功" }
+    if errorCode == 5   { return "拒绝访问 (ACCESS_DENIED) — 可能权限不足或被反作弊保护" }
+    if errorCode == 6   { return "句柄无效 (INVALID_HANDLE)" }
+    if errorCode == 299 { return "部分拷贝 (PARTIAL_COPY) — 地址部分不可读" }
+    if errorCode == 487 { return "地址无效 (INVALID_ADDRESS) — 目标地址不可访问" }
+    if errorCode == 998 { return "内存分配无效 (INVALID_ACCESS)" }
+    if errorCode == 1006 { return "标签不匹配" }
+    if errorCode == 1062 { return "服务未启动" }
+    if errorCode == 1084 { return "不能在安全模式运行" }
+    if errorCode == 1114 { return "动态链接库初始化失败" }
+    if errorCode == 127  { return "找不到过程 (PROC_NOT_FOUND)" }
+    if errorCode == 126  { return "找不到模块 (MOD_NOT_FOUND)" }
+    if errorCode == 183  { return "文件已存在" }
+    if errorCode == 2    { return "找不到文件 (FILE_NOT_FOUND)" }
+    if errorCode == 3    { return "找不到路径" }
+    if errorCode == 87   { return "参数错误 (INVALID_PARAMETER)" }
+    if errorCode == 122  { return "缓冲区不足 (INSUFFICIENT_BUFFER)" }
+    if errorCode == 8    { return "内存不足 (NOT_ENOUGH_MEMORY)" }
+    if errorCode == 1450 { return "资源不足 (NO_SYSTEM_RESOURCES)" }
+    return "错误码 " + errorCode
+}
+
+// 获取并格式化最后的系统错误
+export func lastErrorString(): string {
+    int code = lastError()
+    return errorString(code)
+}

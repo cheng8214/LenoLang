@@ -31,6 +31,13 @@
                                 while (*after_cstruct && *after_cstruct != '\n') after_cstruct++;
                                 continue;
                             }
+                            // 跳过多行注释 /* ... */
+                            if (*after_cstruct == '/' && *(after_cstruct+1) == '*') {
+                                after_cstruct += 2;
+                                while (*after_cstruct && !(*after_cstruct == '*' && *(after_cstruct+1) == '/')) after_cstruct++;
+                                if (*after_cstruct) after_cstruct += 2;
+                                continue;
+                            }
 
                             // cstruct 不支持方法，跳过 func 定义
                             if (strncmp(after_cstruct, "func", 4) == 0 && (after_cstruct[4] == ' ' || after_cstruct[4] == '\t')) {
@@ -45,6 +52,16 @@
                                     after_func++;
                                     int paren_depth = 1;
                                     while (*after_func && paren_depth > 0) {
+                                        if (*after_func == '/' && *(after_func+1) == '/') {
+                                            while (*after_func && *after_func != '\n') after_func++;
+                                            continue;
+                                        }
+                                        if (*after_func == '/' && *(after_func+1) == '*') {
+                                            after_func += 2;
+                                            while (*after_func && !(*after_func == '*' && *(after_func+1) == '/')) after_func++;
+                                            if (*after_func) after_func += 2;
+                                            continue;
+                                        }
                                         if (*after_func == '(') paren_depth++;
                                         else if (*after_func == ')') paren_depth--;
                                         after_func++;
@@ -63,6 +80,16 @@
                                     after_func++;
                                     int brace_depth = 1;
                                     while (*after_func && brace_depth > 0) {
+                                        if (*after_func == '/' && *(after_func+1) == '/') {
+                                            while (*after_func && *after_func != '\n') after_func++;
+                                            continue;
+                                        }
+                                        if (*after_func == '/' && *(after_func+1) == '*') {
+                                            after_func += 2;
+                                            while (*after_func && !(*after_func == '*' && *(after_func+1) == '/')) after_func++;
+                                            if (*after_func) after_func += 2;
+                                            continue;
+                                        }
                                         if (*after_func == '{') brace_depth++;
                                         else if (*after_func == '}') brace_depth--;
                                         after_func++;
@@ -160,7 +187,20 @@
 
                             // 跳过字段默认值（可能包含嵌套的 {} 或 []，如 Dict val = {}）
 	                            // 先跳过到 = 或行尾/分号/}
-	                            while (*after_cstruct && *after_cstruct != '\n' && *after_cstruct != ';' && *after_cstruct != '=' && *after_cstruct != '}') after_cstruct++;
+	                            // 注意：遇到 // 注释时直接跳到行尾，避免注释中的 } 导致扫描错位
+	                            while (*after_cstruct && *after_cstruct != '\n' && *after_cstruct != ';' && *after_cstruct != '=' && *after_cstruct != '}') {
+	                                if (*after_cstruct == '/' && *(after_cstruct+1) == '/') {
+	                                    while (*after_cstruct && *after_cstruct != '\n') after_cstruct++;
+	                                    break;
+	                                }
+	                                if (*after_cstruct == '/' && *(after_cstruct+1) == '*') {
+	                                    after_cstruct += 2;
+	                                    while (*after_cstruct && !(*after_cstruct == '*' && *(after_cstruct+1) == '/')) after_cstruct++;
+	                                    if (*after_cstruct) after_cstruct += 2;
+	                                    continue;
+	                                }
+	                                after_cstruct++;
+	                            }
 	                            if (*after_cstruct == '=') {
 	                                after_cstruct++; // 跳过 =
 	                                // 跳过空白
@@ -170,6 +210,16 @@
 	                                    int depth = 1;
 	                                    after_cstruct++;
 	                                    while (*after_cstruct && depth > 0) {
+	                                        if (*after_cstruct == '/' && *(after_cstruct+1) == '/') {
+	                                            while (*after_cstruct && *after_cstruct != '\n') after_cstruct++;
+	                                            continue;
+	                                        }
+	                                        if (*after_cstruct == '/' && *(after_cstruct+1) == '*') {
+	                                            after_cstruct += 2;
+	                                            while (*after_cstruct && !(*after_cstruct == '*' && *(after_cstruct+1) == '/')) after_cstruct++;
+	                                            if (*after_cstruct) after_cstruct += 2;
+	                                            continue;
+	                                        }
 	                                        if (*after_cstruct == '{') depth++;
 	                                        else if (*after_cstruct == '}') depth--;
 	                                        after_cstruct++;
@@ -178,13 +228,35 @@
 	                                    int depth = 1;
 	                                    after_cstruct++;
 	                                    while (*after_cstruct && depth > 0) {
+	                                        if (*after_cstruct == '/' && *(after_cstruct+1) == '/') {
+	                                            while (*after_cstruct && *after_cstruct != '\n') after_cstruct++;
+	                                            continue;
+	                                        }
+	                                        if (*after_cstruct == '/' && *(after_cstruct+1) == '*') {
+	                                            after_cstruct += 2;
+	                                            while (*after_cstruct && !(*after_cstruct == '*' && *(after_cstruct+1) == '/')) after_cstruct++;
+	                                            if (*after_cstruct) after_cstruct += 2;
+	                                            continue;
+	                                        }
 	                                        if (*after_cstruct == '[') depth++;
 	                                        else if (*after_cstruct == ']') depth--;
 	                                        after_cstruct++;
 	                                    }
 	                                } else {
 	                                    // 简单值（数字、字符串等），跳到 ; 或行尾或 }
-	                                    while (*after_cstruct && *after_cstruct != '\n' && *after_cstruct != ';' && *after_cstruct != '}') after_cstruct++;
+	                                    while (*after_cstruct && *after_cstruct != '\n' && *after_cstruct != ';' && *after_cstruct != '}') {
+	                                        if (*after_cstruct == '/' && *(after_cstruct+1) == '/') {
+	                                            while (*after_cstruct && *after_cstruct != '\n') after_cstruct++;
+	                                            break;
+	                                        }
+	                                        if (*after_cstruct == '/' && *(after_cstruct+1) == '*') {
+	                                            after_cstruct += 2;
+	                                            while (*after_cstruct && !(*after_cstruct == '*' && *(after_cstruct+1) == '/')) after_cstruct++;
+	                                            if (*after_cstruct) after_cstruct += 2;
+	                                            continue;
+	                                        }
+	                                        after_cstruct++;
+	                                    }
 	                                }
 	                            }
 	                            // 跳过分号（无论是否有默认值）

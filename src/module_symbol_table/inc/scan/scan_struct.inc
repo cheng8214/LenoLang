@@ -109,6 +109,13 @@
                                 while (*after_struct && *after_struct != '\n') after_struct++;
                                 continue;
                             }
+                            // 跳过多行注释 /* ... */
+                            if (*after_struct == '/' && *(after_struct+1) == '*') {
+                                after_struct += 2;
+                                while (*after_struct && !(*after_struct == '*' && *(after_struct+1) == '/')) after_struct++;
+                                if (*after_struct) after_struct += 2;
+                                continue;
+                            }
 
                             // 检查是否是关联常量声明 (const NAME = value)
                             if (strncmp(after_struct, "const", 5) == 0 && (after_struct[5] == ' ' || after_struct[5] == '\t')) {
@@ -230,6 +237,17 @@
                                         int has_param = 0;
 
                                         while (*after_func && paren_depth > 0) {
+                                            // 跳过注释
+                                            if (*after_func == '/' && *(after_func+1) == '/') {
+                                                while (*after_func && *after_func != '\n') after_func++;
+                                                continue;
+                                            }
+                                            if (*after_func == '/' && *(after_func+1) == '*') {
+                                                after_func += 2;
+                                                while (*after_func && !(*after_func == '*' && *(after_func+1) == '/')) after_func++;
+                                                if (*after_func) after_func += 2;
+                                                continue;
+                                            }
                                             if (*after_func == '(') {
                                                 paren_depth++;
                                                 after_func++;
@@ -298,8 +316,10 @@
                                                         }
                                                     }
 
-                                                    // 跳过空白
+                                                    // 跳过空白和注释
                                                     while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
+                                                    while (*after_func == '/' && *(after_func+1) == '/') { while (*after_func && *after_func != '\n') after_func++; while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++; }
+                                                    while (*after_func == '/' && *(after_func+1) == '*') { after_func += 2; while (*after_func && !(*after_func == '*' && *(after_func+1) == '/')) after_func++; if (*after_func) after_func += 2; while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++; }
 
                                                     // 如果后面跟着标识符，说明 token 是类型
                                                     if (*after_func && (isalnum((unsigned char)*after_func) || *after_func == '_')) {
@@ -330,9 +350,13 @@
 
                                                     // 跳过默认值（如果有）
                                                     while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
+                                                    while (*after_func == '/' && *(after_func+1) == '/') { while (*after_func && *after_func != '\n') after_func++; while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++; }
+                                                    while (*after_func == '/' && *(after_func+1) == '*') { after_func += 2; while (*after_func && !(*after_func == '*' && *(after_func+1) == '/')) after_func++; if (*after_func) after_func += 2; while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++; }
                                                     if (*after_func == '=') {
                                                         after_func++;
                                                         while (*after_func && *after_func != ',' && *after_func != ')' && paren_depth == 1) {
+                                                            if (*after_func == '/' && *(after_func+1) == '/') { while (*after_func && *after_func != '\n') after_func++; continue; }
+                                                            if (*after_func == '/' && *(after_func+1) == '*') { after_func += 2; while (*after_func && !(*after_func == '*' && *(after_func+1) == '/')) after_func++; if (*after_func) after_func += 2; continue; }
                                                             if (*after_func == '(') paren_depth++;
                                                             else if (*after_func == ')') paren_depth--;
                                                             else after_func++;
@@ -496,6 +520,18 @@
                                             after_func++;
                                             int brace_depth = 1;
                                             while (*after_func && brace_depth > 0) {
+                                                // 跳过单行注释 //（避免注释中的花括号影响深度计数）
+                                                if (*after_func == '/' && *(after_func+1) == '/') {
+                                                    while (*after_func && *after_func != '\n') after_func++;
+                                                    continue;
+                                                }
+                                                // 跳过多行注释 /* ... */
+                                                if (*after_func == '/' && *(after_func+1) == '*') {
+                                                    after_func += 2;
+                                                    while (*after_func && !(*after_func == '*' && *(after_func+1) == '/')) after_func++;
+                                                    if (*after_func) after_func += 2;
+                                                    continue;
+                                                }
                                                 if (*after_func == '{') brace_depth++;
                                                 else if (*after_func == '}') brace_depth--;
                                                 after_func++;
@@ -699,6 +735,16 @@
                                             int depth = 1;
                                             after_struct++;
                                             while (*after_struct && depth > 0) {
+                                                if (*after_struct == '/' && *(after_struct+1) == '/') {
+                                                    while (*after_struct && *after_struct != '\n') after_struct++;
+                                                    continue;
+                                                }
+                                                if (*after_struct == '/' && *(after_struct+1) == '*') {
+                                                    after_struct += 2;
+                                                    while (*after_struct && !(*after_struct == '*' && *(after_struct+1) == '/')) after_struct++;
+                                                    if (*after_struct) after_struct += 2;
+                                                    continue;
+                                                }
                                                 if (*after_struct == '{') depth++;
                                                 else if (*after_struct == '}') depth--;
                                                 after_struct++;
@@ -707,13 +753,35 @@
                                             int depth = 1;
                                             after_struct++;
                                             while (*after_struct && depth > 0) {
+                                                if (*after_struct == '/' && *(after_struct+1) == '/') {
+                                                    while (*after_struct && *after_struct != '\n') after_struct++;
+                                                    continue;
+                                                }
+                                                if (*after_struct == '/' && *(after_struct+1) == '*') {
+                                                    after_struct += 2;
+                                                    while (*after_struct && !(*after_struct == '*' && *(after_struct+1) == '/')) after_struct++;
+                                                    if (*after_struct) after_struct += 2;
+                                                    continue;
+                                                }
                                                 if (*after_struct == '[') depth++;
                                                 else if (*after_struct == ']') depth--;
                                                 after_struct++;
                                             }
                                         } else {
                                             // 简单值，跳到逗号或分号或行尾或 }
-                                            while (*after_struct && *after_struct != ',' && *after_struct != ';' && *after_struct != '\n' && *after_struct != '}') after_struct++;
+                                            while (*after_struct && *after_struct != ',' && *after_struct != ';' && *after_struct != '\n' && *after_struct != '}') {
+                                                if (*after_struct == '/' && *(after_struct+1) == '/') {
+                                                    while (*after_struct && *after_struct != '\n') after_struct++;
+                                                    break;
+                                                }
+                                                if (*after_struct == '/' && *(after_struct+1) == '*') {
+                                                    after_struct += 2;
+                                                    while (*after_struct && !(*after_struct == '*' && *(after_struct+1) == '/')) after_struct++;
+                                                    if (*after_struct) after_struct += 2;
+                                                    continue;
+                                                }
+                                                after_struct++;
+                                            }
                                         }
                                         // 跳过空白
                                         while (*after_struct && (*after_struct == ' ' || *after_struct == '\t')) after_struct++;
@@ -723,7 +791,20 @@
 
                             // 跳过字段默认值（可能包含嵌套的 {} 或 []，如 Dict val = {}）
 	                            // 先跳过到 = 或行尾/分号/}
-	                            while (*after_struct && *after_struct != '\n' && *after_struct != ';' && *after_struct != '=' && *after_struct != '}') after_struct++;
+	                            // 注意：遇到 // 注释时直接跳到行尾，避免注释中的 } 导致扫描错位
+	                            while (*after_struct && *after_struct != '\n' && *after_struct != ';' && *after_struct != '=' && *after_struct != '}') {
+	                                if (*after_struct == '/' && *(after_struct+1) == '/') {
+	                                    while (*after_struct && *after_struct != '\n') after_struct++;
+	                                    break;
+	                                }
+	                                if (*after_struct == '/' && *(after_struct+1) == '*') {
+	                                    after_struct += 2;
+	                                    while (*after_struct && !(*after_struct == '*' && *(after_struct+1) == '/')) after_struct++;
+	                                    if (*after_struct) after_struct += 2;
+	                                    continue;
+	                                }
+	                                after_struct++;
+	                            }
 	                            if (*after_struct == '=') {
 	                                after_struct++; // 跳过 =
 	                                // 跳过空白
@@ -733,6 +814,16 @@
 	                                    int depth = 1;
 	                                    after_struct++;
 	                                    while (*after_struct && depth > 0) {
+	                                        if (*after_struct == '/' && *(after_struct+1) == '/') {
+	                                            while (*after_struct && *after_struct != '\n') after_struct++;
+	                                            continue;
+	                                        }
+	                                        if (*after_struct == '/' && *(after_struct+1) == '*') {
+	                                            after_struct += 2;
+	                                            while (*after_struct && !(*after_struct == '*' && *(after_struct+1) == '/')) after_struct++;
+	                                            if (*after_struct) after_struct += 2;
+	                                            continue;
+	                                        }
 	                                        if (*after_struct == '{') depth++;
 	                                        else if (*after_struct == '}') depth--;
 	                                        after_struct++;
@@ -741,13 +832,36 @@
 	                                    int depth = 1;
 	                                    after_struct++;
 	                                    while (*after_struct && depth > 0) {
+	                                        if (*after_struct == '/' && *(after_struct+1) == '/') {
+	                                            while (*after_struct && *after_struct != '\n') after_struct++;
+	                                            continue;
+	                                        }
+	                                        if (*after_struct == '/' && *(after_struct+1) == '*') {
+	                                            after_struct += 2;
+	                                            while (*after_struct && !(*after_struct == '*' && *(after_struct+1) == '/')) after_struct++;
+	                                            if (*after_struct) after_struct += 2;
+	                                            continue;
+	                                        }
 	                                        if (*after_struct == '[') depth++;
 	                                        else if (*after_struct == ']') depth--;
 	                                        after_struct++;
 	                                    }
 	                                } else {
 	                                    // 简单值（数字、字符串等），跳到 ; 或行尾或 }
-	                                    while (*after_struct && *after_struct != '\n' && *after_struct != ';' && *after_struct != '}') after_struct++;
+	                                    // 注意：遇到 // 注释时直接跳到行尾
+	                                    while (*after_struct && *after_struct != '\n' && *after_struct != ';' && *after_struct != '}') {
+	                                        if (*after_struct == '/' && *(after_struct+1) == '/') {
+	                                            while (*after_struct && *after_struct != '\n') after_struct++;
+	                                            break;
+	                                        }
+	                                        if (*after_struct == '/' && *(after_struct+1) == '*') {
+	                                            after_struct += 2;
+	                                            while (*after_struct && !(*after_struct == '*' && *(after_struct+1) == '/')) after_struct++;
+	                                            if (*after_struct) after_struct += 2;
+	                                            continue;
+	                                        }
+	                                        after_struct++;
+	                                    }
 	                                }
 	                            }
 	                            // 跳过分号（无论是否有默认值）
