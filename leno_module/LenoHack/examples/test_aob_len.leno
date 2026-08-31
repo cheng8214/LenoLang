@@ -1,0 +1,37 @@
+// test_aob_len.leno — 验证 Bug1 修复后 aobScan 的 parsed["len"] 正常工作
+// 不需要实际进程，只测试 _parseAobPattern 返回的 Dict 能正确访问 "len" 键
+
+import ffi
+import "../lib/w32_memory.leno" as mem
+
+main() {
+    print("=== Bug1 修复验证: _parseAobPattern 的 parsed[\"len\"] ===")
+    print("")
+
+    // 直接测试 Dict 的 "len" 键访问（不需要进程）
+    Dict d = {bytes: [1,2,3], mask: [true,false,true], len: 3}
+    print("Dict d = {bytes:[1,2,3], mask:[T,F,T], len:3}")
+    print("  d[\"bytes\"] = " + d["bytes"])
+    print("  d[\"mask\"] = " + d["mask"])
+    print("  d[\"len\"] = " + d["len"])
+    print("  _int(d[\"len\"]) = " + _int(d["len"]))
+    print("")
+
+    // 验证 d.len() 方法仍然正常工作
+    print("  d.len() 方法 = " + d.len())
+    print("")
+
+    // 模拟 aobScan 中的解析流程
+    print("模拟 _parseAobPattern 返回值:")
+    Dict parsed = {bytes: [0x48, 0x8B, 0x05], mask: [true, true, true], len: 3}
+    int pLen = _int(parsed["len"])
+    print("  parsed[\"len\"] = " + pLen)
+    if pLen == 3 {
+        print("  v Bug1 修复成功! parsed[\"len\"] 返回 3 而非 [object]")
+    } else {
+        print("  x Bug1 未修复!")
+    }
+    print("")
+
+    print("=== 验证完成 ===")
+}

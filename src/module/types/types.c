@@ -621,6 +621,10 @@ static Value native_to_int(int argCount, Value* args) {
                 }
                 // 超出 int32 范围，保持为 bigint 返回
                 return value;
+            } else if (val_as_obj(value)->type == OBJ_FFI_POINTER) {
+                // FFI 指针 → int：返回指针地址作为整数
+                ObjFFIPointer* ptr = (ObjFFIPointer*)val_as_obj(value);
+                return val_int((int64_t)(intptr_t)ptr->ptr);
             }
             break;
         default:

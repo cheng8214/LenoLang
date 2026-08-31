@@ -25,6 +25,18 @@ OPCODE(OP_GET_PROPERTY) {
     #ifdef VM_USE_THREAD_LOCAL
         // 子线程：不使用内联缓存，直接查找方法
         if (ic_type_supported(receiver_type)) {
+            // Dict 键优先（非调用上下文）：
+            // d["len"] 不带 () 时应返回键值而非内建 len 方法
+            // 仅当下一条指令不是 OP_CALL 时才优先检查 Dict 键
+            if (receiver_type == OBJ_DICT && *frame->ip != OP_CALL) {
+                ObjDict* dict = (ObjDict*)val_as_obj(receiver);
+                if (dict_has(dict, val_obj((Object*)name))) {
+                    Value value = dict_get(dict, val_obj((Object*)name));
+                    vm_stack_push(&vm, value);
+                    DISPATCH;
+                }
+            }
+
             ObjNative* method = find_method_by_type(receiver_type, name->chars);
 
             if (method) {
@@ -214,6 +226,18 @@ OPCODE(OP_GET_PROPERTY) {
     #else
         // 主线程：使用内联缓存优化
         if (ic_type_supported(receiver_type)) {
+            // Dict 键优先（非调用上下文）：
+            // d["len"] 不带 () 时应返回键值而非内建 len 方法
+            // 仅当下一条指令不是 OP_CALL 时才优先检查 Dict 键
+            if (receiver_type == OBJ_DICT && *frame->ip != OP_CALL) {
+                ObjDict* dict = (ObjDict*)val_as_obj(receiver);
+                if (dict_has(dict, val_obj((Object*)name))) {
+                    Value value = dict_get(dict, val_obj((Object*)name));
+                    vm_stack_push(&vm, value);
+                    DISPATCH;
+                }
+            }
+
             // 计算缓存索引（使用当前指令地址）
             uint8_t* ip_before = frame->ip - 3;  // OP_GET_PROPERTY 是 3 字节指令
             int cache_idx = ic_cache_index(ip_before);
