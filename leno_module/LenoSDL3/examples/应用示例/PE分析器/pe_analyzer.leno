@@ -1,0 +1,949 @@
+// pe_analyzer.leno — Leno PE 分析器（可视化界面版）
+//
+// 基于 SDL3 GUI 的 PE/EXE 文件分析器，支持：
+//   1. 通过文件对话框选择 .exe/.dll 文件
+//   2. 解析 DOS 头、PE 头、节区表、导入表
+//   3. 检测 LENB 尾部附加数据（Leno 编译器生成的元信息）
+//   4. XOR(LENO) 加密字符串搜索与解密
+//
+// 布局结构：
+//   Window
+//   ├── TitleBar（自绘标题栏）
+//   └── VBox root
+//       ├── HBox toolbar（浏览按钮 + 文件路径标签 + 分析按钮）
+//       ├── TabControl（7 个页签：概览 / DOS头 / PE头 / 节区 / 导入表 / LENB / XOR字符串）
+//       │   ├── 概览页：ListBox 显示文件基本信息和关键数据
+//       │   ├── DOS头页：Table 显示 DOS 头各字段
+//       │   ├── PE头页：Table 显示 PE/可选头各字段
+//       │   ├── 节区页：Table 显示各节区信息
+//       │   ├── 导入表页：Table 显示导入的 DLL 和函数
+//       │   ├── LENB页：ListBox 显示 LENB 尾部元信息
+//       │   └── XOR字符串页：Table 显示解密后的字符串
+//       └── Label statusLbl（底部状态栏）
+//
+// 运行：leno pe_analyzer.leno
+import "../../../lib/SDL3.leno" as SDL3
+import "../../../lib/sdl_filedialog.leno" as fdlg
+use SDL3.(Event, Renderer, Window, WindowFlag, TitleBar, Scancode)
+use SDL3.(Button, Label, ListBox, Table, HBox, VBox, TabControl)
+import files
+import strings
+import dirs
+
+// ==================== PE 解析常量 ====================
+
+const LENB_MAGIC = 0x424E454C  // "LENB" little-endian
+const DOS_MAGIC  = 0x5A4D      // "MZ" little-endian
+const PE_MAGIC   = 0x00004550  // "PE\0\0" little-endian
+
+// 16 进制字符表
+const HEX_CHARS = "0123456789ABCDEF"
+
+// XOR 密钥 "LENO" = 0x4C, 0x45, 0x4E, 0x4F
+func xorKey(int i): int {
+    if i == 0 { return 0x4C }
+    if i == 1 { return 0x45 }
+    if i == 2 { return 0x4E }
+    return 0x4F
+}
+
+// ==================== 二进制读取工具函数 ====================
+
+// 从 string 的指定偏移读取 4 字节小端 uint32
+func readU32(string data, int off): int {
+    int val = 0
+    for 0:3 to i {
+        val = val | (data.byte(off + i) << (i * 8))
+    }
+    return val
+}
+
+// 从 string 的指定偏移读取 2 字节小端 uint16
+func readU16(string data, int off): int {
+    return data.byte(off) | (data.byte(off + 1) << 8)
+}
+
+// 从 string 的指定偏移读取 1 字节
+func readU8(string data, int off): int {
+    return data.byte(off)
+}
+
+// ==================== 格式化工具函数 ====================
+
+// 格式化为 8 位 hex（无 0x 前缀，用于拼接）
+func toHex8(int v): string {
+    string s = ""
+    for 7:0:-1 to i {
+        int nibble = (v >> (i * 4)) & 0xF
+        s = s + HEX_CHARS[nibble]
+    }
+    return s
+}
+
+// 格式化为 4 位 hex（无 0x 前缀，用于拼接）
+func toHex4(int v): string {
+    string s = ""
+    for 3:0:-1 to i {
+        int nibble = (v >> (i * 4)) & 0xF
+        s = s + HEX_CHARS[nibble]
+    }
+    return s
+}
+
+// 格式化为 2 位 hex（无前缀）
+func toHex2(int v): string {
+    int hi = (v >> 4) & 0xF
+    int lo = v & 0xF
+    return HEX_CHARS[hi] + HEX_CHARS[lo]
+}
+
+// 人类可读文件大小
+func fmtSize(int b): string {
+    if b < 1024 { return b + " B" }
+    float kb = _float(b) / 1024.0
+    if kb < 1024.0 { return _int(kb) + " KB" }
+    float mb = kb / 1024.0
+    if mb < 1024.0 { return _int(mb) + " MB" }
+    float gb = mb / 1024.0
+    int gbInt = _int(gb)
+    int tenths = _int((gb - _float(gbInt)) * 10.0)
+    if tenths == 0 { return gbInt + " GB" }
+    return gbInt + "." + tenths + " GB"
+}
+
+// 根据节区特征值返回可读名称
+func sectionFlagsName(int flags): string {
+    Array[string] parts = []
+    if (flags & 0x20000000) != 0 { parts.add("X") }
+    if (flags & 0x40000000) != 0 { parts.add("R") }
+    if (flags & 0x80000000) != 0 { parts.add("W") }
+    if (flags & 0x20) != 0 { parts.add("CODE") }
+    if (flags & 0x40) != 0 { parts.add("IDATA") }
+    if (flags & 0x80) != 0 { parts.add("UDATA") }
+    return parts.join("/")
+}
+
+// 根据子系统值返回可读名称
+func subsystemName(int sub): string {
+    switch sub {
+        case 0 { return "未知" }
+        case 1 { return "原生" }
+        case 2 { return "Windows GUI" }
+        case 3 { return "Windows 控制台" }
+        case 5 { return "OS/2 字符" }
+        case 7 { return "Posix 字符" }
+        case 9 { return "Windows CE GUI" }
+        case 10 { return "EFI 应用" }
+        case 11 { return "EFI 启动服务" }
+        case 12 { return "EFI 运行时" }
+        case 13 { return "EFI ROM" }
+        case 14 { return "XBOX" }
+    }
+    return "其他(" + sub + ")"
+}
+
+// 根据机器类型返回可读名称
+func machineName(int mach): string {
+    switch mach {
+        case 0x014C { return "x86 (i386)" }
+        case 0x0200 { return "Intel Itanium" }
+        case 0x8664 { return "x64 (AMD64)" }
+        case 0x01C0 { return "ARM" }
+        case 0xAA64 { return "ARM64" }
+    }
+    return "未知(0x" + toHex4(mach) + ")"
+}
+
+// ==================== PE 分析器结构体 ====================
+
+struct PEAnalyzer {
+    // ===== 布局常量 =====
+    float PAD = 8.0
+
+    // ===== UI 控件引用 =====
+    Window      win
+    TitleBar    titleBar
+    Button      browseBtn
+    Button      analyzeBtn
+    Label       fileLbl
+    Label       statusLbl
+    TabControl  tab
+
+    // 各页的展示控件
+    ListBox     overviewBox    // 概览
+    Table       dosTable       // DOS 头
+    Table       peTable        // PE 头
+    Table       sectionTable   // 节区
+    Table       importTable    // 导入表
+    ListBox     lenbBox        // LENB 信息
+    Table       xorTable       // XOR 字符串
+
+    // ===== 分析状态 =====
+    string filePath = ""
+    string fileData  = ""    // 文件二进制数据
+    int    fileSize  = 0
+    bool   analyzed  = false
+
+    // PE 解析结果缓存
+    int dosHeaderOff = 0       // DOS 头偏移（通常为 0）
+    int peHeaderOff  = 0       // PE 头偏移（e_lfanew）
+    int optHeaderOff = 0       // 可选头偏移
+    int sectionTableOff = 0    // 节区表偏移
+    int sectionCount = 0       // 节区数量
+    int is64bit = 0            // 是否 64 位（0x20B1 vs 0x010B）
+
+    // ==================== RVA 转文件偏移 ====================
+
+    func rvaToOffset(int rva): int {
+        int secSize = 40
+        for sectionCount to i {
+            int off = sectionTableOff + i * secSize
+            if off + secSize > fileSize { break }
+            int virtSize = readU32(fileData, off + 8)
+            int virtAddr = readU32(fileData, off + 12)
+            int rawOff   = readU32(fileData, off + 20)
+            if rva >= virtAddr and rva < virtAddr + virtSize {
+                return rawOff + (rva - virtAddr)
+            }
+        }
+        return 0
+    }
+
+    // 从文件偏移读取 C 字符串（以 \0 结尾，最多 maxLen 字节）
+    func readCString(int fileOff, int maxLen): string {
+        string s = ""
+        int i = 0
+        while i < maxLen and fileOff + i < fileSize {
+            int b = fileData.byte(fileOff + i)
+            if b == 0 { break }
+            // 只显示可打印 ASCII 和扩展字符
+            if b >= 0x20 and b <= 0x7E {
+                s = s + strings.char(b)
+            } else {
+                s = s + "."
+            }
+            i = i + 1
+        }
+        return s
+    }
+
+    // ==================== UI 构建 ====================
+
+    func setupUI() {
+        // 标题栏
+        titleBar = SDL3.createTitleBar({title: "Leno PE 分析器", height: 32, font_size: 14})
+        win.add(titleBar)
+        float titleH = titleBar.get_h()
+
+        // 顶部工具栏
+        var toolbar = SDL3.createHBox({h: 36, padX: 4, padY: 2, spacing: 6})
+
+        browseBtn = SDL3.createButton({w: 80, h: 28, text: "浏览...", font_size: 14})
+        toolbar.add(browseBtn, {grow: 0, shrink: 0, basis: 80, align: 3})
+        browseBtn.on_click(func() { onBrowse() })
+
+        fileLbl = SDL3.createLabel({text: "文件: (未选择)", font_size: 13})
+        toolbar.add(fileLbl, {grow: 1, shrink: 1, align: 3})
+
+        analyzeBtn = SDL3.createButton({w: 70, h: 28, text: "分析", font_size: 14})
+        toolbar.add(analyzeBtn, {grow: 0, shrink: 0, basis: 70, align: 3})
+        analyzeBtn.set_enabled(false)
+        analyzeBtn.on_click(func() { onAnalyze() })
+
+        // 选项卡容器
+        tab = SDL3.createTabControl({
+            tabs: ["概览", "DOS 头", "PE 头", "节区", "导入表", "LENB", "XOR 字符串"],
+            active: 0,
+            font_size: 14
+        })
+
+        // ===== 各页内容 =====
+
+        // 概览页 - ListBox
+        overviewBox = SDL3.createListBox({font_size: 13})
+        var overviewLayout = SDL3.createVBox({padX: PAD, padY: PAD, spacing: 0})
+        overviewLayout.add(overviewBox, {grow: 1, shrink: 1, align: 3})
+        tab.setPageLayout(0, overviewLayout)
+
+        // DOS 头页 - Table
+        dosTable = SDL3.createTable({
+            headers: ["字段", "值", "说明"],
+            col_widths: [180.0, 200.0, 400.0],
+            sortable: false, zebra: true, row_h: 24, header_h: 28, font_size: 13
+        })
+        var dosLayout = SDL3.createVBox({padX: PAD, padY: PAD, spacing: 0})
+        dosLayout.add(dosTable, {grow: 1, shrink: 1, align: 3})
+        tab.setPageLayout(1, dosLayout)
+
+        // PE 头页 - Table
+        peTable = SDL3.createTable({
+            headers: ["字段", "值", "说明"],
+            col_widths: [180.0, 200.0, 400.0],
+            sortable: false, zebra: true, row_h: 24, header_h: 28, font_size: 13
+        })
+        var peLayout = SDL3.createVBox({padX: PAD, padY: PAD, spacing: 0})
+        peLayout.add(peTable, {grow: 1, shrink: 1, align: 3})
+        tab.setPageLayout(2, peLayout)
+
+        // 节区页 - Table
+        sectionTable = SDL3.createTable({
+            headers: ["序号", "名称", "虚拟大小", "虚拟地址", "原始大小", "原始偏移", "特征值"],
+            col_widths: [50.0, 120.0, 100.0, 100.0, 100.0, 100.0, 150.0],
+            sortable: true, zebra: true, row_h: 24, header_h: 28, font_size: 13
+        })
+        var secLayout = SDL3.createVBox({padX: PAD, padY: PAD, spacing: 0})
+        secLayout.add(sectionTable, {grow: 1, shrink: 1, align: 3})
+        tab.setPageLayout(3, secLayout)
+
+        // 导入表页 - Table
+        importTable = SDL3.createTable({
+            headers: ["DLL", "函数名", "RVA", "序号"],
+            col_widths: [200.0, 400.0, 100.0, 80.0],
+            sortable: true, zebra: true, row_h: 24, header_h: 28, font_size: 13
+        })
+        var impLayout = SDL3.createVBox({padX: PAD, padY: PAD, spacing: 0})
+        impLayout.add(importTable, {grow: 1, shrink: 1, align: 3})
+        tab.setPageLayout(4, impLayout)
+
+        // LENB 页 - ListBox
+        lenbBox = SDL3.createListBox({font_size: 13})
+        var lenbLayout = SDL3.createVBox({padX: PAD, padY: PAD, spacing: 0})
+        lenbLayout.add(lenbBox, {grow: 1, shrink: 1, align: 3})
+        tab.setPageLayout(5, lenbLayout)
+
+        // XOR 字符串页 - Table
+        xorTable = SDL3.createTable({
+            headers: ["序号", "偏移", "长度", "解密内容"],
+            col_widths: [50.0, 120.0, 60.0, 600.0],
+            sortable: true, zebra: true, row_h: 24, header_h: 28, font_size: 13
+        })
+        var xorLayout = SDL3.createVBox({padX: PAD, padY: PAD, spacing: 0})
+        xorLayout.add(xorTable, {grow: 1, shrink: 1, align: 3})
+        tab.setPageLayout(6, xorLayout)
+
+        // 状态栏
+        statusLbl = SDL3.createLabel({text: "就绪 - 点击[浏览...]选择 PE 文件", font_size: 13})
+
+        // 根布局
+        var root = SDL3.createVBox({padX: PAD, padY: PAD, spacing: 4})
+        root.add(toolbar, {grow: 0, shrink: 0, align: 3})
+        root.add(tab, {grow: 1, shrink: 1, align: 3})
+        root.add(statusLbl, {grow: 0, shrink: 0, basis: 22, align: 3})
+        win.setRootAt(root, 0, titleH)
+    }
+
+    // ==================== 事件回调 ====================
+
+    // 浏览文件
+    func onBrowse() {
+        fdlg.showOpenFileDialog(win, func(Array[string] paths, int filter) {
+            if paths != null and paths.len() > 0 {
+                filePath = paths[0]
+                fileLbl.set_text("文件: " + dirs.basename(filePath))
+                analyzeBtn.set_enabled(true)
+                statusLbl.set_text("已选择: " + filePath)
+                SDL3.markFrameRedraw()
+            }
+        }, {
+            filters: [
+                {name: "可执行文件", pattern: "*.exe"},
+                {name: "动态链接库", pattern: "*.dll"},
+                {name: "所有文件", pattern: "*.*"}
+            ],
+            default_location: dirs.dirname(dirs.script_dir())
+        })
+    }
+
+    // 分析文件
+    func onAnalyze() {
+        if filePath == "" {
+            statusLbl.set_text("错误: 请先选择文件")
+            SDL3.markFrameRedraw()
+            return
+        }
+        if not files.exists(filePath) {
+            statusLbl.set_text("错误: 文件不存在")
+            SDL3.markFrameRedraw()
+            return
+        }
+
+        statusLbl.set_text("正在读取文件...")
+        SDL3.markFrameRedraw()
+
+        // 读取文件
+        File f = files.open(filePath, "rb")
+        if f == null {
+            statusLbl.set_text("错误: 无法打开文件")
+            SDL3.markFrameRedraw()
+            return
+        }
+        fileSize = f.len()
+        fileData = f.read(fileSize)
+        f.close()
+
+        if fileSize < 64 {
+            statusLbl.set_text("错误: 文件太小，不是有效的 PE 文件")
+            SDL3.markFrameRedraw()
+            return
+        }
+
+        statusLbl.set_text("正在解析 PE 结构...")
+        SDL3.markFrameRedraw()
+
+        // 解析各部分
+        analyzed = true
+        analyzeOverview()
+        analyzeDOSHeader()
+        analyzePEHeader()
+        analyzeSections()
+        analyzeImports()
+        analyzeLENB()
+        analyzeXORStrings()
+
+        statusLbl.set_text("分析完成 - " + dirs.basename(filePath) + " (" + fmtSize(fileSize) + ")")
+        SDL3.markFrameRedraw()
+    }
+
+    // ==================== 概览页 ====================
+
+    func analyzeOverview() {
+        overviewBox.clear()
+        overviewBox.add_item("========== 文件概览 ==========")
+        overviewBox.add_item("文件路径: " + filePath)
+        overviewBox.add_item("文件名: " + dirs.basename(filePath))
+        overviewBox.add_item("文件大小: " + fileSize + " bytes (" + fmtSize(fileSize) + ")")
+        overviewBox.add_item("")
+
+        // 检测 MZ 头
+        int dosMagic = readU16(fileData, 0)
+        if dosMagic == DOS_MAGIC {
+            overviewBox.add_item("[DOS 头] MZ 魔数: 0x" + toHex4(dosMagic) + " (有效)")
+            peHeaderOff = readU32(fileData, 0x3C)
+            overviewBox.add_item("[DOS 头] e_lfanew (PE 头偏移): 0x" + toHex8(peHeaderOff))
+        } else {
+            overviewBox.add_item("[DOS 头] MZ 魔数: 0x" + toHex4(dosMagic) + " (无效! 不是 PE 文件)")
+            overviewBox.add_item("x 该文件不是有效的 PE/EXE 文件")
+            return
+        }
+
+        // 检测 PE 签名
+        if peHeaderOff + 4 <= fileSize {
+            int peSig = readU32(fileData, peHeaderOff)
+            if peSig == PE_MAGIC {
+                overviewBox.add_item("[PE 头] PE 签名: 0x" + toHex8(peSig) + " (PE\\0\\0, 有效)")
+            } else {
+                overviewBox.add_item("[PE 头] PE 签名: 0x" + toHex8(peSig) + " (无效!)")
+                return
+            }
+        }
+
+        // 机器类型
+        if peHeaderOff + 6 <= fileSize {
+            int machine = readU16(fileData, peHeaderOff + 4)
+            overviewBox.add_item("[PE 头] 机器类型: " + machineName(machine))
+        }
+
+        // 节区数量
+        if peHeaderOff + 8 <= fileSize {
+            sectionCount = readU16(fileData, peHeaderOff + 6)
+            overviewBox.add_item("[PE 头] 节区数量: " + sectionCount)
+        }
+
+        // 可选头 magic（判断 32/64 位）
+        optHeaderOff = peHeaderOff + 24
+        if optHeaderOff + 2 <= fileSize {
+            int optMagic = readU16(fileData, optHeaderOff)
+            if optMagic == 0x010B {
+                is64bit = 0
+                overviewBox.add_item("[可选头] Magic: 0x" + toHex4(optMagic) + " (PE32, 32位)")
+            } else if optMagic == 0x20B {
+                is64bit = 1
+                overviewBox.add_item("[可选头] Magic: 0x" + toHex4(optMagic) + " (PE32+, 64位)")
+            } else {
+                overviewBox.add_item("[可选头] Magic: 0x" + toHex4(optMagic) + " (未知格式)")
+            }
+        }
+
+        // 入口点
+        if optHeaderOff + 20 <= fileSize {
+            int entryRVA = readU32(fileData, optHeaderOff + 16)
+            overviewBox.add_item("[可选头] 入口点 RVA: 0x" + toHex8(entryRVA))
+        }
+
+        // 节区表偏移
+        if peHeaderOff + 22 <= fileSize {
+            sectionTableOff = peHeaderOff + 24 + readU16(fileData, peHeaderOff + 20)
+            overviewBox.add_item("[节区表] 偏移: 0x" + toHex8(sectionTableOff))
+        }
+        overviewBox.add_item("")
+
+        // LENB 检测
+        if fileSize >= 8 {
+            int magicTail = readU32(fileData, fileSize - 4)
+            int lenbSize = readU32(fileData, fileSize - 8)
+            if magicTail == LENB_MAGIC {
+                overviewBox.add_item("[LENB] 检测到 Leno 尾部附加数据!")
+                overviewBox.add_item("[LENB] 魔数: 0x" + toHex8(magicTail) + " (LENB)")
+                overviewBox.add_item("[LENB] 数据大小: " + lenbSize + " bytes")
+                int lenbOff = fileSize - 8 - lenbSize
+                overviewBox.add_item("[LENB] 数据偏移: 0x" + toHex8(lenbOff))
+            } else {
+                overviewBox.add_item("[LENB] 未检测到 Leno 尾部数据")
+            }
+        }
+        overviewBox.add_item("")
+        overviewBox.add_item("========== 分析完成 ==========")
+    }
+
+    // ==================== DOS 头页 ====================
+
+    func analyzeDOSHeader() {
+        Array[Array[string]] rows = []
+        if fileSize < 64 { dosTable.set_rows(rows); return }
+
+        rows.add(["e_magic", "0x" + toHex4(readU16(fileData, 0)), "DOS 魔数 'MZ' (0x5A4D)"])
+        rows.add(["e_cblp", _str(readU16(fileData, 2)), "最后一页字节数"])
+        rows.add(["e_cp", _str(readU16(fileData, 4)), "文件页数"])
+        rows.add(["e_crlc", _str(readU16(fileData, 6)), "重定位项数"])
+        rows.add(["e_cparhdr", _str(readU16(fileData, 8)), "头部段落大小(每段16字节)"])
+        rows.add(["e_minalloc", _str(readU16(fileData, 10)), "最少需要的额外段落数"])
+        rows.add(["e_maxalloc", _str(readU16(fileData, 12)), "最多需要的额外段落数"])
+        rows.add(["e_ss", _str(readU16(fileData, 14)), "初始 SS"])
+        rows.add(["e_sp", _str(readU16(fileData, 16)), "初始 SP"])
+        rows.add(["e_csum", _str(readU16(fileData, 18)), "校验和"])
+        rows.add(["e_ip", _str(readU16(fileData, 20)), "初始 IP"])
+        rows.add(["e_cs", _str(readU16(fileData, 22)), "初始 CS"])
+        rows.add(["e_lfarlc", _str(readU16(fileData, 24)), "重定位表偏移"])
+        rows.add(["e_ovno", _str(readU16(fileData, 26)), "覆盖号"])
+        rows.add(["e_lfanew", "0x" + toHex8(readU32(fileData, 0x3C)), "PE 头偏移(指向 PE 签名)"])
+
+        dosTable.set_rows(rows)
+    }
+
+    // ==================== PE 头页 ====================
+
+    func analyzePEHeader() {
+        Array[Array[string]] rows = []
+        if peHeaderOff == 0 or peHeaderOff + 24 > fileSize {
+            peTable.set_rows(rows)
+            return
+        }
+
+        // === COFF 头 ===
+        rows.add(["--- COFF 头 ---", "", ""])
+        rows.add(["Machine", "0x" + toHex4(readU16(fileData, peHeaderOff + 4)), machineName(readU16(fileData, peHeaderOff + 4))])
+        rows.add(["NumberOfSections", _str(readU16(fileData, peHeaderOff + 6)), "节区数量"])
+        rows.add(["TimeDateStamp", "0x" + toHex8(readU32(fileData, peHeaderOff + 8)), "时间戳(Unix)"])
+        rows.add(["PointerToSymbolTable", "0x" + toHex8(readU32(fileData, peHeaderOff + 12)), "符号表偏移"])
+        rows.add(["NumberOfSymbols", _str(readU32(fileData, peHeaderOff + 16)), "符号表数量"])
+        rows.add(["SizeOfOptionalHeader", _str(readU16(fileData, peHeaderOff + 20)), "可选头大小(字节)"])
+        rows.add(["Characteristics", "0x" + toHex4(readU16(fileData, peHeaderOff + 22)), "文件特征值"])
+
+        // === 可选头 ===
+        optHeaderOff = peHeaderOff + 24
+        int optSize = readU16(fileData, peHeaderOff + 20)
+        if optSize > 0 and optHeaderOff + optSize <= fileSize {
+            rows.add(["", "", ""])
+            rows.add(["--- 可选头 ---", "", ""])
+
+            int optMagic = readU16(fileData, optHeaderOff)
+            string magicStr = "未知"
+            if optMagic == 0x010B { magicStr = "PE32 (32位)" }
+            if optMagic == 0x20B { magicStr = "PE32+ (64位)" }
+            rows.add(["Magic", "0x" + toHex4(optMagic), magicStr])
+
+            rows.add(["MajorLinkerVersion", _str(readU8(fileData, optHeaderOff + 2)), "链接器主版本号"])
+            rows.add(["MinorLinkerVersion", _str(readU8(fileData, optHeaderOff + 3)), "链接器次版本号"])
+            rows.add(["SizeOfCode", _str(readU32(fileData, optHeaderOff + 4)), "代码段总大小"])
+            rows.add(["SizeOfInitializedData", _str(readU32(fileData, optHeaderOff + 8)), "已初始化数据大小"])
+            rows.add(["SizeOfUninitializedData", _str(readU32(fileData, optHeaderOff + 12)), "未初始化数据大小"])
+            rows.add(["AddressOfEntryPoint", "0x" + toHex8(readU32(fileData, optHeaderOff + 16)), "入口点 RVA"])
+            rows.add(["BaseOfCode", "0x" + toHex8(readU32(fileData, optHeaderOff + 20)), "代码段基址 RVA"])
+
+            if optMagic == 0x010B {
+                // PE32
+                rows.add(["BaseOfData", "0x" + toHex8(readU32(fileData, optHeaderOff + 24)), "数据段基址 RVA"])
+                rows.add(["ImageBase", "0x" + toHex8(readU32(fileData, optHeaderOff + 28)), "镜像基址"])
+                rows.add(["SectionAlignment", "0x" + toHex8(readU32(fileData, optHeaderOff + 32)), "节区对齐粒度"])
+                rows.add(["FileAlignment", "0x" + toHex8(readU32(fileData, optHeaderOff + 36)), "文件对齐粒度"])
+                rows.add(["MajorOSVersion", _str(readU16(fileData, optHeaderOff + 40)), "所需 OS 主版本号"])
+                rows.add(["MinorOSVersion", _str(readU16(fileData, optHeaderOff + 42)), "所需 OS 次版本号"])
+                rows.add(["MajorImageVersion", _str(readU16(fileData, optHeaderOff + 44)), "镜像主版本号"])
+                rows.add(["MinorImageVersion", _str(readU16(fileData, optHeaderOff + 46)), "镜像次版本号"])
+                rows.add(["MajorSubsystemVersion", _str(readU16(fileData, optHeaderOff + 48)), "子系统主版本号"])
+                rows.add(["MinorSubsystemVersion", _str(readU16(fileData, optHeaderOff + 50)), "子系统次版本号"])
+                rows.add(["SizeOfImage", "0x" + toHex8(readU32(fileData, optHeaderOff + 56)), "镜像总大小"])
+                rows.add(["SizeOfHeaders", "0x" + toHex8(readU32(fileData, optHeaderOff + 60)), "头部大小"])
+                rows.add(["Subsystem", _str(readU16(fileData, optHeaderOff + 68)), subsystemName(readU16(fileData, optHeaderOff + 68))])
+                rows.add(["CheckSum", "0x" + toHex8(readU32(fileData, optHeaderOff + 64)), "校验和"])
+            } else if optMagic == 0x20B {
+                // PE32+
+                rows.add(["ImageBase", "0x" + toHex8(readU32(fileData, optHeaderOff + 24)), "镜像基址(低32位)"])
+                rows.add(["ImageBase_Hi", "0x" + toHex8(readU32(fileData, optHeaderOff + 28)), "镜像基址(高32位)"])
+                rows.add(["SectionAlignment", "0x" + toHex8(readU32(fileData, optHeaderOff + 32)), "节区对齐粒度"])
+                rows.add(["FileAlignment", "0x" + toHex8(readU32(fileData, optHeaderOff + 36)), "文件对齐粒度"])
+                rows.add(["MajorOSVersion", _str(readU16(fileData, optHeaderOff + 40)), "所需 OS 主版本号"])
+                rows.add(["MinorOSVersion", _str(readU16(fileData, optHeaderOff + 42)), "所需 OS 次版本号"])
+                rows.add(["SizeOfImage", "0x" + toHex8(readU32(fileData, optHeaderOff + 56)), "镜像总大小"])
+                rows.add(["SizeOfHeaders", "0x" + toHex8(readU32(fileData, optHeaderOff + 60)), "头部大小"])
+                rows.add(["Subsystem", _str(readU16(fileData, optHeaderOff + 68)), subsystemName(readU16(fileData, optHeaderOff + 68))])
+                rows.add(["CheckSum", "0x" + toHex8(readU32(fileData, optHeaderOff + 64)), "校验和"])
+            }
+        }
+
+        peTable.set_rows(rows)
+    }
+
+    // ==================== 节区页 ====================
+
+    func analyzeSections() {
+        Array[Array[string]] rows = []
+        if sectionCount == 0 or sectionTableOff == 0 {
+            sectionTable.set_rows(rows)
+            return
+        }
+
+        int secSize = 40
+        for sectionCount to i {
+            int off = sectionTableOff + i * secSize
+            if off + secSize > fileSize { break }
+
+            // 节区名（8字节，可能含 \0）
+            string name = ""
+            for 0:7 to j {
+                int b = fileData.byte(off + j)
+                if b == 0 { break }
+                name = name + strings.char(b)
+            }
+
+            int virtSize = readU32(fileData, off + 8)
+            int virtAddr = readU32(fileData, off + 12)
+            int rawSize  = readU32(fileData, off + 16)
+            int rawOff   = readU32(fileData, off + 20)
+            int flags    = readU32(fileData, off + 36)
+
+            rows.add([
+                _str(i + 1),
+                name,
+                _str(virtSize),
+                "0x" + toHex8(virtAddr),
+                _str(rawSize),
+                "0x" + toHex8(rawOff),
+                "0x" + toHex8(flags) + " [" + sectionFlagsName(flags) + "]"
+            ])
+        }
+        sectionTable.set_rows(rows)
+    }
+
+    // ==================== 导入表页 ====================
+
+    func analyzeImports() {
+        Array[Array[string]] rows = []
+
+        // 数据目录在可选头中的偏移：PE32 = optHeaderOff + 96, PE32+ = optHeaderOff + 112
+        int dataDirOff = optHeaderOff + 96
+        if is64bit == 1 { dataDirOff = optHeaderOff + 112 }
+
+        // 导入表是第 2 个目录项（索引 1）
+        int impDirRVA = 0
+        if dataDirOff + 8 <= fileSize {
+            impDirRVA = readU32(fileData, dataDirOff + 8)
+        }
+
+        if impDirRVA == 0 {
+            importTable.set_rows(rows)
+            return
+        }
+
+        // 将 RVA 转换为文件偏移
+        int impFileOff = rvaToOffset(impDirRVA)
+        if impFileOff == 0 {
+            importTable.set_rows(rows)
+            return
+        }
+
+        // 遍历导入描述符（每个 20 字节）
+        int descSize = 20
+        int maxDlls = 64
+        int dllCount = 0
+
+        while dllCount < maxDlls {
+            int descOff = impFileOff + dllCount * descSize
+            if descOff + descSize > fileSize { break }
+
+            // 导入描述符字段
+            int origFirstThunk = readU32(fileData, descOff + 0)   // OriginalFirstThunk (ILT RVA)
+            int nameRVA        = readU32(fileData, descOff + 12)   // DLL 名称 RVA
+            int firstThunk     = readU32(fileData, descOff + 16)   // FirstThunk (IAT RVA)
+
+            // 终止条件：全零描述符
+            if nameRVA == 0 and firstThunk == 0 { break }
+
+            // 读取 DLL 名称
+            int nameOff = rvaToOffset(nameRVA)
+            string dllName = "???"
+            if nameOff > 0 and nameOff < fileSize {
+                dllName = readCString(nameOff, 256)
+            }
+
+            // 遍历该 DLL 的导入函数
+            // 优先使用 OriginalFirstThunk (ILT)，如果为 0 则用 FirstThunk (IAT)
+            int thunkRVA = origFirstThunk
+            if thunkRVA == 0 { thunkRVA = firstThunk }
+
+            if thunkRVA == 0 {
+                rows.add([dllName, "(无法解析 thunk)", "0x" + toHex8(firstThunk), "-"])
+                dllCount = dllCount + 1
+                continue
+            }
+
+            int thunkOff = rvaToOffset(thunkRVA)
+            if thunkOff == 0 {
+                rows.add([dllName, "(无法解析 thunk 偏移)", "0x" + toHex8(firstThunk), "-"])
+                dllCount = dllCount + 1
+                continue
+            }
+
+            // 遍历 thunk 数组（每项 4 字节 on 32位）
+            int thunkSize = 4
+            if is64bit == 1 { thunkSize = 8 }
+            int maxFuncs = 512
+            int funcCount = 0
+
+            while funcCount < maxFuncs {
+                int thunkEntryOff = thunkOff + funcCount * thunkSize
+                if thunkEntryOff + thunkSize > fileSize { break }
+
+                int thunkVal = readU32(fileData, thunkEntryOff)
+                // 终止条件：全零 thunk
+                if thunkVal == 0 { break }
+
+                // 最高位为 1 表示按序号导入
+                if is64bit == 1 {
+                    // 64位：检查高32位
+                    int thunkHi = readU32(fileData, thunkEntryOff + 4)
+                    if (thunkHi & 0x80000000) != 0 {
+                        int ordinal = thunkVal & 0xFFFF
+                        rows.add([dllName, "Ordinal #" + ordinal, "0x" + toHex8(firstThunk + funcCount * 8), _str(ordinal)])
+                    } else {
+                        // 按名称导入：thunkVal 是 Hint/Name 结构的 RVA
+                        int hintNameOff = rvaToOffset(thunkVal)
+                        if hintNameOff > 0 and hintNameOff + 2 < fileSize {
+                            int hint = readU16(fileData, hintNameOff)
+                            string funcName = readCString(hintNameOff + 2, 256)
+                            rows.add([dllName, funcName, "0x" + toHex8(firstThunk + funcCount * 8), _str(hint)])
+                        } else {
+                            rows.add([dllName, "(名称偏移无效)", "0x" + toHex8(thunkVal), "-"])
+                        }
+                    }
+                } else {
+                    // 32位
+                    if (thunkVal & 0x80000000) != 0 {
+                        int ordinal = thunkVal & 0xFFFF
+                        rows.add([dllName, "Ordinal #" + ordinal, "0x" + toHex8(firstThunk + funcCount * 4), _str(ordinal)])
+                    } else {
+                        // 按名称导入：thunkVal 是 Hint/Name 结构的 RVA
+                        int hintNameOff = rvaToOffset(thunkVal)
+                        if hintNameOff > 0 and hintNameOff + 2 < fileSize {
+                            int hint = readU16(fileData, hintNameOff)
+                            string funcName = readCString(hintNameOff + 2, 256)
+                            rows.add([dllName, funcName, "0x" + toHex8(firstThunk + funcCount * 4), _str(hint)])
+                        } else {
+                            rows.add([dllName, "(名称偏移无效)", "0x" + toHex8(thunkVal), "-"])
+                        }
+                    }
+                }
+                funcCount = funcCount + 1
+            }
+
+            if funcCount == 0 {
+                rows.add([dllName, "(无导入函数)", "-", "-"])
+            }
+            dllCount = dllCount + 1
+        }
+
+        importTable.set_rows(rows)
+    }
+
+    // ==================== LENB 页 ====================
+
+    func analyzeLENB() {
+        lenbBox.clear()
+        lenbBox.add_item("========== LENB 尾部分析 ==========")
+
+        if fileSize < 8 {
+            lenbBox.add_item("x 文件太小，无法包含 LENB 尾部")
+            return
+        }
+
+        int magicOff = fileSize - 4
+        int sizeOff = fileSize - 8
+
+        int magic = readU32(fileData, magicOff)
+        int lenbSize = readU32(fileData, sizeOff)
+
+        lenbBox.add_item("尾部魔数偏移: 0x" + toHex8(magicOff))
+        lenbBox.add_item("尾部大小偏移: 0x" + toHex8(sizeOff))
+        lenbBox.add_item("尾部 Magic: 0x" + toHex8(magic))
+        lenbBox.add_item("LENB 期望值: 0x" + toHex8(LENB_MAGIC))
+        lenbBox.add_item("匹配: " + (if magic == LENB_MAGIC then "是" else "否"))
+        lenbBox.add_item("")
+
+        if magic == LENB_MAGIC {
+            int lenbOffset = fileSize - 8 - lenbSize
+            lenbBox.add_item("v 检测到 LENB 尾部!")
+            lenbBox.add_item("LENB 数据大小: " + lenbSize + " bytes")
+            lenbBox.add_item("LENB 数据偏移: 0x" + toHex8(lenbOffset))
+            lenbBox.add_item("")
+
+            // 解析 LENB 头部
+            if lenbOffset + 28 <= fileSize {
+                lenbBox.add_item("--- LENB 头部字段 ---")
+                int lenbMagicVal = readU32(fileData, lenbOffset)
+                int lenbVersion = readU32(fileData, lenbOffset + 4)
+                int lenbFlags = readU32(fileData, lenbOffset + 8)
+                int lenbSrcHash = readU32(fileData, lenbOffset + 12)
+                int globalVars = readU32(fileData, lenbOffset + 20)
+                int globalFuncs = readU32(fileData, lenbOffset + 24)
+
+                lenbBox.add_item("Magic:    0x" + toHex8(lenbMagicVal) + " (LENB)")
+                lenbBox.add_item("Version:  0x" + toHex8(lenbVersion))
+                lenbBox.add_item("Flags:    0x" + toHex8(lenbFlags))
+                lenbBox.add_item("SrcHash:  0x" + toHex8(lenbSrcHash))
+                lenbBox.add_item("全局变量数: " + globalVars)
+                lenbBox.add_item("全局函数数: " + globalFuncs)
+
+                // 尝试读取符号计数
+                if lenbOffset + 32 <= fileSize {
+                    int symCount = readU32(fileData, lenbOffset + 28)
+                    lenbBox.add_item("符号数:   " + symCount)
+                }
+            }
+
+            // Hex dump 前 64 字节（每行 16 字节）
+            lenbBox.add_item("")
+            lenbBox.add_item("--- LENB 头部 Hex Dump (前 64 字节) ---")
+            int dumpLen = 64
+            if lenbOffset + dumpLen > fileSize { dumpLen = fileSize - lenbOffset }
+            int row = 0
+            while row * 16 < dumpLen {
+                int rowOff = row * 16
+                int rowEnd = rowOff + 16
+                if rowEnd > dumpLen { rowEnd = dumpLen }
+                string addr = toHex8(lenbOffset + rowOff)
+                string hexData = ""
+                string asciiData = ""
+                for rowOff:rowEnd to j {
+                    int byteVal = fileData.byte(lenbOffset + j)
+                    hexData = hexData + toHex2(byteVal) + " "
+                    if byteVal >= 0x20 and byteVal <= 0x7E {
+                        asciiData = asciiData + strings.char(byteVal)
+                    } else {
+                        asciiData = asciiData + "."
+                    }
+                }
+                // 补齐最后一行的空位
+                while rowEnd - rowOff < 16 {
+                    hexData = hexData + "   "
+                    rowOff = rowOff + 1
+                }
+                lenbBox.add_item("0x" + addr + "  " + hexData + " " + asciiData)
+                row = row + 1
+            }
+        } else {
+            lenbBox.add_item("x 未检测到 LENB 尾部数据")
+            lenbBox.add_item("该文件可能不是 Leno 编译器生成的可执行文件")
+            lenbBox.add_item("或 LENB 尾部已被移除/修改")
+        }
+        lenbBox.add_item("")
+        lenbBox.add_item("========== LENB 分析完成 ==========")
+    }
+
+    // ==================== XOR 字符串页 ====================
+
+    func analyzeXORStrings() {
+        Array[Array[string]] rows = []
+
+        // XOR(LENO) 字符串搜索：扫描整个文件
+        int pos = 0
+        int maxPos = fileSize - 12
+        int found = 0
+        int maxResults = 500
+
+        while pos < maxPos and found < maxResults {
+            int runStart = pos
+            int runLen = 0
+            string decrypted = ""
+
+            while pos + runLen < fileSize and runLen < 256 {
+                int b = fileData.byte(pos + runLen)
+                int keyByte = xorKey(runLen % 4)
+                int dec = b ^ keyByte
+
+                if (dec >= 0x20 and dec <= 0x7E) or dec >= 0x80 {
+                    decrypted = decrypted + strings.char(dec)
+                    runLen = runLen + 1
+                } else {
+                    break
+                }
+            }
+
+            if runLen >= 12 {
+                found = found + 1
+                rows.add([
+                    _str(found),
+                    "0x" + toHex8(runStart),
+                    _str(runLen),
+                    decrypted
+                ])
+                pos = runStart + runLen
+            } else {
+                pos = pos + 1
+            }
+        }
+
+        xorTable.set_rows(rows)
+    }
+
+    // ==================== 事件处理 ====================
+
+    func handleEvent(Event ev): bool {
+        if ev.isQuit() or ev.isWindowClose() { return false }
+        if titleBar.is_close_requested() {
+            titleBar.clear_close_request()
+            return false
+        }
+        if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
+        return true
+    }
+
+    // ==================== 主入口 ====================
+
+    func run() {
+        SDL3.ttfInit()
+
+        win = SDL3.createWindow({
+            title: "Leno PE 分析器",
+            w: 1100, h: 700,
+            flags: WindowFlag.RESIZABLE
+        })
+        if not win.ok { SDL3.ttfQuit(); return }
+        win.setMinSize(700, 500)
+
+        setupUI()
+
+        win.run(
+            func(Event ev): bool { return handleEvent(ev) },
+            func(Renderer r) { }
+        )
+
+        SDL3.ttfQuit()
+    }
+}
+
+// ==================== 程序入口 ====================
+
+main() {
+    PEAnalyzer app = new PEAnalyzer()
+    app.run()
+}
