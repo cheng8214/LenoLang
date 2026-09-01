@@ -434,6 +434,28 @@ TypeInfo* infer_field_type(Semantic* s, TypeInfo* obj_type, const char* field_na
 }
 
 // ============================================================================
+// 辅助：检查 nullable 值类型是否参与算术运算（发出警告）
+// nullable 的值类型（如 int?, float?, bool?, bigint?）参与算术运算时，
+// 运行时可能为 null 导致错误，编译时发出警告提醒用户先做 null 检查
+// ============================================================================
+static void check_nullable_arith(TypeInfo* left, TypeInfo* right, int line, int column) {
+    int warned = 0;
+    if (left && left->nullable &&
+        (left->kind == TYPE_INT || left->kind == TYPE_FLOAT ||
+         left->kind == TYPE_BOOL || left->kind == TYPE_BIGINT)) {
+        warning_add_at(WARN_NULLABLE_ARITH, line, column,
+            "nullable 值类型参与算术运算，运行时可能为 null，请先检查变量是否为 null（如 if a != null）");
+        warned = 1;
+    }
+    if (!warned && right && right->nullable &&
+        (right->kind == TYPE_INT || right->kind == TYPE_FLOAT ||
+         right->kind == TYPE_BOOL || right->kind == TYPE_BIGINT)) {
+        warning_add_at(WARN_NULLABLE_ARITH, line, column,
+            "nullable 值类型参与算术运算，运行时可能为 null，请先检查变量是否为 null（如 if a != null）");
+    }
+}
+
+// ============================================================================
 // 类型推断
 // ============================================================================
 
@@ -827,10 +849,31 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                         (left->kind == TYPE_STRING || right->kind == TYPE_STRING)) {
                         result = type_new(TYPE_STRING);
                     }
-                    // null 参与加法 -> any（运行时错误）
+                    // null 参与加法 -> 编译错误
                     else if (left && right &&
                         (left->kind == TYPE_NULL || right->kind == TYPE_NULL)) {
+                        error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, "null 类型不能参与算术运算，请先检查变量是否为 null");
                         result = type_new(TYPE_ANY);
+                    }
+                    // nullable 值类型参与算术运算 -> 警告
+                    else if (left && right &&
+                        ((left->nullable && (left->kind == TYPE_INT || left->kind == TYPE_FLOAT || left->kind == TYPE_BOOL || left->kind == TYPE_BIGINT)) ||
+                         (right->nullable && (right->kind == TYPE_INT || right->kind == TYPE_FLOAT || right->kind == TYPE_BOOL || right->kind == TYPE_BIGINT)))) {
+                        check_nullable_arith(left, right, ast->line, ast->column);
+                        // 继续走数值类型推导
+                        if (left->kind == TYPE_GENERIC_PARAM) {
+                            result = type_copy(left);
+                        } else if (right->kind == TYPE_GENERIC_PARAM) {
+                            result = type_copy(left);
+                        } else if (left->kind == TYPE_BIGINT || right->kind == TYPE_BIGINT) {
+                            result = type_new(TYPE_BIGINT);
+                        } else if (left->kind == TYPE_INT && right->kind == TYPE_INT) {
+                            result = type_new(TYPE_INT);
+                        } else if (left->kind == TYPE_FLOAT || right->kind == TYPE_FLOAT) {
+                            result = type_new(TYPE_FLOAT);
+                        } else {
+                            result = type_new(TYPE_ANY);
+                        }
                     }
                     // 如果任一操作数是 ANY，结果是 ANY
                     else if (left && right &&
@@ -873,10 +916,30 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                 }
                 case TOK_MINUS:
                 case TOK_STAR: {
-                    // null 参与减法/乘法 -> any
+                    // null 参与减法/乘法 -> 编译错误
                     if (left && right &&
                         (left->kind == TYPE_NULL || right->kind == TYPE_NULL)) {
+                        error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, "null 类型不能参与算术运算，请先检查变量是否为 null");
                         result = type_new(TYPE_ANY);
+                    }
+                    // nullable 值类型参与算术运算 -> 警告
+                    else if (left && right &&
+                        ((left->nullable && (left->kind == TYPE_INT || left->kind == TYPE_FLOAT || left->kind == TYPE_BOOL || left->kind == TYPE_BIGINT)) ||
+                         (right->nullable && (right->kind == TYPE_INT || right->kind == TYPE_FLOAT || right->kind == TYPE_BOOL || right->kind == TYPE_BIGINT)))) {
+                        check_nullable_arith(left, right, ast->line, ast->column);
+                        if (left->kind == TYPE_GENERIC_PARAM) {
+                            result = type_copy(left);
+                        } else if (right->kind == TYPE_GENERIC_PARAM) {
+                            result = type_copy(left);
+                        } else if (left->kind == TYPE_BIGINT || right->kind == TYPE_BIGINT) {
+                            result = type_new(TYPE_BIGINT);
+                        } else if (left->kind == TYPE_INT && right->kind == TYPE_INT) {
+                            result = type_new(TYPE_INT);
+                        } else if (left->kind == TYPE_FLOAT || right->kind == TYPE_FLOAT) {
+                            result = type_new(TYPE_FLOAT);
+                        } else {
+                            result = type_new(TYPE_ANY);
+                        }
                     }
                     // 如果任一操作数是 ANY，结果是 ANY
                     else if (left && right &&
@@ -920,10 +983,30 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     break;
                 }
                 case TOK_SLASH:
-                    // 如果任一操作数是 ANY 或 NULL，结果是 ANY
+                    // null 参与除法 -> 编译错误
                     if (left && right &&
-                        (left->kind == TYPE_ANY || right->kind == TYPE_ANY ||
-                         left->kind == TYPE_NULL || right->kind == TYPE_NULL)) {
+                        (left->kind == TYPE_NULL || right->kind == TYPE_NULL)) {
+                        error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, "null 类型不能参与算术运算，请先检查变量是否为 null");
+                        result = type_new(TYPE_ANY);
+                    }
+                    // nullable 值类型参与算术运算 -> 警告
+                    else if (left && right &&
+                        ((left->nullable && (left->kind == TYPE_INT || left->kind == TYPE_FLOAT || left->kind == TYPE_BOOL || left->kind == TYPE_BIGINT)) ||
+                         (right->nullable && (right->kind == TYPE_INT || right->kind == TYPE_FLOAT || right->kind == TYPE_BOOL || right->kind == TYPE_BIGINT)))) {
+                        check_nullable_arith(left, right, ast->line, ast->column);
+                        if (left->kind == TYPE_INT && right->kind == TYPE_INT) {
+                            result = type_new(TYPE_INT);
+                        } else if (left->kind == TYPE_FLOAT || right->kind == TYPE_FLOAT) {
+                            result = type_new(TYPE_FLOAT);
+                        } else if (left->kind == TYPE_BIGINT || right->kind == TYPE_BIGINT) {
+                            result = type_new(TYPE_BIGINT);
+                        } else {
+                            result = type_new(TYPE_ANY);
+                        }
+                    }
+                    // 如果任一操作数是 ANY，结果是 ANY
+                    else if (left && right &&
+                        (left->kind == TYPE_ANY || right->kind == TYPE_ANY)) {
                         result = type_new(TYPE_ANY);
                     }
                     // bool 参与除法 -> 编译错误
@@ -978,8 +1061,25 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                 case TOK_SHL:
                 case TOK_SHR:
                 case TOK_USHR:
-                    // bool 参与位运算/取模 -> 编译错误
+                    // null 参与位运算/取模 -> 编译错误
                     if (left && right &&
+                        (left->kind == TYPE_NULL || right->kind == TYPE_NULL)) {
+                        error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, "null 类型不能参与算术运算，请先检查变量是否为 null");
+                        result = type_new(TYPE_ANY);
+                    }
+                    // nullable 值类型参与位运算/取模 -> 警告
+                    else if (left && right &&
+                        ((left->nullable && (left->kind == TYPE_INT || left->kind == TYPE_FLOAT || left->kind == TYPE_BOOL || left->kind == TYPE_BIGINT)) ||
+                         (right->nullable && (right->kind == TYPE_INT || right->kind == TYPE_FLOAT || right->kind == TYPE_BOOL || right->kind == TYPE_BIGINT)))) {
+                        check_nullable_arith(left, right, ast->line, ast->column);
+                        if (left->kind == TYPE_BIGINT || right->kind == TYPE_BIGINT) {
+                            result = type_new(TYPE_BIGINT);
+                        } else {
+                            result = type_new(TYPE_INT);
+                        }
+                    }
+                    // bool 参与位运算/取模 -> 编译错误
+                    else if (left && right &&
                         (left->kind == TYPE_BOOL || right->kind == TYPE_BOOL)) {
                         error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, "bool 类型不能参与算术运算");
                         result = type_new(TYPE_ANY);
@@ -1077,10 +1177,19 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     type_free(operand);
                     result = type_new(TYPE_ANY);
                 }
-                // 负号：null 参与 -> any
+                // 负号：null 参与 -> 编译错误
                 else if (operand && operand->kind == TYPE_NULL) {
+                    error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, "null 类型不能参与算术运算，请先检查变量是否为 null");
                     type_free(operand);
                     result = type_new(TYPE_ANY);
+                }
+                // 负号：nullable 值类型参与 -> 警告
+                else if (operand && operand->nullable &&
+                    (operand->kind == TYPE_INT || operand->kind == TYPE_FLOAT ||
+                     operand->kind == TYPE_BOOL || operand->kind == TYPE_BIGINT)) {
+                    warning_add_at(WARN_NULLABLE_ARITH, ast->line, ast->column,
+                        "nullable 值类型参与算术运算，运行时可能为 null，请先检查变量是否为 null（如 if a != null）");
+                    result = operand;
                 }
                 // 保持原有数值类型
                 else {

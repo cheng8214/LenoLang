@@ -91,6 +91,7 @@ typedef enum {
     WARN_STRUCT_EQ_NULL,   // struct 值类型与 null 比较（恒为 false/true）
     WARN_OR_TYPE_GUARD,    // or 条件中的类型守卫不会收窄
     WARN_GENERIC_NO_CONSTRAINT, // 泛型参数参与运算但无约束
+    WARN_NULLABLE_ARITH,    // nullable 值类型参与算术运算（可能为 null）
 } WarnType;
 
 // ============================================================================

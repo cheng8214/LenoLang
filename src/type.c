@@ -804,8 +804,31 @@ int type_is_compatible(TypeInfo* target, TypeInfo* source) {
     if (target->kind == TYPE_GENERIC_PARAM) return 1;
     if (source->kind == TYPE_GENERIC_PARAM) return 1;
 
-    // null 可以赋值给任何类型（允许 int b = null, string c = null）
-    if (source->kind == TYPE_NULL) return 1;
+    // null 赋值规则：
+    // - nullable 类型（如 int?, string?）可以接受 null
+    // - 引用类型（struct, cstruct, face, string, array, dict, func, clib, ptr 等）可以为 null
+    // - 值类型（int, float, bool, bigint）不接受 null 赋值（需使用 int? 等可空类型）
+    if (source->kind == TYPE_NULL) {
+        // nullable 类型（如 int?, string?）可以接受 null
+        if (target->nullable) return 1;
+        // any/infer 类型可以接受 null（用于 var a = null 的类型推断）
+        if (target->kind == TYPE_ANY || target->kind == TYPE_INFER) return 1;
+        // 泛型类型参数可以接受 null
+        if (target->kind == TYPE_GENERIC_PARAM) return 1;
+        // 引用类型可以为 null
+        if (target->kind == TYPE_PTR || target->kind == TYPE_PTR_GENERIC) return 1;  // 指针
+        if (target->kind == TYPE_CSTRUCT || target->kind == TYPE_STR8 || target->kind == TYPE_STR16) return 1;  // C 布局指针类型
+        if (target->kind == TYPE_CLIB) return 1;       // clib 句柄
+        if (target->kind == TYPE_FACE) return 1;       // face 接口引用
+        if (target->kind == TYPE_STRUCT) return 1;     // struct 引用
+        if (target->kind == TYPE_STRING) return 1;     // string 引用
+        if (target->kind == TYPE_ARRAY) return 1;      // array 引用
+        if (target->kind == TYPE_DICT) return 1;       // dict 引用
+        if (target->kind == TYPE_FUNCTION) return 1;    // func 引用
+        if (target->kind == TYPE_ENUM) return 1;       // enum 引用
+        // 值类型（int, float, bool, bigint）不接受 null 赋值
+        return 0;
+    }
 
     // 多返回值类型在非解构上下文中自动退化为第一个返回值类型
     if (source->kind == TYPE_MULTI_RET && source->param_count > 0 && source->param_types) {

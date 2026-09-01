@@ -489,13 +489,23 @@ main() {
 
 ### null 类型
 
+null 表示"没有值"。在 Leno 中，null 的赋值规则取决于目标类型是**值类型**还是**引用类型**。
+
+#### 引用类型——可以赋值为 null
+
+`string`、`Array`、`Dict`、`struct`、`face`、`func`、`Ptr` 等引用类型天然可以为 null：
+
 ```leno
 main() {
-    // null 可以赋给任何类型，值保持 null
-    int a = null
-    string b = null
-    print(a is null)     // true
-    print(b is null)     // true
+    string s = null         // ✅ string 是引用类型，可以为 null
+    Dict d = null           // ✅ Dict 是引用类型，可以为 null
+    Array a = null          // ✅ Array 是引用类型，可以为 null
+
+    // 函数返回 null（引用类型返回 null 表示"不存在"）
+    func findUser(int id): string {
+        if id == 0 { return null }
+        return "cheng"
+    }
 
     // var 声明 null 后，第一次赋值锁定类型
     var x = null
@@ -505,29 +515,36 @@ main() {
     // 清空变量
     var name = "cheng"
     name = null         // ✅ 允许
+}
+```
 
-    // 函数返回 null
-    func findUser(int id):string {
-        if id == 0 { return null }
-        return "cheng"
-    }
+#### 值类型——不能赋值为 null
+
+`int`、`float`、`bool`、`bigint` 是值类型，**不能直接赋值为 null**。如需允许 null，请使用**可空类型** `int?`、`float?` 等：
+
+```leno
+main() {
+    int a = null          // ❌ 编译错误：值类型不能赋值为 null
+    int? b = null         // ✅ 可空类型可以赋值为 null
+    float f = null        // ❌ 编译错误：值类型不能赋值为 null
+    float? g = null       // ✅ 可空类型可以赋值为 null
 }
 ```
 
 > **⚠️ 注意：null 不能参与算术运算**
 >
 > ```leno
-> int a = null
-> a + 1              // ❌ 运行时错误：null 不能参与算术运算
-> null == null       // true
-> null == 0          // false
-> null == ""         // false
+> int a = null          // ❌ 编译错误：int 不能赋值为 null
+> null + 1              // ❌ 编译错误：null 类型不能参与算术运算
+> null == null          // true
+> null == 0             // false
+> null == ""            // false
 > ```
 
 > **⚠️ 注意：`var x = null`** **后类型未锁定，类似空数组**
 >
 > ```leno
-> var x = null        // 类型为 null（未锁定）
+> var x = null        // 类型为 any（未锁定）
 > x = 42              // 锁定为 int
 > x = "hello"         // ❌ 已锁定为 int
 >
@@ -1033,15 +1050,17 @@ main() {
     var id_map = {1: "一"}
     print(type(id_map))     // "Dict[int, string]"
 
-    int b = null
-    print(type(b))          // "null"（值是 null，不是 int）
+    int? b = null
+    print(type(b))          // "null"（值是 null）
+    b = 42
+    print(type(b))          // "int"（值变成了 42）
 }
 ```
 
 > **⚠️ 注意：`type()`** **返回的是值的类型，不是变量的编译时类型**
 >
 > ```leno
-> int a = null
+> int? a = null
 > print(type(a))    // "null"（因为当前值是 null）
 > a = 10
 > print(type(a))    // "int"（值变成了 10）
@@ -1253,7 +1272,9 @@ main() {
 > true - 1         // ❌ 编译错误
 > "hello" - "lo"   // ❌ 编译错误：string 类型不能参与减法
 > "hello" * 2      // ❌ 编译错误：string 类型不能参与乘法
-> null + 1         // ❌ 运行时错误：null 不能参与算术运算
+> null + 1         // ❌ 编译错误：null 类型不能参与算术运算
+> int? a = null
+> a + 1            // ⚠️ 编译警告：nullable 值类型参与运算，可能为 null
 > ```
 
 **`+`** **特殊规则：** 一边是 string 时，自动转为字符串拼接：
@@ -4229,6 +4250,36 @@ func process() {
 }
 ```
 
+#### 可空值类型与算术运算
+
+当可空值类型（`int?`、`float?`、`bool?`、`bigint?`）参与算术运算时，编译器会发出**警告**，因为运行时该值可能为 null，直接运算会导致运行时错误：
+
+```leno
+main() {
+    int? a = null
+    int b = a + 1         // ⚠️ 警告：nullable 值类型参与算术运算，运行时可能为 null
+    print(b)
+}
+```
+
+**正确的写法**——先做 null 检查，在 `if` 分支内编译器会自动窄化类型：
+
+```leno
+main() {
+    int? a = null
+    if a != null {
+        int b = a + 1     // ✅ 窄化后 a 视为 int，安全运算
+        print(b)
+    }
+}
+```
+
+> **规则总结**：
+> - `null + 1`、`null - 1` 等 → **编译错误**（null 字面量直接参与运算）
+> - `int? a = null; a + 1` → **编译警告**（nullable 值类型参与运算，可能为 null）
+> - `if a != null { a + 1 }` → ✅ 安全（窄化后视为 int）
+> - `string? s = null; s + "x"` → ✅ 安全（string 拼接天然处理 null）
+
 #### 类型兼容规则
 
 ```leno
@@ -4255,16 +4306,16 @@ struct Good {
 
 ---
 
-**⚠️ 重要：原始类型字段没有默认值时也是 null**
+**⚠️ 重要：值类型字段必须指定默认值**
 
-在 Leno 中，`float`、`int`、`bool` 等原始类型字段如果不指定默认值，初始值是 **null** 而不是 0 或 false。这意味着在算术运算、比较等操作中会报错：
+在 Leno 中，`float`、`int`、`bool` 等**值类型**字段如果不指定默认值，初始值是 **null** 而不是 0 或 false。这会导致算术运算产生**编译警告**或运行时错误：
 
 ```leno
 struct Counter {
     float value           // ❌ 初始值是 null，不是 0.0
     int count             // ❌ 初始值是 null，不是 0
     bool active           // ❌ 初始值是 null，不是 false
-    string name           // ❌ 初始值是 null，不是 ""
+    // string name       // string 是引用类型，默认 null 合法
 }
 
 struct Counter {
@@ -4275,7 +4326,7 @@ struct Counter {
 }
 ```
 
-**常见陷阱**：如果方法在 `set()` 初始化之前被调用，null 字段参与运算会报运行时错误：
+**常见陷阱**：如果方法在 `set()` 初始化之前被调用，null 字段参与运算会产生警告或运行时错误：
 
 ```leno
 struct Widget {
@@ -4287,7 +4338,8 @@ struct Widget {
     }
 
     func move(float dx, float dy) {
-        // ❌ 如果 move() 在 set() 之前调用，x 和 y 是 null
+        // ⚠️ 如果 move() 在 set() 之前调用，x 和 y 是 null
+        // 编译警告：nullable 值类型参与算术运算
         // 运行时报错："操作数必须是数字或字符串"
         x = x + dx
         y = y + dy
@@ -4295,7 +4347,7 @@ struct Widget {
 }
 ```
 
-> **建议**：所有可能参与运算的字段，都应显式指定默认值，避免 null 导致运行时错误。引用类型（struct、Font 等）默认就是 null，不需要写 `= null`（写了反而会触发语义分析器的 null 访问警告）。
+> **建议**：所有可能参与运算的**值类型**字段（`int`、`float`、`bool`、`bigint`），都应显式指定默认值，避免 null 导致的编译警告和运行时错误。引用类型（`struct`、`string`、`Array`、`Dict` 等）默认就是 null，不需要写 `= null`。
 
 ### 结构体方法
 
@@ -10445,6 +10497,8 @@ lenolang program.leno
 | 成员检查  | `x in arr`, `key in dict`, `sub in str` |
 | 非成员检查 | `x not in arr`, `key not in dict`       |
 | 可空类型  | `Type?` — `int?`, `string?`, `Point?` 等  |
+| null 赋值 | `string s = null` ✅ 引用类型 \| `int a = null` ❌ 值类型 \| `int? a = null` ✅ 可空类型  |
+| null 运算 | `null + 1` ❌ 编译错误 \| `int? a = null; a + 1` ⚠️ 编译警告 \| `if a != null { a + 1 }` ✅ |
 | null 判断 | `x is null`, `x != null`, `x == null`    |
 | 复合赋值  | `+=`, `-=`, `*=`, `/=`, `%=`            |
 | 位复合赋值 | `&=`, `\|=`, `^=`, `<<=`, `>>=`, `>>>=` |

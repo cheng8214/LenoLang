@@ -229,6 +229,8 @@ void warning_print_all(void) {
             case WARN_NULL_FIELD_CHAIN: type_str = "空值链式访问"; break;
             case WARN_STRUCT_EQ_NULL:  type_str = "struct与null比较"; break;
             case WARN_OR_TYPE_GUARD:   type_str = "or类型守卫"; break;
+            case WARN_GENERIC_NO_CONSTRAINT: type_str = "泛型无约束"; break;
+            case WARN_NULLABLE_ARITH:  type_str = "可空类型运算"; break;
             default: break;
         }
 

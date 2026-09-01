@@ -444,8 +444,8 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
                     }
                 }
                 
-                // 检查类型兼容性
-                if (default_kind != TYPE_ANY && default_kind != TYPE_NULL) {
+                // 检查类型兼容性（null 默认值也要检查，只有 nullable/指针类型才能接受 null）
+                if (default_kind != TYPE_ANY) {
                     if (!type_is_compatible(param_type, type_new(default_kind))) {
                         char msg[BUFFER_MEDIUM];
                         snprintf(msg, sizeof(msg), "参数 '%s' 的默认值类型 '%s' 与参数类型 '%s' 不匹配",
