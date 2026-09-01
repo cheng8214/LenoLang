@@ -28,6 +28,7 @@ export struct Table impl Widget, Themeable {
     Array[bool] _selSet = []           // 选中行标志数组（与 _rows 平行），让 _is_sel O(1) 避免 render 中线性扫描 _selRows
     bool _sortable = false; int _sortCol = -1; bool _sortDesc = false, _zebra = true
     Array[int] _numericCols = []    // 数值排序列索引集合（点击表头时按数值而非字符串比较）
+    Array[int] _sortDisabledCols = []  // 禁用排序的列索引集合（黑名单；空数组=全部列可排序，受 _sortable 控制）
     bool _colReorder = true         // 是否允许拖拽表头重排列顺序
     int _dragReorderCol = -1        // 正在拖拽重排的源列索引（-1=无）
     float _reorderStartX = 0.0     // 拖拽起点 X（用于判断是点击还是拖拽）
@@ -312,6 +313,11 @@ export struct Table impl Widget, Themeable {
         _maxColW = opts.get("max_col_width", 9999.0)
         var ncs = opts.get("numeric_cols", [])
         if ncs is Array[int] { _numericCols = ncs } else { _numericCols = [] }
+        // 禁用排序的列集合（黑名单，空数组=全部可排序）；列重排时索引自动同步
+        var sdc = opts.get("sort_disabled_cols", [])
+        if sdc is Array[int] { _sortDisabledCols = sdc } else { _sortDisabledCols = [] }
+        // 若当前排序列被禁用，清除排序状态
+        if _is_col_sort_disabled(_sortCol) { _sortCol = -1; _sortDesc = false }
 
         var hs = opts.get("headers", [])
         if hs is Array[string] { _headers = hs } else { _headers = [] }
@@ -587,6 +593,12 @@ export struct Table impl Widget, Themeable {
         for _numericCols.len() to i { if _numericCols[i] == col { return true } }
         return false
     }
+    // 判断列是否被禁用排序（在 _sortDisabledCols 黑名单中）
+    func _is_col_sort_disabled(int col): bool {
+        if col < 0 { return false }
+        for _sortDisabledCols.len() to i { if _sortDisabledCols[i] == col { return true } }
+        return false
+    }
     // 字符串转 float（失败返回 0.0，不抛异常）
     func _to_float(string s): float {
         try {
@@ -595,12 +607,36 @@ export struct Table impl Widget, Themeable {
             return 0.0
         }
     }
+    // 判断字符串是否为可解析的数字（自动数值排序检测用）
+    func _is_number_str(string s): bool {
+        if s == "" { return false }
+        try {
+            _float(s)
+            return true
+        } catch {
+            return false
+        }
+    }
+    // 判断某列排序是否应按数值比较：
+    // 1) 显式在 numeric_cols 中指定 → 数值
+    // 2) 否则自动检测：该列所有非空值均可解析为数字 → 数值
+    //    （避免 "9" > "89" 这类字符串比较 bug：99/90/89 会排成 90,9,89）
+    func _should_numeric_sort(int col): bool {
+        if _is_numeric_col(col) { return true }
+        for _rows.len() to i {
+            string v = _cell(i, col)
+            if v == "" { continue }
+            if not _is_number_str(v) { return false }
+        }
+        return true
+    }
     // ★ 选择排序替代冒泡：比较次数减半，交换次数从 O(n²) 降为 O(n)
     // 支持 numeric 模式：数值列按 float 比较，避免字符串排序 "10" < "2" 的问题
+    // ★ 自动检测：显式 numeric_cols 或全列可解析为数字时按数值比较
     func sort_by(int col, bool desc) {
         _sortCol = col; _sortDesc = desc
         _invalidate_fitted(); _invalidate_sb()
-        bool numeric = _is_numeric_col(col)
+        bool numeric = _should_numeric_sort(col)
         int n = _rows.len()
         for 0 : n - 1 to i {
             int best = i
@@ -625,6 +661,25 @@ export struct Table impl Widget, Themeable {
     // ==================== 设置方法 ====================
     func set_font_size(float s) { _fontSize = s; if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null; _invalidate_fitted() }
     func set_col_reorder(bool r) { _colReorder = r }
+    // 动态启用/禁用某列的排序（en=false 时从黑名单追加，en=true 时从黑名单移除）
+    func set_col_sortable(int col, bool en) {
+        if col < 0 { return }
+        if not en {
+            if not _is_col_sort_disabled(col) { _sortDisabledCols.add(col) }
+            if _sortCol == col { _sortCol = -1; _sortDesc = false }
+        } else {
+            for _sortDisabledCols.len() to i { if _sortDisabledCols[i] == col { _sortDisabledCols.remove(i); break } }
+        }
+    }
+    // 整体设置禁用排序的列集合（黑名单，空数组=全部列可排序）
+    func set_sort_disabled_cols(Array[int] cols) {
+        _sortDisabledCols = cols
+        if _is_col_sort_disabled(_sortCol) { _sortCol = -1; _sortDesc = false }
+    }
+    // 查询某列是否可排序（全局开关 + 列级黑名单）
+    func is_col_sortable(int col): bool {
+        return _sortable and not _is_col_sort_disabled(col)
+    }
     func set_frozen_cols(int n) { _frozenCols = n; _invalidate_sb(); _clamp_scroll() }
     func set_row_reorder(bool r) { _rowReorder = r }
     func on_row_reorder(func(int, int):void cb) { _onRowReorder = cb }
@@ -682,11 +737,13 @@ export struct Table impl Widget, Themeable {
         for _rows.len() to i {
             if a < _rows[i].len() and b < _rows[i].len() { string tc = _rows[i][a]; _rows[i][a] = _rows[i][b]; _rows[i][b] = tc }
         }
-        // 交换 numericCols 中的索引
+        // 交换 numericCols / sortDisabledCols 中的索引
         for _numericCols.len() to i { if _numericCols[i] == a { _numericCols[i] = b } eif _numericCols[i] == b { _numericCols[i] = a } }
-        // 交换 imageCol / checkCol 引用
+        for _sortDisabledCols.len() to i { if _sortDisabledCols[i] == a { _sortDisabledCols[i] = b } eif _sortDisabledCols[i] == b { _sortDisabledCols[i] = a } }
+        // 交换 imageCol / checkCol / sortCol 引用（排序箭头跟随列移动）
         if _imageCol == a { _imageCol = b } eif _imageCol == b { _imageCol = a }
         if _checkCol == a { _checkCol = b } eif _checkCol == b { _checkCol = a }
+        if _sortCol == a { _sortCol = b } eif _sortCol == b { _sortCol = a }
         _colWPrefixValid = false; _totalWValid = false; _invalidate_sb(); _invalidate_fitted()
     }
     func set_enabled(bool e) { enabled = e }
@@ -1416,7 +1473,7 @@ export struct Table impl Widget, Themeable {
                 if col >= 0 and _colReorder {
                     _dragReorderCol = col; _reorderStartX = mx; _reorderDragging = false
                 }
-                if col >= 0 and _sortable { sort_by(col, not (_sortCol == col and _sortDesc)) }
+                if col >= 0 and _sortable and not _is_col_sort_disabled(col) { sort_by(col, not (_sortCol == col and _sortDesc)) }
             } else {
                 int row = _row_at(my)
                 int col = _col_at(mx)
@@ -1496,6 +1553,9 @@ export struct Table impl Widget, Themeable {
         float boxSize = 14.0
         float bx = r.snapX(cx + (cw - boxSize) / 2.0)
         float by = r.snapY(ry + (rh - boxSize) / 2.0)
+        // ★ 水平边界保护：表头在 bodyClip 之外绘制（无全表 clip），
+        //   完全滚出 Table 水平范围的复选框跳过，防止画出 Table 左/右边界。
+        if bx + boxSize < x or bx > x + w { return }
         if checked or partial {
             Color cc = _chkColor
             if partial { cc = theme.packColor(100, 110, 125) }   // 半选用灰色
@@ -1698,6 +1758,9 @@ export struct Table impl Widget, Themeable {
         // （每格 push/pop 会产生 2 次 batch flush，12行×5列=120次/帧，导致闪烁）
         float cl = cx; if cl < x { cl = x }
         float crx = cx + cw; if crx > x + w { crx = x + w }
+        // ★ 左边界保护：表头在 bodyClip 之外直接绘制（无全表 clip），
+        //   防止列滚动到视口左侧时 header 文字画出 Table 左边界。
+        if tx < cl { tx = cl }
         if tx >= crx { return }
         r.drawText(_font, dt, r.snapX(tx), r.snapY(ty), color)
     }
@@ -1713,12 +1776,6 @@ export struct Table impl Widget, Themeable {
         r.fillRect(x, y, w, h)
 
         if _font == null or not _font.ok { return }   // 字体无效时仍有背景，只跳过文字
-
-        SDL_Rect clip = SDL_Rect.malloc()
-        clip.x = _int(x); clip.y = _int(y)
-        clip.w = _int(w) + 1; clip.h = _int(h) + 1   // +1 防止浮点坐标截断丢失亚像素，避免行边缘闪烁
-        r.pushClipRect(clip.to_ptr())
-        _clipBase = clip.to_ptr()
 
         var sb = _compute_sb()
 
@@ -1738,7 +1795,8 @@ export struct Table impl Widget, Themeable {
             if c < _headers.len() and c != _checkCol {
                 string t = _headers[c]
                 Color htc = _hdrTxtColor
-                if c == _sortCol {
+                // 禁用排序列不显示排序箭头（即使它曾是排序列）
+                if c == _sortCol and not _is_col_sort_disabled(c) {
                     if _sortDesc { t = $"{t} ▼" } else { t = $"{t} ▲" }
                 }
                 _draw_cell_text(r, t, cx, cw, y, _headerH, _headerAligns[c], htc, 0.0)
@@ -1749,14 +1807,20 @@ export struct Table impl Widget, Themeable {
         r.setColor(theme.withAlpha(_sepColor, 220))
         r.drawLine(x, y + _headerH, x + w, y + _headerH)
 
-        // 数据行
+        // 数据区：bodyClip 单层裁剪。裁剪深度在 Tab 内容区内仍为 2 层（Tab + body），
+        // 且 push/pop 次数与旧"仅全表单层裁剪"版本相同——不引入额外 flush，避免 D3D 闪烁。
+        // ★ bodyClip 兜底：跨 header 上边界 / 底部边界的半行被安全裁剪，
+        //   既不覆盖表头（滚动到底时行不会画到 header 上），也不整行跳过留空白
+        //   （拖动滚动条时顶部半行自然显示，滚动平滑）。
         float bodyTop = y + _headerH
         float bodyH = h - _headerH - sb[1]
         float bodyW = w - sb[0]
-        // ★ 不再使用第二层 bodyClip 裁剪：三层嵌套 clipRect（Tab内容区 + Table + body）
-        //   会导致 pushClipRect/popClipRect 的 _flushBatches 在 D3D 后端偶发中间状态→闪烁。
-        //   改用行级可见性检查（continue 跳过不可见行）+ fillRect 宽度裁剪到 bodyW 防止渗透。
-        //   与 ListBox 的单层 clipRect 方案一致。
+        SDL_Rect bodyClip = SDL_Rect.malloc()
+        bodyClip.x = _int(x); bodyClip.y = _int(bodyTop)
+        bodyClip.w = _int(bodyW) + 1; bodyClip.h = _int(bodyH) + 1   // +1 防止浮点坐标截断丢失亚像素
+        r.pushClipRect(bodyClip.to_ptr())
+        _clipBase = bodyClip.to_ptr()
+
         int startRow = _int(_scrollY / _rowH)
         if startRow < 0 { startRow = 0 }
         int endRow = startRow + _int(bodyH / _rowH) + 2
@@ -1881,8 +1945,8 @@ export struct Table impl Widget, Themeable {
             r.drawText(_font, _emptyText, r.snapX(tx), r.snapY(ty), _emptyColor)
         }
 
-        // 恢复表格整体裁剪区（滚动条/边框需全区域绘制）
-        _clipBase = clip.to_ptr()
+        // 恢复裁剪（滚动条/边框/拖拽线需全区域绘制）
+        r.popClipRect(); bodyClip.free()
 
         if _dragCol >= 0 and _dragCol < _colW.len() {
             float ex = _col_x(_dragCol) + _colW[_dragCol]
@@ -1924,8 +1988,6 @@ export struct Table impl Widget, Themeable {
         if sb[1] > 0.0 { _draw_hscroll(r, sb) }
 
         if _editing and _edit != null { _edit.render(r) }
-
-        r.popClipRect(); clip.free()
     }
 
     func _draw_vscroll(Renderer r, Array[float] sb) {
