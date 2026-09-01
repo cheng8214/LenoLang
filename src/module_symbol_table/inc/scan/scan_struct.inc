@@ -45,8 +45,9 @@
 
                     while (*after_struct && (*after_struct == ' ' || *after_struct == '\t' || *after_struct == '\n' || *after_struct == '\r')) after_struct++;
 
-                    // 解析 impl 声明
-                    char* impl_names[MOD_MAX_TYPES];
+                    // 解析 impl 声明（名称数组动态增长，无固定上限）
+                    char** impl_names = NULL;
+                    int impl_capacity = 0;
                     int impl_count = 0;
                     if (strncmp(after_struct, "impl", 4) == 0 && (after_struct[4] == ' ' || after_struct[4] == '\t')) {
                         after_struct += 4;
@@ -58,11 +59,26 @@
                             while (*after_struct && (isalnum((unsigned char)*after_struct) || *after_struct == '_')) after_struct++;
                             int face_name_len = (int)(after_struct - face_name_start);
 
-                            if (face_name_len > 0 && face_name_len < 64 && impl_count < 64) {
-                                impl_names[impl_count] = (char*)malloc(face_name_len + 1);
-                                strncpy(impl_names[impl_count], face_name_start, face_name_len);
-                                impl_names[impl_count][face_name_len] = '\0';
-                                impl_count++;
+                            if (face_name_len > 0 && face_name_len < 64) {
+                                // 动态扩容（容量不足时翻倍）
+                                int impl_slot_ok = 0;
+                                if (impl_count < impl_capacity) {
+                                    impl_slot_ok = 1;
+                                } else {
+                                    int new_cap = impl_capacity == 0 ? 8 : impl_capacity * 2;
+                                    char** grown = (char**)realloc(impl_names, sizeof(char*) * new_cap);
+                                    if (grown) {
+                                        impl_names = grown;
+                                        impl_capacity = new_cap;
+                                        impl_slot_ok = 1;
+                                    }
+                                }
+                                if (impl_slot_ok) {
+                                    impl_names[impl_count] = (char*)malloc(face_name_len + 1);
+                                    strncpy(impl_names[impl_count], face_name_start, face_name_len);
+                                    impl_names[impl_count][face_name_len] = '\0';
+                                    impl_count++;
+                                }
                             }
 
                             // 跳过泛型参数 [TypeArg]（如 Comparable[int]）
@@ -92,8 +108,14 @@
                     if (*after_struct == '{') {
                         after_struct++;
 
-                        ModuleStructField fields[MOD_MAX_FIELDS];
-                        ModuleStructMethod methods[MOD_MAX_METHODS];
+                        // 字段/方法数组按需动态增长（无固定上限）
+                        // 修复：原固定栈数组上限 MOD_MAX_FIELDS/MOD_MAX_METHODS=128，
+                        // struct 方法超过 128 个时被静默丢弃，导致跨模块调用报
+                        // "类型 'struct X' 没有方法 'Y'"（如 LenoSDL3 Table 的 contains/on_dbl_click）
+                        ModuleStructField* fields = NULL;
+                        ModuleStructMethod* methods = NULL;
+                        int field_capacity = 0;
+                        int method_capacity = 0;
                         int field_count = 0;
                         int method_count = 0;
                         // 关联常量临时数组
@@ -101,7 +123,7 @@
                         char* const_values_tmp[64];
                         int const_count_tmp = 0;
 
-                        while (*after_struct && *after_struct != '}' && (field_count < MOD_MAX_FIELDS || method_count < MOD_MAX_METHODS)) {
+                        while (*after_struct && *after_struct != '}') {
                             while (*after_struct && (*after_struct == ' ' || *after_struct == '\t' || *after_struct == '\n' || *after_struct == '\r')) after_struct++;
                             if (!*after_struct || *after_struct == '}') break;
 
@@ -214,7 +236,7 @@
                                 while (*after_func && (isalnum((unsigned char)*after_func) || *after_func == '_')) after_func++;
                                 int method_name_len = (int)(after_func - method_name_start);
 
-                                if (method_name_len > 0 && method_name_len < 64 && method_count < MOD_MAX_METHODS) {
+                                if (method_name_len > 0 && method_name_len < 64) {
                                     char method_name[64];
                                     strncpy(method_name, method_name_start, method_name_len);
                                     method_name[method_name_len] = '\0';
@@ -545,50 +567,68 @@
                                         for (const char* c = source; c < after_struct; c++) {
                                             if (*c == '\n') method_def_line++;
                                         }
-                                        methods[method_count].name = (char*)malloc(method_key_len + 1);
-                                        memcpy(methods[method_count].name, method_key, method_key_len);
-                                        methods[method_count].name[method_key_len] = '\0';
-                                        methods[method_count].line = method_def_line;
-                                        methods[method_count].return_type = method_return_type;
-                                        methods[method_count].return_type_info = method_return_type_info ? type_copy(method_return_type_info) : NULL;
-                                        // 释放临时 method_return_type_info（已复制到 methods 数组）
-                                        if (method_return_type_info) { type_free(method_return_type_info); method_return_type_info = NULL; }
-                                        methods[method_count].return_struct_name = method_return_struct[0] ? strdup(method_return_struct) : NULL;
-                                        methods[method_count].return_type_param_name = method_return_type_param[0] ? strdup(method_return_type_param) : NULL;
-                                        methods[method_count].return_generic_count = method_return_generic_count;
-                                        methods[method_count].return_generic_param_names = NULL;
-                                        if (method_return_generic_count > 0) {
-                                            methods[method_count].return_generic_param_names = (char**)malloc(sizeof(char*) * method_return_generic_count);
-                                            for (int gi = 0; gi < method_return_generic_count; gi++) {
-                                                methods[method_count].return_generic_param_names[gi] = method_return_generic_params[gi];
-                                                method_return_generic_params[gi] = NULL; // 转移所有权
+                                        // 动态扩容方法数组（容量不足时翻倍，无固定上限）
+                                        int method_slot_ok = 0;
+                                        if (method_count < method_capacity) {
+                                            method_slot_ok = 1;
+                                        } else {
+                                            int new_cap = method_capacity == 0 ? 16 : method_capacity * 2;
+                                            ModuleStructMethod* new_methods = (ModuleStructMethod*)realloc(methods, sizeof(ModuleStructMethod) * new_cap);
+                                            if (new_methods) {
+                                                methods = new_methods;
+                                                method_capacity = new_cap;
+                                                method_slot_ok = 1;
                                             }
                                         }
-                                        methods[method_count].param_count = param_count;
-                                        methods[method_count].param_types = NULL;
-                                        methods[method_count].param_generic_names = NULL;
-                                        if (param_count > 0) {
-                                            methods[method_count].param_types = (TypeKind*)malloc(sizeof(TypeKind) * param_count);
-                                            for (int pi = 0; pi < param_count; pi++) {
-                                                methods[method_count].param_types[pi] = param_types[pi];
-                                            }
-                                            // 设置泛型参数名
-                                            int has_generic = 0;
-                                            for (int pi = 0; pi < param_count; pi++) {
-                                                if (param_generic_names[pi]) has_generic = 1;
-                                            }
-                                            if (has_generic) {
-                                                methods[method_count].param_generic_names = (char**)malloc(sizeof(char*) * param_count);
-                                                for (int pi = 0; pi < param_count; pi++) {
-                                                    methods[method_count].param_generic_names[pi] = param_generic_names[pi];
-                                                    param_generic_names[pi] = NULL;  // 转移所有权
+                                        if (method_slot_ok) {
+                                            methods[method_count].name = (char*)malloc(method_key_len + 1);
+                                            memcpy(methods[method_count].name, method_key, method_key_len);
+                                            methods[method_count].name[method_key_len] = '\0';
+                                            methods[method_count].line = method_def_line;
+                                            methods[method_count].return_type = method_return_type;
+                                            methods[method_count].return_type_info = method_return_type_info ? type_copy(method_return_type_info) : NULL;
+                                            // 释放临时 method_return_type_info（已复制到 methods 数组）
+                                            if (method_return_type_info) { type_free(method_return_type_info); method_return_type_info = NULL; }
+                                            methods[method_count].return_struct_name = method_return_struct[0] ? strdup(method_return_struct) : NULL;
+                                            methods[method_count].return_type_param_name = method_return_type_param[0] ? strdup(method_return_type_param) : NULL;
+                                            methods[method_count].return_generic_count = method_return_generic_count;
+                                            methods[method_count].return_generic_param_names = NULL;
+                                            if (method_return_generic_count > 0) {
+                                                methods[method_count].return_generic_param_names = (char**)malloc(sizeof(char*) * method_return_generic_count);
+                                                for (int gi = 0; gi < method_return_generic_count; gi++) {
+                                                    methods[method_count].return_generic_param_names[gi] = method_return_generic_params[gi];
+                                                    method_return_generic_params[gi] = NULL; // 转移所有权
                                                 }
                                             }
-                                        }
-                                        if (method_count >= MOD_MAX_METHODS) {
-                                            fprintf(stderr, "[错误] struct方法数量超过上限 %d\n", MOD_MAX_METHODS);
-                                        } else {
+                                            methods[method_count].param_count = param_count;
+                                            methods[method_count].param_types = NULL;
+                                            methods[method_count].param_generic_names = NULL;
+                                            if (param_count > 0) {
+                                                methods[method_count].param_types = (TypeKind*)malloc(sizeof(TypeKind) * param_count);
+                                                for (int pi = 0; pi < param_count; pi++) {
+                                                    methods[method_count].param_types[pi] = param_types[pi];
+                                                }
+                                                // 设置泛型参数名
+                                                int has_generic = 0;
+                                                for (int pi = 0; pi < param_count; pi++) {
+                                                    if (param_generic_names[pi]) has_generic = 1;
+                                                }
+                                                if (has_generic) {
+                                                    methods[method_count].param_generic_names = (char**)malloc(sizeof(char*) * param_count);
+                                                    for (int pi = 0; pi < param_count; pi++) {
+                                                        methods[method_count].param_generic_names[pi] = param_generic_names[pi];
+                                                        param_generic_names[pi] = NULL;  // 转移所有权
+                                                    }
+                                                }
+                                            }
                                             method_count++;
+                                        } else {
+                                            // 内存不足（realloc 失败）：释放本次解析的临时类型信息，跳过该方法
+                                            if (method_return_type_info) { type_free(method_return_type_info); method_return_type_info = NULL; }
+                                            for (int gi = 0; gi < method_return_generic_count; gi++) {
+                                                free(method_return_generic_params[gi]);
+                                                method_return_generic_params[gi] = NULL;
+                                            }
                                         }
                                     }
                                 }
@@ -669,58 +709,70 @@
                                     while (*after_struct && (isalnum((unsigned char)*after_struct) || *after_struct == '_')) after_struct++;
                                     int field_len = (int)(after_struct - field_start);
 
-                                    if (field_len > 0 && field_len < 64 && field_count < MOD_MAX_FIELDS) {
-                                        TypeKind ft = parse_base_type(type_str);
-                                        fields[field_count].name = (char*)malloc(field_len + 1);
-                                        strncpy(fields[field_count].name, field_start, field_len);
-                                        fields[field_count].name[field_len] = '\0';
-                                        fields[field_count].type = ft;
-                                        fields[field_count].struct_name = NULL;
-                                        // 即时计算字段定义行号（从 source 开头数到 field_start 的换行数 +1）
-                                        {
-                                            int fl = 1;
-                                            for (const char* c = source; c < field_start; c++) {
-                                                if (*c == '\n') fl++;
+                                    if (field_len > 0 && field_len < 64) {
+                                        // 动态扩容字段数组（容量不足时翻倍，无固定上限）
+                                        int field_slot_ok = 0;
+                                        if (field_count < field_capacity) {
+                                            field_slot_ok = 1;
+                                        } else {
+                                            int new_cap = field_capacity == 0 ? 16 : field_capacity * 2;
+                                            ModuleStructField* new_fields = (ModuleStructField*)realloc(fields, sizeof(ModuleStructField) * new_cap);
+                                            if (new_fields) {
+                                                fields = new_fields;
+                                                field_capacity = new_cap;
+                                                field_slot_ok = 1;
                                             }
-                                            fields[field_count].line = fl;
                                         }
-                                        // 如果是未识别的自定义类型，检查是否是 alias、clib 或 struct
-                                        if (ft == TYPE_ANY) {
-                                            // ★ 先检查本地 alias（如 Color = int）
-                                            //   alias 在 scan_alias.inc 中注册到 local_alias 表，
-                                            //   若匹配则直接用 alias 底层类型的 TypeKind
-                                            TypeInfo* alias_ti = FIND_LOCAL_ALIAS(type_str);
-                                            if (alias_ti) {
-                                                fields[field_count].type = alias_ti->kind;
-                                                // alias 可能指向 struct/face/clib（如 Node = TreeNode）
-                                                if (alias_ti->kind == TYPE_STRUCT && alias_ti->struct_name) {
-                                                    fields[field_count].struct_name = strdup(alias_ti->struct_name);
+                                        if (field_slot_ok) {
+                                            TypeKind ft = parse_base_type(type_str);
+                                            fields[field_count].name = (char*)malloc(field_len + 1);
+                                            strncpy(fields[field_count].name, field_start, field_len);
+                                            fields[field_count].name[field_len] = '\0';
+                                            fields[field_count].type = ft;
+                                            fields[field_count].struct_name = NULL;
+                                            // 即时计算字段定义行号（从 source 开头数到 field_start 的换行数 +1）
+                                            {
+                                                int fl = 1;
+                                                for (const char* c = source; c < field_start; c++) {
+                                                    if (*c == '\n') fl++;
                                                 }
-                                            } else if (is_known_clib(type_str, clib_names, clib_name_count)) {
-                                                fields[field_count].type = TYPE_CLIB;
-                                                fields[field_count].struct_name = strdup(type_str);
-                                            } else if (is_known_struct(type_str, struct_names, struct_name_count)) {
-                                                fields[field_count].type = TYPE_STRUCT;
-                                                fields[field_count].struct_name = strdup(type_str);
+                                                fields[field_count].line = fl;
                                             }
-                                        }
-                                        fields[field_count].element_type = element_type;
-                                        fields[field_count].element_struct_name = element_struct_name;
-                                        fields[field_count].nullable = is_nullable;
-                                        // 仅第一个字段转移 element_struct_name 所有权
-                                        if (field_count > 0) {
-                                            // 后续字段需要独立的 element_struct_name 副本
-                                            if (element_struct_name) {
-                                                fields[field_count].element_struct_name = strdup(element_struct_name);
+                                            // 如果是未识别的自定义类型，检查是否是 alias、clib 或 struct
+                                            if (ft == TYPE_ANY) {
+                                                // ★ 先检查本地 alias（如 Color = int）
+                                                //   alias 在 scan_alias.inc 中注册到 local_alias 表，
+                                                //   若匹配则直接用 alias 底层类型的 TypeKind
+                                                TypeInfo* alias_ti = FIND_LOCAL_ALIAS(type_str);
+                                                if (alias_ti) {
+                                                    fields[field_count].type = alias_ti->kind;
+                                                    // alias 可能指向 struct/face/clib（如 Node = TreeNode）
+                                                    if (alias_ti->kind == TYPE_STRUCT && alias_ti->struct_name) {
+                                                        fields[field_count].struct_name = strdup(alias_ti->struct_name);
+                                                    }
+                                                } else if (is_known_clib(type_str, clib_names, clib_name_count)) {
+                                                    fields[field_count].type = TYPE_CLIB;
+                                                    fields[field_count].struct_name = strdup(type_str);
+                                                } else if (is_known_struct(type_str, struct_names, struct_name_count)) {
+                                                    fields[field_count].type = TYPE_STRUCT;
+                                                    fields[field_count].struct_name = strdup(type_str);
+                                                }
                                             }
-                                        } else {
-                                            // 第一个字段直接使用 element_struct_name 指针
-                                        }
-                                        if (field_count >= MOD_MAX_FIELDS) {
-                                            fprintf(stderr, "[错误] struct字段数量超过上限 %d\n", MOD_MAX_FIELDS);
-                                        } else {
+                                            fields[field_count].element_type = element_type;
+                                            fields[field_count].element_struct_name = element_struct_name;
+                                            fields[field_count].nullable = is_nullable;
+                                            // 仅第一个字段转移 element_struct_name 所有权
+                                            if (field_count > 0) {
+                                                // 后续字段需要独立的 element_struct_name 副本
+                                                if (element_struct_name) {
+                                                    fields[field_count].element_struct_name = strdup(element_struct_name);
+                                                }
+                                            } else {
+                                                // 第一个字段直接使用 element_struct_name 指针
+                                            }
                                             field_count++;
                                         }
+                                        // 内存不足（realloc 失败）时跳过该字段，继续扫描
                                     }
 
                                     // 跳过空白
@@ -893,6 +945,7 @@
                 free(impl_names[i]);
             }
         }
+        free(impl_names);  // 释放动态数组本体（元素所有权已转移或已释放）
 
                         // 设置关联常量信息
                         if (added_struct && const_count_tmp > 0) {
@@ -940,6 +993,9 @@
                                 free(methods[i].param_generic_names);
                             }
                         }
+                        // 释放动态数组本体
+                        free(fields);
+                        free(methods);
 
                         while (*after_struct && *after_struct != '}') after_struct++;
                         if (*after_struct == '}') after_struct++;

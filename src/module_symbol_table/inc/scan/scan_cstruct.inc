@@ -17,13 +17,13 @@
                     if (*after_cstruct == '{') {
                         after_cstruct++;
 
-                        ModuleStructField fields[MOD_MAX_FIELDS];
-                        ModuleStructMethod methods[MOD_MAX_METHODS];
-                        int field_count = 0;
-                        int method_count = 0;
-
+                        // 字段数组按需动态增长（无固定上限，修复超过 128 个字段被静默丢弃的问题）
                         // cstruct 只解析字段，不解析方法（cstruct 用于 C 布局，不支持方法）
-                        while (*after_cstruct && *after_cstruct != '}' && field_count < MOD_MAX_FIELDS) {
+                        ModuleStructField* fields = NULL;
+                        int field_capacity = 0;
+                        int field_count = 0;
+
+                        while (*after_cstruct && *after_cstruct != '}') {
                             while (*after_cstruct && (*after_cstruct == ' ' || *after_cstruct == '\t' || *after_cstruct == '\n' || *after_cstruct == '\r')) after_cstruct++;
                             if (!*after_cstruct || *after_cstruct == '}') break;
 
@@ -150,38 +150,50 @@
                                 while (*after_cstruct && (isalnum((unsigned char)*after_cstruct) || *after_cstruct == '_')) after_cstruct++;
                                 int field_len = (int)(after_cstruct - field_start);
 
-                                if (field_len > 0 && field_len < 64 && field_count < MOD_MAX_FIELDS) {
-                                    TypeKind ft = parse_base_type(type_str);
-                                    fields[field_count].name = (char*)malloc(field_len + 1);
-                                    strncpy(fields[field_count].name, field_start, field_len);
-                                    fields[field_count].name[field_len] = '\0';
-                                    fields[field_count].type = ft;
-                                    fields[field_count].struct_name = NULL;
-                                    // 即时计算字段定义行号
-                                    {
-                                        int fl = 1;
-                                        for (const char* c = source; c < field_start; c++) {
-                                            if (*c == '\n') fl++;
-                                        }
-                                        fields[field_count].line = fl;
-                                    }
-                                    if (ft == TYPE_ANY) {
-                                        if (is_known_clib(type_str, clib_names, clib_name_count)) {
-                                            fields[field_count].type = TYPE_CLIB;
-                                            fields[field_count].struct_name = strdup(type_str);
-                                        } else if (is_known_struct(type_str, struct_names, struct_name_count)) {
-                                            fields[field_count].type = TYPE_STRUCT;
-                                            fields[field_count].struct_name = strdup(type_str);
-                                        }
-                                    }
-                                    fields[field_count].element_type = element_type;
-                                    fields[field_count].element_struct_name = element_struct_name;
-                                    fields[field_count].nullable = 0;  // cstruct 字段不支持 nullable，显式初始化
-                                    if (field_count >= MOD_MAX_FIELDS) {
-                                        fprintf(stderr, "[错误] cstruct字段数量超过上限 %d\n", MOD_MAX_FIELDS);
+                                if (field_len > 0 && field_len < 64) {
+                                    // 动态扩容字段数组（容量不足时翻倍，无固定上限）
+                                    int field_slot_ok = 0;
+                                    if (field_count < field_capacity) {
+                                        field_slot_ok = 1;
                                     } else {
+                                        int new_cap = field_capacity == 0 ? 16 : field_capacity * 2;
+                                        ModuleStructField* new_fields = (ModuleStructField*)realloc(fields, sizeof(ModuleStructField) * new_cap);
+                                        if (new_fields) {
+                                            fields = new_fields;
+                                            field_capacity = new_cap;
+                                            field_slot_ok = 1;
+                                        }
+                                    }
+                                    if (field_slot_ok) {
+                                        TypeKind ft = parse_base_type(type_str);
+                                        fields[field_count].name = (char*)malloc(field_len + 1);
+                                        strncpy(fields[field_count].name, field_start, field_len);
+                                        fields[field_count].name[field_len] = '\0';
+                                        fields[field_count].type = ft;
+                                        fields[field_count].struct_name = NULL;
+                                        // 即时计算字段定义行号
+                                        {
+                                            int fl = 1;
+                                            for (const char* c = source; c < field_start; c++) {
+                                                if (*c == '\n') fl++;
+                                            }
+                                            fields[field_count].line = fl;
+                                        }
+                                        if (ft == TYPE_ANY) {
+                                            if (is_known_clib(type_str, clib_names, clib_name_count)) {
+                                                fields[field_count].type = TYPE_CLIB;
+                                                fields[field_count].struct_name = strdup(type_str);
+                                            } else if (is_known_struct(type_str, struct_names, struct_name_count)) {
+                                                fields[field_count].type = TYPE_STRUCT;
+                                                fields[field_count].struct_name = strdup(type_str);
+                                            }
+                                        }
+                                        fields[field_count].element_type = element_type;
+                                        fields[field_count].element_struct_name = element_struct_name;
+                                        fields[field_count].nullable = 0;  // cstruct 字段不支持 nullable，显式初始化
                                         field_count++;
                                     }
+                                    // 内存不足（realloc 失败）时跳过该字段，继续扫描
                                 }
                             }
 
@@ -263,33 +275,14 @@
 	                            if (*after_cstruct == ';') after_cstruct++;
                         }
 
-                        // 添加 cstruct 到符号表（包括字段和方法）
-                        module_symbol_table_add_struct(table, cstruct_name, field_count, fields, method_count, methods, 1, 0, NULL);
+                        // 添加 cstruct 到符号表（cstruct 无方法，method_count 恒为 0）
+                        module_symbol_table_add_struct(table, cstruct_name, field_count, fields, 0, NULL, 1, 0, NULL);
 
                         // 释放临时分配的内存
                         for (int i = 0; i < field_count; i++) {
                             free(fields[i].name);
                         }
-                        for (int i = 0; i < method_count; i++) {
-                            free(methods[i].name);
-                            free(methods[i].return_struct_name);
-                            if (methods[i].return_type_info) {
-                                type_free(methods[i].return_type_info);
-                            }
-                            free(methods[i].return_type_param_name);
-                            for (int gi = 0; gi < methods[i].return_generic_count; gi++) {
-                                free(methods[i].return_generic_param_names[gi]);
-                            }
-                            free(methods[i].return_generic_param_names);
-                            free(methods[i].param_types);
-                            // 释放泛型参数名
-                            if (methods[i].param_generic_names) {
-                                for (int pi = 0; pi < methods[i].param_count; pi++) {
-                                    free(methods[i].param_generic_names[pi]);
-                                }
-                                free(methods[i].param_generic_names);
-                            }
-                        }
+                        free(fields);
 
                         while (*after_cstruct && *after_cstruct != '}') after_cstruct++;
                         if (*after_cstruct == '}') after_cstruct++;

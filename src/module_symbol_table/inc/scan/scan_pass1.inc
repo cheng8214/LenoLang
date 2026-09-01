@@ -38,19 +38,25 @@
     normalize_path(normalized_current, MAX_PATH_LEN);
 
     // 第一遍：收集所有 struct/cstruct/clib/face/enum 名称
-    char* struct_names[MOD_MAX_TYPES];
+    // （动态数组，无固定上限：修复超过 128/32 个时扫描静默中断的问题）
+    char** struct_names = NULL;
     int struct_name_count = 0;
-    char* cstruct_names[MOD_MAX_TYPES];
+    int struct_name_cap = 0;
+    char** cstruct_names = NULL;
     int cstruct_name_count = 0;
-    char* face_names[MOD_MAX_TYPES];
+    int cstruct_name_cap = 0;
+    char** face_names = NULL;
     int face_name_count = 0;
-    char* clib_names[MOD_MAX_CLIBS];
+    int face_name_cap = 0;
+    char** clib_names = NULL;
     int clib_name_count = 0;
-    char* enum_names[MOD_MAX_ENUMS];
+    int clib_name_cap = 0;
+    char** enum_names = NULL;
     int enum_name_count = 0;
+    int enum_name_cap = 0;
     char* p = source;
 
-    while (*p && struct_name_count < MOD_MAX_TYPES) {
+    while (*p) {
         // 跳过空白、注释、字符串
         while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) p++;
         if (!*p) break;
@@ -110,14 +116,8 @@
                 int name_len = (int)(after_struct - name_start);
 
                 if (name_len > 0 && name_len < 64) {
-                    if (struct_name_count >= MOD_MAX_TYPES) {
-                        fprintf(stderr, "[错误] struct数量超过上限 %d\n", MOD_MAX_TYPES);
-                    } else {
-                        struct_names[struct_name_count] = (char*)malloc(name_len + 1);
-                        strncpy(struct_names[struct_name_count], name_start, name_len);
-                        struct_names[struct_name_count][name_len] = '\0';
-                        struct_name_count++;
-                    }
+                    // 动态追加（无固定上限）
+                    mod_names_push(&struct_names, &struct_name_count, &struct_name_cap, name_start, name_len);
                 }
 
                 p = after_struct;
@@ -134,14 +134,8 @@
                 int name_len = (int)(after_cstruct - name_start);
 
                 if (name_len > 0 && name_len < 64) {
-                    if (cstruct_name_count >= MOD_MAX_TYPES) {
-                        fprintf(stderr, "[错误] cstruct数量超过上限 %d\n", MOD_MAX_TYPES);
-                    } else {
-                        cstruct_names[cstruct_name_count] = (char*)malloc(name_len + 1);
-                        strncpy(cstruct_names[cstruct_name_count], name_start, name_len);
-                        cstruct_names[cstruct_name_count][name_len] = '\0';
-                        cstruct_name_count++;
-                    }
+                    // 动态追加（无固定上限）
+                    mod_names_push(&cstruct_names, &cstruct_name_count, &cstruct_name_cap, name_start, name_len);
                 }
 
                 p = after_cstruct;
@@ -158,14 +152,8 @@
                 int name_len = (int)(after_face - name_start);
 
                 if (name_len > 0 && name_len < 64) {
-                    if (face_name_count >= MOD_MAX_TYPES) {
-                        fprintf(stderr, "[错误] face数量超过上限 %d\n", MOD_MAX_TYPES);
-                    } else {
-                        face_names[face_name_count] = (char*)malloc(name_len + 1);
-                        strncpy(face_names[face_name_count], name_start, name_len);
-                        face_names[face_name_count][name_len] = '\0';
-                        face_name_count++;
-                    }
+                    // 动态追加（无固定上限）
+                    mod_names_push(&face_names, &face_name_count, &face_name_cap, name_start, name_len);
                 }
 
                 p = after_face;
@@ -182,14 +170,8 @@
                 int name_len = (int)(after_clib - name_start);
 
                 if (name_len > 0 && name_len < 64) {
-                    if (clib_name_count >= MOD_MAX_CLIBS) {
-                        fprintf(stderr, "[错误] clib数量超过上限 %d\n", MOD_MAX_CLIBS);
-                    } else {
-                        clib_names[clib_name_count] = (char*)malloc(name_len + 1);
-                        strncpy(clib_names[clib_name_count], name_start, name_len);
-                        clib_names[clib_name_count][name_len] = '\0';
-                        clib_name_count++;
-                    }
+                    // 动态追加（无固定上限）
+                    mod_names_push(&clib_names, &clib_name_count, &clib_name_cap, name_start, name_len);
                 }
 
                 p = after_clib;
@@ -229,7 +211,15 @@
                         while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t')) after_cfunc++;
                         if (*after_cfunc == '(') {
                             after_cfunc++;
-                            while (*after_cfunc && *after_cfunc != ')' && param_count < MOD_MAX_PARAMS) {
+                            while (*after_cfunc && *after_cfunc != ')') {
+                                // 设计型上限：响亮报错（带位置），不再静默截断
+                                if (param_count >= MOD_MAX_PARAMS) {
+                                    char err_msg[256];
+                                    snprintf(err_msg, sizeof(err_msg),
+                                        "cfunc '%s' 参数数量超过上限 %d", cfunc_name_buf, MOD_MAX_PARAMS);
+                                    error_add(ERR_SEMANTIC, mod_source_line(source, after_cfunc), err_msg);
+                                    break;
+                                }
                                 while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t' || *after_cfunc == ',' || *after_cfunc == '\n' || *after_cfunc == '\r')) after_cfunc++;
                                 // 跳过注释
                                 if (*after_cfunc == '/' && *(after_cfunc+1) == '/') { while (*after_cfunc && *after_cfunc != '\n') after_cfunc++; continue; }
@@ -347,14 +337,8 @@
                 int name_len = (int)(after_enum - name_start);
 
                 if (name_len > 0 && name_len < 64) {
-                    if (enum_name_count >= MOD_MAX_ENUMS) {
-                        fprintf(stderr, "[错误] enum数量超过上限 %d\n", MOD_MAX_ENUMS);
-                    } else {
-                        enum_names[enum_name_count] = (char*)malloc(name_len + 1);
-                        strncpy(enum_names[enum_name_count], name_start, name_len);
-                        enum_names[enum_name_count][name_len] = '\0';
-                        enum_name_count++;
-                    }
+                    // 动态追加（无固定上限）
+                    mod_names_push(&enum_names, &enum_name_count, &enum_name_cap, name_start, name_len);
                 }
 
                 p = after_enum;
@@ -376,17 +360,14 @@
                 strncpy(clib_name_buf, name_start, name_len);
                 clib_name_buf[name_len] = '\0';
 
-                // 收集名称
-                if (clib_name_count >= MOD_MAX_CLIBS) {
-                    fprintf(stderr, "[错误] clib数量超过上限 %d\n", MOD_MAX_CLIBS);
-                } else {
+                // 收集名称（动态追加，无固定上限）
+                {
                     int already = 0;
                     for (int ci = 0; ci < clib_name_count; ci++) {
                         if (strcmp(clib_names[ci], clib_name_buf) == 0) { already = 1; break; }
                     }
                     if (!already) {
-                        clib_names[clib_name_count] = strdup(clib_name_buf);
-                        clib_name_count++;
+                        mod_names_push_z(&clib_names, &clib_name_count, &clib_name_cap, clib_name_buf);
                     }
                 }
 
@@ -394,10 +375,12 @@
                 while (*after_clib && *after_clib != '{' && *after_clib != '\n') after_clib++;
                 if (*after_clib == '{') {
                     after_clib++;
-                    ModuleClibFuncSymbol funcs[MOD_MAX_CLIB_FUNCS];
+                    // 函数数组动态增长（无固定上限：修复超过 512 个函数被静默截断的问题）
+                    ModuleClibFuncSymbol* funcs = NULL;
                     int func_count = 0;
+                    int func_capacity = 0;
 
-                    while (*after_clib && *after_clib != '}' && func_count < MOD_MAX_CLIB_FUNCS) {
+                    while (*after_clib && *after_clib != '}') {
                         while (*after_clib && (*after_clib == ' ' || *after_clib == '\t' || *after_clib == '\n' || *after_clib == '\r')) after_clib++;
                         if (*after_clib == '}' || *after_clib == '\0') break;
                         if (*after_clib == '/' && *(after_clib+1) == '/') {
@@ -447,6 +430,15 @@
                         int func_name_len = (int)(after_clib - func_name_start);
                         if (func_name_len <= 0) break;
 
+                        // 动态扩容函数数组（容量不足时翻倍）
+                        if (func_count >= func_capacity) {
+                            int new_cap = func_capacity == 0 ? 16 : func_capacity * 2;
+                            ModuleClibFuncSymbol* grown = (ModuleClibFuncSymbol*)realloc(funcs, sizeof(ModuleClibFuncSymbol) * new_cap);
+                            if (!grown) break;  // 内存不足：结束本 clib 解析
+                            funcs = grown;
+                            func_capacity = new_cap;
+                        }
+
                         funcs[func_count].name = (char*)malloc(func_name_len + 1);
                         strncpy(funcs[func_count].name, func_name_start, func_name_len);
                         funcs[func_count].name[func_name_len] = '\0';
@@ -482,29 +474,34 @@
                                 int pt_len = (int)(after_clib - pt_start);
                                 if (pt_len > 0 && pt_len < 128) {
                                     if (param_count >= MOD_MAX_PARAMS) {
-                                        fprintf(stderr, "[错误] clib函数参数数量超过上限 %d\n", MOD_MAX_PARAMS);
-                                    } else {
-                                        char pt_buf[128]; strncpy(pt_buf, pt_start, pt_len); pt_buf[pt_len] = '\0';
-                                        // 检查是否是 Ptr[T] 语法
-                                        char* pbracket = strchr(pt_buf, '[');
-                                        if (pbracket) {
-                                            *pbracket = '\0';
-                                            TypeKind base = parse_base_type(pt_buf);
-                                            if (base == TYPE_PTR) {
-                                                param_types[param_count] = TYPE_PTR_GENERIC;
-                                                char* pelem_start = pbracket + 1;
-                                                char* pelem_end = strchr(pelem_start, ']');
-                                                if (pelem_end) *pelem_end = '\0';
-                                                param_element_types[param_count] = parse_base_type(pelem_start);
-                                            } else {
-                                                param_types[param_count] = base;
-                                            }
-                                        } else {
-                                            param_types[param_count] = parse_base_type(pt_buf);
-                                        }
-                                        param_structs[param_count] = NULL;
-                                        param_count++;
+                                        // 设计型上限：响亮报错（带位置），不再静默截断
+                                        char err_msg[256];
+                                        snprintf(err_msg, sizeof(err_msg),
+                                            "clib 函数 '%s' 参数数量超过上限 %d",
+                                            funcs[func_count].name, MOD_MAX_PARAMS);
+                                        error_add(ERR_SEMANTIC, mod_source_line(source, pt_start), err_msg);
+                                        break;
                                     }
+                                    char pt_buf[128]; strncpy(pt_buf, pt_start, pt_len); pt_buf[pt_len] = '\0';
+                                    // 检查是否是 Ptr[T] 语法
+                                    char* pbracket = strchr(pt_buf, '[');
+                                    if (pbracket) {
+                                        *pbracket = '\0';
+                                        TypeKind base = parse_base_type(pt_buf);
+                                        if (base == TYPE_PTR) {
+                                            param_types[param_count] = TYPE_PTR_GENERIC;
+                                            char* pelem_start = pbracket + 1;
+                                            char* pelem_end = strchr(pelem_start, ']');
+                                            if (pelem_end) *pelem_end = '\0';
+                                            param_element_types[param_count] = parse_base_type(pelem_start);
+                                        } else {
+                                            param_types[param_count] = base;
+                                        }
+                                    } else {
+                                        param_types[param_count] = parse_base_type(pt_buf);
+                                    }
+                                    param_structs[param_count] = NULL;
+                                    param_count++;
                                 }
                                 while (*after_clib && (*after_clib == ' ' || *after_clib == '\t')) after_clib++;
                                 // 跳过注释
@@ -547,6 +544,7 @@
                         free(funcs[fi].param_element_types);
                         free(funcs[fi].param_struct_names);
                     }
+                    free(funcs);
                 }
             }
 
@@ -587,7 +585,15 @@
                     while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t')) after_cfunc++;
                     if (*after_cfunc == '(') {
                         after_cfunc++;
-                        while (*after_cfunc && *after_cfunc != ')' && param_count < MOD_MAX_PARAMS) {
+                        while (*after_cfunc && *after_cfunc != ')') {
+                            // 设计型上限：响亮报错（带位置），不再静默截断
+                            if (param_count >= MOD_MAX_PARAMS) {
+                                char err_msg[256];
+                                snprintf(err_msg, sizeof(err_msg),
+                                    "cfunc '%s' 参数数量超过上限 %d", cfunc_name_buf, MOD_MAX_PARAMS);
+                                error_add(ERR_SEMANTIC, mod_source_line(source, after_cfunc), err_msg);
+                                break;
+                            }
                             while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t' || *after_cfunc == ',' || *after_cfunc == '\n' || *after_cfunc == '\r')) after_cfunc++;
                             if (*after_cfunc == ')' || *after_cfunc == '\0') break;
 
@@ -774,9 +780,11 @@
                                             while (*after_clib && *after_clib != '{') after_clib++;
                                             if (*after_clib == '{') after_clib++;
                                             // 解析函数列表
-                                            ModuleClibFuncSymbol funcs[MOD_MAX_CLIB_FUNCS];
+                                            // 函数数组动态增长（无固定上限）
+                                            ModuleClibFuncSymbol* funcs = NULL;
                                             int func_count = 0;
-                                            while (*after_clib && *after_clib != '}' && func_count < MOD_MAX_CLIB_FUNCS) {
+                                            int func_capacity = 0;
+                                            while (*after_clib && *after_clib != '}') {
                                                 while (*after_clib && (*after_clib == ' ' || *after_clib == '\t' || *after_clib == '\n' || *after_clib == '\r')) after_clib++;
                                                 if (*after_clib == '}') break;
                                                 // 解析返回类型
@@ -789,6 +797,14 @@
                                                 while (*after_clib && *after_clib != '(') after_clib++;
                                                 int fn_len = (int)(after_clib - fn_start);
                                                 if (fn_len > 0 && rt_len > 0) {
+                                                    // 动态扩容函数数组（容量不足时翻倍）
+                                                    if (func_count >= func_capacity) {
+                                                        int new_cap = func_capacity == 0 ? 16 : func_capacity * 2;
+                                                        ModuleClibFuncSymbol* grown = (ModuleClibFuncSymbol*)realloc(funcs, sizeof(ModuleClibFuncSymbol) * new_cap);
+                                                        if (!grown) break;  // 内存不足：结束本 clib 解析
+                                                        funcs = grown;
+                                                        func_capacity = new_cap;
+                                                    }
                                                     funcs[func_count].name = (char*)malloc(fn_len + 1);
                                                     strncpy(funcs[func_count].name, fn_start, fn_len);
                                                     funcs[func_count].name[fn_len] = '\0';
@@ -821,7 +837,16 @@
                                                     TypeKind param_element_types[MOD_MAX_PARAMS];
                                                     char* param_structs[MOD_MAX_PARAMS];
                                                     int param_count = 0;
-                                                    while (*after_clib && *after_clib != ')' && param_count < MOD_MAX_PARAMS) {
+                                                    while (*after_clib && *after_clib != ')') {
+                                                        // 设计型上限：响亮报错（带位置），不再静默截断
+                                                        if (param_count >= MOD_MAX_PARAMS) {
+                                                            char err_msg[256];
+                                                            snprintf(err_msg, sizeof(err_msg),
+                                                                "clib 函数 '%s' 参数数量超过上限 %d",
+                                                                funcs[func_count].name, MOD_MAX_PARAMS);
+                                                            error_add(ERR_SEMANTIC, mod_source_line(sub_source, after_clib), err_msg);
+                                                            break;
+                                                        }
                                                         while (*after_clib && (*after_clib == ' ' || *after_clib == '\t')) after_clib++;
                                                         // 跳过注释
                                                         if (*after_clib == '/' && *(after_clib+1) == '/') { while (*after_clib && *after_clib != '\n') after_clib++; continue; }
@@ -888,6 +913,7 @@
                                                 free(funcs[fi].param_types);
                                                 free(funcs[fi].param_element_types);
                                             }
+                                            free(funcs);
                                         }
                                     }
                                 }
@@ -926,7 +952,15 @@
                                             while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t')) after_cfunc++;
                                             if (*after_cfunc == '(') {
                                                 after_cfunc++;
-                                                while (*after_cfunc && *after_cfunc != ')' && param_count < MOD_MAX_PARAMS) {
+                                                while (*after_cfunc && *after_cfunc != ')') {
+                                                    // 设计型上限：响亮报错（带位置），不再静默截断
+                                                    if (param_count >= MOD_MAX_PARAMS) {
+                                                        char err_msg[256];
+                                                        snprintf(err_msg, sizeof(err_msg),
+                                                            "cfunc '%s' 参数数量超过上限 %d", cfunc_name_buf, MOD_MAX_PARAMS);
+                                                        error_add(ERR_SEMANTIC, mod_source_line(sub_source, after_cfunc), err_msg);
+                                                        break;
+                                                    }
                                                     while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t' || *after_cfunc == ',' || *after_cfunc == '\n' || *after_cfunc == '\r')) after_cfunc++;
                                                     if (*after_cfunc == ')' || *after_cfunc == '\0') break;
 
@@ -1053,7 +1087,15 @@
                                         while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t')) after_cfunc++;
                                         if (*after_cfunc == '(') {
                                             after_cfunc++;
-                                            while (*after_cfunc && *after_cfunc != ')' && param_count < MOD_MAX_PARAMS) {
+                                            while (*after_cfunc && *after_cfunc != ')') {
+                                                // 设计型上限：响亮报错（带位置），不再静默截断
+                                                if (param_count >= MOD_MAX_PARAMS) {
+                                                    char err_msg[256];
+                                                    snprintf(err_msg, sizeof(err_msg),
+                                                        "cfunc '%s' 参数数量超过上限 %d", cfunc_name_buf, MOD_MAX_PARAMS);
+                                                    error_add(ERR_SEMANTIC, mod_source_line(sub_source, after_cfunc), err_msg);
+                                                    break;
+                                                }
                                                 while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t' || *after_cfunc == ',' || *after_cfunc == '\n' || *after_cfunc == '\r')) after_cfunc++;
                                                 // 跳过注释
                                                 if (*after_cfunc == '/' && *(after_cfunc+1) == '/') { while (*after_cfunc && *after_cfunc != '\n') after_cfunc++; continue; }

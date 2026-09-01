@@ -4,7 +4,7 @@
 // ============================================================================
 
 #define LENOSYMC_MAGIC   0x4D59534C  // "LSYM" little-endian
-#define LENOSYMC_VERSION 0x0000000F  // v15: 添加方法 line/字段 line/struct def_line 序列化
+#define LENOSYMC_VERSION 0x00000011  // v17: 扫描器全部数量型上限改为动态数组（enum 成员/clib 函数/类型数/别名等），旧缓存可能含被截断的符号，需失效重建
 
 // 字符串序列化辅助函数（需在 TypeInfo 序列化之前定义）
 static void sym_cache_write_string(FILE* f, const char* s) {

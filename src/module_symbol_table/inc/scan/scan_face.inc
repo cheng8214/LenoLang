@@ -34,10 +34,12 @@
                     if (*after_face == '{') {
                         after_face++;
 
-                        ModuleFaceMethodSymbol methods[MOD_MAX_METHODS];
+                        // 方法数组按需动态增长（无固定上限，修复超过 128 个方法被静默丢弃的问题）
+                        ModuleFaceMethodSymbol* methods = NULL;
+                        int method_capacity = 0;
                         int method_count = 0;
 
-                        while (*after_face && *after_face != '}' && method_count < MOD_MAX_METHODS) {
+                        while (*after_face && *after_face != '}') {
                             while (*after_face && (*after_face == ' ' || *after_face == '\t' || *after_face == '\n' || *after_face == '\r')) after_face++;
                             if (!*after_face || *after_face == '}') break;
 
@@ -181,20 +183,29 @@
                                         }
                                     }
 
-                                    // 添加方法
-                                    methods[method_count].name = (char*)malloc(method_name_len + 1);
-                                    strncpy(methods[method_count].name, method_name_start, method_name_len);
-                                    methods[method_count].name[method_name_len] = '\0';
-                                    methods[method_count].return_type = method_return_type;
-                                    methods[method_count].return_struct_name = method_return_struct[0] ? strdup(method_return_struct) : NULL;
-                                    methods[method_count].param_count = param_count;
                                     // 释放临时 method_return_type_info（face 方法符号不存储此字段）
                                     if (method_return_type_info) { type_free(method_return_type_info); method_return_type_info = NULL; }
-                                    if (method_count >= MOD_MAX_METHODS) {
-                                        fprintf(stderr, "[错误] face方法数量超过上限 %d\n", MOD_MAX_METHODS);
+                                    // 添加方法（动态扩容，容量不足时翻倍）
+                                    if (method_count < method_capacity) {
+                                        // 容量足够
                                     } else {
+                                        int new_cap = method_capacity == 0 ? 16 : method_capacity * 2;
+                                        ModuleFaceMethodSymbol* new_methods = (ModuleFaceMethodSymbol*)realloc(methods, sizeof(ModuleFaceMethodSymbol) * new_cap);
+                                        if (new_methods) {
+                                            methods = new_methods;
+                                            method_capacity = new_cap;
+                                        }
+                                    }
+                                    if (method_count < method_capacity) {
+                                        methods[method_count].name = (char*)malloc(method_name_len + 1);
+                                        strncpy(methods[method_count].name, method_name_start, method_name_len);
+                                        methods[method_count].name[method_name_len] = '\0';
+                                        methods[method_count].return_type = method_return_type;
+                                        methods[method_count].return_struct_name = method_return_struct[0] ? strdup(method_return_struct) : NULL;
+                                        methods[method_count].param_count = param_count;
                                         method_count++;
                                     }
+                                    // 内存不足（realloc 失败）时跳过该方法，继续扫描
                                 }
 
                                 after_face = after_func;
@@ -225,6 +236,7 @@
                             free(methods[i].name);
                             free(methods[i].return_struct_name);
                         }
+                        free(methods);
 
                         while (*after_face && *after_face != '}') after_face++;
                         if (*after_face == '}') after_face++;

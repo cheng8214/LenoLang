@@ -60,14 +60,9 @@
                                     }
                                 }
                                 module_symbol_table_add_alias(table, alias_name, ti_ptr);
-                                // 添加到本地解析表
-                                if (local_alias_count >= MOD_MAX_ALIASES) {
-                                    fprintf(stderr, "[错误] 别名数量超过上限 %d\n", MOD_MAX_ALIASES);
-                                } else {
-                                    local_alias_names[local_alias_count] = strdup(alias_name);
-                                    local_alias_types[local_alias_count] = type_copy(ti_ptr);
-                                    local_alias_count++;
-                                }
+                                // 添加到本地解析表（动态追加，无固定上限）
+                                mod_alias_push(&local_alias_names, &local_alias_types, &local_alias_count, &local_alias_cap,
+                                    alias_name, type_copy(ti_ptr));
                                 type_free(ti_ptr);
                             }
                         }

@@ -13,13 +13,15 @@
                     enum_name[name_len] = '\0';
 
                     // 解析成员名和显式值
-                    char* member_names_buf[MOD_MAX_MEMBERS];
-                    int64_t member_values_buf[MOD_MAX_MEMBERS];
+                    // （动态数组，无固定上限：修复超过 128 个成员被静默截断的问题）
+                    char** member_names_buf = NULL;
+                    int64_t* member_values_buf = NULL;
                     int member_count = 0;
+                    int member_capacity = 0;
                     while (*after_enum && *after_enum != '{') after_enum++;
                     if (*after_enum == '{') {
                         after_enum++;
-                        while (*after_enum && *after_enum != '}' && member_count < MOD_MAX_MEMBERS) {
+                        while (*after_enum && *after_enum != '}') {
                             while (*after_enum && (*after_enum == ' ' || *after_enum == '\t' || *after_enum == '\n' || *after_enum == '\r')) after_enum++;
                             if (*after_enum == '}' || *after_enum == '\0') break;
                             if (*after_enum == '/' && *(after_enum+1) == '/') {
@@ -37,6 +39,24 @@
                             while (*after_enum && (isalnum((unsigned char)*after_enum) || *after_enum == '_')) after_enum++;
                             int m_len = (int)(after_enum - m_start);
                             if (m_len > 0 && m_len < 64) {
+                                // 动态扩容成员数组（容量不足时翻倍）
+                                int member_slot_ok = 0;
+                                if (member_count < member_capacity) {
+                                    member_slot_ok = 1;
+                                } else {
+                                    int new_cap = member_capacity == 0 ? 16 : member_capacity * 2;
+                                    char** grown_names = (char**)realloc(member_names_buf, sizeof(char*) * new_cap);
+                                    if (grown_names) {
+                                        int64_t* grown_values = (int64_t*)realloc(member_values_buf, sizeof(int64_t) * new_cap);
+                                        if (grown_values) {
+                                            member_names_buf = grown_names;
+                                            member_values_buf = grown_values;
+                                            member_capacity = new_cap;
+                                            member_slot_ok = 1;
+                                        }
+                                    }
+                                }
+                                if (member_slot_ok) {
                                 member_names_buf[member_count] = (char*)malloc(m_len + 1);
                                 strncpy(member_names_buf[member_count], m_start, m_len);
                                 member_names_buf[member_count][m_len] = '\0';
@@ -108,13 +128,17 @@
                                             // 支持：数字、十六进制、enum 成员引用、+ - * / % << >> | & ^
                                             // 使用内联的方式实现简易求值
                                             // 简易 token 化 + 递归求值
-                                            // 保存当前 enum 的已解析成员用于引用
-                                            char* saved_names[MOD_MAX_MEMBERS];
-                                            int64_t saved_values[MOD_MAX_MEMBERS];
+                                            // 保存当前 enum 的已解析成员用于引用（动态分配）
+                                            char** saved_names = NULL;
+                                            int64_t* saved_values = NULL;
                                             int saved_count = member_count;
-                                            for (int si = 0; si < member_count; si++) {
-                                                saved_names[si] = member_names_buf[si];
-                                                saved_values[si] = member_values_buf[si] == -1 ? (int64_t)si : member_values_buf[si];
+                                            if (saved_count > 0) {
+                                                saved_names = (char**)malloc(sizeof(char*) * saved_count);
+                                                saved_values = (int64_t*)malloc(sizeof(int64_t) * saved_count);
+                                                for (int si = 0; si < saved_count; si++) {
+                                                    saved_names[si] = member_names_buf[si];
+                                                    saved_values[si] = member_values_buf[si] == -1 ? (int64_t)si : member_values_buf[si];
+                                                }
                                             }
 
                                             // 简易递归下降求值器
@@ -257,12 +281,16 @@
                                                     }
                                                 }
                                             }
+                                            // 释放表达式求值快照（动态分配）
+                                            free(saved_names);
+                                            free(saved_values);
                                         }
                                     }
-                                }
                                 member_count++;
+                                }
                             }
-                            // 跳过分隔符：逗号、分号或换行
+                        }
+                        // 跳过分隔符：逗号、分号或换行
                             while (*after_enum && *after_enum != ',' && *after_enum != ';' && *after_enum != '}' && *after_enum != '\n') after_enum++;
                             if (*after_enum == ',' || *after_enum == ';') after_enum++;
                         }
@@ -271,6 +299,9 @@
 
                     module_symbol_table_add_enum(table, enum_name, member_count, member_names_buf, member_values_buf);
                     for (int mi = 0; mi < member_count; mi++) free(member_names_buf[mi]);
+                    // 释放动态数组本体
+                    free(member_names_buf);
+                    free(member_values_buf);
                 }
 
                 p = after_enum;

@@ -4,13 +4,14 @@ extern char* read_module_file(const char* file_path, const char* current_file);
 // 递归传导 alias 底层类型依赖到当前模块符号表
 // 当 use 导入 alias（如 EventHandler = func(Event):bool）时，
 // alias 底层类型引用的其他类型（如 Event）也需要传导到当前模块的符号表
+// （名称数组为动态数组：传入数组指针、计数与容量，追加时按需扩容，无固定上限）
 static void import_alias_type_deps_to_sym_table(
     ModuleSymbolTable* table, ModuleSymbolTable* dep_table, TypeInfo* type_info,
-    char** struct_names, int* struct_name_count,
-    char** cstruct_names, int* cstruct_name_count,
-    char** enum_names, int* enum_name_count,
-    char** face_names, int* face_name_count,
-    char** local_alias_names, TypeInfo** local_alias_types, int* local_alias_count)
+    char*** struct_names, int* struct_name_count, int* struct_name_cap,
+    char*** cstruct_names, int* cstruct_name_count, int* cstruct_name_cap,
+    char*** enum_names, int* enum_name_count, int* enum_name_cap,
+    char*** face_names, int* face_name_count, int* face_name_cap,
+    char*** local_alias_names, TypeInfo*** local_alias_types, int* local_alias_count, int* local_alias_cap)
 {
     if (!type_info || !dep_table) return;
 
@@ -20,58 +21,58 @@ static void import_alias_type_deps_to_sym_table(
             if (type_info->param_types) {
                 for (int i = 0; i < type_info->param_count; i++) {
                     import_alias_type_deps_to_sym_table(table, dep_table, type_info->param_types[i],
-                        struct_names, struct_name_count,
-                        cstruct_names, cstruct_name_count,
-                        enum_names, enum_name_count,
-                        face_names, face_name_count,
-                        local_alias_names, local_alias_types, local_alias_count);
+                        struct_names, struct_name_count, struct_name_cap,
+                        cstruct_names, cstruct_name_count, cstruct_name_cap,
+                        enum_names, enum_name_count, enum_name_cap,
+                        face_names, face_name_count, face_name_cap,
+                        local_alias_names, local_alias_types, local_alias_count, local_alias_cap);
                 }
             }
             if (type_info->return_type) {
                 import_alias_type_deps_to_sym_table(table, dep_table, type_info->return_type,
-                    struct_names, struct_name_count,
-                    cstruct_names, cstruct_name_count,
-                    enum_names, enum_name_count,
-                    face_names, face_name_count,
-                    local_alias_names, local_alias_types, local_alias_count);
+                    struct_names, struct_name_count, struct_name_cap,
+                    cstruct_names, cstruct_name_count, cstruct_name_cap,
+                    enum_names, enum_name_count, enum_name_cap,
+                    face_names, face_name_count, face_name_cap,
+                    local_alias_names, local_alias_types, local_alias_count, local_alias_cap);
             }
             break;
         case TYPE_ARRAY:
             if (type_info->element_type) {
                 import_alias_type_deps_to_sym_table(table, dep_table, type_info->element_type,
-                    struct_names, struct_name_count,
-                    cstruct_names, cstruct_name_count,
-                    enum_names, enum_name_count,
-                    face_names, face_name_count,
-                    local_alias_names, local_alias_types, local_alias_count);
+                    struct_names, struct_name_count, struct_name_cap,
+                    cstruct_names, cstruct_name_count, cstruct_name_cap,
+                    enum_names, enum_name_count, enum_name_cap,
+                    face_names, face_name_count, face_name_cap,
+                    local_alias_names, local_alias_types, local_alias_count, local_alias_cap);
             }
             break;
         case TYPE_DICT:
             if (type_info->key_type) {
                 import_alias_type_deps_to_sym_table(table, dep_table, type_info->key_type,
-                    struct_names, struct_name_count,
-                    cstruct_names, cstruct_name_count,
-                    enum_names, enum_name_count,
-                    face_names, face_name_count,
-                    local_alias_names, local_alias_types, local_alias_count);
+                    struct_names, struct_name_count, struct_name_cap,
+                    cstruct_names, cstruct_name_count, cstruct_name_cap,
+                    enum_names, enum_name_count, enum_name_cap,
+                    face_names, face_name_count, face_name_cap,
+                    local_alias_names, local_alias_types, local_alias_count, local_alias_cap);
             }
             if (type_info->value_type) {
                 import_alias_type_deps_to_sym_table(table, dep_table, type_info->value_type,
-                    struct_names, struct_name_count,
-                    cstruct_names, cstruct_name_count,
-                    enum_names, enum_name_count,
-                    face_names, face_name_count,
-                    local_alias_names, local_alias_types, local_alias_count);
+                    struct_names, struct_name_count, struct_name_cap,
+                    cstruct_names, cstruct_name_count, cstruct_name_cap,
+                    enum_names, enum_name_count, enum_name_cap,
+                    face_names, face_name_count, face_name_cap,
+                    local_alias_names, local_alias_types, local_alias_count, local_alias_cap);
             }
             break;
         case TYPE_PTR_GENERIC:
             if (type_info->element_type) {
                 import_alias_type_deps_to_sym_table(table, dep_table, type_info->element_type,
-                    struct_names, struct_name_count,
-                    cstruct_names, cstruct_name_count,
-                    enum_names, enum_name_count,
-                    face_names, face_name_count,
-                    local_alias_names, local_alias_types, local_alias_count);
+                    struct_names, struct_name_count, struct_name_cap,
+                    cstruct_names, cstruct_name_count, cstruct_name_cap,
+                    enum_names, enum_name_count, enum_name_cap,
+                    face_names, face_name_count, face_name_cap,
+                    local_alias_names, local_alias_types, local_alias_count, local_alias_cap);
             }
             break;
         case TYPE_STRUCT:
@@ -109,17 +110,11 @@ static void import_alias_type_deps_to_sym_table(
                         }
                     }
                 }
-                // 添加到本地名称列表
+                // 添加到本地名称列表（动态追加，无固定上限）
                 if (ssym->is_cstruct) {
-                    if (*cstruct_name_count < MOD_MAX_TYPES) {
-                        cstruct_names[*cstruct_name_count] = strdup(dep_name);
-                        (*cstruct_name_count)++;
-                    }
+                    mod_names_push_z(cstruct_names, cstruct_name_count, cstruct_name_cap, dep_name);
                 } else {
-                    if (*struct_name_count < MOD_MAX_TYPES) {
-                        struct_names[*struct_name_count] = strdup(dep_name);
-                        (*struct_name_count)++;
-                    }
+                    mod_names_push_z(struct_names, struct_name_count, struct_name_cap, dep_name);
                 }
                 break;
             }
@@ -128,10 +123,7 @@ static void import_alias_type_deps_to_sym_table(
             if (esym) {
                 module_symbol_table_add_enum(table, dep_name,
                     esym->member_count, esym->member_names, esym->member_values);
-                if (*enum_name_count < MOD_MAX_ENUMS) {
-                    enum_names[*enum_name_count] = strdup(dep_name);
-                    (*enum_name_count)++;
-                }
+                mod_names_push_z(enum_names, enum_name_count, enum_name_cap, dep_name);
                 break;
             }
             // 尝试传导 face
@@ -139,10 +131,7 @@ static void import_alias_type_deps_to_sym_table(
             if (fsym) {
                 module_symbol_table_add_face(table, dep_name,
                     fsym->method_count, fsym->methods, fsym->type_param_count);
-                if (*face_name_count < MOD_MAX_TYPES) {
-                    face_names[*face_name_count] = strdup(dep_name);
-                    (*face_name_count)++;
-                }
+                mod_names_push_z(face_names, face_name_count, face_name_cap, dep_name);
                 break;
             }
             // 尝试传导 alias（依赖可能是另一个 alias）
@@ -150,19 +139,16 @@ static void import_alias_type_deps_to_sym_table(
             if (asym && !module_symbol_table_find_alias(table, dep_name)) {
                 module_symbol_table_add_alias(table, dep_name,
                     asym->type_info ? type_copy(asym->type_info) : NULL);
-                if (*local_alias_count < MOD_MAX_ALIASES) {
-                    local_alias_names[*local_alias_count] = strdup(dep_name);
-                    local_alias_types[*local_alias_count] = asym->type_info ? type_copy(asym->type_info) : NULL;
-                    (*local_alias_count)++;
-                }
+                mod_alias_push(local_alias_names, local_alias_types, local_alias_count, local_alias_cap,
+                    dep_name, asym->type_info ? type_copy(asym->type_info) : NULL);
                 // 递归传导 alias 的底层类型依赖
                 if (asym->type_info) {
                     import_alias_type_deps_to_sym_table(table, dep_table, asym->type_info,
-                        struct_names, struct_name_count,
-                        cstruct_names, cstruct_name_count,
-                        enum_names, enum_name_count,
-                        face_names, face_name_count,
-                        local_alias_names, local_alias_types, local_alias_count);
+                        struct_names, struct_name_count, struct_name_cap,
+                        cstruct_names, cstruct_name_count, cstruct_name_cap,
+                        enum_names, enum_name_count, enum_name_cap,
+                        face_names, face_name_count, face_name_cap,
+                        local_alias_names, local_alias_types, local_alias_count, local_alias_cap);
                 }
                 break;
             }

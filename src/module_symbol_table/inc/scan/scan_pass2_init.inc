@@ -3,9 +3,11 @@
     int cur_line = 1;  // 当前行号（1-based），用于记录 struct/字段定义位置
 
     // 本地别名解析表（支持 alias B = A 链式引用）
-    char* local_alias_names[MOD_MAX_ALIASES] = {0};
-    TypeInfo* local_alias_types[MOD_MAX_ALIASES] = {0};
+    // （动态数组，无固定上限：修复超过 64 个别名被静默丢弃的问题）
+    char** local_alias_names = NULL;
+    TypeInfo** local_alias_types = NULL;
     int local_alias_count = 0;
+    int local_alias_cap = 0;
 
     // 注意：不再自动收集 import 模块的 export alias 到本地别名表
     // alias 必须通过 use 语句显式导入才能使用
@@ -151,19 +153,9 @@
                                             s_sym->is_cstruct, s_sym->type_param_count, s_sym->type_param_names);
                                         // 将 use 导入的 struct/cstruct 名称添加到对应数组，使后续 export func 返回类型解析能识别
                                         if (s_sym->is_cstruct) {
-                                            if (cstruct_name_count >= MOD_MAX_TYPES) {
-                                                fprintf(stderr, "[错误] cstruct数量超过上限 %d\n", MOD_MAX_TYPES);
-                                            } else {
-                                                cstruct_names[cstruct_name_count] = strdup(type_name);
-                                                cstruct_name_count++;
-                                            }
+                                            mod_names_push_z(&cstruct_names, &cstruct_name_count, &cstruct_name_cap, type_name);
                                         } else {
-                                            if (struct_name_count >= MOD_MAX_TYPES) {
-                                                fprintf(stderr, "[错误] struct数量超过上限 %d\n", MOD_MAX_TYPES);
-                                            } else {
-                                                struct_names[struct_name_count] = strdup(type_name);
-                                                struct_name_count++;
-                                            }
+                                            mod_names_push_z(&struct_names, &struct_name_count, &struct_name_cap, type_name);
                                         }
                                         if (s_sym->impl_count > 0) {
                                             ModuleStructSymbol* new_sym = module_symbol_table_find_struct(table, type_name);
@@ -197,12 +189,7 @@
                                         module_symbol_table_add_face(table, type_name,
                                             f_sym->method_count, f_sym->methods, f_sym->type_param_count);
                                         // 将 use 导入的 face 名称添加到 face_names，使后续 export func 返回类型解析能识别
-                                        if (face_name_count >= MOD_MAX_TYPES) {
-                                            fprintf(stderr, "[错误] face数量超过上限 %d\n", MOD_MAX_TYPES);
-                                        } else {
-                                            face_names[face_name_count] = strdup(type_name);
-                                            face_name_count++;
-                                        }
+                                        mod_names_push_z(&face_names, &face_name_count, &face_name_cap, type_name);
                                     }
                                     // 查找 clib 类型（通过函数返回类型识别）
                                     if (!s_sym && !f_sym_ptr) {
@@ -215,12 +202,7 @@
                                                     if (strcmp(clib_names[ci], type_name) == 0) { already = 1; break; }
                                                 }
                                                 if (!already) {
-                                                    if (clib_name_count >= MOD_MAX_CLIBS) {
-                                                        fprintf(stderr, "[错误] clib数量超过上限 %d\n", MOD_MAX_CLIBS);
-                                                    } else {
-                                                        clib_names[clib_name_count] = strdup(type_name);
-                                                        clib_name_count++;
-                                                    }
+                                                    mod_names_push_z(&clib_names, &clib_name_count, &clib_name_cap, type_name);
                                                 }
                                                 break;
                                             }
@@ -238,12 +220,7 @@
                                                 if (strcmp(enum_names[ei], type_name) == 0) { already = 1; break; }
                                             }
                                             if (!already) {
-                                                if (enum_name_count >= MOD_MAX_ENUMS) {
-                                                    fprintf(stderr, "[错误] enum数量超过上限 %d\n", MOD_MAX_ENUMS);
-                                                } else {
-                                                    enum_names[enum_name_count] = strdup(type_name);
-                                                    enum_name_count++;
-                                                }
+                                                mod_names_push_z(&enum_names, &enum_name_count, &enum_name_cap, type_name);
                                             }
                                         }
                                     }
@@ -254,22 +231,17 @@
                                             module_symbol_table_add_alias(table, type_name,
                                                 a_sym->type_info ? type_copy(a_sym->type_info) : NULL);
                                             // 同时添加到本地别名表，使后续方法返回类型解析能找到
-                                            if (local_alias_count >= MOD_MAX_ALIASES) {
-                                                fprintf(stderr, "[错误] 别名数量超过上限 %d\n", MOD_MAX_ALIASES);
-                                            } else {
-                                                local_alias_names[local_alias_count] = strdup(type_name);
-                                                local_alias_types[local_alias_count] = a_sym->type_info ? type_copy(a_sym->type_info) : NULL;
-                                                local_alias_count++;
-                                            }
+                                            mod_alias_push(&local_alias_names, &local_alias_types, &local_alias_count, &local_alias_cap,
+                                                type_name, a_sym->type_info ? type_copy(a_sym->type_info) : NULL);
                                             // 递归传导 alias 底层类型依赖到当前模块符号表
                                             // 如 EventHandler = func(Event):bool，需要把 Event 也传导过来
                                             if (a_sym->type_info) {
                                                 import_alias_type_deps_to_sym_table(table, dep_table, a_sym->type_info,
-                                                    struct_names, &struct_name_count,
-                                                    cstruct_names, &cstruct_name_count,
-                                                    enum_names, &enum_name_count,
-                                                    face_names, &face_name_count,
-                                                    local_alias_names, local_alias_types, &local_alias_count);
+                                                    &struct_names, &struct_name_count, &struct_name_cap,
+                                                    &cstruct_names, &cstruct_name_count, &cstruct_name_cap,
+                                                    &enum_names, &enum_name_count, &enum_name_cap,
+                                                    &face_names, &face_name_count, &face_name_cap,
+                                                    &local_alias_names, &local_alias_types, &local_alias_count, &local_alias_cap);
                                             }
                                         }
                                     }
