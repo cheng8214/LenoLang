@@ -189,6 +189,7 @@ export struct TabControl impl Widget, Themeable {
         if idx == _active { return }
         _active = idx
         _closePopups()   // 切页时关闭所有已展开的下拉框，避免弹层残留/错位（修复切 tab 下拉仍显示）
+        core.markFrameRedraw()   // ★ 切页后强制请求重绘，避免节流跳帧时画面停留在旧页 → 闪烁
         if _onChange != null { _onChange(_active) }
     }
     func get_active(): int { return _active }

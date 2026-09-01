@@ -1,0 +1,285 @@
+// test_tab_table.leno — Tab 选项卡内嵌 Table 表格测试
+// 运行：leno 本文件（Esc 退出）
+//
+// 校验点：
+//   1) 三个 Tab 页，每页内嵌一个 Table 控件
+//   2) 页 0：商品库存表（排序、斑马纹、行选中）
+//   3) 页 1：学生成绩表（数值列排序、列宽拖拽、冻结首列）
+//   4) 页 2：系统日志表（自动滚动、定时刷新追加日志行）
+//   5) 切换 Tab 页时各 Table 互不干扰
+//   6) 每页底部有操作按钮（添加行 / 删除选中行 / 清空）
+import "../../../../lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.TabControl
+use SDL3.Table
+use SDL3.Button
+use SDL3.Label
+use SDL3.ListBox
+import rands
+
+// ===================== 模拟数据 =====================
+func genProducts(): Array[Array[string]] {
+    return [
+        ["A001", "机械键盘", "82", "299", "永福仓"],
+        ["A002", "无线鼠标", "156", "89", "义乌仓"],
+        ["A003", "4K显示器", "34", "2199", "深圳仓"],
+        ["A004", "降噪耳机", "68", "899", "永福仓"],
+        ["A005", "USB-C线", "450", "19", "义乌仓"],
+        ["A006", "笔记本支架", "203", "129", "北京仓"],
+        ["A007", " webcam", "77", "349", "深圳仓"],
+        ["A008", "移动硬盘", "112", "459", "北京仓"]
+    ]
+}
+
+func genStudents(): Array[Array[string]] {
+    return [
+        ["1", "张三", "95",  "22", "A"],
+        ["2", "李四", "100", "21", "A"],
+        ["3", "王五", "85",  "23", "B"],
+        ["4", "赵六", "72",  "20", "C"],
+        ["5", "钱七", "68",  "22", "C"],
+        ["6", "孙八", "110", "24", "A"],
+        ["7", "周九", "55",  "19", "D"],
+        ["8", "吴十", "42",  "25", "F"],
+        ["9", "郑十一", "88", "21", "B"],
+        ["10","冯十二", "76", "23", "C"]
+    ]
+}
+
+Array[Array[string]] _logRows = []
+int _logSeq = 0
+
+func addLogRow(): Array[string] {
+    _logSeq = _logSeq + 1
+    string level = "INFO"
+    int r = _int(rands.floats(0, 10))
+    if r < 2 { level = "WARN" }
+    if r < 1 { level = "ERROR" }
+    float ts = _float(SDL3.getTicks()) / 1000.0
+    string msg = "操作执行完成，耗时 " + _int(rands.floats(10, 500)) + "ms"
+    if level == "WARN" { msg = "连接池使用率超过 80%" }
+    if level == "ERROR" { msg = "数据库连接超时" }
+    Array[string] row = [_logSeq as string, level, ts as string, msg]
+    _logRows.add(row)
+    return row
+}
+
+func initLogs() {
+    _logRows = []
+    _logSeq = 0
+    for 6 to _ { addLogRow() }
+}
+
+main() {
+    SDL3.ttfInit()
+    rands.seed(_int(SDL3.getTicks()) % 233280)
+
+    var win = SDL3.createWindow({title: "Tab + Table 组合测试", w: 920, h: 600, resizable: true})
+    if not win.ok { SDL3.ttfQuit(); return }
+    win.setMinSize(640, 460)
+
+    var font = SDL3.createFontAuto(14.0)
+
+    // ===================== Tab 控件 =====================
+    Array[string] titles = ["商品库存", "学生成绩", "系统日志", "ListBox对比"]
+    var tab = win.addTabControl({
+        x: 0, y: 0, w: 920, h: 600,
+        tabs: titles, active: 0, tab_h: 34, font_size: 15
+    })
+    win.setRoot(tab)
+    tab.on_change(func(int idx) {
+        print("切换到 Tab " + idx + "：" + titles[idx])
+    })
+
+    // ===================== 页 0：商品库存表 =====================
+    Array[string] pHeaders = ["编号", "名称", "库存", "单价", "仓库"]
+    Array[int] pAligns = [1, 0, 2, 2, 1]
+    Array[int] pHAligns = [1, 1, 1, 1, 1]
+
+    var pTable = SDL3.createTable({
+        x: 0, y: 0, w: 880, h: 420,
+        headers: pHeaders, aligns: pAligns, header_aligns: pHAligns,
+        col_widths: [80, 200, 80, 100, 120],
+        rows: genProducts(),
+        sortable: true, resizable: true, zebra: true,
+        row_h: 26, header_h: 28, multi_select: true,
+        font_size: 14
+    })
+    pTable.set_window_size(920, 600)
+    pTable.set_window_handle(win.handle)
+    tab.addToPage(0, pTable, 20, 20)
+    pTable.on_select(func(int row) {
+        print("[库存] 选中第 " + row + " 行：" + pTable.get_row(row))
+    })
+
+    // 页 0 按钮区
+    var pAddBtn = SDL3.createButton({w: 120, h: 32, text: "添加商品"})
+    var pDelBtn = SDL3.createButton({w: 120, h: 32, text: "删除选中"})
+    var pClrBtn = SDL3.createButton({w: 120, h: 32, text: "清空"})
+    tab.addToPage(0, pAddBtn, 20, 450)
+    tab.addToPage(0, pDelBtn, 150, 450)
+    tab.addToPage(0, pClrBtn, 280, 450)
+    pAddBtn.on_click(func() {
+        int n = pTable.row_count()
+        pTable.add_row(["A" + _int_pad(n + 100), "新商品" + n, "50", "199", "临时仓"], "")
+        print("[库存] 添加一行，当前 " + pTable.row_count() + " 行")
+    })
+    pDelBtn.on_click(func() {
+        var sels = pTable.get_selected_rows()
+        for sels.len() to i {
+            int k = sels.len() - 1 - i
+            int r = sels[k]
+            if r >= 0 and r < pTable.row_count() { pTable.remove_row(r) }
+        }
+        print("[库存] 删除 " + sels.len() + " 行，剩余 " + pTable.row_count() + " 行")
+    })
+    pClrBtn.on_click(func() {
+        pTable.clear()
+        print("[库存] 已清空")
+    })
+
+    // ===================== 页 1：学生成绩表 =====================
+    Array[string] sHeaders = ["ID", "姓名", "分数", "年龄", "等级"]
+    Array[int] sAligns = [1, 0, 2, 2, 1]
+    Array[int] sHAligns = [1, 1, 1, 1, 1]
+
+    var sTable = SDL3.createTable({
+        x: 0, y: 0, w: 880, h: 420,
+        headers: sHeaders, aligns: sAligns, header_aligns: sHAligns,
+        col_widths: [50, 160, 120, 100, 100],
+        rows: genStudents(),
+        sortable: true, resizable: true, zebra: true,
+        row_h: 26, header_h: 28, multi_select: false,
+        numeric_cols: [2, 3],
+        frozen_cols: 1,
+        col_reorder: true,
+        font_size: 14
+    })
+    sTable.set_window_size(920, 600)
+    sTable.set_window_handle(win.handle)
+    tab.addToPage(1, sTable, 20, 20)
+    sTable.on_select(func(int row) {
+        print("[成绩] 选中第 " + row + " 行：" + sTable.get_row(row))
+    })
+
+    // 页 1 按钮区
+    var sSortBtn = SDL3.createButton({w: 140, h: 32, text: "分数降序"})
+    var sAddBtn = SDL3.createButton({w: 120, h: 32, text: "添加学生"})
+    var sClrBtn = SDL3.createButton({w: 120, h: 32, text: "清空"})
+    tab.addToPage(1, sSortBtn, 20, 450)
+    tab.addToPage(1, sAddBtn, 170, 450)
+    tab.addToPage(1, sClrBtn, 300, 450)
+    sSortBtn.on_click(func() {
+        sTable.sort_by(2, true)
+        print("[成绩] 按分数降序排列（数值模式）")
+    })
+    sAddBtn.on_click(func() {
+        int n = sTable.row_count()
+        sTable.add_row([(n + 1) as string, "新生" + n, _int(rands.floats(40, 100)) as string, "20", "B"], "")
+        print("[成绩] 添加一行，当前 " + sTable.row_count() + " 行")
+    })
+    sClrBtn.on_click(func() {
+        sTable.clear()
+        print("[成绩] 已清空")
+    })
+
+    // ===================== 页 2：系统日志表 =====================
+    initLogs()
+    Array[string] lHeaders = ["序号", "级别", "时间", "消息"]
+    Array[int] lAligns = [1, 1, 1, 0]
+    Array[int] lHAligns = [1, 1, 1, 1]
+
+    var lTable = SDL3.createTable({
+        x: 0, y: 0, w: 880, h: 420,
+        headers: lHeaders, aligns: lAligns, header_aligns: lHAligns,
+        col_widths: [60, 80, 120, 620],
+        rows: _logRows,
+        sortable: true, resizable: true, zebra: true,
+        row_h: 24, header_h: 28, multi_select: true,
+        font_size: 13
+    })
+    lTable.set_window_size(920, 600)
+    lTable.set_window_handle(win.handle)
+    tab.addToPage(2, lTable, 20, 20)
+
+    // 页 2 按钮区
+    var lAddBtn = SDL3.createButton({w: 120, h: 32, text: "追加日志"})
+    var lClrBtn = SDL3.createButton({w: 120, h: 32, text: "清空日志"})
+    tab.addToPage(2, lAddBtn, 20, 450)
+    tab.addToPage(2, lClrBtn, 150, 450)
+    lAddBtn.on_click(func() {
+        addLogRow()
+        lTable.set_rows(_logRows)
+        print("[日志] 追加一条，共 " + _logRows.len() + " 条")
+    })
+    lClrBtn.on_click(func() {
+        _logRows = []
+        _logSeq = 0
+        lTable.clear()
+        print("[日志] 已清空")
+    })
+
+    // 定时器：每 3 秒自动追加一条日志
+    win.addTimer(3000, func() {
+        // 只有当前页是系统日志页时才追加，避免无效刷新
+        if tab.get_active() == 2 {
+            addLogRow()
+            lTable.set_rows(_logRows)
+        }
+    })
+
+    // ===================== 页 3：ListBox（对比测试是否也闪烁）=====================
+    Array[string] lbItems = []
+    for 30 to i {
+        lbItems.add("列表项 #" + (i + 1) + " — 这是用于对比闪烁测试的数据行")
+    }
+    var listBox = SDL3.createListBox({
+        x: 0, y: 0, w: 880, h: 420,
+        items: lbItems, font_size: 14,
+        multi_select: true
+    })
+    tab.addToPage(3, listBox, 20, 20)
+    listBox.on_change(func(Array[int] sels) {
+        if sels.len() > 0 { print("[ListBox] 选中：" + sels) }
+    })
+
+    // 页 3 按钮
+    var lbAddBtn = SDL3.createButton({w: 120, h: 32, text: "追加项"})
+    var lbClrBtn = SDL3.createButton({w: 120, h: 32, text: "清空"})
+    tab.addToPage(3, lbAddBtn, 20, 450)
+    tab.addToPage(3, lbClrBtn, 150, 450)
+    lbAddBtn.on_click(func() {
+        int n = listBox.items.len()
+        listBox.add_item("追加项 #" + (n + 1))
+        print("[ListBox] 追加一项，共 " + listBox.items.len() + " 项")
+    })
+    lbClrBtn.on_click(func() {
+        listBox.clear()
+        print("[ListBox] 已清空")
+    })
+
+    // ===================== 事件循环 =====================
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            // 不使用 r.clearColor()：SDL_RenderClear 在 D3D 后端可能不走 back buffer，
+            // 导致偶发黑闪。窗口主循环已用 fillRect 做背景填充，这里无需再清屏。
+        }
+    )
+
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
+}
+
+// 数字补零到指定位数
+func _int_pad(int n): string {
+    if n < 10 { return "00" + n as string }
+    if n < 100 { return "0" + n as string }
+    return n as string
+}

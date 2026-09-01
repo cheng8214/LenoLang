@@ -1753,14 +1753,10 @@ export struct Table impl Widget, Themeable {
         float bodyTop = y + _headerH
         float bodyH = h - _headerH - sb[1]
         float bodyW = w - sb[0]
-        // 数据区裁剪：防止行渲染渗透到底部滚动条区域
-        SDL_Rect bodyClip = SDL_Rect.malloc()
-        bodyClip.x = _int(x); bodyClip.y = _int(bodyTop)
-        bodyClip.w = _int(bodyW) + 1; bodyClip.h = _int(bodyH) + 1   // +1 覆盖浮点截断的亚像素
-        r.pushClipRect(bodyClip.to_ptr())
-        // 关键：把 _clipBase 临时换成 bodyClip，让 _draw_cell_text 内部恢复时回到 body 区
-        // （否则恢复为全表 clip，后续行背景 fillRect 就会渗透到滚动条区域）
-        _clipBase = bodyClip.to_ptr()
+        // ★ 不再使用第二层 bodyClip 裁剪：三层嵌套 clipRect（Tab内容区 + Table + body）
+        //   会导致 pushClipRect/popClipRect 的 _flushBatches 在 D3D 后端偶发中间状态→闪烁。
+        //   改用行级可见性检查（continue 跳过不可见行）+ fillRect 宽度裁剪到 bodyW 防止渗透。
+        //   与 ListBox 的单层 clipRect 方案一致。
         int startRow = _int(_scrollY / _rowH)
         if startRow < 0 { startRow = 0 }
         int endRow = startRow + _int(bodyH / _rowH) + 2
@@ -1784,7 +1780,7 @@ export struct Table impl Widget, Themeable {
                 eif _zebra and (ri % 2 == 1) { rc = _zebColor }
             }
             r.setColor(rc)
-            r.fillRect(x, ry, w, _rowH + 1.0)   // +1 覆盖亚像素间隙，防止行间闪烁
+            r.fillRect(x, ry, bodyW, _rowH + 1.0)   // ★ 用 bodyW 防止渗透到竖向滚动条区域（替代原 bodyClip 裁剪）
         }
 
         // ★ Pass 1.5（仅 _cellSelect 模式）：单元格级 hover/选中高亮
@@ -1887,8 +1883,6 @@ export struct Table impl Widget, Themeable {
 
         // 恢复表格整体裁剪区（滚动条/边框需全区域绘制）
         _clipBase = clip.to_ptr()
-        r.popClipRect()
-        bodyClip.free()
 
         if _dragCol >= 0 and _dragCol < _colW.len() {
             float ex = _col_x(_dragCol) + _colW[_dragCol]

@@ -1355,6 +1355,9 @@ export struct Window {
                     var rootWid = _runRoots[i]
                     rootWid?.render(_runRens[i])
                     // 自动渲染该窗口的所有控件（z 值小的先画，大的后画；同 z 值保持添加顺序）
+                    // ★ 跳过已作为 root 渲染的控件，避免双重渲染导致闪烁
+                    //   （如 TabControl 既被 setRoot 又在 _widgets 中，双重渲染时
+                    //     第二次的内容区背景覆盖第一次 Table 内容 → 闪一下背景再画 Table）
                     var ws = _runWidgets[i]
                     var wz = _runWidgetZ[i]
                     int wn = ws.len()
@@ -1374,7 +1377,11 @@ export struct Window {
                                 int tmp = order[k]; order[k] = order[minIdx]; order[minIdx] = tmp
                             }
                         }
-                        for wn to k { ws[order[k]].render(_runRens[i]) }
+                        for wn to k {
+                            var w = ws[order[k]]
+                            if rootWid != null and w == rootWid { continue }
+                            w.render(_runRens[i])
+                        }
                     }
                     // 第二遍：所有展开的下拉框画在最上层（按窗口隔离；含经 panel/tab/布局添加的，由 registerComboBox 兜底）
                     cbb.renderComboBoxes(_runRens[i], _runHnds[i])
