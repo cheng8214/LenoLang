@@ -316,6 +316,9 @@ char* lsp_handle_document_diagnostic(LspServer* server, int id, JsonValue* param
     json_object_set(result, "kind", json_string_new("full"));
     
     lsp_free_diagnostics(diags, count);
-    
-    return lsp_create_response(id, result);
+
+    char* response = lsp_create_response(id, result);
+    json_free(result);
+
+    return response;
 }

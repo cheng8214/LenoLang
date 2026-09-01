@@ -1326,7 +1326,8 @@ static char* get_symbol_hover_from_compiler(const char* content, const char* wor
 
         if (struct_count > 0) {
             char* type_str = NULL;
-            bool found = compiler_get_struct_field_info(&ctx, struct_names[0], word, &type_str);
+            // 先 strdup 保存 struct_names[0]，因为后面要释放 struct_names 数组
+            char* first_struct_name = strdup(struct_names[0]);
 
             // 释放 struct 名称列表
             for (int i = 0; i < struct_count; i++) {
@@ -1334,8 +1335,10 @@ static char* get_symbol_hover_from_compiler(const char* content, const char* wor
             }
             free(struct_names);
 
+            bool found = compiler_get_struct_field_info(&ctx, first_struct_name, word, &type_str);
+
             if (found && type_str) {
-                size_t info_len = 512 + strlen(word) + strlen(type_str) + strlen(struct_names[0]);
+                size_t info_len = 512 + strlen(word) + strlen(type_str) + strlen(first_struct_name);
                 char* info = (char*)malloc(info_len);
                 if (info) {
                     snprintf(info, info_len, "**%s**\n\n"
@@ -1345,14 +1348,16 @@ static char* get_symbol_hover_from_compiler(const char* content, const char* wor
                              "%s 字段 (%s)",
                              word,
                              type_str, word,
-                             struct_names[0],
-                             struct_names[0]);
+                             first_struct_name,
+                             first_struct_name);
                 }
                 free(type_str);
+                free(first_struct_name);
                 free(current_struct_name);
                 compiler_context_cleanup(&ctx);
                 return info;
             }
+            free(first_struct_name);
         }
 
         free(current_struct_name);
