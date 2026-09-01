@@ -41,7 +41,7 @@ func ok4() {
 // ============================================================
 // 用例4: 匿名函数参数用 any
 // ============================================================
-func ok5() {
+func ok5(): Array[int] {
     var items = [1, 2, 3]
     var result = items.map(func(any x): int {
         if x is int { return x * x }

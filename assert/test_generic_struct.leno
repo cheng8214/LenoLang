@@ -178,7 +178,7 @@ struct Holder[T] {
         return self.data == null
     }
 }
-var hn = new Holder[int](data=null)
+var hn = new Holder[int?](data=null)
 var hv = new Holder[int](data=10)
 assert_eq(hn.isNull(), true)
 assert_eq(hv.isNull(), false)
@@ -308,7 +308,7 @@ func coalesce[T](T a, T b): T {
     return b
 }
 
-assert_eq(coalesce[int](null, 42), 42)
+assert_eq(coalesce[int?](null, 42), 42)
 assert_eq(coalesce[int](10, 20), 10)
 assert_eq(coalesce[string](null, "default"), "default")
 
