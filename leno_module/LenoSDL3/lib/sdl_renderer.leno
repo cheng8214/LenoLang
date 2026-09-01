@@ -85,10 +85,11 @@ export struct PixelBuffer {
 
 export struct Renderer {
     // ==================== 关联常量 ====================
-    const BX_EMPTY  = 0   // 批处理空闲
-    const BX_FILL   = 1   // 批处理填充矩形
-    const BX_STROKE = 2   // 批处理描边矩形
-    const BX_LINE   = 3   // 批处理线段
+const BX_EMPTY  = 0   // 批处理空闲
+const BX_FILL   = 1   // 批处理填充矩形
+const BX_STROKE = 2   // 批处理描边矩形
+const BX_LINE   = 3   // 批处理线段
+const BX_TEX    = 4   // 批处理文字纹理
 
     Ptr[u8] handle; bool ok
     // 超采样抗锯齿（SSAA）：整帧渲染到 scale 倍离屏纹理，再以 1x 缩放贴回窗口得到平滑边缘
@@ -100,7 +101,12 @@ export struct Renderer {
     Ptr[f32] _bxFill; int _bxFillN, _bxFillCap
     Ptr[f32] _bxOut;  int _bxOutN, _bxOutCap
     Ptr[f32] _bxLine; int _bxLineN, _bxLineCap
-    int _bxCur            // 批处理状态（BX_EMPTY/FILL/STROKE/LINE，切换即 flush 保序）
+    int _bxCur            // 批处理状态（BX_EMPTY/FILL/STROKE/LINE/TEX，切换即 flush 保序）
+    // ---- 文字纹理批处理缓冲：同纹理连续 drawText 合并为一次 SDL_RenderGeometry ----
+    // 每条目 6 floats：dstX, dstY, dstW, dstH, alphaMod, texHandle(低32位)
+    // texHandle 高位丢弃（纹理指针通常 < 4GB），用于同纹理分组
+    Ptr[f32] _bxTexCoords; int _bxTexN, _bxTexCap   // 坐标+alpha 缓冲
+    Array[Ptr[u8]] _bxTexPtrs   // 与 _bxTexN 并行的纹理指针数组（用于提交时取真实指针）
     int _bxR, _bxG, _bxB, _bxA
     bool _bxIsFloat
     float _bxFr, _bxFg, _bxFb, _bxFa
@@ -143,6 +149,8 @@ export struct Renderer {
             _bxOutCap  = 2048; _bxOut  = ffi.malloc(_bxOutCap * 16)
             _bxLineCap = 4096; _bxLine = ffi.malloc(_bxLineCap * 16)
             _bxFillN = 0; _bxOutN = 0; _bxLineN = 0
+            // 文字纹理批处理：每条目 5 floats (dstX, dstY, dstW, dstH, alpha)
+            _bxTexCap = 1024; _bxTexCoords = ffi.malloc(_bxTexCap * 20); _bxTexN = 0; _bxTexPtrs = []
         }
         return ok
     }
@@ -162,6 +170,8 @@ export struct Renderer {
             if _bxFill != null { ffi.free(_bxFill); _bxFill = null }
             if _bxOut != null { ffi.free(_bxOut); _bxOut = null }
             if _bxLine != null { ffi.free(_bxLine); _bxLine = null }
+            if _bxTexCoords != null { ffi.free(_bxTexCoords); _bxTexCoords = null }
+            _bxTexPtrs = []
             if _ssaaTex != null { _lib.SDL_DestroyTexture(_ssaaTex); _ssaaTex = null }
             if _pixTex != null { _lib.SDL_DestroyTexture(_pixTex); _pixTex = null }
             // 渲染器销毁前：先使字体库中由本渲染器创建的纹理缓存失效。
@@ -627,10 +637,11 @@ export struct Renderer {
     // 再按逻辑尺寸绘制（被 setScale 映射回 1:1 的离屏像素），下采样后清晰不糊。
     // 文字纹理经 Font 内部缓存（_getCachedTex），命中时跳过每帧 2x 栅格化与 GPU 上传，显著省 CPU/带宽。
     func drawText(Font f, string text, float x, float y, Color color) {
-        _flushBatches()
         int r = (color >> 16) & 0xFF
         int g = (color >> 8) & 0xFF
         int b = color & 0xFF
+        float alphaMod = 1.0
+        if ((color >> 24) & 0xFF) < 255 { alphaMod = ((color >> 24) & 0xFF) / 255.0 }
         if _ssaa and _ssaaScale > 0.0 {
             float origPt = f._pt
             f.setFontSize(origPt * _ssaaScale)   // _pt 临时变 2x，作为缓存 key 维度
@@ -639,9 +650,7 @@ export struct Renderer {
             if tex.ok {
                 float dw = tex.width  / _ssaaScale
                 float dh = tex.height / _ssaaScale
-                // Alpha 调制：用颜色中的 Alpha 通道
-                if ((color >> 24) & 0xFF) < 255 { _lib.SDL_SetTextureAlphaMod(tex.texture, (color >> 24) & 0xFF) }
-                drawTextureAt(tex.texture, x, y, dw, dh)
+                _pushTexBatch(tex.texture, x, y, dw, dh, alphaMod)
             }
             return
         }
@@ -651,10 +660,26 @@ export struct Renderer {
         y = _int(y + 0.5)
         TextTexture tex = f._getCachedTex(handle, text, r, g, b)
         if tex.ok {
-            // Alpha 调制：用颜色中的 Alpha 通道
-            if ((color >> 24) & 0xFF) < 255 { _lib.SDL_SetTextureAlphaMod(tex.texture, (color >> 24) & 0xFF) }
-            drawTextureAt(tex.texture, x, y, tex.width, tex.height)
+            _pushTexBatch(tex.texture, x, y, tex.width, tex.height, alphaMod)
         }
+    }
+
+    // 文字纹理批处理：收集到缓冲，不打断 fillRect/drawRect/drawLine 的批处理
+    // 当缓冲满或纹理切换（由 _flushBatches 统一处理）时批量提交
+    func _pushTexBatch(Ptr[u8] texture, float x, float y, float w, float h, float alpha) {
+        // 如果当前批处理类型不是 TEX，先 flush 之前的状态（fillRect/drawRect 等）
+        if _bxCur != BX_EMPTY and _bxCur != BX_TEX { _flushBatches() }
+        // 缓冲满则先提交
+        if _bxTexN >= _bxTexCap { _flushBatches() }
+        int off = _bxTexN * 20
+        ffi.write_float(_bxTexCoords, off, x)
+        ffi.write_float(_bxTexCoords, off + 4, y)
+        ffi.write_float(_bxTexCoords, off + 8, w)
+        ffi.write_float(_bxTexCoords, off + 12, h)
+        ffi.write_float(_bxTexCoords, off + 16, alpha)
+        _bxTexPtrs.add(texture)
+        _bxTexN = _bxTexN + 1
+        _bxCur = BX_TEX
     }
 
     // 居中绘制文字（在 [x, x+w] 范围内水平居中）
@@ -741,10 +766,78 @@ export struct Renderer {
             _bxLineN = 0
         }
         _bxCur = BX_EMPTY
+        // ---- 文字纹理批处理提交：按纹理分组，同纹理用一次 SDL_RenderGeometry ----
+        if _bxTexN > 0 {
+            _flushTexBatch()
+        }
         return ok
     }
 
-    // 批处理统计：fill/drawRect/drawLine 各自的「批量提交次数」与「经批处理提交的图元总数」
+    // 提交文字纹理缓冲：按纹理指针分组，同纹理的多个矩形合并为一次 SDL_RenderGeometry
+    // 每个矩形 = 4 顶点（三角形对），6 索引（2 个三角形）
+    func _flushTexBatch() {
+        if _bxTexN == 0 { return }
+        // 逐条提交：同纹理连续的合并为一次 RenderGeometry
+        int i = 0
+        while i < _bxTexN {
+            Ptr[u8] curTex = _bxTexPtrs[i]
+            // 收集连续同纹理条目
+            int j = i + 1
+            while j < _bxTexN and _bxTexPtrs[j] == curTex { j = j + 1 }
+            int count = j - i   // 同纹理条目数
+            // 构建顶点数组：每矩形 4 顶点，每顶点 8 floats (x,y,r,g,b,a,u,v) = 32 bytes
+            int vcnt = count * 4
+            var verts = SDL_Vertex.malloc_array(vcnt)
+            // 索引数组：每矩形 6 个索引（2 三角形）
+            Array[int] idxArr = []
+            for count to k {
+                int base = k * 4
+                idxArr.add(base); idxArr.add(base + 1); idxArr.add(base + 2)
+                idxArr.add(base); idxArr.add(base + 2); idxArr.add(base + 3)
+            }
+            // 填充顶点
+            for count to k {
+                int entryIdx = i + k
+                int off = entryIdx * 20
+                float dx = ffi.read_float(_bxTexCoords, off)
+                float dy = ffi.read_float(_bxTexCoords, off + 4)
+                float dw = ffi.read_float(_bxTexCoords, off + 8)
+                float dh = ffi.read_float(_bxTexCoords, off + 12)
+                float alpha = ffi.read_float(_bxTexCoords, off + 16)
+                // 4 顶点：左上、右上、右下、左下
+                // 顶点颜色全白，alpha 由顶点控制（与纹理相乘），无需 SDL_SetTextureAlphaMod
+                int vi = k * 4
+                // 左上 (0,0)
+                verts[vi].x = dx;           verts[vi].y = dy
+                verts[vi].r = 1.0; verts[vi].g = 1.0; verts[vi].b = 1.0; verts[vi].a = alpha
+                verts[vi].u = 0.0; verts[vi].v = 0.0
+                // 右上 (1,0)
+                verts[vi + 1].x = dx + dw;  verts[vi + 1].y = dy
+                verts[vi + 1].r = 1.0; verts[vi + 1].g = 1.0; verts[vi + 1].b = 1.0; verts[vi + 1].a = alpha
+                verts[vi + 1].u = 1.0; verts[vi + 1].v = 0.0
+                // 右下 (1,1)
+                verts[vi + 2].x = dx + dw;  verts[vi + 2].y = dy + dh
+                verts[vi + 2].r = 1.0; verts[vi + 2].g = 1.0; verts[vi + 2].b = 1.0; verts[vi + 2].a = alpha
+                verts[vi + 2].u = 1.0; verts[vi + 2].v = 1.0
+                // 左下 (0,1)
+                verts[vi + 3].x = dx;       verts[vi + 3].y = dy + dh
+                verts[vi + 3].r = 1.0; verts[vi + 3].g = 1.0; verts[vi + 3].b = 1.0; verts[vi + 3].a = alpha
+                verts[vi + 3].u = 0.0; verts[vi + 3].v = 1.0
+            }
+            // 构建索引指针
+            Ptr[u8] idxPtr = ffi.malloc(vcnt * 6 / 4 * 4)   // 每矩形 6 索引 × 4 bytes
+            for idxArr.len() to k {
+                ffi.write_int(idxPtr, k * 4, idxArr[k])
+            }
+            int idxCount = idxArr.len()
+            _lib.SDL_RenderGeometry(handle, curTex, verts.to_ptr(), vcnt, idxPtr, idxCount)
+            verts.free()
+            ffi.free(idxPtr)
+            i = j
+        }
+        _bxTexN = 0
+        _bxTexPtrs = []
+    }
 
 
     // 强制刷新渲染命令：先提交批处理缓冲，再让 SDL 把已入队命令刷到 GPU
@@ -888,7 +981,7 @@ export struct Renderer {
         if r > w * 0.5 { r = w * 0.5 }
         if r > h * 0.5 { r = h * 0.5 }
 
-        // 直边区域（3 个矩形批量填充）
+        // 直边区域（3 个矩形批量填充）+1px 扩展消除与 drawRoundedRect 边框线的亚像素缝隙
         _emitFill(x + r, y, w - 2.0 * r, h)
         _emitFill(x, y + r, r, h - 2.0 * r)
         _emitFill(x + w - r, y + r, r, h - 2.0 * r)
@@ -900,6 +993,10 @@ export struct Renderer {
 
         // 获取当前颜色
         var[float, float, float, float](cr, cg, cb, ca) = getColorFloat()
+
+        // 圆角半径外扩 0.5px，确保三角形扇完全覆盖到 drawRoundedRect 边框线内侧，
+        // 消除两者采样点不重合导致的亚像素缝隙（表现为右下角黑线）
+        float fr = r + 0.5
 
         var half_pi = 1.57079633
         var v_per_corner = 3 * segs  // 每个角需要的顶点数（segs 个三角形 × 3 顶点）
@@ -923,9 +1020,9 @@ export struct Renderer {
                 var vi = ci * v_per_corner + i * 3
                 verts[vi].x = cx; verts[vi].y = cy
                 verts[vi].r = cr; verts[vi].g = cg; verts[vi].b = cb; verts[vi].a = ca
-                verts[vi+1].x = cx + r * maths.cos(a1); verts[vi+1].y = cy + r * maths.sin(a1)
+                verts[vi+1].x = cx + fr * maths.cos(a1); verts[vi+1].y = cy + fr * maths.sin(a1)
                 verts[vi+1].r = cr; verts[vi+1].g = cg; verts[vi+1].b = cb; verts[vi+1].a = ca
-                verts[vi+2].x = cx + r * maths.cos(a2); verts[vi+2].y = cy + r * maths.sin(a2)
+                verts[vi+2].x = cx + fr * maths.cos(a2); verts[vi+2].y = cy + fr * maths.sin(a2)
                 verts[vi+2].r = cr; verts[vi+2].g = cg; verts[vi+2].b = cb; verts[vi+2].a = ca
             }
         }
