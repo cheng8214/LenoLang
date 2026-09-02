@@ -64,6 +64,7 @@ static const char* opCodeNames[] = {
     "OP_DTOR_LOCAL",
 // 全局函数调用合并指令
 "OP_CALL_GLOBAL_FUNC",
+"OP_CALL_GLOBAL_FUNC_TYPED",
 // NOPUSH 变体
 "OP_INC_LOCAL_NOPUSH",
 "OP_DEC_LOCAL_NOPUSH",
@@ -519,6 +520,12 @@ int disassembleInstruction(Chunk* chunk, int offset) {
             int func_slot = (chunk->code[offset + 1] << 8) | chunk->code[offset + 2];
             int arg_count = (chunk->code[offset + 3] << 8) | chunk->code[offset + 4];
             printf(" func=%d args=%d", func_slot, arg_count);
+            return offset + 5;
+        }
+        case OP_CALL_GLOBAL_FUNC_TYPED: {
+            int func_slot = (chunk->code[offset + 1] << 8) | chunk->code[offset + 2];
+            int arg_count = (chunk->code[offset + 3] << 8) | chunk->code[offset + 4];
+            printf(" func=%d args=%d (typed)", func_slot, arg_count);
             return offset + 5;
         }
         case OP_INVOKE_METHOD: {

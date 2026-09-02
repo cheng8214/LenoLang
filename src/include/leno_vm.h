@@ -174,6 +174,9 @@ typedef enum {
     OP_DTOR_LOCAL,       // 对局部变量调用析构函数: slot(2)
     // 全局函数调用合并指令（省掉 OP_GET_GLOBAL_FUNC + OP_CALL 配对）
     OP_CALL_GLOBAL_FUNC, // 直接调用全局函数: func_slot(2) arg_count(2)
+    // 全局函数调用（类型已确认版）：编译期确认所有实参类型与形参精确匹配，
+    // 运行时跳过 call() 中的 param_types 类型转换循环
+    OP_CALL_GLOBAL_FUNC_TYPED, // 同 OP_CALL_GLOBAL_FUNC 格式，但调用 call_no_type_check()
     // NOPUSH 变体（语句上下文，省掉 OP_POP 分发开销）
     OP_INC_LOCAL_NOPUSH,   // 局部变量++，不压栈（i++ 语句用）
     OP_DEC_LOCAL_NOPUSH,   // 局部变量--，不压栈（i-- 语句用）

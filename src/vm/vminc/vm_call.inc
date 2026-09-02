@@ -150,6 +150,74 @@ static inline int call(ObjClosure* closure, int arg_count, int line) {
     return 1;
 }
 
+// 调用闭包函数（跳过参数类型检查快速路径）
+// 当编译期已确认所有实参类型与形参精确匹配时使用
+// 与 call() 的唯一区别：跳过 param_types 类型转换循环，用 memcpy 直接拷贝参数
+static inline int call_no_type_check(ObjClosure* closure, int arg_count, int line) {
+    ObjFunction* func = closure->function;
+
+    if (unlikely(vm.frame_cnt >= vm.frame_capacity)) {
+        if (!vm_grow_frames(current_exec_vm)) {
+            runtime_error("调用栈内存分配失败", line);
+            return 0;
+        }
+    }
+
+    int local_count = func->local_count;
+    Value* locals;
+    int locals_is_dynamic = 0;
+
+    CallFrame* frame = &vm.frames[vm.frame_cnt];
+    if (likely(local_count <= INLINE_LOCALS_MAX)) {
+        locals = frame->inline_locals;
+    } else {
+        locals = (Value*)malloc(local_count * sizeof(Value));
+        if (!locals) {
+            runtime_error("局部变量内存分配失败", line);
+            return 0;
+        }
+        locals_is_dynamic = 1;
+    }
+
+    // 快速路径：跳过类型转换，直接拷贝参数到 locals
+    // 栈布局: [...][arg1][arg2]...[argN][callee]
+    // call() 中 arg = vm.stack[vm.sp - arg_count - 1 + i]，这里与之完全一致
+    Value* src = vm.stack + vm.sp - arg_count - 1;
+    for (int i = 0; i < arg_count; i++) {
+        locals[i] = src[i];
+    }
+    for (int i = arg_count; i < local_count; i++) {
+        locals[i] = val_null();
+    }
+
+    // 弹出 callee 和参数，为返回值预留槽位
+    vm.sp -= arg_count;
+    int new_stack_base = vm.sp - 1;
+
+    vm.frame_cnt++;
+    frame->closure = closure;
+    frame->chunk = func->chunk;
+    frame->ip = func->chunk->code;
+    frame->stack_base = new_stack_base;
+    frame->slot_count = local_count;
+    frame->locals = locals;
+    frame->local_count = local_count;
+    frame->locals_is_dynamic = locals_is_dynamic;
+    if (func->has_try) {
+        frame->catch_ip = NULL;
+        frame->finally_ip = NULL;
+        frame->prev_catch_ip = NULL;
+        frame->prev_finally_ip = NULL;
+        frame->in_finally = 0;
+        frame->try_return_value = val_null();
+        frame->has_try_return = 0;
+    }
+    frame->module = func->module;
+    frame->has_captures = (closure->upvalue_count > 0) ? 1 : 0;
+
+    return 1;
+}
+
 // 调用值（处理不同类型的可调用对象）
 static inline int call_value(Value callee, int arg_count, int line) {
     // 检查是否是null（函数未定义）

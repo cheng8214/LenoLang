@@ -1146,7 +1146,55 @@ static void gen_call(CodeGen* gen, Ast* ast) {
                 return;
             }
 
-            emit_byte(gen, OP_CALL_GLOBAL_FUNC, ast->line);
+            // 类型已确认快速路径：编译期检查所有实参类型与形参类型是否精确匹配
+            // 如果匹配，发射 OP_CALL_GLOBAL_FUNC_TYPED，运行时跳过 call() 中的类型转换循环
+            int all_types_match = 0;
+            if (func_def && func_def->kind == AST_FUNC_DEF
+                && func_def->u.func.param_types
+                && provided_args == expected_args
+                && func_def->u.func.default_count == 0) {
+                all_types_match = 1;
+                for (int i = 0; i < expected_args; i++) {
+                    TypeInfo* param_type = func_def->u.func.param_types[i];
+                    if (!param_type) {
+                        all_types_match = 0;
+                        break;
+                    }
+                    // 泛型类型参数、any 类型、struct 等不参与快速路径
+                    TypeKind pk = param_type->kind;
+                    if (pk == TYPE_ANY || pk == TYPE_INFER || pk == TYPE_UNKNOWN
+                        || pk == TYPE_STRUCT || pk == TYPE_FACE
+                        || pk == TYPE_ARRAY || pk == TYPE_DICT
+                        || param_type->type_param_name != NULL) {
+                        all_types_match = 0;
+                        break;
+                    }
+                    // 推断实参类型
+                    TypeInfo* arg_type = infer_expr_type(gen->sem, ast->u.call.args.items[i]);
+                    if (!arg_type) {
+                        all_types_match = 0;
+                        break;
+                    }
+                    // 只允许基础类型（int/float/string/bool/null/bigint）参与快速路径
+                    // 且实参类型必须与形参类型完全一致（不需要类型转换）
+                    TypeKind ak = arg_type->kind;
+                    // int 字面量可以精确匹配 int 参数，float 字面量匹配 float 参数
+                    // 但 int 传给 float 参数需要转换，不算匹配
+                    if (ak != pk) {
+                        // 唯一允许的例外：bigint 字面量值在 int32 范围内时匹配 int 参数
+                        // 但这需要运行时检查，不算编译期精确匹配
+                        all_types_match = 0;
+                    }
+                    if (!arg_type->interned) type_free(arg_type);
+                    if (!all_types_match) break;
+                }
+            }
+
+            if (all_types_match) {
+                emit_byte(gen, OP_CALL_GLOBAL_FUNC_TYPED, ast->line);
+            } else {
+                emit_byte(gen, OP_CALL_GLOBAL_FUNC, ast->line);
+            }
             emit_byte(gen, (callee_sym->index >> 8) & 0xff, ast->line);
             emit_byte(gen, callee_sym->index & 0xff, ast->line);
             emit_byte(gen, (total_args >> 8) & 0xff, ast->line);

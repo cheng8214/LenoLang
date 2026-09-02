@@ -839,3 +839,36 @@ OPCODE(OP_CALL_GLOBAL_FUNC) {
     frame = &vm.frames[vm.frame_cnt - 1];
     DISPATCH;
 }
+
+// 全局函数调用（类型已确认版）：编译期确认参数类型匹配，跳过类型转换循环
+// 字节格式与 OP_CALL_GLOBAL_FUNC 完全相同: func_slot(2) arg_count(2)
+OPCODE(OP_CALL_GLOBAL_FUNC_TYPED) {
+    uint16_t func_slot = READ_SHORT();
+    int arg_count = READ_SHORT();
+
+    if (likely(func_slot < vm.global_func_capacity)) {
+        Value callee = vm.global_funcs[func_slot];
+        if (likely(val_is_obj(callee) && val_as_obj(callee)->type == OBJ_CLOSURE)) {
+            // 闭包快速路径：在栈顶临时放入 callee 供 call_no_type_check() 读取
+            vm_stack_push(&vm, callee);
+            if (!call_no_type_check((ObjClosure*)val_as_obj(callee), arg_count, 0)) {
+                if (!vm.has_exception) {
+                    return -1;
+                }
+            }
+        } else {
+            // 非闭包回退到 call_value（罕见路径）
+            vm_stack_push(&vm, callee);
+            if (!call_value(callee, arg_count, GET_CURRENT_LINE())) {
+                if (!vm.has_exception) {
+                    return -1;
+                }
+            }
+        }
+    } else {
+        runtime_error("全局函数索引越界", GET_CURRENT_LINE());
+        return -1;
+    }
+    frame = &vm.frames[vm.frame_cnt - 1];
+    DISPATCH;
+}
