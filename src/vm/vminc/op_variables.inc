@@ -50,6 +50,26 @@ OPCODE(OP_SET_LOCAL_POP) {
     DISPATCH;
 }
 
+OPCODE(OP_SET_LOCAL_CONST) {
+    // 融合指令：从常量表取值直接写入 local slot，完全不碰栈
+    // 合并 OP_CONST + OP_SET_LOCAL_POP
+    frame = &vm.frames[vm.frame_cnt - 1];
+    uint16_t const_idx = READ_SHORT();
+    uint16_t slot = READ_SHORT();
+    Value value = frame->chunk->constants[const_idx];
+    if (frame->locals != NULL) {
+        if (likely(slot < frame->local_count)) {
+            frame->locals[slot] = value;
+        } else {
+            runtime_error("局部变量索引越界", GET_CURRENT_LINE());
+            return -1;
+        }
+    } else {
+        vm.stack[frame->stack_base + slot] = value;
+    }
+    DISPATCH;
+}
+
 OPCODE(OP_MOVE_LOCAL) {
     // 局部变量间直接复制：帧局部变量 src → dst，并压入栈（融合 OP_GET_LOCAL + OP_SET_LOCAL）
     frame = &vm.frames[vm.frame_cnt - 1];

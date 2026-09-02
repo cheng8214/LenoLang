@@ -153,3 +153,11 @@ void emit_tail_call_native(CodeGen* gen, int name_const, int arg_count, int line
     emit_byte(gen, (arg_count >> 8) & 0xff, line);
     emit_byte(gen, arg_count & 0xff, line);
 }
+
+void emit_set_local_const(CodeGen* gen, int const_idx, int slot, int line) {
+    emit_byte(gen, OP_SET_LOCAL_CONST, line);
+    emit_byte(gen, (const_idx >> 8) & 0xff, line);
+    emit_byte(gen, const_idx & 0xff, line);
+    emit_byte(gen, (slot >> 8) & 0xff, line);
+    emit_byte(gen, slot & 0xff, line);
+}

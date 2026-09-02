@@ -4,6 +4,73 @@
 #include <ctype.h>
 
 static void gen_binary(CodeGen* gen, Ast* ast);
+static TypeKind get_expr_type_kind(Ast* ast);
+
+static TypeKind get_expr_type_kind(Ast* ast) {
+    if (!ast || !ast->cached_type) return TYPE_ANY;
+    return ast->cached_type->kind;
+}
+
+// 辅助函数：收集 "obj.f0 + obj.f1 + ..." 链中的字段访问信息
+// 返回 1 表示可以优化（全部是同一对象的字段访问），0 表示不行
+// 收集到的 obj_ast 指针、字段索引列表存入 out 参数
+static int collect_acc_fields(Ast* ast, Ast** out_obj, int* out_fields, int* out_count, int max_fields) {
+    if (!ast || *out_count >= max_fields) return 0;
+
+    if (ast->kind == AST_FIELD_ACCESS && ast->u.field_access.field_index >= 0) {
+        // 叶子：字段访问
+        out_fields[*out_count] = ast->u.field_access.field_index;
+        (*out_count)++;
+        if (*out_obj == NULL) {
+            *out_obj = ast->u.field_access.obj;
+            return 1;
+        }
+        // 检查是否是同一个对象（AST_VAR 且同名）
+        Ast* new_obj = ast->u.field_access.obj;
+        if (new_obj->kind == (*out_obj)->kind &&
+            new_obj->kind == AST_VAR &&
+            new_obj->u.var.ref.index == (*out_obj)->u.var.ref.index &&
+            new_obj->u.var.ref.kind == (*out_obj)->u.var.ref.kind) {
+            return 1;
+        }
+        return 0;
+    }
+
+    if (ast->kind == AST_BINOP && ast->u.binop.op == TOK_PLUS) {
+        // 递归收集左子树和右子树
+        if (!collect_acc_fields(ast->u.binop.l, out_obj, out_fields, out_count, max_fields))
+            return 0;
+        return collect_acc_fields(ast->u.binop.r, out_obj, out_fields, out_count, max_fields);
+    }
+
+    return 0;
+}
+
+// 尝试发射 OP_ACC_FIELDS，返回 1 表示成功优化
+static int try_emit_acc_fields(CodeGen* gen, Ast* ast) {
+    // 只处理 float 字段加法（编译器已知类型）
+    TypeKind result_type = get_expr_type_kind(ast);
+    if (result_type != TYPE_FLOAT) return 0;
+
+    Ast* obj = NULL;
+    int fields[16];
+    int count = 0;
+    if (!collect_acc_fields(ast, &obj, fields, &count, 16)) return 0;
+    if (count < 2) return 0;  // 至少 2 个字段才值得优化
+
+    // 检查对象表达式是否是简单的 local 变量
+    if (!obj || obj->kind != AST_VAR) return 0;
+    if (obj->u.var.ref.kind != SYM_LOCAL) return 0;
+
+    // 发射：GET_LOCAL obj + OP_ACC_FIELDS count field_indices...
+    emit_bytes_2(gen, OP_GET_LOCAL, obj->u.var.ref.index, ast->line);
+    emit_byte(gen, OP_ACC_FIELDS, ast->line);
+    emit_byte(gen, (uint8_t)count, ast->line);
+    for (int i = 0; i < count; i++) {
+        emit_byte(gen, (uint8_t)fields[i], ast->line);
+    }
+    return 1;
+}
 static void gen_unary(CodeGen* gen, Ast* ast);
 static void gen_variable(CodeGen* gen, Ast* ast, int can_assign);
 static void gen_call(CodeGen* gen, Ast* ast);
@@ -42,11 +109,6 @@ void gen_array_add_by_symbol(CodeGen* gen, Symbol* var_sym, Ast* arg_ast, int ne
     }
     gen_expr(gen, arg_ast);
     emit_byte(gen, need_result ? OP_ARRAY_APPEND : OP_ARRAY_APPEND_NOPUSH, line);
-}
-
-static TypeKind get_expr_type_kind(Ast* ast) {
-    if (!ast || !ast->cached_type) return TYPE_ANY;
-    return ast->cached_type->kind;
 }
 
 static void gen_binary(CodeGen* gen, Ast* ast) {
@@ -109,6 +171,9 @@ static void gen_binary(CodeGen* gen, Ast* ast) {
             imm_val = (int8_t)val;
         }
     }
+
+    // 融合优化：检测 "obj.f0 + obj.f1 + ..." 模式（在生成左操作数之前）
+    if (ast->u.binop.op == TOK_PLUS && try_emit_acc_fields(gen, ast)) return;
 
     // 普通二元运算符（非立即数路径）
     gen_expr(gen, ast->u.binop.l);

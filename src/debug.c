@@ -71,7 +71,10 @@ static const char* opCodeNames[] = {
 "OP_INDEX_SET_NOPUSH",
 "OP_CLEAR_LOCAL_RANGE",
 "OP_SWITCH_LOOKUP",
-"OP_INVOKE_METHOD"
+"OP_INVOKE_METHOD",
+// 融合指令
+"OP_SET_LOCAL_CONST",
+"OP_ACC_FIELDS"
 };
 
 // 反汇编单条指令
@@ -514,6 +517,17 @@ int disassembleInstruction(Chunk* chunk, int offset) {
             int arg_count = (chunk->code[offset + 3] << 8) | chunk->code[offset + 4];
             printf(" name=%d args=%d", name_const, arg_count);
             return offset + 5;
+        }
+        case OP_SET_LOCAL_CONST: {
+            int const_idx = (chunk->code[offset + 1] << 8) | chunk->code[offset + 2];
+            int slot = (chunk->code[offset + 3] << 8) | chunk->code[offset + 4];
+            printf(" const=%d slot=%d", const_idx, slot);
+            return offset + 5;
+        }
+        case OP_ACC_FIELDS: {
+            int count = chunk->code[offset + 1];
+            printf(" count=%d", count);
+            return offset + 2 + count;
         }
         case OP_INC_LOCAL_NOPUSH:
         case OP_DEC_LOCAL_NOPUSH: {

@@ -62,6 +62,7 @@ void emit_call(CodeGen* gen, int arg_count, int line);
 void emit_tail_call(CodeGen* gen, int arg_count, int line);
 void emit_call_native(CodeGen* gen, int name_const, int arg_count, int line);
 void emit_tail_call_native(CodeGen* gen, int name_const, int arg_count, int line);
+void emit_set_local_const(CodeGen* gen, int const_idx, int slot, int line);
 
 // 数组 add 操作生成（公共函数，供 codegen_stmt.c 检测表达式语句优化）
 void gen_array_add(CodeGen* gen, Ast* receiver_ast, Ast* arg_ast, int need_result, int line);

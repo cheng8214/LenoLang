@@ -183,6 +183,10 @@ typedef enum {
     OP_SWITCH_LOOKUP,      // 整数 switch 二分查找：const_idx(2) count(2) default_off(4) [offset(4)]...
     // struct 方法调用融合指令（省掉 receiver 二次求值 + OP_GET_METHOD 分发开销）
     OP_INVOKE_METHOD,      // 直接调用 struct 方法: name_const(2) arg_count(2)，receiver 在参数区首位
+    // 融合指令：常量直接写入局部变量（合并 OP_CONST + OP_SET_LOCAL_POP）
+    OP_SET_LOCAL_CONST,   // 从常量表取值直接写入 local: const_idx(2) local_slot(2)
+    // 融合指令：对象多字段累加（合并多个 GET_LOCAL + GET_FIELD + ADD_FLOAT）
+    OP_ACC_FIELDS,        // 弹出对象，读取 N 个字段累加，压入结果: count(1) field_idx_0(1)...field_idx_N-1(1)
 } OpCode;
 
 // ============================================================================

@@ -1096,12 +1096,59 @@ static void gen_for(CodeGen* gen, Ast* ast) {
 }
 
 static void gen_var_decl(CodeGen* gen, Ast* ast) {
+SymRef* ref = &ast->u.var_decl.ref;
+    if (!ref->name) {
+        error_add_at(ERR_SEMANTIC, ast->line, ast->column, "未解析的变量声明");
+        return;
+    }
+
 if (ast->u.var_decl.init) {
 // 多返回值函数调用：禁止 gen_expr 弹出多余值，由这里统一弹出
-if (ast->u.var_decl.init->cached_type &&
-ast->u.var_decl.init->cached_type->kind == TYPE_MULTI_RET) {
-gen->suppress_multi_pop = 1;
+    if (ast->u.var_decl.init->cached_type &&
+    ast->u.var_decl.init->cached_type->kind == TYPE_MULTI_RET) {
+    gen->suppress_multi_pop = 1;
 }
+
+// 融合优化：当 init 是纯常量、无类型转换、无特殊处理、且目标是 local 时
+// 直接用 OP_SET_LOCAL_CONST，跳过 gen_expr（不压栈），完全不碰栈
+Ast* init = ast->u.var_decl.init;
+int has_cast = (ast->u.var_decl.type != NULL && ast->u.var_decl.type->kind != TYPE_INFER && assign_cast_needed(ast->u.var_decl.type->kind, init));
+int has_special = (ast->u.var_decl.type != NULL &&(ast->u.var_decl.type->kind == TYPE_PTR_GENERIC ||ast->u.var_decl.type->kind == TYPE_FACE));
+int is_multi_ret = (init->cached_type &&init->cached_type->kind == TYPE_MULTI_RET);
+if (ref->kind == SYM_LOCAL && !has_cast && !has_special && !is_multi_ret &&(init->kind == AST_NUM || init->kind == AST_STRING ||
+    init->kind == AST_BOOL || init->kind == AST_NULL)) {
+    // 直接生成常量并写入 local slot，不调用 gen_expr
+    Value const_val;
+    if (init->kind == AST_NUM) {
+    if (init->u.num.is_bigint && init->u.num.bigint_str) {
+    if (bigint_str_fits_in_int32(init->u.num.bigint_str)) {
+    long long val = strtoll(init->u.num.bigint_str, NULL, 0);
+    const_val = val_int_safe(val);
+    } else {
+    const_val = val_bigint_from_string(init->u.num.bigint_str);
+    }
+    } else if (init->u.num.is_float) {
+    const_val = val_float(init->u.num.value);
+    } else {
+    const_val = val_int_safe((int64_t)init->u.num.value);
+    }
+    } else if (init->kind == AST_STRING) {
+    const_val = val_obj((Object*)str_copy(init->u.string.value, init->u.string.len));
+    } else if (init->kind == AST_BOOL) {
+                    const_val = val_bool(init->u.boolean);
+    } else {
+    const_val = val_null();
+    }
+    int const_idx = make_constant(gen, const_val);
+    emit_set_local_const(gen, const_idx, ref->index, ast->line);
+    track_toplevel_local_slot(gen, ref->index);
+    // 追踪需要析构的局部变量
+    if (init->kind == AST_STRUCT_INIT && init->u.struct_init.has_dtor) {
+    codegen_add_dtor_entry(gen, ref->index);
+    }
+    return; // 优化路径完成，跳过后续所有代码
+}
+
 gen_expr(gen, ast->u.var_decl.init);
 gen->suppress_multi_pop = 0;
 
@@ -1172,12 +1219,6 @@ emit_byte(gen, OP_POP, ast->line);
         emit_byte(gen, OP_SET_DECLARED_FACE, ast->line);
         emit_byte(gen, (face_name_const >> 8) & 0xff, ast->line);
         emit_byte(gen, face_name_const & 0xff, ast->line);
-    }
-
-    SymRef* ref = &ast->u.var_decl.ref;
-    if (!ref->name) {
-        error_add_at(ERR_SEMANTIC, ast->line, ast->column, "未解析的变量声明");
-        return;
     }
 
     if (ref->kind == SYM_GLOBAL) {
@@ -1764,19 +1805,28 @@ void gen_compound_assign(CodeGen* gen, Ast* ast) {
     TypeKind var_type = ref->type_kind;
     TypeKind value_type = get_expr_type_kind(ast->u.compound_assign.value);
     int is_int_op = (var_type == TYPE_INT && value_type == TYPE_INT);
+    int is_float_op = (var_type == TYPE_FLOAT && value_type == TYPE_FLOAT);
 
     switch (op) {
         case TOK_PLUSEQ:
-            emit_byte(gen, is_int_op ? OP_ADD_INT : OP_ADD, ast->line);
+            if (is_int_op) emit_byte(gen, OP_ADD_INT, ast->line);
+            else if (is_float_op) emit_byte(gen, OP_ADD_FLOAT, ast->line);
+            else emit_byte(gen, OP_ADD, ast->line);
             break;
         case TOK_MINUSEQ:
-            emit_byte(gen, is_int_op ? OP_SUB_INT : OP_SUB, ast->line);
+            if (is_int_op) emit_byte(gen, OP_SUB_INT, ast->line);
+            else if (is_float_op) emit_byte(gen, OP_SUB_FLOAT, ast->line);
+            else emit_byte(gen, OP_SUB, ast->line);
             break;
         case TOK_STAREQ:
-            emit_byte(gen, is_int_op ? OP_MUL_INT : OP_MUL, ast->line);
+            if (is_int_op) emit_byte(gen, OP_MUL_INT, ast->line);
+            else if (is_float_op) emit_byte(gen, OP_MUL_FLOAT, ast->line);
+            else emit_byte(gen, OP_MUL, ast->line);
             break;
         case TOK_SLASHEQ:
-            emit_byte(gen, is_int_op ? OP_DIV_INT : OP_DIV, ast->line);
+            if (is_int_op) emit_byte(gen, OP_DIV_INT, ast->line);
+            else if (is_float_op) emit_byte(gen, OP_DIV_FLOAT, ast->line);
+            else emit_byte(gen, OP_DIV, ast->line);
             break;
         case TOK_MODEQ:
             emit_byte(gen, is_int_op ? OP_MOD_INT : OP_MOD, ast->line);

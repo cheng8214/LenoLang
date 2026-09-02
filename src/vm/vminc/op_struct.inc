@@ -1127,3 +1127,35 @@ OPCODE(OP_INVOKE_METHOD) {
     frame = &vm.frames[vm.frame_cnt - 1];
     DISPATCH;
 }
+
+OPCODE(OP_ACC_FIELDS) {
+    // 融合指令：弹出对象，读取 N 个字段累加，压入结果
+    // 合并多个 GET_LOCAL + GET_FIELD + ADD_FLOAT
+    // 操作数: count(1) field_idx_0(1) ... field_idx_N-1(1)
+    frame = &vm.frames[vm.frame_cnt - 1];
+    uint8_t count = READ_BYTE();
+    Value obj_val = vm_stack_pop(&vm);
+
+    if (!val_is_obj(obj_val) || val_as_obj(obj_val)->type != OBJ_STRUCT) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "OP_ACC_FIELDS: 需要 struct 类型");
+        runtime_error(msg, GET_CURRENT_LINE());
+        return -1;
+    }
+
+    ObjStruct* obj = (ObjStruct*)val_as_obj(obj_val);
+    ObjStructDef* def = obj->def;
+
+    double sum = 0.0;
+    for (int i = 0; i < count; i++) {
+        uint8_t field_idx = READ_BYTE();
+        if (field_idx >= def->field_count) {
+            runtime_error("字段索引越界", GET_CURRENT_LINE());
+            return -1;
+        }
+        Value fv = struct_get_field(obj, field_idx);
+        sum += val_as_num_ex(fv);
+    }
+    vm_stack_push(&vm, val_float(sum));
+    DISPATCH;
+}
