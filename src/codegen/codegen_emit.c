@@ -161,3 +161,35 @@ void emit_set_local_const(CodeGen* gen, int const_idx, int slot, int line) {
     emit_byte(gen, (slot >> 8) & 0xff, line);
     emit_byte(gen, slot & 0xff, line);
 }
+
+int emit_cmpjmp_ll_int(CodeGen* gen, int cmp_op, int slot_a, int slot_b, int line) {
+    emit_byte(gen, OP_CMPJMP_LL_INT, line);
+    emit_byte(gen, (uint8_t)cmp_op, line);
+    emit_byte(gen, (slot_a >> 8) & 0xff, line);
+    emit_byte(gen, slot_a & 0xff, line);
+    emit_byte(gen, (slot_b >> 8) & 0xff, line);
+    emit_byte(gen, slot_b & 0xff, line);
+    // 4字节占位偏移量
+    emit_byte(gen, 0xff, line);
+    emit_byte(gen, 0xff, line);
+    emit_byte(gen, 0xff, line);
+    emit_byte(gen, 0xff, line);
+    // 返回偏移量字段的位置（用于后续 patch_jump）
+    return gen->chunk->len - 4;
+}
+
+int emit_cmpjmp_lg_int(CodeGen* gen, int cmp_op, int slot, int global_idx, int line) {
+    emit_byte(gen, OP_CMPJMP_LG_INT, line);
+    emit_byte(gen, (uint8_t)cmp_op, line);
+    emit_byte(gen, (slot >> 8) & 0xff, line);
+    emit_byte(gen, slot & 0xff, line);
+    emit_byte(gen, (global_idx >> 8) & 0xff, line);
+    emit_byte(gen, global_idx & 0xff, line);
+    // 4字节占位偏移量
+    emit_byte(gen, 0xff, line);
+    emit_byte(gen, 0xff, line);
+    emit_byte(gen, 0xff, line);
+    emit_byte(gen, 0xff, line);
+    // 返回偏移量字段的位置（用于后续 patch_jump）
+    return gen->chunk->len - 4;
+}

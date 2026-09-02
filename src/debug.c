@@ -74,7 +74,9 @@ static const char* opCodeNames[] = {
 "OP_INVOKE_METHOD",
 // 融合指令
 "OP_SET_LOCAL_CONST",
-"OP_ACC_FIELDS"
+"OP_ACC_FIELDS",
+"OP_CMPJMP_LL_INT",
+"OP_CMPJMP_LG_INT"
 };
 
 // 反汇编单条指令
@@ -528,6 +530,26 @@ int disassembleInstruction(Chunk* chunk, int offset) {
             int count = chunk->code[offset + 1];
             printf(" count=%d", count);
             return offset + 2 + count;
+        }
+        case OP_CMPJMP_LL_INT: {
+            int cmp_op = chunk->code[offset + 1];
+            int slot_a = (chunk->code[offset + 2] << 8) | chunk->code[offset + 3];
+            int slot_b = (chunk->code[offset + 4] << 8) | chunk->code[offset + 5];
+            int32_t off = (int32_t)((chunk->code[offset + 6] << 24) | (chunk->code[offset + 7] << 16) | (chunk->code[offset + 8] << 8) | chunk->code[offset + 9]);
+            const char* ops[] = {"EQ", "NE", "LT", "GT", "LE", "GE"};
+            const char* op_name = (cmp_op < 6) ? ops[cmp_op] : "??";
+            printf(" %s a=%d b=%d off=%d", op_name, slot_a, slot_b, off);
+            return offset + 10;
+        }
+        case OP_CMPJMP_LG_INT: {
+            int cmp_op = chunk->code[offset + 1];
+            int slot = (chunk->code[offset + 2] << 8) | chunk->code[offset + 3];
+            int gidx = (chunk->code[offset + 4] << 8) | chunk->code[offset + 5];
+            int32_t off = (int32_t)((chunk->code[offset + 6] << 24) | (chunk->code[offset + 7] << 16) | (chunk->code[offset + 8] << 8) | chunk->code[offset + 9]);
+            const char* ops[] = {"EQ", "NE", "LT", "GT", "LE", "GE"};
+            const char* op_name = (cmp_op < 6) ? ops[cmp_op] : "??";
+            printf(" %s local=%d global=%d off=%d", op_name, slot, gidx, off);
+            return offset + 10;
         }
         case OP_INC_LOCAL_NOPUSH:
         case OP_DEC_LOCAL_NOPUSH: {

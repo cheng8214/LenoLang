@@ -1,6 +1,5 @@
 import times
 import maths
-
 // 光线追踪对比测试（标量优化版，SoA 布局，无对象创建）
 // 三段式：
 //   Phase A: 数组索引微基准

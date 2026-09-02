@@ -187,6 +187,12 @@ typedef enum {
     OP_SET_LOCAL_CONST,   // 从常量表取值直接写入 local: const_idx(2) local_slot(2)
     // 融合指令：对象多字段累加（合并多个 GET_LOCAL + GET_FIELD + ADD_FLOAT）
     OP_ACC_FIELDS,        // 弹出对象，读取 N 个字段累加，压入结果: count(1) field_idx_0(1)...field_idx_N-1(1)
+    // 融合指令：两个 local int 比较 + 条件跳转（合并 GET_LOCAL + GET_LOCAL + CMP + JUMP_IF_FALSE + POP）
+    // 操作数: cmp_op(1) slot_a(2) slot_b(2) offset(4)，比较结果为 false 时跳转，完全不碰栈
+    OP_CMPJMP_LL_INT,
+    // 融合指令：local int 与 global int 比较 + 条件跳转
+    // 操作数: cmp_op(1) slot(2) global_idx(2) offset(4)
+    OP_CMPJMP_LG_INT,
 } OpCode;
 
 // ============================================================================

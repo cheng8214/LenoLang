@@ -536,6 +536,67 @@ static void gen_switch(CodeGen* gen, Ast* ast) {
     free(case_end_jumps);
 }
 
+// ============================================================================
+// Peephole 优化：比较 + 条件跳转融合（方案 6）
+// 检测 if (local OP local/global) 模式，直接发射 OP_CMPJMP_* 指令
+// 成功时返回 1 并设置 out_jump_offset（用于后续 patch_jump）
+// 失败时返回 0（调用方应走原来的 gen_expr + JUMP_IF_FALSE + POP 路径）
+// ============================================================================
+static int try_emit_cmpjmp(CodeGen* gen, Ast* cond, int* out_jump_offset) {
+    if (!cond || cond->kind != AST_BINOP) return 0;
+
+    // 映射 token 到 cmp_op 编码
+    int cmp_op;
+    switch (cond->u.binop.op) {
+        case TOK_EQEQ: cmp_op = 0; break;
+        case TOK_NEQ:  cmp_op = 1; break;
+        case TOK_LT:   cmp_op = 2; break;
+        case TOK_GT:   cmp_op = 3; break;
+        case TOK_LE:   cmp_op = 4; break;
+        case TOK_GE:   cmp_op = 5; break;
+        default: return 0;  // 非比较运算符
+    }
+
+    Ast* l = cond->u.binop.l;
+    Ast* r = cond->u.binop.r;
+
+    // 两个操作数都必须是 AST_VAR
+    if (!l || l->kind != AST_VAR) return 0;
+    if (!r || r->kind != AST_VAR) return 0;
+
+    // 两个操作数都必须是 int 类型
+    if (get_expr_type_kind(l) != TYPE_INT) return 0;
+    if (get_expr_type_kind(r) != TYPE_INT) return 0;
+
+    SymRef* lr = &l->u.var.ref;
+    SymRef* rr = &r->u.var.ref;
+
+    // 模式 1: local OP local → OP_CMPJMP_LL_INT
+    if ((lr->kind == SYM_LOCAL || lr->kind == SYM_PARAM) &&
+        (rr->kind == SYM_LOCAL || rr->kind == SYM_PARAM)) {
+        *out_jump_offset = emit_cmpjmp_ll_int(gen, cmp_op, lr->index, rr->index, cond->line);
+        return 1;
+    }
+
+    // 模式 2: local OP global → OP_CMPJMP_LG_INT
+    if ((lr->kind == SYM_LOCAL || lr->kind == SYM_PARAM) &&
+        rr->kind == SYM_GLOBAL) {
+        *out_jump_offset = emit_cmpjmp_lg_int(gen, cmp_op, lr->index, rr->index, cond->line);
+        return 1;
+    }
+
+    // 模式 3: global OP local → 反转比较 + OP_CMPJMP_LG_INT
+    // 例如 global >= local 等价于 local <= global (cmp_op: GE→LE)
+    static const int reverse_op[6] = {0, 1, 3, 2, 5, 4};  // EQ→EQ, NE→NE, LT→GT, GT→LT, LE→GE, GE→LE
+    if (lr->kind == SYM_GLOBAL &&
+        (rr->kind == SYM_LOCAL || rr->kind == SYM_PARAM)) {
+        *out_jump_offset = emit_cmpjmp_lg_int(gen, reverse_op[cmp_op], rr->index, lr->index, cond->line);
+        return 1;
+    }
+
+    return 0;
+}
+
 void gen_if(CodeGen* gen, Ast* ast) {
     // => var 绑定模式：if expr is Type => var { ... }
     // 代码生成流程：
@@ -725,6 +786,32 @@ void gen_if(CodeGen* gen, Ast* ast) {
         }
     } else {
         // 普通条件表达式
+        // 方案 6 peephole：尝试用 OP_CMPJMP 融合指令替代 gen_expr + JUMP_IF_FALSE + POP
+        int cmpjmp_offset = -1;
+        if (try_emit_cmpjmp(gen, ast->u.if_.cond, &cmpjmp_offset)) {
+            // 融合成功：cmpjmp_offset 是 4 字节跳转偏移量字段的位置
+            // 语义与 JUMP_IF_FALSE + POP 等价（false 时跳转到 else），且不碰栈
+            // 但仍需一个 JUMP 到 end（与原来 else_jump 逻辑一致）
+            // then body
+            if (ast->u.if_.then->kind == AST_BLOCK) {
+                gen_stmt(gen, ast->u.if_.then);
+            } else {
+                gen_expr(gen, ast->u.if_.then);
+            }
+            int else_jump = emit_jump(gen, OP_JUMP, ast->line);
+            // patch cmpjmp_offset → 跳到这里（else body 开始）
+            patch_jump(gen, cmpjmp_offset);
+            // 注意：融合指令不压栈，所以不需要 OP_POP
+            if (ast->u.if_.else_) {
+                if (ast->u.if_.else_->kind == AST_BLOCK) {
+                    gen_stmt(gen, ast->u.if_.else_);
+                } else {
+                    gen_expr(gen, ast->u.if_.else_);
+                }
+            }
+            patch_jump(gen, else_jump);
+            return;
+        }
         gen_expr(gen, ast->u.if_.cond);
     }
 

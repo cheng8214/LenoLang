@@ -64,6 +64,12 @@ void emit_call_native(CodeGen* gen, int name_const, int arg_count, int line);
 void emit_tail_call_native(CodeGen* gen, int name_const, int arg_count, int line);
 void emit_set_local_const(CodeGen* gen, int const_idx, int slot, int line);
 
+// 比较跳转融合指令 emit 函数
+// cmp_op: 0=EQ, 1=NE, 2=LT, 3=GT, 4=LE, 5=GE
+// 返回值: offset 位置（用于后续 patch_jump）
+int emit_cmpjmp_ll_int(CodeGen* gen, int cmp_op, int slot_a, int slot_b, int line);
+int emit_cmpjmp_lg_int(CodeGen* gen, int cmp_op, int slot, int global_idx, int line);
+
 // 数组 add 操作生成（公共函数，供 codegen_stmt.c 检测表达式语句优化）
 void gen_array_add(CodeGen* gen, Ast* receiver_ast, Ast* arg_ast, int need_result, int line);
 void gen_array_add_by_symbol(CodeGen* gen, Symbol* var_sym, Ast* arg_ast, int need_result, int line);
