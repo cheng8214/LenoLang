@@ -5,20 +5,22 @@
 //   2. 解析 DOS 头、PE 头、节区表、导入表
 //   3. 检测 LENB 尾部附加数据（Leno 编译器生成的元信息）
 //   4. XOR(LENO) 加密字符串搜索与解密
+//   5. LENB 字节码反汇编(显示 opcode、常量池、跳转目标、行号)
 //
 // 布局结构：
 //   Window
 //   ├── TitleBar（自绘标题栏）
 //   └── VBox root
 //       ├── HBox toolbar（浏览按钮 + 文件路径标签 + 分析按钮）
-//       ├── TabControl（7 个页签：概览 / DOS头 / PE头 / 节区 / 导入表 / LENB / XOR字符串）
+//       ├── TabControl（8 个页签：概览 / DOS头 / PE头 / 节区 / 导入表 / LENB / XOR字符串 / 反汇编）
 //       │   ├── 概览页：ListBox 显示文件基本信息和关键数据
 //       │   ├── DOS头页：Table 显示 DOS 头各字段
 //       │   ├── PE头页：Table 显示 PE/可选头各字段
 //       │   ├── 节区页：Table 显示各节区信息
 //       │   ├── 导入表页：Table 显示导入的 DLL 和函数
 //       │   ├── LENB页：ListBox 显示 LENB 尾部元信息
-//       │   └── XOR字符串页：Table 显示解密后的字符串
+//       │   ├── XOR字符串页：Table 显示解密后的字符串
+//       │   └── 反汇编页：ListBox 显示 opcode、常量池、跳转目标、行号
 //       └── Label statusLbl（底部状态栏）
 //
 // 运行：leno pe_analyzer.leno
@@ -177,6 +179,7 @@ struct PEAnalyzer {
     Table       importTable    // 导入表
     ListBox     lenbBox        // LENB 信息
     Table       xorTable       // XOR 字符串
+    ListBox     disasmBox      // 反汇编输出
 
     // ===== 分析状态 =====
     string filePath = ""
@@ -191,6 +194,13 @@ struct PEAnalyzer {
     int sectionTableOff = 0    // 节区表偏移
     int sectionCount = 0       // 节区数量
     int is64bit = 0            // 是否 64 位（0x20B1 vs 0x010B）
+
+    // 反汇编器全局状态
+    int gLenbOff = 0           // LENB blob 起始偏移（绝对）
+    int gLenbPos = 0           // 当前解析位置（绝对）
+    int gLenbEnd = 0           // LENB 结束位置（绝对）
+    int gDepth   = 0           // 递归深度限制
+    Array[string] gLines = []  // 反汇编行累加器
 
     // ==================== RVA 转文件偏移 ====================
 
@@ -252,7 +262,7 @@ struct PEAnalyzer {
 
         // 选项卡容器
         tab = SDL3.createTabControl({
-            tabs: ["概览", "DOS 头", "PE 头", "节区", "导入表", "LENB", "XOR 字符串"],
+            tabs: ["概览", "DOS 头", "PE 头", "节区", "导入表", "LENB", "XOR 字符串", "反汇编"],
             active: 0,
             font_size: 14
         })
@@ -320,6 +330,12 @@ struct PEAnalyzer {
         var xorLayout = SDL3.createVBox({padX: PAD, padY: PAD, spacing: 0})
         xorLayout.add(xorTable, {grow: 1, shrink: 1, align: 3})
         tab.setPageLayout(6, xorLayout)
+
+        // 反汇编页 - ListBox（等宽字体显示字节码行）
+        disasmBox = SDL3.createListBox({font_size: 12})
+        var disasmLayout = SDL3.createVBox({padX: PAD, padY: PAD, spacing: 0})
+        disasmLayout.add(disasmBox, {grow: 1, shrink: 1, align: 3})
+        tab.setPageLayout(7, disasmLayout)
 
         // 状态栏
         statusLbl = SDL3.createLabel({text: "就绪 - 点击[浏览...]选择 PE 文件", font_size: 13})
@@ -399,6 +415,7 @@ struct PEAnalyzer {
         analyzeImports()
         analyzeLENB()
         analyzeXORStrings()
+        analyzeDisasm()
 
         statusLbl.set_text("分析完成 - " + dirs.basename(filePath) + " (" + fmtSize(fileSize) + ")")
         SDL3.markFrameRedraw()
@@ -903,6 +920,616 @@ struct PEAnalyzer {
         }
 
         xorTable.set_rows(rows)
+    }
+
+    // ==================== 反汇编器辅助 ====================
+
+    func rbe32(int off): int {
+        int b0 = fileData.byte(off) & 0xFF
+        int b1 = fileData.byte(off + 1) & 0xFF
+        int b2 = fileData.byte(off + 2) & 0xFF
+        int b3 = fileData.byte(off + 3) & 0xFF
+        return (b0 << 24) | (b1 << 16) | (b2 << 8) | b3
+    }
+    func rbe16(int off): int {
+        int b0 = fileData.byte(off) & 0xFF
+        int b1 = fileData.byte(off + 1) & 0xFF
+        return (b0 << 8) | b1
+    }
+    func rbe_i64_hex(int off): string {
+        int hi = rbe32(off)
+        int lo = rbe32(off + 4)
+        return "0x" + toHex8(hi) + toHex8(lo)
+    }
+    func readXorStr(int byteLen): string {
+        if byteLen > 10000 { return "<long-str:" + _str(byteLen) + ">" }
+        string s = ""
+        for 0:byteLen-1 to i {
+            int key = 0x4C
+            if i % 4 == 1 { key = 0x45 }
+            if i % 4 == 2 { key = 0x4E }
+            if i % 4 == 3 { key = 0x4F }
+            int plain = (fileData.byte(gLenbPos) ^ key) & 0xFF
+            s = s + strings.char(plain)
+            gLenbPos = gLenbPos + 1
+        }
+        return s
+    }
+    func constTagName(int tag): string {
+        switch tag {
+            case 0x00 { return "NULL" }
+            case 0x01 { return "TRUE" }
+            case 0x02 { return "FALSE" }
+            case 0x03 { return "INT" }
+            case 0x04 { return "FLOAT" }
+            case 0x05 { return "STRING" }
+            case 0x06 { return "FUNCTION" }
+            case 0x07 { return "BIGINT" }
+            case 0x08 { return "RANGE" }
+            case 0x09 { return "ARRAY" }
+            case 0x0A { return "DICT" }
+            case 0x0B { return "STRUCT_DEF" }
+            case 0x0C { return "ENUM_DEF" }
+            case 0x0D { return "CSTRUCT_DEF" }
+            case 0x0E { return "FACE_DEF" }
+            case 0x0F { return "MODULE" }
+            case 0x10 { return "MODULE_REF" }
+            case 0x11 { return "FFI_PTR" }
+            case 0x12 { return "CLOSURE" }
+            case 0x13 { return "FFI_LIB" }
+        }
+        return "TAG_0x" + toHex2(tag)
+    }
+    func opName(int code): string {
+        if code == 0 { return "OP_CONST" }
+        if code == 1 { return "OP_NULL" }
+        if code == 2 { return "OP_TRUE" }
+        if code == 3 { return "OP_FALSE" }
+        if code == 4 { return "OP_ZERO" }
+        if code == 5 { return "OP_ONE" }
+        if code == 6 { return "OP_POP" }
+        if code == 7 { return "OP_DUP" }
+        if code == 8 { return "OP_GET_LOCAL" }
+        if code == 9 { return "OP_SET_LOCAL" }
+        if code == 10 { return "OP_SET_LOCAL_POP" }
+        if code == 11 { return "OP_MOVE_LOCAL" }
+        if code == 12 { return "OP_GET_GLOBAL" }
+        if code == 13 { return "OP_SET_GLOBAL" }
+        if code == 14 { return "OP_GET_UPVALUE" }
+        if code == 15 { return "OP_SET_UPVALUE" }
+        if code == 16 { return "OP_CLOSE_UPVALUE" }
+        if code == 17 { return "OP_DEFINE_GLOBAL" }
+        if code == 18 { return "OP_GET_GLOBAL_FUNC" }
+        if code == 19 { return "OP_DEFINE_GLOBAL_FUNC" }
+        if code == 20 { return "OP_GET_NATIVE" }
+        if code == 21 { return "OP_ADD" }
+        if code == 22 { return "OP_SUB" }
+        if code == 23 { return "OP_MUL" }
+        if code == 24 { return "OP_DIV" }
+        if code == 25 { return "OP_MOD" }
+        if code == 26 { return "OP_BITAND" }
+        if code == 27 { return "OP_BITOR" }
+        if code == 28 { return "OP_BITXOR" }
+        if code == 29 { return "OP_BITNOT" }
+        if code == 30 { return "OP_SHL" }
+        if code == 31 { return "OP_SHR" }
+        if code == 32 { return "OP_USHR" }
+        if code == 33 { return "OP_NEG" }
+        if code == 34 { return "OP_NOT" }
+        if code == 35 { return "OP_CAST_FLOAT" }
+        if code == 36 { return "OP_CAST_INT" }
+        if code == 37 { return "OP_CAST_STRING" }
+        if code == 38 { return "OP_SET_PTR_ELEM_TYPE" }
+        if code == 39 { return "OP_SET_DECLARED_FACE" }
+        if code == 40 { return "OP_INC" }
+        if code == 41 { return "OP_DEC" }
+        if code == 42 { return "OP_INC_LOCAL" }
+        if code == 43 { return "OP_DEC_LOCAL" }
+        if code == 44 { return "OP_PRE_INC_LOCAL" }
+        if code == 45 { return "OP_PRE_DEC_LOCAL" }
+        if code == 46 { return "OP_EQ" }
+        if code == 47 { return "OP_NEQ" }
+        if code == 48 { return "OP_IS_NULL" }
+        if code == 49 { return "OP_LT" }
+        if code == 50 { return "OP_GT" }
+        if code == 51 { return "OP_LE" }
+        if code == 52 { return "OP_GE" }
+        if code == 53 { return "OP_IN" }
+        if code == 54 { return "OP_RANGE" }
+        if code == 55 { return "OP_JUMP" }
+        if code == 56 { return "OP_JUMP_IF_FALSE" }
+        if code == 57 { return "OP_JUMP_IF_TRUE" }
+        if code == 58 { return "OP_LOOP" }
+        if code == 59 { return "OP_CALL" }
+        if code == 60 { return "OP_TAIL_CALL" }
+        if code == 61 { return "OP_CLOSURE" }
+        if code == 62 { return "OP_RETURN" }
+        if code == 63 { return "OP_RETURN_MULTI" }
+        if code == 64 { return "OP_ARRAY" }
+        if code == 65 { return "OP_ARRAY_GET" }
+        if code == 66 { return "OP_ARRAY_SET" }
+        if code == 67 { return "OP_ARRAY_APPEND" }
+        if code == 68 { return "OP_ARRAY_APPEND_NOPUSH" }
+        if code == 69 { return "OP_DICT" }
+        if code == 70 { return "OP_DICT_GET" }
+        if code == 71 { return "OP_DICT_SET" }
+        if code == 72 { return "OP_DICT_GET_KEY" }
+        if code == 73 { return "OP_LOAD_NATIVE_MODULE" }
+        if code == 74 { return "OP_MODULE_CALL" }
+        if code == 75 { return "OP_GET_MODULE_CONST" }
+        if code == 76 { return "OP_STRING_ADD" }
+        if code == 77 { return "OP_INDEX" }
+        if code == 78 { return "OP_INDEX_SET" }
+        if code == 79 { return "OP_SLICE" }
+        if code == 80 { return "OP_LENGTH" }
+        if code == 81 { return "OP_ITER_GET" }
+        if code == 82 { return "OP_ITER_GET_VALUE" }
+        if code == 83 { return "OP_TRY" }
+        if code == 84 { return "OP_CATCH" }
+        if code == 85 { return "OP_FINALLY" }
+        if code == 86 { return "OP_END_TRY" }
+        if code == 87 { return "OP_THROW" }
+        if code == 88 { return "OP_GET_MODULE_VAR" }
+        if code == 89 { return "OP_SET_MODULE_VAR" }
+        if code == 90 { return "OP_GET_MODULE_FUNC" }
+        if code == 91 { return "OP_DEFINE_MODULE_FUNC" }
+        if code == 92 { return "OP_GET_PROPERTY" }
+        if code == 93 { return "OP_TYPE_CHECK" }
+        if code == 94 { return "OP_AS_CAST" }
+        if code == 95 { return "OP_FOR_PREP" }
+        if code == 96 { return "OP_FOR_LOOP" }
+        if code == 97 { return "OP_ADD_INT" }
+        if code == 98 { return "OP_SUB_INT" }
+        if code == 99 { return "OP_MUL_INT" }
+        if code == 100 { return "OP_DIV_INT" }
+        if code == 101 { return "OP_MOD_INT" }
+        if code == 102 { return "OP_ADD_FLOAT" }
+        if code == 103 { return "OP_SUB_FLOAT" }
+        if code == 104 { return "OP_MUL_FLOAT" }
+        if code == 105 { return "OP_DIV_FLOAT" }
+        if code == 106 { return "OP_NEG_INT" }
+        if code == 107 { return "OP_NEG_FLOAT" }
+        if code == 108 { return "OP_EQ_INT" }
+        if code == 109 { return "OP_LT_INT" }
+        if code == 110 { return "OP_GT_INT" }
+        if code == 111 { return "OP_LE_INT" }
+        if code == 112 { return "OP_GE_INT" }
+        if code == 113 { return "OP_EQ_FLOAT" }
+        if code == 114 { return "OP_LT_FLOAT" }
+        if code == 115 { return "OP_GT_FLOAT" }
+        if code == 116 { return "OP_LE_FLOAT" }
+        if code == 117 { return "OP_GE_FLOAT" }
+        if code == 118 { return "OP_ADD_INT_IMM" }
+        if code == 119 { return "OP_SUB_INT_IMM" }
+        if code == 120 { return "OP_MUL_INT_IMM" }
+        if code == 121 { return "OP_LT_INT_IMM" }
+        if code == 122 { return "OP_GT_INT_IMM" }
+        if code == 123 { return "OP_LE_INT_IMM" }
+        if code == 124 { return "OP_GE_INT_IMM" }
+        if code == 125 { return "OP_EQ_INT_IMM" }
+        if code == 126 { return "OP_SHL_IMM" }
+        if code == 127 { return "OP_SHR_IMM" }
+        if code == 128 { return "OP_USHR_IMM" }
+        if code == 129 { return "OP_STRUCT_DEF" }
+        if code == 130 { return "OP_STRUCT_INIT" }
+        if code == 131 { return "OP_GET_FIELD" }
+        if code == 132 { return "OP_SET_FIELD" }
+        if code == 133 { return "OP_GET_FIELD_ADDR" }
+        if code == 134 { return "OP_GET_METHOD" }
+        if code == 135 { return "OP_ENUM_DEF" }
+        if code == 136 { return "OP_FACE_DEF" }
+        if code == 137 { return "OP_CSTRUCT_DEF" }
+        if code == 138 { return "OP_GET_CSTRUCT_DEF" }
+        if code == 139 { return "OP_AWAIT" }
+        if code == 140 { return "OP_ASYNC_CALL" }
+        if code == 141 { return "OP_INIT_LENOMODULE" }
+        if code == 142 { return "OP_CLIB_CALL" }
+        if code == 143 { return "OP_CFUNC_CALLBACK" }
+        if code == 144 { return "OP_CALL_NATIVE" }
+        if code == 145 { return "OP_TAIL_CALL_NATIVE" }
+        if code == 146 { return "OP_U8_TO_F64" }
+        if code == 147 { return "OP_PUSH_TYPE_ARGS" }
+        if code == 148 { return "OP_DTOR_LOCAL" }
+        if code == 149 { return "OP_CALL_GLOBAL_FUNC" }
+        if code == 150 { return "OP_INC_LOCAL_NOPUSH" }
+        if code == 151 { return "OP_DEC_LOCAL_NOPUSH" }
+        if code == 152 { return "OP_MOVE_LOCAL_POP" }
+        if code == 153 { return "OP_INDEX_SET_NOPUSH" }
+        if code == 154 { return "OP_CLEAR_LOCAL_RANGE" }
+        if code == 155 { return "OP_SWITCH_LOOKUP" }
+        if code == 156 { return "OP_INVOKE_METHOD" }
+        return "OP_0x" + toHex2(code)
+    }
+    func opImmSize(int op): int {
+        if op == 0 { return 2 }
+        if op >= 8 and op <= 20 { return 2 }
+        if op == 11 or op == 152 { return 4 }
+        if op == 55 or op == 56 or op == 57 or op == 58 { return 4 }
+        if op == 59 or op == 60 { return 2 }
+        if op == 61 { return 2 }
+        if op == 64 { return 2 }
+        if op == 67 or op == 68 { return 2 }
+        if op == 73 or op == 74 or op == 75 { return 2 }
+        if op == 88 or op == 89 or op == 90 or op == 91 { return 2 }
+        if op >= 118 and op <= 128 { return 1 }
+        if op == 131 or op == 132 or op == 134 or op == 153 { return 1 }
+        if op == 144 or op == 145 or op == 149 or op == 156 { return 4 }
+        if op == 133 or op == 148 or op == 150 or op == 151 { return 2 }
+        if op == 154 { return 4 }
+        if op == 129 { return 0 }
+        if op == 135 { return 0 }
+        if op == 137 or op == 138 { return 0 }
+        if op == 130 { return 2 }
+        if op == 147 { return 1 }
+        return 0
+    }
+    func skipConstRaw() {
+        int tag = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
+        if tag == 0x00 or tag == 0x01 or tag == 0x02 { return }
+        if tag == 0x03 or tag == 0x04 { gLenbPos = gLenbPos + 8; return }
+        if tag == 0x05 {
+            int n = rbe32(gLenbPos); gLenbPos = gLenbPos + 4 + n
+            return
+        }
+        if tag == 0x09 {
+            int n = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            for 0:n-1 to i { skipConstRaw() }
+            return
+        }
+        if tag == 0x0A {
+            int n = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            for 0:(2 * n)-1 to i { skipConstRaw() }
+            return
+        }
+        if tag == 0x07 {
+            int limbs = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            gLenbPos = gLenbPos + 1  // is_negative
+            gLenbPos = gLenbPos + 4 * limbs
+            return
+        }
+        if tag == 0x08 {
+            gLenbPos = gLenbPos + 8 + 8 + 1
+            return
+        }
+        if tag == 0x06 {
+            skipFuncRaw()
+            return
+        }
+        if tag == 0x13 {
+            int has = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
+            if has != 0 {
+                int n = rbe32(gLenbPos); gLenbPos = gLenbPos + 4 + n
+            }
+            return
+        }
+        if tag == 0x11 {
+            gLenbPos = gLenbPos + 2
+            return
+        }
+        gLenbPos = gLenbPos + 1
+    }
+    func skipFuncRaw() {
+        int nameLen = rbe32(gLenbPos); gLenbPos = gLenbPos + 4 + nameLen
+        int arity = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+        int upvals = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+        int locals = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+        gLenbPos = gLenbPos + 1  // has_try
+        int pcnt = rbe32(gLenbPos); gLenbPos = gLenbPos + 4 + pcnt
+        int tpcnt = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+        for 0:tpcnt-1 to i {
+            int n = rbe32(gLenbPos); gLenbPos = gLenbPos + 4 + n
+        }
+        skipChunkRaw()
+    }
+    func skipChunkRaw() {
+        int fnLen = rbe32(gLenbPos); gLenbPos = gLenbPos + 4 + fnLen
+        int lcnt = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+        int ccnt = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+        for 0:ccnt-1 to i { skipConstRaw() }
+        int codeLen = rbe32(gLenbPos); gLenbPos = gLenbPos + 4 + codeLen
+        int hasLines = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
+        if hasLines == 1 and codeLen > 0 {
+            gLenbPos = gLenbPos + 2 * codeLen
+        }
+    }
+    func formatConst(int idx, string text): string {
+        return "; const[" + _str(idx) + "] = " + text
+    }
+    func parseConstText(int depth): string {
+        int tag = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
+        if tag == 0x00 { return "null" }
+        if tag == 0x01 { return "true" }
+        if tag == 0x02 { return "false" }
+        if tag == 0x03 {
+            int hi = rbe32(gLenbPos)
+            int lo = rbe32(gLenbPos + 4)
+            gLenbPos = gLenbPos + 8
+            if hi == 0 and (lo >> 31) == 0 { return _str(lo) }
+            return "int:" + toHex8(hi) + toHex8(lo)
+        }
+        if tag == 0x04 {
+            string hex = rbe_i64_hex(gLenbPos); gLenbPos = gLenbPos + 8
+            return "float:" + hex
+        }
+        if tag == 0x05 {
+            int n = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            string s = readXorStr(n)
+            return "'" + s + "'"
+        }
+        if tag == 0x06 {
+            int nameLen = rbe32(gLenbPos); gLenbPos = gLenbPos + 4 + nameLen
+            if gLenbPos + 17 > gLenbEnd { return "FUNC?<trunc>" }
+            int arity = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            int upvals = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            int locals = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            int hasTry = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
+            int pcnt = rbe32(gLenbPos); gLenbPos = gLenbPos + 4 + pcnt
+            int tpcnt = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            for 0:tpcnt-1 to i {
+                int n3 = rbe32(gLenbPos); gLenbPos = gLenbPos + 4 + n3
+            }
+            return "FUNC(arity=" + _str(arity) + ",upvals=" + _str(upvals) + ",locals=" + _str(locals) + ")"
+        }
+        if tag == 0x07 {
+            int n = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            gLenbPos = gLenbPos + 1 + 4 * n
+            return "BIGINT(limbs=" + _str(n) + ")"
+        }
+        if tag == 0x08 {
+            int sHi = rbe32(gLenbPos); int sLo = rbe32(gLenbPos + 4); gLenbPos = gLenbPos + 8
+            int eHi = rbe32(gLenbPos); int eLo = rbe32(gLenbPos + 4); gLenbPos = gLenbPos + 8
+            int inc = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
+            return "RANGE"
+        }
+        if tag == 0x09 {
+            int n = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            string r = "["
+            for 0:n-1 to i {
+                if i > 0 { r = r + "," }
+                r = r + parseConstText(depth)
+            }
+            return r + "]"
+        }
+        if tag == 0x0A {
+            int n = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            string r = "{"
+            for 0:n-1 to i {
+                if i > 0 { r = r + "," }
+                r = r + parseConstText(depth) + ":" + parseConstText(depth)
+            }
+            return r + "}"
+        }
+        if tag == 0x13 {
+            int has = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
+            if has == 0 { return "FFI_LIB(null)" }
+            int n5 = rbe32(gLenbPos); gLenbPos = gLenbPos + 4 + n5
+            return "FFI_LIB"
+        }
+        if tag == 0x11 {
+            gLenbPos = gLenbPos + 2
+            return "FFI_PTR"
+        }
+        int nSkip = 0
+        string label = constTagName(tag)
+        return "<" + label + ">"
+    }
+    func decodeOneInstruction(int codeStart, int codeLen, Array[int] lines, int idx): string {
+        int pc = codeStart + idx
+        if pc + 1 > gLenbEnd { return "<eof>" }
+        int op = fileData.byte(pc) & 0xFF
+        int immSz = opImmSize(op)
+        string name = opName(op)
+        string operands = ""
+        int lineNo = -1
+        if idx < lines.len() { lineNo = lines[idx] }
+        int nextPc = pc + 1 + immSz
+        if op == 0 {  // CONST
+            if pc + 3 <= gLenbEnd {
+                int ci = rbe16(pc + 1)
+                operands = "const[" + _str(ci) + "]"
+            }
+        } else if op == 8 {  // GET_LOCAL
+            if pc + 3 <= gLenbEnd { operands = "slot=" + _str(rbe16(pc + 1)) }
+        } else if op == 9 {  // SET_LOCAL
+            if pc + 3 <= gLenbEnd { operands = "slot=" + _str(rbe16(pc + 1)) }
+        } else if op == 12 {  // GET_GLOBAL
+            if pc + 3 <= gLenbEnd { operands = "slot=" + _str(rbe16(pc + 1)) }
+        } else if op == 13 {  // SET_GLOBAL
+            if pc + 3 <= gLenbEnd { operands = "slot=" + _str(rbe16(pc + 1)) }
+        } else if op == 11 {  // MOVE_LOCAL
+            if pc + 5 <= gLenbEnd {
+                operands = "src=" + _str(rbe16(pc + 1)) + " dst=" + _str(rbe16(pc + 3))
+            }
+        } else if op == 59 {  // CALL
+            if pc + 3 <= gLenbEnd { operands = "argc=" + _str(rbe16(pc + 1)) }
+        } else if op == 55 or op == 56 or op == 57 {
+            if pc + 5 <= gLenbEnd {
+                int target = rbe32(pc + 1)
+                int absT = pc + 1 + 4 + target
+                operands = "-> 0x" + toHex8(absT)
+            }
+        } else if op == 58 {  // LOOP
+            if pc + 5 <= gLenbEnd {
+                int target = rbe32(pc + 1)
+                int absT = pc + 1 + 4 + target
+                operands = "-> 0x" + toHex8(absT)
+            }
+        } else if op == 144 or op == 145 or op == 149 or op == 156 {
+            if pc + 5 <= gLenbEnd {
+                operands = "name=" + _str(rbe16(pc + 1)) + " argc=" + _str(rbe16(pc + 3))
+            }
+        } else if op == 61 {  // CLOSURE
+            if pc + 3 <= gLenbEnd { operands = "const[" + _str(rbe16(pc + 1)) + "]" }
+        } else if op == 73 {  // LOAD_NATIVE_MODULE
+            if pc + 3 <= gLenbEnd { operands = "const[" + _str(rbe16(pc + 1)) + "]" }
+        } else if op >= 118 and op <= 128 {
+            if pc + 2 <= gLenbEnd {
+                int imm = fileData.byte(pc + 1) & 0xFF
+                if imm >= 128 { imm = imm - 256 }
+                operands = "imm=" + _str(imm)
+            }
+        } else if op == 64 {  // ARRAY
+            if pc + 3 <= gLenbEnd { operands = "cap=" + _str(rbe16(pc + 1)) }
+        } else if op == 131 or op == 132 {
+            if pc + 2 <= gLenbEnd { operands = "field=" + _str(fileData.byte(pc + 1) & 0xFF) }
+        } else if op == 148 or op == 150 or op == 151 or op == 133 {
+            if pc + 3 <= gLenbEnd { operands = "slot=" + _str(rbe16(pc + 1)) }
+        } else if immSz > 0 {
+            operands = "<" + _str(immSz) + "B>"
+        }
+        string lineField = "?"
+        if lineNo == 0 { lineField = "0" }
+        if lineNo > 0 { lineField = _str(lineNo) }
+        string addrField = toHex8(pc)
+        return addrField + "  L" + lineField + "  " + name + "  " + operands
+    }
+    func parseOneChunkBody(int depth) {
+        if depth > 4 { gLines.add("  ; <深度超限,停止展开>"); return }
+        if gLenbPos + 4 > gLenbEnd { return }
+        int fnLen = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+        if fnLen < 0 or fnLen > 1000 { return }
+        string fnName = readXorStr(fnLen)
+        if gLenbPos + 8 > gLenbEnd { return }
+        int localCount = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+        int constCnt = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+        gLines.add("; ===== " + fnName + " (locals=" + _str(localCount) + ", consts=" + _str(constCnt) + ") =====")
+        Array[int] constStarts = []
+        Array[string] constTexts = []
+        for 0:constCnt-1 to ci {
+            constStarts.add(gLenbPos)
+            string ct = parseConstText(depth + 1)
+            constTexts.add(ct)
+        }
+        for 0:constCnt-1 to ci {
+            int cst = constStarts[ci]
+            int tag = fileData.byte(cst) & 0xFF
+            gLines.add(formatConst(ci, constTexts[ci]))
+            if tag == 0x06 and depth < 4 {
+                int subPos = cst + 1
+                int nameLen = rbe32(subPos); subPos = subPos + 4 + nameLen
+                subPos = subPos + 13
+                int p2 = rbe32(subPos); subPos = subPos + 4 + p2
+                int tp2 = rbe32(subPos); subPos = subPos + 4
+                for 0:tp2-1 to k {
+                    int n2 = rbe32(subPos); subPos = subPos + 4 + n2
+                }
+                int savedPos = gLenbPos
+                gLenbPos = subPos
+                parseOneChunkBody(depth + 1)
+                gLenbPos = savedPos
+            }
+        }
+        if gLenbPos + 4 > gLenbEnd { return }
+        int codeLen = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+        int codeStart = gLenbPos
+        gLenbPos = gLenbPos + codeLen
+        int hasLines = -1
+        Array[int] lines = []
+        if gLenbPos + 1 <= gLenbEnd {
+            hasLines = fileData.byte(gLenbPos) & 0xFF
+            gLenbPos = gLenbPos + 1
+            if hasLines == 1 and codeLen > 0 {
+                for 0:codeLen-1 to li {
+                    if gLenbPos + 2 <= gLenbEnd {
+                        lines.add(rbe16(gLenbPos)); gLenbPos = gLenbPos + 2
+                    }
+                }
+            }
+        }
+        for 0:codeLen-1 to ii {
+            if hasLines != 1 { lines.add(-1) }
+        }
+        gLines.add("; --- bytecode (" + _str(codeLen) + "B) ---")
+        int pc = 0
+        while pc < codeLen {
+            if codeStart + pc >= gLenbEnd { break }
+            int opc = fileData.byte(codeStart + pc) & 0xFF
+            int imm = opImmSize(opc)
+            string line = decodeOneInstruction(codeStart, codeLen, lines, pc)
+            gLines.add(line)
+            pc = pc + 1 + imm
+        }
+    }
+
+    // ==================== 反汇编顶层驱动 ====================
+
+    func skipHeaderAndSymbols(int startPos): int {
+        int pos = startPos
+        if pos + 12 > gLenbEnd { return pos }
+        int gvars = rbe32(pos); pos = pos + 4
+        int gfuncs = rbe32(pos); pos = pos + 4
+        int symCount = rbe32(pos); pos = pos + 4
+        for 0:symCount-1 to si {
+            if pos + 13 > gLenbEnd { break }
+            int kind = fileData.byte(pos) & 0xFF; pos = pos + 1
+            int nameLen = rbe32(pos); pos = pos + 4
+            if nameLen < 0 or nameLen > 100000 or pos + nameLen + 8 > gLenbEnd { break }
+            pos = pos + nameLen
+            pos = pos + 4  // index
+            pos = pos + 1  // is_captured
+            if pos + 2 > gLenbEnd { break }
+            int tkind = fileData.byte(pos) & 0xFF; pos = pos + 1
+            int hasDk = fileData.byte(pos) & 0xFF; pos = pos + 1
+            if hasDk != 0 {
+                if pos + 4 > gLenbEnd { break }
+                int dkCount = rbe32(pos); pos = pos + 4
+                for 0:dkCount-1 to di {
+                    if pos + 4 > gLenbEnd { break }
+                    int dkLen = rbe32(pos); pos = pos + 4
+                    if dkLen < 0 or pos + dkLen > gLenbEnd { break }
+                    pos = pos + dkLen
+                }
+            }
+        }
+        return pos
+    }
+
+    func analyzeDisasm(){
+        disasmBox.clear()
+        gLines = []
+        if fileSize < 8 {
+            disasmBox.add_item("文件太小,无法包含 LENB 尾部")
+            return
+        }
+        int tailMagic = readU32(fileData, fileSize - 4)
+        if tailMagic != LENB_MAGIC {
+            disasmBox.add_item("未检测到 LENB 尾部数据")
+            disasmBox.add_item("尾部魔数: 0x" + toHex8(tailMagic) + " (期望 0x" + toHex8(LENB_MAGIC) + ")")
+            return
+        }
+        int lenbSize = readU32(fileData, fileSize - 8)
+        if lenbSize <= 0 or lenbSize > fileSize - 8 {
+            disasmBox.add_item("LENB 大小异常: " + _str(lenbSize))
+            return
+        }
+        int lenbStart = fileSize - 8 - lenbSize
+        gLenbOff = lenbStart
+        gLenbPos = lenbStart
+        gLenbEnd = fileSize - 8
+        if gLenbEnd - gLenbOff < 20 {
+            disasmBox.add_item("LENB 数据太短")
+            return
+        }
+        int magic = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+        int version = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+        int flags = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+        string srcHash = rbe_i64_hex(gLenbPos)
+        gLenbPos = gLenbPos + 8
+        gLines.add("; ===== LENB Header =====")
+        gLines.add("; magic:    0x" + toHex8(magic))
+        gLines.add("; version:  0x" + toHex8(version))
+        gLines.add("; flags:    0x" + toHex8(flags))
+        gLines.add("; src_hash: " + srcHash)
+        gLines.add("; blob_off: 0x" + toHex8(gLenbOff))
+        gLines.add("; blob_end: 0x" + toHex8(gLenbEnd))
+        int parseStart = skipHeaderAndSymbols(gLenbPos)
+        gDepth = 0
+        gLenbPos = parseStart
+        gLines.add("; ===== (跳过符号表,跳到模块主体) =====")
+        parseOneChunkBody(0)
+        for 0:gLines.len()-1 to li {
+            disasmBox.add_item(gLines[li])
+        }
     }
 
     // ==================== 事件处理 ====================
