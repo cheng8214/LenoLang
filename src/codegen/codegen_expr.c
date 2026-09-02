@@ -1917,14 +1917,32 @@ void gen_expr(CodeGen* gen, Ast* ast) {
                     break;
                 }
             }
+
+            // 优化：如果对象是 struct 类型、字段索引编译期已知、且对象是 local 变量，
+            // 发射 OP_GET_FIELD_FAST 融合指令（合并 GET_LOCAL + GET_FIELD，跳过栈操作和类型检查）
+            int field_idx = ast->u.field_access.field_index;
+            if (obj_type && obj_type->kind == TYPE_STRUCT && field_idx >= 0) {
+                Ast* obj_ast = ast->u.field_access.obj;
+                if (obj_ast && obj_ast->kind == AST_VAR) {
+                    SymRef* ref = &obj_ast->u.var.ref;
+                    if (ref->kind == SYM_LOCAL || ref->kind == SYM_PARAM) {
+                        // 快速路径：直接从 local slot 读对象 + 取字段
+                        emit_byte(gen, OP_GET_FIELD_FAST, ast->line);
+                        emit_byte(gen, (ref->index >> 8) & 0xff, ast->line);
+                        emit_byte(gen, ref->index & 0xff, ast->line);
+                        emit_byte(gen, (uint8_t)field_idx, ast->line);
+                        if (obj_type) type_free(obj_type);
+                        break;
+                    }
+                }
+            }
+
             if (obj_type) type_free(obj_type);
 
             // 生成对象表达式
             gen_expr(gen, ast->u.field_access.obj);
 
             // 使用编译期确定的字段索引（优化：避免运行时线性搜索）
-            int field_idx = ast->u.field_access.field_index;
-
             if (field_idx >= 0) {
                 // 优化路径：使用字段索引直接访问
                 emit_byte(gen, OP_GET_FIELD, ast->line);

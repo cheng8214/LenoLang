@@ -686,6 +686,29 @@ OPCODE(OP_GET_FIELD) {
     DISPATCH;
 }
 
+// ============================================================================
+// 融合指令：从 local 变量直接读取 struct 对象 + 取字段值压栈
+// 合并 GET_LOCAL + GET_FIELD，省掉: 栈弹出+压回 + 类型检查 + 边界检查
+// 字节格式: OP_GET_FIELD_FAST local_slot(2) field_idx(1)
+// 由 codegen 在编译期确认对象是 struct 且 field_index 有效时发射
+// 析构函数不受影响：析构走 OP_DTOR_LOCAL 独立路径，与字段访问正交
+// ============================================================================
+OPCODE(OP_GET_FIELD_FAST) {
+    frame = &vm.frames[vm.frame_cnt - 1];
+    uint16_t slot = READ_SHORT();
+    uint8_t field_idx = READ_BYTE();
+
+    // 直接从局部变量数组读取，不经过栈弹出
+    Value obj_val = frame->locals[slot];
+
+    // 最小化检查：编译期已保证是 struct 且 field_idx 有效
+    // 运行时仅需一次指针解引用
+    ObjStruct* obj = (ObjStruct*)val_as_obj(obj_val);
+    vm_stack_push(&vm, obj->field_values[field_idx]);
+
+    DISPATCH;
+}
+
 OPCODE(OP_SET_FIELD) {
     frame = &vm.frames[vm.frame_cnt - 1];
     // 设置结构体/cstruct字段

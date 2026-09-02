@@ -193,6 +193,11 @@ typedef enum {
     // 融合指令：local int 与 global int 比较 + 条件跳转
     // 操作数: cmp_op(1) slot(2) global_idx(2) offset(4)
     OP_CMPJMP_LG_INT,
+    // 融合指令：从 local 变量读 struct 对象 + 直接取字段值压栈
+    // 合并 GET_LOCAL + GET_FIELD，跳过栈弹出/类型检查/冗余边界检查
+    // 操作数: local_slot(2) field_idx(1)
+    // 仅由 codegen 在编译期确认对象是 struct 且字段索引有效时发射
+    OP_GET_FIELD_FAST,
 } OpCode;
 
 // ============================================================================

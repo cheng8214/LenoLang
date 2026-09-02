@@ -196,6 +196,7 @@
         [OP_ACC_FIELDS] = &&LABEL(OP_ACC_FIELDS),
         [OP_CMPJMP_LL_INT] = &&LABEL(OP_CMPJMP_LL_INT),
         [OP_CMPJMP_LG_INT] = &&LABEL(OP_CMPJMP_LG_INT),
+        [OP_GET_FIELD_FAST] = &&LABEL(OP_GET_FIELD_FAST),
 };
 
     // 宏定义：取指令并分发

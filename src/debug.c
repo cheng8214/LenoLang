@@ -76,7 +76,8 @@ static const char* opCodeNames[] = {
 "OP_SET_LOCAL_CONST",
 "OP_ACC_FIELDS",
 "OP_CMPJMP_LL_INT",
-"OP_CMPJMP_LG_INT"
+"OP_CMPJMP_LG_INT",
+"OP_GET_FIELD_FAST"
 };
 
 // 反汇编单条指令
@@ -350,6 +351,12 @@ int disassembleInstruction(Chunk* chunk, int offset) {
             int field_idx = chunk->code[offset + 1];
             printf(" %d", field_idx);
             return offset + 2;
+        }
+        case OP_GET_FIELD_FAST: {
+            int slot = (chunk->code[offset + 1] << 8) | chunk->code[offset + 2];
+            int field_idx = chunk->code[offset + 3];
+            printf(" slot=%d field=%d", slot, field_idx);
+            return offset + 4;
         }
         case OP_GET_METHOD: {
             int method_name_idx = (chunk->code[offset + 1] << 8) | chunk->code[offset + 2];
