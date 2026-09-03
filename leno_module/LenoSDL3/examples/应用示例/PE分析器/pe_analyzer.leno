@@ -1,4 +1,4 @@
-// pe_analyzer.leno — Leno PE 分析器（可视化界面版）
+// pe_analyzer.leno -- Leno PE 分析器（可视化界面版）
 //
 // 基于 SDL3 GUI 的 PE/EXE 文件分析器，支持：
 //   1. 通过文件对话框选择 .exe/.dll 文件
@@ -6,22 +6,6 @@
 //   3. 检测 LENB 尾部附加数据（Leno 编译器生成的元信息）
 //   4. XOR(LENO) 加密字符串搜索与解密
 //   5. LENB 字节码反汇编(显示 opcode、常量池、跳转目标、行号)
-//
-// 布局结构：
-//   Window
-//   ├── TitleBar（自绘标题栏）
-//   └── VBox root
-//       ├── HBox toolbar（浏览按钮 + 文件路径标签 + 分析按钮）
-//       ├── TabControl（8 个页签：概览 / DOS头 / PE头 / 节区 / 导入表 / LENB / XOR字符串 / 反汇编）
-//       │   ├── 概览页：ListBox 显示文件基本信息和关键数据
-//       │   ├── DOS头页：Table 显示 DOS 头各字段
-//       │   ├── PE头页：Table 显示 PE/可选头各字段
-//       │   ├── 节区页：Table 显示各节区信息
-//       │   ├── 导入表页：Table 显示导入的 DLL 和函数
-//       │   ├── LENB页：ListBox 显示 LENB 尾部元信息
-//       │   ├── XOR字符串页：Table 显示解密后的字符串
-//       │   └── 反汇编页：ListBox 显示 opcode、常量池、跳转目标、行号
-//       └── Label statusLbl（底部状态栏）
 //
 // 运行：leno pe_analyzer.leno
 import "../../../lib/SDL3.leno" as SDL3
@@ -34,7 +18,7 @@ import dirs
 
 // ==================== PE 解析常量 ====================
 
-const LENB_MAGIC = 0x424E454C  // "LENB" little-endian
+const LENB_MAGIC = 0x424E454C  // "LENB" little-endian (trailer)
 const DOS_MAGIC  = 0x5A4D      // "MZ" little-endian
 const PE_MAGIC   = 0x00004550  // "PE\0\0" little-endian
 
@@ -43,13 +27,16 @@ const HEX_CHARS = "0123456789ABCDEF"
 
 // XOR 密钥 "LENO" = 0x4C, 0x45, 0x4E, 0x4F
 func xorKey(int i): int {
-    if i == 0 { return 0x4C }
-    if i == 1 { return 0x45 }
-    if i == 2 { return 0x4E }
+    int m = i % 4
+    if m == 0 { return 0x4C }
+    if m == 1 { return 0x45 }
+    if m == 2 { return 0x4E }
     return 0x4F
 }
 
 // ==================== 二进制读取工具函数 ====================
+// 注意：readU32/readU16 读取小端，用于 PE 头和文件尾部 trailer
+//       rbe32/rbe16 读取大端，用于 LENB blob 内部数据
 
 // 从 string 的指定偏移读取 4 字节小端 uint32
 func readU32(string data, int off): int {
@@ -72,7 +59,6 @@ func readU8(string data, int off): int {
 
 // ==================== 格式化工具函数 ====================
 
-// 格式化为 8 位 hex（无 0x 前缀，用于拼接）
 func toHex8(int v): string {
     string s = ""
     for 7:0:-1 to i {
@@ -82,7 +68,6 @@ func toHex8(int v): string {
     return s
 }
 
-// 格式化为 4 位 hex（无 0x 前缀，用于拼接）
 func toHex4(int v): string {
     string s = ""
     for 3:0:-1 to i {
@@ -92,14 +77,12 @@ func toHex4(int v): string {
     return s
 }
 
-// 格式化为 2 位 hex（无前缀）
 func toHex2(int v): string {
     int hi = (v >> 4) & 0xF
     int lo = v & 0xF
     return HEX_CHARS[hi] + HEX_CHARS[lo]
 }
 
-// 人类可读文件大小
 func fmtSize(int b): string {
     if b < 1024 { return b + " B" }
     float kb = _float(b) / 1024.0
@@ -113,7 +96,6 @@ func fmtSize(int b): string {
     return gbInt + "." + tenths + " GB"
 }
 
-// 根据节区特征值返回可读名称
 func sectionFlagsName(int flags): string {
     Array[string] parts = []
     if (flags & 0x20000000) != 0 { parts.add("X") }
@@ -125,7 +107,6 @@ func sectionFlagsName(int flags): string {
     return parts.join("/")
 }
 
-// 根据子系统值返回可读名称
 func subsystemName(int sub): string {
     switch sub {
         case 0 { return "未知" }
@@ -144,7 +125,6 @@ func subsystemName(int sub): string {
     return "其他(" + sub + ")"
 }
 
-// 根据机器类型返回可读名称
 func machineName(int mach): string {
     switch mach {
         case 0x014C { return "x86 (i386)" }
@@ -172,35 +152,37 @@ struct PEAnalyzer {
     TabControl  tab
 
     // 各页的展示控件
-    ListBox     overviewBox    // 概览
-    Table       dosTable       // DOS 头
-    Table       peTable        // PE 头
-    Table       sectionTable   // 节区
-    Table       importTable    // 导入表
-    ListBox     lenbBox        // LENB 信息
-    Table       xorTable       // XOR 字符串
-    ListBox     disasmBox      // 反汇编输出
+    ListBox     overviewBox
+    Table       dosTable
+    Table       peTable
+    Table       sectionTable
+    Table       importTable
+    ListBox     lenbBox
+    Table       xorTable
+    ListBox     disasmBox
 
     // ===== 分析状态 =====
     string filePath = ""
-    string fileData  = ""    // 文件二进制数据
+    string fileData  = ""
     int    fileSize  = 0
     bool   analyzed  = false
 
     // PE 解析结果缓存
-    int dosHeaderOff = 0       // DOS 头偏移（通常为 0）
-    int peHeaderOff  = 0       // PE 头偏移（e_lfanew）
-    int optHeaderOff = 0       // 可选头偏移
-    int sectionTableOff = 0    // 节区表偏移
-    int sectionCount = 0       // 节区数量
-    int is64bit = 0            // 是否 64 位（0x20B1 vs 0x010B）
+    int dosHeaderOff = 0
+    int peHeaderOff  = 0
+    int optHeaderOff = 0
+    int sectionTableOff = 0
+    int sectionCount = 0
+    int is64bit = 0
 
-    // 反汇编器全局状态
-    int gLenbOff = 0           // LENB blob 起始偏移（绝对）
-    int gLenbPos = 0           // 当前解析位置（绝对）
-    int gLenbEnd = 0           // LENB 结束位置（绝对）
-    int gDepth   = 0           // 递归深度限制
-    Array[string] gLines = []  // 反汇编行累加器
+    // LENB 区域缓存
+    int gLenbOff = 0
+    int gLenbPos = 0
+    int gLenbEnd = 0
+
+    // 反汇编行累加器
+    Array[string] gLines = []
+    int gLineCount = 0
 
     // ==================== RVA 转文件偏移 ====================
 
@@ -226,7 +208,6 @@ struct PEAnalyzer {
         while i < maxLen and fileOff + i < fileSize {
             int b = fileData.byte(fileOff + i)
             if b == 0 { break }
-            // 只显示可打印 ASCII 和扩展字符
             if b >= 0x20 and b <= 0x7E {
                 s = s + strings.char(b)
             } else {
@@ -240,12 +221,10 @@ struct PEAnalyzer {
     // ==================== UI 构建 ====================
 
     func setupUI() {
-        // 标题栏
         titleBar = SDL3.createTitleBar({title: "Leno PE 分析器", height: 32, font_size: 14})
         win.add(titleBar)
         float titleH = titleBar.get_h()
 
-        // 顶部工具栏
         var toolbar = SDL3.createHBox({h: 36, padX: 4, padY: 2, spacing: 6})
 
         browseBtn = SDL3.createButton({w: 80, h: 28, text: "浏览...", font_size: 14})
@@ -260,22 +239,19 @@ struct PEAnalyzer {
         analyzeBtn.set_enabled(false)
         analyzeBtn.on_click(func() { onAnalyze() })
 
-        // 选项卡容器
         tab = SDL3.createTabControl({
             tabs: ["概览", "DOS 头", "PE 头", "节区", "导入表", "LENB", "XOR 字符串", "反汇编"],
             active: 0,
             font_size: 14
         })
 
-        // ===== 各页内容 =====
-
-        // 概览页 - ListBox
+        // 概览页
         overviewBox = SDL3.createListBox({font_size: 13})
         var overviewLayout = SDL3.createVBox({padX: PAD, padY: PAD, spacing: 0})
         overviewLayout.add(overviewBox, {grow: 1, shrink: 1, align: 3})
         tab.setPageLayout(0, overviewLayout)
 
-        // DOS 头页 - Table
+        // DOS 头页
         dosTable = SDL3.createTable({
             headers: ["字段", "值", "说明"],
             col_widths: [180.0, 200.0, 400.0],
@@ -285,7 +261,7 @@ struct PEAnalyzer {
         dosLayout.add(dosTable, {grow: 1, shrink: 1, align: 3})
         tab.setPageLayout(1, dosLayout)
 
-        // PE 头页 - Table
+        // PE 头页
         peTable = SDL3.createTable({
             headers: ["字段", "值", "说明"],
             col_widths: [180.0, 200.0, 400.0],
@@ -295,7 +271,7 @@ struct PEAnalyzer {
         peLayout.add(peTable, {grow: 1, shrink: 1, align: 3})
         tab.setPageLayout(2, peLayout)
 
-        // 节区页 - Table
+        // 节区页
         sectionTable = SDL3.createTable({
             headers: ["序号", "名称", "虚拟大小", "虚拟地址", "原始大小", "原始偏移", "特征值"],
             col_widths: [50.0, 120.0, 100.0, 100.0, 100.0, 100.0, 150.0],
@@ -305,7 +281,7 @@ struct PEAnalyzer {
         secLayout.add(sectionTable, {grow: 1, shrink: 1, align: 3})
         tab.setPageLayout(3, secLayout)
 
-        // 导入表页 - Table
+        // 导入表页
         importTable = SDL3.createTable({
             headers: ["DLL", "函数名", "RVA", "序号"],
             col_widths: [200.0, 400.0, 100.0, 80.0],
@@ -315,13 +291,13 @@ struct PEAnalyzer {
         impLayout.add(importTable, {grow: 1, shrink: 1, align: 3})
         tab.setPageLayout(4, impLayout)
 
-        // LENB 页 - ListBox
+        // LENB 页
         lenbBox = SDL3.createListBox({font_size: 13})
         var lenbLayout = SDL3.createVBox({padX: PAD, padY: PAD, spacing: 0})
         lenbLayout.add(lenbBox, {grow: 1, shrink: 1, align: 3})
         tab.setPageLayout(5, lenbLayout)
 
-        // XOR 字符串页 - Table
+        // XOR 字符串页
         xorTable = SDL3.createTable({
             headers: ["序号", "偏移", "长度", "解密内容"],
             col_widths: [50.0, 120.0, 60.0, 600.0],
@@ -331,7 +307,7 @@ struct PEAnalyzer {
         xorLayout.add(xorTable, {grow: 1, shrink: 1, align: 3})
         tab.setPageLayout(6, xorLayout)
 
-        // 反汇编页 - ListBox（等宽字体显示字节码行）
+        // 反汇编页
         disasmBox = SDL3.createListBox({font_size: 12})
         var disasmLayout = SDL3.createVBox({padX: PAD, padY: PAD, spacing: 0})
         disasmLayout.add(disasmBox, {grow: 1, shrink: 1, align: 3})
@@ -350,7 +326,6 @@ struct PEAnalyzer {
 
     // ==================== 事件回调 ====================
 
-    // 浏览文件
     func onBrowse() {
         fdlg.showOpenFileDialog(win, func(Array[string] paths, int filter) {
             if paths != null and paths.len() > 0 {
@@ -370,7 +345,6 @@ struct PEAnalyzer {
         })
     }
 
-    // 分析文件
     func onAnalyze() {
         if filePath == "" {
             statusLbl.set_text("错误: 请先选择文件")
@@ -386,7 +360,6 @@ struct PEAnalyzer {
         statusLbl.set_text("正在读取文件...")
         SDL3.markFrameRedraw()
 
-        // 读取文件
         File f = files.open(filePath, "rb")
         if f == null {
             statusLbl.set_text("错误: 无法打开文件")
@@ -397,6 +370,11 @@ struct PEAnalyzer {
         fileData = f.read(fileSize)
         f.close()
 
+        // 用 byte_len() 校准实际读到的字节数
+        // 注意: len() 返回 UTF-8 字符数, byte_len() 返回字节数
+        // 二进制文件必须用 byte_len(), 否则边界检查会出错
+        fileSize = fileData.byte_len()
+
         if fileSize < 64 {
             statusLbl.set_text("错误: 文件太小，不是有效的 PE 文件")
             SDL3.markFrameRedraw()
@@ -406,7 +384,6 @@ struct PEAnalyzer {
         statusLbl.set_text("正在解析 PE 结构...")
         SDL3.markFrameRedraw()
 
-        // 解析各部分
         analyzed = true
         analyzeOverview()
         analyzeDOSHeader()
@@ -431,7 +408,6 @@ struct PEAnalyzer {
         overviewBox.add_item("文件大小: " + fileSize + " bytes (" + fmtSize(fileSize) + ")")
         overviewBox.add_item("")
 
-        // 检测 MZ 头
         int dosMagic = readU16(fileData, 0)
         if dosMagic == DOS_MAGIC {
             overviewBox.add_item("[DOS 头] MZ 魔数: 0x" + toHex4(dosMagic) + " (有效)")
@@ -443,7 +419,6 @@ struct PEAnalyzer {
             return
         }
 
-        // 检测 PE 签名
         if peHeaderOff + 4 <= fileSize {
             int peSig = readU32(fileData, peHeaderOff)
             if peSig == PE_MAGIC {
@@ -454,19 +429,16 @@ struct PEAnalyzer {
             }
         }
 
-        // 机器类型
         if peHeaderOff + 6 <= fileSize {
             int machine = readU16(fileData, peHeaderOff + 4)
             overviewBox.add_item("[PE 头] 机器类型: " + machineName(machine))
         }
 
-        // 节区数量
         if peHeaderOff + 8 <= fileSize {
             sectionCount = readU16(fileData, peHeaderOff + 6)
             overviewBox.add_item("[PE 头] 节区数量: " + sectionCount)
         }
 
-        // 可选头 magic（判断 32/64 位）
         optHeaderOff = peHeaderOff + 24
         if optHeaderOff + 2 <= fileSize {
             int optMagic = readU16(fileData, optHeaderOff)
@@ -481,20 +453,18 @@ struct PEAnalyzer {
             }
         }
 
-        // 入口点
         if optHeaderOff + 20 <= fileSize {
             int entryRVA = readU32(fileData, optHeaderOff + 16)
             overviewBox.add_item("[可选头] 入口点 RVA: 0x" + toHex8(entryRVA))
         }
 
-        // 节区表偏移
         if peHeaderOff + 22 <= fileSize {
             sectionTableOff = peHeaderOff + 24 + readU16(fileData, peHeaderOff + 20)
             overviewBox.add_item("[节区表] 偏移: 0x" + toHex8(sectionTableOff))
         }
         overviewBox.add_item("")
 
-        // LENB 检测
+        // LENB 检测 (trailer 使用小端)
         if fileSize >= 8 {
             int magicTail = readU32(fileData, fileSize - 4)
             int lenbSize = readU32(fileData, fileSize - 8)
@@ -546,7 +516,6 @@ struct PEAnalyzer {
             return
         }
 
-        // === COFF 头 ===
         rows.add(["--- COFF 头 ---", "", ""])
         rows.add(["Machine", "0x" + toHex4(readU16(fileData, peHeaderOff + 4)), machineName(readU16(fileData, peHeaderOff + 4))])
         rows.add(["NumberOfSections", _str(readU16(fileData, peHeaderOff + 6)), "节区数量"])
@@ -556,7 +525,6 @@ struct PEAnalyzer {
         rows.add(["SizeOfOptionalHeader", _str(readU16(fileData, peHeaderOff + 20)), "可选头大小(字节)"])
         rows.add(["Characteristics", "0x" + toHex4(readU16(fileData, peHeaderOff + 22)), "文件特征值"])
 
-        // === 可选头 ===
         optHeaderOff = peHeaderOff + 24
         int optSize = readU16(fileData, peHeaderOff + 20)
         if optSize > 0 and optHeaderOff + optSize <= fileSize {
@@ -578,7 +546,6 @@ struct PEAnalyzer {
             rows.add(["BaseOfCode", "0x" + toHex8(readU32(fileData, optHeaderOff + 20)), "代码段基址 RVA"])
 
             if optMagic == 0x010B {
-                // PE32
                 rows.add(["BaseOfData", "0x" + toHex8(readU32(fileData, optHeaderOff + 24)), "数据段基址 RVA"])
                 rows.add(["ImageBase", "0x" + toHex8(readU32(fileData, optHeaderOff + 28)), "镜像基址"])
                 rows.add(["SectionAlignment", "0x" + toHex8(readU32(fileData, optHeaderOff + 32)), "节区对齐粒度"])
@@ -594,7 +561,6 @@ struct PEAnalyzer {
                 rows.add(["Subsystem", _str(readU16(fileData, optHeaderOff + 68)), subsystemName(readU16(fileData, optHeaderOff + 68))])
                 rows.add(["CheckSum", "0x" + toHex8(readU32(fileData, optHeaderOff + 64)), "校验和"])
             } else if optMagic == 0x20B {
-                // PE32+
                 rows.add(["ImageBase", "0x" + toHex8(readU32(fileData, optHeaderOff + 24)), "镜像基址(低32位)"])
                 rows.add(["ImageBase_Hi", "0x" + toHex8(readU32(fileData, optHeaderOff + 28)), "镜像基址(高32位)"])
                 rows.add(["SectionAlignment", "0x" + toHex8(readU32(fileData, optHeaderOff + 32)), "节区对齐粒度"])
@@ -625,7 +591,6 @@ struct PEAnalyzer {
             int off = sectionTableOff + i * secSize
             if off + secSize > fileSize { break }
 
-            // 节区名（8字节，可能含 \0）
             string name = ""
             for 0:7 to j {
                 int b = fileData.byte(off + j)
@@ -657,11 +622,9 @@ struct PEAnalyzer {
     func analyzeImports() {
         Array[Array[string]] rows = []
 
-        // 数据目录在可选头中的偏移：PE32 = optHeaderOff + 96, PE32+ = optHeaderOff + 112
         int dataDirOff = optHeaderOff + 96
         if is64bit == 1 { dataDirOff = optHeaderOff + 112 }
 
-        // 导入表是第 2 个目录项（索引 1）
         int impDirRVA = 0
         if dataDirOff + 8 <= fileSize {
             impDirRVA = readU32(fileData, dataDirOff + 8)
@@ -672,14 +635,12 @@ struct PEAnalyzer {
             return
         }
 
-        // 将 RVA 转换为文件偏移
         int impFileOff = rvaToOffset(impDirRVA)
         if impFileOff == 0 {
             importTable.set_rows(rows)
             return
         }
 
-        // 遍历导入描述符（每个 20 字节）
         int descSize = 20
         int maxDlls = 64
         int dllCount = 0
@@ -688,23 +649,18 @@ struct PEAnalyzer {
             int descOff = impFileOff + dllCount * descSize
             if descOff + descSize > fileSize { break }
 
-            // 导入描述符字段
-            int origFirstThunk = readU32(fileData, descOff + 0)   // OriginalFirstThunk (ILT RVA)
-            int nameRVA        = readU32(fileData, descOff + 12)   // DLL 名称 RVA
-            int firstThunk     = readU32(fileData, descOff + 16)   // FirstThunk (IAT RVA)
+            int origFirstThunk = readU32(fileData, descOff + 0)
+            int nameRVA        = readU32(fileData, descOff + 12)
+            int firstThunk     = readU32(fileData, descOff + 16)
 
-            // 终止条件：全零描述符
             if nameRVA == 0 and firstThunk == 0 { break }
 
-            // 读取 DLL 名称
             int nameOff = rvaToOffset(nameRVA)
             string dllName = "???"
             if nameOff > 0 and nameOff < fileSize {
                 dllName = readCString(nameOff, 256)
             }
 
-            // 遍历该 DLL 的导入函数
-            // 优先使用 OriginalFirstThunk (ILT)，如果为 0 则用 FirstThunk (IAT)
             int thunkRVA = origFirstThunk
             if thunkRVA == 0 { thunkRVA = firstThunk }
 
@@ -721,7 +677,6 @@ struct PEAnalyzer {
                 continue
             }
 
-            // 遍历 thunk 数组（每项 4 字节 on 32位）
             int thunkSize = 4
             if is64bit == 1 { thunkSize = 8 }
             int maxFuncs = 512
@@ -732,18 +687,14 @@ struct PEAnalyzer {
                 if thunkEntryOff + thunkSize > fileSize { break }
 
                 int thunkVal = readU32(fileData, thunkEntryOff)
-                // 终止条件：全零 thunk
                 if thunkVal == 0 { break }
 
-                // 最高位为 1 表示按序号导入
                 if is64bit == 1 {
-                    // 64位：检查高32位
                     int thunkHi = readU32(fileData, thunkEntryOff + 4)
                     if (thunkHi & 0x80000000) != 0 {
                         int ordinal = thunkVal & 0xFFFF
                         rows.add([dllName, "Ordinal #" + ordinal, "0x" + toHex8(firstThunk + funcCount * 8), _str(ordinal)])
                     } else {
-                        // 按名称导入：thunkVal 是 Hint/Name 结构的 RVA
                         int hintNameOff = rvaToOffset(thunkVal)
                         if hintNameOff > 0 and hintNameOff + 2 < fileSize {
                             int hint = readU16(fileData, hintNameOff)
@@ -754,12 +705,10 @@ struct PEAnalyzer {
                         }
                     }
                 } else {
-                    // 32位
                     if (thunkVal & 0x80000000) != 0 {
                         int ordinal = thunkVal & 0xFFFF
                         rows.add([dllName, "Ordinal #" + ordinal, "0x" + toHex8(firstThunk + funcCount * 4), _str(ordinal)])
                     } else {
-                        // 按名称导入：thunkVal 是 Hint/Name 结构的 RVA
                         int hintNameOff = rvaToOffset(thunkVal)
                         if hintNameOff > 0 and hintNameOff + 2 < fileSize {
                             int hint = readU16(fileData, hintNameOff)
@@ -793,9 +742,9 @@ struct PEAnalyzer {
             return
         }
 
+        // trailer 使用小端 (native endian on x86)
         int magicOff = fileSize - 4
         int sizeOff = fileSize - 8
-
         int magic = readU32(fileData, magicOff)
         int lenbSize = readU32(fileData, sizeOff)
 
@@ -806,123 +755,158 @@ struct PEAnalyzer {
         lenbBox.add_item("匹配: " + (if magic == LENB_MAGIC then "是" else "否"))
         lenbBox.add_item("")
 
-        if magic == LENB_MAGIC {
-            int lenbOffset = fileSize - 8 - lenbSize
-            lenbBox.add_item("v 检测到 LENB 尾部!")
-            lenbBox.add_item("LENB 数据大小: " + lenbSize + " bytes")
-            lenbBox.add_item("LENB 数据偏移: 0x" + toHex8(lenbOffset))
-            lenbBox.add_item("")
-
-            // 解析 LENB 头部
-            if lenbOffset + 28 <= fileSize {
-                lenbBox.add_item("--- LENB 头部字段 ---")
-                int lenbMagicVal = readU32(fileData, lenbOffset)
-                int lenbVersion = readU32(fileData, lenbOffset + 4)
-                int lenbFlags = readU32(fileData, lenbOffset + 8)
-                int lenbSrcHash = readU32(fileData, lenbOffset + 12)
-                int globalVars = readU32(fileData, lenbOffset + 20)
-                int globalFuncs = readU32(fileData, lenbOffset + 24)
-
-                lenbBox.add_item("Magic:    0x" + toHex8(lenbMagicVal) + " (LENB)")
-                lenbBox.add_item("Version:  0x" + toHex8(lenbVersion))
-                lenbBox.add_item("Flags:    0x" + toHex8(lenbFlags))
-                lenbBox.add_item("SrcHash:  0x" + toHex8(lenbSrcHash))
-                lenbBox.add_item("全局变量数: " + globalVars)
-                lenbBox.add_item("全局函数数: " + globalFuncs)
-
-                // 尝试读取符号计数
-                if lenbOffset + 32 <= fileSize {
-                    int symCount = readU32(fileData, lenbOffset + 28)
-                    lenbBox.add_item("符号数:   " + symCount)
-                }
-            }
-
-            // Hex dump 前 64 字节（每行 16 字节）
-            lenbBox.add_item("")
-            lenbBox.add_item("--- LENB 头部 Hex Dump (前 64 字节) ---")
-            int dumpLen = 64
-            if lenbOffset + dumpLen > fileSize { dumpLen = fileSize - lenbOffset }
-            int row = 0
-            while row * 16 < dumpLen {
-                int rowOff = row * 16
-                int rowEnd = rowOff + 16
-                if rowEnd > dumpLen { rowEnd = dumpLen }
-                string addr = toHex8(lenbOffset + rowOff)
-                string hexData = ""
-                string asciiData = ""
-                for rowOff:rowEnd to j {
-                    int byteVal = fileData.byte(lenbOffset + j)
-                    hexData = hexData + toHex2(byteVal) + " "
-                    if byteVal >= 0x20 and byteVal <= 0x7E {
-                        asciiData = asciiData + strings.char(byteVal)
-                    } else {
-                        asciiData = asciiData + "."
-                    }
-                }
-                // 补齐最后一行的空位
-                while rowEnd - rowOff < 16 {
-                    hexData = hexData + "   "
-                    rowOff = rowOff + 1
-                }
-                lenbBox.add_item("0x" + addr + "  " + hexData + " " + asciiData)
-                row = row + 1
-            }
-        } else {
+        if magic != LENB_MAGIC {
             lenbBox.add_item("x 未检测到 LENB 尾部数据")
             lenbBox.add_item("该文件可能不是 Leno 编译器生成的可执行文件")
-            lenbBox.add_item("或 LENB 尾部已被移除/修改")
+            lenbBox.add_item("")
+            lenbBox.add_item("========== LENB 分析完成 ==========")
+            return
         }
+
+        if lenbSize <= 0 or lenbSize > fileSize - 8 {
+            lenbBox.add_item("x LENB 大小异常: " + lenbSize)
+            return
+        }
+
+        int lenbOffset = fileSize - 8 - lenbSize
+        lenbBox.add_item("v 检测到 LENB 尾部!")
+        lenbBox.add_item("LENB 数据大小: " + lenbSize + " bytes")
+        lenbBox.add_item("LENB 数据偏移: 0x" + toHex8(lenbOffset))
+        lenbBox.add_item("")
+
+        // LENB blob 内部使用大端 -- 用 rbe32 读取
+        if lenbOffset + 20 <= fileSize {
+            lenbBox.add_item("--- LENB 头部字段 (大端) ---")
+            int lenbMagicVal = rbe32(lenbOffset)
+            int lenbVersion = rbe32(lenbOffset + 4)
+            int lenbFlags = rbe32(lenbOffset + 8)
+            // src_hash 是 u64 BE (8 字节)
+            string srcHashHex = rbe_i64_hex(lenbOffset + 12)
+
+            lenbBox.add_item("Magic:    0x" + toHex8(lenbMagicVal))
+            lenbBox.add_item("Version:  0x" + toHex8(lenbVersion))
+            lenbBox.add_item("Flags:    0x" + toHex8(lenbFlags))
+            lenbBox.add_item("SrcHash:  " + srcHashHex)
+
+            // scope data 从 offset 20 开始
+            if lenbOffset + 32 <= fileSize {
+                int globalVars = rbe32(lenbOffset + 20)
+                int globalFuncs = rbe32(lenbOffset + 24)
+                int symCount = rbe32(lenbOffset + 28)
+                lenbBox.add_item("全局变量数: " + globalVars)
+                lenbBox.add_item("全局函数数: " + globalFuncs)
+                lenbBox.add_item("符号数:     " + symCount)
+            }
+        }
+
+        // Hex dump 前 64 字节
+        lenbBox.add_item("")
+        lenbBox.add_item("--- LENB 头部 Hex Dump (前 64 字节) ---")
+        int dumpLen = 64
+        if lenbOffset + dumpLen > fileSize { dumpLen = fileSize - lenbOffset }
+        int row = 0
+        while row * 16 < dumpLen {
+            int rowOff = row * 16
+            int rowEnd = rowOff + 16
+            if rowEnd > dumpLen { rowEnd = dumpLen }
+            string addr = toHex8(lenbOffset + rowOff)
+            string hexData = ""
+            string asciiData = ""
+            for rowOff:rowEnd to j {
+                int byteVal = fileData.byte(lenbOffset + j)
+                hexData = hexData + toHex2(byteVal) + " "
+                if byteVal >= 0x20 and byteVal <= 0x7E {
+                    asciiData = asciiData + strings.char(byteVal)
+                } else {
+                    asciiData = asciiData + "."
+                }
+            }
+            int padCount = rowEnd - rowOff
+            while padCount < 16 {
+                hexData = hexData + "   "
+                padCount = padCount + 1
+            }
+            lenbBox.add_item("0x" + addr + "  " + hexData + " " + asciiData)
+            row = row + 1
+        }
+
         lenbBox.add_item("")
         lenbBox.add_item("========== LENB 分析完成 ==========")
     }
 
     // ==================== XOR 字符串页 ====================
+    //
+    // XOR(LENO) 字符串只存在于 LENB blob 内部，不扫描整个 PE 文件。
+    // 这避免了在大型 exe 上因逐字节扫描+字符串拼接导致的内存爆炸。
 
     func analyzeXORStrings() {
         Array[Array[string]] rows = []
 
-        // XOR(LENO) 字符串搜索：扫描整个文件
-        int pos = 0
-        int maxPos = fileSize - 12
+        // 检测 LENB 尾部
+        if fileSize < 8 {
+            xorTable.set_rows(rows)
+            return
+        }
+        int magicTail = readU32(fileData, fileSize - 4)
+        if magicTail != LENB_MAGIC {
+            xorTable.set_rows(rows)
+            return
+        }
+        int lenbSize = readU32(fileData, fileSize - 8)
+        if lenbSize <= 0 or lenbSize > fileSize - 8 {
+            xorTable.set_rows(rows)
+            return
+        }
+
+        int lenbStart = fileSize - 8 - lenbSize
+        int lenbEnd = fileSize - 8
+
+        // 只在 LENB blob 范围内搜索
+        int pos = lenbStart
         int found = 0
         int maxResults = 500
 
-        while pos < maxPos and found < maxResults {
-            int runStart = pos
-            int runLen = 0
-            string decrypted = ""
-
-            while pos + runLen < fileSize and runLen < 256 {
-                int b = fileData.byte(pos + runLen)
-                int keyByte = xorKey(runLen % 4)
-                int dec = b ^ keyByte
-
-                if (dec >= 0x20 and dec <= 0x7E) or dec >= 0x80 {
-                    decrypted = decrypted + strings.char(dec)
-                    runLen = runLen + 1
-                } else {
-                    break
+        while pos < lenbEnd - 4 and found < maxResults {
+            // 尝试在当前位置读取 XOR 字符串: u32 BE length + XOR bytes
+            int strLen = rbe32(pos)
+            if strLen >= 4 and strLen <= 10000 and pos + 4 + strLen <= lenbEnd {
+                // 解密并检查是否为可打印字符串
+                bool printable = true
+                for 0:strLen-1 to j {
+                    int b = fileData.byte(pos + 4 + j)
+                    int dec = (b ^ xorKey(j)) & 0xFF
+                    if dec < 0x20 or dec > 0x7E {
+                        printable = false
+                        break
+                    }
+                }
+                if printable {
+                    // 解密字符串
+                    string decrypted = ""
+                    for 0:strLen-1 to j {
+                        int b = fileData.byte(pos + 4 + j)
+                        int dec = (b ^ xorKey(j)) & 0xFF
+                        decrypted = decrypted + strings.char(dec)
+                    }
+                    found = found + 1
+                    rows.add([
+                        _str(found),
+                        "0x" + toHex8(pos),
+                        _str(strLen),
+                        decrypted
+                    ])
+                    pos = pos + 4 + strLen
+                    continue
                 }
             }
-
-            if runLen >= 12 {
-                found = found + 1
-                rows.add([
-                    _str(found),
-                    "0x" + toHex8(runStart),
-                    _str(runLen),
-                    decrypted
-                ])
-                pos = runStart + runLen
-            } else {
-                pos = pos + 1
-            }
+            pos = pos + 1
         }
 
         xorTable.set_rows(rows)
     }
 
-    // ==================== 反汇编器辅助 ====================
+    // ==================== 反汇编器辅助函数 ====================
+    // LENB blob 内部所有整数使用大端 (big-endian)
 
     func rbe32(int off): int {
         int b0 = fileData.byte(off) & 0xFF
@@ -931,30 +915,52 @@ struct PEAnalyzer {
         int b3 = fileData.byte(off + 3) & 0xFF
         return (b0 << 24) | (b1 << 16) | (b2 << 8) | b3
     }
+
     func rbe16(int off): int {
         int b0 = fileData.byte(off) & 0xFF
         int b1 = fileData.byte(off + 1) & 0xFF
         return (b0 << 8) | b1
     }
+
     func rbe_i64_hex(int off): string {
         int hi = rbe32(off)
         int lo = rbe32(off + 4)
         return "0x" + toHex8(hi) + toHex8(lo)
     }
+
+    // 从 gLenbPos 读取 XOR 加密字符串 (长度前缀已由调用方读取)
     func readXorStr(int byteLen): string {
-        if byteLen > 10000 { return "<long-str:" + _str(byteLen) + ">" }
+        if byteLen < 0 or gLenbPos + byteLen > gLenbEnd {
+            gLenbPos = gLenbEnd
+            return "<invalid>"
+        }
+        if byteLen > 10000 {
+            gLenbPos = gLenbPos + byteLen
+            return "<long:" + _str(byteLen) + ">"
+        }
         string s = ""
         for 0:byteLen-1 to i {
-            int key = 0x4C
-            if i % 4 == 1 { key = 0x45 }
-            if i % 4 == 2 { key = 0x4E }
-            if i % 4 == 3 { key = 0x4F }
+            int key = xorKey(i)
             int plain = (fileData.byte(gLenbPos) ^ key) & 0xFF
             s = s + strings.char(plain)
             gLenbPos = gLenbPos + 1
         }
         return s
     }
+
+    // 跳过一个 XOR 字符串 (只推进 gLenbPos，不解密)
+    func skipXorStr() {
+        int n = rbe32(gLenbPos)
+        gLenbPos = gLenbPos + 4
+        if n < 0 or gLenbPos + n > gLenbEnd {
+            gLenbPos = gLenbEnd
+            return
+        }
+        gLenbPos = gLenbPos + n
+    }
+
+    // ==================== 常量标签名 ====================
+
     func constTagName(int tag): string {
         switch tag {
             case 0x00 { return "NULL" }
@@ -968,18 +974,21 @@ struct PEAnalyzer {
             case 0x08 { return "RANGE" }
             case 0x09 { return "ARRAY" }
             case 0x0A { return "DICT" }
-            case 0x0B { return "STRUCT_DEF" }
-            case 0x0C { return "ENUM_DEF" }
+            case 0x0B { return "ENUM_DEF" }
+            case 0x0C { return "STRUCT_DEF" }
             case 0x0D { return "CSTRUCT_DEF" }
             case 0x0E { return "FACE_DEF" }
             case 0x0F { return "MODULE" }
-            case 0x10 { return "MODULE_REF" }
-            case 0x11 { return "FFI_PTR" }
-            case 0x12 { return "CLOSURE" }
-            case 0x13 { return "FFI_LIB" }
+            case 0x10 { return "FFI_PTR" }
+            case 0x11 { return "CLOSURE" }
+            case 0x12 { return "FFI_LIB" }
+            case 0x13 { return "MODULE_REF" }
         }
         return "TAG_0x" + toHex2(tag)
     }
+
+    // ==================== Opcode 名称表 ====================
+
     func opName(int code): string {
         if code == 0 { return "OP_CONST" }
         if code == 1 { return "OP_NULL" }
@@ -1140,6 +1149,7 @@ struct PEAnalyzer {
         if code == 156 { return "OP_INVOKE_METHOD" }
         return "OP_0x" + toHex2(code)
     }
+
     func opImmSize(int op): int {
         if op == 0 { return 2 }
         if op >= 8 and op <= 20 { return 2 }
@@ -1163,83 +1173,279 @@ struct PEAnalyzer {
         if op == 147 { return 1 }
         return 0
     }
+
+    // ==================== 常量跳过函数 (skipConstRaw) ====================
+    //
+    // 所有 skip 函数推进 gLenbPos 到常量数据之后。
+    // 标签字节已由 skipConstRaw 读取。
+    //
+    // LENB 序列化格式 (大端):
+    //   string = u32 len + XOR(bytes)
+    //   u32/u16 = big-endian
+
     func skipConstRaw() {
-        int tag = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
-        if tag == 0x00 or tag == 0x01 or tag == 0x02 { return }
-        if tag == 0x03 or tag == 0x04 { gLenbPos = gLenbPos + 8; return }
+        if gLenbPos >= gLenbEnd { return }
+        int tag = fileData.byte(gLenbPos) & 0xFF
+        gLenbPos = gLenbPos + 1
+
+        // NULL/TRUE/FALSE: 无数据
+        if tag <= 0x02 { return }
+
+        // INT: u64 BE (8 字节, v2.2.0+)
+        if tag == 0x03 { gLenbPos = gLenbPos + 8; return }
+
+        // FLOAT: double BE (8 字节)
+        if tag == 0x04 { gLenbPos = gLenbPos + 8; return }
+
+        // STRING: u32 len + XOR bytes
         if tag == 0x05 {
-            int n = rbe32(gLenbPos); gLenbPos = gLenbPos + 4 + n
+            skipXorStr()
             return
         }
-        if tag == 0x09 {
-            int n = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            for 0:n-1 to i { skipConstRaw() }
-            return
-        }
-        if tag == 0x0A {
-            int n = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            for 0:(2 * n)-1 to i { skipConstRaw() }
-            return
-        }
-        if tag == 0x07 {
-            int limbs = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            gLenbPos = gLenbPos + 1  // is_negative
-            gLenbPos = gLenbPos + 4 * limbs
-            return
-        }
-        if tag == 0x08 {
-            gLenbPos = gLenbPos + 8 + 8 + 1
-            return
-        }
+
+        // FUNCTION: name + arity + upvals + locals + has_try + params + type_params + chunk
         if tag == 0x06 {
             skipFuncRaw()
             return
         }
-        if tag == 0x13 {
-            int has = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
-            if has != 0 {
-                int n = rbe32(gLenbPos); gLenbPos = gLenbPos + 4 + n
+
+        // BIGINT: u32 limb_count + u8 is_negative + 4*limbs 字节
+        if tag == 0x07 {
+            int limbs = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            gLenbPos = gLenbPos + 1  // is_negative
+            if limbs < 0 or limbs > 100000 { gLenbPos = gLenbEnd; return }
+            gLenbPos = gLenbPos + 4 * limbs
+            return
+        }
+
+        // RANGE: u64 start + u64 end + u8 inclusive = 17 字节
+        if tag == 0x08 {
+            gLenbPos = gLenbPos + 17
+            return
+        }
+
+        // ARRAY: u32 count + count * constant
+        if tag == 0x09 {
+            int n = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            if n < 0 or n > 100000 { gLenbPos = gLenbEnd; return }
+            for 0:n-1 to i { skipConstRaw() }
+            return
+        }
+
+        // DICT: u32 count + 2*count * constant
+        if tag == 0x0A {
+            int n = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            if n < 0 or n > 100000 { gLenbPos = gLenbEnd; return }
+            int total = 2 * n
+            for 0:total-1 to i { skipConstRaw() }
+            return
+        }
+
+        // ENUM_DEF: name + u32 member_count + members*(string + u64)
+        if tag == 0x0B {
+            skipXorStr()
+            int mc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            if mc < 0 or mc > 100000 { gLenbPos = gLenbEnd; return }
+            for 0:mc-1 to i {
+                skipXorStr()
+                gLenbPos = gLenbPos + 8  // member value u64
             }
             return
         }
-        if tag == 0x11 {
-            gLenbPos = gLenbPos + 2
+
+        // STRUCT_DEF: name + fields + methods + impls + consts
+        if tag == 0x0C {
+            skipXorStr()
+            int fc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            if fc < 0 or fc > 100000 { gLenbPos = gLenbEnd; return }
+            for 0:fc-1 to i {
+                skipXorStr()       // field name
+                gLenbPos = gLenbPos + 1  // type
+                int hasSTN = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
+                if hasSTN != 0 { skipXorStr() }  // struct_type_name
+                int hasDef = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
+                if hasDef != 0 { skipConstRaw() }  // default value
+                gLenbPos = gLenbPos + 2  // element_type + nullable
+            }
+            int mc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            if mc < 0 or mc > 100000 { gLenbPos = gLenbEnd; return }
+            for 0:mc-1 to i {
+                skipXorStr()       // method name
+                skipConstRaw()     // method function (or null)
+            }
+            int ic = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            if ic < 0 or ic > 100000 { gLenbPos = gLenbEnd; return }
+            for 0:ic-1 to i { skipXorStr() }  // impl names
+            int cc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            if cc < 0 or cc > 100000 { gLenbPos = gLenbEnd; return }
+            for 0:cc-1 to i {
+                skipXorStr()       // const name
+                skipConstRaw()     // const value
+            }
             return
         }
+
+        // CSTRUCT_DEF: name + u32 field_count + u32 size + u32 align + u8 packed + u8 explicit + fields
+        if tag == 0x0D {
+            skipXorStr()
+            int fc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            gLenbPos = gLenbPos + 4  // total_size
+            gLenbPos = gLenbPos + 4  // alignment
+            gLenbPos = gLenbPos + 1  // is_packed
+            gLenbPos = gLenbPos + 1  // explicit_align
+            if fc < 0 or fc > 100000 { gLenbPos = gLenbEnd; return }
+            for 0:fc-1 to i {
+                skipXorStr()       // field name
+                gLenbPos = gLenbPos + 1  // type
+                gLenbPos = gLenbPos + 4  // offset
+                gLenbPos = gLenbPos + 4  // size
+                gLenbPos = gLenbPos + 4  // array_dim
+                int hasSN = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
+                if hasSN != 0 { skipXorStr() }  // struct_name
+                gLenbPos = gLenbPos + 1  // element_type
+            }
+            return
+        }
+
+        // FACE_DEF: name + u32 method_count + methods*(string + u32 params + u8 ret + params*u8)
+        if tag == 0x0E {
+            skipXorStr()
+            int mc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            if mc < 0 or mc > 100000 { gLenbPos = gLenbEnd; return }
+            for 0:mc-1 to i {
+                skipXorStr()       // method name
+                int pc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4  // param_count
+                gLenbPos = gLenbPos + 1  // return type
+                if pc < 0 or pc > 100000 { gLenbPos = gLenbEnd; return }
+                gLenbPos = gLenbPos + pc  // param types (1 byte each)
+            }
+            return
+        }
+
+        // MODULE: name + has_path + path + globals + exports + native_imports
+        //         + init_chunk + export_mapping + use_reexport
+        if tag == 0x0F {
+            skipXorStr()       // module name
+            int hasPath = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
+            if hasPath != 0 { skipXorStr() }  // source path
+            int gc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            if gc < 0 or gc > 100000 { gLenbPos = gLenbEnd; return }
+            for 0:gc-1 to i { skipConstRaw() }  // globals
+            int ec = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            if ec < 0 or ec > 100000 { gLenbPos = gLenbEnd; return }
+            int totalE = 2 * ec
+            for 0:totalE-1 to i { skipConstRaw() }  // exports (key+value)
+            int nic = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            if nic < 0 or nic > 100000 { gLenbPos = gLenbEnd; return }
+            for 0:nic-1 to i { skipXorStr() }  // native imports
+            int hasInit = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
+            if hasInit != 0 { skipChunkRaw() }
+            // export_mapping (v2.2.0+)
+            int emc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            if emc < 0 or emc > 100000 { gLenbPos = gLenbEnd; return }
+            for 0:emc-1 to i {
+                skipXorStr()       // mapping name
+                gLenbPos = gLenbPos + 4  // global_index
+            }
+            // use_reexport (v2.2.0+)
+            int urc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            if urc < 0 or urc > 100000 { gLenbPos = gLenbEnd; return }
+            for 0:urc-1 to i {
+                skipXorStr()       // reexport name
+                gLenbPos = gLenbPos + 4  // kind (i32)
+            }
+            return
+        }
+
+        // FFI_PTR: u64 ptr + u64 size + u8 owned + u8 freed + u8 element_type = 19 字节
+        if tag == 0x10 {
+            gLenbPos = gLenbPos + 19
+            return
+        }
+
+        // CLOSURE: nested function constant + u32 upvalue_count + u32 type_param_count + strings
+        if tag == 0x11 {
+            skipConstRaw()     // function constant (recursive)
+            gLenbPos = gLenbPos + 4  // upvalue_count
+            int tpc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            if tpc < 0 or tpc > 100000 { gLenbPos = gLenbEnd; return }
+            for 0:tpc-1 to i { skipXorStr() }
+            return
+        }
+
+        // FFI_LIB: u8 has_path + if has: string
+        if tag == 0x12 {
+            int has = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
+            if has != 0 { skipXorStr() }
+            return
+        }
+
+        // MODULE_REF: name + u8 has_path + if has: string
+        if tag == 0x13 {
+            skipXorStr()
+            int has = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
+            if has != 0 { skipXorStr() }
+            return
+        }
+
+        // 未知标签: 尝试跳过 1 字节 (best effort)
         gLenbPos = gLenbPos + 1
     }
+
+    // 跳过函数数据 (tag 已由调用方读取)
+    // name + arity + upvals + locals + has_try + params + type_params + chunk
     func skipFuncRaw() {
-        int nameLen = rbe32(gLenbPos); gLenbPos = gLenbPos + 4 + nameLen
-        int arity = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-        int upvals = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-        int locals = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+        skipXorStr()       // function name
+        gLenbPos = gLenbPos + 4  // arity
+        gLenbPos = gLenbPos + 4  // upvalue_count
+        gLenbPos = gLenbPos + 4  // local_count
         gLenbPos = gLenbPos + 1  // has_try
-        int pcnt = rbe32(gLenbPos); gLenbPos = gLenbPos + 4 + pcnt
+        int pcnt = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+        if pcnt < 0 or pcnt > 100000 { gLenbPos = gLenbEnd; return }
+        gLenbPos = gLenbPos + pcnt  // param types (1 byte each)
         int tpcnt = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-        for 0:tpcnt-1 to i {
-            int n = rbe32(gLenbPos); gLenbPos = gLenbPos + 4 + n
-        }
+        if tpcnt < 0 or tpcnt > 100000 { gLenbPos = gLenbEnd; return }
+        for 0:tpcnt-1 to i { skipXorStr() }
         skipChunkRaw()
     }
+
+    // 跳过 chunk 数据
+    // filename + local_count + const_count + constants + code + lines
     func skipChunkRaw() {
-        int fnLen = rbe32(gLenbPos); gLenbPos = gLenbPos + 4 + fnLen
-        int lcnt = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+        skipXorStr()       // filename
+        gLenbPos = gLenbPos + 4  // local_count
         int ccnt = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+        if ccnt < 0 or ccnt > 100000 { gLenbPos = gLenbEnd; return }
         for 0:ccnt-1 to i { skipConstRaw() }
-        int codeLen = rbe32(gLenbPos); gLenbPos = gLenbPos + 4 + codeLen
+        int codeLen = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+        if codeLen < 0 or codeLen > 1000000 { gLenbPos = gLenbEnd; return }
+        gLenbPos = gLenbPos + codeLen
+        if gLenbPos >= gLenbEnd { return }
         int hasLines = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
         if hasLines == 1 and codeLen > 0 {
             gLenbPos = gLenbPos + 2 * codeLen
         }
     }
-    func formatConst(int idx, string text): string {
-        return "; const[" + _str(idx) + "] = " + text
-    }
+
+    // ==================== 常量文本解析 (parseConstText) ====================
+    //
+    // 读取常量并返回可读字符串，同时推进 gLenbPos 到常量之后。
+    // 必须跳过完整常量数据 (包括 FUNCTION 的嵌套 chunk)。
+
     func parseConstText(int depth): string {
-        int tag = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
+        if depth > 20 {
+            skipConstRaw()
+            return "<deep>"
+        }
+        if gLenbPos >= gLenbEnd { return "<eof>" }
+        int tag = fileData.byte(gLenbPos) & 0xFF
+        gLenbPos = gLenbPos + 1
+
         if tag == 0x00 { return "null" }
         if tag == 0x01 { return "true" }
         if tag == 0x02 { return "false" }
+
+        // INT: u64 BE
         if tag == 0x03 {
             int hi = rbe32(gLenbPos)
             int lo = rbe32(gLenbPos + 4)
@@ -1247,72 +1453,236 @@ struct PEAnalyzer {
             if hi == 0 and (lo >> 31) == 0 { return _str(lo) }
             return "int:" + toHex8(hi) + toHex8(lo)
         }
+
+        // FLOAT: double BE
         if tag == 0x04 {
             string hex = rbe_i64_hex(gLenbPos); gLenbPos = gLenbPos + 8
             return "float:" + hex
         }
+
+        // STRING: u32 len + XOR bytes
         if tag == 0x05 {
             int n = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
             string s = readXorStr(n)
             return "'" + s + "'"
         }
+
+        // FUNCTION: name + header + chunk (必须跳过 chunk!)
         if tag == 0x06 {
-            int nameLen = rbe32(gLenbPos); gLenbPos = gLenbPos + 4 + nameLen
-            if gLenbPos + 17 > gLenbEnd { return "FUNC?<trunc>" }
+            int nameLen = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            string fnName = readXorStr(nameLen)
+            if gLenbPos + 13 > gLenbEnd { return "FUNC?<trunc>" }
             int arity = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
             int upvals = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
             int locals = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
             int hasTry = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
-            int pcnt = rbe32(gLenbPos); gLenbPos = gLenbPos + 4 + pcnt
+            int pcnt = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            if pcnt < 0 or pcnt > 10000 { gLenbPos = gLenbEnd; return "FUNC?<bad>" }
+            gLenbPos = gLenbPos + pcnt
             int tpcnt = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            for 0:tpcnt-1 to i {
-                int n3 = rbe32(gLenbPos); gLenbPos = gLenbPos + 4 + n3
-            }
-            return "FUNC(arity=" + _str(arity) + ",upvals=" + _str(upvals) + ",locals=" + _str(locals) + ")"
+            if tpcnt < 0 or tpcnt > 10000 { gLenbPos = gLenbEnd; return "FUNC?<bad>" }
+            for 0:tpcnt-1 to i { skipXorStr() }
+            // 关键修复: 跳过嵌套 chunk
+            skipChunkRaw()
+            return "FUNC(" + fnName + ",arity=" + _str(arity) + ",upvals=" + _str(upvals) + ",locals=" + _str(locals) + ")"
         }
+
+        // BIGINT: u32 limbs + u8 is_neg + 4*limbs
         if tag == 0x07 {
             int n = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            gLenbPos = gLenbPos + 1 + 4 * n
+            gLenbPos = gLenbPos + 1
+            if n < 0 or n > 100000 { gLenbPos = gLenbEnd; return "BIGINT?<bad>" }
+            gLenbPos = gLenbPos + 4 * n
             return "BIGINT(limbs=" + _str(n) + ")"
         }
+
+        // RANGE: u64 start + u64 end + u8 inclusive
         if tag == 0x08 {
-            int sHi = rbe32(gLenbPos); int sLo = rbe32(gLenbPos + 4); gLenbPos = gLenbPos + 8
-            int eHi = rbe32(gLenbPos); int eLo = rbe32(gLenbPos + 4); gLenbPos = gLenbPos + 8
-            int inc = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
+            gLenbPos = gLenbPos + 17
             return "RANGE"
         }
+
+        // ARRAY: u32 count + count * constant
         if tag == 0x09 {
             int n = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            if n < 0 or n > 10000 { gLenbPos = gLenbEnd; return "[?<bad>]" }
             string r = "["
             for 0:n-1 to i {
                 if i > 0 { r = r + "," }
-                r = r + parseConstText(depth)
+                r = r + parseConstText(depth + 1)
             }
             return r + "]"
         }
+
+        // DICT: u32 count + 2*count * constant
         if tag == 0x0A {
             int n = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            if n < 0 or n > 10000 { gLenbPos = gLenbEnd; return "{?<bad>}" }
             string r = "{"
             for 0:n-1 to i {
                 if i > 0 { r = r + "," }
-                r = r + parseConstText(depth) + ":" + parseConstText(depth)
+                r = r + parseConstText(depth + 1) + ":" + parseConstText(depth + 1)
             }
             return r + "}"
         }
-        if tag == 0x13 {
-            int has = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
-            if has == 0 { return "FFI_LIB(null)" }
-            int n5 = rbe32(gLenbPos); gLenbPos = gLenbPos + 4 + n5
-            return "FFI_LIB"
+
+        // ENUM_DEF: name + members
+        if tag == 0x0B {
+            int nameLen = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            string name = readXorStr(nameLen)
+            int mc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            if mc < 0 or mc > 100000 { gLenbPos = gLenbEnd; return "ENUM?<bad>" }
+            for 0:mc-1 to i {
+                skipXorStr()
+                gLenbPos = gLenbPos + 8
+            }
+            return "ENUM(" + name + ")"
         }
-        if tag == 0x11 {
-            gLenbPos = gLenbPos + 2
+
+        // STRUCT_DEF: name + fields + methods + impls + consts
+        if tag == 0x0C {
+            int nameLen = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            string name = readXorStr(nameLen)
+            int fc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            if fc < 0 or fc > 100000 { gLenbPos = gLenbEnd; return "STRUCT?<bad>" }
+            for 0:fc-1 to i {
+                skipXorStr()
+                gLenbPos = gLenbPos + 1  // type
+                int hasSTN = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
+                if hasSTN != 0 { skipXorStr() }
+                int hasDef = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
+                if hasDef != 0 { skipConstRaw() }
+                gLenbPos = gLenbPos + 2
+            }
+            int mc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            if mc < 0 or mc > 100000 { gLenbPos = gLenbEnd; return "STRUCT?<bad>" }
+            for 0:mc-1 to i {
+                skipXorStr()
+                skipConstRaw()
+            }
+            int ic = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            if ic < 0 or ic > 100000 { gLenbPos = gLenbEnd; return "STRUCT?<bad>" }
+            for 0:ic-1 to i { skipXorStr() }
+            int cc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            if cc < 0 or cc > 100000 { gLenbPos = gLenbEnd; return "STRUCT?<bad>" }
+            for 0:cc-1 to i {
+                skipXorStr()
+                skipConstRaw()
+            }
+            return "STRUCT(" + name + ")"
+        }
+
+        // CSTRUCT_DEF
+        if tag == 0x0D {
+            int nameLen = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            string name = readXorStr(nameLen)
+            int fc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            gLenbPos = gLenbPos + 4 + 4 + 1 + 1  // size + align + packed + explicit
+            if fc < 0 or fc > 100000 { gLenbPos = gLenbEnd; return "CSTRUCT?<bad>" }
+            for 0:fc-1 to i {
+                skipXorStr()
+                gLenbPos = gLenbPos + 1 + 4 + 4 + 4  // type + offset + size + array_dim
+                int hasSN = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
+                if hasSN != 0 { skipXorStr() }
+                gLenbPos = gLenbPos + 1  // element_type
+            }
+            return "CSTRUCT(" + name + ")"
+        }
+
+        // FACE_DEF
+        if tag == 0x0E {
+            int nameLen = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            string name = readXorStr(nameLen)
+            int mc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            if mc < 0 or mc > 100000 { gLenbPos = gLenbEnd; return "FACE?<bad>" }
+            for 0:mc-1 to i {
+                skipXorStr()
+                int pc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                gLenbPos = gLenbPos + 1  // return type
+                if pc < 0 or pc > 100000 { gLenbPos = gLenbEnd; return "FACE?<bad>" }
+                gLenbPos = gLenbPos + pc
+            }
+            return "FACE(" + name + ")"
+        }
+
+        // MODULE
+        if tag == 0x0F {
+            int nameLen = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            string name = readXorStr(nameLen)
+            int hasPath = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
+            if hasPath != 0 { skipXorStr() }
+            int gc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            if gc < 0 or gc > 100000 { gLenbPos = gLenbEnd; return "MODULE?<bad>" }
+            for 0:gc-1 to i { skipConstRaw() }
+            int ec = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            if ec < 0 or ec > 100000 { gLenbPos = gLenbEnd; return "MODULE?<bad>" }
+            int totalE = 2 * ec
+            for 0:totalE-1 to i { skipConstRaw() }
+            int nic = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            if nic < 0 or nic > 100000 { gLenbPos = gLenbEnd; return "MODULE?<bad>" }
+            for 0:nic-1 to i { skipXorStr() }
+            int hasInit = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
+            if hasInit != 0 { skipChunkRaw() }
+            // export_mapping (v2.2.0+)
+            int emc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            if emc < 0 or emc > 100000 { gLenbPos = gLenbEnd; return "MODULE?<bad>" }
+            for 0:emc-1 to i {
+                skipXorStr()
+                gLenbPos = gLenbPos + 4
+            }
+            // use_reexport (v2.2.0+)
+            int urc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            if urc < 0 or urc > 100000 { gLenbPos = gLenbEnd; return "MODULE?<bad>" }
+            for 0:urc-1 to i {
+                skipXorStr()
+                gLenbPos = gLenbPos + 4
+            }
+            return "MODULE(" + name + ")"
+        }
+
+        // FFI_PTR: u64 + u64 + u8 + u8 + u8 = 19 bytes
+        if tag == 0x10 {
+            gLenbPos = gLenbPos + 19
             return "FFI_PTR"
         }
-        int nSkip = 0
-        string label = constTagName(tag)
-        return "<" + label + ">"
+
+        // CLOSURE: function constant + u32 + u32 + strings
+        if tag == 0x11 {
+            string fnDesc = parseConstText(depth + 1)
+            gLenbPos = gLenbPos + 4  // upvalue_count
+            int tpc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            if tpc < 0 or tpc > 100000 { gLenbPos = gLenbEnd; return "CLOSURE?<bad>" }
+            for 0:tpc-1 to i { skipXorStr() }
+            return "CLOSURE(" + fnDesc + ")"
+        }
+
+        // FFI_LIB: u8 has_path + if has: string
+        if tag == 0x12 {
+            int has = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
+            if has != 0 {
+                int n = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                string p = readXorStr(n)
+                return "FFI_LIB(" + p + ")"
+            }
+            return "FFI_LIB(null)"
+        }
+
+        // MODULE_REF: name + u8 has_path + if has: string
+        if tag == 0x13 {
+            int nameLen = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            string name = readXorStr(nameLen)
+            int has = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
+            if has != 0 { skipXorStr() }
+            return "MODULE_REF(" + name + ")"
+        }
+
+        // 未知标签
+        gLenbPos = gLenbPos + 1
+        return "<" + constTagName(tag) + ">"
     }
+
+    // ==================== 指令解码 ====================
+
     func decodeOneInstruction(int codeStart, int codeLen, Array[int] lines, int idx): string {
         int pc = codeStart + idx
         if pc + 1 > gLenbEnd { return "<eof>" }
@@ -1323,24 +1693,22 @@ struct PEAnalyzer {
         int lineNo = -1
         if idx < lines.len() { lineNo = lines[idx] }
         int nextPc = pc + 1 + immSz
-        if op == 0 {  // CONST
-            if pc + 3 <= gLenbEnd {
-                int ci = rbe16(pc + 1)
-                operands = "const[" + _str(ci) + "]"
-            }
-        } else if op == 8 {  // GET_LOCAL
+
+        if op == 0 {
+            if pc + 3 <= gLenbEnd { operands = "const[" + _str(rbe16(pc + 1)) + "]" }
+        } else if op == 8 {
             if pc + 3 <= gLenbEnd { operands = "slot=" + _str(rbe16(pc + 1)) }
-        } else if op == 9 {  // SET_LOCAL
+        } else if op == 9 {
             if pc + 3 <= gLenbEnd { operands = "slot=" + _str(rbe16(pc + 1)) }
-        } else if op == 12 {  // GET_GLOBAL
+        } else if op == 12 {
             if pc + 3 <= gLenbEnd { operands = "slot=" + _str(rbe16(pc + 1)) }
-        } else if op == 13 {  // SET_GLOBAL
+        } else if op == 13 {
             if pc + 3 <= gLenbEnd { operands = "slot=" + _str(rbe16(pc + 1)) }
-        } else if op == 11 {  // MOVE_LOCAL
+        } else if op == 11 {
             if pc + 5 <= gLenbEnd {
                 operands = "src=" + _str(rbe16(pc + 1)) + " dst=" + _str(rbe16(pc + 3))
             }
-        } else if op == 59 {  // CALL
+        } else if op == 59 {
             if pc + 3 <= gLenbEnd { operands = "argc=" + _str(rbe16(pc + 1)) }
         } else if op == 55 or op == 56 or op == 57 {
             if pc + 5 <= gLenbEnd {
@@ -1348,7 +1716,7 @@ struct PEAnalyzer {
                 int absT = pc + 1 + 4 + target
                 operands = "-> 0x" + toHex8(absT)
             }
-        } else if op == 58 {  // LOOP
+        } else if op == 58 {
             if pc + 5 <= gLenbEnd {
                 int target = rbe32(pc + 1)
                 int absT = pc + 1 + 4 + target
@@ -1358,9 +1726,9 @@ struct PEAnalyzer {
             if pc + 5 <= gLenbEnd {
                 operands = "name=" + _str(rbe16(pc + 1)) + " argc=" + _str(rbe16(pc + 3))
             }
-        } else if op == 61 {  // CLOSURE
+        } else if op == 61 {
             if pc + 3 <= gLenbEnd { operands = "const[" + _str(rbe16(pc + 1)) + "]" }
-        } else if op == 73 {  // LOAD_NATIVE_MODULE
+        } else if op == 73 {
             if pc + 3 <= gLenbEnd { operands = "const[" + _str(rbe16(pc + 1)) + "]" }
         } else if op >= 118 and op <= 128 {
             if pc + 2 <= gLenbEnd {
@@ -1368,7 +1736,7 @@ struct PEAnalyzer {
                 if imm >= 128 { imm = imm - 256 }
                 operands = "imm=" + _str(imm)
             }
-        } else if op == 64 {  // ARRAY
+        } else if op == 64 {
             if pc + 3 <= gLenbEnd { operands = "cap=" + _str(rbe16(pc + 1)) }
         } else if op == 131 or op == 132 {
             if pc + 2 <= gLenbEnd { operands = "field=" + _str(fileData.byte(pc + 1) & 0xFF) }
@@ -1377,22 +1745,40 @@ struct PEAnalyzer {
         } else if immSz > 0 {
             operands = "<" + _str(immSz) + "B>"
         }
+
         string lineField = "?"
         if lineNo == 0 { lineField = "0" }
         if lineNo > 0 { lineField = _str(lineNo) }
         string addrField = toHex8(pc)
         return addrField + "  L" + lineField + "  " + name + "  " + operands
     }
+
+    // ==================== Chunk 主体解析 ====================
+
+    func addLine(string s) {
+        if gLineCount < 10000 {
+            gLines.add(s)
+            gLineCount = gLineCount + 1
+        }
+    }
+
     func parseOneChunkBody(int depth) {
-        if depth > 4 { gLines.add("  ; <深度超限,停止展开>"); return }
+        if depth > 4 { addLine("  ; <深度超限,停止展开>"); return }
         if gLenbPos + 4 > gLenbEnd { return }
+
+        // filename string
         int fnLen = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
         if fnLen < 0 or fnLen > 1000 { return }
         string fnName = readXorStr(fnLen)
+
         if gLenbPos + 8 > gLenbEnd { return }
         int localCount = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
         int constCnt = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-        gLines.add("; ===== " + fnName + " (locals=" + _str(localCount) + ", consts=" + _str(constCnt) + ") =====")
+        if constCnt < 0 or constCnt > 100000 { return }
+
+        addLine("; ===== " + fnName + " (locals=" + _str(localCount) + ", consts=" + _str(constCnt) + ") =====")
+
+        // 解析常量 (parseConstText 现在会跳过完整常量，包括 FUNCTION 的 chunk)
         Array[int] constStarts = []
         Array[string] constTexts = []
         for 0:constCnt-1 to ci {
@@ -1400,15 +1786,18 @@ struct PEAnalyzer {
             string ct = parseConstText(depth + 1)
             constTexts.add(ct)
         }
+
+        // 显示常量，对 FUNCTION 常量递归展开嵌套 chunk
         for 0:constCnt-1 to ci {
             int cst = constStarts[ci]
             int tag = fileData.byte(cst) & 0xFF
-            gLines.add(formatConst(ci, constTexts[ci]))
+            addLine("; const[" + _str(ci) + "] = " + constTexts[ci])
             if tag == 0x06 and depth < 4 {
-                int subPos = cst + 1
+                // 从保存的起始位置重新计算 chunk 偏移
+                int subPos = cst + 1  // skip tag
                 int nameLen = rbe32(subPos); subPos = subPos + 4 + nameLen
-                subPos = subPos + 13
-                int p2 = rbe32(subPos); subPos = subPos + 4 + p2
+                subPos = subPos + 13  // arity(4) + upvals(4) + locals(4) + has_try(1)
+                int p2 = rbe32(subPos); subPos = subPos + 4 + p2  // param_count + params
                 int tp2 = rbe32(subPos); subPos = subPos + 4
                 for 0:tp2-1 to k {
                     int n2 = rbe32(subPos); subPos = subPos + 4 + n2
@@ -1419,10 +1808,15 @@ struct PEAnalyzer {
                 gLenbPos = savedPos
             }
         }
+
+        // 读取字节码
         if gLenbPos + 4 > gLenbEnd { return }
         int codeLen = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+        if codeLen < 0 or codeLen > 1000000 { return }
         int codeStart = gLenbPos
         gLenbPos = gLenbPos + codeLen
+
+        // 读取行号
         int hasLines = -1
         Array[int] lines = []
         if gLenbPos + 1 <= gLenbEnd {
@@ -1439,19 +1833,20 @@ struct PEAnalyzer {
         for 0:codeLen-1 to ii {
             if hasLines != 1 { lines.add(-1) }
         }
-        gLines.add("; --- bytecode (" + _str(codeLen) + "B) ---")
+
+        addLine("; --- bytecode (" + _str(codeLen) + "B) ---")
         int pc = 0
         while pc < codeLen {
             if codeStart + pc >= gLenbEnd { break }
             int opc = fileData.byte(codeStart + pc) & 0xFF
             int imm = opImmSize(opc)
             string line = decodeOneInstruction(codeStart, codeLen, lines, pc)
-            gLines.add(line)
+            addLine(line)
             pc = pc + 1 + imm
         }
     }
 
-    // ==================== 反汇编顶层驱动 ====================
+    // ==================== 符号表跳过 ====================
 
     func skipHeaderAndSymbols(int startPos): int {
         int pos = startPos
@@ -1459,20 +1854,26 @@ struct PEAnalyzer {
         int gvars = rbe32(pos); pos = pos + 4
         int gfuncs = rbe32(pos); pos = pos + 4
         int symCount = rbe32(pos); pos = pos + 4
+        if symCount < 0 or symCount > 100000 { return pos }
+
         for 0:symCount-1 to si {
             if pos + 13 > gLenbEnd { break }
             int kind = fileData.byte(pos) & 0xFF; pos = pos + 1
+
+            // name: string (u32 len + XOR bytes)
             int nameLen = rbe32(pos); pos = pos + 4
             if nameLen < 0 or nameLen > 100000 or pos + nameLen + 8 > gLenbEnd { break }
             pos = pos + nameLen
-            pos = pos + 4  // index
+
+            pos = pos + 4  // index (i32)
             pos = pos + 1  // is_captured
-            if pos + 2 > gLenbEnd { break }
-            int tkind = fileData.byte(pos) & 0xFF; pos = pos + 1
+            pos = pos + 1  // type_kind
             int hasDk = fileData.byte(pos) & 0xFF; pos = pos + 1
+
             if hasDk != 0 {
                 if pos + 4 > gLenbEnd { break }
                 int dkCount = rbe32(pos); pos = pos + 4
+                if dkCount < 0 or dkCount > 100000 { break }
                 for 0:dkCount-1 to di {
                     if pos + 4 > gLenbEnd { break }
                     int dkLen = rbe32(pos); pos = pos + 4
@@ -1480,13 +1881,44 @@ struct PEAnalyzer {
                     pos = pos + dkLen
                 }
             }
+
+            // SYM_CLIB (kind=10): clib_func_count + funcs
+            if kind == 10 {
+                if pos + 4 > gLenbEnd { break }
+                int cfc = rbe32(pos); pos = pos + 4
+                if cfc < 0 or cfc > 100000 { break }
+                for 0:cfc-1 to ci {
+                    if pos + 4 > gLenbEnd { break }
+                    int fnLen = rbe32(pos); pos = pos + 4
+                    if fnLen < 0 or pos + fnLen > gLenbEnd { break }
+                    pos = pos + fnLen
+                    pos = pos + 1  // return type
+                    if pos + 4 > gLenbEnd { break }
+                    int pc2 = rbe32(pos); pos = pos + 4
+                    if pc2 < 0 or pc2 > 100000 { break }
+                    pos = pos + pc2  // param types (1 byte each)
+                }
+            }
+
+            // SYM_CFUNC (kind=11): param_count + return_type + params
+            if kind == 11 {
+                if pos + 4 > gLenbEnd { break }
+                int pc3 = rbe32(pos); pos = pos + 4
+                pos = pos + 1  // return type
+                if pc3 < 0 or pc3 > 100000 { break }
+                pos = pos + pc3  // param types (1 byte each)
+            }
         }
         return pos
     }
 
-    func analyzeDisasm(){
+    // ==================== 反汇编顶层驱动 ====================
+
+    func analyzeDisasm() {
         disasmBox.clear()
         gLines = []
+        gLineCount = 0
+
         if fileSize < 8 {
             disasmBox.add_item("文件太小,无法包含 LENB 尾部")
             return
@@ -1510,25 +1942,33 @@ struct PEAnalyzer {
             disasmBox.add_item("LENB 数据太短")
             return
         }
+
+        // 读取 LENB 头部 (大端)
         int magic = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
         int version = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
         int flags = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
         string srcHash = rbe_i64_hex(gLenbPos)
         gLenbPos = gLenbPos + 8
-        gLines.add("; ===== LENB Header =====")
-        gLines.add("; magic:    0x" + toHex8(magic))
-        gLines.add("; version:  0x" + toHex8(version))
-        gLines.add("; flags:    0x" + toHex8(flags))
-        gLines.add("; src_hash: " + srcHash)
-        gLines.add("; blob_off: 0x" + toHex8(gLenbOff))
-        gLines.add("; blob_end: 0x" + toHex8(gLenbEnd))
+
+        addLine("; ===== LENB Header =====")
+        addLine("; magic:    0x" + toHex8(magic))
+        addLine("; version:  0x" + toHex8(version))
+        addLine("; flags:    0x" + toHex8(flags))
+        addLine("; src_hash: " + srcHash)
+        addLine("; blob_off: 0x" + toHex8(gLenbOff))
+        addLine("; blob_end: 0x" + toHex8(gLenbEnd))
+
         int parseStart = skipHeaderAndSymbols(gLenbPos)
-        gDepth = 0
         gLenbPos = parseStart
-        gLines.add("; ===== (跳过符号表,跳到模块主体) =====")
+        addLine("; ===== (跳过符号表,跳到模块主体) =====")
         parseOneChunkBody(0)
+
+        // 输出到 ListBox
         for 0:gLines.len()-1 to li {
             disasmBox.add_item(gLines[li])
+        }
+        if gLineCount >= 10000 {
+            disasmBox.add_item("... (输出已截断,超过 10000 行)")
         }
     }
 
