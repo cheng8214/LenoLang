@@ -304,13 +304,13 @@ static int body_has_unsupported(Ast* ast) {
         case AST_WHILE:
         case AST_FOR:
             return 1;  // 不内联含循环的函数（循环变量索引 patch 复杂）
-case AST_RETURN:
-return body_has_unsupported(ast->u.ret);
-case AST_RETURN_MULTI:
-for (int i = 0; i < ast->u.ret_multi.count; i++) {
-if (body_has_unsupported(ast->u.ret_multi.exprs[i])) return 1;
-}
-return 0;
+        case AST_RETURN:
+        return body_has_unsupported(ast->u.ret);
+        case AST_RETURN_MULTI:
+        for (int i = 0; i < ast->u.ret_multi.count; i++) {
+        if (body_has_unsupported(ast->u.ret_multi.exprs[i])) return 1;
+        }
+        return 0;
         case AST_VAR_DECL:
             return body_has_unsupported(ast->u.var_decl.init);
         case AST_DESTRUCT_DECL:
@@ -540,7 +540,9 @@ int try_inline_call(CodeGen* gen, Ast* ast, Ast* func_def) {
 
     gen->inline_depth++;
     gen->inline_result_slot = result_slot;
-    gen->inline_return_jump_count = 0;
+    // 不重置 inline_return_jump_count — 内层函数的 return 跳转
+    // 会自动追加到 saved_jump_count 之后，不会覆写外层函数的条目。
+    // 修复前：reset 为 0 导致嵌套内联时内层 return 覆写外层条目。
 
     // 4. 生成函数体（逐条语句，不用 gen_block 避免预处理逻辑）
     for (int i = 0; i < body_count; i++) {
@@ -551,8 +553,8 @@ int try_inline_call(CodeGen* gen, Ast* ast, Ast* func_def) {
     emit_byte(gen, OP_NULL, ast->line);
     emit_bytes_2(gen, OP_SET_LOCAL_POP, gen->inline_result_slot, ast->line);
 
-    // 6. 回填所有 return 跳转到这里
-    for (int i = 0; i < gen->inline_return_jump_count; i++) {
+    // 6. 只回填本层内联期间新增的 return 跳转（saved_jump_count 之后）
+    for (int i = saved_jump_count; i < gen->inline_return_jump_count; i++) {
         patch_jump(gen, gen->inline_return_jumps[i]);
     }
 

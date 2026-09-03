@@ -1,0 +1,730 @@
+// tetris.leno — 俄罗斯方块
+//
+// 操作：
+//   ← →      左右移动（按住连续移动）
+//   ↑ / X    顺时针旋转
+//   Z        逆时针旋转
+//   ↓        软降（+1 分/格）
+//   空格      硬降（+2 分/格）
+//   P        暂停 / 继续
+//   R        重新开始
+//   回车      开始（菜单/结束界面）
+//   ESC      退出
+//
+// 规则：10×20 棋盘，7-bag 随机器保证出块均匀；
+//       一次消 1/2/3/4 行分别得 100/300/500/800 × 等级分；
+//       每消 10 行升 1 级，下落越来越快。
+
+import "../../../../lib/SDL3.leno" as SDL3
+import "../../../../lib/sdl_core.leno" as core
+use SDL3.(Event, Renderer, WindowFlag, Scancode, Font)
+import rands
+
+// ==================== 常量 ====================
+
+var WIN_W = 480.0
+var WIN_H = 700.0
+
+var BOARD_W = 10
+var BOARD_H = 20
+var CELL = 30.0
+var BOARD_X = 30.0
+var BOARD_Y = 60.0
+var PANEL_X = 350.0
+
+// 游戏状态
+var ST_MENU = 0
+var ST_PLAY = 1
+var ST_PAUSE = 2
+var ST_OVER = 3
+
+// 方块类型：0=I 1=O 2=T 3=S 4=Z 5=J 6=L
+var CLEAR_FLASH = 8       // 消行闪烁帧数
+
+// 调色板（按方块类型索引 0..6）
+Array[float] PAL_R = []
+Array[float] PAL_G = []
+Array[float] PAL_B = []
+
+// ==================== 数据结构 ====================
+
+struct Game {
+    int state
+
+    Array[int] board          // BOARD_W * BOARD_H，0=空，1..7=方块类型+1
+    int curType               // 当前方块类型 0..6
+    Array[int] curShape       // 当前方块的 4x4 形态（16 个格子）
+    int curX, curY            // 当前方块在棋盘中的左上角坐标
+    int nextType              // 下一个方块
+    Array[int] bag            // 7-bag 剩余
+
+    int score, lines, level
+    int fallTimer, fallInterval
+    int clearFlashTimer
+    Array[int] clearRows      // 待消除的行号
+
+    int frameCount
+    bool moveLeft, moveRight, softDrop
+    int dasTimer              // 左右连发的重复计时
+
+    Font font
+}
+
+// ==================== 形状与调色板 ====================
+
+func initPalette() {
+    PAL_R = []; PAL_G = []; PAL_B = []
+    // I 青
+    PAL_R.add(0.10); PAL_G.add(0.85); PAL_B.add(0.95)
+    // O 黄
+    PAL_R.add(1.00); PAL_G.add(0.85); PAL_B.add(0.15)
+    // T 紫
+    PAL_R.add(0.70); PAL_G.add(0.35); PAL_B.add(0.95)
+    // S 绿
+    PAL_R.add(0.30); PAL_G.add(0.85); PAL_B.add(0.35)
+    // Z 红
+    PAL_R.add(0.95); PAL_G.add(0.25); PAL_B.add(0.30)
+    // J 蓝
+    PAL_R.add(0.25); PAL_G.add(0.45); PAL_B.add(0.95)
+    // L 橙
+    PAL_R.add(1.00); PAL_G.add(0.55); PAL_B.add(0.15)
+}
+
+// 16 个 0 的 4x4 网格
+func zeroGrid(): Array[int] {
+    Array[int] g = []
+    for 0 : 15 to i { g.add(0) }
+    return g
+}
+
+func zeroBoard(): Array[int] {
+    Array[int] b = []
+    for 0 : (BOARD_W * BOARD_H) - 1 to i { b.add(0) }
+    return b
+}
+
+// 每种方块的初始形态（4x4 网格，行优先索引 r*4+c）
+func shapeOf(int t): Array[int] {
+    Array[int] s = zeroGrid()
+    switch t {
+        case 0 {
+            // I：第 1 行整排
+            s[4] = 1; s[5] = 1; s[6] = 1; s[7] = 1
+        }
+        case 1 {
+            // O：2x2
+            s[1] = 1; s[2] = 1; s[5] = 1; s[6] = 1
+        }
+        case 2 {
+            // T
+            s[1] = 1; s[4] = 1; s[5] = 1; s[6] = 1
+        }
+        case 3 {
+            // S
+            s[2] = 1; s[3] = 1; s[4] = 1; s[5] = 1
+        }
+        case 4 {
+            // Z
+            s[0] = 1; s[1] = 1; s[5] = 1; s[6] = 1
+        }
+        case 5 {
+            // J
+            s[0] = 1; s[4] = 1; s[5] = 1; s[6] = 1
+        }
+        default {
+            // L
+            s[2] = 1; s[4] = 1; s[5] = 1; s[6] = 1
+        }
+    }
+    return s
+}
+
+// 4x4 网格旋转：cw=true 顺时针，false 逆时针
+func rotateGrid(Array[int] s, bool cw): Array[int] {
+    Array[int] r = zeroGrid()
+    for 0 : 3 to rw {
+        for 0 : 3 to c {
+            if cw {
+                r[rw * 4 + c] = s[(3 - c) * 4 + rw]
+            } else {
+                r[rw * 4 + c] = s[c * 4 + (3 - rw)]
+            }
+        }
+    }
+    return r
+}
+
+// ==================== 碰撞与移动 ====================
+
+// 判断形态 s 放在 (px, py) 是否越界或与已落方块重叠
+func collides(Game g, Array[int] s, int px, int py): bool {
+    for 0 : 3 to r {
+        for 0 : 3 to c {
+            if s[r * 4 + c] == 0 { continue }
+            int bx = px + c
+            int by = py + r
+            if bx < 0 or bx >= BOARD_W { return true }
+            if by >= BOARD_H { return true }
+            if by >= 0 {
+                if g.board[by * BOARD_W + bx] != 0 { return true }
+            }
+        }
+    }
+    return false
+}
+
+func tryMove(Game g, int dx, int dy): bool {
+    if collides(g, g.curShape, g.curX + dx, g.curY + dy) { return false }
+    g.curX = g.curX + dx
+    g.curY = g.curY + dy
+    return true
+}
+
+// 旋转并尝试踢墙（依次尝试横向偏移 0, ±1, ±2）
+func tryRotate(Game g, bool cw) {
+    if g.curType == 1 { return }   // O 旋转后形状不变
+
+    Array[int] ns = rotateGrid(g.curShape, cw)
+
+    Array[int] kicks = []
+    kicks.add(0); kicks.add(-1); kicks.add(1); kicks.add(-2); kicks.add(2)
+
+    for 0 : 4 to i {
+        int ox = kicks[i]
+        if not collides(g, ns, g.curX + ox, g.curY) {
+            g.curShape = ns
+            g.curX = g.curX + ox
+            return
+        }
+    }
+}
+
+func hardDrop(Game g) {
+    int dist = 0
+    while not collides(g, g.curShape, g.curX, g.curY + 1) {
+        g.curY = g.curY + 1
+        dist = dist + 1
+    }
+    g.score = g.score + dist * 2
+    lockPiece(g)
+}
+
+// ==================== 生成与锁定 ====================
+
+// 7-bag：7 种方块打乱后依次取，避免长时间不出 I
+func nextFromBag(Game g): int {
+    if g.bag.len() == 0 {
+        for 0 : 6 to i { g.bag.add(i) }
+        for 0 : 6 to i {
+            int j = rands.ints(0, 6)
+            int tmp = g.bag[i]
+            g.bag[i] = g.bag[j]
+            g.bag[j] = tmp
+        }
+    }
+
+    int t = g.bag[0]
+    Array[int] rest = []
+    if g.bag.len() > 1 {
+        for 1 : g.bag.len() - 1 to i { rest.add(g.bag[i]) }
+    }
+    g.bag = rest
+    return t
+}
+
+func updateFallInterval(Game g) {
+    int iv = 48 - (g.level - 1) * 4
+    if iv < 4 { iv = 4 }
+    g.fallInterval = iv
+}
+
+func spawnPiece(Game g) {
+    g.curType = g.nextType
+    g.nextType = nextFromBag(g)
+    g.curShape = shapeOf(g.curType)
+    g.curX = 3
+    g.curY = -1
+
+    // 新方块一出生就重叠 → 顶到天，游戏结束
+    if collides(g, g.curShape, g.curX, g.curY) {
+        g.state = ST_OVER
+    }
+}
+
+func isMarkedRow(Game g, int r): bool {
+    for 0 : g.clearRows.len() - 1 to i {
+        if g.clearRows[i] == r { return true }
+    }
+    return false
+}
+
+// 方块落地：写入棋盘，并检测满行
+func lockPiece(Game g) {
+    for 0 : 3 to r {
+        for 0 : 3 to c {
+            if g.curShape[r * 4 + c] == 0 { continue }
+            int by = g.curY + r
+            int bx = g.curX + c
+            if by >= 0 {
+                g.board[by * BOARD_W + bx] = g.curType + 1
+            }
+        }
+    }
+
+    // 收集满行
+    Array[int] full = []
+    for 0 : BOARD_H - 1 to r {
+        bool isFull = true
+        for 0 : BOARD_W - 1 to c {
+            if g.board[r * BOARD_W + c] == 0 {
+                isFull = false
+                break
+            }
+        }
+        if isFull { full.add(r) }
+    }
+
+    if full.len() > 0 {
+        g.clearRows = full
+        g.clearFlashTimer = CLEAR_FLASH
+    } else {
+        spawnPiece(g)
+    }
+}
+
+// 删除满行并结算分数
+func removeRows(Game g) {
+    int cnt = g.clearRows.len()
+
+    // 从底往上重建棋盘，跳过被消掉的行
+    Array[int] nb = zeroBoard()
+    int wr = BOARD_H - 1
+    for 0 : BOARD_H - 1 to i {
+        int r = BOARD_H - 1 - i
+        if isMarkedRow(g, r) { continue }
+        for 0 : BOARD_W - 1 to c {
+            nb[wr * BOARD_W + c] = g.board[r * BOARD_W + c]
+        }
+        wr = wr - 1
+    }
+    g.board = nb
+
+    int base = 100
+    switch cnt {
+        case 1 { base = 100 }
+        case 2 { base = 300 }
+        case 3 { base = 500 }
+        case 4 { base = 800 }
+        default { base = 1000 }
+    }
+    g.score = g.score + base * g.level
+    g.lines = g.lines + cnt
+
+    int newLevel = g.lines / 10 + 1
+    if newLevel > g.level {
+        g.level = newLevel
+        updateFallInterval(g)
+    }
+
+    g.clearRows = []
+}
+
+// ==================== 游戏流程 ====================
+
+func newGame(): Game {
+    var g = new Game()
+    g.state = ST_MENU
+    g.board = zeroBoard()
+    g.bag = []
+    g.curType = 0
+    g.curShape = zeroGrid()
+    g.curX = 3
+    g.curY = -1
+    g.nextType = 0
+    g.score = 0
+    g.lines = 0
+    g.level = 1
+    g.fallTimer = 0
+    g.fallInterval = 48
+    g.clearFlashTimer = 0
+    g.clearRows = []
+    g.frameCount = 0
+    g.moveLeft = false
+    g.moveRight = false
+    g.softDrop = false
+    g.dasTimer = 0
+    return g
+}
+
+func startGame(Game g) {
+    g.state = ST_PLAY
+    g.board = zeroBoard()
+    g.bag = []
+    g.score = 0
+    g.lines = 0
+    g.level = 1
+    g.fallTimer = 0
+    g.fallInterval = 48
+    g.clearFlashTimer = 0
+    g.clearRows = []
+    g.moveLeft = false
+    g.moveRight = false
+    g.softDrop = false
+    g.dasTimer = 0
+
+    g.nextType = nextFromBag(g)
+    spawnPiece(g)
+}
+
+func updateGame(Game g) {
+    // 消行闪烁期间冻结操作
+    if g.clearFlashTimer > 0 {
+        g.clearFlashTimer = g.clearFlashTimer - 1
+        if g.clearFlashTimer <= 0 {
+            removeRows(g)
+            spawnPiece(g)
+        }
+        return
+    }
+
+    // 左右按住时的连发（首次延迟 12 帧，之后每 4 帧一格）
+    if g.moveLeft or g.moveRight {
+        if g.dasTimer > 0 {
+            g.dasTimer = g.dasTimer - 1
+        } else {
+            int dir = 1
+            if g.moveLeft { dir = -1 }
+            tryMove(g, dir, 0)
+            g.dasTimer = 4
+        }
+    }
+
+    // 重力（软降时加速到 2 帧/格）
+    int interval = g.fallInterval
+    if g.softDrop and interval > 2 { interval = 2 }
+
+    g.fallTimer = g.fallTimer + 1
+    if g.fallTimer >= interval {
+        g.fallTimer = 0
+        if not collides(g, g.curShape, g.curX, g.curY + 1) {
+            g.curY = g.curY + 1
+            if g.softDrop { g.score = g.score + 1 }
+        } else {
+            lockPiece(g)
+        }
+    }
+}
+
+// ==================== 渲染 ====================
+
+func drawCell(Renderer r, float x, float y, float size, int t, float alpha) {
+    if t < 1 or t > 7 { return }
+    float cr = PAL_R[t - 1]
+    float cg = PAL_G[t - 1]
+    float cb = PAL_B[t - 1]
+
+    // 外框（暗色）
+    r.setColorFloat(cr * 0.7, cg * 0.7, cb * 0.7, alpha)
+    r.fillRect(x + 1.0, y + 1.0, size - 2.0, size - 2.0)
+    // 内芯（亮色）
+    r.setColorFloat(cr, cg, cb, alpha)
+    r.fillRect(x + 4.0, y + 4.0, size - 8.0, size - 8.0)
+    // 顶部高光
+    r.setColorFloat(1.0, 1.0, 1.0, alpha * 0.25)
+    r.fillRect(x + 4.0, y + 4.0, size - 8.0, 3.0)
+}
+
+func drawShape(Renderer r, Array[int] shape, int px, int py, int t,
+               float ox, float oy, float size, float alpha) {
+    for 0 : 3 to rw {
+        for 0 : 3 to c {
+            if shape[rw * 4 + c] == 0 { continue }
+            int by = py + rw
+            if by < 0 { continue }
+            float x = ox + _float(px + c) * size
+            float y = oy + _float(by) * size
+            drawCell(r, x, y, size, t, alpha)
+        }
+    }
+}
+
+func drawBoard(Game g, Renderer r) {
+    float bw = _float(BOARD_W) * CELL
+    float bh = _float(BOARD_H) * CELL
+
+    // 棋盘底色
+    r.setColorFloat(0.05, 0.05, 0.09, 1.0)
+    r.fillRect(BOARD_X, BOARD_Y, bw, bh)
+
+    // 网格线
+    r.setColorFloat(1.0, 1.0, 1.0, 0.05)
+    for 0 : BOARD_W to i {
+        float x = BOARD_X + _float(i) * CELL
+        r.drawLine(x, BOARD_Y, x, BOARD_Y + bh)
+    }
+    for 0 : BOARD_H to i {
+        float y = BOARD_Y + _float(i) * CELL
+        r.drawLine(BOARD_X, y, BOARD_X + bw, y)
+    }
+
+    // 已落下的方块
+    for 0 : BOARD_H - 1 to row {
+        for 0 : BOARD_W - 1 to c {
+            int v = g.board[row * BOARD_W + c]
+            if v != 0 {
+                float x = BOARD_X + _float(c) * CELL
+                float y = BOARD_Y + _float(row) * CELL
+                drawCell(r, x, y, CELL, v, 1.0)
+            }
+        }
+    }
+
+    // 当前方块 + 落点预测（幽灵）
+    if g.clearFlashTimer <= 0 and (g.state == ST_PLAY or g.state == ST_PAUSE) {
+        int gy = g.curY
+        while not collides(g, g.curShape, g.curX, gy + 1) {
+            gy = gy + 1
+        }
+        drawShape(r, g.curShape, g.curX, gy, g.curType + 1, BOARD_X, BOARD_Y, CELL, 0.22)
+        drawShape(r, g.curShape, g.curX, g.curY, g.curType + 1, BOARD_X, BOARD_Y, CELL, 1.0)
+    }
+
+    // 消行闪烁
+    if g.clearFlashTimer > 0 and g.clearRows.len() > 0 {
+        float a = _float(g.clearFlashTimer % 4) / 4.0
+        r.setColorFloat(1.0, 1.0, 1.0, 0.3 + a * 0.5)
+        for 0 : g.clearRows.len() - 1 to i {
+            float y = BOARD_Y + _float(g.clearRows[i]) * CELL
+            r.fillRect(BOARD_X, y, bw, CELL)
+        }
+    }
+
+    // 棋盘边框
+    r.setColorFloat(0.45, 0.55, 0.9, 0.9)
+    r.drawRect(BOARD_X, BOARD_Y, bw, bh)
+}
+
+func drawPanel(Game g, Renderer r) {
+    float px = PANEL_X
+
+    if not g.font.ok { return }
+
+    // 下一个方块预览
+    r.drawText(g.font, "NEXT", px, 60.0, #AAAAAAFF)
+    r.setColorFloat(0.06, 0.06, 0.12, 1.0)
+    r.fillRect(px, 85.0, 100.0, 80.0)
+    r.setColorFloat(0.45, 0.55, 0.9, 0.6)
+    r.drawRect(px, 85.0, 100.0, 80.0)
+
+    Array[int] ns = shapeOf(g.nextType)
+    drawShape(r, ns, 0, 0, g.nextType + 1, px + 10.0, 95.0, 20.0, 1.0)
+
+    // 数据面板
+    r.drawText(g.font, "分数", px, 190.0, #AAAAAAFF)
+    r.drawText(g.font, _str(g.score), px, 212.0, #FFFFFFFF)
+
+    r.drawText(g.font, "等级", px, 250.0, #AAAAAAFF)
+    r.drawText(g.font, _str(g.level), px, 272.0, #88CCFFFF)
+
+    r.drawText(g.font, "消行", px, 310.0, #AAAAAAFF)
+    r.drawText(g.font, _str(g.lines), px, 332.0, #88FF88FF)
+
+    // 操作说明
+    float hy = 385.0
+    r.drawText(g.font, "操作", px, hy, #AAAAAAFF)
+    r.drawText(g.font, "← → 移动", px, hy + 22.0, #888888FF)
+    r.drawText(g.font, "↑ / X 旋转", px, hy + 44.0, #888888FF)
+    r.drawText(g.font, "Z 反向旋转", px, hy + 66.0, #888888FF)
+    r.drawText(g.font, "↓ 软降", px, hy + 88.0, #888888FF)
+    r.drawText(g.font, "空格 硬降", px, hy + 110.0, #888888FF)
+    r.drawText(g.font, "P 暂停", px, hy + 132.0, #888888FF)
+    r.drawText(g.font, "R 重开", px, hy + 154.0, #888888FF)
+    r.drawText(g.font, "ESC 退出", px, hy + 176.0, #888888FF)
+}
+
+func drawOverlay(Game g, Renderer r, float alpha) {
+    r.setColorFloat(0.0, 0.0, 0.0, alpha)
+    r.fillRect(0.0, 0.0, WIN_W, WIN_H)
+}
+
+func renderMenu(Game g, Renderer r) {
+    drawOverlay(g, r, 0.75)
+
+    if g.font.ok {
+        r.drawTextCentered(g.font, "俄罗斯方块", 0.0, WIN_W, WIN_H / 2.0 - 90.0, #66DDFFFF)
+        if (g.frameCount / 30) % 2 == 0 {
+            r.drawTextCentered(g.font, "按 回车 开始游戏", 0.0, WIN_W, WIN_H / 2.0 - 20.0, #FFFFFFFF)
+        }
+        r.drawTextCentered(g.font, "← → 移动   ↑ 旋转   空格 硬降", 0.0, WIN_W, WIN_H / 2.0 + 40.0, #AAAAAAFF)
+        r.drawTextCentered(g.font, "消行得 ↑ 升级加速", 0.0, WIN_W, WIN_H / 2.0 + 70.0, #888888FF)
+    }
+}
+
+func renderPause(Game g, Renderer r) {
+    drawOverlay(g, r, 0.6)
+
+    if g.font.ok {
+        r.drawTextCentered(g.font, "已暂停", 0.0, WIN_W, WIN_H / 2.0 - 30.0, #FFD700FF)
+        if (g.frameCount / 30) % 2 == 0 {
+            r.drawTextCentered(g.font, "按 P 继续", 0.0, WIN_W, WIN_H / 2.0 + 10.0, #AAAAAAFF)
+        }
+    }
+}
+
+func renderOver(Game g, Renderer r) {
+    drawOverlay(g, r, 0.72)
+
+    if g.font.ok {
+        r.drawTextCentered(g.font, "游戏结束", 0.0, WIN_W, WIN_H / 2.0 - 60.0, #FF4444FF)
+        r.drawTextCentered(g.font, "分数: " + _str(g.score), 0.0, WIN_W, WIN_H / 2.0 - 10.0, #FFFFFFFF)
+        r.drawTextCentered(g.font, "消行: " + _str(g.lines) + "   等级: " + _str(g.level),
+                           0.0, WIN_W, WIN_H / 2.0 + 20.0, #AAAAAAFF)
+        if (g.frameCount / 30) % 2 == 0 {
+            r.drawTextCentered(g.font, "按 回车 / R 重新开始", 0.0, WIN_W, WIN_H / 2.0 + 80.0, #AAAAAAFF)
+        }
+    }
+}
+
+func renderGame(Game g, Renderer r) {
+    // 清屏
+    r.setColor(#0d0d18FF)
+    r.clear()
+
+    // 标题
+    if g.font.ok {
+        r.drawText(g.font, "俄罗斯方块", BOARD_X, 20.0, #66DDFFFF)
+    }
+
+    drawBoard(g, r)
+    drawPanel(g, r)
+
+    switch g.state {
+        case ST_MENU {
+            renderMenu(g, r)
+        }
+        case ST_PAUSE {
+            renderPause(g, r)
+        }
+        case ST_OVER {
+            renderOver(g, r)
+        }
+        default { }
+    }
+
+    core.requestRedraw()
+}
+
+// ==================== 事件处理 ====================
+
+func handleEvent(Game g, Event e): bool {
+    if e.isQuit() or e.isWindowClose() { return false }
+
+    if e.isKeyDown() {
+        int sc = e.scancode()
+        if sc == Scancode.ESCAPE { return false }
+
+        // 全局按键
+        switch sc {
+            case Scancode.RETURN {
+                if g.state == ST_MENU or g.state == ST_OVER { startGame(g) }
+            }
+            case Scancode.P {
+                if g.state == ST_PLAY {
+                    g.state = ST_PAUSE
+                } else if g.state == ST_PAUSE {
+                    g.state = ST_PLAY
+                }
+            }
+            case Scancode.R {
+                startGame(g)
+            }
+            default { }
+        }
+
+        if g.state != ST_PLAY { return true }
+        if g.clearFlashTimer > 0 { return true }
+
+        // 操作按键
+        switch sc {
+            case Scancode.LEFT {
+                g.moveLeft = true
+                tryMove(g, -1, 0)
+                g.dasTimer = 12
+            }
+            case Scancode.RIGHT {
+                g.moveRight = true
+                tryMove(g, 1, 0)
+                g.dasTimer = 12
+            }
+            case Scancode.DOWN {
+                g.softDrop = true
+            }
+            case Scancode.UP, Scancode.X {
+                tryRotate(g, true)
+            }
+            case Scancode.Z {
+                tryRotate(g, false)
+            }
+            case Scancode.SPACE {
+                hardDrop(g)
+            }
+            default { }
+        }
+    }
+
+    if e.isKeyUp() {
+        int sc = e.scancode()
+        switch sc {
+            case Scancode.LEFT { g.moveLeft = false }
+            case Scancode.RIGHT { g.moveRight = false }
+            case Scancode.DOWN { g.softDrop = false }
+            default { }
+        }
+    }
+
+    return true
+}
+
+// ==================== 主函数 ====================
+
+main() {
+    var win = SDL3.createWindow({
+        title: "俄罗斯方块",
+        w: _int(WIN_W),
+        h: _int(WIN_H),
+        flags: WindowFlag.RESIZABLE
+    })
+    if not win.ok {
+        print("[错误] 窗口创建失败")
+        return
+    }
+
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(18.0)
+
+    initPalette()
+
+    var g = newGame()
+    g.font = font
+
+    win.setMaxFPS(60)
+
+    print("[OK] 俄罗斯方块启动成功!")
+    print("     ← → 移动, ↑/X 旋转, Z 反向, ↓ 软降, 空格 硬降, P 暂停, R 重开, ESC 退出")
+
+    win.run(
+        func(Event ev): bool {
+            return handleEvent(g, ev)
+        },
+        func(Renderer r) {
+            if g.state == ST_PLAY { updateGame(g) }
+            g.frameCount = g.frameCount + 1
+            renderGame(g, r)
+        }
+    )
+
+    if font.ok { font.close() }
+    win.destroy()
+    SDL3.quit()
+    print("俄罗斯方块退出")
+}
