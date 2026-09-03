@@ -1,2 +1,0 @@
-export alias Size = int
-export alias Name = string
