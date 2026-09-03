@@ -203,6 +203,12 @@ export struct TabControl impl Widget, Themeable {
     func _bind_window(Ptr[u8] hwnd) {
         _hwnd = hwnd
         for _pages.len() to p {
+            // 先把句柄下发给通过 setPageLayout 设置的布局容器，
+            // 布局容器内部会递归传递给 Edit 等子控件
+            if _hasLayout[p] {
+                _tab_pass_window(_pageLayouts[p] as Widget, hwnd)
+            }
+            // 再下发给通过 addToPage 直接添加的子控件
             var pg = _pages[p]
             for pg to c { _tab_pass_window(c, hwnd) }
         }

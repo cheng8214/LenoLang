@@ -6,12 +6,13 @@
 //   3. 检测 LENB 尾部附加数据（Leno 编译器生成的元信息）
 //   4. XOR(LENO) 加密字符串搜索与解密
 //   5. LENB 字节码反汇编(显示 opcode、常量池、跳转目标、行号)
+//   6. 反汇编 Table 支持右键菜单修改数据、写回磁盘、查找数据
 //
 // 运行：leno pe_analyzer.leno
 import "../../../lib/SDL3.leno" as SDL3
 import "../../../lib/sdl_filedialog.leno" as fdlg
 use SDL3.(Event, Renderer, Window, WindowFlag, TitleBar, Scancode)
-use SDL3.(Button, Label, ListBox, Table, HBox, VBox, TabControl)
+use SDL3.(Button, Label, ListBox, Table, HBox, VBox, TabControl, Edit)
 import files
 import strings
 import dirs
@@ -27,11 +28,12 @@ const HEX_CHARS = "0123456789ABCDEF"
 
 // XOR 密钥 "LENO" = 0x4C, 0x45, 0x4E, 0x4F
 func xorKey(int i): int {
-    int m = i % 4
-    if m == 0 { return 0x4C }
-    if m == 1 { return 0x45 }
-    if m == 2 { return 0x4E }
-    return 0x4F
+    switch i % 4 {
+        case 0 { return 0x4C }
+        case 1 { return 0x45 }
+        case 2 { return 0x4E }
+        default { return 0x4F }
+    }
 }
 
 // ==================== 二进制读取工具函数 ====================
@@ -159,7 +161,18 @@ struct PEAnalyzer {
     Table       importTable
     ListBox     lenbBox
     Table       xorTable
-    ListBox     disasmBox
+    Table       disasmTable
+
+    // 反汇编页搜索栏
+    Edit        disasmSearchEdit
+    Button      disasmSearchBtn
+    Button      disasmSaveBtn
+    Button      disasmSearchNextBtn
+
+    // 反汇编数据缓存（用于搜索和保存）
+    Array[Array[string]] disasmRows = []
+    int         disasmSearchPos = 0  // 搜索当前匹配位置
+    string      disasmSearchKey = "" // 搜索关键字
 
     // ===== 分析状态 =====
     string filePath = ""
@@ -308,10 +321,44 @@ struct PEAnalyzer {
         tab.setPageLayout(6, xorLayout)
 
         // 反汇编页
-        disasmBox = SDL3.createListBox({font_size: 12})
-        var disasmLayout = SDL3.createVBox({padX: PAD, padY: PAD, spacing: 0})
-        disasmLayout.add(disasmBox, {grow: 1, shrink: 1, align: 3})
+        var disasmToolbar = SDL3.createHBox({h: 36, padX: 4, padY: 2, spacing: 6})
+        disasmSearchEdit = SDL3.createEdit({w: 200, h: 28, font_size: 13, placeholder: "搜索指令/地址/操作数..."})
+        disasmToolbar.add(disasmSearchEdit, {grow: 1, shrink: 1, align: 3})
+        disasmSearchBtn = SDL3.createButton({w: 60, h: 28, text: "查找", font_size: 14})
+        disasmToolbar.add(disasmSearchBtn, {grow: 0, shrink: 0, basis: 60, align: 3})
+        disasmSearchNextBtn = SDL3.createButton({w: 70, h: 28, text: "下一个", font_size: 14})
+        disasmToolbar.add(disasmSearchNextBtn, {grow: 0, shrink: 0, basis: 70, align: 3})
+        disasmSaveBtn = SDL3.createButton({w: 80, h: 28, text: "保存修改", font_size: 14})
+        disasmToolbar.add(disasmSaveBtn, {grow: 0, shrink: 0, basis: 80, align: 3})
+        disasmSearchBtn.on_click(func() { onDisasmSearch() })
+        disasmSearchNextBtn.on_click(func() { onDisasmSearchNext() })
+        disasmSaveBtn.on_click(func() { onDisasmSave() })
+        disasmSearchEdit.on_enter(func() { onDisasmSearch() })
+
+        disasmTable = SDL3.createTable({
+            headers: ["地址", "行号", "指令", "操作数", "原始字节"],
+            col_widths: [110.0, 60.0, 160.0, 200.0, 300.0],
+            sortable: true, zebra: true, row_h: 22, header_h: 28, font_size: 12,
+            editable: false, cell_select: true
+        })
+        var disasmLayout = SDL3.createVBox({padX: PAD, padY: PAD, spacing: 4})
+        disasmLayout.add(disasmToolbar, {grow: 0, shrink: 0, align: 3})
+        disasmLayout.add(disasmTable, {grow: 1, shrink: 1, align: 3})
         tab.setPageLayout(7, disasmLayout)
+
+        // 反汇编 Table 右键菜单
+        disasmTable.addContextItem({label: "修改此单元格", id: "edit_cell", shortcut: "F2"})
+        disasmTable.addContextItem({label: "修改整行数据", id: "edit_row"})
+        disasmTable.addContextSeparator()
+        disasmTable.addContextItem({label: "复制整行", id: "copy_row", shortcut: "Ctrl+C"})
+        disasmTable.addContextItem({label: "复制地址", id: "copy_addr"})
+        disasmTable.addContextSeparator()
+        disasmTable.addContextItem({label: "跳转到地址...", id: "goto_addr"})
+        disasmTable.addContextItem({label: "保存修改到文件", id: "save_file"})
+        disasmTable.on_context_select(func(int row, string id) { onDisasmContext(row, id) })
+        disasmTable.on_context_will_open(func(int row) { onDisasmCtxWillOpen(row) })
+        disasmTable.on_edit_commit(func(int row, int col, string newText) { onDisasmEditCommit(row, col, newText) })
+        disasmTable.on_cell(func(int row, int col) { onDisasmCellClick(row, col) })
 
         // 状态栏
         statusLbl = SDL3.createLabel({text: "就绪 - 点击[浏览...]选择 PE 文件", font_size: 13})
@@ -442,14 +489,18 @@ struct PEAnalyzer {
         optHeaderOff = peHeaderOff + 24
         if optHeaderOff + 2 <= fileSize {
             int optMagic = readU16(fileData, optHeaderOff)
-            if optMagic == 0x010B {
-                is64bit = 0
-                overviewBox.add_item("[可选头] Magic: 0x" + toHex4(optMagic) + " (PE32, 32位)")
-            } else if optMagic == 0x20B {
-                is64bit = 1
-                overviewBox.add_item("[可选头] Magic: 0x" + toHex4(optMagic) + " (PE32+, 64位)")
-            } else {
-                overviewBox.add_item("[可选头] Magic: 0x" + toHex4(optMagic) + " (未知格式)")
+            switch optMagic {
+                case 0x010B {
+                    is64bit = 0
+                    overviewBox.add_item("[可选头] Magic: 0x" + toHex4(optMagic) + " (PE32, 32位)")
+                }
+                case 0x20B {
+                    is64bit = 1
+                    overviewBox.add_item("[可选头] Magic: 0x" + toHex4(optMagic) + " (PE32+, 64位)")
+                }
+                default {
+                    overviewBox.add_item("[可选头] Magic: 0x" + toHex4(optMagic) + " (未知格式)")
+                }
             }
         }
 
@@ -533,8 +584,10 @@ struct PEAnalyzer {
 
             int optMagic = readU16(fileData, optHeaderOff)
             string magicStr = "未知"
-            if optMagic == 0x010B { magicStr = "PE32 (32位)" }
-            if optMagic == 0x20B { magicStr = "PE32+ (64位)" }
+            switch optMagic {
+                case 0x010B { magicStr = "PE32 (32位)" }
+                case 0x20B { magicStr = "PE32+ (64位)" }
+            }
             rows.add(["Magic", "0x" + toHex4(optMagic), magicStr])
 
             rows.add(["MajorLinkerVersion", _str(readU8(fileData, optHeaderOff + 2)), "链接器主版本号"])
@@ -545,32 +598,35 @@ struct PEAnalyzer {
             rows.add(["AddressOfEntryPoint", "0x" + toHex8(readU32(fileData, optHeaderOff + 16)), "入口点 RVA"])
             rows.add(["BaseOfCode", "0x" + toHex8(readU32(fileData, optHeaderOff + 20)), "代码段基址 RVA"])
 
-            if optMagic == 0x010B {
-                rows.add(["BaseOfData", "0x" + toHex8(readU32(fileData, optHeaderOff + 24)), "数据段基址 RVA"])
-                rows.add(["ImageBase", "0x" + toHex8(readU32(fileData, optHeaderOff + 28)), "镜像基址"])
-                rows.add(["SectionAlignment", "0x" + toHex8(readU32(fileData, optHeaderOff + 32)), "节区对齐粒度"])
-                rows.add(["FileAlignment", "0x" + toHex8(readU32(fileData, optHeaderOff + 36)), "文件对齐粒度"])
-                rows.add(["MajorOSVersion", _str(readU16(fileData, optHeaderOff + 40)), "所需 OS 主版本号"])
-                rows.add(["MinorOSVersion", _str(readU16(fileData, optHeaderOff + 42)), "所需 OS 次版本号"])
-                rows.add(["MajorImageVersion", _str(readU16(fileData, optHeaderOff + 44)), "镜像主版本号"])
-                rows.add(["MinorImageVersion", _str(readU16(fileData, optHeaderOff + 46)), "镜像次版本号"])
-                rows.add(["MajorSubsystemVersion", _str(readU16(fileData, optHeaderOff + 48)), "子系统主版本号"])
-                rows.add(["MinorSubsystemVersion", _str(readU16(fileData, optHeaderOff + 50)), "子系统次版本号"])
-                rows.add(["SizeOfImage", "0x" + toHex8(readU32(fileData, optHeaderOff + 56)), "镜像总大小"])
-                rows.add(["SizeOfHeaders", "0x" + toHex8(readU32(fileData, optHeaderOff + 60)), "头部大小"])
-                rows.add(["Subsystem", _str(readU16(fileData, optHeaderOff + 68)), subsystemName(readU16(fileData, optHeaderOff + 68))])
-                rows.add(["CheckSum", "0x" + toHex8(readU32(fileData, optHeaderOff + 64)), "校验和"])
-            } else if optMagic == 0x20B {
-                rows.add(["ImageBase", "0x" + toHex8(readU32(fileData, optHeaderOff + 24)), "镜像基址(低32位)"])
-                rows.add(["ImageBase_Hi", "0x" + toHex8(readU32(fileData, optHeaderOff + 28)), "镜像基址(高32位)"])
-                rows.add(["SectionAlignment", "0x" + toHex8(readU32(fileData, optHeaderOff + 32)), "节区对齐粒度"])
-                rows.add(["FileAlignment", "0x" + toHex8(readU32(fileData, optHeaderOff + 36)), "文件对齐粒度"])
-                rows.add(["MajorOSVersion", _str(readU16(fileData, optHeaderOff + 40)), "所需 OS 主版本号"])
-                rows.add(["MinorOSVersion", _str(readU16(fileData, optHeaderOff + 42)), "所需 OS 次版本号"])
-                rows.add(["SizeOfImage", "0x" + toHex8(readU32(fileData, optHeaderOff + 56)), "镜像总大小"])
-                rows.add(["SizeOfHeaders", "0x" + toHex8(readU32(fileData, optHeaderOff + 60)), "头部大小"])
-                rows.add(["Subsystem", _str(readU16(fileData, optHeaderOff + 68)), subsystemName(readU16(fileData, optHeaderOff + 68))])
-                rows.add(["CheckSum", "0x" + toHex8(readU32(fileData, optHeaderOff + 64)), "校验和"])
+            switch optMagic {
+                case 0x010B {
+                    rows.add(["BaseOfData", "0x" + toHex8(readU32(fileData, optHeaderOff + 24)), "数据段基址 RVA"])
+                    rows.add(["ImageBase", "0x" + toHex8(readU32(fileData, optHeaderOff + 28)), "镜像基址"])
+                    rows.add(["SectionAlignment", "0x" + toHex8(readU32(fileData, optHeaderOff + 32)), "节区对齐粒度"])
+                    rows.add(["FileAlignment", "0x" + toHex8(readU32(fileData, optHeaderOff + 36)), "文件对齐粒度"])
+                    rows.add(["MajorOSVersion", _str(readU16(fileData, optHeaderOff + 40)), "所需 OS 主版本号"])
+                    rows.add(["MinorOSVersion", _str(readU16(fileData, optHeaderOff + 42)), "所需 OS 次版本号"])
+                    rows.add(["MajorImageVersion", _str(readU16(fileData, optHeaderOff + 44)), "镜像主版本号"])
+                    rows.add(["MinorImageVersion", _str(readU16(fileData, optHeaderOff + 46)), "镜像次版本号"])
+                    rows.add(["MajorSubsystemVersion", _str(readU16(fileData, optHeaderOff + 48)), "子系统主版本号"])
+                    rows.add(["MinorSubsystemVersion", _str(readU16(fileData, optHeaderOff + 50)), "子系统次版本号"])
+                    rows.add(["SizeOfImage", "0x" + toHex8(readU32(fileData, optHeaderOff + 56)), "镜像总大小"])
+                    rows.add(["SizeOfHeaders", "0x" + toHex8(readU32(fileData, optHeaderOff + 60)), "头部大小"])
+                    rows.add(["Subsystem", _str(readU16(fileData, optHeaderOff + 68)), subsystemName(readU16(fileData, optHeaderOff + 68))])
+                    rows.add(["CheckSum", "0x" + toHex8(readU32(fileData, optHeaderOff + 64)), "校验和"])
+                }
+                case 0x20B {
+                    rows.add(["ImageBase", "0x" + toHex8(readU32(fileData, optHeaderOff + 24)), "镜像基址(低32位)"])
+                    rows.add(["ImageBase_Hi", "0x" + toHex8(readU32(fileData, optHeaderOff + 28)), "镜像基址(高32位)"])
+                    rows.add(["SectionAlignment", "0x" + toHex8(readU32(fileData, optHeaderOff + 32)), "节区对齐粒度"])
+                    rows.add(["FileAlignment", "0x" + toHex8(readU32(fileData, optHeaderOff + 36)), "文件对齐粒度"])
+                    rows.add(["MajorOSVersion", _str(readU16(fileData, optHeaderOff + 40)), "所需 OS 主版本号"])
+                    rows.add(["MinorOSVersion", _str(readU16(fileData, optHeaderOff + 42)), "所需 OS 次版本号"])
+                    rows.add(["SizeOfImage", "0x" + toHex8(readU32(fileData, optHeaderOff + 56)), "镜像总大小"])
+                    rows.add(["SizeOfHeaders", "0x" + toHex8(readU32(fileData, optHeaderOff + 60)), "头部大小"])
+                    rows.add(["Subsystem", _str(readU16(fileData, optHeaderOff + 68)), subsystemName(readU16(fileData, optHeaderOff + 68))])
+                    rows.add(["CheckSum", "0x" + toHex8(readU32(fileData, optHeaderOff + 64)), "校验和"])
+                }
             }
         }
 
@@ -990,188 +1046,193 @@ struct PEAnalyzer {
     // ==================== Opcode 名称表 ====================
 
     func opName(int code): string {
-        if code == 0 { return "OP_CONST" }
-        if code == 1 { return "OP_NULL" }
-        if code == 2 { return "OP_TRUE" }
-        if code == 3 { return "OP_FALSE" }
-        if code == 4 { return "OP_ZERO" }
-        if code == 5 { return "OP_ONE" }
-        if code == 6 { return "OP_POP" }
-        if code == 7 { return "OP_DUP" }
-        if code == 8 { return "OP_GET_LOCAL" }
-        if code == 9 { return "OP_SET_LOCAL" }
-        if code == 10 { return "OP_SET_LOCAL_POP" }
-        if code == 11 { return "OP_MOVE_LOCAL" }
-        if code == 12 { return "OP_GET_GLOBAL" }
-        if code == 13 { return "OP_SET_GLOBAL" }
-        if code == 14 { return "OP_GET_UPVALUE" }
-        if code == 15 { return "OP_SET_UPVALUE" }
-        if code == 16 { return "OP_CLOSE_UPVALUE" }
-        if code == 17 { return "OP_DEFINE_GLOBAL" }
-        if code == 18 { return "OP_GET_GLOBAL_FUNC" }
-        if code == 19 { return "OP_DEFINE_GLOBAL_FUNC" }
-        if code == 20 { return "OP_GET_NATIVE" }
-        if code == 21 { return "OP_ADD" }
-        if code == 22 { return "OP_SUB" }
-        if code == 23 { return "OP_MUL" }
-        if code == 24 { return "OP_DIV" }
-        if code == 25 { return "OP_MOD" }
-        if code == 26 { return "OP_BITAND" }
-        if code == 27 { return "OP_BITOR" }
-        if code == 28 { return "OP_BITXOR" }
-        if code == 29 { return "OP_BITNOT" }
-        if code == 30 { return "OP_SHL" }
-        if code == 31 { return "OP_SHR" }
-        if code == 32 { return "OP_USHR" }
-        if code == 33 { return "OP_NEG" }
-        if code == 34 { return "OP_NOT" }
-        if code == 35 { return "OP_CAST_FLOAT" }
-        if code == 36 { return "OP_CAST_INT" }
-        if code == 37 { return "OP_CAST_STRING" }
-        if code == 38 { return "OP_SET_PTR_ELEM_TYPE" }
-        if code == 39 { return "OP_SET_DECLARED_FACE" }
-        if code == 40 { return "OP_INC" }
-        if code == 41 { return "OP_DEC" }
-        if code == 42 { return "OP_INC_LOCAL" }
-        if code == 43 { return "OP_DEC_LOCAL" }
-        if code == 44 { return "OP_PRE_INC_LOCAL" }
-        if code == 45 { return "OP_PRE_DEC_LOCAL" }
-        if code == 46 { return "OP_EQ" }
-        if code == 47 { return "OP_NEQ" }
-        if code == 48 { return "OP_IS_NULL" }
-        if code == 49 { return "OP_LT" }
-        if code == 50 { return "OP_GT" }
-        if code == 51 { return "OP_LE" }
-        if code == 52 { return "OP_GE" }
-        if code == 53 { return "OP_IN" }
-        if code == 54 { return "OP_RANGE" }
-        if code == 55 { return "OP_JUMP" }
-        if code == 56 { return "OP_JUMP_IF_FALSE" }
-        if code == 57 { return "OP_JUMP_IF_TRUE" }
-        if code == 58 { return "OP_LOOP" }
-        if code == 59 { return "OP_CALL" }
-        if code == 60 { return "OP_TAIL_CALL" }
-        if code == 61 { return "OP_CLOSURE" }
-        if code == 62 { return "OP_RETURN" }
-        if code == 63 { return "OP_RETURN_MULTI" }
-        if code == 64 { return "OP_ARRAY" }
-        if code == 65 { return "OP_ARRAY_GET" }
-        if code == 66 { return "OP_ARRAY_SET" }
-        if code == 67 { return "OP_ARRAY_APPEND" }
-        if code == 68 { return "OP_ARRAY_APPEND_NOPUSH" }
-        if code == 69 { return "OP_DICT" }
-        if code == 70 { return "OP_DICT_GET" }
-        if code == 71 { return "OP_DICT_SET" }
-        if code == 72 { return "OP_DICT_GET_KEY" }
-        if code == 73 { return "OP_LOAD_NATIVE_MODULE" }
-        if code == 74 { return "OP_MODULE_CALL" }
-        if code == 75 { return "OP_GET_MODULE_CONST" }
-        if code == 76 { return "OP_STRING_ADD" }
-        if code == 77 { return "OP_INDEX" }
-        if code == 78 { return "OP_INDEX_SET" }
-        if code == 79 { return "OP_SLICE" }
-        if code == 80 { return "OP_LENGTH" }
-        if code == 81 { return "OP_ITER_GET" }
-        if code == 82 { return "OP_ITER_GET_VALUE" }
-        if code == 83 { return "OP_TRY" }
-        if code == 84 { return "OP_CATCH" }
-        if code == 85 { return "OP_FINALLY" }
-        if code == 86 { return "OP_END_TRY" }
-        if code == 87 { return "OP_THROW" }
-        if code == 88 { return "OP_GET_MODULE_VAR" }
-        if code == 89 { return "OP_SET_MODULE_VAR" }
-        if code == 90 { return "OP_GET_MODULE_FUNC" }
-        if code == 91 { return "OP_DEFINE_MODULE_FUNC" }
-        if code == 92 { return "OP_GET_PROPERTY" }
-        if code == 93 { return "OP_TYPE_CHECK" }
-        if code == 94 { return "OP_AS_CAST" }
-        if code == 95 { return "OP_FOR_PREP" }
-        if code == 96 { return "OP_FOR_LOOP" }
-        if code == 97 { return "OP_ADD_INT" }
-        if code == 98 { return "OP_SUB_INT" }
-        if code == 99 { return "OP_MUL_INT" }
-        if code == 100 { return "OP_DIV_INT" }
-        if code == 101 { return "OP_MOD_INT" }
-        if code == 102 { return "OP_ADD_FLOAT" }
-        if code == 103 { return "OP_SUB_FLOAT" }
-        if code == 104 { return "OP_MUL_FLOAT" }
-        if code == 105 { return "OP_DIV_FLOAT" }
-        if code == 106 { return "OP_NEG_INT" }
-        if code == 107 { return "OP_NEG_FLOAT" }
-        if code == 108 { return "OP_EQ_INT" }
-        if code == 109 { return "OP_LT_INT" }
-        if code == 110 { return "OP_GT_INT" }
-        if code == 111 { return "OP_LE_INT" }
-        if code == 112 { return "OP_GE_INT" }
-        if code == 113 { return "OP_EQ_FLOAT" }
-        if code == 114 { return "OP_LT_FLOAT" }
-        if code == 115 { return "OP_GT_FLOAT" }
-        if code == 116 { return "OP_LE_FLOAT" }
-        if code == 117 { return "OP_GE_FLOAT" }
-        if code == 118 { return "OP_ADD_INT_IMM" }
-        if code == 119 { return "OP_SUB_INT_IMM" }
-        if code == 120 { return "OP_MUL_INT_IMM" }
-        if code == 121 { return "OP_LT_INT_IMM" }
-        if code == 122 { return "OP_GT_INT_IMM" }
-        if code == 123 { return "OP_LE_INT_IMM" }
-        if code == 124 { return "OP_GE_INT_IMM" }
-        if code == 125 { return "OP_EQ_INT_IMM" }
-        if code == 126 { return "OP_SHL_IMM" }
-        if code == 127 { return "OP_SHR_IMM" }
-        if code == 128 { return "OP_USHR_IMM" }
-        if code == 129 { return "OP_STRUCT_DEF" }
-        if code == 130 { return "OP_STRUCT_INIT" }
-        if code == 131 { return "OP_GET_FIELD" }
-        if code == 132 { return "OP_SET_FIELD" }
-        if code == 133 { return "OP_GET_FIELD_ADDR" }
-        if code == 134 { return "OP_GET_METHOD" }
-        if code == 135 { return "OP_ENUM_DEF" }
-        if code == 136 { return "OP_FACE_DEF" }
-        if code == 137 { return "OP_CSTRUCT_DEF" }
-        if code == 138 { return "OP_GET_CSTRUCT_DEF" }
-        if code == 139 { return "OP_AWAIT" }
-        if code == 140 { return "OP_ASYNC_CALL" }
-        if code == 141 { return "OP_INIT_LENOMODULE" }
-        if code == 142 { return "OP_CLIB_CALL" }
-        if code == 143 { return "OP_CFUNC_CALLBACK" }
-        if code == 144 { return "OP_CALL_NATIVE" }
-        if code == 145 { return "OP_TAIL_CALL_NATIVE" }
-        if code == 146 { return "OP_U8_TO_F64" }
-        if code == 147 { return "OP_PUSH_TYPE_ARGS" }
-        if code == 148 { return "OP_DTOR_LOCAL" }
-        if code == 149 { return "OP_CALL_GLOBAL_FUNC" }
-        if code == 150 { return "OP_INC_LOCAL_NOPUSH" }
-        if code == 151 { return "OP_DEC_LOCAL_NOPUSH" }
-        if code == 152 { return "OP_MOVE_LOCAL_POP" }
-        if code == 153 { return "OP_INDEX_SET_NOPUSH" }
-        if code == 154 { return "OP_CLEAR_LOCAL_RANGE" }
-        if code == 155 { return "OP_SWITCH_LOOKUP" }
-        if code == 156 { return "OP_INVOKE_METHOD" }
-        return "OP_0x" + toHex2(code)
+        switch code {
+            case 0 { return "OP_CONST" }
+            case 1 { return "OP_NULL" }
+            case 2 { return "OP_TRUE" }
+            case 3 { return "OP_FALSE" }
+            case 4 { return "OP_ZERO" }
+            case 5 { return "OP_ONE" }
+            case 6 { return "OP_POP" }
+            case 7 { return "OP_DUP" }
+            case 8 { return "OP_GET_LOCAL" }
+            case 9 { return "OP_SET_LOCAL" }
+            case 10 { return "OP_SET_LOCAL_POP" }
+            case 11 { return "OP_MOVE_LOCAL" }
+            case 12 { return "OP_GET_GLOBAL" }
+            case 13 { return "OP_SET_GLOBAL" }
+            case 14 { return "OP_GET_UPVALUE" }
+            case 15 { return "OP_SET_UPVALUE" }
+            case 16 { return "OP_CLOSE_UPVALUE" }
+            case 17 { return "OP_DEFINE_GLOBAL" }
+            case 18 { return "OP_GET_GLOBAL_FUNC" }
+            case 19 { return "OP_DEFINE_GLOBAL_FUNC" }
+            case 20 { return "OP_GET_NATIVE" }
+            case 21 { return "OP_ADD" }
+            case 22 { return "OP_SUB" }
+            case 23 { return "OP_MUL" }
+            case 24 { return "OP_DIV" }
+            case 25 { return "OP_MOD" }
+            case 26 { return "OP_BITAND" }
+            case 27 { return "OP_BITOR" }
+            case 28 { return "OP_BITXOR" }
+            case 29 { return "OP_BITNOT" }
+            case 30 { return "OP_SHL" }
+            case 31 { return "OP_SHR" }
+            case 32 { return "OP_USHR" }
+            case 33 { return "OP_NEG" }
+            case 34 { return "OP_NOT" }
+            case 35 { return "OP_CAST_FLOAT" }
+            case 36 { return "OP_CAST_INT" }
+            case 37 { return "OP_CAST_STRING" }
+            case 38 { return "OP_SET_PTR_ELEM_TYPE" }
+            case 39 { return "OP_SET_DECLARED_FACE" }
+            case 40 { return "OP_INC" }
+            case 41 { return "OP_DEC" }
+            case 42 { return "OP_INC_LOCAL" }
+            case 43 { return "OP_DEC_LOCAL" }
+            case 44 { return "OP_PRE_INC_LOCAL" }
+            case 45 { return "OP_PRE_DEC_LOCAL" }
+            case 46 { return "OP_EQ" }
+            case 47 { return "OP_NEQ" }
+            case 48 { return "OP_IS_NULL" }
+            case 49 { return "OP_LT" }
+            case 50 { return "OP_GT" }
+            case 51 { return "OP_LE" }
+            case 52 { return "OP_GE" }
+            case 53 { return "OP_IN" }
+            case 54 { return "OP_RANGE" }
+            case 55 { return "OP_JUMP" }
+            case 56 { return "OP_JUMP_IF_FALSE" }
+            case 57 { return "OP_JUMP_IF_TRUE" }
+            case 58 { return "OP_LOOP" }
+            case 59 { return "OP_CALL" }
+            case 60 { return "OP_TAIL_CALL" }
+            case 61 { return "OP_CLOSURE" }
+            case 62 { return "OP_RETURN" }
+            case 63 { return "OP_RETURN_MULTI" }
+            case 64 { return "OP_ARRAY" }
+            case 65 { return "OP_ARRAY_GET" }
+            case 66 { return "OP_ARRAY_SET" }
+            case 67 { return "OP_ARRAY_APPEND" }
+            case 68 { return "OP_ARRAY_APPEND_NOPUSH" }
+            case 69 { return "OP_DICT" }
+            case 70 { return "OP_DICT_GET" }
+            case 71 { return "OP_DICT_SET" }
+            case 72 { return "OP_DICT_GET_KEY" }
+            case 73 { return "OP_LOAD_NATIVE_MODULE" }
+            case 74 { return "OP_MODULE_CALL" }
+            case 75 { return "OP_GET_MODULE_CONST" }
+            case 76 { return "OP_STRING_ADD" }
+            case 77 { return "OP_INDEX" }
+            case 78 { return "OP_INDEX_SET" }
+            case 79 { return "OP_SLICE" }
+            case 80 { return "OP_LENGTH" }
+            case 81 { return "OP_ITER_GET" }
+            case 82 { return "OP_ITER_GET_VALUE" }
+            case 83 { return "OP_TRY" }
+            case 84 { return "OP_CATCH" }
+            case 85 { return "OP_FINALLY" }
+            case 86 { return "OP_END_TRY" }
+            case 87 { return "OP_THROW" }
+            case 88 { return "OP_GET_MODULE_VAR" }
+            case 89 { return "OP_SET_MODULE_VAR" }
+            case 90 { return "OP_GET_MODULE_FUNC" }
+            case 91 { return "OP_DEFINE_MODULE_FUNC" }
+            case 92 { return "OP_GET_PROPERTY" }
+            case 93 { return "OP_TYPE_CHECK" }
+            case 94 { return "OP_AS_CAST" }
+            case 95 { return "OP_FOR_PREP" }
+            case 96 { return "OP_FOR_LOOP" }
+            case 97 { return "OP_ADD_INT" }
+            case 98 { return "OP_SUB_INT" }
+            case 99 { return "OP_MUL_INT" }
+            case 100 { return "OP_DIV_INT" }
+            case 101 { return "OP_MOD_INT" }
+            case 102 { return "OP_ADD_FLOAT" }
+            case 103 { return "OP_SUB_FLOAT" }
+            case 104 { return "OP_MUL_FLOAT" }
+            case 105 { return "OP_DIV_FLOAT" }
+            case 106 { return "OP_NEG_INT" }
+            case 107 { return "OP_NEG_FLOAT" }
+            case 108 { return "OP_EQ_INT" }
+            case 109 { return "OP_LT_INT" }
+            case 110 { return "OP_GT_INT" }
+            case 111 { return "OP_LE_INT" }
+            case 112 { return "OP_GE_INT" }
+            case 113 { return "OP_EQ_FLOAT" }
+            case 114 { return "OP_LT_FLOAT" }
+            case 115 { return "OP_GT_FLOAT" }
+            case 116 { return "OP_LE_FLOAT" }
+            case 117 { return "OP_GE_FLOAT" }
+            case 118 { return "OP_ADD_INT_IMM" }
+            case 119 { return "OP_SUB_INT_IMM" }
+            case 120 { return "OP_MUL_INT_IMM" }
+            case 121 { return "OP_LT_INT_IMM" }
+            case 122 { return "OP_GT_INT_IMM" }
+            case 123 { return "OP_LE_INT_IMM" }
+            case 124 { return "OP_GE_INT_IMM" }
+            case 125 { return "OP_EQ_INT_IMM" }
+            case 126 { return "OP_SHL_IMM" }
+            case 127 { return "OP_SHR_IMM" }
+            case 128 { return "OP_USHR_IMM" }
+            case 129 { return "OP_STRUCT_DEF" }
+            case 130 { return "OP_STRUCT_INIT" }
+            case 131 { return "OP_GET_FIELD" }
+            case 132 { return "OP_SET_FIELD" }
+            case 133 { return "OP_GET_FIELD_ADDR" }
+            case 134 { return "OP_GET_METHOD" }
+            case 135 { return "OP_ENUM_DEF" }
+            case 136 { return "OP_FACE_DEF" }
+            case 137 { return "OP_CSTRUCT_DEF" }
+            case 138 { return "OP_GET_CSTRUCT_DEF" }
+            case 139 { return "OP_AWAIT" }
+            case 140 { return "OP_ASYNC_CALL" }
+            case 141 { return "OP_INIT_LENOMODULE" }
+            case 142 { return "OP_CLIB_CALL" }
+            case 143 { return "OP_CFUNC_CALLBACK" }
+            case 144 { return "OP_CALL_NATIVE" }
+            case 145 { return "OP_TAIL_CALL_NATIVE" }
+            case 146 { return "OP_U8_TO_F64" }
+            case 147 { return "OP_PUSH_TYPE_ARGS" }
+            case 148 { return "OP_DTOR_LOCAL" }
+            case 149 { return "OP_CALL_GLOBAL_FUNC" }
+            case 150 { return "OP_INC_LOCAL_NOPUSH" }
+            case 151 { return "OP_DEC_LOCAL_NOPUSH" }
+            case 152 { return "OP_MOVE_LOCAL_POP" }
+            case 153 { return "OP_INDEX_SET_NOPUSH" }
+            case 154 { return "OP_CLEAR_LOCAL_RANGE" }
+            case 155 { return "OP_SWITCH_LOOKUP" }
+            case 156 { return "OP_INVOKE_METHOD" }
+            default { return "OP_0x" + toHex2(code) }
+        }
     }
 
     func opImmSize(int op): int {
-        if op == 0 { return 2 }
+        // 先处理范围判断和组合条件
         if op >= 8 and op <= 20 { return 2 }
-        if op == 11 or op == 152 { return 4 }
-        if op == 55 or op == 56 or op == 57 or op == 58 { return 4 }
-        if op == 59 or op == 60 { return 2 }
-        if op == 61 { return 2 }
-        if op == 64 { return 2 }
-        if op == 67 or op == 68 { return 2 }
-        if op == 73 or op == 74 or op == 75 { return 2 }
-        if op == 88 or op == 89 or op == 90 or op == 91 { return 2 }
         if op >= 118 and op <= 128 { return 1 }
-        if op == 131 or op == 132 or op == 134 or op == 153 { return 1 }
-        if op == 144 or op == 145 or op == 149 or op == 156 { return 4 }
-        if op == 133 or op == 148 or op == 150 or op == 151 { return 2 }
-        if op == 154 { return 4 }
-        if op == 129 { return 0 }
-        if op == 135 { return 0 }
-        if op == 137 or op == 138 { return 0 }
-        if op == 130 { return 2 }
-        if op == 147 { return 1 }
-        return 0
+        switch op {
+            case 0 { return 2 }
+            case 11, 152 { return 4 }
+            case 55, 56, 57, 58 { return 4 }
+            case 59, 60 { return 2 }
+            case 61 { return 2 }
+            case 64 { return 2 }
+            case 67, 68 { return 2 }
+            case 73, 74, 75 { return 2 }
+            case 88, 89, 90, 91 { return 2 }
+            case 131, 132, 134, 153 { return 1 }
+            case 144, 145, 149, 156 { return 4 }
+            case 133, 148, 150, 151 { return 2 }
+            case 154 { return 4 }
+            case 129 { return 0 }
+            case 135 { return 0 }
+            case 137, 138 { return 0 }
+            case 130 { return 2 }
+            case 147 { return 1 }
+            default { return 0 }
+        }
     }
 
     // ==================== 常量跳过函数 (skipConstRaw) ====================
@@ -1188,208 +1249,212 @@ struct PEAnalyzer {
         int tag = fileData.byte(gLenbPos) & 0xFF
         gLenbPos = gLenbPos + 1
 
-        // NULL/TRUE/FALSE: 无数据
+        // NULL/TRUE/FALSE: 无数据 (范围判断, switch 不支持 <=)
         if tag <= 0x02 { return }
 
-        // INT: u64 BE (8 字节, v2.2.0+)
-        if tag == 0x03 { gLenbPos = gLenbPos + 8; return }
+        switch tag {
+            // INT: u64 BE (8 字节, v2.2.0+)
+            case 0x03 { gLenbPos = gLenbPos + 8; return }
 
-        // FLOAT: double BE (8 字节)
-        if tag == 0x04 { gLenbPos = gLenbPos + 8; return }
+            // FLOAT: double BE (8 字节)
+            case 0x04 { gLenbPos = gLenbPos + 8; return }
 
-        // STRING: u32 len + XOR bytes
-        if tag == 0x05 {
-            skipXorStr()
-            return
-        }
-
-        // FUNCTION: name + arity + upvals + locals + has_try + params + type_params + chunk
-        if tag == 0x06 {
-            skipFuncRaw()
-            return
-        }
-
-        // BIGINT: u32 limb_count + u8 is_negative + 4*limbs 字节
-        if tag == 0x07 {
-            int limbs = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            gLenbPos = gLenbPos + 1  // is_negative
-            if limbs < 0 or limbs > 100000 { gLenbPos = gLenbEnd; return }
-            gLenbPos = gLenbPos + 4 * limbs
-            return
-        }
-
-        // RANGE: u64 start + u64 end + u8 inclusive = 17 字节
-        if tag == 0x08 {
-            gLenbPos = gLenbPos + 17
-            return
-        }
-
-        // ARRAY: u32 count + count * constant
-        if tag == 0x09 {
-            int n = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            if n < 0 or n > 100000 { gLenbPos = gLenbEnd; return }
-            for 0:n-1 to i { skipConstRaw() }
-            return
-        }
-
-        // DICT: u32 count + 2*count * constant
-        if tag == 0x0A {
-            int n = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            if n < 0 or n > 100000 { gLenbPos = gLenbEnd; return }
-            int total = 2 * n
-            for 0:total-1 to i { skipConstRaw() }
-            return
-        }
-
-        // ENUM_DEF: name + u32 member_count + members*(string + u64)
-        if tag == 0x0B {
-            skipXorStr()
-            int mc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            if mc < 0 or mc > 100000 { gLenbPos = gLenbEnd; return }
-            for 0:mc-1 to i {
+            // STRING: u32 len + XOR bytes
+            case 0x05 {
                 skipXorStr()
-                gLenbPos = gLenbPos + 8  // member value u64
+                return
             }
-            return
-        }
 
-        // STRUCT_DEF: name + fields + methods + impls + consts
-        if tag == 0x0C {
-            skipXorStr()
-            int fc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            if fc < 0 or fc > 100000 { gLenbPos = gLenbEnd; return }
-            for 0:fc-1 to i {
-                skipXorStr()       // field name
-                gLenbPos = gLenbPos + 1  // type
-                int hasSTN = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
-                if hasSTN != 0 { skipXorStr() }  // struct_type_name
-                int hasDef = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
-                if hasDef != 0 { skipConstRaw() }  // default value
-                gLenbPos = gLenbPos + 2  // element_type + nullable
+            // FUNCTION: name + arity + upvals + locals + has_try + params + type_params + chunk
+            case 0x06 {
+                skipFuncRaw()
+                return
             }
-            int mc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            if mc < 0 or mc > 100000 { gLenbPos = gLenbEnd; return }
-            for 0:mc-1 to i {
-                skipXorStr()       // method name
-                skipConstRaw()     // method function (or null)
+
+            // BIGINT: u32 limb_count + u8 is_negative + 4*limbs 字节
+            case 0x07 {
+                int limbs = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                gLenbPos = gLenbPos + 1  // is_negative
+                if limbs < 0 or limbs > 100000 { gLenbPos = gLenbEnd; return }
+                gLenbPos = gLenbPos + 4 * limbs
+                return
             }
-            int ic = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            if ic < 0 or ic > 100000 { gLenbPos = gLenbEnd; return }
-            for 0:ic-1 to i { skipXorStr() }  // impl names
-            int cc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            if cc < 0 or cc > 100000 { gLenbPos = gLenbEnd; return }
-            for 0:cc-1 to i {
-                skipXorStr()       // const name
-                skipConstRaw()     // const value
+
+            // RANGE: u64 start + u64 end + u8 inclusive = 17 字节
+            case 0x08 {
+                gLenbPos = gLenbPos + 17
+                return
             }
-            return
-        }
 
-        // CSTRUCT_DEF: name + u32 field_count + u32 size + u32 align + u8 packed + u8 explicit + fields
-        if tag == 0x0D {
-            skipXorStr()
-            int fc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            gLenbPos = gLenbPos + 4  // total_size
-            gLenbPos = gLenbPos + 4  // alignment
-            gLenbPos = gLenbPos + 1  // is_packed
-            gLenbPos = gLenbPos + 1  // explicit_align
-            if fc < 0 or fc > 100000 { gLenbPos = gLenbEnd; return }
-            for 0:fc-1 to i {
-                skipXorStr()       // field name
-                gLenbPos = gLenbPos + 1  // type
-                gLenbPos = gLenbPos + 4  // offset
-                gLenbPos = gLenbPos + 4  // size
-                gLenbPos = gLenbPos + 4  // array_dim
-                int hasSN = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
-                if hasSN != 0 { skipXorStr() }  // struct_name
-                gLenbPos = gLenbPos + 1  // element_type
+            // ARRAY: u32 count + count * constant
+            case 0x09 {
+                int n = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                if n < 0 or n > 100000 { gLenbPos = gLenbEnd; return }
+                for 0:n-1 to i { skipConstRaw() }
+                return
             }
-            return
-        }
 
-        // FACE_DEF: name + u32 method_count + methods*(string + u32 params + u8 ret + params*u8)
-        if tag == 0x0E {
-            skipXorStr()
-            int mc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            if mc < 0 or mc > 100000 { gLenbPos = gLenbEnd; return }
-            for 0:mc-1 to i {
-                skipXorStr()       // method name
-                int pc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4  // param_count
-                gLenbPos = gLenbPos + 1  // return type
-                if pc < 0 or pc > 100000 { gLenbPos = gLenbEnd; return }
-                gLenbPos = gLenbPos + pc  // param types (1 byte each)
+            // DICT: u32 count + 2*count * constant
+            case 0x0A {
+                int n = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                if n < 0 or n > 100000 { gLenbPos = gLenbEnd; return }
+                int total = 2 * n
+                for 0:total-1 to i { skipConstRaw() }
+                return
             }
-            return
-        }
 
-        // MODULE: name + has_path + path + globals + exports + native_imports
-        //         + init_chunk + export_mapping + use_reexport
-        if tag == 0x0F {
-            skipXorStr()       // module name
-            int hasPath = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
-            if hasPath != 0 { skipXorStr() }  // source path
-            int gc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            if gc < 0 or gc > 100000 { gLenbPos = gLenbEnd; return }
-            for 0:gc-1 to i { skipConstRaw() }  // globals
-            int ec = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            if ec < 0 or ec > 100000 { gLenbPos = gLenbEnd; return }
-            int totalE = 2 * ec
-            for 0:totalE-1 to i { skipConstRaw() }  // exports (key+value)
-            int nic = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            if nic < 0 or nic > 100000 { gLenbPos = gLenbEnd; return }
-            for 0:nic-1 to i { skipXorStr() }  // native imports
-            int hasInit = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
-            if hasInit != 0 { skipChunkRaw() }
-            // export_mapping (v2.2.0+)
-            int emc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            if emc < 0 or emc > 100000 { gLenbPos = gLenbEnd; return }
-            for 0:emc-1 to i {
-                skipXorStr()       // mapping name
-                gLenbPos = gLenbPos + 4  // global_index
+            // ENUM_DEF: name + u32 member_count + members*(string + u64)
+            case 0x0B {
+                skipXorStr()
+                int mc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                if mc < 0 or mc > 100000 { gLenbPos = gLenbEnd; return }
+                for 0:mc-1 to i {
+                    skipXorStr()
+                    gLenbPos = gLenbPos + 8  // member value u64
+                }
+                return
             }
-            // use_reexport (v2.2.0+)
-            int urc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            if urc < 0 or urc > 100000 { gLenbPos = gLenbEnd; return }
-            for 0:urc-1 to i {
-                skipXorStr()       // reexport name
-                gLenbPos = gLenbPos + 4  // kind (i32)
+
+            // STRUCT_DEF: name + fields + methods + impls + consts
+            case 0x0C {
+                skipXorStr()
+                int fc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                if fc < 0 or fc > 100000 { gLenbPos = gLenbEnd; return }
+                for 0:fc-1 to i {
+                    skipXorStr()       // field name
+                    gLenbPos = gLenbPos + 1  // type
+                    int hasSTN = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
+                    if hasSTN != 0 { skipXorStr() }  // struct_type_name
+                    int hasDef = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
+                    if hasDef != 0 { skipConstRaw() }  // default value
+                    gLenbPos = gLenbPos + 2  // element_type + nullable
+                }
+                int mc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                if mc < 0 or mc > 100000 { gLenbPos = gLenbEnd; return }
+                for 0:mc-1 to i {
+                    skipXorStr()       // method name
+                    skipConstRaw()     // method function (or null)
+                }
+                int ic = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                if ic < 0 or ic > 100000 { gLenbPos = gLenbEnd; return }
+                for 0:ic-1 to i { skipXorStr() }  // impl names
+                int cc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                if cc < 0 or cc > 100000 { gLenbPos = gLenbEnd; return }
+                for 0:cc-1 to i {
+                    skipXorStr()       // const name
+                    skipConstRaw()     // const value
+                }
+                return
             }
-            return
-        }
 
-        // FFI_PTR: u64 ptr + u64 size + u8 owned + u8 freed + u8 element_type = 19 字节
-        if tag == 0x10 {
-            gLenbPos = gLenbPos + 19
-            return
-        }
+            // CSTRUCT_DEF: name + u32 field_count + u32 size + u32 align + u8 packed + u8 explicit + fields
+            case 0x0D {
+                skipXorStr()
+                int fc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                gLenbPos = gLenbPos + 4  // total_size
+                gLenbPos = gLenbPos + 4  // alignment
+                gLenbPos = gLenbPos + 1  // is_packed
+                gLenbPos = gLenbPos + 1  // explicit_align
+                if fc < 0 or fc > 100000 { gLenbPos = gLenbEnd; return }
+                for 0:fc-1 to i {
+                    skipXorStr()       // field name
+                    gLenbPos = gLenbPos + 1  // type
+                    gLenbPos = gLenbPos + 4  // offset
+                    gLenbPos = gLenbPos + 4  // size
+                    gLenbPos = gLenbPos + 4  // array_dim
+                    int hasSN = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
+                    if hasSN != 0 { skipXorStr() }  // struct_name
+                    gLenbPos = gLenbPos + 1  // element_type
+                }
+                return
+            }
 
-        // CLOSURE: nested function constant + u32 upvalue_count + u32 type_param_count + strings
-        if tag == 0x11 {
-            skipConstRaw()     // function constant (recursive)
-            gLenbPos = gLenbPos + 4  // upvalue_count
-            int tpc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            if tpc < 0 or tpc > 100000 { gLenbPos = gLenbEnd; return }
-            for 0:tpc-1 to i { skipXorStr() }
-            return
-        }
+            // FACE_DEF: name + u32 method_count + methods*(string + u32 params + u8 ret + params*u8)
+            case 0x0E {
+                skipXorStr()
+                int mc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                if mc < 0 or mc > 100000 { gLenbPos = gLenbEnd; return }
+                for 0:mc-1 to i {
+                    skipXorStr()       // method name
+                    int pc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4  // param_count
+                    gLenbPos = gLenbPos + 1  // return type
+                    if pc < 0 or pc > 100000 { gLenbPos = gLenbEnd; return }
+                    gLenbPos = gLenbPos + pc  // param types (1 byte each)
+                }
+                return
+            }
 
-        // FFI_LIB: u8 has_path + if has: string
-        if tag == 0x12 {
-            int has = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
-            if has != 0 { skipXorStr() }
-            return
-        }
+            // MODULE: name + has_path + path + globals + exports + native_imports
+            //         + init_chunk + export_mapping + use_reexport
+            case 0x0F {
+                skipXorStr()       // module name
+                int hasPath = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
+                if hasPath != 0 { skipXorStr() }  // source path
+                int gc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                if gc < 0 or gc > 100000 { gLenbPos = gLenbEnd; return }
+                for 0:gc-1 to i { skipConstRaw() }  // globals
+                int ec = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                if ec < 0 or ec > 100000 { gLenbPos = gLenbEnd; return }
+                int totalE = 2 * ec
+                for 0:totalE-1 to i { skipConstRaw() }  // exports (key+value)
+                int nic = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                if nic < 0 or nic > 100000 { gLenbPos = gLenbEnd; return }
+                for 0:nic-1 to i { skipXorStr() }  // native imports
+                int hasInit = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
+                if hasInit != 0 { skipChunkRaw() }
+                // export_mapping (v2.2.0+)
+                int emc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                if emc < 0 or emc > 100000 { gLenbPos = gLenbEnd; return }
+                for 0:emc-1 to i {
+                    skipXorStr()       // mapping name
+                    gLenbPos = gLenbPos + 4  // global_index
+                }
+                // use_reexport (v2.2.0+)
+                int urc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                if urc < 0 or urc > 100000 { gLenbPos = gLenbEnd; return }
+                for 0:urc-1 to i {
+                    skipXorStr()       // reexport name
+                    gLenbPos = gLenbPos + 4  // kind (i32)
+                }
+                return
+            }
 
-        // MODULE_REF: name + u8 has_path + if has: string
-        if tag == 0x13 {
-            skipXorStr()
-            int has = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
-            if has != 0 { skipXorStr() }
-            return
-        }
+            // FFI_PTR: u64 ptr + u64 size + u8 owned + u8 freed + u8 element_type = 19 字节
+            case 0x10 {
+                gLenbPos = gLenbPos + 19
+                return
+            }
 
-        // 未知标签: 尝试跳过 1 字节 (best effort)
-        gLenbPos = gLenbPos + 1
+            // CLOSURE: nested function constant + u32 upvalue_count + u32 type_param_count + strings
+            case 0x11 {
+                skipConstRaw()     // function constant (recursive)
+                gLenbPos = gLenbPos + 4  // upvalue_count
+                int tpc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                if tpc < 0 or tpc > 100000 { gLenbPos = gLenbEnd; return }
+                for 0:tpc-1 to i { skipXorStr() }
+                return
+            }
+
+            // FFI_LIB: u8 has_path + if has: string
+            case 0x12 {
+                int has = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
+                if has != 0 { skipXorStr() }
+                return
+            }
+
+            // MODULE_REF: name + u8 has_path + if has: string
+            case 0x13 {
+                skipXorStr()
+                int has = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
+                if has != 0 { skipXorStr() }
+                return
+            }
+
+            // 未知标签: 尝试跳过 1 字节 (best effort)
+            default {
+                gLenbPos = gLenbPos + 1
+            }
+        }
     }
 
     // 跳过函数数据 (tag 已由调用方读取)
@@ -1441,244 +1506,248 @@ struct PEAnalyzer {
         int tag = fileData.byte(gLenbPos) & 0xFF
         gLenbPos = gLenbPos + 1
 
-        if tag == 0x00 { return "null" }
-        if tag == 0x01 { return "true" }
-        if tag == 0x02 { return "false" }
+        switch tag {
+            case 0x00 { return "null" }
+            case 0x01 { return "true" }
+            case 0x02 { return "false" }
 
-        // INT: u64 BE
-        if tag == 0x03 {
-            int hi = rbe32(gLenbPos)
-            int lo = rbe32(gLenbPos + 4)
-            gLenbPos = gLenbPos + 8
-            if hi == 0 and (lo >> 31) == 0 { return _str(lo) }
-            return "int:" + toHex8(hi) + toHex8(lo)
-        }
-
-        // FLOAT: double BE
-        if tag == 0x04 {
-            string hex = rbe_i64_hex(gLenbPos); gLenbPos = gLenbPos + 8
-            return "float:" + hex
-        }
-
-        // STRING: u32 len + XOR bytes
-        if tag == 0x05 {
-            int n = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            string s = readXorStr(n)
-            return "'" + s + "'"
-        }
-
-        // FUNCTION: name + header + chunk (必须跳过 chunk!)
-        if tag == 0x06 {
-            int nameLen = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            string fnName = readXorStr(nameLen)
-            if gLenbPos + 13 > gLenbEnd { return "FUNC?<trunc>" }
-            int arity = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            int upvals = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            int locals = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            int hasTry = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
-            int pcnt = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            if pcnt < 0 or pcnt > 10000 { gLenbPos = gLenbEnd; return "FUNC?<bad>" }
-            gLenbPos = gLenbPos + pcnt
-            int tpcnt = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            if tpcnt < 0 or tpcnt > 10000 { gLenbPos = gLenbEnd; return "FUNC?<bad>" }
-            for 0:tpcnt-1 to i { skipXorStr() }
-            // 关键修复: 跳过嵌套 chunk
-            skipChunkRaw()
-            return "FUNC(" + fnName + ",arity=" + _str(arity) + ",upvals=" + _str(upvals) + ",locals=" + _str(locals) + ")"
-        }
-
-        // BIGINT: u32 limbs + u8 is_neg + 4*limbs
-        if tag == 0x07 {
-            int n = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            gLenbPos = gLenbPos + 1
-            if n < 0 or n > 100000 { gLenbPos = gLenbEnd; return "BIGINT?<bad>" }
-            gLenbPos = gLenbPos + 4 * n
-            return "BIGINT(limbs=" + _str(n) + ")"
-        }
-
-        // RANGE: u64 start + u64 end + u8 inclusive
-        if tag == 0x08 {
-            gLenbPos = gLenbPos + 17
-            return "RANGE"
-        }
-
-        // ARRAY: u32 count + count * constant
-        if tag == 0x09 {
-            int n = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            if n < 0 or n > 10000 { gLenbPos = gLenbEnd; return "[?<bad>]" }
-            string r = "["
-            for 0:n-1 to i {
-                if i > 0 { r = r + "," }
-                r = r + parseConstText(depth + 1)
-            }
-            return r + "]"
-        }
-
-        // DICT: u32 count + 2*count * constant
-        if tag == 0x0A {
-            int n = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            if n < 0 or n > 10000 { gLenbPos = gLenbEnd; return "{?<bad>}" }
-            string r = "{"
-            for 0:n-1 to i {
-                if i > 0 { r = r + "," }
-                r = r + parseConstText(depth + 1) + ":" + parseConstText(depth + 1)
-            }
-            return r + "}"
-        }
-
-        // ENUM_DEF: name + members
-        if tag == 0x0B {
-            int nameLen = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            string name = readXorStr(nameLen)
-            int mc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            if mc < 0 or mc > 100000 { gLenbPos = gLenbEnd; return "ENUM?<bad>" }
-            for 0:mc-1 to i {
-                skipXorStr()
+            // INT: u64 BE
+            case 0x03 {
+                int hi = rbe32(gLenbPos)
+                int lo = rbe32(gLenbPos + 4)
                 gLenbPos = gLenbPos + 8
+                if hi == 0 and (lo >> 31) == 0 { return _str(lo) }
+                return "int:" + toHex8(hi) + toHex8(lo)
             }
-            return "ENUM(" + name + ")"
-        }
 
-        // STRUCT_DEF: name + fields + methods + impls + consts
-        if tag == 0x0C {
-            int nameLen = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            string name = readXorStr(nameLen)
-            int fc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            if fc < 0 or fc > 100000 { gLenbPos = gLenbEnd; return "STRUCT?<bad>" }
-            for 0:fc-1 to i {
-                skipXorStr()
-                gLenbPos = gLenbPos + 1  // type
-                int hasSTN = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
-                if hasSTN != 0 { skipXorStr() }
-                int hasDef = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
-                if hasDef != 0 { skipConstRaw() }
-                gLenbPos = gLenbPos + 2
+            // FLOAT: double BE
+            case 0x04 {
+                string hex = rbe_i64_hex(gLenbPos); gLenbPos = gLenbPos + 8
+                return "float:" + hex
             }
-            int mc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            if mc < 0 or mc > 100000 { gLenbPos = gLenbEnd; return "STRUCT?<bad>" }
-            for 0:mc-1 to i {
-                skipXorStr()
-                skipConstRaw()
-            }
-            int ic = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            if ic < 0 or ic > 100000 { gLenbPos = gLenbEnd; return "STRUCT?<bad>" }
-            for 0:ic-1 to i { skipXorStr() }
-            int cc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            if cc < 0 or cc > 100000 { gLenbPos = gLenbEnd; return "STRUCT?<bad>" }
-            for 0:cc-1 to i {
-                skipXorStr()
-                skipConstRaw()
-            }
-            return "STRUCT(" + name + ")"
-        }
 
-        // CSTRUCT_DEF
-        if tag == 0x0D {
-            int nameLen = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            string name = readXorStr(nameLen)
-            int fc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            gLenbPos = gLenbPos + 4 + 4 + 1 + 1  // size + align + packed + explicit
-            if fc < 0 or fc > 100000 { gLenbPos = gLenbEnd; return "CSTRUCT?<bad>" }
-            for 0:fc-1 to i {
-                skipXorStr()
-                gLenbPos = gLenbPos + 1 + 4 + 4 + 4  // type + offset + size + array_dim
-                int hasSN = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
-                if hasSN != 0 { skipXorStr() }
-                gLenbPos = gLenbPos + 1  // element_type
-            }
-            return "CSTRUCT(" + name + ")"
-        }
-
-        // FACE_DEF
-        if tag == 0x0E {
-            int nameLen = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            string name = readXorStr(nameLen)
-            int mc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            if mc < 0 or mc > 100000 { gLenbPos = gLenbEnd; return "FACE?<bad>" }
-            for 0:mc-1 to i {
-                skipXorStr()
-                int pc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-                gLenbPos = gLenbPos + 1  // return type
-                if pc < 0 or pc > 100000 { gLenbPos = gLenbEnd; return "FACE?<bad>" }
-                gLenbPos = gLenbPos + pc
-            }
-            return "FACE(" + name + ")"
-        }
-
-        // MODULE
-        if tag == 0x0F {
-            int nameLen = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            string name = readXorStr(nameLen)
-            int hasPath = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
-            if hasPath != 0 { skipXorStr() }
-            int gc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            if gc < 0 or gc > 100000 { gLenbPos = gLenbEnd; return "MODULE?<bad>" }
-            for 0:gc-1 to i { skipConstRaw() }
-            int ec = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            if ec < 0 or ec > 100000 { gLenbPos = gLenbEnd; return "MODULE?<bad>" }
-            int totalE = 2 * ec
-            for 0:totalE-1 to i { skipConstRaw() }
-            int nic = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            if nic < 0 or nic > 100000 { gLenbPos = gLenbEnd; return "MODULE?<bad>" }
-            for 0:nic-1 to i { skipXorStr() }
-            int hasInit = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
-            if hasInit != 0 { skipChunkRaw() }
-            // export_mapping (v2.2.0+)
-            int emc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            if emc < 0 or emc > 100000 { gLenbPos = gLenbEnd; return "MODULE?<bad>" }
-            for 0:emc-1 to i {
-                skipXorStr()
-                gLenbPos = gLenbPos + 4
-            }
-            // use_reexport (v2.2.0+)
-            int urc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            if urc < 0 or urc > 100000 { gLenbPos = gLenbEnd; return "MODULE?<bad>" }
-            for 0:urc-1 to i {
-                skipXorStr()
-                gLenbPos = gLenbPos + 4
-            }
-            return "MODULE(" + name + ")"
-        }
-
-        // FFI_PTR: u64 + u64 + u8 + u8 + u8 = 19 bytes
-        if tag == 0x10 {
-            gLenbPos = gLenbPos + 19
-            return "FFI_PTR"
-        }
-
-        // CLOSURE: function constant + u32 + u32 + strings
-        if tag == 0x11 {
-            string fnDesc = parseConstText(depth + 1)
-            gLenbPos = gLenbPos + 4  // upvalue_count
-            int tpc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            if tpc < 0 or tpc > 100000 { gLenbPos = gLenbEnd; return "CLOSURE?<bad>" }
-            for 0:tpc-1 to i { skipXorStr() }
-            return "CLOSURE(" + fnDesc + ")"
-        }
-
-        // FFI_LIB: u8 has_path + if has: string
-        if tag == 0x12 {
-            int has = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
-            if has != 0 {
+            // STRING: u32 len + XOR bytes
+            case 0x05 {
                 int n = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-                string p = readXorStr(n)
-                return "FFI_LIB(" + p + ")"
+                string s = readXorStr(n)
+                return "'" + s + "'"
             }
-            return "FFI_LIB(null)"
-        }
 
-        // MODULE_REF: name + u8 has_path + if has: string
-        if tag == 0x13 {
-            int nameLen = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            string name = readXorStr(nameLen)
-            int has = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
-            if has != 0 { skipXorStr() }
-            return "MODULE_REF(" + name + ")"
-        }
+            // FUNCTION: name + header + chunk (必须跳过 chunk!)
+            case 0x06 {
+                int nameLen = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                string fnName = readXorStr(nameLen)
+                if gLenbPos + 13 > gLenbEnd { return "FUNC?<trunc>" }
+                int arity = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                int upvals = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                int locals = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                int hasTry = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
+                int pcnt = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                if pcnt < 0 or pcnt > 10000 { gLenbPos = gLenbEnd; return "FUNC?<bad>" }
+                gLenbPos = gLenbPos + pcnt
+                int tpcnt = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                if tpcnt < 0 or tpcnt > 10000 { gLenbPos = gLenbEnd; return "FUNC?<bad>" }
+                for 0:tpcnt-1 to i { skipXorStr() }
+                // 关键修复: 跳过嵌套 chunk
+                skipChunkRaw()
+                return "FUNC(" + fnName + ",arity=" + _str(arity) + ",upvals=" + _str(upvals) + ",locals=" + _str(locals) + ")"
+            }
 
-        // 未知标签
-        gLenbPos = gLenbPos + 1
-        return "<" + constTagName(tag) + ">"
+            // BIGINT: u32 limbs + u8 is_neg + 4*limbs
+            case 0x07 {
+                int n = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                gLenbPos = gLenbPos + 1
+                if n < 0 or n > 100000 { gLenbPos = gLenbEnd; return "BIGINT?<bad>" }
+                gLenbPos = gLenbPos + 4 * n
+                return "BIGINT(limbs=" + _str(n) + ")"
+            }
+
+            // RANGE: u64 start + u64 end + u8 inclusive
+            case 0x08 {
+                gLenbPos = gLenbPos + 17
+                return "RANGE"
+            }
+
+            // ARRAY: u32 count + count * constant
+            case 0x09 {
+                int n = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                if n < 0 or n > 10000 { gLenbPos = gLenbEnd; return "[?<bad>]" }
+                string r = "["
+                for 0:n-1 to i {
+                    if i > 0 { r = r + "," }
+                    r = r + parseConstText(depth + 1)
+                }
+                return r + "]"
+            }
+
+            // DICT: u32 count + 2*count * constant
+            case 0x0A {
+                int n = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                if n < 0 or n > 10000 { gLenbPos = gLenbEnd; return "{?<bad>}" }
+                string r = "{"
+                for 0:n-1 to i {
+                    if i > 0 { r = r + "," }
+                    r = r + parseConstText(depth + 1) + ":" + parseConstText(depth + 1)
+                }
+                return r + "}"
+            }
+
+            // ENUM_DEF: name + members
+            case 0x0B {
+                int nameLen = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                string name = readXorStr(nameLen)
+                int mc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                if mc < 0 or mc > 100000 { gLenbPos = gLenbEnd; return "ENUM?<bad>" }
+                for 0:mc-1 to i {
+                    skipXorStr()
+                    gLenbPos = gLenbPos + 8
+                }
+                return "ENUM(" + name + ")"
+            }
+
+            // STRUCT_DEF: name + fields + methods + impls + consts
+            case 0x0C {
+                int nameLen = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                string name = readXorStr(nameLen)
+                int fc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                if fc < 0 or fc > 100000 { gLenbPos = gLenbEnd; return "STRUCT?<bad>" }
+                for 0:fc-1 to i {
+                    skipXorStr()
+                    gLenbPos = gLenbPos + 1  // type
+                    int hasSTN = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
+                    if hasSTN != 0 { skipXorStr() }
+                    int hasDef = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
+                    if hasDef != 0 { skipConstRaw() }
+                    gLenbPos = gLenbPos + 2
+                }
+                int mc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                if mc < 0 or mc > 100000 { gLenbPos = gLenbEnd; return "STRUCT?<bad>" }
+                for 0:mc-1 to i {
+                    skipXorStr()
+                    skipConstRaw()
+                }
+                int ic = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                if ic < 0 or ic > 100000 { gLenbPos = gLenbEnd; return "STRUCT?<bad>" }
+                for 0:ic-1 to i { skipXorStr() }
+                int cc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                if cc < 0 or cc > 100000 { gLenbPos = gLenbEnd; return "STRUCT?<bad>" }
+                for 0:cc-1 to i {
+                    skipXorStr()
+                    skipConstRaw()
+                }
+                return "STRUCT(" + name + ")"
+            }
+
+            // CSTRUCT_DEF
+            case 0x0D {
+                int nameLen = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                string name = readXorStr(nameLen)
+                int fc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                gLenbPos = gLenbPos + 4 + 4 + 1 + 1  // size + align + packed + explicit
+                if fc < 0 or fc > 100000 { gLenbPos = gLenbEnd; return "CSTRUCT?<bad>" }
+                for 0:fc-1 to i {
+                    skipXorStr()
+                    gLenbPos = gLenbPos + 1 + 4 + 4 + 4  // type + offset + size + array_dim
+                    int hasSN = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
+                    if hasSN != 0 { skipXorStr() }
+                    gLenbPos = gLenbPos + 1  // element_type
+                }
+                return "CSTRUCT(" + name + ")"
+            }
+
+            // FACE_DEF
+            case 0x0E {
+                int nameLen = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                string name = readXorStr(nameLen)
+                int mc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                if mc < 0 or mc > 100000 { gLenbPos = gLenbEnd; return "FACE?<bad>" }
+                for 0:mc-1 to i {
+                    skipXorStr()
+                    int pc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                    gLenbPos = gLenbPos + 1  // return type
+                    if pc < 0 or pc > 100000 { gLenbPos = gLenbEnd; return "FACE?<bad>" }
+                    gLenbPos = gLenbPos + pc
+                }
+                return "FACE(" + name + ")"
+            }
+
+            // MODULE
+            case 0x0F {
+                int nameLen = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                string name = readXorStr(nameLen)
+                int hasPath = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
+                if hasPath != 0 { skipXorStr() }
+                int gc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                if gc < 0 or gc > 100000 { gLenbPos = gLenbEnd; return "MODULE?<bad>" }
+                for 0:gc-1 to i { skipConstRaw() }
+                int ec = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                if ec < 0 or ec > 100000 { gLenbPos = gLenbEnd; return "MODULE?<bad>" }
+                int totalE = 2 * ec
+                for 0:totalE-1 to i { skipConstRaw() }
+                int nic = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                if nic < 0 or nic > 100000 { gLenbPos = gLenbEnd; return "MODULE?<bad>" }
+                for 0:nic-1 to i { skipXorStr() }
+                int hasInit = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
+                if hasInit != 0 { skipChunkRaw() }
+                // export_mapping (v2.2.0+)
+                int emc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                if emc < 0 or emc > 100000 { gLenbPos = gLenbEnd; return "MODULE?<bad>" }
+                for 0:emc-1 to i {
+                    skipXorStr()
+                    gLenbPos = gLenbPos + 4
+                }
+                // use_reexport (v2.2.0+)
+                int urc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                if urc < 0 or urc > 100000 { gLenbPos = gLenbEnd; return "MODULE?<bad>" }
+                for 0:urc-1 to i {
+                    skipXorStr()
+                    gLenbPos = gLenbPos + 4
+                }
+                return "MODULE(" + name + ")"
+            }
+
+            // FFI_PTR: u64 + u64 + u8 + u8 + u8 = 19 bytes
+            case 0x10 {
+                gLenbPos = gLenbPos + 19
+                return "FFI_PTR"
+            }
+
+            // CLOSURE: function constant + u32 + u32 + strings
+            case 0x11 {
+                string fnDesc = parseConstText(depth + 1)
+                gLenbPos = gLenbPos + 4  // upvalue_count
+                int tpc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                if tpc < 0 or tpc > 100000 { gLenbPos = gLenbEnd; return "CLOSURE?<bad>" }
+                for 0:tpc-1 to i { skipXorStr() }
+                return "CLOSURE(" + fnDesc + ")"
+            }
+
+            // FFI_LIB: u8 has_path + if has: string
+            case 0x12 {
+                int has = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
+                if has != 0 {
+                    int n = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                    string p = readXorStr(n)
+                    return "FFI_LIB(" + p + ")"
+                }
+                return "FFI_LIB(null)"
+            }
+
+            // MODULE_REF: name + u8 has_path + if has: string
+            case 0x13 {
+                int nameLen = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+                string name = readXorStr(nameLen)
+                int has = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
+                if has != 0 { skipXorStr() }
+                return "MODULE_REF(" + name + ")"
+            }
+
+            // 未知标签
+            default {
+                gLenbPos = gLenbPos + 1
+                return "<" + constTagName(tag) + ">"
+            }
+        }
     }
 
     // ==================== 指令解码 ====================
@@ -1692,63 +1761,65 @@ struct PEAnalyzer {
         string operands = ""
         int lineNo = -1
         if idx < lines.len() { lineNo = lines[idx] }
-        int nextPc = pc + 1 + immSz
 
-        if op == 0 {
-            if pc + 3 <= gLenbEnd { operands = "const[" + _str(rbe16(pc + 1)) + "]" }
-        } else if op == 8 {
-            if pc + 3 <= gLenbEnd { operands = "slot=" + _str(rbe16(pc + 1)) }
-        } else if op == 9 {
-            if pc + 3 <= gLenbEnd { operands = "slot=" + _str(rbe16(pc + 1)) }
-        } else if op == 12 {
-            if pc + 3 <= gLenbEnd { operands = "slot=" + _str(rbe16(pc + 1)) }
-        } else if op == 13 {
-            if pc + 3 <= gLenbEnd { operands = "slot=" + _str(rbe16(pc + 1)) }
-        } else if op == 11 {
-            if pc + 5 <= gLenbEnd {
-                operands = "src=" + _str(rbe16(pc + 1)) + " dst=" + _str(rbe16(pc + 3))
-            }
-        } else if op == 59 {
-            if pc + 3 <= gLenbEnd { operands = "argc=" + _str(rbe16(pc + 1)) }
-        } else if op == 55 or op == 56 or op == 57 {
-            if pc + 5 <= gLenbEnd {
-                int target = rbe32(pc + 1)
-                int absT = pc + 1 + 4 + target
-                operands = "-> 0x" + toHex8(absT)
-            }
-        } else if op == 58 {
-            if pc + 5 <= gLenbEnd {
-                int target = rbe32(pc + 1)
-                int absT = pc + 1 + 4 + target
-                operands = "-> 0x" + toHex8(absT)
-            }
-        } else if op == 144 or op == 145 or op == 149 or op == 156 {
-            if pc + 5 <= gLenbEnd {
-                operands = "name=" + _str(rbe16(pc + 1)) + " argc=" + _str(rbe16(pc + 3))
-            }
-        } else if op == 61 {
-            if pc + 3 <= gLenbEnd { operands = "const[" + _str(rbe16(pc + 1)) + "]" }
-        } else if op == 73 {
-            if pc + 3 <= gLenbEnd { operands = "const[" + _str(rbe16(pc + 1)) + "]" }
-        } else if op >= 118 and op <= 128 {
+        // 范围判断先处理（switch 不支持范围）
+        if op >= 118 and op <= 128 {
             if pc + 2 <= gLenbEnd {
                 int imm = fileData.byte(pc + 1) & 0xFF
                 if imm >= 128 { imm = imm - 256 }
                 operands = "imm=" + _str(imm)
             }
-        } else if op == 64 {
-            if pc + 3 <= gLenbEnd { operands = "cap=" + _str(rbe16(pc + 1)) }
-        } else if op == 131 or op == 132 {
-            if pc + 2 <= gLenbEnd { operands = "field=" + _str(fileData.byte(pc + 1) & 0xFF) }
-        } else if op == 148 or op == 150 or op == 151 or op == 133 {
-            if pc + 3 <= gLenbEnd { operands = "slot=" + _str(rbe16(pc + 1)) }
-        } else if immSz > 0 {
-            operands = "<" + _str(immSz) + "B>"
+        } else {
+            switch op {
+                case 0 {
+                    if pc + 3 <= gLenbEnd { operands = "const[" + _str(rbe16(pc + 1)) + "]" }
+                }
+                case 8, 9, 12, 13 {
+                    if pc + 3 <= gLenbEnd { operands = "slot=" + _str(rbe16(pc + 1)) }
+                }
+                case 11 {
+                    if pc + 5 <= gLenbEnd {
+                        operands = "src=" + _str(rbe16(pc + 1)) + " dst=" + _str(rbe16(pc + 3))
+                    }
+                }
+                case 59 {
+                    if pc + 3 <= gLenbEnd { operands = "argc=" + _str(rbe16(pc + 1)) }
+                }
+                case 55, 56, 57, 58 {
+                    if pc + 5 <= gLenbEnd {
+                        int target = rbe32(pc + 1)
+                        int absT = pc + 1 + 4 + target
+                        operands = "-> 0x" + toHex8(absT)
+                    }
+                }
+                case 144, 145, 149, 156 {
+                    if pc + 5 <= gLenbEnd {
+                        operands = "name=" + _str(rbe16(pc + 1)) + " argc=" + _str(rbe16(pc + 3))
+                    }
+                }
+                case 61, 73 {
+                    if pc + 3 <= gLenbEnd { operands = "const[" + _str(rbe16(pc + 1)) + "]" }
+                }
+                case 64 {
+                    if pc + 3 <= gLenbEnd { operands = "cap=" + _str(rbe16(pc + 1)) }
+                }
+                case 131, 132 {
+                    if pc + 2 <= gLenbEnd { operands = "field=" + _str(fileData.byte(pc + 1) & 0xFF) }
+                }
+                case 148, 150, 151, 133 {
+                    if pc + 3 <= gLenbEnd { operands = "slot=" + _str(rbe16(pc + 1)) }
+                }
+                default {
+                    if immSz > 0 { operands = "<" + _str(immSz) + "B>" }
+                }
+            }
         }
 
         string lineField = "?"
-        if lineNo == 0 { lineField = "0" }
-        if lineNo > 0 { lineField = _str(lineNo) }
+        switch lineNo {
+            case 0 { lineField = "0" }
+            default { if lineNo > 0 { lineField = _str(lineNo) } }
+        }
         string addrField = toHex8(pc)
         return addrField + "  L" + lineField + "  " + name + "  " + operands
     }
@@ -1762,8 +1833,59 @@ struct PEAnalyzer {
         }
     }
 
+    // 将一行反汇编文本拆分成 Table 行（地址/行号/指令/操作数/原始字节）
+    // 指令行格式: "0xADDR  L42  OP_NAME  operands"
+    // 注释行格式: "; ..."，整行放到指令列
+    func addDisasmRow(string s) {
+        if gLineCount < 10000 {
+            gLineCount = gLineCount + 1
+            // 注释行
+            if s.len() > 0 and s[0] == ";" {
+                disasmRows.add(["", "", s, "", ""])
+                return
+            }
+            // 指令行: 尝试拆分
+            string addr = ""
+            string lineNo = ""
+            string opName = s
+            string operands = ""
+            string rawBytes = ""
+
+            // 拆分: 地址  L行号  指令  操作数
+            // 注意: decodeOneInstruction 返回的地址是纯 hex（不含 0x 前缀）
+            int space1 = s.find("  ")
+            if space1 > 0 {
+                addr = "0x" + s.slice(0, space1)
+                int restStart = space1
+                while restStart < s.len() and s[restStart] == " " { restStart = restStart + 1 }
+                if restStart < s.len() and s[restStart] == "L" {
+                    int space2 = s.find("  ", restStart)
+                    if space2 > restStart {
+                        lineNo = s.slice(restStart, space2)
+                        int rest2 = space2
+                        while rest2 < s.len() and s[rest2] == " " { rest2 = rest2 + 1 }
+                        if rest2 < s.len() {
+                            int space3 = s.find("  ", rest2)
+                            if space3 > rest2 {
+                                opName = s.slice(rest2, space3)
+                                int rest3 = space3
+                                while rest3 < s.len() and s[rest3] == " " { rest3 = rest3 + 1 }
+                                if rest3 < s.len() {
+                                    operands = s.slice(rest3, s.len())
+                                }
+                            } else {
+                                opName = s.slice(rest2, s.len())
+                            }
+                        }
+                    }
+                }
+            }
+            disasmRows.add([addr, lineNo, opName, operands, rawBytes])
+        }
+    }
+
     func parseOneChunkBody(int depth) {
-        if depth > 4 { addLine("  ; <深度超限,停止展开>"); return }
+        if depth > 4 { addDisasmRow("  ; <深度超限,停止展开>"); return }
         if gLenbPos + 4 > gLenbEnd { return }
 
         // filename string
@@ -1776,7 +1898,7 @@ struct PEAnalyzer {
         int constCnt = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
         if constCnt < 0 or constCnt > 100000 { return }
 
-        addLine("; ===== " + fnName + " (locals=" + _str(localCount) + ", consts=" + _str(constCnt) + ") =====")
+        addDisasmRow("; ===== " + fnName + " (locals=" + _str(localCount) + ", consts=" + _str(constCnt) + ") =====")
 
         // 解析常量 (parseConstText 现在会跳过完整常量，包括 FUNCTION 的 chunk)
         Array[int] constStarts = []
@@ -1791,7 +1913,7 @@ struct PEAnalyzer {
         for 0:constCnt-1 to ci {
             int cst = constStarts[ci]
             int tag = fileData.byte(cst) & 0xFF
-            addLine("; const[" + _str(ci) + "] = " + constTexts[ci])
+            addDisasmRow("; const[" + _str(ci) + "] = " + constTexts[ci])
             if tag == 0x06 and depth < 4 {
                 // 从保存的起始位置重新计算 chunk 偏移
                 int subPos = cst + 1  // skip tag
@@ -1834,14 +1956,27 @@ struct PEAnalyzer {
             if hasLines != 1 { lines.add(-1) }
         }
 
-        addLine("; --- bytecode (" + _str(codeLen) + "B) ---")
+        addDisasmRow("; --- bytecode (" + _str(codeLen) + "B) ---")
         int pc = 0
         while pc < codeLen {
             if codeStart + pc >= gLenbEnd { break }
             int opc = fileData.byte(codeStart + pc) & 0xFF
             int imm = opImmSize(opc)
             string line = decodeOneInstruction(codeStart, codeLen, lines, pc)
-            addLine(line)
+            addDisasmRow(line)
+            // 为指令行补充原始字节列（第5列）
+            int rowIdx = disasmRows.len() - 1
+            if rowIdx >= 0 and disasmRows[rowIdx][0].len() > 0 {
+                string hexStr = ""
+                int byteCnt = 1 + imm
+                if byteCnt > 16 { byteCnt = 16 }
+                for 0:byteCnt-1 to bi {
+                    if codeStart + pc + bi < gLenbEnd {
+                        hexStr = hexStr + toHex2(fileData.byte(codeStart + pc + bi)) + " "
+                    }
+                }
+                disasmRows[rowIdx][4] = hexStr
+            }
             pc = pc + 1 + imm
         }
     }
@@ -1882,31 +2017,31 @@ struct PEAnalyzer {
                 }
             }
 
-            // SYM_CLIB (kind=10): clib_func_count + funcs
-            if kind == 10 {
-                if pos + 4 > gLenbEnd { break }
-                int cfc = rbe32(pos); pos = pos + 4
-                if cfc < 0 or cfc > 100000 { break }
-                for 0:cfc-1 to ci {
+            // SYM_CLIB (kind=10) / SYM_CFUNC (kind=11)
+            switch kind {
+                case 10 {
                     if pos + 4 > gLenbEnd { break }
-                    int fnLen = rbe32(pos); pos = pos + 4
-                    if fnLen < 0 or pos + fnLen > gLenbEnd { break }
-                    pos = pos + fnLen
-                    pos = pos + 1  // return type
-                    if pos + 4 > gLenbEnd { break }
-                    int pc2 = rbe32(pos); pos = pos + 4
-                    if pc2 < 0 or pc2 > 100000 { break }
-                    pos = pos + pc2  // param types (1 byte each)
+                    int cfc = rbe32(pos); pos = pos + 4
+                    if cfc < 0 or cfc > 100000 { break }
+                    for 0:cfc-1 to ci {
+                        if pos + 4 > gLenbEnd { break }
+                        int fnLen = rbe32(pos); pos = pos + 4
+                        if fnLen < 0 or pos + fnLen > gLenbEnd { break }
+                        pos = pos + fnLen
+                        pos = pos + 1  // return type
+                        if pos + 4 > gLenbEnd { break }
+                        int pc2 = rbe32(pos); pos = pos + 4
+                        if pc2 < 0 or pc2 > 100000 { break }
+                        pos = pos + pc2  // param types (1 byte each)
+                    }
                 }
-            }
-
-            // SYM_CFUNC (kind=11): param_count + return_type + params
-            if kind == 11 {
-                if pos + 4 > gLenbEnd { break }
-                int pc3 = rbe32(pos); pos = pos + 4
-                pos = pos + 1  // return type
-                if pc3 < 0 or pc3 > 100000 { break }
-                pos = pos + pc3  // param types (1 byte each)
+                case 11 {
+                    if pos + 4 > gLenbEnd { break }
+                    int pc3 = rbe32(pos); pos = pos + 4
+                    pos = pos + 1  // return type
+                    if pc3 < 0 or pc3 > 100000 { break }
+                    pos = pos + pc3  // param types (1 byte each)
+                }
             }
         }
         return pos
@@ -1915,23 +2050,28 @@ struct PEAnalyzer {
     // ==================== 反汇编顶层驱动 ====================
 
     func analyzeDisasm() {
-        disasmBox.clear()
+        disasmRows = []
         gLines = []
         gLineCount = 0
+        disasmSearchPos = 0
+        disasmSearchKey = ""
 
         if fileSize < 8 {
-            disasmBox.add_item("文件太小,无法包含 LENB 尾部")
+            disasmRows.add(["", "", "文件太小,无法包含 LENB 尾部", "", ""])
+            disasmTable.set_rows(disasmRows)
             return
         }
         int tailMagic = readU32(fileData, fileSize - 4)
         if tailMagic != LENB_MAGIC {
-            disasmBox.add_item("未检测到 LENB 尾部数据")
-            disasmBox.add_item("尾部魔数: 0x" + toHex8(tailMagic) + " (期望 0x" + toHex8(LENB_MAGIC) + ")")
+            disasmRows.add(["", "", "未检测到 LENB 尾部数据", "", ""])
+            disasmRows.add(["", "", "尾部魔数: 0x" + toHex8(tailMagic) + " (期望 0x" + toHex8(LENB_MAGIC) + ")", "", ""])
+            disasmTable.set_rows(disasmRows)
             return
         }
         int lenbSize = readU32(fileData, fileSize - 8)
         if lenbSize <= 0 or lenbSize > fileSize - 8 {
-            disasmBox.add_item("LENB 大小异常: " + _str(lenbSize))
+            disasmRows.add(["", "", "LENB 大小异常: " + _str(lenbSize), "", ""])
+            disasmTable.set_rows(disasmRows)
             return
         }
         int lenbStart = fileSize - 8 - lenbSize
@@ -1939,7 +2079,8 @@ struct PEAnalyzer {
         gLenbPos = lenbStart
         gLenbEnd = fileSize - 8
         if gLenbEnd - gLenbOff < 20 {
-            disasmBox.add_item("LENB 数据太短")
+            disasmRows.add(["", "", "LENB 数据太短", "", ""])
+            disasmTable.set_rows(disasmRows)
             return
         }
 
@@ -1950,26 +2091,289 @@ struct PEAnalyzer {
         string srcHash = rbe_i64_hex(gLenbPos)
         gLenbPos = gLenbPos + 8
 
-        addLine("; ===== LENB Header =====")
-        addLine("; magic:    0x" + toHex8(magic))
-        addLine("; version:  0x" + toHex8(version))
-        addLine("; flags:    0x" + toHex8(flags))
-        addLine("; src_hash: " + srcHash)
-        addLine("; blob_off: 0x" + toHex8(gLenbOff))
-        addLine("; blob_end: 0x" + toHex8(gLenbEnd))
+        addDisasmRow("; ===== LENB Header =====")
+        addDisasmRow("; magic:    0x" + toHex8(magic))
+        addDisasmRow("; version:  0x" + toHex8(version))
+        addDisasmRow("; flags:    0x" + toHex8(flags))
+        addDisasmRow("; src_hash: " + srcHash)
+        addDisasmRow("; blob_off: 0x" + toHex8(gLenbOff))
+        addDisasmRow("; blob_end: 0x" + toHex8(gLenbEnd))
 
         int parseStart = skipHeaderAndSymbols(gLenbPos)
         gLenbPos = parseStart
-        addLine("; ===== (跳过符号表,跳到模块主体) =====")
+        addDisasmRow("; ===== (跳过符号表,跳到模块主体) =====")
         parseOneChunkBody(0)
 
-        // 输出到 ListBox
-        for 0:gLines.len()-1 to li {
-            disasmBox.add_item(gLines[li])
-        }
+        // 输出到 Table
+        disasmTable.set_rows(disasmRows)
         if gLineCount >= 10000 {
-            disasmBox.add_item("... (输出已截断,超过 10000 行)")
+            disasmRows.add(["", "", "... (输出已截断,超过 10000 行)", "", ""])
+            disasmTable.set_rows(disasmRows)
         }
+        statusLbl.set_text("反汇编完成 - " + disasmRows.len() + " 行")
+        SDL3.markFrameRedraw()
+    }
+
+    // ==================== 反汇编搜索功能 ====================
+
+    func onDisasmSearch() {
+        string key = disasmSearchEdit.get_text()
+        if key == "" {
+            statusLbl.set_text("请输入搜索关键字")
+            SDL3.markFrameRedraw()
+            return
+        }
+        disasmSearchKey = key
+        disasmSearchPos = 0
+        if disasmSearchInternal() {
+            statusLbl.set_text("找到匹配 - 行 " + _str(disasmSearchPos + 1))
+        } else {
+            statusLbl.set_text("未找到匹配: " + key)
+        }
+        SDL3.markFrameRedraw()
+    }
+
+    func onDisasmSearchNext() {
+        if disasmSearchKey == "" {
+            onDisasmSearch()
+            return
+        }
+        disasmSearchPos = disasmSearchPos + 1
+        if disasmSearchInternal() {
+            statusLbl.set_text("找到匹配 - 行 " + _str(disasmSearchPos + 1))
+        } else {
+            // 重头开始搜索
+            disasmSearchPos = 0
+            if disasmSearchInternal() {
+                statusLbl.set_text("重新搜索 - 行 " + _str(disasmSearchPos + 1))
+            } else {
+                statusLbl.set_text("未找到匹配: " + disasmSearchKey)
+            }
+        }
+        SDL3.markFrameRedraw()
+    }
+
+    func disasmSearchInternal(): bool {
+        string key = disasmSearchKey
+        for disasmSearchPos:disasmRows.len()-1 to i {
+            // 搜索所有列
+            for 0:4 to col {  // 遍历 5 列: 地址/行号/指令/操作数/原始字节
+                string cell = disasmRows[i][col]
+                if cell.find(key) >= 0 {
+                    disasmSearchPos = i
+                    disasmTable.set_selected(i)
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    // ==================== 反汇编右键菜单回调 ====================
+
+    func onDisasmCtxWillOpen(int row) {
+        // 只有指令行（地址列非空）才允许修改
+        bool isInstruction = false
+        if row >= 0 and row < disasmRows.len() {
+            if disasmRows[row][0].len() > 0 { isInstruction = true }
+        }
+        disasmTable.setContextItemEnabled("edit_cell", isInstruction)
+        disasmTable.setContextItemEnabled("edit_row", isInstruction)
+        disasmTable.setContextItemEnabled("copy_row", row >= 0)
+        disasmTable.setContextItemEnabled("copy_addr", isInstruction)
+        disasmTable.setContextItemEnabled("goto_addr", true)
+        disasmTable.setContextItemEnabled("save_file", true)
+    }
+
+    func onDisasmContext(int row, string id) {
+        if id == "edit_cell" {
+            // 获取右击的列
+            int col = disasmTable.get_context_menu_col()
+            if col < 0 { col = 3 }  // 默认编辑操作数列
+            disasmTable.begin_edit(row, col)
+        } eif id == "edit_row" {
+            // 默认编辑操作数列（第3列，索引3）
+            disasmTable.begin_edit(row, 3)
+        } eif id == "copy_row" {
+            if row >= 0 and row < disasmRows.len() {
+                string line = disasmRows[row][0] + "  " + disasmRows[row][1] + "  " + disasmRows[row][2] + "  " + disasmRows[row][3]
+                statusLbl.set_text("已复制: " + line)
+                SDL3.markFrameRedraw()
+            }
+        } eif id == "copy_addr" {
+            if row >= 0 and row < disasmRows.len() {
+                statusLbl.set_text("地址: " + disasmRows[row][0])
+                SDL3.markFrameRedraw()
+            }
+        } eif id == "goto_addr" {
+            // 跳转到地址：在搜索框中输入地址，然后查找
+            statusLbl.set_text("在搜索框输入地址然后点击查找")
+            SDL3.markFrameRedraw()
+        } eif id == "save_file" {
+            onDisasmSave()
+        }
+    }
+
+    func onDisasmEditCommit(int row, int col, string newText) {
+        if row < 0 or row >= disasmRows.len() { return }
+        // 更新内存中的数据
+        disasmRows[row][col] = newText
+        // 同步更新 fileData（如果是操作数列，需要重新计算字节）
+        // 这里先只更新显示，保存时统一写回
+        statusLbl.set_text("已修改行 " + _str(row + 1) + " 列 " + _str(col) + " - 点击保存修改写入文件")
+        SDL3.markFrameRedraw()
+    }
+
+    func onDisasmCellClick(int row, int col) {
+        // 单击单元格时显示详情
+        if row >= 0 and row < disasmRows.len() {
+            string cell = disasmRows[row][col]
+            if cell.len() > 0 {
+                statusLbl.set_text("行 " + _str(row + 1) + " 列 " + _str(col) + ": " + cell)
+                SDL3.markFrameRedraw()
+            }
+        }
+    }
+
+    // ==================== 保存修改到文件 ====================
+    //
+    // 将修改后的反汇编数据写回 PE 文件。根据修改的单元格内容，
+    // 重新计算字节码并写入对应文件偏移。
+    // 参考 LenoHack 的 patch_files.leno 模式：
+    //   files.open(path, "r+b") → seek(offset) → write(bytes) → close()
+
+    func onDisasmSave() {
+        if filePath == "" {
+            statusLbl.set_text("错误: 请先选择文件")
+            SDL3.markFrameRedraw()
+            return
+        }
+        if not analyzed {
+            statusLbl.set_text("错误: 请先分析文件")
+            SDL3.markFrameRedraw()
+            return
+        }
+
+        // 备份原文件
+        string backupPath = filePath + ".bak"
+        try {
+            File src = files.open(filePath, "rb")
+            File dst = files.open(backupPath, "wb")
+            int sz = src.len()
+            string data = src.read(sz)
+            dst.write(data)
+            src.close()
+            dst.close()
+        } catch {
+            statusLbl.set_text("警告: 备份失败,继续保存")
+            SDL3.markFrameRedraw()
+        }
+
+        // 写回文件 - 使用 r+b 模式原地修改
+        File wf = files.open(filePath, "r+b")
+        if wf == null {
+            statusLbl.set_text("错误: 无法以读写模式打开文件")
+            SDL3.markFrameRedraw()
+            return
+        }
+
+        int patchCount = 0
+        // 遍历反汇编行，找到有地址的指令行，将修改后的操作数/指令写回
+        for 0:disasmRows.len()-1 to ri {
+            string addrStr = disasmRows[ri][0]
+            if addrStr == "" { continue }
+            if addrStr.len() < 3 { continue }
+            // 解析地址 (格式: 0x........)
+            if addrStr[0] != "0" or addrStr[1] != "x" { continue }
+            int addr = hexStrToInt(addrStr)
+            if addr <= 0 or addr >= fileSize { continue }
+
+            // 获取原始字节列和当前字节列
+            string rawHex = disasmRows[ri][4]
+            if rawHex == "" { continue }
+
+            // 将修改后的原始字节列写回文件
+            // 解析 hex 字符串为字节序列
+            Array[int] bytes = parseHexBytes(rawHex)
+            if bytes.len() == 0 { continue }
+
+            // 与原文件对比，只写有变化的字节
+            int changed = 0
+            for 0:bytes.len()-1 to bi {
+                if addr + bi < fileSize {
+                    int origByte = fileData.byte(addr + bi)
+                    if origByte != bytes[bi] {
+                        wf.seek(addr + bi, "set")
+                        wf.write(strings.char(bytes[bi]))
+                        changed = changed + 1
+                    }
+                }
+            }
+            if changed > 0 {
+                patchCount = patchCount + changed
+            }
+        }
+
+        wf.close()
+
+        // 重新读取文件到内存（保持 fileData 与磁盘同步）
+        File rf = files.open(filePath, "rb")
+        if rf != null {
+            fileSize = rf.len()
+            fileData = rf.read(fileSize)
+            fileSize = fileData.byte_len()
+            rf.close()
+        }
+
+        if patchCount > 0 {
+            statusLbl.set_text("v 保存完成 - 修改 " + patchCount + " 字节, 备份: " + dirs.basename(backupPath))
+        } else {
+            statusLbl.set_text("无修改内容（原始字节列未变化）")
+        }
+        SDL3.markFrameRedraw()
+    }
+
+    // hex 字符串转 int（如 "0x1234" → 4660）
+    func hexStrToInt(string s): int {
+        int result = 0
+        int start = 0
+        if s.len() > 2 and s[0] == "0" and s[1] == "x" { start = 2 }
+        for start:s.len()-1 to i {
+            string ch = s[i]
+            int v = 0
+            if ch >= "0" and ch <= "9" {
+                v = strings.byte(ch) - 48
+            } eif ch >= "A" and ch <= "F" {
+                v = strings.byte(ch) - 55
+            } eif ch >= "a" and ch <= "f" {
+                v = strings.byte(ch) - 87
+            } else {
+                break
+            }
+            result = result * 16 + v
+        }
+        return result
+    }
+
+    // 解析 hex 字节字符串（如 "48 8B 05" → [0x48, 0x8B, 0x05]）
+    func parseHexBytes(string s): Array[int] {
+        Array[int] result = []
+        string cur = ""
+        for 0:s.len()-1 to i {
+            string ch = s[i]
+            if ch == " " {
+                if cur.len() == 2 {
+                    result.add(hexStrToInt("0x" + cur))
+                }
+                cur = ""
+            } else {
+                cur = cur + ch
+            }
+        }
+        if cur.len() == 2 {
+            result.add(hexStrToInt("0x" + cur))
+        }
+        return result
     }
 
     // ==================== 事件处理 ====================
