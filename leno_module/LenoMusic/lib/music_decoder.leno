@@ -1,0 +1,60 @@
+// music_decoder.leno -- Decoder for audio metadata
+import "music_core.leno" as core
+use core.miniaudio
+
+export struct Decoder {
+    Ptr d; bool open
+
+    func open(string p): bool {
+        miniaudio l = core.lib()
+        if l == null { return false }
+        d = l.ma_dll_decoder_open(p) as Ptr
+        open = d != null
+        return open
+    }
+
+    func getSampleRate(): int {
+        if not open { return 0 }
+        return core.lib().ma_dll_decoder_get_sample_rate(d)
+    }
+
+    func getChannels(): int {
+        if not open { return 0 }
+        return core.lib().ma_dll_decoder_get_channels(d)
+    }
+
+    func getFormat(): int {
+        if not open { return -1 }
+        return core.lib().ma_dll_decoder_get_format(d)
+    }
+
+    func getLengthInFrames(): int {
+        if not open { return 0 }
+        return core.lib().ma_dll_decoder_get_length_in_pcm_frames(d)
+    }
+
+    func getDuration(): int {
+        if not open { return 0 }
+        var sr = getSampleRate()
+        return if sr > 0 then getLengthInFrames() / sr else 0
+    }
+
+    func close() {
+        if open { core.lib().ma_dll_decoder_close(d); d = null; open = false }
+    }
+
+    func isOpen(): bool { return open }
+}
+
+export func createDecoder(string p): Decoder {
+    var d = new Decoder()
+    d.open(p)
+    return d
+}
+
+export func getInfo(string p) {
+    var d = createDecoder(p)
+    if not d.isOpen() { print("no"); return }
+    print("SR:" + d.getSampleRate() + "Hz CH:" + d.getChannels() + " DUR:" + d.getDuration() + "s")
+    d.close()
+}

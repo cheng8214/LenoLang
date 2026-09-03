@@ -1,0 +1,48 @@
+// test_controls.leno -- 播放控制: 音量/音调/声像/循环/定位
+import "../../lib/Music.leno" as audio
+use audio.Sound
+
+main() {
+    print("=== 播放控制测试 ===")
+
+    var s = audio.createSound("../audio/bk.mp3")
+    if not s.isInit() {
+        print("[FAIL] 加载失败")
+        return
+    }
+    print("[OK] 加载成功")
+
+    s.setVolume(0.3)
+    print("音量: " + _str(s.getVolume()))
+
+    s.setPitch(1.5)
+    print("音调: " + _str(s.getPitch()))
+
+    s.setPan(-0.5)
+    print("声像: " + _str(s.getPan()))
+
+    s.setLooping(true)
+    print("循环: " + _str(s.isLooping()))
+
+    s.play()
+    print("播放中: " + _str(s.isPlaying()))
+
+    sleep(2000)
+    float pos = s.getPosition()
+    print("当前位置: " + _str(pos) + " 秒")
+
+    s.seek(10.0)
+    sleep(500)
+    print("跳转后位置: " + _str(s.getPosition()) + " 秒")
+
+    s.setPitch(1.0)
+    s.setPan(0.0)
+    s.setVolume(0.5)
+    print("恢复默认: 音调=1.0 声像=0.0 音量=0.5")
+
+    sleep(2000)
+    s.stop()
+    s.uninit()
+
+    print("\n=== 测试完成 ===")
+}

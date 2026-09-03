@@ -1,0 +1,36 @@
+// test_filter.leno -- 滤波器: 低通/高通
+import "../../lib/Music.leno" as audio
+use audio.(LPF, HPF)
+
+main() {
+    print("=== 滤波器测试 ===")
+
+    int FORMAT_F32 = audio.FORMAT_F32
+    int SR = 44100
+
+    // 低通滤波器 (截止频率 1000Hz, 2阶)
+    print("\n--- 低通滤波器 LPF ---")
+    var lpf = audio.createLPF(FORMAT_F32, 1, SR, 1000.0, 2)
+    if lpf.isInit() {
+        print("[OK] LPF 创建成功 (截止: 1000Hz, 阶数: 2)")
+        lpf.reinit(500.0, 4)
+        print("重新初始化: 截止 500Hz, 阶数 4")
+        lpf.uninit()
+    } else {
+        print("[FAIL] LPF 创建失败")
+    }
+
+    // 高通滤波器 (截止频率 2000Hz, 2阶)
+    print("\n--- 高通滤波器 HPF ---")
+    var hpf = audio.createHPF(FORMAT_F32, 1, SR, 2000.0, 2)
+    if hpf.isInit() {
+        print("[OK] HPF 创建成功 (截止: 2000Hz, 阶数: 2)")
+        hpf.reinit(4000.0, 4)
+        print("重新初始化: 截止 4000Hz, 阶数 4")
+        hpf.uninit()
+    } else {
+        print("[FAIL] HPF 创建失败")
+    }
+
+    print("\n=== 测试完成 ===")
+}

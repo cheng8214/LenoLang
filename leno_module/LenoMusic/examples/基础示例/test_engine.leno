@@ -1,0 +1,25 @@
+// test_engine.leno -- 基础示例: 引擎初始化与信息
+import "../../lib/Music.leno" as audio
+use audio.Engine
+
+main() {
+    print("=== 引擎信息测试 ===")
+
+    var e = audio.createEngine()
+    if not e.isInit() {
+        print("[FAIL] 引擎初始化失败")
+        return
+    }
+    print("[OK] 引擎初始化成功")
+
+    int sr = _int(e.getSampleRate())
+    int ch = _int(e.getChannels())
+    print("采样率: " + _str(sr) + " Hz")
+    print("声道数: " + _str(ch))
+
+    e.setVolume(0.8)
+    print("音量设为 0.8, 当前音量: " + _str(e.getVolume()))
+
+    e.uninit()
+    print("\n=== 测试完成 ===")
+}

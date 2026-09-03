@@ -1,13 +1,13 @@
 {
-  "name": "",
+  "name": "LenoMusic-native",
   "path": "D:\\CLeno\\LenoC\\leno_module\\LenoMusic\\src\\",
-  "mainFile": "main.leno",
-  "sourceFiles": [],
+  "mainFile": "miniaudio_dll.c",
+  "sourceFiles": ["miniaudio_dll.c"],
   "createdDate": "2026-06-19T19:48:34.006714+08:00",
-  "modifiedDate": "2026-06-19T19:48:34.006715+08:00",
+  "modifiedDate": "2026-09-03T19:30:00.000000+08:00",
   "type": 0,
-  "description": "",
-  "version": "1.0.0",
+  "description": "miniaudio DLL v3 - streaming playback",
+  "version": "3.0.0",
   "author": "",
   "settings": {}
 }

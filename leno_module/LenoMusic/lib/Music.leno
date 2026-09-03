@@ -1,0 +1,62 @@
+// Music.leno -- LenoMusic entry point
+// Streaming audio playback module based on miniaudio
+// Usage: import "Music"
+//        var s = createSound("song.mp3"); s.play(); ...
+
+import "music_core.leno" as core
+import "music_player.leno" as player
+import "music_decoder.leno" as decoder
+import "music_generator.leno" as gen
+import "music_filter.leno" as flt
+
+// ==================== Re-export types ====================
+use core.miniaudio
+use player.(Sound, Engine)
+use decoder.Decoder
+use gen.(Waveform, Noise)
+use flt.(LPF, HPF)
+
+// ==================== Re-export constants ====================
+export var FORMAT_F32 = core.FORMAT_F32
+export var FORMAT_S16 = core.FORMAT_S16
+export var FORMAT_S24 = core.FORMAT_S24
+export var FORMAT_S32 = core.FORMAT_S32
+export var FORMAT_U8 = core.FORMAT_U8
+export var WAVEFORM_SINE = core.WAVEFORM_SINE
+export var WAVEFORM_SQUARE = core.WAVEFORM_SQUARE
+export var WAVEFORM_TRIANGLE = core.WAVEFORM_TRIANGLE
+export var WAVEFORM_SAWTOOTH = core.WAVEFORM_SAWTOOTH
+export var NOISE_WHITE = core.NOISE_WHITE
+export var NOISE_PINK = core.NOISE_PINK
+export var NOISE_BROWNIAN = core.NOISE_BROWNIAN
+
+// ==================== Core functions ====================
+export func init(string dll): bool { return core.init(dll) }
+export func uninit() { core.uninit() }
+export func getVersion(): int { return core.getVersion() }
+export func hasVorbis(): bool { return core.hasVorbis() }
+
+// ==================== Player ====================
+export func createSound(string p): Sound { return player.createSound(p) }
+export func createEngine(): Engine { return player.createEngine() }
+export func quickPlay(string p, int sec): bool { return player.quickPlay(p, sec) }
+
+// ==================== Decoder ====================
+export func createDecoder(string p): Decoder { return decoder.createDecoder(p) }
+export func getInfo(string p) { decoder.getInfo(p) }
+
+// ==================== Generator ====================
+export func createWaveform(int f, int c, int s, int t, float a, float fr): Waveform {
+    return gen.createWaveform(f, c, s, t, a, fr)
+}
+export func createNoise(int f, int c, int t, int s, float a): Noise {
+    return gen.createNoise(f, c, t, s, a)
+}
+
+// ==================== Filter ====================
+export func createLPF(int f, int c, int s, float cf, int o): LPF {
+    return flt.createLPF(f, c, s, cf, o)
+}
+export func createHPF(int f, int c, int s, float cf, int o): HPF {
+    return flt.createHPF(f, c, s, cf, o)
+}

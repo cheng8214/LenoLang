@@ -1,0 +1,145 @@
+// music_core.leno -- clib declarations, DLL loading, constants
+import ffi
+import dirs
+import files
+
+// ==================== clib miniaudio ====================
+clib miniaudio {
+    // Engine
+    i32 ma_dll_engine_init()
+    void ma_dll_engine_uninit()
+    i32 ma_dll_engine_get_sample_rate()
+    i32 ma_dll_engine_get_channels()
+    void ma_dll_engine_set_volume(f64 vol)
+    f64 ma_dll_engine_get_volume()
+    i32 ma_dll_engine_play_sound(str8 path)
+    i32 ma_dll_engine_stop()
+    // Sound (streaming)
+    Ptr ma_dll_sound_create(str8 path)
+    void ma_dll_sound_destroy(Ptr h)
+    i32 ma_dll_sound_start(Ptr h)
+    i32 ma_dll_sound_stop(Ptr h)
+    i32 ma_dll_sound_is_playing(Ptr h)
+    void ma_dll_sound_set_volume(Ptr h, f64 v)
+    f64 ma_dll_sound_get_volume(Ptr h)
+    i32 ma_dll_sound_seek(Ptr h, f64 sec)
+    f32 ma_dll_sound_get_position(Ptr h)
+    f32 ma_dll_sound_get_duration(Ptr h)
+    void ma_dll_sound_set_looping(Ptr h, i32 looping)
+    i32 ma_dll_sound_is_looping(Ptr h)
+    void ma_dll_sound_set_pitch(Ptr h, f64 pitch)
+    f64 ma_dll_sound_get_pitch(Ptr h)
+    void ma_dll_sound_set_pan(Ptr h, f64 pan)
+    f64 ma_dll_sound_get_pan(Ptr h)
+    // Decoder
+    Ptr ma_dll_decoder_open(str8 path)
+    void ma_dll_decoder_close(Ptr d)
+    i32 ma_dll_decoder_get_sample_rate(Ptr d)
+    i32 ma_dll_decoder_get_channels(Ptr d)
+    i32 ma_dll_decoder_get_format(Ptr d)
+    i32 ma_dll_decoder_get_length_in_pcm_frames(Ptr d)
+    // Waveform
+    Ptr ma_dll_waveform_create(i32 f, i32 c, i32 sr, i32 t, f64 a, f64 fr)
+    void ma_dll_waveform_destroy(Ptr h)
+    i32 ma_dll_waveform_read(Ptr h, Ptr o, i32 n)
+    i32 ma_dll_waveform_set_amplitude(Ptr h, f64 a)
+    i32 ma_dll_waveform_set_frequency(Ptr h, f64 f)
+    i32 ma_dll_waveform_set_type(Ptr h, i32 t)
+    // Noise
+    Ptr ma_dll_noise_create(i32 f, i32 c, i32 t, i32 s, f64 a)
+    void ma_dll_noise_destroy(Ptr h)
+    i32 ma_dll_noise_read(Ptr h, Ptr o, i32 n)
+    i32 ma_dll_noise_set_amplitude(Ptr h, f64 a)
+    i32 ma_dll_noise_set_seed(Ptr h, i32 s)
+    // LPF
+    Ptr ma_dll_lpf_create(i32 f, i32 c, i32 sr, i32 o, f32 cf)
+    void ma_dll_lpf_destroy(Ptr h)
+    i32 ma_dll_lpf_process(Ptr h, Ptr o, Ptr i, i32 n)
+    i32 ma_dll_lpf_reinit(Ptr h, i32 f, i32 c, i32 sr, i32 o, f32 cf)
+    // HPF
+    Ptr ma_dll_hpf_create(i32 f, i32 c, i32 sr, i32 o, f32 cf)
+    void ma_dll_hpf_destroy(Ptr h)
+    i32 ma_dll_hpf_process(Ptr h, Ptr o, Ptr i, i32 n)
+    i32 ma_dll_hpf_reinit(Ptr h, i32 f, i32 c, i32 sr, i32 o, f32 cf)
+    // Version
+    i32 ma_dll_get_version()
+    i32 ma_dll_has_vorbis()
+}
+
+// ==================== Constants ====================
+export var FORMAT_F32 = 0
+export var FORMAT_S16 = 1
+export var FORMAT_S24 = 2
+export var FORMAT_S32 = 3
+export var FORMAT_U8 = 4
+export var WAVEFORM_SINE = 0
+export var WAVEFORM_SQUARE = 1
+export var WAVEFORM_TRIANGLE = 2
+export var WAVEFORM_SAWTOOTH = 3
+export var NOISE_WHITE = 0
+export var NOISE_PINK = 1
+export var NOISE_BROWNIAN = 2
+
+// ==================== DLL loading ====================
+string g_path = ""
+var g_ok = false
+miniaudio g_lib = null
+
+func find_dll() {
+    // 1: global cache ~/.leno/pkgs/LenoMusic/lib/
+    var cache = _homedir() + "\\.leno\\pkgs\\LenoMusic\\lib\\miniaudio.dll"
+    if files.exists(cache) { g_path = cache; return }
+    // 2: CWD
+    if files.exists("miniaudio.dll") { g_path = "miniaudio.dll"; return }
+    // 3: lib/ (dev mode from project root)
+    if files.exists("lib/miniaudio.dll") { g_path = "lib/miniaudio.dll"; return }
+    // 4: ../../lib/ (from examples subdirectory)
+    if files.exists("../../lib/miniaudio.dll") { g_path = "../../lib/miniaudio.dll"; return }
+    // 5: dirs.script_dir()
+    var scr = dirs.script_dir()
+    if scr != null {
+        var path = scr + "/miniaudio.dll"
+        if files.exists(path) { g_path = path; return }
+        // Also try ../../lib/ relative to script dir
+        var libPath = scr + "/../../lib/miniaudio.dll"
+        if files.exists(libPath) { g_path = libPath; return }
+    }
+    g_path = "miniaudio.dll"
+}
+
+export func lib(): miniaudio {
+    if g_lib == null {
+        if not g_ok { find_dll(); g_ok = true }
+        g_lib = ffi.load(g_path)
+    }
+    return g_lib
+}
+
+export func init(string dll): bool {
+    if g_ok { return true }
+    g_path = dll
+    g_ok = true
+    return true
+}
+
+export func uninit() {
+    if g_lib != null {
+        g_lib.ma_dll_engine_stop()
+        g_lib.ma_dll_engine_uninit()
+    }
+    g_lib = null
+    g_path = ""
+    g_ok = false
+}
+
+export func getVersion(): int {
+    var l = lib()
+    if l == null { return 0 }
+    return l.ma_dll_get_version()
+}
+
+export func hasVorbis(): bool {
+    var l = lib()
+    if l == null { return false }
+    return l.ma_dll_has_vorbis() == 1
+}

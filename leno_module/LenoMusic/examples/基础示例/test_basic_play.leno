@@ -1,0 +1,29 @@
+// test_basic_play.leno -- 基础示例: 流式音频播放
+import "../../lib/Music.leno" as audio
+use audio.Sound
+
+main() {
+    print("=== 流式播放测试 ===")
+
+    var s = audio.createSound("../audio/bk.mp3")
+    if not s.isInit() {
+        print("[FAIL] 音频加载失败")
+        return
+    }
+    print("[OK] 音频加载成功 (流式, 低内存)")
+
+    float dur = s.getDuration()
+    print("时长: " + _str(dur) + " 秒")
+
+    print("开始播放 3 秒...")
+    s.play()
+    print("正在播放: " + _str(s.isPlaying()))
+
+    sleep(3000)
+
+    s.stop()
+    print("已停止")
+    s.uninit()
+
+    print("\n=== 测试完成 ===")
+}

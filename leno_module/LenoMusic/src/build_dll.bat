@@ -7,7 +7,6 @@ if %ERRORLEVEL% neq 0 (
     exit /b 1
 )
 
-echo Copying to lib\ and native\...
+echo Copying to lib\...
 copy /Y miniaudio.dll ..\lib\miniaudio.dll >nul
-copy /Y miniaudio.dll ..\native\miniaudio.dll >nul
 echo Done

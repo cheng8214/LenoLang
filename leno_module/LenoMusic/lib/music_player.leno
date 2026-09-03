@@ -1,0 +1,161 @@
+// music_player.leno -- Sound (streaming) + Engine
+import "music_core.leno" as core
+use core.miniaudio
+
+// ==================== Sound (streaming playback) ====================
+export struct Sound {
+    Ptr h; bool ok
+
+    func load(string p): bool {
+        miniaudio l = core.lib()
+        if l == null { return false }
+        l.ma_dll_engine_init()
+        h = l.ma_dll_sound_create(p) as Ptr
+        if h == null { l.ma_dll_engine_uninit(); return false }
+        ok = true
+        return true
+    }
+
+    func play(): bool {
+        if not ok { return false }
+        return core.lib().ma_dll_sound_start(h) == 0
+    }
+
+    func stop(): bool {
+        if not ok { return false }
+        return core.lib().ma_dll_sound_stop(h) == 0
+    }
+
+    func seek(float s): bool {
+        if not ok { return false }
+        return core.lib().ma_dll_sound_seek(h, s) == 0
+    }
+
+    func isPlaying(): bool {
+        if not ok { return false }
+        return core.lib().ma_dll_sound_is_playing(h) == 1
+    }
+
+    func setVolume(float v) {
+        if ok { core.lib().ma_dll_sound_set_volume(h, v) }
+    }
+
+    func getVolume(): float {
+        if not ok { return 0.0 }
+        return _float(core.lib().ma_dll_sound_get_volume(h))
+    }
+
+    func getPosition(): float {
+        if not ok { return 0.0 }
+        return _float(core.lib().ma_dll_sound_get_position(h))
+    }
+
+    func getDuration(): float {
+        if not ok { return 0.0 }
+        return _float(core.lib().ma_dll_sound_get_duration(h))
+    }
+
+    func setLooping(bool loop) {
+        if ok { core.lib().ma_dll_sound_set_looping(h, if loop then 1 else 0) }
+    }
+
+    func isLooping(): bool {
+        if not ok { return false }
+        return core.lib().ma_dll_sound_is_looping(h) == 1
+    }
+
+    func setPitch(float v) {
+        if ok { core.lib().ma_dll_sound_set_pitch(h, v) }
+    }
+
+    func getPitch(): float {
+        if not ok { return 0.0 }
+        return _float(core.lib().ma_dll_sound_get_pitch(h))
+    }
+
+    func setPan(float v) {
+        if ok { core.lib().ma_dll_sound_set_pan(h, v) }
+    }
+
+    func getPan(): float {
+        if not ok { return 0.0 }
+        return _float(core.lib().ma_dll_sound_get_pan(h))
+    }
+
+    func isInit(): bool { return ok }
+
+    func uninit() {
+        if ok {
+            core.lib().ma_dll_sound_destroy(h)
+            core.lib().ma_dll_engine_uninit()
+            h = null
+            ok = false
+        }
+    }
+}
+
+// ==================== Engine ====================
+export struct Engine {
+    bool ok
+
+    func init(): bool {
+        if core.lib().ma_dll_engine_init() != 0 { return false }
+        ok = true
+        return true
+    }
+
+    func play(string p): bool {
+        if not ok { return false }
+        return core.lib().ma_dll_engine_play_sound(p) == 0
+    }
+
+    func stop() {
+        if ok { core.lib().ma_dll_engine_stop() }
+    }
+
+    func setVolume(float v) {
+        if ok { core.lib().ma_dll_engine_set_volume(v) }
+    }
+
+    func getVolume(): float {
+        if not ok { return 0.0 }
+        return _float(core.lib().ma_dll_engine_get_volume())
+    }
+
+    func getSampleRate(): int {
+        if not ok { return 0 }
+        return core.lib().ma_dll_engine_get_sample_rate()
+    }
+
+    func getChannels(): int {
+        if not ok { return 0 }
+        return core.lib().ma_dll_engine_get_channels()
+    }
+
+    func isInit(): bool { return ok }
+
+    func uninit() {
+        if ok { core.lib().ma_dll_engine_uninit(); ok = false }
+    }
+}
+
+// ==================== Factory ====================
+export func createSound(string p): Sound {
+    var s = new Sound()
+    s.load(p)
+    return s
+}
+
+export func createEngine(): Engine {
+    var e = new Engine()
+    e.init()
+    return e
+}
+
+export func quickPlay(string p, int sec): bool {
+    var e = createEngine()
+    if not e.isInit() or not e.play(p) { return false }
+    sleep(sec * 1000)
+    e.uninit()
+    return true
+}

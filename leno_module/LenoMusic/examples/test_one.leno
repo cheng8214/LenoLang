@@ -1,7 +1,0 @@
-import "../lib/LenoMusic.leno" as audio
-main() {
-    var s = audio.createSound("d:\\1.flac")
-    if not s.isInit() { print("fail"); return }
-    s.play(); sleep(3000); s.stop(); s.uninit()
-    print("done")
-}

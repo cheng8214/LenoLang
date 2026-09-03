@@ -1,0 +1,61 @@
+// test_waveform.leno -- 音频合成: 波形发生器 (正弦/方波/三角/锯齿)
+import "../../lib/Music.leno" as audio
+use audio.Waveform
+
+main() {
+    print("=== 波形发生器测试 ===")
+
+    int FORMAT_F32 = audio.FORMAT_F32
+    int SR = 44100
+
+    // 正弦波 440Hz (A4 音符)
+    print("\n--- 正弦波 440Hz ---")
+    var sine = audio.createWaveform(FORMAT_F32, 1, SR, audio.WAVEFORM_SINE, 0.3, 440.0)
+    if sine.isInit() {
+        print("[OK] 正弦波创建成功")
+        sine.setFreq(880.0)
+        print("频率改为: 880 Hz")
+        sine.setAmp(0.5)
+        print("振幅改为: 0.5")
+        sine.uninit()
+    }
+
+    // 方波
+    print("\n--- 方波 220Hz ---")
+    var square = audio.createWaveform(FORMAT_F32, 1, SR, audio.WAVEFORM_SQUARE, 0.2, 220.0)
+    if square.isInit() {
+        print("[OK] 方波创建成功")
+        square.uninit()
+    }
+
+    // 三角波
+    print("\n--- 三角波 330Hz ---")
+    var tri = audio.createWaveform(FORMAT_F32, 1, SR, audio.WAVEFORM_TRIANGLE, 0.3, 330.0)
+    if tri.isInit() {
+        print("[OK] 三角波创建成功")
+        tri.uninit()
+    }
+
+    // 锯齿波
+    print("\n--- 锯齿波 110Hz ---")
+    var saw = audio.createWaveform(FORMAT_F32, 1, SR, audio.WAVEFORM_SAWTOOTH, 0.2, 110.0)
+    if saw.isInit() {
+        print("[OK] 锯齿波创建成功")
+        saw.uninit()
+    }
+
+    // 动态切换类型
+    print("\n--- 动态切换类型 ---")
+    var dyn = audio.createWaveform(FORMAT_F32, 1, SR, audio.WAVEFORM_SINE, 0.3, 440.0)
+    if dyn.isInit() {
+        dyn.setType(audio.WAVEFORM_SQUARE)
+        print("切换为方波")
+        dyn.setType(audio.WAVEFORM_TRIANGLE)
+        print("切换为三角波")
+        dyn.setType(audio.WAVEFORM_SAWTOOTH)
+        print("切换为锯齿波")
+        dyn.uninit()
+    }
+
+    print("\n=== 测试完成 ===")
+}

@@ -1,0 +1,19 @@
+// test_version.leno -- 基础示例: 版本信息与 DLL 加载检测
+import "../../lib/Music.leno" as audio
+import files
+
+main() {
+    print("=== LenoMusic 版本信息 ===")
+
+    // 检查 DLL 是否能找到
+    bool found = files.exists("../../lib/miniaudio.dll")
+    print("DLL 在 ../../lib/ 存在: " + _str(found))
+
+    int ver = audio.getVersion()
+    print("miniaudio 版本: " + _str(ver))
+
+    bool vorbis = audio.hasVorbis()
+    print("Vorbis 解码支持: " + _str(vorbis))
+
+    print("\n=== 测试完成 ===")
+}

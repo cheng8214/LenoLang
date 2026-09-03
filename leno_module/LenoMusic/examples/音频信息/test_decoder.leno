@@ -1,0 +1,41 @@
+// test_decoder.leno -- 音频信息: 解码器元数据读取
+import "../../lib/Music.leno" as audio
+use audio.Decoder
+
+main() {
+    print("=== 音频信息测试 ===")
+
+    // 测试 MP3
+    print("\n--- bk.mp3 ---")
+    var d1 = audio.createDecoder("../audio/bk.mp3")
+    if d1.isOpen() {
+        print("采样率: " + _str(d1.getSampleRate()) + " Hz")
+        print("声道数: " + _str(d1.getChannels()))
+        print("格式: " + _str(d1.getFormat()))
+        print("总帧数: " + _str(d1.getLengthInFrames()))
+        print("时长: " + _str(d1.getDuration()) + " 秒")
+        d1.close()
+    } else {
+        print("[FAIL] 无法打开 bk.mp3")
+    }
+
+    // 测试 WAV
+    print("\n--- zq.wav ---")
+    var d2 = audio.createDecoder("../audio/zq.wav")
+    if d2.isOpen() {
+        print("采样率: " + _str(d2.getSampleRate()) + " Hz")
+        print("声道数: " + _str(d2.getChannels()))
+        print("格式: " + _str(d2.getFormat()))
+        print("总帧数: " + _str(d2.getLengthInFrames()))
+        print("时长: " + _str(d2.getDuration()) + " 秒")
+        d2.close()
+    } else {
+        print("[FAIL] 无法打开 zq.wav")
+    }
+
+    // 用 getInfo 快捷方法
+    print("\n--- getInfo 快捷方法 ---")
+    audio.getInfo("../audio/chi.wav")
+
+    print("\n=== 测试完成 ===")
+}

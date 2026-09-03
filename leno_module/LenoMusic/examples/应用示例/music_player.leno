@@ -1,0 +1,103 @@
+// music_player.leno -- 应用示例: 音乐播放器演示
+//
+// 非交互式演示, 展示 LenoMusic 的完整播放控制能力
+// 依次演示: 加载 -> 音量 -> 音调 -> 声像 -> 循环 -> 定位 -> 音效叠加
+
+import "../../lib/Music.leno" as audio
+use audio.Sound
+
+main() {
+    print("=== 音乐播放器演示 ===")
+    print("")
+
+    // 1. 加载背景音乐 (流式, 低内存)
+    print("[1] 加载背景音乐...")
+    var bgm = audio.createSound("../audio/bk.mp3")
+    if not bgm.isInit() {
+        print("[FAIL] 无法加载背景音乐")
+        return
+    }
+    print("    时长: " + _str(bgm.getDuration()) + " 秒")
+    print("    (流式播放, 不全量加载到内存)")
+
+    // 2. 音量控制
+    print("[2] 音量控制...")
+    bgm.setVolume(0.2)
+    print("    音量 0.2: " + _str(bgm.getVolume()))
+    bgm.setVolume(0.5)
+    print("    音量 0.5: " + _str(bgm.getVolume()))
+
+    // 3. 音调控制
+    print("[3] 音调控制...")
+    bgm.setPitch(1.5)
+    print("    音调 1.5x (升调)")
+    sleep(500)
+
+    bgm.setPitch(0.75)
+    print("    音调 0.75x (降调)")
+    sleep(500)
+
+    bgm.setPitch(1.0)
+    print("    音调 1.0x (正常)")
+
+    // 4. 声像控制
+    print("[4] 声像控制...")
+    bgm.setPan(-0.8)
+    print("    声像 -0.8 (偏左)")
+    sleep(500)
+
+    bgm.setPan(0.8)
+    print("    声像 0.8 (偏右)")
+    sleep(500)
+
+    bgm.setPan(0.0)
+    print("    声像 0.0 (居中)")
+
+    // 5. 循环控制
+    print("[5] 循环控制...")
+    bgm.setLooping(true)
+    print("    循环: " + _str(bgm.isLooping()))
+
+    // 6. 播放
+    print("[6] 开始播放...")
+    bgm.play()
+    print("    播放中: " + _str(bgm.isPlaying()))
+
+    // 7. 定位
+    sleep(2000)
+    float pos = bgm.getPosition()
+    print("[7] 当前位置: " + _str(pos) + " 秒")
+
+    bgm.seek(30.0)
+    sleep(500)
+    print("    跳转到 30 秒, 实际位置: " + _str(bgm.getPosition()) + " 秒")
+
+    // 8. 音效叠加
+    print("[8] 音效叠加...")
+    var sfxShoot = audio.createSound("../audio/zq.wav")
+    var sfxBoom = audio.createSound("../audio/db.wav")
+    sfxShoot.setVolume(0.4)
+    sfxBoom.setVolume(0.6)
+
+    if sfxShoot.isInit() {
+        sfxShoot.play()
+        print("    射击音效播放")
+    }
+    sleep(500)
+
+    if sfxBoom.isInit() {
+        sfxBoom.play()
+        print("    爆炸音效播放")
+    }
+    sleep(1000)
+
+    // 9. 清理
+    print("[9] 清理资源...")
+    bgm.stop()
+    bgm.uninit()
+    if sfxShoot.isInit() { sfxShoot.uninit() }
+    if sfxBoom.isInit() { sfxBoom.uninit() }
+
+    print("")
+    print("=== 演示完成 ===")
+}

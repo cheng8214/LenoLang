@@ -1,0 +1,77 @@
+// music_filter.leno -- LPF + HPF
+import "music_core.leno" as core
+use core.miniaudio
+
+// ==================== LPF ====================
+export struct LPF {
+    Ptr h; bool ok; int fmt; int ch; int sr
+
+    func init(int f, int c, int s, float cf, int o): bool {
+        miniaudio l = core.lib()
+        if l == null { return false }
+        // C 签名: (fmt, ch, sr, order, cutoff) -- 浮点在最后避免 Win64 FFI 限制
+        h = l.ma_dll_lpf_create(f, c, s, o, cf) as Ptr
+        ok = h != null
+        fmt = f; ch = c; sr = s
+        return ok
+    }
+
+    func process(Ptr o, Ptr i, int n): int {
+        if not ok { return 0 }
+        return core.lib().ma_dll_lpf_process(h, o, i, n)
+    }
+
+    func reinit(float cf, int o): bool {
+        if not ok { return false }
+        return core.lib().ma_dll_lpf_reinit(h, fmt, ch, sr, o, cf) == 0
+    }
+
+    func uninit() {
+        if ok { core.lib().ma_dll_lpf_destroy(h); h = null; ok = false }
+    }
+
+    func isInit(): bool { return ok }
+}
+
+// ==================== HPF ====================
+export struct HPF {
+    Ptr h; bool ok; int fmt; int ch; int sr
+
+    func init(int f, int c, int s, float cf, int o): bool {
+        miniaudio l = core.lib()
+        if l == null { return false }
+        h = l.ma_dll_hpf_create(f, c, s, o, cf) as Ptr
+        ok = h != null
+        fmt = f; ch = c; sr = s
+        return ok
+    }
+
+    func process(Ptr o, Ptr i, int n): int {
+        if not ok { return 0 }
+        return core.lib().ma_dll_hpf_process(h, o, i, n)
+    }
+
+    func reinit(float cf, int o): bool {
+        if not ok { return false }
+        return core.lib().ma_dll_hpf_reinit(h, fmt, ch, sr, o, cf) == 0
+    }
+
+    func uninit() {
+        if ok { core.lib().ma_dll_hpf_destroy(h); h = null; ok = false }
+    }
+
+    func isInit(): bool { return ok }
+}
+
+// ==================== Factory ====================
+export func createLPF(int f, int c, int s, float cf, int o): LPF {
+    var lpf = new LPF()
+    lpf.init(f, c, s, cf, o)
+    return lpf
+}
+
+export func createHPF(int f, int c, int s, float cf, int o): HPF {
+    var hpf = new HPF()
+    hpf.init(f, c, s, cf, o)
+    return hpf
+}

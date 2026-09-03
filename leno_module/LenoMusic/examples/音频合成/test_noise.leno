@@ -1,0 +1,39 @@
+// test_noise.leno -- 音频合成: 噪声发生器 (白/粉/布朗)
+import "../../lib/Music.leno" as audio
+use audio.Noise
+
+main() {
+    print("=== 噪声发生器测试 ===")
+
+    int FORMAT_F32 = audio.FORMAT_F32
+
+    // 白噪声
+    print("\n--- 白噪声 ---")
+    var white = audio.createNoise(FORMAT_F32, 1, audio.NOISE_WHITE, 42, 0.3)
+    if white.isInit() {
+        print("[OK] 白噪声创建成功")
+        white.setAmp(0.5)
+        print("振幅改为: 0.5")
+        white.setSeed(100)
+        print("种子改为: 100")
+        white.uninit()
+    }
+
+    // 粉噪声
+    print("\n--- 粉噪声 ---")
+    var pink = audio.createNoise(FORMAT_F32, 1, audio.NOISE_PINK, 7, 0.3)
+    if pink.isInit() {
+        print("[OK] 粉噪声创建成功")
+        pink.uninit()
+    }
+
+    // 布朗噪声
+    print("\n--- 布朗噪声 ---")
+    var brown = audio.createNoise(FORMAT_F32, 1, audio.NOISE_BROWNIAN, 99, 0.3)
+    if brown.isInit() {
+        print("[OK] 布朗噪声创建成功")
+        brown.uninit()
+    }
+
+    print("\n=== 测试完成 ===")
+}
