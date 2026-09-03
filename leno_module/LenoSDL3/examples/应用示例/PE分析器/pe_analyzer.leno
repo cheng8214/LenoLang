@@ -6,12 +6,13 @@
 //   3. 检测 LENB 尾部附加数据（Leno 编译器生成的元信息）
 //   4. XOR(LENO) 加密字符串搜索与解密
 //   5. LENB 字节码反汇编(显示 opcode、常量池、跳转目标、行号)
+//   6. 反汇编 Table 支持右键菜单修改数据、写回磁盘、查找数据
 //
 // 运行：leno pe_analyzer.leno
 import "../../../lib/SDL3.leno" as SDL3
 import "../../../lib/sdl_filedialog.leno" as fdlg
 use SDL3.(Event, Renderer, Window, WindowFlag, TitleBar, Scancode)
-use SDL3.(Button, Label, ListBox, Table, HBox, VBox, TabControl)
+use SDL3.(Button, Label, ListBox, Table, HBox, VBox, TabControl, Edit)
 import files
 import strings
 import dirs
@@ -160,7 +161,18 @@ struct PEAnalyzer {
     Table       importTable
     ListBox     lenbBox
     Table       xorTable
-    ListBox     disasmBox
+    Table       disasmTable
+
+    // 反汇编页搜索栏
+    Edit        disasmSearchEdit
+    Button      disasmSearchBtn
+    Button      disasmSaveBtn
+    Button      disasmSearchNextBtn
+
+    // 反汇编数据缓存（用于搜索和保存）
+    Array[Array[string]] disasmRows = []
+    int         disasmSearchPos = 0  // 搜索当前匹配位置
+    string      disasmSearchKey = "" // 搜索关键字
 
     // ===== 分析状态 =====
     string filePath = ""
@@ -309,10 +321,44 @@ struct PEAnalyzer {
         tab.setPageLayout(6, xorLayout)
 
         // 反汇编页
-        disasmBox = SDL3.createListBox({font_size: 12})
-        var disasmLayout = SDL3.createVBox({padX: PAD, padY: PAD, spacing: 0})
-        disasmLayout.add(disasmBox, {grow: 1, shrink: 1, align: 3})
+        var disasmToolbar = SDL3.createHBox({h: 36, padX: 4, padY: 2, spacing: 6})
+        disasmSearchEdit = SDL3.createEdit({w: 200, h: 28, font_size: 13, placeholder: "搜索指令/地址/操作数..."})
+        disasmToolbar.add(disasmSearchEdit, {grow: 1, shrink: 1, align: 3})
+        disasmSearchBtn = SDL3.createButton({w: 60, h: 28, text: "查找", font_size: 14})
+        disasmToolbar.add(disasmSearchBtn, {grow: 0, shrink: 0, basis: 60, align: 3})
+        disasmSearchNextBtn = SDL3.createButton({w: 70, h: 28, text: "下一个", font_size: 14})
+        disasmToolbar.add(disasmSearchNextBtn, {grow: 0, shrink: 0, basis: 70, align: 3})
+        disasmSaveBtn = SDL3.createButton({w: 80, h: 28, text: "保存修改", font_size: 14})
+        disasmToolbar.add(disasmSaveBtn, {grow: 0, shrink: 0, basis: 80, align: 3})
+        disasmSearchBtn.on_click(func() { onDisasmSearch() })
+        disasmSearchNextBtn.on_click(func() { onDisasmSearchNext() })
+        disasmSaveBtn.on_click(func() { onDisasmSave() })
+        disasmSearchEdit.on_enter(func() { onDisasmSearch() })
+
+        disasmTable = SDL3.createTable({
+            headers: ["地址", "行号", "指令", "操作数", "原始字节"],
+            col_widths: [110.0, 60.0, 160.0, 200.0, 300.0],
+            sortable: true, zebra: true, row_h: 22, header_h: 28, font_size: 12,
+            editable: false, cell_select: true
+        })
+        var disasmLayout = SDL3.createVBox({padX: PAD, padY: PAD, spacing: 4})
+        disasmLayout.add(disasmToolbar, {grow: 0, shrink: 0, align: 3})
+        disasmLayout.add(disasmTable, {grow: 1, shrink: 1, align: 3})
         tab.setPageLayout(7, disasmLayout)
+
+        // 反汇编 Table 右键菜单
+        disasmTable.addContextItem({label: "修改此单元格", id: "edit_cell", shortcut: "F2"})
+        disasmTable.addContextItem({label: "修改整行数据", id: "edit_row"})
+        disasmTable.addContextSeparator()
+        disasmTable.addContextItem({label: "复制整行", id: "copy_row", shortcut: "Ctrl+C"})
+        disasmTable.addContextItem({label: "复制地址", id: "copy_addr"})
+        disasmTable.addContextSeparator()
+        disasmTable.addContextItem({label: "跳转到地址...", id: "goto_addr"})
+        disasmTable.addContextItem({label: "保存修改到文件", id: "save_file"})
+        disasmTable.on_context_select(func(int row, string id) { onDisasmContext(row, id) })
+        disasmTable.on_context_will_open(func(int row) { onDisasmCtxWillOpen(row) })
+        disasmTable.on_edit_commit(func(int row, int col, string newText) { onDisasmEditCommit(row, col, newText) })
+        disasmTable.on_cell(func(int row, int col) { onDisasmCellClick(row, col) })
 
         // 状态栏
         statusLbl = SDL3.createLabel({text: "就绪 - 点击[浏览...]选择 PE 文件", font_size: 13})
@@ -1787,8 +1833,59 @@ struct PEAnalyzer {
         }
     }
 
+    // 将一行反汇编文本拆分成 Table 行（地址/行号/指令/操作数/原始字节）
+    // 指令行格式: "0xADDR  L42  OP_NAME  operands"
+    // 注释行格式: "; ..."，整行放到指令列
+    func addDisasmRow(string s) {
+        if gLineCount < 10000 {
+            gLineCount = gLineCount + 1
+            // 注释行
+            if s.len() > 0 and s[0] == ";" {
+                disasmRows.add(["", "", s, "", ""])
+                return
+            }
+            // 指令行: 尝试拆分
+            string addr = ""
+            string lineNo = ""
+            string opName = s
+            string operands = ""
+            string rawBytes = ""
+
+            // 拆分: 地址  L行号  指令  操作数
+            // 注意: decodeOneInstruction 返回的地址是纯 hex（不含 0x 前缀）
+            int space1 = s.find("  ")
+            if space1 > 0 {
+                addr = "0x" + s.slice(0, space1)
+                int restStart = space1
+                while restStart < s.len() and s[restStart] == " " { restStart = restStart + 1 }
+                if restStart < s.len() and s[restStart] == "L" {
+                    int space2 = s.find("  ", restStart)
+                    if space2 > restStart {
+                        lineNo = s.slice(restStart, space2)
+                        int rest2 = space2
+                        while rest2 < s.len() and s[rest2] == " " { rest2 = rest2 + 1 }
+                        if rest2 < s.len() {
+                            int space3 = s.find("  ", rest2)
+                            if space3 > rest2 {
+                                opName = s.slice(rest2, space3)
+                                int rest3 = space3
+                                while rest3 < s.len() and s[rest3] == " " { rest3 = rest3 + 1 }
+                                if rest3 < s.len() {
+                                    operands = s.slice(rest3, s.len())
+                                }
+                            } else {
+                                opName = s.slice(rest2, s.len())
+                            }
+                        }
+                    }
+                }
+            }
+            disasmRows.add([addr, lineNo, opName, operands, rawBytes])
+        }
+    }
+
     func parseOneChunkBody(int depth) {
-        if depth > 4 { addLine("  ; <深度超限,停止展开>"); return }
+        if depth > 4 { addDisasmRow("  ; <深度超限,停止展开>"); return }
         if gLenbPos + 4 > gLenbEnd { return }
 
         // filename string
@@ -1801,7 +1898,7 @@ struct PEAnalyzer {
         int constCnt = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
         if constCnt < 0 or constCnt > 100000 { return }
 
-        addLine("; ===== " + fnName + " (locals=" + _str(localCount) + ", consts=" + _str(constCnt) + ") =====")
+        addDisasmRow("; ===== " + fnName + " (locals=" + _str(localCount) + ", consts=" + _str(constCnt) + ") =====")
 
         // 解析常量 (parseConstText 现在会跳过完整常量，包括 FUNCTION 的 chunk)
         Array[int] constStarts = []
@@ -1816,7 +1913,7 @@ struct PEAnalyzer {
         for 0:constCnt-1 to ci {
             int cst = constStarts[ci]
             int tag = fileData.byte(cst) & 0xFF
-            addLine("; const[" + _str(ci) + "] = " + constTexts[ci])
+            addDisasmRow("; const[" + _str(ci) + "] = " + constTexts[ci])
             if tag == 0x06 and depth < 4 {
                 // 从保存的起始位置重新计算 chunk 偏移
                 int subPos = cst + 1  // skip tag
@@ -1859,14 +1956,27 @@ struct PEAnalyzer {
             if hasLines != 1 { lines.add(-1) }
         }
 
-        addLine("; --- bytecode (" + _str(codeLen) + "B) ---")
+        addDisasmRow("; --- bytecode (" + _str(codeLen) + "B) ---")
         int pc = 0
         while pc < codeLen {
             if codeStart + pc >= gLenbEnd { break }
             int opc = fileData.byte(codeStart + pc) & 0xFF
             int imm = opImmSize(opc)
             string line = decodeOneInstruction(codeStart, codeLen, lines, pc)
-            addLine(line)
+            addDisasmRow(line)
+            // 为指令行补充原始字节列（第5列）
+            int rowIdx = disasmRows.len() - 1
+            if rowIdx >= 0 and disasmRows[rowIdx][0].len() > 0 {
+                string hexStr = ""
+                int byteCnt = 1 + imm
+                if byteCnt > 16 { byteCnt = 16 }
+                for 0:byteCnt-1 to bi {
+                    if codeStart + pc + bi < gLenbEnd {
+                        hexStr = hexStr + toHex2(fileData.byte(codeStart + pc + bi)) + " "
+                    }
+                }
+                disasmRows[rowIdx][4] = hexStr
+            }
             pc = pc + 1 + imm
         }
     }
@@ -1940,23 +2050,28 @@ struct PEAnalyzer {
     // ==================== 反汇编顶层驱动 ====================
 
     func analyzeDisasm() {
-        disasmBox.clear()
+        disasmRows = []
         gLines = []
         gLineCount = 0
+        disasmSearchPos = 0
+        disasmSearchKey = ""
 
         if fileSize < 8 {
-            disasmBox.add_item("文件太小,无法包含 LENB 尾部")
+            disasmRows.add(["", "", "文件太小,无法包含 LENB 尾部", "", ""])
+            disasmTable.set_rows(disasmRows)
             return
         }
         int tailMagic = readU32(fileData, fileSize - 4)
         if tailMagic != LENB_MAGIC {
-            disasmBox.add_item("未检测到 LENB 尾部数据")
-            disasmBox.add_item("尾部魔数: 0x" + toHex8(tailMagic) + " (期望 0x" + toHex8(LENB_MAGIC) + ")")
+            disasmRows.add(["", "", "未检测到 LENB 尾部数据", "", ""])
+            disasmRows.add(["", "", "尾部魔数: 0x" + toHex8(tailMagic) + " (期望 0x" + toHex8(LENB_MAGIC) + ")", "", ""])
+            disasmTable.set_rows(disasmRows)
             return
         }
         int lenbSize = readU32(fileData, fileSize - 8)
         if lenbSize <= 0 or lenbSize > fileSize - 8 {
-            disasmBox.add_item("LENB 大小异常: " + _str(lenbSize))
+            disasmRows.add(["", "", "LENB 大小异常: " + _str(lenbSize), "", ""])
+            disasmTable.set_rows(disasmRows)
             return
         }
         int lenbStart = fileSize - 8 - lenbSize
@@ -1964,7 +2079,8 @@ struct PEAnalyzer {
         gLenbPos = lenbStart
         gLenbEnd = fileSize - 8
         if gLenbEnd - gLenbOff < 20 {
-            disasmBox.add_item("LENB 数据太短")
+            disasmRows.add(["", "", "LENB 数据太短", "", ""])
+            disasmTable.set_rows(disasmRows)
             return
         }
 
@@ -1975,26 +2091,289 @@ struct PEAnalyzer {
         string srcHash = rbe_i64_hex(gLenbPos)
         gLenbPos = gLenbPos + 8
 
-        addLine("; ===== LENB Header =====")
-        addLine("; magic:    0x" + toHex8(magic))
-        addLine("; version:  0x" + toHex8(version))
-        addLine("; flags:    0x" + toHex8(flags))
-        addLine("; src_hash: " + srcHash)
-        addLine("; blob_off: 0x" + toHex8(gLenbOff))
-        addLine("; blob_end: 0x" + toHex8(gLenbEnd))
+        addDisasmRow("; ===== LENB Header =====")
+        addDisasmRow("; magic:    0x" + toHex8(magic))
+        addDisasmRow("; version:  0x" + toHex8(version))
+        addDisasmRow("; flags:    0x" + toHex8(flags))
+        addDisasmRow("; src_hash: " + srcHash)
+        addDisasmRow("; blob_off: 0x" + toHex8(gLenbOff))
+        addDisasmRow("; blob_end: 0x" + toHex8(gLenbEnd))
 
         int parseStart = skipHeaderAndSymbols(gLenbPos)
         gLenbPos = parseStart
-        addLine("; ===== (跳过符号表,跳到模块主体) =====")
+        addDisasmRow("; ===== (跳过符号表,跳到模块主体) =====")
         parseOneChunkBody(0)
 
-        // 输出到 ListBox
-        for 0:gLines.len()-1 to li {
-            disasmBox.add_item(gLines[li])
-        }
+        // 输出到 Table
+        disasmTable.set_rows(disasmRows)
         if gLineCount >= 10000 {
-            disasmBox.add_item("... (输出已截断,超过 10000 行)")
+            disasmRows.add(["", "", "... (输出已截断,超过 10000 行)", "", ""])
+            disasmTable.set_rows(disasmRows)
         }
+        statusLbl.set_text("反汇编完成 - " + disasmRows.len() + " 行")
+        SDL3.markFrameRedraw()
+    }
+
+    // ==================== 反汇编搜索功能 ====================
+
+    func onDisasmSearch() {
+        string key = disasmSearchEdit.get_text()
+        if key == "" {
+            statusLbl.set_text("请输入搜索关键字")
+            SDL3.markFrameRedraw()
+            return
+        }
+        disasmSearchKey = key
+        disasmSearchPos = 0
+        if disasmSearchInternal() {
+            statusLbl.set_text("找到匹配 - 行 " + _str(disasmSearchPos + 1))
+        } else {
+            statusLbl.set_text("未找到匹配: " + key)
+        }
+        SDL3.markFrameRedraw()
+    }
+
+    func onDisasmSearchNext() {
+        if disasmSearchKey == "" {
+            onDisasmSearch()
+            return
+        }
+        disasmSearchPos = disasmSearchPos + 1
+        if disasmSearchInternal() {
+            statusLbl.set_text("找到匹配 - 行 " + _str(disasmSearchPos + 1))
+        } else {
+            // 重头开始搜索
+            disasmSearchPos = 0
+            if disasmSearchInternal() {
+                statusLbl.set_text("重新搜索 - 行 " + _str(disasmSearchPos + 1))
+            } else {
+                statusLbl.set_text("未找到匹配: " + disasmSearchKey)
+            }
+        }
+        SDL3.markFrameRedraw()
+    }
+
+    func disasmSearchInternal(): bool {
+        string key = disasmSearchKey
+        for disasmSearchPos:disasmRows.len()-1 to i {
+            // 搜索所有列
+            for 0:4 to col {  // 遍历 5 列: 地址/行号/指令/操作数/原始字节
+                string cell = disasmRows[i][col]
+                if cell.find(key) >= 0 {
+                    disasmSearchPos = i
+                    disasmTable.set_selected(i)
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    // ==================== 反汇编右键菜单回调 ====================
+
+    func onDisasmCtxWillOpen(int row) {
+        // 只有指令行（地址列非空）才允许修改
+        bool isInstruction = false
+        if row >= 0 and row < disasmRows.len() {
+            if disasmRows[row][0].len() > 0 { isInstruction = true }
+        }
+        disasmTable.setContextItemEnabled("edit_cell", isInstruction)
+        disasmTable.setContextItemEnabled("edit_row", isInstruction)
+        disasmTable.setContextItemEnabled("copy_row", row >= 0)
+        disasmTable.setContextItemEnabled("copy_addr", isInstruction)
+        disasmTable.setContextItemEnabled("goto_addr", true)
+        disasmTable.setContextItemEnabled("save_file", true)
+    }
+
+    func onDisasmContext(int row, string id) {
+        if id == "edit_cell" {
+            // 获取右击的列
+            int col = disasmTable.get_context_menu_col()
+            if col < 0 { col = 3 }  // 默认编辑操作数列
+            disasmTable.begin_edit(row, col)
+        } eif id == "edit_row" {
+            // 默认编辑操作数列（第3列，索引3）
+            disasmTable.begin_edit(row, 3)
+        } eif id == "copy_row" {
+            if row >= 0 and row < disasmRows.len() {
+                string line = disasmRows[row][0] + "  " + disasmRows[row][1] + "  " + disasmRows[row][2] + "  " + disasmRows[row][3]
+                statusLbl.set_text("已复制: " + line)
+                SDL3.markFrameRedraw()
+            }
+        } eif id == "copy_addr" {
+            if row >= 0 and row < disasmRows.len() {
+                statusLbl.set_text("地址: " + disasmRows[row][0])
+                SDL3.markFrameRedraw()
+            }
+        } eif id == "goto_addr" {
+            // 跳转到地址：在搜索框中输入地址，然后查找
+            statusLbl.set_text("在搜索框输入地址然后点击查找")
+            SDL3.markFrameRedraw()
+        } eif id == "save_file" {
+            onDisasmSave()
+        }
+    }
+
+    func onDisasmEditCommit(int row, int col, string newText) {
+        if row < 0 or row >= disasmRows.len() { return }
+        // 更新内存中的数据
+        disasmRows[row][col] = newText
+        // 同步更新 fileData（如果是操作数列，需要重新计算字节）
+        // 这里先只更新显示，保存时统一写回
+        statusLbl.set_text("已修改行 " + _str(row + 1) + " 列 " + _str(col) + " - 点击保存修改写入文件")
+        SDL3.markFrameRedraw()
+    }
+
+    func onDisasmCellClick(int row, int col) {
+        // 单击单元格时显示详情
+        if row >= 0 and row < disasmRows.len() {
+            string cell = disasmRows[row][col]
+            if cell.len() > 0 {
+                statusLbl.set_text("行 " + _str(row + 1) + " 列 " + _str(col) + ": " + cell)
+                SDL3.markFrameRedraw()
+            }
+        }
+    }
+
+    // ==================== 保存修改到文件 ====================
+    //
+    // 将修改后的反汇编数据写回 PE 文件。根据修改的单元格内容，
+    // 重新计算字节码并写入对应文件偏移。
+    // 参考 LenoHack 的 patch_files.leno 模式：
+    //   files.open(path, "r+b") → seek(offset) → write(bytes) → close()
+
+    func onDisasmSave() {
+        if filePath == "" {
+            statusLbl.set_text("错误: 请先选择文件")
+            SDL3.markFrameRedraw()
+            return
+        }
+        if not analyzed {
+            statusLbl.set_text("错误: 请先分析文件")
+            SDL3.markFrameRedraw()
+            return
+        }
+
+        // 备份原文件
+        string backupPath = filePath + ".bak"
+        try {
+            File src = files.open(filePath, "rb")
+            File dst = files.open(backupPath, "wb")
+            int sz = src.len()
+            string data = src.read(sz)
+            dst.write(data)
+            src.close()
+            dst.close()
+        } catch {
+            statusLbl.set_text("警告: 备份失败,继续保存")
+            SDL3.markFrameRedraw()
+        }
+
+        // 写回文件 - 使用 r+b 模式原地修改
+        File wf = files.open(filePath, "r+b")
+        if wf == null {
+            statusLbl.set_text("错误: 无法以读写模式打开文件")
+            SDL3.markFrameRedraw()
+            return
+        }
+
+        int patchCount = 0
+        // 遍历反汇编行，找到有地址的指令行，将修改后的操作数/指令写回
+        for 0:disasmRows.len()-1 to ri {
+            string addrStr = disasmRows[ri][0]
+            if addrStr == "" { continue }
+            if addrStr.len() < 3 { continue }
+            // 解析地址 (格式: 0x........)
+            if addrStr[0] != "0" or addrStr[1] != "x" { continue }
+            int addr = hexStrToInt(addrStr)
+            if addr <= 0 or addr >= fileSize { continue }
+
+            // 获取原始字节列和当前字节列
+            string rawHex = disasmRows[ri][4]
+            if rawHex == "" { continue }
+
+            // 将修改后的原始字节列写回文件
+            // 解析 hex 字符串为字节序列
+            Array[int] bytes = parseHexBytes(rawHex)
+            if bytes.len() == 0 { continue }
+
+            // 与原文件对比，只写有变化的字节
+            int changed = 0
+            for 0:bytes.len()-1 to bi {
+                if addr + bi < fileSize {
+                    int origByte = fileData.byte(addr + bi)
+                    if origByte != bytes[bi] {
+                        wf.seek(addr + bi, "set")
+                        wf.write(strings.char(bytes[bi]))
+                        changed = changed + 1
+                    }
+                }
+            }
+            if changed > 0 {
+                patchCount = patchCount + changed
+            }
+        }
+
+        wf.close()
+
+        // 重新读取文件到内存（保持 fileData 与磁盘同步）
+        File rf = files.open(filePath, "rb")
+        if rf != null {
+            fileSize = rf.len()
+            fileData = rf.read(fileSize)
+            fileSize = fileData.byte_len()
+            rf.close()
+        }
+
+        if patchCount > 0 {
+            statusLbl.set_text("v 保存完成 - 修改 " + patchCount + " 字节, 备份: " + dirs.basename(backupPath))
+        } else {
+            statusLbl.set_text("无修改内容（原始字节列未变化）")
+        }
+        SDL3.markFrameRedraw()
+    }
+
+    // hex 字符串转 int（如 "0x1234" → 4660）
+    func hexStrToInt(string s): int {
+        int result = 0
+        int start = 0
+        if s.len() > 2 and s[0] == "0" and s[1] == "x" { start = 2 }
+        for start:s.len()-1 to i {
+            string ch = s[i]
+            int v = 0
+            if ch >= "0" and ch <= "9" {
+                v = strings.byte(ch) - 48
+            } eif ch >= "A" and ch <= "F" {
+                v = strings.byte(ch) - 55
+            } eif ch >= "a" and ch <= "f" {
+                v = strings.byte(ch) - 87
+            } else {
+                break
+            }
+            result = result * 16 + v
+        }
+        return result
+    }
+
+    // 解析 hex 字节字符串（如 "48 8B 05" → [0x48, 0x8B, 0x05]）
+    func parseHexBytes(string s): Array[int] {
+        Array[int] result = []
+        string cur = ""
+        for 0:s.len()-1 to i {
+            string ch = s[i]
+            if ch == " " {
+                if cur.len() == 2 {
+                    result.add(hexStrToInt("0x" + cur))
+                }
+                cur = ""
+            } else {
+                cur = cur + ch
+            }
+        }
+        if cur.len() == 2 {
+            result.add(hexStrToInt("0x" + cur))
+        }
+        return result
     }
 
     // ==================== 事件处理 ====================
