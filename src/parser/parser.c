@@ -211,6 +211,61 @@ Ast* parse_statement(Parser* p) {
                             is_type_decl = (p->lex.current.type == TOK_IDENT);
                         }
                     }
+                } else if (p->lex.current.type == TOK_DOT) {
+                    // Module.Type varName = ... —— 带模块前缀的类型声明（Leno 不支持此写法）
+                    // 报出友好错误并给出正确写法提示，避免误解析为表达式产生级联误导错误
+                    lexer_next(&p->lex);  // 消费 '.'
+                    if (p->lex.current.type == TOK_IDENT) {
+                        char* mod_name = copy_string(saved.current.text, saved.current.len);
+                        char* type_name = copy_string(p->lex.current.text, p->lex.current.len);
+                        lexer_next(&p->lex);  // 消费类型名
+                        int qualified_decl = 0;
+                        if (p->lex.current.type == TOK_IDENT) {
+                            // Module.Type varName = ...
+                            qualified_decl = 1;
+                        } else if (p->lex.current.type == TOK_QUESTION) {
+                            // Module.Type? varName = ...
+                            Lexer qsaved = p->lex;
+                            lexer_next(&p->lex);
+                            qualified_decl = (p->lex.current.type == TOK_IDENT);
+                            p->lex = qsaved;
+                        } else if (p->lex.current.type == TOK_LBRACKET) {
+                            // Module.Type[T] varName = ...
+                            int bracket_depth = 1;
+                            lexer_next(&p->lex);
+                            while (p->lex.current.type != TOK_EOF && bracket_depth > 0) {
+                                if (p->lex.current.type == TOK_LBRACKET) bracket_depth++;
+                                else if (p->lex.current.type == TOK_RBRACKET) bracket_depth--;
+                                if (bracket_depth > 0) lexer_next(&p->lex);
+                            }
+                            if (bracket_depth == 0) {
+                                lexer_next(&p->lex);
+                                if (p->lex.current.type == TOK_IDENT) {
+                                    qualified_decl = 1;
+                                } else if (p->lex.current.type == TOK_QUESTION) {
+                                    lexer_next(&p->lex);
+                                    qualified_decl = (p->lex.current.type == TOK_IDENT);
+                                }
+                            }
+                        }
+                        if (qualified_decl) {
+                            char msg[BUFFER_MEDIUM];
+                            snprintf(msg, sizeof(msg),
+                                "不支持带模块前缀的类型声明 '%s.%s 变量名'：请先 use %s.%s，然后直接写 '%s 变量名 = ...'（use 会把类型导入当前作用域）",
+                                mod_name, type_name, mod_name, type_name, type_name);
+                            error_add_at(ERR_SYNTAX, saved.current.line, saved.current.column, msg);
+                            free(mod_name);
+                            free(type_name);
+                            // 消费当前行剩余 token，避免错误恢复时重复解析同一语句
+                            while (p->lex.current.type != TOK_EOF &&
+                                   p->lex.current.line == saved.current.line) {
+                                lexer_next(&p->lex);
+                            }
+                            return NULL;
+                        }
+                        free(mod_name);
+                        free(type_name);
+                    }
                 }
                 p->lex = saved; // 恢复 lexer 状态
                 error_set_column(saved.current.column);  // 恢复列号
