@@ -1,0 +1,1076 @@
+// gomoku.leno — 五子棋（人机对战 / AI 对 AI）
+//
+// 模式：
+//   人机对战  —— 你执黑先行，点击棋盘落子，白方由 AI 接管
+//   AI 对 AI  —— 双方都是 AI，自动对弈，可观察谁更强
+//
+// 操作：
+//   M        切换模式（人机 ↔ AI对AI）
+//   Tab      在 AI对AI 模式下切换“正在调节的 AI”（黑方 / 白方）
+//   1 ~ 9    设置当前调节对象的智力（1=随机乱下 … 9=大师级搜索）
+//   空格      AI对AI 模式下暂停 / 继续自动对弈
+//   R        重新开始（保留双方智力设置）
+//   鼠标点击 人机模式下由你落子
+//   ESC      退出
+//
+// 智力说明：数值越高，AI 搜索越深、考虑越周全、失误越少；
+//           在 AI 对 AI 模式下会持续累计战绩，直接看出哪方 AI 更厉害。
+
+import "../../../../lib/SDL3.leno" as SDL3
+import "../../../../lib/sdl_core.leno" as core
+use SDL3.(Event, Renderer, WindowFlag, Scancode, Font)
+import rands
+
+// ==================== 常量 ====================
+var N = 15                 // 棋盘 15×15
+var CELL = 36.0            // 交叉点间距
+var BOARD_X = 42.0         // 棋盘左上角
+var BOARD_Y = 78.0
+var RADIUS = 15.0          // 棋子半径
+var WIN_W = 900.0
+var WIN_H = 660.0
+var PANEL_X = 600.0
+
+// 开场菜单按钮（居中）
+var MENU_BTN_W = 360.0
+var MENU_BTN_H = 66.0
+var MENU_BTN1_X = (WIN_W - MENU_BTN_W) / 2.0
+var MENU_BTN1_Y = 320.0
+var MENU_BTN2_X = (WIN_W - MENU_BTN_W) / 2.0
+var MENU_BTN2_Y = 320.0 + 88.0
+
+var THINK = 18             // AI 每步思考的帧数（约 300ms，便于观看"思考"停顿）
+var RESTART = 90           // AI对AI 一局结束后停留帧数再开下一局
+var PLACE_FRAMES = 12      // 落子动画时长（帧，约 200ms）
+
+// 面板"悔棋"按钮（框在面板内水平居中）
+var UNDO_W = 150.0
+var UNDO_H = 32.0
+var UNDO_X = PANEL_X + (WIN_W - PANEL_X - UNDO_W) / 2.0
+var UNDO_Y = 600.0
+
+// 颜色
+var COL_BG     = #14141CFF
+var COL_BOARD  = #1E1E2BFF
+var COL_GRID   = #3A3A4EFF
+var COL_TEXT   = #E8E8F2FF
+var COL_SUB    = #9A9AB0FF
+var COL_ACCENT = #66DDFFFF
+var COL_RED    = #FF5C5CFF
+var COL_GREEN  = #5CFF8DFF
+var COL_GOLD   = #FFD24DFF
+var COL_WHITE  = #ECECF2FF
+
+// ==================== 状态 ====================
+struct Game {
+    int mode            // 0=人机对战, 1=AI对AI
+    Array[int] board    // 0 空, 1 黑, 2 白
+    int current         // 当前轮到谁落子
+    bool gameOver
+    int winner          // 0 平局, 1 黑, 2 白
+    int blackAI         // 黑方 AI 智力 1..9
+    int whiteAI         // 白方 AI 智力 1..9
+    int tuneTarget      // 调节对象 0=黑, 1=白
+    bool pause          // AI对AI 暂停
+    int thinkTimer      // 倒计时到 0 时 AI 落子
+    int restartTimer    // 一局结束后的停留计时
+    int lastR, lastC    // 最后一手
+    int hoverR, hoverC  // 鼠标悬停格
+    bool hasHover
+    int blackWins, whiteWins, draws, games
+    int moveCount
+    int aiR, aiC        // 供 bestMove 回传结果
+    Font font
+    Font sfont         // 小号字体（操作说明）
+    int frameCount
+    string state        // "menu" 开场菜单 / "play" 对局中
+    float mx, my        // 鼠标位置（用于菜单按钮悬停）
+    string msg          // 顶部即时反馈横幅
+    int msgTimer        // 横幅剩余显示帧数
+    int placeAnim       // 落子动画剩余帧
+    int winR1, winC1, winR2, winC2  // 获胜连线两端（行列）
+    Array[int] histR, histC, histP  // 悔棋历史（每手 r,c,player）
+    int winAnim        // 获胜连线动画帧（快速连线用）
+    Array[float] fpX, fpY, fpVX, fpVY, fpLife  // 烟花粒子
+}
+
+// ==================== 基础工具 ====================
+
+func inBounds(int r, int c): bool {
+    if r < 0 or r >= N { return false }
+    if c < 0 or c >= N { return false }
+    return true
+}
+
+func centerX(int c): float { return BOARD_X + _float(c) * CELL }
+func centerY(int r): float { return BOARD_Y + _float(r) * CELL }
+
+func zeroBoard(): Array[int] {
+    Array[int] b = []
+    for 0 : (N * N - 1) to i { b.add(0) }
+    return b
+}
+
+// 该空位是否在任一棋子 dist 范围内（用于裁剪候选落子点）
+func nearStone(Game g, int r, int c, int dist): bool {
+    for 0 : (2 * dist) to kr {
+        int aa = kr - dist
+        for 0 : (2 * dist) to kc {
+            int bb = kc - dist
+            int rr = r + aa
+            int cc = c + bb
+            if rr < 0 or rr >= N or cc < 0 or cc >= N { continue }
+            if g.board[rr * N + cc] != 0 { return true }
+        }
+    }
+    return false
+}
+
+// ==================== 棋型评估 ====================
+
+// 单个方向：以 (r,c) 为假设落子点，统计 player 连子数与开放端数
+func dirScore(Game g, int r, int c, int dr, int dc, int p): float {
+    int cnt = 1
+    int open = 0
+    int i = 1
+    while true {
+        int rr = r + dr * i
+        int cc = c + dc * i
+        if rr < 0 or rr >= N or cc < 0 or cc >= N { break }
+        int v = g.board[rr * N + cc]
+        if v == p { cnt = cnt + 1; i = i + 1 }
+        else { if v == 0 { open = open + 1 } break }
+    }
+    i = 1
+    while true {
+        int rr = r - dr * i
+        int cc = c - dc * i
+        if rr < 0 or rr >= N or cc < 0 or cc >= N { break }
+        int v = g.board[rr * N + cc]
+        if v == p { cnt = cnt + 1; i = i + 1 }
+        else { if v == 0 { open = open + 1 } break }
+    }
+    return patternValue(cnt, open)
+}
+
+// 连子数 + 开放端 → 威胁分数
+func patternValue(int cnt, int open): float {
+    if cnt >= 5 {
+        if open >= 1 { return 1000000.0 }   // 成五（含冲四也能连成）
+        return 100000.0
+    }
+    if cnt == 4 {
+        if open == 2 { return 100000.0 }    // 活四，必胜
+        if open == 1 { return 8000.0 }      // 冲四，下一手即胜
+        return 0.0
+    }
+    if cnt == 3 {
+        if open == 2 { return 6000.0 }      // 活三，极强威胁
+        if open == 1 { return 600.0 }
+        return 0.0
+    }
+    if cnt == 2 {
+        if open == 2 { return 500.0 }       // 活二
+        if open == 1 { return 50.0 }
+        return 0.0
+    }
+    if cnt == 1 {
+        if open == 2 { return 20.0 }
+        if open == 1 { return 2.0 }
+        return 0.0
+    }
+    return 0.0
+}
+
+// 四个方向合计
+func pointScoreAll(Game g, int r, int c, int p): float {
+    float s = 0.0
+    s = s + dirScore(g, r, c, 1, 0, p)
+    s = s + dirScore(g, r, c, 0, 1, p)
+    s = s + dirScore(g, r, c, 1, 1, p)
+    s = s + dirScore(g, r, c, 1, -1, p)
+    return s
+}
+
+// 对手在“当前棋盘”下的最优单点威胁（用于两层前瞻）
+func opponentBest(Game g, int opp): float {
+    float best = 0.0
+    for 0 : (N - 1) to r {
+        for 0 : (N - 1) to c {
+            if g.board[r * N + c] != 0 { continue }
+            if not nearStone(g, r, c, 2) { continue }
+            float s = pointScoreAll(g, r, c, opp)
+            if s > best { best = s }
+        }
+    }
+    return best
+}
+
+// 评估在 (r,c) 落子 player 的价值；level 控制是否做两层前瞻
+func evaluateMove(Game g, int r, int c, int player, int level, int opp): float {
+    int idx = r * N + c
+    g.board[idx] = player
+    float atk = pointScoreAll(g, r, c, player)
+    float def = pointScoreAll(g, r, c, opp)
+    // 智力越低，越忽视对手威胁（防守权重下降）→ 低智力会漏防、明显变菜
+    float defW = 0.15 + 0.85 * (_float(level) / 9.0)
+    float v = atk + def * defW
+    if atk >= 100000.0 { g.board[idx] = 0; return 1000001.0 }  // 直接获胜
+    if level >= 6 {                                            // 高智力才做对手反杀预判
+        float oMax = opponentBest(g, opp)
+        v = v - oMax * 0.8 * defW
+    }
+    g.board[idx] = 0
+    return v
+}
+
+// 从候选落子点中挑出评分最高的前 limit 个，返回其下标
+func pickTopIdx(Array[int] cR, Array[float] sc, int limit): Array[int] {
+    Array[bool] taken = []
+    for 0 : (cR.len() - 1) to i { taken.add(false) }
+    Array[int] res = []
+    int m = limit
+    if m > cR.len() { m = cR.len() }
+    for 0 : (m - 1) to k {
+        int bi = -1
+        float bv = -100000000.0
+        for 0 : (cR.len() - 1) to i {
+            if taken[i] { continue }
+            if sc[i] > bv { bv = sc[i]; bi = i }
+        }
+        if bi < 0 { break }
+        taken[bi] = true
+        res.add(bi)
+    }
+    return res
+}
+
+// 计算 player 的最佳落子，结果写入 g.aiR / g.aiC
+func bestMove(Game g, int player, int level) {
+    int opp = 1
+    if player == 1 { opp = 2 }
+
+    Array[int] cR = []
+    Array[int] cC = []
+    Array[float] cS = []
+    bool found = false
+    for 0 : (N - 1) to r {
+        for 0 : (N - 1) to c {
+            if g.board[r * N + c] != 0 { continue }
+            if not nearStone(g, r, c, 2) { continue }
+            found = true
+            float sc = pointScoreAll(g, r, c, player) + pointScoreAll(g, r, c, opp) * 0.9
+            cR.add(r); cC.add(c); cS.add(sc)
+        }
+    }
+    if not found {
+        g.aiR = 7; g.aiC = 7     // 空盘走天元
+        return
+    }
+
+    int EVAL = 8 + level * 3
+    Array[int] idxs = pickTopIdx(cR, cS, EVAL)
+
+    int bestR = cR[0]
+    int bestC = cC[0]
+    float bestV = -100000000.0
+    for 0 : (idxs.len() - 1) to k {
+        int i = idxs[k]
+        int r = cR[i]
+        int c = cC[i]
+        float v = evaluateMove(g, r, c, player, level, opp)
+        if v >= 1000000.0 { g.aiR = r; g.aiC = c; return }   // 能赢直接走
+        if level < 9 {
+            float rf = rands.floats(0.0, 1.0)
+            v = v + (rf - 0.5) * _float(10 - level) * 5000.0  // 智力越低噪声越大
+        }
+        if v > bestV { bestV = v; bestR = r; bestC = c }
+    }
+    g.aiR = bestR
+    g.aiC = bestC
+}
+
+// ==================== 胜负判定 ====================
+
+func lineCount(Game g, int r, int c, int dr, int dc, int p): int {
+    int cnt = 1
+    int i = 1
+    while true {
+        int rr = r + dr * i
+        int cc = c + dc * i
+        if rr < 0 or rr >= N or cc < 0 or cc >= N { break }
+        if g.board[rr * N + cc] == p { cnt = cnt + 1; i = i + 1 } else { break }
+    }
+    i = 1
+    while true {
+        int rr = r - dr * i
+        int cc = c - dc * i
+        if rr < 0 or rr >= N or cc < 0 or cc >= N { break }
+        if g.board[rr * N + cc] == p { cnt = cnt + 1; i = i + 1 } else { break }
+    }
+    return cnt
+}
+
+func checkWin(Game g, int r, int c, int p): bool {
+    if lineCount(g, r, c, 1, 0, p) >= 5 { return true }
+    if lineCount(g, r, c, 0, 1, p) >= 5 { return true }
+    if lineCount(g, r, c, 1, 1, p) >= 5 { return true }
+    if lineCount(g, r, c, 1, -1, p) >= 5 { return true }
+    return false
+}
+
+// 沿某方向检测并填充获胜连线两端坐标（用于高亮）
+func tryDir(Game g, int r, int c, int dr, int dc, int p): bool {
+    int cnt = 1
+    int sr = r, sc = c, er = r, ec = c
+    int i = 1
+    while true {
+        int rr = r + dr * i
+        int cc = c + dc * i
+        if rr < 0 or rr >= N or cc < 0 or cc >= N { break }
+        if g.board[rr * N + cc] != p { break }
+        cnt = cnt + 1; er = rr; ec = cc; i = i + 1
+    }
+    i = 1
+    while true {
+        int rr = r - dr * i
+        int cc = c - dc * i
+        if rr < 0 or rr >= N or cc < 0 or cc >= N { break }
+        if g.board[rr * N + cc] != p { break }
+        cnt = cnt + 1; sr = rr; sc = cc; i = i + 1
+    }
+    if cnt >= 5 {
+        g.winR1 = sr; g.winC1 = sc; g.winR2 = er; g.winC2 = ec
+        return true
+    }
+    return false
+}
+
+func detectWinLine(Game g, int r, int c, int p) {
+    if tryDir(g, r, c, 1, 0, p) { return }
+    if tryDir(g, r, c, 0, 1, p) { return }
+    if tryDir(g, r, c, 1, 1, p) { return }
+    if tryDir(g, r, c, 1, -1, p) { return }
+}
+
+// ==================== 获胜特效：烟花粒子 ====================
+
+// 在 (cx,cy) 炸开一束烟花
+func spawnFireworks(Game g, float cx, float cy) {
+    int n = 100
+    for 0 : (n - 1) to i {
+        float dx = rands.floats(-1.0, 1.0)
+        float dy = rands.floats(-1.0, 1.0)
+        float sp = rands.floats(2.0, 6.5)
+        g.fpX.add(cx)
+        g.fpY.add(cy)
+        g.fpVX.add(dx * sp)
+        g.fpVY.add(dy * sp)
+        g.fpLife.add(1.0)
+    }
+}
+
+// 推进烟花粒子（位移、重力、衰减，死亡则移除）
+func updateFireworks(Game g) {
+    int n = g.fpX.len()
+    int i = 0
+    while i < n {
+        float lf = g.fpLife[i]
+        if lf <= 0.0 {
+            g.fpX.remove(i); g.fpY.remove(i); g.fpVX.remove(i); g.fpVY.remove(i); g.fpLife.remove(i)
+            n = n - 1
+            continue
+        }
+        g.fpX[i] = g.fpX[i] + g.fpVX[i]
+        g.fpY[i] = g.fpY[i] + g.fpVY[i]
+        g.fpVY[i] = g.fpVY[i] + 0.05   // 重力下坠
+        g.fpLife[i] = lf - 0.014
+        i = i + 1
+    }
+}
+
+// 绘制烟花粒子
+func drawFireworks(Game g, Renderer r) {
+    for 0 : (g.fpX.len() - 1) to i {
+        float lf = g.fpLife[i]
+        if lf <= 0.0 { continue }
+        r.setColorFloat(1.0, 0.7 * lf + 0.3, 0.3 * lf, lf)
+        r.fillCircle(g.fpX[i], g.fpY[i], 2.0 * lf + 1.0)
+    }
+}
+
+// ==================== 落子 / 流程 ====================
+
+func doMove(Game g, int r, int c) {
+    int p = g.current
+    g.board[r * N + c] = p
+    g.histR.add(r); g.histC.add(c); g.histP.add(p)
+    g.lastR = r
+    g.lastC = c
+    g.moveCount = g.moveCount + 1
+    g.hasHover = false
+    g.placeAnim = PLACE_FRAMES
+
+    if checkWin(g, r, c, p) {
+        g.gameOver = true
+        g.winner = p
+        detectWinLine(g, r, c, p)
+        g.winAnim = 0
+        float cx = (centerX(g.winC1) + centerX(g.winC2)) / 2.0
+        float cy = (centerY(g.winR1) + centerY(g.winR2)) / 2.0
+        spawnFireworks(g, cx, cy)
+        g.restartTimer = RESTART
+    } else if g.moveCount >= N * N {
+        g.gameOver = true
+        g.winner = 0
+        g.restartTimer = RESTART
+    } else {
+        if p == 1 { g.current = 2 } else { g.current = 1 }
+    }
+}
+
+func newGame(Game g) {
+    g.board = zeroBoard()
+    g.current = 1
+    g.gameOver = false
+    g.winner = 0
+    g.tuneTarget = 1
+    g.pause = false
+    g.thinkTimer = THINK
+    g.restartTimer = 0
+    g.lastR = -1
+    g.lastC = -1
+    g.hasHover = false
+    g.blackWins = 0
+    g.whiteWins = 0
+    g.draws = 0
+    g.games = 0
+    g.moveCount = 0
+    g.histR = []
+    g.histC = []
+    g.histP = []
+    g.placeAnim = 0
+    g.winR1 = -1; g.winC1 = -1; g.winR2 = -1; g.winC2 = -1
+    g.winAnim = 0
+    g.fpX = []; g.fpY = []; g.fpVX = []; g.fpVY = []; g.fpLife = []
+}
+
+// AI对AI：记录上一局结果后开新一局（保留战绩与智力）
+func newRound(Game g) {
+    if g.winner == 1 { g.blackWins = g.blackWins + 1 }
+    else if g.winner == 2 { g.whiteWins = g.whiteWins + 1 }
+    else { g.draws = g.draws + 1 }
+    g.games = g.blackWins + g.whiteWins + g.draws
+
+    g.board = zeroBoard()
+    g.current = 1
+    g.gameOver = false
+    g.winner = 0
+    g.thinkTimer = THINK
+    g.restartTimer = 0
+    g.lastR = -1
+    g.lastC = -1
+    g.hasHover = false
+    g.moveCount = 0
+    g.placeAnim = 0
+    g.winR1 = -1; g.winC1 = -1; g.winR2 = -1; g.winC2 = -1
+    g.winAnim = 0
+    g.fpX = []; g.fpY = []; g.fpVX = []; g.fpVY = []; g.fpLife = []
+}
+
+func flash(Game g, string s) {
+    g.msg = s
+    g.msgTimer = 150
+}
+
+// 悔棋（仅人机模式）：撤销到"轮到你(黑)落子"为止
+func undo(Game g) {
+    if g.mode != 0 { return }
+    if g.histR.len() == 0 { return }
+    if g.gameOver {
+        g.gameOver = false
+        g.winner = 0
+        g.restartTimer = 0
+    }
+    while g.histR.len() > 0 {
+        int n = g.histR.len()
+        int pr = g.histR[n - 1]
+        int pc = g.histC[n - 1]
+        int pp = g.histP[n - 1]
+        g.histR.remove(n - 1)
+        g.histC.remove(n - 1)
+        g.histP.remove(n - 1)
+        g.board[pr * N + pc] = 0
+        g.moveCount = g.moveCount - 1
+        g.current = pp
+        if pp == 1 { break }   // 回到你落子前
+    }
+    g.lastR = -1
+    g.lastC = -1
+    g.placeAnim = 0
+    g.thinkTimer = THINK
+    g.winAnim = 0
+    g.fpX = []; g.fpY = []; g.fpVX = []; g.fpVY = []; g.fpLife = []
+    flash(g, "已悔棋")
+}
+
+func setLevel(Game g, int lvl) {
+    int target = 2
+    if g.mode == 0 {
+        g.whiteAI = lvl
+        target = 2
+    } else {
+        if g.tuneTarget == 0 { g.blackAI = lvl; target = 1 }
+        else { g.whiteAI = lvl; target = 2 }
+    }
+    string who = "白方 AI"
+    if target == 1 { who = "黑方 AI" }
+    if g.mode == 0 { who = "AI（白）" }
+    flash(g, who + " 智力 → " + _str(lvl) + "（" + levelName(lvl) + "）")
+}
+
+func updateGame(Game g) {
+    if g.state != "play" { return }
+    if g.msgTimer > 0 { g.msgTimer = g.msgTimer - 1 }
+    if g.placeAnim > 0 { g.placeAnim = g.placeAnim - 1 }
+    if g.gameOver {
+        if g.winner != 0 {
+            g.winAnim = g.winAnim + 1
+            updateFireworks(g)
+        }
+        if g.mode == 1 and not g.pause {
+            g.restartTimer = g.restartTimer - 1
+            if g.restartTimer <= 0 { newRound(g) }
+        }
+        return
+    }
+
+    bool aiTurn = false
+    int lvl = 1
+    if g.mode == 0 {
+        if g.current == 2 { aiTurn = true; lvl = g.whiteAI }   // 人机：黑=人, 白=AI
+    } else {
+        aiTurn = true
+        if g.current == 1 { lvl = g.blackAI } else { lvl = g.whiteAI }
+    }
+
+    if aiTurn {
+        if g.thinkTimer > 0 {
+            g.thinkTimer = g.thinkTimer - 1
+        } else {
+            bestMove(g, g.current, lvl)
+            doMove(g, g.aiR, g.aiC)
+            g.thinkTimer = THINK
+        }
+    }
+}
+
+// ==================== 渲染 ====================
+
+func drawStone(Renderer r, float cx, float cy, int player, float alpha, float scale) {
+    float rad = RADIUS * scale
+    if player == 1 {
+        r.setColorFloat(0.0, 0.0, 0.0, alpha)
+        r.fillCircle(cx, cy, rad)
+        r.setColorFloat(0.16, 0.16, 0.24, alpha)
+        r.fillCircle(cx, cy, rad - 1.5)
+        r.setColorFloat(0.5, 0.5, 0.65, alpha * 0.5)
+        r.fillCircle(cx - rad * 0.3, cy - rad * 0.3, rad * 0.35)
+    } else {
+        r.setColorFloat(0.55, 0.55, 0.68, alpha)
+        r.fillCircle(cx, cy, rad)
+        r.setColorFloat(0.93, 0.93, 0.99, alpha)
+        r.fillCircle(cx, cy, rad - 1.5)
+        r.setColorFloat(1.0, 1.0, 1.0, alpha * 0.85)
+        r.fillCircle(cx - rad * 0.3, cy - rad * 0.3, rad * 0.3)
+    }
+}
+
+func drawBoard(Game g, Renderer r) {
+    float bx = BOARD_X - 18.0
+    float by = BOARD_Y - 18.0
+    float bw = _float(N - 1) * CELL + 36.0
+    float bh = _float(N - 1) * CELL + 36.0
+
+    r.setColor(COL_BOARD)
+    r.fillRect(bx, by, bw, bh)
+    r.setColor(COL_ACCENT)
+    r.drawRect(bx, by, bw, bh)
+
+    // 网格线
+    r.setColor(COL_GRID)
+    for 0 : (N - 1) to i {
+        float p = _float(i) * CELL
+        r.drawLine(BOARD_X, BOARD_Y + p, BOARD_X + _float(N - 1) * CELL, BOARD_Y + p)
+        r.drawLine(BOARD_X + p, BOARD_Y, BOARD_X + p, BOARD_Y + _float(N - 1) * CELL)
+    }
+
+    // 星位
+    Array[int] stars = []
+    stars.add(3); stars.add(7); stars.add(11)
+    for 0 : 2 to a {
+        for 0 : 2 to b {
+            float sx = centerX(stars[a])
+            float sy = centerY(stars[b])
+            r.setColor(COL_GRID)
+            r.fillCircle(sx, sy, 3.0)
+        }
+    }
+
+    // 棋子
+    for 0 : (N - 1) to rr {
+        for 0 : (N - 1) to cc {
+            int v = g.board[rr * N + cc]
+            if v != 0 {
+                float sc = 1.0
+                float aa = 1.0
+                float ay = 0.0
+                if (rr == g.lastR and cc == g.lastC) and g.placeAnim > 0 {
+                    float p = 1.0 - _float(g.placeAnim) / _float(PLACE_FRAMES)
+                    sc = 1.0 + (1.0 - p) * 0.8   // 从大缩小到 1（弹入）
+                    aa = p                         // 渐显
+                    ay = -(1.0 - p) * 14.0         // 从上方落下
+                }
+                drawStone(r, centerX(cc), centerY(rr) + ay, v, aa, sc)
+            }
+        }
+    }
+
+    // 最后一手标记
+    if g.lastR >= 0 and g.lastR < N {
+        r.setColor(COL_GOLD)
+        r.drawCircle(centerX(g.lastC), centerY(g.lastR), RADIUS + 2.0)
+    }
+
+    // 人机模式下：当前轮到人时显示悬停预览
+    if g.mode == 0 and not g.gameOver and g.current == 1 and g.hasHover {
+        if g.board[g.hoverR * N + g.hoverC] == 0 {
+            drawStone(r, centerX(g.hoverC), centerY(g.hoverR), 1, 0.4, 1.0)
+        }
+    }
+}
+
+func drawBar(Renderer r, float x, float y, float w, float h, float ratio, int col) {
+    r.setColor(0x00000066)
+    r.fillRect(x, y, w, h)
+    r.setColor(col)
+    r.fillRect(x, y, w * ratio, h)
+    r.setColor(COL_GRID)
+    r.drawRect(x, y, w, h)
+}
+
+func levelName(int lvl): string {
+    if lvl <= 1 { return "随机" }
+    if lvl <= 3 { return "新手" }
+    if lvl <= 5 { return "入门" }
+    if lvl <= 7 { return "进阶" }
+    if lvl == 8 { return "高手" }
+    return "大师"
+}
+
+func drawAIBox(Game g, Renderer r, float x, float y, string label, int lvl, bool isBlack, bool tuned) {
+    r.drawText(g.font, label, x, y, COL_TEXT)
+    r.drawText(g.font, "智力 " + _str(lvl) + "  (" + levelName(lvl) + ")", x, y + 22.0, COL_GOLD)
+    int barCol = COL_ACCENT
+    if not isBlack { barCol = COL_WHITE }
+    drawBar(r, x, y + 50.0, 210.0, 14.0, _float(lvl) / 9.0, barCol)
+    if tuned {
+        r.drawText(g.font, " 调节中", x + 220.0, y + 22.0, COL_GREEN)
+    }
+}
+
+// 思考中转圈（四颗点依次高亮）
+func drawThinking(Game g, Renderer r, float cx, float cy) {
+    Array[float] ox = []
+    ox.add(-9.0); ox.add(0.0); ox.add(9.0); ox.add(0.0)
+    Array[float] oy = []
+    oy.add(0.0); oy.add(-9.0); oy.add(0.0); oy.add(9.0)
+    int t = g.frameCount / 6
+    int active = t - 4 * (t / 4)
+    for 0 : 3 to i {
+        bool on = (i == active)
+        int col = 0x666677FF
+        if on { col = COL_GOLD }
+        r.setColor(col)
+        float rr = 2.5
+        if on { rr = 4.0 }
+        r.fillCircle(cx + ox[i], cy + oy[i], rr)
+    }
+}
+
+// 面板"悔棋"按钮
+func drawUndoButton(Game g, Renderer r) {
+    bool enabled = (g.mode == 0)
+    int fill = 0x2A2A3CFF
+    if not enabled { fill = 0x20202CFF }
+    r.setColor(fill)
+    r.fillRect(UNDO_X, UNDO_Y, UNDO_W, UNDO_H)
+    if enabled { r.setColor(COL_ACCENT) } else { r.setColor(0x55556EFF) }
+    r.drawRect(UNDO_X, UNDO_Y, UNDO_W, UNDO_H)
+    int col = COL_TEXT
+    if not enabled { col = 0x777788FF }
+    // 文字在框内水平+垂直居中：用 measureString 取高，垂直偏移 = (框高-字高)/2
+    var[float, float](tw, th) = g.font.measureString("悔棋 (U)")
+    float ty = UNDO_Y + (UNDO_H - th) / 2.0
+    r.drawTextCentered(g.font, "悔棋 (U)", UNDO_X, UNDO_W, ty, col)
+}
+
+func drawPanel(Game g, Renderer r) {
+    float px = PANEL_X
+    if not g.font.ok { return }
+
+    r.drawText(g.font, "五子棋 Gomoku", px, 28.0, COL_ACCENT)
+
+    string modeStr = "人机对战"
+    if g.mode == 1 { modeStr = "AI 对 AI" }
+    r.drawText(g.font, "模式: " + modeStr, px, 64.0, COL_TEXT)
+
+    // 当前行动方
+    string turnStr = ""
+    if g.gameOver {
+        turnStr = "对局结束"
+    } else if g.mode == 0 {
+        if g.current == 1 { turnStr = "轮到你（黑）落子" } else { turnStr = "AI（白）思考中…" }
+    } else {
+        if g.current == 1 { turnStr = "黑方 AI 思考中…" } else { turnStr = "白方 AI 思考中…" }
+    }
+    r.drawText(g.font, turnStr, px, 92.0, COL_SUB)
+
+    // 双方 AI 智力
+    bool blackTuned = (g.mode == 1 and g.tuneTarget == 0)
+    bool whiteTuned = (g.mode == 1 and g.tuneTarget == 1)
+    drawAIBox(g, r, px, 130.0, "黑方 AI（先手）", g.blackAI, true, blackTuned)
+    drawAIBox(g, r, px, 230.0, "白方 AI（后手）", g.whiteAI, false, whiteTuned)
+
+    bool thinkBlack = (not g.gameOver) and g.mode == 1 and g.current == 1
+    bool thinkWhite = (not g.gameOver) and g.current == 2
+    if thinkBlack { drawThinking(g, r, px + 250.0, 140.0) }
+    if thinkWhite { drawThinking(g, r, px + 250.0, 240.0) }
+
+    // 战绩（AI 对 AI）
+    r.drawText(g.font, "—— 战绩 ——", px, 340.0, COL_SUB)
+    string rec = "共 " + _str(g.games) + " 局   黑 " + _str(g.blackWins)
+                + " : " + _str(g.whiteWins) + " 白   平 " + _str(g.draws)
+    r.drawText(g.font, rec, px, 364.0, COL_TEXT)
+
+    if g.mode == 1 and g.games > 0 {
+        string verdict = ""
+        if g.blackWins > g.whiteWins { verdict = "黑方 AI 暂时领先 " }
+        else if g.whiteWins > g.blackWins { verdict = "白方 AI 暂时领先 " }
+        else { verdict = "双方 AI 势均力敌" }
+        r.drawText(g.font, verdict, px, 388.0, COL_GOLD)
+    }
+
+    // 操作说明（小号字体 + 收紧行距，避免压到下方按钮）
+    Font of = g.sfont
+    if not of.ok { of = g.font }
+    float hy = 432.0
+    r.drawText(of, "操作", px, hy, COL_SUB)
+    r.drawText(of, "M 切换模式", px, hy + 18.0, #888888FF)
+    r.drawText(of, "Tab 切换调节的AI", px, hy + 36.0, #888888FF)
+    r.drawText(of, "1~9 设置智力", px, hy + 54.0, #888888FF)
+    r.drawText(of, "空格 暂停/继续", px, hy + 72.0, #888888FF)
+    r.drawText(of, "R 重新开始", px, hy + 90.0, #888888FF)
+    r.drawText(of, "U / 点按钮 悔棋(人机)", px, hy + 108.0, #888888FF)
+    r.drawText(of, "ESC 退出", px, hy + 126.0, #888888FF)
+    drawUndoButton(g, r)
+}
+
+// 获胜连线高亮（快速连线 + 线头亮点）
+func drawWinLine(Game g, Renderer r) {
+    float x1 = centerX(g.winC1)
+    float y1 = centerY(g.winR1)
+    float x2 = centerX(g.winC2)
+    float y2 = centerY(g.winR2)
+    int WIN_DRAW = 8   // 约 130ms 跨速连线
+    float prog = _float(g.winAnim) / _float(WIN_DRAW)
+    if prog > 1.0 { prog = 1.0 }
+    float hx = x1 + (x2 - x1) * prog
+    float hy = y1 + (y2 - y1) * prog
+    // 发光底（随进度延伸）
+    r.setColorFloat(1.0, 0.85, 0.3, 0.22)
+    for 0 : 6 to kk {
+        int k = kk - 3
+        float off = _float(k) * 1.6
+        r.drawLine(x1 + off, y1 + off, hx + off, hy + off)
+    }
+    // 主线（随进度延伸）
+    r.setColorFloat(1.0, 0.92, 0.45, 0.95)
+    r.drawLine(x1, y1, hx, hy)
+    // 连线未完成时线头亮点；完成后流动亮点
+    if prog < 1.0 {
+        r.setColorFloat(1.0, 1.0, 0.8, 1.0)
+        r.fillCircle(hx, hy, 6.0)
+    } else {
+        // 流动亮点：沿连线来回平滑跑（三角波，单程约 1.2s，比原 6.7s 快很多且无硬跳变）
+        int t = g.frameCount
+        int p = t - 72 * (t / 72)       // 周期 72 帧（1.2s），单程 36 帧 ≈ 0.6s
+        float u
+        if p <= 36 { u = _float(p) / 36.0 } else { u = _float(72 - p) / 36.0 }
+        r.setColorFloat(1.0, 1.0, 0.8, 1.0)
+        r.fillCircle(x1 + (x2 - x1) * u, y1 + (y2 - y1) * u, 5.0)
+    }
+}
+
+func drawResult(Game g, Renderer r) {
+    r.setColorFloat(0.0, 0.0, 0.0, 0.6)
+    r.fillRect(0.0, 0.0, WIN_W, WIN_H)
+
+    if not g.font.ok { return }
+
+    string title = ""
+    int col = COL_TEXT
+    if g.winner == 1 { title = "黑方胜！"; col = COL_ACCENT }
+    else if g.winner == 2 { title = "白方胜！"; col = COL_WHITE }
+    else { title = "平局"; col = COL_SUB }
+
+    if g.mode == 0 {
+        if g.winner == 1 { title = "你赢了！" }
+        else if g.winner == 2 { title = "AI 赢了" }
+    }
+
+    r.drawTextCentered(g.font, title, 0.0, WIN_W, WIN_H / 2.0 - 20.0, col)
+    if g.mode == 1 {
+        r.drawTextCentered(g.font,
+            "黑 " + _str(g.blackWins) + " : " + _str(g.whiteWins) + " 白 （按 R 重置战绩）",
+            0.0, WIN_W, WIN_H / 2.0 + 20.0, COL_SUB)
+    } else {
+        r.drawTextCentered(g.font, "按 R 再来一局", 0.0, WIN_W, WIN_H / 2.0 + 20.0, COL_SUB)
+    }
+    if g.winner != 0 { drawWinLine(g, r); drawFireworks(g, r) }
+}
+
+func pointInRect(float px, float py, float x, float y, float w, float h): bool {
+    return px >= x and px <= x + w and py >= y and py <= y + h
+}
+
+func drawMenuButton(Game g, Renderer r, float x, float y, float w, float h, string label, bool hover, int borderCol) {
+    int fill = 0x2A2A3CFF
+    if hover { fill = 0x3A3A52FF }
+    r.setColor(fill)
+    r.fillRect(x, y, w, h)
+    if hover { r.setColor(borderCol) } else { r.setColor(0x55556EFF) }
+    r.drawRect(x, y, w, h)
+    var[float, float](tw, th) = g.font.measureString(label)
+    float ty = y + (h - th) / 2.0
+    r.drawTextCentered(g.font, label, x, w, ty, COL_TEXT)
+}
+
+func drawMenu(Game g, Renderer r) {
+    r.setColor(COL_BG)
+    r.clear()
+
+    r.drawTextCentered(g.font, "五子棋 Gomoku", 0.0, WIN_W, 150.0, COL_ACCENT)
+    r.drawTextCentered(g.font, "请选择对战模式", 0.0, WIN_W, 192.0, COL_TEXT)
+
+    bool h1 = pointInRect(g.mx, g.my, MENU_BTN1_X, MENU_BTN1_Y, MENU_BTN_W, MENU_BTN_H)
+    bool h2 = pointInRect(g.mx, g.my, MENU_BTN2_X, MENU_BTN2_Y, MENU_BTN_W, MENU_BTN_H)
+
+    drawMenuButton(g, r, MENU_BTN1_X, MENU_BTN1_Y, MENU_BTN_W, MENU_BTN_H,
+                   "人机对战  (你执黑，点击落子)", h1, COL_GOLD)
+    drawMenuButton(g, r, MENU_BTN2_X, MENU_BTN2_Y, MENU_BTN_W, MENU_BTN_H,
+                   "AI 大战  (双方自动对弈，累计战绩)", h2, COL_ACCENT)
+
+    r.drawTextCentered(g.font, "AI 大战会自动连下几百回合，胜率一目了然", 0.0, WIN_W, MENU_BTN2_Y + MENU_BTN_H + 34.0, COL_SUB)
+    r.drawTextCentered(g.font, "游戏中按 ESC 可返回本菜单", 0.0, WIN_W, MENU_BTN2_Y + MENU_BTN_H + 58.0, COL_SUB)
+}
+
+func renderGame(Game g, Renderer r) {
+    if g.state == "menu" {
+        drawMenu(g, r)
+        core.requestRedraw()
+        return
+    }
+    r.setColor(COL_BG)
+    r.clear()
+    drawBoard(g, r)
+    drawPanel(g, r)
+    if g.gameOver { drawResult(g, r) }
+
+    if g.msgTimer > 0 {
+        var[float, float](mw, mh) = g.font.measureString(g.msg)
+        float bx = (600.0 - mw) / 2.0 - 10.0
+        r.setColor(0x00000099)
+        r.fillRect(bx, 14.0, mw + 20.0, 28.0)
+        r.drawTextCentered(g.font, g.msg, 0.0, 600.0, 20.0, COL_GOLD)
+    }
+    core.requestRedraw()
+}
+
+// ==================== 事件 ====================
+
+func handleEvent(Game g, Event e): bool {
+    if e.isQuit() or e.isWindowClose() { return false }
+
+    if e.isKeyDown() {
+        int sc = e.scancode()
+        if sc == Scancode.ESCAPE {
+            if g.state == "menu" { return false }   // 菜单里 ESC 退出
+            g.state = "menu"                          // 对局中 ESC 返回菜单
+            return true
+        }
+        if g.state == "menu" { return true }          // 菜单下忽略其它按键
+
+        if sc == Scancode.M {
+            g.mode = 1 - g.mode
+            newGame(g)
+            if g.mode == 0 { flash(g, "切换到 人机对战") } else { flash(g, "切换到 AI 对 AI") }
+        } else if sc == Scancode.TAB {
+            g.tuneTarget = 1 - g.tuneTarget
+            if g.tuneTarget == 0 { flash(g, "调节对象 → 黑方 AI") } else { flash(g, "调节对象 → 白方 AI") }
+        } else if sc == Scancode.R {
+            newGame(g)
+        } else if sc == Scancode.SPACE {
+            if g.mode == 1 { g.pause = not g.pause }
+        } else if sc == Scancode._1 { setLevel(g, 1) }
+          else if sc == Scancode._2 { setLevel(g, 2) }
+          else if sc == Scancode._3 { setLevel(g, 3) }
+          else if sc == Scancode._4 { setLevel(g, 4) }
+          else if sc == Scancode._5 { setLevel(g, 5) }
+          else if sc == Scancode._6 { setLevel(g, 6) }
+          else if sc == Scancode._7 { setLevel(g, 7) }
+          else if sc == Scancode._8 { setLevel(g, 8) }
+          else if sc == Scancode._9 { setLevel(g, 9) }
+          else if sc == Scancode.U { undo(g) }
+    }
+
+    if e.isMouseButtonDown() {
+        if g.state == "menu" {
+            var[float, float](mx, my) = e.mousePos()
+            if pointInRect(mx, my, MENU_BTN1_X, MENU_BTN1_Y, MENU_BTN_W, MENU_BTN_H) {
+                g.mode = 0
+                g.tuneTarget = 1
+                newGame(g)
+                g.state = "play"
+            } else if pointInRect(mx, my, MENU_BTN2_X, MENU_BTN2_Y, MENU_BTN_W, MENU_BTN_H) {
+                g.mode = 1
+                g.tuneTarget = 1
+                newGame(g)
+                g.state = "play"
+            }
+            return true
+        }
+        var[float, float](mx, my) = e.mousePos()
+        if pointInRect(mx, my, UNDO_X, UNDO_Y, UNDO_W, UNDO_H) {
+            if g.mode == 0 { undo(g) } else { flash(g, "悔棋仅限人机模式") }
+            return true
+        }
+        int c = _int((mx - BOARD_X) / CELL + 0.5)
+        int r = _int((my - BOARD_Y) / CELL + 0.5)
+        if inBounds(r, c) {
+            if g.mode == 0 and not g.gameOver and g.current == 1 {
+                if g.board[r * N + c] == 0 {
+                    doMove(g, r, c)
+                    g.thinkTimer = THINK
+                }
+            }
+        }
+    }
+
+    if e.isMouseMotion() {
+        var[float, float](mx, my) = e.mousePos()
+        g.mx = mx
+        g.my = my
+        int c = _int((mx - BOARD_X) / CELL + 0.5)
+        int r = _int((my - BOARD_Y) / CELL + 0.5)
+        if g.mode == 0 and not g.gameOver and g.current == 1 and inBounds(r, c) {
+            g.hasHover = true
+            g.hoverR = r
+            g.hoverC = c
+        } else {
+            g.hasHover = false
+        }
+    }
+
+    return true
+}
+
+// ==================== 主函数 ====================
+
+main() {
+    // ===== 自测模式（验证 AI 对弈逻辑，正式运行请保持 false）=====
+    var SELFTEST = false
+    if SELFTEST {
+        func runMatch(int bAI, int wAI, int nGames) {
+            var g = new Game()
+            g.blackAI = bAI
+            g.whiteAI = wAI
+            g.mode = 1
+            g.tuneTarget = 1
+            newGame(g)
+            g.state = "play"
+            int safety = 0
+            bool prevOver = false
+            while g.games < nGames and safety < 200000 {
+                updateGame(g)
+                safety = safety + 1
+                if g.gameOver and not prevOver {
+                    prevOver = true
+                    print("    局" + _str(g.games + 1) + " winner=" + _str(g.winner)
+                          + " 手数=" + _str(g.moveCount))
+                }
+                if not g.gameOver { prevOver = false }
+            }
+            print("  [智力 黑" + _str(bAI) + " vs 白" + _str(wAI) + "] => 黑"
+                  + _str(g.blackWins) + " : " + _str(g.whiteWins) + " 白  平"
+                  + _str(g.draws))
+        }
+        print("[自测] 智力梯度验证：")
+        runMatch(9, 1, 3)
+        runMatch(1, 9, 3)
+        runMatch(7, 3, 3)
+        runMatch(5, 5, 3)
+        return
+    }
+
+    var win = SDL3.createWindow({
+        title: "五子棋 — 请选择对战模式",
+        w: _int(WIN_W),
+        h: _int(WIN_H),
+        flags: WindowFlag.RESIZABLE
+    })
+    if not win.ok {
+        print("[错误] 窗口创建失败")
+        return
+    }
+
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(18.0)
+    var sfont = SDL3.createFontAuto(12.0)
+
+    var g = new Game()
+    g.font = font
+    g.sfont = sfont
+    g.blackAI = 6
+    g.whiteAI = 4
+    g.mode = 1
+    g.tuneTarget = 1
+    g.frameCount = 0
+    g.mx = -10.0
+    g.my = -10.0
+    newGame(g)
+    g.state = "menu"
+
+    win.setMaxFPS(60)
+
+    print("[OK] 五子棋启动成功!")
+    print("     M 切换模式, 1~9 设置智力, Tab 切换调节对象, 空格 暂停, R 重开, ESC 退出")
+    print("     人机模式: 你执黑, 点击落子; AI对AI: 双方自动对弈并累计战绩")
+
+    win.run(
+        func(Event ev): bool {
+            return handleEvent(g, ev)
+        },
+        func(Renderer r) {
+            updateGame(g)
+            g.frameCount = g.frameCount + 1
+            renderGame(g, r)
+        }
+    )
+
+    if font.ok { font.close() }
+    if sfont.ok { sfont.close() }
+    win.destroy()
+    SDL3.quit()
+    print("五子棋退出")
+}

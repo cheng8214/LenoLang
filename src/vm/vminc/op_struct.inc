@@ -120,9 +120,6 @@ OPCODE(OP_STRUCT_DEF) {
         }
         def->methods[i].func = (ObjFunction*)val_as_obj(func_val);
 
-        // 预创建闭包（优化：避免每次调用都创建）
-        // 注意：只有不需要 upvalue 的方法才能预创建闭包
-        // 需要 upvalue 的方法将在 OP_GET_METHOD 中动态创建
         ObjFunction* func = def->methods[i].func;
         if (func->upvalue_count == 0) {
             ObjClosure* closure = (ObjClosure*)gc_alloc(sizeof(ObjClosure), OBJ_CLOSURE);

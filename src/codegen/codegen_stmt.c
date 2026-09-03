@@ -2046,10 +2046,20 @@ static void gen_return(CodeGen* gen, Ast* ast) {
             emit_byte(gen, OP_NULL, ast->line);
         }
         emit_bytes_2(gen, OP_SET_LOCAL_POP, gen->inline_result_slot, ast->line);
+        // 逆序调用本层内联期间新增的析构条目
+        for (int i = gen->dtor_count - 1; i >= gen->inline_dtor_base; i--) {
+            emit_byte(gen, OP_DTOR_LOCAL, ast->line);
+            emit_byte(gen, (gen->dtor_entries[i].local_slot >> 8) & 0xff, ast->line);
+            emit_byte(gen, gen->dtor_entries[i].local_slot & 0xff, ast->line);
+            emit_byte(gen, OP_POP, ast->line);
+        }
         // 记录跳转，稍后回填到内联块末尾
         if (gen->inline_return_jump_count < 256) {
             gen->inline_return_jumps[gen->inline_return_jump_count++] =
                 emit_jump(gen, OP_JUMP, ast->line);
+        } else {
+            error_add_at(ERR_RUNTIME, ast->line, ast->column,
+                "内联函数 return 跳转数量超过 256 上限");
         }
         return;
     }
@@ -2111,9 +2121,19 @@ static void gen_return_multi(CodeGen* gen, Ast* ast) {
             emit_byte(gen, OP_NULL, ast->line);
         }
         emit_bytes_2(gen, OP_SET_LOCAL_POP, gen->inline_result_slot, ast->line);
+        // 逆序调用本层内联期间新增的析构条目
+        for (int i = gen->dtor_count - 1; i >= gen->inline_dtor_base; i--) {
+            emit_byte(gen, OP_DTOR_LOCAL, ast->line);
+            emit_byte(gen, (gen->dtor_entries[i].local_slot >> 8) & 0xff, ast->line);
+            emit_byte(gen, gen->dtor_entries[i].local_slot & 0xff, ast->line);
+            emit_byte(gen, OP_POP, ast->line);
+        }
         if (gen->inline_return_jump_count < 256) {
             gen->inline_return_jumps[gen->inline_return_jump_count++] =
                 emit_jump(gen, OP_JUMP, ast->line);
+        } else {
+            error_add_at(ERR_RUNTIME, ast->line, ast->column,
+                "内联函数 return 跳转数量超过 256 上限");
         }
         return;
     }

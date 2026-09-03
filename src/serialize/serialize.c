@@ -339,6 +339,7 @@ static int serialize_constant(WriteBuffer* wb, Value val) {
             wb_write_u32(wb, (uint32_t)func->upvalue_count);
             wb_write_u32(wb, (uint32_t)func->local_count);
             wb_write_u8(wb, (uint8_t)func->has_try);
+            wb_write_u8(wb, (uint8_t)func->is_ctor);
             uint32_t param_count = 0;
             if (func->arity > 0 && func->param_types) {
                 param_count = (uint32_t)func->arity;
@@ -830,11 +831,12 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
         if (!name) return 0;
 
         uint32_t arity, upvalue_count, local_count, param_count;
-        uint8_t has_try;
+        uint8_t has_try, is_ctor;
         if (!ctx_read_u32(ctx, &arity) ||
             !ctx_read_u32(ctx, &upvalue_count) ||
             !ctx_read_u32(ctx, &local_count) ||
             !ctx_read_u8(ctx, &has_try) ||
+            !ctx_read_u8(ctx, &is_ctor) ||
             !ctx_read_u32(ctx, &param_count)) {
             free(name);
             return 0;
@@ -846,6 +848,7 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
         func->upvalue_count = (int)upvalue_count;
         func->local_count = (int)local_count;
         func->has_try = has_try;
+        func->is_ctor = is_ctor;
         func->module = NULL;
 
         if (param_count > 0) {

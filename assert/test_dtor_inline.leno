@@ -1,0 +1,47 @@
+// 测试内联函数中析构是否正常（函数体足够小，会被内联）
+int alive = 0
+
+struct Resource {
+    int handle = 0
+
+    func Resource() {
+        handle = 42
+        alive = alive + 1
+    }
+
+    func ~Resource() {
+        alive = alive - 1
+    }
+}
+
+// 小函数，会被内联
+func create(): int {
+    var r = new Resource()
+    return r.handle
+}
+
+// 小函数 + 显式 return null
+func create2() {
+    var r = new Resource()
+    print("inner")
+    return null
+}
+
+main() {
+    assert_eq(alive, 0)
+
+    // 内联后析构仍应触发
+    var h = create()
+    assert_eq(h, 42)
+    assert_eq(alive, 0)  // 析构后回 0
+
+    // 多次调用
+    var h2 = create()
+    assert_eq(h2, 42)
+    assert_eq(alive, 0)
+
+    create2()
+    assert_eq(alive, 0)
+
+    print("test_dtor_inline passed")
+}

@@ -1,0 +1,29 @@
+// 测试局部函数定义中的析构是否正常
+int alive = 0
+
+struct Resource {
+    int handle = 0
+
+    func Resource() {
+        handle = 42
+        alive = alive + 1
+    }
+
+    func ~Resource() {
+        alive = alive - 1
+    }
+}
+
+main() {
+    assert_eq(alive, 0)
+
+    func test() {
+        var r = new Resource()
+        assert_eq(alive, 1)
+        assert_eq(r.handle, 42)
+    }
+    test()
+    assert_eq(alive, 0)  // 析构后回 0
+
+    print("test_inline_dtor_basic passed")
+}

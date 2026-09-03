@@ -491,11 +491,13 @@ int try_inline_call(CodeGen* gen, Ast* ast, Ast* func_def) {
     // 内联函数的局部变量在 OP_CLEAR_LOCAL_RANGE 时已被清零，
     // 析构函数不应再被调用。
     int saved_dtor_count = gen->dtor_count;
+    int saved_dtor_base = gen->inline_dtor_base;
 
     if (fast_path) {
         // ===== 快速路径：直接生成返回表达式，无需 result_slot =====
         int saved_depth = gen->inline_depth;
         gen->inline_depth++;  // 仅为递归检测和深度限制
+        gen->inline_dtor_base = gen->dtor_count;  // 记录本层析构基址
 
         if (fast_return_expr) {
             // 返回表达式的结果就是内联函数的结果，不应被丢弃
@@ -511,6 +513,15 @@ int try_inline_call(CodeGen* gen, Ast* ast, Ast* func_def) {
             }
         }
 
+        // 快速路径析构：逆序调用本层内联期间新增的析构条目
+        while (gen->dtor_count > gen->inline_dtor_base) {
+            gen->dtor_count--;
+            emit_byte(gen, OP_DTOR_LOCAL, ast->line);
+            emit_byte(gen, (gen->dtor_entries[gen->dtor_count].local_slot >> 8) & 0xff, ast->line);
+            emit_byte(gen, gen->dtor_entries[gen->dtor_count].local_slot & 0xff, ast->line);
+            emit_byte(gen, OP_POP, ast->line);
+        }
+
         // 清零所有局部变量 slot，防止 GC 扫描到残留的对象引用
         if (local_count > 0) {
             emit_byte(gen, OP_CLEAR_LOCAL_RANGE, ast->line);
@@ -523,6 +534,7 @@ int try_inline_call(CodeGen* gen, Ast* ast, Ast* func_def) {
         gen->inline_depth = saved_depth;
         gen->inline_discard_result = saved_discard;
         gen->dtor_count = saved_dtor_count;  // 恢复析构追踪
+        gen->inline_dtor_base = saved_dtor_base;
         inline_name_stack_pop();
 
         // 恢复 AST 索引
@@ -537,9 +549,11 @@ int try_inline_call(CodeGen* gen, Ast* ast, Ast* func_def) {
     int saved_depth = gen->inline_depth;
     int saved_result_slot = gen->inline_result_slot;
     int saved_jump_count = gen->inline_return_jump_count;
+    int saved_dtor_base_gen = gen->inline_dtor_base;
 
     gen->inline_depth++;
     gen->inline_result_slot = result_slot;
+    gen->inline_dtor_base = gen->dtor_count;  // 记录本层析构基址
     // 不重置 inline_return_jump_count — 内层函数的 return 跳转
     // 会自动追加到 saved_jump_count 之后，不会覆写外层函数的条目。
     // 修复前：reset 为 0 导致嵌套内联时内层 return 覆写外层条目。
@@ -547,6 +561,16 @@ int try_inline_call(CodeGen* gen, Ast* ast, Ast* func_def) {
     // 4. 生成函数体（逐条语句，不用 gen_block 避免预处理逻辑）
     for (int i = 0; i < body_count; i++) {
         gen_stmt(gen, body->u.block.items[i]);
+    }
+
+    // 4.5 逆序调用本层内联期间新增的析构条目（仿 gen_block 尾部循环）
+    // gen_stmt 逐条生成绕过了 gen_block 的析构尾部，需在此补上
+    while (gen->dtor_count > gen->inline_dtor_base) {
+        gen->dtor_count--;
+        emit_byte(gen, OP_DTOR_LOCAL, ast->line);
+        emit_byte(gen, (gen->dtor_entries[gen->dtor_count].local_slot >> 8) & 0xff, ast->line);
+        emit_byte(gen, gen->dtor_entries[gen->dtor_count].local_slot & 0xff, ast->line);
+        emit_byte(gen, OP_POP, ast->line);
     }
 
     // 5. 函数体末尾没有 return 的情况（void 函数）：push null
@@ -578,6 +602,7 @@ int try_inline_call(CodeGen* gen, Ast* ast, Ast* func_def) {
     gen->inline_no_result = 0;
     gen->inline_discard_result = saved_discard;
     gen->dtor_count = saved_dtor_count;  // 恢复析构追踪
+    gen->inline_dtor_base = saved_dtor_base_gen;
     inline_name_stack_pop();
 
     // 9. 恢复 AST 索引
