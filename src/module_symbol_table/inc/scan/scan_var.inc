@@ -131,8 +131,8 @@
                                     } else {
                                         var_type = TYPE_INT;
                                     }
-                                } else if (*after_var == '"') {
-                                    // 字符串字面量
+                                } else if (*after_var == '"' || *after_var == '\'') {
+                                    // 字符串字面量（双引号或单引号）
                                     var_type = TYPE_STRING;
                                 } else if (strncmp(after_var, "true", 4) == 0 || strncmp(after_var, "false", 5) == 0) {
                                     // 布尔字面量

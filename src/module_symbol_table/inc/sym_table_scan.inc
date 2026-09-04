@@ -94,7 +94,13 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
             while (*q && depth > 0) {
                 if (*q == '/' && *(q+1) == '/') { while (*q && *q != '\n') q++; continue; }
                 if (*q == '/' && *(q+1) == '*') { q += 2; while (*q && !(*q == '*' && *(q+1) == '/')) q++; if (*q) q += 2; continue; }
-                if (*q == '"') { q++; while (*q && *q != '"') { if (*q == '\\' && *(q+1)) q += 2; else q++; } if (*q) q++; continue; }
+                if (*q == '"' || *q == '\'') {
+                    char quote = *q;
+                    q++;
+                    while (*q && *q != quote) { if (*q == '\\' && *(q+1)) q += 2; else q++; }
+                    if (*q) q++;
+                    continue;
+                }
                 if (*q == '{') depth++;
                 else if (*q == '}') depth--;
                 else if (depth == 1
@@ -146,7 +152,13 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
             while (*q && depth > 0) {
                 if (*q == '/' && *(q+1) == '/') { while (*q && *q != '\n') q++; continue; }
                 if (*q == '/' && *(q+1) == '*') { q += 2; while (*q && !(*q == '*' && *(q+1) == '/')) q++; if (*q) q += 2; continue; }
-                if (*q == '"') { q++; while (*q && *q != '"') { if (*q == '\\' && *(q+1)) q += 2; else q++; } if (*q) q++; continue; }
+                if (*q == '"' || *q == '\'') {
+                    char quote = *q;
+                    q++;
+                    while (*q && *q != quote) { if (*q == '\\' && *(q+1)) q += 2; else q++; }
+                    if (*q) q++;
+                    continue;
+                }
                 if (*q == '{') depth++;
                 else if (*q == '}') depth--;
                 else if (depth == 1

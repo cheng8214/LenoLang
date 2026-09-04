@@ -71,9 +71,10 @@
             if (*p) p += 2;
             continue;
         }
-        if (*p == '"') {
+        if (*p == '"' || *p == '\'') {
+            char quote = *p;
             p++;
-            while (*p && *p != '"') {
+            while (*p && *p != quote) {
                 if (*p == '\\' && *(p+1)) p += 2;
                 else p++;
             }
@@ -706,7 +707,13 @@
         if (!*p) break;
         if (*p == '/' && *(p+1) == '/') { while (*p && *p != '\n') p++; continue; }
         if (*p == '/' && *(p+1) == '*') { p += 2; while (*p && !(*p == '*' && *(p+1) == '/')) p++; if (*p) p += 2; continue; }
-        if (*p == '"') { p++; while (*p && *p != '"') { if (*p == '\\' && *(p+1)) p += 2; else p++; } if (*p) p++; continue; }
+        if (*p == '"' || *p == '\'') {
+            char quote = *p;
+            p++;
+            while (*p && *p != quote) { if (*p == '\\' && *(p+1)) p += 2; else p++; }
+            if (*p) p++;
+            continue;
+        }
 
         // 查找 import 语句
         if (strncmp(p, "import", 6) == 0 && (p[6] == ' ' || p[6] == '\t')) {
@@ -750,7 +757,13 @@
                             if (!*sp) break;
                             if (*sp == '/' && *(sp+1) == '/') { while (*sp && *sp != '\n') sp++; continue; }
                             if (*sp == '/' && *(sp+1) == '*') { sp += 2; while (*sp && !(*sp == '*' && *(sp+1) == '/')) sp++; if (*sp) sp += 2; continue; }
-                            if (*sp == '"') { sp++; while (*sp && *sp != '"') { if (*sp == '\\' && *(sp+1)) sp += 2; else sp++; } if (*sp) sp++; continue; }
+                            if (*sp == '"' || *sp == '\'') {
+                                char quote = *sp;
+                                sp++;
+                                while (*sp && *sp != quote) { if (*sp == '\\' && *(sp+1)) sp += 2; else sp++; }
+                                if (*sp) sp++;
+                                continue;
+                            }
 
                             // 查找 export clib
                             if (strncmp(sp, "export", 6) == 0 && (sp[6] == ' ' || sp[6] == '\t' || sp[6] == '\n' || sp[6] == '\r')) {

@@ -379,6 +379,17 @@
                                                         while (*after_func && *after_func != ',' && *after_func != ')' && paren_depth == 1) {
                                                             if (*after_func == '/' && *(after_func+1) == '/') { while (*after_func && *after_func != '\n') after_func++; continue; }
                                                             if (*after_func == '/' && *(after_func+1) == '*') { after_func += 2; while (*after_func && !(*after_func == '*' && *(after_func+1) == '/')) after_func++; if (*after_func) after_func += 2; continue; }
+                                                            // 跳过字符串字面量（双引号和单引号，避免字符串中的 , ) / 等影响解析）
+                                                            if (*after_func == '"' || *after_func == '\'') {
+                                                                char quote = *after_func;
+                                                                after_func++;
+                                                                while (*after_func && *after_func != quote) {
+                                                                    if (*after_func == '\\' && *(after_func+1)) after_func += 2;
+                                                                    else after_func++;
+                                                                }
+                                                                if (*after_func) after_func++;
+                                                                continue;
+                                                            }
                                                             if (*after_func == '(') paren_depth++;
                                                             else if (*after_func == ')') paren_depth--;
                                                             else after_func++;
@@ -552,6 +563,20 @@
                                                     after_func += 2;
                                                     while (*after_func && !(*after_func == '*' && *(after_func+1) == '/')) after_func++;
                                                     if (*after_func) after_func += 2;
+                                                    continue;
+                                                }
+                                                // 跳过字符串字面量（双引号和单引号，避免字符串中的 { } / // 等影响深度计数和注释检测）
+                                                // 历史缺陷：原实现不跳过字符串，导致方法体中的 "://" 被误判为
+                                                // 单行注释，其后的 { 不被计入 brace_depth，使方法体跳过提前结束，
+                                                // 后续方法被静默丢弃（如 Url::normalize 和 Url::str2）
+                                                if (*after_func == '"' || *after_func == '\'') {
+                                                    char quote = *after_func;
+                                                    after_func++;
+                                                    while (*after_func && *after_func != quote) {
+                                                        if (*after_func == '\\' && *(after_func+1)) after_func += 2;
+                                                        else after_func++;
+                                                    }
+                                                    if (*after_func) after_func++;
                                                     continue;
                                                 }
                                                 if (*after_func == '{') brace_depth++;

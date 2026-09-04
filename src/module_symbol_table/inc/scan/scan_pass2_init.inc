@@ -42,9 +42,10 @@
             if (*p) p += 2;
             continue;
         }
-        if (*p == '"') {
+        if (*p == '"' || *p == '\'') {
+            char quote = *p;
             p++;
-            while (*p && *p != '"') {
+            while (*p && *p != quote) {
                 if (*p == '\\' && *(p+1)) { p += 2; continue; }
                 if (*p == '\n') cur_line++;
                 p++;
