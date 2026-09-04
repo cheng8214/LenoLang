@@ -19,6 +19,9 @@ import "../../../../lib/SDL3.leno" as SDL3
 import "../../../../lib/sdl_core.leno" as core
 use SDL3.(Event, Renderer, WindowFlag, Scancode, Font)
 import rands
+import "../../../../../LenoMusic/lib/Music.leno" as audio
+use audio.Sound
+import dirs
 
 // ==================== 常量 ====================
 
@@ -40,6 +43,7 @@ var ST_OVER = 3
 
 // 方块类型：0=I 1=O 2=T 3=S 4=Z 5=J 6=L
 var CLEAR_FLASH = 8       // 消行闪烁帧数
+var WARN_ROWS    = 3       // 顶部危险：已落方块堆到最上几行即警告
 
 // 调色板（按方块类型索引 0..6）
 Array[float] PAL_R = []
@@ -68,6 +72,13 @@ struct Game {
     int dasTimer              // 左右连发的重复计时
 
     Font font
+
+    // 音效
+    Sound sfxRotate       // 旋转（变形）
+    Sound sfxClear        // 整行消除
+    Sound sfxWarn         // 顶部危险警告
+    bool  audioOk
+    bool  warnOn          // 是否处于顶部危险警告状态
 }
 
 // ==================== 形状与调色板 ====================
@@ -196,6 +207,7 @@ func tryRotate(Game g, bool cw) {
         if not collides(g, ns, g.curX + ox, g.curY) {
             g.curShape = ns
             g.curX = g.curX + ox
+            if g.audioOk { g.sfxRotate.play() }
             return
         }
     }
@@ -260,6 +272,16 @@ func isMarkedRow(Game g, int r): bool {
     return false
 }
 
+// 顶部危险：已落定的方块是否堆到最上面 WARN_ROWS 行内（不含下落中的方块）
+func nearTop(Game g): bool {
+    for 0 : WARN_ROWS to r {
+        for 0 : BOARD_W - 1 to c {
+            if g.board[r * BOARD_W + c] != 0 { return true }
+        }
+    }
+    return false
+}
+
 // 方块落地：写入棋盘，并检测满行
 func lockPiece(Game g) {
     for 0 : 3 to r {
@@ -289,6 +311,7 @@ func lockPiece(Game g) {
     if full.len() > 0 {
         g.clearRows = full
         g.clearFlashTimer = CLEAR_FLASH
+        if g.audioOk { g.sfxClear.play() }
     } else {
         spawnPiece(g)
     }
@@ -387,6 +410,15 @@ func updateGame(Game g) {
             spawnPiece(g)
         }
         return
+    }
+
+    // 顶部危险警告：进入危险区时播放一次警告声
+    bool w = nearTop(g)
+    if w and not g.warnOn {
+        g.warnOn = true
+        if g.audioOk { g.sfxWarn.play() }
+    } else {
+        g.warnOn = w
     }
 
     // 左右按住时的连发（首次延迟 12 帧，之后每 4 帧一格）
@@ -501,9 +533,22 @@ func drawBoard(Game g, Renderer r) {
         }
     }
 
-    // 棋盘边框
-    r.setColorFloat(0.45, 0.55, 0.9, 0.9)
+    // 棋盘边框（危险时变红闪烁）
+    if g.warnOn {
+        float pulse = 0.55 + 0.45 * _float((g.frameCount / 5) % 2)
+        r.setColorFloat(0.95, 0.25, 0.25, pulse)
+    } else {
+        r.setColorFloat(0.45, 0.55, 0.9, 0.9)
+    }
     r.drawRect(BOARD_X, BOARD_Y, bw, bh)
+
+    // 顶部危险红条 + 文字警告
+    if g.warnOn and g.font.ok {
+        float pulse = 0.5 + 0.5 * _float((g.frameCount / 5) % 2)
+        r.setColorFloat(1.0, 0.2, 0.2, pulse * 0.7)
+        r.fillRect(BOARD_X, BOARD_Y, bw, 5.0)
+        r.drawText(g.font, "危险! 接近顶部", BOARD_X + 132.0, 20.0, #FF4444FF)
+    }
 }
 
 func drawPanel(Game g, Renderer r) {
@@ -709,6 +754,20 @@ main() {
     var g = newGame()
     g.font = font
 
+    // 初始化音效：用脚本目录拼接绝对路径（现已支持中文路径）
+    string sdir = dirs.script_dir()
+    g.audioOk  = false
+    g.sfxRotate = audio.createSound(sdir + "/music/bianxing.mp3")
+    g.sfxRotate.setVolume(0.5)
+    g.sfxClear  = audio.createSound(sdir + "/music/xiaochu.mp3")
+    g.sfxClear.setVolume(0.6)
+    g.sfxWarn   = audio.createSound(sdir + "/music/jinggao.mp3")
+    g.sfxWarn.setVolume(0.7)
+    g.audioOk  = g.sfxRotate.ok
+    g.warnOn   = false
+    if g.audioOk { print("[OK] 音效加载完成") }
+    else { print("[警告] 音效初始化失败，将以静音模式运行") }
+
     win.setMaxFPS(60)
 
     print("[OK] 俄罗斯方块启动成功!")
@@ -727,6 +786,12 @@ main() {
 
     if font.ok { font.close() }
     win.destroy()
+    if g.audioOk {
+        g.sfxRotate.uninit()
+        g.sfxClear.uninit()
+        g.sfxWarn.uninit()
+        audio.uninit()
+    }
     SDL3.quit()
     print("俄罗斯方块退出")
 }
