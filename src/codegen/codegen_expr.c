@@ -839,10 +839,10 @@ static void gen_call(CodeGen* gen, Ast* ast) {
                                                     expected_args = face_sym->methods[fi].param_count + 1;
                                                     required_args = expected_args;
                                                     has_method_def = 1;
-                                                    break;
-                                                }
-                                            }
-                                        }
+            break;
+        }
+    }
+}
                                     }
                                 }
                             }

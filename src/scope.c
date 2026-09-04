@@ -240,7 +240,6 @@ Symbol* scope_resolve_local(Scope* s, const char* name) {
             return s->syms[i];
         }
     }
-    
     return NULL;
 }
 

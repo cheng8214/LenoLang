@@ -154,6 +154,11 @@ static void printHelp(const char* program) {
 }
 
 // 主执行流程
+
+// 入口文件缓存路径（由 lenolang_run_file 设置，lenolang_run 在序列化后写入缓存）
+static char g_entry_cache_path[MAX_PATH_LEN] = {0};
+static int g_entry_cache_enabled = 0;
+
 int lenolang_run(const char* source) {
       if (debugMode) {
          printf("debug模式:进入主执行流程\n");
@@ -166,6 +171,7 @@ int lenolang_run(const char* source) {
          printf("debug模式:进入语法分析阶段\n");
      }
     // 1. 词法分析 + 语法分析
+    clock_t t_parse0 = clock();
     Parser parser;
     parser_init(&parser, source);
     if (parser_parse(&parser) < 0) {
@@ -175,9 +181,9 @@ int lenolang_run(const char* source) {
         ast_free(parser.root);
         return -1;
     }
-   if (debugMode) {
-         printf("debug模式:进入语义分析\n");
-     }
+    clock_t t_parse1 = clock();
+    fprintf(stderr, "[TIME] parse: %.1f ms\n", (double)(t_parse1 - t_parse0) / CLOCKS_PER_SEC * 1000.0);
+
     // 2. 语义分析（单遍）
     Semantic sem;
     semantic_init(&sem, parser.root);
@@ -186,20 +192,26 @@ int lenolang_run(const char* source) {
     chunk_init(&chunk);
     CodeGen gen;
     codegen_init(&gen, &chunk, &sem);
+    clock_t t_sem0 = clock();
     semantic_analyze(&sem, parser.root);
+    clock_t t_sem1 = clock();
+    fprintf(stderr, "[TIME] semantic: %.1f ms\n", (double)(t_sem1 - t_sem0) / CLOCKS_PER_SEC * 1000.0);
     if (error_has_any()) goto fail;
 
     // 2.5 常量折叠优化
+    clock_t t_opt0 = clock();
     optimize_constant_fold(parser.root);
 
     // 2.6 死代码消除
     optimize_dead_code_elimination(parser.root);
+    clock_t t_opt1 = clock();
+    fprintf(stderr, "[TIME] optimize: %.1f ms\n", (double)(t_opt1 - t_opt0) / CLOCKS_PER_SEC * 1000.0);
 
-  if (debugMode) {
-         printf("debug模式:开始生成字节码\n");
-     }
     // 3. 生成字节码
+    clock_t t_cg0 = clock();
     codegen(&gen, parser.root);
+    clock_t t_cg1 = clock();
+    fprintf(stderr, "[TIME] codegen: %.1f ms\n", (double)(t_cg1 - t_cg0) / CLOCKS_PER_SEC * 1000.0);
     if (error_has_any()) goto fail;
 
     // 调试模式：统一输出全部字节码（主程序 + 所有已加载模块）
@@ -213,8 +225,30 @@ int lenolang_run(const char* source) {
     {
         uint8_t* lenb_buf = NULL;
         size_t lenb_size = 0;
+        clock_t t_ser0 = clock();
         SerializeResult sr = chunk_serialize_to_memory(&chunk, sem.root_scope, &lenb_buf, &lenb_size);
+        clock_t t_ser1 = clock();
+        fprintf(stderr, "[TIME] serialize: %.1f ms\n", (double)(t_ser1 - t_ser0) / CLOCKS_PER_SEC * 1000.0);
         if (sr == SERIALIZE_OK && lenb_buf) {
+            // 入口文件缓存写入：将序列化结果落盘，下次运行可直接加载跳过编译
+            if (g_entry_cache_enabled && g_entry_cache_path[0]) {
+#ifdef _WIN32
+                int wlen2 = MultiByteToWideChar(CP_UTF8, 0, g_entry_cache_path, -1, NULL, 0);
+                if (wlen2 > 0) {
+                    wchar_t* wpath2 = (wchar_t*)malloc(wlen2 * sizeof(wchar_t));
+                    if (wpath2) {
+                        MultiByteToWideChar(CP_UTF8, 0, g_entry_cache_path, -1, wpath2, wlen2);
+                        FILE* cf = _wfopen(wpath2, L"wb");
+                        if (cf) { fwrite(lenb_buf, 1, lenb_size, cf); fclose(cf); }
+                        free(wpath2);
+                    }
+                }
+#else
+                FILE* cf = fopen(g_entry_cache_path, "wb");
+                if (cf) { fwrite(lenb_buf, 1, lenb_size, cf); fclose(cf); }
+#endif
+            }
+
             // 立刻释放编译器资源（核心！清零「内存税」）
             codegen_cleanup(&gen);
             ast_free(parser.root);
@@ -225,7 +259,10 @@ int lenolang_run(const char* source) {
             Chunk run_chunk;
             chunk_init(&run_chunk);
             Scope* run_scope = NULL;
+            clock_t t_des0 = clock();
             sr = chunk_deserialize_from_memory(lenb_buf, lenb_size, &run_chunk, &run_scope);
+            clock_t t_des1 = clock();
+            fprintf(stderr, "[TIME] deserialize: %.1f ms\n", (double)(t_des1 - t_des0) / CLOCKS_PER_SEC * 1000.0);
             free(lenb_buf);  // 缓冲已用完，立即释放
 
             if (sr == SERIALIZE_OK) {
@@ -362,6 +399,7 @@ int lenolang_compile(const char* source, const char* output_path) {
     gc_init();
     vm_init();
 
+    clock_t t_parse0 = clock();
     Parser parser;
     parser_init(&parser, source);
     if (parser_parse(&parser) < 0) {
@@ -371,6 +409,8 @@ int lenolang_compile(const char* source, const char* output_path) {
         gc_free_all();
         return -1;
     }
+    clock_t t_parse1 = clock();
+    fprintf(stderr, "[TIME] parse: %.1f ms\n", (double)(t_parse1 - t_parse0) / CLOCKS_PER_SEC * 1000.0);
 
     Semantic sem;
     semantic_init(&sem, parser.root);
@@ -378,20 +418,32 @@ int lenolang_compile(const char* source, const char* output_path) {
     chunk_init(&chunk);
     CodeGen gen;
     codegen_init(&gen, &chunk, &sem);
+    clock_t t_sem0 = clock();
     semantic_analyze(&sem, parser.root);
+    clock_t t_sem1 = clock();
+    fprintf(stderr, "[TIME] semantic: %.1f ms\n", (double)(t_sem1 - t_sem0) / CLOCKS_PER_SEC * 1000.0);
     if (error_has_any()) goto compile_fail;
 
+    clock_t t_opt0 = clock();
     optimize_constant_fold(parser.root);
     optimize_dead_code_elimination(parser.root);
+    clock_t t_opt1 = clock();
+    fprintf(stderr, "[TIME] optimize: %.1f ms\n", (double)(t_opt1 - t_opt0) / CLOCKS_PER_SEC * 1000.0);
 
+    clock_t t_cg0 = clock();
     codegen(&gen, parser.root);
+    clock_t t_cg1 = clock();
+    fprintf(stderr, "[TIME] codegen: %.1f ms\n", (double)(t_cg1 - t_cg0) / CLOCKS_PER_SEC * 1000.0);
     if (error_has_any()) goto compile_fail;
 
     if (debugMode) {
         debug_dump_all_bytecode(&chunk);
     }
 
+    clock_t t_ser0 = clock();
     SerializeResult result = chunk_serialize(output_path, &chunk, sem.root_scope);
+    clock_t t_ser1 = clock();
+    fprintf(stderr, "[TIME] serialize: %.1f ms\n", (double)(t_ser1 - t_ser0) / CLOCKS_PER_SEC * 1000.0);
     if (result != SERIALIZE_OK) {
         fprintf(stderr, "写入二进制文件失败: %s (错误码: %d)\n", output_path, result);
         codegen_cleanup(&gen);
@@ -584,15 +636,12 @@ int lenolang_run_file(const char* path) {
         // 添加全局缓存中所有已安装包的 lib/ 到搜索路径
         package_cache_add_to_search_paths();
 
-        // 设置模块编译缓存目录（优先项目根，fallback 到 entry 文件目录）
+        // 设置模块编译缓存目录：始终使用 entry 文件所在目录
+        // 每个运行目录有独立的 .lenocache，避免不同项目/示例的缓存混在同一目录
         if (module_loader_is_cache_enabled()) {
             const char* abs_f = error_get_filename();
-            char* proot = abs_f ? package_find_project_root(abs_f) : NULL;
-            const char* base_dir = NULL;
-            char dir_buf[MAX_PATH_LEN];
-            if (proot) {
-                base_dir = proot;
-            } else if (abs_f) {
+            if (abs_f) {
+                char dir_buf[MAX_PATH_LEN];
                 strncpy(dir_buf, abs_f, MAX_PATH_LEN - 1);
                 dir_buf[MAX_PATH_LEN - 1] = '\0';
                 char* ls = strrchr(dir_buf,
@@ -603,11 +652,9 @@ int lenolang_run_file(const char* path) {
 #endif
                 );
                 if (ls) *(ls + 1) = '\0';
-                base_dir = dir_buf;
-            }
-            if (base_dir) {
+
                 char cache_dir[MAX_PATH_LEN + 16];
-                snprintf(cache_dir, sizeof(cache_dir), "%s.lenocache%c", base_dir,
+                snprintf(cache_dir, sizeof(cache_dir), "%s.lenocache%c", dir_buf,
 #ifdef _WIN32
                     '\\'
 #else
@@ -616,7 +663,6 @@ int lenolang_run_file(const char* path) {
                 );
                 module_loader_set_cache_dir(cache_dir);
             }
-            if (proot) free(proot);
         }
     }
 
@@ -869,6 +915,58 @@ int lenolang_run_file(const char* path) {
         //  printf("\n===== 执行结果 =====\n\n");
     }
     
+    // ===== 入口文件缓存 =====
+    // 检查入口文件的 .lenb 缓存，如果源码哈希不变则直接加载跳过编译
+    if (module_loader_is_cache_enabled() && !compileMode && !packMode && !debugMode) {
+        const char* abs_f = error_get_filename();
+        const char* cache_dir = module_loader_get_cache_dir();
+        if (abs_f && cache_dir && cache_dir[0]) {
+            // 计算源码哈希
+            uint64_t src_hash = serialize_source_hash(source, strlen(source));
+            // 生成缓存路径：<cache_dir>entry_<hash>.lenb
+            char cache_dir_norm[MAX_PATH_LEN];
+            strncpy(cache_dir_norm, cache_dir, MAX_PATH_LEN - 1);
+            cache_dir_norm[MAX_PATH_LEN - 1] = '\0';
+            size_t dlen = strlen(cache_dir_norm);
+            // 确保目录后有分隔符
+    #ifdef _WIN32
+            if (dlen > 0 && cache_dir_norm[dlen-1] != '\\' && cache_dir_norm[dlen-1] != '/') {
+                cache_dir_norm[dlen] = '\\'; cache_dir_norm[dlen+1] = '\0';
+            }
+    #else
+            if (dlen > 0 && cache_dir_norm[dlen-1] != '/') {
+                cache_dir_norm[dlen] = '/'; cache_dir_norm[dlen+1] = '\0';
+            }
+    #endif
+            snprintf(g_entry_cache_path, sizeof(g_entry_cache_path),
+                     "%sentry_%llx.lenb", cache_dir_norm, (unsigned long long)src_hash);
+            g_entry_cache_enabled = 1;
+
+            // 尝试加载缓存
+            Chunk entry_chunk;
+            Scope* entry_scope = NULL;
+            SerializeResult cache_sr = chunk_deserialize(g_entry_cache_path, &entry_chunk, &entry_scope);
+            if (cache_sr == SERIALIZE_OK) {
+                register_defs_from_chunk(&entry_chunk);
+                gc_init();
+                fix_module_function_ptrs(&entry_chunk);
+                vm_init_with_scope(entry_scope);
+                vm_load(&entry_chunk);
+                int ret = vm_run();
+                chunk_free(&entry_chunk);
+                gc_free_all();
+                free(source);
+                if (ret != 0 || error_has_any()) {
+                    error_print_all();
+                    warning_print_all();
+                    return -1;
+                }
+                warning_print_all();
+                return vm_get_exit_code();
+            }
+        }
+    }
+
     int result = lenolang_run(source);
     free(source);
     

@@ -418,8 +418,9 @@ extern void gen_stmt(CodeGen* gen, Ast* ast);
 // 尝试内联函数调用
 // 返回 1=已内联, 0=未内联（回退到普通调用）
 int try_inline_call(CodeGen* gen, Ast* ast, Ast* func_def) {
-    if (!can_inline(gen, func_def, ast->u.call.args.count))
+    if (!can_inline(gen, func_def, ast->u.call.args.count)) {
         return 0;
+    }
 
     Ast* body = func_def->u.func.body;
     int local_count = func_def->u.func.local_count;
@@ -616,6 +617,5 @@ int try_inline_call(CodeGen* gen, Ast* ast, Ast* func_def) {
 
     // 9. 恢复 AST 索引
     patch_ast_indices(body, -base);
-
     return 1;
 }

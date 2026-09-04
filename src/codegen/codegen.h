@@ -95,4 +95,5 @@ void inline_name_stack_push(const char* name);
 void inline_name_stack_pop(void);
 void inline_name_stack_reset(void);
 
+
 #endif // LENO_CODEGEN_INTERNAL_H
