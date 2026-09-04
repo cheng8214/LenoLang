@@ -16,6 +16,9 @@ import "../../../../lib/SDL3.leno" as SDL3
 import "../../../../lib/sdl_core.leno" as core
 use SDL3.(Event, Renderer, WindowFlag, Scancode, Font, Window)
 import rands
+import "../../../../../LenoMusic/lib/Music.leno" as audio
+use audio.Sound
+import dirs
 
 // ==================== 布局常量 ====================
 var CELL    = 34.0      // 格子像素
@@ -59,6 +62,9 @@ struct Game {
     string scene         // "menu" 菜单 / "play" 对局
     float mx, my         // 鼠标位置（菜单悬停/格子高亮）
     int  lostR, lostC    // 触雷格坐标
+    Sound sfxClick       // 点击方块音效
+    Sound sfxBoom        // 踩雷爆炸音效
+    bool  audioOk
 }
 
 // ==================== 工具 ====================
@@ -183,7 +189,11 @@ func reveal(Game g, int r, int c) {
     int i = r * g.cols + c
     if g.state[i] != 0 { return }                 // 只翻隐藏格（不翻已翻开/插旗）
     if not g.placed { placeMines(g, r, c); g.placed = true }
-    if g.mine[i] { g.over = true; g.won = false; g.lostR = r; g.lostC = c; return }
+    if g.mine[i] {
+        g.over = true; g.won = false; g.lostR = r; g.lostC = c
+        if g.audioOk { g.sfxBoom.play() }
+        return
+    }
     Array[int] stack = []
     stack.add(i)
     while stack.len() > 0 {
@@ -568,6 +578,7 @@ func handleEvent(Game g, Window win, Event ev): bool {
             int c = _int((mx - g.boardX) / g.cell)
             int r = _int((my - g.boardY) / g.cell)
             if btn == 1 {
+                if g.audioOk { g.sfxClick.play() }
                 int i = r * g.cols + c
                 if g.state[i] == 1 and g.adj[i] > 0 { chord(g, r, c) }
                 else { reveal(g, r, c) }
@@ -615,6 +626,17 @@ main() {
     g.winW = MENU_W
     g.winH = MENU_H
 
+    // 初始化音效：用脚本目录拼接绝对路径（现已支持中文路径）
+    string sdir = dirs.script_dir()
+    g.audioOk  = false
+    g.sfxClick = audio.createSound(sdir + "/music/anxia.mp3")
+    g.sfxClick.setVolume(0.5)
+    g.sfxBoom  = audio.createSound(sdir + "/music/baozha.mp3")
+    g.sfxBoom.setVolume(0.6)
+    g.audioOk  = g.sfxClick.ok
+    if g.audioOk { print("[OK] 音效加载完成") }
+    else { print("[警告] 音效初始化失败，将以静音模式运行") }
+
     win.setMaxFPS(60)
 
     print("[OK] 扫雷启动成功!")
@@ -633,6 +655,11 @@ main() {
 
     if font.ok { font.close() }
     win.destroy()
+    if g.audioOk {
+        g.sfxClick.uninit()
+        g.sfxBoom.uninit()
+        audio.uninit()
+    }
     SDL3.quit()
     print("扫雷退出")
 }
