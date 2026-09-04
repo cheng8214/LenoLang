@@ -1,0 +1,1426 @@
+// tower_defense.leno — 塔防（Tower Defense）
+//
+// 操作：
+//   鼠标左键 — 选塔 / 放置塔 / 点击面板按钮
+//   1 2 3 4  — 选择 箭塔 / 炮塔 / 冰塔 / 电塔
+//   空格     — 提前开始下一波（按剩余秒数奖励金币）
+//   U        — 升级选中的塔      S — 出售选中的塔
+//   P        — 暂停 / 继续       R — 重新开始      ESC — 退出
+//
+// 规则：
+//   敌人沿路径从左上入口走向右下基地，漏怪扣生命，生命归零则失败。
+//   击杀获得金币，金币用于在草地格（以及有石块装饰的格子除外）建造/升级塔。
+//   共 20 波，第 10 / 20 波带 BOSS，全部清空即通关。
+//
+// 资源目录：
+//   image/   — 精灵图片（由 gen_assets.leno 程序化生成，零外部素材）
+//   bkmusic/ — 音频（复用飞机大战的素材：bk.mp3 背景, boss.mp3 BOSS 波,
+//                    zq.wav 开火, db.wav 爆炸, si.wav 漏怪）
+//
+// 素材生成：在本目录执行  leno.exe gen_assets.leno
+
+import "../../../../lib/SDL3.leno" as SDL3
+import "../../../../lib/sdl_core.leno" as core
+use SDL3.(Event, Renderer, WindowFlag, Scancode, Font, Flip)
+import maths
+import rands
+import dirs
+import "../../../../../LenoMusic/lib/Music.leno" as audio
+use audio.(Sound, Sfx)
+
+// ==================== 常量 ====================
+
+var TS      = 32.0               // 格子边长（像素）
+var COLS    = 20
+var ROWS    = 14
+var MAP_W   = 640.0              // 20 * 32
+var MAP_H   = 448.0              // 14 * 32
+var PANEL_W = 180.0
+var WIN_W   = 820                // 640 + 180
+var WIN_H   = 448
+
+// 格子类型
+var T_GRASS = 0
+var T_PATH  = 1
+var T_ROCK  = 2
+var T_START = 3
+var T_BASE  = 4
+
+// 塔类型
+var TW_ARROW  = 0
+var TW_CANNON = 1
+var TW_FROST  = 2
+var TW_TESLA  = 3
+
+var TOWER_COST   = [50, 100, 75, 150]
+var TOWER_RANGE  = [3.2, 2.8, 2.6, 3.0]     // 单位：格
+var TOWER_CD     = [28, 70, 45, 20]         // 单位：帧
+var TOWER_DMG    = [9.0, 26.0, 5.0, 7.0]
+var TOWER_SPD    = [7.0, 5.0, 6.0, 13.0]    // 子弹速度 px/帧
+var TOWER_SPLASH = [0.0, 1.2, 0.0, 0.0]     // 溅射半径（格）
+var TOWER_SLOW   = [0.0, 0.0, 0.45, 0.0]    // 减速比例
+var TOWER_CHAIN  = [0, 0, 0, 2]             // 链式额外目标数
+var TOWER_NAME   = ["箭塔", "炮塔", "冰塔", "电塔"]
+var MAX_LEVEL    = 3
+
+// 敌人类型
+var EM_GRUNT  = 0
+var EM_RUNNER = 1
+var EM_TANK   = 2
+var EM_BOSS   = 3
+
+var ENEMY_HP    = [60.0, 40.0, 190.0, 1400.0]
+var ENEMY_SPD   = [0.55, 1.15, 0.38, 0.32]  // px/帧
+var ENEMY_GOLD  = [8, 10, 22, 260]
+var ENEMY_DMG   = [1, 1, 2, 12]             // 漏怪扣血
+var ENEMY_ARMOR = [0.0, 0.0, 0.30, 0.15]    // 伤害减免
+var ENEMY_SIZE  = [28.0, 26.0, 30.0, 46.0]
+
+// 游戏状态
+var ST_MENU  = 0
+var ST_PLAY  = 1
+var ST_PAUSE = 2
+var ST_OVER  = 3
+var ST_WIN   = 4
+
+var _enemyIdSeq  = 1                        // 敌人唯一 id 分配器
+
+var MAX_WAVE     = 20
+var WAVE_GAP     = 300                      // 波间隔（帧）
+var START_GOLD   = 220
+var START_LIVES  = 20
+
+// 路径拐点（格坐标）：入口在屏幕外 (-1,2)，终点为基地 (19,5)
+var WPX = [-1, 4, 4, 8, 8, 12, 12, 16, 16, 19]
+var WPY = [2, 2, 6, 6, 2, 2, 9, 9, 5, 5]
+var WP_N = 10
+
+// 装饰石块（不可建造）
+var ROCK_GX = [2, 3, 6, 9, 13, 17, 1, 18, 10, 6]
+var ROCK_GY = [10, 11, 12, 11, 12, 11, 7, 1, 12, 9]
+
+// 面板按钮布局
+var PX       = MAP_W + 6.0
+var PW       = PANEL_W - 12.0
+var CARD_Y0  = 38.0
+var CARD_H   = 32.0
+var CARD_GAP = 2.0
+
+// ==================== 数据类 ====================
+
+struct Enemy {
+    int id
+    int etype
+    float x
+    float y
+    float hp
+    float maxHp
+    float speed
+    float armor
+    int gold
+    int dmg
+    int wpIdx
+    float dir              // 朝向（度，素材默认朝下）
+    int slowTimer
+    float slowAmount
+    bool alive
+    bool reached
+}
+
+struct Tower {
+    int ttype
+    int gx
+    int gy
+    float x
+    float y
+    int level
+    int cooldown
+    float angle
+    int kills
+}
+
+struct Bullet {
+    int btype
+    float x
+    float y
+    float vx
+    float vy
+    float speed
+    float damage
+    float splash
+    float slowAmount
+    int slowFrames
+    int chain
+    int targetId          // 目标敌人 id（-1 表示无目标）
+    bool alive
+}
+
+struct Particle {
+    float x
+    float y
+    float vx
+    float vy
+    float size
+    int life
+    int maxLife
+    int c
+    bool alive
+}
+
+struct FloatText {
+    float x
+    float y
+    string text
+    int c
+    int life
+    bool alive
+}
+
+struct Arc {
+    float x1
+    float y1
+    float x2
+    float y2
+    int life
+    bool alive
+}
+
+struct Game {
+    int state
+    int frameCount
+
+    int gold
+    int lives
+    int wave
+    int kills
+    int totalKilled
+
+    int waveState              // 0=准备中 1=生成中 2=清理中
+    int waveTimer              // 准备倒计时
+    Array[int] spawnQueue      // 本波待生成的敌人类型
+    int spawnIdx               // 生成游标
+    int spawnTimer
+    int bannerTimer
+    string bannerText
+
+    int selType                // 当前选中的塔类型（-1 无）
+    int selTower               // 当前选中的已建造塔索引（-1 无）
+    float mouseX
+    float mouseY
+
+    Array[int] map
+    Array[Enemy] enemies
+    Array[Tower] towers
+    Array[Bullet] bullets
+    Array[Particle] particles
+    Array[FloatText] floats
+    Array[Arc] arcs
+    int pCount
+
+    // 纹理
+    Ptr[u8] texGrass
+    Ptr[u8] texPath
+    Ptr[u8] texStart
+    Ptr[u8] texBase
+    Ptr[u8] texRock
+    Array[Ptr[u8]] texTower
+    Array[Ptr[u8]] texEnemy
+    Array[Ptr[u8]] texBullet
+    Ptr[u8] texCoin
+    Ptr[u8] texHeart
+    Ptr[u8] texStar
+    Ptr[u8] mapTex
+    bool loaded
+
+    // 音频
+    Sound bgm
+    Sound bossBgm
+    Sfx sfxShoot
+    Sfx sfxBoom
+    Sfx sfxLose
+    bool audioOk
+
+    Font font
+    Font fontBig
+}
+
+// ==================== 工具 ====================
+
+func dist2(float ax, float ay, float bx, float by): float {
+    var dx = ax - bx
+    var dy = ay - by
+    return dx * dx + dy * dy
+}
+
+// 把方向向量转成「素材默认朝上」体系的角度（0=上, 90=右, 180=下）
+func dirAngle(float dx, float dy): float {
+    return maths.atan2(dy, dx) * 180.0 / 3.14159265 + 90.0
+}
+
+func towerRange(int ttype, int level): float {
+    return TOWER_RANGE[ttype] * (1.0 + 0.12 * _float(level - 1)) * TS
+}
+
+func towerDamage(int ttype, int level): float {
+    return TOWER_DMG[ttype] * (1.0 + 0.60 * _float(level - 1))
+}
+
+func towerCooldown(int ttype, int level): int {
+    var f = 1.0 - 0.12 * _float(level - 1)
+    return _int(TOWER_CD[ttype] * f)
+}
+
+func upgradeCost(int ttype, int level): int {
+    return _int(TOWER_COST[ttype] * _float(level) * 0.7)
+}
+
+func sellValue(int ttype, int level): int {
+    var spent = TOWER_COST[ttype]
+    for 2 : level to lv {
+        spent = spent + upgradeCost(ttype, lv - 1)
+    }
+    return _int(spent * 0.6)
+}
+
+func cellAt(Game g, int gx, int gy): int {
+    if gx < 0 or gy < 0 or gx >= COLS or gy >= ROWS { return T_ROCK }
+    return g.map[gy * COLS + gx]
+}
+
+// ==================== 初始化 ====================
+
+func newGame(): Game {
+    var g = new Game()
+    g.state = ST_MENU
+    g.frameCount = 0
+    g.gold = START_GOLD
+    g.lives = START_LIVES
+    g.wave = 0
+    g.kills = 0
+    g.totalKilled = 0
+    g.waveState = 0
+    g.waveTimer = WAVE_GAP
+    g.spawnQueue = []
+    g.spawnIdx = 0
+    g.spawnTimer = 0
+    g.bannerTimer = 0
+    g.bannerText = ""
+    g.selType = -1
+    g.selTower = -1
+    g.mouseX = 0.0
+    g.mouseY = 0.0
+    g.map = []
+    g.enemies = []
+    g.towers = []
+    g.bullets = []
+    g.particles = []
+    g.floats = []
+    g.arcs = []
+    g.pCount = 0
+    g.texTower = []
+    g.texEnemy = []
+    g.texBullet = []
+    g.loaded = false
+    g.audioOk = false
+    buildMap(g)
+    return g
+}
+
+func buildMap(Game g) {
+    g.map = []
+    for 0 : COLS * ROWS - 1 to i {
+        g.map.add(T_GRASS)
+    }
+    // 按路径拐点铺路
+    for 0 : WP_N - 2 to i {
+        var x0 = WPX[i]; var y0 = WPY[i]
+        var x1 = WPX[i + 1]; var y1 = WPY[i + 1]
+        if x0 == x1 {
+            var a = y0; var b = y1
+            if a > b { var tmp = a; a = b; b = tmp }
+            for a : b to y {
+                if x0 >= 0 and x0 < COLS and y >= 0 and y < ROWS {
+                    g.map[y * COLS + x0] = T_PATH
+                }
+            }
+        } else {
+            var a = x0; var b = x1
+            if a > b { var tmp2 = a; a = b; b = tmp2 }
+            for a : b to x {
+                if x >= 0 and x < COLS and y0 >= 0 and y0 < ROWS {
+                    g.map[y0 * COLS + x] = T_PATH
+                }
+            }
+        }
+    }
+    // 起点 / 基地
+    var sy = WPY[0]
+    g.map[sy * COLS] = T_START
+    var ex = WPX[WP_N - 1]
+    var ey = WPY[WP_N - 1]
+    g.map[ey * COLS + ex] = T_BASE
+    // 装饰石块
+    for 0 : 9 to i {
+        var x = ROCK_GX[i]; var y = ROCK_GY[i]
+        if g.map[y * COLS + x] == T_GRASS { g.map[y * COLS + x] = T_ROCK }
+    }
+}
+
+// ==================== 资源加载 ====================
+
+func loadResources(Game g, Renderer r) {
+    var base = dirs.script_dir()
+    g.texGrass = SDL3.loadImageTexture(r.handle, base + "/image/tile_grass.png")
+    g.texPath  = SDL3.loadImageTexture(r.handle, base + "/image/tile_path.png")
+    g.texStart = SDL3.loadImageTexture(r.handle, base + "/image/tile_start.png")
+    g.texBase  = SDL3.loadImageTexture(r.handle, base + "/image/tile_base.png")
+    g.texRock  = SDL3.loadImageTexture(r.handle, base + "/image/tile_rock.png")
+    g.texCoin  = SDL3.loadImageTexture(r.handle, base + "/image/icon_coin.png")
+    g.texHeart = SDL3.loadImageTexture(r.handle, base + "/image/icon_heart.png")
+    g.texStar  = SDL3.loadImageTexture(r.handle, base + "/image/icon_star.png")
+
+    var tn = ["tower_arrow", "tower_cannon", "tower_frost", "tower_tesla"]
+    var en = ["enemy_grunt", "enemy_runner", "enemy_tank", "enemy_boss"]
+    var bn = ["bullet_arrow", "bullet_shell", "bullet_frost", "bullet_bolt"]
+    g.texTower = []
+    g.texEnemy = []
+    g.texBullet = []
+    for 0 : 3 to i {
+        g.texTower.add(SDL3.loadImageTexture(r.handle, base + "/image/" + tn[i] + ".png"))
+        g.texEnemy.add(SDL3.loadImageTexture(r.handle, base + "/image/" + en[i] + ".png"))
+        g.texBullet.add(SDL3.loadImageTexture(r.handle, base + "/image/" + bn[i] + ".png"))
+    }
+
+    // 静态地图预渲染到一张纹理，之后每帧只需一次贴图
+    g.mapTex = r.createTexture(core.PIXELFORMAT_RGBA8888, 2, _int(MAP_W), _int(MAP_H))
+    if g.mapTex != null {
+        r.setRenderTarget(g.mapTex)
+        r.clearColor(#00000000)
+        for 0 : ROWS - 1 to gy {
+            for 0 : COLS - 1 to gx {
+                var t = g.map[gy * COLS + gx]
+                var px = _float(gx) * TS
+                var py = _float(gy) * TS
+                if t == T_PATH {
+                    r.drawTextureAt(g.texPath, px, py, TS, TS)
+                } else if t == T_START {
+                    r.drawTextureAt(g.texStart, px, py, TS, TS)
+                } else if t == T_BASE {
+                    r.drawTextureAt(g.texBase, px, py, TS, TS)
+                } else {
+                    r.drawTextureAt(g.texGrass, px, py, TS, TS)
+                    if t == T_ROCK { r.drawTextureAt(g.texRock, px, py, TS, TS) }
+                }
+            }
+        }
+        r.flush()
+        r.setRenderTarget(null)
+    }
+
+    // 音频（相对路径，避开 miniaudio 的 fopen 不支持中文路径问题）
+    g.bgm = audio.createSound("bkmusic/bk.mp3")
+    g.bgm.setLooping(true)
+    g.bgm.setVolume(0.35)
+
+    g.bossBgm = audio.createSound("bkmusic/boss.mp3")
+    g.bossBgm.setLooping(true)
+    g.bossBgm.setVolume(0.4)
+
+    g.sfxShoot = audio.createSfx("bkmusic/anxia.mp3", 6, 0.2)   // 复用扫雷「按下」音作开火声
+    g.sfxBoom  = audio.createSfx("bkmusic/db.wav", 5, 0.35)
+    g.sfxLose  = audio.createSfx("bkmusic/si.wav", 3, 0.45)
+
+    g.audioOk = g.bgm.ok
+    if g.audioOk {
+        g.bgm.play()
+        print("[OK] 音频加载完成")
+    } else {
+        print("[警告] 音频初始化失败，游戏将以静音模式运行")
+    }
+
+    g.loaded = true
+    print("[OK] 资源加载完成")
+}
+
+// ==================== 波次 ====================
+
+func buildWave(Game g, int wave): Array[int] {
+    Array[int] q = []
+    var count = 6 + wave * 2
+    if count > 30 { count = 30 }
+    for 0 : count - 1 to i {
+        var t = EM_GRUNT
+        var roll = rands.ints(0, 99)
+        if wave >= 3 {
+            if roll < 30 + wave { t = EM_RUNNER }
+        }
+        if wave >= 5 {
+            if roll > 88 - wave { t = EM_TANK }
+        }
+        q.add(t)
+    }
+    // 每 10 波追加 BOSS
+    if wave % 10 == 0 {
+        q.add(EM_BOSS)
+        if wave >= 20 { q.add(EM_BOSS) }
+    }
+    return q
+}
+
+func startWave(Game g) {
+    g.wave = g.wave + 1
+    g.spawnQueue = buildWave(g, g.wave)
+    g.spawnIdx = 0
+    g.spawnTimer = 0
+    g.waveState = 1
+    g.bannerText = "第 " + g.wave + " 波"
+    g.bannerTimer = 120
+    if g.wave % 10 == 0 {
+        g.bannerText = "第 " + g.wave + " 波 — BOSS 来袭！"
+        if g.audioOk { g.bossBgm.play() }
+    }
+}
+
+func spawnEnemy(Game g, int etype) {
+    var e = new Enemy()
+    e.id = _enemyIdSeq
+    _enemyIdSeq = _enemyIdSeq + 1
+    e.etype = etype
+    e.x = _float(WPX[0]) * TS + TS * 0.5
+    e.y = _float(WPY[0]) * TS + TS * 0.5
+    e.wpIdx = 0
+    var scale = 1.0 + 0.18 * _float(g.wave - 1)
+    if etype == EM_BOSS { scale = scale * 0.55 }
+    e.maxHp = ENEMY_HP[etype] * scale
+    e.hp = e.maxHp
+    e.speed = ENEMY_SPD[etype]
+    e.armor = ENEMY_ARMOR[etype]
+    e.gold = ENEMY_GOLD[etype]
+    e.dmg = ENEMY_DMG[etype]
+    e.dir = 270.0
+    e.slowTimer = 0
+    e.slowAmount = 0.0
+    e.alive = true
+    e.reached = false
+    g.enemies.add(e)
+}
+
+// ==================== 战斗 ====================
+
+func addParticles(Game g, float x, float y, int n, int c) {
+    if g.pCount > 700 { return }
+    for 0 : n - 1 to i {
+        var p = new Particle()
+        var a = _float(rands.ints(0, 359)) * 3.14159265 / 180.0
+        var s = _float(rands.ints(10, 45)) / 10.0
+        p.x = x; p.y = y
+        p.vx = maths.cos(a) * s
+        p.vy = maths.sin(a) * s
+        p.size = _float(rands.ints(2, 5))
+        p.life = rands.ints(16, 32)
+        p.maxLife = p.life
+        p.c = c
+        p.alive = true
+        g.particles.add(p)
+        g.pCount = g.pCount + 1
+    }
+}
+
+func addFloat(Game g, float x, float y, string text, int c) {
+    var f = new FloatText()
+    f.x = x; f.y = y
+    f.text = text
+    f.c = c
+    f.life = 50
+    f.alive = true
+    g.floats.add(f)
+}
+
+// 对指定下标的敌人造成伤害（在 for-in 内修改，确保写回数组元素）
+func damageIdx(Game g, int idx, float dmg) {
+    if idx < 0 { return }
+    var i = 0
+    for g.enemies to e {
+        if i == idx {
+            if not e.alive { return }
+            e.hp = e.hp - dmg * (1.0 - e.armor)
+            if e.hp <= 0 {
+                e.alive = false
+                g.gold = g.gold + e.gold
+                g.kills = g.kills + 1
+                g.totalKilled = g.totalKilled + 1
+                addParticles(g, e.x, e.y, 12, #F39C12FF)
+                addFloat(g, e.x, e.y - 12.0, "+" + e.gold, #FFD700FF)
+                if g.audioOk { g.sfxBoom.play() }
+            }
+            return
+        }
+        i = i + 1
+    }
+}
+
+func applySlow(Game g, int idx, float amount, int frames) {
+    if idx < 0 { return }
+    var i = 0
+    for g.enemies to e {
+        if i == idx {
+            e.slowTimer = frames
+            e.slowAmount = amount
+            return
+        }
+        i = i + 1
+    }
+}
+
+// 按 id 查敌人下标（-1 = 已死/不存在）
+func findEnemyIdx(Game g, int id): int {
+    if id < 0 { return -1 }
+    var i = 0
+    for g.enemies to e {
+        if e.id == id and e.alive { return i }
+        i = i + 1
+    }
+    return -1
+}
+
+// 索敌：射程内「推进最靠前」的敌人，返回下标（-1 = 无目标）
+func findTargetIdx(Game g, Tower t): int {
+    var range = towerRange(t.ttype, t.level)
+    var r2 = range * range
+    var best = -1
+    var bestProg = -1.0
+    var i = 0
+    for g.enemies to e {
+        if e.alive and dist2(t.x, t.y, e.x, e.y) <= r2 {
+            var prog = _float(e.wpIdx) * 4096.0
+            if e.wpIdx + 1 < WP_N {
+                var tx = _float(WPX[e.wpIdx + 1]) * TS + TS * 0.5
+                var ty = _float(WPY[e.wpIdx + 1]) * TS + TS * 0.5
+                prog = prog + (4096.0 - maths.sqrt(dist2(e.x, e.y, tx, ty)))
+            }
+            if prog > bestProg {
+                bestProg = prog
+                best = i
+            }
+        }
+        i = i + 1
+    }
+    return best
+}
+
+func fire(Game g, Tower t, int ti) {
+    var e = g.enemies[ti]
+    var b = new Bullet()
+    b.btype = t.ttype
+    if t.ttype == TW_CANNON {
+        b.x = t.x; b.y = t.y            // 炮塔随炮管旋转，从中心发射
+    } else {
+        b.x = t.x; b.y = t.y - TS * 0.5  // 箭/冰/电塔武器在顶部，从塔顶发射
+    }
+    b.speed = TOWER_SPD[t.ttype]
+    b.damage = towerDamage(t.ttype, t.level)
+    b.splash = TOWER_SPLASH[t.ttype]
+    b.slowAmount = TOWER_SLOW[t.ttype]
+    b.slowFrames = 90
+    b.chain = TOWER_CHAIN[t.ttype]
+    b.targetId = e.id
+    b.alive = true
+    var dx = e.x - t.x
+    var dy = e.y - t.y
+    var d = maths.sqrt(dx * dx + dy * dy)
+    if d < 0.001 { d = 1.0 }
+    b.vx = dx / d
+    b.vy = dy / d
+    g.bullets.add(b)
+    if g.audioOk { g.sfxShoot.play() }   // 所有塔开火都播放开火声（不再仅限加农炮）
+}
+
+func hitTarget(Game g, Bullet b, int ti) {
+    if ti < 0 { return }
+    damageIdx(g, ti, b.damage)
+
+    // 溅射
+    if b.splash > 0.0 {
+        var rad = b.splash * TS
+        var i = 0
+        for g.enemies to o {
+            if i != ti and o.alive {
+                if dist2(b.x, b.y, o.x, o.y) <= rad * rad {
+                    damageIdx(g, i, b.damage * 0.5)
+                }
+            }
+            i = i + 1
+        }
+        addParticles(g, b.x, b.y, 10, #E74C3CFF)
+    }
+
+    // 减速
+    if b.slowAmount > 0.0 {
+        applySlow(g, ti, b.slowAmount, b.slowFrames)
+        addParticles(g, b.x, b.y, 5, #5DADE2FF)
+    }
+
+    // 链式闪电
+    if b.chain > 0 {
+        var cx = b.x
+        var cy = b.y
+        var n = 0
+        var i2 = 0
+        for g.enemies to o {
+            if n >= b.chain { break }
+            if i2 != ti and o.alive {
+                if dist2(cx, cy, o.x, o.y) <= 4096.0 {
+                    var a = new Arc()
+                    a.x1 = cx; a.y1 = cy
+                    a.x2 = o.x; a.y2 = o.y
+                    a.life = 10
+                    a.alive = true
+                    g.arcs.add(a)
+                    damageIdx(g, i2, b.damage * 0.6)
+                    cx = o.x
+                    cy = o.y
+                    n = n + 1
+                }
+            }
+            i2 = i2 + 1
+        }
+    }
+}
+
+func updateEnemies(Game g) {
+    Array[Enemy] live = []
+    for g.enemies to e {
+        if not e.alive {
+            if e.reached { }
+            continue
+        }
+        if e.wpIdx >= WP_N - 1 {
+            // 抵达基地：漏怪
+            e.alive = false
+            g.lives = g.lives - e.dmg
+            addFloat(g, e.x, e.y - 10.0, "-" + e.dmg, #E74C3CFF)
+            addParticles(g, e.x, e.y, 14, #C0392BFF)
+            if g.audioOk { g.sfxLose.play() }
+            if g.lives <= 0 {
+                g.lives = 0
+                g.state = ST_OVER
+            }
+            continue
+        }
+        var tx = _float(WPX[e.wpIdx + 1]) * TS + TS * 0.5
+        var ty = _float(WPY[e.wpIdx + 1]) * TS + TS * 0.5
+        var dx = tx - e.x
+        var dy = ty - e.y
+        var d = maths.sqrt(dx * dx + dy * dy)
+        var spd = e.speed
+        if e.slowTimer > 0 {
+            spd = spd * (1.0 - e.slowAmount)
+            e.slowTimer = e.slowTimer - 1
+        }
+        e.dir = dirAngle(dx, dy)
+        if d <= spd {
+            e.x = tx
+            e.y = ty
+            e.wpIdx = e.wpIdx + 1
+        } else {
+            e.x = e.x + dx / d * spd
+            e.y = e.y + dy / d * spd
+        }
+        live.add(e)
+    }
+    g.enemies = live
+}
+
+func updateTowers(Game g) {
+    for g.towers to t {
+        if t.cooldown > 0 { t.cooldown = t.cooldown - 1 }
+        var ti = findTargetIdx(g, t)
+        if ti >= 0 {
+            var e = g.enemies[ti]
+            // 仅加农炮随目标旋转；箭/冰/电塔固定朝上，从塔顶发起攻击
+            if t.ttype == TW_CANNON {
+                t.angle = dirAngle(e.x - t.x, e.y - t.y)
+            } else {
+                t.angle = 0.0
+            }
+            if t.cooldown == 0 {
+                fire(g, t, ti)
+                t.cooldown = towerCooldown(t.ttype, t.level)
+            }
+        }
+    }
+}
+
+func updateBullets(Game g) {
+    Array[Bullet] live = []
+    for g.bullets to b {
+        if not b.alive { continue }
+        var ti = findEnemyIdx(g, b.targetId)
+        // 追踪目标
+        if ti >= 0 {
+            var e = g.enemies[ti]
+            var dx = e.x - b.x
+            var dy = e.y - b.y
+            var d = maths.sqrt(dx * dx + dy * dy)
+            if d > 0.001 { b.vx = dx / d; b.vy = dy / d }
+        }
+        b.x = b.x + b.vx * b.speed
+        b.y = b.y + b.vy * b.speed
+
+        if b.x < -20.0 or b.y < -20.0 or b.x > MAP_W + 20.0 or b.y > MAP_H + 20.0 {
+            continue
+        }
+        var hit = false
+        if ti >= 0 {
+            var e2 = g.enemies[ti]
+            if dist2(b.x, b.y, e2.x, e2.y) < 196.0 {
+                hitTarget(g, b, ti)
+                hit = true
+            }
+        }
+        if not hit {
+            // 无目标时与任意敌人碰撞（溅射弹/穿透判定）
+            var i = 0
+            for g.enemies to e3 {
+                if e3.alive {
+                    if dist2(b.x, b.y, e3.x, e3.y) < 144.0 {
+                        hitTarget(g, b, i)
+                        hit = true
+                        break
+                    }
+                }
+                i = i + 1
+            }
+        }
+        if not hit { live.add(b) }
+    }
+    g.bullets = live
+}
+
+func updateEffects(Game g) {
+    Array[Particle] lp = []
+    for g.particles to p {
+        p.x = p.x + p.vx
+        p.y = p.y + p.vy
+        p.vy = p.vy + 0.06
+        p.life = p.life - 1
+        if p.life > 0 { lp.add(p) }
+    }
+    g.particles = lp
+    g.pCount = 0
+    for lp to p { g.pCount = g.pCount + 1 }
+
+    Array[FloatText] lf = []
+    for g.floats to f {
+        f.y = f.y - 0.5
+        f.life = f.life - 1
+        if f.life > 0 { lf.add(f) }
+    }
+    g.floats = lf
+
+    Array[Arc] la = []
+    for g.arcs to a {
+        a.life = a.life - 1
+        if a.life > 0 { la.add(a) }
+    }
+    g.arcs = la
+}
+
+// ==================== 主更新 ====================
+
+func updateGame(Game g) {
+    g.frameCount = g.frameCount + 1
+    if g.bannerTimer > 0 { g.bannerTimer = g.bannerTimer - 1 }
+
+    // 波次调度
+    if g.waveState == 0 {
+        g.waveTimer = g.waveTimer - 1
+        if g.waveTimer <= 0 { startWave(g) }
+    } else if g.waveState == 1 {
+        g.spawnTimer = g.spawnTimer - 1
+        if g.spawnTimer <= 0 {
+            if g.spawnIdx < g.spawnQueue.len() {
+                var t = g.spawnQueue[g.spawnIdx]
+                g.spawnIdx = g.spawnIdx + 1
+                spawnEnemy(g, t)
+                var gap = 34 - g.wave / 2
+                if gap < 12 { gap = 12 }
+                if t == EM_BOSS { gap = 90 }
+                g.spawnTimer = gap
+            } else {
+                g.waveState = 2
+            }
+        }
+    } else if g.waveState == 2 {
+        if g.enemies.len() == 0 {
+            if g.wave >= MAX_WAVE {
+                g.state = ST_WIN
+            } else {
+                g.waveState = 0
+                g.waveTimer = WAVE_GAP
+                if g.audioOk and g.wave % 10 == 0 { g.bossBgm.stop() }
+            }
+        }
+    }
+
+    updateEnemies(g)
+    updateTowers(g)
+    updateBullets(g)
+    updateEffects(g)
+}
+
+// ==================== 建造 ====================
+
+func towerAt(Game g, int gx, int gy): int {
+    for 0 : g.towers.len() - 1 to i {
+        if g.towers[i].gx == gx and g.towers[i].gy == gy { return i }
+    }
+    return -1
+}
+
+func placeTower(Game g, int gx, int gy) {
+    if g.selType < 0 { return }
+    if cellAt(g, gx, gy) != T_GRASS { return }
+    if towerAt(g, gx, gy) >= 0 { return }
+    var cost = TOWER_COST[g.selType]
+    if g.gold < cost {
+        g.bannerText = "金币不足"
+        g.bannerTimer = 60
+        return
+    }
+    g.gold = g.gold - cost
+    var t = new Tower()
+    t.ttype = g.selType
+    t.gx = gx
+    t.gy = gy
+    t.x = _float(gx) * TS + TS * 0.5
+    t.y = _float(gy) * TS + TS * 0.5
+    t.level = 1
+    t.cooldown = 0
+    t.angle = 0.0
+    t.kills = 0
+    g.towers.add(t)
+    addParticles(g, t.x, t.y, 8, #AED6F1FF)
+}
+
+func doUpgrade(Game g) {
+    if g.selTower < 0 or g.selTower >= g.towers.len() { return }
+    var t = g.towers[g.selTower]
+    if t.level >= MAX_LEVEL { return }
+    var cost = upgradeCost(t.ttype, t.level)
+    if g.gold < cost {
+        g.bannerText = "金币不足"
+        g.bannerTimer = 60
+        return
+    }
+    g.gold = g.gold - cost
+    t.level = t.level + 1
+    addParticles(g, t.x, t.y, 10, #F1C40FFF)
+    addFloat(g, t.x, t.y - 16.0, "LV" + t.level, #F1C40FFF)
+}
+
+func doSell(Game g) {
+    if g.selTower < 0 or g.selTower >= g.towers.len() { return }
+    var t = g.towers[g.selTower]
+    var v = sellValue(t.ttype, t.level)
+    g.gold = g.gold + v
+    addFloat(g, t.x, t.y - 16.0, "+" + v, #FFD700FF)
+    addParticles(g, t.x, t.y, 8, #95A5A6FF)
+    Array[Tower] keep = []
+    for 0 : g.towers.len() - 1 to i {
+        if i != g.selTower { keep.add(g.towers[i]) }
+    }
+    g.towers = keep
+    g.selTower = -1
+}
+
+// 选中塔「可升级」时，返回地图内「↑」按钮矩形 [x,y,w,h]；否则返回空数组
+// 仅在金币足够且未满级时才出现
+func upgradeBtnRect(Game g): Array[float] {
+    if g.selTower < 0 or g.selTower >= g.towers.len() { return [] }
+    var t = g.towers[g.selTower]
+    if t.level >= MAX_LEVEL { return [] }
+    if g.gold < upgradeCost(t.ttype, t.level) { return [] }
+    var w = 22.0; var h = 22.0
+    var x = t.x - w * 0.5
+    var y = t.y - TS * 0.5 - h - 4.0          // 默认浮在塔正上方
+    if y < 2.0 { y = t.y + TS * 0.5 + 4.0 }    // 贴顶则改放下方
+    if x < 2.0 { x = 2.0 }
+    if x + w > MAP_W - 2.0 { x = MAP_W - 2.0 - w }
+    if y + h > MAP_H - 2.0 { y = MAP_H - 2.0 - h }
+    return [x, y, w, h]
+}
+
+// ==================== 渲染 ====================
+
+func drawPanel(Game g, Renderer r) {
+    // 面板背景
+    r.setColor(#16202AFF)
+    r.fillRect(MAP_W, 0.0, PANEL_W, MAP_H)
+    r.setColor(#2C3E50FF)
+    r.fillRect(MAP_W, 0.0, 2.0, MAP_H)
+
+    var f = g.font
+    // 标题 y=2
+    r.drawText(f, "塔防 TOWER DEFENSE", PX, 2.0, #FFDC50FF)
+
+    // 资源行 y=16 (单行[coin][heart][wave])
+    r.drawTextureAt(g.texCoin, PX, 16.0, 13.0, 13.0)
+    r.drawText(f, " " + g.gold, PX + 14.0, 16.0, #FFD700FF)
+    r.drawTextureAt(g.texHeart, PX + 50.0, 16.0, 13.0, 13.0)
+    r.drawText(f, " " + g.lives, PX + 64.0, 16.0, #E74C3CFF)
+    r.drawText(f, "波 " + g.wave + "/" + MAX_WAVE, PX + 100.0, 16.0, #AED6F1FF)
+
+    // 塔卡片 (4张, 32px高, 2px间距)
+    for 0 : 3 to i {
+        var cy = CARD_Y0 + _float(i) * (CARD_H + CARD_GAP)
+        var sel = g.selType == i
+        var afford = g.gold >= TOWER_COST[i]
+        r.setColor(if sel then #1F618DFF else #1A252FFF)
+        r.fillRoundedRect(PX, cy, PW, CARD_H, 4.0)
+        r.setColor(if sel then #5DADE2FF else #34495EFF)
+        r.drawRoundedRect(PX, cy, PW, CARD_H, 4.0)
+
+        if g.texTower[i] != null {
+            r.drawTextureAt(g.texTower[i], PX + 3.0, cy + 3.0, 26.0, 26.0)
+        }
+        var nc = #ECF0F1FF
+        if not afford { nc = #7F8C8DFF }
+        r.drawText(f, "[" + (i + 1) + "] " + TOWER_NAME[i], PX + 32.0, cy + 3.0, nc)
+        var rng = _int(towerRange(i, 1) / TS * 10.0)
+        r.drawText(f, "造价" + TOWER_COST[i] + " 伤害" + _int(TOWER_DMG[i]) + " 射程" + (rng / 10) + "格",
+                  PX + 32.0, cy + 18.0, #A0AAB0FF)
+    }
+
+    // 选中塔信息 (y=168)
+    if g.selTower >= 0 and g.selTower < g.towers.len() {
+        var t = g.towers[g.selTower]
+        r.drawText(f, TOWER_NAME[t.ttype] + " Lv" + t.level, PX + 4.0, 168.0, #FFDC50FF)
+        r.drawText(f, "伤害" + _int(towerDamage(t.ttype, t.level)) + " 射程" +
+                 _int(towerRange(t.ttype, t.level) / TS * 10.0) / 10 + "格", PX + 4.0, 180.0, #ECF0F1FF)
+
+        var uc = upgradeCost(t.ttype, t.level)
+        var canUp = t.level < MAX_LEVEL and g.gold >= uc
+        r.setColor(if canUp then #1E8449FF else #566573FF)
+        r.fillRoundedRect(PX + 4.0, 192.0, 52.0, 12.0, 2.0)
+        r.drawText(f, "[U]" + (if t.level >= MAX_LEVEL then "满" else "升" + uc), PX + 6.0, 193.0, #ECF0F1FF)
+        r.setColor(#7B241CFF)
+        r.fillRoundedRect(PX + 60.0, 192.0, 52.0, 12.0, 2.0)
+        r.drawText(f, "[S]售" + sellValue(t.ttype, t.level), PX + 62.0, 193.0, #ECF0F1FF)
+    } else {
+        r.drawText(f, "点击地图格子建塔", PX + 4.0, 172.0, #7F8C8DFF)
+    }
+
+    // 波次按钮：两行文字按字号实际高度动态行距，从根上避免重叠
+    var by = 210.0
+    var lh = _float(f.height) + 3.0   // 行高 = 字号像素高度 + 3px 间隙
+    var bh = lh * 2.0 + 8.0           // 按钮框高 = 两行 + 上下各 4px
+    if g.waveState == 0 {
+        var secs = g.waveTimer / 60 + 1
+        r.setColor(#1E8449FF)
+        r.fillRoundedRect(PX, by, PW, bh, 4.0)
+        r.drawText(f, "空格:立即开始(+" + (secs * 2) + "金)", PX + 4.0, by + 4.0, #ECF0F1FF)
+        r.drawText(f, secs + " 秒后自动开始", PX + 4.0, by + 4.0 + lh, #A0AAB0FF)
+    } else {
+        r.setColor(#566573FF)
+        r.fillRoundedRect(PX, by, PW, bh, 4.0)
+        r.drawText(f, "第 " + g.wave + " 波进行中...", PX + 4.0, by + 4.0, #ECF0F1FF)
+        r.drawText(f, "剩余 " + (g.enemies.len() + g.spawnQueue.len() - g.spawnIdx) + " 敌", PX + 4.0, by + 4.0 + lh, #A0AAB0FF)
+    }
+
+    // 帮助文本（紧接按钮下方，随按钮高度自适应）
+    var hy = by + bh + 8.0
+    r.drawText(f, "1-4选塔 空格开始", PX + 4.0, hy, #6C7A89FF)
+    r.drawText(f, "U升级 S出售", PX + 4.0, hy + 12.0, #6C7A89FF)
+    r.drawText(f, "P暂停 R重开 ESC退出", PX + 4.0, hy + 24.0, #6C7A89FF)
+}
+
+func drawGame(Game g, Renderer r) {
+    r.clearColor(#0F1620FF)
+
+    // 地图（预渲染纹理）
+    if g.mapTex != null {
+        r.drawTextureAt(g.mapTex, 0.0, 0.0, MAP_W, MAP_H)
+    }
+
+    // 鼠标悬停：建造预览
+    if g.selType >= 0 and g.mouseX < MAP_W and g.mouseY < MAP_H {
+        var gx = _int(g.mouseX / TS)
+        var gy = _int(g.mouseY / TS)
+        if gx >= 0 and gy >= 0 and gx < COLS and gy < ROWS {
+            var canPlace = cellAt(g, gx, gy) == T_GRASS and towerAt(g, gx, gy) < 0
+            var px = _float(gx) * TS
+            var py = _float(gy) * TS
+            // 射程圈
+            var rad = towerRange(g.selType, 1)
+            r.setColor(if canPlace then #5DADE233 else #E74C3C33)
+            r.fillCircle(px + TS * 0.5, py + TS * 0.5, rad)
+            r.setColor(if canPlace then #5DADE2AA else #E74C3CAA)
+            r.drawCircle(px + TS * 0.5, py + TS * 0.5, rad)
+            // 格子高亮
+            r.setColor(if canPlace then #2ECC7199 else #E74C3C99)
+            r.fillRect(px, py, TS, TS)
+            r.setColor(if canPlace then #2ECC71FF else #E74C3CFF)
+            r.drawRect(px, py, TS, TS)
+            // 半透明塔预览
+            if canPlace and g.texTower[g.selType] != null {
+                r.drawTextureAt(g.texTower[g.selType], px + 1.0, py + 1.0, TS - 2.0, TS - 2.0)
+            }
+        }
+    }
+
+    // 选中塔的射程圈
+    if g.selTower >= 0 and g.selTower < g.towers.len() {
+        var st = g.towers[g.selTower]
+        var rad2 = towerRange(st.ttype, st.level)
+        r.setColor(#F1C40F33)
+        r.fillCircle(st.x, st.y, rad2)
+        r.setColor(#F1C40FCC)
+        r.drawCircle(st.x, st.y, rad2)
+    }
+
+    // 塔
+    for g.towers to t {
+        var tex = g.texTower[t.ttype]
+        if tex == null { continue }
+        r.drawTextureRotated(tex, t.x - TS * 0.75, t.y - TS * 0.75, TS * 1.5, TS * 1.5,
+                             t.angle, TS * 0.75, TS * 0.75, Flip.NONE)
+        // 等级星
+        for 1 : t.level to lv {
+            r.drawTextureAt(g.texStar, t.x - 12.0 + _float(lv) * 7.0, t.y + 10.0, 10.0, 10.0)
+        }
+    }
+
+    // 选中塔可升级时，地图内浮现「↑」升级按钮
+    var ub = upgradeBtnRect(g)
+    if ub.len() == 4 {
+        r.setColor(#1E8449FF)
+        r.fillRoundedRect(ub[0], ub[1], ub[2], ub[3], 5.0)
+        r.setColor(#ECF0F1FF)
+        r.drawRoundedRect(ub[0], ub[1], ub[2], ub[3], 5.0)
+        r.drawTriangle(ub[0] + ub[2] * 0.5, ub[1] + ub[3] * 0.5, ub[2] * 0.55, 0.0, 1.0, 1.0, 1.0, 1.0)
+    }
+
+    // 敌人
+    for g.enemies to e {
+        var tex = g.texEnemy[e.etype]
+        var sz = ENEMY_SIZE[e.etype]
+        if tex != null {
+            // 素材默认朝下，旋转量需减去 180
+            r.drawTextureRotated(tex, e.x - sz * 0.5, e.y - sz * 0.5, sz, sz,
+                                 e.dir - 180.0, sz * 0.5, sz * 0.5, Flip.NONE)
+        }
+        // 减速光环
+        if e.slowTimer > 0 {
+            r.setColor(#5DADE255)
+            r.fillCircle(e.x, e.y, sz * 0.55)
+        }
+        // 血条
+        var bw = sz
+        var ratio = e.hp / e.maxHp
+        if ratio < 0.0 { ratio = 0.0 }
+        r.setColor(#00000099)
+        r.fillRect(e.x - bw * 0.5, e.y - sz * 0.5 - 7.0, bw, 4.0)
+        if ratio > 0.6 {
+            r.setColor(#2ECC71FF)
+        } else if ratio > 0.3 {
+            r.setColor(#F1C40FFF)
+        } else {
+            r.setColor(#E74C3CFF)
+        }
+        r.fillRect(e.x - bw * 0.5, e.y - sz * 0.5 - 7.0, bw * ratio, 4.0)
+    }
+
+    // 子弹
+    for g.bullets to b {
+        var bt = g.texBullet[b.btype]
+        if bt == null { continue }
+        var ang = dirAngle(b.vx, b.vy)
+        r.drawTextureRotated(bt, b.x - 8.0, b.y - 8.0, 16.0, 16.0, ang, 8.0, 8.0, Flip.NONE)
+    }
+
+    // 电弧
+    for g.arcs to a {
+        r.setColor(#F1C40FCC)
+        r.drawLine(a.x1, a.y1, a.x2, a.y2)
+    }
+
+    // 粒子
+    for g.particles to p {
+        var alpha = _int(255.0 * _float(p.life) / _float(p.maxLife))
+        int rr = (p.c >> 16) & 0xFF
+        int gg = (p.c >> 8) & 0xFF
+        int bb = p.c & 0xFF
+        r.setColor((alpha << 24) | (rr << 16) | (gg << 8) | bb)
+        r.fillRect(p.x - p.size * 0.5, p.y - p.size * 0.5, p.size, p.size)
+    }
+
+    // 飘字
+    for g.floats to ft {
+        var a2 = _int(255.0 * _float(ft.life) / 50.0)
+        int fr = (ft.c >> 16) & 0xFF
+        int fg = (ft.c >> 8) & 0xFF
+        int fb = ft.c & 0xFF
+        r.drawText(g.font, ft.text, ft.x - 8.0, ft.y, (a2 << 24) | (fr << 16) | (fg << 8) | fb)
+    }
+
+    drawPanel(g, r)
+
+    // 波次横幅（背景半透明，不遮挡画面）
+    if g.bannerTimer > 0 {
+        var t = g.bannerTimer
+        var fade = 1.0
+        if t < 30 { fade = _float(t) / 30.0 }
+        var bgA = _int(110.0 * fade)          // 背景半透明黑（约 43%）
+        r.setColor((bgA << 24) | 0x000000)
+        r.fillRect(0.0, MAP_H * 0.5 - 26.0, MAP_W, 52.0)
+        var txA = _int(255.0 * fade)
+        r.drawTextCentered(g.fontBig, g.bannerText, 0.0, MAP_W, MAP_H * 0.5 - 12.0,
+                           (txA << 24) | 0xFFDC50)
+    }
+}
+
+func drawOverlay(Game g, Renderer r, string title, string sub) {
+    r.setColor(#000000BB)
+    r.fillRect(0.0, 0.0, _float(WIN_W), _float(WIN_H))
+    r.drawTextCentered(g.fontBig, title, 0.0, _float(WIN_W), MAP_H * 0.5 - 40.0, #FFDC50FF)
+    r.drawTextCentered(g.font, sub, 0.0, _float(WIN_W), MAP_H * 0.5 + 6.0, #ECF0F1FF)
+}
+
+func renderGame(Game g, Renderer r) {
+    drawGame(g, r)
+
+    if g.state == ST_MENU {
+        drawOverlay(g, r, "塔 防", "点击画面开始游戏   1-4 选塔   空格 开始下一波")
+    } else if g.state == ST_PAUSE {
+        drawOverlay(g, r, "暂停", "按 P 继续")
+    } else if g.state == ST_OVER {
+        drawOverlay(g, r, "游戏结束", "坚持到第 " + g.wave + " 波，击杀 " + g.totalKilled +
+                    " 个敌人   点击画面或按 R 重新开始")
+    } else if g.state == ST_WIN {
+        drawOverlay(g, r, "通关！", "剩余生命 " + g.lives + "   击杀 " + g.totalKilled + "   点击画面重开")
+    }
+}
+
+// ==================== 事件 ====================
+
+func inRect(float x, float y, float rx, float ry, float rw, float rh): bool {
+    return x >= rx and x <= rx + rw and y >= ry and y <= ry + rh
+}
+
+func onClick(Game g, float mx, float my, int button) {
+    if g.state == ST_MENU {
+        g.state = ST_PLAY
+        return
+    }
+    if g.state == ST_OVER or g.state == ST_WIN {
+        restartGame(g)
+        return
+    }
+    if g.state != ST_PLAY { return }
+
+    // 面板：塔卡片
+    if mx >= MAP_W {
+        for 0 : 3 to i {
+            var cy = CARD_Y0 + _float(i) * (CARD_H + CARD_GAP)
+            if inRect(mx, my, PX, cy, PW, CARD_H) {
+                g.selType = i
+                g.selTower = -1
+                return
+            }
+        }
+        // 升级 / 出售
+        if g.selTower >= 0 and g.selTower < g.towers.len() {
+            if inRect(mx, my, PX + 4.0, 192.0, 52.0, 12.0) { doUpgrade(g); return }
+            if inRect(mx, my, PX + 60.0, 192.0, 52.0, 12.0) { doSell(g); return }
+        }
+        // 开始下一波
+        if g.waveState == 0 and inRect(mx, my, PX, 240.0, PW, 30.0) {
+            g.gold = g.gold + (g.waveTimer / 60 + 1) * 2
+            g.waveTimer = 0
+            return
+        }
+        return
+    }
+
+    // 地图
+    var gx = _int(mx / TS)
+    var gy = _int(my / TS)
+    if gx < 0 or gy < 0 or gx >= COLS or gy >= ROWS { return }
+
+    // 地图内升级按钮（金币够且未满级时出现）
+    var ub = upgradeBtnRect(g)
+    if ub.len() == 4 and inRect(mx, my, ub[0], ub[1], ub[2], ub[3]) {
+        doUpgrade(g); return
+    }
+
+    if button == 3 {
+        // 右键：取消选择
+        g.selType = -1
+        g.selTower = -1
+        return
+    }
+
+    var ti = towerAt(g, gx, gy)
+    if ti >= 0 {
+        g.selTower = ti
+        g.selType = -1
+        return
+    }
+    if g.selType >= 0 {
+        placeTower(g, gx, gy)
+        return
+    }
+    g.selTower = -1
+}
+
+func restartGame(Game g) {
+    g.state = ST_PLAY
+    g.gold = START_GOLD
+    g.lives = START_LIVES
+    g.wave = 0
+    g.kills = 0
+    g.totalKilled = 0
+    g.waveState = 0
+    g.waveTimer = WAVE_GAP
+    g.spawnQueue = []
+    g.spawnIdx = 0
+    g.spawnTimer = 0
+    g.bannerTimer = 0
+    g.selType = -1
+    g.selTower = -1
+    g.enemies = []
+    g.towers = []
+    g.bullets = []
+    g.particles = []
+    g.floats = []
+    g.arcs = []
+    g.pCount = 0
+    if g.audioOk {
+        g.bossBgm.stop()
+        g.bgm.play()
+    }
+}
+
+func handleEvent(Game g, Event e): bool {
+    if e.isQuit() or e.isWindowClose() { return false }
+
+    if e.isMouseMotion() {
+        var[float, float](mx, my) = e.mousePos()
+        g.mouseX = mx
+        g.mouseY = my
+    }
+
+    if e.isMouseButtonDown() {
+        var[float, float](cx, cy) = e.mousePos()
+        g.mouseX = cx
+        g.mouseY = cy
+        onClick(g, cx, cy, e.mouseButton())
+        return true
+    }
+
+    if e.isKeyDown() {
+        int sc = e.scancode()
+        if sc == Scancode.ESCAPE {
+            if g.state == ST_PLAY and (g.selType >= 0 or g.selTower >= 0) {
+                g.selType = -1
+                g.selTower = -1
+                return true
+            }
+            return false
+        }
+        if sc == Scancode._1 { g.selType = TW_ARROW;  g.selTower = -1; return true }
+        if sc == Scancode._2 { g.selType = TW_CANNON; g.selTower = -1; return true }
+        if sc == Scancode._3 { g.selType = TW_FROST;  g.selTower = -1; return true }
+        if sc == Scancode._4 { g.selType = TW_TESLA;  g.selTower = -1; return true }
+
+        if sc == Scancode.U { doUpgrade(g); return true }
+        if sc == Scancode.S { doSell(g); return true }
+
+        if sc == Scancode.P {
+            if g.state == ST_PLAY { g.state = ST_PAUSE }
+            else if g.state == ST_PAUSE { g.state = ST_PLAY }
+            return true
+        }
+
+        if sc == Scancode.R {
+            restartGame(g)
+            return true
+        }
+
+        if sc == Scancode.SPACE {
+            if g.state == ST_MENU { g.state = ST_PLAY; return true }
+            if g.state == ST_PLAY and g.waveState == 0 {
+                g.gold = g.gold + (g.waveTimer / 60 + 1) * 2
+                g.waveTimer = 0
+            }
+            return true
+        }
+
+        if sc == Scancode.RETURN {
+            if g.state == ST_MENU { g.state = ST_PLAY }
+            else if g.state == ST_OVER or g.state == ST_WIN { restartGame(g) }
+            return true
+        }
+    }
+
+    return true
+}
+
+// ==================== 主函数 ====================
+
+main() {
+    var win = SDL3.createWindow({
+        title: "塔防 Tower Defense",
+        w: WIN_W,
+        h: WIN_H,
+        flags: WindowFlag.RESIZABLE
+    })
+    if not win.ok {
+        print("[错误] 窗口创建失败")
+        return
+    }
+
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(11.0)
+    var fontBig = SDL3.createFontAuto(16.0)
+
+    var g = newGame()
+    g.font = font
+    g.fontBig = fontBig
+
+    win.setMaxFPS(60)
+
+    print("[OK] 塔防启动成功!")
+    print("     1-4 选塔，鼠标左键放置；U 升级 / S 出售；空格 开始下一波；P 暂停 / R 重开")
+
+    win.run(
+        func(Event ev): bool {
+            return handleEvent(g, ev)
+        },
+        func(Renderer r) {
+            // 框架默认是「事件驱动重绘」，游戏需要连续动画 → 每帧请求下一帧重绘
+            core.markFrameRedraw()
+            if not g.loaded { loadResources(g, r) }
+
+            if g.state == ST_PLAY {
+                updateGame(g)
+            } else if g.state == ST_PAUSE {
+                g.frameCount = g.frameCount + 1
+            }
+            renderGame(g, r)
+        }
+    )
+
+    if g.audioOk {
+        g.bgm.stop(); g.bgm.uninit()
+        g.bossBgm.stop(); g.bossBgm.uninit()
+        g.sfxShoot.uninit(); g.sfxBoom.uninit(); g.sfxLose.uninit()
+        audio.uninit()
+    }
+    if font.ok { font.close() }
+    if fontBig.ok { fontBig.close() }
+    win.destroy()
+    SDL3.quit()
+    print("塔防退出")
+}

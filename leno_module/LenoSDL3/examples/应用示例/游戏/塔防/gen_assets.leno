@@ -1,0 +1,406 @@
+// gen_assets.leno — 塔防素材生成器（零外部素材，全部由渲染器图元程序化绘制）
+//
+// 原理：开一个 HIDDEN 离屏窗口 → 用 Renderer 的图元把素材画在一张大画布上
+//       → 逐格 readPixelsAt 截取 → SDL3.saveImagePNG 存成带透明通道的 PNG。
+//       与 examples/UI组件/按钮/gen_icons.leno 同款写法。
+//
+// 用法：在本目录执行  leno.exe gen_assets.leno
+// 产物：image/ 下的 tile_*.png / tower_*.png / enemy_*.png / bullet_*.png / icon_*.png
+//
+// 素材一览：
+//   瓦片 32x32  tile_grass 草地 / tile_path 路径 / tile_start 出怪口 / tile_base 基地 / tile_rock 石块
+//   塔   48x48  tower_arrow 箭塔 / tower_cannon 炮塔 / tower_frost 冰塔 / tower_tesla 电塔
+//   敌人 32x32  enemy_grunt 小兵 / enemy_runner 快兵 / enemy_tank 装甲；enemy_boss 48x48
+//   子弹 16x16  bullet_arrow / bullet_shell / bullet_frost / bullet_bolt
+//   图标 16x16  icon_coin 金币 / icon_heart 生命 / icon_star 等级星
+
+import "../../../../lib/SDL3.leno" as SDL3
+use SDL3.(Renderer, WindowFlag)
+import maths
+import rands
+import dirs
+
+// ==================== 画布与输出目录 ====================
+
+var CW = 640
+var CH = 320
+var OUT = ""
+
+// ==================== 绘制小工具 ====================
+
+// 实心矩形
+func box(Renderer r, float x, float y, float w, float h, int c) {
+    r.setColor(c)
+    r.fillRect(x, y, w, h)
+}
+
+// 实心圆
+func disc(Renderer r, float cx, float cy, float rad, int c) {
+    r.setColor(c)
+    r.fillCircle(cx, cy, rad)
+}
+
+// 空心圆
+func ring(Renderer r, float cx, float cy, float rad, int c) {
+    r.setColor(c)
+    r.drawCircle(cx, cy, rad)
+}
+
+// 实心圆角矩形
+func rbox(Renderer r, float x, float y, float w, float h, float rad, int c) {
+    r.setColor(c)
+    r.fillRoundedRect(x, y, w, h, rad)
+}
+
+// 实心扇形（角度制，0=正上，90=右，180=下，270=左）
+func pie(Renderer r, float cx, float cy, float rad, float a0, float a1, int c) {
+    int cr = (c >> 16) & 0xFF
+    int cg = (c >> 8) & 0xFF
+    int cb = c & 0xFF
+    int ca = (c >> 24) & 0xFF
+    r.fillPie(cx, cy, rad, a0, a1, cr, cg, cb, ca)
+}
+
+// 实心三角（angle：0=上，90=右，180=下，270=左）
+func tri(Renderer r, float cx, float cy, float size, float angle, int c) {
+    int cr = (c >> 16) & 0xFF
+    int cg = (c >> 8) & 0xFF
+    int cb = c & 0xFF
+    int ca = (c >> 24) & 0xFF
+    r.drawTriangle(cx, cy, size, angle, _float(cr), _float(cg), _float(cb), _float(ca))
+}
+
+// 线段
+func seg(Renderer r, float x1, float y1, float x2, float y2, int c) {
+    r.setColor(c)
+    r.drawLine(x1, y1, x2, y2)
+}
+
+// 塔/敌人通用的落地阴影 + 石基座
+func baseShadow(Renderer r, float cx, float by) {
+    disc(r, cx, by, 12.0, #00000038)
+}
+func baseStone(Renderer r, float cx, float by) {
+    disc(r, cx, by - 1.0, 11.0, #5A6472FF)
+    disc(r, cx, by - 3.0, 9.0, #7C8899FF)
+}
+
+// ==================== 瓦片 32x32 ====================
+
+func drawTileGrass(Renderer r, float ox, float oy) {
+    box(r, ox, oy, 32.0, 32.0, #4C8B3AFF)
+    // 随机深浅草斑，做出草地质感
+    for 0 : 22 to i {
+        var px = ox + _float(rands.ints(1, 29))
+        var py = oy + _float(rands.ints(1, 28))
+        if (i / 2) * 2 == i {
+            box(r, px, py, 2.0, 2.0, #57A045FF)
+        } else {
+            box(r, px, py, 2.0, 2.0, #3F7A31FF)
+        }
+    }
+    box(r, ox, oy + 30.0, 32.0, 2.0, #3A6E2CFF)   // 下缘暗边
+}
+
+func drawTilePath(Renderer r, float ox, float oy) {
+    box(r, ox, oy, 32.0, 32.0, #C8A96AFF)
+    for 0 : 18 to i {
+        var px = ox + _float(rands.ints(1, 29))
+        var py = oy + _float(rands.ints(1, 29))
+        if (i / 3) * 3 == i {
+            box(r, px, py, 2.0, 2.0, #D8BE84FF)
+        } else {
+            box(r, px, py, 2.0, 2.0, #B0905AFF)
+        }
+    }
+    box(r, ox, oy + 30.0, 32.0, 2.0, #9E7F4EFF)
+}
+
+// 出怪口：暗色地面 + 红色传送漩涡
+func drawTileStart(Renderer r, float ox, float oy) {
+    box(r, ox, oy, 32.0, 32.0, #3A2F3DFF)
+    ring(r, ox + 16.0, oy + 16.0, 13.0, #6E2B2BFF)
+    ring(r, ox + 16.0, oy + 16.0, 9.0,  #A93226FF)
+    ring(r, ox + 16.0, oy + 16.0, 5.0,  #E74C3CFF)
+    disc(r, ox + 16.0, oy + 16.0, 3.0,  #F1948AFF)
+}
+
+// 基地：石台 + 蓝色水晶
+func drawTileBase(Renderer r, float ox, float oy) {
+    box(r, ox, oy, 32.0, 32.0, #2E4053FF)
+    rbox(r, ox + 3.0, oy + 3.0, 26.0, 26.0, 5.0, #34495EFF)
+    disc(r, ox + 16.0, oy + 16.0, 9.0, #1A6FA8FF)     // 光晕
+    tri(r, ox + 16.0, oy + 14.0, 8.0, 0.0, #5DADE2FF) // 水晶上半
+    box(r, ox + 12.0, oy + 14.0, 8.0, 8.0, #5DADE2FF) // 水晶下半
+    tri(r, ox + 16.0, oy + 22.0, 8.0, 180.0, #2E86C1FF)
+    box(r, ox + 14.0, oy + 12.0, 2.0, 8.0, #AED6F1FF) // 高光
+}
+
+// 装饰石块（透明底，铺在草地上）
+func drawTileRock(Renderer r, float ox, float oy) {
+    disc(r, ox + 15.0, oy + 18.0, 9.0, #78838CFF)
+    disc(r, ox + 22.0, oy + 21.0, 6.0, #68737CFF)
+    disc(r, ox + 12.0, oy + 15.0, 4.0, #95A0A8FF)     // 高光
+    seg(r, ox + 9.0, oy + 20.0, ox + 18.0, oy + 14.0, #5C666EFF)
+}
+
+// ==================== 塔 48x48 ====================
+// 约定：所有塔的「炮口/朝向」默认画成朝上（angle=0），
+//       运行时由 drawTextureRotated 按目标角度旋转。
+
+func drawTowerArrow(Renderer r, float ox, float oy) {
+    baseShadow(r, ox + 24.0, oy + 45.0)
+    baseStone(r, ox + 24.0, oy + 45.0)
+    rbox(r, ox + 15.0, oy + 18.0, 18.0, 24.0, 4.0, #8B5A2BFF)   // 木质塔身
+    box(r, ox + 15.0, oy + 26.0, 18.0, 2.0, #6E4A22FF)          // 木纹
+    box(r, ox + 15.0, oy + 34.0, 18.0, 2.0, #6E4A22FF)
+    rbox(r, ox + 12.0, oy + 13.0, 24.0, 7.0, 3.0, #6E4A22FF)    // 顶部平台
+    box(r, ox + 9.0, oy + 8.0, 30.0, 4.0, #D2B48CFF)            // 弩臂
+    tri(r, ox + 9.0, oy + 10.0, 4.0, 270.0, #D2B48CFF)          // 弩臂两端尖
+    tri(r, ox + 39.0, oy + 10.0, 4.0, 90.0, #D2B48CFF)
+    box(r, ox + 22.0, oy + 3.0, 4.0, 12.0, #F5DEB3FF)           // 箭槽
+    tri(r, ox + 24.0, oy + 2.0, 4.0, 0.0, #FFFFFFFF)            // 箭头（朝上）
+    rbox(r, ox + 13.0, oy + 18.0, 4.0, 24.0, 2.0, #A06E38FF)    // 侧向高光
+}
+
+func drawTowerCannon(Renderer r, float ox, float oy) {
+    baseShadow(r, ox + 24.0, oy + 45.0)
+    baseStone(r, ox + 24.0, oy + 45.0)
+    disc(r, ox + 24.0, oy + 27.0, 12.0, #34495EFF)              // 炮塔座
+    disc(r, ox + 24.0, oy + 25.0, 9.0,  #5D6D7EFF)
+    rbox(r, ox + 20.0, oy + 6.0, 8.0, 22.0, 3.0, #2C3E50FF)     // 炮管（朝上）
+    rbox(r, ox + 19.0, oy + 3.0, 10.0, 5.0, 2.0, #1B2631FF)     // 炮口
+    disc(r, ox + 24.0, oy + 5.0, 3.0, #00000090)                // 炮口内膛
+    disc(r, ox + 20.0, oy + 24.0, 3.0, #85929EFF)               // 座圈高光
+}
+
+func drawTowerFrost(Renderer r, float ox, float oy) {
+    baseShadow(r, ox + 24.0, oy + 45.0)
+    baseStone(r, ox + 24.0, oy + 45.0)
+    rbox(r, ox + 17.0, oy + 22.0, 14.0, 20.0, 4.0, #AED6F1FF)   // 冰柱基座
+    tri(r, ox + 24.0, oy + 12.0, 11.0, 0.0, #5DADE2FF)          // 主冰晶（朝上）
+    tri(r, ox + 17.0, oy + 20.0, 7.0, 0.0, #2E86C1FF)           // 左小晶
+    tri(r, ox + 31.0, oy + 22.0, 6.0, 0.0, #2E86C1FF)           // 右小晶
+    box(r, ox + 23.0, oy + 10.0, 2.0, 12.0, #EAF2F8FF)          // 高光
+    disc(r, ox + 24.0, oy + 14.0, 2.0, #FFFFFFFF)
+}
+
+func drawTowerTesla(Renderer r, float ox, float oy) {
+    baseShadow(r, ox + 24.0, oy + 45.0)
+    baseStone(r, ox + 24.0, oy + 45.0)
+    box(r, ox + 21.0, oy + 18.0, 6.0, 24.0, #7F8C8DFF)          // 金属杆
+    box(r, ox + 17.0, oy + 38.0, 14.0, 4.0, #566573FF)          // 底部法兰
+    disc(r, ox + 24.0, oy + 14.0, 8.0, #2874A6FF)                // 电球
+    disc(r, ox + 24.0, oy + 13.0, 6.0, #3498DBFF)
+    disc(r, ox + 21.0, oy + 10.0, 2.0, #AED6F1FF)                // 高光
+    // 电弧（黄色折线）
+    seg(r, ox + 16.0, oy + 16.0, ox + 20.0, oy + 9.0, #F1C40FFF)
+    seg(r, ox + 20.0, oy + 9.0,  ox + 18.0, oy + 4.0, #F1C40FFF)
+    seg(r, ox + 32.0, oy + 16.0, ox + 28.0, oy + 8.0, #F1C40FFF)
+    seg(r, ox + 28.0, oy + 8.0,  ox + 31.0, oy + 3.0, #F1C40FFF)
+}
+
+// ==================== 敌人 32x32 ====================
+// 约定：敌人默认朝下（沿路径从左/上进入时由运行时旋转）
+
+func drawEnemyGrunt(Renderer r, float ox, float oy) {
+    disc(r, ox + 16.0, oy + 27.0, 9.0, #00000030)               // 影子
+    disc(r, ox + 16.0, oy + 19.0, 9.0, #52BE80FF)               // 史莱姆身体
+    disc(r, ox + 16.0, oy + 24.0, 7.0, #27AE60FF)               // 下腹加深
+    disc(r, ox + 12.0, oy + 15.0, 3.0, #7DCEA0FF)               // 高光
+    disc(r, ox + 11.0, oy + 18.0, 3.0, #FFFFFFFF)               // 左眼
+    disc(r, ox + 21.0, oy + 18.0, 3.0, #FFFFFFFF)               // 右眼
+    disc(r, ox + 11.0, oy + 19.0, 1.5, #17202AFF)
+    disc(r, ox + 21.0, oy + 19.0, 1.5, #17202AFF)
+}
+
+func drawEnemyRunner(Renderer r, float ox, float oy) {
+    disc(r, ox + 16.0, oy + 27.0, 8.0, #00000030)
+    tri(r, ox + 16.0, oy + 17.0, 11.0, 180.0, #E67E22FF)        // 尖头朝下（冲锋姿态）
+    tri(r, ox + 16.0, oy + 12.0, 7.0, 0.0, #F39C12FF)           // 尾部朝上
+    seg(r, ox + 8.0, oy + 2.0, ox + 16.0, oy + 10.0, #F5B04199) // 速度线
+    seg(r, ox + 24.0, oy + 2.0, ox + 16.0, oy + 10.0, #F5B04199)
+    disc(r, ox + 13.0, oy + 19.0, 2.0, #FFFFFFFF)
+    disc(r, ox + 19.0, oy + 19.0, 2.0, #FFFFFFFF)
+    disc(r, ox + 13.0, oy + 19.5, 1.0, #17202AFF)
+    disc(r, ox + 19.0, oy + 19.5, 1.0, #17202AFF)
+}
+
+func drawEnemyTank(Renderer r, float ox, float oy) {
+    disc(r, ox + 16.0, oy + 27.0, 10.0, #00000030)
+    rbox(r, ox + 5.0, oy + 10.0, 22.0, 17.0, 4.0, #7F8C8DFF)    // 装甲主体
+    rbox(r, ox + 5.0, oy + 10.0, 22.0, 6.0, 3.0, #95A5A6FF)     // 上装甲
+    box(r, ox + 7.0, oy + 18.0, 18.0, 3.0, #566573FF)           // 履带
+    box(r, ox + 8.0, oy + 23.0, 16.0, 3.0, #566573FF)
+    disc(r, ox + 9.0, oy + 13.0, 1.5, #34495EFF)                // 铆钉
+    disc(r, ox + 23.0, oy + 13.0, 1.5, #34495EFF)
+    disc(r, ox + 9.0, oy + 22.0, 1.5, #34495EFF)
+    disc(r, ox + 23.0, oy + 22.0, 1.5, #34495EFF)
+    box(r, ox + 10.0, oy + 14.0, 12.0, 3.0, #E74C3CFF)          // 红色目镜
+}
+
+func drawEnemyBoss(Renderer r, float ox, float oy) {
+    disc(r, ox + 24.0, oy + 42.0, 15.0, #00000038)
+    disc(r, ox + 24.0, oy + 26.0, 15.0, #8E44ADFF)              // 主体
+    tri(r, ox + 9.0, oy + 14.0, 8.0, 270.0, #6C3483FF)          // 左角
+    tri(r, ox + 39.0, oy + 14.0, 8.0, 90.0, #6C3483FF)          // 右角
+    tri(r, ox + 24.0, oy + 6.0, 8.0, 0.0, #6C3483FF)            // 顶角
+    ring(r, ox + 24.0, oy + 26.0, 15.0, #BB8FCEFF)              // 光环
+    disc(r, ox + 18.0, oy + 24.0, 4.0, #FFFFFFFF)               // 眼白
+    disc(r, ox + 30.0, oy + 24.0, 4.0, #FFFFFFFF)
+    disc(r, ox + 18.0, oy + 25.0, 2.0, #C0392BFF)
+    disc(r, ox + 30.0, oy + 25.0, 2.0, #C0392BFF)
+    box(r, ox + 16.0, oy + 32.0, 16.0, 3.0, #512E5FFF)          // 嘴
+}
+
+// ==================== 子弹 16x16 ====================
+// 约定：一律画成朝上（angle=0），运行时旋转
+
+func drawBulletArrow(Renderer r, float ox, float oy) {
+    box(r, ox + 7.0, oy + 6.0, 2.0, 8.0, #D2B48CFF)             // 箭杆
+    tri(r, ox + 8.0, oy + 4.0, 4.0, 0.0, #FFFFFFFF)             // 箭头
+    box(r, ox + 5.0, oy + 12.0, 6.0, 2.0, #95A5A6FF)            // 尾羽
+}
+
+func drawBulletShell(Renderer r, float ox, float oy) {
+    disc(r, ox + 8.0, oy + 8.0, 4.5, #34495EFF)
+    disc(r, ox + 8.0, oy + 8.0, 3.0, #5D6D7EFF)
+    disc(r, ox + 6.5, oy + 6.5, 1.5, #AEB6BFFF)                 // 高光
+}
+
+func drawBulletFrost(Renderer r, float ox, float oy) {
+    disc(r, ox + 8.0, oy + 8.0, 5.0, #5DADE2FF)
+    disc(r, ox + 8.0, oy + 8.0, 3.0, #AED6F1FF)
+    seg(r, ox + 8.0, oy + 1.0, ox + 8.0, oy + 15.0, #EAF2F8FF)  // 十字冰芒
+    seg(r, ox + 1.0, oy + 8.0, ox + 15.0, oy + 8.0, #EAF2F8FF)
+}
+
+func drawBulletBolt(Renderer r, float ox, float oy) {
+    disc(r, ox + 8.0, oy + 8.0, 6.0, #2874A6FF)
+    // 闪电折线
+    seg(r, ox + 9.0, oy + 2.0, ox + 6.0, oy + 8.0, #F1C40FFF)
+    seg(r, ox + 6.0, oy + 8.0, ox + 10.0, oy + 8.0, #F1C40FFF)
+    seg(r, ox + 10.0, oy + 8.0, ox + 7.0, oy + 14.0, #F1C40FFF)
+}
+
+// ==================== 图标 16x16 ====================
+
+func drawIconCoin(Renderer r, float ox, float oy) {
+    disc(r, ox + 8.0, oy + 8.0, 7.0, #B7950BFF)
+    disc(r, ox + 8.0, oy + 8.0, 5.0, #F1C40FFF)
+    disc(r, ox + 6.0, oy + 6.0, 2.0, #F9E79FFF)
+    seg(r, ox + 8.0, oy + 4.0, ox + 8.0, oy + 12.0, #B7950BFF)
+}
+
+func drawIconHeart(Renderer r, float ox, float oy) {
+    disc(r, ox + 5.5, oy + 6.0, 4.0, #E74C3CFF)
+    disc(r, ox + 10.5, oy + 6.0, 4.0, #E74C3CFF)
+    tri(r, ox + 8.0, oy + 8.5, 5.5, 180.0, #E74C3CFF)
+    disc(r, ox + 5.0, oy + 5.0, 1.2, #FADBD8FF)                 // 高光
+}
+
+func drawIconStar(Renderer r, float ox, float oy) {
+    tri(r, ox + 8.0, oy + 1.5, 4.5, 0.0,   #F1C40FFF)           // 上
+    tri(r, ox + 8.0, oy + 14.5, 4.5, 180.0, #F1C40FFF)          // 下
+    tri(r, ox + 1.5, oy + 8.0, 4.5, 270.0, #F1C40FFF)           // 左
+    tri(r, ox + 14.5, oy + 8.0, 4.5, 90.0, #F1C40FFF)           // 右
+    rbox(r, ox + 5.0, oy + 5.0, 6.0, 6.0, 1.5, #F7DC6FFF)       // 中心
+}
+
+// ==================== 截取与保存 ====================
+
+func grab(Renderer r, string name, int x, int y, int w, int h) {
+    var s = r.readPixelsAt(x, y, w, h)
+    if s == null {
+        print("[gen] 截取失败: " + name)
+        return
+    }
+    var path = OUT + "/" + name + ".png"
+    if SDL3.saveImagePNG(s, path) {
+        print("[gen] " + name + ".png  (" + _str(w) + "x" + _str(h) + ")")
+    } else {
+        print("[gen] 保存失败: " + name + "  " + SDL3.getError())
+    }
+}
+
+// ==================== 主函数 ====================
+
+main() {
+    OUT = dirs.script_dir() + "/image"
+    print("[gen] 输出目录: " + OUT)
+
+    var win = SDL3.createWindow({
+        title: "tower-defense-asset-gen",
+        w: CW,
+        h: CH,
+        flags: WindowFlag.HIDDEN
+    })
+    if not win.ok {
+        print("[gen] createWindow 失败: " + SDL3.getError())
+        return
+    }
+
+    var r = SDL3.createRenderer(win.getHandle())
+    r.clearColor(#00000000)          // 全透明底
+
+    // ---- 第 0 行：瓦片 32x32（y=0）----
+    drawTileGrass(r, 0.0, 0.0)
+    drawTilePath(r, 32.0, 0.0)
+    drawTileStart(r, 64.0, 0.0)
+    drawTileBase(r, 96.0, 0.0)
+    drawTileRock(r, 128.0, 0.0)
+
+    // ---- 第 1 行：敌人 32x32（y=48）----
+    drawEnemyGrunt(r, 0.0, 48.0)
+    drawEnemyRunner(r, 32.0, 48.0)
+    drawEnemyTank(r, 64.0, 48.0)
+    drawEnemyBoss(r, 96.0, 48.0)      // 48x48
+
+    // ---- 第 2 行：塔 48x48（y=112）----
+    drawTowerArrow(r, 0.0, 112.0)
+    drawTowerCannon(r, 48.0, 112.0)
+    drawTowerFrost(r, 96.0, 112.0)
+    drawTowerTesla(r, 144.0, 112.0)
+
+    // ---- 第 3 行：子弹 16x16（y=176）----
+    drawBulletArrow(r, 0.0, 176.0)
+    drawBulletShell(r, 16.0, 176.0)
+    drawBulletFrost(r, 32.0, 176.0)
+    drawBulletBolt(r, 48.0, 176.0)
+
+    // ---- 第 3 行右：图标 16x16（y=176）----
+    drawIconCoin(r, 72.0, 176.0)
+    drawIconHeart(r, 88.0, 176.0)
+    drawIconStar(r, 104.0, 176.0)
+
+    r.flush()   // 提交所有批处理图元（fillRect / drawLine 是批处理的）
+
+    // ---- 逐格截取 ----
+    grab(r, "tile_grass",  0,   0, 32, 32)
+    grab(r, "tile_path",   32,  0, 32, 32)
+    grab(r, "tile_start",  64,  0, 32, 32)
+    grab(r, "tile_base",   96,  0, 32, 32)
+    grab(r, "tile_rock",   128, 0, 32, 32)
+
+    grab(r, "enemy_grunt",  0,  48, 32, 32)
+    grab(r, "enemy_runner", 32, 48, 32, 32)
+    grab(r, "enemy_tank",   64, 48, 32, 32)
+    grab(r, "enemy_boss",   96, 48, 48, 48)
+
+    grab(r, "tower_arrow",  0,   112, 48, 48)
+    grab(r, "tower_cannon", 48,  112, 48, 48)
+    grab(r, "tower_frost",  96,  112, 48, 48)
+    grab(r, "tower_tesla",  144, 112, 48, 48)
+
+    grab(r, "bullet_arrow", 0,  176, 16, 16)
+    grab(r, "bullet_shell", 16, 176, 16, 16)
+    grab(r, "bullet_frost", 32, 176, 16, 16)
+    grab(r, "bullet_bolt",  48, 176, 16, 16)
+
+    grab(r, "icon_coin",  72,  176, 16, 16)
+    grab(r, "icon_heart", 88,  176, 16, 16)
+    grab(r, "icon_star",  104, 176, 16, 16)
+
+    SDL3.quit()
+    print("[gen] 素材生成完毕，共 19 个 PNG")
+}
