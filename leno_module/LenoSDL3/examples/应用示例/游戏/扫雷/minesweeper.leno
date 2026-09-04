@@ -1,0 +1,572 @@
+// minesweeper.leno — 扫雷（LenoSDL3）
+//
+// 玩法：
+//   左键       翻开格子
+//   右键       在格子上插旗 / 取消旗
+//   左键点已翻开的数字  若周围旗数==数字，则一键翻开剩余邻居（和式展开）
+//   R         重开当前难度
+//   1 / 2 / 3 切换 初级 / 中级 / 高级（也会重开）
+//   ESC       返回难度选择菜单（菜单里 ESC 退出）
+//
+// 规则：
+//   第一次点击保证安全（不会踩雷，且尽量展开一片空地）
+//   翻开所有非雷格子即获胜；踩到雷则失败，揭示全部地雷
+
+import "../../../../lib/SDL3.leno" as SDL3
+import "../../../../lib/sdl_core.leno" as core
+use SDL3.(Event, Renderer, WindowFlag, Scancode, Font, Window)
+import rands
+
+// ==================== 布局常量 ====================
+var CELL    = 34.0      // 格子像素
+var MARGIN  = 16.0      // 边距
+var BAR_H   = 52.0      // 顶部信息栏高度
+var MENU_W  = 460.0     // 菜单窗口尺寸
+var MENU_H  = 400.0
+
+// ==================== 颜色 ====================
+var COL_BG      = #20232EFF
+var COL_BAR     = #2B2E3CFF
+var COL_HIDDEN  = #AEB4C4FF   // 未翻开格子底色
+var COL_BEVEL_L = #E2E6EEFF   // 凸起高光（上/左）
+var COL_BEVEL_D = #6E7488FF   // 凸起阴影（下/右）
+var COL_REVEAL  = #CDD2DCFF   // 已翻开格子底色
+var COL_GRID    = #AEB4C0FF   // 网格线
+var COL_TEXT    = #E8E8F2FF
+var COL_SUB     = #9A9AB0FF
+var COL_ACCENT  = #66DDFFFF
+var COL_GOLD    = #FFD24DFF
+var COL_MINE_BAD= #E2473BFF   // 触雷格底色
+var COL_DIGIT   = #FF5555FF   // 计数器红字
+var COL_DIGIT_BG= #0C0C12FF
+
+// ==================== 状态 ====================
+struct Game {
+    int cols, rows, mines
+    float cell
+    float boardX, boardY
+    float winW, winH
+    Array[int]  state   // 0 隐藏, 1 已翻开, 2 插旗
+    Array[bool] mine
+    Array[int]  adj     // 周围雷数
+    bool placed          // 是否已布雷
+    bool over
+    bool won
+    int  flags
+    int  timeFrames      // 计时（帧）
+    int  frameCount
+    Font font
+    string scene         // "menu" 菜单 / "play" 对局
+    float mx, my         // 鼠标位置（菜单悬停/格子高亮）
+    int  lostR, lostC    // 触雷格坐标
+}
+
+// ==================== 工具 ====================
+func applyDifficulty(Game g, int d) {
+    if d == 0 { g.cols = 9;  g.rows = 9;  g.mines = 10 }
+    else if d == 1 { g.cols = 16; g.rows = 16; g.mines = 40 }
+    else { g.cols = 30; g.rows = 16; g.mines = 99 }
+    g.cell   = CELL
+    g.boardX = MARGIN
+    g.boardY = BAR_H + MARGIN
+    g.winW   = MARGIN * 2.0 + _float(g.cols) * g.cell
+    g.winH   = g.boardY + _float(g.rows) * g.cell + MARGIN
+}
+
+func diffName(int d): string {
+    if d == 0 { return "初级   9 × 9  （10 雷）" }
+    if d == 1 { return "中级   16 × 16（40 雷）" }
+    return "高级   30 × 16（99 雷）"
+}
+
+func pointInRect(float px, float py, float x, float y, float w, float h): bool {
+    return px >= x and px <= x + w and py >= y and py <= y + h
+}
+
+// 菜单按钮矩形（绘制与点击共用，保证一致）
+func menuRect(int i): Array[float] {
+    float w = 320.0
+    float h = 52.0
+    float x = (MENU_W - w) / 2.0
+    float y = 120.0 + _float(i) * 64.0
+    Array[float] r = []
+    r.add(x); r.add(y); r.add(w); r.add(h)
+    return r
+}
+
+// ==================== 新局 / 布雷 ====================
+func newGame(Game g) {
+    int n = g.cols * g.rows
+    g.state = []
+    g.mine  = []
+    g.adj   = []
+    for 0 : (n - 1) to i { g.state.add(0); g.mine.add(false); g.adj.add(0) }
+    g.placed   = false
+    g.over     = false
+    g.won      = false
+    g.flags    = 0
+    g.timeFrames = 0
+    g.lostR    = -1
+    g.lostC    = -1
+}
+
+// 首点安全：避开点击格及其 8 邻域布雷，保证能展开一片
+func placeMines(Game g, int sr, int sc) {
+    Array[int] cand = []
+    for 0 : (g.rows - 1) to r {
+        for 0 : (g.cols - 1) to c {
+            int rr = r - sr
+            int cc = c - sc
+            if rr > -2 and rr < 2 and cc > -2 and cc < 2 { continue }  // 含自身与邻域
+            cand.add(r * g.cols + c)
+        }
+    }
+    int need = g.mines
+    if need > cand.len() { need = cand.len() }
+    for 0 : (need - 1) to k {
+        int pick = _int(rands.floats(0.0, 1.0) * _float(cand.len()))
+        if pick >= cand.len() { pick = cand.len() - 1 }
+        int ci = cand[pick]
+        g.mine[ci] = true
+        cand.remove(pick)
+    }
+    // 计算每格周围雷数
+    for 0 : (g.rows - 1) to r {
+        for 0 : (g.cols - 1) to c {
+            int i = r * g.cols + c
+            if g.mine[i] { continue }
+            int cnt = 0
+            for 0 : 2 to kra { int dr = kra - 1; for 0 : 2 to kca { int dc = kca - 1;
+                if dr == 0 and dc == 0 { continue }
+                int nr = r + dr; int nc = c + dc
+                if nr < 0 or nr >= g.rows or nc < 0 or nc >= g.cols { continue }
+                if g.mine[nr * g.cols + nc] { cnt = cnt + 1 }
+            }}
+            g.adj[i] = cnt
+        }
+    }
+}
+
+func checkWin(Game g) {
+    int n = g.cols * g.rows
+    int revealed = 0
+    for 0 : (n - 1) to i { if g.state[i] == 1 { revealed = revealed + 1 } }
+    if revealed == n - g.mines {
+        g.over = true
+        g.won  = true
+        // 胜利时自动给所有雷插旗
+        for 0 : (n - 1) to i {
+            if g.mine[i] and g.state[i] == 0 { g.state[i] = 2; g.flags = g.flags + 1 }
+        }
+    }
+}
+
+// 翻开（含空白区洪泛展开）
+func reveal(Game g, int r, int c) {
+    if g.over { return }
+    int i = r * g.cols + c
+    if g.state[i] != 0 { return }                 // 只翻隐藏格（不翻已翻开/插旗）
+    if not g.placed { placeMines(g, r, c); g.placed = true }
+    if g.mine[i] { g.over = true; g.won = false; g.lostR = r; g.lostC = c; return }
+    Array[int] stack = []
+    stack.add(i)
+    while stack.len() > 0 {
+        int cur = stack[stack.len() - 1]
+        stack.remove(stack.len() - 1)
+        if g.state[cur] == 1 { continue }
+        g.state[cur] = 1
+        int cr = cur / g.cols
+        int cc = cur % g.cols
+        if g.adj[cur] == 0 {
+            for 0 : 2 to kra { int dr = kra - 1; for 0 : 2 to kca { int dc = kca - 1;
+                if dr == 0 and dc == 0 { continue }
+                int nr = cr + dr; int nc = cc + dc
+                if nr < 0 or nr >= g.rows or nc < 0 or nc >= g.cols { continue }
+                int ni = nr * g.cols + nc
+                if g.state[ni] == 0 and not g.mine[ni] { stack.add(ni) }
+            }}
+        }
+    }
+    checkWin(g)
+}
+
+func toggleFlag(Game g, int r, int c) {
+    if g.over { return }
+    int i = r * g.cols + c
+    if g.state[i] == 0 { g.state[i] = 2; g.flags = g.flags + 1 }
+    else if g.state[i] == 2 { g.state[i] = 0; g.flags = g.flags - 1 }
+}
+
+// 和式展开：点已翻开的数字，若周围旗数==数字则翻开其余邻居
+func chord(Game g, int r, int c) {
+    if g.over { return }
+    int i = r * g.cols + c
+    if g.state[i] != 1 or g.adj[i] == 0 { return }
+    int fc = 0
+    for 0 : 2 to kra { int dr = kra - 1; for 0 : 2 to kca { int dc = kca - 1;
+        if dr == 0 and dc == 0 { continue }
+        int nr = r + dr; int nc = c + dc
+        if nr < 0 or nr >= g.rows or nc < 0 or nc >= g.cols { continue }
+        if g.state[nr * g.cols + nc] == 2 { fc = fc + 1 }
+    }}
+    if fc != g.adj[i] { return }
+    for 0 : 2 to kra { int dr = kra - 1; for 0 : 2 to kca { int dc = kca - 1;
+        if dr == 0 and dc == 0 { continue }
+        int nr = r + dr; int nc = c + dc
+        if nr < 0 or nr >= g.rows or nc < 0 or nc >= g.cols { continue }
+        int ni = nr * g.cols + nc
+        if g.state[ni] == 0 and not g.mine[ni] { reveal(g, nr, nc) }
+    }}
+}
+
+// ==================== 渲染 ====================
+func numColor(int n): int {
+    if n == 1 { return #2E6FD6FF }
+    if n == 2 { return #2E9E4FFF }
+    if n == 3 { return #D6453BFF }
+    if n == 4 { return #3A3AA0FF }
+    if n == 5 { return #B5341FFF }
+    if n == 6 { return #1FA3A3FF }
+    if n == 7 { return #42424FFF }
+    return #8A8A99FF
+}
+
+func drawNumber(Game g, Renderer r, float x, float y, float s, int n) {
+    string t = _str(n)
+    var[float, float](mw, mh) = g.font.measureString(t)
+    float tx = x + (s - mw) / 2.0
+    float ty = y + (s - mh) / 2.0
+    r.drawText(g.font, t, tx, ty, numColor(n))
+}
+
+func drawMine(Renderer r, float cx, float cy, float rad, bool wrong) {
+    r.setColor(#14141CFF)
+    r.fillCircle(cx, cy, rad)
+    r.setColor(#FFFFFFFF)
+    r.fillCircle(cx - rad * 0.3, cy - rad * 0.3, rad * 0.25)
+    r.setColor(#14141CFF)
+    r.drawLine(cx - rad, cy, cx + rad, cy)
+    r.drawLine(cx, cy - rad, cx, cy + rad)
+    r.drawLine(cx - rad * 0.7, cy - rad * 0.7, cx + rad * 0.7, cy + rad * 0.7)
+    r.drawLine(cx - rad * 0.7, cy + rad * 0.7, cx + rad * 0.7, cy - rad * 0.7)
+    if wrong {
+        r.setColor(#FF3B3BFF)
+        r.drawLine(cx - rad, cy - rad, cx + rad, cy + rad)
+        r.drawLine(cx - rad, cy + rad, cx + rad, cy - rad)
+    }
+}
+
+func drawFlag(Renderer r, float x, float y, float s) {
+    float cx = x + s / 2.0
+    float cy = y + s / 2.0
+    float topY = cy - s * 0.28
+    float botY = cy + s * 0.24
+    // 旗杆
+    r.setColor(#2A2A2AFF)
+    r.fillRect(cx - 1.5, topY, 3.0, botY - topY + 2.0)
+    // 旗布（三角）
+    float px = cx - 1.5
+    r.setColor(#E23B3BFF)
+    r.drawLine(px, topY, px + s * 0.30, topY + s * 0.11)
+    r.drawLine(px + s * 0.30, topY + s * 0.11, px, topY + s * 0.22)
+    r.drawLine(px, topY + s * 0.22, px, topY)
+}
+
+func drawCell(Game g, Renderer r, int rr, int cc) {
+    float x = g.boardX + _float(cc) * g.cell
+    float y = g.boardY + _float(rr) * g.cell
+    float s = g.cell
+    int i = rr * g.cols + cc
+    int st = g.state[i]
+
+    if st == 1 {
+        // 已翻开 —— 凹陷感（上/左暗，下/右亮，像被按下去）
+        r.setColor(COL_REVEAL)
+        r.fillRect(x, y, s, s)
+        r.setColor(COL_BEVEL_D)
+        r.fillRect(x, y, s, 2.0)            // 上缘暗
+        r.fillRect(x, y, 2.0, s)            // 左缘暗
+        r.setColor(COL_BEVEL_L)
+        r.fillRect(x, y + s - 2.0, s, 2.0)  // 下缘亮
+        r.fillRect(x + s - 2.0, y, 2.0, s)  // 右缘亮
+        if g.mine[i] {
+            drawMine(r, x + s / 2.0, y + s / 2.0, s * 0.32, false)
+        } else if g.adj[i] > 0 {
+            drawNumber(g, r, x, y, s, g.adj[i])
+        }
+    } else {
+        // 隐藏 / 插旗 —— 凸起感（上/左亮，下/右暗，像按键浮起）
+        r.setColor(COL_HIDDEN)
+        r.fillRect(x, y, s, s)
+        r.setColor(COL_BEVEL_L)
+        r.fillRect(x, y, s, 2.0)            // 上缘亮
+        r.fillRect(x, y, 2.0, s)            // 左缘亮
+        r.setColor(COL_BEVEL_D)
+        r.fillRect(x, y + s - 2.0, s, 2.0)  // 下缘暗
+        r.fillRect(x + s - 2.0, y, 2.0, s)  // 右缘暗
+        if st == 2 {
+            if g.over and not g.mine[i] {
+                drawMine(r, x + s / 2.0, y + s / 2.0, s * 0.30, true)   // 错旗：标错的雷
+            } else {
+                drawFlag(r, x, y, s)
+            }
+        }
+        if g.over and g.mine[i] and st != 2 {
+            drawMine(r, x + s / 2.0, y + s / 2.0, s * 0.32, false)       // 失败揭示未插旗的雷
+        }
+        // 鼠标悬停高亮
+        if not g.over and st == 0 {
+            int hc = _int((g.mx - g.boardX) / g.cell)
+            int hr = _int((g.my - g.boardY) / g.cell)
+            if hc == cc and hr == rr and g.mx >= g.boardX and g.my >= g.boardY {
+                r.setColorFloat(1.0, 1.0, 1.0, 0.12)
+                r.fillRect(x, y, s, s)
+            }
+        }
+    }
+
+    // 触雷格红底强调
+    if g.over and not g.won and rr == g.lostR and cc == g.lostC {
+        r.setColor(COL_MINE_BAD)
+        r.fillRect(x, y, s, s)
+        drawMine(r, x + s / 2.0, y + s / 2.0, s * 0.32, false)
+    }
+}
+
+// 三位数字格式化（支持负数，如 -05）
+func pad3(int v): string {
+    if v < 10 { return "00" + _str(v) }
+    if v < 100 { return "0" + _str(v) }
+    return _str(v)
+}
+func pad2(int v): string {
+    if v < 10 { return "0" + _str(v) }
+    return _str(v)
+}
+func format3(int v): string {
+    if v < 0 {
+        int a = -v
+        if a > 99 { a = 99 }
+        return "-" + pad2(a)
+    }
+    if v > 999 { v = 999 }
+    return pad3(v)
+}
+
+func drawDigitBox(Game g, Renderer r, float x, float y, float w, float h, int v) {
+    r.setColor(COL_DIGIT_BG)
+    r.fillRect(x, y, w, h)
+    string s = format3(v)
+    var[float, float](mw, mh) = g.font.measureString(s)
+    float tx = x + (w - mw) / 2.0
+    float ty = y + (h - mh) / 2.0
+    r.drawText(g.font, s, tx, ty, COL_DIGIT)
+}
+
+func drawFace(Game g, Renderer r, float cx, float cy, float rad) {
+    int mood = 0
+    if g.over { if g.won { mood = 1 } else { mood = 2 } }
+    r.setColor(COL_GOLD)
+    r.fillCircle(cx, cy, rad)
+    float ex1 = cx - 6.0, ex2 = cx + 6.0, ey = cy - 4.0
+    r.setColor(#2A2A2AFF)
+    if mood == 2 {
+        // X 眼
+        r.drawLine(ex1 - 2.5, ey - 2.5, ex1 + 2.5, ey + 2.5)
+        r.drawLine(ex1 - 2.5, ey + 2.5, ex1 + 2.5, ey - 2.5)
+        r.drawLine(ex2 - 2.5, ey - 2.5, ex2 + 2.5, ey + 2.5)
+        r.drawLine(ex2 - 2.5, ey + 2.5, ex2 + 2.5, ey - 2.5)
+    } else {
+        r.fillCircle(ex1, ey, 2.6)
+        r.fillCircle(ex2, ey, 2.6)
+    }
+    // 嘴
+    if mood == 1 {
+        r.drawLine(cx - 7.0, cy + 2.0, cx, cy + 7.0)
+        r.drawLine(cx, cy + 7.0, cx + 7.0, cy + 2.0)
+    } else if mood == 2 {
+        r.drawLine(cx - 6.0, cy + 7.0, cx, cy + 3.0)
+        r.drawLine(cx, cy + 3.0, cx + 6.0, cy + 7.0)
+    } else {
+        r.drawLine(cx - 5.0, cy + 3.0, cx, cy + 6.0)
+        r.drawLine(cx, cy + 6.0, cx + 5.0, cy + 3.0)
+    }
+}
+
+func drawTopBar(Game g, Renderer r) {
+    r.setColor(COL_BAR)
+    r.fillRect(0.0, 0.0, g.winW, BAR_H)
+    drawDigitBox(g, r, MARGIN, (BAR_H - 28.0) / 2.0, 54.0, 28.0, g.mines - g.flags)
+    int sec = g.timeFrames / 60
+    drawDigitBox(g, r, g.winW - MARGIN - 54.0, (BAR_H - 28.0) / 2.0, 54.0, 28.0, sec)
+    drawFace(g, r, g.winW / 2.0, BAR_H / 2.0, 18.0)
+}
+
+func drawMenuButton(Game g, Renderer r, float x, float y, float w, float h, string label, bool hover) {
+    int fill = 0x2A2A3CFF
+    if hover { fill = 0x3A3A52FF }
+    r.setColor(fill)
+    r.fillRect(x, y, w, h)
+    if hover { r.setColor(COL_GOLD) } else { r.setColor(0x55556EFF) }
+    r.drawRect(x, y, w, h)
+    var[float, float](tw, th) = g.font.measureString(label)
+    float ty = y + (h - th) / 2.0
+    r.drawTextCentered(g.font, label, x, w, ty, COL_TEXT)
+}
+
+func drawMenu(Game g, Renderer r) {
+    if not g.font.ok { return }
+    r.setColor(COL_BG)
+    r.clear()
+    r.drawTextCentered(g.font, "扫雷  Minesweeper", 0.0, MENU_W, 56.0, COL_ACCENT)
+    r.drawTextCentered(g.font, "选择难度开始游戏", 0.0, MENU_W, 90.0, COL_SUB)
+    for 0 : 2 to i {
+        Array[float] rect = menuRect(i)
+        bool hover = pointInRect(g.mx, g.my, rect[0], rect[1], rect[2], rect[3])
+        drawMenuButton(g, r, rect[0], rect[1], rect[2], rect[3], diffName(i), hover)
+    }
+    r.drawTextCentered(g.font, "左键 翻开    右键 插旗", 0.0, MENU_W, MENU_H - 70.0, COL_SUB)
+    r.drawTextCentered(g.font, "数字键 切换难度    R 重开    ESC 退出", 0.0, MENU_W, MENU_H - 44.0, COL_SUB)
+    core.requestRedraw()
+}
+
+func renderGame(Game g, Renderer r) {
+    if g.scene == "menu" { drawMenu(g, r); return }
+    if not g.font.ok { return }
+    r.setColor(COL_BG)
+    r.clear()
+    drawTopBar(g, r)
+    for 0 : (g.rows - 1) to rr {
+        for 0 : (g.cols - 1) to cc {
+            drawCell(g, r, rr, cc)
+        }
+    }
+    core.requestRedraw()
+}
+
+// ==================== 事件 ====================
+func startGame(Game g, Window win, int d) {
+    applyDifficulty(g, d)
+    win.setSize(_int(g.winW), _int(g.winH))
+    newGame(g)
+    g.scene = "play"
+}
+
+func handleEvent(Game g, Window win, Event ev): bool {
+    if ev.isQuit() or ev.isWindowClose() { return false }
+
+    if ev.isKeyDown() {
+        int sc = ev.scancode()
+        if sc == Scancode.ESCAPE {
+            if g.scene == "menu" { return false }
+            g.scene = "menu"
+            g.winW = MENU_W; g.winH = MENU_H
+            win.setSize(_int(MENU_W), _int(MENU_H))
+            return true
+        }
+        if g.scene == "menu" {
+            if sc == Scancode._1 { startGame(g, win, 0); return true }
+            if sc == Scancode._2 { startGame(g, win, 1); return true }
+            if sc == Scancode._3 { startGame(g, win, 2); return true }
+            return true
+        }
+        // 对局中
+        if sc == Scancode.R { newGame(g); return true }
+        if sc == Scancode._1 { startGame(g, win, 0); return true }
+        if sc == Scancode._2 { startGame(g, win, 1); return true }
+        if sc == Scancode._3 { startGame(g, win, 2); return true }
+    }
+
+    if ev.isMouseButtonDown() {
+        var[float, float](mx, my) = ev.mousePos()
+        int btn = ev.mouseButton()
+        if g.scene == "menu" {
+            for 0 : 2 to i {
+                Array[float] rect = menuRect(i)
+                if pointInRect(mx, my, rect[0], rect[1], rect[2], rect[3]) {
+                    startGame(g, win, i)
+                    return true
+                }
+            }
+            return true
+        }
+        // 笑脸按钮 → 重开
+        float fcx = g.winW / 2.0
+        float fcy = BAR_H / 2.0
+        float ddx = mx - fcx
+        float ddy = my - fcy
+        if ddx * ddx + ddy * ddy <= 18.0 * 18.0 { newGame(g); return true }
+        // 棋盘内
+        if mx >= g.boardX and mx < g.boardX + _float(g.cols) * g.cell
+           and my >= g.boardY and my < g.boardY + _float(g.rows) * g.cell {
+            int c = _int((mx - g.boardX) / g.cell)
+            int r = _int((my - g.boardY) / g.cell)
+            if btn == 1 {
+                int i = r * g.cols + c
+                if g.state[i] == 1 and g.adj[i] > 0 { chord(g, r, c) }
+                else { reveal(g, r, c) }
+            } else if btn == 3 {
+                toggleFlag(g, r, c)
+            }
+        }
+    }
+
+    if ev.isMouseMotion() {
+        var[float, float](mx, my) = ev.mousePos()
+        g.mx = mx
+        g.my = my
+    }
+
+    return true
+}
+
+func updateGame(Game g) {
+    if g.scene != "play" { return }
+    if g.placed and not g.over { g.timeFrames = g.timeFrames + 1 }
+}
+
+// ==================== 主函数 ====================
+main() {
+    var win = SDL3.createWindow({
+        title: "扫雷 — 选择难度",
+        w: _int(MENU_W),
+        h: _int(MENU_H)
+    })
+    if not win.ok {
+        print("[错误] 窗口创建失败")
+        return
+    }
+
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(18.0)
+
+    var g = new Game()
+    g.font = font
+    g.frameCount = 0
+    g.mx = -10.0
+    g.my = -10.0
+    g.scene = "menu"
+    g.winW = MENU_W
+    g.winH = MENU_H
+
+    win.setMaxFPS(60)
+
+    print("[OK] 扫雷启动成功!")
+    print("     左键 翻开, 右键 插旗, 数字键 切换难度, R 重开, ESC 返回菜单")
+
+    win.run(
+        func(Event ev): bool {
+            return handleEvent(g, win, ev)
+        },
+        func(Renderer r) {
+            updateGame(g)
+            g.frameCount = g.frameCount + 1
+            renderGame(g, r)
+        }
+    )
+
+    if font.ok { font.close() }
+    win.destroy()
+    SDL3.quit()
+    print("扫雷退出")
+}
