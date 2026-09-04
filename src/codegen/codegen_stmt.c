@@ -2046,8 +2046,17 @@ static void gen_return(CodeGen* gen, Ast* ast) {
             emit_byte(gen, OP_NULL, ast->line);
         }
         emit_bytes_2(gen, OP_SET_LOCAL_POP, gen->inline_result_slot, ast->line);
+        // NRVO: 如果 return 直接返回局部变量, 跳过该变量的析构
+        int nrvo_skip = -1;
+        if (ast->u.ret && ast->u.ret->kind == AST_VAR) {
+            SymRef* ref = &ast->u.ret->u.var.ref;
+            if (ref->kind == SYM_LOCAL || ref->kind == SYM_PARAM) {
+                nrvo_skip = ref->index;
+            }
+        }
         // 逆序调用本层内联期间新增的析构条目
         for (int i = gen->dtor_count - 1; i >= gen->inline_dtor_base; i--) {
+            if (gen->dtor_entries[i].local_slot == nrvo_skip) continue;
             emit_byte(gen, OP_DTOR_LOCAL, ast->line);
             emit_byte(gen, (gen->dtor_entries[i].local_slot >> 8) & 0xff, ast->line);
             emit_byte(gen, gen->dtor_entries[i].local_slot & 0xff, ast->line);
@@ -2075,8 +2084,17 @@ static void gen_return(CodeGen* gen, Ast* ast) {
             }
             emit_bytes_2(gen, OP_SET_LOCAL, gen->dtor_temp_slot, ast->line);
         }
+        // NRVO: 如果 return 直接返回局部变量, 跳过该变量的析构
+        int nrvo_skip = -1;
+        if (ast->u.ret && ast->u.ret->kind == AST_VAR) {
+            SymRef* ref = &ast->u.ret->u.var.ref;
+            if (ref->kind == SYM_LOCAL || ref->kind == SYM_PARAM) {
+                nrvo_skip = ref->index;
+            }
+        }
         // 逆序调用所有析构函数
         for (int i = gen->dtor_count - 1; i >= 0; i--) {
+            if (gen->dtor_entries[i].local_slot == nrvo_skip) continue;
             emit_byte(gen, OP_DTOR_LOCAL, ast->line);
             emit_byte(gen, (gen->dtor_entries[i].local_slot >> 8) & 0xff, ast->line);
             emit_byte(gen, gen->dtor_entries[i].local_slot & 0xff, ast->line);
@@ -2121,8 +2139,17 @@ static void gen_return_multi(CodeGen* gen, Ast* ast) {
             emit_byte(gen, OP_NULL, ast->line);
         }
         emit_bytes_2(gen, OP_SET_LOCAL_POP, gen->inline_result_slot, ast->line);
+        // NRVO: 如果 return 直接返回局部变量, 跳过该变量的析构
+        int nrvo_skip = -1;
+        if (count > 0 && ast->u.ret_multi.exprs[0]->kind == AST_VAR) {
+            SymRef* ref = &ast->u.ret_multi.exprs[0]->u.var.ref;
+            if (ref->kind == SYM_LOCAL || ref->kind == SYM_PARAM) {
+                nrvo_skip = ref->index;
+            }
+        }
         // 逆序调用本层内联期间新增的析构条目
         for (int i = gen->dtor_count - 1; i >= gen->inline_dtor_base; i--) {
+            if (gen->dtor_entries[i].local_slot == nrvo_skip) continue;
             emit_byte(gen, OP_DTOR_LOCAL, ast->line);
             emit_byte(gen, (gen->dtor_entries[i].local_slot >> 8) & 0xff, ast->line);
             emit_byte(gen, gen->dtor_entries[i].local_slot & 0xff, ast->line);
@@ -2147,8 +2174,25 @@ static void gen_return_multi(CodeGen* gen, Ast* ast) {
             gen_expr(gen, ast->u.ret_multi.exprs[i]);
             emit_bytes_2(gen, OP_SET_LOCAL_POP, temp_slots[i], ast->line);
         }
+        // NRVO: 收集所有直接返回的局部变量, 跳过它们的析构
+        int nrvo_slots[16];
+        int nrvo_count = 0;
+        for (int j = 0; j < count && j < 16; j++) {
+            Ast* expr = ast->u.ret_multi.exprs[j];
+            if (expr && expr->kind == AST_VAR) {
+                SymRef* ref = &expr->u.var.ref;
+                if (ref->kind == SYM_LOCAL || ref->kind == SYM_PARAM) {
+                    nrvo_slots[nrvo_count++] = ref->index;
+                }
+            }
+        }
         // 逆序调用析构函数
         for (int i = gen->dtor_count - 1; i >= 0; i--) {
+            int skip = 0;
+            for (int j = 0; j < nrvo_count; j++) {
+                if (gen->dtor_entries[i].local_slot == nrvo_slots[j]) { skip = 1; break; }
+            }
+            if (skip) continue;
             emit_byte(gen, OP_DTOR_LOCAL, ast->line);
             emit_byte(gen, (gen->dtor_entries[i].local_slot >> 8) & 0xff, ast->line);
             emit_byte(gen, gen->dtor_entries[i].local_slot & 0xff, ast->line);

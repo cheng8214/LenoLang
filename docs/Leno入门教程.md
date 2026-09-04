@@ -5813,6 +5813,76 @@ g.run(...)        // ⚠️ 悬空引用，会崩溃！
 
 > **最佳实践**：析构函数管理资源的 struct 尽量作为局部变量使用，不要将引用存到更外层的作用域。
 
+#### return 返回值优化（NRVO）
+
+当你**直接返回**一个局部 struct 变量时（如 `return r`），Leno 会自动执行**返回值优化**，跳过该变量的析构函数。因为值的所有权已经转移给调用者，局部变量不应在 return 时被销毁。
+
+```leno
+int alive = 0
+
+struct Box {
+    int value = 0
+
+    func Box() {
+        alive = alive + 1
+    }
+
+    func ~Box() {
+        alive = alive - 1
+    }
+}
+
+// 直接返回局部变量 —— 触发 NRVO，return 时跳过析构
+func makeBox(int v): Box {
+    var b = new Box(value=v)
+    return b          // NRVO：b 的析构在 return 时不触发
+}
+
+main() {
+    assert_eq(alive, 0)
+
+    var box = makeBox(42)
+    assert_eq(alive, 1, "makeBox 中 new Box() 调用构造，return 时析构被跳过")
+
+    // box 出作用域时才触发析构
+    print(alive)      // 0
+}
+```
+
+**NRVO 触发条件**：
+
+- `return <局部变量>` —— 变量名直接作为 return 表达式
+- `return <表达式>` —— 如 `return new Box()`，不会触发 NRVO，因为是临时对象
+- `return a, b` —— 多返回值中每个返回的局部变量都会独立判断
+
+**注意事项**：
+
+> **⚠️ NRVO 只跳过 return 时的析构，作用域结束时仍要析构**
+>
+> NRVO 跳过的是 **return 语句处的析构**，不是 **作用域结束处的析构**。
+>
+> ```leno
+> func makeBox(int v): Box {
+>     var b = new Box(value=v)
+>     return b          // NRVO 跳过
+> }
+> // 调用者得到 box 后，box 出作用域时析构
+> ```
+>
+> 只有在直接返回局部变量时编译器才会应用 NRVO。如果返回的是表达式或临时值，不会触发：
+>
+> ```leno
+> func makeBoxExpr(int v): Box {
+>     return new Box(value=v)   // 不会触发 NRVO，临时对象在 return 时析构
+> }
+>
+> main() {
+>     var box = makeBoxExpr(42)
+>     // makeBoxExpr 中 new Box() 没有局部变量承载，返回时无析构可跳过
+>     // 析构在 box 出作用域时触发
+> }
+> ```
+
 ### struct 常见问题
 
 **Q: 为什么自引用 struct 必须设 null 默认值？**

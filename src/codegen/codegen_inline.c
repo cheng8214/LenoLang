@@ -513,9 +513,18 @@ int try_inline_call(CodeGen* gen, Ast* ast, Ast* func_def) {
             }
         }
 
+        // NRVO: 如果快速路径直接返回局部变量, 跳过该变量的析构
+        int nrvo_skip = -1;
+        if (fast_return_expr && fast_return_expr->kind == AST_VAR) {
+            SymRef* ref = &fast_return_expr->u.var.ref;
+            if (ref->kind == SYM_LOCAL || ref->kind == SYM_PARAM) {
+                nrvo_skip = ref->index;
+            }
+        }
         // 快速路径析构：逆序调用本层内联期间新增的析构条目
         while (gen->dtor_count > gen->inline_dtor_base) {
             gen->dtor_count--;
+            if (gen->dtor_entries[gen->dtor_count].local_slot == nrvo_skip) continue;
             emit_byte(gen, OP_DTOR_LOCAL, ast->line);
             emit_byte(gen, (gen->dtor_entries[gen->dtor_count].local_slot >> 8) & 0xff, ast->line);
             emit_byte(gen, gen->dtor_entries[gen->dtor_count].local_slot & 0xff, ast->line);

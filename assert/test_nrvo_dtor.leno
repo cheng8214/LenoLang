@@ -1,0 +1,52 @@
+// NRVO 测试: return 局部 struct 变量时, 该变量的析构函数不应被调用
+// 所有权转移给调用者, 析构应由调用者负责
+
+int alive = 0
+
+struct Resource {
+    int handle = 0
+
+    func Resource() {
+        alive = alive + 1
+    }
+
+    func ~Resource() {
+        alive = alive - 1
+    }
+}
+
+// 直接 return 局部变量 -> NRVO, 析构不应触发
+func make(): Resource {
+    var r = new Resource()
+    return r
+}
+
+// 直接 return 表达式 -> 临时对象, 析构在 return 后不应触发 (值已转移)
+func makeExpr(): Resource {
+    return new Resource()
+}
+
+// 多返回值中的 NRVO
+func makeTwo(): [Resource, Resource] {
+    var a = new Resource()
+    var b = new Resource()
+    return a, b
+}
+
+main() {
+    assert_eq(alive, 0)
+
+    // 测试1: NRVO - return 局部变量
+    var r1 = make()
+    assert_eq(alive, 1, "NRVO: return local var - dtor should NOT fire")
+
+    // 测试2: return 表达式
+    var r2 = makeExpr()
+    assert_eq(alive, 2, "return expr - dtor should NOT fire")
+
+    // 测试3: 多返回值 NRVO
+    var[Resource, Resource](a, b) = makeTwo()
+    assert_eq(alive, 4, "multi-return NRVO - both dtors should NOT fire")
+
+    print("test_nrvo_dtor passed")
+}
