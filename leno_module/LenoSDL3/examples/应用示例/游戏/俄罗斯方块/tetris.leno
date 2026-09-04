@@ -43,7 +43,7 @@ var ST_OVER = 3
 
 // 方块类型：0=I 1=O 2=T 3=S 4=Z 5=J 6=L
 var CLEAR_FLASH = 8       // 消行闪烁帧数
-var WARN_ROWS    = 2       // 顶部危险：已落方块堆到最上几行即警告
+var WARN_ROWS    = 4       // 顶部危险：已落方块堆到最上几行即警告（数值越大越早起提醒）
 
 // 调色板（按方块类型索引 0..6）
 Array[float] PAL_R = []
@@ -324,6 +324,11 @@ func spawnPiece(Game g) {
     // 新方块一出生就重叠 → 顶到天，游戏结束
     if collides(g, g.curShape, g.curX, g.curY) {
         g.state = ST_OVER
+        // 结束时若警告音乐还在循环，立即停掉
+        if g.warnOn {
+            g.warnOn = false
+            g.sfxWarn.stop()
+        }
     }
 }
 
@@ -447,6 +452,11 @@ func newGame(): Game {
 
 func startGame(Game g) {
     g.state = ST_PLAY
+    // 重开时若上一局警告还在循环，确保停掉并复位
+    if g.warnOn {
+        g.warnOn = false
+        g.sfxWarn.stop()
+    }
     g.board = zeroBoard()
     g.bag = []
     g.score = 0
