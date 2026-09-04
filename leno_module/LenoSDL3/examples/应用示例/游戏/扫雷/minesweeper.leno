@@ -17,7 +17,7 @@ import "../../../../lib/sdl_core.leno" as core
 use SDL3.(Event, Renderer, WindowFlag, Scancode, Font, Window)
 import rands
 import "../../../../../LenoMusic/lib/Music.leno" as audio
-use audio.Sound
+use audio.(Sound, Sfx)
 import dirs
 
 // ==================== 布局常量 ====================
@@ -62,8 +62,8 @@ struct Game {
     string scene         // "menu" 菜单 / "play" 对局
     float mx, my         // 鼠标位置（菜单悬停/格子高亮）
     int  lostR, lostC    // 触雷格坐标
-    Sound sfxClick       // 点击方块音效
-    Sound sfxBoom        // 踩雷爆炸音效
+    Sfx   sfxClick       // 点击方块音效
+    Sfx   sfxBoom        // 踩雷爆炸音效
     bool  audioOk
 }
 
@@ -629,10 +629,8 @@ main() {
     // 初始化音效：用脚本目录拼接绝对路径（现已支持中文路径）
     string sdir = dirs.script_dir()
     g.audioOk  = false
-    g.sfxClick = audio.createSound(sdir + "/music/anxia.mp3")
-    g.sfxClick.setVolume(0.5)
-    g.sfxBoom  = audio.createSound(sdir + "/music/baozha.mp3")
-    g.sfxBoom.setVolume(0.6)
+    g.sfxClick = audio.createSfx(sdir + "/music/anxia.mp3", 6, 0.5)
+    g.sfxBoom  = audio.createSfx(sdir + "/music/baozha.mp3", 6, 0.6)
     g.audioOk  = g.sfxClick.ok
     if g.audioOk { print("[OK] 音效加载完成") }
     else { print("[警告] 音效初始化失败，将以静音模式运行") }

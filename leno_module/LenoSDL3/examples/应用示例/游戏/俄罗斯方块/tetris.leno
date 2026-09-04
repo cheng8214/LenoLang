@@ -20,7 +20,7 @@ import "../../../../lib/sdl_core.leno" as core
 use SDL3.(Event, Renderer, WindowFlag, Scancode, Font)
 import rands
 import "../../../../../LenoMusic/lib/Music.leno" as audio
-use audio.Sound
+use audio.(Sound, Sfx)
 import dirs
 
 // ==================== 常量 ====================
@@ -81,63 +81,6 @@ struct Game {
     bool  audioOk
     bool  warnOn          // 是否处于顶部危险警告状态
     int   warnCd          // 警告重触发冷却（帧），防抖动重复
-}
-
-// 短音效池：预建多个实例轮转，每次播放先 stop+seek(0) 再 play，
-// 保证即使上一个还没播完也能从头重新响，解决“连按被吞没声音”的问题
-struct Sfx {
-    Array[Sound] pool
-    int idx
-    bool ok
-    float vol
-
-    func setup(string path, int n, float v) {
-        pool = []
-        ok = false
-        vol = v
-        for 0 : n - 1 to i {
-            Sound s = audio.createSound(path)
-            if s.ok {
-                s.setVolume(v)
-                pool.add(s)
-                ok = true
-            }
-        }
-        idx = 0
-    }
-
-    func play() {
-        if not ok { return }
-        int cnt = pool.len()
-        if cnt == 0 { return }
-        int chosen = -1
-        int i = 0
-        while i < cnt {
-            int j = idx + 1 + i
-            if j >= cnt { j = j - cnt }
-            if not pool[j].isPlaying() { chosen = j; break }
-            i = i + 1
-        }
-        if chosen == -1 {
-            idx = idx + 1
-            if idx >= cnt { idx = 0 }
-            chosen = idx
-        } else {
-            idx = chosen
-        }
-        pool[chosen].stop()
-        pool[chosen].seek(0)
-        pool[chosen].play()
-    }
-
-    func uninit() {
-        if pool.len() > 0 {
-            for 0 : pool.len() - 1 to i {
-                pool[i].uninit()
-            }
-        }
-        pool = []
-    }
 }
 
 // ==================== 形状与调色板 ====================

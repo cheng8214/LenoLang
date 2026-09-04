@@ -8,6 +8,7 @@ import "music_player.leno" as player
 import "music_decoder.leno" as decoder
 import "music_generator.leno" as gen
 import "music_filter.leno" as flt
+import "music_sfx.leno" as sfx
 
 // ==================== Re-export types ====================
 use core.miniaudio
@@ -15,6 +16,7 @@ use player.(Sound, Engine)
 use decoder.Decoder
 use gen.(Waveform, Noise)
 use flt.(LPF, HPF)
+use sfx.Sfx
 
 // ==================== Re-export constants ====================
 export var FORMAT_F32 = core.FORMAT_F32
@@ -40,6 +42,10 @@ export func hasVorbis(): bool { return core.hasVorbis() }
 export func createSound(string p): Sound { return player.createSound(p) }
 export func createEngine(): Engine { return player.createEngine() }
 export func quickPlay(string p, int sec): bool { return player.quickPlay(p, sec) }
+
+// ==================== SFX (音效池) ====================
+// 预建多实例轮转，避免连续触发同一音效被吞。详见 music_sfx.leno
+export func createSfx(string p, int n, float v): Sfx { return sfx.createSfx(p, n, v) }
 
 // ==================== Decoder ====================
 export func createDecoder(string p): Decoder { return decoder.createDecoder(p) }

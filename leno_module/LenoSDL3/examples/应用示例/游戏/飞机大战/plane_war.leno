@@ -25,7 +25,7 @@ import rands
 import files
 import dirs
 import "../../../../../LenoMusic/lib/Music.leno" as audio
-use audio.Sound
+use audio.(Sound, Sfx)
 
 // ==================== 常量 ====================
 
@@ -159,10 +159,10 @@ struct Game {
     // 音频
     Sound bgm
     Sound bossBgm
-    Sound sfxShoot
-    Sound sfxHit
-    Sound sfxExplode
-    Sound sfxDeath
+    Sfx   sfxShoot
+    Sfx   sfxHit
+    Sfx   sfxExplode
+    Sfx   sfxDeath
     bool audioOk
 
     Font font
@@ -279,17 +279,10 @@ func loadResources(Game g, Ptr[u8] renderer) {
     g.bossBgm.setLooping(true)
     g.bossBgm.setVolume(0.5)
 
-    g.sfxShoot = audio.createSound("bkmusic/zq.wav")
-    g.sfxShoot.setVolume(0.3)
-
-    g.sfxHit = audio.createSound("bkmusic/chi.wav")
-    g.sfxHit.setVolume(0.4)
-
-    g.sfxExplode = audio.createSound("bkmusic/db.wav")
-    g.sfxExplode.setVolume(0.5)
-
-    g.sfxDeath = audio.createSound("bkmusic/si.wav")
-    g.sfxDeath.setVolume(0.5)
+    g.sfxShoot = audio.createSfx("bkmusic/zq.wav", 8, 0.3)
+    g.sfxHit   = audio.createSfx("bkmusic/chi.wav", 6, 0.4)
+    g.sfxExplode = audio.createSfx("bkmusic/db.wav", 6, 0.5)
+    g.sfxDeath = audio.createSfx("bkmusic/si.wav", 6, 0.5)
 
     g.audioOk = g.bgm.ok
     if g.audioOk {
