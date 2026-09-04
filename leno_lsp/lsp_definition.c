@@ -335,10 +335,13 @@ static bool find_definition_in_module(const char* module_path, const char* curre
     ModuleSymbolTable* sym_table = module_symbol_table_create(full_path);
     if (!sym_table) return false;
 
+    fprintf(stderr, "[DEF] scan module=%s word=%s\n", full_path, word); fflush(stderr);
     if (module_symbol_table_scan(sym_table, current_file) != 0) {
+        fprintf(stderr, "[DEF] scan FAILED module=%s\n", full_path); fflush(stderr);
         module_symbol_table_destroy(sym_table);
         return false;
     }
+    fprintf(stderr, "[DEF] scan OK module=%s structs=%d funcs=%d\n", full_path, sym_table->struct_count, sym_table->func_count); fflush(stderr);
 
     bool found = false;
     
@@ -479,6 +482,7 @@ static bool find_definition_in_module(const char* module_path, const char* curre
 
     module_symbol_table_destroy(sym_table);
     // 符号表查找失败时，仍然尝试读文件定位（方法定义在 struct 内部，符号表可能未收录）
+    fprintf(stderr, "[DEF] sym_table lookup failed, trying text search word=%s\n", word); fflush(stderr);
 
     char* module_content = read_module_file(module_path, current_file);
     if (!module_content) return false;
@@ -498,10 +502,13 @@ static bool find_definition_in_module(const char* module_path, const char* curre
     // 检查符号表中是否有 struct 字段或方法的行号
     // （字段/方法可能定义在子模块中，但符号表通过 use/import 已传导）
     // 重新扫描符号表以获取字段/方法行号
+    fprintf(stderr, "[DEF] text search failed, trying field_table scan word=%s\n", word); fflush(stderr);
     module_symbol_table_reset_scan_stack();
     ModuleSymbolTable* field_table = module_symbol_table_create(full_path);
     if (field_table) {
+        fprintf(stderr, "[DEF] field_table scan START word=%s\n", word); fflush(stderr);
         if (module_symbol_table_scan(field_table, current_file) == 0) {
+            fprintf(stderr, "[DEF] field_table scan OK word=%s\n", word); fflush(stderr);
             // 遍历所有 struct 查找字段
             for (int i = 0; i < field_table->struct_count; i++) {
                 ModuleStructSymbol* st = &field_table->structs[i];
@@ -1320,6 +1327,7 @@ LspLocation* lsp_get_definition(const char* content, LspPosition pos, int* count
     bool module_prefix_matched = false;
     ImportEntry imports[MAX_IMPORTS];
     int import_count = extract_imports_from_content(content, imports, MAX_IMPORTS);
+    fprintf(stderr, "[DEF] import_count=%d module_prefix=%s lookup_word=%s\n", import_count, module_prefix ? module_prefix : "NULL", lookup_word); fflush(stderr);
     for (int i = 0; i < import_count && *count < capacity; i++) {
         LspRange mod_range;
         char full_path[MAX_PATH_LEN];
@@ -1331,6 +1339,7 @@ LspLocation* lsp_get_definition(const char* content, LspPosition pos, int* count
             module_prefix_matched = true;
         }
         
+        fprintf(stderr, "[DEF] find_definition_in_module alias=%s path=%s word=%s\n", imports[i].alias, imports[i].file_path, lookup_word); fflush(stderr);
         if (find_definition_in_module(imports[i].file_path,
                                       file_path[0] ? file_path : NULL,
                                       lookup_word, &mod_range, full_path, sizeof(full_path))) {
@@ -1340,6 +1349,7 @@ LspLocation* lsp_get_definition(const char* content, LspPosition pos, int* count
             locations[*count].range = mod_range;
             (*count)++;
         }
+        fprintf(stderr, "[DEF] find_definition_in_module done count=%d\n", *count); fflush(stderr);
     }
 
     // 如果 module_prefix 不匹配任何导入别名（说明是实例变量如 _ctxMenu.method），

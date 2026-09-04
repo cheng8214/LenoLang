@@ -75,192 +75,214 @@
                 // 判断批量模式: use module.(A, B, C) 还是 use module.Type
                 int batch_mode = (*p == '(');
                 if (batch_mode) p++; // skip '('
-                
-                // 循环处理每个类型名（单模式只循环一次，批量模式循环到 ')'）
+
+                // ---- 阶段 1：解析模块路径（只需一次） ----
+                // 在源码中反向查找 import "path" as alias 来解析模块路径
+                char resolved_path[1024] = {0};
+                {
+                    // 保存当前位置，用于限定 import 搜索范围
+                    const char* search_limit = p;
+                    char* import_search = source;
+                    while (import_search < search_limit) {
+                        if (strncmp(import_search, "import", 6) == 0 && (import_search[6] == ' ' || import_search[6] == '\t' || import_search[6] == '\"')) {
+                            import_search += 6;
+                            while (*import_search && (*import_search == ' ' || *import_search == '\t')) import_search++;
+                            if (*import_search == '"') {
+                                import_search++;
+                                const char* path_start = import_search;
+                                while (*import_search && *import_search != '"') import_search++;
+                                int path_len = (int)(import_search - path_start);
+                                import_search++; // skip closing "
+
+                                // 检查 as alias
+                                while (*import_search && (*import_search == ' ' || *import_search == '\t')) import_search++;
+                                if (strncmp(import_search, "as", 2) == 0 && (import_search[2] == ' ' || import_search[2] == '\t')) {
+                                    import_search += 2;
+                                    while (*import_search && (*import_search == ' ' || *import_search == '\t')) import_search++;
+                                    const char* as_start = import_search;
+                                    while (*import_search && (isalnum((unsigned char)*import_search) || *import_search == '_')) import_search++;
+                                    int as_len = (int)(import_search - as_start);
+                                    if (as_len == alias_len && strncmp(as_start, alias_name, alias_len) == 0) {
+                                        // 找到匹配的 import
+                                        if (path_len > 0 && path_len < 1023) {
+                                            memcpy(resolved_path, path_start, path_len);
+                                            resolved_path[path_len] = '\0';
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        if (*import_search) import_search++;
+                    }
+                }
+
+                // ---- 阶段 2：扫描依赖模块（只需一次） ----
+                ModuleSymbolTable* dep_table = NULL;
+                if (resolved_path[0]) {
+                    dep_table = module_symbol_table_create(resolved_path);
+                    if (dep_table) {
+                        if (module_symbol_table_scan(dep_table, normalized_current) != 0) {
+                            module_symbol_table_destroy(dep_table);
+                            dep_table = NULL;
+                        } else {
+                            // 记录依赖路径（含传递依赖，用于 .lenosymc 缓存失效判定）
+                            char dep_full_path[MAX_PATH_LEN] = {0};
+                            resolve_module_full_path(dep_full_path, MAX_PATH_LEN, resolved_path, normalized_current);
+                            module_symbol_table_add_dep(table, dep_full_path);
+                            for (int di = 0; di < dep_table->dep_count; di++) {
+                                module_symbol_table_add_dep(table, dep_table->dep_paths[di]);
+                            }
+                        }
+                    }
+                }
+
+                // ---- 阶段 3：循环处理每个类型名（复用同一个 dep_table） ----
                 while (1) {
                     if (batch_mode) {
-                        while (*p && (*p == ' ' || *p == '\t')) p++;
+                        // 跳过所有空白（含换行，支持跨行 use 语句）
+                        while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) {
+                            if (*p == '\n') cur_line++;
+                            p++;
+                        }
                         if (*p == ')') { p++; break; } // 批量模式结束
                     }
-                    
+
                     // 读类型名
                     const char* type_start = p;
                     while (*p && (isalnum((unsigned char)*p) || *p == '_')) p++;
                     int type_len = (int)(p - type_start);
-                    
+
                     if (type_len > 0 && type_len < 64) {
                         char type_name[64];
                         memcpy(type_name, type_start, type_len);
                         type_name[type_len] = '\0';
-                        
-                        // 在源码中反向查找 import "path" as alias 来解析模块路径
-                        char* import_search = source;
-                        char resolved_path[1024] = {0};
-                        while (import_search < p) {
-                            if (strncmp(import_search, "import", 6) == 0 && (import_search[6] == ' ' || import_search[6] == '\t' || import_search[6] == '\"')) {
-                                import_search += 6;
-                                while (*import_search && (*import_search == ' ' || *import_search == '\t')) import_search++;
-                                if (*import_search == '"') {
-                                    import_search++;
-                                    const char* path_start = import_search;
-                                    while (*import_search && *import_search != '"') import_search++;
-                                    int path_len = (int)(import_search - path_start);
-                                    import_search++; // skip closing "
-                                    
-                                    // 检查 as alias
-                                    while (*import_search && (*import_search == ' ' || *import_search == '\t')) import_search++;
-                                    if (strncmp(import_search, "as", 2) == 0 && (import_search[2] == ' ' || import_search[2] == '\t')) {
-                                        import_search += 2;
-                                        while (*import_search && (*import_search == ' ' || *import_search == '\t')) import_search++;
-                                        const char* as_start = import_search;
-                                        while (*import_search && (isalnum((unsigned char)*import_search) || *import_search == '_')) import_search++;
-                                        int as_len = (int)(import_search - as_start);
-                                        if (as_len == alias_len && strncmp(as_start, alias_name, alias_len) == 0) {
-                                            // 找到匹配的 import
-                                            if (path_len > 0 && path_len < 1023) {
-                                                memcpy(resolved_path, path_start, path_len);
-                                                resolved_path[path_len] = '\0';
+
+                        // 在已扫描的 dep_table 中查找类型
+                        if (dep_table) {
+                            // 查找 struct
+                            ModuleStructSymbol* s_sym = module_symbol_table_find_struct(dep_table, type_name);
+                            ModuleFaceSymbol* f_sym_ptr = module_symbol_table_find_face(dep_table, type_name);
+                            if (s_sym && !module_symbol_table_find_struct(table, type_name)) {
+                                module_symbol_table_add_struct(table, type_name,
+                                    s_sym->field_count, s_sym->fields,
+                                    s_sym->method_count, s_sym->methods,
+                                    s_sym->is_cstruct, s_sym->type_param_count, s_sym->type_param_names);
+                                // 将 use 导入的 struct/cstruct 名称添加到对应数组，使后续 export func 返回类型解析能识别
+                                if (s_sym->is_cstruct) {
+                                    mod_names_push_z(&cstruct_names, &cstruct_name_count, &cstruct_name_cap, type_name);
+                                } else {
+                                    mod_names_push_z(&struct_names, &struct_name_count, &struct_name_cap, type_name);
+                                }
+                                if (s_sym->impl_count > 0) {
+                                    ModuleStructSymbol* new_sym = module_symbol_table_find_struct(table, type_name);
+                                    if (new_sym) {
+                                        new_sym->impl_count = s_sym->impl_count;
+                                        new_sym->impl_names = (char**)malloc(sizeof(char*) * s_sym->impl_count);
+                                        for (int ii = 0; ii < s_sym->impl_count; ii++) {
+                                            new_sym->impl_names[ii] = strdup(s_sym->impl_names[ii]);
+                                        }
+                                    }
+                                }
+                                // 传导关联常量（module_symbol_table_add_struct 不含常量参数，需手动复制）
+                                if (s_sym->const_count > 0) {
+                                    ModuleStructSymbol* new_sym = module_symbol_table_find_struct(table, type_name);
+                                    if (new_sym && new_sym->const_count == 0) {
+                                        new_sym->const_count = s_sym->const_count;
+                                        new_sym->const_names = (char**)malloc(sizeof(char*) * s_sym->const_count);
+                                        new_sym->const_value_strs = (char**)calloc(s_sym->const_count, sizeof(char*));
+                                        for (int ci = 0; ci < s_sym->const_count; ci++) {
+                                            new_sym->const_names[ci] = strdup(s_sym->const_names[ci]);
+                                            if (s_sym->const_value_strs && s_sym->const_value_strs[ci]) {
+                                                new_sym->const_value_strs[ci] = strdup(s_sym->const_value_strs[ci]);
                                             }
-                                            break;
                                         }
                                     }
                                 }
                             }
-                            if (*import_search) import_search++;
-                        }
-                        
-                        // 扫描目标模块，查找类型
-                        if (resolved_path[0]) {
-                            ModuleSymbolTable* dep_table = module_symbol_table_create(resolved_path);
-                            if (dep_table) {
-                                // 使用入口函数扫描（会先检查 .lenosymc 磁盘缓存，命中则跳过源文件扫描）
-                                if (module_symbol_table_scan(dep_table, normalized_current) == 0) {
-                                    // 记录依赖路径（含传递依赖，用于 .lenosymc 缓存失效判定）
-                                    {
-                                        char dep_full_path[MAX_PATH_LEN] = {0};
-                                        resolve_module_full_path(dep_full_path, MAX_PATH_LEN, resolved_path, normalized_current);
-                                        module_symbol_table_add_dep(table, dep_full_path);
-                                        for (int di = 0; di < dep_table->dep_count; di++) {
-                                            module_symbol_table_add_dep(table, dep_table->dep_paths[di]);
+                            // 查找 face
+                            ModuleFaceSymbol* f_sym = module_symbol_table_find_face(dep_table, type_name);
+                            if (f_sym && !module_symbol_table_find_face(table, type_name)) {
+                                module_symbol_table_add_face(table, type_name,
+                                    f_sym->method_count, f_sym->methods, f_sym->type_param_count);
+                                // 将 use 导入的 face 名称添加到 face_names，使后续 export func 返回类型解析能识别
+                                mod_names_push_z(&face_names, &face_name_count, &face_name_cap, type_name);
+                            }
+                            // 查找 clib 类型（通过函数返回类型识别）
+                            if (!s_sym && !f_sym_ptr) {
+                                for (int fi = 0; fi < dep_table->func_count; fi++) {
+                                    ModuleFuncSymbol* func = &dep_table->funcs[fi];
+                                    if (func->return_type == TYPE_CLIB && func->return_struct_name &&
+                                        strcmp(func->return_struct_name, type_name) == 0) {
+                                        int already = 0;
+                                        for (int ci = 0; ci < clib_name_count; ci++) {
+                                            if (strcmp(clib_names[ci], type_name) == 0) { already = 1; break; }
                                         }
-                                    }
-                                    // 查找 struct
-                                    ModuleStructSymbol* s_sym = module_symbol_table_find_struct(dep_table, type_name);
-                                    ModuleFaceSymbol* f_sym_ptr = module_symbol_table_find_face(dep_table, type_name);
-                                    if (s_sym && !module_symbol_table_find_struct(table, type_name)) {
-                                        module_symbol_table_add_struct(table, type_name,
-                                            s_sym->field_count, s_sym->fields,
-                                            s_sym->method_count, s_sym->methods,
-                                            s_sym->is_cstruct, s_sym->type_param_count, s_sym->type_param_names);
-                                        // 将 use 导入的 struct/cstruct 名称添加到对应数组，使后续 export func 返回类型解析能识别
-                                        if (s_sym->is_cstruct) {
-                                            mod_names_push_z(&cstruct_names, &cstruct_name_count, &cstruct_name_cap, type_name);
-                                        } else {
-                                            mod_names_push_z(&struct_names, &struct_name_count, &struct_name_cap, type_name);
+                                        if (!already) {
+                                            mod_names_push_z(&clib_names, &clib_name_count, &clib_name_cap, type_name);
                                         }
-                                        if (s_sym->impl_count > 0) {
-                                            ModuleStructSymbol* new_sym = module_symbol_table_find_struct(table, type_name);
-                                            if (new_sym) {
-                                                new_sym->impl_count = s_sym->impl_count;
-                                                new_sym->impl_names = (char**)malloc(sizeof(char*) * s_sym->impl_count);
-                                                for (int ii = 0; ii < s_sym->impl_count; ii++) {
-                                                    new_sym->impl_names[ii] = strdup(s_sym->impl_names[ii]);
-                                                }
-                                            }
-                                        }
-                                        // 传导关联常量（module_symbol_table_add_struct 不含常量参数，需手动复制）
-                                        if (s_sym->const_count > 0) {
-                                            ModuleStructSymbol* new_sym = module_symbol_table_find_struct(table, type_name);
-                                            if (new_sym && new_sym->const_count == 0) {
-                                                new_sym->const_count = s_sym->const_count;
-                                                new_sym->const_names = (char**)malloc(sizeof(char*) * s_sym->const_count);
-                                                new_sym->const_value_strs = (char**)calloc(s_sym->const_count, sizeof(char*));
-                                                for (int ci = 0; ci < s_sym->const_count; ci++) {
-                                                    new_sym->const_names[ci] = strdup(s_sym->const_names[ci]);
-                                                    if (s_sym->const_value_strs && s_sym->const_value_strs[ci]) {
-                                                        new_sym->const_value_strs[ci] = strdup(s_sym->const_value_strs[ci]);
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    // 查找 face
-                                    ModuleFaceSymbol* f_sym = module_symbol_table_find_face(dep_table, type_name);
-                                    if (f_sym && !module_symbol_table_find_face(table, type_name)) {
-                                        module_symbol_table_add_face(table, type_name,
-                                            f_sym->method_count, f_sym->methods, f_sym->type_param_count);
-                                        // 将 use 导入的 face 名称添加到 face_names，使后续 export func 返回类型解析能识别
-                                        mod_names_push_z(&face_names, &face_name_count, &face_name_cap, type_name);
-                                    }
-                                    // 查找 clib 类型（通过函数返回类型识别）
-                                    if (!s_sym && !f_sym_ptr) {
-                                        for (int fi = 0; fi < dep_table->func_count; fi++) {
-                                            ModuleFuncSymbol* func = &dep_table->funcs[fi];
-                                            if (func->return_type == TYPE_CLIB && func->return_struct_name &&
-                                                strcmp(func->return_struct_name, type_name) == 0) {
-                                                int already = 0;
-                                                for (int ci = 0; ci < clib_name_count; ci++) {
-                                                    if (strcmp(clib_names[ci], type_name) == 0) { already = 1; break; }
-                                                }
-                                                if (!already) {
-                                                    mod_names_push_z(&clib_names, &clib_name_count, &clib_name_cap, type_name);
-                                                }
-                                                break;
-                                            }
-                                        }
-                                    }
-                                    // 查找 enum 类型
-                                    if (!s_sym && !f_sym_ptr) {
-                                        ModuleEnumSymbol* e_sym = module_symbol_table_find_enum(dep_table, type_name);
-                                        if (e_sym && !module_symbol_table_find_enum(table, type_name)) {
-                                            // 将 enum 完整信息（成员名+成员值）添加到当前模块的符号表
-                                            module_symbol_table_add_enum(table, type_name,
-                                                e_sym->member_count, e_sym->member_names, e_sym->member_values);
-                                            int already = 0;
-                                            for (int ei = 0; ei < enum_name_count; ei++) {
-                                                if (strcmp(enum_names[ei], type_name) == 0) { already = 1; break; }
-                                            }
-                                            if (!already) {
-                                                mod_names_push_z(&enum_names, &enum_name_count, &enum_name_cap, type_name);
-                                            }
-                                        }
-                                    }
-                                    // 查找 alias 类型
-                                    if (!s_sym && !f_sym_ptr) {
-                                        ModuleAliasSymbol* a_sym = module_symbol_table_find_alias(dep_table, type_name);
-                                        if (a_sym && !module_symbol_table_find_alias(table, type_name)) {
-                                            module_symbol_table_add_alias(table, type_name,
-                                                a_sym->type_info ? type_copy(a_sym->type_info) : NULL);
-                                            // 同时添加到本地别名表，使后续方法返回类型解析能找到
-                                            mod_alias_push(&local_alias_names, &local_alias_types, &local_alias_count, &local_alias_cap,
-                                                type_name, a_sym->type_info ? type_copy(a_sym->type_info) : NULL);
-                                            // 递归传导 alias 底层类型依赖到当前模块符号表
-                                            // 如 EventHandler = func(Event):bool，需要把 Event 也传导过来
-                                            if (a_sym->type_info) {
-                                                import_alias_type_deps_to_sym_table(table, dep_table, a_sym->type_info,
-                                                    &struct_names, &struct_name_count, &struct_name_cap,
-                                                    &cstruct_names, &cstruct_name_count, &cstruct_name_cap,
-                                                    &enum_names, &enum_name_count, &enum_name_cap,
-                                                    &face_names, &face_name_count, &face_name_cap,
-                                                    &local_alias_names, &local_alias_types, &local_alias_count, &local_alias_cap);
-                                            }
-                                        }
+                                        break;
                                     }
                                 }
-                                module_symbol_table_destroy(dep_table);
+                            }
+                            // 查找 enum 类型
+                            if (!s_sym && !f_sym_ptr) {
+                                ModuleEnumSymbol* e_sym = module_symbol_table_find_enum(dep_table, type_name);
+                                if (e_sym && !module_symbol_table_find_enum(table, type_name)) {
+                                    // 将 enum 完整信息（成员名+成员值）添加到当前模块的符号表
+                                    module_symbol_table_add_enum(table, type_name,
+                                        e_sym->member_count, e_sym->member_names, e_sym->member_values);
+                                    int already = 0;
+                                    for (int ei = 0; ei < enum_name_count; ei++) {
+                                        if (strcmp(enum_names[ei], type_name) == 0) { already = 1; break; }
+                                    }
+                                    if (!already) {
+                                        mod_names_push_z(&enum_names, &enum_name_count, &enum_name_cap, type_name);
+                                    }
+                                }
+                            }
+                            // 查找 alias 类型
+                            if (!s_sym && !f_sym_ptr) {
+                                ModuleAliasSymbol* a_sym = module_symbol_table_find_alias(dep_table, type_name);
+                                if (a_sym && !module_symbol_table_find_alias(table, type_name)) {
+                                    module_symbol_table_add_alias(table, type_name,
+                                        a_sym->type_info ? type_copy(a_sym->type_info) : NULL);
+                                    // 同时添加到本地别名表，使后续方法返回类型解析能找到
+                                    mod_alias_push(&local_alias_names, &local_alias_types, &local_alias_count, &local_alias_cap,
+                                        type_name, a_sym->type_info ? type_copy(a_sym->type_info) : NULL);
+                                    // 递归传导 alias 底层类型依赖到当前模块符号表
+                                    // 如 EventHandler = func(Event):bool，需要把 Event 也传导过来
+                                    if (a_sym->type_info) {
+                                        import_alias_type_deps_to_sym_table(table, dep_table, a_sym->type_info,
+                                            &struct_names, &struct_name_count, &struct_name_cap,
+                                            &cstruct_names, &cstruct_name_count, &cstruct_name_cap,
+                                            &enum_names, &enum_name_count, &enum_name_cap,
+                                            &face_names, &face_name_count, &face_name_cap,
+                                            &local_alias_names, &local_alias_types, &local_alias_count, &local_alias_cap);
+                                    }
+                                }
                             }
                         }
                     }
-                    
+
                     if (!batch_mode) break; // 单模式：只处理一次
-                    
-                    // 批量模式：跳过逗号和空白，继续下一个类型名
-                    while (*p && (*p == ' ' || *p == '\t')) p++;
+
+                    // 批量模式：跳过逗号和空白（含换行，支持跨行 use 语句），继续下一个类型名
+                    while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) {
+                        if (*p == '\n') cur_line++;
+                        p++;
+                    }
                     if (*p == ',') p++;
-                    while (*p && (*p == ' ' || *p == '\t')) p++;
+                    while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) {
+                        if (*p == '\n') cur_line++;
+                        p++;
+                    }
                     // 允许尾逗号
                     if (*p == ')') { p++; break; }
                 }
+
+                // 释放 dep_table（批量模式下所有类型都已处理完毕）
+                if (dep_table) module_symbol_table_destroy(dep_table);
             } else {
                 // 没有 '.' 的情况，跳过本行
             }

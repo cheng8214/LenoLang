@@ -4820,10 +4820,13 @@ char* lsp_get_hover_info(const char* content, LspPosition pos, const char* file_
     
     // 0. 检查是否是导入模块的导出符号 (如 "color_module.Color.red")
     // 这需要在模块方法检查之前，因为模块方法只支持两层（module.method）
+    fprintf(stderr, "[HOVER] step0: get_module_symbol_hover word='%s'\n", word); fflush(stderr);
     info = get_module_symbol_hover(content, word, file_path);
+    fprintf(stderr, "[HOVER] step0 done info=%s\n", info ? "yes" : "no"); fflush(stderr);
 
     // 0.5 检查是否是当前文件中的 enum 值 (如 "Color.red")
     if (!info) {
+        fprintf(stderr, "[HOVER] step0.5: get_enum_value_hover\n"); fflush(stderr);
         info = get_enum_value_hover(content, word, file_path);
     }
 
@@ -4844,7 +4847,9 @@ char* lsp_get_hover_info(const char* content, LspPosition pos, const char* file_
     //    这一步在模块方法/实例方法之前，使得悬停在 "tokens.add" 的 "tokens" 上时
     //    能显示变量类型信息，而不是方法文档
     if (!info) {
+        fprintf(stderr, "[HOVER] step3: get_symbol_hover_from_compiler word='%s'\n", word); fflush(stderr);
         info = get_symbol_hover_from_compiler(content, word, pos, file_path);
+        fprintf(stderr, "[HOVER] step3 done info=%s\n", info ? "yes" : "no"); fflush(stderr);
     }
 
     // 3.5 处理函数调用链（如 ttfLib().TTF_RenderText_Blended_Wrapped）
@@ -4864,6 +4869,7 @@ char* lsp_get_hover_info(const char* content, LspPosition pos, const char* file_
     // 4. 检查是否是模块方法调用 (如 "io.print") 或实例方法调用 (如 "s.len")
     char* module = NULL;
     char* method = NULL;
+    fprintf(stderr, "[HOVER] step4: parse_module_method word='%s'\n", word); fflush(stderr);
     if (!info && parse_module_method(word, &module, &method)) {
         // 首先尝试作为模块方法
         int arity = native_get_module_method_arity(module, method);
@@ -5348,6 +5354,7 @@ const char* last_sep = (slash && backslash) ? (slash > backslash ? slash : backs
     //    - 如果 info 已有内容且找到了定义位置：追加来源到末尾
     //    - 如果 info 为 NULL 且找到了定义位置：生成基本悬停信息+来源
     //    - 如果 info 已包含 "---\n" 来源标记（已由前面路径附加），跳过避免重复
+    fprintf(stderr, "[HOVER] step6: lsp_get_definition info=%s\n", info ? "yes" : "no"); fflush(stderr);
     if (file_path && (!info || !strstr(info, "\n---\n"))) {
         char* current_uri = lsp_path_to_uri(file_path);
         int def_count = 0;

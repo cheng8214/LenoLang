@@ -3,7 +3,7 @@
 
 import strings
 import "web_html.leno" as htmls
-import "web_net.leno"
+import "web_net.leno" as web_net
 use web_net.(HttpClient, Response, createClient)
 use htmls.(HtmlNode)
 
