@@ -847,11 +847,11 @@ main() {
     g.sfxWarn = audio.createSound(sdir + "/music/jinggao.mp3")
     if g.sfxWarn.ok { g.sfxWarn.setVolume(0.7) }
     g.sfxRotate = new Sfx()
-    g.sfxRotate.setup(sdir + "/music/bianxing.mp3", 6, 0.5)
+    g.sfxRotate.setup(sdir + "/music/bianxing.mp3", 6, 1.0)
     g.sfxClear = new Sfx()
     g.sfxClear.setup(sdir + "/music/xiaochu.mp3", 6, 0.6)
     g.sfxSpeed = new Sfx()
-    g.sfxSpeed.setup(sdir + "/music/jiashu.mp3", 6, 0.6)
+    g.sfxSpeed.setup(sdir + "/music/jiashu.mp3", 6, 0.4)
     g.audioOk = g.sfxRotate.ok
     if g.sfxClear.ok { g.audioOk = true }
     if g.sfxSpeed.ok { g.audioOk = true }
