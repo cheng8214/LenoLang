@@ -43,7 +43,7 @@ var ST_OVER = 3
 
 // 方块类型：0=I 1=O 2=T 3=S 4=Z 5=J 6=L
 var CLEAR_FLASH = 8       // 消行闪烁帧数
-var WARN_ROWS    = 3       // 顶部危险：已落方块堆到最上几行即警告
+var WARN_ROWS    = 2       // 顶部危险：已落方块堆到最上几行即警告
 
 // 调色板（按方块类型索引 0..6）
 Array[float] PAL_R = []
@@ -74,12 +74,70 @@ struct Game {
     Font font
 
     // 音效
-    Sound sfxRotate       // 旋转（变形）
-    Sound sfxClear        // 整行消除
-    Sound sfxWarn         // 顶部危险警告
-    Sound sfxSpeed        // 升级加速
+    Sound sfxWarn         // 顶部危险警告（单次）
+    Sfx   sfxRotate       // 旋转（变形）：音效池，避免快速连按被吞
+    Sfx   sfxClear        // 整行消除
+    Sfx   sfxSpeed        // 空格硬降加速
     bool  audioOk
     bool  warnOn          // 是否处于顶部危险警告状态
+    int   warnCd          // 警告重触发冷却（帧），防抖动重复
+}
+
+// 短音效池：预建多个实例轮转，每次播放先 stop+seek(0) 再 play，
+// 保证即使上一个还没播完也能从头重新响，解决“连按被吞没声音”的问题
+struct Sfx {
+    Array[Sound] pool
+    int idx
+    bool ok
+    float vol
+
+    func setup(string path, int n, float v) {
+        pool = []
+        ok = false
+        vol = v
+        for 0 : n - 1 to i {
+            Sound s = audio.createSound(path)
+            if s.ok {
+                s.setVolume(v)
+                pool.add(s)
+                ok = true
+            }
+        }
+        idx = 0
+    }
+
+    func play() {
+        if not ok { return }
+        int cnt = pool.len()
+        if cnt == 0 { return }
+        int chosen = -1
+        int i = 0
+        while i < cnt {
+            int j = idx + 1 + i
+            if j >= cnt { j = j - cnt }
+            if not pool[j].isPlaying() { chosen = j; break }
+            i = i + 1
+        }
+        if chosen == -1 {
+            idx = idx + 1
+            if idx >= cnt { idx = 0 }
+            chosen = idx
+        } else {
+            idx = chosen
+        }
+        pool[chosen].stop()
+        pool[chosen].seek(0)
+        pool[chosen].play()
+    }
+
+    func uninit() {
+        if pool.len() > 0 {
+            for 0 : pool.len() - 1 to i {
+                pool[i].uninit()
+            }
+        }
+        pool = []
+    }
 }
 
 // ==================== 形状与调色板 ====================
@@ -382,6 +440,8 @@ func newGame(): Game {
     g.moveRight = false
     g.softDrop = false
     g.dasTimer = 0
+    g.warnOn = false
+    g.warnCd = 0
     return g
 }
 
@@ -400,6 +460,8 @@ func startGame(Game g) {
     g.moveRight = false
     g.softDrop = false
     g.dasTimer = 0
+    g.warnOn = false
+    g.warnCd = 0
 
     g.nextType = nextFromBag(g)
     spawnPiece(g)
@@ -416,14 +478,26 @@ func updateGame(Game g) {
         return
     }
 
-    // 顶部危险警告：进入危险区时播放一次警告声
+    // 顶部危险警告：进入危险时开始循环播放警告音乐，直到危险解除才停止；
+    // 冷却防抖避免危险边缘抖动时频繁 stop/start。
     bool w = nearTop(g)
-    if w and not g.warnOn {
-        g.warnOn = true
-        if g.audioOk { g.sfxWarn.play() }
+    if w {
+        if not g.warnOn and g.warnCd <= 0 {
+            g.warnOn = true
+            g.warnCd = 90
+            if g.audioOk {
+                g.sfxWarn.setLooping(true)
+                g.sfxWarn.seek(0)
+                g.sfxWarn.play()
+            }
+        }
     } else {
-        g.warnOn = w
+        if g.warnOn {
+            g.warnOn = false
+            g.sfxWarn.stop()
+        }
     }
+    if g.warnCd > 0 { g.warnCd = g.warnCd - 1 }
 
     // 左右按住时的连发（首次延迟 12 帧，之后每 4 帧一格）
     if g.moveLeft or g.moveRight {
@@ -760,17 +834,20 @@ main() {
 
     // 初始化音效：用脚本目录拼接绝对路径（现已支持中文路径）
     string sdir = dirs.script_dir()
-    g.audioOk  = false
-    g.sfxRotate = audio.createSound(sdir + "/music/bianxing.mp3")
-    g.sfxRotate.setVolume(0.5)
-    g.sfxClear  = audio.createSound(sdir + "/music/xiaochu.mp3")
-    g.sfxClear.setVolume(0.6)
-    g.sfxWarn   = audio.createSound(sdir + "/music/jinggao.mp3")
-    g.sfxWarn.setVolume(0.7)
-    g.sfxSpeed  = audio.createSound(sdir + "/music/jiashu.mp3")
-    g.sfxSpeed.setVolume(0.6)
-    g.audioOk  = g.sfxRotate.ok
+    g.sfxWarn = audio.createSound(sdir + "/music/jinggao.mp3")
+    if g.sfxWarn.ok { g.sfxWarn.setVolume(0.7) }
+    g.sfxRotate = new Sfx()
+    g.sfxRotate.setup(sdir + "/music/bianxing.mp3", 6, 0.5)
+    g.sfxClear = new Sfx()
+    g.sfxClear.setup(sdir + "/music/xiaochu.mp3", 6, 0.6)
+    g.sfxSpeed = new Sfx()
+    g.sfxSpeed.setup(sdir + "/music/jiashu.mp3", 6, 0.6)
+    g.audioOk = g.sfxRotate.ok
+    if g.sfxClear.ok { g.audioOk = true }
+    if g.sfxSpeed.ok { g.audioOk = true }
+    if g.sfxWarn.ok { g.audioOk = true }
     g.warnOn   = false
+    g.warnCd   = 0
     if g.audioOk { print("[OK] 音效加载完成") }
     else { print("[警告] 音效初始化失败，将以静音模式运行") }
 
