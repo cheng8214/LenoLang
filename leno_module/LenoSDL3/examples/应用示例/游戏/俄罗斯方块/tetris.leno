@@ -77,6 +77,7 @@ struct Game {
     Sound sfxRotate       // 旋转（变形）
     Sound sfxClear        // 整行消除
     Sound sfxWarn         // 顶部危险警告
+    Sound sfxSpeed        // 升级加速
     bool  audioOk
     bool  warnOn          // 是否处于顶部危险警告状态
 }
@@ -199,6 +200,9 @@ func tryRotate(Game g, bool cw) {
 
     Array[int] ns = rotateGrid(g.curShape, cw)
 
+    // 旋转即发声（两个方向都给反馈，避免某一方向旋转被墙挡住时没声音）
+    if g.audioOk { g.sfxRotate.play() }
+
     Array[int] kicks = []
     kicks.add(0); kicks.add(-1); kicks.add(1); kicks.add(-2); kicks.add(2)
 
@@ -207,13 +211,13 @@ func tryRotate(Game g, bool cw) {
         if not collides(g, ns, g.curX + ox, g.curY) {
             g.curShape = ns
             g.curX = g.curX + ox
-            if g.audioOk { g.sfxRotate.play() }
             return
         }
     }
 }
 
 func hardDrop(Game g) {
+    if g.audioOk { g.sfxSpeed.play() }
     int dist = 0
     while not collides(g, g.curShape, g.curX, g.curY + 1) {
         g.curY = g.curY + 1
@@ -763,6 +767,8 @@ main() {
     g.sfxClear.setVolume(0.6)
     g.sfxWarn   = audio.createSound(sdir + "/music/jinggao.mp3")
     g.sfxWarn.setVolume(0.7)
+    g.sfxSpeed  = audio.createSound(sdir + "/music/jiashu.mp3")
+    g.sfxSpeed.setVolume(0.6)
     g.audioOk  = g.sfxRotate.ok
     g.warnOn   = false
     if g.audioOk { print("[OK] 音效加载完成") }
@@ -790,6 +796,7 @@ main() {
         g.sfxRotate.uninit()
         g.sfxClear.uninit()
         g.sfxWarn.uninit()
+        g.sfxSpeed.uninit()
         audio.uninit()
     }
     SDL3.quit()
