@@ -94,6 +94,22 @@ func menuRect(int i): Array[float] {
     return r
 }
 
+// 游戏结束弹窗按钮矩形（i==0 重新开始 / i==1 回到主界面），绘制与点击共用
+func overRect(Game g, int i): Array[float] {
+    float pw = 240.0
+    float ph = 168.0
+    float cx = g.boardX + (_float(g.cols) * g.cell) / 2.0
+    float cy = g.boardY + (_float(g.rows) * g.cell) / 2.0
+    float px = cx - pw / 2.0
+    float py = cy - ph / 2.0
+    float bw = pw - 48.0
+    float bx = px + 24.0
+    float by = py + 64.0 + _float(i) * 56.0
+    Array[float] r = []
+    r.add(bx); r.add(by); r.add(bw); r.add(44.0)
+    return r
+}
+
 // ==================== 新局 / 布雷 ====================
 func newGame(Game g) {
     int n = g.cols * g.rows
@@ -430,6 +446,38 @@ func drawMenu(Game g, Renderer r) {
     core.requestRedraw()
 }
 
+// 游戏结束弹窗：半透明遮罩 + 面板 + 两个按钮（重新开始 / 回到主界面）
+func drawOverPanel(Game g, Renderer r) {
+    if not g.font.ok { return }
+    float pw = 240.0
+    float ph = 168.0
+    float cx = g.boardX + (_float(g.cols) * g.cell) / 2.0
+    float cy = g.boardY + (_float(g.rows) * g.cell) / 2.0
+    float px = cx - pw / 2.0
+    float py = cy - ph / 2.0
+    // 半透明遮罩（压暗棋盘）
+    r.setColorFloat(0.0, 0.0, 0.0, 0.55)
+    r.fillRect(0.0, 0.0, g.winW, g.winH)
+    // 面板
+    r.setColor(COL_BAR)
+    r.fillRect(px, py, pw, ph)
+    r.setColor(COL_GOLD)
+    r.drawRect(px, py, pw, ph)
+    // 标题
+    string title = "游戏结束"
+    int tcol = COL_TEXT
+    if g.won { title = "胜利！"; tcol = COL_GOLD }
+    r.drawTextCentered(g.font, title, px, pw, py + 24.0, tcol)
+    // 两个按钮
+    for 0 : 1 to i {
+        Array[float] rect = overRect(g, i)
+        bool hover = pointInRect(g.mx, g.my, rect[0], rect[1], rect[2], rect[3])
+        string label = "重新开始"
+        if i == 1 { label = "回到主界面" }
+        drawMenuButton(g, r, rect[0], rect[1], rect[2], rect[3], label, hover)
+    }
+}
+
 func renderGame(Game g, Renderer r) {
     if g.scene == "menu" { drawMenu(g, r); return }
     if not g.font.ok { return }
@@ -441,6 +489,7 @@ func renderGame(Game g, Renderer r) {
             drawCell(g, r, rr, cc)
         }
     }
+    if g.over { drawOverPanel(g, r) }
     core.requestRedraw()
 }
 
@@ -489,6 +538,23 @@ func handleEvent(Game g, Window win, Event ev): bool {
                 }
             }
             return true
+        }
+        // 游戏结束弹窗：拦截点击，响应 重新开始 / 回到主界面
+        if g.over {
+            for 0 : 1 to bi {
+                Array[float] rect = overRect(g, bi)
+                if pointInRect(mx, my, rect[0], rect[1], rect[2], rect[3]) {
+                    if bi == 0 {
+                        newGame(g)
+                    } else {
+                        g.scene = "menu"
+                        g.winW = MENU_W; g.winH = MENU_H
+                        win.setSize(_int(MENU_W), _int(MENU_H))
+                    }
+                    return true
+                }
+            }
+            return true   // 弹窗显示时吞掉棋盘点击
         }
         // 笑脸按钮 → 重开
         float fcx = g.winW / 2.0
