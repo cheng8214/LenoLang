@@ -33,14 +33,17 @@ use audio.(Sound, Sfx)
 
 // ==================== 常量 ====================
 
-var TS      = 32.0               // 格子边长（像素）
+var TS      = 48.0               // 格子边长（像素）
 var COLS    = 20
 var ROWS    = 14
-var MAP_W   = 640.0              // 20 * 32
-var MAP_H   = 448.0              // 14 * 32
-var PANEL_W = 180.0
-var WIN_W   = 820                // 640 + 180
-var WIN_H   = 448
+var MAP_W   = 960.0              // 20 * 48
+var MAP_H   = 672.0              // 14 * 48
+var WIN_W   = 960                // 与地图同宽（无侧栏，HUD 叠加在地图上下边）
+var WIN_H   = 672
+var HUD_H   = 34.0               // 顶部状态条高
+var BAR_H   = 58.0               // 底部建塔栏高
+var BAR_Y   = MAP_H - BAR_H      // 底栏 y
+var CARD_W  = 96.0               // 底栏塔卡片宽
 
 // 格子类型
 var T_GRASS = 0
@@ -93,7 +96,7 @@ var ENEMY_SPD   = [0.55, 1.15, 0.38, 0.32, 0.72, 0.60, 1.30, 0.70]  // px/帧
 var ENEMY_GOLD  = [8, 10, 22, 260, 7, 9, 12, 15]
 var ENEMY_DMG   = [1, 1, 2, 12, 1, 1, 1, 1]             // 漏怪扣血
 var ENEMY_ARMOR = [0.0, 0.0, 0.30, 0.15, 0.0, 0.0, 0.0, 0.0] // 伤害减免
-var ENEMY_SIZE  = [28.0, 26.0, 30.0, 46.0, 34.0, 32.0, 30.0, 34.0]
+var ENEMY_SIZE  = [42.0, 39.0, 45.0, 69.0, 51.0, 48.0, 45.0, 51.0]
 
 // 人物3（原 runner 位）：8 帧精灵表，前 4 帧走路、后 4 帧攻击（抬臂→挥出→击打→回收）
 // 靠近防御塔时会停下攻击，塔血量归零即被摧毁并腾出格子
@@ -119,6 +122,7 @@ var CRY_R       = 3.0    // 声波影响半径（单位：格）
 var CRY_SLOW    = 0.60   // 每个声波源使塔冷却增加的倍率（+60%）
 var CRY_MAX     = 2.50   // 冷却倍率上限（防止叠加后完全打不出）
 var CRY_WAVECD  = 70     // 声波释放间隔（帧）
+var CRY_DMG     = 5.0    // 每圈声波对范围内防御塔的震荡伤害
 var CRY_DRAIN   = 0.22   // 哭泣时每帧流失的血量：保证不会永久卡住波次
 var WAVE_LIFE   = 48     // 单圈声波存活帧数
 
@@ -142,21 +146,14 @@ var WPY = [2, 2, 6, 6, 2, 2, 9, 9, 5, 5]
 var WP_N = 10
 
 // 装饰石块（不可建造）
-var ROCK_GX = [2, 3, 6, 9, 13, 17, 1, 18, 10, 6]
-var ROCK_GY = [10, 11, 12, 11, 12, 11, 7, 1, 12, 9]
+var ROCK_GX = [2, 3, 6, 9, 13, 17, 1, 18, 10, 6, 0, 5, 9, 14, 19, 1]
+var ROCK_GY = [10, 11, 12, 11, 12, 11, 7, 1, 12, 9, 9, 12, 0, 1, 10, 12]
 
 // 树木障碍（不可建造，自动阻挡塔的放置；避开路径与石块）
-var TREE_GX  = [3, 6, 10, 14, 11, 15]
-var TREE_GY  = [4, 3, 4, 4, 7, 7]
-var TREE2_GX = [2, 5, 10, 7, 14, 18]
-var TREE2_GY = [8, 9, 10, 11, 11, 8]
-
-// 面板按钮布局
-var PX       = MAP_W + 6.0
-var PW       = PANEL_W - 12.0
-var CARD_Y0  = 38.0
-var CARD_H   = 32.0
-var CARD_GAP = 2.0
+var TREE_GX  = [3, 6, 10, 14, 11, 15, 1, 7, 19, 8]
+var TREE_GY  = [4, 3, 4, 4, 7, 7, 10, 1, 3, 11]
+var TREE2_GX = [2, 5, 10, 7, 14, 18, 0, 12, 16, 6]
+var TREE2_GY = [8, 9, 10, 11, 11, 8, 5, 0, 0, 5]
 
 // ==================== 数据类 ====================
 
@@ -190,6 +187,7 @@ struct Enemy {
     float pm4Sy
     float pm4Tx            // 人物4：目标塔坐标（跳过去爆炸）
     float pm4Ty
+    float lane             // 横向车道偏移（单位：格，-0.45~0.45），双通道散开行走
 }
 
 struct Wave {
@@ -253,6 +251,7 @@ struct FloatText {
     int c
     int life
     bool alive
+    bool bg                // true = 白底黑字气泡（人物台词）
 }
 
 struct Arc {
@@ -273,6 +272,7 @@ struct Coin {
     float ty
     float p
     int val
+    int delay              // 出场延迟（帧）：宝箱金币雨逐枚迸出
     bool alive
 }
 
@@ -309,6 +309,7 @@ struct Game {
 
     int speedMul              // 倍速：1 / 2 / 3
     bool muted                // 是否静音
+    bool quitReq              // 主菜单「退出游戏」请求退出
 
     Array[int] map
     Array[Enemy] enemies
@@ -495,6 +496,11 @@ func cellAt(Game g, int gx, int gy): int {
     return g.map[gy * COLS + gx]
 }
 
+// 是否「可通行地面」（路径/出怪口/基地）：用于地形描边判断
+func isRoadTile(int t): bool {
+    return t == T_PATH or t == T_START or t == T_BASE
+}
+
 // ==================== 初始化 ====================
 
 func newGame(): Game {
@@ -520,6 +526,7 @@ func newGame(): Game {
     g.mouseY = 0.0
     g.speedMul = 1
     g.muted = false
+    g.quitReq = false
     g.map = []
     g.enemies = []
     g.towers = []
@@ -556,7 +563,7 @@ func buildMap(Game g) {
     for 0 : COLS * ROWS - 1 to i {
         g.map.add(T_GRASS)
     }
-    // 按路径拐点铺路
+    // 按路径拐点铺路（双通道：每段铺 2 格宽，敌人可并排走）
     for 0 : WP_N - 2 to i {
         var x0 = WPX[i]; var y0 = WPY[i]
         var x1 = WPX[i + 1]; var y1 = WPY[i + 1]
@@ -566,6 +573,7 @@ func buildMap(Game g) {
             for a : b to y {
                 if x0 >= 0 and x0 < COLS and y >= 0 and y < ROWS {
                     g.map[y * COLS + x0] = T_PATH
+                    if x0 + 1 < COLS { g.map[y * COLS + x0 + 1] = T_PATH }
                 }
             }
         } else {
@@ -574,6 +582,7 @@ func buildMap(Game g) {
             for a : b to x {
                 if x >= 0 and x < COLS and y0 >= 0 and y0 < ROWS {
                     g.map[y0 * COLS + x] = T_PATH
+                    if y0 + 1 < ROWS { g.map[(y0 + 1) * COLS + x] = T_PATH }
                 }
             }
         }
@@ -585,12 +594,12 @@ func buildMap(Game g) {
     var ey = WPY[WP_N - 1]
     g.map[ey * COLS + ex] = T_BASE
     // 装饰石块
-    for 0 : 9 to i {
+    for 0 : 15 to i {
         var x = ROCK_GX[i]; var y = ROCK_GY[i]
         if g.map[y * COLS + x] == T_GRASS { g.map[y * COLS + x] = T_ROCK }
     }
     // 树木（不可建造）
-    for 0 : 5 to i {
+    for 0 : 9 to i {
         var x = TREE_GX[i]; var y = TREE_GY[i]
         if g.map[y * COLS + x] == T_GRASS { g.map[y * COLS + x] = T_TREE }
         x = TREE2_GX[i]; y = TREE2_GY[i]
@@ -849,9 +858,48 @@ func loadResources(Game g, Renderer r) {
                     r.drawTextureAt(g.texBase, px, py, TS, TS)
                 } else {
                     r.drawTextureAt(g.texGrass, px, py, TS, TS)
-                    if t == T_ROCK { r.drawTextureAt(g.texRock, px, py, TS, TS) }
-                    if t == T_TREE  { r.drawTextureAt(g.texTree,  px - 2.0, py - 2.0, TS + 4.0, TS + 4.0) }
-                    if t == T_TREE2 { r.drawTextureAt(g.texTree2, px - 2.0, py - 2.0, TS + 4.0, TS + 4.0) }
+                    // 树木/石头随机水平翻转，避免同款贴图整齐划一
+                    var df = Flip.NONE
+                    if rands.ints(0, 1) == 1 { df = Flip.HORIZONTAL }
+                    var dsz = TS + 6.0
+                    if t == T_ROCK { r.drawTextureRotated(g.texRock, px, py, TS, TS, 0.0, TS * 0.5, TS * 0.5, df) }
+                    if t == T_TREE  { r.drawTextureRotated(g.texTree,  px - 3.0, py - 3.0, dsz, dsz, 0.0, dsz * 0.5, dsz * 0.5, df) }
+                    if t == T_TREE2 { r.drawTextureRotated(g.texTree2, px - 3.0, py - 3.0, dsz, dsz, 0.0, dsz * 0.5, dsz * 0.5, df) }
+                }
+            }
+        }
+
+        // 地形细节层：消除「管道感」的关键——
+        // 1) 草地逐格明暗抖动，打破纹理重复；2) 路缘描深色边；3) 草地侧投柔和阴影
+        for 0 : ROWS - 1 to gy {
+            for 0 : COLS - 1 to gx {
+                var tt = g.map[gy * COLS + gx]
+                var px = _float(gx) * TS
+                var py = _float(gy) * TS
+                if isRoadTile(tt) {
+                    // 路缘：与草地/障碍相邻的四边描 3px 深土色边，让路「有边界」而不是浮管
+                    r.setColor(#8F6F3FFF)
+                    if not isRoadTile(cellAt(g, gx, gy - 1)) { r.fillRect(px, py, TS, 3.0) }
+                    if not isRoadTile(cellAt(g, gx, gy + 1)) { r.fillRect(px, py + TS - 3.0, TS, 3.0) }
+                    if not isRoadTile(cellAt(g, gx - 1, gy)) { r.fillRect(px, py, 3.0, TS) }
+                    if not isRoadTile(cellAt(g, gx + 1, gy)) { r.fillRect(px + TS - 3.0, py, 3.0, TS) }
+                    // 光照来自左上：路的下侧/右侧在草地上投柔和阴影
+                    r.setColor(#00000030)
+                    if not isRoadTile(cellAt(g, gx, gy + 1)) { r.fillRect(px, py + TS, TS, 5.0) }
+                    if not isRoadTile(cellAt(g, gx + 1, gy)) { r.fillRect(px + TS, py, 5.0, TS) }
+                } else {
+                    // 草地：逐格随机提亮/压暗，破坏每格纹理完全一致的重复感
+                    var j = rands.ints(0, 2)
+                    if j == 0 { r.setColor(#FFFFFF12) } else { r.setColor(#00000016) }
+                    r.fillRect(px, py, TS, TS)
+                    // 草地上的小草丛点缀（位置随格子变化）
+                    var tx = px + _float(rands.ints(4, 26))
+                    var ty = py + _float(rands.ints(4, 26))
+                    r.setColor(#3E7A30FF)
+                    r.fillRect(tx, ty, 1.0, 3.0)
+                    r.fillRect(tx + 3.0, ty + 1.0, 1.0, 3.0)
+                    r.setColor(#5FAF4CFF)
+                    r.fillRect(tx + 1.0, ty + 1.0, 1.0, 2.0)
                 }
             }
         }
@@ -971,6 +1019,14 @@ func spawnEnemy(Game g, int etype) {
     e.pm4Sy = 0.0
     e.pm4Tx = 0.0
     e.pm4Ty = 0.0
+    // 双通道：随机分配车道（0.05~0.95 格），敌人占满整条 2 格宽路面
+    // 铺路时横向路段向下加宽一行、纵向路段向右加宽一列（与 buildMap 一致）
+    e.lane = _float(rands.ints(-45, 45)) / 100.0
+    if WPX[1] == WPX[0] {
+        e.x = e.x + (0.5 + e.lane) * TS
+    } else {
+        e.y = e.y + (0.5 + e.lane) * TS
+    }
     g.enemies.add(e)
 }
 
@@ -1002,6 +1058,19 @@ func addFloat(Game g, float x, float y, string text, int c) {
     f.c = c
     f.life = 50
     f.alive = true
+    f.bg = false
+    g.floats.add(f)
+}
+
+// 人物台词气泡：白底黑字，停留更久
+func addSpeech(Game g, float x, float y, string text) {
+    var f = new FloatText()
+    f.x = x; f.y = y
+    f.text = text
+    f.c = 0x1A1A1A         // 黑字
+    f.life = 75
+    f.alive = true
+    f.bg = true
     g.floats.add(f)
 }
 
@@ -1012,11 +1081,19 @@ func damageIdx(Game g, int idx, float dmg) {
     for g.enemies to e {
         if i == idx {
             if not e.alive { return }
+            // 人物4 起跳/落地/爆炸期间免疫伤害：血量低易被塔打死，否则会「消失而不爆炸」
+            if e.etype == EM_PERSON4 and e.pm4State > 0 { return }
             e.hp = e.hp - dmg * (1.0 - e.armor)
             // 小怪受击音效（全局节流，避免多塔齐射时刷屏）
             if g.hitSfxCd <= 0 {
                 if g.audioOk and not g.muted { g.sfxHit.play() }
                 g.hitSfxCd = 8
+            }
+            // 人物小兵濒死求饶：被打后还活着且血量见底时，有几率头顶弹出「别射我」
+            if e.etype == EM_GRUNT and e.hp > 0 {
+                if e.hp / e.maxHp <= 0.35 and rands.ints(0, 99) < 35 {
+                    addSpeech(g, e.x - 12.0, e.y - ENEMY_SIZE[e.etype] * 0.5 - 14.0, "别射我")
+                }
             }
             if e.hp <= 0 { killEnemyAt(g, idx) }
             return
@@ -1344,6 +1421,21 @@ func updateEnemies(Game g) {
             if e.waveTimer <= 0 {
                 spawnWave(g, e.x, e.y)
                 e.waveTimer = CRY_WAVECD
+                // 哭声波同时震伤范围内的防御塔（小额，从后往前结算防止下标位移）
+                var crad = CRY_R * TS
+                var ctlen = g.towers.len()
+                for 0 : ctlen - 1 to ci2 {
+                    var ci3 = ctlen - 1 - ci2
+                    if dist2(e.x, e.y, g.towers[ci3].x, g.towers[ci3].y) <= crad * crad {
+                        hitTower(g, ci3, CRY_DMG)
+                    }
+                }
+            }
+            // 哭坐时随机喊话（约每 3~4 秒一句）
+            if rands.ints(0, 199) < 1 {
+                var cryTxt = "我要回家"
+                if rands.ints(0, 1) == 1 { cryTxt = "妈妈有人打我" }
+                addSpeech(g, e.x - 18.0, e.y - ENEMY_SIZE[e.etype] * 0.5 - 14.0, cryTxt)
             }
             // 哭到力竭而亡：保证定身不会永久卡住波次
             e.hp = e.hp - CRY_DRAIN
@@ -1355,6 +1447,14 @@ func updateEnemies(Game g) {
 
         var tx = _float(WPX[e.wpIdx + 1]) * TS + TS * 0.5
         var ty = _float(WPY[e.wpIdx + 1]) * TS + TS * 0.5
+        // 双通道：目标点沿「加宽侧」偏移（横向路向下、纵向路向右，与 buildMap 一致），
+        // 每个敌人固定走自己的车道，两条道都有人走，转角处目标固定不打转
+        var side = 0.5 + e.lane
+        if WPX[e.wpIdx + 1] == WPX[e.wpIdx] {
+            tx = tx + side * TS   // 纵向路：向右加宽的一列
+        } else {
+            ty = ty + side * TS   // 横向路：向下加宽的一行
+        }
         var dx = tx - e.x
         var dy = ty - e.y
         var d = maths.sqrt(dx * dx + dy * dy)
@@ -1457,8 +1557,29 @@ func spawnCoin(Game g, float x, float y, int val) {
     c.tx = MAP_W + 8.0; c.ty = 23.0
     c.p = 0.0
     c.val = val
+    c.delay = 0
     c.alive = true
     g.coins.add(c)
+}
+
+// 宝箱金币雨：8 枚金币从宝箱位置向四周迸出，依次起飞飞向计数处
+func spawnCoinBurst(Game g, float x, float y, int total) {
+    var n = 8
+    var each = total / n
+    for 0 : n - 1 to k {
+        var c = new Coin()
+        var ang = _float(rands.ints(0, 359)) * 3.14159265 / 180.0
+        var rr = _float(rands.ints(6, 24))
+        c.sx = x + maths.cos(ang) * rr
+        c.sy = y + maths.sin(ang) * rr
+        c.x = c.sx; c.y = c.sy
+        c.tx = MAP_W + 8.0; c.ty = 23.0
+        c.p = 0.0
+        if k == n - 1 { c.val = total - each * (n - 1) } else { c.val = each }
+        c.delay = k * 5
+        c.alive = true
+        g.coins.add(c)
+    }
 }
 
 // 生成一枚停留在地图上的宝箱（点击后弹出随机金币奖励，约 10 秒后消失）
@@ -1511,6 +1632,12 @@ func updateEffects(Game g) {
     // 飞行金币：死亡后快速飞向左上角计数处，到达即收集入账
     Array[Coin] lc = []
     for g.coins to c {
+        // 金币雨：延迟帧内原地待命（停在迸出位置）
+        if c.delay > 0 {
+            c.delay = c.delay - 1
+            lc.add(c)
+            continue
+        }
         c.p = c.p + 0.08
         if c.p >= 1.0 {
             g.gold = g.gold + c.val
@@ -1691,7 +1818,7 @@ func upgradeBadgeRect(Game g, Tower t): Array[float] {
 func popupMenu(Game g): Array[float] {
     if g.menuTower < 0 or g.menuTower >= g.towers.len() { return [] }
     var t = g.towers[g.menuTower]
-    var bw = 132.0; var bh = 72.0
+    var bw = 156.0; var bh = 102.0             // 顶部留 38px 信息区（名称/等级/血量/伤害）
     var bx = t.x - bw * 0.5
     var by = t.y - TS * 0.5 - bh - 8.0          // 默认浮在塔上方
     if by < 4.0 { by = t.y + TS * 0.5 + 8.0 }    // 贴顶则改放下方
@@ -1699,131 +1826,157 @@ func popupMenu(Game g): Array[float] {
     if bx + bw > MAP_W - 4.0 { bx = MAP_W - 4.0 - bw }
     if by + bh > MAP_H - 4.0 { by = MAP_H - 4.0 - bh }
     var pad = 6.0
-    var ux = bx + pad;            var uy = by + pad;            var uw = bw - pad * 2.0; var uh = 22.0
+    var ux = bx + pad;            var uy = by + 44.0;           var uw = bw - pad * 2.0; var uh = 22.0
     var sx = bx + pad;            var sy = uy + uh + pad;       var sw = bw - pad * 2.0; var sh = 22.0
     return [bx, by, bw, bh, ux, uy, uw, uh, sx, sy, sw, sh]
 }
 
 // ==================== 渲染 ====================
 
-func drawPanel(Game g, Renderer r) {
-    // 面板背景
-    r.setColor(#16202AFF)
-    r.fillRect(MAP_W, 0.0, PANEL_W, MAP_H)
-    r.setColor(#2C3E50FF)
-    r.fillRect(MAP_W, 0.0, 2.0, MAP_H)
-
+func drawHUD(Game g, Renderer r) {
     var f = g.font
-    // 标题 y=2
-    r.drawText(f, "塔防 TOWER DEFENSE", PX, 2.0, #FFDC50FF)
 
-    // 资源行 y=16 (单行[coin][heart][wave])
-    r.drawTextureAt(g.texCoin, PX, 16.0, 13.0, 13.0)
-    r.drawText(f, " " + g.gold, PX + 14.0, 16.0, #FFD700FF)
-    r.drawTextureAt(g.texHeart, PX + 50.0, 16.0, 13.0, 13.0)
-    r.drawText(f, " " + g.lives, PX + 64.0, 16.0, #E74C3CFF)
-    r.drawText(f, "波 " + g.wave + "/" + MAX_WAVE, PX + 100.0, 16.0, #AED6F1FF)
+    // ===== 顶部状态条：资源 / 波次信息 / 控制按钮 =====
+    r.setColor(#16202AE8)
+    r.fillRect(0.0, 0.0, MAP_W, HUD_H)
+    r.setColor(#2C3E50FF)
+    r.fillRect(0.0, HUD_H - 2.0, MAP_W, 2.0)
+    r.drawTextureAt(g.texCoin, 10.0, 9.0, 16.0, 16.0)
+    r.drawText(f, "" + g.gold, 30.0, 10.0, #FFD700FF)
+    r.drawTextureAt(g.texHeart, 96.0, 9.0, 16.0, 16.0)
+    r.drawText(f, "" + g.lives, 116.0, 10.0, #E74C3CFF)
+    r.drawText(f, "第 " + g.wave + "/" + MAX_WAVE + " 波", 168.0, 10.0, #AED6F1FF)
+    if g.waveState == 0 {
+        var secs = g.waveTimer / 60 + 1
+        r.drawText(f, "下一波 " + secs + " 秒后 (空格提前 +" + (secs * 2) + " 金)", 268.0, 10.0, #A0AAB0FF)
+    } else {
+        r.drawText(f, "剩余敌人 " + (g.enemies.len() + g.spawnQueue.len() - g.spawnIdx), 268.0, 10.0, #A0AAB0FF)
+    }
+    // 右侧小按钮：倍速 / 静音 / 暂停
+    var bw = 66.0
+    var bx0 = MAP_W - (bw + 6.0) * 3.0 - 8.0
+    r.setColor(if g.speedMul > 1 then #1F618DFF else #1A252FFF)
+    r.fillRoundedRect(bx0, 5.0, bw, 24.0, 5.0)
+    r.drawTextCentered(f, "速度 x" + g.speedMul, bx0, bw, 11.0, #ECF0F1FF)
+    r.setColor(if g.muted then #7B241CFF else #1A252FFF)
+    r.fillRoundedRect(bx0 + bw + 6.0, 5.0, bw, 24.0, 5.0)
+    r.drawTextCentered(f, if g.muted then "静音" else "开声", bx0 + bw + 6.0, bw, 11.0, #ECF0F1FF)
+    r.setColor(#1A252FFF)
+    r.fillRoundedRect(bx0 + (bw + 6.0) * 2.0, 5.0, bw, 24.0, 5.0)
+    r.drawTextCentered(f, if g.state == ST_PAUSE then "继续" else "暂停", bx0 + (bw + 6.0) * 2.0, bw, 11.0, #ECF0F1FF)
 
-    // 塔卡片 (4张, 32px高, 2px间距)
+    // ===== 底部建塔栏：4 张塔卡片 + 波次按钮 =====
+    r.setColor(#16202AE8)
+    r.fillRect(0.0, BAR_Y, MAP_W, BAR_H)
+    r.setColor(#2C3E50FF)
+    r.fillRect(0.0, BAR_Y, MAP_W, 2.0)
+    var hovIdx = -1
     for 0 : 3 to i {
-        var cy = CARD_Y0 + _float(i) * (CARD_H + CARD_GAP)
+        var cx = 8.0 + _float(i) * (CARD_W + 6.0)
+        var cy = BAR_Y + 6.0
+        if inRect(g.mouseX, g.mouseY, cx, cy, CARD_W, BAR_H - 12.0) { hovIdx = i }
         var sel = g.selType == i
         var afford = g.gold >= TOWER_COST[i]
-        r.setColor(if sel then #1F618DFF else #1A252FFF)
-        r.fillRoundedRect(PX, cy, PW, CARD_H, 4.0)
+        var bgc = #1A252FFF
+        if sel { bgc = #1F618DFF } else if hovIdx == i { bgc = #243447FF }
+        r.setColor(bgc)
+        r.fillRoundedRect(cx, cy, CARD_W, BAR_H - 12.0, 6.0)
         r.setColor(if sel then #5DADE2FF else #34495EFF)
-        r.drawRoundedRect(PX, cy, PW, CARD_H, 4.0)
-
-        if g.texTower[i] != null {
-            r.drawTextureAt(g.texTower[i], PX + 3.0, cy + 3.0, 26.0, 26.0)
-        }
+        r.drawRoundedRect(cx, cy, CARD_W, BAR_H - 12.0, 6.0)
+        if g.texTower[i] != null { r.drawTextureAt(g.texTower[i], cx + 5.0, cy + 8.0, 34.0, 34.0) }
         var nc = #ECF0F1FF
         if not afford { nc = #7F8C8DFF }
-        r.drawText(f, "[" + (i + 1) + "] " + TOWER_NAME[i], PX + 32.0, cy + 3.0, nc)
-        var rng = _int(towerRange(i, 1) / TS * 10.0)
-        r.drawText(f, "造价" + TOWER_COST[i] + " 伤害" + _int(TOWER_DMG[i]) + " 射程" + (rng / 10) + "格",
-                  PX + 32.0, cy + 18.0, #A0AAB0FF)
+        r.drawText(f, TOWER_NAME[i], cx + 44.0, cy + 9.0, nc)
+        r.drawTextureAt(g.texCoin, cx + 44.0, cy + 26.0, 11.0, 11.0)
+        r.drawText(f, "" + TOWER_COST[i], cx + 58.0, cy + 25.0, #FFD700FF)
+        r.drawText(f, "[" + (i + 1) + "]", cx + CARD_W - 18.0, cy + 9.0, #6C7A89FF)
     }
-
-    // 选中塔信息 (y=168)
-    if g.selTower >= 0 and g.selTower < g.towers.len() {
-        var t = g.towers[g.selTower]
-        r.drawText(f, TOWER_NAME[t.ttype] + " Lv" + t.level, PX + 4.0, 168.0, #FFDC50FF)
-        r.drawText(f, "伤害" + _int(towerDamage(t.ttype, t.level)) + " 射程" +
-                 _int(towerRange(t.ttype, t.level) / TS * 10.0) / 10 + "格", PX + 4.0, 180.0, #ECF0F1FF)
-
-        // 升级 / 出售信息（操作改为点塔弹出的地图菜单，键盘 U / S 仍可）
-        if t.level < MAX_LEVEL {
-            r.drawText(f, "升级需" + upgradeCost(t.ttype, t.level) + "金 (U)", PX + 4.0, 192.0, #AAB7B8FF)
-        } else {
-            r.drawText(f, "已满级", PX + 4.0, 192.0, #AAB7B8FF)
-        }
-        r.drawText(f, "出售得" + sellValue(t.ttype, t.level) + "金 (S)", PX + 4.0, 204.0, #AAB7B8FF)
-    } else {
-        r.drawText(f, "点击地图格子建塔", PX + 4.0, 172.0, #7F8C8DFF)
-    }
-
-    // 波次按钮：两行文字按字号实际高度动态行距，从根上避免重叠
-    var by = 210.0
-    var lh = _float(f.height) + 3.0   // 行高 = 字号像素高度 + 3px 间隙
-    var bh = lh * 2.0 + 8.0           // 按钮框高 = 两行 + 上下各 4px
+    // 波次按钮（底栏右侧）
+    var wbx = MAP_W - 216.0
+    var wby = BAR_Y + 7.0
     if g.waveState == 0 {
         var secs = g.waveTimer / 60 + 1
         r.setColor(#1E8449FF)
-        r.fillRoundedRect(PX, by, PW, bh, 4.0)
-        r.drawTextCentered(f, "空格:立即开始(+" + (secs * 2) + "金)", PX, PW, by + 4.0, #ECF0F1FF)
-        r.drawTextCentered(f, secs + " 秒后自动开始", PX, PW, by + 4.0 + lh, #A0AAB0FF)
+        r.fillRoundedRect(wbx, wby, 208.0, BAR_H - 14.0, 6.0)
+        r.setColor(#2ECC71FF)
+        r.drawRoundedRect(wbx, wby, 208.0, BAR_H - 14.0, 6.0)
+        r.drawTextCentered(f, "开始下一波 (空格)  奖励 +" + (secs * 2) + " 金", wbx, 208.0, wby + 6.0, #ECF0F1FF)
+        r.drawTextCentered(f, secs + " 秒后自动开始", wbx, 208.0, wby + 24.0, #A0AAB0FF)
     } else {
         r.setColor(#566573FF)
-        r.fillRoundedRect(PX, by, PW, bh, 4.0)
-        r.drawTextCentered(f, "第 " + g.wave + " 波进行中...", PX, PW, by + 4.0, #ECF0F1FF)
-        r.drawTextCentered(f, "剩余 " + (g.enemies.len() + g.spawnQueue.len() - g.spawnIdx) + " 敌", PX, PW, by + 4.0 + lh, #A0AAB0FF)
+        r.fillRoundedRect(wbx, wby, 208.0, BAR_H - 14.0, 6.0)
+        r.drawTextCentered(f, "第 " + g.wave + " 波进行中", wbx, 208.0, wby + 6.0, #ECF0F1FF)
+        r.drawTextCentered(f, "剩余 " + (g.enemies.len() + g.spawnQueue.len() - g.spawnIdx) + " 敌", wbx, 208.0, wby + 24.0, #A0AAB0FF)
     }
 
-    // 帮助文本（紧接按钮下方，随按钮高度自适应）
-    var hy = by + bh + 8.0
-    r.drawText(f, "1-4选塔 空格开始", PX + 4.0, hy, #6C7A89FF)
-    r.drawText(f, "点塔弹菜单:升级/出售", PX + 4.0, hy + 12.0, #6C7A89FF)
-    r.drawText(f, "点宝箱开随机金币", PX + 4.0, hy + 24.0, #6C7A89FF)
-    r.drawText(f, "F倍速 M静音 P暂停 R重开", PX + 4.0, hy + 36.0, #6C7A89FF)
+    // 底栏卡片悬停：弹出详细信息（建塔栏上方）
+    if hovIdx >= 0 {
+        var tip = "单体速射 · 无特效"
+        if hovIdx == 1 { tip = "炮弹溅射 1.2 格范围伤害" }
+        else if hovIdx == 2 { tip = "冰冻减速 45% · 辅助控场" }
+        else if hovIdx == 3 { tip = "链式闪电 · 弹跳 2 个目标" }
+        var aps = _int(600 / TOWER_CD[hovIdx])
+        var ttx = 8.0 + _float(hovIdx) * (CARD_W + 6.0) - 20.0
+        if ttx < 4.0 { ttx = 4.0 }
+        if ttx + 226.0 > MAP_W - 4.0 { ttx = MAP_W - 230.0 }
+        var tty = BAR_Y - 96.0
+        r.setColor(#0B1016F2)
+        r.fillRoundedRect(ttx, tty, 226.0, 90.0, 8.0)
+        r.setColor(#5DADE2FF)
+        r.drawRoundedRect(ttx, tty, 226.0, 90.0, 8.0)
+        r.drawText(f, TOWER_NAME[hovIdx] + " · 用法", ttx + 8.0, tty + 6.0, #FFDC50FF)
+        r.drawText(f, "伤害 " + _int(TOWER_DMG[hovIdx]) + "  射程 " +
+                  _int(towerRange(hovIdx, 1) / TS * 10.0) / 10 + "格  攻速 " +
+                  (aps / 10) + "." + (aps % 10) + "/秒", ttx + 8.0, tty + 22.0, #ECF0F1FF)
+        r.drawText(f, "造价 " + TOWER_COST[hovIdx] + "  血量 " + _int(towerMaxHp(hovIdx, 1)), ttx + 8.0, tty + 36.0, #ECF0F1FF)
+        r.drawText(f, "特性: " + tip, ttx + 8.0, tty + 50.0, #AED6F1FF)
+        r.drawText(f, "点卡片 / 按数字键选择建造", ttx + 8.0, tty + 68.0, #7F8C8DFF)
+    }
 
-    // 控制行：倍速 + 静音（点击切换；快捷键 F 倍速 / M 静音）
-    var ctrlY = MAP_H - 54.0
-    var halfW = (PW - 6.0) * 0.5
-    // 倍速按钮
-    r.setColor(if g.speedMul > 1 then #1F618DFF else #1A252FFF)
-    r.fillRoundedRect(PX, ctrlY, halfW, 24.0, 4.0)
-    r.setColor(#5DADE2FF)
-    r.drawRoundedRect(PX, ctrlY, halfW, 24.0, 4.0)
-    r.drawTextCentered(f, "速度 x" + g.speedMul, PX, halfW, ctrlY + 4.0, #ECF0F1FF)
-    // 静音按钮
-    r.setColor(if g.muted then #7B241CFF else #1A252FFF)
-    r.fillRoundedRect(PX + halfW + 6.0, ctrlY, halfW, 24.0, 4.0)
-    r.setColor(if g.muted then #E74C3CFF else #5DADE2FF)
-    r.drawRoundedRect(PX + halfW + 6.0, ctrlY, halfW, 24.0, 4.0)
-    r.drawTextCentered(f, if g.muted then "静音" else "开声", PX + halfW + 6.0, halfW, ctrlY + 4.0, #ECF0F1FF)
-
-    // 选中塔的弹出操作菜单（升级 / 出售），画在面板最上层
+    // 选中塔的弹出操作菜单（信息 + 升级 / 出售）
     var pm = popupMenu(g)
     if pm.len() == 12 {
-        r.setColor(#0B1016EE)
+        r.setColor(#0B1016F0)
         r.fillRoundedRect(pm[0], pm[1], pm[2], pm[3], 8.0)
         r.setColor(#34495EFF)
         r.drawRoundedRect(pm[0], pm[1], pm[2], pm[3], 8.0)
         var mt = g.towers[g.menuTower]
         var canUp = towerCanUpgrade(g, mt)
+        r.drawText(f, TOWER_NAME[mt.ttype] + " Lv" + mt.level, pm[0] + 8.0, pm[1] + 6.0, #FFDC50FF)
+        r.drawText(f, "血量 " + _int(mt.hp) + "/" + _int(mt.maxHp) + "  伤害 " + _int(towerDamage(mt.ttype, mt.level)),
+                  pm[0] + 8.0, pm[1] + 21.0, #ECF0F1FF)
         // 升级
         r.setColor(if canUp then #1E8449FF else #566573FF)
         r.fillRoundedRect(pm[4], pm[5], pm[6], pm[7], 4.0)
-        if g.texUp != null { r.drawTextureAt(g.texUp, pm[4] + 5.0, pm[5] + 2.0, 18.0, 18.0) }
-        r.drawTextCentered(f, (if mt.level >= MAX_LEVEL then "已满级" else "升级 " + upgradeCost(mt.ttype, mt.level)),
-                   pm[4], pm[6], pm[5] + 3.0, #ECF0F1FF)
+        if g.texUp != null { r.drawTextureAt(g.texUp, pm[4] + 5.0, pm[5] + 3.0, 18.0, 18.0) }
+        r.drawTextCentered(f, (if mt.level >= MAX_LEVEL then "已满级" else "升级 " + upgradeCost(mt.ttype, mt.level) + " 金"),
+                   pm[4], pm[6], pm[5] + 4.0, #ECF0F1FF)
         // 出售
         r.setColor(#7B241CFF)
         r.fillRoundedRect(pm[8], pm[9], pm[10], pm[11], 4.0)
-        if g.texSell != null { r.drawTextureAt(g.texSell, pm[8] + 5.0, pm[9] + 2.0, 18.0, 18.0) }
-        r.drawTextCentered(f, "出售 " + sellValue(mt.ttype, mt.level), pm[8], pm[10], pm[9] + 3.0, #ECF0F1FF)
+        if g.texSell != null { r.drawTextureAt(g.texSell, pm[8] + 5.0, pm[9] + 3.0, 18.0, 18.0) }
+        r.drawTextCentered(f, "出售 " + sellValue(mt.ttype, mt.level) + " 金", pm[8], pm[10], pm[9] + 4.0, #ECF0F1FF)
     }
+}
+
+// 主菜单中央按钮：开始游戏 / 退出游戏
+func drawMenuButtons(Game g, Renderer r) {
+    var f = g.fontBig
+    var mbx = MAP_W * 0.5 - 110.0
+    var mb1 = MAP_H * 0.5 - 10.0
+    var mb2 = MAP_H * 0.5 + 46.0
+    var hov1 = inRect(g.mouseX, g.mouseY, mbx, mb1, 220.0, 44.0)
+    var hov2 = inRect(g.mouseX, g.mouseY, mbx, mb2, 220.0, 44.0)
+    r.setColor(if hov1 then #1E8449FF else #145A32FF)
+    r.fillRoundedRect(mbx, mb1, 220.0, 44.0, 10.0)
+    r.setColor(if hov1 then #2ECC71FF else #1E8449FF)
+    r.drawRoundedRect(mbx, mb1, 220.0, 44.0, 10.0)
+    r.drawTextCentered(f, "开 始 游 戏", mbx, 220.0, mb1 + 14.0, #ECF0F1FF)
+    r.setColor(if hov2 then #922B21FF else #641E16FF)
+    r.fillRoundedRect(mbx, mb2, 220.0, 44.0, 10.0)
+    r.setColor(#E74C3CFF)
+    r.drawRoundedRect(mbx, mb2, 220.0, 44.0, 10.0)
+    r.drawTextCentered(f, "退 出 游 戏", mbx, 220.0, mb2 + 14.0, #ECF0F1FF)
 }
 
 func drawGame(Game g, Renderer r) {
@@ -1835,7 +1988,7 @@ func drawGame(Game g, Renderer r) {
     }
 
     // 鼠标悬停：建造预览
-    if g.selType >= 0 and g.mouseX < MAP_W and g.mouseY < MAP_H {
+    if g.selType >= 0 and g.mouseY > HUD_H and g.mouseY < BAR_Y {
         var gx = _int(g.mouseX / TS)
         var gy = _int(g.mouseY / TS)
         if gx >= 0 and gy >= 0 and gx < COLS and gy < ROWS {
@@ -1942,8 +2095,20 @@ func drawGame(Game g, Renderer r) {
         }
     }
 
-    // 敌人
-    for g.enemies to e {
+    // 敌人（画家算法：按 y 坐标从上到下排序绘制，近处的敌人遮住远处的）
+    Array[int] drawOrder = []
+    for 0 : g.enemies.len() - 1 to oi { drawOrder.add(oi) }
+    for 1 : drawOrder.len() - 1 to ii {
+        var key = drawOrder[ii]
+        var jj = ii - 1
+        while jj >= 0 and g.enemies[drawOrder[jj]].y > g.enemies[key].y {
+            drawOrder[jj + 1] = drawOrder[jj]
+            jj = jj - 1
+        }
+        drawOrder[jj + 1] = key
+    }
+    for 0 : g.enemies.len() - 1 to ei2 {
+        var e = g.enemies[drawOrder[ei2]]
         var sz = ENEMY_SIZE[e.etype]
         if e.etype == EM_SLIME and g.texSlime.len() > 0 {
             // 侧视行走帧：不旋转，按移动方向水平翻转（素材默认朝左）
@@ -2151,13 +2316,23 @@ func drawGame(Game g, Renderer r) {
     // 飘字
     for g.floats to ft {
         var a2 = _int(255.0 * _float(ft.life) / 50.0)
+        if a2 > 255 { a2 = 255 }
         int fr = (ft.c >> 16) & 0xFF
         int fg = (ft.c >> 8) & 0xFF
         int fb = ft.c & 0xFF
-        r.drawText(g.font, ft.text, ft.x - 8.0, ft.y, (a2 << 24) | (fr << 16) | (fg << 8) | fb)
+        if ft.bg {
+            // 白底黑字气泡：宽度 = 字数 × 每字宽（11 号中文字约 13px）+ 内边距
+            var tw = _float(ft.text.len()) * 13.0
+            r.setColor((a2 << 24) | 0xFAFAFA)
+            r.fillRoundedRect(ft.x - 5.0, ft.y - 3.0, tw + 10.0, 19.0, 6.0)
+            r.setColor((a2 << 24) | 0x1A1A1A)
+            r.drawText(g.font, ft.text, ft.x, ft.y, (a2 << 24) | 0x1A1A1A)
+        } else {
+            r.drawText(g.font, ft.text, ft.x - 8.0, ft.y, (a2 << 24) | (fr << 16) | (fg << 8) | fb)
+        }
     }
 
-    drawPanel(g, r)
+    drawHUD(g, r)
 
     // 波次横幅（背景半透明，不遮挡画面）
     if g.bannerTimer > 0 {
@@ -2175,24 +2350,31 @@ func drawGame(Game g, Renderer r) {
 }
 
 func drawOverlay(Game g, Renderer r, string title, string sub) {
+    // 只压暗地图区域，右侧面板保持明亮可见
     r.setColor(#000000BB)
-    r.fillRect(0.0, 0.0, _float(WIN_W), _float(WIN_H))
-    r.drawTextCentered(g.fontBig, title, 0.0, _float(WIN_W), MAP_H * 0.5 - 40.0, #FFDC50FF)
-    r.drawTextCentered(g.font, sub, 0.0, _float(WIN_W), MAP_H * 0.5 + 6.0, #ECF0F1FF)
+    r.fillRect(0.0, 0.0, MAP_W, MAP_H)
+    r.drawTextCentered(g.fontBig, title, 0.0, MAP_W, MAP_H * 0.5 - 40.0, #FFDC50FF)
+    r.drawTextCentered(g.font, sub, 0.0, MAP_W, MAP_H * 0.5 + 6.0, #ECF0F1FF)
 }
 
 func renderGame(Game g, Renderer r) {
     drawGame(g, r)
 
     if g.state == ST_MENU {
-        drawOverlay(g, r, "塔 防", "点击画面开始游戏   1-4 选塔   空格 开始下一波")
+        // 主菜单：标题与说明文字在按钮上方，避免被「开始游戏」按钮盖住
+        r.setColor(#000000BB)
+        r.fillRect(0.0, 0.0, MAP_W, MAP_H)
+        r.drawTextCentered(g.fontBig, "塔 防", 0.0, MAP_W, MAP_H * 0.5 - 122.0, #FFDC50FF)
+        r.drawTextCentered(g.font, "守住院子，别让怪物摸到水晶   双通道 · 四种塔 · 二十波",
+                      0.0, MAP_W, MAP_H * 0.5 - 78.0, #ECF0F1FF)
+        drawMenuButtons(g, r)
     } else if g.state == ST_PAUSE {
-        drawOverlay(g, r, "暂停", "按 P 继续")
+        drawOverlay(g, r, "暂停", "按 P 或点顶部「继续」按钮返回战斗")
     } else if g.state == ST_OVER {
         drawOverlay(g, r, "游戏结束", "坚持到第 " + g.wave + " 波，击杀 " + g.totalKilled +
-                    " 个敌人   点击画面或按 R 重新开始")
+                    " 个敌人   点击地图或按 R 重新开始")
     } else if g.state == ST_WIN {
-        drawOverlay(g, r, "通关！", "剩余生命 " + g.lives + "   击杀 " + g.totalKilled + "   点击画面重开")
+        drawOverlay(g, r, "通关！", "剩余生命 " + g.lives + "   击杀 " + g.totalKilled + "   点击地图重新开始")
     }
 }
 
@@ -2204,7 +2386,10 @@ func inRect(float x, float y, float rx, float ry, float rw, float rh): bool {
 
 func onClick(Game g, float mx, float my, int button) {
     if g.state == ST_MENU {
-        g.state = ST_PLAY
+        // 主菜单：开始游戏 / 退出游戏
+        var mbx = MAP_W * 0.5 - 110.0
+        if inRect(mx, my, mbx, MAP_H * 0.5 - 10.0, 220.0, 44.0) { g.state = ST_PLAY; return }
+        if inRect(mx, my, mbx, MAP_H * 0.5 + 46.0, 220.0, 44.0) { g.quitReq = true; return }
         return
     }
     if g.state == ST_OVER or g.state == ST_WIN {
@@ -2213,32 +2398,33 @@ func onClick(Game g, float mx, float my, int button) {
     }
     if g.state != ST_PLAY { return }
 
-    // 面板：塔卡片 / 开始下一波（点面板即关闭地图上的塔菜单）
-    if mx >= MAP_W {
+    // 顶部状态条按钮：倍速 / 静音 / 暂停
+    if my < HUD_H {
+        var bw = 66.0
+        var bx0 = MAP_W - (bw + 6.0) * 3.0 - 8.0
+        if inRect(mx, my, bx0, 5.0, bw, 24.0) { cycleSpeed(g); return }
+        if inRect(mx, my, bx0 + bw + 6.0, 5.0, bw, 24.0) { toggleMute(g); return }
+        if inRect(mx, my, bx0 + (bw + 6.0) * 2.0, 5.0, bw, 24.0) {
+            if g.state == ST_PLAY { g.state = ST_PAUSE } else if g.state == ST_PAUSE { g.state = ST_PLAY }
+            return
+        }
+        return
+    }
+    // 底部建塔栏：选塔 / 开始下一波
+    if my >= BAR_Y {
         g.menuTower = -1
         for 0 : 3 to i {
-            var cy = CARD_Y0 + _float(i) * (CARD_H + CARD_GAP)
-            if inRect(mx, my, PX, cy, PW, CARD_H) {
+            var cx = 8.0 + _float(i) * (CARD_W + 6.0)
+            if inRect(mx, my, cx, BAR_Y + 6.0, CARD_W, BAR_H - 12.0) {
                 g.selType = i
                 g.selTower = -1
                 return
             }
         }
-        // 开始下一波
-        if g.waveState == 0 and inRect(mx, my, PX, 240.0, PW, 30.0) {
+        var wbx = MAP_W - 216.0
+        if g.waveState == 0 and inRect(mx, my, wbx, BAR_Y + 7.0, 208.0, BAR_H - 14.0) {
             g.gold = g.gold + (g.waveTimer / 60 + 1) * 2
             g.waveTimer = 0
-            return
-        }
-        // 控制行：倍速 / 静音
-        var ctrlY = MAP_H - 54.0
-        var halfW = (PW - 6.0) * 0.5
-        if inRect(mx, my, PX, ctrlY, halfW, 24.0) {
-            cycleSpeed(g)
-            return
-        }
-        if inRect(mx, my, PX + halfW + 6.0, ctrlY, halfW, 24.0) {
-            toggleMute(g)
             return
         }
         return
@@ -2258,9 +2444,8 @@ func onClick(Game g, float mx, float my, int button) {
         var dy = my - (chy + bob)
         if dx > -14.0 and dx < 14.0 and dy > -16.0 and dy < 14.0 {
             var reward = rands.ints(40, 100) + g.wave * 3
-            g.gold = g.gold + reward
-            g.bannerText = "宝箱 +" + reward + " 金币"
-            g.bannerTimer = 70
+            spawnCoinBurst(g, chx, chy, reward)   // 金币从宝箱迸出后逐枚飞向计数处入账
+            addFloat(g, chx - 20.0, chy - 26.0, "+" + reward + " 金币", #FFE100FF)   // 宝箱旁透明小字显示金额
             if g.audioOk and not g.muted { g.sfxPickup.play() }   // 开宝箱拾取音
             Array[Chest] ck = []
             for 0 : g.chests.len() - 1 to j {
@@ -2353,6 +2538,7 @@ func restartGame(Game g) {
 }
 
 func handleEvent(Game g, Event e): bool {
+    if g.quitReq { return false }   // 主菜单「退出游戏」
     if e.isQuit() or e.isWindowClose() { return false }
 
     if e.isMouseMotion() {
@@ -2432,8 +2618,7 @@ main() {
     var win = SDL3.createWindow({
         title: "塔防 Tower Defense",
         w: WIN_W,
-        h: WIN_H,
-        flags: WindowFlag.RESIZABLE
+        h: WIN_H
     })
     if not win.ok {
         print("[错误] 窗口创建失败")
@@ -2441,8 +2626,12 @@ main() {
     }
 
     SDL3.ttfInit()
-    var font = SDL3.createFontAuto(11.0)
-    var fontBig = SDL3.createFontAuto(16.0)
+    // 游戏字体：得意黑 Smiley Sans（OFL 开源协议，免费商用）；加载失败自动回退系统字体
+    var fontPath = dirs.script_dir() + "/font/SmileySans-Oblique.ttf"
+    var font = SDL3.createFont(fontPath, 11.0)
+    if not font.ok { font = SDL3.createFontAuto(11.0) }
+    var fontBig = SDL3.createFont(fontPath, 16.0)
+    if not fontBig.ok { fontBig = SDL3.createFontAuto(16.0) }
 
     var g = newGame()
     g.font = font

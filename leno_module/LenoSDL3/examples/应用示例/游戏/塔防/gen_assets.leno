@@ -89,31 +89,63 @@ func baseStone(Renderer r, float cx, float by) {
 
 func drawTileGrass(Renderer r, float ox, float oy) {
     box(r, ox, oy, 32.0, 32.0, #4C8B3AFF)
-    // 随机深浅草斑，做出草地质感
-    for 0 : 22 to i {
-        var px = ox + _float(rands.ints(1, 29))
-        var py = oy + _float(rands.ints(1, 28))
+    // 大块深浅草斑（软边、不出界，避免接缝处形成规律条纹）
+    for 0 : 6 to i {
+        var px = ox + _float(rands.ints(0, 25))
+        var py = oy + _float(rands.ints(0, 26))
         if (i / 2) * 2 == i {
-            box(r, px, py, 2.0, 2.0, #57A045FF)
+            rbox(r, px, py, 8.0, 6.0, 3.0, #55A044B0)
         } else {
-            box(r, px, py, 2.0, 2.0, #3F7A31FF)
+            rbox(r, px, py, 7.0, 5.0, 3.0, #458437B0)
         }
     }
-    box(r, ox, oy + 30.0, 32.0, 2.0, #3A6E2CFF)   // 下缘暗边
+    // 细草茎：短竖线，深浅交替，模拟草的纤维感
+    for 0 : 26 to i {
+        var px = ox + _float(rands.ints(0, 30))
+        var py = oy + _float(rands.ints(0, 28))
+        if (i / 3) * 3 == i {
+            box(r, px, py, 1.0, 3.0, #5FAF4CFF)
+        } else {
+            box(r, px, py, 1.0, 3.0, #3E7A30FF)
+        }
+    }
+    // 零星小花点（低概率出现，打破纯绿）
+    for 0 : 2 to i {
+        if rands.ints(0, 9) < 3 {
+            disc(r, ox + _float(rands.ints(3, 28)), oy + _float(rands.ints(3, 28)), 1.0, #F5F7FAFF)
+        }
+    }
 }
 
 func drawTilePath(Renderer r, float ox, float oy) {
     box(r, ox, oy, 32.0, 32.0, #C8A96AFF)
-    for 0 : 18 to i {
-        var px = ox + _float(rands.ints(1, 29))
-        var py = oy + _float(rands.ints(1, 29))
-        if (i / 3) * 3 == i {
-            box(r, px, py, 2.0, 2.0, #D8BE84FF)
+    // 大块土色斑驳（土路不均匀）
+    for 0 : 6 to i {
+        var px = ox + _float(rands.ints(0, 24))
+        var py = oy + _float(rands.ints(0, 26))
+        if (i / 2) * 2 == i {
+            rbox(r, px, py, 8.0, 6.0, 3.0, #D4B478B0)
         } else {
-            box(r, px, py, 2.0, 2.0, #B0905AFF)
+            rbox(r, px, py, 7.0, 5.0, 3.0, #BC9C60B0)
         }
     }
-    box(r, ox, oy + 30.0, 32.0, 2.0, #9E7F4EFF)
+    // 砂砾碎点
+    for 0 : 14 to i {
+        var px = ox + _float(rands.ints(1, 29))
+        var py = oy + _float(rands.ints(1, 29))
+        if (i / 4) * 4 == i {
+            disc(r, px, py, 1.5, #A8894FFF)
+        } else {
+            box(r, px, py, 1.0, 1.0, #DAC088FF)
+        }
+    }
+    // 小石子（带一点高光）
+    for 0 : 3 to i {
+        var px = ox + _float(rands.ints(3, 26))
+        var py = oy + _float(rands.ints(3, 26))
+        disc(r, px, py, 2.0, #9C8250FF)
+        disc(r, px - 1.0, py - 1.0, 1.0, #B89A62FF)
+    }
 }
 
 // 出怪口：暗色地面 + 红色传送漩涡
