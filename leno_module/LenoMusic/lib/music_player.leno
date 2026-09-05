@@ -2,6 +2,12 @@
 import "music_core.leno" as core
 use core.miniaudio
 
+// 音频引擎全局状态（所有 Sound 实例共享）
+// 引擎只需初始化一次：部分电脑首次打开音频设备很慢，无设备时会逐个后端回退更慢。
+// 若每个音效实例都重复初始化，几十个音效会让启动卡顿甚至看似假死。
+var _engineRefs   = 0        // 已成功创建的 Sound 数（引用计数）
+var _engineFailed = false    // 引擎初始化是否曾失败：失败后不再重试，直接快速跳过
+
 // ==================== Sound (streaming playback) ====================
 export struct Sound {
     Ptr h; bool ok
@@ -9,9 +15,20 @@ export struct Sound {
     func load(string p): bool {
         miniaudio l = core.lib()
         if l == null { return false }
-        l.ma_dll_engine_init()
+        if _engineFailed { return false }              // 设备不可用：直接跳过，不再反复重试
+        if _engineRefs == 0 {
+            if l.ma_dll_engine_init() != 0 {           // 引擎全局只初始化一次
+                _engineFailed = true
+                return false
+            }
+        }
         h = l.ma_dll_sound_create(p) as Ptr
-        if h == null { l.ma_dll_engine_uninit(); return false }
+        if h == null {
+            // 单个文件失败不关闭引擎：其他 Sound 实例可能正在使用
+            if _engineRefs == 0 { l.ma_dll_engine_uninit() }
+            return false
+        }
+        _engineRefs = _engineRefs + 1
         ok = true
         return true
     }
@@ -87,7 +104,11 @@ export struct Sound {
     func uninit() {
         if ok {
             core.lib().ma_dll_sound_destroy(h)
-            core.lib().ma_dll_engine_uninit()
+            _engineRefs = _engineRefs - 1
+            if _engineRefs <= 0 {                      // 最后一个实例才关闭引擎
+                core.lib().ma_dll_engine_uninit()
+                _engineRefs = 0
+            }
             h = null
             ok = false
         }

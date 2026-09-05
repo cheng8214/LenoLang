@@ -359,6 +359,7 @@ static Value native_dirs_script_dir(int argCount, Value* args) {
     extern char** g_argv;
 
     const char* target = NULL;
+    char* target_heap = NULL;  // 若 target 来自 GetModuleFileNameW，需 free
 
     // 优先从参数中找脚本路径（第一个非选项参数）
     for (int i = 1; i < g_argc; i++) {
@@ -371,6 +372,19 @@ static Value native_dirs_script_dir(int argCount, Value* args) {
     // 没有脚本路径，使用 exe 路径
     if (!target && g_argc > 0 && g_argv[0]) {
         target = g_argv[0];
+#ifdef _WIN32
+        // Windows: g_argv[0] 可能是相对路径（如"game.exe"），
+        // 在快捷方式 / 批处理中 CWD 可能不等于 exe 所在目录。
+        // 用 GetModuleFileNameW 获取当前 exe 的真实绝对路径，不依赖 CWD。
+        wchar_t exe_path[4096];
+        DWORD len = GetModuleFileNameW(NULL, exe_path, 4096);
+        if (len > 0 && len < 4096) {
+            target_heap = utf16_to_utf8(exe_path);
+            if (target_heap) {
+                target = target_heap;
+            }
+        }
+#endif
     }
 
     if (!target) {
@@ -422,10 +436,13 @@ static Value native_dirs_script_dir(int argCount, Value* args) {
     }
 
     if (len == 0) {
+        if (target_heap) free(target_heap);
         return val_obj((Object*)str_copy(".", 1));
     }
 
-    return val_obj((Object*)str_copy(abs_path, len));
+    ObjString* result = str_copy(abs_path, len);
+    if (target_heap) free(target_heap);
+    return val_obj((Object*)result);
 }
 
 // ==================== 目录操作 ====================

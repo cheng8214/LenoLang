@@ -959,32 +959,32 @@ func loadResources(Game g, Renderer r) {
     }
 
     // 音频（引擎已支持中文路径，可直接使用中文文件名）
-    g.bgm = audio.createSound("bkmusic/bk.mp3")
+    g.bgm = audio.createSound(base + "/bkmusic/bk.mp3")
     g.bgm.setLooping(true)
     g.bgm.setVolume(0.35)
 
-    g.bossBgm = audio.createSound("bkmusic/boss.mp3")
+    g.bossBgm = audio.createSound(base + "/bkmusic/boss.mp3")
     g.bossBgm.setLooping(true)
     g.bossBgm.setVolume(0.4)
 
-    g.sfxShoot = audio.createSfx("bkmusic/anxia.mp3", 6, 0.4)   // 复用扫雷「按下」音作开火声（调响，炮塔/冰塔/电塔共用）
-    g.sfxBoom  = audio.createSfx("bkmusic/db.wav", 5, 0.4)
-    g.sfxLose  = audio.createSfx("bkmusic/si.wav", 3, 0.28)
-    g.sfxShootArrow = audio.createSfx("bkmusic/箭塔射箭.mp3", 6, 0.18)   // 箭塔开火（换用专属射箭音）
-    g.sfxBuild      = audio.createSfx("bkmusic/放置.mp3", 4, 0.35)   // 建造
-    g.sfxFreeze     = audio.createSfx("bkmusic/冻住.wav", 4, 0.3)   // 冰塔冰冻
-    g.sfxWave       = audio.createSfx("bkmusic/波浪提示音.mp3", 2, 0.4)   // 波次开始
-    g.sfxDie        = audio.createSfx("bkmusic/怪物死亡.mp3", 5, 0.3)     // 怪物死亡
-    g.sfxUpgrade    = audio.createSfx("bkmusic/升级.mp3", 3, 0.4)         // 塔升级
-    g.sfxPickup     = audio.createSfx("bkmusic/拾取.mp3", 5, 0.35)        // 金币入账 / 开宝箱
-    g.sfxHit        = audio.createSfx("bkmusic/小怪受击.mp3", 6, 0.2)     // 小怪受击（节流播放）
-    g.sfxBoom4      = audio.createSfx("bkmusic/db.wav", 3, 0.55)          // 人物4 自爆（降调大爆炸）
+    g.sfxShoot = audio.createSfx(base + "/bkmusic/anxia.mp3", 6, 0.4)   // 复用扫雷「按下」音作开火声（调响，炮塔/冰塔/电塔共用）
+    g.sfxBoom  = audio.createSfx(base + "/bkmusic/db.wav", 5, 0.4)
+    g.sfxLose  = audio.createSfx(base + "/bkmusic/si.wav", 3, 0.28)
+    g.sfxShootArrow = audio.createSfx(base + "/bkmusic/箭塔射箭.mp3", 6, 0.18)   // 箭塔开火（换用专属射箭音）
+    g.sfxBuild      = audio.createSfx(base + "/bkmusic/放置.mp3", 4, 0.35)   // 建造
+    g.sfxFreeze     = audio.createSfx(base + "/bkmusic/冻住.wav", 4, 0.3)   // 冰塔冰冻
+    g.sfxWave       = audio.createSfx(base + "/bkmusic/波浪提示音.mp3", 2, 0.4)   // 波次开始
+    g.sfxDie        = audio.createSfx(base + "/bkmusic/怪物死亡.mp3", 5, 0.3)     // 怪物死亡
+    g.sfxUpgrade    = audio.createSfx(base + "/bkmusic/升级.mp3", 3, 0.4)         // 塔升级
+    g.sfxPickup     = audio.createSfx(base + "/bkmusic/拾取.mp3", 5, 0.35)        // 金币入账 / 开宝箱
+    g.sfxHit        = audio.createSfx(base + "/bkmusic/小怪受击.mp3", 6, 0.2)     // 小怪受击（节流播放）
+    g.sfxBoom4      = audio.createSfx(base + "/bkmusic/db.wav", 3, 0.55)          // 人物4 自爆（降调大爆炸）
     for g.sfxBoom4.pool to ps {
         ps.setPitch(0.6)   // 降调：比普通爆炸低沉，听起来是不同的大爆炸
     }
-    g.sfxBossSmash = audio.createSfx("bkmusic/db.wav", 3, 0.5)
+    g.sfxBossSmash = audio.createSfx(base + "/bkmusic/db.wav", 3, 0.5)
     for g.sfxBossSmash.pool to ps { ps.setPitch(0.7) }   // 降调闷响：BOSS 拆塔击打，区别于普通爆炸
-    g.sfxBossFire  = audio.createSfx("bkmusic/anxia.mp3", 4, 0.3)         // 较轻的开炮声，与击打区分开
+    g.sfxBossFire  = audio.createSfx(base + "/bkmusic/anxia.mp3", 4, 0.3)         // 较轻的开炮声，与击打区分开
 
     g.audioOk = g.bgm.ok
     if g.audioOk {
@@ -2941,6 +2941,7 @@ func handleEvent(Game g, Event e): bool {
 // ==================== 主函数 ====================
 
 main() {
+    _console(false)
     var win = SDL3.createWindow({
         title: "塔防 Tower Defense",
         w: WIN_W,
