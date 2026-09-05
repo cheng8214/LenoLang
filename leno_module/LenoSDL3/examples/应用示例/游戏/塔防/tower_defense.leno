@@ -1596,7 +1596,7 @@ func updateEnemies(Game g) {
                     var adx = e.bAx - e.x
                     var ady = e.bAy - e.y
                     var ad = maths.sqrt(adx * adx + ady * ady)
-                    var aspd = e.speed * 8.0 + 4.0
+                    var aspd = e.speed * 4.0 + 2.0
                     if e.bRb <= e.bWpIdx {
                         var fwx = _float(WPX[e.bRb]) * TS + TS * 0.5
                         var fwy = _float(WPY[e.bRb]) * TS + TS * 0.5
@@ -2453,9 +2453,9 @@ func drawGame(Game g, Renderer r) {
                 r.drawTextureRotated(g.texBossJump[bfj], e.x - sz * 0.5, e.y - sz * 0.5, sz, sz,
                                      0.0, sz * 0.5, sz * 0.5, bflip)
             } else {
-                // 赶路 / 空手回位：走路动画（跑回原位时帧速加倍，看起来在跑）
+                // 赶路 / 空手回位：走路动画（回程放慢，帧速恢复正常，避免滑步）
                 var wfr = 8
-                if e.bState == 3 { wfr = 4 }
+                if e.bState == 4 { wfr = 8 }
                 var bfw = _int(g.frameCount / wfr) % 6
                 if bfw > g.texBossWalk.len() - 1 { bfw = g.texBossWalk.len() - 1 }
                 r.drawTextureRotated(g.texBossWalk[bfw], e.x - sz * 0.5, e.y - sz * 0.5, sz, sz,
@@ -2496,10 +2496,9 @@ func drawGame(Game g, Renderer r) {
     for g.enemies to e {
         if not e.alive { continue }
         if e.etype != EM_BOSS { continue }
-        // 箭塔：跑回出生点 + 跑回原位期间都扛着人；武器类：仅原地攻击阶段扛着
+        // 箭塔：扛着人跑回出生点（state 2），到达后即放下，空手跑回（state 3）；武器类：仅原地攻击阶段（state 2）扛着
         var showCarry = false
         if e.bState == 2 { showCarry = true }
-        if e.bState == 3 and e.bTowerType == TW_ARROW { showCarry = true }
         if not showCarry { continue }
         var bsz = ENEMY_SIZE[e.etype]
         var cflip = Flip.NONE
@@ -2513,8 +2512,9 @@ func drawGame(Game g, Renderer r) {
             r.drawTextureRotated(g.texFrost[1], e.x - 21.0, e.y - bsz * 0.5 - 30.0 + cbob, 42.0, 42.0,
                                  0.0, 21.0, 21.0, cflip)
         } else if e.bTowerType == TW_ARROW and g.texArrowTower.len() > 1 {
-            r.drawTextureRotated(g.texArrowTower[1], e.x - 19.0, e.y - bsz * 0.5 - 34.0 + cbob, 38.0, 38.0,
-                                 0.0, 19.0, 19.0, cflip)
+            // 扛在肩上：人物横躺（旋转 90°），中心略下移搭在肩头
+            r.drawTextureRotated(g.texArrowTower[1], e.x - 27.0, e.y - bsz * 0.5 - 38.0 + cbob, 54.0, 54.0,
+                                 90.0, 27.0, 27.0, cflip)
         } else if e.bTowerType == TW_TESLA and g.texTower[3] != null {
             r.drawTextureRotated(g.texTower[3], e.x - 20.0, e.y - bsz * 0.5 - 32.0 + cbob, 40.0, 40.0,
                                  0.0, 20.0, 20.0, cflip)
