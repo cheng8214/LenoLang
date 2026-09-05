@@ -1348,7 +1348,23 @@ export struct Window {
                         ren.setColor(th.bg)
                         ren.fillRect(0, 0, _float(_runW[i]), _float(_runH[i]))
                     }
-                    _runRends[i](_runRens[i])
+                    try {
+                        _runRends[i](_runRens[i])
+                    } catch e {
+                        print("[错误] 渲染异常: " + e.msg)
+                        // 异常导致事件循环中断，手动执行清理（与 isQuit 路径一致）
+                        for _runWids.len() to j {
+                            var ws = _runWidgets[j]
+                            if ws != null { for ws to w { w.dispose() } }
+                            _runRens[j].destroy()
+                            _lib.SDL_DestroyWindow(_runHnds[j])
+                            _windowCount -= 1
+                        }
+                        ev.uninit()
+                        if _windowCount <= 0 { core.quit() }
+                        _runLoopActive = false
+                        return
+                    }
                     // 弹层捕获区：每帧渲染前清空，由展开的下拉框在 renderPopup 里重新登记
                     core.clearPopupCapture()
                     // 先渲染根布局控件（背景层），再渲染 _widgets（按 z 值排序后层叠）
