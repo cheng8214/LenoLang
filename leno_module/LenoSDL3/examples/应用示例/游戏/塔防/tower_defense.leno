@@ -242,6 +242,9 @@ struct Game {
     bool chestOpen            // 宝箱奖励弹窗是否打开
     int chestReward           // 本次宝箱随机金币
 
+    int speedMul              // 倍速：1 / 2 / 3
+    bool muted                // 是否静音
+
     Array[int] map
     Array[Enemy] enemies
     Array[Tower] towers
@@ -324,6 +327,29 @@ func sellValue(int ttype, int level): int {
     return _int(spent * 0.6)
 }
 
+// 应用静音状态（BGM / BOSS 音乐音量置 0，音效在播放处单独拦截）
+func applyMute(Game g) {
+    if not g.audioOk { return }
+    if g.muted {
+        g.bgm.setVolume(0.0)
+        g.bossBgm.setVolume(0.0)
+    } else {
+        g.bgm.setVolume(0.35)
+        g.bossBgm.setVolume(0.4)
+    }
+}
+
+func toggleMute(Game g) {
+    g.muted = not g.muted
+    applyMute(g)
+}
+
+// 倍速循环：1 -> 2 -> 3 -> 1
+func cycleSpeed(Game g) {
+    g.speedMul = g.speedMul + 1
+    if g.speedMul > 3 { g.speedMul = 1 }
+}
+
 func cellAt(Game g, int gx, int gy): int {
     if gx < 0 or gy < 0 or gx >= COLS or gy >= ROWS { return T_ROCK }
     return g.map[gy * COLS + gx]
@@ -352,6 +378,8 @@ func newGame(): Game {
     g.menuTower = -1
     g.mouseX = 0.0
     g.mouseY = 0.0
+    g.speedMul = 1
+    g.muted = false
     g.map = []
     g.enemies = []
     g.towers = []
@@ -493,6 +521,7 @@ func loadResources(Game g, Renderer r) {
     g.audioOk = g.bgm.ok
     if g.audioOk {
         g.bgm.play()
+        applyMute(g)
         print("[OK] 音频加载完成")
     } else {
         print("[警告] 音频初始化失败，游戏将以静音模式运行")
@@ -614,7 +643,7 @@ func damageIdx(Game g, int idx, float dmg) {
                 if e.etype == EM_BOSS or rands.ints(0, 99) < CHEST_DROP_RATE {
                     spawnChest(g, e.x, e.y)
                 }
-                if g.audioOk { g.sfxBoom.play() }
+                if g.audioOk and not g.muted { g.sfxBoom.play() }
             }
             return
         }
@@ -695,7 +724,7 @@ func fire(Game g, Tower t, int ti) {
     b.vx = dx / d
     b.vy = dy / d
     g.bullets.add(b)
-    if g.audioOk { g.sfxShoot.play() }   // 所有塔开火都播放开火声（不再仅限加农炮）
+    if g.audioOk and not g.muted { g.sfxShoot.play() }   // 所有塔开火都播放开火声（不再仅限加农炮）
 }
 
 func hitTarget(Game g, Bullet b, int ti) {
@@ -763,7 +792,7 @@ func updateEnemies(Game g) {
             g.lives = g.lives - e.dmg
             addFloat(g, e.x, e.y - 10.0, "-" + e.dmg, #E74C3CFF)
             addParticles(g, e.x, e.y, 14, #C0392BFF)
-            if g.audioOk { g.sfxLose.play() }
+            if g.audioOk and not g.muted { g.sfxLose.play() }
             if g.lives <= 0 {
                 g.lives = 0
                 g.state = ST_OVER
@@ -1174,7 +1203,23 @@ func drawPanel(Game g, Renderer r) {
     r.drawText(f, "1-4选塔 空格开始", PX + 4.0, hy, #6C7A89FF)
     r.drawText(f, "点塔弹菜单:升级/出售", PX + 4.0, hy + 12.0, #6C7A89FF)
     r.drawText(f, "点宝箱开随机金币", PX + 4.0, hy + 24.0, #6C7A89FF)
-    r.drawText(f, "P暂停 R重开 ESC退出", PX + 4.0, hy + 36.0, #6C7A89FF)
+    r.drawText(f, "F倍速 M静音 P暂停 R重开", PX + 4.0, hy + 36.0, #6C7A89FF)
+
+    // 控制行：倍速 + 静音（点击切换；快捷键 F 倍速 / M 静音）
+    var ctrlY = MAP_H - 54.0
+    var halfW = (PW - 6.0) * 0.5
+    // 倍速按钮
+    r.setColor(if g.speedMul > 1 then #1F618DFF else #1A252FFF)
+    r.fillRoundedRect(PX, ctrlY, halfW, 24.0, 4.0)
+    r.setColor(#5DADE2FF)
+    r.drawRoundedRect(PX, ctrlY, halfW, 24.0, 4.0)
+    r.drawTextCentered(f, "速度 x" + g.speedMul, PX, halfW, ctrlY + 4.0, #ECF0F1FF)
+    // 静音按钮
+    r.setColor(if g.muted then #7B241CFF else #1A252FFF)
+    r.fillRoundedRect(PX + halfW + 6.0, ctrlY, halfW, 24.0, 4.0)
+    r.setColor(if g.muted then #E74C3CFF else #5DADE2FF)
+    r.drawRoundedRect(PX + halfW + 6.0, ctrlY, halfW, 24.0, 4.0)
+    r.drawTextCentered(f, if g.muted then "静音" else "开声", PX + halfW + 6.0, halfW, ctrlY + 4.0, #ECF0F1FF)
 
     // 选中塔的弹出操作菜单（升级 / 出售），画在面板最上层
     var pm = popupMenu(g)
@@ -1440,6 +1485,17 @@ func onClick(Game g, float mx, float my, int button) {
             g.waveTimer = 0
             return
         }
+        // 控制行：倍速 / 静音
+        var ctrlY = MAP_H - 54.0
+        var halfW = (PW - 6.0) * 0.5
+        if inRect(mx, my, PX, ctrlY, halfW, 24.0) {
+            cycleSpeed(g)
+            return
+        }
+        if inRect(mx, my, PX + halfW + 6.0, ctrlY, halfW, 24.0) {
+            toggleMute(g)
+            return
+        }
         return
     }
 
@@ -1543,6 +1599,7 @@ func restartGame(Game g) {
     if g.audioOk {
         g.bossBgm.stop()
         g.bgm.play()
+        applyMute(g)
     }
 }
 
@@ -1584,6 +1641,15 @@ func handleEvent(Game g, Event e): bool {
         if sc == Scancode.P {
             if g.state == ST_PLAY { g.state = ST_PAUSE }
             else if g.state == ST_PAUSE { g.state = ST_PLAY }
+            return true
+        }
+
+        if sc == Scancode.F {
+            if g.state == ST_PLAY or g.state == ST_PAUSE { cycleSpeed(g) }
+            return true
+        }
+        if sc == Scancode.M {
+            toggleMute(g)
             return true
         }
 
@@ -1636,7 +1702,7 @@ main() {
     win.setMaxFPS(60)
 
     print("[OK] 塔防启动成功!")
-    print("     1-4 选塔，鼠标左键放置；点塔弹菜单升级/出售；空格 开始下一波；P 暂停 / R 重开")
+    print("     1-4 选塔，鼠标左键放置；点塔弹菜单升级/出售；空格 开始下一波；F 倍速 / M 静音 / P 暂停 / R 重开")
 
     win.run(
         func(Event ev): bool {
@@ -1648,7 +1714,7 @@ main() {
             if not g.loaded { loadResources(g, r) }
 
             if g.state == ST_PLAY and not g.chestOpen {
-                updateGame(g)
+                for 0 : g.speedMul - 1 to s { updateGame(g) }
             } else if g.state == ST_PAUSE {
                 g.frameCount = g.frameCount + 1
             }
