@@ -1,15 +1,16 @@
 // tower_defense.leno — 塔防（Tower Defense）
 //
 // 操作：
-//   鼠标左键 — 选塔 / 放置塔 / 点击面板按钮
+//   鼠标左键 — 放置塔 / 点塔弹出菜单(升级·出售) / 点面板按钮
 //   1 2 3 4  — 选择 箭塔 / 炮塔 / 冰塔 / 电塔
 //   空格     — 提前开始下一波（按剩余秒数奖励金币）
+//   点塔     — 弹出菜单：升级(金币够且未满级时塔旁自动显示↑) / 出售
 //   U        — 升级选中的塔      S — 出售选中的塔
 //   P        — 暂停 / 继续       R — 重新开始      ESC — 退出
 //
 // 规则：
 //   敌人沿路径从左上入口走向右下基地，漏怪扣生命，生命归零则失败。
-//   击杀获得金币，金币用于在草地格（以及有石块装饰的格子除外）建造/升级塔。
+//   击杀获得金币，金币用于在草地格（石块与树木处不可建造）建造/升级塔；死亡掉落金币飞向左上角即收集成功；怪物有几率掉落宝箱，点击宝箱可随机获得金币。
 //   共 20 波，第 10 / 20 波带 BOSS，全部清空即通关。
 //
 // 资源目录：
@@ -45,6 +46,8 @@ var T_PATH  = 1
 var T_ROCK  = 2
 var T_START = 3
 var T_BASE  = 4
+var T_TREE  = 5   // 树木障碍（不可建造）
+var T_TREE2 = 6   // 树木2障碍（不可建造）
 
 // 塔类型
 var TW_ARROW  = 0
@@ -68,6 +71,9 @@ var EM_GRUNT  = 0
 var EM_RUNNER = 1
 var EM_TANK   = 2
 var EM_BOSS   = 3
+
+// 宝箱掉落
+var CHEST_DROP_RATE = 15     // 普通怪掉落概率（%）；BOSS 必掉
 
 var ENEMY_HP    = [60.0, 40.0, 190.0, 1400.0]
 var ENEMY_SPD   = [0.55, 1.15, 0.38, 0.32]  // px/帧
@@ -98,6 +104,12 @@ var WP_N = 10
 // 装饰石块（不可建造）
 var ROCK_GX = [2, 3, 6, 9, 13, 17, 1, 18, 10, 6]
 var ROCK_GY = [10, 11, 12, 11, 12, 11, 7, 1, 12, 9]
+
+// 树木障碍（不可建造，自动阻挡塔的放置；避开路径与石块）
+var TREE_GX  = [3, 6, 10, 14, 11, 15]
+var TREE_GY  = [4, 3, 4, 4, 7, 7]
+var TREE2_GX = [2, 5, 10, 7, 14, 18]
+var TREE2_GY = [8, 9, 10, 11, 11, 8]
 
 // 面板按钮布局
 var PX       = MAP_W + 6.0
@@ -185,6 +197,25 @@ struct Arc {
     bool alive
 }
 
+struct Coin {
+    float sx
+    float sy
+    float x
+    float y
+    float tx
+    float ty
+    float p
+    int val
+    bool alive
+}
+
+struct Chest {
+    float x
+    float y
+    int life
+    bool alive
+}
+
 struct Game {
     int state
     int frameCount
@@ -205,8 +236,11 @@ struct Game {
 
     int selType                // 当前选中的塔类型（-1 无）
     int selTower               // 当前选中的已建造塔索引（-1 无）
+    int menuTower              // 当前弹出的塔操作菜单所属塔索引（-1 无）
     float mouseX
     float mouseY
+    bool chestOpen            // 宝箱奖励弹窗是否打开
+    int chestReward           // 本次宝箱随机金币
 
     Array[int] map
     Array[Enemy] enemies
@@ -215,6 +249,8 @@ struct Game {
     Array[Particle] particles
     Array[FloatText] floats
     Array[Arc] arcs
+    Array[Coin] coins
+    Array[Chest] chests
     int pCount
 
     // 纹理
@@ -229,6 +265,12 @@ struct Game {
     Ptr[u8] texCoin
     Ptr[u8] texHeart
     Ptr[u8] texStar
+    Ptr[u8] texTree
+    Ptr[u8] texTree2
+    Ptr[u8] texUp
+    Ptr[u8] texCoinFly
+    Ptr[u8] texSell
+    Ptr[u8] texChest
     Ptr[u8] mapTex
     bool loaded
 
@@ -307,6 +349,7 @@ func newGame(): Game {
     g.bannerText = ""
     g.selType = -1
     g.selTower = -1
+    g.menuTower = -1
     g.mouseX = 0.0
     g.mouseY = 0.0
     g.map = []
@@ -316,6 +359,8 @@ func newGame(): Game {
     g.particles = []
     g.floats = []
     g.arcs = []
+    g.coins = []
+    g.chests = []
     g.pCount = 0
     g.texTower = []
     g.texEnemy = []
@@ -364,6 +409,13 @@ func buildMap(Game g) {
         var x = ROCK_GX[i]; var y = ROCK_GY[i]
         if g.map[y * COLS + x] == T_GRASS { g.map[y * COLS + x] = T_ROCK }
     }
+    // 树木（不可建造）
+    for 0 : 5 to i {
+        var x = TREE_GX[i]; var y = TREE_GY[i]
+        if g.map[y * COLS + x] == T_GRASS { g.map[y * COLS + x] = T_TREE }
+        x = TREE2_GX[i]; y = TREE2_GY[i]
+        if g.map[y * COLS + x] == T_GRASS { g.map[y * COLS + x] = T_TREE2 }
+    }
 }
 
 // ==================== 资源加载 ====================
@@ -378,6 +430,12 @@ func loadResources(Game g, Renderer r) {
     g.texCoin  = SDL3.loadImageTexture(r.handle, base + "/image/icon_coin.png")
     g.texHeart = SDL3.loadImageTexture(r.handle, base + "/image/icon_heart.png")
     g.texStar  = SDL3.loadImageTexture(r.handle, base + "/image/icon_star.png")
+    g.texTree  = SDL3.loadImageTexture(r.handle, base + "/image/树木.png")
+    g.texTree2 = SDL3.loadImageTexture(r.handle, base + "/image/树木2.png")
+    g.texUp    = SDL3.loadImageTexture(r.handle, base + "/image/升级.png")
+    g.texCoinFly = SDL3.loadImageTexture(r.handle, base + "/image/金币.png")
+    g.texSell  = SDL3.loadImageTexture(r.handle, base + "/image/出售.png")
+    g.texChest = SDL3.loadImageTexture(r.handle, base + "/image/宝箱.png")
 
     var tn = ["tower_arrow", "tower_cannon", "tower_frost", "tower_tesla"]
     var en = ["enemy_grunt", "enemy_runner", "enemy_tank", "enemy_boss"]
@@ -410,6 +468,8 @@ func loadResources(Game g, Renderer r) {
                 } else {
                     r.drawTextureAt(g.texGrass, px, py, TS, TS)
                     if t == T_ROCK { r.drawTextureAt(g.texRock, px, py, TS, TS) }
+                    if t == T_TREE  { r.drawTextureAt(g.texTree,  px - 2.0, py - 2.0, TS + 4.0, TS + 4.0) }
+                    if t == T_TREE2 { r.drawTextureAt(g.texTree2, px - 2.0, py - 2.0, TS + 4.0, TS + 4.0) }
                 }
             }
         }
@@ -426,8 +486,8 @@ func loadResources(Game g, Renderer r) {
     g.bossBgm.setLooping(true)
     g.bossBgm.setVolume(0.4)
 
-    g.sfxShoot = audio.createSfx("bkmusic/anxia.mp3", 6, 0.2)   // 复用扫雷「按下」音作开火声
-    g.sfxBoom  = audio.createSfx("bkmusic/db.wav", 5, 0.35)
+    g.sfxShoot = audio.createSfx("bkmusic/anxia.mp3", 6, 0.5)   // 复用扫雷「按下」音作开火声（调响）
+    g.sfxBoom  = audio.createSfx("bkmusic/db.wav", 5, 0.65)
     g.sfxLose  = audio.createSfx("bkmusic/si.wav", 3, 0.45)
 
     g.audioOk = g.bgm.ok
@@ -546,11 +606,14 @@ func damageIdx(Game g, int idx, float dmg) {
             e.hp = e.hp - dmg * (1.0 - e.armor)
             if e.hp <= 0 {
                 e.alive = false
-                g.gold = g.gold + e.gold
                 g.kills = g.kills + 1
                 g.totalKilled = g.totalKilled + 1
                 addParticles(g, e.x, e.y, 12, #F39C12FF)
-                addFloat(g, e.x, e.y - 12.0, "+" + e.gold, #FFD700FF)
+                spawnCoin(g, e.x, e.y, e.gold)        // 金币飞向左上角计数为收集
+                // 宝箱掉落：BOSS 必掉，普通怪按概率掉落
+                if e.etype == EM_BOSS or rands.ints(0, 99) < CHEST_DROP_RATE {
+                    spawnChest(g, e.x, e.y)
+                }
                 if g.audioOk { g.sfxBoom.play() }
             }
             return
@@ -797,6 +860,27 @@ func updateBullets(Game g) {
     g.bullets = live
 }
 
+// 生成一枚飞向左上角金币计数处的金币（到达后入账，表示收集成功）
+func spawnCoin(Game g, float x, float y, int val) {
+    var c = new Coin()
+    c.sx = x; c.sy = y
+    c.x = x; c.y = y
+    c.tx = MAP_W + 8.0; c.ty = 23.0
+    c.p = 0.0
+    c.val = val
+    c.alive = true
+    g.coins.add(c)
+}
+
+// 生成一枚停留在地图上的宝箱（点击后弹出随机金币奖励，约 10 秒后消失）
+func spawnChest(Game g, float x, float y) {
+    var ch = new Chest()
+    ch.x = x; ch.y = y
+    ch.life = 600
+    ch.alive = true
+    g.chests.add(ch)
+}
+
 func updateEffects(Game g) {
     Array[Particle] lp = []
     for g.particles to p {
@@ -824,6 +908,30 @@ func updateEffects(Game g) {
         if a.life > 0 { la.add(a) }
     }
     g.arcs = la
+
+    // 飞行金币：死亡后快速飞向左上角计数处，到达即收集入账
+    Array[Coin] lc = []
+    for g.coins to c {
+        c.p = c.p + 0.08
+        if c.p >= 1.0 {
+            g.gold = g.gold + c.val
+            addFloat(g, MAP_W + 22.0, 16.0, "+" + c.val, #FFD700FF)
+        } else {
+            var e = c.p
+            c.x = c.sx + (c.tx - c.sx) * e
+            c.y = c.sy + (c.ty - c.sy) * e - maths.sin(e * 3.14159265) * 20.0
+            lc.add(c)
+        }
+    }
+    g.coins = lc
+
+    // 宝箱：停留一段时间后消失
+    Array[Chest] lch = []
+    for g.chests to ch {
+        ch.life = ch.life - 1
+        if ch.life > 0 { lch.add(ch) }
+    }
+    g.chests = lch
 }
 
 // ==================== 主更新 ====================
@@ -880,8 +988,23 @@ func towerAt(Game g, int gx, int gy): int {
 
 func placeTower(Game g, int gx, int gy) {
     if g.selType < 0 { return }
-    if cellAt(g, gx, gy) != T_GRASS { return }
-    if towerAt(g, gx, gy) >= 0 { return }
+    var c2 = cellAt(g, gx, gy)
+    if c2 != T_GRASS {
+        if c2 == T_TREE or c2 == T_TREE2 {
+            g.bannerText = "此处有树木，无法建造"
+        } else if c2 == T_PATH {
+            g.bannerText = "道路之上，无法建造"
+        } else {
+            g.bannerText = "此处无法建造"
+        }
+        g.bannerTimer = 70
+        return
+    }
+    if towerAt(g, gx, gy) >= 0 {
+        g.bannerText = "此处已有防御塔"
+        g.bannerTimer = 70
+        return
+    }
     var cost = TOWER_COST[g.selType]
     if g.gold < cost {
         g.bannerText = "金币不足"
@@ -932,23 +1055,42 @@ func doSell(Game g) {
     }
     g.towers = keep
     g.selTower = -1
+    g.menuTower = -1
 }
 
-// 选中塔「可升级」时，返回地图内「↑」按钮矩形 [x,y,w,h]；否则返回空数组
-// 仅在金币足够且未满级时才出现
-func upgradeBtnRect(Game g): Array[float] {
-    if g.selTower < 0 or g.selTower >= g.towers.len() { return [] }
-    var t = g.towers[g.selTower]
-    if t.level >= MAX_LEVEL { return [] }
-    if g.gold < upgradeCost(t.ttype, t.level) { return [] }
-    var w = 22.0; var h = 22.0
-    var x = t.x - w * 0.5
-    var y = t.y - TS * 0.5 - h - 4.0          // 默认浮在塔正上方
-    if y < 2.0 { y = t.y + TS * 0.5 + 4.0 }    // 贴顶则改放下方
-    if x < 2.0 { x = 2.0 }
-    if x + w > MAP_W - 2.0 { x = MAP_W - 2.0 - w }
-    if y + h > MAP_H - 2.0 { y = MAP_H - 2.0 - h }
-    return [x, y, w, h]
+// 塔是否可升级（金币足够且未满级）
+func towerCanUpgrade(Game g, Tower t): bool {
+    if t.level >= MAX_LEVEL { return false }
+    return g.gold >= upgradeCost(t.ttype, t.level)
+}
+
+// 可升级标识符：金币够且未满级时，返回塔旁的「↑」徽标矩形 [x,y,w,h]，否则 []
+func upgradeBadgeRect(Game g, Tower t): Array[float] {
+    if not towerCanUpgrade(g, t) { return [] }
+    var s = 18.0
+    var x = t.x + TS * 0.5 - s - 1.0   // 默认放在塔右上角外侧
+    var y = t.y - TS * 0.5 - 1.0
+    if x + s > MAP_W - 1.0 { x = t.x - TS * 0.5 - 1.0 }   // 贴右则改放左侧
+    if y < 1.0 { y = t.y + TS * 0.5 + 1.0 }               // 贴顶则改放下方
+    return [x, y, s, s]
+}
+
+// 选中塔弹出的操作菜单（升级 / 出售）。返回 12 个数：
+// [bx,by,bw,bh, ux,uy,uw,uh, sx,sy,sw,sh]，无菜单则 []
+func popupMenu(Game g): Array[float] {
+    if g.menuTower < 0 or g.menuTower >= g.towers.len() { return [] }
+    var t = g.towers[g.menuTower]
+    var bw = 132.0; var bh = 72.0
+    var bx = t.x - bw * 0.5
+    var by = t.y - TS * 0.5 - bh - 8.0          // 默认浮在塔上方
+    if by < 4.0 { by = t.y + TS * 0.5 + 8.0 }    // 贴顶则改放下方
+    if bx < 4.0 { bx = 4.0 }
+    if bx + bw > MAP_W - 4.0 { bx = MAP_W - 4.0 - bw }
+    if by + bh > MAP_H - 4.0 { by = MAP_H - 4.0 - bh }
+    var pad = 6.0
+    var ux = bx + pad;            var uy = by + pad;            var uw = bw - pad * 2.0; var uh = 22.0
+    var sx = bx + pad;            var sy = uy + uh + pad;       var sw = bw - pad * 2.0; var sh = 22.0
+    return [bx, by, bw, bh, ux, uy, uw, uh, sx, sy, sw, sh]
 }
 
 // ==================== 渲染 ====================
@@ -999,14 +1141,13 @@ func drawPanel(Game g, Renderer r) {
         r.drawText(f, "伤害" + _int(towerDamage(t.ttype, t.level)) + " 射程" +
                  _int(towerRange(t.ttype, t.level) / TS * 10.0) / 10 + "格", PX + 4.0, 180.0, #ECF0F1FF)
 
-        var uc = upgradeCost(t.ttype, t.level)
-        var canUp = t.level < MAX_LEVEL and g.gold >= uc
-        r.setColor(if canUp then #1E8449FF else #566573FF)
-        r.fillRoundedRect(PX + 4.0, 192.0, 52.0, 12.0, 2.0)
-        r.drawText(f, "[U]" + (if t.level >= MAX_LEVEL then "满" else "升" + uc), PX + 6.0, 193.0, #ECF0F1FF)
-        r.setColor(#7B241CFF)
-        r.fillRoundedRect(PX + 60.0, 192.0, 52.0, 12.0, 2.0)
-        r.drawText(f, "[S]售" + sellValue(t.ttype, t.level), PX + 62.0, 193.0, #ECF0F1FF)
+        // 升级 / 出售信息（操作改为点塔弹出的地图菜单，键盘 U / S 仍可）
+        if t.level < MAX_LEVEL {
+            r.drawText(f, "升级需" + upgradeCost(t.ttype, t.level) + "金 (U)", PX + 4.0, 192.0, #AAB7B8FF)
+        } else {
+            r.drawText(f, "已满级", PX + 4.0, 192.0, #AAB7B8FF)
+        }
+        r.drawText(f, "出售得" + sellValue(t.ttype, t.level) + "金 (S)", PX + 4.0, 204.0, #AAB7B8FF)
     } else {
         r.drawText(f, "点击地图格子建塔", PX + 4.0, 172.0, #7F8C8DFF)
     }
@@ -1031,8 +1172,31 @@ func drawPanel(Game g, Renderer r) {
     // 帮助文本（紧接按钮下方，随按钮高度自适应）
     var hy = by + bh + 8.0
     r.drawText(f, "1-4选塔 空格开始", PX + 4.0, hy, #6C7A89FF)
-    r.drawText(f, "U升级 S出售", PX + 4.0, hy + 12.0, #6C7A89FF)
-    r.drawText(f, "P暂停 R重开 ESC退出", PX + 4.0, hy + 24.0, #6C7A89FF)
+    r.drawText(f, "点塔弹菜单:升级/出售", PX + 4.0, hy + 12.0, #6C7A89FF)
+    r.drawText(f, "点宝箱开随机金币", PX + 4.0, hy + 24.0, #6C7A89FF)
+    r.drawText(f, "P暂停 R重开 ESC退出", PX + 4.0, hy + 36.0, #6C7A89FF)
+
+    // 选中塔的弹出操作菜单（升级 / 出售），画在面板最上层
+    var pm = popupMenu(g)
+    if pm.len() == 12 {
+        r.setColor(#0B1016EE)
+        r.fillRoundedRect(pm[0], pm[1], pm[2], pm[3], 8.0)
+        r.setColor(#34495EFF)
+        r.drawRoundedRect(pm[0], pm[1], pm[2], pm[3], 8.0)
+        var mt = g.towers[g.menuTower]
+        var canUp = towerCanUpgrade(g, mt)
+        // 升级
+        r.setColor(if canUp then #1E8449FF else #566573FF)
+        r.fillRoundedRect(pm[4], pm[5], pm[6], pm[7], 4.0)
+        if g.texUp != null { r.drawTextureAt(g.texUp, pm[4] + 5.0, pm[5] + 2.0, 18.0, 18.0) }
+        r.drawText(f, (if mt.level >= MAX_LEVEL then "已满级" else "升级 " + upgradeCost(mt.ttype, mt.level)),
+                   pm[4] + 26.0, pm[5] + 3.0, #ECF0F1FF)
+        // 出售
+        r.setColor(#7B241CFF)
+        r.fillRoundedRect(pm[8], pm[9], pm[10], pm[11], 4.0)
+        if g.texSell != null { r.drawTextureAt(g.texSell, pm[8] + 5.0, pm[9] + 2.0, 18.0, 18.0) }
+        r.drawText(f, "出售 " + sellValue(mt.ttype, mt.level), pm[8] + 26.0, pm[9] + 3.0, #ECF0F1FF)
+    }
 }
 
 func drawGame(Game g, Renderer r) {
@@ -1091,14 +1255,12 @@ func drawGame(Game g, Renderer r) {
         }
     }
 
-    // 选中塔可升级时，地图内浮现「↑」升级按钮
-    var ub = upgradeBtnRect(g)
-    if ub.len() == 4 {
-        r.setColor(#1E8449FF)
-        r.fillRoundedRect(ub[0], ub[1], ub[2], ub[3], 5.0)
-        r.setColor(#ECF0F1FF)
-        r.drawRoundedRect(ub[0], ub[1], ub[2], ub[3], 5.0)
-        r.drawTriangle(ub[0] + ub[2] * 0.5, ub[1] + ub[3] * 0.5, ub[2] * 0.55, 0.0, 1.0, 1.0, 1.0, 1.0)
+    // 可升级标识符：金币够且未满级时，每座塔旁自动显示「升级」图标
+    for g.towers to t {
+        var bd = upgradeBadgeRect(g, t)
+        if bd.len() == 4 and g.texUp != null {
+            r.drawTextureAt(g.texUp, bd[0] - 2.0, bd[1] - 2.0, bd[2] + 4.0, bd[3] + 4.0)
+        }
     }
 
     // 敌人
@@ -1145,6 +1307,21 @@ func drawGame(Game g, Renderer r) {
         r.drawLine(a.x1, a.y1, a.x2, a.y2)
     }
 
+    // 飞行金币（死亡后飞向左上角计数处）
+    if g.texCoinFly != null {
+        for g.coins to c {
+            r.drawTextureAt(g.texCoinFly, c.x - 8.0, c.y - 8.0, 16.0, 16.0)
+        }
+    }
+
+    // 宝箱（点击弹出随机金币奖励）
+    if g.texChest != null {
+        for g.chests to ch {
+            var bob = maths.sin(g.frameCount * 0.08 + ch.x * 0.05) * 3.0
+            r.drawTextureAt(g.texChest, ch.x - 15.0, ch.y - 15.0 + bob, 30.0, 30.0)
+        }
+    }
+
     // 粒子
     for g.particles to p {
         var alpha = _int(255.0 * _float(p.life) / _float(p.maxLife))
@@ -1177,6 +1354,24 @@ func drawGame(Game g, Renderer r) {
         var txA = _int(255.0 * fade)
         r.drawTextCentered(g.fontBig, g.bannerText, 0.0, MAP_W, MAP_H * 0.5 - 12.0,
                            (txA << 24) | 0xFFDC50)
+    }
+
+    // 宝箱奖励弹窗（点击宝箱后弹出，点击任意处领取）
+    if g.chestOpen {
+        r.setColor(#000000CC)
+        r.fillRect(0.0, 0.0, _float(WIN_W), _float(WIN_H))
+        var pw = 320.0; var ph = 190.0
+        var px = _float(WIN_W) * 0.5 - pw * 0.5
+        var py = _float(WIN_H) * 0.5 - ph * 0.5
+        r.setColor(#1A252FFF)
+        r.fillRoundedRect(px, py, pw, ph, 12.0)
+        r.setColor(#F1C40FFF)
+        r.drawRoundedRect(px, py, pw, ph, 12.0)
+        if g.texChest != null {
+            r.drawTextureAt(g.texChest, px + pw * 0.5 - 30.0, py + 22.0, 60.0, 60.0)
+        }
+        r.drawTextCentered(g.fontBig, "获得 " + g.chestReward + " 金币！", px, pw, py + 108.0, #FFD700FF)
+        r.drawTextCentered(g.font, "点击任意处领取", px, pw, py + 146.0, #95A5A6FF)
     }
 }
 
@@ -1219,8 +1414,18 @@ func onClick(Game g, float mx, float my, int button) {
     }
     if g.state != ST_PLAY { return }
 
-    // 面板：塔卡片
+    // 宝箱奖励弹窗开启时，点击任意处即领取金币并关闭
+    if g.chestOpen {
+        g.gold = g.gold + g.chestReward
+        addFloat(g, _float(MAP_W) * 0.5, _float(MAP_H) * 0.5, "+" + g.chestReward, #FFD700FF)
+        g.chestOpen = false
+        g.chestReward = 0
+        return
+    }
+
+    // 面板：塔卡片 / 开始下一波（点面板即关闭地图上的塔菜单）
     if mx >= MAP_W {
+        g.menuTower = -1
         for 0 : 3 to i {
             var cy = CARD_Y0 + _float(i) * (CARD_H + CARD_GAP)
             if inRect(mx, my, PX, cy, PW, CARD_H) {
@@ -1228,11 +1433,6 @@ func onClick(Game g, float mx, float my, int button) {
                 g.selTower = -1
                 return
             }
-        }
-        // 升级 / 出售
-        if g.selTower >= 0 and g.selTower < g.towers.len() {
-            if inRect(mx, my, PX + 4.0, 192.0, 52.0, 12.0) { doUpgrade(g); return }
-            if inRect(mx, my, PX + 60.0, 192.0, 52.0, 12.0) { doSell(g); return }
         }
         // 开始下一波
         if g.waveState == 0 and inRect(mx, my, PX, 240.0, PW, 30.0) {
@@ -1246,18 +1446,43 @@ func onClick(Game g, float mx, float my, int button) {
     // 地图
     var gx = _int(mx / TS)
     var gy = _int(my / TS)
-    if gx < 0 or gy < 0 or gx >= COLS or gy >= ROWS { return }
 
-    // 地图内升级按钮（金币够且未满级时出现）
-    var ub = upgradeBtnRect(g)
-    if ub.len() == 4 and inRect(mx, my, ub[0], ub[1], ub[2], ub[3]) {
-        doUpgrade(g); return
+    // 点击落在宝箱上：打开随机金币奖励弹窗（宝箱即被消耗）
+    if g.chests.len() > 0 {
+    for 0 : g.chests.len() - 1 to i {
+        var chx = g.chests[i].x
+        var chy = g.chests[i].y
+        var dx = mx - chx
+        var dy = my - chy
+        if dx > -16.0 and dx < 16.0 and dy > -16.0 and dy < 16.0 {
+            g.chestReward = rands.ints(40, 100) + g.wave * 3
+            g.chestOpen = true
+            Array[Chest] ck = []
+            for 0 : g.chests.len() - 1 to j {
+                if j != i { ck.add(g.chests[j]) }
+            }
+            g.chests = ck
+            g.menuTower = -1
+            return
+        }
+    }
     }
 
+    // 弹出的塔操作菜单优先处理（升级 / 出售）
+    var pm = popupMenu(g)
+    if pm.len() == 12 {
+        if inRect(mx, my, pm[4], pm[5], pm[6], pm[7]) { doUpgrade(g); return }
+        if inRect(mx, my, pm[8], pm[9], pm[10], pm[11]) { doSell(g); return }
+        // 点菜单外：交给下面的「选塔 / 关菜单」逻辑
+    }
+
+    if gx < 0 or gy < 0 or gx >= COLS or gy >= ROWS { return }
+
     if button == 3 {
-        // 右键：取消选择
+        // 右键：取消选择 / 关闭菜单
         g.selType = -1
         g.selTower = -1
+        g.menuTower = -1
         return
     }
 
@@ -1265,13 +1490,27 @@ func onClick(Game g, float mx, float my, int button) {
     if ti >= 0 {
         g.selTower = ti
         g.selType = -1
+        g.menuTower = ti          // 点击塔 → 弹出操作菜单
         return
+    }
+    // 点中「↑」可升级徽标也视为选中该塔并弹菜单
+    if g.towers.len() > 0 {
+    for 0 : g.towers.len() - 1 to i {
+        var bd = upgradeBadgeRect(g, g.towers[i])
+        if bd.len() == 4 and inRect(mx, my, bd[0], bd[1], bd[2], bd[3]) {
+            g.selTower = i
+            g.selType = -1
+            g.menuTower = i
+            return
+        }
+    }
     }
     if g.selType >= 0 {
         placeTower(g, gx, gy)
         return
     }
     g.selTower = -1
+    g.menuTower = -1            // 点空地：关闭菜单
 }
 
 func restartGame(Game g) {
@@ -1289,13 +1528,18 @@ func restartGame(Game g) {
     g.bannerTimer = 0
     g.selType = -1
     g.selTower = -1
+    g.menuTower = -1
     g.enemies = []
     g.towers = []
     g.bullets = []
     g.particles = []
     g.floats = []
     g.arcs = []
+    g.coins = []
+    g.chests = []
     g.pCount = 0
+    g.chestOpen = false
+    g.chestReward = 0
     if g.audioOk {
         g.bossBgm.stop()
         g.bgm.play()
@@ -1392,7 +1636,7 @@ main() {
     win.setMaxFPS(60)
 
     print("[OK] 塔防启动成功!")
-    print("     1-4 选塔，鼠标左键放置；U 升级 / S 出售；空格 开始下一波；P 暂停 / R 重开")
+    print("     1-4 选塔，鼠标左键放置；点塔弹菜单升级/出售；空格 开始下一波；P 暂停 / R 重开")
 
     win.run(
         func(Event ev): bool {
@@ -1403,7 +1647,7 @@ main() {
             core.markFrameRedraw()
             if not g.loaded { loadResources(g, r) }
 
-            if g.state == ST_PLAY {
+            if g.state == ST_PLAY and not g.chestOpen {
                 updateGame(g)
             } else if g.state == ST_PAUSE {
                 g.frameCount = g.frameCount + 1
