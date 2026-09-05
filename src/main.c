@@ -171,7 +171,6 @@ int lenolang_run(const char* source) {
          printf("debug模式:进入语法分析阶段\n");
      }
     // 1. 词法分析 + 语法分析
-    clock_t t_parse0 = clock();
     Parser parser;
     parser_init(&parser, source);
     if (parser_parse(&parser) < 0) {
@@ -181,8 +180,6 @@ int lenolang_run(const char* source) {
         ast_free(parser.root);
         return -1;
     }
-    clock_t t_parse1 = clock();
-    fprintf(stderr, "[TIME] parse: %.1f ms\n", (double)(t_parse1 - t_parse0) / CLOCKS_PER_SEC * 1000.0);
 
     // 2. 语义分析（单遍）
     Semantic sem;
@@ -192,26 +189,17 @@ int lenolang_run(const char* source) {
     chunk_init(&chunk);
     CodeGen gen;
     codegen_init(&gen, &chunk, &sem);
-    clock_t t_sem0 = clock();
     semantic_analyze(&sem, parser.root);
-    clock_t t_sem1 = clock();
-    fprintf(stderr, "[TIME] semantic: %.1f ms\n", (double)(t_sem1 - t_sem0) / CLOCKS_PER_SEC * 1000.0);
     if (error_has_any()) goto fail;
 
     // 2.5 常量折叠优化
-    clock_t t_opt0 = clock();
     optimize_constant_fold(parser.root);
 
     // 2.6 死代码消除
     optimize_dead_code_elimination(parser.root);
-    clock_t t_opt1 = clock();
-    fprintf(stderr, "[TIME] optimize: %.1f ms\n", (double)(t_opt1 - t_opt0) / CLOCKS_PER_SEC * 1000.0);
 
     // 3. 生成字节码
-    clock_t t_cg0 = clock();
     codegen(&gen, parser.root);
-    clock_t t_cg1 = clock();
-    fprintf(stderr, "[TIME] codegen: %.1f ms\n", (double)(t_cg1 - t_cg0) / CLOCKS_PER_SEC * 1000.0);
     if (error_has_any()) goto fail;
 
     // 调试模式：统一输出全部字节码（主程序 + 所有已加载模块）
@@ -225,10 +213,7 @@ int lenolang_run(const char* source) {
     {
         uint8_t* lenb_buf = NULL;
         size_t lenb_size = 0;
-        clock_t t_ser0 = clock();
         SerializeResult sr = chunk_serialize_to_memory(&chunk, sem.root_scope, &lenb_buf, &lenb_size);
-        clock_t t_ser1 = clock();
-        fprintf(stderr, "[TIME] serialize: %.1f ms\n", (double)(t_ser1 - t_ser0) / CLOCKS_PER_SEC * 1000.0);
         if (sr == SERIALIZE_OK && lenb_buf) {
             // 入口文件缓存写入：将序列化结果落盘，下次运行可直接加载跳过编译
             if (g_entry_cache_enabled && g_entry_cache_path[0]) {
@@ -259,10 +244,7 @@ int lenolang_run(const char* source) {
             Chunk run_chunk;
             chunk_init(&run_chunk);
             Scope* run_scope = NULL;
-            clock_t t_des0 = clock();
             sr = chunk_deserialize_from_memory(lenb_buf, lenb_size, &run_chunk, &run_scope);
-            clock_t t_des1 = clock();
-            fprintf(stderr, "[TIME] deserialize: %.1f ms\n", (double)(t_des1 - t_des0) / CLOCKS_PER_SEC * 1000.0);
             free(lenb_buf);  // 缓冲已用完，立即释放
 
             if (sr == SERIALIZE_OK) {

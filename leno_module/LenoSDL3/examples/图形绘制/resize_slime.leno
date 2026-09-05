@@ -46,7 +46,7 @@ func _isNearWhite(Ptr[u8] px, int pitch, int bpp, int x, int y, int thr): bool {
 }
 
 main() {
-    string name = "boss1蹲下跳跃攻击.png"
+    string name = "boss1走.png"
     string SRC = "d:\\CLeno\\" + name
     string DST = "d:\\CLeno\\LenoC\\leno_module\\LenoSDL3\\examples\\应用示例\\游戏\\塔防\\image\\" + name
     string TMP = "d:\\CLeno\\LenoC\\_slime_tmp.png"

@@ -92,7 +92,7 @@ var EM_PERSON4    = 7   // 人物4：自爆（素材帧 0-2 走路 3-5 跳跃 6-
 var CHEST_DROP_RATE = 15     // 普通怪掉落概率（%）；BOSS 必掉
 
 var ENEMY_HP    = [60.0, 40.0, 190.0, 1400.0, 55.0, 70.0, 50.0, 65.0]
-var ENEMY_SPD   = [0.55, 1.15, 0.38, 0.32, 0.72, 0.60, 1.30, 0.70]  // px/帧
+var ENEMY_SPD   = [0.55, 1.15, 0.38, 0.42, 0.72, 0.60, 1.30, 0.70]  // px/帧
 var ENEMY_GOLD  = [8, 10, 22, 260, 7, 9, 12, 15]
 var ENEMY_DMG   = [1, 1, 2, 12, 1, 1, 1, 1]             // 漏怪扣血
 var ENEMY_ARMOR = [0.0, 0.0, 0.30, 0.15, 0.0, 0.0, 0.0, 0.0] // 伤害减免
@@ -246,6 +246,7 @@ struct Bullet {
     int chain
     int targetId          // 目标敌人 id（-1 表示无目标）
     bool alive
+    bool bossShot         // BOSS 扛炮台所发射：纯表现弹，不与敌人碰撞（避免误伤自己）
 }
 
 struct Particle {
@@ -388,6 +389,8 @@ struct Game {
     Sfx sfxPickup          // 拾取：金币入账/开宝箱（拾取.mp3）
     Sfx sfxHit             // 小怪受击（小怪受击.mp3，带节流）
     Sfx sfxBoom4           // 人物4 自爆大爆炸（db.wav 降调变沉，与其他爆炸错开）
+    Sfx sfxBossSmash       // BOSS 拆塔击打（db.wav 降调闷响）
+    Sfx sfxBossFire        // BOSS 抢到炮塔开炮（anxia.mp3 较轻）
     int hitSfxCd           // 受击音效节流倒计时（帧），避免连射时刷屏
     bool audioOk
 
@@ -979,6 +982,9 @@ func loadResources(Game g, Renderer r) {
     for g.sfxBoom4.pool to ps {
         ps.setPitch(0.6)   // 降调：比普通爆炸低沉，听起来是不同的大爆炸
     }
+    g.sfxBossSmash = audio.createSfx("bkmusic/db.wav", 3, 0.5)
+    for g.sfxBossSmash.pool to ps { ps.setPitch(0.7) }   // 降调闷响：BOSS 拆塔击打，区别于普通爆炸
+    g.sfxBossFire  = audio.createSfx("bkmusic/anxia.mp3", 4, 0.3)         // 较轻的开炮声，与击打区分开
 
     g.audioOk = g.bgm.ok
     if g.audioOk {
@@ -1014,10 +1020,6 @@ func buildWave(Game g, int wave): Array[int] {
     if wave % 10 == 0 {
         q.add(EM_BOSS)
         if wave >= 20 { q.add(EM_BOSS) }
-    }
-    // TODO 测试用：第 1 波即出 BOSS，验证突袭流程后删除
-    if wave == 1 {
-        q.add(EM_BOSS)
     }
     return q
 }
@@ -1509,6 +1511,7 @@ func updateEnemies(Game g) {
                             e.bTowerType = g.towers[bti2].ttype
                             hitTower(g, bti2, 99999.0)
                         }
+                        if g.audioOk and not g.muted { g.sfxBossSmash.play() }   // BOSS 拆塔击打音
                     }
                     if e.bTimer >= BOSS_ATK_STEP * 6 {
                         e.bState = 2
@@ -1554,14 +1557,16 @@ func updateEnemies(Game g) {
                         }
                     } else {
                         // 抢到武器（加农炮/冰塔/电塔）：原地架起来攻击，打完才归位
-                        // 加农炮每 45 帧朝 6 格内最近的塔轰一炮（伤害立即结算，炮弹为飞行表现）
+                        // 加农炮每 45 帧朝全图最近的塔轰一炮（伤害立即结算，炮弹为飞行表现）；BOSS 始终面向目标塔
+                        var aimTi = findTowerNear(g, e.x, e.y, TS * 100.0)
+                        if aimTi >= 0 {
+                            e.dir = dirAngle(g.towers[aimTi].x - e.x, g.towers[aimTi].y - e.y)
+                        }
                         if e.bTowerType == TW_CANNON {
                             if e.bTimer == 45 or e.bTimer == 90 or e.bTimer == 135 {
-                                var ti3 = findTowerNear(g, e.x, e.y, TS * 6.0)
+                                var ti3 = aimTi
                                 var bb = new Bullet()
                                 bb.btype = TW_CANNON
-                                bb.x = e.x
-                                bb.y = e.y - 10.0
                                 bb.speed = 6.0
                                 bb.damage = 0.0
                                 bb.splash = 0.0
@@ -1570,20 +1575,38 @@ func updateEnemies(Game g) {
                                 bb.chain = 0
                                 bb.targetId = -1
                                 bb.alive = true
+                                bb.bossShot = true   // 纯表现弹：不与原敌碰撞，避免误伤 BOSS 自己
+                                var mx = e.x
+                                var my = e.y - 10.0
                                 if ti3 >= 0 {
-                                    var tdx = g.towers[ti3].x - bb.x
-                                    var tdy = g.towers[ti3].y - bb.y
+                                    var tdx = g.towers[ti3].x - mx
+                                    var tdy = g.towers[ti3].y - my
                                     var tdd = maths.sqrt(tdx * tdx + tdy * tdy)
                                     if tdd < 0.001 { tdd = 1.0 }
                                     bb.vx = tdx / tdd
                                     bb.vy = tdy / tdd
+                                    bb.x = mx + bb.vx * 26.0   // 从炮口前方出发，不压在 BOSS 身上被当成打自己
+                                    bb.y = my + bb.vy * 26.0
                                     hitTower(g, ti3, 8.0)   // 开炮即对塔结算伤害，炮弹只做飞行表现
                                 } else {
-                                    var bang = _float(rands.ints(0, 359)) * 3.14159265 / 180.0
-                                    bb.vx = maths.cos(bang)
-                                    bb.vy = maths.sin(bang)
+                                    bb.vx = 0.0; bb.vy = -1.0
+                                    bb.x = mx; bb.y = my
                                 }
                                 g.bullets.add(bb)
+                                // 开炮表现：炮口闪光（在 BOSS 处）+ 命中处火花与冲击波（在塔处）
+                                addParticles(g, mx, my, 7, #F9E79FFF)
+                                if g.audioOk and not g.muted { g.sfxBossFire.play() }   // BOSS 开炮音
+                                if ti3 >= 0 {
+                                    var tx2 = g.towers[ti3].x
+                                    var ty2 = g.towers[ti3].y
+                                    addParticles(g, tx2, ty2, 12, #E67E22FF)
+                                    var w3 = new Wave()
+                                    w3.x = tx2; w3.y = ty2
+                                    w3.life = 16; w3.maxLife = 16
+                                    w3.r = 6.0; w3.rMax = TS * 1.2
+                                    w3.alive = true
+                                    g.waves.add(w3)
+                                }
                             }
                         }
                         if e.bTimer >= 180 {
@@ -1759,8 +1782,8 @@ func updateBullets(Game g) {
                 hit = true
             }
         }
-        if not hit {
-            // 无目标时与任意敌人碰撞（溅射弹/穿透判定）
+        if not hit and not b.bossShot {
+            // 无目标时与任意敌人碰撞（溅射弹/穿透判定）；BOSS 表现弹跳过，免得误伤自己
             var i = 0
             for g.enemies to e3 {
                 if e3.alive {
@@ -2252,8 +2275,20 @@ func drawGame(Game g, Renderer r) {
         r.drawCircle(st.x, st.y, rad2)
     }
 
-    // 塔
-    for g.towers to t {
+    // 塔（画家算法：按 y 坐标从上到下排序绘制，下方的塔遮住上方的，避免相邻塔层级错乱）
+    Array[int] twOrder = []
+    for 0 : g.towers.len() - 1 to twoi { twOrder.add(twoi) }
+    for 1 : twOrder.len() - 1 to twii {
+        var twkey = twOrder[twii]
+        var twjj = twii - 1
+        while twjj >= 0 and g.towers[twOrder[twjj]].y > g.towers[twkey].y {
+            twOrder[twjj + 1] = twOrder[twjj]
+            twjj = twjj - 1
+        }
+        twOrder[twjj + 1] = twkey
+    }
+    for 0 : g.towers.len() - 1 to twi2 {
+        var t = g.towers[twOrder[twi2]]
         var tex = g.texTower[t.ttype]
         if tex == null { continue }
         // 加农炮/冰塔：帧 0 底座不旋转；帧 1 炮管（素材朝左）按目标方向旋转
@@ -2454,9 +2489,10 @@ func drawGame(Game g, Renderer r) {
                                      0.0, sz * 0.5, sz * 0.5, bflip)
             } else {
                 // 赶路 / 空手回位：走路动画（回程放慢，帧速恢复正常，避免滑步）
-                var wfr = 8
-                if e.bState == 4 { wfr = 8 }
-                var bfw = _int(g.frameCount / wfr) % 6
+                var wfr = 4
+                // 12 帧往返（ping-pong）：0→1→2→3→4→5→4→3→2→1→0，腿不会突跳，走路更顺滑（整轮节奏与原 6 帧一致）
+                var bfw = _int(g.frameCount / wfr) % 12
+                if bfw >= 6 { bfw = 11 - bfw }
                 if bfw > g.texBossWalk.len() - 1 { bfw = g.texBossWalk.len() - 1 }
                 r.drawTextureRotated(g.texBossWalk[bfw], e.x - sz * 0.5, e.y - sz * 0.5, sz, sz,
                                      0.0, sz * 0.5, sz * 0.5, bflip)
@@ -2506,8 +2542,9 @@ func drawGame(Game g, Renderer r) {
         var cbob = maths.sin(_float(g.frameCount) * 0.25) * 4.0
         if cbob > 0.0 { cbob = -cbob }
         if e.bTowerType == TW_CANNON and g.texCannon.len() > 1 {
-            r.drawTextureRotated(g.texCannon[1], e.x - 21.0, e.y - bsz * 0.5 - 30.0 + cbob, 42.0, 42.0,
-                                 0.0, 21.0, 21.0, cflip)
+            // 扛着的加农炮：炮管放大（与人物一致），炮口朝上
+            r.drawTextureRotated(g.texCannon[1], e.x - 27.0, e.y - bsz * 0.5 - 40.0 + cbob, 54.0, 54.0,
+                                 0.0, 27.0, 27.0, cflip)
         } else if e.bTowerType == TW_FROST and g.texFrost.len() > 1 {
             r.drawTextureRotated(g.texFrost[1], e.x - 21.0, e.y - bsz * 0.5 - 30.0 + cbob, 42.0, 42.0,
                                  0.0, 21.0, 21.0, cflip)
