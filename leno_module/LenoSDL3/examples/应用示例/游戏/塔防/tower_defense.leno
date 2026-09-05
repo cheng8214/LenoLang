@@ -124,6 +124,11 @@ var CRY_MAX     = 2.50   // 冷却倍率上限（防止叠加后完全打不出�
 var CRY_WAVECD  = 70     // 声波释放间隔（帧）
 var CRY_DMG     = 5.0    // 每圈声波对范围内防御塔的震荡伤害
 var CRY_DRAIN   = 0.22   // 哭泣时每帧流失的血量：保证不会永久卡住波次
+
+// BOSS 突袭：靠近防御塔有几率跳跃拆塔，抓着「战利品」回位
+var BOSS_ATK_STEP = 8      // 突袭/回位动画每个动作帧持续的帧数（6 帧动画）
+var BOSS_AGGRO_R  = 2.0    // 触发突袭的距离（格）
+var BOSS_CD       = 900    // 突袭冷却（帧，约 15 秒）
 var WAVE_LIFE   = 48     // 单圈声波存活帧数
 
 // 游戏状态
@@ -188,6 +193,17 @@ struct Enemy {
     float pm4Tx            // 人物4：目标塔坐标（跳过去爆炸）
     float pm4Ty
     float lane             // 横向车道偏移（单位：格，-0.45~0.45），双通道散开行走
+    int bState             // BOSS：0=走路 1=跳跃攻击 2=抓着战利品回位
+    int bTimer             // BOSS：当前状态已播放帧数
+    int bCd                // BOSS：突袭冷却倒计时
+    float bAx              // BOSS：触发点坐标（回位目标）
+    float bAy
+    float bTx              // BOSS：目标塔坐标
+    float bTy
+    int bTowerType         // BOSS：拆掉的塔类型（决定台词）
+    bool bHit              // BOSS：本次突袭伤害是否已结算
+    int bRb                // BOSS：原路返回/跑回时的路点游标
+    int bWpIdx             // BOSS：突袭触发时的路点位置（跑回终点）
 }
 
 struct Wave {
@@ -340,6 +356,9 @@ struct Game {
     Array[Ptr[u8]] texArrowTower
     Array[Ptr[u8]] texCannon
     Array[Ptr[u8]] texFrost
+    Array[Ptr[u8]] texBossWalk
+    Array[Ptr[u8]] texBossJump
+    Array[Ptr[u8]] texBossReturn
     Array[Ptr[u8]] texBullet
     Ptr[u8] texCoin
     Ptr[u8] texHeart
@@ -552,6 +571,9 @@ func newGame(): Game {
     g.texArrowTower = []
     g.texCannon = []
     g.texFrost = []
+    g.texBossWalk = []
+    g.texBossJump = []
+    g.texBossReturn = []
     g.loaded = false
     g.audioOk = false
     buildMap(g)
@@ -605,6 +627,26 @@ func buildMap(Game g) {
         x = TREE2_GX[i]; y = TREE2_GY[i]
         if g.map[y * COLS + x] == T_GRASS { g.map[y * COLS + x] = T_TREE2 }
     }
+}
+
+// 按帧切分横排精灵表（每帧 48x48，n 帧）
+func loadSheet(Renderer r, string path, int n): Array[Ptr[u8]] {
+    Array[Ptr[u8]] out = []
+    var sheet = SDL3.loadImageTexture(r.handle, path)
+    if sheet != null {
+        for 0 : n - 1 to fi {
+            var ft = r.createTexture(core.PIXELFORMAT_RGBA8888, 2, 48, 48)
+            if ft != null {
+                r.setRenderTarget(ft)
+                r.clearColor(#00000000)
+                r.drawTextureFromTo(sheet, _float(fi) * 48.0, 0.0, 48.0, 48.0, 0.0, 0.0, 48.0, 48.0)
+                r.flush()
+                r.setRenderTarget(null)
+                out.add(ft)
+            }
+        }
+    }
+    return out
 }
 
 // ==================== 资源加载 ====================
@@ -717,6 +759,12 @@ func loadResources(Game g, Renderer r) {
         // 面板卡片 / 建造预览改用底座帧
         if g.texFrost.len() > 0 { g.texTower[2] = g.texFrost[0] }
     }
+
+    // BOSS 三态精灵表：走 / 蹲下跳跃攻击 / 抓到回到原位（各 288x48 六帧）
+    var bimg = base + "/image/"
+    g.texBossWalk   = loadSheet(r, bimg + "boss1走.png", 6)
+    g.texBossJump   = loadSheet(r, bimg + "boss1蹲下跳跃攻击.png", 6)
+    g.texBossReturn = loadSheet(r, bimg + "boss1抓到回到原位.png", 6)
 
     // 史莱姆：288x48 横排 6 帧（每帧 48x48），侧视向左行走；向右移动时水平翻转
     g.texSlime = []
@@ -967,6 +1015,10 @@ func buildWave(Game g, int wave): Array[int] {
         q.add(EM_BOSS)
         if wave >= 20 { q.add(EM_BOSS) }
     }
+    // TODO 测试用：第 1 波即出 BOSS，验证突袭流程后删除
+    if wave == 1 {
+        q.add(EM_BOSS)
+    }
     return q
 }
 
@@ -1019,14 +1071,27 @@ func spawnEnemy(Game g, int etype) {
     e.pm4Sy = 0.0
     e.pm4Tx = 0.0
     e.pm4Ty = 0.0
-    // 双通道：随机分配车道（0.05~0.95 格），敌人占满整条 2 格宽路面
-    // 铺路时横向路段向下加宽一行、纵向路段向右加宽一列（与 buildMap 一致）
-    e.lane = _float(rands.ints(-45, 45)) / 100.0
+    // 双通道：随机二选一车道，走道路正中（上/下车道中心分别为 ±0.25 格）
+    e.lane = if rands.ints(0, 1) == 0 then -0.25 else 0.25
     if WPX[1] == WPX[0] {
         e.x = e.x + (0.5 + e.lane) * TS
     } else {
         e.y = e.y + (0.5 + e.lane) * TS
     }
+    // BOSS 突袭状态初始化
+    e.bState = 0
+    e.bTimer = 0
+    e.bCd = 300
+    e.bAx = 0.0
+    e.bAy = 0.0
+    e.bTx = 0.0
+    e.bTy = 0.0
+    e.bTowerType = 0
+    e.bHit = false
+    e.bRb = 0
+    e.bWpIdx = 0
+    e.bRb = 0
+    e.bWpIdx = 0
     g.enemies.add(e)
 }
 
@@ -1062,13 +1127,13 @@ func addFloat(Game g, float x, float y, string text, int c) {
     g.floats.add(f)
 }
 
-// 人物台词气泡：白底黑字，停留更久
-func addSpeech(Game g, float x, float y, string text) {
+// 人物台词气泡：白底黑字，停留更久（life 可自定义）
+func addSpeech(Game g, float x, float y, string text, int life = 75) {
     var f = new FloatText()
     f.x = x; f.y = y
     f.text = text
     f.c = 0x1A1A1A         // 黑字
-    f.life = 75
+    f.life = life
     f.alive = true
     f.bg = true
     g.floats.add(f)
@@ -1407,8 +1472,172 @@ func updateEnemies(Game g) {
                 killEnemyAt(g, i)                 // 爆炸动画播完移除（正常掉金币）
             }
             live.add(e)                           // 跳跃/落地/爆炸期间原地不动
-            i = i + 1
+            i++
             continue
+        }
+
+        // BOSS 突袭：靠近防御塔有几率跳跃过去拆塔，抓着「战利品」回位
+        if e.etype == EM_BOSS {
+            if e.bCd > 0 { e.bCd = e.bCd - 1 }
+            if e.bState == 0 {
+                var bti = findTowerNear(g, e.x, e.y, BOSS_AGGRO_R * TS)
+                if bti >= 0 and e.bCd <= 0 and rands.ints(0, 99) < 2 {
+                    var bt = g.towers[bti]
+                    e.bAx = e.x; e.bAy = e.y
+                    e.bTx = bt.x; e.bTy = bt.y
+                    e.bTowerType = bt.ttype
+                    e.bRb = e.wpIdx
+                    e.bWpIdx = e.wpIdx
+                    e.bState = 1
+                    e.bTimer = 0
+                    e.bHit = false
+                    e.dir = dirAngle(bt.x - e.x, bt.y - e.y)
+                }
+            } else {
+                e.bTimer = e.bTimer + 1
+                if e.bState == 1 {
+                    // 跳跃突进：从触发点向塔移动
+                    var bp = _float(e.bTimer) / _float(BOSS_ATK_STEP * 3)
+                    if bp > 1.0 { bp = 1.0 }
+                    e.x = e.bAx + (e.bTx - e.bAx) * bp
+                    e.y = e.bAy + (e.bTy - e.bAy) * bp
+                    // 「击打」帧结算：塔直接被拆爆
+                    if not e.bHit and e.bTimer >= BOSS_ATK_STEP * 3 {
+                        e.bHit = true
+                        var bti2 = findTowerNear(g, e.x, e.y, TS * 1.5)
+                        if bti2 >= 0 {
+                            e.bTowerType = g.towers[bti2].ttype
+                            hitTower(g, bti2, 99999.0)
+                        }
+                    }
+                    if e.bTimer >= BOSS_ATK_STEP * 6 {
+                        e.bState = 2
+                        e.bTimer = 0
+                        // 抓着战利品回位，喊台词（四种塔各有一套）
+                        if e.bTowerType == TW_ARROW {
+                            addSpeech(g, e.x - 36.0, e.y - ENEMY_SIZE[e.etype] * 0.5 - 18.0, "抢压寨夫人回来咯", 100)
+                        } else if e.bTowerType == TW_CANNON {
+                            addSpeech(g, e.x - 36.0, e.y - ENEMY_SIZE[e.etype] * 0.5 - 18.0, "老子天下无敌，哈哈", 100)
+                        } else if e.bTowerType == TW_FROST {
+                            addSpeech(g, e.x - 36.0, e.y - ENEMY_SIZE[e.etype] * 0.5 - 18.0, "冰棍归我咯！", 100)
+                        } else {
+                            addSpeech(g, e.x - 36.0, e.y - ENEMY_SIZE[e.etype] * 0.5 - 18.0, "充电宝抢到手咯！", 100)
+                        }
+                    }
+                } else if e.bState == 2 {
+                    if e.bTowerType == TW_ARROW {
+                        // 抢到压寨夫人：沿原路（路点倒序）跑回出生点
+                        var wpx = _float(WPX[e.bRb]) * TS + TS * 0.5
+                        var wpy = _float(WPY[e.bRb]) * TS + TS * 0.5
+                        var wdx = wpx - e.x
+                        var wdy = wpy - e.y
+                        var wd = maths.sqrt(wdx * wdx + wdy * wdy)
+                        e.dir = dirAngle(wdx, wdy)
+                        var wspd = e.speed * 8.0 + 4.0
+                        if wd <= wspd {
+                            if e.bRb <= 0 {
+                                e.bState = 3    // 到达出生点 → 沿原路跑回来
+                                e.bRb = 0
+                                e.bTimer = 0
+                            } else {
+                                e.bRb = e.bRb - 1
+                            }
+                        } else {
+                            e.x = e.x + wdx / wd * wspd
+                            e.y = e.y + wdy / wd * wspd
+                        }
+                        // 跑回途中循环喊话
+                        if e.bTimer == 10 or e.bTimer == 100 or e.bTimer == 190 {
+                            var sTxt = "抢到了压寨夫人咯！"
+                            if (e.bTimer / 100) * 2 == 1 { sTxt = "洞房咯！" }
+                            addSpeech(g, e.x - 40.0, e.y - ENEMY_SIZE[e.etype] * 0.5 - 24.0, sTxt, 80)
+                        }
+                    } else {
+                        // 抢到武器（加农炮/冰塔/电塔）：原地架起来攻击，打完才归位
+                        // 加农炮每 45 帧朝 6 格内最近的塔轰一炮（伤害立即结算，炮弹为飞行表现）
+                        if e.bTowerType == TW_CANNON {
+                            if e.bTimer == 45 or e.bTimer == 90 or e.bTimer == 135 {
+                                var ti3 = findTowerNear(g, e.x, e.y, TS * 6.0)
+                                var bb = new Bullet()
+                                bb.btype = TW_CANNON
+                                bb.x = e.x
+                                bb.y = e.y - 10.0
+                                bb.speed = 6.0
+                                bb.damage = 0.0
+                                bb.splash = 0.0
+                                bb.slowAmount = 0.0
+                                bb.slowFrames = 0
+                                bb.chain = 0
+                                bb.targetId = -1
+                                bb.alive = true
+                                if ti3 >= 0 {
+                                    var tdx = g.towers[ti3].x - bb.x
+                                    var tdy = g.towers[ti3].y - bb.y
+                                    var tdd = maths.sqrt(tdx * tdx + tdy * tdy)
+                                    if tdd < 0.001 { tdd = 1.0 }
+                                    bb.vx = tdx / tdd
+                                    bb.vy = tdy / tdd
+                                    hitTower(g, ti3, 8.0)   // 开炮即对塔结算伤害，炮弹只做飞行表现
+                                } else {
+                                    var bang = _float(rands.ints(0, 359)) * 3.14159265 / 180.0
+                                    bb.vx = maths.cos(bang)
+                                    bb.vy = maths.sin(bang)
+                                }
+                                g.bullets.add(bb)
+                            }
+                        }
+                        if e.bTimer >= 180 {
+                            e.bState = 4    // 打爽了 → 空手走回原位
+                            e.bTimer = 0
+                        }
+                    }
+                } else if e.bState == 3 {
+                    // 抢到夫人后：沿原路（路点正序）跑回触发点，继续赶路
+                    var adx = e.bAx - e.x
+                    var ady = e.bAy - e.y
+                    var ad = maths.sqrt(adx * adx + ady * ady)
+                    var aspd = e.speed * 8.0 + 4.0
+                    if e.bRb <= e.bWpIdx {
+                        var fwx = _float(WPX[e.bRb]) * TS + TS * 0.5
+                        var fwy = _float(WPY[e.bRb]) * TS + TS * 0.5
+                        var fdx = fwx - e.x
+                        var fdy = fwy - e.y
+                        var fd = maths.sqrt(fdx * fdx + fdy * fdy)
+                        e.dir = dirAngle(fdx, fdy)
+                        if fd <= aspd {
+                            e.bRb = e.bRb + 1
+                        } else {
+                            e.x = e.x + fdx / fd * aspd
+                            e.y = e.y + fdy / fd * aspd
+                        }
+                    } else if ad <= aspd {
+                        e.x = e.bAx; e.y = e.bAy
+                        e.bState = 0
+                        e.bCd = BOSS_CD
+                    } else {
+                        e.x = e.x + adx / ad * aspd
+                        e.y = e.y + ady / ad * aspd
+                    }
+                } else if e.bState == 4 {
+                    // 抢到武器打完：空手走回原位
+                    var adx2 = e.bAx - e.x
+                    var ady2 = e.bAy - e.y
+                    var ad2 = maths.sqrt(adx2 * adx2 + ady2 * ady2)
+                    e.dir = dirAngle(adx2, ady2)
+                    var aspd2 = e.speed * 4.0 + 2.0
+                    if ad2 <= aspd2 {
+                        e.x = e.bAx; e.y = e.bAy
+                        e.bState = 0
+                        e.bCd = BOSS_CD
+                    } else {
+                        e.x = e.x + adx2 / ad2 * aspd2
+                        e.y = e.y + ady2 / ad2 * aspd2
+                    }
+                }
+                live.add(e)     // 突袭期间原地/往返移动，不走路点
+                i++
+                continue
+            }
         }
 
         // 人物2：血量降到阈值以下进入「哭泣」状态
@@ -1554,7 +1783,7 @@ func spawnCoin(Game g, float x, float y, int val) {
     var c = new Coin()
     c.sx = x; c.sy = y
     c.x = x; c.y = y
-    c.tx = MAP_W + 8.0; c.ty = 23.0
+    c.tx = 18.0; c.ty = 17.0
     c.p = 0.0
     c.val = val
     c.delay = 0
@@ -1573,7 +1802,7 @@ func spawnCoinBurst(Game g, float x, float y, int total) {
         c.sx = x + maths.cos(ang) * rr
         c.sy = y + maths.sin(ang) * rr
         c.x = c.sx; c.y = c.sy
-        c.tx = MAP_W + 8.0; c.ty = 23.0
+        c.tx = 18.0; c.ty = 17.0
         c.p = 0.0
         if k == n - 1 { c.val = total - each * (n - 1) } else { c.val = each }
         c.delay = k * 5
@@ -1641,7 +1870,7 @@ func updateEffects(Game g) {
         c.p = c.p + 0.08
         if c.p >= 1.0 {
             g.gold = g.gold + c.val
-            addFloat(g, MAP_W + 22.0, 16.0, "+" + c.val, #FFD700FF)
+            addFloat(g, 34.0, 42.0, "+" + c.val, #FFD700FF)   // 入账提示显示在左上角金币计数下方
             if g.audioOk and not g.muted { g.sfxPickup.play() }   // 金币收集入账
         } else {
             var e = c.p
@@ -2201,6 +2430,37 @@ func drawGame(Game g, Renderer r) {
             if maths.cos((e.dir - 90.0) * 3.14159265 / 180.0) > 0.0 { flip = Flip.HORIZONTAL }
             r.drawTextureRotated(g.texPerson2[fidx], e.x - sz * 0.5, e.y - sz * 0.5, sz, sz,
                                  0.0, sz * 0.5, sz * 0.5, flip)
+        } else if e.etype == EM_BOSS and g.texBossWalk.len() > 0 {
+            // BOSS：三态精灵表（走 / 跳跃攻击 / 抓着战利品回位）；素材默认朝左，按方向翻转
+            var bflip = Flip.NONE
+            if maths.cos((e.dir - 90.0) * 3.14159265 / 180.0) > 0.0 { bflip = Flip.HORIZONTAL }
+            if e.bState == 1 and g.texBossJump.len() > 0 {
+                var bfj = e.bTimer / BOSS_ATK_STEP
+                if bfj > g.texBossJump.len() - 1 { bfj = g.texBossJump.len() - 1 }
+                r.drawTextureRotated(g.texBossJump[bfj], e.x - sz * 0.5, e.y - sz * 0.5, sz, sz,
+                                     0.0, sz * 0.5, sz * 0.5, bflip)
+            } else if e.bState == 2 and e.bTowerType == TW_ARROW and g.texBossReturn.len() > 0 {
+                // 抢到夫人：扛着人沿原路返回，帧速放慢表现沉重感
+                var bfr = e.bTimer / (BOSS_ATK_STEP * 2)
+                if bfr > g.texBossReturn.len() - 1 { bfr = g.texBossReturn.len() - 1 }
+                r.drawTextureRotated(g.texBossReturn[bfr], e.x - sz * 0.5, e.y - sz * 0.5, sz, sz,
+                                     0.0, sz * 0.5, sz * 0.5, bflip)
+            } else if e.bState == 2 and g.texBossJump.len() > 0 {
+                // 抢到武器：原地抡着武器攻击（攻击动画循环）
+                var raw = e.bTimer / BOSS_ATK_STEP
+                var bfj = raw - (raw / 6) * 6
+                if bfj > g.texBossJump.len() - 1 { bfj = g.texBossJump.len() - 1 }
+                r.drawTextureRotated(g.texBossJump[bfj], e.x - sz * 0.5, e.y - sz * 0.5, sz, sz,
+                                     0.0, sz * 0.5, sz * 0.5, bflip)
+            } else {
+                // 赶路 / 空手回位：走路动画（跑回原位时帧速加倍，看起来在跑）
+                var wfr = 8
+                if e.bState == 3 { wfr = 4 }
+                var bfw = _int(g.frameCount / wfr) % 6
+                if bfw > g.texBossWalk.len() - 1 { bfw = g.texBossWalk.len() - 1 }
+                r.drawTextureRotated(g.texBossWalk[bfw], e.x - sz * 0.5, e.y - sz * 0.5, sz, sz,
+                                     0.0, sz * 0.5, sz * 0.5, bflip)
+            }
         } else {
             var tex = g.texEnemy[e.etype]
             if tex != null {
@@ -2229,6 +2489,35 @@ func drawGame(Game g, Renderer r) {
                 r.setColor(#E74C3CFF)
             }
             r.fillRect(e.x - bw * 0.5, e.y - sz * 0.5 - 7.0, bw * ratio, 4.0)
+        }
+    }
+
+    // BOSS 战利品独立绘制层：抓着战利品回位时，炮管/人物画在 BOSS 头顶
+    for g.enemies to e {
+        if not e.alive { continue }
+        if e.etype != EM_BOSS { continue }
+        // 箭塔：跑回出生点 + 跑回原位期间都扛着人；武器类：仅原地攻击阶段扛着
+        var showCarry = false
+        if e.bState == 2 { showCarry = true }
+        if e.bState == 3 and e.bTowerType == TW_ARROW { showCarry = true }
+        if not showCarry { continue }
+        var bsz = ENEMY_SIZE[e.etype]
+        var cflip = Flip.NONE
+        if maths.cos((e.dir - 90.0) * 3.14159265 / 180.0) > 0.0 { cflip = Flip.HORIZONTAL }
+        var cbob = maths.sin(_float(g.frameCount) * 0.25) * 4.0
+        if cbob > 0.0 { cbob = -cbob }
+        if e.bTowerType == TW_CANNON and g.texCannon.len() > 1 {
+            r.drawTextureRotated(g.texCannon[1], e.x - 21.0, e.y - bsz * 0.5 - 30.0 + cbob, 42.0, 42.0,
+                                 0.0, 21.0, 21.0, cflip)
+        } else if e.bTowerType == TW_FROST and g.texFrost.len() > 1 {
+            r.drawTextureRotated(g.texFrost[1], e.x - 21.0, e.y - bsz * 0.5 - 30.0 + cbob, 42.0, 42.0,
+                                 0.0, 21.0, 21.0, cflip)
+        } else if e.bTowerType == TW_ARROW and g.texArrowTower.len() > 1 {
+            r.drawTextureRotated(g.texArrowTower[1], e.x - 19.0, e.y - bsz * 0.5 - 34.0 + cbob, 38.0, 38.0,
+                                 0.0, 19.0, 19.0, cflip)
+        } else if e.bTowerType == TW_TESLA and g.texTower[3] != null {
+            r.drawTextureRotated(g.texTower[3], e.x - 20.0, e.y - bsz * 0.5 - 32.0 + cbob, 40.0, 40.0,
+                                 0.0, 20.0, 20.0, cflip)
         }
     }
 
@@ -2445,7 +2734,7 @@ func onClick(Game g, float mx, float my, int button) {
         if dx > -14.0 and dx < 14.0 and dy > -16.0 and dy < 14.0 {
             var reward = rands.ints(40, 100) + g.wave * 3
             spawnCoinBurst(g, chx, chy, reward)   // 金币从宝箱迸出后逐枚飞向计数处入账
-            addFloat(g, chx - 20.0, chy - 26.0, "+" + reward + " 金币", #FFE100FF)   // 宝箱旁透明小字显示金额
+            addSpeech(g, chx - 20.0, chy - 26.0, "+" + reward + " 金币", 110)   // 宝箱旁白底黑字气泡，停留更久
             if g.audioOk and not g.muted { g.sfxPickup.play() }   // 开宝箱拾取音
             Array[Chest] ck = []
             for 0 : g.chests.len() - 1 to j {
@@ -2628,10 +2917,10 @@ main() {
     SDL3.ttfInit()
     // 游戏字体：得意黑 Smiley Sans（OFL 开源协议，免费商用）；加载失败自动回退系统字体
     var fontPath = dirs.script_dir() + "/font/SmileySans-Oblique.ttf"
-    var font = SDL3.createFont(fontPath, 11.0)
-    if not font.ok { font = SDL3.createFontAuto(11.0) }
-    var fontBig = SDL3.createFont(fontPath, 16.0)
-    if not fontBig.ok { fontBig = SDL3.createFontAuto(16.0) }
+    var font = SDL3.createFont(fontPath, 13.0)
+    if not font.ok { font = SDL3.createFontAuto(13.0) }
+    var fontBig = SDL3.createFont(fontPath, 20.0)
+    if not fontBig.ok { fontBig = SDL3.createFontAuto(20.0) }
 
     var g = newGame()
     g.font = font
