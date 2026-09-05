@@ -1,0 +1,321 @@
+// resize_slime.leno — 把大图压缩成 288x48，并抠掉白色背景变透明
+//
+// 抠图算法 v3（高分辨率抠图 + 边缘洪泛 + 漏孔回填）：
+//
+//   为什么不在最终尺寸上抠图？
+//     缩到 48px 高之后，人物轮廓会被插值糊成一条「浅色渐变带」，不再实心。
+//     洪泛填充会顺着这条渐变带漏进人物内部，把里面的浅色区域
+//     （衣服、皮肤、高光）整片吃掉 —— 这就是「人物内部透明」的根因。
+//
+//   所以改成两段式：先渲染到较高的「工作分辨率」（此时轮廓实心、洪泛钻不进去），
+//   抠完背景再缩小到最终尺寸。
+//
+// 流程：
+//   1) 读源图原始尺寸，算出工作分辨率（像素数不超过 WORK_MAX_PX）
+//   2) HIDDEN 窗口把源图渲染到工作分辨率 → readPixels → 存临时 PNG（白底仍不透明）
+//   3) 重新 loadImage 临时 PNG（RGBA：byte0=R byte1=G byte2=B byte3=A）
+//   4) 以四边的近白像素为种子做 4 邻域洪泛，标记「与边框连通的近白区域」= 背景
+//   5) 背景 alpha 置 0
+//   6) 兜底：把被人物包围的「封闭小透明区」恢复不透明（洪泛漏抠）
+//   7) 把实体边缘色向外扩若干层，填满透明像素的 RGB，避免缩小插值时漏出白边
+//   8) 再把处理好的图缩小到 288x48 存最终 PNG
+//
+// 运行：build\leno.exe resize_slime.leno
+import "d:/CLeno/LenoC/leno_module/LenoSDL3/lib/SDL3.leno" as SDL3
+import ffi
+use SDL3.(WindowFlag, Window, Renderer)
+
+// 读回 surface 头部布局（64 位）：flags@0 format@4 w@8 h@12 pitch@16 pixels@24
+cstruct SInfo {
+    u32 flags
+    u32 format
+    i32 w
+    i32 h
+    i32 pitch
+    Ptr[u8] pixels
+}
+
+// 判断 (x,y) 是否「接近白底」：三通道都 >= 阈值
+func _isNearWhite(Ptr[u8] px, int pitch, int bpp, int x, int y, int thr): bool {
+    int b = y * pitch + x * bpp
+    int R = ffi.read_byte(px, b + 0)
+    int G = ffi.read_byte(px, b + 1)
+    int B = ffi.read_byte(px, b + 2)
+    if R >= thr and G >= thr and B >= thr { return true }
+    return false
+}
+
+main() {
+    string name = "加农炮.png"
+    string SRC = "d:\\CLeno\\" + name
+    string DST = "d:\\CLeno\\LenoC\\leno_module\\LenoSDL3\\examples\\应用示例\\游戏\\塔防\\image\\" + name
+    string TMP = "d:\\CLeno\\LenoC\\_slime_tmp.png"
+
+    int FRAMES = 6    // 精灵表帧数：人物3 = 8 帧(384x48)；人物1/2/史莱姆 = 6 帧(288x48)
+    int W = 48 * FRAMES   // 每帧 48x48 横排
+    int H = 48
+
+    // ---- 可调参数 ----
+    int WORK_MAX_PX = 400000  // 抠图用的工作分辨率像素上限（调大更精确但更慢）
+    int BG_THR      = 232     // 洪泛判定「接近白底」阈值(0-255)：调低=抠更狠，调高=更保守
+    int MAX_HOLE    = 120     // 小于此面积的封闭透明区视为漏抠，恢复不透明
+    int BLEED       = 8       // 透明区 RGB 向外填充层数（消除缩小后的白边）
+
+    // ---- 第 1 步：读源图原始尺寸 ----
+    Ptr[u8] s0 = SDL3.loadImage(SRC)
+    if s0 == null { print("[resize] 加载源图失败: " + SDL3.getError()); return }
+    SInfo i0 = SInfo.from_ptr(s0)
+    int sw = i0.w
+    int sh = i0.h
+    SDL3.destroySurface(s0)
+    print("[resize] 源图尺寸: " + sw + " x " + sh)
+
+    // ---- 第 2 步：算工作分辨率（像素数不超上限，但不低于最终尺寸的 3 倍）----
+    int kw = sw
+    int kh = sh
+    while (kw * kh) > WORK_MAX_PX and kw > W * 3 and kh > H * 3 {
+        kw = kw / 2
+        kh = kh / 2
+    }
+    print("[resize] 工作分辨率: " + kw + " x " + kh + "  ->  最终: " + W + " x " + H)
+
+    // ---- 第 3 步：把源图渲染到工作分辨率（白底此时仍不透明）----
+    var winA = SDL3.createWindow({ title: "key-pass", w: kw, h: kh, flags: WindowFlag.HIDDEN })
+    if not winA.ok { print("[resize] 窗口创建失败: " + SDL3.getError()); return }
+    Renderer rA = SDL3.createRenderer(winA.getHandle())
+    rA.clearColor(#00000000)
+
+    Ptr[u8] texA = SDL3.loadImageTexture(rA.handle, SRC)
+    if texA == null { print("[resize] 加载源图失败: " + SDL3.getError()); SDL3.quit(); return }
+    rA.drawTextureAt(texA, 0.0, 0.0, _float(kw), _float(kh))
+    rA.flush()
+
+    Ptr[u8] surfA = rA.readPixelsAt(0, 0, kw, kh)
+    if surfA == null { print("[resize] 读像素失败: " + SDL3.getError()); SDL3.quit(); return }
+    SDL3.saveImagePNG(surfA, TMP)
+    SDL3.destroySurface(surfA)
+    SDL3.destroyTexture(texA)
+
+    // ---- 第 4 步：读回像素准备抠图 ----
+    Ptr[u8] surf2 = SDL3.loadImage(TMP)
+    if surf2 == null { print("[resize] 读取临时图失败: " + SDL3.getError()); SDL3.quit(); return }
+    SInfo info = SInfo.from_ptr(surf2)
+    int bpp = info.pitch / info.w
+    Ptr[u8] px = info.pixels
+    if px == null { print("[resize] 像素指针为空"); SDL3.quit(); return }
+
+    int KW = info.w
+    int KH = info.h
+    int N = KW * KH
+
+    // ---- 第 5 步：从四条边洪泛，标记与边框连通的近白区域 = 背景 ----
+    Array[int] bg = []
+    for 0 : N - 1 to i { bg.add(0) }
+
+    Array[int] q = []
+    for 0 : KW - 1 to x {
+        int it = x
+        if _isNearWhite(px, info.pitch, bpp, x, 0, BG_THR) {
+            if bg[it] == 0 { bg[it] = 1; q.add(it) }
+        }
+        int ib = (KH - 1) * KW + x
+        if _isNearWhite(px, info.pitch, bpp, x, KH - 1, BG_THR) {
+            if bg[ib] == 0 { bg[ib] = 1; q.add(ib) }
+        }
+    }
+    for 0 : KH - 1 to y {
+        int il = y * KW
+        if _isNearWhite(px, info.pitch, bpp, 0, y, BG_THR) {
+            if bg[il] == 0 { bg[il] = 1; q.add(il) }
+        }
+        int ir = y * KW + (KW - 1)
+        if _isNearWhite(px, info.pitch, bpp, KW - 1, y, BG_THR) {
+            if bg[ir] == 0 { bg[ir] = 1; q.add(ir) }
+        }
+    }
+
+    int head = 0
+    while head < q.len() {
+        int idx = q[head]
+        head = head + 1
+        int cx = idx % KW
+        int cy = idx / KW
+
+        if cx > 0 {
+            int j = idx - 1
+            if bg[j] == 0 and _isNearWhite(px, info.pitch, bpp, cx - 1, cy, BG_THR) { bg[j] = 1; q.add(j) }
+        }
+        if cx < KW - 1 {
+            int j = idx + 1
+            if bg[j] == 0 and _isNearWhite(px, info.pitch, bpp, cx + 1, cy, BG_THR) { bg[j] = 1; q.add(j) }
+        }
+        if cy > 0 {
+            int j = idx - KW
+            if bg[j] == 0 and _isNearWhite(px, info.pitch, bpp, cx, cy - 1, BG_THR) { bg[j] = 1; q.add(j) }
+        }
+        if cy < KH - 1 {
+            int j = idx + KW
+            if bg[j] == 0 and _isNearWhite(px, info.pitch, bpp, cx, cy + 1, BG_THR) { bg[j] = 1; q.add(j) }
+        }
+    }
+    print("[resize] 洪泛判定为背景: " + q.len() + " / " + N + " 像素")
+
+    // ---- 第 6 步：背景 alpha 置 0 ----
+    for 0 : KH - 1 to y {
+        for 0 : KW - 1 to x {
+            if bg[y * KW + x] == 1 {
+                int b = y * info.pitch + x * bpp
+                ffi.write_byte(px, b + 3, 0)
+            }
+        }
+    }
+
+    // ---- 第 7 步：漏孔回填 ----
+    // 找出「透明但没有连到图片边框」的封闭区域：面积小的说明是洪泛漏进人物内部，恢复不透明。
+    // 必须在第 8 步（RGB 外扩）之前做，否则像素的原始颜色已被覆盖。
+    Array[int] ext = []
+    for 0 : N - 1 to i { ext.add(0) }
+    Array[int] q2 = []
+    for 0 : KW - 1 to x {
+        int it = x
+        if bg[it] == 1 { ext[it] = 1; q2.add(it) }
+        int ib = (KH - 1) * KW + x
+        if bg[ib] == 1 { ext[ib] = 1; q2.add(ib) }
+    }
+    for 0 : KH - 1 to y {
+        int il = y * KW
+        if bg[il] == 1 { ext[il] = 1; q2.add(il) }
+        int ir = y * KW + (KW - 1)
+        if bg[ir] == 1 { ext[ir] = 1; q2.add(ir) }
+    }
+    int h2 = 0
+    while h2 < q2.len() {
+        int idx = q2[h2]
+        h2 = h2 + 1
+        int cx = idx % KW
+        int cy = idx / KW
+        if cx > 0 {
+            int j = idx - 1
+            if bg[j] == 1 and ext[j] == 0 { ext[j] = 1; q2.add(j) }
+        }
+        if cx < KW - 1 {
+            int j = idx + 1
+            if bg[j] == 1 and ext[j] == 0 { ext[j] = 1; q2.add(j) }
+        }
+        if cy > 0 {
+            int j = idx - KW
+            if bg[j] == 1 and ext[j] == 0 { ext[j] = 1; q2.add(j) }
+        }
+        if cy < KH - 1 {
+            int j = idx + KW
+            if bg[j] == 1 and ext[j] == 0 { ext[j] = 1; q2.add(j) }
+        }
+    }
+    // 剩下的透明像素都是封闭孔，逐块统计面积
+    Array[int] seen = []
+    for 0 : N - 1 to i { seen.add(0) }
+    int holes = 0
+    for 0 : N - 1 to i {
+        if bg[i] == 0 { continue }
+        if ext[i] == 1 { continue }
+        if seen[i] == 1 { continue }
+        Array[int] comp = []
+        Array[int] qs = []
+        seen[i] = 1
+        qs.add(i)
+        int hh = 0
+        while hh < qs.len() {
+            int idx = qs[hh]
+            hh = hh + 1
+            comp.add(idx)
+            int cx = idx % KW
+            int cy = idx / KW
+            if cx > 0 {
+                int j = idx - 1
+                if bg[j] == 1 and ext[j] == 0 and seen[j] == 0 { seen[j] = 1; qs.add(j) }
+            }
+            if cx < KW - 1 {
+                int j = idx + 1
+                if bg[j] == 1 and ext[j] == 0 and seen[j] == 0 { seen[j] = 1; qs.add(j) }
+            }
+            if cy > 0 {
+                int j = idx - KW
+                if bg[j] == 1 and ext[j] == 0 and seen[j] == 0 { seen[j] = 1; qs.add(j) }
+            }
+            if cy < KH - 1 {
+                int j = idx + KW
+                if bg[j] == 1 and ext[j] == 0 and seen[j] == 0 { seen[j] = 1; qs.add(j) }
+            }
+        }
+        if comp.len() <= MAX_HOLE {
+            for comp to ci {
+                bg[ci] = 0
+                int b = (ci / KW) * info.pitch + (ci % KW) * bpp
+                ffi.write_byte(px, b + 3, 255)
+                holes = holes + 1
+            }
+        }
+    }
+    print("[resize] 回填漏抠孔洞: " + holes + " 像素")
+
+    // ---- 第 8 步：透明区 RGB 向外扩，填满后用实体色，避免缩小插值漏白边 ----
+    Array[int] got = []
+    for 0 : N - 1 to i {
+        if bg[i] == 0 { got.add(1) } else { got.add(0) }
+    }
+    int pass = 0
+    while pass < BLEED {
+        for 0 : KH - 1 to y {
+            for 0 : KW - 1 to x {
+                int i = y * KW + x
+                if bg[i] == 0 { continue }
+                if got[i] == 1 { continue }
+                int s = -1
+                if y > 0     { if got[(y - 1) * KW + x] == 1 { s = (y - 1) * KW + x } }
+                if s < 0 and y < KH - 1 { if got[(y + 1) * KW + x] == 1 { s = (y + 1) * KW + x } }
+                if s < 0 and x > 0     { if got[y * KW + x - 1] == 1 { s = y * KW + x - 1 } }
+                if s < 0 and x < KW - 1 { if got[y * KW + x + 1] == 1 { s = y * KW + x + 1 } }
+                if s >= 0 {
+                    int sb = (s / KW) * info.pitch + (s % KW) * bpp
+                    int db = y * info.pitch + x * bpp
+                    ffi.write_byte(px, db + 0, ffi.read_byte(px, sb + 0))
+                    ffi.write_byte(px, db + 1, ffi.read_byte(px, sb + 1))
+                    ffi.write_byte(px, db + 2, ffi.read_byte(px, sb + 2))
+                    got[i] = 1
+                }
+            }
+        }
+        pass = pass + 1
+    }
+
+    if not SDL3.saveImagePNG(surf2, TMP) {
+        print("[resize] 保存临时图失败: " + SDL3.getError())
+        SDL3.destroySurface(surf2)
+        SDL3.quit()
+        return
+    }
+    SDL3.destroySurface(surf2)
+
+    // ---- 第 9 步：把抠好的图缩小到 288x48 存盘 ----
+    var winB = SDL3.createWindow({ title: "final-pass", w: W, h: H, flags: WindowFlag.HIDDEN })
+    if not winB.ok { print("[resize] 最终窗口创建失败: " + SDL3.getError()); SDL3.quit(); return }
+    Renderer rB = SDL3.createRenderer(winB.getHandle())
+    rB.clearColor(#00000000)
+
+    Ptr[u8] texB = SDL3.loadImageTexture(rB.handle, TMP)
+    if texB == null { print("[resize] 加载临时图失败: " + SDL3.getError()); SDL3.quit(); return }
+    rB.drawTextureAt(texB, 0.0, 0.0, _float(W), _float(H))
+    rB.flush()
+
+    Ptr[u8] surfB = rB.readPixelsAt(0, 0, W, H)
+    if surfB == null { print("[resize] 最终读像素失败: " + SDL3.getError()); SDL3.quit(); return }
+    if SDL3.saveImagePNG(surfB, DST) {
+        print("[resize] 已保存: " + DST)
+    } else {
+        print("[resize] 保存失败: " + SDL3.getError())
+    }
+    SDL3.destroySurface(surfB)
+    SDL3.destroyTexture(texB)
+    SDL3.quit()
+    print("[resize] 完成")
+}

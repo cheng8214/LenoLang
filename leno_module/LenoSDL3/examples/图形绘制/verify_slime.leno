@@ -1,0 +1,74 @@
+// verify_slime.leno — 检查 史莱姆.png 是否真的有透明背景（alpha=0 的像素）
+import "d:/CLeno/LenoC/leno_module/LenoSDL3/lib/SDL3.leno" as SDL3
+import ffi
+
+// SDL3 SDL_Surface 头部布局（64 位）：
+// flags@0  format@4  w@8  h@12  pitch@16  pixels@24
+cstruct SInfo {
+    u32 flags
+    u32 format
+    i32 w
+    i32 h
+    i32 pitch
+    Ptr[u8] pixels
+}
+
+main() {
+    string DST = "d:\\CLeno\\LenoC\\leno_module\\LenoSDL3\\examples\\应用示例\\游戏\\塔防\\image\\史莱姆.png"
+
+    Ptr[u8] surf = SDL3.loadImage(DST)
+    if surf == null {
+        print("[verify] 加载失败: " + SDL3.getError())
+        return
+    }
+    SInfo info = SInfo.from_ptr(surf)
+    print("[verify] 尺寸: " + info.w + " x " + info.h + "  pitch: " + info.pitch + "  format: " + info.format)
+
+    int W = info.w
+    int H = info.h
+    int bpp = info.pitch / W
+    print("[verify] bpp: " + bpp)
+
+    Ptr[u8] px = info.pixels
+    if px == null {
+        print("[verify] 像素指针为空")
+        SDL3.destroySurface(surf)
+        return
+    }
+
+    // 先探测 alpha 在哪个字节：取四角与中心像素
+    int base00 = 0 * info.pitch + 0 * bpp
+    int baseCC = (H / 2) * info.pitch + (W / 2) * bpp
+    print("[verify] 角(0,0) 字节: " +
+        ffi.read_byte(px, base00+0) + "," + ffi.read_byte(px, base00+1) + "," +
+        ffi.read_byte(px, base00+2) + "," + ffi.read_byte(px, base00+3))
+    print("[verify] 中心    字节: " +
+        ffi.read_byte(px, baseCC+0) + "," + ffi.read_byte(px, baseCC+1) + "," +
+        ffi.read_byte(px, baseCC+2) + "," + ffi.read_byte(px, baseCC+3))
+
+    // 统计 alpha 通道：分别按「字节3(RGBA)」与「字节0(ARGB)」解释
+    int tr3 = 0; int op3 = 0; int ot3 = 0
+    int tr0 = 0; int op0 = 0; int ot0 = 0
+    for 0 : H to y {
+        for 0 : W to x {
+            int base = y * info.pitch + x * bpp
+            int a3 = ffi.read_byte(px, base + 3)
+            int a0 = ffi.read_byte(px, base + 0)
+            if a3 == 0 { tr3 = tr3 + 1 } else if a3 == 255 { op3 = op3 + 1 } else { ot3 = ot3 + 1 }
+            if a0 == 0 { tr0 = tr0 + 1 } else if a0 == 255 { op0 = op0 + 1 } else { ot0 = ot0 + 1 }
+        }
+    }
+
+    print("[verify] RGBA(alpha@3): 透明=" + tr3 + " 不透明=" + op3 + " 半透明=" + ot3)
+    print("[verify] ARGB(alpha@0): 透明=" + tr0 + " 不透明=" + op0 + " 半透明=" + ot0)
+
+    if tr3 > 0 and op3 > 0 {
+        print("[verify] 结论: 背景透明 ✅ (RGBA，存在 alpha=0 像素)")
+    } else if tr0 > 0 and op0 > 0 {
+        print("[verify] 结论: 背景透明 ✅ (ARGB，存在 alpha=0 像素)")
+    } else {
+        print("[verify] 结论: 似乎整张都不透明 ❌（白色/黑底风险）")
+    }
+
+    SDL3.destroySurface(surf)
+}
