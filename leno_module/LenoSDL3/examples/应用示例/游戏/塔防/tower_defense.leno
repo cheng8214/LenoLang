@@ -71,7 +71,8 @@ var MAX_LEVEL    = 3
 // 箭塔「塔上人物射箭」：塔射箭人物.png 帧 0=塔本体，帧 1-4=人物射箭动作，帧 5=箭矢
 var ARROW_ANIM_STEP = 9   // 射箭动作每个动画帧持续的帧数（4 帧 × 9 = 36 帧一轮）
 
-// 加农炮「底座+炮管」：加农炮.png 帧 0=底座，帧 1=炮管(朝左)，帧 3-4=开火动作，帧 5=炮弹
+// 加农炮/冰塔「底座+炮管」：加农炮.png、冰塔炮.png 格式一致
+// 帧 0=底座，帧 1=炮管(朝左)，帧 3-4=开火动作，帧 5=炮弹/冰弹
 var CANNON_ANIM_STEP = 9  // 开火动作每个动画帧持续的帧数（2 帧 × 9 = 18 帧）
 
 // 敌人类型
@@ -337,6 +338,7 @@ struct Game {
     Array[Ptr[u8]] texGrunt
     Array[Ptr[u8]] texArrowTower
     Array[Ptr[u8]] texCannon
+    Array[Ptr[u8]] texFrost
     Array[Ptr[u8]] texBullet
     Ptr[u8] texCoin
     Ptr[u8] texHeart
@@ -542,6 +544,7 @@ func newGame(): Game {
     g.texGrunt = []
     g.texArrowTower = []
     g.texCannon = []
+    g.texFrost = []
     g.loaded = false
     g.audioOk = false
     buildMap(g)
@@ -616,7 +619,7 @@ func loadResources(Game g, Renderer r) {
 
     var tn = ["tower_arrow", "tower_cannon", "tower_frost", "tower_tesla"]
     var en = ["", "enemy_runner", "", "enemy_boss"]   // 小兵/坦克已由「人物小兵」「人物2」取代
-    var bn = ["", "", "bullet_frost", "bullet_bolt"]   // 箭矢/炮弹改用「塔射箭人物」「加农炮」第 6 帧
+    var bn = ["", "", "", "bullet_bolt"]   // 箭矢/炮弹/冰弹改用「塔射箭人物」「加农炮」「冰塔炮」第 6 帧
     g.texTower = []
     g.texEnemy = []
     g.texBullet = []
@@ -685,6 +688,25 @@ func loadResources(Game g, Renderer r) {
         }
         // 面板卡片 / 建造预览改用底座帧
         if g.texCannon.len() > 0 { g.texTower[1] = g.texCannon[0] }
+    }
+
+    // 冰塔炮：288x48 横排 6 帧，格式与加农炮一致：底座/炮管(朝左)/开火动作/冰弹
+    g.texFrost = []
+    var frostSheet = SDL3.loadImageTexture(r.handle, base + "/image/冰塔炮.png")
+    if frostSheet != null {
+        for 0 : 5 to fi {
+            var ff = r.createTexture(core.PIXELFORMAT_RGBA8888, 2, 48, 48)
+            if ff != null {
+                r.setRenderTarget(ff)
+                r.clearColor(#00000000)
+                r.drawTextureFromTo(frostSheet, _float(fi) * 48.0, 0.0, 48.0, 48.0, 0.0, 0.0, 48.0, 48.0)
+                r.flush()
+                r.setRenderTarget(null)
+                g.texFrost.add(ff)
+            }
+        }
+        // 面板卡片 / 建造预览改用底座帧
+        if g.texFrost.len() > 0 { g.texTower[2] = g.texFrost[0] }
     }
 
     // 史莱姆：288x48 横排 6 帧（每帧 48x48），侧视向左行走；向右移动时水平翻转
@@ -1102,7 +1124,7 @@ func fire(Game g, Tower t, int ti) {
     b.vy = dy / d
     g.bullets.add(b)
     if t.ttype == TW_ARROW { t.fireAnim = ARROW_ANIM_STEP * 4 }     // 塔上人物射箭动作
-    if t.ttype == TW_CANNON { t.fireAnim = CANNON_ANIM_STEP * 2 }   // 炮管开火动作（帧 3-4）
+    if t.ttype == TW_CANNON or t.ttype == TW_FROST { t.fireAnim = CANNON_ANIM_STEP * 2 }   // 炮管开火动作（帧 3-4）
     if g.audioOk and not g.muted {
         if t.ttype == TW_ARROW { g.sfxShootArrow.play() }   // 箭塔用专属开火音
         else { g.sfxShoot.play() }                          // 其余塔复用通用开火音
@@ -1363,8 +1385,8 @@ func updateTowers(Game g) {
         var ti = findTargetIdx(g, t)
         if ti >= 0 {
             var e = g.enemies[ti]
-            // 仅加农炮随目标旋转；箭塔记录目标方向供塔上人物翻转，冰/电塔固定朝上
-            if t.ttype == TW_CANNON {
+            // 加农炮/冰塔随目标旋转；箭塔记录目标方向供塔上人物翻转，电塔固定朝上
+            if t.ttype == TW_CANNON or t.ttype == TW_FROST {
                 t.angle = dirAngle(e.x - t.x, e.y - t.y)
             } else if t.ttype == TW_ARROW {
                 t.angle = 0.0
@@ -1852,10 +1874,16 @@ func drawGame(Game g, Renderer r) {
     for g.towers to t {
         var tex = g.texTower[t.ttype]
         if tex == null { continue }
-        if t.ttype == TW_CANNON and g.texCannon.len() > 4 {
-            // 新加农炮：帧 0 底座不旋转；帧 1 炮管（素材朝左）按目标方向旋转
-            // 炮管旋转量 = dirAngle + 90（朝左基准），开火时用帧 3-4 的开火动作
-            r.drawTextureRotated(g.texCannon[0], t.x - TS * 0.75, t.y - TS * 0.75, TS * 1.5, TS * 1.5,
+        // 加农炮/冰塔：帧 0 底座不旋转；帧 1 炮管（素材朝左）按目标方向旋转
+        // 炮管旋转量 = dirAngle + 90（朝左基准），开火时用帧 3-4 的开火动作
+        // 冰塔底座不动，仅炮管抬高（约一张图高减一点），塔身显高
+        var bsheet = g.texCannon
+        if t.ttype == TW_FROST { bsheet = g.texFrost }
+        if (t.ttype == TW_CANNON or t.ttype == TW_FROST) and bsheet.len() > 4 {
+            var byoff = 0.0            // 底座：不偏移
+            var gyoff = 0.0            // 炮管：竖直偏移
+            if t.ttype == TW_FROST { gyoff = -TS * 0.90 }
+            r.drawTextureRotated(bsheet[0], t.x - TS * 0.75, t.y - TS * 0.75 + byoff, TS * 1.5, TS * 1.5,
                                  0.0, TS * 0.75, TS * 0.75, Flip.NONE)
             var brot = t.angle + 90.0
             var bfi = 1
@@ -1863,17 +1891,20 @@ func drawGame(Game g, Renderer r) {
                 bfi = 3 + ((CANNON_ANIM_STEP * 2 - t.fireAnim) / CANNON_ANIM_STEP)
                 if bfi > 4 { bfi = 4 }
             }
-            r.drawTextureRotated(g.texCannon[bfi], t.x - TS * 0.75, t.y - TS * 0.75, TS * 1.5, TS * 1.5,
+            r.drawTextureRotated(bsheet[bfi], t.x - TS * 0.75, t.y - TS * 0.75 + gyoff, TS * 1.5, TS * 1.5,
                                  brot, TS * 0.75, TS * 0.75, Flip.NONE)
         } else {
             r.drawTextureRotated(tex, t.x - TS * 0.75, t.y - TS * 0.75, TS * 1.5, TS * 1.5,
                                  t.angle, TS * 0.75, TS * 0.75, Flip.NONE)
         }
-        // 箭塔：塔上人物射箭动作（帧 1-4，开火后播一轮）
-        // 人物缩小到约 0.7 倍放在塔身中上部，并按目标方向水平翻转（素材默认朝左）
-        if t.ttype == TW_ARROW and t.fireAnim > 0 and g.texArrowTower.len() > 4 {
-            var ai = 1 + ((ARROW_ANIM_STEP * 4 - t.fireAnim) / ARROW_ANIM_STEP)
-            if ai > 4 { ai = 4 }
+        // 箭塔：塔上人物常驻——无目标时用帧 1 作待机姿势，开火时播放帧 1-4 射箭动作
+        // 人物缩小放在塔身中上部，并按目标方向水平翻转（素材默认朝左）
+        if t.ttype == TW_ARROW and g.texArrowTower.len() > 4 {
+            var ai = 1
+            if t.fireAnim > 0 {
+                ai = 1 + ((ARROW_ANIM_STEP * 4 - t.fireAnim) / ARROW_ANIM_STEP)
+                if ai > 4 { ai = 4 }
+            }
             var psz = TS * 1.05
             var pflip = Flip.NONE
             if maths.cos((t.aimDir - 90.0) * 3.14159265 / 180.0) > 0.0 { pflip = Flip.HORIZONTAL }
@@ -1902,11 +1933,12 @@ func drawGame(Game g, Renderer r) {
         }
     }
 
-    // 可升级标识符：金币够且未满级时，每座塔旁自动显示「升级」图标
+    // 可升级标识符：金币够且未满级时，塔旁显示「升级」图标（上下浮动提示可点）
     for g.towers to t {
         var bd = upgradeBadgeRect(g, t)
         if bd.len() == 4 and g.texUp != null {
-            r.drawTextureAt(g.texUp, bd[0] - 2.0, bd[1] - 2.0, bd[2] + 4.0, bd[3] + 4.0)
+            var ubob = maths.sin(_float(g.frameCount) * 0.12) * 3.0
+            r.drawTextureAt(g.texUp, bd[0] - 2.0, bd[1] - 2.0 + ubob, bd[2] + 4.0, bd[3] + 4.0)
         }
     }
 
@@ -2068,10 +2100,11 @@ func drawGame(Game g, Renderer r) {
 
     // 子弹
     for g.bullets to b {
-        // 箭矢/炮弹分别用「塔射箭人物」「加农炮」第 6 帧，其余子弹用各自贴图
+        // 箭矢/炮弹/冰弹分别用「塔射箭人物」「加农炮」「冰塔炮」第 6 帧，其余子弹用各自贴图
         var bt = g.texBullet[b.btype]
         if b.btype == TW_ARROW and g.texArrowTower.len() > 5 { bt = g.texArrowTower[5] }
         if b.btype == TW_CANNON and g.texCannon.len() > 5 { bt = g.texCannon[5] }
+        if b.btype == TW_FROST and g.texFrost.len() > 5 { bt = g.texFrost[5] }
         if bt == null { continue }
         var ang = dirAngle(b.vx, b.vy)
         // 箭矢素材水平朝左：飞行方向角 = atan2(vy,vx)，素材基准朝左(180°)，旋转量 = 方向角 - 180

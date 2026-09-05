@@ -9,9 +9,9 @@
 //
 // 素材一览：
 //   瓦片 32x32  tile_grass 草地 / tile_path 路径 / tile_start 出怪口 / tile_base 基地 / tile_rock 石块
-//   塔   48x48  tower_frost 冰塔 / tower_tesla 电塔（箭塔/炮塔已由「塔射箭人物」「加农炮」取代）
+//   塔   48x48  tower_tesla 电塔（箭塔/炮塔/冰塔已由「塔射箭人物」「加农炮」「冰塔炮」取代）
 //   敌人 32x32  enemy_runner 快兵；enemy_boss 48x48（小兵/坦克已由「人物小兵」「人物2」取代）
-//   子弹 16x16  bullet_frost / bullet_bolt（箭矢/炮弹由「塔射箭人物」「加农炮」第 6 帧提供）
+//   子弹 16x16  bullet_bolt（箭矢/炮弹/冰弹由「塔射箭人物」「加农炮」「冰塔炮」第 6 帧提供）
 //   图标 16x16  icon_coin 金币 / icon_heart 生命 / icon_star 等级星
 
 import "../../../../lib/SDL3.leno" as SDL3
@@ -385,10 +385,8 @@ main() {
     grab(r, "enemy_runner", 32, 48, 32, 32)
     grab(r, "enemy_boss",   96, 48, 48, 48)
 
-    grab(r, "tower_frost",  96,  112, 48, 48)
     grab(r, "tower_tesla",  144, 112, 48, 48)
 
-    grab(r, "bullet_frost", 32, 176, 16, 16)
     grab(r, "bullet_bolt",  48, 176, 16, 16)
 
     grab(r, "icon_coin",  72,  176, 16, 16)
