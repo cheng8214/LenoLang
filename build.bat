@@ -102,4 +102,4 @@ if %ERRORLEVEL% neq 0 (
 echo Build successful
 echo.
 echo Usage: build\lenojit.exe ^<file.leno^>
-echo Tests:  build\lenojit.exe assert\run_tests.leno build\leno.exe assert
+echo Tests:  build\lenojit.exe assert\run_tests.leno build\lenojit.exe assert
