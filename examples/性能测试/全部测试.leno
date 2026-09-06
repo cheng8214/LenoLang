@@ -1,8 +1,10 @@
 import times
-int csnum=100000000
+int csnum=100000000   // 一亿次
 main()
 {
     print("======== 算术运算与赋值性能分析 ========")
+    print("")
+    print($"说明: 以下每个循环类测试均为 {csnum} 次 (1亿次)")
     print("")
 
     // 测试1: 纯整数自增 (baseline)
@@ -14,7 +16,7 @@ main()
         i++
     }
     var t2=times.ms()
-    print($"{csnum}次 i++: " + (t2-t1) + "ms")
+    print($"{csnum}次(1亿) i++: " + (t2-t1) + "ms")
 
     // 测试2: 局部变量赋值
     print("")
@@ -27,7 +29,7 @@ main()
         a = b
     }
     t2=times.ms()
-    print($"{csnum}次 a = b: " + (t2-t1) + "ms")
+    print($"{csnum}次(1亿) a = b: " + (t2-t1) + "ms")
 
     // 测试3: 常量赋值
     print("")
@@ -39,7 +41,7 @@ main()
         a = 1
     }
     t2=times.ms()
-    print($"{csnum}次 a = 1: " + (t2-t1) + "ms")
+    print($"{csnum}次(1亿) a = 1: " + (t2-t1) + "ms")
 
     // 测试4: 简单加法 (两个常量)
     print("")
@@ -51,7 +53,7 @@ main()
         a = 1 + 2
     }
     t2=times.ms()
-    print($"{csnum}次 a = 1 + 2: " + (t2-t1) + "ms")
+    print($"{csnum}次(1亿) a = 1 + 2: " + (t2-t1) + "ms")
 
     // 测试5: 变量加法
     print("")
@@ -65,7 +67,7 @@ main()
         a = b + c
     }
     t2=times.ms()
-    print($"{csnum}次 a = b + c: " + (t2-t1) + "ms")
+    print($"{csnum}次(1亿) a = b + c: " + (t2-t1) + "ms")
 
     // 测试6: 复合加法赋值
     print("")
@@ -77,7 +79,7 @@ main()
         a += 1
     }
     t2=times.ms()
-    print($"{csnum}次 a += 1: " + (t2-t1) + "ms")
+    print($"{csnum}次(1亿) a += 1: " + (t2-t1) + "ms")
 
     // 测试7: 自增 vs 加1 对比
     print("")
@@ -90,7 +92,7 @@ main()
     }
     t2=times.ms()
     var add1_time = t2-t1
-    print($"{csnum}次 i = i + 1: " + add1_time + "ms")
+    print($"{csnum}次(1亿) i = i + 1: " + add1_time + "ms")
 
     t1=times.ms()
     i=0
@@ -100,7 +102,7 @@ main()
     }
     t2=times.ms()
     var inc_time = t2-t1
-    print($"{csnum}次 i++: " + inc_time + "ms")
+    print($"{csnum}次(1亿) i++: " + inc_time + "ms")
     print($"比值: i++ / (i=i+1) = " + (inc_time * 100 / add1_time) + "%")
 
     // 测试8: 乘法
@@ -115,7 +117,7 @@ main()
         a = b * c
     }
     t2=times.ms()
-    print($"{csnum}次 a = b * c: " + (t2-t1) + "ms")
+    print($"{csnum}次(1亿) a = b * c: " + (t2-t1) + "ms")
 
     // 测试9: 减法
     print("")
@@ -129,7 +131,7 @@ main()
         a = b - c
     }
     t2=times.ms()
-    print($"{csnum}次 a = b - c: " + (t2-t1) + "ms")
+    print($"{csnum}次(1亿) a = b - c: " + (t2-t1) + "ms")
 
     // 测试10: 连续操作
     print("")
@@ -144,7 +146,7 @@ main()
         a = b + c + d
     }
     t2=times.ms()
-    print($"{csnum}次 a = b + c + d: " + (t2-t1) + "ms")
+    print($"{csnum}次(1亿) a = b + c + d: " + (t2-t1) + "ms")
 
     print("")
     print("======== 下一个测试=======")
@@ -169,7 +171,7 @@ func test1()
     }
     var t2=times.ms()
     var elapsed = t2-t1
-    print($"{csnum}次 i++: " + elapsed + "ms")
+    print($"{csnum}次(1亿) i++: " + elapsed + "ms")
 
     // 算术运算
     var a=1
@@ -182,7 +184,7 @@ func test1()
     }
     t2=times.ms()
     elapsed = t2-t1
-    print($"{csnum}次加法: " + elapsed + "ms")
+    print($"{csnum}次(1亿)加法: " + elapsed + "ms")
 
     // 函数调用
     print("")
@@ -194,7 +196,7 @@ func test1()
     }
     t2=times.ms()
     elapsed = t2-t1
-    print($"{csnum}次空函数调用: " + elapsed + "ms")
+    print($"{csnum}次(1亿)空函数调用: " + elapsed + "ms")
 
     // 数组操作
     print("")
@@ -207,7 +209,7 @@ func test1()
     }
     t2=times.ms()
     elapsed = t2-t1
-    print($"{csnum}次 arr.add(): " + elapsed + "ms")
+    print($"{csnum}次(1亿) arr.add(): " + elapsed + "ms")
 
     // 数组访问
     var arr1=[]
@@ -220,7 +222,7 @@ func test1()
     }
     t2=times.ms()
     elapsed = t2-t1
-    print($"{csnum}次 arr[index]: " + elapsed + "ms")
+    print($"{csnum}次(1亿) arr[index]: " + elapsed + "ms")
 
     // 字典操作
     print("")
@@ -233,7 +235,7 @@ func test1()
     }
     t2=times.ms()
     elapsed = t2-t1
-    print($"{csnum}次 dict[key]=value: " + elapsed + "ms")
+    print($"{csnum}次(1亿) dict[key]=value: " + elapsed + "ms")
 
     print("")
     print("======== 下一个测试=======")
@@ -248,15 +250,15 @@ func myfunc()
 func trytest()
 {
 print("")
-print("======== try 测试=======")
+print("======== try 测试 (每组 1亿次) =======")
 var t1 = times.ms();
  var d1=no_try_test()
  var t2 = times.ms();
- print($" {t2 - t1}ms 结果:{d1}\n");
+ print($"无 try: 1亿({csnum})次 sum++  " + (t2 - t1) + "ms 结果:{d1}\n");
   var t3 = times.ms();
   var d2=with_try_test()
   var t4 = times.ms();
-   print($" {t4 -t3 }ms 结果:{d2}\n");
+   print($"有 try: 1亿({csnum})次 sum++  " + (t4 - t3) + "ms 结果:{d2}\n");
     print("======== 下一个测试=======")
 }
 
@@ -286,13 +288,13 @@ func whileandfor()
     print("")
 
     // 测试1: 纯空循环对比
-    print($"--- 测试1:{csnum}次 空循环 ---")
+    print($"--- 测试1:{csnum}次(1亿) 空循环 ---")
 
     var t1=times.ms()
     for csnum {}
     var t2=times.ms()
     var for_empty = t2-t1
-    print($"for N \{\}: " + for_empty + "ms")
+    print($"for 1亿次(空体) \{\}: " + for_empty + "ms")
 
     t1=times.ms()
     var i=0
@@ -301,12 +303,12 @@ func whileandfor()
     }
     t2=times.ms()
     var while_empty = t2-t1
-    print($"while i < N: " + while_empty + "ms")
+    print($"while 1亿次: " + while_empty + "ms")
     print($"比值: for/while = " + (for_empty * 100 / while_empty) + "%")
     print("")
 
     // 测试2: 带简单操作的循环
-    print("--- 测试2: 1000万次 i++ ---")
+    print("--- 测试2: 1亿(100000000)次 i++ ---")
 
     t1=times.ms()
     for csnum {
@@ -314,7 +316,7 @@ func whileandfor()
     }
     t2=times.ms()
     var for_inc = t2-t1
-    print($"for N: " + for_inc + "ms")
+    print($"for 1亿次: " + for_inc + "ms")
 
     t1=times.ms()
     i=0
@@ -323,12 +325,12 @@ func whileandfor()
     }
     t2=times.ms()
     var while_inc = t2-t1
-    print($"while i < N: " + while_inc + "ms")
+    print($"while 1亿次: " + while_inc + "ms")
     print($"比值: for/while = " + (for_inc * 100 / while_inc) + "%")
     print("")
 
     // 测试3: 带循环变量的 for vs while
-    print("--- 测试3: for to var vs while (带循环变量访问) ---")
+    print("--- 测试3: for to var vs while (带循环变量访问, 1亿次) ---")
 
     t1=times.ms()
     var sum=0
@@ -337,7 +339,7 @@ func whileandfor()
     }
     t2=times.ms()
     var for_var = t2-t1
-    print($"for N to j: " + for_var + "ms")
+    print($"for 1亿次 to j: " + for_var + "ms")
 
     t1=times.ms()
     var jj=0
@@ -347,12 +349,12 @@ func whileandfor()
     }
     t2=times.ms()
     var while_var = t2-t1
-    print($"while i < N: " + while_var + "ms")
+    print($"while 1亿次: " + while_var + "ms")
     print($"比值: for/while = " + (for_var * 100 / while_var) + "%")
     print("")
 
     // 测试4: 数组操作场景
-    print("--- 测试4: 数组添加操作 ---")
+    print("--- 测试4: 数组添加操作 (1亿次) ---")
 
     var arr=[]
     t1=times.ms()
@@ -361,7 +363,7 @@ func whileandfor()
     }
     t2=times.ms()
     var for_arr = t2-t1
-    print($"for N: " + for_arr + "ms, 长度: " + arr.len())
+    print($"for 1亿次: " + for_arr + "ms, 长度: " + arr.len())
 
     var arr1=[]
     t1=times.ms()
@@ -372,12 +374,12 @@ func whileandfor()
     }
     t2=times.ms()
     var while_arr = t2-t1
-    print($"while i < N: " + while_arr + "ms, 长度: " + arr.len())
+    print($"while 1亿次: " + while_arr + "ms, 长度: " + arr1.len())
     print($"比值: for/while = " + (for_arr * 100 / while_arr) + "%")
     print("")
 
     // 测试5: 循环变量修改场景
-    print("--- 测试5: for 步长2 (各自最自然的写法) ---")
+    print("--- 测试5: for 步长2 (0:1亿:2, 实际循环 5000万次) ---")
 
     var arr2=[]
     t1=times.ms()
@@ -386,12 +388,12 @@ func whileandfor()
     }
     t2=times.ms()
     var for_step = t2-t1
-    print($"for 0:csnum:2 to k: " + for_step + "ms, 长度: " + arr2.len())
+    print($"for 0:1亿:2 to k (实际5000万次): " + for_step + "ms, 长度: " + arr2.len())
 
     print("")
 
     // 测试5b: while 步长2 (完全公平对比)
-    print("--- 测试5b: while 步长2 (完全公平对比) ---")
+    print("--- 测试5b: while 步长2 (完全公平对比, 实际循环 5000万次) ---")
 
     var arr3=[]
     t1=times.ms()
@@ -403,11 +405,11 @@ func whileandfor()
     }
     t2=times.ms()
     var while_step = t2-t1
-    print($"while + 两次i++: " + while_step + "ms, 长度: " + arr3.len())
+    print($"while + 两次i++ (实际5000万次): " + while_step + "ms, 长度: " + arr3.len())
     print("")
 
     // 测试6: 嵌套循环场景
-    print("--- 测试6: 嵌套循环 (1000 * 1000) ---")
+    print("--- 测试6: 嵌套循环 (10000 * 10000 = 1亿次) ---")
 
     t1=times.ms()
     var count=0
