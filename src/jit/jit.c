@@ -62,6 +62,17 @@ JitState jit_state = {0};
 /* ---- Callout VM pointer (set before JIT execution) ---- */
 static VM* jit_callout_vm = NULL;
 
+/* ---- Bytecode operand readers (big-endian, matching VM) ---- */
+static inline uint16_t rd_short(const uint8_t* p) {
+    return (uint16_t)((p[0] << 8) | p[1]);
+}
+static inline int32_t rd_int32(const uint8_t* p) {
+    return (int32_t)((p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]);
+}
+static inline int8_t rd_byte(const uint8_t* p) {
+    return (int8_t)p[0];
+}
+
 /* ---- Callout helpers ---- */
 
 /* Convert JIT virtual-stack raw value to NaN-boxed Value.
@@ -238,25 +249,125 @@ static Value jit_callout_div(Value a, Value b) {
     return NULL_VAL;
 }
 
+/* Callout: OP_ACC_FIELDS (pop struct, sum N fields as float, push result).
+ * Pure computation — no VM re-entry. */
+static Value jit_callout_acc_fields(Value obj_val, uint8_t count,
+                                    const uint8_t* field_indices) {
+    if (!val_is_obj(obj_val) || val_as_obj(obj_val)->type != OBJ_STRUCT) {
+        error_add_at(ERR_RUNTIME, 0, 0, "OP_ACC_FIELDS: 需要 struct 类型");
+        return NULL_VAL;
+    }
+    ObjStruct* obj = (ObjStruct*)val_as_obj(obj_val);
+    ObjStructDef* def = obj->def;
+    double sum = 0.0;
+    for (int i = 0; i < count; i++) {
+        uint8_t idx = field_indices[i];
+        if (idx >= def->field_count) {
+            error_add_at(ERR_RUNTIME, 0, 0, "字段索引越界");
+            return NULL_VAL;
+        }
+        Value fv = struct_get_field(obj, idx);
+        sum += val_as_num_ex(fv);
+    }
+    return val_float(sum);
+}
+
+/* Callout: OP_INVOKE_METHOD (struct method call via VM re-entry).
+ * arg_count includes self (receiver is first arg).
+ * Returns NaN-boxed result from vm->last_return_value. */
+static Value jit_callout_invoke_method(int64_t* vstack_top, int arg_count,
+                                       const uint8_t* ip, Chunk* chunk) {
+    VM* vm = jit_callout_vm;
+    if (!vm) return NULL_VAL;
+
+    /* Read method name constant from bytecode: name_const(2) at ip+1 */
+    uint16_t method_name_idx = rd_short(ip + 1);
+    /* arg_count from bytecode at ip+3 */
+    /* int arg_count already passed as parameter (matches ip[3..4]) */
+
+    Value method_name_val = chunk->constants[method_name_idx];
+    if (!val_is_obj(method_name_val) || val_as_obj(method_name_val)->type != OBJ_STRING) {
+        error_add_at(ERR_RUNTIME, 0, 0, "方法名必须是字符串");
+        return NULL_VAL;
+    }
+    ObjString* method_name = (ObjString*)val_as_obj(method_name_val);
+
+    /* Save VM stack state */
+    int saved_sp = vm->sp;
+
+    /* Push args from JIT virtual stack to VM stack (receiver first, i.e. bottom).
+     * JIT virtual stack grows downward (x86 push/pop): RSP points to topmost
+     * element (last pushed = lowest address). First-pushed elements are at
+     * HIGHER addresses, so receiver is at vstack_top + (arg_count - 1). */
+    for (int i = 0; i < arg_count; i++) {
+        int64_t raw = vstack_top[arg_count - 1 - i];
+        vm_stack_push(vm, jit_raw_to_value(raw));
+    }
+
+    /* Now receiver is at vm->stack[vm->sp - arg_count] */
+    Value obj_val = vm->stack[vm->sp - arg_count];
+    if (!val_is_obj(obj_val) || val_as_obj(obj_val)->type != OBJ_STRUCT) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "尝试在非 struct 类型上调用方法 '%s'", method_name->chars);
+        error_add_at(ERR_RUNTIME, 0, 0, msg);
+        vm->sp = saved_sp;
+        return NULL_VAL;
+    }
+
+    ObjStructDef* def = ((ObjStruct*)val_as_obj(obj_val))->def;
+    ObjClosure* closure = NULL;
+    for (int i = 0; i < def->method_count; i++) {
+        if (strcmp(def->methods[i].name, method_name->chars) == 0) {
+            if (def->has_ctor && i == def->ctor_index) continue;
+            if (def->has_dtor && i == def->dtor_index) continue;
+            closure = def->methods[i].closure;
+            break;
+        }
+    }
+    if (!closure) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "类型 '%s' 没有方法 '%s'",
+                 def->name ? def->name : "?", method_name->chars);
+        error_add_at(ERR_RUNTIME, 0, 0, msg);
+        vm->sp = saved_sp;
+        return NULL_VAL;
+    }
+
+    /* Push callee and call */
+    vm_stack_push(vm, val_obj((Object*)closure));
+    vm_call_value(val_obj((Object*)closure), arg_count, 0);
+
+    Value result = vm->last_return_value;
+
+    /* Restore VM stack */
+    vm->sp = saved_sp;
+
+    return result;
+}
+
+/* Callout: OP_GET_FIELD_FAST (read struct from local, get field value, push).
+ * Pure computation — no VM re-entry.
+ * Same semantics as VM's OP_GET_FIELD_FAST: locals[slot] → struct → field_values[idx]. */
+static Value jit_callout_get_field_fast(Value obj_val, uint8_t field_idx) {
+    if (!val_is_obj(obj_val) || val_as_obj(obj_val)->type != OBJ_STRUCT) {
+        error_add_at(ERR_RUNTIME, 0, 0, "OP_GET_FIELD_FAST: 需要 struct 类型");
+        return NULL_VAL;
+    }
+    ObjStruct* obj = (ObjStruct*)val_as_obj(obj_val);
+    return struct_get_field(obj, field_idx);
+}
+
 /* ---- Cache hash ---- */
 static int cache_hash(const uint8_t* ip) {
     uintptr_t v = (uintptr_t)ip;
     return (int)((v >> 4) & (JIT_CACHE_SIZE - 1));
 }
 
-/* ---- Bytecode operand readers (big-endian, matching VM) ---- */
-static inline uint16_t rd_short(const uint8_t* p) {
-    return (uint16_t)((p[0] << 8) | p[1]);
-}
-static inline int32_t rd_int32(const uint8_t* p) {
-    return (int32_t)((p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]);
-}
-static inline int8_t rd_byte(const uint8_t* p) {
-    return (int8_t)p[0];
-}
-
 /* ---- Opcode instruction size (bytes) ---- */
-static int opcode_size(uint8_t op) {
+/* Takes ip (pointer to opcode byte) because some opcodes are variable-length
+ * (e.g. OP_ACC_FIELDS has size 2 + count). */
+static int opcode_size(const uint8_t* ip) {
+    uint8_t op = *ip;
     switch (op) {
         /* 1-byte (no operands) */
         case OP_ZERO: case OP_ONE: case OP_POP: case OP_DUP:
@@ -309,10 +420,19 @@ static int opcode_size(uint8_t op) {
         /* 7-byte (OP_FOR_LOOP) */
         case OP_FOR_LOOP:
             return 7;
+        /* 5-byte: OP_INVOKE_METHOD = opcode + name_const(2) + arg_count(2) */
+        case OP_INVOKE_METHOD:
+            return 5;
+        /* Variable-length: OP_ACC_FIELDS = opcode + count(1) + field_idx[count] */
+        case OP_ACC_FIELDS:
+            return 2 + ip[1];
         /* 8-byte (OP_FOR_PREP) — recognized so scan doesn't fail on
          * "unknown opcode"; actual nesting is rejected in scan. */
         case OP_FOR_PREP:
             return 8;
+        /* 4-byte: OP_GET_FIELD_FAST = opcode + local_slot(2) + field_idx(1) */
+        case OP_GET_FIELD_FAST:
+            return 4;
         /* 10-byte (CMPJMP variants) */
         case OP_CMPJMP_LL_INT:
         case OP_CMPJMP_LG_INT:
@@ -372,7 +492,7 @@ static void scan_loop_body(const uint8_t* body_start, int body_size,
 
     while (ip < end) {
         uint8_t op = *ip;
-        int size = opcode_size(op);
+        int size = opcode_size(ip);
         if (size < 0) {
             if (getenv("LENO_JIT_DEBUG"))
                 fprintf(stderr, "[JIT-DEBUG] scan FAIL: unknown opcode %d (size<0) at offset %d\n", op, (int)(ip - body_start));
@@ -457,6 +577,16 @@ static void scan_loop_body(const uint8_t* body_start, int body_size,
                 /* pop 3 (arr, index, value), push 0 → net -3 */
                 vstack -= 3;
                 break;
+            case OP_ACC_FIELDS:
+                /* pop 1 (struct obj), push 1 (float sum) -> net 0 */
+                break;
+            case OP_INVOKE_METHOD: {
+                /* name_const(2) + arg_count(2); arg_count includes self (receiver).
+                 * pop arg_count, push 1 result -> net -(arg_count - 1) */
+                int arg_count = rd_short(ip + 3);
+                vstack -= (arg_count - 1);
+                break;
+            }
             case OP_CALL_GLOBAL_FUNC:
             case OP_CALL_GLOBAL_FUNC_TYPED:
                 /* 函数调用：JIT 暂不支持含调用的循环。
@@ -612,6 +742,13 @@ static void scan_loop_body(const uint8_t* body_start, int body_size,
             /* Shift immediates — supported, pop 1 push 1 */
             case OP_SHL_IMM: case OP_SHR_IMM: case OP_USHR_IMM:
                 break;
+            /* 4-byte: OP_GET_FIELD_FAST = local read + struct field push (net +1) */
+            case OP_GET_FIELD_FAST: {
+                uint16_t slot = rd_short(ip + 1);
+                mark_local(r, slot);
+                vstack++;
+                break;
+            }
             default:
                 if (getenv("LENO_JIT_DEBUG"))
                     fprintf(stderr, "[JIT-DEBUG] scan FAIL: unknown opcode %d at offset %d\n", op, (int)(ip - body_start));
@@ -1065,7 +1202,7 @@ static int compile_loop(CodegenCtx* ctx) {
 
     while (ip < end) {
         uint8_t op = *ip;
-        int size = opcode_size(op);
+        int size = opcode_size(ip);
         offmap_add(ctx, bc_off, cb->len);
 
         switch (op) {
@@ -2325,6 +2462,82 @@ static int compile_loop(CodegenCtx* ctx) {
                 break;
             }
 
+            /* ---- Callout: OP_ACC_FIELDS (struct field accumulation) ---- */
+            case OP_ACC_FIELDS: {
+                /* Pop struct obj, convert to NaN-boxed, save to tmp */
+                TOS_SPILL();
+                emit_pop_reg(cb, JIT_RAX);   /* struct obj */
+                EMIT_RAW_TO_VALUE();
+                EMIT_STORE_TMP(tmp1_disp, JIT_RAX);
+                EMIT_CALLOUT_BEGIN();
+                /* Set args AFTER CALLOUT_BEGIN (saves original RCX=locals to R13) */
+                EMIT_LOAD_TMP(JIT_RCX, tmp1_disp);   /* obj (1st arg) */
+                emit_mov_reg_imm64(cb, JIT_RDX, (uint64_t)ip[1]);  /* count (2nd arg) */
+                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)(ip + 2));  /* field_indices ptr (3rd) */
+                EMIT_CALL(jit_callout_acc_fields);
+                EMIT_CALLOUT_END();
+                EMIT_VALUE_TO_RAW();
+                TOS_PRODUCE();
+                break;
+            }
+            /* ---- Callout: OP_INVOKE_METHOD (struct method call, VM re-entry) ---- */
+            case OP_INVOKE_METHOD: {
+                int arg_count = rd_short(ip + 3);
+                TOS_SPILL();
+                /* Save current RSP (virtual stack pointer) to tmp1
+                 * BEFORE CALLOUT_BEGIN aligns/changes RSP. */
+                EMIT_STORE_TMP(tmp1_disp, JIT_RSP);
+                EMIT_CALLOUT_BEGIN();
+                /* After CALLOUT_BEGIN: RSP is aligned, RCX/R9 saved to R13/R14.
+                 * Load saved vstack_ptr into RCX (1st arg). */
+                EMIT_LOAD_TMP(JIT_RCX, tmp1_disp);   /* vstack_top (1st arg) */
+                emit_mov_reg_imm64(cb, JIT_RDX, (uint64_t)arg_count);  /* arg_count (2nd) */
+                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)ip);  /* bytecode ip (3rd) */
+                emit_mov_reg_imm64(cb, JIT_R9, (uint64_t)(uintptr_t)ctx->chunk);  /* chunk (4th) */
+                EMIT_CALL(jit_callout_invoke_method);
+                EMIT_CALLOUT_END();
+                /* Pop arg_count values from JIT virtual stack */
+                int pop_bytes = arg_count * 8;
+                if (pop_bytes <= 127) {
+                    emit_byte(cb, 0x48); emit_byte(cb, 0x83); emit_byte(cb, 0xC4);
+                    emit_byte(cb, (uint8_t)pop_bytes);
+                } else {
+                    emit_byte(cb, 0x48); emit_byte(cb, 0x81); emit_byte(cb, 0xC4);
+                    emit_uint32(cb, (uint32_t)pop_bytes);
+                }
+                EMIT_VALUE_TO_RAW();
+                TOS_PRODUCE();
+                vstack -= (arg_count - 1);
+                break;
+            }
+
+            /* ---- Callout: OP_GET_FIELD_FAST (read local struct + get field) ---- */
+            case OP_GET_FIELD_FAST: {
+                uint16_t slot = rd_short(ip + 1);
+                uint8_t field_idx = ip[3];
+                int si = sr->local_map[slot];
+                int disp = scratch_disp(si);
+                TOS_SPILL();
+                /* Load local (struct obj raw) from scratch area */
+                if (disp >= -128 && disp <= 127) {
+                    emit_mov_reg_mem8(cb, JIT_RAX, JIT_RBP, (int8_t)disp);
+                } else {
+                    emit_mov_reg_mem32(cb, JIT_RAX, JIT_RBP, disp);
+                }
+                EMIT_RAW_TO_VALUE();
+                EMIT_STORE_TMP(tmp1_disp, JIT_RAX);
+                EMIT_CALLOUT_BEGIN();
+                /* Set args AFTER CALLOUT_BEGIN (saves original RCX=locals to R13) */
+                EMIT_LOAD_TMP(JIT_RCX, tmp1_disp);  /* obj_val (1st arg) */
+                emit_mov_reg_imm64(cb, JIT_RDX, (uint64_t)field_idx);  /* field_idx (2nd arg) */
+                EMIT_CALL(jit_callout_get_field_fast);
+                EMIT_CALLOUT_END();
+                EMIT_VALUE_TO_RAW();
+                TOS_PRODUCE();
+                vstack++;
+                break;
+            }
+
             /* ---- Exception handling opcodes (no-op in JIT) ---- */
             /* The JIT skips try/catch/finally setup entirely.
              * In normal execution (no exception), these are effectively
@@ -2563,7 +2776,7 @@ static JitLoopFn jit_compile(CallFrame* frame, const uint8_t* body_start,
             int printed = 0;
             while (p < body_start + body_size && printed < 20) {
                 fprintf(stderr, " %d", *p);
-                int sz = opcode_size(*p);
+                int sz = opcode_size(p);
                 if (sz < 0) break;
                 p += sz;
                 printed++;
