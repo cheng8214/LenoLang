@@ -91,7 +91,7 @@ set SOURCES=!SOURCES! src\package\package_resolve.c
 set SOURCES=!SOURCES! src\package\package_install.c
 set SOURCES=!SOURCES! src\jit\jit.c
 
-gcc -o build\leno.exe !SOURCES! -Isrc -Wall -Wextra -std=c99 -O2 -lm -municode -lws2_32
+gcc -o build\lenojit.exe !SOURCES! -Isrc -Wall -Wextra -std=c99 -O2 -lm -municode -lws2_32
 
 if %ERRORLEVEL% neq 0 (
     echo Build failed
@@ -101,5 +101,5 @@ if %ERRORLEVEL% neq 0 (
 
 echo Build successful
 echo.
-echo Usage: build\leno.exe ^<file.leno^>
-echo Tests:  build\leno.exe assert\run_tests.leno build\leno.exe assert
+echo Usage: build\lenojit.exe ^<file.leno^>
+echo Tests:  build\lenojit.exe assert\run_tests.leno build\leno.exe assert
