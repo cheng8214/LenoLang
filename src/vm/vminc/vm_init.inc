@@ -133,6 +133,9 @@ void vm_init_with_scope(Scope* global_scope) {
     files_init_instance_methods();
     cstructs_init_methods();
     threads_init_instance_methods();
+
+    // 初始化 JIT
+    jit_init();
 }
 
 // ============================================================================

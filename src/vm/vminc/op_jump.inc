@@ -26,6 +26,21 @@ OPCODE(OP_JUMP_IF_TRUE) {
 
 OPCODE(OP_LOOP) {
     int32_t offset = READ_INT32();
+
+    /* JIT: try to run a compiled hot loop */
+    if (jit_try_hot_loop(frame, &vm, offset, 1)) {
+        /* JIT ran the loop to completion (condition became false).
+         * The while loop's exit path has OP_POP to pop the condition
+         * value that JUMP_IF_FALSE left on the stack (peek semantics).
+         * But JIT handled the condition internally without touching
+         * the VM stack — there is no condition value to pop.
+         * Skip the exit OP_POP to avoid stack underflow. */
+        if (*frame->ip == OP_POP) {
+            frame->ip++;  /* skip 1-byte OP_POP */
+        }
+        DISPATCH;
+    }
+
     frame->ip -= offset;
     DISPATCH;
 }

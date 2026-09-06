@@ -2,6 +2,7 @@
 #include "../include/string_table.h"
 #include "../include/native.h"
 #include "../module/ffi/ffi_clib.h"
+#include "../jit/jit.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>

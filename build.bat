@@ -89,6 +89,7 @@ set SOURCES=!SOURCES! src\package\package_toml.c
 set SOURCES=!SOURCES! src\package\package_init.c
 set SOURCES=!SOURCES! src\package\package_resolve.c
 set SOURCES=!SOURCES! src\package\package_install.c
+set SOURCES=!SOURCES! src\jit\jit.c
 
 gcc -o build\leno.exe !SOURCES! -Isrc -Wall -Wextra -std=c99 -O2 -lm -municode -lws2_32
 

@@ -53,6 +53,11 @@ OPCODE(OP_FOR_LOOP) {
     uint8_t inclusive = READ_BYTE();
     uint16_t jump_offset = READ_SHORT();
 
+    /* JIT: try to run a compiled hot loop */
+    if (jit_try_hot_loop(frame, &vm, (int32_t)jump_offset, 2)) {
+        DISPATCH;
+    }
+
     // 获取当前值
     Value loop_var = frame->locals[loop_var_slot];
     Value step_val = frame->locals[step_slot];

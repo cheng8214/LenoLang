@@ -42,6 +42,7 @@
 #include "include/string_table.h"
 #include "include/native.h"
 #include "include/leno_vm.h"
+#include "jit/jit.h"
 // guis module removed
 #include <stdlib.h>
 #include <stdio.h>
@@ -1812,6 +1813,12 @@ void gc_collect(void) {
 
 // 释放所有 GC 对象和 VM 资源（程序退出时调用）
 void gc_free_all(void) {
+    // 关闭 JIT，释放可执行内存（先打印统计）
+    if (jit_state.enabled) {
+        jit_print_stats();
+    }
+    jit_close();
+
     // 等待所有活动线程完成
     if (gc.vm && gc.vm->active_threads) {
         for (int i = 0; i < gc.vm->active_thread_count; i++) {
