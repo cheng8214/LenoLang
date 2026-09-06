@@ -315,6 +315,7 @@ for each local i:
 | Opcode | 枚举名 | 字节数 | 说明 |
 |--------|--------|--------|------|
 | 58 | OP_LOOP | 5 | while 循环回边（无条件跳转到循环头） |
+| 95 | OP_FOR_PREP | 8 | for 循环初始化（读取 start/end/step/loop_var，设置初始值并检查循环条件） |
 | 96 | OP_FOR_LOOP | 7 | for 循环回边（自增 loop_var、比较 end、条件跳转） |
 
 ### Callout 操作（通过 C 函数调用实现）
@@ -336,7 +337,6 @@ for each local i:
 | 83 | OP_TRY | 异常处理涉及 VM 异常栈、try/catch 表等复杂状态 |
 | 84 | OP_CATCH | 同上 |
 | 86 | OP_END_TRY | 同上 |
-| 95 | OP_FOR_PREP | 嵌套 for 循环的初始化指令，涉及内层循环变量初始化和跳转 |
 | — | OP_CALL | 函数调用涉及 VM 调用栈管理 |
 | — | OP_TAIL_CALL | 尾调用涉及帧复用 |
 | — | OP_RETURN | 循环体中不应出现返回 |
@@ -347,8 +347,7 @@ for each local i:
 
 ### 特殊拒绝条件
 
-- **OP_LOOP 出现在循环体中间**：表示嵌套 while 循环，当前不支持
-- **虚拟栈溢出**：`vstack < 0 || vstack > JIT_MAX_VSTACK (64)`
+- **虚拟栈溢出**：`vstack > JIT_MAX_VSTACK (64)`（允许负 vstack，因嵌套循环 exit POP 在线性扫描中被重复扣减）
 - **local 数过多**：超过 `JIT_MAX_LOCALS (32)`
 
 ---
@@ -527,15 +526,38 @@ XORPD (0F 57)           → 0x66 前缀
 
 **修复**：对非 int/float 常量，加载 raw NaN-boxed bits，并额外发 `BTS RBX, si` 指令标记该 local 为 non-int，确保 epilogue write-back 存 raw bits 而非错误地重编码为 int。
 
-### 8.8 OP_FOR_PREP 未注册到 opcode_size 表
+### 8.8 OP_FOR_PREP 注册到 opcode_size 表 + 嵌套 for 支持
 
 **现象**：`scan FAIL: unknown opcode 95 (size<0)`。
 
 **根因**：`OP_FOR_PREP`（opcode 95, 8 bytes）不在 `opcode_size()` 函数的 switch 中，返回 -1。
 
-**修复**：在 `opcode_size()` 中添加 `case OP_FOR_PREP: return 8;`，并在 `scan_loop_body` 中将其标记为不支持（嵌套 for 循环太复杂）。
+**修复**：在 `opcode_size()` 中添加 `case OP_FOR_PREP: return 8;`。后续 P1 阶段进一步在 scan 和 codegen 中完整支持 OP_FOR_PREP（读取 start/end/step/loop_var slot，设置初始值，检查循环条件，前向跳转）。
 
-### 8.9 Epilogue 不能用 LEAVE 指令
+### 8.9 嵌套循环的 vstack 负值修复
+
+**现象**：嵌套 while 200x200 输出 600 而非 40000，scan 阶段报 `vstack=-1`。
+
+**根因**：嵌套 while 的内层循环 exit POP（条件跳转的跳转目标）在线性扫描中被当作 fall-through 路径处理，导致 vstack 被重复扣减。实际上 exit POP 是跳转目标，不应该参与线性 vstack 计算。
+
+**修复**：将 scan 阶段的 vstack 检查从 `vstack < 0 || vstack > JIT_MAX_VSTACK` 改为仅 `vstack > JIT_MAX_VSTACK`，允许负 vstack 值。
+
+### 8.10 JUMP_IF_FALSE/TRUE 跳转路径 TOS 不匹配
+
+**现象**：嵌套 while 循环结果错误（如 200x200 输出 600 而非 40000）。
+
+**根因**：JUMP_IF_FALSE/JUMP_IF_TRUE 的跳转目标（内层循环 exit POP）在线性 codegen 中 tos_live=0，但跳转路径本身可能 tos_live=1（条件值在 RAX 中）或 tos_live=0（条件值在栈上）。
+
+- tos_live=1 路径：跳转时 RAX 中的条件值被"abandoned"（零成本丢弃），但跳转目标 exit POP 的 tos_live=0 执行 `add rsp, 8`，试图弹出不存在的栈元素，导致 RSP 漂移
+- tos_live=0 路径：跳转路径上执行 `add rsp, 8` 弹出条件值，但跳转目标 exit POP 又执行一次 `add rsp, 8`，导致双重 pop
+
+**修复**：
+- tos_live=1 路径：跳转前 `push rax` 将条件值推入栈（为跳转目标准备），fall-through 路径 tos_live 保持 1
+- tos_live=0 路径：跳转路径不再 pop（移除 `add rsp, 8`），将条件值留在栈上供跳转目标 POP 弹出
+
+非嵌套单层循环不受影响：跳转目标为 exit_mc，epilogue 的 `mov rsp, rbp` 会丢弃栈上残留值。
+
+### 8.11 Epilogue 不能用 LEAVE 指令
 
 **现象**：JIT 函数返回时崩溃或寄存器值错乱。
 
@@ -543,7 +565,7 @@ XORPD (0F 57)           → 0x66 前缀
 
 **修复**：手动恢复：`mov rsp,rbp; pop r14; pop r13; pop r12; pop rbx; pop rbp; ret`。
 
-### 8.10 OP_DICT_SET scan vstack 计算错误
+### 8.12 OP_DICT_SET scan vstack 计算错误
 
 **现象**：`OP_DICT_SET` 的 callout 实现中虚拟栈深度计算错误。
 
@@ -551,7 +573,7 @@ XORPD (0F 57)           → 0x66 前缀
 
 **修复**：scan 和 codegen 统一为 `vstack -= 2`。
 
-### 8.11 Bailout 后 VM 重复执行循环迭代
+### 8.13 Bailout 后 VM 重复执行循环迭代
 
 **现象**：JIT bail out 后，VM 从 back-edge 重新执行，导致一次循环体执行了两次。
 
@@ -559,7 +581,7 @@ XORPD (0F 57)           → 0x66 前缀
 
 **当前状态**：设计上可接受，未修复。
 
-### 8.12 fib_iterative(1000) 的 3 次 Bailout
+### 8.14 fib_iterative(1000) 的 3 次 Bailout
 
 **现象**：`body_start=57` 的循环（`fib_iterative` 函数）执行 3 次 bailout 后放弃。
 
@@ -597,7 +619,9 @@ XORPD (0F 57)           → 0x66 前缀
 | 1 亿次 arr.add() | 625ms | 1359ms | ~2.2x |
 | for 1000 万次 i++ | 343ms | — | — |
 | while 1000 万次 i++ | 422ms | — | — |
-| 嵌套 for 1000×1000 | 78ms | 110ms | ~1.4x |
+| 嵌套 for 10000×10000 | 78ms | — | — |
+| 嵌套 while 3000×3000 | 15ms | — | — |
+| 三层嵌套 while 20×20×20 | <1ms | — | — |
 
 ### 回归测试
 
@@ -611,9 +635,9 @@ Results: 261 passed, 0 failed (total 261)
 
 当前 JIT 是 **loop-body template JIT**，只编译单个循环体、用 push/pop 虚拟栈、单回边。存在三个结构性天花板：
 
-### 瓶颈 1：只能编译扁平循环，不能跨控制流
+### 瓶颈 1：~~只能编译扁平循环，不能跨控制流~~ 已解决
 
-`scan_loop_body` 在遇到 `OP_FOR_PREP`（嵌套 for）或 body 中途出现 `OP_LOOP`/`OP_FOR_LOOP`（嵌套 while）时直接 `capable=0` 拒绝编译。任何"for 里套 for"或"while 里套 while"的代码都无法 JIT。
+P1 已完成嵌套循环支持。`scan_loop_body` 现在接受 `OP_FOR_PREP`（内层 for 初始化）、mid-body `OP_LOOP`（内层 while 回边）和 mid-body `OP_FOR_LOOP`（内层 for 回边）。codegen 通过 `offmap_lookup` 解析每个回边指令自带的目标偏移，天然支持任意嵌套深度，无需 loop stack。
 
 ### 瓶颈 2：不支持函数调用，递归函数永远无提速
 
@@ -648,7 +672,7 @@ push rax    ; 内存写
   - `push` → 如果 RAX 空，放 RAX；否则 spill 栈顶到 `[rsp]` 再放 RAX
   - `pop` → 如果 RAX 有值，取 RAX；否则从 `[rsp]` 加载
   - 二元运算（ADD/SUB/MUL）→ 左操作数在 RAX，右操作数在 RDX，直接 `add rax,rdx`，0 次内存操作
-- **状态**：实施中
+- **状态**：✅ 已完成（2026-09-06）。TOS 缓存 RAX，push/pop 从 4 次内存操作降到 1-2 次。修复 OP_JUMP_IF_FALSE/TRUE 的 `tos_live=0` 编译期赋值污染 fall-through 路径的 bug（导致 while 循环 RSP 漂移、提前退出）。261 回归测试全过，while 50-5000 次迭代验证正确。
 
 ### P1：嵌套循环支持（解锁大量真实代码）
 
@@ -657,8 +681,11 @@ push rax    ; 内存写
 - **实现要点**：
   - `OP_FOR_PREP` 不再拒绝，记录为内层循环入口，跳过初始化字节
   - body 中途出现 `OP_LOOP`/`OP_FOR_LOOP` 时，记录为内层回边
-  - codegen 需要一个 loop stack（记录每层循环的 `loop_start_mc` 和 `exit_mc`）
+  - ~~codegen 需要一个 loop stack（记录每层循环的 `loop_start_mc` 和 `exit_mc`）~~ 不需要：每个回边指令自带跳转偏移，通过 `offmap_lookup` 独立计算目标地址，天然支持任意嵌套深度
   - 正确处理内层循环退出后回到外层循环体的跳转
+  - 修复 JUMP_IF_FALSE/TRUE 跳转路径 TOS 不匹配（见 8.10）
+  - 修复 scan vstack 负值检查（见 8.9）
+- **状态**：✅ 已完成（2026-09-06）。支持 while-while / for-for / while-for / for-while / 三层嵌套，261 回归测试全过，嵌套 10000x10000 = 1亿次 for+for 仅 78ms。
 
 ### P2：OP_CALL callout（让更多代码进入 JIT 路径）
 
@@ -691,7 +718,8 @@ push rax    ; 内存写
 1. **try/catch 循环（body_start=27）**：异常处理涉及 VM 异常栈和 try/catch 表，暂不支持
 2. **body_start=1156 编译失败**：具体原因未完全定位（无 scan FAIL 和 codegen FAIL 消息）
 3. **fib_iterative(1000) 3 次 bailout**：斐波那契值约 fib(56) 溢出 int48（超 2^47），属预期行为
-4. **while 比 for 慢约 2 倍**：`OP_GET_GLOBAL` 每次 NaN-box 解码开销，P0 寄存器化后有望缓解
+4. **OP_FOR_PREP 仅支持正步长**：step ≤ 0 时 bail out，负步长 for 循环无法 JIT 编译（已知限制，非 bug）
+5. **while 比 for 慢约 2 倍**：`OP_GET_GLOBAL` 每次 NaN-box 解码开销，P0 寄存器化后有望缓解
 
 ---
 

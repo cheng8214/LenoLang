@@ -370,13 +370,13 @@ static void scan_loop_body(const uint8_t* body_start, int body_size,
                 r->capable = 0;
                 return;
             case OP_FOR_PREP:
-                /* Nested for-loop's FOR_PREP appears in the outer loop body.
-                 * The JIT cannot handle nested for loops (inner FOR_PREP
-                 * initializes loop vars and may skip the inner body entirely). */
-                if (getenv("LENO_JIT_DEBUG"))
-                    fprintf(stderr, "[JIT-DEBUG] scan FAIL: OP_FOR_PREP (nested for) at offset %d\n", (int)(ip - body_start));
-                r->capable = 0;
-                return;
+                /* Inner for-loop init: mark locals, no stack change.
+                 * Codegen handles init + condition check + skip jump. */
+                mark_local(r, ip[1]);  /* start_slot */
+                mark_local(r, ip[2]);  /* end_slot */
+                mark_local(r, ip[3]);  /* step_slot */
+                mark_local(r, ip[4]);  /* loop_var_slot */
+                break;
             case OP_EQ_INT: case OP_LT_INT: case OP_GT_INT:
             case OP_LE_INT: case OP_GE_INT:
                 vstack--;  /* pop 2 push 1 → net -1 */
@@ -464,32 +464,23 @@ static void scan_loop_body(const uint8_t* body_start, int body_size,
                 /* peek only — VM uses vm_stack_peek_fast, explicit POP follows */
                 break;
             case OP_LOOP:
-                /* Back-edge: only allowed as the LAST instruction in the body.
-                 * If OP_LOOP appears mid-body, it's a nested loop's back-edge —
-                 * the JIT codegen would emit JMP loop_start_mc, creating a
-                 * wrong jump that bypasses the outer loop's condition check. */
-                if (ip + size < end) {
-                    if (getenv("LENO_JIT_DEBUG"))
-                        fprintf(stderr, "[JIT-DEBUG] scan FAIL: OP_LOOP mid-body at offset %d\n", (int)(ip - body_start));
-                    r->capable = 0;
-                    return;
-                }
+                /* Back-edge: may be outer (last instruction) or inner (mid-body).
+                 * Codegen uses offmap_lookup to find the correct jump target
+                 * from the instruction's own offset. */
                 break;
-            /* 7-byte FOR_LOOP — back-edge: only allowed as the LAST instruction */
+            /* 7-byte FOR_LOOP — back-edge: may be outer (last) or inner (mid-body) */
             case OP_FOR_LOOP: {
-                if (ip + size < end) {
-                    if (getenv("LENO_JIT_DEBUG"))
-                        fprintf(stderr, "[JIT-DEBUG] scan FAIL: OP_FOR_LOOP mid-body at offset %d\n", (int)(ip - body_start));
-                    r->capable = 0;
-                    return;
+                /* Mark locals for both inner and outer for-loops */
+                mark_local(r, ip[1]);  /* loop_var_slot */
+                mark_local(r, ip[2]);  /* step_slot */
+                mark_local(r, ip[3]);  /* end_slot */
+                /* Record outer back-edge metadata (last instruction only) */
+                if (ip + size >= end) {
+                    r->for_loop_var_slot = ip[1];
+                    r->for_step_slot = ip[2];
+                    r->for_end_slot = ip[3];
+                    r->for_inclusive = ip[4];
                 }
-                r->for_loop_var_slot = ip[1];
-                r->for_step_slot = ip[2];
-                r->for_end_slot = ip[3];
-                r->for_inclusive = ip[4];
-                mark_local(r, ip[1]);
-                mark_local(r, ip[2]);
-                mark_local(r, ip[3]);
                 break;
             }
             /* 10-byte CMPJMP */
@@ -511,7 +502,11 @@ static void scan_loop_body(const uint8_t* body_start, int body_size,
                 return;
         }
 
-    if (vstack < 0 || vstack > JIT_MAX_VSTACK) {
+    /* Allow vstack < 0: nested while loops have an exit OP_POP at the
+     * jump target that the linear scan double-counts (true path's POP
+     * already decremented; false path's POP decrements again). This is
+     * a linear-scan artifact — the actual runtime never goes negative. */
+    if (vstack > JIT_MAX_VSTACK) {
         if (getenv("LENO_JIT_DEBUG"))
             fprintf(stderr, "[JIT-DEBUG] scan FAIL: vstack=%d at opcode %d\n", vstack, op);
         r->capable = 0;
@@ -1853,26 +1848,26 @@ static int compile_loop(CodegenCtx* ctx) {
                     /* RAX already holds the condition value */
                     emit_test_rr(cb, JIT_RAX, JIT_RAX);
                     int jnz_patch = emit_jcc(cb, 0x85);  /* JNZ = skip if true */
-                    /* Jump path: condition is false, TOS abandoned in RAX (zero-cost) */
+                    /* Jump path: push condition to stack for jump target
+                     * (target may have tos_live=0 from linear codegen) */
+                    emit_push_reg(cb, JIT_RAX);
                     int jmp_patch = emit_jmp(cb);
                     patch_add(ctx, jmp_patch, target_bc, 0);
                     patch_rel32(cb, jnz_patch, cb->len);
                     /* Fall-through: tos_live stays 1, next OP_POP will TOS_DISCARD */
                 } else {
-                    /* Value on memory stack: peek + conditional pop + jump */
+                    /* Value on memory stack: peek + conditional jump (no pop) */
                     emit_byte(cb, 0x48);
                     emit_byte(cb, 0x8B);
                     emit_byte(cb, 0x04);
-                    emit_byte(cb, 0x24);
+                    emit_byte(cb, 0x24);  /* mov rax, [rsp] */
                     emit_test_rr(cb, JIT_RAX, JIT_RAX);
                     int jnz_patch = emit_jcc(cb, 0x85);
-                    emit_byte(cb, 0x48);
-                    emit_byte(cb, 0x83);
-                    emit_byte(cb, 0xC4);
-                    emit_byte(cb, 8);
+                    /* Jump path: value stays on stack for target POP */
                     int jmp_patch = emit_jmp(cb);
                     patch_add(ctx, jmp_patch, target_bc, 0);
                     patch_rel32(cb, jnz_patch, cb->len);
+                    /* Fall-through: value still on stack, next OP_POP pops it */
                 }
                 break;
             }
@@ -1883,26 +1878,25 @@ static int compile_loop(CodegenCtx* ctx) {
                     /* RAX already holds the condition value */
                     emit_test_rr(cb, JIT_RAX, JIT_RAX);
                     int jz_patch = emit_jcc(cb, 0x84);  /* JZ = skip if false */
-                    /* Jump path: condition is true, TOS abandoned in RAX (zero-cost) */
+                    /* Jump path: push condition to stack for jump target */
+                    emit_push_reg(cb, JIT_RAX);
                     int jmp_patch = emit_jmp(cb);
                     patch_add(ctx, jmp_patch, target_bc, 0);
                     patch_rel32(cb, jz_patch, cb->len);
                     /* Fall-through: tos_live stays 1 */
                 } else {
-                    /* Value on memory stack: peek + conditional pop + jump */
+                    /* Value on memory stack: peek + conditional jump (no pop) */
                     emit_byte(cb, 0x48);
                     emit_byte(cb, 0x8B);
                     emit_byte(cb, 0x04);
-                    emit_byte(cb, 0x24);
+                    emit_byte(cb, 0x24);  /* mov rax, [rsp] */
                     emit_test_rr(cb, JIT_RAX, JIT_RAX);
                     int jz_patch = emit_jcc(cb, 0x84);
-                    emit_byte(cb, 0x48);
-                    emit_byte(cb, 0x83);
-                    emit_byte(cb, 0xC4);
-                    emit_byte(cb, 8);
+                    /* Jump path: value stays on stack for target POP */
                     int jmp_patch = emit_jmp(cb);
                     patch_add(ctx, jmp_patch, target_bc, 0);
                     patch_rel32(cb, jz_patch, cb->len);
+                    /* Fall-through: value still on stack, next OP_POP pops it */
                 }
                 break;
             }
@@ -1949,59 +1943,121 @@ static int compile_loop(CodegenCtx* ctx) {
                 break;
             }
 
+            /* ---- Inner for-loop init: OP_FOR_PREP ---- */
+            case OP_FOR_PREP: {
+                /* 8 bytes: op, start_slot, end_slot, step_slot,
+                 *         loop_var_slot, inclusive, jump_off_hi, jump_off_lo */
+                TOS_SPILL();
+                uint8_t start_sl = ip[1];
+                uint8_t end_sl   = ip[2];
+                uint8_t step_sl  = ip[3];
+                uint8_t lv_sl    = ip[4];
+                uint8_t incl     = ip[5];
+                uint16_t joff    = rd_short(ip + 6);
+
+                int si_start = sr->local_map[start_sl];
+                int si_end   = sr->local_map[end_sl];
+                int si_step  = sr->local_map[step_sl];
+                int si_lv    = sr->local_map[lv_sl];
+                int d_start = scratch_disp(si_start);
+                int d_end   = scratch_disp(si_end);
+                int d_step  = scratch_disp(si_step);
+                int d_lv    = scratch_disp(si_lv);
+
+                /* Check step > 0 (bailout if step <= 0) */
+                if (d_step >= -128 && d_step <= 127)
+                    emit_mov_reg_mem8(cb, JIT_RAX, JIT_RBP, (int8_t)d_step);
+                else
+                    emit_mov_reg_mem32(cb, JIT_RAX, JIT_RBP, d_step);
+                emit_test_rr(cb, JIT_RAX, JIT_RAX);
+                int step_bail = emit_jcc(cb, 0x8E);  /* JLE → bailout */
+                patch_add(ctx, step_bail, -1, 0);
+
+                /* Set loop_var = start */
+                if (d_start >= -128 && d_start <= 127)
+                    emit_mov_reg_mem8(cb, JIT_RAX, JIT_RBP, (int8_t)d_start);
+                else
+                    emit_mov_reg_mem32(cb, JIT_RAX, JIT_RBP, d_start);
+                if (d_lv >= -128 && d_lv <= 127)
+                    emit_mov_mem8_reg(cb, JIT_RBP, (int8_t)d_lv, JIT_RAX);
+                else
+                    emit_mov_mem32_reg(cb, JIT_RBP, d_lv, JIT_RAX);
+
+                /* Check initial condition: start vs end (step > 0) */
+                if (d_end >= -128 && d_end <= 127)
+                    emit_mov_reg_mem8(cb, JIT_RDX, JIT_RBP, (int8_t)d_end);
+                else
+                    emit_mov_reg_mem32(cb, JIT_RDX, JIT_RBP, d_end);
+                emit_cmp_rr(cb, JIT_RAX, JIT_RDX);
+                /* step > 0, exclusive: JGE (start >= end) → skip inner loop
+                 * step > 0, inclusive: JG  (start > end)  → skip inner loop */
+                uint8_t cc_skip = incl ? 0x8F /*JG*/ : 0x8D /*JGE*/;
+                int skip_patch = emit_jcc(cb, cc_skip);
+                /* Forward jump: target = bc_off + 8 + joff (past inner body + FOR_LOOP) */
+                int skip_target = bc_off + size + (int)joff;
+                patch_add(ctx, skip_patch, skip_target, 0);
+                break;
+            }
+
             /* ---- Back-edge: OP_LOOP ---- */
             case OP_LOOP: {
-                /* Unconditional jump to loop start */
-                TOS_SPILL();  /* back-edge: loop entry expects tos_live=0 */
+                /* 5 bytes: op + 4-byte big-endian int32 backward offset */
+                TOS_SPILL();
+                int32_t loff = rd_int32(ip + 1);
+                int target_bc = bc_off + size - loff;
+                int target_mc = offmap_lookup(ctx, target_bc);
+                if (target_mc < 0) target_mc = ctx->loop_start_mc;
                 int patch = emit_jmp(cb);
-                /* Target is loop_start_mc */
-                patch_rel32(cb, patch, ctx->loop_start_mc);
+                patch_rel32(cb, patch, target_mc);
                 break;
             }
 
             /* ---- Back-edge: OP_FOR_LOOP ---- */
             case OP_FOR_LOOP: {
-                /* Increment loop_var by step, compare with end, conditional jump */
-                TOS_SPILL();  /* back-edge: clobbers RAX/RDX, loop entry expects tos_live=0 */
-                int si_lv = sr->local_map[sr->for_loop_var_slot];
-                int si_st = sr->local_map[sr->for_step_slot];
-                int si_en = sr->local_map[sr->for_end_slot];
+                /* 7 bytes: op, lv_slot, step_slot, end_slot, inclusive,
+                 *         jump_off_hi, jump_off_lo */
+                TOS_SPILL();
+                uint8_t lv_sl  = ip[1];
+                uint8_t st_sl  = ip[2];
+                uint8_t en_sl  = ip[3];
+                uint8_t incl   = ip[4];
+                uint16_t joff  = rd_short(ip + 5);
+
+                int si_lv = sr->local_map[lv_sl];
+                int si_st = sr->local_map[st_sl];
+                int si_en = sr->local_map[en_sl];
                 int d_lv = scratch_disp(si_lv);
                 int d_st = scratch_disp(si_st);
                 int d_en = scratch_disp(si_en);
 
-                /* mov rax, [rbp+d_lv] (loop_var) */
+                /* Increment loop_var by step */
                 if (d_lv >= -128 && d_lv <= 127)
                     emit_mov_reg_mem8(cb, JIT_RAX, JIT_RBP, (int8_t)d_lv);
                 else
                     emit_mov_reg_mem32(cb, JIT_RAX, JIT_RBP, d_lv);
-                /* mov rdx, [rbp+d_st] (step) */
                 if (d_st >= -128 && d_st <= 127)
                     emit_mov_reg_mem8(cb, JIT_RDX, JIT_RBP, (int8_t)d_st);
                 else
                     emit_mov_reg_mem32(cb, JIT_RDX, JIT_RBP, d_st);
-                /* add rax, rdx (loop_var += step) */
                 emit_add_rr(cb, JIT_RAX, JIT_RDX);
                 EMIT_INT48_CHECK();
-                /* mov [rbp+d_lv], rax (store back) */
                 if (d_lv >= -128 && d_lv <= 127)
                     emit_mov_mem8_reg(cb, JIT_RBP, (int8_t)d_lv, JIT_RAX);
                 else
                     emit_mov_mem32_reg(cb, JIT_RBP, d_lv, JIT_RAX);
-                /* mov rdx, [rbp+d_en] (end) */
+                /* Compare with end */
                 if (d_en >= -128 && d_en <= 127)
                     emit_mov_reg_mem8(cb, JIT_RDX, JIT_RBP, (int8_t)d_en);
                 else
                     emit_mov_reg_mem32(cb, JIT_RDX, JIT_RBP, d_en);
-                /* cmp rax, rdx */
                 emit_cmp_rr(cb, JIT_RAX, JIT_RDX);
-                /* Conditional jump to loop start:
-                 * step > 0, exclusive: JL  (loop_var < end)
-                 * step > 0, inclusive: JLE (loop_var <= end)
-                 */
-                uint8_t cc = sr->for_inclusive ? 0x8E /*JLE*/ : 0x8C /*JL*/;
+                /* Conditional jump to inner loop start */
+                uint8_t cc = incl ? 0x8E /*JLE*/ : 0x8C /*JL*/;
+                int target_bc = bc_off + size - (int)joff;
+                int target_mc = offmap_lookup(ctx, target_bc);
+                if (target_mc < 0) target_mc = ctx->loop_start_mc;
                 int patch = emit_jcc(cb, cc);
-                patch_rel32(cb, patch, ctx->loop_start_mc);
+                patch_rel32(cb, patch, target_mc);
                 break;
             }
 
