@@ -235,6 +235,7 @@ int vm_run_with_vm(VM* vm_ptr) {
 int vm_call_value(Value callee, int arg_count, int line) {
     VM* vm_ptr = current_exec_vm ? current_exec_vm : &vm;
     int saved_frame_cnt = vm_ptr->frame_cnt;
+    int saved_stop_frame_cnt = vm_ptr->stop_frame_cnt;
 
     current_exec_vm = vm_ptr;
     #define vm (*current_exec_vm)
@@ -247,7 +248,7 @@ int vm_call_value(Value callee, int arg_count, int line) {
 
     int r = vm_run_with_vm(vm_ptr);
 
-    vm_ptr->stop_frame_cnt = 0;
+    vm_ptr->stop_frame_cnt = saved_stop_frame_cnt;
     return (r == 0) ? 1 : 0;
 }
 

@@ -53,9 +53,11 @@ OPCODE(OP_FOR_LOOP) {
     uint8_t inclusive = READ_BYTE();
     uint16_t jump_offset = READ_SHORT();
 
-    /* JIT: try to run a compiled hot loop */
+    /* JIT: try to run a compiled hot loop. */
     int jit_r = jit_try_hot_loop(frame, &vm, (int32_t)jump_offset, 2);
     if (jit_r == 1) {
+        /* Reload frame — callout may have triggered vm_grow_frames */
+        frame = &vm.frames[vm.frame_cnt - 1];
         DISPATCH;
     }
     if (jit_r == 2) {

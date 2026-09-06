@@ -672,6 +672,9 @@ OPCODE(OP_RETURN) {
     vm.frame_cnt--;
 
     if (vm.stop_frame_cnt > 0 && vm.frame_cnt <= vm.stop_frame_cnt) {
+        /* Push return value onto VM stack for JIT callout to read. */
+        vm.sp = stack_base;
+        vm_stack_push(&vm, result);
         vm.last_return_value = result;
         vm.stop_frame_cnt = 0;
         if (locals != NULL && locals_is_dynamic) {
@@ -766,6 +769,13 @@ OPCODE(OP_RETURN_MULTI) {
     vm.frame_cnt--;
 
     if (vm.stop_frame_cnt > 0 && vm.frame_cnt <= vm.stop_frame_cnt) {
+        /* Push ALL return values onto VM stack for JIT callout to read.
+         * The JIT callout (jit_callout_global_func) reads return_count
+         * values from here; only saving results[0] would lose the rest. */
+        vm.sp = stack_base;
+        for (int i = 0; i < ret_count; i++) {
+            vm_stack_push(&vm, results[i]);
+        }
         vm.last_return_value = results[0];
         vm.stop_frame_cnt = 0;
         if (locals != NULL && locals_is_dynamic) {

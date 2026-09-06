@@ -62,6 +62,11 @@ JitState jit_state = {0};
 /* ---- Callout VM pointer (set before JIT execution) ---- */
 static VM* jit_callout_vm = NULL;
 
+/* ---- Reloaded locals pointer (updated by callouts after vm_call_value,
+ * in case vm_grow_frames reallocates vm.frames; JIT writeback reloads
+ * RCX from this before storing locals back) ---- */
+static Value* jit_reloaded_locals = NULL;
+
 /* ---- Bytecode operand readers (big-endian, matching VM) ---- */
 static inline uint16_t rd_short(const uint8_t* p) {
     return (uint16_t)((p[0] << 8) | p[1]);
@@ -339,6 +344,122 @@ static Value jit_callout_invoke_method(int64_t* vstack_top, int arg_count,
 
     Value result = vm->last_return_value;
 
+    /* Reload locals pointer in case vm_grow_frames reallocated vm.frames */
+    if (vm->frame_cnt > 0) {
+        jit_reloaded_locals = vm->frames[vm->frame_cnt - 1].locals;
+    }
+
+    /* Restore VM stack */
+    vm->sp = saved_sp;
+
+    return result;
+}
+
+/* Callout: OP_CALL_GLOBAL_FUNC / OP_CALL_GLOBAL_FUNC_TYPED (global function call via VM re-entry).
+ * callee is directly available from vm->global_funcs[func_slot].
+ * Returns NaN-boxed first result in RAX. For multi-return (ret_count > 1),
+ * writes additional results directly into the JIT vstack memory at
+ * vstack_top[arg_count - ret_count + i] (for i = 1..ret_count-1). */
+static Value jit_callout_global_func(int64_t* vstack_top, int arg_count,
+                                     uint16_t func_slot) {
+    VM* vm = jit_callout_vm;
+    if (!vm) {
+        if (getenv("LENO_JIT_DEBUG"))
+            fprintf(stderr, "[JIT-DEBUG] global_func: jit_callout_vm is NULL!\n");
+        return NULL_VAL;
+    }
+
+    if (func_slot >= vm->global_func_capacity) {
+        if (getenv("LENO_JIT_DEBUG"))
+            fprintf(stderr, "[JIT-DEBUG] global_func: slot %d >= capacity %d\n", func_slot, vm->global_func_capacity);
+        error_add_at(ERR_RUNTIME, 0, 0, "全局函数索引越界");
+        return NULL_VAL;
+    }
+
+    Value callee = vm->global_funcs[func_slot];
+    if (!val_is_obj(callee)) {
+        if (getenv("LENO_JIT_DEBUG"))
+            fprintf(stderr, "[JIT-DEBUG] global_func: callee not obj, slot=%d\n", func_slot);
+        error_add_at(ERR_RUNTIME, 0, 0, "全局函数未定义");
+        return NULL_VAL;
+    }
+
+    /* Determine return_count from callee's ObjFunction.
+     * return_count <= 0 or inconsistent (-1) → treat as single return. */
+    int ret_count = 1;
+    Object* obj = val_as_obj(callee);
+    if (obj->type == OBJ_CLOSURE) {
+        ObjClosure* closure = (ObjClosure*)obj;
+        if (closure->function && closure->function->return_count > 1) {
+            ret_count = closure->function->return_count;
+        }
+    } else if (obj->type == OBJ_FUNCTION) {
+        ObjFunction* func = (ObjFunction*)obj;
+        if (func && func->return_count > 1) {
+            ret_count = func->return_count;
+        }
+    }
+
+    /* Save VM stack state */
+    int saved_sp = vm->sp;
+
+    /* Push args from JIT virtual stack to VM stack (first arg at bottom).
+     * JIT virtual stack grows downward: first-pushed elements are at
+     * HIGHER addresses, so first arg is at vstack_top + (arg_count - 1). */
+    for (int i = 0; i < arg_count; i++) {
+        int64_t raw = vstack_top[arg_count - 1 - i];
+        vm_stack_push(vm, jit_raw_to_value(raw));
+    }
+
+    /* Push callee on top of stack */
+    vm_stack_push(vm, callee);
+
+    vm_call_value(callee, arg_count, 0);
+
+    /* Read return values from VM stack.
+     * OP_RETURN / OP_RETURN_MULTI (stop_frame_cnt path) pushed ret_count
+     * values onto the VM stack. They are at vm->stack[vm->sp - ret_count]
+     * through vm->stack[vm->sp - 1]. */
+    Value result = vm->last_return_value;  /* first return value (fallback) */
+
+    if (ret_count > 1 && vm->sp >= ret_count) {
+        /* Read all return values from VM stack */
+        Value ret_vals[16];
+        for (int i = 0; i < ret_count && i < 16; i++) {
+            ret_vals[i] = vm->stack[vm->sp - ret_count + i];
+        }
+        result = ret_vals[ret_count - 1];  /* last return value → RAX (TOS) */
+
+        /* Write ret_vals[0..ret_count-2] into the JIT vstack memory.
+         * The VM pushes results[0] first, results[N-1] last (TOS).
+         * The JIT must match: RAX = results[N-1] (TOS), and the memory
+         * stack has results[0] (deepest) through results[N-2] (TOS of memory).
+         *
+         * vstack_top[0] is at the lowest address (native TOS before pop).
+         * After popping (arg_count - ret_count + 1) args, RSP moves up.
+         * [RSP] = vstack_top[pop_count] is the new TOS of memory.
+         *
+         * We write ret_vals[i] to vstack_top[arg_count - 1 - i]:
+         *   ret_vals[0]           → vstack_top[arg_count-1] (deepest, [RSP + (ret_count-2)*8])
+         *   ret_vals[ret_count-2] → vstack_top[arg_count - ret_count + 1] ([RSP], TOS of memory)
+         */
+        for (int i = 0; i < ret_count - 1 && i < 15; i++) {
+            int slot = arg_count - 1 - i;
+            if (slot >= 0) {
+                vstack_top[slot] = jit_value_to_raw(ret_vals[i]);
+            }
+        }
+    }
+
+    /* Reload locals pointer in case vm_grow_frames reallocated vm.frames
+     * during the nested VM execution (e.g. deep recursion). The JIT's
+     * RCX register still holds the pre-callout locals pointer, which may
+     * now be dangling. jit_reloaded_locals is read by the JIT writeback
+     * code before storing locals back to the VM. */
+    if (vm->frame_cnt > 0) {
+        jit_reloaded_locals = vm->frames[vm->frame_cnt - 1].locals;
+    }
+
     /* Restore VM stack */
     vm->sp = saved_sp;
 
@@ -588,18 +709,32 @@ static void scan_loop_body(const uint8_t* body_start, int body_size,
                 break;
             }
             case OP_CALL_GLOBAL_FUNC:
-            case OP_CALL_GLOBAL_FUNC_TYPED:
-                /* 函数调用：JIT 暂不支持含调用的循环。
-                 * 实测 callout 方案（vm_call_value 重入解释循环）单次调用开销
-                 * 约为解释器原生 OP_CALL 路径的 20~30 倍，调用密集循环 JIT 后
-                 * 反而大幅负优化（基准 Phase B: 859ms → 18000ms）。
-                 * 待实现被调函数内联（把 callee 字节码直接编进宿主循环）后再支持；
-                 * 届时返回值个数可用 ObjFunction.return_count（编译期已确定）。 */
-                if (getenv("LENO_JIT_DEBUG"))
-                    fprintf(stderr, "[JIT-DEBUG] scan FAIL: call in loop at offset %d (inlining not implemented)\n",
-                            (int)(ip - body_start));
-                r->capable = 0;
-                return;
+            case OP_CALL_GLOBAL_FUNC_TYPED: {
+                /* func_slot(2) + arg_count(2); callout mode (VM re-entry).
+                 * pop arg_count, push ret_count results.
+                 * ret_count is 1 by default; for OP_CALL_GLOBAL_FUNC_TYPED
+                 * with a known ObjFunction, use its return_count. */
+                int arg_count = rd_short(ip + 3);
+                int ret_count = 1;
+                if (op == OP_CALL_GLOBAL_FUNC_TYPED && vm_ptr) {
+                    uint16_t func_slot = rd_short(ip + 1);
+                    if (func_slot < vm_ptr->global_func_capacity) {
+                        Value callee = vm_ptr->global_funcs[func_slot];
+                        if (val_is_obj(callee)) {
+                            Object* obj2 = val_as_obj(callee);
+                            ObjFunction* func2 = NULL;
+                            if (obj2->type == OBJ_CLOSURE)
+                                func2 = ((ObjClosure*)obj2)->function;
+                            else if (obj2->type == OBJ_FUNCTION)
+                                func2 = (ObjFunction*)obj2;
+                            if (func2 && func2->return_count > 1)
+                                ret_count = func2->return_count;
+                        }
+                    }
+                }
+                vstack -= (arg_count - ret_count);
+                break;
+            }
             case OP_TRY:
             case OP_CATCH:
             case OP_FINALLY:
@@ -799,6 +934,7 @@ typedef struct {
     const ScanResult* sr;
     const uint8_t* body_start;
     Chunk* chunk;        /* for constant table access */
+    VM* vm_ptr;          /* for looking up global_funcs at codegen time */
 } CodegenCtx;
 
 static void offmap_add(CodegenCtx* ctx, int bc_off, int mc_off) {
@@ -2538,6 +2674,63 @@ static int compile_loop(CodegenCtx* ctx) {
                 break;
             }
 
+            /* ---- Callout: OP_CALL_GLOBAL_FUNC / OP_CALL_GLOBAL_FUNC_TYPED ---- */
+            case OP_CALL_GLOBAL_FUNC:
+            case OP_CALL_GLOBAL_FUNC_TYPED: {
+                uint16_t func_slot = rd_short(ip + 1);
+                int arg_count = rd_short(ip + 3);
+                /* Determine ret_count from callee's ObjFunction.
+                 * The callout writes extra return values (ret[1..]) to
+                 * vstack_top, and returns ret[0] in RAX. We pop
+                 * (arg_count - ret_count + 1) args, leaving (ret_count - 1)
+                 * slots on the memory stack for the extra return values. */
+                int ret_count = 1;
+                if (op == OP_CALL_GLOBAL_FUNC_TYPED && ctx->vm_ptr) {
+                    if (func_slot < ctx->vm_ptr->global_func_capacity) {
+                        Value callee = ctx->vm_ptr->global_funcs[func_slot];
+                        if (val_is_obj(callee)) {
+                            Object* obj2 = val_as_obj(callee);
+                            ObjFunction* func2 = NULL;
+                            if (obj2->type == OBJ_CLOSURE)
+                                func2 = ((ObjClosure*)obj2)->function;
+                            else if (obj2->type == OBJ_FUNCTION)
+                                func2 = (ObjFunction*)obj2;
+                            if (func2 && func2->return_count > 1)
+                                ret_count = func2->return_count;
+                        }
+                    }
+                }
+                TOS_SPILL();
+                /* Save current RSP (virtual stack pointer) to tmp1
+                 * BEFORE CALLOUT_BEGIN aligns/changes RSP. */
+                EMIT_STORE_TMP(tmp1_disp, JIT_RSP);
+                EMIT_CALLOUT_BEGIN();
+                /* After CALLOUT_BEGIN: RSP is aligned, RCX/R9 saved to R13/R14.
+                 * Load saved vstack_ptr into RCX (1st arg). */
+                EMIT_LOAD_TMP(JIT_RCX, tmp1_disp);   /* vstack_top (1st arg) */
+                emit_mov_reg_imm64(cb, JIT_RDX, (uint64_t)arg_count);  /* arg_count (2nd) */
+                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)func_slot);   /* func_slot (3rd) */
+                EMIT_CALL(jit_callout_global_func);
+                EMIT_CALLOUT_END();
+                /* Pop (arg_count - ret_count + 1) args from JIT virtual stack.
+                 * The remaining (ret_count - 1) slots hold the extra return
+                 * values that the callout wrote to vstack_top. */
+                int pop_bytes = (arg_count - ret_count + 1) * 8;
+                if (pop_bytes <= 0) {
+                    /* ret_count >= arg_count + 1: no pop needed (or even push) */
+                } else if (pop_bytes <= 127) {
+                    emit_byte(cb, 0x48); emit_byte(cb, 0x83); emit_byte(cb, 0xC4);
+                    emit_byte(cb, (uint8_t)pop_bytes);
+                } else {
+                    emit_byte(cb, 0x48); emit_byte(cb, 0x81); emit_byte(cb, 0xC4);
+                    emit_uint32(cb, (uint32_t)pop_bytes);
+                }
+                EMIT_VALUE_TO_RAW();
+                TOS_PRODUCE();
+                vstack -= (arg_count - ret_count);
+                break;
+            }
+
             /* ---- Exception handling opcodes (no-op in JIT) ---- */
             /* The JIT skips try/catch/finally setup entirely.
              * In normal execution (no exception), these are effectively
@@ -2635,6 +2828,17 @@ static int compile_loop(CodegenCtx* ctx) {
         } \
     } while(0)
 
+    /* Reload RCX from jit_reloaded_locals before writeback, in case
+     * vm_grow_frames reallocated vm.frames during a callout (e.g. deep
+     * recursion via OP_CALL_GLOBAL_FUNC_TYPED or OP_INVOKE_METHOD).
+     * Without this, RCX still points to the pre-callout (now freed)
+     * frame->locals, and the writeback below writes to freed memory. */
+    #define EMIT_RELOAD_RCX() do { \
+        emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_reloaded_locals); \
+        emit_mov_reg_mem8(cb, JIT_RCX, JIT_R8, 0); \
+    } while(0)
+
+    EMIT_RELOAD_RCX();
     EMIT_WRITEBACK_LOCALS();
 
     /* Return 0 (success) */
@@ -2666,6 +2870,7 @@ static int compile_loop(CodegenCtx* ctx) {
      * 写回 locals 后返回 2；调用方（OP_LOOP/OP_FOR_LOOP handler）
      * 重载 frame 后 DISPATCH，从宿主帧 catch_ip 继续执行 */
     ctx->framedead_mc = cb->len;
+    EMIT_RELOAD_RCX();
     EMIT_WRITEBACK_LOCALS();
     /* Return 2 (frame-dead, host frame alive, locals written back) */
     emit_mov_eax_imm32(cb, 2);
@@ -2748,6 +2953,7 @@ static JitLoopFn jit_compile(CallFrame* frame, const uint8_t* body_start,
     ctx.sr = &sr;
     ctx.body_start = body_start;
     ctx.chunk = frame->chunk;
+    ctx.vm_ptr = vm_ptr;
 
     int ok = compile_loop(&ctx);
 
@@ -2909,6 +3115,9 @@ int jit_try_hot_loop(CallFrame* frame, VM* vm_ptr, int32_t loop_offset, int back
     /* Execute JIT */
     jit_state.execute_count++;
     jit_callout_vm = vm_ptr;  /* set global VM pointer for callouts */
+    /* Initialize reloaded locals to current value; callouts will update
+     * this if vm_grow_frames reallocates vm.frames during nested execution. */
+    jit_reloaded_locals = vm_ptr->frames[vm_ptr->frame_cnt - 1].locals;
     int result = entry->fn(frame->locals, vm_ptr->globals);
 
     if (result == 0) {

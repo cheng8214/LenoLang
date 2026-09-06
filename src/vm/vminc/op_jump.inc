@@ -27,9 +27,11 @@ OPCODE(OP_JUMP_IF_TRUE) {
 OPCODE(OP_LOOP) {
     int32_t offset = READ_INT32();
 
-    /* JIT: try to run a compiled hot loop */
+    /* JIT: try to run a compiled hot loop. */
     int jit_r = jit_try_hot_loop(frame, &vm, offset, 1);
     if (jit_r == 1) {
+        /* Reload frame — callout may have triggered vm_grow_frames */
+        frame = &vm.frames[vm.frame_cnt - 1];
         /* JIT ran the loop to completion (condition became false).
          * The while loop's exit path has OP_POP to pop the condition
          * value that JUMP_IF_FALSE left on the stack (peek semantics).
