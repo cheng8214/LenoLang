@@ -230,6 +230,7 @@ ObjFunction* gen_func_proto(CodeGen* gen, Ast* ast) {
     func->type_param_names = NULL;
     func->type_param_constraints = NULL;
     func->is_ctor = ast->u.func.is_ctor;
+    func->return_types = NULL;
 
     // 统计返回值个数（编译期确定，供 JIT 等消费方使用）
     {
@@ -248,9 +249,23 @@ ObjFunction* gen_func_proto(CodeGen* gen, Ast* ast) {
         } else {
             func->return_count = rc;   // 所有执行路径的返回值个数一致
         }
-    }
+    } // end return_count
 
-    // 存储函数级泛型类型参数（如 func f[T, U] 中的 T, U）
+    // 从声明中提取返回值类型（供 JIT 内联使用）
+    if (func->return_count > 0 && ast->u.func.return_type) {
+        TypeInfo* rt = ast->u.func.return_type;
+        func->return_types = (TypeKind*)malloc(sizeof(TypeKind) * func->return_count);
+        if (func->return_types) {
+            if (rt->kind == TYPE_MULTI_RET && rt->param_types && rt->param_count == func->return_count) {
+                for (int i = 0; i < func->return_count; i++) {
+                    func->return_types[i] = rt->param_types[i]->kind;
+                }
+            } else {
+                // 单返回值：直接取 return_type 的 kind
+                func->return_types[0] = rt->kind;
+            }
+        }
+    }
     if (ast->u.func.type_param_count > 0 && ast->u.func.type_params) {
         func->type_param_count = ast->u.func.type_param_count;
         func->type_param_names = (char**)malloc(sizeof(char*) * ast->u.func.type_param_count);

@@ -1218,6 +1218,7 @@ static void free_object_resources(Object* obj) {
             ObjFunction* func = (ObjFunction*)obj;
             free(func->name);
             free(func->param_types);
+            free(func->return_types);
             if (func->param_generic_names) {
                 for (int i = 0; i < func->arity; i++) {
                     free(func->param_generic_names[i]);

@@ -247,6 +247,7 @@ int lenolang_run(const char* source) {
             sr = chunk_deserialize_from_memory(lenb_buf, lenb_size, &run_chunk, &run_scope);
             free(lenb_buf);  // 缓冲已用完，立即释放
 
+
             if (sr == SERIALIZE_OK) {
                 // 与 lenb 路径一致的运行前准备（补 native 函数指针）
                 register_defs_from_chunk(&run_chunk);
