@@ -50,9 +50,11 @@ func test_negated_guard(any val) {
     if val not is int {
         assert_eq(val is int, false)
     } else {
-        // else 分支内 val 被收窄为 int
-        var n = val
-        assert_eq(n >= 0, true)
+        // else 分支：val 仍为 any，需再次守卫
+        if val is int {
+            var n = val
+            assert_eq(n >= 0, true)
+        }
     }
 }
 

@@ -1,7 +1,7 @@
 import times as ti
 import rands
 // Leno语言实现的冒泡排序算法
-func bubble_sort(Array arr):Array {
+func bubble_sort(Array[int] arr):Array[int] {
     var n = arr.len();
     for n - 1 to var i {
         for n - i - 1 to var j {
@@ -15,7 +15,7 @@ func bubble_sort(Array arr):Array {
     return arr;
 }
 // 原始快速排序算法（有性能问题）
-func quick_sort_original(Array arr):Array {
+func quick_sort_original(Array[int] arr):Array[int] {
     if arr.len() <= 1 {
         return arr
     }
@@ -39,17 +39,17 @@ func quick_sort_original(Array arr):Array {
     return result;
 }
 // 优化的原地快速排序算法
-func quick_sort(Array arr):Array[int] {
+func quick_sort(Array[int] arr):Array[int] {
     return quick_sort_recursive(arr, 0, arr.len() - 1)
 }
-func quick_sort_recursive(Array arr, any left, any right):Array[int] {
+func quick_sort_recursive(Array[int] arr, int left, int right):Array[int] {
     if left >= right {return arr}
     var pivot_index = partition(arr, left, right)
     quick_sort_recursive(arr, left, pivot_index - 1)
     quick_sort_recursive(arr, pivot_index + 1, right)
     return arr;
 }
-func partition(Array arr, any left, any right) {
+func partition(Array[int] arr, int left, int right):int {
     // 选择中间元素作为基准值，避免最坏情况
     var mid = (left + right) / 2;
     var pivot = arr[mid];
@@ -74,10 +74,10 @@ func partition(Array arr, any left, any right) {
     return i
 }
 // 进一步优化的快速排序（小数组用插入排序）
-func quick_sort_optimized(Array arr):Array[int] {
+func quick_sort_optimized(Array[int] arr):Array[int] {
     return quick_sort_opt(arr, 0, arr.len() - 1)
 }
-func quick_sort_opt(Array arr, any left, any right):Array[int] {
+func quick_sort_opt(Array[int] arr, int left, int right):Array[int] {
     // 小数组使用插入排序
     if right - left < 20 {
         return insertion_sort_range(arr, left, right);
@@ -89,7 +89,7 @@ func quick_sort_opt(Array arr, any left, any right):Array[int] {
     }
     return arr;
 }
-func partition_opt(Array arr, any left, any right) {
+func partition_opt(Array[int] arr, int left, int right):int {
     // 三数取中法选择基准值
     var mid = (left + right) / 2;
     // 确保arr[left] <= arr[mid] <= arr[right]
@@ -135,7 +135,7 @@ func partition_opt(Array arr, any left, any right) {
     arr[right - 1] = temp1
     return i
 }
-func insertion_sort_range(Array arr, any left, any right):Array[int] {
+func insertion_sort_range(Array[int] arr, int left, int right):Array[int] {
 	 if left >= right {
 	        return arr
 	    }
@@ -151,7 +151,7 @@ func insertion_sort_range(Array arr, any left, any right):Array[int] {
     return arr;
 }
 // 辅助函数：验证数组是否已排序
-func verify_sorted(Array arr) {
+func verify_sorted(Array[int] arr) {
     for arr.len() - 1 to var i {
         if arr[i] > arr[i + 1]{
             return false;
@@ -170,7 +170,7 @@ main() {
         {"size": 10000, "name": "大规模"}
     ];
     for test_cases to  var test_case {
-        var size = test_case["size"];
+        var size = _int(test_case["size"]);
         var name = test_case["name"];
         print($"\n=== {name}测试 (数组大小: {size}) ===");
         // 生成测试数据

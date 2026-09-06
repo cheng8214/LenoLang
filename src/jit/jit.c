@@ -160,6 +160,39 @@ static Value jit_callout_dict_set(Value dict_val, Value key_val, Value value) {
     return dict_val;
 }
 
+/* Callout: OP_INDEX_SET_NOPUSH (arr[idx]=val, statement form, no push).
+ * Returns 0 on success, -1 on error. */
+static int jit_callout_index_set(Value obj_val, Value idx_val, Value value) {
+    if (!val_is_obj(obj_val)) {
+        error_add_at(ERR_RUNTIME, 0, 0, "索引赋值需要对象类型");
+        return -1;
+    }
+    Object* obj = val_as_obj(obj_val);
+    if (obj->type == OBJ_ARRAY) {
+        if (!val_is_num(idx_val)) {
+            error_add_at(ERR_RUNTIME, 0, 0, "数组索引必须是数字");
+            return -1;
+        }
+        ObjArray* arr = (ObjArray*)obj;
+        int index = val_is_int(idx_val) ? (int)val_as_int(idx_val) : (int)value_to_double(idx_val);
+        if (index < 0 || index >= arr->capacity) {
+            error_add_at(ERR_RUNTIME, 0, 0, "数组索引越界");
+            return -1;
+        }
+        arr->elements[index] = value;
+        gc_write_barrier((Object*)arr, value);
+        if (index >= arr->count) arr->count = index + 1;
+        return 0;
+    }
+    if (obj->type == OBJ_DICT) {
+        ObjDict* dict = (ObjDict*)obj;
+        dict_set(dict, idx_val, value);
+        return 0;
+    }
+    error_add_at(ERR_RUNTIME, 0, 0, "索引赋值需要数组或字典");
+    return -1;
+}
+
 /* Callout: OP_DIV (通用除法，运行时类型分发: int/int, float 混合, BigInt).
  * 语义与 VM 的 OP_DIV 一致；出错时记录错误并返回 NULL_VAL（与其它 callout 一致）。 */
 static Value jit_callout_div(Value a, Value b) {
@@ -246,6 +279,7 @@ static int opcode_size(uint8_t op) {
         case OP_INDEX: /* array/dict index access (callout) */
         case OP_ARRAY_APPEND_NOPUSH: /* arr.add(v) statement (callout) */
         case OP_DICT_SET: /* dict[key]=val (callout) */
+        case OP_INDEX_SET_NOPUSH: /* arr[idx]=val statement (callout) */
             return 1;
         /* 2-byte (opcode + imm8) */
         case OP_ADD_INT_IMM: case OP_SUB_INT_IMM: case OP_MUL_INT_IMM:
@@ -418,6 +452,10 @@ static void scan_loop_body(const uint8_t* body_start, int body_size,
             case OP_DICT_SET:
                 /* pop 3 (dict, key, value), push 1 (dict) → net -2 */
                 vstack -= 2;
+                break;
+            case OP_INDEX_SET_NOPUSH:
+                /* pop 3 (arr, index, value), push 0 → net -3 */
+                vstack -= 3;
                 break;
             case OP_CALL_GLOBAL_FUNC:
             case OP_CALL_GLOBAL_FUNC_TYPED:
@@ -1633,6 +1671,27 @@ static int compile_loop(CodegenCtx* ctx) {
                 EMIT_VALUE_TO_RAW();
                 TOS_PRODUCE();
                 vstack -= 2;
+                break;
+            }
+            /* ---- Callout: OP_INDEX_SET_NOPUSH (arr[idx]=val, no push) ---- */
+            case OP_INDEX_SET_NOPUSH: {
+                TOS_SPILL();
+                emit_pop_reg(cb, JIT_RAX);   /* value (top) */
+                EMIT_RAW_TO_VALUE();
+                EMIT_STORE_TMP(tmp1_disp, JIT_RAX);
+                emit_pop_reg(cb, JIT_RAX);   /* index */
+                EMIT_RAW_TO_VALUE();
+                EMIT_STORE_TMP(tmp2_disp, JIT_RAX);
+                emit_pop_reg(cb, JIT_RAX);   /* array */
+                EMIT_RAW_TO_VALUE();
+                EMIT_STORE_TMP(tmp3_disp, JIT_RAX);
+                EMIT_CALLOUT_BEGIN();
+                EMIT_LOAD_TMP(JIT_RCX, tmp3_disp);  /* array (1st arg) */
+                EMIT_LOAD_TMP(JIT_RDX, tmp2_disp);  /* index (2nd arg) */
+                EMIT_LOAD_TMP(JIT_R8, tmp1_disp);   /* value (3rd arg) */
+                EMIT_CALL(jit_callout_index_set);
+                EMIT_CALLOUT_END();
+                vstack -= 3;
                 break;
             }
             case OP_EQ_FLOAT: case OP_LT_FLOAT: case OP_GT_FLOAT:

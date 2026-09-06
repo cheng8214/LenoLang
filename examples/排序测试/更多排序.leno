@@ -2,10 +2,10 @@
 import times as time
 import rands as rand
 // ==================== 插入排序 ====================
-func insertion_sort(Array arr):Array[int] {
+func insertion_sort(Array[int] arr):Array[int] {
     var n = arr.len();
     for 1:n-1 to var i {
-        var key = arr[i];
+        int key = arr[i];
         var j = i - 1;
         while j >= 0 and arr[j] > key {
             arr[j + 1] = arr[j];
@@ -17,7 +17,7 @@ func insertion_sort(Array arr):Array[int] {
 }
 
 // ==================== 冒泡排序 ====================
-func bubble_sort(Array arr):Array[int] {
+func bubble_sort(Array[int] arr):Array[int] {
     var n = arr.len();
     for n - 1 to var i {
         for n - i - 1 to var j {
@@ -32,7 +32,7 @@ func bubble_sort(Array arr):Array[int] {
 }
 
 // ==================== 选择排序 ====================
-func selection_sort(Array arr):Array[int] {
+func selection_sort(Array[int] arr):Array[int] {
     var n = arr.len();
     for n - 1 to var i {
         var min_idx = i;
@@ -52,7 +52,7 @@ func selection_sort(Array arr):Array[int] {
 }
 
 // ==================== 希尔排序 ====================
-func shell_sort(Array arr):Array[int] {
+func shell_sort(Array[int] arr):Array[int] {
     var n = arr.len();
     var gap = n / 2;
     while gap >= 1 {
@@ -140,7 +140,7 @@ func merge_sort(Array[int] arr) {
 }
 
 // ==================== 堆排序（迭代版本，避免递归栈溢出）====================
-func heap_sort(Array arr):Array[int] {
+func heap_sort(Array[int] arr):Array[int] {
     var n = arr.len();
     if n <= 1 {
         return arr;
@@ -168,7 +168,7 @@ func heap_sort(Array arr):Array[int] {
     return arr;
 }
 
-func heapify(Array arr, any n, any i) {
+func heapify(Array[int] arr, int n, int i) {
     while true {
         var largest = i;
         var left = 2 * i + 1;
@@ -193,11 +193,11 @@ func heapify(Array arr, any n, any i) {
 }
 
 // ==================== 快速排序（优化版本）====================
-func quick_sort(Array arr):Array[int] {
+func quick_sort(Array[int] arr):Array[int] {
     return quick_sort_opt(arr, 0, arr.len() - 1)
 }
 
-func quick_sort_opt(Array arr, any left, any right):Array[int] {
+func quick_sort_opt(Array[int] arr, int left, int right):Array[int] {
     // 小数组使用插入排序
     if right - left < 20 {
         return quick_insertion_sort_range(arr, left, right);
@@ -210,7 +210,7 @@ func quick_sort_opt(Array arr, any left, any right):Array[int] {
     return arr;
 }
 
-func partition_opt(Array arr, any left, any right) {
+func partition_opt(Array[int] arr, int left, int right): int {
     // 三数取中法选择基准值
     var mid = (left + right) / 2;
     // 确保arr[left] <= arr[mid] <= arr[right]
@@ -257,7 +257,7 @@ func partition_opt(Array arr, any left, any right) {
     return i
 }
 
-func quick_insertion_sort_range(Array arr, any left, any right):Array[int] {
+func quick_insertion_sort_range(Array[int] arr, int left, int right):Array[int] {
     if left >= right {
         return arr
     }
@@ -274,7 +274,7 @@ func quick_insertion_sort_range(Array arr, any left, any right):Array[int] {
 }
 
 // ==================== 计数排序 ====================
-func counting_sort(Array arr):Array[int] {
+func counting_sort(Array[int] arr):Array[int] {
     if arr.len() <= 1 {
         return arr;
     }
@@ -332,7 +332,7 @@ func radix_sort(Array[int] arr) {
     return arr;
 }
 
-func counting_sort_by_digit(Array[int] arr, any exp) {
+func counting_sort_by_digit(Array[int] arr, int exp) {
     var n = arr.len();
     var output = [];
     for n to var i { output.add(0); }
@@ -366,7 +366,7 @@ func counting_sort_by_digit(Array[int] arr, any exp) {
 }
 
 // ==================== 辅助函数 ====================
-func verify_sorted(Array arr) {
+func verify_sorted(Array[int] arr) {
     for 0:arr.len()-2 to var i {
         if arr[i] > arr[i + 1] {
             return false;
@@ -376,7 +376,7 @@ func verify_sorted(Array arr) {
 }
 
 // 生成整数随机数组
-func rand_int_array(any min_val,any  max_val,any  size):Array[int] {
+func rand_int_array(int min_val, int max_val, int size):Array[int] {
     var arr = [];
     for size to var i {
         arr.add(rand.ints(min_val, max_val));

@@ -5,7 +5,7 @@ func add(any a, any b) {
 assert_eq(add(3, 4), 7)
 assert_eq(add(1.5, 2.5), 4.0)
 
-func factorial(any n) {
+func factorial(int n) {
     if n <= 1 {
         return 1
     }

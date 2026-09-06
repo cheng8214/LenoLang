@@ -18,7 +18,7 @@ main() {
     assert_eq(strs[4], "5")
 
     // map 返回 Array[bool]（类型守卫让 x 为 int → x > 3 返回 bool）
-    Array[bool] flags = nums.map(func(any x, any i) { return x > 3 })
+    Array[bool] flags = nums.map(func(int x, any i) { return x > 3 })
     assert_eq(flags[0], false)
     assert_eq(flags[3], true)
 
@@ -28,7 +28,7 @@ main() {
     assert_eq(squared[4], 25)
 
     // 链式操作：filter → map
-    Array[int] big = nums.filter(func(any x, any i) { return x > 2 })
+    Array[int] big = nums.filter(func(int x, any i) { return x > 2 })
     Array[int] big_doubled = big.map(func(any x, any i) { return x * 10 })
     assert_eq(big_doubled[0], 30)
 
