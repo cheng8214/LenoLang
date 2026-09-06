@@ -226,6 +226,7 @@ static int opcode_size(uint8_t op) {
             return 8;
         /* 10-byte (CMPJMP variants) */
         case OP_CMPJMP_LL_INT:
+        case OP_CMPJMP_LG_INT:
             return 10;
         default:
             return -1;  /* unknown / unsupported */
@@ -488,6 +489,13 @@ static void scan_loop_body(const uint8_t* body_start, int body_size,
                 uint16_t sb = rd_short(ip + 4);
                 mark_local(r, sa);
                 mark_local(r, sb);
+                /* no stack change */
+                break;
+            }
+            case OP_CMPJMP_LG_INT: {
+                uint16_t sa = rd_short(ip + 2);
+                mark_local(r, sa);
+                /* global is not a local, no need to mark */
                 /* no stack change */
                 break;
             }
@@ -1139,20 +1147,14 @@ static int compile_loop(CodegenCtx* ctx) {
                 int isint_patch = cb->len;
                 emit_byte(cb, 0x00);
 
-                /* Check non-number: cmp r8, 0xFFF8; jae bailout */
-                {
-                    int b = (JIT_R8 >> 3) & 1;
-                    emit_byte(cb, rex(1, 0, 0, b));
-                    emit_byte(cb, 0x81);
-                    emit_byte(cb, modrm(3, 7, JIT_R8 & 7));
-                    emit_uint32(cb, 0x0000FFF8);
-                }
-                {
-                    int p = emit_jcc(cb, 0x83);  /* JAE → bailout */
-                    patch_add(ctx, p, -1, 0);
-                }
+                /* Non-int value (float or object).
+                 * For floats: RAX already has raw double bits (same as NaN-boxed).
+                 * For objects (arrays, dicts, strings): RAX has NaN-boxed
+                 * value, pushed as-is for callout consumption (OP_INDEX,
+                 * OP_ARRAY_APPEND, etc.). EMIT_RAW_TO_VALUE() in callouts
+                 * correctly handles non-int48 values by leaving them as-is. */
 
-                /* Float path: RAX already has raw double bits */
+                /* Float/object path: push RAX as-is */
                 TOS_PRODUCE();
                 /* jmp .next (rel8 placeholder) */
                 emit_byte(cb, 0xEB);
@@ -1935,6 +1937,63 @@ static int compile_loop(CodegenCtx* ctx) {
                     case 3: cc = 0x8E; break;  /* GT → JLE (jump if not gt) */
                     case 4: cc = 0x8F; break;  /* LE → JG  (jump if not le) */
                     case 5: cc = 0x8C; break;  /* GE → JL  (jump if not ge) */
+                    default: cc = 0x85; break;
+                }
+                int patch = emit_jcc(cb, cc);
+                patch_add(ctx, patch, target_bc, vstack);
+                break;
+            }
+
+            /* ---- CMPJMP: local int vs global int + conditional jump ---- */
+            /* Operands: cmp_op(1) slot(2) global_idx(2) offset(4) = 9 bytes + opcode = 10 */
+            case OP_CMPJMP_LG_INT: {
+                uint8_t cmp_op = ip[1];
+                uint16_t sa = rd_short(ip + 2);
+                uint16_t gi = rd_short(ip + 4);
+                int32_t off = rd_int32(ip + 6);
+                int target_bc = bc_off + size + off;
+                int si_a = sr->local_map[sa];
+                int da = scratch_disp(si_a);
+                int gd = gi * 8;
+                TOS_SPILL();  /* clobbers RAX */
+                /* Load local (raw int48) from scratch area: mov rax, [rbp+da] */
+                if (da >= -128 && da <= 127) {
+                    emit_mov_reg_mem8(cb, JIT_RAX, JIT_RBP, (int8_t)da);
+                } else {
+                    emit_mov_reg_mem32(cb, JIT_RAX, JIT_RBP, da);
+                }
+                /* Load global (NaN-boxed int) from globals: mov rdx, [r9+gd] */
+                if (gd >= -128 && gd <= 127) {
+                    emit_mov_reg_mem8(cb, JIT_RDX, JIT_R9, (int8_t)gd);
+                } else {
+                    emit_mov_reg_mem32(cb, JIT_RDX, JIT_R9, gd);
+                }
+                /* Extract int48 payload from NaN-boxed value: shl rdx,16; sar rdx,16 */
+                {
+                    int b = (JIT_RDX >> 3) & 1;
+                    emit_byte(cb, rex(1, 0, 0, b));
+                    emit_byte(cb, 0xC1);
+                    emit_byte(cb, modrm(3, 4, JIT_RDX & 7));  /* /4 = SHL */
+                    emit_byte(cb, 16);
+                }
+                {
+                    int b = (JIT_RDX >> 3) & 1;
+                    emit_byte(cb, rex(1, 0, 0, b));
+                    emit_byte(cb, 0xC1);
+                    emit_byte(cb, modrm(3, 7, JIT_RDX & 7));  /* /7 = SAR */
+                    emit_byte(cb, 16);
+                }
+                /* cmp rax, rdx */
+                emit_cmp_rr(cb, JIT_RAX, JIT_RDX);
+                /* Jump if comparison is FALSE (same inversion as CMPJMP_LL_INT) */
+                uint8_t cc;
+                switch (cmp_op) {
+                    case 0: cc = 0x85; break;  /* EQ → JNE */
+                    case 1: cc = 0x84; break;  /* NE → JE  */
+                    case 2: cc = 0x8D; break;  /* LT → JGE */
+                    case 3: cc = 0x8E; break;  /* GT → JLE */
+                    case 4: cc = 0x8F; break;  /* LE → JG  */
+                    case 5: cc = 0x8C; break;  /* GE → JL  */
                     default: cc = 0x85; break;
                 }
                 int patch = emit_jcc(cb, cc);
