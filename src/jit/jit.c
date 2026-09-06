@@ -612,6 +612,67 @@ static int compile_loop(CodegenCtx* ctx) {
         patch_add(ctx, _p, -1, 0);        \
     } while(0)
 
+    /* ---- TOS (top-of-stack) register cache ----
+     * tos_live=1: RAX holds the TOS value; memory stack has vstack-1 elements.
+     * tos_live=0: all vstack elements are on the memory stack.
+     * Rule: at all jump targets and loop start, tos_live must be 0. */
+
+    /* Spill live TOS to memory stack (frees RAX for computation) */
+    #define TOS_SPILL() do { \
+        if (tos_live) { \
+            emit_push_reg(cb, JIT_RAX); \
+            tos_live = 0; \
+        } \
+    } while(0)
+
+    /* Mark RAX as holding new TOS (after producing a result in RAX) */
+    #define TOS_PRODUCE() do { tos_live = 1; } while(0)
+
+    /* Move result from RDX to RAX, then mark as TOS (for IDIV remainder) */
+    #define TOS_PRODUCE_FROM_RDX() do { \
+        emit_mov_rr(cb, JIT_RAX, JIT_RDX); \
+        tos_live = 1; \
+    } while(0)
+
+    /* Consume TOS into RAX (result in RAX, TOS removed) */
+    #define TOS_CONSUME_RAX() do { \
+        if (!tos_live) { \
+            emit_pop_reg(cb, JIT_RAX); \
+        } \
+        tos_live = 0; \
+    } while(0)
+
+    /* Consume TOS into reg (reg gets TOS value, TOS removed) */
+    #define TOS_CONSUME_TO(reg) do { \
+        if (tos_live) { \
+            if ((reg) != JIT_RAX) emit_mov_rr(cb, (reg), JIT_RAX); \
+            tos_live = 0; \
+        } else { \
+            emit_pop_reg(cb, (reg)); \
+        } \
+    } while(0)
+
+    /* Peek TOS into reg (TOS not consumed) */
+    #define TOS_PEEK_TO(reg) do { \
+        if (tos_live) { \
+            if ((reg) != JIT_RAX) emit_mov_rr(cb, (reg), JIT_RAX); \
+        } else { \
+            emit_mov_reg_mem8(cb, (reg), JIT_RSP, 0); \
+        } \
+    } while(0)
+
+    /* Discard TOS (remove without using) */
+    #define TOS_DISCARD() do { \
+        if (tos_live) { \
+            tos_live = 0; \
+        } else { \
+            emit_byte(cb, 0x48); \
+            emit_byte(cb, 0x83); \
+            emit_byte(cb, 0xC4); \
+            emit_byte(cb, 8); \
+        } \
+    } while(0)
+
     /* ---- Callout helpers ---- */
     /* Convert RAX from virtual-stack raw to NaN-boxed Value (in-place).
      * Uses R8 as scratch, R10/R11 as constants. */
@@ -881,6 +942,7 @@ static int compile_loop(CodegenCtx* ctx) {
     const uint8_t* end = ctx->body_start + sr->body_size;
     int bc_off = 0;
     int vstack = 0;
+    int tos_live = 0;  /* TOS register cache: 1=RAX holds TOS, 0=all on memory stack */
 
     while (ip < end) {
         uint8_t op = *ip;
@@ -890,30 +952,30 @@ static int compile_loop(CodegenCtx* ctx) {
         switch (op) {
             /* ---- Stack ops ---- */
             case OP_ZERO:
+                TOS_SPILL();
                 emit_xor_rr(cb, JIT_RAX, JIT_RAX);  /* xor rax, rax → 0 */
-                emit_push_reg(cb, JIT_RAX);
+                TOS_PRODUCE();
                 vstack++;
                 break;
             case OP_ONE:
+                TOS_SPILL();
                 emit_mov_reg_imm64(cb, JIT_RAX, 1);
-                emit_push_reg(cb, JIT_RAX);
+                TOS_PRODUCE();
                 vstack++;
                 break;
             case OP_POP:
-                /* lea rsp, [rsp+8] or pop rax */
-                /* Use: add rsp, 8 */
-                {
-                    emit_byte(cb, 0x48);
-                    emit_byte(cb, 0x83);
-                    emit_byte(cb, 0xC4);  /* ModRM(11, 0, 4) = ADD RSP, imm8 */
-                    emit_byte(cb, 8);
-                }
+                TOS_DISCARD();
                 vstack--;
                 break;
             case OP_DUP:
-                /* mov rax, [rsp]; push rax */
-                emit_mov_reg_mem8(cb, JIT_RAX, JIT_RSP, 0);
-                emit_push_reg(cb, JIT_RAX);
+                if (tos_live) {
+                    /* RAX has TOS, push a copy to stack; RAX stays as TOS */
+                    emit_push_reg(cb, JIT_RAX);
+                } else {
+                    /* Peek TOS from stack into RAX, mark as live */
+                    emit_mov_reg_mem8(cb, JIT_RAX, JIT_RSP, 0);
+                    TOS_PRODUCE();
+                }
                 vstack++;
                 break;
 
@@ -922,13 +984,13 @@ static int compile_loop(CodegenCtx* ctx) {
                 uint16_t slot = rd_short(ip + 1);
                 int si = sr->local_map[slot];
                 int disp = scratch_disp(si);
-                /* push [rbp + disp] */
+                TOS_SPILL();
                 if (disp >= -128 && disp <= 127) {
                     emit_mov_reg_mem8(cb, JIT_RAX, JIT_RBP, (int8_t)disp);
                 } else {
                     emit_mov_reg_mem32(cb, JIT_RAX, JIT_RBP, disp);
                 }
-                emit_push_reg(cb, JIT_RAX);
+                TOS_PRODUCE();
                 vstack++;
                 break;
             }
@@ -936,8 +998,8 @@ static int compile_loop(CodegenCtx* ctx) {
                 uint16_t slot = rd_short(ip + 1);
                 int si = sr->local_map[slot];
                 int disp = scratch_disp(si);
-                /* peek: mov rax, [rsp]; mov [rbp+disp], rax */
-                emit_mov_reg_mem8(cb, JIT_RAX, JIT_RSP, 0);
+                /* peek TOS → store to local */
+                TOS_PEEK_TO(JIT_RAX);
                 if (disp >= -128 && disp <= 127) {
                     emit_mov_mem8_reg(cb, JIT_RBP, (int8_t)disp, JIT_RAX);
                 } else {
@@ -949,8 +1011,8 @@ static int compile_loop(CodegenCtx* ctx) {
                 uint16_t slot = rd_short(ip + 1);
                 int si = sr->local_map[slot];
                 int disp = scratch_disp(si);
-                /* pop rax; mov [rbp+disp], rax */
-                emit_pop_reg(cb, JIT_RAX);
+                /* consume TOS → store to local */
+                TOS_CONSUME_RAX();
                 if (disp >= -128 && disp <= 127) {
                     emit_mov_mem8_reg(cb, JIT_RBP, (int8_t)disp, JIT_RAX);
                 } else {
@@ -966,7 +1028,7 @@ static int compile_loop(CodegenCtx* ctx) {
                 int si_dst = sr->local_map[dst];
                 int d_src = scratch_disp(si_src);
                 int d_dst = scratch_disp(si_dst);
-                /* mov rax, [rbp+d_src]; mov [rbp+d_dst], rax; push rax */
+                TOS_SPILL();
                 if (d_src >= -128 && d_src <= 127) {
                     emit_mov_reg_mem8(cb, JIT_RAX, JIT_RBP, (int8_t)d_src);
                 } else {
@@ -977,7 +1039,7 @@ static int compile_loop(CodegenCtx* ctx) {
                 } else {
                     emit_mov_mem32_reg(cb, JIT_RBP, d_dst, JIT_RAX);
                 }
-                emit_push_reg(cb, JIT_RAX);
+                TOS_PRODUCE();
                 vstack++;
                 break;
             }
@@ -988,6 +1050,8 @@ static int compile_loop(CodegenCtx* ctx) {
                 int si_dst = sr->local_map[dst];
                 int d_src = scratch_disp(si_src);
                 int d_dst = scratch_disp(si_dst);
+                /* No stack effect (pop + local op), but clobbers RAX */
+                TOS_SPILL();
                 if (d_src >= -128 && d_src <= 127) {
                     emit_mov_reg_mem8(cb, JIT_RAX, JIT_RBP, (int8_t)d_src);
                 } else {
@@ -1006,23 +1070,18 @@ static int compile_loop(CodegenCtx* ctx) {
                 int si = sr->local_map[slot];
                 int disp = scratch_disp(si);
                 Value cv = ctx->chunk->constants[ci];
+                TOS_SPILL();  /* clobbers RAX */
                 if (val_is_int(cv)) {
                     int64_t iv = val_as_int(cv);
                     emit_mov_reg_imm64(cb, JIT_RAX, (uint64_t)iv);
                 } else if (val_is_float(cv)) {
-                    /* Store raw double bits directly */
                     emit_mov_reg_imm64(cb, JIT_RAX, cv);
                 } else {
-                    /* Non-int/non-float constant (string/null/bool/obj):
-                     * Store raw NaN-boxed Value bits and mark this local as
-                     * non-int via RBX bitmap so the epilogue write-back stores
-                     * raw bits instead of re-encoding as NaN-boxed int. */
                     emit_mov_reg_imm64(cb, JIT_RAX, cv);
-                    /* BTS RBX, si (48 0F BA EB imm8) */
                     emit_byte(cb, 0x48);
                     emit_byte(cb, 0x0F);
                     emit_byte(cb, 0xBA);
-                    emit_byte(cb, 0xEB);  /* ModRM(11, 5, 3) = BTS RBX, imm8 */
+                    emit_byte(cb, 0xEB);
                     emit_byte(cb, (uint8_t)si);
                 }
                 if (disp >= -128 && disp <= 127) {
@@ -1035,26 +1094,19 @@ static int compile_loop(CodegenCtx* ctx) {
             case OP_CONST: {
                 uint16_t ci = rd_short(ip + 1);
                 Value cv = ctx->chunk->constants[ci];
+                TOS_SPILL();
                 if (val_is_int(cv)) {
                     int64_t iv = val_as_int(cv);
                     emit_mov_reg_imm64(cb, JIT_RAX, (uint64_t)iv);
-                    emit_push_reg(cb, JIT_RAX);
-                    vstack++;
+                    TOS_PRODUCE();
                 } else if (val_is_float(cv)) {
-                    /* Push raw double bits directly (float is stored as raw IEEE 754) */
                     emit_mov_reg_imm64(cb, JIT_RAX, cv);
-                    emit_push_reg(cb, JIT_RAX);
-                    vstack++;
+                    TOS_PRODUCE();
                 } else {
-                    /* Non-int/non-float constant (string/null/bool/obj):
-                     * Push raw NaN-boxed Value bits onto the virtual stack.
-                     * EMIT_RAW_TO_VALUE at callout boundaries will correctly
-                     * detect these as non-int48 (shift check yields >1) and
-                     * pass them through as-is. */
                     emit_mov_reg_imm64(cb, JIT_RAX, cv);
-                    emit_push_reg(cb, JIT_RAX);
-                    vstack++;
+                    TOS_PRODUCE();
                 }
+                vstack++;
                 break;
             }
 
@@ -1065,6 +1117,7 @@ static int compile_loop(CodegenCtx* ctx) {
             case OP_GET_GLOBAL: {
                 uint16_t slot = rd_short(ip + 1);
                 int gd = slot * 8;
+                TOS_SPILL();  /* clobbers RAX, R8 */
                 /* Load NaN-boxed Value: mov rax, [r9 + gd] */
                 if (gd >= -128 && gd <= 127)
                     emit_mov_reg_mem8(cb, JIT_RAX, JIT_R9, (int8_t)gd);
@@ -1105,8 +1158,8 @@ static int compile_loop(CodegenCtx* ctx) {
                     patch_add(ctx, p, -1, 0);
                 }
 
-                /* Float path: RAX already has raw double bits, push directly */
-                emit_push_reg(cb, JIT_RAX);
+                /* Float path: RAX already has raw double bits */
+                TOS_PRODUCE();
                 /* jmp .next (rel8 placeholder) */
                 emit_byte(cb, 0xEB);
                 int next_patch = cb->len;
@@ -1118,7 +1171,7 @@ static int compile_loop(CodegenCtx* ctx) {
                 emit_and_rr(cb, JIT_RAX, JIT_R10);
                 emit_shl_imm(cb, JIT_RAX, 16);
                 emit_sar_imm(cb, JIT_RAX, 16);
-                emit_push_reg(cb, JIT_RAX);
+                TOS_PRODUCE();
 
                 /* .next: patch jmp to here */
                 cb->buf[next_patch] = (uint8_t)(cb->len - (next_patch + 1));
@@ -1131,8 +1184,8 @@ static int compile_loop(CodegenCtx* ctx) {
             case OP_SET_GLOBAL: {
                 uint16_t slot = rd_short(ip + 1);
                 int gd = slot * 8;
-                /* peek: mov rax, [rsp] (no pop) */
-                emit_mov_reg_mem8(cb, JIT_RAX, JIT_RSP, 0);
+                /* peek TOS → RAX (clobbers RAX, R8) */
+                TOS_PEEK_TO(JIT_RAX);
                 /* Check if value fits int48: sar r8, 47; inc r8; cmp r8, 1; ja .is_float */
                 emit_mov_rr(cb, JIT_R8, JIT_RAX);
                 emit_sar_imm(cb, JIT_R8, 47);
@@ -1153,9 +1206,9 @@ static int compile_loop(CodegenCtx* ctx) {
                 emit_byte(cb, 0xEB);
                 int done_patch = cb->len;
                 emit_byte(cb, 0x00);
-                /* .is_float: patch ja to here — reload and store raw bits */
+                /* .is_float: patch ja to here — reload TOS and store raw bits */
                 cb->buf[flt_patch] = (uint8_t)(cb->len - (flt_patch + 1));
-                emit_mov_reg_mem8(cb, JIT_RAX, JIT_RSP, 0);  /* reload raw value */
+                TOS_PEEK_TO(JIT_RAX);  /* reload raw value */
                 if (gd >= -128 && gd <= 127)
                     emit_mov_mem8_reg(cb, JIT_R9, (int8_t)gd, JIT_RAX);
                 else
@@ -1167,43 +1220,43 @@ static int compile_loop(CodegenCtx* ctx) {
 
             /* ---- Arithmetic ---- */
             case OP_ADD_INT:
-                emit_pop_reg(cb, JIT_RDX);   /* pop b */
-                emit_pop_reg(cb, JIT_RAX);   /* pop a */
+                TOS_CONSUME_TO(JIT_RDX);   /* right → RDX */
+                TOS_CONSUME_TO(JIT_RAX);   /* left → RAX */
                 emit_add_rr(cb, JIT_RAX, JIT_RDX);
                 EMIT_INT48_CHECK();
-                emit_push_reg(cb, JIT_RAX);
+                TOS_PRODUCE();
                 vstack--;
                 break;
             case OP_SUB_INT:
-                emit_pop_reg(cb, JIT_RDX);
-                emit_pop_reg(cb, JIT_RAX);
+                TOS_CONSUME_TO(JIT_RDX);
+                TOS_CONSUME_TO(JIT_RAX);
                 emit_sub_rr(cb, JIT_RAX, JIT_RDX);
                 EMIT_INT48_CHECK();
-                emit_push_reg(cb, JIT_RAX);
+                TOS_PRODUCE();
                 vstack--;
                 break;
             case OP_MUL_INT:
-                emit_pop_reg(cb, JIT_RDX);
-                emit_pop_reg(cb, JIT_RAX);
+                TOS_CONSUME_TO(JIT_RDX);
+                TOS_CONSUME_TO(JIT_RAX);
                 emit_imul_rr(cb, JIT_RAX, JIT_RDX);
-                EMIT_INT64_OVF_CHECK();  /* int64 overflow from MUL */
-                EMIT_INT48_CHECK();      /* int48 range check */
-                emit_push_reg(cb, JIT_RAX);
+                EMIT_INT64_OVF_CHECK();
+                EMIT_INT48_CHECK();
+                TOS_PRODUCE();
                 vstack--;
                 break;
             case OP_MOD_INT:
-                emit_pop_reg(cb, JIT_R8);    /* pop b (divisor) */
-                emit_pop_reg(cb, JIT_RAX);   /* pop a (dividend) */
-                emit_cqo(cb);                /* sign-extend RAX → RDX:RAX */
-                emit_idiv_reg(cb, JIT_R8);   /* idiv r8 → quotient in RAX, rem in RDX */
-                emit_push_reg(cb, JIT_RDX);  /* push remainder */
+                TOS_CONSUME_TO(JIT_R8);    /* divisor */
+                TOS_CONSUME_TO(JIT_RAX);   /* dividend */
+                emit_cqo(cb);
+                emit_idiv_reg(cb, JIT_R8);
+                TOS_PRODUCE_FROM_RDX();
                 vstack--;
                 break;
             case OP_NEG_INT:
-                emit_pop_reg(cb, JIT_RAX);
+                TOS_CONSUME_RAX();
                 emit_neg_reg(cb, JIT_RAX);
                 EMIT_INT48_CHECK();
-                emit_push_reg(cb, JIT_RAX);
+                TOS_PRODUCE();
                 break;
             case OP_CAST_INT:
                 /* no-op: value is already int in JIT context */
@@ -1212,51 +1265,48 @@ static int compile_loop(CodegenCtx* ctx) {
             /* ---- Extra integer ops ---- */
             case OP_DIV_INT: {
                 /* int / int -> float result (pushed as raw double bits) */
-                emit_pop_reg(cb, JIT_R8);    /* divisor */
-                emit_pop_reg(cb, JIT_RAX);   /* dividend */
+                TOS_CONSUME_TO(JIT_R8);    /* divisor */
+                TOS_CONSUME_TO(JIT_RAX);   /* dividend */
                 emit_cqo(cb);
                 emit_idiv_reg(cb, JIT_R8);
                 /* Convert quotient (int64 in RAX) to double in XMM0 */
                 emit_cvtsi2sd(cb, 0 /* XMM0 */, JIT_RAX);
-                /* Push raw double bits onto stack */
-                /* movd to general reg: movq rax, xmm0 via movd (0x66 0x0F 0x7E) */
+                /* movq rax, xmm0 */
                 emit_byte(cb, 0x66);
                 emit_byte(cb, 0x48);
                 emit_byte(cb, 0x0F);
                 emit_byte(cb, 0x7E);
-                emit_byte(cb, modrm(3, 0, 0));  /* xmm0 → rax */
-                emit_push_reg(cb, JIT_RAX);
+                emit_byte(cb, modrm(3, 0, 0));
+                TOS_PRODUCE();
                 vstack--;
                 break;
             }
             case OP_BITAND:
-                emit_pop_reg(cb, JIT_RDX);
-                emit_pop_reg(cb, JIT_RAX);
+                TOS_CONSUME_TO(JIT_RDX);
+                TOS_CONSUME_TO(JIT_RAX);
                 emit_and_rr(cb, JIT_RAX, JIT_RDX);
                 EMIT_INT48_CHECK();
-                emit_push_reg(cb, JIT_RAX);
+                TOS_PRODUCE();
                 vstack--;
                 break;
             case OP_BITOR:
-                emit_pop_reg(cb, JIT_RDX);
-                emit_pop_reg(cb, JIT_RAX);
+                TOS_CONSUME_TO(JIT_RDX);
+                TOS_CONSUME_TO(JIT_RAX);
                 emit_or_rr(cb, JIT_RAX, JIT_RDX);
                 EMIT_INT48_CHECK();
-                emit_push_reg(cb, JIT_RAX);
+                TOS_PRODUCE();
                 vstack--;
                 break;
             case OP_BITXOR:
-                emit_pop_reg(cb, JIT_RDX);
-                emit_pop_reg(cb, JIT_RAX);
+                TOS_CONSUME_TO(JIT_RDX);
+                TOS_CONSUME_TO(JIT_RAX);
                 emit_xor_rr(cb, JIT_RAX, JIT_RDX);
                 EMIT_INT48_CHECK();
-                emit_push_reg(cb, JIT_RAX);
+                TOS_PRODUCE();
                 vstack--;
                 break;
             case OP_BITNOT:
-                emit_pop_reg(cb, JIT_RAX);
-                emit_neg_reg(cb, JIT_RAX);  /* ~x = -x-1, but we want bitwise NOT */
-                /* Actually use NOT: 0xF7 /2 = NOT r/m64 */
+                TOS_CONSUME_RAX();
                 {
                     int b = 0;
                     emit_byte(cb, rex(1, 0, 0, b));
@@ -1264,57 +1314,56 @@ static int compile_loop(CodegenCtx* ctx) {
                     emit_byte(cb, modrm(3, 2, JIT_RAX & 7));  /* /2 = NOT */
                 }
                 EMIT_INT48_CHECK();
-                emit_push_reg(cb, JIT_RAX);
+                TOS_PRODUCE();
                 break;
 
             /* ---- Float arithmetic ---- */
             /* Float values on the virtual stack are stored as raw double bits in int64 slots. */
             /* We load them into XMM registers, do SSE2 arithmetic, store back. */
             case OP_ADD_FLOAT:
-                emit_pop_reg(cb, JIT_RAX);   /* b (raw double bits) */
-                emit_pop_reg(cb, JIT_RDX);   /* a */
+                TOS_CONSUME_TO(JIT_RAX);   /* b (raw double bits) */
+                TOS_CONSUME_TO(JIT_RDX);   /* a */
                 /* movq xmm0, rdx; movq xmm1, rax */
                 emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0x6E); emit_byte(cb, modrm(3, 0, JIT_RDX & 7));
                 emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0x6E); emit_byte(cb, modrm(3, 1, JIT_RAX & 7));
                 emit_sse2_rr(cb, 0x58, 0, 1);  /* ADDSD xmm0, xmm1 → xmm0 = a + b */
                 /* movq rax, xmm0 */
                 emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0x7E); emit_byte(cb, modrm(3, 0, 0));
-                emit_push_reg(cb, JIT_RAX);
+                TOS_PRODUCE();
                 vstack--;
                 break;
             case OP_SUB_FLOAT:
-                emit_pop_reg(cb, JIT_RAX);
-                emit_pop_reg(cb, JIT_RDX);
+                TOS_CONSUME_TO(JIT_RAX);
+                TOS_CONSUME_TO(JIT_RDX);
                 emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0x6E); emit_byte(cb, modrm(3, 0, JIT_RDX & 7));
                 emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0x6E); emit_byte(cb, modrm(3, 1, JIT_RAX & 7));
                 emit_sse2_rr(cb, 0x5C, 0, 1);  /* SUBSD xmm0, xmm1 */
                 emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0x7E); emit_byte(cb, modrm(3, 0, 0));
-                emit_push_reg(cb, JIT_RAX);
+                TOS_PRODUCE();
                 vstack--;
                 break;
             case OP_MUL_FLOAT:
-                emit_pop_reg(cb, JIT_RAX);
-                emit_pop_reg(cb, JIT_RDX);
+                TOS_CONSUME_TO(JIT_RAX);
+                TOS_CONSUME_TO(JIT_RDX);
                 emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0x6E); emit_byte(cb, modrm(3, 0, JIT_RDX & 7));
                 emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0x6E); emit_byte(cb, modrm(3, 1, JIT_RAX & 7));
                 emit_sse2_rr(cb, 0x59, 0, 1);  /* MULSD xmm0, xmm1 */
                 emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0x7E); emit_byte(cb, modrm(3, 0, 0));
-                emit_push_reg(cb, JIT_RAX);
+                TOS_PRODUCE();
                 vstack--;
                 break;
             case OP_DIV_FLOAT:
-                emit_pop_reg(cb, JIT_RAX);
-                emit_pop_reg(cb, JIT_RDX);
+                TOS_CONSUME_TO(JIT_RAX);
+                TOS_CONSUME_TO(JIT_RDX);
                 emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0x6E); emit_byte(cb, modrm(3, 0, JIT_RDX & 7));
                 emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0x6E); emit_byte(cb, modrm(3, 1, JIT_RAX & 7));
                 emit_sse2_rr(cb, 0x5E, 0, 1);  /* DIVSD xmm0, xmm1 */
                 emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0x7E); emit_byte(cb, modrm(3, 0, 0));
-                emit_push_reg(cb, JIT_RAX);
+                TOS_PRODUCE();
                 vstack--;
                 break;
             case OP_NEG_FLOAT:
-                emit_pop_reg(cb, JIT_RAX);
-                /* Flip sign bit: XOR with 0x8000000000000000 */
+                TOS_CONSUME_RAX();
                 /* movq xmm0, rax */
                 emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0x6E); emit_byte(cb, modrm(3, 0, JIT_RAX & 7));
                 /* Load sign mask into xmm1: mov rdx, 0x8000000000000000; movq xmm1, rdx */
@@ -1323,16 +1372,13 @@ static int compile_loop(CodegenCtx* ctx) {
                 emit_xorpd_xmm_xmm(cb, 0, 1);
                 /* movq rax, xmm0 */
                 emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0x7E); emit_byte(cb, modrm(3, 0, 0));
-                emit_push_reg(cb, JIT_RAX);
+                TOS_PRODUCE();
                 break;
             case OP_CAST_FLOAT: {
                 /* Runtime type dispatch:
                  * - If value fits int48 → it's an int, convert via CVTSI2SD
-                 * - If not (likely float) → already float, pass through as-is
-                 * This handles both cases:
-                 *   int(x)  → OP_CAST_FLOAT on int value → needs conversion
-                 *   a + 0.1 → OP_ADD_FLOAT then OP_CAST_FLOAT → already float, skip */
-                emit_pop_reg(cb, JIT_RAX);
+                 * - If not (likely float) → already float, pass through as-is */
+                TOS_CONSUME_RAX();
                 emit_mov_rr(cb, JIT_R8, JIT_RAX);
                 emit_sar_imm(cb, JIT_R8, 47);
                 emit_inc_reg(cb, JIT_R8);
@@ -1347,14 +1393,14 @@ static int compile_loop(CodegenCtx* ctx) {
                 emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0x7E); emit_byte(cb, modrm(3, 0, 0));
                 /* .already_float: patch ja to here */
                 cb->buf[flt_patch] = (uint8_t)(cb->len - (flt_patch + 1));
-                emit_push_reg(cb, JIT_RAX);
+                TOS_PRODUCE();
                 break;
             }
 
             /* ---- Stack-top increment/decrement (int or float dispatch) ---- */
             case OP_INC: case OP_DEC: {
                 int is_inc = (op == OP_INC);
-                emit_pop_reg(cb, JIT_RAX);
+                TOS_CONSUME_RAX();
                 /* Type dispatch: check if int48 */
                 emit_mov_rr(cb, JIT_R8, JIT_RAX);
                 emit_sar_imm(cb, JIT_R8, 47);
@@ -1365,13 +1411,12 @@ static int compile_loop(CodegenCtx* ctx) {
                 int flt_patch = cb->len;
                 emit_byte(cb, 0x00);
                 /* Int path: add/sub 1 */
-                /* 48 83 C0 01 = add rax, 1 / 48 83 E8 01 = sub rax, 1 */
                 emit_byte(cb, 0x48);
                 emit_byte(cb, 0x83);
                 emit_byte(cb, is_inc ? 0xC0 : 0xE8);
                 emit_byte(cb, 0x01);
                 EMIT_INT48_CHECK();
-                emit_push_reg(cb, JIT_RAX);
+                TOS_PRODUCE();
                 /* jmp .next (rel8 placeholder) */
                 emit_byte(cb, 0xEB);
                 int next_patch = cb->len;
@@ -1387,14 +1432,14 @@ static int compile_loop(CodegenCtx* ctx) {
                 emit_sse2_rr(cb, is_inc ? 0x58 : 0x5C, 0, 1);
                 /* movq rax, xmm0 */
                 emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0x7E); emit_byte(cb, modrm(3, 0, 0));
-                emit_push_reg(cb, JIT_RAX);
+                TOS_PRODUCE();
                 /* .next: patch jmp to here */
                 cb->buf[next_patch] = (uint8_t)(cb->len - (next_patch + 1));
                 break;
             }
             /* ---- Logical NOT (int or float dispatch) ---- */
             case OP_NOT: {
-                emit_pop_reg(cb, JIT_RAX);
+                TOS_CONSUME_RAX();
                 /* Type dispatch: check if int48 */
                 emit_mov_rr(cb, JIT_R8, JIT_RAX);
                 emit_sar_imm(cb, JIT_R8, 47);
@@ -1407,8 +1452,8 @@ static int compile_loop(CodegenCtx* ctx) {
                 /* Int path: test rax, rax; sete al; movzx eax, al */
                 emit_test_rr(cb, JIT_RAX, JIT_RAX);
                 emit_byte(cb, 0x0F); emit_byte(cb, 0x94); emit_byte(cb, modrm(3, 0, JIT_RAX & 7)); /* sete al */
-                emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0xB6); emit_byte(cb, modrm(3, JIT_RAX & 7, JIT_RAX & 7)); /* movzx rax, al (32-bit zero-extend) */
-                emit_push_reg(cb, JIT_RAX);
+                emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0xB6); emit_byte(cb, modrm(3, JIT_RAX & 7, JIT_RAX & 7)); /* movzx rax, al */
+                TOS_PRODUCE();
                 /* jmp .next */
                 emit_byte(cb, 0xEB);
                 int next_patch = cb->len;
@@ -1419,12 +1464,12 @@ static int compile_loop(CodegenCtx* ctx) {
                 emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0x6E); emit_byte(cb, modrm(3, 0, JIT_RAX & 7));
                 /* xorpd xmm1, xmm1 (zero) */
                 emit_byte(cb, 0x66); emit_byte(cb, 0x0F); emit_byte(cb, 0x57); emit_byte(cb, modrm(3, 1, 1));
-                /* ucomisd xmm0, xmm1 → ZF=1 if equal (0.0 and -0.0 both match) */
+                /* ucomisd xmm0, xmm1 → ZF=1 if equal */
                 emit_ucomisd_rr(cb, 0, 1);
                 /* sete al; movzx rax, al */
                 emit_byte(cb, 0x0F); emit_byte(cb, 0x94); emit_byte(cb, modrm(3, 0, JIT_RAX & 7));
                 emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0xB6); emit_byte(cb, modrm(3, JIT_RAX & 7, JIT_RAX & 7));
-                emit_push_reg(cb, JIT_RAX);
+                TOS_PRODUCE();
                 /* .next: patch jmp to here */
                 cb->buf[next_patch] = (uint8_t)(cb->len - (next_patch + 1));
                 break;
@@ -1432,6 +1477,7 @@ static int compile_loop(CodegenCtx* ctx) {
             /* ---- Callout: OP_INDEX (array/dict index access) ---- */
             case OP_INDEX: {
                 /* Pop index, convert to NaN-boxed, save to tmp1 */
+                TOS_SPILL();  /* ensure all values on memory stack for callout */
                 emit_pop_reg(cb, JIT_RAX);
                 EMIT_RAW_TO_VALUE();
                 EMIT_STORE_TMP(tmp1_disp, JIT_RAX);
@@ -1447,65 +1493,57 @@ static int compile_loop(CodegenCtx* ctx) {
                 emit_mov_rr(cb, JIT_RDX, JIT_R8);
                 EMIT_CALL(jit_callout_index);
                 EMIT_CALLOUT_END();
-                /* Convert result, push */
+                /* Convert result */
                 EMIT_VALUE_TO_RAW();
-                emit_push_reg(cb, JIT_RAX);
+                TOS_PRODUCE();
                 vstack--;
                 break;
             }
             /* ---- Callout: OP_ARRAY_APPEND_NOPUSH ---- */
             case OP_ARRAY_APPEND_NOPUSH: {
-                /* Pop value, convert, save to tmp1 */
+                TOS_SPILL();
                 emit_pop_reg(cb, JIT_RAX);
                 EMIT_RAW_TO_VALUE();
                 EMIT_STORE_TMP(tmp1_disp, JIT_RAX);
-                /* Pop arr, convert → RDX */
                 emit_pop_reg(cb, JIT_RAX);
                 EMIT_RAW_TO_VALUE();
                 emit_mov_rr(cb, JIT_RDX, JIT_RAX);
-                /* Load value from tmp1 → R8 */
                 EMIT_LOAD_TMP(JIT_R8, tmp1_disp);
-                /* Callout: RCX=arr, RDX=value */
                 EMIT_CALLOUT_BEGIN();
                 emit_mov_rr(cb, JIT_RCX, JIT_RDX);
                 emit_mov_rr(cb, JIT_RDX, JIT_R8);
                 EMIT_CALL(jit_callout_array_append);
                 EMIT_CALLOUT_END();
-                /* No push (NOPUSH variant) */
                 vstack -= 2;
                 break;
             }
             /* ---- Callout: OP_DICT_SET (dict[key]=val, returns dict) ---- */
             case OP_DICT_SET: {
-                /* Pop value, convert, save to tmp1 */
+                TOS_SPILL();
                 emit_pop_reg(cb, JIT_RAX);
                 EMIT_RAW_TO_VALUE();
                 EMIT_STORE_TMP(tmp1_disp, JIT_RAX);
-                /* Pop key, convert, save to tmp2 */
                 emit_pop_reg(cb, JIT_RAX);
                 EMIT_RAW_TO_VALUE();
                 EMIT_STORE_TMP(tmp2_disp, JIT_RAX);
-                /* Pop dict, convert, save to tmp3 */
                 emit_pop_reg(cb, JIT_RAX);
                 EMIT_RAW_TO_VALUE();
                 EMIT_STORE_TMP(tmp3_disp, JIT_RAX);
-                /* Callout: RCX=dict, RDX=key, R8=value */
                 EMIT_CALLOUT_BEGIN();
                 EMIT_LOAD_TMP(JIT_RCX, tmp3_disp);
                 EMIT_LOAD_TMP(JIT_RDX, tmp2_disp);
                 EMIT_LOAD_TMP(JIT_R8, tmp1_disp);
                 EMIT_CALL(jit_callout_dict_set);
                 EMIT_CALLOUT_END();
-                /* Convert result (dict_val), push */
                 EMIT_VALUE_TO_RAW();
-                emit_push_reg(cb, JIT_RAX);
+                TOS_PRODUCE();
                 vstack -= 2;
                 break;
             }
             case OP_EQ_FLOAT: case OP_LT_FLOAT: case OP_GT_FLOAT:
             case OP_LE_FLOAT: case OP_GE_FLOAT: {
-                emit_pop_reg(cb, JIT_RAX);  /* b */
-                emit_pop_reg(cb, JIT_RDX); /* a */
+                TOS_CONSUME_TO(JIT_RAX);  /* b */
+                TOS_CONSUME_TO(JIT_RDX);  /* a */
                 /* movq xmm0, rdx; movq xmm1, rax */
                 emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0x6E); emit_byte(cb, modrm(3, 0, JIT_RDX & 7));
                 emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0x6E); emit_byte(cb, modrm(3, 1, JIT_RAX & 7));
@@ -1531,41 +1569,41 @@ static int compile_loop(CodegenCtx* ctx) {
                 }
                 emit_setcc_reg(cb, cc, JIT_RAX);
                 emit_movzx_r32_r8(cb, JIT_RAX, JIT_RAX);
-                emit_push_reg(cb, JIT_RAX);
+                TOS_PRODUCE();
                 vstack--;
                 break;
             }
             case OP_ADD_INT_IMM: {
                 int8_t imm = rd_byte(ip + 1);
-                emit_pop_reg(cb, JIT_RAX);
+                TOS_CONSUME_RAX();
                 /* add rax, imm8 (sign-extended) */
                 emit_byte(cb, 0x48);
                 emit_byte(cb, 0x83);
                 emit_byte(cb, modrm(3, 0, JIT_RAX & 7));  /* /0 = ADD */
                 emit_byte(cb, (uint8_t)imm);
                 EMIT_INT48_CHECK();
-                emit_push_reg(cb, JIT_RAX);
+                TOS_PRODUCE();
                 break;
             }
             case OP_SUB_INT_IMM: {
                 int8_t imm = rd_byte(ip + 1);
-                emit_pop_reg(cb, JIT_RAX);
+                TOS_CONSUME_RAX();
                 emit_byte(cb, 0x48);
                 emit_byte(cb, 0x83);
                 emit_byte(cb, modrm(3, 5, JIT_RAX & 7));  /* /5 = SUB */
                 emit_byte(cb, (uint8_t)imm);
                 EMIT_INT48_CHECK();
-                emit_push_reg(cb, JIT_RAX);
+                TOS_PRODUCE();
                 break;
             }
             case OP_MUL_INT_IMM: {
                 int8_t imm = rd_byte(ip + 1);
-                emit_pop_reg(cb, JIT_RAX);
+                TOS_CONSUME_RAX();
                 emit_mov_reg_imm64(cb, JIT_RDX, (uint64_t)(int64_t)imm);
                 emit_imul_rr(cb, JIT_RAX, JIT_RDX);
                 EMIT_INT64_OVF_CHECK();
                 EMIT_INT48_CHECK();
-                emit_push_reg(cb, JIT_RAX);
+                TOS_PRODUCE();
                 break;
             }
 
@@ -1574,6 +1612,7 @@ static int compile_loop(CodegenCtx* ctx) {
                 uint16_t slot = rd_short(ip + 1);
                 int si = sr->local_map[slot];
                 int disp = scratch_disp(si);
+                TOS_SPILL();  /* clobbers RAX */
                 /* mov rax, [rbp+disp]; add rax, 1; mov [rbp+disp], rax */
                 if (disp >= -128 && disp <= 127) {
                     emit_mov_reg_mem8(cb, JIT_RAX, JIT_RBP, (int8_t)disp);
@@ -1596,6 +1635,7 @@ static int compile_loop(CodegenCtx* ctx) {
                 uint16_t slot = rd_short(ip + 1);
                 int si = sr->local_map[slot];
                 int disp = scratch_disp(si);
+                TOS_SPILL();  /* clobbers RAX */
                 if (disp >= -128 && disp <= 127) {
                     emit_mov_reg_mem8(cb, JIT_RAX, JIT_RBP, (int8_t)disp);
                 } else {
@@ -1618,12 +1658,14 @@ static int compile_loop(CodegenCtx* ctx) {
                 uint16_t slot = rd_short(ip + 1);
                 int si = sr->local_map[slot];
                 int disp = scratch_disp(si);
+                TOS_SPILL();  /* clobbers RAX */
                 if (disp >= -128 && disp <= 127) {
                     emit_mov_reg_mem8(cb, JIT_RAX, JIT_RBP, (int8_t)disp);
                 } else {
                     emit_mov_reg_mem32(cb, JIT_RAX, JIT_RBP, disp);
                 }
-                emit_push_reg(cb, JIT_RAX);  /* push old value */
+                /* Save old value in R8 before incrementing */
+                emit_mov_rr(cb, JIT_R8, JIT_RAX);
                 emit_byte(cb, 0x48);
                 emit_byte(cb, 0x83);
                 emit_byte(cb, modrm(3, 0, JIT_RAX & 7));  /* ADD rax, 1 */
@@ -1634,6 +1676,9 @@ static int compile_loop(CodegenCtx* ctx) {
                 } else {
                     emit_mov_mem32_reg(cb, JIT_RBP, disp, JIT_RAX);
                 }
+                /* RAX = old value (from R8) */
+                emit_mov_rr(cb, JIT_RAX, JIT_R8);
+                TOS_PRODUCE();
                 vstack++;
                 break;
             }
@@ -1641,12 +1686,14 @@ static int compile_loop(CodegenCtx* ctx) {
                 uint16_t slot = rd_short(ip + 1);
                 int si = sr->local_map[slot];
                 int disp = scratch_disp(si);
+                TOS_SPILL();  /* clobbers RAX */
                 if (disp >= -128 && disp <= 127) {
                     emit_mov_reg_mem8(cb, JIT_RAX, JIT_RBP, (int8_t)disp);
                 } else {
                     emit_mov_reg_mem32(cb, JIT_RAX, JIT_RBP, disp);
                 }
-                emit_push_reg(cb, JIT_RAX);
+                /* Save old value in R8 before decrementing */
+                emit_mov_rr(cb, JIT_R8, JIT_RAX);
                 emit_byte(cb, 0x48);
                 emit_byte(cb, 0x83);
                 emit_byte(cb, modrm(3, 5, JIT_RAX & 7));  /* SUB rax, 1 */
@@ -1657,6 +1704,8 @@ static int compile_loop(CodegenCtx* ctx) {
                 } else {
                     emit_mov_mem32_reg(cb, JIT_RBP, disp, JIT_RAX);
                 }
+                emit_mov_rr(cb, JIT_RAX, JIT_R8);  /* old value */
+                TOS_PRODUCE();
                 vstack++;
                 break;
             }
@@ -1664,6 +1713,7 @@ static int compile_loop(CodegenCtx* ctx) {
                 uint16_t slot = rd_short(ip + 1);
                 int si = sr->local_map[slot];
                 int disp = scratch_disp(si);
+                TOS_SPILL();  /* clobbers RAX */
                 if (disp >= -128 && disp <= 127) {
                     emit_mov_reg_mem8(cb, JIT_RAX, JIT_RBP, (int8_t)disp);
                 } else {
@@ -1679,7 +1729,7 @@ static int compile_loop(CodegenCtx* ctx) {
                 } else {
                     emit_mov_mem32_reg(cb, JIT_RBP, disp, JIT_RAX);
                 }
-                emit_push_reg(cb, JIT_RAX);  /* push new value */
+                TOS_PRODUCE();  /* RAX = new value */
                 vstack++;
                 break;
             }
@@ -1687,6 +1737,7 @@ static int compile_loop(CodegenCtx* ctx) {
                 uint16_t slot = rd_short(ip + 1);
                 int si = sr->local_map[slot];
                 int disp = scratch_disp(si);
+                TOS_SPILL();  /* clobbers RAX */
                 if (disp >= -128 && disp <= 127) {
                     emit_mov_reg_mem8(cb, JIT_RAX, JIT_RBP, (int8_t)disp);
                 } else {
@@ -1702,7 +1753,7 @@ static int compile_loop(CodegenCtx* ctx) {
                 } else {
                     emit_mov_mem32_reg(cb, JIT_RBP, disp, JIT_RAX);
                 }
-                emit_push_reg(cb, JIT_RAX);
+                TOS_PRODUCE();  /* RAX = new value */
                 vstack++;
                 break;
             }
@@ -1719,13 +1770,13 @@ static int compile_loop(CodegenCtx* ctx) {
                     case OP_GE_INT: cc = 0xD; break;  /* JGE */
                     default: cc = 0x4; break;
                 }
-                emit_pop_reg(cb, JIT_RDX);  /* pop b */
-                emit_pop_reg(cb, JIT_RAX);  /* pop a */
+                TOS_CONSUME_TO(JIT_RDX);  /* b */
+                TOS_CONSUME_RAX();         /* a */
                 emit_cmp_rr(cb, JIT_RAX, JIT_RDX);
                 /* setcc al; movzx eax, al (don't xor between cmp and setcc — destroys flags!) */
                 emit_setcc_reg(cb, cc, JIT_RAX);
                 emit_movzx_r32_r8(cb, JIT_RAX, JIT_RAX);
-                emit_push_reg(cb, JIT_RAX);
+                TOS_PRODUCE();
                 vstack--;
                 break;
             }
@@ -1743,7 +1794,7 @@ static int compile_loop(CodegenCtx* ctx) {
                     default: cc = 0x4; break;
                 }
                 int8_t imm = rd_byte(ip + 1);
-                emit_pop_reg(cb, JIT_RAX);
+                TOS_CONSUME_RAX();
                 /* cmp rax, imm8 (sign-extended) */
                 emit_byte(cb, 0x48);
                 emit_byte(cb, 0x83);
@@ -1752,28 +1803,28 @@ static int compile_loop(CodegenCtx* ctx) {
                 /* setcc al; movzx eax, al (don't xor between cmp and setcc — destroys flags!) */
                 emit_setcc_reg(cb, cc, JIT_RAX);
                 emit_movzx_r32_r8(cb, JIT_RAX, JIT_RAX);
-                emit_push_reg(cb, JIT_RAX);
+                TOS_PRODUCE();
                 break;
             }
 
             /* ---- Shift immediates ---- */
             case OP_SHL_IMM: {
                 int8_t imm = rd_byte(ip + 1);
-                emit_pop_reg(cb, JIT_RAX);
+                TOS_CONSUME_RAX();
                 emit_shl_imm(cb, JIT_RAX, (uint8_t)imm);
-                emit_push_reg(cb, JIT_RAX);
+                TOS_PRODUCE();
                 break;
             }
             case OP_SHR_IMM: {
                 int8_t imm = rd_byte(ip + 1);
-                emit_pop_reg(cb, JIT_RAX);
+                TOS_CONSUME_RAX();
                 emit_sar_imm(cb, JIT_RAX, (uint8_t)imm);
-                emit_push_reg(cb, JIT_RAX);
+                TOS_PRODUCE();
                 break;
             }
             case OP_USHR_IMM: {
                 int8_t imm = rd_byte(ip + 1);
-                emit_pop_reg(cb, JIT_RAX);
+                TOS_CONSUME_RAX();
                 /* SHR rax, imm (unsigned right shift) */
                 {
                     int b = (JIT_RAX >> 3) & 1;
@@ -1782,7 +1833,7 @@ static int compile_loop(CodegenCtx* ctx) {
                     emit_byte(cb, modrm(3, 5, JIT_RAX & 7));  /* /5 = SHR */
                     emit_byte(cb, (uint8_t)imm);
                 }
-                emit_push_reg(cb, JIT_RAX);
+                TOS_PRODUCE();
                 break;
             }
 
@@ -1790,6 +1841,7 @@ static int compile_loop(CodegenCtx* ctx) {
             case OP_JUMP: {
                 int32_t off = rd_int32(ip + 1);
                 int target_bc = bc_off + size + off;
+                TOS_SPILL();  /* jump targets expect tos_live=0 */
                 int patch = emit_jmp(cb);
                 patch_add(ctx, patch, target_bc, vstack);
                 break;
@@ -1797,50 +1849,61 @@ static int compile_loop(CodegenCtx* ctx) {
             case OP_JUMP_IF_FALSE: {
                 int32_t off = rd_int32(ip + 1);
                 int target_bc = bc_off + size + off;
-                /* peek + conditional pop + jump:
-                 *   mov rax, [rsp]   ; peek
-                 *   test rax, rax
-                 *   jnz .skip        ; if true, fall through (explicit POP follows)
-                 *   add rsp, 8        ; pop condition (jump path, no explicit POP)
-                 *   jmp target
-                 * .skip:
-                 */
-                /* mov rax, [rsp] */
-                emit_byte(cb, 0x48);
-                emit_byte(cb, 0x8B);
-                emit_byte(cb, 0x04);
-                emit_byte(cb, 0x24);
-                emit_test_rr(cb, JIT_RAX, JIT_RAX);
-                int jnz_patch = emit_jcc(cb, 0x85);  /* JNZ = jump if true (non-zero) */
-                /* add rsp, 8 */
-                emit_byte(cb, 0x48);
-                emit_byte(cb, 0x83);
-                emit_byte(cb, 0xC4);
-                emit_byte(cb, 8);
-                /* jmp target */
-                int jmp_patch = emit_jmp(cb);
-                patch_add(ctx, jmp_patch, target_bc, 0);  /* vstack=0 after pop */
-                /* fixup jnz to here */
-                patch_rel32(cb, jnz_patch, cb->len);
+                if (tos_live) {
+                    /* RAX already holds the condition value */
+                    emit_test_rr(cb, JIT_RAX, JIT_RAX);
+                    int jnz_patch = emit_jcc(cb, 0x85);  /* JNZ = skip if true */
+                    /* Jump path: condition is false, TOS abandoned in RAX (zero-cost) */
+                    int jmp_patch = emit_jmp(cb);
+                    patch_add(ctx, jmp_patch, target_bc, 0);
+                    patch_rel32(cb, jnz_patch, cb->len);
+                    /* Fall-through: tos_live stays 1, next OP_POP will TOS_DISCARD */
+                } else {
+                    /* Value on memory stack: peek + conditional pop + jump */
+                    emit_byte(cb, 0x48);
+                    emit_byte(cb, 0x8B);
+                    emit_byte(cb, 0x04);
+                    emit_byte(cb, 0x24);
+                    emit_test_rr(cb, JIT_RAX, JIT_RAX);
+                    int jnz_patch = emit_jcc(cb, 0x85);
+                    emit_byte(cb, 0x48);
+                    emit_byte(cb, 0x83);
+                    emit_byte(cb, 0xC4);
+                    emit_byte(cb, 8);
+                    int jmp_patch = emit_jmp(cb);
+                    patch_add(ctx, jmp_patch, target_bc, 0);
+                    patch_rel32(cb, jnz_patch, cb->len);
+                }
                 break;
             }
             case OP_JUMP_IF_TRUE: {
                 int32_t off = rd_int32(ip + 1);
                 int target_bc = bc_off + size + off;
-                /* peek + conditional pop + jump (inverted) */
-                emit_byte(cb, 0x48);
-                emit_byte(cb, 0x8B);
-                emit_byte(cb, 0x04);
-                emit_byte(cb, 0x24);
-                emit_test_rr(cb, JIT_RAX, JIT_RAX);
-                int jz_patch = emit_jcc(cb, 0x84);  /* JZ = jump if false (zero) */
-                emit_byte(cb, 0x48);
-                emit_byte(cb, 0x83);
-                emit_byte(cb, 0xC4);
-                emit_byte(cb, 8);
-                int jmp_patch = emit_jmp(cb);
-                patch_add(ctx, jmp_patch, target_bc, 0);
-                patch_rel32(cb, jz_patch, cb->len);
+                if (tos_live) {
+                    /* RAX already holds the condition value */
+                    emit_test_rr(cb, JIT_RAX, JIT_RAX);
+                    int jz_patch = emit_jcc(cb, 0x84);  /* JZ = skip if false */
+                    /* Jump path: condition is true, TOS abandoned in RAX (zero-cost) */
+                    int jmp_patch = emit_jmp(cb);
+                    patch_add(ctx, jmp_patch, target_bc, 0);
+                    patch_rel32(cb, jz_patch, cb->len);
+                    /* Fall-through: tos_live stays 1 */
+                } else {
+                    /* Value on memory stack: peek + conditional pop + jump */
+                    emit_byte(cb, 0x48);
+                    emit_byte(cb, 0x8B);
+                    emit_byte(cb, 0x04);
+                    emit_byte(cb, 0x24);
+                    emit_test_rr(cb, JIT_RAX, JIT_RAX);
+                    int jz_patch = emit_jcc(cb, 0x84);
+                    emit_byte(cb, 0x48);
+                    emit_byte(cb, 0x83);
+                    emit_byte(cb, 0xC4);
+                    emit_byte(cb, 8);
+                    int jmp_patch = emit_jmp(cb);
+                    patch_add(ctx, jmp_patch, target_bc, 0);
+                    patch_rel32(cb, jz_patch, cb->len);
+                }
                 break;
             }
 
@@ -1855,6 +1918,7 @@ static int compile_loop(CodegenCtx* ctx) {
                 int si_b = sr->local_map[sb];
                 int da = scratch_disp(si_a);
                 int db = scratch_disp(si_b);
+                TOS_SPILL();  /* clobbers RAX/RDX */
                 /* mov rax, [rbp+da]; mov rdx, [rbp+db]; cmp rax, rdx */
                 if (da >= -128 && da <= 127) {
                     emit_mov_reg_mem8(cb, JIT_RAX, JIT_RBP, (int8_t)da);
@@ -1888,6 +1952,7 @@ static int compile_loop(CodegenCtx* ctx) {
             /* ---- Back-edge: OP_LOOP ---- */
             case OP_LOOP: {
                 /* Unconditional jump to loop start */
+                TOS_SPILL();  /* back-edge: loop entry expects tos_live=0 */
                 int patch = emit_jmp(cb);
                 /* Target is loop_start_mc */
                 patch_rel32(cb, patch, ctx->loop_start_mc);
@@ -1897,6 +1962,7 @@ static int compile_loop(CodegenCtx* ctx) {
             /* ---- Back-edge: OP_FOR_LOOP ---- */
             case OP_FOR_LOOP: {
                 /* Increment loop_var by step, compare with end, conditional jump */
+                TOS_SPILL();  /* back-edge: clobbers RAX/RDX, loop entry expects tos_live=0 */
                 int si_lv = sr->local_map[sr->for_loop_var_slot];
                 int si_st = sr->local_map[sr->for_step_slot];
                 int si_en = sr->local_map[sr->for_end_slot];
@@ -1959,6 +2025,7 @@ static int compile_loop(CodegenCtx* ctx) {
     }
 
     /* Clean up any remaining virtual stack */
+    TOS_SPILL();  /* flush TOS to memory stack before cleanup */
     if (vstack > 0) {
         /* add rsp, vstack*8 */
         if (vstack * 8 <= 127) {

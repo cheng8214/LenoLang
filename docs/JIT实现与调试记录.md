@@ -14,7 +14,9 @@
 - [7. 调试方法](#7-调试方法)
 - [8. 踩坑记录与解决方案](#8-踩坑记录与解决方案)
 - [9. 性能数据](#9-性能数据)
-- [10. 待办与未来方向](#10-待办与未来方向)
+- [10. 架构瓶颈分析](#10-架构瓶颈分析)
+- [11. 优化路线图](#11-优化路线图)
+- [12. 当前未解决问题](#12-当前未解决问题)
 
 ---
 
@@ -605,24 +607,91 @@ Results: 261 passed, 0 failed (total 261)
 
 ---
 
-## 10. 待办与未来方向
+## 10. 架构瓶颈分析
 
-### 当前未解决的问题
+当前 JIT 是 **loop-body template JIT**，只编译单个循环体、用 push/pop 虚拟栈、单回边。存在三个结构性天花板：
+
+### 瓶颈 1：只能编译扁平循环，不能跨控制流
+
+`scan_loop_body` 在遇到 `OP_FOR_PREP`（嵌套 for）或 body 中途出现 `OP_LOOP`/`OP_FOR_LOOP`（嵌套 while）时直接 `capable=0` 拒绝编译。任何"for 里套 for"或"while 里套 while"的代码都无法 JIT。
+
+### 瓶颈 2：不支持函数调用，递归函数永远无提速
+
+`OP_CALL`、`OP_RETURN`、`OP_CALL_GLOBAL_FUNC` 在 JIT 中完全不存在。fib(30) 是递归调用，每次递归都走 VM 的 `call()` → 新建 CallFrame → 解释执行 → `OP_RETURN` 回到调用者。JIT 只在 `OP_LOOP`/`OP_FOR_LOOP` 处触发，递归函数里根本没有循环回边可以触发 JIT。即使通过 callout 实现 OP_CALL，每次递归调用都要保存虚拟栈 → 切到 VM 执行 → 恢复虚拟栈，开销比纯解释执行还大。
+
+### 瓶颈 3：push/pop 虚拟栈是性能杀手
+
+当前 codegen 中 `a + b` 实际生成的指令序列：
+
+```
+push a      ; 内存写 [rsp-8]
+push b      ; 内存写 [rsp-8]
+pop rax     ; 内存读 [rsp]
+pop rdx     ; 内存读 [rsp]
+add rax,rdx
+push rax    ; 内存写
+```
+
+4 次内存操作做一次加法。while 循环只有 ~2x 提速的根本原因：JIT 省的是 dispatch 开销，没省内存开销。LuaJIT 快是因为 register-based bytecode + 线性扫描寄存器分配，运算几乎全在寄存器里完成。
+
+---
+
+## 11. 优化路线图
+
+按投入产出比排序：
+
+### P0：虚拟栈寄存器化（预计提速 3-5x）
+
+- **目标**：维护 register cache，栈顶 1-2 个元素常驻 RAX/RDX，不下推到内存
+- **改动范围**：只改 codegen 中的 push/pop 语义，不碰 scan 逻辑和 bailout 机制
+- **实现要点**：
+  - `push` → 如果 RAX 空，放 RAX；否则 spill 栈顶到 `[rsp]` 再放 RAX
+  - `pop` → 如果 RAX 有值，取 RAX；否则从 `[rsp]` 加载
+  - 二元运算（ADD/SUB/MUL）→ 左操作数在 RAX，右操作数在 RDX，直接 `add rax,rdx`，0 次内存操作
+- **状态**：实施中
+
+### P1：嵌套循环支持（解锁大量真实代码）
+
+- **目标**：for 套 for、while 套 while 能被 JIT 编译
+- **改动范围**：scan + codegen 的 loop patch 表
+- **实现要点**：
+  - `OP_FOR_PREP` 不再拒绝，记录为内层循环入口，跳过初始化字节
+  - body 中途出现 `OP_LOOP`/`OP_FOR_LOOP` 时，记录为内层回边
+  - codegen 需要一个 loop stack（记录每层循环的 `loop_start_mc` 和 `exit_mc`）
+  - 正确处理内层循环退出后回到外层循环体的跳转
+
+### P2：OP_CALL callout（让更多代码进入 JIT 路径）
+
+- **目标**：循环体中遇到 OP_CALL 不再整个循环拒绝编译
+- **改动范围**：利用现有 callout 基础设施
+- **注意**：能让 fib"跑通"JIT 路径但不会提速——callout 开销远大于解释执行省下的 dispatch 开销
+
+### P3：架构方向决定——函数级 JIT（method JIT）
+
+| 方向 | 代表 | 工作量 | 收益 | 适合场景 |
+|------|------|--------|------|---------|
+| 继续改进 loop JIT | 当前 | 低 | 中（2-5x） | 算术密集循环 |
+| 函数级 JIT | V8 TurboFan / PyPy | 中-高 | 高（10x+） | 通用 |
+| Trace JIT | LuaJIT | 很高 | 很高（20x+） | 通用+递归 |
+
+**不推荐 Trace JIT**：Mike Pall 花了几年全职才做出来，需要 trace recording、SSA IR、trace stitching、snapshot-based deoptimization、trace exit 修复，一个人无法完成。
+
+**推荐函数级 JIT**：
+- 天然解决嵌套循环（编译整个函数体，循环只是函数内跳转）
+- 可支持函数间调用（JIT 函数调用 JIT 函数，开销远低于 callout）
+- 可做叶子函数内联
+- 不需要 trace recording，可用现有 codegen 基础设施扩展
+- 渐进式迁移（先编译最热的几个函数）
+- 核心改变：触发点改为函数被调用 N 次后编译整个函数体；编译范围从 `OP_CALL` 到 `OP_RETURN`；OP_CALL 走快路径（已 JIT 函数直接 `call jit_fn`）或慢路径（callout 到 VM）；用 simple linear-sscan allocator 把局部变量分配到 callee-saved 寄存器
+
+---
+
+## 12. 当前未解决问题
 
 1. **try/catch 循环（body_start=27）**：异常处理涉及 VM 异常栈和 try/catch 表，暂不支持
-2. **嵌套循环（body_start=1260, 1156）**：OP_LOOP mid-body 和 OP_FOR_PREP 拒绝，设计上暂不支持
-3. **while 比 for 慢约 2 倍**：`OP_GET_GLOBAL` 每次 NaN-box 解码开销，未优化
-4. **body_start=1156 编译失败**：具体原因未完全定位（无 scan FAIL 和 codegen FAIL 消息）
-
-### 未来优化方向
-
-1. **更多 callout**：OP_GET_PROPERTY、OP_CALL、OP_MODULE_CALL 等
-2. **寄存器分配**：当前虚拟栈全部 push/pop，可改为寄存器缓存热值
-3. **Loop 粒度提升**：支持嵌套循环和 try/catch 循环
-4. **Tiered compilation**：解释器 → 轻量 JIT（快速编译） → 优化 JIT（重度优化）
-5. **类型反馈**：记录 bailout 时的类型信息，用于后续编译的类型特化
-6. **Inlining**：热函数内联到循环体中
-7. **参考 LuaJIT**：考虑 trace-based JIT（记录执行路径而非循环体），可处理跨函数边界的热路径
+2. **body_start=1156 编译失败**：具体原因未完全定位（无 scan FAIL 和 codegen FAIL 消息）
+3. **fib_iterative(1000) 3 次 bailout**：斐波那契值约 fib(56) 溢出 int48（超 2^47），属预期行为
+4. **while 比 for 慢约 2 倍**：`OP_GET_GLOBAL` 每次 NaN-box 解码开销，P0 寄存器化后有望缓解
 
 ---
 

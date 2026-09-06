@@ -1,5 +1,5 @@
 import times
-int csnum=10000000
+int csnum=100000000
 main()
 {
     print("======== 算术运算与赋值性能分析 ========")
@@ -411,8 +411,8 @@ func whileandfor()
 
     t1=times.ms()
     var count=0
-    for 1000 {
-        for 1000 {
+    for 10000 {
+        for 10000 {
             count++
         }
     }
@@ -423,9 +423,9 @@ func whileandfor()
     count=0
     t1=times.ms()
     i=0
-    while i < 1000 {
+    while i < 10000 {
         var m=0
-        while m < 1000 {
+        while m < 10000 {
             count++
             m++
         }
