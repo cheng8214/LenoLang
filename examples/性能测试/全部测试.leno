@@ -150,10 +150,10 @@ main()
 
     print("")
     print("======== 下一个测试=======")
+    fibtest()
     test1()
     trytest()
     whileandfor()
-    fibtest()
 }
 func test1()
 {

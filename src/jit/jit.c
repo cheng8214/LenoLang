@@ -215,7 +215,7 @@ static int opcode_size(uint8_t op) {
         case OP_TRY:   /* catch_offset(2) + finally_offset(2) */
             return 5;
         /* 1-byte try/catch (no operands) */
-        case OP_CATCH: case OP_END_TRY:
+        case OP_CATCH: case OP_FINALLY: case OP_END_TRY:
             return 1;
         /* 7-byte (OP_FOR_LOOP) */
         case OP_FOR_LOOP:
@@ -361,14 +361,13 @@ static void scan_loop_body(const uint8_t* body_start, int body_size,
                 break;
             case OP_TRY:
             case OP_CATCH:
+            case OP_FINALLY:
             case OP_END_TRY:
-                /* Exception handling involves complex VM state (exception
-                 * handler stack, try/catch tables) that the JIT cannot
-                 * safely replicate. Reject the entire loop. */
-                if (getenv("LENO_JIT_DEBUG"))
-                    fprintf(stderr, "[JIT-DEBUG] scan FAIL: try/catch opcode %d at offset %d\n", op, (int)(ip - body_start));
-                r->capable = 0;
-                return;
+                /* Exception handling opcodes: treated as no-ops in JIT.
+                 * The JIT skips try/catch/finally setup; if an exception
+                 * actually occurs (from a callout), the JIT will bail out
+                 * and the interpreter re-executes with full try/catch. */
+                break;
             case OP_FOR_PREP:
                 /* Inner for-loop init: mark locals, no stack change.
                  * Codegen handles init + condition check + skip jump. */
@@ -2060,6 +2059,19 @@ static int compile_loop(CodegenCtx* ctx) {
                 patch_rel32(cb, patch, target_mc);
                 break;
             }
+
+            /* ---- Exception handling opcodes (no-op in JIT) ---- */
+            /* The JIT skips try/catch/finally setup entirely.
+             * In normal execution (no exception), these are effectively
+             * no-ops: OP_TRY sets up catch_ip (skipped), OP_JUMP after
+             * try body skips the catch body, OP_END_TRY restores state.
+             * If an exception occurs from a callout, the JIT bails out
+             * and the interpreter re-executes with full try/catch. */
+            case OP_TRY:
+            case OP_CATCH:
+            case OP_FINALLY:
+            case OP_END_TRY:
+                break;
 
             default:
                 /* Should not reach here if scan passed */
