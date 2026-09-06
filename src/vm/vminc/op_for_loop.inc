@@ -54,7 +54,14 @@ OPCODE(OP_FOR_LOOP) {
     uint16_t jump_offset = READ_SHORT();
 
     /* JIT: try to run a compiled hot loop */
-    if (jit_try_hot_loop(frame, &vm, (int32_t)jump_offset, 2)) {
+    int jit_r = jit_try_hot_loop(frame, &vm, (int32_t)jump_offset, 2);
+    if (jit_r == 1) {
+        DISPATCH;
+    }
+    if (jit_r == 2) {
+        /* JIT 循环内函数调用抛出异常，控制流已转移到新的当前帧
+         * （宿主帧 catch_ip 或外层 handler 帧）：重载 frame 后直接继续 */
+        frame = &vm.frames[vm.frame_cnt - 1];
         DISPATCH;
     }
 

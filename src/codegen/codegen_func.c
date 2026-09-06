@@ -24,14 +24,14 @@ static int ast_list_has_try(AstList* list) {
 // 递归检查 AST 中是否包含 try 语句
 static int ast_has_try(Ast* ast) {
     if (!ast) return 0;
-    
+
     switch (ast->kind) {
         case AST_TRY:
             return 1;
         case AST_BLOCK:
             return ast_list_has_try(&ast->u.block);
         case AST_IF:
-            return ast_has_try(ast->u.if_.then) || 
+            return ast_has_try(ast->u.if_.then) ||
                    ast_has_try(ast->u.if_.else_);
         case AST_WHILE:
             return ast_has_try(ast->u.while_.body);
@@ -43,6 +43,170 @@ static int ast_has_try(Ast* ast) {
         case AST_CLIB_DEF:
         default:
             return 0;
+    }
+}
+
+// 统计函数体内所有 return 语句的返回值个数（含"必返"分析）。
+// 返回值：
+//   -2  函数体没有 return 语句（隐式返回 null，按 1 个返回值处理见调用处）
+//   -1  各 return 的返回值个数不一致，无法静态确定
+//   >=0 所有 return 一致的返回值个数
+// *must（出参，可 NULL）：
+//   1 = 该子树所有执行路径都终止于 return（不存在 fall-through 到函数尾的路径）
+//   0 = 存在 fall-through 路径（if 无 else / 循环 0 次迭代 / switch 无匹配
+//       case / try 异常路径等），函数可能隐式返回 1 个 null
+//
+// 必返分析的必要性：
+//   func f(arr) { for a in arr { return 1, 2 } }
+//   若只统计显式 return 会得 2，但循环 0 次迭代时实际隐式返回 1 个 null，
+//   运行时存在两种返回个数。调用处必须结合 must 判定：
+//   存在 fall-through 且显式个数 != 1 时，return_count 只能是 -1。
+static int ast_return_count_in_block(AstList* list, int* found, int* must);
+static int ast_return_count(Ast* ast, int* found, int* must);
+
+static int ast_return_count_in_block(AstList* list, int* found, int* must) {
+    int result = -2;  // -2 = 尚未遇到 return
+    int all_must = 0; // 是否已遇到必返语句（其后语句不可达）
+    for (int i = 0; i < list->count; i++) {
+        int m = 0;
+        int r = ast_return_count(list->items[i], found, &m);
+        if (r == -1) {
+            if (must) *must = all_must;  // 已不一致，must 已无意义，保持已扫描状态
+            return -1;  // 内部已不一致，直接传播
+        }
+        if (r >= 0) {
+            if (result == -2) result = r;
+            else if (result != r) {
+                if (must) *must = all_must;
+                return -1;
+            }
+        }
+        if (m) {
+            // 该语句必然以 return 终止，其后语句运行时不可达，
+            // 停止扫描（不可达代码里的 return 不影响运行时返回个数）
+            all_must = 1;
+            break;
+        }
+    }
+    if (must) *must = all_must;
+    return result;
+}
+
+static int ast_return_count(Ast* ast, int* found, int* must) {
+    if (must) *must = 0;
+    if (!ast) return -2;
+
+    switch (ast->kind) {
+        case AST_RETURN:
+            *found = 1;
+            if (must) *must = 1;
+            return 1;
+        case AST_RETURN_MULTI:
+            *found = 1;
+            if (must) *must = 1;
+            return ast->u.ret_multi.count;
+        case AST_BLOCK:
+            return ast_return_count_in_block(&ast->u.block, found, must);
+        case AST_IF: {
+            int m1 = 0, m2 = 0;
+            int r1 = ast_return_count(ast->u.if_.then, found, &m1);
+            if (r1 == -1) return -1;
+            int r2 = ast_return_count(ast->u.if_.else_, found, &m2);
+            if (r2 == -1) return -1;
+            if (r1 >= 0 && r2 >= 0 && r1 != r2) return -1;
+            if (must) *must = m1 && m2;  // then/else 都必返才必返（无 else 时 m2=0）
+            return (r1 >= 0) ? r1 : r2;
+        }
+        case AST_WHILE: {
+            // 循环可能 0 次迭代，恒非必返；体内 return 个数仍参与统计
+            int m = 0;
+            int r = ast_return_count(ast->u.while_.body, found, &m);
+            if (must) *must = 0;
+            return r;
+        }
+        case AST_FOR: {
+            // 同 AST_WHILE：0 次迭代路径存在，恒非必返
+            int m = 0;
+            int r = ast_return_count(ast->u.for_.body, found, &m);
+            if (must) *must = 0;
+            return r;
+        }
+        case AST_SWITCH: {
+            // 所有 case 分支 + default 的 return 都参与统计；
+            // 仅当有 default 且全部分支都必返时才必返（无 default 时
+            // 可能无匹配 case 直接跳出 → fall-through）
+            int result = -2;
+            int all_must = (ast->u.switch_.default_body != NULL);
+            for (int i = 0; i < ast->u.switch_.case_count; i++) {
+                int m = 0;
+                int r = ast_return_count(ast->u.switch_.cases[i].body, found, &m);
+                if (r == -1) {
+                    if (must) *must = 0;
+                    return -1;
+                }
+                if (r >= 0) {
+                    if (result == -2) result = r;
+                    else if (result != r) {
+                        if (must) *must = 0;
+                        return -1;
+                    }
+                }
+                if (!m) all_must = 0;  // 任一分支非必返则整体非必返
+            }
+            if (ast->u.switch_.default_body != NULL) {
+                int m = 0;
+                int r = ast_return_count(ast->u.switch_.default_body, found, &m);
+                if (r == -1) {
+                    if (must) *must = 0;
+                    return -1;
+                }
+                if (r >= 0) {
+                    if (result == -2) result = r;
+                    else if (result != r) {
+                        if (must) *must = 0;
+                        return -1;
+                    }
+                }
+                if (!m) all_must = 0;
+            }
+            if (must) *must = all_must;
+            return result;
+        }
+        case AST_TRY: {
+            // try/catch/finally 三个块的 return 都参与统计；
+            // 异常路径与 finally 覆盖语义复杂（finally 中 throw/return
+            // 可覆盖 try 的返回值），保守视为非必返
+            int result = -2;
+            int m = 0;
+            int r = ast_return_count(ast->u.try_.try_body, found, &m);
+            if (r == -1) return -1;
+            if (r >= 0) result = r;
+            if (ast->u.try_.catch_body != NULL) {
+                m = 0;
+                r = ast_return_count(ast->u.try_.catch_body, found, &m);
+                if (r == -1) return -1;
+                if (r >= 0) {
+                    if (result == -2) result = r;
+                    else if (result != r) return -1;
+                }
+            }
+            if (ast->u.try_.finally_body != NULL) {
+                m = 0;
+                r = ast_return_count(ast->u.try_.finally_body, found, &m);
+                if (r == -1) return -1;
+                if (r >= 0) {
+                    if (result == -2) result = r;
+                    else if (result != r) return -1;
+                }
+            }
+            if (must) *must = 0;
+            return result;
+        }
+        case AST_FUNC_DEF:
+            // 嵌套函数的 return 不属于本函数
+            return -2;
+        default:
+            return -2;
     }
 }
 
@@ -66,6 +230,25 @@ ObjFunction* gen_func_proto(CodeGen* gen, Ast* ast) {
     func->type_param_names = NULL;
     func->type_param_constraints = NULL;
     func->is_ctor = ast->u.func.is_ctor;
+
+    // 统计返回值个数（编译期确定，供 JIT 等消费方使用）
+    {
+        int found = 0;
+        int must = 0;
+        int rc = ast_return_count(ast->u.func.body, &found, &must);
+        if (rc == -1) {
+            func->return_count = -1;   // 各 return 个数不一致，无法静态确定
+        } else if (!found) {
+            func->return_count = 1;    // 无 return 语句，隐式返回 null（1 个值）
+        } else if (!must && rc != 1) {
+            // 存在 fall-through 路径（if 无 else / 循环 0 次迭代 / switch
+            // 无匹配 case / try 异常路径等），隐式返回 1 个 null 与显式
+            // rc 个返回值在运行时并存，无法静态确定
+            func->return_count = -1;
+        } else {
+            func->return_count = rc;   // 所有执行路径的返回值个数一致
+        }
+    }
 
     // 存储函数级泛型类型参数（如 func f[T, U] 中的 T, U）
     if (ast->u.func.type_param_count > 0 && ast->u.func.type_params) {

@@ -350,6 +350,8 @@ typedef struct {
     char** type_param_names;     // 函数级泛型类型参数名称数组（如 ["T"] 或 ["K","V"]）
     char** type_param_constraints; // 函数级泛型类型参数约束 face 名数组（如 ["Comparable"]，NULL 表示无约束）
     int is_ctor;              // 是否是构造函数（用于 OP_RETURN 返回 self）
+    int return_count;         // 返回值个数（编译期统计；所有 return 个数一致时记录，
+                               // 不一致或无法静态确定时为 -1。无 return 的函数为 0）
 } ObjFunction;
 
 // 原生函数类型

@@ -26,8 +26,15 @@
  *   Const:    CONST (only if int constant)
  *
  * NOT supported (causes scan to reject the loop):
- *   DIV_INT (returns float), any float/string/object operation,
- *   function calls, exceptions, etc.
+ *   any string/object operation not listed above, exceptions, etc.
+ *
+ * Callout-based opcodes (fallback to C helpers):
+ *   DIV (runtime type dispatch: int/int, float mix, BigInt),
+ *   INDEX, ARRAY_APPEND_NOPUSH, DICT_SET
+ *
+ * NOT supported (call-heavy loops stay interpreted):
+ *   CALL_GLOBAL_FUNC / CALL_GLOBAL_FUNC_TYPED —— callout 重入解释循环的
+ *   单次开销远大于解释器原生调用路径，负优化；待内联实现后再支持
  */
 #include "jit.h"
 #include "jit_mem.h"
@@ -153,6 +160,51 @@ static Value jit_callout_dict_set(Value dict_val, Value key_val, Value value) {
     return dict_val;
 }
 
+/* Callout: OP_DIV (通用除法，运行时类型分发: int/int, float 混合, BigInt).
+ * 语义与 VM 的 OP_DIV 一致；出错时记录错误并返回 NULL_VAL（与其它 callout 一致）。 */
+static Value jit_callout_div(Value a, Value b) {
+    /* int / int = int（整数除法，向零取整） */
+    if (val_is_int(a) && val_is_int(b)) {
+        int64_t b_val = val_as_int(b);
+        if (b_val == 0) {
+            error_add_at(ERR_RUNTIME, 0, 0, "除零错误：除数为 0");
+            return NULL_VAL;
+        }
+        int64_t a_val = val_as_int(a);
+        return val_int(a_val / b_val);
+    }
+    /* float / 任意 = float */
+    if (val_is_float(a) || val_is_float(b)) {
+        double b_val = val_as_num_ex(b);
+        if (b_val == 0) {
+            error_add_at(ERR_RUNTIME, 0, 0, "除零错误：除数为 0");
+            return NULL_VAL;
+        }
+        double result = val_as_num_ex(a) / b_val;
+        return val_float(result);
+    }
+    /* BigInt / BigInt（promote_to_bigint 是 vm 内部 static inline，这里等价内联） */
+    if (val_is_bigint(a) || val_is_bigint(b)) {
+        if (val_is_bigint(b)) {
+            ObjBigInt* bb = val_as_bigint(b);
+            if (bb->limb_count == 1 && bb->limbs[0] == 0) {
+                error_add_at(ERR_RUNTIME, 0, 0, "除零错误：除数为 0");
+                return NULL_VAL;
+            }
+        } else if (val_as_num(b) == 0) {
+            error_add_at(ERR_RUNTIME, 0, 0, "除零错误：除数为 0");
+            return NULL_VAL;
+        }
+        ObjBigInt* ba = val_is_bigint(a) ? val_as_bigint(a)
+                                         : bigint_from_int64((int64_t)val_as_num(a));
+        ObjBigInt* bb = val_is_bigint(b) ? val_as_bigint(b)
+                                         : bigint_from_int64((int64_t)val_as_num(b));
+        return bigint_div(ba, bb);
+    }
+    error_add_at(ERR_RUNTIME, 0, 0, "操作数必须是数字");
+    return NULL_VAL;
+}
+
 /* ---- Cache hash ---- */
 static int cache_hash(const uint8_t* ip) {
     uintptr_t v = (uintptr_t)ip;
@@ -187,6 +239,7 @@ static int opcode_size(uint8_t op) {
         case OP_EQ_FLOAT: case OP_LT_FLOAT: case OP_GT_FLOAT:
         case OP_LE_FLOAT: case OP_GE_FLOAT:
         case OP_CAST_FLOAT: /* int → float */
+        case OP_DIV:  /* 通用除法，运行时类型分发 (callout) */
         case OP_INC:  /* ++ (stack-top) */
         case OP_DEC:  /* -- (stack-top) */
         case OP_NOT:  /* logical NOT */
@@ -213,6 +266,8 @@ static int opcode_size(uint8_t op) {
         case OP_JUMP: case OP_JUMP_IF_FALSE: case OP_JUMP_IF_TRUE:
         case OP_LOOP:
         case OP_TRY:   /* catch_offset(2) + finally_offset(2) */
+        case OP_CALL_GLOBAL_FUNC:        /* func_slot(2) + arg_count(2) (callout) */
+        case OP_CALL_GLOBAL_FUNC_TYPED:  /* func_slot(2) + arg_count(2) (callout) */
             return 5;
         /* 1-byte try/catch (no operands) */
         case OP_CATCH: case OP_FINALLY: case OP_END_TRY:
@@ -271,7 +326,7 @@ static void mark_local(ScanResult* r, int slot) {
  * back_edge:  1=OP_LOOP, 2=OP_FOR_LOOP
  */
 static void scan_loop_body(const uint8_t* body_start, int body_size,
-                           int back_edge, ScanResult* r) {
+                           int back_edge, ScanResult* r, VM* vm_ptr) {
     memset(r, 0, sizeof(*r));
     r->capable = 1;
     r->back_edge_type = back_edge;
@@ -342,6 +397,10 @@ static void scan_loop_body(const uint8_t* body_start, int body_size,
             case OP_CAST_FLOAT:
                 /* int → float, pop 1 push 1 → net 0 */
                 break;
+            case OP_DIV:
+                /* 通用除法 (callout): pop 2 push 1 → net -1 */
+                vstack -= 1;
+                break;
             case OP_INC: case OP_DEC:
                 /* stack-top ++/--: pop 1 push 1 → net 0 */
                 break;
@@ -360,6 +419,19 @@ static void scan_loop_body(const uint8_t* body_start, int body_size,
                 /* pop 3 (dict, key, value), push 1 (dict) → net -2 */
                 vstack -= 2;
                 break;
+            case OP_CALL_GLOBAL_FUNC:
+            case OP_CALL_GLOBAL_FUNC_TYPED:
+                /* 函数调用：JIT 暂不支持含调用的循环。
+                 * 实测 callout 方案（vm_call_value 重入解释循环）单次调用开销
+                 * 约为解释器原生 OP_CALL 路径的 20~30 倍，调用密集循环 JIT 后
+                 * 反而大幅负优化（基准 Phase B: 859ms → 18000ms）。
+                 * 待实现被调函数内联（把 callee 字节码直接编进宿主循环）后再支持；
+                 * 届时返回值个数可用 ObjFunction.return_count（编译期已确定）。 */
+                if (getenv("LENO_JIT_DEBUG"))
+                    fprintf(stderr, "[JIT-DEBUG] scan FAIL: call in loop at offset %d (inlining not implemented)\n",
+                            (int)(ip - body_start));
+                r->capable = 0;
+                return;
             case OP_TRY:
             case OP_CATCH:
             case OP_FINALLY:
@@ -547,6 +619,8 @@ typedef struct {
     int loop_start_mc;   /* machine code offset of loop body start */
     int exit_mc;         /* machine code offset of exit code */
     int bailout_mc;      /* machine code offset of bailout code */
+    int framedead_mc;    /* machine code offset of frame-dead exit (write back, ret 2) */
+    int framedead_nowb_mc; /* machine code offset of frame-dead exit (no write back, ret 3) */
     const ScanResult* sr;
     const uint8_t* body_start;
     Chunk* chunk;        /* for constant table access */
@@ -770,7 +844,7 @@ static int compile_loop(CodegenCtx* ctx) {
     emit_push_reg(cb, JIT_R14);              /* push r14 (callout: saved R9=globals) */
     emit_mov_rbp_rsp(cb);                     /* mov rbp, rsp      */
     /* Allocate: scratch area (n*8) + max_vstack*8 + callout temps (3*8), rounded to 16 */
-    int frame_sz = n * 8 + sr->max_vstack * 8 + 16 + 24;  /* +24 for callout temps */
+    int frame_sz = n * 8 + sr->max_vstack * 8 + 16 + 24;
     frame_sz = (frame_sz + 15) & ~15;        /* align to 16 */
     if (frame_sz <= 127) {
         emit_sub_rsp_imm8(cb, (uint8_t)frame_sz);
@@ -893,8 +967,13 @@ static int compile_loop(CodegenCtx* ctx) {
     /* The JIT is triggered at OP_FOR_LOOP BEFORE the interpreter does the increment.
      * So the JIT must do the increment itself on the first iteration to avoid
      * re-running the body with the same loop_var value the interpreter already used.
+     *
+     * Nesting support: when an inner for-loop (OP_FOR_PREP) is nested inside
+     * the JIT body, its initial-condition check also emits a Jcc that must be
+     * patched to the exit point.  We keep a small stack of these patches.
      */
-    int for_loop_entry_patch = -1;  /* patch for "exit if loop done" */
+    int for_loop_entry_patches[8];
+    int for_loop_patch_cnt = 0;
     if (sr->back_edge_type == 2) {
         int si_lv = sr->local_map[sr->for_loop_var_slot];
         int si_st = sr->local_map[sr->for_step_slot];
@@ -932,7 +1011,7 @@ static int compile_loop(CodegenCtx* ctx) {
         /* step > 0, exclusive: JGE (loop_var >= end) → exit */
         /* step > 0, inclusive: JG  (loop_var > end) → exit  */
         uint8_t cc_exit = sr->for_inclusive ? 0x8F /*JG*/ : 0x8D /*JGE*/;
-        for_loop_entry_patch = emit_jcc(cb, cc_exit);
+        for_loop_entry_patches[for_loop_patch_cnt++] = emit_jcc(cb, cc_exit);
         /* Will be patched to exit_mc later */
     }
 
@@ -1358,6 +1437,26 @@ static int compile_loop(CodegenCtx* ctx) {
                 TOS_PRODUCE();
                 vstack--;
                 break;
+            case OP_DIV: {
+                /* 通用除法 callout: 运行时类型分发 (int/int, float 混合, BigInt) */
+                TOS_SPILL();
+                emit_pop_reg(cb, JIT_RAX);   /* b (divisor) */
+                EMIT_RAW_TO_VALUE();
+                EMIT_STORE_TMP(tmp1_disp, JIT_RAX);
+                emit_pop_reg(cb, JIT_RAX);   /* a (dividend) */
+                EMIT_RAW_TO_VALUE();
+                emit_mov_rr(cb, JIT_RDX, JIT_RAX);
+                EMIT_LOAD_TMP(JIT_R8, tmp1_disp);
+                EMIT_CALLOUT_BEGIN();
+                emit_mov_rr(cb, JIT_RCX, JIT_RDX);   /* a */
+                emit_mov_rr(cb, JIT_RDX, JIT_R8);    /* b */
+                EMIT_CALL(jit_callout_div);
+                EMIT_CALLOUT_END();
+                EMIT_VALUE_TO_RAW();
+                TOS_PRODUCE();
+                vstack--;
+                break;
+            }
             case OP_NEG_FLOAT:
                 TOS_CONSUME_RAX();
                 /* movq xmm0, rax */
@@ -1846,15 +1945,31 @@ static int compile_loop(CodegenCtx* ctx) {
                 int32_t off = rd_int32(ip + 1);
                 int target_bc = bc_off + size + off;
                 if (tos_live) {
-                    /* RAX already holds the condition value */
+                    /* RAX already holds the condition value.
+                     * Proper falsey check: NaN-boxed FALSE_VAL (0xFFF9..)
+                     * and NULL_VAL (0xFFF8..) are non-zero, so a simple
+                     * test rax,rax is insufficient. Must also compare
+                     * against FALSE_VAL and NULL_VAL. */
                     emit_test_rr(cb, JIT_RAX, JIT_RAX);
-                    int jnz_patch = emit_jcc(cb, 0x85);  /* JNZ = skip if true */
-                    /* Jump path: push condition to stack for jump target
+                    int jz_patch = emit_jcc(cb, 0x84);   /* JZ = falsey (zero: int 0 / float +0.0) */
+                    emit_mov_reg_imm64(cb, JIT_R8, FALSE_VAL);
+                    emit_cmp_rr(cb, JIT_RAX, JIT_R8);
+                    int je1_patch = emit_jcc(cb, 0x84);  /* JE = falsey (FALSE_VAL) */
+                    emit_mov_reg_imm64(cb, JIT_R8, NULL_VAL);
+                    emit_cmp_rr(cb, JIT_RAX, JIT_R8);
+                    int je2_patch = emit_jcc(cb, 0x84);  /* JE = falsey (NULL_VAL) */
+                    /* Truthy: jump over falsey code */
+                    int truthy_jmp = emit_jmp(cb);
+                    /* Falsey path: push condition to stack for jump target
                      * (target may have tos_live=0 from linear codegen) */
+                    patch_rel32(cb, jz_patch, cb->len);
+                    patch_rel32(cb, je1_patch, cb->len);
+                    patch_rel32(cb, je2_patch, cb->len);
                     emit_push_reg(cb, JIT_RAX);
                     int jmp_patch = emit_jmp(cb);
                     patch_add(ctx, jmp_patch, target_bc, 0);
-                    patch_rel32(cb, jnz_patch, cb->len);
+                    /* Patch truthy jump to here */
+                    patch_rel32(cb, truthy_jmp, cb->len);
                     /* Fall-through: tos_live stays 1, next OP_POP will TOS_DISCARD */
                 } else {
                     /* Value on memory stack: peek + conditional jump (no pop) */
@@ -1863,11 +1978,23 @@ static int compile_loop(CodegenCtx* ctx) {
                     emit_byte(cb, 0x04);
                     emit_byte(cb, 0x24);  /* mov rax, [rsp] */
                     emit_test_rr(cb, JIT_RAX, JIT_RAX);
-                    int jnz_patch = emit_jcc(cb, 0x85);
-                    /* Jump path: value stays on stack for target POP */
+                    int jz_patch = emit_jcc(cb, 0x84);
+                    emit_mov_reg_imm64(cb, JIT_R8, FALSE_VAL);
+                    emit_cmp_rr(cb, JIT_RAX, JIT_R8);
+                    int je1_patch = emit_jcc(cb, 0x84);
+                    emit_mov_reg_imm64(cb, JIT_R8, NULL_VAL);
+                    emit_cmp_rr(cb, JIT_RAX, JIT_R8);
+                    int je2_patch = emit_jcc(cb, 0x84);
+                    /* Truthy: jump over falsey code */
+                    int truthy_jmp = emit_jmp(cb);
+                    /* Falsey path: value stays on stack for target POP */
+                    patch_rel32(cb, jz_patch, cb->len);
+                    patch_rel32(cb, je1_patch, cb->len);
+                    patch_rel32(cb, je2_patch, cb->len);
                     int jmp_patch = emit_jmp(cb);
                     patch_add(ctx, jmp_patch, target_bc, 0);
-                    patch_rel32(cb, jnz_patch, cb->len);
+                    /* Patch truthy jump to here */
+                    patch_rel32(cb, truthy_jmp, cb->len);
                     /* Fall-through: value still on stack, next OP_POP pops it */
                 }
                 break;
@@ -1876,14 +2003,25 @@ static int compile_loop(CodegenCtx* ctx) {
                 int32_t off = rd_int32(ip + 1);
                 int target_bc = bc_off + size + off;
                 if (tos_live) {
-                    /* RAX already holds the condition value */
+                    /* RAX already holds the condition value.
+                     * If falsey (zero, FALSE_VAL, NULL_VAL): skip jump.
+                     * Otherwise (truthy): push and jump to target. */
                     emit_test_rr(cb, JIT_RAX, JIT_RAX);
-                    int jz_patch = emit_jcc(cb, 0x84);  /* JZ = skip if false */
-                    /* Jump path: push condition to stack for jump target */
+                    int jz_patch = emit_jcc(cb, 0x84);   /* JZ = falsey (zero) */
+                    emit_mov_reg_imm64(cb, JIT_R8, FALSE_VAL);
+                    emit_cmp_rr(cb, JIT_RAX, JIT_R8);
+                    int je1_patch = emit_jcc(cb, 0x84);  /* JE = falsey (FALSE_VAL) */
+                    emit_mov_reg_imm64(cb, JIT_R8, NULL_VAL);
+                    emit_cmp_rr(cb, JIT_RAX, JIT_R8);
+                    int je2_patch = emit_jcc(cb, 0x84);  /* JE = falsey (NULL_VAL) */
+                    /* Truthy: push condition to stack and jump to target */
                     emit_push_reg(cb, JIT_RAX);
                     int jmp_patch = emit_jmp(cb);
                     patch_add(ctx, jmp_patch, target_bc, 0);
+                    /* Patch all falsey jumps to here (skip) */
                     patch_rel32(cb, jz_patch, cb->len);
+                    patch_rel32(cb, je1_patch, cb->len);
+                    patch_rel32(cb, je2_patch, cb->len);
                     /* Fall-through: tos_live stays 1 */
                 } else {
                     /* Value on memory stack: peek + conditional jump (no pop) */
@@ -1893,10 +2031,19 @@ static int compile_loop(CodegenCtx* ctx) {
                     emit_byte(cb, 0x24);  /* mov rax, [rsp] */
                     emit_test_rr(cb, JIT_RAX, JIT_RAX);
                     int jz_patch = emit_jcc(cb, 0x84);
-                    /* Jump path: value stays on stack for target POP */
+                    emit_mov_reg_imm64(cb, JIT_R8, FALSE_VAL);
+                    emit_cmp_rr(cb, JIT_RAX, JIT_R8);
+                    int je1_patch = emit_jcc(cb, 0x84);
+                    emit_mov_reg_imm64(cb, JIT_R8, NULL_VAL);
+                    emit_cmp_rr(cb, JIT_RAX, JIT_R8);
+                    int je2_patch = emit_jcc(cb, 0x84);
+                    /* Truthy: value stays on stack, jump to target */
                     int jmp_patch = emit_jmp(cb);
                     patch_add(ctx, jmp_patch, target_bc, 0);
+                    /* Patch all falsey jumps to here (skip) */
                     patch_rel32(cb, jz_patch, cb->len);
+                    patch_rel32(cb, je1_patch, cb->len);
+                    patch_rel32(cb, je2_patch, cb->len);
                     /* Fall-through: value still on stack, next OP_POP pops it */
                 }
                 break;
@@ -2146,9 +2293,9 @@ static int compile_loop(CodegenCtx* ctx) {
     /* ---- Exit code ---- */
     ctx->exit_mc = cb->len;
 
-    /* Patch FOR_LOOP entry "exit if done" jump to here */
-    if (for_loop_entry_patch >= 0) {
-        patch_rel32(cb, for_loop_entry_patch, ctx->exit_mc);
+    /* Patch FOR_LOOP entry "exit if done" jumps to here */
+    for (int _i = 0; _i < for_loop_patch_cnt; _i++) {
+        patch_rel32(cb, for_loop_entry_patches[_i], ctx->exit_mc);
     }
 
     /* Clean up any remaining virtual stack */
@@ -2168,50 +2315,55 @@ static int compile_loop(CodegenCtx* ctx) {
         }
     }
 
-    /* Write back all locals (type-aware via RBX bitmap) */
-    for (int i = 0; i < n; i++) {
-        int slot = sr->local_slots[i];
-        int disp = scratch_disp(i);
-        int sd = slot * 8;
-        /* BT RBX, i → CF = bit i (48 0F BA E3 imm8) */
-        emit_byte(cb, 0x48);
-        emit_byte(cb, 0x0F);
-        emit_byte(cb, 0xBA);
-        emit_byte(cb, 0xE3);  /* ModRM(11, 4, 3) = BT RBX, imm8 */
-        emit_byte(cb, (uint8_t)i);
-        /* jc .float_wb (rel8 placeholder) */
-        emit_byte(cb, 0x72);
-        int flt_patch = cb->len;
-        emit_byte(cb, 0x00);
-        /* Int path: load scratch, re-encode as NaN-boxed int */
-        if (disp >= -128 && disp <= 127)
-            emit_mov_reg_mem8(cb, JIT_RAX, JIT_RBP, (int8_t)disp);
-        else
-            emit_mov_reg_mem32(cb, JIT_RAX, JIT_RBP, disp);
-        emit_and_rr(cb, JIT_RAX, JIT_R10);
-        emit_or_rr(cb, JIT_RAX, JIT_R11);
-        if (sd >= -128 && sd <= 127)
-            emit_mov_mem8_reg(cb, JIT_RCX, (int8_t)sd, JIT_RAX);
-        else
-            emit_mov_mem32_reg(cb, JIT_RCX, sd, JIT_RAX);
-        /* jmp .next (rel8 placeholder) */
-        emit_byte(cb, 0xEB);
-        int next_patch = cb->len;
-        emit_byte(cb, 0x00);
-        /* .float_wb: patch jc to here */
-        cb->buf[flt_patch] = (uint8_t)(cb->len - (flt_patch + 1));
-        /* Float path: load raw double bits, store directly (no re-encode) */
-        if (disp >= -128 && disp <= 127)
-            emit_mov_reg_mem8(cb, JIT_RAX, JIT_RBP, (int8_t)disp);
-        else
-            emit_mov_reg_mem32(cb, JIT_RAX, JIT_RBP, disp);
-        if (sd >= -128 && sd <= 127)
-            emit_mov_mem8_reg(cb, JIT_RCX, (int8_t)sd, JIT_RAX);
-        else
-            emit_mov_mem32_reg(cb, JIT_RCX, sd, JIT_RAX);
-        /* .next: patch jmp to here */
-        cb->buf[next_patch] = (uint8_t)(cb->len - (next_patch + 1));
-    }
+    /* Write back all locals (type-aware via RBX bitmap) — 提取为宏，
+     * exit 块与 framedead 块（异常定向到宿主帧 catch 时）共用 */
+    #define EMIT_WRITEBACK_LOCALS() do { \
+        for (int _i = 0; _i < n; _i++) { \
+            int slot = sr->local_slots[_i]; \
+            int disp = scratch_disp(_i); \
+            int sd = slot * 8; \
+            /* BT RBX, i → CF = bit i (48 0F BA E3 imm8) */ \
+            emit_byte(cb, 0x48); \
+            emit_byte(cb, 0x0F); \
+            emit_byte(cb, 0xBA); \
+            emit_byte(cb, 0xE3);  /* ModRM(11, 4, 3) = BT RBX, imm8 */ \
+            emit_byte(cb, (uint8_t)_i); \
+            /* jc .float_wb (rel8 placeholder) */ \
+            emit_byte(cb, 0x72); \
+            int flt_patch = cb->len; \
+            emit_byte(cb, 0x00); \
+            /* Int path: load scratch, re-encode as NaN-boxed int */ \
+            if (disp >= -128 && disp <= 127) \
+                emit_mov_reg_mem8(cb, JIT_RAX, JIT_RBP, (int8_t)disp); \
+            else \
+                emit_mov_reg_mem32(cb, JIT_RAX, JIT_RBP, disp); \
+            emit_and_rr(cb, JIT_RAX, JIT_R10); \
+            emit_or_rr(cb, JIT_RAX, JIT_R11); \
+            if (sd >= -128 && sd <= 127) \
+                emit_mov_mem8_reg(cb, JIT_RCX, (int8_t)sd, JIT_RAX); \
+            else \
+                emit_mov_mem32_reg(cb, JIT_RCX, sd, JIT_RAX); \
+            /* jmp .next (rel8 placeholder) */ \
+            emit_byte(cb, 0xEB); \
+            int next_patch = cb->len; \
+            emit_byte(cb, 0x00); \
+            /* .float_wb: patch jc to here */ \
+            cb->buf[flt_patch] = (uint8_t)(cb->len - (flt_patch + 1)); \
+            /* Float path: load raw double bits, store directly (no re-encode) */ \
+            if (disp >= -128 && disp <= 127) \
+                emit_mov_reg_mem8(cb, JIT_RAX, JIT_RBP, (int8_t)disp); \
+            else \
+                emit_mov_reg_mem32(cb, JIT_RAX, JIT_RBP, disp); \
+            if (sd >= -128 && sd <= 127) \
+                emit_mov_mem8_reg(cb, JIT_RCX, (int8_t)sd, JIT_RAX); \
+            else \
+                emit_mov_mem32_reg(cb, JIT_RCX, sd, JIT_RAX); \
+            /* .next: patch jmp to here */ \
+            cb->buf[next_patch] = (uint8_t)(cb->len - (next_patch + 1)); \
+        } \
+    } while(0)
+
+    EMIT_WRITEBACK_LOCALS();
 
     /* Return 0 (success) */
     emit_xor_eax_eax(cb);
@@ -2238,12 +2390,51 @@ static int compile_loop(CodegenCtx* ctx) {
     emit_pop_rbp(cb);
     emit_ret(cb);
 
+    /* ---- Frame-dead exit: callout 异常且宿主帧存活（catch_ip 已定向）----
+     * 写回 locals 后返回 2；调用方（OP_LOOP/OP_FOR_LOOP handler）
+     * 重载 frame 后 DISPATCH，从宿主帧 catch_ip 继续执行 */
+    ctx->framedead_mc = cb->len;
+    EMIT_WRITEBACK_LOCALS();
+    /* Return 2 (frame-dead, host frame alive, locals written back) */
+    emit_mov_eax_imm32(cb, 2);
+    /* Epilogue: mov rsp, rbp; pop r14; pop r13; pop r12; pop rbx; pop rbp; ret */
+    emit_rr(cb, 0x89, JIT_RSP, JIT_RBP);
+    emit_pop_reg(cb, JIT_R14);
+    emit_pop_reg(cb, JIT_R13);
+    emit_pop_reg(cb, JIT_R12);
+    emit_pop_reg(cb, JIT_RBX);
+    emit_pop_rbp(cb);
+    emit_ret(cb);
+
+    /* ---- Frame-dead exit: callout 异常且宿主帧已被展开 ----
+     * 宿主帧 locals 已被异常展开释放，禁止写回；返回 3；
+     * 调用方重载 frame（外层 handler 帧）后 DISPATCH */
+    ctx->framedead_nowb_mc = cb->len;
+    /* Return 3 (frame-dead, host frame destroyed, no write back) */
+    emit_mov_eax_imm32(cb, 3);
+    /* Epilogue: mov rsp, rbp; pop r14; pop r13; pop r12; pop rbx; pop rbp; ret */
+    emit_rr(cb, 0x89, JIT_RSP, JIT_RBP);
+    emit_pop_reg(cb, JIT_R14);
+    emit_pop_reg(cb, JIT_R13);
+    emit_pop_reg(cb, JIT_R12);
+    emit_pop_reg(cb, JIT_RBX);
+    emit_pop_rbp(cb);
+    emit_ret(cb);
+
+    #undef EMIT_WRITEBACK_LOCALS
+
     /* ---- Patch all jumps ---- */
     for (int i = 0; i < ctx->patch_count; i++) {
         Patch* p = &ctx->patches[i];
         if (p->target_bc == -1) {
             /* Bailout target */
             patch_rel32(cb, p->patch_mc, ctx->bailout_mc);
+        } else if (p->target_bc == -2) {
+            /* Frame-dead (write back) target */
+            patch_rel32(cb, p->patch_mc, ctx->framedead_mc);
+        } else if (p->target_bc == -3) {
+            /* Frame-dead (no write back) target */
+            patch_rel32(cb, p->patch_mc, ctx->framedead_nowb_mc);
         } else if (p->target_bc >= 0 && p->target_bc < sr->body_size) {
             /* Intra-body jump */
             int target_mc = offmap_lookup(ctx, p->target_bc);
@@ -2272,9 +2463,9 @@ static int compile_loop(CodegenCtx* ctx) {
 
 /* ---- Compile a loop and cache the result ---- */
 static JitLoopFn jit_compile(CallFrame* frame, const uint8_t* body_start,
-                             int body_size, int back_edge) {
+                             int body_size, int back_edge, VM* vm_ptr) {
     ScanResult sr;
-    scan_loop_body(body_start, body_size, back_edge, &sr);
+    scan_loop_body(body_start, body_size, back_edge, &sr, vm_ptr);
     if (!sr.capable) {
         return NULL;
     }
@@ -2287,6 +2478,17 @@ static JitLoopFn jit_compile(CallFrame* frame, const uint8_t* body_start,
     ctx.chunk = frame->chunk;
 
     int ok = compile_loop(&ctx);
+
+    /* LENO_JIT_DUMP=1 时把生成的机器码写入 jitdump<N>.bin（供反汇编调试） */
+    if (getenv("LENO_JIT_DUMP") && ok && ctx.cb.len > 0) {
+        char dumpname[64];
+        snprintf(dumpname, sizeof(dumpname), "jitdump%d.bin", jit_state.compile_count);
+        FILE* f = fopen(dumpname, "wb");
+        if (f) {
+            fwrite(ctx.cb.buf, 1, (size_t)ctx.cb.len, f);
+            fclose(f);
+        }
+    }
 
     if (!ok || ctx.cb.len == 0) {
         if (getenv("LENO_JIT_DEBUG")) {
@@ -2420,7 +2622,7 @@ int jit_try_hot_loop(CallFrame* frame, VM* vm_ptr, int32_t loop_offset, int back
     /* Not compiled yet — try to compile (only once) */
     if (!entry->tried) {
         entry->tried = 1;
-        entry->fn = jit_compile(frame, body_start, body_size, back_edge);
+        entry->fn = jit_compile(frame, body_start, body_size, back_edge, vm_ptr);
         entry->is_compiled = (entry->fn != NULL);
         jit_state.compile_count++;
         if (getenv("LENO_JIT_DEBUG") && !entry->is_compiled)
@@ -2440,6 +2642,14 @@ int jit_try_hot_loop(CallFrame* frame, VM* vm_ptr, int32_t loop_offset, int back
     if (result == 0) {
         /* Success — frame->ip is already past the back-edge */
         return 1;
+    } else if (result == 2 || result == 3) {
+        /* 函数调用 callout 内抛出异常，控制流已转移到新的当前帧
+         * （宿主帧 catch_ip 或外层 handler 帧）。
+         * 不计入 bailout；返回 2 让调用方重载 frame 后继续执行 */
+        if (getenv("LENO_JIT_DEBUG"))
+            fprintf(stderr, "[JIT-DEBUG] FRAME-DEAD exit (%d) at body_start=%d\n",
+                    result, (int)(body_start - frame->chunk->code));
+        return 2;
     } else {
         /* Bailout — let interpreter handle it */
         entry->bailout_count++;

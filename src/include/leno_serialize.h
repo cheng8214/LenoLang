@@ -75,12 +75,12 @@
 // ============================================================================
 
 #define LENO_BIN_MAGIC      0x424E454C  // "LENB" little-endian
-#define LENO_BIN_VERSION    0x00020200  // v2.2.0 - CONST_TAG_INT 与 CONST_TAG_RANGE 改用 64 位存储 int48 值（修复 >= 2^31 被截断为 int32）
+#define LENO_BIN_VERSION    0x00020300  // v2.3.0 - ObjFunction 增加 return_count 字段（编译期统计的返回值个数，供 JIT 使用）
 #define LENO_BIN_EXT        ".lenb"
 
 // 模块编译缓存格式（.lenomc）—— 跨运行的模块编译产物缓存
 #define LENO_MODCACHE_MAGIC    0x434D4E4C  // "LNMC" little-endian
-#define LENO_MODCACHE_VERSION  0x00000001
+#define LENO_MODCACHE_VERSION  0x00000002  // v2 - ObjFunction 增加 return_count 字段（与 LENO_BIN_VERSION v2.3.0 同步）
 #define LENO_MODCACHE_EXT      ".lenomc"
 
 // 常量类型标签
