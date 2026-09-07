@@ -20,7 +20,7 @@
 //                    冻住.wav 冰冻, db.wav 爆炸, si.wav 漏怪, 怪物死亡.mp3 击杀,
 //                    升级.mp3 升级, 拾取.mp3 金币/宝箱, 小怪受击.mp3 受击, 波浪提示音.mp3 波次
 //
-// 素材生成：在本目录执行  leno.exe gen_assets.leno
+// 素材生成：在本目录执行  lenojit.exe gen_assets.leno
 
 import "../../../../lib/SDL3.leno" as SDL3
 import "../../../../lib/sdl_core.leno" as core

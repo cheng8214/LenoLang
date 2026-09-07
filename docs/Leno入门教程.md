@@ -10392,7 +10392,7 @@ func get_arg(int idx, string fallback) {
 }
 
 main() {
-    var leno = get_arg(0, "build\\leno.exe")
+    var leno = get_arg(0, "build\\lenojit.exe")
     var dir  = get_arg(1, "assert")
     
     int passed = 0
@@ -10416,7 +10416,7 @@ main() {
 }
 ```
 
-运行：`leno assert\run_tests.leno build\leno.exe assert`
+运行：`leno assert\run_tests.leno build\lenojit.exe assert`
 
 > **💡 用到的能力**：`dirs` 目录遍历、`strings` 字符串过滤、`_exec()` 执行外部命令、`_args()` 命令行参数
 

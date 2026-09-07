@@ -1,5 +1,5 @@
 main() {
-    var leno = "d:\\CLeno\\LenoC\\build\\leno.exe"
+    var leno = "d:\\CLeno\\LenoC\\build\\lenojit.exe"
     var test = "d:\\CLeno\\LenoC\\assert\\test_basic_types.leno"
     var cmd = "\"" + leno + "\" \"" + test + "\""
     print("cmd: " + cmd)

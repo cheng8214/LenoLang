@@ -4,7 +4,7 @@ import io
 
 // ============================================================
 // Async Socket 压力测试
-// 用法: build\leno.exe examples/sockets/test_async_stress.leno
+// 用法: build\lenojit.exe examples/sockets/test_async_stress.leno
 // ============================================================
 
 var g_total_clients = 0

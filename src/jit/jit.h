@@ -24,11 +24,11 @@
 /* ---- Configuration ---- */
 #define JIT_HOT_THRESHOLD   50    /* loop iterations before compilation  */
 #define JIT_CACHE_SIZE      256   /* cache hash table size (power of 2)  */
-#define JIT_MAX_LOCALS      32    /* max locals to type-guard            */
+#define JIT_MAX_LOCALS      64    /* max locals to type-guard (incl inline) */
 #define JIT_MAX_LOOP_OPS    256   /* max opcodes in a JIT-able loop body */
 #define JIT_MAX_VSTACK      64    /* max virtual stack depth             */
 #define JIT_MAX_LABELS      32    /* max jump labels in a loop body      */
-#define JIT_MAX_PATCHES     64    /* max jump patches                    */
+#define JIT_MAX_PATCHES     256   /* max jump patches                    */
 #define JIT_BAILOUT_LIMIT   3     /* after N bailouts, stop trying      */
 
 /* ---- JIT function type ---- */

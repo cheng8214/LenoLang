@@ -10,13 +10,13 @@ main() {
     files.write(tmp_leno, test_code)
 
     // 2. 编译为 .lenb
-    var cr = _exec("leno.exe -c " + tmp_leno)
+    var cr = _exec("lenojit.exe -c " + tmp_leno)
     assert_ne(cr, null)
     assert_eq(cr[1], 0)
 
     // 3. 执行 .lenb
     var tmp_lenb = "test_serialize_tmp.lenb"
-    var rr = _exec("leno.exe " + tmp_lenb)
+    var rr = _exec("lenojit.exe " + tmp_lenb)
     assert_ne(rr, null)
     assert_eq(rr[1], 0)
 

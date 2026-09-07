@@ -1,5 +1,5 @@
 main() {
-    var r = _exec("build\\leno.exe assert\\test_basic_types.leno")
+    var r = _exec("build\\lenojit.exe assert\\test_basic_types.leno")
     print("exit_code:")
     print(r[1])
 }

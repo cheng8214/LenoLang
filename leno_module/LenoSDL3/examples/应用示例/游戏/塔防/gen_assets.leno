@@ -4,7 +4,7 @@
 //       → 逐格 readPixelsAt 截取 → SDL3.saveImagePNG 存成带透明通道的 PNG。
 //       与 examples/UI组件/按钮/gen_icons.leno 同款写法。
 //
-// 用法：在本目录执行  leno.exe gen_assets.leno
+// 用法：在本目录执行  lenojit.exe gen_assets.leno
 // 产物：image/ 下的 tile_*.png / tower_*.png / enemy_*.png / bullet_*.png / icon_*.png
 //
 // 素材一览：

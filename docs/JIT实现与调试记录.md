@@ -433,7 +433,7 @@ int tmp3_disp = -8 * (n + sr->max_vstack + 3);
 ### --debug 反汇编
 
 ```bash
-./build/leno.exe --debug file.leno
+./build/lenojit.exe --debug file.leno
 ```
 
 输出每个函数的字节码反汇编，包括 offset、行号、指令名和操作数。用于定位 `body_start` 对应的字节码序列。
@@ -614,7 +614,7 @@ XORPD (0F 57)           → 0x66 前缀
 
 - 编译命令：`cmd //c build.bat`
 
-- 运行命令：`./build/leno.exe "examples/性能测试/全部测试.leno"`
+- 运行命令：`./build/lenojit.exe "examples/性能测试/全部测试.leno"`
 
 ### JIT 统计
 

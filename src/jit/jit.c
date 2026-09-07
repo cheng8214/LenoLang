@@ -40,6 +40,7 @@
 #include "jit_mem.h"
 #include "jit_emit.h"
 #include "../include/leno_error.h"
+#include "../include/native.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -61,6 +62,16 @@ JitState jit_state = {0};
 
 /* ---- Callout VM pointer (set before JIT execution) ---- */
 static VM* jit_callout_vm = NULL;
+
+/* ---- Bailout debug function ---- */
+static int64_t jit_bailout_rax = 0;
+static int32_t jit_bailout_site = 0;
+static void jit_bailout_debug(int64_t rsp_val) {
+    fprintf(stderr, "[JIT-DEBUG] BAILOUT site=%d RSP=%lld (0x%llx) RAX=%lld (0x%llx)\n",
+            (int)jit_bailout_site,
+            (long long)rsp_val, (unsigned long long)rsp_val,
+            (long long)jit_bailout_rax, (unsigned long long)jit_bailout_rax);
+}
 
 /* ---- Reloaded locals pointer (updated by callouts after vm_call_value,
  * in case vm_grow_frames reallocates vm.frames; JIT writeback reloads
@@ -478,6 +489,62 @@ static Value jit_callout_get_field_fast(Value obj_val, uint8_t field_idx) {
     return struct_get_field(obj, field_idx);
 }
 
+/* Callout: OP_MODULE_CALL (native module method like maths.sqrt).
+ * Looks up module+method from callee chunk constants, calls the native
+ * function, and returns the result. No VM re-entry needed. */
+static Value jit_callout_module_call(int64_t* vstack_top, int arg_count,
+                                     uint16_t module_idx, uint16_t method_idx,
+                                     Chunk* chunk) {
+    (void)jit_callout_vm;  /* not needed for pure native calls */
+
+    if (module_idx >= (uint16_t)chunk->const_cnt ||
+        method_idx >= (uint16_t)chunk->const_cnt) {
+        error_add_at(ERR_RUNTIME, 0, 0, "OP_MODULE_CALL: 常量索引越界");
+        return NULL_VAL;
+    }
+
+    Value module_val = chunk->constants[module_idx];
+    Value method_val = chunk->constants[method_idx];
+    if (!val_is_obj(module_val) || val_as_obj(module_val)->type != OBJ_STRING ||
+        !val_is_obj(method_val) || val_as_obj(method_val)->type != OBJ_STRING) {
+        error_add_at(ERR_RUNTIME, 0, 0, "模块方法名必须是字符串");
+        return NULL_VAL;
+    }
+
+    const char* module_name = ((ObjString*)val_as_obj(module_val))->chars;
+    const char* method_name = ((ObjString*)val_as_obj(method_val))->chars;
+
+    ModuleMethodMeta* meta = native_find_module_method(module_name, method_name);
+    if (!meta) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "未找到模块方法: %s.%s", module_name, method_name);
+        error_add_at(ERR_RUNTIME, 0, 0, msg);
+        return NULL_VAL;
+    }
+
+    /* Build Value args from JIT virtual stack raw values.
+     * JIT virtual stack grows downward: first-pushed at higher address.
+     * vstack_top[0] = TOS (last pushed), vstack_top[arg_count-1] = first pushed.
+     * Native function expects args[0] = first argument. */
+    Value args[16];
+    if (arg_count > 16) {
+        error_add_at(ERR_RUNTIME, 0, 0, "模块方法参数过多");
+        return NULL_VAL;
+    }
+    for (int i = 0; i < arg_count; i++) {
+        args[i] = jit_raw_to_value(vstack_top[arg_count - 1 - i]);
+    }
+
+    Value result = meta->function(arg_count, args);
+
+    /* Check for exception set by native function */
+    if (jit_callout_vm && jit_callout_vm->has_exception) {
+        return NULL_VAL;
+    }
+
+    return result;
+}
+
 /* ---- Cache hash ---- */
 static int cache_hash(const uint8_t* ip) {
     uintptr_t v = (uintptr_t)ip;
@@ -512,6 +579,10 @@ static int opcode_size(const uint8_t* ip) {
         case OP_ARRAY_APPEND_NOPUSH: /* arr.add(v) statement (callout) */
         case OP_DICT_SET: /* dict[key]=val (callout) */
         case OP_INDEX_SET_NOPUSH: /* arr[idx]=val statement (callout) */
+        case OP_NULL:    /* push null */
+        case OP_TRUE:    /* push true */
+        case OP_FALSE:   /* push false */
+        case OP_RETURN:  /* return (single value) */
             return 1;
         /* 2-byte (opcode + imm8) */
         case OP_ADD_INT_IMM: case OP_SUB_INT_IMM: case OP_MUL_INT_IMM:
@@ -544,6 +615,12 @@ static int opcode_size(const uint8_t* ip) {
         /* 5-byte: OP_INVOKE_METHOD = opcode + name_const(2) + arg_count(2) */
         case OP_INVOKE_METHOD:
             return 5;
+        /* 2-byte: OP_RETURN_MULTI = opcode + count(1) */
+        case OP_RETURN_MULTI:
+            return 2;
+        /* 7-byte: OP_MODULE_CALL = opcode + module_idx(2) + method_idx(2) + arg_count(2) */
+        case OP_MODULE_CALL:
+            return 7;
         /* Variable-length: OP_ACC_FIELDS = opcode + count(1) + field_idx[count] */
         case OP_ACC_FIELDS:
             return 2 + ip[1];
@@ -563,6 +640,20 @@ static int opcode_size(const uint8_t* ip) {
     }
 }
 
+/* ---- Inline site (for OP_CALL_GLOBAL_FUNC_TYPED inlining) ---- */
+typedef struct {
+    int bc_off;              /* bytecode offset of the call in caller */
+    uint16_t func_slot;      /* global func slot of callee */
+    int arg_count;           /* number of args */
+    int ret_count;           /* number of return values (1 or 2) */
+    Chunk* callee_chunk;     /* callee's bytecode chunk */
+    int callee_local_count;  /* callee's local_count */
+    int callee_local_base;   /* base scratch index for callee locals */
+    int callee_body_size;    /* bytecode size of callee body */
+    int callee_local_map[256]; /* callee local slot → scratch index */
+    int inline_end_mc;       /* mc offset of inline-end label (set during codegen) */
+} InlineSite;
+
 /* ---- Scan result ---- */
 typedef struct {
     int capable;
@@ -577,6 +668,10 @@ typedef struct {
     uint8_t for_step_slot;
     uint8_t for_end_slot;
     uint8_t for_inclusive;
+    /* Inline sites */
+    InlineSite inline_sites[4]; /* max 4 inline calls per loop */
+    int inline_count;
+    int inline_extra_locals;   /* total extra locals from inlining */
 } ScanResult;
 
 /* Mark a local slot as used; assign scratch index */
@@ -589,9 +684,130 @@ static void mark_local(ScanResult* r, int slot) {
         r->capable = 0;
         return;
     }
-    r->local_map[slot] = r->num_locals;
+    /* Scratch index must skip over inline callee locals (if any inlined
+     * before this local was first seen) to avoid slot overlap. */
+    int si = r->num_locals + r->inline_extra_locals;
+    r->local_map[slot] = si;
     r->local_slots[r->num_locals] = (uint8_t)slot;
     r->num_locals++;
+}
+
+/* ---- Scan a callee function body for inlining ----
+ * Walks the callee's bytecode, checks all opcodes are JIT-supported,
+ * tracks max vstack, and counts distinct local slots used.
+ * Returns 1 if inlinable, 0 otherwise.
+ * Fills callee_local_map[slot] = base_scratch + slot for slots 0..local_count-1.
+ * Sets *out_max_vstack to the max vstack depth in the callee body. */
+static int scan_callee_for_inline(Chunk* cc, int local_count,
+                                   int base_scratch,
+                                   int callee_local_map[256],
+                                   int* out_max_vstack) {
+    const uint8_t* ip = cc->code;
+    const uint8_t* end = cc->code + cc->len;
+    int vstack = 0;
+    int mv = 0;
+
+    /* Pre-map all callee locals 0..local_count-1 to base_scratch+0..base_scratch+N-1 */
+    for (int i = 0; i < 256; i++) callee_local_map[i] = -1;
+    for (int i = 0; i < local_count && i < 256; i++) {
+        callee_local_map[i] = base_scratch + i;
+    }
+
+    while (ip < end) {
+        uint8_t op = *ip;
+        int size = opcode_size(ip);
+        if (size < 0 || ip + size > end) {
+            if (getenv("LENO_JIT_DEBUG"))
+                fprintf(stderr, "[JIT-DEBUG] inline-scan FAIL: opcode %d size=%d at off %d\n",
+                        op, size, (int)(ip - cc->code));
+            return 0;
+        }
+
+        /* Track vstack changes (simplified — same logic as scan_loop_body) */
+        switch (op) {
+            case OP_ZERO: case OP_ONE: case OP_DUP: case OP_CONST:
+            case OP_NULL: case OP_TRUE: case OP_FALSE:
+                vstack++; break;
+            case OP_POP:
+                vstack--; break;
+            case OP_ADD_INT: case OP_SUB_INT: case OP_MUL_INT:
+            case OP_MOD_INT: case OP_DIV_INT:
+            case OP_BITAND: case OP_BITOR: case OP_BITXOR:
+            case OP_ADD_FLOAT: case OP_SUB_FLOAT: case OP_MUL_FLOAT: case OP_DIV_FLOAT:
+            case OP_EQ_INT: case OP_LT_INT: case OP_GT_INT:
+            case OP_LE_INT: case OP_GE_INT:
+            case OP_EQ_FLOAT: case OP_LT_FLOAT: case OP_GT_FLOAT:
+            case OP_LE_FLOAT: case OP_GE_FLOAT:
+            case OP_DIV: case OP_INDEX:
+                vstack--; break;
+            case OP_NEG_INT: case OP_NEG_FLOAT: case OP_NOT:
+            case OP_CAST_INT: case OP_CAST_FLOAT:
+            case OP_BITNOT: case OP_INC: case OP_DEC:
+                break;
+            case OP_ARRAY_APPEND_NOPUSH: vstack -= 2; break;
+            case OP_DICT_SET: vstack -= 2; break;
+            case OP_INDEX_SET_NOPUSH: vstack -= 3; break;
+            case OP_RETURN:
+                vstack--; break;
+            case OP_RETURN_MULTI:
+                vstack -= ip[1]; break;
+            case OP_MODULE_CALL: {
+                int ac = rd_short(ip + 5);
+                vstack -= (ac - 1);
+                break;
+            }
+            case OP_GET_LOCAL:
+                vstack++; break;
+            case OP_SET_LOCAL: break;
+            case OP_SET_LOCAL_POP: vstack--; break;
+            case OP_MOVE_LOCAL: vstack++; break;
+            case OP_MOVE_LOCAL_POP: break;
+            case OP_SET_LOCAL_CONST: break;
+            case OP_GET_GLOBAL: vstack++; break;
+            case OP_SET_GLOBAL: break;
+            case OP_INC_LOCAL: case OP_DEC_LOCAL:
+            case OP_PRE_INC_LOCAL: case OP_PRE_DEC_LOCAL:
+                vstack++; break;
+            case OP_INC_LOCAL_NOPUSH: case OP_DEC_LOCAL_NOPUSH: break;
+            case OP_ADD_INT_IMM: case OP_SUB_INT_IMM: case OP_MUL_INT_IMM:
+            case OP_LT_INT_IMM: case OP_GT_INT_IMM:
+            case OP_LE_INT_IMM: case OP_GE_INT_IMM: case OP_EQ_INT_IMM:
+            case OP_SHL_IMM: case OP_SHR_IMM: case OP_USHR_IMM:
+                break;
+            case OP_JUMP: case OP_JUMP_IF_FALSE: case OP_JUMP_IF_TRUE:
+            case OP_LOOP:
+                break;
+            case OP_FOR_PREP: break;
+            case OP_FOR_LOOP: break;
+            case OP_CMPJMP_LL_INT: break;
+            case OP_CMPJMP_LG_INT: break;
+            case OP_GET_FIELD_FAST: vstack++; break;
+            case OP_INVOKE_METHOD: {
+                int ac = rd_short(ip + 3);
+                vstack -= (ac - 1);
+                break;
+            }
+            case OP_ACC_FIELDS: break;
+            case OP_TRY: case OP_CATCH: case OP_FINALLY: case OP_END_TRY:
+                break;
+            default:
+                if (getenv("LENO_JIT_DEBUG"))
+                    fprintf(stderr, "[JIT-DEBUG] inline-scan FAIL: unsupported opcode %d at off %d\n",
+                            op, (int)(ip - cc->code));
+                return 0;
+        }
+
+        if (vstack > JIT_MAX_VSTACK) {
+            if (getenv("LENO_JIT_DEBUG"))
+                fprintf(stderr, "[JIT-DEBUG] inline-scan FAIL: vstack=%d\n", vstack);
+            return 0;
+        }
+        if (vstack > mv) mv = vstack;
+        ip += size;
+    }
+
+    *out_max_vstack = mv;
+    return 1;
 }
 
 /*
@@ -698,6 +914,28 @@ static void scan_loop_body(const uint8_t* body_start, int body_size,
                 /* pop 3 (arr, index, value), push 0 → net -3 */
                 vstack -= 3;
                 break;
+            case OP_NULL:
+            case OP_TRUE:
+            case OP_FALSE:
+                /* push 1 value */
+                vstack++;
+                break;
+            case OP_RETURN:
+                /* pop 1 (return value) → vstack-- */
+                vstack--;
+                break;
+            case OP_RETURN_MULTI: {
+                /* opcode + count(1); pop count values */
+                uint8_t rc = ip[1];
+                vstack -= rc;
+                break;
+            }
+            case OP_MODULE_CALL: {
+                /* opcode + module_idx(2) + method_idx(2) + arg_count(2) */
+                int ac = rd_short(ip + 5);
+                vstack -= (ac - 1);
+                break;
+            }
             case OP_ACC_FIELDS:
                 /* pop 1 (struct obj), push 1 (float sum) -> net 0 */
                 break;
@@ -729,6 +967,56 @@ static void scan_loop_body(const uint8_t* body_start, int body_size,
                                 func2 = (ObjFunction*)obj2;
                             if (func2 && func2->return_count > 1)
                                 ret_count = func2->return_count;
+
+                            /* ---- Try to inline the callee ---- */
+                            if (func2 && func2->chunk && r->inline_count < 4
+                                && !getenv("LENO_JIT_NOINLINE")) {
+                                Chunk* cc = func2->chunk;
+                                int callee_lc = func2->local_count;
+                                int base = r->num_locals + r->inline_extra_locals;
+                                /* Check capacity: base + callee_lc must fit in JIT_MAX_LOCALS */
+                                if (base + callee_lc <= JIT_MAX_LOCALS && cc->len <= 256) {
+                                    int callee_mv = 0;
+                                    InlineSite* is = &r->inline_sites[r->inline_count];
+                                    if (scan_callee_for_inline(cc, callee_lc, base,
+                                                               is->callee_local_map,
+                                                               &callee_mv)) {
+                                        is->bc_off = (int)(ip - body_start);
+                                        is->func_slot = func_slot;
+                                        is->arg_count = arg_count;
+                                        is->ret_count = ret_count;
+                                        is->callee_chunk = cc;
+                                        is->callee_local_count = callee_lc;
+                                        is->callee_local_base = base;
+                                        is->callee_body_size = cc->len;
+                                        is->inline_end_mc = -1;
+                                        r->inline_count++;
+                                        r->inline_extra_locals += callee_lc;
+                                    /* Update max_vstack: the callee's vstack
+                                     * operates on top of (caller_vstack - arg_count).
+                                     * Also, the args themselves are on the stack
+                                     * before the call. */
+                                    int vstack_at_call = vstack;
+                                    int vstack_after_pop = vstack - arg_count;
+                                    int callee_total_max = vstack_after_pop + callee_mv;
+                                    if (vstack_at_call > r->max_vstack)
+                                        r->max_vstack = vstack_at_call;
+                                    if (callee_total_max > r->max_vstack)
+                                        r->max_vstack = callee_total_max;
+                                    if (r->max_vstack > JIT_MAX_VSTACK) {
+                                        if (getenv("LENO_JIT_DEBUG"))
+                                            fprintf(stderr, "[JIT-DEBUG] scan FAIL: max_vstack=%d after inline\n", r->max_vstack);
+                                        r->capable = 0;
+                                        return;
+                                    }
+                                    if (getenv("LENO_JIT_DEBUG"))
+                                        fprintf(stderr, "[JIT-DEBUG] inline: func_slot=%d arg_count=%d ret_count=%d callee_lc=%d base=%d mv=%d vstack_at_call=%d callee_total_max=%d\n",
+                                                func_slot, arg_count, ret_count, callee_lc, base, callee_mv, vstack_at_call, callee_total_max);
+                                    vstack -= (arg_count - ret_count);
+                                    goto scan_next;
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -902,6 +1190,7 @@ static void scan_loop_body(const uint8_t* body_start, int body_size,
         return;
     }
         r->max_vstack = vstack > r->max_vstack ? vstack : r->max_vstack;
+        scan_next:
         ip += size;
     }
 
@@ -922,7 +1211,7 @@ typedef struct {
 
 typedef struct {
     CodeBuf cb;
-    OffMap off_map[JIT_MAX_LOOP_OPS * 2];
+    OffMap off_map[JIT_MAX_LOOP_OPS * 10];
     int off_count;
     Patch patches[JIT_MAX_PATCHES];
     int patch_count;
@@ -976,6 +1265,34 @@ static int compile_loop(CodegenCtx* ctx) {
     CodeBuf* cb = &ctx->cb;
     int n = sr->num_locals;
 
+    /* ---- Inline context (switchable local_map and chunk) ----
+     * cur_local_map starts as the caller's local_map; when we enter
+     * an inlined callee, we switch to the callee's local_map.
+     * cur_chunk similarly switches for constant access. */
+    const int* cur_local_map = sr->local_map;
+    Chunk* cur_chunk = ctx->chunk;
+
+    /* Inline frame stack: saved when entering an inlined callee,
+     * restored when the callee body ends. */
+    typedef struct {
+        const uint8_t* ip;
+        const uint8_t* end;
+        const int* local_map;
+        Chunk* chunk;
+        int bc_off;
+        int vstack;
+        int tos_live;
+        int callee_ret_count;
+        int callee_arg_count;
+    } InlineFrame;
+    InlineFrame inline_frames[4];
+    int inline_depth = 0;
+
+    /* Jump patch list for OP_RETURN inside inlined callees.
+     * Each OP_RETURN emits a jmp that needs to be patched to inline_end. */
+    int inline_ret_patches[64];
+    int inline_ret_patch_cnt = 0;
+
     /*
      * int48 overflow check: bail out to VM (which handles BigInt promotion)
      * if RAX doesn't fit in signed 48-bit range [-2^47, 2^47-1].
@@ -984,7 +1301,7 @@ static int compile_loop(CodegenCtx* ctx) {
      * inc r8 maps 0→1, -1→0 (both ≤ 1 unsigned), anything else → > 1.
      * ja bailout catches the "anything else" case.
      */
-    #define EMIT_INT48_CHECK() do { \
+     #define EMIT_INT48_CHECK() do { \
         emit_mov_rr(cb, JIT_R8, JIT_RAX);  \
         emit_sar_imm(cb, JIT_R8, 47);     \
         emit_inc_reg(cb, JIT_R8);          \
@@ -1142,10 +1459,13 @@ static int compile_loop(CodegenCtx* ctx) {
             emit_mov_reg_mem32(cb, (reg), JIT_RBP, (disp)); \
     } while(0)
 
-    /* Callout temp slot offsets (3 slots below virtual stack area) */
-    int tmp1_disp = -8 * (n + sr->max_vstack + 1);
-    int tmp2_disp = -8 * (n + sr->max_vstack + 2);
-    int tmp3_disp = -8 * (n + sr->max_vstack + 3);
+    /* Callout temp slot offsets (3 slots below virtual stack area).
+     * n includes only caller locals; inline callee locals use slots
+     * n..n+inline_extra_locals-1 which are below the vstack area. */
+    int total_locals = n + sr->inline_extra_locals;
+    int tmp1_disp = -8 * (total_locals + sr->max_vstack + 1);
+    int tmp2_disp = -8 * (total_locals + sr->max_vstack + 2);
+    int tmp3_disp = -8 * (total_locals + sr->max_vstack + 3);
 
     /* ---- Function prologue ---- */
     emit_push_rbp(cb);                        /* push rbp          */
@@ -1154,8 +1474,8 @@ static int compile_loop(CodegenCtx* ctx) {
     emit_push_reg(cb, JIT_R13);              /* push r13 (callout: saved RCX=locals) */
     emit_push_reg(cb, JIT_R14);              /* push r14 (callout: saved R9=globals) */
     emit_mov_rbp_rsp(cb);                     /* mov rbp, rsp      */
-    /* Allocate: scratch area (n*8) + max_vstack*8 + callout temps (3*8), rounded to 16 */
-    int frame_sz = n * 8 + sr->max_vstack * 8 + 16 + 24;
+    /* Allocate: scratch area (total_locals*8) + max_vstack*8 + callout temps (3*8), rounded to 16 */
+    int frame_sz = total_locals * 8 + sr->max_vstack * 8 + 16 + 24;
     frame_sz = (frame_sz + 15) & ~15;        /* align to 16 */
     if (frame_sz <= 127) {
         emit_sub_rsp_imm8(cb, (uint8_t)frame_sz);
@@ -1176,10 +1496,13 @@ static int compile_loop(CodegenCtx* ctx) {
 
     /* ---- Type guards + extraction (int OR float) ---- */
     /* RCX = locals pointer (first arg, preserved) */
-    /* RBX = type bitmap: bit i = 1 if local i is float, 0 if int */
+    /* RBX = type bitmap: bit si = 1 if local at scratch slot si is float.
+     * Bit position is the scratch index (may be non-contiguous due to
+     * inline callee locals occupying intermediate scratch slots). */
     for (int i = 0; i < n; i++) {
         int slot = sr->local_slots[i];
-        int disp = scratch_disp(i);
+        int si = sr->local_map[slot];
+        int disp = scratch_disp(si);
         /* Load value: mov rax, [rcx + slot*8] */
         {
             int sd = slot * 8;
@@ -1216,12 +1539,12 @@ static int compile_loop(CodegenCtx* ctx) {
          * No bailout for non-numeric locals (needed for callout support). */
 
         /* Float path: RAX still has original raw double bits */
-        /* Set type bit: BTS RBX, i  (48 0F BA EB imm8) */
+        /* Set type bit: BTS RBX, si  (48 0F BA EB imm8) */
         emit_byte(cb, 0x48);
         emit_byte(cb, 0x0F);
         emit_byte(cb, 0xBA);
         emit_byte(cb, 0xEB);  /* ModRM(11, 5, 3) = BTS RBX, imm8 */
-        emit_byte(cb, (uint8_t)i);
+        emit_byte(cb, (uint8_t)si);
         /* Store raw double bits: mov [rbp+disp], rax */
         if (disp >= -128 && disp <= 127) {
             emit_mov_mem8_reg(cb, JIT_RBP, (int8_t)disp, JIT_RAX);
@@ -1253,7 +1576,7 @@ static int compile_loop(CodegenCtx* ctx) {
 
     /* ---- Step direction check (for OP_FOR_LOOP) ---- */
     if (sr->back_edge_type == 2) {
-        int step_scratch = sr->local_map[sr->for_step_slot];
+        int step_scratch = cur_local_map[sr->for_step_slot];
         if (step_scratch < 0) {
             if (getenv("LENO_JIT_DEBUG"))
                 fprintf(stderr, "[JIT-DEBUG] codegen FAIL: FOR_LOOP step_scratch<0\n");
@@ -1286,9 +1609,9 @@ static int compile_loop(CodegenCtx* ctx) {
     int for_loop_entry_patches[8];
     int for_loop_patch_cnt = 0;
     if (sr->back_edge_type == 2) {
-        int si_lv = sr->local_map[sr->for_loop_var_slot];
-        int si_st = sr->local_map[sr->for_step_slot];
-        int si_en = sr->local_map[sr->for_end_slot];
+        int si_lv = cur_local_map[sr->for_loop_var_slot];
+        int si_st = cur_local_map[sr->for_step_slot];
+        int si_en = cur_local_map[sr->for_end_slot];
         int d_lv = scratch_disp(si_lv);
         int d_st = scratch_disp(si_st);
         int d_en = scratch_disp(si_en);
@@ -1336,7 +1659,44 @@ static int compile_loop(CodegenCtx* ctx) {
     int vstack = 0;
     int tos_live = 0;  /* TOS register cache: 1=RAX holds TOS, 0=all on memory stack */
 
-    while (ip < end) {
+    /* Helper: check if current bc_off matches an inline site */
+    #define FIND_INLINE_SITE(off) \
+        ({ int _idx = -1; \
+           for (int _i = 0; _i < sr->inline_count; _i++) { \
+               if (sr->inline_sites[_i].bc_off == (off)) { _idx = _i; break; } \
+           } _idx; })
+
+    while (1) {
+        /* Check if we've reached the end of an inlined callee body */
+        if (ip >= end) {
+            if (inline_depth > 0) {
+                /* Reached end of inlined callee bytecode.
+                 * This is the inline_end point. Patch all OP_RETURN
+                 * jumps to here. */
+                int end_mc = cb->len;
+                for (int _i = 0; _i < inline_ret_patch_cnt; _i++) {
+                    patch_rel32(cb, inline_ret_patches[_i], end_mc);
+                }
+                inline_ret_patch_cnt = 0;  /* reset for nested inline */
+
+                /* Restore caller context */
+                inline_depth--;
+                InlineFrame* f = &inline_frames[inline_depth];
+                /* The return values are on the vstack.
+                 * Callee's vstack had ret_count items.
+                 * Caller's vstack should be: saved_vstack - arg_count + ret_count */
+                vstack = f->vstack - f->callee_arg_count + f->callee_ret_count;
+                tos_live = 0;  /* TOS not cached after inline */
+                bc_off = f->bc_off;
+                ip = f->ip;
+                end = f->end;
+                cur_local_map = f->local_map;
+                cur_chunk = f->chunk;
+                continue;
+            }
+            break;  /* normal end of loop body */
+        }
+
         uint8_t op = *ip;
         int size = opcode_size(ip);
         offmap_add(ctx, bc_off, cb->len);
@@ -1374,7 +1734,7 @@ static int compile_loop(CodegenCtx* ctx) {
             /* ---- Local variable ops ---- */
             case OP_GET_LOCAL: {
                 uint16_t slot = rd_short(ip + 1);
-                int si = sr->local_map[slot];
+                int si = cur_local_map[slot];
                 int disp = scratch_disp(si);
                 TOS_SPILL();
                 if (disp >= -128 && disp <= 127) {
@@ -1388,7 +1748,7 @@ static int compile_loop(CodegenCtx* ctx) {
             }
             case OP_SET_LOCAL: {
                 uint16_t slot = rd_short(ip + 1);
-                int si = sr->local_map[slot];
+                int si = cur_local_map[slot];
                 int disp = scratch_disp(si);
                 /* peek TOS → store to local */
                 TOS_PEEK_TO(JIT_RAX);
@@ -1401,7 +1761,7 @@ static int compile_loop(CodegenCtx* ctx) {
             }
             case OP_SET_LOCAL_POP: {
                 uint16_t slot = rd_short(ip + 1);
-                int si = sr->local_map[slot];
+                int si = cur_local_map[slot];
                 int disp = scratch_disp(si);
                 /* consume TOS → store to local */
                 TOS_CONSUME_RAX();
@@ -1416,8 +1776,8 @@ static int compile_loop(CodegenCtx* ctx) {
             case OP_MOVE_LOCAL: {
                 uint16_t src = rd_short(ip + 1);
                 uint16_t dst = rd_short(ip + 3);
-                int si_src = sr->local_map[src];
-                int si_dst = sr->local_map[dst];
+                int si_src = cur_local_map[src];
+                int si_dst = cur_local_map[dst];
                 int d_src = scratch_disp(si_src);
                 int d_dst = scratch_disp(si_dst);
                 TOS_SPILL();
@@ -1438,8 +1798,8 @@ static int compile_loop(CodegenCtx* ctx) {
             case OP_MOVE_LOCAL_POP: {
                 uint16_t src = rd_short(ip + 1);
                 uint16_t dst = rd_short(ip + 3);
-                int si_src = sr->local_map[src];
-                int si_dst = sr->local_map[dst];
+                int si_src = cur_local_map[src];
+                int si_dst = cur_local_map[dst];
                 int d_src = scratch_disp(si_src);
                 int d_dst = scratch_disp(si_dst);
                 /* No stack effect (pop + local op), but clobbers RAX */
@@ -1459,9 +1819,9 @@ static int compile_loop(CodegenCtx* ctx) {
             case OP_SET_LOCAL_CONST: {
                 uint16_t ci = rd_short(ip + 1);
                 uint16_t slot = rd_short(ip + 3);
-                int si = sr->local_map[slot];
+                int si = cur_local_map[slot];
                 int disp = scratch_disp(si);
-                Value cv = ctx->chunk->constants[ci];
+                Value cv = cur_chunk->constants[ci];
                 TOS_SPILL();  /* clobbers RAX */
                 if (val_is_int(cv)) {
                     int64_t iv = val_as_int(cv);
@@ -1485,7 +1845,7 @@ static int compile_loop(CodegenCtx* ctx) {
             }
             case OP_CONST: {
                 uint16_t ci = rd_short(ip + 1);
-                Value cv = ctx->chunk->constants[ci];
+                Value cv = cur_chunk->constants[ci];
                 TOS_SPILL();
                 if (val_is_int(cv)) {
                     int64_t iv = val_as_int(cv);
@@ -2037,7 +2397,7 @@ static int compile_loop(CodegenCtx* ctx) {
             /* ---- Inc/Dec locals ---- */
             case OP_INC_LOCAL_NOPUSH: {
                 uint16_t slot = rd_short(ip + 1);
-                int si = sr->local_map[slot];
+                int si = cur_local_map[slot];
                 int disp = scratch_disp(si);
                 TOS_SPILL();  /* clobbers RAX */
                 /* mov rax, [rbp+disp]; add rax, 1; mov [rbp+disp], rax */
@@ -2060,7 +2420,7 @@ static int compile_loop(CodegenCtx* ctx) {
             }
             case OP_DEC_LOCAL_NOPUSH: {
                 uint16_t slot = rd_short(ip + 1);
-                int si = sr->local_map[slot];
+                int si = cur_local_map[slot];
                 int disp = scratch_disp(si);
                 TOS_SPILL();  /* clobbers RAX */
                 if (disp >= -128 && disp <= 127) {
@@ -2083,7 +2443,7 @@ static int compile_loop(CodegenCtx* ctx) {
             case OP_INC_LOCAL: {
                 /* push old value, then inc local */
                 uint16_t slot = rd_short(ip + 1);
-                int si = sr->local_map[slot];
+                int si = cur_local_map[slot];
                 int disp = scratch_disp(si);
                 TOS_SPILL();  /* clobbers RAX */
                 if (disp >= -128 && disp <= 127) {
@@ -2111,7 +2471,7 @@ static int compile_loop(CodegenCtx* ctx) {
             }
             case OP_DEC_LOCAL: {
                 uint16_t slot = rd_short(ip + 1);
-                int si = sr->local_map[slot];
+                int si = cur_local_map[slot];
                 int disp = scratch_disp(si);
                 TOS_SPILL();  /* clobbers RAX */
                 if (disp >= -128 && disp <= 127) {
@@ -2138,7 +2498,7 @@ static int compile_loop(CodegenCtx* ctx) {
             }
             case OP_PRE_INC_LOCAL: {
                 uint16_t slot = rd_short(ip + 1);
-                int si = sr->local_map[slot];
+                int si = cur_local_map[slot];
                 int disp = scratch_disp(si);
                 TOS_SPILL();  /* clobbers RAX */
                 if (disp >= -128 && disp <= 127) {
@@ -2162,7 +2522,7 @@ static int compile_loop(CodegenCtx* ctx) {
             }
             case OP_PRE_DEC_LOCAL: {
                 uint16_t slot = rd_short(ip + 1);
-                int si = sr->local_map[slot];
+                int si = cur_local_map[slot];
                 int disp = scratch_disp(si);
                 TOS_SPILL();  /* clobbers RAX */
                 if (disp >= -128 && disp <= 127) {
@@ -2388,8 +2748,8 @@ static int compile_loop(CodegenCtx* ctx) {
                 uint16_t sb = rd_short(ip + 4);
                 int32_t off = rd_int32(ip + 6);
                 int target_bc = bc_off + size + off;
-                int si_a = sr->local_map[sa];
-                int si_b = sr->local_map[sb];
+                int si_a = cur_local_map[sa];
+                int si_b = cur_local_map[sb];
                 int da = scratch_disp(si_a);
                 int db = scratch_disp(si_b);
                 TOS_SPILL();  /* clobbers RAX/RDX */
@@ -2431,7 +2791,7 @@ static int compile_loop(CodegenCtx* ctx) {
                 uint16_t gi = rd_short(ip + 4);
                 int32_t off = rd_int32(ip + 6);
                 int target_bc = bc_off + size + off;
-                int si_a = sr->local_map[sa];
+                int si_a = cur_local_map[sa];
                 int da = scratch_disp(si_a);
                 int gd = gi * 8;
                 TOS_SPILL();  /* clobbers RAX */
@@ -2492,10 +2852,10 @@ static int compile_loop(CodegenCtx* ctx) {
                 uint8_t incl     = ip[5];
                 uint16_t joff    = rd_short(ip + 6);
 
-                int si_start = sr->local_map[start_sl];
-                int si_end   = sr->local_map[end_sl];
-                int si_step  = sr->local_map[step_sl];
-                int si_lv    = sr->local_map[lv_sl];
+                int si_start = cur_local_map[start_sl];
+                int si_end   = cur_local_map[end_sl];
+                int si_step  = cur_local_map[step_sl];
+                int si_lv    = cur_local_map[lv_sl];
                 int d_start = scratch_disp(si_start);
                 int d_end   = scratch_disp(si_end);
                 int d_step  = scratch_disp(si_step);
@@ -2560,9 +2920,9 @@ static int compile_loop(CodegenCtx* ctx) {
                 uint8_t incl   = ip[4];
                 uint16_t joff  = rd_short(ip + 5);
 
-                int si_lv = sr->local_map[lv_sl];
-                int si_st = sr->local_map[st_sl];
-                int si_en = sr->local_map[en_sl];
+                int si_lv = cur_local_map[lv_sl];
+                int si_st = cur_local_map[st_sl];
+                int si_en = cur_local_map[en_sl];
                 int d_lv = scratch_disp(si_lv);
                 int d_st = scratch_disp(si_st);
                 int d_en = scratch_disp(si_en);
@@ -2651,7 +3011,7 @@ static int compile_loop(CodegenCtx* ctx) {
             case OP_GET_FIELD_FAST: {
                 uint16_t slot = rd_short(ip + 1);
                 uint8_t field_idx = ip[3];
-                int si = sr->local_map[slot];
+                int si = cur_local_map[slot];
                 int disp = scratch_disp(si);
                 TOS_SPILL();
                 /* Load local (struct obj raw) from scratch area */
@@ -2679,11 +3039,69 @@ static int compile_loop(CodegenCtx* ctx) {
             case OP_CALL_GLOBAL_FUNC_TYPED: {
                 uint16_t func_slot = rd_short(ip + 1);
                 int arg_count = rd_short(ip + 3);
-                /* Determine ret_count from callee's ObjFunction.
-                 * The callout writes extra return values (ret[1..]) to
-                 * vstack_top, and returns ret[0] in RAX. We pop
-                 * (arg_count - ret_count + 1) args, leaving (ret_count - 1)
-                 * slots on the memory stack for the extra return values. */
+
+                /* ---- Check if this call site is marked for inlining ---- */
+                if (op == OP_CALL_GLOBAL_FUNC_TYPED) {
+                    int inline_idx = FIND_INLINE_SITE(bc_off);
+                    if (inline_idx >= 0) {
+                        const InlineSite* is = &sr->inline_sites[inline_idx];
+                        /* Spill TOS to memory stack */
+                        TOS_SPILL();
+                        /* Pop args from vstack and store to callee locals.
+                         * Args are on the stack in order: last arg = TOS.
+                         * Callee local slot 0 = first arg, slot (arg_count-1) = last arg.
+                         * Pop in reverse: last arg first (slot arg_count-1), ..., first arg last (slot 0). */
+                        for (int i = arg_count - 1; i >= 0; i--) {
+                            /* pop rax */
+                            emit_byte(cb, 0x58);  /* pop rax */
+                            /* store to callee local slot i */
+                            int si = is->callee_local_map[i];
+                            if (si < 0) {
+                                /* shouldn't happen: scan pre-mapped all locals */
+                                if (getenv("LENO_JIT_DEBUG"))
+                                    fprintf(stderr, "[JIT-DEBUG] inline FAIL: unmapped callee slot %d\n", i);
+                                return 0;
+                            }
+                            int disp = scratch_disp(si);
+                            if (disp >= -128 && disp <= 127)
+                                emit_mov_mem8_reg(cb, JIT_RBP, (int8_t)disp, JIT_RAX);
+                            else
+                                emit_mov_mem32_reg(cb, JIT_RBP, disp, JIT_RAX);
+                        }
+                        vstack -= arg_count;
+
+                        /* Save caller context and switch to callee */
+                        InlineFrame* f = &inline_frames[inline_depth];
+                        f->ip = ip + size;  /* next instruction after the call */
+                        f->end = end;
+                        f->local_map = cur_local_map;
+                        f->chunk = cur_chunk;
+                        f->bc_off = bc_off + size;
+                        f->vstack = vstack + arg_count;  /* vstack before args were popped */
+                        f->tos_live = 0;  /* TOS already spilled */
+                        f->callee_ret_count = is->ret_count;
+                        f->callee_arg_count = arg_count;
+                        inline_depth++;
+
+                        /* Switch to callee bytecode.
+                         * Use a large bc_off base to avoid offmap conflicts
+                         * with the caller's bytecode offsets. */
+                        ip = is->callee_chunk->code;
+                        end = ip + is->callee_body_size;
+                        cur_local_map = is->callee_local_map;
+                        cur_chunk = is->callee_chunk;
+                        bc_off = 0x10000 * inline_depth;
+                        vstack = 0;
+                        tos_live = 0;
+
+                        if (getenv("LENO_JIT_DEBUG"))
+                            fprintf(stderr, "[JIT-DEBUG] inline ENTER: func_slot=%d arg_count=%d ret_count=%d\n",
+                                    func_slot, arg_count, is->ret_count);
+                        continue;  /* skip normal ip+=size advance */
+                    }
+                }
+
+                /* ---- Non-inline: callout path (original code) ---- */
                 int ret_count = 1;
                 if (op == OP_CALL_GLOBAL_FUNC_TYPED && ctx->vm_ptr) {
                     if (func_slot < ctx->vm_ptr->global_func_capacity) {
@@ -2730,6 +3148,106 @@ static int compile_loop(CodegenCtx* ctx) {
                 vstack -= (arg_count - ret_count);
                 break;
             }
+
+            /* ---- Inline return handling ---- */
+            case OP_RETURN: {
+                if (inline_depth > 0) {
+                    /* In inline mode, OP_RETURN's value is already on vstack.
+                     * We just emit a jump to the inline_end label (to be patched
+                     * when the callee body ends). The return value stays on the
+                     * virtual stack as the call result. */
+                    TOS_SPILL();  /* ensure value is on memory stack */
+                    /* Emit: jmp <inline_end> (rel32 placeholder) */
+                    emit_byte(cb, 0xE9);
+                    int patch_loc = cb->len;
+                    emit_uint32(cb, 0);
+                    inline_ret_patches[inline_ret_patch_cnt++] = patch_loc;
+                    /* Match scan phase: vstack-- (return value "consumed").
+                     * The value stays on the hardware stack for inline_end,
+                     * but vstack tracking must match scan for dead code after
+                     * the return to have correct vstack. */
+                    vstack--;
+                } else {
+                    /* Shouldn't happen in loop body, but handle gracefully */
+                    TOS_SPILL();
+                    vstack--;
+                }
+                break;
+            }
+            case OP_RETURN_MULTI: {
+                uint8_t rc = ip[1];
+                if (inline_depth > 0) {
+                    /* Multiple return values are on vstack. Emit jump to inline_end. */
+                    TOS_SPILL();
+                    emit_byte(cb, 0xE9);
+                    int patch_loc = cb->len;
+                    emit_uint32(cb, 0);
+                    inline_ret_patches[inline_ret_patch_cnt++] = patch_loc;
+                    /* Match scan phase: vstack -= rc.
+                     * The return values stay on the hardware stack for
+                     * inline_end, but vstack tracking must match scan for
+                     * dead code after the return. */
+                    vstack -= rc;
+                } else {
+                    TOS_SPILL();
+                    vstack -= rc;
+                }
+                break;
+            }
+
+            /* ---- Module call (e.g., maths.sqrt) ---- */
+            case OP_MODULE_CALL: {
+                uint16_t module_idx = rd_short(ip + 1);
+                uint16_t method_idx = rd_short(ip + 3);
+                int arg_count = rd_short(ip + 5);
+                TOS_SPILL();
+                /* Save RSP before callout */
+                EMIT_STORE_TMP(tmp1_disp, JIT_RSP);
+                EMIT_CALLOUT_BEGIN();
+                EMIT_LOAD_TMP(JIT_RCX, tmp1_disp);  /* vstack_top (1st arg) */
+                emit_mov_reg_imm64(cb, JIT_RDX, (uint64_t)arg_count);    /* arg_count (2nd) */
+                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)module_idx);   /* module_idx (3rd) */
+                emit_mov_reg_imm64(cb, JIT_R9, (uint64_t)method_idx);   /* method_idx (4th) */
+                /* 5th param (chunk ptr) in shadow space [rsp+32] */
+                emit_mov_reg_imm64(cb, JIT_RAX, (uint64_t)(uintptr_t)cur_chunk);
+                emit_mov_mem8_reg(cb, JIT_RSP, 32, JIT_RAX);
+                EMIT_CALL(jit_callout_module_call);
+                EMIT_CALLOUT_END();
+                /* Pop arg_count args, push 1 result */
+                int pop_bytes2 = arg_count * 8;
+                if (pop_bytes2 <= 127) {
+                    emit_byte(cb, 0x48); emit_byte(cb, 0x83); emit_byte(cb, 0xC4);
+                    emit_byte(cb, (uint8_t)pop_bytes2);
+                } else {
+                    emit_byte(cb, 0x48); emit_byte(cb, 0x81); emit_byte(cb, 0xC4);
+                    emit_uint32(cb, (uint32_t)pop_bytes2);
+                }
+                EMIT_VALUE_TO_RAW();
+                TOS_PRODUCE();
+                vstack -= (arg_count - 1);
+                break;
+            }
+
+            /* ---- Simple constant pushes ---- */
+            case OP_NULL:
+                TOS_SPILL();
+                emit_mov_reg_imm64(cb, JIT_RAX, 0);  /* NULL = 0 */
+                TOS_PRODUCE();
+                vstack++;
+                break;
+            case OP_TRUE:
+                TOS_SPILL();
+                /* Leno true value = NaN-boxed bool true */
+                emit_mov_reg_imm64(cb, JIT_RAX, (uint64_t)0xFFFFFFFFFFFF0003ULL);
+                TOS_PRODUCE();
+                vstack++;
+                break;
+            case OP_FALSE:
+                TOS_SPILL();
+                emit_mov_reg_imm64(cb, JIT_RAX, (uint64_t)0xFFFFFFFFFFFF0001ULL);
+                TOS_PRODUCE();
+                vstack++;
+                break;
 
             /* ---- Exception handling opcodes (no-op in JIT) ---- */
             /* The JIT skips try/catch/finally setup entirely.
@@ -2785,14 +3303,15 @@ static int compile_loop(CodegenCtx* ctx) {
     #define EMIT_WRITEBACK_LOCALS() do { \
         for (int _i = 0; _i < n; _i++) { \
             int slot = sr->local_slots[_i]; \
-            int disp = scratch_disp(_i); \
+            int si = sr->local_map[slot]; \
+            int disp = scratch_disp(si); \
             int sd = slot * 8; \
-            /* BT RBX, i → CF = bit i (48 0F BA E3 imm8) */ \
+            /* BT RBX, si → CF = bit si (48 0F BA E3 imm8) */ \
             emit_byte(cb, 0x48); \
             emit_byte(cb, 0x0F); \
             emit_byte(cb, 0xBA); \
             emit_byte(cb, 0xE3);  /* ModRM(11, 4, 3) = BT RBX, imm8 */ \
-            emit_byte(cb, (uint8_t)_i); \
+            emit_byte(cb, (uint8_t)si); \
             /* jc .float_wb (rel8 placeholder) */ \
             emit_byte(cb, 0x72); \
             int flt_patch = cb->len; \
@@ -2855,6 +3374,19 @@ static int compile_loop(CodegenCtx* ctx) {
 
     /* ---- Bailout code ---- */
     ctx->bailout_mc = cb->len;
+    /* DEBUG: save RAX to global, then call debug function */
+    if (getenv("LENO_JIT_DEBUG")) {
+        /* Store RAX to global jit_bailout_rax */
+        emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_bailout_rax);
+        /* mov [r8], rax */
+        emit_byte(cb, 0x49); emit_byte(cb, 0x89); emit_byte(cb, 0x00);  /* mov [r8], rax */
+        /* Save RSP and RAX before callout */
+        EMIT_STORE_TMP(tmp1_disp, JIT_RSP);
+        EMIT_CALLOUT_BEGIN();
+        EMIT_LOAD_TMP(JIT_RCX, tmp1_disp);
+        EMIT_CALL(jit_bailout_debug);
+        EMIT_CALLOUT_END();
+    }
     /* Return 1 (bailout) — locals not written back (VM re-executes from back-edge) */
     emit_mov_eax_imm32(cb, 1);
     /* Epilogue: mov rsp, rbp; pop r14; pop r13; pop r12; pop rbx; pop rbp; ret */
@@ -2912,18 +3444,13 @@ static int compile_loop(CodegenCtx* ctx) {
         } else if (p->target_bc == -3) {
             /* Frame-dead (no write back) target */
             patch_rel32(cb, p->patch_mc, ctx->framedead_nowb_mc);
-        } else if (p->target_bc >= 0 && p->target_bc < sr->body_size) {
-            /* Intra-body jump */
+        } else if (p->target_bc >= 0) {
+            /* Intra-body jump (caller or inlined callee).
+             * Inlined callee offsets use bc_off = 0x10000 * inline_depth,
+             * so target_bc can far exceed sr->body_size.
+             * Rely on offmap_lookup to find valid targets. */
             int target_mc = offmap_lookup(ctx, p->target_bc);
             if (target_mc >= 0) {
-                /* Clean up virtual stack if needed */
-                if (p->vstack > 0) {
-                    /* Insert stack cleanup before the jump target?
-                     * No — we already emitted the jump. We need to fix this.
-                     * For the MVP, we'll skip stack cleanup on intra-body jumps.
-                     * This is correct for well-formed bytecode where the stack
-                     * is balanced at all jump targets. */
-                }
                 patch_rel32(cb, p->patch_mc, target_mc);
             } else {
                 /* Target not found — redirect to exit */

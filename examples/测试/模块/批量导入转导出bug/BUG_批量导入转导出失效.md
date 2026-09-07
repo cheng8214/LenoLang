@@ -1,7 +1,7 @@
 # 缺陷：批量 `use` 在「转导出（re-export）」场景下失效
 
 > 状态：**已修复并验证（2026-07-19 编译器修复，原复现文件已通过）**
-> 影响版本：截至 2026-07-19 修复前的 `leno` 编译器（`build/leno.exe`）
+> 影响版本：截至 2026-07-19 修复前的 `leno` 编译器（`build/lenojit.exe`）
 > 复现文件：`examples/测试/模块/批量导入转导出bug/`
 > 关联改动：`leno_module/LenoSDL3/lib/SDL3.leno` 尝试用批量 `use core.(...)` 替代多行
 > `use core.x` 时触发 —— 下游 `examples/.../fireworks_run.leno` 的 `use SDL3.WindowFlag`
@@ -97,10 +97,10 @@ main() {
 cd d:/CLeno/LenoC
 
 # 对照组：单行 use 转导出 —— 正常运行
-.\build\leno.exe "examples/测试/模块/批量导入转导出bug/repro_batchimport_main_ok.leno"
+.\build\lenojit.exe "examples/测试/模块/批量导入转导出bug/repro_batchimport_main_ok.leno"
 
 # 复现组：批量 use 转导出 —— 编译报错
-.\build\leno.exe "examples/测试/模块/批量导入转导出bug/repro_batchimport_main_bug.leno"
+.\build\lenojit.exe "examples/测试/模块/批量导入转导出bug/repro_batchimport_main_bug.leno"
 ```
 
 ### 输出
@@ -188,7 +188,7 @@ use core.(HelperA, HelperB)
 
 ```powershell
 cd d:/CLeno/LenoC
-.\build\leno.exe "examples/测试/模块/批量导入转导出bug/repro_batchimport_main_bug.leno"
+.\build\lenojit.exe "examples/测试/模块/批量导入转导出bug/repro_batchimport_main_bug.leno"
 ```
 
 输出：

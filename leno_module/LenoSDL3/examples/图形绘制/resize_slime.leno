@@ -20,7 +20,7 @@
 //   7) 把实体边缘色向外扩若干层，填满透明像素的 RGB，避免缩小插值时漏出白边
 //   8) 再把处理好的图缩小到 288x48 存最终 PNG
 //
-// 运行：build\leno.exe resize_slime.leno
+// 运行：build\lenojit.exe resize_slime.leno
 import "d:/CLeno/LenoC/leno_module/LenoSDL3/lib/SDL3.leno" as SDL3
 import ffi
 use SDL3.(WindowFlag, Window, Renderer)
