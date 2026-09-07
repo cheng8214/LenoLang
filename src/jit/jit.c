@@ -684,10 +684,7 @@ static void mark_local(ScanResult* r, int slot) {
         r->capable = 0;
         return;
     }
-    /* Scratch index must skip over inline callee locals (if any inlined
-     * before this local was first seen) to avoid slot overlap. */
-    int si = r->num_locals + r->inline_extra_locals;
-    r->local_map[slot] = si;
+    r->local_map[slot] = r->num_locals;
     r->local_slots[r->num_locals] = (uint8_t)slot;
     r->num_locals++;
 }
@@ -1496,13 +1493,10 @@ static int compile_loop(CodegenCtx* ctx) {
 
     /* ---- Type guards + extraction (int OR float) ---- */
     /* RCX = locals pointer (first arg, preserved) */
-    /* RBX = type bitmap: bit si = 1 if local at scratch slot si is float.
-     * Bit position is the scratch index (may be non-contiguous due to
-     * inline callee locals occupying intermediate scratch slots). */
+    /* RBX = type bitmap: bit i = 1 if local i is float, 0 if int */
     for (int i = 0; i < n; i++) {
         int slot = sr->local_slots[i];
-        int si = sr->local_map[slot];
-        int disp = scratch_disp(si);
+        int disp = scratch_disp(i);
         /* Load value: mov rax, [rcx + slot*8] */
         {
             int sd = slot * 8;
@@ -1539,12 +1533,12 @@ static int compile_loop(CodegenCtx* ctx) {
          * No bailout for non-numeric locals (needed for callout support). */
 
         /* Float path: RAX still has original raw double bits */
-        /* Set type bit: BTS RBX, si  (48 0F BA EB imm8) */
+        /* Set type bit: BTS RBX, i  (48 0F BA EB imm8) */
         emit_byte(cb, 0x48);
         emit_byte(cb, 0x0F);
         emit_byte(cb, 0xBA);
         emit_byte(cb, 0xEB);  /* ModRM(11, 5, 3) = BTS RBX, imm8 */
-        emit_byte(cb, (uint8_t)si);
+        emit_byte(cb, (uint8_t)i);
         /* Store raw double bits: mov [rbp+disp], rax */
         if (disp >= -128 && disp <= 127) {
             emit_mov_mem8_reg(cb, JIT_RBP, (int8_t)disp, JIT_RAX);
@@ -3303,15 +3297,14 @@ static int compile_loop(CodegenCtx* ctx) {
     #define EMIT_WRITEBACK_LOCALS() do { \
         for (int _i = 0; _i < n; _i++) { \
             int slot = sr->local_slots[_i]; \
-            int si = sr->local_map[slot]; \
-            int disp = scratch_disp(si); \
+            int disp = scratch_disp(_i); \
             int sd = slot * 8; \
-            /* BT RBX, si → CF = bit si (48 0F BA E3 imm8) */ \
+            /* BT RBX, i → CF = bit i (48 0F BA E3 imm8) */ \
             emit_byte(cb, 0x48); \
             emit_byte(cb, 0x0F); \
             emit_byte(cb, 0xBA); \
             emit_byte(cb, 0xE3);  /* ModRM(11, 4, 3) = BT RBX, imm8 */ \
-            emit_byte(cb, (uint8_t)si); \
+            emit_byte(cb, (uint8_t)_i); \
             /* jc .float_wb (rel8 placeholder) */ \
             emit_byte(cb, 0x72); \
             int flt_patch = cb->len; \
@@ -3472,6 +3465,21 @@ static JitLoopFn jit_compile(CallFrame* frame, const uint8_t* body_start,
     scan_loop_body(body_start, body_size, back_edge, &sr, vm_ptr);
     if (!sr.capable) {
         return NULL;
+    }
+
+    /* Remap inline callee locals: place them after all caller locals
+     * (si = n..n+inline_extra_locals-1), so caller locals (0..n-1) and
+     * callee locals never overlap.  During scan, callee_local_map was
+     * set with a base that may overlap caller locals marked later;
+     * fix it now that n is final. */
+    {
+        int base = sr.num_locals;
+        for (int i = 0; i < sr.inline_count; i++) {
+            int clc = sr.inline_sites[i].callee_local_count;
+            for (int j = 0; j < clc && j < 256; j++)
+                sr.inline_sites[i].callee_local_map[j] = base + j;
+            base += clc;
+        }
     }
 
     CodegenCtx ctx;
