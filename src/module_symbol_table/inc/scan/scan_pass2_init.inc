@@ -2,6 +2,201 @@
     p = source;
     int cur_line = 1;  // 当前行号（1-based），用于记录 struct/字段定义位置
 
+    // ---- 预扫描：收集所有非 export 的本地函数签名 ----
+    // export func 在主循环中由 scan_func.inc 处理，但非 export 的 func
+    // 不会被主循环扫描（主循环只处理 export 关键字开头的内容）。
+    // 当 export var 的初始化值引用本地函数时（如 export var arr = [test()]），
+    // 需要从符号表查找函数返回类型，因此必须预先收集所有函数签名。
+    {
+        const char* prescan = source;
+        while (*prescan) {
+            // 跳过空白、注释、字符串
+            while (*prescan && (*prescan == ' ' || *prescan == '\t' || *prescan == '\n' || *prescan == '\r')) prescan++;
+            if (!*prescan) break;
+            if (*prescan == '/' && *(prescan+1) == '/') {
+                while (*prescan && *prescan != '\n') prescan++;
+                continue;
+            }
+            if (*prescan == '/' && *(prescan+1) == '*') {
+                prescan += 2;
+                while (*prescan && !(*prescan == '*' && *(prescan+1) == '/')) prescan++;
+                if (*prescan) prescan += 2;
+                continue;
+            }
+            if (*prescan == '"' || *prescan == '\'') {
+                char q = *prescan++;
+                while (*prescan && *prescan != q) { if (*prescan == '\\' && *(prescan+1)) prescan += 2; else prescan++; }
+                if (*prescan) prescan++;
+                continue;
+            }
+
+            // 检查是否是 func 定义（仅收集非 export 的本地函数）
+            // export func 由主循环 scan_func.inc 处理（含完整类型修正），
+            // 预扫描只负责收集非 export 的本地函数签名，
+            // 使 export var 初始化值引用本地函数时能查到返回类型。
+            int has_export = 0;
+            const char* check_export = prescan;
+            if (strncmp(check_export, "export", 6) == 0 && (check_export[6] == ' ' || check_export[6] == '\t' || check_export[6] == '\n' || check_export[6] == '\r' || check_export[6] == '\0')) {
+                has_export = 1;
+            }
+
+            // 跳过 export 语句（整行跳过，直到行末）—— 由主循环处理
+            if (has_export) {
+                while (*prescan && *prescan != '\n') prescan++;
+                continue;
+            }
+
+            const char* func_pos = prescan;
+
+            if (strncmp(func_pos, "func", 4) == 0 && (func_pos[4] == ' ' || func_pos[4] == '\t' || func_pos[4] == '\n' || func_pos[4] == '\r' || func_pos[4] == '\0')) {
+                // 解析函数签名
+                const char* after_func = func_pos + 4;
+                while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
+
+                // 读函数名
+                const char* name_start = after_func;
+                while (*after_func && (isalnum((unsigned char)*after_func) || *after_func == '_')) after_func++;
+                int fname_len = (int)(after_func - name_start);
+
+                if (fname_len > 0 && fname_len < 64) {
+                    char func_name[64];
+                    memcpy(func_name, name_start, fname_len);
+                    func_name[fname_len] = '\0';
+
+                    // 只添加尚未在表中的函数（避免与 export func 重复）
+                    if (!module_symbol_table_find_func(table, func_name)) {
+                        // 跳过泛型参数 [T]
+                        while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
+                        if (*after_func == '[') {
+                            int d = 1; after_func++;
+                            while (*after_func && d > 0) {
+                                if (*after_func == '[') d++;
+                                else if (*after_func == ']') d--;
+                                after_func++;
+                            }
+                        }
+
+                        // 跳过空格
+                        while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
+
+                        // 解析参数列表 (...)
+                        char param_text[256] = {0};
+                        int param_count = 0;
+                        if (*after_func == '(') {
+                            const char* param_start = after_func + 1;
+                            int pd = 1; after_func++;
+                            while (*after_func && pd > 0) {
+                                if (*after_func == '(') pd++;
+                                else if (*after_func == ')') pd--;
+                                after_func++;
+                            }
+                            int plen = (int)(after_func - 1 - param_start);
+                            if (plen > 0 && plen < 256) {
+                                memcpy(param_text, param_start, plen);
+                                param_text[plen] = '\0';
+                                // 简单计数参数（逗号分割）
+                                if (param_text[0] != '\0') {
+                                    param_count = 1;
+                                    for (int i = 0; param_text[i]; i++) {
+                                        if (param_text[i] == ',') param_count++;
+                                    }
+                                }
+                            }
+                        }
+
+                        // 跳过空格和换行
+                        while (*after_func && (*after_func == ' ' || *after_func == '\t' || *after_func == '\n' || *after_func == '\r')) after_func++;
+
+                        // 解析返回类型 :Type
+                        TypeKind return_type = TYPE_ANY;
+                        TypeInfo* return_type_info = NULL;
+                        char return_struct_name[64] = {0};
+
+                        if (*after_func == ':') {
+                            after_func++;
+                            while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
+                            const char* type_start = after_func;
+
+                            // 读类型标识符
+                            while (*after_func && (isalnum((unsigned char)*after_func) || *after_func == '_')) after_func++;
+                            int type_len = (int)(after_func - type_start);
+
+                            // 读泛型参数 [K,V]
+                            while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
+                            if (*after_func == '[') {
+                                int d = 1; after_func++;
+                                while (*after_func && d > 0) {
+                                    if (*after_func == '[') d++;
+                                    else if (*after_func == ']') d--;
+                                    after_func++;
+                                }
+                                type_len = (int)(after_func - type_start);
+                            }
+
+                            // 消费可空 ?
+                            while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
+                            if (*after_func == '?') after_func++;
+
+                            if (type_len > 0 && type_len < 128) {
+                                char type_str[128];
+                                memcpy(type_str, type_start, type_len);
+                                type_str[type_len] = '\0';
+                                return_type_info = parse_type_from_string(type_str);
+                                if (return_type_info) {
+                                    return_type = return_type_info->kind;
+                                    if (return_type_info->struct_name) {
+                                        strncpy(return_struct_name, return_type_info->struct_name, 63);
+                                    }
+                                } else {
+                                    return_type = parse_base_type(type_str);
+                                }
+
+                                // 修正类型分类：检查是否是已知 clib/face/cstruct/struct
+                                // parse_simple_type_str 对未知标识符默认返回 TYPE_STRUCT
+                                {
+                                    char base_str[64];
+                                    int base_len = type_len < 64 ? type_len : 63;
+                                    strncpy(base_str, type_str, base_len);
+                                    base_str[base_len] = '\0';
+                                    char* bracket = strchr(base_str, '[');
+                                    if (bracket) *bracket = '\0';
+
+                                    if (return_type == TYPE_ANY || return_type == TYPE_STRUCT) {
+                                        if (is_known_clib(base_str, clib_names, clib_name_count)) {
+                                            return_type = TYPE_CLIB;
+                                            if (return_type_info) return_type_info->kind = TYPE_CLIB;
+                                            strncpy(return_struct_name, base_str, 63);
+                                        } else if (is_known_face(base_str, face_names, face_name_count)) {
+                                            return_type = TYPE_FACE;
+                                            if (return_type_info) return_type_info->kind = TYPE_FACE;
+                                            strncpy(return_struct_name, base_str, 63);
+                                        } else if (is_known_cstruct(base_str, cstruct_names, cstruct_name_count)) {
+                                            return_type = TYPE_CSTRUCT;
+                                            if (return_type_info) return_type_info->kind = TYPE_CSTRUCT;
+                                            strncpy(return_struct_name, base_str, 63);
+                                        } else if (is_known_struct(base_str, struct_names, struct_name_count)) {
+                                            return_type = TYPE_STRUCT;
+                                            strncpy(return_struct_name, base_str, 63);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        module_symbol_table_add_func(table, func_name,
+                            return_type,
+                            return_struct_name[0] ? return_struct_name : NULL,
+                            0, return_type_info, param_text, param_count, 0, NULL);
+                        if (return_type_info) type_free(return_type_info);
+                    }
+                }
+            }
+
+            // skip to next token
+            prescan++;
+        }
+    }
+
     // 本地别名解析表（支持 alias B = A 链式引用）
     // （动态数组，无固定上限：修复超过 64 个别名被静默丢弃的问题）
     char** local_alias_names = NULL;

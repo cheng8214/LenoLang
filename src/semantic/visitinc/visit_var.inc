@@ -381,9 +381,36 @@
                 Ast* target = ast->u.assign.targets[i];
                 
                 if (target->kind == AST_INDEX) {
+                    // const 检查必须在 visit 之前，因为 visit 会改变 obj 节点类型
+                    if (target->u.index.obj && target->u.index.obj->kind == AST_VAR) {
+                        const char* obj_name = target->u.index.obj->u.var.name;
+                        SymRef tmp_ref;
+                        memset(&tmp_ref, 0, sizeof(tmp_ref));
+                        Symbol* sym = resolve_variable_with_upvalue(s, obj_name, &tmp_ref);
+                        if (sym && sym->is_const) {
+                            char msg[BUFFER_MEDIUM];
+                            snprintf(msg, sizeof(msg), "不能对 const 变量 '%s' 的元素重新赋值", obj_name);
+                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                        }
+                    }
+                    // 检查模块变量是否为 const（如 m.arr[0] = 99）
+                    if (target->u.index.obj && target->u.index.obj->kind == AST_MODULE_ACCESS) {
+                        const char* mod_name = target->u.index.obj->u.module_access.module_name;
+                        const char* mem_name = target->u.index.obj->u.module_access.member_name;
+                        ImportedModuleInfo* mod_info = find_imported_module(s, mod_name);
+                        if (mod_info && mod_info->sym_table) {
+                            ModuleVarSymbol* var_sym = module_symbol_table_find_var(mod_info->sym_table, mem_name);
+                            if (var_sym && var_sym->is_const) {
+                                char msg[BUFFER_MEDIUM];
+                                snprintf(msg, sizeof(msg), "不能对 const 变量 '%s.%s' 的元素重新赋值", mod_name, mem_name);
+                                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                            }
+                        }
+                    }
+
                     // 索引表达式：访问索引节点进行语义分析
                     visit(s, target);
-                    
+
                     // 对于索引目标，获取索引对象变量的符号信息
                     // 这用于代码生成时计算临时槽位基址
                     if (target->u.index.obj && target->u.index.obj->kind == AST_VAR) {

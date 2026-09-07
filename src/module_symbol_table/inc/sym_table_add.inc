@@ -75,6 +75,7 @@ void module_symbol_table_add_struct(ModuleSymbolTable* table, const char* name, 
             st->fields[i].struct_name = fields[i].struct_name ? strdup(fields[i].struct_name) : NULL;
             st->fields[i].element_type = fields[i].element_type;
             st->fields[i].element_struct_name = fields[i].element_struct_name ? strdup(fields[i].element_struct_name) : NULL;
+            st->fields[i].type_info = fields[i].type_info ? type_copy(fields[i].type_info) : NULL;
             st->fields[i].nullable = fields[i].nullable;
             st->fields[i].line = fields[i].line;
         }
@@ -263,7 +264,7 @@ ModuleVarSymbol* module_symbol_table_find_var(ModuleSymbolTable* table, const ch
 }
 
 // 添加变量符号
-void module_symbol_table_add_var(ModuleSymbolTable* table, const char* name, TypeKind type, const char* struct_name, int is_const) {
+void module_symbol_table_add_var(ModuleSymbolTable* table, const char* name, TypeKind type, const char* struct_name, int is_const, TypeInfo* type_info) {
     if (!table || !name) return;
 
     // 扩容
@@ -279,6 +280,7 @@ void module_symbol_table_add_var(ModuleSymbolTable* table, const char* name, Typ
     var->name = strdup(name);
     var->type = type;
     var->struct_name = struct_name ? strdup(struct_name) : NULL;
+    var->type_info = type_info ? type_copy(type_info) : NULL;
     var->is_const = is_const;
 }
 

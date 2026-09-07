@@ -8,7 +8,12 @@
 // 返回：1 = 是，0 = 否
 int type_utils_is_array_element_mutator(const char* method_name) {
     return (strcmp(method_name, "add") == 0 ||
-            strcmp(method_name, "insert") == 0);
+            strcmp(method_name, "insert") == 0 ||
+            strcmp(method_name, "pop") == 0 ||
+            strcmp(method_name, "remove") == 0 ||
+            strcmp(method_name, "clear") == 0 ||
+            strcmp(method_name, "reverse") == 0 ||
+            strcmp(method_name, "sort") == 0);
 }
 
 // 获取数组元素修改方法中，元素参数的位置
@@ -165,7 +170,9 @@ Symbol* type_utils_resolve_var_symbol(Semantic* s, Ast* ast) {
 // 检查方法名是否是字典元素修改方法
 // 返回：1 = 是，0 = 否
 int type_utils_is_dict_element_mutator(const char* method_name) {
-    return (strcmp(method_name, "set") == 0);
+    return (strcmp(method_name, "set") == 0 ||
+            strcmp(method_name, "remove") == 0 ||
+            strcmp(method_name, "clear") == 0);
 }
 
 

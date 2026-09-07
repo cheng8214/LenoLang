@@ -257,7 +257,34 @@
         case AST_INDEX_ASSIGN: {
             // 初始化字段索引为 -1（未确定）
             ast->u.index_assign.field_index = -1;
-            
+
+            // const 检查必须在 visit 之前，因为 visit 会改变 obj 的节点类型
+            // （AST_MODULE_ACCESS → AST_FIELD_ACCESS / AST_INDEX）
+            Ast* obj = ast->u.index_assign.obj;
+            if (obj && obj->kind == AST_VAR) {
+                const char* obj_name = obj->u.var.name;
+                SymRef tmp_ref;
+                memset(&tmp_ref, 0, sizeof(tmp_ref));
+                Symbol* sym = resolve_variable_with_upvalue(s, obj_name, &tmp_ref);
+                if (sym && sym->is_const) {
+                    char msg[BUFFER_MEDIUM];
+                    snprintf(msg, sizeof(msg), "不能对 const 变量 '%s' 的元素重新赋值", obj_name);
+                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                }
+            } else if (obj && obj->kind == AST_MODULE_ACCESS) {
+                const char* mod_name = obj->u.module_access.module_name;
+                const char* mem_name = obj->u.module_access.member_name;
+                ImportedModuleInfo* mod_info = find_imported_module(s, mod_name);
+                if (mod_info && mod_info->sym_table) {
+                    ModuleVarSymbol* var_sym = module_symbol_table_find_var(mod_info->sym_table, mem_name);
+                    if (var_sym && var_sym->is_const) {
+                        char msg[BUFFER_MEDIUM];
+                        snprintf(msg, sizeof(msg), "不能对 const 变量 '%s.%s' 的元素重新赋值", mod_name, mem_name);
+                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                    }
+                }
+            }
+
             visit(s, ast->u.index_assign.obj);
             visit(s, ast->u.index_assign.index);
             visit(s, ast->u.index_assign.value);
@@ -413,6 +440,38 @@
             // 处理方法调用：callee 是 INDEX (obj["method"])
             if (ast->u.call.callee && ast->u.call.callee->kind == AST_INDEX) {
                 Ast* index_ast = ast->u.call.callee;
+
+                // const 检查：在 visit 之前检查，因为 visit 会改变 AST_MODULE_ACCESS 节点类型
+                if (index_ast->u.index.index->kind == AST_STRING) {
+                    const char* method_name = index_ast->u.index.index->u.string.value;
+                    if (type_utils_is_array_element_mutator(method_name) ||
+                        type_utils_is_dict_element_mutator(method_name)) {
+                        Ast* obj = index_ast->u.index.obj;
+                        if (obj && obj->kind == AST_VAR) {
+                            SymRef tmp_ref;
+                            memset(&tmp_ref, 0, sizeof(tmp_ref));
+                            Symbol* sym = resolve_variable_with_upvalue(s, obj->u.var.name, &tmp_ref);
+                            if (sym && sym->is_const) {
+                                char msg[BUFFER_MEDIUM];
+                                snprintf(msg, sizeof(msg), "不能对 const 变量 '%s' 调用修改方法 '%s'", obj->u.var.name, method_name);
+                                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                            }
+                        } else if (obj && obj->kind == AST_MODULE_ACCESS) {
+                            const char* mod_name = obj->u.module_access.module_name;
+                            const char* mem_name = obj->u.module_access.member_name;
+                            ImportedModuleInfo* mod_info = find_imported_module(s, mod_name);
+                            if (mod_info && mod_info->sym_table) {
+                                ModuleVarSymbol* var_sym = module_symbol_table_find_var(mod_info->sym_table, mem_name);
+                                if (var_sym && var_sym->is_const) {
+                                    char msg[BUFFER_MEDIUM];
+                                    snprintf(msg, sizeof(msg), "不能对 const 变量 '%s.%s' 调用修改方法 '%s'", mod_name, mem_name, method_name);
+                                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                                }
+                            }
+                        }
+                    }
+                }
+
                 visit(s, index_ast->u.index.obj);
                 visit(s, index_ast->u.index.index);
                 visit_list(s, &ast->u.call.args);

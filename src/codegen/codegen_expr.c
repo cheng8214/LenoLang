@@ -1391,7 +1391,13 @@ void gen_expr(CodeGen* gen, Ast* ast) {
                 TypeInfo* obj_type = infer_expr_type(gen->sem, ast->u.index.obj);
                 // 检查对象是否是模块访问（如 color_module.Color），这种情况下也使用 OP_INDEX
                 int is_module_access = (ast->u.index.obj->kind == AST_MODULE_ACCESS);
-                if ((obj_type && (obj_type->kind == TYPE_STRUCT || obj_type->kind == TYPE_CSTRUCT || obj_type->kind == TYPE_ENUM)) || is_module_access) {
+                // ★ 模块访问的内置容器类型（Array/Dict/String 等）需要走 OP_GET_PROPERTY
+                //   获取方法（如 mod.ARR.len()），不能走 OP_INDEX（会把方法名当数组索引）
+                int is_builtin_container = (obj_type && (
+                    obj_type->kind == TYPE_ARRAY || obj_type->kind == TYPE_DICT ||
+                    obj_type->kind == TYPE_STRING || obj_type->kind == TYPE_FILE ||
+                    obj_type->kind == TYPE_SOCKET || obj_type->kind == TYPE_THREAD));
+                if ((obj_type && (obj_type->kind == TYPE_STRUCT || obj_type->kind == TYPE_CSTRUCT || obj_type->kind == TYPE_ENUM)) || (is_module_access && !is_builtin_container)) {
                     // struct/cstruct 字段访问、enum 成员访问或模块访问使用通用索引
                     gen_expr(gen, ast->u.index.index);
                     emit_byte(gen, OP_INDEX, ast->line);

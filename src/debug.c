@@ -468,6 +468,11 @@ int disassembleInstruction(Chunk* chunk, int offset) {
             printf(" %u", (unsigned int)imm);
             return offset + 2;
         }
+        case OP_RETURN_MULTI: {
+            int count = chunk->code[offset + 1];
+            printf(" count=%d", count);
+            return offset + 2;
+        }
         case OP_AWAIT: {
             printf(" (await Future)");
             return offset + 1;
@@ -587,11 +592,6 @@ int disassembleInstruction(Chunk* chunk, int offset) {
             printf(" const=%d cases=%d", const_idx, case_count);
             // opcode(1) + const(2) + count(2) + default_off(4) + offsets(4*case_count)
             return offset + 9 + case_count * 4;
-        }
-        case OP_RETURN_MULTI: {
-            int count = chunk->code[offset + 1];
-            printf(" count=%d", count);
-            return offset + 2;
         }
         default:
             return offset + 1;

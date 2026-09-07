@@ -460,6 +460,13 @@ Ast* parse_export_stmt(Parser* p) {
             "'use' 已自带重导出语义，不需要 'export'，请直接使用 'use module.Type'");
         return NULL;
     } else {
+        // 尝试解析为"类型在前"变量声明: export Array[int] arr = value, export int x = 42
+        Ast* decl = parse_var_decl_internal(p);
+        if (decl) {
+            Ast* ast = ast_new(AST_EXPORT, line);
+            ast->u.export.decl = decl;
+            return ast;
+        }
         error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "export 后面期望 var、const、func、struct、cstruct、packed、align、clib、enum 或 alias");
         return NULL;
     }

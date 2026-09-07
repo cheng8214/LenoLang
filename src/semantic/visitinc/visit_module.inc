@@ -287,22 +287,32 @@
                     sym->struct_field_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * struct_sym->field_count);
                     for (int i = 0; i < struct_sym->field_count; i++) {
                         sym->struct_field_names[i] = strdup(struct_sym->fields[i].name);
-                        sym->struct_field_types[i] = type_new(struct_sym->fields[i].type);
-                        if (struct_sym->fields[i].struct_name) {
-                            sym->struct_field_types[i]->struct_name = strdup(struct_sym->fields[i].struct_name);
-                        }
-                        // 传播 nullable 标记
-                        if (struct_sym->fields[i].nullable) {
-                            sym->struct_field_types[i]->nullable = 1;
-                        }
-                        // 重建 Array[T]/Dict[K,V] 的元素类型信息
-                        if ((struct_sym->fields[i].type == TYPE_ARRAY || struct_sym->fields[i].type == TYPE_DICT)
-                            && struct_sym->fields[i].element_type != TYPE_PTR) {
-                            TypeInfo* elem_type = type_new(struct_sym->fields[i].element_type);
-                            if (struct_sym->fields[i].element_struct_name) {
-                                elem_type->struct_name = strdup(struct_sym->fields[i].element_struct_name);
+                        // ★ 优先使用完整类型信息（支持 Array[Array[int]]/Array[Ptr[u8]] 等嵌套泛型）
+                        if (struct_sym->fields[i].type_info) {
+                            sym->struct_field_types[i] = type_copy(struct_sym->fields[i].type_info);
+                            // 传播 nullable 标记（type_info 可能未设置 nullable）
+                            if (struct_sym->fields[i].nullable) {
+                                sym->struct_field_types[i]->nullable = 1;
                             }
-                            sym->struct_field_types[i]->element_type = elem_type;
+                        } else {
+                            // 向后兼容：从扁平字段重建类型
+                            sym->struct_field_types[i] = type_new(struct_sym->fields[i].type);
+                            if (struct_sym->fields[i].struct_name) {
+                                sym->struct_field_types[i]->struct_name = strdup(struct_sym->fields[i].struct_name);
+                            }
+                            // 传播 nullable 标记
+                            if (struct_sym->fields[i].nullable) {
+                                sym->struct_field_types[i]->nullable = 1;
+                            }
+                            // 重建 Array[T]/Dict[K,V] 的元素类型信息
+                            if ((struct_sym->fields[i].type == TYPE_ARRAY || struct_sym->fields[i].type == TYPE_DICT)
+                                && struct_sym->fields[i].element_type != TYPE_PTR) {
+                                TypeInfo* elem_type = type_new(struct_sym->fields[i].element_type);
+                                if (struct_sym->fields[i].element_struct_name) {
+                                    elem_type->struct_name = strdup(struct_sym->fields[i].element_struct_name);
+                                }
+                                sym->struct_field_types[i]->element_type = elem_type;
+                            }
                         }
                     }
                     // 设置泛型类型参数信息
@@ -775,6 +785,39 @@
                         error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     }
                     
+                    // const 检查：模块方法调用不能修改 const 容器
+                    {
+                        const char* m_name = ast->u.module_call.method_name;
+                        if (type_utils_is_array_element_mutator(m_name) ||
+                            type_utils_is_dict_element_mutator(m_name)) {
+                            if (actual_arity > 0) {
+                                Ast* first_arg = ast->u.module_call.args.items[0];
+                                if (first_arg && first_arg->kind == AST_VAR) {
+                                    SymRef tmp_ref;
+                                    memset(&tmp_ref, 0, sizeof(tmp_ref));
+                                    Symbol* sym = resolve_variable_with_upvalue(s, first_arg->u.var.name, &tmp_ref);
+                                    if (sym && sym->is_const) {
+                                        char msg[BUFFER_MEDIUM];
+                                        snprintf(msg, sizeof(msg), "不能对 const 变量 '%s' 调用修改方法 '%s'", first_arg->u.var.name, m_name);
+                                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                                    }
+                                } else if (first_arg && first_arg->kind == AST_MODULE_ACCESS) {
+                                    const char* mod_name = first_arg->u.module_access.module_name;
+                                    const char* mem_name = first_arg->u.module_access.member_name;
+                                    ImportedModuleInfo* mod_info = find_imported_module(s, mod_name);
+                                    if (mod_info && mod_info->sym_table) {
+                                        ModuleVarSymbol* var_sym = module_symbol_table_find_var(mod_info->sym_table, mem_name);
+                                        if (var_sym && var_sym->is_const) {
+                                            char msg[BUFFER_MEDIUM];
+                                            snprintf(msg, sizeof(msg), "不能对 const 变量 '%s.%s' 调用修改方法 '%s'", mod_name, mem_name, m_name);
+                                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     // 检查参数类型
                     // 先找到第一个数组参数及其元素类型
                     TypeInfo* array_elem_type = NULL;
@@ -1545,6 +1588,17 @@
                         if (method_found) {
                         // 方法在该类型的注册表中存在
                         int actual_arity = ast->u.module_call.args.count;
+
+                        // const 检查：实例方法调用不能修改 const 容器
+                        if (obj_sym->is_const &&
+                            (type_utils_is_array_element_mutator(method_name) ||
+                             type_utils_is_dict_element_mutator(method_name))) {
+                            char msg[BUFFER_MEDIUM];
+                            snprintf(msg, sizeof(msg), "不能对 const 变量 '%s' 调用修改方法 '%s'",
+                                     ast->u.module_call.module_name, method_name);
+                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                        }
+
                         const InstanceMethodMeta* inst_meta = NULL;
                         if (obj_type_name) {
                             inst_meta = native_find_instance_method(obj_type_name, method_name);
@@ -2048,6 +2102,11 @@
                         ModuleVarSymbol* mv = module_symbol_table_find_var(mod_info->sym_table, ast->u.module_access.member_name);
                         if (mv) {
                             member_type = mv->type;
+                            // ★ 优先使用完整类型信息（支持 Array[int] 等泛型变量）
+                            if (mv->type_info) {
+                                if (ast->cached_type) { type_free(ast->cached_type); }
+                                ast->cached_type = type_copy(mv->type_info);
+                            }
                         } else {
                             // 也可能是 enum 成员（enum 成员可被引用为常量）
                             for (int ei = 0; ei < mod_info->sym_table->enum_count; ei++) {

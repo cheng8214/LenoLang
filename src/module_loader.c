@@ -367,6 +367,25 @@ static void extract_exports(const char* source, ExportList* list) {
             } else if (strncmp(p, "enum", 4) == 0 && !isalnum((unsigned char)p[4]) && p[4] != '_') {
                 p += 4;
                 while (*p && (*p == ' ' || *p == '\t')) p++;
+            } else {
+                // "类型在前"声明: export int x = 42, export Array[int] arr = value, export MyStruct b = ...
+                // 跳过类型部分（类型名 + 可选泛型 [T] 或 [K,V]）
+                // 跳过类型名标识符
+                while (*p && (isalnum((unsigned char)*p) || *p == '_')) p++;
+                while (*p && (*p == ' ' || *p == '\t')) p++;
+                // 跳过泛型参数 [T] 或 [K,V]（支持嵌套如 Array[Array[int]]）
+                if (*p == '[') {
+                    int depth = 1;
+                    p++;
+                    while (*p && depth > 0) {
+                        if (*p == '[') depth++;
+                        else if (*p == ']') { depth--; if (depth == 0) { p++; break; } }
+                        p++;
+                    }
+                    while (*p && (*p == ' ' || *p == '\t')) p++;
+                }
+                // 跳过可能的第二级类型（如 Array[Array[int]] 中外层 Array 后还有 [Array[int]]）
+                // 上面已处理嵌套，这里不需要再循环
             }
 
             // 读取标识符名称

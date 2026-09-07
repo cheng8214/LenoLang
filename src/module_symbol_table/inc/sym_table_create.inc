@@ -66,6 +66,9 @@ void module_symbol_table_destroy(ModuleSymbolTable* table) {
             free(table->structs[i].fields[j].name);
             free(table->structs[i].fields[j].struct_name);
             free(table->structs[i].fields[j].element_struct_name);
+            if (table->structs[i].fields[j].type_info) {
+                type_free(table->structs[i].fields[j].type_info);
+            }
         }
         free(table->structs[i].fields);
         // 释放方法数组
@@ -138,6 +141,9 @@ void module_symbol_table_destroy(ModuleSymbolTable* table) {
     for (int i = 0; i < table->var_count; i++) {
         free(table->vars[i].name);
         free(table->vars[i].struct_name);
+        if (table->vars[i].type_info) {
+            type_free(table->vars[i].type_info);
+        }
     }
     free(table->vars);
 

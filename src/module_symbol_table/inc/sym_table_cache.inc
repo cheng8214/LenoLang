@@ -4,7 +4,7 @@
 // ============================================================================
 
 #define LENOSYMC_MAGIC   0x4D59534C  // "LSYM" little-endian
-#define LENOSYMC_VERSION 0x00000011  // v17: 扫描器全部数量型上限改为动态数组（enum 成员/clib 函数/类型数/别名等），旧缓存可能含被截断的符号，需失效重建
+#define LENOSYMC_VERSION 0x00000013  // v19: ModuleVarSymbol 序列化/反序列化 is_const 字段，旧缓存缺失此字段需失效重建
 
 // 字符串序列化辅助函数（需在 TypeInfo 序列化之前定义）
 static void sym_cache_write_string(FILE* f, const char* s) {
@@ -267,6 +267,8 @@ sym_cache_write_string(f, table->funcs[i].param_default_texts[k]);
             // v15: 序列化字段行号
             uint32_t fl = (uint32_t)ss->fields[j].line;
             fwrite(&fl, 4, 1, f);
+            // v18: 序列化完整类型信息（支持嵌套泛型）
+            sym_cache_write_type_info(f, ss->fields[j].type_info);
         }
         uint32_t mc = (uint32_t)ss->method_count;
         fwrite(&mc, 4, 1, f);
@@ -371,6 +373,11 @@ sym_cache_write_string(f, table->funcs[i].param_default_texts[k]);
         uint8_t vt = (uint8_t)table->vars[i].type;
         fwrite(&vt, 1, 1, f);
         sym_cache_write_string(f, table->vars[i].struct_name);
+        // v18: 序列化完整类型信息（支持 Array[int] 等泛型变量）
+        sym_cache_write_type_info(f, table->vars[i].type_info);
+        // v19: 序列化 is_const 标志
+        uint8_t ic = (uint8_t)(table->vars[i].is_const ? 1 : 0);
+        fwrite(&ic, 1, 1, f);
     }
 
     // aliases
@@ -641,6 +648,8 @@ table->func_count++;
             // v15: 反序列化字段行号
             uint32_t fl; if (fread(&fl, 4, 1, f) != 1) goto fail;
             ss->fields[j].line = (int)fl;
+            // v18: 反序列化完整类型信息（支持嵌套泛型）
+            ss->fields[j].type_info = sym_cache_read_type_info(f);
         }
         uint32_t mc; if (fread(&mc, 4, 1, f) != 1) goto fail;
         ss->method_count = (int)mc;
@@ -765,6 +774,11 @@ table->func_count++;
         uint8_t vt; if (fread(&vt, 1, 1, f) != 1) goto fail;
         table->vars[i].type = (TypeKind)vt;
         table->vars[i].struct_name = sym_cache_read_string(f);
+        // v18: 反序列化完整类型信息（支持 Array[int] 等泛型变量）
+        table->vars[i].type_info = sym_cache_read_type_info(f);
+        // v19: 反序列化 is_const 标志
+        uint8_t ic; if (fread(&ic, 1, 1, f) != 1) goto fail;
+        table->vars[i].is_const = ic ? 1 : 0;
         table->var_count++;
     }
 

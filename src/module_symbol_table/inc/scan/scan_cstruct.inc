@@ -123,36 +123,65 @@
                                 // 检查是否是 Ptr[T] / Array[T] / Dict[K,V] 类型
                                 TypeKind element_type = TYPE_PTR;  // 默认元素类型
                                 char* element_struct_name = NULL;   // 元素类型的结构体/face/clib 名称
+                                // ★ 完整类型信息（支持 Array[Array[int]] / Array[Ptr[u8]] 等嵌套泛型）
+                                TypeInfo* field_type_info = NULL;
                                 while (*after_cstruct && (*after_cstruct == ' ' || *after_cstruct == '\t')) after_cstruct++;
                                 if (*after_cstruct == '[') {
-                                    // 解析 [T] 中的 T
-                                    after_cstruct++;
-                                    while (*after_cstruct && (*after_cstruct == ' ' || *after_cstruct == '\t')) after_cstruct++;
-                                    const char* elem_type_start = after_cstruct;
-                                    while (*after_cstruct && (isalnum((unsigned char)*after_cstruct) || *after_cstruct == '_')) after_cstruct++;
-                                    int elem_type_len = (int)(after_cstruct - elem_type_start);
-                                    if (elem_type_len > 0 && elem_type_len < 64) {
-                                        char elem_type_str[64];
-                                        strncpy(elem_type_str, elem_type_start, elem_type_len);
-                                        elem_type_str[elem_type_len] = '\0';
-                                        element_type = parse_base_type(elem_type_str);
-                                        // 如果元素类型是未识别的自定义类型，检查是否是 struct/face/clib
-                                        if (element_type == TYPE_ANY) {
-                                            if (is_known_struct(elem_type_str, struct_names, struct_name_count)) {
-                                                element_type = TYPE_STRUCT;
-                                                element_struct_name = strdup(elem_type_str);
-                                            } else if (is_known_face(elem_type_str, face_names, face_name_count)) {
-                                                element_type = TYPE_FACE;
-                                                element_struct_name = strdup(elem_type_str);
-                                            } else if (is_known_clib(elem_type_str, clib_names, clib_name_count)) {
-                                                element_type = TYPE_CLIB;
-                                                element_struct_name = strdup(elem_type_str);
+                                    // 提取完整的泛型类型字符串（如 Array[Array[int]]），用于 parse_type_from_string
+                                    const char* full_type_start = type_start;
+                                    // 用括号深度正确跳过嵌套的 []，而非简单找第一个 ]
+                                    after_cstruct++; // skip '['
+                                    int bracket_depth = 1;
+                                    while (*after_cstruct && bracket_depth > 0) {
+                                        if (*after_cstruct == '[') bracket_depth++;
+                                        else if (*after_cstruct == ']') { bracket_depth--; if (bracket_depth == 0) { after_cstruct++; break; } }
+                                        after_cstruct++;
+                                    }
+                                    // 提取完整类型字符串
+                                    int full_type_len = (int)(after_cstruct - full_type_start);
+                                    if (full_type_len > 0 && full_type_len < 256) {
+                                        char full_type_str[256];
+                                        strncpy(full_type_str, full_type_start, full_type_len);
+                                        full_type_str[full_type_len] = '\0';
+                                        // 先检查本地别名表
+                                        TypeInfo* alias_ti = FIND_LOCAL_ALIAS(full_type_str);
+                                        if (alias_ti) {
+                                            field_type_info = type_copy(alias_ti);
+                                        } else {
+                                            field_type_info = parse_type_from_string(full_type_str);
+                                        }
+                                    }
+
+                                    // 向后兼容：解析第一层元素类型
+                                    {
+                                        const char* gp = full_type_start + type_len; // skip type name
+                                        while (*gp && (*gp == ' ' || *gp == '\t')) gp++;
+                                        if (*gp == '[') {
+                                            gp++; // skip '['
+                                            while (*gp && (*gp == ' ' || *gp == '\t')) gp++;
+                                            const char* elem_type_start2 = gp;
+                                            while (*gp && (isalnum((unsigned char)*gp) || *gp == '_')) gp++;
+                                            int elem_type_len2 = (int)(gp - elem_type_start2);
+                                            if (elem_type_len2 > 0 && elem_type_len2 < 64) {
+                                                char elem_type_str[64];
+                                                strncpy(elem_type_str, elem_type_start2, elem_type_len2);
+                                                elem_type_str[elem_type_len2] = '\0';
+                                                element_type = parse_base_type(elem_type_str);
+                                                if (element_type == TYPE_ANY) {
+                                                    if (is_known_struct(elem_type_str, struct_names, struct_name_count)) {
+                                                        element_type = TYPE_STRUCT;
+                                                        element_struct_name = strdup(elem_type_str);
+                                                    } else if (is_known_face(elem_type_str, face_names, face_name_count)) {
+                                                        element_type = TYPE_FACE;
+                                                        element_struct_name = strdup(elem_type_str);
+                                                    } else if (is_known_clib(elem_type_str, clib_names, clib_name_count)) {
+                                                        element_type = TYPE_CLIB;
+                                                        element_struct_name = strdup(elem_type_str);
+                                                    }
+                                                }
                                             }
                                         }
                                     }
-                                    // 跳过到 ] 为止的内容
-                                    while (*after_cstruct && *after_cstruct != ']') after_cstruct++;
-                                    if (*after_cstruct == ']') after_cstruct++;
                                 }
 
                                 while (*after_cstruct && (*after_cstruct == ' ' || *after_cstruct == '\t')) after_cstruct++;
@@ -202,9 +231,16 @@
                                         fields[field_count].element_type = element_type;
                                         fields[field_count].element_struct_name = element_struct_name;
                                         fields[field_count].nullable = 0;  // cstruct 字段不支持 nullable，显式初始化
+                                        // ★ 存储完整类型信息（支持嵌套泛型）
+                                        fields[field_count].type_info = field_type_info ? type_copy(field_type_info) : NULL;
                                         field_count++;
                                     }
                                     // 内存不足（realloc 失败）时跳过该字段，继续扫描
+                                }
+                                // 释放临时的 field_type_info（所有权已通过 type_copy 转移到字段数组）
+                                if (field_type_info) {
+                                    type_free(field_type_info);
+                                    field_type_info = NULL;
                                 }
                             }
 
@@ -292,6 +328,10 @@
                         // 释放临时分配的内存
                         for (int i = 0; i < field_count; i++) {
                             free(fields[i].name);
+                            if (fields[i].type_info) {
+                                type_free(fields[i].type_info);
+                                fields[i].type_info = NULL;
+                            }
                         }
                         free(fields);
 

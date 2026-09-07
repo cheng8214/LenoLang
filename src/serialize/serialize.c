@@ -340,7 +340,7 @@ static int serialize_constant(WriteBuffer* wb, Value val) {
             wb_write_u32(wb, (uint32_t)func->local_count);
             wb_write_u8(wb, (uint8_t)func->has_try);
             wb_write_u8(wb, (uint8_t)func->is_ctor);
-            wb_write_u32(wb, (uint32_t)func->return_count);  // 返回值个数（编译期统计）
+            wb_write_u32(wb, (uint32_t)func->return_count);
             // 返回值类型数组（供 JIT 内联使用）
             uint32_t ret_type_count = 0;
             if (func->return_count > 0 && func->return_types) {
@@ -887,7 +887,7 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
         func->local_count = (int)local_count;
         func->has_try = has_try;
         func->is_ctor = is_ctor;
-        func->return_count = (int)return_count;  // 返回值个数（编译期统计）
+        func->return_count = (int)return_count;
         func->module = NULL;
         func->return_types = NULL;
 
@@ -906,7 +906,7 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
             }
         }
 
-        // param_count 在 ret_types 之后
+        // param_count 在 return_types 之后
         if (!ctx_read_u32(ctx, &param_count)) {
             free(name);
             return 0;

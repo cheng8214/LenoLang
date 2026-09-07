@@ -24,6 +24,8 @@ typedef struct {
     TypeKind element_type;      // Array[T]/Dict[K,V] 中 T/V 的类型（当 type 为 TYPE_ARRAY/TYPE_DICT/TYPE_PTR_GENERIC 时有效）
     char* struct_name;          // 类型名（当 type 为 TYPE_STRUCT/TYPE_CLIB/TYPE_CSTRUCT/TYPE_FACE 时）
     char* element_struct_name;  // Array[T]/Dict[K,V] 中 T/V 的类型名（当 element_type 为 TYPE_STRUCT/TYPE_FACE/TYPE_CSTRUCT/TYPE_CLIB 时）
+    TypeInfo* type_info;        // 完整类型信息（支持 Array[Array[int]]/Array[Ptr[u8]] 等嵌套泛型类型）
+                                // 非 NULL 时优先使用，element_type/element_struct_name 为向后兼容的扁平降级
     int nullable;               // 可空字段标记：1=Type?，0=Type
     int line;                   // 字段定义所在行号（1-based，0 表示未知）
 } ModuleStructField;
@@ -123,6 +125,8 @@ typedef struct {
     char* name;                 // 变量名
     TypeKind type;              // 变量类型
     char* struct_name;          // 如果类型是 struct，存储 struct 名称
+    TypeInfo* type_info;        // 完整类型信息（支持 Array[int]/Dict[K,V] 等泛型类型）
+                                // 非 NULL 时优先使用，type/struct_name 为向后兼容的扁平降级
     int is_const;               // 是否为 const 声明
 } ModuleVarSymbol;
 
@@ -207,7 +211,7 @@ void module_symbol_table_add_face(ModuleSymbolTable* table, const char* name, in
 ModuleVarSymbol* module_symbol_table_find_var(ModuleSymbolTable* table, const char* var_name);
 
 // 添加变量符号
-void module_symbol_table_add_var(ModuleSymbolTable* table, const char* name, TypeKind type, const char* struct_name, int is_const);
+void module_symbol_table_add_var(ModuleSymbolTable* table, const char* name, TypeKind type, const char* struct_name, int is_const, TypeInfo* type_info);
 
 // 查找别名符号
 ModuleAliasSymbol* module_symbol_table_find_alias(ModuleSymbolTable* table, const char* alias_name);

@@ -1126,11 +1126,6 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                             // 其他不兼容类型（排除泛型参数）
                             error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, "不兼容的类型不能进行大小比较");
                         }
-                    } else if (left && right &&
-                               (left->kind == TYPE_ANY || right->kind == TYPE_ANY)) {
-                        // any 类型不能参与大小比较（如无类型参数的 Array 元素）
-                        error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column,
-                            "any 类型不能参与大小比较，请指定数组元素类型（如 Array[int]）");
                     }
                     // any 类型不能参与大小比较（如无类型参数的 Array 元素）：
                     // 编译期能确定的类型问题不放过到运行时
@@ -1894,7 +1889,12 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     // 检查是否是变量名
                     ModuleVarSymbol* var_sym = module_symbol_table_find_var(module_info->sym_table, ast->u.module_access.member_name);
                     if (var_sym) {
-                        // 这是变量，返回变量类型
+                        // ★ 优先使用完整类型信息（支持 Array[int] 等泛型变量）
+                        if (var_sym->type_info) {
+                            ast->cached_type = type_copy(var_sym->type_info);
+                            return type_copy(ast->cached_type);
+                        }
+                        // 向后兼容：从扁平字段重建类型
                         TypeInfo* var_type = type_new(var_sym->type);
                         if (var_sym->type == TYPE_STRUCT && var_sym->struct_name) {
                             var_type->struct_name = strdup(var_sym->struct_name);
