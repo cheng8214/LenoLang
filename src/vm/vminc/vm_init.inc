@@ -24,6 +24,7 @@ void vm_init_with_scope(Scope* global_scope) {
     vm.catch_frame = -1;
     vm.pending_exception = 0;
     vm.exception_line = 0;
+    vm.last_return_count = 0;
     
     // 初始化字符串表（字符串内化）
     intern_table_init();

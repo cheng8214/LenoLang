@@ -483,6 +483,10 @@ typedef struct {
 // 虚拟机
 // ============================================================================
 
+// vm_call_value（native 回调脚本函数）路径下可读取的最大返回值个数
+// 与 OP_RETURN_MULTI 的 results[16] 上限保持一致
+#define VM_MAX_RETURNS 16
+
 typedef struct VM {
     Chunk* chunk;
     uint8_t* ip;
@@ -523,6 +527,13 @@ typedef struct VM {
     ObjCoroutine* current_coroutine;
     ObjCoroutine* all_coroutines;
     Value last_return_value;
+    // 多返回值：vm_call_value（native 回调脚本函数）路径下，OP_RETURN_MULTI 的
+    // 全部返回值保存在这里，last_return_count 记录个数（单返回值时恒为 1）。
+    // 从前只保留 results[0] 到 last_return_value，其余返回值全部丢失。
+    // 注意：这里刻意不往 VM 栈压值——压栈会改变所有 vm_call_value 调用方
+    // （arrays.map / FFI 回调等）看到的栈布局，存在栈漂移风险。
+    Value last_return_values[VM_MAX_RETURNS];
+    int last_return_count;
     // 线程系统
     ObjThread** active_threads;  // 活动线程列表
     int active_thread_count;

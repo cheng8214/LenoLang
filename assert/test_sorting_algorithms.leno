@@ -2,7 +2,7 @@
 import rands as rand
 
 // ==================== 插入排序 ====================
-func insertion_sort(Array[int] arr): Array[int] {
+func insertion_sort(Array[int] arr):Array[int] {
     var n = arr.len();
     if n <= 1 {
         return arr;
@@ -20,7 +20,7 @@ func insertion_sort(Array[int] arr): Array[int] {
 }
 
 // ==================== 冒泡排序 ====================
-func bubble_sort(Array[int] arr): Array[int] {
+func bubble_sort(Array[int] arr):Array[int] {
     var n = arr.len();
     if n <= 1 {
         return arr;
@@ -205,7 +205,7 @@ func quick_sort_opt(Array[int] arr, int left, int right):Array[int] {
         return quick_insertion_sort_range(arr, left, right);
     }
     if left < right {
-        var pivot_index = partition_opt(arr, left, right);
+        int pivot_index = partition_opt(arr, left, right);
         quick_sort_opt(arr, left, pivot_index - 1);
         quick_sort_opt(arr, pivot_index + 1, right);
     }

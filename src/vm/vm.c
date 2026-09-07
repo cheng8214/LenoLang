@@ -235,6 +235,9 @@ int vm_run_with_vm(VM* vm_ptr) {
 int vm_call_value(Value callee, int arg_count, int line) {
     VM* vm_ptr = current_exec_vm ? current_exec_vm : &vm;
     int saved_frame_cnt = vm_ptr->frame_cnt;
+    // 嵌套调用（回调里再 vm_call_value，如 FFI 回调 → 脚本 → 回调）时，
+    // 内层返回会把 stop_frame_cnt 清零，导致外层的停止条件失效、一直跑到
+    // 字节码结束。改为保存/恢复，而不是无条件清零。
     int saved_stop_frame_cnt = vm_ptr->stop_frame_cnt;
 
     current_exec_vm = vm_ptr;

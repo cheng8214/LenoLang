@@ -934,8 +934,15 @@ static void mark_roots(void) {
     // 6. 标记当前异常值（防止 GC 在异常处理期间回收异常对象）
     gc_mark_value(gc.vm->exception);
 
-    // 7. 标记最后一次返回值
+    // 7. 标记最后一次返回值（含多返回值，防止 native 读取前被回收）
     gc_mark_value(gc.vm->last_return_value);
+    if (gc.vm->last_return_count > 0) {
+        int n = gc.vm->last_return_count;
+        if (n > VM_MAX_RETURNS) n = VM_MAX_RETURNS;
+        for (int i = 0; i < n; i++) {
+            gc_mark_value(gc.vm->last_return_values[i]);
+        }
+    }
 
     // 8. 标记原生函数方法表
     native_mark_all_functions();

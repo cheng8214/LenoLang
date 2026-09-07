@@ -364,6 +364,24 @@ static int serialize_constant(WriteBuffer* wb, Value val) {
                 wb_write_string(wb, func->type_param_names[i],
                     (uint32_t)strlen(func->type_param_names[i]));
             }
+            // 参数级泛型类型参数名（运行时泛型推断用，如 Ok[T](T val) 的 val）
+            // 长度固定为 arity，元素可为 NULL。此前未序列化，导致从 .lenb /
+            // 模块缓存加载后 param_generic_names 恒为 NULL，泛型推断静默失效。
+            uint32_t pgn_count = 0;
+            if (func->arity > 0 && func->param_generic_names) {
+                pgn_count = (uint32_t)func->arity;
+            }
+            wb_write_u32(wb, pgn_count);
+            for (uint32_t i = 0; i < pgn_count; i++) {
+                if (func->param_generic_names[i]) {
+                    wb_write_u8(wb, 1);
+                    wb_write_string(wb, func->param_generic_names[i],
+                        (uint32_t)strlen(func->param_generic_names[i]));
+                } else {
+                    wb_write_u8(wb, 0);
+                }
+            }
+            wb_write_u32(wb, (uint32_t)func->param_generic_count);
             if (!serialize_chunk(wb, func->chunk)) return 0;
             return 1;
         }
@@ -800,6 +818,15 @@ static int serialize_scope_data(WriteBuffer* wb, Scope* scope) {
 // 常量反序列化
 // ============================================================================
 
+// 释放参数级泛型名数组（元素可能为 NULL）
+static void free_pgnames(char** names, int count) {
+    if (!names) return;
+    for (int i = 0; i < count; i++) {
+        free(names[i]);
+    }
+    free(names);
+}
+
 static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
     uint8_t tag;
     if (!ctx_read_u8(ctx, &tag)) return 0;
@@ -924,6 +951,53 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
                 func->type_param_names[i] = tp_name;
             }
         }
+
+        // 反序列化未覆盖的字段必须显式置空（不要依赖分配器的清零行为）
+        func->param_generic_names = NULL;
+        func->param_generic_count = 0;
+        func->type_param_constraints = NULL;
+
+        // 参数级泛型类型参数名
+        uint32_t pgn_count;
+        if (!ctx_read_u32(ctx, &pgn_count)) {
+            free(name);
+            return 0;
+        }
+        if (pgn_count > 0) {
+            func->param_generic_names = (char**)calloc(pgn_count, sizeof(char*));
+            if (!func->param_generic_names) {
+                free(name);
+                return 0;
+            }
+            for (uint32_t i = 0; i < pgn_count; i++) {
+                uint8_t has_pgn;
+                if (!ctx_read_u8(ctx, &has_pgn)) {
+                    free_pgnames(func->param_generic_names, (int)pgn_count);
+                    func->param_generic_names = NULL;
+                    free(name);
+                    return 0;
+                }
+                if (has_pgn) {
+                    uint32_t pgn_len;
+                    char* pgn = ctx_read_string(ctx, &pgn_len);
+                    if (!pgn) {
+                        free_pgnames(func->param_generic_names, (int)pgn_count);
+                        func->param_generic_names = NULL;
+                        free(name);
+                        return 0;
+                    }
+                    func->param_generic_names[i] = pgn;
+                }
+            }
+        }
+        uint32_t pgeneric_count;
+        if (!ctx_read_u32(ctx, &pgeneric_count)) {
+            free_pgnames(func->param_generic_names, (int)pgn_count);
+            func->param_generic_names = NULL;
+            free(name);
+            return 0;
+        }
+        func->param_generic_count = (int)pgeneric_count;
 
         func->chunk = (Chunk*)malloc(sizeof(Chunk));
         chunk_init(func->chunk);

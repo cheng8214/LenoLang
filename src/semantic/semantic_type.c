@@ -1132,6 +1132,13 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                         error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column,
                             "any 类型不能参与大小比较，请指定数组元素类型（如 Array[int]）");
                     }
+                    // any 类型不能参与大小比较（如无类型参数的 Array 元素）：
+                    // 编译期能确定的类型问题不放过到运行时
+                    else if (left && right &&
+                               (left->kind == TYPE_ANY || right->kind == TYPE_ANY)) {
+                        error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                            "any 类型不能参与大小比较，请指定数组元素类型（如 Array[int]）");
+                    }
                     result = type_new(TYPE_BOOL);
                     break;
                 case TOK_EQEQ:

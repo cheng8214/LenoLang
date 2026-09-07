@@ -75,12 +75,13 @@
 // ============================================================================
 
 #define LENO_BIN_MAGIC      0x424E454C  // "LENB" little-endian
-#define LENO_BIN_VERSION    0x00020400  // v2.4.0 - ObjFunction 增加 return_types 字段（返回值类型数组，供 JIT 内联使用）
+#define LENO_BIN_VERSION    0x00020500  // v2.5.0 - ObjFunction 增加 return_types + param_generic_names / param_generic_count
 #define LENO_BIN_EXT        ".lenb"
 
 // 模块编译缓存格式（.lenomc）—— 跨运行的模块编译产物缓存
 #define LENO_MODCACHE_MAGIC    0x434D4E4C  // "LNMC" little-endian
-#define LENO_MODCACHE_VERSION  0x00000003  // v3 - ObjFunction 增加 return_types 字段（与 LENO_BIN_VERSION v2.4.0 同步）
+#define LENO_MODCACHE_VERSION  0x00000004  // v4 - 与 LENO_BIN_VERSION v2.5.0 同步（return_types + param_generic_info）
+#define LENO_MODCACHE_EXT      ".lenomc"
 #define LENO_MODCACHE_EXT      ".lenomc"
 
 // 常量类型标签

@@ -676,6 +676,8 @@ OPCODE(OP_RETURN) {
         vm.sp = stack_base;
         vm_stack_push(&vm, result);
         vm.last_return_value = result;
+        vm.last_return_count = 1;
+        vm.last_return_values[0] = result;
         vm.stop_frame_cnt = 0;
         if (locals != NULL && locals_is_dynamic) {
             free(locals);
@@ -696,6 +698,8 @@ OPCODE(OP_RETURN) {
 
     if (vm.frame_cnt == 0) {
         vm.last_return_value = result;
+        vm.last_return_count = 1;
+        vm.last_return_values[0] = result;
         if (locals != NULL && locals_is_dynamic) {
             free(locals);
         }
@@ -777,6 +781,11 @@ OPCODE(OP_RETURN_MULTI) {
             vm_stack_push(&vm, results[i]);
         }
         vm.last_return_value = results[0];
+        // 保存全部返回值：从前只保留 results[0]，ret_count>1 时其余值丢失
+        vm.last_return_count = ret_count;
+        for (int i = 0; i < ret_count && i < VM_MAX_RETURNS; i++) {
+            vm.last_return_values[i] = results[i];
+        }
         vm.stop_frame_cnt = 0;
         if (locals != NULL && locals_is_dynamic) {
             free(locals);
@@ -797,6 +806,10 @@ OPCODE(OP_RETURN_MULTI) {
 
     if (vm.frame_cnt == 0) {
         vm.last_return_value = results[0];
+        vm.last_return_count = ret_count;
+        for (int i = 0; i < ret_count && i < VM_MAX_RETURNS; i++) {
+            vm.last_return_values[i] = results[i];
+        }
         if (locals != NULL && locals_is_dynamic) {
             free(locals);
         }

@@ -49,7 +49,7 @@ func quick_sort_recursive(Array[int] arr, int left, int right):Array[int] {
     quick_sort_recursive(arr, pivot_index + 1, right)
     return arr;
 }
-func partition(Array[int] arr, int left, int right):int {
+func partition(Array[int] arr, int left, int right): int {
     // 选择中间元素作为基准值，避免最坏情况
     var mid = (left + right) / 2;
     var pivot = arr[mid];
@@ -89,7 +89,7 @@ func quick_sort_opt(Array[int] arr, int left, int right):Array[int] {
     }
     return arr;
 }
-func partition_opt(Array[int] arr, int left, int right):int {
+func partition_opt(Array[int] arr, int left, int right): int {
     // 三数取中法选择基准值
     var mid = (left + right) / 2;
     // 确保arr[left] <= arr[mid] <= arr[right]
@@ -170,7 +170,7 @@ main() {
         {"size": 10000, "name": "大规模"}
     ];
     for test_cases to  var test_case {
-        var size = _int(test_case["size"]);
+        int size = _int(test_case["size"]);
         var name = test_case["name"];
         print($"\n=== {name}测试 (数组大小: {size}) ===");
         // 生成测试数据
@@ -212,5 +212,5 @@ main() {
         }
     }
     print("\n========== 测试完成 ==========");
- 
+   
 }
