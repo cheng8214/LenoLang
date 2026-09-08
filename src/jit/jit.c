@@ -63,6 +63,12 @@ JitState jit_state = {0};
 /* ---- Callout VM pointer (set before JIT execution) ---- */
 static VM* jit_callout_vm = NULL;
 
+/* ---- Callout failure flag ----
+ * Set by callouts when vm_call_value fails (exception thrown, not caught).
+ * JIT codegen checks this after each callout that calls vm_call_value,
+ * and bails out to the interpreter if set. */
+static volatile int jit_callout_failed = 0;
+
 /* ---- Bailout debug function ---- */
 static int64_t jit_bailout_rax = 0;
 static int32_t jit_bailout_site = 0;
@@ -296,6 +302,18 @@ static Value jit_callout_invoke_method(int64_t* vstack_top, int arg_count,
     VM* vm = jit_callout_vm;
     if (!vm) return NULL_VAL;
 
+    if (getenv("LENO_JIT_DEBUG")) {
+        uint16_t mni = rd_short(ip + 1);
+        const char* mname = "?";
+        if (mni < chunk->const_cnt) {
+            Value mv = chunk->constants[mni];
+            if (val_is_obj(mv) && val_as_obj(mv)->type == OBJ_STRING)
+                mname = ((ObjString*)val_as_obj(mv))->chars;
+        }
+        fprintf(stderr, "[JIT-DEBUG] callout_invoke_method: '%s' arg_count=%d vstack_top=%p\n",
+                mname, arg_count, (void*)vstack_top);
+    }
+
     /* Read method name constant from bytecode: name_const(2) at ip+1 */
     uint16_t method_name_idx = rd_short(ip + 1);
     /* arg_count from bytecode at ip+3 */
@@ -351,9 +369,32 @@ static Value jit_callout_invoke_method(int64_t* vstack_top, int arg_count,
 
     /* Push callee and call */
     vm_stack_push(vm, val_obj((Object*)closure));
-    vm_call_value(val_obj((Object*)closure), arg_count, 0);
+    int saved_frame_cnt = vm->frame_cnt;
+    int call_r = vm_call_value(val_obj((Object*)closure), arg_count, 0);
 
     Value result = vm->last_return_value;
+
+    if (getenv("LENO_JIT_DEBUG")) {
+        fprintf(stderr, "[JIT-DEBUG] callout_invoke_method: vm_call_value returned %d, frame_cnt %d->%d\n",
+                call_r, saved_frame_cnt, vm->frame_cnt);
+    }
+
+    /* Check if vm_call_value failed or didn't complete the callee */
+    if (call_r == 0) {
+        /* vm_call_value failed — exception was thrown and not caught.
+         * Clean up leaked callee frame(s). */
+        while (vm->frame_cnt > saved_frame_cnt) {
+            vm->frame_cnt--;
+            CallFrame* leaked = &vm->frames[vm->frame_cnt];
+            if (leaked->locals && leaked->locals_is_dynamic) {
+                free(leaked->locals);
+                leaked->locals = NULL;
+            }
+        }
+        vm->sp = saved_sp;
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
 
     /* Reload locals pointer in case vm_grow_frames reallocated vm.frames */
     if (vm->frame_cnt > 0) {
@@ -413,6 +454,7 @@ static Value jit_callout_global_func(int64_t* vstack_top, int arg_count,
 
     /* Save VM stack state */
     int saved_sp = vm->sp;
+    int saved_frame_cnt = vm->frame_cnt;
 
     /* Push args from JIT virtual stack to VM stack (first arg at bottom).
      * JIT virtual stack grows downward: first-pushed elements are at
@@ -425,7 +467,36 @@ static Value jit_callout_global_func(int64_t* vstack_top, int arg_count,
     /* Push callee on top of stack */
     vm_stack_push(vm, callee);
 
-    vm_call_value(callee, arg_count, 0);
+    int call_result = vm_call_value(callee, arg_count, 0);
+
+    /* If vm_call_value failed (exception thrown, not caught within callee),
+     * clean up leaked callee frame(s) and set failure flag for JIT codegen. */
+    if (call_result == 0) {
+        /* Pop leaked frames (callee frame was pushed by call_value but
+         * never popped because vm_run_with_vm returned -1). */
+        if (getenv("LENO_JIT_DEBUG")) {
+            fprintf(stderr, "[JIT-DEBUG] global_func callout FAILED: func_slot=%d arg_count=%d has_exception=%d frame_cnt=%d saved=%d\n",
+                    func_slot, arg_count, vm->has_exception, vm->frame_cnt, saved_frame_cnt);
+            if (vm->has_exception && val_is_obj(vm->exception) && val_as_obj(vm->exception)->type == OBJ_DICT) {
+                ObjDict* ed = (ObjDict*)val_as_obj(vm->exception);
+                ObjString* mk = str_copy("msg", 3);
+                Value mv = dict_get(ed, val_obj((Object*)mk));
+                if (val_is_string(mv))
+                    fprintf(stderr, "[JIT-DEBUG] exception: %s\n", ((ObjString*)val_as_obj(mv))->chars);
+            }
+        }
+        while (vm->frame_cnt > saved_frame_cnt) {
+            vm->frame_cnt--;
+            CallFrame* leaked = &vm->frames[vm->frame_cnt];
+            if (leaked->locals && leaked->locals_is_dynamic) {
+                free(leaked->locals);
+                leaked->locals = NULL;
+            }
+        }
+        vm->sp = saved_sp;
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
 
     /* Read return values from VM stack.
      * OP_RETURN / OP_RETURN_MULTI (stop_frame_cnt path) pushed ret_count
@@ -533,12 +604,23 @@ static Value jit_callout_module_call(int64_t* vstack_top, int arg_count,
     }
     for (int i = 0; i < arg_count; i++) {
         args[i] = jit_raw_to_value(vstack_top[arg_count - 1 - i]);
+        if (getenv("LENO_JIT_DEBUG")) {
+            fprintf(stderr, "[JIT-DEBUG] module_call arg[%d]: raw=0x%016llx val=0x%016llx is_obj=%d is_int=%d is_float=%d\n",
+                    i, (unsigned long long)vstack_top[arg_count - 1 - i],
+                    (unsigned long long)args[i],
+                    val_is_obj(args[i]), val_is_int(args[i]),
+                    (args[i] != val_null() && (args[i] & (QNAN | SIGN_BIT)) != (QNAN | SIGN_BIT)));
+        }
     }
 
     Value result = meta->function(arg_count, args);
 
     /* Check for exception set by native function */
     if (jit_callout_vm && jit_callout_vm->has_exception) {
+        if (getenv("LENO_JIT_DEBUG")) {
+            fprintf(stderr, "[JIT-DEBUG] module_call FAILED: %s.%s (has_exception=1)\n", module_name, method_name);
+        }
+        jit_callout_failed = 1;
         return NULL_VAL;
     }
 
@@ -1192,6 +1274,15 @@ static void scan_loop_body(const uint8_t* body_start, int body_size,
     }
 
     r->body_size = body_size;
+
+    if (getenv("LENO_JIT_DEBUG")) {
+        fprintf(stderr, "[JIT-DEBUG] scan result: n_locals=%d max_vstack=%d\n", r->num_locals, r->max_vstack);
+        for (int i = 0; i < r->num_locals; i++) {
+            fprintf(stderr, "[JIT-DEBUG]   scratch[%d] = slot %d\n", i, r->local_slots[i]);
+        }
+        fprintf(stderr, "[JIT-DEBUG]   for_loop_var_slot=%d for_end_slot=%d for_step_slot=%d inclusive=%d\n",
+                r->for_loop_var_slot, r->for_end_slot, r->for_step_slot, r->for_inclusive);
+    }
 }
 
 /* ---- Codegen: offset map and patch list ---- */
@@ -1417,13 +1508,15 @@ static int compile_loop(CodegenCtx* ctx) {
         cb->buf[_vp] = (uint8_t)(cb->len - (_vp + 1)); \
     } while(0)
 
-    /* Save volatile state, align RSP, allocate shadow space */
+    /* Save volatile state, align RSP, allocate shadow space (32) + 16 bytes
+     * for stack arguments (e.g. MODULE_CALL's 5th arg at [RSP+32]).
+     * Without the extra 16, [RSP+32] would overlap vstack_top[0]. */
     #define EMIT_CALLOUT_BEGIN() do { \
         emit_mov_rr(cb, JIT_R12, JIT_RSP); \
         emit_mov_rr(cb, JIT_R13, JIT_RCX); \
         emit_mov_rr(cb, JIT_R14, JIT_R9); \
         emit_byte(cb, 0x48); emit_byte(cb, 0x83); emit_byte(cb, 0xE4); emit_byte(cb, 0xF0); \
-        emit_byte(cb, 0x48); emit_byte(cb, 0x83); emit_byte(cb, 0xEC); emit_byte(cb, 0x20); \
+        emit_byte(cb, 0x48); emit_byte(cb, 0x83); emit_byte(cb, 0xEC); emit_byte(cb, 0x30); \
     } while(0)
 
     /* Restore state, reload R10/R11 */
@@ -1738,6 +1831,7 @@ static int compile_loop(CodegenCtx* ctx) {
                 }
                 TOS_PRODUCE();
                 vstack++;
+                if (getenv("LENO_JIT_DEBUG")) fprintf(stderr, "[JIT-CG] GET_LOCAL slot=%d -> scratch[%d] disp=%d vstack=%d\n", slot, si, disp, vstack);
                 break;
             }
             case OP_SET_LOCAL: {
@@ -1765,6 +1859,7 @@ static int compile_loop(CodegenCtx* ctx) {
                     emit_mov_mem32_reg(cb, JIT_RBP, disp, JIT_RAX);
                 }
                 vstack--;
+                if (getenv("LENO_JIT_DEBUG")) fprintf(stderr, "[JIT-CG] SET_LOCAL_POP slot=%d -> scratch[%d] disp=%d vstack=%d\n", slot, si, disp, vstack);
                 break;
             }
             case OP_MOVE_LOCAL: {
@@ -2986,6 +3081,18 @@ static int compile_loop(CodegenCtx* ctx) {
                 emit_mov_reg_imm64(cb, JIT_R9, (uint64_t)(uintptr_t)ctx->chunk);  /* chunk (4th) */
                 EMIT_CALL(jit_callout_invoke_method);
                 EMIT_CALLOUT_END();
+                /* Check jit_callout_failed flag — if set, bail out. */
+                EMIT_STORE_TMP(tmp2_disp, JIT_RAX);
+                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_callout_failed);
+                emit_mov_reg_mem8(cb, JIT_RAX, JIT_R8, 0);
+                emit_test_rr(cb, JIT_RAX, JIT_RAX);
+                {
+                    int fail_patch = emit_jcc(cb, 0x85);  /* JNZ → bailout */
+                    patch_add(ctx, fail_patch, -1, 0);
+                }
+                emit_xor_rr(cb, JIT_RAX, JIT_RAX);
+                emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
+                EMIT_LOAD_TMP(JIT_RAX, tmp2_disp);
                 /* Pop arg_count values from JIT virtual stack */
                 int pop_bytes = arg_count * 8;
                 if (pop_bytes <= 127) {
@@ -3124,6 +3231,21 @@ static int compile_loop(CodegenCtx* ctx) {
                 emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)func_slot);   /* func_slot (3rd) */
                 EMIT_CALL(jit_callout_global_func);
                 EMIT_CALLOUT_END();
+                /* Check jit_callout_failed flag — if set, bail out.
+                 * RAX holds the callout return value; save it, check flag, restore. */
+                EMIT_STORE_TMP(tmp2_disp, JIT_RAX);
+                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_callout_failed);
+                emit_mov_reg_mem8(cb, JIT_RAX, JIT_R8, 0);  /* RAX = *flag */
+                emit_test_rr(cb, JIT_RAX, JIT_RAX);
+                {
+                    int fail_patch = emit_jcc(cb, 0x85);  /* JNZ → bailout */
+                    patch_add(ctx, fail_patch, -1, 0);  /* bailout */
+                }
+                /* Clear flag */
+                emit_xor_rr(cb, JIT_RAX, JIT_RAX);
+                emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);  /* *flag = 0 */
+                /* Restore callout return value */
+                EMIT_LOAD_TMP(JIT_RAX, tmp2_disp);
                 /* Pop (arg_count - ret_count + 1) args from JIT virtual stack.
                  * The remaining (ret_count - 1) slots hold the extra return
                  * values that the callout wrote to vstack_top. */
@@ -3207,6 +3329,18 @@ static int compile_loop(CodegenCtx* ctx) {
                 emit_mov_mem8_reg(cb, JIT_RSP, 32, JIT_RAX);
                 EMIT_CALL(jit_callout_module_call);
                 EMIT_CALLOUT_END();
+                /* Check jit_callout_failed flag — if set, bail out. */
+                EMIT_STORE_TMP(tmp2_disp, JIT_RAX);
+                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_callout_failed);
+                emit_mov_reg_mem8(cb, JIT_RAX, JIT_R8, 0);
+                emit_test_rr(cb, JIT_RAX, JIT_RAX);
+                {
+                    int fail_patch = emit_jcc(cb, 0x85);  /* JNZ → bailout */
+                    patch_add(ctx, fail_patch, -1, 0);
+                }
+                emit_xor_rr(cb, JIT_RAX, JIT_RAX);
+                emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
+                EMIT_LOAD_TMP(JIT_RAX, tmp2_disp);
                 /* Pop arg_count args, push 1 result */
                 int pop_bytes2 = arg_count * 8;
                 if (pop_bytes2 <= 127) {
@@ -3463,6 +3597,43 @@ static JitLoopFn jit_compile(CallFrame* frame, const uint8_t* body_start,
                              int body_size, int back_edge, VM* vm_ptr) {
     ScanResult sr;
     scan_loop_body(body_start, body_size, back_edge, &sr, vm_ptr);
+    if (getenv("LENO_JIT_DEBUG")) {
+        const char* fname = "?";
+        int bc_off = -1;
+        if (frame && frame->chunk) {
+            bc_off = (int)(body_start - frame->chunk->code);
+            if (frame->closure && frame->closure->function && frame->closure->function->name)
+                fname = frame->closure->function->name;
+            else
+                fname = "<main>";
+        }
+        fprintf(stderr, "[JIT-DEBUG] COMPILE: fn='%s' bc_off=%d back_edge=%d, body_size=%d, capable=%d, n_locals=%d, max_vstack=%d, inline=%d\n",
+                fname, bc_off, back_edge, body_size, sr.capable, sr.num_locals, sr.max_vstack, sr.inline_count);
+        fprintf(stderr, "[JIT-DEBUG] body raw hex:");
+        for (int i = 0; i < body_size && i < 200; i++) {
+            fprintf(stderr, " %02x", body_start[i]);
+        }
+        fprintf(stderr, "\n");
+        fprintf(stderr, "[JIT-DEBUG] body opcodes:");
+        const uint8_t* p = body_start;
+        int printed = 0;
+        while (p < body_start + body_size && printed < 60) {
+            int op = *p;
+            int sz = opcode_size(p);
+            fprintf(stderr, " %d", op);
+            if (sz < 0) break;
+            /* Also print operands for key opcodes */
+            if (sz >= 3) {
+                fprintf(stderr, "(");
+                for (int j = 1; j < sz && j <= 6; j++)
+                    fprintf(stderr, "%d%s", p[j], j < sz-1 && j < 6 ? "," : "");
+                fprintf(stderr, ")");
+            }
+            p += sz;
+            printed++;
+        }
+        fprintf(stderr, "\n");
+    }
     if (!sr.capable) {
         return NULL;
     }
@@ -3653,7 +3824,18 @@ int jit_try_hot_loop(CallFrame* frame, VM* vm_ptr, int32_t loop_offset, int back
     /* Initialize reloaded locals to current value; callouts will update
      * this if vm_grow_frames reallocates vm.frames during nested execution. */
     jit_reloaded_locals = vm_ptr->frames[vm_ptr->frame_cnt - 1].locals;
+    if (getenv("LENO_JIT_DEBUG"))
+        fprintf(stderr, "[JIT-DEBUG] EXEC call #%d, fn=%p, locals=%p\n",
+                jit_state.execute_count, (void*)entry->fn, (void*)frame->locals);
     int result = entry->fn(frame->locals, vm_ptr->globals);
+    if (getenv("LENO_JIT_DEBUG")) {
+        fprintf(stderr, "[JIT-DEBUG] EXEC returned %d\n", result);
+        if (result == 0) {
+            CallFrame* cf = &vm_ptr->frames[vm_ptr->frame_cnt - 1];
+            fprintf(stderr, "[JIT-DEBUG] post-JIT: frame_cnt=%d ip_off=%d sp=%d locals=%p\n",
+                    vm_ptr->frame_cnt, (int)(cf->ip - cf->chunk->code), vm_ptr->sp, (void*)cf->locals);
+        }
+    }
 
     if (result == 0) {
         /* Success — frame->ip is already past the back-edge */
