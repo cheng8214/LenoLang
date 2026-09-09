@@ -128,14 +128,6 @@ static inline int64_t jit_value_to_raw(Value v) {
 /* Callout: OP_INDEX (array/dict index access).
  * Returns NaN-boxed result, or NULL_VAL on error. */
 static Value jit_callout_index(Value obj_val, Value idx_val) {
-    if (getenv("LENO_JIT_DEBUG")) {
-        static int dbg_cnt = 0;
-        if (dbg_cnt < 40)
-            fprintf(stderr, "[JIT-IDX] obj=0x%llx obj_is_obj=%d idx=0x%llx\n",
-                    (unsigned long long)(uint64_t)obj_val, val_is_obj(obj_val),
-                    (unsigned long long)(uint64_t)idx_val);
-        dbg_cnt++;
-    }
     if (!val_is_obj(obj_val)) {
         error_add_at(ERR_RUNTIME, 0, 0, "索引操作需要对象类型");
         return NULL_VAL;
