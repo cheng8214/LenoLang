@@ -472,7 +472,7 @@ func fib_memo_helper(int n, Dict memo) {
 }
 
 // 版本3：迭代实现（最快）
-func fib_iterative(any n) {
+func fib_iterative(int n) {
     if n <= 1 {
         return n
     }
