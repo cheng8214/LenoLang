@@ -60,13 +60,18 @@
                 /* Save RSP before callout */
                 EMIT_STORE_TMP(tmp1_disp, JIT_RSP);
                 EMIT_CALLOUT_BEGIN();
-                EMIT_LOAD_TMP(JIT_RCX, tmp1_disp);  /* vstack_top (1st arg) */
-                emit_mov_reg_imm64(cb, JIT_RDX, (uint64_t)arg_count);    /* arg_count (2nd) */
-                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)module_idx);   /* module_idx (3rd) */
-                emit_mov_reg_imm64(cb, JIT_R9, (uint64_t)method_idx);   /* method_idx (4th) */
-                /* 5th param (chunk ptr) in shadow space [rsp+32] */
+                EMIT_LOAD_TMP(JIT_ARG1, tmp1_disp);  /* vstack_top (1st arg) */
+                emit_mov_reg_imm64(cb, JIT_ARG2, (uint64_t)arg_count);    /* arg_count (2nd) */
+                emit_mov_reg_imm64(cb, JIT_ARG3, (uint64_t)module_idx);   /* module_idx (3rd) */
+                emit_mov_reg_imm64(cb, JIT_ARG4, (uint64_t)method_idx);   /* method_idx (4th) */
+                /* 5th param (chunk ptr): Windows x64 passes it as the first
+                 * stack argument at [RSP+32]; System V passes it in R8. */
+#ifdef _WIN32
                 emit_mov_reg_imm64(cb, JIT_RAX, (uint64_t)(uintptr_t)cur_chunk);
                 emit_mov_mem8_reg(cb, JIT_RSP, 32, JIT_RAX);
+#else
+                emit_mov_reg_imm64(cb, JIT_ARG5, (uint64_t)(uintptr_t)cur_chunk);
+#endif
                 EMIT_CALL(jit_callout_module_call);
                 EMIT_CALLOUT_END();
                 /* Check jit_callout_failed flag — if set, bail out. */

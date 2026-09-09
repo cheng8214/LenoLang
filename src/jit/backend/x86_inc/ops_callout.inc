@@ -14,9 +14,9 @@
                 EMIT_STORE_TMP(tmp1_disp, JIT_RAX);
                 EMIT_CALLOUT_BEGIN();
                 /* Set args AFTER CALLOUT_BEGIN (saves original RCX=locals to R13) */
-                EMIT_LOAD_TMP(JIT_RCX, tmp1_disp);   /* obj (1st arg) */
-                emit_mov_reg_imm64(cb, JIT_RDX, (uint64_t)ip[1]);  /* count (2nd arg) */
-                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)(ip + 2));  /* field_indices ptr (3rd) */
+                EMIT_LOAD_TMP(JIT_ARG1, tmp1_disp);   /* obj (1st arg) */
+                emit_mov_reg_imm64(cb, JIT_ARG2, (uint64_t)ip[1]);  /* count (2nd arg) */
+                emit_mov_reg_imm64(cb, JIT_ARG3, (uint64_t)(uintptr_t)(ip + 2));  /* field_indices ptr (3rd) */
                 EMIT_CALL(jit_callout_acc_fields);
                 EMIT_CALLOUT_END();
                 EMIT_VALUE_TO_RAW();
@@ -32,11 +32,11 @@
                 EMIT_STORE_TMP(tmp1_disp, JIT_RSP);
                 EMIT_CALLOUT_BEGIN();
                 /* After CALLOUT_BEGIN: RSP is aligned, RCX/R9 saved to R13/R14.
-                 * Load saved vstack_ptr into RCX (1st arg). */
-                EMIT_LOAD_TMP(JIT_RCX, tmp1_disp);   /* vstack_top (1st arg) */
-                emit_mov_reg_imm64(cb, JIT_RDX, (uint64_t)arg_count);  /* arg_count (2nd) */
-                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)ip);  /* bytecode ip (3rd) */
-                emit_mov_reg_imm64(cb, JIT_R9, (uint64_t)(uintptr_t)ctx->chunk);  /* chunk (4th) */
+                 * Load saved vstack_ptr into arg1 (1st argument register). */
+                EMIT_LOAD_TMP(JIT_ARG1, tmp1_disp);   /* vstack_top (1st arg) */
+                emit_mov_reg_imm64(cb, JIT_ARG2, (uint64_t)arg_count);  /* arg_count (2nd) */
+                emit_mov_reg_imm64(cb, JIT_ARG3, (uint64_t)(uintptr_t)ip);  /* bytecode ip (3rd) */
+                emit_mov_reg_imm64(cb, JIT_ARG4, (uint64_t)(uintptr_t)ctx->chunk);  /* chunk (4th) */
                 EMIT_CALL(jit_callout_invoke_method);
                 EMIT_CALLOUT_END();
                 /* Check jit_callout_failed flag — if set, bail out. */
@@ -83,8 +83,8 @@
                 EMIT_STORE_TMP(tmp1_disp, JIT_RAX);
                 EMIT_CALLOUT_BEGIN();
                 /* Set args AFTER CALLOUT_BEGIN (saves original RCX=locals to R13) */
-                EMIT_LOAD_TMP(JIT_RCX, tmp1_disp);  /* obj_val (1st arg) */
-                emit_mov_reg_imm64(cb, JIT_RDX, (uint64_t)field_idx);  /* field_idx (2nd arg) */
+                EMIT_LOAD_TMP(JIT_ARG1, tmp1_disp);  /* obj_val (1st arg) */
+                emit_mov_reg_imm64(cb, JIT_ARG2, (uint64_t)field_idx);  /* field_idx (2nd arg) */
                 EMIT_CALL(jit_callout_get_field_fast);
                 EMIT_CALLOUT_END();
                 EMIT_VALUE_TO_RAW();
@@ -183,10 +183,10 @@
                 EMIT_STORE_TMP(tmp1_disp, JIT_RSP);
                 EMIT_CALLOUT_BEGIN();
                 /* After CALLOUT_BEGIN: RSP is aligned, RCX/R9 saved to R13/R14.
-                 * Load saved vstack_ptr into RCX (1st arg). */
-                EMIT_LOAD_TMP(JIT_RCX, tmp1_disp);   /* vstack_top (1st arg) */
-                emit_mov_reg_imm64(cb, JIT_RDX, (uint64_t)arg_count);  /* arg_count (2nd) */
-                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)func_slot);   /* func_slot (3rd) */
+                 * Load saved vstack_ptr into arg1 (1st argument register). */
+                EMIT_LOAD_TMP(JIT_ARG1, tmp1_disp);   /* vstack_top (1st arg) */
+                emit_mov_reg_imm64(cb, JIT_ARG2, (uint64_t)arg_count);  /* arg_count (2nd) */
+                emit_mov_reg_imm64(cb, JIT_ARG3, (uint64_t)func_slot);   /* func_slot (3rd) */
                 EMIT_CALL(jit_callout_global_func);
                 EMIT_CALLOUT_END();
                 /* Check jit_callout_failed flag — if set, bail out.

@@ -204,15 +204,46 @@ int compile_loop(CodegenCtx* ctx) {
         cb->buf[_vp] = (uint8_t)(cb->len - (_vp + 1)); \
     } while(0)
 
-    /* Save volatile state, align RSP, allocate shadow space (32) + 16 bytes
-     * for stack arguments (e.g. MODULE_CALL's 5th arg at [RSP+32]).
-     * Without the extra 16, [RSP+32] would overlap vstack_top[0]. */
+    /* Callout argument registers per target ABI:
+     *   Windows x64:    arg1..arg4 = RCX/RDX/R8/R9, 5th+ go on the stack
+     *                   (first stack arg at [RSP+32] after 32B shadow)
+     *   System V AMD64: arg1..arg6 = RDI/RSI/RDX/RCX/R8/R9, no shadow space
+     * JIT_ARGn maps an argument position to the platform's integer arg
+     * register, so callout argument loading sequences are written once and
+     * work on both ABIs. */
+    #ifdef _WIN32
+    #define JIT_ARG1 JIT_RCX
+    #define JIT_ARG2 JIT_RDX
+    #define JIT_ARG3 JIT_R8
+    #define JIT_ARG4 JIT_R9
+    #else
+    #define JIT_ARG1 JIT_RDI
+    #define JIT_ARG2 JIT_RSI
+    #define JIT_ARG3 JIT_RDX
+    #define JIT_ARG4 JIT_RCX
+    #define JIT_ARG5 JIT_R8
+    #endif
+
+    /* Save volatile state, align RSP to 16 bytes (required by both ABIs),
+     * then allocate the per-ABI call frame. Windows x64 needs 32-byte shadow
+     * space + 16 bytes for stack arguments (e.g. MODULE_CALL's 5th arg at
+     * [RSP+32]); without the extra 16, [RSP+32] would overlap vstack_top[0].
+     * System V has no shadow space and no stack argument area, so only the
+     * 16-byte alignment is needed. */
+    #ifdef _WIN32
+    #define EMIT_CALLOUT_ALLOC() do { \
+        emit_byte(cb, 0x48); emit_byte(cb, 0x83); emit_byte(cb, 0xEC); emit_byte(cb, 0x30); \
+    } while(0)
+    #else
+    #define EMIT_CALLOUT_ALLOC() do { } while(0)
+    #endif
+
     #define EMIT_CALLOUT_BEGIN() do { \
         emit_mov_rr(cb, JIT_R12, JIT_RSP); \
         emit_mov_rr(cb, JIT_R13, JIT_RCX); \
         emit_mov_rr(cb, JIT_R14, JIT_R9); \
         emit_byte(cb, 0x48); emit_byte(cb, 0x83); emit_byte(cb, 0xE4); emit_byte(cb, 0xF0); \
-        emit_byte(cb, 0x48); emit_byte(cb, 0x83); emit_byte(cb, 0xEC); emit_byte(cb, 0x30); \
+        EMIT_CALLOUT_ALLOC(); \
     } while(0)
 
     /* Restore state, reload R10/R11 */
@@ -625,7 +656,7 @@ int compile_loop(CodegenCtx* ctx) {
         /* Save RSP and RAX before callout */
         EMIT_STORE_TMP(tmp1_disp, JIT_RSP);
         EMIT_CALLOUT_BEGIN();
-        EMIT_LOAD_TMP(JIT_RCX, tmp1_disp);
+        EMIT_LOAD_TMP(JIT_ARG1, tmp1_disp);
         EMIT_CALL(jit_bailout_debug);
         EMIT_CALLOUT_END();
     }

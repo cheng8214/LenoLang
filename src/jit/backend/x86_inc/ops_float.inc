@@ -61,8 +61,8 @@
                 emit_mov_rr(cb, JIT_RDX, JIT_RAX);
                 EMIT_LOAD_TMP(JIT_R8, tmp1_disp);
                 EMIT_CALLOUT_BEGIN();
-                emit_mov_rr(cb, JIT_RCX, JIT_RDX);   /* a */
-                emit_mov_rr(cb, JIT_RDX, JIT_R8);    /* b */
+                emit_mov_rr(cb, JIT_ARG1, JIT_RDX);   /* a */
+                emit_mov_rr(cb, JIT_ARG2, JIT_R8);    /* b */
                 EMIT_CALL(jit_callout_div);
                 EMIT_CALLOUT_END();
                 EMIT_VALUE_TO_RAW();

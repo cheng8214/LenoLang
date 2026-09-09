@@ -85,11 +85,11 @@
                 EMIT_LOAD_TMP(JIT_RAX, tmp2_disp);
                 EMIT_RAW_TO_VALUE();
                 emit_mov_rr(cb, JIT_RDX, JIT_RAX);
-                /* Callout: RCX=obj, RDX=index */
+                /* Callout: arg1=obj, arg2=index */
                 EMIT_LOAD_TMP(JIT_R8, tmp1_disp);
                 EMIT_CALLOUT_BEGIN();
-                emit_mov_rr(cb, JIT_RCX, JIT_RDX);
-                emit_mov_rr(cb, JIT_RDX, JIT_R8);
+                emit_mov_rr(cb, JIT_ARG1, JIT_RDX);
+                emit_mov_rr(cb, JIT_ARG2, JIT_R8);
                 EMIT_CALL(jit_callout_index);
                 EMIT_CALLOUT_END();
                 /* Convert result */
@@ -111,8 +111,8 @@
                 emit_mov_rr(cb, JIT_RDX, JIT_RAX);
                 EMIT_LOAD_TMP(JIT_R8, tmp1_disp);
                 EMIT_CALLOUT_BEGIN();
-                emit_mov_rr(cb, JIT_RCX, JIT_RDX);
-                emit_mov_rr(cb, JIT_RDX, JIT_R8);
+                emit_mov_rr(cb, JIT_ARG1, JIT_RDX);
+                emit_mov_rr(cb, JIT_ARG2, JIT_R8);
                 EMIT_CALL(jit_callout_array_append);
                 EMIT_CALLOUT_END();
                 vstack -= 2;
@@ -131,9 +131,9 @@
                 EMIT_RAW_TO_VALUE();
                 EMIT_STORE_TMP(tmp3_disp, JIT_RAX);
                 EMIT_CALLOUT_BEGIN();
-                EMIT_LOAD_TMP(JIT_RCX, tmp3_disp);
-                EMIT_LOAD_TMP(JIT_RDX, tmp2_disp);
-                EMIT_LOAD_TMP(JIT_R8, tmp1_disp);
+                EMIT_LOAD_TMP(JIT_ARG1, tmp3_disp);
+                EMIT_LOAD_TMP(JIT_ARG2, tmp2_disp);
+                EMIT_LOAD_TMP(JIT_ARG3, tmp1_disp);
                 EMIT_CALL(jit_callout_dict_set);
                 EMIT_CALLOUT_END();
                 EMIT_VALUE_TO_RAW();
@@ -154,9 +154,9 @@
                 EMIT_RAW_TO_VALUE();
                 EMIT_STORE_TMP(tmp3_disp, JIT_RAX);
                 EMIT_CALLOUT_BEGIN();
-                EMIT_LOAD_TMP(JIT_RCX, tmp3_disp);  /* array (1st arg) */
-                EMIT_LOAD_TMP(JIT_RDX, tmp2_disp);  /* index (2nd arg) */
-                EMIT_LOAD_TMP(JIT_R8, tmp1_disp);   /* value (3rd arg) */
+                EMIT_LOAD_TMP(JIT_ARG1, tmp3_disp);  /* array (1st arg) */
+                EMIT_LOAD_TMP(JIT_ARG2, tmp2_disp);  /* index (2nd arg) */
+                EMIT_LOAD_TMP(JIT_ARG3, tmp1_disp);   /* value (3rd arg) */
                 EMIT_CALL(jit_callout_index_set);
                 EMIT_CALLOUT_END();
                 vstack -= 3;
