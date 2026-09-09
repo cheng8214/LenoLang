@@ -69,6 +69,14 @@ static VM* jit_callout_vm = NULL;
  * and bails out to the interpreter if set. */
 static volatile int jit_callout_failed = 0;
 
+/* ---- Debug flags: read once (getenv() scans the environment block on every
+ * call — far too slow for JIT hot paths that run millions of times). ---- */
+static int jit_debug_on(void) {
+    static int v = -1;
+    if (v < 0) v = getenv("LENO_JIT_DEBUG") ? 1 : 0;
+    return v;
+}
+
 /* ---- Bailout debug function ---- */
 static int64_t jit_bailout_rax = 0;
 static int32_t jit_bailout_site = 0;
@@ -299,20 +307,8 @@ static Value jit_callout_acc_fields(Value obj_val, uint8_t count,
  * Returns NaN-boxed result from vm->last_return_value. */
 static Value jit_callout_invoke_method(int64_t* vstack_top, int arg_count,
                                        const uint8_t* ip, Chunk* chunk) {
-    VM* vm = jit_callout_vm;
+VM* vm = jit_callout_vm;
     if (!vm) return NULL_VAL;
-
-    if (getenv("LENO_JIT_DEBUG")) {
-        uint16_t mni = rd_short(ip + 1);
-        const char* mname = "?";
-        if (mni < chunk->const_cnt) {
-            Value mv = chunk->constants[mni];
-            if (val_is_obj(mv) && val_as_obj(mv)->type == OBJ_STRING)
-                mname = ((ObjString*)val_as_obj(mv))->chars;
-        }
-        fprintf(stderr, "[JIT-DEBUG] callout_invoke_method: '%s' arg_count=%d vstack_top=%p\n",
-                mname, arg_count, (void*)vstack_top);
-    }
 
     /* Read method name constant from bytecode: name_const(2) at ip+1 */
     uint16_t method_name_idx = rd_short(ip + 1);
@@ -372,12 +368,7 @@ static Value jit_callout_invoke_method(int64_t* vstack_top, int arg_count,
     int saved_frame_cnt = vm->frame_cnt;
     int call_r = vm_call_value(val_obj((Object*)closure), arg_count, 0);
 
-    Value result = vm->last_return_value;
-
-    if (getenv("LENO_JIT_DEBUG")) {
-        fprintf(stderr, "[JIT-DEBUG] callout_invoke_method: vm_call_value returned %d, frame_cnt %d->%d\n",
-                call_r, saved_frame_cnt, vm->frame_cnt);
-    }
+Value result = vm->last_return_value;
 
     /* Check if vm_call_value failed or didn't complete the callee */
     if (call_r == 0) {
@@ -416,13 +407,13 @@ static Value jit_callout_global_func(int64_t* vstack_top, int arg_count,
                                      uint16_t func_slot) {
     VM* vm = jit_callout_vm;
     if (!vm) {
-        if (getenv("LENO_JIT_DEBUG"))
+        if (jit_debug_on())
             fprintf(stderr, "[JIT-DEBUG] global_func: jit_callout_vm is NULL!\n");
         return NULL_VAL;
     }
 
     if (func_slot >= vm->global_func_capacity) {
-        if (getenv("LENO_JIT_DEBUG"))
+        if (jit_debug_on())
             fprintf(stderr, "[JIT-DEBUG] global_func: slot %d >= capacity %d\n", func_slot, vm->global_func_capacity);
         error_add_at(ERR_RUNTIME, 0, 0, "全局函数索引越界");
         return NULL_VAL;
@@ -430,7 +421,7 @@ static Value jit_callout_global_func(int64_t* vstack_top, int arg_count,
 
     Value callee = vm->global_funcs[func_slot];
     if (!val_is_obj(callee)) {
-        if (getenv("LENO_JIT_DEBUG"))
+        if (jit_debug_on())
             fprintf(stderr, "[JIT-DEBUG] global_func: callee not obj, slot=%d\n", func_slot);
         error_add_at(ERR_RUNTIME, 0, 0, "全局函数未定义");
         return NULL_VAL;
@@ -474,7 +465,7 @@ static Value jit_callout_global_func(int64_t* vstack_top, int arg_count,
     if (call_result == 0) {
         /* Pop leaked frames (callee frame was pushed by call_value but
          * never popped because vm_run_with_vm returned -1). */
-        if (getenv("LENO_JIT_DEBUG")) {
+        if (jit_debug_on()) {
             fprintf(stderr, "[JIT-DEBUG] global_func callout FAILED: func_slot=%d arg_count=%d has_exception=%d frame_cnt=%d saved=%d\n",
                     func_slot, arg_count, vm->has_exception, vm->frame_cnt, saved_frame_cnt);
             if (vm->has_exception && val_is_obj(vm->exception) && val_as_obj(vm->exception)->type == OBJ_DICT) {
@@ -602,24 +593,14 @@ static Value jit_callout_module_call(int64_t* vstack_top, int arg_count,
         error_add_at(ERR_RUNTIME, 0, 0, "模块方法参数过多");
         return NULL_VAL;
     }
-    for (int i = 0; i < arg_count; i++) {
+for (int i = 0; i < arg_count; i++) {
         args[i] = jit_raw_to_value(vstack_top[arg_count - 1 - i]);
-        if (getenv("LENO_JIT_DEBUG")) {
-            fprintf(stderr, "[JIT-DEBUG] module_call arg[%d]: raw=0x%016llx val=0x%016llx is_obj=%d is_int=%d is_float=%d\n",
-                    i, (unsigned long long)vstack_top[arg_count - 1 - i],
-                    (unsigned long long)args[i],
-                    val_is_obj(args[i]), val_is_int(args[i]),
-                    (args[i] != val_null() && (args[i] & (QNAN | SIGN_BIT)) != (QNAN | SIGN_BIT)));
-        }
     }
 
     Value result = meta->function(arg_count, args);
 
     /* Check for exception set by native function */
     if (jit_callout_vm && jit_callout_vm->has_exception) {
-        if (getenv("LENO_JIT_DEBUG")) {
-            fprintf(stderr, "[JIT-DEBUG] module_call FAILED: %s.%s (has_exception=1)\n", module_name, method_name);
-        }
         jit_callout_failed = 1;
         return NULL_VAL;
     }
@@ -761,7 +742,7 @@ static void mark_local(ScanResult* r, int slot) {
     if (slot < 0 || slot >= 256) return;
     if (r->local_map[slot] >= 0) return;  /* already mapped */
     if (r->num_locals >= JIT_MAX_LOCALS) {
-        if (getenv("LENO_JIT_DEBUG"))
+        if (jit_debug_on())
             fprintf(stderr, "[JIT-DEBUG] scan FAIL: too many locals (%d) at slot %d\n", r->num_locals, slot);
         r->capable = 0;
         return;
@@ -796,7 +777,7 @@ static int scan_callee_for_inline(Chunk* cc, int local_count,
         uint8_t op = *ip;
         int size = opcode_size(ip);
         if (size < 0 || ip + size > end) {
-            if (getenv("LENO_JIT_DEBUG"))
+            if (jit_debug_on())
                 fprintf(stderr, "[JIT-DEBUG] inline-scan FAIL: opcode %d size=%d at off %d\n",
                         op, size, (int)(ip - cc->code));
             return 0;
@@ -870,14 +851,14 @@ static int scan_callee_for_inline(Chunk* cc, int local_count,
             case OP_TRY: case OP_CATCH: case OP_FINALLY: case OP_END_TRY:
                 break;
             default:
-                if (getenv("LENO_JIT_DEBUG"))
+                if (jit_debug_on())
                     fprintf(stderr, "[JIT-DEBUG] inline-scan FAIL: unsupported opcode %d at off %d\n",
                             op, (int)(ip - cc->code));
                 return 0;
         }
 
         if (vstack > JIT_MAX_VSTACK) {
-            if (getenv("LENO_JIT_DEBUG"))
+            if (jit_debug_on())
                 fprintf(stderr, "[JIT-DEBUG] inline-scan FAIL: vstack=%d\n", vstack);
             return 0;
         }
@@ -910,13 +891,13 @@ static void scan_loop_body(const uint8_t* body_start, int body_size,
         uint8_t op = *ip;
         int size = opcode_size(ip);
         if (size < 0) {
-            if (getenv("LENO_JIT_DEBUG"))
+            if (jit_debug_on())
                 fprintf(stderr, "[JIT-DEBUG] scan FAIL: unknown opcode %d (size<0) at offset %d\n", op, (int)(ip - body_start));
             r->capable = 0;
             return;
         }
         if (ip + size > end) {
-            if (getenv("LENO_JIT_DEBUG"))
+            if (jit_debug_on())
                 fprintf(stderr, "[JIT-DEBUG] scan FAIL: ip+size>end for opcode %d at offset %d, size=%d, remaining=%d\n", op, (int)(ip - body_start), size, (int)(end - ip));
             r->capable = 0;
             return;
@@ -1083,12 +1064,12 @@ static void scan_loop_body(const uint8_t* body_start, int body_size,
                                     if (callee_total_max > r->max_vstack)
                                         r->max_vstack = callee_total_max;
                                     if (r->max_vstack > JIT_MAX_VSTACK) {
-                                        if (getenv("LENO_JIT_DEBUG"))
+                                        if (jit_debug_on())
                                             fprintf(stderr, "[JIT-DEBUG] scan FAIL: max_vstack=%d after inline\n", r->max_vstack);
                                         r->capable = 0;
                                         return;
                                     }
-                                    if (getenv("LENO_JIT_DEBUG"))
+                                    if (jit_debug_on())
                                         fprintf(stderr, "[JIT-DEBUG] inline: func_slot=%d arg_count=%d ret_count=%d callee_lc=%d base=%d mv=%d vstack_at_call=%d callee_total_max=%d\n",
                                                 func_slot, arg_count, ret_count, callee_lc, base, callee_mv, vstack_at_call, callee_total_max);
                                     vstack -= (arg_count - ret_count);
@@ -1252,7 +1233,7 @@ static void scan_loop_body(const uint8_t* body_start, int body_size,
                 break;
             }
             default:
-                if (getenv("LENO_JIT_DEBUG"))
+                if (jit_debug_on())
                     fprintf(stderr, "[JIT-DEBUG] scan FAIL: unknown opcode %d at offset %d\n", op, (int)(ip - body_start));
                 r->capable = 0;
                 return;
@@ -1263,7 +1244,7 @@ static void scan_loop_body(const uint8_t* body_start, int body_size,
      * already decremented; false path's POP decrements again). This is
      * a linear-scan artifact — the actual runtime never goes negative. */
     if (vstack > JIT_MAX_VSTACK) {
-        if (getenv("LENO_JIT_DEBUG"))
+        if (jit_debug_on())
             fprintf(stderr, "[JIT-DEBUG] scan FAIL: vstack=%d at opcode %d\n", vstack, op);
         r->capable = 0;
         return;
@@ -1275,7 +1256,7 @@ static void scan_loop_body(const uint8_t* body_start, int body_size,
 
     r->body_size = body_size;
 
-    if (getenv("LENO_JIT_DEBUG")) {
+    if (jit_debug_on()) {
         fprintf(stderr, "[JIT-DEBUG] scan result: n_locals=%d max_vstack=%d\n", r->num_locals, r->max_vstack);
         for (int i = 0; i < r->num_locals; i++) {
             fprintf(stderr, "[JIT-DEBUG]   scratch[%d] = slot %d\n", i, r->local_slots[i]);
@@ -1465,7 +1446,7 @@ static int compile_loop(CodegenCtx* ctx) {
         } \
     } while(0)
 
-    /* ---- Callout helpers ---- */
+/* ---- Callout helpers ---- */
     /* Convert RAX from virtual-stack raw to NaN-boxed Value (in-place).
      * Uses R8 as scratch, R10/R11 as constants. */
     #define EMIT_RAW_TO_VALUE() do { \
@@ -1665,7 +1646,7 @@ static int compile_loop(CodegenCtx* ctx) {
     if (sr->back_edge_type == 2) {
         int step_scratch = cur_local_map[sr->for_step_slot];
         if (step_scratch < 0) {
-            if (getenv("LENO_JIT_DEBUG"))
+            if (jit_debug_on())
                 fprintf(stderr, "[JIT-DEBUG] codegen FAIL: FOR_LOOP step_scratch<0\n");
             return 0;  /* shouldn't happen */
         }
@@ -1831,7 +1812,7 @@ static int compile_loop(CodegenCtx* ctx) {
                 }
                 TOS_PRODUCE();
                 vstack++;
-                if (getenv("LENO_JIT_DEBUG")) fprintf(stderr, "[JIT-CG] GET_LOCAL slot=%d -> scratch[%d] disp=%d vstack=%d\n", slot, si, disp, vstack);
+                if (jit_debug_on()) fprintf(stderr, "[JIT-CG] GET_LOCAL slot=%d -> scratch[%d] disp=%d vstack=%d\n", slot, si, disp, vstack);
                 break;
             }
             case OP_SET_LOCAL: {
@@ -1859,7 +1840,7 @@ static int compile_loop(CodegenCtx* ctx) {
                     emit_mov_mem32_reg(cb, JIT_RBP, disp, JIT_RAX);
                 }
                 vstack--;
-                if (getenv("LENO_JIT_DEBUG")) fprintf(stderr, "[JIT-CG] SET_LOCAL_POP slot=%d -> scratch[%d] disp=%d vstack=%d\n", slot, si, disp, vstack);
+                if (jit_debug_on()) fprintf(stderr, "[JIT-CG] SET_LOCAL_POP slot=%d -> scratch[%d] disp=%d vstack=%d\n", slot, si, disp, vstack);
                 break;
             }
             case OP_MOVE_LOCAL: {
@@ -2329,20 +2310,88 @@ static int compile_loop(CodegenCtx* ctx) {
                 cb->buf[next_patch] = (uint8_t)(cb->len - (next_patch + 1));
                 break;
             }
-            /* ---- Callout: OP_INDEX (array/dict index access) ---- */
+/* ---- Callout: OP_INDEX (array/dict index access) ----
+             * Fast path: Array[int] index → native load (no C callout).
+             * Slow path: convert both operands to Values and callout
+             * (dict / non-int index / out-of-bounds / error). */
             case OP_INDEX: {
-                /* Pop index, convert to NaN-boxed, save to tmp1 */
-                TOS_SPILL();  /* ensure all values on memory stack for callout */
+                TOS_SPILL();
+                /* Pop idx + obj (raw stack forms): RAX = idx, RDX = obj.
+                 * Keep both in scratch for the slow path below. */
                 emit_pop_reg(cb, JIT_RAX);
+                emit_pop_reg(cb, JIT_RDX);
+                EMIT_STORE_TMP(tmp1_disp, JIT_RAX);
+                EMIT_STORE_TMP(tmp2_disp, JIT_RDX);
+
+                /* Fast path conditions (violated ⇒ jump to slow):
+                 *  1. idx is int48      (raw>>47 +1 <= 1)
+                 *  2. obj is object     (NaN-box top16 == 0xFFFC, TAG_OBJ)
+                 *  3. obj->type == OBJ_ARRAY  (type at offset 0, OBJ_ARRAY == 1)
+                 *  4. (uint64)idx < arr->count (int32 at offset 40,
+                 *     ObjArray: Object header 32B + Value* elements @32 + int count @40)
+                 * Fast load: rax = arr->elements[idx], then raw-convert. */
+                emit_mov_rr(cb, JIT_R8, JIT_RAX);
+                emit_sar_imm(cb, JIT_R8, 47);
+                emit_inc_reg(cb, JIT_R8);
+                emit_cmp_reg_imm8(cb, JIT_R8, 1);
+                int p_idx_notint = emit_jcc(cb, 0x87);   /* JA → slow */
+                emit_mov_rr(cb, JIT_R8, JIT_RDX);
+                {   /* shr r8, 48 */
+                    int b = (JIT_R8 >> 3) & 1;
+                    emit_byte(cb, rex(1, 0, 0, b));
+                    emit_byte(cb, 0xC1);
+                    emit_byte(cb, modrm(3, 5, JIT_R8 & 7));
+                    emit_byte(cb, 48);
+                }
+                {   /* cmp r8, 0x0000FFFC (top16 == TAG_OBJ) */
+                    int b = (JIT_R8 >> 3) & 1;
+                    emit_byte(cb, rex(1, 0, 0, b));
+                    emit_byte(cb, 0x81);
+                    emit_byte(cb, modrm(3, 7, JIT_R8 & 7));
+                    emit_uint32(cb, 0x0000FFFC);
+                }
+                int p_obj_notobj = emit_jcc(cb, 0x85);   /* JNE → slow */
+                /* Unbox obj: rdx = (rdx & PAYLOAD_MSK) → real pointer.
+                 * RDX still holds the NaN-boxed raw (0xFFFC<<48 | ptr). */
+                emit_and_rr(cb, JIT_RDX, JIT_R10);
+                /* cmp byte ptr [rdx], OBJ_ARRAY */
+                emit_byte(cb, 0x80);
+                emit_byte(cb, 0x7A);                     /* mod01 reg7 rm=RDX */
+                emit_byte(cb, 0x00);                     /* disp8 = type offset 0 */
+                emit_byte(cb, (uint8_t)OBJ_ARRAY);
+                int p_obj_notarr = emit_jcc(cb, 0x85);   /* JNE → slow */
+                /* r8 = (uint64)(int32)count; cmp rax, r8; jae → slow
+                 * (negative idx becomes huge unsigned ⇒ jae taken) */
+                emit_mov_reg_mem32(cb, JIT_R8, JIT_RDX, 40);
+                emit_cmp_rr(cb, JIT_RAX, JIT_R8);
+                int p_idx_oob = emit_jcc(cb, 0x83);      /* JAE → slow */
+                /* rdx = arr->elements (+32); rax = [rdx + rax*8] */
+                emit_mov_reg_mem8(cb, JIT_RDX, JIT_RDX, 32);
+                emit_byte(cb, 0x48);                     /* mov rax, [rdx+rax*8] */
+                emit_byte(cb, 0x8B);
+                emit_byte(cb, 0x04);
+                emit_byte(cb, 0xC2);
+                EMIT_VALUE_TO_RAW();
+                /* jmp done (rel32 placeholder) */
+                emit_byte(cb, 0xE9);
+                int done_loc = cb->len;
+                emit_uint32(cb, 0);
+
+                /* ---- Slow path: NaN-box both, callout ---- */
+                patch_rel32(cb, p_idx_notint, cb->len);
+                patch_rel32(cb, p_obj_notobj, cb->len);
+                patch_rel32(cb, p_obj_notarr, cb->len);
+                patch_rel32(cb, p_idx_oob, cb->len);
+                /* idx → Value in tmp1 */
+                EMIT_LOAD_TMP(JIT_RAX, tmp1_disp);
                 EMIT_RAW_TO_VALUE();
                 EMIT_STORE_TMP(tmp1_disp, JIT_RAX);
-                /* Pop obj, convert to NaN-boxed → RDX */
-                emit_pop_reg(cb, JIT_RAX);
+                /* obj → Value in RDX */
+                EMIT_LOAD_TMP(JIT_RAX, tmp2_disp);
                 EMIT_RAW_TO_VALUE();
                 emit_mov_rr(cb, JIT_RDX, JIT_RAX);
-                /* Load index from tmp1 → R8 */
-                EMIT_LOAD_TMP(JIT_R8, tmp1_disp);
                 /* Callout: RCX=obj, RDX=index */
+                EMIT_LOAD_TMP(JIT_R8, tmp1_disp);
                 EMIT_CALLOUT_BEGIN();
                 emit_mov_rr(cb, JIT_RCX, JIT_RDX);
                 emit_mov_rr(cb, JIT_RDX, JIT_R8);
@@ -2350,6 +2399,8 @@ static int compile_loop(CodegenCtx* ctx) {
                 EMIT_CALLOUT_END();
                 /* Convert result */
                 EMIT_VALUE_TO_RAW();
+                /* done: result in RAX = live TOS */
+                patch_rel32(cb, done_loc, cb->len);
                 TOS_PRODUCE();
                 vstack--;
                 break;
@@ -3168,7 +3219,7 @@ static int compile_loop(CodegenCtx* ctx) {
                             int si = is->callee_local_map[i];
                             if (si < 0) {
                                 /* shouldn't happen: scan pre-mapped all locals */
-                                if (getenv("LENO_JIT_DEBUG"))
+                                if (jit_debug_on())
                                     fprintf(stderr, "[JIT-DEBUG] inline FAIL: unmapped callee slot %d\n", i);
                                 return 0;
                             }
@@ -3204,7 +3255,7 @@ static int compile_loop(CodegenCtx* ctx) {
                         vstack = 0;
                         tos_live = 0;
 
-                        if (getenv("LENO_JIT_DEBUG"))
+                        if (jit_debug_on())
                             fprintf(stderr, "[JIT-DEBUG] inline ENTER: func_slot=%d arg_count=%d ret_count=%d\n",
                                     func_slot, arg_count, is->ret_count);
                         continue;  /* skip normal ip+=size advance */
@@ -3402,7 +3453,7 @@ case OP_TRUE:
 
             default:
                 /* Should not reach here if scan passed */
-                if (getenv("LENO_JIT_DEBUG"))
+                if (jit_debug_on())
                     fprintf(stderr, "[JIT-DEBUG] codegen FAIL: unsupported opcode %d at bc_off=%d\n", op, bc_off);
                 return 0;
         }
@@ -3522,7 +3573,7 @@ case OP_TRUE:
     /* ---- Bailout code ---- */
     ctx->bailout_mc = cb->len;
     /* DEBUG: save RAX to global, then call debug function */
-    if (getenv("LENO_JIT_DEBUG")) {
+    if (jit_debug_on()) {
         /* Store RAX to global jit_bailout_rax */
         emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_bailout_rax);
         /* mov [r8], rax */
@@ -3617,7 +3668,7 @@ static JitLoopFn jit_compile(CallFrame* frame, const uint8_t* body_start,
                              int body_size, int back_edge, VM* vm_ptr) {
     ScanResult sr;
     scan_loop_body(body_start, body_size, back_edge, &sr, vm_ptr);
-    if (getenv("LENO_JIT_DEBUG")) {
+    if (jit_debug_on()) {
         const char* fname = "?";
         int bc_off = -1;
         if (frame && frame->chunk) {
@@ -3695,7 +3746,7 @@ static JitLoopFn jit_compile(CallFrame* frame, const uint8_t* body_start,
     }
 
     if (!ok || ctx.cb.len == 0) {
-        if (getenv("LENO_JIT_DEBUG")) {
+        if (jit_debug_on()) {
             fprintf(stderr, "[JIT-DEBUG] compile_loop returned %d, cb.len=%d, capable=%d, n_locals=%d, body_size=%d\n",
                     ok, ctx.cb.len, sr.capable, sr.num_locals, body_size);
             /* Print raw bytes and opcode walk */
@@ -3829,7 +3880,7 @@ int jit_try_hot_loop(CallFrame* frame, VM* vm_ptr, int32_t loop_offset, int back
         entry->fn = jit_compile(frame, body_start, body_size, back_edge, vm_ptr);
         entry->is_compiled = (entry->fn != NULL);
         jit_state.compile_count++;
-        if (getenv("LENO_JIT_DEBUG") && !entry->is_compiled)
+        if (jit_debug_on() && !entry->is_compiled)
             fprintf(stderr, "[JIT-DEBUG] compile FAIL at body_start=%d, back_edge=%d\n",
                     (int)(body_start - frame->chunk->code), back_edge);
     }
@@ -3844,9 +3895,16 @@ int jit_try_hot_loop(CallFrame* frame, VM* vm_ptr, int32_t loop_offset, int back
     /* Initialize reloaded locals to current value; callouts will update
      * this if vm_grow_frames reallocates vm.frames during nested execution. */
     jit_reloaded_locals = vm_ptr->frames[vm_ptr->frame_cnt - 1].locals;
-    if (getenv("LENO_JIT_DEBUG")) {
-        fprintf(stderr, "[JIT-DEBUG] EXEC call #%d, fn=%p, locals=%p\n",
+    if (jit_debug_on()) {
+fprintf(stderr, "[JIT-DEBUG] EXEC call #%d, fn=%p, locals=%p\n",
                 jit_state.execute_count, (void*)entry->fn, (void*)frame->locals);
+        {
+            const unsigned char* cp = (const unsigned char*)entry->fn;
+            fprintf(stderr, "[JIT-DUMP] ");
+            for (int _i = 0; _i < 420; _i++)
+                fprintf(stderr, "%02x ", cp[_i]);
+            fprintf(stderr, "\n");
+        }
         if (getenv("LENO_JIT_TRACE")) {
             fprintf(stderr, "[JIT-TRACE] PRE  #%d body_off=%-4d n_locals(scratch)=%d:", jit_state.execute_count, (int)(body_start - frame->chunk->code), 0);
             for (int _si = 0; _si < 40; _si++) {
@@ -3856,7 +3914,7 @@ int jit_try_hot_loop(CallFrame* frame, VM* vm_ptr, int32_t loop_offset, int back
         }
     }
     int result = entry->fn(frame->locals, vm_ptr->globals);
-    if (getenv("LENO_JIT_DEBUG")) {
+    if (jit_debug_on()) {
         if (getenv("LENO_JIT_TRACE")) {
             fprintf(stderr, "[JIT-TRACE] POST #%d body_off=%-4d n_locals(scratch)=%d:", jit_state.execute_count, (int)(body_start - frame->chunk->code), 0);
             for (int _si = 0; _si < 40; _si++) {
@@ -3879,7 +3937,7 @@ int jit_try_hot_loop(CallFrame* frame, VM* vm_ptr, int32_t loop_offset, int back
         /* 函数调用 callout 内抛出异常，控制流已转移到新的当前帧
          * （宿主帧 catch_ip 或外层 handler 帧）。
          * 不计入 bailout；返回 2 让调用方重载 frame 后继续执行 */
-        if (getenv("LENO_JIT_DEBUG"))
+        if (jit_debug_on())
             fprintf(stderr, "[JIT-DEBUG] FRAME-DEAD exit (%d) at body_start=%d\n",
                     result, (int)(body_start - frame->chunk->code));
         return 2;
@@ -3887,7 +3945,7 @@ int jit_try_hot_loop(CallFrame* frame, VM* vm_ptr, int32_t loop_offset, int back
         /* Bailout — let interpreter handle it */
         entry->bailout_count++;
         jit_state.bailout_count++;
-        if (getenv("LENO_JIT_DEBUG"))
+        if (jit_debug_on())
             fprintf(stderr, "[JIT-DEBUG] BAILOUT at body_start=%d, count=%d\n",
                     (int)(body_start - frame->chunk->code), entry->bailout_count);
         return 0;
