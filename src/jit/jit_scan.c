@@ -40,6 +40,10 @@ int opcode_size(const uint8_t* ip) {
         case OP_LE_FLOAT: case OP_GE_FLOAT:
         case OP_CAST_FLOAT: /* int → float */
         case OP_DIV:  /* 通用除法，运行时类型分发 (callout) */
+        case OP_ADD:  /* 通用加法（int fast path，其他类型 callout） */
+        case OP_SUB:  /* 通用减法（int fast path，其他类型 callout） */
+        case OP_SHL: case OP_SHR: case OP_USHR:  /* 通用移位（int fast path） */
+        case OP_LT: case OP_GT: case OP_LE: case OP_GE:  /* 通用比较（int fast path） */
         case OP_INC:  /* ++ (stack-top) */
         case OP_DEC:  /* -- (stack-top) */
         case OP_NOT:  /* logical NOT */
@@ -64,6 +68,8 @@ int opcode_size(const uint8_t* ip) {
         case OP_PRE_INC_LOCAL: case OP_PRE_DEC_LOCAL:
         case OP_INC_LOCAL_NOPUSH: case OP_DEC_LOCAL_NOPUSH:
         case OP_GET_GLOBAL: case OP_SET_GLOBAL:
+        case OP_ARRAY:          /* opcode + count16 */
+        case OP_GET_PROPERTY:   /* opcode + name_const16 */
             return 3;
         /* 5-byte (opcode + slot16 + slot16 or opcode + int32) */
         case OP_MOVE_LOCAL: case OP_MOVE_LOCAL_POP:
@@ -73,6 +79,8 @@ int opcode_size(const uint8_t* ip) {
         case OP_TRY:   /* catch_offset(2) + finally_offset(2) */
         case OP_CALL_GLOBAL_FUNC:        /* func_slot(2) + arg_count(2) (callout) */
         case OP_CALL_GLOBAL_FUNC_TYPED:  /* func_slot(2) + arg_count(2) (callout) */
+        case OP_CALL_NATIVE:             /* name_const(2) + arg_count(2) (callout) */
+        case OP_CLEAR_LOCAL_RANGE:       /* base(2) + count(2) */
             return 5;
         /* 1-byte try/catch (no operands) */
         case OP_CATCH: case OP_FINALLY: case OP_END_TRY:
@@ -173,6 +181,9 @@ static int scan_callee_for_inline(Chunk* cc, int local_count,
             case OP_EQ_FLOAT: case OP_LT_FLOAT: case OP_GT_FLOAT:
             case OP_LE_FLOAT: case OP_GE_FLOAT:
             case OP_DIV: case OP_INDEX:
+            case OP_ADD: case OP_SUB:
+            case OP_SHL: case OP_SHR: case OP_USHR:
+            case OP_LT: case OP_GT: case OP_LE: case OP_GE:
                 vstack--; break;
             case OP_NEG_INT: case OP_NEG_FLOAT: case OP_NOT:
             case OP_CAST_INT: case OP_CAST_FLOAT:
@@ -224,6 +235,28 @@ static int scan_callee_for_inline(Chunk* cc, int local_count,
             case OP_ACC_FIELDS: break;
             case OP_TRY: case OP_CATCH: case OP_FINALLY: case OP_END_TRY:
                 break;
+            case OP_ARRAY: {
+                uint16_t cnt = rd_short(ip + 1);
+                vstack -= (cnt - 1);
+                break;
+            }
+            case OP_GET_PROPERTY: {
+                /* Peephole: GET_PROPERTY + OP_CALL merges into a single
+                 * method call (receiver + args collapsed into result). */
+                if (ip + 6 <= end && ip[3] == OP_CALL) {
+                    uint16_t ac = rd_short(ip + 4);
+                    size = 6;                 /* consume OP_CALL too */
+                    vstack -= ac;             /* receiver+args -> result */
+                }
+                /* standalone property access: vstack unchanged */
+                break;
+            }
+            case OP_CALL_NATIVE: {
+                uint16_t ac = rd_short(ip + 3);
+                vstack -= (ac - 1);
+                break;
+            }
+            case OP_CLEAR_LOCAL_RANGE: break;
             default:
                 if (jit_debug_on())
                     fprintf(stderr, "[JIT-DEBUG] inline-scan FAIL: unsupported opcode %d at off %d\n",
@@ -325,6 +358,38 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
             case OP_DIV:
                 /* 通用除法 (callout): pop 2 push 1 → net -1 */
                 vstack -= 1;
+                break;
+            case OP_ADD: case OP_SUB:
+            case OP_SHL: case OP_SHR: case OP_USHR:
+            case OP_LT: case OP_GT: case OP_LE: case OP_GE:
+                /* 通用算术/移位/比较：int fast path（pop 2 push 1 → net -1） */
+                vstack -= 1;
+                break;
+            case OP_ARRAY: {
+                /* opcode + count16: pop count 元素 push 1 数组 → net -(count-1) */
+                uint16_t cnt = rd_short(ip + 1);
+                vstack -= (cnt - 1);
+                break;
+            }
+            case OP_GET_PROPERTY: {
+                /* opcode + name_const(2)。窥孔：后随 OP_CALL(arg_count16) 时
+                 * 合并为一次方法调用：pop receiver+args push 1 → net -arg_count。
+                 * 独立属性访问：弹 receiver push 值 → net 0。 */
+                if (ip + 6 <= end && ip[3] == OP_CALL) {
+                    uint16_t ac = rd_short(ip + 4);
+                    size = 6;   /* 连同 OP_CALL 一起消费 */
+                    vstack -= ac;
+                }
+                break;
+            }
+            case OP_CALL_NATIVE: {
+                /* name_const(2) + arg_count(2)，arg_count 包含 self */
+                uint16_t ac = rd_short(ip + 3);
+                vstack -= (ac - 1);
+                break;
+            }
+            case OP_CLEAR_LOCAL_RANGE:
+                /* base(2) + count(2)：只写 locals，不压栈 */
                 break;
             case OP_INC: case OP_DEC:
                 /* stack-top ++/--: pop 1 push 1 → net 0 */

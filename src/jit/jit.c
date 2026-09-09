@@ -64,25 +64,27 @@ static JitLoopFn jit_compile(CallFrame* frame, const uint8_t* body_start,
         fprintf(stderr, "[JIT-DEBUG] COMPILE: fn='%s' bc_off=%d back_edge=%d, body_size=%d, capable=%d, n_locals=%d, max_vstack=%d, inline=%d\n",
                 fname, bc_off, back_edge, body_size, sr.capable, sr.num_locals, sr.max_vstack, sr.inline_count);
         fprintf(stderr, "[JIT-DEBUG] body raw hex:");
-        for (int i = 0; i < body_size && i < 200; i++) {
+        for (int i = 0; i < body_size && i < 1200; i++) {
             fprintf(stderr, " %02x", body_start[i]);
         }
         fprintf(stderr, "\n");
         fprintf(stderr, "[JIT-DEBUG] body opcodes:");
         const uint8_t* p = body_start;
         int printed = 0;
-        while (p < body_start + body_size && printed < 60) {
+        int rel_off = 0;
+        while (p < body_start + body_size && printed < 400) {
             int op = *p;
             int sz = opcode_size(p);
             fprintf(stderr, " %d", op);
             if (sz < 0) break;
+            fprintf(stderr, "(%d,", rel_off);
             /* Also print operands for key opcodes */
             if (sz >= 3) {
-                fprintf(stderr, "(");
                 for (int j = 1; j < sz && j <= 6; j++)
                     fprintf(stderr, "%d%s", p[j], j < sz-1 && j < 6 ? "," : "");
-                fprintf(stderr, ")");
             }
+            fprintf(stderr, ")");
+            rel_off += sz;
             p += sz;
             printed++;
         }

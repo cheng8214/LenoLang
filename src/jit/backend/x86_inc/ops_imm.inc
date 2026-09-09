@@ -13,7 +13,7 @@
                 emit_byte(cb, 0x83);
                 emit_byte(cb, modrm(3, 0, JIT_RAX & 7));  /* /0 = ADD */
                 emit_byte(cb, (uint8_t)imm);
-                EMIT_INT48_CHECK();
+                EMIT_INT48_CHECK(bc_off);
                 TOS_PRODUCE();
                 break;
             }
@@ -24,7 +24,7 @@
                 emit_byte(cb, 0x83);
                 emit_byte(cb, modrm(3, 5, JIT_RAX & 7));  /* /5 = SUB */
                 emit_byte(cb, (uint8_t)imm);
-                EMIT_INT48_CHECK();
+                EMIT_INT48_CHECK(bc_off);
                 TOS_PRODUCE();
                 break;
             }
@@ -33,8 +33,8 @@
                 TOS_CONSUME_RAX();
                 emit_mov_reg_imm64(cb, JIT_RDX, (uint64_t)(int64_t)imm);
                 emit_imul_rr(cb, JIT_RAX, JIT_RDX);
-                EMIT_INT64_OVF_CHECK();
-                EMIT_INT48_CHECK();
+                EMIT_INT64_OVF_CHECK(bc_off);
+                EMIT_INT48_CHECK(bc_off);
                 TOS_PRODUCE();
                 break;
             }

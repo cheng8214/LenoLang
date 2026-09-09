@@ -185,6 +185,9 @@ Value jit_callout_invoke_method(int64_t* vstack_top, int arg_count, const uint8_
 Value jit_callout_global_func(int64_t* vstack_top, int arg_count, uint16_t func_slot);
 Value jit_callout_get_field_fast(Value obj_val, uint8_t field_idx);
 Value jit_callout_module_call(int64_t* vstack_top, int arg_count, uint16_t module_idx, uint16_t method_idx, Chunk* chunk);
+Value jit_callout_array_new(int64_t* vstack_top, uint16_t count);
+Value jit_callout_call_native(int64_t* vstack_top, ObjNative* native, uint16_t arg_count);
+Value jit_callout_get_property(int64_t* vstack_top, uint16_t name_const_idx, uint16_t call_or_args, Chunk* chunk);
 
 /* ---- Scanning (jit_scan.c) ---- */
 int cache_hash(const uint8_t* ip);

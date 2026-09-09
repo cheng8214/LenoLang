@@ -6,6 +6,25 @@
  * EMIT_*) and locals (cb, ctx, sr, ip, vstack, tos_live, ...).
  * ========================================================================== */
             /* ---- Inc/Dec locals ---- */
+            case OP_CLEAR_LOCAL_RANGE: {
+                /* 内联清理：把 [base, base+count) 局部槽写回 NULL（raw=0）。
+                 * 未映射的槽（cur_local_map 为 -1）跳过。 */
+                uint16_t base = rd_short(ip + 1);
+                uint16_t count = rd_short(ip + 3);
+                TOS_SPILL();  /* 释放 RAX */
+                /* xor rax, rax (NULL raw = 0) */
+                emit_xor_rr(cb, JIT_RAX, JIT_RAX);
+                for (uint16_t i = base; i < base + count; i++) {
+                    int si = cur_local_map[i];
+                    if (si < 0) continue;
+                    int disp = scratch_disp(si);
+                    if (disp >= -128 && disp <= 127)
+                        emit_mov_mem8_reg(cb, JIT_RBP, (int8_t)disp, JIT_RAX);
+                    else
+                        emit_mov_mem32_reg(cb, JIT_RBP, disp, JIT_RAX);
+                }
+                break;
+            }
             case OP_INC_LOCAL_NOPUSH: {
                 uint16_t slot = rd_short(ip + 1);
                 int si = cur_local_map[slot];
@@ -21,7 +40,7 @@
                 emit_byte(cb, 0x83);
                 emit_byte(cb, modrm(3, 0, JIT_RAX & 7));  /* ADD rax, 1 */
                 emit_byte(cb, 1);
-                EMIT_INT48_CHECK();
+                EMIT_INT48_CHECK(bc_off);
                 if (disp >= -128 && disp <= 127) {
                     emit_mov_mem8_reg(cb, JIT_RBP, (int8_t)disp, JIT_RAX);
                 } else {
@@ -43,7 +62,7 @@
                 emit_byte(cb, 0x83);
                 emit_byte(cb, modrm(3, 5, JIT_RAX & 7));  /* SUB rax, 1 */
                 emit_byte(cb, 1);
-                EMIT_INT48_CHECK();
+                EMIT_INT48_CHECK(bc_off);
                 if (disp >= -128 && disp <= 127) {
                     emit_mov_mem8_reg(cb, JIT_RBP, (int8_t)disp, JIT_RAX);
                 } else {
@@ -68,7 +87,7 @@
                 emit_byte(cb, 0x83);
                 emit_byte(cb, modrm(3, 0, JIT_RAX & 7));  /* ADD rax, 1 */
                 emit_byte(cb, 1);
-                EMIT_INT48_CHECK();
+                EMIT_INT48_CHECK(bc_off);
                 if (disp >= -128 && disp <= 127) {
                     emit_mov_mem8_reg(cb, JIT_RBP, (int8_t)disp, JIT_RAX);
                 } else {
@@ -96,7 +115,7 @@
                 emit_byte(cb, 0x83);
                 emit_byte(cb, modrm(3, 5, JIT_RAX & 7));  /* SUB rax, 1 */
                 emit_byte(cb, 1);
-                EMIT_INT48_CHECK();
+                EMIT_INT48_CHECK(bc_off);
                 if (disp >= -128 && disp <= 127) {
                     emit_mov_mem8_reg(cb, JIT_RBP, (int8_t)disp, JIT_RAX);
                 } else {
@@ -121,7 +140,7 @@
                 emit_byte(cb, 0x83);
                 emit_byte(cb, modrm(3, 0, JIT_RAX & 7));  /* ADD rax, 1 */
                 emit_byte(cb, 1);
-                EMIT_INT48_CHECK();
+                EMIT_INT48_CHECK(bc_off);
                 if (disp >= -128 && disp <= 127) {
                     emit_mov_mem8_reg(cb, JIT_RBP, (int8_t)disp, JIT_RAX);
                 } else {
@@ -145,7 +164,7 @@
                 emit_byte(cb, 0x83);
                 emit_byte(cb, modrm(3, 5, JIT_RAX & 7));  /* SUB rax, 1 */
                 emit_byte(cb, 1);
-                EMIT_INT48_CHECK();
+                EMIT_INT48_CHECK(bc_off);
                 if (disp >= -128 && disp <= 127) {
                     emit_mov_mem8_reg(cb, JIT_RBP, (int8_t)disp, JIT_RAX);
                 } else {

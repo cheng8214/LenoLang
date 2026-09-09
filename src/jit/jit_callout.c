@@ -331,6 +331,7 @@ Value result = vm->last_return_value;
         }
         vm->sp = saved_sp;
         jit_callout_failed = 1;
+        if (jit_debug_on()) fprintf(stderr, "[JIT-CALLOUT-FAIL] invoke_method: vm_call_value failed\n");
         return NULL_VAL;
     }
 
@@ -433,6 +434,7 @@ Value jit_callout_global_func(int64_t* vstack_top, int arg_count,
         }
         vm->sp = saved_sp;
         jit_callout_failed = 1;
+        if (jit_debug_on()) fprintf(stderr, "[JIT-CALLOUT-FAIL] global_func: vm_call_value failed\n");
         return NULL_VAL;
     }
 
@@ -549,9 +551,224 @@ for (int i = 0; i < arg_count; i++) {
     /* Check for exception set by native function */
     if (jit_callout_vm && jit_callout_vm->has_exception) {
         jit_callout_failed = 1;
+        if (jit_debug_on()) fprintf(stderr, "[JIT-CALLOUT-FAIL] module_call: native raised exception\n");
         return NULL_VAL;
     }
 
     return result;
 }
+
+/* ---- Local equivalents of vm_ic.inc helpers (those are static inline in
+ * ---- the VM translation unit and NOT visible from here) ---- */
+static ObjType jitc_receiver_type(Value receiver) {
+    if (val_is_int(receiver)) return OBJ_INT;
+    if (val_is_float(receiver)) return OBJ_FLOAT;
+    if (val_is_obj(receiver)) return val_as_obj(receiver)->type;
+    return OBJ_NONE;
+}
+
+static ObjNative* jitc_find_method(ObjType type, const char* name) {
+    switch (type) {
+        case OBJ_ARRAY:   return array_find_method(name);
+        case OBJ_STRING:  return string_find_method(name);
+        case OBJ_DICT:    return dict_find_method(name);
+        case OBJ_FILE:    return file_find_method(name);
+        case OBJ_SOCKET:  return socket_find_method(name);
+        case OBJ_STRUCT:  return struct_find_method(name);
+        case OBJ_CSTRUCT_DEF:
+        case OBJ_CSTRUCT: return cstruct_find_method(name);
+        case OBJ_THREAD:  return thread_find_method(name);
+        case OBJ_CHANNEL: return channel_find_method(name);
+        case OBJ_INT:
+        case OBJ_FLOAT:
+        case OBJ_BIGINT:  return number_find_method(name);
+        default:          return NULL;
+    }
+}
+
+/* Callout: OP_ARRAY (array literal [e1, ..., eN]).
+ * JIT virtual stack grows downward: vstack_top[0] = LAST pushed element,
+ * vstack_top[count-1] = FIRST pushed element. VM wants [e1..eN] in order. */
+Value jit_callout_array_new(int64_t* vstack_top, uint16_t count) {
+    VM* vm = jit_callout_vm;
+    if (!vm) return NULL_VAL;
+
+    ObjArray* arr = arr_new(count);
+    if (!arr) {
+        jit_callout_failed = 1;
+        if (jit_debug_on()) fprintf(stderr, "[JIT-CALLOUT-FAIL] array_new: alloc failed\n");
+        return NULL_VAL;
+    }
+    for (int i = 0; i < count; i++) {
+        arr->elements[i] = jit_raw_to_value(vstack_top[count - 1 - i]);
+    }
+    arr->count = count;
+
+    /* Set runtime element type info (mirror VM OP_ARRAY) */
+    if (count > 0) {
+        Value first = arr->elements[0];
+        int all_same = 1;
+        for (int i = 1; i < count; i++) {
+            if (val_get_type(arr->elements[i]) != val_get_type(first)) {
+                all_same = 0;
+                break;
+            }
+        }
+        if (all_same) {
+            TypeKind elem_kind = TYPE_ANY;
+            switch (val_get_type(first)) {
+                case VAL_NULL:  elem_kind = TYPE_NULL; break;
+                case VAL_BOOL:  elem_kind = TYPE_BOOL; break;
+                case VAL_INT:   elem_kind = TYPE_INT; break;
+                case VAL_FLOAT: elem_kind = TYPE_FLOAT; break;
+                case VAL_OBJ: {
+                    switch (val_as_obj(first)->type) {
+                        case OBJ_STRING: elem_kind = TYPE_STRING; break;
+                        case OBJ_ARRAY:  elem_kind = TYPE_ARRAY; break;
+                        case OBJ_DICT:   elem_kind = TYPE_DICT; break;
+                        default: break;
+                    }
+                    break;
+                }
+            }
+            if (elem_kind != TYPE_ANY) {
+                arr->type_info = type_get_array_cached(elem_kind);
+            }
+        }
+    }
+    return val_obj((Object*)arr);
+}
+
+/* Callout: OP_CALL_NATIVE (direct native function call, e.g. sha256_init).
+ * Args are on the JIT virtual stack: vstack_top[0] = last arg.
+ * native was resolved at compile time (see codegen) to avoid a strcmp scan
+ * of the global native table on every execution. */
+Value jit_callout_call_native(int64_t* vstack_top, ObjNative* native,
+                              uint16_t arg_count) {
+    VM* vm = jit_callout_vm;
+    if (!vm || !native) return NULL_VAL;
+
+    /* Push args onto the VM stack (GC roots during the call), in order:
+     * VM stack [arg1..argN] = JIT vstack_top[N-1..0]. */
+    int saved_sp = vm->sp;
+    for (int i = 0; i < arg_count; i++) {
+        vm_stack_push(vm, jit_raw_to_value(vstack_top[arg_count - 1 - i]));
+    }
+    Value result = native->function(arg_count, vm->stack + vm->sp - arg_count);
+    vm->sp = saved_sp;
+
+    if (vm->has_exception) {
+        jit_callout_failed = 1;
+        if (jit_debug_on()) fprintf(stderr, "[JIT-CALLOUT-FAIL] call_native: native raised exception\n");
+        return NULL_VAL;
+    }
+    return result;
+}
+
+/* Callout: OP_GET_PROPERTY (receiver.name), optionally peephole-merged with
+ * a following OP_CALL. call_or_args == 0xFFFF means standalone property
+ * access; otherwise it is the merged call's arg_count.
+ * JIT virtual stack in call mode: [..., receiver, arg1..argN] with
+ * vstack_top[0] = argN and vstack_top[arg_count] = receiver. */
+Value jit_callout_get_property(int64_t* vstack_top, uint16_t name_const_idx,
+                               uint16_t call_or_args, Chunk* chunk) {
+    VM* vm = jit_callout_vm;
+    if (!vm) return NULL_VAL;
+
+    Value name_val = chunk->constants[name_const_idx];
+    if (!val_is_obj(name_val) || val_as_obj(name_val)->type != OBJ_STRING) {
+        error_add_at(ERR_RUNTIME, 0, 0, "属性名必须是字符串");
+        jit_callout_failed = 1;
+        if (jit_debug_on()) fprintf(stderr, "[JIT-CALLOUT-FAIL] get_property: name not string\n");
+        return NULL_VAL;
+    }
+    ObjString* name = (ObjString*)val_as_obj(name_val);
+
+/* ---- Merged call: receiver.name(args) ---- */
+    if (call_or_args != 0xFFFF) {
+        uint16_t arg_count = call_or_args;
+        int saved_sp = vm->sp;
+
+        /* Compiler push order: args first, receiver LAST (on top), so the
+         * physical/virtual stack at this point is [..., arg1..argN, receiver]
+         * with vstack_top[0] = receiver and vstack_top[i] = arg_i (i>=1).
+         * Mirror op_property.inc: pop receiver from TOS, then reshape the VM
+         * stack to [receiver, arg1..argN] and call the native with
+         * (arg_count + 1) values. */
+        Value receiver = jit_raw_to_value(vstack_top[0]);
+        for (int i = 0; i < arg_count; i++) {
+            vm_stack_push(vm, jit_raw_to_value(vstack_top[i + 1]));
+        }
+        int arg_start = vm->sp - arg_count;
+        for (int i = arg_count - 1; i >= 0; i--) {
+            vm->stack[arg_start + i + 1] = vm->stack[arg_start + i];
+        }
+        vm->stack[arg_start] = receiver;
+        vm->sp++;
+
+        ObjType rt = jitc_receiver_type(receiver);
+        ObjNative* method = jitc_find_method(rt, name->chars);
+        if (!method) {
+            /* Non-native call (struct closure method etc.) → bail out,
+             * the VM re-executes with the full op_property path. */
+            vm->sp = saved_sp;
+            jit_callout_failed = 1;
+            if (jit_debug_on()) fprintf(stderr, "[JIT-CALLOUT-FAIL] get_property: method not native (name='%s', rt=%d)\n", name ? name->chars : "?", (int)rt);
+            return NULL_VAL;
+        }
+        Value result = method->function(arg_count + 1, vm->stack + arg_start);
+        vm->sp = saved_sp;
+        if (vm->has_exception) {
+            jit_callout_failed = 1;
+            if (jit_debug_on()) fprintf(stderr, "[JIT-CALLOUT-FAIL] get_property: method raised exception\n");
+            return NULL_VAL;
+        }
+        return result;
+    }
+
+    /* ---- Standalone property access ---- */
+    Value receiver = jit_raw_to_value(vstack_top[0]);
+    if (!val_is_obj(receiver)) {
+        jit_callout_failed = 1;
+        if (jit_debug_on()) fprintf(stderr, "[JIT-CALLOUT-FAIL] get_property: receiver not obj\n");
+        return NULL_VAL;
+    }
+    ObjType rt = jitc_receiver_type(receiver);
+
+    /* Dict key first (non-call context) */
+    if (rt == OBJ_DICT) {
+        ObjDict* dict = (ObjDict*)val_as_obj(receiver);
+        if (dict_has(dict, val_obj((Object*)name))) {
+            return dict_get(dict, val_obj((Object*)name));
+        }
+    }
+
+    /* Native method → bound method */
+    ObjNative* method = jitc_find_method(rt, name->chars);
+    if (method) {
+        int saved_sp = vm->sp;
+        vm_stack_push(vm, receiver);  /* GC root while allocating */
+        ObjBoundMethod* bound = bound_method_new(receiver, method);
+        vm->sp = saved_sp;
+        if (!bound) {
+            jit_callout_failed = 1;
+            if (jit_debug_on()) fprintf(stderr, "[JIT-CALLOUT-FAIL] get_property: bound_method_new failed\n");
+            return NULL_VAL;
+        }
+        return val_obj((Object*)bound);
+    }
+
+    /* Dict fallback (no such key → dict_get returns NULL_VAL) */
+    if (rt == OBJ_DICT) {
+        ObjDict* dict = (ObjDict*)val_as_obj(receiver);
+        return dict_get(dict, val_obj((Object*)name));
+    }
+
+    /* Struct/cstruct methods & fields → bail out to the VM */
+    jit_callout_failed = 1;
+    if (jit_debug_on()) fprintf(stderr, "[JIT-CALLOUT-FAIL] get_property: struct bailout\n");
+    return NULL_VAL;
+}
+
+
 

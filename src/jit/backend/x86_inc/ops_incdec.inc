@@ -23,7 +23,7 @@
                 emit_byte(cb, 0x83);
                 emit_byte(cb, is_inc ? 0xC0 : 0xE8);
                 emit_byte(cb, 0x01);
-                EMIT_INT48_CHECK();
+                EMIT_INT48_CHECK(bc_off);
                 TOS_PRODUCE();
                 /* jmp .next (rel8 placeholder) */
                 emit_byte(cb, 0xEB);

@@ -223,3 +223,135 @@
                 break;
             }
 
+            /* ---- Callout: OP_ARRAY (array literal [e1..eN]) ---- */
+            case OP_ARRAY: {
+                uint16_t count = rd_short(ip + 1);
+                TOS_SPILL();
+                EMIT_STORE_TMP(tmp1_disp, JIT_RSP);   /* vstack_top */
+                EMIT_CALLOUT_BEGIN();
+                EMIT_LOAD_TMP(JIT_ARG1, tmp1_disp);   /* vstack_top (1st arg) */
+                emit_mov_reg_imm64(cb, JIT_ARG2, (uint64_t)count);  /* count (2nd) */
+                EMIT_CALL(jit_callout_array_new);
+                EMIT_CALLOUT_END();
+                EMIT_STORE_TMP(tmp2_disp, JIT_RAX);
+                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_callout_failed);
+                emit_mov_reg_mem8(cb, JIT_RAX, JIT_R8, 0);
+                emit_test_rr(cb, JIT_RAX, JIT_RAX);
+                { int fail_patch = emit_jcc(cb, 0x85); patch_add(ctx, fail_patch, -1, 0); }
+                emit_xor_rr(cb, JIT_RAX, JIT_RAX);
+                emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
+                EMIT_LOAD_TMP(JIT_RAX, tmp2_disp);
+                /* Pop count elements from JIT virtual stack */
+                int pop_bytes = count * 8;
+                if (pop_bytes <= 127) {
+                    emit_byte(cb, 0x48); emit_byte(cb, 0x83); emit_byte(cb, 0xC4);
+                    emit_byte(cb, (uint8_t)pop_bytes);
+                } else {
+                    emit_byte(cb, 0x48); emit_byte(cb, 0x81); emit_byte(cb, 0xC4);
+                    emit_uint32(cb, (uint32_t)pop_bytes);
+                }
+                EMIT_VALUE_TO_RAW();
+                TOS_PRODUCE();
+                vstack -= (count - 1);
+                break;
+            }
+
+            /* ---- Callout: OP_CALL_NATIVE (direct native call) ----
+             * The native function pointer is resolved at compile time and
+             * embedded as an immediate: the runtime callout then calls it
+             * directly, avoiding a strcmp scan of the global native table
+             * on every execution (the interpreter's IC cache does the same). */
+            case OP_CALL_NATIVE: {
+                uint16_t name_idx = rd_short(ip + 1);
+                uint16_t arg_count = rd_short(ip + 3);
+                /* Compile-time resolution: name constant -> ObjNative* */
+                Value name_val = cur_chunk->constants[name_idx];
+                ObjNative* native = NULL;
+                if (val_is_obj(name_val) && val_as_obj(name_val)->type == OBJ_STRING) {
+                    native = native_find_function(((ObjString*)val_as_obj(name_val))->chars);
+                }
+                if (!native) {
+                    if (jit_debug_on())
+                        fprintf(stderr, "[JIT-DEBUG] call_native: unresolved native at compile time\n");
+                    return 0;  /* bail out → interpreter keeps semantics */
+                }
+                TOS_SPILL();
+                EMIT_STORE_TMP(tmp1_disp, JIT_RSP);   /* vstack_top */
+                EMIT_CALLOUT_BEGIN();
+                EMIT_LOAD_TMP(JIT_ARG1, tmp1_disp);   /* vstack_top (1st arg) */
+                emit_mov_reg_imm64(cb, JIT_ARG2, (uint64_t)(uintptr_t)native);  /* ObjNative* (2nd) */
+                emit_mov_reg_imm64(cb, JIT_ARG3, (uint64_t)arg_count);  /* arg_count (3rd) */
+                EMIT_CALL(jit_callout_call_native);
+                EMIT_CALLOUT_END();
+                EMIT_STORE_TMP(tmp2_disp, JIT_RAX);
+                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_callout_failed);
+                emit_mov_reg_mem8(cb, JIT_RAX, JIT_R8, 0);
+                emit_test_rr(cb, JIT_RAX, JIT_RAX);
+                { int fail_patch = emit_jcc(cb, 0x85); patch_add(ctx, fail_patch, -1, 0); }
+                emit_xor_rr(cb, JIT_RAX, JIT_RAX);
+                emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
+                EMIT_LOAD_TMP(JIT_RAX, tmp2_disp);
+                /* Pop ALL arg_count args: the callout reads the args from the
+                 * vstack and returns its result in RAX, which becomes the new
+                 * TOS (tos_live=1). Physical stack must shrink by arg_count
+                 * slots to stay consistent with vstack -= (arg_count - 1). */
+                int pop_bytes = arg_count * 8;
+                if (pop_bytes > 0) {
+                    if (pop_bytes <= 127) {
+                        emit_byte(cb, 0x48); emit_byte(cb, 0x83); emit_byte(cb, 0xC4);
+                        emit_byte(cb, (uint8_t)pop_bytes);
+                    } else {
+                        emit_byte(cb, 0x48); emit_byte(cb, 0x81); emit_byte(cb, 0xC4);
+                        emit_uint32(cb, (uint32_t)pop_bytes);
+                    }
+                }
+                EMIT_VALUE_TO_RAW();
+                TOS_PRODUCE();
+                vstack -= (arg_count - 1);
+                break;
+            }
+
+            /* ---- Callout: OP_GET_PROPERTY (obj.name / obj.name(args) peephole) ---- */
+            case OP_GET_PROPERTY: {
+                uint16_t name_idx = rd_short(ip + 1);
+                /* Peephole: GET_PROPERTY + OP_CALL(arg_count16) merged in scan;
+                 * mirror the same condition here (end = current body end). */
+                int merged = (ip + 6 <= end && ip[3] == OP_CALL);
+                uint16_t merged_argc = merged ? rd_short(ip + 4) : 0xFFFF;
+                /* 窥孔合并且已被 scan 确认：codegen 也要连同 OP_CALL 一起消费 */
+                if (merged) size = 6;
+                TOS_SPILL();
+                EMIT_STORE_TMP(tmp1_disp, JIT_RSP);   /* vstack_top */
+                EMIT_CALLOUT_BEGIN();
+                EMIT_LOAD_TMP(JIT_ARG1, tmp1_disp);   /* vstack_top (1st arg) */
+                emit_mov_reg_imm64(cb, JIT_ARG2, (uint64_t)name_idx);         /* name const (2nd) */
+                emit_mov_reg_imm64(cb, JIT_ARG3, (uint64_t)merged_argc);      /* call args / 0xFFFF (3rd) */
+                emit_mov_reg_imm64(cb, JIT_ARG4, (uint64_t)(uintptr_t)cur_chunk);  /* chunk (4th) */
+                EMIT_CALL(jit_callout_get_property);
+                EMIT_CALLOUT_END();
+                EMIT_STORE_TMP(tmp2_disp, JIT_RAX);
+                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_callout_failed);
+                emit_mov_reg_mem8(cb, JIT_RAX, JIT_R8, 0);
+                emit_test_rr(cb, JIT_RAX, JIT_RAX);
+                { int fail_patch = emit_jcc(cb, 0x85); patch_add(ctx, fail_patch, -1, 0); }
+                emit_xor_rr(cb, JIT_RAX, JIT_RAX);
+                emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
+                EMIT_LOAD_TMP(JIT_RAX, tmp2_disp);
+                /* Merged call: pop receiver + args, push result → net -arg_count.
+                 * Standalone: receiver replaced by value → no pop. */
+                int pop_bytes = merged ? (merged_argc + 1) * 8 : 0;
+                if (pop_bytes > 0) {
+                    if (pop_bytes <= 127) {
+                        emit_byte(cb, 0x48); emit_byte(cb, 0x83); emit_byte(cb, 0xC4);
+                        emit_byte(cb, (uint8_t)pop_bytes);
+                    } else {
+                        emit_byte(cb, 0x48); emit_byte(cb, 0x81); emit_byte(cb, 0xC4);
+                        emit_uint32(cb, (uint32_t)pop_bytes);
+                    }
+                }
+                EMIT_VALUE_TO_RAW();
+                TOS_PRODUCE();
+                if (merged) vstack -= merged_argc;
+                break;
+            }
+

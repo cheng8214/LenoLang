@@ -84,18 +84,40 @@ int compile_loop(CodegenCtx* ctx) {
      * sar r8, 47 yields 0 for valid positive, -1 for valid negative.
      * inc r8 maps 0→1, -1→0 (both ≤ 1 unsigned), anything else → > 1.
      * ja bailout catches the "anything else" case.
+     *
+     * site param: bytecode offset of the check, written to the global
+     * jit_bailout_site BEFORE the conditional jump so the bailout debug
+     * log can pinpoint which instruction overflowed.
      */
-     #define EMIT_INT48_CHECK() do { \
+     #define EMIT_BAILOUT_SITE_WRITE(site) do { \
+        emit_byte(cb, 0x41); emit_byte(cb, 0x57); /* push r9 */ \
+        emit_mov_reg_imm64(cb, JIT_R9, (uint64_t)(uintptr_t)&jit_bailout_site); \
+        emit_byte(cb, 0x41); emit_byte(cb, 0xC7); emit_byte(cb, 0x01); \
+        emit_uint32(cb, (uint32_t)(int32_t)(site)); /* mov dword [r9], imm32 */ \
+        emit_byte(cb, 0x41); emit_byte(cb, 0x5F); /* pop r9 */ \
+     } while(0)
+
+     #define EMIT_INT48_CHECK(site) do { \
         emit_mov_rr(cb, JIT_R8, JIT_RAX);  \
         emit_sar_imm(cb, JIT_R8, 47);     \
         emit_inc_reg(cb, JIT_R8);          \
         emit_cmp_reg_imm8(cb, JIT_R8, 1);  \
+        EMIT_BAILOUT_SITE_WRITE(site);     \
         int _p = emit_jcc(cb, 0x87);      \
         patch_add(ctx, _p, -1, 0);          \
-    } while(0)
+     } while(0)
+
+     /* 48-bit truncation for SHL: VM 语义为 int64 左移后 val_int() 截断为
+      * 48 位有符号（不提升 BigInt）。shl rax,16 把 bit47 移到 bit63，
+      * sar rax,16 再算术右移回 → 等价于截断低 48 位并保留符号。 */
+     #define EMIT_INT48_TRUNCATE() do { \
+        emit_shl_imm(cb, JIT_RAX, 16);   \
+        emit_sar_imm(cb, JIT_RAX, 16);   \
+     } while(0)
 
     /* int64 overflow check for MUL: bail out if OF flag set */
-    #define EMIT_INT64_OVF_CHECK() do { \
+    #define EMIT_INT64_OVF_CHECK(site) do { \
+        EMIT_BAILOUT_SITE_WRITE(site);     \
         int _p = emit_jcc(cb, 0x80);      \
         patch_add(ctx, _p, -1, 0);        \
     } while(0)
@@ -442,7 +464,8 @@ int compile_loop(CodegenCtx* ctx) {
             emit_mov_reg_mem32(cb, JIT_RDX, JIT_RBP, d_st);
         /* add rax, rdx (loop_var += step) */
         emit_add_rr(cb, JIT_RAX, JIT_RDX);
-        EMIT_INT48_CHECK();
+        /* -1: this check is the loop-entry increment, bc_off not yet in scope */
+        EMIT_INT48_CHECK(-1);
         /* mov [rbp+d_lv], rax (store back) */
         if (d_lv >= -128 && d_lv <= 127)
             emit_mov_mem8_reg(cb, JIT_RBP, (int8_t)d_lv, JIT_RAX);

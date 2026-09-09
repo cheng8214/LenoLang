@@ -102,7 +102,7 @@
                 else
                     emit_mov_reg_mem32(cb, JIT_RDX, JIT_RBP, d_st);
                 emit_add_rr(cb, JIT_RAX, JIT_RDX);
-                EMIT_INT48_CHECK();
+                EMIT_INT48_CHECK(bc_off);
                 if (d_lv >= -128 && d_lv <= 127)
                     emit_mov_mem8_reg(cb, JIT_RBP, (int8_t)d_lv, JIT_RAX);
                 else
