@@ -56,6 +56,8 @@ SOURCES="$SOURCES src/codegen/codegen_func.c"
 SOURCES="$SOURCES src/codegen/codegen_import.c"
 SOURCES="$SOURCES src/codegen/codegen_utils.c"
 SOURCES="$SOURCES src/codegen/codegen_inline.c"
+SOURCES="$SOURCES src/jit/jit_callout.c"
+SOURCES="$SOURCES src/jit/jit_scan.c"
 SOURCES="$SOURCES src/jit/jit.c"
 SOURCES="$SOURCES src/debug.c"
 SOURCES="$SOURCES src/type.c"
@@ -101,6 +103,21 @@ case "$OS" in
   Darwin*)               PLATFORM=macos   ;;
   *)                     PLATFORM=linux   ;;
 esac
+
+# JIT 后端选择：按 CPU 架构。
+# x86_64 -> backend/x86_64.c；arm64/aarch64 -> backend/arm64.c（已预留，
+# 未实现时编译报错，明确提示 TODO）。
+JIT_ARCH="$(uname -m 2>/dev/null || echo x86_64)"
+case "$JIT_ARCH" in
+  aarch64|arm64) JIT_BACKEND=src/jit/backend/arm64.c ;;
+  *)             JIT_BACKEND=src/jit/backend/x86_64.c ;;
+esac
+if [ ! -f "$JIT_BACKEND" ]; then
+  echo "error: JIT backend $JIT_BACKEND not found" >&2
+  echo "       (arm64 backend not implemented yet — add src/jit/backend/arm64.c)" >&2
+  exit 1
+fi
+SOURCES="$SOURCES $JIT_BACKEND"
 
 EXE=""
 LIBS="-lm"

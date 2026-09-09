@@ -89,7 +89,15 @@ set SOURCES=!SOURCES! src\package\package_toml.c
 set SOURCES=!SOURCES! src\package\package_init.c
 set SOURCES=!SOURCES! src\package\package_resolve.c
 set SOURCES=!SOURCES! src\package\package_install.c
+set SOURCES=!SOURCES! src\jit\jit_callout.c
+set SOURCES=!SOURCES! src\jit\jit_scan.c
 set SOURCES=!SOURCES! src\jit\jit.c
+REM JIT 后端按 CPU 架构选择（arm64 预留：实现 src\jit\backend\arm64.c 后自动启用）
+if /i "%PROCESSOR_ARCHITECTURE%"=="ARM64" (
+  set SOURCES=!SOURCES! src\jit\backend\arm64.c
+) else (
+  set SOURCES=!SOURCES! src\jit\backend\x86_64.c
+)
 
 gcc -o build\lenojit.exe !SOURCES! -Isrc -Wall -Wextra -std=c99 -O2 -lm -municode -lws2_32
 

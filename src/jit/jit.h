@@ -11,7 +11,7 @@
  *   - On type-guard failure, JIT returns 1 (bailout) and the interpreter
  *     resumes normal execution.
  *
- * Calling convention (Windows x64):
+* Calling convention (defined by the backend, e.g. x86_64 Win64):
  *   RCX = Value* locals   (first argument)
  *   Return value (EAX) = 0 (success) or 1 (bailout)
  */
@@ -32,7 +32,8 @@
 #define JIT_BAILOUT_LIMIT   3     /* after N bailouts, stop trying      */
 
 /* ---- JIT function type ---- */
-/* Windows x64 ABI: RCX = Value* locals, RDX = Value* globals */
+/* Calling convention is target-ABI specific (see backend/x86_64.c);
+ * from C's perspective it is a plain function pointer. */
 typedef int (*JitLoopFn)(Value* locals, Value* globals);
 
 /* ---- Cache entry ---- */

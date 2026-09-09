@@ -1,32 +1,15 @@
 /*
- * jit_emit.h - x86_64 machine code emission helpers
+ * x86_64_emit.h - x86_64 instruction encoders (target-specific, NOT portable)
  *
- * Provides a CodeBuf (dynamic byte buffer) and inline functions to emit
- * x86_64 instructions.  All functions append bytes to the CodeBuf.
- *
- * Register usage convention (Windows x64 calling convention):
- *   RCX  = arg1 (Value* locals)   [fixed, never overwritten]
- *   RAX  = accumulator
- *   RDX  = secondary operand / IDIV implicit
- *   R8   = scratch / secondary
- *   R9   = scratch
- *   R10  = constant register 1 (PAYLOAD_MASK)
- *   R11  = constant register 2 (INT_TAG)
- *   RBP  = frame pointer (scratch area base)
- *   RSP  = stack pointer (virtual stack via PUSH/POP)
- *
- * Condition codes (for Jcc / SETcc):
- *   0x4 = JE/JZ,  0x5 = JNE/JNZ
- *   0xC = JL,     0xD = JGE
- *   0xE = JLE,    0xF = JG
- *   0x2 = JB,     0x3 = JAE
+ * Register IDs (JIT_RAX .. JIT_R14) and all static-inline encoders
+ * (rex/modrm/emit_*). Included only by backend/x86_64.c.
+ * Requires CodeBuf (from ../jit_priv.h, shared portable layer).
  */
-#ifndef LENO_JIT_EMIT_H
-#define LENO_JIT_EMIT_H
+#ifndef X86_64_EMIT_H
+#define X86_64_EMIT_H
 
 #include <stdint.h>
-#include <stdlib.h>
-#include <string.h>
+#include "../jit_priv.h"
 
 /* ---- Register IDs ---- */
 #define JIT_RAX  0
@@ -44,51 +27,6 @@
 #define JIT_R12  12
 #define JIT_R13  13
 #define JIT_R14  14
-
-/* ---- CodeBuf ---- */
-typedef struct {
-    uint8_t* buf;
-    int      len;
-    int      cap;
-} CodeBuf;
-
-static inline void codebuf_init(CodeBuf* cb, int initial_cap) {
-    cb->cap   = initial_cap > 0 ? initial_cap : 256;
-    cb->buf   = (uint8_t*)malloc((size_t)cb->cap);
-    cb->len   = 0;
-}
-
-static inline void codebuf_free(CodeBuf* cb) {
-    free(cb->buf);
-    cb->buf = NULL;
-    cb->len = cb->cap = 0;
-}
-
-static inline void codebuf_ensure(CodeBuf* cb, int need) {
-    if (cb->len + need > cb->cap) {
-        while (cb->len + need > cb->cap) cb->cap *= 2;
-        cb->buf = (uint8_t*)realloc(cb->buf, (size_t)cb->cap);
-    }
-}
-
-static inline void emit_byte(CodeBuf* cb, uint8_t b) {
-    codebuf_ensure(cb, 1);
-    cb->buf[cb->len++] = b;
-}
-
-static inline void emit_uint32(CodeBuf* cb, uint32_t v) {
-    codebuf_ensure(cb, 4);
-    cb->buf[cb->len++] = (uint8_t)(v);
-    cb->buf[cb->len++] = (uint8_t)(v >> 8);
-    cb->buf[cb->len++] = (uint8_t)(v >> 16);
-    cb->buf[cb->len++] = (uint8_t)(v >> 24);
-}
-
-static inline void emit_uint64(CodeBuf* cb, uint64_t v) {
-    codebuf_ensure(cb, 8);
-    for (int i = 0; i < 8; i++)
-        cb->buf[cb->len++] = (uint8_t)(v >> (i * 8));
-}
 
 /* ---- Low-level encoding helpers ---- */
 
@@ -545,4 +483,4 @@ static inline void emit_xorpd_xmm_xmm(CodeBuf* cb, int dst, int src) {
     emit_byte(cb, modrm(3, dst & 7, src & 7));
 }
 
-#endif /* LENO_JIT_EMIT_H */
+#endif /* X86_64_EMIT_H */
