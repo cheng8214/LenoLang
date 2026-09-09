@@ -128,6 +128,14 @@ static inline int64_t jit_value_to_raw(Value v) {
 /* Callout: OP_INDEX (array/dict index access).
  * Returns NaN-boxed result, or NULL_VAL on error. */
 static Value jit_callout_index(Value obj_val, Value idx_val) {
+    if (getenv("LENO_JIT_DEBUG")) {
+        static int dbg_cnt = 0;
+        if (dbg_cnt < 40)
+            fprintf(stderr, "[JIT-IDX] obj=0x%llx obj_is_obj=%d idx=0x%llx\n",
+                    (unsigned long long)(uint64_t)obj_val, val_is_obj(obj_val),
+                    (unsigned long long)(uint64_t)idx_val);
+        dbg_cnt++;
+    }
     if (!val_is_obj(obj_val)) {
         error_add_at(ERR_RUNTIME, 0, 0, "索引操作需要对象类型");
         return NULL_VAL;
@@ -2739,10 +2747,17 @@ static int compile_loop(CodegenCtx* ctx) {
                     emit_mov_reg_imm64(cb, JIT_R8, NULL_VAL);
                     emit_cmp_rr(cb, JIT_RAX, JIT_R8);
                     int je2_patch = emit_jcc(cb, 0x84);  /* JE = falsey (NULL_VAL) */
-                    /* Truthy: jump over falsey code */
+/* Truthy: jump over falsey code */
                     int truthy_jmp = emit_jmp(cb);
-                    /* Falsey path: push condition to stack for jump target
-                     * (target may have tos_live=0 from linear codegen) */
+                    /* Falsey path: JUMP_IF_FALSE is peek-only in the VM —
+                     * the condition value stays on the stack for the target
+                     * instruction (normally an OP_POP) to consume.  The
+                     * target was compiled in the linear fall-through state
+                     * (tos_live=0, vstack as recorded), so its OP_POP is
+                     * "add rsp,8" popping exactly one memory entry.  We must
+                     * push RAX here so that pop consumes OUR value; otherwise
+                     * the add rsp,8 would pop garbage and desync the
+                     * runtime stack (e.g. OP_INDEX pops a wrong obj operand). */
                     patch_rel32(cb, jz_patch, cb->len);
                     patch_rel32(cb, je1_patch, cb->len);
                     patch_rel32(cb, je2_patch, cb->len);
@@ -2751,7 +2766,9 @@ static int compile_loop(CodegenCtx* ctx) {
                     patch_add(ctx, jmp_patch, target_bc, 0);
                     /* Patch truthy jump to here */
                     patch_rel32(cb, truthy_jmp, cb->len);
-                    /* Fall-through: tos_live stays 1, next OP_POP will TOS_DISCARD */
+                    /* Fall-through (truthy): RAX still holds condition,
+                     * next OP_POP will TOS_DISCARD */
+                    tos_live = 1;
                 } else {
                     /* Value on memory stack: peek + conditional jump (no pop) */
                     emit_byte(cb, 0x48);
@@ -3363,16 +3380,17 @@ static int compile_loop(CodegenCtx* ctx) {
                 TOS_PRODUCE();
                 vstack++;
                 break;
-            case OP_TRUE:
+case OP_TRUE:
                 TOS_SPILL();
-                /* Leno true value = NaN-boxed bool true */
-                emit_mov_reg_imm64(cb, JIT_RAX, (uint64_t)0xFFFFFFFFFFFF0003ULL);
+                /* Leno true value = NaN-boxed bool true (must match VM TRUE_VAL,
+                 * otherwise is_falsey/val_is_bool misclassify JIT-sunk bools) */
+                emit_mov_reg_imm64(cb, JIT_RAX, (uint64_t)TRUE_VAL);
                 TOS_PRODUCE();
                 vstack++;
                 break;
             case OP_FALSE:
                 TOS_SPILL();
-                emit_mov_reg_imm64(cb, JIT_RAX, (uint64_t)0xFFFFFFFFFFFF0001ULL);
+                emit_mov_reg_imm64(cb, JIT_RAX, (uint64_t)FALSE_VAL);
                 TOS_PRODUCE();
                 vstack++;
                 break;
@@ -3433,6 +3451,16 @@ static int compile_loop(CodegenCtx* ctx) {
             int slot = sr->local_slots[_i]; \
             int disp = scratch_disp(_i); \
             int sd = slot * 8; \
+            /* Skip duplicate slot mappings — only write back the first mapping. \
+             * When the same slot is mapped to multiple scratch slots (e.g. a   \
+             * value is loaded multiple times into different scratch locations)  \
+             * only the first scratch was initialised by the prologue; the rest \
+             * may hold garbage.  Writing them back would corrupt the local. */ \
+            int _dup = 0; \
+            for (int _j = 0; _j < _i; _j++) { \
+                if (sr->local_slots[_j] == slot) { _dup = 1; break; } \
+            } \
+            if (_dup) continue; \
             /* BT RBX, i → CF = bit i (48 0F BA E3 imm8) */ \
             emit_byte(cb, 0x48); \
             emit_byte(cb, 0x0F); \
@@ -3818,17 +3846,32 @@ int jit_try_hot_loop(CallFrame* frame, VM* vm_ptr, int32_t loop_offset, int back
         return 0;
     }
 
-    /* Execute JIT */
+/* Execute JIT */
     jit_state.execute_count++;
     jit_callout_vm = vm_ptr;  /* set global VM pointer for callouts */
     /* Initialize reloaded locals to current value; callouts will update
      * this if vm_grow_frames reallocates vm.frames during nested execution. */
     jit_reloaded_locals = vm_ptr->frames[vm_ptr->frame_cnt - 1].locals;
-    if (getenv("LENO_JIT_DEBUG"))
+    if (getenv("LENO_JIT_DEBUG")) {
         fprintf(stderr, "[JIT-DEBUG] EXEC call #%d, fn=%p, locals=%p\n",
                 jit_state.execute_count, (void*)entry->fn, (void*)frame->locals);
+        if (getenv("LENO_JIT_TRACE")) {
+            fprintf(stderr, "[JIT-TRACE] PRE  #%d body_off=%-4d n_locals(scratch)=%d:", jit_state.execute_count, (int)(body_start - frame->chunk->code), 0);
+            for (int _si = 0; _si < 40; _si++) {
+                fprintf(stderr, " L[%02d]=%p", _si, (void*)(uintptr_t)frame->locals[_si]);
+            }
+            fprintf(stderr, "\n");
+        }
+    }
     int result = entry->fn(frame->locals, vm_ptr->globals);
     if (getenv("LENO_JIT_DEBUG")) {
+        if (getenv("LENO_JIT_TRACE")) {
+            fprintf(stderr, "[JIT-TRACE] POST #%d body_off=%-4d n_locals(scratch)=%d:", jit_state.execute_count, (int)(body_start - frame->chunk->code), 0);
+            for (int _si = 0; _si < 40; _si++) {
+                fprintf(stderr, " L[%02d]=%p", _si, (void*)(uintptr_t)frame->locals[_si]);
+            }
+            fprintf(stderr, "\n");
+        }
         fprintf(stderr, "[JIT-DEBUG] EXEC returned %d\n", result);
         if (result == 0) {
             CallFrame* cf = &vm_ptr->frames[vm_ptr->frame_cnt - 1];
