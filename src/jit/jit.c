@@ -182,6 +182,104 @@ static JitLoopFn jit_compile(CallFrame* frame, const uint8_t* body_start,
     memcpy(exec_mem, ctx.cb.buf, (size_t)ctx.cb.len);
     codebuf_free(&ctx.cb);
 
+return (JitLoopFn)exec_mem;
+}
+
+
+/* ---- Function-level JIT (hot function bodies, no loop semantics) ----
+ *
+ * 函数级 JIT 的目标：把整函数（无 OP_LOOP/OP_FOR_LOOP）编译为
+ * fn(locals, globals) 机器码，供 jit_callout.c 中的 invoke/global call
+ * 快路径直接调用。执行约定与循环 JIT 一致：
+ *   - locals 数组契约：slot i = Value（NaN-boxed）；参数在低地址
+ *   - 返回：0 成功（返回值写 jit_fn_result），非 0 失败/异常
+ *   - func_mode=1：CodegenCtx 反馈用新栈帧（add rsp,24），
+ *     OP_RETURN 写 jit_fn_result 后 ret；不做 locals 写回/RELOAD_RCX
+ */
+JitFuncCacheEntry jit_func_cache[JIT_FUNC_CACHE_SIZE];
+
+/* 快速预扫描：函数体含循环回边（LOOP/FOR_LOOP/FOR_PREP）或非法指令
+ * → 拒绝函数级 JIT（func_mode 的编译语义只对无循环函数保证正确）。
+ * FOR_INCREMENT 也会出现在 FOR 循环中（含 FOR_PREP 时已被拒绝）。 */
+static int func_body_is_simple(const uint8_t* code, int len) {
+    const uint8_t* p = code;
+    const uint8_t* end = code + (size_t)len;
+    while (p < end) {
+        uint8_t op = *p;
+        if (op == OP_LOOP || op == OP_FOR_LOOP || op == OP_FOR_PREP)
+            return 0;
+        int sz = opcode_size(p);
+        if (sz < 0 || p + sz > end)
+            return 0;
+        p += sz;
+    }
+    return 1;
+}
+
+static JitLoopFn jit_compile_function(ObjFunction* func, VM* vm_ptr) {
+    if (!func || !func->chunk || func->chunk->len <= 0)
+        return NULL;
+    if (func->has_try || func->return_count > 1)
+        return NULL;  /* 异常处理 / 多返回值语义复杂，回退解释器 */
+
+    const uint8_t* code = func->chunk->code;
+    int len = func->chunk->len;
+    if (!func_body_is_simple(code, len))
+        return NULL;
+
+    ScanResult sr;
+    scan_loop_body(code, len, 0, &sr, vm_ptr);
+    if (!sr.capable)
+        return NULL;
+
+    /* 函数级 JIT 禁用内联：callee 调用统一走 callout 快路径
+     * （递归/互调由 jit_func_lookup_or_compile 缓存兜底），
+     * 避免递归函数自内联导致 codegen 语义复杂化。 */
+    sr.inline_count = 0;
+    sr.inline_extra_locals = 0;
+
+    /* Remap inline callee locals: skipped (inline disabled) */
+
+    CodegenCtx ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    codebuf_init(&ctx.cb, 512);
+    ctx.sr = &sr;
+    ctx.body_start = code;
+    ctx.chunk = func->chunk;
+    ctx.vm_ptr = vm_ptr;
+    ctx.func_mode = 1;   /* 函数模式：OP_RETURN 直接返回 */
+
+    int ok = compile_loop(&ctx);
+
+    if (getenv("LENO_JIT_DUMP") && ok && ctx.cb.len > 0) {
+        char dumpname[64];
+        snprintf(dumpname, sizeof(dumpname), "jitdump_func_%d.bin", jit_state.compile_count);
+        FILE* f = fopen(dumpname, "wb");
+        if (f) {
+            fwrite(ctx.cb.buf, 1, (size_t)ctx.cb.len, f);
+            fclose(f);
+        }
+    }
+
+    if (!ok || ctx.cb.len == 0) {
+        if (jit_debug_on())
+            fprintf(stderr, "[JIT-DEBUG] func compile FAIL: '%s' capable=%d cb=%d\n",
+                    func->name ? func->name : "?", sr.capable, ctx.cb.len);
+        codebuf_free(&ctx.cb);
+        return NULL;
+    }
+
+    void* exec_mem = jit_mem_alloc((size_t)ctx.cb.len);
+    if (!exec_mem) {
+        codebuf_free(&ctx.cb);
+        return NULL;
+    }
+    memcpy(exec_mem, ctx.cb.buf, (size_t)ctx.cb.len);
+    codebuf_free(&ctx.cb);
+
+    if (jit_debug_on())
+        fprintf(stderr, "[JIT-DEBUG] func compiled: '%s' locals=%d bytes=%d\n",
+                func->name ? func->name : "?", sr.num_locals, len);
     return (JitLoopFn)exec_mem;
 }
 
@@ -206,7 +304,36 @@ void jit_close(void) {
             jit_mem_free((void*)e->fn, 0);
         }
     }
+    for (int i = 0; i < JIT_FUNC_CACHE_SIZE; i++) {
+        JitFuncCacheEntry* e = &jit_func_cache[i];
+        if (e->fn) {
+            jit_mem_free((void*)e->fn, 0);
+        }
+    }
+    memset(jit_func_cache, 0, sizeof(jit_func_cache));
     memset(&jit_state, 0, sizeof(jit_state));
+    jit_ft_profile_dump();
+}
+
+/* 查找/编译函数级 JIT 缓存（direct-mapped，按 func 指针哈希）。
+ * 编译失败缓存 tried 状态，避免重复编译开销。 */
+JitLoopFn jit_func_lookup_or_compile(ObjFunction* func, VM* vm_ptr) {
+    if (!func || !jit_state.enabled)
+        return NULL;
+    uintptr_t h = (uintptr_t)func;
+    int idx = (int)((h >> 4) & (JIT_FUNC_CACHE_SIZE - 1));
+    JitFuncCacheEntry* e = &jit_func_cache[idx];
+    if (e->func == func) {
+        return e->fn;   /* 命中（含尝试失败缓存 NULL） */
+    }
+    /* 新函数（或哈希冲突覆盖旧条目） */
+    if (e->func && e->fn) {
+        jit_mem_free((void*)e->fn, 0);
+    }
+    memset(e, 0, sizeof(*e));
+    e->func = func;
+    e->fn = jit_compile_function(func, vm_ptr);
+    return e->fn;
 }
 
 void jit_set_enabled(int enabled) {

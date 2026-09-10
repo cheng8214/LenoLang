@@ -355,3 +355,57 @@
                 break;
             }
 
+            /* ---- Callout: OP_STRUCT_INIT (struct literal, e.g. Hit{...}) ----
+             * ip: op(1) + name_const(2) + arg_count(1) + generic_count(1) +
+             *     field_indices(arg_count bytes)。scan 已拒绝泛型
+             *     (generic_count>0)，此处仅处理非泛型路径。 */
+            case OP_STRUCT_INIT: {
+                uint8_t arg_count = ip[3];
+                TOS_SPILL();
+                /* Save current RSP (virtual stack pointer) BEFORE
+                 * CALLOUT_BEGIN aligns/changes RSP. */
+                EMIT_STORE_TMP(tmp1_disp, JIT_RSP);
+                EMIT_CALLOUT_BEGIN();
+                /* After CALLOUT_BEGIN: RSP is aligned, RCX/R9 saved to R13/R14. */
+                EMIT_LOAD_TMP(JIT_ARG1, tmp1_disp);   /* vstack_top (1st arg) */
+                emit_mov_reg_imm64(cb, JIT_ARG2, (uint64_t)rd_short(ip + 1)); /* name idx (2nd) */
+                emit_mov_reg_imm64(cb, JIT_ARG3, (uint64_t)arg_count);        /* arg_count (3rd) */
+                emit_mov_reg_imm64(cb, JIT_ARG4, (uint64_t)(uintptr_t)ip);    /* ip (4th) */
+                /* 5th param (chunk ptr): Windows x64 passes it as the first
+                 * stack argument at [RSP+32]; System V passes it in R8. */
+#ifdef _WIN32
+                emit_mov_reg_imm64(cb, JIT_RAX, (uint64_t)(uintptr_t)cur_chunk);
+                emit_mov_mem8_reg(cb, JIT_RSP, 32, JIT_RAX);
+#else
+                emit_mov_reg_imm64(cb, JIT_ARG5, (uint64_t)(uintptr_t)cur_chunk);
+#endif
+                EMIT_CALL(jit_callout_struct_init);
+                EMIT_CALLOUT_END();
+                /* Check jit_callout_failed flag — if set, bail out. */
+                EMIT_STORE_TMP(tmp2_disp, JIT_RAX);
+                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_callout_failed);
+                emit_mov_reg_mem8(cb, JIT_RAX, JIT_R8, 0);
+                emit_test_rr(cb, JIT_RAX, JIT_RAX);
+                {
+                    int fail_patch = emit_jcc(cb, 0x85);  /* JNZ → bailout */
+                    patch_add(ctx, fail_patch, -1, 0);
+                }
+                emit_xor_rr(cb, JIT_RAX, JIT_RAX);
+                emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
+                EMIT_LOAD_TMP(JIT_RAX, tmp2_disp);
+                /* Pop arg_count arg slots from JIT virtual stack,
+                 * push 1 result → net -(arg_count - 1) */
+                int pop_bytes = arg_count * 8;
+                if (pop_bytes <= 127) {
+                    emit_byte(cb, 0x48); emit_byte(cb, 0x83); emit_byte(cb, 0xC4);
+                    emit_byte(cb, (uint8_t)pop_bytes);
+                } else {
+                    emit_byte(cb, 0x48); emit_byte(cb, 0x81); emit_byte(cb, 0xC4);
+                    emit_uint32(cb, (uint32_t)pop_bytes);
+                }
+                EMIT_VALUE_TO_RAW();
+                TOS_PRODUCE();
+                vstack -= (arg_count - 1);
+                break;
+            }
+

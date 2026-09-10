@@ -45,6 +45,18 @@
  * preventing false restores at fall-through merge points. */
 #define VSTACK_UNREACHABLE  (-99999)
 
+/* Epilogue: mov rsp, rbp; pop r14; pop r13; pop r12; pop rbx; pop rbp; ret
+ * (cannot use LEAVE because we pushed R12/R13/R14/RBX after RBP) */
+#define EMIT_EPILOGUE() do { \
+    emit_rr(cb, 0x89, JIT_RSP, JIT_RBP); \
+    emit_pop_reg(cb, JIT_R14); \
+    emit_pop_reg(cb, JIT_R13); \
+    emit_pop_reg(cb, JIT_R12); \
+    emit_pop_reg(cb, JIT_RBX); \
+    emit_pop_rbp(cb); \
+    emit_ret(cb); \
+} while(0)
+
 static int scratch_disp(int scratch_idx) {
     return -8 * (scratch_idx + 1);
 }
@@ -680,7 +692,7 @@ int compile_loop(CodegenCtx* ctx) {
         } \
     } while(0)
 
-    /* Reload RCX from jit_reloaded_locals before writeback, in case
+/* Reload RCX from jit_reloaded_locals before writeback, in case
      * vm_grow_frames reallocated vm.frames during a callout (e.g. deep
      * recursion via OP_CALL_GLOBAL_FUNC_TYPED or OP_INVOKE_METHOD).
      * Without this, RCX still points to the pre-callout (now freed)
@@ -690,20 +702,19 @@ int compile_loop(CodegenCtx* ctx) {
         emit_mov_reg_mem8(cb, JIT_RCX, JIT_R8, 0); \
     } while(0)
 
-    EMIT_RELOAD_RCX();
-    EMIT_WRITEBACK_LOCALS();
+    /* ---- 函数级 JIT（func_mode）：不写回 locals ----
+     * 调用方（jit_callout_invoke_method / jit_callout_global_func）为函数
+     * JIT 分配的是临时 locals 数组，执行后整体 free；写回无意义且可能把
+     * NULL_VAL 初值覆盖到错误地址。正常流程必经 OP_RETURN 返回，此 exit
+     * 仅为防御性不可达代码（ret 0；jit_fn_result 由 OP_RETURN 设置）。 */
+    if (!ctx->func_mode) {
+        EMIT_RELOAD_RCX();
+        EMIT_WRITEBACK_LOCALS();
+    }
 
     /* Return 0 (success) */
     emit_xor_eax_eax(cb);
-    /* Epilogue: mov rsp, rbp; pop r14; pop r13; pop r12; pop rbx; pop rbp; ret
-     * (cannot use LEAVE because we pushed R12/R13/R14/RBX after RBP) */
-    emit_rr(cb, 0x89, JIT_RSP, JIT_RBP);  /* mov rsp, rbp */
-    emit_pop_reg(cb, JIT_R14);
-    emit_pop_reg(cb, JIT_R13);
-    emit_pop_reg(cb, JIT_R12);
-    emit_pop_reg(cb, JIT_RBX);
-    emit_pop_rbp(cb);
-    emit_ret(cb);
+    EMIT_EPILOGUE();
 
     /* ---- Bailout code ---- */
     ctx->bailout_mc = cb->len;
@@ -722,14 +733,7 @@ int compile_loop(CodegenCtx* ctx) {
     }
     /* Return 1 (bailout) — locals not written back (VM re-executes from back-edge) */
     emit_mov_eax_imm32(cb, 1);
-    /* Epilogue: mov rsp, rbp; pop r14; pop r13; pop r12; pop rbx; pop rbp; ret */
-    emit_rr(cb, 0x89, JIT_RSP, JIT_RBP);
-    emit_pop_reg(cb, JIT_R14);
-    emit_pop_reg(cb, JIT_R13);
-    emit_pop_reg(cb, JIT_R12);
-    emit_pop_reg(cb, JIT_RBX);
-    emit_pop_rbp(cb);
-    emit_ret(cb);
+    EMIT_EPILOGUE();
 
     /* ---- Frame-dead exit: callout 异常且宿主帧存活（catch_ip 已定向）----
      * 写回 locals 后返回 2；调用方（OP_LOOP/OP_FOR_LOOP handler）
@@ -739,14 +743,7 @@ int compile_loop(CodegenCtx* ctx) {
     EMIT_WRITEBACK_LOCALS();
     /* Return 2 (frame-dead, host frame alive, locals written back) */
     emit_mov_eax_imm32(cb, 2);
-    /* Epilogue: mov rsp, rbp; pop r14; pop r13; pop r12; pop rbx; pop rbp; ret */
-    emit_rr(cb, 0x89, JIT_RSP, JIT_RBP);
-    emit_pop_reg(cb, JIT_R14);
-    emit_pop_reg(cb, JIT_R13);
-    emit_pop_reg(cb, JIT_R12);
-    emit_pop_reg(cb, JIT_RBX);
-    emit_pop_rbp(cb);
-    emit_ret(cb);
+    EMIT_EPILOGUE();
 
     /* ---- Frame-dead exit: callout 异常且宿主帧已被展开 ----
      * 宿主帧 locals 已被异常展开释放，禁止写回；返回 3；
@@ -754,14 +751,7 @@ int compile_loop(CodegenCtx* ctx) {
     ctx->framedead_nowb_mc = cb->len;
     /* Return 3 (frame-dead, host frame destroyed, no write back) */
     emit_mov_eax_imm32(cb, 3);
-    /* Epilogue: mov rsp, rbp; pop r14; pop r13; pop r12; pop rbx; pop rbp; ret */
-    emit_rr(cb, 0x89, JIT_RSP, JIT_RBP);
-    emit_pop_reg(cb, JIT_R14);
-    emit_pop_reg(cb, JIT_R13);
-    emit_pop_reg(cb, JIT_R12);
-    emit_pop_reg(cb, JIT_RBX);
-    emit_pop_rbp(cb);
-    emit_ret(cb);
+    EMIT_EPILOGUE();
 
     #undef EMIT_WRITEBACK_LOCALS
 

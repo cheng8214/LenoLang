@@ -5,7 +5,7 @@
  * NOT a translation unit: relies on function-local macros (TOS_*,
  * EMIT_*) and locals (cb, ctx, sr, ip, vstack, tos_live, ...).
  * ========================================================================== */
-            /* ---- Inline return handling ---- */
+/* ---- Inline return handling ---- */
             case OP_RETURN: {
                 if (inline_depth > 0) {
                     /* In inline mode, OP_RETURN's value is already on vstack.
@@ -22,6 +22,20 @@
                      * The value stays on the hardware stack for inline_end,
                      * but vstack tracking must match scan for dead code after
                      * the return to have correct vstack. */
+                    vstack--;
+                    /* After return, code is unreachable */
+                    vstack = VSTACK_UNREACHABLE;
+                } else if (ctx->func_mode) {
+                    /* ---- 函数级 JIT：OP_RETURN 真正返回 ----
+                     * 返回值在 RAX（TOS），转为 NaN-boxed Value 写入
+                     * jit_fn_result，然后 epilogue 返回调用方。
+                     * 不写回 locals（调用方使用临时 locals 数组）。 */
+                    TOS_CONSUME_RAX();          /* result into RAX */
+                    EMIT_RAW_TO_VALUE();        /* raw -> NaN-boxed Value */
+                    emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_fn_result);
+                    emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
+                    emit_xor_eax_eax(cb);       /* jr=0: success (jit_fn_result holds the value) */
+                    EMIT_EPILOGUE();
                     vstack--;
                     /* After return, code is unreachable */
                     vstack = VSTACK_UNREACHABLE;
@@ -46,6 +60,24 @@
                      * The return values stay on the hardware stack for
                      * inline_end, but vstack tracking must match scan for
                      * dead code after the return. */
+                    vstack -= rc;
+                    vstack = VSTACK_UNREACHABLE;
+                } else if (ctx->func_mode) {
+                    if (rc == 1) {
+                        /* 单返回值：与 OP_RETURN 相同，真正返回 */
+                        TOS_CONSUME_RAX();
+                        EMIT_RAW_TO_VALUE();
+                        emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_fn_result);
+                        emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
+                        emit_xor_eax_eax(cb);   /* jr=0: success */
+                        EMIT_EPILOGUE();
+                    } else {
+                        /* 多返回值：函数级 JIT 不支持，bailout 回解释路径 */
+                        emit_byte(cb, 0xE9);
+                        int bail_patch = cb->len;
+                        emit_uint32(cb, 0);
+                        patch_add(ctx, bail_patch, -1, 0);
+                    }
                     vstack -= rc;
                     vstack = VSTACK_UNREACHABLE;
                 } else {

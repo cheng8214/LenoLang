@@ -135,6 +135,9 @@ typedef struct {
     const uint8_t* body_start;
     Chunk* chunk;        /* for constant table access */
     VM* vm_ptr;          /* for looking up global_funcs at codegen time */
+    int func_mode;       /* 1 = 函数级 JIT：整个函数编译为 fn(locals, globals)，
+                          * OP_RETURN 真正返回（结果写 jit_fn_result），
+                          * exit 不写回 locals（调用方用临时数组） */
 } CodegenCtx;
 
 /* ---- Platform-independent codegen helpers (shared by all backends) ----
@@ -172,8 +175,32 @@ extern Value* jit_reloaded_locals;
 extern int64_t jit_bailout_rax;
 extern int32_t jit_bailout_site;
 
+/* ---- Function-level JIT (defined in jit_callout.c) ----
+ * jit_fn_result:  函数级 JIT 机器码通过 OP_RETURN 写入的返回值（单返回）。
+ * jit_func_depth: 当前 JIT 函数嵌套深度（递归保护，超过上限回退解释路径）。
+ * jit_func_locals_pool: 按 depth 索引的固定 locals 池（零分配快路径）。
+ * 池行宽 = JIT_MAX_LOCALS(64) 槽；depth 上限受 jit_func_depth < 64 约束。 */
+extern Value jit_fn_result;
+extern int jit_func_depth;
+#define JIT_FUNC_MAX_DEPTH 64
+extern Value jit_func_locals_pool[JIT_FUNC_MAX_DEPTH][JIT_MAX_LOCALS];
+
+/* ---- Function-level JIT cache (defined in jit.c) ---- */
+#define JIT_FUNC_CACHE_SIZE 32   /* direct-mapped cache, power of 2 */
+typedef struct {
+    ObjFunction* func;   /* cache key: ObjFunction pointer */
+    int tried;           /* 1 = compilation attempted */
+    JitLoopFn fn;        /* compiled machine code (NULL if compilation failed) */
+} JitFuncCacheEntry;
+extern JitFuncCacheEntry jit_func_cache[JIT_FUNC_CACHE_SIZE];
+
+/* Look up (or compile on first use) a function-level JIT entry.
+ * Returns NULL if JIT disabled / unsupported / compilation failed. */
+JitLoopFn jit_func_lookup_or_compile(ObjFunction* func, VM* vm_ptr);
+
 /* ---- Runtime helpers (jit_callout.c) ---- */
 int jit_debug_on(void);
+void jit_ft_profile_dump(void);
 void jit_bailout_debug(int64_t rsp_val);
 Value jit_callout_index(Value obj_val, Value idx_val);
 int jit_callout_array_append(Value arr_val, Value value);
@@ -181,6 +208,8 @@ Value jit_callout_dict_set(Value dict_val, Value key_val, Value value);
 int jit_callout_index_set(Value obj_val, Value idx_val, Value value);
 Value jit_callout_div(Value a, Value b);
 Value jit_callout_acc_fields(Value obj_val, uint8_t count, const uint8_t* field_indices);
+Value jit_callout_struct_init(int64_t* vstack_top, uint16_t name_const_idx,
+                              uint8_t arg_count, const uint8_t* ip, Chunk* chunk);
 Value jit_callout_invoke_method(int64_t* vstack_top, int arg_count, const uint8_t* ip, Chunk* chunk);
 Value jit_callout_global_func(int64_t* vstack_top, int arg_count, uint16_t func_slot);
 Value jit_callout_get_field_fast(Value obj_val, uint8_t field_idx);

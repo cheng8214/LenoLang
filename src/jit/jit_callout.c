@@ -48,6 +48,57 @@ void jit_bailout_debug(int64_t rsp_val) {
  * RCX from this before storing locals back) ---- */
 Value* jit_reloaded_locals = NULL;
 
+/* ---- Function-level JIT state ----
+ * jit_fn_result: 函数级 JIT 机器码通过 OP_RETURN 写入的返回值（单返回）。
+ * jit_func_depth: 当前 JIT 函数嵌套深度（递归保护：超过上限回退解释路径，
+ * 避免 JIT 机器码无限递归耗尽 C 栈）。 */
+Value jit_fn_result = NULL_VAL;
+int jit_func_depth = 0;
+Value jit_func_locals_pool[JIT_FUNC_MAX_DEPTH][JIT_MAX_LOCALS];
+
+#ifdef _WIN32
+#include <windows.h>
+static double jit_ft_accum_pre = 0, jit_ft_accum_call = 0, jit_ft_accum_post = 0;
+static long long jit_ft_count = 0;
+static int jit_ft_prof = -1;
+static double jit_ft_qpc_freq(void) {
+    static double f = 0;
+    if (f == 0) { LARGE_INTEGER q; QueryPerformanceFrequency(&q); f = (double)q.QuadPart; }
+    return f;
+}
+#define JIT_FT_PROF_ON() (jit_ft_prof < 0 ? (jit_ft_prof = getenv("LENO_JIT_FPROF") ? 1 : 0) : jit_ft_prof)
+#define JIT_FT_T0() LARGE_INTEGER _t0, _t1, _t2, _t3; if (JIT_FT_PROF_ON()) QueryPerformanceCounter(&_t0)
+#define JIT_FT_T1() if (JIT_FT_PROF_ON()) QueryPerformanceCounter(&_t1)
+#define JIT_FT_T2() if (JIT_FT_PROF_ON()) QueryPerformanceCounter(&_t2)
+#define JIT_FT_T3() if (JIT_FT_PROF_ON()) QueryPerformanceCounter(&_t3)
+#define JIT_FT_ACC() do { \
+    if (JIT_FT_PROF_ON()) { \
+        jit_ft_accum_pre += (double)(_t1.QuadPart - _t0.QuadPart) / jit_ft_qpc_freq(); \
+        jit_ft_accum_call += (double)(_t2.QuadPart - _t1.QuadPart) / jit_ft_qpc_freq(); \
+        jit_ft_accum_post += (double)(_t3.QuadPart - _t2.QuadPart) / jit_ft_qpc_freq(); \
+        jit_ft_count++; \
+    } \
+} while(0)
+/* 打印累计函数 JIT 调用开销分布（退出时由主程序调用） */
+void jit_ft_profile_dump(void) {
+    if (jit_ft_count > 0) {
+        fprintf(stderr, "[FT-PROF] calls=%lld pre=%.4fs call=%.4fs post=%.4fs total=%.4fs (%.2fus/call)\n",
+                (long long)jit_ft_count, jit_ft_accum_pre, jit_ft_accum_call,
+                jit_ft_accum_post, jit_ft_accum_pre + jit_ft_accum_call + jit_ft_accum_post,
+                (jit_ft_accum_pre + jit_ft_accum_call + jit_ft_accum_post) * 1e6 / (double)jit_ft_count);
+    }
+}
+#else
+#define JIT_FT_T0()
+#define JIT_FT_T1()
+#define JIT_FT_T2()
+#define JIT_FT_T3()
+#define JIT_FT_ACC()
+#endif
+/* static 一次性读取的 FT 标志（热路径避免 getenv 扫描环境块） */
+static int jit_ft_trace = -1;
+#define JIT_FT_TRACE_ON() (jit_ft_trace < 0 ? (jit_ft_trace = getenv("LENO_JIT_FTRACE") ? 1 : 0) : jit_ft_trace)
+
 /* ---- Bytecode operand readers (big-endian, matching VM) ---- */
 
 /* ---- Callout helpers ---- */
@@ -252,6 +303,88 @@ Value jit_callout_acc_fields(Value obj_val, uint8_t count,
 /* Callout: OP_INVOKE_METHOD (struct method call via VM re-entry).
  * arg_count includes self (receiver is first arg).
  * Returns NaN-boxed result from vm->last_return_value. */
+/* Callout: OP_STRUCT_INIT (struct 实例构造，函数级 JIT / 循环 JIT 共用)。
+ * 直接构造实例、设置字段并返回（不重入 VM）——与 VM 的 OP_STRUCT_INIT
+ * 语义一致（无构造函数时：查 def → struct_instance_new → 设字段 → push）。
+ *
+ * 参数：
+ *   vstack_top   JIT 虚拟栈顶（实参按调用顺序从 vstack_top[arg_count-1] 到
+ *                vstack_top[0]，vstack_top[0] = 最后一个实参 = 原生 TOS）
+ *   name_idx     struct 名常量索引（chunk->constants[name_idx]）
+ *   arg_count    参数字段数量（= ip[3]）
+ *   ip           指向 OP_STRUCT_INIT 操作码（含后续操作数）
+ *   chunk        所在 chunk（读常量用）
+ *
+ * 返回：新实例 Value；失败返回 NULL_VAL（jit_callout_failed 置 1 → JIT bailout，
+ * 由解释器重放保证 ctor/错误语义完整）。
+ */
+Value jit_callout_struct_init(int64_t* vstack_top, uint16_t name_const_idx,
+                              uint8_t arg_count, const uint8_t* ip, Chunk* chunk) {
+    VM* vm = jit_callout_vm;
+    if (!vm) {
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+    /* 泛型构造（generic_type_count = ip[4]）：scan 阶段已拒绝；
+     * 防御性检查，不应到达。 */
+    if (ip[4] > 0) {
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+
+    Value name_val = chunk->constants[name_const_idx];
+    if (!val_is_obj(name_val) || val_as_obj(name_val)->type != OBJ_STRING) {
+        error_add_at(ERR_RUNTIME, 0, 0, "结构体名称必须是字符串");
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+    ObjString* name = (ObjString*)val_as_obj(name_val);
+
+    ObjStructDef* def = struct_def_find(name->chars);
+    if (!def) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "未定义的结构体 '%s'", name->chars);
+        error_add_at(ERR_RUNTIME, 0, 0, msg);
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+    /* 有构造函数：callout 无法在返回前自动调用 ctor（需重入 VM 执行方法体），
+     * 置 failed 让 JIT bailout，解释器完整执行 ctor 语义。 */
+    if (def->has_ctor) {
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+
+    ObjStruct* obj = struct_instance_new(def);
+
+    /* 字段索引字节位于 ip + 5 + 2*generic_count 起，共 arg_count 个。
+     * codegen 反序生成字段索引+按调用顺序压栈，VM 循环内第 i 次 pop 的
+     * 值即第 i 个字段索引对应的实参；JIT 栈上 vstack_top[i] 正是
+     * 第 i 次 pop 会取到的值（vstack_top[0] = 最后入栈实参）。 */
+    const uint8_t* field_ip = ip + 5;
+    for (int i = 0; i < arg_count; i++) {
+        uint8_t field_idx = field_ip[i];
+        if (field_idx >= def->field_count) {
+            char msg[256];
+            snprintf(msg, sizeof(msg), "struct '%s' 字段索引越界（索引 %d，共 %d 个字段）",
+                     def->name ? def->name : "?", (int)field_idx, def->field_count);
+            error_add_at(ERR_RUNTIME, 0, 0, msg);
+            jit_callout_failed = 1;
+            return NULL_VAL;
+        }
+        Value field_value = jit_raw_to_value(vstack_top[i]);
+        /* int → float 自动提升（与 VM OP_STRUCT_INIT 一致） */
+        TypeKind expected_type = def->fields[field_idx].type;
+        if (expected_type == TYPE_FLOAT && val_is_int(field_value)) {
+            field_value = val_float((double)val_as_int(field_value));
+        }
+        struct_set_field(obj, field_idx, field_value);
+    }
+
+    return val_obj((Object*)obj);
+}
+
+/* Callout: OP_INVOKE_METHOD (struct method call, VM re-entry) ---- */
 Value jit_callout_invoke_method(int64_t* vstack_top, int arg_count,
                                        const uint8_t* ip, Chunk* chunk) {
 VM* vm = jit_callout_vm;
@@ -262,32 +395,20 @@ VM* vm = jit_callout_vm;
     /* arg_count from bytecode at ip+3 */
     /* int arg_count already passed as parameter (matches ip[3..4]) */
 
-    Value method_name_val = chunk->constants[method_name_idx];
+Value method_name_val = chunk->constants[method_name_idx];
     if (!val_is_obj(method_name_val) || val_as_obj(method_name_val)->type != OBJ_STRING) {
         error_add_at(ERR_RUNTIME, 0, 0, "方法名必须是字符串");
         return NULL_VAL;
     }
     ObjString* method_name = (ObjString*)val_as_obj(method_name_val);
 
-    /* Save VM stack state */
-    int saved_sp = vm->sp;
-
-    /* Push args from JIT virtual stack to VM stack (receiver first, i.e. bottom).
-     * JIT virtual stack grows downward (x86 push/pop): RSP points to topmost
-     * element (last pushed = lowest address). First-pushed elements are at
-     * HIGHER addresses, so receiver is at vstack_top + (arg_count - 1). */
-    for (int i = 0; i < arg_count; i++) {
-        int64_t raw = vstack_top[arg_count - 1 - i];
-        vm_stack_push(vm, jit_raw_to_value(raw));
-    }
-
-    /* Now receiver is at vm->stack[vm->sp - arg_count] */
-    Value obj_val = vm->stack[vm->sp - arg_count];
+    /* Receiver = first arg (JIT vstack: receiver pushed first = HIGHER addr).
+     * 不 push VM 栈——快路径与回退路径各自按需处理。 */
+    Value obj_val = jit_raw_to_value(vstack_top[arg_count - 1]);
     if (!val_is_obj(obj_val) || val_as_obj(obj_val)->type != OBJ_STRUCT) {
         char msg[256];
         snprintf(msg, sizeof(msg), "尝试在非 struct 类型上调用方法 '%s'", method_name->chars);
         error_add_at(ERR_RUNTIME, 0, 0, msg);
-        vm->sp = saved_sp;
         return NULL_VAL;
     }
 
@@ -306,8 +427,69 @@ VM* vm = jit_callout_vm;
         snprintf(msg, sizeof(msg), "类型 '%s' 没有方法 '%s'",
                  def->name ? def->name : "?", method_name->chars);
         error_add_at(ERR_RUNTIME, 0, 0, msg);
-        vm->sp = saved_sp;
         return NULL_VAL;
+    }
+
+    /* ---- 函数级 JIT 快路径 ----
+     * 方法整体已编译为机器码 fn(locals, globals) 时，直接执行它，
+     * 跳过解释器 VM frame push/pop + 字节码分发循环。
+     * locals 是临时数组：locals[0] = self(接收者)，locals[1..arg_count-1]
+     * = 其余实参，其余 slot 置 NULL_VAL（VM 语义：未定义 slot 为 NULL）。
+     * 返回 0 且无失败标志 → jit_fn_result 即返回值。
+     * 任何不成功情况 → 回退到下方 VM 重入路径（栈/VM 状态在快路径中
+     * 保持不变：只有 jit_callout_failed 可能被内部嵌套 callout 设置，
+     * 回退前必须复位）。 */
+    {
+        ObjFunction* mfunc = closure->function;
+        if (mfunc && jit_state.enabled && jit_func_depth < JIT_FUNC_MAX_DEPTH) {
+            JIT_FT_T0();
+            JitLoopFn jfn = jit_func_lookup_or_compile(mfunc, vm);
+            if (jfn) {
+                int lcount = mfunc->local_count > mfunc->arity
+                                 ? mfunc->local_count : mfunc->arity;
+                if (lcount < arg_count) lcount = arg_count;
+                if (lcount > JIT_MAX_LOCALS) lcount = JIT_MAX_LOCALS;
+                Value* flocals = jit_func_locals_pool[jit_func_depth];
+                for (int i = 0; i < lcount; i++) flocals[i] = NULL_VAL;
+                /* JIT 栈：vstack_top[0]=TOS=最后实参；函数参数 slot 0=第一个实参。 */
+                for (int i = 0; i < arg_count && i < lcount; i++) {
+                    flocals[i] = jit_raw_to_value(vstack_top[arg_count - 1 - i]);
+                }
+                jit_func_depth++;
+                jit_fn_result = NULL_VAL;
+                if (JIT_FT_TRACE_ON()) {
+                    fprintf(stderr, "[FT] jfn=%p func='%s' lc=%d ac=%d depth=%d\n",
+                            (void*)jfn, mfunc ? (mfunc->name ? mfunc->name : "?") : "?", lcount, arg_count, jit_func_depth);
+                }
+                JIT_FT_T1();
+                int jr = jfn(flocals, vm->globals);
+                JIT_FT_T2();
+                jit_func_depth--;
+                if (JIT_FT_TRACE_ON())
+                    fprintf(stderr, "[FT] jfn done jr=%d failed=%d result=%p depth=%d\n",
+                            jr, jit_callout_failed, (void*)(uintptr_t)jit_fn_result, jit_func_depth);
+                if (jr == 0 && !jit_callout_failed) {
+                    jit_reloaded_locals = vm->frames[vm->frame_cnt - 1].locals;
+                    JIT_FT_T3();
+                    JIT_FT_ACC();
+                    return jit_fn_result;
+                }
+                jit_callout_failed = 0;  /* 回退解释路径前复位 */
+            }
+        }
+    }
+
+    /* ---- VM 重入路径（慢路径）：push args + callee，调用解释器 ---- */
+    /* Save VM stack state */
+    int saved_sp = vm->sp;
+
+    /* Push args from JIT virtual stack to VM stack (receiver first, i.e. bottom).
+     * JIT virtual stack grows downward (x86 push/pop): RSP points to topmost
+     * element (last pushed = lowest address). First-pushed elements are at
+     * HIGHER addresses, so receiver is at vstack_top + (arg_count - 1). */
+    for (int i = 0; i < arg_count; i++) {
+        int64_t raw = vstack_top[arg_count - 1 - i];
+        vm_stack_push(vm, jit_raw_to_value(raw));
     }
 
     /* Push callee and call */
@@ -388,6 +570,53 @@ Value jit_callout_global_func(int64_t* vstack_top, int arg_count,
         ObjFunction* func = (ObjFunction*)obj;
         if (func && func->return_count > 1) {
             ret_count = func->return_count;
+        }
+    }
+
+/* ---- 函数级 JIT 快路径 ----
+     * 全局函数整体已编译为机器码 fn(locals, globals) 时直接执行，
+     * 跳过解释器 VM frame push/pop + 字节码分发循环。
+     * 仅支持单返回值（ret_count == 1）；多返回值回退 VM 路径。
+     * locals 临时数组：slot 0..arg_count-1 = 实参，其余置 NULL_VAL。 */
+    {
+        ObjFunction* gfunc = NULL;
+        if (obj->type == OBJ_CLOSURE) {
+            ObjClosure* clo = (ObjClosure*)obj;
+            if (clo->function) gfunc = clo->function;
+        } else if (obj->type == OBJ_FUNCTION) {
+            gfunc = (ObjFunction*)obj;
+        }
+        if (gfunc && ret_count == 1 && jit_state.enabled && jit_func_depth < JIT_FUNC_MAX_DEPTH) {
+            JitLoopFn jfn = jit_func_lookup_or_compile(gfunc, vm);
+            if (jfn) {
+                int lcount = gfunc->local_count > gfunc->arity
+                                 ? gfunc->local_count : gfunc->arity;
+                if (lcount < arg_count) lcount = arg_count;
+                if (lcount > JIT_MAX_LOCALS) lcount = JIT_MAX_LOCALS;
+                Value* flocals = jit_func_locals_pool[jit_func_depth];
+                for (int i = 0; i < lcount; i++) flocals[i] = NULL_VAL;
+                for (int i = 0; i < arg_count && i < lcount; i++) {
+                    flocals[i] = jit_raw_to_value(vstack_top[arg_count - 1 - i]);
+                }
+                jit_func_depth++;
+                jit_fn_result = NULL_VAL;
+                if (JIT_FT_TRACE_ON()) {
+                    fprintf(stderr, "[FT-G] jfn=%p func='%s' lc=%d ac=%d depth=%d\n",
+                            (void*)jfn, gfunc->name ? gfunc->name : "?", lcount, arg_count, jit_func_depth);
+                }
+                int jr = jfn(flocals, vm->globals);
+                jit_func_depth--;
+                if (JIT_FT_TRACE_ON())
+                    fprintf(stderr, "[FT] jfn done jr=%d failed=%d result=%p depth=%d\n",
+                            jr, jit_callout_failed, (void*)(uintptr_t)jit_fn_result, jit_func_depth);
+                if (jr == 0 && !jit_callout_failed) {
+                    if (vm->frame_cnt > 0) {
+                        jit_reloaded_locals = vm->frames[vm->frame_cnt - 1].locals;
+                    }
+                    return jit_fn_result;
+                }
+                jit_callout_failed = 0;  /* 回退解释路径前复位 */
+            }
         }
     }
 

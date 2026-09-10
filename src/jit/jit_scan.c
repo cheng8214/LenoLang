@@ -104,9 +104,14 @@ int opcode_size(const uint8_t* ip) {
          * "unknown opcode"; actual nesting is rejected in scan. */
         case OP_FOR_PREP:
             return 8;
-        /* 4-byte: OP_GET_FIELD_FAST = opcode + local_slot(2) + field_idx(1) */
+/* 4-byte: OP_GET_FIELD_FAST = opcode + local_slot(2) + field_idx(1) */
         case OP_GET_FIELD_FAST:
             return 4;
+        /* Variable-length: OP_STRUCT_INIT =
+         *   opcode(1) + name_const(2) + arg_count(1) + generic_count(1)
+         *   + generic_args(generic_count*2) + field_idx[arg_count] */
+        case OP_STRUCT_INIT:
+            return 5 + 2 * ip[4] + ip[3];
         /* 10-byte (CMPJMP variants) */
         case OP_CMPJMP_LL_INT:
         case OP_CMPJMP_LG_INT:
@@ -226,7 +231,20 @@ static int scan_callee_for_inline(Chunk* cc, int local_count,
             case OP_FOR_LOOP: break;
             case OP_CMPJMP_LL_INT: break;
             case OP_CMPJMP_LG_INT: break;
-            case OP_GET_FIELD_FAST: vstack++; break;
+case OP_GET_FIELD_FAST: vstack++; break;
+            case OP_STRUCT_INIT: {
+                /* opcode + name16 + arg8 + generic8 + generic2*N + field[arg]。
+                 * 泛型 struct 的构造语义依赖调用栈帧解析（OP_STRUCT_INIT），
+                 * JIT callout 不支持 → 拒绝 inline。 */
+                if (ip[4] > 0) {
+                    if (jit_debug_on())
+                        fprintf(stderr, "[JIT-DEBUG] inline-scan FAIL: generic OP_STRUCT_INIT at off %d\n",
+                                (int)(ip - cc->code));
+                    return 0;
+                }
+                vstack -= ((int)ip[3] - 1);
+                break;
+            }
             case OP_INVOKE_METHOD: {
                 int ac = rd_short(ip + 3);
                 vstack -= (ac - 1);
@@ -727,11 +745,25 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
             /* Shift immediates — supported, pop 1 push 1 */
             case OP_SHL_IMM: case OP_SHR_IMM: case OP_USHR_IMM:
                 break;
-            /* 4-byte: OP_GET_FIELD_FAST = local read + struct field push (net +1) */
+/* 4-byte: OP_GET_FIELD_FAST = local read + struct field push (net +1) */
             case OP_GET_FIELD_FAST: {
                 uint16_t slot = rd_short(ip + 1);
                 mark_local(r, slot);
                 vstack++;
+                break;
+            }
+            /* Variable-length: OP_STRUCT_INIT (struct 实例构造, callout)
+             * 布局: op(1) + name16(2) + arg8(1) + generic8(1) + [generic2*N] + field[arg]。
+             * 泛型构造在 scan 阶段拒绝（callout 无法解析调用栈帧的泛型参数）。 */
+            case OP_STRUCT_INIT: {
+                if (ip[4] > 0) {
+                    if (jit_debug_on())
+                        fprintf(stderr, "[JIT-DEBUG] scan FAIL: generic OP_STRUCT_INIT at offset %d\n",
+                                (int)(ip - body_start));
+                    r->capable = 0;
+                    return;
+                }
+                vstack -= ((int)ip[3] - 1);   /* pop arg 实参, push 1 实例 → net -(arg-1) */
                 break;
             }
             default:
