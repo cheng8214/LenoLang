@@ -84,7 +84,9 @@ use spllib.Splitter
 import "sdl_gridlayout.leno" as grdlib
 use grdlib.GridLayout
 import "sdl_titlebar.leno" as tbarlib
+import "sdl_canvas.leno" as cnv
 use tbarlib.TitleBar
+use cnv.Canvas
 
 // ★ 注册扩展窗口句柄下发回调：布局容器（HBox/VBox/AnchorBox）遇到 Splitter/Panel/TabControl/
 // SpinBox/GroupBox/ScrollView/ComboBox 等后续扩展类型时，通过此回调下发窗口句柄，无需在 sdl_layout 中
@@ -582,6 +584,9 @@ export struct Window {
             case is TitleBar {
                 w.set_window_handle(handle); return w
             }
+            case is Canvas {
+                w.set_window_handle(handle); return w
+            }
         }
         return w
     }
@@ -606,6 +611,9 @@ export struct Window {
                 w.set_window_size(_w, _h); return w
             }
             case is TitleBar {
+                w.set_window_handle(handle); return w
+            }
+            case is Canvas {
                 w.set_window_handle(handle); return w
             }
         }
@@ -787,6 +795,16 @@ export struct Window {
         _widgetZ.add(opts.get("z", 0.0))
         if t.is_context_menu_enabled() { menu.registerContextMenu(t.get_context_menu()) }   // 上下文菜单登记，由窗口第二遍按窗口隔离绘制
         return t
+    }
+
+    // 添加画布，opts: {x, y, w, h, bg_color, border, border_color, pad, cursor, ...}
+    // 返回 Canvas，可 .on_draw(func(Renderer, float, float){...}) / .on_click(func(float, float, int){...}) 等
+    func addCanvas(Dict opts): Canvas {
+        Canvas c = cnv.createCanvas(opts)
+        _widgets.add(c as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
+        c.set_window_handle(handle)
+        return c
     }
 
     // 添加水平布局容器，opts: {x, y, w, h, spacing, padX, padY}
@@ -1351,7 +1369,7 @@ export struct Window {
                     try {
                         _runRends[i](_runRens[i])
                     } catch e {
-                        print("[错误] 渲染异常: " + e.msg)
+                        print("[错误] 渲染异常: " + e)
                         // 异常导致事件循环中断，手动执行清理（与 isQuit 路径一致）
                         for _runWids.len() to j {
                             var ws = _runWidgets[j]

@@ -1,0 +1,87 @@
+// assets.leno — 素材 + 通用绘制辅助（塔防主文件引用）
+// 用法：import "assets.leno" as assets
+//       g.texX = assets.loadSheet(r, "image/xxx.png", 6)
+import "../../../../lib/SDL3.leno" as SDL3
+import "../../../../lib/sdl_core.leno" as core
+import maths
+use SDL3.Renderer
+use SDL3.Flip
+
+// 把动画帧下标钳制到 [0, n-1]（n 为纹理帧数组的长度），防止越界取帧
+export func clampIdx(int idx, int n): int {
+    if idx > n - 1 { return n - 1 }
+    return idx
+}
+
+// 侧视素材默认朝左：根据朝向角（度，0=上/90=右）判断是否水平翻转
+// 角度在右半边（cos > 0）时翻转，否则保持原样
+export func sideFlip(float dir): int {
+    if maths.cos((dir - 90.0) * 3.14159265 / 180.0) > 0.0 { return Flip.HORIZONTAL }
+    return Flip.NONE
+}
+
+// 把 #AARRGGBB 颜色的 alpha 替换为指定值，保留 RGB 通道不变
+export func colorWithAlpha(int c, int alpha): int {
+    int rr = (c >> 16) & 0xFF
+    int gg = (c >> 8) & 0xFF
+    int bb = c & 0xFF
+    return (alpha << 24) | (rr << 16) | (gg << 8) | bb
+}
+
+// 画家算法：把「物体 y 坐标数组」排序，返回重新排列后的原始下标
+// （y 小的先画，后画的盖住先画的，实现近处物体遮住远处的层级效果）
+export func orderByY(Array[float] ys): Array[int] {
+    Array[int] order = []
+    for 0 : ys.len() - 1 to i { order.add(i) }
+    for 1 : order.len() - 1 to ii {
+        var key = order[ii]
+        var jj = ii - 1
+        while jj >= 0 and ys[order[jj]] > ys[key] {
+            order[jj + 1] = order[jj]
+            jj = jj - 1
+        }
+        order[jj + 1] = key
+    }
+    return order
+}
+
+// 按帧切分横排精灵表（每帧 48x48，n 帧）
+// 返回空数组表示加载失败；成功则每个元素是一帧独立纹理
+export func loadSheet(Renderer r, string path, int n): Array[Ptr[u8]] {
+    Array[Ptr[u8]] out = []
+    var sheet = SDL3.loadImageTexture(r.handle, path)
+    if sheet != null {
+        for 0 : n - 1 to fi {
+            var ft = r.createTexture(core.PIXELFORMAT_RGBA8888, 2, 48, 48)
+            if ft != null {
+                r.setRenderTarget(ft)
+                r.clearColor(#00000000)
+                r.drawTextureFromTo(sheet, _float(fi) * 48.0, 0.0, 48.0, 48.0, 0.0, 0.0, 48.0, 48.0)
+                r.flush()
+                r.setRenderTarget(null)
+                out.add(ft)
+            }
+        }
+    }
+    return out
+}
+
+// 创建 1x1 透明占位纹理（用于无素材槽位占位，避免下标空洞）
+// 创建失败返回 null（与调用方原逻辑一致：允许 add(null)）
+export func blankTexture(Renderer r): Ptr[u8] {
+    var t = r.createTexture(core.PIXELFORMAT_RGBA8888, 2, 1, 1)
+    if t != null {
+        r.setRenderTarget(t)
+        r.clearColor(#00000000)
+        r.flush()
+        r.setRenderTarget(null)
+    }
+    return t
+}
+
+// 按名字加载 image/ 下的贴图；名字为空则返回占位空白纹理
+// （用于保持数组下标与 EM_*/塔类型常量对齐，空槽位不放真实图）
+export func loadSprite(Renderer r, string base, string name): Ptr[u8] {
+    if name == "" { return blankTexture(r) }
+    return SDL3.loadImageTexture(r.handle, base + "/image/" + name + ".png")
+}

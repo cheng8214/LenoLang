@@ -1,0 +1,243 @@
+// td_types.leno — 塔防数据类（struct 定义集中处）
+// 用法：import "td_types.leno" as types
+//       use types.(Enemy, Wave, Tower, Bullet, Particle, FloatText, Arc, Coin, Chest, Game)
+import "../../../../lib/SDL3.leno" as SDL3
+import "../../../../../LenoMusic/lib/Music.leno" as audio
+use SDL3.Font
+use audio.(Sound, Sfx)
+
+export struct Enemy {
+    int id
+    int etype
+    float x
+    float y
+    float hp
+    float maxHp
+    float speed
+    float armor
+    int gold
+    int dmg
+    int wpIdx
+    float dir              // 朝向（度，素材默认朝下）
+    int slowTimer
+    float slowAmount
+    bool alive
+    bool reached
+    int dying              // 临终动画剩余帧：>0 表示已死亡但仍保留渲染（播放倒地动作）
+    bool crying            // 人物2：已进入「哭泣定身」状态（原地不动 + 释放声波）
+    int waveTimer          // 人物2：距离下次释放声波的帧数
+    bool attacking         // 人物3：正在播放攻击动作（原地不动）
+    int atkTimer           // 人物3：当前攻击动作已播放的帧数
+    bool atkHit            // 人物3：本轮伤害是否已结算（避免一次挥击多次命中）
+    int atkCd              // 人物3：攻击间隔倒计时
+    int pm4State           // 人物4：0=走路 1=跳跃 2=落地 3=爆炸
+    int pm4Timer           // 人物4：当前状态已播放帧数
+    float pm4Sx            // 人物4：起跳点坐标
+    float pm4Sy
+    float pm4Tx            // 人物4：目标塔坐标（跳过去爆炸）
+    float pm4Ty
+    float lane             // 横向车道偏移（单位：格，-0.45~0.45），双通道散开行走
+    int bState             // BOSS：0=走路 1=跳跃攻击 2=抓着战利品回位
+    int bTimer             // BOSS：当前状态已播放帧数
+    int bCd                // BOSS：突袭冷却倒计时
+    float bAx              // BOSS：触发点坐标（回位目标）
+    float bAy
+    float bTx              // BOSS：目标塔坐标
+    float bTy
+    int bTowerType         // BOSS：拆掉的塔类型（决定台词）
+    bool bHit              // BOSS：本次突袭伤害是否已结算
+    int bRb                // BOSS：原路返回/跑回时的路点游标
+    int bWpIdx             // BOSS：突袭触发时的路点位置（跑回终点）
+}
+
+export struct Wave {
+    float x
+    float y
+    int life
+    int maxLife
+    float r                // 当前半径（渲染用，逐帧向外扩张）
+    float rMax             // 最大半径
+    bool alive
+}
+
+export struct Tower {
+    int ttype
+    int gx
+    int gy
+    float x
+    float y
+    int level
+    int cooldown
+    float angle
+    int kills
+    float hp                // 当前血量（被人物3 攻击会掉）
+    float maxHp
+    int fireAnim            // 箭塔：塔上人物射箭动作剩余帧数（>0 时播放帧 1-4）
+    float aimDir            // 箭塔：当前目标方向（塔上人物据此翻转朝向）
+}
+
+export struct Bullet {
+    int btype
+    float x
+    float y
+    float vx
+    float vy
+    float speed
+    float damage
+    float splash
+    float slowAmount
+    int slowFrames
+    int chain
+    int targetId          // 目标敌人 id（-1 表示无目标）
+    bool alive
+    bool bossShot         // BOSS 扛炮台所发射：纯表现弹，不与敌人碰撞（避免误伤自己）
+}
+
+export struct Particle {
+    float x
+    float y
+    float vx
+    float vy
+    float size
+    int life
+    int maxLife
+    int c
+    bool alive
+}
+
+export struct FloatText {
+    float x
+    float y
+    string text
+    int c
+    int life
+    bool alive
+    bool bg                // true = 白底黑字气泡（人物台词）
+}
+
+export struct Arc {
+    float x1
+    float y1
+    float x2
+    float y2
+    int life
+    bool alive
+}
+
+export struct Coin {
+    float sx
+    float sy
+    float x
+    float y
+    float tx
+    float ty
+    float p
+    int val
+    int delay              // 出场延迟（帧）：宝箱金币雨逐枚迸出
+    bool alive
+}
+
+export struct Chest {
+    float x
+    float y
+    int life
+    bool alive
+}
+
+export struct Game {
+    int state
+    int frameCount
+
+    int gold
+    int lives
+    int wave
+    int kills
+    int totalKilled
+
+    int waveState              // 0=准备中 1=生成中 2=清理中
+    int waveTimer              // 准备倒计时
+    Array[int] spawnQueue      // 本波待生成的敌人类型
+    int spawnIdx               // 生成游标
+    int spawnTimer
+    int bannerTimer
+    string bannerText
+
+    int selType                // 当前选中的塔类型（-1 无）
+    int selTower               // 当前选中的已建造塔索引（-1 无）
+    int menuTower              // 当前弹出的塔操作菜单所属塔索引（-1 无）
+    float mouseX
+    float mouseY
+
+    int speedMul              // 倍速：1 / 2 / 3
+    bool muted                // 是否静音
+    bool quitReq              // 主菜单「退出游戏」请求退出
+
+    Array[int] map
+    Array[Enemy] enemies
+    Array[Tower] towers
+    Array[Bullet] bullets
+    Array[Particle] particles
+    Array[FloatText] floats
+    Array[Arc] arcs
+    Array[Coin] coins
+    Array[Chest] chests
+    int pCount
+
+    // 纹理
+    Ptr[u8] texGrass
+    Ptr[u8] texPath
+    Ptr[u8] texStart
+    Ptr[u8] texBase
+    Ptr[u8] texRock
+    Array[Ptr[u8]] texTower
+    Array[Ptr[u8]] texEnemy
+    Array[Ptr[u8]] texSlime
+    Array[Ptr[u8]] texPerson
+    Array[Ptr[u8]] texPerson2
+    Array[Ptr[u8]] texPerson3
+    Array[Ptr[u8]] texPerson4
+    Array[Ptr[u8]] texBoom4
+    Array[Ptr[u8]] texGrunt
+    Array[Ptr[u8]] texArrowTower
+    Array[Ptr[u8]] texCannon
+    Array[Ptr[u8]] texFrost
+    Array[Ptr[u8]] texBossWalk
+    Array[Ptr[u8]] texBossJump
+    Array[Ptr[u8]] texBossReturn
+    Array[Ptr[u8]] texBullet
+    Ptr[u8] texCoin
+    Ptr[u8] texHeart
+    Ptr[u8] texStar
+    Ptr[u8] texTree
+    Ptr[u8] texTree2
+    Ptr[u8] texUp
+    Ptr[u8] texCoinFly
+    Ptr[u8] texSell
+    Ptr[u8] texChest
+    Array[Wave] waves
+    Ptr[u8] mapTex
+    bool loaded
+
+    // 音频
+    Sound bgm
+    Sound bossBgm
+    Sfx sfxShoot
+    Sfx sfxBoom
+    Sfx sfxLose
+    Sfx sfxShootArrow      // 箭塔开火（射箭.mp3）
+    Sfx sfxBuild           // 建造（放置.mp3）
+    Sfx sfxFreeze          // 冰塔冰冻（冻住.wav）
+    Sfx sfxWave            // 波次开始（波浪提示音.mp3）
+    Sfx sfxDie             // 怪物死亡（怪物死亡.mp3）
+    Sfx sfxUpgrade         // 塔升级（升级.mp3）
+    Sfx sfxPickup          // 拾取：金币入账/开宝箱（拾取.mp3）
+    Sfx sfxHit             // 小怪受击（小怪受击.mp3，带节流）
+    Sfx sfxBoom4           // 人物4 自爆大爆炸（db.wav 降调变沉，与其他爆炸错开）
+    Sfx sfxBossSmash       // BOSS 拆塔击打（db.wav 降调闷响）
+    Sfx sfxBossFire        // BOSS 抢到炮塔开炮（anxia.mp3 较轻）
+    int hitSfxCd           // 受击音效节流倒计时（帧），避免连射时刷屏
+    bool audioOk
+
+    Font font
+    Font fontBig
+}

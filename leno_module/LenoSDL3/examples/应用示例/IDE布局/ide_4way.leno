@@ -1,0 +1,305 @@
+// ide_4way.leno — VSCode 风格四向Splitter（左/右拉通，中间上下两层）
+//
+// 布局结构：
+//   ┌────────┬──────────────────┬────────┐
+//   │        │    Editor        │        │
+//   │ Side   │    (上半区)       │ Right  │
+//   │ Bar    ├──────────────────┤ Panel  │
+//   │        │    Terminal      │        │
+//   │        │    (下半区)       │        │
+//   ├────────┴──────────────────┴────────┤
+//   │           Status Bar               │
+//   └────────────────────────────────────┘
+//
+// Splitter 嵌套：
+//   outerHSplit (水平) ─ 左侧面板 vs 右半区
+//   innerHSplit (水平) ─ 中间区 vs 右侧面板
+//   midVSplit   (垂直) ─ 中间上半 vs 中间下半
+//
+import "../../../lib/SDL3.leno" as SDL3
+use SDL3.(Event, Renderer, Window, WindowFlag, TitleBar, MenuBar, Splitter, TreeView, TreeViewNode, Edit, ListBox, Label, Scancode)
+import "../../../lib/sdl_menu.leno" as menuLib
+import dirs
+
+struct IDE4Way {
+    Window   win
+    TitleBar titleBar
+    MenuBar  menuBar
+    Splitter outerHSplit   // 左 vs 右半区
+    Splitter innerHSplit   // 中间 vs 右侧面板
+    Splitter midVSplit     // 中间上半 vs 中间下半
+    TreeView explorer      // 左侧资源管理器（拉通）
+    Edit     editor        // 中间上半（主编辑区）
+    ListBox  terminal      // 中间下半（终端）
+    TreeView outline       // 右侧大纲（拉通）
+    Label    statusLbl
+
+    bool explorerVisible = true
+    bool terminalVisible  = true
+    bool outlineVisible  = true
+    bool _wantQuit        = false
+
+    func setupUI() {
+        float PAD = 1.0
+
+        // ===== 标题栏 =====
+        titleBar = SDL3.createTitleBar({
+            title: "LenoIDE - 四向布局",
+            height: 36, font_size: 12, title_align: "center"
+        })
+        win.add(titleBar)
+        float titleH = titleBar.get_h()
+
+        // ===== 菜单栏 =====
+        menuBar = menuLib.createMenuBar({
+            x: 0, y: 0, w: 0, h: titleH - 8,
+            font_size: 12, transparent: true, auto_width: true
+        })
+        menuBar.setWindowHandle(win.handle)
+
+        int mFile = menuBar.addMenu("文件")
+        menuBar.addItem(mFile, {label: "新建", id: "new", shortcut: "Ctrl+N"})
+        menuBar.addItem(mFile, {label: "打开", id: "open", shortcut: "Ctrl+O"})
+        menuBar.addSeparator(mFile)
+        menuBar.addItem(mFile, {label: "保存", id: "save", shortcut: "Ctrl+S"})
+        menuBar.addItem(mFile, {label: "退出", id: "exit", shortcut: "Alt+F4"})
+
+        int mView = menuBar.addMenu("视图")
+        menuBar.addItem(mView, {label: "切换资源管理器", id: "toggle_sidebar", shortcut: "Ctrl+B"})
+        menuBar.addItem(mView, {label: "切换大纲视图", id: "toggle_aux", shortcut: "Ctrl+Shift+O"})
+        menuBar.addItem(mView, {label: "切换终端", id: "toggle_terminal", shortcut: "Ctrl+J"})
+        menuBar.addSeparator(mView)
+        menuBar.addItem(mView, {label: "重置布局", id: "reset_layout"})
+
+        int mHelp = menuBar.addMenu("帮助")
+        menuBar.addItem(mHelp, {label: "关于", id: "about"})
+
+        menuBar.on_select(func(string menu, string id) { onMenuSelect(menu, id) })
+        titleBar.set_center_menu(menuBar)
+
+        // ===== 左侧：TreeView（资源管理器）=====
+        explorer = SDL3.createTreeView({font_size: 13, placeholder: "资源管理器"})
+        buildExplorer()
+        explorer.on_change(func(Array[int] ids) {
+            if ids.len() > 0 { onExplorerClick(ids[0]) }
+        })
+
+        // ===== 中间上半：Edit（主编辑区）=====
+        editor = SDL3.createEdit({
+            multiline: true, font_size: 14,
+            placeholder: "// 四向Splitter — 左/右拉通，中间上下两层"
+        })
+        editor.set_text(
+            "// main.leno\n"
+            + "use SDL3.(Event, Renderer, Window)\n"
+            + "\n"
+            + "func hello() {\n"
+            + "    print(\"Hello from 4-way splitter!\")\n"
+            + "}\n"
+            + "\n"
+            + "hello()\n"
+            + "\n"
+            + "// 拖动分割条：\n"
+            + "//   最左侧垂直 — 调侧边栏宽度\n"
+            + "//   右侧中间垂直 — 调大纲面板宽度\n"
+            + "//   中间水平 — 调编辑器/终端高度比\n"
+        )
+        editor.on_change(func() {
+            int lines = countLines(editor.get_text())
+            int chars = editor.get_text_length()
+            statusLbl.set_text("行: " + lines + "  |  字符: " + chars)
+            SDL3.markFrameRedraw()
+        })
+
+        // ===== 中间下半：ListBox（终端）=====
+        terminal = SDL3.createListBox({font_size: 12})
+        terminal.add_item("=== 终端就绪 ===")
+        terminal.add_item("$ leno --compile main.leno")
+        terminal.add_item("[ok] 编译成功")
+        terminal.add_item("$ _")
+
+        // ===== 右侧：TreeView（大纲/符号）=====
+        outline = SDL3.createTreeView({font_size: 13, placeholder: "大纲"})
+        buildOutline()
+
+        // ===== 状态栏 =====
+        statusLbl = SDL3.createLabel({text: "就绪", font_size: 12})
+
+        // ===== Splitter 嵌套 =====
+        // 中间垂直分割：Editor(70%) / Terminal(30%)
+        midVSplit = SDL3.createSplitter({
+            orientation: 1, ratio: 0.7,
+            min_first: 100, min_second: 60,
+            divider_width: 4, hit_pad: 5
+        })
+        midVSplit.set_first(editor)
+        midVSplit.set_second(terminal)
+
+        // 内层水平分割：中间区(75%) / 右侧面板(25%)
+        innerHSplit = SDL3.createSplitter({
+            orientation: 0, ratio: 0.75,
+            min_first: 200, min_second: 100,
+            divider_width: 5, hit_pad: 5
+        })
+        innerHSplit.set_first(midVSplit)
+        innerHSplit.set_second(outline)
+
+        // 外层水平分割：左侧面板(20%) / 内层区(80%)
+        outerHSplit = SDL3.createSplitter({
+            orientation: 0, ratio: 0.2,
+            min_first: 100, min_second: 300,
+            divider_width: 5, hit_pad: 5
+        })
+        outerHSplit.set_first(explorer)
+        outerHSplit.set_second(innerHSplit)
+
+        // 根布局
+        float topOffset = titleH
+        var root = SDL3.createVBox({padX: PAD, padY: PAD, spacing: 0})
+        root.add(statusLbl, {grow: 0, shrink: 0, basis: 20, align: 3})
+        root.add(outerHSplit, {grow: 1, shrink: 1, align: 3})
+        win.setRootAt(root, 0, topOffset)
+    }
+
+    func buildExplorer() {
+        Array[Dict] roots = [
+            {text: "src", expanded: true, children: [
+                {text: "main.leno"}, {text: "utils.leno"}, {text: "parser.leno"}
+            ]},
+            {text: "examples", expanded: true, children: [
+                {text: "ide_4way.leno"}, {text: "ide_layout.leno"}
+            ]},
+            {text: "lib", expanded: false, children: [
+                {text: "SDL3.leno"}, {text: "sdl_edit.leno"}
+            ]}
+        ]
+        explorer.set_items(roots)
+    }
+
+    func buildOutline() {
+        Array[Dict] roots = [
+            {text: "hello()", expanded: true, children: [{text: "print"}]},
+            {text: "onExplorerClick(int)", expanded: false, children: []},
+            {text: "countLines(string)", expanded: false, children: []},
+            {text: "onMenuSelect(string,string)", expanded: false, children: []}
+        ]
+        outline.set_items(roots)
+    }
+
+    func onExplorerClick(int nodeId) {
+        TreeViewNode n = explorer.get_node(nodeId)
+        if n.id < 0 { return }
+        if n.children.len() == 0 {
+            terminal.add_item("[打开] " + n.text)
+            terminal.scroll_to_bottom()
+            SDL3.markFrameRedraw()
+        }
+    }
+
+    func onMenuSelect(string menu, string id) {
+        if id == "exit" { _wantQuit = true; return }
+        if id == "toggle_sidebar" { toggleExplorer(); return }
+        if id == "toggle_aux" { toggleOutline(); return }
+        if id == "toggle_terminal" { toggleTerminal(); return }
+        if id == "reset_layout" {
+            outerHSplit.set_ratio(0.2)
+            innerHSplit.set_ratio(0.75)
+            midVSplit.set_ratio(0.7)
+            terminal.add_item("[布局] 已重置")
+            terminal.scroll_to_bottom()
+            SDL3.markFrameRedraw()
+            return
+        }
+        if id == "about" {
+            terminal.add_item("=== 四向Splitter布局 ===")
+            terminal.add_item("VSCode 风格 — 四面可拖")
+            terminal.scroll_to_bottom()
+            SDL3.markFrameRedraw()
+            return
+        }
+    }
+
+    func toggleExplorer() {
+        explorerVisible = not explorerVisible
+        if explorerVisible {
+            outerHSplit.set_first(explorer)
+            outerHSplit.set_ratio(0.2)
+        } else {
+            outerHSplit.set_ratio(0.0)
+        }
+        terminal.add_item("[视图] 资源管理器: " + (if explorerVisible then "显示" else "隐藏"))
+        terminal.scroll_to_bottom()
+        SDL3.markFrameRedraw()
+    }
+
+    func toggleOutline() {
+        outlineVisible = not outlineVisible
+        if outlineVisible {
+            innerHSplit.set_second(outline)
+            innerHSplit.set_ratio(0.75)
+        } else {
+            innerHSplit.set_ratio(1.0)
+        }
+        terminal.add_item("[视图] 大纲: " + (if outlineVisible then "显示" else "隐藏"))
+        terminal.scroll_to_bottom()
+        SDL3.markFrameRedraw()
+    }
+
+    func toggleTerminal() {
+        terminalVisible = not terminalVisible
+        if terminalVisible {
+            midVSplit.set_ratio(0.7)
+        } else {
+            midVSplit.set_ratio(1.0)
+        }
+        terminal.add_item("[视图] 终端: " + (if terminalVisible then "显示" else "隐藏"))
+        terminal.scroll_to_bottom()
+        SDL3.markFrameRedraw()
+    }
+
+    func handleEvent(Event ev): bool {
+        if _wantQuit { return false }
+        if ev.isQuit() or ev.isWindowClose() { return false }
+        if titleBar.is_close_requested() { titleBar.clear_close_request(); return false }
+        if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
+        if ev.isKeyDown() {
+            int mod = ev.keyMod()
+            bool ctrl = (mod & 64) != 0 or (mod & 128) != 0
+            if ctrl and ev.scancode() == Scancode.B { toggleExplorer(); return true }
+            if ctrl and ev.scancode() == Scancode.J { toggleTerminal(); return true }
+            if ctrl and ev.scancode() == Scancode.O {
+                int mod2 = ev.keyMod()
+                bool shift = (mod2 & 1) != 0 or (mod2 & 2) != 0
+                if shift { toggleOutline(); return true }
+            }
+        }
+        return true
+    }
+
+    func countLines(string text): int {
+        if text == "" { return 0 }
+        int n = 1
+        for text.len() to i {
+            if text[i] == '\n' { n = n + 1 }
+        }
+        return n
+    }
+
+    func run() {
+        SDL3.ttfInit()
+        win = SDL3.createWindow({
+            title: "LenoIDE — 四向Splitter",
+            w: 1100, h: 720, flags: WindowFlag.RESIZABLE
+        })
+        if not win.ok { SDL3.ttfQuit(); return }
+        win.setMinSize(700, 450)
+        setupUI()
+        win.run(
+            func(Event ev): bool { return handleEvent(ev) },
+            func(Renderer r) { }
+        )
+        SDL3.ttfQuit()
+    }
+}
+
+main() { new IDE4Way().run() }

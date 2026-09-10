@@ -1,0 +1,213 @@
+// pvz_types.leno — 植物大战僵尸 数据结构
+//
+// 动画：素材源自 PvZ 的 reanim 骨骼动画。gen_anim.ps1 已把每个动作的
+// 「逐帧变换」导出到 anim/*.txt，运行时按帧播放，部件变换为：
+//     绘制尺寸 = 原始尺寸 × (sx, sy)
+//     左上角   = (x, y)                 ← reanim 的 x/y 就是部件左上角
+//     旋转     = a 度，绕部件中心
+// 骨架原点 (ox, oy) 取包围盒底部中心，绘制时对齐到屏幕锚点。
+
+import "../../../../lib/SDL3.leno" as SDL3
+import "../../../../../LenoMusic/lib/Music.leno" as audio
+use SDL3.Font
+use audio.(Sound, Sfx)
+
+// 一个动作（如 僵尸走路 / 豌豆射手射击）
+// 逐帧数据按 part 主序存放：下标 = part * nFrame + frame
+export struct Anim {
+    int fps
+    int nFrame
+    int nPart
+    Array[Ptr[u8]] tex
+    Array[float] tw            // 部件原始宽
+    Array[float] th            // 部件原始高
+    Array[float] px
+    Array[float] py
+    Array[float] pa
+    Array[float] psx
+    Array[float] psy
+    Array[int] vis             // 0 = 该帧隐藏
+    float ox                   // 骨架原点（reanim 坐标）
+    float oy
+    Array[string] names        // 每个部件的原始文件名（用于保存）
+}
+
+export struct Plant {
+    int ptype
+    int row
+    int col
+    float x
+    float y
+    float hp
+    float maxHp
+    int timer
+    int fuse               // 樱桃引信；向日葵用来标记已出过首颗阳光
+    int anim               // 0=idle 1=动作（射击）
+    float aframe           // 动画帧（浮点，按 fps 推进）
+    bool alive
+}
+
+export struct Zombie {
+    int ztype
+    int row
+    float x                // 脚底中心 x
+    float y                // 脚底 y（行固定）
+    float hp
+    float maxHp
+    int hatHp
+    int hatMax
+    float speed
+    bool alive
+    bool eating
+    int eatTimer
+    int slowTimer
+    float slowAmt
+    int anim               // 0=walk 1=eat 2=death
+    float aframe
+    bool dying
+    int dieTimer
+}
+
+export struct Pea {
+    int row                // 发射豌豆的植物所在行（碰撞只打本行僵尸）
+    float x
+    float y
+    float vx
+    int kind               // 0=普通 1=寒冰
+    bool alive
+}
+
+export struct Sun {
+    float x
+    float y
+    float ty
+    bool falling
+    bool alive
+    int life
+    bool collecting          // 点击后正在飞向阳光库
+    float targetX            // 飞行目标 x（阳光库中心）
+    float targetY            // 飞行目标 y
+}
+
+export struct Mower {
+    int row
+    float x
+    float y
+    bool active
+    bool alive
+}
+
+export struct Particle {
+    float x
+    float y
+    float vx
+    float vy
+    float size
+    int life
+    int maxLife
+    int c
+}
+
+export struct FloatText {
+    float x
+    float y
+    string text
+    int c
+    int life
+    int maxLife
+}
+
+export struct Game {
+    int state
+    int frameCount
+    int sun
+    int wave
+    int killed
+    int waveState
+    int waveTimer
+    Array[int] spawnQueue
+    int spawnIdx
+    int spawnTimer
+    int skyTimer
+    int bannerTimer
+    string bannerText
+    bool hugeWave
+
+    int selCard
+    bool shovelMode
+    float mouseX
+    float mouseY
+    bool muted
+    bool quitReq
+
+    Array[int] cardCd
+    Array[Plant] plants
+    Array[Zombie] zombies
+    Array[Pea] peas
+    Array[Sun] suns
+    Array[Mower] mowers
+    Array[Particle] particles
+    Array[FloatText] floats
+    int pCount
+
+    // 纹理
+    Ptr[u8] texBg
+    Ptr[u8] texTitle
+    Ptr[u8] texSun
+    Ptr[u8] texPea
+    Ptr[u8] texSnowPea
+    Ptr[u8] texShovel
+    Ptr[u8] texShovelBank
+    Ptr[u8] texSunBank
+    Ptr[u8] texSeedBank
+    Ptr[u8] texFlagMeter
+    Ptr[u8] texProgress
+    Ptr[u8] texCone
+    Ptr[u8] texBucket
+    Ptr[u8] texMowerBody
+    Ptr[u8] texMowerWheel1
+    Ptr[u8] texMowerWheel2
+    float coneW
+    float coneH
+    float bucketW
+    float bucketH
+    float coneOx
+    float coneOy
+    float bucketOx
+    float bucketOy
+
+    // 动画
+    Anim anSunflower
+    Anim anPeashooter
+    Anim anPeaShoot
+    Anim anWallnut
+    Anim anSnowPea
+    Anim anSnowShoot
+    Anim anCherry
+    Anim anSun
+    Anim anZWalk
+    Anim anZEat
+    Anim anZDeath
+
+    bool loaded
+
+    Sound bgm
+    Sound winMus
+    Sound loseMus
+    Sfx sfxPlant
+    Sfx sfxThrow
+    Sfx sfxSplat
+    Sfx sfxCherry
+    Sfx sfxShovel
+    Sfx sfxCoin
+    Sfx sfxGroan
+    Sfx sfxPop
+    Sfx sfxAwooga
+    Sfx sfxMower
+    Sfx sfxChomp
+    Sfx sfxBuzzer
+    bool audioOk
+
+    Font font
+    Font fontBig
+}

@@ -10,7 +10,7 @@
 //   (strings.find() 内部用 strstr, 遇 \x00 会截断, 不适合二进制搜索)
 //   (pattern 首字节 0x00 在 PE 中太常见, 用 byte[4]=0x6C 做过滤)
 //
-// 用法: lenojit.exe patch_files.leno
+// 用法: leno.exe patch_files.leno
 
 import files
 import strings

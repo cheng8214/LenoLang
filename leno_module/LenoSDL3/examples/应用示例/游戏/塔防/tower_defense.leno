@@ -20,7 +20,7 @@
 //                    冻住.wav 冰冻, db.wav 爆炸, si.wav 漏怪, 怪物死亡.mp3 击杀,
 //                    升级.mp3 升级, 拾取.mp3 金币/宝箱, 小怪受击.mp3 受击, 波浪提示音.mp3 波次
 //
-// 素材生成：在本目录执行  lenojit.exe gen_assets.leno
+// 素材生成：在本目录执行  leno.exe gen_assets.leno
 
 import "../../../../lib/SDL3.leno" as SDL3
 import "../../../../lib/sdl_core.leno" as core
@@ -28,8 +28,11 @@ use SDL3.(Event, Renderer, WindowFlag, Scancode, Font, Flip)
 import maths
 import rands
 import dirs
+import "assets.leno" as assets
+import "td_types.leno" as types
 import "../../../../../LenoMusic/lib/Music.leno" as audio
 use audio.(Sound, Sfx)
+use types.(Enemy, Wave, Tower, Bullet, Particle, FloatText, Arc, Coin, Chest, Game)
 
 // ==================== 常量 ====================
 
@@ -159,244 +162,6 @@ var TREE_GX  = [3, 6, 10, 14, 11, 15, 1, 7, 19, 8]
 var TREE_GY  = [4, 3, 4, 4, 7, 7, 10, 1, 3, 11]
 var TREE2_GX = [2, 5, 10, 7, 14, 18, 0, 12, 16, 6]
 var TREE2_GY = [8, 9, 10, 11, 11, 8, 5, 0, 0, 5]
-
-// ==================== 数据类 ====================
-
-struct Enemy {
-    int id
-    int etype
-    float x
-    float y
-    float hp
-    float maxHp
-    float speed
-    float armor
-    int gold
-    int dmg
-    int wpIdx
-    float dir              // 朝向（度，素材默认朝下）
-    int slowTimer
-    float slowAmount
-    bool alive
-    bool reached
-    int dying              // 临终动画剩余帧：>0 表示已死亡但仍保留渲染（播放倒地动作）
-    bool crying            // 人物2：已进入「哭泣定身」状态（原地不动 + 释放声波）
-    int waveTimer          // 人物2：距离下次释放声波的帧数
-    bool attacking         // 人物3：正在播放攻击动作（原地不动）
-    int atkTimer           // 人物3：当前攻击动作已播放的帧数
-    bool atkHit            // 人物3：本轮伤害是否已结算（避免一次挥击多次命中）
-    int atkCd              // 人物3：攻击间隔倒计时
-    int pm4State           // 人物4：0=走路 1=跳跃 2=落地 3=爆炸
-    int pm4Timer           // 人物4：当前状态已播放帧数
-    float pm4Sx            // 人物4：起跳点坐标
-    float pm4Sy
-    float pm4Tx            // 人物4：目标塔坐标（跳过去爆炸）
-    float pm4Ty
-    float lane             // 横向车道偏移（单位：格，-0.45~0.45），双通道散开行走
-    int bState             // BOSS：0=走路 1=跳跃攻击 2=抓着战利品回位
-    int bTimer             // BOSS：当前状态已播放帧数
-    int bCd                // BOSS：突袭冷却倒计时
-    float bAx              // BOSS：触发点坐标（回位目标）
-    float bAy
-    float bTx              // BOSS：目标塔坐标
-    float bTy
-    int bTowerType         // BOSS：拆掉的塔类型（决定台词）
-    bool bHit              // BOSS：本次突袭伤害是否已结算
-    int bRb                // BOSS：原路返回/跑回时的路点游标
-    int bWpIdx             // BOSS：突袭触发时的路点位置（跑回终点）
-}
-
-struct Wave {
-    float x
-    float y
-    int life
-    int maxLife
-    float r                // 当前半径（渲染用，逐帧向外扩张）
-    float rMax             // 最大半径
-    bool alive
-}
-
-struct Tower {
-    int ttype
-    int gx
-    int gy
-    float x
-    float y
-    int level
-    int cooldown
-    float angle
-    int kills
-    float hp                // 当前血量（被人物3 攻击会掉）
-    float maxHp
-    int fireAnim            // 箭塔：塔上人物射箭动作剩余帧数（>0 时播放帧 1-4）
-    float aimDir            // 箭塔：当前目标方向（塔上人物据此翻转朝向）
-}
-
-struct Bullet {
-    int btype
-    float x
-    float y
-    float vx
-    float vy
-    float speed
-    float damage
-    float splash
-    float slowAmount
-    int slowFrames
-    int chain
-    int targetId          // 目标敌人 id（-1 表示无目标）
-    bool alive
-    bool bossShot         // BOSS 扛炮台所发射：纯表现弹，不与敌人碰撞（避免误伤自己）
-}
-
-struct Particle {
-    float x
-    float y
-    float vx
-    float vy
-    float size
-    int life
-    int maxLife
-    int c
-    bool alive
-}
-
-struct FloatText {
-    float x
-    float y
-    string text
-    int c
-    int life
-    bool alive
-    bool bg                // true = 白底黑字气泡（人物台词）
-}
-
-struct Arc {
-    float x1
-    float y1
-    float x2
-    float y2
-    int life
-    bool alive
-}
-
-struct Coin {
-    float sx
-    float sy
-    float x
-    float y
-    float tx
-    float ty
-    float p
-    int val
-    int delay              // 出场延迟（帧）：宝箱金币雨逐枚迸出
-    bool alive
-}
-
-struct Chest {
-    float x
-    float y
-    int life
-    bool alive
-}
-
-struct Game {
-    int state
-    int frameCount
-
-    int gold
-    int lives
-    int wave
-    int kills
-    int totalKilled
-
-    int waveState              // 0=准备中 1=生成中 2=清理中
-    int waveTimer              // 准备倒计时
-    Array[int] spawnQueue      // 本波待生成的敌人类型
-    int spawnIdx               // 生成游标
-    int spawnTimer
-    int bannerTimer
-    string bannerText
-
-    int selType                // 当前选中的塔类型（-1 无）
-    int selTower               // 当前选中的已建造塔索引（-1 无）
-    int menuTower              // 当前弹出的塔操作菜单所属塔索引（-1 无）
-    float mouseX
-    float mouseY
-
-    int speedMul              // 倍速：1 / 2 / 3
-    bool muted                // 是否静音
-    bool quitReq              // 主菜单「退出游戏」请求退出
-
-    Array[int] map
-    Array[Enemy] enemies
-    Array[Tower] towers
-    Array[Bullet] bullets
-    Array[Particle] particles
-    Array[FloatText] floats
-    Array[Arc] arcs
-    Array[Coin] coins
-    Array[Chest] chests
-    int pCount
-
-    // 纹理
-    Ptr[u8] texGrass
-    Ptr[u8] texPath
-    Ptr[u8] texStart
-    Ptr[u8] texBase
-    Ptr[u8] texRock
-    Array[Ptr[u8]] texTower
-    Array[Ptr[u8]] texEnemy
-    Array[Ptr[u8]] texSlime
-    Array[Ptr[u8]] texPerson
-    Array[Ptr[u8]] texPerson2
-    Array[Ptr[u8]] texPerson3
-    Array[Ptr[u8]] texPerson4
-    Array[Ptr[u8]] texBoom4
-    Array[Ptr[u8]] texGrunt
-    Array[Ptr[u8]] texArrowTower
-    Array[Ptr[u8]] texCannon
-    Array[Ptr[u8]] texFrost
-    Array[Ptr[u8]] texBossWalk
-    Array[Ptr[u8]] texBossJump
-    Array[Ptr[u8]] texBossReturn
-    Array[Ptr[u8]] texBullet
-    Ptr[u8] texCoin
-    Ptr[u8] texHeart
-    Ptr[u8] texStar
-    Ptr[u8] texTree
-    Ptr[u8] texTree2
-    Ptr[u8] texUp
-    Ptr[u8] texCoinFly
-    Ptr[u8] texSell
-    Ptr[u8] texChest
-    Array[Wave] waves
-    Ptr[u8] mapTex
-    bool loaded
-
-    // 音频
-    Sound bgm
-    Sound bossBgm
-    Sfx sfxShoot
-    Sfx sfxBoom
-    Sfx sfxLose
-    Sfx sfxShootArrow      // 箭塔开火（射箭.mp3）
-    Sfx sfxBuild           // 建造（放置.mp3）
-    Sfx sfxFreeze          // 冰塔冰冻（冻住.wav）
-    Sfx sfxWave            // 波次开始（波浪提示音.mp3）
-    Sfx sfxDie             // 怪物死亡（怪物死亡.mp3）
-    Sfx sfxUpgrade         // 塔升级（升级.mp3）
-    Sfx sfxPickup          // 拾取：金币入账/开宝箱（拾取.mp3）
-    Sfx sfxHit             // 小怪受击（小怪受击.mp3，带节流）
-    Sfx sfxBoom4           // 人物4 自爆大爆炸（db.wav 降调变沉，与其他爆炸错开）
-    Sfx sfxBossSmash       // BOSS 拆塔击打（db.wav 降调闷响）
-    Sfx sfxBossFire        // BOSS 抢到炮塔开炮（anxia.mp3 较轻）
-    int hitSfxCd           // 受击音效节流倒计时（帧），避免连射时刷屏
-    bool audioOk
-
-    Font font
-    Font fontBig
-}
 
 // ==================== 工具 ====================
 
@@ -632,44 +397,24 @@ func buildMap(Game g) {
     }
 }
 
-// 按帧切分横排精灵表（每帧 48x48，n 帧）
-func loadSheet(Renderer r, string path, int n): Array[Ptr[u8]] {
-    Array[Ptr[u8]] out = []
-    var sheet = SDL3.loadImageTexture(r.handle, path)
-    if sheet != null {
-        for 0 : n - 1 to fi {
-            var ft = r.createTexture(core.PIXELFORMAT_RGBA8888, 2, 48, 48)
-            if ft != null {
-                r.setRenderTarget(ft)
-                r.clearColor(#00000000)
-                r.drawTextureFromTo(sheet, _float(fi) * 48.0, 0.0, 48.0, 48.0, 0.0, 0.0, 48.0, 48.0)
-                r.flush()
-                r.setRenderTarget(null)
-                out.add(ft)
-            }
-        }
-    }
-    return out
-}
-
 // ==================== 资源加载 ====================
 
 func loadResources(Game g, Renderer r) {
     var base = dirs.script_dir()
-    g.texGrass = SDL3.loadImageTexture(r.handle, base + "/image/tile_grass.png")
-    g.texPath  = SDL3.loadImageTexture(r.handle, base + "/image/tile_path.png")
-    g.texStart = SDL3.loadImageTexture(r.handle, base + "/image/tile_start.png")
-    g.texBase  = SDL3.loadImageTexture(r.handle, base + "/image/tile_base.png")
-    g.texRock  = SDL3.loadImageTexture(r.handle, base + "/image/tile_rock.png")
-    g.texCoin  = SDL3.loadImageTexture(r.handle, base + "/image/icon_coin.png")
-    g.texHeart = SDL3.loadImageTexture(r.handle, base + "/image/icon_heart.png")
-    g.texStar  = SDL3.loadImageTexture(r.handle, base + "/image/icon_star.png")
-    g.texTree  = SDL3.loadImageTexture(r.handle, base + "/image/树木.png")
-    g.texTree2 = SDL3.loadImageTexture(r.handle, base + "/image/树木2.png")
-    g.texUp    = SDL3.loadImageTexture(r.handle, base + "/image/升级.png")
-    g.texCoinFly = SDL3.loadImageTexture(r.handle, base + "/image/金币.png")
-    g.texSell  = SDL3.loadImageTexture(r.handle, base + "/image/出售.png")
-    g.texChest = SDL3.loadImageTexture(r.handle, base + "/image/宝箱.png")
+    g.texGrass = assets.loadSprite(r, base, "tile_grass")
+    g.texPath  = assets.loadSprite(r, base, "tile_path")
+    g.texStart = assets.loadSprite(r, base, "tile_start")
+    g.texBase  = assets.loadSprite(r, base, "tile_base")
+    g.texRock  = assets.loadSprite(r, base, "tile_rock")
+    g.texCoin  = assets.loadSprite(r, base, "icon_coin")
+    g.texHeart = assets.loadSprite(r, base, "icon_heart")
+    g.texStar  = assets.loadSprite(r, base, "icon_star")
+    g.texTree  = assets.loadSprite(r, base, "树木")
+    g.texTree2 = assets.loadSprite(r, base, "树木2")
+    g.texUp    = assets.loadSprite(r, base, "升级")
+    g.texCoinFly = assets.loadSprite(r, base, "金币")
+    g.texSell  = assets.loadSprite(r, base, "出售")
+    g.texChest = assets.loadSprite(r, base, "宝箱")
 
     var tn = ["tower_arrow", "tower_cannon", "tower_frost", "tower_tesla"]
     var en = ["", "enemy_runner", "", "enemy_boss"]   // 小兵/坦克已由「人物小兵」「人物2」取代
@@ -678,218 +423,56 @@ func loadResources(Game g, Renderer r) {
     g.texEnemy = []
     g.texBullet = []
     for 0 : 3 to i {
-        g.texTower.add(SDL3.loadImageTexture(r.handle, base + "/image/" + tn[i] + ".png"))
-        // 占位空白纹理保持下标与 EM_* 常量对齐（EM_TANK 渲染走人物2 分支，不会用到）
-        if en[i] == "" {
-            var dummy = r.createTexture(core.PIXELFORMAT_RGBA8888, 2, 1, 1)
-            if dummy != null {
-                r.setRenderTarget(dummy)
-                r.clearColor(#00000000)
-                r.flush()
-                r.setRenderTarget(null)
-            }
-            g.texEnemy.add(dummy)
-        } else {
-            g.texEnemy.add(SDL3.loadImageTexture(r.handle, base + "/image/" + en[i] + ".png"))
-        }
-        if bn[i] == "" {
-            var bdummy = r.createTexture(core.PIXELFORMAT_RGBA8888, 2, 1, 1)
-            if bdummy != null {
-                r.setRenderTarget(bdummy)
-                r.clearColor(#00000000)
-                r.flush()
-                r.setRenderTarget(null)
-            }
-            g.texBullet.add(bdummy)
-        } else {
-            g.texBullet.add(SDL3.loadImageTexture(r.handle, base + "/image/" + bn[i] + ".png"))
-        }
+        g.texTower.add(assets.loadSprite(r, base, tn[i]))
+        // 空名字的槽位由 loadSprite 自动放占位纹理，保持下标与 EM_*/子弹类型常量对齐
+        g.texEnemy.add(assets.loadSprite(r, base, en[i]))
+        g.texBullet.add(assets.loadSprite(r, base, bn[i]))
     }
 
     // 塔射箭人物：288x48 横排 6 帧（每帧 48x48）：帧 0=箭塔本体，帧 1-4=塔上人物射箭动作，帧 5=箭矢
-    g.texArrowTower = []
-    var arrowTowerSheet = SDL3.loadImageTexture(r.handle, base + "/image/塔射箭人物.png")
-    if arrowTowerSheet != null {
-        for 0 : 5 to fi {
-            var fa = r.createTexture(core.PIXELFORMAT_RGBA8888, 2, 48, 48)
-            if fa != null {
-                r.setRenderTarget(fa)
-                r.clearColor(#00000000)
-                r.drawTextureFromTo(arrowTowerSheet, _float(fi) * 48.0, 0.0, 48.0, 48.0, 0.0, 0.0, 48.0, 48.0)
-                r.flush()
-                r.setRenderTarget(null)
-                g.texArrowTower.add(fa)
-            }
-        }
-        // 用新塔本体帧替换旧 tower_arrow 贴图（面板卡片 / 建造预览 / 塔底座自动生效）
-        if g.texArrowTower.len() > 0 { g.texTower[0] = g.texArrowTower[0] }
-    }
+    g.texArrowTower = assets.loadSheet(r, base + "/image/塔射箭人物.png", 6)
+    // 用新塔本体帧替换旧 tower_arrow 贴图（面板卡片 / 建造预览 / 塔底座自动生效）
+    if g.texArrowTower.len() > 0 { g.texTower[0] = g.texArrowTower[0] }
 
     // 加农炮：288x48 横排 6 帧（每帧 48x48）：帧 0=底座，帧 1=炮管(朝左)，帧 3-4=开火动作，帧 5=炮弹
-    g.texCannon = []
-    var cannonSheet = SDL3.loadImageTexture(r.handle, base + "/image/加农炮.png")
-    if cannonSheet != null {
-        for 0 : 5 to fi {
-            var fc = r.createTexture(core.PIXELFORMAT_RGBA8888, 2, 48, 48)
-            if fc != null {
-                r.setRenderTarget(fc)
-                r.clearColor(#00000000)
-                r.drawTextureFromTo(cannonSheet, _float(fi) * 48.0, 0.0, 48.0, 48.0, 0.0, 0.0, 48.0, 48.0)
-                r.flush()
-                r.setRenderTarget(null)
-                g.texCannon.add(fc)
-            }
-        }
-        // 面板卡片 / 建造预览改用底座帧
-        if g.texCannon.len() > 0 { g.texTower[1] = g.texCannon[0] }
-    }
+    g.texCannon = assets.loadSheet(r, base + "/image/加农炮.png", 6)
+    // 面板卡片 / 建造预览改用底座帧
+    if g.texCannon.len() > 0 { g.texTower[1] = g.texCannon[0] }
 
     // 冰塔炮：288x48 横排 6 帧，格式与加农炮一致：底座/炮管(朝左)/开火动作/冰弹
-    g.texFrost = []
-    var frostSheet = SDL3.loadImageTexture(r.handle, base + "/image/冰塔炮.png")
-    if frostSheet != null {
-        for 0 : 5 to fi {
-            var ff = r.createTexture(core.PIXELFORMAT_RGBA8888, 2, 48, 48)
-            if ff != null {
-                r.setRenderTarget(ff)
-                r.clearColor(#00000000)
-                r.drawTextureFromTo(frostSheet, _float(fi) * 48.0, 0.0, 48.0, 48.0, 0.0, 0.0, 48.0, 48.0)
-                r.flush()
-                r.setRenderTarget(null)
-                g.texFrost.add(ff)
-            }
-        }
-        // 面板卡片 / 建造预览改用底座帧
-        if g.texFrost.len() > 0 { g.texTower[2] = g.texFrost[0] }
-    }
+    g.texFrost = assets.loadSheet(r, base + "/image/冰塔炮.png", 6)
+    // 面板卡片 / 建造预览改用底座帧
+    if g.texFrost.len() > 0 { g.texTower[2] = g.texFrost[0] }
 
     // BOSS 三态精灵表：走 / 蹲下跳跃攻击 / 抓到回到原位（各 288x48 六帧）
     var bimg = base + "/image/"
-    g.texBossWalk   = loadSheet(r, bimg + "boss1走.png", 6)
-    g.texBossJump   = loadSheet(r, bimg + "boss1蹲下跳跃攻击.png", 6)
-    g.texBossReturn = loadSheet(r, bimg + "boss1抓到回到原位.png", 6)
+    g.texBossWalk   = assets.loadSheet(r, bimg + "boss1走.png", 6)
+    g.texBossJump   = assets.loadSheet(r, bimg + "boss1蹲下跳跃攻击.png", 6)
+    g.texBossReturn = assets.loadSheet(r, bimg + "boss1抓到回到原位.png", 6)
 
     // 史莱姆：288x48 横排 6 帧（每帧 48x48），侧视向左行走；向右移动时水平翻转
-    g.texSlime = []
-    var slimeSheet = SDL3.loadImageTexture(r.handle, base + "/image/史莱姆.png")
-    if slimeSheet != null {
-        for 0 : 5 to fi {
-            var ft = r.createTexture(core.PIXELFORMAT_RGBA8888, 2, 48, 48)
-            if ft != null {
-                r.setRenderTarget(ft)
-                r.clearColor(#00000000)
-                r.drawTextureFromTo(slimeSheet, _float(fi) * 48.0, 0.0, 48.0, 48.0, 0.0, 0.0, 48.0, 48.0)
-                r.flush()
-                r.setRenderTarget(null)
-                g.texSlime.add(ft)
-            }
-        }
-    }
+    g.texSlime = assets.loadSheet(r, base + "/image/史莱姆.png", 6)
 
     // 人物小兵：288x48 横排 6 帧（每帧 48x48）侧视行走；素材默认朝左，向右移动时水平翻转
-    g.texGrunt = []
-    var gruntSheet = SDL3.loadImageTexture(r.handle, base + "/image/人物小兵.png")
-    if gruntSheet != null {
-        for 0 : 5 to fi {
-            var fg = r.createTexture(core.PIXELFORMAT_RGBA8888, 2, 48, 48)
-            if fg != null {
-                r.setRenderTarget(fg)
-                r.clearColor(#00000000)
-                r.drawTextureFromTo(gruntSheet, _float(fi) * 48.0, 0.0, 48.0, 48.0, 0.0, 0.0, 48.0, 48.0)
-                r.flush()
-                r.setRenderTarget(null)
-                g.texGrunt.add(fg)
-            }
-        }
-    }
+    g.texGrunt = assets.loadSheet(r, base + "/image/人物小兵.png", 6)
 
     // 人物：288x48 横排 6 帧（每帧 48x48）：前 3 帧走路、后 3 帧奔跑；素材默认朝左，向右移动时水平翻转
-    g.texPerson = []
-    var personSheet = SDL3.loadImageTexture(r.handle, base + "/image/人物1.png")
-    if personSheet != null {
-        for 0 : 5 to fi {
-            var ft = r.createTexture(core.PIXELFORMAT_RGBA8888, 2, 48, 48)
-            if ft != null {
-                r.setRenderTarget(ft)
-                r.clearColor(#00000000)
-                r.drawTextureFromTo(personSheet, _float(fi) * 48.0, 0.0, 48.0, 48.0, 0.0, 0.0, 48.0, 48.0)
-                r.flush()
-                r.setRenderTarget(null)
-                g.texPerson.add(ft)
-            }
-        }
-    }
+    g.texPerson = assets.loadSheet(r, base + "/image/人物1.png", 6)
 
     // 人物2：288x48 横排 6 帧（每帧 48x48）：前 3 帧走路，后 3 帧为 含泪→趴地哭泣→倒下死亡
     // 素材默认朝左，向右移动时水平翻转
-    g.texPerson2 = []
-    var person2Sheet = SDL3.loadImageTexture(r.handle, base + "/image/人物2.png")
-    if person2Sheet != null {
-        for 0 : 5 to fi {
-            var ft = r.createTexture(core.PIXELFORMAT_RGBA8888, 2, 48, 48)
-            if ft != null {
-                r.setRenderTarget(ft)
-                r.clearColor(#00000000)
-                r.drawTextureFromTo(person2Sheet, _float(fi) * 48.0, 0.0, 48.0, 48.0, 0.0, 0.0, 48.0, 48.0)
-                r.flush()
-                r.setRenderTarget(null)
-                g.texPerson2.add(ft)
-            }
-        }
-    }
+    g.texPerson2 = assets.loadSheet(r, base + "/image/人物2.png", 6)
 
     // 人物3：384x48 横排 8 帧（每帧 48x48）：前 4 帧走路、后 4 帧攻击（抬臂→挥出→击打→回收）
     // 素材默认朝左，向右移动时水平翻转
-    g.texPerson3 = []
-    var person3Sheet = SDL3.loadImageTexture(r.handle, base + "/image/人物3.png")
-    if person3Sheet != null {
-        for 0 : 7 to fi {
-            var ft = r.createTexture(core.PIXELFORMAT_RGBA8888, 2, 48, 48)
-            if ft != null {
-                r.setRenderTarget(ft)
-                r.clearColor(#00000000)
-                r.drawTextureFromTo(person3Sheet, _float(fi) * 48.0, 0.0, 48.0, 48.0, 0.0, 0.0, 48.0, 48.0)
-                r.flush()
-                r.setRenderTarget(null)
-                g.texPerson3.add(ft)
-            }
-        }
-    }
+    g.texPerson3 = assets.loadSheet(r, base + "/image/人物3.png", 8)
 
     // 人物4：384x48 横排 8 帧（每帧 48x48）：前 3 帧走路、中 3 帧跳跃、后 2 帧落地
     // 素材默认朝左，向右移动时水平翻转
-    g.texPerson4 = []
-    var person4Sheet = SDL3.loadImageTexture(r.handle, base + "/image/人物4.png")
-    if person4Sheet != null {
-        for 0 : 7 to fi {
-            var ft = r.createTexture(core.PIXELFORMAT_RGBA8888, 2, 48, 48)
-            if ft != null {
-                r.setRenderTarget(ft)
-                r.clearColor(#00000000)
-                r.drawTextureFromTo(person4Sheet, _float(fi) * 48.0, 0.0, 48.0, 48.0, 0.0, 0.0, 48.0, 48.0)
-                r.flush()
-                r.setRenderTarget(null)
-                g.texPerson4.add(ft)
-            }
-        }
-    }
+    g.texPerson4 = assets.loadSheet(r, base + "/image/人物4.png", 8)
 
     // 人物4 爆炸：192x48 横排 4 帧（每帧 48x48），自爆时叠加播放
-    g.texBoom4 = []
-    var boom4Sheet = SDL3.loadImageTexture(r.handle, base + "/image/人物4爆炸.png")
-    if boom4Sheet != null {
-        for 0 : 3 to fi {
-            var fb = r.createTexture(core.PIXELFORMAT_RGBA8888, 2, 48, 48)
-            if fb != null {
-                r.setRenderTarget(fb)
-                r.clearColor(#00000000)
-                r.drawTextureFromTo(boom4Sheet, _float(fi) * 48.0, 0.0, 48.0, 48.0, 0.0, 0.0, 48.0, 48.0)
-                r.flush()
-                r.setRenderTarget(null)
-                g.texBoom4.add(fb)
-            }
-        }
-    }
+    g.texBoom4 = assets.loadSheet(r, base + "/image/人物4爆炸.png", 4)
 
     // 静态地图预渲染到一张纹理，之后每帧只需一次贴图
     g.mapTex = r.createTexture(core.PIXELFORMAT_RGBA8888, 2, _int(MAP_W), _int(MAP_H))
@@ -1148,8 +731,16 @@ func damageIdx(Game g, int idx, float dmg) {
     for g.enemies to e {
         if i == idx {
             if not e.alive { return }
-            // 人物4 起跳/落地/爆炸期间免疫伤害：血量低易被塔打死，否则会「消失而不爆炸」
-            if e.etype == EM_PERSON4 and e.pm4State > 0 { return }
+            // 人物4（自爆女）：走路阶段可被正常削血；当血量降到一半以下时开启
+            // 「血量保持」——把 HP 锁定在半血并免疫后续伤害，保证它能活着去自爆，
+            // 而不是被半路点死。触发后由状态机立刻起跳跳向最近塔爆炸。
+            if e.etype == EM_PERSON4 {
+                // 已处于血量保持状态（半血及以下）→ 免疫一切伤害，不会死亡
+                if e.hp <= e.maxHp * 0.5 { return }
+                var real = dmg * (1.0 - e.armor)
+                // 本次伤害若会把血量打到半血以下 → 开启血量保持，锁在半血
+                if e.hp - real <= e.maxHp * 0.5 { e.hp = e.maxHp * 0.5; return }
+            }
             e.hp = e.hp - dmg * (1.0 - e.armor)
             // 小怪受击音效（全局节流，避免多塔齐射时刷屏）
             if g.hitSfxCd <= 0 {
@@ -1418,6 +1009,23 @@ func updateEnemies(Game g) {
             }
         }
 
+        // 人物4：血量低于一半时开启「血量保持」并立即起跳自爆
+        //  （半血锁定已在 damageIdx 中处理，这里负责触发朝最近塔的跳跃）
+        if e.etype == EM_PERSON4 and e.pm4State == 0 and e.hp < e.maxHp * 0.5 {
+            var ti4 = findTowerNear(g, e.x, e.y, 999999.0)   // 不限射程，找最近的塔
+            if ti4 >= 0 {
+                var tt = g.towers[ti4]
+                e.pm4Sx = e.x
+                e.pm4Sy = e.y
+                e.pm4Tx = tt.x
+                e.pm4Ty = tt.y
+                e.dir = dirAngle(tt.x - e.x, tt.y - e.y)
+                e.pm4State = 1
+                e.pm4Timer = 0
+                // 触发自爆时给一句台词提示
+                addSpeech(g, e.x - 12.0, e.y - ENEMY_SIZE[e.etype] * 0.5 - 14.0, "要爆炸啦！", 45)
+            }
+        }
         // 人物4：接近防御塔即锁定目标，起跳跳到塔身上
         if e.etype == EM_PERSON4 and e.pm4State == 0 {
             var ti4 = findTowerNear(g, e.x, e.y, ATK_RANGE * TS)
@@ -2276,17 +1884,9 @@ func drawGame(Game g, Renderer r) {
     }
 
     // 塔（画家算法：按 y 坐标从上到下排序绘制，下方的塔遮住上方的，避免相邻塔层级错乱）
-    Array[int] twOrder = []
-    for 0 : g.towers.len() - 1 to twoi { twOrder.add(twoi) }
-    for 1 : twOrder.len() - 1 to twii {
-        var twkey = twOrder[twii]
-        var twjj = twii - 1
-        while twjj >= 0 and g.towers[twOrder[twjj]].y > g.towers[twkey].y {
-            twOrder[twjj + 1] = twOrder[twjj]
-            twjj = twjj - 1
-        }
-        twOrder[twjj + 1] = twkey
-    }
+    Array[float] twYs = []
+    for 0 : g.towers.len() - 1 to twoi { twYs.add(g.towers[twoi].y) }
+    var twOrder = assets.orderByY(twYs)
     for 0 : g.towers.len() - 1 to twi2 {
         var t = g.towers[twOrder[twi2]]
         var tex = g.texTower[t.ttype]
@@ -2323,8 +1923,7 @@ func drawGame(Game g, Renderer r) {
                 if ai > 4 { ai = 4 }
             }
             var psz = TS * 1.05
-            var pflip = Flip.NONE
-            if maths.cos((t.aimDir - 90.0) * 3.14159265 / 180.0) > 0.0 { pflip = Flip.HORIZONTAL }
+            var pflip = assets.sideFlip(t.aimDir)
             r.drawTextureRotated(g.texArrowTower[ai], t.x - psz * 0.5, t.y - TS * 0.65 - psz * 0.5, psz, psz,
                                  0.0, psz * 0.5, psz * 0.5, pflip)
         }
@@ -2360,34 +1959,24 @@ func drawGame(Game g, Renderer r) {
     }
 
     // 敌人（画家算法：按 y 坐标从上到下排序绘制，近处的敌人遮住远处的）
-    Array[int] drawOrder = []
-    for 0 : g.enemies.len() - 1 to oi { drawOrder.add(oi) }
-    for 1 : drawOrder.len() - 1 to ii {
-        var key = drawOrder[ii]
-        var jj = ii - 1
-        while jj >= 0 and g.enemies[drawOrder[jj]].y > g.enemies[key].y {
-            drawOrder[jj + 1] = drawOrder[jj]
-            jj = jj - 1
-        }
-        drawOrder[jj + 1] = key
-    }
+    Array[float] eYs = []
+    for 0 : g.enemies.len() - 1 to oi { eYs.add(g.enemies[oi].y) }
+    var drawOrder = assets.orderByY(eYs)
     for 0 : g.enemies.len() - 1 to ei2 {
         var e = g.enemies[drawOrder[ei2]]
         var sz = ENEMY_SIZE[e.etype]
         if e.etype == EM_SLIME and g.texSlime.len() > 0 {
             // 侧视行走帧：不旋转，按移动方向水平翻转（素材默认朝左）
             var fidx = _int(g.frameCount / 8) % 6
-            if fidx > g.texSlime.len() - 1 { fidx = g.texSlime.len() - 1 }
-            var flip = Flip.NONE
-            if maths.cos((e.dir - 90.0) * 3.14159265 / 180.0) > 0.0 { flip = Flip.HORIZONTAL }
+            fidx = assets.clampIdx(fidx, g.texSlime.len())
+            var flip = assets.sideFlip(e.dir)
             r.drawTextureRotated(g.texSlime[fidx], e.x - sz * 0.5, e.y - sz * 0.5, sz, sz,
                                  0.0, sz * 0.5, sz * 0.5, flip)
         } else if e.etype == EM_GRUNT and g.texGrunt.len() > 0 {
             // 人物小兵：6 帧侧视行走；不旋转，按移动方向水平翻转（素材默认朝左）
             var fidx = _int(g.frameCount / 8) % 6
-            if fidx > g.texGrunt.len() - 1 { fidx = g.texGrunt.len() - 1 }
-            var flip = Flip.NONE
-            if maths.cos((e.dir - 90.0) * 3.14159265 / 180.0) > 0.0 { flip = Flip.HORIZONTAL }
+            fidx = assets.clampIdx(fidx, g.texGrunt.len())
+            var flip = assets.sideFlip(e.dir)
             r.drawTextureRotated(g.texGrunt[fidx], e.x - sz * 0.5, e.y - sz * 0.5, sz, sz,
                                  0.0, sz * 0.5, sz * 0.5, flip)
         } else if (e.etype == EM_PERSON or e.etype == EM_PERSON_RUN) and g.texPerson.len() > 0 {
@@ -2395,9 +1984,8 @@ func drawGame(Game g, Renderer r) {
             var base = 0
             if e.etype == EM_PERSON_RUN { base = 3 }
             var fidx = base + (_int(g.frameCount / 8) % 3)
-            if fidx > g.texPerson.len() - 1 { fidx = g.texPerson.len() - 1 }
-            var flip = Flip.NONE
-            if maths.cos((e.dir - 90.0) * 3.14159265 / 180.0) > 0.0 { flip = Flip.HORIZONTAL }
+            fidx = assets.clampIdx(fidx, g.texPerson.len())
+            var flip = assets.sideFlip(e.dir)
             r.drawTextureRotated(g.texPerson[fidx], e.x - sz * 0.5, e.y - sz * 0.5, sz, sz,
                                  0.0, sz * 0.5, sz * 0.5, flip)
         } else if e.etype == EM_RUNNER and g.texPerson3.len() > 0 {
@@ -2411,9 +1999,8 @@ func drawGame(Game g, Renderer r) {
             } else {
                 fidx = _int(g.frameCount / 8) % 4
             }
-            if fidx > g.texPerson3.len() - 1 { fidx = g.texPerson3.len() - 1 }
-            var flip = Flip.NONE
-            if maths.cos((e.dir - 90.0) * 3.14159265 / 180.0) > 0.0 { flip = Flip.HORIZONTAL }
+            fidx = assets.clampIdx(fidx, g.texPerson3.len())
+            var flip = assets.sideFlip(e.dir)
             r.drawTextureRotated(g.texPerson3[fidx], e.x - sz * 0.5, e.y - sz * 0.5, sz, sz,
                                  0.0, sz * 0.5, sz * 0.5, flip)
         } else if e.etype == EM_PERSON4 and g.texPerson4.len() > 0 {
@@ -2431,9 +2018,8 @@ func drawGame(Game g, Renderer r) {
                 } else {
                     fidx = _int(g.frameCount / 8) % 3
                 }
-                if fidx > g.texPerson4.len() - 1 { fidx = g.texPerson4.len() - 1 }
-                var flip = Flip.NONE
-                if maths.cos((e.dir - 90.0) * 3.14159265 / 180.0) > 0.0 { flip = Flip.HORIZONTAL }
+                fidx = assets.clampIdx(fidx, g.texPerson4.len())
+                var flip = assets.sideFlip(e.dir)
                 // 跳跃期间叠加抛物线高度（正弦弧线），跳到塔上方
                 var yoff = 0.0
                 if e.pm4State == 1 {
@@ -2460,31 +2046,29 @@ func drawGame(Game g, Renderer r) {
                     fidx = 4                              // 濒死：趴地哭泣
                 }
             }
-            if fidx > g.texPerson2.len() - 1 { fidx = g.texPerson2.len() - 1 }
-            var flip = Flip.NONE
-            if maths.cos((e.dir - 90.0) * 3.14159265 / 180.0) > 0.0 { flip = Flip.HORIZONTAL }
+            fidx = assets.clampIdx(fidx, g.texPerson2.len())
+            var flip = assets.sideFlip(e.dir)
             r.drawTextureRotated(g.texPerson2[fidx], e.x - sz * 0.5, e.y - sz * 0.5, sz, sz,
                                  0.0, sz * 0.5, sz * 0.5, flip)
         } else if e.etype == EM_BOSS and g.texBossWalk.len() > 0 {
             // BOSS：三态精灵表（走 / 跳跃攻击 / 抓着战利品回位）；素材默认朝左，按方向翻转
-            var bflip = Flip.NONE
-            if maths.cos((e.dir - 90.0) * 3.14159265 / 180.0) > 0.0 { bflip = Flip.HORIZONTAL }
+            var bflip = assets.sideFlip(e.dir)
             if e.bState == 1 and g.texBossJump.len() > 0 {
                 var bfj = e.bTimer / BOSS_ATK_STEP
-                if bfj > g.texBossJump.len() - 1 { bfj = g.texBossJump.len() - 1 }
+                bfj = assets.clampIdx(bfj, g.texBossJump.len())
                 r.drawTextureRotated(g.texBossJump[bfj], e.x - sz * 0.5, e.y - sz * 0.5, sz, sz,
                                      0.0, sz * 0.5, sz * 0.5, bflip)
             } else if e.bState == 2 and e.bTowerType == TW_ARROW and g.texBossReturn.len() > 0 {
                 // 抢到夫人：扛着人沿原路返回，帧速放慢表现沉重感
                 var bfr = e.bTimer / (BOSS_ATK_STEP * 2)
-                if bfr > g.texBossReturn.len() - 1 { bfr = g.texBossReturn.len() - 1 }
+                bfr = assets.clampIdx(bfr, g.texBossReturn.len())
                 r.drawTextureRotated(g.texBossReturn[bfr], e.x - sz * 0.5, e.y - sz * 0.5, sz, sz,
                                      0.0, sz * 0.5, sz * 0.5, bflip)
             } else if e.bState == 2 and g.texBossJump.len() > 0 {
                 // 抢到武器：原地抡着武器攻击（攻击动画循环）
                 var raw = e.bTimer / BOSS_ATK_STEP
                 var bfj = raw - (raw / 6) * 6
-                if bfj > g.texBossJump.len() - 1 { bfj = g.texBossJump.len() - 1 }
+                bfj = assets.clampIdx(bfj, g.texBossJump.len())
                 r.drawTextureRotated(g.texBossJump[bfj], e.x - sz * 0.5, e.y - sz * 0.5, sz, sz,
                                      0.0, sz * 0.5, sz * 0.5, bflip)
             } else {
@@ -2493,7 +2077,7 @@ func drawGame(Game g, Renderer r) {
                 // 12 帧往返（ping-pong）：0→1→2→3→4→5→4→3→2→1→0，腿不会突跳，走路更顺滑（整轮节奏与原 6 帧一致）
                 var bfw = _int(g.frameCount / wfr) % 12
                 if bfw >= 6 { bfw = 11 - bfw }
-                if bfw > g.texBossWalk.len() - 1 { bfw = g.texBossWalk.len() - 1 }
+                bfw = assets.clampIdx(bfw, g.texBossWalk.len())
                 r.drawTextureRotated(g.texBossWalk[bfw], e.x - sz * 0.5, e.y - sz * 0.5, sz, sz,
                                      0.0, sz * 0.5, sz * 0.5, bflip)
             }
@@ -2537,8 +2121,7 @@ func drawGame(Game g, Renderer r) {
         if e.bState == 2 { showCarry = true }
         if not showCarry { continue }
         var bsz = ENEMY_SIZE[e.etype]
-        var cflip = Flip.NONE
-        if maths.cos((e.dir - 90.0) * 3.14159265 / 180.0) > 0.0 { cflip = Flip.HORIZONTAL }
+        var cflip = assets.sideFlip(e.dir)
         var cbob = maths.sin(_float(g.frameCount) * 0.25) * 4.0
         if cbob > 0.0 { cbob = -cbob }
         if e.bTowerType == TW_CANNON and g.texCannon.len() > 1 {
@@ -2564,7 +2147,7 @@ func drawGame(Game g, Renderer r) {
         if e.pm4State != 3 { continue }
         if g.texBoom4.len() == 0 { continue }
         var bst = e.pm4Timer / P4_BOOM_STEP
-        if bst > g.texBoom4.len() - 1 { bst = g.texBoom4.len() - 1 }
+        bst = assets.clampIdx(bst, g.texBoom4.len())
         var bs = ENEMY_SIZE[e.etype] * 1.8
         r.drawTextureRotated(g.texBoom4[bst], e.x - bs * 0.5, e.y - bs * 0.5, bs, bs,
                              0.0, bs * 0.5, bs * 0.5, Flip.NONE)
@@ -2632,10 +2215,7 @@ func drawGame(Game g, Renderer r) {
     // 粒子
     for g.particles to p {
         var alpha = _int(255.0 * _float(p.life) / _float(p.maxLife))
-        int rr = (p.c >> 16) & 0xFF
-        int gg = (p.c >> 8) & 0xFF
-        int bb = p.c & 0xFF
-        r.setColor((alpha << 24) | (rr << 16) | (gg << 8) | bb)
+        r.setColor(assets.colorWithAlpha(p.c, alpha))
         r.fillRect(p.x - p.size * 0.5, p.y - p.size * 0.5, p.size, p.size)
     }
 
@@ -2643,18 +2223,15 @@ func drawGame(Game g, Renderer r) {
     for g.floats to ft {
         var a2 = _int(255.0 * _float(ft.life) / 50.0)
         if a2 > 255 { a2 = 255 }
-        int fr = (ft.c >> 16) & 0xFF
-        int fg = (ft.c >> 8) & 0xFF
-        int fb = ft.c & 0xFF
         if ft.bg {
             // 白底黑字气泡：宽度 = 字数 × 每字宽（11 号中文字约 13px）+ 内边距
             var tw = _float(ft.text.len()) * 13.0
-            r.setColor((a2 << 24) | 0xFAFAFA)
+            r.setColor(assets.colorWithAlpha(0x00FAFAFA, a2))
             r.fillRoundedRect(ft.x - 5.0, ft.y - 3.0, tw + 10.0, 19.0, 6.0)
-            r.setColor((a2 << 24) | 0x1A1A1A)
-            r.drawText(g.font, ft.text, ft.x, ft.y, (a2 << 24) | 0x1A1A1A)
+            r.setColor(assets.colorWithAlpha(0x001A1A1A, a2))
+            r.drawText(g.font, ft.text, ft.x, ft.y, assets.colorWithAlpha(0x001A1A1A, a2))
         } else {
-            r.drawText(g.font, ft.text, ft.x - 8.0, ft.y, (a2 << 24) | (fr << 16) | (fg << 8) | fb)
+            r.drawText(g.font, ft.text, ft.x - 8.0, ft.y, assets.colorWithAlpha(ft.c, a2))
         }
     }
 
@@ -2666,11 +2243,11 @@ func drawGame(Game g, Renderer r) {
         var fade = 1.0
         if t < 30 { fade = _float(t) / 30.0 }
         var bgA = _int(110.0 * fade)          // 背景半透明黑（约 43%）
-        r.setColor((bgA << 24) | 0x000000)
+        r.setColor(assets.colorWithAlpha(0x00000000, bgA))
         r.fillRect(0.0, MAP_H * 0.5 - 26.0, MAP_W, 52.0)
         var txA = _int(255.0 * fade)
         r.drawTextCentered(g.fontBig, g.bannerText, 0.0, MAP_W, MAP_H * 0.5 - 12.0,
-                           (txA << 24) | 0xFFDC50)
+                           assets.colorWithAlpha(0x00FFDC50, txA))
     }
 
 }
