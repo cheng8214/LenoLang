@@ -12,6 +12,11 @@
                 TOS_SPILL();  /* jump targets expect tos_live=0 */
                 int patch = emit_jmp(cb);
                 patch_add(ctx, patch, target_bc, vstack);
+                /* After unconditional jump, fall-through is unreachable.
+                 * Mark vstack so the restore block knows to pick up
+                 * the correct vstack from a patch record at the next
+                 * reachable bc_off. */
+                vstack = VSTACK_UNREACHABLE;
                 break;
             }
             case OP_JUMP_IF_FALSE: {
@@ -47,7 +52,7 @@
                     patch_rel32(cb, je2_patch, cb->len);
                     emit_push_reg(cb, JIT_RAX);
                     int jmp_patch = emit_jmp(cb);
-                    patch_add(ctx, jmp_patch, target_bc, 0);
+                    patch_add(ctx, jmp_patch, target_bc, vstack);
                     /* Patch truthy jump to here */
                     patch_rel32(cb, truthy_jmp, cb->len);
                     /* Fall-through (truthy): RAX still holds condition,
@@ -74,7 +79,7 @@
                     patch_rel32(cb, je1_patch, cb->len);
                     patch_rel32(cb, je2_patch, cb->len);
                     int jmp_patch = emit_jmp(cb);
-                    patch_add(ctx, jmp_patch, target_bc, 0);
+                    patch_add(ctx, jmp_patch, target_bc, vstack);
                     /* Patch truthy jump to here */
                     patch_rel32(cb, truthy_jmp, cb->len);
                     /* Fall-through: value still on stack, next OP_POP pops it */
@@ -99,7 +104,7 @@
                     /* Truthy: push condition to stack and jump to target */
                     emit_push_reg(cb, JIT_RAX);
                     int jmp_patch = emit_jmp(cb);
-                    patch_add(ctx, jmp_patch, target_bc, 0);
+                    patch_add(ctx, jmp_patch, target_bc, vstack);
                     /* Patch all falsey jumps to here (skip) */
                     patch_rel32(cb, jz_patch, cb->len);
                     patch_rel32(cb, je1_patch, cb->len);
@@ -121,7 +126,7 @@
                     int je2_patch = emit_jcc(cb, 0x84);
                     /* Truthy: value stays on stack, jump to target */
                     int jmp_patch = emit_jmp(cb);
-                    patch_add(ctx, jmp_patch, target_bc, 0);
+                    patch_add(ctx, jmp_patch, target_bc, vstack);
                     /* Patch all falsey jumps to here (skip) */
                     patch_rel32(cb, jz_patch, cb->len);
                     patch_rel32(cb, je1_patch, cb->len);

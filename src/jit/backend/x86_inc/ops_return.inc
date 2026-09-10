@@ -23,10 +23,13 @@
                      * but vstack tracking must match scan for dead code after
                      * the return to have correct vstack. */
                     vstack--;
+                    /* After return, code is unreachable */
+                    vstack = VSTACK_UNREACHABLE;
                 } else {
                     /* Shouldn't happen in loop body, but handle gracefully */
                     TOS_SPILL();
                     vstack--;
+                    vstack = VSTACK_UNREACHABLE;
                 }
                 break;
             }
@@ -44,9 +47,11 @@
                      * inline_end, but vstack tracking must match scan for
                      * dead code after the return. */
                     vstack -= rc;
+                    vstack = VSTACK_UNREACHABLE;
                 } else {
                     TOS_SPILL();
                     vstack -= rc;
+                    vstack = VSTACK_UNREACHABLE;
                 }
                 break;
             }

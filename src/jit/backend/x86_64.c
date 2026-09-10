@@ -39,6 +39,12 @@
  * Returns the displacement for emit_mov_reg_mem8/32
  * (offmap_add/offmap_lookup/patch_add live in jit_priv.h - platform-neutral)
  */
+/* Sentinel marking code positions unreachable via fall-through
+ * (after OP_JUMP / OP_RETURN).  The vstack_restore block only
+ * restores vstack from patch records when this sentinel is active,
+ * preventing false restores at fall-through merge points. */
+#define VSTACK_UNREACHABLE  (-99999)
+
 static int scratch_disp(int scratch_idx) {
     return -8 * (scratch_idx + 1);
 }
@@ -537,6 +543,37 @@ int compile_loop(CodegenCtx* ctx) {
         uint8_t op = *ip;
         int size = opcode_size(ip);
         offmap_add(ctx, bc_off, cb->len);
+
+        /* Restore vstack at forward jump targets — but ONLY when the
+         * current code position is truly unreachable via fall-through.
+         *
+         * After an unconditional OP_JUMP or OP_RETURN, the linear scan
+         * marks vstack as VSTACK_UNREACHABLE.  When the scan later reaches
+         * a bc_off that is a forward-jump target, it restores vstack from
+         * the patch record (which captured the correct vstack at the jump
+         * source).  This fixes the double-counting of OP_POP in mutually
+         * exclusive truthy/falsey paths (e.g. if/else, if/continue) without
+         * corrupting fall-through merge points (e.g. if-without-else).
+         *
+         * tos_live is also reset to 0: all forward jumps TOS_SPILL
+         * before emitting the jump, so jump targets always arrive
+         * with tos_live=0. */
+        if (vstack == VSTACK_UNREACHABLE) {
+            int found = 0;
+            for (int _pi = 0; _pi < ctx->patch_count; _pi++) {
+                if (ctx->patches[_pi].target_bc == bc_off) {
+                    vstack = ctx->patches[_pi].vstack;
+                    tos_live = 0;
+                    found = 1;
+                    break;
+                }
+            }
+            if (!found) {
+                /* Dead code with no jump target — use safe default */
+                vstack = 0;
+                tos_live = 0;
+            }
+        }
 
         switch (op) {
             #include "x86_inc/ops_stack.inc"
