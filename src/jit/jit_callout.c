@@ -160,11 +160,68 @@ Value jit_callout_index(Value obj_val, Value idx_val) {
         }
         return arr->elements[index];
     }
-    if (obj->type == OBJ_DICT) {
+if (obj->type == OBJ_DICT) {
         ObjDict* dict = (ObjDict*)obj;
         return dict_get(dict, idx_val);
     }
-    error_add_at(ERR_RUNTIME, 0, 0, "索引操作需要数组或字典");
+    if (obj->type == OBJ_STRING) {
+        /* 对齐解释器 OP_INDEX 字符串分支：str[i] 返回单字符子串（UTF-8 感知） */
+        if (!val_is_num(idx_val)) {
+            error_add_at(ERR_RUNTIME, 0, 0, "字符串索引必须是数字");
+            return NULL_VAL;
+        }
+        ObjString* str = (ObjString*)obj;
+        int index = (int)value_to_double(idx_val);
+        if (index < 0 || index >= str->char_len) {
+            error_add_at(ERR_RUNTIME, 0, 0, "字符串索引越界");
+            return NULL_VAL;
+        }
+        int byte_offset = utf8_char_offset(str->chars, str->len, index);
+        int char_bytes = utf8_char_byte_len(str->chars, str->len, byte_offset);
+        ObjString* result = str_new(&str->chars[byte_offset], char_bytes);
+        return val_obj((Object*)result);
+    }
+    error_add_at(ERR_RUNTIME, 0, 0, "索引操作需要数组、字典或字符串");
+    return NULL_VAL;
+}
+
+/* Callout: OP_ADD 字符串拼接（对齐解释器 OP_ADD 语义）。
+ * 返回拼接结果字符串；两个操作数都不是字符串（float 等）时返回 NULL_VAL，
+ * 由 codegen 决定 bailout 回解释器（语义不变，仅性能回退）。 */
+Value jit_callout_concat(Value a, Value b) {
+    /* 任一操作数为 ObjString → 字符串拼接路径 */
+    if ((val_is_obj(a) && val_as_obj(a)->type == OBJ_STRING) ||
+        (val_is_obj(b) && val_as_obj(b)->type == OBJ_STRING)) {
+        if (val_is_obj(a) && val_as_obj(a)->type == OBJ_STRING &&
+            val_is_obj(b) && val_as_obj(b)->type == OBJ_STRING) {
+            ObjString* result = str_concat((ObjString*)val_as_obj(a), (ObjString*)val_as_obj(b));
+            return val_obj((Object*)result);
+        }
+        int a_is_str = val_is_obj(a) && val_as_obj(a)->type == OBJ_STRING;
+        ObjString* str_obj = a_is_str ? (ObjString*)val_as_obj(a) : (ObjString*)val_as_obj(b);
+        Value other = a_is_str ? b : a;
+        char* other_str = value_to_string(other);
+        int other_len = (int)strlen(other_str);
+        int total_len = str_obj->len + other_len;
+        char* buf = (char*)malloc((size_t)total_len + 1);
+        if (!buf) {
+            free(other_str);
+            return NULL_VAL;
+        }
+        if (a_is_str) {
+            memcpy(buf, str_obj->chars, (size_t)str_obj->len);
+            memcpy(buf + str_obj->len, other_str, (size_t)other_len);
+        } else {
+            memcpy(buf, other_str, (size_t)other_len);
+            memcpy(buf + other_len, str_obj->chars, (size_t)str_obj->len);
+        }
+        buf[total_len] = '\0';
+        ObjString* result = str_new(buf, total_len);
+        free(buf);
+        free(other_str);
+        return val_obj((Object*)result);
+    }
+    /* 双方都非字符串：交给解释器（bailout），避免在此处复刻 float/bigint/null 全语义 */
     return NULL_VAL;
 }
 

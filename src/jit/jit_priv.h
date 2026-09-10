@@ -203,6 +203,7 @@ int jit_debug_on(void);
 void jit_ft_profile_dump(void);
 void jit_bailout_debug(int64_t rsp_val);
 Value jit_callout_index(Value obj_val, Value idx_val);
+Value jit_callout_concat(Value a, Value b);
 int jit_callout_array_append(Value arr_val, Value value);
 Value jit_callout_dict_set(Value dict_val, Value key_val, Value value);
 int jit_callout_index_set(Value obj_val, Value idx_val, Value value);
