@@ -1,0 +1,115 @@
+// test_jit_float_continue.leno
+// JIT 回归测试：int->float 隐式转换(OP_CAST_FLOAT) + continue/break 控制流
+// 覆盖以下 bug 场景：
+//   1. emit_cvtsi2sd 前缀 0x66(CVTPI2PD) vs 0xF2(CVTSI2SD)
+//   2. jit_scan.c if/continue 双路径 vstack 双重计数导致 max_vstack 低估
+// 注意：Leno 的 for 0:100 包含结束值，即 i=0..100 共 101 次
+
+// ---- 测试1: int->float 转换后浮点比较 (OP_CAST_FLOAT + OP_GT_FLOAT) ----
+func test_cast_compare(): int {
+    float threshold = 50.0
+    int gt_count = 0
+    for 0 : 100 to i {
+        float fi = i      // OP_CAST_FLOAT: int -> float
+        if fi > threshold { gt_count = gt_count + 1 }
+    }
+    // i=51..100 => 50 个大于 threshold
+    assert_eq(gt_count, 50)
+    return 0
+}
+
+// ---- 测试2: continue 在 float 比较条件中 ----
+func test_float_continue(): int {
+    float limit = 30.0
+    int sum = 0
+    for 0 : 100 to i {
+        float fi = i
+        if fi > limit { continue }
+        sum = sum + i
+    }
+    // i=0..30 => sum = 0+1+...+30 = 465
+    assert_eq(sum, 465)
+    return 0
+}
+
+// ---- 测试3: break 在 float 比较条件中 ----
+func test_float_break(): int {
+    float target = 42.0
+    int found = -1
+    for 0 : 100 to i {
+        float fi = i
+        if fi >= target { found = i; break }
+    }
+    assert_eq(found, 42)
+    return 0
+}
+
+// ---- 测试4: continue 在 int 比较条件中 (对照) ----
+func test_int_continue(): int {
+    int limit = 30
+    int sum = 0
+    for 0 : 100 to i {
+        if i > limit { continue }
+        sum = sum + i
+    }
+    assert_eq(sum, 465)
+    return 0
+}
+
+// ---- 测试5: continue + break 混合, float 转换 ----
+func test_mixed_flow(): int {
+    float cutoff = 25.0
+    float stop = 75.0
+    int count = 0
+    int first_past = -1
+    for 0 : 100 to i {
+        float fi = i
+        if fi >= stop { break }
+        if fi < cutoff { continue }
+        count = count + 1
+        if first_past == -1 { first_past = i }
+    }
+    // i=25..74 => count=50, first_past=25
+    assert_eq(count, 50)
+    assert_eq(first_past, 25)
+    return 0
+}
+
+// ---- 测试6: int 除法结果赋值给 float (OP_CAST_FLOAT 路径) ----
+func test_int_div_to_float(): int {
+    int q = 10 / 3            // int/int -> int 3
+    float result = q          // OP_CAST_FLOAT: int 3 -> float 3.0
+    assert_eq(result, 3.0)
+    // 确认 float 除法正常
+    float fr = 10.0 / 3.0
+    assert_true(fr > 3.0)
+    assert_true(fr < 4.0)
+    return 0
+}
+
+// ---- 测试7: 嵌套循环 + continue 内层 ----
+func test_nested_continue(): int {
+    int total = 0
+    float skip = 5.0
+    for 0 : 10 to y {
+        for 0 : 10 to x {
+            float fx = x
+            if fx >= skip { continue }
+            total = total + 1
+        }
+    }
+    // 每行 x=0..4 => 5, 11行(0..10) => 55
+    assert_eq(total, 55)
+    return 0
+}
+
+// ---- 运行所有测试 ----
+test_cast_compare()
+test_float_continue()
+test_float_break()
+test_int_continue()
+test_mixed_flow()
+test_int_div_to_float()
+test_nested_continue()
+
+print("test_jit_float_continue passed")
