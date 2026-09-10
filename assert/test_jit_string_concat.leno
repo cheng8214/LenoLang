@@ -1,0 +1,73 @@
+// test_jit_string_concat.leno
+// JIT 回归测试：字符串索引（jit_callout_index OBJ_STRING 分支）+ 字符串拼接（jit_callout_concat 顺序）
+// 覆盖已修复 bug：
+//   1. jit_callout_index 缺 OBJ_STRING 分支 → hex[i] 返回 NULL_VAL → 误 bailout
+//   2. jit_callout_concat 参数顺序反 → 拼接镜像（新字符前置插入）
+// 触发路径：300 轮循环命中 JIT 热路径（>50），结构复刻 pbkdf2 bytes_to_hex
+import strings
+
+func hex_byte(int b):string {
+    var hex = "0123456789abcdef"
+    var hi = (b >> 4) & 0x0F
+    var lo = b & 0x0F
+    return hex[hi] + hex[lo]
+}
+
+// ---- 测试1：字符串索引单字符语义（OBJ_STRING callout 返回值）----
+func test_str_index_single():int {
+    var hex = "0123456789abcdef"
+    assert_eq(hex[0], "0")
+    assert_eq(hex[7], "7")
+    assert_eq(hex[10], "a")
+    assert_eq(hex[15], "f")
+    return 0
+}
+
+// ---- 测试2：hex_byte 拼接顺序（防镜像回归）----
+func test_hex_byte_order():int {
+    assert_eq(hex_byte(0x00), "00")
+    assert_eq(hex_byte(0x2A), "2a")
+    assert_eq(hex_byte(0xC3), "c3")
+    assert_eq(hex_byte(0xFF), "ff")
+    return 0
+}
+
+// ---- 测试3：热循环内索引+拼接（触发 JIT），期望串独立构造 ----
+// 修复前该循环每轮必 bailout；若 concat 参数顺序回归，result 会镜像错乱
+func test_hot_concat_correct():int {
+    var hex = "0123456789abcdef"
+    var result = ""
+    for 300 to i { result += hex[i & 15] }
+    // 期望 = 表重复 18 次(288 字符) + 前 12 字符 = 300 字符，独立于被测路径构造
+    Array[string] segs = []
+    for 18 to k { segs.add("0123456789abcdef") }
+    var expect = strings.join(segs, "") + "0123456789ab"
+    assert_eq(result.len(), 300)
+    assert_eq(result.len(), expect.len())
+    assert_eq(result, expect)
+    return 0
+}
+
+// ---- 测试4：复刻 pbkdf2 bytes_to_hex（修复前 FAIL 的正确输出向量）----
+func bytes_to_hex(Array[int] bytes):string {
+    var result = ""
+    for bytes.len() to i { result += hex_byte(bytes[i]) }
+    return result
+}
+
+func test_bytes_to_hex_pbkdf():int {
+    var bytes = [0x42, 0x07, 0x89, 0x27, 0x2f, 0xa0, 0x94, 0xb8,
+                 0xd8, 0x78, 0x41, 0xe9, 0xe3, 0x6a, 0xd1, 0x73,
+                 0xe3, 0xfb, 0xb3, 0x85, 0x5e, 0xf9, 0x9e, 0x28, 0x6c]
+    assert_eq(bytes_to_hex(bytes),
+              "420789272fa094b8d87841e9e36ad173e3fbb3855ef99e286c")
+    return 0
+}
+
+// ---- 运行所有测试 ----
+test_str_index_single()
+test_hex_byte_order()
+test_hot_concat_correct()
+test_bytes_to_hex_pbkdf()
+
+print("test_jit_string_concat passed")
