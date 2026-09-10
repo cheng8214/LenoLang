@@ -89,13 +89,13 @@ int compile_loop(CodegenCtx* ctx) {
      * jit_bailout_site BEFORE the conditional jump so the bailout debug
      * log can pinpoint which instruction overflowed.
      */
-     #define EMIT_BAILOUT_SITE_WRITE(site) do { \
-        emit_byte(cb, 0x41); emit_byte(cb, 0x57); /* push r9 */ \
-        emit_mov_reg_imm64(cb, JIT_R9, (uint64_t)(uintptr_t)&jit_bailout_site); \
-        emit_byte(cb, 0x41); emit_byte(cb, 0xC7); emit_byte(cb, 0x01); \
-        emit_uint32(cb, (uint32_t)(int32_t)(site)); /* mov dword [r9], imm32 */ \
-        emit_byte(cb, 0x41); emit_byte(cb, 0x5F); /* pop r9 */ \
-     } while(0)
+      #define EMIT_BAILOUT_SITE_WRITE(site) do { \
+         emit_push_reg(cb, JIT_R9);  /* push r9 — save globals ptr */ \
+         emit_mov_reg_imm64(cb, JIT_R9, (uint64_t)(uintptr_t)&jit_bailout_site); \
+         emit_byte(cb, 0x41); emit_byte(cb, 0xC7); emit_byte(cb, 0x01); \
+         emit_uint32(cb, (uint32_t)(int32_t)(site)); /* mov dword [r9], imm32 */ \
+         emit_pop_reg(cb, JIT_R9);   /* pop r9 — restore globals ptr */ \
+      } while(0)
 
      #define EMIT_INT48_CHECK(site) do { \
         emit_mov_rr(cb, JIT_R8, JIT_RAX);  \
