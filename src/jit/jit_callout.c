@@ -181,7 +181,175 @@ if (obj->type == OBJ_DICT) {
         ObjString* result = str_new(&str->chars[byte_offset], char_bytes);
         return val_obj((Object*)result);
     }
-    error_add_at(ERR_RUNTIME, 0, 0, "索引操作需要数组、字典或字符串");
+    /* ---- 以下分支对齐解释器 op_utils.inc OP_INDEX 语义 ---- */
+    if (obj->type == OBJ_MODULE) {
+        if (!val_is_obj(idx_val) || val_as_obj(idx_val)->type != OBJ_STRING) {
+            error_add_at(ERR_RUNTIME, 0, 0, "模块键必须是字符串");
+            return NULL_VAL;
+        }
+        ObjModule* module = (ObjModule*)obj;
+        return dict_get(module->exports, idx_val);
+    }
+    if (obj->type == OBJ_STRUCT) {
+        if (!val_is_obj(idx_val) || val_as_obj(idx_val)->type != OBJ_STRING) {
+            error_add_at(ERR_RUNTIME, 0, 0, "struct 字段名必须是字符串");
+            return NULL_VAL;
+        }
+        ObjStruct* st = (ObjStruct*)obj;
+        ObjString* key = (ObjString*)val_as_obj(idx_val);
+        /* 1) 字段 */
+        int field_idx = struct_get_field_index(st->def, key->chars);
+        if (field_idx >= 0) {
+            return struct_get_field(st, field_idx);
+        }
+        /* 2) 用户定义方法 → 预创建闭包 */
+        ObjStructDef* def = st->def;
+        for (int i = 0; i < def->method_count; i++) {
+            if (strcmp(def->methods[i].name, key->chars) == 0) {
+                return val_obj((Object*)def->methods[i].closure);
+            }
+        }
+        /* 3) 原生方法 → 绑定方法 */
+        ObjNative* native_method = struct_find_method(key->chars);
+        if (native_method) {
+            return val_obj((Object*)bound_method_new(obj_val, native_method));
+        }
+        char msg[256];
+        snprintf(msg, sizeof(msg), "struct '%s' 没有字段或方法 '%s'", st->def->name, key->chars);
+        error_add_at(ERR_RUNTIME, 0, 0, msg);
+        return NULL_VAL;
+    }
+    if (obj->type == OBJ_CSTRUCT) {
+        if (!val_is_obj(idx_val) || val_as_obj(idx_val)->type != OBJ_STRING) {
+            error_add_at(ERR_RUNTIME, 0, 0, "cstruct 字段名必须是字符串");
+            return NULL_VAL;
+        }
+        ObjCStruct* cst = (ObjCStruct*)obj;
+        ObjString* key = (ObjString*)val_as_obj(idx_val);
+        /* 1) 字段 */
+        int field_idx = cstruct_get_field_index(cst->def, key->chars);
+        if (field_idx >= 0) {
+            return cstruct_get_field_value(cst, field_idx);
+        }
+        /* 2) 原生方法 → 绑定方法 */
+        ObjNative* native_method = cstruct_find_method(key->chars);
+        if (native_method) {
+            return val_obj((Object*)bound_method_new(obj_val, native_method));
+        }
+        char msg[256];
+        snprintf(msg, sizeof(msg), "cstruct '%s' 没有字段或方法 '%s'", cst->def->name, key->chars);
+        error_add_at(ERR_RUNTIME, 0, 0, msg);
+        return NULL_VAL;
+    }
+    if (obj->type == OBJ_ENUM_DEF) {
+        if (!val_is_obj(idx_val) || val_as_obj(idx_val)->type != OBJ_STRING) {
+            error_add_at(ERR_RUNTIME, 0, 0, "enum 成员名必须是字符串");
+            return NULL_VAL;
+        }
+        ObjEnumDef* def = (ObjEnumDef*)obj;
+        ObjString* key = (ObjString*)val_as_obj(idx_val);
+        int64_t value = enum_def_get_member_value(def, key->chars);
+        if (value < 0) {
+            char msg[256];
+            snprintf(msg, sizeof(msg), "enum '%s' 没有成员 '%s'", def->name, key->chars);
+            error_add_at(ERR_RUNTIME, 0, 0, msg);
+            return NULL_VAL;
+        }
+        return val_int_safe(value);
+    }
+    if (obj->type == OBJ_CSTRUCT_DEF) {
+        if (!val_is_obj(idx_val) || val_as_obj(idx_val)->type != OBJ_STRING) {
+            error_add_at(ERR_RUNTIME, 0, 0, "cstruct 方法名必须是字符串");
+            return NULL_VAL;
+        }
+        ObjCStructDef* def = (ObjCStructDef*)obj;
+        ObjString* key = (ObjString*)val_as_obj(idx_val);
+        ObjNative* native_method = cstruct_find_method(key->chars);
+        if (native_method) {
+            return val_obj((Object*)bound_method_new(obj_val, native_method));
+        }
+        char msg[256];
+        snprintf(msg, sizeof(msg), "cstruct '%s' 没有方法 '%s'", def->name, key->chars);
+        error_add_at(ERR_RUNTIME, 0, 0, msg);
+        return NULL_VAL;
+    }
+    if (obj->type == OBJ_CSTRUCT_ARRAY_VIEW) {
+        if (!val_is_num(idx_val)) {
+            error_add_at(ERR_RUNTIME, 0, 0, "cstruct 数组索引必须是数字");
+            return NULL_VAL;
+        }
+        int index = (int)value_to_double(idx_val);
+        ObjCStructArrayView* view = (ObjCStructArrayView*)obj;
+        if (index < 0 || index >= view->array_dim) {
+            error_add_at(ERR_RUNTIME, 0, 0, "cstruct 数组索引越界");
+            return NULL_VAL;
+        }
+        ObjCStruct* cst = view->cstruct;
+        CStructFieldInfo* field = &cst->def->fields[view->field_index];
+        uint8_t* element_addr = cst->data + field->offset + (index * view->element_size);
+        if (view->element_type == TYPE_CSTRUCT && field->struct_name) {
+            ObjCStructDef* nested_def = cstruct_def_find(field->struct_name);
+            if (nested_def) {
+                ObjCStruct* nested_obj = (ObjCStruct*)gc_alloc(sizeof(ObjCStruct), OBJ_CSTRUCT);
+                if (nested_obj) {
+                    nested_obj->def = nested_def;
+                    nested_obj->data = element_addr;
+                    nested_obj->owns_memory = 0;
+                    return val_obj((Object*)nested_obj);
+                }
+            }
+        }
+        Value result = val_null();
+        switch (view->element_type) {
+            case TYPE_I8:   result = val_num((double)(*(int8_t*)element_addr)); break;
+            case TYPE_U8:   result = val_num((double)(*(uint8_t*)element_addr)); break;
+            case TYPE_I16:  result = val_num((double)(*(int16_t*)element_addr)); break;
+            case TYPE_U16:  result = val_num((double)(*(uint16_t*)element_addr)); break;
+            case TYPE_I32:  result = val_num((double)(*(int32_t*)element_addr)); break;
+            case TYPE_U32:  result = val_num((double)(*(uint32_t*)element_addr)); break;
+            case TYPE_I64:  result = val_num((double)(*(int64_t*)element_addr)); break;
+            case TYPE_U64:  result = val_num((double)(*(uint64_t*)element_addr)); break;
+            case TYPE_F32:  result = val_num((double)(*(float*)element_addr)); break;
+            case TYPE_F64:  result = val_num((*(double*)element_addr)); break;
+            case TYPE_BOOL: result = val_bool(*(uint8_t*)element_addr); break;
+            case TYPE_C_INT:       result = val_num((double)(*(int*)element_addr)); break;
+            case TYPE_C_UINT:      result = val_num((double)(*(unsigned int*)element_addr)); break;
+            case TYPE_C_LONG:      result = val_num((double)(*(long*)element_addr)); break;
+            case TYPE_C_ULONG:     result = val_num((double)(*(unsigned long*)element_addr)); break;
+            case TYPE_C_LONGLONG:  result = val_num((double)(*(long long*)element_addr)); break;
+            case TYPE_C_ULONGLONG: result = val_num((double)(*(unsigned long long*)element_addr)); break;
+            case TYPE_C_SIZE:      result = val_num((double)(*(size_t*)element_addr)); break;
+            case TYPE_C_SSIZE:     result = val_num((double)(*(ssize_t*)element_addr)); break;
+            default: break;
+        }
+        return result;
+    }
+    if (obj->type == OBJ_CSTRUCT_ARRAY) {
+        if (val_is_num(idx_val)) {
+            int index = (int)value_to_double(idx_val);
+            ObjCStructArray* array = (ObjCStructArray*)obj;
+            if (index < 0 || index >= array->count) {
+                error_add_at(ERR_RUNTIME, 0, 0, "cstruct 数组索引越界");
+                return NULL_VAL;
+            }
+            ObjCStruct* element = cstruct_array_get(array, index);
+            return element ? val_obj((Object*)element) : val_null();
+        }
+        if (val_is_obj(idx_val) && val_as_obj(idx_val)->type == OBJ_STRING) {
+            ObjString* key = (ObjString*)val_as_obj(idx_val);
+            ObjNative* native_method = cstruct_find_method(key->chars);
+            if (native_method) {
+                return val_obj((Object*)bound_method_new(obj_val, native_method));
+            }
+            char msg[256];
+            snprintf(msg, sizeof(msg), "cstruct 数组没有方法 '%s'", key->chars);
+            error_add_at(ERR_RUNTIME, 0, 0, msg);
+            return NULL_VAL;
+        }
+        error_add_at(ERR_RUNTIME, 0, 0, "cstruct 数组索引必须是数字或方法名");
+        return NULL_VAL;
+    }
+    error_add_at(ERR_RUNTIME, 0, 0, "索引操作需要数组、字典、字符串、struct、模块或 cstruct");
     return NULL_VAL;
 }
 
@@ -280,12 +448,100 @@ int jit_callout_index_set(Value obj_val, Value idx_val, Value value) {
         if (index >= arr->count) arr->count = index + 1;
         return 0;
     }
-    if (obj->type == OBJ_DICT) {
+if (obj->type == OBJ_DICT) {
         ObjDict* dict = (ObjDict*)obj;
         dict_set(dict, idx_val, value);
         return 0;
     }
-    error_add_at(ERR_RUNTIME, 0, 0, "索引赋值需要数组或字典");
+    /* ---- 以下分支对齐解释器 op_index_slice.inc DO_INDEX_SET 语义 ---- */
+    if (obj->type == OBJ_STRUCT) {
+        if (!val_is_obj(idx_val) || val_as_obj(idx_val)->type != OBJ_STRING) {
+            error_add_at(ERR_RUNTIME, 0, 0, "struct 字段名必须是字符串");
+            return -1;
+        }
+        ObjStruct* struct_obj = (ObjStruct*)obj;
+        ObjStructDef* def = struct_obj->def;
+        ObjString* field_name = (ObjString*)val_as_obj(idx_val);
+        int field_idx = struct_get_field_index(def, field_name->chars);
+        if (field_idx < 0) {
+            error_add_at(ERR_RUNTIME, 0, 0, "struct 字段不存在");
+            return -1;
+        }
+        TypeKind expected_type = def->fields[field_idx].type;
+        if (expected_type == TYPE_FLOAT && val_is_int(value)) {
+            value = val_float((double)val_as_int(value));
+        } else if (expected_type == TYPE_FLOAT && val_is_bigint(value)) {
+            value = val_float(bigint_to_double(val_as_bigint(value)));
+        }
+        struct_set_field(struct_obj, field_idx, value);
+        return 0;
+    }
+    if (obj->type == OBJ_CSTRUCT) {
+        if (!val_is_obj(idx_val) || val_as_obj(idx_val)->type != OBJ_STRING) {
+            error_add_at(ERR_RUNTIME, 0, 0, "cstruct 字段名必须是字符串");
+            return -1;
+        }
+        ObjCStruct* cstruct_obj = (ObjCStruct*)obj;
+        ObjCStructDef* def = cstruct_obj->def;
+        ObjString* field_name = (ObjString*)val_as_obj(idx_val);
+        int field_idx = cstruct_get_field_index(def, field_name->chars);
+        if (field_idx < 0) {
+            error_add_at(ERR_RUNTIME, 0, 0, "cstruct 字段不存在");
+            return -1;
+        }
+        CStructFieldInfo* field = &def->fields[field_idx];
+        if (val_is_int(value) && (field->type == TYPE_F32 || field->type == TYPE_F64)) {
+            value = val_float((double)val_as_int(value));
+        } else if (val_is_float(value) && (field->type >= TYPE_I8 && field->type <= TYPE_U64)) {
+            value = val_num(val_as_num(value));
+        }
+        cstruct_set_field_value(cstruct_obj, field_idx, value);
+        return 0;
+    }
+    if (obj->type == OBJ_CSTRUCT_ARRAY_VIEW) {
+        if (!val_is_num(idx_val)) {
+            error_add_at(ERR_RUNTIME, 0, 0, "cstruct 数组索引必须是数字");
+            return -1;
+        }
+        int index = (int)value_to_double(idx_val);
+        ObjCStructArrayView* view = (ObjCStructArrayView*)obj;
+        if (index < 0 || index >= view->array_dim) {
+            error_add_at(ERR_RUNTIME, 0, 0, "cstruct 数组索引越界");
+            return -1;
+        }
+        ObjCStruct* cst = view->cstruct;
+        CStructFieldInfo* field = &cst->def->fields[view->field_index];
+        uint8_t* element_addr = cst->data + field->offset + (index * view->element_size);
+        if (val_is_int(value) && (view->element_type == TYPE_F32 || view->element_type == TYPE_F64)) {
+            value = val_float((double)val_as_int(value));
+        } else if (val_is_float(value) && (view->element_type >= TYPE_I8 && view->element_type <= TYPE_U64)) {
+            value = val_num(val_as_num(value));
+        }
+        switch (view->element_type) {
+            case TYPE_I8:   *(int8_t*)element_addr = (int8_t)val_as_num(value); break;
+            case TYPE_U8:   *(uint8_t*)element_addr = (uint8_t)val_as_num(value); break;
+            case TYPE_I16:  *(int16_t*)element_addr = (int16_t)val_as_num(value); break;
+            case TYPE_U16:  *(uint16_t*)element_addr = (uint16_t)val_as_num(value); break;
+            case TYPE_I32:  *(int32_t*)element_addr = (int32_t)val_as_num(value); break;
+            case TYPE_U32:  *(uint32_t*)element_addr = (uint32_t)val_as_num(value); break;
+            case TYPE_I64:  *(int64_t*)element_addr = (int64_t)val_as_num(value); break;
+            case TYPE_U64:  *(uint64_t*)element_addr = (uint64_t)val_as_num(value); break;
+            case TYPE_F32:  *(float*)element_addr = (float)val_as_num(value); break;
+            case TYPE_F64:  *(double*)element_addr = (double)val_as_num(value); break;
+            case TYPE_BOOL: *(uint8_t*)element_addr = val_as_num(value) != 0 ? 1 : 0; break;
+            case TYPE_C_INT:       *(int*)element_addr = (int)val_as_num(value); break;
+            case TYPE_C_UINT:      *(unsigned int*)element_addr = (unsigned int)val_as_num(value); break;
+            case TYPE_C_LONG:      *(long*)element_addr = (long)val_as_num(value); break;
+            case TYPE_C_ULONG:     *(unsigned long*)element_addr = (unsigned long)val_as_num(value); break;
+            case TYPE_C_LONGLONG:  *(long long*)element_addr = (long long)val_as_num(value); break;
+            case TYPE_C_ULONGLONG: *(unsigned long long*)element_addr = (unsigned long long)val_as_num(value); break;
+            case TYPE_C_SIZE:      *(size_t*)element_addr = (size_t)val_as_num(value); break;
+            case TYPE_C_SSIZE:     *(ssize_t*)element_addr = (ssize_t)val_as_num(value); break;
+            default: break;
+        }
+        return 0;
+    }
+    error_add_at(ERR_RUNTIME, 0, 0, "索引赋值需要数组、字典、struct 或 cstruct");
     return -1;
 }
 
