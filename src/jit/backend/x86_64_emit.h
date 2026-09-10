@@ -450,11 +450,12 @@ static inline void emit_ucomisd_rr(CodeBuf* cb, int xmm1, int xmm2) {
     emit_byte(cb, modrm(3, xmm1 & 7, xmm2 & 7));
 }
 
-/* CVTSI2SD xmm, r/m64 — convert int64 to double */
+/* CVTSI2SD xmm, r/m64 — convert int64 to double
+ * Mandatory prefix is 0xF2 (NOT 0x66, which would be CVTPI2PD from MMX). */
 static inline void emit_cvtsi2sd(CodeBuf* cb, int xmm, int reg) {
     int r = (xmm >> 3) & 1;
     int b = (reg >> 3) & 1;
-    emit_byte(cb, 0x66);
+    emit_byte(cb, 0xF2);
     emit_byte(cb, rex(1, r, 0, b));
     emit_byte(cb, 0x0F);
     emit_byte(cb, 0x2A);

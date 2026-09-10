@@ -294,6 +294,14 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
     const uint8_t* end = body_start + body_size;
     int vstack = 0;
 
+    /* Dead-code tracking: after OP_JUMP/OP_RETURN, code is unreachable
+     * until a forward jump target. This prevents double-counting POPs
+     * in mutually exclusive truthy/falsey paths (if/else, if/continue). */
+    typedef struct { int target_bc; int vstack; } ScanJumpTarget;
+    ScanJumpTarget fwd_targets[64];
+    int fwd_count = 0;
+    int dead = 0;
+
     while (ip < end) {
         uint8_t op = *ip;
         int size = opcode_size(ip);
@@ -308,6 +316,26 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                 fprintf(stderr, "[JIT-DEBUG] scan FAIL: ip+size>end for opcode %d at offset %d, size=%d, remaining=%d\n", op, (int)(ip - body_start), size, (int)(end - ip));
             r->capable = 0;
             return;
+        }
+
+        int bc_off = (int)(ip - body_start);
+
+        /* If in dead code, check whether we've reached a recorded
+         * forward-jump target. If so, restore vstack and resume live
+         * scanning. If not, skip this instruction entirely. */
+        if (dead) {
+            int found = 0;
+            for (int i = 0; i < fwd_count; i++) {
+                if (fwd_targets[i].target_bc == bc_off) {
+                    vstack = fwd_targets[i].vstack;
+                    dead = 0;
+                    found = 1;
+                    break;
+                }
+            }
+            if (!found) {
+                goto scan_next;
+            }
         }
 
         switch (op) {
@@ -422,11 +450,13 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
             case OP_RETURN:
                 /* pop 1 (return value) → vstack-- */
                 vstack--;
+                dead = 1;
                 break;
             case OP_RETURN_MULTI: {
                 /* opcode + count(1); pop count values */
                 uint8_t rc = ip[1];
                 vstack -= rc;
+                dead = 1;
                 break;
             }
             case OP_MODULE_CALL: {
@@ -619,12 +649,32 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                 break;
             }
             /* 5-byte jumps */
-            case OP_JUMP:
-                /* no stack change */
+            case OP_JUMP: {
+                /* Forward jump: record target+vstack for restore,
+                 * then mark code as dead until target is reached */
+                int32_t off = rd_int32(ip + 1);
+                int target_bc = bc_off + size + off;
+                if (fwd_count < 64) {
+                    fwd_targets[fwd_count].target_bc = target_bc;
+                    fwd_targets[fwd_count].vstack = vstack;
+                    fwd_count++;
+                }
+                dead = 1;
                 break;
-            case OP_JUMP_IF_FALSE: case OP_JUMP_IF_TRUE:
-                /* peek only — VM uses vm_stack_peek_fast, explicit POP follows */
+            }
+            case OP_JUMP_IF_FALSE: case OP_JUMP_IF_TRUE: {
+                /* Conditional jump: record target+vstack for restore
+                 * (falsey path arrives with condition still on stack).
+                 * Fall-through (truthy) path is still live. */
+                int32_t off = rd_int32(ip + 1);
+                int target_bc = bc_off + size + off;
+                if (fwd_count < 64) {
+                    fwd_targets[fwd_count].target_bc = target_bc;
+                    fwd_targets[fwd_count].vstack = vstack;
+                    fwd_count++;
+                }
                 break;
+            }
             case OP_LOOP:
                 /* Back-edge: may be outer (last instruction) or inner (mid-body).
                  * Codegen uses offmap_lookup to find the correct jump target
@@ -651,14 +701,27 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                 uint16_t sb = rd_short(ip + 4);
                 mark_local(r, sa);
                 mark_local(r, sb);
-                /* no stack change */
+                /* Conditional jump: record target for restore */
+                int32_t off = rd_int32(ip + 6);
+                int target_bc = bc_off + size + off;
+                if (fwd_count < 64) {
+                    fwd_targets[fwd_count].target_bc = target_bc;
+                    fwd_targets[fwd_count].vstack = vstack;
+                    fwd_count++;
+                }
                 break;
             }
             case OP_CMPJMP_LG_INT: {
                 uint16_t sa = rd_short(ip + 2);
                 mark_local(r, sa);
-                /* global is not a local, no need to mark */
-                /* no stack change */
+                /* Conditional jump: record target for restore */
+                int32_t off = rd_int32(ip + 6);
+                int target_bc = bc_off + size + off;
+                if (fwd_count < 64) {
+                    fwd_targets[fwd_count].target_bc = target_bc;
+                    fwd_targets[fwd_count].vstack = vstack;
+                    fwd_count++;
+                }
                 break;
             }
             /* Shift immediates — supported, pop 1 push 1 */
