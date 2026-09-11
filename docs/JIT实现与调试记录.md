@@ -331,10 +331,16 @@ for each local i:
 | ------ | --- | --- | --- |
 | — | OP\_ADD | 1 | int 加 → `ADDSD` → `jit_callout_concat`（字符串拼接；双方都非字符串时返回 NULL_VAL → bailout） |
 | — | OP\_SUB | 1 | int 减 → `SUBSD` → bailout（BigInt / 类型错误交解释器） |
-| — | OP\_LT | 1 | int48 有符号 `cmp` → `UCOMISD`+\\(SETB\\)（NaN → bailout）→ bailout |
-| — | OP\_GT | 1 | 同上，`SETG` / \\(SETA\\) |
-| — | OP\_LE | 1 | 同上，`SETLE` / \\(SETBE\\) |
-| — | OP\_GE | 1 | 同上，`SETGE` / \\(SETAE\\) |
+| — | OP\_LT | 1 | int48 有符号 `cmp` → `UCOMISD`+\\(SETB\\)（无序再 AND 非 PF）→ NaN-boxed 才 bailout |
+| — | OP\_GT | 1 | 同上，`SETG` / \\(SETA\\)（JA 在无序时天然为 0） |
+| — | OP\_LE | 1 | 同上，`SETLE` / \\(SETBE\\)（无序再 AND 非 PF） |
+| — | OP\_GE | 1 | 同上，`SETGE` / \\(SETAE\\)（JAE 在无序时天然为 0） |
+
+> **NaN 语义**（2026-09-11 第二轮）：`OP_*_FLOAT` 与通用 `OP_LT..OP_GE` 的 float 慢路径
+> 都按 IEEE 处理——与 NaN 比较除 `!=` 外一律 false。`UCOMISD` 无序时置 `PF=ZF=CF=1`，
+> 故 `JA/JAE`（GT/GE）天然给出 false，而 `EQ/LT/LE` 的 setcc 会误判为真，
+> 必须再 `SETNP DL; AND AL, DL` 把无序压成 false。旧实现遇 NaN 直接 bailout，
+> 会把整个热循环永久踢回解释器（SDL 鼠标坐标可能为 NaN）。
 
 > **实现要点（必须遵守）**：两个操作数要在**任何类型判定跳转之前**全部取到寄存器
 > （`TOS_CONSUME_*`），否则从第一个判定跳走时会跳过第二个操作数的 `pop`，
@@ -528,15 +534,18 @@ int tmp3_disp = -8 * (n + sr->max_vstack + 3);
 | site 取值 | 含义 |
 | --- | --- |
 | `>= 0` | 溢出/截断类检查，值 = 触发指令的 `bc_off`（内联帧含 `0x10000 * depth` 基址） |
-| `-1` | JIT 序言的「进入自增」int48 检查 |
-| `-2` | JIT 序言的 `step <= 0` 检查 |
-| `<= -1000` | 其它原因（NaN 比较、callout 失败、类型不支持、concat 失败…），`bc_off = -1000 - site` |
+| `-1` | JIT 序言的「进入自增」int48 溢出检查 |
+| `-2` | JIT 序言的 `step == 0` 检查（VM 语义：不进循环） |
+| `-3` | JIT 序言的 `step` 是 float 检查（类型位图为 1） |
+| `<= -1000` | 其它原因（callout 失败、类型不支持、concat 失败、`step==0`/float step 的 `FOR_PREP` 侧…），`bc_off = -1000 - site` |
 
 对应宏：`EMIT_INT48_CHECK(bc_off)` / `EMIT_INT64_OVF_CHECK(bc_off)` 写非负值；
 `EMIT_BAILOUT_SITE_NONOVF(bc_off)` 写负值；两者都在 `backend/x86_64.c`。
+`jit_print_stats` 退出时会用缓存条目里的 `last_bailout_site/bc_off/fn` 打印一行
+「哪个函数、哪个循环、什么原因」，不必再手工换算 site。
 
 > **历史坑**：加上这套约定之前，只有 int48 检查会写 site，其它守卫
-> （`OP_ADD` concat 返回 NULL、`OP_SUB` 非 int48、浮点 NaN 比较、callout 失败…）
+> （`OP_ADD` concat 返回 NULL、`OP_SUB` 非 int48、callout 失败、`FOR_PREP` 步长…）
 > 都不写，于是日志里的 `site=` 是**上一次写入的残留值**，会把排查方向带偏
 > （实例：ripple 示例 9 次 bailout 全被报成 `OP_FOR_LOOP` 的偏移，真正原因是
 > `1.0 - maths.abs(diff)` 的通用 `OP_SUB`）。
@@ -552,7 +561,9 @@ int tmp3_disp = -8 * (n + sr->max_vstack + 3);
 [JIT-DEBUG] compile FAIL at body_start=654, back_edge=2
 [JIT-DEBUG] BAILOUT site=372 RSP=... RAX=...
 [JIT-DEBUG] BAILOUT(nonovf) bc_off=159 RSP=... RAX=...
-[JIT-DEBUG] BAILOUT(prologue:step<=0) RSP=... RAX=0
+[JIT-DEBUG] BAILOUT(prologue:step==0) RSP=... RAX=0
+[JIT-DEBUG] BAILOUT(prologue:step-is-float) RSP=... RAX=...
+[JIT-DEBUG] BAILOUT(prologue:entry-increment) RSP=... RAX=...
 [JIT-DEBUG] BAILOUT at body_start=462, count=1
 [JIT-DEBUG] FRAME-DEAD exit (2) at body_start=...
 ```
@@ -736,7 +747,8 @@ XORPD (0F 57)           → 0x66 前缀
 
 **修复**（2026-09-11）：见第 4 节「通用算术与比较」。用 `EMIT_NUM_TO_XMM` 把 int48
 操作数 `CVTSI2SD` 提升、裸 double 直通，float 混合表达式不再回退解释器。
-实测：`Executed: 424 → 5173`，`Bailouts: 9 → 3`（残留 3 次来自负步长 for，见第 12 节），
+实测：`Executed: 424 → 5173`，`Bailouts: 9 → 3`；残留 3 次来自负步长 for，
+已由后续提交 `701692d4` 的倒序 for 支持消除，最终 **`Bailouts: 0`**。
 `ripple` 的内层像素循环第一次真正跑在机器码上。
 
 **教训**：**「通用」opcode 是 JIT 覆盖率的隐形缺口**。写 `a op b` 时只要有一侧类型
@@ -825,10 +837,13 @@ Results: 263 passed, 0 failed (total 263)
 
 `LenoSDL3/examples/特效动画/ripple_image.leno` JIT 统计对比：
 
-| 指标 | 修复前 | 修复后 |
-| --- | --- | --- |
-| Executed | 424 | 5173 |
-| Bailouts | 9 | 3（全部为负步长 for，见第 12 节） |
+| 指标 | 修复前 | 通用 float 快路径 | 倒序 for 支持后 |
+| --- | --- | --- | --- |
+| Executed | 424 | 5173 | 3557 |
+| Bailouts | 9 | 3（全部为负步长 for） | **0** |
+
+> `Executed` 随机波动较大（波纹位置随机 → 各循环达到热度阈值的时间不同），
+> 关注 `Bailouts` 归零即可。
 
 > 该示例自带的 `平均 FPS` 无法体现收益：它每帧 `SDL3.delay(16 - elapsed)` 且开了
 > VSync，帧时间被钉在 16ms。要看收益请用 `Executed`/`Bailouts` 或纯计算基准。
@@ -946,10 +961,10 @@ push rax    ; 内存写
 
 ## 12. 当前未解决问题
 
-1. **负步长 for 循环无法 JIT**（`step <= 0`，已知限制非 bug）：序言与 `OP_FOR_PREP`
-   都假设 `step > 0`（比较方向随之固定），日志现在能直接报
-   `[JIT-DEBUG] BAILOUT(prologue:step<=0)`。要支持需在序言 / `FOR_PREP` / `FOR_LOOP`
-   三处按 step 符号运行时分叉比较方向。典型触发：`for n-1 : 0 : -1`（LenoSDL3 内部辅助函数）
+1. **`step == 0` / `step` 是 float 的 for 循环无法 JIT**（`site -2` / `site -3`，已知限制非 bug）：
+   `step == 0` 的 VM 语义是「不进循环」，float 步长无法走 int48 快路径判断方向，
+   两者都显式 bailout 交回解释器。**正/负步长（±1/±2/±3）现已全部支持**，
+   日志直接报 `BAILOUT(prologue:step==0)` / `(prologue:step-is-float)`
 2. **通用 `OP_MUL` / `OP_MOD` / `OP_EQ` / `OP_NE` 未实现**：出现在循环体里会导致**整个循环**
    被 scan 拒绝（不是 bailout），排查看 `scan FAIL: unknown opcode N`。
    补齐思路与 2026-09-11 的 `OP_SUB`/`OP_ADD` 一致（复用 `EMIT_NUM_TO_XMM`）
@@ -961,6 +976,10 @@ push rax    ; 内存写
 
 > 已关闭的旧条目：
 >
+> - ~~负步长 for 循环无法 JIT~~ → 已支持倒序 for：序言 / `FOR_PREP` / `FOR_LOOP`
+>   三处按 step 符号分流比较方向（`701692d4`）
+> - ~~浮点 NaN 比较 bailout~~ → 已按 IEEE 语义：`EQ/LT/LE` 用 `SETNP` 屏蔽无序，
+>   `GT/GE` 的 `JA/JAE` 天然正确（`701692d4`）
 > - ~~try/catch 循环不可 JIT~~ → `OP_TRY/CATCH/FINALLY/END_TRY` 现为 no-op（第 5 节）
 > - ~~含函数调用的循环无法 JIT~~ → 已实现被调函数内联 + 函数级 JIT（13.8）
 > - ~~通用算术/比较遇 float 即 bailout~~ → 已补 float 快路径（8.15）

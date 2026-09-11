@@ -39,7 +39,7 @@ int32_t jit_bailout_site = 0;
 void jit_bailout_debug(int64_t rsp_val) {
     /* jit_bailout_site 编码约定（见 EMIT_BAILOUT_SITE_WRITE / _NONOVF）：
      *   >= 0         : 溢出/截断类检查，值 = 触发指令的 bc_off
-     *   -999 .. -1   : JIT 序言（-1 进入自增、-2 step ≤ 0）
+     *   -999 .. -1   : JIT 序言（-1 进入自增溢出、-2 step == 0、-3 step 是 float）
      *   <= -1000     : 其它原因，bc_off = -1000 - site */
     int site = (int)jit_bailout_site;
     if (site <= -1000) {
@@ -48,8 +48,12 @@ void jit_bailout_debug(int64_t rsp_val) {
                 (long long)rsp_val, (unsigned long long)rsp_val,
                 (long long)jit_bailout_rax, (unsigned long long)jit_bailout_rax);
     } else if (site < 0) {
+        /* 序言三态：-1 进入自增 int48 溢出、-2 step == 0、-3 step 是 float */
+        const char* why = (site == -2) ? "step==0"
+                        : (site == -3) ? "step-is-float"
+                        : "entry-increment";
         fprintf(stderr, "[JIT-DEBUG] BAILOUT(prologue:%s) RSP=%lld (0x%llx) RAX=%lld (0x%llx)\n",
-                (site == -2) ? "step<=0" : "entry-increment",
+                why,
                 (long long)rsp_val, (unsigned long long)rsp_val,
                 (long long)jit_bailout_rax, (unsigned long long)jit_bailout_rax);
     } else {
