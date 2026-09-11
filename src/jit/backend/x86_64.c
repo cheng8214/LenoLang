@@ -284,10 +284,12 @@ int compile_loop(CodegenCtx* ctx) {
      * 全局量，但用负值区间区分原因，便于 [JIT-DEBUG] 日志定位：
      *   site >= 0          : 溢出/截断类检查，值 = 触发指令的 bc_off
      *                        （内联帧含 0x10000 * depth 基址）
-     *   site ∈ [-999, -1]  : JIT 序言（-1 = 进入自增/step 方向、-2 = step ≤ 0）
+     *   site ∈ [-999, -1]  : JIT 序言（-1 = 进入自增溢出、-2 = step == 0、-3 = step 为 float）
      *   site <= -1000      : 其它原因（NaN 比较、callout 失败、类型不支持等），
      *                        对应 bc_off = -1000 - site
      * 每个 bailout 守卫都在跳转前写一次 site，因此 site 永远反映真正失败的那条指令。 */
+    /* 序言 bailout 的 site 取值（jit_print_stats 会翻译成可读原因）：
+     *   -1 = 进入自增 int48 溢出，-2 = step == 0，-3 = step 是 float */
     #define EMIT_BAILOUT_SITE_NONOVF(off) EMIT_BAILOUT_SITE_WRITE(-1000 - (int)(off))
 
     /* Callout argument registers per target ABI:
@@ -474,7 +476,12 @@ int compile_loop(CodegenCtx* ctx) {
         cb->buf[next_patch] = (uint8_t)(cb->len - (next_patch + 1));
     }
 
-    /* ---- Step direction check (for OP_FOR_LOOP) ---- */
+    /* ---- Step check (for OP_FOR_LOOP) ----
+     * 支持正/负步长（倒序循环）：方向在入口处按 step 符号分流，不在此 bailout。
+     * 仅两种情况仍回退解释器：
+     *   site -3: step 是 float（类型位图为 1）——JIT 的 FOR_LOOP 走 int48 快路径，
+     *            无法对 double 位模式做方向/比较判断；
+     *   site -2: step == 0 —— VM 语义为“不进循环”，交给解释器处理。 */
     if (sr->back_edge_type == 2) {
         int step_scratch = cur_local_map[sr->for_step_slot];
         if (step_scratch < 0) {
@@ -483,19 +490,28 @@ int compile_loop(CodegenCtx* ctx) {
             return 0;  /* shouldn't happen */
         }
         int disp = scratch_disp(step_scratch);
+
+        /* 类型位图：bit(step_scratch) == 1 表示该 local 是 float → bailout */
+        emit_byte(cb, 0x48);
+        emit_byte(cb, 0x0F);
+        emit_byte(cb, 0xBA);
+        emit_byte(cb, 0xE3);  /* ModRM(11, 4, 3) = BT RBX, imm8 */
+        emit_byte(cb, (uint8_t)(step_scratch & 0xFF));
+        EMIT_BAILOUT_SITE_WRITE(-3);
+        int float_patch = emit_jcc(cb, 0x82);  /* JC → bailout */
+        patch_add(ctx, float_patch, -1, 0);
+
         /* Load step: mov rax, [rbp + disp] */
         if (disp >= -128 && disp <= 127) {
             emit_mov_reg_mem8(cb, JIT_RAX, JIT_RBP, (int8_t)disp);
         } else {
             emit_mov_reg_mem32(cb, JIT_RAX, JIT_RBP, disp);
         }
-        /* Test: cmp rax, 0; jle bailout */
-        /* test rax, rax */
+        /* step == 0 → bailout (site -2) */
         emit_test_rr(cb, JIT_RAX, JIT_RAX);
-        /* jle bailout (0x8E = JLE) — site -2 = 序言 step ≤ 0 */
         EMIT_BAILOUT_SITE_WRITE(-2);
-        int patch = emit_jcc(cb, 0x8E);
-        patch_add(ctx, patch, -1, 0);  /* bailout */
+        int zero_patch = emit_jcc(cb, 0x84);  /* JE → bailout */
+        patch_add(ctx, zero_patch, -1, 0);
     }
 
     /* ---- FOR_LOOP first-iteration increment + check ---- */
@@ -517,38 +533,67 @@ int compile_loop(CodegenCtx* ctx) {
         int d_st = scratch_disp(si_st);
         int d_en = scratch_disp(si_en);
 
-        /* mov rax, [rbp+d_lv] (loop_var) */
-        if (d_lv >= -128 && d_lv <= 127)
-            emit_mov_reg_mem8(cb, JIT_RAX, JIT_RBP, (int8_t)d_lv);
-        else
-            emit_mov_reg_mem32(cb, JIT_RAX, JIT_RBP, d_lv);
-        /* mov rdx, [rbp+d_st] (step) */
+        /* loop_var += step，再与 end 比较；退出跳转由调用处按方向选择
+         * （正向用 JG/JGE，反向用 JL/JLE），同一段比较代码两种方向复用。 */
+        #define EMIT_FOR_ENTRY_STEP() do { \
+            /* mov rax, [rbp+d_lv] (loop_var) */ \
+            if (d_lv >= -128 && d_lv <= 127) \
+                emit_mov_reg_mem8(cb, JIT_RAX, JIT_RBP, (int8_t)d_lv); \
+            else \
+                emit_mov_reg_mem32(cb, JIT_RAX, JIT_RBP, d_lv); \
+            /* mov rdx, [rbp+d_st] (step) */ \
+            if (d_st >= -128 && d_st <= 127) \
+                emit_mov_reg_mem8(cb, JIT_RDX, JIT_RBP, (int8_t)d_st); \
+            else \
+                emit_mov_reg_mem32(cb, JIT_RDX, JIT_RBP, d_st); \
+            /* add rax, rdx (loop_var += step) */ \
+            emit_add_rr(cb, JIT_RAX, JIT_RDX); \
+            /* -1: this check is the loop-entry increment, bc_off not yet in scope */ \
+            EMIT_INT48_CHECK(-1); \
+            /* mov [rbp+d_lv], rax (store back) */ \
+            if (d_lv >= -128 && d_lv <= 127) \
+                emit_mov_mem8_reg(cb, JIT_RBP, (int8_t)d_lv, JIT_RAX); \
+            else \
+                emit_mov_mem32_reg(cb, JIT_RBP, d_lv, JIT_RAX); \
+            /* mov rdx, [rbp+d_en] (end) */ \
+            if (d_en >= -128 && d_en <= 127) \
+                emit_mov_reg_mem8(cb, JIT_RDX, JIT_RBP, (int8_t)d_en); \
+            else \
+                emit_mov_reg_mem32(cb, JIT_RDX, JIT_RBP, d_en); \
+            /* cmp rax, rdx */ \
+            emit_cmp_rr(cb, JIT_RAX, JIT_RDX); \
+        } while(0)
+
+        /* 读取 step 符号：step < 0 走反向入口（支持倒序 for 循环） */
         if (d_st >= -128 && d_st <= 127)
-            emit_mov_reg_mem8(cb, JIT_RDX, JIT_RBP, (int8_t)d_st);
+            emit_mov_reg_mem8(cb, JIT_RAX, JIT_RBP, (int8_t)d_st);
         else
-            emit_mov_reg_mem32(cb, JIT_RDX, JIT_RBP, d_st);
-        /* add rax, rdx (loop_var += step) */
-        emit_add_rr(cb, JIT_RAX, JIT_RDX);
-        /* -1: this check is the loop-entry increment, bc_off not yet in scope */
-        EMIT_INT48_CHECK(-1);
-        /* mov [rbp+d_lv], rax (store back) */
-        if (d_lv >= -128 && d_lv <= 127)
-            emit_mov_mem8_reg(cb, JIT_RBP, (int8_t)d_lv, JIT_RAX);
-        else
-            emit_mov_mem32_reg(cb, JIT_RBP, d_lv, JIT_RAX);
-        /* mov rdx, [rbp+d_en] (end) */
-        if (d_en >= -128 && d_en <= 127)
-            emit_mov_reg_mem8(cb, JIT_RDX, JIT_RBP, (int8_t)d_en);
-        else
-            emit_mov_reg_mem32(cb, JIT_RDX, JIT_RBP, d_en);
-        /* cmp rax, rdx */
-        emit_cmp_rr(cb, JIT_RAX, JIT_RDX);
+            emit_mov_reg_mem32(cb, JIT_RAX, JIT_RBP, d_st);
+        emit_test_rr(cb, JIT_RAX, JIT_RAX);
+        int neg_step_patch = emit_jcc(cb, 0x88);  /* JS -> negative entry */
+
+        /* ---- 正向入口 (step > 0) ---- */
+        EMIT_FOR_ENTRY_STEP();
         /* If condition NOT met, jump to exit (loop is done) */
         /* step > 0, exclusive: JGE (loop_var >= end) → exit */
         /* step > 0, inclusive: JG  (loop_var > end) → exit  */
         uint8_t cc_exit = sr->for_inclusive ? 0x8F /*JG*/ : 0x8D /*JGE*/;
         for_loop_entry_patches[for_loop_patch_cnt++] = emit_jcc(cb, cc_exit);
         /* Will be patched to exit_mc later */
+
+        int entry_done_patch = emit_jmp(cb);      /* 正向入口结束，跳过反向块 */
+
+        /* ---- 反向入口 (step < 0)：退出条件与正向相反 ---- */
+        patch_rel32(cb, neg_step_patch, cb->len);
+        EMIT_FOR_ENTRY_STEP();
+        uint8_t cc_exit_neg = sr->for_inclusive ? 0x8C /*JL*/ : 0x8E /*JLE*/;
+        if (for_loop_patch_cnt < 8)
+            for_loop_entry_patches[for_loop_patch_cnt++] = emit_jcc(cb, cc_exit_neg);
+        else
+            emit_jcc(cb, cc_exit_neg);
+        patch_rel32(cb, entry_done_patch, cb->len);
+
+        #undef EMIT_FOR_ENTRY_STEP
     }
 
     /* ---- Loop body start ---- */

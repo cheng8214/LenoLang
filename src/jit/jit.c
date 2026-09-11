@@ -354,6 +354,14 @@ int jit_try_hot_loop(CallFrame* frame, VM* vm_ptr, int32_t loop_offset, int back
     /* Sanity check */
     if (body_size <= 0 || body_size > 4096) return 0;
 
+    /* Loop identity (for bailout diagnostics in stats output).
+     * 必须在执行 JIT 之前取好：callout 可能触发 vm_grow_frames 重分配 frames，
+     * 执行后 frame 指针可能失效。 */
+    const char* loop_fn = "<main>";
+    if (frame->closure && frame->closure->function && frame->closure->function->name)
+        loop_fn = frame->closure->function->name;
+    const int loop_bc_off = (int)(body_start - frame->chunk->code);
+
     /* Cache lookup */
     int idx = cache_hash(body_start);
     JitCacheEntry* entry = &jit_state.cache[idx];
@@ -452,17 +460,37 @@ fprintf(stderr, "[JIT-DEBUG] EXEC call #%d, fn=%p, locals=%p\n",
          * 不计入 bailout；返回 2 让调用方重载 frame 后继续执行 */
         if (jit_debug_on())
             fprintf(stderr, "[JIT-DEBUG] FRAME-DEAD exit (%d) at body_start=%d\n",
-                    result, (int)(body_start - frame->chunk->code));
+                    result, loop_bc_off);
         return 2;
     } else {
         /* Bailout — let interpreter handle it */
         entry->bailout_count++;
         jit_state.bailout_count++;
+        /* 记录定位信息：stats 输出可看出是哪个循环、哪条字节码触发的 */
+        entry->last_bailout_site = (int)jit_bailout_site;
+        entry->last_bailout_bc_off = loop_bc_off;
+        entry->last_bailout_fn = loop_fn;
         if (jit_debug_on())
             fprintf(stderr, "[JIT-DEBUG] BAILOUT at body_start=%d, count=%d\n",
-                    (int)(body_start - frame->chunk->code), entry->bailout_count);
+                    loop_bc_off, entry->bailout_count);
         return 0;
     }
+}
+
+/* 把 jit_bailout_site 的编码翻译成可读原因（约定见 x86_64.c） */
+static void jit_bailout_reason(int site, char* out, size_t out_sz) {
+    if (site >= 0)
+        snprintf(out, out_sz, "int48 溢出/截断 @bc_off=%d", site);
+    else if (site <= -1000)
+        snprintf(out, out_sz, "非溢出类 @bc_off=%d", -1000 - site);
+    else if (site == -3)
+        snprintf(out, out_sz, "序言: step 为 float（非 int 循环）");
+    else if (site == -2)
+        snprintf(out, out_sz, "序言: step == 0");
+    else if (site == -1)
+        snprintf(out, out_sz, "序言: 进入自增 int48 溢出");
+    else
+        snprintf(out, out_sz, "序言: 未知 site=%d", site);
 }
 
 void jit_print_stats(void) {
@@ -470,6 +498,18 @@ void jit_print_stats(void) {
     fprintf(stderr, "  Compiled: %d\n", jit_state.compile_count);
     fprintf(stderr, "  Executed: %d\n", jit_state.execute_count);
     fprintf(stderr, "  Bailouts: %d\n", jit_state.bailout_count);
+    /* 列出发生过 bailout 的循环及其触发点，便于定位未消除的 bailout */
+    if (jit_state.bailout_count > 0) {
+        for (int i = 0; i < JIT_CACHE_SIZE; i++) {
+            JitCacheEntry* e = &jit_state.cache[i];
+            if (e->bailout_count <= 0) continue;
+            char reason[96];
+            jit_bailout_reason(e->last_bailout_site, reason, sizeof(reason));
+            fprintf(stderr, "  Bailout: fn='%s' loop_bc=%d x%d — %s\n",
+                    e->last_bailout_fn ? e->last_bailout_fn : "?",
+                    e->last_bailout_bc_off, e->bailout_count, reason);
+        }
+    }
     fprintf(stderr, "  Enabled:  %s\n", jit_state.enabled ? "yes" : "no");
     int compiled = 0;
     int tried = 0;

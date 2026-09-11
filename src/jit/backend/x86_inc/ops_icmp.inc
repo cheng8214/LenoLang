@@ -97,7 +97,7 @@
             /* ---- 通用比较（对齐解释器 OP_LT..OP_GE）----
              * 1) int48 对 int48 → 有符号整数比较
              * 2) 两边都不是 NaN-boxed → float 比较（UCOMISD + 无符号 CC）；
-             *    结果无序（NaN）→ bailout，与 OP_*_FLOAT 保持同一简化
+             *    无序（NaN）按 IEEE 语义：< > <= >= 一律 false（不再 bailout）
              * 3) 任一是 NaN-boxed（字符串/bigint/类型错误）→ bailout ---- */
             case OP_LT: case OP_GT: case OP_LE: case OP_GE: {
                 uint8_t cc;    /* 整数比较用有符号 CC（CMP 后 SF/OF 有效） */
@@ -145,15 +145,21 @@
                 EMIT_NUM_TO_XMM(0, JIT_RAX, JIT_R8, tagged_jcc_a);   /* xmm0 = a */
                 EMIT_NUM_TO_XMM(1, JIT_RDX, JIT_R8, tagged_jcc_b);   /* xmm1 = b */
                 emit_ucomisd_rr(cb, 0, 1);                           /* flags: a ? b */
-                int jp_patch = emit_jcc(cb, 0x8A);   /* JP：无序（NaN）→ bailout */
+                /* NaN（无序）按 IEEE 语义处理，不再 bailout：
+                 * JA/JAE 在无序时结果为 0；JB/JBE 的 setcc 会给出 1，
+                 * 需再 AND「非 PF」把无序压成 false */
                 emit_setcc_reg(cb, fcc, JIT_RAX);
+                if (op == OP_LT || op == OP_LE) {
+                    emit_setcc_reg(cb, 0x0B, JIT_RDX);   /* SETNP DL */
+                    emit_byte(cb, 0x20);                 /* AND AL, DL */
+                    emit_byte(cb, modrm(3, JIT_RDX & 7, JIT_RAX & 7));
+                }
                 emit_movzx_r32_r8(cb, JIT_RAX, JIT_RAX);
                 skip_bail_jmp = emit_jmp(cb);
 
-                /* ---- bailout 桩 ---- */
+                /* ---- bailout 桩（仅 NaN-boxed 操作数：字符串/bigint 等）---- */
                 patch_rel32(cb, tagged_jcc_a, cb->len);
                 patch_rel32(cb, tagged_jcc_b, cb->len);
-                patch_rel32(cb, jp_patch, cb->len);
                 EMIT_BAILOUT_SITE_NONOVF(bc_off);
                 {
                     int _p = emit_jmp(cb);

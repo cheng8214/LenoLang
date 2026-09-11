@@ -46,6 +46,14 @@ typedef struct {
     int            tried;       /* 1 = compilation attempted (don't retry) */
     int            bailout_count;/* times JIT bailed out                */
     int            back_edge;   /* OP_LOOP=1, OP_FOR_LOOP=2            */
+    /* ---- 最近一次 bailout 的定位信息（jit_print_stats 输出）----
+     * site 编码约定见 x86_64.c 的 EMIT_BAILOUT_SITE_*：
+     *   >= 0       : 溢出/截断类检查，值 = 触发指令的 bc_off
+     *   -999..-1   : JIT 序言（-1 进入自增溢出、-2 step == 0、-3 step 为 float）
+     *   <= -1000   : 其它原因，bc_off = -1000 - site */
+    int            last_bailout_site;
+    int            last_bailout_bc_off; /* 循环体起始字节码偏移 */
+    const char*    last_bailout_fn;     /* 所属函数名（main 为 "<main>"） */
 } JitCacheEntry;
 
 /* ---- JIT state ---- */
