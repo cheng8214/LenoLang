@@ -6,6 +6,7 @@
 #define LENO_JIT_PRIV_H
 
 #include "jit.h"
+#include "../include/native.h"   /* ModuleMethodMeta（模块方法编译期解析用） */
 #include <stdint.h>
 /* ---- CodeBuf ---- */
 typedef struct {
@@ -215,6 +216,25 @@ Value jit_callout_invoke_method(int64_t* vstack_top, int arg_count, const uint8_
 Value jit_callout_global_func(int64_t* vstack_top, int arg_count, uint16_t func_slot);
 Value jit_callout_get_field_fast(Value obj_val, uint8_t field_idx);
 Value jit_callout_module_call(int64_t* vstack_top, int arg_count, uint16_t module_idx, uint16_t method_idx, Chunk* chunk);
+
+/* ---- 模块方法编译期解析（codegen 用）----
+ * 旧实现让 callout 每次调用都做「字符串哈希 + strcmp」查模块方法表（解释器侧
+ * 有 inline cache 规避，JIT 没有）。现在在 JIT 编译期解析一次，把
+ * ModuleMethodMeta* 直接嵌进机器码。模块方法表在启动注册后不再变更
+ * （native_reset_registry 未被调用），指针长期有效。 */
+ModuleMethodMeta* jit_resolve_module_method(Chunk* chunk, uint16_t module_idx, uint16_t method_idx);
+
+/* Callout：已解析 meta 的模块方法调用（无运行时查找） */
+Value jit_callout_module_call_meta(int64_t* vstack_top, int arg_count, ModuleMethodMeta* meta);
+
+/* ---- 通用「数值薄调用」桥（jit_callout.c）----
+ * 模块方法若注册为「全部参数 + 返回值都是 float」（param_types/return_type），
+ * codegen 可以把实参当 double 直接放进 xmm0..3 并调用下面的薄桥：
+ *   - 桥内部仍调用该模块原本的 NativeFn（数学实现只有模块里那一份）
+ *   - 省掉 callout 的 vstack 数组、逐参数装箱、模块方法查表
+ *   - native 内部抛错 → 置 jit_callout_failed，codegen 检查后 bailout
+ * 支持 1..4 个 double 参数（xmm0..3；首参寄存器位放桥函数指针）。 */
+void* jit_thin_bridge_for(int arity);
 Value jit_callout_array_new(int64_t* vstack_top, uint16_t count);
 Value jit_callout_call_native(int64_t* vstack_top, ObjNative* native, uint16_t arg_count);
 Value jit_callout_get_property(int64_t* vstack_top, uint16_t name_const_idx, uint16_t call_or_args, Chunk* chunk);

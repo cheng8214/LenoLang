@@ -1059,6 +1059,100 @@ Value jit_callout_get_field_fast(Value obj_val, uint8_t field_idx) {
     return struct_get_field(obj, field_idx);
 }
 
+/* ---- 模块方法编译期解析 ----
+ * 从 chunk 常量表取「模块名/方法名」字符串，查一次模块方法表并返回 meta。
+ * codegen 把结果指针嵌进机器码；解析失败返回 NULL，此时 codegen 退回
+ * 通用 callout（保留原有的报错信息与语义）。 */
+ModuleMethodMeta* jit_resolve_module_method(Chunk* chunk, uint16_t module_idx, uint16_t method_idx) {
+    if (!chunk) return NULL;
+    if (module_idx >= (uint16_t)chunk->const_cnt || method_idx >= (uint16_t)chunk->const_cnt)
+        return NULL;
+    Value module_val = chunk->constants[module_idx];
+    Value method_val = chunk->constants[method_idx];
+    if (!val_is_obj(module_val) || val_as_obj(module_val)->type != OBJ_STRING ||
+        !val_is_obj(method_val) || val_as_obj(method_val)->type != OBJ_STRING)
+        return NULL;
+    return native_find_module_method(((ObjString*)val_as_obj(module_val))->chars,
+                                     ((ObjString*)val_as_obj(method_val))->chars);
+}
+
+/* ---- 通用「数值薄调用」桥 ----
+ * 供 codegen 对「全 float 参数 + float 返回」的模块方法使用（如 maths.*）。
+ *
+ * 调用约定（两个 ABI 都成立的关键：double 参数放最前面）：
+ *   - 第 1..N 个参数是 double → xmm0..xmm(N-1)（Win64 与 SysV 一致）
+ *   - 最后一个参数是 NativeFn 指针：
+ *       Win64：按“位置”分配整型寄存器，第 N+1 位 → RDX/R8/R9
+ *       SysV ：按“第几个整型参数”分配，它是第 1 个整型参数 → RDI
+ *     （若把 fn 放最前，Win64 会把第 1 个 double 参数放到 xmm1，两边不一致）
+ *   - 返回 double 在 xmm0
+ * 桥内部把参数装箱后调用模块原本的 NativeFn，因此数学实现只有模块里那一份。 */
+static double jit_thin_bridge_impl(NativeFn fn, int argc, const double* argv) {
+    VM* vm = jit_callout_vm;
+    Value args[4];
+    for (int i = 0; i < argc; i++) args[i] = val_float(argv[i]);
+    Value result = fn(argc, args);
+    if (vm && vm->has_exception) {
+        jit_callout_failed = 1;
+        if (jit_debug_on()) fprintf(stderr, "[JIT-CALLOUT-FAIL] thin bridge: native raised exception\n");
+        return 0.0;
+    }
+    return val_as_num(result);
+}
+
+double jit_thin_f1(double a, NativeFn fn) {
+    double v[1]; v[0] = a;
+    return jit_thin_bridge_impl(fn, 1, v);
+}
+double jit_thin_f2(double a, double b, NativeFn fn) {
+    double v[2]; v[0] = a; v[1] = b;
+    return jit_thin_bridge_impl(fn, 2, v);
+}
+double jit_thin_f3(double a, double b, double c, NativeFn fn) {
+    double v[3]; v[0] = a; v[1] = b; v[2] = c;
+    return jit_thin_bridge_impl(fn, 3, v);
+}
+
+void* jit_thin_bridge_for(int arity) {
+    switch (arity) {
+        case 1: return (void*)jit_thin_f1;
+        case 2: return (void*)jit_thin_f2;
+        case 3: return (void*)jit_thin_f3;
+        default: return NULL;   /* 0 或 >3 个 double 参数：走通用 callout */
+    }
+}
+
+/* Callout: 已解析 meta 的模块方法调用（快路径，无哈希/strcmp 查找）。
+ * 与 jit_callout_module_call 的语义完全一致，只是省掉了解析步骤。 */
+Value jit_callout_module_call_meta(int64_t* vstack_top, int arg_count,
+                                   ModuleMethodMeta* meta) {
+    if (!meta || !meta->function) {
+        error_add_at(ERR_RUNTIME, 0, 0, "OP_MODULE_CALL: 模块方法未解析");
+        return NULL_VAL;
+    }
+    if (arg_count > 16) {
+        error_add_at(ERR_RUNTIME, 0, 0, "模块方法参数过多");
+        return NULL_VAL;
+    }
+
+    /* JIT 虚拟栈向低地址增长：vstack_top[0] = TOS（最后压入的实参），
+     * native 期望 args[0] = 第一个实参。 */
+    Value args[16];
+    for (int i = 0; i < arg_count; i++) {
+        args[i] = jit_raw_to_value(vstack_top[arg_count - 1 - i]);
+    }
+
+    Value result = meta->function(arg_count, args);
+
+    if (jit_callout_vm && jit_callout_vm->has_exception) {
+        jit_callout_failed = 1;
+        if (jit_debug_on()) fprintf(stderr, "[JIT-CALLOUT-FAIL] module_call(meta): native raised exception\n");
+        return NULL_VAL;
+    }
+
+    return result;
+}
+
 /* Callout: OP_MODULE_CALL (native module method like maths.sqrt).
  * Looks up module+method from callee chunk constants, calls the native
  * function, and returns the result. No VM re-entry needed. */

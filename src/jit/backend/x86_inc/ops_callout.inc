@@ -281,6 +281,58 @@
                         fprintf(stderr, "[JIT-DEBUG] call_native: unresolved native at compile time\n");
                     return 0;  /* bail out → interpreter keeps semantics */
                 }
+                /* ---- 内联快速路径：_int / _float（单参数数值转换）----
+                 * 这两个原语在热循环里极其常见（如 _int(x) 取像素下标），而
+                 * 通用 callout 每次要付 ~23ns 的装箱/调用开销。这里直接生成
+                 * CVTTSD2SI / CVTSI2SD（语义与 types.c 的 native_to_int/_float
+                 * 一致：int 原样、float 按 (int) 截断 / 提升为 double）；
+                 * 遇到 NaN-boxed 的其它类型（bool/null/string/bigint/ptr）
+                 * 则 bailout 交回解释器，保证语义与报错信息不变。 */
+                if (arg_count == 1 && native->name &&
+                    (strcmp(native->name, "_int") == 0 || strcmp(native->name, "_float") == 0)) {
+                    int is_int_cast = (strcmp(native->name, "_int") == 0);
+                    TOS_CONSUME_RAX();          /* RAX = 参数原始值（int48 或裸 double） */
+                    /* int48 判定：mov r8,rax; sar r8,47; inc r8; cmp r8,1; ja .not_int */
+                    emit_mov_rr(cb, JIT_R8, JIT_RAX);
+                    emit_sar_imm(cb, JIT_R8, 47);
+                    emit_inc_reg(cb, JIT_R8);
+                    emit_cmp_reg_imm8(cb, JIT_R8, 1);
+                    int not_int_p = emit_jcc(cb, 0x87);
+                    if (is_int_cast) {
+                        /* _int(int) → 原样 */
+                        int done0 = emit_jmp(cb);
+                        patch_rel32(cb, not_int_p, cb->len);
+                        /* 非 int48：NaN-boxed → bailout（bool/null/string/bigint/ptr） */
+                        emit_mov_reg_imm64(cb, JIT_R8, JIT_NAN_SIG);
+                        emit_cmp_rr(cb, JIT_RAX, JIT_R8);
+                        EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                        int bail_p = emit_jcc(cb, 0x83);        /* jae（无符号）→ bailout */
+                        patch_add(ctx, bail_p, -1, 0);
+                        /* 裸 double → (int) 截断：movq xmm0,rax; cvttsd2si eax,xmm0; movsxd rax,eax */
+                        emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F);
+                        emit_byte(cb, 0x6E); emit_byte(cb, modrm(3, 0, JIT_RAX & 7));
+                        emit_byte(cb, 0xF2); emit_byte(cb, 0x0F); emit_byte(cb, 0x2C);
+                        emit_byte(cb, modrm(3, 0, JIT_RAX & 7));  /* cvttsd2si eax, xmm0 */
+                        emit_byte(cb, 0x48); emit_byte(cb, 0x63); emit_byte(cb, 0xC0); /* movsxd rax,eax */
+                        patch_rel32(cb, done0, cb->len);
+                    } else {
+                        /* _float(int) → cvtsi2sd xmm0,rax; movq rax,xmm0 */
+                        emit_cvtsi2sd(cb, 0, JIT_RAX);
+                        emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F);
+                        emit_byte(cb, 0x7E); emit_byte(cb, modrm(3, 0, 0));
+                        int done0 = emit_jmp(cb);
+                        patch_rel32(cb, not_int_p, cb->len);
+                        /* 非 int48：NaN-boxed → bailout；裸 double 原样保留 */
+                        emit_mov_reg_imm64(cb, JIT_R8, JIT_NAN_SIG);
+                        emit_cmp_rr(cb, JIT_RAX, JIT_R8);
+                        EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                        int bail_p = emit_jcc(cb, 0x83);
+                        patch_add(ctx, bail_p, -1, 0);
+                        patch_rel32(cb, done0, cb->len);
+                    }
+                    TOS_PRODUCE();
+                    break;                      /* arg_count == 1 → vstack 不变 */
+                }
                 TOS_SPILL();
                 EMIT_STORE_TMP(tmp1_disp, JIT_RSP);   /* vstack_top */
                 EMIT_CALLOUT_BEGIN();

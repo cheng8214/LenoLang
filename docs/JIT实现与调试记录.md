@@ -424,6 +424,10 @@ for each local i:
 
 > 注意：通用 `OP_MUL`/`OP_MOD`/`OP_EQ` 缺席会让**整个循环**被拒绝编译（不是 bailout），
 > 排查时看 `scan FAIL: unknown opcode N` 而不是 `BAILOUT`。
+>
+> 通用 `OP_MUL` 为什么会出现在字节码里（编译器 `AST_MODULE_CALL` 分支未写回
+> `ast->cached_type` → codegen 读到 TYPE_ANY → 发通用 opcode），以及模块调用
+> callout 的三项优化与性能数据，见 `docs/JIT模块调用优化与bailout排查记录.md`。
 
 ### 曾经"不支持"、现已支持（旧文档已过时）
 
