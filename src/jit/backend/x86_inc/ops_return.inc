@@ -117,6 +117,7 @@
                 emit_mov_reg_mem8(cb, JIT_RAX, JIT_R8, 0);
                 emit_test_rr(cb, JIT_RAX, JIT_RAX);
                 {
+                    EMIT_BAILOUT_SITE_NONOVF(bc_off);
                     int fail_patch = emit_jcc(cb, 0x85);  /* JNZ → bailout */
                     patch_add(ctx, fail_patch, -1, 0);
                 }

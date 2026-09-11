@@ -22,40 +22,60 @@
                 TOS_PRODUCE();
                 vstack--;
                 break;
-            /* ---- 通用 ADD：int fast path；任一操作数非 int48 → 字符串拼接
-             * callout（对齐解释器 OP_ADD：任一 ObjString 即拼接）。concat 返回
-             * NULL_VAL（双方均非字符串）→ bailout 回解释器保持原语义。---- */
+            /* ---- 通用 ADD（对齐解释器 OP_ADD 语义）----
+             * 1) int48 + int48 → 整数加（溢出检查；溢出交解释器走 BigInt）
+             * 2) 两边都不是 NaN-boxed（即都是裸数值）→ float 加
+             *    （int48 操作数用 CVTSI2SD 提升；结果保持 float，同 val_float）
+             * 3) 任一是 NaN-boxed（字符串/对象/null）→ concat callout
+             *    （任一 ObjString 即拼接；双方都非字符串时返回 NULL_VAL →
+             *     bailout 回解释器保持原语义）---- */
             case OP_ADD: {
-                int concat_jcc_r, concat_jcc_l, end_jmp;
+                int slow_jcc_b, slow_jcc_a;          /* 非 int48 → 慢路径 */
+                int tagged_jcc_r, tagged_jcc_l;      /* NaN-boxed → concat */
+                int end_jmp, skip_cat_jmp;
 
-                /* a → RAX，b → RDX */
+                /* b（右）→ RAX，a（左）→ RDX */
                 TOS_CONSUME_RAX();
                 TOS_CONSUME_TO(JIT_RDX);
 
-                /* b（RDX）非 int48 → concat 分支 */
+                /* b（RDX）非 int48 → 慢路径 */
                 emit_mov_rr(cb, JIT_R8, JIT_RDX);
                 emit_sar_imm(cb, JIT_R8, 47);
                 emit_inc_reg(cb, JIT_R8);
                 emit_cmp_reg_imm8(cb, JIT_R8, 1);
-                concat_jcc_r = emit_jcc(cb, 0x85);   /* jne concat */
+                slow_jcc_b = emit_jcc(cb, 0x87);     /* ja slow */
 
-                /* a（RAX）非 int48 → concat 分支 */
+                /* a（RAX）非 int48 → 慢路径 */
                 emit_mov_rr(cb, JIT_R8, JIT_RAX);
                 emit_sar_imm(cb, JIT_R8, 47);
                 emit_inc_reg(cb, JIT_R8);
                 emit_cmp_reg_imm8(cb, JIT_R8, 1);
-                concat_jcc_l = emit_jcc(cb, 0x85);   /* jne concat */
+                slow_jcc_a = emit_jcc(cb, 0x87);     /* ja slow */
 
                 /* int 快路径 */
                 emit_add_rr(cb, JIT_RAX, JIT_RDX);
                 EMIT_INT48_CHECK(bc_off);
-                end_jmp = emit_jmp(cb);              /* 跳过 concat 段 */
+                end_jmp = emit_jmp(cb);              /* 跳过慢路径 */
+
+                /* ---- 慢路径：float 加 / concat 分派 ---- */
+                patch_rel32(cb, slow_jcc_b, cb->len);
+                patch_rel32(cb, slow_jcc_a, cb->len);
+
+                /* 两个操作数都规范化为 double；任一是 NaN-boxed 则跳去 concat */
+                EMIT_NUM_TO_XMM(0, JIT_RDX, JIT_R8, tagged_jcc_r);   /* xmm0 = a */
+                EMIT_NUM_TO_XMM(1, JIT_RAX, JIT_R8, tagged_jcc_l);   /* xmm1 = b */
+
+                emit_sse2_rr(cb, 0x58, 0, 1);        /* ADDSD xmm0, xmm1 */
+                /* movq rax, xmm0 */
+                emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F);
+                emit_byte(cb, 0x7E); emit_byte(cb, modrm(3, 0, 0));
+                skip_cat_jmp = emit_jmp(cb);         /* 跳过 concat 段 */
 
                 /* ---- concat 段：jit_callout_concat(result = a+b) ----
                  * 栈序：先弹右操作数（RAX），后弹左操作数（RDX）。
                  * concat(左, 右) → arg1=RDX(左)、arg2=RAX(右)。 */
-                patch_rel32(cb, concat_jcc_r, cb->len);
-                patch_rel32(cb, concat_jcc_l, cb->len);
+                patch_rel32(cb, tagged_jcc_r, cb->len);
+                patch_rel32(cb, tagged_jcc_l, cb->len);
 
                 /* RAX=右(raw), RDX=左(raw) → Value（int 转 int48 Value，对象保持） */
                 EMIT_RAW_TO_VALUE();                 /* RAX = Value(右) */
@@ -87,28 +107,80 @@
                     emit_byte(cb, modrm(3, 7, JIT_R8 & 7));
                     emit_uint32(cb, 0x0000FFF8);
                 }
-                { int _p = emit_jcc(cb, 0x84); patch_add(ctx, _p, -1, 0); }  /* je bailout */
+                {
+                    EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                    int _p = emit_jcc(cb, 0x84);   /* je → bailout（双方均非字符串） */
+                    patch_add(ctx, _p, -1, 0);
+                }
 
-                /* 成功：结果（字符串 Value）透传为 TOS，不做 int48 转换 */
+                /* 成功：结果透传为 TOS（float 为裸 double；concat 结果为字符串 Value，
+                 * 不做 int48 转换） */
                 patch_rel32(cb, end_jmp, cb->len);
+                patch_rel32(cb, skip_cat_jmp, cb->len);
                 TOS_PRODUCE();
                 vstack--;
                 break;
             }
-            /* ---- 通用 SUB：int only，输入或结果非 int48 → bailout ---- */
+            /* ---- 通用 SUB（对齐解释器 OP_SUB 语义）----
+             * 1) int48 - int48 → 整数减（溢出交解释器走 BigInt）
+             * 2) 两边都不是 NaN-boxed（即都是裸数值）→ float 减
+             *    （int48 操作数用 CVTSI2SD 提升；结果保持 float，同 val_float）
+             * 3) 任一是 NaN-boxed（对象/null/bool）→ bailout
+             *    （BigInt 运算与类型错误交回解释器）---- */
             case OP_SUB: {
-                /* 检查 b（RDX）是 int48 */
+                int slow_jcc_b, slow_jcc_a;          /* 非 int48 → 慢路径 */
+                int tagged_jcc_a, tagged_jcc_b;      /* NaN-boxed → bailout */
+                int end_jmp, skip_bail_jmp;
+
+                /* b（右）→ RDX，a（左）→ RAX。
+                 * 必须先把两个操作数都取到寄存器再判定类型：慢路径的 float 加
+                 * 需要完整的 a/b，若把判定夹在两次消费之间，从 b 的判定跳走时
+                 * a 还没被 pop 出来（被跳过的 pop 会让 RAX 停在 b 上）。 */
                 TOS_CONSUME_TO(JIT_RDX);
+                TOS_CONSUME_RAX();
+
+                /* b（RDX）非 int48 → 慢路径 */
                 emit_mov_rr(cb, JIT_R8, JIT_RDX);
                 emit_sar_imm(cb, JIT_R8, 47);
                 emit_inc_reg(cb, JIT_R8);
                 emit_cmp_reg_imm8(cb, JIT_R8, 1);
-                { int _p = emit_jcc(cb, 0x87); patch_add(ctx, _p, -1, 0); }
-                /* 检查 a（RAX）是 int48 */
-                TOS_CONSUME_RAX();
-                EMIT_INT48_CHECK(bc_off);
+                slow_jcc_b = emit_jcc(cb, 0x87);     /* ja slow */
+
+                /* a（RAX）非 int48 → 慢路径 */
+                emit_mov_rr(cb, JIT_R8, JIT_RAX);
+                emit_sar_imm(cb, JIT_R8, 47);
+                emit_inc_reg(cb, JIT_R8);
+                emit_cmp_reg_imm8(cb, JIT_R8, 1);
+                slow_jcc_a = emit_jcc(cb, 0x87);     /* ja slow */
+
+                /* int 快路径：RAX = a - b */
                 emit_sub_rr(cb, JIT_RAX, JIT_RDX);
                 EMIT_INT48_CHECK(bc_off);
+                end_jmp = emit_jmp(cb);
+
+                /* ---- 慢路径：float 减 ---- */
+                patch_rel32(cb, slow_jcc_b, cb->len);
+                patch_rel32(cb, slow_jcc_a, cb->len);
+
+                EMIT_NUM_TO_XMM(0, JIT_RAX, JIT_R8, tagged_jcc_a);   /* xmm0 = a */
+                EMIT_NUM_TO_XMM(1, JIT_RDX, JIT_R8, tagged_jcc_b);   /* xmm1 = b */
+                emit_sse2_rr(cb, 0x5C, 0, 1);        /* SUBSD xmm0, xmm1 */
+                /* movq rax, xmm0 */
+                emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F);
+                emit_byte(cb, 0x7E); emit_byte(cb, modrm(3, 0, 0));
+                skip_bail_jmp = emit_jmp(cb);
+
+                /* ---- bailout 桩：NaN-boxed 操作数交回解释器 ---- */
+                patch_rel32(cb, tagged_jcc_a, cb->len);
+                patch_rel32(cb, tagged_jcc_b, cb->len);
+                EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                {
+                    int _p = emit_jmp(cb);
+                    patch_add(ctx, _p, -1, 0);
+                }
+
+                patch_rel32(cb, end_jmp, cb->len);
+                patch_rel32(cb, skip_bail_jmp, cb->len);
                 TOS_PRODUCE();
                 vstack--;
                 break;

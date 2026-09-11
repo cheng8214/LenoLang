@@ -32,6 +32,7 @@
                 else
                     emit_mov_reg_mem32(cb, JIT_RAX, JIT_RBP, d_step);
                 emit_test_rr(cb, JIT_RAX, JIT_RAX);
+                EMIT_BAILOUT_SITE_NONOVF(bc_off);
                 int step_bail = emit_jcc(cb, 0x8E);  /* JLE → bailout */
                 patch_add(ctx, step_bail, -1, 0);
 

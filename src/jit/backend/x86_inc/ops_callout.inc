@@ -45,6 +45,7 @@
                 emit_mov_reg_mem8(cb, JIT_RAX, JIT_R8, 0);
                 emit_test_rr(cb, JIT_RAX, JIT_RAX);
                 {
+                    EMIT_BAILOUT_SITE_NONOVF(bc_off);
                     int fail_patch = emit_jcc(cb, 0x85);  /* JNZ → bailout */
                     patch_add(ctx, fail_patch, -1, 0);
                 }
@@ -196,6 +197,7 @@
                 emit_mov_reg_mem8(cb, JIT_RAX, JIT_R8, 0);  /* RAX = *flag */
                 emit_test_rr(cb, JIT_RAX, JIT_RAX);
                 {
+                    EMIT_BAILOUT_SITE_NONOVF(bc_off);
                     int fail_patch = emit_jcc(cb, 0x85);  /* JNZ → bailout */
                     patch_add(ctx, fail_patch, -1, 0);  /* bailout */
                 }
@@ -237,7 +239,11 @@
                 emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_callout_failed);
                 emit_mov_reg_mem8(cb, JIT_RAX, JIT_R8, 0);
                 emit_test_rr(cb, JIT_RAX, JIT_RAX);
-                { int fail_patch = emit_jcc(cb, 0x85); patch_add(ctx, fail_patch, -1, 0); }
+                {
+                    EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                    int fail_patch = emit_jcc(cb, 0x85);
+                    patch_add(ctx, fail_patch, -1, 0);
+                }
                 emit_xor_rr(cb, JIT_RAX, JIT_RAX);
                 emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
                 EMIT_LOAD_TMP(JIT_RAX, tmp2_disp);
@@ -287,7 +293,11 @@
                 emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_callout_failed);
                 emit_mov_reg_mem8(cb, JIT_RAX, JIT_R8, 0);
                 emit_test_rr(cb, JIT_RAX, JIT_RAX);
-                { int fail_patch = emit_jcc(cb, 0x85); patch_add(ctx, fail_patch, -1, 0); }
+                {
+                    EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                    int fail_patch = emit_jcc(cb, 0x85);
+                    patch_add(ctx, fail_patch, -1, 0);
+                }
                 emit_xor_rr(cb, JIT_RAX, JIT_RAX);
                 emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
                 EMIT_LOAD_TMP(JIT_RAX, tmp2_disp);
@@ -333,7 +343,11 @@
                 emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_callout_failed);
                 emit_mov_reg_mem8(cb, JIT_RAX, JIT_R8, 0);
                 emit_test_rr(cb, JIT_RAX, JIT_RAX);
-                { int fail_patch = emit_jcc(cb, 0x85); patch_add(ctx, fail_patch, -1, 0); }
+                {
+                    EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                    int fail_patch = emit_jcc(cb, 0x85);
+                    patch_add(ctx, fail_patch, -1, 0);
+                }
                 emit_xor_rr(cb, JIT_RAX, JIT_RAX);
                 emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
                 EMIT_LOAD_TMP(JIT_RAX, tmp2_disp);
@@ -387,6 +401,7 @@
                 emit_mov_reg_mem8(cb, JIT_RAX, JIT_R8, 0);
                 emit_test_rr(cb, JIT_RAX, JIT_RAX);
                 {
+                    EMIT_BAILOUT_SITE_NONOVF(bc_off);
                     int fail_patch = emit_jcc(cb, 0x85);  /* JNZ → bailout */
                     patch_add(ctx, fail_patch, -1, 0);
                 }

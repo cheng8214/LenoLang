@@ -37,10 +37,27 @@ int jit_debug_on(void) {
 int64_t jit_bailout_rax = 0;
 int32_t jit_bailout_site = 0;
 void jit_bailout_debug(int64_t rsp_val) {
-    fprintf(stderr, "[JIT-DEBUG] BAILOUT site=%d RSP=%lld (0x%llx) RAX=%lld (0x%llx)\n",
-            (int)jit_bailout_site,
-            (long long)rsp_val, (unsigned long long)rsp_val,
-            (long long)jit_bailout_rax, (unsigned long long)jit_bailout_rax);
+    /* jit_bailout_site 编码约定（见 EMIT_BAILOUT_SITE_WRITE / _NONOVF）：
+     *   >= 0         : 溢出/截断类检查，值 = 触发指令的 bc_off
+     *   -999 .. -1   : JIT 序言（-1 进入自增、-2 step ≤ 0）
+     *   <= -1000     : 其它原因，bc_off = -1000 - site */
+    int site = (int)jit_bailout_site;
+    if (site <= -1000) {
+        fprintf(stderr, "[JIT-DEBUG] BAILOUT(nonovf) bc_off=%d RSP=%lld (0x%llx) RAX=%lld (0x%llx)\n",
+                -1000 - site,
+                (long long)rsp_val, (unsigned long long)rsp_val,
+                (long long)jit_bailout_rax, (unsigned long long)jit_bailout_rax);
+    } else if (site < 0) {
+        fprintf(stderr, "[JIT-DEBUG] BAILOUT(prologue:%s) RSP=%lld (0x%llx) RAX=%lld (0x%llx)\n",
+                (site == -2) ? "step<=0" : "entry-increment",
+                (long long)rsp_val, (unsigned long long)rsp_val,
+                (long long)jit_bailout_rax, (unsigned long long)jit_bailout_rax);
+    } else {
+        fprintf(stderr, "[JIT-DEBUG] BAILOUT site=%d RSP=%lld (0x%llx) RAX=%lld (0x%llx)\n",
+                site,
+                (long long)rsp_val, (unsigned long long)rsp_val,
+                (long long)jit_bailout_rax, (unsigned long long)jit_bailout_rax);
+    }
 }
 
 /* ---- Reloaded locals pointer (updated by callouts after vm_call_value,

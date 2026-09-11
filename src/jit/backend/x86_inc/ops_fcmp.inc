@@ -17,6 +17,7 @@
                 /* Need to handle unordered (NaN) case: PF=1 means unordered */
                 /* For simplicity, if NaN, bail out (jp bailout) */
                 {
+                    EMIT_BAILOUT_SITE_NONOVF(bc_off);
                     int jp_patch = emit_jcc(cb, 0x8A);  /* JP (unordered/NaN) → bailout */
                     patch_add(ctx, jp_patch, -1, 0);
                 }

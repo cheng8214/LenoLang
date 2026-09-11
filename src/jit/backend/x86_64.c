@@ -244,6 +244,52 @@ int compile_loop(CodegenCtx* ctx) {
         cb->buf[_vp] = (uint8_t)(cb->len - (_vp + 1)); \
     } while(0)
 
+    /* ---- 裸数值 → double 规范化（通用算术/比较的 float 慢路径用）----
+     * JIT 虚拟栈上的值只有两种数值形态：
+     *   - int48：裸 int64 位模式（sar 47 + inc ≤ 1 可判定）
+     *   - float：裸 IEEE754 double 位模式
+     * 此外还有 NaN-boxed 的 Value（对象/null/bool，高 13 位全 1，即 >= 0xFFF8...）。
+     * 注意：负的裸 double（如 0xBFEF...）小于 0xFFF8...，只有 NaN 位模式才会
+     * 与 NaN-boxing 撞车，而 val_float() 已把这种 double 归一化为 QNAN。
+     *
+     *   dst_xmm   : 目标 XMM 号
+     *   src_reg   : 源 GPR
+     *   scratch   : 临时 GPR
+     *   tagged_var: 整型左值；写入「该操作数是 NaN-boxed」的 rel32 补丁偏移，
+     *               调用方随后用 patch_rel32(cb, tagged_var, cb->len) 落到
+     *               concat / bailout 标签。
+     *
+     * int48 走 CVTSI2SD 提升，裸 double 直接 MOVQ 搬位，NaN-boxed 跳走。 */
+    #define EMIT_NUM_TO_XMM(dst_xmm, src_reg, scratch_reg, tagged_var) do {      \
+        emit_mov_rr(cb, (scratch_reg), (src_reg));                               \
+        emit_sar_imm(cb, (scratch_reg), 47);                                     \
+        emit_inc_reg(cb, (scratch_reg));                                         \
+        emit_cmp_reg_imm8(cb, (scratch_reg), 1);                                 \
+        int _int_p = emit_jcc(cb, 0x87);          /* ja .not_int48 */            \
+        emit_cvtsi2sd(cb, (dst_xmm), (src_reg));                                 \
+        int _done_p = emit_jmp(cb);                                              \
+        patch_rel32(cb, _int_p, cb->len);         /* .not_int48: */              \
+        emit_mov_reg_imm64(cb, (scratch_reg), 0xFFF8000000000000ULL);            \
+        emit_cmp_rr(cb, (src_reg), (scratch_reg));                               \
+        (tagged_var) = emit_jcc(cb, 0x83);        /* jae (unsigned) → tagged */  \
+        emit_byte(cb, 0x66);                                                     \
+        emit_byte(cb, rex(1, 0, 0, ((src_reg) >> 3) & 1));                       \
+        emit_byte(cb, 0x0F);                                                     \
+        emit_byte(cb, 0x6E);                      /* MOVQ xmm, r64 */            \
+        emit_byte(cb, modrm(3, (dst_xmm) & 7, (src_reg) & 7));                   \
+        patch_rel32(cb, _done_p, cb->len);                                       \
+    } while(0)
+
+    /* 非溢出类 bailout 的 site 汇报：与 int48 溢出检查共用 jit_bailout_site
+     * 全局量，但用负值区间区分原因，便于 [JIT-DEBUG] 日志定位：
+     *   site >= 0          : 溢出/截断类检查，值 = 触发指令的 bc_off
+     *                        （内联帧含 0x10000 * depth 基址）
+     *   site ∈ [-999, -1]  : JIT 序言（-1 = 进入自增/step 方向、-2 = step ≤ 0）
+     *   site <= -1000      : 其它原因（NaN 比较、callout 失败、类型不支持等），
+     *                        对应 bc_off = -1000 - site
+     * 每个 bailout 守卫都在跳转前写一次 site，因此 site 永远反映真正失败的那条指令。 */
+    #define EMIT_BAILOUT_SITE_NONOVF(off) EMIT_BAILOUT_SITE_WRITE(-1000 - (int)(off))
+
     /* Callout argument registers per target ABI:
      *   Windows x64:    arg1..arg4 = RCX/RDX/R8/R9, 5th+ go on the stack
      *                   (first stack arg at [RSP+32] after 32B shadow)
@@ -446,7 +492,8 @@ int compile_loop(CodegenCtx* ctx) {
         /* Test: cmp rax, 0; jle bailout */
         /* test rax, rax */
         emit_test_rr(cb, JIT_RAX, JIT_RAX);
-        /* jle bailout (0x8E = JLE) */
+        /* jle bailout (0x8E = JLE) — site -2 = 序言 step ≤ 0 */
+        EMIT_BAILOUT_SITE_WRITE(-2);
         int patch = emit_jcc(cb, 0x8E);
         patch_add(ctx, patch, -1, 0);  /* bailout */
     }

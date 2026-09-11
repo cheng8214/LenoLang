@@ -1,7 +1,15 @@
 # Leno JIT 编译器实现与调试记录
 
 > 文档记录 Leno VM JIT 编译器的架构设计、已支持字节码清单、调试方法、踩过的坑及解决方案。
-> 代码位置：`src/jit/jit.c`、`src/jit/jit.h`、`src/jit/jit_emit.h`、`src/jit/jit_mem.h`
+>
+> 代码位置（可移植层 / x86_64 后端分工）：
+>
+> - `src/jit/jit.c`、`jit.h`、`jit_scan.c`、`jit_callout.c`、`jit_mem.h` —— 与目标无关
+> - `src/jit/backend/x86_64.c` —— x86_64 codegen 骨架（序言/宏/switch/收尾/补丁）
+> - `src/jit/backend/x86_64_emit.h` —— 指令编码器（`emit_*`）与寄存器编号
+> - `src/jit/backend/x86_inc/ops_*.inc` —— 按 opcode 家族拆分的 `switch(op)` case，
+>   被 `#include` 进 `compile_loop()`，因此可直接使用函数内局部宏（`TOS_*` / `EMIT_*`）
+> - 新增/修改某个 opcode 的 codegen：改对应的 `ops_*.inc`；新增通用宏放 `x86_64.c`
 
 ## 目录
 
@@ -52,7 +60,9 @@ VM 执行 OP_LOOP / OP_FOR_LOOP
 
 ```c
 int (*JitLoopFn)(Value* locals, Value* globals);
-// 返回 0 = 成功，1 = bailout（类型溢出，回退 VM）
+// 返回 0 = 成功，1 = bailout（回退 VM 重跑本次迭代）
+//      2 = frame-dead（callout 抛异常，控制流已转移到宿主帧 catch_ip，需写回 locals）
+//      3 = frame-dead（同上，不写回）
 ```
 
 ### 关键参数 (`jit.h`)
@@ -61,7 +71,7 @@ int (*JitLoopFn)(Value* locals, Value* globals);
 | ------------------- | --- | ----------------------- |
 | `JIT_HOT_THRESHOLD` | 50  | 循环执行 50 次后触发编译          |
 | `JIT_CACHE_SIZE`    | 256 | 缓存哈希表大小（2 的幂）           |
-| `JIT_MAX_LOCALS`    | 32  | 最多 type-guard 的 local 数 |
+| `JIT_MAX_LOCALS`    | 64  | 最多 type-guard 的 local 数（含内联 callee） |
 | `JIT_MAX_LOOP_OPS`  | 256 | 循环体最大 opcode 数          |
 | `JIT_MAX_VSTACK`    | 64  | 虚拟栈最大深度                 |
 | `JIT_BAILOUT_LIMIT` | 3   | bailout 3 次后放弃此循环       |
@@ -130,8 +140,12 @@ JIT 虚拟栈不存 NaN-boxed Value，而是存 **raw int64\_t**：
 | 值类型           | 虚拟栈存储格式                 | 检测方法                                                     |
 | ------------- | ----------------------- | -------------------------------------------------------- |
 | int           | int48 raw（符号扩展到 int64）  | `sar r8,47; inc r8; cmp r8,1; ja .not_int` — 结果 ≤1 是 int |
-| float         | 原始 IEEE 754 double bits | 上述检测 >1                                                  |
-| null/bool/obj | 原始 NaN-boxed bits       | 上述检测 >1（top16 ≠ 0xFFFB）                                  |
+| float         | 原始 IEEE 754 double bits | 非 int48 且 < `0xFFF8000000000000`（无符号）                    |
+| null/bool/obj | 原始 NaN-boxed bits       | 非 int48 且 ≥ `0xFFF8000000000000`（高 13 位全 1）               |
+
+**「非 int48」不等于「float」**：负的裸 double（如 `0xBFEF...`）小于 `0xFFF8...`，所以
+裸 double 与 NaN-boxed 的判别是 `cmp v, 0xFFF8000000000000; jae .tagged`。只有 NaN
+位模式的 double 会与 NaN-boxing 撞车，而 `val_float()` 已把这种值归一化为 QNAN。
 
 ### int48 检测惯用法
 
@@ -142,6 +156,29 @@ inc r8           ; 正确 int48: 0→1 或 -1→0，都 ≤1
 cmp r8, 1
 ja  .bailout     ; >1 表示溢出 int48 范围 [-2^47, 2^47-1]
 ```
+
+### 裸数值规范化宏 `EMIT_NUM_TO_XMM`
+
+通用算术/比较的 float 慢路径需要「把任一操作数变成 XMM 里的 double」，由
+`backend/x86_64.c` 的 `EMIT_NUM_TO_XMM(dst_xmm, src_reg, scratch, tagged_var)` 完成三段分派：
+
+```asm
+mov  scratch, src          ; int48 检测
+sar  scratch, 47
+inc  scratch
+cmp  scratch, 1
+ja   .not_int48
+cvtsi2sd dst, src          ; int48 → double
+jmp  .done
+.not_int48:
+mov  scratch, 0xFFF8000000000000
+cmp  src, scratch
+jae  <tagged>              ; NaN-boxed（对象/null/bool）→ 调用方决定 concat 还是 bailout
+movq dst, src              ; 裸 double 位模式直通
+.done:
+```
+
+该方法保证「int48 与 float 混合」的表达式（如 `x + dx*invScale`）不再回退解释器。
 
 ### Prologue：locals 加载与类型守卫
 
@@ -278,6 +315,31 @@ for each local i:
 | —      | OP\_GE\_INT\_IMM | 2   | <br />                  |
 | —      | OP\_EQ\_INT\_IMM | 2   | <br />                  |
 
+### 通用算术与比较（int/float 混合，语义对齐解释器）
+
+编译器在操作数类型不可静态确定时（如 `<float 变量> + <native 调用返回值>`、
+`<int 循环变量> + <float>`）会发这些「通用」opcode。JIT 采用三段式：
+
+```
+① int 快路径：两边都是 int48 → 整数运算
+② float 快路径：两边都不是 NaN-boxed（即都是裸数值）→ SSE2 运算
+   （int48 操作数经 EMIT_NUM_TO_XMM 的 CVTSI2SD 提升；结果按 val_float 保持 float）
+③ 回退：任一是 NaN-boxed（字符串/对象/null/bool）→ concat callout 或 bailout
+```
+
+| Opcode | 枚举名 | 字节数 | 说明 |
+| ------ | --- | --- | --- |
+| — | OP\_ADD | 1 | int 加 → `ADDSD` → `jit_callout_concat`（字符串拼接；双方都非字符串时返回 NULL_VAL → bailout） |
+| — | OP\_SUB | 1 | int 减 → `SUBSD` → bailout（BigInt / 类型错误交解释器） |
+| — | OP\_LT | 1 | int48 有符号 `cmp` → `UCOMISD`+\\(SETB\\)（NaN → bailout）→ bailout |
+| — | OP\_GT | 1 | 同上，`SETG` / \\(SETA\\) |
+| — | OP\_LE | 1 | 同上，`SETLE` / \\(SETBE\\) |
+| — | OP\_GE | 1 | 同上，`SETGE` / \\(SETAE\\) |
+
+> **实现要点（必须遵守）**：两个操作数要在**任何类型判定跳转之前**全部取到寄存器
+> （`TOS_CONSUME_*`），否则从第一个判定跳走时会跳过第二个操作数的 `pop`，
+> 让慢路径拿到错的操作数。详见 8.15。
+
 ### 自增自减
 
 | Opcode | 枚举名                    | 字节数 | 说明                             |
@@ -341,26 +403,46 @@ for each local i:
 
 ## 5. 不支持的字节码（导致 scan 拒绝）
 
-以下字节码出现在循环体中时，`scan_loop_body` 会将整个循环标记为 `capable=0`（不可 JIT）：
+**判定规则**（权威来源是代码，不要凭记忆）：
 
-| Opcode | 枚举名               | 原因                             |
-| ------ | ----------------- | ------------------------------ |
-| 83     | OP\_TRY           | 异常处理涉及 VM 异常栈、try/catch 表等复杂状态 |
-| 84     | OP\_CATCH         | 同上                             |
-| 86     | OP\_END\_TRY      | 同上                             |
-| —      | OP\_CALL          | 函数调用涉及 VM 调用栈管理                |
-| —      | OP\_TAIL\_CALL    | 尾调用涉及帧复用                       |
-| —      | OP\_RETURN        | 循环体中不应出现返回                     |
-| —      | OP\_MODULE\_CALL  | 模块方法调用                         |
-| —      | OP\_GET\_PROPERTY | 属性访问（未来可通过 callout 支持）         |
-| —      | OP\_STRING\_ADD   | 字符串拼接                          |
-| —      | 其他未列出 opcode      | 未实现 codegen                    |
+1. `jit_scan.c` 的 `opcode_size()` 返回 -1（未收录该 opcode）→ `scan FAIL: unknown opcode`，
+   `capable=0`；
+2. 收录了但 `scan_loop_body` 的 switch 没有对应 `case` → 落到 default →
+   `scan FAIL: unknown opcode`，`capable=0`；
+3. 收录且 scan 通过，但 codegen 没有 `case` → `ops_misc.inc` 的 default →
+   `codegen FAIL: unsupported opcode`，编译返回 0。
+
+### 当前明确不支持（出现即整个循环不可 JIT）
+
+| Opcode | 枚举名 | 说明 |
+| ------ | --- | --- |
+| — | 通用 OP\_MUL | 未实现 codegen（已支持的是 `OP_MUL_INT` / `OP_MUL_FLOAT` / `OP_MUL_INT_IMM`） |
+| — | 通用 OP\_MOD | 同上（已支持 `OP_MOD_INT`） |
+| — | 通用 OP\_EQ / OP\_NE | 同上（已支持 `OP_EQ_INT` / `OP_EQ_FLOAT` / `OP_EQ_INT_IMM`） |
+| — | 泛型 OP\_STRUCT\_INIT | `generic_count > 0` 时拒绝：泛型实参需解析调用栈帧 |
+| — | 其它 `opcode_size()` 未收录的 opcode | 未实现 codegen |
+
+> 注意：通用 `OP_MUL`/`OP_MOD`/`OP_EQ` 缺席会让**整个循环**被拒绝编译（不是 bailout），
+> 排查时看 `scan FAIL: unknown opcode N` 而不是 `BAILOUT`。
+
+### 曾经"不支持"、现已支持（旧文档已过时）
+
+| Opcode | 现状 |
+| ------ | --- |
+| OP\_TRY / OP\_CATCH / OP\_FINALLY / OP\_END\_TRY | JIT 中视为 **no-op**（`ops_misc.inc`）。正常路径无需 setup；若 callout 抛异常则整体 bailout 回解释器重跑完整 try/catch |
+| OP\_MODULE\_CALL | callout `jit_callout_module_call`（如 `maths.sqrt`） |
+| OP\_GET\_PROPERTY / OP\_INVOKE\_METHOD | callout（`jit_callout_get_property` / `jit_callout_invoke_method`），并带 GET\_PROPERTY+OP\_CALL 窥孔合并 |
+| OP\_CALL\_NATIVE | callout `jit_callout_call_native` |
+| OP\_INDEX / OP\_ARRAY / OP\_DICT\_SET / OP\_INDEX\_SET\_NOPUSH / OP\_ARRAY\_APPEND\_NOPUSH | callout |
+| OP\_STRUCT\_INIT（非泛型） | callout `jit_callout_struct_init` |
+| OP\_RETURN / OP\_RETURN\_MULTI | 支持（函数级 JIT；多返回值仅内联路径） |
+| 脚本函数调用（OP\_CALL\_GLOBAL\_FUNC\_TYPED） | **内联**展开进宿主循环（见 13.8），不再整体拒绝 |
 
 ### 特殊拒绝条件
 
 - **虚拟栈溢出**：`vstack > JIT_MAX_VSTACK (64)`（允许负 vstack，因嵌套循环 exit POP 在线性扫描中被重复扣减）
 
-- **local 数过多**：超过 `JIT_MAX_LOCALS (32)`
+- **local 数过多**：超过 `JIT_MAX_LOCALS (64)`（含内联 callee 的槽位）
 
 ***
 
@@ -424,38 +506,71 @@ int tmp3_disp = -8 * (n + sr->max_vstack + 3);
 
 ### 环境变量
 
-| 变量                 | 作用                                            |
-| ------------------ | --------------------------------------------- |
-| `LENO_JIT_DEBUG=1` | 打印 scan 失败、codegen 失败、compile FAIL、BAILOUT 信息 |
-| `LENO_JIT_DUMP=1`  | 将 JIT 机器码 dump 到 `jit_mc_dump.txt`            |
-| `LENO_NO_JIT=1`    | 完全禁用 JIT（用于性能对比基线）                            |
+| 变量 | 作用 |
+| --- | --- |
+| `LENO_JIT_DEBUG=1` | 打印 scan/codegen FAIL、`COMPILE`、`BAILOUT`（含精确 site） |
+| `LENO_JIT_DUMP=1` | dump 机器码到 `jitdump<N>.bin`（二进制，配 objdump）和 `jit_mc_dump.txt`（hex 文本）。**会在当前工作目录留下文件，注意别误提交** |
+| `LENO_NO_JIT=1` | 完全禁用 JIT（性能对比基线 / 隔离"解释器 bug vs JIT 机器码 bug"） |
+| `LENO_JIT_TRACE=1` | 每次 JIT 执行前后打印 `frame->locals[0..39]` 的原始位模式（配 `LENO_JIT_DEBUG`） |
+| `LENO_JIT_NOINLINE=1` | 关闭被调函数内联 |
+| `LENO_JIT_FPROF=1` | 打印函数级 JIT 的调用开销分布 |
+| `LENO_JIT_FTRACE=1` | 函数级 JIT 跟踪 |
 
-### --debug 反汇编
+### bailout site 编码约定（2026-09-11 起）
 
-```bash
-./build/lenojit.exe --debug file.leno
-```
+`jit_bailout_site` 是全局量，**每个 bailout 守卫都在跳转前写一次**，所以它永远反映真正
+失败的那条指令。取值为负数区间时表示非溢出原因：
 
-输出每个函数的字节码反汇编，包括 offset、行号、指令名和操作数。用于定位 `body_start` 对应的字节码序列。
+| site 取值 | 含义 |
+| --- | --- |
+| `>= 0` | 溢出/截断类检查，值 = 触发指令的 `bc_off`（内联帧含 `0x10000 * depth` 基址） |
+| `-1` | JIT 序言的「进入自增」int48 检查 |
+| `-2` | JIT 序言的 `step <= 0` 检查 |
+| `<= -1000` | 其它原因（NaN 比较、callout 失败、类型不支持、concat 失败…），`bc_off = -1000 - site` |
+
+对应宏：`EMIT_INT48_CHECK(bc_off)` / `EMIT_INT64_OVF_CHECK(bc_off)` 写非负值；
+`EMIT_BAILOUT_SITE_NONOVF(bc_off)` 写负值；两者都在 `backend/x86_64.c`。
+
+> **历史坑**：加上这套约定之前，只有 int48 检查会写 site，其它守卫
+> （`OP_ADD` concat 返回 NULL、`OP_SUB` 非 int48、浮点 NaN 比较、callout 失败…）
+> 都不写，于是日志里的 `site=` 是**上一次写入的残留值**，会把排查方向带偏
+> （实例：ripple 示例 9 次 bailout 全被报成 `OP_FOR_LOOP` 的偏移，真正原因是
+> `1.0 - maths.abs(diff)` 的通用 `OP_SUB`）。
 
 ### 调试输出示例
 
 ```
-[JIT-DEBUG] codegen FAIL: OP_CONST non-int/float const at bc_off=3, op=0, ci=69
-[JIT-DEBUG] compile_loop returned 0, cb.len=303, capable=1, n_locals=4, body_size=18
-[JIT-DEBUG] raw bytes: 8 0 40 0 0 69 0 0 70 71 6 96 45 43 42 0 0 18
-[JIT-DEBUG] body opcodes: 8 0 0 71 6 96
+[JIT-DEBUG] scan result: n_locals=28 max_vstack=4
+[JIT-DEBUG]   scratch[0] = slot 29          ← bytecode 槽位 → scratch 槽位映射
+[JIT-DEBUG]   for_loop_var_slot=29 for_end_slot=30 for_step_slot=31 inclusive=1
+[JIT-DEBUG] COMPILE: fn='renderRipple' bc_off=462 back_edge=2, body_size=379, capable=1, n_locals=28, max_vstack=4, inline=0
+[JIT-DEBUG] scan FAIL: unknown opcode 132 (size<0) at offset 20
 [JIT-DEBUG] compile FAIL at body_start=654, back_edge=2
-[JIT-DEBUG] scan FAIL: try/catch opcode 83 at offset 0
-[JIT-DEBUG] BAILOUT at body_start=57, count=1
+[JIT-DEBUG] BAILOUT site=372 RSP=... RAX=...
+[JIT-DEBUG] BAILOUT(nonovf) bc_off=159 RSP=... RAX=...
+[JIT-DEBUG] BAILOUT(prologue:step<=0) RSP=... RAX=0
+[JIT-DEBUG] BAILOUT at body_start=462, count=1
+[JIT-DEBUG] FRAME-DEAD exit (2) at body_start=...
 ```
 
 ### 定位流程
 
-1. 用 `--debug` 找到 `body_start` 对应的函数和字节码序列
-2. 用 `LENO_JIT_DEBUG=1` 运行，查看具体的 FAIL/BAILOUT 原因
-3. 对照 `raw bytes` 和 `body opcodes` 确认字节码序列
-4. 在 `jit.c` 对应的 codegen case 中定位问题
+1. 用 `LENO_JIT_DEBUG=1` 运行，先看有没有 `BAILOUT*` 行和对应的 `body_start`
+2. 用 `--debug --debug-out <file>` 导出字节码，找到该函数的反汇编
+3. **site 换算**：`body_start` 与 site 都是「相对于帧 chunk 起始」的偏移，
+   按上表的编码换算出真正的 `bc_off`，再对照反汇编定位到源码行
+   （注意：同一循环在嵌套外层循环的 body 里，`bc_off` 会不同，但三者换算到
+   同一个绝对偏移——若多个 `body_start` 报出能对到同一条指令，说明它们都栽在那里）
+4. 若 site 是负数区间或指向明显不该失败的指令，先怀疑「守卫没写 site / 操作数取错」
+   这类 codegen 问题，用 `LENO_JIT_DUMP=1` + objdump 反汇编核对生成的机器码
+5. 需要判断是解释器还是 JIT 的问题，用 `LENO_NO_JIT=1` 跑同一二进制做对照
+
+### objdump 反汇编生成的机器码
+
+```bash
+LENO_JIT_DUMP=1 ./build/lenojit.exe file.leno
+objdump -D -b binary -m i386:x86-64 -M intel jitdump1.bin
+```
 
 ***
 
@@ -604,6 +719,56 @@ XORPD (0F 57)           → 0x66 前缀
 
 **结论**：这是预期行为，JIT 的 int48 溢出检测正常工作。
 
+### 8.15 通用算术/比较遇 float 直接 bailout（ripple 示例 9 次 bailout 的真凶）
+
+**现象**：`LenoSDL3/examples/特效动画/ripple_image.leno` 报 9 次 bailout，
+但 `[JIT-DEBUG] BAILOUT site=` 全部指向同一条指令（x 循环的 `OP_FOR_LOOP`），
+而那条指令的 int48 检查在数学上不可能失败（循环变量 109、step 1、end 133）。
+
+**根因**：源码第 132 行 `float tri = 1.0 - maths.abs(diff)` —— 右操作数是 native
+调用返回值，类型不可静态确定，编译器发的是**通用 `OP_SUB`**，而 JIT 的通用
+`OP_SUB`/`OP_ADD`/`OP_LT..GE` 只实现 int48 快路径，操作数是 float 时只能 bailout。
+`site=` 指向 FOR_LOOP 是因为真正失败的守卫**不写 site**（见第 7 节历史坑）。
+
+**修复**（2026-09-11）：见第 4 节「通用算术与比较」。用 `EMIT_NUM_TO_XMM` 把 int48
+操作数 `CVTSI2SD` 提升、裸 double 直通，float 混合表达式不再回退解释器。
+实测：`Executed: 424 → 5173`，`Bailouts: 9 → 3`（残留 3 次来自负步长 for，见第 12 节），
+`ripple` 的内层像素循环第一次真正跑在机器码上。
+
+**教训**：**「通用」opcode 是 JIT 覆盖率的隐形缺口**。写 `a op b` 时只要有一侧类型
+不可静态确定（native 调用返回值、混合 int/float、`_int()/_float()`），编译器就发通用
+opcode；JIT 若只做 int 快路径，热循环里一行普通浮点表达式就能把整个循环
+永久踢出 JIT（bailout 3 次即拉黑）。
+
+### 8.16 慢路径跳转夹在两次 TOS 消费之间（本次改动引入并修掉的 bug）
+
+**现象**：加了 float 快路径后 bailout 归零、`Executed` 大涨，**但算出来的数是错的**：
+`1.0 - |d|` 结果不对，`|d| > 100.0` 恒为 false。
+
+**根因**：`OP_SUB` 的 codegen 原本是「取 b → 判类型 → 取 a → 判类型」，
+我把慢路径跳转插在了两次 `TOS_CONSUME` 之间：
+
+```asm
+mov  r8, rdx        ; 判 b
+ja   .slow          ; ← 跳走
+pop  rax            ; ← 这句被跳过！慢路径却假设 RAX = 左操作数 a
+```
+
+结果从 b 的判定跳走时 `RAX` 还停在 b 上（`mov rdx, rax` 不清 RAX），
+慢路径把 b 当成了 a —— 比较变成自己跟自己比（恒 false），
+减法变成 `b - b = 0`。`OP_ADD` 恰好两次取值都在判定之前，所以只有它是对的——
+这也是"为什么只有加法正常"的线索。
+
+**修复**：把所有 `TOS_CONSUME` 提到任何类型判定跳转之前，并在代码里写注释固化该约束。
+
+**教训**：codegen 里**跳转目标处需要的寄存器状态，必须在第一个跳转之前就全部就位**。
+这类 bug 不会崩、只会静默算错，定位手段是 `LENO_JIT_DUMP=1` + objdump 反汇编，
+直接看跳转落点处的寄存器是从哪来的（对照 13.1「生成大段机器码后必须先 dump 反汇编核对」）。
+
+**验证方法（推荐复用）**：写一个确定性数值脚本，`lenojit x.leno` 与
+`LENO_NO_JIT=1 lenojit x.leno` 的输出必须逐位一致；配合 `LENO_JIT_DEBUG=1` 确认
+`Executed > 0`（否则探针根本没走 JIT，差分是假的）。
+
 ***
 
 ## 9. 性能数据
@@ -643,8 +808,26 @@ XORPD (0F 57)           → 0x66 前缀
 ### 回归测试
 
 ```
-Results: 261 passed, 0 failed (total 261)
+Results: 263 passed, 0 failed (total 263)
 ```
+
+### 通用算术 float 快路径（2026-09-11）
+
+| 测试项 | JIT | 无 JIT | 加速比 |
+| --- | --- | --- | --- |
+| 计算热循环 200 万次（通用 `1.0 - maths.abs(d)` + 通用 `>` + `rsqrt` 累积 + 限幅） | 164ms | 422ms | **2.56x** |
+
+两侧输出逐位一致（`acc` / `s` 完全相同）。
+
+`LenoSDL3/examples/特效动画/ripple_image.leno` JIT 统计对比：
+
+| 指标 | 修复前 | 修复后 |
+| --- | --- | --- |
+| Executed | 424 | 5173 |
+| Bailouts | 9 | 3（全部为负步长 for，见第 12 节） |
+
+> 该示例自带的 `平均 FPS` 无法体现收益：它每帧 `SDL3.delay(16 - elapsed)` 且开了
+> VSync，帧时间被钉在 16ms。要看收益请用 `Executed`/`Bailouts` 或纯计算基准。
 
 ***
 
@@ -759,12 +942,24 @@ push rax    ; 内存写
 
 ## 12. 当前未解决问题
 
-1. **try/catch 循环（body\_start=27）**：异常处理涉及 VM 异常栈和 try/catch 表，暂不支持
-2. **body\_start=1156 编译失败**：具体原因未完全定位（无 scan FAIL 和 codegen FAIL 消息）
-3. **fib\_iterative(1000) 3 次 bailout**：斐波那契值约 fib(56) 溢出 int48（超 2^47），属预期行为
-4. **OP\_FOR\_PREP 仅支持正步长**：step ≤ 0 时 bail out，负步长 for 循环无法 JIT 编译（已知限制，非 bug）
-5. **while 比 for 慢约 2 倍**：`OP_GET_GLOBAL` 每次 NaN-box 解码开销，P0 寄存器化后有望缓解
-6. **含函数调用的循环无法 JIT**（2026-09-06 起）：scan 阶段直接拒绝，待实现内联（见第 13 节）
+1. **负步长 for 循环无法 JIT**（`step <= 0`，已知限制非 bug）：序言与 `OP_FOR_PREP`
+   都假设 `step > 0`（比较方向随之固定），日志现在能直接报
+   `[JIT-DEBUG] BAILOUT(prologue:step<=0)`。要支持需在序言 / `FOR_PREP` / `FOR_LOOP`
+   三处按 step 符号运行时分叉比较方向。典型触发：`for n-1 : 0 : -1`（LenoSDL3 内部辅助函数）
+2. **通用 `OP_MUL` / `OP_MOD` / `OP_EQ` / `OP_NE` 未实现**：出现在循环体里会导致**整个循环**
+   被 scan 拒绝（不是 bailout），排查看 `scan FAIL: unknown opcode N`。
+   补齐思路与 2026-09-11 的 `OP_SUB`/`OP_ADD` 一致（复用 `EMIT_NUM_TO_XMM`）
+3. **while 比 for 慢约 2 倍**：`OP_GET_GLOBAL` 每次 NaN-box 解码开销，P0 寄存器化后有望缓解
+4. **`body_start=1156` 编译失败**（历史记录，待复核）：具体原因未完全定位
+   （无 scan FAIL 和 codegen FAIL 消息）
+5. **fib_iterative(1000) 3 次 bailout**：斐波那契值约 fib(56) 溢出 int48（超 2^47），
+   属预期行为，JIT 的溢出检测正常工作
+
+> 已关闭的旧条目：
+>
+> - ~~try/catch 循环不可 JIT~~ → `OP_TRY/CATCH/FINALLY/END_TRY` 现为 no-op（第 5 节）
+> - ~~含函数调用的循环无法 JIT~~ → 已实现被调函数内联 + 函数级 JIT（13.8）
+> - ~~通用算术/比较遇 float 即 bailout~~ → 已补 float 快路径（8.15）
 
 ***
 
@@ -937,10 +1132,14 @@ hits=50 全错——"快"是因为几何判断全走 miss 短路路径，毫无�
 
 | 文件                             | 说明                                           |
 | ------------------------------ | -------------------------------------------- |
-| `src/jit/jit.c`                | JIT 编译器主文件（scan + codegen + cache + callout） |
+| `src/jit/jit.c`                | compile 驱动 + 缓存 + `jit_try_hot_loop` + 统计打印 |
 | `src/jit/jit.h`                | 公共 API 和配置参数                                 |
-| `src/jit/jit_emit.h`           | x86\_64 指令发射函数                               |
+| `src/jit/jit_scan.c`           | 热循环扫描 / 可 JIT 判定 / 内联分析                      |
+| `src/jit/jit_callout.c`        | 运行期 C 辅助函数（callout、bailout 调试、`jit_debug_on`） |
 | `src/jit/jit_mem.h`            | 可执行内存分配（VirtualAlloc/mprotect）               |
+| `src/jit/backend/x86_64.c`     | x86_64 codegen 骨架 + 通用宏（`EMIT_NUM_TO_XMM` 等）   |
+| `src/jit/backend/x86_64_emit.h` | x86\_64 指令发射函数与寄存器编号                          |
+| `src/jit/backend/x86_inc/`     | 按 opcode 家族拆分的 codegen case（`ops_arith/icmp/fcmp/loop/callout/local/...`） |
 | `src/vm/vminc/op_for_loop.inc` | OP\_FOR\_PREP / OP\_FOR\_LOOP 的 VM 实现        |
 | `src/vm/vminc/op_loop.inc`     | OP\_LOOP 的 VM 实现                             |
 | `src/include/leno_vm.h`        | OpCode 枚举定义                                  |
