@@ -477,12 +477,19 @@ fprintf(stderr, "[JIT-DEBUG] EXEC call #%d, fn=%p, locals=%p\n",
     }
 }
 
-/* 把 jit_bailout_site 的编码翻译成可读原因（约定见 x86_64.c） */
-static void jit_bailout_reason(int site, char* out, size_t out_sz) {
+/* 把 jit_bailout_site 的编码翻译成可读原因（约定见 x86_64.c）。
+ * 注意：溢出类与非溢出类 site 里带的偏移都是**相对循环体起点**的
+ * （codegen 里 bc_off 从 body_start 开始计数），所以这里同时给出
+ * 绝对偏移 = loop_bc + rel，和 `--debug` 的字节码偏移对齐。 */
+static void jit_bailout_reason(int site, int loop_bc, char* out, size_t out_sz) {
     if (site >= 0)
-        snprintf(out, out_sz, "int48 溢出/截断 @bc_off=%d", site);
-    else if (site <= -1000)
-        snprintf(out, out_sz, "非溢出类 @bc_off=%d", -1000 - site);
+        snprintf(out, out_sz, "int48 溢出/截断 @bc_off=%d（= loop_bc %d + %d）",
+                 loop_bc + site, loop_bc, site);
+    else if (site <= -1000) {
+        int rel = -1000 - site;
+        snprintf(out, out_sz, "非溢出类 @bc_off=%d（= loop_bc %d + %d）",
+                 loop_bc + rel, loop_bc, rel);
+    }
     else if (site == -3)
         snprintf(out, out_sz, "序言: step 为 float（非 int 循环）");
     else if (site == -2)
@@ -504,7 +511,7 @@ void jit_print_stats(void) {
             JitCacheEntry* e = &jit_state.cache[i];
             if (e->bailout_count <= 0) continue;
             char reason[96];
-            jit_bailout_reason(e->last_bailout_site, reason, sizeof(reason));
+            jit_bailout_reason(e->last_bailout_site, e->last_bailout_bc_off, reason, sizeof(reason));
             fprintf(stderr, "  Bailout: fn='%s' loop_bc=%d x%d — %s\n",
                     e->last_bailout_fn ? e->last_bailout_fn : "?",
                     e->last_bailout_bc_off, e->bailout_count, reason);

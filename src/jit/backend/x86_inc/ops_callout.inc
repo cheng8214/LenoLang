@@ -302,7 +302,16 @@
                         /* _int(int) → 原样 */
                         int done0 = emit_jmp(cb);
                         patch_rel32(cb, not_int_p, cb->len);
-                        /* 非 int48：NaN-boxed → bailout（bool/null/string/bigint/ptr） */
+                        /* 非 int48：先认 bool —— true→1 / false→0，与 types.c 的
+                         * native_to_int 一致；判据用**全值精确比较**，与 VM 的
+                         * val_is_bool（v == TRUE_VAL || v == FALSE_VAL）保持一致。 */
+                        emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)TRUE_VAL);
+                        emit_cmp_rr(cb, JIT_RAX, JIT_R8);
+                        int int_is_true = emit_jcc(cb, 0x84);   /* JE → .bool_true */
+                        emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)FALSE_VAL);
+                        emit_cmp_rr(cb, JIT_RAX, JIT_R8);
+                        int int_is_false = emit_jcc(cb, 0x84);  /* JE → .bool_false */
+                        /* 其余 NaN-boxed（null/string/bigint/ptr）→ bailout 交解释器 */
                         emit_mov_reg_imm64(cb, JIT_R8, JIT_NAN_SIG);
                         emit_cmp_rr(cb, JIT_RAX, JIT_R8);
                         EMIT_BAILOUT_SITE_NONOVF(bc_off);
@@ -314,6 +323,16 @@
                         emit_byte(cb, 0xF2); emit_byte(cb, 0x0F); emit_byte(cb, 0x2C);
                         emit_byte(cb, modrm(3, 0, JIT_RAX & 7));  /* cvttsd2si eax, xmm0 */
                         emit_byte(cb, 0x48); emit_byte(cb, 0x63); emit_byte(cb, 0xC0); /* movsxd rax,eax */
+                        int int_done_jmp = emit_jmp(cb);        /* 跳过下面两个 bool 分支 */
+                        /* .bool_true → 1 */
+                        patch_rel32(cb, int_is_true, cb->len);
+                        emit_mov_reg_imm64(cb, JIT_RAX, 1);
+                        int int_true_done = emit_jmp(cb);
+                        /* .bool_false → 0 */
+                        patch_rel32(cb, int_is_false, cb->len);
+                        emit_xor_rr(cb, JIT_RAX, JIT_RAX);
+                        patch_rel32(cb, int_true_done, cb->len);
+                        patch_rel32(cb, int_done_jmp, cb->len);
                         patch_rel32(cb, done0, cb->len);
                     } else {
                         /* _float(int) → cvtsi2sd xmm0,rax; movq rax,xmm0 */
@@ -322,12 +341,30 @@
                         emit_byte(cb, 0x7E); emit_byte(cb, modrm(3, 0, 0));
                         int done0 = emit_jmp(cb);
                         patch_rel32(cb, not_int_p, cb->len);
-                        /* 非 int48：NaN-boxed → bailout；裸 double 原样保留 */
+                        /* 非 int48：先认 bool —— true→1.0 / false→0.0，与 types.c 的
+                         * native_to_float 一致；判定同 VM 的 val_is_bool：全值精确比较。 */
+                        emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)TRUE_VAL);
+                        emit_cmp_rr(cb, JIT_RAX, JIT_R8);
+                        int flt_is_true = emit_jcc(cb, 0x84);   /* JE → .bool_true */
+                        emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)FALSE_VAL);
+                        emit_cmp_rr(cb, JIT_RAX, JIT_R8);
+                        int flt_is_false = emit_jcc(cb, 0x84);  /* JE → .bool_false */
+                        /* 其余 NaN-boxed → bailout；裸 double 原样保留 */
                         emit_mov_reg_imm64(cb, JIT_R8, JIT_NAN_SIG);
                         emit_cmp_rr(cb, JIT_RAX, JIT_R8);
                         EMIT_BAILOUT_SITE_NONOVF(bc_off);
                         int bail_p = emit_jcc(cb, 0x83);
                         patch_add(ctx, bail_p, -1, 0);
+                        int flt_done_jmp = emit_jmp(cb);         /* 跳过下面两个 bool 分支 */
+                        /* .bool_true → 1.0（裸 double 位模式） */
+                        patch_rel32(cb, flt_is_true, cb->len);
+                        emit_mov_reg_imm64(cb, JIT_RAX, 0x3FF0000000000000ULL);
+                        int flt_true_done = emit_jmp(cb);
+                        /* .bool_false → 0.0（位模式全 0） */
+                        patch_rel32(cb, flt_is_false, cb->len);
+                        emit_xor_rr(cb, JIT_RAX, JIT_RAX);
+                        patch_rel32(cb, flt_true_done, cb->len);
+                        patch_rel32(cb, flt_done_jmp, cb->len);
                         patch_rel32(cb, done0, cb->len);
                     }
                     TOS_PRODUCE();

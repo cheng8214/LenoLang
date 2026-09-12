@@ -413,14 +413,33 @@ JIT 与解释器输出**逐位一致**；`examples/` 下 73 个非 GUI 示例两
      回退路径验证：未赋值 string 字段（运行期 null）→ `Bailouts: 3`、site 指向该指令、
      输出与 `LENO_NO_JIT=1` 逐位一致。回归：assert 263/263（两模式）、
      `ripple_image.leno` `Bailouts: 0`、72 个示例双模式 stdout 全一致。
-2. **热循环里 `_int(<返回 float 的模块调用>)` 每次进入 JIT 都 bailout**：
-   `OP_CALL_NATIVE` 的 `_int/_float` 内联快路径（`ops_callout.inc`）拿到的操作数是
-   `TRUE_VAL`（`0xFFFA000000000000` = `QNAN|SIGN_BIT|TAG_TRUE`），而不是
-   `maths.round(2.6)` 的裸 double → `cmp rax, 0xFFF8…; jae bailout` 命中：
-   `[JIT-DEBUG] BAILOUT(nonovf) bc_off=139 RAX=0xfffa000000000000`。
-   基线（回退 A′）是同样的现象、同一个 `bc_off`、同一个 `RAX`，故与 A′ 无关。
-   **嫌疑**：float 返回的模块调用走薄桥时结果在 `xmm0`，若没被搬回 RAX 就写入 vstack，
-   就会留下上一个调用（`strings.has(...)` → `true`）的残值 —— 需要单独查证。
+2. **`_int(<bool>)` / `_float(<bool>)` 每次进 JIT 都 bailout**
+   （原记录写作「`_int(<返回 float 的模块调用>)`、怀疑薄桥返回值没搬回 RAX」，
+   **结论已订正** —— 与薄桥、与 A′ 都无关）：
+
+   真正原因：`OP_CALL_NATIVE` 的 `_int/_float` 内联快路径（`ops_callout.inc`）在 int48
+   判定失败后，对**任何 NaN-boxed 值**（含 bool）一律 `cmp rax, 0xFFF8…; jae bailout`。
+   证据：`RAX=0xFFFA000000000000` 是 `TRUE_VAL`，不是 `maths.round(2.6)` 的裸 double；
+   触发点是 `_int(strings.has(...))`、`_int(flag)`、`_float(flag)`。
+   定位过程中还发现**site 里的偏移是相对循环体起点**的：最小组合 `g_min`（loop_bc=29）
+   报 `@bc_off=39`，而 39 = 68 − 29 正是第二个 `OP_CALL_NATIVE(_int)` 的位置。
+
+   **✅ 已修复（2026-09-12）**：在 `_int`/`_float` 内联路径加 bool 快路径 —— 用
+   **全值精确比较**（与 VM 的 `val_is_bool`：`v == TRUE_VAL || v == FALSE_VAL` 一致）认出
+   `TRUE_VAL`/`FALSE_VAL`，按 `types.c` 的 `native_to_int`/`native_to_float` 语义产出
+   `1`/`0`（int）与 `1.0`/`0.0`（裸 double 位模式）；其余 NaN-boxed
+   （null/string/bigint/ptr）仍按设计 bailout。
+
+   实测：`_int(strings.has(...))`、`_int(flag)`、`_float(flag)` 三个循环全部
+   `Bailouts: 0`；此前 bailout 的 mct2 型组合（`g_full`/`g_nolast`/`g_min`）从
+   `Bailouts: 3` 变 `0` 且结果逐位不变；`_int(<string>)` / `_int(null)` 仍 bailout、
+   输出与解释器逐位一致（`isum=84000`）；assert 263/263（两模式，含
+   `_int(true)==1` / `_float(false)==0.0` 用例）、`ripple_image.leno` `Bailouts: 0`、
+   72 个示例双模式 stdout 全一致。
+
+   顺带修正诊断：`jit_print_stats` 现在同时打出**绝对偏移与分解**
+   （`非溢出类 @bc_off=40（= loop_bc 29 + 11）`）。此前只打相对偏移，排查时极易
+   把它当成别的指令 —— 这次的误判就是这么来的。
 
 ---
 
