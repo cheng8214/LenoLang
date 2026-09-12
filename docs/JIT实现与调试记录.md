@@ -935,6 +935,79 @@ pop  rax            ; ← 这句被跳过！慢路径却假设 RAX = 左操作�
 `LENO_NO_JIT=1 lenojit x.leno` 的输出必须逐位一致；配合 `LENO_JIT_DEBUG=1` 确认
 `Executed > 0`（否则探针根本没走 JIT，差分是假的）。
 
+### 8.17 callout 取实参反序 —— file_manager 整个界面错位（2026-09-12）
+
+**现象**：`leno_module/LenoSDL3/examples/应用示例/文件管理器/file_manager.leno`
+界面错位：工具栏被压窄、状态栏贴在工具栏下方、splitter 高度≈0，导航树与表格行整片消失；
+`LENO_NO_JIT=1` 运行完全正常。
+
+**定位**（完整链路见 `JIT模块调用优化与bailout排查记录.md` 第 8 节）：
+从界面像素反推布局分支 —— combo 宽度恰为其 `basis`（300）、按钮按 32 依次排开
+⇒ `HBox._relayout` 的 `childMain()` 走的是「`free >= 0` 且 `sumGrow == 0`」分支
+⇒ 累加器 `sumGrow` 不是数值。差分探针随即复现出 `sumGrow = "grow"`
+—— **`.get(key, default)` 返回了键字符串本身**。
+
+**根因**：`OP_GET_PROPERTY` + `OP_CALL` 窥孔合并成的调用 callout
+（`jit_callout_get_property`）取实参方向反了。JIT 虚拟栈是「栈顶在低地址」的反向栈：
+
+```
+vstack_top[0]     = receiver      ← 编译器把 receiver 最后压栈
+vstack_top[1]     = 最后一个实参
+vstack_top[arg_count] = 第一个实参
+```
+
+旧实现写 `vstack_top[i + 1]`，于是 `d.get(key, def)` 实际执行 `d.get(def, key)`：
+键落空 → 返回默认值。`_relayout` 里 `o.get("grow", 0.0)` 因此返回字符串 `"grow"`，
+`sumGrow > 0.0` 恒假，每个子控件只拿到自己的 `basis`。
+
+**修复**：第 i 个实参改取 `vstack_top[arg_count - i]`。三种压栈顺序的差异见第 14 节表 2。
+
+**教训**：`vstack_top` 的下标语义必须逐个 callout 写明 ——
+**「receiver 在 `vstack_top[0]`」不等于「实参从 `vstack_top[1]` 顺着排」**：
+原生方法调用是实参先压、receiver 最后压，而 struct 方法（`OP_INVOKE_METHOD`）
+是 receiver 最先压。同一个 `vstack_top` 基址，取参公式完全不同。
+
+### 8.18 类型化浮点运算不提升 int 操作数（2026-09-12）
+
+**现象**：`acc = acc + o.get("grow", 0.0)`（`acc` 是 float 局部量、右侧类型不可静态确定）
+在 JIT 下累加 600 轮，期望 200 只得 **17**；17 恰是 JIT 接管前解释执行那 49 轮的和
+⇒ **JIT 段每次加的都是 0**。
+
+**根因**：`OP_*_FLOAT` 默认操作数已是裸 double，直接 `MOVQ` + SSE 运算；但编译器只在
+静态类型确定时才补 `OP_CAST_FLOAT`，动态来源（方法/模块调用返回值、数组元素、字典值）
+会把 **int48 直接喂进来**：int 1 的位模式 `0x…0001` 被当成 **1e-323 次正规 double**，
+加法等于加 0。比较同理（int48 位模式 ≈ 3.5e-323，与 1.0 比恒 `<`）。
+
+**修复**：`x86_64.c` 新增 `EMIT_FLOAT_ARGS2`：int48 → `CVTSI2SD`、裸 double → 直搬、
+NaN-boxed → bailout 交解释器（解释器 `val_as_num_ex`/`val_as_num` 对 BigInt 转 double、
+对其余非数值按 0.0；JIT 无法区分对象种类，一律回退最稳），
+覆盖 `ADD/SUB/MUL/DIV/NEG_FLOAT` 与 `EQ/LT/GT/LE/GE_FLOAT`。
+
+**代价**：每个浮点操作数多 4-5 条判定指令。`ripple_image.leno` 每帧 13.4 → 14.8 ms
+（约 5%），仍比解释器（23.2 ms）快 1.6x。
+
+**教训**：**opcode 名字里的 FLOAT ≠ 操作数一定是 float**。判断「JIT 语义是否对齐」的
+权威依据是解释器那一侧调用的转换函数：`val_as_num`（int/float，其余 0.0）
+还是 `val_as_num_ex`（额外处理 BigInt）。
+
+### 8.19 `OP_DIV_FLOAT` 除零 + 一次「自己比自己」的自伤（2026-09-12）
+
+**固有缺口**：JIT 直接 `DIVSD`，除数为 0 得 ±inf，而解释器抛「浮点除零错误」。
+（`OP_MOD` 与通用 `OP_DIV` 的除零分别由自挡 / callout 覆盖，只有类型化浮点除法漏了。）
+
+**改动引入的自伤**：首版判零写成 `UCOMISD xmm1, xmm1` ——
+**自己跟自己比恒相等 → ZF 恒 1**，于是每次浮点除法都 bailout：
+`ripple` 冒出 12 次回退、4 个循环被拉黑（`Bailouts: 0 → 12`）。
+靠「`git stash` 收起本次改动重建做基线对比」才确认是本次引入，而不是既有回退。
+
+**修复**：`XORPD xmm2, xmm2` 造 0.0 后 `UCOMISD xmm1, xmm2`；
+无序（NaN 除数）用 `JP` 放行（`DIVSD` 得 NaN，与解释器一致），
+避免含 NaN 的热循环被整片踢回解释器。
+
+**教训**：x86 没有「自比较判零/判 NaN」这种指令 —— `x == x` 只对 `PF`（NaN 检测）有意义，
+`ZF` 永远是 1，判零必须显式准备 0.0 操作数。另外：**加 bailout 分支后必须复测
+`Bailouts` 计数**（功能正确但每次都回退，同样是回归）。
+
 ***
 
 ## 9. 性能数据
@@ -1011,6 +1084,19 @@ Results: 264 passed, 0 failed (total 264)   // JIT 与 LENO_NO_JIT=1 两种模�
 
 **约 -34%**，折算每次 ffi 调用省下 ~7.5ns（callout 本身 ~20ns，其余开销在循环与访存）。
 两侧 JIT 统计均为 `Compiled=1 Cached=1 Bailouts=0`，即整个热循环都命中 JIT、无回退。
+
+### 类型化浮点操作数提升的开销（2026-09-12，见 §8.18）
+
+`EMIT_FLOAT_ARGS2` 给每个浮点操作数加了 4-5 条 int48 判定，代价可测但可控：
+
+| 测试项 | 提升前 | 提升后 | 说明 |
+| --- | --- | --- | --- |
+| `ripple_image.leno` 平均每帧 | 13.4 ms | 14.8 ms | 约 +5% |
+| 同上（`LENO_NO_JIT=1`） | 23.2 ms | 23.2 ms | 解释器基准，JIT 仍快 **1.6x** |
+| 同示例 `Bailouts` | 0 | **0** | 提升本身不引入回退 |
+
+换来的是一致性：`acc + o.get("k", 0.0)` 这类「float 局部量 + 动态类型调用结果」在 JIT 下
+不再把 int48 位模式当次正规 double 加（§8.18，修复前 600 轮累加只得 17）。
 
 ***
 
@@ -1134,6 +1220,11 @@ push rax    ; 内存写
    （无 scan FAIL 和 codegen FAIL 消息）
 4. **fib_iterative(1000) 3 次 bailout**：斐波那契值约 fib(56) 溢出 int48（超 2^47），
    属预期行为，JIT 的溢出检测正常工作
+5. **比较结果的位模式：JIT 写回裸 0/1，解释器压 `val_bool`**（2026-09-12 复核，**未修**，
+   详见第 14 节「已知差异」）：`var x = (a > b)` 或 `bool flag = (a > b)` 在 JIT 循环里
+   写回后，解释器读到的是**次正规 float**（≈4.9e-324 / 0.0）而不是 bool。
+   真值判断恰好仍然正确（非零/零），但 `x is bool` 变 false、`_int(flag)` 由 1 变 0
+   —— 后者是**静默算错**。复现探针：`build/probe8.leno`（`boolLocal` / `intOfFlag`）。
 
 > 已关闭的旧条目：
 >
@@ -1146,6 +1237,11 @@ push rax    ; 内存写
 > - ~~通用算术/比较遇 float 即 bailout~~ → 已补 float 快路径（8.15）
 > - ~~通用 `OP_MUL` / `OP_MOD` / `OP_EQ` / `OP_NEQ` 不被 JIT 支持~~ → 已补齐（2026-09-12，
 >   三处同步：`jit_scan.c` 的 size 表与两处 vstack switch + `ops_arith.inc` / `ops_icmp.inc`）
+> - ~~原生方法调用 callout 取实参反序~~ → 已修（2026-09-12，§8.17）：
+>   `d.get(key, def)` 曾变成 `d.get(def, key)`
+> - ~~`OP_*_FLOAT` 不提升 int 操作数~~ → 已修（2026-09-12，§8.18）：`EMIT_FLOAT_ARGS2`
+> - ~~`OP_DIV_FLOAT` 除零静默算 inf~~ → 已修（2026-09-12，§8.19）：
+>   与 0.0 比较后 bailout，NaN 除数放行
 
 ***
 
@@ -1311,6 +1407,116 @@ hits=50 全错——"快"是因为几何判断全走 miss 短路路径，毫无�
 | 边界两侧打印位模式                   | callout 入口打 args、出口打 ret 的 0x%016llx | 坑三：a1=上次返回值，一眼锁定错位                |
 | `--debug-out` 字节码导出         | 确认源码层生成的操作码序列                        | 排除解构（OP\_SET\_LOCAL\_POP 15/14）嫌疑 |
 | 结果数字反推                      | hits=15 ≈ 50 次解释执行的命中数               | 确认"JIT 接管后全错"而非"偶发"               |
+
+***
+
+## 14. JIT 与解释器语义差异清单（核对用）
+
+本节的用途：**新增/修改一个 opcode 或 callout 时，逐条对照，避免「JIT 快是快，但算出来的
+东西和解释器不一样」**。这类差异不会崩、只会静默算错，而且往往只在大循环里才显形
+（§8.15 / §8.17 / §8.18 / §8.19 全是这个套路）。
+
+结论先写在这里：**JIT 的每一个语义分支都必须能在解释器里指到对应的一行**；
+指不到的那一支，要么 bailout，要么在表里显式登记为「已知差异」。
+
+### 14.1 算术 / 比较 / 转换语义对照
+
+| 领域 | 解释器语义（`src/vm/vminc/`） | JIT 做法 | 状态 |
+| --- | --- | --- | --- |
+| 通用 `OP_ADD` | int+int（溢出升 BigInt）→ 任一 float 则 float 加 → 任一 ObjString 则拼接 → 否则类型错误 | int 快路径 + `EMIT_NUM_TO_XMM` float 慢路径 + concat callout（双方非字符串 → bailout） | ✅ |
+| 通用 `OP_SUB` / `OP_MUL` | int 运算（溢出升 BigInt）→ float → 类型错误 | int 快路径（`EMIT_INT64_OVF_CHECK` + `EMIT_INT48_CHECK`，两个检查缺一不可）→ float 慢路径 → NaN-boxed bailout | ✅ |
+| 通用 `OP_MOD` | **仅 int%int**（除零抛错）；float 落到「取模操作数必须是整数」 | 仅 int48 快路径，并自行挡除数为 0 → 其余 bailout | ✅ |
+| 通用 `OP_EQ` / `OP_NEQ` | int/float 数值比较 → 字符串按内容 → 数组逐元素 → 其它对象按指针 → BigInt → FFI 指针与 null | int 快路径（`JE`/`JNE`）→ float（IEEE：无序时 `==` 需 `AND SETNP`、`!=` 需 `OR SETP`）→ NaN-boxed bailout | ✅ |
+| 通用 `OP_LT..GE` | int/float 数值（与 NaN 比较一律 false）→ BigInt → 字符串 | int 快路径 → float（`JB/JBE` 再 `AND SETNP` 压无序；`JA/JAE` 天然正确）→ 其余 bailout | ✅ |
+| `OP_*_FLOAT` 算术 | `val_as_num_ex`：int/float 提升、BigInt 转 double、**其余一律 0.0** | `EMIT_FLOAT_ARGS2`：int48 → `CVTSI2SD`、裸 double → 直搬、NaN-boxed → bailout | ✅（2026-09-12，§8.18） |
+| `OP_*_FLOAT` 比较 | `val_as_num`：int/float 提升、其余 0.0（无 BigInt 转换） | 同上 | ✅（2026-09-12，§8.18） |
+| `OP_DIV_FLOAT` 除零 | 抛「浮点除零错误：除数为 0.0」 | 与 0.0 比较 → bailout；NaN 除数放行（DIVSD 得 NaN） | ✅（2026-09-12，§8.19） |
+| 类型化整数运算（`OP_ADD_INT` …） | 溢出升 BigInt | `EMIT_INT48_CHECK` / `EMIT_INT64_OVF_CHECK` → bailout | ✅ |
+| `OP_CAST_FLOAT` | int→`(double)`、bool→1.0/0.0、BigInt→double、null 保持 null | int48 → `CVTSI2SD`；其余**原样透传** | ⚠️ 见 14.4-① |
+| BigInt 参与算术/比较 | BigInt 路径 | NaN-boxed → bailout 交解释器 | ✅（有意为之） |
+| 比较结果的**类型** | 压 `val_bool`（`TRUE_VAL` / `FALSE_VAL`） | 压**裸 0/1**，写回时按 slot 类型位图裸存 | ⚠️ 见 14.4-② |
+| `len()` / 模块方法 / FFI 等 callout | 原生实现 | 同一原生函数（callout 调用），除参数/返回值装箱外无第二份实现 | ✅ |
+
+> **一条由此得出的通用原则**：JIT 中途算错的值**通常不会泄漏** ——
+> bailout 会整迭代重放、且不写回 locals，所以「跑到一半发现不对」的那批值会被丢弃（14.4-① 就是这样）。
+> 真正危险的是「**JIT 把整个循环跑完、再写回 locals**」的那一批值：错值会安静地传给解释器
+> （14.4-② 即此类）。**优先怀疑"循环跑完才暴露"的错值。**
+
+### 14.2 callout 取实参方向（**最容易踩的一类**）
+
+JIT 虚拟栈是「栈顶在低地址」的反向栈，`vstack_top` 永远指向**最后压入**的那个值。
+但不同 opcode 的压栈顺序不同，取参公式必须逐个对照：
+
+| opcode / callout | 压栈顺序 | 取参公式 |
+| --- | --- | --- |
+| `OP_MODULE_CALL`（`jit_callout_module_call`） | 实参按源码顺序，第一个实参先压（最高地址） | `arg[i] = vstack_top[arg_count-1-i]` |
+| `OP_CALL_GLOBAL_FUNC[_TYPED]`（`jit_callout_global_func`） | 同上 | 同上 |
+| `OP_STRUCT_INIT` / `OP_ARRAY` / `OP_CALL_NATIVE` | 同上 | 同上 |
+| `OP_INVOKE_METHOD`（struct 方法，`arg_count` 含 self） | **receiver 最先压**，再压实参 | `receiver = vstack_top[arg_count-1]`；`flocals[i] = vstack_top[arg_count-1-i]` |
+| `OP_GET_PROPERTY` + `OP_CALL` 合并（原生方法） | **实参先压，receiver 最后压（栈顶）** | `receiver = vstack_top[0]`；`arg[i] = vstack_top[arg_count - i]`（§8.17 的坑） |
+
+> 判据：编译器生成 `obj.m(a, b)` 时，`OP_GET_PROPERTY` 需要 receiver 在 TOS，所以实参先压；
+> 而 `OP_INVOKE_METHOD` 的约定是 receiver 占参数区首位，所以最先压。**写新 callout 前先
+> `--debug-out` 看一眼字节码序列，别凭直觉。**
+
+### 14.3 新增 opcode / callout 的一致性检查清单
+
+1. **三处同步**：`jit_scan.c` 的 `opcode_size()`、`scan_loop_body()` 的 vstack switch、
+   `scan_callee_for_inline()` 的 vstack switch。漏任一处 → 整个循环 `scan FAIL`（不是 bailout）
+2. `opcode_size()` 与 VM 侧的 `READ_*` 数量必须完全一致（变长 opcode 用 `ip[n]` 取值）
+3. vstack 净效应（pop N push M）与 codegen 里 `vstack` 的增减必须一致
+4. **`tos_live` 约束**：所有 `TOS_CONSUME` 必须在任何类型判定跳转**之前**（§8.16）
+5. **数值提升**：以解释器那侧调用的函数为准 —— `val_is_int` / `val_as_num`
+   （int/float，其余 0.0）/ `val_as_num_ex`（额外 BigInt）
+6. **溢出**：区分「int48 截断」与「int64 溢出」两条分支，确认哪条对应解释器的 BigInt 提升
+7. **除零**：整数除/模、浮点除三种除零都必须与解释器的报错行为一致（JIT 挡下 → bailout 让解释器抛）
+8. **结果类型**：解释器压的是 `val_bool` 还是 `val_int`（见 14.4-②）
+9. **失败路径**：`jit_callout_failed` 置位 + `EMIT_BAILOUT_SITE_NONOVF(bc_off)` 写 site。
+   不写 site 会让日志里的 `site=` 停留在**上一次**写过的值，排查方向被带偏
+10. **callout 取参方向**按 14.2 表，并在代码注释里写明该 opcode 的压栈顺序
+11. **回归**：差分探针（`LENO_NO_JIT=1` 对照，并用 `LENO_JIT_DEBUG=1` 确认 `Executed > 0`）
+    + 一个 `assert/test_jit_*.leno`；断言要**先在未修复代码上跑一遍确认会失败**
+12. **加 bailout 分支后必须复测 `Bailouts` 计数**（§8.19 的教训：功能对了但每次都回退）
+
+### 14.4 已知差异（未修，**改动相关代码时要留意**）
+
+**① `OP_CAST_FLOAT` 对非 int 值原样透传**
+解释器（`op_unary.inc`）对 bool → 1.0/0.0、BigInt → double、null 保持 null；
+JIT 只处理 int48，其余原样透传（`ops_float.inc`）。
+因为值本身没被破坏，下游的 `OP_*_FLOAT` 现在遇到 NaN-boxed 操作数会 bailout（§8.18），
+所以**不会静默算错**，但 `float f = <bool>` 这类循环会退化成「每次迭代都回退」。
+
+实测（`build/probe9.leno`）：`float f = o.get("flag", false); acc = acc + f + 1.0`
+两模式都是 `600.0` ✓ —— 因为**回退会整迭代重放、且不写回 locals，JIT 中途算错的值不会泄漏**。
+彻底修法：按解释器分支补 bool/null/BigInt 三条快路径（可同时消掉这里的回退）。
+
+**② 比较结果的位模式：裸 0/1 vs `val_bool`**
+JIT 的比较 opcode 产出裸 0/1；写回 locals 时按 slot 的类型位图决定装箱还是裸存，
+而「原值是 bool」的 slot 在位图里标记为"非 int" → **裸存** →
+解释器把 `0x…0001` 读成次正规 float（≈4.9e-324 / 0.0）。
+
+```leno
+// 复现（本地探针 build/probe8.leno，未入库；断言化的部分见 14.5）
+bool flag = false
+while k < iters { flag = (k >= 0); k = k + 1 }   // 热循环 → 进 JIT
+print(flag is bool)     // 解释器 1(bool) / JIT 2(float)
+print(_int(flag))       // 解释器 1      / JIT 0   ← 静默算错
+print(not flag)         // 两边都是 0（真值判断恰好正确）
+```
+
+影响面：真值判断（`if` / `while` / `not`）恰好正确，**但 `is bool`、`_int(bool)`、
+与 `true`/`false` 比较、以及把结果序列化（JSON 会写出 `4.9e-324`）都不一致**。
+修法方向（择一）：比较 opcode 直接产出 NaN-boxed `TRUE_VAL`/`FALSE_VAL`
+（`JUMP_IF_FALSE` 已能识别这两个常量，需同时核对 `OP_NOT` / and/or 的 codegen）；
+或给 writeback 增加「该 slot 原值是 bool」的第二张位图。
+
+### 14.5 回归断言索引
+
+| 断言文件 | 覆盖 |
+| --- | --- |
+| `assert/test_jit_method_args.leno` | 原生方法 callout 实参顺序（§8.17）：`_relayout` 累加循环现场 + `Dict.get(key, def)` |
+| `assert/test_jit_float_ops.leno` | `OP_*_FLOAT` int 操作数提升（§8.18）、热循环内浮点除零报错（§8.19） |
+| `assert/test_ffi_inline_widths.leno` | ffi 定宽内存读写内联 + 越界/空指针/已释放的 bailout 报错 |
 
 ***
 

@@ -204,6 +204,11 @@ codegen 在调用后检查该标志 → bailout → 解释器重跑该循环迭�
 * 2026-09-12 在 `2e5fdebb`（i5-3450）重新构建复跑：263 passed / 0 failed；
   `ripple_image.leno` `Bailouts: 0`、~50 FPS；`性能测试/for性能测试.leno` 与
   `While vs For 性能对比.leno` 均 `Bailouts: 0`；通用 opcode 差分探针逐位一致（见 §7.1）
+* 2026-09-12 修掉 callout 实参反序（§7.6）/ `OP_*_FLOAT` int 提升（§8.18）/
+  浮点除零（§8.19）后复跑：`assert/run_tests.leno` **266 passed / 0 failed**
+  （含新增 `test_jit_method_args.leno`、`test_jit_float_ops.leno`，两者在未修复代码上
+  会失败已实测）；`ripple_image.leno` `Bailouts: 0`、59.7 FPS（关 JIT 41.9 FPS）；
+  `file_manager.leno` 布局恢复正常（3 次稳定）
 
 ---
 
@@ -532,9 +537,138 @@ assert 263/263（两模式）、`ripple_image.leno` `Bailouts: 0`、72 个示例
    （`非溢出类 @bc_off=40（= loop_bc 29 + 11）`）。此前只打相对偏移，排查时极易
    把它当成别的指令 —— 这次的误判就是这么来的。
 
+### 7.6 原生方法调用 callout 取实参反序 —— file_manager 界面错位 —— ✅ 已修复（2026-09-12）
+
+**现象**：`LenoSDL3/examples/应用示例/文件管理器/file_manager.leno` 界面错位
+（工具栏被压窄、状态栏贴在工具栏下方、splitter 高度≈0、导航树与表格行消失），
+`LENO_NO_JIT=1` 正常。
+
+**根因**：`OP_GET_PROPERTY` + `OP_CALL` 窥孔合并成的调用 callout
+（`jit_callout_get_property`）用 `vstack_top[i + 1]` 取实参。JIT 虚拟栈栈顶在低地址：
+`vstack_top[0]` 是 receiver、`vstack_top[i]` 的第 i 个实参是**倒序**的
+⇒ `d.get(key, def)` 实际执行 `d.get(def, key)`，键落空返回默认值
+⇒ `sdl_layout.leno` 的 `_relayout` 累加出 `sumGrow = "grow"`（字符串）→ 布局整体退化。
+
+**修复**：`arg[i] = vstack_top[arg_count - i]`（`src/jit/jit_callout.c`）。
+
+**实测**：file_manager 布局恢复正常（3 次稳定，判定指标与关 JIT 基线一致）；
+`assert` **266 passed / 0 failed**（含新增 2 个回归断言）；`ripple_image.leno`
+`Bailouts: 0`、59.7 FPS（关 JIT 41.9 FPS）。
+
+**完整排查链路见第 8 节**；语义对照与检查清单见 `JIT实现与调试记录.md` §8.17 / §14。
+
+**同批修掉的另两处**（同属「JIT 与解释器语义不一致」，详见 `JIT实现与调试记录.md`
+§8.18 / §8.19）：`OP_*_FLOAT` 不提升 int 操作数、`OP_DIV_FLOAT` 除零静默算 inf。
+
 ---
 
-## 8. 涉及文件
+## 8. 排查手记：从「界面错位」到「callout 实参反序」（2026-09-12）
+
+这次报障是**界面错位**这种"说不清哪里错"的症状，排查路径有复用价值，完整记一遍。
+
+### 8.1 第 0 步：先做「JIT 还是解释器」的二分
+
+`LENO_NO_JIT=1` 跑同一个二进制 → 界面正常 ⇒ 问题在 JIT 生成的机器码或 JIT 的语义差，
+与示例代码、SDL3 库都无关。**这一步把搜索空间直接砍半，且成本只有一次运行。**
+
+### 8.2 第 1 步：把「界面错位」翻译成数值判据
+
+肉眼看截图得不出结论，换成两件可量化的事：
+
+* **从像素位置反推布局分支**：工具栏 combo 宽度恰好等于它的 `basis`（300）、
+  4 个按钮按 32 依次排开 ⇒ 说明 `HBox._relayout` 的 `childMain()` 返回的是 `basis`
+  ⇒ 只可能是「`free >= 0` 且 `sumGrow == 0`」这条分支 ⇒ **累加器 `sumGrow` 不是数值**。
+  从"结果长什么样"反推"走了哪个分支"，比通读布局代码快一个数量级。
+* **截屏 + 亮度指标做量化判定**：导航面板区域的亮点像素数，
+  正常 **2078** / 错位 **459**。之后每次改动跑一次脚本即可判定，不用肉眼比图
+  （`build/shot.ps1` 截屏、`build/metric.ps1` 计分、`build/trial.ps1` 连跑多轮）。
+
+### 8.3 第 2 步：字节码定位到源码行
+
+`lenojit --debug --debug-out bc.txt x.leno` 导出反汇编，把 JIT 日志里的 `body_start`
+对上源码行号：
+
+```
+[JIT-DEBUG] COMPILE: fn='_relayout' bc_off=350 back_edge=2, body_size=193 ...
+```
+
+`0350-0543` 与 `sdl_layout.leno:157-166`（`totalBasis/sumGrow/sumShrinkBasis` 累加）
+逐行对应 ⇒ 锁定循环。
+
+### 8.4 第 3 步：把「整个 GUI 程序」缩成「单循环差分探针」
+
+一路缩到 `build/probe3.leno`（20 行、单 while 循环）：
+
+```
+NO JIT: s1= 200.0
+JIT:    s1= grow        ← 复现
+```
+
+再用变体（`build/probe4.leno`）把出错阶段切出来：
+`acc = acc + 1.0` 正常、`acc = g`（`g = o.get(...)`）出错 ⇒ **错在 `get` 的返回值**，
+不在累加、不在写回。
+
+> 探针三原则：秒级迭代、不依赖 GUI、直接给「期望 vs 实际」。
+> 并且一定要看 `LENO_JIT_DEBUG=1` 的 `Executed > 0`，否则探针根本没走 JIT，差分是假的。
+
+### 8.5 第 4 步：反汇编 JIT 机器码
+
+`LENO_JIT_DEBUG=1` 的 `[JIT-DUMP]` 默认只打前 420 字节，本次序言就吃满了，
+临时把上限调到 2048，把 hex 落成 `.bin`，再 `objdump -D -b binary -m i386:x86-64 -M intel`
+（脚本 `build/disasm.ps1`）。直接读 callout 前的 `push` 序列就能看出实参在栈上的地址顺序，
+与 callout 里的取参下标不匹配 —— **一眼可见，不需要跑起来猜**。
+
+### 8.6 第 5 步：「是不是我这个提交引入的」——对比两版编译日志
+
+把相关源文件 `git checkout HEAD~1 --` 回退、重建、再跑一次 `LENO_JIT_DEBUG=1`，
+把两次的 `COMPILE:` / `compile FAIL` 行按 `capable` 分组对比：
+
+```
+HEAD~1: _relayout 350     capable=1        HEAD: _relayout 350     capable=1
+        drawRoundedRect 463 capable=0             drawRoundedRect 463 capable=1  ← 新增可 JIT
+        fillRoundedRect 608 capable=0             fillRoundedRect 608 capable=1  ← 新增可 JIT
+```
+
+结论：本次提交让**两个绘制循环**从「整体不可 JIT」变成「可 JIT」，
+而布局循环两版都可 JIT ⇒ 布局错位是**既有隐患**，新提交只是把另一批循环也推进了 JIT。
+
+**这一步能避免"凭印象归因提交"**（用户报「某提交引入」时尤其值得做），
+成本只有一次重建 + 一次运行。
+
+### 8.7 第 6 步：修完做「双模式 + 计数」验证
+
+* `LENO_NO_JIT=1` 与默认模式输出**逐位一致**（探针 / 示例 stdout）
+* `LENO_JIT_DEBUG=1` 确认 `Executed > 0`（否则没走 JIT）
+* **`Bailouts` 必须回到基线** —— 本次因为把判零写成 `UCOMISD xmm1, xmm1`（自己比自己恒相等），
+  功能正确但每次浮点除法都回退（`Bailouts: 0 → 12`），靠「`git stash` 收起改动做基线对比」
+  才发现是本次引入
+* 断言落成 `assert/test_jit_*.leno`，并**在未修复代码上先跑一遍确认它会失败**，
+  否则可能写出恒过的假断言
+
+### 8.8 可复用的 30 分钟路径
+
+```
+关 JIT 二分 → 把现象翻译成数值/像素判据 → 单循环差分探针 →（必要时）反汇编
+→ 定位 → 双模式 + Bailouts 计数验证 → 落断言（并验证未修时会失败）
+```
+
+---
+
+## 9. 涉及文件
+
+本轮（callout 实参 + 浮点操作数语义，2026-09-12）：
+
+* `src/jit/jit_callout.c`：`jit_callout_get_property` 合并调用路径取实参改
+  `vstack_top[arg_count - i]`（§7.6，修 file_manager 界面错位）
+* `src/jit/backend/x86_64.c`：新增 `EMIT_FLOAT_ARGS2` / `EMIT_MOVQ_RAX_XMM0` /
+  `EMIT_FLOAT_TAGGED_BAILOUT`（§8.18）
+* `src/jit/backend/x86_inc/ops_float.inc`：`ADD/SUB/MUL/DIV/NEG_FLOAT` 改用
+  `EMIT_FLOAT_ARGS2`；`OP_DIV_FLOAT` 补除零检查（§8.19）
+* `src/jit/backend/x86_inc/ops_fcmp.inc`：`EQ/LT/GT/LE/GE_FLOAT` 改用
+  `EMIT_FLOAT_ARGS2`（§8.18）
+* `assert/test_jit_method_args.leno`、`assert/test_jit_float_ops.leno`：新增回归断言
+* `docs/JIT实现与调试记录.md`：§8.17–§8.19 踩坑、§9 浮点提升开销、**§14
+  JIT 与解释器语义差异清单（核对用）**
 
 最近三轮（2026-09-12，`ad9ba582` → `25a4c1c2`）：
 
