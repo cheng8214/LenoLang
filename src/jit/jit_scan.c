@@ -41,7 +41,10 @@ int opcode_size(const uint8_t* ip) {
         case OP_CAST_FLOAT: /* int → float */
         case OP_DIV:  /* 通用除法，运行时类型分发 (callout) */
         case OP_ADD:  /* 通用加法（int fast path，其他类型 callout） */
-        case OP_SUB:  /* 通用减法（int fast path，其他类型 callout） */
+        case OP_SUB:  /* 通用减法（int fast path，float 慢路径 / bailout） */
+        case OP_MUL:  /* 通用乘法（int fast path，float 慢路径 / bailout） */
+        case OP_MOD:  /* 通用取模（仅 int fast path，其余 bailout） */
+        case OP_EQ: case OP_NEQ:  /* 通用相等比较（int/float 快路径，其余 bailout） */
         case OP_SHL: case OP_SHR: case OP_USHR:  /* 通用移位（int fast path） */
         case OP_LT: case OP_GT: case OP_LE: case OP_GE:  /* 通用比较（int fast path） */
         case OP_INC:  /* ++ (stack-top) */
@@ -186,7 +189,8 @@ static int scan_callee_for_inline(Chunk* cc, int local_count,
             case OP_EQ_FLOAT: case OP_LT_FLOAT: case OP_GT_FLOAT:
             case OP_LE_FLOAT: case OP_GE_FLOAT:
             case OP_DIV: case OP_INDEX:
-            case OP_ADD: case OP_SUB:
+            case OP_ADD: case OP_SUB: case OP_MUL: case OP_MOD:
+            case OP_EQ: case OP_NEQ:
             case OP_SHL: case OP_SHR: case OP_USHR:
             case OP_LT: case OP_GT: case OP_LE: case OP_GE:
                 vstack--; break;
@@ -405,7 +409,8 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                 /* 通用除法 (callout): pop 2 push 1 → net -1 */
                 vstack -= 1;
                 break;
-            case OP_ADD: case OP_SUB:
+            case OP_ADD: case OP_SUB: case OP_MUL: case OP_MOD:
+            case OP_EQ: case OP_NEQ:
             case OP_SHL: case OP_SHR: case OP_USHR:
             case OP_LT: case OP_GT: case OP_LE: case OP_GE:
                 /* 通用算术/移位/比较：int fast path（pop 2 push 1 → net -1） */

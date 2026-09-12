@@ -185,6 +185,125 @@
                 vstack--;
                 break;
             }
+            /* ---- 通用 MUL（对齐解释器 OP_MUL 语义）----
+             * 1) int48 * int48 → 整数乘；int64 溢出或超出 int48 → bailout
+             *    （解释器在此升 BigInt，bailout 后由解释器接管）
+             * 2) 两边都不是 NaN-boxed（即都是裸数值）→ float 乘
+             *    （int48 操作数用 CVTSI2SD 提升；结果保持 float，同 val_float）
+             * 3) 任一是 NaN-boxed（null/字符串/对象/BigInt）→ bailout
+             *    （null 报错、BigInt 运算、类型错误全交解释器）---- */
+            case OP_MUL: {
+                int slow_jcc_b, slow_jcc_a;          /* 非 int48 → 慢路径 */
+                int tagged_jcc_a, tagged_jcc_b;      /* NaN-boxed → bailout */
+                int end_jmp, skip_bail_jmp;
+
+                /* 必须先把两个操作数都取到寄存器再判定类型（见 8.16 的坑）。
+                 * b（右）→ RDX，a（左）→ RAX */
+                TOS_CONSUME_TO(JIT_RDX);
+                TOS_CONSUME_RAX();
+
+                /* b（RDX）非 int48 → 慢路径 */
+                emit_mov_rr(cb, JIT_R8, JIT_RDX);
+                emit_sar_imm(cb, JIT_R8, 47);
+                emit_inc_reg(cb, JIT_R8);
+                emit_cmp_reg_imm8(cb, JIT_R8, 1);
+                slow_jcc_b = emit_jcc(cb, 0x87);     /* ja slow */
+
+                /* a（RAX）非 int48 → 慢路径 */
+                emit_mov_rr(cb, JIT_R8, JIT_RAX);
+                emit_sar_imm(cb, JIT_R8, 47);
+                emit_inc_reg(cb, JIT_R8);
+                emit_cmp_reg_imm8(cb, JIT_R8, 1);
+                slow_jcc_a = emit_jcc(cb, 0x87);     /* ja slow */
+
+                /* int 快路径：RAX = a * b。
+                 * 两个检查缺一不可：INT64_OVF 捕 int64 溢出，INT48 捕
+                 * 「不溢出 int64 但超 48 位」（解释器此时已升 BigInt）。 */
+                emit_imul_rr(cb, JIT_RAX, JIT_RDX);
+                EMIT_INT64_OVF_CHECK(bc_off);
+                EMIT_INT48_CHECK(bc_off);
+                end_jmp = emit_jmp(cb);
+
+                /* ---- 慢路径：float 乘 ---- */
+                patch_rel32(cb, slow_jcc_b, cb->len);
+                patch_rel32(cb, slow_jcc_a, cb->len);
+
+                EMIT_NUM_TO_XMM(0, JIT_RAX, JIT_R8, tagged_jcc_a);   /* xmm0 = a */
+                EMIT_NUM_TO_XMM(1, JIT_RDX, JIT_R8, tagged_jcc_b);   /* xmm1 = b */
+                emit_sse2_rr(cb, 0x59, 0, 1);        /* MULSD xmm0, xmm1 */
+                /* movq rax, xmm0 */
+                emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F);
+                emit_byte(cb, 0x7E); emit_byte(cb, modrm(3, 0, 0));
+                skip_bail_jmp = emit_jmp(cb);
+
+                /* ---- bailout 桩：NaN-boxed 操作数交回解释器 ---- */
+                patch_rel32(cb, tagged_jcc_a, cb->len);
+                patch_rel32(cb, tagged_jcc_b, cb->len);
+                EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                {
+                    int _p = emit_jmp(cb);
+                    patch_add(ctx, _p, -1, 0);
+                }
+
+                patch_rel32(cb, end_jmp, cb->len);
+                patch_rel32(cb, skip_bail_jmp, cb->len);
+                TOS_PRODUCE();
+                vstack--;
+                break;
+            }
+            /* ---- 通用 MOD（对齐解释器 OP_MOD 语义）----
+             * 解释器的 OP_MOD **没有 float 路径**：int%int → int（除数为 0 报错）；
+             * null → 报错；BigInt → bigint_mod；其余（含 float）→ 类型错误。
+             * 所以这里只做 int48 快路径，其余一律 bailout 交解释器，
+             * 绝不能照抄 OP_SUB 的 float 中间段。
+             * 另外需要自行挡掉除数为 0——OP_MOD_INT 靠编译器保证非零，通用版没有这保证，
+             * 直接 idiv 会触发 #DE 硬件异常。挡下后交解释器抛「取模除零错误」。
+             * 余数必然落在 int48 内（|a%b| < |b|），无需 INT48 检查。 */
+            case OP_MOD: {
+                int chk[3];
+                int nc = 0;
+                int end_jmp;
+
+                TOS_CONSUME_TO(JIT_R8);    /* b（右）= 除数 */
+                TOS_CONSUME_TO(JIT_RAX);   /* a（左）= 被除数 */
+
+                /* b 非 int48 → bailout（用 RDX 当 scratch，R8 要留给 idiv） */
+                emit_mov_rr(cb, JIT_RDX, JIT_R8);
+                emit_sar_imm(cb, JIT_RDX, 47);
+                emit_inc_reg(cb, JIT_RDX);
+                emit_cmp_reg_imm8(cb, JIT_RDX, 1);
+                chk[nc++] = emit_jcc(cb, 0x87);      /* ja → bail */
+
+                /* a 非 int48 → bailout */
+                emit_mov_rr(cb, JIT_RDX, JIT_RAX);
+                emit_sar_imm(cb, JIT_RDX, 47);
+                emit_inc_reg(cb, JIT_RDX);
+                emit_cmp_reg_imm8(cb, JIT_RDX, 1);
+                chk[nc++] = emit_jcc(cb, 0x87);      /* ja → bail */
+
+                /* 除数 == 0 → bailout */
+                emit_test_rr(cb, JIT_R8, JIT_R8);
+                chk[nc++] = emit_jcc(cb, 0x84);      /* je → bail */
+
+                /* int 快路径：RAX = a % b（余数在 RDX） */
+                emit_cqo(cb);
+                emit_idiv_reg(cb, JIT_R8);
+                TOS_PRODUCE_FROM_RDX();
+                end_jmp = emit_jmp(cb);
+
+                /* ---- bailout 桩 ---- */
+                for (int _i = 0; _i < nc; _i++)
+                    patch_rel32(cb, chk[_i], cb->len);
+                EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                {
+                    int _p = emit_jmp(cb);
+                    patch_add(ctx, _p, -1, 0);
+                }
+
+                patch_rel32(cb, end_jmp, cb->len);
+                vstack--;
+                break;
+            }
             case OP_MUL_INT:
                 TOS_CONSUME_TO(JIT_RDX);
                 TOS_CONSUME_TO(JIT_RAX);

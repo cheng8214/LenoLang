@@ -201,11 +201,55 @@ codegen 在调用后检查该标志 → bailout → 解释器重跑该循环迭�
 
 ## 7. 遗留问题 / 待办
 
-### 7.1 通用 `OP_MUL`（以及 `OP_MOD` / `OP_EQ`/`OP_NE`）不被 JIT 支持
+### 7.1 通用 `OP_MUL`（以及 `OP_MOD` / `OP_EQ`/`OP_NEQ`）不被 JIT 支持 —— ✅ 已修复（2026-09-12）
 
-`jit_scan.c` 未收录这些通用 opcode → `scan FAIL: unknown opcode N` → **整个循环**不被编译
-（不是 bailout，排查时容易看错方向）。建议给 JIT 补上（与现有 `OP_ADD/OP_SUB` 同构：
-int 快路径 + float 慢路径 + 其余 bailout），受益面覆盖「类型确实未知」的动态代码。
+**修复前**：`jit_scan.c` 未收录这些通用 opcode → `scan FAIL: unknown opcode N` → **整个循环**
+不被编译（不是 bailout，排查时容易看错方向）。
+
+**修复**（三处必须同步，漏一处就白改）：
+
+1. `jit_scan.c`：`opcode_size()` 的 1-byte 段补 4 个 opcode；
+   `scan_loop_body()` 与 `scan_callee_for_inline()` 的 vstack switch 都登记为「pop 2 push 1 → -1」
+2. `ops_arith.inc`：新增通用 `OP_MUL`（int 快路径 → float 慢路径 → NaN-boxed bailout）
+   与通用 `OP_MOD`（**仅 int 快路径**，其余 bailout）
+3. `ops_icmp.inc`：新增通用 `OP_EQ` / `OP_NEQ`（int 快路径 → float 慢路径 → NaN-boxed bailout）
+
+**语义对齐要点**（严格照解释器的分派顺序写）：
+
+- `OP_MUL`：int×int → `imul` + `EMIT_INT64_OVF_CHECK` + `EMIT_INT48_CHECK`（两个检查缺一不可：
+  前者捕 int64 溢出，后者捕「不溢出 int64 但超 48 位」）；任一是 float → `MULSD`；NaN-boxed → bailout
+- `OP_MOD`：解释器**没有 float 路径**（float 落到「取模操作数必须是整数」类型错误），
+  所以 JIT 只能做 int48 快路径，**绝不能照抄 OP_SUB 的 float 中间段**。另外必须自行挡除数为 0
+  ——`idiv` 除零会触发 `#DE` 硬件异常，挡下后 bailout 交解释器抛「取模除零错误」。
+  余数必然落在 int48 内（`|a%b| < |b|`），无需 INT48 检查
+- `OP_EQ`/`OP_NEQ`：int48 对 int48 → `cmp` + `JE`/`JNE`；两边非 NaN-boxed → `UCOMISD`，
+  并按 IEEE 修正无序（`==` 结果再 `AND SETNP`、`!=` 结果再 `OR SETP`）；NaN-boxed
+  （字符串按内容、数组逐元素、其它对象按指针、BigInt）一律 bailout 交解释器
+
+**实测**（临时探针，JIT 与 `LENO_NO_JIT=1` 输出**逐位一致**）：
+
+| 场景 | 结果 |
+| --- | --- |
+| 通用 MUL：float×float / int×float / int×int | 走 JIT，0 bailout |
+| 通用 MOD：int % int | 走 JIT，0 bailout |
+| 通用 EQ/NEQ：int、float 混比、NaN | 走 JIT，0 bailout（NaN 按 IEEE：`==` false、`!=` true） |
+| 通用 MUL：int64 溢出 | 按设计 bailout → 解释器升 BigInt，结果正确 |
+| 字符串 `==` / `!=` | 按设计 bailout → 解释器，结果正确 |
+
+> 探针手法：用「声明返回 `any` 的函数」或模块调用结果当操作数，让**编译期类型未知**
+> （→ 发通用 opcode）而**运行时类型确定**（→ 分别命中整数快路径 / float 慢路径 / bailout）。
+> `any` 参与运算后结果也是 `any`，赋值处需 `_int()/_float()` 收敛，否则类型检查会报错。
+
+**副产品：7.2 的 A 写法循环现在能进 JIT 了**（本轮最大收益）：
+
+```
+修复前: [JIT-DEBUG] scan FAIL: unknown opcode 23 (size<0) at offset 16
+        [JIT-DEBUG] COMPILE: fn='main' bc_off=34 ... capable=0
+修复后: [JIT-DEBUG] COMPILE: fn='main' bc_off=34 ... capable=1
+        Executed: 1   Bailouts: 0
+```
+
+`s = s + maths.abs(gacc) * 1.0000001` 跑 100 万次：解释 38ms → JIT **17ms（2.26x）**。
 
 ### 7.2 编译器侧：`AST_MODULE_CALL` 没有写回 `cached_type`
 
@@ -229,13 +273,43 @@ s = s + t * 1.0000001
 即：**语义分析算出了 float，但只用于类型检查，没传给代码生成**，运行时看到的是动态类型。
 `ripple_image.leno` 没中招是因为它把 `maths.rsqrt(...)` 先赋给了 `float` 局部变量。
 
-两条修法（未做，需评估）：
+**修复现状**：7.1 已落地 —— 通用 opcode 现在 JIT 能编、能跑，所以这里的后果从
+「**整个循环进不了 JIT**」降级为「解释器里多一层类型分派 + 多发一条字节码」。
+上例 A 写法的循环已实测 `capable=1`（见 7.1），因此 A′ 变成纯锦上添花项。
 
-* **A′（编译器侧）**：让 `AST_MODULE_CALL` 各 return 路径写回 `cached_type`（或让 codegen
-  按需查 `native_get_module_method_return_type`）→ 直接发特化指令，解释器也变快；
-  风险：等于信任模块声明的返回类型（与用户函数返回值同等信任级别），若某 native 声明
-  `TYPE_FLOAT` 却返回 null，特化指令不再做运行时派发。
-* **B′（JIT 侧）**：见 7.1，纯兜底、不改语义。
+两条修法：
+
+* **B′（JIT 侧）**：见 7.1，纯兜底、不改语义 —— **已完成**。
+* **A′（编译器侧，未做）**：让 `AST_MODULE_CALL` 各 return 路径写回 `cached_type`
+  （或让 codegen 按需查 `native_get_module_method_return_type`）→ 直接发特化指令。
+
+  收益需修正：**A′ 并不会省掉 `OP_CAST_FLOAT`**。`assign_cast_needed()`
+  （`src/codegen/codegen_stmt.c:93-104`）只对字面量（`AST_NUM/STRING/BOOL/NULL`）消除 CAST，
+  其余一律保留 1，所以跨语句的规范化照旧。A′ 的收益仅限于**同一表达式内的 opcode 特化**
+  （少一层通用分派），比原估的小。
+
+  风险描述也需修正三处：
+
+  1. **失败形态是静默偏差，不是崩溃**。特化浮点指令内部走 `val_as_num_ex()`
+     （`src/vm/vminc/op_type_specialized.inc:159-178`）：int/float/bigint 正常转换，
+     **其它类型一律按 0.0**。而解释器通用 `OP_MUL` 对 null 是
+     `check_null_binary` → 抛「乘法运算: null 不能参与运算」。即 A′ 会把「报错」变成
+     「静默算 0.0」，比崩溃更隐蔽。
+  2. **信任级别弱于「用户函数返回值」**。用户函数的返回类型是语义分析**校验过**的
+     （声明 `: float` 却 `return null` 会编译报错）；native 元信息是 C 里手写注册、
+     **无人校验**。真实形式反例：`maths.sqrt/asin/acos/log/log2/rsqrt/fmod` 都注册
+     `TYPE_FLOAT`，非法输入时 `native_throw_error(...) + return val_null()`
+     （`src/module/maths/maths.c:33-41` 等）。**缓解因素**：它们都伴随 native 抛错，
+     实际影响被掩盖；且 maths 模块所有成功路径都是 `val_float(...)`，目前不存在
+     「不报错却返回非 float」的实例 —— 风险属于「未来新增 native 可能违反契约」。
+  3. **这份「信任元信息」JIT 侧其实已经在用了**。本轮的通用数值薄调用就是按
+     `ModuleMethodMeta.param_types/return_type` 决定走 xmm0..N 的 double ABI，返回也按
+     `val_as_num(result)` 取 double，仅用 `vm->has_exception` 兜底
+     （`src/jit/jit_callout.c:1094-1104`）。所以 A′ 不是新建信任边界，而是把同一份信任
+     从「JIT 薄调用」扩展到「解释器 + 特化 opcode」。
+
+  若将来要动 A′，建议加一道门槛：仅当 `meta->return_type` 明确（非 `TYPE_ANY`）**且**该
+  调用点的参数类型已通过 `param_types` 校验时才写回 `cached_type`。
 
 ### 7.3 `ffi.read_int` / `ffi.write_int` 仍是 2 次 callout
 
@@ -252,7 +326,14 @@ s = s + t * 1.0000001
 
 ## 8. 涉及文件
 
-本轮（模块调用优化）：
+本轮（通用 opcode 兜底，2026-09-12）：
+
+* `src/jit/jit_scan.c`：`opcode_size()` 补 `OP_MUL/OP_MOD/OP_EQ/OP_NEQ`；
+  `scan_loop_body()` 与 `scan_callee_for_inline()` 的 vstack 登记
+* `src/jit/backend/x86_inc/ops_arith.inc`：通用 `OP_MUL` / `OP_MOD` 的 codegen
+* `src/jit/backend/x86_inc/ops_icmp.inc`：通用 `OP_EQ` / `OP_NEQ` 的 codegen
+
+上一轮（模块调用优化）：
 
 * `src/jit/jit_callout.c`：`jit_resolve_module_method`、`jit_callout_module_call_meta`、
   `jit_thin_f1/2/3` + `jit_thin_bridge_for`（通用数值薄桥）
@@ -260,7 +341,7 @@ s = s + t * 1.0000001
 * `src/jit/backend/x86_inc/ops_return.inc`：`OP_MODULE_CALL` 的薄调用快速路径
 * `src/jit/backend/x86_inc/ops_callout.inc`：`OP_CALL_NATIVE` 的 `_int`/`_float` 内联
 
-上一提交（bailout 修复）：
+更早（bailout 修复）：
 
 * `src/jit/backend/x86_64.c`（序言 step 分流 + bailout 诊断埋点）
 * `src/jit/backend/x86_inc/ops_loop.inc`（`OP_FOR_LOOP` / `OP_FOR_PREP` 负步长）

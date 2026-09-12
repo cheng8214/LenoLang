@@ -331,10 +331,14 @@ for each local i:
 | ------ | --- | --- | --- |
 | — | OP\_ADD | 1 | int 加 → `ADDSD` → `jit_callout_concat`（字符串拼接；双方都非字符串时返回 NULL_VAL → bailout） |
 | — | OP\_SUB | 1 | int 减 → `SUBSD` → bailout（BigInt / 类型错误交解释器） |
+| — | OP\_MUL | 1 | int 乘（`imul` + int64 溢出 + int48 双检查）→ `MULSD` → bailout（null 报错 / BigInt / 类型错误） |
+| — | OP\_MOD | 1 | **仅** int48 取模（`cqo`/`idiv`，并自行挡除数为 0）；其余一律 bailout。解释器无 float 路径，故**没有** float 段 |
 | — | OP\_LT | 1 | int48 有符号 `cmp` → `UCOMISD`+\\(SETB\\)（无序再 AND 非 PF）→ NaN-boxed 才 bailout |
 | — | OP\_GT | 1 | 同上，`SETG` / \\(SETA\\)（JA 在无序时天然为 0） |
 | — | OP\_LE | 1 | 同上，`SETLE` / \\(SETBE\\)（无序再 AND 非 PF） |
 | — | OP\_GE | 1 | 同上，`SETGE` / \\(SETAE\\)（JAE 在无序时天然为 0） |
+| — | OP\_EQ | 1 | int48 `cmp`+`JE` → `UCOMISD`+\(SETE\)（无序再 AND `SETNP`）→ NaN-boxed 才 bailout |
+| — | OP\_NEQ | 1 | 同上，`JNE` / \(SETNE\)（无序再 OR `SETP`，使 NaN ≠ NaN 为真） |
 
 > **NaN 语义**（2026-09-11 第二轮）：`OP_*_FLOAT` 与通用 `OP_LT..OP_GE` 的 float 慢路径
 > 都按 IEEE 处理——与 NaN 比较除 `!=` 外一律 false。`UCOMISD` 无序时置 `PF=ZF=CF=1`，
@@ -422,14 +426,16 @@ for each local i:
 
 | Opcode | 枚举名 | 说明 |
 | ------ | --- | --- |
-| — | 通用 OP\_MUL | 未实现 codegen（已支持的是 `OP_MUL_INT` / `OP_MUL_FLOAT` / `OP_MUL_INT_IMM`） |
-| — | 通用 OP\_MOD | 同上（已支持 `OP_MOD_INT`） |
-| — | 通用 OP\_EQ / OP\_NE | 同上（已支持 `OP_EQ_INT` / `OP_EQ_FLOAT` / `OP_EQ_INT_IMM`） |
 | — | 泛型 OP\_STRUCT\_INIT | `generic_count > 0` 时拒绝：泛型实参需解析调用栈帧 |
 | — | 其它 `opcode_size()` 未收录的 opcode | 未实现 codegen |
 
-> 注意：通用 `OP_MUL`/`OP_MOD`/`OP_EQ` 缺席会让**整个循环**被拒绝编译（不是 bailout），
-> 排查时看 `scan FAIL: unknown opcode N` 而不是 `BAILOUT`。
+> 注意：**通用 `OP_MUL` / `OP_MOD` / `OP_EQ` / `OP_NEQ` 已于 2026-09-12 支持**（见第 4 节
+> 「通用算术与比较」）；它们缺席时同样会让**整个循环**被拒绝编译（不是 bailout），
+> 历史上排查时看 `scan FAIL: unknown opcode N` 而不是 `BAILOUT`。
+>
+> 排查通用 opcode 是否真的能进 JIT：`jit_scan.c` 三处必须同步——
+> `opcode_size()`、`scan_loop_body()`、`scan_callee_for_inline()`；漏掉最后一处会导致
+> 「循环本身能编，但含该 opcode 的被调函数无法内联」。
 >
 > 通用 `OP_MUL` 为什么会出现在字节码里（编译器 `AST_MODULE_CALL` 分支未写回
 > `ast->cached_type` → codegen 读到 TYPE_ANY → 发通用 opcode），以及模块调用
@@ -965,13 +971,10 @@ push rax    ; 内存写
    `step == 0` 的 VM 语义是「不进循环」，float 步长无法走 int48 快路径判断方向，
    两者都显式 bailout 交回解释器。**正/负步长（±1/±2/±3）现已全部支持**，
    日志直接报 `BAILOUT(prologue:step==0)` / `(prologue:step-is-float)`
-2. **通用 `OP_MUL` / `OP_MOD` / `OP_EQ` / `OP_NE` 未实现**：出现在循环体里会导致**整个循环**
-   被 scan 拒绝（不是 bailout），排查看 `scan FAIL: unknown opcode N`。
-   补齐思路与 2026-09-11 的 `OP_SUB`/`OP_ADD` 一致（复用 `EMIT_NUM_TO_XMM`）
-3. **while 比 for 慢约 2 倍**：`OP_GET_GLOBAL` 每次 NaN-box 解码开销，P0 寄存器化后有望缓解
-4. **`body_start=1156` 编译失败**（历史记录，待复核）：具体原因未完全定位
+2. **while 比 for 慢约 2 倍**：`OP_GET_GLOBAL` 每次 NaN-box 解码开销，P0 寄存器化后有望缓解
+3. **`body_start=1156` 编译失败**（历史记录，待复核）：具体原因未完全定位
    （无 scan FAIL 和 codegen FAIL 消息）
-5. **fib_iterative(1000) 3 次 bailout**：斐波那契值约 fib(56) 溢出 int48（超 2^47），
+4. **fib_iterative(1000) 3 次 bailout**：斐波那契值约 fib(56) 溢出 int48（超 2^47），
    属预期行为，JIT 的溢出检测正常工作
 
 > 已关闭的旧条目：
@@ -983,6 +986,8 @@ push rax    ; 内存写
 > - ~~try/catch 循环不可 JIT~~ → `OP_TRY/CATCH/FINALLY/END_TRY` 现为 no-op（第 5 节）
 > - ~~含函数调用的循环无法 JIT~~ → 已实现被调函数内联 + 函数级 JIT（13.8）
 > - ~~通用算术/比较遇 float 即 bailout~~ → 已补 float 快路径（8.15）
+> - ~~通用 `OP_MUL` / `OP_MOD` / `OP_EQ` / `OP_NEQ` 不被 JIT 支持~~ → 已补齐（2026-09-12，
+>   三处同步：`jit_scan.c` 的 size 表与两处 vstack switch + `ops_arith.inc` / `ops_icmp.inc`）
 
 ***
 

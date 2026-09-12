@@ -94,6 +94,80 @@
                 break;
             }
 
+            /* ---- 通用相等比较（对齐解释器 OP_EQ / OP_NEQ）----
+             * 1) int48 对 int48 → 整数比较（相等性与符号无关，用 JE/JNE）
+             * 2) 两边都不是 NaN-boxed → float 比较。IEEE 语义下与 NaN 的比较
+             *    恒为「不相等」：unordered 时 == 必须是 false、!= 必须是 true。
+             *    UCOMISD 无序时置 PF=ZF=CF=1，于是 SETE 会误判成真（需再 AND
+             *    SETNP 压下去），SETNE 会误判成假（需再 OR SETP 抬上来）。
+             * 3) 任一是 NaN-boxed → bailout。解释器这条路径上还要处理字符串
+             *    按内容相等、数组逐元素、其它对象按指针、BigInt 以及 FFI 指针
+             *    的 null 比较，语义复杂又非热点，一律交回解释器。---- */
+            case OP_EQ: case OP_NEQ: {
+                int is_neq = (op == OP_NEQ);
+                uint8_t cc = is_neq ? 0x5 : 0x4;      /* JNE  / JE    */
+                uint8_t pf = is_neq ? 0x0A : 0x0B;    /* SETP / SETNP */
+                int slow_jcc_b, slow_jcc_a;           /* 非 int48 → 慢路径 */
+                int tagged_jcc_a, tagged_jcc_b;       /* NaN-boxed → bailout */
+                int end_jmp, skip_bail_jmp;
+
+                /* 必须先把两个操作数都取到寄存器再判定类型（见 8.16 的坑）。
+                 * b（右）→ RDX，a（左）→ RAX */
+                TOS_CONSUME_TO(JIT_RDX);
+                TOS_CONSUME_RAX();
+
+                emit_mov_rr(cb, JIT_R8, JIT_RDX);
+                emit_sar_imm(cb, JIT_R8, 47);
+                emit_inc_reg(cb, JIT_R8);
+                emit_cmp_reg_imm8(cb, JIT_R8, 1);
+                slow_jcc_b = emit_jcc(cb, 0x87);      /* ja slow */
+
+                emit_mov_rr(cb, JIT_R8, JIT_RAX);
+                emit_sar_imm(cb, JIT_R8, 47);
+                emit_inc_reg(cb, JIT_R8);
+                emit_cmp_reg_imm8(cb, JIT_R8, 1);
+                slow_jcc_a = emit_jcc(cb, 0x87);      /* ja slow */
+
+                /* int 快路径 */
+                emit_cmp_rr(cb, JIT_RAX, JIT_RDX);
+                emit_setcc_reg(cb, cc, JIT_RAX);
+                emit_movzx_r32_r8(cb, JIT_RAX, JIT_RAX);
+                end_jmp = emit_jmp(cb);
+
+                /* ---- 慢路径：float 相等比较 ---- */
+                patch_rel32(cb, slow_jcc_b, cb->len);
+                patch_rel32(cb, slow_jcc_a, cb->len);
+
+                EMIT_NUM_TO_XMM(0, JIT_RAX, JIT_R8, tagged_jcc_a);   /* xmm0 = a */
+                EMIT_NUM_TO_XMM(1, JIT_RDX, JIT_R8, tagged_jcc_b);   /* xmm1 = b */
+                emit_ucomisd_rr(cb, 0, 1);                           /* flags: a ? b */
+                emit_setcc_reg(cb, cc, JIT_RAX);      /* AL = SETE / SETNE */
+                emit_setcc_reg(cb, pf, JIT_RDX);      /* DL = SETNP / SETP（无序修正位） */
+                if (is_neq) {
+                    emit_byte(cb, 0x08);              /* OR  AL, DL：unordered → 真 */
+                } else {
+                    emit_byte(cb, 0x20);              /* AND AL, DL：unordered → 假 */
+                }
+                emit_byte(cb, modrm(3, JIT_RDX & 7, JIT_RAX & 7));
+                emit_movzx_r32_r8(cb, JIT_RAX, JIT_RAX);
+                skip_bail_jmp = emit_jmp(cb);
+
+                /* ---- bailout 桩（NaN-boxed：字符串/数组/对象/null/BigInt）---- */
+                patch_rel32(cb, tagged_jcc_a, cb->len);
+                patch_rel32(cb, tagged_jcc_b, cb->len);
+                EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                {
+                    int _p = emit_jmp(cb);
+                    patch_add(ctx, _p, -1, 0);
+                }
+
+                patch_rel32(cb, end_jmp, cb->len);
+                patch_rel32(cb, skip_bail_jmp, cb->len);
+                TOS_PRODUCE();
+                vstack--;
+                break;
+            }
+
             /* ---- 通用比较（对齐解释器 OP_LT..OP_GE）----
              * 1) int48 对 int48 → 有符号整数比较
              * 2) 两边都不是 NaN-boxed → float 比较（UCOMISD + 无符号 CC）；
