@@ -227,6 +227,13 @@ ModuleMethodMeta* jit_resolve_module_method(Chunk* chunk, uint16_t module_idx, u
 /* Callout：已解析 meta 的模块方法调用（无运行时查找） */
 Value jit_callout_module_call_meta(int64_t* vstack_top, int arg_count, ModuleMethodMeta* meta);
 
+/* ---- struct 方法返回值个数（编译期解析，jit_scan.c）----
+ * OP_INVOKE_METHOD 只编码「方法名常量 + arg_count」，接收者类型运行时才定。
+ * JIT 的栈记账必须知道调用后留下几个返回值，多返回值方法（如
+ * Font.measureString → [float, float]）按 1 个记账会让第一个返回值读到
+ * 实参槽的残留值。返回 0 表示「无法确定」，调用方必须拒绝 JIT。 */
+int jit_resolve_method_ret_count(Chunk* chunk, uint16_t name_const_idx);
+
 /* ---- 通用「数值薄调用」桥（jit_callout.c）----
  * 模块方法若注册为「全部参数 + 返回值都是 float」（param_types/return_type），
  * codegen 可以把实参当 double 直接放进 xmm0..3 并调用下面的薄桥：
@@ -242,7 +249,8 @@ Value jit_callout_get_property(int64_t* vstack_top, uint16_t name_const_idx, uin
 /* ---- Scanning (jit_scan.c) ---- */
 int cache_hash(const uint8_t* ip);
 int opcode_size(const uint8_t* ip);
-void scan_loop_body(const uint8_t* body_start, int body_size, int back_edge, ScanResult* r, VM* vm_ptr);
+void scan_loop_body(const uint8_t* body_start, int body_size, int back_edge, ScanResult* r,
+                    VM* vm_ptr, Chunk* chunk);
 
 /* ---- Codegen (backend/x86_64.c) ---- */
 int compile_loop(CodegenCtx* ctx);

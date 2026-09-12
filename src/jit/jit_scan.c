@@ -25,6 +25,48 @@ int cache_hash(const uint8_t* ip) {
     return (int)(v & (JIT_CACHE_SIZE - 1));
 }
 
+/* ---- struct 方法返回值个数（编译期解析） ----
+ * OP_INVOKE_METHOD 只编码「方法名常量 + arg_count」，接收者的静态类型信息不在
+ * 字节码里（同一条指令运行时可能落到不同 struct 定义上）。JIT 的栈记账必须
+ * 知道调用结束后留下几个返回值：多返回值方法（如 Font.measureString →
+ * [float, float]）若按 1 个记账，第一个返回值会直接落在实参槽上（读到上一帧
+ * 的残留值），表现为数值/位置每帧乱跳。
+ *
+ * 解析办法：枚举当前线程已注册的 struct 定义，按方法名匹配：
+ *   - 匹配到的所有方法 return_count 一致（<=1 归一为 1）→ 返回该值
+ *   - 一个都没匹配到 / 定义不完整 / 同名方法返回值个数不一致 → 返回 0
+ * 返回 0 表示「无法确定」，调用方（scan/codegen）必须拒绝 JIT 交解释器执行，
+ * 绝不能退化成「按 1 个返回值」处理 —— 那正是本 bug 的形态。 */
+int jit_resolve_method_ret_count(Chunk* chunk, uint16_t name_const_idx) {
+    if (!chunk || !chunk->constants || name_const_idx >= (uint16_t)chunk->const_cnt)
+        return 0;
+    Value name_val = chunk->constants[name_const_idx];
+    if (!val_is_obj(name_val) || val_as_obj(name_val)->type != OBJ_STRING)
+        return 0;
+    const char* name = ((ObjString*)val_as_obj(name_val))->chars;
+    if (!name) return 0;
+
+    int found = 0;
+    int rc = 0;
+    int n = struct_def_get_count();
+    for (int i = 0; i < n; i++) {
+        ObjStructDef* def = struct_def_get(i);
+        if (!def || !def->methods) continue;
+        for (int j = 0; j < def->method_count; j++) {
+            StructMethodInfo* m = &def->methods[j];
+            if (!m->name || strcmp(m->name, name) != 0) continue;
+            ObjFunction* fn = m->func;
+            if (!fn && m->closure) fn = m->closure->function;
+            if (!fn) return 0;                /* 定义不完整 → 无法确定 */
+            int c = (fn->return_count > 1) ? fn->return_count : 1;
+            if (found && c != rc) return 0;   /* 同名方法返回值个数不一致 → 无法确定 */
+            rc = c;
+            found = 1;
+        }
+    }
+    return found ? rc : 0;
+}
+
 /* ---- Opcode instruction size (bytes) ---- */
 /* Takes ip (pointer to opcode byte) because some opcodes are variable-length
  * (e.g. OP_ACC_FIELDS has size 2 + count). */
@@ -257,8 +299,17 @@ case OP_GET_FIELD_FAST: vstack++; break;
                 break;
             }
             case OP_INVOKE_METHOD: {
+                /* 返回值个数按编译期解析结果记账；解析不出来则拒绝内联
+                 * （callee 的返回值个数未知时无法保证栈记账正确）。 */
                 int ac = rd_short(ip + 3);
-                vstack -= (ac - 1);
+                int rc = jit_resolve_method_ret_count(cc, rd_short(ip + 1));
+                if (rc <= 0) {
+                    if (jit_debug_on())
+                        fprintf(stderr, "[JIT-DEBUG] inline-scan FAIL: INVOKE_METHOD ret_count 无法确定 at off %d\n",
+                                (int)(ip - cc->code));
+                    return 0;
+                }
+                vstack -= (ac - rc);
                 break;
             }
             case OP_ACC_FIELDS: break;
@@ -313,7 +364,7 @@ case OP_GET_FIELD_FAST: vstack++; break;
  * back_edge:  1=OP_LOOP, 2=OP_FOR_LOOP
  */
 void scan_loop_body(const uint8_t* body_start, int body_size,
-                           int back_edge, ScanResult* r, VM* vm_ptr) {
+                           int back_edge, ScanResult* r, VM* vm_ptr, Chunk* chunk) {
     memset(r, 0, sizeof(*r));
     r->capable = 1;
     r->back_edge_type = back_edge;
@@ -504,9 +555,19 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                 break;
             case OP_INVOKE_METHOD: {
                 /* name_const(2) + arg_count(2); arg_count includes self (receiver).
-                 * pop arg_count, push 1 result -> net -(arg_count - 1) */
+                 * pop arg_count, push ret_count results -> net -(arg_count - ret_count)。
+                 * ret_count 不能假定为 1：多返回值方法（如 Font.measureString）
+                 * 的后续栈布局全靠它，解析不出来就拒绝 JIT（capable=0）。 */
                 int arg_count = rd_short(ip + 3);
-                vstack -= (arg_count - 1);
+                int ret_count = jit_resolve_method_ret_count(chunk, rd_short(ip + 1));
+                if (ret_count <= 0) {
+                    if (jit_debug_on())
+                        fprintf(stderr, "[JIT-DEBUG] scan FAIL: INVOKE_METHOD ret_count 无法确定 at offset %d\n",
+                                (int)(ip - body_start));
+                    r->capable = 0;
+                    return;
+                }
+                vstack -= (arg_count - ret_count);
                 break;
             }
             case OP_CALL_GLOBAL_FUNC:

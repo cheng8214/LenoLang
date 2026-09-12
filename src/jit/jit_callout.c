@@ -764,6 +764,16 @@ Value method_name_val = chunk->constants[method_name_idx];
         return NULL_VAL;
     }
 
+    /* 返回值个数：JIT codegen 已按编译期解析结果规划了栈布局，这里必须按
+     * 同一规则回填。多返回值方法（如 Font.measureString → [float, float]）
+     * 的额外返回值由调用方在 vstack 上留出的槽位承载（见下方 VM 路径）。
+     * 函数级 JIT 拒收 return_count > 1 的函数，所以快路径只对 ret_count == 1 生效。 */
+    int ret_count = 1;
+    if (closure->function && closure->function->return_count > 1) {
+        ret_count = closure->function->return_count;
+        if (ret_count > 16) ret_count = 16;
+    }
+
     /* ---- 函数级 JIT 快路径 ----
      * 方法整体已编译为机器码 fn(locals, globals) 时，直接执行它，
      * 跳过解释器 VM frame push/pop + 字节码分发循环。
@@ -775,7 +785,7 @@ Value method_name_val = chunk->constants[method_name_idx];
      * 回退前必须复位）。 */
     {
         ObjFunction* mfunc = closure->function;
-        if (mfunc && jit_state.enabled && jit_func_depth < JIT_FUNC_MAX_DEPTH) {
+        if (mfunc && ret_count == 1 && jit_state.enabled && jit_func_depth < JIT_FUNC_MAX_DEPTH) {
             JIT_FT_T0();
             JitLoopFn jfn = jit_func_lookup_or_compile(mfunc, vm);
             if (jfn) {
@@ -854,6 +864,27 @@ Value result = vm->last_return_value;
     /* Reload locals pointer in case vm_grow_frames reallocated vm.frames */
     if (vm->frame_cnt > 0) {
         jit_reloaded_locals = vm->frames[vm->frame_cnt - 1].locals;
+    }
+
+    /* ---- 多返回值：与 jit_callout_global_func 完全同构 ----
+     * OP_RETURN_MULTI 把全部返回值按序压在 VM 栈上（results[0] 最深、
+     * results[ret_count-1] 为 TOS）。JIT 侧约定：
+     *   RAX            = results[ret_count-1]（新 TOS，由返回值带回）
+     *   vstack_top[arg_count-1-i] = results[i]（i = 0..ret_count-2）
+     * 缺了这段回填，调用方 `var[float,float](a, b) = f.m()` 的 a 会读到
+     * 实参槽残留（数值每帧不同 → 画面抖动）。 */
+    if (ret_count > 1 && vm->sp >= ret_count) {
+        Value ret_vals[16];
+        for (int i = 0; i < ret_count && i < 16; i++) {
+            ret_vals[i] = vm->stack[vm->sp - ret_count + i];
+        }
+        result = ret_vals[ret_count - 1];
+        for (int i = 0; i < ret_count - 1 && i < 15; i++) {
+            int slot = arg_count - 1 - i;
+            if (slot >= 0) {
+                vstack_top[slot] = jit_value_to_raw(ret_vals[i]);
+            }
+        }
     }
 
     /* Restore VM stack */

@@ -26,6 +26,17 @@
             /* ---- Callout: OP_INVOKE_METHOD (struct method call, VM re-entry) ---- */
             case OP_INVOKE_METHOD: {
                 int arg_count = rd_short(ip + 3);
+                /* 返回值个数：编译期按方法名解析（scan 阶段已保证可解析，
+                 * 这里再兜一次，绝不允许按错误的个数生成代码）。多返回值
+                 * 方法（如 Font.measureString → [float, float]）时，
+                 * callout 已把前 (ret_count-1) 个结果写回 vstack 内存，
+                 * RAX = 最后一个结果（新 TOS）。 */
+                int ret_count = jit_resolve_method_ret_count(cur_chunk, rd_short(ip + 1));
+                if (ret_count <= 0) {
+                    if (jit_debug_on())
+                        fprintf(stderr, "[JIT-DEBUG] INVOKE_METHOD ret_count 无法确定 at bc_off=%d\n", bc_off);
+                    return 0;
+                }
                 TOS_SPILL();
                 /* Save current RSP (virtual stack pointer) to tmp1
                  * BEFORE CALLOUT_BEGIN aligns/changes RSP. */
@@ -36,7 +47,9 @@
                 EMIT_LOAD_TMP(JIT_ARG1, tmp1_disp);   /* vstack_top (1st arg) */
                 emit_mov_reg_imm64(cb, JIT_ARG2, (uint64_t)arg_count);  /* arg_count (2nd) */
                 emit_mov_reg_imm64(cb, JIT_ARG3, (uint64_t)(uintptr_t)ip);  /* bytecode ip (3rd) */
-                emit_mov_reg_imm64(cb, JIT_ARG4, (uint64_t)(uintptr_t)ctx->chunk);  /* chunk (4th) */
+                /* 4th arg 用 cur_chunk：内联 callee 时 ip 指向 callee 的字节码，
+                 * 方法名常量索引必须到 callee 的常量表里取（其余 callout 同理）。 */
+                emit_mov_reg_imm64(cb, JIT_ARG4, (uint64_t)(uintptr_t)cur_chunk);  /* chunk (4th) */
                 EMIT_CALL(jit_callout_invoke_method);
                 EMIT_CALLOUT_END();
                 /* Check jit_callout_failed flag — if set, bail out. */
@@ -52,18 +65,22 @@
                 emit_xor_rr(cb, JIT_RAX, JIT_RAX);
                 emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
                 EMIT_LOAD_TMP(JIT_RAX, tmp2_disp);
-                /* Pop arg_count values from JIT virtual stack */
-                int pop_bytes = arg_count * 8;
-                if (pop_bytes <= 127) {
-                    emit_byte(cb, 0x48); emit_byte(cb, 0x83); emit_byte(cb, 0xC4);
-                    emit_byte(cb, (uint8_t)pop_bytes);
-                } else {
-                    emit_byte(cb, 0x48); emit_byte(cb, 0x81); emit_byte(cb, 0xC4);
-                    emit_uint32(cb, (uint32_t)pop_bytes);
+                /* Pop (arg_count - ret_count + 1) 个实参槽：剩下的
+                 * (ret_count - 1) 个槽由 callout 写入额外的返回值，
+                 * 与 OP_CALL_GLOBAL_FUNC 的多返回值处理完全一致。 */
+                int pop_bytes = (arg_count - ret_count + 1) * 8;
+                if (pop_bytes > 0) {
+                    if (pop_bytes <= 127) {
+                        emit_byte(cb, 0x48); emit_byte(cb, 0x83); emit_byte(cb, 0xC4);
+                        emit_byte(cb, (uint8_t)pop_bytes);
+                    } else {
+                        emit_byte(cb, 0x48); emit_byte(cb, 0x81); emit_byte(cb, 0xC4);
+                        emit_uint32(cb, (uint32_t)pop_bytes);
+                    }
                 }
                 EMIT_VALUE_TO_RAW();
                 TOS_PRODUCE();
-                vstack -= (arg_count - 1);
+                vstack -= (arg_count - ret_count);
                 break;
             }
 

@@ -50,7 +50,7 @@
 static JitLoopFn jit_compile(CallFrame* frame, const uint8_t* body_start,
                              int body_size, int back_edge, VM* vm_ptr) {
     ScanResult sr;
-    scan_loop_body(body_start, body_size, back_edge, &sr, vm_ptr);
+    scan_loop_body(body_start, body_size, back_edge, &sr, vm_ptr, frame->chunk);
     if (jit_debug_on()) {
         const char* fname = "?";
         int bc_off = -1;
@@ -228,7 +228,7 @@ static JitLoopFn jit_compile_function(ObjFunction* func, VM* vm_ptr) {
         return NULL;
 
     ScanResult sr;
-    scan_loop_body(code, len, 0, &sr, vm_ptr);
+    scan_loop_body(code, len, 0, &sr, vm_ptr, func->chunk);
     if (!sr.capable)
         return NULL;
 
