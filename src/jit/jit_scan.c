@@ -14,9 +14,15 @@
 #include "jit_priv.h"
 
 /* ---- Cache hash ---- */
+/* 老实现是 `(addr >> 4) & (SIZE-1)`：只用地址的 8 位，不同 chunk 里偏移相同的
+ * 循环必然落到同一槽位（direct-mapped 下就互相驱逐）。这里先把低 4 位（16 字节
+ * 对齐，无信息）移掉，再把高位异或折回低位，让槽位取决于更多地址位。 */
 int cache_hash(const uint8_t* ip) {
     uintptr_t v = (uintptr_t)ip;
-    return (int)((v >> 4) & (JIT_CACHE_SIZE - 1));
+    v >>= 4;
+    v ^= v >> 8;
+    v ^= v >> 16;
+    return (int)(v & (JIT_CACHE_SIZE - 1));
 }
 
 /* ---- Opcode instruction size (bytes) ---- */

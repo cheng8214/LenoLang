@@ -362,13 +362,36 @@ int jit_try_hot_loop(CallFrame* frame, VM* vm_ptr, int32_t loop_offset, int back
         loop_fn = frame->closure->function->name;
     const int loop_bc_off = (int)(body_start - frame->chunk->code);
 
-    /* Cache lookup */
-    int idx = cache_hash(body_start);
-    JitCacheEntry* entry = &jit_state.cache[idx];
+    /* Cache lookup：哈希 + 线性探测。窗口内先找同一循环，再找空槽；窗口满了才
+     * 挑一个「最不值得留」的条目驱逐。
+     * 老实现是 direct-mapped、冲突就地覆盖：两个别名循环互相驱逐（刚被驱逐的又要
+     * 重新攒 50 次命中才能再编），实测 120 个热循环时 Compiled = 360（3 轮全量重编）。 */
+    JitCacheEntry* entry = NULL;
+    JitCacheEntry* victim = NULL;
+    int base = cache_hash(body_start);
+    for (int p = 0; p < JIT_CACHE_PROBES; p++) {
+        JitCacheEntry* e = &jit_state.cache[(base + p) & (JIT_CACHE_SIZE - 1)];
+        if (e->loop_ip == body_start) { entry = e; break; }   /* 命中同一循环 */
+        if (e->loop_ip == NULL) { entry = e; break; }         /* 空槽 */
+        /* 候选牺牲者：「价值」最低的 —— 没编译成功的优先，其次命中次数少的 */
+        if (!victim) {
+            victim = e;
+        } else {
+            int e_worth = (e->is_compiled ? 1 : 0) * 2 + (e->hit_count >= JIT_HOT_THRESHOLD ? 1 : 0);
+            int v_worth = (victim->is_compiled ? 1 : 0) * 2 + (victim->hit_count >= JIT_HOT_THRESHOLD ? 1 : 0);
+            if (e_worth < v_worth ||
+                (e_worth == v_worth && e->hit_count < victim->hit_count))
+                victim = e;
+        }
+    }
+    if (!entry) {
+        entry = victim;          /* 窗口内无空槽 → 驱逐最差候选（罕见） */
+        if (!entry) return 0;    /* 理论不可达：窗口至少含 1 个槽 */
+        jit_state.cache_evictions++;
+    }
 
-    /* Verify it's the right loop (handle hash collisions) */
     if (entry->loop_ip != body_start) {
-        /* Different loop — reset entry */
+        /* 新循环（空槽，或驱逐后重用）—— 重置条目 */
         if (entry->fn) {
             jit_mem_free((void*)entry->fn, 0);
         }
@@ -526,6 +549,9 @@ void jit_print_stats(void) {
     }
     fprintf(stderr, "  Cached:   %d\n", compiled);
     fprintf(stderr, "  Tried:    %d\n", tried);
+    /* 只有探测窗口满了才会 > 0；非 0 说明 JIT_CACHE_SIZE 或窗口该调大了 */
+    if (jit_state.cache_evictions > 0)
+        fprintf(stderr, "  Evicted:  %d\n", jit_state.cache_evictions);
     fprintf(stderr, "======================\n");
 }
 

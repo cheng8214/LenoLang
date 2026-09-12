@@ -30,6 +30,9 @@
 #define JIT_MAX_LABELS      32    /* max jump labels in a loop body      */
 #define JIT_MAX_PATCHES     256   /* max jump patches                    */
 #define JIT_BAILOUT_LIMIT   3     /* after N bailouts, stop trying      */
+/* 线性探测窗口：哈希冲突时在同一窗口内先找空槽，避免像老实现那样就地覆盖
+ * 另一个热循环（两个别名循环会互相驱逐 → 每次进入都重编译） */
+#define JIT_CACHE_PROBES    8
 
 /* ---- JIT function type ---- */
 /* Calling convention is target-ABI specific (see backend/x86_64.c);
@@ -62,6 +65,7 @@ typedef struct {
     int compile_count;
     int execute_count;
     int bailout_count;
+    int cache_evictions;  /* 探测窗口满而被迫驱逐热循环的次数（诊断用） */
     int enabled;
 } JitState;
 
