@@ -378,10 +378,63 @@ JIT 与解释器输出**逐位一致**；`examples/` 下 73 个非 GUI 示例两
   若将来要动 A′，建议加一道门槛：仅当 `meta->return_type` 明确（非 `TYPE_ANY`）**且**该
   调用点的参数类型已通过 `param_types` 校验时才写回 `cached_type`。
 
-### 7.3 `ffi.read_int` / `ffi.write_int` 仍是 2 次 callout
+### 7.3 `ffi.read_int` / `ffi.write_int` 是 2 次 callout —— **✅ 已内联（2026-09-12）**
 
-每像素约 40ns。可内联为一条未对齐 `mov`（需一并内联 `ObjFFIPointer` 的类型/空指针/边界检查），
-或再做一套「整数签名」的薄调用。
+**为什么之前只能走 callout**（两层原因，缺一不可）：
+
+1. JIT 唯一的模块调用快速路径「数值薄调用」的判据是
+   `arg_count ∈ [1,3] && 所有 param_types == TYPE_FLOAT && return_type == TYPE_FLOAT`
+   （`ops_return.inc`）。而 `ffi.read_int` 注册的是 `{TYPE_PTR, TYPE_INT} → TYPE_INT`、
+   `ffi.write_int` 是 `{TYPE_PTR, TYPE_INT, TYPE_INT} → TYPE_NULL` —— 一条都不满足。
+2. 那条判据之所以只认 float，是因为它靠**双 ABI 恰好一致**：Win64/SysV 都把前 4 个
+   浮点实参放 `xmm0..3`、float 结果也回 `xmm0`；`Ptr`/`int` 走整型寄存器，
+   两个 ABI 的位置完全不同（`RCX/RDX/R8/R9` vs `RDI/RSI/RDX/RCX`），要写两套。
+
+于是每次调用都要付：`EMIT_CALLOUT_BEGIN` + 逐个装箱成 `Value args[16]` + 调 native +
+`has_exception` 检查 + `EMIT_VALUE_TO_RAW` 回转换。而 native 内部真正干的只有一次
+4 字节 `memcpy`。
+
+**实现**（`src/jit/backend/x86_inc/ops_return.inc`，插在薄调用判据之前）：编译期按
+`meta->module_name == "ffi"` + `meta->method_name` 识别这两个方法，直接生成：
+
+* 前置检查（任一不过就写 site → bailout，交解释器抛**原样报错**）：
+  offset 是 int48（解释器 `parse_offset` 对非 int 按 0 处理，这里直接回退）；
+  `top16 == 0xFFFC`（TAG_OBJ）且 `Object.type == OBJ_FFI_POINTER`；
+  `ptr->ptr != NULL && !freed`（`CHECK_NULL_PTR`）；`owned && size > 0` 时校验
+  `(uint64)offset + 4 <= size`（`CHECK_BOUNDS`）
+* 访存：`movsxd rax, dword [rdx + rax]`（读 4 字节并符号扩展，结果本身就是 JIT 的
+  raw int48，**不需要装箱**）；`mov dword [rdx + rax], ecx`（只写低 32 位 =
+  `(int32_t)value`）；`write_int` 返回 `NULL_VAL` 与通用路径一致
+
+**踩到的坑（重要，未来写内联必看）**：Win64 下 **`RSI`/`RDI` 是非易失寄存器**，
+而 JIT 序言只保存 `rbp/rbx/r12-r14` —— 用它们当临时寄存器会悄悄破坏调用方。
+第一次实现用了 `RSI`（存 `size`）与 `RDI`（存 `offset+4`），结果在 bailout 之后
+`jit_try_hot_loop` 里段错误（gdb：`addl $0x1,0x4008(%rsi)`，而 `RSI=0x10` 正是刚读出的
+`size=16`）。**内联只能用易失寄存器 `RAX/RCX/RDX/R8`**（`R9`=globals、`R10`=payload mask、
+`R11`=int tag、`RBX`=类型位图，都不可动）。边界比较需要第 4 个临时值时，用
+`EMIT_STORE_TMP/LOAD_TMP` 的 frame spill 槽，而不是 RSI/RDI。
+
+**语义等价性细节**：`CHECK_BOUNDS` 的 `(size_t)offset + 4 > size` 在 offset 为负时会
+**回绕**（如 `offset = -4` → `(size_t)(-4)+4 == 0`，`0 > size` 为假 → **不报错**）。
+内联用同样的 64 位加法 + 无符号 `ja` 比较，实测 `-4` 两边都不报错、`-5` 两边都报
+「内存访问越界」，逐字一致。
+
+**实测**（i5-3450，同机 A/B：`read_int/write_int` 内联 vs `read_int16/write_int16`
+仍走 callout，500 万次，int16 的访存代价与 int32 相同，差值即 callout 开销）：
+
+| 实现 | 每次 read+write |
+| --- | --- |
+| callout（未内联） | **45.6–48.2 ns** |
+| 内联 | **26.7–28.4 ns** |
+
+省 **约 19ns/次（~40%）**。验证：七场景（正常 / 非对齐 / 非 owned / 越界 / 已释放 /
+空指针 / 负偏移）JIT 与 `LENO_NO_JIT=1` 输出**逐位一致**（含两条报错文本）；
+「先跑热 150 次再出错」的三个用例确认真的走了 JIT 内联的 bailout 路径
+（`@bc_off=96（= loop_bc 47 + 49）` 正是边界检查）且报错一致；
+assert 263/263（两模式）、`ripple_image.leno` `Bailouts: 0`、72 个示例双模式 stdout 全一致。
+
+同类方法（`read_int8/16/32/64`、`read_uint*`、`read_float/double`、`write_*`、
+`write_float/double`）目前仍走 callout，可按同一模板扩展（宽度/符号不同）。
 
 ### 7.4 其它
 

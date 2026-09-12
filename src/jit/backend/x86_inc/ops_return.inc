@@ -99,6 +99,147 @@
                 ModuleMethodMeta* mod_meta =
                     jit_resolve_module_method(cur_chunk, module_idx, method_idx);
 
+                /* ---- ffi.read_int / ffi.write_int 内联 ----
+                 * 这两个方法在像素直写循环里每像素各一次，走通用 callout 每次要付
+                 * 「逐个装箱成 Value 数组 + native 调用 + 异常检查」（实测 ~20ns），
+                 * 而它们真正做的只是一次 4 字节 memcpy。这里直接生成 load/store；
+                 * 任一前置检查不过就写 site 后 bailout 交解释器，保证报错文本
+                 * （"空指针引用或指针已释放" / "内存访问越界"）与语义完全一致。 */
+                if (mod_meta && strcmp(mod_meta->module_name, "ffi") == 0) {
+                    int ffi_is_read  = (arg_count == 2 && strcmp(mod_meta->method_name, "read_int") == 0);
+                    int ffi_is_write = (arg_count == 3 && strcmp(mod_meta->method_name, "write_int") == 0);
+                    if (ffi_is_read || ffi_is_write) {
+                        /* 实参在 JIT 虚拟栈上：read=[ptr, off]，write=[ptr, off, value] */
+                        TOS_SPILL();
+                        if (ffi_is_write) {
+                            emit_pop_reg(cb, JIT_RCX);            /* RCX = value（raw） */
+                            /* value 必须是 int48（对应解释器的 val_as_int） */
+                            emit_mov_rr(cb, JIT_RDX, JIT_RCX);
+                            emit_sar_imm(cb, JIT_RDX, 47);
+                            emit_inc_reg(cb, JIT_RDX);
+                            emit_cmp_reg_imm8(cb, JIT_RDX, 1);
+                            EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                            int fw_val_notint = emit_jcc(cb, 0x87);   /* JA → bailout */
+                            patch_add(ctx, fw_val_notint, -1, 0);
+                        }
+                        emit_pop_reg(cb, JIT_RAX);                /* RAX = offset（raw int48） */
+                        emit_pop_reg(cb, JIT_R8);                 /* R8  = ptr（NaN-boxed Value） */
+
+                        /* 1) offset 必须是 int48（解释器 parse_offset 对非 int 按 0 处理） */
+                        emit_mov_rr(cb, JIT_RDX, JIT_RAX);
+                        emit_sar_imm(cb, JIT_RDX, 47);
+                        emit_inc_reg(cb, JIT_RDX);
+                        emit_cmp_reg_imm8(cb, JIT_RDX, 1);
+                        EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                        int f_off_notint = emit_jcc(cb, 0x87);        /* JA → bailout */
+                        patch_add(ctx, f_off_notint, -1, 0);
+
+                        /* 2) ptr 必须是 NaN-boxed 对象（top16 == 0xFFFC = TAG_OBJ） */
+                        emit_mov_rr(cb, JIT_RDX, JIT_R8);
+                        {   /* shr rdx, 48 */
+                            int _b = (JIT_RDX >> 3) & 1;
+                            emit_byte(cb, rex(1, 0, 0, _b));
+                            emit_byte(cb, 0xC1);
+                            emit_byte(cb, modrm(3, 5, JIT_RDX & 7));
+                            emit_byte(cb, 48);
+                        }
+                        {   /* cmp rdx, 0x0000FFFC */
+                            int _b = (JIT_RDX >> 3) & 1;
+                            emit_byte(cb, rex(1, 0, 0, _b));
+                            emit_byte(cb, 0x81);
+                            emit_byte(cb, modrm(3, 7, JIT_RDX & 7));
+                            emit_uint32(cb, 0x0000FFFC);
+                        }
+                        EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                        int f_not_obj = emit_jcc(cb, 0x85);           /* JNE → bailout */
+                        patch_add(ctx, f_not_obj, -1, 0);
+                        emit_and_rr(cb, JIT_R8, JIT_R10);             /* R8 = Object* */
+
+                        /* 3) obj->type == OBJ_FFI_POINTER（type 是 Object 首字段，偏移 0） */
+                        {
+                            int _b = (JIT_R8 >> 3) & 1;
+                            emit_byte(cb, rex(0, 0, 0, _b));
+                            emit_byte(cb, 0x80);
+                            emit_byte(cb, modrm(1, 7, JIT_R8 & 7));
+                            emit_byte(cb, 0x00);
+                            emit_byte(cb, (uint8_t)OBJ_FFI_POINTER);
+                        }
+                        EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                        int f_not_ptr = emit_jcc(cb, 0x85);           /* JNE → bailout */
+                        patch_add(ctx, f_not_ptr, -1, 0);
+
+                        /* 4) CHECK_NULL_PTR：ptr->ptr != NULL 且 !freed
+                         * 用 cmp qword [r8+disp], 0 形式，不额外占寄存器 ——
+                         * Win64 下 RSI/RDI 是**非易失**寄存器，而 JIT 序言只保存
+                         * rbp/rbx/r12-r14，所以这里只能用易失寄存器 RAX/RCX/RDX/R8。 */
+                        {
+                            int _b = (JIT_R8 >> 3) & 1;
+                            emit_byte(cb, rex(1, 0, 0, _b));          /* REX.W */
+                            emit_byte(cb, 0x83);
+                            emit_byte(cb, modrm(1, 7, JIT_R8 & 7));
+                            emit_byte(cb, (uint8_t)offsetof(ObjFFIPointer, ptr));
+                            emit_byte(cb, 0x00);
+                        }
+                        EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                        int f_null = emit_jcc(cb, 0x84);              /* JE → bailout */
+                        patch_add(ctx, f_null, -1, 0);
+                        {
+                            int _b = (JIT_R8 >> 3) & 1;
+                            emit_byte(cb, rex(0, 0, 0, _b));
+                            emit_byte(cb, 0x83);
+                            emit_byte(cb, modrm(1, 7, JIT_R8 & 7));
+                            emit_byte(cb, (uint8_t)offsetof(ObjFFIPointer, freed));
+                            emit_byte(cb, 0x00);
+                        }
+                        EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                        int f_freed = emit_jcc(cb, 0x85);             /* JNE → bailout */
+                        patch_add(ctx, f_freed, -1, 0);
+
+                        /* 5) CHECK_BOUNDS：仅当 owned && size > 0 校验 off+4 <= size
+                         *    （offset 为负时无符号比较必然越界，与解释器一致） */
+                        {
+                            int _b = (JIT_R8 >> 3) & 1;
+                            emit_byte(cb, rex(0, 0, 0, _b));
+                            emit_byte(cb, 0x83);
+                            emit_byte(cb, modrm(1, 7, JIT_R8 & 7));
+                            emit_byte(cb, (uint8_t)offsetof(ObjFFIPointer, owned));
+                            emit_byte(cb, 0x00);
+                        }
+                        int f_not_owned = emit_jcc(cb, 0x84);         /* JE → 跳过边界检查 */
+                        emit_mov_reg_mem8(cb, JIT_RDX, JIT_R8, (int8_t)offsetof(ObjFFIPointer, size));
+                        emit_test_rr(cb, JIT_RDX, JIT_RDX);
+                        int f_size0 = emit_jcc(cb, 0x84);             /* JE → 跳过边界检查 */
+                        EMIT_STORE_TMP(tmp1_disp, JIT_RAX);           /* 暂存 offset */
+                        /* add rax, 4（RAX 仅用于比较，之后从 tmp1 恢复） */
+                        emit_byte(cb, 0x48); emit_byte(cb, 0x83);
+                        emit_byte(cb, 0xC0); emit_byte(cb, 0x04);
+                        emit_cmp_rr(cb, JIT_RAX, JIT_RDX);
+                        EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                        int f_oob = emit_jcc(cb, 0x87);               /* JA → bailout（无符号） */
+                        patch_add(ctx, f_oob, -1, 0);
+                        EMIT_LOAD_TMP(JIT_RAX, tmp1_disp);            /* 恢复 offset */
+                        patch_rel32(cb, f_not_owned, cb->len);
+                        patch_rel32(cb, f_size0, cb->len);
+
+                        /* 6) 访存：RDX = ptr->ptr（基址），RAX = offset（索引） */
+                        emit_mov_reg_mem8(cb, JIT_RDX, JIT_R8, (int8_t)offsetof(ObjFFIPointer, ptr));
+                        if (ffi_is_read) {
+                            /* movsxd rax, dword [rdx + rax]：结果本身就是 raw int48 */
+                            emit_byte(cb, 0x48); emit_byte(cb, 0x63);
+                            emit_byte(cb, 0x04); emit_byte(cb, 0x02);
+                        } else {
+                            /* mov dword [rdx + rax], ecx：只写低 32 位（(int32_t)value） */
+                            emit_byte(cb, 0x89);
+                            emit_byte(cb, 0x0C); emit_byte(cb, 0x02);
+                            /* write_int 返回 val_null()：与通用路径一致地压 NULL_VAL */
+                            emit_mov_reg_imm64(cb, JIT_RAX, (uint64_t)NULL_VAL);
+                        }
+                        TOS_PRODUCE();
+                        vstack -= (arg_count - 1);
+                        break;
+                    }
+                }
+
                 /* ---- 通用「数值薄调用」快速路径（不含任何模块/方法名特判）----
                  * 判据完全来自模块方法自身注册的元信息：
                  *   - 参数个数 1..3，且 param_types[0..n-1] 全是 TYPE_FLOAT
