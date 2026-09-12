@@ -379,6 +379,25 @@ int compile_loop(CodegenCtx* ctx) {
     emit_push_reg(cb, JIT_R13);              /* push r13 (callout: saved RCX=locals) */
     emit_push_reg(cb, JIT_R14);              /* push r14 (callout: saved R9=globals) */
     emit_mov_rbp_rsp(cb);                     /* mov rbp, rsp      */
+
+    /* ---- Entry ABI shim (System V AMD64) -----------------------------
+     * The JIT function is entered through a plain C call:
+     *     fn(locals, globals)          (jit.c / jit_callout.c thin bridge)
+     * Everything below this point assumes the parameters sit in the Windows
+     * x64 registers: RCX = locals (read as [rcx + slot*8]), RDX = globals
+     * (copied into R9).  On System V (Linux/macOS x86-64) a C call delivers
+     * arg1/arg2 in RDI/RSI instead, so alias them into the Win64 slots
+     * first; otherwise the prologue would dereference garbage.
+     * Safe here: nothing has been emitted before the pushes above (only
+     * RBP/RBX/R12-R14 are touched), so RDI/RSI still hold the arguments.
+     * JIT_ARG1/JIT_ARG2 (defined below) already handle callout arguments;
+     * this shim covers the *entry* convention, which is the only place that
+     * is not reached through those macros. */
+#ifndef _WIN32
+    emit_mov_rr(cb, JIT_RCX, JIT_RDI);        /* RCX = locals  (arg1) */
+    emit_mov_rr(cb, JIT_RDX, JIT_RSI);        /* RDX = globals (arg2) */
+#endif
+
     /* Allocate: scratch area (total_locals*8) + max_vstack*8 + callout temps (3*8), rounded to 16 */
     int frame_sz = total_locals * 8 + sr->max_vstack * 8 + 16 + 24;
     frame_sz = (frame_sz + 15) & ~15;        /* align to 16 */

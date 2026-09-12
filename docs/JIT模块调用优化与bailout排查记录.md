@@ -414,6 +414,9 @@ JIT 与解释器输出**逐位一致**；`examples/` 下 73 个非 GUI 示例两
 `R11`=int tag、`RBX`=类型位图，都不可动）。边界比较需要第 4 个临时值时，用
 `EMIT_STORE_TMP/LOAD_TMP` 的 frame spill 槽，而不是 RSI/RDI。
 
+> 完整的寄存器 / ABI 约定、内联写法清单、跨平台矩阵与校验基线，见
+> 《JIT实现与调试记录.md》**§2 寄存器约定与内联规则**。
+
 **语义等价性细节**：`CHECK_BOUNDS` 的 `(size_t)offset + 4 > size` 在 offset 为负时会
 **回绕**（如 `offset = -4` → `(size_t)(-4)+4 == 0`，`0 > size` 为假 → **不报错**）。
 内联用同样的 64 位加法 + 无符号 `ja` 比较，实测 `-4` 两边都不报错、`-5` 两边都报
@@ -533,7 +536,22 @@ assert 263/263（两模式）、`ripple_image.leno` `Bailouts: 0`、72 个示例
 
 ## 8. 涉及文件
 
-本轮（A′ 编译期类型落地，2026-09-12）：
+最近三轮（2026-09-12，`ad9ba582` → `25a4c1c2`）：
+
+* `src/semantic/visitinc/visit_module.inc`：A′ —— 模块调用返回类型写回 `cached_type`
+* `src/jit/jit_scan.c`：收录 `OP_CAST_STRING`（size + 两处 vstack 表）；
+  `cache_hash()` 位混合
+* `src/jit/backend/x86_inc/ops_arith.inc`：`OP_CAST_STRING` 的 codegen
+  （已是 string → 原样，否则 bailout）
+* `src/jit/backend/x86_inc/ops_callout.inc`：`_int`/`_float` 内联转换支持
+  `bool`（1/0、1.0/0.0）与 `null`（0、0.0）
+* `src/jit/jit.c`：循环缓存线性探测（`jit_try_hot_loop`）、`cache_evictions` 统计、
+  bailout 诊断输出绝对偏移
+* `src/jit/jit.h`：`JIT_CACHE_PROBES`、`JitState.cache_evictions`
+* `src/jit/backend/x86_inc/ops_return.inc`：`ffi.read_int` / `ffi.write_int` 内联
+* `docs/JIT实现与调试记录.md` §2：寄存器 / ABI 约定与内联规则（新增 §2.3–§2.5）
+
+更早：A′ 编译期类型落地（2026-09-12）：
 
 * `src/semantic/visitinc/visit_module.inc`：`case AST_MODULE_CALL` 末尾把推断出的返回类型
   写回 `cached_type`（仅 `AST_MODULE_CALL` 且未缓存且非 `TYPE_ANY` 时）

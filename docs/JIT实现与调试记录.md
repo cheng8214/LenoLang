@@ -15,7 +15,10 @@
 
 - [1. 架构概述](#1-架构概述)
 
-- [2. 寄存器约定](#2-寄存器约定)
+- [2. 寄存器约定与内联规则](#2-寄存器约定与内联规则)
+  - [2.3 写内联操作码的规则（必读）](#23-写内联操作码的规则必读)
+  - [2.4 反面案例：内联用 RSI → Windows 上段错误](#24-反面案例内联用-rsi--windows-上段错误2026-09-12)
+  - [2.5 跨平台结论](#25-跨平台结论)
 
 - [3. NaN-boxing 与 JIT 虚拟栈](#3-nan-boxing-与-jit-虚拟栈)
 
@@ -78,28 +81,60 @@ int (*JitLoopFn)(Value* locals, Value* globals);
 
 ***
 
-## 2. 寄存器约定
+## 2. 寄存器约定与内联规则
 
-Windows x64 ABI，JIT 函数入口 `RCX = Value* locals`，`RDX = Value* globals`。
+JIT 后端目前只有 **x86-64**（`src/jit/backend/x86_64.c`），但它要同时跑在两种 ABI 上：
 
-| 寄存器 | 用途                                       | 保留方式                         |
-| --- | ---------------------------------------- | ---------------------------- |
-| RCX | locals 指针（第一参数，固定）                       | 调用者保存                        |
-| RDX | globals 指针（入口参数，prologue 复制到 R9）         | -                            |
-| R9  | globals 指针（运行期间固定）                       | 调用者保存                        |
-| R10 | `PAYLOAD_MASK = 0x0000FFFFFFFFFFFF`      | prologue 加载                  |
-| R11 | `INT_TAG = 0xFFFB000000000000`           | prologue 加载                  |
-| RBX | 类型位图：bit i=1 表示 local i 是 float/obj      | callee-saved，prologue xor 清零 |
-| RBP | 帧指针 = scratch 区基址                        | callee-saved                 |
-| RSP | 虚拟栈顶（JIT push/pop 用）                     | 运行期间管理                       |
-| RAX | 通用 scratch                               | volatile                     |
-| RDX | 通用 scratch（注意：入口时是 globals，prologue 后释放） | volatile                     |
-| R8  | int48 检测 scratch                         | volatile                     |
-| R12 | callout: 保存 RSP                          | callee-saved                 |
-| R13 | callout: 保存 RCX                          | callee-saved                 |
-| R14 | callout: 保存 R9                           | callee-saved                 |
+| 平台 | ABI | callout 的整型/指针参数寄存器 | 栈 |
+| --- | --- | --- | --- |
+| Windows x64 | Win64 | `RCX, RDX, R8, R9` | 需要 32B shadow space（`EMIT_CALLOUT_ALLOC`） |
+| Linux / macOS x86-64 | SysV | `RDI, RSI, RDX, RCX`（第 5 个起入栈） | 无 shadow，仅需 16B 对齐 |
 
-### Epilogue（不能使用 LEAVE）
+后端里按 ABI 分叉的只有**四处**：`JIT_ARG1..5` 的映射、callout 栈空间
+（`EMIT_CALLOUT_ALLOC`）、**JIT 函数入口 shim**（见下）、可执行内存分配（`jit_mem.h`：
+Windows `VirtualAlloc` / POSIX `mmap`）。**内联代码生成不许再引入新的 ABI 依赖**（见 §2.3）。
+`build.sh` 按 `uname -m` 选后端：x86_64 → 本文件，arm64/aarch64 → `backend/arm64.c`
+（已预留、**未实现**，缺文件时构建直接报错）。
+
+JIT 函数入口（`compile_loop` 序言）：约定参数为 `RCX = Value* locals`、`RDX = Value* globals`，
+但这是 **Win64 的寄存器**。JIT 函数是用**普通 C 调用**进的（`jit.c` 的 `entry->fn(locals, globals)`、
+`jit_callout.c` 薄桥里的 `jfn(flocals, vm->globals)`），所以 SysV 下实参落在 `RDI/RSI`。序言
+在 `mov rbp, rsp` 之后立刻补了一段 shim（`#ifndef _WIN32`）：
+
+```c
+emit_mov_rr(cb, JIT_RCX, JIT_RDI);   /* RCX = locals  (arg1) */
+emit_mov_rr(cb, JIT_RDX, JIT_RSI);   /* RDX = globals (arg2) */
+```
+
+* 位置安全：此处只压过 `RBP/RBX/R12-R14`，`RDI/RSI` 尚未被动过；`RCX=locals` 之后所有
+  `[rcx + slot*8]`、`RDX→R9`（globals）等既有约定**一行都不用改**。
+* 与 callout 的分工：callout 参数走 `JIT_ARG1..5`（已 ABI 感知），**入口是唯一不走那些宏
+  的取参路径** —— 之前漏的就是这一处，症状是 Linux 上一进 JIT 就段错误（读到垃圾 locals）。
+* Win64 分支不受影响（`#ifndef _WIN32` 包住），热循环与函数级 JIT 共用同一段序言，
+  所以一处即覆盖两种模式。
+
+### 2.1 寄存器角色
+
+| 寄存器 | 用途 | 保留方式 |
+| --- | --- | --- |
+| RCX | 入口 = locals 指针（第一参数，固定；SysV 下由 shim 从 `RDI` 搬入） | 调用者保存 |
+| RDX | 入口 = globals 指针（prologue 复制到 R9；SysV 下由 shim 从 `RSI` 搬入） | - |
+| R9  | globals 指针（运行期间固定）；`EMIT_BAILOUT_SITE_WRITE` 临时借它（自带 push/pop） | 调用者保存 |
+| R10 | `PAYLOAD_MASK = 0x0000FFFFFFFFFFFF` | prologue 加载；callout 后由 `EMIT_CALLOUT_END` 重载 |
+| R11 | `INT_TAG = 0xFFFB000000000000` | 同上 |
+| RBX | 类型位图：bit i=1 表示 local i 是 float/obj（`BT RBX, imm8`） | callee-saved，prologue xor 清零 |
+| RBP | 帧指针 = scratch/spill 区基址 | callee-saved |
+| RSP | 虚拟栈顶（JIT 的 push/pop 就是参数与中间值） | 运行期间管理 |
+| RAX | 通用 scratch / TOS 常驻寄存器 | volatile |
+| RDX | 通用 scratch（入口时是 globals，prologue 后释放） | volatile |
+| R8  | 通用 scratch（int48 检测、tag 检查……） | volatile |
+| **RSI / RDI** | **❌ 内联禁用**（见 §2.3 第 2 条）；SysV 下序言入口处承载 `arg2/arg1`，只被 shim 读一次 | SysV: volatile / **Win64: callee-saved** |
+| R12 | callout: 保存 RSP | callee-saved |
+| R13 | callout: 保存 RCX | callee-saved |
+| R14 | callout: 保存 R9（并借它搬 globals 指针） | callee-saved |
+| R15 | 后端未定义（`x86_64_emit.h` 只到 `JIT_R14`） | — |
+
+### 2.2 Epilogue（不能使用 LEAVE）
 
 由于在 RBP 之后压入了 R12/R13/R14/RBX，无法用 `LEAVE` 指令，必须手动恢复：
 
@@ -112,6 +147,63 @@ pop rbx
 pop rbp
 ret
 ```
+
+### 2.3 写内联操作码的规则（必读）
+
+1. **可用的临时寄存器只有 `RAX / RCX / RDX / R8`** —— 这四个在两种 ABI 下都是 volatile。
+   需要第 5 个及其以上的临时值时，用 `EMIT_STORE_TMP(tmp1_disp, reg)` /
+   `EMIT_LOAD_TMP(reg, tmp1_disp)` 的 frame spill 槽，**不要**去找 RSI/RDI。
+2. **`RSI` / `RDI` 在 Win64 下是 callee-saved，而 JIT 序言只保存了 `RBP/RBX/R12/R13/R14`**：
+   内联里写它们就会破坏 `jit_try_hot_loop` / `vm_run` 等调用方的状态（§2.4 是真实事故）。
+   SysV 下它们确实是 volatile（写了没事），但**同一份代码必须两端都对**，所以统一禁用；
+   它们只允许出现在 callout 参数装载（`JIT_ARG1..5`）。
+3. 参数与结果走 JIT 虚拟栈约定：`TOS_SPILL()` → `emit_pop_reg(...)`（**倒序**，栈顶是最后一个实参）
+   → 结果 `TOS_PRODUCE()` → `vstack -= (arg_count - 1)`。
+4. 任何"做不到/不确定"的情形一律写成 **bailout**，不要猜：
+   `EMIT_BAILOUT_SITE_NONOVF(bc_off); int p = emit_jcc(cb, <cc>); patch_add(ctx, p, -1, 0);`
+   走这条路时**不要**再 `TOS_PRODUCE()`。语义要逐条对齐解释器，包括边界判断的**无符号回绕**、
+   `null`/`bool` 的具体数值、以及报错文本（bailout 后由解释器抛原样错误）。
+5. 改 opcode 支持范围时**三处必须同步**，漏一处就是"整个循环静默不可 JIT"：
+   `jit_scan.c` 的 `opcode_size()`、`scan_callee_for_inline()` 与 `scan_loop_body()` 的
+   vstack 栈效应表、以及 backend 的实现。
+6. 不要动 RBP/RSP 的约定：bailout 出口统一走 `EMIT_EPILOGUE()`（用 RBP 恢复 RSP），
+   所以 bailout 之前 RSP 的临时变化（比如已 pop 掉实参）是安全的。
+
+### 2.4 反面案例：内联用 RSI → Windows 上段错误（2026-09-12）
+
+给 `ffi.read_int` / `ffi.write_int` 写内联时，第一版用 `RSI` 存 `size`、`RDI` 存 `offset+4`
+（觉得都是 scratch）。结果：正常路径全部正确，**只有 bailout 之后**崩：
+
+```
+Thread 1 received signal SIGSEGV
+0x00007ff76d728a9b in jit_try_hot_loop ()
+=> addl $0x1,0x4008(%rsi)        ; RSI = 0x10 —— 正是刚读出的 size=16
+```
+
+原因：Win64 把 RSI/RDI 归为 callee-saved，而 JIT 序言没保存它们，于是内联把 `RSI=0x10`
+留给了调用方，编译器用 RSI 缓存的 `&jit_state`（+0x4008）就飞了。SysV 下 RSI/RDI 是
+volatile，同一份代码在 Linux 上**不会**复现 —— 典型的"Linux 能跑、Windows 崩"。
+修法：只用 `RAX/RCX/RDX/R8`，边界比较的第 4 个临时值改用 frame spill 槽。
+
+### 2.5 跨平台结论
+
+* **入口同样是 ABI 相关**：Win64 传参在 `RCX/RDX`，SysV 在 `RDI/RSI`；序言用一段
+  `#ifndef _WIN32` 的 shim 归一化（见 §2 开头），因此「内联只用 `RAX/RCX/RDX/R8`」
+  这条规则在 SysV 下还多一层含义：`RDI/RSI` 在 shim 执行前**是活跃的入口参数**，
+  内联更不该碰。
+* 内联代码只用 `RAX/RCX/RDX/R8` + 相对 RBP 寻址，**Win64 与 SysV 通用**（打包出的
+  `ffi.read_int` 内联在两种 ABI 下行为一致）。
+* 换**架构**才需要重写：arm64 后端未实现；但 tag 检查、边界规则、bailout 协议、虚拟栈
+  约定与架构无关，可以照搬，只有指令编码与寄存器编号要换。
+* 校验基线：改动内联后至少跑 `assert/run_tests.leno`（两种模式）、
+  `LENO_NO_JIT=1` 差分、以及带 `bailout` 的用例（正常路径正确不代表 bailout 路径正确 ——
+  本节的段错误就是这么漏出来的）。
+* **首次在 Linux 上跑必须额外确认**：
+  1. `bash build.sh` 能过（`jit_mem.h` 走 POSIX `mmap`；`LENO_NO_JIT=1` 是纯解释器兜底）；
+  2. 热循环与函数级 JIT 都真的被执行到（否则 shim 没被覆盖到就等于没测）；
+  3. callout 相关的 5 参数用例（SysV 第 5 个参数走 `R8`，Windows 走 `[RSP+32]`）；
+  4. 若 `mmap(PROT_READ|PROT_WRITE|PROT_EXEC)` 被 SELinux/PaX 之类拦掉，`jit_compile`
+     会失败并**退回解释器**（不崩，只是没加速）——那是环境问题，不是 ABI 问题。
 
 ***
 
