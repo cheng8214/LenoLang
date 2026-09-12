@@ -20,6 +20,7 @@ FFI 模块核心路径：
 | P1 | 3 | 回调数量上限 128 → 256 | 低 | 功能限制 | ✅ 已完成 |
 | P1 | 4 | write_bytes/read_bytes 批量读写 | 低 | 易用性 | ✅ 已完成 |
 | P1 | 5 | ffi.dlsym 显式符号解析 | 低 | 功能补充 | ✅ 已完成 |
+| P1 | 10 | JIT 内联 ffi 定宽读写（`read_byte`/`int8`/`int16`/`uint16`/`int`/`uint` + `write_*`） | 中 | 热路径性能（像素直写 ~-34%） | ✅ 已完成 |
 | P2 | 6 | 显式字节序函数 | 低 | 跨平台 | ✅ 已完成 |
 | P2 | 7 | cstruct offset_of 方法 | 低 | 易用性 | ✅ 已完成 |
 | P3 | 8 | 代码去重：窄化公共函数 | 低 | 可维护性 | ✅ 已完成 |
@@ -123,6 +124,36 @@ int64 位模式通过整数寄存器/栈传递，但被调函数期望
 
 - `ffi.dlsym(lib, name)` → 返回 `Ptr`（函数地址）或 `null`
 - 内部也使用函数地址缓存
+
+---
+
+## P1-10：JIT 内联 ffi 定宽读写 ✅
+
+### 问题
+
+`ffi.read_byte` / `ffi.write_byte` 这类「ptr + offset 定宽访存」在像素直写、缓冲区循环里
+每像素调用十几次，但在 JIT 里走的是 `OP_MODULE_CALL` 通用 callout（~20ns/次：逐个装箱成
+Value 数组 + native 调用 + 异常检查），而它们实际只做一次 1/2/4 字节 memcpy。
+
+### 实现
+
+JIT 后端（`src/jit/backend/x86_64.c` 的 `ffi_inline_specs[]` 表 + `x86_inc/ops_return.inc`
+的 `OP_MODULE_CALL` 分支）把定宽读写做成**表驱动内联**，详细设计见
+`docs/JIT实现与调试记录.md` §2.6：命中后直接生成 load/store，前置检查
+（int48 偏移 → NaN-boxed 对象 → `OBJ_FFI_POINTER` → `!NULL/!freed` → owned 边界）
+任一不过就 bailout 交解释器，报错文本与语义不变。
+
+已内联 12 个：`read_byte`、`read_int8`、`read_int16`、`read_uint16`、`read_int`、`read_uint`、
+`write_byte`、`write_int8`、`write_int16`、`write_uint16`、`write_int`、`write_uint`。
+
+有意不内联：64 位系列（值域越 int48，需 bigint 堆分配）、`float`/`double`（NaN-box 构造）、
+返回对象/字符串/bool 的方法（`read_ptr`/`read_at`/`read_string`/`offset`/`read_bool`）、`copy4`。
+
+### 效果
+
+像素直写风格基准（3,000,000 次迭代 = 15,000,000 次 ffi 调用）：**334ms → 221ms，约 -34%**
+（每次调用省下 ~7.5ns）。测试 `assert/test_ffi_inline_widths.leno` 在 JIT 与 `LENO_NO_JIT=1`
+两种模式均通过；`read_int`/`write_int` 的机器码经 dump 差分确认未改动。
 
 ---
 

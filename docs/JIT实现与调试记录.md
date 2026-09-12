@@ -19,6 +19,7 @@
   - [2.3 写内联操作码的规则（必读）](#23-写内联操作码的规则必读)
   - [2.4 反面案例：内联用 RSI → Windows 上段错误](#24-反面案例内联用-rsi--windows-上段错误2026-09-12)
   - [2.5 跨平台结论](#25-跨平台结论)
+  - [2.6 ffi 定宽内存读写内联（表驱动）](#26-ffi-定宽内存读写内联表驱动2026-09-12)
 
 - [3. NaN-boxing 与 JIT 虚拟栈](#3-nan-boxing-与-jit-虚拟栈)
 
@@ -204,6 +205,57 @@ volatile，同一份代码在 Linux 上**不会**复现 —— 典型的"Linux �
   3. callout 相关的 5 参数用例（SysV 第 5 个参数走 `R8`，Windows 走 `[RSP+32]`）；
   4. 若 `mmap(PROT_READ|PROT_WRITE|PROT_EXEC)` 被 SELinux/PaX 之类拦掉，`jit_compile`
      会失败并**退回解释器**（不崩，只是没加速）——那是环境问题，不是 ABI 问题。
+
+### 2.6 ffi 定宽内存读写内联（表驱动，2026-09-12）
+
+**背景**：像素直写内层是 `ffi.read_byte` ×4 + `ffi.write_byte`/`ffi.write_int` ×1，
+每像素十几次 ffi 调用。这些方法此前都走 `OP_MODULE_CALL` 的通用 callout
+（实测 ~20ns/次：逐个装箱成 Value 数组 + native 调用 + 异常检查），而它们真正做的
+只是一次 1/2/4 字节 memcpy。把第一批 `read_int`/`write_int` 的内联模板**表驱动化**后，
+一并铺开到全部定宽读写。
+
+**实现**：`src/jit/backend/x86_64.c` 里一张常量表 `ffi_inline_specs[]`，
+`ops_return.inc` 的 `OP_MODULE_CALL` 分支命中后直接生成 load/store
+（`ffi_inline_lookup()` 线性 strcmp）。加一个方法 = **加一行表**，不必把 135 行的
+前置检查复制 N 份。
+
+| 表字段 | 含义 |
+| --- | --- |
+| `name` | ffi 方法名 |
+| `size` | 访存字节数 1/2/4，同时是 CHECK_BOUNDS 的 `access_size` |
+| `sign_ext` | 读路径是否符号扩展（写路径忽略）；`read_byte`/`read_uint16`/`read_uint` 为 0 |
+| `is_write` | 0 = 读（2 实参 → 结果 raw int48）；1 = 写（3 实参 → 结果 `NULL_VAL`） |
+
+**已内联（12 个）**：
+
+`read_byte`、`read_int8`、`read_int16`、`read_uint16`、`read_int`、`read_uint`、
+`write_byte`、`write_int8`、`write_int16`、`write_uint16`、`write_int`、`write_uint`
+
+前置检查对 12 个条目完全同构（沿用 §2.4 修好后的模板），任一不过就 bailout：
+`int48 offset` → NaN-boxed 对象 → `OBJ_FFI_POINTER` → `!NULL/!freed` → owned 边界
+（`(size_t)off + size > ptr->size`，**负 offset 无符号回绕必然越界**，与解释器一致）。
+只有三处由表参数化：**边界检查宽度、load/store 宽度与扩展方式、写截断宽度**。
+bailout 后由解释器抛原样错误（"空指针引用或指针已释放" / "内存访问越界"），
+语义与报错文本逐字一致。
+
+**有意不内联**（不要顺手往表里加）：
+
+| 方法 | 原因 |
+| --- | --- |
+| `read_int64` / `write_int64` / `read_uint64` / `write_uint64` | 值域越过 Value 的 int48：uint64 超 `INT32_MAX` 返回 bigint 对象，int64 超 int48 也要转对象，机器码里无法复刻堆分配 |
+| `read_float` / `read_double` / `write_float` / `write_double` | 要构造/拆 NaN-boxed float Value，不是 raw int48 |
+| `read_ptr` / `read_at` / `read_string` / `offset` | 返回对象，要分配 `val_obj` |
+| `read_bool` | 返回 bool Value，非 raw int48 |
+| `copy4` | 双指针、两套对象检查，无逐像素调用点 |
+
+**验证基线**：
+- `assert/test_ffi_inline_widths.leno`：宽度/符号扩展边界（`0x80`/`0x8000`）、窄写保留高位、
+  bigint 写回退、越界/空指针/已释放/负 offset 的 bailout 报错，JIT 与 `LENO_NO_JIT`
+  两种模式均通过；JIT 统计中 `test_errors` 两个热循环各 bailout 3 次，验证回退路径。
+- **机器码回归**：对 `read_int`/`write_int` 热循环 dump，屏蔽 `mov r64, imm64`
+  （bailout site / 运行时地址跨进程不同）后**残差 0 字节**（base=1719 / new=1719），
+  确认重构没有改动已有内联的机器码。
+- 性能数字见 §9。
 
 ***
 
@@ -538,7 +590,7 @@ for each local i:
 | Opcode | 现状 |
 | ------ | --- |
 | OP\_TRY / OP\_CATCH / OP\_FINALLY / OP\_END\_TRY | JIT 中视为 **no-op**（`ops_misc.inc`）。正常路径无需 setup；若 callout 抛异常则整体 bailout 回解释器重跑完整 try/catch |
-| OP\_MODULE\_CALL | callout `jit_callout_module_call`（如 `maths.sqrt`） |
+| OP\_MODULE\_CALL | callout `jit_callout_module_call`（如 `maths.sqrt`）；但 **ffi 定宽内存读写**（`read_byte`/`read_int8`/`read_int16`/`read_uint16`/`read_int`/`read_uint` 及对应 `write_*`，共 12 个）走**内联**，见 §2.6 |
 | OP\_GET\_PROPERTY / OP\_INVOKE\_METHOD | callout（`jit_callout_get_property` / `jit_callout_invoke_method`），并带 GET\_PROPERTY+OP\_CALL 窥孔合并 |
 | OP\_CALL\_NATIVE | callout `jit_callout_call_native` |
 | OP\_INDEX / OP\_ARRAY / OP\_DICT\_SET / OP\_INDEX\_SET\_NOPUSH / OP\_ARRAY\_APPEND\_NOPUSH | callout |
@@ -922,7 +974,7 @@ pop  rax            ; ← 这句被跳过！慢路径却假设 RAX = 左操作�
 ### 回归测试
 
 ```
-Results: 263 passed, 0 failed (total 263)
+Results: 264 passed, 0 failed (total 264)   // JIT 与 LENO_NO_JIT=1 两种模式均通过
 ```
 
 ### 通用算术 float 快路径（2026-09-11）
@@ -945,6 +997,20 @@ Results: 263 passed, 0 failed (total 263)
 
 > 该示例自带的 `平均 FPS` 无法体现收益：它每帧 `SDL3.delay(16 - elapsed)` 且开了
 > VSync，帧时间被钉在 16ms。要看收益请用 `Executed`/`Bailouts` 或纯计算基准。
+
+### ffi 定宽内存读写内联（2026-09-12，见 §2.6）
+
+复刻像素直写内层：每迭代 `write_byte`×1 + `read_byte`×4，共 3,000,000 次迭代
+= **15,000,000 次 ffi 调用**（`build/ffiscratch/t_bench.leno`，对照基线
+`build/lenojit_base.exe`）：
+
+| 版本 | 耗时（3 次均值） |
+| --- | --- |
+| 改动前（通用 callout） | 334 ms |
+| 改动后（内联） | 221 ms |
+
+**约 -34%**，折算每次 ffi 调用省下 ~7.5ns（callout 本身 ~20ns，其余开销在循环与访存）。
+两侧 JIT 统计均为 `Compiled=1 Cached=1 Bailouts=0`，即整个热循环都命中 JIT、无回退。
 
 ***
 

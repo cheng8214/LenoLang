@@ -99,16 +99,19 @@
                 ModuleMethodMeta* mod_meta =
                     jit_resolve_module_method(cur_chunk, module_idx, method_idx);
 
-                /* ---- ffi.read_int / ffi.write_int 内联 ----
-                 * 这两个方法在像素直写循环里每像素各一次，走通用 callout 每次要付
-                 * 「逐个装箱成 Value 数组 + native 调用 + 异常检查」（实测 ~20ns），
-                 * 而它们真正做的只是一次 4 字节 memcpy。这里直接生成 load/store；
+                /* ---- ffi 定宽内存读写内联（表驱动，表见 x86_64.c: ffi_inline_specs）----
+                 * 这批方法在像素直写/缓冲区循环里每像素多次（像素直写内层是
+                 * read_byte×4 + write_int×1），走通用 callout 每次要付「逐个装箱成
+                 * Value 数组 + native 调用 + 异常检查」（实测 ~20ns），而它们真正做的
+                 * 只是一次 1/2/4 字节 memcpy。这里直接生成 load/store；
                  * 任一前置检查不过就写 site 后 bailout 交解释器，保证报错文本
                  * （"空指针引用或指针已释放" / "内存访问越界"）与语义完全一致。 */
                 if (mod_meta && strcmp(mod_meta->module_name, "ffi") == 0) {
-                    int ffi_is_read  = (arg_count == 2 && strcmp(mod_meta->method_name, "read_int") == 0);
-                    int ffi_is_write = (arg_count == 3 && strcmp(mod_meta->method_name, "write_int") == 0);
-                    if (ffi_is_read || ffi_is_write) {
+                    const FfiInlineSpec* fsp = ffi_inline_lookup(mod_meta->method_name);
+                    int ffi_is_write = (fsp != NULL && fsp->is_write);
+                    int ffi_is_read  = (fsp != NULL && !fsp->is_write);
+                    int ffi_size     = (fsp != NULL) ? (int)fsp->size : 0;
+                    if (fsp != NULL && arg_count == (ffi_is_write ? 3 : 2)) {
                         /* 实参在 JIT 虚拟栈上：read=[ptr, off]，write=[ptr, off, value] */
                         TOS_SPILL();
                         if (ffi_is_write) {
@@ -195,7 +198,7 @@
                         int f_freed = emit_jcc(cb, 0x85);             /* JNE → bailout */
                         patch_add(ctx, f_freed, -1, 0);
 
-                        /* 5) CHECK_BOUNDS：仅当 owned && size > 0 校验 off+4 <= size
+                        /* 5) CHECK_BOUNDS：仅当 owned && size > 0 校验 off+ffi_size <= size
                          *    （offset 为负时无符号比较必然越界，与解释器一致） */
                         {
                             int _b = (JIT_R8 >> 3) & 1;
@@ -210,9 +213,9 @@
                         emit_test_rr(cb, JIT_RDX, JIT_RDX);
                         int f_size0 = emit_jcc(cb, 0x84);             /* JE → 跳过边界检查 */
                         EMIT_STORE_TMP(tmp1_disp, JIT_RAX);           /* 暂存 offset */
-                        /* add rax, 4（RAX 仅用于比较，之后从 tmp1 恢复） */
+                        /* add rax, ffi_size（RAX 仅用于比较，之后从 tmp1 恢复） */
                         emit_byte(cb, 0x48); emit_byte(cb, 0x83);
-                        emit_byte(cb, 0xC0); emit_byte(cb, 0x04);
+                        emit_byte(cb, 0xC0); emit_byte(cb, (uint8_t)ffi_size);
                         emit_cmp_rr(cb, JIT_RAX, JIT_RDX);
                         EMIT_BAILOUT_SITE_NONOVF(bc_off);
                         int f_oob = emit_jcc(cb, 0x87);               /* JA → bailout（无符号） */
@@ -221,17 +224,41 @@
                         patch_rel32(cb, f_not_owned, cb->len);
                         patch_rel32(cb, f_size0, cb->len);
 
-                        /* 6) 访存：RDX = ptr->ptr（基址），RAX = offset（索引） */
+                        /* 6) 访存：RDX = ptr->ptr（基址），RAX = offset（索引）
+                         * 统一寻址 [rdx + rax*1]：modrm=0x04（reg=RAX, rm=SIB）+ SIB=0x02
+                         * （scale=1, index=RAX, base=RDX）。宽度只由 ffi_size 参数化：
+                         *   读 —— 1/2 字节用 movsx/movzx，4 字节用 movsxd（符号）或
+                         *        mov（32 位写零扩展）；结果位模式即解释器 val_int() 的
+                         *        raw int48（int8/16/32 符号扩展、uint16/uint32 零扩展后
+                         *        的值都在 int48 值域内）。
+                         *   写 —— 只覆盖低 ffi_size 字节，即解释器 (int8_t)/(int16_t)/
+                         *        (int32_t) 截断；返回值固定 val_null()。 */
                         emit_mov_reg_mem8(cb, JIT_RDX, JIT_R8, (int8_t)offsetof(ObjFFIPointer, ptr));
                         if (ffi_is_read) {
-                            /* movsxd rax, dword [rdx + rax]：结果本身就是 raw int48 */
-                            emit_byte(cb, 0x48); emit_byte(cb, 0x63);
+                            if (ffi_size == 1) {                      /* movsx/movzx rax, byte [rdx+rax] */
+                                if (fsp->sign_ext) emit_byte(cb, 0x48);
+                                emit_byte(cb, 0x0F);
+                                emit_byte(cb, fsp->sign_ext ? 0xBE : 0xB6);
+                            } else if (ffi_size == 2) {                /* movsx/movzx rax, word [rdx+rax] */
+                                if (fsp->sign_ext) emit_byte(cb, 0x48);
+                                emit_byte(cb, 0x0F);
+                                emit_byte(cb, fsp->sign_ext ? 0xBF : 0xB7);
+                            } else if (fsp->sign_ext) {                /* movsxd rax, dword [rdx+rax] */
+                                emit_byte(cb, 0x48); emit_byte(cb, 0x63);
+                            } else {                                   /* mov eax, dword [rdx+rax] */
+                                emit_byte(cb, 0x8B);
+                            }
                             emit_byte(cb, 0x04); emit_byte(cb, 0x02);
                         } else {
-                            /* mov dword [rdx + rax], ecx：只写低 32 位（(int32_t)value） */
-                            emit_byte(cb, 0x89);
+                            if (ffi_size == 1) {                       /* mov byte [rdx+rax], cl */
+                                emit_byte(cb, 0x88);
+                            } else if (ffi_size == 2) {                /* mov word [rdx+rax], cx */
+                                emit_byte(cb, 0x66); emit_byte(cb, 0x89);
+                            } else {                                   /* mov dword [rdx+rax], ecx */
+                                emit_byte(cb, 0x89);
+                            }
                             emit_byte(cb, 0x0C); emit_byte(cb, 0x02);
-                            /* write_int 返回 val_null()：与通用路径一致地压 NULL_VAL */
+                            /* 返回 val_null()：与通用路径一致地压 NULL_VAL */
                             emit_mov_reg_imm64(cb, JIT_RAX, (uint64_t)NULL_VAL);
                         }
                         TOS_PRODUCE();

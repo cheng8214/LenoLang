@@ -1,0 +1,200 @@
+// ffi 定宽内存读写内联（表驱动）回归测试
+//
+// 覆盖 read/write 的 byte / int8 / int16 / uint16 / int / uint 十二个方法：
+//   1) 宽度截断与符号扩展语义（写进去 → 读出来）
+//   2) 热循环（远超 JIT 热阈值 50）命中内联路径，累加结果与纯算术参考实现一致
+//   3) bailout 路径（越界 / 负偏移 / 空指针 / 已释放 / 热循环内触发）报错与
+//      解释器一致
+//
+// 机器码层面的回归（read_int/write_int 逐字节不变）在 docs 里记录，这里只测语义。
+import ffi
+
+// 用纯算术复刻同一段内存语义：不经过任何 ffi 调用，作为内联路径的独立参照。
+func ref_sum():int {
+    var acc = 0
+    var v = 0
+    var b = 0
+    var w = 0
+    for 2000 to i {
+        v = (i & 0x7FFF) - 1000
+        b = v & 0xFF                        // write_byte / write_int8 落盘的低字节
+        acc = acc + b                       // read_byte      : 零扩展
+        if (b & 0x80) != 0 { acc = acc + (b - 256) } else { acc = acc + b }   // read_int8
+        w = v & 0xFFFF                      // write_int16 / write_uint16
+        acc = acc + w                       // read_uint16    : 零扩展
+        if (w & 0x8000) != 0 { acc = acc + (w - 65536) } else { acc = acc + w } // read_int16
+        acc = acc + v                       // read_int       : 4 字节符号扩展 = v 本身
+        if (v < 0) { acc = acc + (v + 4294967296) } else { acc = acc + v }       // read_uint
+    }
+    return acc
+}
+
+// 1) 宽度截断与符号扩展
+func test_widths() {
+    var p = ffi.malloc(16)
+
+    // 全 1 后按各宽度读：只有零扩展/符号扩展之分，没有别的差异
+    ffi.write_int(p, 0, -1)
+    assert_eq(ffi.read_byte(p, 0), 255)
+    assert_eq(ffi.read_int8(p, 0), -1)
+    assert_eq(ffi.read_int16(p, 0), -1)
+    assert_eq(ffi.read_uint16(p, 0), 65535)
+    assert_eq(ffi.read_int(p, 0), -1)
+    assert_eq(ffi.read_uint(p, 0), 4294967295)
+
+    // 窄写只覆盖低 N 字节，高位保留
+    ffi.write_int(p, 0, -1)
+    ffi.write_int16(p, 0, 0)
+    assert_eq(ffi.read_int(p, 0), -65536)
+    assert_eq(ffi.read_uint16(p, 0), 0)
+    assert_eq(ffi.read_uint(p, 0), 4294901760)
+
+    ffi.write_int(p, 0, -1)
+    ffi.write_byte(p, 0, 0)
+    assert_eq(ffi.read_int(p, 0), -256)
+    assert_eq(ffi.read_byte(p, 0), 0)
+
+    // 0x80 / 0x8000 是符号扩展与零扩展的分水岭
+    ffi.write_byte(p, 0, 0x80)
+    assert_eq(ffi.read_byte(p, 0), 128)
+    assert_eq(ffi.read_int8(p, 0), -128)
+    ffi.write_uint16(p, 0, 0x8000)
+    assert_eq(ffi.read_uint16(p, 0), 32768)
+    assert_eq(ffi.read_int16(p, 0), -32768)
+
+    // write_uint 的大值实参（bigint）不能内联，必须 bailout 交解释器且结果正确
+    ffi.write_uint(p, 8, 0x80000000)
+    assert_eq(ffi.read_uint(p, 8), 2147483648)
+
+    // 写方法统一返回 null
+    assert_true(ffi.write_byte(p, 0, 1) == null)
+    assert_true(ffi.write_uint16(p, 0, 1) == null)
+    assert_true(ffi.write_uint(p, 0, 1) == null)
+
+    ffi.free(p)
+    print("  [1] 宽度/符号扩展语义 OK")
+}
+
+// 2) 热循环：12 个方法都在循环体内，命中内联（JIT）
+func test_hot_loop_matches_reference() {
+    var p = ffi.malloc(16)
+    var acc = 0
+    var v = 0
+    for 2000 to i {
+        v = (i & 0x7FFF) - 1000
+        ffi.write_byte(p, 0, v)
+        ffi.write_int8(p, 1, v)
+        ffi.write_int16(p, 2, v)
+        ffi.write_uint16(p, 4, v)
+        ffi.write_int(p, 8, v)
+        ffi.write_uint(p, 12, v)
+        acc = acc + ffi.read_byte(p, 0)
+        acc = acc + ffi.read_int8(p, 1)
+        acc = acc + ffi.read_int16(p, 2)
+        acc = acc + ffi.read_uint16(p, 4)
+        acc = acc + ffi.read_int(p, 8)
+        acc = acc + ffi.read_uint(p, 12)
+    }
+    ffi.free(p)
+    assert_eq(acc, ref_sum())
+    print("  [2] 热循环 12 方法累加 = 参考实现 OK")
+}
+
+// 3) 错误路径：内联的前置检查失败必须 bailout，报错文本与解释器一致
+func test_errors() {
+    var p = ffi.malloc(8)
+    var caught = false
+
+    // 越界：宽度参与判定（read_byte off=8 越界；read_int16 off=7 → 7+2>8 越界）
+    caught = false
+    try { ffi.read_byte(p, 8) } catch e { caught = true; assert_true(e.msg.find("越界") >= 0) }
+    assert_eq(caught, true)
+
+    caught = false
+    try { ffi.read_int16(p, 7) } catch e { caught = true; assert_true(e.msg.find("越界") >= 0) }
+    assert_eq(caught, true)
+
+    caught = false
+    try { ffi.write_int16(p, 7, 1) } catch e { caught = true; assert_true(e.msg.find("越界") >= 0) }
+    assert_eq(caught, true)
+
+    caught = false
+    try { ffi.write_uint(p, 5, 1) } catch e { caught = true; assert_true(e.msg.find("越界") >= 0) }
+    assert_eq(caught, true)
+
+    // 临界：off + 宽度 == size 不越界
+    ffi.write_uint16(p, 6, 0x1234)
+    assert_eq(ffi.read_uint16(p, 6), 0x1234)
+
+    // 负偏移：判据是 (size_t)offset + access_size > size（无符号算术），
+    // 所以 -1 回绕成 0 不会报错（内联路径必须同样"不报错"，两边一致），
+    // 而 -9 回绕后是天文数字，必须报越界。
+    caught = false
+    var before = ffi.read_byte(p, -1)
+    assert_eq(caught, false)
+    assert_true(before >= 0)
+
+    caught = false
+    try { ffi.read_byte(p, -9) } catch e { caught = true; assert_true(e.msg.find("越界") >= 0) }
+    assert_eq(caught, true)
+
+    // 空指针
+    caught = false
+    try { ffi.write_byte(ffi.nullptr(), 0, 1) } catch e { caught = true; assert_true(e.msg.find("空指针") >= 0) }
+    assert_eq(caught, true)
+
+    caught = false
+    try { ffi.read_int8(ffi.nullptr(), 0) } catch e { caught = true; assert_true(e.msg.find("空指针") >= 0) }
+    assert_eq(caught, true)
+
+    // 已释放
+    var q = ffi.malloc(8)
+    ffi.free(q)
+    caught = false
+    try { ffi.read_uint16(q, 0) } catch e { caught = true; assert_true(e.msg.find("释放") >= 0) }
+    assert_eq(caught, true)
+    caught = false
+    try { ffi.write_int(q, 0, 1) } catch e { caught = true; assert_true(e.msg.find("释放") >= 0) }
+    assert_eq(caught, true)
+
+    ffi.free(p)
+
+    // 热循环内越界：JIT 已编译该循环，出错那次必须 bailout 后报同样的错
+    caught = false
+    try {
+        var r = ffi.malloc(4)
+        var acc = 0
+        for 200 to i {
+            if i == 199 { acc = acc + ffi.read_int(r, 4) } else { acc = acc + ffi.read_int(r, 0) }
+        }
+        print("  不应到达: " + acc)
+    } catch e {
+        caught = true
+        assert_true(e.msg.find("越界") >= 0)
+    }
+    assert_eq(caught, true)
+
+    // 热循环内空指针：同样要 bailout 到解释器报错
+    caught = false
+    try {
+        var np = ffi.nullptr()
+        var acc2 = 0
+        for 200 to i {
+            if i == 199 { acc2 = acc2 + ffi.read_byte(np, 0) } else { acc2 = acc2 + 1 }
+        }
+        print("  不应到达: " + acc2)
+    } catch e {
+        caught = true
+        assert_true(e.msg.find("空指针") >= 0)
+    }
+    assert_eq(caught, true)
+
+    print("  [3] bailout 错误路径 OK")
+}
+
+main() {
+    test_widths()
+    test_hot_loop_matches_reference()
+    test_errors()
+    print("test_ffi_inline_widths passed")
+}

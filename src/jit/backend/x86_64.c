@@ -61,6 +61,58 @@ static int scratch_disp(int scratch_idx) {
     return -8 * (scratch_idx + 1);
 }
 
+/* ---- ffi 定宽内存读写：可内联方法表（消费方见 x86_inc/ops_return.inc）----
+ * 表里每个条目是 ffi 的一个「ptr + offset 定宽访存」方法。内联只做三件与条目
+ * 相关的事：CHECK_BOUNDS 的访问宽度、load/store 的宽度与扩展方式、写路径的
+ * 截断宽度。其余前置检查（int48 偏移、NaN-boxed 对象、OBJ_FFI_POINTER、
+ * !NULL/!freed、owned 边界）对所有条目完全同构；任一检查不过就 bailout 交
+ * 解释器，所以报错文本与语义与解释器逐字一致。
+ *
+ *   size     : 访存字节数（1/2/4），同时是 CHECK_BOUNDS 的 access_size
+ *   sign_ext : 读路径是否符号扩展（写路径忽略）；read_byte/read_uint16/
+ *              read_uint 为 0（零扩展，对应 memcpy 到无符号窄类型）
+ *   is_write : 0 = 读（2 实参，结果 raw int48 压栈）
+ *              1 = 写（3 实参，结果 NULL_VAL）
+ *
+ * 有意不内联（理由见 docs/JIT实现与调试记录.md §2.5）：
+ *   read_int64/read_uint64/write_int64/write_uint64 —— 值域越过 Value 的 int48
+ *     表示：uint64 超 INT32_MAX 直接返回 bigint 对象，read_int64 走 val_int_safe
+ *     超 int48 也要转对象，机器码里无法复刻分配；
+ *   read_float/double、write_float/double —— 需要构造/拆 NaN-boxed float Value；
+ *   read_ptr/read_at/read_string/offset —— 返回对象（要分配 val_obj）；
+ *   read_bool —— 返回 bool Value，非 raw int48；
+ *   copy4 —— 双指针，两套对象检查，无逐像素调用点。 */
+typedef struct {
+    const char* name;
+    unsigned char size;
+    unsigned char sign_ext;
+    unsigned char is_write;
+} FfiInlineSpec;
+
+static const FfiInlineSpec ffi_inline_specs[] = {
+    { "read_byte",    1, 0, 0 },
+    { "read_int8",    1, 1, 0 },
+    { "read_int16",   2, 1, 0 },
+    { "read_uint16",  2, 0, 0 },
+    { "read_int",     4, 1, 0 },
+    { "read_uint",    4, 0, 0 },
+    { "write_byte",   1, 0, 1 },
+    { "write_int8",   1, 0, 1 },
+    { "write_int16",  2, 0, 1 },
+    { "write_uint16", 2, 0, 1 },
+    { "write_int",    4, 0, 1 },
+    { "write_uint",   4, 0, 1 },
+};
+
+static const FfiInlineSpec* ffi_inline_lookup(const char* method) {
+    int i;
+    int n = (int)(sizeof(ffi_inline_specs) / sizeof(ffi_inline_specs[0]));
+    for (i = 0; i < n; i++) {
+        if (strcmp(ffi_inline_specs[i].name, method) == 0) return &ffi_inline_specs[i];
+    }
+    return NULL;
+}
+
 /* ---- Main codegen function ---- */
 int compile_loop(CodegenCtx* ctx) {
     const ScanResult* sr = ctx->sr;

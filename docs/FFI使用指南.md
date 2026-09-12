@@ -2210,6 +2210,12 @@ main() {
 | `read_string_n(ptr, off, len)` | - | - |
 | `read_bytes(ptr, off, len)` | `write_bytes(ptr, off, str)` | len 字节 |
 
+> **JIT 加速**：在 JIT 编译的热循环里，上表中的 `read_byte`/`read_int8`/`read_int16`/
+> `read_uint16`/`read_int`/`read_uint` 及对应 `write_*`（共 12 个）会被**直接内联成
+> 机器码 load/store**，免去每次 ~20ns 的 callout 开销（适合像素直写这类每像素多次
+> 读写的内层循环）。`read_int64`/`read_float`/`read_double`/`read_ptr` 等返回对象或
+> 需堆分配的方法仍走常规调用。详见 `docs/JIT实现与调试记录.md` §2.6。
+
 ### 显式字节序读写
 
 | 读取函数 | 写入函数 | 大小 |
@@ -2328,10 +2334,13 @@ main() {
 
 ---
 
-*文档版本: 4.0*
-*最后更新: 2026-08-19*
+*文档版本: 4.1*
+*最后更新: 2026-09-12*
 
 ### 更新记录
+
+- **v4.1** (2026-09-12):
+  - **JIT 内联定宽内存读写**：热循环中 `read_byte`/`read_int8`/`read_int16`/`read_uint16`/`read_int`/`read_uint` 及对应 `write_*`（共 12 个）由 JIT 直接生成机器码 load/store，免去 callout 开销。像素直写风格基准（15,000,000 次调用）334ms → 221ms（约 -34%）。语义与越界/空指针报错文本与解释器一致；详见 `docs/JIT实现与调试记录.md` §2.6。
 
 - **v4.0** (2026-08-19):
   - **符号地址缓存**：`ObjFFILibrary` 新增函数地址缓存表（32 槽），`ffi.call_*`/`clib`/`ffi.dlsym` 首次调用后缓存函数地址，后续调用跳过 `GetProcAddress`/`dlsym`。
