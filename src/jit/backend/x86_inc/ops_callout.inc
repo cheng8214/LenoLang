@@ -311,7 +311,12 @@
                         emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)FALSE_VAL);
                         emit_cmp_rr(cb, JIT_RAX, JIT_R8);
                         int int_is_false = emit_jcc(cb, 0x84);  /* JE → .bool_false */
-                        /* 其余 NaN-boxed（null/string/bigint/ptr）→ bailout 交解释器 */
+                        /* null → 0（同 types.c native_to_int 的 VAL_NULL 分支 val_int(0)），
+                         * 与 false 同路；判据同样是全值精确比较 */
+                        emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)NULL_VAL);
+                        emit_cmp_rr(cb, JIT_RAX, JIT_R8);
+                        int int_is_null = emit_jcc(cb, 0x84);   /* JE → 与 false 同路（0） */
+                        /* 其余 NaN-boxed（string/bigint/ptr）→ bailout 交解释器 */
                         emit_mov_reg_imm64(cb, JIT_R8, JIT_NAN_SIG);
                         emit_cmp_rr(cb, JIT_RAX, JIT_R8);
                         EMIT_BAILOUT_SITE_NONOVF(bc_off);
@@ -328,8 +333,9 @@
                         patch_rel32(cb, int_is_true, cb->len);
                         emit_mov_reg_imm64(cb, JIT_RAX, 1);
                         int int_true_done = emit_jmp(cb);
-                        /* .bool_false → 0 */
+                        /* .bool_false / null → 0 */
                         patch_rel32(cb, int_is_false, cb->len);
+                        patch_rel32(cb, int_is_null, cb->len);
                         emit_xor_rr(cb, JIT_RAX, JIT_RAX);
                         patch_rel32(cb, int_true_done, cb->len);
                         patch_rel32(cb, int_done_jmp, cb->len);
@@ -349,6 +355,11 @@
                         emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)FALSE_VAL);
                         emit_cmp_rr(cb, JIT_RAX, JIT_R8);
                         int flt_is_false = emit_jcc(cb, 0x84);  /* JE → .bool_false */
+                        /* null → 0.0（同 types.c native_to_float 的 VAL_NULL 分支），
+                         * 与 false 同路；判据同样是全值精确比较 */
+                        emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)NULL_VAL);
+                        emit_cmp_rr(cb, JIT_RAX, JIT_R8);
+                        int flt_is_null = emit_jcc(cb, 0x84);   /* JE → 与 false 同路（0.0） */
                         /* 其余 NaN-boxed → bailout；裸 double 原样保留 */
                         emit_mov_reg_imm64(cb, JIT_R8, JIT_NAN_SIG);
                         emit_cmp_rr(cb, JIT_RAX, JIT_R8);
@@ -360,8 +371,9 @@
                         patch_rel32(cb, flt_is_true, cb->len);
                         emit_mov_reg_imm64(cb, JIT_RAX, 0x3FF0000000000000ULL);
                         int flt_true_done = emit_jmp(cb);
-                        /* .bool_false → 0.0（位模式全 0） */
+                        /* .bool_false / null → 0.0（位模式全 0） */
                         patch_rel32(cb, flt_is_false, cb->len);
+                        patch_rel32(cb, flt_is_null, cb->len);
                         emit_xor_rr(cb, JIT_RAX, JIT_RAX);
                         patch_rel32(cb, flt_true_done, cb->len);
                         patch_rel32(cb, flt_done_jmp, cb->len);

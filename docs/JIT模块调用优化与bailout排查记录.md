@@ -424,18 +424,26 @@ JIT 与解释器输出**逐位一致**；`examples/` 下 73 个非 GUI 示例两
    定位过程中还发现**site 里的偏移是相对循环体起点**的：最小组合 `g_min`（loop_bc=29）
    报 `@bc_off=39`，而 39 = 68 − 29 正是第二个 `OP_CALL_NATIVE(_int)` 的位置。
 
-   **✅ 已修复（2026-09-12）**：在 `_int`/`_float` 内联路径加 bool 快路径 —— 用
-   **全值精确比较**（与 VM 的 `val_is_bool`：`v == TRUE_VAL || v == FALSE_VAL` 一致）认出
-   `TRUE_VAL`/`FALSE_VAL`，按 `types.c` 的 `native_to_int`/`native_to_float` 语义产出
-   `1`/`0`（int）与 `1.0`/`0.0`（裸 double 位模式）；其余 NaN-boxed
-   （null/string/bigint/ptr）仍按设计 bailout。
+   **✅ 已修复（2026-09-12）**：在 `_int`/`_float` 内联路径加 **bool + null 快路径** ——
+   用**全值精确比较**认出 `TRUE_VAL`/`FALSE_VAL`/`NULL_VAL`（与 VM 的 `val_is_bool`
+   `v == TRUE_VAL || v == FALSE_VAL`、`val_is_null` 的判据一致），按 `types.c` 的
+   `native_to_int`/`native_to_float` 语义产出：
 
-   实测：`_int(strings.has(...))`、`_int(flag)`、`_float(flag)` 三个循环全部
-   `Bailouts: 0`；此前 bailout 的 mct2 型组合（`g_full`/`g_nolast`/`g_min`）从
-   `Bailouts: 3` 变 `0` 且结果逐位不变；`_int(<string>)` / `_int(null)` 仍 bailout、
-   输出与解释器逐位一致（`isum=84000`）；assert 263/263（两模式，含
-   `_int(true)==1` / `_float(false)==0.0` 用例）、`ripple_image.leno` `Bailouts: 0`、
-   72 个示例双模式 stdout 全一致。
+   | 输入 | `_int` | `_float` |
+   | --- | --- | --- |
+   | `true` | `1` | `1.0` |
+   | `false` | `0` | `0.0` |
+   | `null` | `0`（`VAL_NULL → val_int(0)`） | `0.0`（`VAL_NULL → val_float(0.0)`） |
+
+   实现上 `false` 与 `null` 复用同一个「产出 0 / 0.0」的分支（位模式全 0）；
+   其余 NaN-boxed（string/bigint/ptr）仍按设计 bailout 交解释器。
+
+   实测：`_int(strings.has(...))`、`_int(flag)`、`_float(flag)`、`_int(<null>)`、
+   `_float(<null>)` 五个循环全部 `Bailouts: 0`；此前 bailout 的 mct2 型组合
+   （`g_full`/`g_nolast`/`g_min`）从 `Bailouts: 3` 变 `0` 且结果逐位不变；
+   `_int(<string>)` 仍 bailout、输出与解释器逐位一致（`isum=84000`）；
+   assert 263/263（两模式，含 `_int(true)==1` / `_float(false)==0.0` 用例）、
+   `ripple_image.leno` `Bailouts: 0`、72 个示例双模式 stdout 全一致。
 
    顺带修正诊断：`jit_print_stats` 现在同时打出**绝对偏移与分解**
    （`非溢出类 @bc_off=40（= loop_bc 29 + 11）`）。此前只打相对偏移，排查时极易
