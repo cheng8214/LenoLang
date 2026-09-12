@@ -535,12 +535,17 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
             case OP_RETURN:
                 /* pop 1 (return value) → vstack-- */
                 vstack--;
+                /* 到这里都是可达代码：循环体内可达的 return 循环 JIT 处理不了
+                 * （见 ScanResult.has_reachable_return 说明），标出来由
+                 * jit_compile 拒绝整循环。 */
+                r->has_reachable_return = 1;
                 dead = 1;
                 break;
             case OP_RETURN_MULTI: {
                 /* opcode + count(1); pop count values */
                 uint8_t rc = ip[1];
                 vstack -= rc;
+                r->has_reachable_return = 1;
                 dead = 1;
                 break;
             }

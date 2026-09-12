@@ -94,6 +94,26 @@ static JitLoopFn jit_compile(CallFrame* frame, const uint8_t* body_start,
         return NULL;
     }
 
+    /* 循环体内有可达的 return：循环 JIT 无法从机器码里真正返回函数
+     * （codegen 只能把 OP_RETURN 当作 no-op 继续执行），必须交解释器。
+     * 五子棋 nearStone 的 `if 有子 { return true }` 就是此形态 —— JIT 下
+     * return 被丢弃，函数恒返回 false，AI 每步都落天元。
+     * 函数级 JIT（func_mode）与内联 callee 能正确处理 return，不走这里。 */
+    if (sr.has_reachable_return) {
+        if (jit_debug_on()) {
+            const char* fname = "<main>";
+            int bc_off = -1;
+            if (frame && frame->chunk) {
+                bc_off = (int)(body_start - frame->chunk->code);
+                if (frame->closure && frame->closure->function && frame->closure->function->name)
+                    fname = frame->closure->function->name;
+            }
+            fprintf(stderr, "[JIT-DEBUG] scan REJECT: fn='%s' bc_off=%d 循环体内含可达 return（循环 JIT 不支持）\n",
+                    fname, bc_off);
+        }
+        return NULL;
+    }
+
     /* Remap inline callee locals: place them after all caller locals
      * (si = n..n+inline_extra_locals-1), so caller locals (0..n-1) and
      * callee locals never overlap.  During scan, callee_local_map was

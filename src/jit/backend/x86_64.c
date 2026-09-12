@@ -976,6 +976,9 @@ int compile_loop(CodegenCtx* ctx) {
                 patch_rel32(cb, p->patch_mc, target_mc);
             } else {
                 /* Target not found — redirect to exit */
+                if (jit_debug_on())
+                    fprintf(stderr, "[JIT-DEBUG] PATCH-REDIRECT: target_bc=%d 未在循环体内找到 → 改为跳到 exit\n",
+                            p->target_bc);
                 patch_rel32(cb, p->patch_mc, ctx->exit_mc);
             }
         } else {

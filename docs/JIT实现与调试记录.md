@@ -511,7 +511,7 @@ for each local i:
 
 | Opcode | 枚举名     | 字节数 | 说明                                 |
 | ------ | ------- | --- | ---------------------------------- |
-| 34     | OP\_NOT | 1   | 逻辑非：`test rax,rax; sete al; movzx` |
+| 34     | OP\_NOT | 1   | 逻辑非：**三态分派**（int48 / NaN-boxed / 裸 double），结果压 NaN-boxed `TRUE_VAL`/`FALSE_VAL`，对齐解释器 `val_bool(is_falsey(v))`；见 §8.22 |
 
 ### 移位
 
@@ -591,11 +591,11 @@ for each local i:
 | ------ | --- |
 | OP\_TRY / OP\_CATCH / OP\_FINALLY / OP\_END\_TRY | JIT 中视为 **no-op**（`ops_misc.inc`）。正常路径无需 setup；若 callout 抛异常则整体 bailout 回解释器重跑完整 try/catch |
 | OP\_MODULE\_CALL | callout `jit_callout_module_call`（如 `maths.sqrt`）；但 **ffi 定宽内存读写**（`read_byte`/`read_int8`/`read_int16`/`read_uint16`/`read_int`/`read_uint` 及对应 `write_*`，共 12 个）走**内联**，见 §2.6 |
-| OP\_GET\_PROPERTY / OP\_INVOKE\_METHOD | callout（`jit_callout_get_property` / `jit_callout_invoke_method`），并带 GET\_PROPERTY+OP\_CALL 窥孔合并 |
+| OP\_GET\_PROPERTY / OP\_INVOKE\_METHOD | callout（`jit_callout_get_property` / `jit_callout_invoke_method`），并带 GET\_PROPERTY+OP\_CALL 窥孔合并；`OP_INVOKE_METHOD` **支持多返回值回填**（§8.20） |
 | OP\_CALL\_NATIVE | callout `jit_callout_call_native` |
 | OP\_INDEX / OP\_ARRAY / OP\_DICT\_SET / OP\_INDEX\_SET\_NOPUSH / OP\_ARRAY\_APPEND\_NOPUSH | callout |
 | OP\_STRUCT\_INIT（非泛型） | callout `jit_callout_struct_init` |
-| OP\_RETURN / OP\_RETURN\_MULTI | 支持（函数级 JIT；多返回值仅内联路径） |
+| OP\_RETURN / OP\_RETURN\_MULTI | 支持（函数级 JIT；多返回值仅内联路径）。**循环体内可达的 return 会让整个循环被拒绝**（§8.21） |
 | 脚本函数调用（OP\_CALL\_GLOBAL\_FUNC\_TYPED） | **内联**展开进宿主循环（见 13.8），不再整体拒绝 |
 
 ### 特殊拒绝条件
@@ -603,6 +603,14 @@ for each local i:
 - **虚拟栈溢出**：`vstack > JIT_MAX_VSTACK (64)`（允许负 vstack，因嵌套循环 exit POP 在线性扫描中被重复扣减）
 
 - **local 数过多**：超过 `JIT_MAX_LOCALS (64)`（含内联 callee 的槽位）
+
+- **循环体内存在可达的 `OP_RETURN` / `OP_RETURN_MULTI`**：循环 JIT 只能「跑完循环再回到解释器」，
+  没有能力从机器码里真正返回函数（codegen 里 `OP_RETURN` 只能退回「spill 后继续往下跑」），
+  这个 `return` 会被静默丢弃。`scan_loop_body` 置 `ScanResult.has_reachable_return`，
+  `jit_compile()` 据此拒绝（`scan REJECT` 日志）；函数级 JIT / 内联 callee 能正确处理，不受影响。
+  详见 §8.21。
+
+- **`OP_INVOKE_METHOD` 的返回值个数无法在编译期确定**：见 §8.20，拒绝（不猜成 1 个）。
 
 ***
 
@@ -729,6 +737,12 @@ int tmp3_disp = -8 * (n + sr->max_vstack + 3);
 4. 若 site 是负数区间或指向明显不该失败的指令，先怀疑「守卫没写 site / 操作数取错」
    这类 codegen 问题，用 `LENO_JIT_DUMP=1` + objdump 反汇编核对生成的机器码
 5. 需要判断是解释器还是 JIT 的问题，用 `LENO_NO_JIT=1` 跑同一二进制做对照
+6. **结果「偶尔对、多数错」时先算 «阈值»**：JIT 在热点阈值（`JIT_HOT_THRESHOLD=50`）后才接管，
+   所以「301 次迭代里错了 251 次」= `301 - 50`，说明错值全部来自 JIT 路径（§8.22 就是这么定性的）。
+7. 看 `PATCH-REDIRECT` 行：`compile_loop` 收尾时，循环体内跳转的目标偏移若在
+   `off_map` 里找不到，会被**静默改成跳 `exit_mc`**（= 循环提前退出）。这条日志说明
+   某条 `continue`/`break` 的目标没被编出来，通常意味着 scan 与 codegen 对循环体
+   边界（`body_start` / `body_size`）的理解不一致。
 
 ### objdump 反汇编生成的机器码
 
@@ -1008,6 +1022,116 @@ NaN-boxed → bailout 交解释器（解释器 `val_as_num_ex`/`val_as_num` 对 
 `ZF` 永远是 1，判零必须显式准备 0.0 操作数。另外：**加 bailout 分支后必须复测
 `Bailouts` 计数**（功能正确但每次都回退，同样是回归）。
 
+### 8.20 `OP_INVOKE_METHOD` 多返回值只按 1 个记账 —— PvZ 选卡数字每帧左右抖动（2026-09-12）
+
+**症状**：`植物大战僵尸/pvz.leno` 开 JIT 时，卡片上的数字（1~5、阳光数）每帧左右乱跳；
+`LENO_NO_JIT=1` 完全正常。日志里全是 `drawTextCentered`/`drawText` 的函数级 JIT 命中。
+
+**根因**：`OP_INVOKE_METHOD` 的 scan vstack 记账与 codegen 弹栈都写死「pop `arg_count`，
+push 1 个结果」，但 struct 方法可以返回多个值。`drawTextCentered` 里
+
+```leno
+var[float, float](msw, msh) = f.measureString(text)   // Font.measureString 返回 [float, float]
+float cx = x + (w - msw) / 2.0                        // msw 是脏值 → 文字水平位置乱跳
+```
+
+JIT 只留下 1 个返回值（而且落在实参槽上），于是 `msw` 读到**上一帧的栈残留**，
+`cx` 每帧不同 → 文字左右抖动。注意 `OP_CALL_GLOBAL_FUNC` 早就处理了 `ret_count`，
+只有 `OP_INVOKE_METHOD` 漏了。
+
+**修复**（4 处同步，缺一不可）：
+
+1. `jit_scan.c` 新增 `jit_resolve_method_ret_count()`：`OP_INVOKE_METHOD` 只编码
+   「方法名常量 + arg_count」，接收者类型运行时才定，所以在**编译期枚举已注册 struct 定义**
+   按方法名解析 `return_count`；要求「所有同名方法返回值个数一致」，否则返回 0；
+2. `scan_loop_body` / `scan_callee_for_inline`：`vstack -= (arg_count - ret_count)`，
+   解析失败置 `capable=0`（**绝不退化成按 1 个处理**——那正是本 bug 的形态）；
+3. `ops_callout.inc`：弹 `(arg_count - ret_count + 1)` 槽，保留 `ret_count - 1` 个额外返回值槽
+   （与 `OP_CALL_GLOBAL_FUNC` 同构）；顺带把传给 callout 的 chunk 从 `ctx->chunk` 修正为
+   `cur_chunk`（内联 callee 的方法名常量必须到 callee 常量表里取）；
+4. `jit_callout.c`：`jit_callout_invoke_method` 对齐 `jit_callout_global_func`，
+   把前 `ret_count-1` 个返回值写回 `vstack_top[arg_count-1-i]`；函数级 JIT 快路径限定
+   `ret_count == 1`（`jit_compile_function` 本就拒收多返回值函数）。
+
+**回归**：`assert/test_jit_multiret_method.leno`（双/三返回值 + 多返回值调用位于函数级 JIT 函数体内）。
+
+**教训**：**同一个语义（返回值个数）在 3 个 callout 路径（global func / module call / invoke method）
+各写了一遍，改一处必须扫另外两处**。另外「编译期解析不出来就拒绝编译」比「猜一个默认值」安全得多。
+
+### 8.21 循环体内可达的 `return` 被静默丢弃 —— 五子棋 `nearStone` 恒返回 false（2026-09-12）
+
+**症状**：五子棋 AI 对 AI 时双方都把棋子下在天元（同一格），每局都在 225 手后判平局；
+关 JIT 正常。缩小到最小用例：`nearStone(g, 7, 7, 2)` 在热循环里恒返回 false。
+
+**根因**：循环 JIT 的语义是「跑完这个循环，再把 locals 写回、回到解释器」，
+**没有能力从机器码里真正返回函数**。而 codegen 里 `OP_RETURN` 的 loop 分支只写了
+
+```c
+/* Shouldn't happen in loop body, but handle gracefully */
+TOS_SPILL(); vstack--; vstack = VSTACK_UNREACHABLE;
+```
+
+—— 即「spill 一下继续往下跑」。于是 `nearStone` 里的
+`if g.board[rr * N + cc] != 0 { return true }` 被丢掉，函数沿循环继续走到末尾 `return false`。
+`bestMove` 因此认为全盘无子，`found` 恒 false → `g.aiR=7; g.aiC=7`（空盘走天元）。
+
+**修复**：`scan_loop_body` 在扫描到可达的 `OP_RETURN` / `OP_RETURN_MULTI` 时置
+`ScanResult.has_reachable_return`，`jit_compile()` 见到就返回 NULL（日志 `scan REJECT`），
+该循环交解释器。函数级 JIT（`func_mode` 的 `OP_RETURN` 是真正的返回）与内联 callee
+（跳 `inline_end`）不受影响，**不能**在 scan 里一律拒绝（否则所有带 `return` 的函数都无法函数级 JIT）。
+
+**教训**：scan 的 `dead` 标记（用 `vstack = VSTACK_UNREACHABLE` 表示「后续不可达」）只影响
+**编译期记账**，不会让 codegen 停止发射代码——「不可达」不等于「不生成」。
+凡是 loop JIT 语义上表达不了的指令（return 是最典型的一个），必须在 scan 阶段拒绝，不能指望 codegen 兜住。
+
+### 8.22 `OP_NOT` 对 NaN-boxed bool 失效 —— `not <任何 bool>` 恒为真（2026-09-12）
+
+**症状**：五子棋 AI 全部落天元（与 §8.21 同症状，但 §8.21 修完仍复现）。
+逐档缩小后定位到 `OP_NOT`：
+
+| 表达式 | JIT | 无 JIT |
+| --- | --- | --- |
+| `not alwaysTrue()` | **251** | 0 |
+| `not callTrue()` | **251** | 0 |
+| `not <局部 bool true>` | **251** | 0 |
+| `not (i < 0)` | 301 | 301 |
+| `not 0.0` | 301 | 301 |
+
+（301 次迭代错 251 次 = `301 - JIT_HOT_THRESHOLD(50)`，即**错值全部来自 JIT 路径**。）
+
+**根因**：JIT 用 **NaN-boxed** `TRUE_VAL`/`FALSE_VAL` 表示布尔（`OP_TRUE`/`OP_FALSE` 就是这么压的，
+`JUMP_IF_FALSE/TRUE` 也显式比较这两个常量）。但旧的 `OP_NOT` 只区分两类：
+
+```c
+int48 → test rax,rax; sete al; movzx   // 对
+其它  → movq xmm0, rax; ucomisd xmm0, 0.0; sete  // 把 NaN-boxed 值当裸 double
+```
+
+`TRUE_VAL`(0xFFFA…) / `FALSE_VAL`(0xFFF9…) / `NULL_VAL`(0xFFF8…) 的位模式作为 double 都是 **NaN**，
+`UCOMISD` 遇 NaN 是 **unordered**（ZF=1），`sete` 恒得 1 —— 于是 `not <任何 bool>` 恒为真。
+五子棋 `bestMove` 里 `if not nearStone(...) { continue }` 因此永远 continue，候选点恒为空。
+
+**修复**（`ops_incdec.inc`）：`OP_NOT` 改为三态分派，结果固定产出 NaN-boxed bool，
+逐条对齐解释器 `val_bool(is_falsey(v))` / `val_is_truthy()`：
+
+| 操作数 | 判定 | 结果 |
+| --- | --- | --- |
+| int48 | `test rax,rax` | `0` → `TRUE_VAL`，否则 `FALSE_VAL` |
+| NaN-boxed（无符号 `>= JIT_NAN_SIG`） | 与 `FALSE_VAL` / `NULL_VAL` 全值比较 | 命中 → `TRUE_VAL`；其余（对象 / `TRUE_VAL`）→ `FALSE_VAL` |
+| 裸 double | `UCOMISD` vs 0.0：`JP`（NaN）→ `FALSE_VAL`，`JE` → `TRUE_VAL` | 与 `val_is_truthy` 的 `!= 0.0` 一致（NaN 为真） |
+
+产出 NaN-boxed（而非旧的裸 0/1）同时也修掉了「`not` 结果写回 bool 槽时被解释器读成次正规 float」
+这类问题（对应 §14.4-② 的同族差异）。
+
+**影响面**：所有 JIT 循环里的 `if not <bool>` —— 包括 `if not z.alive { continue }`
+（PvZ 僵尸/植物更新）、LenoSDL3 里 `if not ok { ... }` 等，此前这些分支**方向全是反的**。
+
+**回归**：`assert/test_jit_not_bool.leno`（6 种取值形态各一个热循环 + 嵌套 `not`+`continue`）。
+
+**教训**：JIT 里「布尔」有两个表示（裸 0/1 与 NaN-boxed `val_bool`），写任何与真假相关的
+opcode 前先确认该处的表示，并对照 `val_is_truthy()`。**NaN 的无序比较（`ZF=1`）是这类 bug
+的经典陷阱**，凡是「用浮点比较实现整数/布尔语义」的地方都要显式处理 `PF`。
+
 ***
 
 ## 9. 性能数据
@@ -1047,7 +1171,7 @@ NaN-boxed → bailout 交解释器（解释器 `val_as_num_ex`/`val_as_num` 对 
 ### 回归测试
 
 ```
-Results: 264 passed, 0 failed (total 264)   // JIT 与 LENO_NO_JIT=1 两种模式均通过
+Results: 268 passed, 0 failed (total 268)   // JIT 与 LENO_NO_JIT=1 两种模式均通过
 ```
 
 ### 通用算术 float 快路径（2026-09-11）
@@ -1225,6 +1349,8 @@ push rax    ; 内存写
    写回后，解释器读到的是**次正规 float**（≈4.9e-324 / 0.0）而不是 bool。
    真值判断恰好仍然正确（非零/零），但 `x is bool` 变 false、`_int(flag)` 由 1 变 0
    —— 后者是**静默算错**。复现探针：`build/probe8.leno`（`boolLocal` / `intOfFlag`）。
+   注：同类问题里的 **`OP_NOT` 已在 2026-09-12 修掉**（现在产出 NaN-boxed bool，§8.22），
+   剩下的只是各比较 opcode 自身仍压裸 0/1。
 
 > 已关闭的旧条目：
 >
@@ -1434,7 +1560,10 @@ hits=50 全错——"快"是因为几何判断全走 miss 短路路径，毫无�
 | 类型化整数运算（`OP_ADD_INT` …） | 溢出升 BigInt | `EMIT_INT48_CHECK` / `EMIT_INT64_OVF_CHECK` → bailout | ✅ |
 | `OP_CAST_FLOAT` | int→`(double)`、bool→1.0/0.0、BigInt→double、null 保持 null | int48 → `CVTSI2SD`；其余**原样透传** | ⚠️ 见 14.4-① |
 | BigInt 参与算术/比较 | BigInt 路径 | NaN-boxed → bailout 交解释器 | ✅（有意为之） |
+| 逻辑非 `OP_NOT` | `val_bool(is_falsey(v))`；假值 = `int 0` / `float ±0.0` / `false` / `null`，**NaN 为真** | 三态分派（int48 / NaN-boxed 全值比较 `FALSE_VAL`·`NULL_VAL` / 裸 double `UCOMISD`+`JP`）→ 压 NaN-boxed `TRUE_VAL`/`FALSE_VAL` | ✅（2026-09-12，§8.22） |
 | 比较结果的**类型** | 压 `val_bool`（`TRUE_VAL` / `FALSE_VAL`） | 压**裸 0/1**，写回时按 slot 类型位图裸存 | ⚠️ 见 14.4-② |
+| struct 方法调用的**返回值个数** | 由 callee 的 `return_count` 决定（压 N 个值） | 编译期 `jit_resolve_method_ret_count()` 解析；解析不出 → 拒绝 JIT | ✅（2026-09-12，§8.20） |
+| 循环体内可达的 `return` | 真返回（弹帧、写回栈） | 循环 JIT 表达不了 → **scan 拒绝该循环** | ✅（2026-09-12，§8.21） |
 | `len()` / 模块方法 / FFI 等 callout | 原生实现 | 同一原生函数（callout 调用），除参数/返回值装箱外无第二份实现 | ✅ |
 
 > **一条由此得出的通用原则**：JIT 中途算错的值**通常不会泄漏** ——
@@ -1458,6 +1587,12 @@ JIT 虚拟栈是「栈顶在低地址」的反向栈，`vstack_top` 永远指向
 > 判据：编译器生成 `obj.m(a, b)` 时，`OP_GET_PROPERTY` 需要 receiver 在 TOS，所以实参先压；
 > 而 `OP_INVOKE_METHOD` 的约定是 receiver 占参数区首位，所以最先压。**写新 callout 前先
 > `--debug-out` 看一眼字节码序列，别凭直觉。**
+>
+> **多返回值补充**：`OP_CALL_GLOBAL_FUNC[_TYPED]` 与 `OP_INVOKE_METHOD` 都可能一次返回 N 个值
+> （`ObjFunction.return_count > 1`）。约定是：callout 返回**最后一个**返回值（作为新 TOS），
+> 其余 N-1 个直接写回虚拟栈的**实参槽** `vstack_top[arg_count-1-i]`（i = 0..N-2），
+> 与 codegen 的「弹 `arg_count - ret_count + 1` 槽」配对。少了这段回填，
+> 解构出来的第一个值就是上一帧的栈残留（§8.20 的 PvZ 数字抖动）。
 
 ### 14.3 新增 opcode / callout 的一致性检查清单
 
@@ -1507,7 +1642,9 @@ print(not flag)         // 两边都是 0（真值判断恰好正确）
 影响面：真值判断（`if` / `while` / `not`）恰好正确，**但 `is bool`、`_int(bool)`、
 与 `true`/`false` 比较、以及把结果序列化（JSON 会写出 `4.9e-324`）都不一致**。
 修法方向（择一）：比较 opcode 直接产出 NaN-boxed `TRUE_VAL`/`FALSE_VAL`
-（`JUMP_IF_FALSE` 已能识别这两个常量，需同时核对 `OP_NOT` / and/or 的 codegen）；
+（`JUMP_IF_FALSE` 已能识别这两个常量；**`OP_NOT` 已于 2026-09-12 核对并修成能正确处理
+NaN-boxed bool，见 §8.22** —— 也就是说这条路的前置条件已经具备，剩下只需改比较 opcode 本身，
+并确认 and/or 的短路 codegen 不受影响）；
 或给 writeback 增加「该 slot 原值是 bool」的第二张位图。
 
 ### 14.5 回归断言索引
@@ -1517,6 +1654,8 @@ print(not flag)         // 两边都是 0（真值判断恰好正确）
 | `assert/test_jit_method_args.leno` | 原生方法 callout 实参顺序（§8.17）：`_relayout` 累加循环现场 + `Dict.get(key, def)` |
 | `assert/test_jit_float_ops.leno` | `OP_*_FLOAT` int 操作数提升（§8.18）、热循环内浮点除零报错（§8.19） |
 | `assert/test_ffi_inline_widths.leno` | ffi 定宽内存读写内联 + 越界/空指针/已释放的 bailout 报错 |
+| `assert/test_jit_multiret_method.leno` | struct 方法多返回值（§8.20）：双/三返回值 + 多返回值调用位于函数级 JIT 函数体内 |
+| `assert/test_jit_not_bool.leno` | `OP_NOT` 对 NaN-boxed bool / int48 / 裸 double 的三态分派（§8.22）：6 种取值形态各一个热循环 + 嵌套 `not`+`continue` |
 
 ***
 

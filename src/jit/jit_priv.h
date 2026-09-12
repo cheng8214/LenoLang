@@ -107,6 +107,13 @@ typedef struct {
     InlineSite inline_sites[4]; /* max 4 inline calls per loop */
     int inline_count;
     int inline_extra_locals;   /* total extra locals from inlining */
+    /* 循环体内存在可达的 OP_RETURN / OP_RETURN_MULTI（提前返回）。
+     * 循环 JIT（loop mode）没有能力从机器码中返回函数——codegen 对
+     * OP_RETURN 只能「spill 后继续往下跑」，于是这个 return 被静默丢弃
+     * （五子棋 nearStone 的 `if 有子 { return true }` 因此永远返回 false，
+     * AI 每步都走天元）。消费方 jit_compile() 据此拒绝该循环；
+     * 函数级 JIT（func_mode）与内联 callee 都能正确处理 return，不受影响。 */
+    int has_reachable_return;
 } ScanResult;
 
 /* ---- Codegen: offset map and patch list ---- */
