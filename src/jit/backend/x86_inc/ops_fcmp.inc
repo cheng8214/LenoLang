@@ -15,11 +15,10 @@
  * ========================================================================== */
             case OP_EQ_FLOAT: case OP_LT_FLOAT: case OP_GT_FLOAT:
             case OP_LE_FLOAT: case OP_GE_FLOAT: {
-                TOS_CONSUME_TO(JIT_RAX);  /* b */
-                TOS_CONSUME_TO(JIT_RDX);  /* a */
-                /* movq xmm0, rdx; movq xmm1, rax */
-                emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0x6E); emit_byte(cb, modrm(3, 0, JIT_RDX & 7));
-                emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0x6E); emit_byte(cb, modrm(3, 1, JIT_RAX & 7));
+                int ta, tb, end_jmp;
+                /* 操作数未必已是 float：解释器走 val_as_num（int 提升为 double，
+                 * 非数值按 0.0），NaN-boxed 一律 bailout 交解释器。 */
+                EMIT_FLOAT_ARGS2(ta, tb);   /* xmm0 = a, xmm1 = b */
                 /* UCOMISD xmm0, xmm1 → sets EFLAGS for xmm0 OP xmm1 */
                 emit_ucomisd_rr(cb, 0, 1);
                 /* SETcc based on comparison type.
@@ -44,6 +43,9 @@
                     emit_byte(cb, modrm(3, JIT_RDX & 7, JIT_RAX & 7));
                 }
                 emit_movzx_r32_r8(cb, JIT_RAX, JIT_RAX);
+                end_jmp = emit_jmp(cb);
+                EMIT_FLOAT_TAGGED_BAILOUT(ta, tb);
+                patch_rel32(cb, end_jmp, cb->len);
                 TOS_PRODUCE();
                 vstack--;
                 break;

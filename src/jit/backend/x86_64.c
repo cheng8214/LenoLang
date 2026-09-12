@@ -344,6 +344,42 @@ int compile_loop(CodegenCtx* ctx) {
      *   -1 = 进入自增 int48 溢出，-2 = step == 0，-3 = step 是 float */
     #define EMIT_BAILOUT_SITE_NONOVF(off) EMIT_BAILOUT_SITE_WRITE(-1000 - (int)(off))
 
+    /* ---- 类型化浮点运算（OP_*_FLOAT / OP_*_FLOAT 比较）的操作数取值 ----
+     * 这些 opcode 名字里带 FLOAT，但**操作数不保证已经是 float**：编译器只在
+     * 静态类型确定时才补 OP_CAST_FLOAT，像 `acc + o.get("k", 0.0)`（float 局部量
+     * 加动态类型调用结果）会把 int48 直接喂进来。解释器一律经 val_as_num_ex /
+     * val_as_num 提升，所以 JIT 也必须按三态取操作数，否则 1 的 int48 位模式
+     * 会当成 1e-323 的次正规 double 参与 SSE 运算（加了个「0」）。
+     *   1) int48            → CVTSI2SD 提升
+     *   2) 裸 double        → MOVQ 直接搬位
+     *   3) NaN-boxed        → bailout 交解释器（解释器对 BigInt 转 double、
+     *                         对其余非数值按 0.0；对象种类 JIT 无从区分，
+     *                         一律回退，语义与性能都最稳）
+     * 展开后 xmm0 = a（左操作数）、xmm1 = b（右操作数）；tagged_a/tagged_b
+     * 是两条「操作数是 NaN-boxed」的 rel32 跳转，必须紧接着调用
+     * EMIT_FLOAT_TAGGED_BAILOUT() 让它们落到 bailout 桩上。 */
+    #define EMIT_FLOAT_ARGS2(tagged_a, tagged_b) do { \
+        TOS_CONSUME_TO(JIT_RAX);                          /* b（右） */ \
+        TOS_CONSUME_TO(JIT_RDX);                          /* a（左） */ \
+        EMIT_NUM_TO_XMM(0, JIT_RDX, JIT_R8, tagged_a);    /* xmm0 = a */ \
+        EMIT_NUM_TO_XMM(1, JIT_RAX, JIT_R8, tagged_b);    /* xmm1 = b */ \
+    } while(0)
+
+    /* 浮点结果（xmm0）写回 RAX，作为新的 TOS */
+    #define EMIT_MOVQ_RAX_XMM0() do { \
+        emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F); \
+        emit_byte(cb, 0x7E); emit_byte(cb, modrm(3, 0, 0)); \
+    } while(0)
+
+    /* 把 EMIT_FLOAT_ARGS2 挂起的两条 tagged 跳转落到 bailout 桩：
+     * 非溢出类 bailout，site 用负值编码，日志可定位到具体 bc_off。 */
+    #define EMIT_FLOAT_TAGGED_BAILOUT(tagged_a, tagged_b) do { \
+        patch_rel32(cb, (tagged_a), cb->len); \
+        patch_rel32(cb, (tagged_b), cb->len); \
+        EMIT_BAILOUT_SITE_NONOVF(bc_off); \
+        { int _p = emit_jmp(cb); patch_add(ctx, _p, -1, 0); } \
+    } while(0)
+
     /* Callout argument registers per target ABI:
      *   Windows x64:    arg1..arg4 = RCX/RDX/R8/R9, 5th+ go on the stack
      *                   (first stack arg at [RSP+32] after 32B shadow)

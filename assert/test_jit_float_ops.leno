@@ -1,0 +1,104 @@
+// JIT 热循环内「类型化浮点运算」操作数语义回归
+//
+// 回归点：
+//   [1] OP_*_FLOAT 不提升 int 操作数
+//       编译器只在静态类型确定时补 OP_CAST_FLOAT；`float 局部量 + 动态类型调用结果`
+//       会把 int48 直接送进 ADDSD/MULSD：int 1 的位模式被当成 1e-323 次正规 double，
+//       等于加了个 0（实测外层 600 轮累加，期望 200 只得 17 —— 17 恰是 JIT 接管前
+//       解释执行那 49 轮的和，说明 JIT 段每次加的都是"0"）。
+//   [2] OP_*_FLOAT 比较同理：int48 位模式 ≈ 3.5e-323，与 1.0 比永远 <。
+//   [3] OP_DIV_FLOAT 除零：解释器抛「浮点除零错误」，JIT 不能静默算成 inf。
+//
+// 用例都在热循环里（外层/单层循环远超 JIT 热阈值 50），期望值按解释器语义写死。
+
+func makeOpts():Array[Dict] {
+    Array[Dict] opts = []
+    opts.add({grow:1, shrink:1, align:3})
+    opts.add({grow:0, shrink:0, basis:32, align:3})
+    opts.add({grow:0, shrink:0, basis:32, align:3})
+    return opts
+}
+
+// [1a] 右操作数是动态类型调用结果（默认值 float）→ float 累加
+func dynFloatAccum(Array[Dict] opts, int rounds):float {
+    float acc = 0.0
+    for rounds to rep {
+        for opts.len() to i {
+            Dict o = opts[i]
+            acc = acc + o.get("grow", 0.0)
+        }
+    }
+    return acc
+}
+
+// [1b] 右操作数是动态类型调用结果且取到 int → *_FLOAT 必须把 int48 提升为 double
+func dynIntAccum(Array[Dict] opts, int rounds):float {
+    float acc = 0.0
+    for rounds to rep {
+        for opts.len() to i {
+            Dict o = opts[i]
+            acc = acc + o.get("grow", 0)
+        }
+    }
+    return acc
+}
+
+// [2] 浮点比较的操作数是 int：1 必须按 1.0 参与比较
+func dynCmpHits(Array[Dict] opts, int rounds):float {
+    int hits = 0
+    for rounds to rep {
+        for opts.len() to i {
+            Dict o = opts[i]
+            if o.get("grow", 0) >= 1.0 { hits = hits + 1 }
+        }
+    }
+    return _float(hits)
+}
+
+// [3] 被除数是 int（1）→ 必须先提升为 1.0 再除：1/4 = 0.25，每轮合计 0.25
+func dynIntDiv(Array[Dict] opts, int rounds):float {
+    float acc = 0.0
+    for rounds to rep {
+        for opts.len() to i {
+            Dict o = opts[i]
+            acc = acc + o.get("grow", 0) / 4.0
+        }
+    }
+    return acc
+}
+
+func test_int_operand_promote() {
+    var opts = makeOpts()
+    assert_eq(dynFloatAccum(opts, 300), 300.0, "float 累加（默认值 float）应为 300")
+    assert_eq(dynIntAccum(opts, 200), 200.0, "int 操作数必须提升为 double（否则按 1e-323 加 0）")
+    assert_eq(dynCmpHits(opts, 300), 300.0, "int 操作数按 1.0 参与浮点比较：命中 300")
+    assert_eq(dynIntDiv(opts, 200), 50.0, "int 被除数提升后 1/4 = 0.25：0.25*200 = 50")
+    print("  [1] *_FLOAT / 比较 / 除法 的 int 操作数提升 OK")
+}
+
+func test_div_zero_in_hot_loop() {
+    // 循环已进 JIT（热阈值 50）后在第 199 次触发除零：JIT 必须 bailout 交解释器抛错
+    var caught = false
+    try {
+        var acc = 0.0
+        for 200 to i {
+            if i == 199 {
+                acc = acc + _float(8) / _float(i - 199)
+            } else {
+                acc = acc + _float(8) / _float(2)
+            }
+        }
+        print("  不应到达: " + acc)
+    } catch e {
+        caught = true
+        assert_true(e.msg.find("除零") >= 0, "错误信息应含「除零」")
+    }
+    assert_eq(caught, true, "热循环内浮点除零必须抛「浮点除零错误」")
+    print("  [2] 热循环内浮点除零报错 OK")
+}
+
+main() {
+    test_int_operand_promote()
+    test_div_zero_in_hot_loop()
+    print("test_jit_float_ops passed")
+}

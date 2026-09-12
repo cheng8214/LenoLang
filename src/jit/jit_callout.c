@@ -1347,14 +1347,21 @@ Value jit_callout_get_property(int64_t* vstack_top, uint16_t name_const_idx,
         int saved_sp = vm->sp;
 
         /* Compiler push order: args first, receiver LAST (on top), so the
-         * physical/virtual stack at this point is [..., arg1..argN, receiver]
-         * with vstack_top[0] = receiver and vstack_top[i] = arg_i (i>=1).
+         * physical/virtual stack at this point is [..., arg1..argN, receiver].
+         *
+         * JIT 虚拟栈是「栈顶在低地址」，即 vstack_top[k] 是栈顶往下第 k 个值，
+         * 于是 vstack_top[0] = receiver、vstack_top[1] = 最后一个实参 argN、
+         * …、vstack_top[arg_count] = 第一个实参 arg1。
+         * 所以第 i 个实参（i 从 0 计，源序）在 vstack_top[arg_count - i]。
+         * （此前误用 vstack_top[i+1]，把实参顺序整体颠倒：o.get(key, def)
+         * 变成 get(def, key)，键落空即返回默认值——例如 _relayout 里
+         * o.get("grow", 0.0) 返回字符串 "grow"。）
          * Mirror op_property.inc: pop receiver from TOS, then reshape the VM
          * stack to [receiver, arg1..argN] and call the native with
          * (arg_count + 1) values. */
         Value receiver = jit_raw_to_value(vstack_top[0]);
         for (int i = 0; i < arg_count; i++) {
-            vm_stack_push(vm, jit_raw_to_value(vstack_top[i + 1]));
+            vm_stack_push(vm, jit_raw_to_value(vstack_top[arg_count - i]));
         }
         int arg_start = vm->sp - arg_count;
         for (int i = arg_count - 1; i >= 0; i--) {

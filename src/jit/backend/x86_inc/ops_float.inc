@@ -5,51 +5,75 @@
  * NOT a translation unit: relies on function-local macros (TOS_*,
  * EMIT_*) and locals (cb, ctx, sr, ip, vstack, tos_live, ...).
  * ========================================================================== */
-            /* ---- Float arithmetic ---- */
-            /* Float values on the virtual stack are stored as raw double bits in int64 slots. */
-            /* We load them into XMM registers, do SSE2 arithmetic, store back. */
-            case OP_ADD_FLOAT:
-                TOS_CONSUME_TO(JIT_RAX);   /* b (raw double bits) */
-                TOS_CONSUME_TO(JIT_RDX);   /* a */
-                /* movq xmm0, rdx; movq xmm1, rax */
-                emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0x6E); emit_byte(cb, modrm(3, 0, JIT_RDX & 7));
-                emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0x6E); emit_byte(cb, modrm(3, 1, JIT_RAX & 7));
+            /* ---- Float arithmetic ----
+             * 虚拟栈上的浮点值是裸 double 位模式，但操作数**未必已是 float**
+             * （见 EMIT_FLOAT_ARGS2 的说明：float 局部量 + 动态类型调用结果 /
+             *  数组元素 / 字典值时会直接把 int48 喂进来）。解释器一律经
+             * val_as_num_ex 提升，所以这里统一用 EMIT_FLOAT_ARGS2 取操作数，
+             * NaN-boxed（含 BigInt）一律 bailout 交解释器。 */
+            case OP_ADD_FLOAT: {
+                int ta, tb, end_jmp;
+                EMIT_FLOAT_ARGS2(ta, tb);
                 emit_sse2_rr(cb, 0x58, 0, 1);  /* ADDSD xmm0, xmm1 → xmm0 = a + b */
-                /* movq rax, xmm0 */
-                emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0x7E); emit_byte(cb, modrm(3, 0, 0));
+                EMIT_MOVQ_RAX_XMM0();
+                end_jmp = emit_jmp(cb);
+                EMIT_FLOAT_TAGGED_BAILOUT(ta, tb);
+                patch_rel32(cb, end_jmp, cb->len);
                 TOS_PRODUCE();
                 vstack--;
                 break;
-            case OP_SUB_FLOAT:
-                TOS_CONSUME_TO(JIT_RAX);
-                TOS_CONSUME_TO(JIT_RDX);
-                emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0x6E); emit_byte(cb, modrm(3, 0, JIT_RDX & 7));
-                emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0x6E); emit_byte(cb, modrm(3, 1, JIT_RAX & 7));
+            }
+            case OP_SUB_FLOAT: {
+                int ta, tb, end_jmp;
+                EMIT_FLOAT_ARGS2(ta, tb);
                 emit_sse2_rr(cb, 0x5C, 0, 1);  /* SUBSD xmm0, xmm1 */
-                emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0x7E); emit_byte(cb, modrm(3, 0, 0));
+                EMIT_MOVQ_RAX_XMM0();
+                end_jmp = emit_jmp(cb);
+                EMIT_FLOAT_TAGGED_BAILOUT(ta, tb);
+                patch_rel32(cb, end_jmp, cb->len);
                 TOS_PRODUCE();
                 vstack--;
                 break;
-            case OP_MUL_FLOAT:
-                TOS_CONSUME_TO(JIT_RAX);
-                TOS_CONSUME_TO(JIT_RDX);
-                emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0x6E); emit_byte(cb, modrm(3, 0, JIT_RDX & 7));
-                emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0x6E); emit_byte(cb, modrm(3, 1, JIT_RAX & 7));
+            }
+            case OP_MUL_FLOAT: {
+                int ta, tb, end_jmp;
+                EMIT_FLOAT_ARGS2(ta, tb);
                 emit_sse2_rr(cb, 0x59, 0, 1);  /* MULSD xmm0, xmm1 */
-                emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0x7E); emit_byte(cb, modrm(3, 0, 0));
+                EMIT_MOVQ_RAX_XMM0();
+                end_jmp = emit_jmp(cb);
+                EMIT_FLOAT_TAGGED_BAILOUT(ta, tb);
+                patch_rel32(cb, end_jmp, cb->len);
                 TOS_PRODUCE();
                 vstack--;
                 break;
-            case OP_DIV_FLOAT:
-                TOS_CONSUME_TO(JIT_RAX);
-                TOS_CONSUME_TO(JIT_RDX);
-                emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0x6E); emit_byte(cb, modrm(3, 0, JIT_RDX & 7));
-                emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0x6E); emit_byte(cb, modrm(3, 1, JIT_RAX & 7));
-                emit_sse2_rr(cb, 0x5E, 0, 1);  /* DIVSD xmm0, xmm1 */
-                emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0x7E); emit_byte(cb, modrm(3, 0, 0));
+            }
+            /* DIV 额外要求与解释器一致：除数为 ±0.0 要抛「浮点除零错误」，
+             * JIT 不能默默算成 inf/NaN。
+             * 注意必须与 **0.0** 比较：UCOMISD xmm1, xmm1（自己比自己）永远
+             * 相等 → ZF 恒为 1，会变成「每次除法都 bailout」。
+             * 无序（NaN 除数，PF=1）不走 bailout：DIVSD 得 NaN，与解释器
+             * 结果一致，避免把含 NaN 的热循环整片踢回解释器。 */
+            case OP_DIV_FLOAT: {
+                int ta, tb, izero, jnan, end_jmp;
+                EMIT_FLOAT_ARGS2(ta, tb);
+                emit_xorpd_xmm_xmm(cb, 2, 2);        /* xmm2 = 0.0 */
+                emit_ucomisd_rr(cb, 1, 2);           /* xmm1 ? 0.0 */
+                jnan = emit_jcc(cb, 0x8A);           /* JP：无序(NaN) → 不回退 */
+                izero = emit_jcc(cb, 0x84);          /* JE：等于 ±0 → bailout */
+                patch_rel32(cb, jnan, cb->len);      /* .nan: 直接进 DIVSD */
+                emit_sse2_rr(cb, 0x5E, 0, 1);        /* DIVSD xmm0, xmm1 */
+                EMIT_MOVQ_RAX_XMM0();
+                end_jmp = emit_jmp(cb);
+                patch_rel32(cb, ta, cb->len);
+                patch_rel32(cb, tb, cb->len);
+                patch_rel32(cb, izero, cb->len);
+                EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                { int _p = emit_jmp(cb); patch_add(ctx, _p, -1, 0); }
+                patch_rel32(cb, end_jmp, cb->len);
                 TOS_PRODUCE();
                 vstack--;
                 break;
+            }
             case OP_DIV: {
                 /* 通用除法 callout: 运行时类型分发 (int/int, float 混合, BigInt) */
                 TOS_SPILL();
@@ -70,18 +94,24 @@
                 vstack--;
                 break;
             }
-            case OP_NEG_FLOAT:
+            /* 一元负号：解释器用 val_as_num（int 提升为 double）→ 同样三态取值 */
+            case OP_NEG_FLOAT: {
+                int ta, end_jmp;
                 TOS_CONSUME_RAX();
-                /* movq xmm0, rax */
-                emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0x6E); emit_byte(cb, modrm(3, 0, JIT_RAX & 7));
+                EMIT_NUM_TO_XMM(0, JIT_RAX, JIT_R8, ta);   /* xmm0 = 操作数 */
                 /* Load sign mask into xmm1: mov rdx, 0x8000000000000000; movq xmm1, rdx */
                 emit_mov_reg_imm64(cb, JIT_RDX, 0x8000000000000000ULL);
                 emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0x6E); emit_byte(cb, modrm(3, 1, JIT_RDX & 7));
                 emit_xorpd_xmm_xmm(cb, 0, 1);
-                /* movq rax, xmm0 */
-                emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0x7E); emit_byte(cb, modrm(3, 0, 0));
+                EMIT_MOVQ_RAX_XMM0();
+                end_jmp = emit_jmp(cb);
+                patch_rel32(cb, ta, cb->len);
+                EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                { int _p = emit_jmp(cb); patch_add(ctx, _p, -1, 0); }
+                patch_rel32(cb, end_jmp, cb->len);
                 TOS_PRODUCE();
                 break;
+            }
             case OP_CAST_FLOAT: {
                 /* Runtime type dispatch:
                  * - If value fits int48 → it's an int, convert via CVTSI2SD

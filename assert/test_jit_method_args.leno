@@ -1,0 +1,104 @@
+// JIT 热循环内「带实参的方法调用」实参顺序回归
+//
+// 回归点：OP_GET_PROPERTY + OP_CALL 窥孔合并成的调用 callout 取实参反序。
+// JIT 虚拟栈栈顶在低地址：receiver 在 vstack_top[0]，第一个实参在最深处；
+// 旧实现按 vstack_top[i+1] 取参，于是 d.get(key, def) 实际执行 d.get(def, key)：
+// 键落空 → 返回默认值。sdl_layout.leno 的 _relayout 因此把 sumGrow 算成字符串
+// "grow"，sumGrow > 0.0 恒假 → 每个子控件只拿到自己的 basis，
+// 状态栏贴在工具栏下方、splitter 高度≈0、导航树与表格行整片消失。
+//
+// 用例都在热循环里（外层 300 次、内层 3 次，远超 JIT 热阈值 50），
+// 期望值按解释器语义写死；任一断言失败 → 退出码非 0（run_tests.leno 判 FAIL）。
+
+func makeOpts():Array[Dict] {
+    Array[Dict] opts = []
+    opts.add({grow:1, shrink:1, align:3})
+    opts.add({grow:0, shrink:0, basis:32, align:3})
+    opts.add({grow:0, shrink:0, basis:32, align:3})
+    return opts
+}
+
+// 复刻 sdl_layout.leno HBox._relayout 的累加循环（界面错位的原始现场）：
+// 一个循环里三次 .get(key, default)，键/默认值类型各不相同
+//（string+float、string+bool、string+float）——顺序反了必被其中任一暴露。
+// 返回 [totalBasis, sumGrow, sumShrinkBasis]。
+func layoutAccum(Array[Dict] opts, Array[float] natW, int rounds):Array[float] {
+    float totalBasis = 0.0
+    float sumGrow = 0.0
+    float sumShrinkBasis = 0.0
+    for rounds to rep {
+        totalBasis = 0.0
+        sumGrow = 0.0
+        sumShrinkBasis = 0.0
+        for opts.len() to i {
+            Dict o = opts[i]
+            float g = o.get("grow", 0.0)
+            if o.get("expand", false) and g <= 0.0 { g = 1.0 }
+            float s = o.get("shrink", 1.0)
+            float basis = natW[i]
+            float b = o.get("basis", -1.0)
+            if b >= 0.0 { basis = b }
+            totalBasis = totalBasis + basis
+            sumGrow = sumGrow + g
+            sumShrinkBasis = sumShrinkBasis + s * basis
+        }
+    }
+    Array[float] out = []
+    out.add(totalBasis)
+    out.add(sumGrow)
+    out.add(sumShrinkBasis)
+    return out
+}
+
+// 只取一个值：最简形态，便于把失败定位到「键/默认值互换」本身
+func getGrowSum(Array[Dict] opts, int rounds):float {
+    float acc = 0.0
+    for rounds to rep {
+        for opts.len() to i {
+            Dict o = opts[i]
+            float g = o.get("grow", 0.0)
+            acc = acc + g
+        }
+    }
+    return acc
+}
+
+// 键与默认值类型不同：反序后键变成 0.0（float），落入默认值分支返回 "grow"
+func getStrictSum(Array[Dict] opts, int rounds):float {
+    float acc = 0.0
+    for rounds to rep {
+        for opts.len() to i {
+            Dict o = opts[i]
+            float g = o.get("grow", -1.0)
+            acc = acc + g
+        }
+    }
+    return acc
+}
+
+func test_layout_accum() {
+    var opts = makeOpts()
+    var natW = [300.0, 32.0, 32.0]
+    var r = layoutAccum(opts, natW, 300)
+    // 每轮：basis = natW（第 2、3 项被 basis:32 覆盖）→ 300+32+32 = 364
+    assert_eq(r[0], 364.0, "totalBasis 应为 364（basis 累加）")
+    // grow 只有第 1 项是 1，其余 0 → 1
+    assert_true(r[1] is float, "sumGrow 必须是 float（反序时会拿到键字符串 \"grow\"）")
+    assert_eq(r[1], 1.0, "sumGrow 应为 1")
+    // shrink*basis = 1*300 + 0*32 + 0*32 = 300
+    assert_eq(r[2], 300.0, "sumShrinkBasis 应为 300")
+    print("  [1] _relayout 累加循环三accumulator OK")
+}
+
+func test_simple_get() {
+    var opts = makeOpts()
+    assert_eq(getGrowSum(opts, 300), 300.0, "get(\"grow\", 0.0) 累加应为 300")
+    assert_eq(getStrictSum(opts, 300), 300.0, "get(\"grow\", -1.0) 累加应为 300（不能落到默认值）")
+    print("  [2] 单值 Dict.get(key, default) OK")
+}
+
+main() {
+    test_layout_accum()
+    test_simple_get()
+    print("test_jit_method_args passed")
+}
