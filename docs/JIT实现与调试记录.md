@@ -396,17 +396,22 @@ for each local i:
 | —      | OP\_ADD\_INT      | 1   | `add rax, rdx` + int48 检测               |
 | —      | OP\_SUB\_INT      | 1   | `sub rax, rdx` + int48 检测               |
 | —      | OP\_MUL\_INT      | 1   | `imul rax, rdx` + int64 溢出检测 + int48 检测 |
-| —      | OP\_MOD\_INT      | 1   | `cqo; idiv r8` 取余数                      |
+| —      | OP\_MOD\_INT      | 1   | `cqo; idiv r8` 取余数（除数为 0 先 bailout，见 §8.23）      |
 | —      | OP\_NEG\_INT      | 1   | `neg rax` + int48 检测                    |
 | —      | OP\_ADD\_INT\_IMM | 2   | `add rax, imm8` + int48 检测              |
 | —      | OP\_SUB\_INT\_IMM | 2   | `sub rax, imm8` + int48 检测              |
 | —      | OP\_MUL\_INT\_IMM | 2   | `imul rax, imm` + 溢出检测                  |
 
-### 整数除法（返回 float）
+### 整数除法（int / int → **int48**）
 
 | Opcode | 枚举名          | 字节数 | 说明                                                      |
 | ------ | ------------ | --- | ------------------------------------------------------- |
-| —      | OP\_DIV\_INT | 1   | `cqo; idiv r8; cvtsi2sd xmm0, rax` → 压入 raw double bits |
+| —      | OP\_DIV\_INT | 1   | `cqo; idiv r8` → 商（RAX）作为 **int48** 压栈；除数为 0 / 商超 int48 先 bailout |
+
+> 语义以解释器为准：`vm/vminc/op_type_specialized.inc:119` 压的是 `val_int(a / b)`
+> —— **整除、向零截断、结果是 int**。任一侧是 float 时编译器发的是 `OP_DIV_FLOAT`。
+> 本行原写作「返回 float」是错的（旧 codegen 真把它转成了 double），
+> 该错误在 2026-09-12 修掉，见 §8.23。
 
 ### 位运算
 
@@ -1132,6 +1137,43 @@ int48 → test rax,rax; sete al; movzx   // 对
 opcode 前先确认该处的表示，并对照 `val_is_truthy()`。**NaN 的无序比较（`ZF=1`）是这类 bug
 的经典陷阱**，凡是「用浮点比较实现整数/布尔语义」的地方都要显式处理 `PF`。
 
+### 8.23 `OP_DIV_INT` 把商转成 double —— 基数排序算错 + 数组越界（2026-09-12）
+
+**症状**：`examples/排序测试/更多排序.leno` 里 8 个排序算法只有**基数排序**报
+`正确: false`，并伴一条 `[运行时错误] 数组索引越界`；其余 7 个全对。`LENO_NO_JIT=1` 正常。
+
+**定位**（差分探针，两步就到底）：
+
+1. 复刻 `counting_sort_by_digit` 的统计循环 → JIT 得到 `395 5 397 5 393 5 394 5 396 5`，
+   解释器得到正确的 `200×10`。**偶数桶约 2 倍、奇数桶恰好 5**（= 前 50 次迭代的贡献，
+   即 JIT 阈值前由解释器执行的那部分）→ 说明错值全部来自 JIT 路径，且计数器被算成了别的数。
+2. 逐档拆表达式：`arr[i] % 10` 对、`(arr[i] + 0) % 10` 对、`x = arr[i] / exp; x % 10` **错**、
+   `arr[i] / exp` 单独看"对"（其实是被 `_str(12.0) == "12"` 骗了）。
+   ⇒ 问题在 **`/` 之后**：商不是整数 → 紧接着的 `OP_MOD_INT` 拿 double 的**位模式**做整数 `idiv`。
+
+**根因**：解释器 `OP_DIV_INT` 压 `val_int(a / b)`（int48），而 JIT 的 `OP_DIV_INT` 把商
+`CVTSI2SD` 成 double 再压栈 —— 两边结果**类型**就不一样（语言语义：`100/3 == 33`、`q is int`）。
+
+**为什么藏得住**：①`_str(12.0)` 打印成 `"12"`，单看除法结果看不出区别；
+②`docs` 里 §4 那小节标题本来就写着「整数除法（返回 float）」，**文档把 bug 当成了设计**；
+③只有「商又被当整数用」（取模、`is int`、位运算）时才炸。
+
+**修复**（`ops_arith.inc`）：
+
+* `OP_DIV_INT`：不再 `CVTSI2SD`，商直接作为 int48 压栈；补 `EMIT_INT48_CHECK`
+  （`INT48_MIN / -1` 是唯一越界情形 → bailout 交解释器）；
+* `OP_DIV_INT` / `OP_MOD_INT` 补**除数为 0 的守卫 → bailout**：原先直接 `idiv`，
+  除零会触发 `#DE` 把进程打崩，而解释器是抛「整数/取模除零错误」
+  （通用 `OP_MOD` 早有守卫，这两个类型化版本漏了；§14.3 第 7 条的要求终于补齐）。
+
+**回归**：`assert/test_jit_int_div.leno` —— 取位串逐字符比对、向零截断、`100/3 is int`、
+浮点除法不受影响、热循环内除零/模零必须**可捕获而不是崩进程**。
+
+**教训**：**「算出来一样」不等于「一样」**——类型、位模式、后续 opcode 的假设都得对齐；
+另外**文档与代码互相印证时也要怀疑**：这次正是文档把错误行为写成了规格。
+差分探针要挑「能直接看见值」的输出（`_str` 会把 float 12.0 印成 12，天然掩盖问题，
+换成 `%`/`is int`/位运算才暴露）。
+
 ***
 
 ## 9. 性能数据
@@ -1171,7 +1213,7 @@ opcode 前先确认该处的表示，并对照 `val_is_truthy()`。**NaN 的无�
 ### 回归测试
 
 ```
-Results: 268 passed, 0 failed (total 268)   // JIT 与 LENO_NO_JIT=1 两种模式均通过
+Results: 269 passed, 0 failed (total 269)   // JIT 与 LENO_NO_JIT=1 两种模式均通过
 ```
 
 ### 通用算术 float 快路径（2026-09-11）
@@ -1558,6 +1600,8 @@ hits=50 全错——"快"是因为几何判断全走 miss 短路路径，毫无�
 | `OP_*_FLOAT` 比较 | `val_as_num`：int/float 提升、其余 0.0（无 BigInt 转换） | 同上 | ✅（2026-09-12，§8.18） |
 | `OP_DIV_FLOAT` 除零 | 抛「浮点除零错误：除数为 0.0」 | 与 0.0 比较 → bailout；NaN 除数放行（DIVSD 得 NaN） | ✅（2026-09-12，§8.19） |
 | 类型化整数运算（`OP_ADD_INT` …） | 溢出升 BigInt | `EMIT_INT48_CHECK` / `EMIT_INT64_OVF_CHECK` → bailout | ✅ |
+| `OP_DIV_INT`（int/int） | `val_int(a / b)`：**整除、向零截断、结果 int** | `cqo; idiv` → 商作为 **int48** 压栈 + `EMIT_INT48_CHECK`；除数为 0 → bailout | ✅（2026-09-12，§8.23） |
+| `OP_MOD_INT`（int%int） | `val_int(a % b)`；除数为 0 抛「取模除零错误」 | `cqo; idiv` 取 RDX；除数为 0 → bailout | ✅（2026-09-12，§8.23） |
 | `OP_CAST_FLOAT` | int→`(double)`、bool→1.0/0.0、BigInt→double、null 保持 null | int48 → `CVTSI2SD`；其余**原样透传** | ⚠️ 见 14.4-① |
 | BigInt 参与算术/比较 | BigInt 路径 | NaN-boxed → bailout 交解释器 | ✅（有意为之） |
 | 逻辑非 `OP_NOT` | `val_bool(is_falsey(v))`；假值 = `int 0` / `float ±0.0` / `false` / `null`，**NaN 为真** | 三态分派（int48 / NaN-boxed 全值比较 `FALSE_VAL`·`NULL_VAL` / 裸 double `UCOMISD`+`JP`）→ 压 NaN-boxed `TRUE_VAL`/`FALSE_VAL` | ✅（2026-09-12，§8.22） |
@@ -1604,7 +1648,10 @@ JIT 虚拟栈是「栈顶在低地址」的反向栈，`vstack_top` 永远指向
 5. **数值提升**：以解释器那侧调用的函数为准 —— `val_is_int` / `val_as_num`
    （int/float，其余 0.0）/ `val_as_num_ex`（额外 BigInt）
 6. **溢出**：区分「int48 截断」与「int64 溢出」两条分支，确认哪条对应解释器的 BigInt 提升
-7. **除零**：整数除/模、浮点除三种除零都必须与解释器的报错行为一致（JIT 挡下 → bailout 让解释器抛）
+7. **除零**：整数除/模、浮点除三种除零都必须与解释器的报错行为一致（JIT 挡下 → bailout 让解释器抛）。
+   **2026-09-12 已全部补齐**：`OP_DIV`（callout 内判零）、`OP_MOD`（自挡）、`OP_DIV_FLOAT`（§8.19）、
+   `OP_DIV_INT` / `OP_MOD_INT`（§8.23）。此前后两者会直接 `idiv 0` 触发 `#DE` 崩进程。**新增任何
+   除法/取模类 opcode 时，先确认这一条**。
 8. **结果类型**：解释器压的是 `val_bool` 还是 `val_int`（见 14.4-②）
 9. **失败路径**：`jit_callout_failed` 置位 + `EMIT_BAILOUT_SITE_NONOVF(bc_off)` 写 site。
    不写 site 会让日志里的 `site=` 停留在**上一次**写过的值，排查方向被带偏
@@ -1656,6 +1703,7 @@ NaN-boxed bool，见 §8.22** —— 也就是说这条路的前置条件已经�
 | `assert/test_ffi_inline_widths.leno` | ffi 定宽内存读写内联 + 越界/空指针/已释放的 bailout 报错 |
 | `assert/test_jit_multiret_method.leno` | struct 方法多返回值（§8.20）：双/三返回值 + 多返回值调用位于函数级 JIT 函数体内 |
 | `assert/test_jit_not_bool.leno` | `OP_NOT` 对 NaN-boxed bool / int48 / 裸 double 的三态分派（§8.22）：6 种取值形态各一个热循环 + 嵌套 `not`+`continue` |
+| `assert/test_jit_int_div.leno` | `OP_DIV_INT` 结果类型/向零截断（§8.23）：取位串逐字符比对、`100/3 is int`、浮点除法不受影响、热循环内除零/模零必须可捕获而不崩进程 |
 
 ***
 

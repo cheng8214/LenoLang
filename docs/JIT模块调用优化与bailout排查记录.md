@@ -570,6 +570,7 @@ assert 263/263（两模式）、`ripple_image.leno` `Bailouts: 0`、72 个示例
 | `OP_INVOKE_METHOD` 多返回值只按 1 个记账 | 第一个返回值读到实参槽残留 → 用 `measureString` 算的文字水平位置每帧乱跳 | §8.20 |
 | 循环体内可达的 `return` 被 codegen 当 no-op 丢掉 | 提前返回的函数恒走到末尾（`nearStone` 恒 false） | §8.21 |
 | `OP_NOT` 把 NaN-boxed `TRUE_VAL`/`FALSE_VAL` 当裸 double 比 0 | `not <任何 bool>` 恒为真 → 所有 `if not xxx { continue }` 分支方向全反 | §8.22 |
+| `OP_DIV_INT` 把 int/int 的商转成 double 压栈（解释器是 int48） | 商之后一旦再当整数用（`%`、`is int`、位运算）就出垃圾 → 基数排序 digit 全错 + 数组越界；同时 `DIV_INT`/`MOD_INT` 除零会 `#DE` 崩进程 | §8.23 |
 
 三者的**共同特征**（值得写进排查直觉）：报障现象都是"数值/位置不稳定"或"逻辑反了"，
 且**关掉 JIT 就正常**；用「`LENO_NO_JIT=1` 对照 + 结果计数与 `JIT_HOT_THRESHOLD=50` 对齐」

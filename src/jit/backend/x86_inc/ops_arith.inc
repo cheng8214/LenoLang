@@ -316,6 +316,11 @@
             case OP_MOD_INT:
                 TOS_CONSUME_TO(JIT_R8);    /* divisor */
                 TOS_CONSUME_TO(JIT_RAX);   /* dividend */
+                /* 除数为 0 时解释器抛「取模除零错误」，而 idiv 0 会触发 #DE
+                 * 直接把进程干掉 → 先挡下交解释器（与通用 OP_MOD 的策略一致）。 */
+                emit_test_rr(cb, JIT_R8, JIT_R8);
+                EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                { int _p = emit_jcc(cb, 0x84); patch_add(ctx, _p, -1, 0); }  /* jz → bailout */
                 emit_cqo(cb);
                 emit_idiv_reg(cb, JIT_R8);
                 TOS_PRODUCE_FROM_RDX();
@@ -380,19 +385,26 @@
 
             /* ---- Extra integer ops ---- */
             case OP_DIV_INT: {
-                /* int / int -> float result (pushed as raw double bits) */
+                /* 与解释器（vm/vminc/op_type_specialized.inc:119 的
+                 * `val_int(a / b)`）对齐：**int / int → int48**（向零截断的整除）。
+                 * 旧实现把商 `CVTSI2SD` 成 double 再压栈，结果类型与解释器不一致：
+                 *   ① 紧随其后的 OP_MOD_INT 会拿 double 的位模式做整数 idiv →
+                 *      `(arr[i] / exp) % 10` 算出的 digit 全是垃圾
+                 *      （examples/排序测试/更多排序.leno 的基数排序因此排错并越界）；
+                 *   ② `q is int` / 后续 int48 溢出判定与比较语义同样跟着错。
+                 * 注意 float 除法走的是 OP_DIV_FLOAT（任一侧为 float 时由编译器选它）。 */
                 TOS_CONSUME_TO(JIT_R8);    /* divisor */
                 TOS_CONSUME_TO(JIT_RAX);   /* dividend */
+                /* 除数为 0：解释器抛「整数除零错误」，idiv 0 会 #DE 崩进程 → bailout。
+                 * （被除数是 int48，故 INT64_MIN / -1 的溢出场景不可能出现。） */
+                emit_test_rr(cb, JIT_R8, JIT_R8);
+                EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                { int _p = emit_jcc(cb, 0x84); patch_add(ctx, _p, -1, 0); }  /* jz → bailout */
                 emit_cqo(cb);
                 emit_idiv_reg(cb, JIT_R8);
-                /* Convert quotient (int64 in RAX) to double in XMM0 */
-                emit_cvtsi2sd(cb, 0 /* XMM0 */, JIT_RAX);
-                /* movq rax, xmm0 */
-                emit_byte(cb, 0x66);
-                emit_byte(cb, 0x48);
-                emit_byte(cb, 0x0F);
-                emit_byte(cb, 0x7E);
-                emit_byte(cb, modrm(3, 0, 0));
+                /* 商必然落在 int48 值域内（|a/b| <= |a|），唯一例外是 INT48_MIN / -1
+                 * = 2^47；超界就 bailout，让解释器按 val_int 的截断语义处理。 */
+                EMIT_INT48_CHECK(bc_off);
                 TOS_PRODUCE();
                 vstack--;
                 break;
