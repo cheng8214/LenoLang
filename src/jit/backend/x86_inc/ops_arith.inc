@@ -331,6 +331,53 @@
                 /* no-op: value is already int in JIT context */
                 break;
 
+            case OP_CAST_STRING: {
+                /* 解释器语义（vm/vminc/op_unary.inc:100 OP_CAST_STRING）：
+                 *   null        → 保持 null
+                 *   string      → 原样
+                 *   其它类型    → val_to_string 生成新字符串
+                 * JIT 只做「已经是 string 对象」的快路径 —— 把字符串赋给 string
+                 * 变量时最常见；其余（null/int/float/bool/其它对象）bailout 交解释器，
+                 * 这样字符串化结果与报错信息与解释器完全一致，JIT 也无需实现格式化。 */
+                TOS_CONSUME_RAX();
+                /* 1) NaN-box tag 必须是 TAG_OBJ (top16 == 0xFFFC) */
+                emit_mov_rr(cb, JIT_R8, JIT_RAX);
+                {   /* shr r8, 48 */
+                    int b = (JIT_R8 >> 3) & 1;
+                    emit_byte(cb, rex(1, 0, 0, b));
+                    emit_byte(cb, 0xC1);
+                    emit_byte(cb, modrm(3, 5, JIT_R8 & 7));
+                    emit_byte(cb, 48);
+                }
+                {   /* cmp r8, 0x0000FFFC */
+                    int b = (JIT_R8 >> 3) & 1;
+                    emit_byte(cb, rex(1, 0, 0, b));
+                    emit_byte(cb, 0x81);
+                    emit_byte(cb, modrm(3, 7, JIT_R8 & 7));
+                    emit_uint32(cb, 0x0000FFFC);
+                }
+                EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                int cast_str_not_obj = emit_jcc(cb, 0x85);   /* JNE → bailout */
+                patch_add(ctx, cast_str_not_obj, -1, 0);
+                /* 2) obj->type 必须是 OBJ_STRING(0)：r8 = rax & PAYLOAD_MASK → 指针，
+                 *    cmp byte ptr [r8], OBJ_STRING（Object.type 在偏移 0） */
+                emit_mov_rr(cb, JIT_R8, JIT_RAX);
+                emit_and_rr(cb, JIT_R8, JIT_R10);
+                {
+                    int b = (JIT_R8 >> 3) & 1;
+                    emit_byte(cb, rex(0, 0, 0, b));
+                    emit_byte(cb, 0x80);
+                    emit_byte(cb, modrm(1, 7, JIT_R8 & 7));
+                    emit_byte(cb, 0x00);                     /* disp8 = 0（type 偏移） */
+                    emit_byte(cb, (uint8_t)OBJ_STRING);
+                }
+                EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                int cast_str_not_string = emit_jcc(cb, 0x85);  /* JNE → bailout */
+                patch_add(ctx, cast_str_not_string, -1, 0);
+                TOS_PRODUCE();                               /* 值不变，放回 TOS */
+                break;
+            }
+
             /* ---- Extra integer ops ---- */
             case OP_DIV_INT: {
                 /* int / int -> float result (pushed as raw double bits) */

@@ -39,6 +39,7 @@ int opcode_size(const uint8_t* ip) {
         case OP_EQ_FLOAT: case OP_LT_FLOAT: case OP_GT_FLOAT:
         case OP_LE_FLOAT: case OP_GE_FLOAT:
         case OP_CAST_FLOAT: /* int → float */
+        case OP_CAST_STRING: /* 通用值转换：已是 string 原样，否则 bailout */
         case OP_DIV:  /* 通用除法，运行时类型分发 (callout) */
         case OP_ADD:  /* 通用加法（int fast path，其他类型 callout） */
         case OP_SUB:  /* 通用减法（int fast path，float 慢路径 / bailout） */
@@ -195,7 +196,7 @@ static int scan_callee_for_inline(Chunk* cc, int local_count,
             case OP_LT: case OP_GT: case OP_LE: case OP_GE:
                 vstack--; break;
             case OP_NEG_INT: case OP_NEG_FLOAT: case OP_NOT:
-            case OP_CAST_INT: case OP_CAST_FLOAT:
+            case OP_CAST_INT: case OP_CAST_FLOAT: case OP_CAST_STRING:
             case OP_BITNOT: case OP_INC: case OP_DEC:
                 break;
             case OP_ARRAY_APPEND_NOPUSH: vstack -= 2; break;
@@ -404,6 +405,10 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                 break;
             case OP_CAST_FLOAT:
                 /* int → float, pop 1 push 1 → net 0 */
+                break;
+            case OP_CAST_STRING:
+                /* 通用值转换：pop 1 push 1 → net 0
+                 * （JIT 只放行「已是 string」的值，其余 bailout 交解释器） */
                 break;
             case OP_DIV:
                 /* 通用除法 (callout): pop 2 push 1 → net -1 */

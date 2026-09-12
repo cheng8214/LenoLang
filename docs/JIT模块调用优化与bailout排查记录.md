@@ -395,8 +395,24 @@ JIT 与解释器输出**逐位一致**；`examples/` 下 73 个非 GUI 示例两
    （如 `ssum = strings.to_upper("ab")`：赋的若不是字面量，`assign_cast_needed()` 会补 CAST），
    就报 `scan FAIL: unknown opcode 37 (OP_CAST_STRING) at offset 144`，**整个循环 `capable=0`**。
    回退 A′ 的基线与 A′ 后报错位置完全一致（`offset 144` 是相对循环体起点，绝对偏移 183），
-   确认是既有缺口而非 A′ 引入。修法：`opcode_size()` 记 1 字节、vstack 不变；backend 侧
-   「tag 是 string → 原样；否则 bailout 交解释器」即可覆盖绝大多数情形。
+   确认是既有缺口而非 A′ 引入。
+
+   **✅ 已修复（2026-09-12）**：
+
+   * `src/jit/jit_scan.c`：`opcode_size()` 记 1 字节；`scan_callee_for_inline()` 与
+     `scan_loop_body()` 两处 vstack 栈效应都登记为「pop 1 push 1 → 净 0」
+   * `src/jit/backend/x86_inc/ops_arith.inc`：新增 `OP_CAST_STRING` codegen。语义按解释器
+     （`vm/vminc/op_unary.inc:100`）：`null` 保持 null、`string` 原样、其它类型走 `val_to_string`。
+     JIT 只放行**已经是 string 对象**的快路径（`top16 == 0xFFFC`（TAG_OBJ）
+     且 `((Object*)payload)->type == OBJ_STRING`），其余一律写 site 后 bailout 交解释器 ——
+     不在 JIT 里复制一套字符串格式化，字符串化结果与报错因此天然一致。
+     由于语义层禁止 `any → string` 隐式赋值，`OP_CAST_STRING` 的实际运行期值**几乎总是 string**，
+     快路径基本全覆盖；非字符串（如声明为 `string` 但未赋值的字段 = null）才回退。
+   * 实测：循环里给 string 变量赋值 → `capable=1`、`Executed: 1`、`Bailouts: 0`；
+     该循环 100 万次 **59.5–60.9ms → 44.8ms（1.33x）**（修复前 JIT 与解释器同速，因为压根没编）。
+     回退路径验证：未赋值 string 字段（运行期 null）→ `Bailouts: 3`、site 指向该指令、
+     输出与 `LENO_NO_JIT=1` 逐位一致。回归：assert 263/263（两模式）、
+     `ripple_image.leno` `Bailouts: 0`、72 个示例双模式 stdout 全一致。
 2. **热循环里 `_int(<返回 float 的模块调用>)` 每次进入 JIT 都 bailout**：
    `OP_CALL_NATIVE` 的 `_int/_float` 内联快路径（`ops_callout.inc`）拿到的操作数是
    `TRUE_VAL`（`0xFFFA000000000000` = `QNAN|SIGN_BIT|TAG_TRUE`），而不是
