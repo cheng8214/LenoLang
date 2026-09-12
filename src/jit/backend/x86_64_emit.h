@@ -462,6 +462,21 @@ static inline void emit_cvtsi2sd(CodeBuf* cb, int xmm, int reg) {
     emit_byte(cb, modrm(3, xmm & 7, reg & 7));
 }
 
+/* CVTTSD2SI r64, xmm — convert double to int64 with truncation (toward zero).
+ * F2 REX.W 0F 2C /r （reg = 目标 GPR，rm = 源 XMM）。
+ * 语义对齐解释器 OP_CAST_INT 的 (int64_t)val_as_num(a)：向零截断。
+ * 注意 NaN/Inf/超范围时硬件返回 INT64_MIN，调用方要用 EMIT_INT48_CHECK
+ * 把它挡回解释器，不能在 JIT 里造一份截断/回绕语义。 */
+static inline void emit_cvttsd2si_r64_xmm(CodeBuf* cb, int reg, int xmm) {
+    int r = (reg >> 3) & 1;
+    int b = (xmm >> 3) & 1;
+    emit_byte(cb, 0xF2);
+    emit_byte(cb, rex(1, r, 0, b));
+    emit_byte(cb, 0x0F);
+    emit_byte(cb, 0x2C);
+    emit_byte(cb, modrm(3, reg & 7, xmm & 7));
+}
+
 /* MOVSD xmm, xmm (load form: 0x66 0x0F 0x10 /r with mod=11) */
 static inline void emit_movsd_xmm_xmm(CodeBuf* cb, int dst, int src) {
     int r = (src >> 3) & 1;

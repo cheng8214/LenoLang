@@ -296,6 +296,38 @@ int compile_loop(CodegenCtx* ctx) {
         cb->buf[_vp] = (uint8_t)(cb->len - (_vp + 1)); \
     } while(0)
 
+    /* ---- 裸 0/1（setcc 产物）→ VM 的 bool 表示 TRUE_VAL / FALSE_VAL ----
+     * 解释器的每个比较 opcode 压的都是 val_bool(...)（TRUE_VAL/FALSE_VAL），
+     * 而 JIT 的比较 opcode 只 setcc 出裸 0/1。这两者的位模式差别很大，且裸 0/1
+     * 在 JIT 内部是**歧义**的（0x1 同时是 int48 的 1）：
+     *   - 存全局 / 返回 / 传实参时会被「int48 重装箱」路径变成 int 1（bool 变 int）；
+     *   - 写回 locals 时若该 slot 的入口值不是 int48（如声明为 bool 的局部量，
+     *     入口值 FALSE_VAL），写回走「原样裸存」分支，0x1 直接落进 locals，
+     *     解释器把它读成次正规 double 4.9e-324（`is bool`→false、`_int()`→0、
+     *     JSON 里写成 4.9e-324）。
+     * 所以比较结果必须在**产生处**就做成 VM 的表示，而不是在消费处猜。
+     *
+     * FALSE_VAL = QNAN|SIGN_BIT|TAG_FALSE = 0xFFF9000000000000，
+     * TRUE_VAL  = QNAN|SIGN_BIT|TAG_TRUE  = 0xFFFA000000000000，
+     * 两者相差 TAG_TRUE − TAG_FALSE = 1<<48 —— **必须用 ADD，不能用 OR**：
+     *   TAG_FALSE = 0x0001_0000_0000_0000 的**第 48 位本身就是 1**，
+     *   所以 `FALSE_VAL | (1<<48) == FALSE_VAL`（OR 是空操作），
+     *   只有 `FALSE_VAL + (1<<48)` 才进位到第 49 位得到 TRUE_VAL
+     *   （0xFFF9 + 0x0001 = 0xFFFA，差的是进位不是某一位）。
+     * 实测教训：写成 OR 时比较结果恒为 FALSE_VAL，于是所有 while 循环
+     * 第一轮就退出（`for` 循环的条件由 FOR_LOOP 自己比较，不受影响），
+     * 而机器码反汇编看起来「完全正确」（`or rax, rdx`），极易被误判成
+     * codegen/CPU 问题 —— 见 docs §8.24。
+     * 输入 RAX（0/1，已 movzx，高 32 位为 0），用 RDX 当临时
+     * —— 各比较 case 的 RDX 在结果产出时都已死亡。
+     * 4 条指令、无分支（setcc 之后 EFLAGS 不再需要）。 */
+    #define EMIT_RAW01_TO_BOOLVAL() do { \
+        emit_mov_rr(cb, JIT_RDX, JIT_RAX); \
+        emit_shl_imm(cb, JIT_RDX, 48); \
+        emit_mov_reg_imm64(cb, JIT_RAX, (uint64_t)FALSE_VAL); \
+        emit_add_rr(cb, JIT_RAX, JIT_RDX); \
+    } while(0)
+
     /* ---- 裸数值 → double 规范化（通用算术/比较的 float 慢路径用）----
      * JIT 虚拟栈上的值只有两种数值形态：
      *   - int48：裸 int64 位模式（sar 47 + inc ≤ 1 可判定）
@@ -860,11 +892,21 @@ int compile_loop(CodegenCtx* ctx) {
             emit_byte(cb, 0x72); \
             int flt_patch = cb->len; \
             emit_byte(cb, 0x00); \
-            /* Int path: load scratch, re-encode as NaN-boxed int */ \
+            /* Int path: load scratch；只有确实是 int48 才重新装箱为 NaN-boxed int。 \
+             * 位图 bit=0 只说明「进循环时该槽位是 int」，循环里仍可能被写入     \
+             * NaN-boxed 值（bool / null / 对象）—— 按位图盲装箱会把 TRUE_VAL 的  \
+             * 位模式搅成垃圾 int。判据与 OP_SET_GLOBAL 的重装箱条件完全一致。 */ \
             if (disp >= -128 && disp <= 127) \
                 emit_mov_reg_mem8(cb, JIT_RAX, JIT_RBP, (int8_t)disp); \
             else \
                 emit_mov_reg_mem32(cb, JIT_RAX, JIT_RBP, disp); \
+            emit_mov_rr(cb, JIT_RDX, JIT_RAX); \
+            emit_sar_imm(cb, JIT_RDX, 47); \
+            emit_inc_reg(cb, JIT_RDX); \
+            emit_cmp_reg_imm8(cb, JIT_RDX, 1); \
+            emit_byte(cb, 0x77); /* ja .raw_wb（非 int48 → 原样存回）*/ \
+            int raw_wb_patch = cb->len; \
+            emit_byte(cb, 0x00); \
             emit_and_rr(cb, JIT_RAX, JIT_R10); \
             emit_or_rr(cb, JIT_RAX, JIT_R11); \
             if (sd >= -128 && sd <= 127) \
@@ -874,6 +916,16 @@ int compile_loop(CodegenCtx* ctx) {
             /* jmp .next (rel8 placeholder) */ \
             emit_byte(cb, 0xEB); \
             int next_patch = cb->len; \
+            emit_byte(cb, 0x00); \
+            /* .raw_wb: 原样存回（RAX 未被破坏；RDX 只是判据用的临时值）*/ \
+            cb->buf[raw_wb_patch] = (uint8_t)(cb->len - (raw_wb_patch + 1)); \
+            if (sd >= -128 && sd <= 127) \
+                emit_mov_mem8_reg(cb, JIT_RCX, (int8_t)sd, JIT_RAX); \
+            else \
+                emit_mov_mem32_reg(cb, JIT_RCX, sd, JIT_RAX); \
+            /* jmp .next (rel8 placeholder) —— 同样跳过下面的 float 路径 */ \
+            emit_byte(cb, 0xEB); \
+            int raw_done_patch = cb->len; \
             emit_byte(cb, 0x00); \
             /* .float_wb: patch jc to here */ \
             cb->buf[flt_patch] = (uint8_t)(cb->len - (flt_patch + 1)); \
@@ -886,8 +938,9 @@ int compile_loop(CodegenCtx* ctx) {
                 emit_mov_mem8_reg(cb, JIT_RCX, (int8_t)sd, JIT_RAX); \
             else \
                 emit_mov_mem32_reg(cb, JIT_RCX, sd, JIT_RAX); \
-            /* .next: patch jmp to here */ \
+            /* .next: patch jmp to here（装箱分支与裸存回分支都跳到这里）*/ \
             cb->buf[next_patch] = (uint8_t)(cb->len - (next_patch + 1)); \
+            cb->buf[raw_done_patch] = (uint8_t)(cb->len - (raw_done_patch + 1)); \
         } \
     } while(0)
 

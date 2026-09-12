@@ -200,6 +200,8 @@ static JitLoopFn jit_compile(CallFrame* frame, const uint8_t* body_start,
         return NULL;
     }
     memcpy(exec_mem, ctx.cb.buf, (size_t)ctx.cb.len);
+    /* 写完代码必须刷指令缓存才能执行（见 jit_mem.h 的说明） */
+    jit_mem_flush(exec_mem, (size_t)ctx.cb.len);
     codebuf_free(&ctx.cb);
 
 return (JitLoopFn)exec_mem;
@@ -295,6 +297,8 @@ static JitLoopFn jit_compile_function(ObjFunction* func, VM* vm_ptr) {
         return NULL;
     }
     memcpy(exec_mem, ctx.cb.buf, (size_t)ctx.cb.len);
+    /* 写完代码必须刷指令缓存才能执行（见 jit_mem.h 的说明） */
+    jit_mem_flush(exec_mem, (size_t)ctx.cb.len);
     codebuf_free(&ctx.cb);
 
     if (jit_debug_on())

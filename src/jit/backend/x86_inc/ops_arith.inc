@@ -332,9 +332,60 @@
                 EMIT_INT48_CHECK(bc_off);
                 TOS_PRODUCE();
                 break;
-            case OP_CAST_INT:
-                /* no-op: value is already int in JIT context */
+            case OP_CAST_INT: {
+                /* 解释器语义（vm/vminc/op_unary.inc OP_CAST_INT）：
+                 *   BigInt → int48（超范围保持原值）；int/float → 向零截断为 int；
+                 *   bool → 1/0；null 保持 null；其余抛「类型转换 int: 操作数必须是数字」。
+                 * 旧实现是「no-op（假定已经是 int）」，只在操作数确实是 int48 时成立：
+                 * `int i = (a > b)` / `int i = 2.7` 都会补 OP_CAST_INT，操作数是
+                 * bool / float。把 NaN-boxed 的 TRUE_VAL 当 int 留在栈上，写回 locals
+                 * 时会按 int 重装箱、把位模式搅成垃圾（且布尔语义彻底丢失）。 */
+                TOS_CONSUME_RAX();
+                /* 1) int48 → 原样 */
+                emit_mov_rr(cb, JIT_R8, JIT_RAX);
+                emit_sar_imm(cb, JIT_R8, 47);
+                emit_inc_reg(cb, JIT_R8);
+                emit_cmp_reg_imm8(cb, JIT_R8, 1);
+                int ci_int_p = emit_jcc(cb, 0x86);         /* jbe → .done（int48 原样） */
+                /* 2) 裸 double → 向零截断（VM: (int64_t)val_as_num(a)）；
+                 *    超 int48 范围（含 NaN/Inf 落成 INT64_MIN）交解释器处理 */
+                emit_mov_reg_imm64(cb, JIT_R8, JIT_NAN_SIG);
+                emit_cmp_rr(cb, JIT_RAX, JIT_R8);
+                int ci_double_p = emit_jcc(cb, 0x82);      /* jb → .from_double */
+                /* 3) NaN-boxed：TRUE_VAL → 1，FALSE_VAL → 0，NULL_VAL → 原样，其余 bailout */
+                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)TRUE_VAL);
+                emit_cmp_rr(cb, JIT_RAX, JIT_R8);
+                int ci_true_p = emit_jcc(cb, 0x84);
+                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)FALSE_VAL);
+                emit_cmp_rr(cb, JIT_RAX, JIT_R8);
+                int ci_false_p = emit_jcc(cb, 0x84);
+                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)NULL_VAL);
+                emit_cmp_rr(cb, JIT_RAX, JIT_R8);
+                int ci_null_p = emit_jcc(cb, 0x84);
+                /* 其余 NaN-boxed（BigInt/对象/字符串）→ bailout 交解释器 */
+                EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                { int _p = emit_jmp(cb); patch_add(ctx, _p, -1, 0); }
+
+                /* .from_double */
+                patch_rel32(cb, ci_double_p, cb->len);
+                emit_cvttsd2si_r64_xmm(cb, JIT_RAX, 0);
+                EMIT_INT48_CHECK(bc_off);
+                int ci_double_done_p = emit_jmp(cb);
+                /* .true */
+                patch_rel32(cb, ci_true_p, cb->len);
+                emit_mov_reg_imm64(cb, JIT_RAX, 1);
+                int ci_true_done_p = emit_jmp(cb);
+                /* .false */
+                patch_rel32(cb, ci_false_p, cb->len);
+                emit_xor_rr(cb, JIT_RAX, JIT_RAX);
+                /* .null / .done：NULL_VAL 原样落回来 */
+                patch_rel32(cb, ci_null_p, cb->len);
+                patch_rel32(cb, ci_true_done_p, cb->len);
+                patch_rel32(cb, ci_double_done_p, cb->len);
+                patch_rel32(cb, ci_int_p, cb->len);
+                TOS_PRODUCE();
                 break;
+            }
 
             case OP_CAST_STRING: {
                 /* 解释器语义（vm/vminc/op_unary.inc:100 OP_CAST_STRING）：

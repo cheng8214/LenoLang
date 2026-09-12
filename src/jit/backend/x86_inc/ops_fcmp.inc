@@ -46,6 +46,8 @@
                 end_jmp = emit_jmp(cb);
                 EMIT_FLOAT_TAGGED_BAILOUT(ta, tb);
                 patch_rel32(cb, end_jmp, cb->len);
+                /* 裸 0/1 → val_bool（TRUE_VAL/FALSE_VAL），两条路径在此汇合 */
+                EMIT_RAW01_TO_BOOLVAL();
                 TOS_PRODUCE();
                 vstack--;
                 break;

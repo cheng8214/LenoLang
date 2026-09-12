@@ -113,24 +113,68 @@
                 break;
             }
             case OP_CAST_FLOAT: {
-                /* Runtime type dispatch:
-                 * - If value fits int48 → it's an int, convert via CVTSI2SD
-                 * - If not (likely float) → already float, pass through as-is */
+                /* 解释器语义（vm/vminc/op_unary.inc OP_CAST_FLOAT）：
+                 *   int/float → double；bool → 1.0/0.0；BigInt → double；
+                 *   null 保持 null；其余抛「类型转换 float: 操作数必须是数字」。
+                 * JIT 的四态分派：
+                 *   1) int48            → CVTSI2SD
+                 *   2) 裸 double        → 原样（已达标）
+                 *   3) TRUE_VAL/FALSE_VAL → 1.0/0.0（比较结果走这里；缺了这分支，
+                 *      比较结果的新表示会以 NaN-boxed 形式原样漏进 float slot）
+                 *   4) NULL_VAL         → 原样（解释器也保持 null）
+                 * 其余 NaN-boxed（BigInt/对象）bailout 交解释器，语义与报错天然一致。 */
                 TOS_CONSUME_RAX();
                 emit_mov_rr(cb, JIT_R8, JIT_RAX);
                 emit_sar_imm(cb, JIT_R8, 47);
                 emit_inc_reg(cb, JIT_R8);
                 emit_cmp_reg_imm8(cb, JIT_R8, 1);
-                /* ja .already_float (rel8 placeholder) */
+                /* ja .not_int (rel8 placeholder) */
                 emit_byte(cb, 0x77);
                 int flt_patch = cb->len;
                 emit_byte(cb, 0x00);
                 /* Int path: convert int64 to double */
                 emit_cvtsi2sd(cb, 0 /* XMM0 */, JIT_RAX);
                 /* movq rax, xmm0 */
-                emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0x7E); emit_byte(cb, modrm(3, 0, 0));
-                /* .already_float: patch ja to here */
+                EMIT_MOVQ_RAX_XMM0();
+                int cf_done_p = emit_jmp(cb);              /* → .done */
+
+                /* .not_int: 裸 double 与 NaN-boxed 分流 */
                 cb->buf[flt_patch] = (uint8_t)(cb->len - (flt_patch + 1));
+                emit_mov_reg_imm64(cb, JIT_R8, JIT_NAN_SIG);
+                emit_cmp_rr(cb, JIT_RAX, JIT_R8);
+                int cf_double_p = emit_jcc(cb, 0x82);      /* jb → 裸 double，原样 */
+                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)TRUE_VAL);
+                emit_cmp_rr(cb, JIT_RAX, JIT_R8);
+                int cf_true_p = emit_jcc(cb, 0x84);        /* JE → 1.0 */
+                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)FALSE_VAL);
+                emit_cmp_rr(cb, JIT_RAX, JIT_R8);
+                int cf_false_p = emit_jcc(cb, 0x84);       /* JE → 0.0 */
+                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)NULL_VAL);
+                emit_cmp_rr(cb, JIT_RAX, JIT_R8);
+                int cf_null_p = emit_jcc(cb, 0x84);        /* JE → 原样（null） */
+                /* 其余 NaN-boxed（BigInt/对象/字符串）→ bailout 交解释器 */
+                EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                { int _p = emit_jmp(cb); patch_add(ctx, _p, -1, 0); }
+
+                /* .bool_true: 1 → 复用整数转换路径 */
+                patch_rel32(cb, cf_true_p, cb->len);
+                emit_mov_reg_imm64(cb, JIT_RAX, 1);
+                int cf_true_done_p = emit_jmp(cb);         /* → .int_conv */
+                /* .bool_false: 0 */
+                patch_rel32(cb, cf_false_p, cb->len);
+                emit_xor_rr(cb, JIT_RAX, JIT_RAX);
+                /* .int_conv: rax（0/1）→ double */
+                patch_rel32(cb, cf_true_done_p, cb->len);
+                emit_cvtsi2sd(cb, 0 /* XMM0 */, JIT_RAX);
+                EMIT_MOVQ_RAX_XMM0();
+                int cf_bool_done_p = emit_jmp(cb);         /* → .done */
+
+                /* .not_boxed（裸 double）与 .null：RAX 已经是对的值，直接落 .done */
+                patch_rel32(cb, cf_double_p, cb->len);
+                patch_rel32(cb, cf_null_p, cb->len);
+                /* .done */
+                patch_rel32(cb, cf_done_p, cb->len);
+                patch_rel32(cb, cf_bool_done_p, cb->len);
                 TOS_PRODUCE();
                 break;
             }

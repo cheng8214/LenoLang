@@ -5,7 +5,7 @@
  * NOT a translation unit: relies on function-local macros (TOS_*,
  * EMIT_*) and locals (cb, ctx, sr, ip, vstack, tos_live, ...).
  * ========================================================================== */
-            /* ---- Comparisons (push 0/1) ---- */
+            /* ---- Comparisons (push val_bool，与解释器一致：TRUE_VAL/FALSE_VAL) ---- */
             case OP_EQ_INT: case OP_LT_INT: case OP_GT_INT:
             case OP_LE_INT: case OP_GE_INT: {
                 uint8_t cc;
@@ -23,6 +23,8 @@
                 /* setcc al; movzx eax, al (don't xor between cmp and setcc — destroys flags!) */
                 emit_setcc_reg(cb, cc, JIT_RAX);
                 emit_movzx_r32_r8(cb, JIT_RAX, JIT_RAX);
+                /* 裸 0/1 → val_bool：解释器这里压的是 val_bool，不是 int48 的 0/1 */
+                EMIT_RAW01_TO_BOOLVAL();
                 TOS_PRODUCE();
                 vstack--;
                 break;
@@ -50,6 +52,8 @@
                 /* setcc al; movzx eax, al (don't xor between cmp and setcc — destroys flags!) */
                 emit_setcc_reg(cb, cc, JIT_RAX);
                 emit_movzx_r32_r8(cb, JIT_RAX, JIT_RAX);
+                /* 裸 0/1 → val_bool（同上：不能把 raw 0/1 当成 int 留下来） */
+                EMIT_RAW01_TO_BOOLVAL();
                 TOS_PRODUCE();
                 break;
             }
@@ -163,6 +167,8 @@
 
                 patch_rel32(cb, end_jmp, cb->len);
                 patch_rel32(cb, skip_bail_jmp, cb->len);
+                /* int 快路径与 float 慢路径在此汇合，RAX 都是裸 0/1 → val_bool */
+                EMIT_RAW01_TO_BOOLVAL();
                 TOS_PRODUCE();
                 vstack--;
                 break;
@@ -242,6 +248,8 @@
 
                 patch_rel32(cb, end_jmp, cb->len);
                 patch_rel32(cb, skip_bail_jmp, cb->len);
+                /* int 快路径与 float 慢路径在此汇合，RAX 都是裸 0/1 → val_bool */
+                EMIT_RAW01_TO_BOOLVAL();
                 TOS_PRODUCE();
                 vstack--;
                 break;

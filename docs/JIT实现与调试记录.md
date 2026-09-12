@@ -1174,6 +1174,106 @@ opcode 前先确认该处的表示，并对照 `val_is_truthy()`。**NaN 的无�
 差分探针要挑「能直接看见值」的输出（`_str` 会把 float 12.0 印成 12，天然掩盖问题，
 换成 `%`/`is int`/位运算才暴露）。
 
+### 8.24 比较结果必须是 val_bool，且 TRUE/FALSE 要用 **ADD** 不能 OR（2026-09-12）
+
+本条对应 §14.4-②，同时修掉它引出的 `while` 循环早退。
+
+**症状**（`LENO_NO_JIT=1` 全部正常）：
+
+| 场景 | JIT | 解释器 |
+| --- | --- | --- |
+| `while k < 60 { … }`（任何比较做条件） | 循环第一轮就退出（计数停在热点阈值 50） | 正常跑满 |
+| `for 0:59 to i { … }` | 正常 | 正常 |
+| `bool b = (k >= 0)` 热循环内 | `4.9406564584124654e-324`，`is bool`→false、`_int()`→0 | `true` |
+| `bool g = (k >= 0)` 全局 | `1`（int 1，丢了 bool） | `true` |
+| `return (k >= 0)` | `4.9e-324` | `true` |
+| `jsons.encode({"flag": k >= 0})` | `{"flag":4.9e-324}` | `{"flag":true}` |
+| `int i = (k >= 0)` / `float f = (k >= 0)` | `1` / `1.0`（碰巧对） | `1` / `1.0` |
+
+**根因（两层）**
+
+1. **语义层**：JIT 的比较 opcode（`OP_*_INT`、`OP_*_INT_IMM`、`OP_*_FLOAT`、通用
+   `OP_EQ/NEQ/LT/GT/LE/GE`）只 `setcc` 出**裸 0/1**，而解释器压的是 `val_bool`
+   （`TRUE_VAL`/`FALSE_VAL`）。裸 0/1 在 JIT 内部是**歧义**的：它既是 int48 的 1，
+   又会被「int48 重装箱」路径变成 int，还会被「非 int → 原样裸存」路径把 `0x1`
+   直接写进 locals（解释器把它读成次正规 double 4.9e-324）。所以必须在**产生处**
+   就做成 VM 的表示，而不是在消费处猜。
+
+2. **实现陷阱（这次真正花时间的部分）**：`TRUE_VAL` 与 `FALSE_VAL` **相差
+   `1<<48`，但必须用 ADD 而不是 OR**：
+
+   ```
+   FALSE_VAL = QNAN|SIGN_BIT|TAG_FALSE = 0xFFF9_000000000000   ← 第 48 位本来就是 1
+   TRUE_VAL  = QNAN|SIGN_BIT|TAG_TRUE  = 0xFFFA_000000000000
+   FALSE_VAL | (1<<48) == FALSE_VAL          ← OR 是空操作（错！）
+   FALSE_VAL + (1<<48) == TRUE_VAL           ← 差的是**进位**，不是某一位（对）
+   ```
+
+   误用 OR 后，**比较结果恒为 `FALSE_VAL`**：于是所有 `while` 循环条件恒假、
+   第一轮就退出；而 `for` 循环的条件由 `OP_FOR_LOOP` 自己比较，完全不受影响 ——
+   这个「while 全挂、for 全正常」的分裂现象就是最初最迷惑人的地方。
+
+**排查弯路（值得记住）**
+
+反汇编出来的机器码**完全正确**（`movabs rax,FALSE_VAL; or rax,rdx` 就摆在那里，
+objdump 与 dump 文件、运行时内存三者逐字节一致），但运行时 `or` 的结果就是没变。
+于是先后怀疑过：rel8 补丁错位、RDX 被占用、指令缓存陈旧（还专门给
+`jit_mem.h` 补了 `jit_mem_flush()`/`FlushInstructionCache`）、甚至虚拟化 CPU 模拟错误。
+最后靠三步收敛：
+
+1. **在生成代码里插探针**（`movabs r8,&g; mov [r8],rax` 写 C 全局量，不改寄存器/标志），
+   逐指令打印：`op=1, rdx=1<<48, res=FALSE_VAL` —— 输入自洽、输出不变，方向已经明确
+   指向「这条指令的语义不是我以为的那样」；
+2. **脱离 JIT 做 14 字节最小复现**：把 `movabs rax,0xFFF9…; or rax,rdx; ret`
+   直接放进 `VirtualAlloc` 的内存执行 → 结果同样是 `0xFFF9…`，换成 `add` 就是
+   `0xFFFA…` —— 与 JIT 无关，是我的公式错了；
+3. **手算常量位模式**：`0xFFF9` 的 bit48 = 1（`TAG_FALSE` 自身就占着这一位），
+   `|1<<48` 自然不变。**教训：别凭「两个 tag 差 1<<48」就推「可以 OR 上去」，
+   进位不是置位。**
+
+**修复**
+
+* `backend/x86_64.c`：新增 `EMIT_RAW01_TO_BOOLVAL()`（`mov rdx,rax; shl rdx,48;
+  movabs rax,FALSE_VAL; **add** rax,rdx`），并在比较 opcode 的**结果产出点**调用它：
+  * `ops_icmp.inc`：`OP_*_INT`、`OP_*_INT_IMM`、通用 `OP_EQ/NEQ`、通用 `OP_LT..GE`
+    （后两者放在 int 快路径与 float 慢路径的**汇合点**，两边都覆盖）
+  * `ops_fcmp.inc`：`OP_*_FLOAT`
+* `ops_arith.inc` `OP_CAST_INT`：旧实现是「no-op（假定已经是 int）」，只在操作数确实
+  是 int48 时成立。现在按解释器语义分派：int48 原样 / 裸 double `CVTTSD2SI` 向零截断
+  （超出 int48 → bailout）/ `TRUE_VAL`→1 / `FALSE_VAL`→0 / `NULL_VAL` 原样 /
+  其余 NaN-boxed bailout。不修它的话，`int i = (k >= 0)` 会因为比较结果变成
+  NaN-boxed 而被按 int 重装箱、把位模式搅成垃圾。
+* `ops_float.inc` `OP_CAST_FLOAT`：补 `TRUE_VAL`→1.0 / `FALSE_VAL`→0.0 /
+  `NULL_VAL` 原样（其余 NaN-boxed 仍 bailout）—— 同时清掉 §14.4-① 的一部分。
+* `backend/x86_64.c` 写回 locals：位图 bit=0（入口是 int）的分支不再盲目重装箱，
+  先判「确实是 int48」，否则原样存回 —— NaN-boxed 值落进 int 槽位时不会再被搅成垃圾。
+* `backend/x86_64_emit.h`：新增 `emit_cvttsd2si_r64_xmm()`。
+* `jit_mem.h` / `jit.c`：补 `jit_mem_flush()`（Windows `FlushInstructionCache`），
+  写完机器码后调用。这**不是**本次 bug 的原因（x86 同核自改代码由硬件保证一致），
+  但它是 Windows 对生成代码的明确契约，且能挡住 DSB 陈旧 uops 这类偶发问题。
+
+**回归**
+
+* 新增 `assert/test_jit_bool_compare.leno`：5 种 while 条件形式（立即数/局部/不等/
+  反向/浮点）、bool/int/float 局部量与全局、数组/字典/JSON 的 callout 实参路径、
+  `and`/`or`/`not` 组合、返回值路径。
+* `assert` **270 passed / 0 failed**（JIT 与 `LENO_NO_JIT=1` 两种模式）；
+  此前因本 bug 失败的 5 个用例（`test_bigint`、`test_jit_float_ops`、
+  `test_jit_float_continue`、`test_ffi_inline_widths`、`test_sorting_algorithms`）全部恢复。
+* 五子棋自带 `SELFTEST`（AI 对 AI，给随机扰动加固定种子后）JIT 与解释器**逐字一致**，
+  且智力梯度恢复正常（黑9 三连胜）。
+* `examples/` 下 80 个示例双模式 stdout 逐字一致；`pvz.leno` 实跑 30s：
+  `drawTextCentered`/`drawText` 仍被函数级 JIT 编译、无 `ret_count` 解析拒绝。
+
+**教训**
+
+* 「机器码反汇编正确但行为不符」时，先做**脱离 JIT 的最小字节序列复现**——
+  14 个字节就能把「JIT codegen 错」和「我的公式错」分开，比盯着 1000 字节的 dump 有效得多。
+* 在生成代码里插**只写全局量的探针**（不占寄存器、不改标志）能逐条指令拿到真值，
+  是排查 JIT 的性价比最高的手段。
+* 位运算/常量组合**手算一遍**：这次把 `OR` 当成 `ADD` 用（两者在「差 1 位」的直觉下
+  看着等价），代价是几小时的排查。
+
 ***
 
 ## 9. 性能数据
@@ -1213,7 +1313,7 @@ opcode 前先确认该处的表示，并对照 `val_is_truthy()`。**NaN 的无�
 ### 回归测试
 
 ```
-Results: 269 passed, 0 failed (total 269)   // JIT 与 LENO_NO_JIT=1 两种模式均通过
+Results: 270 passed, 0 failed (total 270)   // JIT 与 LENO_NO_JIT=1 两种模式均通过
 ```
 
 ### 通用算术 float 快路径（2026-09-11）
@@ -1386,8 +1486,8 @@ push rax    ; 内存写
    （无 scan FAIL 和 codegen FAIL 消息）
 4. **fib_iterative(1000) 3 次 bailout**：斐波那契值约 fib(56) 溢出 int48（超 2^47），
    属预期行为，JIT 的溢出检测正常工作
-5. **比较结果的位模式：JIT 写回裸 0/1，解释器压 `val_bool`**（2026-09-12 复核，**未修**，
-   详见第 14 节「已知差异」）：`var x = (a > b)` 或 `bool flag = (a > b)` 在 JIT 循环里
+5. **比较结果的位模式：JIT 写回裸 0/1，解释器压 `val_bool`** —— **✅ 已修复（2026-09-12，§8.24）**。
+   （历史记录）`var x = (a > b)` 或 `bool flag = (a > b)` 在 JIT 循环里
    写回后，解释器读到的是**次正规 float**（≈4.9e-324 / 0.0）而不是 bool。
    真值判断恰好仍然正确（非零/零），但 `x is bool` 变 false、`_int(flag)` 由 1 变 0
    —— 后者是**静默算错**。复现探针：`build/probe8.leno`（`boolLocal` / `intOfFlag`）。
@@ -1605,7 +1705,7 @@ hits=50 全错——"快"是因为几何判断全走 miss 短路路径，毫无�
 | `OP_CAST_FLOAT` | int→`(double)`、bool→1.0/0.0、BigInt→double、null 保持 null | int48 → `CVTSI2SD`；其余**原样透传** | ⚠️ 见 14.4-① |
 | BigInt 参与算术/比较 | BigInt 路径 | NaN-boxed → bailout 交解释器 | ✅（有意为之） |
 | 逻辑非 `OP_NOT` | `val_bool(is_falsey(v))`；假值 = `int 0` / `float ±0.0` / `false` / `null`，**NaN 为真** | 三态分派（int48 / NaN-boxed 全值比较 `FALSE_VAL`·`NULL_VAL` / 裸 double `UCOMISD`+`JP`）→ 压 NaN-boxed `TRUE_VAL`/`FALSE_VAL` | ✅（2026-09-12，§8.22） |
-| 比较结果的**类型** | 压 `val_bool`（`TRUE_VAL` / `FALSE_VAL`） | 压**裸 0/1**，写回时按 slot 类型位图裸存 | ⚠️ 见 14.4-② |
+| 比较结果的**类型** | 压 `val_bool`（`TRUE_VAL` / `FALSE_VAL`） | 同解释器：比较 opcode 在产出点调 `EMIT_RAW01_TO_BOOLVAL()` 压 `val_bool`（**用 ADD 拼装，不能用 OR**，见 §8.24） | ✅（2026-09-12，§8.24） |
 | struct 方法调用的**返回值个数** | 由 callee 的 `return_count` 决定（压 N 个值） | 编译期 `jit_resolve_method_ret_count()` 解析；解析不出 → 拒绝 JIT | ✅（2026-09-12，§8.20） |
 | 循环体内可达的 `return` | 真返回（弹帧、写回栈） | 循环 JIT 表达不了 → **scan 拒绝该循环** | ✅（2026-09-12，§8.21） |
 | `len()` / 模块方法 / FFI 等 callout | 原生实现 | 同一原生函数（callout 调用），除参数/返回值装箱外无第二份实现 | ✅ |
@@ -1659,6 +1759,13 @@ JIT 虚拟栈是「栈顶在低地址」的反向栈，`vstack_top` 永远指向
 11. **回归**：差分探针（`LENO_NO_JIT=1` 对照，并用 `LENO_JIT_DEBUG=1` 确认 `Executed > 0`）
     + 一个 `assert/test_jit_*.leno`；断言要**先在未修复代码上跑一遍确认会失败**
 12. **加 bailout 分支后必须复测 `Bailouts` 计数**（§8.19 的教训：功能对了但每次都回退）
+13. **结果类型的位模式**：bool 结果必须是 NaN-boxed `val_bool`；拼装时注意
+    `FALSE_VAL` 与 `TRUE_VAL` 相差 `1<<48` 且**必须用 ADD**（`TAG_FALSE` 自带第 48 位，
+    OR 是空操作）—— 写成 OR 会让比较结果恒为 false、**所有 `while` 循环第一轮退出**
+    （§8.24，且反汇编看起来完全正确，极易误判成 codegen/CPU 问题）
+14. **写回侧的槽位类型**：类型位图只记录「**进循环时**该槽位是不是 int」，槽位在循环里
+    仍可能被写入 NaN-boxed 值 → int 分支要先确认「确实是 int48」再重装箱，否则会把
+    `TRUE_VAL` 的位模式搅成垃圾 int（§8.24）
 
 ### 14.4 已知差异（未修，**改动相关代码时要留意**）
 
@@ -1688,11 +1795,15 @@ print(not flag)         // 两边都是 0（真值判断恰好正确）
 
 影响面：真值判断（`if` / `while` / `not`）恰好正确，**但 `is bool`、`_int(bool)`、
 与 `true`/`false` 比较、以及把结果序列化（JSON 会写出 `4.9e-324`）都不一致**。
-修法方向（择一）：比较 opcode 直接产出 NaN-boxed `TRUE_VAL`/`FALSE_VAL`
-（`JUMP_IF_FALSE` 已能识别这两个常量；**`OP_NOT` 已于 2026-09-12 核对并修成能正确处理
-NaN-boxed bool，见 §8.22** —— 也就是说这条路的前置条件已经具备，剩下只需改比较 opcode 本身，
-并确认 and/or 的短路 codegen 不受影响）；
-或给 writeback 增加「该 slot 原值是 bool」的第二张位图。
+
+**✅ 已修复（2026-09-12，§8.24）**：比较 opcode 现在在**产生处**就产出 NaN-boxed
+`TRUE_VAL`/`FALSE_VAL`（`EMIT_RAW01_TO_BOOLVAL()`：`mov rdx,rax; shl rdx,48;
+movabs rax,FALSE_VAL; **add** rax,rdx`），并同步修掉 `OP_CAST_INT` / `OP_CAST_FLOAT`
+对 NaN-boxed bool 的处理与写回侧的「盲装箱」。
+
+> **实现陷阱（务必记住）**：两个 tag 相差 `1<<48`，但 `TAG_FALSE` **自己就占着第 48 位**，
+> 所以 `FALSE_VAL | (1<<48) == FALSE_VAL`（OR 是空操作，得到的比较结果恒为 false，
+> 表现为**所有 `while` 循环第一轮退出**），必须用 `FALSE_VAL + (1<<48)`。
 
 ### 14.5 回归断言索引
 
@@ -1704,6 +1815,7 @@ NaN-boxed bool，见 §8.22** —— 也就是说这条路的前置条件已经�
 | `assert/test_jit_multiret_method.leno` | struct 方法多返回值（§8.20）：双/三返回值 + 多返回值调用位于函数级 JIT 函数体内 |
 | `assert/test_jit_not_bool.leno` | `OP_NOT` 对 NaN-boxed bool / int48 / 裸 double 的三态分派（§8.22）：6 种取值形态各一个热循环 + 嵌套 `not`+`continue` |
 | `assert/test_jit_int_div.leno` | `OP_DIV_INT` 结果类型/向零截断（§8.23）：取位串逐字符比对、`100/3 is int`、浮点除法不受影响、热循环内除零/模零必须可捕获而不崩进程 |
+| `assert/test_jit_bool_compare.leno` | 比较结果必须是 `val_bool`（§8.24）：5 种 while 条件形式（立即数/局部/不等/反向/浮点）+ bool/int/float 局部量与全局 + 数组/字典/JSON 的 callout 实参路径 + `and`/`or`/`not` + 返回值路径 |
 
 ***
 
@@ -1715,7 +1827,7 @@ NaN-boxed bool，见 §8.22** —— 也就是说这条路的前置条件已经�
 | `src/jit/jit.h`                | 公共 API 和配置参数                                 |
 | `src/jit/jit_scan.c`           | 热循环扫描 / 可 JIT 判定 / 内联分析                      |
 | `src/jit/jit_callout.c`        | 运行期 C 辅助函数（callout、bailout 调试、`jit_debug_on`） |
-| `src/jit/jit_mem.h`            | 可执行内存分配（VirtualAlloc/mprotect）               |
+| `src/jit/jit_mem.h`            | 可执行内存分配（VirtualAlloc/mprotect）+ `jit_mem_flush()`（写完代码刷指令缓存） |
 | `src/jit/backend/x86_64.c`     | x86_64 codegen 骨架 + 通用宏（`EMIT_NUM_TO_XMM` 等）   |
 | `src/jit/backend/x86_64_emit.h` | x86\_64 指令发射函数与寄存器编号                          |
 | `src/jit/backend/x86_inc/`     | 按 opcode 家族拆分的 codegen case（`ops_arith/icmp/fcmp/loop/callout/local/...`） |
