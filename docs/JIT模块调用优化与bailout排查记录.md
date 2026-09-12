@@ -153,7 +153,12 @@ codegen 在调用后检查该标志 → bailout → 解释器重跑该循环迭�
 
 ## 5. 性能数据
 
-环境：同机、关 vsync、无帧限速、8 秒；探针见 §2。
+环境：关 vsync、无帧限速、8 秒；探针见 §2。
+
+> **机器标注（跨机比较必读）**：本文数据产生于两台机器 —— **i5-14400F**（Raptor Lake）
+> 与 **i5-3450**（Ivy Bridge），单核性能差约 2 倍。解释器是逐指令分派，对 IPC / 主频
+> 比 JIT 代码更敏感，慢机上退化更多，因此**绝对时间不可跨机比较，只能比同机比值**
+> （`JIT / VM`）；JIT 的相对收益在慢机上反而更大。§7.1 末尾附 i5-3450 复测值。
 
 ### 5.1 自动点击 + 满 6 波纹（最重路径）
 
@@ -196,6 +201,9 @@ codegen 在调用后检查该标志 → bailout → 解释器重跑该循环迭�
 * `ripple_image.leno`：vsync 下 ~50 FPS、`Bailouts: 0`
 * 自动点击探针（含 16 次 NaN 坐标点击）：`Bailouts: 0`
 * 正/倒序（±1/±2/±3）、嵌套 for、float 步长、NaN 比较：JIT 与解释器一致
+* 2026-09-12 在 `2e5fdebb`（i5-3450）重新构建复跑：263 passed / 0 failed；
+  `ripple_image.leno` `Bailouts: 0`、~50 FPS；`性能测试/for性能测试.leno` 与
+  `While vs For 性能对比.leno` 均 `Bailouts: 0`；通用 opcode 差分探针逐位一致（见 §7.1）
 
 ---
 
@@ -232,13 +240,23 @@ codegen 在调用后检查该标志 → bailout → 解释器重跑该循环迭�
 | --- | --- |
 | 通用 MUL：float×float / int×float / int×int | 走 JIT，0 bailout |
 | 通用 MOD：int % int | 走 JIT，0 bailout |
-| 通用 EQ/NEQ：int、float 混比、NaN | 走 JIT，0 bailout（NaN 按 IEEE：`==` false、`!=` true） |
+| 通用 EQ/NEQ：int、float 混比、NaN、inf | 走 JIT **原生比较路径**（`UCOMISD` + `SETNP`/`SETP`），0 bailout；`nan==nan` false、`nan!=nan` true、`nan==1.0` false、`inf==inf` true |
 | 通用 MUL：int64 溢出 | 按设计 bailout → 解释器升 BigInt，结果正确 |
-| 字符串 `==` / `!=` | 按设计 bailout → 解释器，结果正确 |
+| 字符串 `==` / `!=` | 按设计 bailout → 解释器，结果正确（**探针里 bailout 的唯一来源**：删掉这两行后 `Bailouts: 0`） |
 
 > 探针手法：用「声明返回 `any` 的函数」或模块调用结果当操作数，让**编译期类型未知**
 > （→ 发通用 opcode）而**运行时类型确定**（→ 分别命中整数快路径 / float 慢路径 / bailout）。
 > `any` 参与运算后结果也是 `any`，赋值处需 `_int()/_float()` 收敛，否则类型检查会报错。
+> 运行时 NaN / inf 的构造：`_float("nan")` / `_float("inf")`（`0.0/0.0`、`maths.sqrt(-1.0)`
+> 等在语言层会直接抛错，不能用来造 NaN）。
+
+**复测（2026-09-12，i5-3450，`2e5fdebb`；差分探针 `dyn(any v): any { return v }`）**：
+
+* 输出 JIT 与 `LENO_NO_JIT=1` **逐位一致**：`fsum=900.0 isum=1200 eqn=22020022200`
+* `Bailouts: 3`，全部指向同一条：`main loop_bc=63 非溢出类 @bc_off=510` —— 即字符串
+  `==`/`!=`。删掉字符串比较后（**保留 NaN / inf 比较**）`Bailouts: 0` → 证实 NaN / inf
+  比较走 JIT 原生路径、并未回退，字符串比较的 bailout 是设计内行为而非回归
+* 顺带覆盖：`-17 % 5` 负数取模、`2.0 == 2` 的 int/float 混比、`±int` 乘法，均与解释器一致
 
 **副产品：7.2 的 A 写法循环现在能进 JIT 了**（本轮最大收益）：
 
@@ -249,9 +267,12 @@ codegen 在调用后检查该标志 → bailout → 解释器重跑该循环迭�
         Executed: 1   Bailouts: 0
 ```
 
-`s = s + maths.abs(gacc) * 1.0000001` 跑 100 万次：解释 38ms → JIT **17ms（2.26x）**。
+`s = s + maths.abs(gacc) * 1.0000001` 跑 100 万次：解释 38ms → JIT **17ms（2.26x）**
+（i5-14400F）。i5-3450 复测：解释 **64.7–67.7ms** → JIT **20.4–21.6ms（约 3.2x）**
+—— 与 §5 的机器标注一致：慢机上解释器退化更多（38→65ms），JIT 本身只慢约 20%
+（17→21ms），所以**JIT 的相对收益在慢机上反而更高**。
 
-### 7.2 编译器侧：`AST_MODULE_CALL` 没有写回 `cached_type`
+### 7.2 编译器侧：`AST_MODULE_CALL` 没有写回 `cached_type` —— ✅ A′ 已实现（2026-09-12）
 
 `src/semantic/semantic_type.c` 的 `case AST_MODULE_CALL:` 多条 `return type;` 路径
 **都没有** `ast->cached_type = ...`（而 `AST_NUM`/`AST_VAR`/`AST_BINOP`/`AST_CALL`/实例方法都有）。
@@ -275,12 +296,58 @@ s = s + t * 1.0000001
 
 **修复现状**：7.1 已落地 —— 通用 opcode 现在 JIT 能编、能跑，所以这里的后果从
 「**整个循环进不了 JIT**」降级为「解释器里多一层类型分派 + 多发一条字节码」。
-上例 A 写法的循环已实测 `capable=1`（见 7.1），因此 A′ 变成纯锦上添花项。
+上例 A 写法的循环已实测 `capable=1`（见 7.1）。
+
+**A′ 实现（2026-09-12，`src/semantic/visitinc/visit_module.inc`）**：在
+`case AST_MODULE_CALL:` 的末尾（`break` 前）统一写回：
+
+```c
+if (ast->kind == AST_MODULE_CALL && ast->cached_type == NULL) {
+    TypeInfo* mc_type = infer_expr_type(s, ast);
+    if (mc_type) {
+        if (mc_type->kind != TYPE_ANY) ast->cached_type = type_copy(mc_type);
+        type_free(mc_type);
+    }
+}
+```
+
+为什么放语义访问、而不是 `semantic_type.c` 里那若干条 `return` 上：模块调用节点在语义阶段
+必经此处，且语义阶段早于 `optimize_constant_fold` / `optimize_dead_code_elimination` / `codegen`；
+`optimize.c` 对 `AST_MODULE_CALL` 只递归参数、**不会清它的 `cached_type`**（清缓存的只有
+`if/while` 被分支原地替换那几处），所以 codegen 一定读得到。三条守卫各有用途：
+
+* `ast->kind == AST_MODULE_CALL` —— 实例方法在这条路径上已被改写成 `AST_CALL`，跳过；
+* `cached_type == NULL` —— clib 路径已写入 `TYPE_CLIB` 哨兵（供 codegen 识别），不能覆盖；
+* `kind != TYPE_ANY` —— 返回类型运行期才确定的方法保持走通用路径，语义不变。
+
+**效果**（同一源码 `--debug` 逐指令比，**全程序只差一条**）：
+
+```leno
+// 修复前
+0040 OP_MODULE_CALL 4 5 1
+0050 OP_MUL                 ← 通用乘法
+// 修复后
+0050 OP_MUL_FLOAT          ← 特化乘法
+```
+
+`s = s + maths.abs(gacc) * 1.0000001` 跑 100 万次（i5-3450）：
+**20.0–23.8ms → 18.0–18.6ms**（约 +10~15%），对解释器（61.7–67.7ms）约 **3.5x**。
+
+**验证**：`assert/run_tests.leno` 263/263（JIT 与 `LENO_NO_JIT=1` 两种模式）；
+`ripple_image.leno` `Bailouts: 0`；差分探针覆盖 `maths.abs/sqrt/floor/ceil/round/pow`、
+`strings.len/to_upper/has/trim`、`strings.split`→`Array[string]`、`times.datetime`→`Array[int]`，
+JIT 与解释器输出**逐位一致**；`examples/` 下 73 个非 GUI 示例两模式 stdout 全一致
+（`测试 times 方法.leno` 因打印时间戳天然不同；`深拷贝功能.leno` 是 `Start-Process`
+重定向未排空的测量假象，严格 `WaitForExit()` 后一致）。
+
+> A′ 只解决「已知类型没传给 codegen」。**跨语句的 `OP_CAST_FLOAT` 仍然存在**
+> （见下条收益修正），所以 A 写法与 B 写法的 opcode 差异缩小到「同一表达式内的一层分派」。
 
 两条修法：
 
 * **B′（JIT 侧）**：见 7.1，纯兜底、不改语义 —— **已完成**。
-* **A′（编译器侧，未做）**：让 `AST_MODULE_CALL` 各 return 路径写回 `cached_type`
+* **A′（编译器侧）**：✅ **已实现（2026-09-12，见上）**。原方案是「让 `AST_MODULE_CALL`
+  各 return 路径写回 `cached_type`」
   （或让 codegen 按需查 `native_get_module_method_return_type`）→ 直接发特化指令。
 
   收益需修正：**A′ 并不会省掉 `OP_CAST_FLOAT`**。`assign_cast_needed()`
@@ -322,9 +389,31 @@ s = s + t * 1.0000001
   （调试运行中曾观察到 305 次编译）；建议改为线性探测/开放寻址。
 * 函数级 JIT 已覆盖部分热点，但 `maths` 这类「叶子函数」的极致优化仍受调用延迟限制。
 
+### 7.5 A′ 验证中发现的两个既有 JIT 缺口（与 A′ 无关，已用回退基线对比确认）
+
+1. **`OP_CAST_STRING` 未收录进 `jit_scan.c`** → 循环体里只要出现「赋值/声明为 `string`」
+   （如 `ssum = strings.to_upper("ab")`：赋的若不是字面量，`assign_cast_needed()` 会补 CAST），
+   就报 `scan FAIL: unknown opcode 37 (OP_CAST_STRING) at offset 144`，**整个循环 `capable=0`**。
+   回退 A′ 的基线与 A′ 后报错位置完全一致（`offset 144` 是相对循环体起点，绝对偏移 183），
+   确认是既有缺口而非 A′ 引入。修法：`opcode_size()` 记 1 字节、vstack 不变；backend 侧
+   「tag 是 string → 原样；否则 bailout 交解释器」即可覆盖绝大多数情形。
+2. **热循环里 `_int(<返回 float 的模块调用>)` 每次进入 JIT 都 bailout**：
+   `OP_CALL_NATIVE` 的 `_int/_float` 内联快路径（`ops_callout.inc`）拿到的操作数是
+   `TRUE_VAL`（`0xFFFA000000000000` = `QNAN|SIGN_BIT|TAG_TRUE`），而不是
+   `maths.round(2.6)` 的裸 double → `cmp rax, 0xFFF8…; jae bailout` 命中：
+   `[JIT-DEBUG] BAILOUT(nonovf) bc_off=139 RAX=0xfffa000000000000`。
+   基线（回退 A′）是同样的现象、同一个 `bc_off`、同一个 `RAX`，故与 A′ 无关。
+   **嫌疑**：float 返回的模块调用走薄桥时结果在 `xmm0`，若没被搬回 RAX 就写入 vstack，
+   就会留下上一个调用（`strings.has(...)` → `true`）的残值 —— 需要单独查证。
+
 ---
 
 ## 8. 涉及文件
+
+本轮（A′ 编译期类型落地，2026-09-12）：
+
+* `src/semantic/visitinc/visit_module.inc`：`case AST_MODULE_CALL` 末尾把推断出的返回类型
+  写回 `cached_type`（仅 `AST_MODULE_CALL` 且未缓存且非 `TYPE_ANY` 时）
 
 本轮（通用 opcode 兜底，2026-09-12）：
 

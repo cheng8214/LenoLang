@@ -1832,6 +1832,21 @@
                 error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
             }
             }
+
+            // A′（编译期类型落地）：模块方法的返回类型在元信息/符号表里是已知的，
+            // 这里把推断结果写回 cached_type → codegen 的 get_expr_type_kind() 读到具体类型，
+            // 直接发特化指令（OP_MUL_FLOAT / OP_EQ_INT ...），不再退化为通用 opcode + 运行期分派。
+            // 只在尚无缓存时写入：clib 路径已写入 TYPE_CLIB 哨兵（供 codegen 识别），不能覆盖；
+            // TYPE_ANY 不缓存，保持「返回类型运行期才确定」的方法（如可变返回）走通用路径。
+            if (ast->kind == AST_MODULE_CALL && ast->cached_type == NULL) {
+                TypeInfo* mc_type = infer_expr_type(s, ast);
+                if (mc_type) {
+                    if (mc_type->kind != TYPE_ANY) {
+                        ast->cached_type = type_copy(mc_type);
+                    }
+                    type_free(mc_type);
+                }
+            }
             break;
         }
 
