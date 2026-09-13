@@ -1505,6 +1505,124 @@ bc_off = 0x10000 * (inline_idx + 1);
 > 与 `test_jit_multi_inline.leno`（真实崩溃、可小样本复现）性质不同。
 > 这类加固的验证方式是：**全语料确认零误伤** + 代码审查。
 
+### 8.28 数组越界读被静默跳过 —— 32 位字段用了 64 位加载（2026-09-13）
+
+**现象**
+
+```leno
+var a = [1, 2, 3]
+var sum = 0
+var i = 0
+while i < 300 {          // 先热起来
+    var ix = 1
+    if i > 60 { ix = 9 } // 之后访问越界下标
+    sum = sum + a[ix]
+    i = i + 1
+}
+print("sum=" + sum)
+```
+
+| 模式 | 结果 |
+| --- | --- |
+| `LENO_NO_JIT=1` | ✅ `数组索引越界: 索引=9, 数组长度=3` |
+| JIT | ❌ `sum=122` —— **不报错，静默读数组之外的内存** |
+
+**根因**
+
+`OP_INDEX` 的内联快路径要用 `count` 做越界判定，代码写的是：
+
+```c
+emit_mov_reg_mem32(cb, JIT_R8, JIT_RDX, 40);   /* r8 = count ← 64 位加载！ */
+emit_cmp_rr(cb, JIT_RAX, JIT_R8);
+emit_jcc(cb, 0x83);                            /* JAE → slow */
+```
+
+`emit_mov_reg_mem32` 是 **REX.W + 0x8B（64 位加载）**，而 `ObjArray` 里
+`count@40` 与 `capacity@44` **相邻** —— 于是 `r8 = count | (capacity << 32)`，
+无符号比较 `idx < r8` 几乎永远成立，越界检查形同虚设。
+（`rax` 侧是 int48 raw，负数/超界按无符号是巨值，但 `r8` 被撑到 2³² 以上，
+所以连负下标也挡不住。）
+
+**修法**
+
+1. 新增 `emit_mov_reg32_mem8()`（32 位零扩展加载），越界判定改用它：
+   `idx < count` 就是一次干净的 32 位零扩展 + 64 位无符号比较；
+2. **越界改为 bailout，不再走 callout**。callout（`jit_callout_index`）只是
+   `error_add_at` 记录错误然后返回 `NULL_VAL`，JIT 不检查失败标志会继续跑完循环
+   —— 错误被**静默吞掉**；而解释器抛的是**可被 try/catch 捕获**的异常。实测同一段
+   代码 `NO_JIT → caught=239`、`JIT（callout 版）→ caught=0`，改成 bailout 后
+   JIT 也是 `caught=239` ✓。
+
+**回归**：`assert/test_jit_array_bounds.leno` 第 1、2 段（越界 / 负下标各 239 次捕获）。
+该断言在未修复代码上输出「越界捕获=0 / 负下标捕获=0」并 FAIL。
+
+> **陷阱：`rel32` 修好的位置不能"顺路落进去"。** 第一版把越界 bailout 桩放在
+> `done` 标签**处**，结果慢路径的 fall-through 也落进桩里 → 每次数组读都 bailout
+> → `c[0]` 循环从 47ms 退化到 **453ms**。桩必须在 `done` 之前、并以无条件 `jmp`
+> 结束（无 fall-through），`done` 紧跟其后。
+
+### 8.29 P5：`arr.add` / `arr[i]=v` 内联快路径（2026-09-13）
+
+**目标**（§11 P5）：数组写是真实程序里最高频的操作，而实测只有 `i++` 的 1/4~1/6
+（2000 万次：`i++` ≈ 1.4ns/op、`arr[0]=1` ≈ 5.5ns/op、`add` ≈ 8.6ns/op）。
+
+**做法**：照抄 `OP_INDEX` 读取快路径的模板（`§8.28` 已证明这个模板有效），
+给两个写操作各加一条「内联快路径 + 原 callout 兜底」：
+
+| opcode | 快路径条件 | 快路径动作 |
+| --- | --- | --- |
+| `OP_ARRAY_APPEND_NOPUSH`（`arr.add(v)`） | 数组对象 && `count < capacity` && 不需要写屏障 | `elements[count] = value; count++` |
+| `OP_INDEX_SET_NOPUSH`（`arr[i]=v`） | 数组对象 && `i` 是 int48 && `0 <= i < capacity` && 不需要写屏障 | `elements[i] = value; if (i >= count) count = i+1` |
+
+慢路径**原样保留**（扩容、字典/struct/cstruct 分支、全部报错文本），所以语义不变。
+
+**写屏障**（这条决定了快路径的边界）：`gc_write_barrier(holder, value)` 的门槛是
+「holder 已晋升老年代 **且** value 是年轻代对象」。快路径**只在三者同时成立时**
+（value 是对象 && `arr->generation == GEN_OLD` && `value_obj->generation == GEN_YOUNG`）
+才交回 callout —— 否则（绝大多数情况：元素是 int/float，或数组还年轻）直接内联完成。
+判定必须在**任何变异之前**完成，这样跳到慢路径时 callout 是从原状态完整重做，
+不会出现"写一半再重放"。
+
+**实测**（`build/probe_arr.leno`，2000 万次，5 轮中位数）
+
+| 场景 | P5 前 | P5 后 | 加速比 |
+| --- | --- | --- | --- |
+| `arr[0] = 1`（下标写） | 110 ms | **62 ms** | **1.8x**（最好 47ms / 2.3x） |
+| `arr[0]`（下标读，本来就有快路径） | 47\~63 ms | 47\~62 ms | 1.0x |
+| `arr.add(1)` 增长到 2000 万元素 | 172 ms | 156 ms | 1.1x |
+| `arr.add + clear` 复用容量 | 15 ms | 15 ms | 1.0x |
+
+`examples/性能测试/全部测试.leno` 1 亿次行：
+
+| 行 | P5 前 | P5 后 |
+| --- | --- | --- |
+| `arr.add()`（真增长到 1 亿） | 641\~656 ms | **547\~563 ms**（1.17x） |
+| `arr[index]` | 171\~188 ms | 171\~203 ms |
+| `dict[key]=value` | 906\~922 ms | 906\~953 ms（未改动） |
+
+**为什么 `arr.add` 只有 1.1x（而不是和下标写一样的 1.8x）**：1 亿次 append 会把数组
+真涨到 1 亿元素，8 字节元素 ≈ 800MB 存储 + 约 1.6GB 的扩容 memcpy，
+**内存带宽地板 ≈ 240ms**，把这部分扣掉后剩下的才是调用开销；
+下标写没有扩容和内存增长，所以能看到快路径的完整收益。
+
+**踩坑记录（两条都是"快路径静默变死代码"）**
+
+1. **NaN-boxing 的 top16 必须用 SHR（逻辑右移）读，不能用 SAR**。
+   第一版新代码写的是 `emit_sar_imm(cb, JIT_R8, 48)`：`0xFFFC0000_00000000`
+   算术右移 48 位会符号扩展成 `0xFFFFFFFFFFFF_FFFC`，与 `0xFFFC` 比较**永远不等**
+   → 标签检查恒失败 → 两个快路径一次都没进过（现象就是"改了但完全没效果"）。
+   改用新增的 `emit_shr_imm()` 后立刻生效（下标写 110 → 62ms）。
+   > 判据：**int48 判定用 SAR（需要符号位），NaN-boxing 标签判定用 SHR**。
+2. **32 位字段的读/写必须用 32 位版**：`count`/`capacity` 相邻，
+   读用 `emit_mov_reg32_mem8`（零扩展）、写用 `emit_mov_mem32_reg32`；
+   误用 64 位版会连隔壁字段一起读/写（§8.28 就是读那条）。
+
+**回归**：`assert/test_jit_array_bounds.leno`（越界/负下标捕获、add 后 len 与内容、
+下标写覆盖与相邻元素、写入的 Value 类型、扩容不丢数据、字典慢路径仍正确）。
+`assert` **273 passed / 0 failed**（`LENO_NO_JIT=1` 同样 273）；
+14 个目录 **243 个 `.leno`** 与 P5 前逐文件差分：差异 10 处，
+全部是计时数字或由计时派生的比值（`Speedup:` 行），**无语义差异**。
+
 ***
 
 ## 9. 性能数据
@@ -1847,7 +1965,17 @@ RAX 常驻栈顶，`a + b` 退化成「pop 一次 + add + 留在 RAX」，只在
   若可以按代条件化（或者本实现的 GC 是非分代/保守的），快路径才成立。
 - **约束**：内联必须把「类型不对 → 写 site 后 bailout」这条守住 ——
   宁可不编、不要猜，也不要在机器码里复刻第二份语义（否则就是 §14 那批静默算错的温床）。
-- **状态**：⬜ 未开始（**下一项**）。
+- **状态（2026-09-13）：🟡 数组部分已完成，见 §8.29**
+  * `OP_ARRAY_APPEND_NOPUSH`（`arr.add`）与 `OP_INDEX_SET_NOPUSH`（`arr[i]=v`）
+    已加「内联快路径 + 原 callout 兜底」：下标写实测 **1.8\~2.3x**（110ms → 62ms / 2000 万次），
+    `arr.add` 因扩容与内存带宽地板只拿到 1.1\~1.17x（1 亿次 641ms → 547ms）。
+  * 顺带修掉一个既有 bug：`OP_INDEX` 快路径用 64 位加载读 `count` 导致
+    **数组越界读被静默跳过**（§8.28），并把它改成 bailout 以对齐解释器的
+    可捕获异常语义。
+  * **未做**：`dict[key]=v`（`OP_DICT_SET`）。字典写要做哈希、探测、tombstone、
+    扩容乃至「数组部分 / 哈希部分」双结构，无法像定宽访存那样内联；
+    真要提速得换实现思路（例如先内联「命中的数组部分连续整数键」快速路径），
+    优先级低于其它项。
 
 ***
 
@@ -1908,6 +2036,11 @@ RAX 常驻栈顶，`a + b` 退化成「pop 一次 + add + 留在 RAX」，只在
 > - ~~`OP_*_FLOAT` 不提升 int 操作数~~ → 已修（2026-09-12，§8.18）：`EMIT_FLOAT_ARGS2`
 > - ~~`OP_DIV_FLOAT` 除零静默算 inf~~ → 已修（2026-09-12，§8.19）：
 >   与 0.0 比较后 bailout，NaN 除数放行
+> - ~~JIT 下数组越界读被静默跳过~~ → 已修（2026-09-13，§8.28）：`OP_INDEX` 快路径
+>   用 64 位加载读 `count` 导致越界判定失效；改用 32 位零扩展加载，并把越界改成
+>   bailout 以对齐解释器的「可被 try/catch 捕获」语义
+> - ~~内联体共用 bc_off 命名空间（aes128 栈溢出）~~ → 已修（2026-09-13，§8.26）
+> - ~~表项溢出等 6 处静默降级~~ → 已改为显式拒绝编译（2026-09-13，§8.27）
 
 ***
 
@@ -2189,6 +2322,16 @@ JIT 虚拟栈是「栈顶在低地址」的反向栈，`vstack_top` 永远指向
     `offmap_add` / `patch_add` 置溢出标志 → 收尾拒绝；
     回边 `offmap_lookup` 失败、内联命名空间目标解析失败、体内目标解析失败、
     `scan` 的前向跳转表满、内联 `return` 补丁表满 → 一律拒绝编译。
+19. **位宽与移位方向必须与字段/位模式匹配**（§8.28 / §8.29 两次踩坑）：
+    * 读 4 字节整型字段（如 `ObjArray.count@40`）用 `emit_mov_reg32_mem8`
+      （零扩展）、写用 `emit_mov_mem32_reg32`；用 64 位版会把相邻字段一起读/写
+      （`count|capacity<<32` 让越界判定恒不成立 → 越界读被静默跳过）。
+    * **int48 判定用 SAR**（需要符号位扩散），**NaN-boxing 的 top16 判定用 SHR**
+      （`0xFFFC` 的最高位是 1，SAR 符号扩展成 `0xFFFF...FFFC` 后比较恒不等，
+      快路径直接变死代码 —— 现象是"改了但完全没效果"）。
+20. **新增内联快路径后必须确认它真的在执行**（§8.29）：先看 `Compiled/Executed/
+    Bailouts`，再用 `LENO_JIT_DUMP=1` + objdump 确认快路径的特征指令确实生成，
+    最后才看耗时。只对比耗时容易把"快路径是死代码"误判成"这类操作没有优化空间"。
 
 ### 14.4 已知差异（未修，**改动相关代码时要留意**）
 
@@ -2257,6 +2400,7 @@ JIT 机器码返回非 0（bailout / `jit_callout_failed`）时，把控制权�
 | `assert/test_jit_bool_compare.leno` | 比较结果必须是 `val_bool`（§8.24）：5 种 while 条件形式（立即数/局部/不等/反向/浮点）+ bool/int/float 局部量与全局 + 数组/字典/JSON 的 callout 实参路径 + `and`/`or`/`not` + 返回值路径 |
 | `assert/test_jit_hot_func.leno` | 解释器侧函数级 JIT 热入口（§8.25，**语义守卫**，基线版本同样 pass）：纯递归 + `is int` 结果类型、深度 200 > `JIT_FUNC_MAX_DEPTH`(64) 的深度守卫、互递归 bool 返回值 + `is bool`、int48 溢出（`pow2(60)` 必须与解释器的 BigInt 语义一致）、float 形参 + int 实参提升、字符串 concat 递归、`return_count>1` 与 `has_try` 必须拒绝编译、低热度不编译、递归返回 `Dict`、函数体内含 struct 多返回值方法调用 |
 | `assert/test_jit_multi_inline.leno` | 循环体内**多个内联点**的 bc_off 命名空间隔离（§8.26）：2 个 / 4 个 `gm()`（GF(2^8) 乘法，体内有 for + 两处 if）内联点，逐元素全文比对 + 20 轮反复调用。**未修复的代码上会以 `0xC00000FD` 崩溃**（不是断言失败），修复后通过 |
+| `assert/test_jit_array_bounds.leno` | 数组索引读/写与 append 的内联快路径（§8.28 / §8.29）：越界与负下标必须**像解释器一样被 try/catch 捕获 239 次**、合法下标读值正确、`add` 后 len 与内容正确、下标写覆盖且不破坏相邻元素、写入的是 Value（`is int`）、扩容不丢数据、字典慢路径仍正确。**未修复代码（P5 前）输出「越界捕获=0」并 FAIL**；同时覆盖 `arr[i]=v` 快路径的 Value 装箱 |
 
 ***
 
