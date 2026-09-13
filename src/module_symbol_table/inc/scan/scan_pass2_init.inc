@@ -162,21 +162,35 @@
                                     if (bracket) *bracket = '\0';
 
                                     if (return_type == TYPE_ANY || return_type == TYPE_STRUCT) {
+                                        // 注意：用 memcpy + 显式补 '\0' 替代 strncpy，
+                                        // 避免目标缓冲区恰满时丢失终止符（-Wstringop-truncation）
                                         if (is_known_clib(base_str, clib_names, clib_name_count)) {
                                             return_type = TYPE_CLIB;
                                             if (return_type_info) return_type_info->kind = TYPE_CLIB;
-                                            strncpy(return_struct_name, base_str, 63);
+                                            size_t base_copy_len = strlen(base_str);
+                                            if (base_copy_len > sizeof(return_struct_name) - 1) base_copy_len = sizeof(return_struct_name) - 1;
+                                            memcpy(return_struct_name, base_str, base_copy_len);
+                                            return_struct_name[base_copy_len] = '\0';
                                         } else if (is_known_face(base_str, face_names, face_name_count)) {
                                             return_type = TYPE_FACE;
                                             if (return_type_info) return_type_info->kind = TYPE_FACE;
-                                            strncpy(return_struct_name, base_str, 63);
+                                            size_t base_copy_len = strlen(base_str);
+                                            if (base_copy_len > sizeof(return_struct_name) - 1) base_copy_len = sizeof(return_struct_name) - 1;
+                                            memcpy(return_struct_name, base_str, base_copy_len);
+                                            return_struct_name[base_copy_len] = '\0';
                                         } else if (is_known_cstruct(base_str, cstruct_names, cstruct_name_count)) {
                                             return_type = TYPE_CSTRUCT;
                                             if (return_type_info) return_type_info->kind = TYPE_CSTRUCT;
-                                            strncpy(return_struct_name, base_str, 63);
+                                            size_t base_copy_len = strlen(base_str);
+                                            if (base_copy_len > sizeof(return_struct_name) - 1) base_copy_len = sizeof(return_struct_name) - 1;
+                                            memcpy(return_struct_name, base_str, base_copy_len);
+                                            return_struct_name[base_copy_len] = '\0';
                                         } else if (is_known_struct(base_str, struct_names, struct_name_count)) {
                                             return_type = TYPE_STRUCT;
-                                            strncpy(return_struct_name, base_str, 63);
+                                            size_t base_copy_len = strlen(base_str);
+                                            if (base_copy_len > sizeof(return_struct_name) - 1) base_copy_len = sizeof(return_struct_name) - 1;
+                                            memcpy(return_struct_name, base_str, base_copy_len);
+                                            return_struct_name[base_copy_len] = '\0';
                                         }
                                     }
                                 }
