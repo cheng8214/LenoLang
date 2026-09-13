@@ -6,7 +6,7 @@ import times
 main() {
     // Java 版是从 args 传入，这里为方便直接给固定初始值
     var inp = 12345
-    var iterations = 200000000  // 2亿次
+    var iterations = 2000000000  // 20亿次
 
     var start = times.ms()  // 开始计时
 

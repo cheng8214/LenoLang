@@ -33,7 +33,7 @@ class BenchBitwiseLoop
 
     static void Main()
     {
-        const long iterations = 200000000L;
+        const long iterations = 2000000000L;
         var sw = Stopwatch.StartNew();
         long inp = Run(iterations);
         sw.Stop();

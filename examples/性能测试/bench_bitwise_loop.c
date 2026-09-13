@@ -13,7 +13,7 @@
 
 int main(void) {
     long long inp = 12345;
-    const long long iterations = 200000000LL;
+    const long long iterations = 2000000000LL;
     LARGE_INTEGER freq, t0, t1;
     long long i;
 
