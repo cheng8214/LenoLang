@@ -213,6 +213,130 @@ static int pick_pin_local(const uint8_t* body_start, const ScanResult* sr,
     return best;
 }
 
+/* ---- §8.44 语句级折叠：GET_LOCAL(pinned) … SET_LOCAL_POP(同槽) ----
+ *
+ * 编译器对 `x = x ⊕ k` / `x = x + k` / `x = x >> k` 生成的是固定形状：
+ *   OP_GET_LOCAL x
+ *   [OP_CONST k | OP_ADD/SUB/MUL_INT_IMM i | OP_SHL/SHR_IMM i]   ← 立即数（必要）
+ *   [OP_BITAND/BITOR/BITXOR]        ← 仅 CONST 形态需要（必须可交换）
+ *   [OP_CAST_INT]                   ← §8.41 已证明它是恒等变换，这里一起吃掉
+ *   OP_SET_LOCAL_POP x
+ *
+ * 当 x 是 pinned 槽时，整段可以折成**在寄存器上直接做一次 ALU 运算**：
+ *   <op> r15, imm                    1 条
+ *   int48 检查                        5 条
+ * 而不是现在的 ~12 条（取局部量、把常量物化进 RAX、搬进 RDX、弹左操作数、运算、
+ * 检查、写回）。**不新增任何语义假设**：操作数同样假定为 int48（与现有 codegen
+ * 一致，由扫描器的类型检查保证），结果同样做 int48 检查。
+ *
+ * 只折叠**语义等价**的组合：AND/OR/XOR 可交换（常量在左在右都对）；
+ * ADD/SUB/SHL/SHR 的立即数本来就在右侧（取自各自的 *_IMM opcode）。
+ *
+ * 返回消费的字节数（0 = 不折叠），并写出要发的运算与立即数。 */
+static int peek_local_fold(CodegenCtx* ctx, const uint8_t* ip, Chunk* chunk,
+                           int slot, int bc_off, uint8_t* out_alu, int32_t* out_imm) {
+    int n = 0;
+    const uint8_t* p = ip;
+    if (p[0] != OP_GET_LOCAL) return 0;
+    if (rd_short(p + 1) != (uint16_t)slot) return 0;
+    n += opcode_size(p); p += opcode_size(p);
+
+    uint8_t op = *p;
+    int32_t imm = 0;
+    uint8_t alu = 0;
+    if (op == OP_ADD_INT_IMM || op == OP_SUB_INT_IMM ||
+        op == OP_SHL_IMM || op == OP_SHR_IMM) {
+        int8_t i8 = (int8_t)p[1];
+        /* 与 codegen 一致：SHL_IMM 的 imm >= 32 走 BigInt 路径（无条件 bailout），不折叠 */
+        if (op == OP_SHL_IMM && i8 >= 32) return 0;
+        imm = (int32_t)i8;
+        alu = op;
+        n += opcode_size(p); p += opcode_size(p);
+    } else if (op == OP_CONST) {
+        uint16_t ci = rd_short(p + 1);
+        if (!chunk || ci >= chunk->const_cnt) return 0;
+        Value cv = chunk->constants[ci];
+        if (!val_is_int(cv)) return 0;
+        int64_t iv = val_as_int(cv);
+        if (iv < -2147483648LL || iv > 2147483647LL) return 0;  /* 折叠只支持 imm32 */
+        imm = (int32_t)iv;
+        n += opcode_size(p); p += opcode_size(p);
+        uint8_t b = *p;
+        if (b != OP_BITAND && b != OP_BITOR && b != OP_BITXOR) return 0;
+        alu = b;
+        n += opcode_size(p); p += opcode_size(p);
+    } else {
+        return 0;
+    }
+
+    if (*p == OP_CAST_INT) { n += opcode_size(p); p += opcode_size(p); }
+
+    if (*p != OP_SET_LOCAL_POP) return 0;
+    if (rd_short(p + 1) != (uint16_t)slot) return 0;
+    n += opcode_size(p);
+
+    /* 被吃掉的偏移都不能是跳转目标：off_map 会缺条目，收尾时按「体内目标未解析」
+     * 拒绝编译（宁可不编，不要猜）。本形状内部没有分支，正常情况下不会有跳进来。 */
+    int off = bc_off;
+    const uint8_t* q = ip;
+    while (off < bc_off + n) {
+        if (off != bc_off && bc_is_jump_target(ctx, off)) return 0;
+        int qs = opcode_size(q);
+        if (qs <= 0) return 0;
+        off += qs;
+        q += qs;
+    }
+
+    *out_alu = alu;
+    *out_imm = imm;
+    return n;
+}
+
+/* 形态 B：OP_CONST k; OP_GET_LOCAL x; <可交换 binop>; [OP_CAST_INT]; OP_SET_LOCAL_POP x
+ * —— `x = k ⊕ x`（常量在左，编译器把常量先压栈）。只有可交换的位运算能这么折。 */
+static int peek_local_fold_constfirst(CodegenCtx* ctx, const uint8_t* ip, Chunk* chunk,
+                                      int bc_off, int* out_slot, uint8_t* out_alu,
+                                      int32_t* out_imm) {
+    int n = 0;
+    const uint8_t* p = ip;
+    if (p[0] != OP_CONST) return 0;
+    uint16_t ci = rd_short(p + 1);
+    if (!chunk || ci >= chunk->const_cnt) return 0;
+    Value cv = chunk->constants[ci];
+    if (!val_is_int(cv)) return 0;
+    int64_t iv = val_as_int(cv);
+    if (iv < -2147483648LL || iv > 2147483647LL) return 0;
+    n += opcode_size(p); p += opcode_size(p);
+
+    if (p[0] != OP_GET_LOCAL) return 0;
+    int slot = rd_short(p + 1);
+    n += opcode_size(p); p += opcode_size(p);
+
+    uint8_t b = *p;
+    if (b != OP_BITAND && b != OP_BITOR && b != OP_BITXOR) return 0;
+    n += opcode_size(p); p += opcode_size(p);
+
+    if (*p == OP_CAST_INT) { n += opcode_size(p); p += opcode_size(p); }
+
+    if (*p != OP_SET_LOCAL_POP) return 0;
+    if (rd_short(p + 1) != (uint16_t)slot) return 0;
+    n += opcode_size(p);
+
+    int off = bc_off;
+    const uint8_t* q = ip;
+    while (off < bc_off + n) {
+        if (off != bc_off && bc_is_jump_target(ctx, off)) return 0;
+        int qs = opcode_size(q);
+        if (qs <= 0) return 0;
+        off += qs;
+        q += qs;
+    }
+    *out_slot = slot;
+    *out_alu = b;
+    *out_imm = (int32_t)iv;
+    return n;
+}
+
 /* ---- Main codegen function ---- */
 int compile_loop(CodegenCtx* ctx) {
     const ScanResult* sr = ctx->sr;
@@ -346,6 +470,18 @@ int compile_loop(CodegenCtx* ctx) {
      #define EMIT_INT48_CHECK_TOS(site) do { \
         EMIT_INT48_CHECK(site); \
         prev_raw_int48 = 1; \
+     } while(0)
+
+     /* §8.44：与 EMIT_INT48_CHECK 同形，但检查任意寄存器（折叠后的值在 pin 寄存器里，
+      * 不在 RAX）。bailout 语义不受影响：JIT 运行整体被丢弃、解释器重放（§8.37）。 */
+     #define EMIT_INT48_CHECK_REG(reg, site) do { \
+        emit_mov_rr(cb, JIT_R8, (reg)); \
+        emit_sar_imm(cb, JIT_R8, 47); \
+        emit_inc_reg(cb, JIT_R8); \
+        emit_cmp_reg_imm8(cb, JIT_R8, 1); \
+        EMIT_BAILOUT_SITE_WRITE(site); \
+        int _p = emit_jcc(cb, 0x87); \
+        patch_add(ctx, _p, -1, 0); \
      } while(0)
 
      /* 结果必在 int48 内但没发检查的 case（OP_MOD_INT：|a%b| < |b|）。 */

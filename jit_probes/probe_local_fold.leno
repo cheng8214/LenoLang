@@ -1,0 +1,54 @@
+// §8.44 语句级折叠（`x = x ⊕ k` 落在 pin 寄存器上）回归探针
+//
+// 判据：JIT 与 LENO_NO_JIT=1 输出**逐字一致**。重点覆盖三件容易错的事：
+//  1) **SHL 的截断语义**：VM 的 `<<` 是「int64 左移后截断为 48 位」，**不 bailout**。
+//     折叠第一版漏了截断，恰好在只用 `>>` 的基准上看不出来 —— 这里专门造超界用例。
+//  2) ADD/SUB 的溢出：保留 int48 检查 → bailout → 解释器走 BigInt。
+//     去掉这个检查就会静默算错，所以它必须留着。
+//  3) 形态 B（常量在左，`x = k ⊕ x`）与形态 A（常量在右）都要覆盖。
+// 另外用 LENO_JIT_DEBUG=1 应能看到 `[JIT-CG] FOLD/FOLDB` 行（确认真的走了折叠）。
+main() {
+    // 1) SHL 截断：逐步左移直到超出 int48（2^47）
+    var s = 1
+    var i = 0
+    while i < 20 {
+        s = s << 4
+        i = i + 1
+    }
+    print("shl_chain=" + s)
+    var s2 = 123456789
+    s2 = s2 << 30
+    print("shl_big=" + s2)
+
+    // 2) ADD/SUB 溢出（检查必须保留：溢出交解释器提升 BigInt）
+    var a = 1
+    var j = 0
+    while j < 80 {
+        a = a + a
+        j = j + 1
+    }
+    print("add_overflow=" + a)
+    var b = 5
+    var k = 0
+    while k < 50 {
+        b = b - 1000000000000
+        k = k + 1
+    }
+    print("sub_underflow=" + b)
+
+    // 3) 形态 A（常量在右）与形态 B（常量在左）
+    var x = 12345
+    var n = 0
+    while n < 100000 {
+        x = x >> 8
+        x = x & 7
+        x = 1125 ^ x        // 形态 B：常量在左
+        x = x & 1135
+        x = x + 77
+        x = x - 3
+        x = x | 16
+        x = 255 & x
+        n = n + 1
+    }
+    print("mixed=" + x)
+}

@@ -294,6 +294,25 @@ static inline void emit_xor_rr(CodeBuf* cb, int dst, int src) {
     emit_rr(cb, 0x31, dst, src);
 }
 
+/* ALU reg64, imm32（§8.44 语句级折叠用；reg 可为 R8-R15）
+ * alu_op: 0=ADD 1=OR 4=AND 5=SUB 6=XOR（与 modrm.reg 的 /n 编码一致） */
+static inline void emit_alu_imm32_reg(CodeBuf* cb, int alu_op, int reg, uint32_t imm) {
+    int b = (reg >> 3) & 1;
+    emit_byte(cb, rex(1, 0, 0, b));
+    emit_byte(cb, 0x81);
+    emit_byte(cb, modrm(3, alu_op, reg & 7));
+    emit_uint32(cb, imm);
+}
+
+/* ALU reg64, imm8（符号扩展到 64 位） */
+static inline void emit_alu_imm8_reg(CodeBuf* cb, int alu_op, int reg, uint8_t imm) {
+    int b = (reg >> 3) & 1;
+    emit_byte(cb, rex(1, 0, 0, b));
+    emit_byte(cb, 0x83);
+    emit_byte(cb, modrm(3, alu_op, reg & 7));
+    emit_byte(cb, imm);
+}
+
 /* SHL reg, imm8 */
 static inline void emit_shl_imm(CodeBuf* cb, int reg, uint8_t count) {
     int b = (reg >> 3) & 1;
