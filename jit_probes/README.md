@@ -16,6 +16,7 @@
 | `probe_jit_gc_safepoint.leno` | JIT 循环的 GC 安全点缺口探针（§8.36）：JIT 热循环里分配 + callout，用钩子数「实际到达的安全点」，并用值判据 + **身份判据**（`probe == n`，比读值可靠）判断 JIT 活值是否被误回收。 |
 | `probe_index_slowpath.leno` | `OP_INDEX` 慢路径 bailout 回归探针（§8.33）：判据是 `Bailouts` 不增长，不是耗时。 |
 | `probe_eq_identity.leno` | `OP_EQ` 身份比较快路径差分探针（§8.34）：判据是 JIT 与 `LENO_NO_JIT=1` 结果逐条一致 + 哪些比较仍 bailout。 |
+| `bench_yield_poll.leno` | 回边 GC 轮询的每轮成本（§8.39）：10 亿次 `arr[0]`。**必须 10 亿次** —— `times.ms()` 刻度是 ~16ms，1 亿次下成本只有 1 个刻度，分辨不出。测法：与临时关掉轮询的二进制比 best-of-N。 |
 
 ## 确定性 GC 钩子（§8.35）
 
@@ -51,8 +52,10 @@ build\lenojit.exe jit_probes\gc_barrier_canary.leno
    （2 条指令），命中就走出口路径让出到解释器，由解释器在状态已发布的前提下回收。
    由此带来两条使用上的注意：
    - **只在「循环体内发射过 callout」的循环上轮询**（`body_has_callout`）⇒ 纯算术循环
-     零开销；但**读数组/字典的紧凑循环也会发射**（`arr[i]` 是 callout），实测
-     `arr[index]` 1 亿次 187~219ms（原 172~203ms 区间），属已知小成本。
+     零开销；但**读数组/字典的紧凑循环也会发射**（`arr[i]` 是 callout）。
+     成本见 `bench_yield_poll.leno`（§8.39）：10 亿次极紧循环 +0.11ns/轮 ≈ +5.7%，
+     真实分配循环上远小于 1%（每轮本就要付一次 callout）。**注意别用 1 亿次去测** ——
+     `times.ms()` 刻度 ~16ms，那个量级下只有 1 个刻度，分不清真假。
    - **让出频率 = 「每跨一次年轻代阈值一次」**，所以默认阈值（8MB）下开销可忽略；
      但如果用 `LENO_GC_YOUNG_THRESHOLD` 钉一个很小的值（如 1KB），回收会变得很频繁
      （那是压力测试场景，不是默认行为）。统计里看 `Yields:` 计数。
