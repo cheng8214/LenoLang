@@ -2395,10 +2395,16 @@ push r9 ; movabs r9,&jit_bailout_site ; mov dword [r9],site ; pop r9
 
 **顺带查清的两件事**（都影响后续方向）：
 
-1. 反汇编里每个语句后「重复的 int48 检查 + 装箱路径」**不是死代码** —— 那是
-   `OP_SET_LOCAL` 的**类型派发**（float 局部量要 `cvttsd2si` 转成 int，反向也要转换，
-   同时维护 RBX 类型位图）。所以「删掉重复检查」这个设想不成立；要省掉它，得先让扫描器
-   提供静态类型保证。
+1. 反汇编里每个语句后「重复的 int48 检查 + 装箱路径」**不是死代码，也不属于
+   `OP_SET_LOCAL`**（`OP_SET_LOCAL` 的 codegen 只有一条原始存储：`ops_stack.inc:53-65`
+   `TOS_PEEK_TO(RAX); mov [rbp+disp], RAX`）—— 它是**编译器在赋值前插的 `OP_CAST_INT`**。
+   JIT 侧 `OP_CAST_INT`（`ops_arith.inc:335-388`）与反汇编逐条对应：int48 → 原样；
+   裸 double → `cvttsd2si`；`TRUE_VAL`→1 / `FALSE_VAL`→0 / `NULL_VAL` 原样；其余 bailout。
+   之所以被插进来：`assign_cast_needed()`（`codegen_stmt.c:92-103`）对**非字面量一律返回 1**
+   （要 cast），且注释里写明了理由 —— 曾放宽到「静态类型一致即消除」，结果 GUI 布局拿到
+   未规范化的值（属性对话框尺寸算错）。**这是有意的保守**，而且它是**语义载荷**：
+   解释器的 `OP_BITAND` 有 BigInt 分支（`op_bitwise.inc`），`+`/`*` 溢出也会提升 BigInt，
+   所以「静态类型是 int」并不等于「运行时是 int48」。
 2. `OP_BITAND/BITOR/BITXOR` 只检查**结果**、不检查**操作数**类型 —— 之所以安全，是因为
    **扫描器会拒绝「操作数静态类型是 float/null」的循环**（实测 `x & 3`（x = 1.5 或 null）
    在 JIT 与解释器下报同样的错，且 `Compiled: 0`）。这条不变量值得记住。
@@ -2409,7 +2415,70 @@ push r9 ; movabs r9,&jit_bailout_site ; mov dword [r9],site ; pop r9
 | --- | --- | --- |
 | 立即数折叠 | ~12 条 | 现在是 `movabs rax,7; mov rdx,rax; pop rax; and rax,rdx`，应为 `and rax,7`。JIT 侧**安全**折叠只能省 1 条（`movabs` 已经发出去了，回退 `cb->len` 会破坏已记录的补丁偏移）；彻底做法是编译期发融合 opcode（`OP_BITAND_IMM` 等，要动字节码格式 + 版本号） |
 | 局部量进寄存器 | ~10 条 | 每个语句都 `mov rax,[rbp-8]` + `mov [rbp-8],rax`（2 次访存，依赖链穿内存） |
-| `SET_LOCAL` 派发省略 | ~25 条 | 需要扫描器提供「该局部量在循环内恒为 int」的静态保证 |
+| `OP_CAST_INT` 归一化省略 | ~25 条 | 编译器为「非字面量赋值给 int 局部量」无条件插入（`assign_cast_needed`）。JIT 侧要有把握才敢跳：**必须证明「前一条指令的 int48 检查覆盖了所有到达该 CAST 的路径」**（`OP_ADD` 这种多路径 opcode 就不满足），且该 bc_off 不是跳转目标（三目/短路会产生落在 CAST 上的合并点） |
+
+***
+
+### 8.41 跳过恒等 OP_CAST_INT：一个「证明型」窥孔（2026-09-14）
+
+**起因**：一个提问 —— 「`OP_SET_LOCAL` 不能在编译时确认类型?」。查下去发现 §8.40 里我
+把 disasm 中「重复的 int48 检查 + 装箱路径」记成 `OP_SET_LOCAL` 的类型派发**是错的**：
+
+- `OP_SET_LOCAL` 的 codegen 只有一条原始存储（`ops_stack.inc:53-65`），槽里是 raw 值
+  （int48 原样 / float 存裸 double 位），**不需要任何类型信息**；
+- 那段是**编译器插入的 `OP_CAST_INT`**，JIT 侧 `ops_arith.inc:335-388` 与 disasm 逐条
+  对应：int48 → 原样；裸 double → `cvttsd2si`；`TRUE_VAL`→1、`FALSE_VAL`→0、`NULL_VAL`
+  原样；其余 bailout。
+
+**编译器为什么插它**：`assign_cast_needed()`（`codegen_stmt.c:92-103`）对**非字面量一律
+返回 1**（要 cast），注释写明理由 —— 曾放宽到「静态类型一致即消除」，结果 GUI 布局拿到
+未规范化的值（属性对话框尺寸算错）。而且 `&`/`|`/`^` 连类型规则都没有
+（`codegen_expr.c:237-239` 直接 `emit OP_BITAND`，不像 `+`/`-`/`*` 会按左右类型选 typed
+opcode），所以 `inp & 7` 的表达式类型是「未知」⇒ 必然补 CAST。**这是有意的保守。**
+
+**为什么不能直接删 CAST**：它是**语义载荷**。解释器的 `OP_BITAND` 有 BigInt 分支
+（`op_bitwise.inc`），`+`/`*` 溢出也会提升 BigInt ⇒「静态类型是 int」**不等于**「运行时是
+int48」。另外静态已知的不匹配（`int a = 2.7`）会被**语义层**直接报错，根本到不了 CAST。
+
+**做法：只有「可证明」时才省（纯 JIT 侧，不动字节码）**。三个前提缺一不可：
+
+1. **支配性**：紧邻的前一条指令必须已经用 int48 检查证明了结果是 raw int48。为此加了
+   白名单（15 个 opcode，`EMIT_INT48_CHECK_TOS` / `MARK_TOS_RAW_INT48` 的调用点）：
+   `OP_ADD_INT/SUB_INT/MUL_INT/NEG_INT/DIV_INT/MOD_INT`、`OP_ADD/SUB/MUL_INT_IMM`、
+   `OP_BITAND/BITOR/BITXOR/BITNOT`、`OP_SHL_IMM/SHR_IMM`。
+   **明确排除**：`OP_ADD/SUB/MUL` 通用版（int/float/concat 三条路径，非 int 路径不做检查）、
+   `OP_USHR_IMM`（`shr` 结果可能越出 int48）、`OP_CAST_INT` 自身（null 路径原样返回）。
+   标记是**一次性**的：每条指令开头消费并清零，跨一条就失效。
+2. **值仍在 RAX**（`tos_live`）—— 被 spill 到内存栈时前提不成立。
+3. **本 bc_off 不是跳转目标、且不在内联体内** —— 短路/分支的合并点会恰好落在 CAST 上，
+   从别的路径跳进来时前一条指令并不是那个检查（复用 `x86_64.c` 里已有的
+   `patch target_bc == bc_off` 扫描思路，抽出 `bc_is_jump_target()`）。
+
+成立时 `OP_CAST_INT` 是恒等变换，整段（4 条检查 + 冷路径）直接不发。
+
+**实测**：
+
+| 项 | 只有 §8.40 | 加上本窥孔 |
+| --- | --- | --- |
+| `bench_bitwise_loop`（2 亿次） | 640/625/641（最小 625ms） | **453/469/453，复测 437~453（最小 437ms ⇒ 1.38~1.43x）** |
+| 该基准生成的机器码 | 591 行 | **386 行（−35%）**，CAST 的冷路径（含 3 个 `movabs`）一并消失 |
+| `fib(38)`（函数级 JIT） | 1328 / 1375 / 1343 ms | 1329 / 1344 / 1328 ms（无变化） |
+| `arr.add` / `arr[index]` / `dict[key]=` / `i++` 1 亿次 | — | 均在噪声内（A/B 二进制对照） |
+
+累计：`bench_bitwise_loop` **750ms → 453ms（1.66x）**，与 C 的差距从 3.35x 缩到 **2.0x**。
+
+**验证**：
+
+- `assert` **273 passed / 0 failed**（JIT 与 `LENO_NO_JIT=1`）；
+- **130 个示例 JIT vs 解释器输出逐字一致**（比「改动前后一致」更强的不变量：它同时是
+  语义等价性检查），只有指针地址（ASLR）与计时数字不同；
+- 新增 `jit_probes/probe_cast_int_peephole.leno`（判据写在文件头：JIT vs 解释器逐字一致
+  + 反汇编里白名单算术后不应再有 CAST 归一化、bool/`and`/`or` 后必须有）；
+- ⚠️ **方法论**：`fib(32)` 一度显示 15ms → 31ms，看着像 2x 回归 —— 其实是 §8.39 那条
+  16ms 计时刻度（恰好跨过一个 tick）。换 `fib(38)` 立刻显示无变化。**别用 1~2 个刻度的
+  量级下结论。**
+- 顺带确认真实性：`i++` 一度显示 125~156ms → 93~110ms，A/B 二进制对照后确认是**机器状态
+  差异**（两个二进制都跑 78~94ms），与本改动无关。
 
 ***
 
