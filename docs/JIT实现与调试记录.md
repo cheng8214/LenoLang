@@ -2066,6 +2066,156 @@ JIT 收编热循环后没有返回值，请求会被推迟 —— 实测预热�
 
 ***
 
+### 8.36 P1 动手前的核实：JIT 活值不可见，改推荐「回边让出」（2026-09-13，**未改动代码**）
+
+`docs/待办_GC与分配优化.md` 的 P1 建议走「路线 2：callout 边界安全点」，并列出两条动手前
+必须核实的事。核实结果如下，**结论是路线 2 的前提不成立，改走路线 3**。
+
+**核实 1：JIT 的活值在 GC 眼里可见吗？——不可见。**
+
+* JIT 序言把 locals 从 `frame->locals`（RCX）**复制进自己的机器栈帧**：
+  `mov rax,[rcx+slot*8]` → 类型分流 → `mov [rbp+disp],rax`（`scratch_disp(i) = -8*(i+1)`）；
+  执行期的局部量读写（`OP_GET_LOCAL` / `OP_SET_LOCAL[_POP]` / `OP_MOVE_LOCAL*` /
+  `OP_INC_LOCAL_NOPUSH` …）全部走 RBP 相对地址。vstack 紧随其后
+  （`frame_sz = total_locals*8 + max_vstack*8 + 16 + 24`）。
+* `EMIT_WRITEBACK_LOCALS` 只在 **exit / framedead** 块发射（`grep WRITEBACK` 在
+  `src/jit/backend` 只有 3 处命中）⇒ 整个循环期间 `frame->locals` 是**进入循环时的快照**。
+* `mark_roots` 扫的是 `vm.stack[0..sp)` 与各帧 `locals[0..local_count)`，都够不到机器栈区。
+
+**⇒ 路线 2 的「发布」不只是写回 locals。** 还得把 JIT 的 vstack 变成 GC 可见的根，而 vstack
+里放的是**裸值**（int48 / 原始 double），不是 NaN-boxed `Value`：直接按 `Value` 扫会被 tag
+误判（`mark_roots` 步骤 1.5 的注释就警告过「未初始化栈内存里的垃圾值可能被 NaN-boxing
+判成对象指针」）。要发布就得**逐槽做 raw→Value 转换**写进一个新的、登记为根的缓冲 ——
+比 P1 表里那句「TOS 本来就要 spill」贵得多，也更容易出错。
+
+**核实 2：`jit_reloaded_locals` 与 `frame->locals` 的语义** —— 执行期 `frame->locals` 过期
+（见上）；`jit_reloaded_locals` 只是 callout 之后回读 `vm.frames[frame_cnt-1].locals`
+（防 `vm_grow_frames` 重分配后 RCX 悬垂），**不参与发布**。
+
+**实测：缺口有多大、什么条件下出现**（`jit_probes/probe_jit_gc_safepoint.leno` + §8.35 钩子）
+
+用 `LENO_GC_FORCE_EVERY=1`（每次分配都挂请求）数「实际到达的安全点」：
+
+| 场景 | 强制回收次数 |
+| --- | --- |
+| `LENO_NO_JIT=1` | 4001（= 4000 次被调函数返回 + 1） |
+| JIT（默认，内联开） | **101** |
+| JIT + `LENO_JIT_NOINLINE=1` | 4007 |
+
+⇒ 默认配置下，JIT 热循环里的 4000 次调用**一次安全点都没到**：被调函数被内联进循环体、
+不再经过 callout，也就没有 `OP_RETURN`。这正是「循环内分配的对象无人回收」的机制。
+（纯算术循环同理：没有 callout 就没有安全点。而只要循环里有分配，就一定有一次
+`OP_STRUCT_INIT` 之类的 callout —— 所以「在 callout 边界检查」这个方向本身是对的。）
+
+**一个仍未解释的观察（别把当"已经有保护"）**
+
+`NOINLINE` 下安全点确实到了（4007 次回收都在 JIT 循环期间），但
+`probe_jit_gc_safepoint.leno` 测出**当前迭代的 `n` 没有被回收**：值判据 `bad=0`，
+身份判据 `reused=0`（身份判据本身已单独验证可靠：`build/probe_identity_check.leno`
+在 JIT 热循环里 `same=100000 wrongly_equal=0`）。
+
+根来源归属（`LENO_GC_TRACE` 新增的 `roots(...)` 字段）显示：每次回收只有 2 个年轻对象
+存活，**全部来自调用帧**（`roots(stk=0 mod=0 frame=2 …)`），且 `freed` 恰好等于
+「窗口分配量 − 1」（紧凑窗口探针 `freed=200`；带 4000 次探测分配的探针 `freed=4199`）。
+按代码，`frame->locals` 里应该是**过期**的那个对象，可实测的存活者却是当前那个。
+
+**⇒ 在查出这 1 个存活者是谁之前，不能认为 JIT 活值已被覆盖。** 任何「在 JIT 循环里原地
+触发回收」的方案（路线 1/2）都必须自己先发布活值，否则就是拿 use-after-free 换吞吐。
+
+**因此改推荐路线 3：回边让出（yield），把回收搬回解释器**
+
+| | 路线 3：回边让出（建议） |
+| --- | --- |
+| 位置 | JIT 回边处每 N 个回边让出一次，走**已有的出口路径**（写回 locals → 平衡/丢弃 vstack → epilogue），返回新码（如 4） |
+| 解释器侧 | `op_jump.inc` 的 `OP_LOOP`：`jit_r == 4` → 重载 frame → `frame->ip -= offset`（跳回循环头）→ **在这里按需回收**（`gc.deferred_gc` → `gc_try_collect_deferred()`）→ DISPATCH |
+| 为什么安全 | 回收发生在解释器里，而 `frame->locals` / `vm.stack` 刚被**出口路径**发布过 —— 复用一条跑了很久、已被 273 个回归覆盖的路径，**不需要发明新的发布机制** |
+| 成本控制 | **只对「循环体内可能出现分配」的循环发射回边检查**（scan 阶段已能判定），纯算术热循环零开销 —— 避免给 `i++`（≈2.5 cycle/iter）加 dec+jnz 这种百分比级别的税 |
+| 判据 | `probe_jit_gc_safepoint.leno`（默认内联配置）的回收次数从 ~101 升到与分配量匹配；`probe_alloc2.leno` 长跑堆曲线不再单调上涨；`assert` 273/0；`i++` / `经典递归` 无回归 |
+
+**状态：⬜ 未实现**（本轮只做到「核实 + 定方案」）。顺带落地的诊断设施：`LENO_GC_TRACE`
+新增 `roots(stk/mod/frame/glb/misc/oth)` 与 `marked` 字段（`gc.dbg_roots` / `gc.mark_new`，
+仅在 trace 打开时维护 —— `gc_mark_object` 里那一次 `if (gc.trace)` 是不打开就不执行的
+可预测分支，实测基准无回归）。
+
+***
+
+### 8.37 两条「让 JIT 循环触发回收」的尝试：一条硬化保留、一条负结果（2026-09-13）
+
+**已保留（本地化改动）：「JIT 帧内禁止同步回收」+ 请求 bailout 退到解释器**
+
+`gc_alloc` 的分配失败路径原本会**同步** `gc_major_collect()`。这条路径在 JIT 帧里
+同样可达（正是"池耗尽退化 malloc"的下一阶段），而 JIT 活值 GC 看不见（§8.36）
+⇒ 静默 use-after-free。改动：
+
+* 新增 `jit_loop_depth` / `jit_in_frame()`（`jit_loop_depth` 在 `jit_try_hot_loop`
+  执行机器码期间自增；`jit_func_depth` 原义不变）；
+* `gc_alloc` 失败时若 `jit_in_frame()` → 只置 `gc.deferred_gc` + `jit_request_bailout()`，
+  **不同步回收**；callout 返回 NULL 后 JIT 因 `jit_callout_failed` 走 bailout，
+  解释器重跑本轮时再同步回收并重试（若回收救得回来，功能不降级）；
+* 修掉两处空指针解引用：`struct_instance_new_depth()` 直接用 `gc_alloc` 返回值
+  （`obj->def = def`）、`jit_callout_struct_init()` 直接用 `struct_instance_new`
+  返回值 —— 分配失败时都会崩。
+
+**负结果：不能用 bailout 做「周期性中断」让 JIT 循环回收**
+
+思路：`gc_alloc` 跨年轻代阈值时（用 `deferred_gc` 的 0→1 锁存保证频率上界）
+置 `vm.gc_force_request` 并 `jit_request_bailout()`；解释器在新增的**回边安全点**
+（`OP_LOOP` / `OP_FOR_LOOP`）消费该标志并回收。这样零 codegen 改动、不需要发布
+JIT 活值，看起来是最小解。
+
+**它不成立，实测数据（`jit_probes/probe_jit_gc_safepoint.leno`，默认内联配置，
+`LENO_GC_YOUNG_THRESHOLD=64KB`）**：
+
+| 指标 | 结果 |
+| --- | --- |
+| 回收次数 | **6,361,951**（每次 `freed=821`、`marked=1`，即同一个迭代被反复重跑） |
+| JIT 进入次数 | 6,367,902（每次进入立刻回退） |
+| 程序耗时 | **428s**（原 ~3s） |
+| 结果正确性 | `bad=0`（值没错，但循环计数几乎不前进） |
+
+**根因（本轮新查清的事实，很重要）**：**bailout 不是迭代边界**。
+
+* JIT 只在 **exit / framedead** 块写回 locals（§8.36 核实 2 已确认 `EMIT_WRITEBACK_LOCALS`
+  只有这两处）；**bailout 路径不写回**。
+* 而 JIT 被进入一次会在机器码内部跑**很多轮**迭代 ⇒ bailout 发生时 `frame->locals`
+  还停在「JIT 进入时」的状态 ⇒ 解释器 `frame->ip -= offset` 后是**从那个旧状态
+  重跑整个循环**（不是重跑当前迭代）。
+* 于是「同一位置可复现的 bailout」= 无限重放 + 副作用重复。现有代码唯一的刹车是
+  `JIT_BAILOUT_LIMIT=3`（3 次后永久放弃此循环）；而 GC 回退为了不把预算烧光
+  **特意不计 bailout**，恰好绕过了这道闸 ⇒ 死循环。
+* 这同时解释了 §14.4-③ 那条「bailout 后堆侧副作用无法回滚」的**机制来源**：
+  不是"重跑一轮"，而是"从 JIT 进入点重跑"。
+
+**⇒ 结论：路线 3（回边让出）是唯一可行的形式，理由现在是具体的**：
+
+* 回边是**迭代边界**，且回边处 **vstack 平衡**（`OP_LOOP` 的 codegen 开头就 `TOS_SPILL()`，
+  循环体净栈效果为 0）⇒ 可以走**已存在的 exit 路径**（`add rsp, vstack*8` +
+  `EMIT_RELOAD_RCX` + `EMIT_WRITEBACK_LOCALS`）让出，`frame->locals` 被正确发布，
+  解释器从**循环头**继续，语义与"刚执行完一次回边"完全等价；
+* 让出码必须**单独计数**（不消耗 `JIT_BAILOUT_LIMIT`），但因为它发布状态、不重放，
+  所以不会出现上面那种死循环；
+* 实现点：JIT 自己的那条回边上加 `dec 计数; jz yield`，yield 段照抄 exit 块但返回
+  新码（如 4）；`jit_try_hot_loop` 把 4 单独映射（不计 bailout）；`op_jump.inc` /
+  `op_for_loop.inc` 在 `jit_r == 4` 时 `frame->ip -= offset`，并在那里消费
+  `gc_force_request` 回收（**本轮已把回边安全点接好**，见下）。
+
+**本轮保留的小改进：回边安全点**
+
+`OP_LOOP` / `OP_FOR_LOOP` 处理器开头各加一次
+`if (unlikely(vm.gc_force_request)) { vm.gc_force_request = 0; gc_force_collect(); }`：
+
+* 只读 VM 结构体字段（非 TLS），实测基准无回归；
+* 为 `LENO_GC_FORCE_EVERY`（§8.35）增加了兑现点（以前只在 `OP_RETURN` 兑现）。
+  **但别高估它**：它只覆盖"解释器执行到回边"的情形。实测
+  `probe_jit_gc_safepoint.leno`（默认内联配置、`FORCE_EVERY=500`）只从 70 次升到
+  **91 次** —— 被内联的 JIT 循环在机器码内部跑完整个循环，解释器压根到不了回边，
+  所以**机器码里的安全点仍然只能靠路线 3**；
+* 它的真正价值是：路线 3 落地时，让出后的收集点就在这里。
+
+**状态**：硬化 ✅ 已实施并随 273/0 回归；路线 3 ⬜ 未实施（本轮到此为止）。
+
+***
+
 ## 9. 性能数据
 
 ### 测试环境

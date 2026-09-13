@@ -92,22 +92,60 @@ JIT 收编热循环后没有返回值 ⇒ 请求被推迟。实测预热循环�
 10M 次 `new` 实测堆涨到 ~960MB，池很快耗尽后退化成裸 `malloc`（这正是 §8.31 里
 「池放大到 1GB 才省 56ns」的成因）。
 
-**两条路线，建议先做路线 2：**
+**两条核实结论（2026-09-13 已查，详见 `JIT实现与调试记录.md` §8.36）**：
 
-| | 路线 1：回边安全点 | **路线 2：callout 边界安全点（建议）** |
-| --- | --- | --- |
-| 位置 | 每个 JIT 循环回边 | JIT 调 callout 之前做一次「发布」（写回 locals + 把 vstack 区间注册为 GC 根）；`gc_alloc` 超硬上限时在 callout 内同步跑一次 Minor GC |
-| 覆盖面 | 最广 | **所有分配都经过 callout**（`OP_STRUCT_INIT`/`OP_ARRAY`/`OP_DICT_SET`/`OP_CALL_*`），实际够用；纯计算热循环无分配，本来也不需要 GC |
-| 难度 | 需要机器码级栈映射；回边处 TOS 状态多样（`tos_live`/spilled） | callout 的 ABI 已明确、TOS 本来就要 spill |
-| 风险 | 高 | 中（要保证「发布」到 callout 返回之间没有未注册的活值） |
+1. **JIT 的活值在 GC 眼里不可见**：序言把 locals 从 `frame->locals` 复制进机器栈 scratch，
+   执行期只在 scratch 读写，`EMIT_WRITEBACK_LOCALS` **只在出口块发射** ⇒ 整个循环期间
+   `frame->locals` 是入口快照；vstack 也在机器栈里。
+2. 更要紧的是：vstack 里放的是**裸值**（int48 / 原始 double），不是 NaN-boxed `Value`，
+   直接当根扫会被 tag 误判 ⇒ 发布它必须**逐槽做 raw→Value 转换**到新缓冲。
 
-**动手前必须先核实的两件事**（未验证）：
-1. JIT 的 vstack（机器栈区）当前是否已在 GC 可见 / 根集合范围内？
-2. `jit_reloaded_locals` 的确切语义，以及 `frame->locals` 在 JIT 执行期间是否是过期值？
-   （§8.31 说「JIT 的 locals 在 scratch 区、`frame->locals` 内是过期值」）
+**⇒ 原推荐的「路线 2：callout 边界安全点」前提不成立（发布成本被低估），改推荐路线 3。**
 
-**验收方式**：长跑 JIT 主循环，堆曲线不再单调上涨；`Bailouts` 不回归；
-`gc_barrier_canary.leno` 从「不敏感」变成能分辨屏障好坏。
+| | 路线 1：回边原地安全点 | 路线 2：callout 边界安全点 | **路线 3：回边让出（建议）** |
+| --- | --- | --- | --- |
+| 位置 | JIT 回边，机器码里原地回收 | callout 前「发布」，callout 内同步回收 | 回边处每 N 次**让出**到解释器，由解释器回收 |
+| 发布成本 | 需机器码级栈映射 + raw→Value 转换 | 同上（vstack 也要） | **零**（复用已有出口路径的 writeback） |
+| 难度 | 高 | 高（比原估计高） | 中 |
+| 成本控制 | 每回边都要检查 | 每次 callout 都要发布 | **只对「循环体内可能分配」的循环发射** ⇒ 纯算术循环零开销 |
+| 风险 | 高 | 中高 | **低**（回收在解释器，状态已由出口路径发布） |
+
+**实测缺口**（`jit_probes/probe_jit_gc_safepoint.leno` + `LENO_GC_FORCE_EVERY=1` 数安全点）：
+`LENO_NO_JIT=1` 4001 次 / JIT（默认，内联开）**101 次** / JIT + `LENO_JIT_NOINLINE=1` 4007 次。
+默认配置下热循环里的 4000 次调用**一次安全点都没到**（被调函数被内联，不再有 `OP_RETURN`）。
+
+**⚠️ 一个仍未解释的观察**：`NOINLINE` 下安全点确实到了（4007 次），但当前迭代的 `n`
+**没有被回收**（值判据 `bad=0`、身份判据 `reused=0`）；根来源归属显示每次回收只有 2 个
+年轻对象存活、全部来自调用帧。按代码 `frame->locals` 里应该是过期对象，实测存活者却是
+当前对象。**查出这个存活者是谁之前，不要认为 JIT 活值已被覆盖** —— 路线 3 之所以安全，
+正是因为它绕开了这个问题（回收时状态已发布）。
+
+**验收方式**：`probe_jit_gc_safepoint.leno` 在默认（内联开）配置下的回收次数从 ~101
+升到与分配量匹配；`probe_alloc2.leno` 长跑堆曲线不再单调上涨；`Bailouts` 不回归；
+`assert` 273/0；`i++` / `经典递归` 无回归。
+（`gc_barrier_canary.leno` 的敏感度问题已由 P0 解决，与 P1 无关，见第五节。）
+
+**进度（2026-09-13，详见 `JIT实现与调试记录.md` §8.37）**：
+
+* ✅ **已实施**：「JIT 帧内禁止同步回收」硬化 —— `gc_alloc` 的分配失败路径不再在
+  JIT 帧里 `gc_major_collect()`（那会把 JIT 的活值当垃圾），改为置延迟标志 +
+  `jit_request_bailout()` 退到解释器处理；新增 `jit_loop_depth` / `jit_in_frame()`；
+  并修掉 `struct_instance_new_depth()` 与 `jit_callout_struct_init()` 两处
+  分配失败时空指针解引用。回归 273/0，基准无变化。
+* ✅ **已实施**：**回边安全点**（`OP_LOOP` / `OP_FOR_LOOP` 消费 `vm.gc_force_request`）。
+  它只覆盖"解释器执行到回边"的情形（实测 `probe_jit_gc_safepoint` 默认内联配置
+  `FORCE_EVERY=500` 时 70 → 91 次，别高估）；JIT 机器码内部仍然没有安全点，
+  那是路线 3 要解决的。这个回边安全点同时也是路线 3 落地后的**收集点**。
+* ❌ **负结果（别再试）**：用 **bailout** 做周期性中断（跨阈值 → 置请求 + 请求 bailout，
+  解释器在回边回收）。实测退化成 6.36M 次回收 + 死循环 + 428s。根因：**bailout 不是
+  迭代边界** —— JIT 只在 exit / framedead 写回 locals，bailout 后解释器是从
+  「JIT 进入时的状态」重跑整个循环，于是可复现的 bailout 无限重放；现有代码唯一的
+  刹车是 `JIT_BAILOUT_LIMIT=3`，而 GC 回退不计数恰好绕过它。
+  **⇒ 路线 3 必须走 exit 路径（回边处 vstack 平衡、locals 会被写回），不能用 bailout。**
+* ⬜ **待实施**：路线 3 的 codegen 部分 —— 回边上 `dec 计数; jz yield`，yield 段照抄
+  exit 块但返回新码 4；`jit_try_hot_loop` 单独映射 4（不计 bailout）；
+  `op_jump.inc` / `op_for_loop.inc` 的 `jit_r == 4` 分支做 `frame->ip -= offset`
+  （回收点已经接好在回边处理器里）。
 
 ### P2 — 实参写入路径的剩余成本
 
