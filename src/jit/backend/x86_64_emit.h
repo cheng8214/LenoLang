@@ -27,6 +27,9 @@
 #define JIT_R12  12
 #define JIT_R13  13
 #define JIT_R14  14
+/* §8.42：局部量驻留寄存器专用（v1 只 pin 一个槽）。callee-saved，所以序言 push /
+ * 尾声 pop（C 调用方与 callout 都会保留它）。此前全后端未使用 R15，不冲突。 */
+#define JIT_R15  15
 
 /* ---- Low-level encoding helpers ---- */
 

@@ -53,6 +53,7 @@
     emit_pop_reg(cb, JIT_R13); \
     emit_pop_reg(cb, JIT_R12); \
     emit_pop_reg(cb, JIT_RBX); \
+    if (pin_reg) emit_pop_reg(cb, JIT_R15); /* §8.42 与序言的 push 对称 */ \
     emit_pop_rbp(cb); \
     emit_ret(cb); \
 } while(0)
@@ -124,6 +125,94 @@ static int bc_is_jump_target(const CodegenCtx* ctx, int bc_off) {
     return 0;
 }
 
+/* ---- §8.42 局部量驻留寄存器：选择要 pin 的 scratch 槽 ----
+ *
+ * v1 是**保守版**：只 pin「访问点全部已转换」的槽 —— 即只被 OP_GET_LOCAL /
+ * OP_SET_LOCAL / OP_SET_LOCAL_POP 访问的槽。任何还被其他 opcode 按**内存**方式
+ * 访问的槽一律排除（否则寄存器与 scratch 槽会出现两份值 → 读到过期值、静默算错）。
+ *
+ * 排除表来自 src/jit/backend 下 `cur_local_map[` 的 grep（§8.42 的清单，20 处）。
+ * **新增任何局部量访问点都必须同步这里。** */
+#define JIT_PIN_MAX_SCRATCH 256
+
+static void pin_excl(const ScanResult* sr, int excluded[], int slot) {
+    if (slot < 0 || slot >= 256) return;
+    int si = sr->local_map[slot];
+    if (si >= 0 && si < JIT_PIN_MAX_SCRATCH) excluded[si] = 1;
+}
+
+static int pick_pin_local(const uint8_t* body_start, const ScanResult* sr,
+                          int count[], int excluded[]) {
+    for (int i = 0; i < JIT_PIN_MAX_SCRATCH; i++) { count[i] = 0; excluded[i] = 0; }
+    const uint8_t* ip = body_start;
+    const uint8_t* end = body_start + sr->body_size;
+    while (ip < end) {
+        uint8_t op = *ip;
+        int size = opcode_size(ip);
+        if (size <= 0) break;
+        switch (op) {
+            /* 已转换（EMIT_LOAD_LOCAL / EMIT_STORE_LOCAL）：计数 */
+            case OP_GET_LOCAL: case OP_SET_LOCAL: case OP_SET_LOCAL_POP: {
+                int si = sr->local_map[rd_short(ip + 1)];
+                if (si >= 0 && si < JIT_PIN_MAX_SCRATCH) count[si]++;
+                break;
+            }
+            /* 未转换：排除（按内存侧操作数布局，与 codegen 的读法一致） */
+            case OP_MOVE_LOCAL: case OP_MOVE_LOCAL_POP:
+                pin_excl(sr, excluded, rd_short(ip + 1));
+                pin_excl(sr, excluded, rd_short(ip + 3));
+                break;
+            case OP_SET_LOCAL_CONST:
+                pin_excl(sr, excluded, rd_short(ip + 3));
+                break;
+            case OP_CLEAR_LOCAL_RANGE: {
+                uint16_t base = rd_short(ip + 1);
+                uint16_t cnt  = rd_short(ip + 3);
+                for (uint16_t s = base; s < (uint16_t)(base + cnt); s++)
+                    pin_excl(sr, excluded, s);
+                break;
+            }
+            case OP_INC_LOCAL_NOPUSH: case OP_DEC_LOCAL_NOPUSH:
+            case OP_INC_LOCAL:       case OP_DEC_LOCAL:
+            case OP_PRE_INC_LOCAL:   case OP_PRE_DEC_LOCAL:
+                pin_excl(sr, excluded, rd_short(ip + 1));
+                break;
+            case OP_FOR_PREP:
+                pin_excl(sr, excluded, ip[1]);   /* start */
+                pin_excl(sr, excluded, ip[2]);   /* end   */
+                pin_excl(sr, excluded, ip[3]);   /* step  */
+                pin_excl(sr, excluded, ip[4]);   /* loop var */
+                break;
+            case OP_FOR_LOOP:
+                pin_excl(sr, excluded, ip[1]);   /* loop var */
+                pin_excl(sr, excluded, ip[2]);   /* step     */
+                pin_excl(sr, excluded, ip[3]);   /* end      */
+                break;
+            case OP_CMPJMP_LL_INT:
+                pin_excl(sr, excluded, rd_short(ip + 2));
+                pin_excl(sr, excluded, rd_short(ip + 4));
+                break;
+            case OP_CMPJMP_LG_INT:
+                pin_excl(sr, excluded, rd_short(ip + 2));
+                break;
+            case OP_GET_FIELD_FAST:
+                pin_excl(sr, excluded, rd_short(ip + 1));
+                break;
+            default:
+                break;   /* 不访问局部量 */
+        }
+        ip += size;
+    }
+    /* 选访问次数最多且未被排除的槽；访问 < 2 次不值得占一个寄存器 */
+    int best = -1, best_n = 1;
+    for (int i = 0; i < JIT_PIN_MAX_SCRATCH; i++) {
+        if (excluded[i] || count[i] <= best_n) continue;
+        best = i;
+        best_n = count[i];
+    }
+    return best;
+}
+
 /* ---- Main codegen function ---- */
 int compile_loop(CodegenCtx* ctx) {
     const ScanResult* sr = ctx->sr;
@@ -180,6 +269,40 @@ int compile_loop(CodegenCtx* ctx) {
      * 明确**不能**置位的：OP_ADD/SUB/MUL 通用版（int/float/concat 多路径）、
      * OP_USHR_IMM（shr 结果可能越出 int48）、OP_CAST_INT 自身（null 路径原样返回）。 */
     int prev_raw_int48 = 0;
+
+    /* ---- §8.42 局部量驻留寄存器（v1：最多 1 个槽、仅循环 JIT）----
+     * pin_si = 选中的 scratch 槽（-1 = 不 pin）；pin_reg = 承载它的寄存器。
+     * 可用寄存器：RBX 是类型位图、RBP 是帧、R12/R13/R14 被 callout 保存/恢复
+     * （RSP/RCX/R9）占用，所以 v1 只有 R15。它只在真的 pin 了槽时才 push/pop。
+     * 函数级 JIT 不 pin：那种 JIT 每次调用都进入，push/pop + 装载的固定成本更高。 */
+    int pin_count[JIT_PIN_MAX_SCRATCH], pin_excluded[JIT_PIN_MAX_SCRATCH];
+    int pin_si = -1;
+    if (!ctx->func_mode)
+        pin_si = pick_pin_local(ctx->body_start, sr, pin_count, pin_excluded);
+    const int pin_reg = (pin_si >= 0) ? JIT_R15 : 0;
+    if (pin_si >= 0 && jit_debug_on())
+        fprintf(stderr, "[JIT-CG] pin: scratch[%d] -> r15 (access=%d)\n",
+                pin_si, pin_count[pin_si]);
+
+    /* 局部量读/写：pinned 槽走寄存器，其余走 scratch 槽（内存） */
+    #define EMIT_LOAD_LOCAL(reg, si, disp) do { \
+        if (pin_reg && (si) == pin_si) { \
+            emit_mov_rr(cb, (reg), pin_reg); \
+        } else if ((disp) >= -128 && (disp) <= 127) { \
+            emit_mov_reg_mem8(cb, (reg), JIT_RBP, (int8_t)(disp)); \
+        } else { \
+            emit_mov_reg_mem32(cb, (reg), JIT_RBP, (disp)); \
+        } \
+    } while(0)
+    #define EMIT_STORE_LOCAL(reg, si, disp) do { \
+        if (pin_reg && (si) == pin_si) { \
+            emit_mov_rr(cb, pin_reg, (reg)); \
+        } else if ((disp) >= -128 && (disp) <= 127) { \
+            emit_mov_mem8_reg(cb, JIT_RBP, (int8_t)(disp), (reg)); \
+        } else { \
+            emit_mov_mem32_reg(cb, JIT_RBP, (disp), (reg)); \
+        } \
+    } while(0)
 
     /*
      * int48 overflow check: bail out to VM (which handles BigInt promotion)
@@ -538,6 +661,7 @@ int compile_loop(CodegenCtx* ctx) {
 
     /* ---- Function prologue ---- */
     emit_push_rbp(cb);                        /* push rbp          */
+    if (pin_reg) emit_push_reg(cb, JIT_R15);  /* §8.42 pin 值寄存器（callee-saved） */
     emit_push_reg(cb, JIT_RBX);              /* push rbx (type bitmap, callee-saved) */
     emit_push_reg(cb, JIT_R12);              /* push r12 (callout: saved RSP) */
     emit_push_reg(cb, JIT_R13);              /* push r13 (callout: saved RCX=locals) */
@@ -657,6 +781,17 @@ int compile_loop(CodegenCtx* ctx) {
 
         /* .next: patch jmp to here */
         cb->buf[next_patch] = (uint8_t)(cb->len - (next_patch + 1));
+    }
+
+    /* §8.42：把 pin 的槽装进寄存器。scratch 槽照旧保留（序言之后的入口检查
+     * —— 例如 FOR_LOOP 的 step 检查 —— 以及写回仍按内存路径读它；
+     * 但本 slot 已被 pick_pin_local 排除在那两类访问之外，见那里的说明）。 */
+    if (pin_reg) {
+        int _pd = scratch_disp(pin_si);
+        if (_pd >= -128 && _pd <= 127)
+            emit_mov_reg_mem8(cb, JIT_R15, JIT_RBP, (int8_t)_pd);
+        else
+            emit_mov_reg_mem32(cb, JIT_R15, JIT_RBP, _pd);
     }
 
     /* ---- Step check (for OP_FOR_LOOP) ----
@@ -917,6 +1052,15 @@ int compile_loop(CodegenCtx* ctx) {
     /* Write back all locals (type-aware via RBX bitmap) — 提取为宏，
      * exit 块与 framedead 块（异常定向到宿主帧 catch 时）共用 */
     #define EMIT_WRITEBACK_LOCALS() do { \
+        /* §8.42：先把 pin 的寄存器刷回 scratch 槽 —— 下面的写回循环按内存读它。 \
+         * 只在写出路径（exit / framedead / yield）执行，属于冷路径。 */ \
+        if (pin_reg) { \
+            int _pd = scratch_disp(pin_si); \
+            if (_pd >= -128 && _pd <= 127) \
+                emit_mov_mem8_reg(cb, JIT_RBP, (int8_t)_pd, JIT_R15); \
+            else \
+                emit_mov_mem32_reg(cb, JIT_RBP, _pd, JIT_R15); \
+        } \
         for (int _i = 0; _i < n; _i++) { \
             int slot = sr->local_slots[_i]; \
             int disp = scratch_disp(_i); \

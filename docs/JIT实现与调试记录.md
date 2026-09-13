@@ -2482,6 +2482,53 @@ int48」。另外静态已知的不匹配（`int a = 2.7`）会被**语义层**�
 
 ***
 
+### 8.43 局部量驻留寄存器 v1：机制落地，但**单独零收益**（2026-09-14）
+
+**判定清单（动手前的审计）**：`cur_local_map[` 在 `src/jit/backend` 下共 **20 处**访问点 ——
+`OP_GET_LOCAL` / `OP_SET_LOCAL` / `OP_SET_LOCAL_POP` / `OP_MOVE_LOCAL[_POP]` /
+`OP_SET_LOCAL_CONST` / `OP_CLEAR_LOCAL_RANGE` / `OP_INC|DEC_LOCAL[_NOPUSH]` /
+`OP_PRE_INC|PRE_DEC_LOCAL` / `OP_FOR_PREP` / `OP_FOR_LOOP` / `OP_CMPJMP_LL_INT` /
+`OP_CMPJMP_LG_INT` / `OP_GET_FIELD_FAST`，加上 `x86_64.c` 里 FOR_LOOP 的 step 检查与回边。
+**任何一处漏改都会让寄存器与 scratch 槽出现两份值（静默算错）**，这个清单是本次改动的安全边界。
+
+**v1 做法（保守）**：
+
+- 只 pin「访问点全部已转换」的 scratch 槽 —— 即只被 `OP_GET_LOCAL` / `OP_SET_LOCAL` /
+  `OP_SET_LOCAL_POP` 访问的槽；其余 17 处 opcode 命中的槽一律排除
+  （`pick_pin_local` 的排除表就是上面那份清单，代码里注明「新增访问点必须同步」）。
+- 最多 pin **1 个**槽（访问次数最多、且 ≥ 2 次的）。**可用寄存器只有 R15**：RBX 是类型位图、
+  RBP 是帧、R12/R13/R14 被 callout 的保存/恢复（RSP/RCX/R9）占用。
+- 只在循环 JIT 启用（函数级 JIT 每次调用都进入，push/pop + 装载的固定成本更高）。
+- pinned 槽在**序言**里装载、在**写回前**刷回 scratch 槽（`EMIT_WRITEBACK_LOCALS` 首行），
+  写成/退出/让出路径共用 ✓；**bailout 不写回**（语义是「整个 JIT 运行被丢弃、解释器重放」，
+  §8.37）✓。
+
+**实测（关键）**：
+
+| 基准 | §8.41 之后 | 加上 pin 之后 |
+| --- | --- | --- |
+| `bench_bitwise_loop` 2 亿次 | 437~453ms | **437 / 438 / 438ms —— 完全相同** |
+| `i++` / `arr.add` / `arr[index]` / `dict[key]=` / `fib(32)` | — | 全部在噪声内（逐项对照） |
+
+debug 打印确认 pin 确实命中：`[JIT-CG] pin: scratch[0] -> r15 (access=10)`（正是最热的 `inp`）。
+
+**为什么零收益（本轮最有价值的结论）**：pin 把 `mov rax,[rbp-8]` / `mov [rbp-8],rax`
+换成了 `mov rax,r15` / `mov r15,rax` —— **指令条数一条没减**，而这条循环是
+**前端吞吐受限**的（§8.40 实测 ≈5.9 IPC，即解码/发射宽度打满）。所以：
+
+> **省「内存访问」不划算，只有省「指令条数」才划算。** 后续优化的判据应该是
+> 「这条改动让每轮少发几条指令」，而不是「让访存更快」。
+
+验证：`assert` 273/0（双模式）；**130 个示例 JIT vs 解释器逐字一致**（3 个差异全是计时行，
+同前两次核对）；两个探针输出不变。
+
+**保留理由**：它是下一步「惰性常量 + 立即数折叠」的前提 —— 有了 pinned 槽，`x = x & 7`
+这种语句才能被折成 `mov rax,r15; and rax,7`（**2 条**，现在是 12 条）。按本项目的
+「不留没有证据的复杂度」原则，这次是**有证据的中性**（机制正确 + 单独零收益 + 明确解锁下一步），
+而不是猜。剩下的 17 处访问点会在各自转换时逐步缩小排除表。
+
+***
+
 ## 9. 性能数据
 
 ### 测试环境

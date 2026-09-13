@@ -40,11 +40,7 @@
                 int si = cur_local_map[slot];
                 int disp = scratch_disp(si);
                 TOS_SPILL();
-                if (disp >= -128 && disp <= 127) {
-                    emit_mov_reg_mem8(cb, JIT_RAX, JIT_RBP, (int8_t)disp);
-                } else {
-                    emit_mov_reg_mem32(cb, JIT_RAX, JIT_RBP, disp);
-                }
+                EMIT_LOAD_LOCAL(JIT_RAX, si, disp);   /* §8.42：pinned 槽走寄存器 */
                 TOS_PRODUCE();
                 vstack++;
                 if (jit_debug_on()) fprintf(stderr, "[JIT-CG] GET_LOCAL slot=%d -> scratch[%d] disp=%d vstack=%d\n", slot, si, disp, vstack);
@@ -56,11 +52,7 @@
                 int disp = scratch_disp(si);
                 /* peek TOS → store to local */
                 TOS_PEEK_TO(JIT_RAX);
-                if (disp >= -128 && disp <= 127) {
-                    emit_mov_mem8_reg(cb, JIT_RBP, (int8_t)disp, JIT_RAX);
-                } else {
-                    emit_mov_mem32_reg(cb, JIT_RBP, disp, JIT_RAX);
-                }
+                EMIT_STORE_LOCAL(JIT_RAX, si, disp);   /* §8.42：pinned 槽走寄存器 */
                 break;
             }
             case OP_SET_LOCAL_POP: {
@@ -69,11 +61,7 @@
                 int disp = scratch_disp(si);
                 /* consume TOS → store to local */
                 TOS_CONSUME_RAX();
-                if (disp >= -128 && disp <= 127) {
-                    emit_mov_mem8_reg(cb, JIT_RBP, (int8_t)disp, JIT_RAX);
-                } else {
-                    emit_mov_mem32_reg(cb, JIT_RBP, disp, JIT_RAX);
-                }
+                EMIT_STORE_LOCAL(JIT_RAX, si, disp);   /* §8.42：pinned 槽走寄存器 */
                 vstack--;
                 if (jit_debug_on()) fprintf(stderr, "[JIT-CG] SET_LOCAL_POP slot=%d -> scratch[%d] disp=%d vstack=%d\n", slot, si, disp, vstack);
                 break;
