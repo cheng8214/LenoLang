@@ -53,6 +53,13 @@ OPCODE(OP_FOR_LOOP) {
     uint8_t inclusive = READ_BYTE();
     uint16_t jump_offset = READ_SHORT();
 
+    /* 回边 GC 安全点（§8.37，同 OP_LOOP）：JIT 热循环跨阈值时请求 bailout
+     * 回到这里，回收在解释器侧完成（JIT 活值 GC 看不见，见 §8.36）。 */
+    if (unlikely(vm.gc_force_request)) {
+        vm.gc_force_request = 0;
+        gc_force_collect();
+    }
+
     /* JIT: try to run a compiled hot loop. */
     int jit_r = jit_try_hot_loop(frame, &vm, (int32_t)jump_offset, 2);
     if (jit_r == 1) {

@@ -129,6 +129,24 @@ int jit_try_hot_loop(CallFrame* frame, VM* vm_ptr, int32_t loop_offset, int back
  */
 int jit_try_hot_func_call(ObjClosure* closure, int arg_count, int typed, VM* vm_ptr);
 
+/*
+ * 当前是否正在执行 JIT 机器码（循环 JIT 或函数级 JIT）。
+ *
+ * 用途：GC 的**同步**回收路径据此避让。JIT 的活值在它自己的机器栈帧里
+ * （locals scratch + vstack），mark_roots 只看 vm.stack 与各帧 locals，
+ * 看不到它们 —— 在 JIT 帧里就地回收会把还在用的对象当垃圾（见 §8.36）。
+ * 只被 gc_alloc 的分配失败路径调用，不在热路径上。
+ */
+int jit_in_frame(void);
+
+/*
+ * 请求从 JIT 机器码回退到解释器：置 jit_callout_failed，使当前 callout 返回后
+ * JIT 走 bailout 路径（会写回 locals），由解释器重跑这一轮。
+ * 当前唯一调用者是 gc_alloc 的分配失败路径（§8.37）：JIT 帧内不能同步回收，
+ * 于是退一格到解释器，在那里安全回收后再试。
+ */
+void jit_request_bailout(void);
+
 /* Print JIT statistics to stdout. */
 void jit_print_stats(void);
 

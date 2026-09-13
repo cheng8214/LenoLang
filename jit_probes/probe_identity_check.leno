@@ -1,0 +1,38 @@
+// struct 身份比较自检（2026-09-13）
+//
+// 用途：`probe_jit_gc_safepoint.leno` 的「槽有没有被复用」判据依赖
+//       `probe == n` 是**对象身份比较**（§8.34）。本探针证明这件事在
+//       JIT 热循环里也成立 —— 否则那些探针的 `reused=0` 可能只是判据失灵。
+//
+// 判据：`same_ok` / `distinct_ok` 必须都出现；热循环里
+//       `same=100000 wrongly_equal=0`（同一对象恒相等、不同对象恒不等）。
+//       两种模式（JIT 与 LENO_NO_JIT=1）结果必须一致。
+//
+//   build\lenojit.exe jit_probes\probe_identity_check.leno
+
+struct Node {
+    float v = 0.0
+}
+
+main() {
+    var a = new Node(v = 1.0)
+    var b = a
+    var c = new Node(v = 1.0)
+    if a == b { print("same_ok") } else { print("same_FAIL(应为同一对象)") }
+    if a == c { print("distinct_FAIL(不同对象却相等)") } else { print("distinct_ok") }
+
+    // 热循环里做同样的事，确保 JIT 的身份比较快路径（§8.34）也成立
+    var same = 0
+    var wrongly_equal = 0
+    var i = 0
+    while i < 100000 {
+        var x = new Node(v = 2.0)
+        var y = x
+        if x == y { same = same + 1 }
+        var z = new Node(v = 2.0)
+        if x == z { wrongly_equal = wrongly_equal + 1 }
+        i = i + 1
+    }
+    print("same=" + _str(same) + " wrongly_equal=" + _str(wrongly_equal))
+    return 0
+}

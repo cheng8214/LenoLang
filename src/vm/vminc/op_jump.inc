@@ -25,6 +25,15 @@ OPCODE(OP_JUMP_IF_TRUE) {
 }
 
 OPCODE(OP_LOOP) {
+    /* 回边 GC 安全点（§8.37）：JIT 热循环跨过年轻代阈值时会置
+     * vm.gc_force_request 并请求 bailout 回到这里 —— 回收必须发生在解释器
+     * 里，因为 JIT 的活值在它自己的机器栈帧里、GC 看不见（§8.36）。
+     * 纯解释执行的循环顺带受益：回边从此也是安全点。
+     * 只读 VM 结构体字段，不涉及 THREAD_LOCAL 访问。 */
+    if (unlikely(vm.gc_force_request)) {
+        vm.gc_force_request = 0;
+        gc_force_collect();
+    }
     int32_t offset = READ_INT32();
 
     /* JIT: try to run a compiled hot loop. */

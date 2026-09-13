@@ -13,6 +13,7 @@
 | `probe_alloc2.leno` | 分配路径隔离。四个循环体算术量级一致，唯一变量是「分配什么」：`new 2 字段` / `new 6 字段` / 数组字面量 `[1.0,2.0]` / 不分配。全部直接写在循环体里，排除方法调用干扰。 |
 | `diff_examples.bat` | 基线二进制 vs 新版二进制，对 `examples/{struct,func,module_export_struct,cstruct}` 的示例做 stdout + 退出码差分（约 59 个文件）。 |
 | `gc_barrier_canary.leno` | 写屏障金丝雀：老年代 holder 只被「自己的字段」引用的年轻对象，屏障失效即被回收。**必须配合下面的确定性 GC 钩子**，否则不敏感（原因写在文件头的注释里）。 |
+| `probe_jit_gc_safepoint.leno` | JIT 循环的 GC 安全点缺口探针（§8.36）：JIT 热循环里分配 + callout，用钩子数「实际到达的安全点」，并用值判据 + **身份判据**（`probe == n`，比读值可靠）判断 JIT 活值是否被误回收。 |
 | `probe_index_slowpath.leno` | `OP_INDEX` 慢路径 bailout 回归探针（§8.33）：判据是 `Bailouts` 不增长，不是耗时。 |
 | `probe_eq_identity.leno` | `OP_EQ` 身份比较快路径差分探针（§8.34）：判据是 JIT 与 `LENO_NO_JIT=1` 结果逐条一致 + 哪些比较仍 bailout。 |
 
@@ -25,7 +26,7 @@
 | --- | --- |
 | `LENO_GC_YOUNG_THRESHOLD=<bytes\|KB\|MB>` | 覆盖年轻代阈值并**钉住**（禁止 `gc_minor_collect` 结尾把它抬回 `max(young_allocated*2, 8MB)`）。不钉住的话第一次回收后覆盖值就没了。 |
 | `LENO_GC_FORCE_EVERY=<n>` | 每 n 次分配挂一个「强制回收」请求，在**下一个解释器安全点**无条件回收一次（不受阈值门控）⇒ 回收次数按分配次数确定。 |
-| `LENO_GC_TRACE=1` | 每次回收向 stderr 打一行：`[GC] minor #N young=..KB old=..KB rem=R freed=F promoted=P thr=..KB`。 |
+| `LENO_GC_TRACE=1` | 每次回收向 stderr 打一行：`[GC] minor #N young=..KB old=..KB rem=R freed=F promoted=P thr=..KB roots(stk=.. mod=.. frame=.. glb=.. misc=.. oth=..) marked=..`。`roots(...)` 是**根来源归属**（各来源新标记的对象数），`marked` 是本轮新标记总数 —— 用来定位「某个活对象靠哪个根活下来的」（排查 JIT 活值可见性时就是靠它确认 `stk=0 frame=2`）。 |
 
 ```bat
 set LENO_GC_YOUNG_THRESHOLD=64KB

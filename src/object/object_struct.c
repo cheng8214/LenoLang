@@ -170,6 +170,9 @@ ObjStruct* struct_instance_new_depth(ObjStructDef* def, int depth) {
     // （对象版光线追踪实测：struct 分配慢于 Python 的主因之一）
     size_t total_size = sizeof(ObjStruct) + (size_t)def->field_count * sizeof(Value);
     ObjStruct* obj = (ObjStruct*)gc_alloc(total_size, OBJ_STRUCT);
+    /* 分配失败时 gc_alloc 已经 error_add_at；这里必须返回 NULL 而不是继续解引用
+     * （JIT 的 OP_STRUCT_INIT callout 与解释器构造都会检查 NULL 走各自的失败路径）。 */
+    if (!obj) return NULL;
     obj->def = def;
     obj->field_values = (Value*)((char*)obj + sizeof(ObjStruct));
     obj->declared_face = NULL;

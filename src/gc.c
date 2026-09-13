@@ -338,6 +338,17 @@ Object* gc_alloc(size_t size, ObjType type) {
     // 年轻代分配超阈值时设置延迟 GC 标志（不在此处同步执行）
     if (gc.enabled && gc.young_allocated + size > gc.young_threshold && !gc.running) {
         gc.deferred_gc = 1;
+        /* ⚠️ 曾试过在这里「置 gc_force_request + jit_request_bailout()」，让解释器
+         * 在回边安全点回收 JIT 循环里的分配。**这条路是错的，已回退**：
+         * bailout 不是迭代边界 —— JIT 只在 exit / framedead 块写回 locals
+         * （§8.36 核实 2），bailout 之后解释器是从「JIT 进入时的状态」重新开始
+         * 整个循环。于是「同一位置可复现的 bailout」会无限重放：实测退化到
+         * 6.36M 次回收 + 循环计数不前进（死循环）。现有 bailout 靠
+         * `JIT_BAILOUT_LIMIT=3` 封顶止血，而 GC 回退为了不烧掉预算特意不计数，
+         * 恰好绕过了这道闸。
+         * 正解是**回边让出**：JIT 在回边处走 exit 路径（那条路径会写回 locals、
+         * 且回边处 vstack 平衡）返回一个"让出"码，解释器从循环头继续并回收。
+         * 见 §8.37 的结论与待办。 */
     }
 
     // 测试钩子 LENO_GC_FORCE_EVERY（§8.35）：每 N 次分配把「强制回收」请求挂到
@@ -395,11 +406,27 @@ Object* gc_alloc(size_t size, ObjType type) {
 
     // 分配失败时尝试 Major GC 释放内存
     if (!obj && gc.enabled && !gc.running) {
-        gc_major_collect();
-        obj = (Object*)malloc(size);
-        if (!obj) {
-            // 放宽阈值，避免反复触发 GC
-            gc.old_threshold = gc.old_allocated + gc.young_allocated + (1024 * 1024);
+        /* ★ 2026-09-13（§8.36）：JIT 帧内**禁止同步回收**。
+         * JIT 的活值在它自己的机器栈帧里（locals scratch + vstack），
+         * mark_roots 只扫 vm.stack 与各帧 locals —— 看不到它们。在 JIT 帧里
+         * 就地回收会把还在用的对象当垃圾（静默 use-after-free）。
+         * 改为只置延迟回收标志：真正的回收发生在解释器侧（回边让出 / OP_RETURN
+         * 安全点，见 §8.37），那时活值已被出口路径发布过。
+         * 代价：这一次分配真的失败（与"回收也没救回来"是同一结局），
+         * 换掉的是内存损坏。 */
+        if (jit_in_frame()) {
+            /* 退一格到解释器：置延迟回收 + 请求 bailout。callout 返回 NULL 后
+             * JIT 因 jit_callout_failed 走 bailout（写回 locals），解释器重跑
+             * 这一轮时先同步回收再重试 —— 通常能成功分配，功能不降级。 */
+            gc.deferred_gc = 1;
+            jit_request_bailout();
+        } else {
+            gc_major_collect();
+            obj = (Object*)malloc(size);
+            if (!obj) {
+                // 放宽阈值，避免反复触发 GC
+                gc.old_threshold = gc.old_allocated + gc.young_allocated + (1024 * 1024);
+            }
         }
     }
 
@@ -840,6 +867,7 @@ void gc_mark_object(Object* obj) {
     if (obj->marked) return;
 
     obj->marked = 1;
+    if (gc.trace) gc.mark_new++;   // 诊断：只在 trace 打开时维护（见 mark_roots 的来源归属）
     mark_stack_push(obj);
 }
 
@@ -903,6 +931,12 @@ static void scan_remembered_set(void) {
 static void mark_roots(void) {
     if (!gc.vm) return;
 
+    /* 诊断：按根来源统计新标记的对象数（仅 LENO_GC_TRACE 下维护，默认零开销）。
+     * 用途：定位「某个活对象靠哪个根活下来的」——排查 JIT 活值可见性时用过。 */
+    int _mk = 0;
+    if (gc.trace) { gc.mark_new = 0; memset(gc.dbg_roots, 0, sizeof(gc.dbg_roots)); }
+#define DBG_ROOT_TAKE(slot) do { if (gc.trace) { int _t = gc.mark_new; gc.dbg_roots[slot] = _t - _mk; _mk = _t; } } while(0)
+
     // 1. 标记操作数栈上的所有值
     int sp = gc.vm->sp;
     if (sp < 0) sp = 0;
@@ -910,6 +944,7 @@ static void mark_roots(void) {
     for (int i = 0; i < sp; i++) {
         gc_mark_value(gc.vm->stack[i]);
     }
+    DBG_ROOT_TAKE(0);
     
     // 1.5 对所有活跃帧的栈帧区域做保守扫描
     // 确保帧的 stack_base ~ stack_base+slot_count 范围内的所有值也被标记。
@@ -932,6 +967,7 @@ static void mark_roots(void) {
             if (val_is_obj(v)) gc_mark_object(val_as_obj(v));
         }
     }
+    DBG_ROOT_TAKE(1);
 
     // 2. 标记所有调用帧（闭包、常量池、局部变量、try 返回值、模块）
     for (int i = 0; i < gc.vm->frame_cnt; i++) {
@@ -958,6 +994,7 @@ static void mark_roots(void) {
             gc_mark_object((Object*)frame->module);
         }
     }
+    DBG_ROOT_TAKE(2);
 
     // 3. 标记全局变量
     for (int i = 0; i < gc.vm->global_count; i++) {
@@ -982,6 +1019,7 @@ static void mark_roots(void) {
     for (int i = 0; i < gc.vm->global_func_count; i++) {
         gc_mark_value(gc.vm->global_funcs[i]);
     }
+    DBG_ROOT_TAKE(3);
 
     // 5. 标记 open upvalue 链表（闭包捕获的栈上变量）
     Upvalue* upvalue = gc.vm->open_upvalues;
@@ -1002,6 +1040,7 @@ static void mark_roots(void) {
             gc_mark_value(gc.vm->last_return_values[i]);
         }
     }
+    DBG_ROOT_TAKE(4);
 
     // 8. 标记原生函数方法表
     native_mark_all_functions();
@@ -1088,6 +1127,8 @@ static void mark_roots(void) {
 
     // 19. 标记字典 tombstone 哨兵字符串已不再需要（已改用 Value 哨兵值）
     // DICT_TOMBSTONE_VAL 是 NaN-boxed 值，不涉及 GC 管理的对象
+    DBG_ROOT_TAKE(5);
+#undef DBG_ROOT_TAKE
 }
 
 // ============================================================================
@@ -1828,14 +1869,18 @@ void gc_minor_collect(void) {
     }
 
     if (gc.trace) {
-        fprintf(stderr, "[GC] minor #%llu young=%lluKB old=%lluKB rem=%d freed=%d promoted=%d thr=%lluKB\n",
+        fprintf(stderr, "[GC] minor #%llu young=%lluKB old=%lluKB rem=%d freed=%d promoted=%d thr=%lluKB"
+                " roots(stk=%d mod=%d frame=%d glb=%d misc=%d oth=%d) marked=%d\n",
                 (unsigned long long)gc.minor_gc_count,
                 (unsigned long long)(gc.young_allocated / 1024),
                 (unsigned long long)(gc.old_allocated / 1024),
                 gc.remembered_count,
                 gc.last_freed,
                 gc.last_promoted,
-                (unsigned long long)(gc.young_threshold / 1024));
+                (unsigned long long)(gc.young_threshold / 1024),
+                gc.dbg_roots[0], gc.dbg_roots[1], gc.dbg_roots[2],
+                gc.dbg_roots[3], gc.dbg_roots[4], gc.dbg_roots[5],
+                gc.mark_new);
     }
 }
 

@@ -214,6 +214,15 @@ extern int32_t jit_bailout_site;
  * 池行宽 = JIT_MAX_LOCALS(64) 槽；depth 上限受 jit_func_depth < 64 约束。 */
 extern Value jit_fn_result;
 extern int jit_func_depth;
+/* ---- 「当前在 JIT 机器码里吗」（2026-09-13，§8.36 / §8.37）----
+ * jit_loop_depth: 正在执行**循环 JIT** 机器码的层数（jit_try_hot_loop 维护）
+ * jit_func_depth: 正在执行**函数级 JIT** 机器码的层数（原义，递归保护）
+ * jit_in_frame() : 两者之一 > 0。
+ * 用途：gc_alloc 的 malloc 失败路径据此决定能不能**同步**回收 ——
+ * JIT 的活值在它自己的机器栈帧里（locals scratch + vstack），mark_roots 看不见，
+ * 就地回收等于把还在用的对象当垃圾（use-after-free）。 */
+extern int jit_loop_depth;
+int jit_in_frame(void);
 #define JIT_FUNC_MAX_DEPTH 64
 extern Value jit_func_locals_pool[JIT_FUNC_MAX_DEPTH][JIT_MAX_LOCALS];
 

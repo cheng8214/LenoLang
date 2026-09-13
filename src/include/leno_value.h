@@ -765,6 +765,10 @@ typedef struct {
     int trace;                    // LENO_GC_TRACE：每次回收向 stderr 打一行
     int last_freed;               // 最近一次回收实际释放的对象数（诊断/trace）
     int last_promoted;            // 最近一次回收晋升到老年代的对象数（诊断/trace）
+    /* 诊断（仅在 LENO_GC_TRACE 下维护）：标记阶段各根来源新标记的对象数。
+     * 用途：定位「某个活对象到底是靠哪个根活下来的」——排查 JIT 活值可见性。 */
+    int mark_new;
+    int dbg_roots[6];             // 0=值栈 1=模块帧 2=调用帧(含locals) 3=全局 4=其它 5=方法表
     Object** remembered_set;
     int remembered_count;
     int remembered_capacity;

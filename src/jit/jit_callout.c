@@ -75,6 +75,19 @@ Value* jit_reloaded_locals = NULL;
  * 避免 JIT 机器码无限递归耗尽 C 栈）。 */
 Value jit_fn_result = NULL_VAL;
 int jit_func_depth = 0;
+int jit_loop_depth = 0;
+
+/* 当前是否在 JIT 机器码里（循环 JIT 或函数级 JIT）—— 见 §8.36。
+ * 只被 GC 的 malloc 失败路径调用，不在热路径上。 */
+int jit_in_frame(void) {
+    return jit_func_depth > 0 || jit_loop_depth > 0;
+}
+
+/* 请求回退到解释器（见 jit.h 的契约）。置 jit_callout_failed 即可：
+ * 所有可能失败的 callout 之后，codegen 都会检查这个标志并 bailout。 */
+void jit_request_bailout(void) {
+    jit_callout_failed = 1;
+}
 Value jit_func_locals_pool[JIT_FUNC_MAX_DEPTH][JIT_MAX_LOCALS];
 
 #ifdef _WIN32
@@ -690,6 +703,13 @@ Value jit_callout_struct_init(int64_t* vstack_top, uint16_t name_const_idx,
     }
 
     ObjStruct* obj = struct_instance_new(def);
+    if (!obj) {
+        /* 分配失败（gc_alloc 已 error_add_at；JIT 帧内不再同步回收，见 §8.37）：
+         * 置 failed 让 JIT bailout → 解释器重跑本轮、在安全状态下回收并重试。
+         * 绝不能带着 NULL 继续写字段。 */
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
 
     /* 字段索引字节位于 ip + 5 + 2*generic_count 起，共 arg_count 个。
      * codegen 反序生成字段索引+按调用顺序压栈，VM 循环内第 i 次 pop 的

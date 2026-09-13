@@ -1,0 +1,70 @@
+// JIT 循环内 GC 安全点缺口探针（2026-09-13）
+//
+// 想验证的事：JIT 编译后的热循环里，活值在**它自己的机器栈帧**里
+// （locals scratch = [rbp-8*(idx+1)]，vstack 紧随其后；见 backend/x86_64.c），
+// 而 `EMIT_WRITEBACK_LOCALS` 只在 exit / framedead 块发射 —— 循环中途不写回。
+// ⇒ 整个循环期间 `frame->locals` 是**进入循环时的快照**，GC 的 mark_roots
+//   （扫 vm.stack + 各帧 locals）看不到 JIT 当前的活值。
+//
+// 危险窗口：JIT 循环里调用函数 → callout → VM 重入 → 被调函数返回时走到
+// OP_RETURN 的 GC 安全点 → 回收。若外层 JIT 的活对象没有任何别的根，
+// 它就会被回收，之后 JIT 继续用它就是 use-after-free。
+//
+// 两个判据（第二个是关键，值检查容易假阴性）：
+//   bad    —— 读 `n.v`，若 n 被回收且槽已被复用为 v=3.0 的 junk 则计数。
+//             注意：**对象被回收 ≠ 槽立刻被复用**，槽没被复用时读到的是
+//             未被覆盖的旧值 7.0，所以这个判据可能漏报。
+//   reused —— n 分配后夹大量分配，再连续分配 4000 个 Node，用**身份比较**
+//             （`probe == n`，struct 按对象身份比较，见 §8.34）判断有没有哪个
+//             新对象拿到了 n 的那个槽。拿到了 ⇒ n 确实已被回收。
+//             只要回收后分配的个数 > 当时 free-list 长度，这个判据就是确定的。
+//
+// 用法（必须开钩子，否则回收时机不可控）：
+//   set LENO_GC_YOUNG_THRESHOLD=64KB
+//   set LENO_GC_FORCE_EVERY=500        :: 每 500 次分配强制回收一次
+//   set LENO_GC_TRACE=1
+//   set LENO_JIT_DEBUG=1               :: 确认 Compiled/Executed/Bailouts
+//   build\lenojit.exe jit_probes\probe_jit_gc_safepoint.leno
+
+struct Node {
+    float v = 0.0
+}
+
+// 被调函数：含循环回边 ⇒ 不能被内联（内联要求 callee 体足够简单），必然走 callout。
+// 体内大量分配 ⇒ ① 给回收提供压力；② 复用被回收对象的槽。
+func churn(int k): float {
+    var s = 0.0
+    var i = 0
+    while i < 200 {
+        var junk = new Node(v = 3.0)
+        s = s + junk.v
+        i = i + 1
+    }
+    return s + _float(k)
+}
+
+main() {
+    var sum = 0.0
+    var bad = 0
+    var reused = 0
+    var i = 0
+    while i < 2000 {
+        // 1) 循环内分配：n 是 JIT 的活值（只在机器栈 scratch 里）
+        var n = new Node(v = 7.0)
+        // 2) 两次 callout → 两次 VM 重入，churn 返回时都可能走到 GC 安全点
+        sum = sum + churn(i)
+        sum = sum + churn(i)
+        // 3) 值判据：若 n 已被回收且槽被复用，这里读到 3.0
+        if n.v != 7.0 { bad = bad + 1 }
+        // 4) 身份判据：连续分配，看有没有新对象拿到 n 的槽
+        var j = 0
+        while j < 4000 {
+            var probe = new Node(v = 9.0)
+            if probe == n { reused = reused + 1 }
+            j = j + 1
+        }
+        i = i + 1
+    }
+    print("bad=" + _str(bad) + " reused=" + _str(reused) + " sum=" + _str(sum))
+    return 0
+}

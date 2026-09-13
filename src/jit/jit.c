@@ -584,7 +584,11 @@ fprintf(stderr, "[JIT-DEBUG] EXEC call #%d, fn=%p, locals=%p\n",
             fprintf(stderr, "\n");
         }
     }
+    /* jit_loop_depth：标记"正在执行循环 JIT 机器码"。
+     * GC 的同步回收路径（gc_alloc 分配失败）据此避让 —— 见 §8.36。 */
+    jit_loop_depth++;
     int result = entry->fn(frame->locals, vm_ptr->globals);
+    jit_loop_depth--;
     if (jit_debug_on()) {
         if (getenv("LENO_JIT_TRACE")) {
             fprintf(stderr, "[JIT-TRACE] POST #%d body_off=%-4d n_locals(scratch)=%d:", jit_state.execute_count, (int)(body_start - frame->chunk->code), 0);
