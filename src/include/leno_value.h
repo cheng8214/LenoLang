@@ -755,11 +755,22 @@ typedef struct {
     struct VM* vm;
     int enabled;
     int deferred_gc;              // 延迟 GC 标志：gc_alloc 置位，由事件循环在帧间执行
+    /* ---- 确定性触发 GC 的测试钩子（2026-09-13，§8.35）----
+     * 环境变量读取一次，默认全部关闭。设计约束：这些钩子只改变「已有安全点
+     * 何时决定回收」，不新增 GC 调用点 —— 即不会在「GC 看不见 JIT 活值」的
+     * 位置触发回收（那是 §8.31 P1 的范围）。 */
+    int young_threshold_pinned;   // 1 = young_threshold 被 LENO_GC_YOUNG_THRESHOLD 钉住，禁止动态上调
+    int force_every;              // LENO_GC_FORCE_EVERY：每 N 次分配挂一次强制回收请求（0=关）
+    int force_count;              // 分配计数（配合 force_every）
+    int trace;                    // LENO_GC_TRACE：每次回收向 stderr 打一行
+    int last_freed;               // 最近一次回收实际释放的对象数（诊断/trace）
+    int last_promoted;            // 最近一次回收晋升到老年代的对象数（诊断/trace）
     Object** remembered_set;
     int remembered_count;
     int remembered_capacity;
     int promote_age;
     size_t minor_gc_count;
+    size_t major_gc_count;
     Value** extra_roots;
     int extra_root_count;
     int extra_root_capacity;
@@ -803,7 +814,9 @@ void gc_remember_object(Object* holder);
 void gc_set_enabled(int enabled);
 int gc_get_enabled(void);
 void gc_try_collect_deferred(void);
-void gc_check_safe_point(void);
+// 强制回收一次（测试钩子，§8.35）：唯一差别是不受 young_threshold 门控。
+// 只在解释器安全点（OP_RETURN / OP_RETURN_MULTI）被调用。
+void gc_force_collect(void);
 void gc_push_root(Value* ptr);
 void gc_pop_root(void);
 

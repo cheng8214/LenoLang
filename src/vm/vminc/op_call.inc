@@ -622,7 +622,12 @@ OPCODE(OP_RETURN) {
     // 使用计数器摊销开销，避免高频递归（如 fib）的性能回退
     // 注意：GC 检查必须在 vm_stack_pop 之前，确保返回值仍在栈上被 GC 扫描到
     // 计数器放在 VM 结构体中，避免 THREAD_LOCAL 的 TLS 访问开销
-    if (unlikely(++vm.gc_return_counter >= 256)) {
+    // LENO_GC_FORCE_EVERY（测试钩子，§8.35）：分配计数到点即置 gc_force_request，
+    // 下一个安全点无条件回收一次（不受 young_threshold 门控）
+    if (unlikely(vm.gc_force_request)) {
+        vm.gc_force_request = 0;
+        gc_force_collect();
+    } else if (unlikely(++vm.gc_return_counter >= 256)) {
         vm.gc_return_counter = 0;
         if (gc.deferred_gc && gc.enabled && !gc.running) {
             gc_try_collect_deferred();
@@ -735,8 +740,11 @@ OPCODE(OP_RETURN_MULTI) {
     frame = &vm.frames[vm.frame_cnt - 1];
     int ret_count = READ_BYTE();
 
-    // GC 安全点检查（同 OP_RETURN）
-    if (unlikely(++vm.gc_return_counter >= 256)) {
+    // GC 安全点检查（同 OP_RETURN，含 LENO_GC_FORCE_EVERY 的强制回收）
+    if (unlikely(vm.gc_force_request)) {
+        vm.gc_force_request = 0;
+        gc_force_collect();
+    } else if (unlikely(++vm.gc_return_counter >= 256)) {
         vm.gc_return_counter = 0;
         if (gc.deferred_gc && gc.enabled && !gc.running) {
             gc_try_collect_deferred();

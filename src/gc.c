@@ -156,6 +156,37 @@ void gc_remember_object(Object* holder) {
 // GC 初始化与控制
 // ============================================================================
 
+// ---- 测试钩子的环境变量解析（§8.35）----
+// 只在 gc_init 里读一次，热路径不做任何 getenv。
+// 语义：变量存在且首字符不是 0/n/N/f/F 即为开（与 LENO_NO_JIT 的判断风格一致）。
+static int gc_env_on(const char* name) {
+    const char* s = getenv(name);
+    if (!s || !*s) return 0;
+    return !(s[0] == '0' || s[0] == 'n' || s[0] == 'N' || s[0] == 'f' || s[0] == 'F');
+}
+
+// 解析字节数：纯数字 = 字节；可带 K/KB/M/MB 后缀（大小写不敏感，兼容 "8MB"）。
+// 解析失败或 <= 0 返回 def。
+static size_t gc_env_size(const char* name, size_t def) {
+    const char* s = getenv(name);
+    if (!s || !*s) return def;
+    char* end = NULL;
+    long long v = strtoll(s, &end, 10);
+    if (end == s || v <= 0) return def;
+    while (*end == ' ' || *end == '\t') end++;
+    if (*end == 'k' || *end == 'K') {
+        v *= 1024;
+        if (end[1] == 'b' || end[1] == 'B') end++;
+    } else if (*end == 'm' || *end == 'M') {
+        v *= 1024 * 1024;
+        if (end[1] == 'b' || end[1] == 'B') end++;
+    } else if (*end == 'b' || *end == 'B') {
+        // 显式字节后缀：不缩放
+    }
+    if (v <= 0) return def;
+    return (size_t)v;
+}
+
 void gc_init(void) {
     // 注意：不清零 young_heap/old_heap，因为 semantic 阶段可能已经通过 gc_alloc 分配了对象
     // 这些对象会被 gc_free_all 正确释放
@@ -172,8 +203,28 @@ void gc_init(void) {
     gc.remembered_capacity = 0;
     gc.promote_age = GC_PROMOTE_AGE;
     gc.minor_gc_count = 0;
+    gc.major_gc_count = 0;
     gc.extra_root_count = 0;
     gc.extra_root_capacity = 0;
+
+    // ---- 测试钩子：确定性触发 GC（默认全关，见 docs/JIT实现与调试记录.md §8.35）----
+    gc.young_threshold_pinned = 0;
+    gc.force_every = 0;
+    gc.force_count = 0;
+    gc.trace = 0;
+    gc.last_freed = 0;
+    gc.last_promoted = 0;
+
+    size_t young_override = gc_env_size("LENO_GC_YOUNG_THRESHOLD", 0);
+    if (young_override > 0) {
+        gc.young_threshold = young_override;
+        // 必须钉住：gc_minor_collect / gc_major_collect 结尾会把阈值抬到
+        // max(young_allocated * 2, GC_YOUNG_THRESHOLD)，不钉住的话覆盖值在
+        // 第一次回收后就被冲掉，钩子等于没接。
+        gc.young_threshold_pinned = 1;
+    }
+    gc.force_every = (int)gc_env_size("LENO_GC_FORCE_EVERY", 0);
+    gc.trace = gc_env_on("LENO_GC_TRACE");
 }
 
 // 设置 GC 开关（1=启用，0=禁用）
@@ -289,6 +340,16 @@ Object* gc_alloc(size_t size, ObjType type) {
         gc.deferred_gc = 1;
     }
 
+    // 测试钩子 LENO_GC_FORCE_EVERY（§8.35）：每 N 次分配把「强制回收」请求挂到
+    // 下一个解释器安全点。默认 force_every == 0 → 只有一次可预测的 load + branch。
+    // 请求挂在 VM 结构体而非 THREAD_LOCAL 的 gc 上：安全点在 OP_RETURN，
+    // 那里读 vm 字段可避免 TLS 访问（与 gc_return_counter 同一取舍）。
+    // gc.vm 在 semantic 阶段可能还是 NULL（此时没有安全点，请求无意义）。
+    if (gc.force_every && ++gc.force_count >= gc.force_every) {
+        gc.force_count = 0;
+        if (gc.vm) gc.vm->gc_force_request = 1;
+    }
+
     Object* obj = NULL;
     uint8_t pooled_flags = 0;
 
@@ -364,13 +425,23 @@ Object* gc_alloc(size_t size, ObjType type) {
     return obj;
 }
 
-// VM 安全点 GC 检查：在指令边界调用，确保 VM 状态一致
-// 同样使用延迟模式：只置标志，不同步触发
-void gc_check_safe_point(void) {
-    if (gc.enabled && !gc.running) {
-        if (gc.young_allocated > gc.young_threshold) {
-            gc.deferred_gc = 1;
-        }
+// 强制回收一次（测试钩子，§8.35）：与 gc_try_collect_deferred 的唯一差别是
+// **不受 young_threshold 门控** —— 因此在 LENO_GC_FORCE_EVERY 下「第 N 次分配触发
+// 一次回收」是确定的，测试可以按分配次数断言回收次数。
+//
+// 调用点必须是解释器安全点（OP_RETURN / OP_RETURN_MULTI）：那里 vm.sp / 各帧
+// locals 都是一致状态，mark_roots 能看到全部活值。不在 JIT 机器码里新增调用点。
+//
+// 注：原 gc_check_safe_point() 已删除 —— 它只做「young_allocated > threshold 就置
+// deferred_gc」，与 gc_alloc 开头的逻辑完全重复，且 src/ 下零调用点（死代码）。
+void gc_force_collect(void) {
+    if (!gc.enabled || gc.running) return;
+    gc.deferred_gc = 0;
+    gc_minor_collect();
+    // Minor 之后仍超阈值 → 升级一次 Major（与 gc_try_collect_deferred 同形）
+    if (gc.young_allocated > gc.young_threshold &&
+        gc.old_allocated + gc.young_allocated > gc.old_threshold) {
+        gc_major_collect();
     }
 }
 
@@ -1545,6 +1616,7 @@ static void free_object_resources(Object* obj) {
 static void sweep_young(void) {
     Object** obj = &gc.young_heap;
     int freed_cnt = 0, promote_cnt = 0;
+    gc.last_freed = 0;      // 诊断计数：每次回收都重算（sweep_old 会累加）
     while (*obj) {
         // 安全检查：验证对象类型是否有效
         if (!is_valid_obj_type((*obj)->type)) {
@@ -1597,11 +1669,14 @@ static void sweep_young(void) {
             }
         }
     }
+    gc.last_freed = freed_cnt;
+    gc.last_promoted = promote_cnt;
 }
 
 // 清除老年代：回收未标记的对象
 static void sweep_old(void) {
     Object** obj = &gc.old_heap;
+    int freed_cnt = 0;
     while (*obj) {
         if (!is_valid_obj_type((*obj)->type)) {
             Object* invalid = *obj;
@@ -1611,6 +1686,7 @@ static void sweep_old(void) {
             else
                 gc.old_allocated = 0;
             remembered_set_remove(invalid);
+            freed_cnt++;
             gc_free_object(invalid);   // flags 池化位可信（除 type 外字段未破坏时）
             continue;
         }
@@ -1621,6 +1697,7 @@ static void sweep_old(void) {
                 gc.old_allocated -= unreached->size;
             else
                 gc.old_allocated = 0;
+            freed_cnt++;
             // 尝试回收小数组到 free_list
             if (unreached->type == OBJ_ARRAY && arr_try_recycle((ObjArray*)unreached)) {
                 continue;
@@ -1633,6 +1710,7 @@ static void sweep_old(void) {
             obj = &(*obj)->next;
         }
     }
+    gc.last_freed += freed_cnt;   // 累加到本轮回收（sweep_young 已置初值）
 }
 
 // GC 后维护 remembered set 的职责已由 scan_remembered_set 在标记阶段完成
@@ -1738,12 +1816,26 @@ void gc_minor_collect(void) {
 
     gc.running = 0;
 
-    // 动态调整年轻代阈值
-    if (gc.young_threshold < gc.young_allocated * 2) {
-        gc.young_threshold = gc.young_allocated * 2;
+    // 动态调整年轻代阈值（被 LENO_GC_YOUNG_THRESHOLD 钉住时跳过：
+    // 否则覆盖值会在第一次回收后立刻被抬回默认值，钩子失效）
+    if (!gc.young_threshold_pinned) {
+        if (gc.young_threshold < gc.young_allocated * 2) {
+            gc.young_threshold = gc.young_allocated * 2;
+        }
+        if (gc.young_threshold < GC_YOUNG_THRESHOLD) {
+            gc.young_threshold = GC_YOUNG_THRESHOLD;
+        }
     }
-    if (gc.young_threshold < GC_YOUNG_THRESHOLD) {
-        gc.young_threshold = GC_YOUNG_THRESHOLD;
+
+    if (gc.trace) {
+        fprintf(stderr, "[GC] minor #%llu young=%lluKB old=%lluKB rem=%d freed=%d promoted=%d thr=%lluKB\n",
+                (unsigned long long)gc.minor_gc_count,
+                (unsigned long long)(gc.young_allocated / 1024),
+                (unsigned long long)(gc.old_allocated / 1024),
+                gc.remembered_count,
+                gc.last_freed,
+                gc.last_promoted,
+                (unsigned long long)(gc.young_threshold / 1024));
     }
 }
 
@@ -1754,6 +1846,7 @@ void gc_major_collect(void) {
 
     gc.running = 1;
     gc.mode = GC_MODE_FULL;
+    gc.major_gc_count++;
 
     clear_all_marks();
     mark_roots();
@@ -1779,12 +1872,25 @@ void gc_major_collect(void) {
     }
     gc.old_threshold = new_threshold;
 
-    // 动态调整年轻代阈值
-    if (gc.young_threshold < gc.young_allocated * 2) {
-        gc.young_threshold = gc.young_allocated * 2;
+    // 动态调整年轻代阈值（被 LENO_GC_YOUNG_THRESHOLD 钉住时跳过，见 gc_minor_collect）
+    if (!gc.young_threshold_pinned) {
+        if (gc.young_threshold < gc.young_allocated * 2) {
+            gc.young_threshold = gc.young_allocated * 2;
+        }
+        if (gc.young_threshold < GC_YOUNG_THRESHOLD) {
+            gc.young_threshold = GC_YOUNG_THRESHOLD;
+        }
     }
-    if (gc.young_threshold < GC_YOUNG_THRESHOLD) {
-        gc.young_threshold = GC_YOUNG_THRESHOLD;
+
+    if (gc.trace) {
+        fprintf(stderr, "[GC] major #%llu young=%lluKB old=%lluKB rem=%d freed=%d promoted=%d thr=%lluKB\n",
+                (unsigned long long)gc.major_gc_count,
+                (unsigned long long)(gc.young_allocated / 1024),
+                (unsigned long long)(gc.old_allocated / 1024),
+                gc.remembered_count,
+                gc.last_freed,
+                gc.last_promoted,
+                (unsigned long long)(gc.young_threshold / 1024));
     }
 
     // Windows：归还 C 堆碎片化页面给 OS

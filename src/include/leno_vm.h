@@ -551,6 +551,7 @@ typedef struct VM {
     char** pending_type_args;    // 待处理的泛型类型参数
     int pending_type_arg_count;  // 待处理数量
     int gc_return_counter;       // OP_RETURN 的 GC 检查计数器（放在 VM 结构体中避免 THREAD_LOCAL 开销）
+    int gc_force_request;        // 测试钩子：LENO_GC_FORCE_EVERY 到点后在下一个安全点强制回收一次（§8.35）
 } VM;
 
 // 主线程使用全局 VM（效率第一）

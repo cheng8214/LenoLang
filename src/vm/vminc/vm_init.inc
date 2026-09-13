@@ -96,6 +96,7 @@ void vm_init_with_scope(Scope* global_scope) {
 
     // 初始化 GC 返回计数器
     vm.gc_return_counter = 0;
+    vm.gc_force_request = 0;
 
     // 初始化模块系统
     vm.current_module_frame = NULL;
