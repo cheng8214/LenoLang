@@ -82,8 +82,10 @@ static int is_valid_obj_type(ObjType type) {
 // 写屏障（Write Barrier）
 // ============================================================================
 
-// 将对象加入 remembered set（去重）
-static void remembered_set_add(Object* obj) {
+// 将对象加入 remembered set（去重）。
+// 非 static：写屏障已内联到 leno_value.h（gc_write_barrier / gc_write_barrier_obj），
+// 这里只保留「确实需要入集」的慢路径。
+void gc_remembered_set_add(Object* obj) {
     // 动态扩容
     if (gc.remembered_count >= gc.remembered_capacity) {
         int new_cap = gc.remembered_capacity * 2;
@@ -111,23 +113,9 @@ static void remembered_set_remove(Object* obj) {
     }
 }
 
-// 写屏障：老年代对象 holder 的 Value 字段被写入年轻代引用时调用
-void gc_write_barrier(Object* holder, Value value) {
-    if (!val_is_obj(value)) return;
-    if (holder->generation != GEN_OLD) return;
-    Object* val_obj = val_as_obj(value);
-    if (val_obj->generation == GEN_YOUNG) {
-        remembered_set_add(holder);
-    }
-}
-
-// 写屏障：老年代对象 holder 的 Object* 字段被写入年轻代引用时调用
-void gc_write_barrier_obj(Object* holder, Object* value_obj) {
-    if (holder->generation != GEN_OLD) return;
-    if (value_obj->generation == GEN_YOUNG) {
-        remembered_set_add(holder);
-    }
-}
+// 写屏障（gc_write_barrier / gc_write_barrier_obj）已移到 leno_value.h 内联：
+// 它们在「字段写入」热路径上每字段一次，跨 TU 调用 + 两个早退分支的开销实测可观。
+// 这里只保留真正需要入集的慢路径 gc_remembered_set_add()。
 
 // ============================================================================
 // remembered set 扫描与维护
@@ -161,7 +149,7 @@ static void remembered_set_add_promoted(Object* obj) {
 void gc_remember_object(Object* holder) {
     if (!holder) return;
     if (holder->generation != GEN_OLD) return;
-    remembered_set_add(holder);
+    gc_remembered_set_add(holder);
 }
 
 // ============================================================================

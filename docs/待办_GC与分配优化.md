@@ -1,0 +1,176 @@
+# 待办：GC 与对象分配优化（交接记录）
+
+> 建立于 2026-09-13。背景是 §8.30（struct 字段读/方法调用内联，提交 `c4b6bbd1`）之后，
+> 结论是「**调用机制已经不是瓶颈，对象分配/回收才是**」。
+>
+> 相关章节：`JIT实现与调试记录.md` 的 §8.31 / §8.31-a / §8.31-b / §8.32。
+> 本文只记「现在到哪了、下一步做什么、别重复踩哪些坑」。
+
+---
+
+## 一、当前性能结论（i5-3450 + Windows，负载波动大）
+
+`jit_probes/probe_alloc2.leno`（N=10M，直接写在循环体里，不经方法调用）：
+
+| 场景 | 耗时 |
+| --- | --- |
+| 不分配（基线） | ~34 ns/次 |
+| `new Pair(t, hit)`（2 字段） | ~200 ns/次 |
+| `new Big(a..f)`（6 字段） | ~270 ns/次 |
+| 数组字面量 `[1.0, 2.0]` | ~220 ns/次 |
+
+拆解（§8.31）：JIT 侧 callout 包装 + 参数搬运只要 **14 ns**；成本全在 C 的分配本体。
+每多一个字段 **+~15 ns**、`GC_POOL_MEM_LIMIT` 太小导致退化到裸 `malloc`（池 4MB→1GB 省 56ns）、
+另有 **~79 ns 未归因**。
+
+**→ 结论：不要再往「加 JIT 覆盖率 / 内联更多 opcode」上投入。** 分配本体才是大头。
+
+---
+
+## 二、已完成（本次改动）
+
+### ✅ 写屏障 + `struct_set_field` 内联（提交信息见 §8.31-b）
+
+`gc_write_barrier()` / `gc_write_barrier_obj()` / `struct_set_field()` 内联到
+`leno_value.h`；真正入集的慢路径 `gc_remembered_set_add()`（原 `remembered_set_add`）
+留在 `gc.c`。函数体逐行未改，只改链接性质 ⇒ 语义等价。
+
+实测（基线/新版二进制**交替同轮**跑）：
+
+| 场景 | 基线 | 内联后 | 差 |
+| --- | --- | --- | --- |
+| `new Big`（6 字段） | 277.2 / 280.8 ns | **253.3 / 253.4 ns** | **−24 ns（−8.6%）** |
+| `new Pair`（2 字段） | 198.5 / 209.7 ns | 194.6 / 202.2 ns | −4 ns |
+| 不分配（对照） | 34.4 / 37.7 ns | 34.4 / 34.1 ns | 不变 |
+| 数组字面量（`arr_write` 也走屏障） | 225.6 / 223.3 ns | 217.9 / 218.0 ns | −6 ns |
+
+验证：`assert` **273 passed / 0 failed**；对象版光追确定性输出逐位一致
+（`sum=50730000.000273108`、`hits=900000`、`hits=585500`，JIT 计数 Compiled 5 /
+Executed 867300 / Bailouts 0）。
+
+---
+
+## 三、已排除的死路（**不要再试**）
+
+1. ❌ **`struct_instance_new_with_args()`：跳过被实参覆盖字段的默认值初始化**
+   （§8.31-a）。两版实现（索引数组线性扫描 / 位图掩码）**都更慢**：
+   `Pair +6~8 ns`、`Big +13~18 ns`，而对照组噪声只有 ±1.5 ns。
+   原因：省掉的只是一次写向已命中缓存的 store（≈0.3 ns/字段），
+   而新增的每字段跳过判定打破了原来「无条件顺序初始化」的可优化形态。
+   **`+28 ns/字段` 是「6 字段与 2 字段的耗时差 ÷ 4」，包含实参写入/栈搬运/类型提升等
+   全部每字段成本，不能当作「默认值初始化」的单价。**
+2. ❌ **把 `GC_POOL_MEM_LIMIT` 从 4MB 放大到 16/32MB**。§8.31 已测：64MB 只省 ~4 ns。
+   池必须能覆盖**整段**分配才有效，而 JIT 循环内对象不回收到 free-list，
+   所以小幅度放大只是换个地方撞墙。
+
+---
+
+## 四、待办（按优先级）
+
+### P0 — 加「确定性触发 GC」的测试钩子（测试基建，先做）
+
+**为什么先做**：今天有两件事被它卡住 ——
+① 写屏障的关键分支**无法用黑盒脚本证明**（见第五节）；
+② 回边安全点落地后需要 GC 压力/差分验证。没有这个钩子，两件都只能靠肉眼。
+
+**建议做法**（都很小）：
+- 环境变量覆盖阈值：`LENO_GC_YOUNG_THRESHOLD=<bytes|MB>`，在 `gc_init()` 读取；
+- 强制触发入口：一个能被脚本调用的「立刻执行一次 Minor/Major GC」的原生函数
+  （或 `LENO_GC_FORCE_EVERY=<n>`：每 n 次分配到指令边界就强制排空一次 `deferred_gc`）。
+
+**注意**：`gc_check_safe_point()`（`gc.c`）当前是**死代码**（`src/` 下零调用点），
+真正的排空只有两处：`op_call.inc` 的 `OP_RETURN` / `OP_RETURN_MULTI`
+（`++vm.gc_return_counter >= 256`）与 GUI 事件循环的 `gc_try_collect_deferred()`。
+接线时顺手决定这几个函数的关系（接进去 or 删掉）。
+
+### P1 — JIT 循环的 GC 安全点（真正的天花板）
+
+**问题**：`gc_alloc()` 只置 `gc.deferred_gc`，不同步回收；排空点只有「解释器每 256 次返回」
+和 GUI 事件循环。**JIT 编译后的热循环两处都够不到** ⇒ 循环内分配的对象无人回收，
+10M 次 `new` 实测堆涨到 ~960MB，池很快耗尽后退化成裸 `malloc`（这正是 §8.31 里
+「池放大到 1GB 才省 56ns」的成因）。
+
+**两条路线，建议先做路线 2：**
+
+| | 路线 1：回边安全点 | **路线 2：callout 边界安全点（建议）** |
+| --- | --- | --- |
+| 位置 | 每个 JIT 循环回边 | JIT 调 callout 之前做一次「发布」（写回 locals + 把 vstack 区间注册为 GC 根）；`gc_alloc` 超硬上限时在 callout 内同步跑一次 Minor GC |
+| 覆盖面 | 最广 | **所有分配都经过 callout**（`OP_STRUCT_INIT`/`OP_ARRAY`/`OP_DICT_SET`/`OP_CALL_*`），实际够用；纯计算热循环无分配，本来也不需要 GC |
+| 难度 | 需要机器码级栈映射；回边处 TOS 状态多样（`tos_live`/spilled） | callout 的 ABI 已明确、TOS 本来就要 spill |
+| 风险 | 高 | 中（要保证「发布」到 callout 返回之间没有未注册的活值） |
+
+**动手前必须先核实的两件事**（未验证）：
+1. JIT 的 vstack（机器栈区）当前是否已在 GC 可见 / 根集合范围内？
+2. `jit_reloaded_locals` 的确切语义，以及 `frame->locals` 在 JIT 执行期间是否是过期值？
+   （§8.31 说「JIT 的 locals 在 scratch 区、`frame->locals` 内是过期值」）
+
+**验收方式**：长跑 JIT 主循环，堆曲线不再单调上涨；`Bailouts` 不回归；
+`gc_barrier_canary.leno` 从「不敏感」变成能分辨屏障好坏。
+
+### P2 — 实参写入路径的剩余成本
+
+内联屏障后每字段仍剩 ~15 ns，代价在 `jit_raw_to_value()` + 类型提升 + vstack 读取。
+需要新的归因实验再决定要不要动（**别凭直觉改**，参考 §8.31-a 的教训）。
+
+---
+
+## 五、已知覆盖缺口（重要）
+
+**写屏障的关键分支（老年代 holder ← 年轻代 value）目前无法用黑盒脚本证明。**
+
+`jit_probes/gc_barrier_canary.leno` 的反向对照结果：把 `gc_write_barrier()` 改成空操作
+重新编译，用例（`Node n` 与 `Node? n` 两种字段写法、400 万次分配）**都仍然 `bad=0`**。
+
+已实测确认的事实（用临时 GC 探针，已移除）：
+
+- GC **确实在跑**：7 次 Minor GC，每次年轻代 ≈39MB；`LENO_NO_JIT=1` 与 JIT 模式相同
+  （`churn()` 每次调用都有 `OP_RETURN`，256 次返回足够排空一次 `deferred_gc`）。
+- 屏障的**可执行分支确实被触发过**：各次 GC 入口的 `gc.remembered_count` 为
+  `0, 0, 165, 1, 1, 1, 1` —— holder 晋升后稳定有 1 个老年代对象持有年轻代引用。
+
+所以既不是「没回收」，也不是「屏障没被调用」。**最可能的解释**（未验证）：
+窗口内那个年轻 Node 还有别的根可达（VM / JIT 的值栈或残留操作数槽），
+minor GC 的 `mark_roots` 照样标记它，与屏障无关。
+
+**⇒ 在 P0 的确定性 GC 钩子落地之前，任何「屏障相关」改动的正确性只能靠
+代码比对 + 现有回归，不能宣称「已被测试覆盖」。**
+
+---
+
+## 六、测量方法（必须照做，否则结论不可信）
+
+这台机器（i5-3450）负载波动大，**跨轮比较会得出相反结论**。§8.31-a 的第一版实验
+就是因为拿「改动前一次」和「改动后一次」对比，差点把 `−24 ns` 读成 `+13 ns`。
+
+**同轮交替 A/B 步骤**：
+
+```bat
+:: 1) 暂存改动，编译出基线二进制
+git stash push -m ab-xxx
+build.bat
+copy /y build\lenojit.exe build\lenojit_base.exe
+git stash pop
+build.bat
+:: 2) 交替跑，至少 2 轮，取各轮最小值比较
+build\lenojit_base.exe jit_probes\probe_alloc2.leno
+build\lenojit.exe      jit_probes\probe_alloc2.leno
+build\lenojit_base.exe jit_probes\probe_alloc2.leno
+build\lenojit.exe      jit_probes\probe_alloc2.leno
+:: 3) 收工清理
+del /q build\lenojit_base.exe build\lenojit_broken.exe
+```
+
+**要点**：
+- 必须有**未被改动的对照路径**（`probe_alloc2` 里的「不分配」行；噪声底通常 ±1.5 ns）；
+- 只做**同机同轮**对照，不要跟文档里的历史绝对值比；
+- 改动 `src/` 后先删 `.lenocache` 再测（缓存 key 只看入口文件内容，改 lib 会命中旧缓存）。
+
+---
+
+## 七、当前工作区状态（2026-09-13 收工）
+
+- 代码改动：写屏障/`struct_set_field` 内联（`src/gc.c`、`src/include/leno_value.h`、
+  `src/object/object_struct.c`）—— 已验证，已提交。
+- 新增：`jit_probes/gc_barrier_canary.leno`（当前**不敏感**，见第五节，勿当验收用例）。
+- 文档：`JIT实现与调试记录.md` §8.31-a（负结果）、§8.31-b（内联屏障 + 覆盖缺口）。
+- 环境已复位：临时 GC 探针已移除、对照二进制已删除。

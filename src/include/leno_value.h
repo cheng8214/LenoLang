@@ -776,8 +776,27 @@ void gc_major_collect(void);
 Object* gc_alloc(size_t size, ObjType type);
 void gc_free_all(void);
 void gc_track_memory(Object* obj, size_t old_size, size_t new_size);
-void gc_write_barrier(Object* holder, Value value);
-void gc_write_barrier_obj(Object* holder, Object* value_obj);
+// 写屏障：老年代 holder 被写入年轻代引用时，需要把 holder 记入 remembered set。
+// 内联在这里（而非 gc.c 导出函数）是因为它在「字段写入」热路径上每字段一次：
+// 跨 TU 调用 + 两个早退分支的开销实测可观，内联后可被调用方折叠。
+// 绝大多数调用在前两个分支早退；真正入集的慢路径保留在 gc.c。
+void gc_remembered_set_add(Object* holder);
+
+static inline void gc_write_barrier(Object* holder, Value value) {
+    if (!val_is_obj(value)) return;
+    if (holder->generation != GEN_OLD) return;
+    if (val_as_obj(value)->generation == GEN_YOUNG) {
+        gc_remembered_set_add(holder);
+    }
+}
+
+static inline void gc_write_barrier_obj(Object* holder, Object* value_obj) {
+    if (holder->generation != GEN_OLD) return;
+    if (value_obj->generation == GEN_YOUNG) {
+        gc_remembered_set_add(holder);
+    }
+}
+
 // 将老年代对象加入 remembered set（供批量字段写入后保守调用）
 void gc_remember_object(Object* holder);
 
@@ -1138,8 +1157,16 @@ int struct_get_field_index(ObjStructDef* def, const char* name);
 // 获取结构体字段值
 Value struct_get_field(ObjStruct* obj, int index);
 
-// 设置结构体字段值
-void struct_set_field(ObjStruct* obj, int index, Value value);
+// 设置结构体字段值。
+// 内联（配合已内联的写屏障）：它是 struct 字段写入的唯一入口，
+// 在 OP_STRUCT_INIT / OP_SET_FIELD 等热路径上每字段调用一次。
+static inline void struct_set_field(ObjStruct* obj, int index, Value value) {
+    if (index < 0 || index >= obj->def->field_count) {
+        return;
+    }
+    obj->field_values[index] = value;
+    gc_write_barrier((Object*)obj, value);
+}
 
 // 结构体定义查找（运行时）
 ObjStructDef* struct_def_find(const char* name);

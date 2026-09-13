@@ -242,13 +242,7 @@ Value struct_get_field(ObjStruct* obj, int index) {
     return obj->field_values[index];
 }
 
-void struct_set_field(ObjStruct* obj, int index, Value value) {
-    if (index < 0 || index >= obj->def->field_count) {
-        return;
-    }
-    obj->field_values[index] = value;
-    gc_write_barrier((Object*)obj, value);
-}
+// struct_set_field 已移到 leno_value.h 内联（字段写入热路径，见该处说明）。
 
 // ============================================================================
 // 结构体方法表（运行时 - 使用通用 MethodTable）

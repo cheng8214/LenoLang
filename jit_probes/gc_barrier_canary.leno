@@ -1,0 +1,63 @@
+// 写屏障「金丝雀」用例
+//
+// 场景：holder 反复把「新生代 Node」写进自己的字段，每次写入后夹大量分配促发 GC。
+//       若写屏障失效（老年代 holder 未进 remembered set），Minor GC 会回收只被
+//       老年代对象引用的年轻 Node，随后读取就应当拿到坏值 / 崩溃。
+//
+// 设计要点（决定它是否敏感，别随意缩小规模）：
+//   * 每次 churn 分配 2000 个 Node。解释器每 256 次返回排空一次 deferred_gc，
+//     所以一个排空窗口内约 256*2000 = 51 万个 Node ≈ 33MB > 8MB 年轻代阈值
+//     —— GC 真的会被触发（实测 7 次 Minor GC，每次年轻代 ≈39MB）。
+//   * 外层 2000 轮；写入后连着两次 churn，再读 —— 第二次 churn 用来「复用被回收
+//     的槽」，否则读到的仍是未被覆盖的旧值，看不出回收。
+//
+// ⚠️ 现状（2026-09-13）：**它仍然抓不到屏障失效**。
+//   把 gc_write_barrier() 改成空操作重新编译，本用例（`Node n` 与 `Node? n` 两种
+//   字段写法、400 万次分配）都还是 bad=0。已确认的事实：
+//     1) GC 确实在跑（7 次 Minor，年轻代每次 ≈39MB，JIT 与 LENO_NO_JIT=1 都一样）；
+//     2) 屏障的可执行分支确实被触发过 —— 各次 GC 入口的 gc.remembered_count 为
+//        0, 0, 165, 1, 1, 1, 1（holder 晋升后稳定有 1 个老年代对象持有年轻代引用）。
+//   所以既不是「没回收」也不是「屏障没被调用」。最可能的解释是：那个年轻 Node
+//   在窗口内**还有别的根可达**（VM/JIT 值栈或残留的操作数槽），minor GC 的
+//   mark_roots 照样标记它 —— 与屏障无关。**此解释未验证。**
+//
+//   结论：今天无法用黑盒脚本做出「屏障敏感」的用例；要真正覆盖它，需要一个
+//   确定性的测试钩子（例如可强制触发的 GC / 可覆盖的年轻代阈值），
+//   或在 JIT 回边安全点落地后再做。见 docs/JIT实现与调试记录.md §8.31-b。
+
+struct Node {
+    float v = 0.0
+}
+
+// 注意：必须是可空引用字段（Node?）。写成非空 `Node n` 时该字段可能是值语义
+// （就地刷新嵌套实例），holder 不会真正持有「年轻代对象的引用」，屏障无从生效。
+struct Holder {
+    Node? n
+}
+
+func churn(int k): int {
+    var s = 0
+    var i = 0
+    while i < 2000 {
+        var junk = new Node(v = 3.0)
+        s = s + _int(junk.v)
+        i = i + 1
+    }
+    return s + k
+}
+
+main() {
+    var h = new Holder()
+    var bad = 0
+    var i = 0
+    while i < 2000 {
+        h.n = new Node(v = 7.0)
+        churn(i)                       // 第一次：大量分配 → 促发 GC（可能回收 h.n）
+        churn(i)                       // 第二次：再分配一批，复用被回收的槽并写入 3.0
+        if h.n == null { bad = bad + 1 }
+        else { if h.n.v != 7.0 { bad = bad + 1 } }
+        i = i + 1
+    }
+    print("bad=" + bad)
+    return 0
+}
