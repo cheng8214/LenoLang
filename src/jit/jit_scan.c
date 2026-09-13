@@ -378,7 +378,8 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
      * until a forward jump target. This prevents double-counting POPs
      * in mutually exclusive truthy/falsey paths (if/else, if/continue). */
     typedef struct { int target_bc; int vstack; } ScanJumpTarget;
-    ScanJumpTarget fwd_targets[64];
+    #define JIT_SCAN_MAX_FWD 256
+    ScanJumpTarget fwd_targets[JIT_SCAN_MAX_FWD];
     int fwd_count = 0;
     int dead = 0;
 
@@ -754,11 +755,20 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                  * then mark code as dead until target is reached */
                 int32_t off = rd_int32(ip + 1);
                 int target_bc = bc_off + size + off;
-                if (fwd_count < 64) {
-                    fwd_targets[fwd_count].target_bc = target_bc;
-                    fwd_targets[fwd_count].vstack = vstack;
-                    fwd_count++;
+                if (fwd_count >= JIT_SCAN_MAX_FWD) {
+                    /* 目标表满：旧实现静默丢弃 → dead-code 段的 vstack 无法恢复
+                     * → 扫描与 codegen 的栈深不一致 → RSP 漂移 → 栈溢出。
+                     * 宁可不编，拒绝整个循环（循环退回解释器执行，语义正确）。 */
+                    if (jit_debug_on())
+                        fprintf(stderr, "[JIT-DEBUG] scan FAIL: 前向跳转目标超过 %d 个"
+                                        "（body_size=%d）→ 拒绝 JIT\n",
+                                JIT_SCAN_MAX_FWD, body_size);
+                    r->capable = 0;
+                    return;
                 }
+                fwd_targets[fwd_count].target_bc = target_bc;
+                fwd_targets[fwd_count].vstack = vstack;
+                fwd_count++;
                 dead = 1;
                 break;
             }
@@ -768,11 +778,20 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                  * Fall-through (truthy) path is still live. */
                 int32_t off = rd_int32(ip + 1);
                 int target_bc = bc_off + size + off;
-                if (fwd_count < 64) {
-                    fwd_targets[fwd_count].target_bc = target_bc;
-                    fwd_targets[fwd_count].vstack = vstack;
-                    fwd_count++;
+                if (fwd_count >= JIT_SCAN_MAX_FWD) {
+                    /* 目标表满：旧实现静默丢弃 → dead-code 段的 vstack 无法恢复
+                     * → 扫描与 codegen 的栈深不一致 → RSP 漂移 → 栈溢出。
+                     * 宁可不编，拒绝整个循环（循环退回解释器执行，语义正确）。 */
+                    if (jit_debug_on())
+                        fprintf(stderr, "[JIT-DEBUG] scan FAIL: 前向跳转目标超过 %d 个"
+                                        "（body_size=%d）→ 拒绝 JIT\n",
+                                JIT_SCAN_MAX_FWD, body_size);
+                    r->capable = 0;
+                    return;
                 }
+                fwd_targets[fwd_count].target_bc = target_bc;
+                fwd_targets[fwd_count].vstack = vstack;
+                fwd_count++;
                 break;
             }
             case OP_LOOP:
@@ -804,11 +823,20 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                 /* Conditional jump: record target for restore */
                 int32_t off = rd_int32(ip + 6);
                 int target_bc = bc_off + size + off;
-                if (fwd_count < 64) {
-                    fwd_targets[fwd_count].target_bc = target_bc;
-                    fwd_targets[fwd_count].vstack = vstack;
-                    fwd_count++;
+                if (fwd_count >= JIT_SCAN_MAX_FWD) {
+                    /* 目标表满：旧实现静默丢弃 → dead-code 段的 vstack 无法恢复
+                     * → 扫描与 codegen 的栈深不一致 → RSP 漂移 → 栈溢出。
+                     * 宁可不编，拒绝整个循环（循环退回解释器执行，语义正确）。 */
+                    if (jit_debug_on())
+                        fprintf(stderr, "[JIT-DEBUG] scan FAIL: 前向跳转目标超过 %d 个"
+                                        "（body_size=%d）→ 拒绝 JIT\n",
+                                JIT_SCAN_MAX_FWD, body_size);
+                    r->capable = 0;
+                    return;
                 }
+                fwd_targets[fwd_count].target_bc = target_bc;
+                fwd_targets[fwd_count].vstack = vstack;
+                fwd_count++;
                 break;
             }
             case OP_CMPJMP_LG_INT: {
@@ -817,11 +845,20 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                 /* Conditional jump: record target for restore */
                 int32_t off = rd_int32(ip + 6);
                 int target_bc = bc_off + size + off;
-                if (fwd_count < 64) {
-                    fwd_targets[fwd_count].target_bc = target_bc;
-                    fwd_targets[fwd_count].vstack = vstack;
-                    fwd_count++;
+                if (fwd_count >= JIT_SCAN_MAX_FWD) {
+                    /* 目标表满：旧实现静默丢弃 → dead-code 段的 vstack 无法恢复
+                     * → 扫描与 codegen 的栈深不一致 → RSP 漂移 → 栈溢出。
+                     * 宁可不编，拒绝整个循环（循环退回解释器执行，语义正确）。 */
+                    if (jit_debug_on())
+                        fprintf(stderr, "[JIT-DEBUG] scan FAIL: 前向跳转目标超过 %d 个"
+                                        "（body_size=%d）→ 拒绝 JIT\n",
+                                JIT_SCAN_MAX_FWD, body_size);
+                    r->capable = 0;
+                    return;
                 }
+                fwd_targets[fwd_count].target_bc = target_bc;
+                fwd_targets[fwd_count].vstack = vstack;
+                fwd_count++;
                 break;
             }
             /* Shift immediates — supported, pop 1 push 1 */

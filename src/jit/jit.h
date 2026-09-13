@@ -28,7 +28,7 @@
 #define JIT_MAX_LOOP_OPS    256   /* max opcodes in a JIT-able loop body */
 #define JIT_MAX_VSTACK      64    /* max virtual stack depth             */
 #define JIT_MAX_LABELS      32    /* max jump labels in a loop body      */
-#define JIT_MAX_PATCHES     256   /* max jump patches                    */
+#define JIT_MAX_PATCHES     512   /* max jump patches                    */
 #define JIT_BAILOUT_LIMIT   3     /* after N bailouts, stop trying      */
 /* 线性探测窗口：哈希冲突时在同一窗口内先找空槽，避免像老实现那样就地覆盖
  * 另一个热循环（两个别名循环会互相驱逐 → 每次进入都重编译） */
@@ -66,6 +66,8 @@ typedef struct {
     int execute_count;
     int bailout_count;
     int cache_evictions;  /* 探测窗口满而被迫驱逐热循环的次数（诊断用） */
+    int func_compile_count; /* 函数级 JIT 编译成功次数（含解释器热入口与 callout 急切编译） */
+    int func_execute_count; /* 解释器侧函数级 JIT 热入口实际执行的次数 */
     int enabled;
 } JitState;
 
@@ -99,6 +101,33 @@ void jit_set_enabled(int enabled);
  *       or unsupported); caller should proceed with normal execution.
  */
 int jit_try_hot_loop(CallFrame* frame, VM* vm_ptr, int32_t loop_offset, int back_edge);
+
+/*
+ * Called from OP_CALL / OP_CALL_GLOBAL_FUNC[_TYPED]——解释器侧的函数级 JIT
+ * 热入口。
+ *
+ * 动机：函数级 JIT（jit_compile_function）此前只有「被某个 JIT 热循环
+ * callout 调用到」才会编译，纯递归/解释器调用链（如顶层一次性 fib(30)）
+ * 完全进不去，收益恒为 1x。这里在解释器的调用点上打一个独立热点计数，
+ * 与「循环回边」解耦。
+ *
+ * VM 栈约定与 call() 完全一致（调用方负责把 callee 压在栈顶）：
+ *   [...][arg1][arg2]...[argN][callee=stack[sp-1]]
+ * 执行成功时把 arg_count+1 个槽折叠成 1 个返回值：
+ *   sp -= arg_count，返回值写入原 callee 槽（stack[sp-1]）。
+ *
+ * Parameters:
+ *   closure   - 被调闭包（其 function 为编译目标）
+ *   arg_count - 实参个数（不含 callee）
+ *   typed     - 1 = 调用点已由编译期保证参数类型（对齐 call_no_type_check，
+ *               跳过 int/float 提升）；0 = 对齐 call() 的参数类型提升
+ *   vm_ptr    - VM 指针
+ *
+ * Returns:
+ *   1 = 已由 JIT 执行完本次调用（返回值已落栈，调用方需重新取 frame 后 DISPATCH）
+ *   0 = 未处理（未达热度 / 不可编译 / 执行失败已复位），调用方必须走原解释路径
+ */
+int jit_try_hot_func_call(ObjClosure* closure, int arg_count, int typed, VM* vm_ptr);
 
 /* Print JIT statistics to stdout. */
 void jit_print_stats(void);

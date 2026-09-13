@@ -143,8 +143,11 @@ int compile_loop(CodegenCtx* ctx) {
     int inline_depth = 0;
 
     /* Jump patch list for OP_RETURN inside inlined callees.
-     * Each OP_RETURN emits a jmp that needs to be patched to inline_end. */
-    int inline_ret_patches[64];
+     * Each OP_RETURN emits a jmp that needs to be patched to inline_end.
+     * 上限按「单个被内联函数体的 return 条数」计（内联退出时清零）；
+     * 越界即拒绝编译（见 ops_return.inc 的检查），不允许写越界。 */
+    #define JIT_INLINE_RET_MAX 64
+    int inline_ret_patches[JIT_INLINE_RET_MAX];
     int inline_ret_patch_cnt = 0;
 
     /*
@@ -1007,6 +1010,19 @@ int compile_loop(CodegenCtx* ctx) {
 
     #undef EMIT_WRITEBACK_LOCALS
 
+    /* ---- 溢出检查：off_map / patch 丢过条目就拒绝编译 ----
+     * 残缺的 off_map 会让回边/前向跳转解析失败，残缺的 patch 会留下 rel32=0
+     * 的跳转（跳到代码段开头）。两者都是"静默发出错误机器码"，按项目原则
+     * （宁可不编、不要猜）一律拒绝，循环退回解释器。 */
+    if (ctx->off_overflow || ctx->patch_overflow) {
+        if (jit_debug_on())
+            fprintf(stderr, "[JIT-DEBUG] COMPILE-FAIL: off_map/patch 溢出 "
+                            "(off=%d/%d patch=%d/%d) → 拒绝编译\n",
+                    ctx->off_count, JIT_MAX_LOOP_OPS * 10,
+                    ctx->patch_count, JIT_MAX_PATCHES);
+        return 0;
+    }
+
     /* ---- Patch all jumps ---- */
     for (int i = 0; i < ctx->patch_count; i++) {
         Patch* p = &ctx->patches[i];
@@ -1021,17 +1037,32 @@ int compile_loop(CodegenCtx* ctx) {
             patch_rel32(cb, p->patch_mc, ctx->framedead_nowb_mc);
         } else if (p->target_bc >= 0) {
             /* Intra-body jump (caller or inlined callee).
-             * Inlined callee offsets use bc_off = 0x10000 * inline_depth,
-             * so target_bc can far exceed sr->body_size.
-             * Rely on offmap_lookup to find valid targets. */
+             * Inlined callee offsets use bc_off = 0x10000 * (inline_idx + 1)
+             * —— 按**内联实例**编号，同一深度下多个内联点各有独立命名空间
+             * （只按 depth 编号会让第 2..N 个实例的跳转解析到第 1 个实例，
+             * 见 ops_callout.inc 的说明与 §8.26）。
+             * 因此 target_bc 可能远大于 sr->body_size，靠 offmap_lookup 定位。 */
             int target_mc = offmap_lookup(ctx, p->target_bc);
             if (target_mc >= 0) {
                 patch_rel32(cb, p->patch_mc, target_mc);
-            } else {
-                /* Target not found — redirect to exit */
+            } else if (p->target_bc >= 0x10000) {
+                /* 内联命名空间的目标**必须**能解析：被内联函数体的条件跳转/前向
+                 * 跳转目标都在它自己的 ≤256 字节内。找不到 = off_map 条目被丢或
+                 * 扫描失配 → 绝不静默改道（§8.26 就是这么崩的），拒绝编译。 */
                 if (jit_debug_on())
-                    fprintf(stderr, "[JIT-DEBUG] PATCH-REDIRECT: target_bc=%d 未在循环体内找到 → 改为跳到 exit\n",
-                            p->target_bc);
+                    fprintf(stderr, "[JIT-DEBUG] PATCH-FAIL: 内联目标 target_bc=%d 未解析 "
+                                    "(mc=%d) → 拒绝编译\n", p->target_bc, p->patch_mc);
+                return 0;
+            } else if (p->target_bc < sr->body_size) {
+                /* 调用方命名空间、目标落在循环体**之内**却找不到 → 真的丢了 */
+                if (jit_debug_on())
+                    fprintf(stderr, "[JIT-DEBUG] PATCH-FAIL: 体内目标 target_bc=%d 未解析 "
+                                    "(mc=%d, body_size=%d) → 拒绝编译\n",
+                            p->target_bc, p->patch_mc, sr->body_size);
+                return 0;
+            } else {
+                /* 调用方命名空间且落在循环体之后 → 就是 break / while 条件为假
+                 * 时的出口（target_bc == body_size 的常见情形），跳到 exit 正确。 */
                 patch_rel32(cb, p->patch_mc, ctx->exit_mc);
             }
         } else {

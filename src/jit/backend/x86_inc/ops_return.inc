@@ -17,6 +17,14 @@
                     emit_byte(cb, 0xE9);
                     int patch_loc = cb->len;
                     emit_uint32(cb, 0);
+                    if (inline_ret_patch_cnt >= JIT_INLINE_RET_MAX) {
+                        /* 被内联函数体里 return 太多 → 拒绝编译（旧实现会写越界，
+                         * 直接踩坏 compile_loop 的栈帧）。 */
+                        if (jit_debug_on())
+                            fprintf(stderr, "[JIT-DEBUG] inline FAIL: return 数超过 %d → 拒绝编译\n",
+                                    JIT_INLINE_RET_MAX);
+                        return 0;
+                    }
                     inline_ret_patches[inline_ret_patch_cnt++] = patch_loc;
                     /* Match scan phase: vstack-- (return value "consumed").
                      * The value stays on the hardware stack for inline_end,
@@ -55,6 +63,12 @@
                     emit_byte(cb, 0xE9);
                     int patch_loc = cb->len;
                     emit_uint32(cb, 0);
+                    if (inline_ret_patch_cnt >= JIT_INLINE_RET_MAX) {
+                        if (jit_debug_on())
+                            fprintf(stderr, "[JIT-DEBUG] inline FAIL: return 数超过 %d → 拒绝编译\n",
+                                    JIT_INLINE_RET_MAX);
+                        return 0;
+                    }
                     inline_ret_patches[inline_ret_patch_cnt++] = patch_loc;
                     /* Match scan phase: vstack -= rc.
                      * The return values stay on the hardware stack for

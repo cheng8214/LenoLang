@@ -1,0 +1,226 @@
+// 回归测试：解释器侧「函数级 JIT 热入口」（jit_try_hot_func_call）
+//
+// 背景：函数级 JIT（jit_compile_function）原先只有「被某个 JIT 热循环 callout
+// 调用到」才会编译 —— 顶层一次性 fib(30) 这类纯递归/解释器调用链永远是解释器
+// 1x。本入口在解释器的 OP_CALL / OP_CALL_GLOBAL_FUNC[_TYPED] 上打独立热点计数
+// （JIT_FUNC_HOT_THRESHOLD = 50），与循环回边解耦。
+//
+// 说明：这是一个**语义守卫**（在改动前后都必须通过）—— 新入口是性能特性，
+// 不修 bug。本文件保证「走 JIT 路径的结果与走解释器路径逐位一致」，
+// 包括类型（int/float/bool/string）与边界（深度上限、int48 溢出）。
+// 「JIT 是否真的执行」由 JIT 统计人工确认（见 docs/JIT实现与调试记录.md §9）。
+//
+// 覆盖点：
+//   1. 纯递归正确性 + 结果类型
+//   2. 线性深递归 200 > JIT_FUNC_MAX_DEPTH(64)：深度守卫必须安全回落
+//   3. 互递归 + bool 返回值类型（§8.24 位模式陷阱）
+//   4. int48 溢出：JIT 必须 bailout 回解释器并保持 BigInt 提升语义
+//   5. float 形参 + int 实参（参数提升路径与 call() 对齐）
+//   6. 字符串参数（concat callout 路径）
+//   7. 多返回值函数：必须拒绝函数级 JIT，语义仍正确
+//   8. 含 try 的函数：必须拒绝函数级 JIT
+//   9. 「先少量解释器调用（< 阈值）→ 再进热循环」：计数条目不得阻塞 callout
+//      侧的急切编译（jit_func_lookup_or_compile 的 tried 语义）
+//   10. 调用次数 < 阈值：不得编译，语义仍正确
+
+import strings
+
+var bad = 0
+
+func fail(int tag):int {
+    print("FAIL case " + tag)
+    bad = bad + 1
+    return 0
+}
+
+// ---- 1) 纯递归 ----
+func fib(int n):int {
+    if n <= 1 { return n }
+    return fib(n - 2) + fib(n - 1)
+}
+
+// ---- 2) 线性深递归（200 > 64）----
+func depth(int n):int {
+    if n <= 0 { return 0 }
+    return 1 + depth(n - 1)
+}
+
+// ---- 3) 互递归（bool 返回值）----
+func isEven(int n):bool {
+    if n == 0 { return true }
+    return isOdd(n - 1)
+}
+func isOdd(int n):bool {
+    if n == 0 { return false }
+    return isEven(n - 1)
+}
+
+// ---- 4) int48 溢出 ----
+func pow2(int n):int {
+    if n == 0 { return 1 }
+    return 2 * pow2(n - 1)
+}
+
+// ---- 5) float 形参 + int 实参 ----
+func fadd(float x, int n):float {
+    if n <= 0 { return x }
+    return fadd(x + 1.0, n - 1)
+}
+
+// ---- 6) 字符串参数（concat）----
+func rep(int n, string s):string {
+    if n <= 0 { return s }
+    return rep(n - 1, s + "x")
+}
+
+// ---- 7) 多返回值：拒绝函数级 JIT ----
+func two(int n):[int, int] {
+    return n, n + 1
+}
+
+// ---- 8) 含 try：拒绝函数级 JIT ----
+func safeDiv(int a, int b):int {
+    try {
+        return a / b
+    } catch {
+        return -1
+    }
+}
+
+// ---- 9) 少量解释器调用后进热循环 ----
+func cb(int n):int {
+    return n * 3
+}
+
+// ---- 10) 低热度函数 ----
+func rare(int n):int {
+    return n + 7
+}
+
+// ---- 11) 递归返回对象（结果经 EMIT_RAW_TO_VALUE 的「已装箱」分支）----
+func build(int n):Dict {
+    if n <= 0 { return {} }
+    var d = build(n - 1)
+    d[_str(n)] = n
+    return d
+}
+
+// ---- 12) 函数体含 struct 多返回值方法调用（解释器热入口路径）----
+struct Box {
+    int v = 0
+    func twice(int a): [int, int] { return a * 2, a * 2 + 1 }
+}
+var box = new Box()
+
+func viaMethod(int k):int {
+    var[int, int](x, y) = box.twice(k)
+    if y != x + 1 { return 1 }
+    if k <= 0 { return 0 }
+    return viaMethod(k - 1)
+}
+
+main() {
+    // 1) fib(24) = 46368：递归 ~46k 次，远超阈值 → 走 JIT
+    var f24 = fib(24)
+    if f24 != 46368 { fail(1) }
+    if f24 is int {
+    } else {
+        fail(1)
+    }
+
+    // 2) 深递归 200 层（超过 JIT 函数深度上限，必须安全回落）
+    if depth(200) != 200 { fail(2) }
+
+    // 3) 互递归 + bool 结果类型
+    var ev = isEven(100)
+    var od = isOdd(101)
+    if ev != true { fail(3) }
+    if od != true { fail(3) }
+    if ev is bool {
+    } else {
+        fail(3)
+    }
+    if od is bool {
+    } else {
+        fail(3)
+    }
+
+    // 4) int48 溢出：2^40 仍在 int48 内（JIT 快路径）；2^60 必溢出，
+    //    JIT 必须 bailout 且结果与解释器的 BigInt 语义一致。
+    var p40 = pow2(40)
+    if p40 != 1099511627776 { fail(4) }
+    if p40 is int {
+    } else {
+        fail(4)
+    }
+    var expected = 1
+    var k = 0
+    while k < 60 { expected = expected * 2
+        k = k + 1 }
+    if pow2(60) != expected { fail(4) }
+
+    // 5) 参数提升：int 字面量传给 float 形参
+    var fv = fadd(0, 60)
+    if fv < 59.5 or fv > 60.5 { fail(5) }
+    if fv is float {
+    } else {
+        fail(5)
+    }
+
+    // 6) 字符串递归（"x" 重复 80 次）
+    var sv = rep(80, "")
+    if strings.len(sv) != 80 { fail(6) }
+    if sv is string {
+    } else {
+        fail(6)
+    }
+
+    // 7) 多返回值函数（不应被函数级 JIT 收编）
+    var mi = 0
+    while mi < 200 {
+        var[int, int](a, b) = two(mi)
+        if a != mi or b != mi + 1 { fail(7) }
+        mi = mi + 1
+    }
+
+    // 8) 含 try 的函数（不应被函数级 JIT 收编）
+    var di = 0
+    while di < 200 {
+        var want = -1
+        if di != 0 { want = 100 / di }
+        if safeDiv(100, di) != want { fail(8) }
+        di = di + 1
+    }
+
+    // 9) 先 5 次解释器调用（< 阈值），再进热循环：
+    //    callout 侧必须仍能急切编译并保持正确
+    var pre = 0
+    while pre < 5 { cb(pre)
+        pre = pre + 1 }
+    var li = 0
+    while li < 3000 {
+        if cb(li) != li * 3 { fail(9) }
+        li = li + 1
+    }
+
+    // 10) 低热度函数：只调 10 次，不得编译，结果正确
+    var ri = 0
+    while ri < 10 {
+        if rare(ri) != ri + 7 { fail(10) }
+        ri = ri + 1
+    }
+
+    // 11) 递归返回 Dict（60 层 > 阈值）
+    var bd = build(60)
+    if bd["60"] != 60 { fail(11) }
+    if bd["1"] != 1 { fail(11) }
+
+    // 12) 函数体内含 struct 多返回值方法调用，解释器热入口路径
+    if viaMethod(60) != 0 { fail(12) }
+
+    if bad > 0 {
+        print("test_jit_hot_func FAILED: " + bad + " 处")
+        _exit(1)
+    }
+    print("test_jit_hot_func ok")
+}

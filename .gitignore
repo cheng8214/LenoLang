@@ -21,6 +21,10 @@ assert/run_tests.exe
 # 编译器产物（leno -c 生成的字节码）
 *.lenb
 
+# JIT 调试产物（LENO_JIT_DUMP=1 时生成在运行目录）
+jitdump*.bin
+jit_mc_dump.txt
+
 # 模块编译缓存（跨运行缓存 import 的 .leno 模块编译产物）
 .lenocache/
 1.txt 

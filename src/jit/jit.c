@@ -301,6 +301,7 @@ static JitLoopFn jit_compile_function(ObjFunction* func, VM* vm_ptr) {
     jit_mem_flush(exec_mem, (size_t)ctx.cb.len);
     codebuf_free(&ctx.cb);
 
+    jit_state.func_compile_count++;
     if (jit_debug_on())
         fprintf(stderr, "[JIT-DEBUG] func compiled: '%s' locals=%d bytes=%d\n",
                 func->name ? func->name : "?", sr.num_locals, len);
@@ -339,25 +340,127 @@ void jit_close(void) {
     jit_ft_profile_dump();
 }
 
+/* 取得（必要时新建 / 驱逐重建）func 对应的缓存条目。
+ * 返回的条目保证 e->func == func；新建/驱逐时 hit_count / tried /
+ * hot_disabled 均为 0，由调用方决定是否编译。 */
+static JitFuncCacheEntry* jit_func_entry_claim(ObjFunction* func) {
+    uintptr_t h = (uintptr_t)func;
+    JitFuncCacheEntry* e = &jit_func_cache[(h >> 4) & (JIT_FUNC_CACHE_SIZE - 1)];
+    if (e->func == func)
+        return e;
+    if (e->fn)
+        jit_mem_free((void*)e->fn, 0);
+    memset(e, 0, sizeof(*e));
+    e->func = func;
+    return e;
+}
+
 /* 查找/编译函数级 JIT 缓存（direct-mapped，按 func 指针哈希）。
- * 编译失败缓存 tried 状态，避免重复编译开销。 */
+ * 编译失败缓存 tried 状态，避免重复编译开销。
+ * 注意 e->tried 的语义：0 = 条目已建立但还没编译过（解释器热入口会先
+ * 建条目做计数），此时必须补编译，不能因为「命中条目」就直接返回 NULL。 */
 JitLoopFn jit_func_lookup_or_compile(ObjFunction* func, VM* vm_ptr) {
     if (!func || !jit_state.enabled)
         return NULL;
-    uintptr_t h = (uintptr_t)func;
-    int idx = (int)((h >> 4) & (JIT_FUNC_CACHE_SIZE - 1));
-    JitFuncCacheEntry* e = &jit_func_cache[idx];
-    if (e->func == func) {
-        return e->fn;   /* 命中（含尝试失败缓存 NULL） */
+    JitFuncCacheEntry* e = jit_func_entry_claim(func);
+    if (!e->tried) {
+        e->tried = 1;
+        e->fn = jit_compile_function(func, vm_ptr);
     }
-    /* 新函数（或哈希冲突覆盖旧条目） */
-    if (e->func && e->fn) {
-        jit_mem_free((void*)e->fn, 0);
+    return e->fn;   /* 命中（含尝试失败缓存 NULL） */
+}
+
+/* 解释器侧函数级 JIT 热入口（见 jit.h 的契约说明）。
+ *
+ * 与 callout 快路径的分工：
+ *   - callout 路径（JIT 循环调用函数）保持「第一次就急切编译」，不受这里的
+ *     热度计数影响，避免回归既有性能；
+ *   - 这里只服务「解释器发起的调用」，阈值 + 一次失败即停用，宁可不编不猜。 */
+int jit_try_hot_func_call(ObjClosure* closure, int arg_count, int typed, VM* vm_ptr) {
+    if (!jit_state.enabled || !closure || !vm_ptr)
+        return 0;
+    ObjFunction* func = closure->function;
+    if (!func || !func->chunk || func->chunk->len <= 0)
+        return 0;
+    /* 泛型实例化的闭包带 type_param_args，其语义依赖解释器在调用点设置
+     * 类型参数（OP_PUSH_TYPE_ARGS）—— 函数级 JIT 不传递这些信息，直接拒收。 */
+    if (closure->type_param_count > 0)
+        return 0;
+    /* JIT 函数是普通 C 调用链（JIT body → callout → JIT body），深度上限
+     * 保护 C 栈；超限交回解释器（解释器的递归不消耗 C 栈）。 */
+    if (jit_func_depth >= JIT_FUNC_MAX_DEPTH)
+        return 0;
+    /* 与 call() 同一栈约定：sp 以下必须恰好有 arg_count 个实参 + 1 个 callee */
+    if (arg_count < 0 || vm_ptr->sp < arg_count + 1)
+        return 0;
+
+    JitFuncCacheEntry* e = jit_func_entry_claim(func);
+    if (e->hot_disabled)
+        return 0;
+    if (!e->fn) {
+        if (e->tried) {          /* 编译过但失败 → 永久走解释器 */
+            e->hot_disabled = 1;
+            return 0;
+        }
+        if (++e->hit_count < JIT_FUNC_HOT_THRESHOLD)
+            return 0;
     }
-    memset(e, 0, sizeof(*e));
-    e->func = func;
-    e->fn = jit_compile_function(func, vm_ptr);
-    return e->fn;
+    JitLoopFn jfn = jit_func_lookup_or_compile(func, vm_ptr);
+    if (!jfn) {
+        e->hot_disabled = 1;
+        return 0;
+    }
+
+    /* ---- 装填 flocals：与 callout 快路径同一契约
+     * （slot 0..arg_count-1 = 实参，其余 slot = null） ---- */
+    int lcount = func->local_count > func->arity ? func->local_count : func->arity;
+    if (lcount < arg_count) lcount = arg_count;
+    if (lcount > JIT_MAX_LOCALS) lcount = JIT_MAX_LOCALS;
+    Value* flocals = jit_func_locals_pool[jit_func_depth];
+    for (int i = 0; i < lcount; i++)
+        flocals[i] = NULL_VAL;
+    TypeKind* pt = func->param_types;
+    for (int i = 0; i < arg_count && i < lcount; i++) {
+        Value a = vm_ptr->stack[vm_ptr->sp - arg_count - 1 + i];
+        /* 参数类型提升与 call() 逐条对齐；typed 调用点（call_no_type_check）
+         * 已由编译期保证类型匹配，跳过转换以保持两条路径一致。 */
+        if (!typed && pt && i < func->arity) {
+            TypeKind t = pt[i];
+            if (t == TYPE_FLOAT && val_is_int(a))
+                a = val_float((double)val_as_int(a));
+            else if (t == TYPE_FLOAT && val_is_bigint(a))
+                a = val_float(bigint_to_double(val_as_bigint(a)));
+            else if (t == TYPE_INT && val_is_float(a))
+                a = val_int((int)val_as_num(a));
+        }
+        flocals[i] = a;
+    }
+
+    jit_callout_vm = vm_ptr;   /* callout 依赖的全局 VM 指针（同循环 JIT） */
+    jit_func_depth++;
+    jit_fn_result = NULL_VAL;
+    jit_callout_failed = 0;
+    int jr = jfn(flocals, vm_ptr->globals);
+    jit_func_depth--;
+    if (jr != 0 || jit_callout_failed) {
+        /* 失败/异常：整迭代语义交回解释器。JIT 中途的堆侧副作用无法回滚，
+         * 与 callout 快路径的既有取舍一致（见文档 §14）。一次失败即停用
+         * 解释器侧入口，避免「每次调用都进 JIT 再回退」的反复试探 ——
+         * 同一份数据触发的 bailout 会稳定复现，重试没有意义。 */
+        jit_callout_failed = 0;
+        e->hot_disabled = 1;
+        return 0;
+    }
+
+    /* ---- 折叠栈：arg_count+1 个槽 → 原 callee 槽里的 1 个返回值 ----
+     * 与 call() + OP_RETURN 的净效应一致（结果落在 stack[sp-arg_count-1]）。 */
+    vm_ptr->sp -= arg_count;
+    vm_ptr->stack[vm_ptr->sp - 1] = jit_fn_result;
+    vm_ptr->last_return_value = jit_fn_result;
+    vm_ptr->last_return_count = 1;
+    vm_ptr->last_return_values[0] = jit_fn_result;
+    jit_state.func_execute_count++;
+    return 1;
 }
 
 void jit_set_enabled(int enabled) {
@@ -576,6 +679,13 @@ void jit_print_stats(void) {
     /* 只有探测窗口满了才会 > 0；非 0 说明 JIT_CACHE_SIZE 或窗口该调大了 */
     if (jit_state.cache_evictions > 0)
         fprintf(stderr, "  Evicted:  %d\n", jit_state.cache_evictions);
+    /* 函数级 JIT：FuncCompiled = 编译成功的函数个数（含 callout 急切编译），
+     * FuncExecuted = 其中由「解释器侧热入口」执行的次数。后者长期为 0
+     * 说明解释器调用点始终没热起来（或全部不可编译）。 */
+    if (jit_state.func_compile_count > 0 || jit_state.func_execute_count > 0) {
+        fprintf(stderr, "  FuncCompiled: %d\n", jit_state.func_compile_count);
+        fprintf(stderr, "  FuncExecuted: %d\n", jit_state.func_execute_count);
+    }
     fprintf(stderr, "======================\n");
 }
 

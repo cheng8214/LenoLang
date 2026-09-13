@@ -136,6 +136,10 @@ typedef struct {
     int patch_count;
     int loop_start_mc;   /* machine code offset of loop body start */
     int exit_mc;         /* machine code offset of exit code */
+    /* off_map / patches 溢出标志（见 offmap_add / patch_add 的说明）。
+     * 置位则 compile_loop 收尾时拒绝这次编译，循环退回解释器执行。 */
+    int off_overflow;
+    int patch_overflow;
     int bailout_mc;      /* machine code offset of bailout code */
     int framedead_mc;    /* machine code offset of frame-dead exit (write back, ret 2) */
     int framedead_nowb_mc; /* machine code offset of frame-dead exit (no write back, ret 3) */
@@ -151,11 +155,21 @@ typedef struct {
 /* ---- Platform-independent codegen helpers (shared by all backends) ----
  * Used by every backend's compile_loop (off_map / patches are generic
  * bytecode-offset <-> machine-code-offset bookkeeping, no ISA specifics). */
+/* off_map / patches 溢出都**不能**静默丢弃条目：
+ *   - 丢了 off_map 条目 → offmap_lookup 找不到目标 → OP_LOOP/OP_FOR_LOOP 的
+ *     回边会退化成「跳到外层循环起点」→ 死循环 + RSP 漂移 → 栈溢出（§8.26 同类）；
+ *     前向跳转则被重定向到 exit → 静默算错。
+ *   - 丢了 patch 条目 → 那条 rel32 永远保持 0 → 跳到代码段开头。
+ * 因此这里只记录标志，由 compile_loop 在收尾时统一拒绝编译（宁可不编，不要猜）。
+ * 注意 off_map 的实际容量是 JIT_MAX_LOOP_OPS * 10，旧实现只用到 * 2，
+ * 4096 字节的循环体 + 4 个内联体就可能触到，属于可复现的隐患。 */
 static inline void offmap_add(CodegenCtx* ctx, int bc_off, int mc_off) {
-    if (ctx->off_count < JIT_MAX_LOOP_OPS * 2) {
+    if (ctx->off_count < JIT_MAX_LOOP_OPS * 10) {
         ctx->off_map[ctx->off_count].bc_off = bc_off;
         ctx->off_map[ctx->off_count].mc_off = mc_off;
         ctx->off_count++;
+    } else {
+        ctx->off_overflow = 1;
     }
 }
 
@@ -173,6 +187,8 @@ static inline void patch_add(CodegenCtx* ctx, int patch_mc, int target_bc, int v
         ctx->patches[ctx->patch_count].target_bc = target_bc;
         ctx->patches[ctx->patch_count].vstack = vstack;
         ctx->patch_count++;
+    } else {
+        ctx->patch_overflow = 1;
     }
 }
 
@@ -194,11 +210,32 @@ extern int jit_func_depth;
 extern Value jit_func_locals_pool[JIT_FUNC_MAX_DEPTH][JIT_MAX_LOCALS];
 
 /* ---- Function-level JIT cache (defined in jit.c) ---- */
-#define JIT_FUNC_CACHE_SIZE 32   /* direct-mapped cache, power of 2 */
+/* direct-mapped cache, power of 2。
+ * 32 → 256（2026-09-13）：函数级 JIT 现在也从解释器调用点进入，
+ * 同一进程里被编译的函数个数远多于「只有热循环 callout 调用」的年代；
+ * 旧的 32 槽在中等规模程序里会频繁哈希冲突，而冲突的代价不只是重编译
+ * —— jit_func_entry_claim 会 jit_mem_free 掉被驱逐函数的机器码，
+ * 若那个函数正在 C 栈上执行（A 调 B，B 的 callout 又编译了撞槽的 C），
+ * 就是 use-after-free。256 槽 ≈ 8KB 元数据，把冲突概率压到可忽略。 */
+#define JIT_FUNC_CACHE_SIZE 256
+
+/* 解释器侧函数调用热度阈值。与 JIT_HOT_THRESHOLD（循环回边 50 次）分开：
+ * 函数编译比循环编译贵，且编译前的调用走的是完整解释器路径，
+ * 阈值过低会让「只调用几次的冷函数」白付编译成本。 */
+#define JIT_FUNC_HOT_THRESHOLD 50
+
 typedef struct {
     ObjFunction* func;   /* cache key: ObjFunction pointer */
     int tried;           /* 1 = compilation attempted */
     JitLoopFn fn;        /* compiled machine code (NULL if compilation failed) */
+    /* ---- 解释器侧热入口专用（jit_try_hot_func_call）----
+     * 只由解释器调用点自增；JIT callout 路径的急切编译不计入，
+     * 以保持「JIT 循环调用函数时立刻编译」的既有行为不变。 */
+    int hit_count;
+    /* 解释器侧入口停用：编译失败，或执行时返回 bailout / 失败。
+     * 停用后该函数的解释器调用点永远走原解释路径（不再反复试探）。
+     * 只影响解释器侧入口，callout 侧的急切编译/回退行为不受影响。 */
+    int hot_disabled;
 } JitFuncCacheEntry;
 extern JitFuncCacheEntry jit_func_cache[JIT_FUNC_CACHE_SIZE];
 

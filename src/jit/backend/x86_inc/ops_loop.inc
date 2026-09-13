@@ -115,7 +115,17 @@
                 int32_t loff = rd_int32(ip + 1);
                 int target_bc = bc_off + size - loff;
                 int target_mc = offmap_lookup(ctx, target_bc);
-                if (target_mc < 0) target_mc = ctx->loop_start_mc;
+                if (target_mc < 0) {
+                    /* 回边目标必须是循环体内已发射的指令。找不到 = off_map 条目被丢
+                     * （容量溢出）或扫描/字节码失配。旧实现静默退化成「跳到外层循环
+                     * 起点」，结果是死循环 + RSP 漂移 → 栈溢出（§8.26 同类）。
+                     * 按「宁可不编，不要猜」拒绝这次编译。 */
+                    if (jit_debug_on())
+                        fprintf(stderr, "[JIT-DEBUG] LOOP-FAIL(OP_LOOP): 回边 target_bc=%d "
+                                        "不在 off_map（off_count=%d inline_depth=%d）→ 拒绝编译\n",
+                                target_bc, ctx->off_count, inline_depth);
+                    return 0;
+                }
                 int patch = emit_jmp(cb);
                 patch_rel32(cb, patch, target_mc);
                 break;
@@ -141,7 +151,14 @@
 
                 int target_bc = bc_off + size - (int)joff;
                 int target_mc = offmap_lookup(ctx, target_bc);
-                if (target_mc < 0) target_mc = ctx->loop_start_mc;
+                if (target_mc < 0) {
+                    /* 同 OP_LOOP：回边找不到目标就拒绝编译，绝不退化成外层循环起点 */
+                    if (jit_debug_on())
+                        fprintf(stderr, "[JIT-DEBUG] LOOP-FAIL(OP_FOR_LOOP): 回边 target_bc=%d "
+                                        "不在 off_map（off_count=%d inline_depth=%d）→ 拒绝编译\n",
+                                target_bc, ctx->off_count, inline_depth);
+                    return 0;
+                }
 
                 /* loop_var += step (+ int48 check)，再与 end 比较；
                  * 继续循环的跳转由方向决定（正/负步长各一份）。 */

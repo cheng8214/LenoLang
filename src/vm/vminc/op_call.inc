@@ -10,6 +10,13 @@ OPCODE(OP_CALL) {
 
     if (likely(val_is_obj(callee) && val_as_obj(callee)->type == OBJ_CLOSURE)) {
         ObjClosure* closure = (ObjClosure*)val_as_obj(callee);
+        // JIT 函数级热入口：被调函数热起来后整段用机器码执行，
+        // 纯递归/解释器调用链不再每次重入解释器分发。
+        // 栈约定与 call() 一致（callee 已在栈顶），命中时 hook 自己折叠栈。
+        if (jit_try_hot_func_call(closure, arg_count, 0, &vm)) {
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH;
+        }
         // 闭包调用是热路径，line 仅用于错误报告，传 0 避免 GET_CURRENT_LINE() 的数组访问开销
         if (!call(closure, arg_count, 0)) {
             if (!vm.has_exception) {
@@ -845,6 +852,11 @@ OPCODE(OP_CALL_GLOBAL_FUNC) {
         if (likely(val_is_obj(callee) && val_as_obj(callee)->type == OBJ_CLOSURE)) {
             // 闭包快速路径：在栈顶临时放入 callee 供 call() 读取
             vm_stack_push(&vm, callee);
+            // JIT 函数级热入口（typed=0：需按 param_types 做参数提升，同 call()）
+            if (jit_try_hot_func_call((ObjClosure*)val_as_obj(callee), arg_count, 0, &vm)) {
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH;
+            }
             if (!call((ObjClosure*)val_as_obj(callee), arg_count, 0)) {
                 if (!vm.has_exception) {
                     return -1;
@@ -874,6 +886,11 @@ OPCODE(OP_CALL_GLOBAL_FUNC_TYPED) {
         if (likely(val_is_obj(callee) && val_as_obj(callee)->type == OBJ_CLOSURE)) {
             // 闭包快速路径：在栈顶临时放入 callee 供 call_no_type_check() 读取
             vm_stack_push(&vm, callee);
+            // JIT 函数级热入口（typed=1：编译期已保证类型，跳过提升，同 call_no_type_check）
+            if (jit_try_hot_func_call((ObjClosure*)val_as_obj(callee), arg_count, 1, &vm)) {
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH;
+            }
             if (!call_no_type_check((ObjClosure*)val_as_obj(callee), arg_count, 0)) {
                 if (!vm.has_exception) {
                     return -1;

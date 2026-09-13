@@ -161,13 +161,29 @@
                         inline_depth++;
 
                         /* Switch to callee bytecode.
-                         * Use a large bc_off base to avoid offmap conflicts
-                         * with the caller's bytecode offsets. */
+                         * 用大偏移把内联体的 bc_off 与调用方隔离开。
+                         *
+                         * 关键：命名空间基准必须按 **内联实例**（inline_idx）区分，
+                         * 不能只按 nesting depth —— off_map / patch 表都以 bc_off
+                         * 为键，offmap_lookup 返回**第一个**匹配项。同一深度下多个
+                         * 内联点若共用基址，第 2..N 个实例的内部跳转
+                         * （OP_JUMP_IF_FALSE / OP_JUMP / OP_FOR_PREP 的 skip /
+                         * OP_FOR_LOOP 回边）会解析到**第 1 个实例的机器码**，
+                         * 表现为死循环 + RSP 逐轮漂移 → 栈溢出。
+                         * 实例：examples/crypto/aes128.leno 的 mix_columns 有 4 个
+                         * gf_mul 内联点，全部落在 0x10000 命名空间，1 亿次基准里
+                         * JIT 首次执行即 0xC00000FD（见 §8.26）。
+                         *
+                         * 内联目前只有一层（内联体内 FIND_INLINE_SITE 不会再命中），
+                         * 被内联的函数体 ≤ 256 字节（scan 的 cc->len <= 256 限制），
+                         * 远小于 0x10000，因此 0x10000 * (inline_idx + 1) 既唯一又
+                         * 不会与调用方（基址 0）冲突。将来若支持多层内联，
+                         * 需把 depth 并入这个 id。 */
                         ip = is->callee_chunk->code;
                         end = ip + is->callee_body_size;
                         cur_local_map = is->callee_local_map;
                         cur_chunk = is->callee_chunk;
-                        bc_off = 0x10000 * inline_depth;
+                        bc_off = 0x10000 * (inline_idx + 1);
                         vstack = 0;
                         tos_live = 0;
 
