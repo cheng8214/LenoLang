@@ -107,6 +107,49 @@ ObjFunction* jit_resolve_method_func(Chunk* chunk, uint16_t name_const_idx,
     return found_fn;
 }
 
+/* ---- 带**编译期静态类型**的方法调用点解析（OP_INVOKE_METHOD_TYPED）----
+ * 字节码里带了接收者的静态 struct 类型名常量，所以可以直接定位 def，再在该 def 的
+ * 方法表里按名找方法 —— 不需要 jit_resolve_method_func 那种「方法名必须在所有 def
+ * 中唯一」的推断，因此 init/update/clone 这类同名方法也能安全解析、内联。
+ * 成功返回 1（out_* 均有效）；失败返回 0（类型名常量非法 / def 未注册 / 该方法不
+ * 存在或定义不完整 / 命中构造析构）。失败时调用方退回按名唯一解析，再不行拒绝 JIT。 */
+int jit_resolve_method_typed(Chunk* chunk, uint16_t name_const_idx, uint16_t type_const_idx,
+                             ObjStructDef** out_def, ObjFunction** out_fn, int* out_ret_count) {
+    if (out_def) *out_def = NULL;
+    if (out_fn) *out_fn = NULL;
+    if (out_ret_count) *out_ret_count = 0;
+    if (!chunk || !chunk->constants) return 0;
+    if (name_const_idx >= (uint16_t)chunk->const_cnt ||
+        type_const_idx >= (uint16_t)chunk->const_cnt)
+        return 0;
+    Value name_val = chunk->constants[name_const_idx];
+    Value type_val = chunk->constants[type_const_idx];
+    if (!val_is_obj(name_val) || val_as_obj(name_val)->type != OBJ_STRING) return 0;
+    if (!val_is_obj(type_val) || val_as_obj(type_val)->type != OBJ_STRING) return 0;
+    const char* name = ((ObjString*)val_as_obj(name_val))->chars;
+    const char* type_name = ((ObjString*)val_as_obj(type_val))->chars;
+    if (!name || !type_name) return 0;
+
+    ObjStructDef* def = struct_def_find(type_name);
+    if (!def || !def->methods) return 0;
+
+    for (int j = 0; j < def->method_count; j++) {
+        StructMethodInfo* m = &def->methods[j];
+        if (!m->name || strcmp(m->name, name) != 0) continue;
+        /* 构造/析构不走 OP_INVOKE_METHOD 的正常方法语义 */
+        if (def->has_ctor && j == def->ctor_index) return 0;
+        if (def->has_dtor && j == def->dtor_index) return 0;
+        ObjFunction* fn = m->func;
+        if (!fn && m->closure) fn = m->closure->function;
+        if (!fn) return 0;                       /* 定义不完整 → 不猜 */
+        if (out_def) *out_def = def;
+        if (out_fn) *out_fn = fn;
+        if (out_ret_count) *out_ret_count = (fn->return_count > 1) ? fn->return_count : 1;
+        return 1;
+    }
+    return 0;                                    /* 该 def 没有这个方法 */
+}
+
 /* ---- Opcode instruction size (bytes) ---- */
 /* Takes ip (pointer to opcode byte) because some opcodes are variable-length
  * (e.g. OP_ACC_FIELDS has size 2 + count). */
@@ -183,6 +226,9 @@ int opcode_size(const uint8_t* ip) {
         /* 5-byte: OP_INVOKE_METHOD = opcode + name_const(2) + arg_count(2) */
         case OP_INVOKE_METHOD:
             return 5;
+        /* 7-byte: OP_INVOKE_METHOD_TYPED = 上述 5 字节 + struct_type_name_const(2) */
+        case OP_INVOKE_METHOD_TYPED:
+            return 7;
         /* 2-byte: OP_RETURN_MULTI = opcode + count(1) */
         case OP_RETURN_MULTI:
             return 2;
@@ -338,11 +384,18 @@ case OP_GET_FIELD_FAST: vstack++; break;
                 vstack -= ((int)ip[3] - 1);
                 break;
             }
-            case OP_INVOKE_METHOD: {
+            case OP_INVOKE_METHOD:
+            case OP_INVOKE_METHOD_TYPED: {
                 /* 返回值个数按编译期解析结果记账；解析不出来则拒绝内联
                  * （callee 的返回值个数未知时无法保证栈记账正确）。 */
                 int ac = rd_short(ip + 3);
-                int rc = jit_resolve_method_ret_count(cc, rd_short(ip + 1));
+                int rc = 0;
+                /* _TYPED：按字节码里的静态类型名直接定位 def/方法（无需"方法名唯一"） */
+                if (op == OP_INVOKE_METHOD_TYPED)
+                    (void)jit_resolve_method_typed(cc, rd_short(ip + 1), rd_short(ip + 5),
+                                                   NULL, NULL, &rc);
+                if (rc <= 0)
+                    rc = jit_resolve_method_ret_count(cc, rd_short(ip + 1));
                 if (rc <= 0) {
                     if (jit_debug_on())
                         fprintf(stderr, "[JIT-DEBUG] inline-scan FAIL: INVOKE_METHOD ret_count 无法确定 at off %d\n",
@@ -599,13 +652,25 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
             case OP_ACC_FIELDS:
                 /* pop 1 (struct obj), push 1 (float sum) -> net 0 */
                 break;
-            case OP_INVOKE_METHOD: {
-                /* name_const(2) + arg_count(2); arg_count includes self (receiver).
+            case OP_INVOKE_METHOD:
+            case OP_INVOKE_METHOD_TYPED: {
+                /* name_const(2) + arg_count(2) [+ struct_type_name_const(2) for _TYPED]；
+                 * arg_count includes self (receiver)。
                  * pop arg_count, push ret_count results -> net -(arg_count - ret_count)。
                  * ret_count 不能假定为 1：多返回值方法（如 Font.measureString）
                  * 的后续栈布局全靠它，解析不出来就拒绝 JIT（capable=0）。 */
                 int arg_count = rd_short(ip + 3);
-                int ret_count = jit_resolve_method_ret_count(chunk, rd_short(ip + 1));
+                int name_idx = rd_short(ip + 1);
+                int ret_count = 0;
+                /* _TYPED 形态带编译期静态类型名：直接定位 def/方法，不再需要
+                 * 「方法名在所有 def 中唯一」的推断（同名方法也能安全解析/内联）。 */
+                ObjStructDef* typed_def = NULL;
+                ObjFunction* typed_fn = NULL;
+                if (op == OP_INVOKE_METHOD_TYPED)
+                    (void)jit_resolve_method_typed(chunk, name_idx, rd_short(ip + 5),
+                                                   &typed_def, &typed_fn, &ret_count);
+                if (ret_count <= 0)
+                    ret_count = jit_resolve_method_ret_count(chunk, name_idx);
                 if (ret_count <= 0) {
                     if (jit_debug_on())
                         fprintf(stderr, "[JIT-DEBUG] scan FAIL: INVOKE_METHOD ret_count 无法确定 at offset %d\n",
@@ -616,14 +681,16 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                 /* ---- 尝试内联 struct 方法体（P5 续：方法调用内联）----
                  * 条件（任一不满足就退回 callout，语义不变）：
                  *   - 单返回值（=1），与 codegen/内联退出记账一致；
-                 *   - 方法名在所有已注册 def 中唯一（否则动态分发可能落到别的实现）；
+                 *   - 能定位方法体：_TYPED 用字节码里的静态类型名直接定位；
+                 *     基础形态只能靠「方法名在所有 def 中唯一」推断（有歧义就放弃）；
                  *   - 体内可内联（scan_callee_for_inline）、无 try、体长 ≤256；
                  *   - callee locals 放得下（callee_lc >= arg_count，避免越界映射）。
                  * 接收者的运行时类型由 codegen 生成 def 守卫兜底。 */
                 if (ret_count == 1 && arg_count >= 1 && r->inline_count < 4
                     && !getenv("LENO_JIT_NOINLINE")) {
-                    ObjStructDef* mdef = NULL;
-                    ObjFunction* mf = jit_resolve_method_func(chunk, rd_short(ip + 1), &mdef);
+                    ObjStructDef* mdef = typed_def;
+                    ObjFunction* mf = typed_fn;
+                    if (!mf) mf = jit_resolve_method_func(chunk, name_idx, &mdef);
                     if (mf && mdef && mf->chunk && !mf->has_try &&
                         mf->chunk->len > 0 && mf->chunk->len <= 256) {
                         int callee_lc = mf->local_count;

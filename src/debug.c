@@ -78,7 +78,8 @@ static const char* opCodeNames[] = {
 "OP_ACC_FIELDS",
 "OP_CMPJMP_LL_INT",
 "OP_CMPJMP_LG_INT",
-"OP_GET_FIELD_FAST"
+"OP_GET_FIELD_FAST",
+"OP_INVOKE_METHOD_TYPED"
 };
 
 // 反汇编单条指令
@@ -538,6 +539,13 @@ int disassembleInstruction(Chunk* chunk, int offset) {
             int arg_count = (chunk->code[offset + 3] << 8) | chunk->code[offset + 4];
             printf(" name=%d args=%d", name_const, arg_count);
             return offset + 5;
+        }
+        case OP_INVOKE_METHOD_TYPED: {
+            int name_const = (chunk->code[offset + 1] << 8) | chunk->code[offset + 2];
+            int arg_count = (chunk->code[offset + 3] << 8) | chunk->code[offset + 4];
+            int type_const = (chunk->code[offset + 5] << 8) | chunk->code[offset + 6];
+            printf(" name=%d args=%d type=%d", name_const, arg_count, type_const);
+            return offset + 7;
         }
         case OP_SET_LOCAL_CONST: {
             int const_idx = (chunk->code[offset + 1] << 8) | chunk->code[offset + 2];

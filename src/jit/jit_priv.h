@@ -294,6 +294,14 @@ int jit_resolve_method_ret_count(Chunk* chunk, uint16_t name_const_idx);
 ObjFunction* jit_resolve_method_func(Chunk* chunk, uint16_t name_const_idx,
                                      ObjStructDef** out_def);
 
+/* ---- 带静态类型的方法解析（OP_INVOKE_METHOD_TYPED，字节码带了类型名常量）----
+ * 直接按类型名定位 def 再找方法，不需要「方法名在所有 def 中唯一」的推断，
+ * 因此同名方法（init/update/clone…）也能确定性解析 / 内联。
+ * 成功返回 1，并回传 def、方法体、返回值个数；失败返回 0（调用方应退回
+ * jit_resolve_method_ret_count / jit_resolve_method_func，再不行拒绝 JIT）。 */
+int jit_resolve_method_typed(Chunk* chunk, uint16_t name_const_idx, uint16_t type_const_idx,
+                             ObjStructDef** out_def, ObjFunction** out_fn, int* out_ret_count);
+
 /* ---- 通用「数值薄调用」桥（jit_callout.c）----
  * 模块方法若注册为「全部参数 + 返回值都是 float」（param_types/return_type），
  * codegen 可以把实参当 double 直接放进 xmm0..3 并调用下面的薄桥：

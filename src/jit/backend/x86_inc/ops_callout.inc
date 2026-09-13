@@ -23,8 +23,11 @@
                 TOS_PRODUCE();
                 break;
             }
-            /* ---- Callout: OP_INVOKE_METHOD (struct method call, VM re-entry) ---- */
-            case OP_INVOKE_METHOD: {
+            /* ---- Callout: OP_INVOKE_METHOD / _TYPED (struct method call, VM re-entry) ----
+             * 两种形态操作数只差末尾 2 字节（_TYPED 多带编译期静态类型名常量），
+             * 前面 name(2)+arg_count(2) 的偏移完全一致，所以共用同一个 case。 */
+            case OP_INVOKE_METHOD:
+            case OP_INVOKE_METHOD_TYPED: {
                 int arg_count = rd_short(ip + 3);
 
                 /* ---- 内联快路径：scan 阶段已解析出唯一的 struct 方法体，
@@ -117,7 +120,16 @@
                  * 方法（如 Font.measureString → [float, float]）时，
                  * callout 已把前 (ret_count-1) 个结果写回 vstack 内存，
                  * RAX = 最后一个结果（新 TOS）。 */
-                int ret_count = jit_resolve_method_ret_count(cur_chunk, rd_short(ip + 1));
+                int ret_count = 0;
+                if (op == OP_INVOKE_METHOD_TYPED) {
+                    /* 静态类型名 → 直接定位 def/方法（确定性解析，不依赖"方法名唯一"） */
+                    ObjStructDef* td = NULL;
+                    ObjFunction* tf = NULL;
+                    (void)jit_resolve_method_typed(cur_chunk, rd_short(ip + 1),
+                                                   rd_short(ip + 5), &td, &tf, &ret_count);
+                }
+                if (ret_count <= 0)
+                    ret_count = jit_resolve_method_ret_count(cur_chunk, rd_short(ip + 1));
                 if (ret_count <= 0) {
                     if (jit_debug_on())
                         fprintf(stderr, "[JIT-DEBUG] INVOKE_METHOD ret_count 无法确定 at bc_off=%d\n", bc_off);

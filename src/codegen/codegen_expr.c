@@ -1019,11 +1019,35 @@ static void gen_call(CodeGen* gen, Ast* ast) {
                         // 融合指令：receiver 只求值一次（避免 spheres[si] 二次求值），
                         // 方法查找 + 调用一条指令完成（内联缓存在指令内）
                         // 栈布局: [self][args...][defaults...] -> OP_INVOKE_METHOD -> 结果
-                        emit_byte(gen, OP_INVOKE_METHOD, ast->line);
-                        emit_byte(gen, (method_name_const >> 8) & 0xff, ast->line);
-                        emit_byte(gen, method_name_const & 0xff, ast->line);
-                        emit_byte(gen, (expected_args >> 8) & 0xff, ast->line);
-                        emit_byte(gen, expected_args & 0xff, ast->line);
+                        //
+                        // 带静态类型形态：语义分析已经把接收者静态类型解析到具体 struct
+                        // （method_def 非空即证明），这里把该类型名一并编码进字节码，
+                        // 让接收者类型「编译期确定」这件事落进字节码 —— JIT 据此可以
+                        // 直接定位 def/方法体（去虚拟化 + 内联），不必再靠「方法名全局
+                        // 唯一」去推断。类型名常量取不到时退回 5 字节基础形态。
+                        int type_name_const = -1;
+                        if (receiver_type && receiver_type->struct_name &&
+                            receiver_type->struct_name[0] != '\0') {
+                            ObjString* type_name_str =
+                                str_copy(receiver_type->struct_name,
+                                         strlen(receiver_type->struct_name));
+                            type_name_const = make_constant(gen, val_obj((Object*)type_name_str));
+                        }
+                        if (type_name_const >= 0) {
+                            emit_byte(gen, OP_INVOKE_METHOD_TYPED, ast->line);
+                            emit_byte(gen, (method_name_const >> 8) & 0xff, ast->line);
+                            emit_byte(gen, method_name_const & 0xff, ast->line);
+                            emit_byte(gen, (expected_args >> 8) & 0xff, ast->line);
+                            emit_byte(gen, expected_args & 0xff, ast->line);
+                            emit_byte(gen, (type_name_const >> 8) & 0xff, ast->line);
+                            emit_byte(gen, type_name_const & 0xff, ast->line);
+                        } else {
+                            emit_byte(gen, OP_INVOKE_METHOD, ast->line);
+                            emit_byte(gen, (method_name_const >> 8) & 0xff, ast->line);
+                            emit_byte(gen, method_name_const & 0xff, ast->line);
+                            emit_byte(gen, (expected_args >> 8) & 0xff, ast->line);
+                            emit_byte(gen, expected_args & 0xff, ast->line);
+                        }
                     } else {
                         // async 方法或未知方法定义：走旧路径
                         // 压入 receiver，OP_GET_METHOD 获取方法闭包压入栈顶

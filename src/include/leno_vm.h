@@ -201,6 +201,14 @@ typedef enum {
     // 操作数: local_slot(2) field_idx(1)
     // 仅由 codegen 在编译期确认对象是 struct 且字段索引有效时发射
     OP_GET_FIELD_FAST,
+    // 融合指令（带**编译期静态类型**）：与 OP_INVOKE_METHOD 同语义，额外编码接收者的
+    // 静态 struct 类型名常量索引，使「接收者类型」不再留到运行时才定：
+    //   操作数: name_const(2) arg_count(2) struct_type_name_const(2)  —— 共 7 字节
+    // 分工：**JIT 侧**用它做编译期去虚拟化 / 方法内联，不再依赖「方法名在所有 def
+    // 中唯一」这种推断（因此 init/update/clone 这类同名方法也能内联）；
+    // **VM 侧**仍按运行时实际类型分发 —— 语义参考实现保持唯一，类型名只读掉不使用。
+    // 旧的 5 字节 OP_INVOKE_METHOD 保留：LenoC 产出的旧字节码与本地旧缓存仍可执行。
+    OP_INVOKE_METHOD_TYPED,
 } OpCode;
 
 // ============================================================================
