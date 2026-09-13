@@ -1,0 +1,53 @@
+// OP_INDEX 慢路径回归探针
+//
+// 背景（2026-09-13 修复）：ops_index.inc 的 OP_INDEX 慢路径
+// （obj 不是数组：dict 取键 / struct 按字段名 / 非 int 索引）在 callout 之后
+// **直接落进了「数组越界」bailout 桩**，导致这类索引每次执行都无条件 bailout ——
+// 含 `d[k]` / `obj["field"]` 的循环**永远跑不进 JIT**（每轮都退回解释器）。
+//
+// 修法：慢路径末尾补一条 jmp done，并在 done 处一并 patch。
+//
+// 验收判据：下方 useStructName 的循环必须 **Bailouts 不再增长**。
+//   修复前：Bailouts ≥ 6（两个循环各 3 次）；
+//   修复后：只剩 useDict 的 3 次（那是另一条路径，见下）。
+//
+// ⚠️ 已知未解释项：useDict 里 `s = s + d["k"]` 仍在 OP_ADD_FLOAT 处 bailout
+//   （bc_off 指向 ADD_FLOAT，而不是 OP_GET_PROPERTY）—— OP_GET_PROPERTY 的
+//   callout 对 dict 是支持的（dict_get）且返回值做过 EMIT_VALUE_TO_RAW，
+//   但 ADD_FLOAT 仍认为操作数是 NaN-boxed。**原因未查清**，单独跟进。
+
+struct Tex {
+    int ok = 0
+}
+
+// 元素静态类型不明的数组 → `arr[i].ok` 编译成 OP_INDEX(struct["ok"]) → 慢路径
+func useStructName(int p): int {
+    var arr = []
+    arr.add(new Tex(ok = 1))
+    arr.add(new Tex(ok = 2))
+    var s = 0
+    for 1000 {
+        for arr.len() to i {
+            if arr[i].ok == p { s = s + 1 }
+        }
+    }
+    return s
+}
+
+// dict 取键（走 OP_GET_PROPERTY，另一条路径，本探针只做记录）
+func useDict(): float {
+    var d = {}
+    d["k"] = 1.0
+    var s = 0.0
+    for 1000 {
+        s = s + d["k"]
+    }
+    return s
+}
+
+main() {
+    var a = useStructName(1)
+    var b = useDict()
+    print("stname= " + a + "  dict= " + b)
+    return 0
+}

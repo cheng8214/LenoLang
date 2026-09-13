@@ -1877,6 +1877,76 @@ Bailouts 0`。
 
 ***
 
+### 8.33 `OP_INDEX` 慢路径落进越界 bailout 桩 —— 含 `d[k]`/`obj["field"]` 的循环永远跑不进 JIT（2026-09-13）
+
+**发现路径**：matrix_rain 的 JIT 统计里 `invalidateRenderer` **每次调用都 bailout 一次**
+（`loop_bc=48`、`非溢出类 @bc_off=59`）。`-c --debug-out` 定位到 bc_off 59 = `OP_INDEX`
+—— 源码是 `_texCache[i].ren`，元素静态类型不明 ⇒ 编译成 `OP_INDEX`（`struct["ren"]`）而非
+`OP_GET_FIELD`。
+
+**根因**：`ops_index.inc` 的 `OP_INDEX` 慢路径（obj 不是数组：dict 取键 / struct 按字段名 /
+非 int 索引）在 `jit_callout_index` + `EMIT_VALUE_TO_RAW()` 之后**没有跳转**，
+直接落进紧随其后的「数组越界 → bailout 桩」：
+
+```c
+EMIT_VALUE_TO_RAW();
+/* 数组越界 → bailout 桩 */
+patch_rel32(cb, p_idx_oob, cb->len);     /* ← 慢路径落到这里 */
+EMIT_BAILOUT_SITE_NONOVF(bc_off);
+{ int bp = emit_jmp(cb); patch_add(ctx, bp, -1, 0); }
+/* done: result in RAX = live TOS */
+patch_rel32(cb, done_loc, cb->len);
+```
+
+**影响**：任何含 `d[k]` 或 `obj["field"]`（元素静态类型不明）的循环
+**每次执行都 bailout，永远跑不进 JIT**。而 bailout 是安全的（解释器完整重跑本轮、
+结果正确），所以表现为「**静默地永远不优化**」—— 不报错、不算错，只能靠 `Bailouts`
+计数发现。**这一类缺口的排查直觉：先看 Bailouts 是否为 0，再谈耗时。**
+
+**修复**（`src/jit/backend/x86_inc/ops_index.inc`，+7 行）：慢路径末尾补一条 `jmp done`，
+并在 `done` 处一并 patch：
+
+```c
+EMIT_VALUE_TO_RAW();
+int slow_done_loc = emit_jmp(cb);        /* 慢路径跳过越界桩直达 done */
+/* 数组越界 → bailout 桩 */
+patch_rel32(cb, p_idx_oob, cb->len);
+EMIT_BAILOUT_SITE_NONOVF(bc_off);
+{ int bp = emit_jmp(cb); patch_add(ctx, bp, -1, 0); }
+/* done */
+patch_rel32(cb, done_loc, cb->len);
+patch_rel32(cb, slow_done_loc, cb->len);
+TOS_PRODUCE();
+```
+
+**验证**
+
+* 回归探针 `jit_probes/probe_index_slowpath.leno`：`Bailouts` **9 → 3**；
+  `useStructName` 的两个循环各 3 次 → **0**；`Executed` **12 → 30**（循环真正在 JIT 里跑了）；
+  结果不变（`stname=1000 dict=1000.0`）。
+* `assert` **273 passed / 0 failed**。
+* matrix_rain 实跑正常收尾：`总帧数 2001，整体平均 183.3fps / 5.4ms`
+  （与修复前及用户侧 184.8 / 5.4 同口径，无回归）。
+
+**修复后同一循环仍有 bailout（有意设计，不是 bug）**：bailout 位置从 `bc_off=59`
+移到 `63` = `OP_EQ`，比较两个 `Ptr[u8]`。`ops_icmp.inc` 的通用 `OP_EQ/OP_NEQ` 明确对
+「任一 NaN-boxed」一律 bailout —— 解释器那条路径还要处理字符串按内容、数组逐元素、
+其它对象按指针、BigInt、FFI 指针 null 比较。它位于 `invalidateRenderer`（renderer 销毁
+路径），不是热点。要归零需实现 NaN-boxed 比较；**若要做，建议 codegen 侧按静态类型发
+专用比较指令，而不是放宽通用 `OP_EQ`**（否则容易踩到「字符串按内容比较」的语义）。
+
+**顺带发现（未查清，留待办）**：`s = s + d["k"]`（dict 读取在热循环内）仍会 bailout，
+但位置是 **`OP_ADD_FLOAT`** 而非 `OP_GET_PROPERTY`。`d["k"]` 编译成 `OP_GET_PROPERTY`，
+该 callout 对 dict 是支持的（`dict_get`）、且调用后做了 `EMIT_VALUE_TO_RAW()`，
+按理浮点操作数不该被判成 NaN-boxed。**原因未查清，未改动。**
+
+**教训**：写完一处 bailout 桩后，必须确认**所有**能到达它的路径都显式跳走 ——
+「桩没有 fall-through」这句话对*桩自身*成立，但对**桩前面紧邻的代码**不成立。
+建议顺手扫一遍 `ops_callout.inc` / `ops_index.inc` 里所有
+`EMIT_BAILOUT_SITE_*` 紧跟无条件 `jmp` 的位置，确认前方没有会误落的路径。
+
+***
+
 ## 9. 性能数据
 
 ### 测试环境

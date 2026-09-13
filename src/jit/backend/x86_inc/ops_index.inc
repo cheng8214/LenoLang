@@ -100,6 +100,12 @@
                 EMIT_CALLOUT_END();
                 /* Convert result */
                 EMIT_VALUE_TO_RAW();
+                /* 慢路径执行完必须**跳过**下面的越界 bailout 桩直达 done：
+                 * 否则每次非数组索引（dict 取键 / struct 按字段名 / 非 int 索引）
+                 * 都会掉进桩里无条件 bailout —— 整个循环永远跑不进 JIT。
+                 * 实测：`obj["field"]` 所在循环 100% bailout（matrix_rain 的
+                 * invalidateRenderer 每次调用都 bailout 一次）。 */
+                int slow_done_loc = emit_jmp(cb);
                 /* 数组越界 → bailout 桩。交回解释器重跑本次迭代，由解释器抛出与
                  * NO_JIT 完全一致的「数组索引越界」异常（可被 try/catch 捕获）。
                  * 位置必须在 `done` 标签**之前**：桩以无条件 jmp 结束、没有
@@ -115,6 +121,7 @@
 
                 /* done: result in RAX = live TOS */
                 patch_rel32(cb, done_loc, cb->len);
+                patch_rel32(cb, slow_done_loc, cb->len);
                 TOS_PRODUCE();
                 vstack--;
                 break;

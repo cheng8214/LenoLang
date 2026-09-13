@@ -167,10 +167,55 @@ del /q build\lenojit_base.exe build\lenojit_broken.exe
 
 ---
 
-## 七、当前工作区状态（2026-09-13 收工）
+## 七、JIT bailout 后续项（2026-09-13 追加）
 
-- 代码改动：写屏障/`struct_set_field` 内联（`src/gc.c`、`src/include/leno_value.h`、
-  `src/object/object_struct.c`）—— 已验证，已提交。
-- 新增：`jit_probes/gc_barrier_canary.leno`（当前**不敏感**，见第五节，勿当验收用例）。
-- 文档：`JIT实现与调试记录.md` §8.31-a（负结果）、§8.31-b（内联屏障 + 覆盖缺口）。
-- 环境已复位：临时 GC 探针已移除、对照二进制已删除。
+本节与 GC 无关，但同属「静默不优化」类缺口，一并记在这里。详见
+`JIT实现与调试记录.md` §8.33。
+
+### ✅ 已修：`OP_INDEX` 慢路径无条件 bailout
+
+含 `d[k]` / `obj["field"]`（元素静态类型不明）的循环**每次执行都 bailout、永远跑不进 JIT**：
+`ops_index.inc` 的慢路径在 callout 后直接落进紧随其后的「数组越界」bailout 桩。
+已修（+7 行，慢路径末尾补 `jmp done`）。回归探针
+`jit_probes/probe_index_slowpath.leno`，判据：其中 `useStructName` 的循环
+`Bailouts` 不再增长（修复前总计 9 → 修复后 3）。
+
+### ⬜ 待办 1：`OP_ADD_FLOAT` 把 dict 读取结果判成 NaN-boxed
+
+`jit_probes/probe_index_slowpath.leno` 里的 `useDict`（`s = s + d["k"]`，热循环）仍
+bailout，位置是 `OP_ADD_FLOAT`。但 `d["k"]` 编译成 `OP_GET_PROPERTY`，其 callout 对 dict
+是支持的（`dict_get`）、且调用后做了 `EMIT_VALUE_TO_RAW()`，按理浮点操作数不该被判成
+NaN-boxed。**原因未查清。**
+
+排查建议：
+
+1. 先确认 `dict_get` 返回的 `1.0` 在 Value 表示下是否真是 raw double（`val_float`）；
+2. 再看 `OP_GET_PROPERTY` 那条代码路径有没有分支绕过 `EMIT_VALUE_TO_RAW()`；
+3. 用 `LENO_JIT_DUMP=1` 反汇编该循环，确认 `EMIT_NUM_TO_XMM` 的 `jae → tagged` 是否真被走到。
+
+**判据**：`useDict` 的 `Bailouts` 归零。
+
+### ⬜ 待办 2：`OP_EQ` 比较 NaN-boxed（指针）会 bailout
+
+matrix_rain 的 `invalidateRenderer` 比较两个 `Ptr[u8]`，通用 `OP_EQ` 对「任一 NaN-boxed」
+一律 bailout（**有意设计**，见 `ops_icmp.inc`：要覆盖字符串按内容、数组逐元素、
+其它对象按指针、BigInt、FFI 指针 null 比较）。它不是热点，但会让这类循环整体跑不进 JIT。
+
+**若要做，建议**：codegen 侧在静态类型已知时发**专用比较指令**（指针 / 对象身份比较），
+而不是放宽通用 `OP_EQ` —— 后者容易踩到「字符串按内容比较」的语义。
+
+**判据**：matrix_rain 的 `Bailouts` 归零。
+
+---
+
+## 八、当前工作区状态（2026-09-13 收工）
+
+- 代码改动 1：写屏障 / `struct_set_field` 内联（`src/gc.c`、`src/include/leno_value.h`、
+  `src/object/object_struct.c`）—— 已验证，已提交（`0ead45e9`）。
+- 代码改动 2：`OP_INDEX` 慢路径越界 bailout 桩修复（`src/jit/backend/x86_inc/ops_index.inc`，
+  +7 行）—— 已验证，见第七节与 `JIT实现与调试记录.md` §8.33。
+- 新增：`jit_probes/gc_barrier_canary.leno`（当前**不敏感**，见第五节，勿当验收用例）、
+  `jit_probes/probe_index_slowpath.leno`（`OP_INDEX` 慢路径回归探针，判据见第七节）。
+- 文档：`JIT实现与调试记录.md` §8.31-a（负结果）、§8.31-b（内联屏障 + 覆盖缺口）、
+  §8.33（`OP_INDEX` 慢路径 bailout）。
+- 环境已复位：临时 GC 探针已移除、对照二进制与诊断临时文件已删除。
