@@ -1647,7 +1647,7 @@ JIT 逐次序言」上，而这两项在循环体内每轮都要付一次。
 
 **实测（本机 i5-3450，同机同轮 A/B，`LENO_JIT_NOINLINE=1` 用来分离两项改动）**
 
-探针 `build/probe_method.leno`（1000 万次）：
+探针 `jit_probes/probe_method.leno`（1000 万次；探针清单与用法见 `jit_probes/README.md`）：
 
 | 场景 | 基线 | 仅字段读内联 | 本版 | 提升 |
 | --- | --- | --- | --- | --- |
@@ -1679,7 +1679,7 @@ JIT 逐次序言」上，而这两项在循环体内每轮都要付一次。
 `OP_STRUCT_INIT` 也加内联快路径。
 
 **归因实验**（临时让 `jit_callout_struct_init` 复用首次分配结果，把「callout 包装 +
-参数搬运」与「分配本体」分开；`build/probe_alloc2.leno`，N=10M，直接写在循环体里、
+参数搬运」与「分配本体」分开；`jit_probes/probe_alloc2.leno`，N=10M，直接写在循环体里、
 不经过任何方法调用）：
 
 | 场景 | 正常 | 跳过分配本体 |

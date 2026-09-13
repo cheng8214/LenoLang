@@ -1,0 +1,87 @@
+import times
+
+// 分配成本探针 v4（不入库，build/ 下）
+// 目的：让「单次 new Struct(...)」的成本随**累计分配量**的阶梯暴露出来，
+//       验证成本拐点是否正好落在 GC 对象池容量（GC_POOL_MEM_LIMIT=4MB ≈ 43K 槽）处。
+// fNum 与 fObj 算术逐条等价，唯一差别是 fObj 每次 new 一个 Pair 返回。
+struct Pair {
+    float t = -1.0
+    int hit = 0
+}
+
+struct S {
+    float r = 1.0
+
+    func fObj(float ox, float dx): Pair {
+        var ocx = ox - r
+        var b = ocx * dx
+        var c = ocx * ocx - r * r
+        var disc = b * b - c
+        if disc < 0.0 {
+            return new Pair(t = -1.0, hit = 0)
+        }
+        var t = -b - disc
+        if t > 0.001 {
+            return new Pair(t = t, hit = 1)
+        }
+        return new Pair(t = -1.0, hit = 0)
+    }
+
+    func fNum(float ox, float dx): float {
+        var ocx = ox - r
+        var b = ocx * dx
+        var c = ocx * ocx - r * r
+        var disc = b * b - c
+        if disc < 0.0 {
+            return -1.0
+        }
+        var t = -b - disc
+        if t > 0.001 {
+            return t
+        }
+        return -1.0
+    }
+}
+
+var cum = 0
+
+func benchObjN(int n) {
+    var s = new S()
+    var sum = 0.0
+    var t1 = times.us()
+    for 0:n-1 to i {
+        var p = s.fObj(0.5, 1.0)
+        sum += p.t
+    }
+    var t2 = times.us()
+    var ns_per = (t2 - t1) * 1000.0 / n
+    cum = cum + n
+    print("fObj n=" + n + " 累计=" + cum + " : " + (t2 - t1) + "us  (" + ns_per + " ns/次)")
+}
+
+func benchNumN(int n) {
+    var s = new S()
+    var sum = 0.0
+    var t1 = times.us()
+    for 0:n-1 to i {
+        sum += s.fNum(0.5, 1.0)
+    }
+    var t2 = times.us()
+    print("fNum n=" + n + " : " + (t2 - t1) + "us  (" + ((t2 - t1) * 1000.0 / n) + " ns/次)")
+}
+
+main() {
+    print("=== 分配成本探针 v4（微秒计时 + 累计阶梯）===")
+    benchNumN(1000000)
+    benchObjN(10000)
+    benchObjN(10000)
+    benchObjN(10000)
+    benchObjN(10000)
+    benchObjN(10000)
+    benchObjN(10000)
+    benchObjN(100000)
+    benchObjN(1000000)
+    benchObjN(10000)
+    print("=== 完成 ===")
+    return 0
+}

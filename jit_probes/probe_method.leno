@@ -1,0 +1,120 @@
+import times
+import maths
+
+// 方法调用成本探针（不入库，放 build/）：
+//   benchInline —— 循环内联展开同一套算术，无方法调用（JIT 理想上限）
+//   f0          —— 最简方法体（1 次 float 加 + 1 次字段读）
+//   f1          —— 中等方法体（无 sqrt，含早退 if）
+//   f2          —— 完整 hitSingle 形态（含 maths.sqrt）
+// 目的：把「调用机制固定成本（callout + 序言 + 返回）」与「方法体内容成本」分开。
+
+struct S {
+    float cx = 0.0
+    float r = 1.0
+
+    func f0(float x): float {
+        return x + r
+    }
+
+    func f1(float ox, float dx): float {
+        var ocx = ox - cx
+        var b = ocx * dx
+        var c = ocx * ocx - r * r
+        var disc = b * b - c
+        if disc < 0.0 {
+            return -1.0
+        }
+        var t = -b - disc
+        if t > 0.001 {
+            return t
+        }
+        return -2.0
+    }
+
+    func f2(float ox, float dx): float {
+        var ocx = ox - cx
+        var b = ocx * dx
+        var c = ocx * ocx - r * r
+        var disc = b * b - c
+        if disc < 0.0 {
+            return -1.0
+        }
+        var sq = maths.sqrt(disc)
+        var t = -b - sq
+        if t > 0.001 {
+            return t
+        }
+        return -2.0
+    }
+}
+
+int N = 10000000
+
+func benchInline() {
+    var s = new S()
+    var sum = 0.0
+    var t1 = times.ms()
+    for N {
+        // 与 f2 等价的算术，直接写在循环体里（无方法调用）
+        var ocx = 0.5 - s.cx
+        var b = ocx * 1.0
+        var c = ocx * ocx - s.r * s.r
+        var disc = b * b - c
+        var t = 0.0
+        if disc < 0.0 {
+            t = -1.0
+        } else {
+            var sq = maths.sqrt(disc)
+            t = -b - sq
+            if t <= 0.001 {
+                t = -2.0
+            }
+        }
+        sum += t
+    }
+    var t2 = times.ms()
+    print("inline  循环内展开   : " + (t2 - t1) + "ms  sum=" + sum)
+}
+
+func bench0() {
+    var s = new S()
+    var sum = 0.0
+    var t1 = times.ms()
+    for N {
+        sum += s.f0(1.5)
+    }
+    var t2 = times.ms()
+    print("f0  1 float op 方法  : " + (t2 - t1) + "ms  sum=" + sum)
+}
+
+func bench1() {
+    var s = new S()
+    var sum = 0.0
+    var t1 = times.ms()
+    for N {
+        sum += s.f1(0.5, 1.0)
+    }
+    var t2 = times.ms()
+    print("f1  中等体 无 sqrt   : " + (t2 - t1) + "ms  sum=" + sum)
+}
+
+func bench2() {
+    var s = new S()
+    var sum = 0.0
+    var t1 = times.ms()
+    for N {
+        sum += s.f2(0.5, 1.0)
+    }
+    var t2 = times.ms()
+    print("f2  完整体 含 sqrt   : " + (t2 - t1) + "ms  sum=" + sum)
+}
+
+main() {
+    print("=== 方法调用成本探针（N=" + N + "）===")
+    benchInline()
+    bench0()
+    bench1()
+    bench2()
+    print("=== 完成 ===")
+    return 0
+}

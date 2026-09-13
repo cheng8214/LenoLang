@@ -1,0 +1,81 @@
+import times
+
+// 分配路径隔离探针（不入库，build/ 下）
+// 四个循环体的算术量级一致，唯一变量是"分配什么"：
+//   benchNone —— 不分配（基线）
+//   benchPair —— new Pair(...)  两字段 struct（OP_STRUCT_INIT callout）
+//   benchBig  —— new Big(...)   六字段 struct
+//   benchArr  —— [1.0, 2.0]     数组字面量（OP_ARRAY callout）
+// 全部直接写在循环体里，不经过任何方法调用，排除调用机制的干扰。
+struct Pair {
+    float t = -1.0
+    int hit = 0
+}
+
+struct Big {
+    float a = 0.0
+    float b = 0.0
+    float c = 0.0
+    float d = 0.0
+    float e = 0.0
+    float f = 0.0
+}
+
+int N = 10000000
+
+func report(string tag, float us) {
+    print(tag + " : " + (us / 1000.0) + "ms  (" + (us * 1000.0 / N) + " ns/次)")
+}
+
+func benchNone() {
+    var sum = 0.0
+    var t1 = times.us()
+    for N {
+        sum += 1.0
+    }
+    var t2 = times.us()
+    report("不分配            ", t2 - t1)
+}
+
+func benchPair() {
+    var sum = 0.0
+    var t1 = times.us()
+    for N {
+        var p = new Pair(t = 1.0, hit = 1)
+        sum += p.t
+    }
+    var t2 = times.us()
+    report("new Pair(2字段)   ", t2 - t1)
+}
+
+func benchBig() {
+    var sum = 0.0
+    var t1 = times.us()
+    for N {
+        var q = new Big(a = 1.0, b = 2.0, c = 3.0, d = 4.0, e = 5.0, f = 6.0)
+        sum += q.a
+    }
+    var t2 = times.us()
+    report("new Big(6字段)    ", t2 - t1)
+}
+
+func benchArr() {
+    var sum = 0.0
+    var t1 = times.us()
+    for N {
+        var a = [1.0, 2.0]
+        sum += a[0]
+    }
+    var t2 = times.us()
+    report("数组字面量[1.0,2.0]", t2 - t1)
+}
+
+main() {
+    print("=== 分配路径隔离探针（N=" + N + "）===")
+    benchNone()
+    benchPair()
+    benchBig()
+    benchArr()
+    print("=== 完成 ===")
+    return 0
+}
