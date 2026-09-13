@@ -26,6 +26,92 @@
             /* ---- Callout: OP_INVOKE_METHOD (struct method call, VM re-entry) ---- */
             case OP_INVOKE_METHOD: {
                 int arg_count = rd_short(ip + 3);
+
+                /* ---- 内联快路径：scan 阶段已解析出唯一的 struct 方法体，
+                 * 把 callee 展开在本循环体内（省掉整条 callout + 函数级 JIT
+                 * 的逐次序言），与 OP_CALL_GLOBAL_FUNC_TYPED 的内联同构。
+                 * 接收者是动态分发 → 必须生成 def 守卫，不匹配即 bailout
+                 * 交解释器（方法查找/报错语义完全由解释器负责）。 ---- */
+                {
+                    int method_inline_idx = FIND_INLINE_SITE(bc_off);
+                    if (method_inline_idx >= 0 &&
+                        sr->inline_sites[method_inline_idx].is_method) {
+                        const InlineSite* mis = &sr->inline_sites[method_inline_idx];
+                        TOS_SPILL();
+                        /* 1) 倒序弹实参写入 callee locals：
+                         *    JIT 栈 [receiver, arg1..argN]，栈顶是 argN，
+                         *    于是 i=arg_count-1 → argN → slot arg_count-1，…，
+                         *    i=0 → receiver → slot 0（= self）。 */
+                        for (int i = arg_count - 1; i >= 0; i--) {
+                            emit_byte(cb, 0x58);          /* pop rax */
+                            int msi = mis->callee_local_map[i];
+                            if (msi < 0) {
+                                if (jit_debug_on())
+                                    fprintf(stderr, "[JIT-DEBUG] method inline FAIL: unmapped callee slot %d\n", i);
+                                return 0;
+                            }
+                            int md = scratch_disp(msi);
+                            if (md >= -128 && md <= 127)
+                                emit_mov_mem8_reg(cb, JIT_RBP, (int8_t)md, JIT_RAX);
+                            else
+                                emit_mov_mem32_reg(cb, JIT_RBP, md, JIT_RAX);
+                        }
+                        vstack -= arg_count;
+                        /* 2) 接收者守卫：slot 0 必须是 mis->method_def 的实例 */
+                        {
+                            int msi0 = mis->callee_local_map[0];
+                            int md0 = scratch_disp(msi0);
+                            if (md0 >= -128 && md0 <= 127)
+                                emit_mov_reg_mem8(cb, JIT_RAX, JIT_RBP, (int8_t)md0);
+                            else
+                                emit_mov_reg_mem32(cb, JIT_RAX, JIT_RBP, md0);
+                            /* 2a) NaN-boxed 对象（top16 == 0xFFFC，用 SHR 比较） */
+                            emit_mov_rr(cb, JIT_R8, JIT_RAX);
+                            emit_shr_imm(cb, JIT_R8, 48);
+                            emit_cmp_reg32_imm32(cb, JIT_R8, 0x0000FFFcu);
+                            EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                            int mi_notobj = emit_jcc(cb, 0x85);
+                            patch_add(ctx, mi_notobj, -1, 0);
+                            emit_and_rr(cb, JIT_RAX, JIT_R10);      /* RAX = Object* */
+                            /* 2b) obj->type == OBJ_STRUCT */
+                            emit_cmp_mem8_imm8(cb, JIT_RAX, 0, (uint8_t)OBJ_STRUCT);
+                            EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                            int mi_notstruct = emit_jcc(cb, 0x85);
+                            patch_add(ctx, mi_notstruct, -1, 0);
+                            /* 2c) obj->def == 编译期解析出的唯一 def */
+                            emit_mov_reg_mem8(cb, JIT_RDX, JIT_RAX, (int8_t)offsetof(ObjStruct, def));
+                            emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)mis->method_def);
+                            emit_cmp_rr(cb, JIT_RDX, JIT_R8);
+                            EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                            int mi_otherdef = emit_jcc(cb, 0x85);
+                            patch_add(ctx, mi_otherdef, -1, 0);
+                        }
+                        /* 3) 切到 callee：保存调用方上下文并进入内联帧
+                         *    （bc_off 命名空间按**内联实例**编号，见 §8.26） */
+                        InlineFrame* mf_frame = &inline_frames[inline_depth];
+                        mf_frame->ip = ip + size;
+                        mf_frame->end = end;
+                        mf_frame->local_map = cur_local_map;
+                        mf_frame->chunk = cur_chunk;
+                        mf_frame->bc_off = bc_off + size;
+                        mf_frame->vstack = vstack + arg_count;
+                        mf_frame->tos_live = 0;
+                        mf_frame->callee_ret_count = mis->ret_count;
+                        mf_frame->callee_arg_count = arg_count;
+                        inline_depth++;
+                        ip = mis->callee_chunk->code;
+                        end = ip + mis->callee_body_size;
+                        cur_local_map = mis->callee_local_map;
+                        cur_chunk = mis->callee_chunk;
+                        bc_off = 0x10000 * (method_inline_idx + 1);
+                        vstack = 0;
+                        tos_live = 0;
+                        if (jit_debug_on())
+                            fprintf(stderr, "[JIT-DEBUG] inline(method) ENTER: arg_count=%d ret_count=%d callee_lc=%d\n",
+                                    arg_count, mis->ret_count, mis->callee_local_count);
+                        continue;
+                    }
+                }
                 /* 返回值个数：编译期按方法名解析（scan 阶段已保证可解析，
                  * 这里再兜一次，绝不允许按错误的个数生成代码）。多返回值
                  * 方法（如 Font.measureString → [float, float]）时，
@@ -84,7 +170,12 @@
                 break;
             }
 
-            /* ---- Callout: OP_GET_FIELD_FAST (read local struct + get field) ---- */
+            /* ---- OP_GET_FIELD_FAST (读局部 struct 的字段) ----
+             * 内联快路径：obj 是 NaN-boxed struct 且 field_idx < obj->def->field_count
+             * 时，直接在机器码里读 field_values[field_idx] —— 这就是
+             * struct_get_field 的全部语义（越界分支走慢路径保证一致）。
+             * 慢路径保留原 callout（类型不匹配 → 错误文本原样）。
+             * 与 OP_INDEX 读取快路径同一模板：所有判定都在产生副作用之前。 */
             case OP_GET_FIELD_FAST: {
                 uint16_t slot = rd_short(ip + 1);
                 uint8_t field_idx = ip[3];
@@ -97,6 +188,35 @@
                 } else {
                     emit_mov_reg_mem32(cb, JIT_RAX, JIT_RBP, disp);
                 }
+                EMIT_STORE_TMP(tmp1_disp, JIT_RAX);   /* 慢路径仍要原始 raw 值 */
+
+                /* 1) NaN-boxed 对象（top16 == TAG_OBJ = 0xFFFC）。
+                 *    必须用 SHR：SAR 会把 0xFFFC 符号扩展成 0xFFFF...FFFC，
+                 *    比较恒不等 → 快路径变死代码（§8.29 同款坑）。 */
+                emit_mov_rr(cb, JIT_R8, JIT_RAX);
+                emit_shr_imm(cb, JIT_R8, 48);
+                emit_cmp_reg32_imm32(cb, JIT_R8, 0x0000FFFcu);
+                int gf_not_obj = emit_jcc(cb, 0x85);          /* JNE → 慢路径 */
+                emit_and_rr(cb, JIT_RAX, JIT_R10);            /* RAX = Object* */
+                /* 2) obj->type == OBJ_STRUCT（type 是 Object 首字段，偏移 0） */
+                emit_cmp_mem8_imm8(cb, JIT_RAX, 0, (uint8_t)OBJ_STRUCT);
+                int gf_not_struct = emit_jcc(cb, 0x85);       /* JNE → 慢路径 */
+                /* 3) field_idx < obj->def->field_count（32 位零扩展加载，勿用 64 位） */
+                emit_mov_reg_mem8(cb, JIT_RDX, JIT_RAX, (int8_t)offsetof(ObjStruct, def));
+                emit_mov_reg32_mem8(cb, JIT_R8, JIT_RDX, (int8_t)offsetof(ObjStructDef, field_count));
+                emit_cmp_reg32_imm32(cb, JIT_R8, (uint32_t)field_idx);
+                int gf_oob = emit_jcc(cb, 0x86);              /* JBE（count <= idx）→ 慢路径 */
+                /* 4) RAX = field_values[field_idx] */
+                emit_mov_reg_mem8(cb, JIT_RDX, JIT_RAX, (int8_t)offsetof(ObjStruct, field_values));
+                emit_mov_reg_mem32(cb, JIT_RAX, JIT_RDX, (int32_t)field_idx * 8);
+                EMIT_VALUE_TO_RAW();
+                int gf_done = emit_jmp(cb);
+
+                /* ---- 慢路径：原 callout（类型检查 / 报错文本全保留）---- */
+                patch_rel32(cb, gf_not_obj, cb->len);
+                patch_rel32(cb, gf_not_struct, cb->len);
+                patch_rel32(cb, gf_oob, cb->len);
+                EMIT_LOAD_TMP(JIT_RAX, tmp1_disp);
                 EMIT_RAW_TO_VALUE();
                 EMIT_STORE_TMP(tmp1_disp, JIT_RAX);
                 EMIT_CALLOUT_BEGIN();
@@ -106,6 +226,7 @@
                 EMIT_CALL(jit_callout_get_field_fast);
                 EMIT_CALLOUT_END();
                 EMIT_VALUE_TO_RAW();
+                patch_rel32(cb, gf_done, cb->len);
                 TOS_PRODUCE();
                 vstack++;
                 break;

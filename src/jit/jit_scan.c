@@ -67,6 +67,46 @@ int jit_resolve_method_ret_count(Chunk* chunk, uint16_t name_const_idx) {
     return found ? rc : 0;
 }
 
+/* ---- struct 方法定义解析（方法内联用）----
+ * 与 jit_resolve_method_ret_count 同一套「枚举已注册 def 按方法名匹配」的思路，
+ * 但要求更强：方法名必须**唯一**（只有一个 def 定义了它），否则运行时可能分发到
+ * 别的实现，内联哪一份都是猜。返回 NULL 一律退回 callout。 */
+ObjFunction* jit_resolve_method_func(Chunk* chunk, uint16_t name_const_idx,
+                                     ObjStructDef** out_def) {
+    if (out_def) *out_def = NULL;
+    if (!chunk || !chunk->constants || name_const_idx >= (uint16_t)chunk->const_cnt)
+        return NULL;
+    Value name_val = chunk->constants[name_const_idx];
+    if (!val_is_obj(name_val) || val_as_obj(name_val)->type != OBJ_STRING)
+        return NULL;
+    const char* name = ((ObjString*)val_as_obj(name_val))->chars;
+    if (!name) return NULL;
+
+    ObjStructDef* found_def = NULL;
+    ObjFunction* found_fn = NULL;
+    int n = struct_def_get_count();
+    for (int i = 0; i < n; i++) {
+        ObjStructDef* def = struct_def_get(i);
+        if (!def || !def->methods) continue;
+        for (int j = 0; j < def->method_count; j++) {
+            StructMethodInfo* m = &def->methods[j];
+            if (!m->name || strcmp(m->name, name) != 0) continue;
+            ObjFunction* fn = m->func;
+            if (!fn && m->closure) fn = m->closure->function;
+            if (!fn) return NULL;                 /* 定义不完整 → 不猜 */
+            if (found_def) return NULL;           /* 同名方法出现在多个 def → 有歧义 */
+            /* 构造/析构不走 OP_INVOKE_METHOD 的正常方法语义，内联没有意义 */
+            if (def->has_ctor && j == def->ctor_index) return NULL;
+            if (def->has_dtor && j == def->dtor_index) return NULL;
+            found_def = def;
+            found_fn = fn;
+        }
+    }
+    if (!found_def || !found_fn) return NULL;
+    if (out_def) *out_def = found_def;
+    return found_fn;
+}
+
 /* ---- Opcode instruction size (bytes) ---- */
 /* Takes ip (pointer to opcode byte) because some opcodes are variable-length
  * (e.g. OP_ACC_FIELDS has size 2 + count). */
@@ -572,6 +612,63 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                                 (int)(ip - body_start));
                     r->capable = 0;
                     return;
+                }
+                /* ---- 尝试内联 struct 方法体（P5 续：方法调用内联）----
+                 * 条件（任一不满足就退回 callout，语义不变）：
+                 *   - 单返回值（=1），与 codegen/内联退出记账一致；
+                 *   - 方法名在所有已注册 def 中唯一（否则动态分发可能落到别的实现）；
+                 *   - 体内可内联（scan_callee_for_inline）、无 try、体长 ≤256；
+                 *   - callee locals 放得下（callee_lc >= arg_count，避免越界映射）。
+                 * 接收者的运行时类型由 codegen 生成 def 守卫兜底。 */
+                if (ret_count == 1 && arg_count >= 1 && r->inline_count < 4
+                    && !getenv("LENO_JIT_NOINLINE")) {
+                    ObjStructDef* mdef = NULL;
+                    ObjFunction* mf = jit_resolve_method_func(chunk, rd_short(ip + 1), &mdef);
+                    if (mf && mdef && mf->chunk && !mf->has_try &&
+                        mf->chunk->len > 0 && mf->chunk->len <= 256) {
+                        int callee_lc = mf->local_count;
+                        int base = r->num_locals + r->inline_extra_locals;
+                        if (callee_lc >= arg_count && base + callee_lc <= JIT_MAX_LOCALS) {
+                            int callee_mv = 0;
+                            InlineSite* is = &r->inline_sites[r->inline_count];
+                            if (scan_callee_for_inline(mf->chunk, callee_lc, base,
+                                                       is->callee_local_map, &callee_mv)) {
+                                is->bc_off = bc_off;
+                                is->func_slot = 0xFFFF;      /* 非全局函数调用点 */
+                                is->arg_count = arg_count;
+                                is->ret_count = ret_count;
+                                is->callee_chunk = mf->chunk;
+                                is->callee_local_count = callee_lc;
+                                is->callee_local_base = base;
+                                is->callee_body_size = mf->chunk->len;
+                                is->inline_end_mc = -1;
+                                is->is_method = 1;
+                                is->method_def = mdef;
+                                r->inline_count++;
+                                r->inline_extra_locals += callee_lc;
+                                /* 与全局函数内联同一套 max_vstack 估算 */
+                                int vstack_at_call = vstack;
+                                int callee_total_max = (vstack - arg_count) + callee_mv;
+                                if (vstack_at_call > r->max_vstack)
+                                    r->max_vstack = vstack_at_call;
+                                if (callee_total_max > r->max_vstack)
+                                    r->max_vstack = callee_total_max;
+                                if (r->max_vstack > JIT_MAX_VSTACK) {
+                                    if (jit_debug_on())
+                                        fprintf(stderr, "[JIT-DEBUG] scan FAIL: max_vstack=%d after method inline\n",
+                                                r->max_vstack);
+                                    r->capable = 0;
+                                    return;
+                                }
+                                if (jit_debug_on())
+                                    fprintf(stderr, "[JIT-DEBUG] inline(method): '%s' bc_off=%d arg_count=%d callee_lc=%d base=%d mv=%d\n",
+                                            mf->name ? mf->name : "?", bc_off, arg_count,
+                                            callee_lc, base, callee_mv);
+                                vstack -= (arg_count - ret_count);
+                                goto scan_next;
+                            }
+                        }
+                    }
                 }
                 vstack -= (arg_count - ret_count);
                 break;
