@@ -169,16 +169,15 @@ int compile_loop(CodegenCtx* ctx) {
      * inc r8 maps 0→1, -1→0 (both ≤ 1 unsigned), anything else → > 1.
      * ja bailout catches the "anything else" case.
      *
-     * site param: bytecode offset of the check, written to the global
-     * jit_bailout_site BEFORE the conditional jump so the bailout debug
-     * log can pinpoint which instruction overflowed.
+     * site param: bytecode offset of the check. 它不再就地写进 jit_bailout_site
+     * （那要在热路径上多付 4 条指令：push r9; movabs r9,&site; mov [r9],imm32;
+     * pop r9，其中 movabs 占 10 字节），而是**只记录待消费的站点值**，由紧随
+     * 其后的 patch_add(..., -1, ...) 转成「这个 bailout 分支自己的桩」——
+     * 站点写入被移到桩里，只有真的 bailout 才执行（§8.40）。诊断信息一字不差。
      */
       #define EMIT_BAILOUT_SITE_WRITE(site) do { \
-         emit_push_reg(cb, JIT_R9);  /* push r9 — save globals ptr */ \
-         emit_mov_reg_imm64(cb, JIT_R9, (uint64_t)(uintptr_t)&jit_bailout_site); \
-         emit_byte(cb, 0x41); emit_byte(cb, 0xC7); emit_byte(cb, 0x01); \
-         emit_uint32(cb, (uint32_t)(int32_t)(site)); /* mov dword [r9], imm32 */ \
-         emit_pop_reg(cb, JIT_R9);   /* pop r9 — restore globals ptr */ \
+         ctx->pending_site       = (int)(site); \
+         ctx->pending_site_valid = 1; \
       } while(0)
 
      #define EMIT_INT48_CHECK(site) do { \
@@ -1002,6 +1001,22 @@ int compile_loop(CodegenCtx* ctx) {
     emit_mov_eax_imm32(cb, 1);
     EMIT_EPILOGUE();
 
+    /* ---- bailout 站点桩（§8.40）----
+     * 每个 bailout 分支的落点：先把「是哪条检查失败的」写进全局 jit_bailout_site
+     * （stats / [JIT-DEBUG] 靠它报出失败位置），再 jmp 到上面的共享 bailout 块。
+     * 这些代码只有真的 bailout 时才执行，所以热路径上省掉了原来那 4 条指令
+     * （push r9; movabs r9,&site; mov [r9],imm32; pop r9）。
+     * R9 在这里可以随便用：马上要 bailout，调用方（解释器）会自己重新装载 R9。 */
+    for (int _si = 0; _si < ctx->bail_stub_count; _si++) {
+        int stub_mc = cb->len;
+        patch_rel32(cb, ctx->bail_stub_mc[_si], stub_mc);
+        emit_mov_reg_imm64(cb, JIT_R9, (uint64_t)(uintptr_t)&jit_bailout_site);
+        emit_byte(cb, 0x41); emit_byte(cb, 0xC7); emit_byte(cb, 0x01);  /* mov [r9], imm32 */
+        emit_uint32(cb, (uint32_t)(int32_t)ctx->bail_stub_site[_si]);
+        int _j = emit_jmp(cb);
+        patch_rel32(cb, _j, ctx->bailout_mc);
+    }
+
     /* ---- Frame-dead exit: callout 异常且宿主帧存活（catch_ip 已定向）----
      * 写回 locals 后返回 2；调用方（OP_LOOP/OP_FOR_LOOP handler）
      * 重载 frame 后 DISPATCH，从宿主帧 catch_ip 继续执行 */
@@ -1057,10 +1072,11 @@ int compile_loop(CodegenCtx* ctx) {
      * （宁可不编、不要猜）一律拒绝，循环退回解释器。 */
     if (ctx->off_overflow || ctx->patch_overflow) {
         if (jit_debug_on())
-            fprintf(stderr, "[JIT-DEBUG] COMPILE-FAIL: off_map/patch 溢出 "
-                            "(off=%d/%d patch=%d/%d) → 拒绝编译\n",
+            fprintf(stderr, "[JIT-DEBUG] COMPILE-FAIL: off_map/patch/桩表 溢出 "
+                            "(off=%d/%d patch=%d/%d stub=%d/%d) → 拒绝编译\n",
                     ctx->off_count, JIT_MAX_LOOP_OPS * 10,
-                    ctx->patch_count, JIT_MAX_PATCHES);
+                    ctx->patch_count, JIT_MAX_PATCHES,
+                    ctx->bail_stub_count, JIT_MAX_BAILOUT_STUBS);
         return 0;
     }
 

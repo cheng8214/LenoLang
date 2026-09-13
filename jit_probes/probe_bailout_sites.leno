@@ -1,0 +1,36 @@
+// bailout 站点（§8.40）回归探针
+//
+// 背景：§8.40 把「把失败位置写进 jit_bailout_site」从热路径（每个 int48/溢出检查前的
+// 4 条指令）搬到了**每个 bailout 分支自己的桩**里。本探针同时覆盖两类路径：
+//   - int48 溢出（ADD 倍增到 2^80）→ 走 EMIT_INT48_CHECK 的桩
+//   - int64 溢出（MUL 3^n 到 3^60）→ 走 EMIT_INT64_OVF_CHECK 的桩
+//
+// 判据（两条都要过）：
+//  1) 与 LENO_NO_JIT=1 的解释器结果**逐位一致**（溢出后由解释器提升 BigInt）：
+//       add_overflow = 1208925819614629174706176   (2^80)
+//       mul_overflow = 42391158275216203514294433201 (3^60)
+//       mix          = 1208925819614629174706177   (BigInt + int)
+//  2) 加 LENO_JIT_DEBUG=1 时，site 序列必须与改动前一致（本例实测循环 A 报 17、
+//     循环 B 报 14，各 3 次）。site 是「哪条检查失败」的唯一线索，桩化不能改变它。
+main() {
+    // 1) ADD 溢出：倍增到超过 2^47
+    var a = 1
+    var i = 0
+    while i < 80 {
+        a = a + a
+        i = i + 1
+    }
+    print("add_overflow=" + a)
+
+    // 2) MUL 溢出：3^n
+    var b = 1
+    var j = 0
+    while j < 60 {
+        b = b * 3
+        j = j + 1
+    }
+    print("mul_overflow=" + b)
+
+    // 3) 溢出后 BigInt 与 int 混算
+    print("mix=" + (a + 1))
+}

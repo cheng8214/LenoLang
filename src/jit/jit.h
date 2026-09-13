@@ -29,6 +29,7 @@
 #define JIT_MAX_VSTACK      64    /* max virtual stack depth             */
 #define JIT_MAX_LABELS      32    /* max jump labels in a loop body      */
 #define JIT_MAX_PATCHES     512   /* max jump patches                    */
+#define JIT_MAX_BAILOUT_STUBS 512 /* bailout 站点桩上限（§8.40，超限拒绝编译）*/
 #define JIT_BAILOUT_LIMIT   3     /* after N bailouts, stop trying      */
 /* 线性探测窗口：哈希冲突时在同一窗口内先找空槽，避免像老实现那样就地覆盖
  * 另一个热循环（两个别名循环会互相驱逐 → 每次进入都重编译） */

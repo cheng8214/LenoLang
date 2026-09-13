@@ -148,6 +148,12 @@ typedef struct {
      * 置位则 compile_loop 收尾时拒绝这次编译，循环退回解释器执行。 */
     int off_overflow;
     int patch_overflow;
+    /* ---- bailout 站点桩（§8.40，见下面 patch_add 的说明）---- */
+    int bail_stub_mc[JIT_MAX_BAILOUT_STUBS];    /* 该分支的 jcc/jmp rel32 位置 */
+    int bail_stub_site[JIT_MAX_BAILOUT_STUBS];  /* 写进 jit_bailout_site 的值 */
+    int bail_stub_count;
+    int pending_site;        /* EMIT_BAILOUT_SITE_WRITE 记下、等 bailout 分支消费 */
+    int pending_site_valid;
     int bailout_mc;      /* machine code offset of bailout code */
     int framedead_mc;    /* machine code offset of frame-dead exit (write back, ret 2) */
     int framedead_nowb_mc; /* machine code offset of frame-dead exit (no write back, ret 3) */
@@ -189,7 +195,34 @@ static inline int offmap_lookup(CodegenCtx* ctx, int bc_off) {
     return -1;
 }
 
+/* bailout 分支的「站点桩」（§8.40）
+ *
+ * 原来：每个 int48/溢出检查在**热路径上**就地写一次 jit_bailout_site
+ *       （push r9; movabs r9,&site; mov [r9],imm32; pop r9 —— 4 条指令、15 字节，
+ *        其中 movabs 占 10 字节），只为「万一 bailout 时能把失败位置报出来」。
+ * 现在：分支改成先跳到**自己的桩**，桩里才写 site 再 jmp 到共享 bailout 块
+ *       （诊断信息一字不差，但只有真的 bailout 才执行）。
+ *
+ * 记录时序：EMIT_BAILOUT_SITE_WRITE(site) 只置 pending_*；紧随其后的
+ * patch_add(..., -1, ...)（= bailout 分支）把它消费成一条桩记录。 */
 static inline void patch_add(CodegenCtx* ctx, int patch_mc, int target_bc, int vstack) {
+    if (target_bc == -1 && ctx->pending_site_valid) {
+        ctx->pending_site_valid = 0;
+        if (ctx->bail_stub_count < JIT_MAX_BAILOUT_STUBS) {
+            ctx->bail_stub_mc[ctx->bail_stub_count] = patch_mc;
+            ctx->bail_stub_site[ctx->bail_stub_count] = ctx->pending_site;
+            ctx->bail_stub_count++;
+        } else {
+            /* 桩表满（单个循环体里有 >512 个 bailout 检查，实际不可达）：按项目
+             * 原则「宁可不编，不要猜」拒绝这次编译 —— 绝不静默丢站点（那会让
+             * stats 报出错误的失败位置）。 */
+            ctx->patch_overflow = 1;
+        }
+        return;
+    }
+    /* 站点没被 bailout 分支消费（例如刚写完 site 就改了主意）→ 丢弃，
+     * 避免串到下一个不相干的分支上。 */
+    ctx->pending_site_valid = 0;
     if (ctx->patch_count < JIT_MAX_PATCHES) {
         ctx->patches[ctx->patch_count].patch_mc = patch_mc;
         ctx->patches[ctx->patch_count].target_bc = target_bc;

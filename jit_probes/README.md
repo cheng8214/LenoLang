@@ -17,6 +17,7 @@
 | `probe_index_slowpath.leno` | `OP_INDEX` 慢路径 bailout 回归探针（§8.33）：判据是 `Bailouts` 不增长，不是耗时。 |
 | `probe_eq_identity.leno` | `OP_EQ` 身份比较快路径差分探针（§8.34）：判据是 JIT 与 `LENO_NO_JIT=1` 结果逐条一致 + 哪些比较仍 bailout。 |
 | `bench_yield_poll.leno` | 回边 GC 轮询的每轮成本（§8.39）：10 亿次 `arr[0]`。**必须 10 亿次** —— `times.ms()` 刻度是 ~16ms，1 亿次下成本只有 1 个刻度，分辨不出。测法：与临时关掉轮询的二进制比 best-of-N。 |
+| `probe_bailout_sites.leno` | bailout 站点回归探针（§8.40）：int48 溢出（ADD 2^80）与 int64 溢出（MUL 3^60）两条桩路径。判据是「JIT 与 `LENO_NO_JIT=1` 结果逐位一致」+「`LENO_JIT_DEBUG=1` 的 site 序列与改动前相同（本例 17,17,17,14,14,14）」。 |
 
 ## 确定性 GC 钩子（§8.35）
 
