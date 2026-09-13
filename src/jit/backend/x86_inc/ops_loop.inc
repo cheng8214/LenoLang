@@ -39,39 +39,26 @@
                     patch_add(ctx, step_float_bail, -1, 0);
                 }
 
-                /* Check step != 0 (bailout if step == 0) */
-                if (d_step >= -128 && d_step <= 127)
-                    emit_mov_reg_mem8(cb, JIT_RAX, JIT_RBP, (int8_t)d_step);
-                else
-                    emit_mov_reg_mem32(cb, JIT_RAX, JIT_RBP, d_step);
+                /* Check step != 0 (bailout if step == 0)
+                 * §8.45：这四个槽的访问全部走宏 —— 它们可能已被 pin（见
+                 * pick_pin_locals 的三元组优先），此时读写都落在寄存器上。 */
+                EMIT_LOAD_LOCAL(JIT_RAX, si_step, d_step);
                 emit_test_rr(cb, JIT_RAX, JIT_RAX);
                 EMIT_BAILOUT_SITE_NONOVF(bc_off);
                 int step_bail = emit_jcc(cb, 0x84);  /* JE (step==0) → bailout */
                 patch_add(ctx, step_bail, -1, 0);
 
                 /* step 符号分流：step < 0 走反向初始条件检查（支持倒序循环） */
-                if (d_step >= -128 && d_step <= 127)
-                    emit_mov_reg_mem8(cb, JIT_RAX, JIT_RBP, (int8_t)d_step);
-                else
-                    emit_mov_reg_mem32(cb, JIT_RAX, JIT_RBP, d_step);
+                EMIT_LOAD_LOCAL(JIT_RAX, si_step, d_step);
                 emit_test_rr(cb, JIT_RAX, JIT_RAX);
                 int prep_neg_patch = emit_jcc(cb, 0x88);  /* JS -> negative init check */
 
                 /* Set loop_var = start */
-                if (d_start >= -128 && d_start <= 127)
-                    emit_mov_reg_mem8(cb, JIT_RAX, JIT_RBP, (int8_t)d_start);
-                else
-                    emit_mov_reg_mem32(cb, JIT_RAX, JIT_RBP, d_start);
-                if (d_lv >= -128 && d_lv <= 127)
-                    emit_mov_mem8_reg(cb, JIT_RBP, (int8_t)d_lv, JIT_RAX);
-                else
-                    emit_mov_mem32_reg(cb, JIT_RBP, d_lv, JIT_RAX);
+                EMIT_LOAD_LOCAL(JIT_RAX, si_start, d_start);
+                EMIT_STORE_LOCAL(JIT_RAX, si_lv, d_lv);
 
                 /* Check initial condition: start vs end (step > 0) */
-                if (d_end >= -128 && d_end <= 127)
-                    emit_mov_reg_mem8(cb, JIT_RDX, JIT_RBP, (int8_t)d_end);
-                else
-                    emit_mov_reg_mem32(cb, JIT_RDX, JIT_RBP, d_end);
+                EMIT_LOAD_LOCAL(JIT_RDX, si_end, d_end);
                 emit_cmp_rr(cb, JIT_RAX, JIT_RDX);
                 /* step > 0, exclusive: JGE (start >= end) → skip inner loop
                  * step > 0, inclusive: JG  (start > end)  → skip inner loop */
@@ -86,18 +73,9 @@
                 /* ---- 反向初始条件 (step < 0)：跳过条件与正向相反 ----
                  * exclusive: start <= end -> skip；inclusive: start < end -> skip */
                 patch_rel32(cb, prep_neg_patch, cb->len);
-                if (d_start >= -128 && d_start <= 127)
-                    emit_mov_reg_mem8(cb, JIT_RAX, JIT_RBP, (int8_t)d_start);
-                else
-                    emit_mov_reg_mem32(cb, JIT_RAX, JIT_RBP, d_start);
-                if (d_lv >= -128 && d_lv <= 127)
-                    emit_mov_mem8_reg(cb, JIT_RBP, (int8_t)d_lv, JIT_RAX);
-                else
-                    emit_mov_mem32_reg(cb, JIT_RBP, d_lv, JIT_RAX);
-                if (d_end >= -128 && d_end <= 127)
-                    emit_mov_reg_mem8(cb, JIT_RDX, JIT_RBP, (int8_t)d_end);
-                else
-                    emit_mov_reg_mem32(cb, JIT_RDX, JIT_RBP, d_end);
+                EMIT_LOAD_LOCAL(JIT_RAX, si_start, d_start);
+                EMIT_STORE_LOCAL(JIT_RAX, si_lv, d_lv);
+                EMIT_LOAD_LOCAL(JIT_RDX, si_end, d_end);
                 emit_cmp_rr(cb, JIT_RAX, JIT_RDX);
                 {
                     uint8_t cc_skip_neg = incl ? 0x8C /*JL*/ : 0x8E /*JLE*/;
@@ -174,6 +152,13 @@
                 int d_lv = scratch_disp(si_lv);
                 int d_st = scratch_disp(si_st);
                 int d_en = scratch_disp(si_en);
+                /* §8.45：三元组（loop_var / step / end）若都驻留寄存器，回边这道
+                 * 「增量 + 比较」就能直接在寄存器上做 —— 省掉 4 次访存。整组才有效：
+                 * 只 pin 一两个只能把访存换成寄存器搬移，指令数中性（§8.43）。 */
+                int lv_reg = pin_reg_of(pin_si, pin_n, si_lv);
+                int st_reg = pin_reg_of(pin_si, pin_n, si_st);
+                int en_reg = pin_reg_of(pin_si, pin_n, si_en);
+                int trio_reg = (lv_reg && st_reg && en_reg) ? lv_reg : 0;
 
                 int target_bc = bc_off + size - (int)joff;
                 int target_mc = offmap_lookup(ctx, target_bc);
@@ -202,34 +187,30 @@
                 /* loop_var += step (+ int48 check)，再与 end 比较；
                  * 继续循环的跳转由方向决定（正/负步长各一份）。 */
                 #define EMIT_FOR_STEP_AND_CMP() do { \
-                    if (d_lv >= -128 && d_lv <= 127) \
-                        emit_mov_reg_mem8(cb, JIT_RAX, JIT_RBP, (int8_t)d_lv); \
-                    else \
-                        emit_mov_reg_mem32(cb, JIT_RAX, JIT_RBP, d_lv); \
-                    if (d_st >= -128 && d_st <= 127) \
-                        emit_mov_reg_mem8(cb, JIT_RDX, JIT_RBP, (int8_t)d_st); \
-                    else \
-                        emit_mov_reg_mem32(cb, JIT_RDX, JIT_RBP, d_st); \
-                    emit_add_rr(cb, JIT_RAX, JIT_RDX); \
-                    EMIT_INT48_CHECK(bc_off); \
-                    if (d_lv >= -128 && d_lv <= 127) \
-                        emit_mov_mem8_reg(cb, JIT_RBP, (int8_t)d_lv, JIT_RAX); \
-                    else \
-                        emit_mov_mem32_reg(cb, JIT_RBP, d_lv, JIT_RAX); \
-                    if (d_en >= -128 && d_en <= 127) \
-                        emit_mov_reg_mem8(cb, JIT_RDX, JIT_RBP, (int8_t)d_en); \
-                    else \
-                        emit_mov_reg_mem32(cb, JIT_RDX, JIT_RBP, d_en); \
-                    emit_cmp_rr(cb, JIT_RAX, JIT_RDX); \
+                    if (trio_reg) { \
+                        /* 全寄存器形态：add lv, step / cmp lv, end */ \
+                        emit_add_rr(cb, lv_reg, st_reg); \
+                        EMIT_INT48_CHECK_REG(lv_reg, bc_off); \
+                        emit_cmp_rr(cb, lv_reg, en_reg); \
+                    } else { \
+                        EMIT_LOAD_LOCAL(JIT_RAX, si_lv, d_lv); \
+                        EMIT_LOAD_LOCAL(JIT_RDX, si_st, d_st); \
+                        emit_add_rr(cb, JIT_RAX, JIT_RDX); \
+                        EMIT_INT48_CHECK(bc_off); \
+                        EMIT_STORE_LOCAL(JIT_RAX, si_lv, d_lv); \
+                        EMIT_LOAD_LOCAL(JIT_RDX, si_en, d_en); \
+                        emit_cmp_rr(cb, JIT_RAX, JIT_RDX); \
+                    } \
                 } while(0)
 
                 /* step 符号分流：step == 0 不回溯（落到循环之后）；
                  * step < 0 走反向比较（倒序循环） */
-                if (d_st >= -128 && d_st <= 127)
-                    emit_mov_reg_mem8(cb, JIT_RAX, JIT_RBP, (int8_t)d_st);
-                else
-                    emit_mov_reg_mem32(cb, JIT_RAX, JIT_RBP, d_st);
-                emit_test_rr(cb, JIT_RAX, JIT_RAX);
+                if (trio_reg) {
+                    emit_test_rr(cb, st_reg, st_reg);
+                } else {
+                    EMIT_LOAD_LOCAL(JIT_RAX, si_st, d_st);
+                    emit_test_rr(cb, JIT_RAX, JIT_RAX);
+                }
                 int zero_patch = emit_jcc(cb, 0x84);   /* JZ -> after (step == 0) */
                 int neg_patch  = emit_jcc(cb, 0x88);   /* JS -> backward direction */
 

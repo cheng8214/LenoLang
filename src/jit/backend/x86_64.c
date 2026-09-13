@@ -45,21 +45,36 @@
  * preventing false restores at fall-through merge points. */
 #define VSTACK_UNREACHABLE  (-99999)
 
-/* Epilogue: mov rsp, rbp; pop r14; pop r13; pop r12; pop rbx; pop rbp; ret
- * (cannot use LEAVE because we pushed R12/R13/R14/RBX after RBP) */
+/* Epilogue: mov rsp, rbp; pop rbx; pop <pin regs 逆序>; pop rbp; ret
+ * (cannot use LEAVE because we pushed RBX/pin regs after RBP)
+ * §8.45：R12/R13/R14 不再被 callout 使用（保存已挪到帧槽），改为按需承载 pin。 */
 #define EMIT_EPILOGUE() do { \
     emit_rr(cb, 0x89, JIT_RSP, JIT_RBP); \
-    emit_pop_reg(cb, JIT_R14); \
-    emit_pop_reg(cb, JIT_R13); \
-    emit_pop_reg(cb, JIT_R12); \
     emit_pop_reg(cb, JIT_RBX); \
-    if (pin_reg) emit_pop_reg(cb, JIT_R15); /* §8.42 与序言的 push 对称 */ \
+    for (int _pi = pin_n - 1; _pi >= 0; _pi--) emit_pop_reg(cb, JIT_PIN_REGS[_pi]); \
     emit_pop_rbp(cb); \
     emit_ret(cb); \
 } while(0)
 
 static int scratch_disp(int scratch_idx) {
     return -8 * (scratch_idx + 1);
+}
+
+/* ---- §8.45 pin v2：最多 4 个局部量驻留寄存器 ----
+ * 分配表（顺序 = 序言 push / 尾声 pop 的顺序）：R15, R14, R13, R12。
+ * 这四个都是 callee-saved：本函数序言保存它们，被调用的 C 函数按 ABI 不会破坏，
+ * 所以 pin 的值能**跨 callout 存活**（这正是 §8.42 选 R15 的同一理由）。
+ * R12/R13/R14 在 §8.45 之前被 callout 的状态保存占用（RSP/RCX/R9），
+ * 现在那三份状态挪到了帧槽 ⇒ 腾出来给 pin。 */
+static const int JIT_PIN_REGS[4] = { JIT_R15, JIT_R14, JIT_R13, JIT_R12 };
+#define JIT_PIN_MAX 4
+
+/* 槽 si 是否被 pin；返回承载它的寄存器（0 = 未 pin） */
+static int pin_reg_of(const int pin_si[], int pin_n, int si) {
+    if (si < 0) return 0;
+    for (int i = 0; i < pin_n; i++)
+        if (pin_si[i] == si) return JIT_PIN_REGS[i];
+    return 0;
 }
 
 /* ---- ffi 定宽内存读写：可内联方法表（消费方见 x86_inc/ops_return.inc）----
@@ -141,8 +156,9 @@ static void pin_excl(const ScanResult* sr, int excluded[], int slot) {
     if (si >= 0 && si < JIT_PIN_MAX_SCRATCH) excluded[si] = 1;
 }
 
-static int pick_pin_local(const uint8_t* body_start, const ScanResult* sr,
-                          int count[], int excluded[]) {
+static int pick_pin_locals(const uint8_t* body_start, const ScanResult* sr,
+                           int out[], int cnt_out[], int excluded[]) {
+    int count[JIT_PIN_MAX_SCRATCH];
     for (int i = 0; i < JIT_PIN_MAX_SCRATCH; i++) { count[i] = 0; excluded[i] = 0; }
     const uint8_t* ip = body_start;
     const uint8_t* end = body_start + sr->body_size;
@@ -177,16 +193,21 @@ static int pick_pin_local(const uint8_t* body_start, const ScanResult* sr,
             case OP_PRE_INC_LOCAL:   case OP_PRE_DEC_LOCAL:
                 pin_excl(sr, excluded, rd_short(ip + 1));
                 break;
+            /* §8.45：这两条已经转换（codegen 全部走 EMIT_LOAD_LOCAL /
+             * EMIT_STORE_LOCAL）⇒ 与 GET/SET_LOCAL 一样**计数**，不再排除。
+             * 这是「计数器能进寄存器」的前提：一旦排除，计数循环的三元组就
+             * 永远拿不到寄存器，FOR_LOOP 回边那道尾部也就无法折成 add/cmp。 */
             case OP_FOR_PREP:
-                pin_excl(sr, excluded, ip[1]);   /* start */
-                pin_excl(sr, excluded, ip[2]);   /* end   */
-                pin_excl(sr, excluded, ip[3]);   /* step  */
-                pin_excl(sr, excluded, ip[4]);   /* loop var */
+                for (int k = 1; k <= 4; k++) {   /* start, end, step, loop var */
+                    int si = sr->local_map[ip[k]];
+                    if (si >= 0 && si < JIT_PIN_MAX_SCRATCH) count[si]++;
+                }
                 break;
             case OP_FOR_LOOP:
-                pin_excl(sr, excluded, ip[1]);   /* loop var */
-                pin_excl(sr, excluded, ip[2]);   /* step     */
-                pin_excl(sr, excluded, ip[3]);   /* end      */
+                for (int k = 1; k <= 3; k++) {   /* loop var, step, end */
+                    int si = sr->local_map[ip[k]];
+                    if (si >= 0 && si < JIT_PIN_MAX_SCRATCH) count[si]++;
+                }
                 break;
             case OP_CMPJMP_LL_INT:
                 pin_excl(sr, excluded, rd_short(ip + 2));
@@ -203,14 +224,46 @@ static int pick_pin_local(const uint8_t* body_start, const ScanResult* sr,
         }
         ip += size;
     }
-    /* 选访问次数最多且未被排除的槽；访问 < 2 次不值得占一个寄存器 */
-    int best = -1, best_n = 1;
-    for (int i = 0; i < JIT_PIN_MAX_SCRATCH; i++) {
-        if (excluded[i] || count[i] <= best_n) continue;
-        best = i;
-        best_n = count[i];
+    /* ---- ① 计数循环的三元组优先 ----
+     * lv/step/end 三者都进寄存器时，FOR_LOOP 回边的「增量 + 比较」可以直接在
+     * 寄存器上做（`add lv,step` / `cmp lv,end`），省掉 4 次访存。只 pin 其中
+     * 一两个拿不到这个收益（§8.43：寄存器化本身指令数中性 ⇒ 必须整组选）。
+     * 三元组都是编译器生成的 temp 槽，循环体内不会被按名访问，所以整组可用是常态。 */
+    int n = 0;
+    if (sr->back_edge_type == 2 && JIT_PIN_MAX >= 3) {
+        int trio[3];
+        trio[0] = sr->local_map[sr->for_loop_var_slot];
+        trio[1] = sr->local_map[sr->for_step_slot];
+        trio[2] = sr->local_map[sr->for_end_slot];
+        int ok = 1;
+        for (int i = 0; i < 3 && ok; i++) {
+            if (trio[i] < 0 || trio[i] >= JIT_PIN_MAX_SCRATCH || excluded[trio[i]]) { ok = 0; break; }
+            for (int j = 0; j < i; j++) if (trio[j] == trio[i]) ok = 0;   /* 槽重复（防御） */
+        }
+        if (ok) {
+            for (int i = 0; i < 3; i++) {
+                out[n] = trio[i];
+                cnt_out[n] = count[trio[i]];
+                excluded[trio[i]] = 1;   /* 不参与 ② 的挑选 */
+                n++;
+            }
+        }
     }
-    return best;
+    /* ---- ② 其余按访问次数填补；访问 < 2 次不值得占一个寄存器 ---- */
+    while (n < JIT_PIN_MAX) {
+        int best = -1, best_n = 1;
+        for (int i = 0; i < JIT_PIN_MAX_SCRATCH; i++) {
+            if (excluded[i] || count[i] <= best_n) continue;
+            best = i;
+            best_n = count[i];
+        }
+        if (best < 0) break;
+        out[n] = best;
+        cnt_out[n] = count[best];
+        excluded[best] = 1;
+        n++;
+    }
+    return n;
 }
 
 /* ---- §8.44 语句级折叠：GET_LOCAL(pinned) … SET_LOCAL_POP(同槽) ----
@@ -394,24 +447,29 @@ int compile_loop(CodegenCtx* ctx) {
      * OP_USHR_IMM（shr 结果可能越出 int48）、OP_CAST_INT 自身（null 路径原样返回）。 */
     int prev_raw_int48 = 0;
 
-    /* ---- §8.42 局部量驻留寄存器（v1：最多 1 个槽、仅循环 JIT）----
-     * pin_si = 选中的 scratch 槽（-1 = 不 pin）；pin_reg = 承载它的寄存器。
-     * 可用寄存器：RBX 是类型位图、RBP 是帧、R12/R13/R14 被 callout 保存/恢复
-     * （RSP/RCX/R9）占用，所以 v1 只有 R15。它只在真的 pin 了槽时才 push/pop。
+    /* ---- §8.45 局部量驻留寄存器 v2（最多 4 个槽，仅循环 JIT）----
+     * pin_si[i] = 第 i 个被 pin 的 scratch 槽；承载寄存器 = JIT_PIN_REGS[i]
+     * （R15/R14/R13/R12 —— R12/R13/R14 由 §8.45 把 callout 状态保存挪到帧槽
+     * 之后腾出来的，见那里的说明）。只对真的被选中的寄存器 push/pop/装载。
      * 函数级 JIT 不 pin：那种 JIT 每次调用都进入，push/pop + 装载的固定成本更高。 */
     int pin_count[JIT_PIN_MAX_SCRATCH], pin_excluded[JIT_PIN_MAX_SCRATCH];
-    int pin_si = -1;
+    int pin_si[JIT_PIN_MAX] = { -1, -1, -1, -1 };
+    int pin_cnt[JIT_PIN_MAX] = { 0, 0, 0, 0 };
+    int pin_n = 0;
     if (!ctx->func_mode)
-        pin_si = pick_pin_local(ctx->body_start, sr, pin_count, pin_excluded);
-    const int pin_reg = (pin_si >= 0) ? JIT_R15 : 0;
-    if (pin_si >= 0 && jit_debug_on())
-        fprintf(stderr, "[JIT-CG] pin: scratch[%d] -> r15 (access=%d)\n",
-                pin_si, pin_count[pin_si]);
+        pin_n = pick_pin_locals(ctx->body_start, sr, pin_si, pin_cnt, pin_excluded);
+    if (pin_n > 0 && jit_debug_on()) {
+        fprintf(stderr, "[JIT-CG] pin: %d 槽 ->", pin_n);
+        for (int _i = 0; _i < pin_n; _i++)
+            fprintf(stderr, " scratch[%d](access=%d)", pin_si[_i], pin_cnt[_i]);
+        fprintf(stderr, "\n");
+    }
 
     /* 局部量读/写：pinned 槽走寄存器，其余走 scratch 槽（内存） */
     #define EMIT_LOAD_LOCAL(reg, si, disp) do { \
-        if (pin_reg && (si) == pin_si) { \
-            emit_mov_rr(cb, (reg), pin_reg); \
+        int _pr = pin_reg_of(pin_si, pin_n, (si)); \
+        if (_pr) { \
+            emit_mov_rr(cb, (reg), _pr); \
         } else if ((disp) >= -128 && (disp) <= 127) { \
             emit_mov_reg_mem8(cb, (reg), JIT_RBP, (int8_t)(disp)); \
         } else { \
@@ -419,8 +477,9 @@ int compile_loop(CodegenCtx* ctx) {
         } \
     } while(0)
     #define EMIT_STORE_LOCAL(reg, si, disp) do { \
-        if (pin_reg && (si) == pin_si) { \
-            emit_mov_rr(cb, pin_reg, (reg)); \
+        int _pr = pin_reg_of(pin_si, pin_n, (si)); \
+        if (_pr) { \
+            emit_mov_rr(cb, _pr, (reg)); \
         } else if ((disp) >= -128 && (disp) <= 127) { \
             emit_mov_mem8_reg(cb, JIT_RBP, (int8_t)(disp), (reg)); \
         } else { \
@@ -750,18 +809,18 @@ int compile_loop(CodegenCtx* ctx) {
 
     #define EMIT_CALLOUT_BEGIN() do { \
         body_has_callout = 1; \
-        emit_mov_rr(cb, JIT_R12, JIT_RSP); \
-        emit_mov_rr(cb, JIT_R13, JIT_RCX); \
-        emit_mov_rr(cb, JIT_R14, JIT_R9); \
+        EMIT_STORE_TMP(co_rsp_disp, JIT_RSP); \
+        EMIT_STORE_TMP(co_rcx_disp, JIT_RCX); \
+        EMIT_STORE_TMP(co_r9_disp,  JIT_R9); \
         emit_byte(cb, 0x48); emit_byte(cb, 0x83); emit_byte(cb, 0xE4); emit_byte(cb, 0xF0); \
         EMIT_CALLOUT_ALLOC(); \
     } while(0)
 
     /* Restore state, reload R10/R11 */
     #define EMIT_CALLOUT_END() do { \
-        emit_mov_rr(cb, JIT_RSP, JIT_R12); \
-        emit_mov_rr(cb, JIT_RCX, JIT_R13); \
-        emit_mov_rr(cb, JIT_R9, JIT_R14); \
+        EMIT_LOAD_TMP(JIT_RSP, co_rsp_disp); \
+        EMIT_LOAD_TMP(JIT_RCX, co_rcx_disp); \
+        EMIT_LOAD_TMP(JIT_R9,  co_r9_disp); \
         emit_mov_reg_imm64(cb, JIT_R10, JIT_PAYLOAD_MSK); \
         emit_mov_reg_imm64(cb, JIT_R11, JIT_INT_TAG); \
     } while(0)
@@ -795,13 +854,19 @@ int compile_loop(CodegenCtx* ctx) {
     int tmp2_disp = -8 * (total_locals + sr->max_vstack + 2);
     int tmp3_disp = -8 * (total_locals + sr->max_vstack + 3);
 
+    /* §8.45：callout 跨调用的状态保存槽（原来放在 R12/R13/R14）。
+     * 挪到帧槽之后，那三个 callee-saved 寄存器被腾出来给局部量 pin 用
+     * （§8.42 的 v1 只有 R15 可用的直接原因）。代价只是每次 callout 3 存 + 3 取，
+     * 都在 L1 里且被被调函数的延迟掩盖。 */
+    int co_rsp_disp = -8 * (total_locals + sr->max_vstack + 4);
+    int co_rcx_disp = -8 * (total_locals + sr->max_vstack + 5);
+    int co_r9_disp  = -8 * (total_locals + sr->max_vstack + 6);
+
     /* ---- Function prologue ---- */
     emit_push_rbp(cb);                        /* push rbp          */
-    if (pin_reg) emit_push_reg(cb, JIT_R15);  /* §8.42 pin 值寄存器（callee-saved） */
+    for (int _i = 0; _i < pin_n; _i++)        /* §8.45 pin 值寄存器（callee-saved） */
+        emit_push_reg(cb, JIT_PIN_REGS[_i]);
     emit_push_reg(cb, JIT_RBX);              /* push rbx (type bitmap, callee-saved) */
-    emit_push_reg(cb, JIT_R12);              /* push r12 (callout: saved RSP) */
-    emit_push_reg(cb, JIT_R13);              /* push r13 (callout: saved RCX=locals) */
-    emit_push_reg(cb, JIT_R14);              /* push r14 (callout: saved R9=globals) */
     emit_mov_rbp_rsp(cb);                     /* mov rbp, rsp      */
 
     /* ---- Entry ABI shim (System V AMD64) -----------------------------
@@ -822,8 +887,9 @@ int compile_loop(CodegenCtx* ctx) {
     emit_mov_rr(cb, JIT_RDX, JIT_RSI);        /* RDX = globals (arg2) */
 #endif
 
-    /* Allocate: scratch area (total_locals*8) + max_vstack*8 + callout temps (3*8), rounded to 16 */
-    int frame_sz = total_locals * 8 + sr->max_vstack * 8 + 16 + 24;
+    /* Allocate: scratch area (total_locals*8) + max_vstack*8 + callout temps (3*8)
+     * + callout 状态保存槽 (3*8，§8.45)，rounded to 16 */
+    int frame_sz = total_locals * 8 + sr->max_vstack * 8 + 16 + 24 + 24;
     frame_sz = (frame_sz + 15) & ~15;        /* align to 16 */
     if (frame_sz <= 127) {
         emit_sub_rsp_imm8(cb, (uint8_t)frame_sz);
@@ -919,15 +985,15 @@ int compile_loop(CodegenCtx* ctx) {
         cb->buf[next_patch] = (uint8_t)(cb->len - (next_patch + 1));
     }
 
-    /* §8.42：把 pin 的槽装进寄存器。scratch 槽照旧保留（序言之后的入口检查
-     * —— 例如 FOR_LOOP 的 step 检查 —— 以及写回仍按内存路径读它；
-     * 但本 slot 已被 pick_pin_local 排除在那两类访问之外，见那里的说明）。 */
-    if (pin_reg) {
-        int _pd = scratch_disp(pin_si);
+    /* §8.45：把 pin 的槽装进寄存器。scratch 槽仍是权威副本（写回路径按内存读它），
+     * 但循环体与入口检查对它的访问都已改为走宏（EMIT_LOAD_LOCAL / STORE_LOCAL）
+     * ⇒ 不会再从内存读到过期值。 */
+    for (int _i = 0; _i < pin_n; _i++) {
+        int _pd = scratch_disp(pin_si[_i]);
         if (_pd >= -128 && _pd <= 127)
-            emit_mov_reg_mem8(cb, JIT_R15, JIT_RBP, (int8_t)_pd);
+            emit_mov_reg_mem8(cb, JIT_PIN_REGS[_i], JIT_RBP, (int8_t)_pd);
         else
-            emit_mov_reg_mem32(cb, JIT_R15, JIT_RBP, _pd);
+            emit_mov_reg_mem32(cb, JIT_PIN_REGS[_i], JIT_RBP, _pd);
     }
 
     /* ---- Step check (for OP_FOR_LOOP) ----
@@ -955,12 +1021,8 @@ int compile_loop(CodegenCtx* ctx) {
         int float_patch = emit_jcc(cb, 0x82);  /* JC → bailout */
         patch_add(ctx, float_patch, -1, 0);
 
-        /* Load step: mov rax, [rbp + disp] */
-        if (disp >= -128 && disp <= 127) {
-            emit_mov_reg_mem8(cb, JIT_RAX, JIT_RBP, (int8_t)disp);
-        } else {
-            emit_mov_reg_mem32(cb, JIT_RAX, JIT_RBP, disp);
-        }
+        /* Load step（§8.45：step 可能已被 pin，走宏） */
+        EMIT_LOAD_LOCAL(JIT_RAX, step_scratch, disp);
         /* step == 0 → bailout (site -2) */
         emit_test_rr(cb, JIT_RAX, JIT_RAX);
         EMIT_BAILOUT_SITE_WRITE(-2);
@@ -990,39 +1052,18 @@ int compile_loop(CodegenCtx* ctx) {
         /* loop_var += step，再与 end 比较；退出跳转由调用处按方向选择
          * （正向用 JG/JGE，反向用 JL/JLE），同一段比较代码两种方向复用。 */
         #define EMIT_FOR_ENTRY_STEP() do { \
-            /* mov rax, [rbp+d_lv] (loop_var) */ \
-            if (d_lv >= -128 && d_lv <= 127) \
-                emit_mov_reg_mem8(cb, JIT_RAX, JIT_RBP, (int8_t)d_lv); \
-            else \
-                emit_mov_reg_mem32(cb, JIT_RAX, JIT_RBP, d_lv); \
-            /* mov rdx, [rbp+d_st] (step) */ \
-            if (d_st >= -128 && d_st <= 127) \
-                emit_mov_reg_mem8(cb, JIT_RDX, JIT_RBP, (int8_t)d_st); \
-            else \
-                emit_mov_reg_mem32(cb, JIT_RDX, JIT_RBP, d_st); \
-            /* add rax, rdx (loop_var += step) */ \
-            emit_add_rr(cb, JIT_RAX, JIT_RDX); \
+            EMIT_LOAD_LOCAL(JIT_RAX, si_lv, d_lv);   /* loop_var */ \
+            EMIT_LOAD_LOCAL(JIT_RDX, si_st, d_st);   /* step     */ \
+            emit_add_rr(cb, JIT_RAX, JIT_RDX);       /* loop_var += step */ \
             /* -1: this check is the loop-entry increment, bc_off not yet in scope */ \
             EMIT_INT48_CHECK(-1); \
-            /* mov [rbp+d_lv], rax (store back) */ \
-            if (d_lv >= -128 && d_lv <= 127) \
-                emit_mov_mem8_reg(cb, JIT_RBP, (int8_t)d_lv, JIT_RAX); \
-            else \
-                emit_mov_mem32_reg(cb, JIT_RBP, d_lv, JIT_RAX); \
-            /* mov rdx, [rbp+d_en] (end) */ \
-            if (d_en >= -128 && d_en <= 127) \
-                emit_mov_reg_mem8(cb, JIT_RDX, JIT_RBP, (int8_t)d_en); \
-            else \
-                emit_mov_reg_mem32(cb, JIT_RDX, JIT_RBP, d_en); \
-            /* cmp rax, rdx */ \
+            EMIT_STORE_LOCAL(JIT_RAX, si_lv, d_lv); \
+            EMIT_LOAD_LOCAL(JIT_RDX, si_en, d_en);   /* end */ \
             emit_cmp_rr(cb, JIT_RAX, JIT_RDX); \
         } while(0)
 
         /* 读取 step 符号：step < 0 走反向入口（支持倒序 for 循环） */
-        if (d_st >= -128 && d_st <= 127)
-            emit_mov_reg_mem8(cb, JIT_RAX, JIT_RBP, (int8_t)d_st);
-        else
-            emit_mov_reg_mem32(cb, JIT_RAX, JIT_RBP, d_st);
+        EMIT_LOAD_LOCAL(JIT_RAX, si_st, d_st);
         emit_test_rr(cb, JIT_RAX, JIT_RAX);
         int neg_step_patch = emit_jcc(cb, 0x88);  /* JS -> negative entry */
 
@@ -1188,14 +1229,16 @@ int compile_loop(CodegenCtx* ctx) {
     /* Write back all locals (type-aware via RBX bitmap) — 提取为宏，
      * exit 块与 framedead 块（异常定向到宿主帧 catch 时）共用 */
     #define EMIT_WRITEBACK_LOCALS() do { \
-        /* §8.42：先把 pin 的寄存器刷回 scratch 槽 —— 下面的写回循环按内存读它。 \
-         * 只在写出路径（exit / framedead / yield）执行，属于冷路径。 */ \
-        if (pin_reg) { \
-            int _pd = scratch_disp(pin_si); \
+        /* §8.45：先把 pin 的寄存器刷回 scratch 槽 —— 下面的写回循环按内存读它。 \
+         * 只在写出路径（exit / framedead / yield）执行，属于冷路径。 \
+         * bailout 路径**刻意不写回**（解释器从回边重跑本轮，见那里的注释）， \
+         * 所以 pin 也不需要在那里刷。 */ \
+        for (int _pi = 0; _pi < pin_n; _pi++) { \
+            int _pd = scratch_disp(pin_si[_pi]); \
             if (_pd >= -128 && _pd <= 127) \
-                emit_mov_mem8_reg(cb, JIT_RBP, (int8_t)_pd, JIT_R15); \
+                emit_mov_mem8_reg(cb, JIT_RBP, (int8_t)_pd, JIT_PIN_REGS[_pi]); \
             else \
-                emit_mov_mem32_reg(cb, JIT_RBP, _pd, JIT_R15); \
+                emit_mov_mem32_reg(cb, JIT_RBP, _pd, JIT_PIN_REGS[_pi]); \
         } \
         for (int _i = 0; _i < n; _i++) { \
             int slot = sr->local_slots[_i]; \

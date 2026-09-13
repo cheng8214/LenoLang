@@ -39,8 +39,9 @@
                 uint16_t slot = rd_short(ip + 1);
                 int si = cur_local_map[slot];
                 int disp = scratch_disp(si);
+                int fold_reg = pin_reg_of(pin_si, pin_n, si);   /* §8.45：本槽自己的寄存器 */
                 /* ---- §8.44 语句级折叠：pinned 槽上的 `x = x ⊕ k` 直接落在寄存器上 ---- */
-                if (pin_reg && si == pin_si && !tos_live) {
+                if (fold_reg && !tos_live) {
                     uint8_t alu = 0;
                     int32_t fold_imm = 0;
                     int flen = peek_local_fold(ctx, ip, cur_chunk, slot, bc_off, &alu, &fold_imm);
@@ -51,19 +52,19 @@
                          alu == OP_ADD_INT_IMM || alu == OP_SUB_INT_IMM ||
                          alu == OP_SHL_IMM || alu == OP_SHR_IMM)) {
                         switch (alu) {
-                            case OP_BITAND:      emit_alu_imm32_reg(cb, 4, pin_reg, (uint32_t)fold_imm); break;
-                            case OP_BITOR:       emit_alu_imm32_reg(cb, 1, pin_reg, (uint32_t)fold_imm); break;
-                            case OP_BITXOR:      emit_alu_imm32_reg(cb, 6, pin_reg, (uint32_t)fold_imm); break;
-                            case OP_ADD_INT_IMM: emit_alu_imm8_reg(cb, 0, pin_reg, (uint8_t)fold_imm); break;
-                            case OP_SUB_INT_IMM: emit_alu_imm8_reg(cb, 5, pin_reg, (uint8_t)fold_imm); break;
+                            case OP_BITAND:      emit_alu_imm32_reg(cb, 4, fold_reg, (uint32_t)fold_imm); break;
+                            case OP_BITOR:       emit_alu_imm32_reg(cb, 1, fold_reg, (uint32_t)fold_imm); break;
+                            case OP_BITXOR:      emit_alu_imm32_reg(cb, 6, fold_reg, (uint32_t)fold_imm); break;
+                            case OP_ADD_INT_IMM: emit_alu_imm8_reg(cb, 0, fold_reg, (uint8_t)fold_imm); break;
+                            case OP_SUB_INT_IMM: emit_alu_imm8_reg(cb, 5, fold_reg, (uint8_t)fold_imm); break;
                             case OP_SHL_IMM:
-                                emit_shl_imm(cb, pin_reg, (uint8_t)fold_imm);
+                                emit_shl_imm(cb, fold_reg, (uint8_t)fold_imm);
                                 /* VM 语义：int64 左移后**截断**为 48 位（不 bailout），
                                  * 与 SHL_IMM 原 codegen 的 EMIT_INT48_TRUNCATE 一致 */
-                                emit_shl_imm(cb, pin_reg, 16);
-                                emit_sar_imm(cb, pin_reg, 16);
+                                emit_shl_imm(cb, fold_reg, 16);
+                                emit_sar_imm(cb, fold_reg, 16);
                                 break;
-                            case OP_SHR_IMM:     emit_sar_imm(cb, pin_reg, (uint8_t)fold_imm); break;
+                            case OP_SHR_IMM:     emit_sar_imm(cb, fold_reg, (uint8_t)fold_imm); break;
                             default: break;
                         }
                         /* §8.44：**只有会溢出 int48 的运算才需要检查**。
@@ -75,7 +76,7 @@
                          * ADD/SUB 会溢出 ⇒ 必须保留（溢出 bailout 交解释器走 BigInt）。
                          * 实测这一步是本次最大的单项：422ms → 313ms（1.35x）。 */
                         if (alu == OP_ADD_INT_IMM || alu == OP_SUB_INT_IMM)
-                            EMIT_INT48_CHECK_REG(pin_reg, bc_off);
+                            EMIT_INT48_CHECK_REG(fold_reg, bc_off);
                         size = flen;   /* 吃掉整条语句的字节码（含可选的 CAST） */
                         if (jit_debug_on())
                             fprintf(stderr, "[JIT-CG] FOLD slot=%d alu=%d imm=%d len=%d\n",
@@ -185,17 +186,17 @@
                 Value cv = cur_chunk->constants[ci];
                 /* ---- §8.44 形态 B：`x = k ⊕ x`（常量在左；只有可交换的位运算能折，
                  * 不能溢出 ⇒ 与形态 A 一样不需要 int48 检查）---- */
-                if (pin_reg && !tos_live && val_is_int(cv)) {
+                if (pin_n > 0 && !tos_live && val_is_int(cv)) {
                     int fslot = 0;
                     uint8_t falu = 0;
                     int32_t fimm = 0;
                     int flen = peek_local_fold_constfirst(ctx, ip, cur_chunk, bc_off,
                                                           &fslot, &falu, &fimm);
-                    if (flen > 0 && cur_local_map[fslot] == pin_si &&
-                        (falu == OP_BITAND || falu == OP_BITOR || falu == OP_BITXOR)) {
-                        if (falu == OP_BITAND)     emit_alu_imm32_reg(cb, 4, pin_reg, (uint32_t)fimm);
-                        else if (falu == OP_BITOR) emit_alu_imm32_reg(cb, 1, pin_reg, (uint32_t)fimm);
-                        else                       emit_alu_imm32_reg(cb, 6, pin_reg, (uint32_t)fimm);
+                    int freg = (flen > 0) ? pin_reg_of(pin_si, pin_n, cur_local_map[fslot]) : 0;
+                    if (freg && (falu == OP_BITAND || falu == OP_BITOR || falu == OP_BITXOR)) {
+                        if (falu == OP_BITAND)     emit_alu_imm32_reg(cb, 4, freg, (uint32_t)fimm);
+                        else if (falu == OP_BITOR) emit_alu_imm32_reg(cb, 1, freg, (uint32_t)fimm);
+                        else                       emit_alu_imm32_reg(cb, 6, freg, (uint32_t)fimm);
                         size = flen;   /* 吃掉整条语句的字节码（含可选的 CAST） */
                         if (jit_debug_on())
                             fprintf(stderr, "[JIT-CG] FOLDB slot=%d alu=%d imm=%d len=%d\n",
