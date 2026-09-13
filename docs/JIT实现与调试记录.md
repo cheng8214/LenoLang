@@ -49,7 +49,10 @@ Leno JIT 是一个**模板 JIT（template JIT）**，工作在栈式 VM 的热�
 
 ### 工作流程
 
+**两条触发路径**（2026-09-13 起）：
+
 ```
+A. 热循环（原有）
 VM 执行 OP_LOOP / OP_FOR_LOOP
   → jit_try_hot_loop() 被调用
   → hit_count++ → 达到阈值 (50次) → 尝试编译
@@ -58,6 +61,14 @@ VM 执行 OP_LOOP / OP_FOR_LOOP
   → 缓存到 jit_state.cache[]
   → 下次命中同循环 → 直接执行 JIT 代码
   → 执行成功返回 0 / 类型溢出 bail out 返回 1
+
+B. 热函数（§8.25，解释器调用链）
+VM 执行 OP_CALL / OP_CALL_GLOBAL_FUNC[_TYPED]
+  → jit_try_hot_func_call() → hit_count++ → 达到阈值 (50次)
+  → jit_compile_function(): 整函数（要求无循环回边/无 try/单返回值）编译为
+    fn(locals, globals)，缓存到 jit_func_cache[]
+  → 命中后直接执行机器码，按 call() 的栈约定折叠栈并写回返回值
+  → 函数体内对被调函数的调用走 callout 薄桥（JIT 链），非 0 返回则交回解释器
 ```
 
 ### JIT 函数签名
@@ -79,6 +90,9 @@ int (*JitLoopFn)(Value* locals, Value* globals);
 | `JIT_MAX_LOOP_OPS`  | 256 | 循环体最大 opcode 数          |
 | `JIT_MAX_VSTACK`    | 64  | 虚拟栈最大深度                 |
 | `JIT_BAILOUT_LIMIT` | 3   | bailout 3 次后放弃此循环       |
+| `JIT_FUNC_HOT_THRESHOLD` | 50 | **解释器侧**函数调用 50 次后编译整函数（§8.25；callout 侧仍第一次就编译） |
+| `JIT_FUNC_CACHE_SIZE` | 256 | 函数级 JIT 缓存槽数（direct-mapped，2 的幂） |
+| `JIT_FUNC_MAX_DEPTH` | 64 | JIT 函数链最大嵌套深度（C 栈保护，超限回退解释器） |
 
 ***
 
@@ -1274,6 +1288,223 @@ objdump 与 dump 文件、运行时内存三者逐字节一致），但运行时
 * 位运算/常量组合**手算一遍**：这次把 `OR` 当成 `ADD` 用（两者在「差 1 位」的直觉下
   看着等价），代价是几小时的排查。
 
+### 8.25 函数级 JIT 只在「被 JIT 循环 callout」时才编译 —— 纯递归永远 1x（2026-09-13）
+
+**现象**
+
+`examples/性能测试/全部测试.leno` 的 `经典递归: 832040`（顶层一次性
+`fib_recursive(30)`，约 2.7M 次递归调用）：
+
+| 模式 | 耗时 |
+| --- | --- |
+| JIT | 93\~94 ms |
+| `LENO_NO_JIT=1` | 93\~109 ms |
+
+**加速比 1.0x** —— 开了 JIT 与纯解释器没有区别。
+
+**根因**
+
+`jit_func_lookup_or_compile()` 全仓只有两个调用者，都在 `jit_callout.c`
+（`jit_callout_global_func` / `jit_callout_invoke_method` 的函数级 JIT 快路径）。
+也就是说：**只有「被某个 JIT 热循环 callout 调用到」的函数才有机会被编译**。
+`fib(30)` 的调用链起点在解释器（`main` 里一句 `fib_recursive(30)`），
+而解释器的 `OP_CALL` / `OP_CALL_GLOBAL_FUNC[_TYPED]` 从不查函数级 JIT 缓存
+→ 整棵递归树都在解释器里跑。
+
+**修法**
+
+1. `JitFuncCacheEntry` 增加 `hit_count` / `hot_disabled`（`jit_priv.h`）；
+2. 新增 `jit_try_hot_func_call(closure, arg_count, typed, vm)`（`jit.c`），
+   在解释器的三个调用点挂上（`op_call.inc`）。它的栈约定与 `call()` /
+   `call_no_type_check` 完全一致：调用前 `[arg1..argN][callee]`，
+   命中时 `sp -= arg_count`、返回值写入原 callee 槽，并同步
+   `last_return_value` / `last_return_count` / `last_return_values[0]`；
+   `typed` 参数用于对齐「typed 调用点不做参数提升」的既有语义；
+3. 阈值 `JIT_FUNC_HOT_THRESHOLD = 50`，与循环回边阈值分开；
+4. **callout 路径保持「第一次就急切编译」**，热点计数只由解释器侧自增，
+   因此不回归既有的「JIT 循环调函数」性能；
+5. `jit_func_lookup_or_compile()` 改为尊重 `tried`：新条目（解释器侧只建了
+   计数器、还没编译）命中时必须补编译 —— 否则会把「有计数器条目」误判成
+   「编译失败已缓存」，让 JIT 循环**永远不再**编译该函数（这是本改动的
+   头号自伤点，`tried` 的三态语义必须记住）；
+6. `jit_try_hot_func_call` 的三道保险：`jit_func_depth >= 64` 直接返回 0；
+   `closure->type_param_count > 0`（泛型实例，JIT 不传类型参数）直接返回 0；
+   执行返回非 0 或 `jit_callout_failed` → 置 `hot_disabled` 并复位失败标志。
+7. `JIT_FUNC_CACHE_SIZE` 32 → 256：函数级 JIT 现在从解释器侧进入，同进程被编译
+   的函数个数远多于从前；而 `jit_func_entry_claim` 在哈希冲突时会
+   `jit_mem_free` 掉被驱逐函数的机器码，若那个函数正在 C 栈上执行
+   （A 调 B，B 的 callout 又撞槽编译了 C）就是 use-after-free。
+
+**实测**
+
+| 场景 | 基线（`66ace270`） | 改动后 |
+| --- | --- | --- |
+| 顶层 `fib_recursive(30)` | 93\~94 ms | **31\~32 ms（3.0x）** |
+| 热循环调 `fib_recursive(10)`×30000 | 47\~63 ms | 47\~78 ms（噪声内，无回归） |
+
+统计新增两项可观测指标 `FuncCompiled` / `FuncExecuted`（后者只统计
+**解释器侧热入口**执行次数，长期为 0 说明解释器调用点没热起来）。
+上例 `FuncCompiled=1`、`FuncExecuted=115`：115 ≪ 2.7M 是**预期**的 ——
+一旦进入 JIT 函数体，其内部递归全部由 callout →
+`jit_func_lookup_or_compile` 命中缓存后直接调用机器码，不再经过热度计数。
+
+**边界（三条都是硬限制，决定了后续优先级）**
+
+| 限制 | 原因 | 表现 |
+| --- | --- | --- |
+| 递归深度 ≤ `JIT_FUNC_MAX_DEPTH`(64) | JIT body → callout → JIT body 是**真实 C 调用链**，超限回退解释器 | `nonTail(200000)`：47ms → 47ms，**无收益**（200000 ≫ 64） |
+| 尾递归完全不覆盖 | `return f(x)` 经尾调用优化发射 `OP_TAIL_CALL`（复用当前帧），不经过新增热入口 | `isEven`/`isOdd`/`fadd`/`rep` 一个都没被编译（`LENO_JIT_DEBUG=1` 确认） |
+| 不可编译的函数一次即停用 | `return_count>1` / `has_try` / 含循环回边 / 含 upvalue / 泛型实例 | 解释器调用点此后只付一次哈希+比较，不再反复试探 |
+
+**取舍：bailout 之后不重跑是做不到的**
+
+`jit_try_hot_func_call` 失败时把控制权交回解释器，解释器会**完整重跑**这次调用。
+JIT 中途对堆的副作用（数组 append、字典写、打印）无法回滚。这与
+`jit_callout_*` 快路径的既有取舍一致（见 14.4-③），也是「一次失败即
+`hot_disabled`」的原因：同一份数据触发的 bailout 会稳定复现，重试没有意义。
+
+**回归**
+
+* 新增 `assert/test_jit_hot_func.leno`（12 个用例）：纯递归 + 结果类型、
+  深度 200 > 64 的深度守卫、互递归 bool 返回值、int48 溢出回退（BigInt 语义）、
+  float 形参 + int 实参提升、字符串 concat、多返回值 / 含 try 必须拒绝编译、
+  「先少量解释器调用再进热循环」不得阻塞 callout 急切编译、低热度不编译、
+  递归返回 Dict、函数体内含 struct 多返回值方法调用。
+  该文件是**语义守卫**（改动前后都必须通过，基线版本同样 pass）；
+  「JIT 是否真的执行」由 `FuncExecuted` 统计人工确认。
+* `assert` **271 passed / 0 failed**（`LENO_NO_JIT=1` 同样 271）。
+* `全部测试.leno` 其余各行与基线逐项一致（`arr.add` 625/641/641、
+  `dict[key]` 875\~906、`arr[index]` 172\~203）。
+* **示例差分（基线二进制 vs 改动版，均为 JIT 模式，逐文件比 stdout + 退出码）**：
+  `examples/{func, struct, crypto, bigint, 排序测试, 闭包, 验证, try catch, switch, enum}`
+  共 **205 个 `.leno`**。差异 7 处，逐一核对后**全部是计时数字**
+  （`test_index_vs_field` 的 ms、`pbkdf2` 的「耗时」、
+  `各种排序`/`更多排序`/`冒泡排序` 的微秒/毫秒），把计时行过滤后差异为 0；
+  两处 `验证/` 用例（`doc_struct_semantics_verify`、`lang_struct_semantics_test`）
+  在**两个二进制上都返回 -1**（同一运行时错误：`类型 'Node' 没有方法 'copy'`），
+  非本次引入。
+* **顺带发现的既有崩溃**：`examples/crypto/aes128.leno` 在 JIT 模式下栈溢出
+  （退出码 `0xC00000FD`，`LENO_NO_JIT=1` 正常跑完）。
+  根因不在本次改动，但已单独修掉 —— 见 §8.26。
+
+### 8.26 内联体共用 bc_off 命名空间 —— aes128 JIT 下栈溢出（2026-09-13）
+
+**现象**
+
+`examples/crypto/aes128.leno` 在 JIT 模式下 `0xC00000FD`（STATUS_STACK_OVERFLOW），
+stdout 停在 `--- 字符串加解密 ---` 之前；`LENO_NO_JIT=1` 完整跑完。
+在 `66ace270` 上单独编译的基线二进制同样复现（同一崩溃点、同一退出码）——
+**是既有 bug，不是 §8.25 引入的**，本次一并修掉。
+
+**最小复现**
+
+`build/probe_aes.leno`（不入库）：`gf_mul`（内部有 `for 8` + 两处 `if`）被内联到
+`mix_columns` 的循环体里，循环体含 **4 个** `gf_mul` 调用点。
+二分探针 `build/probe_aes2.leno` 把循环体分别缩成 **1 个**和 **2 个**内联点：
+
+| 内联点个数 | 结果 |
+| --- | --- |
+| 1 | ✅ `mix1 ok` |
+| 2 | ❌ 进程崩溃（`0xC00000FD`） |
+| 4 | ❌ 进程崩溃（`0xC00000FD`） |
+
+崩在第 13 次调用（`mix_columns` 的内层循环累计 50 次回边触发编译后的**首次执行**），
+不是逐次累积出来的。
+
+**根因**
+
+`ops_callout.inc` 的内联进入点这样给内联体分配字节码偏移命名空间：
+
+```c
+bc_off = 0x10000 * inline_depth;    /* ← bug */
+```
+
+而**内联只有一层**（`FIND_INLINE_SITE` 在内联体内不会再命中，depth 恒为 1），
+于是同一个循环里第 1..N 个内联点**共用同一个命名空间 `0x10000`**。
+
+`off_map` / `ctx->patches` 都以 `bc_off` 为键，而 `offmap_lookup` 返回**第一个**
+匹配项 —— 因此第 2..N 个内联体的内部跳转（`OP_JUMP_IF_FALSE` / `OP_JUMP` /
+`OP_FOR_PREP` 的 skip / `OP_FOR_LOOP` 回边）全部解析到**第 1 个内联体**的机器码。
+执行流于是在「第 1 个实例」与「第 N 个实例」之间来回跳，成为一个死循环；
+每绕一圈 RSP 都有净变化（进入点不是该区域设计时的栈深），几十万圈后打穿
+线程栈 → `0xC00000FD`。
+
+**修法**
+
+命名空间按**内联实例**（`inline_idx`）编号，而不是按 nesting depth：
+
+```c
+bc_off = 0x10000 * (inline_idx + 1);
+```
+
+* 调用方基址是 0，`inline_idx + 1` 从 1 开始 → 不与调用方冲突；
+* `scan` 限制被内联函数体 `cc->len <= 256` ≪ `0x10000` → 各命名空间互不重叠；
+* 将来若支持多层内联，需要把 depth 并入这个 id（已写在代码注释里）。
+
+**验证**
+
+* `build/probe_aes2.leno`：1/2/4 个内联点全部正常，`sum=5280` 与解释器一致。
+* `examples/crypto/aes128.leno`：JIT 与 `LENO_NO_JIT=1` 输出**逐字一致**
+  （472 字符、SHA256 相同），JIT 统计 `Compiled=14 Executed=7416 Bailouts=0`。
+* 新增 `assert/test_jit_multi_inline.leno`：2 个 / 4 个内联点 + GF(2^8) 乘法，
+  逐元素全文比对（期望值由解释器产出后硬编码）。
+  **该断言在未修复的代码上会以 `0xC00000FD` 崩掉**（不是断言失败），
+  在修复后通过。
+* `assert` **272 passed / 0 failed**（`LENO_NO_JIT=1` 同样 272）。
+* 14 个示例目录共 **238 个 `.leno`** 与「修复前」二进制逐文件差分：
+  唯一的行为差异就是 `aes128.leno`（崩溃 → 正常），其余 5 处均为计时数字。
+
+**顺带澄清：`PATCH-REDIRECT: target_bc=40` 是正常现象**
+
+调试日志里每条 `while` 循环都会打印一次
+`PATCH-REDIRECT: target_bc=<body_size> 未在循环体内找到 → 改为跳到 exit`。
+这是**设计如此**：`while` 循环的 `OP_JUMP_IF_FALSE` 目标就在循环体之后
+（`target_bc == body_size`），offmap 里自然没有这条指令，重定向到 `ctx->exit_mc`
+正是正确语义。排查时不要把它当成跳转解析失败。
+
+**教训**
+
+* 「多个实例」类 bug 的判据是**数量**：1 个内联点正常、2 个就崩，
+  比盯着反汇编快得多（`build/probe_aes2.leno` 三步定位）。
+* `0x10000 * depth` 这种「按层级编号」的隔离方案，在**扁平化**的实现里
+  等价于「不隔离」。给命名空间编号时要按**实例**编。
+* 内联 + 内联体内有跳转/循环 = 高危组合：内联体是**复制粘贴**的机器码，
+  任何以原字节码偏移为键的表都必须按实例隔离（off_map、patch 表都是）。
+
+### 8.27 「静默降级」一律改成显式拒绝编译（2026-09-13）
+
+§8.26 的教训是：**内联 / 大循环体路径上任何"表项写不下就丢掉"的代码，都会变成
+静默生成错误机器码**（跳错地方 → 死循环 → RSP 漂移 → 栈溢出，或直接跳到
+代码段开头）。本次把这类静默降级全部改成"拒绝编译"，循环退回解释器执行
+（语义永远正确，只是慢）。
+
+| 位置 | 旧行为（危险） | 新行为 |
+| --- | --- | --- |
+| `offmap_add`（`jit_priv.h`） | 容量判据是 `JIT_MAX_LOOP_OPS * 2`（=512），而数组实际有 `* 10`（=2560）个槽；满了**静默丢弃**条目 | 用到实际容量 2560；仍溢出则置 `off_overflow` → 收尾时拒绝编译 |
+| `patch_add`（`jit_priv.h`） | 满了**静默丢弃**，那条 `rel32` 永远保持 0 → 跳转落到代码段开头 | 置 `patch_overflow` → 拒绝编译；`JIT_MAX_PATCHES` 256 → **512** |
+| `OP_LOOP` / `OP_FOR_LOOP` 回边 | `offmap_lookup` 失败时**静默改成 `ctx->loop_start_mc`**（跳到外层循环起点）→ 死循环 + RSP 漂移 → 栈溢出 | 找不到目标 → 打印 `LOOP-FAIL` 并 `return 0` |
+| patch 收尾（`x86_64.c`） | 找不到目标一律改成"跳到 exit" | **内联命名空间**（`target_bc >= 0x10000`）的目标必须解析，否则 `PATCH-FAIL` 拒绝；调用方命名空间里**体内**目标找不到也拒绝；只有 `target_bc >= body_size`（`break` / `while` 条件为假）才允许改道 exit |
+| `scan_loop_body` 的 `fwd_targets` | `if (fwd_count < 64)`，满了**静默丢弃**前向跳转目标 → dead-code 段的 vstack 无法恢复 → 扫描与 codegen 栈深不一致 → RSP 漂移 | 上限提到 256，超出 → `scan FAIL` 拒绝整个循环 |
+| `inline_ret_patches`（`ops_return.inc`） | 内联体里 `return` > 64 条时**写越界**（踩 `compile_loop` 的栈帧） | 越界即 `return 0` 拒绝编译 |
+
+> 判据（写进 §14.3 第 18 条）：**任何以数量为界的固定数组，读不到/写不下都必须
+> 让这次编译失败**，不允许"跳过这一条继续生成"。
+
+**验证（这次没有专门造 fixture，原因见下）**
+
+* 全量 `assert` **272 passed / 0 failed**。
+* `examples/{func,struct,crypto,bigint,排序测试,闭包,array,dict,strings,maths}` +
+  `性能测试/全部测试.leno` 共 **157 个文件**，带 `LENO_JIT_DEBUG=1` 逐文件跑，
+  **新增的 5 条拒绝路径一次都没有触发** —— 说明加固只兜住隐患，没有误伤任何
+  正常循环（这是本次改动最大的风险面）。
+* `examples/crypto/aes128.leno` 仍与解释器输出逐字一致。
+
+> 为什么不写专门的回归 fixture：触发这些上界需要「>256 个前向跳转」或
+> 「>2560 条指令」的循环体（body_size 上限 4096 字节），手写 fixture 会变成
+> 几百行生成代码，而它的期望行为只是"循环退回解释器、结果不变"——
+> 与 `test_jit_multi_inline.leno`（真实崩溃、可小样本复现）性质不同。
+> 这类加固的验证方式是：**全语料确认零误伤** + 代码审查。
+
 ***
 
 ## 9. 性能数据
@@ -1364,6 +1595,62 @@ Results: 270 passed, 0 failed (total 270)   // JIT 与 LENO_NO_JIT=1 两种模�
 换来的是一致性：`acc + o.get("k", 0.0)` 这类「float 局部量 + 动态类型调用结果」在 JIT 下
 不再把 int48 位模式当次正规 double 加（§8.18，修复前 600 轮累加只得 17）。
 
+### 递归 / 函数调用场景的基线（2026-09-13）
+
+`build/bench_rec.leno`（`build/` 不入库），6 次取中位数，基线与改动后同机对照：
+
+| 场景 | 说明 | 基线 `66ace270` | 改动后 | 加速比 |
+| --- | --- | --- | --- | --- |
+| A 顶层 `fib_recursive(30)` | 纯递归，调用链起点在解释器 | 93\~94 ms | **31\~32 ms** | **3.0x** |
+| B 热循环调 `fib_recursive(10)`×30000 | 走既有「循环 JIT → callout → 函数级 JIT」 | 47\~63 ms | 47\~78 ms | 1.0x（无回归） |
+| C `fib_tail(30)` | 30 次尾调用，量级太小 | 0 ms | 0 ms | — |
+| D `mix(2000)`（循环 + 一次递归） | — | 0 ms | 0 ms | — |
+
+`nonTail(200000)`（深线性递归）：基线 47 ms / 改动后 47 ms —— **无收益**，
+因为 `jit_func_depth` 上限 64，200000 ≫ 64（见 §8.25 边界表）。
+
+> 注意本机各次运行的绝对耗时波动较大（`i++` 1 亿次实测 78\~172 ms，随机器负载变化），
+> 所以上表只做**同机同轮对照**，绝对值不要跨文档比较。
+
+### 与上一轮评估的核对（2026-09-13）
+
+上一轮评估给了一条很有价值的结论（函数级 JIT 触发点与循环回边耦合 → 递归 1x），
+但也有**三处已经过期**，会直接影响优先级排序，逐条核对如下：
+
+| 评估中的说法 | 核对结果 |
+| --- | --- |
+| ①「还没做虚拟栈寄存器化，每次运算带 12 次栈访存，P0 估计还有 3\~5x」 | **过期**。单元素 TOS 寄存器缓存（`TOS_SPILL` / `TOS_CONSUME_*` / `TOS_PRODUCE`）2026-09-06 已在 `x86_64.c` 落地。依据：`i++` 1 亿次 78\~172 ms（≈2.5 cycle/iter）、`a=b` 47\~94 ms，已经贴着「int48 装箱 + 溢出检查」的标量循环下限；1 槽扩 2 槽的剩余空间是「少几次 L1 命中」，不是数量级。**不建议现在做。** |
+| ②「收尾两套表示：比较 opcode 压裸 0/1 vs `val_bool`，改了就行」 | **已完成**。`66ace270`（2026-09-13 00:11）比较 opcode 已在产生处产出 NaN-boxed `TRUE_VAL`/`FALSE_VAL`（§8.24）。§14.4 现在只剩 ①（`OP_CAST_FLOAT` 对 bool/BigInt/null 原样透传）与 ③（下方新增）。 |
+| ③「函数/递归完全没有 hot path，应在 `call()` 路径挂独立热点计数」 | **成立且已实现**（§8.25）：顶层 `fib_recursive(30)` 由 1.0x → **3.0x**；已有的 B 场景无回归。 |
+
+**真正剩下的两项**（按性价比）：
+
+1. **`OP_TAIL_CALL` 覆盖**（§11 P4）：`return f(x)` 经尾调用优化后是 `OP_TAIL_CALL`，
+   复用当前帧、不走 `OP_CALL`，因此尾递归/深递归仍是 1x。本语言**自动**做尾调用优化，
+   所以「写递归」的代码大量落在这一形态上，是当前最大的覆盖缺口。
+   注意：把 `OP_TAIL_CALL` 接到热入口**不够** —— 真正要的是「自尾调用编译成回边跳转」，
+   否则被 JIT 的函数体里含 `OP_TAIL_CALL` 时 scan 仍会拒收。
+2. **callout 内联**（`arr.add` / `arr[index]` / `dict_set`）：这两项实测 ~2x，
+   瓶颈是「一次 C 调用 + 逐参数装箱」。ffi 定宽读写内联拿到 -34%（§2.6）
+   是可复制的模板；但内联里必须守住「类型不对 → bailout，不在机器码里复刻第二份语义」。
+
+### 尾递归（`OP_TAIL_CALL`）的 JIT 收益评估（2026-09-13，决定 P4 值不值得做）
+
+`build/probe_tail3.leno`（不入库），同机三轮：
+
+| 场景 | JIT | `LENO_NO_JIT=1` | 加速比 |
+| --- | --- | --- | --- |
+| `nonTail(200000)`（非尾递归） | 31\~47 ms | 47 ms | ~1.5x |
+| `tailRec(200000)`（轻 body：`acc + n`） | 0\~16 ms | 0\~16 ms | 1.0x |
+| `heavyTail(200000)`（重活在体内的 `while`） | 15\~31 ms | 78 ms | **~3.5x** |
+
+结论：**尾调用本身一点都不慢** —— 解释器的 `OP_TAIL_CALL` 复用当前帧、无分配，
+20 万次不到 16ms（约 0\~5ns/次）。尾递归函数里真正贵的是**体内的循环**，
+而那部分 loop JIT 已经独立覆盖（`heavyTail` 的 3.5x 正是这么来的）。
+所以「自尾调用编译成回边」（§11 P4）能多拿的，只剩"直筒子 body 的几十条指令"。
+
+→ **P4 暂缓，P5（callout 内联）提前为下一项**。
+
 ***
 
 ## 10. 架构瓶颈分析
@@ -1374,24 +1661,45 @@ Results: 270 passed, 0 failed (total 270)   // JIT 与 LENO_NO_JIT=1 两种模�
 
 P1 已完成嵌套循环支持。`scan_loop_body` 现在接受 `OP_FOR_PREP`（内层 for 初始化）、mid-body `OP_LOOP`（内层 while 回边）和 mid-body `OP_FOR_LOOP`（内层 for 回边）。codegen 通过 `offmap_lookup` 解析每个回边指令自带的目标偏移，天然支持任意嵌套深度，无需 loop stack。
 
-### 瓶颈 2：不支持函数调用，递归函数永远无提速
+### 瓶颈 2：函数调用/递归 —— 已大幅缓解，仍有深度与形态两个天花板
 
-`OP_CALL`、`OP_RETURN`、`OP_CALL_GLOBAL_FUNC` 在 JIT 中完全不存在。fib(30) 是递归调用，每次递归都走 VM 的 `call()` → 新建 CallFrame → 解释执行 → `OP_RETURN` 回到调用者。JIT 只在 `OP_LOOP`/`OP_FOR_LOOP` 处触发，递归函数里根本没有循环回边可以触发 JIT。即使通过 callout 实现 OP\_CALL，每次递归调用都要保存虚拟栈 → 切到 VM 执行 → 恢复虚拟栈，开销比纯解释执行还大。
+历史上这里是「JIT 完全不支持函数调用」。现状（2026-09-13）：
 
-### 瓶颈 3：push/pop 虚拟栈是性能杀手
+* ✅ **JIT 循环内的调用**：`OP_CALL_GLOBAL_FUNC[_TYPED]` / `OP_INVOKE_METHOD` /
+  `OP_CALL_NATIVE` / `OP_MODULE_CALL` 都实现了 callout（§13.8），且 callee 可
+  被内联或函数级 JIT 编译。
+* ✅ **被调函数整体进 JIT**：`jit_compile_function` + 薄桥（877688c3）。
+* ✅ **解释器调用链也能进函数级 JIT**（§8.25，2026-09-13）：顶层一次性
+  `fib_recursive(30)` 由 1.0x → **3.0x**。
 
-当前 codegen 中 `a + b` 实际生成的指令序列：
+剩余的两个天花板：
 
-```
-push a      ; 内存写 [rsp-8]
-push b      ; 内存写 [rsp-8]
-pop rax     ; 内存读 [rsp]
-pop rdx     ; 内存读 [rsp]
-add rax,rdx
-push rax    ; 内存写
-```
+1. **递归深度 ≤ `JIT_FUNC_MAX_DEPTH`(64)**：JIT body → callout → JIT body 是
+   真实 C 调用链，超过 64 层回退解释器。实测 `nonTail(200000)` 无收益。
+   这是「用 C 栈当 JIT 调用栈」的结构性代价，要根治需要 JIT 自管调用栈。
+2. **`OP_TAIL_CALL` 完全不覆盖**：`return f(x)` 经编译器尾调用优化后发射
+   `OP_TAIL_CALL`（复用当前帧），既不经过新增热入口，也不在 JIT 支持列表里。
+   本语言**自动**做尾调用优化，所以「写递归」的代码大量落在这一形态
+   → 当前最大的覆盖缺口（§11 P4）。
 
-4 次内存操作做一次加法。while 循环只有 \~2x 提速的根本原因：JIT 省的是 dispatch 开销，没省内存开销。LuaJIT 快是因为 register-based bytecode + 线性扫描寄存器分配，运算几乎全在寄存器里完成。
+另外 callout 本身的单次成本（一次 C 调用 + 逐参数装箱）在对象/调用密集场景仍是
+主瓶颈：`arr.add` / `dict[key]=` 只有 ~2x（§9 基线表）。
+
+### 瓶颈 3：push/pop 虚拟栈 —— 单元素 TOS 缓存已落地，剩余空间有限
+
+历史分析是「`a + b` 要 4 次内存操作」。2026-09-06 已落地**单元素 TOS 寄存器缓存**
+（`x86_64.c` 的 `TOS_SPILL` / `TOS_CONSUME_RAX` / `TOS_CONSUME_TO` / `TOS_PRODUCE`）：
+RAX 常驻栈顶，`a + b` 退化成「pop 一次 + add + 留在 RAX」，只在需要第 2 个临时值时
+才 spill。收益证据是实测的标量循环成本已经贴着下限：
+
+| 场景 | 1 亿次耗时 | 折算 |
+| --- | --- | --- |
+| `i++` | 78\~172 ms | ≈2.5 cycle/iter @3GHz |
+| `a = b` | 47\~94 ms | ≈1.4 cycle/iter |
+
+再往下走的空间是「2 槽 TOS + 循环不变量驻寄存器」，相对 1 槽是**减少若干次 L1
+命中**，不是数量级；而当前真正的瓶颈在 callout（瓶颈 2）与函数覆盖缺口（§11 P4），
+所以 P0 的剩余部分优先级被下调。
 
 ***
 
@@ -1414,6 +1722,10 @@ push rax    ; 内存写
   - 二元运算（ADD/SUB/MUL）→ 左操作数在 RAX，右操作数在 RDX，直接 `add rax,rdx`，0 次内存操作
 
 - **状态**：✅ 已完成（2026-09-06）。TOS 缓存 RAX，push/pop 从 4 次内存操作降到 1-2 次。修复 OP\_JUMP\_IF\_FALSE/TRUE 的 `tos_live=0` 编译期赋值污染 fall-through 路径的 bug（导致 while 循环 RSP 漂移、提前退出）。261 回归测试全过，while 50-5000 次迭代验证正确。
+- **剩余部分（2026-09-13 复核后下调优先级）**：1 槽 → 2 槽（RDX）+ 循环不变量驻寄存器。
+  依据见 §9「与上一轮评估的核对」：标量循环实测已 ≈1.4\~2.5 cycle/iter，剩余空间是
+  「少几次 L1 命中」而不是数量级；当前真正的瓶颈在 callout 与函数覆盖缺口，
+  所以不排在 P4 之前。
 
 ### P1：嵌套循环支持（解锁大量真实代码）
 
@@ -1473,6 +1785,70 @@ push rax    ; 内存写
 
 - 核心改变：触发点改为函数被调用 N 次后编译整个函数体；编译范围从 `OP_CALL` 到 `OP_RETURN`；OP\_CALL 走快路径（已 JIT 函数直接 `call jit_fn`）或慢路径（callout 到 VM）；用 simple linear-sscan allocator 把局部变量分配到 callee-saved 寄存器
 
+- **状态（2026-09-13）**：🟡 部分落地。「触发点改为函数被调用 N 次后编译整个函数体」
+  已由 §8.25 的解释器侧热入口实现（`JIT_FUNC_HOT_THRESHOLD = 50`）；
+  「JIT 函数调用 JIT 函数」已由 callout 薄桥实现，但仍占用 C 栈（深度上限 64）；
+  「局部变量分配到寄存器」未做。
+
+### P4：自尾调用编译成回边 —— 解锁深递归 / 尾递归（2026-09-13 提出）
+
+- **目标**：让 `OP_TAIL_CALL` 也能进 JIT，尤其是「自己调自己」的尾递归
+  （`return f(n-1, acc+x)` 形态，本语言编译器自动做尾调用优化，
+  所以这是最常见的递归写法）。
+
+- **为什么不能只在 `OP_TAIL_CALL` 上挂热入口**：
+  - `OP_TAIL_CALL` 的语义是**复用当前帧**（关 upvalue → 释放 locals →
+    memmove args/callee → `vm.sp = old_stack_base + arg_count + 1` → 就地换
+    `closure/chunk/ip/locals`），并不「返回」到调用者。要把它接到
+    函数级热入口，得在算完结果后额外模拟一次 `OP_RETURN` 的拆帧（含
+    catch/finally、`stop_frame_cnt`、module 帧、动态 locals 释放），风险远高于收益。
+  - 更关键的是：即使接了入口，**被编译的函数体自身仍含 `OP_TAIL_CALL`**，
+    `scan_loop_body` 会在 `default` 分支把它判成不可编译 → 白忙。
+
+- **正解**：在 `func_mode` 下把「对自身的尾调用」编译成**跳回函数入口的回边**
+  （等价于把递归写成循环），参数直接写进 scratch 槽。这样尾递归函数变成
+  一个有回边的函数体，配合 P1 已有的回边基础设施（`offmap_lookup` + patch）
+  就有机会整体编译。同时它天然不消耗 C 栈，**顺带解掉深度上限 64 的问题**
+  （深度不再重要，因为不再递归）。
+
+- **改动范围**：`jit_scan.c` 增加 `OP_TAIL_CALL` 的识别与「是否自调用」判定；
+  `ops_callout.inc` 增加自尾调用 → 回边 codegen；非自尾调用仍走原有 callout /
+  VC 重入路径（或继续 bailout）。三处同步规则见 §2.3 第 5 条。
+
+- **验证**：`tailRec(200000)` 差分 + `assert/test_jit_hot_func.leno` 扩用例 +
+  `Bailouts` 计数不得上升（§14.3 第 12 条）。
+
+- **状态（2026-09-13 实测后暂缓）**：⬜ 未开始，且**不建议现在做**。
+  依据见 §9「尾递归的 JIT 收益评估」：`tailRec(200000)` 在解释器下已经
+  0\~16 ms（`OP_TAIL_CALL` 复用帧，约 0\~5ns/次），而尾递归函数里贵的部分
+  是体内循环 —— loop JIT 已独立覆盖（`heavyTail` 实测 3.5x）。
+  本项能多拿的只有"直筒子 body 的几十条指令"，而实现要碰
+  参数重绑定 / 类型提升 / 返回值 / 异常交互，风险与其收益不匹配。
+  **下一项改为 P5。**
+
+### P5：callout 内联第二批（`arr.add` / `arr[index]` / `dict_set`）
+
+- **现状**：这三项在 1 亿次基准里只有 ~2x（`arr.add` 625\~641ms、
+  `dict[key]=` 875\~906ms，而标量 `i++` 只有 140ms），瓶颈是
+  「一次 C 调用 + 逐参数装箱」。**真实程序里数组/字典写是最高频操作**，
+  所以这是当前性价比最高的一项（2026-09-13 起取代 P4 排在首位）。
+- **依据**：ffi 定宽读写内联（§2.6）拿到 **-34%**，是同一条路可复制的模板。
+- **设计要点（与 ffi 不同，不能照抄）**：`arr.add` 的 C 侧是
+  `array_append(arr, value)`，里面有**容量增长（malloc/realloc）**和
+  **GC 写屏障**，不可能像 ffi 的定宽 memcpy 那样整体内联。可行方案是
+  **内联快路径 + 完整 callout 兜底**：
+  1. 检查 `obj->type == OBJ_ARRAY` 且 `arr->count < arr->capacity`
+     （最热的追加场景通常命中，包括 1 亿次基准）；
+  2. 命中 → 直接 `mov [arr->items + count*8], value; inc count`；
+  3. 未命中（容量满 / 非数组 / 需要写屏障）→ **bailout**，
+     让解释器跑原 `jit_callout_array_append`，报错文本与语义完全一致。
+- **必须先确认的一件事**：`gc_write_barrier` 在「老年代 → 新生代引用」场景是否
+  真的必要 —— 若快路径必须调用它，就退化成"少一次装箱"的小优化；
+  若可以按代条件化（或者本实现的 GC 是非分代/保守的），快路径才成立。
+- **约束**：内联必须把「类型不对 → 写 site 后 bailout」这条守住 ——
+  宁可不编、不要猜，也不要在机器码里复刻第二份语义（否则就是 §14 那批静默算错的温床）。
+- **状态**：⬜ 未开始（**下一项**）。
+
 ***
 
 ## 12. 当前未解决问题
@@ -1486,7 +1862,29 @@ push rax    ; 内存写
    （无 scan FAIL 和 codegen FAIL 消息）
 4. **fib_iterative(1000) 3 次 bailout**：斐波那契值约 fib(56) 溢出 int48（超 2^47），
    属预期行为，JIT 的溢出检测正常工作
-5. **比较结果的位模式：JIT 写回裸 0/1，解释器压 `val_bool`** —— **✅ 已修复（2026-09-12，§8.24）**。
+5. **`OP_TAIL_CALL` 不在 JIT 支持范围内（2026-09-13 新增，§8.25 / §11 P4）**：
+   `return f(x)` 经编译器尾调用优化发射 `OP_TAIL_CALL`，它复用当前帧、既不经过
+   新增的函数级热入口，也不在 scan 的 opcode 支持列表里。后果：
+   ① 尾递归函数无论调用多少次都不进函数级 JIT；② 任何含 `return f(x)` 的函数
+   体都会被 `scan_loop_body` 的 `default` 分支拒收（`capable=0`）。
+   本语言自动做尾调用优化，所以这是当前最大的函数覆盖缺口。
+6. **JIT 函数调用的递归深度上限 64（2026-09-13 新增）**：JIT body → callout →
+   JIT body 是真实 C 调用链，`jit_func_depth >= JIT_FUNC_MAX_DEPTH` 即回退解释器。
+   实测 `nonTail(200000)` 无加速（§8.25）。根治需要 JIT 自管调用栈。
+7. **函数级 JIT 中途 bailout 会重跑整个调用（2026-09-13 新增，§8.25 / 14.4-③）**：
+   与 `jit_callout_*` 快路径同一取舍 —— JIT 中途对堆的副作用（数组 append、
+   字典写、打印）在回退时无法回滚。缓解措施是 `hot_disabled`：一次失败即永久
+   停用解释器侧入口，避免「每次调用都进 JIT 再回退」的反复试探。
+8. **`examples/crypto/aes128.leno` 在 JIT 模式下栈溢出** —— **✅ 已修复（2026-09-13，§8.26）**。
+   （历史记录）现象：JIT 模式退出码 `0xC00000FD`（STATUS_STACK_OVERFLOW），stdout 停在
+   `--- 字符串加解密 ---` 之前；`LENO_NO_JIT=1` 完整跑完。
+   根因：内联体的 `bc_off` 基址按 nesting depth 编号（`0x10000 * inline_depth`），
+   而内联只有一层 → 同一循环内多个内联点共用命名空间，
+   `offmap_lookup` 把第 2..N 个实例的跳转解析到第 1 个实例的机器码
+   → 死循环 + RSP 漂移 → 栈溢出。修法：按**内联实例**编号
+   （`bc_off = 0x10000 * (inline_idx + 1)`）。回归见 `assert/test_jit_multi_inline.leno`。
+
+9. **比较结果的位模式：JIT 写回裸 0/1，解释器压 `val_bool`** —— **✅ 已修复（2026-09-12，§8.24）**。
    （历史记录）`var x = (a > b)` 或 `bool flag = (a > b)` 在 JIT 循环里
    写回后，解释器读到的是**次正规 float**（≈4.9e-324 / 0.0）而不是 bool。
    真值判断恰好仍然正确（非零/零），但 `x is bool` 变 false、`_int(flag)` 由 1 变 0
@@ -1766,6 +2164,31 @@ JIT 虚拟栈是「栈顶在低地址」的反向栈，`vstack_top` 永远指向
 14. **写回侧的槽位类型**：类型位图只记录「**进循环时**该槽位是不是 int」，槽位在循环里
     仍可能被写入 NaN-boxed 值 → int 分支要先确认「确实是 int48」再重装箱，否则会把
     `TRUE_VAL` 的位模式搅成垃圾 int（§8.24）
+15. **函数级 JIT 的准入条件**（`jit_compile_function`，任一不满足就拒绝，且**静默**拒绝）：
+    无 `OP_LOOP`/`OP_FOR_LOOP`/`OP_FOR_PREP`（`func_body_is_simple`）、无 `has_try`、
+    `return_count <= 1`、body 内所有 opcode 都在 scan 支持列表内（含 upvalue /
+    `OP_TAIL_CALL` / 泛型相关 opcode → 一律拒收）。新增 opcode 时如果它可能出现在
+    函数体里，必须想清楚「是否要支持函数级 JIT」。
+16. **解释器侧热入口（§8.25）的三个自伤点**：
+    ① `jit_func_lookup_or_compile` 的 `tried` 是三态（未尝试 / 已编译 / 尝试失败）——
+       解释器侧会先建「只有计数器」的条目，命中该条目时**必须补编译**，
+       否则 JIT 循环会永远不再编译该函数；
+    ② 栈折叠约定必须与 `call()` 完全一致（`sp -= arg_count`，结果落原 callee 槽，
+       并同步 `last_return_value/last_return_count/last_return_values`）；
+    ③ `typed` 调用点不做参数提升，与 `call_no_type_check` 对齐。
+17. **内联体的 bc_off 命名空间必须按「实例」隔离**（§8.26）：`off_map` 与
+    `ctx->patches` 都以 bc_off 为键，`offmap_lookup` 返回**第一个**匹配项。
+    同一循环内有多个内联点时，每个实例必须有不同的基址
+    （当前 `0x10000 * (inline_idx + 1)`）；按 depth 编号在「只有一层内联」的
+    现实下等于不隔离，第 2..N 个实例的内部跳转会被解析到第 1 个实例的机器码
+    → 死循环 + RSP 漂移 → `0xC00000FD`。新增任何「以字节码偏移为键」的表时，
+    都要先确认它在内联场景下是按实例隔离的。
+18. **以数量为界的固定数组：读不到/写不下都必须让本次编译失败**（§8.27）。
+    绝不允许"跳过这一条继续生成" —— 那会产出错误机器码（跳错地方 / `rel32=0`），
+    而且症状是崩溃或静默算错，离现场很远。现有做法：
+    `offmap_add` / `patch_add` 置溢出标志 → 收尾拒绝；
+    回边 `offmap_lookup` 失败、内联命名空间目标解析失败、体内目标解析失败、
+    `scan` 的前向跳转表满、内联 `return` 补丁表满 → 一律拒绝编译。
 
 ### 14.4 已知差异（未修，**改动相关代码时要留意**）
 
@@ -1805,6 +2228,22 @@ movabs rax,FALSE_VAL; **add** rax,rdx`），并同步修掉 `OP_CAST_INT` / `OP_
 > 所以 `FALSE_VAL | (1<<48) == FALSE_VAL`（OR 是空操作，得到的比较结果恒为 false，
 > 表现为**所有 `while` 循环第一轮退出**），必须用 `FALSE_VAL + (1<<48)`。
 
+**③ 函数级 JIT 中途 bailout 会重跑整个调用，堆侧副作用无法回滚**
+
+解释器侧热入口（`jit_try_hot_func_call`，§8.25）与 `jit_callout_*` 快路径同构：
+JIT 机器码返回非 0（bailout / `jit_callout_failed`）时，把控制权交回解释器，
+由解释器**完整重跑**这次调用。JIT 中途已经发生的堆侧副作用
+（数组 `append`、字典写、`print`、FFI 写内存）不会被撤销。
+
+- 影响面：只有「JIT 跑到一半失败 + 调用方 catch 住异常后继续跑」才会看到重复副作用。
+  纯函数递归（fib 类）无影响。
+- 为什么接受：能回滚就得给 callout 加事务/日志，成本远超收益；
+  `jit_callout_*` 从引入起就是这个取舍（13.6 的结论）。
+- 缓解：`hot_disabled` —— 一次失败即**永久**停用解释器侧入口，
+  避免「每次调用都进 JIT 再回退」的反复试探与反复重跑。
+- **新增 callout / 新 opcode 时**：若它的 JIT 分支可能在产生副作用之后才 bailout，
+  必须在 §14 表里登记，并确认「重跑一次」不会破坏语义（比如不能有计数器式副作用）。
+
 ### 14.5 回归断言索引
 
 | 断言文件 | 覆盖 |
@@ -1816,6 +2255,8 @@ movabs rax,FALSE_VAL; **add** rax,rdx`），并同步修掉 `OP_CAST_INT` / `OP_
 | `assert/test_jit_not_bool.leno` | `OP_NOT` 对 NaN-boxed bool / int48 / 裸 double 的三态分派（§8.22）：6 种取值形态各一个热循环 + 嵌套 `not`+`continue` |
 | `assert/test_jit_int_div.leno` | `OP_DIV_INT` 结果类型/向零截断（§8.23）：取位串逐字符比对、`100/3 is int`、浮点除法不受影响、热循环内除零/模零必须可捕获而不崩进程 |
 | `assert/test_jit_bool_compare.leno` | 比较结果必须是 `val_bool`（§8.24）：5 种 while 条件形式（立即数/局部/不等/反向/浮点）+ bool/int/float 局部量与全局 + 数组/字典/JSON 的 callout 实参路径 + `and`/`or`/`not` + 返回值路径 |
+| `assert/test_jit_hot_func.leno` | 解释器侧函数级 JIT 热入口（§8.25，**语义守卫**，基线版本同样 pass）：纯递归 + `is int` 结果类型、深度 200 > `JIT_FUNC_MAX_DEPTH`(64) 的深度守卫、互递归 bool 返回值 + `is bool`、int48 溢出（`pow2(60)` 必须与解释器的 BigInt 语义一致）、float 形参 + int 实参提升、字符串 concat 递归、`return_count>1` 与 `has_try` 必须拒绝编译、低热度不编译、递归返回 `Dict`、函数体内含 struct 多返回值方法调用 |
+| `assert/test_jit_multi_inline.leno` | 循环体内**多个内联点**的 bc_off 命名空间隔离（§8.26）：2 个 / 4 个 `gm()`（GF(2^8) 乘法，体内有 for + 两处 if）内联点，逐元素全文比对 + 20 轮反复调用。**未修复的代码上会以 `0xC00000FD` 崩溃**（不是断言失败），修复后通过 |
 
 ***
 
