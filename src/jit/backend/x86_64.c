@@ -113,6 +113,17 @@ static const FfiInlineSpec* ffi_inline_lookup(const char* method) {
     return NULL;
 }
 
+/* §8.41：该字节码偏移是否有跳转进来。
+ * 用于「上一条指令的证明」型窥孔（目前只有 OP_CAST_INT 的省略）：三目/短路的
+ * 合并点恰好会落在编译器插入的 CAST 上，从别的路径跳进来时前一条指令并不是那个
+ * int48 检查 —— 那时前提不成立，不能省。 */
+static int bc_is_jump_target(const CodegenCtx* ctx, int bc_off) {
+    for (int i = 0; i < ctx->patch_count; i++) {
+        if (ctx->patches[i].target_bc == bc_off) return 1;
+    }
+    return 0;
+}
+
 /* ---- Main codegen function ---- */
 int compile_loop(CodegenCtx* ctx) {
     const ScanResult* sr = ctx->sr;
@@ -161,6 +172,15 @@ int compile_loop(CodegenCtx* ctx) {
     int yield_jmp_patches[JIT_YIELD_MAX];
     int yield_jmp_cnt = 0;
 
+    /* ---- §8.41 窥孔状态：上一条指令的结果是否已被证明是 raw int48 ----
+     * 由白名单 opcode（单路径、且 int48 检查覆盖所有到达路径）置位，在每条
+     * 指令开头消费一次。用途：编译器为「非字面量赋给 int 局部量」无条件插入
+     * 的 OP_CAST_INT 在这种情形下是恒等变换，可整段省掉。
+     * 白名单见 EMIT_INT48_CHECK_TOS / MARK_TOS_RAW_INT48 的调用点；
+     * 明确**不能**置位的：OP_ADD/SUB/MUL 通用版（int/float/concat 多路径）、
+     * OP_USHR_IMM（shr 结果可能越出 int48）、OP_CAST_INT 自身（null 路径原样返回）。 */
+    int prev_raw_int48 = 0;
+
     /*
      * int48 overflow check: bail out to VM (which handles BigInt promotion)
      * if RAX doesn't fit in signed 48-bit range [-2^47, 2^47-1].
@@ -197,6 +217,16 @@ int compile_loop(CodegenCtx* ctx) {
         emit_shl_imm(cb, JIT_RAX, 16);   \
         emit_sar_imm(cb, JIT_RAX, 16);   \
      } while(0)
+
+     /* §8.41：int48 结果检查 + 标记「本指令产出的 TOS 是 raw int48」。
+      * 只有**单路径**、且检查覆盖所有到达后续指令的路径的 case 才能用（白名单）。 */
+     #define EMIT_INT48_CHECK_TOS(site) do { \
+        EMIT_INT48_CHECK(site); \
+        prev_raw_int48 = 1; \
+     } while(0)
+
+     /* 结果必在 int48 内但没发检查的 case（OP_MOD_INT：|a%b| < |b|）。 */
+     #define MARK_TOS_RAW_INT48() do { prev_raw_int48 = 1; } while(0)
 
     /* int64 overflow check for MUL: bail out if OF flag set */
     #define EMIT_INT64_OVF_CHECK(site) do { \
@@ -800,6 +830,11 @@ int compile_loop(CodegenCtx* ctx) {
         uint8_t op = *ip;
         int size = opcode_size(ip);
         offmap_add(ctx, bc_off, cb->len);
+
+        /* §8.41：消费上一条指令留下的「结果是 raw int48」标记（一次性：
+         * 只有**紧邻的前一条**指令作过证明才算数，跨一条就失效）。 */
+        int prev_int48 = prev_raw_int48;
+        prev_raw_int48 = 0;
 
         /* Restore vstack at forward jump targets — but ONLY when the
          * current code position is truly unreachable via fall-through.

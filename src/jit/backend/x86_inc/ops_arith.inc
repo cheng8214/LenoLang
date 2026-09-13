@@ -10,7 +10,7 @@
                 TOS_CONSUME_TO(JIT_RDX);   /* right → RDX */
                 TOS_CONSUME_TO(JIT_RAX);   /* left → RAX */
                 emit_add_rr(cb, JIT_RAX, JIT_RDX);
-                EMIT_INT48_CHECK(bc_off);
+                EMIT_INT48_CHECK_TOS(bc_off);   /* §8.41 白名单 */
                 TOS_PRODUCE();
                 vstack--;
                 break;
@@ -18,7 +18,7 @@
                 TOS_CONSUME_TO(JIT_RDX);
                 TOS_CONSUME_TO(JIT_RAX);
                 emit_sub_rr(cb, JIT_RAX, JIT_RDX);
-                EMIT_INT48_CHECK(bc_off);
+                EMIT_INT48_CHECK_TOS(bc_off);   /* §8.41 白名单 */
                 TOS_PRODUCE();
                 vstack--;
                 break;
@@ -309,7 +309,7 @@
                 TOS_CONSUME_TO(JIT_RAX);
                 emit_imul_rr(cb, JIT_RAX, JIT_RDX);
                 EMIT_INT64_OVF_CHECK(bc_off);
-                EMIT_INT48_CHECK(bc_off);
+                EMIT_INT48_CHECK_TOS(bc_off);   /* §8.41 白名单 */
                 TOS_PRODUCE();
                 vstack--;
                 break;
@@ -324,12 +324,13 @@
                 emit_cqo(cb);
                 emit_idiv_reg(cb, JIT_R8);
                 TOS_PRODUCE_FROM_RDX();
+                MARK_TOS_RAW_INT48();   /* §8.41 白名单：余数必然落在 int48 内 */
                 vstack--;
                 break;
             case OP_NEG_INT:
                 TOS_CONSUME_RAX();
                 emit_neg_reg(cb, JIT_RAX);
-                EMIT_INT48_CHECK(bc_off);
+                EMIT_INT48_CHECK_TOS(bc_off);   /* §8.41 白名单 */
                 TOS_PRODUCE();
                 break;
             case OP_CAST_INT: {
@@ -340,6 +341,25 @@
                  * `int i = (a > b)` / `int i = 2.7` 都会补 OP_CAST_INT，操作数是
                  * bool / float。把 NaN-boxed 的 TRUE_VAL 当 int 留在栈上，写回 locals
                  * 时会按 int 重装箱、把位模式搅成垃圾（且布尔语义彻底丢失）。 */
+                /* ---- §8.41 窥孔：这个 CAST 是恒等变换吗？----
+                 * 编译器为「非字面量赋给 int/float/string 局部量」无条件插 CAST
+                 * （assign_cast_needed 对非字面量一律返回 1，见 codegen_stmt.c）。
+                 * 但只要**紧邻的前一条指令**已经用 int48 检查证明了结果就是 raw
+                 * int48，且那个结果仍作为 TOS 躺在 RAX 里，本 CAST 的全部工作就是
+                 * 「已是 int48 → 原样」，可以整段省掉（4 条检查 + 冷路径）。
+                 *
+                 * 三个前提缺一不可：
+                 *  1) prev_int48 —— 前一条指令在白名单里（EMIT_INT48_CHECK_TOS /
+                 *     MARK_TOS_RAW_INT48 的调用点）。多路径的 opcode（OP_ADD/SUB/MUL
+                 *     通用版有 int/float/concat 三条路、USHR_IMM 的 shr 会越界）不在
+                 *     白名单里：它们的非 int 路径不会执行那个检查。
+                 *  2) tos_live —— 值确实还在 RAX（不是被 spill 到内存栈了）。
+                 *  3) 本 bc_off 不是跳转目标、且不在内联体内 —— 三目/短路的合并点会
+                 *     落在 CAST 上，从别的路径跳进来时前一条指令不是那个检查。 */
+                if (prev_int48 && tos_live && inline_depth == 0 &&
+                    !bc_is_jump_target(ctx, bc_off)) {
+                    break;   /* 值已是 raw int48 且是 TOS：语义等价于原样放行 */
+                }
                 TOS_CONSUME_RAX();
                 /* 1) int48 → 原样 */
                 emit_mov_rr(cb, JIT_R8, JIT_RAX);
@@ -455,7 +475,7 @@
                 emit_idiv_reg(cb, JIT_R8);
                 /* 商必然落在 int48 值域内（|a/b| <= |a|），唯一例外是 INT48_MIN / -1
                  * = 2^47；超界就 bailout，让解释器按 val_int 的截断语义处理。 */
-                EMIT_INT48_CHECK(bc_off);
+                EMIT_INT48_CHECK_TOS(bc_off);   /* §8.41 白名单 */
                 TOS_PRODUCE();
                 vstack--;
                 break;
@@ -464,7 +484,7 @@
                 TOS_CONSUME_TO(JIT_RDX);
                 TOS_CONSUME_TO(JIT_RAX);
                 emit_and_rr(cb, JIT_RAX, JIT_RDX);
-                EMIT_INT48_CHECK(bc_off);
+                EMIT_INT48_CHECK_TOS(bc_off);   /* §8.41 白名单 */
                 TOS_PRODUCE();
                 vstack--;
                 break;
@@ -472,7 +492,7 @@
                 TOS_CONSUME_TO(JIT_RDX);
                 TOS_CONSUME_TO(JIT_RAX);
                 emit_or_rr(cb, JIT_RAX, JIT_RDX);
-                EMIT_INT48_CHECK(bc_off);
+                EMIT_INT48_CHECK_TOS(bc_off);   /* §8.41 白名单 */
                 TOS_PRODUCE();
                 vstack--;
                 break;
@@ -480,7 +500,7 @@
                 TOS_CONSUME_TO(JIT_RDX);
                 TOS_CONSUME_TO(JIT_RAX);
                 emit_xor_rr(cb, JIT_RAX, JIT_RDX);
-                EMIT_INT48_CHECK(bc_off);
+                EMIT_INT48_CHECK_TOS(bc_off);   /* §8.41 白名单 */
                 TOS_PRODUCE();
                 vstack--;
                 break;
@@ -492,7 +512,7 @@
                     emit_byte(cb, 0xF7);
                     emit_byte(cb, modrm(3, 2, JIT_RAX & 7));  /* /2 = NOT */
                 }
-                EMIT_INT48_CHECK(bc_off);
+                EMIT_INT48_CHECK_TOS(bc_off);   /* §8.41 白名单 */
                 TOS_PRODUCE();
                 break;
 

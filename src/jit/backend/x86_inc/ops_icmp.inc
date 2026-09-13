@@ -73,6 +73,7 @@
                 emit_shl_imm(cb, JIT_RAX, (uint8_t)imm);
                 /* VM 语义：int64 左移后 val_int() 截断为 48 位，不 bailout */
                 EMIT_INT48_TRUNCATE();
+                MARK_TOS_RAW_INT48();   /* §8.41 白名单：截断后必在 int48 内 */
                 TOS_PRODUCE();
                 break;
             }
@@ -80,6 +81,7 @@
                 int8_t imm = rd_byte(ip + 1);
                 TOS_CONSUME_RAX();
                 emit_sar_imm(cb, JIT_RAX, (uint8_t)imm);
+                MARK_TOS_RAW_INT48();   /* §8.41 白名单：算术右移结果必在 int48 内 */
                 TOS_PRODUCE();
                 break;
             }

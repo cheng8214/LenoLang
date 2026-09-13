@@ -1,0 +1,75 @@
+// §8.41 窥孔（跳过恒等 OP_CAST_INT）回归探针
+//
+// 背景：编译器为「非字面量赋给 int 局部量」无条件插 OP_CAST_INT（assign_cast_needed
+// 对非字面量一律返回 1，见 codegen_stmt.c）；JIT 现在会在「紧邻的前一条指令已用
+// int48 检查证明结果是 raw int48」时整段省掉它。本探针守的是**不能省**的那些情形。
+//
+// 判据（两条都要过）：
+//  1) 本文件在 JIT 与 LENO_NO_JIT=1 下输出**逐字一致**（比较/逻辑产生的 bool、
+//     白名单算术、BigInt 溢出都覆盖）。
+//  2) 用 LENO_JIT_DUMP=1 + objdump 看机器码时，白名单算术后面**不再**出现
+//     CAST_INT 的归一化序列（`sar r8,0x2f; inc r8; cmp r8,1; jbe` 后面跟着
+//     TRUE_VAL/FALSE_VAL/NULL_VAL 比较与 cvttsd2si）；而非白名单来源（下面的
+//     bool / and / or 行）**必须**仍然出现它。
+//
+// 注意：静态已知类型的赋值（字面量、同类型数组元素）会被**语义层**直接拦下
+// （报「无法将值赋值给变量」），所以运行时 CAST 只能由「静态类型未知」的来源触发。
+main() {
+    // 非白名单来源：比较 / 逻辑产生的 bool → 必须走完整归一化（TRUE_VAL→1 等）
+    int a = 0
+    var c = 5
+    a = (c > 3)
+    print("bool=" + a)
+    a = (c > 9)
+    print("boolfalse=" + a)
+    a = (c > 3) and (c < 9)
+    print("and=" + a)
+    a = (c > 9) or (c < 1)
+    print("or=" + a)
+
+    // 白名单运算（应命中窥孔）+ if/else 分支
+    int d = 3
+    d = d + 4
+    d = d - 1
+    d = d * 3
+    d = d / 2
+    d = d % 5
+    d = -d
+    d = ~d
+    d = 12 & 10
+    d = 12 | 10
+    d = 12 ^ 10
+    d = 3 << 4
+    d = 96 >> 2
+    if c > 3 {
+        d = d + 1
+    } else {
+        d = d + 2
+    }
+    print("arithmetic=" + d)
+
+    // 白名单算术的复合结果（结果已被证明 int48）
+    int e = 0
+    e = 3 + 4
+    e = e * 2 - 1
+    print("arith2=" + e)
+
+    // 循环内（确保 JIT 编译路径被走到）
+    var sum = 0
+    var i = 0
+    while i < 200000 {
+        sum = sum + (i & 7) + (i >> 2) + (i % 3) - (i * 2) + (i / 4) + (-i) + (~i) + (i | 1) + (i ^ 5) + (i << 1)
+        i = i + 1
+    }
+    print("loopsum=" + sum)
+
+    // int48 溢出：溢出后由解释器提升 BigInt（走 bailout，与控制流无关）
+    var big = 1
+    var j = 0
+    while j < 60 {
+        big = big * 3
+        j = j + 1
+    }
+    print("big=" + big)
+    print("bigadd=" + (big + 1))
+}
