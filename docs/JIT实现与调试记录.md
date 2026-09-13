@@ -2338,6 +2338,81 @@ LuaJIT 则靠"**栈槽是 GC 的权威副本** + snapshot 重建退出点状态"
 
 ***
 
+### 8.40 把 bailout 站点写入移出热路径（每检查省 4 条指令）（2026-09-13）
+
+**动机**：C / C# / LenoJit 三方对比（`examples/性能测试/bench_bitwise_loop.{leno,c,cs}`，
+2 亿次位运算循环）：C 224ms / C# 272ms / LenoJit 750ms —— JIT 比解释器快 **16.4x**，
+但离 C 还差 **3.35x**。反汇编逐条数（`LENO_JIT_DUMP=1` + `objdump -D -b binary -m i386:x86-64`；
+主机 ≈5.1GHz，用 `1e9 次 x=x+1` = 195ms 标定）：C 约 **7 条指令/轮**（5 条依赖运算 = 5.7 周期，
+**延迟下界**），LenoJit 约 **112 条指令/轮**（19.2 周期 ⇒ ≈5.8 IPC，**前端吞吐打满**）。
+多出来的三块里最大的一块是：
+
+**每次 int48 / 溢出检查之前都发 4 条「记录失败位置」的指令**：
+
+```asm
+push r9 ; movabs r9,&jit_bailout_site ; mov dword [r9],site ; pop r9
+```
+
+（`movabs` 占 10 字节。）检查本体只有 4 条 ⇒ **检查的约一半开销花在「万一要 bailout 时
+能报出位置」上**，而那个全局量只在**真的 bailout 之后**被读（`jit.c` 记进
+`last_bailout_site`，供 `jit_print_stats` 翻译成可读原因）。本例每轮约 7 处 ⇒ 约 35 条指令（31%）。
+
+**做法：延迟记录 + 每个 bailout 分支一个桩**
+
+1. `EMIT_BAILOUT_SITE_WRITE(site)` 不再发射任何代码，只置 `ctx->pending_site` / `_valid`；
+2. `patch_add(..., target_bc = -1, ...)`（bailout 分支的约定）消费它，转成一条**桩记录**
+   `{jcc 的 rel32 位置, site}`；
+3. bailout 块之后统一发射桩：`movabs r9,&jit_bailout_site; mov [r9],imm32; jmp <bailout>`
+   —— 只有真的 bailout 才执行；R9 可以随便用（马上要 bailout，调用方会重新装载）；
+4. 桩表（`JIT_MAX_BAILOUT_STUBS` = 512）满 ⇒ 按项目原则「宁可不编，不要猜」**拒绝编译**
+   （与 off_map / patch 溢出同一策略），绝不静默丢站点（那会让 stats 报出错误的失败位置）。
+
+好处是 **45 个调用点一行都没改**：所有站点本来就都是「写 site → 分支 → `patch_add(-1)`」
+的形状，所以拦截点只需要 `EMIT_BAILOUT_SITE_WRITE` 与 `patch_add` 两处。
+（顺带：bailout 分支不再占用 patch 槽，patch 表压力反而下降。）
+
+**实测**（同机，两个二进制只差本改动）：
+
+| 基准 | 改前 | 改后 |
+| --- | --- | --- |
+| `bench_bitwise_loop`（2 亿次） | 828 / 750 / 782（最小 750） | 640 / 625 / 641（**最小 625，1.20x**） |
+| `arr.add` 1 亿次 | 547~563 | 516~532 |
+| `dict[key]=` 1 亿次 | 859~891 | 812~828 |
+| `arr[index]` 1 亿次 | 172~203 | 172~187 |
+| `fib(30)`（函数级 JIT） | 110ms | **94ms** |
+
+**验证**：
+
+- **诊断可证明未变**：与改动前的二进制逐项对照 `[JIT-DEBUG] BAILOUT site=` —— 本例
+  `[17,17,17,14,14,14]`、`probe_alloc2` `[0,0,0]` **完全相同**；stats 的
+  `Bailout: fn='benchNone' loop_bc=37 x3 — int48 溢出/截断 @bc_off=37（= loop_bc 37 + 0）`
+  也逐字相同；
+- `assert` **273 passed / 0 failed**（JIT 与 `LENO_NO_JIT=1`）；
+- 溢出路径结果与解释器逐位一致（2^80 / 3^60 / BigInt+int），固化为
+  `jit_probes/probe_bailout_sites.leno`；
+- **130 个示例**（`examples/{struct,func,module_export_struct,cstruct}`）与改动前的二进制
+  差分：**确定性输出 0 差异**，只有指针地址（ASLR）与计时数字不同。
+
+**顺带查清的两件事**（都影响后续方向）：
+
+1. 反汇编里每个语句后「重复的 int48 检查 + 装箱路径」**不是死代码** —— 那是
+   `OP_SET_LOCAL` 的**类型派发**（float 局部量要 `cvttsd2si` 转成 int，反向也要转换，
+   同时维护 RBX 类型位图）。所以「删掉重复检查」这个设想不成立；要省掉它，得先让扫描器
+   提供静态类型保证。
+2. `OP_BITAND/BITOR/BITXOR` 只检查**结果**、不检查**操作数**类型 —— 之所以安全，是因为
+   **扫描器会拒绝「操作数静态类型是 float/null」的循环**（实测 `x & 3`（x = 1.5 或 null）
+   在 JIT 与解释器下报同样的错，且 `Compiled: 0`）。这条不变量值得记住。
+
+**剩余瓶颈（量化，留给下一步）**：优化后约 95 条指令/轮（≈16 周期），仍是吞吐受限。
+
+| 项 | 每轮可省 | 说明 |
+| --- | --- | --- |
+| 立即数折叠 | ~12 条 | 现在是 `movabs rax,7; mov rdx,rax; pop rax; and rax,rdx`，应为 `and rax,7`。JIT 侧**安全**折叠只能省 1 条（`movabs` 已经发出去了，回退 `cb->len` 会破坏已记录的补丁偏移）；彻底做法是编译期发融合 opcode（`OP_BITAND_IMM` 等，要动字节码格式 + 版本号） |
+| 局部量进寄存器 | ~10 条 | 每个语句都 `mov rax,[rbp-8]` + `mov [rbp-8],rax`（2 次访存，依赖链穿内存） |
+| `SET_LOCAL` 派发省略 | ~25 条 | 需要扫描器提供「该局部量在循环内恒为 int」的静态保证 |
+
+***
+
 ## 9. 性能数据
 
 ### 测试环境
