@@ -142,10 +142,13 @@ JIT 收编热循环后没有返回值 ⇒ 请求被推迟。实测预热循环�
   「JIT 进入时的状态」重跑整个循环，于是可复现的 bailout 无限重放；现有代码唯一的
   刹车是 `JIT_BAILOUT_LIMIT=3`，而 GC 回退不计数恰好绕过它。
   **⇒ 路线 3 必须走 exit 路径（回边处 vstack 平衡、locals 会被写回），不能用 bailout。**
-* ⬜ **待实施**：路线 3 的 codegen 部分 —— 回边上 `dec 计数; jz yield`，yield 段照抄
-  exit 块但返回新码 4；`jit_try_hot_loop` 单独映射 4（不计 bailout）；
-  `op_jump.inc` / `op_for_loop.inc` 的 `jit_r == 4` 分支做 `frame->ip -= offset`
-  （回收点已经接好在回边处理器里）。
+* ✅ **已实施（路线 3「回边让出」）**：JIT 在**自己那条回边**上 2 条指令轮询
+  `jit_gc_yield_flag`（`gc_alloc` 在 JIT 帧内跨年轻代阈值时置位），命中就走
+  **出口路径**（写回 locals + 平衡 vstack）返回码 4 让出；`jit_try_hot_loop` 单独
+  映射 4（**不计 bailout**）；`op_jump.inc` / `op_for_loop.inc` 消费让出并回收。
+  **实测：`probe_jit_gc_safepoint`（while）GC=83/Yields=83/`sum` 逐位正确；
+  `probe_alloc2`（for 纯分配 = §8.31 的 960MB 泄漏场景）从 GC=0 变成 GC=333/Yields=333，
+  每次回收 ≈8MB（`freed≈95083`）**。详见 `JIT实现与调试记录.md` §8.38。
 
 **行业对照（2026-09-13 调研，见 `JIT安全点与去优化_参考实现调研.md`）**：
 HotSpot 的 poll 也放在**回边/返回前/调用后**（与本项目一致），差别在于它有
