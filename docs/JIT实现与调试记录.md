@@ -1928,12 +1928,10 @@ TOS_PRODUCE();
 * matrix_rain 实跑正常收尾：`总帧数 2001，整体平均 183.3fps / 5.4ms`
   （与修复前及用户侧 184.8 / 5.4 同口径，无回归）。
 
-**修复后同一循环仍有 bailout（有意设计，不是 bug）**：bailout 位置从 `bc_off=59`
-移到 `63` = `OP_EQ`，比较两个 `Ptr[u8]`。`ops_icmp.inc` 的通用 `OP_EQ/OP_NEQ` 明确对
-「任一 NaN-boxed」一律 bailout —— 解释器那条路径还要处理字符串按内容、数组逐元素、
-其它对象按指针、BigInt、FFI 指针 null 比较。它位于 `invalidateRenderer`（renderer 销毁
-路径），不是热点。要归零需实现 NaN-boxed 比较；**若要做，建议 codegen 侧按静态类型发
-专用比较指令，而不是放宽通用 `OP_EQ`**（否则容易踩到「字符串按内容比较」的语义）。
+**修复后同一循环仍有 bailout**：位置从 `bc_off=59` 移到 `63` = `OP_EQ`，
+比较两个 `Ptr[u8]`。这一处已在 **§8.34** 用「运行时身份比较快路径」解决
+（matrix_rain 的 `Bailouts` 3 → 0）；过程中还**否掉了原先设想的「codegen 按静态类型发
+专用比较指令」方案** —— 原因见 §8.34（`ffi.nullptr()` 包装 NULL 导致"纯身份"不安全）。
 
 **顺带发现（未查清，留待办）**：`s = s + d["k"]`（dict 读取在热循环内）仍会 bailout，
 但位置是 **`OP_ADD_FLOAT`** 而非 `OP_GET_PROPERTY`。`d["k"]` 编译成 `OP_GET_PROPERTY`，
@@ -1944,6 +1942,55 @@ TOS_PRODUCE();
 「桩没有 fall-through」这句话对*桩自身*成立，但对**桩前面紧邻的代码**不成立。
 建议顺手扫一遍 `ops_callout.inc` / `ops_index.inc` 里所有
 `EMIT_BAILOUT_SITE_*` 紧跟无条件 `jmp` 的位置，确认前方没有会误落的路径。
+
+***
+
+### 8.34 `OP_EQ` 身份比较快路径 —— 指针/对象身份比较不再 bailout（2026-09-13）
+
+**背景**：§8.33 修掉 `OP_INDEX` 后，matrix_rain 同一个循环的 bailout 移到了 `bc_off=63`
+= `OP_EQ`，比较两个 `Ptr[u8]`（源码 `_texCache[i].ren == renderer`）。
+`ops_icmp.inc` 的通用 `OP_EQ/OP_NEQ` 对「任一 NaN-boxed」一律 bailout。
+
+**先否掉一个方案：不做「按静态类型发专用身份比较 opcode」**
+
+原设想是让 codegen 在静态类型已知时发一条专用身份比较指令。核实解释器语义后发现**不安全**：
+
+`Ptr[T]` 是 `ObjFFIPointer`，而 `ffi.nullptr()`（`src/module/ffi/ffi.c`）与
+`ffi.ptr_from_int(0)` 会产生**包装 NULL 的 `ObjFFIPointer`**（真对象，不是 `val_null`）。
+解释器对 `null == Ptr` 走的是「看包装地址 `->ptr == NULL`」的**特殊规则**
+（`op_compare.inc`）—— 此时为 **true**，而纯身份比较（位比较）会给 **false**。
+
+于是三条路都不通：
+
+* 新 opcode 做「纯身份比较」⇒ **静默改变** `ffi.nullptr() == null` 的语义；
+* 把 FFI 的 null 规则也搬进新 opcode ⇒ 它就不是身份比较了，等于把解释器那套复制一份，
+  还要额外承担 opcode 重编号 + `LENO_BIN_VERSION` / `LENO_MODCACHE_VERSION` bump；
+* 让 codegen 用谓词排除「可能是 Ptr 的一侧」⇒ 恰好排除了发起这件事的场景，白做。
+
+**最终做法：判定放在运行时（改 `ops_icmp.inc`，零 opcode / 版本改动）**
+
+在 `OP_EQ/OP_NEQ` 的「任一 NaN-boxed → bailout」**之前**插一条快路径：
+
+> 两个操作数都是 OBJ（top16 == `0xFFFC`）、`obj->type` 相同、
+> 且类型 ∉ {`OBJ_STRING`(0), `OBJ_ARRAY`(1), `OBJ_BIGINT`(7)} → **值位比较**（= 对象身份）
+
+依据解释器规则：两个 OBJ 值同类型时，只有 STRING 按内容、ARRAY 逐元素，
+**其余一切对象都是身份比较**（含 struct / dict / Ptr）。不满足条件一律**落到原有数值慢路径**，
+那里对 NaN-boxed 仍 bailout —— 所以不可能静默算错，只是这几类仍走解释器。
+
+**验证**
+
+* 差分测试 `jit_probes/probe_eq_identity.leno`：**JIT 与 `LENO_NO_JIT=1` 结果逐条一致** ——
+  `sameObj=2000 / diffObj=0 / neq=2000 / nullPtr=2000 / str=2000 / arr=2000 / struct=2000`。
+* bailout 归属正确：`c_str`（按内容）、`c_arr`（逐元素）、`c_nullPtr`（`ffi.nullptr() == null`）
+  **仍 bailout**（语义没被吞掉）；`c_sameObj` / `c_diffObj` / `c_neq` / `c_struct` **不再 bailout**。
+* `assert` **273 passed / 0 failed**。
+* **matrix_rain `Bailouts` 3 → 0**（`Executed` 11204），整体平均 187.1fps / 5.3ms（无回归）。
+
+**教训**：打算用「编译期类型谓词」把手写语义下沉成新指令之前，**必须先把解释器那段代码的
+全部分支读完**。这次的关键分支（`null == Ptr` 看包装地址）就藏在 `OP_EQ` 开头那四条
+`val_is_null(...) && OBJ_FFI_POINTER/CALLBACK` 特例里 —— 只读「对象按指针比较」那句注释
+会直接漏掉它。**先否定法：能用运行时判定 + 落回旧路径表达的语义，就不要抬进编译期。**
 
 ***
 

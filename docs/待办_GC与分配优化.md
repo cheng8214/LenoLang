@@ -195,16 +195,24 @@ NaN-boxed。**原因未查清。**
 
 **判据**：`useDict` 的 `Bailouts` 归零。
 
-### ⬜ 待办 2：`OP_EQ` 比较 NaN-boxed（指针）会 bailout
+### ✅ 已修：`OP_EQ` 对指针 / 对象身份比较会 bailout
 
-matrix_rain 的 `invalidateRenderer` 比较两个 `Ptr[u8]`，通用 `OP_EQ` 对「任一 NaN-boxed」
-一律 bailout（**有意设计**，见 `ops_icmp.inc`：要覆盖字符串按内容、数组逐元素、
-其它对象按指针、BigInt、FFI 指针 null 比较）。它不是热点，但会让这类循环整体跑不进 JIT。
+matrix_rain 的 `invalidateRenderer` 比较两个 `Ptr[u8]`，通用 `OP_EQ` 原来对「任一
+NaN-boxed」一律 bailout，整个循环跑不进 JIT。
 
-**若要做，建议**：codegen 侧在静态类型已知时发**专用比较指令**（指针 / 对象身份比较），
-而不是放宽通用 `OP_EQ` —— 后者容易踩到「字符串按内容比较」的语义。
+**做法**：在 `ops_icmp.inc` 的 `OP_EQ/OP_NEQ` 里加**运行时身份比较快路径** ——
+两个操作数都是 OBJ、`obj->type` 相同、且类型 ∉ {`OBJ_STRING`, `OBJ_ARRAY`, `OBJ_BIGINT`}
+→ 值位比较（= 对象身份）。不满足则落回原有慢路径（对 NaN-boxed 仍 bailout），
+**语义不可能被改变**，只是 string / array / bigint / `null == Ptr` 仍走解释器。
 
-**判据**：matrix_rain 的 `Bailouts` 归零。
+**⚠️ 原计划的「codegen 发专用身份比较 opcode」已被否掉**：`Ptr[T]` 是 `ObjFFIPointer`，
+而 `ffi.nullptr()` / `ffi.ptr_from_int(0)` 会产生**包装 NULL 的 ObjFFIPointer**，
+解释器对 `null == Ptr` 走「看包装地址」的特殊规则（为真），纯身份比较会给假 ——
+抬进编译期就会静默改语义。详见 `JIT实现与调试记录.md` §8.34。
+
+**验证**：`jit_probes/probe_eq_identity.leno`（JIT 与 `LENO_NO_JIT=1` 结果逐条一致；
+string / array / `ffi.nullptr()==null` 仍走解释器）；`assert` 273/0；
+**matrix_rain `Bailouts` 3 → 0**。
 
 ---
 
@@ -214,8 +222,11 @@ matrix_rain 的 `invalidateRenderer` 比较两个 `Ptr[u8]`，通用 `OP_EQ` 对
   `src/object/object_struct.c`）—— 已验证，已提交（`0ead45e9`）。
 - 代码改动 2：`OP_INDEX` 慢路径越界 bailout 桩修复（`src/jit/backend/x86_inc/ops_index.inc`，
   +7 行）—— 已验证，见第七节与 `JIT实现与调试记录.md` §8.33。
+- 代码改动 3：`OP_EQ/OP_NEQ` 身份比较快路径（`src/jit/backend/x86_inc/ops_icmp.inc`）
+  —— 已验证，见第七节与 `JIT实现与调试记录.md` §8.34。
 - 新增：`jit_probes/gc_barrier_canary.leno`（当前**不敏感**，见第五节，勿当验收用例）、
-  `jit_probes/probe_index_slowpath.leno`（`OP_INDEX` 慢路径回归探针，判据见第七节）。
+  `jit_probes/probe_index_slowpath.leno`（`OP_INDEX` 慢路径回归探针，判据见第七节）、
+  `jit_probes/probe_eq_identity.leno`（`OP_EQ` 身份比较差分探针，判据见第七节）。
 - 文档：`JIT实现与调试记录.md` §8.31-a（负结果）、§8.31-b（内联屏障 + 覆盖缺口）、
-  §8.33（`OP_INDEX` 慢路径 bailout）。
+  §8.33（`OP_INDEX` 慢路径 bailout）、§8.34（`OP_EQ` 身份比较快路径）。
 - 环境已复位：临时 GC 探针已移除、对照二进制与诊断临时文件已删除。
