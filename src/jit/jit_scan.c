@@ -25,11 +25,12 @@ int cache_hash(const uint8_t* ip) {
     return (int)(v & (JIT_CACHE_SIZE - 1));
 }
 
-/* ---- struct 方法返回值个数（编译期解析） ----
- * OP_INVOKE_METHOD 只编码「方法名常量 + arg_count」，接收者的静态类型信息不在
- * 字节码里（同一条指令运行时可能落到不同 struct 定义上）。JIT 的栈记账必须
- * 知道调用结束后留下几个返回值：多返回值方法（如 Font.measureString →
- * [float, float]）若按 1 个记账，第一个返回值会直接落在实参槽上（读到上一帧
+/* ---- struct 方法返回值个数（按方法名推断；_TYPED 解析失败时的兜底）----
+ * OP_INVOKE_METHOD_TYPED 的正常路径用字节码里的静态类型名直接定位方法，但该解析
+ * 可能失败（def 尚未注册、方法定义不完整等）。此时只能退回「枚举已注册 struct
+ * 定义、按方法名匹配」的推断，前提是方法名在所有 def 中唯一且 return_count 一致。
+ * JIT 的栈记账必须知道调用结束后留下几个返回值：多返回值方法（如 Font.measureString
+ * → [float, float]）若按 1 个记账，第一个返回值会直接落在实参槽上（读到上一帧
  * 的残留值），表现为数值/位置每帧乱跳。
  *
  * 解析办法：枚举当前线程已注册的 struct 定义，按方法名匹配：
@@ -95,7 +96,7 @@ ObjFunction* jit_resolve_method_func(Chunk* chunk, uint16_t name_const_idx,
             if (!fn && m->closure) fn = m->closure->function;
             if (!fn) return NULL;                 /* 定义不完整 → 不猜 */
             if (found_def) return NULL;           /* 同名方法出现在多个 def → 有歧义 */
-            /* 构造/析构不走 OP_INVOKE_METHOD 的正常方法语义，内联没有意义 */
+            /* 构造/析构不走 OP_INVOKE_METHOD_TYPED 的正常方法语义，内联没有意义 */
             if (def->has_ctor && j == def->ctor_index) return NULL;
             if (def->has_dtor && j == def->dtor_index) return NULL;
             found_def = def;
@@ -136,7 +137,7 @@ int jit_resolve_method_typed(Chunk* chunk, uint16_t name_const_idx, uint16_t typ
     for (int j = 0; j < def->method_count; j++) {
         StructMethodInfo* m = &def->methods[j];
         if (!m->name || strcmp(m->name, name) != 0) continue;
-        /* 构造/析构不走 OP_INVOKE_METHOD 的正常方法语义 */
+        /* 构造/析构不走 OP_INVOKE_METHOD_TYPED 的正常方法语义 */
         if (def->has_ctor && j == def->ctor_index) return 0;
         if (def->has_dtor && j == def->dtor_index) return 0;
         ObjFunction* fn = m->func;
@@ -223,10 +224,8 @@ int opcode_size(const uint8_t* ip) {
         /* 7-byte (OP_FOR_LOOP) */
         case OP_FOR_LOOP:
             return 7;
-        /* 5-byte: OP_INVOKE_METHOD = opcode + name_const(2) + arg_count(2) */
-        case OP_INVOKE_METHOD:
-            return 5;
-        /* 7-byte: OP_INVOKE_METHOD_TYPED = 上述 5 字节 + struct_type_name_const(2) */
+        /* 7-byte: OP_INVOKE_METHOD_TYPED = opcode + name_const(2) + arg_count(2)
+         *         + struct_type_name_const(2) */
         case OP_INVOKE_METHOD_TYPED:
             return 7;
         /* 2-byte: OP_RETURN_MULTI = opcode + count(1) */
@@ -384,16 +383,14 @@ case OP_GET_FIELD_FAST: vstack++; break;
                 vstack -= ((int)ip[3] - 1);
                 break;
             }
-            case OP_INVOKE_METHOD:
             case OP_INVOKE_METHOD_TYPED: {
                 /* 返回值个数按编译期解析结果记账；解析不出来则拒绝内联
                  * （callee 的返回值个数未知时无法保证栈记账正确）。 */
                 int ac = rd_short(ip + 3);
                 int rc = 0;
-                /* _TYPED：按字节码里的静态类型名直接定位 def/方法（无需"方法名唯一"） */
-                if (op == OP_INVOKE_METHOD_TYPED)
-                    (void)jit_resolve_method_typed(cc, rd_short(ip + 1), rd_short(ip + 5),
-                                                   NULL, NULL, &rc);
+                /* 按字节码里的静态类型名直接定位 def/方法（无需"方法名唯一"） */
+                (void)jit_resolve_method_typed(cc, rd_short(ip + 1), rd_short(ip + 5),
+                                               NULL, NULL, &rc);
                 if (rc <= 0)
                     rc = jit_resolve_method_ret_count(cc, rd_short(ip + 1));
                 if (rc <= 0) {
@@ -652,9 +649,8 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
             case OP_ACC_FIELDS:
                 /* pop 1 (struct obj), push 1 (float sum) -> net 0 */
                 break;
-            case OP_INVOKE_METHOD:
             case OP_INVOKE_METHOD_TYPED: {
-                /* name_const(2) + arg_count(2) [+ struct_type_name_const(2) for _TYPED]；
+                /* name_const(2) + arg_count(2) + struct_type_name_const(2)；
                  * arg_count includes self (receiver)。
                  * pop arg_count, push ret_count results -> net -(arg_count - ret_count)。
                  * ret_count 不能假定为 1：多返回值方法（如 Font.measureString）
@@ -662,13 +658,12 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                 int arg_count = rd_short(ip + 3);
                 int name_idx = rd_short(ip + 1);
                 int ret_count = 0;
-                /* _TYPED 形态带编译期静态类型名：直接定位 def/方法，不再需要
+                /* 字节码带编译期静态类型名：直接定位 def/方法，不再需要
                  * 「方法名在所有 def 中唯一」的推断（同名方法也能安全解析/内联）。 */
                 ObjStructDef* typed_def = NULL;
                 ObjFunction* typed_fn = NULL;
-                if (op == OP_INVOKE_METHOD_TYPED)
-                    (void)jit_resolve_method_typed(chunk, name_idx, rd_short(ip + 5),
-                                                   &typed_def, &typed_fn, &ret_count);
+                (void)jit_resolve_method_typed(chunk, name_idx, rd_short(ip + 5),
+                                               &typed_def, &typed_fn, &ret_count);
                 if (ret_count <= 0)
                     ret_count = jit_resolve_method_ret_count(chunk, name_idx);
                 if (ret_count <= 0) {
@@ -681,8 +676,8 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                 /* ---- 尝试内联 struct 方法体（P5 续：方法调用内联）----
                  * 条件（任一不满足就退回 callout，语义不变）：
                  *   - 单返回值（=1），与 codegen/内联退出记账一致；
-                 *   - 能定位方法体：_TYPED 用字节码里的静态类型名直接定位；
-                 *     基础形态只能靠「方法名在所有 def 中唯一」推断（有歧义就放弃）；
+                 *   - 能定位方法体：优先用字节码里的静态类型名直接定位；失败再
+                 *     退回「方法名在所有 def 中唯一」的推断（有歧义就放弃）；
                  *   - 体内可内联（scan_callee_for_inline）、无 try、体长 ≤256；
                  *   - callee locals 放得下（callee_lc >= arg_count，避免越界映射）。
                  * 接收者的运行时类型由 codegen 生成 def 守卫兜底。 */

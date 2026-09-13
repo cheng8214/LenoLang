@@ -192,7 +192,6 @@
         [OP_INDEX_SET_NOPUSH] = &&LABEL(OP_INDEX_SET_NOPUSH),
         [OP_CLEAR_LOCAL_RANGE] = &&LABEL(OP_CLEAR_LOCAL_RANGE),
         [OP_SWITCH_LOOKUP] = &&LABEL(OP_SWITCH_LOOKUP),
-        [OP_INVOKE_METHOD] = &&LABEL(OP_INVOKE_METHOD),
         [OP_SET_LOCAL_CONST] = &&LABEL(OP_SET_LOCAL_CONST),
         [OP_ACC_FIELDS] = &&LABEL(OP_ACC_FIELDS),
         [OP_CMPJMP_LL_INT] = &&LABEL(OP_CMPJMP_LL_INT),
@@ -260,15 +259,6 @@
     #define OPCODE(op) case op:
     #define DISPATCH break
     #endif
-
-    // ---------------------------------------------------------------------
-    // OP_INVOKE_METHOD / OP_INVOKE_METHOD_TYPED 共用的操作数（见 op_struct.inc
-    // 的 l_invoke_method_common）：两个形态只有操作数长度不同，公共体只写一份，
-    // 所以操作数必须放在 case/label 之外的作用域里。
-    // ---------------------------------------------------------------------
-    uint16_t invoke_name_idx = 0;
-    int invoke_arg_count = 0;
-    int invoke_insn_len = 0;
 
     #include "vm_helpers.inc"
 

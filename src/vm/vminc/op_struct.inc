@@ -1041,40 +1041,21 @@ OPCODE(OP_GET_METHOD) {
 
 // ============================================================================
 // struct 方法调用融合指令（省掉 receiver 二次求值 + OP_GET_METHOD 分发开销）
-// 两种形态（语义相同，公共体只写一份 —— 见下方 l_invoke_method_common）：
-//   OP_INVOKE_METHOD        op(1) name_const(2) arg_count(2)              —— 5 字节
-//   OP_INVOKE_METHOD_TYPED  op(1) name_const(2) arg_count(2)
-//                                struct_type_name_const(2)               —— 7 字节
+// 操作数: op(1) name_const(2) arg_count(2) struct_type_name_const(2) —— 7 字节
 // 栈布局: [recv][arg1]...[argN][default_args...]（arg_count 含 self，receiver 在参数区首位，
 //         peek 不弹出；查找方法闭包压栈后交给 call()，与旧路径 [recv][args][closure] 完全一致）
-// 仅由 codegen 在编译期确认 struct 方法（非 async）时发射。
-// _TYPED 形态额外携带**编译期静态类型名**：JIT 用它做编译期去虚拟化 / 方法内联（不再依赖
-// 「方法名在所有 def 中唯一」的推断）；VM 侧仍按**运行时实际类型**分发，所以语义与基础
-// 形态逐字一致 —— 类型名在 VM 侧只被读掉、不参与查找，语义参考实现保持唯一。
+// 仅由 codegen 在编译期确认 struct 方法（非 async）**且接收者静态类型名可解析**时发射。
+// 携带的**编译期静态类型名**：JIT 用它做编译期去虚拟化 / 方法内联（不再依赖
+// 「方法名在所有 def 中唯一」的推断）；VM 侧仍按**运行时实际类型**分发 —— 类型名在
+// VM 侧只被读掉、不参与查找，语义参考实现保持唯一。
 // ============================================================================
-
-OPCODE(OP_INVOKE_METHOD) {
-    frame = &vm.frames[vm.frame_cnt - 1];
-    invoke_name_idx = READ_SHORT();
-    invoke_arg_count = READ_SHORT();
-    invoke_insn_len = 5;
-    goto l_invoke_method_common;
-}
 
 OPCODE(OP_INVOKE_METHOD_TYPED) {
     frame = &vm.frames[vm.frame_cnt - 1];
-    invoke_name_idx = READ_SHORT();
-    invoke_arg_count = READ_SHORT();
+    uint16_t method_name_idx = READ_SHORT();
+    int arg_count = READ_SHORT();
     /* 编译期静态类型名常量：JIT 侧消费，VM 侧读掉即可（见本段开头说明） */
     (void)READ_SHORT();
-    invoke_insn_len = 7;
-    /* fall through 进入公共体（jump-table 模式下落进下面的 label；switch 模式同理） */
-}
-
-// ---- 公共体：OP_INVOKE_METHOD / OP_INVOKE_METHOD_TYPED 共用（语义只写一遍）----
-l_invoke_method_common: {
-    uint16_t method_name_idx = invoke_name_idx;
-    int arg_count = invoke_arg_count;
 
     Value method_name_val = frame->chunk->constants[method_name_idx];
     if (!val_is_obj(method_name_val) || val_as_obj(method_name_val)->type != OBJ_STRING) {
@@ -1103,8 +1084,8 @@ l_invoke_method_common: {
 
 #ifndef VM_USE_THREAD_LOCAL
     // 内联缓存（与 OP_GET_METHOD 同一张表，以指令地址哈希区分）。
-    // 指令长度随形态不同（5 / 7 字节），回退到 opcode 字节，保证同一条指令 key 稳定。
-    uint8_t* ip_before = frame->ip - invoke_insn_len;
+    // 指令长度固定 7 字节，回退到 opcode 字节，保证同一条指令 key 稳定。
+    uint8_t* ip_before = frame->ip - 7;
     int mcache_idx = ((uintptr_t)ip_before >> 2) & (IC_METHOD_CACHE_SIZE - 1);
     InlineMethodCacheEntry* mcache = &vm.ic_method_cache[mcache_idx];
     uint32_t mname_hash = method_name->hash;

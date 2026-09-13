@@ -610,7 +610,7 @@ for each local i:
 | ------ | --- |
 | OP\_TRY / OP\_CATCH / OP\_FINALLY / OP\_END\_TRY | JIT 中视为 **no-op**（`ops_misc.inc`）。正常路径无需 setup；若 callout 抛异常则整体 bailout 回解释器重跑完整 try/catch |
 | OP\_MODULE\_CALL | callout `jit_callout_module_call`（如 `maths.sqrt`）；但 **ffi 定宽内存读写**（`read_byte`/`read_int8`/`read_int16`/`read_uint16`/`read_int`/`read_uint` 及对应 `write_*`，共 12 个）走**内联**，见 §2.6 |
-| OP\_GET\_PROPERTY / OP\_INVOKE\_METHOD | callout（`jit_callout_get_property` / `jit_callout_invoke_method`），并带 GET\_PROPERTY+OP\_CALL 窥孔合并；`OP_INVOKE_METHOD` **支持多返回值回填**（§8.20） |
+| OP\_GET\_PROPERTY / OP\_INVOKE\_METHOD\_TYPED | callout（`jit_callout_get_property` / `jit_callout_invoke_method`），并带 GET\_PROPERTY+OP\_CALL 窥孔合并；`_TYPED` **支持多返回值回填**（§8.20），且因字节码带静态类型名可做编译期去虚拟化 / 方法内联（§8.30） |
 | OP\_CALL\_NATIVE | callout `jit_callout_call_native` |
 | OP\_INDEX / OP\_ARRAY / OP\_DICT\_SET / OP\_INDEX\_SET\_NOPUSH / OP\_ARRAY\_APPEND\_NOPUSH | callout |
 | OP\_STRUCT\_INIT（非泛型） | callout `jit_callout_struct_init` |
@@ -629,7 +629,7 @@ for each local i:
   `jit_compile()` 据此拒绝（`scan REJECT` 日志）；函数级 JIT / 内联 callee 能正确处理，不受影响。
   详见 §8.21。
 
-- **`OP_INVOKE_METHOD` 的返回值个数无法在编译期确定**：见 §8.20，拒绝（不猜成 1 个）。
+- **`OP_INVOKE_METHOD_TYPED` 的返回值个数无法在编译期确定**：见 §8.20，拒绝（不猜成 1 个）。
 
 ***
 
@@ -997,7 +997,7 @@ vstack_top[arg_count] = 第一个实参
 
 **教训**：`vstack_top` 的下标语义必须逐个 callout 写明 ——
 **「receiver 在 `vstack_top[0]`」不等于「实参从 `vstack_top[1]` 顺着排」**：
-原生方法调用是实参先压、receiver 最后压，而 struct 方法（`OP_INVOKE_METHOD`）
+原生方法调用是实参先压、receiver 最后压，而 struct 方法（`OP_INVOKE_METHOD_TYPED`）
 是 receiver 最先压。同一个 `vstack_top` 基址，取参公式完全不同。
 
 ### 8.18 类型化浮点运算不提升 int 操作数（2026-09-12）
@@ -1041,12 +1041,17 @@ NaN-boxed → bailout 交解释器（解释器 `val_as_num_ex`/`val_as_num` 对 
 `ZF` 永远是 1，判零必须显式准备 0.0 操作数。另外：**加 bailout 分支后必须复测
 `Bailouts` 计数**（功能正确但每次都回退，同样是回归）。
 
-### 8.20 `OP_INVOKE_METHOD` 多返回值只按 1 个记账 —— PvZ 选卡数字每帧左右抖动（2026-09-12）
+### 8.20 `OP_INVOKE_METHOD_TYPED` 多返回值只按 1 个记账 —— PvZ 选卡数字每帧左右抖动（2026-09-12）
+
+> **后记（2026-09-13，§8.32）**：本节写作时该 struct 方法调用融合指令只有 5 字节形态
+> `OP_INVOKE_METHOD`（不带静态类型名）。该形态已被删除，现存唯一形态是 7 字节的
+> `OP_INVOKE_METHOD_TYPED`。下述「返回值个数必须编译期解析、解析不出来就拒绝编译」的
+> 结论对两者同样成立。
 
 **症状**：`植物大战僵尸/pvz.leno` 开 JIT 时，卡片上的数字（1~5、阳光数）每帧左右乱跳；
 `LENO_NO_JIT=1` 完全正常。日志里全是 `drawTextCentered`/`drawText` 的函数级 JIT 命中。
 
-**根因**：`OP_INVOKE_METHOD` 的 scan vstack 记账与 codegen 弹栈都写死「pop `arg_count`，
+**根因**：`OP_INVOKE_METHOD_TYPED` 的 scan vstack 记账与 codegen 弹栈都写死「pop `arg_count`，
 push 1 个结果」，但 struct 方法可以返回多个值。`drawTextCentered` 里
 
 ```leno
@@ -1056,13 +1061,13 @@ float cx = x + (w - msw) / 2.0                        // msw 是脏值 → 文�
 
 JIT 只留下 1 个返回值（而且落在实参槽上），于是 `msw` 读到**上一帧的栈残留**，
 `cx` 每帧不同 → 文字左右抖动。注意 `OP_CALL_GLOBAL_FUNC` 早就处理了 `ret_count`，
-只有 `OP_INVOKE_METHOD` 漏了。
+只有 `OP_INVOKE_METHOD_TYPED` 漏了。
 
 **修复**（4 处同步，缺一不可）：
 
-1. `jit_scan.c` 新增 `jit_resolve_method_ret_count()`：`OP_INVOKE_METHOD` 只编码
-   「方法名常量 + arg_count」，接收者类型运行时才定，所以在**编译期枚举已注册 struct 定义**
-   按方法名解析 `return_count`；要求「所有同名方法返回值个数一致」，否则返回 0；
+1. `jit_scan.c` 新增 `jit_resolve_method_ret_count()`：按方法名在**编译期枚举已注册的
+   struct 定义**解析 `return_count`；要求「所有同名方法返回值个数一致」，否则返回 0。
+   （该函数如今是 `OP_INVOKE_METHOD_TYPED` 按静态类型名解析失败后的兜底，见 §8.32）
 2. `scan_loop_body` / `scan_callee_for_inline`：`vstack -= (arg_count - ret_count)`，
    解析失败置 `capable=0`（**绝不退化成按 1 个处理**——那正是本 bug 的形态）；
 3. `ops_callout.inc`：弹 `(arg_count - ret_count + 1)` 槽，保留 `ret_count - 1` 个额外返回值槽
@@ -1625,7 +1630,7 @@ emit_jcc(cb, 0x83);                            /* JAE → slow */
 
 ### 8.30 P5 续：struct 字段读与方法调用内联（2026-09-13，提交 `c4b6bbd1`）
 
-**目标**：`OP_GET_FIELD_FAST`（struct 字段读）与 `OP_INVOKE_METHOD`（struct 方法调用）
+**目标**：`OP_GET_FIELD_FAST`（struct 字段读）与 `OP_INVOKE_METHOD_TYPED`（struct 方法调用）
 是对象密集代码的两大 callout。实测每次方法调用有 ~70ns 花在「callout 装箱 + 函数级
 JIT 逐次序言」上，而这两项在循环体内每轮都要付一次。
 
@@ -1634,9 +1639,9 @@ JIT 逐次序言」上，而这两项在循环体内每轮都要付一次。
 1. `OP_GET_FIELD_FAST` 内联快路径：`tag == 0xFFFC`（SHR 读 top16）+ `type == OBJ_STRUCT`
    + `field_idx < obj->def->field_count` 三条通过 → 机器码里直接读 `field_values[idx]`；
    任一不满足走原 callout（报错文本、越界返回 null 的语义完全不变）。
-2. `OP_INVOKE_METHOD` 内联：复用既有 `InlineSite` 机制把方法体展开进调用方循环体。
-   **注意 `OP_INVOKE_METHOD` 是动态分发**（字节码只带方法名常量 + arg_count，接收者
-   类型运行时才定），所以内联入口必须生成**接收者 def 守卫**：
+2. `OP_INVOKE_METHOD_TYPED` 内联：复用既有 `InlineSite` 机制把方法体展开进调用方循环体。
+   **注意 VM 侧仍是动态分发**（字节码里的静态类型名只供 JIT 编译期去虚拟化，解释器
+   仍按运行时实际类型查找），所以内联入口必须生成**接收者 def 守卫**：
    `tag → OBJ_STRUCT → obj->def == 编译期解析出的唯一 def`，任一不匹配立即 bailout
    交解释器 —— 方法查找与报错语义仍由解释器负责，**不在机器码里复刻第二份语义**。
 3. 新增 `jit_resolve_method_func()`（`jit_scan.c`）：方法名在**所有已注册 def 中唯一**、
@@ -1722,6 +1727,56 @@ JIT 逐次序言」上，而这两项在循环体内每轮都要付一次。
 
 **环境**：以上绝对值均在 **i5-3450**（Ivy Bridge，4C/4T）+ Windows 下测得，机器负载
 波动大，**只做同机同轮对照，不要跨机比较绝对值**。
+
+***
+
+### 8.32 删除 5 字节 `OP_INVOKE_METHOD` —— 「类型名取不到」改为编译期报错（2026-09-13）
+
+**背景**：struct 方法调用有两条融合指令形态 —— 5 字节 `OP_INVOKE_METHOD`
+（`name(2) argc(2)`）与 7 字节 `OP_INVOKE_METHOD_TYPED`（多带 `struct_type_name_const(2)`）。
+加 `_TYPED` 时保留了旧形态，作为「类型名常量取不到」时的回退，使 JIT 能靠
+「方法名在所有 def 中唯一」的推断退化解析（§8.30 的 `jit_resolve_method_func`）。
+
+**问题**：该回退会把一个**本该编译期确定**的类型漏到运行时，与项目一贯要求
+（「能在编译时确定就别留到运行时，不确定就报错」）相悖。
+
+**结论：回退是死路径，直接删除。** 两条硬证据（不是靠跑几个例子）：
+
+1. **入口条件已保证类型名非空**。`codegen_expr.c` 进入融合发码块的准入条件要求接收者是
+   `TYPE_STRUCT` / `TYPE_FACE` **且 `struct_name != NULL`**；原生对象（`FILE` / `SOCKET`）
+   那条分支里 `method_def` 恒为 `NULL`，永远进不了发射融合指令的
+   `if (has_method_def && method_def && !is_async)`。所以能到达发码点的接收者必然是
+   `TYPE_STRUCT` 且 `struct_name != NULL`。
+2. **`make_constant()` 永不返回负数**（`chunk_add_const()` 即使 OOM 也返回 `0`）。
+   ⇒ `type_name_const < 0` 只可能来自 `struct_name == ""`；而所有构造 `TYPE_STRUCT` 的路径
+   （符号表类型解析、模块 struct 导入、`AST_STRUCT_INIT` 的 struct 名）都来自非空标识符。
+
+**实测**：273 个 `assert` 回归测试全过；另用 `-c` 编译 7 个 struct/face 方法密集的 LenoSDL3
+应用（桌宠 / 文件管理器 / 文件搜索 / matrix_rain / IDE 布局 / scrollview_all / 缓存清理工具），
+新的编译期报错一次都没触发。`test_jit_multiret_method` 保持 `Compiled 3 / Executed 3 /
+Bailouts 0`。
+
+**改动**
+
+1. `codegen_expr.c`：删除 5 字节回退分支。类型名取不到时改为**编译期报错**
+   （`ERR_RUNTIME`：`内部错误：struct 方法调用缺少接收者静态类型名`），不再静默发码。
+2. 删除 opcode 本体及全部消费点：`leno_vm.h`（枚举）、`debug.c`（名称表 + 反汇编）、
+   `vm_run.inc`（跳转表）、`op_struct.inc`（handler —— 顺带把「两形态共用公共体」合并进
+   `OP_INVOKE_METHOD_TYPED` 内部，消掉 `l_invoke_method_common` 标签与 3 个外部操作数变量）、
+   `jit_scan.c`（`opcode_size()` / `scan_loop_body()` / `scan_callee_for_inline()` 三处 case
+   合并）、以及 `jit_priv.h` / `jit_callout.c` / `ops_callout.inc` / `x86_64.c` 的 case 与注释。
+   `jit_resolve_method_func()` / `jit_resolve_method_ret_count()` **保留** —— 它们是 `_TYPED`
+   解析失败时的兜底，仍在用。
+3. **opcode 重新编号**：`OP_INVOKE_METHOD` 之后还有 6 个 opcode，删除后整体前移 1。按
+   `leno_serialize.h` 自己的规则 bump 版本：`LENO_BIN_VERSION 2.4.0 → 2.5.0`、
+   `LENO_MODCACHE_VERSION 3 → 4`，否则旧的 `entry_*.lenb` / `*.lenomc` 会按
+   `magic + version` 校验通过、加载含错位 opcode 的字节码并跳转发散（`0xC0000005`）。
+   `.lenosymc` 只存符号表、不含 opcode，无需 bump。
+
+**教训**：**「回退分支」也是行为，会被写进字节码契约**。一个「理论上不会走到」的兼容
+回退，如果它发的是**不同长度**的指令，就等于把不确定性固化进了字节码；删掉它、把不确定
+变成编译期报错，比留着「以防万一」更安全 —— 前提是先证明它是死路径（入口条件 + 返回值
+域），而不是靠跑几个样例。
 
 ***
 
@@ -1887,7 +1942,7 @@ P1 已完成嵌套循环支持。`scan_loop_body` 现在接受 `OP_FOR_PREP`（�
 
 历史上这里是「JIT 完全不支持函数调用」。现状（2026-09-13）：
 
-* ✅ **JIT 循环内的调用**：`OP_CALL_GLOBAL_FUNC[_TYPED]` / `OP_INVOKE_METHOD` /
+* ✅ **JIT 循环内的调用**：`OP_CALL_GLOBAL_FUNC[_TYPED]` / `OP_INVOKE_METHOD_TYPED` /
   `OP_CALL_NATIVE` / `OP_MODULE_CALL` 都实现了 callout（§13.8），且 callee 可
   被内联或函数级 JIT 编译。
 * ✅ **被调函数整体进 JIT**：`jit_compile_function` + 薄桥（877688c3）。
@@ -2077,7 +2132,7 @@ RAX 常驻栈顶，`a + b` 退化成「pop 一次 + add + 留在 RAX」，只在
     **数组越界读被静默跳过**（§8.28），并把它改成 bailout 以对齐解释器的
     可捕获异常语义。
   * **2026-09-13 追加（§8.30，提交 `c4b6bbd1`）**：`OP_GET_FIELD_FAST`（struct 字段读）
-    与 `OP_INVOKE_METHOD`（struct 方法调用）也已内联 —— 方法调用实测 **1.9\~3.3x**
+    与 `OP_INVOKE_METHOD_TYPED`（struct 方法调用）也已内联 —— 方法调用实测 **1.9\~3.3x**
     （探针），对象版光追 Phase B2 578 → 297 ms。**新结论**：`OP_STRUCT_INIT`（对象分配）
     的 JIT 侧包装只要 **14ns**，成本全在 C 分配本体，内联它没有意义；后续见 §8.31。
   * **未做**：`dict[key]=v`（`OP_DICT_SET`）。字典写要做哈希、探测、tombstone、
@@ -2371,14 +2426,14 @@ JIT 虚拟栈是「栈顶在低地址」的反向栈，`vstack_top` 永远指向
 | `OP_MODULE_CALL`（`jit_callout_module_call`） | 实参按源码顺序，第一个实参先压（最高地址） | `arg[i] = vstack_top[arg_count-1-i]` |
 | `OP_CALL_GLOBAL_FUNC[_TYPED]`（`jit_callout_global_func`） | 同上 | 同上 |
 | `OP_STRUCT_INIT` / `OP_ARRAY` / `OP_CALL_NATIVE` | 同上 | 同上 |
-| `OP_INVOKE_METHOD`（struct 方法，`arg_count` 含 self） | **receiver 最先压**，再压实参 | `receiver = vstack_top[arg_count-1]`；`flocals[i] = vstack_top[arg_count-1-i]` |
+| `OP_INVOKE_METHOD_TYPED`（struct 方法，`arg_count` 含 self） | **receiver 最先压**，再压实参 | `receiver = vstack_top[arg_count-1]`；`flocals[i] = vstack_top[arg_count-1-i]` |
 | `OP_GET_PROPERTY` + `OP_CALL` 合并（原生方法） | **实参先压，receiver 最后压（栈顶）** | `receiver = vstack_top[0]`；`arg[i] = vstack_top[arg_count - i]`（§8.17 的坑） |
 
 > 判据：编译器生成 `obj.m(a, b)` 时，`OP_GET_PROPERTY` 需要 receiver 在 TOS，所以实参先压；
-> 而 `OP_INVOKE_METHOD` 的约定是 receiver 占参数区首位，所以最先压。**写新 callout 前先
+> 而 `OP_INVOKE_METHOD_TYPED` 的约定是 receiver 占参数区首位，所以最先压。**写新 callout 前先
 > `--debug-out` 看一眼字节码序列，别凭直觉。**
 >
-> **多返回值补充**：`OP_CALL_GLOBAL_FUNC[_TYPED]` 与 `OP_INVOKE_METHOD` 都可能一次返回 N 个值
+> **多返回值补充**：`OP_CALL_GLOBAL_FUNC[_TYPED]` 与 `OP_INVOKE_METHOD_TYPED` 都可能一次返回 N 个值
 > （`ObjFunction.return_count > 1`）。约定是：callout 返回**最后一个**返回值（作为新 TOS），
 > 其余 N-1 个直接写回虚拟栈的**实参槽** `vstack_top[arg_count-1-i]`（i = 0..N-2），
 > 与 codegen 的「弹 `arg_count - ret_count + 1` 槽」配对。少了这段回填，

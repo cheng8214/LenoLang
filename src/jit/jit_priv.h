@@ -78,9 +78,9 @@ static inline int8_t rd_byte(const uint8_t* p) {
 /* ---- Inline site ----
  * 两种来源：
  *   1) OP_CALL_GLOBAL_FUNC_TYPED —— 全局函数（func_slot 定位校准，静态唯一）；
- *   2) OP_INVOKE_METHOD —— struct 方法（is_method=1，method_def 为编译期解析
- *      出的**唯一**定义；codegen 必须为该接收者生成运行时 def 守卫，因为
- *      OP_INVOKE_METHOD 是动态分发，同一条字节码理论上可落到别的 struct 上）。 */
+ *   2) OP_INVOKE_METHOD_TYPED —— struct 方法（is_method=1，method_def 为编译期
+ *      按静态类型名解析出的定义；codegen 仍为该接收者生成运行时 def 守卫，因为
+ *      VM 侧是动态分发，同一条字节码理论上可落到别的 struct 上）。 */
 typedef struct {
     int bc_off;              /* bytecode offset of the call in caller */
     uint16_t func_slot;      /* global func slot of callee（方法内联时为 0xFFFF） */
@@ -93,7 +93,7 @@ typedef struct {
     int callee_local_map[256]; /* callee local slot → scratch index */
     int inline_end_mc;       /* mc offset of inline-end label (set during codegen) */
     /* ---- 仅方法内联（is_method=1）使用 ---- */
-    int is_method;           /* 1 = OP_INVOKE_METHOD 内联点 */
+    int is_method;           /* 1 = OP_INVOKE_METHOD_TYPED 内联点 */
     ObjStructDef* method_def;/* 接收者必须是的 struct 定义（运行时守卫） */
 } InlineSite;
 
@@ -279,11 +279,11 @@ ModuleMethodMeta* jit_resolve_module_method(Chunk* chunk, uint16_t module_idx, u
 /* Callout：已解析 meta 的模块方法调用（无运行时查找） */
 Value jit_callout_module_call_meta(int64_t* vstack_top, int arg_count, ModuleMethodMeta* meta);
 
-/* ---- struct 方法返回值个数（编译期解析，jit_scan.c）----
- * OP_INVOKE_METHOD 只编码「方法名常量 + arg_count」，接收者类型运行时才定。
- * JIT 的栈记账必须知道调用后留下几个返回值，多返回值方法（如
- * Font.measureString → [float, float]）按 1 个记账会让第一个返回值读到
- * 实参槽的残留值。返回 0 表示「无法确定」，调用方必须拒绝 JIT。 */
+/* ---- struct 方法返回值个数（按方法名推断，jit_scan.c）----
+ * OP_INVOKE_METHOD_TYPED 正常路径用字节码里的静态类型名直接定位方法，解析失败时
+ * 退回本函数（要求方法名在全部 def 中唯一）。JIT 的栈记账必须知道调用后留下几个
+ * 返回值，多返回值方法（如 Font.measureString → [float, float]）按 1 个记账会让
+ * 第一个返回值读到实参槽的残留值。返回 0 表示「无法确定」，调用方必须拒绝 JIT。 */
 int jit_resolve_method_ret_count(Chunk* chunk, uint16_t name_const_idx);
 
 /* ---- struct 方法**定义**解析（编译期，供方法内联用）----

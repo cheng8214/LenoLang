@@ -72,7 +72,6 @@ static const char* opCodeNames[] = {
 "OP_INDEX_SET_NOPUSH",
 "OP_CLEAR_LOCAL_RANGE",
 "OP_SWITCH_LOOKUP",
-"OP_INVOKE_METHOD",
 // 融合指令
 "OP_SET_LOCAL_CONST",
 "OP_ACC_FIELDS",
@@ -532,12 +531,6 @@ int disassembleInstruction(Chunk* chunk, int offset) {
             int func_slot = (chunk->code[offset + 1] << 8) | chunk->code[offset + 2];
             int arg_count = (chunk->code[offset + 3] << 8) | chunk->code[offset + 4];
             printf(" func=%d args=%d (typed)", func_slot, arg_count);
-            return offset + 5;
-        }
-        case OP_INVOKE_METHOD: {
-            int name_const = (chunk->code[offset + 1] << 8) | chunk->code[offset + 2];
-            int arg_count = (chunk->code[offset + 3] << 8) | chunk->code[offset + 4];
-            printf(" name=%d args=%d", name_const, arg_count);
             return offset + 5;
         }
         case OP_INVOKE_METHOD_TYPED: {

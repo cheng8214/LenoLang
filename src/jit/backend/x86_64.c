@@ -949,7 +949,7 @@ int compile_loop(CodegenCtx* ctx) {
 
 /* Reload RCX from jit_reloaded_locals before writeback, in case
      * vm_grow_frames reallocated vm.frames during a callout (e.g. deep
-     * recursion via OP_CALL_GLOBAL_FUNC_TYPED or OP_INVOKE_METHOD).
+     * recursion via OP_CALL_GLOBAL_FUNC_TYPED or OP_INVOKE_METHOD_TYPED).
      * Without this, RCX still points to the pre-callout (now freed)
      * frame->locals, and the writeback below writes to freed memory. */
     #define EMIT_RELOAD_RCX() do { \

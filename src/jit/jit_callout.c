@@ -634,7 +634,7 @@ Value jit_callout_acc_fields(Value obj_val, uint8_t count,
     return val_float(sum);
 }
 
-/* Callout: OP_INVOKE_METHOD (struct method call via VM re-entry).
+/* Callout: OP_INVOKE_METHOD_TYPED (struct method call via VM re-entry).
  * arg_count includes self (receiver is first arg).
  * Returns NaN-boxed result from vm->last_return_value. */
 /* Callout: OP_STRUCT_INIT (struct 实例构造，函数级 JIT / 循环 JIT 共用)。
@@ -718,7 +718,7 @@ Value jit_callout_struct_init(int64_t* vstack_top, uint16_t name_const_idx,
     return val_obj((Object*)obj);
 }
 
-/* Callout: OP_INVOKE_METHOD (struct method call, VM re-entry) ---- */
+/* Callout: OP_INVOKE_METHOD_TYPED (struct method call, VM re-entry) ---- */
 Value jit_callout_invoke_method(int64_t* vstack_top, int arg_count,
                                        const uint8_t* ip, Chunk* chunk) {
 VM* vm = jit_callout_vm;

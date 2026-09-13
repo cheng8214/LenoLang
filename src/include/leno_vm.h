@@ -184,8 +184,6 @@ typedef enum {
     OP_INDEX_SET_NOPUSH,   // 通用索引赋值，不压栈（arr[i]=v 语句用）
     OP_CLEAR_LOCAL_RANGE,  // 清零局部变量范围 [base, base+count)，用于内联清理
     OP_SWITCH_LOOKUP,      // 整数 switch 二分查找：const_idx(2) count(2) default_off(4) [offset(4)]...
-    // struct 方法调用融合指令（省掉 receiver 二次求值 + OP_GET_METHOD 分发开销）
-    OP_INVOKE_METHOD,      // 直接调用 struct 方法: name_const(2) arg_count(2)，receiver 在参数区首位
     // 融合指令：常量直接写入局部变量（合并 OP_CONST + OP_SET_LOCAL_POP）
     OP_SET_LOCAL_CONST,   // 从常量表取值直接写入 local: const_idx(2) local_slot(2)
     // 融合指令：对象多字段累加（合并多个 GET_LOCAL + GET_FIELD + ADD_FLOAT）
@@ -201,13 +199,15 @@ typedef enum {
     // 操作数: local_slot(2) field_idx(1)
     // 仅由 codegen 在编译期确认对象是 struct 且字段索引有效时发射
     OP_GET_FIELD_FAST,
-    // 融合指令（带**编译期静态类型**）：与 OP_INVOKE_METHOD 同语义，额外编码接收者的
-    // 静态 struct 类型名常量索引，使「接收者类型」不再留到运行时才定：
+    // struct 方法调用融合指令（省掉 receiver 二次求值 + OP_GET_METHOD 分发开销）。
+    // 带**编译期静态类型**：编码接收者的静态 struct 类型名常量索引，使「接收者类型」
+    // 在编译期即可确定：
     //   操作数: name_const(2) arg_count(2) struct_type_name_const(2)  —— 共 7 字节
     // 分工：**JIT 侧**用它做编译期去虚拟化 / 方法内联，不再依赖「方法名在所有 def
     // 中唯一」这种推断（因此 init/update/clone 这类同名方法也能内联）；
     // **VM 侧**仍按运行时实际类型分发 —— 语义参考实现保持唯一，类型名只读掉不使用。
-    // 旧的 5 字节 OP_INVOKE_METHOD 保留：LenoC 产出的旧字节码与本地旧缓存仍可执行。
+    // codegen 只在静态类型名可解析时发射本指令；解析不出来即编译期报错，
+    // 不存在任何「退回运行时分发」的形态。
     OP_INVOKE_METHOD_TYPED,
 } OpCode;
 

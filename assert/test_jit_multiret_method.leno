@@ -1,6 +1,6 @@
 // 回归测试：JIT 下 struct 方法多返回值的栈记账
 //
-// 背景：OP_INVOKE_METHOD 原先固定按「1 个返回值」做栈记账，多返回值方法
+// 背景：OP_INVOKE_METHOD_TYPED 原先固定按「1 个返回值」做栈记账，多返回值方法
 // （如 LenoSDL3 的 Font.measureString → [float, float]）执行后第一个返回值
 // 会直接落在实参槽上，读到上一帧的栈残留 —— 表现为 PvZ 卡片数字每帧左右抖动。
 //
@@ -15,7 +15,7 @@ struct MultiRetProbe {
 var mrp = new MultiRetProbe()
 
 // 走函数级 JIT：热点循环 -> callout -> 函数级 JIT 编译 probe，
-// probe 内部是 OP_INVOKE_METHOD 的多返回值调用。
+// probe 内部是 OP_INVOKE_METHOD_TYPED 的多返回值调用。
 func probeViaFunc(int v): int {
     var[int, int](a, b) = mrp.two(v)
     if a != v or b != v + 100 { return 1 }

@@ -75,7 +75,7 @@
 // ============================================================================
 
 #define LENO_BIN_MAGIC      0x424E454C  // "LENB" little-endian
-#define LENO_BIN_VERSION    0x00020400  // v2.4.0 - 新增 OP_INVOKE_METHOD_TYPED（新 opcode + 新操作数布局）
+#define LENO_BIN_VERSION    0x00020500  // v2.5.0 - 删除 OP_INVOKE_METHOD（opcode 重新编号，其后 6 个 opcode 前移 1）
                                         //   注意：改变 opcode 集合/编号/操作数编码后必须 bump 本版本号，
                                         //   否则旧构建会按 magic+version 校验通过、直接加载含未知 opcode 的
                                         //   entry_*.lenb 并跳转发散（0xC0000005）；反之亦然
@@ -83,7 +83,7 @@
 
 // 模块编译缓存格式（.lenomc）—— 跨运行的模块编译产物缓存
 #define LENO_MODCACHE_MAGIC    0x434D4E4C  // "LNMC" little-endian
-#define LENO_MODCACHE_VERSION  0x00000003  // v3 - 与 LENO_BIN_VERSION v2.4.0 同步（新增 OP_INVOKE_METHOD_TYPED）
+#define LENO_MODCACHE_VERSION  0x00000004  // v4 - 与 LENO_BIN_VERSION v2.5.0 同步（删除 OP_INVOKE_METHOD）
 #define LENO_MODCACHE_EXT      ".lenomc"
 
 // 常量类型标签

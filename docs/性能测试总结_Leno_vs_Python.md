@@ -59,7 +59,7 @@ struct + 方法 + Hit 对象分配（Python 侧 class + `__slots__`）。
 
 分析：
 - 对象版整体与 Python 持平，Phase B/B2 略慢源于对象分配路径（gc_alloc malloc + 分代簿记 vs pymalloc 池化 free-list）
-- 方法分派 IC + OP_INVOKE_METHOD 融合指令已将方法调用开销压到最低
+- 方法分派 IC + OP_INVOKE_METHOD_TYPED 融合指令已将方法调用开销压到最低
 - Phase C 递归 trace 持平，说明对象版整体已达到 CPython 3.11 同级水平
 
 ---
