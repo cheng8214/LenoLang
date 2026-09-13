@@ -12,6 +12,37 @@
 | `probe_alloc.leno` | 分配成本随**累计分配量**的阶梯（微秒计时，1M/10M 混合），用来判断单次成本是否随堆增长劣化、拐点在哪。 |
 | `probe_alloc2.leno` | 分配路径隔离。四个循环体算术量级一致，唯一变量是「分配什么」：`new 2 字段` / `new 6 字段` / 数组字面量 `[1.0,2.0]` / 不分配。全部直接写在循环体里，排除方法调用干扰。 |
 | `diff_examples.bat` | 基线二进制 vs 新版二进制，对 `examples/{struct,func,module_export_struct,cstruct}` 的示例做 stdout + 退出码差分（约 59 个文件）。 |
+| `gc_barrier_canary.leno` | 写屏障金丝雀：老年代 holder 只被「自己的字段」引用的年轻对象，屏障失效即被回收。**必须配合下面的确定性 GC 钩子**，否则不敏感（原因写在文件头的注释里）。 |
+| `probe_index_slowpath.leno` | `OP_INDEX` 慢路径 bailout 回归探针（§8.33）：判据是 `Bailouts` 不增长，不是耗时。 |
+| `probe_eq_identity.leno` | `OP_EQ` 身份比较快路径差分探针（§8.34）：判据是 JIT 与 `LENO_NO_JIT=1` 结果逐条一致 + 哪些比较仍 bailout。 |
+
+## 确定性 GC 钩子（§8.35）
+
+测 GC / 写屏障 / 分配相关的东西时，「回收什么时候发生」必须可控，否则用例不敏感
+（`gc_barrier_canary.leno` 的第一版就是这么失败的）。三个环境变量：
+
+| 变量 | 作用 |
+| --- | --- |
+| `LENO_GC_YOUNG_THRESHOLD=<bytes\|KB\|MB>` | 覆盖年轻代阈值并**钉住**（禁止 `gc_minor_collect` 结尾把它抬回 `max(young_allocated*2, 8MB)`）。不钉住的话第一次回收后覆盖值就没了。 |
+| `LENO_GC_FORCE_EVERY=<n>` | 每 n 次分配挂一个「强制回收」请求，在**下一个解释器安全点**无条件回收一次（不受阈值门控）⇒ 回收次数按分配次数确定。 |
+| `LENO_GC_TRACE=1` | 每次回收向 stderr 打一行：`[GC] minor #N young=..KB old=..KB rem=R freed=F promoted=P thr=..KB`。 |
+
+```bat
+set LENO_GC_YOUNG_THRESHOLD=64KB
+set LENO_GC_FORCE_EVERY=2000
+set LENO_GC_TRACE=1
+build\lenojit.exe jit_probes\gc_barrier_canary.leno
+```
+
+⚠️ **两个必须知道的限制**：
+
+1. **钩子只在解释器安全点生效**（`OP_RETURN` / `OP_RETURN_MULTI`）。JIT 编译后的热循环
+   里没有返回值 ⇒ 请求会被推迟到「解释器下一次返回」才兑现。实测：预热循环
+   （2000 次 `churn`，共 400 万次分配）全部被 JIT 收编后，第一次回收一次性
+   `freed=4412101` —— 说明这期间**一次安全点都没到**。测 GC 时若想确定性最强，
+   加 `LENO_NO_JIT=1`。这也是 §12 第 10 条（JIT 循环内无 GC 安全点）的同一根因。
+2. **`LENO_GC_TRACE` 的输出在 stderr**，且程序若崩溃/退出，最后一行可能来不及 flush。
+   判定「无屏障」这类失败时，用**退出码 + stdout 是否为空**更可靠。
 
 ## 怎么跑
 

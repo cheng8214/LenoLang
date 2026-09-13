@@ -67,21 +67,23 @@ Executed 867300 / Bailouts 0）。
 
 ## 四、待办（按优先级）
 
-### P0 — 加「确定性触发 GC」的测试钩子（测试基建，先做）
+### ✅ P0 — 加「确定性触发 GC」的测试钩子（测试基建）—— 已完成（2026-09-13，§8.35）
 
-**为什么先做**：今天有两件事被它卡住 ——
-① 写屏障的关键分支**无法用黑盒脚本证明**（见第五节）；
-② 回边安全点落地后需要 GC 压力/差分验证。没有这个钩子，两件都只能靠肉眼。
+**交付**（全部默认关闭；只改变「已有安全点何时决定回收」，不新增 GC 调用点）：
 
-**建议做法**（都很小）：
-- 环境变量覆盖阈值：`LENO_GC_YOUNG_THRESHOLD=<bytes|MB>`，在 `gc_init()` 读取；
-- 强制触发入口：一个能被脚本调用的「立刻执行一次 Minor/Major GC」的原生函数
-  （或 `LENO_GC_FORCE_EVERY=<n>`：每 n 次分配到指令边界就强制排空一次 `deferred_gc`）。
+| 环境变量 | 作用 |
+| --- | --- |
+| `LENO_GC_YOUNG_THRESHOLD=<bytes\|KB\|MB>` | 覆盖并**钉住**年轻代阈值（本来每次回收后会被抬回 `max(young_allocated*2, 8MB)`，不钉住覆盖值立刻失效）。 |
+| `LENO_GC_FORCE_EVERY=<n>` | 每 n 次分配挂一个强制回收请求，在下一个解释器安全点**无条件**回收一次（不受阈值门控）⇒ 回收次数按分配次数确定。 |
+| `LENO_GC_TRACE=1` | 每次回收打一行 `[GC] minor #N young/KB old/KB rem/R freed/F promoted/P thr/KB`。 |
 
-**注意**：`gc_check_safe_point()`（`gc.c`）当前是**死代码**（`src/` 下零调用点），
-真正的排空只有两处：`op_call.inc` 的 `OP_RETURN` / `OP_RETURN_MULTI`
-（`++vm.gc_return_counter >= 256`）与 GUI 事件循环的 `gc_try_collect_deferred()`。
-接线时顺手决定这几个函数的关系（接进去 or 删掉）。
+顺带删除死代码 `gc_check_safe_point()`（与 `gc_alloc` 开头逐字重复、零调用点）。
+用法与两个必须知道的限制写在 `jit_probes/README.md`（「确定性 GC 钩子」一节）。
+
+**⚠️ 钩子没能解决的（P1 的同一根因）**：强制请求只在解释器安全点兑现。
+JIT 收编热循环后没有返回值 ⇒ 请求被推迟。实测预热循环（400 万次分配）全进 JIT 后，
+第一次回收一次性 `freed=4412101`，说明这期间一次安全点都没到。
+**⇒ 要在 JIT 下也确定性触发，仍然只能靠 P1（callout 边界安全点）。P1 优先级不变。**
 
 ### P1 — JIT 循环的 GC 安全点（真正的天花板）
 
@@ -114,26 +116,35 @@ Executed 867300 / Bailouts 0）。
 
 ---
 
-## 五、已知覆盖缺口（重要）
+## 五、已知覆盖缺口 —— 已解除（2026-09-13，§8.35）
 
-**写屏障的关键分支（老年代 holder ← 年轻代 value）目前无法用黑盒脚本证明。**
+**写屏障的关键分支（老年代 holder ← 年轻代 value）现在可以用黑盒脚本证明了。**
 
-`jit_probes/gc_barrier_canary.leno` 的反向对照结果：把 `gc_write_barrier()` 改成空操作
-重新编译，用例（`Node n` 与 `Node? n` 两种字段写法、400 万次分配）**都仍然 `bad=0`**。
+历史上 `jit_probes/gc_barrier_canary.leno` 反向对照（把 `gc_write_barrier()` 改成空操作）
+**仍然 `bad=0`**。加上确定性 GC 钩子后查清真因，是两件事，第一件是决定性的：
 
-已实测确认的事实（用临时 GC 探针，已移除）：
+1. **写入与读取之间根本没发生过回收**：自然回收间隔 = 「256 次返回 × 每次 `churn`
+   2000 次分配 = 512K 次分配」（trace 里每次 `freed=512128` 正是这个数），
+   而写入→读取只隔 2 次 `churn`（4000 次分配）⇒ 目标对象永远是刚分配、还没被回收过的
+   有效对象，读什么都是对的。
+2. `main` 帧的残余临时/局部槽可能让 `mark_roots` 保守保活它（仍未验证，但已不必要）。
 
-- GC **确实在跑**：7 次 Minor GC，每次年轻代 ≈39MB；`LENO_NO_JIT=1` 与 JIT 模式相同
-  （`churn()` 每次调用都有 `OP_RETURN`，256 次返回足够排空一次 `deferred_gc`）。
-- 屏障的**可执行分支确实被触发过**：各次 GC 入口的 `gc.remembered_count` 为
-  `0, 0, 165, 1, 1, 1, 1` —— holder 晋升后稳定有 1 个老年代对象持有年轻代引用。
+**修法**：用 `LENO_GC_FORCE_EVERY` 把回收强制塞进「写入与读取之间」；并把「分配 + 写字段」
+放进 `setHolder(h)`，返回后该帧消失 ⇒ 该年轻 Node 只经老年代 holder 可达，
+**屏障是它唯一的保活路径**。
 
-所以既不是「没回收」，也不是「屏障没被调用」。**最可能的解释**（未验证）：
-窗口内那个年轻 Node 还有别的根可达（VM / JIT 的值栈或残留操作数槽），
-minor GC 的 `mark_roots` 照样标记它，与屏障无关。
+**验收**（两个只差屏障的二进制，同机）：
 
-**⇒ 在 P0 的确定性 GC 钩子落地之前，任何「屏障相关」改动的正确性只能靠
-代码比对 + 现有回归，不能宣称「已被测试覆盖」。**
+| 版本 | 模式 | 强制回收次数 | 结果 |
+| --- | --- | --- | --- |
+| 有屏障 | `LENO_NO_JIT=1` | 6000 | `bad=0`，跑完 |
+| 有屏障 | JIT | 4050 | `bad=0`，跑完 |
+| 无屏障 | `LENO_NO_JIT=1` | 第 2002 次崩 | 退出码 −1，stdout 无 `bad=`，末行 `rem=0` |
+| 无屏障 | JIT | 第 52 次崩 | 同上 |
+
+分水岭是 `rem`（`remembered_count`）：有屏障 `rem>=1`，无屏障恒为 `rem=0`。
+⇒ 「屏障相关改动不能宣称已被测试覆盖」这条限制解除；但注意验收依赖
+`LENO_GC_FORCE_EVERY`，是**探针级**（`jit_probes/`）而非自动化断言（`assert/`）。
 
 ---
 
@@ -224,9 +235,16 @@ string / array / `ffi.nullptr()==null` 仍走解释器）；`assert` 273/0；
   +7 行）—— 已验证，见第七节与 `JIT实现与调试记录.md` §8.33。
 - 代码改动 3：`OP_EQ/OP_NEQ` 身份比较快路径（`src/jit/backend/x86_inc/ops_icmp.inc`）
   —— 已验证，见第七节与 `JIT实现与调试记录.md` §8.34。
-- 新增：`jit_probes/gc_barrier_canary.leno`（当前**不敏感**，见第五节，勿当验收用例）、
+- 代码改动 4（2026-09-13 晚，P0）：确定性 GC 钩子（`src/gc.c`、`src/include/leno_value.h`、
+  `src/include/leno_vm.h`、`src/vm/vminc/vm_init.inc`、`src/vm/vminc/op_call.inc`）
+  —— `LENO_GC_YOUNG_THRESHOLD` / `LENO_GC_FORCE_EVERY` / `LENO_GC_TRACE`，
+  并删除死代码 `gc_check_safe_point()`；见 `JIT实现与调试记录.md` §8.35。
+- 新增：`jit_probes/gc_barrier_canary.leno`（**已重做，现在敏感**：配合钩子时
+  无屏障版会崩、有屏障版 6000 次回收 `bad=0`，见第五节）、
   `jit_probes/probe_index_slowpath.leno`（`OP_INDEX` 慢路径回归探针，判据见第七节）、
   `jit_probes/probe_eq_identity.leno`（`OP_EQ` 身份比较差分探针，判据见第七节）。
 - 文档：`JIT实现与调试记录.md` §8.31-a（负结果）、§8.31-b（内联屏障 + 覆盖缺口）、
-  §8.33（`OP_INDEX` 慢路径 bailout）、§8.34（`OP_EQ` 身份比较快路径）。
+  §8.33（`OP_INDEX` 慢路径 bailout）、§8.34（`OP_EQ` 身份比较快路径）、
+  §8.35（确定性 GC 钩子 + 金丝雀真因）；`jit_probes/README.md` 增加「确定性 GC 钩子」一节。
 - 环境已复位：临时 GC 探针已移除、对照二进制与诊断临时文件已删除。
+  （2026-09-13 晚另建了无屏障对照二进制用于 P0 验收，已删除。）

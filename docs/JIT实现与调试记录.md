@@ -1819,11 +1819,13 @@ JIT 逐次序言」上，而这两项在循环体内每轮都要付一次。
 **还有别的根可达**（VM / JIT 的值栈或残留操作数槽），minor GC 的 `mark_roots` 照样标记它，
 与屏障无关 —— **但这个解释未经验证**。
 
-**结论**：写屏障这条路径今天处于「**无法用黑盒脚本证明**」的状态（既有缺口，不是本次
-改动引入）。`gc_barrier_canary.leno` 留在 `jit_probes/` 作为记录与将来的验收起点，但**在
-补上确定性测试钩子之前它不会报警**。要真正覆盖，需要一个能确定性触发的 GC
-（可强制触发的入口，或可覆盖的年轻代阈值），或在回边安全点落地后重做。
-**在那之前，屏障相关改动的正确性只能靠代码比对 + 现有回归，不能宣称「已被测试覆盖」。**
+**结论**：写屏障这条路径当时处于「**无法用黑盒脚本证明**」的状态（既有缺口，不是本次
+改动引入）。`gc_barrier_canary.leno` 留在 `jit_probes/` 作为记录与验收起点，但**在
+补上确定性测试钩子之前它不会报警**。
+**→ ✅ 已解除（2026-09-13，§8.35）**：补上确定性 GC 钩子（`LENO_GC_YOUNG_THRESHOLD` /
+`LENO_GC_FORCE_EVERY` / `LENO_GC_TRACE`）后重做金丝雀，真因是「写入与读取之间根本没发生过
+回收」；改法是把回收强制塞进该窗口 + 把分配与写字段放进被调函数，使该年轻对象**只经老年代
+holder 可达**。无屏障版现在会崩（末行 `rem=0`），有屏障版 6000 次回收 `bad=0`。
 
 ***
 
@@ -1991,6 +1993,76 @@ TOS_PRODUCE();
 全部分支读完**。这次的关键分支（`null == Ptr` 看包装地址）就藏在 `OP_EQ` 开头那四条
 `val_is_null(...) && OBJ_FFI_POINTER/CALLBACK` 特例里 —— 只读「对象按指针比较」那句注释
 会直接漏掉它。**先否定法：能用运行时判定 + 落回旧路径表达的语义，就不要抬进编译期。**
+
+***
+
+### 8.35 确定性触发 GC 的测试钩子 —— 并顺势查出金丝雀为什么不敏感（2026-09-13）
+
+**目标**（来自 `docs/待办_GC与分配优化.md` 的 P0）：让「回收什么时候发生」可控。
+此前两件事卡在它上面：① 写屏障的关键分支无法用黑盒脚本证明；② GC 压力/差分验证没法做。
+
+**实现**（全部默认关闭。设计约束：只改变「已有安全点何时决定回收」，**不新增 GC 调用点**，
+因此不会在「GC 看不见 JIT 活值」的位置触发回收 —— 那是 §12 第 10 条 / P1 的范围）：
+
+| 环境变量 | 作用 |
+| --- | --- |
+| `LENO_GC_YOUNG_THRESHOLD=<bytes\|KB\|MB>` | 覆盖并**钉住**年轻代阈值（`young_threshold_pinned`）。`gc_minor_collect` / `gc_major_collect` 结尾会把它抬到 `max(young_allocated*2, GC_YOUNG_THRESHOLD)` —— 不钉住的话覆盖值在第一次回收后立刻失效。 |
+| `LENO_GC_FORCE_EVERY=<n>` | 每 n 次分配把「强制回收」请求挂到 `vm.gc_force_request`，在下一个 `OP_RETURN` / `OP_RETURN_MULTI` 由 `gc_force_collect()` 无条件回收一次（不受阈值门控）⇒ 回收次数按分配次数确定。 |
+| `LENO_GC_TRACE=1` | 每次回收打一行 `[GC] minor #N young=..KB old=..KB rem=R freed=F promoted=P thr=..KB`。 |
+
+为了 trace，把 `sweep_young` / `sweep_old` 里**已有但只算了没用**的 `freed_cnt` / `promote_cnt`
+落到 `gc.last_freed` / `gc.last_promoted`（`sweep_old` 累加），并新增 `major_gc_count`。
+
+顺带清理：**删除 `gc_check_safe_point()`** —— 它只做「`young_allocated > threshold` 就置
+`deferred_gc`」，与 `gc_alloc` 开头逐字重复，且 `src/` 下零调用点（死代码）。
+请求标志放在 `VM` 结构体而非 `THREAD_LOCAL gc`：安全点在 `OP_RETURN`，那里读 vm
+字段可避免 TLS 访问（与 `gc_return_counter` 同一取舍）。
+
+**顺带查清了金丝雀不敏感的真因**（§8.31-b 里那条「未验证的解释」）：
+
+旧金丝雀在 `main` 里直接写 `h.n = new Node(...)`，然后 `churn` 两次就读，
+结果**无论屏障是否生效都 `bad=0`**。加上钩子后测出真因是两件事，第一件是决定性的：
+
+1. **写入与读取之间根本没发生过回收**。自然回收间隔 = 「256 次返回 ×
+   每次 `churn` 2000 次分配 = 512K 次分配」（trace 里每次 `freed=512128` 正是这个数），
+   而写入→读取只隔 2 次 `churn`（4000 次分配）。窗口太短 ⇒ 目标对象永远是
+   「刚分配、还没被回收过」的有效对象，读什么都是对。
+2. `main` 帧的残余临时/局部槽可能让 `mark_roots` 保守保活它（此条仍未验证，
+   但已不是必要条件 —— 修掉第 1 条就够了）。
+
+**修法**（`jit_probes/gc_barrier_canary.leno` 重做）：
+- 用 `LENO_GC_FORCE_EVERY` 把回收**强制塞进**「写入与读取之间」；
+- 把「分配 + 写字段」一起放进 `setHolder(h)`，返回后该帧消失 ⇒
+  这个年轻 Node 只经老年代 holder 可达，**屏障是它唯一的保活路径**。
+
+**验收（同机、两个只差屏障的二进制）**：
+
+| 版本 | 模式 | 强制回收次数 | 结果 |
+| --- | --- | --- | --- |
+| 有屏障 | `LENO_NO_JIT=1` | 6000 | `bad=0`，跑完 |
+| 有屏障 | JIT | 4050 | `bad=0`，跑完 |
+| 无屏障（`gc_write_barrier` 改空操作） | `LENO_NO_JIT=1` | 第 2002 次回收处崩 | 退出码 −1，stdout 无 `bad=`，末行 `rem=0` |
+| 无屏障 | JIT | 第 52 次回收处崩 | 同上 |
+
+`rem`（`remembered_count`）就是分水岭：有屏障时 holder 在集合里（`rem >= 1`），
+无屏障时恒为 `rem=0`。⇒ **写屏障的关键分支现在可以用黑盒脚本证明了**，
+§8.31-b 那条「无法证明」的状态解除。
+
+**钩子自身的限制（必须知道，也是 P1 的同一根因）**：强制请求只在**解释器安全点**兑现。
+JIT 收编热循环后没有返回值，请求会被推迟 —— 实测预热循环（2000 次 `churn` =
+400 万次分配）全部进 JIT 后，第一次回收一次性 `freed=4412101`，说明这期间**一次安全点都没到**。
+所以测 GC 时若要确定性最强，加 `LENO_NO_JIT=1`；要在 JIT 下也确定，得等 P1
+（callout 边界安全点）。
+
+**回归**：`assert` **273 passed / 0 failed**（JIT 与 `LENO_NO_JIT=1`），钩子开启时同样 273/0；
+13 个分配密集示例（`光线追踪对象版` + `examples/struct`）钩子开启 vs 关闭差分，
+差异只有计时数字，确定性载荷逐位一致（`sum=50730000.000273108` / `hits=900000` /
+`hits=585500`）；基准无回归（`i++` 1 亿次 125\~141ms、`经典递归` 31\~32ms、
+`arr.add` 547\~563ms、`arr[index]` 172\~187ms、`dict[key]=` 859\~891ms）。
+
+**性能注**：`LENO_GC_FORCE_EVERY` 在 `gc_alloc` 里只多一次可预测的 load + branch（默认 0，早退）；
+`OP_RETURN` 上多一次 `vm.gc_force_request` 的 load + branch（与 `gc_return_counter`
+同一条 cache line）。
 
 ***
 
