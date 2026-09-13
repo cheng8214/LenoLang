@@ -122,6 +122,20 @@ typedef struct {
      * AI 每步都走天元）。消费方 jit_compile() 据此拒绝该循环；
      * 函数级 JIT（func_mode）与内联 callee 都能正确处理 return，不受影响。 */
     int has_reachable_return;
+
+    /* ---- §8.46 语句级折叠「一步回看」的健全信息（见 ops_stack.inc 的用法）----
+     * 回看的前提是：**当前语句只可能由紧邻的上一条语句直落到达**。两条信息合起来
+     * 保证这一点（任一不满足就放弃回看，不发恒等运算/不省检查）：
+     *   jt_fwd[off]  —— off 是某个**前向**跳转的目标 ⇒ 上一条语句可能被跳过；
+     *   has_back_jump—— 体内存在**非本条回边**的反向跳转（嵌套循环的 OP_LOOP /
+     *                   内层 OP_FOR_LOOP）。这种目标可能正好落在两条相邻语句之间
+     *                   （do{}while 形态：循环头就是第二条语句），第二轮的到达
+     *                   会跳过第一条 ⇒ 回看状态失效。
+     * jt_ok = 0 表示 body 超过位图上限（或处于内联体内、bc_off 被重定位）⇒ 不可信。 */
+    #define JIT_SCAN_JT_MAX 512
+    uint8_t jt_fwd[JIT_SCAN_JT_MAX];
+    int jt_ok;
+    int has_back_jump;
 } ScanResult;
 
 /* ---- Codegen: offset map and patch list ---- */

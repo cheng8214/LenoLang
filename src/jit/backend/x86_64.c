@@ -447,6 +447,15 @@ int compile_loop(CodegenCtx* ctx) {
      * OP_USHR_IMM（shr 结果可能越出 int48）、OP_CAST_INT 自身（null 路径原样返回）。 */
     int prev_raw_int48 = 0;
 
+    /* ---- §8.46 折叠「一步回看」状态：紧邻的上一条被折叠语句留下的值域掩码 ----
+     * 语义：prev_fold_si >= 0 时，该槽的值 ∈ [0, prev_fold_mask]（掩码的位即
+     * 「可能置位」的位，且全部落在低 47 位内 ⇒ 值非负且在 int48 内）。
+     * 只由 §8.44 折叠路径写入，且只在**同槽、直线相邻**时有效：主循环每轮开头
+     * 快照一次并清空（任何非折叠 opcode ⇒ 失效），另加扫描器的 jt_fwd /
+     * has_back_jump 两个条件（见 ScanResult 的说明）。 */
+    int prev_fold_si = -1;
+    uint64_t prev_fold_mask = 0;
+
     /* ---- §8.45 局部量驻留寄存器 v2（最多 4 个槽，仅循环 JIT）----
      * pin_si[i] = 第 i 个被 pin 的 scratch 槽；承载寄存器 = JIT_PIN_REGS[i]
      * （R15/R14/R13/R12 —— R12/R13/R14 由 §8.45 把 callout 状态保存挪到帧槽
@@ -1109,6 +1118,14 @@ int compile_loop(CodegenCtx* ctx) {
            } _idx; })
 
     while (1) {
+        /* §8.46：一步回看快照 —— 只有**紧邻的上一条语句**是同槽折叠时掩码才有效；
+         * 本轮若不是那条语句（任何别的 opcode，含 callout / 跳转 / 内联点），
+         * 下面就把状态清掉。 */
+        int fold_prev_si = prev_fold_si;
+        uint64_t fold_prev_mask = prev_fold_mask;
+        prev_fold_si = -1;
+        prev_fold_mask = 0;
+
         /* Check if we've reached the end of an inlined callee body */
         if (ip >= end) {
             if (inline_depth > 0) {

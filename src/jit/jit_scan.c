@@ -458,7 +458,12 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
     memset(r, 0, sizeof(*r));
     r->capable = 1;
     r->back_edge_type = back_edge;
+    r->jt_ok = (body_size <= JIT_SCAN_JT_MAX);   /* §8.46：超上限则放弃回看 */
     for (int i = 0; i < 256; i++) r->local_map[i] = -1;
+
+    /* §8.46：标记某个偏移是前向跳转目标（超上限/越界则整体标记不可信） */
+    #define MARK_JT_FWD(t) do { int _t = (int)(t); \
+        if (_t >= 0 && _t < JIT_SCAN_JT_MAX) r->jt_fwd[_t] = 1; else r->jt_ok = 0; } while(0)
 
     const uint8_t* ip = body_start;
     const uint8_t* end = body_start + body_size;
@@ -914,6 +919,7 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                  * then mark code as dead until target is reached */
                 int32_t off = rd_int32(ip + 1);
                 int target_bc = bc_off + size + off;
+                MARK_JT_FWD(target_bc);   /* §8.46：目标偏移不接受回看 */
                 if (fwd_count >= JIT_SCAN_MAX_FWD) {
                     /* 目标表满：旧实现静默丢弃 → dead-code 段的 vstack 无法恢复
                      * → 扫描与 codegen 的栈深不一致 → RSP 漂移 → 栈溢出。
@@ -937,6 +943,7 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                  * Fall-through (truthy) path is still live. */
                 int32_t off = rd_int32(ip + 1);
                 int target_bc = bc_off + size + off;
+                MARK_JT_FWD(target_bc);   /* §8.46：目标偏移不接受回看 */
                 if (fwd_count >= JIT_SCAN_MAX_FWD) {
                     /* 目标表满：旧实现静默丢弃 → dead-code 段的 vstack 无法恢复
                      * → 扫描与 codegen 的栈深不一致 → RSP 漂移 → 栈溢出。
@@ -957,6 +964,9 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                 /* Back-edge: may be outer (last instruction) or inner (mid-body).
                  * Codegen uses offmap_lookup to find the correct jump target
                  * from the instruction's own offset. */
+                /* §8.46：只有「非本条回边」的内层回边才是回看的不安全因素
+                 * （它的目标可能正好落在两条相邻语句之间） */
+                if (ip + size < end) r->has_back_jump = 1;
                 break;
             /* 7-byte FOR_LOOP — back-edge: may be outer (last) or inner (mid-body) */
             case OP_FOR_LOOP: {
@@ -964,6 +974,7 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                 mark_local(r, ip[1]);  /* loop_var_slot */
                 mark_local(r, ip[2]);  /* step_slot */
                 mark_local(r, ip[3]);  /* end_slot */
+                if (ip + size < end) r->has_back_jump = 1;   /* §8.46：内层回边 */
                 /* Record outer back-edge metadata (last instruction only) */
                 if (ip + size >= end) {
                     r->for_loop_var_slot = ip[1];
@@ -982,6 +993,7 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                 /* Conditional jump: record target for restore */
                 int32_t off = rd_int32(ip + 6);
                 int target_bc = bc_off + size + off;
+                MARK_JT_FWD(target_bc);   /* §8.46：目标偏移不接受回看 */
                 if (fwd_count >= JIT_SCAN_MAX_FWD) {
                     /* 目标表满：旧实现静默丢弃 → dead-code 段的 vstack 无法恢复
                      * → 扫描与 codegen 的栈深不一致 → RSP 漂移 → 栈溢出。
@@ -1004,6 +1016,7 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                 /* Conditional jump: record target for restore */
                 int32_t off = rd_int32(ip + 6);
                 int target_bc = bc_off + size + off;
+                MARK_JT_FWD(target_bc);   /* §8.46：目标偏移不接受回看 */
                 if (fwd_count >= JIT_SCAN_MAX_FWD) {
                     /* 目标表满：旧实现静默丢弃 → dead-code 段的 vstack 无法恢复
                      * → 扫描与 codegen 的栈深不一致 → RSP 漂移 → 栈溢出。

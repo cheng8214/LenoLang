@@ -51,36 +51,77 @@
                         (alu == OP_BITAND || alu == OP_BITOR || alu == OP_BITXOR ||
                          alu == OP_ADD_INT_IMM || alu == OP_SUB_INT_IMM ||
                          alu == OP_SHL_IMM || alu == OP_SHR_IMM)) {
-                        switch (alu) {
-                            case OP_BITAND:      emit_alu_imm32_reg(cb, 4, fold_reg, (uint32_t)fold_imm); break;
-                            case OP_BITOR:       emit_alu_imm32_reg(cb, 1, fold_reg, (uint32_t)fold_imm); break;
-                            case OP_BITXOR:      emit_alu_imm32_reg(cb, 6, fold_reg, (uint32_t)fold_imm); break;
-                            case OP_ADD_INT_IMM: emit_alu_imm8_reg(cb, 0, fold_reg, (uint8_t)fold_imm); break;
-                            case OP_SUB_INT_IMM: emit_alu_imm8_reg(cb, 5, fold_reg, (uint8_t)fold_imm); break;
-                            case OP_SHL_IMM:
-                                emit_shl_imm(cb, fold_reg, (uint8_t)fold_imm);
-                                /* VM 语义：int64 左移后**截断**为 48 位（不 bailout），
-                                 * 与 SHL_IMM 原 codegen 的 EMIT_INT48_TRUNCATE 一致 */
-                                emit_shl_imm(cb, fold_reg, 16);
-                                emit_sar_imm(cb, fold_reg, 16);
-                                break;
-                            case OP_SHR_IMM:     emit_sar_imm(cb, fold_reg, (uint8_t)fold_imm); break;
-                            default: break;
+                        /* ---- §8.46 一步回看：上一条语句留下的**值域掩码** ----
+                         * 掩码 M 的语义：该槽的值 ∈ [0, M]，且 M 的位都在低 47 位内
+                         * （⇒ 值非负、且在 int48 内）。仅当下列条件全部满足才可用：
+                         *   · 紧邻的上一条语句是**同槽**折叠（fold_prev_si == si）；
+                         *   · 当前语句起始偏移**不是前向跳转目标**（否则那条语句
+                         *     可能被跳过 ⇒ M 未必成立；扫描器 jt_fwd / jt_ok）；
+                         *   · 体内没有内层回边（do{}while 形态第二轮会从本语句进入
+                         *     而跳过上一条；扫描器 has_back_jump）。
+                         * 这两条来自**扫描器的静态事实**，不做任何跨迭代猜测。 */
+                        int mask_ok = (fold_prev_si == si) && sr->jt_ok && !sr->has_back_jump &&
+                                      bc_off < JIT_SCAN_JT_MAX && !sr->jt_fwd[bc_off];
+                        int noop_and = 0, skip_check = 0;
+                        if (mask_ok) {
+                            /* 恒等 AND：值 ⊆ M ⇒ `x & imm` 不改变 x（gcc 删掉 `&1135`
+                             * 的同一推理：M=0x467 ⊆ 0x46F）。整条不发。 */
+                            if (alu == OP_BITAND && fold_imm >= 0 &&
+                                (fold_prev_mask & ~(uint64_t)(uint32_t)fold_imm) == 0)
+                                noop_and = 1;
+                            /* 值域 + 立即数仍在 int48 内 ⇒ 溢出检查恒真，不发 */
+                            if (alu == OP_ADD_INT_IMM || alu == OP_SUB_INT_IMM) {
+                                int64_t k  = (int64_t)fold_imm;
+                                int64_t lo = (alu == OP_ADD_INT_IMM) ? (k < 0 ? k : 0) : (k > 0 ? -k : 0);
+                                int64_t hi = (int64_t)fold_prev_mask +
+                                             ((alu == OP_ADD_INT_IMM) ? (k > 0 ? k : 0) : (k < 0 ? -k : 0));
+                                if (lo >= -(1LL << 47) && hi <= (1LL << 47) - 1) skip_check = 1;
+                            }
                         }
-                        /* §8.44：**只有会溢出 int48 的运算才需要检查**。
-                         * AND/OR/XOR 在 int48 操作数下结果必然仍在 int48 内（位运算保持
-                         * 符号扩展模式）；算术右移只会变小 ⇒ 两者的检查恒真。
-                         * 操作数是 int48 这一点由**扫描器**保证（位运算的操作数静态类型
-                         * 必须是 int，浮点/null 入口的循环会被拒绝编译 —— 见 §8.41 的实测），
-                         * 立即数是 int 字面量。⇒ 省掉检查语义不变。
-                         * ADD/SUB 会溢出 ⇒ 必须保留（溢出 bailout 交解释器走 BigInt）。
-                         * 实测这一步是本次最大的单项：422ms → 313ms（1.35x）。 */
-                        if (alu == OP_ADD_INT_IMM || alu == OP_SUB_INT_IMM)
-                            EMIT_INT48_CHECK_REG(fold_reg, bc_off);
+                        if (!noop_and) {
+                            switch (alu) {
+                                case OP_BITAND:      emit_alu_imm32_reg(cb, 4, fold_reg, (uint32_t)fold_imm); break;
+                                case OP_BITOR:       emit_alu_imm32_reg(cb, 1, fold_reg, (uint32_t)fold_imm); break;
+                                case OP_BITXOR:      emit_alu_imm32_reg(cb, 6, fold_reg, (uint32_t)fold_imm); break;
+                                case OP_ADD_INT_IMM: emit_alu_imm8_reg(cb, 0, fold_reg, (uint8_t)fold_imm); break;
+                                case OP_SUB_INT_IMM: emit_alu_imm8_reg(cb, 5, fold_reg, (uint8_t)fold_imm); break;
+                                case OP_SHL_IMM:
+                                    emit_shl_imm(cb, fold_reg, (uint8_t)fold_imm);
+                                    /* VM 语义：int64 左移后**截断**为 48 位（不 bailout），
+                                     * 与 SHL_IMM 原 codegen 的 EMIT_INT48_TRUNCATE 一致 */
+                                    emit_shl_imm(cb, fold_reg, 16);
+                                    emit_sar_imm(cb, fold_reg, 16);
+                                    break;
+                                case OP_SHR_IMM:     emit_sar_imm(cb, fold_reg, (uint8_t)fold_imm); break;
+                                default: break;
+                            }
+                            /* §8.44：**只有会溢出 int48 的运算才需要检查**。
+                             * AND/OR/XOR 在 int48 操作数下结果必然仍在 int48 内（位运算保持
+                             * 符号扩展模式）；算术右移只会变小 ⇒ 两者的检查恒真。
+                             * 操作数是 int48 这一点由**扫描器**保证（位运算的操作数静态类型
+                             * 必须是 int，浮点/null 入口的循环会被拒绝编译 —— 见 §8.41 的实测），
+                             * 立即数是 int 字面量。⇒ 省掉检查语义不变。
+                             * ADD/SUB 会溢出 ⇒ 必须保留（溢出 bailout 交解释器走 BigInt），
+                             * 但 §8.46 能证明「这一步加不出 int48」时同样可以不发。 */
+                            if ((alu == OP_ADD_INT_IMM || alu == OP_SUB_INT_IMM) && !skip_check)
+                                EMIT_INT48_CHECK_REG(fold_reg, bc_off);
+                        }
+                        /* 记录留给下一步回看的掩码：AND ⇒ 收紧到 imm（或更紧的 M）；
+                         * XOR/OR ⇒ 并上 imm 的位（只在仍落在低 47 位内时可信）。 */
+                        if (alu == OP_BITAND && fold_imm >= 0) {
+                            uint64_t nm = (uint64_t)(uint32_t)fold_imm;
+                            if (mask_ok && (fold_prev_mask & ~nm) == 0) nm = fold_prev_mask;
+                            prev_fold_si = si; prev_fold_mask = nm;
+                        } else if (mask_ok && (alu == OP_BITXOR || alu == OP_BITOR)) {
+                            uint64_t tm = fold_prev_mask | (uint64_t)(uint32_t)fold_imm;
+                            if ((tm >> 47) == 0) { prev_fold_si = si; prev_fold_mask = tm; }
+                        }
                         size = flen;   /* 吃掉整条语句的字节码（含可选的 CAST） */
                         if (jit_debug_on())
-                            fprintf(stderr, "[JIT-CG] FOLD slot=%d alu=%d imm=%d len=%d\n",
-                                    slot, (int)alu, (int)fold_imm, flen);
+                            fprintf(stderr, "[JIT-CG] FOLD slot=%d alu=%d imm=%d len=%d%s%s\n",
+                                    slot, (int)alu, (int)fold_imm, flen,
+                                    noop_and ? " [恒等 AND 不发]" : "",
+                                    skip_check ? " [检查恒真不发]" : "");
                         break;
                     }
                 }
@@ -192,15 +233,32 @@
                     int32_t fimm = 0;
                     int flen = peek_local_fold_constfirst(ctx, ip, cur_chunk, bc_off,
                                                           &fslot, &falu, &fimm);
-                    int freg = (flen > 0) ? pin_reg_of(pin_si, pin_n, cur_local_map[fslot]) : 0;
+                    int fsi  = (flen > 0) ? cur_local_map[fslot] : -1;
+                    int freg = (flen > 0) ? pin_reg_of(pin_si, pin_n, fsi) : 0;
                     if (freg && (falu == OP_BITAND || falu == OP_BITOR || falu == OP_BITXOR)) {
-                        if (falu == OP_BITAND)     emit_alu_imm32_reg(cb, 4, freg, (uint32_t)fimm);
-                        else if (falu == OP_BITOR) emit_alu_imm32_reg(cb, 1, freg, (uint32_t)fimm);
-                        else                       emit_alu_imm32_reg(cb, 6, freg, (uint32_t)fimm);
+                        /* §8.46 一步回看（条件与形态 A 完全相同，见那里的说明） */
+                        int mask_ok = (fold_prev_si == fsi) && sr->jt_ok && !sr->has_back_jump &&
+                                      bc_off < JIT_SCAN_JT_MAX && !sr->jt_fwd[bc_off];
+                        int noop_and = mask_ok && falu == OP_BITAND && fimm >= 0 &&
+                                       (fold_prev_mask & ~(uint64_t)(uint32_t)fimm) == 0;
+                        if (!noop_and) {
+                            if (falu == OP_BITAND)     emit_alu_imm32_reg(cb, 4, freg, (uint32_t)fimm);
+                            else if (falu == OP_BITOR) emit_alu_imm32_reg(cb, 1, freg, (uint32_t)fimm);
+                            else                       emit_alu_imm32_reg(cb, 6, freg, (uint32_t)fimm);
+                        }
+                        if (falu == OP_BITAND && fimm >= 0) {
+                            uint64_t nm = (uint64_t)(uint32_t)fimm;
+                            if (mask_ok && (fold_prev_mask & ~nm) == 0) nm = fold_prev_mask;
+                            prev_fold_si = fsi; prev_fold_mask = nm;
+                        } else if (mask_ok && (falu == OP_BITOR || falu == OP_BITXOR)) {
+                            uint64_t tm = fold_prev_mask | (uint64_t)(uint32_t)fimm;
+                            if ((tm >> 47) == 0) { prev_fold_si = fsi; prev_fold_mask = tm; }
+                        }
                         size = flen;   /* 吃掉整条语句的字节码（含可选的 CAST） */
                         if (jit_debug_on())
-                            fprintf(stderr, "[JIT-CG] FOLDB slot=%d alu=%d imm=%d len=%d\n",
-                                    fslot, (int)falu, (int)fimm, flen);
+                            fprintf(stderr, "[JIT-CG] FOLDB slot=%d alu=%d imm=%d len=%d%s\n",
+                                    fslot, (int)falu, (int)fimm, flen,
+                                    noop_and ? " [恒等 AND 不发]" : "");
                         break;
                     }
                 }
