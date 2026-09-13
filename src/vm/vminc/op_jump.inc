@@ -59,6 +59,19 @@ OPCODE(OP_LOOP) {
         DISPATCH;
     }
 
+    if (jit_r == 4) {
+        /* 回边让出（§8.37 路线 3）：JIT 在**迭代边界**用出口路径退出，
+         * locals 已经写回 frame->locals、vstack 已平衡 —— 此时解释器的根集合
+         * 与 VM 栈都是一致状态，回收是安全的（JIT 机器码里不是，见 §8.36）。
+         * 回收后走下面的 `frame->ip -= offset` 从循环头继续，
+         * 语义等价于「刚执行完一次回边」，不重放、不重复副作用。 */
+        frame = &vm.frames[vm.frame_cnt - 1];
+        jit_gc_yield_flag = 0;
+        if (gc.deferred_gc && gc.enabled && !gc.running) {
+            gc_try_collect_deferred();
+        }
+    }
+
     frame->ip -= offset;
     DISPATCH;
 }

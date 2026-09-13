@@ -338,17 +338,27 @@ Object* gc_alloc(size_t size, ObjType type) {
     // 年轻代分配超阈值时设置延迟 GC 标志（不在此处同步执行）
     if (gc.enabled && gc.young_allocated + size > gc.young_threshold && !gc.running) {
         gc.deferred_gc = 1;
-        /* ⚠️ 曾试过在这里「置 gc_force_request + jit_request_bailout()」，让解释器
-         * 在回边安全点回收 JIT 循环里的分配。**这条路是错的，已回退**：
-         * bailout 不是迭代边界 —— JIT 只在 exit / framedead 块写回 locals
-         * （§8.36 核实 2），bailout 之后解释器是从「JIT 进入时的状态」重新开始
-         * 整个循环。于是「同一位置可复现的 bailout」会无限重放：实测退化到
-         * 6.36M 次回收 + 循环计数不前进（死循环）。现有 bailout 靠
-         * `JIT_BAILOUT_LIMIT=3` 封顶止血，而 GC 回退为了不烧掉预算特意不计数，
-         * 恰好绕过了这道闸。
-         * 正解是**回边让出**：JIT 在回边处走 exit 路径（那条路径会写回 locals、
-         * 且回边处 vstack 平衡）返回一个"让出"码，解释器从循环头继续并回收。
-         * 见 §8.37 的结论与待办。 */
+        /* ★ 让 JIT 热循环也能到达安全点（§8.37 路线 3）：
+         * JIT 机器码里没有任何安全点（不经过解释器），循环内分配的对象于是
+         * 永远等不到回收（§8.31 实测堆涨到 ~960MB）。JIT 会在**回边轮询**这个
+         * 标志，命中就走**出口路径**让出到解释器（写回 locals + 平衡 vstack），
+         * 解释器在状态一致的前提下回收后再让它重进 JIT。
+         *
+         * 两个"不是"（都是实测踩过的，别再改回去）：
+         *   - 不是让 JIT 就地回收：活值在机器栈里、GC 看不见（§8.36）；
+         *   - 不是请求 bailout：bailout 是"守卫失败"语义，会从 JIT 进入点
+         *     重放整轮（§8.37 实测 6.36M 次回收 + 死循环）。
+         *
+         * 锁存必须用**标志自身**（已请求就不再置位，解释器消费时清零），
+         * 不能用 `deferred_gc`：后者的清零依赖"解释器侧真的发生了一次回收"，
+         * 而纯分配循环（没有 OP_RETURN、也没有函数调用）恰恰等不到那次回收，
+         * `deferred_gc` 会一直停在 1 ⇒ 让出永远不被请求 ⇒ 泄漏照旧。
+         *
+         * 只在 `jit_in_frame()` 时置位：解释器自己的分配不需要打断 JIT
+         * （它会在下一个 OP_RETURN / 回边安全点正常回收）。 */
+        if (jit_in_frame() && !jit_gc_yield_flag) {
+            jit_gc_yield_flag = 1;
+        }
     }
 
     // 测试钩子 LENO_GC_FORCE_EVERY（§8.35）：每 N 次分配把「强制回收」请求挂到

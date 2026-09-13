@@ -73,6 +73,19 @@ OPCODE(OP_FOR_LOOP) {
         frame = &vm.frames[vm.frame_cnt - 1];
         DISPATCH;
     }
+    if (jit_r == 4) {
+        /* 回边让出（§8.37 路线 3）：JIT 在**迭代边界**走出口路径退出、
+         * locals 已写回 frame->locals —— 此处回收是安全的（JIT 机器码里不是，
+         * 活值在机器栈、GC 看不见，见 §8.36）。
+         * 关键：机器码里的轮询放在 `loop_var += step` **之前**，所以这里**落到
+         * 下面正常的 OP_FOR_LOOP 语义**（它自己会做增量与回跳）就是正确续跑，
+         * 不会多加一次增量（那会表现为迭代跳步）。 */
+        frame = &vm.frames[vm.frame_cnt - 1];
+        jit_gc_yield_flag = 0;
+        if (gc.deferred_gc && gc.enabled && !gc.running) {
+            gc_try_collect_deferred();
+        }
+    }
 
     // 获取当前值
     Value loop_var = frame->locals[loop_var_slot];

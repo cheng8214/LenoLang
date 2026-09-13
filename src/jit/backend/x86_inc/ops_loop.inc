@@ -126,6 +126,28 @@
                                 target_bc, ctx->off_count, inline_depth);
                     return 0;
                 }
+                /* ★ 回边 GC 轮询（§8.37 路线 3）。三个条件缺一不可：
+                 * 1) `bc_off + size == sr->body_size` —— **只认 JIT 自己那条回边**
+                 *    （编译体的最后一条指令）。嵌套回边与内联 callee 里的回边都
+                 *    不能发射：让出时解释器会用它自己的 `frame->ip`（= 外层 OP_LOOP）
+                 *    减去 offset 从**外层循环头**继续，而那半轮已经被执行过 ——
+                 *    实测「每个 yield 多算一轮迭代」（sum 6.398e+06 → 6.671e+06）。
+                 * 2) `body_has_callout` —— 循环体里发射过 callout（可能分配）。
+                 *    纯算术热循环零开销（否则给 2.5 cycle/iter 的 i++ 加 2 条指令
+                 *    就是百分比级的税）。
+                 * 3) 补丁点没超上限（防御性）。
+                 * 轮询本身 2 条指令：mov r8, imm64(&jit_gc_yield_flag); cmp [r8], 0
+                 * —— 借的是"GC 想让 JIT 停一下"这个全局标志（HotSpot polling page
+                 * 的同一形状：轮询一个由 VM 侧置位的标志），命中才付让出的代价。
+                 * 位置在 jmp 回边**之前**，语义上正是解释器 OP_LOOP 的执行点，
+                 * 所以解释器接手时 `frame->ip -= offset` 恰好从循环头继续、
+                 * 不重放本轮（这正是 bailout 做不到的，见 §8.37）。 */
+                if (body_has_callout && yield_jmp_cnt < JIT_YIELD_MAX &&
+                    bc_off + size == sr->body_size) {
+                    emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_gc_yield_flag);
+                    emit_cmp_mem8_imm8(cb, JIT_R8, 0, 0);
+                    yield_jmp_patches[yield_jmp_cnt++] = emit_jcc(cb, 0x85);  /* JNZ → yield */
+                }
                 int patch = emit_jmp(cb);
                 patch_rel32(cb, patch, target_mc);
                 break;
@@ -158,6 +180,19 @@
                                         "不在 off_map（off_count=%d inline_depth=%d）→ 拒绝编译\n",
                                 target_bc, ctx->off_count, inline_depth);
                     return 0;
+                }
+
+                /* ★ 回边 GC 轮询（§8.37 路线 3，同 OP_LOOP）。位置要求更严：
+                 * **必须放在 EMIT_FOR_STEP_AND_CMP 之前** —— 那一段会执行
+                 * `loop_var += step`，而解释器接手时会自己跑 OP_FOR_LOOP 的
+                 * 增量语义；放在它后面就会多加一次（表现为迭代跳步）。
+                 * 只认 JIT 自己那条回边（理由同 OP_LOOP：嵌套/内联回边让出会
+                 * 从外层循环头重跑）。 */
+                if (body_has_callout && yield_jmp_cnt < JIT_YIELD_MAX &&
+                    bc_off + size == sr->body_size) {
+                    emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_gc_yield_flag);
+                    emit_cmp_mem8_imm8(cb, JIT_R8, 0, 0);
+                    yield_jmp_patches[yield_jmp_cnt++] = emit_jcc(cb, 0x85);  /* JNZ → yield */
                 }
 
                 /* loop_var += step (+ int48 check)，再与 end 比较；

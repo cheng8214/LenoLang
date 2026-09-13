@@ -77,6 +77,10 @@ Value jit_fn_result = NULL_VAL;
 int jit_func_depth = 0;
 int jit_loop_depth = 0;
 
+/* 「GC 想让 JIT 让出」标志 —— 契约见 jit_priv.h。
+ * 置位只在 gc_alloc 跨阈值那一次；清零在解释器消费让出时。 */
+int jit_gc_yield_flag = 0;
+
 /* 当前是否在 JIT 机器码里（循环 JIT 或函数级 JIT）—— 见 §8.36。
  * 只被 GC 的 malloc 失败路径调用，不在热路径上。 */
 int jit_in_frame(void) {

@@ -68,6 +68,7 @@ typedef struct {
     int cache_evictions;  /* 探测窗口满而被迫驱逐热循环的次数（诊断用） */
     int func_compile_count; /* 函数级 JIT 编译成功次数（含解释器热入口与 callout 急切编译） */
     int func_execute_count; /* 解释器侧函数级 JIT 热入口实际执行的次数 */
+    int yield_count;        /* 回边让出（§8.37 路线 3）次数：不计入 bailout */
     int enabled;
 } JitState;
 
@@ -146,6 +147,19 @@ int jit_in_frame(void);
  * 于是退一格到解释器，在那里安全回收后再试。
  */
 void jit_request_bailout(void);
+
+/*
+ * 「GC 想让 JIT 让出」标志（§8.37 路线 3）。
+ *
+ * gc_alloc 在**JIT 帧内**跨过年轻代阈值时置位；JIT 在每个回边轮询它
+ * （2 条指令），命中就走**出口路径**让出到解释器 —— 那里 locals / vm.stack
+ * 都已经发布好，回收是安全的（JIT 机器码里没法回收：活值在机器栈里、
+ * GC 看不见，见 §8.36）。
+ *
+ * 解释器消费让出时（`jit_r == 4`）清零。用普通全局是为了让轮询保持 2 条指令；
+ * 多线程下最坏情况只是"别人的请求让本线程多让出一次"，而让出本身无害。
+ */
+extern int jit_gc_yield_flag;
 
 /* Print JIT statistics to stdout. */
 void jit_print_stats(void);

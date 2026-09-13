@@ -150,6 +150,17 @@ int compile_loop(CodegenCtx* ctx) {
     int inline_ret_patches[JIT_INLINE_RET_MAX];
     int inline_ret_patch_cnt = 0;
 
+    /* ---- 回边让出（§8.37 路线 3）----
+     * body_has_callout: 本循环体内是否发射过 callout（可能分配）。
+     *   由 EMIT_CALLOUT_BEGIN() 置位 —— 这样内联进来的 callee 体里的 callout
+     *   也自动算进去。只有它置位时才在回边发射 GC 轮询，纯算术热循环零开销
+     *   （否则给 i++ 那种 2.5 cycle/iter 的循环加 2 条指令就是百分比级的税）。
+     * yield_jmp_*: 回边轮询命中时的前向跳转补丁点 → 统一的 yield 出口块。 */
+    int body_has_callout = 0;
+    #define JIT_YIELD_MAX 8
+    int yield_jmp_patches[JIT_YIELD_MAX];
+    int yield_jmp_cnt = 0;
+
     /*
      * int48 overflow check: bail out to VM (which handles BigInt promotion)
      * if RAX doesn't fit in signed 48-bit range [-2^47, 2^47-1].
@@ -450,6 +461,7 @@ int compile_loop(CodegenCtx* ctx) {
     #endif
 
     #define EMIT_CALLOUT_BEGIN() do { \
+        body_has_callout = 1; \
         emit_mov_rr(cb, JIT_R12, JIT_RSP); \
         emit_mov_rr(cb, JIT_R13, JIT_RCX); \
         emit_mov_rr(cb, JIT_R14, JIT_R9); \
@@ -1007,6 +1019,35 @@ int compile_loop(CodegenCtx* ctx) {
     /* Return 3 (frame-dead, host frame destroyed, no write back) */
     emit_mov_eax_imm32(cb, 3);
     EMIT_EPILOGUE();
+
+    /* ---- Yield exit（§8.37 路线 3）：回边轮询命中 → 让出到解释器 ----
+     * 与上面的 exit 块**同形**（先平衡 vstack 再写回 locals），唯一差别是返回码 4。
+     * 之所以安全：回边是迭代边界、且回边处 vstack 平衡（OP_LOOP 的 codegen 开头
+     * 就 TOS_SPILL），所以解释器 `frame->ip -= offset` 从循环头继续，语义等价于
+     * 「刚执行完一次回边」—— 不会重放、不会重复副作用（§8.37 里 bailout 的
+     * 6.36M 次死循环正是因为 bailout 不满足这两点）。
+     * 让出**不计入 bailout**（jit_try_hot_loop 单独映射返回码 4），否则每跨一次
+     * 年轻代阈值就烧掉 1/3 的 JIT_BAILOUT_LIMIT，循环很快被永久放弃。 */
+    if (yield_jmp_cnt > 0) {
+        int yield_mc = cb->len;
+        for (int _i = 0; _i < yield_jmp_cnt; _i++)
+            patch_rel32(cb, yield_jmp_patches[_i], yield_mc);
+        if (vstack > 0) {
+            if (vstack * 8 <= 127) {
+                emit_byte(cb, 0x48); emit_byte(cb, 0x83); emit_byte(cb, 0xC4);
+                emit_byte(cb, (uint8_t)(vstack * 8));
+            } else {
+                emit_byte(cb, 0x48); emit_byte(cb, 0x81); emit_byte(cb, 0xC4);
+                emit_uint32(cb, (uint32_t)(vstack * 8));
+            }
+        }
+        if (!ctx->func_mode) {
+            EMIT_RELOAD_RCX();
+            EMIT_WRITEBACK_LOCALS();
+        }
+        emit_mov_eax_imm32(cb, 4);
+        EMIT_EPILOGUE();
+    }
 
     #undef EMIT_WRITEBACK_LOCALS
 

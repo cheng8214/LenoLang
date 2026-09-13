@@ -616,6 +616,16 @@ fprintf(stderr, "[JIT-DEBUG] EXEC call #%d, fn=%p, locals=%p\n",
             fprintf(stderr, "[JIT-DEBUG] FRAME-DEAD exit (%d) at body_start=%d\n",
                     result, loop_bc_off);
         return 2;
+    } else if (result == 4) {
+        /* Yield exit（§8.37 路线 3）：机器码在回边看到 jit_gc_yield_flag，
+         * 走 exit 出口块（locals 已写回、vstack 已平衡）返回 4，请解释器接手
+         * 并在安全状态下回收。**不是失败**：不计 bailout、不碰 hot_disabled，
+         * 否则每跨一次年轻代阈值都会烧掉 1/3 的 JIT_BAILOUT_LIMIT。 */
+        jit_state.yield_count++;
+        if (jit_debug_on())
+            fprintf(stderr, "[JIT-DEBUG] YIELD at body_start=%d (#%d)\n",
+                    loop_bc_off, jit_state.yield_count);
+        return 4;
     } else {
         /* Bailout — let interpreter handle it */
         entry->bailout_count++;
@@ -659,6 +669,11 @@ void jit_print_stats(void) {
     fprintf(stderr, "  Compiled: %d\n", jit_state.compile_count);
     fprintf(stderr, "  Executed: %d\n", jit_state.execute_count);
     fprintf(stderr, "  Bailouts: %d\n", jit_state.bailout_count);
+    /* 回边让出（§8.37 路线 3）：不是失败，是「让解释器在安全状态回收一次」。
+     * 长期为 0 而循环内又有分配 ⇒ 说明轮询没发射（循环体没有 callout）或
+     * jit_gc_yield_flag 没被置起来。 */
+    if (jit_state.yield_count > 0)
+        fprintf(stderr, "  Yields:   %d\n", jit_state.yield_count);
     /* 列出发生过 bailout 的循环及其触发点，便于定位未消除的 bailout */
     if (jit_state.bailout_count > 0) {
         for (int i = 0; i < JIT_CACHE_SIZE; i++) {

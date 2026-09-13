@@ -223,6 +223,14 @@ extern int jit_func_depth;
  * 就地回收等于把还在用的对象当垃圾（use-after-free）。 */
 extern int jit_loop_depth;
 int jit_in_frame(void);
+/* ---- 「GC 想让 JIT 让出」标志（2026-09-13，§8.37 路线 3）----
+ * gc_alloc 在年轻代跨过阈值的**那一瞬间**（deferred_gc 的 0→1）置位；
+ * JIT 在每个回边轮询它（2 条指令：mov r8, imm64(&flag); cmp [r8], 0; jne），
+ * 命中就走**出口路径**让出到解释器（写回 locals → 解释器回收 → 重进 JIT）。
+ * 解释器在消费让出时清零。
+ * 用普通全局（而非 per-VM 字段）是为了让轮询保持 2 条指令；多线程下只会
+ * 「别人的请求让本线程多让出一次」，让出本身无害（解释器发现无需回收就直接继续）。 */
+extern int jit_gc_yield_flag;
 #define JIT_FUNC_MAX_DEPTH 64
 extern Value jit_func_locals_pool[JIT_FUNC_MAX_DEPTH][JIT_MAX_LOCALS];
 
