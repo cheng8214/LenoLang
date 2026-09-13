@@ -55,9 +55,12 @@
                 emit_byte(cb, 0x00);                     /* disp8 = type offset 0 */
                 emit_byte(cb, (uint8_t)OBJ_ARRAY);
                 int p_obj_notarr = emit_jcc(cb, 0x85);   /* JNE → slow */
-                /* r8 = (uint64)(int32)count; cmp rax, r8; jae → slow
-                 * (negative idx becomes huge unsigned ⇒ jae taken) */
-                emit_mov_reg_mem32(cb, JIT_R8, JIT_RDX, 40);
+                /* r8 = (uint64)count（**必须 32 位零扩展加载**）; cmp rax, r8;
+                 * jae → slow（负数/超界索引按无符号都是巨值 ⇒ 取慢路径报错）。
+                 * 用 64 位加载会把相邻的 capacity 一起读进来
+                 * （count@40 / capacity@44 相邻 → r8 = count|capacity<<32），
+                 * 越界比较因此恒不成立 → JIT 静默读越界内存（§8.28）。 */
+                emit_mov_reg32_mem8(cb, JIT_R8, JIT_RDX, (int8_t)offsetof(ObjArray, count));
                 emit_cmp_rr(cb, JIT_RAX, JIT_R8);
                 int p_idx_oob = emit_jcc(cb, 0x83);      /* JAE → slow */
                 /* rdx = arr->elements (+32); rax = [rdx + rax*8] */
@@ -76,7 +79,10 @@
                 patch_rel32(cb, p_idx_notint, cb->len);
                 patch_rel32(cb, p_obj_notobj, cb->len);
                 patch_rel32(cb, p_obj_notarr, cb->len);
-                patch_rel32(cb, p_idx_oob, cb->len);
+                /* 注意：p_idx_oob **不**接到这里（见本 case 末尾的 bailout 桩）。
+                 * 越界必须交回解释器：callout 只 error_add_at 记录错误然后返回
+                 * NULL_VAL，JIT 会继续跑完循环（错误被静默吞掉），而解释器抛的是
+                 * 可被 try/catch 捕获的异常 —— 实测 NO_JIT 捕获 239 次、JIT 捕获 0 次。 */
                 /* idx → Value in tmp1 */
                 EMIT_LOAD_TMP(JIT_RAX, tmp1_disp);
                 EMIT_RAW_TO_VALUE();
@@ -94,27 +100,110 @@
                 EMIT_CALLOUT_END();
                 /* Convert result */
                 EMIT_VALUE_TO_RAW();
+                /* 数组越界 → bailout 桩。交回解释器重跑本次迭代，由解释器抛出与
+                 * NO_JIT 完全一致的「数组索引越界」异常（可被 try/catch 捕获）。
+                 * 位置必须在 `done` 标签**之前**：桩以无条件 jmp 结束、没有
+                 * fall-through，而 done 紧接着桩之后 —— 否则快路径的 jmp done
+                 * 会直接落进桩里，变成"每次读数组都 bailout"（实测 c[0] 循环
+                 * 从 47ms 退化到 453ms）。 */
+                patch_rel32(cb, p_idx_oob, cb->len);
+                EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                {
+                    int bp = emit_jmp(cb);
+                    patch_add(ctx, bp, -1, 0);
+                }
+
                 /* done: result in RAX = live TOS */
                 patch_rel32(cb, done_loc, cb->len);
                 TOS_PRODUCE();
                 vstack--;
                 break;
             }
-            /* ---- Callout: OP_ARRAY_APPEND_NOPUSH ---- */
+            /* ---- OP_ARRAY_APPEND_NOPUSH（arr.add(v) 语句形式）----
+             * 内联快路径：目标确为数组、有剩余容量、且不需要写屏障时，直接在机器码
+             * 里做 elements[count] = value; count++，不走 C callout。
+             * 慢路径保留原 callout（类型检查 / 扩容 / 写屏障 / 报错文本原样）。
+             *
+             * 顺序约束（重要）：**所有慢路径判定都发生在任何变异之前**，
+             * 因此跳到慢路径是安全的 —— callout 会从原状态完整重做，不会重复 append。
+             *
+             * 寄存器预算：可用的暂存只有 RAX/RCX/RDX/R8（RCX=locals、R9=globals、
+             * R10/R11=常量、RBX=类型位图都不能动）；地址一时用不上临时槽时，
+             * 用 push/pop 借一下硬件栈（与 OP_ADD 的 concat 路径同一手法）。 */
             case OP_ARRAY_APPEND_NOPUSH: {
                 TOS_SPILL();
-                emit_pop_reg(cb, JIT_RAX);
-                EMIT_RAW_TO_VALUE();
+                emit_pop_reg(cb, JIT_RAX);           /* value（TOS）*/
                 EMIT_STORE_TMP(tmp1_disp, JIT_RAX);
-                emit_pop_reg(cb, JIT_RAX);
+                emit_pop_reg(cb, JIT_RDX);           /* array */
+                EMIT_STORE_TMP(tmp2_disp, JIT_RDX);
+
+                /* 1) array 是 NaN-boxed 对象（top16 == TAG_OBJ = 0xFFFC）
+                 *    必须用 SHR（逻辑右移）读 top16，SAR 会符号扩展成
+                 *    0xFFFF...FFFC 让比较恒不相等（快路径变死代码）。 */
+                emit_mov_rr(cb, JIT_R8, JIT_RDX);
+                emit_shr_imm(cb, JIT_R8, 48);
+                emit_cmp_reg32_imm32(cb, JIT_R8, 0x0000FFFcu);
+                int ap_notobj = emit_jcc(cb, 0x85);              /* JNE → slow */
+                /* 2) obj->type == OBJ_ARRAY（type 是 Object 首字段，偏移 0） */
+                emit_and_rr(cb, JIT_RDX, JIT_R10);               /* RDX = Object* */
+                emit_cmp_mem8_imm8(cb, JIT_RDX, 0, (uint8_t)OBJ_ARRAY);
+                int ap_notarr = emit_jcc(cb, 0x85);              /* JNE → slow */
+
+                /* 3) 写屏障判定（必须在变异前）：value 是对象 且 arr 已是老年代
+                 *    且 value 是年轻代 → 需要写 remembered set，交 callout。
+                 *    热路径上通常第一条就不成立（arr.add(1) 这类非对象值）。 */
+                emit_mov_rr(cb, JIT_R8, JIT_RAX);
+                emit_shr_imm(cb, JIT_R8, 48);
+                emit_cmp_reg32_imm32(cb, JIT_R8, 0x0000FFFcu);
+                int ap_val_notobj = emit_jcc(cb, 0x85);          /* JNE → 无需屏障 */
+                emit_cmp_mem8_imm8(cb, JIT_RDX, (int8_t)offsetof(Object, generation), GEN_OLD);
+                int ap_arr_notold = emit_jcc(cb, 0x85);          /* JNE → 无需屏障 */
+                emit_mov_rr(cb, JIT_R8, JIT_RAX);
+                emit_and_rr(cb, JIT_R8, JIT_R10);                /* R8 = value_obj */
+                emit_cmp_mem8_imm8(cb, JIT_R8, (int8_t)offsetof(Object, generation), GEN_YOUNG);
+                int ap_barrier = emit_jcc(cb, 0x84);             /* JE → 需要屏障 → slow */
+                patch_rel32(cb, ap_val_notobj, cb->len);
+                patch_rel32(cb, ap_arr_notold, cb->len);
+
+                /* 4) count < capacity（32 位比较；两者都是非负 int） */
+                emit_mov_reg32_mem8(cb, JIT_R8, JIT_RDX, (int8_t)offsetof(ObjArray, count));
+                emit_cmp_reg32_mem8(cb, JIT_R8, JIT_RDX, (int8_t)offsetof(ObjArray, capacity));
+                int ap_full = emit_jcc(cb, 0x83);                /* JAE → slow（容量满）*/
+
+                /* 5) &elements[count] */
+                emit_shl_imm(cb, JIT_R8, 3);                     /* count*8 */
+                emit_mov_reg_mem8(cb, JIT_RAX, JIT_RDX, (int8_t)offsetof(ObjArray, elements));
+                emit_add_rr(cb, JIT_RAX, JIT_R8);                /* RAX = &elements[count] */
+                emit_push_reg(cb, JIT_RAX);                      /* 暂存地址（下面 pop）*/
+                /* 6) value raw → Value（RAW_TO_VALUE 只作用于 RAX）*/
+                EMIT_LOAD_TMP(JIT_RAX, tmp1_disp);
                 EMIT_RAW_TO_VALUE();
-                emit_mov_rr(cb, JIT_RDX, JIT_RAX);
-                EMIT_LOAD_TMP(JIT_R8, tmp1_disp);
+                emit_pop_reg(cb, JIT_R8);                        /* R8 = 地址 */
+                emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);       /* *addr = value */
+                /* 7) count++ */
+                emit_mov_reg32_mem8(cb, JIT_R8, JIT_RDX, (int8_t)offsetof(ObjArray, count));
+                emit_inc_reg(cb, JIT_R8);
+                emit_mov_mem32_reg32(cb, JIT_RDX, (int8_t)offsetof(ObjArray, count), JIT_R8);
+                int ap_done = emit_jmp(cb);
+
+                /* ---- 慢路径：原 callout（含类型检查 / 扩容 / 写屏障 / 报错）---- */
+                patch_rel32(cb, ap_notobj, cb->len);
+                patch_rel32(cb, ap_notarr, cb->len);
+                patch_rel32(cb, ap_barrier, cb->len);
+                patch_rel32(cb, ap_full, cb->len);
+                EMIT_LOAD_TMP(JIT_RAX, tmp1_disp);
+                EMIT_RAW_TO_VALUE();
+                EMIT_STORE_TMP(tmp1_disp, JIT_RAX);              /* tmp1 ← value(Value) */
+                EMIT_LOAD_TMP(JIT_RAX, tmp2_disp);
+                EMIT_RAW_TO_VALUE();
+                emit_mov_rr(cb, JIT_RDX, JIT_RAX);               /* RDX = array(Value) */
+                EMIT_LOAD_TMP(JIT_R8, tmp1_disp);                /* R8 = value(Value) */
                 EMIT_CALLOUT_BEGIN();
                 emit_mov_rr(cb, JIT_ARG1, JIT_RDX);
                 emit_mov_rr(cb, JIT_ARG2, JIT_R8);
                 EMIT_CALL(jit_callout_array_append);
                 EMIT_CALLOUT_END();
+                patch_rel32(cb, ap_done, cb->len);
                 vstack -= 2;
                 break;
             }
@@ -141,24 +230,101 @@
                 vstack -= 2;
                 break;
             }
-            /* ---- Callout: OP_INDEX_SET_NOPUSH (arr[idx]=val, no push) ---- */
+            /* ---- OP_INDEX_SET_NOPUSH（arr[idx]=val 语句形式）----
+             * 内联快路径：array 是数组、idx 是 int48、0 <= idx < capacity、
+             * 且不需要写屏障 → elements[idx] = value; if (idx >= count) count = idx+1。
+             * 语义完全对齐 jit_callout_index_set 的数组分支：**越界判据是 capacity
+             * 而不是 count**，idx >= count 时把 count 抬到 idx+1。
+             * 慢路径：非数组 / 浮点或越界索引 / 需要写屏障 → 原 callout
+             * （dict / struct / cstruct 分支与全部报错文本都保留）。
+             * 同样所有判定都在变异之前，慢路径不会看到"写了一半"的状态。 */
             case OP_INDEX_SET_NOPUSH: {
                 TOS_SPILL();
-                emit_pop_reg(cb, JIT_RAX);   /* value (top) */
-                EMIT_RAW_TO_VALUE();
+                emit_pop_reg(cb, JIT_RAX);   /* value (TOS) */
                 EMIT_STORE_TMP(tmp1_disp, JIT_RAX);
                 emit_pop_reg(cb, JIT_RAX);   /* index */
-                EMIT_RAW_TO_VALUE();
                 EMIT_STORE_TMP(tmp2_disp, JIT_RAX);
-                emit_pop_reg(cb, JIT_RAX);   /* array */
+                emit_pop_reg(cb, JIT_RDX);   /* array */
+                EMIT_STORE_TMP(tmp3_disp, JIT_RDX);
+
+                /* 1) array 是 NaN-boxed 对象 且 type == OBJ_ARRAY（top16 用 SHR 读） */
+                emit_mov_rr(cb, JIT_R8, JIT_RDX);
+                emit_shr_imm(cb, JIT_R8, 48);
+                emit_cmp_reg32_imm32(cb, JIT_R8, 0x0000FFFcu);
+                int is_notobj = emit_jcc(cb, 0x85);              /* JNE → slow */
+                emit_and_rr(cb, JIT_RDX, JIT_R10);               /* RDX = Object* */
+                emit_cmp_mem8_imm8(cb, JIT_RDX, 0, (uint8_t)OBJ_ARRAY);
+                int is_notarr = emit_jcc(cb, 0x85);              /* JNE → slow */
+
+                /* 2) index 是 int48（放 RAX 备用） */
+                EMIT_LOAD_TMP(JIT_RAX, tmp2_disp);
+                emit_mov_rr(cb, JIT_R8, JIT_RAX);
+                emit_sar_imm(cb, JIT_R8, 47);
+                emit_inc_reg(cb, JIT_R8);
+                emit_cmp_reg_imm8(cb, JIT_R8, 1);
+                int is_idx_notint = emit_jcc(cb, 0x87);          /* JA → slow */
+
+                /* 3) 写屏障判定（变异前） */
+                EMIT_LOAD_TMP(JIT_R8, tmp1_disp);
+                emit_shr_imm(cb, JIT_R8, 48);
+                emit_cmp_reg32_imm32(cb, JIT_R8, 0x0000FFFcu);
+                int is_val_notobj = emit_jcc(cb, 0x85);          /* JNE → 无需屏障 */
+                emit_cmp_mem8_imm8(cb, JIT_RDX, (int8_t)offsetof(Object, generation), GEN_OLD);
+                int is_arr_notold = emit_jcc(cb, 0x85);          /* JNE → 无需屏障 */
+                EMIT_LOAD_TMP(JIT_R8, tmp1_disp);
+                emit_and_rr(cb, JIT_R8, JIT_R10);                /* R8 = value_obj */
+                emit_cmp_mem8_imm8(cb, JIT_R8, (int8_t)offsetof(Object, generation), GEN_YOUNG);
+                int is_barrier = emit_jcc(cb, 0x84);             /* JE → 需要屏障 → slow */
+                patch_rel32(cb, is_val_notobj, cb->len);
+                patch_rel32(cb, is_arr_notold, cb->len);
+
+                /* 4) 0 <= idx < capacity（无符号比较：负数/超界 → slow → 解释器报错） */
+                emit_mov_reg32_mem8(cb, JIT_R8, JIT_RDX, (int8_t)offsetof(ObjArray, capacity));
+                emit_cmp_rr(cb, JIT_RAX, JIT_R8);
+                int is_oob = emit_jcc(cb, 0x83);                 /* JAE → slow */
+
+                /* 5) &elements[idx]（压栈暂存，RAW_TO_VALUE 只能作用于 RAX） */
+                emit_shl_imm(cb, JIT_RAX, 3);
+                emit_mov_reg_mem8(cb, JIT_R8, JIT_RDX, (int8_t)offsetof(ObjArray, elements));
+                emit_add_rr(cb, JIT_RAX, JIT_R8);
+                emit_push_reg(cb, JIT_RAX);
+                /* 6) value raw → Value，写入槽位 */
+                EMIT_LOAD_TMP(JIT_RAX, tmp1_disp);
                 EMIT_RAW_TO_VALUE();
-                EMIT_STORE_TMP(tmp3_disp, JIT_RAX);
+                emit_pop_reg(cb, JIT_R8);
+                emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
+                /* 7) if (idx >= count) count = idx + 1 */
+                EMIT_LOAD_TMP(JIT_RAX, tmp2_disp);               /* idx（int48 raw 即整数值）*/
+                emit_mov_reg32_mem8(cb, JIT_R8, JIT_RDX, (int8_t)offsetof(ObjArray, count));
+                emit_cmp_rr(cb, JIT_RAX, JIT_R8);
+                int is_within = emit_jcc(cb, 0x82);              /* JB (idx<count) → 跳过 */
+                emit_inc_reg(cb, JIT_RAX);
+                emit_mov_mem32_reg32(cb, JIT_RDX, (int8_t)offsetof(ObjArray, count), JIT_RAX);
+                patch_rel32(cb, is_within, cb->len);
+                int is_done = emit_jmp(cb);
+
+                /* ---- 慢路径：原 callout ---- */
+                patch_rel32(cb, is_notobj, cb->len);
+                patch_rel32(cb, is_notarr, cb->len);
+                patch_rel32(cb, is_idx_notint, cb->len);
+                patch_rel32(cb, is_barrier, cb->len);
+                patch_rel32(cb, is_oob, cb->len);
+                EMIT_LOAD_TMP(JIT_RAX, tmp1_disp);
+                EMIT_RAW_TO_VALUE();
+                EMIT_STORE_TMP(tmp1_disp, JIT_RAX);              /* value(Value) */
+                EMIT_LOAD_TMP(JIT_RAX, tmp2_disp);
+                EMIT_RAW_TO_VALUE();
+                EMIT_STORE_TMP(tmp2_disp, JIT_RAX);              /* index(Value) */
+                EMIT_LOAD_TMP(JIT_RAX, tmp3_disp);
+                EMIT_RAW_TO_VALUE();
+                EMIT_STORE_TMP(tmp3_disp, JIT_RAX);              /* array(Value) */
                 EMIT_CALLOUT_BEGIN();
                 EMIT_LOAD_TMP(JIT_ARG1, tmp3_disp);  /* array (1st arg) */
                 EMIT_LOAD_TMP(JIT_ARG2, tmp2_disp);  /* index (2nd arg) */
-                EMIT_LOAD_TMP(JIT_ARG3, tmp1_disp);   /* value (3rd arg) */
+                EMIT_LOAD_TMP(JIT_ARG3, tmp1_disp);  /* value (3rd arg) */
                 EMIT_CALL(jit_callout_index_set);
                 EMIT_CALLOUT_END();
+                patch_rel32(cb, is_done, cb->len);
                 vstack -= 3;
                 break;
             }

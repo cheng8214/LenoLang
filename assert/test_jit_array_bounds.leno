@@ -1,0 +1,128 @@
+// 回归测试：JIT 数组索引读/写与 append 的内联快路径（§8.28 / §8.29）
+//
+// 背景（§8.28）：`OP_INDEX` 的内联快路径读 `count` 时误用了 **64 位**加载
+// （emit_mov_reg_mem32 = REX.W + 0x8B），把相邻的 `capacity` 一起读进寄存器，
+// 于是 `count|capacity<<32` 让「无符号比较 idx < count」几乎永远成立 ——
+// 越界检查失效、JIT 静默读数组之外的内存、解释器的「数组索引越界」异常被跳过。
+// 修法：改用 32 位零扩展加载（emit_mov_reg32_mem8）。
+//
+// 同时把「数组越界」从 callout 慢路径改成 **bailout**：
+// callout 只 error_add_at 记录错误并返回 NULL_VAL，JIT 会继续跑完整循环
+// （错误被静默吞掉）；解释器抛的是可被 try/catch 捕获的异常。实测同一段代码
+//   LENO_NO_JIT=1 → caught=239        JIT（callout 版）→ caught=0
+// 改为 bailout 后 JIT 与解释器一致（本文件第 1、2 段就是这个对照）。
+//
+// §8.29 部分：`arr.add(v)`（OP_ARRAY_APPEND_NOPUSH）与 `arr[i]=v`
+// （OP_INDEX_SET_NOPUSH）新增内联快路径，本文件验证它们的语义与 callout 一致。
+
+import arrays
+
+var bad = 0
+
+func fail(int tag):int {
+    print("FAIL case " + tag)
+    bad = bad + 1
+    return 0
+}
+
+main() {
+    // ---- 1) 越界读：必须与解释器一样可被 try/catch 捕获（61..299 共 239 次）----
+    var a = [1, 2, 3]
+    var caught = 0
+    var wrong = 0
+    var i = 0
+    while i < 300 {
+        var ix = 1
+        if i > 60 { ix = 9 }
+        try {
+            var v = a[ix]
+            if ix == 1 and v != 2 { wrong = wrong + 1 }
+        } catch {
+            caught = caught + 1
+        }
+        i = i + 1
+    }
+    if caught != 239 { print("越界捕获=" + caught); fail(1) }
+    if wrong != 0 { print("合法下标读值错误 " + wrong + " 次"); fail(1) }
+
+    // ---- 2) 负下标同样必须捕获 ----
+    var neg = 0
+    i = 0
+    while i < 300 {
+        var ix = 0
+        if i > 60 { ix = -1 }
+        try {
+            var v2 = a[ix]
+        } catch {
+            neg = neg + 1
+        }
+        i = i + 1
+    }
+    if neg != 239 { print("负下标捕获=" + neg); fail(2) }
+
+    // ---- 3) add 快路径：300 次 append（含扩容）后 len 与内容正确 ----
+    var b = []
+    i = 0
+    while i < 300 { b.add(i)
+        i = i + 1 }
+    if arrays.len(b) != 300 { print("len=" + arrays.len(b)); fail(3) }
+    var s = 0
+    i = 0
+    while i < 300 { s = s + b[i]
+        i = i + 1 }
+    if s != 44850 { print("sum=" + s); fail(3) }
+
+    // ---- 4) 下标写快路径：反复覆盖同一元素，其他元素不受影响 ----
+    var c = [1, 2, 3, 4, 5, 6, 7, 8]
+    i = 0
+    while i < 300 { c[1] = i
+        i = i + 1 }
+    if c[1] != 299 { fail(4) }
+    if c[0] != 1 or c[2] != 3 or c[7] != 8 { print("相邻元素被破坏"); fail(4) }
+
+    // ---- 5) 下标写 + 读回，验证写入的是 Value 而不是 raw 位模式 ----
+    var d = [0, 0, 0, 0, 0, 0, 0, 0]
+    i = 0
+    while i < 300 {
+        d[3] = i * 2
+        if d[3] != i * 2 { fail(5) }
+        i = i + 1
+    }
+
+    // ---- 6) 容量满 → 慢路径扩容，数据不能丢 ----
+    var e = []
+    i = 0
+    while i < 3000 { e.add(i)
+        i = i + 1 }
+    if arrays.len(e) != 3000 { print("len=" + arrays.len(e)); fail(6) }
+    var s2 = 0
+    i = 0
+    while i < 3000 { s2 = s2 + e[i]
+        i = i + 1 }
+    if s2 != 4498500 { print("sum2=" + s2); fail(6) }
+
+    // ---- 7) append 的结果类型：int 元素应仍是 int（不是 raw/garbage）----
+    var f = []
+    i = 0
+    while i < 300 { f.add(i)
+        i = i + 1 }
+    if f[299] is int {
+    } else {
+        print("元素类型错误")
+        fail(7)
+    }
+    if f[299] != 299 { fail(7) }
+
+    // ---- 8) 非数组接收者仍走慢路径且语义正确（dict）----
+    var h = {}
+    i = 0
+    while i < 300 { h["k"] = i
+        i = i + 1 }
+    if h["k"] != 299 { fail(8) }
+
+    if bad > 0 {
+        print("test_jit_array_bounds FAILED: " + bad + " 处")
+        _exit(1)
+    }
+    print("test_jit_array_bounds ok")
+}

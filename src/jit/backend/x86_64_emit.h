@@ -122,6 +122,84 @@ static inline void emit_mov_mem32_reg(CodeBuf* cb, int base, int32_t disp, int r
     emit_uint32(cb, (uint32_t)disp);
 }
 
+/* ---- 32 位访存（写 4 字节字段时必须用它，不能用 64 位版！）----
+ * ObjArray 的 count/capacity 是相邻的 int（偏移 40/44），用 emit_mov_mem8_reg /
+ * emit_mov_mem32_reg 写会把下一个字段一起覆盖（REX.W + 0x89 = 8 字节存储）。 */
+
+/* MOV [base + disp8], reg32 (32-bit store) */
+static inline void emit_mov_mem32_reg32(CodeBuf* cb, int base, int8_t disp, int reg) {
+    int r = (reg >> 3) & 1;
+    int b = (base >> 3) & 1;
+    emit_byte(cb, rex(0, r, 0, b));
+    emit_byte(cb, 0x89);
+    emit_byte(cb, modrm(1, reg & 7, base & 7));
+    if ((base & 7) == 4)
+        emit_byte(cb, 0x24);
+    emit_byte(cb, (uint8_t)disp);
+}
+
+/* MOV reg32, [base + disp8] (32-bit load, 零扩展到 64 位)
+ * 读 4 字节整型字段**必须**用它：emit_mov_reg_mem32 是 64 位加载，
+ * 会把相邻字段一起读进来（ObjArray 的 count@40 / capacity@44 相邻，
+ * 用 64 位读会让 count|capacity<<32 使越界比较恒不成立 —— §8.28）。 */
+static inline void emit_mov_reg32_mem8(CodeBuf* cb, int reg, int base, int8_t disp) {
+    int r = (reg >> 3) & 1;
+    int b = (base >> 3) & 1;
+    emit_byte(cb, rex(0, r, 0, b));
+    emit_byte(cb, 0x8B);                       /* MOV r32, r/m32 */
+    emit_byte(cb, modrm(1, reg & 7, base & 7));
+    if ((base & 7) == 4)
+        emit_byte(cb, 0x24);
+    emit_byte(cb, (uint8_t)disp);
+}
+
+/* CMP reg32, [base + disp8] (32-bit) */
+static inline void emit_cmp_reg32_mem8(CodeBuf* cb, int reg, int base, int8_t disp) {
+    int r = (reg >> 3) & 1;
+    int b = (base >> 3) & 1;
+    emit_byte(cb, rex(0, r, 0, b));
+    emit_byte(cb, 0x3B);                       /* CMP r32, r/m32 */
+    emit_byte(cb, modrm(1, reg & 7, base & 7));
+    if ((base & 7) == 4)
+        emit_byte(cb, 0x24);
+    emit_byte(cb, (uint8_t)disp);
+}
+
+/* CMP reg32, imm32 */
+static inline void emit_cmp_reg32_imm32(CodeBuf* cb, int reg, uint32_t imm) {
+    int b = (reg >> 3) & 1;
+    emit_byte(cb, rex(0, 0, 0, b));
+    emit_byte(cb, 0x81);                       /* CMP r/m32, imm32 */
+    emit_byte(cb, modrm(3, 7, reg & 7));
+    emit_uint32(cb, imm);
+}
+
+/* CMP byte [base + disp8], imm8 */
+static inline void emit_cmp_mem8_imm8(CodeBuf* cb, int base, int8_t disp, uint8_t imm) {
+    int b = (base >> 3) & 1;
+    emit_byte(cb, rex(0, 0, 0, b));
+    emit_byte(cb, 0x80);
+    emit_byte(cb, modrm(1, 7, base & 7));
+    if ((base & 7) == 4)
+        emit_byte(cb, 0x24);
+    emit_byte(cb, (uint8_t)disp);
+    emit_byte(cb, imm);
+}
+
+/* MOV [base + index*scale], src (64-bit store)，scale ∈ {1,2,4,8}。
+ * 约束：index 不能是 RSP(4)/R12(12)（SIB 的 index 字段 4 表示"无 index"），
+ * base 低 3 位为 5（RBP/R13）时需要 disp32 —— 现有调用点都不满足这两个条件。 */
+static inline void emit_mov_mem_index_reg(CodeBuf* cb, int base, int index, int scale, int src) {
+    int log = (scale == 8) ? 3 : (scale == 4) ? 2 : (scale == 2) ? 1 : 0;
+    int r = (src >> 3) & 1;
+    int x = (index >> 3) & 1;
+    int b = (base >> 3) & 1;
+    emit_byte(cb, rex(1, r, x, b));
+    emit_byte(cb, 0x89);                       /* MOV r/m64, r64 */
+    emit_byte(cb, modrm(0, src & 7, 4));       /* rm=100 → 后面跟 SIB */
+    emit_byte(cb, (uint8_t)((log << 6) | ((index & 7) << 3) | (base & 7)));
+}
+
 /* MOV reg, reg (64-bit)  → MOV dst, src */
 static inline void emit_mov_rr(CodeBuf* cb, int dst, int src) {
     emit_rr(cb, 0x89, dst, src);
@@ -228,6 +306,19 @@ static inline void emit_sar_imm(CodeBuf* cb, int reg, uint8_t count) {
     emit_byte(cb, rex(1, 0, 0, b));
     emit_byte(cb, 0xC1);
     emit_byte(cb, modrm(3, 7, reg & 7));    /* /7 = SAR */
+    emit_byte(cb, count);
+}
+
+/* SHR reg, imm8（逻辑右移）
+ * 读 NaN-boxing 的 top16 必须用它：值的高 16 位是 0xFFFF/0xFFFC 这类
+ * 「最高位为 1」的 tag，用 SAR 会把结果符号扩展成 0xFFFF...FFFC，
+ * 与 0xFFFC 比较永远不相等 —— 标签检查静默恒失败、快路径变成死代码
+ * （2026-09-13 踩过：两个写路径快路径因此完全没生效）。 */
+static inline void emit_shr_imm(CodeBuf* cb, int reg, uint8_t count) {
+    int b = (reg >> 3) & 1;
+    emit_byte(cb, rex(1, 0, 0, b));
+    emit_byte(cb, 0xC1);
+    emit_byte(cb, modrm(3, 5, reg & 7));    /* /5 = SHR */
     emit_byte(cb, count);
 }
 
