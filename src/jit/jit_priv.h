@@ -371,6 +371,12 @@ int jit_callout_switch_lookup(Value switch_val, Value arr_val, int case_count);
  * 纯判断：不分配、不报错 ⇒ 无失败通道、调用方没有 bailout 分支。
  * 语义与 vm/vminc/op_compare.inc 的 OP_IS_NULL 一致（val_bool(val_is_null(v))）。 */
 Value jit_callout_is_null(Value v);
+
+/* ---- R2 批次 2：字符串拼接（OP_STRING_ADD，由字符串插值 `"${x}"` 编译出）----
+ * 直接调 VM 的 string_add（vm.c，解释器用的是同一份）—— **语义唯一来源**。
+ * 会分配（新字符串），但在 JIT 帧里是安全的：GC 在 JIT 执行期间只置让出标志、
+ * 不就地回收（§8.36/§8.37）。任何值都能转成字符串 ⇒ 不报错 ⇒ 无失败通道。 */
+Value jit_callout_string_add(Value a, Value b);
 /* 模块变量读写：module 由 codegen **编译期嵌入**（jit_scan_get_module），
  * 不是运行时查 vm.frames[frame_cnt-1] —— 函数级 JIT 的快路径不压帧，
  * 查帧会读到调用方的模块（§8.55 的修正 + §8.56 的教训）。 */

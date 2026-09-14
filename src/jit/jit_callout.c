@@ -1029,6 +1029,16 @@ Value jit_callout_is_null(Value v) {
     return val_bool(val_is_null(v));
 }
 
+/* Callout: OP_STRING_ADD（R2 批次 2）—— 字符串插值 `"${x}"` 编译出的拼接。
+ * 一行转发到 VM 的 string_add（**语义唯一来源**，§8.64）：两侧都是 ObjString 时
+ * 走 str_concat（正确处理内嵌 NUL），否则两侧各自转字符串再拼。
+ * 会分配（新字符串）—— 在 JIT 帧里安全：GC 在 JIT 执行期间只置让出标志、不就地回收
+ * （§8.36/§8.37），所以不会在中途搬走 JIT 机器栈里的活值。
+ * 任何值都能转成字符串 ⇒ 不报错 ⇒ 永不置 jit_callout_failed。 */
+Value jit_callout_string_add(Value a, Value b) {
+    return string_add(a, b);
+}
+
 /* ---- 通用相等比较的 C 实现（镜像解释器 vm/vminc/op_compare.inc 的 OP_EQ）----
  * 逐条对齐解释器规则：
  *   1) int/int 精确比较；任一是 float 时按 double 比较（BigInt 与 float 混合也走这里，

@@ -648,7 +648,7 @@ inline-scan: 76(OP_STRING_ADD) / 88(模块变量访问) / 156(SWITCH_LOOKUP，R1
 |---|---|---|---|---|---|
 | ~~R4~~ | ~~`jit_func_cache` 冲突驱逐的 **use-after-free 隐患**~~ | ~~256 槽 direct-mapped，冲突时 `jit_mem_free` 掉占用者的机器码 —— 若那个函数**正在 C 栈上执行**（A 调 B、B 的 callout 又编译了撞槽的 C）就是 UAF~~ | ~~需要「执行中计数」+ 驱逐时延迟回收~~ | ~~高（内存安全）~~ | **已完成（§8.60，2026-09-14）**：确认存在（强制碰撞 4/4 崩 `0xC0000005`）并修复为**机器码延迟释放队列**（安全点判据复用 `jit_func_depth`/`jit_loop_depth`）；`LENO_JIT_FUNC_CACHE_SMALL=1` 做确定性复现，用例 `assert/test_jit_func_cache_churn.leno` |
 | ~~R1~~ | ~~`OP_SWITCH_LOOKUP` 进 JIT~~ | ~~file_manager 仅剩的"可做但难"拒收点（×1）。VM 侧是 int/bigint/float/string 四路二分查找；变长编码：`const_idx(2) count(2) default_off(4) [case_off(4)]…`~~ | ~~`opcode_size` 变长解码 + scan 的多目标前向记账 + codegen 线性比较链~~ | ~~中~~ | **已完成（§8.61，2026-09-14）**：查找逻辑抽成 `switch_lookup_index`（VM/JIT 共用，语义唯一来源）+ 变长 `opcode_size` + 多目标前向记账（内联侧保守拒绝）+ 线性比较链；`assert/test_jit_op_switch_lookup.leno`；**循环拒收清零**（直方图只剩刻意保留的 `138`） |
-| R2 | L7 余项成批补齐 | 余项：`OP_STRING_ADD`(76)、`OP_TYPE_CHECK`(93)、`OP_AS_CAST`(94)、`OP_ARRAY_GET/SET`、`OP_DICT*`、`OP_SLICE`(79)、`OP_IN`、`OP_RANGE`、`OP_NEG`(33)、`OP_U8_TO_F64`(146) | 多为 callout 型，照 §8.52~§8.59 的模板走（`opcode_size` + 两处 scan + callout + codegen + 用例） | 低 | **批次 1 已完成（§8.63）**：`OP_IS_NULL`(48)。**下一批由 R3 的实测直方图定序**：`76:STRING_ADD ×4` 与 `93:TYPE_CHECK ×3` 是 file_manager 里仅剩的两个高频缺口 ⇒ **先做这两条**（其余按需）。注：`-d["k"]`、`x == null` 实测走已支持的路径，不必做 |
+| R2 | L7 余项成批补齐 | 余项：`OP_TYPE_CHECK`(93)、`OP_AS_CAST`(94)、`OP_ARRAY_GET/SET`、`OP_DICT*`、`OP_SLICE`(79)、`OP_IN`、`OP_RANGE`、`OP_NEG`(33)、`OP_U8_TO_F64`(146) | 多为 callout 型，照 §8.52~§8.59 的模板走（`opcode_size` + 两处 scan + callout + codegen + 用例）；`TYPE_CHECK`/`AS_CAST` 需要先把 VM 里那一大坨 TypeKind 判定抽成共享函数（同 §8.61/§8.64 的做法） | 低 | **批次 1（§8.63）**：`OP_IS_NULL`(48)。**批次 2（§8.64）**：`OP_STRING_ADD`(76)——由字符串插值 `$"..."` 产生（不是 `+`），顺带解开内联侧对该 opcode 的拒绝。**下一批**：`93:TYPE_CHECK`（实测是当前最高频缺口 **×16**，且 `is` 在真实代码里常见）；`94:AS_CAST` 是否跟做待定（它带值改写语义，本轮直方图里未出现）。注：`-d["k"]`、`x == null` 实测走已支持的路径，不必做 |
 | ~~R3~~ | ~~L0 诊断收口~~ | ~~`opcode_size` 余项补全；把 scan 的 default 报错区分成 `unknown opcode`（缺长度）与 `unsupported opcode`（已收录长度但缺 case）~~ | ~~纯诊断，无行为变化~~ | ~~极低~~ | **已完成（§8.63，2026-09-14）**：补齐约 40 条长度（逐条与 VM 的 `READ_*`、`debug.c` 反汇编器交叉核对）；`OP_CLOSURE` 因长度依赖常量表而**故意保持"未知"**；报错分为 `unknown（长度未知）`/`unsupported（已收录长度、未实现）`。**实测收益**：同一负载的拒收清单从"含糊的 138"变成分类可排期（76×4 / 93×3 / 14×2 / 142×2 / 138×49），R2 的下一批因此是测出来的而不是猜的 |
 | R5 | 闭包创建与捕获变量（`OP_CLOSURE` / `GET/SET/CLOSE_UPVALUE`） | 循环里建闭包、闭包体内读写捕获变量都不进 JIT（被调函数带 upvalue 时自动退回 VM 重入 ⇒ 语义正确但不快） | 两件基础：**(a)** func-JIT ABI 要加 closure 通道（现为 `jfn(flocals, globals)`，无 upvalue 入口）；**(b)** 循环 JIT 的 locals 在 scratch 区（迭代即复用）⇒ 直接捕获会产生**悬空 upvalue**，只能先允许"捕获已在 upvalue 链上的变量"，或改 locals 布局 | 高（ABI + 生命周期不变量） | 单独一轮，**先设计不变量再动手** |
 | R6 | 函数级 JIT 的多返回值 + `OP_TAIL_CALL` | `jit_compile_function` 直接拒收 `return_count > 1`；`OP_TAIL_CALL` 在循环 JIT 里等价"提前返回"（应归入 `has_reachable_return` 拒绝），只有函数级 JIT 有价值 | 多返回：扩返回值通道（`jit_fn_result` 单值 → 多槽约定），调用方回填约定已就绪（§8.59 的 helper）；尾调用：帧复用语义另算 | 中 | 排在 R5 之后 |
@@ -3969,6 +3969,66 @@ unsupported:93  x3   ← OP_TYPE_CHECK   ← 同上
 3. **同一份代码在 Windows 与 POSIX 上的"释放语义"可以完全不同**：
    `VirtualFree(MEM_RELEASE)` 忽略 size、`munmap` 必填 size —— 一个传 0 的调用点
    在两个平台上分别是"正确"和"永不生效"。跨平台代码里，**能忽略的参数迟早会被传错**。
+
+***
+
+### 8.64 R2 批次 2：`OP_STRING_ADD` 进 JIT（字符串插值）+ 顺带解开内联侧（2026-09-14）
+
+**选题依据（R3 实测）**：上一轮的分类直方图里 `76:STRING_ADD ×4` 是 file_manager 里
+最高频的可做缺口（`93:TYPE_CHECK ×3` 次之，下一批做）。
+
+**关键事实：这条 opcode 由字符串插值 `$"..."` 编译出**，不是 `+`：
+
+```1288:1303:src/codegen/codegen_expr.c
+                emit_byte(gen, OP_STRING_ADD, ast->line);
+```
+
+`+`（两侧都已知是 string 时）走的是**已支持的通用 `OP_ADD`**，所以它出现在"拼显示文本"的
+热循环里 —— 这也解释了它为什么在 file_manager 里高频。
+
+**实现**
+
+1. **语义唯一来源**：把 `op_string.inc` 的拼接逻辑整段抽成 `string_add(Value, Value)`
+   （落在 `vm.c`，声明进 `leno_vm.h`）；解释器的 `OP_STRING_ADD` 与 JIT 的 callout 调同一个。
+   它覆盖两条路径：两侧都是 `ObjString` → `str_concat`（正确处理内嵌 NUL）；
+   否则两侧各自 `value_to_string` 再拼。
+2. `jit_callout.c` / `jit_priv.h`：`jit_callout_string_add` = **一行转发**；
+   纯转发 ⇒ 不报错（任何值都能转字符串）⇒ 无失败通道、无 bailout 分支。
+3. `ops_callout.inc`：取值用 `TOS_CONSUME_TO(JIT_RDX)`（b）+ `TOS_CONSUME_RAX()`（a）——
+   与 `OP_EQ_INT` 同款；两次 `EMIT_RAW_TO_VALUE`（只动 RAX/R8，RDX 安全）后传参；
+   结尾 `EMIT_VALUE_TO_RAW` + `TOS_PRODUCE` + `vstack--`（净 **-1**）。
+4. 两处 scan 都按净 -1 记账 ⇒ **内联扫描不再拒绝 76**（roadmap 里"STRING_ADD 还能恢复
+   一部分内联"这一条同时兑现）。
+
+**关于"callout 里分配对象"的 GC 契约**（本轮必须想清楚的一点）
+新字符串是**分配**出来的，而这个 callout 是从 JIT 机器码里调用的。安全，理由是本工程既有
+的设计：`gc_alloc` 在 JIT 执行期间**只置让出标志**、不就地回收（§8.36 的 `jit_in_frame()`
+避让 + §8.37 的让出标志），所以不会在 callout 中途把 JIT 机器栈里的活值当垃圾收掉。
+
+**踩坑（探针必须自证）**：第一版探针我写成 `"v${i}"` —— 这门语言的插值语法是 `$"...{expr}..."`，
+`${i}` 被当成**普通字面量**，于是循环照常编译、结果"看着也正常"，结论会完全错
+（会误判成"插值走的是已支持路径"）。是"输出原样打印了 `v${i}`"才暴露的。
+⇒ 判定"某 opcode 是否真被这条源码触发"，**必须看编译侧证据**（R3 的 `unsupported opcode N`
+消失、`body_size` 变化、探针输出本身），不能只看退出码/断言。
+
+**验证**
+
+* 探针：两个插值热循环 `capable=1`（实现前会被 `unsupported opcode 76` 拒收），
+  结果 `last=v2999` / `last2=x2999` 与 `LENO_NO_JIT=1` 完全一致。
+* 新用例 `assert/test_jit_op_string_add.leno`：三条路径（int 插值 ⇒ 转换路径、
+  string+int 混合 ⇒ 快路径+转换、反复拼接 200 轮核对长度），JIT 与 `LENO_NO_JIT=1` 都 `exit=0`。
+* `file_manager` 交互负载：**`unsupported:76` 归零**、内联侧 76 也消失；
+  拒收点前移到 `93:TYPE_CHECK ×16`（`138 ×104 / 14 ×9 / 142 ×2` 为保留项与 R5）；
+  运行时 bailout **0**、`closed cleanly`。
+* `assert` 全套见提交说明；编译 0 warning。
+
+**教训**
+
+1. **opcode 的名字会骗人**：`OP_STRING_ADD` 不是"字符串 `+` 的通用路径"，
+   而是**插值专用**。选题/写用例前先看编译器在哪发它（`codegen_expr.c` 一行 grep），
+   比从名字猜快得多。
+2. **探针要先自证**：错误语法会被静默当成另一种合法语义（这里是字面量字符串），
+   于是"跑通了"反而掩盖了"根本没测到目标"。
 
 ***
 

@@ -228,6 +228,11 @@ typedef enum {
 // 返回匹配下标，-1 = 未匹配（走 default）。case_count <= 0 或非数组 → -1。
 int switch_lookup_index(Value switch_val, Value arr_val, int case_count);
 
+// OP_STRING_ADD 的语义唯一来源（定义在 vm.c）—— 解释器与 JIT callout 共用（§8.64）。
+// 字符串拼接：两侧都是 ObjString 时走 str_concat（正确处理内嵌 NUL），
+// 否则两侧各自转字符串再拼。纯 Value→Value，不依赖 VM 状态、不报错。
+Value string_add(Value a, Value b);
+
 typedef struct Chunk {
     uint8_t* code;
     int len;

@@ -273,6 +273,45 @@ int switch_lookup_index(Value switch_val, Value arr_val, int case_count) {
 }
 
 // ============================================================================
+// OP_STRING_ADD 的语义唯一来源（§8.64）
+//   字符串拼接：两侧都是 ObjString 时走 str_concat（正确处理内嵌 NUL），
+//   否则把两侧都转成字符串（value_to_string）再拼。
+// VM 的 OP_STRING_ADD 与 JIT 的 callout（jit_callout_string_add）都调它 ——
+// 两边各写一套拼接迟早分叉，而分叉表现是"某些值拼出来不一样"。
+// 纯 Value→Value：不碰 VM 状态、不报错（任何值都能转成字符串）⇒ JIT 侧无失败通道。
+// ============================================================================
+Value string_add(Value a, Value b) {
+    // 快速路径：两个操作数都是 ObjString，直接使用 str_concat（正确处理 null 字节）
+    if (val_is_obj(a) && val_as_obj(a)->type == OBJ_STRING &&
+        val_is_obj(b) && val_as_obj(b)->type == OBJ_STRING) {
+        ObjString* result = str_concat((ObjString*)val_as_obj(a), (ObjString*)val_as_obj(b));
+        return val_obj((Object*)result);
+    }
+
+    // 将两个值都转换为字符串
+    char* str_a = value_to_string(a);
+    char* str_b = value_to_string(b);
+
+    // 计算新字符串长度（转换后的字符串不含 null 字节，strlen 安全）
+    int len_a = (int)strlen(str_a);
+    int len_b = (int)strlen(str_b);
+    int total_len = len_a + len_b;
+
+    // 创建新字符串
+    ObjString* result = str_alloc(total_len);
+    memcpy(result->chars, str_a, len_a);
+    memcpy(result->chars + len_a, str_b, len_b);
+    result->chars[total_len] = '\0';
+    result->hash = hash_string(result->chars, total_len);
+
+    // 释放临时字符串
+    free(str_a);
+    free(str_b);
+
+    return val_obj((Object*)result);
+}
+
+// ============================================================================
 // 辅助函数实现 - 从各 .c 文件合并（需要在 OPCODE 之前定义）
 // ============================================================================
 // 注意：按依赖顺序包含，被依赖的在前

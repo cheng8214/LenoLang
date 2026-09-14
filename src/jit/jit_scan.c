@@ -444,6 +444,7 @@ static int scan_callee_for_inline(Chunk* cc, int local_count,
             case OP_DIV: case OP_INDEX:
             case OP_ITER_GET: case OP_ITER_GET_VALUE:   /* pop 2 push 1 → net -1 */
             case OP_SET_FIELD:                          /* pop 2 push 1 → net -1 */
+            case OP_STRING_ADD:                         /* pop 2 push 1 → net -1，R2 批次 2 */
             case OP_ADD: case OP_SUB: case OP_MUL: case OP_MOD:
             case OP_EQ: case OP_NEQ:
             case OP_SHL: case OP_SHR: case OP_USHR:
@@ -711,6 +712,10 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                 break;
             case OP_DIV:
                 /* 通用除法 (callout): pop 2 push 1 → net -1 */
+                vstack -= 1;
+                break;
+            case OP_STRING_ADD:
+                /* 字符串拼接（字符串插值编译出）：pop 2 push 1 → net -1，R2 批次 2 */
                 vstack -= 1;
                 break;
             case OP_ADD: case OP_SUB: case OP_MUL: case OP_MOD:

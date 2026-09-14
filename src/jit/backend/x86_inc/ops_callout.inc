@@ -480,6 +480,33 @@
                 break;
             }
 
+            /* ---- OP_STRING_ADD（字符串插值 `"${x}"` 编译出的拼接）—— R2 批次 2（§8.64）----
+             * 解释器语义（vm/vminc/op_string.inc）：弹 b（TOS）、弹 a → 拼成新串 → 压回，
+             * 即 **pop 2 push 1 → net -1**。两侧都是 ObjString 时走 str_concat
+             * （正确处理内嵌 NUL），否则两侧各自转字符串（value_to_string）再拼。
+             * 拼接逻辑复用 VM 的 string_add（**语义唯一来源**），JIT 只做取值/装箱/回填。
+             * 会分配：在 JIT 帧里安全 —— GC 在 JIT 执行期间只置让出标志、不就地回收
+             *   （§8.36/§8.37），所以 callout 里分配不会中途搬走 JIT 机器栈里的活值。
+             * 不报错（任何值都能转字符串）⇒ 无失败通道、无 bailout 分支。 */
+            case OP_STRING_ADD: {
+                TOS_CONSUME_TO(JIT_RDX);            /* b（TOS，raw） */
+                TOS_CONSUME_RAX();                  /* a（raw） */
+                EMIT_RAW_TO_VALUE();                /* 裸 int48 → 装箱；其余原样 */
+                EMIT_STORE_TMP(tmp1_disp, JIT_RAX); /* a（RAW_TO_VALUE 只动 RAX/R8，RDX 安全） */
+                emit_mov_rr(cb, JIT_RAX, JIT_RDX);
+                EMIT_RAW_TO_VALUE();                /* b */
+                EMIT_STORE_TMP(tmp2_disp, JIT_RAX);
+                EMIT_CALLOUT_BEGIN();
+                EMIT_LOAD_TMP(JIT_ARG1, tmp1_disp); /* a */
+                EMIT_LOAD_TMP(JIT_ARG2, tmp2_disp); /* b */
+                EMIT_CALL(jit_callout_string_add);
+                EMIT_CALLOUT_END();
+                EMIT_VALUE_TO_RAW();
+                TOS_PRODUCE();
+                vstack--;                           /* 净 -1 */
+                break;
+            }
+
             /* ---- OP_GET_FIELD / OP_SET_FIELD（struct 字段读写）—— §5 覆盖面 L3 ----
              * 解释器语义：vm/vminc/op_struct.inc。
              *   GET_FIELD：弹 obj、压 field（net 0）；struct 走越界检查 + struct_get_field。
