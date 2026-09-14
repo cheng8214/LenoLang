@@ -82,6 +82,11 @@
                     kind = SYM_LOCAL;
                 }
 
+                // 同名冲突标记：跨种类重名或同类重复定义时置 1。
+                // 四张类型表（struct/cstruct/enum/face）统一策略——**报错后不再写入全局定义表**，
+                // 否则一个非法定义会留在表里，被后续 *_def_find / struct_def_find 取到并派生次级错误。
+                int struct_dup = 0;
+
                 // 先检查是否已经预注册
                 Symbol* sym = scope_resolve_local(s->current, ast->u.struct_def.name);
                 if (sym && sym->type && sym->type->kind == TYPE_STRUCT) {
@@ -128,19 +133,22 @@
                     }
                 } else {
                     char msg[BUFFER_MEDIUM];
-                    // 检查是否已经被定义为其他类型（cstruct/enum）
+                    // 检查是否已经被定义为其他类型（cstruct/enum/face）
                     Symbol* existing = scope_resolve_local(s->current, ast->u.struct_def.name);
                     if (existing && existing->type) {
                         if (existing->type->kind == TYPE_CSTRUCT) {
                             snprintf(msg, sizeof(msg), "类型 '%s' 已经定义为 cstruct，不能重复定义为 struct", ast->u.struct_def.name);
                         } else if (existing->type->kind == TYPE_ENUM) {
                             snprintf(msg, sizeof(msg), "类型 '%s' 已经定义为 enum，不能重复定义为 struct", ast->u.struct_def.name);
+                        } else if (existing->type->kind == TYPE_FACE) {
+                            snprintf(msg, sizeof(msg), "类型 '%s' 已经定义为 face，不能重复定义为 struct", ast->u.struct_def.name);
                         } else {
                             snprintf(msg, sizeof(msg), "struct '%s' 重复定义", ast->u.struct_def.name);
                         }
                     } else {
                         snprintf(msg, sizeof(msg), "struct '%s' 重复定义", ast->u.struct_def.name);
                     }
+                    struct_dup = 1;
                     error_add_at(ERR_DUPLICATE_VAR, ast->line, ast->column, msg);
                 }
 
@@ -398,6 +406,9 @@
                     }
                 }
 
+                // 同名冲突已报错：不再创建/覆盖全局 struct 定义表（与 cstruct/enum/face 统一策略）
+                if (struct_dup) break;
+
                 ObjStructDef* early_def = struct_def_find(ast->u.struct_def.name);
                 if (early_def) {
                     // 预注册阶段已创建 early_def，但可能缺少 ctor/dtor 信息，补上
@@ -463,6 +474,9 @@
                 TypeInfo* face_type = type_new(TYPE_FACE);
                 face_type->struct_name = strdup(ast->u.face_def.name);
 
+                // 同名冲突标记（与 struct 分支同一策略：报错后不再写入全局 face 定义表）
+                int face_dup = 0;
+
                 Symbol* existing = scope_resolve_local(s->current, ast->u.face_def.name);
                 if (existing && existing->type && existing->type->kind == TYPE_FACE) {
                     type_free(existing->type);
@@ -481,6 +495,7 @@
                     } else {
                         snprintf(msg, sizeof(msg), "face '%s' 重复定义", ast->u.face_def.name);
                     }
+                    face_dup = 1;
                     error_add_at(ERR_DUPLICATE_VAR, ast->line, ast->column, msg);
                     type_free(face_type);   // 未挂到任何 symbol 上，避免泄漏
                 } else {
@@ -505,6 +520,9 @@
                         }
                     }
                 }
+
+                // 同名冲突已报错：不再注册（全局 face 定义表保持原状）
+                if (face_dup) break;
 
                 ObjFaceDef* fdef = face_def_new(ast->u.face_def.name, ast->u.face_def.method_count);
                 if (fdef) {
