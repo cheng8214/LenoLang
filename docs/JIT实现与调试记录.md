@@ -654,6 +654,7 @@ inline-scan: 76(OP_STRING_ADD) / 88(模块变量访问) / 156(SWITCH_LOOKUP，R1
 | R6 | 函数级 JIT 的多返回值 + `OP_TAIL_CALL` | `jit_compile_function` 直接拒收 `return_count > 1`；`OP_TAIL_CALL` 在循环 JIT 里等价"提前返回"（应归入 `has_reachable_return` 拒绝），只有函数级 JIT 有价值 | 多返回：扩返回值通道（`jit_fn_result` 单值 → 多槽约定），调用方回填约定已就绪（§8.59 的 helper）；尾调用：帧复用语义另算 | 中 | 排在 R5 之后 |
 | R7 | 内联的跨模块限制 | 模块变量/函数访问被 inline scan 一刀拒绝（§8.55/§8.56）——因为内联后没有 callee 的帧，模块归属不可知 | 在 inline site 记录 callee 的 module，与 caller 相同才允许内联 | 低 | 有内联收益需求时再做 |
 | R8 | 性能基准复盘 | §9 的数据需要按最新覆盖面重跑（JIT vs `LENO_NO_JIT=1`），量化"覆盖面增长（如 `FuncCompiled 5→161`）到底换来多少" | 纯测量；也顺便验证 R4 的延迟回收没有性能回退 | 极低 | 随时（建议 R4 之后做一次） |
+| ~~R9~~ | ~~`OP_SWITCH_LOOKUP` 的 callout 开销~~ | ~~R9 前的基准显示：JIT 下 switch 每轮一次 callout（+15.5ms/3M 轮），比等价的 if 链慢 3.7 倍~~ | ~~编译期分流：case 值全 int 时发内联比较链~~ | ~~低（非 int 一律退回原 callout 路径）~~ | **已完成（§8.62，2026-09-14）**：int 快路径 + int48 守卫（bailout 交解释器，保住 bigint 值能命中 int case 的语义）+ 重复值排除；switch 的 JIT 时间 30.4 → **15.7 ms**，与 if 同级 |
 | — | **建议维持拒绝** | `OP_THROW`、`OP_AWAIT`/`OP_ASYNC_CALL`、`OP_CLIB_CALL`/`OP_CFUNC_CALLBACK`、`OP_GET_FIELD_ADDR`、`OP_DTOR_LOCAL`、`OP_TAIL_CALL_NATIVE`、`OP_PUSH_TYPE_ARGS`、**`OP_GET_CSTRUCT_DEF`(138)**、模块定义期指令 | 语义特殊（异常/协程/FFI/泛型/仅初始化期出现），收益低、风险高 | — | 维持 |
 
 **45 项未收录全量（`编号:名字`，用于 L0 逐项补长度；`80:LENGTH`、`81:ITER_GET`、
@@ -3826,6 +3827,76 @@ int / bigint / float / string 四路二分查找。
    设计 callout 时优先问"能不能把失败面压到零"。
 4. 跳转指令弹值前先想清楚是**消费**还是 **peek**：`TOS_CONSUME_RAX` 与 `TOS_SPILL`
    在不同 opcode 上语义相反，而机器码层面只差一条 pop，错了就是静默的栈深错位。
+
+> **后续（§8.62，同日）**：上面的 callout 路径虽然语义最稳，但每轮一次真实 C 调用在热循环里
+> 太贵（基准显示比等价的 `if` 链慢 3.7 倍）⇒ 同日加了 **R9 编译期分流**：case 值全 int 时改发
+> 内联比较链（+ int48 守卫），switch 的 JIT 时间 30.4 → 15.7 ms；callout 路径保留给
+> float/string/bigint case。语义完全一致，见 §8.62。
+
+***
+
+### 8.62 R9：`switch` 的 JIT 分派提速（int 内联比较链）—— 一次"基准驱动"的优化（2026-09-14）
+
+**起因：先量，再动手。** 用 4 个等价负载（switch 分派 / if 链分派 / 纯循环 / 空程序）
+在 VM 与 JIT 下各跑 3 次取最小（N = 3,000,000，扣除同模式进程启动开销）得到：
+
+| 负载（净耗时） | VM | JIT（R9 前） | JIT（R9 后） |
+|---|---|---|---|
+| 纯循环 | 143.9 ms | 6.1 ms | 7.9 ms |
+| + `switch`（4 case + default） | 157.2 ms | **21.6 ms** | **8.0 ms** |
+| + `if/else if` 链 | 162.9 ms | 5.9 ms | 6.6 ms |
+
+* **VM 里两者基本持平**（switch 靠二分查找略省几次比较，但循环开销占 90% 以上）；
+* **JIT 里 `if` 的分派几乎免费**（`cmp`+`jcc`，且 `i%5` 的分支被预测器吃满），
+  而 `switch` 每轮要走一次 **callout**（真实 C 调用 + 序言保存 RSP/RCX/R9 + 对齐 + 回来），
+  约 **5.2 ns/轮 ≈ 15~20 周期**，全花在调用本身而不是查找 ⇒ switch 比 if 慢 3.7 倍。
+
+**修法：编译期分流**（`ops_jump.inc` 的 `case OP_SWITCH_LOOKUP`）
+
+* **A. int 快路径**：case 值**全是 int 且无重复**时，直接发内联比较链
+  `[int48 守卫] + cmp rax,case_k / je case_k … / jmp default` —— 与 `if` 链同级。
+* **B. callout 路径**：case 值含 float/string/bigint 或常量表解析不出时，仍走
+  `jit_callout_switch_lookup`（§8.61 的语义唯一来源）。**语义完全不变**，只是给常见情形提速。
+
+**正确性的三个要点**
+
+1. **int48 守卫不能省，而且它就是语义关键**：非 int48 的值（裸 double / NaN-boxed 的
+   null/bool/对象/bigint）一律 **bailout → 解释器重放**。因为 **bigint 值配 int case 时
+   解释器是能命中的**（bigint 分支接受 int 元素），拿 bigint 的位模式去比 int 常量会算错。
+   守卫用与 `EMIT_INT48_CHECK` 完全相同的指令序列（`sar 47 / inc / cmp 1 / ja`）——
+   这套判据在本工程里已经用了上百处，自创检查只会引入偏差。
+2. **重复 case 值必须排除**：解释器的二分查找在重复值上命中的是**中间**那个，而线性链命中的是
+   **第一个** ⇒ 两者会跳到**不同的 case 体**（不同语句！）。数组是排序过的，重复必然相邻，
+   编译期扫一遍即可。
+3. **裸 int48 的符号扩展**：JIT 虚拟栈里 int 是**未装箱**的 int48，负数以全 1 符号扩展存储，
+   所以 case 常量也要按 `(int64_t)val_as_int(v)` 比较 —— 而不是装箱后的 `val_int(v)`。
+
+**踩坑（值得记）**：第一版我把比较常量写成了装箱形态 `val_int(v)`，于是位比较**恒不成立**、
+所有 int 值都会掉到 default。**断言确实会失败**（结果从 65400 变成 297000），
+但真正先暴露问题的是基准：分派耗时**没有任何变化**（30.4 ms 原样）——
+"优化写了但没生效"这类问题，**只有基准看得出来**。
+
+**验证**
+
+* 基准（同机同法，取 3 次最小）：switch 的 JIT 时间 **30.4 → 15.7 ms**；
+  分派净开销 **+15.5 ms → +0.1 ms**，与 `if` 链（+0 ms 级）同级；结果 `acc=65400000` 不变。
+* 扩展用例 `assert/test_jit_op_switch_lookup.leno`：新增
+  ① 负数 case（裸 int48 符号扩展）、② **字符串 case**（走 callout 路径，命中 + default）、
+  ③ **int case 配非 int 值**（float / 字符串 ⇒ 守卫 bailout）。
+  JIT 与 `LENO_NO_JIT=1` 都 `exit=0`，断言完全一致；`LENO_JIT_DEBUG` 下 `Bailouts: 6`
+  （两个非 int 循环各 3 次 = 守卫按设计触发后交解释器）—— **这正是守卫正确性的证明**。
+* `file_manager` 交互负载：**运行时 bailout 仍 0**（真实 switch 的值都是 int ⇒ 全走快路径）、
+  拒收直方图不变（只剩刻意的 `138`）、`closed cleanly`。
+* `assert` 全套见提交说明；编译 0 warning。
+
+**教训**
+
+1. **基准是"优化是否生效"的唯一证据**：断言只能证明"没算错"，证明不了"变快了"或"真的走了新路径"。
+   今后这类优化一律先写等价负载、记录 before/after。
+2. **复用工程里已有的判据与指令序列**（`EMIT_INT48_CHECK`、`val_is_int` 的语义）比自己拼一套更安全 ——
+   自创检查的偏差只会在极端输入上暴露。
+3. 编译器生成的**常量数组**要先想清楚它的边界（这里：重复值 ⇒ 二分查找与线性链命中位置不同），
+   否则"等价改写"会悄悄改变语义。
 
 ***
 

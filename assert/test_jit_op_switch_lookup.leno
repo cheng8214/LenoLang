@@ -1,16 +1,17 @@
-// OP_SWITCH_LOOKUP 进 JIT —— 覆盖面 R1（§8.61）
+// OP_SWITCH_LOOKUP 进 JIT —— 覆盖面 R1（§8.61）+ int 快路径 R9（§8.62）
 //
 // 编译器只在「>= 4 个同类型常量 case」时才发 OP_SWITCH_LOOKUP
-// （codegen_stmt.c 的 gen_switch），所以这里写 4 case + default。
+// （codegen_stmt.c 的 gen_switch），所以这里都写 4 case + default。
 //
-// 两条路径都要覆盖：
-//   1) switch 直接写在**热循环体**里 → 循环 JIT 编译它（本用例第 1 段）；
-//   2) switch 写在**被调函数**里   → 函数级 JIT 编译它（本用例第 2 段，
-//      这也顺带验证 classify 之前因缺 OP_SWITCH_LOOKUP 而进不了函数级 JIT）。
-//
-// JIT 侧语义：弹 switch 值 → callout 调 VM 的 switch_lookup_index（语义唯一来源）
-// → 用返回下标发线性比较链。永不失败 ⇒ 无 bailout 分支。
-// 与 LENO_NO_JIT=1 的结果必须逐位一致。
+// 覆盖的路径：
+//   A. int case + int 值  ⇒ **R9 内联快路径**（int48 守卫 + 逐位比较链），
+//      并且既覆盖"switch 在热循环体里"（循环 JIT），也覆盖"switch 在被调函数里"（函数级 JIT）。
+//   B. int case + **非 int 值**（float/字符串/大数）⇒ 守卫失败 → bailout → 解释器重放，
+//      结果必须与 LENO_NO_JIT=1 一致（解释器走完整四路查找；float/string 配 int case
+//      一律 default，而 **bigint 配 int case 是能命中的** —— 所以守卫不能省）。
+//   C. **字符串 case** ⇒ 走 callout 路径（jit_callout_switch_lookup → VM 的
+//      switch_lookup_index，语义唯一来源）。
+//   D. 负数 case ⇒ 裸 int48 的符号扩展形态（逐位比较的正确性）。
 
 func classify(int v): int {
     switch v {
@@ -22,8 +23,28 @@ func classify(int v): int {
     }
 }
 
+func negClassify(int v): int {
+    switch v {
+        case -3 { return 1 }
+        case -2 { return 2 }
+        case -1 { return 3 }
+        case 0 { return 4 }
+        default { return 9 }
+    }
+}
+
+func strClassify(string s): int {
+    switch s {
+        case "apple" { return 1 }
+        case "banana" { return 2 }
+        case "cherry" { return 3 }
+        case "date" { return 4 }
+        default { return 9 }
+    }
+}
+
 main() {
-    // ---- 1) 热循环体里的 switch：命中 case 0..3 + 每轮一次 default ----
+    // ---- A1. 热循环体里的 switch（内联快路径）----
     int acc = 0
     int i = 0
     while i < 3000 {
@@ -40,7 +61,7 @@ main() {
     // 每 5 次一轮：1+2+3+4+99 = 109；3000/5 = 600 轮 ⇒ 65400
     assert_eq(acc, 65400)
 
-    // ---- 2) 被调函数里的 switch（函数级 JIT）----
+    // ---- A2. 被调函数里的 switch（函数级 JIT，同一份快路径）----
     int acc2 = 0
     int j = 0
     while j < 3000 {
@@ -49,6 +70,65 @@ main() {
     }
     // 每轮 10+20+30+40+99 = 199；600 轮 ⇒ 119400
     assert_eq(acc2, 119400)
+
+    // ---- D. 负数 case ----
+    int nacc = 0
+    int n = 0
+    while n < 3000 {
+        nacc = nacc + negClassify(n % 5 - 3)
+        n = n + 1
+    }
+    // n%5-3 = -3,-2,-1,0,1 ⇒ 1+2+3+4+9 = 19；600 轮 ⇒ 11400
+    assert_eq(nacc, 11400)
+
+    // ---- C. 字符串 case（callout 路径）：命中 + default ----
+    int sacc = 0
+    int s = 0
+    while s < 3000 {
+        sacc = sacc + strClassify("cherry")
+        s = s + 1
+    }
+    assert_eq(sacc, 9000)
+
+    int sacc2 = 0
+    int s2 = 0
+    while s2 < 3000 {
+        sacc2 = sacc2 + strClassify("zzz")
+        s2 = s2 + 1
+    }
+    assert_eq(sacc2, 27000)
+
+    // ---- B. int case + 非 int 值：必须与解释器一致（float / 字符串 一律 default）----
+    //     每轮都会守卫失败 → bailout（JIT_BAILOUT_LIMIT 次后退回解释器），所以用小循环。
+    float fv = 1.5
+    int facc = 0
+    int f = 0
+    while f < 200 {
+        switch fv {
+            case 0 { facc = facc + 1 }
+            case 1 { facc = facc + 2 }
+            case 2 { facc = facc + 3 }
+            case 3 { facc = facc + 4 }
+            default { facc = facc + 7 }
+        }
+        f = f + 1
+    }
+    assert_eq(facc, 1400)   // 200 × 7（default）
+
+    string sv = "2"
+    int tacc = 0
+    int t = 0
+    while t < 200 {
+        switch sv {
+            case 0 { tacc = tacc + 1 }
+            case 1 { tacc = tacc + 2 }
+            case 2 { tacc = tacc + 3 }
+            case 3 { tacc = tacc + 4 }
+            default { tacc = tacc + 7 }
+        }
+        t = t + 1
+    }
+    assert_eq(tacc, 1400)   // 200 × 7（default）
 
     print("test_jit_op_switch_lookup: OK")
 }
