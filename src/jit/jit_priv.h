@@ -209,6 +209,18 @@ static inline int offmap_lookup(CodegenCtx* ctx, int bc_off) {
     return -1;
 }
 
+/* bc_off 是否是某条**尚未落定**的前向跳转的目标（patches 里已登记）。
+ * 用途见 x86_64.c 的「合并点 TOS 归一化」：跳转路径一律以「TOS 在内存栈」的形态
+ * 到达（OP_JUMP 先 TOS_SPILL；条件跳转的 falsey/truthy 路径 push），所以合并点必须
+ * 也按内存形态发码，否则两条到达路径的栈形态不一致 → 每次经过都漏一个 slot。 */
+static inline int patch_targets(const CodegenCtx* ctx, int bc_off) {
+    for (int i = 0; i < ctx->patch_count; i++) {
+        if (ctx->patches[i].target_bc == bc_off)
+            return 1;
+    }
+    return 0;
+}
+
 /* bailout 分支的「站点桩」（§8.40）
  *
  * 原来：每个 int48/溢出检查在**热路径上**就地写一次 jit_bailout_site

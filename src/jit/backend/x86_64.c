@@ -50,6 +50,8 @@
  * §8.45：R12/R13/R14 不再被 callout 使用（保存已挪到帧槽），改为按需承载 pin。 */
 #define EMIT_EPILOGUE() do { \
     emit_rr(cb, 0x89, JIT_RSP, JIT_RBP); \
+    emit_pop_reg(cb, JIT_RSI); \
+    emit_pop_reg(cb, JIT_RDI); \
     emit_pop_reg(cb, JIT_RBX); \
     for (int _pi = pin_n - 1; _pi >= 0; _pi--) emit_pop_reg(cb, JIT_PIN_REGS[_pi]); \
     emit_pop_rbp(cb); \
@@ -876,6 +878,16 @@ int compile_loop(CodegenCtx* ctx) {
     for (int _i = 0; _i < pin_n; _i++)        /* §8.45 pin 值寄存器（callee-saved） */
         emit_push_reg(cb, JIT_PIN_REGS[_i]);
     emit_push_reg(cb, JIT_RBX);              /* push rbx (type bitmap, callee-saved) */
+    /* ★ RDI / RSI 保存（2026-09-14 修复「长跑后栈溢出/访问违例」）：
+     * JIT 内部把 RDI/RSI 当 callout 参数寄存器用（JIT_ARG1/JIT_ARG2，见 EMIT_CALLOUT），
+     * 但它们是**被调方必须保存**的寄存器（Win64 nonvolatile；SysV 上虽为 volatile，
+     * 多两条 push/pop 也无害）—— 序言漏了它们，等于每次执行完一个含 callout 的 JIT
+     * 循环都把 C 调用方（jit_try_hot_loop → 解释器主循环）的 RDI/RSI 破坏掉。
+     * 解释器把活值放在这两个寄存器里时就会用被污染的值访存/设栈 → 随机崩溃，
+     * 且与「已经执行了多少次 JIT」相关（matrix_rain 10s 必崩、3s 不崩即此）。
+     * 位置必须在 `mov rbp, rsp` 之前，尾声按逆序 pop。 */
+    emit_push_reg(cb, JIT_RDI);
+    emit_push_reg(cb, JIT_RSI);
     emit_mov_rbp_rsp(cb);                     /* mov rbp, rsp      */
 
     /* ---- Entry ABI shim (System V AMD64) -----------------------------
@@ -1158,7 +1170,6 @@ int compile_loop(CodegenCtx* ctx) {
 
         uint8_t op = *ip;
         int size = opcode_size(ip);
-        offmap_add(ctx, bc_off, cb->len);
 
         /* §8.41：消费上一条指令留下的「结果是 raw int48」标记（一次性：
          * 只有**紧邻的前一条**指令作过证明才算数，跨一条就失效）。 */
@@ -1195,6 +1206,34 @@ int compile_loop(CodegenCtx* ctx) {
                 tos_live = 0;
             }
         }
+
+        /* ---- ★ 合并点 TOS 归一化（2026-09-14 修复「每轮迭代漏 8 字节 → RSP 漂移
+         *      → 长跑栈溢出」）----
+         * 背景：跳转路径**一律**以「TOS 落在内存栈」的形态到达目标
+         *   - OP_JUMP            ：先 TOS_SPILL 再跳；
+         *   - 条件跳转（真假分支）：tos_live 时先 push 再跳，否则值本就在内存栈上；
+         * 而**直落**到达目标时，上一条指令可能把 TOS 留在 RAX 里（tos_live=1）。
+         * 两条到达路径形态不一致 ⇒ 按直落形态（mem = vstack - tos_live）发码的目标代码
+         * 会比运行时少算一个 slot，于是每次经过这个合并点，跳转路径 push 的那一项就
+         * 永远没人消费 ⇒ **每轮迭代泄漏 8 字节**，RSP 单调下漂，最终撞栈底崩溃
+         * （matrix_rain 报告里的 `if dc >= b0 and dc <= b1` 短路恰好构成这种形态：
+         *  第一条 JUMP_IF_FALSE 的 false 分支跳到第二条 JUMP_IF_FALSE 本身，
+         *  而第二条又能从上一条 LE_INT 直落到达 —— 实测 1,599,992 = 199,999 × 8）。
+         *
+         * 修法：在**直落路径**上把 TOS 落到内存（`push rax`；vstack 不变，只把
+         * tos_live 清 0），并把 offmap_add 挪到这条 spill **之后** —— 于是跳转路径落在
+         * spill 之后（本来就是内存形态，不需要也不该再 push），直落路径执行 spill 后
+         * 也变成内存形态，两条路径一致。值本身两条路径都在 RAX 里（条件跳转的
+         * 内存形态分支会先 mov rax,[rsp] 把值读回 RAX），所以 push 的是正确的值。
+         * 注意只在 vstack 可达（直落会执行）时才需要；直落不可达时下面的 restore
+         * 已经把 tos_live 清 0，不会有形态分歧。 */
+        if (vstack != VSTACK_UNREACHABLE && tos_live && patch_targets(ctx, bc_off)) {
+            emit_push_reg(cb, JIT_RAX);
+            tos_live = 0;
+        }
+
+        /* offmap_add 必须记在 spill 之后：跳转目标要落在 spill 之后。 */
+        offmap_add(ctx, bc_off, cb->len);
 
         switch (op) {
             #include "x86_inc/ops_stack.inc"

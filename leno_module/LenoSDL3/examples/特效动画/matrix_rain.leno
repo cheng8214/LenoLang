@@ -2,6 +2,10 @@
 // 经典黑客帝国风格字符雨：绿色字符从顶部不断下落，头部亮白，尾部渐隐
 // 操作：ESC 退出 | F1 切换统计信息 | SPACE 切换字符集
 //
+// 测试模式（无人值守跑性能对照，避免 GUI 卡住）：
+//   build\lenojit.exe matrix_rain.leno 10    → 运行 10 秒后自动关闭并打印性能报告
+//   不传参数则一直运行到用户按 ESC / 关窗。
+//
 // ★ 性能优化（2026-08-10 v3）：
 //   字符掩码预渲染为"可直接 memcpy 的 RGBA 亮绿块"，每帧用整行 ffi.memcpy 拷入整帧缓冲，
 //   再整帧一次 blitBuffer 上传。拖尾用 GPU fillRect 半透明黑。
@@ -42,6 +46,20 @@ func randCharIdx(): int { return rands.ints(0, charSet.len() - 1) }
 main() {
     var winW = 1000
     var winH = 700
+
+    // ==================== 测试模式：限时自动关闭 ====================
+    // 首个命令行参数为秒数时（如 `matrix_rain.leno 10`），到点自动退出并打印报告；
+    // 不传参 / 参数非数字则 0 = 关闭该功能，照常等 ESC / 关窗。
+    var autoCloseSecs = 0.0
+    var rawArgs = _args()
+    if rawArgs.len() >= 1 {
+        try {
+            autoCloseSecs = _float("" + rawArgs[0])
+        } catch e {
+            autoCloseSecs = 0.0
+        }
+    }
+    if autoCloseSecs < 0.0 { autoCloseSecs = 0.0 }
 
     var win = SDL3.createWindow({title: "Matrix Rain 矩阵字符雨 — ESC 退出", w: winW, h: winH, flags: WindowFlag.RESIZABLE})
     if not win.ok { return }
@@ -156,6 +174,14 @@ main() {
     var fpsFrames = 0; var fps = 0; var fpsStart = times.ns()
     var showStats = true
     var useKana = false
+
+    // 测试模式的限时基准（0 = 不限时）
+    // 注意：阈值全程用**浮点秒**比较。不能用 `_int(secs * 1e9)` ——
+    // `_int` 是 32 位截断（3e9 → -2147483648），阈值变负数就永远不触发。
+    var loopStartNs = times.ns()
+    if autoCloseSecs > 0.0 {
+        print("[TEST] 限时自动关闭: " + autoCloseSecs + " 秒")
+    }
 
     // ==================== 性能统计（退出时输出，对标 Python） ====================
     var peakDrawn = 0
@@ -302,9 +328,15 @@ main() {
         if drawn > peakDrawn { peakDrawn = drawn }
         perfLogs.add(drawn)
         perfMs.add(_int((times.ns() - t0) / 1000000.0))
+
+        // 测试模式：到时自动关闭（在帧处理结束后判定，统计口径不受影响）
+        if autoCloseSecs > 0.0 and times.ns() - loopStartNs >= autoCloseSecs * 1000000000.0 { running = false }
     }
 
     // 清理
+    if autoCloseSecs > 0.0 {
+        print("[TEST] 实际循环运行 " + _int((times.ns() - loopStartNs) / 1000000.0) + " ms，共 " + frame + " 帧")
+    }
     for glyphs.len() to gi { glyphs[gi].free() }
     buf.free()
     ren.destroy()

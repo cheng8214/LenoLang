@@ -2703,6 +2703,105 @@ sub rax,1; jne` —— **`inp & 1135` 整条被 gcc 删掉了**。
 
 ***
 
+### 8.47 JIT 长跑栈溢出（`0xC00000FD`）：合并点 TOS 形态不一致 + `RDI`/`RSI` 未保存（2026-09-14）
+
+**症状**：matrix_rain 这类「外层 while + 内层 for + 退出报告分桶循环」的程序，JIT 开到一定
+执行量后必崩：3s（1567 帧）不崩、7s（3539 帧）不崩、**10s（≈5100 帧）3/3 崩**（退出码
+`0xC00000FD`，RSP 撞栈底）；`LENO_NO_JIT=1` 干净退出；`LENO_JIT_DEBUG=1`（I/O 巨慢、
+JIT 执行次数只有 1/20）也不崩 ⇒ 与**JIT 执行次数**而非墙钟相关。崩溃点固定在**退出报告
+阶段**：stdout 停在分桶表最后一行，缺「整体平均」。
+
+> 注意：这不是「加限时自动关闭」引入的。自动关闭只是让「长跑」变成常规操作，把原本
+> 潜伏的 codegen bug 暴露出来；Leno 层那几行（`_args()` + 一句比较）与 JIT 无关，
+> 关掉 JIT 就不再崩。
+
+**最小复现**（无 GUI，秒级）：
+
+```leno
+var logs = []; var ms = []
+for 0 : 20000 - 1 to i { logs.add(250 + (i % 50)); ms.add(1) }
+var s = 0; var t = 0; var b0 = 0; var b1 = 49
+while b0 <= 5000 {                          // 101 个桶
+    for 0 : logs.len() - 1 to k {           // 每桶 20000 轮
+        var dc = logs[k]
+        if dc >= b0 and dc <= b1 { s += dc; t += ms[k] }
+    }
+    b0 += 50; b1 += 50
+}
+```
+
+`if` 里去掉 `and` 短路同样崩；把 `s += dc` 换成 `s += 1` 也崩；**没有 `if` 就不崩**
+（纯算术嵌套循环 2000 万轮也正常）。临界规模实测：101 桶 × 5000 轮/桶 = 505,000 轮不崩、
+101 × 6000 = 606,000 轮就崩（≈4.4MB 漂移）⇒ **每轮迭代泄漏一个 8 字节 slot**。
+
+**定位手段**（临时探针，已删除，思路留档）：在 codegen 的每条算子前插一段自检
+`drift = (rbp - frame_sz - 8*内存栈项数) - rsp`，按 `bc_off` 分别记最大值 —— 漂移在某条
+算子之后整段抬高，那条算子就是漏点。实测阶梯：
+
+```
+bc_off 0..77 = 15984      ← 1998 × 8
+bc_off 90    = 15992      ← 1999 × 8，即 +8/轮
+```
+
+（探针必须放在 vstack 恢复**之后**，否则跳转目标处的 `vstack` 还是 `VSTACK_UNREACHABLE`
+会被跳过；期望值的符号也踩过一次坑：内存栈项是 push 在 `rbp - frame_sz` **之下**，
+期望应为 `rbp - frame_sz - 8*项数`。）
+
+**根因①：合并点两条到达路径的 TOS 形态不一致**（`x86_64.c`）
+
+短路 `and` 编译成两条 `JUMP_IF_FALSE`：第一条的 false 分支 push 一个 slot 后**跳到第二条
+`JUMP_IF_FALSE` 本身**（bc_off 90），而第二条又能从上一条 `LE_INT` **直落**到达 —— 此时
+TOS 还在 RAX 里（`tos_live=1`）。codegen 只按直落形态发码（内存栈项数 =
+`vstack - tos_live` 记成 0），于是跳转路径 push 进去的那一项**永远没人消费**，每经过一次
+这个合并点就漏 8 字节。（`patch_add` 只记了 vstack、没记 TOS 形态；而 vstack 恢复块只在
+`VSTACK_UNREACHABLE` 时才把 `tos_live` 清 0，所以「直落可达的合并点」留下了这个分歧。）
+
+**修法**：合并点统一到「TOS 在内存栈」形态 —— 若本偏移是某条前向跳转的目标
+（新增 `patch_targets()`）且当前 `tos_live`，就在**直落路径**上补一条 `push rax`
+（`vstack` 不变，只把 `tos_live` 清 0），并把 `offmap_add` 挪到这条 spill **之后**：
+跳转路径落在 spill 之后（本来就是内存形态、不该再 push），直落路径执行 spill 后同样变成
+内存形态，两条路径一致。值在两条路径上都在 RAX（条件跳转的内存形态分支会先
+`mov rax,[rsp]` 读回），所以 push 的是正确的值。只在 `vstack` 可达（直落会执行）时才需要。
+
+**根因②：`RDI`/`RSI` 没保存（Win64 nonvolatile）**
+
+JIT 用 `RDI`/`RSI` 当 callout 实参寄存器（`JIT_ARG1/JIT_ARG2`），但序言只 push 了
+`rbp/pin(4)/rbx` —— 每个含 callout 的 JIT 循环执行完都会破坏 C 调用方
+（`jit_try_hot_loop` → 解释器主循环）的 `RDI`/`RSI`，解释器一旦把活值放在这两个寄存器里
+就会用被污染的值访存/设栈。本轮是用「JIT 返回后 C 侧紧接着以 `%rsi` 为基址访存」的崩溃现场
+抓到的。（SysV 上 `RDI`/`RSI` 是 volatile，多两条 push/pop 无害，故两平台统一保存。）
+这一条与根因①**独立**：只修②不修①，最小复现照样崩。
+
+**验证**
+
+* 最小复现 `exit=0`，`s=5490000 t=20000` 与解释器逐位一致；断点探针零漂移。
+* matrix_rain 10s × 3：全部 `exit=0`（修复前 3/3 崩），帧率无回归（≈5170 帧/10s vs 修复前 ≈5100）。
+* 新增回归测试 `assert/test_jit_rsp_drift.leno`（§8.47 专用：`and`/单条件/`or` 三种短路形态
+  + 值断言）：**修复版 3/3 pass；关掉修复的对照二进制 3/3 以 `0xC00000FD` 崩溃**。
+* `assert` **274 passed / 0 failed**（273 + 新增 1）。
+* 开/关 JIT 差分（stdout + 退出码，只比较 stdout 以免与 stderr 的统计块交错）：
+  `examples/{struct,func,module_export_struct,cstruct}` **59 个文件零差异**；
+  `assert` 里 JIT/控制流/循环/闭包相关 **62 个文件零差异**。
+* `probe_local_fold` / `probe_eq_identity` / `probe_bailout_sites` / `probe_index_slowpath` /
+  `probe_cast_int_peephole` 与 `LENO_NO_JIT=1` 输出一致；
+  `probe_jit_gc_safepoint`（`bad=0 reused=0 sum=6.398e+06`）、`probe_method` / `probe_alloc2`
+  的 `sum` 类结果一致（仅耗时数字不同）。
+
+**教训**
+
+1. **合并点必须约定唯一的栈形态**：跳转路径一律把 TOS 落栈，而直落路径可能把它留在寄存器。
+   两者汇到同一个 bc_off 时，只记 `vstack` 是不够的，`tos_live` 必须一起归一 —— 否则
+   「形态差一个 slot」会变成每轮一次的静默泄漏。修的时候要把 `offmap_add` 放到归一化
+   代码之后，才能让跳转绕开它。
+2. **跨 ABI 边界先数清「被调方必须保存」的寄存器**：Win64 的 `RDI`/`RSI` 很容易被当成
+   「参数寄存器 = 随便用」而漏保存。这类 bug 只在 C 侧恰好把活值放在那里时发作，随执行次数显现。
+3. **「与执行次数相关、与墙钟无关」的崩溃 ⇒ 优先怀疑每次迭代/调用漏一点栈**：按 `bc_off`
+   记录漂移阶梯的探针能在几分钟内把漏点缩到一条算子；相比之下「盯着耗时/看汇编」要慢得多。
+4. 想造差分探针时注意**别把 stdout 与 stderr 混到同一个文件**（JIT 统计在 stderr，会与
+   stdout 交错，按区间过滤会把程序的真实输出行一起吃掉，表现为假的「缺行」）。
+
+***
+
 ## 9. 性能数据
 
 ### 测试环境
@@ -3494,6 +3593,7 @@ JIT 机器码返回非 0（bailout / `jit_callout_failed`）时，把控制权�
 | `assert/test_jit_hot_func.leno` | 解释器侧函数级 JIT 热入口（§8.25，**语义守卫**，基线版本同样 pass）：纯递归 + `is int` 结果类型、深度 200 > `JIT_FUNC_MAX_DEPTH`(64) 的深度守卫、互递归 bool 返回值 + `is bool`、int48 溢出（`pow2(60)` 必须与解释器的 BigInt 语义一致）、float 形参 + int 实参提升、字符串 concat 递归、`return_count>1` 与 `has_try` 必须拒绝编译、低热度不编译、递归返回 `Dict`、函数体内含 struct 多返回值方法调用 |
 | `assert/test_jit_multi_inline.leno` | 循环体内**多个内联点**的 bc_off 命名空间隔离（§8.26）：2 个 / 4 个 `gm()`（GF(2^8) 乘法，体内有 for + 两处 if）内联点，逐元素全文比对 + 20 轮反复调用。**未修复的代码上会以 `0xC00000FD` 崩溃**（不是断言失败），修复后通过 |
 | `assert/test_jit_array_bounds.leno` | 数组索引读/写与 append 的内联快路径（§8.28 / §8.29）：越界与负下标必须**像解释器一样被 try/catch 捕获 239 次**、合法下标读值正确、`add` 后 len 与内容正确、下标写覆盖且不破坏相邻元素、写入的是 Value（`is int`）、扩容不丢数据、字典慢路径仍正确。**未修复代码（P5 前）输出「越界捕获=0」并 FAIL**；同时覆盖 `arr[i]=v` 快路径的 Value 装箱 |
+| `assert/test_jit_rsp_drift.leno` | 合并点两条到达路径的 TOS 形态必须一致（§8.47）：`and` 短路 / 单条件 / `or` 短路三种形态 + 值断言。101 桶 × 20000 轮（2.02M 轮内层迭代）把「每轮漏 8 字节」放大到栈溢出量级。**未修复的代码上会以 `0xC00000FD` 崩溃**（不是断言失败），修复后通过 |
 
 ***
 

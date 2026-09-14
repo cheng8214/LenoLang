@@ -1,0 +1,91 @@
+// 回归测试：合并点两条到达路径的 TOS 形态必须一致（§8.47）
+//
+// 背景（2026-09-14 修复，x86_64.c「合并点 TOS 归一化」）：
+//   短路 `and` / `or` 编译成两条条件跳转。以 `if dc >= b0 and dc <= b1` 为例：
+//     第一条 JUMP_IF_FALSE 的 false 分支会 push 一个 slot 后**跳到第二条
+//     JUMP_IF_FALSE 本身**；而第二条同时还能从上一条 LE_INT **直落**到达 ——
+//     此时 TOS 还在 RAX 里（tos_live=1）。
+//   codegen 只按直落形态发码（内存栈项数 = vstack - tos_live 记为 0），于是跳转路径
+//   push 进去的那一项**永远没人消费** ⇒ 每轮迭代泄漏 8 字节，RSP 单调下漂，
+//   撞到栈底后以 0xC00000FD 崩溃（注意：**不是断言失败，是进程崩溃**）。
+//
+// 触发条件：内层循环**总**迭代数 × 8 字节 > 线程栈。实测（本机，未修复版）：
+//   101 桶 × 5000 轮/桶 = 505,000 轮 → 不崩；101 × 6000 = 606,000 轮 → 崩。
+//   即约 55 万轮（≈4.4MB 漂移）是临界点。本文件取 101 × 20000 = 2.02M 轮，
+//   留 3.7 倍余量，修复版上仍是毫秒级。
+// 期望值由解释器（LENO_NO_JIT=1）产出后硬编码。
+
+var bad = 0
+
+func fail(int tag):int {
+    print("FAIL case " + tag)
+    bad = bad + 1
+    return 0
+}
+
+main() {
+    // ---- 数据：logs[i] = 250 + i%50（值域 250..299）、ms[i] = 1 ----
+    //   多次运行的实测漂移量（未修复版）：退出码 0xC00000FD
+    var n = 20000
+    var logs = []
+    var ms = []
+    for 0 : n - 1 to i {
+        logs.add(250 + (i % 50))
+        ms.add(1)
+    }
+
+    // ---- 形状 A：`and` 短路 + 体内数组读（漏点原形）----
+    //   只有 b0=250 那个桶（250..299）命中：s = 5000 个 dc 之和、t = 5000
+    var a_s = 0
+    var a_t = 0
+    var a_buckets = 0
+    var b0 = 0
+    var b1 = 49
+    while b0 <= 5000 {
+        for 0 : logs.len() - 1 to k {
+            var dc = logs[k]
+            if dc >= b0 and dc <= b1 {
+                a_s += dc
+                a_t += ms[k]
+            }
+        }
+        a_buckets += 1
+        b0 += 50
+        b1 += 50
+    }
+    if a_buckets != 101 { fail(1) }
+    if a_t != n { fail(2) }
+    // 20000 × 250 + 400 × (0+1+…+49) = 5000000 + 490000
+    if a_s != 5490000 { fail(3) }
+
+    // ---- 形状 B：单条件（同样构成「跳转目标 + 直落」的合并点）----
+    //   b0 = 0/50/100/150/200/250 这 6 个桶全部命中 ⇒ 6 × 5000
+    var b_hit = 0
+    var c0 = 0
+    while c0 <= 5000 {
+        for 0 : logs.len() - 1 to k {
+            var dc2 = logs[k]
+            if dc2 >= c0 { b_hit += 1 }
+        }
+        c0 += 50
+    }
+    if b_hit != 6 * n { fail(4) }
+
+    // ---- 形状 C：`or` 短路（truthy 路径同样会 push 后跳转）----
+    var c_hit = 0
+    var d0 = 0
+    while d0 <= 5000 {
+        for 0 : logs.len() - 1 to k {
+            var dc3 = logs[k]
+            if dc3 < d0 or dc3 >= d0 { c_hit += 1 }
+        }
+        d0 += 50
+    }
+    if c_hit != 101 * n { fail(5) }
+
+    if bad > 0 {
+        print("test_jit_rsp_drift FAILED: " + bad + " 处")
+        _exit(1)
+    }
+    print("test_jit_rsp_drift ok")
+}
