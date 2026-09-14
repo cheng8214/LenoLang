@@ -1,0 +1,46 @@
+// OP_GET_FIELD / OP_SET_FIELD 回归 —— §8.54（覆盖面 L3）
+//
+// 循环跑 3000 轮（> JIT 热阈值 50）让 JIT 接管，覆盖四种形态：
+//   int 字段读写            s.i = r / sum_i + s.i
+//   float 字段 + 自动提升    s.f = d.get("k", 0)  ← 值静态类型不可知，必须走
+//                            「int → float 自动提升」（解释器 OP_SET_FIELD 的语义）
+//   嵌套 struct 字段        s.inner.v = 3 / s.inner.v ← GET_FIELD(inner) + SET_FIELD(v)
+//   string 字段（对象）      s.name = "abc" → struct_set_field 的 GC 写屏障路径
+//
+// 一旦字段读写的语义/栈记账/提升逻辑出错，JIT 段的结果就会与断言不符。
+// 本用例在 JIT 与 LENO_NO_JIT=1 两种模式下都必须通过。
+struct Inner {
+    int v = 5
+}
+
+struct S {
+    int i = 0
+    float f = 0.0
+    string name = ""
+    Inner inner
+}
+
+main() {
+    S s = new S()
+    s.inner = new Inner()
+    Dict[string, int] d = {"k": 7}
+
+    int sum_i = 0, cnt = 0
+    float sum_f = 0.0
+    for 3000 to r {
+        s.i = r                     // SET_FIELD（int）
+        sum_i = sum_i + s.i         // GET_FIELD（int）
+        s.f = d.get("k", 0)         // SET_FIELD + int→float 提升
+        sum_f = sum_f + s.f         // GET_FIELD（float）
+        s.inner.v = 3               // GET_FIELD + SET_FIELD（嵌套字段）
+        cnt = cnt + s.inner.v       // GET_FIELD
+        s.name = "abc"              // SET_FIELD（对象 → 写屏障）
+        cnt = cnt + s.name.len()    // GET_FIELD + OP_LENGTH
+    }
+
+    assert_eq(sum_i, 4498500)       // 3000*2999/2
+    assert_eq(sum_f, 21000.0)       // 3000*7（提升生效才会是 21000）
+    assert_eq(cnt, 18000)           // 3000*(3+3)
+
+    print("test_jit_op_field: OK")
+}

@@ -179,6 +179,70 @@
                 break;
             }
 
+            /* ---- OP_GET_FIELD / OP_SET_FIELD（struct 字段读写）—— §5 覆盖面 L3 ----
+             * 解释器语义：vm/vminc/op_struct.inc。
+             *   GET_FIELD：弹 obj、压 field（net 0）；struct 走越界检查 + struct_get_field。
+             *   SET_FIELD：弹 value + obj，**压回 value**（赋值表达式的值，net -1）；
+             *              struct 有 int→float / bigint→float 自动提升 + GC 写屏障。
+             * JIT：两条都走 callout —— struct 路径完整实现；cstruct 与「非 struct/cstruct
+             *   类型」的报错路径由 callout 置 failed → bailout → 解释器重放本条指令，
+             *   报错文本、分配语义与 try/catch 可捕获性全与 NO_JIT 一致。
+             *   特别注意：**字段写入必须走 struct_set_field**（leno_value.h 的 static inline
+             *   唯一写入入口，内含写屏障）—— 这里不做原生内联写，避免漏屏障破坏 GC 契约。 */
+            case OP_GET_FIELD:
+            case OP_SET_FIELD: {
+                uint8_t field_idx = ip[1];
+                int is_set = (op == OP_SET_FIELD);
+                TOS_SPILL();
+                if (is_set) {
+                    emit_pop_reg(cb, JIT_RDX);                 /* value（TOS） */
+                    emit_pop_reg(cb, JIT_RAX);                 /* obj */
+                    EMIT_STORE_TMP(tmp1_disp, JIT_RAX);        /* obj（raw） */
+                    EMIT_STORE_TMP(tmp2_disp, JIT_RDX);        /* value（raw） */
+                    /* 两个操作数先就地转成 Value 写回 tmp 槽；实参寄存器留到 callout 序言
+                     * 再载入 —— EMIT_RAW_TO_VALUE 以 R8 为 scratch，跨它保存值会被踩
+                     * （§8.53 踩坑①）。 */
+                    EMIT_LOAD_TMP(JIT_RAX, tmp1_disp);
+                    EMIT_RAW_TO_VALUE();
+                    EMIT_STORE_TMP(tmp1_disp, JIT_RAX);
+                    EMIT_LOAD_TMP(JIT_RAX, tmp2_disp);
+                    EMIT_RAW_TO_VALUE();
+                    EMIT_STORE_TMP(tmp2_disp, JIT_RAX);
+                    EMIT_CALLOUT_BEGIN();
+                    EMIT_LOAD_TMP(JIT_ARG1, tmp1_disp);        /* obj */
+                    emit_mov_reg_imm64(cb, JIT_ARG2, (uint32_t)field_idx);
+                    EMIT_LOAD_TMP(JIT_ARG3, tmp2_disp);        /* value */
+                    EMIT_CALL(jit_callout_set_field);
+                    EMIT_CALLOUT_END();
+                } else {
+                    emit_pop_reg(cb, JIT_RAX);                 /* obj（TOS） */
+                    EMIT_RAW_TO_VALUE();
+                    EMIT_STORE_TMP(tmp1_disp, JIT_RAX);
+                    EMIT_CALLOUT_BEGIN();
+                    EMIT_LOAD_TMP(JIT_ARG1, tmp1_disp);        /* obj */
+                    emit_mov_reg_imm64(cb, JIT_ARG2, (uint32_t)field_idx);
+                    EMIT_CALL(jit_callout_get_field);
+                    EMIT_CALLOUT_END();
+                }
+                EMIT_VALUE_TO_RAW();
+                /* 错误（非 struct/cstruct、cstruct 读、越界）→ bailout 交解释器重放 */
+                EMIT_STORE_TMP(tmp3_disp, JIT_RAX);
+                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_callout_failed);
+                emit_mov_reg_mem8(cb, JIT_RAX, JIT_R8, 0);
+                emit_test_rr(cb, JIT_RAX, JIT_RAX);
+                {
+                    EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                    int fld_fail = emit_jcc(cb, 0x85);         /* JNZ → bailout */
+                    patch_add(ctx, fld_fail, -1, 0);
+                }
+                emit_xor_rr(cb, JIT_RAX, JIT_RAX);
+                emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
+                EMIT_LOAD_TMP(JIT_RAX, tmp3_disp);
+                TOS_PRODUCE();
+                if (is_set) vstack--;   /* SET: pop2 push1（net -1）；GET: pop1 push1（net 0） */
+                break;
+            }
+
             /* ---- OP_GET_FIELD_FAST (读局部 struct 的字段) ----
              * 内联快路径：obj 是 NaN-boxed struct 且 field_idx < obj->def->field_count
              * 时，直接在机器码里读 field_values[field_idx] —— 这就是

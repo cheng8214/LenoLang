@@ -200,6 +200,8 @@ int opcode_size(const uint8_t* ip) {
         case OP_LT_INT_IMM: case OP_GT_INT_IMM:
         case OP_LE_INT_IMM: case OP_GE_INT_IMM: case OP_EQ_INT_IMM:
         case OP_SHL_IMM: case OP_SHR_IMM: case OP_USHR_IMM:
+        case OP_GET_FIELD:   /* op + field_idx(1) */
+        case OP_SET_FIELD:   /* op + field_idx(1) */
             return 2;
         /* 3-byte (opcode + slot16) */
         case OP_CONST: case OP_GET_LOCAL: case OP_SET_LOCAL:
@@ -330,6 +332,7 @@ static int scan_callee_for_inline(Chunk* cc, int local_count,
             case OP_LE_FLOAT: case OP_GE_FLOAT:
             case OP_DIV: case OP_INDEX:
             case OP_ITER_GET: case OP_ITER_GET_VALUE:   /* pop 2 push 1 → net -1 */
+            case OP_SET_FIELD:                          /* pop 2 push 1 → net -1 */
             case OP_ADD: case OP_SUB: case OP_MUL: case OP_MOD:
             case OP_EQ: case OP_NEQ:
             case OP_SHL: case OP_SHR: case OP_USHR:
@@ -339,6 +342,7 @@ static int scan_callee_for_inline(Chunk* cc, int local_count,
             case OP_CAST_INT: case OP_CAST_FLOAT: case OP_CAST_STRING:
             case OP_BITNOT: case OP_INC: case OP_DEC:
             case OP_LENGTH:   /* pop 1 push 1 → net 0 */
+            case OP_GET_FIELD: /* pop 1 push 1 → net 0 */
                 break;
             case OP_ARRAY_APPEND_NOPUSH: vstack -= 2; break;
             case OP_DICT_SET: vstack -= 2; break;
@@ -617,6 +621,13 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                 break;
             case OP_LENGTH:
                 /* pop 1 push 1 → net 0（结果恒为 int，见 ops_misc.inc 的 OP_LENGTH） */
+                break;
+            case OP_GET_FIELD:
+                /* pop 1 (obj) push 1 (field) → net 0 */
+                break;
+            case OP_SET_FIELD:
+                /* pop 2 (obj, value) push 1（赋值表达式的值）→ net -1 */
+                vstack--;
                 break;
             case OP_INDEX:
             case OP_ITER_GET:

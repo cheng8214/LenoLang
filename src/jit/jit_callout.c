@@ -738,6 +738,97 @@ fail:
     return NULL_VAL;
 }
 
+/* Callout: OP_GET_FIELD（读 struct / cstruct 字段）。
+ * 语义对齐 vm/vminc/op_struct.inc 的 OP_GET_FIELD：
+ *   struct  → 越界检查 + struct_get_field（一次指针解引用）
+ *   cstruct → 有 str16 转换 / 数组视图 / 嵌套 cstruct 三条**分配**路径，形态复杂
+ * 这里实现 struct 路径（热循环里的绝对多数）；cstruct 与「非 struct/cstruct 类型」的
+ * 报错路径一律置 jit_callout_failed → bailout → 解释器重放本条指令
+ * （报错文本、分配语义、行号全部与 NO_JIT 一致）。 */
+Value jit_callout_get_field(Value obj_val, uint8_t field_idx) {
+    if (!val_is_obj(obj_val) || val_as_obj(obj_val)->type != OBJ_STRUCT) {
+        if (jit_debug_on())
+            fprintf(stderr, "[FIELD-FAIL] get_field: obj 不是 struct（bits=0x%016llx, type=%d）\n",
+                    (unsigned long long)obj_val,
+                    val_is_obj(obj_val) ? (int)val_as_obj(obj_val)->type : -1);
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+    ObjStruct* obj = (ObjStruct*)val_as_obj(obj_val);
+    if (field_idx >= obj->def->field_count) {
+        if (jit_debug_on())
+            fprintf(stderr, "[FIELD-FAIL] get_field: idx=%u >= count=%d（def=%s）\n",
+                    (unsigned)field_idx, obj->def->field_count,
+                    obj->def->name ? obj->def->name : "?");
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+    return struct_get_field(obj, field_idx);
+}
+
+/* Callout: OP_SET_FIELD（写 struct / cstruct 字段，并把写进去的值压回栈 —— 赋值表达式的值）。
+ * 语义对齐 vm/vminc/op_struct.inc 的 OP_SET_FIELD：
+ *   struct  → 越界检查 + int→float / bigint→float 自动提升 + struct_set_field（**含 GC 写屏障**，
+ *             它是 static inline 的唯一写入入口，JIT 不自己实现屏障）
+ *   cstruct → 数值类型自动转换 + cstruct_set_field_value
+ * 错误路径同样只置 failed（交解释器报错），语义与 NO_JIT 一致。 */
+Value jit_callout_set_field(Value obj_val, uint8_t field_idx, Value value) {
+    if (!val_is_obj(obj_val)) {
+        if (jit_debug_on())
+            fprintf(stderr, "[FIELD-FAIL] set_field: obj 不是对象（bits=0x%016llx）\n",
+                    (unsigned long long)obj_val);
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+    ObjType t = val_as_obj(obj_val)->type;
+
+    if (t == OBJ_STRUCT) {
+        ObjStruct* obj = (ObjStruct*)val_as_obj(obj_val);
+        ObjStructDef* def = obj->def;
+        if (field_idx >= def->field_count) {
+            if (jit_debug_on())
+                fprintf(stderr, "[FIELD-FAIL] set_field: idx=%u >= count=%d（def=%s）\n",
+                        (unsigned)field_idx, def->field_count, def->name ? def->name : "?");
+            jit_callout_failed = 1;
+            return NULL_VAL;
+        }
+        TypeKind expected = def->fields[field_idx].type;
+        /* 自动提升（与解释器同序：先 int，后 bigint） */
+        if (expected == TYPE_FLOAT && val_is_int(value)) {
+            value = val_float((double)val_as_int(value));
+        } else if (expected == TYPE_FLOAT && val_is_bigint(value)) {
+            value = val_float(bigint_to_double(val_as_bigint(value)));
+        }
+        struct_set_field(obj, field_idx, value);
+        return value;   /* 解释器把（可能已提升的）值压回栈 */
+    }
+
+    if (t == OBJ_CSTRUCT) {
+        ObjCStruct* obj = (ObjCStruct*)val_as_obj(obj_val);
+        ObjCStructDef* def = obj->def;
+        if (field_idx >= def->field_count) {
+            if (jit_debug_on())
+                fprintf(stderr, "[FIELD-FAIL] set_field(cstruct): idx=%u >= count=%d\n",
+                        (unsigned)field_idx, def->field_count);
+            jit_callout_failed = 1;
+            return NULL_VAL;
+        }
+        CStructFieldInfo* field = &def->fields[field_idx];
+        if (val_is_int(value) && (field->type == TYPE_F32 || field->type == TYPE_F64)) {
+            value = val_float((double)val_as_int(value));
+        } else if (val_is_float(value) && (field->type >= TYPE_I8 && field->type <= TYPE_U64)) {
+            value = val_num(val_as_num(value));
+        }
+        cstruct_set_field_value(obj, field_idx, value);
+        return value;
+    }
+
+    if (jit_debug_on())
+        fprintf(stderr, "[FIELD-FAIL] set_field: 不支持的对象类型 type=%d\n", (int)t);
+    jit_callout_failed = 1;
+    return NULL_VAL;
+}
+
 /* ---- 通用相等比较的 C 实现（镜像解释器 vm/vminc/op_compare.inc 的 OP_EQ）----
  * 逐条对齐解释器规则：
  *   1) int/int 精确比较；任一是 float 时按 double 比较（BigInt 与 float 混合也走这里，
