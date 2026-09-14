@@ -1145,13 +1145,31 @@ pathCombo.on_enter(func(string text) {
         }
 
         // ==================== 拖拽逻辑 ====================
+        // 兜底：分割条正在拖拽时，本轮一律不参与文件拖拽。
+        //   窗口级事件回调（本函数）先于控件 process 执行，所以「按下」那一刻还看不到
+        //   content._dragging；在这里补一次判断并清掉可能残留的拖拽状态，确保拖拽提示框、
+        //   状态栏文字、以及松手时的移动操作都不会被分割条拖拽误触发。
+        if content._dragging {
+            if _dragPending or _dragging {
+                _dragPending = false
+                _dragging = false
+                _dragPaths = []
+                _dragTargetNode = -1
+                _dragSelRows = []
+                dragHint.hide()
+            }
+        }
+
         // 鼠标按下 Table 时记录起点，等待移动阈值触发拖拽
         // 排除弹层（菜单/下拉框）打开时的点击：左键点击右键菜单项时，
         //   鼠标位置仍在 Table 区域内，但此时应由菜单处理点击而非触发拖拽。
         if ev.isMouseButtonDown() and ev.mouseButton() == 1 {
             // 编辑中不启动文件拖拽：否则在 Edit 内按住鼠标选文字时会误触发拖拽提示框
             var[float, float](_mx, _my) = ev.mousePos()
-            if table.contains(_mx, _my) and not core.inPopupCapture(_mx, _my) and not table.is_editing() {
+            // 分割条命中区（dividerW/2 + hitPad）比可视条宽，与 Table 区域存在重叠带：
+            //   在重叠带按下会同时启动分割条拖拽与文件拖拽（拖分割条时冒出拖拽提示框、
+            //   松手落在左侧树上还会把选中项移动过去）。故按下点落在分割条命中区内时跳过。
+            if table.contains(_mx, _my) and not content._in_divider(_mx, _my) and not core.inPopupCapture(_mx, _my) and not table.is_editing() {
                 _dragStartX = _mx
                 _dragStartY = _my
                 _dragPending = true

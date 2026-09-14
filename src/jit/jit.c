@@ -655,8 +655,16 @@ static void jit_bailout_reason(int site, int loop_bc, char* out, size_t out_sz) 
                  loop_bc + site, loop_bc, site);
     else if (site <= -1000) {
         int rel = -1000 - site;
-        snprintf(out, out_sz, "非溢出类 @bc_off=%d（= loop_bc %d + %d）",
-                 loop_bc + rel, loop_bc, rel);
+        /* 内联帧（inlined callee）的偏移带 0x10000 * depth 基址（见 x86_64.c 的
+         * site 约定），必须先剥掉，否则会报出 131425 这种天文数字误导排查。 */
+        int depth = rel >> 16;
+        int rel_in_body = rel & 0xFFFF;
+        if (depth > 0)
+            snprintf(out, out_sz, "非溢出类 @bc_off=%d（= loop_bc %d + %d，内联深度 %d）",
+                     loop_bc + rel_in_body, loop_bc, rel_in_body, depth);
+        else
+            snprintf(out, out_sz, "非溢出类 @bc_off=%d（= loop_bc %d + %d）",
+                     loop_bc + rel_in_body, loop_bc, rel_in_body);
     }
     else if (site == -3)
         snprintf(out, out_sz, "序言: step 为 float（非 int 循环）");

@@ -143,6 +143,8 @@
                 /* ---- 慢路径 ---- */
                 patch_rel32(cb, slow_jcc_b, cb->len);
                 patch_rel32(cb, slow_jcc_a, cb->len);
+                /* 类型检查直接跳过来的：RAX/RDX 仍完好，越过下面的「恢复块」 */
+                int slow_body_jmp = emit_jmp(cb);
 
                 /* ---- 身份比较快路径（对象 / 指针）----------------------------
                  * 解释器 OP_EQ 的规则（op_compare.inc）：两个 OBJ 值类型相同时，
@@ -157,9 +159,10 @@
                  * 任何「编译期断言这就是身份比较」的谓词都不安全（要么改变语义，
                  * 要么必须把 FFI 的 null 规则也搬进来，那就不是身份比较了）。
                  *
-                 * 这里不满足条件一律**落到下面的数值慢路径**（对 NaN-boxed 仍 bailout），
-                 * 因此 string / array / bigint / `null == Ptr` 的语义原样保留，
-                 * 不可能静默算错，只是这几类仍走解释器。
+                 * 这里不满足条件一律**落到下面的数值慢路径**（NaN-boxed 交由
+                 * callout 计算，见本 case 末尾的桩）。
+                 * ★ 跳走前 RAX 已被改写成 type_a，所以数值慢路径入口必须先从
+                 *   tmp1/tmp2 恢复 a/b —— 见下方「入口分两处」的说明。
                  *
                  * 动机：matrix_rain 的 `_texCache[i].ren == renderer`（两个 Ptr）
                  * 以前每次都 bailout，整个循环跑不进 JIT（§8.33）。 */
@@ -202,14 +205,23 @@
                 emit_movzx_r32_r8(cb, JIT_RAX, JIT_RAX);
                 id_done = emit_jmp(cb);
 
-                /* ---- 数值慢路径（int48 已在上方处理；此处只剩 float 或 NaN-boxed）---- */
+                /* ---- 数值慢路径（int48 已在上方处理；此处只剩 float 或 NaN-boxed）----
+                 * 入口分两处：
+                 *   ① int48 类型检查直接跳来的 —— RAX/RDX 完好；
+                 *   ② 身份判定中途放弃跳来的 —— 那条路上 RAX 已被改写成 type_a，
+                 *      必须先从 tmp1/tmp2 恢复原始 a/b，否则后面的数值/NaN-boxed 判定
+                 *      拿「类型编号」当操作数（字符串/数组比较会被算成不等；以前这段
+                 *      紧跟着就 bailout，被解释器回退掩盖了，移除 bailout 后立刻暴露）。 */
                 patch_rel32(cb, id_no_b, cb->len);
                 patch_rel32(cb, id_no_a, cb->len);
                 patch_rel32(cb, id_neq_type, cb->len);
                 patch_rel32(cb, id_is_str, cb->len);
                 patch_rel32(cb, id_is_arr, cb->len);
                 patch_rel32(cb, id_is_bi, cb->len);
+                EMIT_LOAD_TMP(JIT_RAX, tmp1_disp);                   /* a */
+                EMIT_LOAD_TMP(JIT_RDX, tmp2_disp);                   /* b */
 
+                patch_rel32(cb, slow_body_jmp, cb->len);
                 EMIT_NUM_TO_XMM(0, JIT_RAX, JIT_R8, tagged_jcc_a);   /* xmm0 = a */
                 EMIT_NUM_TO_XMM(1, JIT_RDX, JIT_R8, tagged_jcc_b);   /* xmm1 = b */
                 emit_ucomisd_rr(cb, 0, 1);                           /* flags: a ? b */
@@ -224,20 +236,39 @@
                 emit_movzx_r32_r8(cb, JIT_RAX, JIT_RAX);
                 skip_bail_jmp = emit_jmp(cb);
 
-                /* ---- bailout 桩（NaN-boxed：字符串/数组/对象/null/BigInt）---- */
+                /* ---- callout 桩（NaN-boxed：字符串/数组/对象/null/BigInt/FFI 指针）----
+                 * 解释器在这条路径上还要处理「字符串按内容相等、数组逐元素、其它对象
+                 * 按身份、BigInt 按值、Ptr/cfunc 与 null 看包装地址」等规则。以前一律
+                 * bailout，于是 `x != null` / `s != ""` 这种**极常见**的比较会让整个
+                 * 循环退回解释器（file_manager 的 _topRects / _colW / Table.render /
+                 * _ensure_fitted_range 全部因此打不出 JIT 效果，同 §8.33 的老问题）。
+                 * 现在交 jit_callout_value_eq 完成（语义与解释器 OP_EQ 逐条对齐），
+                 * 循环继续留在机器码里跑。
+                 * 进入本桩时 RAX = a、RDX = b —— EMIT_NUM_TO_XMM 的 tagged 跳转不会
+                 * 破坏这两个寄存器（只写 xmm 与 scratch R8）。 */
                 patch_rel32(cb, tagged_jcc_a, cb->len);
                 patch_rel32(cb, tagged_jcc_b, cb->len);
-                EMIT_BAILOUT_SITE_NONOVF(bc_off);
-                {
-                    int _p = emit_jmp(cb);
-                    patch_add(ctx, _p, -1, 0);
-                }
+                EMIT_STORE_TMP(tmp2_disp, JIT_RDX);      /* b（raw） */
+                EMIT_RAW_TO_VALUE();                     /* RAX = a 的 NaN-boxed Value */
+                emit_mov_rr(cb, JIT_RDX, JIT_RAX);       /* a → RDX */
+                EMIT_LOAD_TMP(JIT_RAX, tmp2_disp);       /* b（raw） */
+                EMIT_RAW_TO_VALUE();                     /* RAX = b 的 NaN-boxed Value */
+                emit_mov_rr(cb, JIT_R8, JIT_RAX);        /* b → R8 */
+                EMIT_CALLOUT_BEGIN();
+                emit_mov_rr(cb, JIT_ARG1, JIT_RDX);      /* a */
+                emit_mov_rr(cb, JIT_ARG2, JIT_R8);       /* b */
+                emit_mov_reg_imm64(cb, JIT_ARG3, is_neq ? 1 : 0);   /* 0 = ==, 1 = != */
+                EMIT_CALL(jit_callout_value_eq);
+                EMIT_CALLOUT_END();
+                EMIT_VALUE_TO_RAW();
+                int callout_done = emit_jmp(cb);         /* RAX 已是 NaN-boxed bool */
 
                 patch_rel32(cb, end_jmp, cb->len);
                 patch_rel32(cb, skip_bail_jmp, cb->len);
                 patch_rel32(cb, id_done, cb->len);
                 /* int 快路径 / 身份比较 / float 慢路径在此汇合，RAX 都是裸 0/1 → val_bool */
                 EMIT_RAW01_TO_BOOLVAL();
+                patch_rel32(cb, callout_done, cb->len);  /* callout 结果跳过 0/1 转换 */
                 TOS_PRODUCE();
                 vstack--;
                 break;

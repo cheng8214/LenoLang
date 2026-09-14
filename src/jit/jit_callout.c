@@ -628,6 +628,126 @@ Value jit_callout_div(Value a, Value b) {
     return NULL_VAL;
 }
 
+/* ---- 通用相等比较的 C 实现（镜像解释器 vm/vminc/op_compare.inc 的 OP_EQ）----
+ * 逐条对齐解释器规则：
+ *   1) int/int 精确比较；任一是 float 时按 double 比较（BigInt 与 float 混合也走这里，
+ *      与解释器的判定顺序一致）
+ *   2) BigInt 按值比较
+ *   3) 与 null 比较的 Ptr / cfunc：看包装地址是否为空（**只在顶层**，数组元素不适用）
+ *   4) 类型不同 → false
+ *   5) 同类型：null 相等、bool 比 bool、string 按内容、array 逐元素、其余对象按身份
+ * 注意：这里是 JIT 与解释器共用的一份语义，改动必须同步 op_compare.inc，
+ *       否则同一表达式在 JIT 里与在解释器里会算出不同结果。 */
+static int jit_value_eq(Value a, Value b) {
+    /* 1) 数值 */
+    if (val_is_int(a) && val_is_int(b)) return val_as_int(a) == val_as_int(b);
+    if (val_is_float(a) || val_is_float(b)) return val_as_num(a) == val_as_num(b);
+
+    /* 2) BigInt（promote_to_bigint 是 vm 内部 static inline，这里等价展开） */
+    if (val_is_bigint(a) || val_is_bigint(b)) {
+        ObjBigInt* ba = val_is_bigint(a) ? val_as_bigint(a)
+                                         : bigint_from_int64((int64_t)val_as_num(a));
+        ObjBigInt* bb = val_is_bigint(b) ? val_as_bigint(b)
+                                         : bigint_from_int64((int64_t)val_as_num(b));
+        return bigint_compare(ba, bb) == 0;
+    }
+
+    /* 3) Ptr / cfunc 与 null：比较包装的地址 */
+    if (val_is_null(a) && val_is_obj(b)) {
+        ObjType tb = val_as_obj(b)->type;
+        if (tb == OBJ_FFI_POINTER)  return ((ObjFFIPointer*)val_as_obj(b))->ptr == NULL;
+        if (tb == OBJ_FFI_CALLBACK) return ((ObjFFICallback*)val_as_obj(b))->trampoline == NULL;
+    }
+    if (val_is_null(b) && val_is_obj(a)) {
+        ObjType ta = val_as_obj(a)->type;
+        if (ta == OBJ_FFI_POINTER)  return ((ObjFFIPointer*)val_as_obj(a))->ptr == NULL;
+        if (ta == OBJ_FFI_CALLBACK) return ((ObjFFICallback*)val_as_obj(a))->trampoline == NULL;
+    }
+
+    /* 4) 类型不同 → 不相等 */
+    if (val_get_type(a) != val_get_type(b)) return 0;
+
+    /* 5) 同类型比较 */
+    switch (val_get_type(a)) {
+        case VAL_NULL:
+            return 1;
+        case VAL_BOOL:
+            return val_as_bool(a) == val_as_bool(b);
+        case VAL_INT:
+        case VAL_FLOAT:
+            return 0;   /* 数值路径在前面已处理 */
+        case VAL_OBJ: {
+            ObjType ta = val_as_obj(a)->type;
+            ObjType tb = val_as_obj(b)->type;
+            if (ta == OBJ_STRING && tb == OBJ_STRING) {
+                ObjString* sa = (ObjString*)val_as_obj(a);
+                ObjString* sb = (ObjString*)val_as_obj(b);
+                return sa->len == sb->len &&
+                       memcmp(sa->chars, sb->chars, (size_t)sa->len) == 0;
+            }
+            if (ta == OBJ_ARRAY && tb == OBJ_ARRAY) {
+                ObjArray* aa = (ObjArray*)val_as_obj(a);
+                ObjArray* ab = (ObjArray*)val_as_obj(b);
+                if (aa->count != ab->count) return 0;
+                for (int i = 0; i < aa->count; i++) {
+                    Value ea = aa->elements[i];
+                    Value eb = ab->elements[i];
+                    /* 元素比较：数值按值、其余严格按类型（**不套用顶层 3) 的 Ptr/null 规则**） */
+                    if (val_is_int(ea) && val_is_int(eb)) {
+                        if (val_as_int(ea) != val_as_int(eb)) return 0;
+                    } else if (val_is_float(ea) || val_is_float(eb)) {
+                        if (val_as_num(ea) != val_as_num(eb)) return 0;
+                    } else if (val_is_bigint(ea) || val_is_bigint(eb)) {
+                        ObjBigInt* bea = val_is_bigint(ea) ? val_as_bigint(ea)
+                                                          : bigint_from_int64((int64_t)val_as_num(ea));
+                        ObjBigInt* beb = val_is_bigint(eb) ? val_as_bigint(eb)
+                                                          : bigint_from_int64((int64_t)val_as_num(eb));
+                        if (bigint_compare(bea, beb) != 0) return 0;
+                    } else if (val_get_type(ea) != val_get_type(eb)) {
+                        return 0;
+                    } else {
+                        switch (val_get_type(ea)) {
+                            case VAL_NULL:  break;   /* null == null → 相等 */
+                            case VAL_BOOL:
+                                if (val_as_bool(ea) != val_as_bool(eb)) return 0;
+                                break;
+                            case VAL_INT:
+                            case VAL_FLOAT:
+                                return 0;            /* 前面已处理 */
+                            case VAL_OBJ:
+                                if (val_as_obj(ea)->type == OBJ_STRING &&
+                                    val_as_obj(eb)->type == OBJ_STRING) {
+                                    ObjString* sea = (ObjString*)val_as_obj(ea);
+                                    ObjString* seb = (ObjString*)val_as_obj(eb);
+                                    if (sea->len != seb->len ||
+                                        memcmp(sea->chars, seb->chars, (size_t)sea->len) != 0) return 0;
+                                } else if (val_as_obj(ea) != val_as_obj(eb)) {
+                                    return 0;
+                                }
+                                break;
+                        }
+                    }
+                }
+                return 1;
+            }
+            return val_as_obj(a) == val_as_obj(b);
+        }
+    }
+    return 0;
+}
+
+/* Callout: OP_EQ / OP_NEQ 的 NaN-boxed 操作数路径。
+ * invert = 0 → ==，invert != 0 → !=（OP_NEQ 就是 OP_EQ 取反）。
+ * 纯计算：不分配、不重入 VM，不会置 jit_callout_failed。
+ * 动机：这两个操作数形态以前一律 bailout，而 `x != null` / `s != ""` 在渲染、
+ * 布局、菜单等热循环里随处可见（file_manager 的 _topRects / _colW / Table.render /
+ * _ensure_fitted_range 都因此整循环退回解释器）。 */
+Value jit_callout_value_eq(Value a, Value b, int invert) {
+    int result = jit_value_eq(a, b);
+    if (invert) result = !result;
+    return val_bool(result);
+}
+
 /* Callout: OP_ACC_FIELDS (pop struct, sum N fields as float, push result).
  * Pure computation — no VM re-entry. */
 Value jit_callout_acc_fields(Value obj_val, uint8_t count,

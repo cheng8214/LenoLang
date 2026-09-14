@@ -8,7 +8,14 @@
             /* ---- Simple constant pushes ---- */
             case OP_NULL:
                 TOS_SPILL();
-                emit_mov_reg_imm64(cb, JIT_RAX, 0);  /* NULL = 0 */
+                /* 必须压真正的 NULL_VAL（QNAN|SIGN_BIT|TAG_NULL），不能压字面量 0：
+                 * val_is_null(v) 是「v == NULL_VAL」的精确比较，而 0 是 int48 的 0
+                 * —— 压 0 会让 JIT 里的 null 与整数 0 无法区分：`x == null` 在 x 为
+                 * 0 时误判为真、`null == null` 误判为假（while cur != null 直接死循环）。
+                 * OP_TRUE/OP_FALSE 同样必须与 VM 的 val_bool 表示一致。
+                 * 历史：以前 OP_EQ/OP_NEQ 遇到 NaN-boxed 就 bailout，比较全交解释器，
+                 * 这个错误表示被掩盖；EQ/NEQ 改走 callout 后立刻暴露成死循环。 */
+                emit_mov_reg_imm64(cb, JIT_RAX, (uint64_t)NULL_VAL);
                 TOS_PRODUCE();
                 vstack++;
                 break;
