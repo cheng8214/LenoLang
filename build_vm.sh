@@ -59,6 +59,26 @@ SOURCES="$SOURCES src/module/sys/sys.c"
 SOURCES="$SOURCES src/module/regexs/regexs.c"
 SOURCES="$SOURCES src/platform/platform_thread.c"
 SOURCES="$SOURCES src/serialize/serialize.c"
+# JIT 是 VM 运行时的一部分：OP_CALL / 回边会调 jit_try_hot_*，gc 会调 jit_in_frame()
+# 等，缺这些文件会链接失败，故 VM 清单必须包含（与 build.sh / build_vm.bat 保持一致）
+SOURCES="$SOURCES src/jit/jit_callout.c"
+SOURCES="$SOURCES src/jit/jit_scan.c"
+SOURCES="$SOURCES src/jit/jit.c"
+
+# JIT 后端选择：按 CPU 架构。
+# x86_64 -> backend/x86_64.c；arm64/aarch64 -> backend/arm64.c（已预留，
+# 未实现时编译报错，明确提示 TODO）。
+JIT_ARCH="$(uname -m 2>/dev/null || echo x86_64)"
+case "$JIT_ARCH" in
+  aarch64|arm64) JIT_BACKEND=src/jit/backend/arm64.c ;;
+  *)             JIT_BACKEND=src/jit/backend/x86_64.c ;;
+esac
+if [ ! -f "$JIT_BACKEND" ]; then
+  echo "error: JIT backend $JIT_BACKEND not found" >&2
+  echo "       (arm64 backend not implemented yet — add src/jit/backend/arm64.c)" >&2
+  exit 1
+fi
+SOURCES="$SOURCES $JIT_BACKEND"
 
 # 平台检测
 OS="$(uname -s 2>/dev/null || echo unknown)"

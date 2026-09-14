@@ -57,6 +57,17 @@ set SOURCES=!SOURCES! src\module\sys\sys.c
 set SOURCES=!SOURCES! src\module\regexs\regexs.c
 set SOURCES=!SOURCES! src\platform\platform_thread.c
 set SOURCES=!SOURCES! src\serialize\serialize.c
+REM JIT 是 VM 运行时的一部分：OP_CALL / 回边会调 jit_try_hot_*，gc 会调 jit_in_frame()
+REM 等，缺这些文件会链接失败，故 VM 清单必须包含（与 build.bat 保持一致）
+set SOURCES=!SOURCES! src\jit\jit_callout.c
+set SOURCES=!SOURCES! src\jit\jit_scan.c
+set SOURCES=!SOURCES! src\jit\jit.c
+REM JIT 后端按 CPU 架构选择（arm64 预留：实现 src\jit\backend\arm64.c 后自动启用）
+if /i "%PROCESSOR_ARCHITECTURE%"=="ARM64" (
+  set SOURCES=!SOURCES! src\jit\backend\arm64.c
+) else (
+  set SOURCES=!SOURCES! src\jit\backend\x86_64.c
+)
 
 REM 1. 控制台版 leno_vm.exe（命令行调试用）
 REM    -s: 剥离符号表和调试信息，避免暴露函数名/变量名/类型结构
