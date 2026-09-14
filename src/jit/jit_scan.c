@@ -240,6 +240,7 @@ int opcode_size(const uint8_t* ip) {
         case OP_GET_GLOBAL: case OP_SET_GLOBAL:
         case OP_ARRAY:          /* opcode + count16 */
         case OP_GET_PROPERTY:   /* opcode + name_const16 */
+        case OP_GET_METHOD:     /* opcode + name_const16 */
         case OP_GET_MODULE_VAR:  /* opcode + index16 */
         case OP_SET_MODULE_VAR:  /* opcode + index16 */
         case OP_GET_MODULE_FUNC: /* opcode + index16 */
@@ -752,6 +753,41 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
             case OP_ACC_FIELDS:
                 /* pop 1 (struct obj), push 1 (float sum) -> net 0 */
                 break;
+            case OP_GET_METHOD: {
+                /* 窥孔：`obj.m(args)` 的**动态派发**形态 = `OP_GET_METHOD name(2)` + `OP_CALL argc(2)`
+                 * （face 调用，或接收者静态类型解析不出来时的 struct 方法调用）。
+                 * 栈布局（用最小探针反汇编实测）：
+                 *     [self][args...] 已就位，调用方**再多压一个 receiver** 供 GET_METHOD 消费，
+                 *     然后 OP_CALL(argc)（argc 含 self）。
+                 *   ⇒ 合并后的净效应 = -(argc + 1) + rc（那个多压的 receiver 被 GET_METHOD 吃掉）。
+                 *   原生方法形态（先压实参、再压 receiver，OP_CALL 的 argc 不含 self）也恰好是
+                 *   同样的「argc + 1 个值待消费」布局，所以记账统一。
+                 * rc 只能按「方法名在所有 struct def 中唯一且 return_count 一致」推断
+                 * （这里没有 INVOKE_METHOD_TYPED 那样的静态类型名常量）—— 推不出来就拒绝整个循环。 */
+                if (ip + 6 <= end && ip[3] == OP_CALL) {
+                    uint16_t gm_name_idx = rd_short(ip + 1);
+                    int gm_rc = jit_resolve_method_ret_count(chunk, gm_name_idx);
+                    if (gm_rc <= 0) {
+                        if (jit_debug_on())
+                            fprintf(stderr, "[JIT-DEBUG] scan FAIL: GET_METHOD 的 ret_count 不可知"
+                                            "（方法名唯一性推断失败）at offset %d\n",
+                                    (int)(ip - body_start));
+                        r->capable = 0;
+                        return;
+                    }
+                    int gm_argc = rd_short(ip + 4);
+                    size = 6;                          /* 连同 OP_CALL 一起消费 */
+                    vstack -= (gm_argc + 1 - gm_rc);
+                    break;
+                }
+                /* 独立的 OP_GET_METHOD（只取方法值、不调用）：要建 bound method / 闭包，
+                 * 且没有 OP_CALL 可合并 ⇒ 交解释器。 */
+                if (jit_debug_on())
+                    fprintf(stderr, "[JIT-DEBUG] scan FAIL: 独立的 OP_GET_METHOD（非调用形态）"
+                                    "at offset %d\n", (int)(ip - body_start));
+                r->capable = 0;
+                return;
+            }
             case OP_INVOKE_METHOD_TYPED: {
                 /* name_const(2) + arg_count(2) + struct_type_name_const(2)；
                  * arg_count includes self (receiver)。

@@ -23,6 +23,74 @@
                 TOS_PRODUCE();
                 break;
             }
+            /* ---- OP_GET_METHOD + OP_CALL（动态派发方法调用）—— §8.57 ----
+             * 形态与记账见 jit_scan.c 的同名 case：调用方在 `[self][args...]` 之上**多压了一个
+             * receiver** 供 GET_METHOD 消费，所以
+             *   - 传给 jit_callout_invoke_method 的 vstack_top 要 +8（跳过那个多余槽），
+             *     这样它看到的正好是「receiver 在 [argc-1]」的实参块；
+             *   - 合并后弹 (argc + 1 - rc) 个槽。
+             * rc 与 callout 运行时读到的 return_count 同一规则（方法自身 return_count），
+             * scan 阶段已保证可解析。动态派发到非法/原生布局时 callout 会置 failed → bailout
+             * 交解释器（循环侧有 JIT_BAILOUT_LIMIT 兜底）。 */
+            case OP_GET_METHOD: {
+                uint16_t gm_name_idx = rd_short(ip + 1);
+                int gm_argc = rd_short(ip + 4);
+                int gm_rc = jit_resolve_method_ret_count(cur_chunk, gm_name_idx);
+                if (gm_rc <= 0) {
+                    if (jit_debug_on())
+                        fprintf(stderr, "[JIT-DEBUG] GET_METHOD ret_count 不可知 at bc_off=%d\n", bc_off);
+                    return 0;
+                }
+                size = 6;   /* 连同 OP_CALL 一起消费 */
+                TOS_SPILL();
+                EMIT_STORE_TMP(tmp1_disp, JIT_RSP);
+                EMIT_CALLOUT_BEGIN();
+                EMIT_LOAD_TMP(JIT_RAX, tmp1_disp);
+                /* add rax, 8 —— 跳过 GET_METHOD 要消费的那个 receiver 槽 */
+                emit_byte(cb, 0x48); emit_byte(cb, 0x83); emit_byte(cb, 0xC0); emit_byte(cb, 0x08);
+                emit_mov_rr(cb, JIT_ARG1, JIT_RAX);              /* vstack_top（实参块） */
+                emit_mov_reg_imm64(cb, JIT_ARG2, (uint64_t)gm_argc);
+                emit_mov_reg_imm64(cb, JIT_ARG3, (uint64_t)(uintptr_t)ip);
+                emit_mov_reg_imm64(cb, JIT_ARG4, (uint64_t)(uintptr_t)cur_chunk);
+                EMIT_CALL(jit_callout_invoke_method);
+                EMIT_CALLOUT_END();
+                EMIT_STORE_TMP(tmp2_disp, JIT_RAX);
+                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_callout_failed);
+                emit_mov_reg_mem8(cb, JIT_RAX, JIT_R8, 0);
+                emit_test_rr(cb, JIT_RAX, JIT_RAX);
+                {
+                    EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                    int gm_fail = emit_jcc(cb, 0x85);     /* JNZ → bailout */
+                    patch_add(ctx, gm_fail, -1, 0);
+                }
+                emit_xor_rr(cb, JIT_RAX, JIT_RAX);
+                emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
+                EMIT_LOAD_TMP(JIT_RAX, tmp2_disp);
+                {
+                    /* 内存里待消费 = 实参块(argc) + 额外 receiver(1)；保留在内存的是
+                     * 多返回值的前 (rc-1) 个（callout 已写回实参槽），最后一个在 RAX。
+                     * ⇒ 弹 (argc + 1) - (rc - 1) = argc - rc + 2 个槽。
+                     * 注意它比 scan 的 vstack 计数（-(argc + 1 - rc)）多 1：TOS 在寄存器里，
+                     * 内存弹栈数天然比计数差 1（`INVOKE_METHOD` 的 argc-rc+1 同款）。
+                     * 少弹 1 格 = RSP 漂移 ⇒ 后续指令读错槽（本轮就是踩了这个，
+                     * 表现为 OP_ADD_INT 的 "int48 溢出/截断" bailout）。 */
+                    int gm_pop = (gm_argc - gm_rc + 2) * 8;
+                    if (gm_pop > 0) {
+                        if (gm_pop <= 127) {
+                            emit_byte(cb, 0x48); emit_byte(cb, 0x83); emit_byte(cb, 0xC4);
+                            emit_byte(cb, (uint8_t)gm_pop);
+                        } else {
+                            emit_byte(cb, 0x48); emit_byte(cb, 0x81); emit_byte(cb, 0xC4);
+                            emit_uint32(cb, (uint32_t)gm_pop);
+                        }
+                    }
+                }
+                EMIT_VALUE_TO_RAW();
+                TOS_PRODUCE();
+                vstack -= (gm_argc + 1 - gm_rc);
+                break;
+            }
+
             /* ---- Callout: OP_INVOKE_METHOD_TYPED (struct method call, VM re-entry) ---- */
             case OP_INVOKE_METHOD_TYPED: {
                 int arg_count = rd_short(ip + 3);

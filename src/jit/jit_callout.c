@@ -1250,6 +1250,12 @@ Value method_name_val = chunk->constants[method_name_idx];
         char msg[256];
         snprintf(msg, sizeof(msg), "尝试在非 struct 类型上调用方法 '%s'", method_name->chars);
         error_add_at(ERR_RUNTIME, 0, 0, msg);
+        /* §8.57：本 callout 现在也被 `OP_GET_METHOD + OP_CALL` 的动态派发复用，
+         * 而那种调用点**可能**是原生方法布局（先压实参再压 receiver）——
+         * 此时这里取到的不是接收者。必须置 failed 让 JIT bailout 交解释器，
+         * 绝不能带着 NULL 继续（那会把"布局不对"变成静默算错）。
+         * 循环侧有 JIT_BAILOUT_LIMIT 兜底，最坏只是该循环回退几次后被拉黑。 */
+        jit_callout_failed = 1;
         return NULL_VAL;
     }
 
@@ -1268,6 +1274,7 @@ Value method_name_val = chunk->constants[method_name_idx];
         snprintf(msg, sizeof(msg), "类型 '%s' 没有方法 '%s'",
                  def->name ? def->name : "?", method_name->chars);
         error_add_at(ERR_RUNTIME, 0, 0, msg);
+        jit_callout_failed = 1;   /* §8.57：动态派发路径可能落到这里，必须交解释器 */
         return NULL_VAL;
     }
 

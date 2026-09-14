@@ -605,7 +605,7 @@ bailout，只加一半会出现「能编译但一进去就 bailout」的假收�
 | L1 | `OP_LENGTH`（`.len()`） | 高（`for x.len() to i` 遍地） | **已完成**（§8.52）：`opcode_size` + 两处 scan + 数字原生/对象 callout 双路径 + `assert/test_jit_op_length.leno` |
 | L2 | `OP_ITER_GET` / `OP_ITER_GET_VALUE`（for-in 迭代） | 高（补完 L1 后是 file_manager 里最高频的缺口 ×4） | **已完成**（§8.53）：`opcode_size` + 两处 scan + 数组原生快路径 + callout + `assert/test_jit_op_iter.leno`；顺带修掉 `jit_callout_failed` 在循环入口未复位导致的连锁 bailout |
 | L3 | `OP_SET_FIELD` / `OP_GET_FIELD`（callout，`field_idx` 已在指令里） | 高（对象状态更新 ×2；**顺带解锁 3 个 SDL 包装函数的函数级 JIT**） | **已完成**（§8.54）：`opcode_size` + 两处 scan + callout（写入复用 `struct_set_field` 保住写屏障）+ `assert/test_jit_op_field.leno` |
-| L4 | `OP_GET_METHOD`（struct/native 方法查找，×2）+ `OP_SWITCH_LOOKUP`（变长：`const(2) count(2) default(4) [offset(4)]...`，×2） | 中。**`GET_METHOD` 永远后跟 `OP_CALL`/`OP_ASYNC_CALL`（4 条产出路径都是），必须和「`GET_METHOD` + `OP_CALL` 窥孔」一起做（可复用现成的 `jit_callout_invoke_method`），单补它解锁不了任何循环**（§8.55） | 未做（等 L8 的 `OP_CALL` 先落地） |
+| L4 | `OP_GET_METHOD`（动态派发方法查找）+ `OP_SWITCH_LOOKUP`（变长：`const(2) count(2) default(4) [offset(4)]...`，×2） | 中 | `GET_METHOD + OP_CALL` 窥孔**已完成**（§8.57，复用 `jit_callout_invoke_method`）；`OP_SWITCH_LOOKUP` 未做（唯一非 callout 型：控制流 + 变长编码 + 多目标 patch，单独设计） |
 | L5 | `OP_SET_DECLARED_FACE`（op+const16）/ `OP_SET_PTR_ELEM_TYPE`（op+byte） | 中（×2 / ×1）。**不能当 no-op 跳过**：`declared_face` 影响后续虚拟分派、`element_type` 影响 FFI 读写宽度 | 未做 |
 | L6 | `OP_GET_MODULE_VAR` / `OP_SET_MODULE_VAR` / `OP_GET_MODULE_FUNC`（callout，用当前帧 `module`） | 高（SDL3 大量模块级变量与函数，×2 / ×2；**顺带解锁 2 个函数的函数级 JIT**） | **已完成**（§8.55）：`opcode_size` + 循环 scan（净 +1 / 净 0）+ **内联 scan 显式拒绝**（`frame->module` 来自被调函数）+ 两个 callout（写入带 `gc_write_barrier`）+ `assert/test_jit_op_module_var.leno` |
 | L7 | `OP_STRING_ADD`（×1，内联扫描里也出现）/ `OP_NEG` / `OP_IS_NULL` / `OP_ARRAY_GET` / `OP_ARRAY_SET` / `OP_ARRAY_APPEND` / `OP_INDEX_SET` / `OP_DICT` / `OP_DICT_GET` / `OP_DICT_GET_KEY` / `OP_TYPE_CHECK` / `OP_AS_CAST` / `OP_SLICE` / `OP_IN` / `OP_RANGE` / `OP_U8_TO_F64` | 中 | 未做 |
@@ -615,7 +615,6 @@ bailout，只加一半会出现「能编译但一进去就 bailout」的假收�
 **实测拒收直方图（`file_manager.leno`，2026-09-14，补完 L6 之后）**：
 
 ```
-op=134(OP_GET_METHOD)        ×2
 op=156(OP_SWITCH_LOOKUP)     ×2
 op=39 (OP_SET_DECLARED_FACE) ×2
 op=59 (OP_CALL)              ×2   ← §8.56 的模块函数窥孔解掉 2 个；剩下 2 个不是 GET_MODULE_FUNC 形态
@@ -625,7 +624,7 @@ inline-scan: 76(OP_STRING_ADD) / 88(模块变量访问，L6 起显式拒绝内�
 
 （演进：L1 前 `81×4 / 132×2 / 156×2 / 39×2 / 88×2 / 38×1` → 补 L1 后 `80` 消失 →
 补 L2 后 `81` 消失 → 补 L3 后 `132` 消失 → 补 L6 后 `88`/`90` 消失但**新暴露 `59:OP_CALL ×4`**
-→ 补 §8.56（模块函数窥孔）后 `59` 由 ×4 降到 **×2**。
+→ 补 §8.56（模块函数窥孔）后 `59` 由 ×4 降到 **×2** → 补 §8.57 后 `134(OP_GET_METHOD)` 归零。
 （一个循环只报它的第一条缺口：前面的缺口一补上，后面的缺口才露出来 ⇒ **每次都是拒收点前移**，
 总行数基本不变。）
 
@@ -639,9 +638,9 @@ inline-scan: 76(OP_STRING_ADD) / 88(模块变量访问，L6 起显式拒绝内�
 注意覆盖面还决定**函数级 JIT 与被调函数内联**能否成立：L3 补完 `OP_SET_FIELD` 后，
 `set_pos` / `set_size` / `setWindowHandle` 三个 SDL 包装函数立刻进了函数级 JIT（§8.54）。
 
-**48 项未收录全量（`编号:名字`，用于 L0 逐项补长度；`80:LENGTH`、`81:ITER_GET`、
+**47 项未收录全量（`编号:名字`，用于 L0 逐项补长度；`80:LENGTH`、`81:ITER_GET`、
 `82:ITER_GET_VALUE`、`131:GET_FIELD`、`132:SET_FIELD`、`88:GET_MODULE_VAR`、`89:SET_MODULE_VAR`、
-`90:GET_MODULE_FUNC` 已于 §8.52~§8.55 补齐，从本表移除）**：
+`90:GET_MODULE_FUNC`、`134:GET_METHOD` 已于 §8.52~§8.57 补齐，从本表移除）**：
 
 ```
 14:GET_UPVALUE 15:SET_UPVALUE 16:CLOSE_UPVALUE 17:DEFINE_GLOBAL 18:GET_GLOBAL_FUNC
@@ -650,7 +649,7 @@ inline-scan: 76(OP_STRING_ADD) / 88(模块变量访问，L6 起显式拒绝内�
 67:ARRAY_APPEND 69:DICT 70:DICT_GET 72:DICT_GET_KEY 73:LOAD_NATIVE_MODULE
 75:GET_MODULE_CONST 76:STRING_ADD 78:INDEX_SET 79:SLICE 87:THROW
 91:DEFINE_MODULE_FUNC 93:TYPE_CHECK 94:AS_CAST 129:STRUCT_DEF 133:GET_FIELD_ADDR
-134:GET_METHOD 135:ENUM_DEF 136:FACE_DEF
+135:ENUM_DEF 136:FACE_DEF
 137:CSTRUCT_DEF 138:GET_CSTRUCT_DEF 139:AWAIT 140:ASYNC_CALL 141:INIT_LENOMODULE
 142:CLIB_CALL 143:CFUNC_CALLBACK 145:TAIL_CALL_NATIVE 146:U8_TO_F64 147:PUSH_TYPE_ARGS
 148:DTOR_LOCAL 156:SWITCH_LOOKUP
@@ -681,6 +680,7 @@ inline-scan: 76(OP_STRING_ADD) / 88(模块变量访问，L6 起显式拒绝内�
 | OP\_GET\_FIELD / OP\_SET\_FIELD | callout `jit_callout_get_field` / `jit_callout_set_field`（§8.54，覆盖面 L3）：struct 路径完整实现（含越界检查、int→float/bigint→float 提升）；**写入复用 `struct_set_field`，写屏障由它保证**；cstruct 读与非 struct 报错走 bailout 交解释器重放 |
 | OP\_GET\_MODULE\_VAR / OP\_SET\_MODULE\_VAR / OP\_GET\_MODULE\_FUNC | callout `jit_callout_get_module_var` / `jit_callout_set_module_var`（§8.55，覆盖面 L6）：module 由 codegen **编译期嵌入**（§8.56 修正：不能查运行时帧）；`SET` 是 **peek** 语义（净 0、不改 TOS）且写入带 `gc_write_barrier`；无模块/越界走 bailout。**内联扫描显式拒绝这三条**（内联后没有被调函数的帧，会读错模块的变量） |
 | OP\_GET\_MODULE\_FUNC **+** OP\_CALL（模块内部函数调用） | 窥孔合并为一次 `jit_callout_call_module_func`（§8.56，覆盖面 L8 部分）：`return_count` 编译期解析，`-1`/解析失败即拒绝整个循环；callee 从**编译期模块**现取并复核 ret_count（模块变量可被重新赋值）；多返回值沿用 `jit_callout_invoke_method` 的回填约定。**跨模块 `m.f()`、闭包值调用、`OP_TAIL_CALL` 仍未做** |
+| OP\_GET\_METHOD **+** OP\_CALL（动态派发方法调用） | 窥孔合并，复用 `jit_callout_invoke_method`（§8.57）：传给它的 `vstack_top` 要 `+8`（跳过 GET_METHOD 消费的那个额外 receiver）；`rc` 按「方法名唯一且 return_count 一致」推断，推不出即拒绝整个循环；弹 `argc - rc + 2` 个槽（**比逻辑计数多 1**，见 §8.57 教训 1）。独立的 `OP_GET_METHOD`（只取方法值）拒绝 |
 | OP\_LENGTH | **数字原生**（32 位 `CVTTSD2SI` + 负值 clamp，复刻解释器的 `(int)double`）/ 对象与非法类型走 callout `jit_callout_length`（§8.52，覆盖面 L1） |
 | OP\_STRUCT\_INIT（非泛型） | callout `jit_callout_struct_init` |
 | OP\_RETURN / OP\_RETURN\_MULTI | 支持（函数级 JIT；多返回值仅内联路径）。**循环体内可达的 return 会让整个循环被拒绝**（§8.21） |
@@ -3483,6 +3483,77 @@ callout 全程不再查运行时帧。`test_jit_op_module_call.leno` 里 `other.
    形态（模块对象 + `GET_PROPERTY`），别指望一个窥孔吃两种。
 3. **三种执行形态（循环 / 函数级 / 内联）的帧形态不同**，是实现与评审时最容易漏的一环：
    凡是想"从当前帧拿上下文"的实现，都要先确认这三种形态下都成立 —— §8.55 的错误就出在这里。
+
+***
+
+### 8.57 `OP_GET_METHOD + OP_CALL` 进 JIT（动态派发方法调用）—— 并踩到"弹栈数比计数多 1"（2026-09-14）
+
+**背景**：补完 §8.56 后直方图剩 `134(OP_GET_METHOD) ×2`。`GET_METHOD` 的产出场景（`codegen_expr.c`）：
+face 动态派发、接收者静态类型解析不出来、原生方法、async/未知方法定义 —— **四条都后跟 `OP_CALL`**，
+所以和 `GET_MODULE_FUNC + OP_CALL` 一样必须做成窥孔（单补 `GET_METHOD` 解锁不了循环）。
+
+**栈布局（用最小探针反汇编实测，别再靠猜）**：
+
+```
+0085  OP_GET_LOCAL   0        // self（作为 args[0]）
+0088  OP_GET_LOCAL   0        // 供 OP_GET_METHOD 消费的额外 receiver
+0091  OP_GET_METHOD  8 (area)
+0094  OP_CALL        1        // argc 含 self
+```
+
+⇒ 调用方在 `[self][args...]` 之上**多压了一个 receiver**。合并后的逻辑净效应 = `-(argc + 1) + rc`；
+原生方法形态（先压实参、再压 receiver，`OP_CALL` 的 argc 不含 self）恰好也是「argc + 1 个值待消费」，
+所以记账统一。
+
+**实现（3 处）**
+
+1. `jit_scan.c`：`opcode_size` 把 `OP_GET_METHOD` 归入 3 字节组；`scan_loop_body` 新增 case ——
+   后随 `OP_CALL` 时合并（`size = 6`，`vstack -= argc + 1 - rc`）；`rc` 只能按
+   `jit_resolve_method_ret_count`（方法名在所有 struct def 中唯一、return_count 一致）推断，
+   推不出来就拒绝整个循环；**独立的 `OP_GET_METHOD`**（只取方法值）要建 bound method/闭包 ⇒ 也拒绝。
+2. `ops_callout.inc`：`OP_GET_METHOD` 合并路径，复用 `jit_callout_invoke_method` ——
+   传给它的 `vstack_top` 要 `+8`（跳过那个额外 receiver 槽），这样它看到的正好是
+   「receiver 在 `[argc-1]`」的实参块。
+3. `jit_callout.c`：给 `jit_callout_invoke_method` 的两条错误路径补上 `jit_callout_failed = 1`
+   （见教训 3）。
+
+**⚠ 本轮踩的坑：内存弹栈数 ≠ vstack 计数（差 1）**
+
+第一版 codegen 弹 `(argc + 1 - rc)` 个槽（= 照抄逻辑净效应），结果 **A 形状（纯算术）正常、
+B 形状（`acc = acc + a.area()`）稳定 bailout 3 次**（`site=28` → 报 "int48 溢出/截断"，
+随后被 `JIT_BAILOUT_LIMIT` 拉黑）。原因是：
+
+* 内存里待消费 = 实参块(`argc`) + 额外 receiver(1)；
+* 保留在内存的 = 多返回值的前 `rc-1` 个（callout 已写回实参槽），最后一个在 RAX；
+* ⇒ 应弹 `(argc + 1) - (rc - 1) = argc - rc + 2` 个槽 —— **比逻辑计数多 1**（TOS 在寄存器里，
+  内存弹栈数天然比计数差 1；`INVOKE_METHOD` 的 `argc - rc + 1` 同款）。
+
+少弹 1 格 ⇒ RSP 漂移 ⇒ 紧随其后的 `OP_ADD_INT` 读到错槽（值不是合法 int48）⇒ bailout。
+**这次是 bailout 救了正确性**（栈漂移若没被检查拦住就是静默算错）。
+
+定位手段：**形状二分**比手解 hex 快得多 —— 同一个文件里放三条循环（纯算术 / 调用结果直接参与
+运算 / 调用结果先落局部），一次运行就看得出是哪一种形态触发，再去反汇编那条循环。
+
+**验证**
+
+* 新用例 `assert/test_jit_op_get_method.leno`（face 派发、两种实现交替调用 3000 轮）：
+  JIT 与 `LENO_NO_JIT=1` 都通过，且 JIT 侧 **`Bailouts: 0`**（修漂移前是 3）。
+* 形状探针 `acc=4552500`（= 4498500 + 27000 + 27000）在 JIT / NO_JIT 下**一致**。
+* `file_manager` 交互负载：`134(OP_GET_METHOD)` 归零，直方图剩
+  `156(SWITCH_LOOKUP) ×2 / 39 ×2 / 38 ×1 / 59(OP_CALL) ×2`；运行时 bailout 仍 **0**。
+* `assert` 全套 **282 passed / 0 failed**。
+
+**教训**
+
+1. **callout 型 opcode 的「内存弹栈数」与「vstack 计数」是两个数**：TOS 在寄存器里时，
+   弹栈数 = |vstack 净变化| + 1（rc ≥ 1）。写新窥孔时两者都要显式算一遍，别用一个推另一个。
+2. 定位栈漂移用**形状二分**（把一条语句拆成几种写法，一次跑完看哪条 bailout），
+   比手解字节码 hex 快一个数量级 —— 本轮就是靠它 30 秒锁定。
+3. 复用既有 callout 时，要逐个检查它「理论上不该发生」的错误路径**是否置 `failed`**：
+   `jit_callout_invoke_method` 原来对非 struct 接收者只 `error_add_at` 就 `return NULL_VAL`
+   —— 对 `INVOKE_METHOD_TYPED`（静态保证是 struct）无害，但被动态派发复用后，
+   一旦布局判断失手就会**带着 NULL 继续**（静默算错）。已补 `jit_callout_failed = 1`，
+   配合循环侧的 `JIT_BAILOUT_LIMIT`（最坏回退几次即拉黑）兜底。
 
 ***
 
