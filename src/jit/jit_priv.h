@@ -178,6 +178,10 @@ typedef struct {
     int func_mode;       /* 1 = 函数级 JIT：整个函数编译为 fn(locals, globals)，
                           * OP_RETURN 真正返回（结果写 jit_fn_result），
                           * exit 不写回 locals（调用方用临时数组） */
+    ObjFunction* func;   /* 函数级 JIT 的被编译函数（NULL = 循环 JIT）。
+                          * §8.48 形参类型化快路径要用它的 arity / param_types：
+                          * 语言保证「写了具体类型的形参运行期一定是该类型」
+                          * （any 必须先收窄才能用，编译器会拦）。 */
 } CodegenCtx;
 
 /* ---- Platform-independent codegen helpers (shared by all backends) ----

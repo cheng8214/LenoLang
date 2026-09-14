@@ -988,14 +988,13 @@ Value jit_callout_global_func(int64_t* vstack_top, int arg_count,
             static ObjFunction*       lc_func  = NULL;
             static JitFuncCacheEntry* lc_entry = NULL;
             static int                lc_base  = 0;   /* max(local_count, arity) */
-            /* LENO_NO_CALLCACHE：关掉本缓存（基准/诊断用，与 LENO_NO_JIT 同类）。
-             * 理由见 codegen_stmt.c 的 LENO_NO_CMPJMP：跨时段测性能会被频率漂移
-             * 污染，只有同一二进制内交错 A/B 才可信。 */
-            static int lc_disabled = -1;
-            if (lc_disabled < 0) lc_disabled = getenv("LENO_NO_CALLCACHE") ? 1 : 0;
+            /* LENO_NO_CALLCACHE：关掉本缓存（基准/诊断用）。
+             * 开关值在 jit_init() 里解析好（jit_state.no_callcache）—— **不能**
+             * 在这里现读 getenv 或做「首次调用判负的 static」：本函数是每次
+             * Leno 调用都进的（fib 8.67 亿次），那会在热路径上白付 2~3 条指令。 */
             JitLoopFn jfn = NULL;
             int base = 0;
-            if (!lc_disabled && gfunc == lc_func && lc_entry->func == gfunc) {
+            if (!jit_state.no_callcache && gfunc == lc_func && lc_entry->func == gfunc) {
                 jfn  = lc_entry->fn;      /* 每次重读：槽可能已被回收或重编译 */
                 base = lc_base;
             }

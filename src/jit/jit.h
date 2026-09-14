@@ -71,6 +71,12 @@ typedef struct {
     int func_execute_count; /* 解释器侧函数级 JIT 热入口实际执行的次数 */
     int yield_count;        /* 回边让出（§8.37 路线 3）次数：不计入 bailout */
     int enabled;
+    /* ---- 基准开关（§8.47）----
+     * 在 jit_init() 里**一次性**解析，热路径上只做一次 test。
+     * 不要改成「现读 getenv」或「首次调用判负的 static」放在热路径里 ——
+     * jit_callout_global_func 是每次 Leno 调用都走的（fib 8.67 亿次），
+     * 为一个默认关闭的开关每次多付 2~3 条指令。 */
+    int no_callcache;       /* LENO_NO_CALLCACHE：关掉 callee 解析缓存 */
 } JitState;
 
 /* Global JIT state (single-threaded VM) */

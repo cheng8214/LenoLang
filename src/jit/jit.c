@@ -270,6 +270,7 @@ static JitLoopFn jit_compile_function(ObjFunction* func, VM* vm_ptr) {
     ctx.chunk = func->chunk;
     ctx.vm_ptr = vm_ptr;
     ctx.func_mode = 1;   /* 函数模式：OP_RETURN 直接返回 */
+    ctx.func = func;     /* §8.48：形参类型化快路径需要 arity / param_types */
 
     int ok = compile_loop(&ctx);
 
@@ -320,6 +321,9 @@ void jit_init(void) {
     if (no_jit && (no_jit[0] == '1' || no_jit[0] == 't' || no_jit[0] == 'T')) {
         jit_state.enabled = 0;
     }
+
+    /* 基准开关一次性解析（§8.47）。只在启动读一次，热路径上是一次 test。 */
+    jit_state.no_callcache = getenv("LENO_NO_CALLCACHE") ? 1 : 0;
 }
 
 void jit_close(void) {

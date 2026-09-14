@@ -924,6 +924,38 @@ int compile_loop(CodegenCtx* ctx) {
     for (int i = 0; i < n; i++) {
         int slot = sr->local_slots[i];
         int disp = scratch_disp(i);
+        /* ---- §8.48 类型化形参快路径 ----
+         * 语言保证：写了具体类型的形参，运行期一定是该类型（`any` 必须先收窄
+         * 才能使用，编译器会拦住）。所以 **TYPE_INT 形参**不必逐个做
+         * tag 检查 + 双路径，直接取 int48 载荷（`<<16 >>16` 即符号扩展）写进
+         * scratch 槽即可，并且**不置** RBX 位图对应位（0 = int）—— 写回路径据此
+         * 重新装箱为 int，语义与下面的 int 路径逐位一致。
+         *
+         * 只对「函数级 JIT + slot 落在 arity 之内 + param_types[slot]==TYPE_INT」
+         * 生效。float / struct / any / 无 param_types（arity 之外、或元信息缺失）
+         * 一律走原路径 —— 它们的 raw 表示不同，照搬会静默算错。 */
+        {
+            ObjFunction* _f = ctx->func;
+            /* LENO_NO_TYPEDPARAM：关掉本快路径（基准/诊断用，
+             * 与 LENO_NO_CMPJMP / LENO_NO_CALLCACHE 同类）。 */
+            static int tp_disabled = -1;
+            if (tp_disabled < 0) tp_disabled = getenv("LENO_NO_TYPEDPARAM") ? 1 : 0;
+            if (!tp_disabled && ctx->func_mode && _f && _f->param_types &&
+                slot < _f->arity && _f->param_types[slot] == TYPE_INT) {
+                int sd = slot * 8;
+                if (sd >= -128 && sd <= 127)
+                    emit_mov_reg_mem8(cb, JIT_RAX, JIT_RCX, (int8_t)sd);
+                else
+                    emit_mov_reg_mem32(cb, JIT_RAX, JIT_RCX, sd);
+                emit_shl_imm(cb, JIT_RAX, 16);   /* 取 int48 载荷 */
+                emit_sar_imm(cb, JIT_RAX, 16);   /* 符号扩展 */
+                if (disp >= -128 && disp <= 127)
+                    emit_mov_mem8_reg(cb, JIT_RBP, (int8_t)disp, JIT_RAX);
+                else
+                    emit_mov_mem32_reg(cb, JIT_RBP, disp, JIT_RAX);
+                continue;
+            }
+        }
         /* Load value: mov rax, [rcx + slot*8] */
         {
             int sd = slot * 8;
