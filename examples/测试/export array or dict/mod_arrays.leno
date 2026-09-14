@@ -1,0 +1,19 @@
+// === 数组类型导出 ===
+export var intArr = [1, 2, 3]
+export var floatArr = [1.0, 2.0, 3.0]
+export var mixedArr = [1, 2, 3.5]
+export var strArr = ["a", "b", "c"]
+export var boolArr = [true, false, true]
+export var emptyArr = []
+
+// 显式类型数组
+export Array[int] typedIntArr = [10, 20, 30]
+export Array[float] typedFloatArr = [1.1, 2.2, 3.3]
+export Array[string] typedStrArr = ["x", "y", "z"]
+
+// 嵌套数组
+export var nestedArr = [[1, 2], [3, 4]]
+export Array[Array[int]] typedNested = [[10, 20], [30, 40]]
+
+// 混合类型数组（int + float → float 提升）
+export var promotedArr = [1, 2.5, 3]

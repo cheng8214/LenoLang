@@ -1,0 +1,20 @@
+// test_nested_generic_field_mod.leno — 模块：定义含嵌套泛型字段的 export struct
+// 回归测试：跨模块 use 后，Array[Array[T]]/Array[Ptr[T]] 字段不丢失
+// Bug: 扫描器用 while != ']' 跳过泛型参数，遇到嵌套 [] 时提前终止，
+//       导致后续字段全部丢失（字段数 < 预期）
+
+export struct Grid {
+    int id
+    string name
+    Array[int] simpleArr
+    Array[Array[int]] nestedArr
+    Array[Ptr[u8]] ptrArr
+    Ptr[u8] rawPtr
+    int tail
+}
+
+// 导出数组变量：跨模块下标访问时元素类型不应丢失
+// Bug: mod.TOWER_SPD[i] 拿不到类型（元素变成 any）
+export const TOWER_SPD = [1, 2, 3]
+export const TOWER_DMG = [10, 20, 30]
+export const GRID_DATA = [[1, 2], [3, 4]]

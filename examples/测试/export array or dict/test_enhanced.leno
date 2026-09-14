@@ -1,0 +1,47 @@
+// 测试增强文本扫描 — 验证函数调用/变量引用不再降级为 any
+import "mod_enhanced.leno" as m
+{
+    // 无显式类型 + 函数调用元素 → 应推断为 int
+    int a = m.arrFunc[0]
+    print(a)
+
+    // 无显式类型 + float 函数调用元素
+    float f = m.arrFuncF[0]
+    print(f)
+
+    // 无显式类型 + string 函数调用元素
+    string s = m.arrFuncS[0]
+    print(s)
+
+    // 无显式类型 + 变量引用元素
+    int v = m.arrVar[0]
+    print(v)
+
+    // 混合: int 字面量 + int 函数调用
+    int m0 = m.arrMixed[0]
+    int m1 = m.arrMixed[1]
+    int m2 = m.arrMixed[2]
+    print(m0)
+    print(m1)
+    print(m2)
+
+    // 混合: float 字面量 + float 函数调用
+    float mf0 = m.arrMixedF[0]
+    float mf1 = m.arrMixedF[1]
+    print(mf0)
+    print(mf1)
+
+    // 标量: 函数调用
+    int ff = m.fromFunc
+    print(ff)
+
+    float ffF = m.fromFuncF
+    print(ffF)
+
+    string ffS = m.fromFuncS
+    print(ffS)
+
+    // 标量: 变量引用
+    int fv = m.fromVar
+    print(fv)
+}

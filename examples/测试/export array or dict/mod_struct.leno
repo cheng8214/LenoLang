@@ -1,0 +1,27 @@
+// === struct/enum/alias 导出测试 ===
+
+export struct Point {
+    int x = 0
+    int y = 0
+}
+
+export struct Rect {
+    float x = 0.0
+    float y = 0.0
+    float w = 0.0
+    float h = 0.0
+}
+
+export enum Color {
+    RED = 0xFF0000
+    GREEN = 0x00FF00
+    BLUE = 0x0000FF
+}
+
+export alias IntList = Array[int]
+export alias StrDict = Dict[string, string]
+export alias Coord = int
+
+// 使用 alias 声明 export
+export IntList nums = [1, 2, 3]
+export Coord pos = 42

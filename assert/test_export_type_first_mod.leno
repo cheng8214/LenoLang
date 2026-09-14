@@ -1,0 +1,11 @@
+// test_export_type_first_mod.leno
+// 测试"类型在前"导出语法（含 const 关键字和无关键字两种写法）
+
+// 有 const 关键字
+export const Array[int] INT_ARR = [10, 20, 30]
+export const Array[string] STR_ARR = ["hello", "world"]
+
+// 无关键字（export 后直接跟类型）
+export int X = 42
+export string S = "world"
+export Array[int] ARR4 = [100, 200, 300]

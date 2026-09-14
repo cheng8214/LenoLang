@@ -1,0 +1,16 @@
+// === 字典类型导出 ===
+export var strIntDict = {"a": 1, "b": 2}
+export var strStrDict = {"name": "Leno", "version": "1.0"}
+export var strFloatDict = {"x": 1.0, "y": 2.0}
+export var emptyDict = {}
+
+// 显式类型字典
+export Dict[string, int] typedDict = {"key": 42}
+export Dict[string, string] typedStrDict = {"lang": "leno"}
+export Dict[string, float] typedFloatDict = {"pi": 3.14}
+
+// 混合值类型字典（int + float → float 提升）
+export var mixedDict = {"a": 1, "b": 2.5}
+
+// 嵌套字典
+export var nestedDict = {"outer": {"inner": 1}}

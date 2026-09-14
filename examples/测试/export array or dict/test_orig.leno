@@ -1,0 +1,5 @@
+import "array.leno" as ar
+{
+    int a = ar.arr[0]
+    print(a)
+}

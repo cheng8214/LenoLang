@@ -1,0 +1,11 @@
+export var arr=[1,2,3]
+
+func test():int
+{
+
+return 100
+}
+export int x = 42
+export Array[int] arr4 = [10,20,test()]
+export string s = "hello"
+export int tt=x

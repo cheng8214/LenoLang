@@ -1,0 +1,4 @@
+// test_var_mod.leno
+export const ARR = [1, 2, 3]
+export const ARR2 = [[1, 2], [3, 4]]
+export const ARR3 = [1, 0.1, "cs"]

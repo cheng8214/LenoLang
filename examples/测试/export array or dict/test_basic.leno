@@ -1,0 +1,39 @@
+// 测试1: 基本类型导出 + 显式类型 + const
+import "mod_basic.leno" as m
+{
+    // var 推断
+    int i = m.iVar
+    float f = m.fVar
+    string s = m.sVar
+    bool b = m.bVar
+    print(i)
+    print(f)
+    print(s)
+    print(b)
+
+    // 显式类型
+    int ie = m.iExplicit
+    float fe = m.fExplicit
+    string se = m.sExplicit
+    bool be = m.bExplicit
+    print(ie)
+    print(fe)
+    print(se)
+    print(be)
+
+    // const
+    float pi = m.PI
+    int max = m.MAX
+    string name = m.NAME
+    print(pi)
+    print(max)
+    print(name)
+
+    // const + 类型
+    int port = m.PORT
+    float e = m.E
+    string ver = m.VERSION
+    print(port)
+    print(e)
+    print(ver)
+}

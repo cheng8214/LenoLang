@@ -1,0 +1,101 @@
+// test_nested_generic_field.leno — 跨模块嵌套泛型字段+变量回归测试
+// Bug 1: struct 含 Array[Array[int]] 或 Array[Ptr[u8]] 字段时，
+//   扫描器 while != ']' 提前终止，后续字段全部丢失。
+//   跨模块 use 后 struct 字段数 < 源码定义数。
+// 修复: 用括号深度正确跳过嵌套 []，并用 parse_type_from_string 存储完整 TypeInfo。
+//
+// Bug 2: 模块导出的数组变量（export const X = [1,2,3]），
+//   导入方做下标访问 mod.X[i] 时元素类型丢失（变成 any）。
+// 修复: ModuleVarSymbol 添加 type_info 字段，存储完整 TypeInfo。
+
+import "test_nested_generic_field_mod.leno" as mod
+use mod.Grid
+
+func test_all_fields_present() {
+    // 核心断言：Grid 的所有字段都必须存在（字段丢失会报"没有字段"或类型错误）
+    Grid g = new Grid()
+    g.id = 42
+    g.name = "grid"
+    g.simpleArr = [1, 2, 3]
+    g.nestedArr = [[10, 20], [30, 40]]
+    g.rawPtr = null
+    g.ptrArr = []
+    g.tail = 99
+
+    assert_eq(g.id, 42)
+    assert_eq(g.name, "grid")
+    assert_eq(g.simpleArr.len(), 3)
+    assert_eq(g.simpleArr[0], 1)
+    assert_eq(g.simpleArr[2], 3)
+
+    // 嵌套数组读写
+    assert_eq(g.nestedArr.len(), 2)
+    assert_eq(g.nestedArr[0].len(), 2)
+    assert_eq(g.nestedArr[0][0], 10)
+    assert_eq(g.nestedArr[0][1], 20)
+    assert_eq(g.nestedArr[1][0], 30)
+    assert_eq(g.nestedArr[1][1], 40)
+
+    // 修改嵌套数组
+    g.nestedArr[0][0] = 100
+    assert_eq(g.nestedArr[0][0], 100)
+
+    // tail 字段在嵌套泛型字段之后，如果扫描错位会丢失
+    assert_eq(g.tail, 99)
+
+    print("test_nested_generic_field [1] all_fields_present passed")
+}
+
+func test_field_type_correct() {
+    Grid g = new Grid()
+    // 验证字段类型被正确识别（不是 null/any）
+    g.simpleArr = []
+    g.simpleArr.add(10)
+    assert_eq(g.simpleArr[0], 10)
+
+    g.nestedArr = []
+    g.nestedArr.add([1, 2, 3])
+    assert_eq(g.nestedArr[0].len(), 3)
+    assert_eq(g.nestedArr[0][2], 3)
+
+    // ptrArr 应该是数组
+    g.ptrArr = []
+    assert_eq(g.ptrArr.len(), 0)
+
+    print("test_nested_generic_field [2] field_type_correct passed")
+}
+
+func test_exported_array_var_index() {
+    // Bug 2: 导出的数组变量，下标访问时元素类型不应丢失
+    // 修复前: mod.TOWER_SPD[i] 拿不到类型（element_type 为 TYPE_ANY）
+    assert_eq(mod.TOWER_SPD.len(), 3)
+    assert_eq(mod.TOWER_SPD[0], 1)
+    assert_eq(mod.TOWER_SPD[1], 2)
+    assert_eq(mod.TOWER_SPD[2], 3)
+
+    // 带类型注解的导出数组变量
+    assert_eq(mod.TOWER_DMG.len(), 3)
+    assert_eq(mod.TOWER_DMG[0], 10)
+    assert_eq(mod.TOWER_DMG[1], 20)
+    assert_eq(mod.TOWER_DMG[2], 30)
+
+    // 嵌套数组变量
+    assert_eq(mod.GRID_DATA.len(), 2)
+    // GRID_DATA 是 [[1,2],[3,4]]，元素也是数组
+    // 数组字面量推断为 TYPE_ARRAY，嵌套元素需要类型收窄
+    Array[Array[int]] gd = mod.GRID_DATA
+    assert_eq(gd[0].len(), 2)
+    assert_eq(gd[0][0], 1)
+    assert_eq(gd[0][1], 2)
+    assert_eq(gd[1][0], 3)
+    assert_eq(gd[1][1], 4)
+
+    print("test_nested_generic_field [3] exported_array_var_index passed")
+}
+
+main() {
+    test_all_fields_present()
+    test_field_type_correct()
+    test_exported_array_var_index()
+    print("=== test_nested_generic_field ALL passed ===")
+}
