@@ -1081,8 +1081,14 @@
                 emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
                 EMIT_LOAD_TMP(JIT_RAX, tmp2_disp);
                 /* Merged call: pop receiver + args, push result → net -arg_count.
-                 * Standalone: receiver replaced by value → no pop. */
-                int pop_bytes = merged ? (merged_argc + 1) * 8 : 0;
+                 * Standalone: receiver 被结果取代 —— 但**结果放在 RAX（TOS 缓存）**，
+                 * 内存里那个 receiver 槽必须显式弹掉，否则每执行一次就永久多留一个
+                 * 槽（实测 **8 字节/次**：循环里 RSP 单调下漂，跑到 ~2MB 栈界时崩溃，
+                 * 即 §8.67 / roadmap R12 的 `0xC0000374`；`probe` 实测
+                 * `n=100000 → rsp_delta=-800000`、`n=200000 → -1600000`）。
+                 * 判据与合并分支同源：**弹掉本指令消费掉的操作数**（独立访问只消费
+                 * receiver 一个）；结果作为 TOS 留在 RAX，内存栈应为 vstack-1 项。 */
+                int pop_bytes = merged ? (merged_argc + 1) * 8 : 8;
                 if (pop_bytes > 0) {
                     if (pop_bytes <= 127) {
                         emit_byte(cb, 0x48); emit_byte(cb, 0x83); emit_byte(cb, 0xC4);

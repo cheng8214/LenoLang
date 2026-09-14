@@ -648,7 +648,7 @@ inline-scan: 76(OP_STRING_ADD) / 88(模块变量访问) / 156(SWITCH_LOOKUP，R1
 |---|---|---|---|---|---|
 | ~~R4~~ | ~~`jit_func_cache` 冲突驱逐的 **use-after-free 隐患**~~ | ~~256 槽 direct-mapped，冲突时 `jit_mem_free` 掉占用者的机器码 —— 若那个函数**正在 C 栈上执行**（A 调 B、B 的 callout 又编译了撞槽的 C）就是 UAF~~ | ~~需要「执行中计数」+ 驱逐时延迟回收~~ | ~~高（内存安全）~~ | **已完成（§8.60，2026-09-14）**：确认存在（强制碰撞 4/4 崩 `0xC0000005`）并修复为**机器码延迟释放队列**（安全点判据复用 `jit_func_depth`/`jit_loop_depth`）；`LENO_JIT_FUNC_CACHE_SMALL=1` 做确定性复现，用例 `assert/test_jit_func_cache_churn.leno` |
 | ~~R1~~ | ~~`OP_SWITCH_LOOKUP` 进 JIT~~ | ~~file_manager 仅剩的"可做但难"拒收点（×1）。VM 侧是 int/bigint/float/string 四路二分查找；变长编码：`const_idx(2) count(2) default_off(4) [case_off(4)]…`~~ | ~~`opcode_size` 变长解码 + scan 的多目标前向记账 + codegen 线性比较链~~ | ~~中~~ | **已完成（§8.61，2026-09-14）**：查找逻辑抽成 `switch_lookup_index`（VM/JIT 共用，语义唯一来源）+ 变长 `opcode_size` + 多目标前向记账（内联侧保守拒绝）+ 线性比较链；`assert/test_jit_op_switch_lookup.leno`；**循环拒收清零**（直方图只剩刻意保留的 `138`） |
-| **R12** | **【内存安全·最高优先级】JIT 下「循环体内 dict 取值 → 存局部变量」堆损坏** | 见 §12.1：最小形态可 100% 复现 `0xC0000374`；已夹逼到"循环体内的 dict 取值 + 存局部变量"，与字段读无关；已证明**不是** R9/R2/R8 引入（`4cf9e9ed` 同样崩） | 先查 `OP_SET_LOCAL`/`SET_LOCAL_POP` 用 `cur_local_map[slot]` 时不检查 `si < 0`（`mark_local` 在 `num_locals >= JIT_MAX_LOCALS` 时静默返回 ⇒ 偏移可能是垃圾值 ⇒ 写到 scratch 区外） | **高（内存损坏）** | **最优先**（高于 R11/R5/R7 等一切性能项） |
+| ~~R12~~ | ~~【内存安全】JIT 下「循环体内**按字面量属性名取值**」堆损坏~~（原描述："dict 取值 + 存局部变量"） | ~~最小形态 100% 复现 `0xC0000374`；200000 轮正常 / 262144 轮崩~~ | ~~一个 `pop_bytes` 判据~~ | ~~高（内存损坏）~~ | **已完成（§8.67，2026-09-14）**：根因不是 dict 路径，而是 **`OP_GET_PROPERTY` 独立访问形态没弹 receiver 槽** ⇒ **每次执行泄漏 8 字节** ⇒ 循环里 RSP 单调下漂 ⇒ ~2MB 栈界处 `0xC0000374`。修法：该分支 `pop_bytes` 由 `0` 改为 `8`。实测漂移 **−8/次 → 0**、该循环 **182ms → 约 20~33ms**、A 形态的 3 次 `int48` bailout 一并消失；用例 `assert/test_jit_op_get_property.leno`（40 万轮，必须 > 262144 阈值） |
 | R2 | L7 余项成批补齐 | 余项：`OP_AS_CAST`(94)、`OP_GET_METHOD`(134，**裸方法取值**形态)、`OP_ARRAY_GET/SET`、`OP_DICT*`、`OP_SLICE`(79)、`OP_IN`、`OP_RANGE`、`OP_NEG`(33)、`OP_U8_TO_F64`(146) | 多为 callout 型，照 §8.52~§8.59 的模板走（`opcode_size` + 两处 scan + callout + codegen + 用例）；需要"语义唯一来源"抽取的（VM 里就地 READ 的那类）照 §8.61/§8.64/§8.65 的做法 | 低 | **批次 1（§8.63）**：`OP_IS_NULL`(48)。**批次 2（§8.64）**：`OP_STRING_ADD`(76)（由插值 `$"..."` 产生，不是 `+`；顺带解开内联侧）。**批次 3（§8.65）**：`OP_TYPE_CHECK`(93)——抽出 `type_check_value` 共用，顺带修掉 `TYPE_ENUM` 的 4 字节长度 bug；实测 `FuncCompiled 123 → 289`。**下一批候选**（实测排序）：**内联侧**补 `OP_GET_METHOD`（×36，见 R7；这是"内联能否成立"的问题，不影响循环编译）、`94:AS_CAST`（带值改写语义，直方图未出现）。注：`-d["k"]`、`x == null` 实测走已支持的路径，不必做；**循环级拒收此刻只剩刻意保留项**（`138`）/ R5 前置（`14`）/ 维持拒绝（`142`） |
 | ~~R3~~ | ~~L0 诊断收口~~ | ~~`opcode_size` 余项补全；把 scan 的 default 报错区分成 `unknown opcode`（缺长度）与 `unsupported opcode`（已收录长度但缺 case）~~ | ~~纯诊断，无行为变化~~ | ~~极低~~ | **已完成（§8.63，2026-09-14）**：补齐约 40 条长度（逐条与 VM 的 `READ_*`、`debug.c` 反汇编器交叉核对）；`OP_CLOSURE` 因长度依赖常量表而**故意保持"未知"**；报错分为 `unknown（长度未知）`/`unsupported（已收录长度、未实现）`。**实测收益**：同一负载的拒收清单从"含糊的 138"变成分类可排期（76×4 / 93×3 / 14×2 / 142×2 / 138×49），R2 的下一批因此是测出来的而不是猜的 |
 | R5 | 闭包创建与捕获变量（`OP_CLOSURE` / `GET/SET/CLOSE_UPVALUE`） | 循环里建闭包、闭包体内读写捕获变量都不进 JIT（被调函数带 upvalue 时自动退回 VM 重入 ⇒ 语义正确但不快） | 两件基础：**(a)** func-JIT ABI 要加 closure 通道（现为 `jfn(flocals, globals)`，无 upvalue 入口）；**(b)** 循环 JIT 的 locals 在 scratch 区（迭代即复用）⇒ 直接捕获会产生**悬空 upvalue**，只能先允许"捕获已在 upvalue 链上的变量"，或改 locals 布局 | 高（ABI + 生命周期不变量） | 单独一轮，**先设计不变量再动手** |
@@ -3751,10 +3751,24 @@ callout 会**急切编译**被调者，正好落在这条链上 ⇒ 风险被 §
 * 8 个 JIT 用例 JIT + `LENO_NO_JIT=1` 双模式全绿；`assert` 全套见提交说明。
 * `file_manager` 交互负载：`closed cleanly`、运行时 bailout **0**、拒收直方图无新项。
 
-**附带发现（值得单独记）**：崩溃会在 Windows 上留下 **WER 挂住的进程**。本次实验一次就留下
-**42 个** `lenojit` 进程，它们锁着 `build\lenojit.exe` ⇒ 后续 `ld: cannot open output file
-build\lenojit.exe: Permission denied`（构建失败）。⇒ **看到一堆残留 `lenojit` 进程，就该怀疑
-之前发生过崩溃**（此前描述过的"30 多个残留进程"很可能就是同一现象）。
+**附带发现（2026-09-14 实测更正）**：崩溃会在 Windows 上留下一堆 `lenojit` 条目。实测
+（`Get-Process` 与 `tasklist` 交叉验证）：
+
+* 这些条目的**线程数全为 0、工作集 0 MB**，`HasExited=True` ⇒ **不是"在跑的进程"，也不是
+  「WER 挂住」**（同时确认**没有** `WerFault`/`wermgr` 在运行）。合计约 **2 MB** 内核记账、
+  0 CPU，**不影响程序运行**。
+* 任务管理器默认视图**看不到**它们是正常的（它列的是"活着"的进程）；只有按进程对象列举的
+  接口（`Get-Process`/`tasklist`）会显示 ⇒ 用户看不到 ≠ 计数撒谎，而是两类"进程"定义不同。
+* `build\lenojit.exe` **确实会不可写**（以写方式打开失败）⇒ 后续构建报
+  `ld: cannot open output file ... Permission denied`。成因**不是 WER**：进程对象未释放时映象
+  section 仍钉住 exe；而进程对象靠**启动它的进程持有的句柄**维持 ⇒ **`Stop-Process`/`Kill()`
+  对它们无效**（早已终止，没有可杀对象），只有持有句柄的 shell 退出才会消失。
+* **实用做法**：遇到这种锁不要纠缠清理僵尸，**换个输出名构建**即可绕开
+  （`gcc -o build\lenojit_xxx.exe <同 build.bat 的源列表>`）。
+* **另一种更常见的瞬时锁**：构建命令紧跟在同一批地跑过一次 `lenojit` 之后（进程尚在退出）
+  ⇒ `collect2.exe: error: ld returned 1 exit status`。此时 `Get-Process lenojit` 可能已经是 0、
+  exe 也可写 —— **直接重试构建即可**，不必怀疑代码或环境。
+* 仍然成立的经验：**看到一堆残留 `lenojit` 条目，就该怀疑之前崩过**。
 
 **教训**
 
@@ -4150,6 +4164,79 @@ grep 编译器可见，`OP_GET_METHOD` 的所有发射点后面都紧跟调用�
 3. **"补一条 opcode"之前先确认它有没有源码入口**：这一条的名字叫"取值形态"，
    但编译器根本不发不带调用的裸形态 —— 花在建言前的这一次 grep 比事后的返工便宜得多
    （§8.64 的教训在这里第二次成立）。
+
+***
+
+### 8.67 修复 R12：`OP_GET_PROPERTY` 独立访问漏弹 receiver 槽（每轮泄漏 8 字节 ⇒ RSP 漂移 ⇒ 长跑堆损坏）（2026-09-14）
+
+**症状**：循环里做 `var q = box["p"]`（`box` 是字典），30 万轮后 `exit=-1073741571`
+（`0xC0000374` STATUS_HEAP_CORRUPTION）。阈值实测：**200000 轮正常 / 262144 轮崩**。
+
+**第 0 步曾走错**：最初把它归类为"循环内 dict 取值"（怀疑 `OP_INDEX` 的 dict callout /
+`vm.stack` 越界），并据此写了一版诊断。**字节码 dump 一句话纠正了它**（`--debug-out`）：
+
+```
+崩溃形态（box["p"]）： OP_GET_LOCAL 0 → OP_GET_PROPERTY 11 (p) → OP_SET_LOCAL_POP 4
+正常形态（box[k]  ）： OP_GET_LOCAL 0 → OP_GET_LOCAL 1 → OP_INDEX → OP_SET_LOCAL_POP 5
+```
+
+⇒ **`obj["常量"]` 与 `obj[变量]` 是两个不同 opcode**。这解释了全部"奇怪"的判别结果：
+换任何字面量都崩（都走 `OP_GET_PROPERTY`）、键放局部变量就不崩（走 `OP_INDEX`）、
+int 键不崩（`OP_INDEX`）。而 `jit_callout_index` 的 dict 分支**一次都没被调用**
+（诊断打印 0 行）—— 这就是"**该被调用的 callout 没被调用**"给出的第一个硬信号。
+
+**测量：这种 bug 别读代码，先量漂移**。在 callout 里打印一个**局部变量的地址**即可 ——
+它随 JIT 调用点的 RSP 一起移动：
+
+```
+[PROP] n=100000  vm_sp=2 (delta=0)  rsp_delta=-800000     ← 每轮 -8 字节
+[PROP] n=200000  vm_sp=2 (delta=0)  rsp_delta=-1600000
+```
+
+`vm_sp` 不动 ⇒ 不是 VM 值栈；**机器栈每执行一次少 8 字节**。8 × 262144 ≈ **2.1MB**
+⇒ 与崩溃阈值精确吻合 ⇒ 根因锁定为"某处漏弹一个槽"。
+
+**根因**（`ops_callout.inc` 的 `case OP_GET_PROPERTY`）：
+
+```c
+/* Merged call: pop receiver + args, push result → net -arg_count.
+ * Standalone: receiver replaced by value → no pop.        ← 错在这里 */
+int pop_bytes = merged ? (merged_argc + 1) * 8 : 0;
+```
+
+"receiver 被结果取代"只在**结果写回那个槽**时成立；这里结果进的是 **TOS 缓存（RAX）**，
+内存里的 receiver 槽必须显式弹掉，否则不变量"内存栈 = vstack − tos_live"被破坏 ——
+每次执行永久多留一个槽。合并调用分支按"弹掉本指令消费掉的操作数"（`(argc+1)*8`）**是对的**，
+错的只有独立访问这条（照同一判据补 `8`）。
+
+**修法**：`int pop_bytes = merged ? (merged_argc + 1) * 8 : 8;`
+
+**验证**
+
+* 漂移复测：`n=100000/200000/300000` 的 `rsp_delta` **恒为 0**（修前 −8/次）。
+* 原最小复现（100 万轮）`exit=0`；本轮全部崩溃探针（262144 轮、换字面量、`probe_crash_a`）通过。
+* **一个修复解释了两个症状**：A 形态（`s + box["p"].a`）修前每次 3 次 `int48 溢出/截断` bailout、
+  比解释器还慢（156ms）—— RSP 错位使 JIT 读到错位的 vstack 槽（拿到 struct 对象而不是字段值）
+  ⇒ 修后 **bailout 归零、28.1ms**。同一循环 `probe_crash_b` 从 182ms 降到 19.6~32.5ms。
+* 新用例 `assert/test_jit_op_get_property.leno`：40 万轮（**必须大于 262144 的崩溃阈值**，
+  否则回归用例形同虚设）+ 一条 `OP_INDEX` 对照路径；JIT / `LENO_NO_JIT=1` 都通过。
+* `file_manager`：`closed cleanly`、运行时 bailout **0**、`FuncCompiled 280`。
+* `assert` 全套 **290 passed / 0 failed**；编译 0 warning。
+
+**已排除"本轮引入"**：`git worktree` 在 `4cf9e9ed`（R9 之前）重建二进制，同一探针同样崩，
+而这段 codegen 更早就存在 ⇒ **长期潜伏的老 bug**。此前"崩溃后留下一堆僵尸进程条目"
+（§8.60 记过一次）很可能正由它造成 —— 只是当时没找到触发形态。
+
+**教训**
+
+1. **"该被调用的 callout 一次没被调用"是最强信号**：它一秒否掉整套假设，比读十遍代码有用。
+   诊断要打印**计数**，而不是只断言"应该是它"。
+2. **换一个写法就不崩 ⇒ 先 dump 字节码**：`a[b]` 会按操作数形态（常量/变量）分派到**不同 opcode**。
+   凭语义直觉猜 opcode 是这次走弯路的唯一原因。
+3. **"长跑才崩/内存损坏"先量漂移再读代码**：在 callout 里打印局部量地址就能直接读出
+   "每轮少 8 字节"，几分钟定位；而这类 bug 的代码读起来完全"正常"（注释还写着自认为对的理由）。
+4. **TOS 缓存与内存栈必须一起记账**："结果放到 RAX"不等于"内存栈少一项"。
+   凡"结果取代栈顶"的形态都要显式弹掉被消费的槽（可对照同文件其它 `pop_bytes` 的写法）。
 
 ***
 
@@ -4595,7 +4682,12 @@ RAX 常驻栈顶，`a + b` 退化成「pop 一次 + add + 留在 RAX」，只在
 
 ## 12. 当前未解决问题
 
-### 12.1 【未修复·内存安全】循环体内「dict 取值 → 存局部变量」在 JIT 下堆损坏（2026-09-14 发现）
+### 12.1 【已修复·§8.62】循环体内「按字面量属性名取值」obj["key"] 在 JIT 下堆损坏（2026-09-14 发现 → 同日修复）
+
+> **状态：已修复**（2026-09-14，详见 §8.67）。根因：`OP_GET_PROPERTY` 的**独立访问**形态在 JIT 里
+> **没有弹掉 receiver 槽** —— 结果只进 RAX（TOS 缓存），内存栈却永久多留一个槽 ⇒
+> **每次执行泄漏 8 字节** ⇒ 循环里 RSP 单调下漂 ⇒ 到 ~2MB 栈界时 `0xC0000374`。
+> 下面保留完整的发现/夹逼/排除过程，**以及被推翻的两条线索**，供同类问题参考。
 
 **症状**：`exit=-1073741571` = **`0xC0000374` STATUS_HEAP_CORRUPTION**。
 
@@ -4646,9 +4738,11 @@ main() {
 | A（`s + box["p"].a`） | 有 | **否**（3 次 `int48` bailout 后放弃 JIT） | 不崩 |
 | B2 / B3 | 无 | 是 | 不崩 |
 
-⇒ 充分条件是「**循环留在 JIT 机器码里反复执行 `OP_INDEX` 的 dict callout**」。
-下一步应从 `jit_callout_index` 的 dict 分支与其 callout 前后（保存/恢复、以及
-`vm_grow_frames` 重分配 `vm.frames` 时的 `jit_reloaded_locals` 回写）开始查；
+⇒ 充分条件是「**循环留在 JIT 机器码里反复执行该 opcode**」。
+（这条推断当时写的是"`OP_INDEX` 的 dict callout" —— **是错的**：真正被反复执行 30 万次的是
+`OP_GET_PROPERTY`，而 `jit_callout_index`（dict 分支）**一次都没被调用** —— 诊断代码证明了这点。
+纠正它的是**字节码 dump**（`--debug-out`）：`obj["常量"]` 与 `obj[变量]` 发的是**不同 opcode**。
+详见 §8.67 的教训。）
 `LENO_JIT_DEBUG` 显示崩溃有 `[JIT-TRACE] PRE` 行、**没有** POST 行。
 3. 同一形态另有性能异常：A 形态在 JIT 下 3 次 bailout 后放弃 ⇒ **比纯解释器还慢**
    （156ms vs 146ms）。记账修好后这两件事很可能一起消失。
