@@ -11,7 +11,16 @@
                 } else {
                     kind = SYM_LOCAL;
                 }
-                Symbol* sym = scope_define(s->current, ast->u.enum_def.name, kind);
+                // 预注册复用（与 struct/cstruct/face 同一策略）：预注册阶段已按同名建好
+                // TYPE_ENUM 符号时直接复用；否则 scope_define 会因重名返回 NULL，反被下面
+                // 的 else 当成"重复定义"误报。kind 保持与预注册时一致。
+                Symbol* sym = scope_resolve_local(s->current, ast->u.enum_def.name);
+                if (sym && sym->type && sym->type->kind == TYPE_ENUM) {
+                    type_free(sym->type);
+                    sym->type = enum_type;
+                } else {
+                    sym = scope_define(s->current, ast->u.enum_def.name, kind);
+                }
                 if (sym) {
                     sym->type = enum_type;
                     // 保存符号引用信息
