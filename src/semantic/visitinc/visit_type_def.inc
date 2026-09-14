@@ -467,6 +467,22 @@
                 if (existing && existing->type && existing->type->kind == TYPE_FACE) {
                     type_free(existing->type);
                     existing->type = face_type;
+                } else if (existing && existing->type) {
+                    // 跨种类同名：struct 分支早已检查（cstruct/enum 亦然），唯独 face 漏了，
+                    // 于是 `struct Foo` + `face Foo` 不报错、两张全局表各存一份，后续按名查
+                    // 全局表会取到"碰巧先命中的那份"。这里补齐同一套检查。
+                    char msg[BUFFER_MEDIUM];
+                    if (existing->type->kind == TYPE_STRUCT) {
+                        snprintf(msg, sizeof(msg), "类型 '%s' 已经定义为 struct，不能重复定义为 face", ast->u.face_def.name);
+                    } else if (existing->type->kind == TYPE_CSTRUCT) {
+                        snprintf(msg, sizeof(msg), "类型 '%s' 已经定义为 cstruct，不能重复定义为 face", ast->u.face_def.name);
+                    } else if (existing->type->kind == TYPE_ENUM) {
+                        snprintf(msg, sizeof(msg), "类型 '%s' 已经定义为 enum，不能重复定义为 face", ast->u.face_def.name);
+                    } else {
+                        snprintf(msg, sizeof(msg), "face '%s' 重复定义", ast->u.face_def.name);
+                    }
+                    error_add_at(ERR_DUPLICATE_VAR, ast->line, ast->column, msg);
+                    type_free(face_type);   // 未挂到任何 symbol 上，避免泄漏
                 } else {
                     SymKind kind = SYM_TYPE;
                     Symbol* sym = scope_define(s->current, ast->u.face_def.name, kind);
