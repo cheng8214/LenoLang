@@ -585,12 +585,66 @@ for each local i:
 3. 收录且 scan 通过，但 codegen 没有 `case` → `ops_misc.inc` 的 default →
    `codegen FAIL: unsupported opcode`，编译返回 0。
 
-### 当前明确不支持（出现即整个循环不可 JIT）
+### 操作码覆盖面盘点与实施计划（2026-09-14 脚本盘点）
 
-| Opcode | 枚举名 | 说明 |
-| ------ | --- | --- |
-| — | 泛型 OP\_STRUCT\_INIT | `generic_count > 0` 时拒绝：泛型实参需解析调用栈帧 |
-| — | 其它 `opcode_size()` 未收录的 opcode | 未实现 codegen |
+**⚠ 只补 `opcode_size()` 的长度不改变任何行为**：补完之后扫描器会在第 2 层（`scan_loop_body`
+的 switch default）照样拒绝，只是日志从 `unknown opcode` 变成诚实的 `unsupported opcode`。
+真正放开必须 **scan 的 `case` 与 codegen 的 `case` 成对加** —— codegen 的 default 是
+bailout，只加一半会出现「能编译但一进去就 bailout」的假收益，比直接拒收更糟
+（白烧 3 次 bailout 预算后整个循环被拉黑）。
+
+**盘点方法**（权威、可复现，不要凭记忆列）：剥掉 `leno_vm.h` 枚举块的注释取全部 `OP_*`（164 项），
+剥掉 `jit_scan.c` 中 `opcode_size()` 函数体的注释取 `OP_*`，做差 ⇒ **56 项未收录**。
+实测锚点：`file_manager.leno` 日志里的 `unknown opcode 80/39/132/88/38`
+分别正是 `OP_LENGTH` / `OP_SET_DECLARED_FACE` / `OP_SET_FIELD` / `OP_GET_MODULE_VAR` /
+`OP_SET_PTR_ELEM_TYPE`，与本表编号完全一致。
+
+| 层 | 内容 | 收益 | 状态 |
+| --- | --- | --- | --- |
+| L0 | 补齐 `opcode_size()` 的 56 项 + 把 `scan_loop_body` / `scan_callee_for_inline` 的 default 报错区分成 `unsupported opcode`（已收录长度但未实现） | 诊断（让「缺长度」与「缺 case」一眼可分） | **未做** |
+| L1 | `OP_LENGTH`（`.len()`） | 高（`for x.len() to i` 遍地） | **已完成**（§8.52）：`opcode_size` + 两处 scan + 数字原生/对象 callout 双路径 + `assert/test_jit_op_length.leno` |
+| L2 | `OP_ITER_GET` / `OP_ITER_GET_VALUE`（for-in 迭代） | 高（补完 L1 后它是 file_manager 里最高频的缺口 ×4） | 未做 |
+| L3 | `OP_SET_FIELD` / `OP_GET_FIELD`（callout，`field_idx` 已在指令里） | 高（对象状态更新，×2） | 未做 |
+| L4 | `OP_SWITCH_LOOKUP`（变长：`const(2) count(2) default(4) [offset(4)]...`） | 中（×2，编译器 switch 语句） | 未做 |
+| L5 | `OP_SET_DECLARED_FACE`（op+const16）/ `OP_SET_PTR_ELEM_TYPE`（op+byte） | 中（×2 / ×1）。**不能当 no-op 跳过**：`declared_face` 影响后续虚拟分派、`element_type` 影响 FFI 读写宽度 | 未做 |
+| L6 | `OP_GET_MODULE_VAR` / `OP_SET_MODULE_VAR`（callout，用当前帧 `module`） | 高（SDL3 大量模块级变量：`_hwnd = hwnd` 这类，×2） | 未做 |
+| L7 | `OP_STRING_ADD`（×1，内联扫描里也出现）/ `OP_NEG` / `OP_IS_NULL` / `OP_ARRAY_GET` / `OP_ARRAY_SET` / `OP_ARRAY_APPEND` / `OP_INDEX_SET` / `OP_DICT` / `OP_DICT_GET` / `OP_DICT_GET_KEY` / `OP_TYPE_CHECK` / `OP_AS_CAST` / `OP_SLICE` / `OP_IN` / `OP_RANGE` / `OP_U8_TO_F64` | 中 | 未做 |
+| L8 | `OP_CALL` / `OP_TAIL_CALL` / `OP_CLOSURE`（**裸**调用/建闭包；注意 `OP_GET_PROPERTY`+`OP_CALL` 的窥孔已把「方法调用」形态吃掉，所以这两条只在闭包/函数值调用时出现） | 中 | 未做 |
+| — | **建议维持拒绝**：`OP_THROW`、`OP_AWAIT` / `OP_ASYNC_CALL`、`OP_CLIB_CALL` / `OP_CFUNC_CALLBACK`、`OP_GET_FIELD_ADDR`、`OP_DTOR_LOCAL`、`OP_TAIL_CALL_NATIVE`、`OP_PUSH_TYPE_ARGS`、模块定义期指令（`OP_DEFINE_GLOBAL*` / `OP_STRUCT_DEF` / `OP_ENUM_DEF` / `OP_FACE_DEF` / `OP_CSTRUCT_DEF` / `OP_LOAD_NATIVE_MODULE` / `OP_INIT_LENOMODULE` / `OP_DEFINE_MODULE_FUNC`） | 语义特殊（异常/协程/FFI/泛型/仅初始化期出现），实现收益低、风险高 | 维持 |
+
+**实测拒收直方图（`file_manager.leno`，2026-09-14，补完 L1 之后）**：
+
+```
+op=81 (OP_ITER_GET)          ×4
+op=132(OP_SET_FIELD)         ×2
+op=156(OP_SWITCH_LOOKUP)     ×2
+op=39 (OP_SET_DECLARED_FACE) ×2
+op=88 (OP_GET_MODULE_VAR)    ×2
+op=38 (OP_SET_PTR_ELEM_TYPE) ×1
+inline-scan: 132 / 76(OP_STRING_ADD) / 88    ← 只影响内联，不阻断循环编译
+```
+
+**关键：单补一个 opcode ≠ 解锁循环。** 补完 L1 后 `OP_LENGTH` 从直方图里消失，但
+`scan FAIL` 的**总行数没变**（16）—— 那些循环的**拒收点前移**到了下一个缺口
+（同一个循环接连撞上 80→…→81 这种链）。只有某个循环的**全部**缺口都被补齐，
+它才真正进 JIT ⇒ 这类工作要**成批推进**，并按上面这张直方图排序
+（本表 L2 / L3 / L6 的先后就是这么定的）。
+
+**55 项未收录全量（`编号:名字`，用于 L0 逐项补长度；`80:LENGTH` 已于 §8.52 补齐）**：
+
+```
+14:GET_UPVALUE 15:SET_UPVALUE 16:CLOSE_UPVALUE 17:DEFINE_GLOBAL 18:GET_GLOBAL_FUNC
+19:DEFINE_GLOBAL_FUNC 20:GET_NATIVE 33:NEG 38:SET_PTR_ELEM_TYPE 39:SET_DECLARED_FACE
+48:IS_NULL 53:IN 54:RANGE 59:CALL 60:TAIL_CALL 61:CLOSURE 65:ARRAY_GET 66:ARRAY_SET
+67:ARRAY_APPEND 69:DICT 70:DICT_GET 72:DICT_GET_KEY 73:LOAD_NATIVE_MODULE
+75:GET_MODULE_CONST 76:STRING_ADD 78:INDEX_SET 79:SLICE 81:ITER_GET
+82:ITER_GET_VALUE 87:THROW 88:GET_MODULE_VAR 89:SET_MODULE_VAR 90:GET_MODULE_FUNC
+91:DEFINE_MODULE_FUNC 93:TYPE_CHECK 94:AS_CAST 129:STRUCT_DEF 131:GET_FIELD
+132:SET_FIELD 133:GET_FIELD_ADDR 134:GET_METHOD 135:ENUM_DEF 136:FACE_DEF
+137:CSTRUCT_DEF 138:GET_CSTRUCT_DEF 139:AWAIT 140:ASYNC_CALL 141:INIT_LENOMODULE
+142:CLIB_CALL 143:CFUNC_CALLBACK 145:TAIL_CALL_NATIVE 146:U8_TO_F64 147:PUSH_TYPE_ARGS
+148:DTOR_LOCAL 156:SWITCH_LOOKUP
+```
 
 > 注意：**通用 `OP_MUL` / `OP_MOD` / `OP_EQ` / `OP_NEQ` 已于 2026-09-12 支持**（见第 4 节
 > 「通用算术与比较」）；它们缺席时同样会让**整个循环**被拒绝编译（不是 bailout），
@@ -613,6 +667,7 @@ for each local i:
 | OP\_GET\_PROPERTY / OP\_INVOKE\_METHOD\_TYPED | callout（`jit_callout_get_property` / `jit_callout_invoke_method`），并带 GET\_PROPERTY+OP\_CALL 窥孔合并；`_TYPED` **支持多返回值回填**（§8.20），且因字节码带静态类型名可做编译期去虚拟化 / 方法内联（§8.30） |
 | OP\_CALL\_NATIVE | callout `jit_callout_call_native` |
 | OP\_INDEX / OP\_ARRAY / OP\_DICT\_SET / OP\_INDEX\_SET\_NOPUSH / OP\_ARRAY\_APPEND\_NOPUSH | callout |
+| OP\_LENGTH | **数字原生**（32 位 `CVTTSD2SI` + 负值 clamp，复刻解释器的 `(int)double`）/ 对象与非法类型走 callout `jit_callout_length`（§8.52，覆盖面 L1） |
 | OP\_STRUCT\_INIT（非泛型） | callout `jit_callout_struct_init` |
 | OP\_RETURN / OP\_RETURN\_MULTI | 支持（函数级 JIT；多返回值仅内联路径）。**循环体内可达的 return 会让整个循环被拒绝**（§8.21） |
 | 脚本函数调用（OP\_CALL\_GLOBAL\_FUNC\_TYPED） | **内联**展开进宿主循环（见 13.8），不再整体拒绝 |
@@ -3034,6 +3089,158 @@ JIT 用 `RDI`/`RSI` 当 callout 实参寄存器（`JIT_ARG1/JIT_ARG2`），但�
    记录漂移阶梯的探针能在几分钟内把漏点缩到一条算子；相比之下「盯着耗时/看汇编」要慢得多。
 4. 想造差分探针时注意**别把 stdout 与 stderr 混到同一个文件**（JIT 统计在 stderr，会与
    stdout 交错，按区间过滤会把程序的真实输出行一起吃掉，表现为假的「缺行」）。
+
+***
+
+### 8.51 `OP_EQ`/`OP_NEQ` 遇 NaN-boxed 一律 bailout —— file_manager 五个热循环整循环退回解释器（2026-09-14）
+
+**症状**：`leno_module/LenoSDL3/examples/应用示例/文件管理器/file_manager.leno` 交互一段后退出统计：
+
+```
+Compiled: 62  Executed: 73760  Bailouts: 15
+Bailout: fn='_ensure_fitted_range' loop_bc=303 x3 — 非溢出类 @bc_off=398（= loop_bc 303 + 95）
+Bailout: fn='_ensure_fitted_range' loop_bc=260 x3 — 非溢出类 @bc_off=131425（= loop_bc 260 + 131165）
+Bailout: fn='render' loop_bc=380 x3 — 非溢出类 @bc_off=540
+Bailout: fn='_topRects' loop_bc=246 x3 — 非溢出类 @bc_off=320
+Bailout: fn='_colW' loop_bc=33 x3 — 非溢出类 @bc_off=117
+```
+
+5 个站点各回退满 3 次即被拉黑 ⇒ `Table.render` / `_ensure_fitted_range`（含 1 份内联副本）/
+`MenuBar._topRects` / `MenuBar._colW` **永远跑解释器**。注意 `loop_bc` 是循环体起始偏移，
+`rel=131165` 是内联帧基址 `0x10000 × depth` 没被解码（真实 `+93`，深度 2）。
+
+**定位手段**：`LENO_JIT_DEBUG=1` + **自动扫鼠标制造热度**（空跑 8s 一次 bailout 都没有 ——
+循环要跨 50 次命中阈值才会编译，交互式程序不制造热度就复现不出来）。解码 `_topRects`
+（`bc_off=246`）循环体字节码：
+
+```
+[69] a1 00 00 12   OP_GET_FIELD_FAST   → _font（对象，RAX=0xfffc...）
+[73] 01            OP_NULL
+[74] 2f            OP_NEQ             ← 每次都在这条回退
+```
+
+对应 `sdl_menu.leno` 的 `if _font != null`。
+
+**根因**：`ops_icmp.inc` 的 `OP_EQ`/`OP_NEQ` 只有「int48 快路径 + 对象身份快路径 + float 慢路径」，
+**任一操作数是 NaN-boxed（字符串/数组/对象/null/BigInt/FFI 指针）就 bailout**。而
+`x != null`、`s != ""` 这类比较在渲染/布局/菜单代码里遍布 ⇒ 这些循环一进去就回退、3 次拉黑。
+
+**修复**
+
+1. 新增 callout `jit_callout_value_eq(a, b, invert)`（`jit_callout.c` + `jit_priv.h` 声明）：
+   语义**逐条复刻**解释器 `vm/vminc/op_compare.inc` 的 `OP_EQ` —— int/int、任一是 float 时按
+   double（BigInt 与 float 混合同序）、BigInt 按值、与 null 比较的 `ObjFFIPointer`/`ObjFFICallback`
+   看包装地址（**仅顶层**，数组元素不适用）、类型不同为假、同类型下 null/bool/string 按内容/
+   array 逐元素/其余按身份。`OP_NEQ` 复用同一函数 `invert=1`。
+2. `ops_icmp.inc`：EQ/NEQ 的 bailout 桩改成 callout 桩（`EMIT_RAW_TO_VALUE` → 传参 →
+   `EMIT_VALUE_TO_RAW` → 用新跳转**跳过**裸 0/1 的 `EMIT_RAW01_TO_BOOLVAL`）。
+
+**同一天内被连带修掉的两个「被 bailout 掩盖」的旧 bug**（同类问题，都是移除 bailout 后立刻暴露）：
+
+* **(a) 身份判定失败跳数值慢路径时 `RAX` 已被改写成 `type_a`，没有恢复。**
+  该路径上 `and rax, R10` + `mov_reg32_mem8` 把 `a` 换成了「类型编号」，而紧随其后的数值慢路径
+  直接拿 `RAX` 当操作数 —— 以前那段紧跟着就是 bailout（解释器重跑），所以从未被发现。
+  后果：`s1 == s2`（内容相同的两个字符串）、`arr1 == arr2`（逐元素）在 JIT 里**恒为「不相等」**，
+  `!=` 恒为真（差分实测 `c3=50 c5=2950` —— 只有 JIT 接管前那 50 轮是对的）。
+  修法：慢路径入口分两处 —— 类型检查直落的寄存器完好，用 `slow_body_jmp` 越过恢复块；
+  身份判定跳来的先 `EMIT_LOAD_TMP` 从 `tmp1/tmp2` 恢复 `a`/`b`。
+* **(b) `OP_NULL` 压的是字面量 0**（`ops_misc.inc` 注释写着「NULL = 0」）。但
+  `val_is_null(v)` 是 `v == NULL_VAL` 的**精确比较**（`NULL_VAL = QNAN|SIGN_BIT|TAG_NULL`，非 0），
+  且 `OP_JUMP_IF_FALSE` 明确分开比较 `FALSE_VAL` 与 `NULL_VAL` ⇒ JIT 里「null」与「整数 0」
+  不可区分：`x == null` 在 x 为 0 时误判为真、**`null == null` 误判为假**。
+  后果：`assert/test_gc_iterative_mark.leno`（`while cur != null` 遍历 5000 层链表）**死循环**
+  （`JIT TIMEOUT(25s)`；`LENO_NO_JIT=1` exit=0）。修法：`emit_mov_reg_imm64(JIT_RAX, NULL_VAL)`。
+3. 顺带修统计显示：非溢出类 site 的内联帧偏移剥掉 `0x10000 × depth` 基址并标出内联深度
+   （此前报 `131425` 这种假偏移，误导排查方向）。
+
+**验证**
+
+* `file_manager` 同一自动交互负载（7s 扫鼠标）：`Bailouts: 15 → 0`，`Compiled 30 / Executed 878`，
+  `[JIT-DEBUG] BAILOUT` 行 0 条。
+* `assert` 全套 **276 passed / 0 failed**。
+* 自写差分探针（对象 vs null、字符串按内容、数组逐元素、`null==null`、类型不同、`!=` 全反向）：
+  JIT 与 `LENO_NO_JIT=1` **逐条一致**（修复前 `c3=50 / c5=2950`）。
+* 修复中途一度让 `test_gc_iterative_mark.leno` 卡死 —— 那正是 (b) 的暴露，不是新引入的独立问题；
+  用「`jit.gc_eq` 复现脚本按进度打印 A/B/C」把卡点缩到 `count()` 的 `while cur != null`。
+
+**教训**
+
+1. **bailout 会掩盖同一条路径上的旧错误假设。** 这条路径以前「一进来就回退」，所以
+   「RAX 被改写」「null 表示错误」这类问题永远不会被执行到。**把 bailout 换成 callout / 原生
+   实现时，必须把那条路径从入口到出口重新核一遍**（本次 3 个 bug 里 2 个是这么暴露的）。
+2. 判「热点循环进没进 JIT」不能只看 `Bailouts`：`Bailouts=0` 也可能是**根本没编译成功**
+   （scan 拒收）。必须同时看 `Compiled` / `Cached` 与 `scan FAIL` 行数（第 5 节第 1/2 类）。
+3. 复现此类问题要**制造热度**：交互程序空跑不热（阈值 50 次命中），自动扫鼠标/长跑才有复现率；
+   现象与**执行次数**相关、与墙钟无关。
+4. `val_is_null` / `val_is_bool` 这类**精确比较**的谓词是「表示不一致」类 bug 的照妖镜：
+   写任何「压 null / 比 null」的 codegen 前先 grep 它们的定义。
+
+***
+
+### 8.52 `OP_LENGTH` 进 JIT：数字原生 + 对象 callout（§5 覆盖面 L1）（2026-09-14）
+
+**背景**：§5 盘点的 56 项未收录 opcode 里，`OP_LENGTH`（编号 **80**）是 `scan FAIL` 日志中出现
+最频繁的一个（`.len()` 在 SDL3 库里遍地都是）。它此前不在 `opcode_size()` 里 ⇒
+**任何含 `.len()` 的循环都被整循环拒收**（连编译都不做）。
+
+**实现（4 处）**
+
+1. `jit_scan.c`：`opcode_size()` 补 `OP_LENGTH → 1 字节`；`scan_loop_body()` 与
+   `scan_callee_for_inline()` 各补 `case OP_LENGTH`（栈净效应 0：pop 1 push 1）。
+   **三处必须同步**，漏最后一处会出现「循环能编，但含 `.len()` 的被调函数无法内联」。
+2. `jit_callout.c` + `jit_priv.h`：新增 `jit_callout_length(Value)`，语义逐条对齐
+   `op_utils.inc` 的 `OP_LENGTH`：数字 → `(int)value_to_double` 截断、负数 clamp 到 0；
+   `string→char_len`（**字符数**，不是字节数）、`array→count`、`dict→order_count`、
+   `enum_def→member_count`、`cstruct_array→count`、`struct→def->field_count`。
+   **非法类型不在这里造错误** ⇒ 置 `jit_callout_failed` → bailout → 解释器重放本条指令，
+   报错文本/行号与 `LENO_NO_JIT=1` 完全一致。
+3. `ops_misc.inc`：新增 `case OP_LENGTH`，双路径 ——
+   * **数字（原生）**：`EMIT_NUM_TO_XMM`（int48 与裸 double 都吃）→ **32 位** `CVTTSD2SI eax, xmm0`
+     \+ `movsxd rax, eax` → `test` + `jns`，负数 `xor` 成 0 ⇒ 与解释器的
+     `(int)double` + `len < 0 → 0` 逐位一致。
+     用 32 位而非 64 位是关键：`(int)1e10` 在 x64 硬件上得到 `INT32_MIN` → clamp 成 0；
+     64 位版本会保留 `10000000000`，那才是 JIT/解释器分歧。
+   * **对象 / 非法类型（callout）**：`jit_callout_length` + `jit_callout_failed` 检查
+     （`JNZ → bailout` 桩）。
+   * 两条路径结果都是 int（callout 侧经 `EMIT_VALUE_TO_RAW`）⇒ `MARK_TOS_RAW_INT48()`（§8.41）。
+4. `assert/test_jit_op_length.leno`：覆盖 string（中文串，验「字符数 ≠ 字节数」）/ Array / Dict /
+   字符串常量 / 数字形态（数字形态只有 `for n to i`（n 是变量）会产生 `OP_LENGTH`，且必须落在
+   外层循环体内才被 JIT 覆盖 ⇒ 用嵌套 `for`）。循环跑 3000 轮（> 热阈值 50）让 JIT 接管，
+   JIT 与 `LENO_NO_JIT=1` 两种模式都必须通过。
+
+**验证**
+
+* 新增测试：JIT `exit=0`、`LENO_NO_JIT=1` `exit=0`，长度值 `str=5 arr=4 dict=2 const=4 num=3` 两边一致。
+* 该循环在 `LENO_JIT_DEBUG=1` 下 `capable=1`、`Compiled 2 / Executed 35 / Bailouts 0`，
+  且 `scan FAIL` 与 `BAILOUT` 均 0 行 ⇒ 确实**在 JIT 里**跑，不是「没编成」。
+* `file_manager` 自动交互负载：日志里 `unknown opcode 80 (OP_LENGTH)` 归零，`Bailouts` 仍 0；
+  `assert/test_gc_iterative_mark.leno` 正常 `exit=0`。
+
+**必须记住的结论：单补一个 opcode ≠ 解锁循环。**
+`file_manager` 的 `scan FAIL` **总行数仍是 16**，只是 `OP_LENGTH` 那几条消失、**拒收点前移**到下一个缺口：
+
+```
+op=81 (OP_ITER_GET)          ×4      ← 现在最高频
+op=132(OP_SET_FIELD)         ×2
+op=156(OP_SWITCH_LOOKUP)     ×2
+op=39 (OP_SET_DECLARED_FACE) ×2
+op=88 (OP_GET_MODULE_VAR)    ×2
+op=38 (OP_SET_PTR_ELEM_TYPE) ×1
+inline-scan: 132 / 76(OP_STRING_ADD) / 88   ← 只影响内联，不阻断循环编译
+```
+
+只有当某个循环的**全部**缺口都被补齐，它才真正进 JIT ⇒ 这类工作要**成批推进**，
+并按实测直方图排序（§5 的表已按此顺序更新）。
+
+**教训**
+
+1. 判「收益」不能看 `scan FAIL` 行数，要看 **opcode 直方图 + 每个循环的缺口集合**。
+2. 解释器侧存在 UB 的地方（`(int)double` 越界），JIT 必须**复刻硬件实际行为**
+   （32 位 `CVTTSD2SI` → `INT32_MIN`），而不是「数学上更合理」的 64 位结果。
+3. 用 `LENO_JIT_DEBUG=1` 时必须同时看 `capable` / `Compiled` / `Executed`：
+   **结果对 ≠ 走了 JIT** —— 扫描拒绝后解释器照样算出正确结果，探针会静默失效。
+4. 别把两次运行（JIT / `LENO_NO_JIT`）的输出串着看：stdout 与 stderr 交错会让人把
+   「解释器的结果」当成「JIT 的结果」（本次就被 `str=5 …` 那行串过一次）。分开跑、分开读。
 
 ***
 

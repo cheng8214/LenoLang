@@ -628,6 +628,34 @@ Value jit_callout_div(Value a, Value b) {
     return NULL_VAL;
 }
 
+/* Callout: OP_LENGTH（`.len()`）的非数字路径。
+ * 语义逐条对齐解释器 vm/vminc/op_utils.inc 的 OP_LENGTH。数字在 codegen 里已原生处理，
+ * 这里一并实现（保持 callout 单独可用 / 语义单点可查）。
+ * **非法类型不在这里造错误**：只置 jit_callout_failed → JIT bailout → 解释器重放本条
+ * 指令，报错文本与行号与 NO_JIT 完全一致（JIT 里凭空造错误会让报错位置错位）。 */
+Value jit_callout_length(Value v) {
+    if (val_is_num(v)) {
+        int len = (int)value_to_double(v);
+        if (len < 0) len = 0;
+        return val_int(len);
+    }
+    if (!val_is_obj(v)) {
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+    switch (val_as_obj(v)->type) {
+        case OBJ_STRING:        return val_int(((ObjString*)val_as_obj(v))->char_len);
+        case OBJ_ARRAY:         return val_int(((ObjArray*)val_as_obj(v))->count);
+        case OBJ_DICT:          return val_int(((ObjDict*)val_as_obj(v))->order_count);
+        case OBJ_ENUM_DEF:      return val_int(((ObjEnumDef*)val_as_obj(v))->member_count);
+        case OBJ_CSTRUCT_ARRAY: return val_int(((ObjCStructArray*)val_as_obj(v))->count);
+        case OBJ_STRUCT:        return val_int(((ObjStruct*)val_as_obj(v))->def->field_count);
+        default:
+            jit_callout_failed = 1;
+            return NULL_VAL;
+    }
+}
+
 /* ---- 通用相等比较的 C 实现（镜像解释器 vm/vminc/op_compare.inc 的 OP_EQ）----
  * 逐条对齐解释器规则：
  *   1) int/int 精确比较；任一是 float 时按 double 比较（BigInt 与 float 混合也走这里，
