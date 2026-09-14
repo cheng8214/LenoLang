@@ -1,0 +1,44 @@
+// symtab_scope_mod.leno — 回归测试辅助模块（文件名不以 test_ 开头，不会被当独立测试执行）
+//
+// 目的：结构体方法、函数体内的局部函数，与**模块级函数同名**时，
+// 模块函数表里不能被它们污染。
+// 旧 bug：预扫描（scan_pass2_init.inc）把层级 >0 的 func 也收成了模块级函数，
+// 而 module_symbol_table_find_func 返回数组里第一个匹配 ⇒ `mod.fn(实参...)`
+// 解析到那条 ⇒ 轻则误报「参数数量过多」，重则静默取到局部函数的返回类型。
+
+export struct Node {
+    string tag
+
+    // 与下面的模块级 text() 同名（旧 bug：m.text(n) 会解析到这个 0 参方法）
+    func text(): string {
+        return tag
+    }
+
+    // 与下面的模块级 pick() 同名且形参个数不同（旧 bug：误报「参数数量过多」）
+    func pick(int n): string {
+        return tag
+    }
+}
+
+export func makeNode(string t): Node {
+    Node n = new Node()
+    n.tag = t
+    return n
+}
+
+export func text(Node n): string {
+    return n.tag
+}
+
+export func pick(Node n, int k): int {
+    return k + 2
+}
+
+// 函数体内的局部函数，与模块级 text() 同名但**返回类型不同**（int）。
+// 旧 bug 下 m.text(node) 会静默拿到这里的返回类型，而不是报错——更危险。
+func localScopeUse(): int {
+    func text(Node n): int {
+        return 1
+    }
+    return 1
+}
