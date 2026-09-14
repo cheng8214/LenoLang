@@ -209,6 +209,13 @@ typedef enum {
     // codegen 只在静态类型名可解析时发射本指令；解析不出来即编译期报错，
     // 不存在任何「退回运行时分发」的形态。
     OP_INVOKE_METHOD_TYPED,
+    // 融合指令：local int 与**立即数**比较 + 条件跳转（补上 LL/LG 缺的那一格）
+    // 合并 GET_LOCAL + CONST + CMP + JUMP_IF_FALSE + POP
+    // 操作数: cmp_op(1) slot(2) imm32(4) offset(4) —— 共 12 字节
+    // 比较结果为 false 时跳转（与 JUMP_IF_FALSE 一致），完全不碰栈。
+    // 立即数限制在 int32 内（超出则 codegen 退回非融合路径）。
+    // **追加在枚举末尾**：既有 opcode 的编号全部不变。
+    OP_CMPJMP_LI_INT,
 } OpCode;
 
 // ============================================================================

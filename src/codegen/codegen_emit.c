@@ -178,6 +178,25 @@ int emit_cmpjmp_ll_int(CodeGen* gen, int cmp_op, int slot_a, int slot_b, int lin
     return gen->chunk->len - 4;
 }
 
+int emit_cmpjmp_li_int(CodeGen* gen, int cmp_op, int slot, int imm, int line) {
+    emit_byte(gen, OP_CMPJMP_LI_INT, line);
+    emit_byte(gen, (uint8_t)cmp_op, line);
+    emit_byte(gen, (slot >> 8) & 0xff, line);
+    emit_byte(gen, slot & 0xff, line);
+    // imm32：大端
+    emit_byte(gen, ((uint32_t)imm >> 24) & 0xff, line);
+    emit_byte(gen, ((uint32_t)imm >> 16) & 0xff, line);
+    emit_byte(gen, ((uint32_t)imm >> 8) & 0xff, line);
+    emit_byte(gen, (uint32_t)imm & 0xff, line);
+    // 4字节占位偏移量
+    emit_byte(gen, 0xff, line);
+    emit_byte(gen, 0xff, line);
+    emit_byte(gen, 0xff, line);
+    emit_byte(gen, 0xff, line);
+    // 返回偏移量字段的位置（用于后续 patch_jump）
+    return gen->chunk->len - 4;
+}
+
 int emit_cmpjmp_lg_int(CodeGen* gen, int cmp_op, int slot, int global_idx, int line) {
     emit_byte(gen, OP_CMPJMP_LG_INT, line);
     emit_byte(gen, (uint8_t)cmp_op, line);

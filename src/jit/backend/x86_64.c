@@ -214,6 +214,7 @@ static int pick_pin_locals(const uint8_t* body_start, const ScanResult* sr,
                 pin_excl(sr, excluded, rd_short(ip + 4));
                 break;
             case OP_CMPJMP_LG_INT:
+            case OP_CMPJMP_LI_INT:
                 pin_excl(sr, excluded, rd_short(ip + 2));
                 break;
             case OP_GET_FIELD_FAST:
@@ -461,7 +462,7 @@ int compile_loop(CodegenCtx* ctx) {
      * （R15/R14/R13/R12 —— R12/R13/R14 由 §8.45 把 callout 状态保存挪到帧槽
      * 之后腾出来的，见那里的说明）。只对真的被选中的寄存器 push/pop/装载。
      * 函数级 JIT 不 pin：那种 JIT 每次调用都进入，push/pop + 装载的固定成本更高。 */
-    int pin_count[JIT_PIN_MAX_SCRATCH], pin_excluded[JIT_PIN_MAX_SCRATCH];
+    int pin_excluded[JIT_PIN_MAX_SCRATCH];
     int pin_si[JIT_PIN_MAX] = { -1, -1, -1, -1 };
     int pin_cnt[JIT_PIN_MAX] = { 0, 0, 0, 0 };
     int pin_n = 0;

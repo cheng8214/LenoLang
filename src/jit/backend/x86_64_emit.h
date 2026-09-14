@@ -269,6 +269,15 @@ static inline void emit_cmp_reg_imm8(CodeBuf* cb, int reg, int8_t imm) {
     emit_byte(cb, (uint8_t)imm);
 }
 
+/* CMP reg64, imm32（符号扩展到 64 位）—— CMPJMP_LI_INT 用 */
+static inline void emit_cmp_reg_imm32(CodeBuf* cb, int reg, uint32_t imm) {
+    int b = (reg >> 3) & 1;
+    emit_byte(cb, rex(1, 0, 0, b));
+    emit_byte(cb, 0x81);
+    emit_byte(cb, modrm(3, 7, reg & 7));  /* /7 = CMP */
+    emit_uint32(cb, imm);
+}
+
 /* CMP r1, r2 */
 static inline void emit_cmp_rr(CodeBuf* cb, int r1, int r2) {
     emit_rr(cb, 0x39, r1, r2);
