@@ -2703,6 +2703,160 @@ sub rax,1; jne` —— **`inp & 1135` 整条被 gcc 删掉了**。
 
 ***
 
+### 8.47 `OP_CMPJMP_LI_INT`（local vs 立即数）+ callee 解析缓存 —— 以及「我连着两次测错」（2026-09-14）
+
+**起点**：`fib(42)` 每次调用 27.2ns，而 C 1.05ns、C# 1.74ns。反汇编 fib 的函数体后发现，
+调用路径的结构性死重是「JIT body → C callout → JIT body」（每次 Leno 调用 2 次 native C 调用
++ 实参经内存 vstack 编组 + callee 的 locals 走内存池），但里面还夹着两块**纯浪费**，本轮先收掉。
+
+**一、`if (local <cmp> 立即数)` 从来没走过融合**
+
+后端早有 `OP_CMPJMP_LL_INT`（local vs local）与 `OP_CMPJMP_LG_INT`（local vs global），
+结构就是 `cmp` + 反条件 `jcc`。缺的是**立即数那一格**，根因在 codegen 的 peephole：
+
+```c
+// codegen_stmt.c: try_emit_cmpjmp
+if (!l || l->kind != AST_VAR) return 0;
+if (!r || r->kind != AST_VAR) return 0;   // ← `n < 2` 右边是字面量，直接放弃
+```
+
+于是 `if n < 2 { return n }` 会先构造一个 bool Value（`setcc` + `shl 48` + `movabs` 标签 + `add`），
+再走 `OP_JUMP_IF_FALSE` 的真值测试（`test` + 与 `FALSE_VAL`/`NULL_VAL` 各比一次，又是 2 个
+`movabs`）—— **共 21 条指令、其中 3 个是 10 字节 `movabs`**，只为测一个刚由 `cmp` 产生的条件。
+
+新增 `OP_CMPJMP_LI_INT`（`cmp_op(1) slot(2) imm32(4) offset(4)` = 12 字节），**追加在枚举末尾**
+（既有 opcode 编号全部不变）。同步点按 `OP_CMPJMP_LG_INT` 的**全部出现位置**对照补齐，共 13 处：
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `include/leno_vm.h` | 枚举（追加末尾） |
+| `debug.c` | `opCodeNames[]`（**位置表**）+ 反汇编 |
+| `vm/vminc/vm_run.inc` | 计算跳转表项 |
+| `vm/vminc/op_jump.inc` | 解释器 handler |
+| `codegen/codegen_stmt.c` | peephole 模式 4（含「字面量在左侧」的反转 `lit OP local ≡ local rev(OP) lit`） |
+| `codegen/codegen_emit.c` / `codegen.h` | `emit_cmpjmp_li_int` |
+| `jit/jit_scan.c` | `opcode_size`(12) / 内联扫描 / 条件跳转目标登记 |
+| `jit/backend/x86_inc/ops_jump.inc` | JIT codegen |
+| `jit/backend/x86_64.c` | `pin_excl`（该局部量不能驻留寄存器，内存副本才是权威，同 LL/LG） |
+| `jit/backend/x86_64_emit.h` | `emit_cmp_reg_imm32` |
+
+立即数限 int32；bigint / float 字面量一律退回非融合路径（**不猜**）。
+
+效果 —— fib 的 `if n < 2` 由 21 条变成 `cmp $0x2,%rax` + `jge`，函数体机器码 954 → 828 字节。
+
+**二、callee 解析缓存**
+
+`jit_callout_global_func` 每次调用都要走 `jit_func_lookup_or_compile`（跨 TU 调用 + 哈希探测），
+而递归 / 固定调用点每次都是**同一个 callee**。加了 1 项缓存。
+
+**安全要点（比优化本身重要）**：缓存里**不存机器码裸指针**。`jit_func_entry_claim` 在槽冲突时
+会 `jit_mem_free` 掉被驱逐函数的机器码（`jit_priv.h` 明确记载了这个 use-after-free 场景，256 槽
+就是为压概率）。所以只缓存**槽地址**（`jit_func_cache` 是静态数组，地址稳定）+ `lcount`，
+每次命中重读 `e->func` / `e->fn` 校验；槽被回收 ⇒ 校验失败 ⇒ 自动回退原路径。
+顺带去掉了实参槽的 `NULL_VAL` 预填（只需填 `arg_count` 之外的槽）。
+
+**三、两个基准开关**（与 `LENO_NO_JIT` / `LENO_JIT_NOINLINE` 同类）
+`LENO_NO_CMPJMP` 关掉比较+跳转融合、`LENO_NO_CALLCACHE` 关掉 callee 缓存。价值见下一段。
+
+**版本**：opcode 集合变化 ⇒ `LENO_BIN_VERSION 2.5.0 → 2.6.0`、`LENO_MODCACHE_VERSION 4 → 5`
+（枚举追加末尾所以既有编号不变，但新字节码含旧构建不认识的 opcode，仍要 bump）。
+
+**验证**：build 无警告；`assert` 273/273（JIT 与 `LENO_NO_JIT=1` **各一遍** —— 后者才覆盖新指令的
+解释器实现，fib 走 JIT 验证不到）；语义专测覆盖 `n<2` / `2<n`（字面量在左）/ `==` / `!=` / `>=` /
+`0<=n` / 大立即数，JIT 开与关输出逐字一致。
+
+**性能**（位置平衡的四配置交错，A=全开 B=融合关 C=缓存关 D=全关）
+
+| 规模 | A | B | C | D | 合并 |
+| --- | --- | --- | --- | --- | --- |
+| fib(32) | 166.7ms | 171.7 | 182.3 | 195.3 | **−14.7%** |
+| fib(36) | 1152.8ms | 1215.3 | 1242.0 | 1375.0 | **−16.2%** |
+
+两档都严格单调 A < B < C < D；归因：callee 缓存 ≈ −9%、融合 ≈ −7%。用户独立实测
+`fib(32)` 186 → 157ms（−15.6%）与此吻合。
+
+**教训：这件事上我连着测错两次，值得单独记**
+
+1. **第一次错在「跨时段对比」**。我先给出 +13.1%（缓存）、+20.2%（合并），方法是用 `git stash`
+   切基线、两边各 3 轮。看上去是 A/B，实际不在同一时间窗 —— 同一个二进制、同一个负载，
+   我在不同时段跑出过 **3000ms 和 3516ms（差 25%）**。那组数字幅度碰巧对，方法不成立。
+2. **第二次错得更多，错在「顺序」和「判据」**。我随后用同一二进制 + 环境开关重测，把结论
+   改成「≈0」，还据此写下「fib 对指令条数不敏感」—— **这是错的**。两个错误叠加：
+   - **顺序没平衡**：那轮固定按 `ABCD` 顺序跑，而机器有明确的「越跑越慢」趋势（有一个轮次是
+     156/172/188/235 严格递增），于是总落在靠后位置的 C/D 被系统性加价。改成 `ABCD`/`DCBA`
+     交替（A/D 各占位置 1、4 各三次）后，读数立刻分开了。
+   - **判据选错**：我用「min 相同」判定无差异，但这里 min 恰恰不敏感（C 组最小也是 156），
+     而中位数/均值能稳定分开（171 vs 188）。`jit_probes/README.md` 原先写的「各 3 轮取最小值」
+     **在效应体现在分布而不是最优值时是失效的**，已按此修正。
+3. **结论**：本机上 **位置平衡 + 足够多轮 + 看中位数/均值** 才够用；单靠「交替 + 取 min」会同时
+   产生假阳性与假阴性 —— 我两种都撞上了。而用户自己测的 186→157ms **从头到尾都是对的**。
+
+**未解释**：同一口径下 `fib(38)` 只量到约 1%（3.4s/轮），与小 N 两档的 ~15% 不自洽。那一轮没做
+位置平衡，暂归因于长跑下的热/带宽状态差异，**标记待查**。
+
+***
+
+### 8.48 形参类型化快路径：序言 11 条 → 4 条（2026-09-14）
+
+**依据（语言语义，不是推测）**：写了具体类型的形参，**运行期一定是该类型** ——
+`any` 形参必须先收窄才能使用，编译器会拦住。所以 `param_types[slot]` 对函数级 JIT
+不是"提示"，是可以直接依赖的**前提**。这与既有 `OP_CMPJMP_LL/LG`（直接按 int64
+比较局部量）所依赖的前提是同一档次。
+
+**改了什么**：函数级 JIT 的序言此前对**每个** scratch 槽做「tag 检查 + 双路径」
+（int → 符号扩展；非 int → 原样存 NaN-boxed 位 + 置 RBX 位图位），并在两路之间跳转。
+现在只要 `ctx->func_mode && slot < arity && param_types[slot] == TYPE_INT`，就直接取
+int48 载荷（`<<16 >>16`）写进 scratch 槽，**不置位图位**（0 = int，与原 int 路径
+逐位等价）。配套在 `CodegenCtx` 加了 `func` 指针（`jit_compile_function` 填入），
+否则 codegen 拿不到 `arity` / `param_types`。
+
+**边界（不照搬）**：只对 `TYPE_INT` 生效；float / struct / any / 元信息缺失
+（`param_types == NULL`）一律走原路径 —— 它们的 raw 表示不同。
+
+机器码（fib 序言）：
+
+```asm
+; 之前：~11 条 + 双路径分支
+mov 0x0(%rcx),%rax ; mov %rax,%r8 ; shr $0x30,%r8 ; cmp $0xfffb,%r8 ; je .is_int
+bts $0x0,%rbx ; mov %rax,-0x8(%rbp) ; jmp .next
+.is_int: and %r10,%rax ; shl $0x10,%rax ; sar $0x10,%rax ; mov %rax,-0x8(%rbp)
+
+; 现在：4 条，无分支
+mov 0x0(%rcx),%rax ; shl $0x10,%rax ; sar $0x10,%rax ; mov %rax,-0x8(%rbp)
+```
+
+**验证**：build 无警告；`assert` 273/273（JIT 与 `LENO_NO_JIT=1`）；另写专测覆盖
+**int / float / string / int+float 混合 / any** 五种形参，在**默认 /
+`LENO_JIT_NOINLINE=1`（强制全走 callout）/ `LENO_NO_JIT=1`** 三种配置下输出逐字一致。
+
+**性能：估 5%，实测 1.5%**（fib(36)，6 轮位置平衡）
+
+| 统计量 | ON | OFF | 差 |
+| --- | --- | --- | --- |
+| 均值 | 1119.8ms | 1132.7ms | −1.1% |
+| 中位数 | 1101.5ms | 1125.0ms | −2.1% |
+| 最小值 | 1093ms | 1109ms | −1.4% |
+
+三个统计量方向一致（所以不是噪声），但**远低于估算的 5%**。偏差原因值得单独记：
+被删掉的是「一个**高度可预测**的分支 + 几条**相互独立**的指令」，在前端 / 分支预测
+不是瓶颈时，省指令并不换时间。**「按指令条数线性推时间」只能当预测，必须实测** ——
+这条在 §8.47 已经打脸一次，这里是第二次。
+
+**度量刻度（本轮的关键方法学收获）**：先试 `fib(32)`，得到 ON 组四次全等 172ms、
+OFF 组 172/172/203/250。172→203→250 的间隔暴露了 `times.ms()` 的刻度是 **~15.6ms**，
+而 fib(32) 总耗时才 172ms ⇒ **5% ≈ 8.6ms 不足一个刻度，物理上不可分辨**。
+换到 fib(36)（~1.1s）后才得出结论。
+**规则：要测百分之几的改动，基准必须跑到「效应 > 1 个刻度」。**
+
+**开关**：新增 `LENO_NO_TYPEDPARAM`。它与 `LENO_NO_CMPJMP` 都在**编译期**路径上，
+运行时零成本；**但同批的 `LENO_NO_CALLCACHE` 一开始放错了位置** —— 写成「static
+首调用判负」塞在 `jit_callout_global_func`（每次 Leno 调用都进的函数，fib 8.67 亿次）
+里，等于给一个默认关闭的开关每次多付 2~3 条指令。已改为在 `jit_init()` 一次性解析成
+`jit_state.no_callcache`，热路径只剩一次 test。教训已写进 `jit_probes/README.md`
+的开关表，并归纳成一句：**新增开关时先问「这个判定在热路径上吗？」**
+
+***
+
 ## 9. 性能数据
 
 ### 测试环境
