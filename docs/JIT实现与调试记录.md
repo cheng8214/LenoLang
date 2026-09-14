@@ -2855,6 +2855,87 @@ OFF 组 172/172/203/250。172→203→250 的间隔暴露了 `times.ms()` 的刻
 `jit_state.no_callcache`，热路径只剩一次 test。教训已写进 `jit_probes/README.md`
 的开关表，并归纳成一句：**新增开关时先问「这个判定在热路径上吗？」**
 
+### 8.49 四张类型定义表：五个注册点、四处不一致、跨模块同名静默覆盖（2026-09-14）
+
+**四张表**（运行时全局定义表，各自 `register` + `find`，都是**线性扫描、只按名字**）：
+
+| 表 | 文件 | 注册 | 查找 |
+| --- | --- | --- | --- |
+| `struct_def_table` | `src/object/object_struct.c` | `struct_def_register` | `struct_def_find` |
+| `enum_def_table` | `src/object/object_struct.c` | `enum_def_register` | `enum_def_find` |
+| `face_def_table` | `src/object/object_face.c` | `face_def_register` | `face_def_find` |
+| `cstruct_def_table` | `src/object/object_cstruct.c` | `cstruct_def_register` | `cstruct_def_find` |
+
+**关键结构性事实**：四张表都是**全局扁平、只认名字**（`strcmp(table[i]->name, def->name)`），
+**没有模块维度**。同一进程里两个模块各定义一个同名类型，后注册者**覆盖**前者 —— 无错、无警告，
+程序照跑。这不是 bug 的"表现"，是这张表的数据结构决定的（见下面「跨模块同名」一节）。
+
+**语义侧的五个注册点**（四个种类分居四个文件，长期各写一套策略）：
+
+1. `semantic.c` 预注册阶段（支持前向引用）—— 覆盖 `struct` / `face` / `cstruct`，**没有 `enum`**；
+2. `visit_type_def.inc` `AST_STRUCT_DEF`；
+3. `visit_type_def.inc` `AST_FACE_DEF`；
+4. `visit_ffi.inc` `AST_CSTRUCT_DEF`；
+5. `visit_enum.inc` `AST_ENUM_DEF`。
+
+**排查中发现并修掉的四处不一致**（`a6a0973` + `c69bb8cf`）：
+
+| # | 不一致 | 后果 | 修法 |
+| --- | --- | --- | --- |
+| 1 | face 分支跨种类时**没有 `else`** | `struct Foo` + `face Foo` **静默通过**，两张全局表各存一份 | 补同一套跨种类检查 |
+| 2 | struct/cstruct/enum 三处文案**漏列 `face`** | 撞上 face 时退化成"重复定义"，看不出原因 | 四种两两互换都能点名先声明的种类 |
+| 3 | struct/face **报错后仍** `*_def_new + register` | 非法定义留在全局表，后续 `*_def_find` 取到它并派生次级错误 | 报错后不再写入全局表（四者统一） |
+| 4 | 覆盖时的资源清理不一致：struct/cstruct/enum 都把旧定义资源指针置 NULL 防 `gc_free_all` 时 double-free，**face 没有** | face 同名覆盖后旧对象资源未置空 | face 补齐（并加 name 非空判断） |
+
+**更深的一处：`enum` 没进预注册（本轮修）。**
+
+`enum E1`（37 行）+ `face E1`（40 行）修复前的报错是：
+
+```
+probe.leno(37,1): error: [重复定义] 类型 'E1' 已经定义为 face，不能重复定义为 enum
+```
+
+报在**先声明**的那条上，文案却指向**源码里更靠后**的 face —— 定位与归因同时错位。根因：
+预注册覆盖 struct/face/cstruct，face 先把 `E1` 占成 `TYPE_FACE`，主阶段处理 enum 时撞上它。
+修法两条：
+
+- 把 enum 纳入预注册，kind **沿用主阶段将采用的取值**（`SYM_MODULE`/`SYM_GLOBAL`）——
+  只提前占位、不改语义（改成 `SYM_ENUM` 会动到 `codegen_expr.c` 的类型定义分支，另说）；
+- 主阶段加「复用已预注册符号」路径（与另三种对齐）。**注意别直接 `scope_define`** ——
+  它会因重名返回 NULL，反被下面的 `else` 当成"重复定义"**误报**。
+
+修后四个种类两两互换的 7 种组合全部落在**后声明**那条上、点名**先声明**的种类。
+
+**跨模块同名：危害是真的，但现有语料没触发。**
+
+正对照（两个模块各定义 `Shared`，1 字段 / 2 字段，main 同时 import）：
+
+```
+[DUPNAME] struct name=Shared old{fc=1,mc=0,f0=x} new{fc=2,mc=0,f0=x}
+```
+
+无错无警告，B 的定义静默覆盖 A。诊断方法：在四个 `*_def_register` 的**同名覆盖分支**用
+环境变量 `LENO_DEBUG_DUPNAME` 打印新旧定义的指纹（字段数 / 方法数 / 首个字段名）——
+指纹相同 = 同一份定义被重复注册（无害），不同 = 真撞名。
+
+| 语料 | DUPNAME 行 | 去重形态 | 同名异形 |
+| --- | --- | --- | --- |
+| `assert` 全部 270 个用例 | 318 | 25 | **0** |
+| LenoWeb `crawl_all_quotes.leno` | 14 | 14 | **0** |
+
+**方法学坑（单独记）**：第一次扫全语料只得到 **1 行** —— 因为没关缓存，绝大多数用例命中
+`.lenosymc` / 字节码缓存、**根本没进语义阶段**。加 `LENO_NO_CACHE=1` 后才是 318 行。
+**扫语料前先关缓存**，与 §8.48 的"先确认度量刻度"是同一类纪律：先确认被测的东西真的被执行了。
+
+**另一条纪律：改之前先证伪自己的前提。** 本轮的起点判断是"struct 分支缺 face 检查会漏报"，
+读了 `scope.c:166` 才发现 `scope_define` 在同作用域重名时返回 NULL、调用方的 `else` 仍会报错
+—— 那三处只是**文案退化**，真正静默通过的只有 face 一处。若不先证伪，就会去改三处"不存在的
+漏洞"。
+
+**若要根治跨模块同名**（本轮只记账，未动）：二选一 —— 给全局定义表加模块维度（`find` 需要
+模块上下文，牵动 VM / JIT 的 def 查找），或让 `mod.Type` 的限定解析不走全局表。属结构改动，
+与 §8.47 的"调用边界税"同一档：不是删几条指令能解决的。
+
 ***
 
 ## 9. 性能数据
