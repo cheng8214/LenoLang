@@ -302,8 +302,78 @@ int opcode_size(const uint8_t* ip) {
         /* 12-byte: CMPJMP local vs imm32 (cmp_op(1) slot(2) imm32(4) offset(4)) */
         case OP_CMPJMP_LI_INT:
             return 12;
+
+        /* ====================================================================
+         * R3：补齐余项长度（诊断用 —— 让「缺长度」与「缺 case」一眼可分）。
+         * 每条都与 VM 实现里 READ_* 的次数逐条核对过，并与 debug.c 的
+         * disassembleInstruction 交叉验证（那里也维护了每个 opcode 的长度）。
+         * 长度算错的后果是**静默走错字节流**，所以宁可不填也不猜：
+         * 长度依赖常量表（opcode_size 只有 ip，拿不到 chunk）的 OP_CLOSURE
+         * 保持返回 -1，归入「长度未知」类。
+         * ==================================================================== */
+
+        /* 无操作数（1 字节） */
+        case OP_CLOSE_UPVALUE:  /* 关闭 upvalue，无操作数 */
+        case OP_NEG:            /* 通用取负：类型分发，无操作数 */
+        case OP_IS_NULL:        /* 弹栈顶判 null，无操作数 */
+        case OP_IN:             /* in 运算符，无操作数（弹 2 压 1） */
+        case OP_ARRAY_GET:      /* 无操作数，从栈读值 */
+        case OP_ARRAY_SET:
+        case OP_ARRAY_APPEND:
+        case OP_DICT_GET:
+        case OP_DICT_GET_KEY:   /* 弹索引 + 字典，无操作数 */
+        case OP_STRING_ADD:     /* 字符串拼接，无操作数 */
+        case OP_INDEX_SET:      /* arr[i] = v，无操作数 */
+        case OP_SLICE:          /* s[a:b]，无操作数 */
+        case OP_THROW:          /* throw，无操作数 */
+        case OP_AWAIT:          /* await，无操作数 */
+        case OP_INIT_LENOMODULE:/* 模块初始化，无操作数 */
+        case OP_U8_TO_F64:      /* u8 → f64，无操作数 */
+            return 1;
+
+        /* 2 字节 */
+        case OP_RANGE:          /* inclusive(1) */
+        case OP_GET_FIELD_ADDR: /* field_idx(1) */
+            return 2;
+
+        /* 3 字节 */
+        case OP_GET_UPVALUE: case OP_SET_UPVALUE:   /* slot(2) */
+        case OP_DEFINE_GLOBAL: case OP_GET_GLOBAL_FUNC: case OP_DEFINE_GLOBAL_FUNC:
+        case OP_GET_NATIVE:                          /* const(2) */
+        case OP_TAIL_CALL:                           /* arg_count(2) */
+        case OP_DICT:                                /* count(2)（值来自前面的 CONST） */
+        case OP_LOAD_NATIVE_MODULE:                  /* const(2) */
+        case OP_DEFINE_MODULE_FUNC:                  /* index(2) */
+        case OP_GET_CSTRUCT_DEF:                     /* name_const(2) */
+        case OP_ASYNC_CALL:                          /* arg_count(2) */
+        case OP_DTOR_LOCAL:                          /* slot(2) */
+            return 3;
+
+        /* 5 字节 */
+        case OP_GET_MODULE_CONST:   /* module_const(2) + const_name(2) */
+            return 5;
+
+        /* kind(1) [+ elem_type(1)] 或 [name_const(2)]：与 VM 的分支一致 */
+        case OP_TYPE_CHECK:
+        case OP_AS_CAST: {
+            uint8_t tk = ip[1];
+            return (tk == TYPE_FACE || tk == TYPE_STRUCT) ? 4 : 3;
+        }
+        /* count(1) + const_index(2) * count */
+        case OP_PUSH_TYPE_ARGS:
+            return 2 + 2 * (int)ip[1];
+        /* ret_type(1) + param_count(1) + param_types[param_count](1 each) */
+        case OP_CFUNC_CALLBACK:
+            return 3 + (int)ip[2];
+        /* arg_count(2) + ret_type(1) + user_arg_count(1) + arg_types[user_arg_count](1 each) */
+        case OP_CLIB_CALL:
+            return 5 + (int)ip[4];
+
         default:
-            return -1;  /* unknown / unsupported */
+            /* 长度未知：要么没登记过，要么长度依赖常量表（OP_CLOSURE —— 它的
+             * upvalue 数量记在常量表的函数对象里，opcode_size 只有 ip，无从得知，
+             * 硬猜长度会让扫描静默走错字节流）。 */
+            return -1;
     }
 }
 
@@ -384,6 +454,7 @@ static int scan_callee_for_inline(Chunk* cc, int local_count,
             case OP_BITNOT: case OP_INC: case OP_DEC:
             case OP_LENGTH:   /* pop 1 push 1 → net 0 */
             case OP_GET_FIELD: /* pop 1 push 1 → net 0 */
+            case OP_IS_NULL:  /* pop 1 push 1 → net 0，R2 批次 1 */
             case OP_SET_PTR_ELEM_TYPE: case OP_SET_DECLARED_FACE: /* peek TOS → net 0 */
                 break;
             case OP_GET_MODULE_VAR: case OP_SET_MODULE_VAR: case OP_GET_MODULE_FUNC:
@@ -557,7 +628,8 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
         int size = opcode_size(ip);
         if (size < 0) {
             if (jit_debug_on())
-                fprintf(stderr, "[JIT-DEBUG] scan FAIL: unknown opcode %d (size<0) at offset %d\n", op, (int)(ip - body_start));
+                fprintf(stderr, "[JIT-DEBUG] scan FAIL: unknown opcode %d（长度未知，R3）at offset %d\n",
+                        op, (int)(ip - body_start));
             r->capable = 0;
             return;
         }
@@ -682,6 +754,9 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                 break;
             case OP_LENGTH:
                 /* pop 1 push 1 → net 0（结果恒为 int，见 ops_misc.inc 的 OP_LENGTH） */
+                break;
+            case OP_IS_NULL:
+                /* pop 1 push 1（判空结果 bool）→ net 0，R2 批次 1（见 ops_misc.inc） */
                 break;
             case OP_SET_PTR_ELEM_TYPE: case OP_SET_DECLARED_FACE:
                 /* 存值前的类型标记：**peek TOS**、不弹不推 → net 0（见 op_unary.inc） */
@@ -1281,8 +1356,11 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                 break;
             }
             default:
+                /* R3：走到这里说明**长度已登记**（上面 size<0 已经拦掉了未知长度），
+                 * 只是还没实现 → 报 "unsupported" 而不是 "unknown"，两者一眼可分。 */
                 if (jit_debug_on())
-                    fprintf(stderr, "[JIT-DEBUG] scan FAIL: unknown opcode %d at offset %d\n", op, (int)(ip - body_start));
+                    fprintf(stderr, "[JIT-DEBUG] scan FAIL: unsupported opcode %d（已收录长度、未实现）at offset %d\n",
+                            op, (int)(ip - body_start));
                 r->capable = 0;
                 return;
         }

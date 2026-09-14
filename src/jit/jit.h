@@ -45,6 +45,11 @@ typedef struct {
     const uint8_t* loop_ip;      /* bytecode address of loop body start */
     const uint8_t* after_ip;    /* bytecode address after back-edge    */
     JitLoopFn      fn;          /* compiled function (NULL if none)    */
+    /* 机器码映射的字节数（jit_mem_alloc 的长度）。
+     * **Linux 必需**：jit_mem_free 在 Windows 用 VirtualFree(MEM_RELEASE)（忽略 size），
+     * 但在 POSIX 用 munmap(ptr, size) —— size 传 0 会 EINVAL、机器码永不归还
+     * （表现为"每次驱逐漏一块可执行内存"）。所以尺寸必须跟代码指针一起存。 */
+    size_t         code_size;
     int            hit_count;   /* times seen in interpreter           */
     int            is_compiled; /* 1 = compiled                        */
     int            tried;       /* 1 = compilation attempted (don't retry) */

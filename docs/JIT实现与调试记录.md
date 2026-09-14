@@ -648,14 +648,15 @@ inline-scan: 76(OP_STRING_ADD) / 88(模块变量访问) / 156(SWITCH_LOOKUP，R1
 |---|---|---|---|---|---|
 | ~~R4~~ | ~~`jit_func_cache` 冲突驱逐的 **use-after-free 隐患**~~ | ~~256 槽 direct-mapped，冲突时 `jit_mem_free` 掉占用者的机器码 —— 若那个函数**正在 C 栈上执行**（A 调 B、B 的 callout 又编译了撞槽的 C）就是 UAF~~ | ~~需要「执行中计数」+ 驱逐时延迟回收~~ | ~~高（内存安全）~~ | **已完成（§8.60，2026-09-14）**：确认存在（强制碰撞 4/4 崩 `0xC0000005`）并修复为**机器码延迟释放队列**（安全点判据复用 `jit_func_depth`/`jit_loop_depth`）；`LENO_JIT_FUNC_CACHE_SMALL=1` 做确定性复现，用例 `assert/test_jit_func_cache_churn.leno` |
 | ~~R1~~ | ~~`OP_SWITCH_LOOKUP` 进 JIT~~ | ~~file_manager 仅剩的"可做但难"拒收点（×1）。VM 侧是 int/bigint/float/string 四路二分查找；变长编码：`const_idx(2) count(2) default_off(4) [case_off(4)]…`~~ | ~~`opcode_size` 变长解码 + scan 的多目标前向记账 + codegen 线性比较链~~ | ~~中~~ | **已完成（§8.61，2026-09-14）**：查找逻辑抽成 `switch_lookup_index`（VM/JIT 共用，语义唯一来源）+ 变长 `opcode_size` + 多目标前向记账（内联侧保守拒绝）+ 线性比较链；`assert/test_jit_op_switch_lookup.leno`；**循环拒收清零**（直方图只剩刻意保留的 `138`） |
-| R2 | L7 余项成批补齐 | `OP_STRING_ADD`（内联侧 ×1）、`OP_NEG`、`OP_IS_NULL`、`OP_ARRAY_GET`/`OP_ARRAY_SET`、`OP_DICT*`、`OP_TYPE_CHECK`、`OP_AS_CAST`、`OP_SLICE`、`OP_IN`、`OP_RANGE`、`OP_U8_TO_F64` | 多为 callout 型，照 §8.52~§8.59 的模板走（`opcode_size` + 两处 scan + callout + codegen + 用例）；`STRING_ADD` 还能恢复一部分内联 | 低 | 3 |
-| R3 | L0 诊断收口 | `opcode_size` 余项补全；把 scan 的 default 报错区分成 `unknown opcode`（缺长度）与 `unsupported opcode`（已收录长度但缺 case） | 纯诊断，无行为变化；排查时"缺长度"和"缺 case"一眼可分 | 极低 | 3（可与 R2 合并做） |
+| R2 | L7 余项成批补齐 | 余项：`OP_STRING_ADD`(76)、`OP_TYPE_CHECK`(93)、`OP_AS_CAST`(94)、`OP_ARRAY_GET/SET`、`OP_DICT*`、`OP_SLICE`(79)、`OP_IN`、`OP_RANGE`、`OP_NEG`(33)、`OP_U8_TO_F64`(146) | 多为 callout 型，照 §8.52~§8.59 的模板走（`opcode_size` + 两处 scan + callout + codegen + 用例） | 低 | **批次 1 已完成（§8.63）**：`OP_IS_NULL`(48)。**下一批由 R3 的实测直方图定序**：`76:STRING_ADD ×4` 与 `93:TYPE_CHECK ×3` 是 file_manager 里仅剩的两个高频缺口 ⇒ **先做这两条**（其余按需）。注：`-d["k"]`、`x == null` 实测走已支持的路径，不必做 |
+| ~~R3~~ | ~~L0 诊断收口~~ | ~~`opcode_size` 余项补全；把 scan 的 default 报错区分成 `unknown opcode`（缺长度）与 `unsupported opcode`（已收录长度但缺 case）~~ | ~~纯诊断，无行为变化~~ | ~~极低~~ | **已完成（§8.63，2026-09-14）**：补齐约 40 条长度（逐条与 VM 的 `READ_*`、`debug.c` 反汇编器交叉核对）；`OP_CLOSURE` 因长度依赖常量表而**故意保持"未知"**；报错分为 `unknown（长度未知）`/`unsupported（已收录长度、未实现）`。**实测收益**：同一负载的拒收清单从"含糊的 138"变成分类可排期（76×4 / 93×3 / 14×2 / 142×2 / 138×49），R2 的下一批因此是测出来的而不是猜的 |
 | R5 | 闭包创建与捕获变量（`OP_CLOSURE` / `GET/SET/CLOSE_UPVALUE`） | 循环里建闭包、闭包体内读写捕获变量都不进 JIT（被调函数带 upvalue 时自动退回 VM 重入 ⇒ 语义正确但不快） | 两件基础：**(a)** func-JIT ABI 要加 closure 通道（现为 `jfn(flocals, globals)`，无 upvalue 入口）；**(b)** 循环 JIT 的 locals 在 scratch 区（迭代即复用）⇒ 直接捕获会产生**悬空 upvalue**，只能先允许"捕获已在 upvalue 链上的变量"，或改 locals 布局 | 高（ABI + 生命周期不变量） | 单独一轮，**先设计不变量再动手** |
 | R6 | 函数级 JIT 的多返回值 + `OP_TAIL_CALL` | `jit_compile_function` 直接拒收 `return_count > 1`；`OP_TAIL_CALL` 在循环 JIT 里等价"提前返回"（应归入 `has_reachable_return` 拒绝），只有函数级 JIT 有价值 | 多返回：扩返回值通道（`jit_fn_result` 单值 → 多槽约定），调用方回填约定已就绪（§8.59 的 helper）；尾调用：帧复用语义另算 | 中 | 排在 R5 之后 |
 | R7 | 内联的跨模块限制 | 模块变量/函数访问被 inline scan 一刀拒绝（§8.55/§8.56）——因为内联后没有 callee 的帧，模块归属不可知 | 在 inline site 记录 callee 的 module，与 caller 相同才允许内联 | 低 | 有内联收益需求时再做 |
 | R8 | 性能基准复盘 | §9 的数据需要按最新覆盖面重跑（JIT vs `LENO_NO_JIT=1`），量化"覆盖面增长（如 `FuncCompiled 5→161`）到底换来多少" | 纯测量；也顺便验证 R4 的延迟回收没有性能回退 | 极低 | 随时（建议 R4 之后做一次） |
 | ~~R9~~ | ~~`OP_SWITCH_LOOKUP` 的 callout 开销~~ | ~~R9 前的基准显示：JIT 下 switch 每轮一次 callout（+15.5ms/3M 轮），比等价的 if 链慢 3.7 倍~~ | ~~编译期分流：case 值全 int 时发内联比较链~~ | ~~低（非 int 一律退回原 callout 路径）~~ | **已完成（§8.62，2026-09-14）**：int 快路径 + int48 守卫（bailout 交解释器，保住 bigint 值能命中 int case 的语义）+ 重复值排除；switch 的 JIT 时间 30.4 → **15.7 ms**，与 if 同级 |
 | — | **建议维持拒绝** | `OP_THROW`、`OP_AWAIT`/`OP_ASYNC_CALL`、`OP_CLIB_CALL`/`OP_CFUNC_CALLBACK`、`OP_GET_FIELD_ADDR`、`OP_DTOR_LOCAL`、`OP_TAIL_CALL_NATIVE`、`OP_PUSH_TYPE_ARGS`、**`OP_GET_CSTRUCT_DEF`(138)**、模块定义期指令 | 语义特殊（异常/协程/FFI/泛型/仅初始化期出现），收益低、风险高 | — | 维持 |
+| ~~R10~~ | ~~Linux 上 `jit_mem_free(ptr, 0)` 导致可执行内存**永不归还**~~ | ~~POSIX 侧 `munmap` 需要长度，而所有调用点都传 0 ⇒ `EINVAL`、每次驱逐漏一块；Windows 侧 `MEM_RELEASE` 忽略 size 所以一直没暴露（也解释了 R4 为何只在 Windows 复现）~~ | ~~把尺寸与代码指针一起存~~ | ~~低（Windows 行为不变）~~ | **已完成（§8.63，2026-09-14）**：`JitCacheEntry.code_size` / `JitFuncCacheEntry.code_size` + 两个编译函数的 `out_size` 出参 + 4 个释放点改用真实长度 |
 
 **45 项未收录全量（`编号:名字`，用于 L0 逐项补长度；`80:LENGTH`、`81:ITER_GET`、
 `82:ITER_GET_VALUE`、`131:GET_FIELD`、`132:SET_FIELD`、`88:GET_MODULE_VAR`、`89:SET_MODULE_VAR`、
@@ -3897,6 +3898,77 @@ int / bigint / float / string 四路二分查找。
    自创检查的偏差只会在极端输入上暴露。
 3. 编译器生成的**常量数组**要先想清楚它的边界（这里：重复值 ⇒ 二分查找与线性链命中位置不同），
    否则"等价改写"会悄悄改变语义。
+
+***
+
+### 8.63 Linux `munmap` 尺寸修复 + R3 诊断收口 + R2 批次 1（`OP_IS_NULL`）（2026-09-14）
+
+**A. 修 Linux 上的可执行内存泄漏（前几轮发现、本轮补记并修复）**
+
+* 现象：`jit_mem_free(ptr, size)` 在 POSIX 侧是 `munmap(ptr, size)`（**需要长度**），
+  而所有调用点都传 `0` ⇒ `munmap(ptr,0)` 返回 `EINVAL`、**机器码永不归还**，
+  每次缓存驱逐漏一块可执行内存。Windows 侧 `VirtualFree(ptr,0,MEM_RELEASE)` 忽略 size，
+  所以一直没暴露（开发机是 Windows）。
+* 修法：**让尺寸跟着代码指针一起存** —— `JitCacheEntry.code_size` /
+  `JitFuncCacheEntry.code_size`，由 `jit_compile` / `jit_compile_function` 通过新增的
+  `size_t* out_size` 出参带出来（两个编译函数都是本文件 static、各只有一个调用点），
+  4 个释放点（`jit_close` ×2、`jit_func_entry_claim`、循环缓存驱逐）改用真实长度。
+* Windows 行为不变（size 仍被忽略）✓；Linux 上恢复"驱逐即归还"。
+* 说明：这也解释了为什么 **R4（use-after-free）只会在 Windows 上发生** ——
+  Linux 侧 `munmap` 一直失败，代码根本没被 unmap，只泄漏不 UAF。
+
+**B. R3：`opcode_size` 余项补全 + 把两类报错分开**
+
+* 补齐约 40 个 opcode 的长度（`OP_GET_UPVALUE`/`SET_UPVALUE`、`OP_DEFINE_GLOBAL*`、
+  `OP_GET_NATIVE`、`OP_TAIL_CALL`、`OP_ARRAY_GET/SET/APPEND`、`OP_DICT*`、`OP_STRING_ADD`、
+  `OP_INDEX_SET`、`OP_SLICE`、`OP_THROW`、`OP_AWAIT`、`OP_INIT_LENOMODULE`、`OP_U8_TO_F64`、
+  `OP_RANGE`、`OP_GET_FIELD_ADDR`、`OP_GET_CSTRUCT_DEF`、`OP_ASYNC_CALL`、`OP_DTOR_LOCAL`、
+  `OP_GET_MODULE_CONST`、`OP_TYPE_CHECK`/`OP_AS_CAST`（按 kind 3 或 4 字节）、
+  `OP_PUSH_TYPE_ARGS`、`OP_CFUNC_CALLBACK`、`OP_CLIB_CALL` …）。
+  **每条都与 VM 实现里的 `READ_*` 次数逐条核对，并与 `debug.c` 的反汇编器交叉验证。**
+  `OP_LOAD_NATIVE_MODULE` / `OP_DEFINE_MODULE_FUNC` 等也一并归类。
+* **`OP_CLOSURE` 故意保持"长度未知"**：它的 upvalue 数量记在常量表的函数对象里，
+  而 `opcode_size(ip)` 只有 `ip`、拿不到 chunk ⇒ 硬猜长度会让扫描**静默走错字节流**。
+  这正是"宁可不编，不要猜"。
+* 报错分成两类：`unknown opcode N（长度未知）` 与
+  `unsupported opcode N（已收录长度、未实现）` —— 排查时一眼可分。
+* **实测收益（`file_manager` 交互负载）**：拒收直方图从含糊的一行变成可直接排期的清单：
+
+```
+unsupported:138 x49  ← OP_GET_CSTRUCT_DEF（刻意保留）
+unsupported:14  x2   ← OP_GET_UPVALUE（R5 闭包）
+unsupported:142 x2   ← OP_CLIB_CALL（维持拒绝）
+unsupported:76  x4   ← OP_STRING_ADD   ← 实测出来的 R2 下一批目标
+unsupported:93  x3   ← OP_TYPE_CHECK   ← 同上
+（unknown: 0 —— 本负载用到的 opcode 长度已全部登记）
+```
+
+**C. R2 批次 1：`OP_IS_NULL`（`?.` / `??` 编译出）**
+
+* 做法照 §8.52~§8.59 的模板：`opcode_size`（已在 B 里）+ 两处 scan（净 0：pop1 push1）
+  + callout `jit_callout_is_null` + `ops_misc.inc` 的 case。
+* 语义：解释器注释里写明这条 opcode 存在就是为了**避开 `OP_EQ` 的 `0.0 == null` 陷阱**，
+  所以判据固定是 `val_is_null`（位比较 `NULL_VAL`），**不能退化成"等于零"**。
+  纯判断、不分配、不报错 ⇒ 无失败通道、无 bailout 分支。
+* **选择顺序的方法论**：先用 R3 的新诊断**照出**哪些构造真的会发这条 opcode
+  （探针实测 `d["k"] ?? 0` → `unsupported opcode 48`），再实现、再验证同一负载转为
+  `capable=1` —— 而不是"照清单挑一个做"。顺带确认了另外两条**不需要做**：
+  `-d["k"]`（字面量字典）走 `OP_NEG_INT`（已支持），`x == null` 走比较（已支持）。
+* 验证：`assert/test_jit_op_is_null.leno`（3 个热循环：`??` 取左/取右、判空结果参与比较）
+  JIT 与 `LENO_NO_JIT=1` 都 `exit=0`；`LENO_JIT_DEBUG` 下 `Compiled 3 / Bailouts 0`。
+* `assert` 全套 **287 passed / 0 failed**（286 + 新增 1）；`file_manager` 仍
+  `closed cleanly`、运行时 bailout **0**。
+
+**教训**
+
+1. **诊断质量直接决定后续排期质量**：这次同一负载、同一时刻，只是把长度补齐、把报错分类，
+   拒收清单就从"一条含糊的 138"变成"76 ×4 / 93 ×3 / 14 ×2 / 142 ×2 / 138 ×49"——
+   R2 该做哪两个 opcode 是**测出来的**，不是从清单里猜的。
+2. **长度表是"静默走错字节流"级别的改动**：每条都必须与 VM 的 `READ_*` 次数、
+   以及 `debug.c` 的反汇编器交叉核对；长度依赖常量表的（`OP_CLOSURE`）宁可留"未知"。
+3. **同一份代码在 Windows 与 POSIX 上的"释放语义"可以完全不同**：
+   `VirtualFree(MEM_RELEASE)` 忽略 size、`munmap` 必填 size —— 一个传 0 的调用点
+   在两个平台上分别是"正确"和"永不生效"。跨平台代码里，**能忽略的参数迟早会被传错**。
 
 ***
 

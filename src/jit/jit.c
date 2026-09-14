@@ -48,8 +48,11 @@
 
 /* ---- Compile a loop and cache the result ---- */
 static JitLoopFn jit_compile(CallFrame* frame, const uint8_t* body_start,
-                             int body_size, int back_edge, VM* vm_ptr) {
+                             int body_size, int back_edge, VM* vm_ptr,
+                             size_t* out_size) {
     ScanResult sr;
+    /* out_size：把机器码映射长度带回给缓存条目（Linux munmap 必需，见 jit.h） */
+    if (out_size) *out_size = 0;
     /* 解析「当前被编译函数所属模块」：模块函数调用的 ret_count 必须编译期确定，
        而函数所属模块记录在 ObjFunction 上（frame->closure->function->module）。 */
     jit_scan_set_module((frame && frame->closure && frame->closure->function)
@@ -207,6 +210,7 @@ static JitLoopFn jit_compile(CallFrame* frame, const uint8_t* body_start,
     /* 写完代码必须刷指令缓存才能执行（见 jit_mem.h 的说明） */
     jit_mem_flush(exec_mem, (size_t)ctx.cb.len);
     codebuf_free(&ctx.cb);
+    if (out_size) *out_size = (size_t)ctx.cb.len;
 
 return (JitLoopFn)exec_mem;
 }
@@ -282,7 +286,9 @@ static int func_body_is_simple(const uint8_t* code, int len) {
     return 1;
 }
 
-static JitLoopFn jit_compile_function(ObjFunction* func, VM* vm_ptr) {
+static JitLoopFn jit_compile_function(ObjFunction* func, VM* vm_ptr,
+                                      size_t* out_size) {
+    if (out_size) *out_size = 0;   /* Linux munmap 需要长度，见 jit.h */
     if (!func || !func->chunk || func->chunk->len <= 0)
         return NULL;
     if (func->has_try || func->return_count > 1)
@@ -346,6 +352,7 @@ static JitLoopFn jit_compile_function(ObjFunction* func, VM* vm_ptr) {
     /* 写完代码必须刷指令缓存才能执行（见 jit_mem.h 的说明） */
     jit_mem_flush(exec_mem, (size_t)ctx.cb.len);
     codebuf_free(&ctx.cb);
+    if (out_size) *out_size = (size_t)ctx.cb.len;
 
     jit_state.func_compile_count++;
     if (jit_debug_on())
@@ -380,13 +387,13 @@ void jit_close(void) {
     for (int i = 0; i < JIT_CACHE_SIZE; i++) {
         JitCacheEntry* e = &jit_state.cache[i];
         if (e->fn) {
-            jit_mem_free((void*)e->fn, 0);
+            jit_mem_free((void*)e->fn, e->code_size);   /* size：Linux munmap 必需 */
         }
     }
     for (int i = 0; i < JIT_FUNC_CACHE_SIZE; i++) {
         JitFuncCacheEntry* e = &jit_func_cache[i];
         if (e->fn) {
-            jit_mem_free((void*)e->fn, 0);
+            jit_mem_free((void*)e->fn, e->code_size);
         }
     }
     /* 延迟释放队列里还挂着已驱逐的机器码（§8.60）—— 到这里已无机器码在执行，可直接放 */
@@ -407,7 +414,7 @@ static JitFuncCacheEntry* jit_func_entry_claim(ObjFunction* func) {
     if (e->func == func)
         return e;
     if (e->fn)
-        jit_code_retire((void*)e->fn, 0);   /* §8.60：不能立即 free —— 可能正在执行 */
+        jit_code_retire((void*)e->fn, e->code_size);   /* §8.60：不能立即 free —— 可能正在执行；size：Linux munmap */
     memset(e, 0, sizeof(*e));
     e->func = func;
     return e;
@@ -423,7 +430,7 @@ JitLoopFn jit_func_lookup_or_compile(ObjFunction* func, VM* vm_ptr) {
     JitFuncCacheEntry* e = jit_func_entry_claim(func);
     if (!e->tried) {
         e->tried = 1;
-        e->fn = jit_compile_function(func, vm_ptr);
+        e->fn = jit_compile_function(func, vm_ptr, &e->code_size);
     }
     return e->fn;   /* 命中（含尝试失败缓存 NULL） */
 }
@@ -581,7 +588,7 @@ int jit_try_hot_loop(CallFrame* frame, VM* vm_ptr, int32_t loop_offset, int back
         if (entry->fn) {
             /* §8.60：被驱逐的可能是**另一个正在执行**的循环 JIT（A 的机器码经 callout
              * 重入解释器，解释器又热启了循环 B；B 的编译撞到 A 的槽）⇒ 不能立即 free */
-            jit_code_retire((void*)entry->fn, 0);
+            jit_code_retire((void*)entry->fn, entry->code_size);
         }
         memset(entry, 0, sizeof(*entry));
         entry->loop_ip = body_start;
@@ -609,7 +616,8 @@ int jit_try_hot_loop(CallFrame* frame, VM* vm_ptr, int32_t loop_offset, int back
     /* Not compiled yet — try to compile (only once) */
     if (!entry->tried) {
         entry->tried = 1;
-        entry->fn = jit_compile(frame, body_start, body_size, back_edge, vm_ptr);
+        entry->fn = jit_compile(frame, body_start, body_size, back_edge, vm_ptr,
+                                &entry->code_size);
         entry->is_compiled = (entry->fn != NULL);
         jit_state.compile_count++;
         if (jit_debug_on() && !entry->is_compiled)

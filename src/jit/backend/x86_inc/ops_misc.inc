@@ -34,6 +34,25 @@ case OP_TRUE:
                 vstack++;
                 break;
 
+            /* ---- OP_IS_NULL（`?.` / `??` 编译出）—— R2 批次 1 ----
+             * 解释器语义（vm/vminc/op_compare.inc）：弹栈顶 → push val_bool(val_is_null(v))，
+             * net 0。解释器注释写明它存在就是为了**避开 OP_EQ 的 `0.0 == null` 陷阱**，
+             * 所以判据必须是 val_is_null（位比较 NULL_VAL），不能用"等于零"。
+             * 纯判断、不分配、不报错 ⇒ 无失败通道、无 bailout 分支。
+             * 不做原生位比较的原因：JIT 虚拟栈有"裸 int48 / 裸 double / NaN-boxed"三态，
+             * 而 null 只对应 NULL_VAL 一种位模式 —— 交给 callout 与解释器共用同一判据最稳。 */
+            case OP_IS_NULL: {
+                TOS_CONSUME_RAX();                     /* 弹操作数（raw）→ RAX，tos_live=0 */
+                EMIT_RAW_TO_VALUE();                   /* 裸 int48 → 装箱；其余原样 */
+                EMIT_CALLOUT_BEGIN();
+                emit_mov_rr(cb, JIT_ARG1, JIT_RAX);
+                EMIT_CALL(jit_callout_is_null);
+                EMIT_CALLOUT_END();                    /* RAX = bool（NaN-boxed） */
+                EMIT_VALUE_TO_RAW();                   /* bool 非 int ⇒ 恒等，统一收尾 */
+                TOS_PRODUCE();
+                break;                                 /* net 0 */
+            }
+
             /* ---- OP_LENGTH（`.len()`）—— 第 5 节 L1 ----
              * 解释器语义（vm/vminc/op_utils.inc OP_LENGTH）：数字 → `(int)value_to_double`
              *   向零截断、负数 clamp 到 0（`for n to i` 依赖后者）；string→char_len、

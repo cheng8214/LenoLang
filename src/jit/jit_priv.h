@@ -327,6 +327,9 @@ typedef struct {
     ObjFunction* func;   /* cache key: ObjFunction pointer */
     int tried;           /* 1 = compilation attempted */
     JitLoopFn fn;        /* compiled machine code (NULL if compilation failed) */
+    /* 机器码映射的字节数（jit_mem_alloc 的长度）—— Linux 上 munmap 必需，
+     * 见 jit.h 的 JitCacheEntry.code_size 说明（Windows 忽略 size）。 */
+    size_t code_size;
     /* ---- 解释器侧热入口专用（jit_try_hot_func_call）----
      * 只由解释器调用点自增；JIT callout 路径的急切编译不计入，
      * 以保持「JIT 循环调用函数时立刻编译」的既有行为不变。 */
@@ -363,6 +366,11 @@ Value jit_callout_set_field(Value obj_val, uint8_t field_idx, Value value);
  * 纯计算、不分配、不报错 ⇒ 调用方无需检查 jit_callout_failed。
  * arr_val 由编译期从 chunk->constants[const_idx] 取出（常量表是 GC 根）。 */
 int jit_callout_switch_lookup(Value switch_val, Value arr_val, int case_count);
+
+/* ---- R2：判空（`?.` / `??` 编译出的 OP_IS_NULL）----
+ * 纯判断：不分配、不报错 ⇒ 无失败通道、调用方没有 bailout 分支。
+ * 语义与 vm/vminc/op_compare.inc 的 OP_IS_NULL 一致（val_bool(val_is_null(v))）。 */
+Value jit_callout_is_null(Value v);
 /* 模块变量读写：module 由 codegen **编译期嵌入**（jit_scan_get_module），
  * 不是运行时查 vm.frames[frame_cnt-1] —— 函数级 JIT 的快路径不压帧，
  * 查帧会读到调用方的模块（§8.55 的修正 + §8.56 的教训）。 */

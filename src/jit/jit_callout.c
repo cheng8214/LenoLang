@@ -1020,6 +1020,15 @@ int jit_callout_switch_lookup(Value switch_val, Value arr_val, int case_count) {
     return switch_lookup_index(switch_val, arr_val, case_count);
 }
 
+/* Callout: OP_IS_NULL（R2 批次 1）—— `?.` / `??` 编译出的判空。
+ * 语义对齐 vm/vminc/op_compare.inc：弹栈顶 → push val_bool(val_is_null(v))（net 0）。
+ * 解释器注释里写明它存在的原因是**避免 OP_EQ 的 `0.0 == null` 陷阱**，
+ * 所以这里也必须用 val_is_null（位比较 NULL_VAL）而不是"等于零"。
+ * 纯判断：不分配、不报错 ⇒ 永不置 jit_callout_failed。 */
+Value jit_callout_is_null(Value v) {
+    return val_bool(val_is_null(v));
+}
+
 /* ---- 通用相等比较的 C 实现（镜像解释器 vm/vminc/op_compare.inc 的 OP_EQ）----
  * 逐条对齐解释器规则：
  *   1) int/int 精确比较；任一是 float 时按 double 比较（BigInt 与 float 混合也走这里，
