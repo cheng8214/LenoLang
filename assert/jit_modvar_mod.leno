@@ -1,0 +1,29 @@
+// JIT 模块变量覆盖测试的辅助模块（§8.55）
+//
+// 模块级变量在模块内的函数里以 OP_GET_MODULE_VAR / OP_SET_MODULE_VAR 访问，
+// 模块级函数以 OP_GET_MODULE_FUNC 取值。下面 run() 的循环体只用这三个 opcode
+// 加上基本算术/比较/跳转 —— 所以这个循环必须能被循环 JIT 完整接管（否则测试无效）。
+var _g_counter = 0
+var _g_sum = 0
+var _g_name = ""
+
+func bump(int n): int {
+    return n + 1
+}
+
+export func run(int iters): int {
+    _g_counter = 0
+    _g_sum = 0
+    _g_name = ""
+    int seen = 0
+    int i = 0
+    while i < iters {
+        _g_counter = _g_counter + 1        // GET_MODULE_VAR + SET_MODULE_VAR（int）
+        _g_sum = _g_sum + _g_counter       // GET ×2 + SET
+        _g_name = "leno"                   // SET_MODULE_VAR（对象值 → gc_write_barrier）
+        var f = bump                       // GET_MODULE_FUNC（取函数值，不调用）
+        if f != null { seen = seen + 1 }   // 用掉函数值，避免引入 OP_CALL
+        i = i + 1
+    }
+    return _g_counter * 1000000 + _g_sum + seen * 10 + _g_name.len()
+}

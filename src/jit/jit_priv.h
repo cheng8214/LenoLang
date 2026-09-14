@@ -345,6 +345,8 @@ Value jit_callout_length(Value v);
 Value jit_callout_iter_get(Value obj_val, Value index_val, int want_value);
 Value jit_callout_get_field(Value obj_val, uint8_t field_idx);
 Value jit_callout_set_field(Value obj_val, uint8_t field_idx, Value value);
+Value jit_callout_get_module_var(uint16_t index);
+Value jit_callout_set_module_var(uint16_t index, Value value);
 Value jit_callout_value_eq(Value a, Value b, int invert);
 Value jit_callout_acc_fields(Value obj_val, uint8_t count, const uint8_t* field_indices);
 Value jit_callout_struct_init(int64_t* vstack_top, uint16_t name_const_idx,

@@ -179,6 +179,67 @@
                 break;
             }
 
+            /* ---- OP_GET_MODULE_VAR / OP_GET_MODULE_FUNC / OP_SET_MODULE_VAR（§5 覆盖面 L6）----
+             * 解释器语义：vm/vminc/op_module_var.inc（module 取自当前帧 frame->module，
+             * 而 frame->module 又来自被调函数 → 见 jit_scan.c 里内联侧的拒绝理由）。
+             * 三条全走 callout：
+             *   GET_MODULE_VAR / GET_MODULE_FUNC：压入 globals[index]（net +1）
+             *   SET_MODULE_VAR：**peek** TOS → 写入 + gc_write_barrier，TOS 原样保留（net 0）
+             * 不做原生内存访问的原因：模块指针是「每帧」的（vm.frames[frame_cnt-1].module），
+             * 在机器码里硬编码帧/模块的结构体偏移太脆；且 SET 还带写屏障（必须走 VM 的
+             * gc_write_barrier）。无模块 / 索引越界 → callout 置 failed → bailout 交解释器报错。 */
+            case OP_GET_MODULE_VAR:
+            case OP_GET_MODULE_FUNC: {
+                uint16_t index = rd_short(ip + 1);
+                TOS_SPILL();
+                EMIT_CALLOUT_BEGIN();
+                emit_mov_reg_imm64(cb, JIT_ARG1, (uint64_t)index);
+                EMIT_CALL(jit_callout_get_module_var);
+                EMIT_CALLOUT_END();
+                EMIT_VALUE_TO_RAW();
+                EMIT_STORE_TMP(tmp1_disp, JIT_RAX);
+                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_callout_failed);
+                emit_mov_reg_mem8(cb, JIT_RAX, JIT_R8, 0);
+                emit_test_rr(cb, JIT_RAX, JIT_RAX);
+                {
+                    EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                    int mv_fail = emit_jcc(cb, 0x85);      /* JNZ → bailout */
+                    patch_add(ctx, mv_fail, -1, 0);
+                }
+                emit_xor_rr(cb, JIT_RAX, JIT_RAX);
+                emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
+                EMIT_LOAD_TMP(JIT_RAX, tmp1_disp);
+                TOS_PRODUCE();
+                vstack++;
+                break;
+            }
+            case OP_SET_MODULE_VAR: {
+                uint16_t index = rd_short(ip + 1);
+                TOS_SPILL();                                   /* TOS 落到 [rsp]，值本身不变 */
+                emit_mov_reg_mem8(cb, JIT_RAX, JIT_RSP, 0);    /* raw TOS */
+                EMIT_STORE_TMP(tmp1_disp, JIT_RAX);
+                EMIT_LOAD_TMP(JIT_RAX, tmp1_disp);
+                EMIT_RAW_TO_VALUE();
+                EMIT_STORE_TMP(tmp1_disp, JIT_RAX);
+                EMIT_CALLOUT_BEGIN();
+                emit_mov_reg_imm64(cb, JIT_ARG1, (uint64_t)index);
+                EMIT_LOAD_TMP(JIT_ARG2, tmp1_disp);            /* TOS 的 Value 形态 */
+                EMIT_CALL(jit_callout_set_module_var);
+                EMIT_CALLOUT_END();
+                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_callout_failed);
+                emit_mov_reg_mem8(cb, JIT_RAX, JIT_R8, 0);
+                emit_test_rr(cb, JIT_RAX, JIT_RAX);
+                {
+                    EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                    int smv_fail = emit_jcc(cb, 0x85);     /* JNZ → bailout */
+                    patch_add(ctx, smv_fail, -1, 0);
+                }
+                emit_xor_rr(cb, JIT_RAX, JIT_RAX);
+                emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
+                /* 解释器是 peek：TOS 保持原样，不 pop 也不改写 → 不做 TOS_PRODUCE、vstack 不变 */
+                break;
+            }
+
             /* ---- OP_GET_FIELD / OP_SET_FIELD（struct 字段读写）—— §5 覆盖面 L3 ----
              * 解释器语义：vm/vminc/op_struct.inc。
              *   GET_FIELD：弹 obj、压 field（net 0）；struct 走越界检查 + struct_get_field。

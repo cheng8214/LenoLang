@@ -1,0 +1,14 @@
+// OP_GET_MODULE_VAR / OP_SET_MODULE_VAR / OP_GET_MODULE_FUNC 回归 —— §8.55（覆盖面 L6）
+//
+// 辅助模块 jit_modvar_mod.leno 的 run() 里有一个 3000 轮（> JIT 热阈值 50）的热循环，
+// 循环体只用这三个 opcode + 基本算术/比较/跳转 ⇒ 该循环必须被 JIT 接管，断言才有意义。
+// 覆盖：int 模块变量读/写、对象模块变量写（走 gc_write_barrier）、模块函数取值。
+// JIT 与 LENO_NO_JIT=1 两种模式都必须通过。
+import "jit_modvar_mod.leno" as m
+
+main() {
+    int r = m.run(3000)
+    // 3000*1000000 + (1+2+…+3000 = 4501500) + 3000*10 + "leno".len()(=4)
+    assert_eq(r, 3004531504)
+    print("test_jit_op_module_var: OK")
+}

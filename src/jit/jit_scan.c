@@ -211,6 +211,9 @@ int opcode_size(const uint8_t* ip) {
         case OP_GET_GLOBAL: case OP_SET_GLOBAL:
         case OP_ARRAY:          /* opcode + count16 */
         case OP_GET_PROPERTY:   /* opcode + name_const16 */
+        case OP_GET_MODULE_VAR:  /* opcode + index16 */
+        case OP_SET_MODULE_VAR:  /* opcode + index16 */
+        case OP_GET_MODULE_FUNC: /* opcode + index16 */
             return 3;
         /* 5-byte (opcode + slot16 + slot16 or opcode + int32) */
         case OP_MOVE_LOCAL: case OP_MOVE_LOCAL_POP:
@@ -344,6 +347,15 @@ static int scan_callee_for_inline(Chunk* cc, int local_count,
             case OP_LENGTH:   /* pop 1 push 1 → net 0 */
             case OP_GET_FIELD: /* pop 1 push 1 → net 0 */
                 break;
+            case OP_GET_MODULE_VAR: case OP_SET_MODULE_VAR: case OP_GET_MODULE_FUNC:
+                /* 模块变量/函数访问依赖「当前帧的 module」，而 frame->module 来自
+                 * **被调函数**（vm_call.inc: frame->module = func->module）。内联后 JIT 手上
+                 * 只有调用方的帧，被调函数来自别的模块时就会读错模块的变量 → 语义依赖运行时
+                 * 帧，与泛型 OP_STRUCT_INIT 同理，拒绝内联（循环本身仍可 JIT，只是不内联该函数）。 */
+                if (jit_debug_on())
+                    fprintf(stderr, "[JIT-DEBUG] inline-scan FAIL: 模块变量访问 op=%d at off %d\n",
+                            op, (int)(ip - cc->code));
+                return 0;
             case OP_ARRAY_APPEND_NOPUSH: vstack -= 2; break;
             case OP_DICT_SET: vstack -= 2; break;
             case OP_INDEX_SET_NOPUSH: vstack -= 3; break;
@@ -621,6 +633,12 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                 break;
             case OP_LENGTH:
                 /* pop 1 push 1 → net 0（结果恒为 int，见 ops_misc.inc 的 OP_LENGTH） */
+                break;
+            case OP_GET_MODULE_VAR: case OP_GET_MODULE_FUNC:
+                /* 模块变量/函数读取：push 1 → net +1 */
+                vstack++; break;
+            case OP_SET_MODULE_VAR:
+                /* 模块变量写入：**peek** TOS（不弹）→ net 0 */
                 break;
             case OP_GET_FIELD:
                 /* pop 1 (obj) push 1 (field) → net 0 */

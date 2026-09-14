@@ -605,43 +605,48 @@ bailout，只加一半会出现「能编译但一进去就 bailout」的假收�
 | L1 | `OP_LENGTH`（`.len()`） | 高（`for x.len() to i` 遍地） | **已完成**（§8.52）：`opcode_size` + 两处 scan + 数字原生/对象 callout 双路径 + `assert/test_jit_op_length.leno` |
 | L2 | `OP_ITER_GET` / `OP_ITER_GET_VALUE`（for-in 迭代） | 高（补完 L1 后是 file_manager 里最高频的缺口 ×4） | **已完成**（§8.53）：`opcode_size` + 两处 scan + 数组原生快路径 + callout + `assert/test_jit_op_iter.leno`；顺带修掉 `jit_callout_failed` 在循环入口未复位导致的连锁 bailout |
 | L3 | `OP_SET_FIELD` / `OP_GET_FIELD`（callout，`field_idx` 已在指令里） | 高（对象状态更新 ×2；**顺带解锁 3 个 SDL 包装函数的函数级 JIT**） | **已完成**（§8.54）：`opcode_size` + 两处 scan + callout（写入复用 `struct_set_field` 保住写屏障）+ `assert/test_jit_op_field.leno` |
-| L4 | `OP_GET_METHOD`（struct 方法查找；静态类型解析不出来时才发，×2）+ `OP_SWITCH_LOOKUP`（变长：`const(2) count(2) default(4) [offset(4)]...`，×2） | 中 | 未做 |
+| L4 | `OP_GET_METHOD`（struct/native 方法查找，×2）+ `OP_SWITCH_LOOKUP`（变长：`const(2) count(2) default(4) [offset(4)]...`，×2） | 中。**`GET_METHOD` 永远后跟 `OP_CALL`/`OP_ASYNC_CALL`（4 条产出路径都是），必须和「`GET_METHOD` + `OP_CALL` 窥孔」一起做（可复用现成的 `jit_callout_invoke_method`），单补它解锁不了任何循环**（§8.55） | 未做（等 L8 的 `OP_CALL` 先落地） |
 | L5 | `OP_SET_DECLARED_FACE`（op+const16）/ `OP_SET_PTR_ELEM_TYPE`（op+byte） | 中（×2 / ×1）。**不能当 no-op 跳过**：`declared_face` 影响后续虚拟分派、`element_type` 影响 FFI 读写宽度 | 未做 |
-| L6 | `OP_GET_MODULE_VAR` / `OP_SET_MODULE_VAR` / `OP_GET_MODULE_FUNC`（callout，用当前帧 `module`） | 高（SDL3 大量模块级变量与函数：`_hwnd = hwnd` 这类，×2 / ×2） | 未做 |
+| L6 | `OP_GET_MODULE_VAR` / `OP_SET_MODULE_VAR` / `OP_GET_MODULE_FUNC`（callout，用当前帧 `module`） | 高（SDL3 大量模块级变量与函数，×2 / ×2；**顺带解锁 2 个函数的函数级 JIT**） | **已完成**（§8.55）：`opcode_size` + 循环 scan（净 +1 / 净 0）+ **内联 scan 显式拒绝**（`frame->module` 来自被调函数）+ 两个 callout（写入带 `gc_write_barrier`）+ `assert/test_jit_op_module_var.leno` |
 | L7 | `OP_STRING_ADD`（×1，内联扫描里也出现）/ `OP_NEG` / `OP_IS_NULL` / `OP_ARRAY_GET` / `OP_ARRAY_SET` / `OP_ARRAY_APPEND` / `OP_INDEX_SET` / `OP_DICT` / `OP_DICT_GET` / `OP_DICT_GET_KEY` / `OP_TYPE_CHECK` / `OP_AS_CAST` / `OP_SLICE` / `OP_IN` / `OP_RANGE` / `OP_U8_TO_F64` | 中 | 未做 |
 | L8 | `OP_CALL` / `OP_TAIL_CALL` / `OP_CLOSURE`（**裸**调用/建闭包；注意 `OP_GET_PROPERTY`+`OP_CALL` 的窥孔已把「方法调用」形态吃掉，所以这两条只在闭包/函数值调用时出现） | 中 | 未做 |
 | — | **建议维持拒绝**：`OP_THROW`、`OP_AWAIT` / `OP_ASYNC_CALL`、`OP_CLIB_CALL` / `OP_CFUNC_CALLBACK`、`OP_GET_FIELD_ADDR`、`OP_DTOR_LOCAL`、`OP_TAIL_CALL_NATIVE`、`OP_PUSH_TYPE_ARGS`、模块定义期指令（`OP_DEFINE_GLOBAL*` / `OP_STRUCT_DEF` / `OP_ENUM_DEF` / `OP_FACE_DEF` / `OP_CSTRUCT_DEF` / `OP_LOAD_NATIVE_MODULE` / `OP_INIT_LENOMODULE` / `OP_DEFINE_MODULE_FUNC`） | 语义特殊（异常/协程/FFI/泛型/仅初始化期出现），实现收益低、风险高 | 维持 |
 
-**实测拒收直方图（`file_manager.leno`，2026-09-14，补完 L3 之后）**：
+**实测拒收直方图（`file_manager.leno`，2026-09-14，补完 L6 之后）**：
 
 ```
 op=134(OP_GET_METHOD)        ×2
 op=156(OP_SWITCH_LOOKUP)     ×2
 op=39 (OP_SET_DECLARED_FACE) ×2
-op=88 (OP_GET_MODULE_VAR)    ×2
-op=90 (OP_GET_MODULE_FUNC)   ×2
+op=59 (OP_CALL)              ×4   ← 补 L6 后新暴露（原被 88/90 遮住的 4 个循环）
 op=38 (OP_SET_PTR_ELEM_TYPE) ×1
-inline-scan: 76(OP_STRING_ADD) / 88          ← 只影响内联，不阻断循环编译
+inline-scan: 76(OP_STRING_ADD) / 88(模块变量访问，L6 起显式拒绝内联)
 ```
 
 （演进：L1 前 `81×4 / 132×2 / 156×2 / 39×2 / 88×2 / 38×1` → 补 L1 后 `80` 消失 →
-补 L2 后 `81` 消失 → 补 L3 后 `132` 消失，**每次都是拒收点前移**，总行数基本不变。）
+补 L2 后 `81` 消失 → 补 L3 后 `132` 消失 → 补 L6 后 `88`/`90` 消失但**新暴露 `59:OP_CALL ×4`**
+（一个循环只报它的第一条缺口：前面的缺口一补上，后面的缺口才露出来），**每次都是拒收点前移**，
+总行数基本不变。）
+
+**下一步顺序（由这张表更新）**：现在最大的单一块是 `OP_CALL ×4`（L8），而且它同时是 `GET_METHOD`(×2)
+的前置 ⇒ 按「先解依赖、再解依赖者」的原则，**L8 的 `OP_CALL`（至少闭包/函数值调用形态）应排在
+L4 的 `GET_METHOD` 之前**。
 
 **关键：单补一个 opcode ≠ 解锁循环。** 只有某个循环的**全部**缺口都被补齐，它才真正进 JIT
 ⇒ 这类工作要**成批推进**，并按上面这张直方图排序（本表 L4~L6 的先后就是这么定的）。
 注意覆盖面还决定**函数级 JIT 与被调函数内联**能否成立：L3 补完 `OP_SET_FIELD` 后，
 `set_pos` / `set_size` / `setWindowHandle` 三个 SDL 包装函数立刻进了函数级 JIT（§8.54）。
 
-**51 项未收录全量（`编号:名字`，用于 L0 逐项补长度；`80:LENGTH`、`81:ITER_GET`、
-`82:ITER_GET_VALUE`、`131:GET_FIELD`、`132:SET_FIELD` 已于 §8.52~§8.54 补齐，从本表移除）**：
+**48 项未收录全量（`编号:名字`，用于 L0 逐项补长度；`80:LENGTH`、`81:ITER_GET`、
+`82:ITER_GET_VALUE`、`131:GET_FIELD`、`132:SET_FIELD`、`88:GET_MODULE_VAR`、`89:SET_MODULE_VAR`、
+`90:GET_MODULE_FUNC` 已于 §8.52~§8.55 补齐，从本表移除）**：
 
 ```
 14:GET_UPVALUE 15:SET_UPVALUE 16:CLOSE_UPVALUE 17:DEFINE_GLOBAL 18:GET_GLOBAL_FUNC
 19:DEFINE_GLOBAL_FUNC 20:GET_NATIVE 33:NEG 38:SET_PTR_ELEM_TYPE 39:SET_DECLARED_FACE
 48:IS_NULL 53:IN 54:RANGE 59:CALL 60:TAIL_CALL 61:CLOSURE 65:ARRAY_GET 66:ARRAY_SET
 67:ARRAY_APPEND 69:DICT 70:DICT_GET 72:DICT_GET_KEY 73:LOAD_NATIVE_MODULE
-75:GET_MODULE_CONST 76:STRING_ADD 78:INDEX_SET 79:SLICE 87:THROW 88:GET_MODULE_VAR
-89:SET_MODULE_VAR 90:GET_MODULE_FUNC
+75:GET_MODULE_CONST 76:STRING_ADD 78:INDEX_SET 79:SLICE 87:THROW
 91:DEFINE_MODULE_FUNC 93:TYPE_CHECK 94:AS_CAST 129:STRUCT_DEF 133:GET_FIELD_ADDR
 134:GET_METHOD 135:ENUM_DEF 136:FACE_DEF
 137:CSTRUCT_DEF 138:GET_CSTRUCT_DEF 139:AWAIT 140:ASYNC_CALL 141:INIT_LENOMODULE
@@ -672,6 +677,7 @@ inline-scan: 76(OP_STRING_ADD) / 88          ← 只影响内联，不阻断循�
 | OP\_INDEX / OP\_ARRAY / OP\_DICT\_SET / OP\_INDEX\_SET\_NOPUSH / OP\_ARRAY\_APPEND\_NOPUSH | callout |
 | OP\_ITER\_GET / OP\_ITER\_GET\_VALUE | ITER\_GET 的「数组 + int 索引」走**原生**（直接读 `elements[idx]`）；其余（数字迭代 / dict 键值 / enum / string 单字符 / struct 字段名）走 callout `jit_callout_iter_get`，错误与越界一律 bailout 交解释器重放（§8.53，覆盖面 L2） |
 | OP\_GET\_FIELD / OP\_SET\_FIELD | callout `jit_callout_get_field` / `jit_callout_set_field`（§8.54，覆盖面 L3）：struct 路径完整实现（含越界检查、int→float/bigint→float 提升）；**写入复用 `struct_set_field`，写屏障由它保证**；cstruct 读与非 struct 报错走 bailout 交解释器重放 |
+| OP\_GET\_MODULE\_VAR / OP\_SET\_MODULE\_VAR / OP\_GET\_MODULE\_FUNC | callout `jit_callout_get_module_var` / `jit_callout_set_module_var`（§8.55，覆盖面 L6）：module 取当前帧 `frame->module`（与解释器同源，不硬编码结构体偏移）；`SET` 是 **peek** 语义（净 0、不改 TOS）且写入带 `gc_write_barrier`；无模块/越界走 bailout。**内联扫描显式拒绝这三条**（内联后没有被调函数的帧，会读错模块的变量） |
 | OP\_LENGTH | **数字原生**（32 位 `CVTTSD2SI` + 负值 clamp，复刻解释器的 `(int)double`）/ 对象与非法类型走 callout `jit_callout_length`（§8.52，覆盖面 L1） |
 | OP\_STRUCT\_INIT（非泛型） | callout `jit_callout_struct_init` |
 | OP\_RETURN / OP\_RETURN\_MULTI | 支持（函数级 JIT；多返回值仅内联路径）。**循环体内可达的 return 会让整个循环被拒绝**（§8.21） |
@@ -3352,6 +3358,60 @@ inline-scan: 132 / 76(OP_STRING_ADD) / 88   ← 只影响内联，不阻断循�
    漏屏障不会立刻崩，而是在下一次 GC 时静默丢对象（§8.36 的同类问题）。
 3. 静态类型已知时编译器发的是 `OP_GET_FIELD_FAST`（JIT 早已支持）；现在 `OP_GET_FIELD` 也支持了，
    两条路径不要混淆：FAST 版**没有**运行时越界检查（靠编译期保证），通用版有。
+
+***
+
+### 8.55 模块变量/函数进 JIT（§5 覆盖面 L6）—— 顺带解锁 2 个函数的函数级 JIT；L4 优先级修正（2026-09-14）
+
+**背景与优先级修正**：原计划 L4 = `OP_GET_METHOD` + `OP_SWITCH_LOOKUP`。动手前先查清 `GET_METHOD` 的产出场景
+（`codegen_expr.c`），结论是**它永远后跟 `OP_CALL` / `OP_ASYNC_CALL`** —— 原生方法、face 动态派发、
+async/未知方法定义、安全访问（`obj?.m()`）四条路径都是这个形态。而 `OP_CALL` 属 L8（未做）
+⇒ **单补 `GET_METHOD` 解锁不了任何循环**，是 §5 那条「单补一个 opcode ≠ 解锁循环」的又一次应验。
+
+于是先做 L6：`OP_GET_MODULE_VAR`(88) / `OP_SET_MODULE_VAR`(89) / `OP_GET_MODULE_FUNC`(90) ——
+三条都是 callout 型、无控制流、累计频次 ×6，且直方图里 `88` / `90` 同时在榜。
+
+**解释器语义**（`vm/vminc/op_module_var.inc`）
+
+* `OP_GET_MODULE_VAR` / `OP_GET_MODULE_FUNC`（3 字节：op + index16）：压入 `module->globals[index]`（净 +1）。
+  解释器里两者实现完全相同，区别只在编译期（取变量还是取函数值）。
+* `OP_SET_MODULE_VAR`（3 字节）：**`peek` TOS**（不弹栈）→ `globals[index] = value;`
+  `gc_write_barrier((Object*)module, value);`（净 0）。
+* `module` 一律取**当前帧**的 `frame->module`，而它来自被调函数（`vm_call.inc: frame->module = func->module`）。
+
+**实现（4 处）**
+
+1. `jit_scan.c`：`opcode_size()` 3 字节组补三条；`scan_loop_body()` 加净 +1（GET_VAR/GET_FUNC）与净 0（SET_VAR）；
+   **内联扫描直接拒绝这三条** —— 内联后 JIT 手上只有调用方的帧，被调函数来自别的模块就会读错模块的变量，
+   语义依赖运行时帧（与泛型 `OP_STRUCT_INIT` 同理），拒绝内联即可，循环本身照常 JIT。
+2. `jit_callout.c` + `jit_priv.h`：`jit_callout_get_module_var(index)` /
+   `jit_callout_set_module_var(index, value)`。module 从 `jit_callout_vm->frames[frame_cnt-1].module` 取
+   （与解释器同一来源），**不硬编码 vm / CallFrame 的布局偏移**；写入照抄解释器的 `gc_write_barrier`
+   （模块是 GC 根）。无模块 / 索引越界 → failed → bailout 交解释器报错。
+3. `ops_callout.inc`：GET 走标准「callout → `EMIT_VALUE_TO_RAW` → 失败标志检查 → `TOS_PRODUCE` / `vstack++`」；
+   SET 用 `TOS_SPILL()` + 从 `[rsp]` 读 TOS，callout 之后**不做 `TOS_PRODUCE`、不动 vstack**
+   （解释器 peek 语义：TOS 原样保留）。
+4. `assert/test_jit_op_module_var.leno` + 辅助模块 `assert/jit_modvar_mod.leno`：模块内函数的 3000 轮热循环，
+   覆盖 int 模块变量读写、对象值写入（写屏障）、模块函数取值。
+
+**验证**
+
+* 新用例：JIT 与 `LENO_NO_JIT=1` 都通过（`r=3004531504`）；`LENO_JIT_DEBUG=1` 下
+  `capable=1 / scan FAIL 0 / CALLOUT-FAIL 0 / Bailouts 0`，且 `inline-scan FAIL: 模块变量访问 op=88`
+  如期出现（证明「拒绝内联」那条守卫生效）。
+* `file_manager` 交互负载：直方图里 `88` / `90` 消失（拒收点前移到 **`59:OP_CALL ×4`**），运行时 bailout 仍 0。
+* **函数级 JIT 再 +2**：`ttfLib` / `lib`（各 162 字节，函数体里就是模块变量访问）进入函数级 JIT，
+  `FuncCompiled 4 / FuncExecuted 171`。
+
+**教训**
+
+1. 动手前先查「这个 opcode 是不是**总是**和另一个未支持的 opcode 绑在一起」——
+   `GET_METHOD` 就是要配套 `OP_CALL` 的典型，一次 `codegen` 检索省掉整轮返工。
+2. 需要**运行时帧上下文**的 opcode（这里是 `frame->module`）要区分三种 JIT 形态：
+   循环 JIT / 函数级 JIT 都能正确取到当前帧，**内联不行**（内联把被调函数的帧抹掉了）
+   ⇒ 内联扫描必须显式拒绝，否则会静默读错模块的变量。
+3. `peek` 型 opcode（净 0、不改 TOS）的 codegen 与 push/pop 型不同：**不能** `TOS_PRODUCE()`，
+   否则栈顶会被改写成 callout 的返回值。
 
 ***
 

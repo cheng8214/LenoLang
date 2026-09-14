@@ -829,6 +829,61 @@ Value jit_callout_set_field(Value obj_val, uint8_t field_idx, Value value) {
     return NULL_VAL;
 }
 
+/* Callout: OP_GET_MODULE_VAR / OP_GET_MODULE_FUNC（读当前帧所属模块的模块级变量/函数）。
+ * 语义对齐 vm/vminc/op_module_var.inc：module 取自**当前帧**（frame->module 来自被调函数，
+ * 见 vm_call.inc 的 frame->module = func->module），无模块 / 索引越界 → 报错。
+ * 解释器里这两条指令实现完全相同（都是 globals[index]，区别只在编译期语义）。
+ * module 由 jit_callout_vm 的帧栈取出，与解释器同一来源 —— 不硬编码 vm / CallFrame 的
+ * 布局偏移，避免结构体一改就悄悄读错。 */
+Value jit_callout_get_module_var(uint16_t index) {
+    VM* vm = jit_callout_vm;
+    ObjModule* module = NULL;
+    if (vm && vm->frame_cnt > 0)
+        module = (ObjModule*)vm->frames[vm->frame_cnt - 1].module;
+    if (!module) {
+        if (jit_debug_on())
+            fprintf(stderr, "[JIT-CALLOUT-FAIL] module_var: 不在模块上下文中（idx=%u）\n",
+                    (unsigned)index);
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+    if (index >= module->global_count) {
+        if (jit_debug_on())
+            fprintf(stderr, "[JIT-CALLOUT-FAIL] module_var: 索引越界 idx=%u >= count=%d\n",
+                    (unsigned)index, module->global_count);
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+    return module->globals[index];
+}
+
+/* Callout: OP_SET_MODULE_VAR（写模块级变量）。
+ * 解释器是 **peek**（vm_stack_peek(&vm, 0)），写完后 TOS 原样保留 → JIT 侧净效应 0、
+ * 不改 vstack。写入必须带 gc_write_barrier（模块是 GC 根，与解释器同款）。 */
+Value jit_callout_set_module_var(uint16_t index, Value value) {
+    VM* vm = jit_callout_vm;
+    ObjModule* module = NULL;
+    if (vm && vm->frame_cnt > 0)
+        module = (ObjModule*)vm->frames[vm->frame_cnt - 1].module;
+    if (!module) {
+        if (jit_debug_on())
+            fprintf(stderr, "[JIT-CALLOUT-FAIL] set_module_var: 不在模块上下文中（idx=%u）\n",
+                    (unsigned)index);
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+    if (index >= module->global_count) {
+        if (jit_debug_on())
+            fprintf(stderr, "[JIT-CALLOUT-FAIL] set_module_var: 索引越界 idx=%u >= count=%d\n",
+                    (unsigned)index, module->global_count);
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+    module->globals[index] = value;
+    gc_write_barrier((Object*)module, value);
+    return value;   /* 解释器 peek 后 TOS 不变；返回值仅便于调试 */
+}
+
 /* ---- 通用相等比较的 C 实现（镜像解释器 vm/vminc/op_compare.inc 的 OP_EQ）----
  * 逐条对齐解释器规则：
  *   1) int/int 精确比较；任一是 float 时按 double 比较（BigInt 与 float 混合也走这里，
