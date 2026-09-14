@@ -1,17 +1,16 @@
 // ============================================================================
 // 类型检查操作码 (OP_TYPE_CHECK)
 //
-// 字节码格式（非 face 类型）:
-//   [OP_TYPE_CHECK] [type_kind:1] [element_type_kind:1]
-//   - type_kind: 主类型 (TypeKind 枚举值)
-//   - element_type_kind: 元素/子类型，无元素类型时为 TYPE_ANY
+// 字节码格式（非名字类型）:
+//   [OP_TYPE_CHECK] [type_kind:1] [element_type_kind:1]           → 3 字节
+// 字节码格式（struct / face / enum —— 带名字常量）:
+//   [OP_TYPE_CHECK] [type_kind:1] [name_const_idx:2]              → 4 字节
+//   **TYPE_STRUCT / TYPE_FACE / TYPE_ENUM 三个都读 2 字节名字常量**
 //
-// 字节码格式（face 类型）:
-//   [OP_TYPE_CHECK] [TYPE_FACE:1] [face_name_const_idx:2]
-//   - face_name_const_idx: 2 字节大端序，指向常量池中的 face 名称字符串
+// 执行逻辑: 弹出栈顶值 → 判定是否符合期望类型 → 压入布尔结果（pop 1 push 1）
 //
-// 执行逻辑:
-//   弹出栈顶值，检查是否符合期望类型，将布尔结果压入栈
+// 判定逻辑抽到 type_check_value（vm.c）—— **语义唯一来源**：
+//   JIT 的 callout（jit_callout_type_check）调的是同一个函数，§8.65。
 // ============================================================================
 
 OPCODE(OP_TYPE_CHECK) {
@@ -20,187 +19,20 @@ OPCODE(OP_TYPE_CHECK) {
     TypeKind expected_type = (TypeKind)type_kind_byte;
 
     Value value = vm_stack_pop(&vm);
-    int matches = 0;
 
-    switch (expected_type) {
-        // --- 简单类型: 仅检查值类型，消费 codegen 发出的 element_type 字节 ---
-        case TYPE_INT:
-            (void)READ_BYTE(); // 消费 element_type 字节 (codegen 总会发出)
-            matches = val_is_int(value) || val_is_bigint(value);
-            break;
-        case TYPE_FLOAT:
-            (void)READ_BYTE();
-            matches = val_is_float(value);
-            break;
-        case TYPE_STRING:
-            (void)READ_BYTE();
-            matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_STRING);
-            break;
-        case TYPE_BOOL:
-            (void)READ_BYTE();
-            matches = val_is_bool(value);
-            break;
-
-        // --- 数组类型: element_type 字节用于检查每个元素的类型 ---
-        case TYPE_ARRAY: {
-            uint8_t elem_type_byte = READ_BYTE();
-            TypeKind expected_elem_type = (TypeKind)elem_type_byte;
-            if (!val_is_obj(value) || val_as_obj(value)->type != OBJ_ARRAY) {
-                matches = 0;
-                break;
-            }
-
-            // TYPE_ANY 表示不检查元素类型，只确认是数组即可
-            if (expected_elem_type != TYPE_ANY) {
-                ObjArray* arr = (ObjArray*)val_as_obj(value);
-                matches = 1;
-
-                for (int i = 0; i < arr->count; i++) {
-                    Value elem = arr->elements[i];
-                    int elem_matches = 0;
-                    switch (expected_elem_type) {
-                        case TYPE_INT:
-                            elem_matches = val_is_int(elem) || val_is_bigint(elem);
-                            break;
-                        case TYPE_FLOAT:
-                            elem_matches = val_is_float(elem);
-                            break;
-                        case TYPE_STRING:
-                            elem_matches = (val_is_obj(elem) && val_as_obj(elem)->type == OBJ_STRING);
-                            break;
-                        case TYPE_BOOL:
-                            elem_matches = val_is_bool(elem);
-                            break;
-                        default:
-                            elem_matches = 1;
-                            break;
-                    }
-                    if (!elem_matches) {
-                        matches = 0;
-                        break;
-                    }
-                }
-            } else {
-                matches = 1;
-            }
-            break;
-        }
-
-        // --- 字典/结构体/文件/指针/空值/任意: 仅检查值类型，消费 element_type 字节 ---
-        case TYPE_DICT:
-            (void)READ_BYTE(); // 消费 element_type 字节
-            matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_DICT);
-            break;
-        case TYPE_STRUCT: {
-            uint16_t struct_name_idx = READ_SHORT();
-            Value struct_name_val = frame->chunk->constants[struct_name_idx];
-            if (!val_is_obj(struct_name_val) || val_as_obj(struct_name_val)->type != OBJ_STRING) {
-                matches = 0;
-                break;
-            }
-            const char* struct_name = ((ObjString*)val_as_obj(struct_name_val))->chars;
-            if (val_is_obj(value) && val_as_obj(value)->type == OBJ_STRUCT) {
-                ObjStruct* obj = (ObjStruct*)val_as_obj(value);
-                if (obj->def && obj->def->name) {
-                    matches = (strcmp(obj->def->name, struct_name) == 0);
-                } else {
-                    matches = 0;
-                }
-            } else {
-                matches = 0;
-            }
-            break;
-        }
-
-        case TYPE_FACE: {
-            uint16_t face_name_idx = READ_SHORT();
-            Value face_name_val = frame->chunk->constants[face_name_idx];
-            if (!val_is_obj(face_name_val) || val_as_obj(face_name_val)->type != OBJ_STRING) {
-                matches = 0;
-                break;
-            }
-            const char* face_name = ((ObjString*)val_as_obj(face_name_val))->chars;
-            if (val_is_obj(value) && val_as_obj(value)->type == OBJ_STRUCT) {
-                ObjStruct* obj = (ObjStruct*)val_as_obj(value);
-                if (!obj->def) {
-                    matches = 0;
-                    break;
-                }
-                ObjFaceDef* fdef = face_def_find(face_name);
-                if (fdef) {
-                    matches = struct_implements_face(obj->def, fdef);
-                } else {
-                    matches = 0;
-                }
-            }
-            break;
-        }
-
-        case TYPE_ENUM: {
-            uint16_t enum_name_idx = READ_SHORT();
-            Value enum_name_val = frame->chunk->constants[enum_name_idx];
-            if (!val_is_obj(enum_name_val) || val_as_obj(enum_name_val)->type != OBJ_STRING) {
-                matches = 0;
-                break;
-            }
-            const char* enum_name = ((ObjString*)val_as_obj(enum_name_val))->chars;
-            if (val_is_obj(value) && val_as_obj(value)->type == OBJ_ENUM_DEF) {
-                ObjEnumDef* edef = (ObjEnumDef*)val_as_obj(value);
-                if (edef->name) {
-                    matches = (strcmp(edef->name, enum_name) == 0);
-                } else {
-                    matches = 0;
-                }
-            } else {
-                matches = 0;
-            }
-            break;
-        }
-
-        case TYPE_FILE:
-            (void)READ_BYTE(); // 消费 element_type 字节
-            matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_FILE);
-            break;
-        case TYPE_SOCKET:
-            (void)READ_BYTE();
-            matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_SOCKET);
-            break;
-        case TYPE_CHANNEL:
-            (void)READ_BYTE();
-            matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_CHANNEL);
-            break;
-        case TYPE_THREAD:
-            (void)READ_BYTE();
-            matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_THREAD);
-            break;
-        case TYPE_PTR:
-            (void)READ_BYTE(); // 消费 element_type 字节
-            matches = (val_is_obj(value) &&
-                      (val_as_obj(value)->type == OBJ_FFI_POINTER ||
-                       val_as_obj(value)->type == OBJ_FFI_LIBRARY ||
-                       val_as_obj(value)->type == OBJ_FFI_CALLBACK));
-            break;
-        case TYPE_NULL:
-            (void)READ_BYTE(); // 消费 element_type 字节
-            matches = val_is_null(value);
-            break;
-        case TYPE_FUNCTION:
-            (void)READ_BYTE(); // 消费 element_type 字节
-            matches = (val_is_obj(value) &&
-                      (val_as_obj(value)->type == OBJ_CLOSURE ||
-                       val_as_obj(value)->type == OBJ_NATIVE ||
-                       val_as_obj(value)->type == OBJ_FFI_CALLBACK));
-            break;
-        case TYPE_ANY:
-            (void)READ_BYTE(); // 消费 element_type 字节
-            matches = 1;
-            break;
-        default:
-            (void)READ_BYTE(); // 消费 element_type 字节，防止 IP 错位
-            matches = 0;
-            break;
+    /* 操作数：struct/face/enum 是"名字常量(2)"，其余是"元素类型(1)"。
+     * 消费顺序与旧实现完全一致（旧实现是在 switch 的各 case 里 READ 的）。 */
+    TypeKind elem_type = TYPE_ANY;
+    Value name_val = NULL_VAL;
+    if (expected_type == TYPE_STRUCT || expected_type == TYPE_FACE ||
+        expected_type == TYPE_ENUM) {
+        uint16_t name_idx = READ_SHORT();
+        name_val = frame->chunk->constants[name_idx];
+    } else {
+        elem_type = (TypeKind)READ_BYTE();   /* codegen 总会发出这个字节 */
     }
 
+    int matches = type_check_value(value, expected_type, elem_type, name_val);
     vm_stack_push(&vm, val_bool(matches));
     DISPATCH;
 }

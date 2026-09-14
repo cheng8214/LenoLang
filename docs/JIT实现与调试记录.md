@@ -648,7 +648,7 @@ inline-scan: 76(OP_STRING_ADD) / 88(模块变量访问) / 156(SWITCH_LOOKUP，R1
 |---|---|---|---|---|---|
 | ~~R4~~ | ~~`jit_func_cache` 冲突驱逐的 **use-after-free 隐患**~~ | ~~256 槽 direct-mapped，冲突时 `jit_mem_free` 掉占用者的机器码 —— 若那个函数**正在 C 栈上执行**（A 调 B、B 的 callout 又编译了撞槽的 C）就是 UAF~~ | ~~需要「执行中计数」+ 驱逐时延迟回收~~ | ~~高（内存安全）~~ | **已完成（§8.60，2026-09-14）**：确认存在（强制碰撞 4/4 崩 `0xC0000005`）并修复为**机器码延迟释放队列**（安全点判据复用 `jit_func_depth`/`jit_loop_depth`）；`LENO_JIT_FUNC_CACHE_SMALL=1` 做确定性复现，用例 `assert/test_jit_func_cache_churn.leno` |
 | ~~R1~~ | ~~`OP_SWITCH_LOOKUP` 进 JIT~~ | ~~file_manager 仅剩的"可做但难"拒收点（×1）。VM 侧是 int/bigint/float/string 四路二分查找；变长编码：`const_idx(2) count(2) default_off(4) [case_off(4)]…`~~ | ~~`opcode_size` 变长解码 + scan 的多目标前向记账 + codegen 线性比较链~~ | ~~中~~ | **已完成（§8.61，2026-09-14）**：查找逻辑抽成 `switch_lookup_index`（VM/JIT 共用，语义唯一来源）+ 变长 `opcode_size` + 多目标前向记账（内联侧保守拒绝）+ 线性比较链；`assert/test_jit_op_switch_lookup.leno`；**循环拒收清零**（直方图只剩刻意保留的 `138`） |
-| R2 | L7 余项成批补齐 | 余项：`OP_TYPE_CHECK`(93)、`OP_AS_CAST`(94)、`OP_ARRAY_GET/SET`、`OP_DICT*`、`OP_SLICE`(79)、`OP_IN`、`OP_RANGE`、`OP_NEG`(33)、`OP_U8_TO_F64`(146) | 多为 callout 型，照 §8.52~§8.59 的模板走（`opcode_size` + 两处 scan + callout + codegen + 用例）；`TYPE_CHECK`/`AS_CAST` 需要先把 VM 里那一大坨 TypeKind 判定抽成共享函数（同 §8.61/§8.64 的做法） | 低 | **批次 1（§8.63）**：`OP_IS_NULL`(48)。**批次 2（§8.64）**：`OP_STRING_ADD`(76)——由字符串插值 `$"..."` 产生（不是 `+`），顺带解开内联侧对该 opcode 的拒绝。**下一批**：`93:TYPE_CHECK`（实测是当前最高频缺口 **×16**，且 `is` 在真实代码里常见）；`94:AS_CAST` 是否跟做待定（它带值改写语义，本轮直方图里未出现）。注：`-d["k"]`、`x == null` 实测走已支持的路径，不必做 |
+| R2 | L7 余项成批补齐 | 余项：`OP_AS_CAST`(94)、`OP_GET_METHOD`(134，**裸方法取值**形态)、`OP_ARRAY_GET/SET`、`OP_DICT*`、`OP_SLICE`(79)、`OP_IN`、`OP_RANGE`、`OP_NEG`(33)、`OP_U8_TO_F64`(146) | 多为 callout 型，照 §8.52~§8.59 的模板走（`opcode_size` + 两处 scan + callout + codegen + 用例）；需要"语义唯一来源"抽取的（VM 里就地 READ 的那类）照 §8.61/§8.64/§8.65 的做法 | 低 | **批次 1（§8.63）**：`OP_IS_NULL`(48)。**批次 2（§8.64）**：`OP_STRING_ADD`(76)（由插值 `$"..."` 产生，不是 `+`；顺带解开内联侧）。**批次 3（§8.65）**：`OP_TYPE_CHECK`(93)——抽出 `type_check_value` 共用，顺带修掉 `TYPE_ENUM` 的 4 字节长度 bug；实测 `FuncCompiled 123 → 289`。**下一批候选**（实测排序）：`134:OP_GET_METHOD` 的裸取值形态（×4，§8.57 只做了带调用的窥孔，成本低）、`94:AS_CAST`（带值改写语义，直方图暂未出现）。注：`-d["k"]`、`x == null` 实测走已支持的路径，不必做 |
 | ~~R3~~ | ~~L0 诊断收口~~ | ~~`opcode_size` 余项补全；把 scan 的 default 报错区分成 `unknown opcode`（缺长度）与 `unsupported opcode`（已收录长度但缺 case）~~ | ~~纯诊断，无行为变化~~ | ~~极低~~ | **已完成（§8.63，2026-09-14）**：补齐约 40 条长度（逐条与 VM 的 `READ_*`、`debug.c` 反汇编器交叉核对）；`OP_CLOSURE` 因长度依赖常量表而**故意保持"未知"**；报错分为 `unknown（长度未知）`/`unsupported（已收录长度、未实现）`。**实测收益**：同一负载的拒收清单从"含糊的 138"变成分类可排期（76×4 / 93×3 / 14×2 / 142×2 / 138×49），R2 的下一批因此是测出来的而不是猜的 |
 | R5 | 闭包创建与捕获变量（`OP_CLOSURE` / `GET/SET/CLOSE_UPVALUE`） | 循环里建闭包、闭包体内读写捕获变量都不进 JIT（被调函数带 upvalue 时自动退回 VM 重入 ⇒ 语义正确但不快） | 两件基础：**(a)** func-JIT ABI 要加 closure 通道（现为 `jfn(flocals, globals)`，无 upvalue 入口）；**(b)** 循环 JIT 的 locals 在 scratch 区（迭代即复用）⇒ 直接捕获会产生**悬空 upvalue**，只能先允许"捕获已在 upvalue 链上的变量"，或改 locals 布局 | 高（ABI + 生命周期不变量） | 单独一轮，**先设计不变量再动手** |
 | R6 | 函数级 JIT 的多返回值 + `OP_TAIL_CALL` | `jit_compile_function` 直接拒收 `return_count > 1`；`OP_TAIL_CALL` 在循环 JIT 里等价"提前返回"（应归入 `has_reachable_return` 拒绝），只有函数级 JIT 有价值 | 多返回：扩返回值通道（`jit_fn_result` 单值 → 多槽约定），调用方回填约定已就绪（§8.59 的 helper）；尾调用：帧复用语义另算 | 中 | 排在 R5 之后 |
@@ -4029,6 +4029,61 @@ unsupported:93  x3   ← OP_TYPE_CHECK   ← 同上
    比从名字猜快得多。
 2. **探针要先自证**：错误语法会被静默当成另一种合法语义（这里是字面量字符串），
    于是"跑通了"反而掩盖了"根本没测到目标"。
+
+***
+
+### 8.65 R2 批次 3：`OP_TYPE_CHECK` 进 JIT（`is` / `switch case is`）+ 修掉一个长度表 bug（2026-09-14）
+
+**选题依据（R3 实测）**：`93:TYPE_CHECK` 是当前最高频的可做缺口（**×16**），来源是
+`is` 与 `switch ... case is` —— 后者正是 file_manager 事件分发的形态。
+
+**实现**
+
+1. **语义唯一来源**：把 `op_type_check.inc` 里那坨约 170 行的 TypeKind 判定整段抽成
+   `type_check_value(value, expected_type, elem_type, name_val)`（落在 `vm.c`，
+   声明进 `leno_vm.h`）。与原实现只有两点不同：操作数不再用 `READ_BYTE/READ_SHORT`
+   就地消费，而是由调用方传入 —— 因为**名字常量要查 `chunk->constants`，而 JIT 在编译期
+   就能查好**（与 §8.61 的 switch case 数组、§8.64 的名字常量同一做法）。
+2. `op_type_check.inc` 变薄：读 `type_kind` → struct/face/enum 读 `name_const(2)`、
+   其余读 `elem_type(1)` → 调判定 → 压 `val_bool`。
+3. `jit_callout.c` / `jit_priv.h`：`jit_callout_type_check` 一行转发；纯判定、不分配、
+   不报错 ⇒ 无失败通道、无 bailout。
+4. `ops_callout.inc`：编译期解出 `type_kind`/`elem_type`/`name_const` → callout →
+   `EMIT_RAW01_TO_BOOLVAL()`（与解释器一致：压的是 `val_bool`，不是 int48 的 0/1）。
+5. 两处 scan 按净 0 记账（pop1 push1）。
+
+**本轮的额外发现（两条，都比实现本身更值钱）**
+
+* **`TYPE_ENUM` 也是 4 字节指令** —— `op_type_check.inc` 里 `case TYPE_ENUM` 与
+  `case TYPE_STRUCT/FACE` 同形，都 `READ_SHORT()` 读名字常量。而我上一轮写 `opcode_size`
+  时是**照抄 `debug.c` 的反汇编器**，那里同样只写了 FACE/STRUCT ⇒ **把参考实现的 bug
+  一起抄了进来**（长度少 1 字节 ⇒ 含 enum 类型检查的字节流会走错位）。
+  本轮对 VM 的 `READ_*` 逐条核对时发现，**两处都修了**（`jit_scan.c` + `debug.c`）。
+* 直方图**新暴露** `134:OP_GET_METHOD ×4`：§8.57 只做了「`GET_METHOD` + `OP_CALL` 窥孔」，
+  **不带调用的裸方法取值**（`obj.m` 作为值传递）还没支持 —— 这是被 `93` 遮住的下一层缺口。
+
+**验证**
+
+* 探针（三种形态：face 变量的 `is`、`switch case is`、dict 无类型值的 `is int`）：
+  实现前三条循环都被 `unsupported opcode 93` 拒收；实现后全部 `capable=1`，
+  结果 `h1=h2=h3=200` 与 `LENO_NO_JIT=1` 完全一致。
+* 新用例 `assert/test_jit_op_type_check.leno`：5 组（struct/face 名字判定**含反例**、
+  `switch case is`、dict 基本类型判定**含反例**、enum 判定），JIT 与 `LENO_NO_JIT=1`
+  都 `exit=0`；`LENO_JIT_DEBUG` 下 `Compiled 4 / Bailouts 0`。
+* `file_manager` 交互负载：**`unsupported:93` 归零**（原 ×16），
+  **`FuncCompiled 123 → 289`**（`case is` 分发的主力函数如 `process`/`_relayout`
+  首次进入函数级 JIT），运行时 bailout **0**、`closed cleanly`。
+* `assert` 全套见提交说明；编译 0 warning。
+
+**教训**
+
+1. **"照抄参考实现"会把参考实现的 bug 一起抄过来**：长度表这类"静默走错字节流"的改动，
+   必须回到 VM 的 `READ_*` 逐条核对 —— 反汇编器是**方便**的对照物，不是**权威**。
+2. **一个 opcode 的收益要看三条**（§8.54 的老教训再次成立）：这里 `TYPE_CHECK` 不只是
+   解锁循环，更让 `case is` 事件分发的整批函数进了**函数级 JIT**，`FuncCompiled` 几乎翻倍
+   —— 评估"补一条 opcode 值不值"时，循环 / 内联 / 函数级 JIT 三条都要算。
+3. 诊断（R3）是**递归见效**的：分类直方图先把 `76`/`93` 照出来，补完之后又照出了 `134`
+   —— 补齐一层就露出下一层，这比一次猜一个 opcode 高效得多。
 
 ***
 

@@ -267,7 +267,9 @@ int disassembleInstruction(Chunk* chunk, int offset) {
                     }
                 }
                 return offset + 4;
-            } else if (type_kind == TYPE_STRUCT) {
+            } else if (type_kind == TYPE_STRUCT || type_kind == TYPE_ENUM) {
+                /* TYPE_ENUM 与 TYPE_STRUCT 同形：也读 2 字节名字常量
+                 * （见 op_type_check.inc 的 case TYPE_ENUM）。漏了它会让反汇编错位。 */
                 int struct_name_idx = (chunk->code[offset + 2] << 8) | chunk->code[offset + 3];
                 printf(" TYPE_STRUCT struct_name=%d", struct_name_idx);
                 if (struct_name_idx >= 0 && struct_name_idx < chunk->const_cnt) {

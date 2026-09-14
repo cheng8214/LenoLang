@@ -312,6 +312,176 @@ Value string_add(Value a, Value b) {
 }
 
 // ============================================================================
+// OP_TYPE_CHECK 的类型判定 —— **语义唯一来源**（§8.65）
+//   从 vm/vminc/op_type_check.inc 整段抽出（解释器那一坨 TypeKind switch）。
+//   区别只有两点：操作数不再用 READ_BYTE/READ_SHORT 就地消费，而是由调用方
+//   把 elem_type / name_val 传进来 —— 因为**名字常量要查 chunk->constants**，
+//   而 JIT 在编译期就能查好（与 §8.61 的 switch case 数组同一做法）。
+//   纯判定：不分配、不报错 ⇒ JIT 侧无失败通道。
+// ============================================================================
+int type_check_value(Value value, TypeKind expected_type, TypeKind elem_type, Value name_val) {
+    int matches = 0;
+
+    switch (expected_type) {
+        // --- 简单类型：仅检查值类型 ---
+        case TYPE_INT:
+            matches = val_is_int(value) || val_is_bigint(value);
+            break;
+        case TYPE_FLOAT:
+            matches = val_is_float(value);
+            break;
+        case TYPE_STRING:
+            matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_STRING);
+            break;
+        case TYPE_BOOL:
+            matches = val_is_bool(value);
+            break;
+
+        // --- 数组类型: elem_type 用于检查每个元素的类型 ---
+        case TYPE_ARRAY: {
+            if (!val_is_obj(value) || val_as_obj(value)->type != OBJ_ARRAY) {
+                matches = 0;
+                break;
+            }
+            // TYPE_ANY 表示不检查元素类型，只确认是数组即可
+            if (elem_type != TYPE_ANY) {
+                ObjArray* arr = (ObjArray*)val_as_obj(value);
+                matches = 1;
+                for (int i = 0; i < arr->count; i++) {
+                    Value elem = arr->elements[i];
+                    int elem_matches = 0;
+                    switch (elem_type) {
+                        case TYPE_INT:
+                            elem_matches = val_is_int(elem) || val_is_bigint(elem);
+                            break;
+                        case TYPE_FLOAT:
+                            elem_matches = val_is_float(elem);
+                            break;
+                        case TYPE_STRING:
+                            elem_matches = (val_is_obj(elem) && val_as_obj(elem)->type == OBJ_STRING);
+                            break;
+                        case TYPE_BOOL:
+                            elem_matches = val_is_bool(elem);
+                            break;
+                        default:
+                            elem_matches = 1;
+                            break;
+                    }
+                    if (!elem_matches) {
+                        matches = 0;
+                        break;
+                    }
+                }
+            } else {
+                matches = 1;
+            }
+            break;
+        }
+
+        // --- 字典/文件/指针/空值/任意: 仅检查值类型 ---
+        case TYPE_DICT:
+            matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_DICT);
+            break;
+
+        case TYPE_STRUCT: {
+            if (!val_is_obj(name_val) || val_as_obj(name_val)->type != OBJ_STRING) {
+                matches = 0;
+                break;
+            }
+            const char* struct_name = ((ObjString*)val_as_obj(name_val))->chars;
+            if (val_is_obj(value) && val_as_obj(value)->type == OBJ_STRUCT) {
+                ObjStruct* obj = (ObjStruct*)val_as_obj(value);
+                if (obj->def && obj->def->name) {
+                    matches = (strcmp(obj->def->name, struct_name) == 0);
+                } else {
+                    matches = 0;
+                }
+            } else {
+                matches = 0;
+            }
+            break;
+        }
+
+        case TYPE_FACE: {
+            if (!val_is_obj(name_val) || val_as_obj(name_val)->type != OBJ_STRING) {
+                matches = 0;
+                break;
+            }
+            const char* face_name = ((ObjString*)val_as_obj(name_val))->chars;
+            if (val_is_obj(value) && val_as_obj(value)->type == OBJ_STRUCT) {
+                ObjStruct* obj = (ObjStruct*)val_as_obj(value);
+                if (!obj->def) {
+                    matches = 0;
+                    break;
+                }
+                ObjFaceDef* fdef = face_def_find(face_name);
+                if (fdef) {
+                    matches = struct_implements_face(obj->def, fdef);
+                } else {
+                    matches = 0;
+                }
+            }
+            break;
+        }
+
+        case TYPE_ENUM: {
+            if (!val_is_obj(name_val) || val_as_obj(name_val)->type != OBJ_STRING) {
+                matches = 0;
+                break;
+            }
+            const char* enum_name = ((ObjString*)val_as_obj(name_val))->chars;
+            if (val_is_obj(value) && val_as_obj(value)->type == OBJ_ENUM_DEF) {
+                ObjEnumDef* edef = (ObjEnumDef*)val_as_obj(value);
+                if (edef->name) {
+                    matches = (strcmp(edef->name, enum_name) == 0);
+                } else {
+                    matches = 0;
+                }
+            } else {
+                matches = 0;
+            }
+            break;
+        }
+
+        case TYPE_FILE:
+            matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_FILE);
+            break;
+        case TYPE_SOCKET:
+            matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_SOCKET);
+            break;
+        case TYPE_CHANNEL:
+            matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_CHANNEL);
+            break;
+        case TYPE_THREAD:
+            matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_THREAD);
+            break;
+        case TYPE_PTR:
+            matches = (val_is_obj(value) &&
+                      (val_as_obj(value)->type == OBJ_FFI_POINTER ||
+                       val_as_obj(value)->type == OBJ_FFI_LIBRARY ||
+                       val_as_obj(value)->type == OBJ_FFI_CALLBACK));
+            break;
+        case TYPE_NULL:
+            matches = val_is_null(value);
+            break;
+        case TYPE_FUNCTION:
+            matches = (val_is_obj(value) &&
+                      (val_as_obj(value)->type == OBJ_CLOSURE ||
+                       val_as_obj(value)->type == OBJ_NATIVE ||
+                       val_as_obj(value)->type == OBJ_FFI_CALLBACK));
+            break;
+        case TYPE_ANY:
+            matches = 1;
+            break;
+        default:
+            matches = 0;
+            break;
+    }
+
+    return matches;
+}
+
+// ============================================================================
 // 辅助函数实现 - 从各 .c 文件合并（需要在 OPCODE 之前定义）
 // ============================================================================
 // 注意：按依赖顺序包含，被依赖的在前

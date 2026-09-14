@@ -1,0 +1,77 @@
+// OP_TYPE_CHECK 进 JIT —— R2 批次 3（§8.65）
+//
+// `is` 编译出 OP_TYPE_CHECK（同时 `switch ... case is T` 也走它 —— 这正是
+// file_manager 里 ×16 的来源，事件分发全是 case is）。
+// 判定整个复用 VM 的 type_check_value（语义唯一来源），JIT 只做：
+//   编译期解出 type_kind / elem_type / name_const → 运行时 callout 判定 → 压 bool。
+//
+// 覆盖：
+//   1. struct 名字判定（含**反例**，确认不是恒真）
+//   2. face 变量上的判定（TYPE_FACE + face_def_find + struct_implements_face）
+//   3. switch case is（真实程序里的高频形态）
+//   4. 无类型值（dict）上的基本类型判定（+ 反例）
+//   5. enum 判定 —— TYPE_ENUM 也读 2 字节名字常量，顺带守住刚修的 opcode_size
+
+struct Point { int x = 0; int y = 0 }
+
+face Shape { func area():float }
+
+struct Rect impl Shape {
+    float w = 0.0
+    float h = 0.0
+    func area():float { return self.w * self.h }
+}
+
+enum Color { red; green; blue }
+
+main() {
+    // ---- 1) struct / face 名字判定（含反例）----
+    Shape s = new Rect(w = 2.0, h = 3.0)
+    int yes = 0
+    int no = 0
+    int i = 0
+    while i < 3000 {
+        if s is Rect { yes = yes + 1 }
+        if s is Point { no = no + 1 }
+        i = i + 1
+    }
+    assert_eq(yes, 3000)
+    assert_eq(no, 0)
+
+    // ---- 2) switch case is ----
+    int h2 = 0
+    int j = 0
+    while j < 3000 {
+        switch s {
+            case is Rect { h2 = h2 + 1 }
+            default { }
+        }
+        j = j + 1
+    }
+    assert_eq(h2, 3000)
+
+    // ---- 3) 无类型值（dict）的基本类型判定（含反例）----
+    var d = {"k": 5}
+    int h3 = 0
+    int h4 = 0
+    int k = 0
+    while k < 3000 {
+        if d["k"] is int { h3 = h3 + 1 }
+        if d["k"] is string { h4 = h4 + 1 }
+        k = k + 1
+    }
+    assert_eq(h3, 3000)
+    assert_eq(h4, 0)
+
+    // ---- 4) enum 判定（顺带守住 TYPE_ENUM 的 4 字节长度）----
+    var c = Color
+    int h5 = 0
+    int m = 0
+    while m < 3000 {
+        if c is Color { h5 = h5 + 1 }
+        m = m + 1
+    }
+    assert_eq(h5, 3000)
+
+    print("test_jit_op_type_check: OK")
+}

@@ -1039,6 +1039,17 @@ Value jit_callout_string_add(Value a, Value b) {
     return string_add(a, b);
 }
 
+/* Callout: OP_TYPE_CHECK（`is` 判定，R2 批次 3 / §8.65）—— 一行转发。
+ * 调 VM 的 type_check_value（**语义唯一来源**）：解释器与 JIT 共用同一套
+ * TypeKind 判定（含数组逐元素检查、struct 按名字比对、face 的 implements 判定、
+ * enum 按名字比对）。编译期解出的三个参数直接传进来，运行时零解析。
+ * 纯判定：不分配、不报错 ⇒ 永不置 jit_callout_failed。
+ * 返回 1/0（不是 bool Value）—— 调用方用 EMIT_RAW01_TO_BOOLVAL 转成
+ * TRUE_VAL/FALSE_VAL，与解释器压的 val_bool 一致。 */
+int jit_callout_type_check(Value value, int expected_type, int elem_type, Value name_val) {
+    return type_check_value(value, (TypeKind)expected_type, (TypeKind)elem_type, name_val);
+}
+
 /* ---- 通用相等比较的 C 实现（镜像解释器 vm/vminc/op_compare.inc 的 OP_EQ）----
  * 逐条对齐解释器规则：
  *   1) int/int 精确比较；任一是 float 时按 double 比较（BigInt 与 float 混合也走这里，

@@ -233,6 +233,13 @@ int switch_lookup_index(Value switch_val, Value arr_val, int case_count);
 // 否则两侧各自转字符串再拼。纯 Value→Value，不依赖 VM 状态、不报错。
 Value string_add(Value a, Value b);
 
+// OP_TYPE_CHECK 的类型判定（定义在 vm.c）—— 解释器与 JIT callout 共用（§8.65）。
+//   expected_type: 期望类型（TypeKind）
+//   elem_type    : 元素类型字节（TYPE_ANY = 不检查元素；仅数组用）
+//   name_val     : TYPE_STRUCT / TYPE_FACE / TYPE_ENUM 的名字字符串常量（其余类型忽略）
+// 返回 1 = 匹配。纯判定：不分配、不报错。
+int type_check_value(Value value, TypeKind expected_type, TypeKind elem_type, Value name_val);
+
 typedef struct Chunk {
     uint8_t* code;
     int len;

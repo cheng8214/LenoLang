@@ -377,6 +377,13 @@ Value jit_callout_is_null(Value v);
  * 会分配（新字符串），但在 JIT 帧里是安全的：GC 在 JIT 执行期间只置让出标志、
  * 不就地回收（§8.36/§8.37）。任何值都能转成字符串 ⇒ 不报错 ⇒ 无失败通道。 */
 Value jit_callout_string_add(Value a, Value b);
+
+/* ---- R2 批次 3：`is` 判定（OP_TYPE_CHECK）----
+ * 直接调 VM 的 type_check_value（vm.c，解释器用的是同一份）—— **语义唯一来源**。
+ * expected_type / elem_type 是编译期从指令里解出的 TypeKind；name_val 是
+ * struct/face/enum 的名字字符串常量（编译期从 chunk->constants 取好，常量表是 GC 根）。
+ * 纯判定：不分配、不报错 ⇒ 永不置 jit_callout_failed（无 bailout 分支）。 */
+int jit_callout_type_check(Value value, int expected_type, int elem_type, Value name_val);
 /* 模块变量读写：module 由 codegen **编译期嵌入**（jit_scan_get_module），
  * 不是运行时查 vm.frames[frame_cnt-1] —— 函数级 JIT 的快路径不压帧，
  * 查帧会读到调用方的模块（§8.55 的修正 + §8.56 的教训）。 */
