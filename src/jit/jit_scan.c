@@ -259,6 +259,11 @@ int opcode_size(const uint8_t* ip) {
         case OP_CALL_NATIVE:             /* name_const(2) + arg_count(2) (callout) */
         case OP_CLEAR_LOCAL_RANGE:       /* base(2) + count(2) */
             return 5;
+        /* 变长：OP_SWITCH_LOOKUP = opcode + const_idx(2) + case_count(2)
+         *                        + default_off(4) + [body_off(4)] * case_count
+         * → 9 + 4 * case_count 字节（§8.61）。case_count 在 ip[3..4]。 */
+        case OP_SWITCH_LOOKUP:
+            return 9 + 4 * (int)(((uint16_t)ip[3] << 8) | (uint16_t)ip[4]);
         /* 1-byte try/catch (no operands) */
         case OP_CATCH: case OP_FINALLY: case OP_END_TRY:
             return 1;
@@ -389,6 +394,16 @@ static int scan_callee_for_inline(Chunk* cc, int local_count,
                 if (jit_debug_on())
                     fprintf(stderr, "[JIT-DEBUG] inline-scan FAIL: 模块变量访问 op=%d at off %d\n",
                             op, (int)(ip - cc->code));
+                return 0;
+            case OP_SWITCH_LOOKUP:
+                /* §8.61 v1：保守拒绝内联。这条是**变长 + 多目标**控制流：每个 case 体
+                 * 都只能「由跳转表进入」，而本函数只是简化的 vstack 走查，没有
+                 * scan_loop_body 那套 fwd_targets/dead-code 机制 —— 一旦内联体的栈深
+                 * 与 JIT 记账错位就是静默算错。循环本身照常 JIT，只是不内联含 switch
+                 * 的函数（与 §8.55 拒绝模块变量访问同一取舍）。 */
+                if (jit_debug_on())
+                    fprintf(stderr, "[JIT-DEBUG] inline-scan FAIL: OP_SWITCH_LOOKUP at off %d\n",
+                            (int)(ip - cc->code));
                 return 0;
             case OP_ARRAY_APPEND_NOPUSH: vstack -= 2; break;
             case OP_DICT_SET: vstack -= 2; break;
@@ -1111,6 +1126,37 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                 fwd_targets[fwd_count].target_bc = target_bc;
                 fwd_targets[fwd_count].vstack = vstack;
                 fwd_count++;
+                break;
+            }
+            case OP_SWITCH_LOOKUP: {
+                /* switch 查找表（§8.61）。编码：const_idx(2) case_count(2)
+                 * default_off(4) [body_off(4)]...；**偏移基准 = 指令起点 + size**
+                 * （= 偏移表之后，见 op_switch_lookup.inc 的 frame->ip 推进）。
+                 * 栈效应：弹出 switch 值、不压回 → net -1。
+                 * 每个 case 体与 default 体都是一个**前向跳转目标**，且都从
+                 * "弹出后的 vstack" 开始（与 if/else 的各分支同理）。 */
+                uint16_t case_count = (uint16_t)((ip[3] << 8) | ip[4]);
+                int32_t default_off = rd_int32(ip + 5);
+                int base_bc = bc_off + size;   /* 各 body_off 的基准 */
+                vstack--;                      /* 弹 switch 值 */
+                for (int k = 0; k <= (int)case_count; k++) {
+                    int32_t body_off = (k < (int)case_count)
+                                           ? rd_int32(ip + 9 + k * 4) : default_off;
+                    int target_bc = base_bc + body_off;
+                    MARK_JT_FWD(target_bc);   /* §8.46：目标偏移不接受回看 */
+                    if (fwd_count >= JIT_SCAN_MAX_FWD) {
+                        if (jit_debug_on())
+                            fprintf(stderr, "[JIT-DEBUG] scan FAIL: 前向跳转目标超过 %d 个"
+                                            "（OP_SWITCH_LOOKUP case_count=%u）→ 拒绝 JIT\n",
+                                    JIT_SCAN_MAX_FWD, (unsigned)case_count);
+                        r->capable = 0;
+                        return;
+                    }
+                    fwd_targets[fwd_count].target_bc = target_bc;
+                    fwd_targets[fwd_count].vstack = vstack;
+                    fwd_count++;
+                }
+                dead = 1;   /* switch 之后没有 fall-through：体一律由跳转表进入 */
                 break;
             }
             case OP_LOOP:

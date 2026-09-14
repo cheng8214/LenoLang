@@ -167,6 +167,112 @@ static inline int compare_value_imm(Value va, int64_t imm) {
 }
 
 // ============================================================================
+// OP_SWITCH_LOOKUP 的查找逻辑 —— **语义唯一来源**（§8.61）
+//   在按类型分组排好序的 case 值数组里查 switch_val，返回匹配下标；
+//   -1 = 未匹配（走 default）。类型不匹配按原实现的语义**直接放弃查找**
+//   （`break` 出整个循环，而不是继续探测）。
+// VM 的 OP_SWITCH_LOOKUP 与 JIT 的 callout（jit_callout_switch_lookup）都调用它：
+// 两边各写一套二分查找迟早会分叉，而分叉表现为"某些值悄悄跳到错误分支"。
+// arr_val 传 Value（而不是 ObjArray*），使声明只依赖 Value —— 头文件零耦合，
+// 且与原实现的 OBJ_ARRAY 检查天然合一。
+// ============================================================================
+int switch_lookup_index(Value switch_val, Value arr_val, int case_count) {
+    if (case_count <= 0) return -1;
+    if (!val_is_obj(arr_val) || val_as_obj(arr_val)->type != OBJ_ARRAY) return -1;
+
+    ObjArray* arr = (ObjArray*)val_as_obj(arr_val);
+    int matched_index = -1;
+
+    // 根据类型选择比较策略
+    if (val_is_int(switch_val)) {
+        // 整数二分查找
+        int64_t target = val_as_int(switch_val);
+        int lo = 0, hi = case_count - 1;
+        while (lo <= hi) {
+            int mid = lo + (hi - lo) / 2;
+            Value cv = arr->elements[mid];
+            int64_t cmp_val;
+            if (val_is_int(cv)) {
+                cmp_val = val_as_int(cv);
+            } else if (val_is_bigint(cv)) {
+                int c = compare_values(switch_val, cv);
+                if (c == 0) { matched_index = mid; break; }
+                if (c < 0) { hi = mid - 1; }
+                else { lo = mid + 1; }
+                continue;
+            } else {
+                break;  // 类型不匹配，回退
+            }
+            if (cmp_val == target) { matched_index = mid; break; }
+            else if (cmp_val < target) { lo = mid + 1; }
+            else { hi = mid - 1; }
+        }
+    } else if (val_is_bigint(switch_val)) {
+        // BigInt 二分查找
+        int lo = 0, hi = case_count - 1;
+        while (lo <= hi) {
+            int mid = lo + (hi - lo) / 2;
+            Value cv = arr->elements[mid];
+            if (val_is_int(cv) || val_is_bigint(cv)) {
+                int c = compare_values(switch_val, cv);
+                if (c == 0) { matched_index = mid; break; }
+                if (c < 0) { hi = mid - 1; }
+                else { lo = mid + 1; }
+            } else {
+                break;
+            }
+        }
+    } else if (val_is_float(switch_val)) {
+        // 浮点数二分查找
+        double target = val_as_double(switch_val);
+        int lo = 0, hi = case_count - 1;
+        while (lo <= hi) {
+            int mid = lo + (hi - lo) / 2;
+            Value cv = arr->elements[mid];
+            if (val_is_float(cv)) {
+                double cmp_val = val_as_double(cv);
+                if (cmp_val == target) { matched_index = mid; break; }
+                else if (cmp_val < target) { lo = mid + 1; }
+                else { hi = mid - 1; }
+            } else {
+                break;
+            }
+        }
+    } else if (val_is_string(switch_val)) {
+        // 字符串二分查找（按字典序）
+        ObjString* target = (ObjString*)val_as_obj(switch_val);
+        int lo = 0, hi = case_count - 1;
+        while (lo <= hi) {
+            int mid = lo + (hi - lo) / 2;
+            Value cv = arr->elements[mid];
+            if (val_is_string(cv)) {
+                ObjString* cs = (ObjString*)val_as_obj(cv);
+                // 先比 hash（快速路径）
+                if (cs->hash == target->hash && cs->len == target->len) {
+                    if (memcmp(cs->chars, target->chars, cs->len) == 0) {
+                        matched_index = mid;
+                        break;
+                    }
+                }
+                // hash 不等，按字典序比较
+                int min_len = cs->len < target->len ? cs->len : target->len;
+                int cmp = memcmp(cs->chars, target->chars, min_len);
+                if (cmp == 0) {
+                    cmp = cs->len - target->len;
+                }
+                if (cmp == 0) { matched_index = mid; break; }
+                else if (cmp < 0) { lo = mid + 1; }
+                else { hi = mid - 1; }
+            } else {
+                break;
+            }
+        }
+    }
+
+    return matched_index;
+}
+
+// ============================================================================
 // 辅助函数实现 - 从各 .c 文件合并（需要在 OPCODE 之前定义）
 // ============================================================================
 // 注意：按依赖顺序包含，被依赖的在前

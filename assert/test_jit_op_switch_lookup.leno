@@ -1,0 +1,54 @@
+// OP_SWITCH_LOOKUP 进 JIT —— 覆盖面 R1（§8.61）
+//
+// 编译器只在「>= 4 个同类型常量 case」时才发 OP_SWITCH_LOOKUP
+// （codegen_stmt.c 的 gen_switch），所以这里写 4 case + default。
+//
+// 两条路径都要覆盖：
+//   1) switch 直接写在**热循环体**里 → 循环 JIT 编译它（本用例第 1 段）；
+//   2) switch 写在**被调函数**里   → 函数级 JIT 编译它（本用例第 2 段，
+//      这也顺带验证 classify 之前因缺 OP_SWITCH_LOOKUP 而进不了函数级 JIT）。
+//
+// JIT 侧语义：弹 switch 值 → callout 调 VM 的 switch_lookup_index（语义唯一来源）
+// → 用返回下标发线性比较链。永不失败 ⇒ 无 bailout 分支。
+// 与 LENO_NO_JIT=1 的结果必须逐位一致。
+
+func classify(int v): int {
+    switch v {
+        case 0 { return 10 }
+        case 1 { return 20 }
+        case 2 { return 30 }
+        case 3 { return 40 }
+        default { return 99 }
+    }
+}
+
+main() {
+    // ---- 1) 热循环体里的 switch：命中 case 0..3 + 每轮一次 default ----
+    int acc = 0
+    int i = 0
+    while i < 3000 {
+        int m = i % 5
+        switch m {
+            case 0 { acc = acc + 1 }
+            case 1 { acc = acc + 2 }
+            case 2 { acc = acc + 3 }
+            case 3 { acc = acc + 4 }
+            default { acc = acc + 99 }
+        }
+        i = i + 1
+    }
+    // 每 5 次一轮：1+2+3+4+99 = 109；3000/5 = 600 轮 ⇒ 65400
+    assert_eq(acc, 65400)
+
+    // ---- 2) 被调函数里的 switch（函数级 JIT）----
+    int acc2 = 0
+    int j = 0
+    while j < 3000 {
+        acc2 = acc2 + classify(j % 5)
+        j = j + 1
+    }
+    // 每轮 10+20+30+40+99 = 199；600 轮 ⇒ 119400
+    assert_eq(acc2, 119400)
+
+    print("test_jit_op_switch_lookup: OK")
+}

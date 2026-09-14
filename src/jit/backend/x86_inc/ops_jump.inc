@@ -19,6 +19,56 @@
                 vstack = VSTACK_UNREACHABLE;
                 break;
             }
+            case OP_SWITCH_LOOKUP: {
+                /* switch 跳转表（§8.61 覆盖面 R1）。解释器语义见 op_switch_lookup.inc：
+                 * 弹 switch 值 → 在 case 值数组里二分查找 → 命中跳对应 case 体，否则跳 default 体。
+                 * 编码：const_idx(2) case_count(2) default_off(4) [body_off(4)]...，
+                 * **偏移基准 = 指令起点 + size**（= 偏移表之后）。
+                 *
+                 * JIT 把"查找"整个交给 callout（它调 VM 的 switch_lookup_index —— 语义唯一
+                 * 来源），只把返回的**下标**编译成线性比较链：
+                 *     cmp rax,0 / je case0 …  / jmp default
+                 * case 少时足够（本项目 switch 一般 ≤ 十几个 case），且不需要间接跳转表、
+                 * 不需要在代码段里放地址表。
+                 *
+                 * 这条指令永不失败（不分配、不报错、无类型错误语义）⇒ **没有 bailout 分支**：
+                 * 任何值都能得到一个确定的目标（命中或 default），与解释器逐字节等价。 */
+                uint16_t const_idx = rd_short(ip + 1);
+                uint16_t case_count = rd_short(ip + 3);
+                int32_t default_off = rd_int32(ip + 5);
+                int base_bc = bc_off + size;
+
+                /* case 值数组：编译期从常量表取（与解释器同一来源，常量表是 GC 根）。
+                 * 非数组 / 越界 → 传 NULL_VAL → callout 返回 -1 → 走 default，
+                 * 与解释器「不是 OBJ_ARRAY 就 matched_index 保持 -1」一致。 */
+                Value cases_val = NULL_VAL;
+                if (ctx->chunk && ctx->chunk->constants &&
+                    (int)const_idx < ctx->chunk->const_cnt) {
+                    cases_val = ctx->chunk->constants[const_idx];
+                }
+
+                TOS_CONSUME_RAX();                     /* 弹 switch 值（raw）→ RAX，tos_live=0 */
+                EMIT_RAW_TO_VALUE();                   /* raw → NaN-boxed Value（R8 是 scratch） */
+                EMIT_STORE_TMP(tmp1_disp, JIT_RAX);    /* 先落 tmp 槽，跨 callout 序言取用 */
+                EMIT_CALLOUT_BEGIN();
+                EMIT_LOAD_TMP(JIT_ARG1, tmp1_disp);    /* switch 值 */
+                emit_mov_reg_imm64(cb, JIT_ARG2, (uint64_t)cases_val);   /* case 值数组 */
+                emit_mov_reg_imm64(cb, JIT_ARG3, (uint32_t)case_count);
+                EMIT_CALL(jit_callout_switch_lookup);
+                EMIT_CALLOUT_END();                    /* RAX = 匹配下标（-1 = default） */
+                for (int k = 0; k < (int)case_count; k++) {
+                    emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uint32_t)k);
+                    emit_cmp_rr(cb, JIT_RAX, JIT_R8);
+                    int case_p = emit_jcc(cb, 0x84);   /* JE → case 体 */
+                    patch_add(ctx, case_p, base_bc + rd_int32(ip + 9 + k * 4), vstack);
+                }
+                {
+                    int def_p = emit_jmp(cb);
+                    patch_add(ctx, def_p, base_bc + default_off, vstack);
+                }
+                vstack = VSTACK_UNREACHABLE;   /* 跳转表之后没有 fall-through */
+                break;
+            }
             case OP_JUMP_IF_FALSE: {
                 int32_t off = rd_int32(ip + 1);
                 int target_bc = bc_off + size + off;

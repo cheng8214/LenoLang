@@ -1009,6 +1009,17 @@ void jit_callout_set_declared_face(Value v, uint16_t name_const_idx, Chunk* chun
     ((ObjStruct*)val_as_obj(v))->declared_face = (ObjString*)val_as_obj(name_val);
 }
 
+/* Callout: OP_SWITCH_LOOKUP（§8.61 覆盖面 R1）—— 只做"下标查找"。
+ * 语义对齐 vm/vminc/op_switch_lookup.inc：**调同一个 switch_lookup_index**
+ * （定义在 vm.c，解释器也调它）。这样两边不会各写一套二分查找而悄悄分叉。
+ * 纯计算：不分配、不报错、不改任何 VM/JIT 状态 ⇒ 永不置 jit_callout_failed，
+ * 调用方也就没有 bailout 分支要还原（解释器在这条指令上从不报错）。
+ * arr_val 是编译期从 chunk->constants[const_idx] 取出的 case 值数组
+ * （常量表本身是 GC 根 ⇒ 不会被回收；本函数又不分配 ⇒ 无需额外保活）。 */
+int jit_callout_switch_lookup(Value switch_val, Value arr_val, int case_count) {
+    return switch_lookup_index(switch_val, arr_val, case_count);
+}
+
 /* ---- 通用相等比较的 C 实现（镜像解释器 vm/vminc/op_compare.inc 的 OP_EQ）----
  * 逐条对齐解释器规则：
  *   1) int/int 精确比较；任一是 float 时按 double 比较（BigInt 与 float 混合也走这里，

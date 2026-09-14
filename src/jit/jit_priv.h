@@ -356,6 +356,13 @@ Value jit_callout_length(Value v);
 Value jit_callout_iter_get(Value obj_val, Value index_val, int want_value);
 Value jit_callout_get_field(Value obj_val, uint8_t field_idx);
 Value jit_callout_set_field(Value obj_val, uint8_t field_idx, Value value);
+
+/* ---- OP_SWITCH_LOOKUP 的下标查找（§8.61 覆盖面 R1）----
+ * 直接调 VM 的 switch_lookup_index（vm.c，解释器用的是同一份）——
+ * **语义唯一来源**，JIT 不重写二分查找。返回匹配下标，-1 = 走 default。
+ * 纯计算、不分配、不报错 ⇒ 调用方无需检查 jit_callout_failed。
+ * arr_val 由编译期从 chunk->constants[const_idx] 取出（常量表是 GC 根）。 */
+int jit_callout_switch_lookup(Value switch_val, Value arr_val, int case_count);
 /* 模块变量读写：module 由 codegen **编译期嵌入**（jit_scan_get_module），
  * 不是运行时查 vm.frames[frame_cnt-1] —— 函数级 JIT 的快路径不压帧，
  * 查帧会读到调用方的模块（§8.55 的修正 + §8.56 的教训）。 */

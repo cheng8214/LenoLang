@@ -222,6 +222,12 @@ typedef enum {
 // 字节码块
 // ============================================================================
 
+// OP_SWITCH_LOOKUP 的查找逻辑（定义在 vm.c）—— VM 解释器与 JIT callout 共用，
+// 保证"语义唯一来源"（见 vm.c 的说明与文档 §8.61）。
+// 在 case 值数组（Value，必须是 OBJ_ARRAY）里二分查找 switch_val；
+// 返回匹配下标，-1 = 未匹配（走 default）。case_count <= 0 或非数组 → -1。
+int switch_lookup_index(Value switch_val, Value arr_val, int case_count);
+
 typedef struct Chunk {
     uint8_t* code;
     int len;

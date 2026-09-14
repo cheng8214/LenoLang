@@ -605,34 +605,36 @@ bailout，只加一半会出现「能编译但一进去就 bailout」的假收�
 | L1 | `OP_LENGTH`（`.len()`） | 高（`for x.len() to i` 遍地） | **已完成**（§8.52）：`opcode_size` + 两处 scan + 数字原生/对象 callout 双路径 + `assert/test_jit_op_length.leno` |
 | L2 | `OP_ITER_GET` / `OP_ITER_GET_VALUE`（for-in 迭代） | 高（补完 L1 后是 file_manager 里最高频的缺口 ×4） | **已完成**（§8.53）：`opcode_size` + 两处 scan + 数组原生快路径 + callout + `assert/test_jit_op_iter.leno`；顺带修掉 `jit_callout_failed` 在循环入口未复位导致的连锁 bailout |
 | L3 | `OP_SET_FIELD` / `OP_GET_FIELD`（callout，`field_idx` 已在指令里） | 高（对象状态更新 ×2；**顺带解锁 3 个 SDL 包装函数的函数级 JIT**） | **已完成**（§8.54）：`opcode_size` + 两处 scan + callout（写入复用 `struct_set_field` 保住写屏障）+ `assert/test_jit_op_field.leno` |
-| L4 | `OP_GET_METHOD`（动态派发方法查找）+ `OP_SWITCH_LOOKUP`（变长：`const(2) count(2) default(4) [offset(4)]...`，×2） | 中 | `GET_METHOD + OP_CALL` 窥孔**已完成**（§8.57，复用 `jit_callout_invoke_method`）；`OP_SWITCH_LOOKUP` 未做（唯一非 callout 型：控制流 + 变长编码 + 多目标 patch，单独设计） |
+| L4 | `OP_GET_METHOD`（动态派发方法查找）+ `OP_SWITCH_LOOKUP`（变长：`const(2) count(2) default(4) [offset(4)]...`，×2） | 中 | **两半都已完成**：`GET_METHOD + OP_CALL` 窥孔见 §8.57（复用 `jit_callout_invoke_method`）；`OP_SWITCH_LOOKUP` 见 §8.61（roadmap R1：语义唯一来源 + 变长 `opcode_size` + 多目标前向记账 + 线性比较链，循环拒收清零） |
 | L5 | `OP_SET_DECLARED_FACE`（op+const16）/ `OP_SET_PTR_ELEM_TYPE`（op+byte） | 中（×2 / ×1）。**不能当 no-op 跳过**：`declared_face` 影响后续虚拟分派与**数组元素类型推断**、`element_type` 影响 FFI 读写宽度 | **已完成**（§8.58）：`opcode_size` + 两处 scan 净 0 + 两个 callout（无失败通道）+ `assert/test_jit_op_type_tag.leno` |
 | L6 | `OP_GET_MODULE_VAR` / `OP_SET_MODULE_VAR` / `OP_GET_MODULE_FUNC`（callout，用当前帧 `module`） | 高（SDL3 大量模块级变量与函数，×2 / ×2；**顺带解锁 2 个函数的函数级 JIT**） | **已完成**（§8.55）：`opcode_size` + 循环 scan（净 +1 / 净 0）+ **内联 scan 显式拒绝**（`frame->module` 来自被调函数）+ 两个 callout（写入带 `gc_write_barrier`）+ `assert/test_jit_op_module_var.leno` |
 | L7 | `OP_STRING_ADD`（×1，内联扫描里也出现）/ `OP_NEG` / `OP_IS_NULL` / `OP_ARRAY_GET` / `OP_ARRAY_SET` / `OP_ARRAY_APPEND` / `OP_INDEX_SET` / `OP_DICT` / `OP_DICT_GET` / `OP_DICT_GET_KEY` / `OP_TYPE_CHECK` / `OP_AS_CAST` / `OP_SLICE` / `OP_IN` / `OP_RANGE` / `OP_U8_TO_F64` | 中 | 未做 |
 | L8 | `OP_CALL` / `OP_TAIL_CALL` / `OP_CLOSURE` | 中 | **`OP_CALL` 已完成**：`OP_GET_MODULE_FUNC + OP_CALL`（§8.56）+ 裸 `OP_CALL`（§8.59：rc=1 记账 + 调用前守卫、公共核心 `jit_invoke_closure`）。**仍未做**：`OP_TAIL_CALL`、`OP_CLOSURE`（创建闭包）、`GET/SET/CLOSE_UPVALUE`（要动 func-JIT 的 ABI 与 locals 生命周期，单独排期） |
 | — | **建议维持拒绝**：`OP_THROW`、`OP_AWAIT` / `OP_ASYNC_CALL`、`OP_CLIB_CALL` / `OP_CFUNC_CALLBACK`、`OP_GET_FIELD_ADDR`、`OP_DTOR_LOCAL`、`OP_TAIL_CALL_NATIVE`、`OP_PUSH_TYPE_ARGS`、模块定义期指令（`OP_DEFINE_GLOBAL*` / `OP_STRUCT_DEF` / `OP_ENUM_DEF` / `OP_FACE_DEF` / `OP_CSTRUCT_DEF` / `OP_LOAD_NATIVE_MODULE` / `OP_INIT_LENOMODULE` / `OP_DEFINE_MODULE_FUNC`） | 语义特殊（异常/协程/FFI/泛型/仅初始化期出现），实现收益低、风险高 | 维持 |
 
-**实测拒收直方图（`file_manager.leno`，2026-09-14，补完 L6 之后）**：
+**实测拒收直方图（`file_manager.leno`，2026-09-14，补完 R1 之后）**：
 
 ```
-op=156(OP_SWITCH_LOOKUP)     ×1   ← 仅剩它一条属"可做但难"
-op=138(OP_GET_CSTRUCT_DEF)   ×1   ← 属"建议维持拒绝"（运行时取 cstruct 定义）
-inline-scan: 76(OP_STRING_ADD) / 88(模块变量访问，L6 起显式拒绝内联)
-（§8.59 后 `59:OP_CALL` 归零；同一负载 `FuncCompiled 5 → 161` —— 回调式调用进 JIT 后，
-被调函数成批进入函数级 JIT，收益远超"解锁 4 个循环"本身）
+op=138(OP_GET_CSTRUCT_DEF)   ×1   ← **仅剩它一条，且属"建议维持拒绝"**（运行时取 cstruct 定义）
+inline-scan: 76(OP_STRING_ADD) / 88(模块变量访问) / 156(SWITCH_LOOKUP，R1 起显式拒绝内联)
+（§8.59 后 `59:OP_CALL` 归零；§8.61（R1）后 `156:OP_SWITCH_LOOKUP` 归零 ⇒ **循环级拒收清零**）
+（§8.59 的额外收益：回调式调用进 JIT 后，被调函数成批进入函数级 JIT ——
+同一负载 `FuncCompiled 5 → 161`，后续实测在 100~225 之间波动，取决于自动化交互路径）
 ```
 
 （演进：L1 前 `81×4 / 132×2 / 156×2 / 39×2 / 88×2 / 38×1` → 补 L1 后 `80` 消失 →
 补 L2 后 `81` 消失 → 补 L3 后 `132` 消失 → 补 L6 后 `88`/`90` 消失但**新暴露 `59:OP_CALL ×4`**
 → 补 §8.56（模块函数窥孔）后 `59` 由 ×4 降到 **×2** → 补 §8.57 后 `134(OP_GET_METHOD)` 归零
-→ 补 §8.58 后 `38`/`39` 归零、拒收点再前移到 `59 ×4 / 156 ×1 / 138 ×1`。
+→ 补 §8.58 后 `38`/`39` 归零、拒收点再前移到 `59 ×4 / 156 ×1 / 138 ×1`
+→ 补 §8.61（R1）后 `156` 归零，**只剩刻意保留的 `138`**。
 （一个循环只报它的第一条缺口：前面的缺口一补上，后面的缺口才露出来 ⇒ **每次都是拒收点前移**，
 总行数基本不变。）
 
-**下一步顺序（2026-09-14 更新，已与直方图对齐）**：`OP_CALL` 的两块形态都已解（§8.56 模块内部调用、
-§8.59 裸调用）⇒ 直方图只剩 `156:OP_SWITCH_LOOKUP ×1`（可做但难）与 `138:OP_GET_CSTRUCT_DEF ×1`
-（建议维持拒绝）。**覆盖面已不再是主要瓶颈**，剩下的规划见下面 roadmap；其中唯一的内存安全项
-R4（函数级缓存驱逐的 use-after-free）已确认并修复（§8.60，2026-09-14）。
+**下一步顺序（2026-09-14 更新，已与直方图对齐）**：`OP_CALL` 的两块形态（§8.56 / §8.59）、
+`OP_GET_METHOD` 窥孔（§8.57）、类型标签（§8.58）、`OP_SWITCH_LOOKUP`（§8.61，roadmap R1）
+都已落地 ⇒ **循环级拒收只剩刻意保留的 `138:OP_GET_CSTRUCT_DEF`（建议长期维持拒绝）**。
+内存安全项 R4 已确认并修复（§8.60）。⇒ 覆盖面工作告一段落，剩下的规划（R2/R3 余项批补 +
+诊断收口、R5 闭包、R6 多返回/尾调用、R7 内联跨模块、R8 基准复盘）见下面 roadmap。
 
 **关键：单补一个 opcode ≠ 解锁循环。** 只有某个循环的**全部**缺口都被补齐，它才真正进 JIT
 ⇒ 这类工作要**成批推进**，并按上面这张直方图排序（本表 L4~L6 的先后就是这么定的）。
@@ -645,7 +647,7 @@ R4（函数级缓存驱逐的 use-after-free）已确认并修复（§8.60，202
 | # | 项目 | 现状 / 缺口 | 前置与成本 | 风险 | 建议顺序 |
 |---|---|---|---|---|---|
 | ~~R4~~ | ~~`jit_func_cache` 冲突驱逐的 **use-after-free 隐患**~~ | ~~256 槽 direct-mapped，冲突时 `jit_mem_free` 掉占用者的机器码 —— 若那个函数**正在 C 栈上执行**（A 调 B、B 的 callout 又编译了撞槽的 C）就是 UAF~~ | ~~需要「执行中计数」+ 驱逐时延迟回收~~ | ~~高（内存安全）~~ | **已完成（§8.60，2026-09-14）**：确认存在（强制碰撞 4/4 崩 `0xC0000005`）并修复为**机器码延迟释放队列**（安全点判据复用 `jit_func_depth`/`jit_loop_depth`）；`LENO_JIT_FUNC_CACHE_SMALL=1` 做确定性复现，用例 `assert/test_jit_func_cache_churn.leno` |
-| R1 | `OP_SWITCH_LOOKUP` 进 JIT | file_manager 仅剩的"可做但难"拒收点（×1）。VM 侧是整数 switch 二分查找；变长编码：`const_idx(2) count(2) default_off(4) [case_off(4)]…` | `opcode_size` 变长解码 + scan 的**多目标**前向跳转记账（每个 `case_off` 都要一条 off_map/patch）+ codegen 线性比较链（case 少时足够） | 中（控制流 + 变长 + 多目标 patch；要检查 `JIT_MAX_PATCHES` / off_map 容量） | 2 |
+| ~~R1~~ | ~~`OP_SWITCH_LOOKUP` 进 JIT~~ | ~~file_manager 仅剩的"可做但难"拒收点（×1）。VM 侧是 int/bigint/float/string 四路二分查找；变长编码：`const_idx(2) count(2) default_off(4) [case_off(4)]…`~~ | ~~`opcode_size` 变长解码 + scan 的多目标前向记账 + codegen 线性比较链~~ | ~~中~~ | **已完成（§8.61，2026-09-14）**：查找逻辑抽成 `switch_lookup_index`（VM/JIT 共用，语义唯一来源）+ 变长 `opcode_size` + 多目标前向记账（内联侧保守拒绝）+ 线性比较链；`assert/test_jit_op_switch_lookup.leno`；**循环拒收清零**（直方图只剩刻意保留的 `138`） |
 | R2 | L7 余项成批补齐 | `OP_STRING_ADD`（内联侧 ×1）、`OP_NEG`、`OP_IS_NULL`、`OP_ARRAY_GET`/`OP_ARRAY_SET`、`OP_DICT*`、`OP_TYPE_CHECK`、`OP_AS_CAST`、`OP_SLICE`、`OP_IN`、`OP_RANGE`、`OP_U8_TO_F64` | 多为 callout 型，照 §8.52~§8.59 的模板走（`opcode_size` + 两处 scan + callout + codegen + 用例）；`STRING_ADD` 还能恢复一部分内联 | 低 | 3 |
 | R3 | L0 诊断收口 | `opcode_size` 余项补全；把 scan 的 default 报错区分成 `unknown opcode`（缺长度）与 `unsupported opcode`（已收录长度但缺 case） | 纯诊断，无行为变化；排查时"缺长度"和"缺 case"一眼可分 | 极低 | 3（可与 R2 合并做） |
 | R5 | 闭包创建与捕获变量（`OP_CLOSURE` / `GET/SET/CLOSE_UPVALUE`） | 循环里建闭包、闭包体内读写捕获变量都不进 JIT（被调函数带 upvalue 时自动退回 VM 重入 ⇒ 语义正确但不快） | 两件基础：**(a)** func-JIT ABI 要加 closure 通道（现为 `jfn(flocals, globals)`，无 upvalue 入口）；**(b)** 循环 JIT 的 locals 在 scratch 区（迭代即复用）⇒ 直接捕获会产生**悬空 upvalue**，只能先允许"捕获已在 upvalue 链上的变量"，或改 locals 布局 | 高（ABI + 生命周期不变量） | 单独一轮，**先设计不变量再动手** |
@@ -654,10 +656,10 @@ R4（函数级缓存驱逐的 use-after-free）已确认并修复（§8.60，202
 | R8 | 性能基准复盘 | §9 的数据需要按最新覆盖面重跑（JIT vs `LENO_NO_JIT=1`），量化"覆盖面增长（如 `FuncCompiled 5→161`）到底换来多少" | 纯测量；也顺便验证 R4 的延迟回收没有性能回退 | 极低 | 随时（建议 R4 之后做一次） |
 | — | **建议维持拒绝** | `OP_THROW`、`OP_AWAIT`/`OP_ASYNC_CALL`、`OP_CLIB_CALL`/`OP_CFUNC_CALLBACK`、`OP_GET_FIELD_ADDR`、`OP_DTOR_LOCAL`、`OP_TAIL_CALL_NATIVE`、`OP_PUSH_TYPE_ARGS`、**`OP_GET_CSTRUCT_DEF`(138)**、模块定义期指令 | 语义特殊（异常/协程/FFI/泛型/仅初始化期出现），收益低、风险高 | — | 维持 |
 
-**46 项未收录全量（`编号:名字`，用于 L0 逐项补长度；`80:LENGTH`、`81:ITER_GET`、
+**45 项未收录全量（`编号:名字`，用于 L0 逐项补长度；`80:LENGTH`、`81:ITER_GET`、
 `82:ITER_GET_VALUE`、`131:GET_FIELD`、`132:SET_FIELD`、`88:GET_MODULE_VAR`、`89:SET_MODULE_VAR`、
-`90:GET_MODULE_FUNC`、`134:GET_METHOD`、`38:SET_PTR_ELEM_TYPE`、`39:SET_DECLARED_FACE`、`59:CALL`
-已于 §8.52~§8.59 补齐，从本表移除；同时补录 `137:CSTRUCT_DEF` / `138:GET_CSTRUCT_DEF`）**：
+`90:GET_MODULE_FUNC`、`134:GET_METHOD`、`38:SET_PTR_ELEM_TYPE`、`39:SET_DECLARED_FACE`、`59:CALL`、
+`156:SWITCH_LOOKUP` 已于 §8.52~§8.61 补齐，从本表移除；同时补录 `137:CSTRUCT_DEF` / `138:GET_CSTRUCT_DEF`）**：
 
 ```
 14:GET_UPVALUE 15:SET_UPVALUE 16:CLOSE_UPVALUE 17:DEFINE_GLOBAL 18:GET_GLOBAL_FUNC
@@ -669,7 +671,7 @@ R4（函数级缓存驱逐的 use-after-free）已确认并修复（§8.60，202
 135:ENUM_DEF 136:FACE_DEF 137:CSTRUCT_DEF 138:GET_CSTRUCT_DEF
 137:CSTRUCT_DEF 138:GET_CSTRUCT_DEF 139:AWAIT 140:ASYNC_CALL 141:INIT_LENOMODULE
 142:CLIB_CALL 143:CFUNC_CALLBACK 145:TAIL_CALL_NATIVE 146:U8_TO_F64 147:PUSH_TYPE_ARGS
-148:DTOR_LOCAL 156:SWITCH_LOOKUP
+148:DTOR_LOCAL
 ```
 
 > 注意：**通用 `OP_MUL` / `OP_MOD` / `OP_EQ` / `OP_NEQ` 已于 2026-09-12 支持**（见第 4 节
@@ -3759,6 +3761,71 @@ build\lenojit.exe: Permission denied`（构建失败）。⇒ **看到一堆残�
    §8.36/§8.37 维护着），不要为修复再造一套并行状态。
 3. **可测性也是修复的一部分**：把编译期常量（缓存槽数）做成运行时可配，才能把"概率性崩溃"
    转成"确定性用例"—— 否则修完了也只能靠运气证明修好了。
+
+***
+
+### 8.61 `OP_SWITCH_LOOKUP` 进 JIT —— 循环拒收清零（roadmap R1）（2026-09-14）
+
+**背景**：`file_manager` 里仅剩的"可做但难"拒收点（×2）。VM 侧（`op_switch_lookup.inc`）是
+int / bigint / float / string 四路二分查找。
+
+* 编码：`const_idx(2) case_count(2) default_off(4) [body_off(4)]…` → **变长** `9 + 4*case_count`。
+* **偏移基准 = 指令起点 + 9 + 4*case_count**（即偏移表之后，见 `frame->ip` 的两段推进）。
+* 栈效应：弹 switch 值、不压回 ⇒ **net -1**。
+* 编译器只在「**≥4 个同类型常量 case**」时才发它（`codegen_stmt.c` 的 `gen_switch`），
+  float / string 同样走这一条。
+
+**实现（4 处代码）**
+
+1. **先把查找抽成"语义唯一来源"**：`switch_lookup_index(Value switch_val, Value arr_val,
+   int case_count)` 落在 `vm.c`（紧邻 `compare_values`），VM 的 `OP_SWITCH_LOOKUP` 与 JIT 的
+   callout **调同一个函数**。声明放 `leno_vm.h`，只依赖 `Value`（数组也按 `Value` 传）⇒
+   头文件零耦合，且与原实现的 `OBJ_ARRAY` 检查天然合一。
+   理由同 §8.54 的 `struct_set_field`：**两边各写一套二分查找迟早分叉**，而分叉的表现是
+   "某些极端值悄悄跳到错误分支"，平时测不出来。
+2. `jit_scan.c`：`opcode_size()` 加变长解码；`scan_loop_body()` 解出全部 case 体 + default 体，
+   **每个都登记为前向跳转目标**（vstack 用"弹出后"的深度，与 if/else 各分支同理）、
+   `dead = 1`（switch 之后没有 fall-through：体一律由跳转表进入）、目标表满则拒绝整个循环；
+   **内联扫描显式拒绝**（这条是变长 + 多目标，而 inline 侧只有简化版 vstack 走查，
+   没有目标表/dead-code 机制 —— 与 §8.55 拒绝模块变量访问同一取舍；循环本身照常 JIT）。
+3. `jit_callout.c`：`jit_callout_switch_lookup` 只是**一行转发**。它是纯计算：不分配、不报错、
+   不改任何 VM/JIT 状态 ⇒ **永不置 `jit_callout_failed`** ⇒ 调用方没有 bailout 分支
+   （解释器在这条指令上从不报错，JIT 也就没有"交回解释器需要还原的语义"）。
+4. `ops_jump.inc`：callout 求出下标后发**线性比较链** `cmp rax,k / je case_k … / jmp default`
+   （case 少时足够，不需要间接跳转表、不在代码段里放地址表）；所有目标走 `patch_add`
+   （记录 vstack，收尾统一 patch）；结尾 `vstack = VSTACK_UNREACHABLE`。
+   弹值用 **`TOS_CONSUME_RAX()`** 而不是 `TOS_SPILL()` —— 这条指令**消费** TOS
+   （TOS 规则要求跳转目标处 `tos_live == 0`），选错宏就会多弹/少弹一格（§8.55 记过一次）。
+
+**验证**
+
+* 新用例 `assert/test_jit_op_switch_lookup.leno`：热循环体里的 4-case switch（含每轮一次
+  default）与被调函数里的 4-case switch 各 3000 轮；JIT / `LENO_NO_JIT=1` 都 `exit=0`，
+  同一份断言（`65400` / `119400`）。`LENO_JIT_DEBUG=1`：两个循环 `capable=1`、
+  **`Bailouts 0`**、`inline-scan FAIL: OP_SWITCH_LOOKUP` 如期出现（守卫生效）。
+* **顺带解锁函数级 JIT**：含 switch 的 `classify` 进入函数级 JIT（`FuncCompiled 1`）——
+  R1 之前它整个函数被拒收。
+* **VM 侧重构的等价性回归**：既有 `test_switch_optimization.leno`（int 正序/无序/负数、
+  float、字符串、中文、大数、少量 case、只有 default）JIT 与 `LENO_NO_JIT=1` 都通过
+  ⇒ 抽成 `switch_lookup_index` 是行为等价的重构。
+* **`file_manager` 交互负载**：拒收直方图里 `156(OP_SWITCH_LOOKUP) ×2` **消失**，
+  只剩 **`138(OP_GET_CSTRUCT_DEF) ×1`（刻意保留项）** ⇒ **循环级拒收清零**；
+  运行时 bailout 仍 **0**、`closed cleanly`。
+* 相关用例 16 个（switch 6 + JIT 10）双模式全绿；`assert` 全套见提交说明。
+
+**教训**
+
+1. **控制流类 opcode 的成本不在"比较"而在"目标记账"**：查找本身三行 callout 就够，
+   真正要设计的是 `opcode_size` 的变长解码 + scan 的**多目标**前向记账 + patch 容量。
+   评估这类工作时按"目标数"而不是"逻辑复杂度"估工。
+2. **"语义唯一来源"要主动维护**：opcode 的逻辑本来就写在 `.inc` 里，JIT 想复用得整段抄。
+   正确做法是**先抽成函数再让两边都调它** —— 否则将来修 VM 侧边界情况（例如 bigint 比较）
+   就会漏掉 JIT，而这类分叉只在极端输入上暴露。
+3. **能"永不失败"的 callout 是最好的 callout**：不分配、不报错 ⇒ 没有 bailout 分支、
+   没有失败标志检查、没有"部分副作用无法回滚"的取舍（对比 §8.59 的调用 callout）。
+   设计 callout 时优先问"能不能把失败面压到零"。
+4. 跳转指令弹值前先想清楚是**消费**还是 **peek**：`TOS_CONSUME_RAX` 与 `TOS_SPILL`
+   在不同 opcode 上语义相反，而机器码层面只差一条 pop，错了就是静默的栈深错位。
 
 ***
 
