@@ -2703,7 +2703,7 @@ sub rax,1; jne` —— **`inp & 1135` 整条被 gcc 删掉了**。
 
 ***
 
-### 8.47 JIT 长跑栈溢出（`0xC00000FD`）：合并点 TOS 形态不一致 + `RDI`/`RSI` 未保存（2026-09-14）
+### 8.50 JIT 长跑栈溢出（`0xC00000FD`）：合并点 TOS 形态不一致 + `RDI`/`RSI` 未保存（2026-09-14）
 
 **症状**：matrix_rain 这类「外层 while + 内层 for + 退出报告分桶循环」的程序，JIT 开到一定
 执行量后必崩：3s（1567 帧）不崩、7s（3539 帧）不崩、**10s（≈5100 帧）3/3 崩**（退出码
@@ -2776,7 +2776,7 @@ JIT 用 `RDI`/`RSI` 当 callout 实参寄存器（`JIT_ARG1/JIT_ARG2`），但�
 
 * 最小复现 `exit=0`，`s=5490000 t=20000` 与解释器逐位一致；断点探针零漂移。
 * matrix_rain 10s × 3：全部 `exit=0`（修复前 3/3 崩），帧率无回归（≈5170 帧/10s vs 修复前 ≈5100）。
-* 新增回归测试 `assert/test_jit_rsp_drift.leno`（§8.47 专用：`and`/单条件/`or` 三种短路形态
+* 新增回归测试 `assert/test_jit_rsp_drift.leno`（§8.50 专用：`and`/单条件/`or` 三种短路形态
   + 值断言）：**修复版 3/3 pass；关掉修复的对照二进制 3/3 以 `0xC00000FD` 崩溃**。
 * `assert` **274 passed / 0 failed**（273 + 新增 1）。
 * 开/关 JIT 差分（stdout + 退出码，只比较 stdout 以免与 stderr 的统计块交错）：
@@ -3593,7 +3593,7 @@ JIT 机器码返回非 0（bailout / `jit_callout_failed`）时，把控制权�
 | `assert/test_jit_hot_func.leno` | 解释器侧函数级 JIT 热入口（§8.25，**语义守卫**，基线版本同样 pass）：纯递归 + `is int` 结果类型、深度 200 > `JIT_FUNC_MAX_DEPTH`(64) 的深度守卫、互递归 bool 返回值 + `is bool`、int48 溢出（`pow2(60)` 必须与解释器的 BigInt 语义一致）、float 形参 + int 实参提升、字符串 concat 递归、`return_count>1` 与 `has_try` 必须拒绝编译、低热度不编译、递归返回 `Dict`、函数体内含 struct 多返回值方法调用 |
 | `assert/test_jit_multi_inline.leno` | 循环体内**多个内联点**的 bc_off 命名空间隔离（§8.26）：2 个 / 4 个 `gm()`（GF(2^8) 乘法，体内有 for + 两处 if）内联点，逐元素全文比对 + 20 轮反复调用。**未修复的代码上会以 `0xC00000FD` 崩溃**（不是断言失败），修复后通过 |
 | `assert/test_jit_array_bounds.leno` | 数组索引读/写与 append 的内联快路径（§8.28 / §8.29）：越界与负下标必须**像解释器一样被 try/catch 捕获 239 次**、合法下标读值正确、`add` 后 len 与内容正确、下标写覆盖且不破坏相邻元素、写入的是 Value（`is int`）、扩容不丢数据、字典慢路径仍正确。**未修复代码（P5 前）输出「越界捕获=0」并 FAIL**；同时覆盖 `arr[i]=v` 快路径的 Value 装箱 |
-| `assert/test_jit_rsp_drift.leno` | 合并点两条到达路径的 TOS 形态必须一致（§8.47）：`and` 短路 / 单条件 / `or` 短路三种形态 + 值断言。101 桶 × 20000 轮（2.02M 轮内层迭代）把「每轮漏 8 字节」放大到栈溢出量级。**未修复的代码上会以 `0xC00000FD` 崩溃**（不是断言失败），修复后通过 |
+| `assert/test_jit_rsp_drift.leno` | 合并点两条到达路径的 TOS 形态必须一致（§8.50）：`and` 短路 / 单条件 / `or` 短路三种形态 + 值断言。101 桶 × 20000 轮（2.02M 轮内层迭代）把「每轮漏 8 字节」放大到栈溢出量级。**未修复的代码上会以 `0xC00000FD` 崩溃**（不是断言失败），修复后通过 |
 
 ***
 
