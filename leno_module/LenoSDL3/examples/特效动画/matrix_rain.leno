@@ -3,7 +3,7 @@
 // 操作：ESC 退出 | F1 切换统计信息 | SPACE 切换字符集
 //
 // 测试模式（无人值守跑性能对照，避免 GUI 卡住）：
-//   build\lenojit.exe matrix_rain.leno 10    → 运行 10 秒后自动关闭并打印性能报告
+//   build\leno.exe matrix_rain.leno 10    → 运行 10 秒后自动关闭并打印性能报告
 //   不传参数则一直运行到用户按 ESC / 关窗。
 //
 // ★ 性能优化（2026-08-10 v3）：

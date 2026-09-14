@@ -8,8 +8,8 @@
 //
 // 用法（判据）：
 //   1) JIT 与解释器结果必须**逐条一致**：
-//        build\lenojit.exe jit_probes\probe_eq_identity.leno
-//        set LENO_NO_JIT=1 & build\lenojit.exe jit_probes\probe_eq_identity.leno
+//        build\leno.exe jit_probes\probe_eq_identity.leno
+//        set LENO_NO_JIT=1 & build\leno.exe jit_probes\probe_eq_identity.leno
 //      期望两边都是：
 //        sameObj=2000 diffObj=0 neq=2000 nullPtr=2000 str=2000 arr=2000 struct=2000
 //   2) Bailouts 必须**只剩** c_str / c_arr / c_nullPtr 三个（见下），

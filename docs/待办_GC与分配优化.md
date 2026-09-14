@@ -208,16 +208,16 @@ LuaJIT 靠**"栈槽就是 GC 的权威副本"**（解释器与 mcode 共用一�
 :: 1) 暂存改动，编译出基线二进制
 git stash push -m ab-xxx
 build.bat
-copy /y build\lenojit.exe build\lenojit_base.exe
+copy /y build\leno.exe build\leno_base.exe
 git stash pop
 build.bat
 :: 2) 交替跑，至少 2 轮，取各轮最小值比较
-build\lenojit_base.exe jit_probes\probe_alloc2.leno
-build\lenojit.exe      jit_probes\probe_alloc2.leno
-build\lenojit_base.exe jit_probes\probe_alloc2.leno
-build\lenojit.exe      jit_probes\probe_alloc2.leno
+build\leno_base.exe jit_probes\probe_alloc2.leno
+build\leno.exe      jit_probes\probe_alloc2.leno
+build\leno_base.exe jit_probes\probe_alloc2.leno
+build\leno.exe      jit_probes\probe_alloc2.leno
 :: 3) 收工清理
-del /q build\lenojit_base.exe build\lenojit_broken.exe
+del /q build\leno_base.exe build\leno_broken.exe
 ```
 
 **要点**：

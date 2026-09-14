@@ -141,16 +141,16 @@ while (*p && depth > 0) {
 
 修复后，以下编译全部通过：
 ```bash
-build\lenojit.exe -c leno_module\LenoHack\lib\offsets_config.leno
-build\lenojit.exe -c leno_module\LenoHack\lib\GameHelper.leno
-build\lenojit.exe -c leno_module\LenoHack\lib\hack_log.leno
-build\lenojit.exe -c leno_module\LenoHack\lib\w32_memory.leno
-build\lenojit.exe -c leno_module\LenoHack\lib\w32_input.leno
+build\leno.exe -c leno_module\LenoHack\lib\offsets_config.leno
+build\leno.exe -c leno_module\LenoHack\lib\GameHelper.leno
+build\leno.exe -c leno_module\LenoHack\lib\hack_log.leno
+build\leno.exe -c leno_module\LenoHack\lib\w32_memory.leno
+build\leno.exe -c leno_module\LenoHack\lib\w32_input.leno
 ```
 
 内置测试全部通过（256 项，零回归）：
 ```
-build\lenojit.exe assert\run_tests.leno build\lenojit.exe assert
+build\leno.exe assert\run_tests.leno build\leno.exe assert
 Results: 256 passed, 0 failed (total 256)
 ```
 

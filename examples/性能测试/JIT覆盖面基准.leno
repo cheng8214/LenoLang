@@ -18,8 +18,8 @@
 //   us()/ns() 走 QueryPerformanceCounter，才是真高精度。
 //
 // 用法：
-//   build\lenojit.exe "examples\性能测试\JIT覆盖面基准.leno"
-//   set LENO_NO_JIT=1 & build\lenojit.exe "examples\性能测试\JIT覆盖面基准.leno"
+//   build\leno.exe "examples\性能测试\JIT覆盖面基准.leno"
+//   set LENO_NO_JIT=1 & build\leno.exe "examples\性能测试\JIT覆盖面基准.leno"
 // ============================================================================
 import times
 

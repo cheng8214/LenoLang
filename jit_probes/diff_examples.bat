@@ -2,11 +2,11 @@
 setlocal enabledelayedexpansion
 REM 基线二进制 vs 新版二进制的 stdout/退出码差分（结构体/函数/cstruct 密集示例）
 REM 用法：在**仓库根目录**执行  jit_probes\diff_examples.bat
-REM 依赖：build\lenojit.exe（新版）与 build\lenojit_base.exe（改动前的基线，见 README）
+REM 依赖：build\leno.exe（新版）与 build\leno_base.exe（改动前的基线，见 README）
 REM 注意：只比对 stdout 与退出码；含 <ptr ...> 地址或计时数字的行会有假差异
 REM       （地址是 ASLR，同一二进制跑两次也不同 —— 先自查确定性再判定回归）。
-set BASE=build\lenojit_base.exe
-set NEW=build\lenojit.exe
+set BASE=build\leno_base.exe
+set NEW=build\leno.exe
 set REPORT=%TEMP%\diff_report.txt
 del /q "%REPORT%" 2>nul
 if not exist "%BASE%" (

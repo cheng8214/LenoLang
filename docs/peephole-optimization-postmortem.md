@@ -137,7 +137,7 @@ if (gen->last_emission.opcode == OP_CALL_NATIVE) {
 
 重写窥孔优化后，必须通过以下测试：
 
-1. **全量测试套件**：`build/lenojit.exe assert/run_tests.leno` — 246 个测试全部通过
+1. **全量测试套件**：`build/leno.exe assert/run_tests.leno` — 246 个测试全部通过
 2. **清缓存后重跑**：删除所有 `.lenocache` 后重新运行，排除缓存干扰
 3. **Table 控件测试**：`test_table_advanced.leno` — 这是触发本次 bug 的场景，必须通过
 4. **大量 dict.set / native call 语句的场景**：构造密集使用 `dict[k]=v` 和 `print()` 等表达式语句的测试用例，验证栈深度正确

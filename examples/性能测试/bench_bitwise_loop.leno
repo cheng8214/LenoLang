@@ -1,5 +1,5 @@
 // test.len — 对齐 Java 的位运算跑分测试
-// 运行: lenojit test.len 或 leno test.len
+// 运行: leno test.len 或 leno test.len
 
 import times
 

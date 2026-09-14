@@ -3,7 +3,7 @@ import asyncs
 import io
 
 // 测试 async socket 方法: sock.arecv() 和 sock.aaccept()
-// 用法: build\lenojit.exe examples/sockets/test_async_arecv_aaccept.leno
+// 用法: build\leno.exe examples/sockets/test_async_arecv_aaccept.leno
 
 // 核心测试：在单个 async 服务器协程中使用 arecv/aaccept
 async func echo_server(int port) {

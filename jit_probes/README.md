@@ -2,7 +2,7 @@
 
 用途：给 JIT 改动做**同机同轮 A/B 对照**，回答两个问题 ——「改动真的生效了吗」、
 「快了多少」。这里的文件都是探针，**不参与编译器构建**；`.leno` 直接用
-`build/lenojit.exe` 跑即可。
+`build/leno.exe` 跑即可。
 
 ## 文件清单
 
@@ -36,7 +36,7 @@
 set LENO_GC_YOUNG_THRESHOLD=64KB
 set LENO_GC_FORCE_EVERY=2000
 set LENO_GC_TRACE=1
-build\lenojit.exe jit_probes\gc_barrier_canary.leno
+build\leno.exe jit_probes\gc_barrier_canary.leno
 ```
 
 ⚠️ **三个必须知道的限制**：
@@ -66,9 +66,9 @@ build\lenojit.exe jit_probes\gc_barrier_canary.leno
 ## 怎么跑
 
 ```bat
-build\lenojit.exe jit_probes\probe_method.leno
-build\lenojit.exe jit_probes\probe_alloc.leno
-build\lenojit.exe jit_probes\probe_alloc2.leno
+build\leno.exe jit_probes\probe_method.leno
+build\leno.exe jit_probes\probe_alloc.leno
+build\leno.exe jit_probes\probe_alloc2.leno
 jit_probes\diff_examples.bat          REM 在仓库根目录执行
 ```
 
@@ -79,7 +79,7 @@ jit_probes\diff_examples.bat          REM 在仓库根目录执行
    ```bat
    git stash push -m probe-baseline -- <你改动的文件>
    build.bat
-   copy /y build\lenojit.exe build\lenojit_base.exe
+   copy /y build\leno.exe build\leno_base.exe
    git stash pop
    build.bat
    ```

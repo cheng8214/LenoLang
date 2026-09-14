@@ -99,7 +99,7 @@ if /i "%PROCESSOR_ARCHITECTURE%"=="ARM64" (
   set SOURCES=!SOURCES! src\jit\backend\x86_64.c
 )
 
-gcc -o build\lenojit.exe !SOURCES! -Isrc -Wall -Wextra -std=c99 -O2 -lm -municode -lws2_32
+gcc -o build\leno.exe !SOURCES! -Isrc -Wall -Wextra -std=c99 -O2 -lm -municode -lws2_32
 
 if %ERRORLEVEL% neq 0 (
     echo Build failed
@@ -109,5 +109,5 @@ if %ERRORLEVEL% neq 0 (
 
 echo Build successful
 echo.
-echo Usage: build\lenojit.exe ^<file.leno^>
-echo Tests:  build\lenojit.exe assert\run_tests.leno build\lenojit.exe assert
+echo Usage: build\leno.exe ^<file.leno^>
+echo Tests:  build\leno.exe assert\run_tests.leno build\leno.exe assert

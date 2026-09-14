@@ -40,7 +40,7 @@
 
 ```bash
 # build.bat 加 -g -O0（临时，定位后去掉）
-gcc -o build\lenojit.exe !SOURCES! -Isrc -Wall -Wextra -std=c99 -g -O0 -lm -municode -lws2_32
+gcc -o build\leno.exe !SOURCES! -Isrc -Wall -Wextra -std=c99 -g -O0 -lm -municode -lws2_32
 ```
 
 ```bash
@@ -54,7 +54,7 @@ quit
 EOF
 
 for i in $(seq 1 50); do
-  output=$(gdb -batch -x /tmp/gdb_script.txt ./build/lenojit.exe 2>&1)
+  output=$(gdb -batch -x /tmp/gdb_script.txt ./build/leno.exe 2>&1)
   if echo "$output" | grep -q "SIGSEGV"; then
     echo "$output" | grep -A 30 "signal SIGSEGV"
     break

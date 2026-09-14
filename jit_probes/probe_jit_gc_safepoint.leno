@@ -24,7 +24,7 @@
 //   set LENO_GC_FORCE_EVERY=500        :: 每 500 次分配强制回收一次
 //   set LENO_GC_TRACE=1
 //   set LENO_JIT_DEBUG=1               :: 确认 Compiled/Executed/Bailouts
-//   build\lenojit.exe jit_probes\probe_jit_gc_safepoint.leno
+//   build\leno.exe jit_probes\probe_jit_gc_safepoint.leno
 
 struct Node {
     float v = 0.0

@@ -14,8 +14,8 @@
 ```bash
 # 从项目根目录运行
 cd D:/CLeno/LenoC
-build/lenojit.exe leno_module/LenoHack/examples/byte_string_tests/test_byte_find.leno
-build/lenojit.exe leno_module/LenoHack/examples/byte_string_tests/patch_files.leno
+build/leno.exe leno_module/LenoHack/examples/byte_string_tests/test_byte_find.leno
+build/leno.exe leno_module/LenoHack/examples/byte_string_tests/patch_files.leno
 ```
 
 ---

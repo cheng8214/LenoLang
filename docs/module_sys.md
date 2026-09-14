@@ -434,7 +434,7 @@ print("输出:", r[0])
 print("退出码:", r[1])
 
 // 检查命令是否成功
-var result = _exec("lenojit.exe test.leno")
+var result = _exec("leno.exe test.leno")
 if result[1] == 0 {
     print("测试通过")
 } else {
@@ -621,8 +621,8 @@ main() {
 - 不包含解释器路径（用 `_executable()` 获取）
 - 不包含脚本路径（用 `_script()` 获取）
 
-运行 `lenojit.exe --flag script.leno arg1 arg2` 时：
-- `_executable()` = `"lenojit.exe"`
+运行 `leno.exe --flag script.leno arg1 arg2` 时：
+- `_executable()` = `"leno.exe"`
 - `_script()` = `"script.leno"`
 - `_args()` = `["arg1", "arg2"]`
 

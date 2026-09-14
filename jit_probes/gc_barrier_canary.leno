@@ -14,7 +14,7 @@
 //   set LENO_GC_FORCE_EVERY=2000        # 每 2000 次分配强制回收一次 —— 本探针的关键
 //   set LENO_NO_JIT=1                   # 可选：纯解释器，安全点最多、最有确定性
 //   set LENO_GC_TRACE=1                 # 可选：打印每次回收的 rem/freed/promoted
-//   build\lenojit.exe jit_probes\gc_barrier_canary.leno
+//   build\leno.exe jit_probes\gc_barrier_canary.leno
 //
 // 实测（2026-09-13，i5-3450）：
 //   有屏障 NO_JIT：6000 次强制回收，bad=0，跑完

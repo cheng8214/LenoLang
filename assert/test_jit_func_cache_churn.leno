@@ -10,7 +10,7 @@
 // 都为 0（C 栈上无机器码）时才真释放。
 //
 // 确定性复现命令（256 槽下碰撞是概率事件，缩到 4 槽就必然）：
-//   LENO_JIT_FUNC_CACHE_SMALL=1 build\lenojit.exe assert\test_jit_func_cache_churn.leno
+//   LENO_JIT_FUNC_CACHE_SMALL=1 build\leno.exe assert\test_jit_func_cache_churn.leno
 //   修前：exit=-1073741819（4/4 崩）；修后：exit=0。
 func h0(int x): int { return x + 1 }
 func h1(int x): int { return x + 2 }

@@ -20,7 +20,7 @@
 定位步骤（诊断能力是本轮新加的，见 §3.1）：
 
 1. 统计行给出「函数名 + 循环体起始 bc_off + 触发指令的循环内偏移 + 可读原因」；
-2. 用 `lenojit --debug-out <file> -c <src.leno>` 导出字节码（不运行），按偏移反查源码；
+2. 用 `leno --debug-out <file> -c <src.leno>` 导出字节码（不运行），按偏移反查源码；
 3. `loop_bc=2158` → 源码 `ripple_image.leno:331` 的 `while ev.poll()`；
    循环体内偏移 159（绝对 2317）→ `OP_GE_FLOAT`，即 `if bx >= 0.0 ...`（第 337 行）。
 
@@ -606,7 +606,7 @@ assert 263/263（两模式）、`ripple_image.leno` `Bailouts: 0`、72 个示例
 
 ### 8.3 第 2 步：字节码定位到源码行
 
-`lenojit --debug --debug-out bc.txt x.leno` 导出反汇编，把 JIT 日志里的 `body_start`
+`leno --debug --debug-out bc.txt x.leno` 导出反汇编，把 JIT 日志里的 `body_start`
 对上源码行号：
 
 ```
