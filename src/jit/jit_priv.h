@@ -351,6 +351,15 @@ Value jit_callout_set_field(Value obj_val, uint8_t field_idx, Value value);
 Value jit_callout_get_module_var(ObjModule* module, uint16_t index);
 Value jit_callout_set_module_var(ObjModule* module, uint16_t index, Value value);
 
+/* ---- 存值前的「类型标记」（§8.58）----
+ * 两条都是 **peek TOS**（不弹栈、无返回值、不报错），语义见 vm/vminc/op_unary.inc：
+ *   OP_SET_PTR_ELEM_TYPE ：TOS 是 ObjFFIPointer（且未 freed）→ ptr->element_type
+ *   OP_SET_DECLARED_FACE ：TOS 是 ObjStruct → obj->declared_face = chunk 常量里的名字
+ * 都由 codegen 在「var-decl / 赋值」时发射，紧跟在值之后、存槽之前。
+ * 类型不匹配时**静默什么都不做**（与解释器一致），因此不需要 bailout 通道。 */
+void jit_callout_set_ptr_elem_type(Value v, int elem_type);
+void jit_callout_set_declared_face(Value v, uint16_t name_const_idx, Chunk* chunk);
+
 /* ---- 模块函数调用（`GET_MODULE_FUNC + OP_CALL` 窥孔，§8.56）----
  * 返回值个数：ObjFunction.return_count 是**编译期**算好的（codegen_func.c），
  * 无显式 return 按 1 个（隐式 null），-1 表示静态不可知（各 return 个数不一致 /

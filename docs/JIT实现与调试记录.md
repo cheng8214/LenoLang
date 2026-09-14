@@ -606,7 +606,7 @@ bailout，只加一半会出现「能编译但一进去就 bailout」的假收�
 | L2 | `OP_ITER_GET` / `OP_ITER_GET_VALUE`（for-in 迭代） | 高（补完 L1 后是 file_manager 里最高频的缺口 ×4） | **已完成**（§8.53）：`opcode_size` + 两处 scan + 数组原生快路径 + callout + `assert/test_jit_op_iter.leno`；顺带修掉 `jit_callout_failed` 在循环入口未复位导致的连锁 bailout |
 | L3 | `OP_SET_FIELD` / `OP_GET_FIELD`（callout，`field_idx` 已在指令里） | 高（对象状态更新 ×2；**顺带解锁 3 个 SDL 包装函数的函数级 JIT**） | **已完成**（§8.54）：`opcode_size` + 两处 scan + callout（写入复用 `struct_set_field` 保住写屏障）+ `assert/test_jit_op_field.leno` |
 | L4 | `OP_GET_METHOD`（动态派发方法查找）+ `OP_SWITCH_LOOKUP`（变长：`const(2) count(2) default(4) [offset(4)]...`，×2） | 中 | `GET_METHOD + OP_CALL` 窥孔**已完成**（§8.57，复用 `jit_callout_invoke_method`）；`OP_SWITCH_LOOKUP` 未做（唯一非 callout 型：控制流 + 变长编码 + 多目标 patch，单独设计） |
-| L5 | `OP_SET_DECLARED_FACE`（op+const16）/ `OP_SET_PTR_ELEM_TYPE`（op+byte） | 中（×2 / ×1）。**不能当 no-op 跳过**：`declared_face` 影响后续虚拟分派、`element_type` 影响 FFI 读写宽度 | 未做 |
+| L5 | `OP_SET_DECLARED_FACE`（op+const16）/ `OP_SET_PTR_ELEM_TYPE`（op+byte） | 中（×2 / ×1）。**不能当 no-op 跳过**：`declared_face` 影响后续虚拟分派与**数组元素类型推断**、`element_type` 影响 FFI 读写宽度 | **已完成**（§8.58）：`opcode_size` + 两处 scan 净 0 + 两个 callout（无失败通道）+ `assert/test_jit_op_type_tag.leno` |
 | L6 | `OP_GET_MODULE_VAR` / `OP_SET_MODULE_VAR` / `OP_GET_MODULE_FUNC`（callout，用当前帧 `module`） | 高（SDL3 大量模块级变量与函数，×2 / ×2；**顺带解锁 2 个函数的函数级 JIT**） | **已完成**（§8.55）：`opcode_size` + 循环 scan（净 +1 / 净 0）+ **内联 scan 显式拒绝**（`frame->module` 来自被调函数）+ 两个 callout（写入带 `gc_write_barrier`）+ `assert/test_jit_op_module_var.leno` |
 | L7 | `OP_STRING_ADD`（×1，内联扫描里也出现）/ `OP_NEG` / `OP_IS_NULL` / `OP_ARRAY_GET` / `OP_ARRAY_SET` / `OP_ARRAY_APPEND` / `OP_INDEX_SET` / `OP_DICT` / `OP_DICT_GET` / `OP_DICT_GET_KEY` / `OP_TYPE_CHECK` / `OP_AS_CAST` / `OP_SLICE` / `OP_IN` / `OP_RANGE` / `OP_U8_TO_F64` | 中 | 未做 |
 | L8 | `OP_CALL` / `OP_TAIL_CALL` / `OP_CLOSURE` | 中。**部分完成**（§8.56）：`OP_GET_MODULE_FUNC + OP_CALL`（模块**内部**函数调用）已进 JIT；裸 `OP_CALL`（callee 是闭包值/上值）、`OP_TAIL_CALL`、`OP_CLOSURE` 仍未做 | 进行中 |
@@ -615,16 +615,16 @@ bailout，只加一半会出现「能编译但一进去就 bailout」的假收�
 **实测拒收直方图（`file_manager.leno`，2026-09-14，补完 L6 之后）**：
 
 ```
-op=156(OP_SWITCH_LOOKUP)     ×2
-op=39 (OP_SET_DECLARED_FACE) ×2
-op=59 (OP_CALL)              ×2   ← §8.56 的模块函数窥孔解掉 2 个；剩下 2 个不是 GET_MODULE_FUNC 形态
-op=38 (OP_SET_PTR_ELEM_TYPE) ×1
+op=59 (OP_CALL)              ×4   ← 38/39 一解，这两个循环露出下一层缺口
+op=156(OP_SWITCH_LOOKUP)     ×1
+op=138(OP_GET_CSTRUCT_DEF)   ×1   ← §8.58 后新暴露（按枚举倒推确认；属"建议维持拒绝"）
 inline-scan: 76(OP_STRING_ADD) / 88(模块变量访问，L6 起显式拒绝内联)
 ```
 
 （演进：L1 前 `81×4 / 132×2 / 156×2 / 39×2 / 88×2 / 38×1` → 补 L1 后 `80` 消失 →
 补 L2 后 `81` 消失 → 补 L3 后 `132` 消失 → 补 L6 后 `88`/`90` 消失但**新暴露 `59:OP_CALL ×4`**
-→ 补 §8.56（模块函数窥孔）后 `59` 由 ×4 降到 **×2** → 补 §8.57 后 `134(OP_GET_METHOD)` 归零。
+→ 补 §8.56（模块函数窥孔）后 `59` 由 ×4 降到 **×2** → 补 §8.57 后 `134(OP_GET_METHOD)` 归零
+→ 补 §8.58 后 `38`/`39` 归零、拒收点再前移到 `59 ×4 / 156 ×1 / 138 ×1`。
 （一个循环只报它的第一条缺口：前面的缺口一补上，后面的缺口才露出来 ⇒ **每次都是拒收点前移**，
 总行数基本不变。）
 
@@ -640,16 +640,17 @@ inline-scan: 76(OP_STRING_ADD) / 88(模块变量访问，L6 起显式拒绝内�
 
 **47 项未收录全量（`编号:名字`，用于 L0 逐项补长度；`80:LENGTH`、`81:ITER_GET`、
 `82:ITER_GET_VALUE`、`131:GET_FIELD`、`132:SET_FIELD`、`88:GET_MODULE_VAR`、`89:SET_MODULE_VAR`、
-`90:GET_MODULE_FUNC`、`134:GET_METHOD` 已于 §8.52~§8.57 补齐，从本表移除）**：
+`90:GET_MODULE_FUNC`、`134:GET_METHOD`、`38:SET_PTR_ELEM_TYPE`、`39:SET_DECLARED_FACE`
+已于 §8.52~§8.58 补齐，从本表移除；同时补录 `137:CSTRUCT_DEF` / `138:GET_CSTRUCT_DEF`）**：
 
 ```
 14:GET_UPVALUE 15:SET_UPVALUE 16:CLOSE_UPVALUE 17:DEFINE_GLOBAL 18:GET_GLOBAL_FUNC
-19:DEFINE_GLOBAL_FUNC 20:GET_NATIVE 33:NEG 38:SET_PTR_ELEM_TYPE 39:SET_DECLARED_FACE
+19:DEFINE_GLOBAL_FUNC 20:GET_NATIVE 33:NEG
 48:IS_NULL 53:IN 54:RANGE 59:CALL 60:TAIL_CALL 61:CLOSURE 65:ARRAY_GET 66:ARRAY_SET
 67:ARRAY_APPEND 69:DICT 70:DICT_GET 72:DICT_GET_KEY 73:LOAD_NATIVE_MODULE
 75:GET_MODULE_CONST 76:STRING_ADD 78:INDEX_SET 79:SLICE 87:THROW
 91:DEFINE_MODULE_FUNC 93:TYPE_CHECK 94:AS_CAST 129:STRUCT_DEF 133:GET_FIELD_ADDR
-135:ENUM_DEF 136:FACE_DEF
+135:ENUM_DEF 136:FACE_DEF 137:CSTRUCT_DEF 138:GET_CSTRUCT_DEF
 137:CSTRUCT_DEF 138:GET_CSTRUCT_DEF 139:AWAIT 140:ASYNC_CALL 141:INIT_LENOMODULE
 142:CLIB_CALL 143:CFUNC_CALLBACK 145:TAIL_CALL_NATIVE 146:U8_TO_F64 147:PUSH_TYPE_ARGS
 148:DTOR_LOCAL 156:SWITCH_LOOKUP
@@ -681,6 +682,7 @@ inline-scan: 76(OP_STRING_ADD) / 88(模块变量访问，L6 起显式拒绝内�
 | OP\_GET\_MODULE\_VAR / OP\_SET\_MODULE\_VAR / OP\_GET\_MODULE\_FUNC | callout `jit_callout_get_module_var` / `jit_callout_set_module_var`（§8.55，覆盖面 L6）：module 由 codegen **编译期嵌入**（§8.56 修正：不能查运行时帧）；`SET` 是 **peek** 语义（净 0、不改 TOS）且写入带 `gc_write_barrier`；无模块/越界走 bailout。**内联扫描显式拒绝这三条**（内联后没有被调函数的帧，会读错模块的变量） |
 | OP\_GET\_MODULE\_FUNC **+** OP\_CALL（模块内部函数调用） | 窥孔合并为一次 `jit_callout_call_module_func`（§8.56，覆盖面 L8 部分）：`return_count` 编译期解析，`-1`/解析失败即拒绝整个循环；callee 从**编译期模块**现取并复核 ret_count（模块变量可被重新赋值）；多返回值沿用 `jit_callout_invoke_method` 的回填约定。**跨模块 `m.f()`、闭包值调用、`OP_TAIL_CALL` 仍未做** |
 | OP\_GET\_METHOD **+** OP\_CALL（动态派发方法调用） | 窥孔合并，复用 `jit_callout_invoke_method`（§8.57）：传给它的 `vstack_top` 要 `+8`（跳过 GET_METHOD 消费的那个额外 receiver）；`rc` 按「方法名唯一且 return_count 一致」推断，推不出即拒绝整个循环；弹 `argc - rc + 2` 个槽（**比逻辑计数多 1**，见 §8.57 教训 1）。独立的 `OP_GET_METHOD`（只取方法值）拒绝 |
+| OP\_SET\_PTR\_ELEM\_TYPE / OP\_SET\_DECLARED\_FACE | callout `jit_callout_set_ptr_elem_type` / `jit_callout_set_declared_face`（§8.58，覆盖面 L5）：两条都是 **peek TOS、净 0、无返回值**，类型不匹配时静默不做（与解释器逐字一致，**不设失败通道**）。`declared_face` 影响数组元素类型推断与 GC 标记，`element_type` 影响 FFI 读写宽度 —— 不能当 no-op 跳过 |
 | OP\_LENGTH | **数字原生**（32 位 `CVTTSD2SI` + 负值 clamp，复刻解释器的 `(int)double`）/ 对象与非法类型走 callout `jit_callout_length`（§8.52，覆盖面 L1） |
 | OP\_STRUCT\_INIT（非泛型） | callout `jit_callout_struct_init` |
 | OP\_RETURN / OP\_RETURN\_MULTI | 支持（函数级 JIT；多返回值仅内联路径）。**循环体内可达的 return 会让整个循环被拒绝**（§8.21） |
@@ -3554,6 +3556,59 @@ B 形状（`acc = acc + a.area()`）稳定 bailout 3 次**（`site=28` → 报 "
    —— 对 `INVOKE_METHOD_TYPED`（静态保证是 struct）无害，但被动态派发复用后，
    一旦布局判断失手就会**带着 NULL 继续**（静默算错）。已补 `jit_callout_failed = 1`，
    配合循环侧的 `JIT_BAILOUT_LIMIT`（最坏回退几次即拉黑）兜底。
+
+***
+
+### 8.58 存值前的「类型标记」进 JIT（`OP_SET_PTR_ELEM_TYPE` / `OP_SET_DECLARED_FACE`，覆盖面 L5）（2026-09-14）
+
+**背景**：直方图剩 `39:SET_DECLARED_FACE ×2` + `38:SET_PTR_ELEM_TYPE ×1`。两条都是
+「**存值前给栈顶打标记**」（`vm/vminc/op_unary.inc`）：
+
+* `OP_SET_PTR_ELEM_TYPE`（2 字节：op + elem_type）：TOS 是 `ObjFFIPointer`（且未 freed）
+  → `ptr->element_type = elem_type`；**peek、不弹不推、类型不匹配静默不做**。
+* `OP_SET_DECLARED_FACE`（3 字节：op + name_const16）：TOS 是 `ObjStruct`
+  → `obj->declared_face = chunk 常量里的名字`；同样 peek、静默。
+
+发射点固定在 `codegen_stmt.c` 的 var-decl / 赋值路径（`Ptr[T]` 与 `face` 声明各 4 处），
+位置固定在「值已压栈、存槽之前」。
+
+**为什么不能当 no-op 跳过**（§5 表里早就标过）：`declared_face` 是
+`module/types/types.c` 做**数组元素类型推断**的依据（有它 ⇒ 元素类型推断为 `TYPE_FACE` 而不是
+struct），也是 GC 的标记对象（`gc.c`）；`element_type` 决定 FFI 读写的宽度。
+
+**实现（4 处）**：`opcode_size`（2 字节 / 3 字节）＋ 两处 scan 的净 0 组 ＋
+两个 callout（`jit_callout_set_ptr_elem_type` / `jit_callout_set_declared_face`，
+逐字照抄解释器，包括「类型不匹配静默不做」）＋ codegen 的 peek 型写法
+（`TOS_SPILL()` → 读 `[rsp]` → 调 callout，**不 `TOS_PRODUCE()`、不动 vstack**，
+与 §8.55 的 `SET_MODULE_VAR` 同款）。
+**这两条不需要失败通道**：解释器本身不报错、语义就是"能设就设" ⇒ callout 不置 `failed`，
+少一个 bailout 来源。
+
+**测试（`assert/test_jit_op_type_tag.leno`）**：断言特意做成**自洽**的 —— 把「循环内用 face 元素
+构造的数组」与「循环外同样方式构造的数组」的 `type()` 对比：若 JIT 跳过了 `declared_face` 写入，
+循环内那个数组会被推断成 struct 元素类型 ⇒ 两者不等（比硬编码类型串更耐改）。
+`OP_SET_PTR_ELEM_TYPE` 用 `Ptr[u8] q = null` 覆盖 JIT 侧代码路径（两种模式都静默 no-op）。
+真实 FFI 指针形态（`&c.r`）由 file_manager 冒烟负载覆盖 —— 注意 `&` 取地址是
+`OP_GET_FIELD_ADDR`，它在"建议维持拒绝"清单里，所以**含它的循环不会进 JIT**，
+这也是这条 opcode 没法写 JIT 单测的原因。
+
+**验证**
+
+* 新用例：JIT 与 `LENO_NO_JIT=1` 均通过；JIT 侧 `capable=1`、`Bailouts: 0`。
+* `file_manager` 冒烟负载：`38` / `39` 归零，运行时 bailout 仍 **0**
+  （`FuncCompiled` / `FuncExecuted` 随鼠标轨迹波动，属正常）。
+* `assert` 全套 **283 passed / 0 failed**。
+* 拒收点再次前移：新暴露 `138:GET_CSTRUCT_DEF ×1`（按枚举倒推确认；属"建议维持拒绝"：
+  运行时取 cstruct 定义，只出现在定义期/稀有路径）、`156:SWITCH_LOOKUP ×1`、`59:OP_CALL ×4`。
+
+**教训**
+
+1. "peek 型" opcode 有固定写法：`TOS_SPILL()` → 读 `[rsp]` → callout → **不 `TOS_PRODUCE()`、
+   不动 vstack**。现在 `SET_MODULE_VAR` 等三处同款，可以照抄。
+2. **能"静默不做"的 opcode 不要硬塞 bailout 通道**：多一条失败路径就多一个漂移/回归面
+   （解释器不报错的语义，JIT 也不该造出失败分支）。
+3. 测试要挑**可观测且自洽**的断言：`declared_face` 的效果藏在类型推断里，
+   直接硬编码 `type()` 串会被格式变更打碎；"循环内 vs 循环外同构对比"更耐改。
 
 ***
 

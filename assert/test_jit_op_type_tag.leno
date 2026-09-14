@@ -1,0 +1,49 @@
+// OP_SET_DECLARED_FACE / OP_SET_PTR_ELEM_TYPE 回归 —— §8.58（存值前的类型标记：peek TOS / net 0）
+//
+// 这两条由 codegen 在「var-decl / 赋值」时发射，紧跟值之后、存槽之前：
+//   OP_SET_DECLARED_FACE  ：face 变量 ⇒ 给栈顶 struct 实例打 declared_face。
+//       它的效果之一是**数组元素类型推断**（module/types/types.c：有 declared_face ⇒ 推断成
+//       TYPE_FACE 而不是 struct），另一个是 GC 标记该名字。所以下面的断言用
+//       「循环内构造的数组 type()」与「循环外同样方式构造的数组 type()」对比：
+//       若 JIT 跳过了写入，循环内那个数组会被推断成 struct 元素类型，两者就不相等。
+//   OP_SET_PTR_ELEM_TYPE  ：Ptr[T] 变量 ⇒ 给栈顶 FFI 指针设 element_type（影响 FFI 读写宽度）。
+//       这里用 `Ptr[u8] q = null` 覆盖 JIT 侧代码路径（值不是 FFI 指针 ⇒ 二者都静默不做事）；
+//       真实 FFI 指针形态由 file_manager 冒烟负载覆盖（`&` 取地址是 OP_GET_FIELD_ADDR，
+//       本身不在 JIT 白名单里，含它的循环不会进 JIT）。
+// JIT 与 LENO_NO_JIT=1 两种模式都必须通过。
+import ffi
+
+face Shape {
+    func area(): int
+}
+
+struct Sq impl Shape {
+    int s = 0
+    func area(): int { return self.s * self.s }
+}
+
+main() {
+    // 循环外参照组
+    Shape ref0 = new Sq(s=3)
+    var refArr = [ref0]
+    Ptr[u8] refPtr = null
+
+    int acc = 0
+    int i = 0
+    var loopArr = [ref0]
+    Ptr[u8] loopPtr = null
+    while i < 3000 {
+        Ptr[u8] q = null               // ← OP_SET_PTR_ELEM_TYPE
+        loopPtr = q
+        Shape s = new Sq(s=3)          // ← OP_SET_DECLARED_FACE
+        loopArr = [s]                  // 数组元素类型推断依赖 declared_face
+        acc = acc + s.area()
+        i = i + 1
+    }
+
+    assert_eq(acc, 27000)                          // 3000 * 9
+    assert_eq(type(loopArr), type(refArr))         // declared_face 写入生效 ⇒ 元素类型一致
+    assert_eq(loopPtr, null)                       // net 0：TOS 未被改写/未错位
+
+    print("test_jit_op_type_tag: OK")
+}

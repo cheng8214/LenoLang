@@ -396,6 +396,43 @@
                 break;
             }
 
+            /* ---- OP_SET_PTR_ELEM_TYPE / OP_SET_DECLARED_FACE（存值前的类型标记，§8.58）----
+             * 解释器语义：**peek TOS**、不弹不推（net 0）、无返回值、类型不匹配时静默不做。
+             * codegen 在「var-decl / 赋值」时发射，紧跟值之后、存槽之前（见 codegen_stmt.c）。
+             * ⇒ 直接调用 callout：不做失败检查、不动 vstack、也不 TOS_PRODUCE（TOS 原样保留）。 */
+            case OP_SET_PTR_ELEM_TYPE: {
+                uint8_t elem_type = ip[1];
+                TOS_SPILL();                                   /* TOS 落到 [rsp]，值不变 */
+                emit_mov_reg_mem8(cb, JIT_RAX, JIT_RSP, 0);    /* raw TOS */
+                EMIT_STORE_TMP(tmp1_disp, JIT_RAX);
+                EMIT_LOAD_TMP(JIT_RAX, tmp1_disp);
+                EMIT_RAW_TO_VALUE();
+                EMIT_STORE_TMP(tmp1_disp, JIT_RAX);
+                EMIT_CALLOUT_BEGIN();
+                EMIT_LOAD_TMP(JIT_ARG1, tmp1_disp);
+                emit_mov_reg_imm64(cb, JIT_ARG2, (uint64_t)elem_type);
+                EMIT_CALL(jit_callout_set_ptr_elem_type);
+                EMIT_CALLOUT_END();
+                break;
+            }
+            case OP_SET_DECLARED_FACE: {
+                uint16_t face_name_idx = rd_short(ip + 1);
+                TOS_SPILL();
+                emit_mov_reg_mem8(cb, JIT_RAX, JIT_RSP, 0);
+                EMIT_STORE_TMP(tmp1_disp, JIT_RAX);
+                EMIT_LOAD_TMP(JIT_RAX, tmp1_disp);
+                EMIT_RAW_TO_VALUE();
+                EMIT_STORE_TMP(tmp1_disp, JIT_RAX);
+                EMIT_CALLOUT_BEGIN();
+                EMIT_LOAD_TMP(JIT_ARG1, tmp1_disp);
+                emit_mov_reg_imm64(cb, JIT_ARG2, (uint64_t)face_name_idx);
+                /* face 名字在**当前编译单元**的常量表里（内联时 cur_chunk 已切到 callee） */
+                emit_mov_reg_imm64(cb, JIT_ARG3, (uint64_t)(uintptr_t)cur_chunk);
+                EMIT_CALL(jit_callout_set_declared_face);
+                EMIT_CALLOUT_END();
+                break;
+            }
+
             /* ---- OP_GET_FIELD / OP_SET_FIELD（struct 字段读写）—— §5 覆盖面 L3 ----
              * 解释器语义：vm/vminc/op_struct.inc。
              *   GET_FIELD：弹 obj、压 field（net 0）；struct 走越界检查 + struct_get_field。

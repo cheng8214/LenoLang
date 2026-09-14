@@ -231,6 +231,7 @@ int opcode_size(const uint8_t* ip) {
         case OP_SHL_IMM: case OP_SHR_IMM: case OP_USHR_IMM:
         case OP_GET_FIELD:   /* op + field_idx(1) */
         case OP_SET_FIELD:   /* op + field_idx(1) */
+        case OP_SET_PTR_ELEM_TYPE: /* op + elem_type(1) */
             return 2;
         /* 3-byte (opcode + slot16) */
         case OP_CONST: case OP_GET_LOCAL: case OP_SET_LOCAL:
@@ -241,6 +242,7 @@ int opcode_size(const uint8_t* ip) {
         case OP_ARRAY:          /* opcode + count16 */
         case OP_GET_PROPERTY:   /* opcode + name_const16 */
         case OP_GET_METHOD:     /* opcode + name_const16 */
+        case OP_SET_DECLARED_FACE: /* opcode + face_name_const16 */
         case OP_GET_MODULE_VAR:  /* opcode + index16 */
         case OP_SET_MODULE_VAR:  /* opcode + index16 */
         case OP_GET_MODULE_FUNC: /* opcode + index16 */
@@ -376,6 +378,7 @@ static int scan_callee_for_inline(Chunk* cc, int local_count,
             case OP_BITNOT: case OP_INC: case OP_DEC:
             case OP_LENGTH:   /* pop 1 push 1 → net 0 */
             case OP_GET_FIELD: /* pop 1 push 1 → net 0 */
+            case OP_SET_PTR_ELEM_TYPE: case OP_SET_DECLARED_FACE: /* peek TOS → net 0 */
                 break;
             case OP_GET_MODULE_VAR: case OP_SET_MODULE_VAR: case OP_GET_MODULE_FUNC:
                 /* 模块变量/函数访问依赖「当前帧的 module」，而 frame->module 来自
@@ -663,6 +666,9 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                 break;
             case OP_LENGTH:
                 /* pop 1 push 1 → net 0（结果恒为 int，见 ops_misc.inc 的 OP_LENGTH） */
+                break;
+            case OP_SET_PTR_ELEM_TYPE: case OP_SET_DECLARED_FACE:
+                /* 存值前的类型标记：**peek TOS**、不弹不推 → net 0（见 op_unary.inc） */
                 break;
             case OP_GET_MODULE_FUNC: {
                 /* 窥孔：`foo(x)` 的模块函数调用形态 = OP_GET_MODULE_FUNC + OP_CALL

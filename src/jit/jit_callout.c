@@ -991,6 +991,23 @@ Value jit_callout_call_module_func(ObjModule* module, int64_t* vstack_top,
     return result;
 }
 
+/* Callouts: 存值前的「类型标记」（§8.58，镜像 vm/vminc/op_unary.inc 的两条 peek 指令）。
+ * 都是 peek TOS、无返回值、**类型不匹配时静默什么都不做**（与解释器逐字一致），
+ * 因此不需要 bailout 通道，也不会产生错误文本差异。 */
+void jit_callout_set_ptr_elem_type(Value v, int elem_type) {
+    if (!val_is_obj(v) || val_as_obj(v)->type != OBJ_FFI_POINTER) return;
+    ObjFFIPointer* ptr = (ObjFFIPointer*)val_as_obj(v);
+    if (!ptr->freed) ptr->element_type = (TypeKind)elem_type;
+}
+
+void jit_callout_set_declared_face(Value v, uint16_t name_const_idx, Chunk* chunk) {
+    if (!chunk || name_const_idx >= (uint16_t)chunk->const_cnt) return;
+    Value name_val = chunk->constants[name_const_idx];
+    if (!val_is_obj(name_val) || val_as_obj(name_val)->type != OBJ_STRING) return;
+    if (!val_is_obj(v) || val_as_obj(v)->type != OBJ_STRUCT) return;
+    ((ObjStruct*)val_as_obj(v))->declared_face = (ObjString*)val_as_obj(name_val);
+}
+
 /* ---- 通用相等比较的 C 实现（镜像解释器 vm/vminc/op_compare.inc 的 OP_EQ）----
  * 逐条对齐解释器规则：
  *   1) int/int 精确比较；任一是 float 时按 double 比较（BigInt 与 float 混合也走这里，
