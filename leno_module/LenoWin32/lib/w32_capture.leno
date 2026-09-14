@@ -65,7 +65,7 @@ const FMT_ARGB8888 = 372645892  // SDL_PIXELFORMAT_ARGB8888 = 0x16362004
 // 返回值: { "w": int, "h": int, "fmt": int, "pixels": Ptr[u8], "pitch": int }
 // pixels 由 ffi.malloc 分配，调用者需 ffi.free() 释放
 // 失败返回 {}
-export func captureScreen() {
+export func captureScreen(): Dict {
     // 1. 获取桌面 DC
     Ptr hdcScreen = _usrLib().GetDC(null)
     if hdcScreen == null {

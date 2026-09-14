@@ -242,6 +242,21 @@ void semantic_analyze(Semantic* s, Ast* ast) {
                     sym->type = type_new(TYPE_CSTRUCT);
                     sym->type->struct_name = strdup(stmt->u.cstruct_def.name);
                 }
+            } else if (stmt->kind == AST_ENUM_DEF) {
+                // 预注册 enum 类型符号 —— 四种类型（struct/cstruct/face/enum）里唯一
+                // 此前没进预注册的。缺了它，跨种类同名的报错会落在**先声明**的那条上、
+                // 且文案指向源码里更靠后的另一种类型：实测 `enum E1`(37 行) + `face E1`
+                // (40 行) 报在 37 行说"已经定义为 face" —— 定位与归因都错位。
+                // kind 沿用主阶段将采用的取值（SYM_MODULE/SYM_GLOBAL），保证注册后
+                // 行为逐位不变：这里只提前占位，不改语义。
+                SymKind ekind = (s->current && s->current->parent == NULL)
+                    ? (s->is_module ? SYM_MODULE : SYM_GLOBAL)
+                    : SYM_LOCAL;
+                Symbol* sym = scope_define(s->current, stmt->u.enum_def.name, ekind);
+                if (sym) {
+                    sym->type = type_new(TYPE_ENUM);
+                    sym->type->struct_name = strdup(stmt->u.enum_def.name);
+                }
             } else if (stmt->kind == AST_EXPORT && stmt->u.export.decl) {
                 // 预注册 export 中的 struct/face 定义
                 Ast* decl = stmt->u.export.decl;
@@ -299,6 +314,17 @@ void semantic_analyze(Semantic* s, Ast* ast) {
                             }
                             face_def_register(early_fdef);
                         }
+                    }
+                } else if (decl->kind == AST_ENUM_DEF && decl->u.enum_def.name &&
+                           !scope_resolve(s->current, decl->u.enum_def.name)) {
+                    // export enum：与上面的 struct/face 同样提前占位（kind 同主阶段）
+                    SymKind ekind = (s->current && s->current->parent == NULL)
+                        ? (s->is_module ? SYM_MODULE : SYM_GLOBAL)
+                        : SYM_LOCAL;
+                    Symbol* sym = scope_define(s->current, decl->u.enum_def.name, ekind);
+                    if (sym) {
+                        sym->type = type_new(TYPE_ENUM);
+                        sym->type->struct_name = strdup(decl->u.enum_def.name);
                     }
                 }
             }

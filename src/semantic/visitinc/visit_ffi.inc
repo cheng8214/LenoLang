@@ -147,13 +147,15 @@
                     }
                 } else {
                     char msg[BUFFER_MEDIUM];
-                    // 检查是否已经被定义为其他类型（struct/enum）
+                    // 检查是否已经被定义为其他类型（struct/enum/face）
                     Symbol* existing = scope_resolve_local(s->current, ast->u.cstruct_def.name);
                     if (existing && existing->type) {
                         if (existing->type->kind == TYPE_STRUCT) {
                             snprintf(msg, sizeof(msg), "类型 '%s' 已经定义为 struct，不能重复定义为 cstruct", ast->u.cstruct_def.name);
                         } else if (existing->type->kind == TYPE_ENUM) {
                             snprintf(msg, sizeof(msg), "类型 '%s' 已经定义为 enum，不能重复定义为 cstruct", ast->u.cstruct_def.name);
+                        } else if (existing->type->kind == TYPE_FACE) {
+                            snprintf(msg, sizeof(msg), "类型 '%s' 已经定义为 face，不能重复定义为 cstruct", ast->u.cstruct_def.name);
                         } else {
                             snprintf(msg, sizeof(msg), "cstruct '%s' 重复定义", ast->u.cstruct_def.name);
                         }

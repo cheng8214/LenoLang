@@ -1,0 +1,27 @@
+// test_symtab_scope.leno — 回归测试：模块级函数与「同名结构体方法 / 函数体内局部函数」
+// 共存时，mod.fn(实参...) 必须解析到模块函数本身。
+//
+// 旧 bug：预扫描（scan_pass2_init.inc）把花括号层级 >0 的 func 也收进了模块函数表，
+// 而 module_symbol_table_find_func 返回数组里第一个匹配 ⇒ 解析到方法/局部函数 ⇒
+// 形参少 1（误报「参数数量过多」）或返回类型被静默取错。
+
+import "symtab_scope_mod.leno" as m
+
+main() {
+    var n = m.makeNode("hi")
+
+    // 同名方法 text() 存在；模块级 text(Node) 返回 string
+    var s = m.text(n)
+    assert_eq(s, "hi")
+
+    // 返回值必须真的是 string：这里要对 string 调 len。
+    // 旧 bug 下 s 会被推断成 int（局部 text 的返回类型），这一行直接编不过。
+    assert_eq(s.len(), 2)
+
+    // 同名方法 pick(int) 存在；模块级 pick(Node, int) 有 2 个形参。
+    // 旧 bug 下会误报「pick 参数数量过多: 最多接受 1 个参数，实际传入 2 个」。
+    var k = m.pick(n, 3)
+    assert_eq(k, 5)
+
+    print("test_symtab_scope passed")
+}

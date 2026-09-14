@@ -9,6 +9,7 @@
     // 需要从符号表查找函数返回类型，因此必须预先收集所有函数签名。
     {
         const char* prescan = source;
+        int prescan_depth = 0;   // 花括号层级：只有 0 层的 func 才算模块级函数
         while (*prescan) {
             // 跳过空白、注释、字符串
             while (*prescan && (*prescan == ' ' || *prescan == '\t' || *prescan == '\n' || *prescan == '\r')) prescan++;
@@ -40,15 +41,39 @@
                 has_export = 1;
             }
 
-            // 跳过 export 语句（整行跳过，直到行末）—— 由主循环处理
+            // 跳过 export 语句（整行跳过，直到行末）—— 由主循环处理。
+            // 跳过期间**仍要统计花括号**：`export func f(): int {` 的 '{' 就在这一行上，
+            // 漏计会让其后所有顶层函数都被误判成「在函数体内」而静默丢符号。
+            // 字符串/行注释里的花括号不算（与主循环的处理一致）。
             if (has_export) {
-                while (*prescan && *prescan != '\n') prescan++;
+                while (*prescan && *prescan != '\n') {
+                    if (*prescan == '/' && *(prescan + 1) == '/') break;   // 行注释：其后不是代码
+                    if (*prescan == '"' || *prescan == '\'') {
+                        char q = *prescan++;
+                        while (*prescan && *prescan != q && *prescan != '\n') {
+                            if (*prescan == '\\' && *(prescan + 1)) prescan += 2; else prescan++;
+                        }
+                        if (*prescan && *prescan != '\n') prescan++;
+                        continue;
+                    }
+                    if (*prescan == '{') prescan_depth++;
+                    else if (*prescan == '}') { if (prescan_depth > 0) prescan_depth--; }
+                    prescan++;
+                }
                 continue;
             }
 
             const char* func_pos = prescan;
 
-            if (strncmp(func_pos, "func", 4) == 0 && (func_pos[4] == ' ' || func_pos[4] == '\t' || func_pos[4] == '\n' || func_pos[4] == '\r' || func_pos[4] == '\0')) {
+            // 只收集**顶层**（花括号层级 0）的函数签名。层级 >0 的 `func` 要么是
+            // struct/cstruct/face 的方法（self 隐式，不计入形参），要么是函数体内的局部函数
+            // —— 两者都不属于模块函数命名空间。一旦被当作模块函数收进来就会与同名模块函数
+            // 撞名，而 module_symbol_table_find_func 返回数组里**第一个**匹配 ⇒
+            // `mod.name(实参...)` 解析到那一条：轻则误报「参数数量过多」（LenoWeb 的
+            // htmls.text/attr/select/selectOne/allText 就是此例），重则静默拿到局部函数的
+            // 返回类型（错类型且不报错，更危险）。
+            if (prescan_depth == 0 &&
+                strncmp(func_pos, "func", 4) == 0 && (func_pos[4] == ' ' || func_pos[4] == '\t' || func_pos[4] == '\n' || func_pos[4] == '\r' || func_pos[4] == '\0')) {
                 // 解析函数签名
                 const char* after_func = func_pos + 4;
                 while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
@@ -206,6 +231,10 @@
                 }
             }
 
+            // 维护花括号层级（字符串/注释在上面已 continue，不会误计）
+            if (*prescan == '{') prescan_depth++;
+            else if (*prescan == '}') { if (prescan_depth > 0) prescan_depth--; }
+
             // skip to next token
             prescan++;
         }
@@ -348,6 +377,7 @@
 
                 // ---- 阶段 3：循环处理每个类型名（复用同一个 dep_table） ----
                 while (1) {
+                    const char* use_iter_start = p;   // 进度守卫基准（见循环末尾）
                     if (batch_mode) {
                         // 跳过所有空白（含换行，支持跨行 use 语句）
                         while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) {
@@ -488,6 +518,10 @@
                     }
                     // 允许尾逗号
                     if (*p == ')') { p++; break; }
+                    // 进度守卫：本圈没推进就退出。括号内出现杂字符（注释、';' 等）或
+                    // 缺少 ')' 时，上面的跳过与读名字全都原地不动 ⇒ 会死循环。
+                    // 畸形列表交由真正的解析器报错（与 parser_module.c 同一处理）。
+                    if (p == use_iter_start) break;
                 }
 
                 // 释放 dep_table（批量模式下所有类型都已处理完毕）

@@ -271,6 +271,9 @@
                                     strncpy(param_names[param_count - 1], pname_start, pname_len);
                                     param_names[param_count - 1][pname_len] = '\0';
                                 }
+                                // 兜底推进：本圈一个字符都没消费（如 'a = 0' 的 '='、'*' 等杂字符）
+                                // 就强制前进一位，否则 ptr 原地不动 ⇒ 死循环
+                                if (after_cfunc == pt_start) after_cfunc++;
                             }
                             if (*after_cfunc == ')') after_cfunc++;
                         }
@@ -510,6 +513,8 @@
                                 else if (*after_clib == '/' && *(after_clib+1) == '*') { after_clib += 2; while (*after_clib && !(*after_clib == '*' && *(after_clib+1) == '/')) after_clib++; if (*after_clib) after_clib += 2; }
                                 // 跳过参数名
                                 while (*after_clib && (isalnum((unsigned char)*after_clib) || *after_clib == '_')) after_clib++;
+                                // 兜底推进：本圈未消费任何字符时强制前进，避免死循环
+                                if (after_clib == pt_start) after_clib++;
                             }
                             if (*after_clib == ')') after_clib++;
                         }
@@ -639,6 +644,8 @@
                                 strncpy(param_names[param_count - 1], pname_start, pname_len);
                                 param_names[param_count - 1][pname_len] = '\0';
                             }
+                            // 兜底推进：本圈未消费任何字符时强制前进，避免死循环
+                            if (after_cfunc == pt_start) after_cfunc++;
                         }
                         if (*after_cfunc == ')') after_cfunc++;
                     }

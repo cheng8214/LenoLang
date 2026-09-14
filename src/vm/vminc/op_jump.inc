@@ -146,3 +146,37 @@ OPCODE(OP_CMPJMP_LG_INT) {
     }
     DISPATCH;
 }
+
+// local int 与**立即数**比较 + 条件跳转（补上 LL/LG 缺的那一格）
+// 操作数: cmp_op(1) slot(2) imm32(4) offset(4)
+OPCODE(OP_CMPJMP_LI_INT) {
+    frame = &vm.frames[vm.frame_cnt - 1];
+    uint8_t cmp_op = READ_BYTE();
+    uint16_t slot = READ_SHORT();
+    int32_t imm = READ_INT32();
+    int32_t offset = READ_INT32();
+
+    int64_t a;
+    if (frame->locals != NULL) {
+        a = val_as_int(frame->locals[slot]);
+    } else {
+        a = val_as_int(vm.stack[frame->stack_base + slot]);
+    }
+    int64_t b = (int64_t)imm;
+
+    int result = 0;
+    switch (cmp_op) {
+        case 0: result = (a == b); break;  // EQ
+        case 1: result = (a != b); break;  // NE
+        case 2: result = (a <  b); break;  // LT
+        case 3: result = (a >  b); break;  // GT
+        case 4: result = (a <= b); break;  // LE
+        case 5: result = (a >= b); break;  // GE
+        default: result = 0; break;
+    }
+
+    if (!result) {
+        frame->ip += offset;
+    }
+    DISPATCH;
+}

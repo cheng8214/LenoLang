@@ -253,6 +253,9 @@ int opcode_size(const uint8_t* ip) {
         case OP_CMPJMP_LL_INT:
         case OP_CMPJMP_LG_INT:
             return 10;
+        /* 12-byte: CMPJMP local vs imm32 (cmp_op(1) slot(2) imm32(4) offset(4)) */
+        case OP_CMPJMP_LI_INT:
+            return 12;
         default:
             return -1;  /* unknown / unsupported */
     }
@@ -369,6 +372,7 @@ static int scan_callee_for_inline(Chunk* cc, int local_count,
             case OP_FOR_LOOP: break;
             case OP_CMPJMP_LL_INT: break;
             case OP_CMPJMP_LG_INT: break;
+            case OP_CMPJMP_LI_INT: break;
 case OP_GET_FIELD_FAST: vstack++; break;
             case OP_STRUCT_INIT: {
                 /* opcode + name16 + arg8 + generic8 + generic2*N + field[arg]。
@@ -992,6 +996,30 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                 mark_local(r, sb);
                 /* Conditional jump: record target for restore */
                 int32_t off = rd_int32(ip + 6);
+                int target_bc = bc_off + size + off;
+                MARK_JT_FWD(target_bc);   /* §8.46：目标偏移不接受回看 */
+                if (fwd_count >= JIT_SCAN_MAX_FWD) {
+                    /* 目标表满：旧实现静默丢弃 → dead-code 段的 vstack 无法恢复
+                     * → 扫描与 codegen 的栈深不一致 → RSP 漂移 → 栈溢出。
+                     * 宁可不编，拒绝整个循环（循环退回解释器执行，语义正确）。 */
+                    if (jit_debug_on())
+                        fprintf(stderr, "[JIT-DEBUG] scan FAIL: 前向跳转目标超过 %d 个"
+                                        "（body_size=%d）→ 拒绝 JIT\n",
+                                JIT_SCAN_MAX_FWD, body_size);
+                    r->capable = 0;
+                    return;
+                }
+                fwd_targets[fwd_count].target_bc = target_bc;
+                fwd_targets[fwd_count].vstack = vstack;
+                fwd_count++;
+                break;
+            }
+            case OP_CMPJMP_LI_INT: {
+                /* local vs 立即数：只有一个局部量 */
+                uint16_t sa = rd_short(ip + 2);
+                mark_local(r, sa);
+                /* Conditional jump: record target for restore */
+                int32_t off = rd_int32(ip + 8);   /* imm32 占 ip+4..ip+7 */
                 int target_bc = bc_off + size + off;
                 MARK_JT_FWD(target_bc);   /* §8.46：目标偏移不接受回看 */
                 if (fwd_count >= JIT_SCAN_MAX_FWD) {

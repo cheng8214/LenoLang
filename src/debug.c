@@ -78,7 +78,8 @@ static const char* opCodeNames[] = {
 "OP_CMPJMP_LL_INT",
 "OP_CMPJMP_LG_INT",
 "OP_GET_FIELD_FAST",
-"OP_INVOKE_METHOD_TYPED"
+"OP_INVOKE_METHOD_TYPED",
+"OP_CMPJMP_LI_INT"
 };
 
 // 反汇编单条指令
@@ -570,6 +571,16 @@ int disassembleInstruction(Chunk* chunk, int offset) {
             const char* op_name = (cmp_op < 6) ? ops[cmp_op] : "??";
             printf(" %s local=%d global=%d off=%d", op_name, slot, gidx, off);
             return offset + 10;
+        }
+        case OP_CMPJMP_LI_INT: {
+            int cmp_op = chunk->code[offset + 1];
+            int slot = (chunk->code[offset + 2] << 8) | chunk->code[offset + 3];
+            int32_t imm = (int32_t)((chunk->code[offset + 4] << 24) | (chunk->code[offset + 5] << 16) | (chunk->code[offset + 6] << 8) | chunk->code[offset + 7]);
+            int32_t off = (int32_t)((chunk->code[offset + 8] << 24) | (chunk->code[offset + 9] << 16) | (chunk->code[offset + 10] << 8) | chunk->code[offset + 11]);
+            const char* ops[] = {"EQ", "NE", "LT", "GT", "LE", "GE"};
+            const char* op_name = (cmp_op < 6) ? ops[cmp_op] : "??";
+            printf(" %s local=%d imm=%d off=%d", op_name, slot, imm, off);
+            return offset + 12;
         }
         case OP_INC_LOCAL_NOPUSH:
         case OP_DEC_LOCAL_NOPUSH: {

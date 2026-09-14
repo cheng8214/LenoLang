@@ -44,7 +44,18 @@ void face_def_register(ObjFaceDef* def) {
     }
 
     for (int i = 0; i < face_def_count; i++) {
-        if (strcmp(face_def_table[i]->name, def->name) == 0) {
+        if (face_def_table[i]->name && strcmp(face_def_table[i]->name, def->name) == 0) {
+            // 覆盖旧定义：将旧定义的资源指针置 NULL，防止 gc_free_all 时 double-free
+            // （与 struct_def_register / cstruct_def_register / enum_def_register 统一策略；
+            //  旧定义对象仍由 GC 管理，gc_free_all 会调用 free_object_resources）
+            ObjFaceDef* old_def = face_def_table[i];
+            old_def->name = NULL;
+            old_def->methods = NULL;
+            old_def->method_count = 0;
+            old_def->type_param_names = NULL;
+            old_def->type_param_constraints = NULL;
+            old_def->type_param_count = 0;
+
             face_def_table[i] = def;
             return;
         }

@@ -542,7 +542,27 @@ static void gen_switch(CodeGen* gen, Ast* ast) {
 // 成功时返回 1 并设置 out_jump_offset（用于后续 patch_jump）
 // 失败时返回 0（调用方应走原来的 gen_expr + JUMP_IF_FALSE + POP 路径）
 // ============================================================================
+// 取出整数字面量的立即数值（只接受能落进 int32 的普通整数字面量）。
+// float / bigint 字面量一律拒绝 —— 前者语义不同，后者超 int32 放不进立即数。
+static int int_literal_imm32(Ast* a, int* out) {
+    if (!a || a->kind != AST_NUM) return 0;
+    if (a->u.num.is_float || a->u.num.is_bigint) return 0;
+    double v = a->u.num.value;
+    if (v < -2147483648.0 || v > 2147483647.0) return 0;
+    if (v != (double)(int)v) return 0;
+    *out = (int)v;
+    return 1;
+}
+
 static int try_emit_cmpjmp(CodeGen* gen, Ast* cond, int* out_jump_offset) {
+    /* LENO_NO_CMPJMP：关掉「比较+条件跳转」融合（基准/诊断用，
+     * 与 LENO_NO_JIT / LENO_JIT_NOINLINE 同一类开关）。
+     * 存在的理由：跨时段测性能会被 CPU 频率/热漂移污染（实测同一二进制
+     * 同一负载能差 25%），只有**同一二进制内交错 A/B** 才能得到可信结论。 */
+    static int cmpjmp_disabled = -1;
+    if (cmpjmp_disabled < 0) cmpjmp_disabled = getenv("LENO_NO_CMPJMP") ? 1 : 0;
+    if (cmpjmp_disabled) return 0;
+
     if (!cond || cond->kind != AST_BINOP) return 0;
 
     // 映射 token 到 cmp_op 编码
@@ -559,10 +579,32 @@ static int try_emit_cmpjmp(CodeGen* gen, Ast* cond, int* out_jump_offset) {
 
     Ast* l = cond->u.binop.l;
     Ast* r = cond->u.binop.r;
+    if (!l || !r) return 0;
+
+    // 模式 4: local OP 整数字面量（含反向 lit OP local）→ OP_CMPJMP_LI_INT
+    // 必须放在最前面：字面量不是 AST_VAR，下面几段会按 AST_VAR 解引用联合体。
+    // 立即数限 int32；超出（bigint 字面量）或 float 字面量一律退回非融合路径。
+    {
+        static const int rev[6] = {0, 1, 3, 2, 5, 4};  // EQ→EQ, NE→NE, LT→GT, GT→LT, LE→GE, GE→LE
+        int imm = 0;
+        if (l->kind == AST_VAR && int_literal_imm32(r, &imm) &&
+            (l->u.var.ref.kind == SYM_LOCAL || l->u.var.ref.kind == SYM_PARAM) &&
+            get_expr_type_kind(l) == TYPE_INT) {
+            *out_jump_offset = emit_cmpjmp_li_int(gen, cmp_op, l->u.var.ref.index, imm, cond->line);
+            return 1;
+        }
+        // 字面量在左侧：lit OP local ≡ local reverse(OP) lit
+        if (r->kind == AST_VAR && int_literal_imm32(l, &imm) &&
+            (r->u.var.ref.kind == SYM_LOCAL || r->u.var.ref.kind == SYM_PARAM) &&
+            get_expr_type_kind(r) == TYPE_INT) {
+            *out_jump_offset = emit_cmpjmp_li_int(gen, rev[cmp_op], r->u.var.ref.index, imm, cond->line);
+            return 1;
+        }
+    }
 
     // 两个操作数都必须是 AST_VAR
-    if (!l || l->kind != AST_VAR) return 0;
-    if (!r || r->kind != AST_VAR) return 0;
+    if (l->kind != AST_VAR) return 0;
+    if (r->kind != AST_VAR) return 0;
 
     // 两个操作数都必须是 int 类型
     if (get_expr_type_kind(l) != TYPE_INT) return 0;

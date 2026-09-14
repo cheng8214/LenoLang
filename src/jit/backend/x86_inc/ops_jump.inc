@@ -178,6 +178,42 @@
                 break;
             }
 
+            /* ---- CMPJMP: local int vs 立即数 + conditional jump ---- */
+            /* Operands: cmp_op(1) slot(2) imm32(4) offset(4) = 11 bytes + opcode = 12 */
+            case OP_CMPJMP_LI_INT: {
+                uint8_t cmp_op = ip[1];
+                uint16_t sa = rd_short(ip + 2);
+                int32_t imm = rd_int32(ip + 4);
+                int32_t off = rd_int32(ip + 8);
+                int target_bc = bc_off + size + off;
+                int si_a = cur_local_map[sa];
+                int da = scratch_disp(si_a);
+                TOS_SPILL();  /* clobbers RAX */
+                /* Load local (raw int48) from scratch area: mov rax, [rbp+da]
+                 * （该槽已被 pin_excl 排除，内存副本权威，与 LL/LG 同一约定） */
+                if (da >= -128 && da <= 127) {
+                    emit_mov_reg_mem8(cb, JIT_RAX, JIT_RBP, (int8_t)da);
+                } else {
+                    emit_mov_reg_mem32(cb, JIT_RAX, JIT_RBP, da);
+                }
+                /* cmp rax, imm32（符号扩展） */
+                emit_cmp_reg_imm32(cb, JIT_RAX, (uint32_t)imm);
+                /* Jump if comparison is FALSE（与 LL/LG 同一套反转） */
+                uint8_t cc;
+                switch (cmp_op) {
+                    case 0: cc = 0x85; break;  /* EQ → JNE (jump if not eq) */
+                    case 1: cc = 0x84; break;  /* NE → JE  (jump if not ne = eq) */
+                    case 2: cc = 0x8D; break;  /* LT → JGE (jump if not lt) */
+                    case 3: cc = 0x8E; break;  /* GT → JLE (jump if not gt) */
+                    case 4: cc = 0x8F; break;  /* LE → JG  (jump if not le) */
+                    case 5: cc = 0x8C; break;  /* GE → JL  (jump if not ge) */
+                    default: cc = 0x85; break;
+                }
+                int patch = emit_jcc(cb, cc);
+                patch_add(ctx, patch, target_bc, vstack);
+                break;
+            }
+
             /* ---- CMPJMP: local int vs global int + conditional jump ---- */
             /* Operands: cmp_op(1) slot(2) global_idx(2) offset(4) = 9 bytes + opcode = 10 */
             case OP_CMPJMP_LG_INT: {

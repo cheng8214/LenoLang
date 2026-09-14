@@ -976,14 +976,45 @@ Value jit_callout_global_func(int64_t* vstack_top, int arg_count,
             gfunc = (ObjFunction*)obj;
         }
         if (gfunc && ret_count == 1 && jit_state.enabled && jit_func_depth < JIT_FUNC_MAX_DEPTH) {
-            JitLoopFn jfn = jit_func_lookup_or_compile(gfunc, vm);
+            /* ---- callee 解析缓存（§8.47）----
+             * 递归调用点 / 固定调用点每次都是同一个 callee，而
+             * jit_func_lookup_or_compile 是一次跨 TU 调用 + 哈希探测 + tried 判定。
+             * 这里缓存「上次解析成功的 callee」及其槽地址，命中即跳过整条查找。
+             *
+             * **不缓存机器码指针**：jit_func_entry_claim 在槽冲突时会
+             * jit_mem_free 掉被驱逐函数的机器码（jit_priv.h 有明确记载），缓存裸
+             * 指针会变成 use-after-free。这里只缓存槽地址（jit_func_cache 是静态
+             * 数组，地址稳定）与 lcount，每次命中都重读 e->func / e->fn 校验。 */
+            static ObjFunction*       lc_func  = NULL;
+            static JitFuncCacheEntry* lc_entry = NULL;
+            static int                lc_base  = 0;   /* max(local_count, arity) */
+            /* LENO_NO_CALLCACHE：关掉本缓存（基准/诊断用）。
+             * 开关值在 jit_init() 里解析好（jit_state.no_callcache）—— **不能**
+             * 在这里现读 getenv 或做「首次调用判负的 static」：本函数是每次
+             * Leno 调用都进的（fib 8.67 亿次），那会在热路径上白付 2~3 条指令。 */
+            JitLoopFn jfn = NULL;
+            int base = 0;
+            if (!jit_state.no_callcache && gfunc == lc_func && lc_entry->func == gfunc) {
+                jfn  = lc_entry->fn;      /* 每次重读：槽可能已被回收或重编译 */
+                base = lc_base;
+            }
+            if (!jfn) {
+                jfn = jit_func_lookup_or_compile(gfunc, vm);
+                if (jfn) {
+                    base = gfunc->local_count > gfunc->arity
+                               ? gfunc->local_count : gfunc->arity;
+                    lc_func  = gfunc;
+                    lc_entry = &jit_func_cache[((uintptr_t)gfunc >> 4) & (JIT_FUNC_CACHE_SIZE - 1)];
+                    lc_base  = base;
+                }
+            }
             if (jfn) {
-                int lcount = gfunc->local_count > gfunc->arity
-                                 ? gfunc->local_count : gfunc->arity;
+                int lcount = base;
                 if (lcount < arg_count) lcount = arg_count;
                 if (lcount > JIT_MAX_LOCALS) lcount = JIT_MAX_LOCALS;
                 Value* flocals = jit_func_locals_pool[jit_func_depth];
-                for (int i = 0; i < lcount; i++) flocals[i] = NULL_VAL;
+                /* 实参槽由下面第二个循环覆写 ⇒ 不必先置 NULL（省 arg_count 次写） */
+                for (int i = arg_count; i < lcount; i++) flocals[i] = NULL_VAL;
                 for (int i = 0; i < arg_count && i < lcount; i++) {
                     flocals[i] = jit_raw_to_value(vstack_top[arg_count - 1 - i]);
                 }

@@ -18,13 +18,19 @@
                     if (*after_face == '[') {
                         after_face++; // skip '['
                         while (*after_face && *after_face != ']') {
-                            while (*after_face && (*after_face == ' ' || *after_face == '\t')) after_face++;
+                            const char* fp_iter_start = after_face;   // 进度守卫基准
+                            // 跳过空白（含换行，泛型参数列表可跨行）
+                            while (*after_face && (*after_face == ' ' || *after_face == '\t' ||
+                                                   *after_face == '\n' || *after_face == '\r')) after_face++;
                             if (*after_face && (isalnum((unsigned char)*after_face) || *after_face == '_')) {
                                 face_type_param_count++;
                                 while (*after_face && (isalnum((unsigned char)*after_face) || *after_face == '_')) after_face++;
                             }
-                            while (*after_face && (*after_face == ' ' || *after_face == '\t')) after_face++;
+                            while (*after_face && (*after_face == ' ' || *after_face == '\t' ||
+                                                   *after_face == '\n' || *after_face == '\r')) after_face++;
                             if (*after_face == ',') after_face++;
+                            // 本圈没推进就退出，避免死循环
+                            if (after_face == fp_iter_start) break;
                         }
                         if (*after_face == ']') after_face++; // skip ']'
                     }

@@ -1,0 +1,12 @@
+// test_scanwrap.leno — 回归：列表跨行写不得让编译器卡死
+// 注意：本用例的回归表现是"编译期死循环"（不是断言失败），所以跑测试套件时
+// 建议带超时；修复后应当秒过。
+import "scanwrap_mod.leno" as m
+use m.(Base)
+
+main() {
+    Base b = new Base()
+    b.n = 7
+    assert_eq(b.n, 7)
+    print("test_scanwrap passed")
+}
