@@ -829,17 +829,18 @@ Value jit_callout_set_field(Value obj_val, uint8_t field_idx, Value value) {
     return NULL_VAL;
 }
 
-/* Callout: OP_GET_MODULE_VAR / OP_GET_MODULE_FUNC（读当前帧所属模块的模块级变量/函数）。
- * 语义对齐 vm/vminc/op_module_var.inc：module 取自**当前帧**（frame->module 来自被调函数，
- * 见 vm_call.inc 的 frame->module = func->module），无模块 / 索引越界 → 报错。
- * 解释器里这两条指令实现完全相同（都是 globals[index]，区别只在编译期语义）。
- * module 由 jit_callout_vm 的帧栈取出，与解释器同一来源 —— 不硬编码 vm / CallFrame 的
- * 布局偏移，避免结构体一改就悄悄读错。 */
-Value jit_callout_get_module_var(uint16_t index) {
-    VM* vm = jit_callout_vm;
-    ObjModule* module = NULL;
-    if (vm && vm->frame_cnt > 0)
-        module = (ObjModule*)vm->frames[vm->frame_cnt - 1].module;
+/* Callout: OP_GET_MODULE_VAR / OP_GET_MODULE_FUNC（读当前被编译函数所属模块的模块级变量/函数）。
+ * 语义对齐 vm/vminc/op_module_var.inc：无模块 / 索引越界 → 报错（这里置 failed → bailout）。
+ *
+ * ⚠ module 是**编译期已知**的（jit_scan_set_module / jit_scan_get_module），由 codegen 直接
+ * 嵌进机器码，**不是**运行时去查 `vm.frames[frame_cnt-1].module`：
+ *   - 函数级 JIT 的快路径（jit_try_hot_func_call / jit_callout_invoke_method 的快路径）
+ *     **不压帧**（flocals 直接从 VM 栈装填、机器码直调），此时栈顶帧是**调用方**的帧，
+ *     查帧会读到调用方的模块 → 跨模块调用时静默读错变量（§8.56 的教训）。
+ *   - 内联 callee 体内的模块变量访问已被 scan 直接拒绝（内联体的模块与调用方不同），
+ *     所以「按被编译函数的模块」处理对循环 JIT / 函数级 JIT 都成立。
+ * 模块对象的生命周期覆盖 JIT 机器码（模块在进程内一直可达）。 */
+Value jit_callout_get_module_var(ObjModule* module, uint16_t index) {
     if (!module) {
         if (jit_debug_on())
             fprintf(stderr, "[JIT-CALLOUT-FAIL] module_var: 不在模块上下文中（idx=%u）\n",
@@ -859,12 +860,9 @@ Value jit_callout_get_module_var(uint16_t index) {
 
 /* Callout: OP_SET_MODULE_VAR（写模块级变量）。
  * 解释器是 **peek**（vm_stack_peek(&vm, 0)），写完后 TOS 原样保留 → JIT 侧净效应 0、
- * 不改 vstack。写入必须带 gc_write_barrier（模块是 GC 根，与解释器同款）。 */
-Value jit_callout_set_module_var(uint16_t index, Value value) {
-    VM* vm = jit_callout_vm;
-    ObjModule* module = NULL;
-    if (vm && vm->frame_cnt > 0)
-        module = (ObjModule*)vm->frames[vm->frame_cnt - 1].module;
+ * 不改 vstack。写入必须带 gc_write_barrier（模块是 GC 根，与解释器同款）。
+ * module 同 jit_callout_get_module_var：编译期嵌入，不查运行时帧。 */
+Value jit_callout_set_module_var(ObjModule* module, uint16_t index, Value value) {
     if (!module) {
         if (jit_debug_on())
             fprintf(stderr, "[JIT-CALLOUT-FAIL] set_module_var: 不在模块上下文中（idx=%u）\n",
@@ -882,6 +880,115 @@ Value jit_callout_set_module_var(uint16_t index, Value value) {
     module->globals[index] = value;
     gc_write_barrier((Object*)module, value);
     return value;   /* 解释器 peek 后 TOS 不变；返回值仅便于调试 */
+}
+
+/* Callout: 模块函数调用（`OP_GET_MODULE_FUNC + OP_CALL` 窥孔，§8.56）。
+ * JIT 栈约定与 jit_callout_invoke_method / OP_CALL_GLOBAL_FUNC 完全一致：
+ *   vstack_top[0] = TOS = 最后一个实参；vstack_top[arg_count-1-i] = 第 i 个实参。
+ *   ret_count == 1：RAX = 返回值（新 TOS）；
+ *   ret_count >  1：把前 (ret_count-1) 个写回 vstack 内存（沿用实参槽），RAX = 最后一个
+ *                   —— codegen 只弹掉 (arg_count - ret_count + 1) 个槽。
+ * callee 从**编译期嵌入的模块**的 globals[index] 现取（模块变量可能被重新赋值换了
+ * callee），并复核其 return_count 与编译期假设一致：不一致就 bailout 交解释器，
+ * 绝不按错误的返回值个数记账（多返回值错记账 = 第一个结果落在实参槽上，§8.48 的老 bug 形态）。 */
+Value jit_callout_call_module_func(ObjModule* module, int64_t* vstack_top,
+                                   int arg_count, uint16_t index, int ret_count) {
+    VM* vm = jit_callout_vm;
+    if (!vm || arg_count < 0 || ret_count < 1) {
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+    if (!module || index >= module->global_count) {
+        if (jit_debug_on())
+            fprintf(stderr, "[JIT-CALLOUT-FAIL] call_module_func: 无模块/索引越界（idx=%u）\n",
+                    (unsigned)index);
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+    Value callee = module->globals[index];
+    if (!val_is_obj(callee) || val_as_obj(callee)->type != OBJ_CLOSURE) {
+        /* 非闭包（原生函数 / 别的可调用对象）：交解释器的 call_value 完整语义 */
+        if (jit_debug_on())
+            fprintf(stderr, "[JIT-CALLOUT-FAIL] call_module_func: callee 不是闭包\n");
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+    ObjClosure* closure = (ObjClosure*)val_as_obj(callee);
+    ObjFunction* mfunc = closure->function;
+    int rc = (mfunc && mfunc->return_count > 0) ? mfunc->return_count : -1;
+    if (rc != ret_count) {
+        /* 模块变量被重新赋值换成了别的函数（或返回值个数不同）→ 编译期假设失效 */
+        if (jit_debug_on())
+            fprintf(stderr, "[JIT-CALLOUT-FAIL] call_module_func: return_count 变了"
+                            "（编译期 %d，实际 %d）\n", ret_count, rc);
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+
+    /* ---- 快路径：callee 自身走函数级 JIT（与 jit_callout_invoke_method 同构）----
+     * 这条路径不压帧，因此下面的模块访问/嵌套调用一律用**编译期模块**（参数传入）。 */
+    if (rc == 1 && mfunc && jit_state.enabled && jit_func_depth < JIT_FUNC_MAX_DEPTH) {
+        JitLoopFn jfn = jit_func_lookup_or_compile(mfunc, vm);
+        if (jfn) {
+            int lcount = mfunc->local_count > mfunc->arity ? mfunc->local_count : mfunc->arity;
+            if (lcount < arg_count) lcount = arg_count;
+            if (lcount > JIT_MAX_LOCALS) lcount = JIT_MAX_LOCALS;
+            Value* flocals = jit_func_locals_pool[jit_func_depth];
+            for (int i = 0; i < lcount; i++) flocals[i] = NULL_VAL;
+            /* JIT 栈：vstack_top[0]=TOS=最后实参；函数参数 slot 0=第一个实参。 */
+            for (int i = 0; i < arg_count && i < lcount; i++)
+                flocals[i] = jit_raw_to_value(vstack_top[arg_count - 1 - i]);
+            jit_func_depth++;
+            jit_fn_result = NULL_VAL;
+            int jr = jfn(flocals, vm->globals);
+            jit_func_depth--;
+            if (jr == 0 && !jit_callout_failed) {
+                jit_reloaded_locals = vm->frames[vm->frame_cnt - 1].locals;
+                return jit_fn_result;
+            }
+            jit_callout_failed = 0;  /* 回退解释路径前复位 */
+        }
+    }
+
+    /* ---- 慢路径：VM 重入（push args + callee，跑完折叠栈）---- */
+    int saved_sp = vm->sp;
+    for (int i = 0; i < arg_count; i++)
+        vm_stack_push(vm, jit_raw_to_value(vstack_top[arg_count - 1 - i]));
+    vm_stack_push(vm, callee);
+    int saved_frame_cnt = vm->frame_cnt;
+    if (vm_call_value(callee, arg_count, 0) == 0) {
+        while (vm->frame_cnt > saved_frame_cnt) {
+            vm->frame_cnt--;
+            CallFrame* leaked = &vm->frames[vm->frame_cnt];
+            if (leaked->locals && leaked->locals_is_dynamic) {
+                free(leaked->locals);
+                leaked->locals = NULL;
+            }
+        }
+        vm->sp = saved_sp;
+        jit_callout_failed = 1;
+        if (jit_debug_on())
+            fprintf(stderr, "[JIT-CALLOUT-FAIL] call_module_func: vm_call_value failed\n");
+        return NULL_VAL;
+    }
+    if (vm->frame_cnt > 0)
+        jit_reloaded_locals = vm->frames[vm->frame_cnt - 1].locals;
+
+    Value result = vm->last_return_value;
+    /* 多返回值回填：与 jit_callout_invoke_method / jit_callout_global_func 同构 */
+    if (rc > 1 && vm->sp >= rc) {
+        Value ret_vals[16];
+        for (int i = 0; i < rc && i < 16; i++)
+            ret_vals[i] = vm->stack[vm->sp - rc + i];
+        result = ret_vals[rc - 1];
+        for (int i = 0; i < rc - 1 && i < 15; i++) {
+            int slot = arg_count - 1 - i;
+            if (slot >= 0)
+                vstack_top[slot] = jit_value_to_raw(ret_vals[i]);
+        }
+    }
+    vm->sp = saved_sp;
+    return result;
 }
 
 /* ---- 通用相等比较的 C 实现（镜像解释器 vm/vminc/op_compare.inc 的 OP_EQ）----

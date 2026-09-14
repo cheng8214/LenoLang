@@ -345,8 +345,29 @@ Value jit_callout_length(Value v);
 Value jit_callout_iter_get(Value obj_val, Value index_val, int want_value);
 Value jit_callout_get_field(Value obj_val, uint8_t field_idx);
 Value jit_callout_set_field(Value obj_val, uint8_t field_idx, Value value);
-Value jit_callout_get_module_var(uint16_t index);
-Value jit_callout_set_module_var(uint16_t index, Value value);
+/* 模块变量读写：module 由 codegen **编译期嵌入**（jit_scan_get_module），
+ * 不是运行时查 vm.frames[frame_cnt-1] —— 函数级 JIT 的快路径不压帧，
+ * 查帧会读到调用方的模块（§8.55 的修正 + §8.56 的教训）。 */
+Value jit_callout_get_module_var(ObjModule* module, uint16_t index);
+Value jit_callout_set_module_var(ObjModule* module, uint16_t index, Value value);
+
+/* ---- 模块函数调用（`GET_MODULE_FUNC + OP_CALL` 窥孔，§8.56）----
+ * 返回值个数：ObjFunction.return_count 是**编译期**算好的（codegen_func.c），
+ * 无显式 return 按 1 个（隐式 null），-1 表示静态不可知（各 return 个数不一致 /
+ * fall-through）—— 遇到 -1 时 scan 直接拒绝该循环，绝不猜。
+ * callee 在 callout 里按「**编译期嵌入的** module → globals[index]」现取
+ * （与解释器 OP_GET_MODULE_FUNC 同源），并在调用前复核 return_count 与编译期假设
+ * 一致（模块变量可能被重新赋值 → 换了 callee），不一致就 bailout。 */
+Value jit_callout_call_module_func(ObjModule* module, int64_t* vstack_top,
+                                   int arg_count, uint16_t index, int ret_count);
+
+/* ---- 编译期「当前被编译函数所属模块」----
+ * scan 与 codegen 都要用它解析模块函数（ret_count 必须编译期确定）。
+ * 由 jit_compile / jit_compile_function 在调用 scan 前设置。 */
+void jit_scan_set_module(ObjModule* module);
+ObjModule* jit_scan_get_module(void);
+/* 解析模块函数：模块 globals[index] 处的闭包 → 返回其 return_count；0 = 解析失败 */
+int jit_resolve_module_func(uint16_t index);
 Value jit_callout_value_eq(Value a, Value b, int invert);
 Value jit_callout_acc_fields(Value obj_val, uint8_t count, const uint8_t* field_indices);
 Value jit_callout_struct_init(int64_t* vstack_top, uint16_t name_const_idx,

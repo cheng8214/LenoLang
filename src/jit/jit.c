@@ -50,6 +50,10 @@
 static JitLoopFn jit_compile(CallFrame* frame, const uint8_t* body_start,
                              int body_size, int back_edge, VM* vm_ptr) {
     ScanResult sr;
+    /* 解析「当前被编译函数所属模块」：模块函数调用的 ret_count 必须编译期确定，
+       而函数所属模块记录在 ObjFunction 上（frame->closure->function->module）。 */
+    jit_scan_set_module((frame && frame->closure && frame->closure->function)
+                            ? frame->closure->function->module : NULL);
     scan_loop_body(body_start, body_size, back_edge, &sr, vm_ptr, frame->chunk);
     if (jit_debug_on()) {
         const char* fname = "?";
@@ -250,6 +254,7 @@ static JitLoopFn jit_compile_function(ObjFunction* func, VM* vm_ptr) {
         return NULL;
 
     ScanResult sr;
+    jit_scan_set_module(func->module);
     scan_loop_body(code, len, 0, &sr, vm_ptr, func->chunk);
     if (!sr.capable)
         return NULL;

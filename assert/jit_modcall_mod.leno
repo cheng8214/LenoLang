@@ -1,0 +1,40 @@
+// JIT 模块函数调用覆盖测试的辅助模块 A（§8.56）
+//
+// 模块内部调用同模块函数（`foo(x)`）编译为 OP_GET_MODULE_FUNC + OP_CALL，
+// 本模块 run() / runPair() 里的热循环必须能被循环 JIT 接管。
+// readBase() 是「无循环 + 只读模块变量」的函数：它会被函数级 JIT 编译，
+// 而函数级 JIT 的快路径**不压帧** —— 模块必须按编译期归属取（见 §8.55 的修正）。
+var _g_base = 100
+
+func single(int x): int {
+    return x + 1
+}
+
+func pair(int x): [int, int] {
+    return x, x * 2
+}
+
+export func readBase(): int {
+    return _g_base + 1
+}
+
+export func run(int iters): int {
+    int acc = 0
+    int i = 0
+    while i < iters {
+        acc = acc + single(i)      // OP_GET_MODULE_FUNC + OP_CALL（ret_count = 1）
+        i = i + 1
+    }
+    return acc
+}
+
+export func runPair(int iters): int {
+    int acc = 0
+    int i = 0
+    while i < iters {
+        var[int, int](a, b) = pair(i)   // ret_count = 2：codegen 只弹 (argc - rc + 1) 个槽
+        acc = acc + a + b
+        i = i + 1
+    }
+    return acc
+}

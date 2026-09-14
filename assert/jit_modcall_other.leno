@@ -1,0 +1,20 @@
+// JIT 模块函数调用 / 模块变量归属测试的辅助模块 B（§8.56）
+//
+// 用「B 自己的模块变量 + 在 B 的帧里热调用 A 的 readBase()」来验证模块归属：
+// A.readBase 只读 A 的 _g_base（=100，返回 101）。调用它时栈顶帧是 **B 的**帧，
+// 若按运行时帧取模块就会读到 B 的 globals（B 的第一个模块变量 = 7）→ 返回 8。
+// 所以 hammer 的返回值能直接区分「按编译期模块」与「按运行时帧」两种实现。
+import "jit_modcall_mod.leno" as a
+
+var _b_first = 7
+var _b_second = 9
+
+export func hammer(int n): int {
+    int sum = 0
+    int i = 0
+    while i < n {
+        sum = sum + a.readBase()   // 期望恒为 101
+        i = i + 1
+    }
+    return sum
+}

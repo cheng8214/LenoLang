@@ -25,6 +25,35 @@ int cache_hash(const uint8_t* ip) {
     return (int)(v & (JIT_CACHE_SIZE - 1));
 }
 
+/* ---- 编译期「当前被编译函数所属模块」（§8.56）----
+ * 模块函数调用（`foo(x)` → `OP_GET_MODULE_FUNC` + `OP_CALL`）的返回值个数必须
+ * 编译期确定（ObjFunction.return_count），而 callee 只能从「函数所属模块的
+ * globals[]」里取 —— 所以 scan 与 codegen 都需要知道当前在编译哪个模块的函数。
+ * 由 jit.c 的两个编译入口（jit_compile / jit_compile_function）在调用 scan 前设置。
+ * 单线程编译、且编译在机器码开始执行前就结束，故不存在交叉覆盖。 */
+static ObjModule* g_jit_scan_module = NULL;
+
+void jit_scan_set_module(ObjModule* module) { g_jit_scan_module = module; }
+ObjModule* jit_scan_get_module(void) { return g_jit_scan_module; }
+
+/* 解析模块 globals[index] 处的函数闭包 → 返回其 return_count。
+ * return_count 的语义见 codegen_func.c：>=1 编译期确定（无显式 return 按 1 个，
+ * 即隐式 null）；-1 = 静态不可知（各 return 个数不一致 / fall-through）。
+ * 返回 0 表示「解析不出来 / 静态不可知」，调用方必须拒绝 JIT（见 jit_priv.h）。 */
+int jit_resolve_module_func(uint16_t index) {
+    ObjModule* module = g_jit_scan_module;
+    if (!module || !module->globals) return 0;
+    if (index >= (uint16_t)module->global_count) return 0;
+    Value v = module->globals[index];
+    if (!val_is_obj(v)) return 0;
+    Object* o = val_as_obj(v);
+    ObjFunction* fn = NULL;
+    if (o->type == OBJ_CLOSURE) fn = ((ObjClosure*)o)->function;
+    else if (o->type == OBJ_FUNCTION) fn = (ObjFunction*)o;
+    if (!fn || fn->return_count <= 0) return 0;
+    return fn->return_count;
+}
+
 /* ---- struct 方法返回值个数（按方法名推断；_TYPED 解析失败时的兜底）----
  * OP_INVOKE_METHOD_TYPED 的正常路径用字节码里的静态类型名直接定位方法，但该解析
  * 可能失败（def 尚未注册、方法定义不完整等）。此时只能退回「枚举已注册 struct
@@ -634,8 +663,34 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
             case OP_LENGTH:
                 /* pop 1 push 1 → net 0（结果恒为 int，见 ops_misc.inc 的 OP_LENGTH） */
                 break;
-            case OP_GET_MODULE_VAR: case OP_GET_MODULE_FUNC:
-                /* 模块变量/函数读取：push 1 → net +1 */
+            case OP_GET_MODULE_FUNC: {
+                /* 窥孔：`foo(x)` 的模块函数调用形态 = OP_GET_MODULE_FUNC + OP_CALL
+                 * （codegen_expr.c 的 SYM_MODULE 分支：函数值先 GET_MODULE_FUNC，再 OP_CALL）。
+                 * 与 OP_CALL_GLOBAL_FUNC_TYPED 同构：JIT 的栈记账必须知道调用后留下几个
+                 * 返回值，它来自 callee 的 ObjFunction.return_count（编译期算好；无显式
+                 * return 按 1 个=隐式 null；-1=静态不可知）。callee 只能从「函数所属模块的
+                 * globals[idx]」解析 → 解析不出来就拒绝整个循环（宁可不编，不要猜）。 */
+                if (ip + 6 <= end && ip[3] == OP_CALL) {
+                    uint16_t func_idx = rd_short(ip + 1);
+                    int rc = jit_resolve_module_func(func_idx);
+                    if (rc <= 0) {
+                        if (jit_debug_on())
+                            fprintf(stderr, "[JIT-DEBUG] scan FAIL: 模块函数 ret_count 不可知"
+                                            "（globals[%u]）at offset %d\n",
+                                    (unsigned)func_idx, (int)(ip - body_start));
+                        r->capable = 0;
+                        return;
+                    }
+                    int argc = rd_short(ip + 4);
+                    size = 6;               /* 连同 OP_CALL 一起消费 */
+                    vstack -= (argc - rc);  /* 压 callee(1) + argc 实参 → 留 rc 个返回值 */
+                    break;
+                }
+                /* 单独取函数值：push 1 → net +1 */
+                vstack++; break;
+            }
+            case OP_GET_MODULE_VAR:
+                /* 模块变量读取：push 1 → net +1 */
                 vstack++; break;
             case OP_SET_MODULE_VAR:
                 /* 模块变量写入：**peek** TOS（不弹）→ net 0 */

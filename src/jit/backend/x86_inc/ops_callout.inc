@@ -188,12 +188,74 @@
              * 不做原生内存访问的原因：模块指针是「每帧」的（vm.frames[frame_cnt-1].module），
              * 在机器码里硬编码帧/模块的结构体偏移太脆；且 SET 还带写屏障（必须走 VM 的
              * gc_write_barrier）。无模块 / 索引越界 → callout 置 failed → bailout 交解释器报错。 */
-            case OP_GET_MODULE_VAR:
             case OP_GET_MODULE_FUNC: {
                 uint16_t index = rd_short(ip + 1);
+                /* 窥孔：`OP_GET_MODULE_FUNC + OP_CALL` = 模块函数调用（scan 已解析出
+                 * ret_count 并允许了这次合并；这里再解析一次作防御性校验，解析不出来
+                 * 就拒绝编译整个循环 —— 宁可不编，不猜返回值个数）。 */
+                int merged_call = (ip + 6 <= end && ip[3] == OP_CALL);
+                if (merged_call) {
+                    int argc = rd_short(ip + 4);
+                    int rc = jit_resolve_module_func(index);
+                    if (rc <= 0) {
+                        if (jit_debug_on())
+                            fprintf(stderr, "[JIT-DEBUG] 模块函数 ret_count 不可知（globals[%u]）\n",
+                                    (unsigned)index);
+                        return 0;
+                    }
+                    size = 6;   /* 连同 OP_CALL 一起消费 */
+                    TOS_SPILL();
+                    EMIT_STORE_TMP(tmp1_disp, JIT_RSP);            /* vstack_top 参数 */
+                    EMIT_CALLOUT_BEGIN();
+                    /* 模块指针编译期嵌入（见 jit_priv.h：函数级 JIT 快路径不压帧）。 */
+                    emit_mov_reg_imm64(cb, JIT_ARG1, (uint64_t)(uintptr_t)jit_scan_get_module());
+                    EMIT_LOAD_TMP(JIT_ARG2, tmp1_disp);            /* vstack_top */
+                    emit_mov_reg_imm64(cb, JIT_ARG3, (uint64_t)argc);
+                    emit_mov_reg_imm64(cb, JIT_ARG4, (uint64_t)index);
+                    /* 5th param (ret_count): Windows x64 走第一个栈参数 [RSP+32]
+                     * （EMIT_CALLOUT_ALLOC 已预留 32B shadow + 16B 栈参数区），
+                     * System V 用 R8 —— 与 OP_STRUCT_INIT / MODULE_CALL 同款写法。 */
+#ifdef _WIN32
+                    emit_mov_reg_imm64(cb, JIT_RAX, (uint64_t)rc);
+                    emit_mov_mem8_reg(cb, JIT_RSP, 32, JIT_RAX);
+#else
+                    emit_mov_reg_imm64(cb, JIT_ARG5, (uint64_t)rc);
+#endif
+                    EMIT_CALL(jit_callout_call_module_func);
+                    EMIT_CALLOUT_END();
+                    EMIT_STORE_TMP(tmp2_disp, JIT_RAX);
+                    emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_callout_failed);
+                    emit_mov_reg_mem8(cb, JIT_RAX, JIT_R8, 0);
+                    emit_test_rr(cb, JIT_RAX, JIT_RAX);
+                    {
+                        EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                        int mc_fail = emit_jcc(cb, 0x85);          /* JNZ → bailout */
+                        patch_add(ctx, mc_fail, -1, 0);
+                    }
+                    emit_xor_rr(cb, JIT_RAX, JIT_RAX);
+                    emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
+                    EMIT_LOAD_TMP(JIT_RAX, tmp2_disp);
+                    /* 弹 (argc - rc + 1) 个实参槽：剩下 (rc-1) 个槽由 callout 写过
+                     * 额外的返回值，与 OP_CALL_GLOBAL_FUNC / INVOKE_METHOD 同构。 */
+                    int pop_bytes = (argc - rc + 1) * 8;
+                    if (pop_bytes > 0) {
+                        if (pop_bytes <= 127) {
+                            emit_byte(cb, 0x48); emit_byte(cb, 0x83); emit_byte(cb, 0xC4);
+                            emit_byte(cb, (uint8_t)pop_bytes);
+                        } else {
+                            emit_byte(cb, 0x48); emit_byte(cb, 0x81); emit_byte(cb, 0xC4);
+                            emit_uint32(cb, (uint32_t)pop_bytes);
+                        }
+                    }
+                    EMIT_VALUE_TO_RAW();
+                    TOS_PRODUCE();
+                    vstack -= (argc - rc);
+                    break;
+                }
                 TOS_SPILL();
                 EMIT_CALLOUT_BEGIN();
-                emit_mov_reg_imm64(cb, JIT_ARG1, (uint64_t)index);
+                emit_mov_reg_imm64(cb, JIT_ARG1, (uint64_t)(uintptr_t)jit_scan_get_module());
+                emit_mov_reg_imm64(cb, JIT_ARG2, (uint64_t)index);
                 EMIT_CALL(jit_callout_get_module_var);
                 EMIT_CALLOUT_END();
                 EMIT_VALUE_TO_RAW();
@@ -213,6 +275,31 @@
                 vstack++;
                 break;
             }
+            case OP_GET_MODULE_VAR: {
+                uint16_t index = rd_short(ip + 1);
+                TOS_SPILL();
+                EMIT_CALLOUT_BEGIN();
+                emit_mov_reg_imm64(cb, JIT_ARG1, (uint64_t)(uintptr_t)jit_scan_get_module());
+                emit_mov_reg_imm64(cb, JIT_ARG2, (uint64_t)index);
+                EMIT_CALL(jit_callout_get_module_var);
+                EMIT_CALLOUT_END();
+                EMIT_VALUE_TO_RAW();
+                EMIT_STORE_TMP(tmp1_disp, JIT_RAX);
+                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_callout_failed);
+                emit_mov_reg_mem8(cb, JIT_RAX, JIT_R8, 0);
+                emit_test_rr(cb, JIT_RAX, JIT_RAX);
+                {
+                    EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                    int mv2_fail = emit_jcc(cb, 0x85);      /* JNZ → bailout */
+                    patch_add(ctx, mv2_fail, -1, 0);
+                }
+                emit_xor_rr(cb, JIT_RAX, JIT_RAX);
+                emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
+                EMIT_LOAD_TMP(JIT_RAX, tmp1_disp);
+                TOS_PRODUCE();
+                vstack++;
+                break;
+            }
             case OP_SET_MODULE_VAR: {
                 uint16_t index = rd_short(ip + 1);
                 TOS_SPILL();                                   /* TOS 落到 [rsp]，值本身不变 */
@@ -222,8 +309,9 @@
                 EMIT_RAW_TO_VALUE();
                 EMIT_STORE_TMP(tmp1_disp, JIT_RAX);
                 EMIT_CALLOUT_BEGIN();
-                emit_mov_reg_imm64(cb, JIT_ARG1, (uint64_t)index);
-                EMIT_LOAD_TMP(JIT_ARG2, tmp1_disp);            /* TOS 的 Value 形态 */
+                emit_mov_reg_imm64(cb, JIT_ARG1, (uint64_t)(uintptr_t)jit_scan_get_module());
+                emit_mov_reg_imm64(cb, JIT_ARG2, (uint64_t)index);
+                EMIT_LOAD_TMP(JIT_ARG3, tmp1_disp);            /* TOS 的 Value 形态 */
                 EMIT_CALL(jit_callout_set_module_var);
                 EMIT_CALLOUT_END();
                 emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_callout_failed);
