@@ -648,11 +648,11 @@ inline-scan: 76(OP_STRING_ADD) / 88(模块变量访问) / 156(SWITCH_LOOKUP，R1
 |---|---|---|---|---|---|
 | ~~R4~~ | ~~`jit_func_cache` 冲突驱逐的 **use-after-free 隐患**~~ | ~~256 槽 direct-mapped，冲突时 `jit_mem_free` 掉占用者的机器码 —— 若那个函数**正在 C 栈上执行**（A 调 B、B 的 callout 又编译了撞槽的 C）就是 UAF~~ | ~~需要「执行中计数」+ 驱逐时延迟回收~~ | ~~高（内存安全）~~ | **已完成（§8.60，2026-09-14）**：确认存在（强制碰撞 4/4 崩 `0xC0000005`）并修复为**机器码延迟释放队列**（安全点判据复用 `jit_func_depth`/`jit_loop_depth`）；`LENO_JIT_FUNC_CACHE_SMALL=1` 做确定性复现，用例 `assert/test_jit_func_cache_churn.leno` |
 | ~~R1~~ | ~~`OP_SWITCH_LOOKUP` 进 JIT~~ | ~~file_manager 仅剩的"可做但难"拒收点（×1）。VM 侧是 int/bigint/float/string 四路二分查找；变长编码：`const_idx(2) count(2) default_off(4) [case_off(4)]…`~~ | ~~`opcode_size` 变长解码 + scan 的多目标前向记账 + codegen 线性比较链~~ | ~~中~~ | **已完成（§8.61，2026-09-14）**：查找逻辑抽成 `switch_lookup_index`（VM/JIT 共用，语义唯一来源）+ 变长 `opcode_size` + 多目标前向记账（内联侧保守拒绝）+ 线性比较链；`assert/test_jit_op_switch_lookup.leno`；**循环拒收清零**（直方图只剩刻意保留的 `138`） |
-| R2 | L7 余项成批补齐 | 余项：`OP_AS_CAST`(94)、`OP_GET_METHOD`(134，**裸方法取值**形态)、`OP_ARRAY_GET/SET`、`OP_DICT*`、`OP_SLICE`(79)、`OP_IN`、`OP_RANGE`、`OP_NEG`(33)、`OP_U8_TO_F64`(146) | 多为 callout 型，照 §8.52~§8.59 的模板走（`opcode_size` + 两处 scan + callout + codegen + 用例）；需要"语义唯一来源"抽取的（VM 里就地 READ 的那类）照 §8.61/§8.64/§8.65 的做法 | 低 | **批次 1（§8.63）**：`OP_IS_NULL`(48)。**批次 2（§8.64）**：`OP_STRING_ADD`(76)（由插值 `$"..."` 产生，不是 `+`；顺带解开内联侧）。**批次 3（§8.65）**：`OP_TYPE_CHECK`(93)——抽出 `type_check_value` 共用，顺带修掉 `TYPE_ENUM` 的 4 字节长度 bug；实测 `FuncCompiled 123 → 289`。**下一批候选**（实测排序）：`134:OP_GET_METHOD` 的裸取值形态（×4，§8.57 只做了带调用的窥孔，成本低）、`94:AS_CAST`（带值改写语义，直方图暂未出现）。注：`-d["k"]`、`x == null` 实测走已支持的路径，不必做 |
+| R2 | L7 余项成批补齐 | 余项：`OP_AS_CAST`(94)、`OP_GET_METHOD`(134，**裸方法取值**形态)、`OP_ARRAY_GET/SET`、`OP_DICT*`、`OP_SLICE`(79)、`OP_IN`、`OP_RANGE`、`OP_NEG`(33)、`OP_U8_TO_F64`(146) | 多为 callout 型，照 §8.52~§8.59 的模板走（`opcode_size` + 两处 scan + callout + codegen + 用例）；需要"语义唯一来源"抽取的（VM 里就地 READ 的那类）照 §8.61/§8.64/§8.65 的做法 | 低 | **批次 1（§8.63）**：`OP_IS_NULL`(48)。**批次 2（§8.64）**：`OP_STRING_ADD`(76)（由插值 `$"..."` 产生，不是 `+`；顺带解开内联侧）。**批次 3（§8.65）**：`OP_TYPE_CHECK`(93)——抽出 `type_check_value` 共用，顺带修掉 `TYPE_ENUM` 的 4 字节长度 bug；实测 `FuncCompiled 123 → 289`。**下一批候选**（实测排序）：**内联侧**补 `OP_GET_METHOD`（×36，见 R7；这是"内联能否成立"的问题，不影响循环编译）、`94:AS_CAST`（带值改写语义，直方图未出现）。注：`-d["k"]`、`x == null` 实测走已支持的路径，不必做；**循环级拒收此刻只剩刻意保留项**（`138`）/ R5 前置（`14`）/ 维持拒绝（`142`） |
 | ~~R3~~ | ~~L0 诊断收口~~ | ~~`opcode_size` 余项补全；把 scan 的 default 报错区分成 `unknown opcode`（缺长度）与 `unsupported opcode`（已收录长度但缺 case）~~ | ~~纯诊断，无行为变化~~ | ~~极低~~ | **已完成（§8.63，2026-09-14）**：补齐约 40 条长度（逐条与 VM 的 `READ_*`、`debug.c` 反汇编器交叉核对）；`OP_CLOSURE` 因长度依赖常量表而**故意保持"未知"**；报错分为 `unknown（长度未知）`/`unsupported（已收录长度、未实现）`。**实测收益**：同一负载的拒收清单从"含糊的 138"变成分类可排期（76×4 / 93×3 / 14×2 / 142×2 / 138×49），R2 的下一批因此是测出来的而不是猜的 |
 | R5 | 闭包创建与捕获变量（`OP_CLOSURE` / `GET/SET/CLOSE_UPVALUE`） | 循环里建闭包、闭包体内读写捕获变量都不进 JIT（被调函数带 upvalue 时自动退回 VM 重入 ⇒ 语义正确但不快） | 两件基础：**(a)** func-JIT ABI 要加 closure 通道（现为 `jfn(flocals, globals)`，无 upvalue 入口）；**(b)** 循环 JIT 的 locals 在 scratch 区（迭代即复用）⇒ 直接捕获会产生**悬空 upvalue**，只能先允许"捕获已在 upvalue 链上的变量"，或改 locals 布局 | 高（ABI + 生命周期不变量） | 单独一轮，**先设计不变量再动手** |
 | R6 | 函数级 JIT 的多返回值 + `OP_TAIL_CALL` | `jit_compile_function` 直接拒收 `return_count > 1`；`OP_TAIL_CALL` 在循环 JIT 里等价"提前返回"（应归入 `has_reachable_return` 拒绝），只有函数级 JIT 有价值 | 多返回：扩返回值通道（`jit_fn_result` 单值 → 多槽约定），调用方回填约定已就绪（§8.59 的 helper）；尾调用：帧复用语义另算 | 中 | 排在 R5 之后 |
-| R7 | 内联的跨模块限制 | 模块变量/函数访问被 inline scan 一刀拒绝（§8.55/§8.56）——因为内联后没有 callee 的帧，模块归属不可知 | 在 inline site 记录 callee 的 module，与 caller 相同才允许内联 | 低 | 有内联收益需求时再做 |
+| R7 | 内联的跨模块限制 + 内联侧 opcode 缺口 | ① 模块变量/函数访问被 inline scan 一刀拒绝（§8.55/§8.56）——内联后没有 callee 的帧，模块归属不可知（**实测 ×166**，内联侧第一大）；② inline scan 没有 `OP_GET_METHOD` 的 case ⇒ 含方法调用的函数一律不能内联（**实测 ×36**）；③ `138:GET_CSTRUCT_DEF ×116`（维持拒绝） | ① 在 inline site 记录 callee 的 module，与 caller 相同才允许内联；② 照 loop scan 的记账补 `GET_METHOD`（配对形态 `-(argc+1-rc)`，rc 用同样的 `jit_resolve_method_ret_count`，解析不出就拒绝内联） | 低 | 有内联收益需求时再做（**内联只影响性能，不影响正确性** —— 与循环级缺口分开排期） |
 | R8 | 性能基准复盘 | §9 的数据需要按最新覆盖面重跑（JIT vs `LENO_NO_JIT=1`），量化"覆盖面增长（如 `FuncCompiled 5→161`）到底换来多少" | 纯测量；也顺便验证 R4 的延迟回收没有性能回退 | 极低 | 随时（建议 R4 之后做一次） |
 | ~~R9~~ | ~~`OP_SWITCH_LOOKUP` 的 callout 开销~~ | ~~R9 前的基准显示：JIT 下 switch 每轮一次 callout（+15.5ms/3M 轮），比等价的 if 链慢 3.7 倍~~ | ~~编译期分流：case 值全 int 时发内联比较链~~ | ~~低（非 int 一律退回原 callout 路径）~~ | **已完成（§8.62，2026-09-14）**：int 快路径 + int48 守卫（bailout 交解释器，保住 bigint 值能命中 int case 的语义）+ 重复值排除；switch 的 JIT 时间 30.4 → **15.7 ms**，与 if 同级 |
 | — | **建议维持拒绝** | `OP_THROW`、`OP_AWAIT`/`OP_ASYNC_CALL`、`OP_CLIB_CALL`/`OP_CFUNC_CALLBACK`、`OP_GET_FIELD_ADDR`、`OP_DTOR_LOCAL`、`OP_TAIL_CALL_NATIVE`、`OP_PUSH_TYPE_ARGS`、**`OP_GET_CSTRUCT_DEF`(138)**、模块定义期指令 | 语义特殊（异常/协程/FFI/泛型/仅初始化期出现），收益低、风险高 | — | 维持 |
@@ -4084,6 +4084,71 @@ unsupported:93  x3   ← OP_TYPE_CHECK   ← 同上
    —— 评估"补一条 opcode 值不值"时，循环 / 内联 / 函数级 JIT 三条都要算。
 3. 诊断（R3）是**递归见效**的：分类直方图先把 `76`/`93` 照出来，补完之后又照出了 `134`
    —— 补齐一层就露出下一层，这比一次猜一个 opcode 高效得多。
+
+***
+
+### 8.66 R2 批次 4：`OP_GET_METHOD` 独立取值形态 + 一次**测量方法学纠错**（2026-09-14）
+
+**做了什么**
+
+* **规则唯一来源**：把 `op_struct.inc` 里 `OP_GET_METHOD`（struct 分支）的方法表查找规则抽成
+  `struct_method_lookup(def, name, &closure, &func)`（`vm.c`，声明进 `leno_vm.h`）——
+  按名字线性比对、**跳过 ctor/dtor**。只抽**规则**：inline cache 更新、GC 安全的 push/pop、
+  报错文本都留在调用方（JIT 侧没有 IC，报错一律走 bailout 交解释器）。
+* `jit_callout_get_method`：只做**成功路径**（struct 预创建闭包 / 新建 closure /
+  原生方法 → bound method；File/Socket 同理），其余 failed → bailout。
+* `ops_callout.inc`：`case OP_GET_METHOD` 顶部加**独立形态**分支，判定条件与
+  `jit_scan.c` 的同名 case **完全一致**（`ip + 6 <= end && ip[3] == OP_CALL` 才是可合并的
+  调用形态）—— 两边条件必须一字不差，否则 size 记账错位。
+* `jit_scan.c`：原来对独立形态是**显式拒绝**，现在按净 0 记账（pop 1 obj push 1 方法值）。
+
+**测量方法学纠错（本轮最有价值的收获）**
+
+排查中我按老习惯统计"拒收直方图"，得到 `unsupported:134 ×36`，一度以为"裸 GET_METHOD ×4
+是最高频缺口"。实际拆开才发现：
+
+* 我的 grep 模式 `scan FAIL: ... opcode (\d+)` **同时命中了 `inline-scan FAIL: ...`**
+  （子串重叠！）⇒ **内联侧**的拒收被当成**循环侧**的拒收，两个完全不同的结论被混在一起。
+* 用确切消息 `[JIT-DEBUG] scan FAIL` 拆开后，真实分布是：
+
+```
+循环级（决定"循环能否编译"）：138 ×2（刻意保留） / 14 ×2（R5 闭包） / 142 ×2（维持拒绝）
+内联级（只影响"能否内联"）：134 ×36（本轮的 GET_METHOD）+ 138 ×116 + 模块变量访问 ×166
+```
+
+⇒ **循环级拒收此刻只剩刻意保留项**；而我本轮补的 `GET_METHOD` 在**内联侧**才是真正的大头
+（内联扫描压根没有这条 opcode 的 case）。教训：**统计必须按扫描器分开**，
+"循环扫描"与"内联扫描"是两套完全不同的判据与收益（前者决定正确性/覆盖面，后者只是性能）。
+
+**一个必须说清楚的限制**：本轮的独立形态**当前无源码入口** ——
+grep 编译器可见，`OP_GET_METHOD` 的所有发射点后面都紧跟调用（`emit_call` / `OP_ASYNC_CALL`），
+**没有**"取了方法值就不调用"的写法；那些后面跟 `OP_ASYNC_CALL` 的（`obj?.m()`、async 方法）
+属于**维持拒绝**，所以扫描到它们仍会在 `OP_ASYNC_CALL` 处拒收 ⇒ 新分支目前不可达。
+
+* 那么为什么不回退？因为**一致性是强制的**：扫描已经按净 0 接受了独立形态，
+  codegen 就**必须**能处理它（否则会按"配对形态"去读 `ip[4]` 当 argc ⇒ 记账错位）。
+  两条路径要么都支持、要么都拒绝，不能只改一边。
+* 本轮真正在跑的收益是**抽出 `struct_method_lookup`**（配对形态用例 `test_jit_op_get_method`
+  在跑，规则被两边共用）；独立形态本身是 `ASYNC_CALL` / 安全访问（`obj?.m()`）将来的**前置**。
+
+**验证**
+
+* 配对形态回归：`assert/test_jit_op_get_method.leno` JIT 与 `LENO_NO_JIT=1` 都 `exit=0`
+  （确认新分支没吞掉原有配对路径 —— 这是本轮最关键的回归）。
+* `file_manager` 交互负载：循环级拒收只剩 `138 ×2 / 14 ×2 / 142 ×2`（全部为刻意保留项
+  或 R5 前置），**运行时 bailout 0**、`closed cleanly`；内联侧分布见上表。
+* `assert` 全套见提交说明；编译 0 warning。
+
+**教训**
+
+1. **grep 子串会骗人**：`inline-scan FAIL: unsupported opcode` 里含有 `scan FAIL:` ——
+   统计拒收原因必须用**行首锚定**或分别按两种扫描器过滤，否则"内联"的问题会被当成
+   "循环"的问题，据此排出的优先级全错（本轮差点如此）。
+2. **扫描与 codegen 必须同进同退**：opcode 的"接受/拒绝"是**成对**的契约。
+   只放开扫描会造成记账错位（静默算错），只放开 codegen 则是死代码。
+3. **"补一条 opcode"之前先确认它有没有源码入口**：这一条的名字叫"取值形态"，
+   但编译器根本不发不带调用的裸形态 —— 花在建言前的这一次 grep 比事后的返工便宜得多
+   （§8.64 的教训在这里第二次成立）。
 
 ***
 

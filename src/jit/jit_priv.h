@@ -384,6 +384,13 @@ Value jit_callout_string_add(Value a, Value b);
  * struct/face/enum 的名字字符串常量（编译期从 chunk->constants 取好，常量表是 GC 根）。
  * 纯判定：不分配、不报错 ⇒ 永不置 jit_callout_failed（无 bailout 分支）。 */
 int jit_callout_type_check(Value value, int expected_type, int elem_type, Value name_val);
+
+/* ---- R2 批次 4：独立的方法取值（`OP_GET_METHOD` 不紧跟 `OP_CALL`）----
+ * 解释器要建 closure / bound method（会分配）。成功路径复用 VM 的
+ * struct_method_lookup（规则唯一来源，§8.66）；找不到 / 类型不支持 ⇒ failed →
+ * bailout → 解释器重放（报错文本、行号、分配语义与 NO_JIT 完全一致）。
+ * name_val 是编译期从 chunk->constants 取的方法名字符串常量（常量表是 GC 根）。 */
+Value jit_callout_get_method(Value obj_val, Value name_val);
 /* 模块变量读写：module 由 codegen **编译期嵌入**（jit_scan_get_module），
  * 不是运行时查 vm.frames[frame_cnt-1] —— 函数级 JIT 的快路径不压帧，
  * 查帧会读到调用方的模块（§8.55 的修正 + §8.56 的教训）。 */

@@ -902,13 +902,10 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                     vstack -= (gm_argc + 1 - gm_rc);
                     break;
                 }
-                /* 独立的 OP_GET_METHOD（只取方法值、不调用）：要建 bound method / 闭包，
-                 * 且没有 OP_CALL 可合并 ⇒ 交解释器。 */
-                if (jit_debug_on())
-                    fprintf(stderr, "[JIT-DEBUG] scan FAIL: 独立的 OP_GET_METHOD（非调用形态）"
-                                    "at offset %d\n", (int)(ip - body_start));
-                r->capable = 0;
-                return;
+                /* 独立的 OP_GET_METHOD（只取方法值、不调用）：解释器要建 bound method /
+                 * 闭包 ⇒ 走 callout（§8.66）。栈效应 pop 1(obj) push 1(方法值) → net 0。
+                 * （codegen 用**完全相同的条件**分辨这两种形态，size 记账才不会错位。） */
+                break;
             }
             case OP_INVOKE_METHOD_TYPED: {
                 /* name_const(2) + arg_count(2) + struct_type_name_const(2)；

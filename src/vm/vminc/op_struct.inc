@@ -925,21 +925,10 @@ OPCODE(OP_GET_METHOD) {
         vm.ic_misses++;
 #endif
 
-        // 在方法表中查找
+        // 在方法表中查找（**规则唯一来源**：struct_method_lookup，§8.66 —— 跳过 ctor/dtor）
         ObjClosure* closure = NULL;
         ObjFunction* func = NULL;
-        for (int i = 0; i < def->method_count; i++) {
-            if (strcmp(def->methods[i].name, method_name->chars) == 0) {
-                // 跳过构造/析构函数（不允许显式调用）
-                if (def->has_ctor && i == def->ctor_index) continue;
-                if (def->has_dtor && i == def->dtor_index) continue;
-                closure = def->methods[i].closure;
-                func = def->methods[i].func;
-                break;
-            }
-        }
-
-        if (func) {
+        if (struct_method_lookup(def, method_name, &closure, &func)) {
             if (closure) {
 #ifndef VM_USE_THREAD_LOCAL
                 // 更新内联缓存：仅缓存预创建闭包（def 为 GC 根，closure 经 def 可达，指针稳定）

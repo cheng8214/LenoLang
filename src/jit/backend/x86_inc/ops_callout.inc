@@ -80,6 +80,42 @@
              * scan 阶段已保证可解析。动态派发到非法/原生布局时 callout 会置 failed → bailout
              * 交解释器（循环侧有 JIT_BAILOUT_LIMIT 兜底）。 */
             case OP_GET_METHOD: {
+                /* ---- 独立取值形态（`obj.m` 不紧跟 OP_CALL）—— R2 批次 4（§8.66）----
+                 * 判定条件必须与 jit_scan.c 的同名 case **完全一致**（否则 size 记账错位）：
+                 * 只有 `ip[3] == OP_CALL` 才是可合并的动态派发调用形态。 */
+                if (!(ip + 6 <= end && ip[3] == OP_CALL)) {
+                    uint16_t gm_bare_idx = rd_short(ip + 1);
+                    Value gm_name_val = NULL_VAL;
+                    if (ctx->chunk && ctx->chunk->constants &&
+                        (int)gm_bare_idx < ctx->chunk->const_cnt) {
+                        gm_name_val = ctx->chunk->constants[gm_bare_idx];
+                    }
+                    TOS_CONSUME_RAX();                     /* 弹接收者（raw）→ RAX */
+                    EMIT_RAW_TO_VALUE();
+                    EMIT_STORE_TMP(tmp1_disp, JIT_RAX);
+                    EMIT_CALLOUT_BEGIN();
+                    EMIT_LOAD_TMP(JIT_ARG1, tmp1_disp);    /* obj */
+                    emit_mov_reg_imm64(cb, JIT_ARG2, (uint64_t)gm_name_val);  /* 方法名常量 */
+                    EMIT_CALL(jit_callout_get_method);
+                    EMIT_CALLOUT_END();
+                    EMIT_VALUE_TO_RAW();
+                    EMIT_STORE_TMP(tmp2_disp, JIT_RAX);
+                    /* 找不到方法 / 类型不支持 → bailout 交解释器（报错文本一致） */
+                    emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_callout_failed);
+                    emit_mov_reg_mem8(cb, JIT_RAX, JIT_R8, 0);
+                    emit_test_rr(cb, JIT_RAX, JIT_RAX);
+                    {
+                        EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                        int gm_bare_fail = emit_jcc(cb, 0x85);   /* JNZ → bailout */
+                        patch_add(ctx, gm_bare_fail, -1, 0);
+                    }
+                    emit_xor_rr(cb, JIT_RAX, JIT_RAX);
+                    emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
+                    EMIT_LOAD_TMP(JIT_RAX, tmp2_disp);
+                    TOS_PRODUCE();
+                    break;                                 /* pop1 push1 → net 0 */
+                }
+                /* ---- 以下为 §8.57 的「GET_METHOD + OP_CALL」动态派发调用形态 ---- */
                 uint16_t gm_name_idx = rd_short(ip + 1);
                 int gm_argc = rd_short(ip + 4);
                 int gm_rc = jit_resolve_method_ret_count(cur_chunk, gm_name_idx);

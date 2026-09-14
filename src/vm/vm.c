@@ -482,6 +482,35 @@ int type_check_value(Value value, TypeKind expected_type, TypeKind elem_type, Va
 }
 
 // ============================================================================
+// struct 方法表查找 —— **规则唯一来源**（§8.66）
+//   从 vm/vminc/op_struct.inc 的 OP_GET_METHOD（struct 分支）抽出**查找规则**：
+//   按名字线性比对方法表，**跳过 ctor/dtor**（不允许显式调用）。
+//   只抽"规则"，不抽周边：inline cache 更新、GC 安全的 push/pop、报错文本都留在原处
+//   —— 那些是解释器侧的实现细节（JIT 侧没有 IC，且报错一律走 bailout 交解释器）。
+//   找到 → 返回 1，并按需回填 out_closure（预创建闭包，可能为 NULL）/ out_func。
+// ============================================================================
+int struct_method_lookup(ObjStructDef* def, ObjString* method_name,
+                         ObjClosure** out_closure, ObjFunction** out_func) {
+    if (!def || !method_name) return 0;
+    ObjClosure* closure = NULL;
+    ObjFunction* func = NULL;
+    for (int i = 0; i < def->method_count; i++) {
+        if (strcmp(def->methods[i].name, method_name->chars) == 0) {
+            // 跳过构造/析构函数（不允许显式调用）
+            if (def->has_ctor && i == def->ctor_index) continue;
+            if (def->has_dtor && i == def->dtor_index) continue;
+            closure = def->methods[i].closure;
+            func = def->methods[i].func;
+            break;
+        }
+    }
+    if (!func) return 0;
+    if (out_closure) *out_closure = closure;
+    if (out_func) *out_func = func;
+    return 1;
+}
+
+// ============================================================================
 // 辅助函数实现 - 从各 .c 文件合并（需要在 OPCODE 之前定义）
 // ============================================================================
 // 注意：按依赖顺序包含，被依赖的在前

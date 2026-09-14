@@ -240,6 +240,12 @@ Value string_add(Value a, Value b);
 // 返回 1 = 匹配。纯判定：不分配、不报错。
 int type_check_value(Value value, TypeKind expected_type, TypeKind elem_type, Value name_val);
 
+// struct 方法表查找（定义在 vm.c）—— 规则唯一来源（§8.66）。
+// 按名字线性比对、跳过 ctor/dtor；找到返回 1 并回填 out_closure（预创建闭包，可为 NULL）
+// 与 out_func。inline cache / GC 安全的 push-pop / 报错文本留在调用方（解释器与 JIT 各自处理）。
+int struct_method_lookup(ObjStructDef* def, ObjString* method_name,
+                         ObjClosure** out_closure, ObjFunction** out_func);
+
 typedef struct Chunk {
     uint8_t* code;
     int len;

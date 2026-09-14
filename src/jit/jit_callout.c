@@ -1050,6 +1050,72 @@ int jit_callout_type_check(Value value, int expected_type, int elem_type, Value 
     return type_check_value(value, (TypeKind)expected_type, (TypeKind)elem_type, name_val);
 }
 
+/* Callout: OP_GET_METHOD 的**独立取值形态**（`obj.m` 不紧跟 `OP_CALL`）—— R2 批次 4（§8.66）。
+ * 只做**成功路径**的查找；失败一律 failed → bailout → 解释器重放
+ * （报错文本、行号、分配语义全与 NO_JIT 一致，含"类型 'X' 没有方法 'Y'"）。
+ * 成功路径（与解释器同一套规则）：
+ *   struct  : struct_method_lookup（**规则唯一来源**，跳过 ctor/dtor）
+ *             → 有预创建闭包就直接返回；否则**新建 closure**（字段初始化与解释器同款）
+ *             → 方法表里没有则查原生方法（struct_find_method）→ bound method
+ *   File/Socket: file/socket_find_method → bound method
+ * 分配安全性：GC 在 JIT 帧里只置让出标志、不就地回收（§8.36/§8.37），
+ *   所以不需要像解释器那样先把 receiver 压回 VM 栈当 GC 根（§8.64 同款论证）。
+ * name_val 是编译期从 chunk->constants 取的方法名字符串常量（常量表是 GC 根）。 */
+Value jit_callout_get_method(Value obj_val, Value name_val) {
+    if (!val_is_obj(name_val) || val_as_obj(name_val)->type != OBJ_STRING) {
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+    ObjString* method_name = (ObjString*)val_as_obj(name_val);
+
+    if (!val_is_obj(obj_val)) {   /* 解释器会报"尝试在非对象类型上获取方法" */
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+    Object* obj = val_as_obj(obj_val);
+
+    if (obj->type == OBJ_STRUCT) {
+        ObjStructDef* def = ((ObjStruct*)obj)->def;
+        ObjClosure* closure = NULL;
+        ObjFunction* func = NULL;
+        if (struct_method_lookup(def, method_name, &closure, &func)) {
+            if (closure) return val_obj((Object*)closure);
+            /* 只有 func、没有预创建闭包 → 新建（与解释器 OP_GET_METHOD 同款初始化） */
+            ObjClosure* new_closure = (ObjClosure*)gc_alloc(sizeof(ObjClosure), OBJ_CLOSURE);
+            if (!new_closure) {
+                jit_callout_failed = 1;
+                return NULL_VAL;
+            }
+            new_closure->function = func;
+            new_closure->upvalue_count = func->upvalue_count;
+            for (int i = 0; i < func->upvalue_count; i++) {
+                new_closure->upvalues[i] = NULL;
+            }
+            return val_obj((Object*)new_closure);
+        }
+        ObjNative* native_method = struct_find_method(method_name->chars);
+        if (native_method) {
+            return val_obj((Object*)bound_method_new(obj_val, native_method));
+        }
+        jit_callout_failed = 1;   /* "类型 'X' 没有方法 'Y'" 交解释器报 */
+        return NULL_VAL;
+    }
+
+    if (obj->type == OBJ_FILE || obj->type == OBJ_SOCKET) {
+        ObjNative* native_method = (obj->type == OBJ_FILE)
+                                       ? file_find_method(method_name->chars)
+                                       : socket_find_method(method_name->chars);
+        if (native_method) {
+            return val_obj((Object*)bound_method_new(obj_val, native_method));
+        }
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+
+    jit_callout_failed = 1;       /* 其他对象类型同样交解释器报错 */
+    return NULL_VAL;
+}
+
 /* ---- 通用相等比较的 C 实现（镜像解释器 vm/vminc/op_compare.inc 的 OP_EQ）----
  * 逐条对齐解释器规则：
  *   1) int/int 精确比较；任一是 float 时按 double 比较（BigInt 与 float 混合也走这里，
