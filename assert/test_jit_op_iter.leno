@@ -1,0 +1,30 @@
+// OP_ITER_GET / OP_ITER_GET_VALUE 回归 —— §8.53（覆盖面 L2）
+//
+// 语法是 `for 集合 to 元素[, 索引]`，四种形态各跑 3000 轮（> JIT 热阈值 50）保证 JIT 接管：
+//   for arr to x        数组元素    → 原生快路径（codegen 直接读 elements[idx]）
+//   for arr to y, i     数组索引变量 → 同一个 OP_ITER_GET（索引变量走非 dict 分支）
+//   for d to k, v       dict 键+值   → OP_ITER_GET(dict→键) + OP_ITER_GET_VALUE(dict→值)
+//   for s to ch         字符串单字符 → callout 的分配路径（str_new）
+//
+// 作用：一旦 ITER_GET/ITER_GET_VALUE 的语义或栈记账出错，JIT 段的结果就会与断言不符。
+// 本用例在 JIT 与 LENO_NO_JIT=1 两种模式下都必须通过。
+main() {
+    Array[int] arr = [1, 2, 3, 4]
+    Dict[string, int] d = {"a": 1, "b": 2, "c": 3}
+    string s = "abc"
+
+    int sum = 0, cnt = 0, keylen = 0, chsum = 0
+    for 3000 to r {
+        for arr to x { sum = sum + x }                              // 10/轮
+        for arr to y, i { cnt = cnt + i }                           // 6/轮
+        for d to k, v { keylen = keylen + k.len(); sum = sum + v }  // 3 + 6/轮
+        for s to ch { chsum = chsum + ch.len() }                    // 3/轮
+    }
+
+    assert_eq(sum, 48000)      // 3000 * 16
+    assert_eq(cnt, 18000)      // 3000 * 6
+    assert_eq(keylen, 9000)    // 3000 * 3
+    assert_eq(chsum, 9000)     // 3000 * 3
+
+    print("test_jit_op_iter: OK")
+}

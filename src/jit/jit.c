@@ -591,6 +591,14 @@ fprintf(stderr, "[JIT-DEBUG] EXEC call #%d, fn=%p, locals=%p\n",
     /* jit_loop_depth：标记"正在执行循环 JIT 机器码"。
      * GC 的同步回收路径（gc_alloc 分配失败）据此避让 —— 见 §8.36。 */
     jit_loop_depth++;
+    /* jit_callout_failed 是**粘滞**的：codegen 只在「检查通过的成功路径」上清它，
+     * bailout 那条路不清（也没机会清）。若不在这里复位，一次真实的 callout 失败会让
+     * 此后每一次进入任何带检查的循环都在第一条检查处立刻 bailout ——
+     * 统计上表现为「1 次真因 + N 次连锁」（§8.53 实测 15 次里只有 1 次是真因），
+     * 白烧 JIT_BAILOUT_LIMIT 的预算、把本该能编的循环拉黑。
+     * 函数级 JIT 入口早已这么做（见 jit_try_hot_func_call 的 `jit_callout_failed = 0`），
+     * 这里补齐循环侧。复位是安全的：本次执行中任何真实失败都会在 codegen 检查前重新置位。 */
+    jit_callout_failed = 0;
     int result = entry->fn(frame->locals, vm_ptr->globals);
     jit_loop_depth--;
     if (jit_debug_on()) {

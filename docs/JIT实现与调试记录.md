@@ -603,42 +603,44 @@ bailout，只加一半会出现「能编译但一进去就 bailout」的假收�
 | --- | --- | --- | --- |
 | L0 | 补齐 `opcode_size()` 的 56 项 + 把 `scan_loop_body` / `scan_callee_for_inline` 的 default 报错区分成 `unsupported opcode`（已收录长度但未实现） | 诊断（让「缺长度」与「缺 case」一眼可分） | **未做** |
 | L1 | `OP_LENGTH`（`.len()`） | 高（`for x.len() to i` 遍地） | **已完成**（§8.52）：`opcode_size` + 两处 scan + 数字原生/对象 callout 双路径 + `assert/test_jit_op_length.leno` |
-| L2 | `OP_ITER_GET` / `OP_ITER_GET_VALUE`（for-in 迭代） | 高（补完 L1 后它是 file_manager 里最高频的缺口 ×4） | 未做 |
+| L2 | `OP_ITER_GET` / `OP_ITER_GET_VALUE`（for-in 迭代） | 高（补完 L1 后是 file_manager 里最高频的缺口 ×4） | **已完成**（§8.53）：`opcode_size` + 两处 scan + 数组原生快路径 + callout + `assert/test_jit_op_iter.leno`；顺带修掉 `jit_callout_failed` 在循环入口未复位导致的连锁 bailout |
 | L3 | `OP_SET_FIELD` / `OP_GET_FIELD`（callout，`field_idx` 已在指令里） | 高（对象状态更新，×2） | 未做 |
-| L4 | `OP_SWITCH_LOOKUP`（变长：`const(2) count(2) default(4) [offset(4)]...`） | 中（×2，编译器 switch 语句） | 未做 |
+| L4 | `OP_GET_METHOD`（struct 方法查找；静态类型解析不出来时才发，×2）+ `OP_SWITCH_LOOKUP`（变长：`const(2) count(2) default(4) [offset(4)]...`，×2） | 中 | 未做 |
 | L5 | `OP_SET_DECLARED_FACE`（op+const16）/ `OP_SET_PTR_ELEM_TYPE`（op+byte） | 中（×2 / ×1）。**不能当 no-op 跳过**：`declared_face` 影响后续虚拟分派、`element_type` 影响 FFI 读写宽度 | 未做 |
-| L6 | `OP_GET_MODULE_VAR` / `OP_SET_MODULE_VAR`（callout，用当前帧 `module`） | 高（SDL3 大量模块级变量：`_hwnd = hwnd` 这类，×2） | 未做 |
+| L6 | `OP_GET_MODULE_VAR` / `OP_SET_MODULE_VAR` / `OP_GET_MODULE_FUNC`（callout，用当前帧 `module`） | 高（SDL3 大量模块级变量与函数：`_hwnd = hwnd` 这类，×2 / ×2） | 未做 |
 | L7 | `OP_STRING_ADD`（×1，内联扫描里也出现）/ `OP_NEG` / `OP_IS_NULL` / `OP_ARRAY_GET` / `OP_ARRAY_SET` / `OP_ARRAY_APPEND` / `OP_INDEX_SET` / `OP_DICT` / `OP_DICT_GET` / `OP_DICT_GET_KEY` / `OP_TYPE_CHECK` / `OP_AS_CAST` / `OP_SLICE` / `OP_IN` / `OP_RANGE` / `OP_U8_TO_F64` | 中 | 未做 |
 | L8 | `OP_CALL` / `OP_TAIL_CALL` / `OP_CLOSURE`（**裸**调用/建闭包；注意 `OP_GET_PROPERTY`+`OP_CALL` 的窥孔已把「方法调用」形态吃掉，所以这两条只在闭包/函数值调用时出现） | 中 | 未做 |
 | — | **建议维持拒绝**：`OP_THROW`、`OP_AWAIT` / `OP_ASYNC_CALL`、`OP_CLIB_CALL` / `OP_CFUNC_CALLBACK`、`OP_GET_FIELD_ADDR`、`OP_DTOR_LOCAL`、`OP_TAIL_CALL_NATIVE`、`OP_PUSH_TYPE_ARGS`、模块定义期指令（`OP_DEFINE_GLOBAL*` / `OP_STRUCT_DEF` / `OP_ENUM_DEF` / `OP_FACE_DEF` / `OP_CSTRUCT_DEF` / `OP_LOAD_NATIVE_MODULE` / `OP_INIT_LENOMODULE` / `OP_DEFINE_MODULE_FUNC`） | 语义特殊（异常/协程/FFI/泛型/仅初始化期出现），实现收益低、风险高 | 维持 |
 
-**实测拒收直方图（`file_manager.leno`，2026-09-14，补完 L1 之后）**：
+**实测拒收直方图（`file_manager.leno`，2026-09-14，补完 L2 之后）**：
 
 ```
-op=81 (OP_ITER_GET)          ×4
 op=132(OP_SET_FIELD)         ×2
+op=134(OP_GET_METHOD)        ×2
 op=156(OP_SWITCH_LOOKUP)     ×2
 op=39 (OP_SET_DECLARED_FACE) ×2
 op=88 (OP_GET_MODULE_VAR)    ×2
+op=90 (OP_GET_MODULE_FUNC)   ×2
 op=38 (OP_SET_PTR_ELEM_TYPE) ×1
 inline-scan: 132 / 76(OP_STRING_ADD) / 88    ← 只影响内联，不阻断循环编译
 ```
 
-**关键：单补一个 opcode ≠ 解锁循环。** 补完 L1 后 `OP_LENGTH` 从直方图里消失，但
-`scan FAIL` 的**总行数没变**（16）—— 那些循环的**拒收点前移**到了下一个缺口
-（同一个循环接连撞上 80→…→81 这种链）。只有某个循环的**全部**缺口都被补齐，
-它才真正进 JIT ⇒ 这类工作要**成批推进**，并按上面这张直方图排序
-（本表 L2 / L3 / L6 的先后就是这么定的）。
+（L1 之前是 `81×4 / 132×2 / 156×2 / 39×2 / 88×2 / 38×1`：补 L1 后 `80(OP_LENGTH)` 消失、
+补 L2 后 `81(OP_ITER_GET)` 消失，**每次都是拒收点前移**，总行数基本不变。）
 
-**55 项未收录全量（`编号:名字`，用于 L0 逐项补长度；`80:LENGTH` 已于 §8.52 补齐）**：
+**关键：单补一个 opcode ≠ 解锁循环。** 只有某个循环的**全部**缺口都被补齐，它才真正进 JIT
+⇒ 这类工作要**成批推进**，并按上面这张直方图排序（本表 L3 / L4 / L6 的先后就是这么定的）。
+
+**53 项未收录全量（`编号:名字`，用于 L0 逐项补长度；`80:LENGTH`、`81:ITER_GET`、
+`82:ITER_GET_VALUE` 已分别于 §8.52 / §8.53 补齐，故从本表移除）**：
 
 ```
 14:GET_UPVALUE 15:SET_UPVALUE 16:CLOSE_UPVALUE 17:DEFINE_GLOBAL 18:GET_GLOBAL_FUNC
 19:DEFINE_GLOBAL_FUNC 20:GET_NATIVE 33:NEG 38:SET_PTR_ELEM_TYPE 39:SET_DECLARED_FACE
 48:IS_NULL 53:IN 54:RANGE 59:CALL 60:TAIL_CALL 61:CLOSURE 65:ARRAY_GET 66:ARRAY_SET
 67:ARRAY_APPEND 69:DICT 70:DICT_GET 72:DICT_GET_KEY 73:LOAD_NATIVE_MODULE
-75:GET_MODULE_CONST 76:STRING_ADD 78:INDEX_SET 79:SLICE 81:ITER_GET
-82:ITER_GET_VALUE 87:THROW 88:GET_MODULE_VAR 89:SET_MODULE_VAR 90:GET_MODULE_FUNC
+75:GET_MODULE_CONST 76:STRING_ADD 78:INDEX_SET 79:SLICE 87:THROW 88:GET_MODULE_VAR
+89:SET_MODULE_VAR 90:GET_MODULE_FUNC
 91:DEFINE_MODULE_FUNC 93:TYPE_CHECK 94:AS_CAST 129:STRUCT_DEF 131:GET_FIELD
 132:SET_FIELD 133:GET_FIELD_ADDR 134:GET_METHOD 135:ENUM_DEF 136:FACE_DEF
 137:CSTRUCT_DEF 138:GET_CSTRUCT_DEF 139:AWAIT 140:ASYNC_CALL 141:INIT_LENOMODULE
@@ -667,6 +669,7 @@ inline-scan: 132 / 76(OP_STRING_ADD) / 88    ← 只影响内联，不阻断循�
 | OP\_GET\_PROPERTY / OP\_INVOKE\_METHOD\_TYPED | callout（`jit_callout_get_property` / `jit_callout_invoke_method`），并带 GET\_PROPERTY+OP\_CALL 窥孔合并；`_TYPED` **支持多返回值回填**（§8.20），且因字节码带静态类型名可做编译期去虚拟化 / 方法内联（§8.30） |
 | OP\_CALL\_NATIVE | callout `jit_callout_call_native` |
 | OP\_INDEX / OP\_ARRAY / OP\_DICT\_SET / OP\_INDEX\_SET\_NOPUSH / OP\_ARRAY\_APPEND\_NOPUSH | callout |
+| OP\_ITER\_GET / OP\_ITER\_GET\_VALUE | ITER\_GET 的「数组 + int 索引」走**原生**（直接读 `elements[idx]`）；其余（数字迭代 / dict 键值 / enum / string 单字符 / struct 字段名）走 callout `jit_callout_iter_get`，错误与越界一律 bailout 交解释器重放（§8.53，覆盖面 L2） |
 | OP\_LENGTH | **数字原生**（32 位 `CVTTSD2SI` + 负值 clamp，复刻解释器的 `(int)double`）/ 对象与非法类型走 callout `jit_callout_length`（§8.52，覆盖面 L1） |
 | OP\_STRUCT\_INIT（非泛型） | callout `jit_callout_struct_init` |
 | OP\_RETURN / OP\_RETURN\_MULTI | 支持（函数级 JIT；多返回值仅内联路径）。**循环体内可达的 return 会让整个循环被拒绝**（§8.21） |
@@ -3241,6 +3244,61 @@ inline-scan: 132 / 76(OP_STRING_ADD) / 88   ← 只影响内联，不阻断循�
    **结果对 ≠ 走了 JIT** —— 扫描拒绝后解释器照样算出正确结果，探针会静默失效。
 4. 别把两次运行（JIT / `LENO_NO_JIT`）的输出串着看：stdout 与 stderr 交错会让人把
    「解释器的结果」当成「JIT 的结果」（本次就被 `str=5 …` 那行串过一次）。分开跑、分开读。
+
+***
+
+### 8.53 `OP_ITER_GET` / `OP_ITER_GET_VALUE` 进 JIT：数组原生 + 其余 callout（§5 覆盖面 L2）（2026-09-14）
+
+**背景**：补完 L1 后，`file_manager` 拒收直方图里最高频的是 `op=81`（×4）。
+语法 `for 集合 to 元素[, 索引]`（`codegen_stmt.c` 的 for 生成器）会发这组指令：
+`ITER_GET`（array→元素 / dict→**键** / string→单字符 / struct→字段名 / 数字→索引本身）
+\+ `ITER_GET_VALUE`（dict→值 / struct→字段值）；两者都是「弹 obj + index，压 1 个结果」，net -1。
+
+**实现（4 处）**
+
+1. `jit_scan.c`：`opcode_size()` 补 1 字节；`scan_loop_body()` 与 `scan_callee_for_inline()`
+   各补 case（net -1，与 `OP_INDEX` 同组）。
+2. `jit_callout.c` + `jit_priv.h`：`jit_callout_iter_get(obj, index, want_value)`，
+   语义逐条对齐 `vm/vminc/op_utils.inc`（ITER\_GET）与 `vm/vminc/op_iter.inc`（ITER\_GET\_VALUE）。
+3. `ops_index.inc`：原生快路径（**仅 ITER\_GET**：obj 是数组 + index 是 int48 +
+   无符号比较判界内 → 直接 `mov rax, [elements + idx*8]`）+ callout 慢路径。
+   所有错误与越界由 callout 置 `jit_callout_failed` → bailout → 解释器重放本条指令，
+   保证异常语义与 `try/catch` 可捕获性（§8.28 的教训）。
+4. `assert/test_jit_op_iter.leno`：四种形态各 3000 轮，JIT 与 `LENO_NO_JIT=1` 都必须过。
+
+**踩坑①（本次自引入，与 §8.51(a) 同类）：跨 `EMIT_RAW_TO_VALUE()` 用 R8 保存值**
+第一次实现每次迭代都 bailout。诊断打印显示 callout 收到的 `index` 是**未装箱的裸位模式**
+（`0xffff…fff9`）—— 因为 `EMIT_RAW_TO_VALUE()` **以 R8 为 scratch**，而我把 index 放进 R8
+*之后*又调它去转换 obj，R8 被踩。修法：两次转换都在 RAX 上做完、就地写回 tmp 槽；
+实参寄存器一律留到 `EMIT_CALLOUT_BEGIN()` 之后再载入（与 `OP_INDEX` 的既有写法同构）。
+
+**踩坑②：`jit_callout_failed` 粘滞 ⇒ 「1 次真因 + N 次连锁」**
+上面那个真因只发生 **1 次**，但统计报 `Bailouts: 15`（5 个循环 × 3 次）。原因：codegen 只在
+「检查通过的成功路径」上清标志，bailout 那条路没机会清，于是标志一直保持 1，
+此后每次进入**任何**带检查的循环都会在第一条检查处立刻 bailout，白烧 `JIT_BAILOUT_LIMIT`
+（3 次后循环被拉黑）。修法：`jit_try_hot_loop` 执行机器码前复位一次
+（与函数级入口 `jit_try_hot_func_call` 的做法一致）。
+**排查提示**：看 `Bailouts` 时要定位**第一次**失败点（诊断行取 `-First 1`），否则会被连锁数字误导。
+
+**验证**
+
+* 新增测试：JIT / `LENO_NO_JIT=1` 都 `exit=0`，`sum=48000 cnt=18000 keylen=9000 chsum=9000` 两边一致。
+* 同一用例 `LENO_JIT_DEBUG=1`：`capable=1`、`Executed 145`、**`Bailouts 0`**（修复前 15）。
+* `assert` 全套 **278 passed / 0 failed**（277 + 新增 1）。
+* `file_manager` 自动交互负载：`unknown opcode 81` 归零、运行时 bailout 仍 **0**、
+  `Compiled 27 / Executed 491`。
+* 直方图继续前移（见 §5）：现为 `132(SET_FIELD) / 134(GET_METHOD) / 156(SWITCH_LOOKUP) /
+  39 / 88 / 90(GET_MODULE_FUNC) / 38`。
+
+**教训**
+
+1. **宏的副作用就是契约**：`EMIT_RAW_TO_VALUE` / `EMIT_VALUE_TO_RAW` 都以 R8 为 scratch ——
+   写新 case 前先读宏定义。这与 §8.51(a) 的「RAX 被改写成 type_a」是**同一类**错误，
+   一天内出现两次，说明「新增 codegen 分支」的检查清单里必须包含「我用的每个宏动了哪些寄存器」。
+2. 诊断打印要一次给足（类型 + 位模式 + 参数归属）：`obj=0xfffc…(objtype=2) / idx=0xffff…fff9 /
+   want=0` 一行就能判定「实参被踩成裸位模式」，比对着汇编猜快得多。
+3. 全局状态标志（`jit_callout_failed`）必须有**明确的复位点且覆盖所有入口**（函数级 + 循环级），
+   否则错误会跨执行粘滞，把统计数字和 bailout 预算一起带偏。
 
 ***
 

@@ -342,6 +342,7 @@ Value jit_callout_dict_set(Value dict_val, Value key_val, Value value);
 int jit_callout_index_set(Value obj_val, Value idx_val, Value value);
 Value jit_callout_div(Value a, Value b);
 Value jit_callout_length(Value v);
+Value jit_callout_iter_get(Value obj_val, Value index_val, int want_value);
 Value jit_callout_value_eq(Value a, Value b, int invert);
 Value jit_callout_acc_fields(Value obj_val, uint8_t count, const uint8_t* field_indices);
 Value jit_callout_struct_init(int64_t* vstack_top, uint16_t name_const_idx,

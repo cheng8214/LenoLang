@@ -185,6 +185,8 @@ int opcode_size(const uint8_t* ip) {
         case OP_NOT:  /* logical NOT */
         case OP_INDEX: /* array/dict index access (callout) */
         case OP_LENGTH: /* x.len()：数字原生 / 其余 callout（pop1 push1） */
+        case OP_ITER_GET:        /* for-in：数组元素原生 / 其余 callout（pop2 push1） */
+        case OP_ITER_GET_VALUE:  /* for-in 取值：dict/struct callout（pop2 push1） */
         case OP_ARRAY_APPEND_NOPUSH: /* arr.add(v) statement (callout) */
         case OP_DICT_SET: /* dict[key]=val (callout) */
         case OP_INDEX_SET_NOPUSH: /* arr[idx]=val statement (callout) */
@@ -327,6 +329,7 @@ static int scan_callee_for_inline(Chunk* cc, int local_count,
             case OP_EQ_FLOAT: case OP_LT_FLOAT: case OP_GT_FLOAT:
             case OP_LE_FLOAT: case OP_GE_FLOAT:
             case OP_DIV: case OP_INDEX:
+            case OP_ITER_GET: case OP_ITER_GET_VALUE:   /* pop 2 push 1 → net -1 */
             case OP_ADD: case OP_SUB: case OP_MUL: case OP_MOD:
             case OP_EQ: case OP_NEQ:
             case OP_SHL: case OP_SHR: case OP_USHR:
@@ -616,6 +619,8 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                 /* pop 1 push 1 → net 0（结果恒为 int，见 ops_misc.inc 的 OP_LENGTH） */
                 break;
             case OP_INDEX:
+            case OP_ITER_GET:
+            case OP_ITER_GET_VALUE:
                 /* pop 2 (obj, index) push 1 → net -1 */
                 vstack--;
                 break;

@@ -126,6 +126,118 @@
                 vstack--;
                 break;
             }
+            /* ---- OP_ITER_GET / OP_ITER_GET_VALUE（for-in 迭代）—— §5 覆盖面 L2 ----
+             * 解释器语义：ITER_GET 在 vm/vminc/op_utils.inc、ITER_GET_VALUE 在
+             * vm/vminc/op_iter.inc；两者都是「弹 obj + index，压 1 个结果」（net -1）。
+             *   ITER_GET      ：数字→索引本身 / array→元素 / dict→**键** / enum→成员值 /
+             *                   string→单字符 / struct→**字段名**
+             *   ITER_GET_VALUE：只支持 dict→值、struct→字段值，其余抛错
+             * JIT 分工：
+             *   - 原生快路径（仅 ITER_GET）：obj 是数组 + index 是 int48 + 索引在界内
+             *     → 直接读 elements[index]（`for x in arr` 是最高频形态）。
+             *   - 其余（数字迭代 / dict 键值 / enum / string / struct）全交 callout。
+             *   - **所有错误与越界**由 callout 置 jit_callout_failed → bailout →
+             *     解释器重放本条指令，抛出与 NO_JIT 一致、可被 try/catch 捕获的异常
+             *     （只 error_add_at + 返回 NULL 会被 JIT 静默吞掉，见 §8.28）。 */
+            case OP_ITER_GET:
+            case OP_ITER_GET_VALUE: {
+                int it_want_value = (op == OP_ITER_GET_VALUE);
+                TOS_SPILL();
+                /* 弹出顺序与 OP_INDEX 一致：RAX = index（TOS），RDX = obj */
+                emit_pop_reg(cb, JIT_RAX);
+                emit_pop_reg(cb, JIT_RDX);
+                EMIT_STORE_TMP(tmp1_disp, JIT_RAX);      /* index（raw） */
+                EMIT_STORE_TMP(tmp2_disp, JIT_RDX);      /* obj（raw） */
+
+                int it_done_loc = -1;
+                if (!it_want_value) {
+                    /* 快路径守卫（与 OP_INDEX 同构）：index 是 int48、obj 是 OBJ_ARRAY、
+                     * (uint64)index < count。任一条不成立 → callout（含越界报错）。 */
+                    emit_mov_rr(cb, JIT_R8, JIT_RAX);
+                    emit_sar_imm(cb, JIT_R8, 47);
+                    emit_inc_reg(cb, JIT_R8);
+                    emit_cmp_reg_imm8(cb, JIT_R8, 1);
+                    int it_idx_notint = emit_jcc(cb, 0x87);      /* JA → callout */
+                    emit_mov_rr(cb, JIT_R8, JIT_RDX);
+                    {   /* shr r8, 48 */
+                        int b = (JIT_R8 >> 3) & 1;
+                        emit_byte(cb, rex(1, 0, 0, b));
+                        emit_byte(cb, 0xC1);
+                        emit_byte(cb, modrm(3, 5, JIT_R8 & 7));
+                        emit_byte(cb, 48);
+                    }
+                    {   /* cmp r8, 0x0000FFFC（top16 == TAG_OBJ） */
+                        int b = (JIT_R8 >> 3) & 1;
+                        emit_byte(cb, rex(1, 0, 0, b));
+                        emit_byte(cb, 0x81);
+                        emit_byte(cb, modrm(3, 7, JIT_R8 & 7));
+                        emit_uint32(cb, 0x0000FFFC);
+                    }
+                    int it_notobj = emit_jcc(cb, 0x85);          /* JNE → callout */
+                    emit_and_rr(cb, JIT_RDX, JIT_R10);           /* RDX = Object* */
+                    emit_byte(cb, 0x80);
+                    emit_byte(cb, 0x7A);                         /* cmp byte [rdx+0] */
+                    emit_byte(cb, 0x00);
+                    emit_byte(cb, (uint8_t)OBJ_ARRAY);
+                    int it_notarr = emit_jcc(cb, 0x85);          /* JNE → callout */
+                    /* count 必须 32 位零扩展加载（§8.28：64 位会把相邻 capacity 读进来） */
+                    emit_mov_reg32_mem8(cb, JIT_R8, JIT_RDX, (int8_t)offsetof(ObjArray, count));
+                    emit_cmp_rr(cb, JIT_RAX, JIT_R8);
+                    int it_oob = emit_jcc(cb, 0x83);             /* JAE → callout（越界报错） */
+                    emit_mov_reg_mem8(cb, JIT_RDX, JIT_RDX, 32); /* rdx = arr->elements */
+                    emit_byte(cb, 0x48);
+                    emit_byte(cb, 0x8B);
+                    emit_byte(cb, 0x04);
+                    emit_byte(cb, 0xC2);                         /* mov rax, [rdx + rax*8] */
+                    EMIT_VALUE_TO_RAW();
+                    it_done_loc = emit_jmp(cb);
+
+                    /* 快路径的 4 个失败出口汇总到 callout 桩入口 */
+                    patch_rel32(cb, it_idx_notint, cb->len);
+                    patch_rel32(cb, it_notobj, cb->len);
+                    patch_rel32(cb, it_notarr, cb->len);
+                    patch_rel32(cb, it_oob, cb->len);
+                }
+
+                /* ---- callout：obj → ARG1，index → ARG2 ----
+                 * ⚠ EMIT_RAW_TO_VALUE() **以 R8 为 scratch**（见其定义）。所以两次转换
+                 * 必须都在 RAX 上做完、结果就地写回 tmp 槽，实参寄存器一律留到 callout
+                 * 序言里再载入 —— 否则「先把 index 放进 R8，再转换 obj」会把 index 踩掉
+                 * （实测：callout 收到的 index 是 obj 转换残留的裸位模式，恒判「index 不是
+                 * 数字」→ 每次迭代 bailout）。 */
+                EMIT_LOAD_TMP(JIT_RAX, tmp1_disp);           /* index（raw） */
+                EMIT_RAW_TO_VALUE();
+                EMIT_STORE_TMP(tmp1_disp, JIT_RAX);          /* 就地写回：index（Value） */
+                EMIT_LOAD_TMP(JIT_RAX, tmp2_disp);           /* obj（raw） */
+                EMIT_RAW_TO_VALUE();
+                EMIT_STORE_TMP(tmp2_disp, JIT_RAX);          /* 就地写回：obj（Value） */
+                EMIT_CALLOUT_BEGIN();
+                EMIT_LOAD_TMP(JIT_ARG1, tmp2_disp);          /* obj */
+                EMIT_LOAD_TMP(JIT_ARG2, tmp1_disp);          /* index */
+                emit_mov_reg_imm64(cb, JIT_ARG3, it_want_value ? 1 : 0);
+                EMIT_CALL(jit_callout_iter_get);
+                EMIT_CALLOUT_END();
+                EMIT_VALUE_TO_RAW();
+                /* 错误/越界 → bailout 交解释器重放（报错文本与 try/catch 都在那边） */
+                EMIT_STORE_TMP(tmp3_disp, JIT_RAX);
+                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_callout_failed);
+                emit_mov_reg_mem8(cb, JIT_RAX, JIT_R8, 0);
+                emit_test_rr(cb, JIT_RAX, JIT_RAX);
+                {
+                    EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                    int it_fail = emit_jcc(cb, 0x85);            /* JNZ → bailout */
+                    patch_add(ctx, it_fail, -1, 0);
+                }
+                emit_xor_rr(cb, JIT_RAX, JIT_RAX);
+                emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
+                EMIT_LOAD_TMP(JIT_RAX, tmp3_disp);
+
+                if (it_done_loc >= 0) patch_rel32(cb, it_done_loc, cb->len);
+                TOS_PRODUCE();
+                vstack--;
+                break;
+            }
+
             /* ---- OP_ARRAY_APPEND_NOPUSH（arr.add(v) 语句形式）----
              * 内联快路径：目标确为数组、有剩余容量、且不需要写屏障时，直接在机器码
              * 里做 elements[count] = value; count++，不走 C callout。

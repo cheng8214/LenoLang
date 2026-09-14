@@ -640,6 +640,10 @@ Value jit_callout_length(Value v) {
         return val_int(len);
     }
     if (!val_is_obj(v)) {
+        if (jit_debug_on())
+            fprintf(stderr, "[LEN-FAIL] non-obj: int=%d float=%d null=%d bool=%d bits=%016llx\n",
+                    val_is_int(v), val_is_float(v), val_is_null(v), val_is_bool(v),
+                    (unsigned long long)v);
         jit_callout_failed = 1;
         return NULL_VAL;
     }
@@ -651,9 +655,87 @@ Value jit_callout_length(Value v) {
         case OBJ_CSTRUCT_ARRAY: return val_int(((ObjCStructArray*)val_as_obj(v))->count);
         case OBJ_STRUCT:        return val_int(((ObjStruct*)val_as_obj(v))->def->field_count);
         default:
+            if (jit_debug_on())
+                fprintf(stderr, "[LEN-FAIL] unsupported obj type=%d\n", (int)val_as_obj(v)->type);
             jit_callout_failed = 1;
             return NULL_VAL;
     }
+}
+
+/* Callout: OP_ITER_GET / OP_ITER_GET_VALUE（for-in 迭代）。
+ * want_value = 0 → ITER_GET：数字→索引本身、array→元素、dict→**键**、enum→成员值、
+ *                          string→单字符、struct→**字段名**
+ * want_value = 1 → ITER_GET_VALUE：只支持 dict→值、struct→字段值
+ * 语义逐条对齐 vm/vminc/op_utils.inc（ITER_GET）与 vm/vminc/op_iter.inc（ITER_GET_VALUE）。
+ * **所有错误/越界都不在这里造**：只置 jit_callout_failed → bailout → 解释器重放本条指令，
+ * 抛出与 NO_JIT 一致、可被 try/catch 捕获的异常（只 error_add_at + 返回 NULL 会被 JIT 静默吞掉）。
+ * 数组 + int 索引的形态在 codegen 里有原生快路径，走不到这里。 */
+Value jit_callout_iter_get(Value obj_val, Value index_val, int want_value) {
+    const char* why = NULL;
+    if (!val_is_num(index_val)) { why = "index not num"; goto fail; }
+    int index = (int)value_to_double(index_val);
+
+    /* 数字迭代（`for n to ...` 的索引本身）；ITER_GET_VALUE 不支持数字 */
+    if (val_is_num(obj_val)) {
+        if (want_value) { why = "numeric + want_value"; goto fail; }
+        int max = (int)value_to_double(obj_val);
+        if (index < 0 || index >= max) { why = "numeric oob"; goto fail; }
+        return val_int(index);
+    }
+    if (!val_is_obj(obj_val)) { why = "obj not obj"; goto fail; }
+
+    switch (val_as_obj(obj_val)->type) {
+        case OBJ_ARRAY: {
+            if (want_value) { why = "array + want_value"; goto fail; }
+            ObjArray* arr = (ObjArray*)val_as_obj(obj_val);
+            if (index < 0 || index >= arr->count) { why = "array oob"; goto fail; }
+            return arr->elements[index];
+        }
+        case OBJ_DICT: {
+            ObjDict* dict = (ObjDict*)val_as_obj(obj_val);
+            if (index < 0 || index >= dict->order_count) { why = "dict oob"; goto fail; }
+            return want_value ? dict_get_value_by_index(dict, index)
+                              : dict_get_key_by_index(dict, index);
+        }
+        case OBJ_STRING: {
+            if (want_value) { why = "string + want_value"; goto fail; }
+            ObjString* str = (ObjString*)val_as_obj(obj_val);
+            if (index < 0 || index >= str->char_len) { why = "string oob"; goto fail; }
+            int byte_offset = utf8_char_offset(str->chars, str->len, index);
+            int char_bytes = utf8_char_byte_len(str->chars, str->len, byte_offset);
+            ObjString* one = str_new(&str->chars[byte_offset], char_bytes);
+            if (!one) { why = "str alloc failed"; goto fail; }
+            return val_obj((Object*)one);
+        }
+        case OBJ_ENUM_DEF: {
+            if (want_value) { why = "enum + want_value"; goto fail; }
+            ObjEnumDef* ed = (ObjEnumDef*)val_as_obj(obj_val);
+            if (index < 0 || index >= ed->member_count) { why = "enum oob"; goto fail; }
+            return val_int((int)ed->members[index].value);
+        }
+        case OBJ_STRUCT: {
+            ObjStruct* so = (ObjStruct*)val_as_obj(obj_val);
+            if (index < 0 || index >= so->def->field_count) { why = "struct oob"; goto fail; }
+            if (want_value) return struct_get_field(so, index);
+            ObjString* fname = str_copy(so->def->fields[index].name,
+                                        (int)strlen(so->def->fields[index].name));
+            if (!fname) { why = "field name alloc failed"; goto fail; }
+            return val_obj((Object*)fname);
+        }
+        default:
+            why = "unsupported obj type";
+            goto fail;
+    }
+
+fail:
+    if (jit_debug_on())
+        fprintf(stderr, "[ITER-FAIL] %s (want_value=%d, idx=%lld/0x%016llx, obj=0x%016llx, objtype=%d)\n",
+                why ? why : "?", want_value,
+                (long long)value_to_double(index_val), (unsigned long long)index_val,
+                (unsigned long long)obj_val,
+                val_is_obj(obj_val) ? (int)val_as_obj(obj_val)->type : -1);
+    jit_callout_failed = 1;
+    return NULL_VAL;
 }
 
 /* ---- 通用相等比较的 C 实现（镜像解释器 vm/vminc/op_compare.inc 的 OP_EQ）----
