@@ -12,8 +12,10 @@
 //   [7] arr.add           : 通用 callout 路径
 //   [8] dict.set          : 通用 callout 路径
 //
-// 各项规模按"JIT 侧 ≥ 数十 ms"标定（`times.ms()` 只有毫秒粒度）；
-// 末尾 CHECK 行两侧必须一致。
+// **计时一律用 times.us()，不要用 times.ms()**：
+//   ms() 在 Windows 上是 GetTickCount64 ⇒ 只有 ~15.6ms 的跳变粒度，
+//   会把快项目测成 `0 ms`、把两项测成完全相同的数（量化假象）。
+//   us()/ns() 走 QueryPerformanceCounter，才是真高精度。
 //
 // 用法：
 //   build\lenojit.exe "examples\性能测试\JIT覆盖面基准.leno"
@@ -21,9 +23,9 @@
 // ============================================================================
 import times
 
-int N       = 20000000   // [1][2][4][5][6]
-int N_STR   = 1000000    // [3] 每次迭代分配一个字符串，规模单独标定
-int N_COLL  = 10000000   // [7][8]
+int N      = 5000000    // [1][2][4][5][6]
+int N_STR  = 500000     // [3] 每次迭代分配一个字符串，规模单独标定
+int N_COLL = 3000000    // [7][8]
 
 struct Pair {
     int a = 0
@@ -31,6 +33,11 @@ struct Pair {
 }
 
 func noop(): int { return 1 }
+
+// 对照用：函数体**读模块变量** ⇒ 内联扫描必然拒绝它（§8.55：内联后没有 callee 的帧，
+// 模块归属不可知）⇒ 调用只能走 callout 路径。用它测出"内联到底值多少"。
+int GV = 1
+func noopNoInline(): int { return GV }
 
 func classify(int v): int {
     switch v {
@@ -43,88 +50,96 @@ func classify(int v): int {
 }
 
 func bench() {
-    var t1 = 0
-    var t2 = 0
+    var t1 = 0.0
+    var t2 = 0.0
     var acc = 0
 
     // [1] 纯循环 + i++
-    t1 = times.ms()
+    t1 = times.us()
     var i = 0
     for N { i++ }
-    t2 = times.ms()
-    print($"[1] 纯循环 i++          : " + (t2 - t1) + " ms")
+    t2 = times.us()
+    print($"[1] 纯循环 i++          : " + (t2 - t1) + " us")
     acc = acc + i
 
     // [2] 空函数调用（裸 OP_CALL + 函数级 JIT）
-    t1 = times.ms()
+    t1 = times.us()
     var s = 0
     for N { s = s + noop() }
-    t2 = times.ms()
-    print($"[2] 空函数调用          : " + (t2 - t1) + " ms")
+    t2 = times.us()
+    print($"[2] 空函数调用          : " + (t2 - t1) + " us")
     acc = acc + s
 
+    // [2b] 空函数调用（**无法内联**：callee 读模块变量 ⇒ 只能走 callout 路径）
+    t1 = times.us()
+    var s2 = 0
+    for N { s2 = s2 + noopNoInline() }
+    t2 = times.us()
+    print($"[2b] 空函数调用(不可内联): " + (t2 - t1) + " us")
+    acc = acc + s2
+
     // [3] 字符串插值（OP_STRING_ADD）
-    t1 = times.ms()
+    t1 = times.us()
     var last = ""
     var j = 0
     while j < N_STR {
         last = $"v{j}"
         j = j + 1
     }
-    t2 = times.ms()
-    print($"[3] 字符串插值          : " + (t2 - t1) + " ms")
+    t2 = times.us()
+    print($"[3] 字符串插值          : " + (t2 - t1) + " us")
     if last == $"v{N_STR-1}" { acc = acc + 1 }
 
     // [4] switch 4 case + default（OP_SWITCH_LOOKUP + int 快路径）
-    t1 = times.ms()
+    t1 = times.us()
     var sacc = 0
     var k = 0
     while k < N {
         sacc = sacc + classify(k % 5)
         k = k + 1
     }
-    t2 = times.ms()
-    print($"[4] switch 4case        : " + (t2 - t1) + " ms")
+    t2 = times.us()
+    print($"[4] switch 4case        : " + (t2 - t1) + " us")
     acc = acc + sacc
 
     // [5] `is` 判定（OP_TYPE_CHECK）
-    t1 = times.ms()
+    t1 = times.us()
     var hits = 0
     var m = 0
     while m < N {
         if classify(m % 5) is int { hits = hits + 1 }
         m = m + 1
     }
-    t2 = times.ms()
-    print($"[5] is 类型判定         : " + (t2 - t1) + " ms")
+    t2 = times.us()
+    print($"[5] is 类型判定         : " + (t2 - t1) + " us")
     acc = acc + hits
 
     // [6] struct 字段读写（OP_GET_FIELD / OP_SET_FIELD）
-    t1 = times.ms()
+    t1 = times.us()
     var p = new Pair(a = 0, b = 0)
     var n = 0
     while n < N {
         p.a = p.a + 1
         n = n + 1
     }
-    t2 = times.ms()
-    print($"[6] struct 字段读写     : " + (t2 - t1) + " ms")
+    t2 = times.us()
+    print($"[6] struct 字段读写     : " + (t2 - t1) + " us")
     acc = acc + p.a
 
     // [7] arr.add
-    t1 = times.ms()
+    t1 = times.us()
     var arr = []
     for N_COLL { arr.add(1) }
-    t2 = times.ms()
-    print($"[7] arr.add             : " + (t2 - t1) + " ms")
+    t2 = times.us()
+    print($"[7] arr.add             : " + (t2 - t1) + " us")
     acc = acc + arr.len()
 
     // [8] dict.set
-    t1 = times.ms()
+    t1 = times.us()
     var d = {}
     for N_COLL { d.set("k", 1) }
-    t2 = times.ms()
-    print($"[8] dict.set            : " + (t2 - t1) + " ms")
+    t2 = times.us()
+    print($"[8] dict.set            : " + (t2 - t1) + " us")
     acc = acc + d.len()
 
     print($"CHECK: acc=" + acc)
