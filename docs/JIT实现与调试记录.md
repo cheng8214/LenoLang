@@ -648,6 +648,7 @@ inline-scan: 76(OP_STRING_ADD) / 88(模块变量访问) / 156(SWITCH_LOOKUP，R1
 |---|---|---|---|---|---|
 | ~~R4~~ | ~~`jit_func_cache` 冲突驱逐的 **use-after-free 隐患**~~ | ~~256 槽 direct-mapped，冲突时 `jit_mem_free` 掉占用者的机器码 —— 若那个函数**正在 C 栈上执行**（A 调 B、B 的 callout 又编译了撞槽的 C）就是 UAF~~ | ~~需要「执行中计数」+ 驱逐时延迟回收~~ | ~~高（内存安全）~~ | **已完成（§8.60，2026-09-14）**：确认存在（强制碰撞 4/4 崩 `0xC0000005`）并修复为**机器码延迟释放队列**（安全点判据复用 `jit_func_depth`/`jit_loop_depth`）；`LENO_JIT_FUNC_CACHE_SMALL=1` 做确定性复现，用例 `assert/test_jit_func_cache_churn.leno` |
 | ~~R1~~ | ~~`OP_SWITCH_LOOKUP` 进 JIT~~ | ~~file_manager 仅剩的"可做但难"拒收点（×1）。VM 侧是 int/bigint/float/string 四路二分查找；变长编码：`const_idx(2) count(2) default_off(4) [case_off(4)]…`~~ | ~~`opcode_size` 变长解码 + scan 的多目标前向记账 + codegen 线性比较链~~ | ~~中~~ | **已完成（§8.61，2026-09-14）**：查找逻辑抽成 `switch_lookup_index`（VM/JIT 共用，语义唯一来源）+ 变长 `opcode_size` + 多目标前向记账（内联侧保守拒绝）+ 线性比较链；`assert/test_jit_op_switch_lookup.leno`；**循环拒收清零**（直方图只剩刻意保留的 `138`） |
+| **R12** | **【内存安全·最高优先级】JIT 下「循环体内 dict 取值 → 存局部变量」堆损坏** | 见 §12.1：最小形态可 100% 复现 `0xC0000374`；已夹逼到"循环体内的 dict 取值 + 存局部变量"，与字段读无关；已证明**不是** R9/R2/R8 引入（`4cf9e9ed` 同样崩） | 先查 `OP_SET_LOCAL`/`SET_LOCAL_POP` 用 `cur_local_map[slot]` 时不检查 `si < 0`（`mark_local` 在 `num_locals >= JIT_MAX_LOCALS` 时静默返回 ⇒ 偏移可能是垃圾值 ⇒ 写到 scratch 区外） | **高（内存损坏）** | **最优先**（高于 R11/R5/R7 等一切性能项） |
 | R2 | L7 余项成批补齐 | 余项：`OP_AS_CAST`(94)、`OP_GET_METHOD`(134，**裸方法取值**形态)、`OP_ARRAY_GET/SET`、`OP_DICT*`、`OP_SLICE`(79)、`OP_IN`、`OP_RANGE`、`OP_NEG`(33)、`OP_U8_TO_F64`(146) | 多为 callout 型，照 §8.52~§8.59 的模板走（`opcode_size` + 两处 scan + callout + codegen + 用例）；需要"语义唯一来源"抽取的（VM 里就地 READ 的那类）照 §8.61/§8.64/§8.65 的做法 | 低 | **批次 1（§8.63）**：`OP_IS_NULL`(48)。**批次 2（§8.64）**：`OP_STRING_ADD`(76)（由插值 `$"..."` 产生，不是 `+`；顺带解开内联侧）。**批次 3（§8.65）**：`OP_TYPE_CHECK`(93)——抽出 `type_check_value` 共用，顺带修掉 `TYPE_ENUM` 的 4 字节长度 bug；实测 `FuncCompiled 123 → 289`。**下一批候选**（实测排序）：**内联侧**补 `OP_GET_METHOD`（×36，见 R7；这是"内联能否成立"的问题，不影响循环编译）、`94:AS_CAST`（带值改写语义，直方图未出现）。注：`-d["k"]`、`x == null` 实测走已支持的路径，不必做；**循环级拒收此刻只剩刻意保留项**（`138`）/ R5 前置（`14`）/ 维持拒绝（`142`） |
 | ~~R3~~ | ~~L0 诊断收口~~ | ~~`opcode_size` 余项补全；把 scan 的 default 报错区分成 `unknown opcode`（缺长度）与 `unsupported opcode`（已收录长度但缺 case）~~ | ~~纯诊断，无行为变化~~ | ~~极低~~ | **已完成（§8.63，2026-09-14）**：补齐约 40 条长度（逐条与 VM 的 `READ_*`、`debug.c` 反汇编器交叉核对）；`OP_CLOSURE` 因长度依赖常量表而**故意保持"未知"**；报错分为 `unknown（长度未知）`/`unsupported（已收录长度、未实现）`。**实测收益**：同一负载的拒收清单从"含糊的 138"变成分类可排期（76×4 / 93×3 / 14×2 / 142×2 / 138×49），R2 的下一批因此是测出来的而不是猜的 |
 | R5 | 闭包创建与捕获变量（`OP_CLOSURE` / `GET/SET/CLOSE_UPVALUE`） | 循环里建闭包、闭包体内读写捕获变量都不进 JIT（被调函数带 upvalue 时自动退回 VM 重入 ⇒ 语义正确但不快） | 两件基础：**(a)** func-JIT ABI 要加 closure 通道（现为 `jfn(flocals, globals)`，无 upvalue 入口）；**(b)** 循环 JIT 的 locals 在 scratch 区（迭代即复用）⇒ 直接捕获会产生**悬空 upvalue**，只能先允许"捕获已在 upvalue 链上的变量"，或改 locals 布局 | 高（ABI + 生命周期不变量） | 单独一轮，**先设计不变量再动手** |
@@ -4593,6 +4594,69 @@ RAX 常驻栈顶，`a + b` 退化成「pop 一次 + add + 留在 RAX」，只在
 ***
 
 ## 12. 当前未解决问题
+
+### 12.1 【未修复·内存安全】循环体内「dict 取值 → 存局部变量」在 JIT 下堆损坏（2026-09-14 发现）
+
+**症状**：`exit=-1073741571` = **`0xC0000374` STATUS_HEAP_CORRUPTION**。
+
+**最小形态**（探针，已隔离）：
+
+```leno
+struct P { int a = 7; int b = 9 }
+main() {
+    var box = {}
+    box["p"] = new P(a = 7, b = 9)
+    var s = 0
+    var i = 0
+    while i < 300000 {
+        var q = box["p"]   // ← 循环体内的 dict 取值 + 存入局部变量
+        s = s + 1
+        i = i + 1
+    }
+}
+```
+
+**四变体夹逼（每个只差一处）**
+
+| 变体 | 循环体内 | JIT 结果 |
+| --- | --- | --- |
+| B | `var q = box["p"]` + `s = s + q.a` | **崩** `0xC0000374` |
+| B2 | dict 取值**移到循环外**，循环内只 `s = s + q.a` | 正常（0.73ms/30万轮 = 2.4ns，真 JIT） |
+| B3 | 静态类型 struct 局部 + `s = s + q.a` | 正常（0.74ms） |
+| B4 | **只** `var q = box["p"]`，不读字段 | **崩** |
+
+⇒ 充分条件是**循环体内的「dict 取值 → 存局部变量」**；**与 `OP_GET_FIELD` 无关**（B4 证明）。
+`LENO_NO_JIT=1` 下四个变体全部正常。
+
+**已排除：不是本轮（R9/R2 各批/R8/基准）引入**
+用 `git worktree` 在 `4cf9e9ed`（R9 之前）重建二进制，同一探针**同样崩溃**；
+且涉及的两个 codegen 文件（`ops_index.inc` 的 dict 慢路径、`ops_stack.inc` 的 `OP_SET_LOCAL`）
+自 `bbc99809` 起未再改动。（`b817680b^`（R4 之前）在本机已无法构建，故只能证到"R9 之前"。）
+
+**诊断线索（已按证据修正到第二步）**
+
+1. 第一版线索（"`OP_SET_LOCAL` 不检查 `si < 0`、`mark_local` 静默返回 ⇒ 偏移越界"）**已证伪**：
+   `mark_local` 在槽位耗尽时会 `capable = 0` 拒绝循环（不是静默返回），
+   而 `LENO_JIT_DEBUG` 打出的实际映射干净（`scratch[0..2]`、`disp=-8/-16/-24`）。
+2. **当前最有力的线索**：把四个变体按"循环内是否有 dict 取值"与"是否真的留在 JIT 里"排开 ——
+
+| 变体 | 循环内 dict 取值 | 是否留在 JIT | 结果 |
+| --- | --- | --- | --- |
+| B / B4 | 有（30 万次） | **是**（`capable=1`、无 bailout） | **崩** |
+| A（`s + box["p"].a`） | 有 | **否**（3 次 `int48` bailout 后放弃 JIT） | 不崩 |
+| B2 / B3 | 无 | 是 | 不崩 |
+
+⇒ 充分条件是「**循环留在 JIT 机器码里反复执行 `OP_INDEX` 的 dict callout**」。
+下一步应从 `jit_callout_index` 的 dict 分支与其 callout 前后（保存/恢复、以及
+`vm_grow_frames` 重分配 `vm.frames` 时的 `jit_reloaded_locals` 回写）开始查；
+`LENO_JIT_DEBUG` 显示崩溃有 `[JIT-TRACE] PRE` 行、**没有** POST 行。
+3. 同一形态另有性能异常：A 形态在 JIT 下 3 次 bailout 后放弃 ⇒ **比纯解释器还慢**
+   （156ms vs 146ms）。记账修好后这两件事很可能一起消失。
+
+**为什么优先级最高**：内存损坏 > 一切性能项（同 §8.60 / R4 的判断）。
+在修复前，**不要**把"含 dict 取值 + 局部变量声明"的循环当作已支持场景。
+
+***
 
 1. **`step == 0` / `step` 是 float 的 for 循环无法 JIT**（`site -2` / `site -3`，已知限制非 bug）：
    `step == 0` 的 VM 语义是「不进循环」，float 步长无法走 int48 快路径判断方向，
