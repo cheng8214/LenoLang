@@ -9,12 +9,16 @@
 //
 // 验收判据：下方 useStructName 的循环必须 **Bailouts 不再增长**。
 //   修复前：Bailouts ≥ 6（两个循环各 3 次）；
-//   修复后：只剩 useDict 的 3 次（那是另一条路径，见下）。
+//   修复后（§8.33 当时）：只剩 useDict 的 3 次（那是另一条路径，见下）；
+//   现状（2026-09-15 复测）：**Bailouts: 0**（useDict 也被顺带修好了）。
 //
-// ⚠️ 已知未解释项：useDict 里 `s = s + d["k"]` 仍在 OP_ADD_FLOAT 处 bailout
-//   （bc_off 指向 ADD_FLOAT，而不是 OP_GET_PROPERTY）—— OP_GET_PROPERTY 的
-//   callout 对 dict 是支持的（dict_get）且返回值做过 EMIT_VALUE_TO_RAW，
-//   但 ADD_FLOAT 仍认为操作数是 NaN-boxed。**原因未查清**，单独跟进。
+// ✅ 已解释（2026-09-15）：useDict 里 `s = s + d["k"]` 当年在 OP_ADD_FLOAT 处 bailout，
+//   真因是 §8.67 / roadmap R12 —— OP_GET_PROPERTY 的**独立访问形态**漏弹 receiver 槽
+//   （`pop_bytes: 0`，提交 5f82acc1 改为 8）⇒ 每执行一次内存栈多留 8 字节 ⇒ 编译期
+//   vstack 与运行时栈位错位 ⇒ 操作数从错槽读出、int48 检查不过而 bailout。
+//   基线：`Compiled: 3 / Executed: 28 / Bailouts: 0`，且 `dict= 1000.0`。
+//   注意这与本探针头部的 OP_INDEX 慢路径是两回事：那条是"能编译但每轮回退"，
+//   这条是"栈位错位"。
 
 struct Tex {
     int ok = 0

@@ -1,0 +1,113 @@
+// 内联侧缺口探针：被调函数体内含「动态派发方法调用」（OP_GET_METHOD + OP_CALL）
+//
+// 背景（roadmap R7②）：`scan_callee_for_inline()` 是一条**简化的 vstack 走查**，
+// 它没有 `OP_GET_METHOD` 的 case ⇒ 落到 default ⇒ `inline-scan FAIL: unsupported
+// opcode 134`。后果：**只要被调函数体里有一次动态派发方法调用（face 接收者调方法，
+// 或接收者静态类型解析不出来的 struct 方法调用），这个函数就永远不能内联进热循环**。
+//
+// ⚠️ 两个必须绕开的坑（否则探针测的不是 JIT 内联）：
+//   ① **编译器层内联器**（`codegen_inline.c`，MAX_INLINE_STMTS=8、体内含 for 即拒绝）：
+//      能被 AST 内联的函数在字节码里根本不存在 ⇒ 让其体内带 for；
+//   ② **调用点必须是 JIT 会尝试内联的形态**：`scan_loop_body` 只对
+//      `OP_CALL_GLOBAL_FUNC_TYPED`（带静态类型）与 `OP_INVOKE_METHOD_TYPED`（接收者静态
+//      类型已知）尝试内联；**非 TYPED 的 `OP_CALL_GLOBAL_FUNC` 压根不尝试**
+//      （`if (op == OP_CALL_GLOBAL_FUNC_TYPED && vm_ptr)`，语义上它可能需要运行时
+//      类型提升，故只走 callout）。所以这里用 **struct 方法**当被内联方。
+//
+// 形态：
+//   Holder.compute() 体内 `s.area()` 的接收者静态类型是 **face**（动态派发）
+//     ⇒ OP_GET_METHOD + OP_CALL 配对形态；
+//   bench() 的热循环里 `h.compute(s, 4)` 是 INVOKE_METHOD_TYPED ⇒ 尝试内联 compute 的函数体。
+//   对照组：struct 方法内部用裸方法名调用兄弟方法走 INVOKE_METHOD_TYPED，
+//   该形态本来就登记在 inline scan 里（`inline(method): 'pair'`），用于区分两类形态。
+//
+// 验收判据：
+//   ① `LENO_JIT_DEBUG=1` 下修复前应看到
+//        `inline-scan FAIL: unsupported opcode 134 at off ...`
+//      修复后应看到 `inline(method): 'compute' bc_off=... arg_count=...`，且 `inline=1`；
+//   ② JIT 与 `LENO_NO_JIT=1` 输出逐位一致；
+//   ③ `Bailouts` 不回归（本探针应为 0）；
+//   ④ 收益用**同一二进制**的 `LENO_JIT_NOINLINE=1` 做 A/B（它关掉 JIT 级内联，
+//      等价于修复前该调用点的形态），不必重建旧版本。
+
+import times
+
+face Shape {
+    func area(): float
+}
+
+struct Circle impl Shape {
+    float r = 1.0
+    func area(): float { return 3.14159 * r * r }
+}
+
+struct Square impl Shape {
+    float side = 1.0
+    func area(): float { return side * side }
+}
+
+struct Holder {
+    float k = 2.0
+
+    // 体内有 for（AST 内联器拒绝）+ 一次 face 动态派发调用
+    func compute(Shape s, int n): float {
+        var acc = 0.0
+        for n {
+            acc = acc + s.area()
+        }
+        return acc * k
+    }
+}
+
+// 热循环里调用 h.compute()：compute 能否内联就看函数体扫描。
+// 计时行是**唯一允许的 JIT/NO_JIT 差异**（与 docs 里其它探针同口径）。
+func bench(Holder h, Shape s, int n): float {
+    var total = 0.0
+    var t0 = times.ms()
+    for n {
+        total = total + h.compute(s, 4)
+    }
+    print("  bench n=" + n + " ms=" + (times.ms() - t0))
+    return total
+}
+
+// 对照组：struct 方法内部裸方法名调用兄弟方法 → INVOKE_METHOD_TYPED（本来就能内联）
+struct V {
+    float x = 0.0
+
+    func add(V o): float {
+        return x + o.x
+    }
+
+    func pair(V o): float {
+        var s = 0.0
+        for 2 {
+            s = s + add(o)
+        }
+        return s
+    }
+}
+
+func bench_pair(V a, V b, int n): float {
+    var s = 0.0
+    for n {
+        s = s + a.pair(b)
+    }
+    return s
+}
+
+main() {
+    var h = new Holder(k = 2.0)
+    Shape c = new Circle(r = 2.0)
+    Shape q = new Square(side = 3.0)
+    // circle: area=3.14159*4=12.56636 → compute(s,4)=50.26544 ×2.0 = 100.53088 → ×2000000
+    print("circle= " + bench(h, c, 2000000))
+    // square: area=9.0 → compute(s,4)=36.0 ×2.0 = 72.0 → ×2000000
+    print("square= " + bench(h, q, 2000000))
+
+    var a = new V(x = 1.5)
+    var b = new V(x = 2.5)
+    // pair = (1.5+2.5)*2 = 8.0 → × 2000000
+    print("pair= " + bench_pair(a, b, 2000000))
+    return 0
+}

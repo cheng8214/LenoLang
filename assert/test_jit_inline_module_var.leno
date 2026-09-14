@@ -1,0 +1,49 @@
+// 回归：JIT 级内联的「模块变量访问」安全边界（roadmap R7①）
+//
+// 背景：`scan_callee_for_inline()` 原先对 `OP_GET_MODULE_VAR` / `OP_SET_MODULE_VAR` /
+// `OP_GET_MODULE_FUNC` 一律拒绝内联（「内联后没有 callee 的帧，模块归属不可知」，
+// 是内联侧第一大缺口）。R7① 放开的**唯一**条件是：**callee 与 caller 同属一个模块**
+// —— 因为内联后 codegen 用的是编译期嵌入的 module（`jit_scan_get_module()`，等于
+// 调用方的 module），同模块时它正确，跨模块时会用错 globals 下标、**静默读错变量**。
+//
+// 覆盖两条判据：
+//   ① 同模块（辅助模块内部 `runSame` → `Acc.bump`）：允许内联，且取值必须精确 ——
+//      一旦内联体的 vstack 记账（+1 / 0 / 配对调用）写错，下面的断言立刻失败。
+//   ② 跨模块（本文件 → 辅助模块的 `Acc.bump`）：**必须仍然拒绝内联**（安全边界），
+//      取值同样必须精确（走 callout / 函数级 JIT）。
+//
+// ⚠️ 与 `test_jit_inline_method_dispatch` 同性质：这是**修后记账/边界守卫**，
+//    「是否真的内联 / 是否真的拒绝」由 `jit_probes/probe_inline_module_var.leno`
+//    用 `LENO_JIT_DEBUG=1` 判定（脚本里读不到 JIT 统计）。
+// 循环次数必须超过热点阈值（JIT_HOT_THRESHOLD = 50）。
+
+import "jit_inline_modvar_mod.leno"
+use jit_inline_modvar_mod.Acc
+
+// 跨模块：调用方在本文件，被调方法 `bump` 属于辅助模块
+func benchCross(Acc a, int n): int {
+    var total = 0
+    for n {
+        total = total + a.bump(4)
+    }
+    return total
+}
+
+main() {
+    var n = 200
+
+    // ① 同模块：每次 bump(4) 使 _sum += 4，返回 4*S + 10（S 为该次调用前的 _sum）
+    //    ⇒ total = Σ_{k=0}^{n-1} (4*(0 + 4k) + 10) = 8n(n-1) + 10n
+    assert_eq(jit_inline_modvar_mod.runSame(n), 8 * n * (n - 1) + 10 * n)
+    assert_eq(jit_inline_modvar_mod.get_seen(), n)
+
+    // ② 跨模块：期望值由**实测的模块状态**推出，不硬编码
+    var s0 = jit_inline_modvar_mod.get_sum()
+    var a = jit_inline_modvar_mod.make_acc(1)
+    var cross = benchCross(a, n)
+    var s1 = jit_inline_modvar_mod.get_sum()
+    assert_eq(s1, s0 + 4 * n)                              // 每次 bump 加 4
+    assert_eq(cross, 4 * s0 * n + 8 * n * (n - 1) + 10 * n)
+
+    print("test_jit_inline_module_var: OK")
+}

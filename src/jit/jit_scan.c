@@ -405,7 +405,8 @@ static void mark_local(ScanResult* r, int slot) {
  * Returns 1 if inlinable, 0 otherwise.
  * Fills callee_local_map[slot] = base_scratch + slot for slots 0..local_count-1.
  * Sets *out_max_vstack to the max vstack depth in the callee body. */
-static int scan_callee_for_inline(Chunk* cc, int local_count,
+static int scan_callee_for_inline(Chunk* cc, ObjModule* callee_module,
+                                   int local_count,
                                    int base_scratch,
                                    int callee_local_map[256],
                                    int* out_max_vstack) {
@@ -463,15 +464,47 @@ static int scan_callee_for_inline(Chunk* cc, int local_count,
             case OP_TYPE_CHECK: /* pop 1 push 1（`is`）→ net 0，R2 批次 3 */
             case OP_SET_PTR_ELEM_TYPE: case OP_SET_DECLARED_FACE: /* peek TOS → net 0 */
                 break;
-            case OP_GET_MODULE_VAR: case OP_SET_MODULE_VAR: case OP_GET_MODULE_FUNC:
-                /* 模块变量/函数访问依赖「当前帧的 module」，而 frame->module 来自
-                 * **被调函数**（vm_call.inc: frame->module = func->module）。内联后 JIT 手上
-                 * 只有调用方的帧，被调函数来自别的模块时就会读错模块的变量 → 语义依赖运行时
-                 * 帧，与泛型 OP_STRUCT_INIT 同理，拒绝内联（循环本身仍可 JIT，只是不内联该函数）。 */
-                if (jit_debug_on())
-                    fprintf(stderr, "[JIT-DEBUG] inline-scan FAIL: 模块变量访问 op=%d at off %d\n",
-                            op, (int)(ip - cc->code));
-                return 0;
+            case OP_GET_MODULE_VAR: case OP_SET_MODULE_VAR: case OP_GET_MODULE_FUNC: {
+                /* R7①：模块变量/函数访问**能否内联**，取决于「被调函数与调用方是否同一个模块」。
+                 *
+                 * 内联后 codegen 用的是**编译期嵌入**的 module（`jit_scan_get_module()`，
+                 * 见 jit_priv.h）：它等于调用方函数的 module —— 因为函数级 JIT 的快路径
+                 * 不压帧，编译期就得知道是哪个模块（§8.55/§8.56 的教训）。
+                 * ⇒ 同模块时该指针正确（模块变量的 index 就是该模块 globals 的下标），
+                 *   跨模块时它会指向**调用方**的模块 ⇒ 用错 globals 下标，静默读错变量。
+                 * 所以只在「callee 与 caller 同模块且都非 NULL」时放行，其余照旧拒绝内联
+                 * （循环本身仍可 JIT，只是不内联该函数）。 */
+                if (!callee_module || callee_module != jit_scan_get_module()) {
+                    if (jit_debug_on())
+                        fprintf(stderr, "[JIT-DEBUG] inline-scan FAIL: 模块变量访问 op=%d at off %d"
+                                        "（callee 与 caller 不同模块）\n",
+                                op, (int)(ip - cc->code));
+                    return 0;
+                }
+                /* 记账与 scan_loop_body 的同名 case **完全一致**：
+                 *   GET_MODULE_FUNC + OP_CALL 配对形态 → `size = 6`、`vstack -= (argc - rc)`
+                 *     （rc 来自 callee 的 return_count，解析不出来就拒绝内联）；
+                 *   单独取函数值 / 读模块变量 → push 1（+1）；
+                 *   写模块变量 → **peek** TOS，不弹不推（net 0）。 */
+                if (op == OP_GET_MODULE_FUNC && ip + 6 <= end && ip[3] == OP_CALL) {
+                    uint16_t func_idx = rd_short(ip + 1);
+                    int rc = jit_resolve_module_func(func_idx);
+                    if (rc <= 0) {
+                        if (jit_debug_on())
+                            fprintf(stderr, "[JIT-DEBUG] inline-scan FAIL: 模块函数 ret_count 不可知"
+                                            "（globals[%u]）at off %d\n",
+                                    (unsigned)func_idx, (int)(ip - cc->code));
+                        return 0;
+                    }
+                    int argc = rd_short(ip + 4);
+                    size = 6;                    /* 连同 OP_CALL 一起消费 */
+                    vstack -= (argc - rc);
+                    break;
+                }
+                if (op == OP_GET_MODULE_VAR || op == OP_GET_MODULE_FUNC)
+                    vstack++;                    /* 单独取变量值 / 函数值：push 1 */
+                break;
+            }
             case OP_SWITCH_LOOKUP:
                 /* §8.61 v1：保守拒绝内联。这条是**变长 + 多目标**控制流：每个 case 体
                  * 都只能「由跳转表进入」，而本函数只是简化的 vstack 走查，没有
@@ -570,6 +603,42 @@ case OP_GET_FIELD_FAST: vstack++; break;
                     vstack -= ac;             /* receiver+args -> result */
                 }
                 /* standalone property access: vstack unchanged */
+                break;
+            }
+            case OP_GET_METHOD: {
+                /* 窥孔：`obj.m(args)` 的**动态派发**形态 = `OP_GET_METHOD name(2)` +
+                 * `OP_CALL argc(2)`（face 接收者调方法，或接收者静态类型解析不出来时的
+                 * struct 方法调用）—— roadmap R7②：这条 case 长期缺失 ⇒ 落到 default，
+                 * 报 `inline-scan FAIL: unsupported opcode 134` ⇒ **只要被调函数体里有
+                 * 一次动态派发方法调用，该函数就永远不能被内联进热循环**
+                 * （循环本身照常 JIT，只是这个调用点退回 callout / 函数级 JIT）。
+                 *
+                 * 记账与 scan_loop_body 的同名 case **完全一致**：
+                 *   栈布局 [self][args...] 之外，调用方再多压一个 receiver 供 GET_METHOD
+                 *   消费，随后是 `OP_CALL(argc)`（argc 含 self）⇒ 合并净效应 = -(argc + 1) + rc。
+                 *   rc 只能按「方法名在所有 struct def 中唯一且 return_count 一致」推断
+                 *   （内联体没有 INVOKE_METHOD_TYPED 那样的静态类型名常量可用）——
+                 *   **推不出来就拒绝内联**：内联体的栈深记账一旦错位就是静默算错，
+                 *   宁可不内联。
+                 * 判定条件必须与 codegen（ops_callout.inc 的 case OP_GET_METHOD）
+                 * 一字不差，且 `end` 与 codegen 的内联体一致（都是
+                 * callee_chunk->code + callee_body_size），否则 size 记账错位。 */
+                if (ip + 6 <= end && ip[3] == OP_CALL) {
+                    uint16_t gm_name_idx = rd_short(ip + 1);
+                    int gm_rc = jit_resolve_method_ret_count(cc, gm_name_idx);
+                    if (gm_rc <= 0) {
+                        if (jit_debug_on())
+                            fprintf(stderr, "[JIT-DEBUG] inline-scan FAIL: GET_METHOD 的 ret_count 不可知（方法名唯一性推断失败）at off %d\n",
+                                    (int)(ip - cc->code));
+                        return 0;
+                    }
+                    int gm_argc = rd_short(ip + 4);
+                    size = 6;                       /* 连同 OP_CALL 一起消费 */
+                    vstack -= (gm_argc + 1 - gm_rc);
+                    break;
+                }
+                /* 独立的 OP_GET_METHOD（只取方法值、不调用）：pop 1(obj) push 1(方法值)
+                 * → net 0。codegen 走 callout（§8.66）。 */
                 break;
             }
             case OP_CALL_NATIVE: {
@@ -951,7 +1020,7 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                         if (callee_lc >= arg_count && base + callee_lc <= JIT_MAX_LOCALS) {
                             int callee_mv = 0;
                             InlineSite* is = &r->inline_sites[r->inline_count];
-                            if (scan_callee_for_inline(mf->chunk, callee_lc, base,
+                            if (scan_callee_for_inline(mf->chunk, mf->module, callee_lc, base,
                                                        is->callee_local_map, &callee_mv)) {
                                 is->bc_off = bc_off;
                                 is->func_slot = 0xFFFF;      /* 非全局函数调用点 */
@@ -1025,7 +1094,7 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                                 if (base + callee_lc <= JIT_MAX_LOCALS && cc->len <= 256) {
                                     int callee_mv = 0;
                                     InlineSite* is = &r->inline_sites[r->inline_count];
-                                    if (scan_callee_for_inline(cc, callee_lc, base,
+                                    if (scan_callee_for_inline(cc, func2->module, callee_lc, base,
                                                                is->callee_local_map,
                                                                &callee_mv)) {
                                         is->bc_off = (int)(ip - body_start);

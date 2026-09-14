@@ -1,0 +1,52 @@
+// 内联侧缺口探针：被调函数体内含「模块变量访问」（OP_GET_MODULE_VAR / OP_SET_MODULE_VAR）
+//
+// 背景（roadmap R7①）：`scan_callee_for_inline()` 对模块变量/函数访问一律拒绝内联，
+// 理由是「内联后没有 callee 的帧，模块归属不可知」（内联侧第一大缺口，file_manager 实测 ×166）。
+//
+// 修法（§8.69）：只有在**被调函数与调用方同属一个模块**时才允许内联 ——
+// 因为内联后 codegen 用的是**编译期嵌入**的 module（`jit_scan_get_module()`），
+// 它等于调用方函数的 module；同模块时该指针正确，跨模块时它会指错模块（静默读错变量）。
+//
+// 判据（`LENO_JIT_DEBUG=1`）：
+//   ① 同模块（helper 内部 runSame → Acc.bump）：
+//        修复前 `inline-scan FAIL: 模块变量访问 op=88 at off ...` + `inline=0`
+//        修复后 `inline(method): 'bump' ...` + `inline=1`
+//   ② 跨模块（本文件 → helper 的 Acc.bump）：
+//        **必须仍然拒绝内联**（`inline-scan FAIL: 模块变量访问 ... （callee 与 caller 不同模块）`），
+//        且取值与 `LENO_NO_JIT=1` 一致 —— 这是本改动的**安全边界**，不能被"顺手放开"。
+//   ③ JIT 与 `LENO_NO_JIT=1` 输出逐位一致；`Bailouts` 不回归。
+//
+// 注意：同模块的循环在 helper 里，本文件只负责调用 + 跨模块对照。
+
+import "inline_modvar_helper.leno"
+import times
+use inline_modvar_helper.Acc
+
+// 跨模块对照：调用方在本文件，被调方法属于 helper 模块
+func benchCross(Acc a, int n): int {
+    var total = 0
+    for n {
+        total = total + a.bump(4)
+    }
+    return total
+}
+
+// n 可由命令行覆盖（默认 200：只做正确性/内联标记；大 n 用于计时 A/B）
+main() {
+    var n = 200
+    var args = _args()
+    if args.len() > 0 { n = _int(args[0]) }
+
+    // 同模块：runSame 内部的热循环调用 Acc.bump（修复后应内联）
+    var t0 = times.ms()
+    var same = inline_modvar_helper.runSame(n)
+    print("same= " + same + " sum= " + inline_modvar_helper.get_sum()
+          + " seen= " + inline_modvar_helper.get_seen() + " ms= " + (times.ms() - t0))
+
+    // 跨模块：本文件的热循环调用 helper 的 Acc.bump（必须仍拒绝内联，但取值正确）
+    var a = inline_modvar_helper.make_acc(1)
+    var t1 = times.ms()
+    var cross = benchCross(a, n)
+    print("cross= " + cross + " ms= " + (times.ms() - t1))
+    return 0
+}

@@ -229,6 +229,11 @@ del /q build\leno_base.exe build\leno_broken.exe
 
 ## 七、JIT bailout 后续项（2026-09-13 追加）
 
+> **状态（2026-09-15）：本节 3 项全部关闭** —— `OP_INDEX` 慢路径（已修）、
+> `OP_ADD_FLOAT` 判 NaN-boxed（已解除，见下）、`OP_EQ` 身份比较（已修）。
+> 现存 JIT 待办已不在本节，见 `JIT实现与调试记录.md` §11 路线图 / §12 未解决问题
+> 与本文第四节（P1/P2）。
+
 本节与 GC 无关，但同属「静默不优化」类缺口，一并记在这里。详见
 `JIT实现与调试记录.md` §8.33。
 
@@ -240,20 +245,37 @@ del /q build\leno_base.exe build\leno_broken.exe
 `jit_probes/probe_index_slowpath.leno`，判据：其中 `useStructName` 的循环
 `Bailouts` 不再增长（修复前总计 9 → 修复后 3）。
 
-### ⬜ 待办 1：`OP_ADD_FLOAT` 把 dict 读取结果判成 NaN-boxed
+### ✅ 已解除（2026-09-15 复测）：`OP_ADD_FLOAT` 把 dict 读取结果判成 NaN-boxed
 
-`jit_probes/probe_index_slowpath.leno` 里的 `useDict`（`s = s + d["k"]`，热循环）仍
-bailout，位置是 `OP_ADD_FLOAT`。但 `d["k"]` 编译成 `OP_GET_PROPERTY`，其 callout 对 dict
-是支持的（`dict_get`）、且调用后做了 `EMIT_VALUE_TO_RAW()`，按理浮点操作数不该被判成
-NaN-boxed。**原因未查清。**
+**原记录（2026-09-13）**：`jit_probes/probe_index_slowpath.leno` 里的 `useDict`
+（`s = s + d["k"]`，热循环）会 bailout，位置是 `OP_ADD_FLOAT`。但 `d["k"]` 编译成
+`OP_GET_PROPERTY`，其 callout 对 dict 是支持的（`dict_get`）、且调用后做了
+`EMIT_VALUE_TO_RAW()`，按理浮点操作数不该被判成 NaN-boxed。**当时原因未查清。**
 
-排查建议：
+**复测（2026-09-15，判据达成）**：
 
-1. 先确认 `dict_get` 返回的 `1.0` 在 Value 表示下是否真是 raw double（`val_float`）；
-2. 再看 `OP_GET_PROPERTY` 那条代码路径有没有分支绕过 `EMIT_VALUE_TO_RAW()`；
-3. 用 `LENO_JIT_DUMP=1` 反汇编该循环，确认 `EMIT_NUM_TO_XMM` 的 `jae → tagged` 是否真被走到。
+```
+> build\leno.exe jit_probes\probe_index_slowpath.leno
+stname= 1000  dict= 1000.0
+Compiled: 3   Executed: 28   Bailouts: 0
+```
 
-**判据**：`useDict` 的 `Bailouts` 归零。
+原判据是「`useDict` 的 `Bailouts` 归零」（修复前该循环固定 3 次）⇒ **已达成**。
+
+**真因（与 §8.67 / roadmap R12 同源）**：`ops_callout.inc` 的 `case OP_GET_PROPERTY`
+**独立访问形态**漏弹 receiver 槽（`pop_bytes: 0`）⇒ 每执行一次内存栈多留 8 字节
+⇒ 编译期 vstack 模型与运行时栈位**错位** ⇒ 后续操作数从错槽读出
+⇒ `OP_ADD_FLOAT` 的 int48 检查不过而 bailout。修复提交 `5f82acc1`
+（`pop_bytes` 改为 8）的说明里已记「A 形态（`s + box["p"].a`）修前每次 3 次 int48 bailout、
+修后归零」，与本条是同一现象。
+
+**⚠ 未做**：单独的回退对照（把 `pop_bytes` 改回 0 再复测该探针），故记为「同源/同一现象」，
+**不再作为待办跟踪**。下面三条排查建议随即作废 —— 原因不在 dict 取值路径，
+而在 `OP_GET_PROPERTY` 独立形态的栈记账（原有建议保留在此仅作过程记录）：
+
+1. ~~先确认 `dict_get` 返回的 `1.0` 在 Value 表示下是否真是 raw double（`val_float`）；~~
+2. ~~再看 `OP_GET_PROPERTY` 那条代码路径有没有分支绕过 `EMIT_VALUE_TO_RAW()`；~~
+3. ~~用 `LENO_JIT_DUMP=1` 反汇编该循环，确认 `EMIT_NUM_TO_XMM` 的 `jae → tagged` 是否真被走到。~~
 
 ### ✅ 已修：`OP_EQ` 对指针 / 对象身份比较会 bailout
 

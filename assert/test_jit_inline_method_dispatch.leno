@@ -1,0 +1,122 @@
+// 回归：JIT 级内联的「动态派发方法调用」栈记账（roadmap R7②）
+//
+// 背景：`scan_callee_for_inline()` 原先没有 `OP_GET_METHOD` 的 case ⇒ 落到 default，
+// 报 `inline-scan FAIL: unsupported opcode 134` ⇒ **只要被调函数体里有一次动态派发
+// 方法调用（face 接收者，或接收者静态类型解析不出来），该函数就永远不能被内联进
+// 热循环**（循环本身照常 JIT，只是该调用点退回 callout / 函数级 JIT）。
+//
+// 修法：照 `scan_loop_body` 的同名 case 补记账 —— 配对形态
+// `OP_GET_METHOD name(2)` + `OP_CALL argc(2)` 的合并净效应 `-(argc + 1) + rc`，
+// rc 由 `jit_resolve_method_ret_count` 推断，**推不出来就拒绝内联**。
+//
+// ⚠️ 本用例是**修后记账守卫**，不是「修前必失败」型用例：修复前只是「不内联」
+//    （结果依然正确，只是慢），所以这里的判据是**数值精确** —— 一旦内联体的 vstack
+//    记账写错（少弹/多弹一个槽、size 消费错位），取值立刻错。
+//    「是否真的内联了」由 `jit_probes/probe_inline_method_call.leno` 用
+//    `LENO_JIT_DEBUG=1` 的 `inline(method): ...` 行判定（脚本里读不到 JIT 统计）。
+//
+// 覆盖形态：1 参 / 2 参动态派发（不同 argc ⇒ 不同记账值）、同一函数体内**两处**
+// 动态派发（size=6 连读两次）、同一 face 的两个实现（运行时动态分发）。
+// 循环次数必须超过热点阈值（JIT_HOT_THRESHOLD = 50）。
+
+face Shape {
+    func weight(): int
+    func scaled(int f): int
+}
+
+struct Circle impl Shape {
+    int r = 1
+    func weight(): int { return r * r * 3 }
+    func scaled(int f): int { return r * r * 3 * f }
+}
+
+struct Square impl Shape {
+    int side = 1
+    func weight(): int { return side * side * 2 }
+    func scaled(int f): int { return side * side * 2 * f }
+}
+
+struct Holder {
+    int k = 2
+
+    // 体内带 for ⇒ 编译器层内联器（codegen_inline.c，MAX_INLINE_STMTS）拒绝，
+    // 于是只有 JIT 级内联这条路；体内 s.weight() 是 face 动态派发（argc=1）。
+    func compute(Shape s, int n): int {
+        var acc = 0
+        for n {
+            acc = acc + s.weight()
+        }
+        return acc * k
+    }
+
+    // 同一体内**两处**动态派发，且方法带参（argc=2）
+    func compute2(Shape a, Shape b, int n): int {
+        var acc = 0
+        for n {
+            acc = acc + a.scaled(2) + b.scaled(3)
+        }
+        return acc
+    }
+}
+
+func benchShape(Holder h, Shape s, int n): int {
+    var total = 0
+    for n {
+        total = total + h.compute(s, 4)
+    }
+    return total
+}
+
+func benchTwo(Holder h, Shape a, Shape b, int n): int {
+    var total = 0
+    for n {
+        total = total + h.compute2(a, b, 4)
+    }
+    return total
+}
+
+// 对照：struct 方法内裸方法名调用兄弟方法（INVOKE_METHOD_TYPED，本来就支持）
+struct V {
+    int x = 0
+
+    func add(V o): int {
+        return x + o.x
+    }
+
+    func pair(V o): int {
+        var s = 0
+        for 2 {
+            s = s + add(o)
+        }
+        return s
+    }
+}
+
+func benchPair(V a, V b, int n): int {
+    var s = 0
+    for n {
+        s = s + a.pair(b)
+    }
+    return s
+}
+
+main() {
+    var h = new Holder(k = 2)
+    Shape c = new Circle(r = 3)      // weight = 27 → compute = 27*4*2 = 216
+    Shape q = new Square(side = 4)   // weight = 32 → compute = 32*4*2 = 256
+    assert_eq(benchShape(h, c, 200), 200 * 216)
+    assert_eq(benchShape(h, q, 200), 200 * 256)
+
+    // compute2 一轮（内层 4 次）= 4 × (c.scaled(2) + q.scaled(3))
+    //            = 4 × (27*2 + 32*3) = 4 × 150 = 600
+    assert_eq(benchTwo(h, c, q, 200), 200 * 600)
+    // 交换接收者 ⇒ 动态派发必须跟着运行时类型走：
+    //            4 × (q.scaled(2) + c.scaled(3)) = 4 × (32*2 + 27*3) = 4 × 145 = 580
+    assert_eq(benchTwo(h, q, c, 200), 200 * 580)
+
+    var a = new V(x = 1)
+    var b = new V(x = 3)
+    assert_eq(benchPair(a, b, 200), 200 * 8)   // pair = (1+3)*2 = 8
+
+    print("test_jit_inline_method_dispatch: OK")
+}

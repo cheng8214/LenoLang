@@ -14,7 +14,9 @@
 | `diff_examples.bat` | 基线二进制 vs 新版二进制，对 `examples/{struct,func,module_export_struct,cstruct}` 的示例做 stdout + 退出码差分（约 59 个文件）。 |
 | `gc_barrier_canary.leno` | 写屏障金丝雀：老年代 holder 只被「自己的字段」引用的年轻对象，屏障失效即被回收。**必须配合下面的确定性 GC 钩子**，否则不敏感（原因写在文件头的注释里）。 |
 | `probe_jit_gc_safepoint.leno` | JIT 循环的 GC 安全点缺口探针（§8.36）：JIT 热循环里分配 + callout，用钩子数「实际到达的安全点」，并用值判据 + **身份判据**（`probe == n`，比读值可靠）判断 JIT 活值是否被误回收。 |
-| `probe_index_slowpath.leno` | `OP_INDEX` 慢路径 bailout 回归探针（§8.33）：判据是 `Bailouts` 不增长，不是耗时。 |
+| `probe_index_slowpath.leno` | `OP_INDEX` 慢路径 bailout 回归探针（§8.33）：判据是 `Bailouts` 不增长，不是耗时。**当前基线（2026-09-15）：`Compiled: 3 / Executed: 28 / Bailouts: 0`** —— 当年的 `useDict` 残留 bailout 已由 §8.67（`OP_GET_PROPERTY` 独立形态补 `pop_bytes`，`5f82acc1`）顺带修好，见文件头注释。 |
+| `probe_inline_method_call.leno` | 内联侧 `OP_GET_METHOD` 缺口探针（§8.68 / R7②）：被内联方是**struct 方法**（体内带 `for` 以绕开编译器层内联器）+ **face 动态派发**。判据：`LENO_JIT_DEBUG=1` 修复前 `inline-scan FAIL: unsupported opcode 134` / `inline=0`，修复后 `inline(method): 'compute' ...` / `inline=1`；收益用同二进制 `LENO_JIT_NOINLINE=1` 做 A/B（实测 2.27~2.40x）。 |
+| `probe_inline_module_var.leno`(+`inline_modvar_helper.leno`) | 内联侧**模块变量访问**缺口探针（§8.69 / R7①）：辅助模块里模块级 `var` + 访问它的 `Acc.bump`（体内带 `for`）。判据：同模块（helper 内部 `runSame`）修复后 `inline(method): 'bump'` / `inline=1`；**跨模块（主文件 → helper 的 `Acc.bump`）必须仍 `inline-scan FAIL: 模块变量访问 …（callee 与 caller 不同模块）` / `inline=0`**，且两侧取值与其它模式逐位一致。`n` 可由命令行覆盖（默认 200；计时用 300000，A/B 用 `LENO_JIT_NOINLINE=1`，实测 ≈2~3x）。 |
 | `probe_eq_identity.leno` | `OP_EQ` 身份比较快路径差分探针（§8.34）：判据是 JIT 与 `LENO_NO_JIT=1` 结果逐条一致 + 哪些比较仍 bailout。 |
 | `bench_yield_poll.leno` | 回边 GC 轮询的每轮成本（§8.39）：10 亿次 `arr[0]`。**必须 10 亿次** —— `times.ms()` 刻度是 ~16ms，1 亿次下成本只有 1 个刻度，分辨不出。测法：与临时关掉轮询的二进制比 best-of-N。 |
 | `probe_bailout_sites.leno` | bailout 站点回归探针（§8.40）：int48 溢出（ADD 2^80）与 int64 溢出（MUL 3^60）两条桩路径。判据是「JIT 与 `LENO_NO_JIT=1` 结果逐位一致」+「`LENO_JIT_DEBUG=1` 的 site 序列与改动前相同（本例 17,17,17,14,14,14）」。 |

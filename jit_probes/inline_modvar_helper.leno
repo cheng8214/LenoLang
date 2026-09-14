@@ -1,0 +1,45 @@
+// R7① 探针的辅助模块：模块级变量 + 访问它们的 struct 方法 / 包装函数
+//
+// 关键点：**只有模块文件里的代码**才会发 OP_GET_MODULE_VAR / OP_SET_MODULE_VAR
+// （入口脚本的顶层 var 是 globals[]，走 OP_GET_GLOBAL）。所以"同模块"这一侧
+// 必须整体放在本模块里：runSame() 是调用方，Acc.bump() 是被内联方，两者同模块。
+
+var _sum = 0
+var _seen = 0
+
+export struct Acc {
+    int step = 1
+
+    // 体内带 for（绕开编译器层内联器 codegen_inline.c）+ 模块级变量读写
+    // ⇒ 体内含 OP_GET_MODULE_VAR / OP_SET_MODULE_VAR
+    func bump(int n): int {
+        var acc = 0
+        for n {
+            _sum = _sum + step
+            acc = acc + _sum
+        }
+        _seen = _seen + 1
+        return acc
+    }
+}
+
+// 调用方与被线内联方**同属本模块** ⇒ 修复后允许内联（R7①）
+// 只返回 total（不做打包成一个大数），这样大 n 下计时不会被 BigInt 算术污染。
+export func runSame(int n): int {
+    _sum = 0
+    _seen = 0
+    var a = new Acc(step = 1)
+    var total = 0
+    for n {
+        total = total + a.bump(4)
+    }
+    return total
+}
+
+export func get_sum(): int { return _sum }
+export func get_seen(): int { return _seen }
+
+// 供主探针做**跨模块**对照：同一个 struct/方法，但调用方在别的模块
+export func make_acc(int step): Acc {
+    return new Acc(step = step)
+}

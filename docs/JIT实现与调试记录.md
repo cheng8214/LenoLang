@@ -653,7 +653,7 @@ inline-scan: 76(OP_STRING_ADD) / 88(模块变量访问) / 156(SWITCH_LOOKUP，R1
 | ~~R3~~ | ~~L0 诊断收口~~ | ~~`opcode_size` 余项补全；把 scan 的 default 报错区分成 `unknown opcode`（缺长度）与 `unsupported opcode`（已收录长度但缺 case）~~ | ~~纯诊断，无行为变化~~ | ~~极低~~ | **已完成（§8.63，2026-09-14）**：补齐约 40 条长度（逐条与 VM 的 `READ_*`、`debug.c` 反汇编器交叉核对）；`OP_CLOSURE` 因长度依赖常量表而**故意保持"未知"**；报错分为 `unknown（长度未知）`/`unsupported（已收录长度、未实现）`。**实测收益**：同一负载的拒收清单从"含糊的 138"变成分类可排期（76×4 / 93×3 / 14×2 / 142×2 / 138×49），R2 的下一批因此是测出来的而不是猜的 |
 | R5 | 闭包创建与捕获变量（`OP_CLOSURE` / `GET/SET/CLOSE_UPVALUE`） | 循环里建闭包、闭包体内读写捕获变量都不进 JIT（被调函数带 upvalue 时自动退回 VM 重入 ⇒ 语义正确但不快） | 两件基础：**(a)** func-JIT ABI 要加 closure 通道（现为 `jfn(flocals, globals)`，无 upvalue 入口）；**(b)** 循环 JIT 的 locals 在 scratch 区（迭代即复用）⇒ 直接捕获会产生**悬空 upvalue**，只能先允许"捕获已在 upvalue 链上的变量"，或改 locals 布局 | 高（ABI + 生命周期不变量） | 单独一轮，**先设计不变量再动手** |
 | R6 | 函数级 JIT 的多返回值 + `OP_TAIL_CALL` | `jit_compile_function` 直接拒收 `return_count > 1`；`OP_TAIL_CALL` 在循环 JIT 里等价"提前返回"（应归入 `has_reachable_return` 拒绝），只有函数级 JIT 有价值 | 多返回：扩返回值通道（`jit_fn_result` 单值 → 多槽约定），调用方回填约定已就绪（§8.59 的 helper）；尾调用：帧复用语义另算 | 中 | 排在 R5 之后 |
-| R7 | 内联的跨模块限制 + 内联侧 opcode 缺口 | ① 模块变量/函数访问被 inline scan 一刀拒绝（§8.55/§8.56）——内联后没有 callee 的帧，模块归属不可知（**实测 ×166**，内联侧第一大）；② inline scan 没有 `OP_GET_METHOD` 的 case ⇒ 含方法调用的函数一律不能内联（**实测 ×36**）；③ `138:GET_CSTRUCT_DEF ×116`（维持拒绝） | ① 在 inline site 记录 callee 的 module，与 caller 相同才允许内联；② 照 loop scan 的记账补 `GET_METHOD`（配对形态 `-(argc+1-rc)`，rc 用同样的 `jit_resolve_method_ret_count`，解析不出就拒绝内联） | 低 | 有内联收益需求时再做（**内联只影响性能，不影响正确性** —— 与循环级缺口分开排期） |
+| R7 | 内联的跨模块限制 + 内联侧 opcode 缺口 | ① 模块变量/函数访问被 inline scan 一刀拒绝（§8.55/§8.56）——内联后没有 callee 的帧，模块归属不可知（**实测 ×166**，内联侧第一大）；② inline scan 没有 `OP_GET_METHOD` 的 case ⇒ 含方法调用的函数一律不能内联（**实测 ×36**）；③ `138:GET_CSTRUCT_DEF ×116`（维持拒绝） | ① 在 inline site 记录 callee 的 module，与 caller 相同才允许内联；② 照 loop scan 的记账补 `GET_METHOD`（配对形态 `-(argc+1-rc)`，rc 用同样的 `jit_resolve_method_ret_count`，解析不出就拒绝内联） | 低 | **② 已完成（§8.68，2026-09-15）**：`scan_callee_for_inline` 补 `OP_GET_METHOD`（配对/独立两形态），探针 `probe_inline_method_call.leno` 2.27~2.40x、用例 `test_jit_inline_method_dispatch.leno`。**① 已完成（§8.69，同日）**：加「callee 与 caller 同模块」守卫后放行模块变量/函数访问，探针 `probe_inline_module_var.leno` ≈2~3x、跨模块仍拒绝（安全边界）、用例 `test_jit_inline_module_var.leno`；assert 298/0。③ 维持拒绝 |
 | ~~R8~~ | ~~性能基准复盘~~ | ~~§9 的数据需要按最新覆盖面重跑（JIT vs `LENO_NO_JIT=1`），量化"覆盖面增长到底换来多少"~~ | ~~纯测量；也顺便验证 R4 的延迟回收没有性能回退~~ | ~~极低~~ | **已完成（§9 的「R8 基准复盘」小节，2026-09-14）**：新增可复用基准 `examples/性能测试/JIT覆盖面基准.leno`（8 项，专测本轮补齐的 opcode）；JIT/VM 加速比 2.2x\~18.6x，**字符串插值 1.0x（分配主导，非测错）**；与历史基线交叉核对无回退（i++ 75 vs 78 ms/亿、arr.add 620 vs 625 ms/亿）⇒ R4 延迟释放无可测代价 |
 | ~~R9~~ | ~~`OP_SWITCH_LOOKUP` 的 callout 开销~~ | ~~R9 前的基准显示：JIT 下 switch 每轮一次 callout（+15.5ms/3M 轮），比等价的 if 链慢 3.7 倍~~ | ~~编译期分流：case 值全 int 时发内联比较链~~ | ~~低（非 int 一律退回原 callout 路径）~~ | **已完成（§8.62，2026-09-14）**：int 快路径 + int48 守卫（bailout 交解释器，保住 bigint 值能命中 int case 的语义）+ 重复值排除；switch 的 JIT 时间 30.4 → **15.7 ms**，与 if 同级 |
 | — | **建议维持拒绝** | `OP_THROW`、`OP_AWAIT`/`OP_ASYNC_CALL`、`OP_CLIB_CALL`/`OP_CFUNC_CALLBACK`、`OP_GET_FIELD_ADDR`、`OP_DTOR_LOCAL`、`OP_TAIL_CALL_NATIVE`、`OP_PUSH_TYPE_ARGS`、**`OP_GET_CSTRUCT_DEF`(138)**、模块定义期指令 | 语义特殊（异常/协程/FFI/泛型/仅初始化期出现），收益低、风险高 | — | 维持 |
@@ -2028,10 +2028,22 @@ TOS_PRODUCE();
 （matrix_rain 的 `Bailouts` 3 → 0）；过程中还**否掉了原先设想的「codegen 按静态类型发
 专用比较指令」方案** —— 原因见 §8.34（`ffi.nullptr()` 包装 NULL 导致"纯身份"不安全）。
 
-**顺带发现（未查清，留待办）**：`s = s + d["k"]`（dict 读取在热循环内）仍会 bailout，
-但位置是 **`OP_ADD_FLOAT`** 而非 `OP_GET_PROPERTY`。`d["k"]` 编译成 `OP_GET_PROPERTY`，
-该 callout 对 dict 是支持的（`dict_get`）、且调用后做了 `EMIT_VALUE_TO_RAW()`，
-按理浮点操作数不该被判成 NaN-boxed。**原因未查清，未改动。**
+**顺带发现 → ✅ 已解释（2026-09-15 复测，与 §8.67 同源）**：`s = s + d["k"]`（dict 读取在
+热循环内）当时仍会 bailout，但位置是 **`OP_ADD_FLOAT`** 而非 `OP_GET_PROPERTY`
+（`d["k"]` 编译成 `OP_GET_PROPERTY`，该 callout 对 dict 是支持的 `dict_get`、且调用后做了
+`EMIT_VALUE_TO_RAW()`，按理浮点操作数不该被判成 NaN-boxed）。
+
+真因与 **§8.67 / roadmap R12** 同一个：`ops_callout.inc` 的 `case OP_GET_PROPERTY`
+**独立访问形态漏弹 receiver 槽**（`pop_bytes: 0`，修复见提交 `5f82acc1`）
+⇒ 编译期 vstack 模型与运行时内存栈**错位**（每执行一次多留 8 字节）
+⇒ 后续操作数从**错槽**读出 ⇒ `OP_ADD_FLOAT` 的 int48 检查不过而 bailout。
+`5f82acc1` 的提交说明已记「A 形态（`s + box["p"].a`）修前每次 3 次 int48 溢出/截断 bailout，
+修后归零」—— 与本条是同一现象。
+
+复测（2026-09-15）：`build\leno.exe jit_probes\probe_index_slowpath.leno` →
+`stname= 1000  dict= 1000.0`、`Compiled: 3 / Executed: 28 / **Bailouts: 0**`，
+原判据「`useDict` 的 `Bailouts` 归零」达成。⚠ **未做**单独的回退对照（把 `pop_bytes`
+改回 0 再复测该探针），故记为"同源/同一现象"，不再作为待办跟踪。
 
 **教训**：写完一处 bailout 桩后，必须确认**所有**能到达它的路径都显式跳走 ——
 「桩没有 fall-through」这句话对*桩自身*成立，但对**桩前面紧邻的代码**不成立。
@@ -4240,6 +4252,123 @@ int pop_bytes = merged ? (merged_argc + 1) * 8 : 0;
 
 ***
 
+### 8.68 R7②：内联侧补 `OP_GET_METHOD` —— 含动态派发调用的函数终于能内联（2026-09-15）
+
+**做了什么**
+
+`jit_scan.c` 的 `scan_callee_for_inline()` 新增 `case OP_GET_METHOD`，记账与
+`scan_loop_body` 的同名 case **一字不差**：
+
+* 配对形态（`ip + 6 <= end && ip[3] == OP_CALL`）：`size = 6` 连带消费 `OP_CALL`，
+  `vstack -= (argc + 1 - rc)`；`rc` 用 `jit_resolve_method_ret_count(cc, name_idx)` 推断
+  —— 注意 `cc` 是**被调函数自己的 chunk**（名字常量索引属于它）；
+  **推不出来就 `return 0`（拒绝内联）**，绝不用「按 1 个返回值」蒙过去。
+* 独立取值形态（只取方法值不调用）：net 0，codegen 走 callout（§8.66）。
+
+判定条件必须与 codegen（`ops_callout.inc` 的 `case OP_GET_METHOD`）一致，且 `end` 与
+codegen 的内联体相同（都是 `callee_chunk->code + callee_body_size`），否则 size 记账错位。
+
+**为什么此前一直没被发现**
+
+* 缺口只在**内联侧**：循环级从 L4（§8.57）起就支持了 `GET_METHOD + CALL` 窥孔；
+* 复现它必须**同时绕开两件事**，否则探针看起来"一切正常"（我第一版探针就踩了这两脚）：
+
+| 坑 | 现象 | 绕过办法 |
+| --- | --- | --- |
+| **编译器层内联器**（`codegen_inline.c`，`MAX_INLINE_STMTS = 8`、体内含 `for` 即拒绝） | 被调函数在字节码里**根本不存在**，JIT 级内联问题无从暴露 | 让被内联方**体内带 `for`** |
+| **调用点形态**：`scan_loop_body` 只对 `OP_CALL_GLOBAL_FUNC_TYPED` 与 `OP_INVOKE_METHOD_TYPED` 尝试内联 | 非 TYPED 的 `OP_CALL_GLOBAL_FUNC` **压根不尝试内联**（它可能需要运行时类型提升，只走 callout）⇒ 也被"看不见" | 用 **struct 方法**（`INVOKE_METHOD_TYPED`）当被内联方 |
+
+⇒ 探针 `jit_probes/probe_inline_method_call.leno`（struct 方法 + 体内带 for + face 动态派发）
+才复现出 `inline-scan FAIL: unsupported opcode 134 at off 36`。
+
+**收益**（同二进制 A/B，`LENO_JIT_NOINLINE=1` 关掉 JIT 级内联 ≈ 修复前该调用点的形态）：
+
+| 场景（2,000,000 轮，内层 4 次 face 调用） | 内联开 | 内联关 | 加速 |
+| --- | --- | --- | --- |
+| `Holder.compute` + `Circle.area` | **172 ms** | 390 ms | **2.27x** |
+| 同上换 `Square` 实现 | **156 ms** | 375 ms | **2.40x** |
+
+**验证**
+
+* 探针：`LENO_JIT_DEBUG=1` 修复前 `inline-scan FAIL: unsupported opcode 134 at off 36` + `inline=0`；
+  修复后 `inline(method): 'compute' bc_off=12 arg_count=3 callee_lc=9 base=3 mv=3` + `inline=1`。
+* 值：JIT 与 `LENO_NO_JIT=1` **逐位一致**（`circle= 201061760.00458556`、`square= 144000000.0`、
+  `pair= 16000000.0`）；`Bailouts: 0`。
+* 新用例 `assert/test_jit_inline_method_dispatch.leno`：1 参 / 2 参动态派发（不同 argc ⇒
+  不同记账值）、**同一函数体内两处派发**（`size = 6` 连读两次）、同一 face 两个实现
+  （动态分发跟着运行时类型走）、外加 `INVOKE_METHOD_TYPED` 对照路径；JIT / `LENO_NO_JIT=1` 双模式通过。
+* `assert` 全套 **297 passed / 0 failed**；编译 0 warning。
+
+**教训 / 边界**
+
+1. **内联侧的缺口不表现为"慢"，而是"没内联"** ⇒ 判据只能是 `LENO_JIT_DEBUG` 的 `inline...` 行
+   （脚本里读不到 JIT 统计），所以这类改动的用例只能是**记账守卫**（数值精确），
+   "是否真的内联"必须靠探针 —— 用例文件头要把这一点写清楚，别让后人误以为它能测出"没内联"。
+2. **写探针前先 dump 字节码确认 opcode**：`a.pair(b)`（struct 方法内裸名调兄弟方法）走
+   `INVOKE_METHOD_TYPED`（本来就能内联），`measure(s, 2.0)`（非 TYPED 全局调用）**从不尝试内联**
+   —— 两者都"看不到缺口"，与 §8.67 教训 2 同源：**形态不对，探针白写**。
+3. `rc` 推不出来时必须拒绝内联。face 语法**不允许声明多返回值方法**（`face` 内只允许方法签名，
+   `[int,int]` 会被 parser 拒），所以 `GET_METHOD` 的 `rc > 1` 目前**无源码入口**；
+   本 case 的 `rc > 1` 分支属于"为一致性而实现"（扫描与 codegen 必须同进同退，见 §8.66 教训 2）。
+
+***
+
+### 8.69 R7①：内联侧放行**同模块**的模块变量访问（含跨模块安全边界）（2026-09-15）
+
+**做了什么**
+
+`scan_callee_for_inline()` 增加「模块归属守卫」：
+
+* 新增参数 `ObjModule* callee_module`（两个调用点分别传 `mf->module` / `func2->module`）；
+* 函数内与 `jit_scan_get_module()` 比较 —— 后者是**调用方**函数的 module
+  （`jit_compile` / `jit_compile_function` 在 scan 前设置，见 §8.55/§8.56 的教训）；
+* **同模块且都非 NULL** → 放行，记账与 `scan_loop_body` 的同名 case **完全一致**：
+  * `GET_MODULE_FUNC + OP_CALL` 配对形态 → `size = 6`、`vstack -= (argc - rc)`，
+    `rc` 由 `jit_resolve_module_func` 解析（失败即拒绝内联）；
+  * 单独取函数值 / 读模块变量 → `vstack++`；
+  * 写模块变量 → **peek** TOS，net 0；
+* 其余（含任一为 NULL）→ 照旧拒绝内联，日志注明「callee 与 caller 不同模块」。
+
+**为什么"同模块"是正确的判据**
+
+内联后 codegen 用的是**编译期嵌入**的 module（`jit_priv.h`：函数级 JIT 的快路径不压帧，
+编译期就得知道是哪个模块）。同模块时该指针与「被调函数运行时的 `frame->module`」等价，
+模块变量的 index 也是同一个 `globals` 数组下标 ⇒ 语义不变；跨模块时它指向**调用方**的模块
+⇒ 用错下标、**静默读错变量**，所以必须拒绝。
+
+**收益**（同二进制 A/B，`LENO_JIT_NOINLINE=1`；`n = 300,000`，每次调用内层 4 轮，
+被内联体内每轮 2 次模块变量访问）：
+
+| 场景 | 内联开 | 内联关 | 说明 |
+| --- | --- | --- | --- |
+| **同模块** `runSame` → `Acc.bump` | **15~16 ms** | 31~47 ms | ≈2~3x；本机负载波动大，只做同轮对照 |
+| **跨模块**（主文件 → helper 的 `Acc.bump`） | 47 ms | 47 ms | **设计上不内联**，两侧相同正是预期 |
+
+**验证**
+
+* 探针 `jit_probes/probe_inline_module_var.leno` + 辅助模块 `jit_probes/inline_modvar_helper.leno`：
+  `LENO_JIT_DEBUG=1` 下同模块出现 `inline(method): 'bump' bc_off=9 arg_count=2 ...` + `inline=1`；
+  跨模块出现 `inline-scan FAIL: 模块变量访问 op=88 at off 27（callee 与 caller 不同模块）` + `inline=0`。
+  取值在 JIT / `LENO_NO_JIT=1` / `LENO_JIT_NOINLINE=1` 三种模式下**完全一致**
+  （`same= 720000600000 sum= 1200000 seen= 300000`、`cross= 2160000600000`）；`Bailouts: 0`。
+* 新用例 `assert/test_jit_inline_module_var.leno` + 辅助模块 `assert/jit_inline_modvar_mod.leno`：
+  同模块精确断言（`total = 8n(n-1) + 10n`、`_seen = n`）+ 跨模块边界断言
+  （期望值由**实测模块状态**推出，不硬编码）；双模式通过。
+* `assert` 全套 **298 passed / 0 failed**；编译 0 warning。
+
+**教训 / 边界**
+
+1. **只有模块文件里的顶层 `var` 才是 `OP_GET_MODULE_VAR`**（入口脚本的顶层 var 走
+   `OP_GET_GLOBAL`）⇒ 测"同模块"的用例必须**整个放在被 import 的模块里**，
+   "入口脚本 + 本地 struct"那套写法根本走不到这条路径（这是我第一版探针第二次"看不到缺口"）。
+2. **放行条件必须写成"同模块"，不是"能解析出模块"**：跨模块不内联是**正确性边界**而不是性能取舍
+   ⇒ 用例里必须有跨模块对照，并断言"两侧耗时相同/不内联"才是预期，
+   否则后人很容易把它当成"顺手也放开"的优化。
+3. 守卫失败必须继续 `return 0`（拒绝内联），**绝不能**退化成"按调用方模块读" —— 那就是静默算错。
+   这与 §8.68 的"rc 推不出来就拒绝"是同一条原则：**宁可不编，不要猜**。
+
+***
+
 ## 9. 性能数据
 
 ### 测试环境
@@ -5180,6 +5309,8 @@ JIT 机器码返回非 0（bailout / `jit_callout_failed`）时，把控制权�
 | `assert/test_jit_multi_inline.leno` | 循环体内**多个内联点**的 bc_off 命名空间隔离（§8.26）：2 个 / 4 个 `gm()`（GF(2^8) 乘法，体内有 for + 两处 if）内联点，逐元素全文比对 + 20 轮反复调用。**未修复的代码上会以 `0xC00000FD` 崩溃**（不是断言失败），修复后通过 |
 | `assert/test_jit_array_bounds.leno` | 数组索引读/写与 append 的内联快路径（§8.28 / §8.29）：越界与负下标必须**像解释器一样被 try/catch 捕获 239 次**、合法下标读值正确、`add` 后 len 与内容正确、下标写覆盖且不破坏相邻元素、写入的是 Value（`is int`）、扩容不丢数据、字典慢路径仍正确。**未修复代码（P5 前）输出「越界捕获=0」并 FAIL**；同时覆盖 `arr[i]=v` 快路径的 Value 装箱 |
 | `assert/test_jit_rsp_drift.leno` | 合并点两条到达路径的 TOS 形态必须一致（§8.50）：`and` 短路 / 单条件 / `or` 短路三种形态 + 值断言。101 桶 × 20000 轮（2.02M 轮内层迭代）把「每轮漏 8 字节」放大到栈溢出量级。**未修复的代码上会以 `0xC00000FD` 崩溃**（不是断言失败），修复后通过 |
+| `assert/test_jit_inline_method_dispatch.leno` | 内联侧 `OP_GET_METHOD` 的栈记账（§8.68 / R7②）：face 动态派发被内联时的 1 参 / 2 参（不同 argc ⇒ 不同记账值）与**同一函数体内两处派发**必须取值精确，两个 face 实现走运行时分发。**它是「修后记账守卫」而非「修前必失败」用例**：修复前只是不内联、结果依然正确 ⇒ 「是否真的内联」由 `jit_probes/probe_inline_method_call.leno` 的 `inline(...)` 行判定 |
+| `assert/test_jit_inline_module_var.leno`(+`assert/jit_inline_modvar_mod.leno`) | 内联侧模块变量访问的**安全边界**（§8.69 / R7①）：同模块（辅助模块内部 `runSame` → `Acc.bump`）允许内联且取值精确（`8n(n-1)+10n`）；**跨模块必须仍拒绝内联**（期望值由实测模块状态推出，不硬编码）。同模块那侧必须整体放在被 import 的模块里 —— 入口脚本的顶层 `var` 是 `OP_GET_GLOBAL`，走不到这条路径 |
 
 ***
 
