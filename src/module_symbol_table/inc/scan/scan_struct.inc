@@ -19,7 +19,10 @@
                     if (*after_struct == '[') {
                         after_struct++; // skip '['
                         while (*after_struct && *after_struct != ']') {
-                            while (*after_struct && (*after_struct == ' ' || *after_struct == '\t')) after_struct++;
+                            const char* tp_iter_start = after_struct;   // 进度守卫基准
+                            // 跳过空白（含换行，泛型参数列表可跨行）
+                            while (*after_struct && (*after_struct == ' ' || *after_struct == '\t' ||
+                                                     *after_struct == '\n' || *after_struct == '\r')) after_struct++;
                             if (*after_struct && (isalnum((unsigned char)*after_struct) || *after_struct == '_')) {
                                 const char* tp_name_start = after_struct;
                                 while (*after_struct && (isalnum((unsigned char)*after_struct) || *after_struct == '_')) after_struct++;
@@ -31,14 +34,18 @@
                                 }
                                 type_param_count++;
                             }
-                            while (*after_struct && (*after_struct == ' ' || *after_struct == '\t')) after_struct++;
+                            while (*after_struct && (*after_struct == ' ' || *after_struct == '\t' ||
+                                                     *after_struct == '\n' || *after_struct == '\r')) after_struct++;
                             // 跳过约束语法 T: FaceName
                             if (*after_struct == ':') {
                                 after_struct++; // skip ':'
-                                while (*after_struct && (*after_struct == ' ' || *after_struct == '\t')) after_struct++;
+                                while (*after_struct && (*after_struct == ' ' || *after_struct == '\t' ||
+                                                         *after_struct == '\n' || *after_struct == '\r')) after_struct++;
                                 while (*after_struct && (isalnum((unsigned char)*after_struct) || *after_struct == '_')) after_struct++;
                             }
                             if (*after_struct == ',') after_struct++;
+                            // 本圈没推进就退出，避免死循环
+                            if (after_struct == tp_iter_start) break;
                         }
                         if (*after_struct == ']') after_struct++; // skip ']'
                     }

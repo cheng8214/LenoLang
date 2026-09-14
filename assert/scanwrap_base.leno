@@ -1,0 +1,8 @@
+// scanwrap_base.leno — 回归测试辅助模块（供 scanwrap_mod.leno 的跨行 use 使用）
+export struct Base {
+    int n
+}
+
+export struct Other {
+    int m
+}

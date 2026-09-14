@@ -47,7 +47,13 @@
                             after_var++;
                             // 解析变量名列表
                             while (*after_var) {
-                                while (*after_var && (*after_var == ' ' || *after_var == '\t' || *after_var == ',')) after_var++;
+                                const char* var_iter_start = after_var;   // 进度守卫基准
+                                // 跳过空白与逗号。**含换行**：解构列表换行写是合法的；
+                                // 只跳空格/制表符时指针会停在 '\n' 上，读名字读到 0 字符、
+                                // 本圈一步不推进 ⇒ 死循环（与 parser_module.c 的跨行 use 同族）。
+                                while (*after_var && (*after_var == ' ' || *after_var == '\t' ||
+                                                      *after_var == '\n' || *after_var == '\r' ||
+                                                      *after_var == ',')) after_var++;
                                 if (*after_var == ')') { after_var++; break; }
                                 const char* name_start = after_var;
                                 while (*after_var && (isalnum((unsigned char)*after_var) || *after_var == '_')) after_var++;
@@ -58,6 +64,8 @@
                                     var_name[name_len] = '\0';
                                     module_symbol_table_add_var(table, var_name, TYPE_ANY, NULL, is_const_decl, NULL);
                                 }
+                                // 本圈没推进就退出；畸形列表交由真正的解析器报错
+                                if (after_var == var_iter_start) break;
                             }
                         }
                         p = after_var;

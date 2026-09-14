@@ -303,7 +303,10 @@ static void extract_exports(const char* source, ExportList* list) {
                     if (*p == '(') {
                         p++;
                         while (*p) {
-                            while (*p && (*p == ' ' || *p == '\t' || *p == ',')) p++;
+                            const char* dname_iter_start = p;   // 进度守卫基准
+                            // 跳过空白与逗号。**含换行**：解构列表换行写合法；漏掉 '\n'
+                            // 会让指针停住、本圈一步不推进 ⇒ 死循环（同 scan_var.inc）。
+                            while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r' || *p == ',')) p++;
                             if (*p == ')') { p++; break; }
                             const char* dname_start = p;
                             while (*p && (isalnum((unsigned char)*p) || *p == '_')) p++;
@@ -313,6 +316,8 @@ static void extract_exports(const char* source, ExportList* list) {
                                 list->names[list->count][dlen] = '\0';
                                 list->count++;
                             }
+                            // 本圈没推进就退出，畸形列表交由真正的解析器报错
+                            if (p == dname_iter_start) break;
                         }
                         continue;  // 已处理完，跳过下方的标识符读取
                     }
