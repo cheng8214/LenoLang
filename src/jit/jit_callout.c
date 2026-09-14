@@ -1242,6 +1242,145 @@ Value jit_callout_struct_init(int64_t* vstack_top, uint16_t name_const_idx,
     return val_obj((Object*)obj);
 }
 
+/* ============================================================================
+ * 公共调用核心：jit_invoke_closure —— 「调用一个闭包」这件事一次做完（§8.59 抽自
+ * jit_callout_invoke_method，供 INVOKE_METHOD_TYPED / GET_METHOD+CALL / 裸 OP_CALL 共用）。
+ *
+ * 约定（三个调用方必须一致）：
+ *   - vstack_top[0] = TOS = **最后一个实参**；vstack_top[arg_count-1] = 第 0 个实参。
+ *     调用方负责把「接收者 / GET_METHOD 消费的额外 receiver」排除在外（各处 codegen 的 +8）。
+ *   - ret_count 由调用方按同一规则算好：被调函数 return_count（<=1 归一为 1）。
+ *   - 成功：RAX = results[ret_count-1]（新 TOS），前 (ret_count-1) 个写回
+ *     vstack_top[arg_count-1-i]。
+ *   - 失败：置 jit_callout_failed 并返回 NULL_VAL（codegen 走 bailout，交解释器重放）。
+ *
+ * 为什么入参是「ObjFunction* + callee 原始 Value」而不是 ObjClosure*：
+ *   函数值可能是**裸 ObjFunction**（`OP_GET_GLOBAL_FUNC` / `OP_GET_MODULE_FUNC` 取出来的
+ *   就是这种；解释器的 call_value 有专门的 OBJ_FUNCTION 分支，内部才包成闭包）。
+ *   快路径本来就只用 function；慢路径把**原始 callee 值**交给 vm_call_value，
+ *   由解释器按自己的分支处理 ⇒ JIT 不需要为裸函数多做一次闭包分配（与解释器同语义、无额外开销）。
+ *
+ * 两级路径：
+ *   快路径：callee 自身已（或可）编成函数级 JIT → 直接调机器码，不压 VM 帧
+ *           （注意：这条路径**不压帧**，所以任何依赖「当前帧」的东西都不能用 —— 见 §8.56）。
+ *   慢路径：VM 重入（vm_call_value），语义与解释器完全一致（异常/多返回值都在这里兜底）。
+ * ========================================================================== */
+static Value jit_invoke_closure(ObjFunction* mfunc, Value callee_val, int arg_count,
+                                int64_t* vstack_top, int ret_count, const char* who) {
+    VM* vm = jit_callout_vm;
+    if (!vm) return NULL_VAL;
+
+    /* ---- 快路径：callee 自身走函数级 JIT ----
+     * locals 是临时数组：locals[0] = self(接收者)，locals[1..arg_count-1]
+     * = 其余实参，其余 slot 置 NULL_VAL（VM 语义：未定义 slot 为 NULL）。
+     * 返回 0 且无失败标志 → jit_fn_result 即返回值。
+     * 任何不成功情况 → 回退到下方 VM 重入路径（栈/VM 状态在快路径中
+     * 保持不变：只有 jit_callout_failed 可能被内部嵌套 callout 设置，
+     * 回退前必须复位）。 */
+    if (mfunc && ret_count == 1 && jit_state.enabled && jit_func_depth < JIT_FUNC_MAX_DEPTH) {
+        JIT_FT_T0();
+        JitLoopFn jfn = jit_func_lookup_or_compile(mfunc, vm);
+        if (jfn) {
+            int lcount = mfunc->local_count > mfunc->arity
+                             ? mfunc->local_count : mfunc->arity;
+            if (lcount < arg_count) lcount = arg_count;
+            if (lcount > JIT_MAX_LOCALS) lcount = JIT_MAX_LOCALS;
+            Value* flocals = jit_func_locals_pool[jit_func_depth];
+            for (int i = 0; i < lcount; i++) flocals[i] = NULL_VAL;
+            /* JIT 栈：vstack_top[0]=TOS=最后实参；函数参数 slot 0=第一个实参。 */
+            for (int i = 0; i < arg_count && i < lcount; i++) {
+                flocals[i] = jit_raw_to_value(vstack_top[arg_count - 1 - i]);
+            }
+            jit_func_depth++;
+            jit_fn_result = NULL_VAL;
+            if (JIT_FT_TRACE_ON()) {
+                fprintf(stderr, "[FT] %s jfn=%p func='%s' lc=%d ac=%d depth=%d\n",
+                        who, (void*)jfn, mfunc->name ? mfunc->name : "?", lcount, arg_count, jit_func_depth);
+            }
+            JIT_FT_T1();
+            int jr = jfn(flocals, vm->globals);
+            JIT_FT_T2();
+            jit_func_depth--;
+            if (JIT_FT_TRACE_ON())
+                fprintf(stderr, "[FT] %s done jr=%d failed=%d result=%p depth=%d\n",
+                        who, jr, jit_callout_failed, (void*)(uintptr_t)jit_fn_result, jit_func_depth);
+            if (jr == 0 && !jit_callout_failed) {
+                jit_reloaded_locals = vm->frames[vm->frame_cnt - 1].locals;
+                JIT_FT_T3();
+                JIT_FT_ACC();
+                return jit_fn_result;
+            }
+            jit_callout_failed = 0;  /* 回退解释路径前复位 */
+        }
+    }
+
+    /* ---- VM 重入路径（慢路径）：push args + callee，调用解释器 ---- */
+    int saved_sp = vm->sp;
+
+    /* JIT 虚拟栈向下增长（x86 push/pop）：vstack_top[0] 是最深压入的那个（最低地址），
+     * 先压的元素在高地址 ⇒ 第 0 个实参在 vstack_top + (arg_count - 1)。 */
+    for (int i = 0; i < arg_count; i++) {
+        int64_t raw = vstack_top[arg_count - 1 - i];
+        vm_stack_push(vm, jit_raw_to_value(raw));
+    }
+
+    /* Push callee and call：callee_val 可能是闭包或**裸函数**，
+     * 交给 vm_call_value 按自己的分支处理（OBJ_FUNCTION 会在解释器侧包成闭包）。 */
+    vm_stack_push(vm, callee_val);
+    int saved_frame_cnt = vm->frame_cnt;
+    int call_r = vm_call_value(callee_val, arg_count, 0);
+
+    Value result = vm->last_return_value;
+
+    if (call_r == 0) {
+        /* vm_call_value 失败（异常未被捕获）：清理泄漏的 callee 帧 */
+        while (vm->frame_cnt > saved_frame_cnt) {
+            vm->frame_cnt--;
+            CallFrame* leaked = &vm->frames[vm->frame_cnt];
+            if (leaked->locals && leaked->locals_is_dynamic) {
+                free(leaked->locals);
+                leaked->locals = NULL;
+            }
+        }
+        vm->sp = saved_sp;
+        jit_callout_failed = 1;
+        if (jit_debug_on())
+            fprintf(stderr, "[JIT-CALLOUT-FAIL] %s: vm_call_value failed\n", who);
+        return NULL_VAL;
+    }
+
+    /* vm_grow_frames 可能重分配 vm.frames ⇒ 重载 locals 指针 */
+    if (vm->frame_cnt > 0) {
+        jit_reloaded_locals = vm->frames[vm->frame_cnt - 1].locals;
+    }
+
+    /* ---- 多返回值：与 jit_callout_global_func 完全同构 ----
+     * OP_RETURN_MULTI 把全部返回值按序压在 VM 栈上（results[0] 最深、
+     * results[ret_count-1] 为 TOS）。JIT 侧约定：
+     *   RAX            = results[ret_count-1]（新 TOS，由返回值带回）
+     *   vstack_top[arg_count-1-i] = results[i]（i = 0..ret_count-2）
+     * 缺了这段回填，调用方 `var[float,float](a, b) = f.m()` 的 a 会读到
+     * 实参槽残留（数值每帧不同 → 画面抖动）。 */
+    if (ret_count > 1 && vm->sp >= ret_count) {
+        Value ret_vals[16];
+        for (int i = 0; i < ret_count && i < 16; i++) {
+            ret_vals[i] = vm->stack[vm->sp - ret_count + i];
+        }
+        result = ret_vals[ret_count - 1];
+        for (int i = 0; i < ret_count - 1 && i < 15; i++) {
+            int slot = arg_count - 1 - i;
+            if (slot >= 0) {
+                vstack_top[slot] = jit_value_to_raw(ret_vals[i]);
+            }
+        }
+    }
+
+    /* Restore VM stack */
+    vm->sp = saved_sp;
+
+    return result;
+}
+
 /* Callout: OP_INVOKE_METHOD_TYPED (struct method call, VM re-entry) ---- */
 Value jit_callout_invoke_method(int64_t* vstack_top, int arg_count,
                                        const uint8_t* ip, Chunk* chunk) {
@@ -1305,123 +1444,56 @@ Value method_name_val = chunk->constants[method_name_idx];
         if (ret_count > 16) ret_count = 16;
     }
 
-    /* ---- 函数级 JIT 快路径 ----
-     * 方法整体已编译为机器码 fn(locals, globals) 时，直接执行它，
-     * 跳过解释器 VM frame push/pop + 字节码分发循环。
-     * locals 是临时数组：locals[0] = self(接收者)，locals[1..arg_count-1]
-     * = 其余实参，其余 slot 置 NULL_VAL（VM 语义：未定义 slot 为 NULL）。
-     * 返回 0 且无失败标志 → jit_fn_result 即返回值。
-     * 任何不成功情况 → 回退到下方 VM 重入路径（栈/VM 状态在快路径中
-     * 保持不变：只有 jit_callout_failed 可能被内部嵌套 callout 设置，
-     * 回退前必须复位）。 */
-    {
-        ObjFunction* mfunc = closure->function;
-        if (mfunc && ret_count == 1 && jit_state.enabled && jit_func_depth < JIT_FUNC_MAX_DEPTH) {
-            JIT_FT_T0();
-            JitLoopFn jfn = jit_func_lookup_or_compile(mfunc, vm);
-            if (jfn) {
-                int lcount = mfunc->local_count > mfunc->arity
-                                 ? mfunc->local_count : mfunc->arity;
-                if (lcount < arg_count) lcount = arg_count;
-                if (lcount > JIT_MAX_LOCALS) lcount = JIT_MAX_LOCALS;
-                Value* flocals = jit_func_locals_pool[jit_func_depth];
-                for (int i = 0; i < lcount; i++) flocals[i] = NULL_VAL;
-                /* JIT 栈：vstack_top[0]=TOS=最后实参；函数参数 slot 0=第一个实参。 */
-                for (int i = 0; i < arg_count && i < lcount; i++) {
-                    flocals[i] = jit_raw_to_value(vstack_top[arg_count - 1 - i]);
-                }
-                jit_func_depth++;
-                jit_fn_result = NULL_VAL;
-                if (JIT_FT_TRACE_ON()) {
-                    fprintf(stderr, "[FT] jfn=%p func='%s' lc=%d ac=%d depth=%d\n",
-                            (void*)jfn, mfunc ? (mfunc->name ? mfunc->name : "?") : "?", lcount, arg_count, jit_func_depth);
-                }
-                JIT_FT_T1();
-                int jr = jfn(flocals, vm->globals);
-                JIT_FT_T2();
-                jit_func_depth--;
-                if (JIT_FT_TRACE_ON())
-                    fprintf(stderr, "[FT] jfn done jr=%d failed=%d result=%p depth=%d\n",
-                            jr, jit_callout_failed, (void*)(uintptr_t)jit_fn_result, jit_func_depth);
-                if (jr == 0 && !jit_callout_failed) {
-                    jit_reloaded_locals = vm->frames[vm->frame_cnt - 1].locals;
-                    JIT_FT_T3();
-                    JIT_FT_ACC();
-                    return jit_fn_result;
-                }
-                jit_callout_failed = 0;  /* 回退解释路径前复位 */
-            }
-        }
-    }
+    /* 快路径（函数级 JIT）+ VM 重入 + 多返回值回填都在 jit_invoke_closure 里，
+     * 与 GET_METHOD+CALL / 裸 OP_CALL 共用同一份机械。 */
+    return jit_invoke_closure(closure->function, val_obj((Object*)closure),
+                              arg_count, vstack_top, ret_count, "invoke_method");
+}
 
-    /* ---- VM 重入路径（慢路径）：push args + callee，调用解释器 ---- */
-    /* Save VM stack state */
-    int saved_sp = vm->sp;
-
-    /* Push args from JIT virtual stack to VM stack (receiver first, i.e. bottom).
-     * JIT virtual stack grows downward (x86 push/pop): RSP points to topmost
-     * element (last pushed = lowest address). First-pushed elements are at
-     * HIGHER addresses, so receiver is at vstack_top + (arg_count - 1). */
-    for (int i = 0; i < arg_count; i++) {
-        int64_t raw = vstack_top[arg_count - 1 - i];
-        vm_stack_push(vm, jit_raw_to_value(raw));
-    }
-
-    /* Push callee and call */
-    vm_stack_push(vm, val_obj((Object*)closure));
-    int saved_frame_cnt = vm->frame_cnt;
-    int call_r = vm_call_value(val_obj((Object*)closure), arg_count, 0);
-
-Value result = vm->last_return_value;
-
-    /* Check if vm_call_value failed or didn't complete the callee */
-    if (call_r == 0) {
-        /* vm_call_value failed — exception was thrown and not caught.
-         * Clean up leaked callee frame(s). */
-        while (vm->frame_cnt > saved_frame_cnt) {
-            vm->frame_cnt--;
-            CallFrame* leaked = &vm->frames[vm->frame_cnt];
-            if (leaked->locals && leaked->locals_is_dynamic) {
-                free(leaked->locals);
-                leaked->locals = NULL;
-            }
-        }
-        vm->sp = saved_sp;
+/* Callout: 裸 OP_CALL（callee 是运行时值：局部闭包 / 回调表元素 / 字段 …）—— §8.59
+ * VM 侧语义见 op_call.inc：`callee = peek(0)`（栈约定 [args...][callee]），
+ *   OBJ_CLOSURE → call()；OBJ_FUNCTION → 新建闭包（分配）再 call；
+ *   OBJ_NATIVE / bound method → call_value 其它分支；null → 报"函数未定义"。
+ * JIT 只处理 OBJ_CLOSURE；其余一律 failed → bailout，报错/分配语义交解释器。
+ *
+ * ★ 返回值个数守卫放在**调用之前**：调用点消费几个值由编译期静态函数类型决定，
+ *   `return_count != 1`（多返回值解构）在这里就挡下。若改成"先调用再检查"，
+ *   bailout 后解释器会重跑整轮 ⇒ callee 执行两次、副作用翻倍
+ *   （§14 的"堆侧副作用无法回滚"只在不可避时才接受；能提前判断的必须提前判断）。 */
+Value jit_callout_call_value(int64_t* vstack_top, int arg_count) {
+    VM* vm = jit_callout_vm;
+    if (!vm || arg_count < 0) {
         jit_callout_failed = 1;
-        if (jit_debug_on()) fprintf(stderr, "[JIT-CALLOUT-FAIL] invoke_method: vm_call_value failed\n");
         return NULL_VAL;
     }
-
-    /* Reload locals pointer in case vm_grow_frames reallocated vm.frames */
-    if (vm->frame_cnt > 0) {
-        jit_reloaded_locals = vm->frames[vm->frame_cnt - 1].locals;
+    /* callee = VM 侧的 peek(0)（栈顶）。注意本 callout 的 vstack_top 是 **+8 后的实参块**
+     * 指针（vstack_top[0] = 最后一个实参），而 callee 在实参之上（JIT 栈向下增长 ⇒ 更低地址）
+     * ⇒ callee 在 vstack_top[-1]。 */
+    Value callee = jit_raw_to_value(vstack_top[-1]);
+    ObjFunction* fn = NULL;
+    if (val_is_obj(callee)) {
+        Object* o = val_as_obj(callee);
+        if (o->type == OBJ_CLOSURE) fn = ((ObjClosure*)o)->function;
+        else if (o->type == OBJ_FUNCTION) fn = (ObjFunction*)o;  /* 裸函数：慢路径由解释器包闭包 */
     }
-
-    /* ---- 多返回值：与 jit_callout_global_func 完全同构 ----
-     * OP_RETURN_MULTI 把全部返回值按序压在 VM 栈上（results[0] 最深、
-     * results[ret_count-1] 为 TOS）。JIT 侧约定：
-     *   RAX            = results[ret_count-1]（新 TOS，由返回值带回）
-     *   vstack_top[arg_count-1-i] = results[i]（i = 0..ret_count-2）
-     * 缺了这段回填，调用方 `var[float,float](a, b) = f.m()` 的 a 会读到
-     * 实参槽残留（数值每帧不同 → 画面抖动）。 */
-    if (ret_count > 1 && vm->sp >= ret_count) {
-        Value ret_vals[16];
-        for (int i = 0; i < ret_count && i < 16; i++) {
-            ret_vals[i] = vm->stack[vm->sp - ret_count + i];
-        }
-        result = ret_vals[ret_count - 1];
-        for (int i = 0; i < ret_count - 1 && i < 15; i++) {
-            int slot = arg_count - 1 - i;
-            if (slot >= 0) {
-                vstack_top[slot] = jit_value_to_raw(ret_vals[i]);
-            }
-        }
+    if (!fn) {
+        /* null（"函数未定义"）、OBJ_NATIVE / bound method 等 ⇒ 交解释器，报错文本一致 */
+        if (jit_debug_on())
+            fprintf(stderr, "[JIT-CALLOUT-FAIL] call_value: callee 不是闭包/函数（交解释器）\n");
+        jit_callout_failed = 1;
+        return NULL_VAL;
     }
-
-    /* Restore VM stack */
-    vm->sp = saved_sp;
-
-    return result;
+    int rc = (fn->return_count > 0) ? fn->return_count : -1;
+    if (rc != 1) {
+        if (jit_debug_on())
+            fprintf(stderr, "[JIT-CALLOUT-FAIL] call_value: return_count=%d != 1（交解释器）\n", rc);
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+    /* 实参块在 callee 槽之上：codegen 已经把 rsp+8（= 最后一个实参）传进来了，
+     * 这里直接把它交给 helper（**不要再 +1** —— 那会跳到更深的槽、把外层变量当成实参，
+     * 本轮就是踩了这个：addOne 拿到的是累加器而不是循环变量）。 */
+    return jit_invoke_closure(fn, callee, arg_count, vstack_top, 1, "call_value");
 }
 
 /* Callout: OP_CALL_GLOBAL_FUNC / OP_CALL_GLOBAL_FUNC_TYPED (global function call via VM re-entry).

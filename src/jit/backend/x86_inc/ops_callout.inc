@@ -23,6 +23,53 @@
                 TOS_PRODUCE();
                 break;
             }
+            /* ---- 裸 OP_CALL（callee 是运行时值：局部闭包 / 回调表元素 / 字段）—— §8.59 ----
+             * 形态与记账见 jit_scan.c 的同名 case：栈 [args(ac)][callee]，返回后留 1 个值
+             * （callout 在**调用前**复核 return_count，不符即 bailout 交解释器）。
+             * 内存待消费 = callee(1) + args(ac) = ac + 1；内存保留 = rc - 1 = 0
+             * ⇒ 弹 (ac + 1) 个槽（正是 §8.57 的 `argc - rc + 2` 在 rc=1 时的取值）。 */
+            case OP_CALL: {
+                int cv_argc = rd_short(ip + 1);
+                TOS_SPILL();
+                EMIT_STORE_TMP(tmp1_disp, JIT_RSP);            /* vstack_top = TOS = callee */
+                EMIT_CALLOUT_BEGIN();
+                EMIT_LOAD_TMP(JIT_RAX, tmp1_disp);
+                /* add rax, 8 —— 跳过 callee 槽，指向最后一个实参（与 §8.57 同款） */
+                emit_byte(cb, 0x48); emit_byte(cb, 0x83); emit_byte(cb, 0xC0); emit_byte(cb, 0x08);
+                emit_mov_rr(cb, JIT_ARG1, JIT_RAX);
+                emit_mov_reg_imm64(cb, JIT_ARG2, (uint64_t)cv_argc);
+                EMIT_CALL(jit_callout_call_value);
+                EMIT_CALLOUT_END();
+                EMIT_STORE_TMP(tmp2_disp, JIT_RAX);
+                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_callout_failed);
+                emit_mov_reg_mem8(cb, JIT_RAX, JIT_R8, 0);
+                emit_test_rr(cb, JIT_RAX, JIT_RAX);
+                {
+                    EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                    int cv_fail = emit_jcc(cb, 0x85);     /* JNZ → bailout */
+                    patch_add(ctx, cv_fail, -1, 0);
+                }
+                emit_xor_rr(cb, JIT_RAX, JIT_RAX);
+                emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
+                EMIT_LOAD_TMP(JIT_RAX, tmp2_disp);
+                {
+                    int cv_pop = (cv_argc + 1) * 8;
+                    if (cv_pop > 0) {
+                        if (cv_pop <= 127) {
+                            emit_byte(cb, 0x48); emit_byte(cb, 0x83); emit_byte(cb, 0xC4);
+                            emit_byte(cb, (uint8_t)cv_pop);
+                        } else {
+                            emit_byte(cb, 0x48); emit_byte(cb, 0x81); emit_byte(cb, 0xC4);
+                            emit_uint32(cb, (uint32_t)cv_pop);
+                        }
+                    }
+                }
+                EMIT_VALUE_TO_RAW();
+                TOS_PRODUCE();
+                vstack -= cv_argc;
+                break;
+            }
+
             /* ---- OP_GET_METHOD + OP_CALL（动态派发方法调用）—— §8.57 ----
              * 形态与记账见 jit_scan.c 的同名 case：调用方在 `[self][args...]` 之上**多压了一个
              * receiver** 供 GET_METHOD 消费，所以

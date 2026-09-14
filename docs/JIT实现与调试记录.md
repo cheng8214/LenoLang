@@ -609,16 +609,17 @@ bailout，只加一半会出现「能编译但一进去就 bailout」的假收�
 | L5 | `OP_SET_DECLARED_FACE`（op+const16）/ `OP_SET_PTR_ELEM_TYPE`（op+byte） | 中（×2 / ×1）。**不能当 no-op 跳过**：`declared_face` 影响后续虚拟分派与**数组元素类型推断**、`element_type` 影响 FFI 读写宽度 | **已完成**（§8.58）：`opcode_size` + 两处 scan 净 0 + 两个 callout（无失败通道）+ `assert/test_jit_op_type_tag.leno` |
 | L6 | `OP_GET_MODULE_VAR` / `OP_SET_MODULE_VAR` / `OP_GET_MODULE_FUNC`（callout，用当前帧 `module`） | 高（SDL3 大量模块级变量与函数，×2 / ×2；**顺带解锁 2 个函数的函数级 JIT**） | **已完成**（§8.55）：`opcode_size` + 循环 scan（净 +1 / 净 0）+ **内联 scan 显式拒绝**（`frame->module` 来自被调函数）+ 两个 callout（写入带 `gc_write_barrier`）+ `assert/test_jit_op_module_var.leno` |
 | L7 | `OP_STRING_ADD`（×1，内联扫描里也出现）/ `OP_NEG` / `OP_IS_NULL` / `OP_ARRAY_GET` / `OP_ARRAY_SET` / `OP_ARRAY_APPEND` / `OP_INDEX_SET` / `OP_DICT` / `OP_DICT_GET` / `OP_DICT_GET_KEY` / `OP_TYPE_CHECK` / `OP_AS_CAST` / `OP_SLICE` / `OP_IN` / `OP_RANGE` / `OP_U8_TO_F64` | 中 | 未做 |
-| L8 | `OP_CALL` / `OP_TAIL_CALL` / `OP_CLOSURE` | 中。**部分完成**（§8.56）：`OP_GET_MODULE_FUNC + OP_CALL`（模块**内部**函数调用）已进 JIT；裸 `OP_CALL`（callee 是闭包值/上值）、`OP_TAIL_CALL`、`OP_CLOSURE` 仍未做 | 进行中 |
+| L8 | `OP_CALL` / `OP_TAIL_CALL` / `OP_CLOSURE` | 中 | **`OP_CALL` 已完成**：`OP_GET_MODULE_FUNC + OP_CALL`（§8.56）+ 裸 `OP_CALL`（§8.59：rc=1 记账 + 调用前守卫、公共核心 `jit_invoke_closure`）。**仍未做**：`OP_TAIL_CALL`、`OP_CLOSURE`（创建闭包）、`GET/SET/CLOSE_UPVALUE`（要动 func-JIT 的 ABI 与 locals 生命周期，单独排期） |
 | — | **建议维持拒绝**：`OP_THROW`、`OP_AWAIT` / `OP_ASYNC_CALL`、`OP_CLIB_CALL` / `OP_CFUNC_CALLBACK`、`OP_GET_FIELD_ADDR`、`OP_DTOR_LOCAL`、`OP_TAIL_CALL_NATIVE`、`OP_PUSH_TYPE_ARGS`、模块定义期指令（`OP_DEFINE_GLOBAL*` / `OP_STRUCT_DEF` / `OP_ENUM_DEF` / `OP_FACE_DEF` / `OP_CSTRUCT_DEF` / `OP_LOAD_NATIVE_MODULE` / `OP_INIT_LENOMODULE` / `OP_DEFINE_MODULE_FUNC`） | 语义特殊（异常/协程/FFI/泛型/仅初始化期出现），实现收益低、风险高 | 维持 |
 
 **实测拒收直方图（`file_manager.leno`，2026-09-14，补完 L6 之后）**：
 
 ```
-op=59 (OP_CALL)              ×4   ← 38/39 一解，这两个循环露出下一层缺口
-op=156(OP_SWITCH_LOOKUP)     ×1
-op=138(OP_GET_CSTRUCT_DEF)   ×1   ← §8.58 后新暴露（按枚举倒推确认；属"建议维持拒绝"）
+op=156(OP_SWITCH_LOOKUP)     ×1   ← 仅剩它一条属"可做但难"
+op=138(OP_GET_CSTRUCT_DEF)   ×1   ← 属"建议维持拒绝"（运行时取 cstruct 定义）
 inline-scan: 76(OP_STRING_ADD) / 88(模块变量访问，L6 起显式拒绝内联)
+（§8.59 后 `59:OP_CALL` 归零；同一负载 `FuncCompiled 5 → 161` —— 回调式调用进 JIT 后，
+被调函数成批进入函数级 JIT，收益远超"解锁 4 个循环"本身）
 ```
 
 （演进：L1 前 `81×4 / 132×2 / 156×2 / 39×2 / 88×2 / 38×1` → 补 L1 后 `80` 消失 →
@@ -638,15 +639,15 @@ inline-scan: 76(OP_STRING_ADD) / 88(模块变量访问，L6 起显式拒绝内�
 注意覆盖面还决定**函数级 JIT 与被调函数内联**能否成立：L3 补完 `OP_SET_FIELD` 后，
 `set_pos` / `set_size` / `setWindowHandle` 三个 SDL 包装函数立刻进了函数级 JIT（§8.54）。
 
-**47 项未收录全量（`编号:名字`，用于 L0 逐项补长度；`80:LENGTH`、`81:ITER_GET`、
+**46 项未收录全量（`编号:名字`，用于 L0 逐项补长度；`80:LENGTH`、`81:ITER_GET`、
 `82:ITER_GET_VALUE`、`131:GET_FIELD`、`132:SET_FIELD`、`88:GET_MODULE_VAR`、`89:SET_MODULE_VAR`、
-`90:GET_MODULE_FUNC`、`134:GET_METHOD`、`38:SET_PTR_ELEM_TYPE`、`39:SET_DECLARED_FACE`
-已于 §8.52~§8.58 补齐，从本表移除；同时补录 `137:CSTRUCT_DEF` / `138:GET_CSTRUCT_DEF`）**：
+`90:GET_MODULE_FUNC`、`134:GET_METHOD`、`38:SET_PTR_ELEM_TYPE`、`39:SET_DECLARED_FACE`、`59:CALL`
+已于 §8.52~§8.59 补齐，从本表移除；同时补录 `137:CSTRUCT_DEF` / `138:GET_CSTRUCT_DEF`）**：
 
 ```
 14:GET_UPVALUE 15:SET_UPVALUE 16:CLOSE_UPVALUE 17:DEFINE_GLOBAL 18:GET_GLOBAL_FUNC
 19:DEFINE_GLOBAL_FUNC 20:GET_NATIVE 33:NEG
-48:IS_NULL 53:IN 54:RANGE 59:CALL 60:TAIL_CALL 61:CLOSURE 65:ARRAY_GET 66:ARRAY_SET
+48:IS_NULL 53:IN 54:RANGE 60:TAIL_CALL 61:CLOSURE 65:ARRAY_GET 66:ARRAY_SET
 67:ARRAY_APPEND 69:DICT 70:DICT_GET 72:DICT_GET_KEY 73:LOAD_NATIVE_MODULE
 75:GET_MODULE_CONST 76:STRING_ADD 78:INDEX_SET 79:SLICE 87:THROW
 91:DEFINE_MODULE_FUNC 93:TYPE_CHECK 94:AS_CAST 129:STRUCT_DEF 133:GET_FIELD_ADDR
@@ -683,6 +684,7 @@ inline-scan: 76(OP_STRING_ADD) / 88(模块变量访问，L6 起显式拒绝内�
 | OP\_GET\_MODULE\_FUNC **+** OP\_CALL（模块内部函数调用） | 窥孔合并为一次 `jit_callout_call_module_func`（§8.56，覆盖面 L8 部分）：`return_count` 编译期解析，`-1`/解析失败即拒绝整个循环；callee 从**编译期模块**现取并复核 ret_count（模块变量可被重新赋值）；多返回值沿用 `jit_callout_invoke_method` 的回填约定。**跨模块 `m.f()`、闭包值调用、`OP_TAIL_CALL` 仍未做** |
 | OP\_GET\_METHOD **+** OP\_CALL（动态派发方法调用） | 窥孔合并，复用 `jit_callout_invoke_method`（§8.57）：传给它的 `vstack_top` 要 `+8`（跳过 GET_METHOD 消费的那个额外 receiver）；`rc` 按「方法名唯一且 return_count 一致」推断，推不出即拒绝整个循环；弹 `argc - rc + 2` 个槽（**比逻辑计数多 1**，见 §8.57 教训 1）。独立的 `OP_GET_METHOD`（只取方法值）拒绝 |
 | OP\_SET\_PTR\_ELEM\_TYPE / OP\_SET\_DECLARED\_FACE | callout `jit_callout_set_ptr_elem_type` / `jit_callout_set_declared_face`（§8.58，覆盖面 L5）：两条都是 **peek TOS、净 0、无返回值**，类型不匹配时静默不做（与解释器逐字一致，**不设失败通道**）。`declared_face` 影响数组元素类型推断与 GC 标记，`element_type` 影响 FFI 读写宽度 —— 不能当 no-op 跳过 |
+| 裸 OP\_CALL（callee 是运行时值：局部闭包 / 回调表 / 字段） | callout `jit_callout_call_value`（§8.59，覆盖面 L8）：接受 `OBJ_CLOSURE` / `OBJ_FUNCTION`（裸函数由解释器侧包闭包，JIT 不额外分配），`OBJ_NATIVE`/bound method/null 交解释器；**rc 按 1 记账 + 调用前守卫**（`return_count != 1` 即 bailout，有界退化且不会双执行）。公共核心 `jit_invoke_closure` 与 `INVOKE_METHOD_TYPED`/`GET_METHOD+CALL` 共用 |
 | OP\_LENGTH | **数字原生**（32 位 `CVTTSD2SI` + 负值 clamp，复刻解释器的 `(int)double`）/ 对象与非法类型走 callout `jit_callout_length`（§8.52，覆盖面 L1） |
 | OP\_STRUCT\_INIT（非泛型） | callout `jit_callout_struct_init` |
 | OP\_RETURN / OP\_RETURN\_MULTI | 支持（函数级 JIT；多返回值仅内联路径）。**循环体内可达的 return 会让整个循环被拒绝**（§8.21） |
@@ -3609,6 +3611,76 @@ struct），也是 GC 的标记对象（`gc.c`）；`element_type` 决定 FFI �
    （解释器不报错的语义，JIT 也不该造出失败分支）。
 3. 测试要挑**可观测且自洽**的断言：`declared_face` 的效果藏在类型推断里，
    直接硬编码 `type()` 串会被格式变更打碎；"循环内 vs 循环外同构对比"更耐改。
+
+***
+
+### 8.59 裸 `OP_CALL` 进 JIT（callee 是运行时值：局部闭包 / 回调表）—— 覆盖面 L8 的第二块（2026-09-14）
+
+**背景**：§8.58 之后直方图剩最大一块 `59:OP_CALL ×4`。VM 侧（`op_call.inc`）：
+
+* `arg_count = READ_SHORT()`（3 字节指令），`callee = vm_stack_peek_fast(&vm, 0)` —— **callee 就是栈顶**，
+  栈约定 `[args...][callee]`（`call()` 读 `vm.stack[sp - arg_count - 1 + i]` 作实参）。
+* 分派（`call_value`）：`OBJ_CLOSURE` → `call()`；`OBJ_FUNCTION`（裸函数）→ **先 `gc_alloc` 包成闭包**再 `call()`；
+  `OBJ_NATIVE` / bound method → 其它分支；`null` → 报"函数未定义"。
+* 返回（`OP_RETURN`）：`vm.sp = stack_base; push(result)` ⇒ `arg_count + 1` 个槽**塌缩成 1 个值**；
+  `OP_RETURN_MULTI count(1)` 塌缩成 count 个。
+
+**探针实测的两种形态**（`.leno` 级）：
+`var f = addOne; f(i)` → `OP_GET_LOCAL callee` + `OP_CALL`；
+`callbacks[j % 2](j)` → `OP_INDEX` + `OP_CALL`。file_manager 的 `_runEvts[i](ev)` 正是后者。
+
+**实现**
+
+1. **抽公共核心 `jit_invoke_closure(ObjFunction* fn, Value callee_val, argc, vstack_top, ret_count, who)`**
+   （把 §8.57 复用过的"函数级 JIT 快路径 + VM 重入 + 多返回值回填"整段搬出来，三个调用方共用）。
+   入参刻意用 **`ObjFunction*` + callee 原始 `Value`** 而不是 `ObjClosure*`：函数值可能是**裸 `ObjFunction`**
+   （`OP_GET_GLOBAL_FUNC` / `OP_GET_MODULE_FUNC` 取出来的就是这种）；快路径本来只用 `function`，
+   慢路径把原始值交给 `vm_call_value` 由解释器按自己的分支处理 ⇒ **JIT 不必为裸函数多分配一次闭包**。
+2. `jit_callout_call_value(vstack_top, argc)`：取 `callee = vstack_top[-1]`（见下），
+   接受 `OBJ_CLOSURE` / `OBJ_FUNCTION`，其余 failed 交解释器；
+   **返回值个数守卫放在调用之前**（`fn->return_count != 1` 直接 bailout）。
+3. scan：`opcode_size` 收录 `OP_CALL` = 3；`case OP_CALL` 按 **rc = 1** 记账（`vstack -= ac`），
+   由 callout 运行时复核；内联扫描经 default 自动拒绝。
+4. codegen：`rsp + 8` 得到实参块 → callout → 失败检查 → 弹 `(ac + 1)` 个槽
+   （= §8.57 的 `argc - rc + 2` 在 rc=1 时的取值）→ `VALUE_TO_RAW` + `TOS_PRODUCE` → `vstack -= ac`。
+
+**为什么敢假设 rc = 1**：调用点消费几个值由编译期静态函数类型决定，多返回值函数必须显式声明多返回类型 ⇒
+绝大多数是 1。`rc != 1` 的调用点（多返回解构）由守卫挡下 → bailout → 循环被 `JIT_BAILOUT_LIMIT` 拉黑，
+代价有界。**守卫必须前置**：若"先调用再检查"，bailout 后解释器重跑整轮会让 callee **执行两次**、副作用翻倍。
+
+**⚠ 本轮踩的两个坑（都是"差一格"）**
+
+1. **callee 读错格**：callout 的 `vstack_top` 约定是「**+8 之后的实参块**指针」
+   （`vstack_top[0]` = 最后一个实参），callee 在它**之上**（JIT 栈向下增长 ⇒ 更低地址）
+   ⇒ 必须读 `vstack_top[-1]`。第一版读 `[0]` ⇒ 把实参当 callee ⇒ 报"callee 不是闭包/函数"。
+2. **双重 +8**：codegen 已经传了 `rsp + 8`，我在 callout 里又写了 `vstack_top + 1` ⇒ 实参指到更深的槽，
+   **`addOne` 收到的是累加器而不是循环变量**（`addOne(50)` 返回 1276 = 累加器+1）。
+   症状却是**后继 `OP_ADD_INT` 报 "int48 溢出/截断"**（bailout 又救了一次正确性）。
+
+**定位手法（两次都靠这个，没碰大反汇编）**：
+先看 stats 的 bailout **站点**——"非溢出类 @bc_off=X" 是我 callout 自己的检查，
+"int48 溢出/截断 @bc_off=X" 则是**值不对**（报错点在下一条指令）；再用现成的
+`LENO_JIT_FTRACE=1` 把快路径的**入参/出参**打出来（`arg0=0x32 → ret=0x4FC` 一眼看出传错了变量）。
+最后加一条 gated `[CV-DBG]` 打印直接照出 callee/实参，确认约定，再删掉。
+
+**验证**
+
+* 新用例 `assert/test_jit_op_call.leno`：形状 1（局部闭包值）、形状 2（回调表交替两种函数）、
+  反例（rc = 2 经闭包值调用 ⇒ 守卫 bailout、结果仍正确）。8 个 JIT 用例 JIT + `LENO_NO_JIT=1` 双模式全绿。
+* `file_manager` 冒烟负载：**`59:OP_CALL` 从直方图消失**（4 个循环全进 JIT），运行时 bailout **0**，
+  **`FuncCompiled 5 → 161`** —— 回调式调用进 JIT 后，被调函数（`process` / `drawText` /
+  `_draw_cached_text` / `pushTexBatch` / `snapX` …）成批进入函数级 JIT，覆盖面收益远超"解锁 4 个循环"本身。
+* `assert` 全套 **284 passed / 0 failed**。直方图剩 `138:GET_CSTRUCT_DEF ×1`、`156:SWITCH_LOOKUP ×1`。
+
+**教训**
+
+1. **"shift 只能做一次"**：`+8`/`+1` 这类"跳过 callee/接收者槽"的约定必须写在函数头（本文档与 `jit_priv.h` 都写了
+   "vstack_top[0] = 最后一个实参"）；两个调用方对同一参数的理解差一格，症状会出现在**几十条指令之后**
+   （下一条算术指令的溢出检查），而不是出错的指令上。
+2. 重构成公共核心时，**先只做搬移、不加新逻辑，并立刻跑既有用例**（本轮 Step A 后 7/7 全绿才继续），
+   否则"重构的锅"和"新逻辑的锅"会混在一起无法区分。
+3. 诊断"值不对"类问题：**先读 bailout 站点**（哪条指令、哪种站点编码）→ 再开 FT trace 看入参出参 →
+   最后才考虑加临时打印。三步下来不用读机器码。
 
 ***
 

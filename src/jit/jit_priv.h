@@ -396,6 +396,15 @@ ModuleMethodMeta* jit_resolve_module_method(Chunk* chunk, uint16_t module_idx, u
 /* Callout：已解析 meta 的模块方法调用（无运行时查找） */
 Value jit_callout_module_call_meta(int64_t* vstack_top, int arg_count, ModuleMethodMeta* meta);
 
+/* ---- 裸 OP_CALL（callee 是运行时值：局部闭包 / 回调表元素 / 字段 …）—— §8.59 ----
+ * VM 侧：`callee = peek(0)`，栈约定 [args...][callee]（op_call.inc）；OBJ_CLOSURE 走 call()，
+ * OBJ_FUNCTION 要**新建闭包**（分配）、OBJ_NATIVE / bound method 走 call_value 其它分支、
+ * null 报"函数未定义" ⇒ JIT 只处理 OBJ_CLOSURE，其余置 failed 交解释器（报错/分配语义一致）。
+ * ★ 返回值个数守卫在**调用之前**：不等于 1（多返回解构调用点）直接 bailout ——
+ *   若先调用再检查，bailout 后解释器重跑整轮会让 callee 执行两次、副作用翻倍。
+ * 实参块在 callee 槽之上（codegen 传 rsp + 8）。 */
+Value jit_callout_call_value(int64_t* vstack_top, int arg_count);
+
 /* ---- struct 方法返回值个数（按方法名推断，jit_scan.c）----
  * OP_INVOKE_METHOD_TYPED 正常路径用字节码里的静态类型名直接定位方法，解析失败时
  * 退回本函数（要求方法名在全部 def 中唯一）。JIT 的栈记账必须知道调用后留下几个

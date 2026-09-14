@@ -1,0 +1,54 @@
+// 裸 OP_CALL（callee 是运行时值）回归 —— §8.59
+//
+// 三种形态：
+//   形状 1：局部闭包值   var f = addOne;  f(i)          → OP_GET_LOCAL + OP_CALL
+//   形状 2：回调表       callbacks[j % 2](j)            → OP_INDEX + OP_CALL
+//   反例  ：多返回值经闭包值调用（rc = 2）⇒ JIT 侧**调用前**守卫挡下 → bailout →
+//           解释器执行（结果必须仍正确；守卫前置所以 callee 不会被执行两次）。
+// JIT 与 LENO_NO_JIT=1 两种模式的结果必须一致。
+func addOne(int x): int {
+    return x + 1
+}
+
+func timesTwo(int x): int {
+    return x * 2
+}
+
+func pair(int x): [int, int] {
+    return x, x + 100
+}
+
+main() {
+    // ---------- 形状 1：局部闭包值 ----------
+    var f = addOne
+    int a1 = 0
+    int i = 0
+    while i < 3000 {
+        a1 = a1 + f(i)                  // sum(i+1) = 3000*3001/2
+        i = i + 1
+    }
+    assert_eq(a1, 4501500)
+
+    // ---------- 形状 2：回调表（两种函数交替） ----------
+    var callbacks = [addOne, timesTwo]
+    int a2 = 0
+    int j = 0
+    while j < 3000 {
+        a2 = a2 + callbacks[j % 2](j)   // 偶数 j: j+1（1500 项）；奇数 j: 2j（1500 项）
+        j = j + 1
+    }
+    assert_eq(a2, 6750000)              // 2250000 + 4500000
+
+    // ---------- 反例：rc = 2 经闭包值调用 ----------
+    var g = pair
+    int a3 = 0
+    int k = 0
+    while k < 100 {
+        var[int, int](q1, q2) = g(k)    // rc=2 ⇒ 守卫 bailout（≤3 次后循环交解释器）
+        a3 = a3 + q1 + q2
+        k = k + 1
+    }
+    assert_eq(a3, 19900)                // sum(2k+100), k=0..99
+
+    print("test_jit_op_call: OK")
+}

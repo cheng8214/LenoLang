@@ -243,6 +243,7 @@ int opcode_size(const uint8_t* ip) {
         case OP_GET_PROPERTY:   /* opcode + name_const16 */
         case OP_GET_METHOD:     /* opcode + name_const16 */
         case OP_SET_DECLARED_FACE: /* opcode + face_name_const16 */
+        case OP_CALL:           /* opcode + arg_count16（裸调用：callee 是运行时值） */
         case OP_GET_MODULE_VAR:  /* opcode + index16 */
         case OP_SET_MODULE_VAR:  /* opcode + index16 */
         case OP_GET_MODULE_FUNC: /* opcode + index16 */
@@ -759,6 +760,18 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
             case OP_ACC_FIELDS:
                 /* pop 1 (struct obj), push 1 (float sum) -> net 0 */
                 break;
+            case OP_CALL: {
+                /* 裸 OP_CALL：callee 是**运行时值**（前一条指令压的局部闭包 / 回调表元素 /
+                 * 字段 …；探针实测形态：`OP_GET_LOCAL f` + `OP_CALL` 或 `OP_INDEX` + `OP_CALL`）。
+                 * 栈约定与 VM 一致：[args(ac)][callee]（op_call.inc 的 `peek(0)`），
+                 * 返回后留下 rc 个值 ⇒ 净效应 = rc - (ac + 1)。
+                 * rc 静态不可知（callee 是值），这里**按 rc = 1 记账**，由 callout 在调用前
+                 * 用 `closure->function->return_count` 复核：不等于 1 就 bailout（多返回解构
+                 * 调用点交解释器），循环侧有 JIT_BAILOUT_LIMIT 兜底 ⇒ 代价有界。 */
+                int ac = rd_short(ip + 1);
+                vstack -= ac;          /* = 1 - (ac + 1) */
+                break;
+            }
             case OP_GET_METHOD: {
                 /* 窥孔：`obj.m(args)` 的**动态派发**形态 = `OP_GET_METHOD name(2)` + `OP_CALL argc(2)`
                  * （face 调用，或接收者静态类型解析不出来时的 struct 方法调用）。
