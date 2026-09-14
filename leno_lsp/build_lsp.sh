@@ -26,6 +26,13 @@ LSP_SOURCES="$LSP_SOURCES lsp_definition.c"
 LSP_SOURCES="$LSP_SOURCES json.c"
 LSP_SOURCES="$LSP_SOURCES leno_compiler_lib.c"
 
+# 模块化补全引擎
+LSP_SOURCES="$LSP_SOURCES comp_set.c"
+LSP_SOURCES="$LSP_SOURCES comp_context.c"
+LSP_SOURCES="$LSP_SOURCES comp_import.c"
+LSP_SOURCES="$LSP_SOURCES comp_keywords.c"
+LSP_SOURCES="$LSP_SOURCES comp_symbols.c"
+
 # LenoC source files
 LENO_SOURCES=""
 LENO_SOURCES="$LENO_SOURCES ../src/error.c"
@@ -52,6 +59,7 @@ LENO_SOURCES="$LENO_SOURCES ../src/gc.c"
 LENO_SOURCES="$LENO_SOURCES ../src/value.c"
 LENO_SOURCES="$LENO_SOURCES ../src/string_table.c"
 LENO_SOURCES="$LENO_SOURCES ../src/object/object_string.c"
+LENO_SOURCES="$LENO_SOURCES ../src/object/method_table.c"
 LENO_SOURCES="$LENO_SOURCES ../src/object/object_array.c"
 LENO_SOURCES="$LENO_SOURCES ../src/object/object_dict.c"
 LENO_SOURCES="$LENO_SOURCES ../src/object/object_number.c"
@@ -59,6 +67,7 @@ LENO_SOURCES="$LENO_SOURCES ../src/object/object_file.c"
 LENO_SOURCES="$LENO_SOURCES ../src/object/object_struct.c"
 LENO_SOURCES="$LENO_SOURCES ../src/object/object_cstruct.c"
 LENO_SOURCES="$LENO_SOURCES ../src/object/object_face.c"
+LENO_SOURCES="$LENO_SOURCES ../src/object/object_socket.c"
 LENO_SOURCES="$LENO_SOURCES ../src/object/object_thread.c"
 LENO_SOURCES="$LENO_SOURCES ../src/bound_method.c"
 LENO_SOURCES="$LENO_SOURCES ../src/coroutine.c"
@@ -70,6 +79,7 @@ LENO_SOURCES="$LENO_SOURCES ../src/codegen/codegen_stmt.c"
 LENO_SOURCES="$LENO_SOURCES ../src/codegen/codegen_func.c"
 LENO_SOURCES="$LENO_SOURCES ../src/codegen/codegen_import.c"
 LENO_SOURCES="$LENO_SOURCES ../src/codegen/codegen_utils.c"
+LENO_SOURCES="$LENO_SOURCES ../src/codegen/codegen_inline.c"
 LENO_SOURCES="$LENO_SOURCES ../src/debug.c"
 LENO_SOURCES="$LENO_SOURCES ../src/native.c"
 LENO_SOURCES="$LENO_SOURCES ../src/bigint.c"
@@ -99,11 +109,17 @@ LENO_SOURCES="$LENO_SOURCES ../src/module/assert/assert.c"
 LENO_SOURCES="$LENO_SOURCES ../src/module/sys/sys.c"
 LENO_SOURCES="$LENO_SOURCES ../src/module/regexs/regexs.c"
 LENO_SOURCES="$LENO_SOURCES ../src/platform/platform_thread.c"
+LENO_SOURCES="$LENO_SOURCES ../src/serialize/serialize.c"
 LENO_SOURCES="$LENO_SOURCES ../src/package/package_platform.c"
 LENO_SOURCES="$LENO_SOURCES ../src/package/package_toml.c"
 LENO_SOURCES="$LENO_SOURCES ../src/package/package_init.c"
 LENO_SOURCES="$LENO_SOURCES ../src/package/package_resolve.c"
 LENO_SOURCES="$LENO_SOURCES ../src/package/package_install.c"
+# JIT 源：gc.c / vm.c 引用 jit_* 符号（jit_init / jit_try_hot_loop / jit_in_frame 等），
+# 缺了必然链接失败
+LENO_SOURCES="$LENO_SOURCES ../src/jit/jit_callout.c"
+LENO_SOURCES="$LENO_SOURCES ../src/jit/jit_scan.c"
+LENO_SOURCES="$LENO_SOURCES ../src/jit/jit.c"
 
 # Platform-specific libraries and FFI implementation
 LIBS="-lm -lpthread -ldl"
@@ -127,6 +143,19 @@ case "$OS" in
     fi
     ;;
 esac
+
+# JIT 后端：按 CPU 架构选择（arm64 后端未实现时明确报错）
+if [ "$ARCH" = "arm64" ] || [ "$ARCH" = "aarch64" ]; then
+  JIT_BACKEND=../src/jit/backend/arm64.c
+else
+  JIT_BACKEND=../src/jit/backend/x86_64.c
+fi
+if [ ! -f "$JIT_BACKEND" ]; then
+  echo "error: JIT backend $JIT_BACKEND not found" >&2
+  echo "       (arm64 backend not implemented yet — add ../src/jit/backend/arm64.c)" >&2
+  exit 1
+fi
+LENO_SOURCES="$LENO_SOURCES $JIT_BACKEND"
 
 gcc -o build/leno_lsp $LSP_SOURCES $LENO_SOURCES -I../src -Wall -Wextra -std=c99 -O2 $LIBS
 

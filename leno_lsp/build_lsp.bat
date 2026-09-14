@@ -115,6 +115,17 @@ set LENO_SOURCES=!LENO_SOURCES! ../src/package/package_toml.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/package/package_init.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/package/package_resolve.c
 set LENO_SOURCES=!LENO_SOURCES! ../src/package/package_install.c
+rem JIT 源：gc.c / vm.c 引用 jit_* 符号（jit_init / jit_try_hot_loop / jit_in_frame 等），
+rem 缺了必然链接失败
+set LENO_SOURCES=!LENO_SOURCES! ../src/jit/jit_callout.c
+set LENO_SOURCES=!LENO_SOURCES! ../src/jit/jit_scan.c
+set LENO_SOURCES=!LENO_SOURCES! ../src/jit/jit.c
+rem JIT 后端按 CPU 架构选择（arm64 预留：实现 ../src/jit/backend/arm64.c 后自动启用）
+if /i "%PROCESSOR_ARCHITECTURE%"=="ARM64" (
+  set LENO_SOURCES=!LENO_SOURCES! ../src/jit/backend/arm64.c
+) else (
+  set LENO_SOURCES=!LENO_SOURCES! ../src/jit/backend/x86_64.c
+)
 
 rem Build to temp file first, then rename (handles file lock from running LSP)
 if exist build\leno_lsp_new.exe del /F build\leno_lsp_new.exe 2>nul
