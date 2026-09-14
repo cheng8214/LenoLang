@@ -224,6 +224,46 @@ return (JitLoopFn)exec_mem;
  */
 JitFuncCacheEntry jit_func_cache[JIT_FUNC_CACHE_SIZE];
 
+/* ---- 机器码延迟释放队列（§8.60 / R4）----
+ * 见 jit_priv.h 的契约说明。这里给出实现与唯一的两个入口：
+ *   jit_code_retire() —— 驱逐/重编时替代 jit_mem_free（不安全就挂队列）
+ *   jit_retire_drain() —— 回到「C 栈上无 JIT 机器码」时真释放
+ * 顺带提供 LENO_JIT_FUNC_CACHE_SMALL=1（把函数缓存掩码缩到 3 位 = 4 槽）用于
+ * **确定性复现** R4：4 槽下"函数级 JIT 正在执行 + callout 里编译别的函数"必然撞槽。*/
+#define JIT_RETIRE_MAX 4096
+typedef struct { void* ptr; size_t size; } JitRetireEntry;
+static JitRetireEntry jit_retire_list[JIT_RETIRE_MAX];
+static int jit_retire_count = 0;
+static long jit_retire_leaked = 0;
+static uintptr_t jit_func_cache_mask = JIT_FUNC_CACHE_SIZE - 1;
+
+void jit_code_retire(void* ptr, size_t size) {
+    if (!ptr) return;
+    if (jit_func_depth == 0 && jit_loop_depth == 0) {
+        jit_mem_free(ptr, size);   /* 没有任何机器码在 C 栈上：直接释放 */
+        return;
+    }
+    if (jit_retire_count < JIT_RETIRE_MAX) {
+        jit_retire_list[jit_retire_count].ptr = ptr;
+        jit_retire_list[jit_retire_count].size = size;
+        jit_retire_count++;
+    } else {
+        /* 宁可泄漏也不 free：那可能是正在执行的代码 */
+        jit_retire_leaked++;
+    }
+}
+
+void jit_retire_drain(void) {
+    if (jit_retire_count == 0) return;
+    if (jit_func_depth != 0 || jit_loop_depth != 0) return;   /* 仍在机器码里，不能放 */
+    for (int i = 0; i < jit_retire_count; i++)
+        jit_mem_free(jit_retire_list[i].ptr, jit_retire_list[i].size);
+    if (jit_debug_on() && jit_retire_leaked > 0)
+        fprintf(stderr, "[JIT-DEBUG] retire: 冲刷 %d 块（累计被迫泄漏 %ld 块）\n",
+                jit_retire_count, jit_retire_leaked);
+    jit_retire_count = 0;
+}
+
 /* 快速预扫描：函数体含循环回边（LOOP/FOR_LOOP/FOR_PREP）或非法指令
  * → 拒绝函数级 JIT（func_mode 的编译语义只对无循环函数保证正确）。
  * FOR_INCREMENT 也会出现在 FOR 循环中（含 FOR_PREP 时已被拒绝）。 */
@@ -329,6 +369,11 @@ void jit_init(void) {
 
     /* 基准开关一次性解析（§8.47）。只在启动读一次，热路径上是一次 test。 */
     jit_state.no_callcache = getenv("LENO_NO_CALLCACHE") ? 1 : 0;
+
+    /* R4 复现开关（§8.60）：把函数缓存掩码缩到 4 槽，让"正在执行的函数级 JIT 被驱逐"
+     * 必然发生（修好延迟释放后应不再崩）。仅测试用，默认全 256 槽。 */
+    jit_func_cache_mask = getenv("LENO_JIT_FUNC_CACHE_SMALL")
+                              ? (uintptr_t)3 : (uintptr_t)(JIT_FUNC_CACHE_SIZE - 1);
 }
 
 void jit_close(void) {
@@ -344,6 +389,10 @@ void jit_close(void) {
             jit_mem_free((void*)e->fn, 0);
         }
     }
+    /* 延迟释放队列里还挂着已驱逐的机器码（§8.60）—— 到这里已无机器码在执行，可直接放 */
+    for (int i = 0; i < jit_retire_count; i++)
+        jit_mem_free(jit_retire_list[i].ptr, jit_retire_list[i].size);
+    jit_retire_count = 0;
     memset(jit_func_cache, 0, sizeof(jit_func_cache));
     memset(&jit_state, 0, sizeof(jit_state));
     jit_ft_profile_dump();
@@ -354,11 +403,11 @@ void jit_close(void) {
  * hot_disabled 均为 0，由调用方决定是否编译。 */
 static JitFuncCacheEntry* jit_func_entry_claim(ObjFunction* func) {
     uintptr_t h = (uintptr_t)func;
-    JitFuncCacheEntry* e = &jit_func_cache[(h >> 4) & (JIT_FUNC_CACHE_SIZE - 1)];
+    JitFuncCacheEntry* e = &jit_func_cache[(h >> 4) & jit_func_cache_mask];
     if (e->func == func)
         return e;
     if (e->fn)
-        jit_mem_free((void*)e->fn, 0);
+        jit_code_retire((void*)e->fn, 0);   /* §8.60：不能立即 free —— 可能正在执行 */
     memset(e, 0, sizeof(*e));
     e->func = func;
     return e;
@@ -451,6 +500,7 @@ int jit_try_hot_func_call(ObjClosure* closure, int arg_count, int typed, VM* vm_
     jit_callout_failed = 0;
     int jr = jfn(flocals, vm_ptr->globals);
     jit_func_depth--;
+    jit_retire_drain();   /* §8.60：回到「C 栈上无机器码」时冲刷延迟释放队列 */
     if (jr != 0 || jit_callout_failed) {
         /* 失败/异常：整迭代语义交回解释器。JIT 中途的堆侧副作用无法回滚，
          * 与 callout 快路径的既有取舍一致（见文档 §14）。一次失败即停用
@@ -529,7 +579,9 @@ int jit_try_hot_loop(CallFrame* frame, VM* vm_ptr, int32_t loop_offset, int back
     if (entry->loop_ip != body_start) {
         /* 新循环（空槽，或驱逐后重用）—— 重置条目 */
         if (entry->fn) {
-            jit_mem_free((void*)entry->fn, 0);
+            /* §8.60：被驱逐的可能是**另一个正在执行**的循环 JIT（A 的机器码经 callout
+             * 重入解释器，解释器又热启了循环 B；B 的编译撞到 A 的槽）⇒ 不能立即 free */
+            jit_code_retire((void*)entry->fn, 0);
         }
         memset(entry, 0, sizeof(*entry));
         entry->loop_ip = body_start;
@@ -606,6 +658,7 @@ fprintf(stderr, "[JIT-DEBUG] EXEC call #%d, fn=%p, locals=%p\n",
     jit_callout_failed = 0;
     int result = entry->fn(frame->locals, vm_ptr->globals);
     jit_loop_depth--;
+    jit_retire_drain();   /* §8.60：循环退出时若已无机器码在跑，冲刷延迟释放队列 */
     if (jit_debug_on()) {
         if (getenv("LENO_JIT_TRACE")) {
             fprintf(stderr, "[JIT-TRACE] POST #%d body_off=%-4d n_locals(scratch)=%d:", jit_state.execute_count, (int)(body_start - frame->chunk->code), 0);

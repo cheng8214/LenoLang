@@ -1,0 +1,45 @@
+// 函数级 JIT 缓存 churn 回归 —— §8.60（R4：机器码延迟释放）
+//
+// 形态：main 热循环通过**函数值**（裸 OP_CALL，§8.59）调 callIt  ⇒ callIt 被编成
+// 函数级 JIT 并以机器码执行；callIt 体内又通过函数值调 h0..h5 ⇒ 在 **callIt 自己的
+// 机器码执行期间**触发对 h0..h5 的编译 —— 这正是 R4 的触发形态：若某个 h_i 撞到
+// callIt 的槽，旧实现会 jit_func_entry_claim → jit_mem_free 掉 callIt **正在执行**的
+// 机器码（VirtualFree(MEM_RELEASE) 真归还 OS）⇒ 返回时 0xC0000005。
+//
+// 修复（§8.60）：驱逐一律走 jit_code_retire()，只在 jit_func_depth/jit_loop_depth
+// 都为 0（C 栈上无机器码）时才真释放。
+//
+// 确定性复现命令（256 槽下碰撞是概率事件，缩到 4 槽就必然）：
+//   LENO_JIT_FUNC_CACHE_SMALL=1 build\lenojit.exe assert\test_jit_func_cache_churn.leno
+//   修前：exit=-1073741819（4/4 崩）；修后：exit=0。
+func h0(int x): int { return x + 1 }
+func h1(int x): int { return x + 2 }
+func h2(int x): int { return x + 3 }
+func h3(int x): int { return x + 4 }
+func h4(int x): int { return x + 5 }
+func h5(int x): int { return x + 6 }
+
+var ha = h0
+var hb = h1
+var hc = h2
+var hd = h3
+var he = h4
+var hf = h5
+
+func callIt(int x): int {
+    return ha(x) + hb(x) + hc(x) + hd(x) + he(x) + hf(x)
+}
+
+var entry = callIt
+
+main() {
+    int acc = 0
+    int i = 0
+    while i < 20000 {
+        acc = acc + entry(i)
+        i = i + 1
+    }
+    // callIt(i) = 6i + 21 ⇒ sum_{i<20000} = 6*(19999*20000/2) + 21*20000
+    assert_eq(acc, 1200360000)
+    print("test_jit_func_cache_churn: OK")
+}

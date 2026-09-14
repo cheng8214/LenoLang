@@ -942,6 +942,7 @@ Value jit_callout_call_module_func(ObjModule* module, int64_t* vstack_top,
             jit_fn_result = NULL_VAL;
             int jr = jfn(flocals, vm->globals);
             jit_func_depth--;
+            jit_retire_drain();   /* §8.60：可能已回到顶层，冲刷延迟释放队列 */
             if (jr == 0 && !jit_callout_failed) {
                 jit_reloaded_locals = vm->frames[vm->frame_cnt - 1].locals;
                 return jit_fn_result;
@@ -1301,6 +1302,7 @@ static Value jit_invoke_closure(ObjFunction* mfunc, Value callee_val, int arg_co
             int jr = jfn(flocals, vm->globals);
             JIT_FT_T2();
             jit_func_depth--;
+            jit_retire_drain();   /* §8.60：可能已回到顶层，冲刷延迟释放队列 */
             if (JIT_FT_TRACE_ON())
                 fprintf(stderr, "[FT] %s done jr=%d failed=%d result=%p depth=%d\n",
                         who, jr, jit_callout_failed, (void*)(uintptr_t)jit_fn_result, jit_func_depth);
@@ -1605,6 +1607,7 @@ Value jit_callout_global_func(int64_t* vstack_top, int arg_count,
                 }
                 int jr = jfn(flocals, vm->globals);
                 jit_func_depth--;
+                jit_retire_drain();   /* §8.60：可能已回到顶层，冲刷延迟释放队列 */
                 if (JIT_FT_TRACE_ON())
                     fprintf(stderr, "[FT] jfn done jr=%d failed=%d result=%p depth=%d\n",
                             jr, jit_callout_failed, (void*)(uintptr_t)jit_fn_result, jit_func_depth);

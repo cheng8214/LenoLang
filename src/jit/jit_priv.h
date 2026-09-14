@@ -277,6 +277,17 @@ extern int32_t jit_bailout_site;
  * 池行宽 = JIT_MAX_LOCALS(64) 槽；depth 上限受 jit_func_depth < 64 约束。 */
 extern Value jit_fn_result;
 extern int jit_func_depth;
+
+/* ---- 机器码延迟释放（§8.60 / R4 修复）----
+ * 为什么不能立即 free：jit_mem_free 是 VirtualFree(MEM_RELEASE)/munmap，**真归还 OS**。
+ * 而 jit_func_entry_claim 是 direct-mapped、冲突时无条件驱逐占用者；若占用者**正在
+ * C 栈上执行**（A 的机器码进 callout，callout 里又编译了撞到 A 槽位的 B），A 的代码被
+ * unmap 后一返回就跳进未映射页 ⇒ STATUS_ACCESS_VIOLATION（实测 cache=4 时 4/4 必崩）。
+ * 修法：驱逐一律走 jit_code_retire()，只有「C 栈上没有任何 JIT 机器码」时才真释放
+ * （jit_retire_drain()，由所有退出机器码的路径在 depth-- 之后调用）。
+ * 队列满时**宁可泄漏**：每次驱逐的代码量很小且有界，jit_close 会兜底释放；UAF 不可恢复。 */
+void jit_code_retire(void* ptr, size_t size);
+void jit_retire_drain(void);
 /* ---- 「当前在 JIT 机器码里吗」（2026-09-13，§8.36 / §8.37）----
  * jit_loop_depth: 正在执行**循环 JIT** 机器码的层数（jit_try_hot_loop 维护）
  * jit_func_depth: 正在执行**函数级 JIT** 机器码的层数（原义，递归保护）

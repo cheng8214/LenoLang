@@ -631,7 +631,8 @@ inline-scan: 76(OP_STRING_ADD) / 88(模块变量访问，L6 起显式拒绝内�
 
 **下一步顺序（2026-09-14 更新，已与直方图对齐）**：`OP_CALL` 的两块形态都已解（§8.56 模块内部调用、
 §8.59 裸调用）⇒ 直方图只剩 `156:OP_SWITCH_LOOKUP ×1`（可做但难）与 `138:OP_GET_CSTRUCT_DEF ×1`
-（建议维持拒绝）。**覆盖面已不再是主要瓶颈**，剩下的规划见下面 roadmap，其中 R4 是唯一的内存安全项。
+（建议维持拒绝）。**覆盖面已不再是主要瓶颈**，剩下的规划见下面 roadmap；其中唯一的内存安全项
+R4（函数级缓存驱逐的 use-after-free）已确认并修复（§8.60，2026-09-14）。
 
 **关键：单补一个 opcode ≠ 解锁循环。** 只有某个循环的**全部**缺口都被补齐，它才真正进 JIT
 ⇒ 这类工作要**成批推进**，并按上面这张直方图排序（本表 L4~L6 的先后就是这么定的）。
@@ -643,7 +644,7 @@ inline-scan: 76(OP_STRING_ADD) / 88(模块变量访问，L6 起显式拒绝内�
 
 | # | 项目 | 现状 / 缺口 | 前置与成本 | 风险 | 建议顺序 |
 |---|---|---|---|---|---|
-| **R4** | `jit_func_cache` 冲突驱逐的 **use-after-free 隐患** | 256 槽 direct-mapped，冲突时 `jit_mem_free` 掉占用者的机器码 —— 若那个函数**正在 C 栈上执行**（A 调 B、B 的 callout 又编译了撞槽的 C）就是 UAF。§8.59 后 `FuncCompiled` 数量级上升 ⇒ 冲突概率显著变大 | 需要「执行中计数」（进出机器码自增/自减）+ 驱逐时**延迟回收**（挂待回收链，在安全点释放），或改用不驱逐的开放寻址 | **高（内存安全）** | **优先**（高于下面所有功能性条目） |
+| ~~R4~~ | ~~`jit_func_cache` 冲突驱逐的 **use-after-free 隐患**~~ | ~~256 槽 direct-mapped，冲突时 `jit_mem_free` 掉占用者的机器码 —— 若那个函数**正在 C 栈上执行**（A 调 B、B 的 callout 又编译了撞槽的 C）就是 UAF~~ | ~~需要「执行中计数」+ 驱逐时延迟回收~~ | ~~高（内存安全）~~ | **已完成（§8.60，2026-09-14）**：确认存在（强制碰撞 4/4 崩 `0xC0000005`）并修复为**机器码延迟释放队列**（安全点判据复用 `jit_func_depth`/`jit_loop_depth`）；`LENO_JIT_FUNC_CACHE_SMALL=1` 做确定性复现，用例 `assert/test_jit_func_cache_churn.leno` |
 | R1 | `OP_SWITCH_LOOKUP` 进 JIT | file_manager 仅剩的"可做但难"拒收点（×1）。VM 侧是整数 switch 二分查找；变长编码：`const_idx(2) count(2) default_off(4) [case_off(4)]…` | `opcode_size` 变长解码 + scan 的**多目标**前向跳转记账（每个 `case_off` 都要一条 off_map/patch）+ codegen 线性比较链（case 少时足够） | 中（控制流 + 变长 + 多目标 patch；要检查 `JIT_MAX_PATCHES` / off_map 容量） | 2 |
 | R2 | L7 余项成批补齐 | `OP_STRING_ADD`（内联侧 ×1）、`OP_NEG`、`OP_IS_NULL`、`OP_ARRAY_GET`/`OP_ARRAY_SET`、`OP_DICT*`、`OP_TYPE_CHECK`、`OP_AS_CAST`、`OP_SLICE`、`OP_IN`、`OP_RANGE`、`OP_U8_TO_F64` | 多为 callout 型，照 §8.52~§8.59 的模板走（`opcode_size` + 两处 scan + callout + codegen + 用例）；`STRING_ADD` 还能恢复一部分内联 | 低 | 3 |
 | R3 | L0 诊断收口 | `opcode_size` 余项补全；把 scan 的 default 报错区分成 `unknown opcode`（缺长度）与 `unsupported opcode`（已收录长度但缺 case） | 纯诊断，无行为变化；排查时"缺长度"和"缺 case"一眼可分 | 极低 | 3（可与 R2 合并做） |
@@ -3695,6 +3696,69 @@ struct），也是 GC 的标记对象（`gc.c`）；`element_type` 决定 FFI �
    否则"重构的锅"和"新逻辑的锅"会混在一起无法区分。
 3. 诊断"值不对"类问题：**先读 bailout 站点**（哪条指令、哪种站点编码）→ 再开 FT trace 看入参出参 →
    最后才考虑加临时打印。三步下来不用读机器码。
+
+***
+
+### 8.60 修复 R4：驱逐机器码时的 use-after-free（机器码延迟释放）（2026-09-14）
+
+**问题定性**（roadmap 的 R4，先确认再修）：
+
+1. `jit_func_entry_claim` 是 direct-mapped，冲突时**无条件**释放占用者的机器码：
+   ```c
+   if (e->fn) jit_mem_free((void*)e->fn, 0);
+   ```
+2. `jit_mem_free` = `VirtualFree(ptr, 0, MEM_RELEASE)` / `munmap` —— **真归还 OS**，不是池内回收。
+3. 触发形态：**函数级 JIT 的机器码正在执行时，callout 里又编译了别的函数**，而那个新函数
+   撞到了正在执行者的槽位 ⇒ 正在执行的机器码被 unmap ⇒ 一返回就跳进未映射页。
+   构造最小复现（`build/probe_r4_collide.leno`：main 热循环经**函数值**调 `callIt`，`callIt`
+   体内再经函数值调 `h0..h5`），把缓存掩码缩到 4 位后 **4/4 必崩**：
+   ```
+   exit=-1073741819    (0xC0000005 STATUS_ACCESS_VIOLATION)
+   ```
+
+**暴露面**：只有「机器码正在执行 + 同时触发编译」这条链才有风险。§8.59 的裸 `OP_CALL`
+callout 会**急切编译**被调者，正好落在这条链上 ⇒ 风险被 §8.59 放大。循环缓存的驱逐是
+「窗口 + 价值启发式」（正在执行的循环 hit_count 最高、worth 最大，基本不会被选中），
+安全得多，但同族风险仍在 ⇒ 一并处理。
+
+**修法：延迟释放队列**
+
+* `jit_code_retire(ptr, size)`：驱逐统一走它 —— `jit_func_depth == 0 && jit_loop_depth == 0`
+  （**C 栈上没有任何 JIT 机器码**）时立即释放，否则挂队列。判据直接复用 §8.36/§8.37 已有的
+  两个深度计数（`jit_in_frame()` 的同源状态），不新造状态。
+* `jit_retire_drain()`：挂在**全部 5 个退出点**（`jit_callout.c` 的 3 个函数级 JIT 返回点 +
+  `jit.c` 的 `jit_try_hot_func_call` / `jit_try_hot_loop`），`depth--` 之后调用。
+* 队列满（`JIT_RETIRE_MAX 4096`）时**宁可泄漏也不 free**：每次驱逐的代码量很小且有界，
+  `jit_close` 会兜底释放全部遗留；UAF 不可恢复。长跑热循环期间（`jit_loop_depth > 0`）
+  队列会累积到"该轮被驱逐的函数数量"，属已知且有界的取舍。
+* `jit_close` 的释放保持直接 `jit_mem_free`（此时已无机器码在执行），并顺带清空队列。
+
+**可测性：把编译期常量做成运行时可配**
+`LENO_JIT_FUNC_CACHE_SMALL=1` 把函数缓存掩码缩到 4 位（默认仍是 256 槽）⇒ 概率性崩溃变成
+**确定性复现**；否则 256 槽下要 ~1/256 的碰撞概率，测试只能是碰运气。
+
+**验证**
+
+* 同一复现（强制碰撞）：修前 **4/4 崩**（`-1073741819`）→ 修后 **4/4 正常**，且
+  `acc=10801080000` 与 `LENO_NO_JIT=1` 完全一致（`callIt(i)=6i+21`，Σ 手算核对）。
+* 固化用例 `assert/test_jit_func_cache_churn.leno`（注释里写了确定性复现命令）：
+  JIT / 强制碰撞 / `LENO_NO_JIT=1` 三种条件都 `exit=0`。
+* 8 个 JIT 用例 JIT + `LENO_NO_JIT=1` 双模式全绿；`assert` 全套见提交说明。
+* `file_manager` 交互负载：`closed cleanly`、运行时 bailout **0**、拒收直方图无新项。
+
+**附带发现（值得单独记）**：崩溃会在 Windows 上留下 **WER 挂住的进程**。本次实验一次就留下
+**42 个** `lenojit` 进程，它们锁着 `build\lenojit.exe` ⇒ 后续 `ld: cannot open output file
+build\lenojit.exe: Permission denied`（构建失败）。⇒ **看到一堆残留 `lenojit` 进程，就该怀疑
+之前发生过崩溃**（此前描述过的"30 多个残留进程"很可能就是同一现象）。
+
+**教训**
+
+1. **释放可执行内存必须与"是否正在执行"绑定**：要么引用计数，要么像这里一样延迟到安全点。
+   直接 `free` 的机器码缓存 = 定时炸弹，而且只在特定嵌套形态下才响。
+2. 判据优先复用既有状态（`jit_func_depth` / `jit_loop_depth` 这套"在不在 JIT 里"的计数早就在
+   §8.36/§8.37 维护着），不要为修复再造一套并行状态。
+3. **可测性也是修复的一部分**：把编译期常量（缓存槽数）做成运行时可配，才能把"概率性崩溃"
+   转成"确定性用例"—— 否则修完了也只能靠运气证明修好了。
 
 ***
 
