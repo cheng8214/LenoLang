@@ -653,7 +653,7 @@ inline-scan: 76(OP_STRING_ADD) / 88(模块变量访问) / 156(SWITCH_LOOKUP，R1
 | R5 | 闭包创建与捕获变量（`OP_CLOSURE` / `GET/SET/CLOSE_UPVALUE`） | 循环里建闭包、闭包体内读写捕获变量都不进 JIT（被调函数带 upvalue 时自动退回 VM 重入 ⇒ 语义正确但不快） | 两件基础：**(a)** func-JIT ABI 要加 closure 通道（现为 `jfn(flocals, globals)`，无 upvalue 入口）；**(b)** 循环 JIT 的 locals 在 scratch 区（迭代即复用）⇒ 直接捕获会产生**悬空 upvalue**，只能先允许"捕获已在 upvalue 链上的变量"，或改 locals 布局 | 高（ABI + 生命周期不变量） | 单独一轮，**先设计不变量再动手** |
 | R6 | 函数级 JIT 的多返回值 + `OP_TAIL_CALL` | `jit_compile_function` 直接拒收 `return_count > 1`；`OP_TAIL_CALL` 在循环 JIT 里等价"提前返回"（应归入 `has_reachable_return` 拒绝），只有函数级 JIT 有价值 | 多返回：扩返回值通道（`jit_fn_result` 单值 → 多槽约定），调用方回填约定已就绪（§8.59 的 helper）；尾调用：帧复用语义另算 | 中 | 排在 R5 之后 |
 | R7 | 内联的跨模块限制 + 内联侧 opcode 缺口 | ① 模块变量/函数访问被 inline scan 一刀拒绝（§8.55/§8.56）——内联后没有 callee 的帧，模块归属不可知（**实测 ×166**，内联侧第一大）；② inline scan 没有 `OP_GET_METHOD` 的 case ⇒ 含方法调用的函数一律不能内联（**实测 ×36**）；③ `138:GET_CSTRUCT_DEF ×116`（维持拒绝） | ① 在 inline site 记录 callee 的 module，与 caller 相同才允许内联；② 照 loop scan 的记账补 `GET_METHOD`（配对形态 `-(argc+1-rc)`，rc 用同样的 `jit_resolve_method_ret_count`，解析不出就拒绝内联） | 低 | 有内联收益需求时再做（**内联只影响性能，不影响正确性** —— 与循环级缺口分开排期） |
-| R8 | 性能基准复盘 | §9 的数据需要按最新覆盖面重跑（JIT vs `LENO_NO_JIT=1`），量化"覆盖面增长（如 `FuncCompiled 5→161`）到底换来多少" | 纯测量；也顺便验证 R4 的延迟回收没有性能回退 | 极低 | 随时（建议 R4 之后做一次） |
+| ~~R8~~ | ~~性能基准复盘~~ | ~~§9 的数据需要按最新覆盖面重跑（JIT vs `LENO_NO_JIT=1`），量化"覆盖面增长到底换来多少"~~ | ~~纯测量；也顺便验证 R4 的延迟回收没有性能回退~~ | ~~极低~~ | **已完成（§9 的「R8 基准复盘」小节，2026-09-14）**：新增可复用基准 `examples/性能测试/JIT覆盖面基准.leno`（8 项，专测本轮补齐的 opcode）；JIT/VM 加速比 2.2x\~18.6x，**字符串插值 1.0x（分配主导，非测错）**；与历史基线交叉核对无回退（i++ 75 vs 78 ms/亿、arr.add 620 vs 625 ms/亿）⇒ R4 延迟释放无可测代价 |
 | ~~R9~~ | ~~`OP_SWITCH_LOOKUP` 的 callout 开销~~ | ~~R9 前的基准显示：JIT 下 switch 每轮一次 callout（+15.5ms/3M 轮），比等价的 if 链慢 3.7 倍~~ | ~~编译期分流：case 值全 int 时发内联比较链~~ | ~~低（非 int 一律退回原 callout 路径）~~ | **已完成（§8.62，2026-09-14）**：int 快路径 + int48 守卫（bailout 交解释器，保住 bigint 值能命中 int case 的语义）+ 重复值排除；switch 的 JIT 时间 30.4 → **15.7 ms**，与 if 同级 |
 | — | **建议维持拒绝** | `OP_THROW`、`OP_AWAIT`/`OP_ASYNC_CALL`、`OP_CLIB_CALL`/`OP_CFUNC_CALLBACK`、`OP_GET_FIELD_ADDR`、`OP_DTOR_LOCAL`、`OP_TAIL_CALL_NATIVE`、`OP_PUSH_TYPE_ARGS`、**`OP_GET_CSTRUCT_DEF`(138)**、模块定义期指令 | 语义特殊（异常/协程/FFI/泛型/仅初始化期出现），收益低、风险高 | — | 维持 |
 | ~~R10~~ | ~~Linux 上 `jit_mem_free(ptr, 0)` 导致可执行内存**永不归还**~~ | ~~POSIX 侧 `munmap` 需要长度，而所有调用点都传 0 ⇒ `EINVAL`、每次驱逐漏一块；Windows 侧 `MEM_RELEASE` 忽略 size 所以一直没暴露（也解释了 R4 为何只在 Windows 复现）~~ | ~~把尺寸与代码指针一起存~~ | ~~低（Windows 行为不变）~~ | **已完成（§8.63，2026-09-14）**：`JitCacheEntry.code_size` / `JitFuncCacheEntry.code_size` + 两个编译函数的 `out_size` 出参 + 4 个释放点改用真实长度 |
@@ -4299,6 +4299,61 @@ Results: 270 passed, 0 failed (total 270)   // JIT 与 LENO_NO_JIT=1 两种模�
 所以「自尾调用编译成回边」（§11 P4）能多拿的，只剩"直筒子 body 的几十条指令"。
 
 → **P4 暂缓，P5（callout 内联）提前为下一项**。
+
+### R8 基准复盘：覆盖面工作的收益量化（2026-09-14）
+
+**方法**：新写一份**专测"这一轮补齐的 opcode"**的基准
+`examples/性能测试/JIT覆盖面基准.leno`（每一项都对应一条曾经被拒收的指令），
+8 项 × {JIT, `LENO_NO_JIT=1`} × 3 次取最小，同机同轮：
+
+| # | 测试项 | 规模 | JIT | 无 JIT | 加速比 |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 纯循环 `i++` | 2000 万 | 15 ms | 156 ms | **10.4x** |
+| 2 | 空函数调用（裸 `OP_CALL` + 函数级 JIT） | 2000 万 | 16 ms | 297 ms | **18.6x** |
+| 3 | 字符串插值（`OP_STRING_ADD`） | 100 万 | 250 ms | 250 ms | **1.0x** |
+| 4 | `switch` 4 case（`OP_SWITCH_LOOKUP` + int 快路径） | 2000 万 | 203 ms | 1390 ms | **6.9x** |
+| 5 | `is` 类型判定（`OP_TYPE_CHECK`） | 2000 万 | 250 ms | 1375 ms | **5.5x** |
+| 6 | struct 字段读写（`OP_GET_FIELD/SET_FIELD`） | 2000 万 | 109 ms | 625 ms | **5.7x** |
+| 7 | `arr.add`（通用 callout 路径） | 1000 万 | 62 ms | 141 ms | **2.3x** |
+| 8 | `dict.set`（通用 callout 路径） | 1000 万 | 78 ms | 172 ms | **2.2x** |
+
+`LENO_JIT_DEBUG` 复核：**8 个循环全部 `capable=1`、`Bailouts 0`** ——
+上表 JIT 列确实是机器码的成绩，不是"没编上、退回解释器"。
+
+**三个结论**
+
+1. **第 3 项（字符串插值）JIT 与解释器持平（1.0x）是真结论，不是测错**：该循环每次迭代
+   都**分配一个新字符串**（`Yields: 6` 说明确实在触发 GC 让出），成本由分配 + GC 主导，
+   JIT 消掉的"解释器指令调度"占比很小。⇒ **覆盖一条 opcode ≠ 一定提速**：
+   对分配密集型负载，JIT 收益天然被摊薄。
+2. **收益与"这条指令原本有多贵"成正比**：纯循环 / 函数调用 10\~19x（解释器每条指令
+   一次 opcode dispatch，JIT 全消掉）；而走 callout 的 `arr.add`/`dict.set` 只有 2.2\~2.3x
+   —— callout 那一段（进出 C、序言保存恢复）两种模式都要付，**这正是 §8.62 给 switch
+   做 int 内联快路径的同一类理由**。
+3. **与 §9 的历史基线交叉核对：没有性能回退**：
+   * `i++`：历史 1 亿次 78 ms ⇒ 本次 2000 万 15 ms（折算 1 亿 ≈ 75 ms）✓
+   * `arr.add`：历史 1 亿次 625 ms ⇒ 本次 1000 万 62 ms（折算 1 亿 ≈ 620 ms）✓
+
+   中间隔了几十次提交（含 R4 的机器码延迟释放、R9 的 switch 快路径），核心循环与
+   callout 路径的绝对耗时仍在同一水平 ⇒ **R4 的延迟释放没有可测代价**（它只在 JIT 出口
+   多做"队列非空？"两条指令，而队列通常是空的）。
+
+**覆盖面的定性进展（同一批负载的 JIT 统计）**
+
+| 指标 | R1 之前 | 现在 |
+| --- | --- | --- |
+| `file_manager` 循环级拒收 | `81/132/156/39/88/90/38` 一堆 | **只剩刻意保留的 `138`** + R5 前置（`14`）+ 维持拒绝（`142`） |
+| `file_manager` `FuncCompiled` | 5（§8.59 之前） | **≈ 100\~290**（随交互路径波动） |
+| `unknown opcode`（长度未知） | 常见 | **0**（R3 补齐长度表后本负载已无） |
+| 运行时 bailout | 0 | **0**（一直保持） |
+
+**方法学提醒（本轮踩到两次）**
+
+* 基准每项的规模必须按 **JIT 侧**标定：JIT 把多数循环跑到 `times.ms()` 的毫秒粒度以下
+  （显示 `0 ms`，无法比较），所以才把纯循环那几项提到 2000 万次。
+* **必须用 `LENO_JIT_DEBUG` 复核"测得的是不是 JIT"**：第 3 项 1.0x 若不复核，最自然的
+  误判是"JIT 对插值无效"；复核后才知道它确实在 JIT 里跑，结论应是"分配主导"。
+  （与 §8.64"探针必须自证"同一条教训。）
 
 ***
 

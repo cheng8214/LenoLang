@@ -1,0 +1,135 @@
+// ============================================================================
+// JIT 覆盖面基准（R8 复盘用）
+//
+// 目的：测「这一轮补齐的 opcode」在 JIT 下的实际收益 —— 与传统的纯算术基准不同，
+// 这里每一项都对应一条曾经被拒收（"不确定能否进 JIT"）的指令：
+//   [1] 纯循环 i++        : 基线
+//   [2] 空函数调用        : OP_CALL（§8.59）+ 函数级 JIT
+//   [3] 字符串插值        : OP_STRING_ADD（§8.64）
+//   [4] switch 4 case     : OP_SWITCH_LOOKUP（§8.61）+ int 快路径（§8.62）
+//   [5] `is` 判定         : OP_TYPE_CHECK（§8.65）
+//   [6] struct 字段读写   : OP_GET_FIELD / OP_SET_FIELD（§8.54）
+//   [7] arr.add           : 通用 callout 路径
+//   [8] dict.set          : 通用 callout 路径
+//
+// 各项规模按"JIT 侧 ≥ 数十 ms"标定（`times.ms()` 只有毫秒粒度）；
+// 末尾 CHECK 行两侧必须一致。
+//
+// 用法：
+//   build\lenojit.exe "examples\性能测试\JIT覆盖面基准.leno"
+//   set LENO_NO_JIT=1 & build\lenojit.exe "examples\性能测试\JIT覆盖面基准.leno"
+// ============================================================================
+import times
+
+int N       = 20000000   // [1][2][4][5][6]
+int N_STR   = 1000000    // [3] 每次迭代分配一个字符串，规模单独标定
+int N_COLL  = 10000000   // [7][8]
+
+struct Pair {
+    int a = 0
+    int b = 0
+}
+
+func noop(): int { return 1 }
+
+func classify(int v): int {
+    switch v {
+        case 0 { return 10 }
+        case 1 { return 20 }
+        case 2 { return 30 }
+        case 3 { return 40 }
+        default { return 99 }
+    }
+}
+
+func bench() {
+    var t1 = 0
+    var t2 = 0
+    var acc = 0
+
+    // [1] 纯循环 + i++
+    t1 = times.ms()
+    var i = 0
+    for N { i++ }
+    t2 = times.ms()
+    print($"[1] 纯循环 i++          : " + (t2 - t1) + " ms")
+    acc = acc + i
+
+    // [2] 空函数调用（裸 OP_CALL + 函数级 JIT）
+    t1 = times.ms()
+    var s = 0
+    for N { s = s + noop() }
+    t2 = times.ms()
+    print($"[2] 空函数调用          : " + (t2 - t1) + " ms")
+    acc = acc + s
+
+    // [3] 字符串插值（OP_STRING_ADD）
+    t1 = times.ms()
+    var last = ""
+    var j = 0
+    while j < N_STR {
+        last = $"v{j}"
+        j = j + 1
+    }
+    t2 = times.ms()
+    print($"[3] 字符串插值          : " + (t2 - t1) + " ms")
+    if last == $"v{N_STR-1}" { acc = acc + 1 }
+
+    // [4] switch 4 case + default（OP_SWITCH_LOOKUP + int 快路径）
+    t1 = times.ms()
+    var sacc = 0
+    var k = 0
+    while k < N {
+        sacc = sacc + classify(k % 5)
+        k = k + 1
+    }
+    t2 = times.ms()
+    print($"[4] switch 4case        : " + (t2 - t1) + " ms")
+    acc = acc + sacc
+
+    // [5] `is` 判定（OP_TYPE_CHECK）
+    t1 = times.ms()
+    var hits = 0
+    var m = 0
+    while m < N {
+        if classify(m % 5) is int { hits = hits + 1 }
+        m = m + 1
+    }
+    t2 = times.ms()
+    print($"[5] is 类型判定         : " + (t2 - t1) + " ms")
+    acc = acc + hits
+
+    // [6] struct 字段读写（OP_GET_FIELD / OP_SET_FIELD）
+    t1 = times.ms()
+    var p = new Pair(a = 0, b = 0)
+    var n = 0
+    while n < N {
+        p.a = p.a + 1
+        n = n + 1
+    }
+    t2 = times.ms()
+    print($"[6] struct 字段读写     : " + (t2 - t1) + " ms")
+    acc = acc + p.a
+
+    // [7] arr.add
+    t1 = times.ms()
+    var arr = []
+    for N_COLL { arr.add(1) }
+    t2 = times.ms()
+    print($"[7] arr.add             : " + (t2 - t1) + " ms")
+    acc = acc + arr.len()
+
+    // [8] dict.set
+    t1 = times.ms()
+    var d = {}
+    for N_COLL { d.set("k", 1) }
+    t2 = times.ms()
+    print($"[8] dict.set            : " + (t2 - t1) + " ms")
+    acc = acc + d.len()
+
+    print($"CHECK: acc=" + acc)
+}
+
+main() {
+    bench()
+}
