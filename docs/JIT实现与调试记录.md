@@ -629,15 +629,29 @@ inline-scan: 76(OP_STRING_ADD) / 88(模块变量访问，L6 起显式拒绝内�
 （一个循环只报它的第一条缺口：前面的缺口一补上，后面的缺口才露出来 ⇒ **每次都是拒收点前移**，
 总行数基本不变。）
 
-**下一步顺序（由这张表更新）**：`OP_CALL` 的「模块内部函数调用」形态已解（§8.56），
-剩下 2 个循环是**别的调用形态**（闭包值 / 原生方法），它们与 `GET_METHOD`(×2) 共享同一个前置：
-「`OP_GET_PROPERTY`/`OP_GET_METHOD` **+ `OP_CALL`** 的合并路径」（可直接复用现成的
-`jit_callout_invoke_method`）。`SWITCH_LOOKUP`（控制流）仍建议最后单独做。
+**下一步顺序（2026-09-14 更新，已与直方图对齐）**：`OP_CALL` 的两块形态都已解（§8.56 模块内部调用、
+§8.59 裸调用）⇒ 直方图只剩 `156:OP_SWITCH_LOOKUP ×1`（可做但难）与 `138:OP_GET_CSTRUCT_DEF ×1`
+（建议维持拒绝）。**覆盖面已不再是主要瓶颈**，剩下的规划见下面 roadmap，其中 R4 是唯一的内存安全项。
 
 **关键：单补一个 opcode ≠ 解锁循环。** 只有某个循环的**全部**缺口都被补齐，它才真正进 JIT
 ⇒ 这类工作要**成批推进**，并按上面这张直方图排序（本表 L4~L6 的先后就是这么定的）。
 注意覆盖面还决定**函数级 JIT 与被调函数内联**能否成立：L3 补完 `OP_SET_FIELD` 后，
-`set_pos` / `set_size` / `setWindowHandle` 三个 SDL 包装函数立刻进了函数级 JIT（§8.54）。
+`set_pos` / `set_size` / `setWindowHandle` 三个 SDL 包装函数立刻进了函数级 JIT（§8.54）；
+§8.59 补完裸 `OP_CALL` 后，同一负载的 `FuncCompiled` 从 5 涨到 **161**。
+
+**未来规划（roadmap）**
+
+| # | 项目 | 现状 / 缺口 | 前置与成本 | 风险 | 建议顺序 |
+|---|---|---|---|---|---|
+| **R4** | `jit_func_cache` 冲突驱逐的 **use-after-free 隐患** | 256 槽 direct-mapped，冲突时 `jit_mem_free` 掉占用者的机器码 —— 若那个函数**正在 C 栈上执行**（A 调 B、B 的 callout 又编译了撞槽的 C）就是 UAF。§8.59 后 `FuncCompiled` 数量级上升 ⇒ 冲突概率显著变大 | 需要「执行中计数」（进出机器码自增/自减）+ 驱逐时**延迟回收**（挂待回收链，在安全点释放），或改用不驱逐的开放寻址 | **高（内存安全）** | **优先**（高于下面所有功能性条目） |
+| R1 | `OP_SWITCH_LOOKUP` 进 JIT | file_manager 仅剩的"可做但难"拒收点（×1）。VM 侧是整数 switch 二分查找；变长编码：`const_idx(2) count(2) default_off(4) [case_off(4)]…` | `opcode_size` 变长解码 + scan 的**多目标**前向跳转记账（每个 `case_off` 都要一条 off_map/patch）+ codegen 线性比较链（case 少时足够） | 中（控制流 + 变长 + 多目标 patch；要检查 `JIT_MAX_PATCHES` / off_map 容量） | 2 |
+| R2 | L7 余项成批补齐 | `OP_STRING_ADD`（内联侧 ×1）、`OP_NEG`、`OP_IS_NULL`、`OP_ARRAY_GET`/`OP_ARRAY_SET`、`OP_DICT*`、`OP_TYPE_CHECK`、`OP_AS_CAST`、`OP_SLICE`、`OP_IN`、`OP_RANGE`、`OP_U8_TO_F64` | 多为 callout 型，照 §8.52~§8.59 的模板走（`opcode_size` + 两处 scan + callout + codegen + 用例）；`STRING_ADD` 还能恢复一部分内联 | 低 | 3 |
+| R3 | L0 诊断收口 | `opcode_size` 余项补全；把 scan 的 default 报错区分成 `unknown opcode`（缺长度）与 `unsupported opcode`（已收录长度但缺 case） | 纯诊断，无行为变化；排查时"缺长度"和"缺 case"一眼可分 | 极低 | 3（可与 R2 合并做） |
+| R5 | 闭包创建与捕获变量（`OP_CLOSURE` / `GET/SET/CLOSE_UPVALUE`） | 循环里建闭包、闭包体内读写捕获变量都不进 JIT（被调函数带 upvalue 时自动退回 VM 重入 ⇒ 语义正确但不快） | 两件基础：**(a)** func-JIT ABI 要加 closure 通道（现为 `jfn(flocals, globals)`，无 upvalue 入口）；**(b)** 循环 JIT 的 locals 在 scratch 区（迭代即复用）⇒ 直接捕获会产生**悬空 upvalue**，只能先允许"捕获已在 upvalue 链上的变量"，或改 locals 布局 | 高（ABI + 生命周期不变量） | 单独一轮，**先设计不变量再动手** |
+| R6 | 函数级 JIT 的多返回值 + `OP_TAIL_CALL` | `jit_compile_function` 直接拒收 `return_count > 1`；`OP_TAIL_CALL` 在循环 JIT 里等价"提前返回"（应归入 `has_reachable_return` 拒绝），只有函数级 JIT 有价值 | 多返回：扩返回值通道（`jit_fn_result` 单值 → 多槽约定），调用方回填约定已就绪（§8.59 的 helper）；尾调用：帧复用语义另算 | 中 | 排在 R5 之后 |
+| R7 | 内联的跨模块限制 | 模块变量/函数访问被 inline scan 一刀拒绝（§8.55/§8.56）——因为内联后没有 callee 的帧，模块归属不可知 | 在 inline site 记录 callee 的 module，与 caller 相同才允许内联 | 低 | 有内联收益需求时再做 |
+| R8 | 性能基准复盘 | §9 的数据需要按最新覆盖面重跑（JIT vs `LENO_NO_JIT=1`），量化"覆盖面增长（如 `FuncCompiled 5→161`）到底换来多少" | 纯测量；也顺便验证 R4 的延迟回收没有性能回退 | 极低 | 随时（建议 R4 之后做一次） |
+| — | **建议维持拒绝** | `OP_THROW`、`OP_AWAIT`/`OP_ASYNC_CALL`、`OP_CLIB_CALL`/`OP_CFUNC_CALLBACK`、`OP_GET_FIELD_ADDR`、`OP_DTOR_LOCAL`、`OP_TAIL_CALL_NATIVE`、`OP_PUSH_TYPE_ARGS`、**`OP_GET_CSTRUCT_DEF`(138)**、模块定义期指令 | 语义特殊（异常/协程/FFI/泛型/仅初始化期出现），收益低、风险高 | — | 维持 |
 
 **46 项未收录全量（`编号:名字`，用于 L0 逐项补长度；`80:LENGTH`、`81:ITER_GET`、
 `82:ITER_GET_VALUE`、`131:GET_FIELD`、`132:SET_FIELD`、`88:GET_MODULE_VAR`、`89:SET_MODULE_VAR`、
