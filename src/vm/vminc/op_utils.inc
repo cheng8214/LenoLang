@@ -193,9 +193,10 @@ OPCODE(OP_INDEX) {
             ObjEnumDef* def = (ObjEnumDef*)val_as_obj(obj_val);
             ObjString* key = (ObjString*)val_as_obj(index_val);
 
-            // 查找成员值
-            int64_t value = enum_def_get_member_value(def, key->chars);
-            if (value < 0) {
+            // 查找成员值。用 found 出参判定，不能用「值 < 0」——
+            // 枚举成员值本身可以是负数（enum E { A = -1 }），那样会误报「没有成员」
+            int64_t value = 0;
+            if (!enum_def_lookup_member_value(def, key->chars, &value)) {
                 char msg[256];
                 snprintf(msg, sizeof(msg), "enum '%s' 没有成员 '%s'", def->name, key->chars);
                 throw_runtime_error(msg, GET_CURRENT_LINE());

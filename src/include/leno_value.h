@@ -1226,7 +1226,10 @@ ObjEnumDef* enum_def_new(const char* name, int member_count);
 void enum_def_set_member(ObjEnumDef* def, int index, const char* name, int64_t value);
 
 // 查找 enum 成员值
-int64_t enum_def_get_member_value(ObjEnumDef* def, const char* name);
+// 返回 1 = 找到（*out_value 被写入），0 = 没有这个成员。
+// 不再用「返回 -1 表示未找到」：枚举成员值本身可以是负数（enum E { A = -1 }），
+// 旧写法会把合法成员误报成「没有成员」（VM 与 JIT callout 两处都这么判）。
+int enum_def_lookup_member_value(ObjEnumDef* def, const char* name, int64_t* out_value);
 
 // enum 定义查找（运行时）
 ObjEnumDef* enum_def_find(const char* name);

@@ -286,8 +286,9 @@ if (obj->type == OBJ_DICT) {
         }
         ObjEnumDef* def = (ObjEnumDef*)obj;
         ObjString* key = (ObjString*)val_as_obj(idx_val);
-        int64_t value = enum_def_get_member_value(def, key->chars);
-        if (value < 0) {
+        // 用 found 出参判定，不能用「值 < 0」——枚举成员值本身可以是负数
+        int64_t value = 0;
+        if (!enum_def_lookup_member_value(def, key->chars, &value)) {
             char msg[256];
             snprintf(msg, sizeof(msg), "enum '%s' 没有成员 '%s'", def->name, key->chars);
             error_add_at(ERR_RUNTIME, 0, 0, msg);

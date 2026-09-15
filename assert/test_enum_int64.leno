@@ -5,6 +5,7 @@
 
 import "test_enum_int64_mod.leno" as tm
 use tm.TrayEntryFlag
+use tm.SignedFlag
 
 // 同模块定义 enum（走 visit_enum.inc 路径）
 enum LocalFlag {
@@ -21,6 +22,13 @@ enum AutoAfter {
 
 // 值别名指向大值 enum 成员
 alias DisabledFlag = TrayEntryFlag.DISABLED
+
+// 同模块定义的负值 enum（负值成员回归用）
+enum LocalSigned {
+    NEG  = -1
+    ZERO = 0
+    POS  = 7
+}
 
 main() {
     // === 同模块 enum：visit_enum.inc 路径 ===
@@ -44,6 +52,19 @@ main() {
 
     // === 值别名指向大值 enum 成员 ===
     assert_eq(DisabledFlag, 2147483648)
+
+    // === 负值成员：不得被误判为「没有成员」 ===
+    // 旧 bug：运行期按名取成员值的函数用「返回 -1」表示未找到，调用方判 `值 < 0`，
+    // 于是合法的负值成员被报「enum 'X' 没有成员 'NEG'」。已改为 found 出参。
+    assert_eq(LocalSigned.NEG, -1)
+    assert_eq(LocalSigned.ZERO, 0)
+    assert_eq(LocalSigned.POS, 7)
+    assert_eq(SignedFlag.NEG_ONE, -1)
+    assert_eq(SignedFlag.NEG_BIG, -100)
+    assert_eq(SignedFlag.POS, 5)
+    // 模块限定访问：走枚举定义对象的运行期按名取值路径
+    assert_eq(tm.SignedFlag.NEG_ONE, -1)
+    assert_eq(tm.SignedFlag.NEG_BIG, -100)
 
     print("enum int64 截断回归测试通过")
 }

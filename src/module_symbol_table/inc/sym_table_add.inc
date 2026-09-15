@@ -202,8 +202,10 @@ void module_symbol_table_add_enum(ModuleSymbolTable* table, const char* name, in
         en->member_values = (int64_t*)malloc(sizeof(int64_t) * member_count);
         for (int i = 0; i < member_count; i++) {
             en->member_names[i] = strdup(member_names[i]);
-            // 如果提供了显式值则使用，否则自动递增
-            en->member_values[i] = (member_values && member_values[i] != -1) ? member_values[i] : (int64_t)i;
+            // 值一律原样接收：自动递增已在扫描阶段（scan_enum.inc）解析完毕。
+            // 这里曾用 `member_values[i] != -1` 判「是否有显式值」，于是显式写 `= -1` 的成员
+            // 会被改写成下标 i（enum 用 -1 当错误码是常见写法，静默出错）。
+            en->member_values[i] = member_values ? member_values[i] : 0;
         }
     }
 }

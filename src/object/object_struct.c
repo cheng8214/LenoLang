@@ -320,13 +320,15 @@ void enum_def_set_member(ObjEnumDef* def, int index, const char* name, int64_t v
     def->members[index].value = value;
 }
 
-int64_t enum_def_get_member_value(ObjEnumDef* def, const char* name) {
+int enum_def_lookup_member_value(ObjEnumDef* def, const char* name, int64_t* out_value) {
+    if (!def || !name) return 0;
     for (int i = 0; i < def->member_count; i++) {
         if (strcmp(def->members[i].name, name) == 0) {
-            return def->members[i].value;
+            if (out_value) *out_value = def->members[i].value;
+            return 1;
         }
     }
-    return -1; // 未找到
+    return 0;
 }
 
 // 注册 enum 定义

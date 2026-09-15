@@ -18,6 +18,8 @@
                     int64_t* member_values_buf = NULL;
                     int member_count = 0;
                     int member_capacity = 0;
+                    // 下一个「无显式值」成员的自动递增值（首个为 0，之后跟随前一个成员 +1）
+                    int64_t next_auto = 0;
                     while (*after_enum && *after_enum != '{') after_enum++;
                     if (*after_enum == '{') {
                         after_enum++;
@@ -61,7 +63,12 @@
                                 strncpy(member_names_buf[member_count], m_start, m_len);
                                 member_names_buf[member_count][m_len] = '\0';
                                 // 检查是否有显式值 = expression
-                                member_values_buf[member_count] = -1; // -1 表示无显式值
+                                // 注意：不能再用 -1 之类的哨兵表示「无显式值」—— 枚举成员值本身
+                                // 可以是负数（enum E { A = -1 } 是极常见写法），哨兵会被当成
+                                // 「自动递增」而把合法值改写成下标。这里用 has_explicit 显式标记，
+                                // 并在本函数末尾统一决定最终取值（见下面的 next_auto）。
+                                member_values_buf[member_count] = 0;
+                                int has_explicit = 0;
                                 while (*after_enum && (*after_enum == ' ' || *after_enum == '\t')) after_enum++;
                                 if (*after_enum == '=') {
                                     after_enum++;
@@ -106,6 +113,7 @@
                                             while (*pnum == ' ' || *pnum == '\t') pnum++;
                                             if (has_digit && (*pnum == '\0' || *pnum == '/')) {
                                                 member_values_buf[member_count] = neg ? -val : val;
+                                                has_explicit = 1;
                                                 parsed = 1;
                                             }
                                         } else if (isdigit((unsigned char)*pnum)) {
@@ -118,6 +126,7 @@
                                             while (*pnum == ' ' || *pnum == '\t') pnum++;
                                             if (*pnum == '\0' || *pnum == '/') {
                                                 member_values_buf[member_count] = neg ? -val : val;
+                                                has_explicit = 1;
                                                 parsed = 1;
                                             }
                                         }
@@ -137,7 +146,8 @@
                                                 saved_values = (int64_t*)malloc(sizeof(int64_t) * saved_count);
                                                 for (int si = 0; si < saved_count; si++) {
                                                     saved_names[si] = member_names_buf[si];
-                                                    saved_values[si] = member_values_buf[si] == -1 ? (int64_t)si : member_values_buf[si];
+                                                    // 成员值这里已是最终值（含负值与自动递增值），直接引用
+                                                    saved_values[si] = member_values_buf[si];
                                                 }
                                             }
 
@@ -277,6 +287,7 @@
                                                     }
                                                     if (ok_val && ti2 == tok_count) {
                                                         member_values_buf[member_count] = result;
+                                                        has_explicit = 1;
                                                         parsed = 1;
                                                     }
                                                 }
@@ -286,6 +297,14 @@
                                             free(saved_values);
                                         }
                                     }
+                                if (has_explicit) {
+                                    // 显式值：不再改写它（负值也必须原样保留），后续自动值从它 +1 起
+                                    next_auto = member_values_buf[member_count] + 1;
+                                } else {
+                                    // 无显式值：前一个成员 +1（首个成员为 0）
+                                    member_values_buf[member_count] = next_auto;
+                                    next_auto += 1;
+                                }
                                 member_count++;
                                 }
                             }

@@ -7,3 +7,13 @@ export enum TrayEntryFlag {
     DISABLED = 0x80000000
     CHECKED  = 0x40000000
 }
+
+// 负值成员回归：运行期按名取成员值的函数曾用「返回 -1」表示未找到，
+// 调用方判 `值 < 0` ⇒ 合法负值成员被误报「enum 'X' 没有成员 'NEG'」。
+// 已改为 found 出参（enum_def_lookup_member_value）。
+export enum SignedFlag {
+    NEG_ONE = -1
+    NEG_BIG = -100
+    ZERO    = 0
+    POS     = 5
+}

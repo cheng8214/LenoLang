@@ -4,7 +4,7 @@
 // ============================================================================
 
 #define LENOSYMC_MAGIC   0x4D59534C  // "LSYM" little-endian
-#define LENOSYMC_VERSION 0x00000015  // v21: 预扫描只收集花括号层级 0 的函数：不再把 struct/cstruct/face 方法与函数体内的局部函数当成模块级函数（同名会污染模块函数表，轻则误报「参数数量过多」，重则静默取到局部函数的返回类型）
+#define LENOSYMC_VERSION 0x00000016  // v22: enum 成员值不再用 -1 当「无显式值」哨兵（显式 `= -1` 曾被改写成下标）；自动递增改在扫描阶段解析
 // 注意：本版本号只覆盖符号表缓存（.lenosymc）；模块编译产物缓存见 include/leno_serialize.h。
 
 // 字符串序列化辅助函数（需在 TypeInfo 序列化之前定义）
