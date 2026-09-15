@@ -651,7 +651,7 @@ inline-scan: 76(OP_STRING_ADD) / 88(模块变量访问) / 156(SWITCH_LOOKUP，R1
 | ~~R12~~ | ~~【内存安全】JIT 下「循环体内**按字面量属性名取值**」堆损坏~~（原描述："dict 取值 + 存局部变量"） | ~~最小形态 100% 复现 `0xC0000374`；200000 轮正常 / 262144 轮崩~~ | ~~一个 `pop_bytes` 判据~~ | ~~高（内存损坏）~~ | **已完成（§8.67，2026-09-14）**：根因不是 dict 路径，而是 **`OP_GET_PROPERTY` 独立访问形态没弹 receiver 槽** ⇒ **每次执行泄漏 8 字节** ⇒ 循环里 RSP 单调下漂 ⇒ ~2MB 栈界处 `0xC0000374`。修法：该分支 `pop_bytes` 由 `0` 改为 `8`。实测漂移 **−8/次 → 0**、该循环 **182ms → 约 20~33ms**、A 形态的 3 次 `int48` bailout 一并消失；用例 `assert/test_jit_op_get_property.leno`（40 万轮，必须 > 262144 阈值） |
 | R2 | L7 余项成批补齐 | 余项：`OP_AS_CAST`(94)、`OP_GET_METHOD`(134，**裸方法取值**形态)、`OP_ARRAY_GET/SET`、`OP_DICT*`、`OP_SLICE`(79)、`OP_IN`、`OP_RANGE`、`OP_NEG`(33)、`OP_U8_TO_F64`(146) | 多为 callout 型，照 §8.52~§8.59 的模板走（`opcode_size` + 两处 scan + callout + codegen + 用例）；需要"语义唯一来源"抽取的（VM 里就地 READ 的那类）照 §8.61/§8.64/§8.65 的做法 | 低 | **批次 1（§8.63）**：`OP_IS_NULL`(48)。**批次 2（§8.64）**：`OP_STRING_ADD`(76)（由插值 `$"..."` 产生，不是 `+`；顺带解开内联侧）。**批次 3（§8.65）**：`OP_TYPE_CHECK`(93)——抽出 `type_check_value` 共用，顺带修掉 `TYPE_ENUM` 的 4 字节长度 bug；实测 `FuncCompiled 123 → 289`。**下一批候选**（实测排序）：**内联侧**补 `OP_GET_METHOD`（×36，见 R7；这是"内联能否成立"的问题，不影响循环编译）、`94:AS_CAST`（带值改写语义，直方图未出现）。注：`-d["k"]`、`x == null` 实测走已支持的路径，不必做；**循环级拒收此刻只剩刻意保留项**（`138`）/ R5 前置（`14`）/ 维持拒绝（`142`） |
 | ~~R3~~ | ~~L0 诊断收口~~ | ~~`opcode_size` 余项补全；把 scan 的 default 报错区分成 `unknown opcode`（缺长度）与 `unsupported opcode`（已收录长度但缺 case）~~ | ~~纯诊断，无行为变化~~ | ~~极低~~ | **已完成（§8.63，2026-09-14）**：补齐约 40 条长度（逐条与 VM 的 `READ_*`、`debug.c` 反汇编器交叉核对）；`OP_CLOSURE` 因长度依赖常量表而**故意保持"未知"**；报错分为 `unknown（长度未知）`/`unsupported（已收录长度、未实现）`。**实测收益**：同一负载的拒收清单从"含糊的 138"变成分类可排期（76×4 / 93×3 / 14×2 / 142×2 / 138×49），R2 的下一批因此是测出来的而不是猜的 |
-| R5 | 闭包创建与捕获变量（`OP_CLOSURE` / `GET/SET/CLOSE_UPVALUE`） | 循环里建闭包、闭包体内读写捕获变量都不进 JIT（被调函数带 upvalue 时自动退回 VM 重入 ⇒ 语义正确但不快） | 两件基础：**(a)** func-JIT ABI 要加 closure 通道（现为 `jfn(flocals, globals)`，无 upvalue 入口）；**(b)** 循环 JIT 的 locals 在 scratch 区（迭代即复用）⇒ 直接捕获会产生**悬空 upvalue**，只能先允许"捕获已在 upvalue 链上的变量"，或改 locals 布局 | 高（ABI + 生命周期不变量） | 单独一轮，**先设计不变量再动手** ⇒ **设计稿已出（2026-09-15）：`JIT闭包与upvalue设计_R5.md`**（形态矩阵 + 不变量 I1~I8 + 分阶段 P0~P5；**仅设计，未动手**） |
+| R5 | 闭包创建与捕获变量（`OP_CLOSURE` / `GET/SET/CLOSE_UPVALUE`） | 循环里建闭包、闭包体内读写捕获变量都不进 JIT（被调函数带 upvalue 时自动退回 VM 重入 ⇒ 语义正确但不快） | 两件基础：**(a)** func-JIT ABI 要加 closure 通道（现为 `jfn(flocals, globals)`，无 upvalue 入口）；**(b)** 循环 JIT 的 locals 在 scratch 区（迭代即复用）⇒ 直接捕获会产生**悬空 upvalue**，只能先允许"捕获已在 upvalue 链上的变量"，或改 locals 布局 | 高（ABI + 生命周期不变量） | **已完成（§8.72，2026-09-15）**：C0（零捕获）/ C1（by-upvalue）/ C2（值捕获）+ `GET/SET_UPVALUE` 全部进 JIT（P1 `34508a90` / P2a `68002778` / P2b `6c119bd3` / P3 `2a572102`，assert 304→307/0）；设计稿与不变量 I1~I8 见 `JIT闭包与upvalue设计_R5.md`。**C3（引用捕获本帧局部）与内联体内的闭包维持拒绝**（P4 需实测授权 / I8） |
 | R6 | 函数级 JIT 的多返回值 + `OP_TAIL_CALL` | `jit_compile_function` 直接拒收 `return_count > 1`；`OP_TAIL_CALL` 在循环 JIT 里等价"提前返回"（应归入 `has_reachable_return` 拒绝），只有函数级 JIT 有价值 | 多返回：扩返回值通道（`jit_fn_result` 单值 → 多槽约定），调用方回填约定已就绪（§8.59 的 helper）；尾调用：帧复用语义另算 | 中 | 排在 R5 之后 |
 | R7 | 内联的跨模块限制 + 内联侧 opcode 缺口 | ① 模块变量/函数访问被 inline scan 一刀拒绝（§8.55/§8.56）——内联后没有 callee 的帧，模块归属不可知（**实测 ×166**，内联侧第一大）；② inline scan 没有 `OP_GET_METHOD` 的 case ⇒ 含方法调用的函数一律不能内联（**实测 ×36**）；③ `138:GET_CSTRUCT_DEF ×116`（维持拒绝） | ① 在 inline site 记录 callee 的 module，与 caller 相同才允许内联；② 照 loop scan 的记账补 `GET_METHOD`（配对形态 `-(argc+1-rc)`，rc 用同样的 `jit_resolve_method_ret_count`，解析不出就拒绝内联） | 低 | **② 已完成（§8.68，2026-09-15）**：`scan_callee_for_inline` 补 `OP_GET_METHOD`（配对/独立两形态），探针 `probe_inline_method_call.leno` 2.27~2.40x、用例 `test_jit_inline_method_dispatch.leno`。**① 已完成（§8.69，同日）**：加「callee 与 caller 同模块」守卫后放行模块变量/函数访问，探针 `probe_inline_module_var.leno` ≈2~3x、跨模块仍拒绝（安全边界）、用例 `test_jit_inline_module_var.leno`；assert 298/0。③ 维持拒绝 |
 | ~~R8~~ | ~~性能基准复盘~~ | ~~§9 的数据需要按最新覆盖面重跑（JIT vs `LENO_NO_JIT=1`），量化"覆盖面增长到底换来多少"~~ | ~~纯测量；也顺便验证 R4 的延迟回收没有性能回退~~ | ~~极低~~ | **已完成（§9 的「R8 基准复盘」小节，2026-09-14）**：新增可复用基准 `examples/性能测试/JIT覆盖面基准.leno`（8 项，专测本轮补齐的 opcode）；JIT/VM 加速比 2.2x\~18.6x，**字符串插值 1.0x（分配主导，非测错）**；与历史基线交叉核对无回退（i++ 75 vs 78 ms/亿、arr.add 620 vs 625 ms/亿）⇒ R4 延迟释放无可测代价 |
@@ -4505,6 +4505,64 @@ set LENO_NO_JIT=1 && build\leno.exe jit_probes\probe_dict_set.leno 2000000
 
 ***
 
+### 8.72 R5：闭包进 JIT（C0/C1/C2 + upvalue 读写）—— 设计先行，三轮提交，一步一验（2026-09-15）
+
+**背景**：`OP_CLOSURE` 的操作数长度取决于常量表里函数对象的 `upvalue_count`，
+而 `opcode_size(ip)` 只有 `ip` ⇒ R3 起它被**故意**登记为"长度未知"（"宁可不编，不要猜"），
+落到 scan 的 `unknown opcode 61` 拒收；`OP_GET/SET_UPVALUE` 则因无 case 落 default
+被报 `unsupported opcode 14/15`。后果：**循环里只要建闭包、或循环在闭包体内访问捕获变量，
+整个循环都不进 JIT**。
+
+**设计先行**（`docs/JIT闭包与upvalue设计_R5.md`）：先交形态矩阵 + 不变量 + 分阶段计划，再动手。
+按「捕获形态 × JIT 层级」切成 C0/C1/C2/C3 与 U1/U2，确立主线不变量：
+
+> **I1：JIT 永不创建 open upvalue**。JIT 只造 **closed** upvalue（值捕获）或**复用**既有
+> `Upvalue*`（by-upvalue）⇒「关闭时机 / 悬空 location / bailout 回滚 open 状态 /
+> `vm_grow_frames` 地址重映射」这一整类问题被**结构性消除**，而不是被小心地绕开。
+> 次要但同样关键：**I2** 不缓存 `upvalue->location`（open→closed 会改写它）、
+> **I7** closure 通道按帧保存（嵌套安全）、**I8** 内联体与 upvalue 互斥。
+
+**落地四步**（每步独立编译 + 用例 + 全套 assert）：
+
+| 步 | 提交 | 内容 | 验证 |
+|---|---|---|---|
+| P1 | `34508a90` | `opcode_size_chunk()` 解析 `OP_CLOSURE` 变长操作数（`3 + 6×upvalue_count`）+ 放行 **C0 零捕获** | 探针 `scan:ALLOW-C0`、循环 `Compiled: 1`、**`Bailouts: 0`** |
+| P2a | `68002778` | **ABI 第三参 closure**（存入本帧固定槽）+ `GET/SET_UPVALUE` 进 JIT（callout + 三级守卫 + 每次重取 location） | 闭环 `u1=200000 / u2=400000`（同一份存储续累加） |
+| P2b | `6c119bd3` | **C1 by-upvalue**（指针复制；把字节码里的捕获描述表指针直接传进 callout） | `scan:ALLOW-C1`、`c1=600000` |
+| P3 | `2a572102` | **C2 值捕获**（局部值经 JIT 栈传给 callout，建 closed upvalue） | `scan:ALLOW-C2`、`c2=1400000`；判别性判据 `collect(1000)=20` |
+
+**本轮踩到并修掉的三个坑**（都属"看起来对、其实静默错"那一类，故逐条记下）：
+
+1. **`OP_CLOSURE` 长度少算 1 字节**：写成 `2 + 6n`，实际是 `opcode(1) + const(2) + 6n`。
+   后果：字节流从闭包之后**整体错位**——错位后仍可能解出"合法"的 opcode 序列，
+   所以 scan 不报错，只是后面的局部槽存取落到错槽上（表现为 `f()` 的 callee 读成 `NULL_VAL`，
+   触发 3 次 bailout 后靠解释器兜底，结果"看着还是对的"）。
+   定位链：先把 `jit_callout_call_value` 的失败诊断补成**打印实际读到的值/对象类型**
+   （原来只有"不是闭包/函数"一句话）⇒ 看到 `raw=0xfff8000000000000`（= NULL_VAL）
+   ⇒ 用 `--debug` 反汇编交叉核对（`0010` 的 `OP_CLOSURE` → 下一条在 `0019`，即 9 字节）坐实。
+   **教训：长度必须与反汇编器逐字节核对**（R3 的注释早已写明，本次是它救的场）。
+2. **`pick_pin_locals` 的走查在 `OP_CLOSURE` 处被截断**：它用 `opcode_size`，拿不到长度就
+   `break` ⇒ pin 的**排除项漏记** ⇒ 可能把本该按内存访问的槽 pin 进寄存器（两份值、读到过期值、
+   静默算错）。这正是 §8.42 那句"新增任何局部量访问点都必须同步这里"的场景 ⇒ 一并改成带 chunk 的解析。
+3. **C2 的瞬时压栈峰值必须计入 `max_vstack`**：callout 看不到 scratch/寄存器，所以局部值要先压到
+   JIT 栈上；压入/弹出虽在同一指令内平衡，但**峰值**会临时抬高 vstack ⇒ 不计入 `max_vstack`
+   则帧尺寸不够、压栈会踩进 `tmp/co/closure` 区（内存安全）。
+
+**未做/维持拒绝**：**C3**（引用捕获本帧局部——需要"长期稳定的槽地址"，是唯一要改 locals 布局的重活，
+按设计文档留 P4 且需实测授权）；**内联体内的闭包与 upvalue**（I8，有意）；`OP_CLOSE_UPVALUE`
+（编译器从不发射）。
+
+**验证总账**：`assert` 全套 **304 → 307 passed / 0 failed**；5 支探针（C0/C1/C2/C3 + upvalue 读写）
+全部 `Bailouts: 0` 且与 `LENO_NO_JIT=1` 逐位一致；P3 用例里 `collect(1000)` 必须得 **20**
+（若实现错误地让所有闭包共享一份 upvalue 会得 40，用例当场失败）。
+
+**顺带加的诊断开关**：`LENO_JIT_CLOSURE=1` —— 只打印闭包形态行
+（`[JIT-CLOSURE] scan:ALLOW-C2 caps=1 ref_local=0 value_local=1 ...`）。
+加它的原因很实际：`LENO_JIT_DEBUG=1` 会把每次编译尝试的 body raw hex（最多 1200 字节）整段打印，
+真实负载上输出量极大，观测体验是"这个命令跑不完"。
+
+***
+
 ## 9. 性能数据
 
 ### 测试环境
@@ -5067,6 +5125,19 @@ main() {
     根因是 **JIT 循环内无 GC 安全点** → 循环内分配的对象永不回收（10M 次 `new`
     实测堆涨到 ~960MB）。这是 Phase B/C 剩余时间的大头，也是「JIT 相对解释器
     提速被摊薄」的主要原因。待办（含安全/不安全的分级）见 §8.31。
+
+11. **内联体内不支持闭包与 upvalue（R5，2026-09-15，有意拒绝，不是待修项）**：
+    含 `OP_CLOSURE` 或 `OP_GET/SET_UPVALUE` 的被调方一律不能内联（inline scan 直接拒）。
+    原因：函数级 JIT 不压帧，"当前闭包"由 ABI 第三参带入；一旦内联，同一段机器码里
+    会同时存在 caller 与 callee 两个闭包环境，`GET_UPVALUE` 该读谁归属不清 ⇒ 可能静默读错环境。
+    这是设计文档的不变量 **I8**；代价只是"含闭包的函数不被内联"，循环本身仍可 JIT。
+
+12. **bailout 重放会连"建闭包"这个堆副作用一起重放（R5 新增受害面，2026-09-15）**：
+    循环 bailout 从**循环头重跑本轮**、函数级 bailout 重跑**整个调用**（见本节第 7 条），
+    而 R5 之后 `OP_CLOSURE` 也是 JIT 能执行的**分配**操作 ⇒ 若那一轮已经"建闭包 + 存进容器"，
+    重放会再建一次（容器里多一个）。属既有取舍的延伸，缓解同样是
+    `hot_disabled` / `JIT_BAILOUT_LIMIT`；主要防线是**扫描期把不安全形态拒掉**
+    （设计文档 I6：宁可拒收，不靠 bailout 兜底）。
 
 > 已关闭的旧条目：
 >

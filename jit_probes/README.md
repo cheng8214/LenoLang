@@ -23,6 +23,17 @@
 | `probe_bailout_sites.leno` | bailout 站点回归探针（§8.40）：int48 溢出（ADD 2^80）与 int64 溢出（MUL 3^60）两条桩路径。判据是「JIT 与 `LENO_NO_JIT=1` 结果逐位一致」+「`LENO_JIT_DEBUG=1` 的 site 序列与改动前相同（本例 17,17,17,14,14,14）」。 |
 | `probe_cast_int_peephole.leno` | `OP_CAST_INT` 恒等省略的回归探针（§8.41）：判据是 JIT 与 `LENO_NO_JIT=1` 输出逐字一致；用 `LENO_JIT_DUMP=1` 反汇编时，白名单算术后面不应再有 CAST 归一化序列，而 bool/`and`/`or` 这些非白名单来源必须有。 |
 | `probe_local_fold.leno` | 语句级折叠（`x = x ⊕ k`，§8.44）回归探针：判据是 JIT 与 `LENO_NO_JIT=1` 逐字一致。重点覆盖 **SHL 的 48 位截断语义**（第一版折叠漏了它，只用 `>>` 的基准看不出来）、ADD/SUB 溢出（检查必须保留）、以及形态 A/B 两种常量位置；`LENO_JIT_DEBUG=1` 应看到 10 行 `[JIT-CG] FOLD/FOLDB`。 |
+| `probe_closure_nocap.leno` | **R5-P1** 形态 C0（零捕获闭包）：热循环体内 `func(){...}` 无捕获。判据：`LENO_JIT_CLOSURE=1` 出现 `scan:ALLOW-C0`、该循环 `Compiled` 增长且 **`Bailouts: 0`**；输出 `c0= 200000` 与 `LENO_NO_JIT=1` 一致。 |
+| `probe_closure_upvalue.leno` | **R5-P2** upvalue 读写（`OP_GET/SET_UPVALUE`）：闭包体内热循环 `total = total + 1`，且**在 `make` 返回之后**才调用闭包 ⇒ 覆盖 open→closed 转换（不变量 I2：不缓存 `location`）。判据：`u1= 200000` / `u2= 400000`（同一份存储续累加）、`Bailouts: 0`。 |
+| `probe_closure_value_capture.leno` | **R5-P3** 形态 C2（值捕获）：`var k = 7` 声明在**循环体内**被闭包捕获（`is_value_capture = sym->is_in_loop` ⇒ 1）。判据：`scan:ALLOW-C2`、`c2= 1400000`、`Bailouts: 0`。 |
+| `probe_closure_byupvalue.leno` | **R5-P2b** 形态 C1（by-upvalue）：`base` 是外层函数的形参，循环体内那层闭包引用它 ⇒ 对它而言 `is_local=0`。判据：`scan:ALLOW-C1`、`c1= 600000`、`Bailouts: 0`。 |
+| `probe_closure_ref_capture.leno` | **R5-P4 的 gate 探针**：形态 C3（引用捕获**循环外**声明的变量，`is_value_capture=0`）。**当前必须仍被拒收**（`scan:REJECT caps=1 ref_local=1 ...` + `scan REJECT: 含 OP_CLOSURE`）—— 它需要"存活期内地址不变的 `Value*`"，是唯一要改 locals 布局的重活。将来若 P4 落地，这里的判据才改为"放行"。 |
+
+> **闭包形态诊断开关 `LENO_JIT_CLOSURE=1`（R5，§8.72）**：只输出闭包形态行与闭包拒收行
+> （`[JIT-CLOSURE] scan:ALLOW-C0 / ALLOW-C1 / ALLOW-C2`、
+> `scan:REJECT ... caps=N ref_local=.. value_local=.. byup=..`），用于在真实负载上做形态盘点。
+> **不要**为此开 `LENO_JIT_DEBUG=1` —— 它会把每次编译尝试的 body raw hex（最多 1200 字节）
+> 整段打印，真实负载上输出量极大（观测体验是"这个命令跑不完"）。
 
 ## 确定性 GC 钩子（§8.35）
 
