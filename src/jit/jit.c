@@ -58,6 +58,8 @@ static JitLoopFn jit_compile(CallFrame* frame, const uint8_t* body_start,
     jit_scan_set_module((frame && frame->closure && frame->closure->function)
                             ? frame->closure->function->module : NULL);
     jit_gaps_set_mode("loop");   /* R6-c：拒收直方图的模式标签 */
+    /* 去重身份用 body_start（同一循环同一原因只记一次；body_start 在 chunk 内唯一） */
+    jit_gaps_set_func_id((const void*)body_start);
     scan_loop_body(body_start, body_size, back_edge, &sr, vm_ptr, frame->chunk);
     if (jit_debug_on()) {
         const char* fname = "?";
@@ -302,9 +304,11 @@ static int func_body_is_simple(const uint8_t* code, int len, Chunk* chunk) {
 static JitLoopFn jit_compile_function(ObjFunction* func, VM* vm_ptr,
                                       size_t* out_size) {
     if (out_size) *out_size = 0;   /* Linux munmap 需要长度，见 jit.h */
-    /* R6-c：模式标签必须在**任何**早期 return（func_body_is_simple / has_try …）之前设置，
-     * 否则那些路径会被记成 "loop"（直方图标签错位）。 */
+    /* R6-c：模式标签与去重身份必须在**任何**早期 return（func_body_is_simple / has_try …）
+     * 之前设置，否则那些路径会被记成 "loop"（直方图标签错位）。
+     * 去重身份用 ObjFunction*：同一函数只因同一原因记一次（与重编译颠簸解耦）。 */
     jit_gaps_set_mode("func");
+    jit_gaps_set_func_id((const void*)func);
     if (!func || !func->chunk || func->chunk->len <= 0)
         return NULL;
     if (func->has_try) {

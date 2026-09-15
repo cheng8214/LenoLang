@@ -62,9 +62,46 @@ static int jit_gaps_on(void) {
 
 void jit_gaps_set_mode(const char* m) { g_gap_mode = (m && *m) ? m : "?"; }
 
-static void jit_gap_bump(const char* mode, const char* reason) {
+/* ---- 按「编译对象身份」去重（R6-c v2，2026-09-16）----
+ * 为什么必须去重：编译尝试会因 jit_func_cache 冲突驱逐（§8.73）而**重复发生** ⇒ 逐次计数会被
+ * "重编译颠簸"污染：实测同一应用重跑 `inline|OP_CALL` = 259/259/9、
+ * `func|函数体含循环` = 13/305/13，而 `FuncCompiled` 在 97~597 之间横跳。
+ * 去重后计数 = "**有多少个不同的**函数 / 循环 / 被调方因该原因被拒"，跨运行才可比。 */
+static const void* g_gap_func_id = NULL;     /* 当前编译对象（jit.c 编译前设置） */
+static const void* g_gap_inline_id = NULL;   /* 当前被内联的 callee chunk（内联扫描入口设置） */
+#define JIT_GAP_SEEN_MAX 8192
+static struct { const void* id; unsigned h; } g_gap_seen[JIT_GAP_SEEN_MAX];
+static int g_gap_seen_n = 0;
+static int g_gap_seen_overflow = 0;
+
+void jit_gaps_set_func_id(const void* id) { g_gap_func_id = id; }
+void jit_gaps_set_inline_id(const void* id) { g_gap_inline_id = id; }
+
+static unsigned jit_gap_hash(const char* s) {     /* FNV-1a */
+    unsigned h = 2166136261u;
+    for (; *s; s++) { h ^= (unsigned)(unsigned char)*s; h *= 16777619u; }
+    return h;
+}
+
+/* 返回 1 = 该 (对象, 原因) 之前已经记过 ⇒ 调用方跳过计数 */
+static int jit_gap_seen_before(const void* id, unsigned h) {
+    for (int i = 0; i < g_gap_seen_n; i++) {
+        if (g_gap_seen[i].id == id && g_gap_seen[i].h == h) return 1;
+    }
+    if (g_gap_seen_n < JIT_GAP_SEEN_MAX) {
+        g_gap_seen[g_gap_seen_n].id = id;
+        g_gap_seen[g_gap_seen_n].h = h;
+        g_gap_seen_n++;
+    } else {
+        g_gap_seen_overflow = 1;
+    }
+    return 0;
+}
+
+static void jit_gap_bump(const char* mode, const char* reason, const void* id) {
     char key[72];
     snprintf(key, sizeof(key), "%s|%s", mode, reason);
+    if (jit_gap_seen_before(id, jit_gap_hash(key))) return;   /* 同一对象+同一原因只记一次 */
     for (int i = 0; i < g_gap_n; i++) {
         if (strcmp(g_gap_tbl[i].key, key) == 0) { g_gap_tbl[i].count++; return; }
     }
@@ -81,7 +118,7 @@ void jit_gaps_record(const char* fmt, ...) {
     va_list ap; va_start(ap, fmt);
     vsnprintf(reason, sizeof(reason), fmt, ap);
     va_end(ap);
-    jit_gap_bump(g_gap_mode, reason);
+    jit_gap_bump(g_gap_mode, reason, g_gap_func_id);
 }
 
 void jit_gaps_record_inline(const char* fmt, ...) {
@@ -90,12 +127,12 @@ void jit_gaps_record_inline(const char* fmt, ...) {
     va_list ap; va_start(ap, fmt);
     vsnprintf(reason, sizeof(reason), fmt, ap);
     va_end(ap);
-    jit_gap_bump("inline", reason);
+    jit_gap_bump("inline", reason, g_gap_inline_id);
 }
 
 void jit_gaps_print(void) {
     if (g_gap_n == 0) return;
-    fprintf(stderr, "=== JIT 拒收原因（LENO_JIT_GAPS）===\n");
+    fprintf(stderr, "=== JIT 拒收原因（LENO_JIT_GAPS；计数 = 不同的函数/循环/被调方数）===\n");
     for (int i = 0; i < g_gap_n; i++) {        /* 计数降序（条目很少，选择排序足够） */
         int best = i;
         for (int j = i + 1; j < g_gap_n; j++)
@@ -108,6 +145,8 @@ void jit_gaps_print(void) {
     }
     for (int i = 0; i < g_gap_n; i++)
         fprintf(stderr, "  %6d  %s\n", g_gap_tbl[i].count, g_gap_tbl[i].key);
+    if (g_gap_seen_overflow)
+        fprintf(stderr, "  （注：去重表已满，部分计数可能偏高）\n");
     fprintf(stderr, "=================================\n");
 }
 
@@ -570,6 +609,9 @@ static int scan_callee_for_inline(Chunk* cc, ObjModule* callee_module,
                                    int base_scratch,
                                    int callee_local_map[256],
                                    int* out_max_vstack) {
+    /* R6-c v2：内联侧的拒收计数按**被调方 chunk** 去重（"有多少个不同的被调函数
+     * 因该原因不能被内联"），这是这一侧真正有意义的指标。 */
+    jit_gaps_set_inline_id((const void*)cc);
     const uint8_t* ip = cc->code;
     const uint8_t* end = cc->code + cc->len;
     int vstack = 0;

@@ -489,6 +489,9 @@ void jit_gaps_set_mode(const char* m);           /* "loop" / "func"（jit.c 在 
 void jit_gaps_record(const char* fmt, ...);      /* 循环/函数级拒收 */
 void jit_gaps_record_inline(const char* fmt, ...); /* 内联侧拒收（模式前缀固定 inline） */
 void jit_gaps_print(void);
+/* 去重身份：循环/函数级传编译对象（jit.c 设置），内联侧传被调方 chunk（扫描入口自设） */
+void jit_gaps_set_func_id(const void* id);
+void jit_gaps_set_inline_id(const void* id);
 /* opcode 编号 → 名（定义在 debug.c，与 OpCode 枚举同序） */
 const char* opcode_name(int op);
 ObjModule* jit_scan_get_module(void);
