@@ -12,8 +12,8 @@ import random
 import ctypes
 
 # SDL3 路径（与 Leno 版共用同一个 DLL）
-SDL3_DLL = r"d:\CLeno\LenoC\leno_module\LenoSDL3\lib\SDL3.dll"
-SDL3_IMAGE_DLL = r"d:\CLeno\LenoC\leno_module\LenoSDL3\lib\SDL3_image.dll"
+SDL3_DLL = r"d:\CLeno\Leno\leno_module\LenoSDL3\lib\SDL3.dll"
+SDL3_IMAGE_DLL = r"d:\CLeno\Leno\leno_module\LenoSDL3\lib\SDL3_image.dll"
 
 # ==================== SDL 常量 ====================
 SDL_PIXELFORMAT_RGBA8888 = 373694468  # 和 Leno 版一致

@@ -19,8 +19,8 @@ ENABLE_AUTO_RIPPLE    = True   # 是否自动产生波纹
 ENABLE_MEMCPY         = True   # render_ripple 开头是否 memcpy
 
 # ==================== SDL 常量 ====================
-SDL3_DLL = r"d:\CLeno\LenoC\leno_module\LenoSDL3\lib\SDL3.dll"
-SDL3_IMAGE_DLL = r"d:\CLeno\LenoC\leno_module\LenoSDL3\lib\SDL3_image.dll"
+SDL3_DLL = r"d:\CLeno\Leno\leno_module\LenoSDL3\lib\SDL3.dll"
+SDL3_IMAGE_DLL = r"d:\CLeno\Leno\leno_module\LenoSDL3\lib\SDL3_image.dll"
 SDL_PIXELFORMAT_RGBA8888 = 373694468
 
 sdl = ctypes.CDLL(SDL3_DLL)

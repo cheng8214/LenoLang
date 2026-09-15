@@ -1,7 +1,7 @@
 
 import time
 
-csnum = 10_000_000
+csnum = 100_000_000
 
 def myfunc():
     pass
@@ -297,7 +297,7 @@ print(f"比值: for/while = {for_empty * 100 / while_empty:.0f}%")
 print()
 
 # 测试2: 带简单操作的循环
-print("--- 测试2: 1000万次 i++ ---")
+print("--- 测试2: 1亿次 i++ ---")
 
 t1 = time.time() * 1000
 for _ in range(csnum):
@@ -386,12 +386,12 @@ print(f"while 步长2: {while_step:.0f}ms, 长度: {len(arr3)}")
 print()
 
 # 测试6: 嵌套循环场景
-print("--- 测试6: 嵌套循环 (1000 * 1000) ---")
+print("--- 测试6: 嵌套循环 (10000 * 10000) ---")
 
 t1 = time.time() * 1000
 count = 0
-for _ in range(1000):
-    for _ in range(1000):
+for _ in range(10000):
+    for _ in range(10000):
         count += 1
 t2 = time.time() * 1000
 for_nested = t2 - t1
@@ -400,9 +400,9 @@ print(f"for + for: {for_nested:.0f}ms, count={count}")
 count = 0
 t1 = time.time() * 1000
 i = 0
-while i < 1000:
+while i < 10000:
     m = 0
-    while m < 1000:
+    while m < 10000:
         count += 1
         m += 1
     i += 1

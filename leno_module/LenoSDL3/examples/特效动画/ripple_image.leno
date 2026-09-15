@@ -292,7 +292,9 @@ main() {
 
     Renderer ren = SDL3.createRenderer(win.handle)
     if not ren.ok { ffi.free(srcPix); ffi.free(dstPix); win.destroy(); return }
-    ren.setVSync(1)
+    // 性能对比基准模式：关闭 VSync 跑满上限（与 ripple_image.py 一致）
+    // ren.setVSync(1)
+    ren.setVSync(0)
 
     // 流式纹理（全程复用，尺寸=处理缓冲尺寸，GPU 放大显示）
     Ptr[u8] pixelTex = ren.createTexture(SDL3.PIXELFORMAT_RGBA8888, 1, bufW, bufH)
@@ -402,7 +404,8 @@ main() {
         totalMs = totalMs + elapsed
         if elapsed < minFrameMs { minFrameMs = elapsed }
         if elapsed > maxFrameMs { maxFrameMs = elapsed }
-        if elapsed < 16 { SDL3.delay(16 - elapsed) }
+        // 基准模式：不延迟，跑满上限（与 ripple_image.py 一致）
+        // if elapsed < 16 { SDL3.delay(16 - elapsed) }
         totalFrames = totalFrames + 1
     }
 
