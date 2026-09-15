@@ -37,13 +37,12 @@ ModuleSymbolTable* module_symbol_table_create(const char* module_path) {
     return table;
 }
 
-// 销毁模块符号表
-void module_symbol_table_destroy(ModuleSymbolTable* table) {
+// 释放符号内容（保留表壳：module_path 与 scanned/shared 等状态不变，各计数归零）
+// 用途一：.lenosymc 反序列化中途失败 ⇒ 必须回到「空表」再重新扫描，否则会把
+//         半张表 + 重扫结果叠在一起，产出重复符号；
+// 用途二：module_symbol_table_destroy 复用它清理内容。
+static void sym_table_clear_symbols(ModuleSymbolTable* table) {
     if (!table) return;
-    // 由进程内记忆化持有的表（module_symbol_table_get_shared 返回）不归调用方所有
-    if (table->shared) return;
-
-    free(table->module_path);
 
     // 释放函数符号
     for (int i = 0; i < table->func_count; i++) {
@@ -204,5 +203,24 @@ void module_symbol_table_destroy(ModuleSymbolTable* table) {
     }
     free(table->dep_paths);
 
+    // 全部归零：调用方随后会往同一张表里重新扫描，必须从「空表」开始
+    table->funcs = NULL;      table->func_count = 0;      table->func_capacity = 0;
+    table->structs = NULL;    table->struct_count = 0;    table->struct_capacity = 0;
+    table->enums = NULL;      table->enum_count = 0;      table->enum_capacity = 0;
+    table->faces = NULL;      table->face_count = 0;      table->face_capacity = 0;
+    table->vars = NULL;       table->var_count = 0;       table->var_capacity = 0;
+    table->aliases = NULL;    table->alias_count = 0;     table->alias_capacity = 0;
+    table->clibs = NULL;      table->clib_count = 0;      table->clib_capacity = 0;
+    table->cfuncs = NULL;     table->cfunc_count = 0;     table->cfunc_capacity = 0;
+    table->dep_paths = NULL;  table->dep_count = 0;       table->dep_capacity = 0;
+}
+
+// 销毁模块符号表
+void module_symbol_table_destroy(ModuleSymbolTable* table) {
+    if (!table) return;
+    // 由进程内记忆化持有的表（module_symbol_table_get_shared 返回）不归调用方所有
+    if (table->shared) return;
+    sym_table_clear_symbols(table);
+    free(table->module_path);
     free(table);
 }

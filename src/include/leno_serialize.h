@@ -75,7 +75,14 @@
 // ============================================================================
 
 #define LENO_BIN_MAGIC      0x424E454C  // "LENB" little-endian
-#define LENO_BIN_VERSION    0x00020600  // v2.6.0 - 新增 OP_CMPJMP_LI_INT（local vs 立即数比较+跳转）
+#define LENO_BIN_VERSION    0x00020700  // v2.7.0 - 序列化不再写出 ObjFFIPointer（原始地址跨进程无效，
+                                        //   读回来即悬空；owned 的还会被下个进程 free ⇒ 堆破坏）；
+                                        //   空 chunk 的表示由 5×u32(20B) 改为 4×u32+u8(17B)，与
+                                        //   deserialize_chunk_data 的读取逐字节对齐。
+                                        //   两者都改变了对既有 .lenb 的读法（旧文件含其一即被错读/
+                                        //   还原出悬空指针），故必须 bump：让旧 .lenb / entry_*.lenb
+                                        //   整体失效重编译。
+                                        // v2.6.0 - 新增 OP_CMPJMP_LI_INT（local vs 立即数比较+跳转）
                                         //   追加在枚举末尾，既有 opcode 编号全部不变；
                                         //   但仍要 bump：新字节码含旧构建不认识的 opcode
                                         //   注意：改变 opcode 集合/编号/操作数编码后必须 bump 本版本号，
@@ -85,7 +92,11 @@
 
 // 模块编译缓存格式（.lenomc）—— 跨运行的模块编译产物缓存
 #define LENO_MODCACHE_MAGIC    0x434D4E4C  // "LNMC" little-endian
-#define LENO_MODCACHE_VERSION  0x00000005  // v5 - 与 LENO_BIN_VERSION v2.6.0 同步（新增 OP_CMPJMP_LI_INT）
+#define LENO_MODCACHE_VERSION  0x00000006  // v6 - 不再序列化 ObjFFIPointer（原始地址跨进程无意义：
+                                          //      owned 的还会被下个进程 free ⇒ 堆破坏）。旧缓存里
+                                          //      可能存着这种指针，必须整体失效重编译。
+                                          //      同一处改动同时把 LENO_BIN_VERSION 升到 v2.7.0。
+                                          // v5 - 与 LENO_BIN_VERSION v2.6.0 同步（新增 OP_CMPJMP_LI_INT）
 #define LENO_MODCACHE_EXT      ".lenomc"
 
 // 常量类型标签

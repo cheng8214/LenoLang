@@ -625,14 +625,18 @@ static int serialize_constant(WriteBuffer* wb, Value val) {
             return 1;
         }
         case OBJ_FFI_POINTER: {
-            ObjFFIPointer* p = (ObjFFIPointer*)obj;
-            wb_write_u8(wb, CONST_TAG_FFI_PTR);
-            wb_write_u64(wb, (uint64_t)(uintptr_t)p->ptr);
-            wb_write_u64(wb, (uint64_t)p->size);
-            wb_write_u8(wb, (uint8_t)p->owned);
-            wb_write_u8(wb, (uint8_t)p->freed);
-            wb_write_u8(wb, (uint8_t)p->element_type);
-            return 1;
+            // 原始指针地址**不能跨进程序列化**：进程一退出，该地址要么已释放、
+            // 要么属于别的进程 —— 读回来就是个悬空指针；更糟的是 owned=1 时
+            // （cstruct 字段地址、ffi.get_func 得到的函数指针等），下一个进程
+            // 会拿这个不属于自己的地址去 free ⇒ 堆破坏。
+            // 因此这里直接判「不可序列化」：持有指针的模块不会写进 .lenomc
+            // （每次重新编译，慢一点但正确）。模块级全局若持有的是 `ffi.load`
+            // 得到的库对象，走的是 CONST_TAG_FFI_LIB（按路径存、读回时重新加载），
+            // 那条路径是安全的，不受影响。
+            // 明确报出原因：否则上游只会看到「写入二进制文件失败 (错误码 2)」，
+            // 无法定位到"产物里有指针"这一点。
+            fprintf(stderr, "[序列化] 产物中含原始指针（跨进程地址无效）：拒绝写出，该文件不做缓存\n");
+            return 0;
         }
         case OBJ_CLOSURE: {
             ObjClosure* closure = (ObjClosure*)obj;
@@ -672,11 +676,17 @@ static int serialize_constant(WriteBuffer* wb, Value val) {
 
 static int serialize_chunk(WriteBuffer* wb, Chunk* chunk) {
     if (!chunk) {
-        wb_write_u32(wb, 0);
-        wb_write_u32(wb, 0);
-        wb_write_u32(wb, 0);
-        wb_write_u32(wb, 0);
-        wb_write_u32(wb, 0);
+        // 空 chunk 的表示必须与 deserialize_chunk_data 的读取**逐字节**对称：
+        // 那边依次读 filename_len(u32) + local_count(u32) + const_count(u32)
+        // + code_len(u32) + has_lines(u8) = 17 字节。
+        // 此前这里写了 5 个 u32（20 字节），一旦真的序列化了 NULL chunk，
+        // 后续整个流就会错位 3 字节（把后面的字节当字段解析 ⇒ 静默损坏或缓存
+        // 被判为格式错误）。写成与读取端一致的 17 字节：还原为一个空 chunk。
+        wb_write_u32(wb, 0);   // filename_len
+        wb_write_u32(wb, 0);   // local_count
+        wb_write_u32(wb, 0);   // const_count
+        wb_write_u32(wb, 0);   // code_len
+        wb_write_u8(wb, 0);    // has_lines
         return 1;
     }
 

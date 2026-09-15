@@ -208,7 +208,8 @@ ModuleStructMethod* module_symbol_table_find_struct_method(ModuleSymbolTable* ta
 // 查找 enum 符号
 ModuleEnumSymbol* module_symbol_table_find_enum(ModuleSymbolTable* table, const char* enum_name);
 
-// 添加 enum 符号（member_values[i] = -1 表示无显式值，使用自动递增）
+// 添加 enum 符号（member_values 一律原样接收：自动递增已在扫描阶段
+// scan_enum.inc 解析完毕。-1 是合法成员值，不表示"无显式值"）
 void module_symbol_table_add_enum(ModuleSymbolTable* table, const char* name, int member_count, char** member_names, int64_t* member_values);
 
 // 查找 face 符号

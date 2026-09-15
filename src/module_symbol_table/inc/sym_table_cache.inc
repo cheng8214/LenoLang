@@ -901,7 +901,12 @@ table->func_count++;
 
 fail:
     fclose(f);
-    // 注意：反序列化失败时，已部分填充的 table 会被 module_symbol_table_destroy 清理
+    // 中途失败时表里已经填进了半截内容（可能有完整的 func/struct 条目）。
+    // 调用方（module_symbol_table_scan）拿到 -1 后会**在同一张表上重新扫描**，
+    // 所以这里必须把表清回空状态 —— 否则会出现重复符号（find_* 只返回第一个匹配，
+    // 重复条目会让后续解析指向半截数据）并泄漏已分配的字符串。
+    // 注意：不能依赖调用方 destroy —— 那条路径只销毁、不重建。
+    sym_table_clear_symbols(table);
     return -1;
 }
 
