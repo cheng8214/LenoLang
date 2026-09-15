@@ -1890,7 +1890,7 @@ Value jit_callout_global_func(int64_t* vstack_top, int arg_count,
                     base = gfunc->local_count > gfunc->arity
                                ? gfunc->local_count : gfunc->arity;
                     lc_func  = gfunc;
-                    lc_entry = &jit_func_cache[((uintptr_t)gfunc >> 4) & (JIT_FUNC_CACHE_SIZE - 1)];
+                    lc_entry = &jit_func_cache[jit_func_cache_slot(gfunc)];
                     lc_base  = base;
                 }
             }

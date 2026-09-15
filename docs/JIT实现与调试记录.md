@@ -4577,6 +4577,63 @@ set LENO_NO_JIT=1 && build\leno.exe jit_probes\probe_dict_set.leno 2000000
 
 ***
 
+### 8.73 修复：函数级 JIT 缓存冲突颠簸（每帧成批重编译；`FuncCompiled` 5 万 → 工作集大小）（2026-09-15）
+
+**现象**：`file_manager` 交互后报 `FuncCompiled: 50483 / Evicted: 352`，同一应用 idle 只有 `327`。
+
+**诊断链**（每步都用一个可复现的度量，不靠猜）：
+
+1. 用 `LENO_JIT_DEBUG=1` 的 `func compiled:` 行统计：交互 18s ⇒ **468 次编译 / 只有 53 个不同函数名**
+   （`inPopupCapture` 单函数 82 次）⇒ 存在重编。
+2. 日志加 `func=%p` 区分「同名不同实例」与「同一函数重编」：**74 个不同函数 / 233 次编译**
+   ⇒ 同名多实例是**正常**的（各控件模块各有一份 `set_pos` / `set_size`），
+   但 `setWindowHandle` **编译 18 次却只有 1 个指针** ⇒ **真重编**。
+3. 日志再加 `slot=%d` + 新增 `FuncEvict` 计数：74 个函数只用到 **65 个槽**（真撞车仅 9 个槽），
+   但 **`FuncEvict: 452`** ⇒ 是那 9 对**热函数在互相驱逐**（每次调用踢走对方，对方下次调用又重编）
+   —— direct-mapped 的**无界颠簸**。
+
+**根因**（都在函数级缓存，两件事叠加）：
+
+- `jit_func_entry_claim` 取槽用 `(ptr >> 4) & mask`，**只用到地址低 8 位**；GC 池里
+  同 size class 对象的槽步长是 16 的倍数 ⇒ 低 8 位高度重复。
+  **循环缓存早在 §8.6x 就用混合哈希修过（`cache_hash` 的注释），函数缓存漏了。**
+- 更根本的是**命中失败即驱逐**：direct-mapped 下哪怕只有 9 个槽撞车，也足以让这几对热函数无界互踢。
+  循环缓存有 `JIT_CACHE_PROBES` 探测窗口，函数缓存也没有。
+
+**修法**：
+
+1. 新增 `jit_func_cache_slot()`：与 `cache_hash` 同款的混合哈希（`v >>= 4; v ^= v >> 8; v ^= v >> 16`），
+   并把**所有**直接索引 `jit_func_cache[]` 的地方统一到它（`jit_callout.c` 的调用点 memo 缓存
+   原先自己算，还漏了 R4 的 `jit_func_cache_mask`）。
+2. `jit_func_entry_claim` 改为**探测窗口**：① 窗口内精确命中 → ② 窗口内有空槽就占用（不驱逐任何人）
+   → ③ 窗口满才驱逐首个（机器码仍走 §8.60 的延迟释放队列）。
+3. 顺手补诊断：`func compiled` 行带 `func=%p slot=%d`；stats 新增 `FuncEvict`
+   （冲突驱逐次数）。**判据公式：编译次数 ≈ 不同函数数 + FuncEvict。**
+
+**验证**（同一负载、同一口径：`file_manager`，16~18s，含同样 4 次模拟点击，`WM_CLOSE` 优雅退出）：
+
+| 版本 | 编译次数 | 不同函数 | FuncEvict |
+|---|---|---|---|
+| 修复前 | **468** | 53 | — |
+| 仅换混合哈希 | 323 | 74 | 452 |
+| **加探测窗口后** | **74** | **74** | **0** |
+
+⇒ **每个函数只编译一次**。`assert` 全套 **307/0**；R4 的 `LENO_JIT_FUNC_CACHE_SMALL=1`
+（缩到 4 槽）用例 `test_jit_func_cache_churn` 仍 OK。
+
+**附带收益**：机器码延迟释放队列（§8.60）的压力一并消失 —— 修复前每次驱逐都要
+`jit_code_retire()`（挂队列，之后 `jit_mem_free`：Linux 上是 `munmap`），
+按 `FuncEvict: 452` 的量级就是几百次可执行内存的分配/释放 churn。
+
+**可复现的度量方法**（无需人工交互、窗口自动关）：
+以真实窗口跑应用 16~18s（其间用 `PostMessage` 模拟几次点击），
+然后发 `WM_CLOSE` 让它**优雅退出**（stderr 才会 flush；直接 kill 会丢缓冲），
+再用 `Select-String "func compiled: '([^']+)' func=(\w+)"` 统计即可。
+（另有**完全不开窗**的静态手段：`--debug-out <file>` 在执行前落盘主程序 +
+全部模块的字节码，见 `JIT闭包与upvalue设计_R5.md` 的 P0 实测。）
+
+***
+
 ## 9. 性能数据
 
 ### 测试环境

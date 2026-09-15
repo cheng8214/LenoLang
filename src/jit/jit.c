@@ -240,6 +240,9 @@ static JitRetireEntry jit_retire_list[JIT_RETIRE_MAX];
 static int jit_retire_count = 0;
 static long jit_retire_leaked = 0;
 static uintptr_t jit_func_cache_mask = JIT_FUNC_CACHE_SIZE - 1;
+/* 诊断计数：函数级缓存因**冲突**而驱逐他人（= 被挤走的函数下次要重编）。
+ * 与"编译次数"配合即可判定颠簸：编译次数 ≈ 不同函数数 + 驱逐次数。 */
+static long jit_func_claim_evictions = 0;
 
 void jit_code_retire(void* ptr, size_t size) {
     if (!ptr) return;
@@ -360,8 +363,9 @@ static JitLoopFn jit_compile_function(ObjFunction* func, VM* vm_ptr,
 
     jit_state.func_compile_count++;
     if (jit_debug_on())
-        fprintf(stderr, "[JIT-DEBUG] func compiled: '%s' locals=%d bytes=%d\n",
-                func->name ? func->name : "?", sr.num_locals, len);
+        fprintf(stderr, "[JIT-DEBUG] func compiled: '%s' func=%p slot=%d locals=%d bytes=%d\n",
+                func->name ? func->name : "?", (void*)func,
+                jit_func_cache_slot(func), sr.num_locals, len);
     return (JitLoopFn)exec_mem;
 }
 
@@ -409,16 +413,52 @@ void jit_close(void) {
     jit_ft_profile_dump();
 }
 
+/* 函数级缓存的槽位：**与循环缓存同款混合哈希**（对齐 cache_hash 的写法）。
+ *
+ * 老写法 `(ptr >> 4) & mask` 只用到地址的低 8 位。GC 池里**同一 size class 的
+ * ObjFunction 槽步长是 16 的倍数**（池按 class 切块、对象大小对齐），于是低 8 位
+ * 高度重复 ⇒ 一批函数挤在同一个槽里互相驱逐；而驱逐是 `memset` 整条（tried 归零）
+ * ⇒ 被挤走的函数下次调用又重编译，形成**每帧成批重编**的颠簸。
+ *
+ * 实测（file_manager，交互 18s，修复前）：`func compiled` **468 次**，但只有
+ * **53 个不同函数**（≈8.8x），`inPopupCapture` 单函数编了 **82 次**。
+ * 循环缓存早在 §8.6x 就修过这个问题（`cache_hash` 的注释），函数缓存当时漏了。 */
+int jit_func_cache_slot(ObjFunction* func) {
+    uintptr_t v = (uintptr_t)func;
+    v >>= 4;              /* 16 字节对齐 ⇒ 低 4 位无信息 */
+    v ^= v >> 8;          /* 把高位异或折回低位，让槽位取决于更多地址位 */
+    v ^= v >> 16;
+    return (int)(v & jit_func_cache_mask);
+}
+
 /* 取得（必要时新建 / 驱逐重建）func 对应的缓存条目。
- * 返回的条目保证 e->func == func；新建/驱逐时 hit_count / tried /
- * hot_disabled 均为 0，由调用方决定是否编译。 */
+ *
+ * ★ **探测窗口**（与循环缓存的 `JIT_CACHE_PROBES` 同一个修法）：direct-mapped 下，
+ * 两个都会被反复调用的热函数一旦哈希到同一槽，就会**互相驱逐** —— 每次调用驱逐
+ * 对方、对方下次调用又重编译，形成无界颠簸。
+ * 实测（file_manager 交互 16s，仅靠哈希混合时）：74 个不同函数只用了 **65** 个槽
+ * （真正撞车的只有 9 个槽），但 `FuncEvict: 452`、编译 **323** 次 ⇒ 就是这几对
+ * 热函数在每帧互踢。加窗口后槽位冲突不再等于驱逐。
+ *
+ * 语义不变：返回的条目保证 `e->func == func`；新建/驱逐时
+ * hit_count / tried / hot_disabled 均为 0，由调用方决定是否编译。 */
 static JitFuncCacheEntry* jit_func_entry_claim(ObjFunction* func) {
-    uintptr_t h = (uintptr_t)func;
-    JitFuncCacheEntry* e = &jit_func_cache[(h >> 4) & jit_func_cache_mask];
-    if (e->func == func)
-        return e;
+    int base = jit_func_cache_slot(func);
+    /* ① 窗口内精确命中 */
+    for (int i = 0; i < JIT_CACHE_PROBES; i++) {
+        JitFuncCacheEntry* e = &jit_func_cache[(int)(((uintptr_t)(base + i)) & jit_func_cache_mask)];
+        if (e->func == func) return e;
+    }
+    /* ② 窗口内有空槽 ⇒ 占用它，不驱逐任何人 */
+    for (int i = 0; i < JIT_CACHE_PROBES; i++) {
+        JitFuncCacheEntry* e = &jit_func_cache[(int)(((uintptr_t)(base + i)) & jit_func_cache_mask)];
+        if (e->func == NULL) { e->func = func; return e; }
+    }
+    /* ③ 窗口已满 ⇒ 驱逐首个（机器码挂延迟释放队列，§8.60） */
+    JitFuncCacheEntry* e = &jit_func_cache[base];
     if (e->fn)
-        jit_code_retire((void*)e->fn, e->code_size);   /* §8.60：不能立即 free —— 可能正在执行；size：Linux munmap */
+        jit_code_retire((void*)e->fn, e->code_size);   /* 不能立即 free —— 可能正在执行；size：Linux munmap */
+    jit_func_claim_evictions++;                         /* 诊断：真被抢占的次数 */
     memset(e, 0, sizeof(*e));
     e->func = func;
     return e;
@@ -790,6 +830,9 @@ void jit_print_stats(void) {
     /* 只有探测窗口满了才会 > 0；非 0 说明 JIT_CACHE_SIZE 或窗口该调大了 */
     if (jit_state.cache_evictions > 0)
         fprintf(stderr, "  Evicted:  %d\n", jit_state.cache_evictions);
+    /* 函数级缓存的冲突驱逐次数（诊断"重编译颠簸"：编译次数 ≈ 不同函数数 + 本值） */
+    if (jit_func_claim_evictions > 0)
+        fprintf(stderr, "  FuncEvict: %ld\n", jit_func_claim_evictions);
     /* 函数级 JIT：FuncCompiled = 编译成功的函数个数（含 callout 急切编译），
      * FuncExecuted = 其中由「解释器侧热入口」执行的次数。后者长期为 0
      * 说明解释器调用点始终没热起来（或全部不可编译）。 */

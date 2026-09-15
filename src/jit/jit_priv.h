@@ -348,6 +348,10 @@ typedef struct {
     int hot_disabled;
 } JitFuncCacheEntry;
 extern JitFuncCacheEntry jit_func_cache[JIT_FUNC_CACHE_SIZE];
+/* 函数级缓存槽位计算（混合哈希，见 jit.c 的实现注释）。
+ * **所有**直接索引 jit_func_cache[] 的地方都必须用它，否则会算出不同的槽
+ * （调用点的 memo 缓存 jit_callout.c 曾经自己算，漏了掩码与哈希）。 */
+int jit_func_cache_slot(ObjFunction* func);
 
 /* Look up (or compile on first use) a function-level JIT entry.
  * Returns NULL if JIT disabled / unsupported / compilation failed. */
