@@ -158,7 +158,7 @@ static void pin_excl(const ScanResult* sr, int excluded[], int slot) {
     if (si >= 0 && si < JIT_PIN_MAX_SCRATCH) excluded[si] = 1;
 }
 
-static int pick_pin_locals(const uint8_t* body_start, const ScanResult* sr,
+static int pick_pin_locals(const uint8_t* body_start, const ScanResult* sr, Chunk* chunk,
                            int out[], int cnt_out[], int excluded[]) {
     int count[JIT_PIN_MAX_SCRATCH];
     for (int i = 0; i < JIT_PIN_MAX_SCRATCH; i++) { count[i] = 0; excluded[i] = 0; }
@@ -166,7 +166,11 @@ static int pick_pin_locals(const uint8_t* body_start, const ScanResult* sr,
     const uint8_t* end = body_start + sr->body_size;
     while (ip < end) {
         uint8_t op = *ip;
-        int size = opcode_size(ip);
+        /* R5-P1：走查必须能**跨过** OP_CLOSURE（它的长度依赖常量表）。以前用
+         * opcode_size 会在闭包处拿不到长度而 `break` ⇒ 走查被截断 ⇒ 后面的排除项
+         * 全部漏记 ⇒ 可能把本该按内存访问的槽 pin 进寄存器（两份值 → 读到过期值、
+         * 静默算错）。这正是本文件开头那句"新增任何局部量访问点都必须同步这里"的场景。 */
+        int size = opcode_size_chunk(chunk, ip);
         if (size <= 0) break;
         switch (op) {
             /* 已转换（EMIT_LOAD_LOCAL / EMIT_STORE_LOCAL）：计数 */
@@ -469,7 +473,7 @@ int compile_loop(CodegenCtx* ctx) {
     int pin_cnt[JIT_PIN_MAX] = { 0, 0, 0, 0 };
     int pin_n = 0;
     if (!ctx->func_mode)
-        pin_n = pick_pin_locals(ctx->body_start, sr, pin_si, pin_cnt, pin_excluded);
+        pin_n = pick_pin_locals(ctx->body_start, sr, ctx->chunk, pin_si, pin_cnt, pin_excluded);
     if (pin_n > 0 && jit_debug_on()) {
         fprintf(stderr, "[JIT-CG] pin: %d 槽 ->", pin_n);
         for (int _i = 0; _i < pin_n; _i++)
@@ -1202,7 +1206,9 @@ int compile_loop(CodegenCtx* ctx) {
         }
 
         uint8_t op = *ip;
-        int size = opcode_size(ip);
+        /* R5-P1：OP_CLOSURE 的长度取决于常量表（upvalue_count），opcode_size 拿不到
+         * chunk ⇒ 用带 chunk 的版本（其余 opcode 转发给 opcode_size，行为不变）。 */
+        int size = opcode_size_chunk(ctx->chunk, ip);
 
         /* §8.41：消费上一条指令留下的「结果是 raw int48」标记（一次性：
          * 只有**紧邻的前一条**指令作过证明才算数，跨一条就失效）。 */

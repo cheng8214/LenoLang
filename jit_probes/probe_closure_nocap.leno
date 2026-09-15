@@ -1,0 +1,31 @@
+// R5-P0 探针：形态 C0 —— 热循环体内创建**零捕获**闭包
+//
+// 背景（roadmap R5、docs/JIT闭包与upvalue设计_R5.md）：
+//   OP_CLOSURE 的操作数长度取决于常量表里函数对象的 upvalue_count，而
+//   opcode_size(ip) 只有 ip ⇒ R3 起它被故意登记为"长度未知"，落到 scan 的
+//   `unknown opcode 61` 拒收 ⇒ **循环里只要建闭包就不进 JIT**。
+//
+// 本探针的形态：`func(): int { return 1 }` 捕获表为空（upvalue_count == 0）
+//   ⇒ 设计文档里的 C0，P1 要放行的第一档（无 upvalue，无地址/生命周期问题）。
+//
+// 验收判据（P0 阶段 = 只计量、行为不变）：
+//   ① `LENO_JIT_DEBUG=1` 下必须出现
+//        [JIT-DEBUG] CLOSURE(scan) caps=0 ref_local=0 value_local=0 byup=0 at offset N
+//      （P0 之前只会看到 `unknown opcode 61`，看不到形态）
+//   ② 该循环仍**不被编译**（出现 `scan FAIL: 含 OP_CLOSURE`），即行为与 P0 之前一致；
+//   ③ JIT 与 `LENO_NO_JIT=1` 的结果逐位一致（本探针输出 acc，不含计时行）。
+
+func bench(int n): int {
+    var acc = 0
+    for n {
+        var f = func(): int { return 1 }
+        acc = acc + f()
+    }
+    return acc
+}
+
+main() {
+    // 200000 > JIT_HOT_THRESHOLD(50)，确保该循环真的被尝试编译
+    print("c0= " + bench(200000))
+    return 0
+}

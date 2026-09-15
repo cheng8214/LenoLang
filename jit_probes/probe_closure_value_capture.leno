@@ -1,0 +1,33 @@
+// R5-P0 探针：形态 C2 —— 热循环内建闭包捕获**循环体内声明的变量**（值捕获）
+//
+// 语义依据（docs/JIT闭包与upvalue设计_R5.md §2.1/§3）：
+//   `src/semantic/semantic_upvalue.c:200` —— `is_value_capture = target_sym->is_in_loop`；
+//   is_in_loop 在两类地方置 1：
+//     · 循环体内 `var` 声明（`src/semantic/visitinc/visit_var.inc:52`）
+//     · for 的循环变量 / 索引变量（`visit_control.inc:672/702`）
+//   ⇒ 捕获"循环体里声明的变量"必然走**值捕获**（VM 侧 `op_call.inc:577-581`：
+//     立刻 new_upvalue 复制一份 closed upvalue，location 指向它自己的 closed 字段）。
+//   这正是设计文档里最安全、也是收益主体的形态（P3）。
+//
+// 本探针的形态：`var k = 7` 声明在循环体内，闭包捕获 k ⇒ 期望 caps=1 value_local=1。
+//
+// 验收判据（P0 阶段 = 只计量、行为不变）：
+//   ① `LENO_JIT_DEBUG=1` 下出现
+//        [JIT-DEBUG] CLOSURE(scan) caps=1 ref_local=0 value_local=1 byup=0 at offset N
+//   ② 该循环仍不被编译（`scan FAIL: 含 OP_CLOSURE`）；
+//   ③ JIT 与 `LENO_NO_JIT=1` 结果逐位一致。
+
+func bench(int n): int {
+    var acc = 0
+    for n {
+        var k = 7
+        var f = func(): int { return k }
+        acc = acc + f()
+    }
+    return acc
+}
+
+main() {
+    print("c2= " + bench(200000))
+    return 0
+}

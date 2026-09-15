@@ -1,0 +1,30 @@
+// R5-P0 探针：形态 C3 —— 热循环内建闭包捕获**循环外声明的变量**（引用捕获）
+//
+// 语义依据（docs/JIT闭包与upvalue设计_R5.md §2.1/§3）：
+//   base 声明在循环**之前** ⇒ `sym->is_in_loop == 0` ⇒ `is_value_capture = 0`
+//   ⇒ VM 走 `capture_upvalue(&frame->locals[index])`（`op_call.inc:583`）：
+//     upvalue **open**、location 直接指向帧 locals 槽，直到函数返回才关闭。
+//
+// ⚠ 这就是设计文档里点名的 C3：它要求"存活期内地址不变的 Value*"，而 JIT（尤其
+//   循环 JIT）的 locals 在 scratch/机器栈上、迭代即复用 ⇒ **默认拒绝**（I1/I6）。
+//   本探针的价值正是量出它在真实代码里的出现频度 —— P4 是否值得做由这个数说话。
+//
+// 验收判据（P0 阶段 = 只计量、行为不变）：
+//   ① `LENO_JIT_DEBUG=1` 下出现
+//        [JIT-DEBUG] CLOSURE(scan) caps=1 ref_local=1 value_local=0 byup=0 at offset N
+//   ② 该循环仍不被编译；③ JIT 与 `LENO_NO_JIT=1` 结果逐位一致。
+
+func bench(int n): int {
+    var base = 7
+    var acc = 0
+    for n {
+        var f = func(): int { return base }
+        acc = acc + f()
+    }
+    return acc
+}
+
+main() {
+    print("c3= " + bench(200000))
+    return 0
+}

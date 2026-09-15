@@ -384,6 +384,91 @@ int opcode_size(const uint8_t* ip) {
 
 
 
+/* ---- R5-P0：`OP_CLOSURE` 的变长操作数解析（只读探针）----
+ *
+ * 操作数格式（与 VM 的 `op_call.inc` / 反汇编器 `debug.c` 逐字节对齐）：
+ *   opcode(1) + func_const(2)
+ *   + upvalue_count × { is_local(2) index(2) is_value_capture(2) }
+ *   ⇒ 指令总长 = 3 + 6 × upvalue_count
+ *   （注意：**操作数区**从 `ip+1` 开始，捕获记录从 `ip+3` 开始；早期版本把总长
+ *     写成 `2 + 6n`（漏了 opcode 那 1 字节），后果是字节流从闭包之后整体错位 ——
+ *     因为错位后仍可能解出"合法"的 opcode 序列，所以 scan 不会报错，
+ *     只会让后面的局部槽存取落到错槽上。教训：长度必须与反汇编器逐字节核对。）
+ * upvalue_count 记在**常量表里那个函数对象**上 —— 这正是 `opcode_size(ip)` 拿不到
+ * chunk 而故意返回 -1（"长度未知"）的原因（R3）。本函数补上带 chunk 的版本，
+ * 并把捕获形态拆成三类计数：
+ *   ref_local  : is_local=1 & is_value_capture=0  → C3（引用捕获本帧 locals，最危险）
+ *   value_local: is_local=1 & is_value_capture=1  → C2（值捕获，安全）
+ *   byup       : is_local=0                       → C1（复用外层 upvalue，安全）
+ *
+ * 解析不出来返回 -1（调用方按"长度未知"照旧拒收，绝不猜长度）。
+ */
+static int closure_probe(Chunk* chunk, const uint8_t* ip,
+                         int* out_caps, int* out_ref_local,
+                         int* out_val_local, int* out_byup) {
+    if (out_caps) *out_caps = 0;
+    if (out_ref_local) *out_ref_local = 0;
+    if (out_val_local) *out_val_local = 0;
+    if (out_byup) *out_byup = 0;
+    if (!chunk || !chunk->constants) return -1;
+
+    uint16_t ci = rd_short(ip + 1);
+    if ((int)ci >= chunk->const_cnt) return -1;
+
+    Value fv = chunk->constants[ci];
+    if (!val_is_obj(fv) || val_as_obj(fv)->type != OBJ_FUNCTION) return -1;
+    ObjFunction* fn = (ObjFunction*)val_as_obj(fv);
+
+    int n = fn->upvalue_count;
+    if (n < 0 || n > 256) return -1;   /* MAX_UPVALUES；越界视为不可信 */
+
+    for (int i = 0; i < n; i++) {
+        const uint8_t* p = ip + 3 + i * 6;
+        uint16_t is_local = rd_short(p);
+        uint16_t index    = rd_short(p + 2);
+        uint16_t is_value = rd_short(p + 4);
+        (void)index;
+        if (is_local) {
+            if (is_value) { if (out_val_local) (*out_val_local)++; }
+            else          { if (out_ref_local) (*out_ref_local)++; }
+        } else {
+            if (out_byup) (*out_byup)++;
+        }
+    }
+    if (out_caps) *out_caps = n;
+    return 3 + 6 * n;   /* opcode(1) + func_const(2) + 6 × 捕获记录 */
+}
+
+int opcode_size_chunk(Chunk* chunk, const uint8_t* ip) {
+    if (*ip == OP_CLOSURE)
+        return closure_probe(chunk, ip, NULL, NULL, NULL, NULL);
+    return opcode_size(ip);
+}
+
+/* R5-P0 计量输出：每次遇到 OP_CLOSURE 打一行形态，便于 Group-Object 统计。
+ *
+ * ⚠ 为什么要单独的开关：`LENO_JIT_DEBUG=1` 会把每次编译尝试的 body raw hex
+ * （最多 1200 字节）+ opcode 走查整段打印，真实负载上输出量极大（观测时表现为
+ * "跑不完"）。做形态盘点只需要下面这一行，所以给一个**只打形态**的轻量开关：
+ *   LENO_JIT_CLOSURE=1  → 仅输出 CLOSURE(...) 形态行与闭包拒收行。 */
+static int jit_closure_probe_on(void) {
+    static int cached = -1;
+    if (cached < 0) cached = getenv("LENO_JIT_CLOSURE") != NULL ? 1 : 0;
+    return cached;
+}
+
+/* 形态行/闭包拒收行是否输出：全量 debug 或轻量开关任一开启。 */
+static int jit_closure_log_on(void) {
+    return jit_debug_on() || jit_closure_probe_on();
+}
+
+static void jit_debug_closure_shape(Chunk* chunk, const uint8_t* ip, int off, const char* who) {
+    int caps = 0, ref_local = 0, val_local = 0, byup = 0;
+    if (closure_probe(chunk, ip, &caps, &ref_local, &val_local, &byup) < 0) return;
+    fprintf(stderr, "[JIT-CLOSURE] %s caps=%d ref_local=%d value_local=%d byup=%d at offset %d\n",
+            who, caps, ref_local, val_local, byup, off);
+}
+
 /* Mark a local slot as used; assign scratch index */
 static void mark_local(ScanResult* r, int slot) {
     if (slot < 0 || slot >= 256) return;
@@ -423,7 +508,17 @@ static int scan_callee_for_inline(Chunk* cc, ObjModule* callee_module,
 
     while (ip < end) {
         uint8_t op = *ip;
-        int size = opcode_size(ip);
+        /* R5-P0：用带 chunk 的解析，让 OP_CLOSURE 也能算出长度（只读计量） */
+        int size = opcode_size_chunk(cc, ip);
+        if (op == OP_CLOSURE && size > 0) {
+            /* 含闭包创建的被调方暂不能内联（与 P0 之前同为拒绝，这里补上形态计量） */
+            if (jit_closure_log_on()) {
+                jit_debug_closure_shape(cc, ip, (int)(ip - cc->code), "inline");
+                fprintf(stderr, "[JIT-CLOSURE] inline-scan FAIL: 含 OP_CLOSURE（R5 未支持）at off %d\n",
+                        (int)(ip - cc->code));
+            }
+            return 0;
+        }
         if (size < 0 || ip + size > end) {
             if (jit_debug_on())
                 fprintf(stderr, "[JIT-DEBUG] inline-scan FAIL: opcode %d size=%d at off %d\n",
@@ -700,7 +795,29 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
 
     while (ip < end) {
         uint8_t op = *ip;
-        int size = opcode_size(ip);
+        /* R5-P0：OP_CLOSURE 的长度依赖常量表 ⇒ 走带 chunk 的解析。
+         * 解析成功时**只计量、继续扫描**（把同一循环体里的闭包形态与其他缺口一次测全），
+         * 最终由末尾的 closure_seen 统一拒收 —— 对编译结果而言行为不变。 */
+        int size = opcode_size_chunk(chunk, ip);
+        if (op == OP_CLOSURE && size > 0) {
+            int clo_caps = 0;
+            closure_probe(chunk, ip, &clo_caps, NULL, NULL, NULL);
+            if (clo_caps == 0) {
+                /* ---- R5-P1：**零捕获**闭包（C0）放行 ----
+                 * 捕获表为空 ⇒ 不涉及"JIT 的 locals 没有稳定 Value* 地址"这个核心冲突
+                 * （见 docs/JIT闭包与upvalue设计_R5.md §3/§4）：既不新建 upvalue、
+                 * 也不捕获任何帧槽，只是分配一个闭包对象。
+                 * 记账：弹 0 压 1（与下面的 case OP_CLOSURE 一致）。 */
+                if (jit_closure_log_on())
+                    jit_debug_closure_shape(chunk, ip, (int)(ip - body_start), "scan:ALLOW-C0");
+            } else {
+                /* C1（by-upvalue）/ C2（值捕获）/ C3（引用捕获本帧）尚未实现
+                 * （P2/P3/P4）⇒ 维持拒收，行为与 P0 之前一致。 */
+                if (jit_closure_log_on())
+                    jit_debug_closure_shape(chunk, ip, (int)(ip - body_start), "scan:REJECT");
+                r->closure_seen = 1;
+            }
+        }
         if (size < 0) {
             if (jit_debug_on())
                 fprintf(stderr, "[JIT-DEBUG] scan FAIL: unknown opcode %d（长度未知，R3）at offset %d\n",
@@ -1434,6 +1551,13 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                 vstack -= ((int)ip[3] - 1);   /* pop arg 实参, push 1 实例 → net -(arg-1) */
                 break;
             }
+            case OP_CLOSURE: {
+                /* R5-P0：`OP_CLOSURE` 是「弹 0 压 1」。这里必须给出 case —— 否则会落到
+                 * default 被报成 unsupported 并在**第一条**闭包处停止扫描，那样就测不到
+                 * 同一循环体里其余的闭包形态了。最终由末尾的 closure_seen 统一拒收。 */
+                vstack++;
+                break;
+            }
             default:
                 /* R3：走到这里说明**长度已登记**（上面 size<0 已经拦掉了未知长度），
                  * 只是还没实现 → 报 "unsupported" 而不是 "unknown"，两者一眼可分。 */
@@ -1460,6 +1584,16 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
     }
 
     r->body_size = body_size;
+
+    /* R5-P0：本次扫描遇到过 OP_CLOSURE ⇒ 统一拒收（与 P0 之前的行为一致：
+     * 以前是在第一条闭包处直接 return，现在改成走完再拒，只为把形态测全）。
+     * 放行闭包要等 P1（C0）/P2（C1）/P3（C2）的实现，见设计文档。 */
+    if (r->closure_seen) {
+        if (jit_closure_log_on())
+            fprintf(stderr, "[JIT-CLOSURE] scan REJECT: 含 OP_CLOSURE（R5 未支持）body_size=%d\n", body_size);
+        r->capable = 0;
+        return;
+    }
 
     if (jit_debug_on()) {
         fprintf(stderr, "[JIT-DEBUG] scan result: n_locals=%d max_vstack=%d\n", r->num_locals, r->max_vstack);

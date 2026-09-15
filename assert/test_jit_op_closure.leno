@@ -1,0 +1,59 @@
+// R5-P1 回归：零捕获闭包（C0）进 JIT —— 循环体内 `func(){...}` 不再让整个循环被拒收。
+//
+// 背景（docs/JIT闭包与upvalue设计_R5.md）：OP_CLOSURE 的操作数长度取决于常量表里
+// 函数对象的 upvalue_count，R3 起它被登记为"长度未知" ⇒ 循环/函数体里只要建闭包
+// 就整个不进 JIT。P1 只放行**零捕获**（捕获表为空）的形态：既不新建 upvalue、
+// 也不捕获任何帧槽，只是分配一个闭包对象 ⇒ 不触碰"JIT 的 locals 没有稳定 Value*"
+// 这个核心冲突（那是 C1/C2/C3 的事，P2/P3/P4）。
+//
+// 覆盖点：
+//   ① 热循环里建闭包并调用（带参数，避免被常量折叠替代）——结果必须与解释器一致；
+//   ② **身份语义**：每次执行都新建闭包 ⇒ 同一轮里的两个闭包 `f == g` 必须为假。
+//      若 codegen 错误地"同函数复用同一闭包"，这一项会失败；
+//   ③ **逃逸**：闭包存进数组、离开创建它的迭代后再取出调用（依赖 locals 写回正确）。
+//
+// 判据：本文件在 `leno.exe`（JIT）与 `LENO_NO_JIT=1` 下都必须 exit=0 且输出一致；
+//       JIT 侧 ① 所在循环必须 capable（Compiled 增长、Bailouts 不增长）。
+
+// ① 热循环建零捕获闭包 + 调用（42 = 21 * 2）
+func benchCall(int n): int {
+    var acc = 0
+    for n {
+        var f = func(int v): int { return v * 2 }
+        acc = acc + f(21)
+    }
+    return acc
+}
+
+// ② 身份语义：同一轮两个闭包不相等 → same 必须为 0
+func benchIdentity(int n): int {
+    var same = 0
+    for n {
+        var f = func(): int { return 1 }
+        var g = func(): int { return 1 }
+        if f == g { same = same + 1 }
+    }
+    return same
+}
+
+// ③ 逃逸：n 个闭包存进数组，再逐个取出调用（+7），最后带上数组长度
+func benchEscape(int n): int {
+    var arr = []
+    for n {
+        arr.add(func(int v): int { return v + 7 })
+    }
+    var s = 0
+    for 3 {
+        var h = arr[0]
+        s = s + h(1)
+    }
+    return s + arr.len()
+}
+
+main() {
+    var n = 200000
+    assert_eq(benchCall(n), n * 42)        // 21 * 2 * n
+    assert_eq(benchIdentity(2000), 0)      // 每次新建 ⇒ 永不相等
+    assert_eq(benchEscape(2000), 2000 + 24) // 3 × (1+7) + 2000
+    print("test_jit_op_closure: OK")
+}

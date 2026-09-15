@@ -133,9 +133,17 @@ typedef struct {
      *                   会跳过第一条 ⇒ 回看状态失效。
      * jt_ok = 0 表示 body 超过位图上限（或处于内联体内、bc_off 被重定位）⇒ 不可信。 */
     #define JIT_SCAN_JT_MAX 512
-    uint8_t jt_fwd[JIT_SCAN_JT_MAX];
+    uint8_t     jt_fwd[JIT_SCAN_JT_MAX];
     int jt_ok;
     int has_back_jump;
+
+    /* R5：本次扫描中遇到过**暂不支持**的 OP_CLOSURE 捕获形态（C1/C2/C3）。
+     * 见 docs/JIT闭包与upvalue设计_R5.md。
+     * 置位时扫描会**跳过**该指令继续走完（把同一循环体里其余缺口与闭包形态一次
+     * 测全），最终由这个标记统一拒收（capable=0）。
+     * P1 起：零捕获（C0）不放这个标记 ⇒ 含 C0 闭包的循环/函数可以进 JIT；
+     * C1/C2/C3 仍然置位拒收，直到 P2/P3/P4 各自实现。 */
+    int closure_seen;
 } ScanResult;
 
 /* ---- Codegen: offset map and patch list ---- */
@@ -367,6 +375,14 @@ Value jit_callout_set_field(Value obj_val, uint8_t field_idx, Value value);
  * arr_val 由编译期从 chunk->constants[const_idx] 取出（常量表是 GC 根）。 */
 int jit_callout_switch_lookup(Value switch_val, Value arr_val, int case_count);
 
+/* ---- R5-P1：建闭包（OP_CLOSURE，**仅零捕获 C0**）----
+ * 语义逐字对齐 vm/vminc/op_call.inc 的 OP_CLOSURE 在 upvalue_count==0 的情形：
+ * `gc_alloc` 一个 ObjClosure、只设 function/upvalue_count（其余字段由 gc_alloc 的
+ * 全块 memset 0 保证）、返回 val_obj(closure)。**每次执行都新建**（身份语义与
+ * 解释器一致）。alloc 在 JIT 帧里安全：GC 执行期间只置让出标志、不就地回收。
+ * 捕获表非空 / 常量不是函数对象 / 内存不足 ⇒ 置 jit_callout_failed（调用方 bailout）。 */
+Value jit_callout_make_closure(Value func_val);
+
 /* ---- R2：判空（`?.` / `??` 编译出的 OP_IS_NULL）----
  * 纯判断：不分配、不报错 ⇒ 无失败通道、调用方没有 bailout 分支。
  * 语义与 vm/vminc/op_compare.inc 的 OP_IS_NULL 一致（val_bool(val_is_null(v))）。 */
@@ -489,6 +505,11 @@ Value jit_callout_get_property(int64_t* vstack_top, uint16_t name_const_idx, uin
 /* ---- Scanning (jit_scan.c) ---- */
 int cache_hash(const uint8_t* ip);
 int opcode_size(const uint8_t* ip);
+/* 带 chunk 的长度解析：**只有 OP_CLOSURE 需要**（它的操作数长度取决于常量表里
+ * 函数对象的 upvalue_count，而 opcode_size 只有 ip —— 这是 R3 故意留的"长度未知"）。
+ * 其余 opcode 直接转交 opcode_size(ip)；chunk 为 NULL 时同样退化到 opcode_size。
+ * R5-P0 阶段仅供计量与跳过指令，不改变任何放行判定。 */
+int opcode_size_chunk(Chunk* chunk, const uint8_t* ip);
 void scan_loop_body(const uint8_t* body_start, int body_size, int back_edge, ScanResult* r,
                     VM* vm_ptr, Chunk* chunk);
 

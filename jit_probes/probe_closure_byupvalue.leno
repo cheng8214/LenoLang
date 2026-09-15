@@ -1,0 +1,34 @@
+// R5-P0 探针：形态 C1 —— 热循环内建闭包捕获**外层闭包的 upvalue**（by-upvalue）
+//
+// 语义依据（docs/JIT闭包与upvalue设计_R5.md §2.1/§3）：
+//   捕获描述里 `is_local=0` 表示"从当前闭包的 upvalues[index] 里取"，
+//   VM 侧直接复制指针（`op_call.inc:600-611`）——**不新建 upvalue、不改生命周期**。
+//   ⇒ 设计文档里的 C1：与 JIT 自身栈无关，天然安全（P2 与 ABI closure 通道一起做）。
+//
+// 构造方式：`base` 是 outer 的形参（不在循环内），mid 捕获它；循环体里再建一层
+//   闭包引用 base ⇒ 对**最内层**闭包而言 base 是"外层闭包的 upvalue" ⇒ is_local=0。
+//   （mid 自己那个闭包对 base 的捕获是引用捕获 C3，但它在循环**外**创建，
+//     不在本次循环扫描的视野里 —— 这正是要看清楚的一点。）
+//
+// 验收判据（P0 阶段 = 只计量、行为不变）：
+//   ① `LENO_JIT_DEBUG=1` 下出现
+//        [JIT-DEBUG] CLOSURE(scan) caps=1 ref_local=0 value_local=0 byup=1 at offset N
+//   ② 该循环仍不被编译；③ JIT 与 `LENO_NO_JIT=1` 结果逐位一致。
+
+func outer(int base, int n): int {
+    var mid = func(): int {
+        var acc = 0
+        for n {
+            var f = func(): int { return base }
+            acc = acc + f()
+        }
+        return acc
+    }
+    return mid()
+}
+
+main() {
+    // 3 × 200000 = 600000
+    print("c1= " + outer(3, 200000))
+    return 0
+}

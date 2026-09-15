@@ -1034,6 +1034,41 @@ Value jit_callout_is_null(Value v) {
     return val_bool(val_is_null(v));
 }
 
+/* Callout: OP_CLOSURE（R5-P1，**仅零捕获** C0）—— 建一个闭包对象。
+ *
+ * 逐字对齐 vm/vminc/op_call.inc 的 OP_CLOSURE 在 `upvalue_count == 0` 的情形：
+ *   gc_alloc(sizeof(ObjClosure), OBJ_CLOSURE) → 只设 function / upvalue_count
+ *   → 返回 val_obj(closure)。
+ *   · `gc_alloc` 的三条路径（池复用 / 新块切割 / 裸 malloc）都整套 memset 0
+ *     ⇒ upvalues[] 全 NULL、type_param_count/args 为 0，与 VM 只设两个字段的
+ *     写法等价（设计文档 §2.1 V9）；
+ *   · **每次执行都新建**（与 VM 一致，设计文档 I4）：不做"同一函数复用同一闭包"，
+ *     否则 `f == g` 跨执行的身份语义会与解释器分叉；
+ *   · 分配在 JIT 帧里安全：GC 在执行期间只置让出标志、不就地回收（§8.36/§8.37），
+ *     且常量表里的函数对象本身是 GC 根。
+ * 复核 upvalue_count：scan 只放行 caps==0，这里再验证一次（成本一次比较）——
+ * 捕获表非空说明两处判据不一致，宁可 bailout 交解释器，也不建一个空壳闭包。
+ * 失败（常量不是函数对象 / 有捕获 / 内存不足）⇒ 置 jit_callout_failed。 */
+Value jit_callout_make_closure(Value func_val) {
+    if (!val_is_obj(func_val) || val_as_obj(func_val)->type != OBJ_FUNCTION) {
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+    ObjFunction* fn = (ObjFunction*)val_as_obj(func_val);
+    if (fn->upvalue_count != 0) {
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+    ObjClosure* cl = (ObjClosure*)gc_alloc(sizeof(ObjClosure), OBJ_CLOSURE);
+    if (!cl) {
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+    cl->function = fn;
+    cl->upvalue_count = 0;
+    return val_obj((Object*)cl);
+}
+
 /* Callout: OP_STRING_ADD（R2 批次 2）—— 字符串插值 `"${x}"` 编译出的拼接。
  * 一行转发到 VM 的 string_add（**语义唯一来源**，§8.64）：两侧都是 ObjString 时
  * 走 str_concat（正确处理内嵌 NUL），否则两侧各自转字符串再拼。
@@ -1591,9 +1626,20 @@ Value jit_callout_call_value(int64_t* vstack_top, int arg_count) {
         else if (o->type == OBJ_FUNCTION) fn = (ObjFunction*)o;  /* 裸函数：慢路径由解释器包闭包 */
     }
     if (!fn) {
-        /* null（"函数未定义"）、OBJ_NATIVE / bound method 等 ⇒ 交解释器，报错文本一致 */
-        if (jit_debug_on())
-            fprintf(stderr, "[JIT-CALLOUT-FAIL] call_value: callee 不是闭包/函数（交解释器）\n");
+        /* null（"函数未定义"）、OBJ_NATIVE / bound method 等 ⇒ 交解释器，报错文本一致。
+         * 打印**实际读到的值**：只报"不是闭包/函数"无法区分"callee 槽的内容不是对象"
+         * 与"是 OBJ_CLOSURE 但 function 为空"（前者是栈记账/取址问题，后者是构造问题）。 */
+        if (jit_debug_on()) {
+            long long raw = (long long)vstack_top[-1];
+            if (val_is_obj(callee))
+                fprintf(stderr, "[JIT-CALLOUT-FAIL] call_value: callee 是对象但 function 为空"
+                                "（obj_type=%d）（交解释器）\n", (int)val_as_obj(callee)->type);
+            else
+                fprintf(stderr, "[JIT-CALLOUT-FAIL] call_value: callee 不是对象（raw=0x%llx, "
+                                "is_int48=%d）（交解释器）\n",
+                        (unsigned long long)raw,
+                        val_is_int(callee) ? 1 : 0);
+        }
         jit_callout_failed = 1;
         return NULL_VAL;
     }

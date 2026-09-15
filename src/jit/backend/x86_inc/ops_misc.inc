@@ -53,6 +53,42 @@ case OP_TRUE:
                 break;                                 /* net 0 */
             }
 
+            /* ---- R5-P1：OP_CLOSURE（**仅零捕获** C0）----
+             * 语义与 vm/vminc/op_call.inc 的 OP_CLOSURE 在 upvalue_count==0 时一致：
+             * 每次执行都新建一个闭包对象（身份语义与解释器一致，设计文档 I4），
+             * gc_alloc 全块清零 ⇒ upvalues[] 全 NULL、type_param_* 为 0（§2.1 V9）。
+             * 捕获表非空的形态（C1/C2/C3）在 scan 阶段已拒收，callout 再复核一次
+             * （成本一次比较）：不符即 bailout 交解释器，绝不建"空壳闭包"。
+             * 记账：弹 0 压 1 ⇒ vstack++。先 TOS_SPILL 把上一个 TOS 落到内存栈，
+             * 保证 callout 期间（RAX 会被覆盖）栈形态一致 —— 与 OP_CALL 同款收尾。 */
+            case OP_CLOSURE: {
+                uint16_t clo_ci = rd_short(ip + 1);
+                Value clo_fn = NULL_VAL;
+                if (ctx->chunk && ctx->chunk->constants && (int)clo_ci < ctx->chunk->const_cnt)
+                    clo_fn = ctx->chunk->constants[clo_ci];   /* 常量表是 GC 根 ⇒ 无需额外保活 */
+                TOS_SPILL();
+                EMIT_CALLOUT_BEGIN();
+                emit_mov_reg_imm64(cb, JIT_ARG1, (uint64_t)clo_fn);
+                EMIT_CALL(jit_callout_make_closure);
+                EMIT_CALLOUT_END();                       /* RAX = 闭包（NaN-boxed） */
+                EMIT_STORE_TMP(tmp2_disp, JIT_RAX);
+                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_callout_failed);
+                emit_mov_reg_mem8(cb, JIT_RAX, JIT_R8, 0);
+                emit_test_rr(cb, JIT_RAX, JIT_RAX);
+                {
+                    EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                    int clo_fail = emit_jcc(cb, 0x85);    /* JNZ → bailout */
+                    patch_add(ctx, clo_fail, -1, 0);
+                }
+                emit_xor_rr(cb, JIT_RAX, JIT_RAX);
+                emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
+                EMIT_LOAD_TMP(JIT_RAX, tmp2_disp);
+                EMIT_VALUE_TO_RAW();                      /* 对象是 NaN-boxed ⇒ 恒等 */
+                TOS_PRODUCE();
+                vstack++;
+                break;                                    /* pop0 push1 → net +1 */
+            }
+
             /* ---- OP_LENGTH（`.len()`）—— 第 5 节 L1 ----
              * 解释器语义（vm/vminc/op_utils.inc OP_LENGTH）：数字 → `(int)value_to_double`
              *   向零截断、负数 clamp 到 0（`for n to i` 依赖后者）；string→char_len、

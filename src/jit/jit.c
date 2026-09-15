@@ -81,7 +81,7 @@ static JitLoopFn jit_compile(CallFrame* frame, const uint8_t* body_start,
         int rel_off = 0;
         while (p < body_start + body_size && printed < 400) {
             int op = *p;
-            int sz = opcode_size(p);
+            int sz = opcode_size_chunk(frame ? frame->chunk : NULL, p);
             fprintf(stderr, " %d", op);
             if (sz < 0) break;
             fprintf(stderr, "(%d,", rel_off);
@@ -171,7 +171,7 @@ static JitLoopFn jit_compile(CallFrame* frame, const uint8_t* body_start,
             int printed = 0;
             while (p < body_start + body_size && printed < 20) {
                 fprintf(stderr, " %d", *p);
-                int sz = opcode_size(p);
+                int sz = opcode_size_chunk(frame ? frame->chunk : NULL, p);
                 if (sz < 0) break;
                 p += sz;
                 printed++;
@@ -271,14 +271,18 @@ void jit_retire_drain(void) {
 /* 快速预扫描：函数体含循环回边（LOOP/FOR_LOOP/FOR_PREP）或非法指令
  * → 拒绝函数级 JIT（func_mode 的编译语义只对无循环函数保证正确）。
  * FOR_INCREMENT 也会出现在 FOR 循环中（含 FOR_PREP 时已被拒绝）。 */
-static int func_body_is_simple(const uint8_t* code, int len) {
+static int func_body_is_simple(const uint8_t* code, int len, Chunk* chunk) {
     const uint8_t* p = code;
     const uint8_t* end = code + (size_t)len;
     while (p < end) {
         uint8_t op = *p;
         if (op == OP_LOOP || op == OP_FOR_LOOP || op == OP_FOR_PREP)
             return 0;
-        int sz = opcode_size(p);
+        /* R5-P0：这里以前用 opcode_size(p)，遇到 OP_CLOSURE 会因"长度未知"返回 -1
+         * 而**静默**拒绝整个函数级 JIT —— 闭包在诊断里因此完全不可见。
+         * 改用带 chunk 的解析后，含闭包的函数会走到 scan，由 scan 明确报出
+         * 「含 OP_CLOSURE」并拒收；结论不变（仍然不编），但形态可测了。 */
+        int sz = opcode_size_chunk(chunk, p);
         if (sz < 0 || p + sz > end)
             return 0;
         p += sz;
@@ -296,7 +300,7 @@ static JitLoopFn jit_compile_function(ObjFunction* func, VM* vm_ptr,
 
     const uint8_t* code = func->chunk->code;
     int len = func->chunk->len;
-    if (!func_body_is_simple(code, len))
+    if (!func_body_is_simple(code, len, func->chunk))
         return NULL;
 
     ScanResult sr;
