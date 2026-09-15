@@ -85,26 +85,33 @@ static int is_valid_obj_type(ObjType type) {
 // 将对象加入 remembered set（去重）。
 // 非 static：写屏障已内联到 leno_value.h（gc_write_barrier / gc_write_barrier_obj），
 // 这里只保留「确实需要入集」的慢路径。
+//
+// §8.71：去重用 Object.flags 的 OBJ_FLAG_IN_REMSET 位，O(1)。
+// 原来是**对整个集合的线性扫描**（O(|set|)），在「老年代持有者写年轻引用」的热循环里
+// 每次写都要扫一遍 —— 一旦 remembered set 被整批晋升撑到几万条，每次插入就要几微秒，
+// 表现为「JIT 下每轮新键的字典写比解释器慢 10 倍」（§8.70 副产品 2：JIT 让出触发的
+// 回收把整批年轻对象晋升并全部入集 ⇒ 集合膨胀 ⇒ 后续每次 dict 写都 O(|set|) 扫描）。
 void gc_remembered_set_add(Object* obj) {
+    if (!obj) return;
+    if (obj->flags & OBJ_FLAG_IN_REMSET) return;   /* O(1) 去重 */
     // 动态扩容
     if (gc.remembered_count >= gc.remembered_capacity) {
         int new_cap = gc.remembered_capacity * 2;
         if (new_cap < GC_REMEMBERED_INIT) new_cap = GC_REMEMBERED_INIT;
         Object** new_set = (Object**)realloc(gc.remembered_set, new_cap * sizeof(Object*));
-        if (!new_set) return;
+        if (!new_set) return;                       /* 失败：不置位，下次再试 */
         gc.remembered_set = new_set;
         gc.remembered_capacity = new_cap;
     }
-    // 去重检查
-    for (int i = 0; i < gc.remembered_count; i++) {
-        if (gc.remembered_set[i] == obj) return;
-    }
     gc.remembered_set[gc.remembered_count++] = obj;
+    obj->flags |= OBJ_FLAG_IN_REMSET;
 }
 
 // 从 remembered set 移除对象（Major GC 释放老年代对象时调用）
 static void remembered_set_remove(Object* obj) {
     if (!obj) return;
+    if (!(obj->flags & OBJ_FLAG_IN_REMSET)) return;  /* 不在集合里（O(1) 早退） */
+    obj->flags &= (uint8_t)~OBJ_FLAG_IN_REMSET;
     for (int i = 0; i < gc.remembered_count; i++) {
         if (gc.remembered_set[i] == obj) {
             gc.remembered_set[i] = gc.remembered_set[--gc.remembered_count];
@@ -129,17 +136,20 @@ static THREAD_LOCAL int young_mark_counter = 0;
 
 // 晋升专用入集：无去重直接加入。
 // 新晋升对象此前是年轻代，不可能已在 remembered set 中（集合只持有 GEN_OLD 对象），
-// 跳过去重的 O(n) 线性扫描，避免大批量晋升时的 O(n²) 开销。
+// 跳过去重的扫描，避免大批量晋升时的 O(n²) 开销。
+// §8.71：仍然要**置上 OBJ_FLAG_IN_REMSET**（否则后续写屏障会重复入集，
+// 而重复条目会让 scan_remembered_set 的剪枝与 O(1) 去重不一致）。
 static void remembered_set_add_promoted(Object* obj) {
     if (gc.remembered_count >= gc.remembered_capacity) {
         int new_cap = gc.remembered_capacity * 2;
         if (new_cap < GC_REMEMBERED_INIT) new_cap = GC_REMEMBERED_INIT;
         Object** new_set = (Object**)realloc(gc.remembered_set, new_cap * sizeof(Object*));
-        if (!new_set) return;
+        if (!new_set) return;                       /* 失败：不置位，下次再试 */
         gc.remembered_set = new_set;
         gc.remembered_capacity = new_cap;
     }
     gc.remembered_set[gc.remembered_count++] = obj;
+    obj->flags |= OBJ_FLAG_IN_REMSET;
 }
 
 // 将老年代对象加入 remembered set（供批量字段写入后保守调用）。
@@ -916,18 +926,26 @@ static void scan_remembered_set(void) {
     for (int i = 0; i < gc.remembered_count; i++) {
         Object* obj = gc.remembered_set[i];
         if (!obj || !is_valid_obj_type(obj->type) || obj->generation != GEN_OLD) {
-            continue;  // 无效条目：剪枝
+            continue;  // 无效条目：剪枝（指针可能已失效，标志位不动；
+                       // 内存复用时的残留位由 gc_alloc 的 obj->flags = ... 清零兜底）
         }
         if (gc.mode == GC_MODE_FULL && !obj->marked) {
-            continue;  // 不可达老年代条目：将由 sweep_old 回收并移除，剪枝
+            // 不可达老年代条目：将由 sweep_old 回收并移除，剪枝。
+            // 对象内存此刻仍有效 ⇒ 同步清 OBJ_FLAG_IN_REMSET，
+            // 否则它再被写屏障写入时会被 O(1) 去重挡住（漏入集 ⇒ 年轻代子引用被误回收）。
+            obj->flags &= (uint8_t)~OBJ_FLAG_IN_REMSET;
+            continue;
         }
         young_mark_counter = 0;
         gc_scan_children(obj);
         gc_drain_mark_stack();
         if (young_mark_counter > 0) {
             gc.remembered_set[j++] = obj;  // 仍持有年轻代子引用，保留
+        } else {
+            // 无年轻代子引用：剪枝（写入路径的写屏障可随时将其加回）。
+            // §8.71：必须同步清标志位，否则"剪枝后再入集"会被去重挡住。
+            obj->flags &= (uint8_t)~OBJ_FLAG_IN_REMSET;
         }
-        // 无年轻代子引用：剪枝（写入路径的写屏障可随时将其加回）
     }
     in_remembered_scan = 0;
     gc.remembered_count = j;

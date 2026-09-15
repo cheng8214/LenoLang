@@ -50,7 +50,11 @@ typedef enum {
 } ObjType;
 
 // 对象标志位
+// 位分配（见 gc.c 的小对象池）：0x0F = 池 size-class 索引、0x80 = 池化位；
+// 0x40 = 「已在 remembered set 中」——用于写屏障入集的 O(1) 去重（§8.71）。
+// 该位由 gc_alloc 保证清零（新对象 obj->flags = pooled_flags 是赋值）。
 #define OBJ_FLAG_INTERNED 0x01
+#define OBJ_FLAG_IN_REMSET 0x40
 #define GEN_YOUNG 0
 #define GEN_OLD   1
 
