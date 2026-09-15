@@ -1,0 +1,91 @@
+// `dict[key] = value`（OP_DICT_SET）内联快路径探针
+//
+// 背景：OP_DICT_SET 原先每轮都走 callout（一次 C 调用 + dict_set 的哈希/探测/负载因子检查），
+// 而 `examples/性能测试/全部测试.leno` 的「dict[key]=value」基准正是
+// `var d={}; for csnum { d.set("key",1) }` —— 除第一轮外**每轮都是「命中已有条目」**。
+//
+// 快路径（§8.70）：字符串键 + `entries[hash & (capacity-1)].key == key`（同一个字符串对象）
+// ⇒ 直接写 `entries[slot].value` + 写屏障判定，不碰 hash/探测/扩容/order。
+// 任何一步不满足（新键 / int 键 / 非字符串键 / 需要入 remembered set / capacity==0）回退原 callout。
+//
+// 判据：
+//   ① A/B/C 三组取值与 `LENO_NO_JIT=1` 逐位一致（`Bailouts: 0`）；
+//   ② `hit` 组的耗时相对「只有 callout」的基线二进制明显下降（A/B 用同机同轮对照，
+//      基线二进制由 `git stash` 掉本改动后构建得到，见 §8.70 的验证小节）；
+//   ③ 新键组（`new`）是**回退路径**，耗时不应回归。
+
+import times
+
+// A) 命中已有条目：快路径
+func bench_hit(int n): int {
+    var d = {}
+    d["key"] = 0
+    var t0 = times.ms()
+    for n {
+        d["key"] = n
+    }
+    var dt = times.ms() - t0
+    print("  hit  n=" + n + " ms=" + dt + "  val=" + _int(d["key"]))
+    return dt
+}
+
+// B) 值是对象（字符串）：快路径但要走「屏障判定」的对象分支
+func bench_objval(int n): int {
+    var d = {}
+    d["k"] = "seed"
+    var t0 = times.ms()
+    for n {
+        d["k"] = "value"
+    }
+    var dt = times.ms() - t0
+    print("  obj  n=" + n + " ms=" + dt + "  len=" + d["k"].len())
+    return dt
+}
+
+// C) 每轮都是新键：全程走 callout（回退路径），语义必须与解释器一致
+func bench_new(int n): int {
+    var d = {}
+    var t0 = times.ms()
+    for 0 : n to var i {
+        d["k" + _str(i)] = i
+    }
+    var dt = times.ms() - t0
+    var ok = 1
+    for 0 : n to var i {
+        if _int(d["k" + _str(i)]) != i { ok = 0 }
+    }
+    print("  new  n=" + n + " ms=" + dt + "  ok=" + ok)
+    return dt
+}
+
+// D) 命中已有条目但**值是 bigint**（int48 之外）：快路径 + 值装箱路径正确性
+func bench_bigval(int n): int {
+    var d = {}
+    d["b"] = 0
+    var acc = 0
+    for n {
+        d["b"] = 1000000000000 + n
+        acc = acc + _int(d["b"])
+    }
+    print("  big  acc=" + acc)
+    return acc
+}
+
+main() {
+    // n 可由命令行覆盖：`times.ms()` 刻度约 16ms，太小的 n 测不出差异（用 2000 万）
+    var n = 2000000
+    var args = _args()
+    if args.len() > 0 { n = _int(args[0]) }
+    bench_hit(n)
+    bench_objval(n)
+    bench_new(n / 10)
+    bench_bigval(n / 20)
+    // 收尾校验：快路径写入的值必须可被正常读回
+    var d = {}
+    d["x"] = 1
+    for 1000 {
+        d["x"] = d["x"] + 1
+    }
+    print("  chain x=" + _int(d["x"]))
+    return 0
+}
