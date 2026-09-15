@@ -11,11 +11,13 @@ main() {
 
 func fib(any n){
 
-    if n <= 1 {
-        return n
+    if n is int =>b
+    {
+    if b <= 1 {
+        return b
     }
     
-    return fib(n - 2)+fib(n - 1)
+    return fib(b - 2)+fib(b - 1)
   
-  
+}
 }
