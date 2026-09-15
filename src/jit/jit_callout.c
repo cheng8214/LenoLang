@@ -1111,6 +1111,14 @@ Value jit_callout_make_closure_caps(Value func_val, ObjClosure* cur,
             cl->upvalues[i] = uv;
         } else {
             if (!cur || index >= cur->upvalue_count || !cur->upvalues[index]) {
+                /* by-upvalue 的守卫失败同样要出声（这是"方法闭包 upvalues 为 NULL"
+                 * 那条已知隐患的探测器：一旦触发就说明 VM 侧确实产出了空壳闭包）。 */
+                if (jit_debug_on())
+                    fprintf(stderr, "[JIT-CALLOUT-FAIL] make_closure: by-upvalue %s"
+                                    "（i=%d, index=%d, upvalue_count=%d）\n",
+                            !cur ? "无闭包环境"
+                                 : ((index >= cur->upvalue_count) ? "索引越界" : "upvalue 为 NULL"),
+                            i, index, cur ? cur->upvalue_count : -1);
                 jit_callout_failed = 1;
                 return NULL_VAL;
             }
@@ -1138,6 +1146,14 @@ Value jit_callout_make_closure_caps(Value func_val, ObjClosure* cur,
  * 不分配、不报错；SET 与 VM 一致**不加写屏障**（写成什么样的历史债照抄，见 §7 疑点 2）。 */
 Value jit_callout_upvalue_get(ObjClosure* closure, int slot) {
     if (!closure || slot < 0 || slot >= closure->upvalue_count || !closure->upvalues[slot]) {
+        /* 守卫失败必须**出声**：否则 stats 里只会看到"非溢出类 bailout"，
+         * 无法分辨是"守卫拦下"还是"别的 callout 失败"。 */
+        if (jit_debug_on())
+            fprintf(stderr, "[JIT-CALLOUT-FAIL] upvalue_get: %s（slot=%d, upvalue_count=%d）\n",
+                    !closure ? "无闭包环境"
+                             : ((slot < 0 || slot >= closure->upvalue_count) ? "索引越界"
+                                                                            : "upvalue 为 NULL"),
+                    slot, closure ? closure->upvalue_count : -1);
         jit_callout_failed = 1;
         return NULL_VAL;
     }
@@ -1146,6 +1162,12 @@ Value jit_callout_upvalue_get(ObjClosure* closure, int slot) {
 
 void jit_callout_upvalue_set(ObjClosure* closure, int slot, Value v) {
     if (!closure || slot < 0 || slot >= closure->upvalue_count || !closure->upvalues[slot]) {
+        if (jit_debug_on())
+            fprintf(stderr, "[JIT-CALLOUT-FAIL] upvalue_set: %s（slot=%d, upvalue_count=%d）\n",
+                    !closure ? "无闭包环境"
+                             : ((slot < 0 || slot >= closure->upvalue_count) ? "索引越界"
+                                                                            : "upvalue 为 NULL"),
+                    slot, closure ? closure->upvalue_count : -1);
         jit_callout_failed = 1;
         return;
     }
