@@ -82,6 +82,15 @@ static const char* opCodeNames[] = {
 "OP_CMPJMP_LI_INT"
 };
 
+/* ---- 供 JIT 拒收直方图（LENO_JIT_GAPS，见 jit_scan.c）复用：opcode 编号 → 名 ----
+ * 表与 leno_vm.h 的 OpCode 枚举严格同序（本文件开头已声明该约束），所以直接按编号取。
+ * 有了它，直方图里就不必再"人工对着枚举数编号"——那正是最容易出错的一步。 */
+const char* opcode_name(int op) {
+    if (op < 0 || op >= (int)(sizeof(opCodeNames) / sizeof(opCodeNames[0])))
+        return "?";
+    return opCodeNames[op];
+}
+
 // 反汇编单条指令
 int disassembleInstruction(Chunk* chunk, int offset) {
     int line = (chunk->lines && offset < chunk->len) ? chunk->lines[offset] : 0;

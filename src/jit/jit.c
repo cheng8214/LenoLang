@@ -57,6 +57,7 @@ static JitLoopFn jit_compile(CallFrame* frame, const uint8_t* body_start,
        而函数所属模块记录在 ObjFunction 上（frame->closure->function->module）。 */
     jit_scan_set_module((frame && frame->closure && frame->closure->function)
                             ? frame->closure->function->module : NULL);
+    jit_gaps_set_mode("loop");   /* R6-c：拒收直方图的模式标签 */
     scan_loop_body(body_start, body_size, back_edge, &sr, vm_ptr, frame->chunk);
     if (jit_debug_on()) {
         const char* fname = "?";
@@ -107,6 +108,7 @@ static JitLoopFn jit_compile(CallFrame* frame, const uint8_t* body_start,
      * return 被丢弃，函数恒返回 false，AI 每步都落天元。
      * 函数级 JIT（func_mode）与内联 callee 能正确处理 return，不走这里。 */
     if (sr.has_reachable_return) {
+        jit_gaps_record("循环体含可达 return（RETURN/RETURN_MULTI/TAIL_CALL）");
         if (jit_debug_on()) {
             const char* fname = "<main>";
             int bc_off = -1;
@@ -279,15 +281,19 @@ static int func_body_is_simple(const uint8_t* code, int len, Chunk* chunk) {
     const uint8_t* end = code + (size_t)len;
     while (p < end) {
         uint8_t op = *p;
-        if (op == OP_LOOP || op == OP_FOR_LOOP || op == OP_FOR_PREP)
+        if (op == OP_LOOP || op == OP_FOR_LOOP || op == OP_FOR_PREP) {
+            jit_gaps_record("函数体含循环（func_mode 不支持）op=%d(%s)", op, opcode_name(op));
             return 0;
+        }
         /* R5-P0：这里以前用 opcode_size(p)，遇到 OP_CLOSURE 会因"长度未知"返回 -1
          * 而**静默**拒绝整个函数级 JIT —— 闭包在诊断里因此完全不可见。
          * 改用带 chunk 的解析后，含闭包的函数会走到 scan，由 scan 明确报出
          * 「含 OP_CLOSURE」并拒收；结论不变（仍然不编），但形态可测了。 */
         int sz = opcode_size_chunk(chunk, p);
-        if (sz < 0 || p + sz > end)
+        if (sz < 0 || p + sz > end) {
+            jit_gaps_record("函数体长度未知/越界 op=%d(%s)", op, opcode_name(op));
             return 0;
+        }
         p += sz;
     }
     return 1;
@@ -296,10 +302,15 @@ static int func_body_is_simple(const uint8_t* code, int len, Chunk* chunk) {
 static JitLoopFn jit_compile_function(ObjFunction* func, VM* vm_ptr,
                                       size_t* out_size) {
     if (out_size) *out_size = 0;   /* Linux munmap 需要长度，见 jit.h */
+    /* R6-c：模式标签必须在**任何**早期 return（func_body_is_simple / has_try …）之前设置，
+     * 否则那些路径会被记成 "loop"（直方图标签错位）。 */
+    jit_gaps_set_mode("func");
     if (!func || !func->chunk || func->chunk->len <= 0)
         return NULL;
-    if (func->has_try)
+    if (func->has_try) {
+        jit_gaps_record("含异常处理（has_try）");
         return NULL;  /* 异常处理语义复杂，回退解释器 */
+    }
     /* R6-a：多返回值（return_count > 1）现已支持 —— 机器码在 OP_RETURN_MULTI 里把全部
      * 结果写进 jit_fn_results[] 并发布个数（契约见 jit_priv.h）；调用方按静态 rc 交付
      * （jit_fastpath_deliver_multi / jit_try_hot_func_call 的折叠），个数不符就回落。
@@ -307,8 +318,10 @@ static JitLoopFn jit_compile_function(ObjFunction* func, VM* vm_ptr,
      * 「多返回值数量超过限制」，JIT 不该抢在它前面改变报错行为。
      * return_count == -1（静态不可知）也放行：机器码按运行时实际个数发布，调用方用
      * jit_fn_result_count 复核。 */
-    if (func->return_count > VM_MAX_RETURNS)
+    if (func->return_count > VM_MAX_RETURNS) {
+        jit_gaps_record("返回个数 > VM_MAX_RETURNS（16）");
         return NULL;
+    }
 
     const uint8_t* code = func->chunk->code;
     int len = func->chunk->len;
@@ -502,8 +515,10 @@ int jit_try_hot_func_call(ObjClosure* closure, int arg_count, int typed, VM* vm_
         return 0;
     /* 泛型实例化的闭包带 type_param_args，其语义依赖解释器在调用点设置
      * 类型参数（OP_PUSH_TYPE_ARGS）—— 函数级 JIT 不传递这些信息，直接拒收。 */
-    if (closure->type_param_count > 0)
+    if (closure->type_param_count > 0) {
+        jit_gaps_record("泛型实例化（带 type_param_args）");
         return 0;
+    }
     /* JIT 函数是普通 C 调用链（JIT body → callout → JIT body），深度上限
      * 保护 C 栈；超限交回解释器（解释器的递归不消耗 C 栈）。 */
     if (jit_func_depth >= JIT_FUNC_MAX_DEPTH)
@@ -862,5 +877,7 @@ void jit_print_stats(void) {
         fprintf(stderr, "  FuncExecuted: %d\n", jit_state.func_execute_count);
     }
     fprintf(stderr, "======================\n");
+    /* R6-c：拒收原因聚合直方图（仅 LENO_JIT_GAPS=1 时有内容） */
+    jit_gaps_print();
 }
 

@@ -36,6 +36,81 @@ static ObjModule* g_jit_scan_module = NULL;
 void jit_scan_set_module(ObjModule* module) { g_jit_scan_module = module; }
 ObjModule* jit_scan_get_module(void) { return g_jit_scan_module; }
 
+/* ============================================================================
+ * JIT 拒收原因**聚合**直方图（`LENO_JIT_GAPS=1`，R6-c 诊断）
+ *
+ * 为什么必须单独一个开关：`LENO_JIT_DEBUG=1` 会把**每次编译尝试**的 body raw hex
+ * （最多 1200 字节）+ 逐 opcode 走查整段打出来 —— 真实应用上实测 stderr **8.4MB 且
+ * 60 帧跑不完（>120s）**，根本无法用来做直方图（本项目为此踩过两次）。
+ * 本开关**只累加计数**，退出时打印一次（几十行），开销可忽略。
+ *
+ * 键 = "模式|原因"。模式由 jit.c 在调用 scan 前设置（`loop` / `func`）；
+ * 内联侧走 jit_gaps_record_inline()，模式固定为 `inline`。
+ * ========================================================================== */
+#include <stdarg.h>
+typedef struct { char key[72]; int count; } JitGapEntry;
+#define JIT_GAP_MAX 96
+static JitGapEntry g_gap_tbl[JIT_GAP_MAX];
+static int g_gap_n = 0;
+static int g_gap_on = -1;
+static const char* g_gap_mode = "loop";
+
+static int jit_gaps_on(void) {
+    if (g_gap_on < 0) g_gap_on = getenv("LENO_JIT_GAPS") ? 1 : 0;
+    return g_gap_on;
+}
+
+void jit_gaps_set_mode(const char* m) { g_gap_mode = (m && *m) ? m : "?"; }
+
+static void jit_gap_bump(const char* mode, const char* reason) {
+    char key[72];
+    snprintf(key, sizeof(key), "%s|%s", mode, reason);
+    for (int i = 0; i < g_gap_n; i++) {
+        if (strcmp(g_gap_tbl[i].key, key) == 0) { g_gap_tbl[i].count++; return; }
+    }
+    if (g_gap_n < JIT_GAP_MAX) {
+        snprintf(g_gap_tbl[g_gap_n].key, sizeof(g_gap_tbl[g_gap_n].key), "%s", key);
+        g_gap_tbl[g_gap_n].count = 1;
+        g_gap_n++;
+    }
+}
+
+void jit_gaps_record(const char* fmt, ...) {
+    if (!jit_gaps_on()) return;
+    char reason[64];
+    va_list ap; va_start(ap, fmt);
+    vsnprintf(reason, sizeof(reason), fmt, ap);
+    va_end(ap);
+    jit_gap_bump(g_gap_mode, reason);
+}
+
+void jit_gaps_record_inline(const char* fmt, ...) {
+    if (!jit_gaps_on()) return;
+    char reason[64];
+    va_list ap; va_start(ap, fmt);
+    vsnprintf(reason, sizeof(reason), fmt, ap);
+    va_end(ap);
+    jit_gap_bump("inline", reason);
+}
+
+void jit_gaps_print(void) {
+    if (g_gap_n == 0) return;
+    fprintf(stderr, "=== JIT 拒收原因（LENO_JIT_GAPS）===\n");
+    for (int i = 0; i < g_gap_n; i++) {        /* 计数降序（条目很少，选择排序足够） */
+        int best = i;
+        for (int j = i + 1; j < g_gap_n; j++)
+            if (g_gap_tbl[j].count > g_gap_tbl[best].count) best = j;
+        if (best != i) {
+            JitGapEntry tmp = g_gap_tbl[i];
+            g_gap_tbl[i] = g_gap_tbl[best];
+            g_gap_tbl[best] = tmp;
+        }
+    }
+    for (int i = 0; i < g_gap_n; i++)
+        fprintf(stderr, "  %6d  %s\n", g_gap_tbl[i].count, g_gap_tbl[i].key);
+    fprintf(stderr, "=================================\n");
+}
+
 /* 解析模块 globals[index] 处的函数闭包 → 返回其 return_count。
  * return_count 的语义见 codegen_func.c：>=1 编译期确定（无显式 return 按 1 个，
  * 即隐式 null）；-1 = 静态不可知（各 return 个数不一致 / fall-through）。
@@ -517,12 +592,14 @@ static int scan_callee_for_inline(Chunk* cc, ObjModule* callee_module,
                 fprintf(stderr, "[JIT-CLOSURE] inline-scan FAIL: 含 OP_CLOSURE（R5 未支持）at off %d\n",
                         (int)(ip - cc->code));
             }
+            jit_gaps_record_inline("含 OP_CLOSURE");
             return 0;
         }
         if (size < 0 || ip + size > end) {
             if (jit_debug_on())
                 fprintf(stderr, "[JIT-DEBUG] inline-scan FAIL: opcode %d size=%d at off %d\n",
                         op, size, (int)(ip - cc->code));
+            jit_gaps_record_inline("长度未知/越界 op=%d(%s) size=%d", op, opcode_name(op), size);
             return 0;
         }
 
@@ -574,6 +651,7 @@ static int scan_callee_for_inline(Chunk* cc, ObjModule* callee_module,
                         fprintf(stderr, "[JIT-DEBUG] inline-scan FAIL: 模块变量访问 op=%d at off %d"
                                         "（callee 与 caller 不同模块）\n",
                                 op, (int)(ip - cc->code));
+                    jit_gaps_record_inline("模块变量/函数访问 op=%d(%s)（跨模块）", op, opcode_name(op));
                     return 0;
                 }
                 /* 记账与 scan_loop_body 的同名 case **完全一致**：
@@ -589,6 +667,7 @@ static int scan_callee_for_inline(Chunk* cc, ObjModule* callee_module,
                             fprintf(stderr, "[JIT-DEBUG] inline-scan FAIL: 模块函数 ret_count 不可知"
                                             "（globals[%u]）at off %d\n",
                                     (unsigned)func_idx, (int)(ip - cc->code));
+                        jit_gaps_record_inline("模块函数 ret_count 不可知");
                         return 0;
                     }
                     int argc = rd_short(ip + 4);
@@ -609,6 +688,7 @@ static int scan_callee_for_inline(Chunk* cc, ObjModule* callee_module,
                 if (jit_debug_on())
                     fprintf(stderr, "[JIT-DEBUG] inline-scan FAIL: OP_SWITCH_LOOKUP at off %d\n",
                             (int)(ip - cc->code));
+                jit_gaps_record_inline("OP_SWITCH_LOOKUP");
                 return 0;
             case OP_ARRAY_APPEND_NOPUSH: vstack -= 2; break;
             case OP_DICT_SET: vstack -= 2; break;
@@ -625,6 +705,7 @@ static int scan_callee_for_inline(Chunk* cc, ObjModule* callee_module,
                 if (jit_debug_on())
                     fprintf(stderr, "[JIT-DEBUG] inline-scan FAIL: OP_TAIL_CALL at off %d\n",
                             (int)(ip - cc->code));
+                jit_gaps_record_inline("OP_TAIL_CALL");
                 return 0;
             case OP_MODULE_CALL: {
                 int ac = rd_short(ip + 5);
@@ -685,6 +766,7 @@ case OP_GET_FIELD_FAST: vstack++; break;
                     if (jit_debug_on())
                         fprintf(stderr, "[JIT-DEBUG] inline-scan FAIL: INVOKE_METHOD ret_count 无法确定 at off %d\n",
                                 (int)(ip - cc->code));
+                    jit_gaps_record_inline("INVOKE_METHOD ret_count 无法确定");
                     return 0;
                 }
                 vstack -= (ac - rc);
@@ -734,6 +816,7 @@ case OP_GET_FIELD_FAST: vstack++; break;
                         if (jit_debug_on())
                             fprintf(stderr, "[JIT-DEBUG] inline-scan FAIL: GET_METHOD 的 ret_count 不可知（方法名唯一性推断失败）at off %d\n",
                                     (int)(ip - cc->code));
+                        jit_gaps_record_inline("GET_METHOD 的 ret_count 不可知");
                         return 0;
                     }
                     int gm_argc = rd_short(ip + 4);
@@ -755,6 +838,7 @@ case OP_GET_FIELD_FAST: vstack++; break;
                 if (jit_debug_on())
                     fprintf(stderr, "[JIT-DEBUG] inline-scan FAIL: unsupported opcode %d at off %d\n",
                             op, (int)(ip - cc->code));
+                jit_gaps_record_inline("unsupported opcode %d(%s)", op, opcode_name(op));
                 return 0;
         }
 
@@ -847,6 +931,7 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
             if (jit_debug_on())
                 fprintf(stderr, "[JIT-DEBUG] scan FAIL: unknown opcode %d（长度未知，R3）at offset %d\n",
                         op, (int)(ip - body_start));
+            jit_gaps_record("unknown opcode %d(%s)（长度未知）", op, opcode_name(op));
             r->capable = 0;
             return;
         }
@@ -1626,6 +1711,7 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                 if (jit_debug_on())
                     fprintf(stderr, "[JIT-DEBUG] scan FAIL: unsupported opcode %d（已收录长度、未实现）at offset %d\n",
                             op, (int)(ip - body_start));
+                jit_gaps_record("unsupported opcode %d(%s)（已收录长度、未实现）", op, opcode_name(op));
                 r->capable = 0;
                 return;
         }
@@ -1653,6 +1739,7 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
     if (r->closure_seen) {
         if (jit_closure_log_on())
             fprintf(stderr, "[JIT-CLOSURE] scan REJECT: 含 OP_CLOSURE（R5 未支持）body_size=%d\n", body_size);
+        jit_gaps_record("含 OP_CLOSURE（未支持的捕获形态 C1/C2/C3）");
         r->capable = 0;
         return;
     }

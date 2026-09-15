@@ -481,6 +481,16 @@ Value jit_callout_call_module_func(ObjModule* module, int64_t* vstack_top,
  * scan 与 codegen 都要用它解析模块函数（ret_count 必须编译期确定）。
  * 由 jit_compile / jit_compile_function 在调用 scan 前设置。 */
 void jit_scan_set_module(ObjModule* module);
+
+/* ---- JIT 拒收原因聚合直方图（`LENO_JIT_GAPS=1`，R6-c 诊断；实现在 jit_scan.c）----
+ * 只累加计数、退出时由 jit_print_stats() 打印一次 —— 因为 `LENO_JIT_DEBUG=1` 在真实
+ * 应用上会产出 8MB+ stderr 且把运行拖到跑不完，不能用来做直方图。 */
+void jit_gaps_set_mode(const char* m);           /* "loop" / "func"（jit.c 在 scan 前设置） */
+void jit_gaps_record(const char* fmt, ...);      /* 循环/函数级拒收 */
+void jit_gaps_record_inline(const char* fmt, ...); /* 内联侧拒收（模式前缀固定 inline） */
+void jit_gaps_print(void);
+/* opcode 编号 → 名（定义在 debug.c，与 OpCode 枚举同序） */
+const char* opcode_name(int op);
 ObjModule* jit_scan_get_module(void);
 /* 解析模块函数：模块 globals[index] 处的闭包 → 返回其 return_count；0 = 解析失败 */
 int jit_resolve_module_func(uint16_t index);

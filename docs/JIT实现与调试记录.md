@@ -4852,6 +4852,42 @@ codegen 推送值）。**顺带收益**：解锁「取函数值再调用」的�
 
 ***
 
+### 8.77 `LENO_JIT_GAPS`：拒收原因的**聚合**直方图 + 当前缺口清单（2026-09-16）
+
+**为什么又加一个开关**：做"剩余缺口盘点"必须能**低开销**地跑真实应用，而
+`LENO_JIT_DEBUG=1` 做不到 —— 实测 file_manager 60 帧：**stderr 8.4MB、>120s 都跑不完**
+（每次编译尝试都把 body raw hex = 最多 1200 字节整段打出来）。
+`LENO_JIT_GAPS=1` 只累加计数、退出时打印一次：**300 帧 2.5s、stderr 1.3KB**。
+键形如 `模式|原因`，模式 ∈ {`loop`, `func`, `inline`}；原因里带 **opcode 名**
+（复用 `debug.c` 新暴露的 `opcode_name()` —— 避免"人工对着枚举数编号"这个最易错的步骤）。
+
+```powershell
+$env:SDL_VIDEODRIVER='dummy'; $env:LENO_SDL_FRAMES='300'; $env:LENO_JIT_GAPS='1'
+build\leno.exe file_manager.leno        # 退出时打印 === JIT 拒收原因 ===
+```
+
+**当前缺口（file_manager，300 帧 headless，2026-09-16）**
+
+| 计数 | 模式 | 原因 | 性质 / 建议 |
+| --- | --- | --- | --- |
+| 259 | inline | **`OP_CALL`(59) 在内联扫描里没有 case** | **可做且最划算**：照 loop scan 的同名 case 补记账（rc=1 + 调用前守卫），一次修好"被调函数里只要有经函数值调用就不能内联" |
+| 258 | func | `OP_GET_CSTRUCT_DEF`(138) | FFI / cstruct 访问；维持拒绝或单独立项 |
+| 251 | func | **`OP_DICT`(69)（字典字面量 `{}` 构造）** | **可做**：属 R2 列表里的 `OP_DICT*`，照 callout 模板走 |
+| 55 / 6 | inline | 模块变量/函数访问（`88`/`90`）**跨模块** | 正确性边界（§8.69 / R7①），**刻意保留** |
+| 25 / 3 / 4 | inline / loop / func | `OP_GET_CSTRUCT_DEF`(138) / `OP_CLIB_CALL`(142) | FFI 相关 |
+| 13 + 11 | func | 函数体含循环（`OP_FOR_PREP` 95 / `OP_LOOP` 58） | 设计限制（`func_mode` 只保证无循环函数正确） |
+| 3 | loop | 循环体含可达 return | 设计限制（loop JIT 无法从机器码返回函数） |
+
+**计数是"指示性"的，不是精确指标**：同一配置重跑 `FuncCompiled` 会在 **97~346** 之间波动
+（自动化交互路径/动画分支不同 ⇒ 编译尝试集合不同）。要判断"某个改动是否减少了拒收"，
+应看**种类与量级**，或用固定负载 + 多次取并集。
+
+**负面结论（同样重要，用于确认前面几轮的收口）**：清单里**没有**
+`OP_GET/SET_UPVALUE`(14/15)、`OP_CLOSURE`(61)、`OP_TAIL_CALL`、`OP_GET_GLOBAL_FUNC`(18)
+⇒ **R5 与 R6 的缺口确实清零了**（对比 2026-09-14 的 `76×4 / 93×3 / 14×2 / 142×2 / 138×49`）。
+
+***
+
 ## 9. 性能数据
 
 ### 测试环境

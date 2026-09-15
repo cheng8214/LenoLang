@@ -74,6 +74,20 @@ cmd /c "set LENO_NO_JIT=1&& build\leno.exe jit_probes\probe_multi_ret_jit.leno 2
 **注意**：`FuncCompiled > 0` 不足以证明快路径被执行 —— 必须用 `LENO_JIT_FTRACE=1`
 看到 `jr=0 failed=0`，否则可能只是"两边都退回了解释器"。详见 §8.75。
 
+## 拒收原因直方图（`LENO_JIT_GAPS=1`，2026-09-16）
+
+盘点"剩余缺口"用这个开关，**不要**用 `LENO_JIT_DEBUG=1`（后者在真实应用上 stderr 8MB+、
+跑不完）：
+
+```powershell
+$env:SDL_VIDEODRIVER='dummy'; $env:LENO_SDL_FRAMES='300'; $env:LENO_JIT_GAPS='1'
+build\leno.exe <app.leno>     # 退出时打印「模式|原因（含 opcode 名）」的计数表
+```
+
+实测开销：file_manager 300 帧 **2.5s / stderr 1.3KB**。
+⚠ 计数是**指示性**的（同配置重跑 `FuncCompiled` 在 97~346 波动）—— 看种类与量级，
+不要当精确指标。当前缺口清单见 §8.77。
+
 ## 确定性 GUI 负载驱动器（2026-09-15，`LENO_SDL_FRAMES`）
 
 GUI 负载以前**无法可靠测量**：按"跑满 N 秒"测时，同一壁钟时长内实际跑了多少帧随系统噪声变化
