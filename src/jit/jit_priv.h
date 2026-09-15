@@ -341,7 +341,12 @@ extern Value jit_func_locals_pool[JIT_FUNC_MAX_DEPTH][JIT_MAX_LOCALS];
  * —— jit_func_entry_claim 会 jit_mem_free 掉被驱逐函数的机器码，
  * 若那个函数正在 C 栈上执行（A 调 B，B 的 callout 又编译了撞槽的 C），
  * 就是 use-after-free。256 槽 ≈ 8KB 元数据，把冲突概率压到可忽略。 */
-#define JIT_FUNC_CACHE_SIZE 256
+#define JIT_FUNC_CACHE_SIZE 1024
+/* 256 → 1024（2026-09-16，§8.78）：§8.73 修的是**哈希碰撞**（混合哈希 + 探测窗口），但
+ * 真实应用的**工作集本身**可能超过表长 —— 实测 file_manager 300 帧：
+ * 同配置重跑 `FuncEvict` = 4 / 504 / 3767、`FuncCompiled` = 97 / 597 / 2748、
+ * `us_per_frame` ±3.2%；换 1024 槽后 `FuncEvict` **归零**、`FuncCompiled` 恒 **97**、
+ * 波动降到 **±0.6%**。1024 槽 ≈ 32KB 元数据，代价可忽略。 */
 
 /* 解释器侧函数调用热度阈值。与 JIT_HOT_THRESHOLD（循环回边 50 次）分开：
  * 函数编译比循环编译贵，且编译前的调用走的是完整解释器路径，
