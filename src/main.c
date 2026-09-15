@@ -157,7 +157,249 @@ static void printHelp(const char* program) {
 
 // 入口文件缓存路径（由 lenolang_run_file 设置，lenolang_run 在序列化后写入缓存）
 static char g_entry_cache_path[MAX_PATH_LEN] = {0};
+// 入口缓存的依赖清单路径（<entry 缓存>.deps，与 .lenb 同目录、同批次落盘）
+static char g_entry_deps_path[MAX_PATH_LEN + 8] = {0};
 static int g_entry_cache_enabled = 0;
+
+// ============================================================================
+// 入口缓存依赖清单（entry_<hash>.lenb.deps）—— 修复「改被引用模块不失效」
+//
+// 背景：entry_<hash>.lenb 是**整个程序**的序列化快照——所有 import 进来的模块
+// 都被内联在同一个文件里（serialize.c 的 OBJ_MODULE 分支只有在「模块缓存序列化」
+// 时才把已加载模块预标记成 CONST_TAG_MODULE_REF，入口序列化走的是全量写出），
+// 而文件名只由【入口文件自身】的内容哈希决定（见 lenolang_run_file）。
+// 于是只修改被引用的 lib 模块（入口不变）时：缓存键不变、内容却是旧的 ⇒ 直接
+// vm_load 改前的模块字节码；模块级 .lenomc 那套「自身 hash + 逐依赖 hash」校验
+// 根本没机会执行（整个程序都没走 load_module_file）。
+//
+// 修法：写入口缓存时把本次编译涉及的**全部模块**做成快照落盘，加载入口缓存前逐条
+// 比对，任一不符即视为未命中（并删掉过期的 .lenb）。
+// 快照记录的是「这些字节码当初由哪一版源码编出来」——直接取自各模块自己的
+// .lenomc header（本轮刚编译，或本轮从缓存载入时已校验过），而不是当场 stat 磁盘：
+// 后者在「编译期间源码又被改动」时会记下新哈希却内联着旧字节码，反而制造假命中。
+// 清单格式（文本、制表符分隔、末行 END）：
+//     LENODEPS1
+//     <count>
+//     <st_size>\t<fnv1a 十六进制>\t<模块源文件路径>
+//     END
+// 校验失败 / 清单缺失 / 任一模块拿不到 .lenomc header ⇒ 返回失效，回退源码编译。
+// （注：覆盖范围是参与编译的 .leno 模块；被 cfunc/extern 绑定的原生库如 SDL3.dll
+//   是运行时加载的，不在缓存失效范围内。）
+// ============================================================================
+#define ENTRY_DEPS_MAGIC "LENODEPS1"
+
+// 跨平台 stat / fopen / remove：Windows 上走宽字符，避免中文路径（如 文件管理器）失败
+static int entry_deps_stat(const char* path, uint64_t* out_size) {
+#ifdef _WIN32
+    wchar_t* wp = utf8_to_utf16(path);
+    if (!wp) return -1;
+    struct _stat st;
+    int ret = _wstat(wp, &st);
+    free(wp);
+#else
+    struct stat st;
+    int ret = stat(path, &st);
+#endif
+    if (ret != 0) return -1;
+    *out_size = (uint64_t)st.st_size;
+    return 0;
+}
+
+static FILE* entry_deps_fopen(const char* path, const char* mode) {
+#ifdef _WIN32
+    wchar_t* wp = utf8_to_utf16(path);
+    if (!wp) return NULL;
+    wchar_t* wm = utf8_to_utf16(mode);
+    if (!wm) { free(wp); return NULL; }
+    FILE* f = _wfopen(wp, wm);
+    free(wp);
+    free(wm);
+    return f;
+#else
+    return fopen(path, mode);
+#endif
+}
+
+static void entry_deps_remove(const char* path) {
+    if (!path || !path[0]) return;
+#ifdef _WIN32
+    wchar_t* wp = utf8_to_utf16(path);
+    if (!wp) return;
+    _wremove(wp);
+    free(wp);
+#else
+    remove(path);
+#endif
+}
+
+// 读源文件并算内容哈希（文本模式打开，与 module_loader.c / serialize.c 的约定一致：
+// Windows 下 CRLF→LF，所以「大小」用 stat 的磁盘字节数、「哈希」用文本模式内容）
+static int entry_deps_hash_file(const char* path, uint64_t* out_hash) {
+    FILE* f = entry_deps_fopen(path, "r");
+    if (!f) return -1;
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (sz < 0) { fclose(f); return -1; }
+    char* buf = (char*)malloc((size_t)sz + 1);
+    if (!buf) { fclose(f); return -1; }
+    size_t rd = fread(buf, 1, (size_t)sz, f);
+    buf[rd] = '\0';
+    fclose(f);
+    *out_hash = serialize_source_hash(buf, strlen(buf));
+    free(buf);
+    return 0;
+}
+
+// 取某模块「已编译版本」的源码快照：读它在模块缓存里的 .lenomc header
+// （大端序 magic(4) + version(4) + src_hash(8) + src_size(8)，与 serialize.c 的
+//  依赖一致性检查读法保持一致）。返回 0=成功，-1=拿不到（调用方按失效处理）
+static int entry_deps_module_snapshot(const char* cache_dir, const char* src_path,
+                                      uint64_t* out_size, uint64_t* out_hash) {
+    if (!cache_dir || !src_path) return -1;
+    char* cache_path = module_cache_path_for(src_path, cache_dir);
+    if (!cache_path) return -1;
+    FILE* f = entry_deps_fopen(cache_path, "rb");
+    free(cache_path);
+    if (!f) return -1;
+    uint8_t h[24];
+    int ok = (fread(h, 24, 1, f) == 1);
+    fclose(f);
+    if (!ok) return -1;
+    uint32_t magic = ((uint32_t)h[0] << 24) | ((uint32_t)h[1] << 16) |
+                     ((uint32_t)h[2] << 8) | (uint32_t)h[3];
+    uint32_t ver = ((uint32_t)h[4] << 24) | ((uint32_t)h[5] << 16) |
+                   ((uint32_t)h[6] << 8) | (uint32_t)h[7];
+    if (magic != LENO_MODCACHE_MAGIC || ver != LENO_MODCACHE_VERSION) return -1;
+    uint64_t hash = 0, size = 0;
+    for (int i = 0; i < 8; i++) hash = (hash << 8) | h[8 + i];
+    for (int i = 0; i < 8; i++) size = (size << 8) | h[16 + i];
+    *out_hash = hash;
+    *out_size = size;
+    return 0;
+}
+
+// 写依赖清单。必须在入口 .lenb 写成功之后调用。
+// 返回 0=成功（清单可信），-1=失败（调用方须把 .lenb 一并删掉，让下次运行重编译）
+static int entry_deps_write(const char* deps_path) {
+    if (!deps_path || !deps_path[0]) return -1;
+
+    const char* cache_dir = module_loader_get_cache_dir();
+    int total = loaded_modules_get_count();
+    char** paths = NULL;
+    uint64_t* sizes = NULL;
+    uint64_t* hashes = NULL;
+    int count = 0;
+    int failed = 0;
+    if (total > 0) {
+        paths = (char**)malloc(sizeof(char*) * (size_t)total);
+        sizes = (uint64_t*)malloc(sizeof(uint64_t) * (size_t)total);
+        hashes = (uint64_t*)malloc(sizeof(uint64_t) * (size_t)total);
+        if (!paths || !sizes || !hashes) {
+            free(paths); free(sizes); free(hashes);
+            return -1;
+        }
+    }
+
+    for (int i = 0; i < total; i++) {
+        ObjModule* m = loaded_modules_get(i);
+        if (!m || !m->source_path || !m->source_path[0]) continue;
+        // 同一路径只记一次（loaded_modules 按理已去重，这里防御）
+        int dup = 0;
+        for (int j = 0; j < count; j++) {
+            if (strcmp(paths[j], m->source_path) == 0) { dup = 1; break; }
+        }
+        if (dup) continue;
+        uint64_t size = 0, hash = 0;
+        if (entry_deps_module_snapshot(cache_dir, m->source_path, &size, &hash) != 0) {
+            // 拿不到该模块「已编译版本」的快照 ⇒ 清单不完整 ⇒ 整体作废
+            failed = 1;
+            break;
+        }
+        paths[count] = m->source_path;
+        sizes[count] = size;
+        hashes[count] = hash;
+        count++;
+    }
+
+    int rc = 0;
+    if (!failed) {
+        FILE* f = entry_deps_fopen(deps_path, "w");
+        if (!f) {
+            rc = -1;
+        } else {
+            fprintf(f, ENTRY_DEPS_MAGIC "\n%d\n", count);
+            for (int i = 0; i < count; i++) {
+                fprintf(f, "%llu\t%llx\t%s\n",
+                        (unsigned long long)sizes[i],
+                        (unsigned long long)hashes[i],
+                        paths[i]);
+            }
+            fprintf(f, "END\n");
+            if (ferror(f)) rc = -1;
+            fclose(f);
+        }
+    } else {
+        rc = -1;
+    }
+    if (rc != 0) entry_deps_remove(deps_path);
+
+    free(paths);
+    free(sizes);
+    free(hashes);
+    return rc;
+}
+
+// 校验依赖清单：0=有效（入口缓存的字节码与当前源码一致），-1=失效
+// 判定与模块缓存一致：先比磁盘大小（O(1) stat），再比内容哈希
+static int entry_deps_valid(const char* deps_path) {
+    if (!deps_path || !deps_path[0]) return -1;
+    FILE* f = entry_deps_fopen(deps_path, "r");
+    if (!f) return -1;
+
+    char line[MAX_PATH_LEN + 128];
+    int ok = 0;
+    if (fgets(line, sizeof(line), f) &&
+        strncmp(line, ENTRY_DEPS_MAGIC, strlen(ENTRY_DEPS_MAGIC)) == 0 &&
+        fgets(line, sizeof(line), f)) {
+        int count = atoi(line);
+        if (count >= 0) {
+            ok = 1;
+            for (int i = 0; i < count && ok; i++) {
+                if (!fgets(line, sizeof(line), f)) { ok = 0; break; }
+                char* tab1 = strchr(line, '\t');
+                if (!tab1) { ok = 0; break; }
+                *tab1 = '\0';
+                char* rest = tab1 + 1;
+                char* tab2 = strchr(rest, '\t');
+                if (!tab2) { ok = 0; break; }
+                *tab2 = '\0';
+                char* path = tab2 + 1;
+                size_t plen = strlen(path);
+                while (plen > 0 && (path[plen - 1] == '\n' || path[plen - 1] == '\r')) {
+                    path[--plen] = '\0';
+                }
+                if (plen == 0) { ok = 0; break; }
+                uint64_t want_size = strtoull(line, NULL, 10);
+                uint64_t want_hash = strtoull(rest, NULL, 16);
+                uint64_t cur_size = 0;
+                if (entry_deps_stat(path, &cur_size) != 0 || cur_size != want_size) {
+                    ok = 0; break;
+                }
+                uint64_t cur_hash = 0;
+                if (entry_deps_hash_file(path, &cur_hash) != 0 || cur_hash != want_hash) {
+                    ok = 0; break;
+                }
+            }
+            // 收尾标记：清单被截断时这里也会失败（不依赖原子替换）
+            if (ok) {
+                if (!fgets(line, sizeof(line), f) || strncmp(line, "END", 3) != 0) ok = 0;
+            }
+        }
+    }
+    fclose(f);
+    return ok ? 0 : -1;
+}
 
 int lenolang_run(const char* source) {
       if (debugMode) {
@@ -218,6 +460,7 @@ int lenolang_run(const char* source) {
         if (sr == SERIALIZE_OK && lenb_buf) {
             // 入口文件缓存写入：将序列化结果落盘，下次运行可直接加载跳过编译
             if (g_entry_cache_enabled && g_entry_cache_path[0]) {
+                int entry_written = 0;
 #ifdef _WIN32
                 int wlen2 = MultiByteToWideChar(CP_UTF8, 0, g_entry_cache_path, -1, NULL, 0);
                 if (wlen2 > 0) {
@@ -225,14 +468,28 @@ int lenolang_run(const char* source) {
                     if (wpath2) {
                         MultiByteToWideChar(CP_UTF8, 0, g_entry_cache_path, -1, wpath2, wlen2);
                         FILE* cf = _wfopen(wpath2, L"wb");
-                        if (cf) { fwrite(lenb_buf, 1, lenb_size, cf); fclose(cf); }
+                        if (cf) {
+                            size_t wrote = fwrite(lenb_buf, 1, lenb_size, cf);
+                            fclose(cf);
+                            entry_written = (wrote == lenb_size);
+                        }
                         free(wpath2);
                     }
                 }
 #else
                 FILE* cf = fopen(g_entry_cache_path, "wb");
-                if (cf) { fwrite(lenb_buf, 1, lenb_size, cf); fclose(cf); }
+                if (cf) {
+                    size_t wrote = fwrite(lenb_buf, 1, lenb_size, cf);
+                    fclose(cf);
+                    entry_written = (wrote == lenb_size);
+                }
 #endif
+                // 依赖清单必须与 .lenb 一同成立：清单写不出来（或 .lenb 没写完整）就把两者
+                // 都删掉——宁可直接重编译，也不能留下一份无从校验的旧字节码。
+                if (!entry_written || entry_deps_write(g_entry_deps_path) != 0) {
+                    entry_deps_remove(g_entry_deps_path);
+                    entry_deps_remove(g_entry_cache_path);
+                }
             }
 
             // 立刻释放编译器资源（核心！清零「内存税」）
@@ -924,29 +1181,39 @@ int lenolang_run_file(const char* path) {
     #endif
             snprintf(g_entry_cache_path, sizeof(g_entry_cache_path),
                      "%sentry_%llx.lenb", cache_dir_norm, (unsigned long long)src_hash);
+            snprintf(g_entry_deps_path, sizeof(g_entry_deps_path),
+                     "%s.deps", g_entry_cache_path);
             g_entry_cache_enabled = 1;
 
-            // 尝试加载缓存
-            Chunk entry_chunk;
-            Scope* entry_scope = NULL;
-            SerializeResult cache_sr = chunk_deserialize(g_entry_cache_path, &entry_chunk, &entry_scope);
-            if (cache_sr == SERIALIZE_OK) {
-                register_defs_from_chunk(&entry_chunk);
-                gc_init();
-                fix_module_function_ptrs(&entry_chunk);
-                vm_init_with_scope(entry_scope);
-                vm_load(&entry_chunk);
-                int ret = vm_run();
-                chunk_free(&entry_chunk);
-                gc_free_all();
-                free(source);
-                if (ret != 0 || error_has_any()) {
-                    error_print_all();
+            // 依赖清单校验：.lenb 里内联了全部 import 模块的字节码，而它的键只含入口
+            // 文件——只改被引用模块（入口不变）时键不变却已过期。清单缺失/不符即视为
+            // 未命中，并把过期的入口缓存删掉（避免遗留与误用）。
+            if (entry_deps_valid(g_entry_deps_path) != 0) {
+                entry_deps_remove(g_entry_cache_path);
+                entry_deps_remove(g_entry_deps_path);
+            } else {
+                // 尝试加载缓存
+                Chunk entry_chunk;
+                Scope* entry_scope = NULL;
+                SerializeResult cache_sr = chunk_deserialize(g_entry_cache_path, &entry_chunk, &entry_scope);
+                if (cache_sr == SERIALIZE_OK) {
+                    register_defs_from_chunk(&entry_chunk);
+                    gc_init();
+                    fix_module_function_ptrs(&entry_chunk);
+                    vm_init_with_scope(entry_scope);
+                    vm_load(&entry_chunk);
+                    int ret = vm_run();
+                    chunk_free(&entry_chunk);
+                    gc_free_all();
+                    free(source);
+                    if (ret != 0 || error_has_any()) {
+                        error_print_all();
+                        warning_print_all();
+                        return -1;
+                    }
                     warning_print_all();
-                    return -1;
+                    return vm_get_exit_code();
                 }
-                warning_print_all();
-                return vm_get_exit_code();
             }
         }
     }

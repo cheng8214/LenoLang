@@ -111,13 +111,19 @@ build\leno.exe leno_module\LenoSDL3\examples\应用示例\文件管理器\file_m
   `us_per_frame` 会被这 1ms 抬高；重负载（如 file_manager 每帧 7ms）可忽略。A/B 是两次测量相减，
   这个常数地板会自然抵消。
 
-**⚠️ 改 `leno_module/**/lib/**` 之后必须先清缓存，否则会静默用旧模块**（本驱动就是这么被坑的：
-`文件管理器\.lenocache` 的时间戳早于 lib 改动 ⇒ 跑了 90s 都不退出的"老代码"）：
-```powershell
-Remove-Item -Recurse -Force "<引用目录>\.lenocache", "leno_module\LenoSDL3\lib\.lenocache"
-```
-根因：`.lenocache` 是**按引用目录**存的，改被引用模块（lib）不会让引用方失效。
-（这是个**缓存失效缺陷**，值得单独修；在那之前，动过 lib 就清缓存。）
+**✅ 改 `leno_module/**/lib/**` 不再需要手动清缓存（2026-09-16 已修）**
+
+历史坑（本驱动开发时踩过：`文件管理器\.lenocache` 时间戳早于 lib 改动 ⇒ 跑了 90s 都不退出的"老代码"）：
+`entry_<hash>.lenb` 是**整程序**的序列化快照（模块字节码全内联），文件名只由入口文件内容哈希决定
+⇒ 只改被引用模块时键不变、内容却是旧的。修法：写入口缓存的同时落一份依赖清单
+`entry_<hash>.lenb.deps`（参与编译的每个模块的 size+hash，取自各模块 `.lenomc` header），
+加载入口缓存前逐条校验，不符即删除缓存回退源码编译（`src/main.c` 的 `entry_deps_*`）。
+旧版本残留的、没有 `.deps` 的 `entry_*.lenb` 会在下次运行时被判失效并自动删除。
+
+**仍然需要手动清缓存的两种情况**：
+- 改了**编译器本身**（`src/**`）：缓存不记录编译器二进制身份，只有 `LENO_BIN_VERSION` /
+  `LENO_MODCACHE_VERSION` 手工 bump 才整体失效 ⇒ 改 src 后先清 `.lenocache` 再测。
+- 改了**原生库**（`SDL3.dll` 等）：DLL 是运行时加载的，不在 `.leno` 源码快照覆盖范围内。
 
 **前提验证探针**：`probe_sdl_headless.leno`（headless 能否建窗+建渲染器+绘制）、
 `probe_headless_maximized.leno`（带 `MAXIMIZED` 标志的窗口在 headless 下是否卡住 —— 实测不卡）。
