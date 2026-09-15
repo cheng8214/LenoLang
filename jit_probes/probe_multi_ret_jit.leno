@@ -1,0 +1,67 @@
+// R6-a 探针：多返回值（函数级 JIT）
+//
+// 目标：验证「函数自身返回多个值」时，函数级 JIT 的机器码能把**全部**返回值发布出来，
+// 且调用方（callout 快路径 / 解释器热入口）按静态 rc 正确交付。
+//
+// 判据（两条都要满足）：
+//   1. `LENO_NO_JIT=1` 与开启 JIT 的输出**逐字一致**（数值一致性）；
+//   2. JIT 统计里能看到被编译/执行（否则"一致"只说明两边都走了解释器，没测到东西）。
+//
+// 覆盖形态：
+//   · divmod  两 int        —— 最基础的两值返回 + 调用点解构
+//   · pair    两 float      —— 非 int 返回值（raw→Value 转换路径）
+//   · trip    三 int        —— rc = 3
+//   · scaled  多返回值嵌套  —— 被调函数内部再调用多返回值函数（同一发布区被两层使用）
+import times
+
+func divmod(int a, int b): [int, int] {
+    return a / b, a % b
+}
+
+func pair(float x): [float, float] {
+    return x * 2.0, x + 1.0
+}
+
+func trip(int a): [int, int, int] {
+    return a, a * 2, a * 3
+}
+
+// 多返回值函数**内部**再调用多返回值函数：两层都用同一发布区，验顺序/覆盖正确
+func scaled(int a): [int, int] {
+    var[int, int](q, r) = divmod(a, 7)
+    return q + r, q - r
+}
+
+main() {
+    var n = 20000
+    var args = _args()
+    if args.len() > 0 { n = _int(args[0]) }
+
+    int s1 = 0
+    for 0 : n to i {
+        var[int, int](q, r) = divmod(i + 7, 3)
+        s1 = s1 + q + r
+    }
+    print("divmod s1=" + s1 + "\n")
+
+    float fsum = 0.0
+    for 0 : n to i {
+        var[float, float](a, b) = pair(_float(i))
+        fsum = fsum + a + b
+    }
+    print("pair fsum=" + fsum + "\n")
+
+    int s3 = 0
+    for 0 : n to i {
+        var[int, int, int](x, y, z) = trip(i)
+        s3 = s3 + x + y + z
+    }
+    print("trip s3=" + s3 + "\n")
+
+    int s4 = 0
+    for 0 : n to i {
+        var[int, int](p, m) = scaled(i)
+        s4 = s4 + p * 2 + m
+    }
+    print("scaled s4=" + s4 + "\n")
+}

@@ -74,8 +74,40 @@ Value* jit_reloaded_locals = NULL;
  * jit_func_depth: 当前 JIT 函数嵌套深度（递归保护：超过上限回退解释路径，
  * 避免 JIT 机器码无限递归耗尽 C 栈）。 */
 Value jit_fn_result = NULL_VAL;
+/* ---- R6-a：多返回值发布区（契约见 jit_priv.h）----
+ * 单返回值路径不写这个数组；rc > 1 时机器码把全部结果写进来并把个数写进
+ * jit_fn_result_count。调用方每次调用前把 count 复位为 1（等价于"按单返回处理"），
+ * 机器码遇 OP_RETURN_MULTI 才覆写。 */
+Value jit_fn_results[VM_MAX_RETURNS];
+int64_t jit_fn_result_count = 1;   /* 8 字节：机器码用 mov [mem], r64 写（见 jit_priv.h） */
 int jit_func_depth = 0;
 int jit_loop_depth = 0;
+
+static int64_t jit_value_to_raw(Value v);   /* 定义在本文件下方（裸值 ↔ NaN-boxed 互转） */
+
+/* ---- R6-a：函数级 JIT 快路径的多返回值交付 ----
+ * 合约与 VM 重入路径**完全一致**（对照 jit_invoke_closure 里的回填注释）：
+ *   · 结果按序读自 jit_fn_results[0..rc)（results[0] 最深、results[rc-1] 为 TOS）；
+ *   · results[rc-1] 由调用方带回 RAX（新 TOS）；
+ *   · results[0..rc-2] 写回 JIT 操作数栈**顶端 (rc-1) 个实参槽**
+ *     （vstack_top[arg_count-1-i]，i = 0..rc-2）。
+ * 这正是 codegen 已经按 rc 规划好的栈布局 —— 多返回值的栈记账本来就在 scan/codegen
+ * 里按 callee 的 return_count 做过了，这里只是把值真正放进去。
+ *
+ * 复核 `jit_fn_result_count == rc`：编译期假设（callee 的 return_count）与实际发布个数
+ * 不符时返回 0，让调用方回退 VM 重入路径 —— **绝不按错误的个数记账**，那正是 §8.48
+ * 老 bug 的形态（第一个结果落在实参槽上，读到残留值）。 */
+static int jit_fastpath_deliver_multi(int64_t* vstack_top, int arg_count, int rc, Value* out_last) {
+    if (rc < 1 || rc > VM_MAX_RETURNS) return 0;
+    if (rc == 1) { *out_last = jit_fn_result; return 1; }
+    if (jit_fn_result_count != rc) return 0;
+    *out_last = jit_fn_results[rc - 1];
+    for (int i = 0; i < rc - 1; i++) {
+        int slot = arg_count - 1 - i;
+        if (slot >= 0) vstack_top[slot] = jit_value_to_raw(jit_fn_results[i]);
+    }
+    return 1;
+}
 
 /* 「GC 想让 JIT 让出」标志 —— 契约见 jit_priv.h。
  * 置位只在 gc_alloc 跨阈值那一次；清零在解释器消费让出时。 */
@@ -931,8 +963,11 @@ Value jit_callout_call_module_func(ObjModule* module, int64_t* vstack_top,
     }
 
     /* ---- 快路径：callee 自身走函数级 JIT（与 jit_callout_invoke_method 同构）----
-     * 这条路径不压帧，因此下面的模块访问/嵌套调用一律用**编译期模块**（参数传入）。 */
-    if (rc == 1 && mfunc && jit_state.enabled && jit_func_depth < JIT_FUNC_MAX_DEPTH) {
+     * 这条路径不压帧，因此下面的模块访问/嵌套调用一律用**编译期模块**（参数传入）。
+     * R6-a：多返回值同样走快路径（原来是 `rc == 1` 才进）。rc 来自 callee 的静态
+     * return_count（上面已与编译期假设复核过），交付方式见 jit_fastpath_deliver_multi。 */
+    if (rc >= 1 && rc <= VM_MAX_RETURNS && mfunc && jit_state.enabled &&
+        jit_func_depth < JIT_FUNC_MAX_DEPTH) {
         JitLoopFn jfn = jit_func_lookup_or_compile(mfunc, vm);
         if (jfn) {
             int lcount = mfunc->local_count > mfunc->arity ? mfunc->local_count : mfunc->arity;
@@ -945,12 +980,18 @@ Value jit_callout_call_module_func(ObjModule* module, int64_t* vstack_top,
                 flocals[i] = jit_raw_to_value(vstack_top[arg_count - 1 - i]);
             jit_func_depth++;
             jit_fn_result = NULL_VAL;
+            jit_fn_result_count = 1;   /* R6-a：默认单返回；多返回由机器码覆写 */
             int jr = jfn(flocals, vm->globals, closure);   /* R5-P2：闭包通道 */
             jit_func_depth--;
             jit_retire_drain();   /* §8.60：可能已回到顶层，冲刷延迟释放队列 */
             if (jr == 0 && !jit_callout_failed) {
-                jit_reloaded_locals = vm->frames[vm->frame_cnt - 1].locals;
-                return jit_fn_result;
+                Value _last;
+                if (jit_fastpath_deliver_multi(vstack_top, arg_count, rc, &_last)) {
+                    jit_reloaded_locals = vm->frames[vm->frame_cnt - 1].locals;
+                    return _last;   /* rc == 1 时即 jit_fn_result（与改动前一致） */
+                }
+                /* 发布个数与编译期假设不符（如 return_count == -1）→ 回落 VM 重入；
+                 * 堆侧副作用不回滚，与既有取舍一致（§14）。 */
             }
             jit_callout_failed = 0;  /* 回退解释路径前复位 */
         }
@@ -1572,7 +1613,9 @@ static Value jit_invoke_closure(ObjFunction* mfunc, Value callee_val, int arg_co
     if (val_is_obj(callee_val) && val_as_obj(callee_val)->type == OBJ_CLOSURE)
         callee_closure = (ObjClosure*)val_as_obj(callee_val);
 
-    if (mfunc && ret_count == 1 && jit_state.enabled && jit_func_depth < JIT_FUNC_MAX_DEPTH) {
+    /* R6-a：多返回值也走快路径（原为 ret_count == 1）。交付见 jit_fastpath_deliver_multi。 */
+    if (mfunc && ret_count >= 1 && ret_count <= VM_MAX_RETURNS && jit_state.enabled &&
+        jit_func_depth < JIT_FUNC_MAX_DEPTH) {
         JIT_FT_T0();
         JitLoopFn jfn = jit_func_lookup_or_compile(mfunc, vm);
         if (jfn) {
@@ -1588,6 +1631,7 @@ static Value jit_invoke_closure(ObjFunction* mfunc, Value callee_val, int arg_co
             }
             jit_func_depth++;
             jit_fn_result = NULL_VAL;
+            jit_fn_result_count = 1;   /* R6-a：默认单返回；多返回由机器码覆写 */
             if (JIT_FT_TRACE_ON()) {
                 fprintf(stderr, "[FT] %s jfn=%p func='%s' lc=%d ac=%d depth=%d\n",
                         who, (void*)jfn, mfunc->name ? mfunc->name : "?", lcount, arg_count, jit_func_depth);
@@ -1601,10 +1645,14 @@ static Value jit_invoke_closure(ObjFunction* mfunc, Value callee_val, int arg_co
                 fprintf(stderr, "[FT] %s done jr=%d failed=%d result=%p depth=%d\n",
                         who, jr, jit_callout_failed, (void*)(uintptr_t)jit_fn_result, jit_func_depth);
             if (jr == 0 && !jit_callout_failed) {
-                jit_reloaded_locals = vm->frames[vm->frame_cnt - 1].locals;
-                JIT_FT_T3();
-                JIT_FT_ACC();
-                return jit_fn_result;
+                Value _last;
+                if (jit_fastpath_deliver_multi(vstack_top, arg_count, ret_count, &_last)) {
+                    jit_reloaded_locals = vm->frames[vm->frame_cnt - 1].locals;
+                    JIT_FT_T3();
+                    JIT_FT_ACC();
+                    return _last;   /* ret_count == 1 时即 jit_fn_result（与改动前一致） */
+                }
+                /* 发布个数与编译期假设不符 → 回落 VM 重入（既有取舍，§14）。 */
             }
             jit_callout_failed = 0;  /* 回退解释路径前复位 */
         }
@@ -1861,7 +1909,9 @@ Value jit_callout_global_func(int64_t* vstack_top, int arg_count,
         } else if (obj->type == OBJ_FUNCTION) {
             gfunc = (ObjFunction*)obj;
         }
-        if (gfunc && ret_count == 1 && jit_state.enabled && jit_func_depth < JIT_FUNC_MAX_DEPTH) {
+        /* R6-a：多返回值也走快路径（原为 ret_count == 1）。交付见 jit_fastpath_deliver_multi。 */
+        if (gfunc && ret_count >= 1 && ret_count <= VM_MAX_RETURNS && jit_state.enabled &&
+            jit_func_depth < JIT_FUNC_MAX_DEPTH) {
             /* ---- callee 解析缓存（§8.47）----
              * 递归调用点 / 固定调用点每次都是同一个 callee，而
              * jit_func_lookup_or_compile 是一次跨 TU 调用 + 哈希探测 + tried 判定。
@@ -1906,6 +1956,7 @@ Value jit_callout_global_func(int64_t* vstack_top, int arg_count,
                 }
                 jit_func_depth++;
                 jit_fn_result = NULL_VAL;
+                jit_fn_result_count = 1;   /* R6-a：默认单返回；多返回由机器码覆写 */
                 if (JIT_FT_TRACE_ON()) {
                     fprintf(stderr, "[FT-G] jfn=%p func='%s' lc=%d ac=%d depth=%d\n",
                             (void*)jfn, gfunc->name ? gfunc->name : "?", lcount, arg_count, jit_func_depth);
@@ -1919,10 +1970,14 @@ Value jit_callout_global_func(int64_t* vstack_top, int arg_count,
                     fprintf(stderr, "[FT] jfn done jr=%d failed=%d result=%p depth=%d\n",
                             jr, jit_callout_failed, (void*)(uintptr_t)jit_fn_result, jit_func_depth);
                 if (jr == 0 && !jit_callout_failed) {
-                    if (vm->frame_cnt > 0) {
-                        jit_reloaded_locals = vm->frames[vm->frame_cnt - 1].locals;
+                    Value _last;
+                    if (jit_fastpath_deliver_multi(vstack_top, arg_count, ret_count, &_last)) {
+                        if (vm->frame_cnt > 0) {
+                            jit_reloaded_locals = vm->frames[vm->frame_cnt - 1].locals;
+                        }
+                        return _last;   /* ret_count == 1 时即 jit_fn_result（与改动前一致） */
                     }
-                    return jit_fn_result;
+                    /* 发布个数与编译期假设不符 → 回落 VM 重入（既有取舍，§14）。 */
                 }
                 jit_callout_failed = 0;  /* 回退解释路径前复位 */
             }

@@ -85,8 +85,35 @@
                         emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
                         emit_xor_eax_eax(cb);   /* jr=0: success */
                         EMIT_EPILOGUE();
+                    } else if (rc <= VM_MAX_RETURNS) {
+                        /* ---- R6-a：多返回值真正返回 ----
+                         * 弹栈顺序与解释器 OP_RETURN_MULTI 逐字一致：TOS = results[rc-1]，
+                         * 依次弹到 results[0]（results[0] 最深）。每个值都要过一遍
+                         * EMIT_RAW_TO_VALUE（裸 int48 → NaN-boxed Value），与单返回同款。
+                         * 全部写进 jit_fn_results[]，jit_fn_result 同步为 results[0]（兼容）；
+                         * 最后把**编译期常量 rc** 写进 jit_fn_result_count —— 调用方据此复核
+                         * 「编译期假设的返回个数」与「实际发布个数」是否一致（不一致就回落
+                         * VM 重入，绝不按错的个数记账）。
+                         * 注意 R8 在 EMIT_RAW_TO_VALUE 里是 scratch ⇒ store 地址必须在转换
+                         * **之后**才装填。 */
+                        for (int ri = rc - 1; ri >= 0; ri--) {
+                            TOS_CONSUME_RAX();
+                            EMIT_RAW_TO_VALUE();
+                            emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_fn_results[ri]);
+                            emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
+                            if (ri == 0) {
+                                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_fn_result);
+                                emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
+                            }
+                        }
+                        emit_mov_reg_imm64(cb, JIT_RAX, (uint64_t)rc);
+                        emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_fn_result_count);
+                        emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
+                        emit_xor_eax_eax(cb);   /* jr=0: success */
+                        EMIT_EPILOGUE();
                     } else {
-                        /* 多返回值：函数级 JIT 不支持，bailout 回解释路径 */
+                        /* rc 超过解释器上限：交解释器执行，由它报
+                         * 「多返回值数量超过限制（最大 16）」，保证报错文本一致。 */
                         emit_byte(cb, 0xE9);
                         int bail_patch = cb->len;
                         emit_uint32(cb, 0);

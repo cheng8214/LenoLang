@@ -298,8 +298,17 @@ static JitLoopFn jit_compile_function(ObjFunction* func, VM* vm_ptr,
     if (out_size) *out_size = 0;   /* Linux munmap 需要长度，见 jit.h */
     if (!func || !func->chunk || func->chunk->len <= 0)
         return NULL;
-    if (func->has_try || func->return_count > 1)
-        return NULL;  /* 异常处理 / 多返回值语义复杂，回退解释器 */
+    if (func->has_try)
+        return NULL;  /* 异常处理语义复杂，回退解释器 */
+    /* R6-a：多返回值（return_count > 1）现已支持 —— 机器码在 OP_RETURN_MULTI 里把全部
+     * 结果写进 jit_fn_results[] 并发布个数（契约见 jit_priv.h）；调用方按静态 rc 交付
+     * （jit_fastpath_deliver_multi / jit_try_hot_func_call 的折叠），个数不符就回落。
+     * 仅当个数超过解释器上限（VM_MAX_RETURNS = 16）才拒收：那种函数解释器自己会报
+     * 「多返回值数量超过限制」，JIT 不该抢在它前面改变报错行为。
+     * return_count == -1（静态不可知）也放行：机器码按运行时实际个数发布，调用方用
+     * jit_fn_result_count 复核。 */
+    if (func->return_count > VM_MAX_RETURNS)
+        return NULL;
 
     const uint8_t* code = func->chunk->code;
     int len = func->chunk->len;
@@ -548,6 +557,7 @@ int jit_try_hot_func_call(ObjClosure* closure, int arg_count, int typed, VM* vm_
     jit_callout_vm = vm_ptr;   /* callout 依赖的全局 VM 指针（同循环 JIT） */
     jit_func_depth++;
     jit_fn_result = NULL_VAL;
+    jit_fn_result_count = 1;   /* R6-a：默认单返回；多返回由机器码覆写 */
     jit_callout_failed = 0;
     int jr = jfn(flocals, vm_ptr->globals, closure);   /* R5-P2：闭包通道 */
     jit_func_depth--;
@@ -562,13 +572,24 @@ int jit_try_hot_func_call(ObjClosure* closure, int arg_count, int typed, VM* vm_
         return 0;
     }
 
-    /* ---- 折叠栈：arg_count+1 个槽 → 原 callee 槽里的 1 个返回值 ----
-     * 与 call() + OP_RETURN 的净效应一致（结果落在 stack[sp-arg_count-1]）。 */
-    vm_ptr->sp -= arg_count;
-    vm_ptr->stack[vm_ptr->sp - 1] = jit_fn_result;
-    vm_ptr->last_return_value = jit_fn_result;
-    vm_ptr->last_return_count = 1;
-    vm_ptr->last_return_values[0] = jit_fn_result;
+    /* ---- R6-a：折叠栈（现支持多返回值）----
+     * 净效应与解释器 `call()` + OP_RETURN / OP_RETURN_MULTI 逐字一致：
+     * 结果从原 callee 槽开始按序排列（results[0] 最深、results[rc-1] 为 TOS），
+     * 即 `vm.sp = stack_base; push(results[i])` 的语义。
+     * rc 取机器码**实际发布**的个数：单返回路径下恒为 1 ⇒ 行为与改动前逐字一致；
+     * 多返回路径下它就是那个静态 return_count。
+     * 用 vm_stack_push 而非直接写：rc 可以大于 arg_count + 1（如零参函数返回多个值），
+     * 这时 new_sp 会超过旧 sp，需要扩容检查。 */
+    int rc = (int)jit_fn_result_count;
+    if (rc < 1 || rc > VM_MAX_RETURNS) rc = 1;   /* 防御：机器码只在 ≤16 时发布 */
+    const Value* rets = (rc == 1) ? NULL : jit_fn_results;
+    vm_ptr->sp -= arg_count + 1;
+    for (int i = 0; i < rc; i++)
+        vm_stack_push(vm_ptr, rets ? rets[i] : jit_fn_result);
+    vm_ptr->last_return_value = rets ? rets[0] : jit_fn_result;
+    vm_ptr->last_return_count = rc;
+    for (int i = 0; i < rc && i < VM_MAX_RETURNS; i++)
+        vm_ptr->last_return_values[i] = rets ? rets[i] : jit_fn_result;
     jit_state.func_execute_count++;
     return 1;
 }

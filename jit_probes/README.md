@@ -36,6 +36,21 @@
 > **不要**为此开 `LENO_JIT_DEBUG=1` —— 它会把每次编译尝试的 body raw hex（最多 1200 字节）
 > 整段打印，真实负载上输出量极大（观测体验是"这个命令跑不完"）。
 
+## R6-a：多返回值 + 函数级 JIT（`probe_multi_ret_jit.leno`）
+
+覆盖 2 值（int）/ 2 值（float）/ 3 值 / **多返回值嵌套**（被调函数内部再调多返回值函数）。
+判据：
+
+```powershell
+build\leno.exe jit_probes\probe_multi_ret_jit.leno 20000                       # JIT
+cmd /c "set LENO_NO_JIT=1&& build\leno.exe jit_probes\probe_multi_ret_jit.leno 20000"
+# 两侧逐字一致；统计里 FuncCompiled: 4 / Bailouts: 0
+# 另可 LENO_JIT_FTRACE=1 看快路径是否真在跑（应出现 3903 次 <<FT> ... done jr=0 failed=0>>、零回退）
+```
+
+**注意**：`FuncCompiled > 0` 不足以证明快路径被执行 —— 必须用 `LENO_JIT_FTRACE=1`
+看到 `jr=0 failed=0`，否则可能只是"两边都退回了解释器"。详见 §8.75。
+
 ## 确定性 GUI 负载驱动器（2026-09-15，`LENO_SDL_FRAMES`）
 
 GUI 负载以前**无法可靠测量**：按"跑满 N 秒"测时，同一壁钟时长内实际跑了多少帧随系统噪声变化

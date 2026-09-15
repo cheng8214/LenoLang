@@ -652,7 +652,7 @@ inline-scan: 76(OP_STRING_ADD) / 88(模块变量访问) / 156(SWITCH_LOOKUP，R1
 | R2 | L7 余项成批补齐 | 余项：`OP_AS_CAST`(94)、`OP_GET_METHOD`(134，**裸方法取值**形态)、`OP_ARRAY_GET/SET`、`OP_DICT*`、`OP_SLICE`(79)、`OP_IN`、`OP_RANGE`、`OP_NEG`(33)、`OP_U8_TO_F64`(146) | 多为 callout 型，照 §8.52~§8.59 的模板走（`opcode_size` + 两处 scan + callout + codegen + 用例）；需要"语义唯一来源"抽取的（VM 里就地 READ 的那类）照 §8.61/§8.64/§8.65 的做法 | 低 | **批次 1（§8.63）**：`OP_IS_NULL`(48)。**批次 2（§8.64）**：`OP_STRING_ADD`(76)（由插值 `$"..."` 产生，不是 `+`；顺带解开内联侧）。**批次 3（§8.65）**：`OP_TYPE_CHECK`(93)——抽出 `type_check_value` 共用，顺带修掉 `TYPE_ENUM` 的 4 字节长度 bug；实测 `FuncCompiled 123 → 289`。**下一批候选**（实测排序）：**内联侧**补 `OP_GET_METHOD`（×36，见 R7；这是"内联能否成立"的问题，不影响循环编译）、`94:AS_CAST`（带值改写语义，直方图未出现）。注：`-d["k"]`、`x == null` 实测走已支持的路径，不必做；**循环级拒收此刻只剩刻意保留项**（`138`）/ R5 前置（`14`）/ 维持拒绝（`142`） |
 | ~~R3~~ | ~~L0 诊断收口~~ | ~~`opcode_size` 余项补全；把 scan 的 default 报错区分成 `unknown opcode`（缺长度）与 `unsupported opcode`（已收录长度但缺 case）~~ | ~~纯诊断，无行为变化~~ | ~~极低~~ | **已完成（§8.63，2026-09-14）**：补齐约 40 条长度（逐条与 VM 的 `READ_*`、`debug.c` 反汇编器交叉核对）；`OP_CLOSURE` 因长度依赖常量表而**故意保持"未知"**；报错分为 `unknown（长度未知）`/`unsupported（已收录长度、未实现）`。**实测收益**：同一负载的拒收清单从"含糊的 138"变成分类可排期（76×4 / 93×3 / 14×2 / 142×2 / 138×49），R2 的下一批因此是测出来的而不是猜的 |
 | R5 | 闭包创建与捕获变量（`OP_CLOSURE` / `GET/SET/CLOSE_UPVALUE`） | 循环里建闭包、闭包体内读写捕获变量都不进 JIT（被调函数带 upvalue 时自动退回 VM 重入 ⇒ 语义正确但不快） | 两件基础：**(a)** func-JIT ABI 要加 closure 通道（现为 `jfn(flocals, globals)`，无 upvalue 入口）；**(b)** 循环 JIT 的 locals 在 scratch 区（迭代即复用）⇒ 直接捕获会产生**悬空 upvalue**，只能先允许"捕获已在 upvalue 链上的变量"，或改 locals 布局 | 高（ABI + 生命周期不变量） | **已完成（§8.72，2026-09-15）**：C0（零捕获）/ C1（by-upvalue）/ C2（值捕获）+ `GET/SET_UPVALUE` 全部进 JIT（P1 `34508a90` / P2a `68002778` / P2b `6c119bd3` / P3 `2a572102`，assert 304→307/0）；设计稿与不变量 I1~I8 见 `JIT闭包与upvalue设计_R5.md`。**C3（引用捕获本帧局部）与内联体内的闭包维持拒绝**（P4 需实测授权 / I8） |
-| R6 | 函数级 JIT 的多返回值 + `OP_TAIL_CALL` | `jit_compile_function` 直接拒收 `return_count > 1`；`OP_TAIL_CALL` 在循环 JIT 里等价"提前返回"（应归入 `has_reachable_return` 拒绝），只有函数级 JIT 有价值 | 多返回：扩返回值通道（`jit_fn_result` 单值 → 多槽约定），调用方回填约定已就绪（§8.59 的 helper）；尾调用：帧复用语义另算 | 中 | 排在 R5 之后 |
+| R6 | 函数级 JIT 的多返回值 + `OP_TAIL_CALL` | `jit_compile_function` 直接拒收 `return_count > 1`；`OP_TAIL_CALL` 在循环 JIT 里等价"提前返回"（应归入 `has_reachable_return` 拒绝），只有函数级 JIT 有价值 | 多返回：扩返回值通道（`jit_fn_result` 单值 → 多槽约定），调用方回填约定已就绪（§8.59 的 helper）；尾调用：帧复用语义另算 | 中 | **R6-a（多返回值）已完成（§8.75，2026-09-15）**：发布区 `jit_fn_results[] + jit_fn_result_count` + `jit_fastpath_deliver_multi()`；三处快路径与解释器热入口全部支持多值；`return_count == -1` 靠交付前复核回落。探针 `probe_multi_ret_jit.leno` JIT/NO_JIT 逐字一致、快路径 3903 次零回退、assert 307/0。**R6-b（`OP_TAIL_CALL`）待做**：先取证 VM 帧复用 + open upvalue 关闭语义（循环模式维持拒收） |
 | R7 | 内联的跨模块限制 + 内联侧 opcode 缺口 | ① 模块变量/函数访问被 inline scan 一刀拒绝（§8.55/§8.56）——内联后没有 callee 的帧，模块归属不可知（**实测 ×166**，内联侧第一大）；② inline scan 没有 `OP_GET_METHOD` 的 case ⇒ 含方法调用的函数一律不能内联（**实测 ×36**）；③ `138:GET_CSTRUCT_DEF ×116`（维持拒绝） | ① 在 inline site 记录 callee 的 module，与 caller 相同才允许内联；② 照 loop scan 的记账补 `GET_METHOD`（配对形态 `-(argc+1-rc)`，rc 用同样的 `jit_resolve_method_ret_count`，解析不出就拒绝内联） | 低 | **② 已完成（§8.68，2026-09-15）**：`scan_callee_for_inline` 补 `OP_GET_METHOD`（配对/独立两形态），探针 `probe_inline_method_call.leno` 2.27~2.40x、用例 `test_jit_inline_method_dispatch.leno`。**① 已完成（§8.69，同日）**：加「callee 与 caller 同模块」守卫后放行模块变量/函数访问，探针 `probe_inline_module_var.leno` ≈2~3x、跨模块仍拒绝（安全边界）、用例 `test_jit_inline_module_var.leno`；assert 298/0。③ 维持拒绝 |
 | ~~R8~~ | ~~性能基准复盘~~ | ~~§9 的数据需要按最新覆盖面重跑（JIT vs `LENO_NO_JIT=1`），量化"覆盖面增长到底换来多少"~~ | ~~纯测量；也顺便验证 R4 的延迟回收没有性能回退~~ | ~~极低~~ | **已完成（§9 的「R8 基准复盘」小节，2026-09-14）**：新增可复用基准 `examples/性能测试/JIT覆盖面基准.leno`（8 项，专测本轮补齐的 opcode）；JIT/VM 加速比 2.2x\~18.6x，**字符串插值 1.0x（分配主导，非测错）**；与历史基线交叉核对无回退（i++ 75 vs 78 ms/亿、arr.add 620 vs 625 ms/亿）⇒ R4 延迟释放无可测代价 |
 | ~~R9~~ | ~~`OP_SWITCH_LOOKUP` 的 callout 开销~~ | ~~R9 前的基准显示：JIT 下 switch 每轮一次 callout（+15.5ms/3M 轮），比等价的 if 链慢 3.7 倍~~ | ~~编译期分流：case 值全 int 时发内联比较链~~ | ~~低（非 int 一律退回原 callout 路径）~~ | **已完成（§8.62，2026-09-14）**：int 快路径 + int48 守卫（bailout 交解释器，保住 bigint 值能命中 int case 的语义）+ 重复值排除；switch 的 JIT 时间 30.4 → **15.7 ms**，与 if 同级 |
@@ -4684,8 +4684,82 @@ set LENO_NO_JIT=1 && build\leno.exe jit_probes\probe_dict_set.leno 2000000
   （GUI 的工作量取决于状态与交互节奏）。这与 `待办_GC与分配优化.md` 开头那句
   "负载波动大"是同一回事。
   ⇒ **GUI 应用的端到端 A/B 必须用确定性驱动器（固定脚本 / 固定帧数），否则不要下结论。**
+  （**已实现，2026-09-15**：`LENO_SDL_FRAMES` + `SDL_VIDEODRIVER=dummy`，
+  见 §8.73 的「可复现的度量方法」与 `jit_probes/README.md`；实测 `sum` 四次逐字相同、
+  `us_per_frame` ±1.5%。）
 - 因此本项的**唯一判据是微基准**（同二进制切 `LENO_GC_POOL_LIMIT`、交替、噪声 ±2 ns）：
   `new Pair −38%`、`new Big −47%`。
+
+***
+
+### 8.75 R6-a：函数级 JIT 的多返回值（单值 → 发布区 + 逐点交付）（2026-09-15）
+
+**原状态**：`jit_compile_function` 直接 `return NULL` 拒收 `func->return_count > 1`
+（原注释写"多返回值语义复杂"）；`ops_return.inc` 的 `OP_RETURN_MULTI` 在 `func_mode` 下
+对 `rc > 1` 只发射一条 bailout —— 那是**占位**，不是实现。后果：**返回多个值的函数永远
+进不了函数级 JIT**，包括 `Font.measureString` 这种每帧被调成百上千次的真实热点。
+
+**动手前最有价值的一条取证**：调用侧的**多返回值交付合约早就存在且完备** ——
+VM 重入路径（`jit_invoke_closure` / `jit_callout_global_func`）已在做同一件事：
+
+```
+RAX = results[rc-1]（新 TOS）；vstack_top[arg_count-1-i] = results[i]（i = 0..rc-2）
+```
+
+更关键的是 **scan/codegen 早已按 callee 的 `return_count` 记好了多返回值的栈布局**
+（§8.56 的 `jit_resolve_module_func`、§8.48 的方法 rc 推断、`OP_CALL_GLOBAL_FUNC_TYPED`
+的 `ret_count`）。缺的其实只有两处：`rc == 1` 这道守卫，以及 **callee 侧根本没有发布多返回值
+的地方**。⇒ 工作量比"扩返回值通道"的原始估计小得多（这也是本条的第一个教训：
+**先找现有的对偶机制，再动手设计新通道**）。
+
+**契约（发布区，见 `jit_priv.h`）**
+
+- `jit_fn_results[VM_MAX_RETURNS]`：机器码在 `OP_RETURN_MULTI(rc)` 里把全部结果写进来，
+  顺序与解释器**逐字一致**（`results[0]` 最深、`results[rc-1]` = TOS）；
+- `jit_fn_result_count` = rc（编译期常量，写死进机器码）；`jit_fn_result` 仍同步为 `results[0]`，
+  **单返回值路径一行未改**（继续只写 `jit_fn_result`，热路径零额外开销）；
+- 调用方按静态 rc 取用；`rc == 1` 时行为与改动前逐字相同。
+
+**交付**：新增 `jit_fastpath_deliver_multi()`（`jit_callout.c`）。三处快路径
+（`call_module_func` / `jit_invoke_closure`（invoke_method 与 call_value 共用）/
+`call_global_func`）由 `rc == 1` 放宽到 `1 ≤ rc ≤ 16` 后统一调它；解释器热入口
+（`jit_try_hot_func_call`）的折叠也按 `jit_fn_result_count` 支持多值（结果从原 callee 槽
+按序排列，用 `vm_stack_push` 而非直接写：rc 可以大于 `arg_count + 1`，那时需要扩容检查）。
+
+**防御（特意加的，建议保留）**：交付前复核 `jit_fn_result_count == rc`，不符就**回落 VM 重入**
+—— 覆盖 `return_count == -1`（静态不可知）的函数：机器码按运行时实际个数发布，调用方按
+编译期假设取用，两者不一致时宁可慢也不能错记账（§8.48 老 bug 的形态正是"第一个结果落在
+实参槽上，读到残留值"）。
+
+**实施时踩到的坑（记下来避免重犯）**
+
+1. **机器码只能用 8 字节 store**（没有 32 位 store 的发射器）⇒ `jit_fn_result_count` 必须
+   声明成 `int64_t`。写成 `int` 会**连带覆写相邻 4 字节的全局**（`jit_func_depth` 之类）。
+2. `EMIT_RAW_TO_VALUE()` 用 R8 当 scratch ⇒ store 地址必须在转换**之后**才装填，否则被踩。
+3. `jit_fastpath_deliver_multi` 的 `vstack_top` 是 **raw 的 `int64_t*`**，不是 `Value*`
+   （写回要过 `jit_value_to_raw`）—— 编译器的 `-Wpointer-sign` 直接把这处点出来了。
+4. **不需要注册 GC 根**：JIT 帧内 GC 只置让出标志、不就地回收（§8.36/§8.37），只要调用方在
+   下一次安全点之前把值搬上 JIT 操作数栈 / VM 栈就安全 —— 与既有 `jit_fn_result` 的前提相同。
+   这条不写清，后人很容易以为漏了根注册。
+
+**验证**
+
+- 新探针 `jit_probes/probe_multi_ret_jit.leno`：2 值（int）/ 2 值（float）/ 3 值 /
+  **多返回值嵌套**（被调函数内部再调多返回值函数，两层共用同一发布区）。
+  JIT 与 `LENO_NO_JIT=1` 输出**逐字一致**，`FuncCompiled: 4 / Bailouts: 0`；
+  `LENO_JIT_FTRACE=1` 下 **3903 次快路径完成（`jr=0 failed=0`）、零回退**
+  ⇒ 新交付代码确实在执行（不是"两边都退回解释器所以看着一致"）。
+- **既有用例的有效性被这次改动提升了**：`assert/test_jit_multiret_method.leno`
+  （热点循环 → callout → 函数级 JIT 内的多返回值方法调用）与 `test_jit_hot_func.leno` 用例 12
+  （解释器热入口）**以前"能过"是因为 callee 被拒收后退回 VM 重入**，实际测的是解释器路径；
+  现在 callee 真的被编译，它们才真正覆盖函数级 JIT 的多返回值。
+- assert **307 passed / 0 failed**（与改动前一致）。
+
+**剩余（R6-b `OP_TAIL_CALL`）**：循环模式下它与 `OP_RETURN` 同类（loop JIT 无法从机器码返回
+函数）⇒ 应归入 `has_reachable_return` 判据**维持拒收**；函数模式要当"调用 + 返回"实现，
+但动手前必须先取证 VM 的**帧复用**与 **open upvalue 关闭**语义（否则会踩 R5 那类生命周期
+不变量）：① 尾递归不增长 VM 栈（JIT 走 C 栈 ⇒ 深递归靠 `JIT_FUNC_MAX_DEPTH` 回退解释器）；
+② 返回值个数匹配；③ 当前帧的 open upvalue 是否必须关闭。
 
 ***
 

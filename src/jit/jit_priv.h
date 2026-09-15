@@ -286,6 +286,23 @@ extern int32_t jit_bailout_site;
 extern Value jit_fn_result;
 extern int jit_func_depth;
 
+/* ---- R6-a：函数级 JIT 的多返回值发布区 ----
+ * 函数级 JIT 的机器码在 `OP_RETURN_MULTI(rc > 1)` 时把**全部**返回值写进这里：
+ *   jit_fn_results[0..rc)    （results[0] = 最深、results[rc-1] = TOS；
+ *                             与解释器 OP_RETURN_MULTI 的「results[i] 从 TOS 逐个弹」顺序一致）
+ *   jit_fn_result_count = rc （编译期常量，直接写进机器码）
+ *   jit_fn_result 同步为 results[0]（单返回值路径**不变**：仍然只写 jit_fn_result）
+ * 调用方（callout 快路径 / 解释器热入口）按**静态 rc** 取用：rc == 1 读 jit_fn_result，
+ * rc > 1 读本数组 —— 契约与 VM 重入路径的多返回值回填逐字一致。
+ *
+ * 为什么不需要注册 GC 根：JIT 帧内 GC 只置让出标志、不就地回收（§8.36/§8.37），
+ * 只要调用方在下一次安全点之前把值消费掉（搬上 JIT 操作数栈 / VM 栈）就安全
+ * —— 与既有 `jit_fn_result` 的前提完全相同。 */
+extern Value jit_fn_results[VM_MAX_RETURNS];
+/* 类型刻意是 8 字节：机器码用 `mov [mem], r64` 一条指令写入（没有 32 位 store 的
+ * 发射器），声明成 int 会连带覆写相邻 4 字节。 */
+extern int64_t jit_fn_result_count;
+
 /* ---- 机器码延迟释放（§8.60 / R4 修复）----
  * 为什么不能立即 free：jit_mem_free 是 VirtualFree(MEM_RELEASE)/munmap，**真归还 OS**。
  * 而 jit_func_entry_claim 是 direct-mapped、冲突时无条件驱逐占用者；若占用者**正在
