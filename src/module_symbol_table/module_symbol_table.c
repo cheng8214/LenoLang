@@ -104,6 +104,9 @@ static int mod_source_line(const char* source, const char* pos) {
 // 导入别名类型依赖传导
 #include "inc/sym_table_import_alias.inc"
 
+// 枚举成员常量表达式求值（扫描阶段用；语义与解析器对齐，见文件内说明）
+#include "inc/sym_table_enum_expr.inc"
+
 // 前向声明（定义在 sym_table_entry.inc，但 scan 阶段需要使用）
 static void resolve_module_full_path(char* full_path, int max_len,
                                        const char* module_path, const char* current_file);

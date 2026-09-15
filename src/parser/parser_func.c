@@ -2993,8 +2993,10 @@ Ast* parse_enum_stmt(Parser* p) {
         // 下一个自动分配的值为当前值 + 1
         next_auto_value = member_value + 1;
 
-        // 可选的分号
-        if (p->lex.current.type == TOK_SEMI) {
+        // 可选的分隔符：分号或逗号。
+        // 扫描器（scan_enum.inc）一直支持逗号分隔，解析器此前只吃 ';'，
+        // 于是同一个 enum 在模块符号表里 vs 直接编译时表现不同（逗号版直接语法错误）。
+        if (p->lex.current.type == TOK_SEMI || p->lex.current.type == TOK_COMMA) {
             lexer_next(&p->lex);
         }
     }

@@ -929,23 +929,23 @@
                 // 用户模块调用，检查方法是否存在
                 const char* current_file = error_get_filename();
                 
-                // 首先检查是否是 struct 定义
-                ModuleSymbolTable* sym_table = module_symbol_table_create(module_info->file_path);
+                // 首先检查是否是 struct 定义。
+                // 注意：**不要**在这里再 create + scan 一遍模块 —— import 阶段已经把整张
+                // 符号表扫好并存在 module_info->sym_table 里（下面查函数用的就是它）。
+                // 此前每个模块调用点都白扫一遍整个模块文件（一个调用点 = 3 次全文件遍历）。
                 int is_struct = 0;
-                if (sym_table) {
-                    if (module_symbol_table_scan(sym_table, current_file) == 0) {
-                        ModuleStructSymbol* struct_sym = module_symbol_table_find_struct(sym_table, ast->u.module_call.method_name);
-                        if (struct_sym) {
-                            is_struct = 1;
-                            // 是 struct 定义，提示使用 new 关键字
-                            char msg[BUFFER_MEDIUM];
-                            snprintf(msg, sizeof(msg), "struct '%s.%s' 需要使用 new 关键字实例化，例如: new %s.%s()",
-                                    ast->u.module_call.module_name, struct_sym->name,
-                                    ast->u.module_call.module_name, struct_sym->name);
-                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
-                        }
+                if (module_info->sym_table && !module_info->load_failed) {
+                    ModuleStructSymbol* struct_sym = module_symbol_table_find_struct(
+                        module_info->sym_table, ast->u.module_call.method_name);
+                    if (struct_sym) {
+                        is_struct = 1;
+                        // 是 struct 定义，提示使用 new 关键字实例化
+                        char msg[BUFFER_MEDIUM];
+                        snprintf(msg, sizeof(msg), "struct '%s.%s' 需要使用 new 关键字实例化，例如: new %s.%s()",
+                                ast->u.module_call.module_name, struct_sym->name,
+                                ast->u.module_call.module_name, struct_sym->name);
+                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     }
-                    module_symbol_table_destroy(sym_table);
                 }
                 
                 // 如果不是 struct，检查是否是函数，并推断返回类型
@@ -1955,10 +1955,26 @@
                         if (ref_name) free(ref_name);
                         if (ast->cached_type) { type_free(ast->cached_type); ast->cached_type = NULL; }
                         ast->kind = AST_NUM;
-                        ast->u.num.value = (double)member_value;
+                        // 不能用 double 承载成员值：超过 2^53 的整数（位标志 `1 << 60` 之类）
+                        // 会被静默舍入，于是 use 路径与同模块/运行期路径给出不同的数。
+                        // 超出 double 精确整数范围时改走 bigint 表示（与词法层同一判据）。
                         ast->u.num.is_float = 0;
-                        ast->u.num.is_bigint = 0;
                         ast->u.num.bigint_str = NULL;  // 必须清空：union 中 bigint_str 与 module_access.ref.kind/index 重叠
+                        if (member_value > 9007199254740992LL || member_value < -9007199254740992LL) {
+                            ast->u.num.value = 0;
+                            ast->u.num.is_bigint = 1;
+                            ast->u.num.bigint_str = (char*)malloc(32);
+                            if (ast->u.num.bigint_str) {
+                                snprintf(ast->u.num.bigint_str, 32, "%lld", (long long)member_value);
+                            } else {
+                                // 兜底：内存不足时退回旧行为（宁可有精度损失，不要崩）
+                                ast->u.num.value = (double)member_value;
+                                ast->u.num.is_bigint = 0;
+                            }
+                        } else {
+                            ast->u.num.value = (double)member_value;
+                            ast->u.num.is_bigint = 0;
+                        }
                         ast->cached_type = type_new(TYPE_INT);
                         // enum 值已解析为常量，释放不再需要的 var_ast
                         if (var_ast) {

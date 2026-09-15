@@ -501,9 +501,11 @@ static char* read_file(const char* file_path) {
     return content;
 }
 
-// 读取模块文件
-char* read_module_file(const char* file_path, const char* current_file) {
-    char full_path[MAX_PATH_LEN];
+// 解析模块文件的完整（规范化）路径
+// 成功返回 1 并写入 full_path，失败返回 0。
+// 与 read_module_file / load_module_file 原来的内联逻辑完全一致，抽出来是为了让
+// 调用方（如导出项扫描缓存）能用同一个「完整路径」做缓存键 / stat。
+static int module_resolve_path(char* full_path, const char* file_path, const char* current_file) {
     char normalized_current[MAX_PATH_LEN];
 
     if (current_file != NULL) {
@@ -532,31 +534,39 @@ char* read_module_file(const char* file_path, const char* current_file) {
         if (last_slash != NULL) {
             size_t dir_len = last_slash - normalized_current + 1;
             if (dir_len >= MAX_PATH_LEN) {
-                return NULL;
+                return 0;
             }
             memcpy(full_path, normalized_current, dir_len);
             full_path[dir_len] = '\0';
             if (strlen(full_path) + strlen(file_path) >= MAX_PATH_LEN) {
-                return NULL;
+                return 0;
             }
             strcat(full_path, file_path);
         } else {
             if (strlen(file_path) >= MAX_PATH_LEN) {
-                return NULL;
+                return 0;
             }
             strcpy(full_path, file_path);
         }
     } else {
         if (strlen(file_path) >= MAX_PATH_LEN) {
-            return NULL;
+            return 0;
         }
         strcpy(full_path, file_path);
     }
 
     if (!normalize_path(full_path, MAX_PATH_LEN)) {
+        return 0;
+    }
+    return 1;
+}
+
+// 读取模块文件
+char* read_module_file(const char* file_path, const char* current_file) {
+    char full_path[MAX_PATH_LEN];
+    if (!module_resolve_path(full_path, file_path, current_file)) {
         return NULL;
     }
-
     return read_file(full_path);
 }
 
@@ -598,19 +608,113 @@ void loaded_modules_mark_all(void) {
     }
 }
 
+// ============================================================================
+// 导出项扫描缓存（进程内，按「完整路径 + mtime + size」校验）
+// ----------------------------------------------------------------------------
+// 每个「模块调用点」（mod.foo()）在语义分析阶段都会走
+// module_has_method → extract_module_exports_from_file，而它此前**每次都重读整份模块
+// 源码**并重跑一遍 export 词法统计。一个模块文件被同一文件里的 k 个调用点引用，
+// 就白读 k 次；SDL3 这类工程模块多、调用点多，累加起来很可观。
+// 这里缓存扫描结果：mtime + size 变化即失效（用户在 LSP 里改了文件保存后，
+// 下一次查询会重新扫描），因此不需要显式清缓存的接口。
+// ============================================================================
+typedef struct {
+    char* path;
+    int64_t mtime;
+    uint64_t size;
+    ExportList list;
+} ExportScanCacheEntry;
+
+static ExportScanCacheEntry* g_export_scan_cache = NULL;
+static int g_export_scan_cache_count = 0;
+static int g_export_scan_cache_cap = 0;
+
+// 取文件 mtime/size（Windows 下走宽字符 API 以支持中文路径）；失败返回 -1
+static int module_file_stamp(const char* full_path, int64_t* out_mtime, uint64_t* out_size) {
+#ifdef _WIN32
+    struct _stat st;
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, full_path, -1, NULL, 0);
+    if (wlen <= 0) return -1;
+    wchar_t* wpath = (wchar_t*)malloc(wlen * sizeof(wchar_t));
+    if (!wpath) return -1;
+    MultiByteToWideChar(CP_UTF8, 0, full_path, -1, wpath, wlen);
+    int ret = _wstat(wpath, &st);
+    free(wpath);
+    if (ret != 0) return -1;
+    *out_mtime = (int64_t)st.st_mtime;
+    *out_size = (uint64_t)st.st_size;
+#else
+    struct stat st;
+    if (stat(full_path, &st) != 0) return -1;
+    *out_mtime = (int64_t)st.st_mtime;
+    *out_size = (uint64_t)st.st_size;
+#endif
+    return 0;
+}
+
+// 命中返回列表指针（仅当路径存在且 mtime/size 均未变），否则 NULL
+static ExportList* export_scan_cache_lookup(const char* full_path) {
+    int64_t mtime = 0;
+    uint64_t size = 0;
+    if (module_file_stamp(full_path, &mtime, &size) != 0) return NULL;
+    for (int i = 0; i < g_export_scan_cache_count; i++) {
+        if (strcmp(g_export_scan_cache[i].path, full_path) == 0) {
+            if (g_export_scan_cache[i].mtime == mtime && g_export_scan_cache[i].size == size) {
+                return &g_export_scan_cache[i].list;
+            }
+            return NULL;   // 文件已变：本次重扫后会覆盖这一条
+        }
+    }
+    return NULL;
+}
+
+static void export_scan_cache_store(const char* full_path, const ExportList* list) {
+    int64_t mtime = 0;
+    uint64_t size = 0;
+    if (module_file_stamp(full_path, &mtime, &size) != 0) return;
+    for (int i = 0; i < g_export_scan_cache_count; i++) {
+        if (strcmp(g_export_scan_cache[i].path, full_path) == 0) {
+            g_export_scan_cache[i].mtime = mtime;
+            g_export_scan_cache[i].size = size;
+            g_export_scan_cache[i].list = *list;   // ExportList 为纯 POD，值拷贝即可
+            return;
+        }
+    }
+    if (g_export_scan_cache_count >= g_export_scan_cache_cap) {
+        int new_cap = g_export_scan_cache_cap == 0 ? 8 : g_export_scan_cache_cap * 2;
+        ExportScanCacheEntry* grown = (ExportScanCacheEntry*)realloc(
+            g_export_scan_cache, sizeof(ExportScanCacheEntry) * new_cap);
+        if (!grown) return;
+        g_export_scan_cache = grown;
+        g_export_scan_cache_cap = new_cap;
+    }
+    ExportScanCacheEntry* entry = &g_export_scan_cache[g_export_scan_cache_count++];
+    entry->path = strdup(full_path);
+    entry->mtime = mtime;
+    entry->size = size;
+    entry->list = *list;
+}
+
 // 从模块文件中提取导出项（用于语义分析）
 int extract_module_exports_from_file(const char* file_path, const char* current_file,
                                       char exports[][MAX_EXPORT_NAME], int max_exports) {
-    char* source = read_module_file(file_path, current_file);
-    if (!source) return -1;
+    char full_path[MAX_PATH_LEN];
+    if (!module_resolve_path(full_path, file_path, current_file)) return -1;
 
-    ExportList list;
-    extract_exports(source, &list);
-    free(source);
+    ExportList local;
+    ExportList* list = export_scan_cache_lookup(full_path);
+    if (!list) {
+        char* source = read_file(full_path);   // 路径已解析，避免二次解析
+        if (!source) return -1;
+        extract_exports(source, &local);
+        free(source);
+        export_scan_cache_store(full_path, &local);
+        list = &local;
+    }
 
-    int count = list.count < max_exports ? list.count : max_exports;
+    int count = list->count < max_exports ? list->count : max_exports;
     for (int i = 0; i < count; i++) {
-        strncpy(exports[i], list.names[i], MAX_EXPORT_NAME - 1);
+        strncpy(exports[i], list->names[i], MAX_EXPORT_NAME - 1);
         exports[i][MAX_EXPORT_NAME - 1] = '\0';
     }
 

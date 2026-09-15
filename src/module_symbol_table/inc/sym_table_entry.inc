@@ -75,6 +75,29 @@ static void resolve_module_full_path(char* full_path, int max_len,
     }
     full_path[max_len - 1] = '\0';
     normalize_path(full_path, max_len);
+
+    // 绝对化：记忆化与磁盘缓存都以「完整路径」为键。同一文件若有时按相对路径解析
+    // （CLI 传入的 argv、error_get_filename）、有时按绝对路径解析，就会得到两个键 ⇒
+    // 同一文件被扫两遍（循环依赖也会报两遍）。这里统一转成绝对路径。
+#ifdef _WIN32
+    {
+        char abs_buf[MAX_PATH_LEN];
+        if (_fullpath(abs_buf, full_path, MAX_PATH_LEN)) {
+            strncpy(full_path, abs_buf, max_len - 1);
+            full_path[max_len - 1] = '\0';
+        }
+    }
+#else
+    {
+        // realpath 需要文件存在；不存在时保留原路径（读取方自会报「找不到模块文件」）
+        extern char* realpath(const char* path, char* resolved_path);
+        char abs_buf[MAX_PATH_LEN];
+        if (realpath(full_path, abs_buf)) {
+            strncpy(full_path, abs_buf, max_len - 1);
+            full_path[max_len - 1] = '\0';
+        }
+    }
+#endif
 }
 
 // ============================================================================
@@ -85,20 +108,75 @@ static void resolve_module_full_path(char* full_path, int max_len,
 // SDL3 的 40 多个 lib 互相 import，路径数是天文数字 ⇒ 表现为编译"卡死"
 // （实测 LENO_NO_CACHE=1 时 20 秒内扫描 5000+ 次，全在重复扫 sdl_core.leno）。
 // 这里按解析后的绝对路径做进程内记忆化：同一路径只扫描一次，与缓存开关无关。
-// 返回的表由本缓存持有（进程生命周期，随进程退出释放），调用方只读、不得 destroy。
+// 返回的表由本缓存持有（进程生命周期），调用方只读、不得 destroy。
+//
+// 失效：命中前会比对源文件的 mtime/size，文件改了就当没缓存、重新扫描。
+// 这一点必须有 —— memo 命中发生在 .lenosymc 的哈希校验**之前**，若不做失效，
+// 长驻进程（LSP）在用户改完依赖文件后会一直返回旧符号表，磁盘缓存的失效机制
+// 完全被短路；同时 module_symbol_table_reset_memo() 供每次编译前重置。
 // ============================================================================
 typedef struct {
     char* full_path;
     ModuleSymbolTable* table;
+    int64_t mtime;      // 源文件时间戳（0 = 取不到，退化为「进程内不变」）
+    uint64_t size;      // 源文件大小
 } SymTableMemoEntry;
 
 static SymTableMemoEntry* g_sym_memo = NULL;
 static int g_sym_memo_count = 0;
 static int g_sym_memo_capacity = 0;
 
+// 因文件已改而被换下来的旧表：不能立即 free —— 同一次扫描链路里上游可能还持有它
+// （例如 scan_pass2_init 的 dep_table），先挂这里，reset_memo 时统一释放。
+static ModuleSymbolTable** g_sym_memo_retired = NULL;
+static int g_sym_memo_retired_count = 0;
+static int g_sym_memo_retired_capacity = 0;
+
+// 取文件 mtime/size（Windows 走宽字符 API 支持中文路径）；失败返回 -1
+static int sym_memo_file_stamp(const char* path, int64_t* out_mtime, uint64_t* out_size) {
+#ifdef _WIN32
+    wchar_t wpath[MAX_PATH_LEN];
+    if (MultiByteToWideChar(CP_UTF8, 0, path, -1, wpath, MAX_PATH_LEN) <= 0) return -1;
+    struct _stat st;
+    if (_wstat(wpath, &st) != 0) return -1;
+#else
+    struct stat st;
+    if (stat(path, &st) != 0) return -1;
+#endif
+    *out_mtime = (int64_t)st.st_mtime;
+    *out_size = (uint64_t)st.st_size;
+    return 0;
+}
+
+static void sym_memo_retire(ModuleSymbolTable* table) {
+    if (!table) return;
+    if (g_sym_memo_retired_count >= g_sym_memo_retired_capacity) {
+        int new_cap = g_sym_memo_retired_capacity == 0 ? 8 : g_sym_memo_retired_capacity * 2;
+        ModuleSymbolTable** grown = (ModuleSymbolTable**)realloc(
+            g_sym_memo_retired, sizeof(ModuleSymbolTable*) * new_cap);
+        if (!grown) return;   // 记不下就先留着（宁可暂时多留一份，也不要悬空）
+        g_sym_memo_retired = grown;
+        g_sym_memo_retired_capacity = new_cap;
+    }
+    g_sym_memo_retired[g_sym_memo_retired_count++] = table;
+}
+
 static ModuleSymbolTable* sym_memo_lookup(const char* full_path) {
+    int64_t mtime = 0;
+    uint64_t size = 0;
+    int have_stamp = (sym_memo_file_stamp(full_path, &mtime, &size) == 0);
     for (int i = 0; i < g_sym_memo_count; i++) {
-        if (strcmp(g_sym_memo[i].full_path, full_path) == 0) return g_sym_memo[i].table;
+        if (strcmp(g_sym_memo[i].full_path, full_path) != 0) continue;
+        if (have_stamp && g_sym_memo[i].mtime != 0 &&
+            (g_sym_memo[i].mtime != mtime || g_sym_memo[i].size != size)) {
+            // 文件已改：换下旧表并移除条目，调用方会重新扫描并写入新条目
+            sym_memo_retire(g_sym_memo[i].table);
+            free(g_sym_memo[i].full_path);
+            g_sym_memo[i] = g_sym_memo[g_sym_memo_count - 1];   // 末尾元素补洞
+            g_sym_memo_count--;
+            return NULL;
+        }
+        return g_sym_memo[i].table;
     }
     return NULL;
 }
@@ -111,9 +189,37 @@ static void sym_memo_store(const char* full_path, ModuleSymbolTable* table) {
         g_sym_memo = grown;
         g_sym_memo_capacity = new_cap;
     }
+    int64_t mtime = 0;
+    uint64_t size = 0;
+    if (sym_memo_file_stamp(full_path, &mtime, &size) != 0) {
+        mtime = 0;
+        size = 0;
+    }
     g_sym_memo[g_sym_memo_count].full_path = strdup(full_path);
     g_sym_memo[g_sym_memo_count].table = table;
+    g_sym_memo[g_sym_memo_count].mtime = mtime;
+    g_sym_memo[g_sym_memo_count].size = size;
     g_sym_memo_count++;
+}
+
+// 清空进程内记忆化（含换下来的旧表）。每次编译前调用，避免同一进程里的多次编译
+// 互相看到旧符号表；LSP 这类常驻宿主应在每次请求前调用。
+void module_symbol_table_reset_memo(void) {
+    for (int i = 0; i < g_sym_memo_count; i++) {
+        free(g_sym_memo[i].full_path);
+        if (g_sym_memo[i].table) {
+            g_sym_memo[i].table->shared = 0;   // 清掉共享标记，destroy 才真正释放
+            module_symbol_table_destroy(g_sym_memo[i].table);
+        }
+    }
+    g_sym_memo_count = 0;
+    for (int i = 0; i < g_sym_memo_retired_count; i++) {
+        if (g_sym_memo_retired[i]) {
+            g_sym_memo_retired[i]->shared = 0;
+            module_symbol_table_destroy(g_sym_memo_retired[i]);
+        }
+    }
+    g_sym_memo_retired_count = 0;
 }
 
 ModuleSymbolTable* module_symbol_table_get_shared(const char* module_path, const char* current_file) {

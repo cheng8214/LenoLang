@@ -282,7 +282,8 @@
                                             // 否则扫描次数 = 依赖图路径数，40+ 模块互相 import 时表现为"卡死"）
                                             ModuleSymbolTable* dep_table = module_symbol_table_get_shared(resolved_path, normalized_current);
                                             if (dep_table) {
-                                                if (module_symbol_table_scan(dep_table, normalized_current) == 0) {
+                                                // 同上：get_shared 内部已扫描完成，勿再显式调 scan
+                                                {
                                                     // 记录依赖路径（含传递依赖，用于 .lenosymc 缓存失效判定）
                                                     {
                                                         char dep_full_path[MAX_PATH_LEN] = {0};

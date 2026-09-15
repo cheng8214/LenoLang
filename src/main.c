@@ -163,10 +163,11 @@ int lenolang_run(const char* source) {
       if (debugMode) {
          printf("debug模式:进入主执行流程\n");
      }
-    // 0. 清空错误和扫描栈
+    // 0. 清空错误、扫描栈与符号表记忆化（记忆化是进程级缓存，跨编译必须清）
     error_clear();
     warning_clear();
     module_symbol_table_reset_scan_stack();
+    module_symbol_table_reset_memo();
      if (debugMode) {
          printf("debug模式:进入语法分析阶段\n");
      }
@@ -377,6 +378,7 @@ int lenolang_compile(const char* source, const char* output_path) {
     error_clear();
     warning_clear();
     module_symbol_table_reset_scan_stack();
+    module_symbol_table_reset_memo();
 
     gc_init();
     vm_init();

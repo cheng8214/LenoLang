@@ -1,0 +1,51 @@
+// 回归测试：enum 成员值在「同模块 / use 导入 / 模块限定」三条计算路径上必须一致
+//
+// 历史 bug（详见 docs/枚举求值与模块符号表问题.md）：
+//   1) 符号表扫描器括号错位 ⇒ 不写 `=` 的成员根本不进成员表，跨模块报「枚举没有成员」；
+//   2) 扫描器另有一套「从左到右、不处理优先级/括号」的求值器 ⇒ use 路径给出另一个值
+//      （2 + 3 * 4 解析器 14、扫描器 20；2 * (3 + 4) 解析器 14、扫描器 10）；
+//   3) 编译期折叠用 double 承载成员值 ⇒ >2^53 被静默舍入；
+//   4) 枚举迭代（for E to v）用 (int) 截断成员值；
+//   5) 解析器不接受逗号分隔 enum 成员（而扫描器接受 ⇒ 模块内外行为不同）。
+
+import "test_enum_value_consistency_mod.leno" as m
+use m.EV
+
+// 同模块 enum：顺便锁定「逗号分隔」与「隐式自动递增」（解析器路径）
+enum LocalEV {
+    A = 2 + 3 * 4,
+    B = 2 * (3 + 4),
+    C,
+}
+
+main() {
+    // ---- 同模块（解析器 / visit_enum.inc 路径）----
+    assert_eq(LocalEV.A, 14)
+    assert_eq(LocalEV.B, 14)
+    assert_eq(LocalEV.C, 15)
+
+    // ---- use 导入（符号表扫描器路径）----
+    // 每一项都必须与同模块一致：这是「三处求值不能各算各的」的核心断言
+    assert_eq(EV.A, 14)
+    assert_eq(EV.B, 14)
+    assert_eq(EV.C, 15)      // 隐式成员（曾整个消失）
+    assert_eq(EV.D, 17)
+    assert_eq(EV.E, -1)
+    assert_eq(EV.F, 15)      // 成员引用 B + 1
+    assert_eq(EV.BIG, 4611686018427387904)   // 1 << 62（double 会舍入）
+
+    // ---- 模块限定（运行期 enum_def / 模块字节码路径）----
+    assert_eq(m.EV.A, 14)
+    assert_eq(m.EV.B, 14)
+    assert_eq(m.EV.C, 15)
+    assert_eq(m.EV.D, 17)
+    assert_eq(m.EV.E, -1)
+    assert_eq(m.EV.F, 15)
+    assert_eq(m.EV.BIG, 4611686018427387904)
+
+    // ---- 模块内取值 + 迭代取值（ITER_GET 的 enum 分支，曾 (int) 截断）----
+    // 14 + 14 + 15 + 17 + (-1) + 15 + 4611686018427387904
+    assert_eq(m.sum_all(), 4611686018427387978)
+
+    print("test_enum_value_consistency passed")
+}

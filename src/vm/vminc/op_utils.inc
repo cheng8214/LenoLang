@@ -538,8 +538,10 @@ OPCODE(OP_ITER_GET) {
                 frame = &vm.frames[vm.frame_cnt - 1];
                 break;
             }
-            // 返回枚举成员的值
-            vm_stack_push(&vm, val_int((int)enum_def->members[index].value));
+            // 返回枚举成员的值。用 val_int_safe：成员值可以是负数或 >32 位（位标志
+            // `1 << 40` 这类），`val_int((int)...)` 会静默截断成 32 位 —— 与「按名取值」
+            // 那条路径（op_utils 的 OBJ_ENUM_DEF 字符串索引分支）给出的值不一致。
+            vm_stack_push(&vm, val_int_safe(enum_def->members[index].value));
             break;
         }
         case OBJ_STRUCT: {

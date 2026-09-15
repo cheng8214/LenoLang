@@ -256,6 +256,11 @@ TypeInfo* parse_type_from_string(const char* type_str);
 // 重置模块扫描栈（用于循环依赖检测，每次编译前调用）
 void module_symbol_table_reset_scan_stack(void);
 
+// 清空进程内符号表记忆化（module_symbol_table_get_shared 的进程级缓存，含已失效换下的旧表）。
+// 每次编译前调用；LSP 这类常驻宿主应在每次请求前调用 —— 否则可能复用旧符号表。
+// 注：记忆化命中前会比对源文件 mtime/size 自动失效，此接口用于主动清空与回收内存。
+void module_symbol_table_reset_memo(void);
+
 // 添加依赖模块路径（用于 .lenosymc 缓存失效判定）
 void module_symbol_table_add_dep(ModuleSymbolTable* table, const char* path);
 

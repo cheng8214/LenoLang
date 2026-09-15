@@ -362,10 +362,10 @@
                     // 同一依赖被反复重扫导致扫描次数随依赖图路径数爆炸
                     dep_table = module_symbol_table_get_shared(resolved_path, normalized_current);
                     if (dep_table) {
-                        if (module_symbol_table_scan(dep_table, normalized_current) != 0) {
-                            module_symbol_table_destroy(dep_table);
-                            dep_table = NULL;
-                        } else {
+                        // get_shared 返回的表内部已完成扫描，这里**不要**再显式调
+                        // module_symbol_table_scan：那只是幂等空操作，还容易被误读成
+                        // 「仍需再扫一次」—— 一旦幂等标志被去掉，扫描爆炸会立刻回来。
+                        {
                             // 记录依赖路径（含传递依赖，用于 .lenosymc 缓存失效判定）
                             char dep_full_path[MAX_PATH_LEN] = {0};
                             resolve_module_full_path(dep_full_path, MAX_PATH_LEN, resolved_path, normalized_current);

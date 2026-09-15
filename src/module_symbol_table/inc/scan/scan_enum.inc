@@ -94,209 +94,30 @@
                                         strncpy(expr_buf, expr_start, real_len);
                                         expr_buf[real_len] = '\0';
 
-                                        // 尝试解析为简单数字（十六进制或十进制，含负号）
-                                        int parsed = 0;
-                                        int neg = 0;
-                                        const char* pnum = expr_buf;
-                                        while (*pnum == ' ' || *pnum == '\t') pnum++;
-                                        if (*pnum == '-') { neg = 1; pnum++; }
-                                        if (*pnum == '0' && (*(pnum+1) == 'x' || *(pnum+1) == 'X')) {
-                                            pnum += 2;
-                                            int64_t val = 0;
-                                            int has_digit = 0;
-                                            while (*pnum && isxdigit((unsigned char)*pnum)) {
-                                                val = val * 16 + (*pnum <= '9' ? *pnum - '0' : (*pnum <= 'F' ? *pnum - 'A' + 10 : *pnum - 'a' + 10));
-                                                pnum++;
-                                                has_digit = 1;
-                                            }
-                                            // 跳过数字后的尾部空格
-                                            while (*pnum == ' ' || *pnum == '\t') pnum++;
-                                            if (has_digit && (*pnum == '\0' || *pnum == '/')) {
-                                                member_values_buf[member_count] = neg ? -val : val;
+                                        // 常量表达式求值：统一走与解析器同优先级的递归下降求值器
+                                        // （定义见 inc/sym_table_enum_expr.inc）。
+                                        // 历史：此处曾有两段自制逻辑 —— 先「试简单数字」，失败再退回
+                                        // 「从左到右」求值（不处理优先级，括号被当未知字符丢弃），与
+                                        // 解析器对同一表达式给出不同值（P = 2 + 3 * 4：解析器 14、
+                                        // 扫描器 20），同一程序里成员值随访问写法而变。两段均已删除。
+                                        {
+                                            int64_t ev_val = 0;
+                                            if (sym_enum_eval_expr(expr_buf, member_names_buf,
+                                                                   member_values_buf, member_count,
+                                                                   &ev_val)) {
+                                                member_values_buf[member_count] = ev_val;
                                                 has_explicit = 1;
-                                                parsed = 1;
                                             }
-                                        } else if (isdigit((unsigned char)*pnum)) {
-                                            int64_t val = 0;
-                                            while (*pnum && isdigit((unsigned char)*pnum)) {
-                                                val = val * 10 + (*pnum - '0');
-                                                pnum++;
-                                            }
-                                            // 跳过数字后的尾部空格
-                                            while (*pnum == ' ' || *pnum == '\t') pnum++;
-                                            if (*pnum == '\0' || *pnum == '/') {
-                                                member_values_buf[member_count] = neg ? -val : val;
-                                                has_explicit = 1;
-                                                parsed = 1;
-                                            }
-                                        }
-
-                                        // 如果不是简单数字，尝试用简易表达式求值器
-                                        if (!parsed) {
-                                            // 简易递归下降表达式求值器
-                                            // 支持：数字、十六进制、enum 成员引用、+ - * / % << >> | & ^
-                                            // 使用内联的方式实现简易求值
-                                            // 简易 token 化 + 递归求值
-                                            // 保存当前 enum 的已解析成员用于引用（动态分配）
-                                            char** saved_names = NULL;
-                                            int64_t* saved_values = NULL;
-                                            int saved_count = member_count;
-                                            if (saved_count > 0) {
-                                                saved_names = (char**)malloc(sizeof(char*) * saved_count);
-                                                saved_values = (int64_t*)malloc(sizeof(int64_t) * saved_count);
-                                                for (int si = 0; si < saved_count; si++) {
-                                                    saved_names[si] = member_names_buf[si];
-                                                    // 成员值这里已是最终值（含负值与自动递增值），直接引用
-                                                    saved_values[si] = member_values_buf[si];
-                                                }
-                                            }
-
-                                            // 简易递归下降求值器
-                                            // expr = bitor_expr
-                                            // bitor_expr = bitxor_expr ('|' bitxor_expr)*
-                                            // bitxor_expr = bitand_expr ('^' bitand_expr)*
-                                            // bitand_expr = shift_expr ('&' shift_expr)*
-                                            // shift_expr = add_expr ('<<' | '>>') add_expr)*
-                                            // add_expr = mul_expr (('+' | '-') mul_expr)*
-                                            // mul_expr = unary_expr (('*' | '/' | '%') unary_expr)*
-                                            // unary_expr = ('-' | '~')? primary
-                                            // primary = number | hex | enum_member_ref
-                                            {
-                                                // 内联递归下降求值器
-                                                // 简易 token 化
-                                                typedef enum { TOK_NUM, TOK_IDENT, TOK_OP, TOK_END } TokType;
-                                                typedef struct { TokType type; int64_t val; char op; char ident[64]; } Token;
-                                                Token tokens[64];
-                                                int tok_count = 0;
-
-                                                // 简易词法分析
-                                                const char* cp = expr_buf;
-                                                while (*cp && tok_count < 64) {
-                                                    while (*cp == ' ' || *cp == '\t') cp++;
-                                                    if (!*cp) break;
-                                                    if (isdigit((unsigned char)*cp)) {
-                                                        int64_t v = 0;
-                                                        if (*cp == '0' && (*(cp+1) == 'x' || *(cp+1) == 'X')) {
-                                                            cp += 2;
-                                                            while (*cp && isxdigit((unsigned char)*cp)) {
-                                                                v = v * 16 + (*cp <= '9' ? *cp - '0' : (*cp <= 'F' ? *cp - 'A' + 10 : *cp - 'a' + 10));
-                                                                cp++;
-                                                            }
-                                                        } else {
-                                                            while (*cp && isdigit((unsigned char)*cp)) {
-                                                                v = v * 10 + (*cp - '0');
-                                                                cp++;
-                                                            }
-                                                        }
-                                                        tokens[tok_count].type = TOK_NUM;
-                                                        tokens[tok_count].val = v;
-                                                        tok_count++;
-                                                    } else if (isalpha((unsigned char)*cp) || *cp == '_') {
-                                                        int il = 0;
-                                                        while (*cp && (isalnum((unsigned char)*cp) || *cp == '_') && il < 63) {
-                                                            tokens[tok_count].ident[il++] = *cp;
-                                                            cp++;
-                                                        }
-                                                        tokens[tok_count].ident[il] = '\0';
-                                                        tokens[tok_count].type = TOK_IDENT;
-                                                        tok_count++;
-                                                    } else if (*cp == '<' && *(cp+1) == '<') {
-                                                        tokens[tok_count].type = TOK_OP;
-                                                        tokens[tok_count].op = 'L'; // L = shift left
-                                                        cp += 2;
-                                                        tok_count++;
-                                                    } else if (*cp == '>' && *(cp+1) == '>') {
-                                                        tokens[tok_count].type = TOK_OP;
-                                                        tokens[tok_count].op = 'R'; // R = shift right
-                                                        cp += 2;
-                                                        tok_count++;
-                                                    } else if (*cp == '|' || *cp == '&' || *cp == '^' || *cp == '+' || *cp == '-' || *cp == '*' || *cp == '/' || *cp == '%') {
-                                                        tokens[tok_count].type = TOK_OP;
-                                                        tokens[tok_count].op = *cp;
-                                                        cp++;
-                                                        tok_count++;
-                                                    } else if (*cp == '~') {
-                                                        tokens[tok_count].type = TOK_OP;
-                                                        tokens[tok_count].op = '~';
-                                                        cp++;
-                                                        tok_count++;
-                                                    } else {
-                                                        cp++; // 跳过未知字符
-                                                    }
-                                                }
-                                                tokens[tok_count].type = TOK_END;
-
-                                                // 将 ident 替换为对应值
-                                                for (int ti = 0; ti < tok_count; ti++) {
-                                                    if (tokens[ti].type == TOK_IDENT) {
-                                                        int found = 0;
-                                                        for (int mi2 = 0; mi2 < saved_count; mi2++) {
-                                                            if (strcmp(saved_names[mi2], tokens[ti].ident) == 0) {
-                                                                tokens[ti].type = TOK_NUM;
-                                                                tokens[ti].val = saved_values[mi2];
-                                                                found = 1;
-                                                                break;
-                                                            }
-                                                        }
-                                                        if (!found) {
-                                                            // 不是 enum 成员，无法求值
-                                                            break;
-                                                        }
-                                                    }
-                                                }
-
-                                                // 简易递归下降求值
-                                                // 使用栈求值
-                                                int ok_val = 1;
-
-                                                // 简化版：支持运算符优先级的递归下降
-                                                // 使用内联函数（通过代码复制）
-                                                // 由于 C99 不支持嵌套函数，改用 goto 实现
-
-                                                // 或者用最简方案：先处理所有一元运算，然后从左到右计算
-                                                // 这对 enum 来说足够了（enum 表达式通常不复杂）
-
-                                                // 最简方案：使用递归 + 函数指针
-                                                // 实际上由于 .inc 文件被 include 进 .c 文件，
-                                                // 可以使用文件级的 static 函数
-
-                                                // 暂时使用从左到右的简单求值（不处理优先级）
-                                                // 对 enum 表达式来说，通常只有一种运算符
-                                                if (tok_count > 0 && tokens[0].type == TOK_NUM) {
-                                                    int64_t result = tokens[0].val;
-                                                    int ti2 = 1;
-                                                    while (ti2 < tok_count && tokens[ti2].type == TOK_OP && ok_val) {
-                                                        char op = tokens[ti2].op;
-                                                        ti2++;
-                                                        if (ti2 >= tok_count || tokens[ti2].type != TOK_NUM) { ok_val = 0; break; }
-                                                        int64_t rhs = tokens[ti2].val;
-                                                        ti2++;
-                                                        switch (op) {
-                                                            case '+': result += rhs; break;
-                                                            case '-': result -= rhs; break;
-                                                            case '*': result *= rhs; break;
-                                                            case '/': result = rhs != 0 ? result / rhs : 0; break;
-                                                            case '%': result = rhs != 0 ? result % rhs : 0; break;
-                                                            case '|': result |= rhs; break;
-                                                            case '&': result &= rhs; break;
-                                                            case '^': result ^= rhs; break;
-                                                            case 'L': result <<= rhs; break;
-                                                            case 'R': result >>= rhs; break;
-                                                            default: ok_val = 0; break;
-                                                        }
-                                                    }
-                                                    if (ok_val && ti2 == tok_count) {
-                                                        member_values_buf[member_count] = result;
-                                                        has_explicit = 1;
-                                                        parsed = 1;
-                                                    }
-                                                }
-                                            }
-                                            // 释放表达式求值快照（动态分配）
-                                            free(saved_names);
-                                            free(saved_values);
+                                            // 求值失败：保持 has_explicit = 0（按「无显式值」自动递增）。
+                                            // 此处不报错 —— 扫描器同时服务 LSP 与跨模块查询；模块自身
+                                            // 编译时解析器（parse_enum_stmt）会对不可求值的表达式报错。
                                         }
                                     }
+                                }        // 结束 if (*after_enum == '=')：显式值表达式已解析完毕
+                                // 统一决定最终取值：有显式值 → 保留原值并按它推进 next_auto；
+                                // 无显式值 → 取自动递增值。**这一段必须对每个成员都执行** ——
+                                // 此前它被误关在 `if (*after_enum == '=')` 内部，导致不写 `=` 的
+                                // 成员根本不进成员表（跨模块 use 报「枚举没有成员」的根因）。
                                 if (has_explicit) {
                                     // 显式值：不再改写它（负值也必须原样保留），后续自动值从它 +1 起
                                     next_auto = member_values_buf[member_count] + 1;
@@ -306,7 +127,6 @@
                                     next_auto += 1;
                                 }
                                 member_count++;
-                                }
                             }
                         }
                         // 跳过分隔符：逗号、分号或换行
