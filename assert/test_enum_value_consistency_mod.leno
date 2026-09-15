@@ -23,7 +23,23 @@ export enum EV {
 export func sum_all():int {
     var s = 0
     for EV to v {
-        s = s + _int(v)   // 迭代变量是 any（枚举成员值可为 bigint），显式转 int
+        // 刻意**不写** _int(v)：迭代变量 v 应被推断为 int（枚举成员值是整数常量）。
+        // 若类型推断退回 any，本行会直接编译失败（「无法将值赋给变量 's'」）——
+        // 这正是本用例要锁住的回归点。
+        s = s + v
     }
     return s
+}
+
+// 让枚举迭代进入 JIT（内层回边次数超阈值）后取值仍必须正确：
+// JIT 的 OP_ITER_GET 走 jit_callout_iter_get，曾用 val_int((int)…) 截断成员值，
+// 与解释器路径（已改 val_int_safe）不一致 ⇒ 同一循环 JIT 与否会得到不同的值。
+export func sum_all_hot(int rounds):int {
+    var total = 0
+    for 0:rounds-1 to i {
+        for EV to v {
+            total = total + v
+        }
+    }
+    return total
 }

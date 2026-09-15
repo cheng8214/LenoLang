@@ -648,6 +648,13 @@
                                 } else if (iterable_type->kind == TYPE_FLOAT) {
                                     // 浮点简写循环：for 5.0 to i
                                     sym->type = type_new(TYPE_FLOAT);
+                                } else if (iterable_type->kind == TYPE_ENUM) {
+                                    // 枚举迭代（for E to v）：成员值是整数常量 ⇒ int
+                                    // （与 EnumName.member 的推断一致；超过 int48 的成员值运行期
+                                    // 自动升级为 bigint）。此前这里掉进「默认为 any」，于是
+                                    // `s = s + v` 报「实际类型 any」，用户只能写 _int(v) 绕过，
+                                    // 且 any 会把后续类型错误一起吞掉。
+                                    sym->type = type_new(TYPE_INT);
                                 } else if (iterable_type->kind == TYPE_ANY) {
                                     // any 类型：编译期无法确定，推断为 any
                                     sym->type = type_new(TYPE_ANY);

@@ -46,6 +46,10 @@ main() {
     // ---- 模块内取值 + 迭代取值（ITER_GET 的 enum 分支，曾 (int) 截断）----
     // 14 + 14 + 15 + 17 + (-1) + 15 + 4611686018427387904
     assert_eq(m.sum_all(), 4611686018427387978)
+    // 迭代变量类型：v 必须是 int —— 模块里刻意写成 `s = s + v`（不带 _int(v)），
+    // 若推断退回 any，上面这个函数根本编译不过。
+    // JIT 路径：重复迭代让内层循环进 JIT（走 jit_callout_iter_get），值与解释器一致
+    assert_eq(m.sum_all_hot(3000), 4611686018427387978 * 3000)
 
     print("test_enum_value_consistency passed")
 }

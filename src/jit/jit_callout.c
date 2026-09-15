@@ -712,7 +712,11 @@ Value jit_callout_iter_get(Value obj_val, Value index_val, int want_value) {
             if (want_value) { why = "enum + want_value"; goto fail; }
             ObjEnumDef* ed = (ObjEnumDef*)val_as_obj(obj_val);
             if (index < 0 || index >= ed->member_count) { why = "enum oob"; goto fail; }
-            return val_int((int)ed->members[index].value);
+            /* 用 val_int_safe：成员值可为负数或超过 32 位（位标志 `1 << 62` 之类），
+             * `val_int((int)…)` 先截成 32 位（且 val_int 上限是 int48）。
+             * 必须与解释器路径（vm/vminc/op_utils.inc 的 OBJ_ENUM_DEF 分支）一致，
+             * 否则同一段 for 循环在 JIT 与否下会迭代出不同的值。 */
+            return val_int_safe(ed->members[index].value);
         }
         case OBJ_STRUCT: {
             ObjStruct* so = (ObjStruct*)val_as_obj(obj_val);
