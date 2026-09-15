@@ -1,0 +1,55 @@
+// R5-P3 回归：**值捕获**（形态 C2）的闭包进 JIT
+//
+// 背景（docs/JIT闭包与upvalue设计_R5.md §3）：`is_local=1 & is_value_capture=1`
+// 表示"读本帧某个局部槽的值，建成 **closed** upvalue"（VM op_call.inc:577-581）。
+// 语义分析给「循环体内声明的变量」标的正是这个形态（semantic_upvalue.c:200）⇒
+// **真实负载里"循环里建闭包"大多走这条**，所以 P3 是 R5 的收益主体。
+// 它仍然不产生 open upvalue（JIT 只造 closed）⇒ 不触碰"locals 没有稳定 Value*"。
+//
+// 覆盖点：
+//   ① **每轮独立取值**（本用例的核心判据）：`for n to i { var v = i*2; arr.add(func(){ return v }) }`
+//      —— 若实现错误地让所有闭包共享一份 upvalue（引用捕获的形态），读出来会全是最后一轮的
+//      值 ⇒ 结果从 20 变成 40，本用例立刻失败；
+//   ② 闭包在热循环里**被调用**（建 + 调同轮）；
+//   ③ **C1 + C2 混合捕获**：一个闭包同时捕获外层 upvalue（by-upvalue）与循环内局部（值捕获），
+//      验证 callout 按描述表顺序消费 vstack_top 的取值逻辑与指针复制互不干扰。
+//
+// 判据：JIT 与 `LENO_NO_JIT=1` 都必须 exit=0；JIT 侧相关循环 Compiled 增长、Bailouts 不增长。
+
+// ① + ②：每轮 v 独立，闭包存进数组；最后取出前 5 个调用。
+// 期望：0 + 2 + 4 + 6 + 8 = 20（若共享一份 upvalue 会得到 5 * 8 = 40）
+func collect(int n): int {
+    var arr = []
+    for n to i {
+        var v = i * 2
+        arr.add(func(): int { return v })
+    }
+    var s = 0
+    for 5 to j {
+        var f = arr[j]
+        s = s + f()
+    }
+    return s
+}
+
+// ③ 混合捕获：base 对本闭包是"外层闭包的 upvalue"（C1），v 是循环内局部（C2）
+// 期望：Σ_{i=0}^{n-1} (100 + i) = 100n + n(n-1)/2
+func mixed(int n): int {
+    var base = 100
+    var mid = func(): int {
+        var acc = 0
+        for n to i {
+            var v = i
+            var f = func(): int { return base + v }
+            acc = acc + f()
+        }
+        return acc
+    }
+    return mid()
+}
+
+main() {
+    assert_eq(collect(1000), 20)          // 每轮独立取值（共享 upvalue 会得 40）
+    assert_eq(mixed(1000), 100000 + 499500)  // 100*1000 + 1000*999/2
+    print("test_jit_closure_value_capture: OK")
+}

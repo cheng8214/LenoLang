@@ -70,18 +70,46 @@ case OP_TRUE:
                     if (val_is_obj(clo_fn) && val_as_obj(clo_fn)->type == OBJ_FUNCTION)
                         clo_n = ((ObjFunction*)val_as_obj(clo_fn))->upvalue_count;
                 }
+                const uint8_t* clo_desc = ip + 3;         /* 捕获描述表：紧随本指令 */
+                /* C2（值捕获）需要把**本帧局部槽的值**交给 callout —— 但 JIT 的 locals
+                 * 在 scratch / pinned 寄存器上，callout 看不到。办法与 OP_CALL 同款：
+                 * 先把这些值压到 JIT 栈上，把 RSP（=vstack_top）当第四个参数传进去。
+                 * 压入顺序 = 捕获下标**降序** ⇒ 全部压完后 vstack_top[0] 正好是
+                 * 第 0 条 is_local=1 的捕获，callout 顺序消费即可。
+                 * 这些槽在 scan 阶段已计入 max_vstack 峰值（见 jit_scan.c 的说明）。 */
+                int clo_nlocal = 0;
+                for (int clo_i = 0; clo_i < clo_n; clo_i++)
+                    if (rd_short(clo_desc + clo_i * 6) != 0) clo_nlocal++;
                 TOS_SPILL();
+                if (clo_nlocal > 0) {
+                    for (int clo_i = clo_n - 1; clo_i >= 0; clo_i--) {
+                        const uint8_t* clo_cp = clo_desc + clo_i * 6;
+                        if (rd_short(clo_cp) == 0) continue;      /* 只压 is_local=1 的 */
+                        int clo_csi = cur_local_map[rd_short(clo_cp + 2)];
+                        if (clo_csi < 0) {
+                            /* 被捕获的局部槽在 scan 里没有被登记 ⇒ 取不到值。
+                             * 绝不发一条读错槽的指令：编译期直接放弃（交解释器）。 */
+                            if (jit_debug_on())
+                                fprintf(stderr, "[JIT-DEBUG] codegen FAIL: OP_CLOSURE 捕获的槽未映射"
+                                                "（slot=%d）at bc_off=%d\n",
+                                        (int)rd_short(clo_cp + 2), bc_off);
+                            return 0;
+                        }
+                        EMIT_LOAD_LOCAL(JIT_RAX, clo_csi, scratch_disp(clo_csi));
+                        emit_push_reg(cb, JIT_RAX);
+                        vstack++;
+                    }
+                }
+                EMIT_STORE_TMP(tmp3_disp, JIT_RSP);       /* vstack_top = 最后一个压入值 */
                 EMIT_CALLOUT_BEGIN();
                 emit_mov_reg_imm64(cb, JIT_ARG1, (uint64_t)clo_fn);
                 if (clo_n > 0) {
-                    /* C1（by-upvalue）：把**当前闭包**的 upvalue 指针复制进新闭包。
-                     * desc = 紧随本指令的捕获描述表（静态只读、与 chunk 同寿命 ⇒
-                     * 直接把字节码指针传进 callout，无需拷贝）。scan 已保证这里的
-                     * 条目全是 is_local=0；callout 会复核（含 NULL/越界守卫）。 */
+                    /* C1 + C2：by-upvalue 复制指针；值捕获从 vstack_top 顺序取值后建
+                     * closed upvalue。desc 是字节码指针（静态只读、与 chunk 同寿命）。 */
                     EMIT_LOAD_TMP(JIT_ARG2, closure_disp);
-                    emit_mov_reg_imm64(cb, JIT_ARG3, (uint64_t)(uintptr_t)(ip + 3));
-                    emit_mov_reg_imm64(cb, JIT_ARG4, (uint64_t)clo_n);
-                    EMIT_CALL(jit_callout_make_closure_upvals);
+                    emit_mov_reg_imm64(cb, JIT_ARG3, (uint64_t)(uintptr_t)clo_desc);
+                    EMIT_LOAD_TMP(JIT_ARG4, tmp3_disp);
+                    EMIT_CALL(jit_callout_make_closure_caps);
                 } else {
                     EMIT_CALL(jit_callout_make_closure);
                 }
@@ -98,10 +126,22 @@ case OP_TRUE:
                 emit_xor_rr(cb, JIT_RAX, JIT_RAX);
                 emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
                 EMIT_LOAD_TMP(JIT_RAX, tmp2_disp);
+                /* 弹出为 C2 压入的那些槽（本指令内部自平衡） */
+                if (clo_nlocal > 0) {
+                    int clo_pop = clo_nlocal * 8;
+                    if (clo_pop <= 127) {
+                        emit_byte(cb, 0x48); emit_byte(cb, 0x83); emit_byte(cb, 0xC4);
+                        emit_byte(cb, (uint8_t)clo_pop);
+                    } else {
+                        emit_byte(cb, 0x48); emit_byte(cb, 0x81); emit_byte(cb, 0xC4);
+                        emit_uint32(cb, (uint32_t)clo_pop);
+                    }
+                    vstack -= clo_nlocal;
+                }
                 EMIT_VALUE_TO_RAW();                      /* 对象是 NaN-boxed ⇒ 恒等 */
                 TOS_PRODUCE();
                 vstack++;
-                break;                                    /* pop0 push1 → net +1 */
+                break;                                    /* 净效应：pop0 push1 → +1 */
             }
 
             /* ---- R5-P2：OP_GET_UPVALUE（读捕获变量）----

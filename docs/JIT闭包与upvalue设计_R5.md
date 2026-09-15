@@ -227,6 +227,26 @@ JIT 只做两件事：
 
 **风险**：中低。**回退**：scan 收紧到只放行 C0/C1。
 
+**实现记录（P3，2026-09-15）**：
+- **scan**：放行条件从"零捕获或全 by-upvalue"放宽为 **`ref_local == 0`**（即 C0 / C1 / C2 都放行，只拒 C3）。
+  新增一处 **`max_vstack` 峰值记账**：C2 的值必须压到 JIT 栈上才能交给 callout，
+  压入/弹出虽在同一指令内平衡，但**峰值**会临时抬高 vstack ⇒ 若不计入 `max_vstack`，
+  帧尺寸不够、压栈会踩进 tmp/co/closure 区（内存安全）。
+- **codegen**：把描述表里 `is_local=1` 的局部槽按捕获下标**降序**用 `EMIT_LOAD_LOCAL` 压栈
+  （降序 ⇒ 压完后 `vstack_top[0]` 正好是第 0 条本帧捕获，callout 顺序消费即可），
+  把 RSP 存进 `tmp3_disp` 传作第四参；callout 返回后再 `add rsp, n_local*8`。
+  被捕获槽若在 scan 里没被映射（`cur_local_map[slot] < 0`）⇒ **编译期放弃**（`return 0`），
+  绝不发一条读错槽的指令。
+- **callout**：`jit_callout_make_closure_caps(func_val, cur, desc, vstack_top)` 统一处理 C1 + C2；
+  值捕获走内部小工具 `jit_new_closed_upvalue()`（复刻 `new_upvalue` + 写屏障 + `location=&closed`，
+  I3 的字段顺序）；C3 条目在 callout 里**兜底拒绝**（不建半成品闭包）。
+- **实测**：`probe_closure_value_capture` → `scan:ALLOW-C2`、`c2=1400000`、**0 bailout**；
+  `assert/test_jit_closure_value_capture.leno` 两条金标准判据 ——
+  ① **每轮独立取值**：`collect(1000)` 必须 = 20（若错误地共享一份 upvalue 会得 40，用例立刻失败）；
+  ② **C1 + C2 混合捕获**：一个闭包同时捕获外层 upvalue 与循环内局部，`mixed(1000) = 599500`。
+  全套 assert **307/0**。
+- 仍未做：**C3（引用捕获本帧局部）**（P4，默认不做）；**内联体内的闭包/upvalue 一律仍拒绝**（I8）。
+
 ---
 
 ### P4 —— C3（引用捕获本帧 locals）：默认不做，需 P0 度量授权

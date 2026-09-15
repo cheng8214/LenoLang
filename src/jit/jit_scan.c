@@ -802,22 +802,33 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
         if (op == OP_CLOSURE && size > 0) {
             int clo_caps = 0, clo_rl = 0, clo_vl = 0, clo_by = 0;
             closure_probe(chunk, ip, &clo_caps, &clo_rl, &clo_vl, &clo_by);
-            if (clo_rl == 0 && clo_vl == 0) {
-                /* ---- R5-P1/P2b：可放行的闭包 ----
-                 * (a) 零捕获（C0）：不新建 upvalue、不捕获任何帧槽，只分配闭包对象；
-                 * (b) 全部是 by-upvalue（C1，`is_local=0`）：只是把**当前闭包**的
-                 *     upvalues[index] 指针复制一份（VM 侧 op_call.inc:600-611）。
-                 *     生命周期仍归 upvalue 的创建者（外层帧 locals 或它自己的 closed），
-                 *     JIT 不制造新的 open upvalue ⇒ 不触碰"locals 没有稳定 Value*"
-                 *     这个核心冲突（设计文档 §3/§4，不变量 I1）。
-                 * 记账：弹 0 压 1（见下面的 case OP_CLOSURE）。 */
+            if (clo_rl == 0) {
+                /* ---- R5-P1 / P2b / P3：可放行的闭包 ----
+                 * (a) 零捕获（C0）：不新建 upvalue、不捕获帧槽，只分配闭包对象；
+                 * (b) by-upvalue（C1，`is_local=0`）：复制**当前闭包**的 upvalues[index]
+                 *     指针（VM op_call.inc:600-611），生命周期归 upvalue 的创建者；
+                 * (c) 值捕获（C2，`is_local=1 & is_value_capture=1`）：读**本帧局部槽的
+                 *     值**，建成 closed upvalue（VM op_call.inc:577-581）—— 这正是语义分析
+                 *     给"循环体内声明的变量"标的形态（semantic_upvalue.c:200）。
+                 * 三者都**不产生 open upvalue** ⇒ 不触碰"locals 没有稳定 Value*"
+                 * 这个核心冲突（设计文档 §3/§4，不变量 I1）。
+                 *
+                 * ⚠ C2 的代价：局部槽的值必须先压到 JIT 栈上才能交给 callout
+                 * （callout 看不到 scratch/寄存器）。压入/弹出都在本指令内部完成，
+                 * 但**峰值会临时抬高 vstack** ⇒ 必须计入 max_vstack，否则帧尺寸
+                 * 不够、压栈会踩到帧内其它槽（tmp/co/closure 区）。 */
+                if (clo_vl > 0) {
+                    int clo_peak = vstack + clo_vl;
+                    if (clo_peak > r->max_vstack) r->max_vstack = clo_peak;
+                }
                 if (jit_closure_log_on())
                     jit_debug_closure_shape(chunk, ip, (int)(ip - body_start),
-                                            clo_caps == 0 ? "scan:ALLOW-C0" : "scan:ALLOW-C1");
+                                            clo_caps == 0 ? "scan:ALLOW-C0"
+                                                          : (clo_vl > 0 ? "scan:ALLOW-C2" : "scan:ALLOW-C1"));
             } else {
-                /* C2（值捕获本帧局部）/ C3（引用捕获本帧局部）尚未实现（P3/P4）
-                 * ⇒ 维持拒收 —— 它们需要"把本帧某个局部槽的值/地址交给新闭包"，
-                 * 而 JIT 的 locals 在 scratch/寄存器上（没有稳定地址）。 */
+                /* C3（引用捕获本帧局部）未实现（P4）⇒ 维持拒收：它需要把本帧某个
+                 * 局部槽的**地址**长期交给新闭包，而 JIT 的 locals 在 scratch/机器栈上
+                 * （迭代即复用、退出即失效）。 */
                 if (jit_closure_log_on())
                     jit_debug_closure_shape(chunk, ip, (int)(ip - body_start), "scan:REJECT");
                 r->closure_seen = 1;

@@ -1034,32 +1034,53 @@ Value jit_callout_is_null(Value v) {
     return val_bool(val_is_null(v));
 }
 
-/* Callout: OP_CLOSURE 的 **by-upvalue 捕获**（R5-P2b，形态 C1）。
+/* ---- R5-P2b/P3 内部小工具：建一个 **closed** upvalue ----
+ * 按 vm/vminc/vm_upvalue.inc:60-67 的 new_upvalue + op_call.inc:577-581 的值捕获
+ * 分支复刻（那个构造函数是 `static inline` 在 VM 的 .inc 里，JIT 侧无法直接调用，
+ * 故在此**唯一一处**复刻同款字段顺序：closed → 写屏障 → location 指向 closed。
+ * gc_alloc 全块清零 ⇒ next = NULL 天然成立）。
+ * 设计文档 I3：字段顺序与写屏障不能改 —— 漏屏障会让老年代 upvalue 指年轻代值
+ * 跨代漏标；提前写 location 会让 GC 看到未初始化字段。 */
+static Upvalue* jit_new_closed_upvalue(Value v) {
+    Upvalue* uv = (Upvalue*)gc_alloc(sizeof(Upvalue), OBJ_UPVALUE);
+    if (!uv) return NULL;
+    uv->closed = v;
+    gc_write_barrier((Object*)uv, v);
+    uv->location = &uv->closed;
+    return uv;
+}
+
+/* Callout: OP_CLOSURE（R5-P2b/P3）—— 建闭包，处理 C1（by-upvalue）+ C2（值捕获）。
  *
- * 逐条复刻 vm/vminc/op_call.inc:600-611 的 `is_local == 0` 分支：
- *   `closure->upvalues[i] = frame->closure->upvalues[index];`
- * —— 纯**指针复制**：不新建 upvalue、不改它的生命周期，upvalue 仍归创建者
- * （外层帧 locals 的 open 形态，或它自己的 closed 字段）。这正是 I1 的收益：
- * JIT 不制造新的 open upvalue，所以"关闭时机 / 悬空 / bailout 回滚"整类问题
- * 都不在这条路径上。
+ * 逐条复刻 vm/vminc/op_call.inc:570-612 的两个分支：
+ *   `is_local == 0`（C1）：`closure->upvalues[i] = frame->closure->upvalues[index];`
+ *      —— 纯**指针复制**：不新建 upvalue、不改生命周期，upvalue 仍归它的创建者
+ *      （外层帧 locals 的 open 形态，或它自己的 closed 字段）。这是 I1 的收益：
+ *      JIT 不制造新的 open upvalue ⇒ "关闭时机 / 悬空 / bailout 回滚"整类问题
+ *      都不在这条路径上。
+ *   `is_local == 1 & is_value_capture == 1`（C2）：从 `vstack_top` 顺序取值建
+ *      **closed** upvalue（值捕获，语义分析给"循环体内声明的变量"标的形态）。
+ *   `is_local == 1 & is_value_capture == 0`（C3）：**拒绝**（scan 已挡，这里兜底）。
  *
  * `desc` = 字节码里紧随 OP_CLOSURE 的捕获描述表（每条 6 字节：is_local(2)
- * index(2) is_value_capture(2)），由 codegen 直接把**字节码指针**传进来 ——
- * 它是静态只读、与 chunk 同寿命，不需要拷贝也不怕 GC。
+ * index(2) is_value_capture(2)），codegen 直接传**字节码指针** —— 静态只读、
+ * 与 chunk 同寿命，无需拷贝也不怕 GC。
+ * `vstack_top` = codegen 压入的局部值块（vstack_top[0] = 第 0 条 is_local=1 的捕获；
+ * 值可能是裸 int48 / 裸 double / NaN-boxed ⇒ 逐条 `jit_raw_to_value` 归一）。
  *
  * 守卫（任一不满足 → failed → 调用方 bailout 交解释器）：
- *   · 常量不是函数对象 / upvalue_count 与描述条数不一致；
- *   · `cur == NULL`（VM 报"没有闭包环境"）；
- *   · 出现 `is_local=1` 的条目（值捕获/引用捕获属 P3/P4，scan 已拒，这里再兜一次）；
- *   · `index` 越界或源 upvalue 为 NULL（VM 会解引用 NULL，JIT 宁可回退）。 */
-Value jit_callout_make_closure_upvals(Value func_val, ObjClosure* cur,
-                                      const uint8_t* desc, int n) {
-    if (!val_is_obj(func_val) || val_as_obj(func_val)->type != OBJ_FUNCTION || !desc || n < 0) {
+ *   · 常量不是函数对象 / desc 为空；· `cur == NULL`（VM 报"没有闭包环境"）；
+ *   · 需要取值却没有 vstack_top；· `index` 越界或源 upvalue 为 NULL（VM 会解引用 NULL）。 */
+Value jit_callout_make_closure_caps(Value func_val, ObjClosure* cur,
+                                    const uint8_t* desc, int64_t* vstack_top) {
+    if (!val_is_obj(func_val) || val_as_obj(func_val)->type != OBJ_FUNCTION || !desc) {
         jit_callout_failed = 1;
         return NULL_VAL;
     }
     ObjFunction* fn = (ObjFunction*)val_as_obj(func_val);
-    if (fn->upvalue_count != n || !cur) {
+    int n = fn->upvalue_count;
+    if (n <= 0) {
+        /* n==0 由 jit_callout_make_closure 负责；走到这里说明 codegen 判据不一致 */
         jit_callout_failed = 1;
         return NULL_VAL;
     }
@@ -1070,15 +1091,31 @@ Value jit_callout_make_closure_upvals(Value func_val, ObjClosure* cur,
     }
     cl->function = fn;
     cl->upvalue_count = n;
+    int vj = 0;   /* vstack_top 的消费下标（codegen 按捕获下标降序压入） */
     for (int i = 0; i < n; i++) {
         const uint8_t* p = desc + i * 6;
         uint16_t is_local = rd_short(p);
         uint16_t index    = rd_short(p + 2);
-        if (is_local || index >= cur->upvalue_count || !cur->upvalues[index]) {
-            jit_callout_failed = 1;
-            return NULL_VAL;
+        uint16_t is_value = rd_short(p + 4);
+        if (is_local) {
+            if (!is_value || !vstack_top) {   /* C3 / 无值可取的形态：不建半成品闭包 */
+                jit_callout_failed = 1;
+                return NULL_VAL;
+            }
+            Value v = jit_raw_to_value(vstack_top[vj++]);
+            Upvalue* uv = jit_new_closed_upvalue(v);
+            if (!uv) {
+                jit_callout_failed = 1;
+                return NULL_VAL;
+            }
+            cl->upvalues[i] = uv;
+        } else {
+            if (!cur || index >= cur->upvalue_count || !cur->upvalues[index]) {
+                jit_callout_failed = 1;
+                return NULL_VAL;
+            }
+            cl->upvalues[i] = cur->upvalues[index];
         }
-        cl->upvalues[i] = cur->upvalues[index];
     }
     return val_obj((Object*)cl);
 }

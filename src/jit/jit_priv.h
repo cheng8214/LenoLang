@@ -392,16 +392,20 @@ void  jit_callout_upvalue_set(ObjClosure* closure, int slot, Value v);
  * 捕获表非空 / 常量不是函数对象 / 内存不足 ⇒ 置 jit_callout_failed（调用方 bailout）。 */
 Value jit_callout_make_closure(Value func_val);
 
-/* ---- R5-P2b：建闭包（OP_CLOSURE 的 by-upvalue 捕获，C1）----
- * 逐条复刻 vm/vminc/op_call.inc:600-611：`is_local=0` 时
- *   `closure->upvalues[i] = frame->closure->upvalues[index]`
- * —— 纯指针复制：**不新建 upvalue、不改生命周期**（upvalue 仍归它的创建者）。
- * `desc` 指向字节码里紧随 OP_CLOSURE 的捕获描述表（每条 6 字节：is_local/index/
- * is_value_capture），静态只读、与 chunk 同寿命 ⇒ 直接传指针，无需拷贝。
- * 仅接受 `is_local=0` 的条目；出现 `is_local=1`（值/引用捕获）或守卫不满足
- * （cur==NULL / 索引越界 / 源 upvalue 为 NULL）即置 failed → 调用方 bailout。 */
-Value jit_callout_make_closure_upvals(Value func_val, ObjClosure* cur,
-                                      const uint8_t* desc, int n);
+/* ---- R5-P2b/P3：建闭包（OP_CLOSURE 的 C1 + C2 捕获）----
+ * 逐条复刻 vm/vminc/op_call.inc:570-612 的两个分支：
+ *   `is_local=0`          → `closure->upvalues[i] = frame->closure->upvalues[index]`
+ *                           （纯指针复制，不新建 upvalue、不改生命周期）
+ *   `is_local=1 & val=1`  → 读**值**（从 `vstack_top` 顺序取，codegen 已把本帧
+ *                           这些局部槽的值按捕获下标**降序**压栈）→ 建 closed upvalue：
+ *                           `closed = v` → `gc_write_barrier` → `location = &closed`
+ *                           （与 VM 同款字段顺序，设计文档 I3）
+ * `is_local=1 & val=0`（C3）本函数拒绝 —— scan 层已挡，这里兜底。
+ * `desc` = 字节码里紧随 OP_CLOSURE 的捕获描述表（每条 6 字节：is_local/index/
+ * is_value_capture），静态只读、与 chunk 同寿命 ⇒ 直接传字节码指针，无需拷贝。
+ * 守卫（函数对象/desc 非法、cur==NULL、索引越界、源 upvalue 为 NULL）→ failed → bailout。 */
+Value jit_callout_make_closure_caps(Value func_val, ObjClosure* cur,
+                                    const uint8_t* desc, int64_t* vstack_top);
 
 /* ---- R2：判空（`?.` / `??` 编译出的 OP_IS_NULL）----
  * 纯判断：不分配、不报错 ⇒ 无失败通道、调用方没有 bailout 分支。
