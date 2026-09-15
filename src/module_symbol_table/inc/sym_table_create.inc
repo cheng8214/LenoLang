@@ -31,6 +31,8 @@ ModuleSymbolTable* module_symbol_table_create(const char* module_path) {
     table->dep_paths = NULL;
     table->dep_count = 0;
     table->dep_capacity = 0;
+    table->scanned = 0;
+    table->shared = 0;
 
     return table;
 }
@@ -38,6 +40,8 @@ ModuleSymbolTable* module_symbol_table_create(const char* module_path) {
 // 销毁模块符号表
 void module_symbol_table_destroy(ModuleSymbolTable* table) {
     if (!table) return;
+    // 由进程内记忆化持有的表（module_symbol_table_get_shared 返回）不归调用方所有
+    if (table->shared) return;
 
     free(table->module_path);
 

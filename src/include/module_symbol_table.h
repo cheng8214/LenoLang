@@ -167,6 +167,9 @@ typedef struct {
     char** dep_paths;           // 依赖模块的绝对路径数组
     int dep_count;              // 依赖模块数量
     int dep_capacity;           // 依赖数组容量
+    // 扫描/所有权状态（详见 module_symbol_table_get_shared 的说明）
+    int scanned;                // 1 = 已扫描完成：module_symbol_table_scan 幂等，不再重复填充
+    int shared;                 // 1 = 由进程内记忆化持有，module_symbol_table_destroy 不得释放
 } ModuleSymbolTable;
 
 // 创建模块符号表
@@ -178,7 +181,14 @@ void module_symbol_table_destroy(ModuleSymbolTable* table);
 // 扫描模块文件并填充符号表
 // current_file: 当前文件路径（用于解析相对路径）
 // 返回: 0 成功，-1 失败
+// 幂等：table->scanned 已为 1 时直接返回 0，不重复填充
 int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file);
+
+// 取（必要时扫描）某模块的符号表：按解析后的绝对路径做**进程内记忆化**，
+// 同一路径只扫描一次，与缓存开关无关。
+// 返回的表由内部缓存持有：调用方只读，且不要 destroy（destroy 对它已是 no-op）。
+// 扫描失败返回 NULL。
+ModuleSymbolTable* module_symbol_table_get_shared(const char* module_path, const char* current_file);
 
 // 查找函数符号
 ModuleFuncSymbol* module_symbol_table_find_func(ModuleSymbolTable* table, const char* func_name);

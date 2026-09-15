@@ -77,8 +77,74 @@ static void resolve_module_full_path(char* full_path, int max_len,
     normalize_path(full_path, max_len);
 }
 
+// ============================================================================
+// 进程内符号表记忆化
+// ----------------------------------------------------------------------------
+// 递归扫描（A 的 import 触发扫 B，B 又触发扫 C…）此前**唯一**的记忆化是磁盘上的
+// .lenosymc 缓存。缓存一关，同一个模块就被反复重扫，扫描次数 = 依赖图上的**路径数**：
+// SDL3 的 40 多个 lib 互相 import，路径数是天文数字 ⇒ 表现为编译"卡死"
+// （实测 LENO_NO_CACHE=1 时 20 秒内扫描 5000+ 次，全在重复扫 sdl_core.leno）。
+// 这里按解析后的绝对路径做进程内记忆化：同一路径只扫描一次，与缓存开关无关。
+// 返回的表由本缓存持有（进程生命周期，随进程退出释放），调用方只读、不得 destroy。
+// ============================================================================
+typedef struct {
+    char* full_path;
+    ModuleSymbolTable* table;
+} SymTableMemoEntry;
+
+static SymTableMemoEntry* g_sym_memo = NULL;
+static int g_sym_memo_count = 0;
+static int g_sym_memo_capacity = 0;
+
+static ModuleSymbolTable* sym_memo_lookup(const char* full_path) {
+    for (int i = 0; i < g_sym_memo_count; i++) {
+        if (strcmp(g_sym_memo[i].full_path, full_path) == 0) return g_sym_memo[i].table;
+    }
+    return NULL;
+}
+
+static void sym_memo_store(const char* full_path, ModuleSymbolTable* table) {
+    if (g_sym_memo_count >= g_sym_memo_capacity) {
+        int new_cap = g_sym_memo_capacity == 0 ? 32 : g_sym_memo_capacity * 2;
+        SymTableMemoEntry* grown = (SymTableMemoEntry*)realloc(g_sym_memo, sizeof(SymTableMemoEntry) * new_cap);
+        if (!grown) return;
+        g_sym_memo = grown;
+        g_sym_memo_capacity = new_cap;
+    }
+    g_sym_memo[g_sym_memo_count].full_path = strdup(full_path);
+    g_sym_memo[g_sym_memo_count].table = table;
+    g_sym_memo_count++;
+}
+
+ModuleSymbolTable* module_symbol_table_get_shared(const char* module_path, const char* current_file) {
+    if (!module_path || !module_path[0]) return NULL;
+
+    char full_path[MAX_PATH_LEN] = {0};
+    resolve_module_full_path(full_path, MAX_PATH_LEN, module_path, current_file);
+    if (!full_path[0]) return NULL;
+
+    ModuleSymbolTable* hit = sym_memo_lookup(full_path);
+    if (hit) return hit;
+
+    ModuleSymbolTable* table = module_symbol_table_create(full_path);
+    if (!table) return NULL;
+    table->shared = 1;
+    if (module_symbol_table_scan(table, current_file) != 0) {
+        table->shared = 0;   // 扫描失败不入缓存，让 destroy 真正释放
+        module_symbol_table_destroy(table);
+        return NULL;
+    }
+    sym_memo_store(full_path, table);
+    return table;
+}
+
 // 公开接口，从深度 0 开始扫描
 int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file) {
+    if (!table) return -1;
+    // 幂等：已扫描完成就不再重复填充（重复填充既会追加重复符号，
+    // 也是"关缓存时扫描次数 = 依赖图路径数"的放大器）
+    if (table->scanned) return 0;
+
     // 解析绝对路径（用于循环依赖检测和缓存）
     char full_path[MAX_PATH_LEN] = {0};
     if (table->module_path) {
@@ -114,6 +180,7 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
         if (cache_path) {
             if (sym_cache_deserialize(cache_path, table, full_path) == 0) {
                 free(cache_path);
+                table->scanned = 1;
                 return 0;  // 缓存命中，跳过源文件扫描
             }
             // 缓存未命中/失效，走正常扫描
@@ -158,6 +225,7 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
                     free(source);
                 }
             }
+            if (result == 0) table->scanned = 1;
             return result;
         }
     }
@@ -166,5 +234,6 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
     if (full_path[0]) scan_stack_push(full_path);
     int result = module_symbol_table_scan_depth(table, current_file, 0);
     if (full_path[0]) scan_stack_pop();
+    if (result == 0) table->scanned = 1;
     return result;
 }

@@ -358,7 +358,9 @@
                 // ---- 阶段 2：扫描依赖模块（只需一次） ----
                 ModuleSymbolTable* dep_table = NULL;
                 if (resolved_path[0]) {
-                    dep_table = module_symbol_table_create(resolved_path);
+                    // 进程内记忆化（见 module_symbol_table_get_shared）：避免关缓存时
+                    // 同一依赖被反复重扫导致扫描次数随依赖图路径数爆炸
+                    dep_table = module_symbol_table_get_shared(resolved_path, normalized_current);
                     if (dep_table) {
                         if (module_symbol_table_scan(dep_table, normalized_current) != 0) {
                             module_symbol_table_destroy(dep_table);
