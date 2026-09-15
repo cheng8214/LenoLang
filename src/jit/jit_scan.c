@@ -989,6 +989,10 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                  * （迭代即复用、退出即失效）。 */
                 if (jit_closure_log_on())
                     jit_debug_closure_shape(chunk, ip, (int)(ip - body_start), "scan:REJECT");
+                /* R6-c：C3 单独记账 —— 这是"P4（C3 提升槽）值不值得做"的 **gate 数字**：
+                 * 计数 = 有多少个**热循环**（能走到编译尝试 ⇒ 回边 ≥ JIT_HOT_THRESHOLD）
+                 * 因为 C3 被整循环拒收。见 §8.79。 */
+                jit_gaps_record("OP_CLOSURE C3（引用捕获本帧局部，P4 未实现）");
                 r->closure_seen = 1;
             }
         }
@@ -1804,7 +1808,7 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
     if (r->closure_seen) {
         if (jit_closure_log_on())
             fprintf(stderr, "[JIT-CLOSURE] scan REJECT: 含 OP_CLOSURE（R5 未支持）body_size=%d\n", body_size);
-        jit_gaps_record("含 OP_CLOSURE（未支持的捕获形态 C1/C2/C3）");
+        jit_gaps_record("含 OP_CLOSURE（合计：见上面各形态明细）");
         r->capable = 0;
         return;
     }
