@@ -28,6 +28,7 @@
 | `probe_closure_value_capture.leno` | **R5-P3** 形态 C2（值捕获）：`var k = 7` 声明在**循环体内**被闭包捕获（`is_value_capture = sym->is_in_loop` ⇒ 1）。判据：`scan:ALLOW-C2`、`c2= 1400000`、`Bailouts: 0`。 |
 | `probe_closure_byupvalue.leno` | **R5-P2b** 形态 C1（by-upvalue）：`base` 是外层函数的形参，循环体内那层闭包引用它 ⇒ 对它而言 `is_local=0`。判据：`scan:ALLOW-C1`、`c1= 600000`、`Bailouts: 0`。 |
 | `probe_closure_ref_capture.leno` | **R5-P4 的 gate 探针**：形态 C3（引用捕获**循环外**声明的变量，`is_value_capture=0`）。**当前必须仍被拒收**（`scan:REJECT caps=1 ref_local=1 ...` + `scan REJECT: 含 OP_CLOSURE`）—— 它需要"存活期内地址不变的 `Value*`"，是唯一要改 locals 布局的重活。将来若 P4 落地，这里的判据才改为"放行"。 |
+| `bench_closure.leno` | **R5 收益基准**（§8.72）：三种闭包形态各 2000 万次 —— A 循环内建零捕获闭包（C0，P1 解锁）、B 循环内建值捕获闭包（C2，P3 解锁）、C 循环内调用外部闭包且闭包体读 upvalue（P2a 解锁）。判据：JIT 与 `LENO_NO_JIT=1` 的值一致（`120000000`）且 `Bailouts: 0`。**收益基线（2026-09-15）**：A 6156 vs 8484ms（1.38x）、B 4360 vs 5125ms（1.18x）、C **281 vs 750ms（2.67x）** —— A/B 被"每轮分配一个闭包"支配，C 才是纯 JIT 收益。 |
 
 > **闭包形态诊断开关 `LENO_JIT_CLOSURE=1`（R5，§8.72）**：只输出闭包形态行与闭包拒收行
 > （`[JIT-CLOSURE] scan:ALLOW-C0 / ALLOW-C1 / ALLOW-C2`、

@@ -1,0 +1,62 @@
+// R5 收益基准：闭包三种形态的 JIT vs 解释器 A/B
+//
+// 三种形态分别对应 R5 的三个子步骤（见 docs/JIT实现与调试记录.md §8.72）：
+//   A：循环内建**零捕获**闭包（C0）—— P1 解锁（此前 `unknown opcode 61` 拒收整个循环）
+//   B：循环内建**值捕获**闭包（C2）—— P3 解锁（此前 `scan:REJECT`）
+//   C：循环内**调用**外部已建好的闭包，闭包体读 upvalue —— P2a 解锁
+//      （此前闭包体含 `OP_GET_UPVALUE` 落 default，函数级 JIT 拒收 ⇒ 每次调用回解释器）
+//
+// ⚠ 计时注意：`times.ms()` 刻度约 16ms（见 jit_probes/README.md），所以 n 必须大
+// （这里 2000 万）；计时行是 JIT 与 `LENO_NO_JIT=1` 之间**唯一允许**的差异。
+//
+// 用法：build\leno.exe jit_probes\bench_closure.leno          （JIT）
+//       set LENO_NO_JIT=1 && build\leno.exe jit_probes\bench_closure.leno（解释器）
+
+import times
+
+// A：每轮建一个零捕获闭包并调用 ⇒ 3*2 = 6/轮
+func benchA(int n): int {
+    var acc = 0
+    for n {
+        var f = func(int v): int { return v * 2 }
+        acc = acc + f(3)
+    }
+    return acc
+}
+
+// B：每轮建一个"捕获循环体内局部 k"的值捕获闭包并调用 ⇒ (3+3) = 6/轮
+func benchB(int n): int {
+    var acc = 0
+    for n {
+        var k = 3
+        var f = func(int v): int { return v + k }
+        acc = acc + f(3)
+    }
+    return acc
+}
+
+// C：闭包建在循环外，循环里只调用（闭包体读 upvalue）⇒ (3+3) = 6/轮
+func benchC(int n): int {
+    var base = 3
+    var f = func(int v): int { return v + base }
+    var acc = 0
+    for n {
+        acc = acc + f(3)
+    }
+    return acc
+}
+
+main() {
+    var n = 20000000
+    var t0 = times.ms()
+    var a = benchA(n)
+    var t1 = times.ms()
+    var b = benchB(n)
+    var t2 = times.ms()
+    var c = benchC(n)
+    var t3 = times.ms()
+    print("A(C0 建+调)= " + a + "  ms= " + (t1 - t0))
+    print("B(C2 建+调)= " + b + "  ms= " + (t2 - t1))
+    print("C(读 upvalue)= " + c + "  ms= " + (t3 - t2))
+    return 0
+}
