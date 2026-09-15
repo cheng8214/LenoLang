@@ -36,6 +36,39 @@
 > **不要**为此开 `LENO_JIT_DEBUG=1` —— 它会把每次编译尝试的 body raw hex（最多 1200 字节）
 > 整段打印，真实负载上输出量极大（观测体验是"这个命令跑不完"）。
 
+## 确定性 GUI 负载驱动器（2026-09-15，`LENO_SDL_FRAMES`）
+
+GUI 负载以前**无法可靠测量**：按"跑满 N 秒"测时，同一壁钟时长内实际跑了多少帧随系统噪声变化
+（实测同一应用交替同轮测 CPU 时间能差 4 倍、两轮方向还会翻转，`FuncExecuted` 甚至差 60 倍）。
+
+现在 `sdl_window.leno` 的 `run()` 支持**固定帧数**模式（环境变量门控，**默认关**，不设时行为逐字不变）：
+
+```powershell
+$env:SDL_VIDEODRIVER='dummy'     # 或 offscreen —— **不开任何窗口**
+$env:LENO_SDL_FRAMES='60'        # 跑满 60 帧后自动清理退出
+build\leno.exe leno_module\LenoSDL3\examples\应用示例\文件管理器\file_manager.leno
+# → [SDL-BENCH] frames=60 total_us=416050 us_per_frame=6934 fill=900 line=3300 out=120 sum=4320
+```
+
+**读数约定**（重要）：
+- `sum` = 批处理计数之和（`fill+line+out`）是**负载一致性判据**：两次运行的 `sum` 必须相同，
+  此时比 `us_per_frame` 才有意义；不同就说明渲染路径分叉了（例如命中了不同的分支）。
+- 实测分辨率：同配置 4 次运行 `sum` 逐字相同、`us_per_frame` **±1.5%**（file_manager 60 帧 ~7ms/帧）。
+- 每帧有一个 **≥1ms 的 `ev.waitTimeout` 地板**（事件循环本身要 poll），所以**很轻的负载**下
+  `us_per_frame` 会被这 1ms 抬高；重负载（如 file_manager 每帧 7ms）可忽略。A/B 是两次测量相减，
+  这个常数地板会自然抵消。
+
+**⚠️ 改 `leno_module/**/lib/**` 之后必须先清缓存，否则会静默用旧模块**（本驱动就是这么被坑的：
+`文件管理器\.lenocache` 的时间戳早于 lib 改动 ⇒ 跑了 90s 都不退出的"老代码"）：
+```powershell
+Remove-Item -Recurse -Force "<引用目录>\.lenocache", "leno_module\LenoSDL3\lib\.lenocache"
+```
+根因：`.lenocache` 是**按引用目录**存的，改被引用模块（lib）不会让引用方失效。
+（这是个**缓存失效缺陷**，值得单独修；在那之前，动过 lib 就清缓存。）
+
+**前提验证探针**：`probe_sdl_headless.leno`（headless 能否建窗+建渲染器+绘制）、
+`probe_headless_maximized.leno`（带 `MAXIMIZED` 标志的窗口在 headless 下是否卡住 —— 实测不卡）。
+
 ## 确定性 GC 钩子（§8.35）
 
 测 GC / 写屏障 / 分配相关的东西时，「回收什么时候发生」必须可控，否则用例不敏感

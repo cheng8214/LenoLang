@@ -1063,9 +1063,31 @@ export struct Window {
         int  _lastRenderTicks = core.getTicks()   // 上次渲染时刻，用于帧率节流
         int  _throttleMs = if _maxFPS > 0 then 1000 / _maxFPS else 1
         int _sizeSyncRemaining = 10   // 安全网：前 N 帧持续检查窗口尺寸（SDL_SyncWindow 已解决主问题）
+
+        // ---- 确定性 GUI 基准模式（2026-09-15）----
+        // `LENO_SDL_FRAMES=<n>`：跑满 n 帧后自动清理退出，并打印一行确定性摘要。
+        //
+        // 为什么需要它：GUI 负载的 A/B **必须固定帧数**。按"跑满 N 秒"测时，同一壁钟时长内
+        // 实际跑了多少帧会随系统噪声变化 —— 实测同一应用交替同轮测 CPU 时间能差 4 倍、
+        // 且两轮方向还会翻转（`FuncExecuted` 甚至差 60 倍），根本下不了结论。
+        // 配合 `SDL_VIDEODRIVER=dummy|offscreen`（**不开任何窗口**）⇒ 可重复、可自动化、
+        // 不需要人工交互，也不需要我在测试时弹窗。
+        //
+        // 默认不设这个环境变量 ⇒ 帧计数为 0、不强制重绘、不打印，行为与改动前逐字一致。
+        int _benchFrames = 0
+        {
+            var _bfEnv = _env("LENO_SDL_FRAMES")
+            if _bfEnv != null { _benchFrames = _int(_bfEnv) }
+            if _benchFrames < 0 { _benchFrames = 0 }
+        }
+        int _benchDone = 0
+        int _benchT0 = core.getPerfCounter()
+        if _benchFrames > 0 { _throttleMs = 0 }   // 基准模式去掉帧率节流（每轮都真渲染）
         while true {
             core.resetFrameCursor()   // 每帧开始：清空本帧光标请求
             core.advanceFrame()       // 帧计数器递增（供控件做帧内去重）
+            // 基准模式：每轮都请求重绘 ⇒ "帧数"与"渲染次数"一一对应（负载可重复）
+            if _benchFrames > 0 { _needRedraw = true }
             bool _hadEvent = false
             // 动态计算等待时长：有重绘请求时节流至目标 FPS，空闲时按定时器触发时刻
             int timeoutMs = 500
@@ -1450,6 +1472,38 @@ export struct Window {
             }
             // 动画控件可能在 render 中调用了 requestRedraw() → 标记快速轮询
             if core.consumeRedrawRequest() { _needRedraw = true }
+
+            // ---- 确定性 GUI 基准：跑满 _benchFrames 帧后收尾 ----
+            // 摘要里的 `sum`（批处理计数之和）是**负载一致性判据**：两次运行的 sum 相同
+            // 才说明渲染工作量相同，此时比 us_per_frame 才有意义。
+            if _benchFrames > 0 {
+                _benchDone = _benchDone + 1
+                if _benchDone >= _benchFrames {
+                    int _bus = _int(_float(core.getPerfCounter() - _benchT0) * 1000000.0
+                                    / _float(core.getPerfFrequency()))
+                    int _bfill = renderer.getBatchFillBatched()
+                    int _bline = renderer.getBatchLineBatched()
+                    int _bout  = renderer.getBatchOutBatched()
+                    int _bsum  = _bfill + _bline + _bout
+                    print("[SDL-BENCH] frames=" + _benchDone
+                          + " total_us=" + _bus
+                          + " us_per_frame=" + _int(_float(_bus) / _float(_benchDone))
+                          + " fill=" + _bfill + " line=" + _bline + " out=" + _bout
+                          + " sum=" + _bsum + "\n")
+                    // 收尾：与 isQuit 路径一致（控件 dispose → 渲染器/窗口销毁 → 事件反初始化）
+                    for _runWids.len() to i {
+                        var benWs = _runWidgets[i]
+                        if benWs != null { for benWs to benW { benW.dispose() } }
+                        _runRens[i].destroy()
+                        _lib.SDL_DestroyWindow(_runHnds[i])
+                        _windowCount -= 1
+                    }
+                    ev.uninit()
+                    if _windowCount <= 0 { core.quit() }
+                    _runLoopActive = false
+                    return
+                }
+            }
         }
     }
 }

@@ -1,0 +1,29 @@
+// 复现探针：headless 驱动 + 带 MAXIMIZED 标志的窗口，是否卡在 run() 之前？
+//
+// 背景：`file_manager.leno` 用 `flags = RESIZABLE(0x20) | MAXIMIZED(0x80)`，在
+// `SDL_VIDEODRIVER=dummy` 下跑 `LENO_SDL_FRAMES=5` 时 >90s 不退出、零输出。
+// 而 `test_button.leno`（无 MAXIMIZED）在同样条件下 12.7ms 就跑完 5 帧。
+// 嫌疑：`registerOnly()` 里的 **阻塞式 `SDL_SyncWindow`**（注释写"阻塞等待 OS 完成
+// 异步窗口状态变更"）—— headless 下没有 OS 去应用"最大化"，可能永远等不到。
+//
+// 判据：设 LENO_SDL_FRAMES=3 跑本文件。
+//   · 若在 20s 内打印 [SDL-BENCH] ⇒ MAXIMIZED 不是原因；
+//   · 若卡住 ⇒ 坐实，修法是 headless 下跳过 SyncWindow（见 sdl_window.leno）。
+import "../leno_module/LenoSDL3/lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+
+main() {
+    print("[MX] 建窗（RESIZABLE|MAXIMIZED）...\n")
+    var win = SDL3.createWindow({title: "maximized headless", w: 640, h: 480, flags: 0x20 | 0x80})
+    if not win.ok {
+        print("[MX] FAIL: 窗口创建失败（headless 不支持该标志？）\n")
+        return
+    }
+    print("[MX] 窗口 OK，进入 run()...\n")
+    win.run(
+        func(Event e): bool { return true },
+        func(Renderer r) { }
+    )
+    print("[MX] run() 返回\n")
+}

@@ -1,0 +1,44 @@
+// 可行性探针（不入库阶段）：SDL3 能否在 **headless** 下建窗 + 建渲染器 + 绘制？
+//
+// 目的：确定"GUI 负载可测"的前提。若能，则所有 SDL3 应用/控件的渲染负载都能在
+// **不开任何窗口**的情况下跑（`SDL_VIDEODRIVER=dummy` / `offscreen`）⇒ 测量既安全
+// 又可重复（不依赖窗口管理器、不依赖人工交互）。
+//
+// 判据：本文件自终止（不 delay、不轮询），打印 OK/FAIL 与批处理计数。
+import "../leno_module/LenoSDL3/lib/SDL3.leno" as SDL3
+use SDL3.WindowFlag
+use SDL3.Renderer
+
+main() {
+    var win = SDL3.createWindow({title: "headless probe", w: 320, h: 240, flags: WindowFlag.HIDDEN})
+    if not win.ok {
+        print("[HL] FAIL: 窗口创建失败\n")
+        return
+    }
+    print("[HL] 窗口 OK\n")
+
+    var r = win.createRenderer()
+    if not r.ok {
+        print("[HL] FAIL: 渲染器创建失败\n")
+        win.destroy()
+        return
+    }
+    print("[HL] 渲染器 OK\n")
+
+    // 确定性绘制：100 个同色矩形应合并为 1 次批量提交
+    r.setColor(#DC3C3CFF)
+    for 0 : 99 to i {
+        r.fillRect(_float(i) * 3.0, 10.0, 2.0, 20.0)
+    }
+    r.present()
+
+    print("[HL] fill batched=")
+    print(SDL3.getBatchFillBatched())
+    print(" submits=")
+    print(SDL3.getBatchFillSubmits())
+    print("\n")
+
+    r.destroy()
+    win.destroy()
+    print("[HL] DONE\n")
+}

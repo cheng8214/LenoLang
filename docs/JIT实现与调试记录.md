@@ -4625,12 +4625,17 @@ set LENO_NO_JIT=1 && build\leno.exe jit_probes\probe_dict_set.leno 2000000
 `jit_code_retire()`（挂队列，之后 `jit_mem_free`：Linux 上是 `munmap`），
 按 `FuncEvict: 452` 的量级就是几百次可执行内存的分配/释放 churn。
 
-**可复现的度量方法**（无需人工交互、窗口自动关）：
-以真实窗口跑应用 16~18s（其间用 `PostMessage` 模拟几次点击），
-然后发 `WM_CLOSE` 让它**优雅退出**（stderr 才会 flush；直接 kill 会丢缓冲），
-再用 `Select-String "func compiled: '([^']+)' func=(\w+)"` 统计即可。
-（另有**完全不开窗**的静态手段：`--debug-out <file>` 在执行前落盘主程序 +
-全部模块的字节码，见 `JIT闭包与upvalue设计_R5.md` 的 P0 实测。）
+**可复现的度量方法**：
+- **一次性/调试类观测**（如上面的 `func compiled` 统计）：以真实窗口跑应用若干秒 → 发 `WM_CLOSE`
+  让它**优雅退出**（stderr 才会 flush；直接 kill 会丢缓冲）→ 再 `Select-String` 统计。
+- **性能类 A/B 一律用确定性驱动器**（2026-09-15 起，见 `jit_probes/README.md` 的
+  「确定性 GUI 负载驱动器」）：`SDL_VIDEODRIVER=dummy`（**不开任何窗口**）+
+  `LENO_SDL_FRAMES=<n>` ⇒ 固定帧数、自终止，打印 `sum`（负载一致性判据）与 `us_per_frame`。
+  实测 `sum` 四次逐字相同、`us_per_frame` **±1.5%** —— 比之前的壁钟口径（±400%、方向还会翻转）
+  可用得多。**注意**：动过 `leno_module/**/lib/**` 后必须先清引用目录与 lib 目录的 `.lenocache`，
+  否则会静默跑旧模块（驱动器开发时正是这么被坑了 90s）。
+- **完全不开窗的静态手段**：`--debug-out <file>` 在执行前落盘主程序 + 全部模块的字节码
+  （见 `JIT闭包与upvalue设计_R5.md` 的 P0 实测）。
 
 ***
 
