@@ -197,6 +197,10 @@ static size_t gc_env_size(const char* name, size_t def) {
     return (size_t)v;
 }
 
+/* 池上限的环境覆盖。定义放在池常量之后（那里才有 GC_POOL_MEM_LIMIT 与
+ * pool_mem_limit），这里只前置声明，供 gc_init 调用（§8.74）。 */
+static void gc_pool_apply_env(void);
+
 void gc_init(void) {
     // 注意：不清零 young_heap/old_heap，因为 semantic 阶段可能已经通过 gc_alloc 分配了对象
     // 这些对象会被 gc_free_all 正确释放
@@ -235,6 +239,9 @@ void gc_init(void) {
     }
     gc.force_every = (int)gc_env_size("LENO_GC_FORCE_EVERY", 0);
     gc.trace = gc_env_on("LENO_GC_TRACE");
+
+    /* 池上限覆盖（§8.74）：实现在池常量定义之后（GC_POOL_MEM_LIMIT 在那里） */
+    gc_pool_apply_env();
 }
 
 // 设置 GC 开关（1=启用，0=禁用）
@@ -293,7 +300,16 @@ void gc_pop_root(void) {
 #define GC_POOL_MAX_SIZE     256                      // 池化对象尺寸上限
 #define GC_POOL_CLASSES      (GC_POOL_MAX_SIZE / GC_POOL_ALIGN)  // 16 类
 #define GC_POOL_BLOCK_SLOTS  64                       // 每块槽数
-#define GC_POOL_MEM_LIMIT    (4 * 1024 * 1024)        // 池持有内存上限 4MB
+/* 池持有内存上限。**32MB 是实测的饱和点**（§8.74 的 A/B，见
+ * docs/待办_GC与分配优化.md）：
+ *   new Pair(2 字段)  4MB=110ns → 16MB=70ns → 32MB=68ns → 64MB=70ns
+ *   new Big (6 字段)  4MB=170ns → 16MB=96ns → 32MB=89ns → 64MB=90ns
+ * 注意上限只是**天花板**：池按需增长，小程序的常驻内存不受影响；
+ * 只有真正分配量大的程序才会用到这个上限（代价：池内存不归还 OS）。
+ * ⚠ 旧结论"放大池只省 ~4ns"（§8.31）是在**回边让出之前**测的 —— 那时 JIT 循环内
+ * 对象不回收到 free-list，池必须覆盖整段分配才有效；§8.37/§8.38 落地让出后，
+ * 池只需覆盖**一个让出间隔**，所以放大池立刻见效。 */
+#define GC_POOL_MEM_LIMIT    (32 * 1024 * 1024)       // 池持有内存上限 32MB（实测饱和点）
 #define OBJ_FLAG_POOLED      0x80                     // flags 位：池化对象
 #define GC_POOL_CLASS_MASK   0x0F                     // flags 低 4 位：class 索引
 
@@ -305,6 +321,17 @@ typedef struct PoolBlockHdr {
 static THREAD_LOCAL Object*  pool_free_list[GC_POOL_CLASSES];  // 各 class 的空闲槽链
 static THREAD_LOCAL PoolBlockHdr* pool_block_list;             // 全部池块（跨 class）
 static THREAD_LOCAL size_t   pool_total;                       // 池持有字节（块计）
+/* 池持有内存上限。默认 GC_POOL_MEM_LIMIT(4MB)；可用 LENO_GC_POOL_LIMIT=<bytes|KB|MB>
+ * 覆盖（§8.74 的 A/B 测量用）。**为什么现在值得调**：早期结论"池必须覆盖整段分配
+ * 才有效"成立于"JIT 循环内对象不回收到 free-list"的前提；§8.37/§8.38 落地**回边让出**
+ * 之后，回收会周期性发生 ⇒ 池只需覆盖**一个让出间隔**内的分配量。 */
+static THREAD_LOCAL size_t   pool_mem_limit = GC_POOL_MEM_LIMIT;
+
+static void gc_pool_apply_env(void) {
+    size_t lim = gc_env_size("LENO_GC_POOL_LIMIT", GC_POOL_MEM_LIMIT);
+    if (lim < 64 * 1024) lim = 64 * 1024;   /* 防止手误设 0 让池彻底失效 */
+    pool_mem_limit = lim;
+}
 
 // 释放对象内存：池化对象归还 free-list，否则系统 free
 // （sweep_young / sweep_old / gc_free_all 共用；free_object_resources 已先行调用）
@@ -395,7 +422,7 @@ Object* gc_alloc(size_t size, ObjType type) {
             pool_free_list[idx] = obj->next;     // 摘链（槽已在上次归还时清零）
             memset(obj, 0, slot_size);
             pooled_flags = (uint8_t)(OBJ_FLAG_POOLED | idx);
-        } else if (pool_total + GC_POOL_BLOCK_SLOTS * slot_size <= GC_POOL_MEM_LIMIT) {
+        } else if (pool_total + GC_POOL_BLOCK_SLOTS * slot_size <= pool_mem_limit) {
             // free-list 空：分配新块整块切割（头部 16B + 64 槽）
             PoolBlockHdr* blk = (PoolBlockHdr*)malloc(sizeof(PoolBlockHdr) + GC_POOL_BLOCK_SLOTS * slot_size);
             if (blk) {

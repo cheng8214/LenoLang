@@ -45,6 +45,7 @@
 | --- | --- |
 | `LENO_GC_YOUNG_THRESHOLD=<bytes\|KB\|MB>` | 覆盖年轻代阈值并**钉住**（禁止 `gc_minor_collect` 结尾把它抬回 `max(young_allocated*2, 8MB)`）。不钉住的话第一次回收后覆盖值就没了。 |
 | `LENO_GC_FORCE_EVERY=<n>` | 每 n 次分配挂一个「强制回收」请求，在**下一个解释器安全点**无条件回收一次（不受阈值门控）⇒ 回收次数按分配次数确定。 |
+| `LENO_GC_POOL_LIMIT=<bytes\|KB\|MB>` | 覆盖小对象池的持有上限（默认 **32MB**，§8.74 的实测饱和点）。**分配成本 A/B 就用它**：同一个二进制上切 4MB/16MB/32MB/64MB，即可复现 `new Pair` **110→68 ns**、`new Big` **170→89 ns** 的差异（配合 `probe_alloc2.leno`）。上限只是**天花板**（池按需增长），小程序的常驻内存不受影响；只有分配量大的程序才用得到，代价是池内存不归还 OS。 |
 | `LENO_GC_TRACE=1` | 每次回收向 stderr 打一行：`[GC] minor #N young=..KB old=..KB rem=R freed=F promoted=P thr=..KB roots(stk=.. mod=.. frame=.. glb=.. misc=.. oth=..) marked=..`。`roots(...)` 是**根来源归属**（各来源新标记的对象数），`marked` 是本轮新标记总数 —— 用来定位「某个活对象靠哪个根活下来的」（排查 JIT 活值可见性时就是靠它确认 `stk=0 frame=2`）。 |
 
 ```bat
