@@ -254,11 +254,11 @@ print("======== try 测试 (每组 1亿次) =======")
 var t1 = times.ms();
  var d1=no_try_test()
  var t2 = times.ms();
- print($"无 try: 1亿({csnum})次 sum++  " + (t2 - t1) + "ms 结果:{d1}\n");
+ print($"无 try: 1亿({csnum})次 sum++  {t2 - t1}ms 结果:{d1}\n");
   var t3 = times.ms();
   var d2=with_try_test()
   var t4 = times.ms();
-   print($"有 try: 1亿({csnum})次 sum++  " + (t4 - t3) + "ms 结果:{d2}\n");
+   print($"有 try: 1亿({csnum})次 sum++  {t4 - t3}ms 结果:{d2}\n");
     print("======== 下一个测试=======")
 }
 
