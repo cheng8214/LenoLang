@@ -192,8 +192,20 @@ JIT 只做两件事：
 - I7 专项用例：闭包 A 调闭包 B、B 内读写自己的 upvalue；
 - 既有全套 assert 无回退（ABI 改动影响面最大，必须全跑）。
 
-**风险**：中（触碰所有 func-JIT / loop-JIT 入口，但改动形状是"加一个参数 + 存进帧内槽"）。
-**回退**：ABI 第三参是可加的；若出问题，把 scan 的闭包 case 关掉即可让机器码不再含 upvalue 访问（入口多传的参数无害）。
+**实现记录（P2a，2026-09-15）**：
+- ABI：`JitLoopFn` 加第三参 `ObjClosure*`；5 个入口全部传值（循环入口传 `frame->closure`、
+  解释器侧函数入口传 `closure`、三个 callout 快路径分别传 `closure` / `callee` /
+  `callee`-或-NULL）。后端序言把它存进**本帧固定槽** `closure_disp`
+  （`-8*(total_locals + max_vstack + 7)`，帧尺寸 +8）；SysV 的 shim 必须**先**搬
+  arg3（RDX→R8）再覆盖 RDX，Win64 的 arg3 本来就在 R8。
+- `GET/SET_UPVALUE` 走 callout（`jit_callout_upvalue_get/set`）：纯指针链 + 三级守卫，
+  每次重新取 `location`（I2）。`SET` 的顺序是"先 TOS_SPILL 保住原始表示，再 PEEK 出来
+  装箱"，避免 RAW→VALUE 转换污染内存栈里的裸 int48/裸 double。
+- **`GET/SET_UPVALUE` 在函数级体与循环体里都放行**；**内联体仍拒绝**（I8）。
+- 实测：`probe_closure_upvalue` → 循环进 JIT、`Bailouts: 0`、`u1=200000 / u2=400000`
+  与 `LENO_NO_JIT=1` 一致；`assert/test_jit_closure_upvalue_rw.leno` 覆盖四种语义
+  （closed / open / 两闭包共享同一 upvalue / 热循环里的函数级 SET）；全套 assert **305/0**。
+- 仍未做：**C1（by-upvalue 捕获）**——留到 P2b。
 
 ---
 
@@ -258,8 +270,26 @@ JIT 只做两件事：
    ⚠ **JIT 侧不要沿用这个门控**（JIT 不关闭任何东西，见 I1，天然免疫）。
 2. **`OP_SET_UPVALUE` 无写屏障**（`op_variables.inc:170-179`）：close 时（`vm_upvalue.inc:121`）有屏障、`OP_CLOSURE` 值捕获（`op_call.inc:580/594`）有屏障，唯独 set 没有。老年代 upvalue 写入年轻代对象时存在跨代漏标的理论隐患。**本轮 JIT 照抄现状**（bug-for-bug 对齐），修正另立项。
 3. **异常展开路径不 `close_upvalues`**：`op_exception.inc:223-229`、`vm_exception.inc:379-385`、`op_coroutine.inc:94-98`、`src/vm/vm.c:805-809` 这些"释放中间帧"的循环只 `free` 动态 locals，未关闭其上的 open upvalue ⇒ 可能悬空/脏值。与 JIT 无直接关系，但任何"整帧消失但不走 `OP_RETURN`"的新路径（包括未来若给 JIT 加 open upvalue 支持）都会继承这个坑 —— 这是 I1 的另一条保险。
-4. **方法闭包的 upvalue 填充未查清**（P2 前置，**待核实**）：`op_struct.inc:124-134` 明确"需要 upvalue 的方法，标记为 NULL，在运行时动态创建"，而 `jit_callout_get_method`（`jit_callout.c:1089-1099`）与解释器若干路径（`op_struct.inc:949-955` / `1114-1120`、`op_property.inc:115-121` / `387-393`）新建闭包时把 `upvalues[0..n)` **一律置 NULL**。若某方法的 `upvalue_count > 0`，这些路径产出的闭包体内的 `GET_UPVALUE` 就会解引用 NULL。
-   ⇒ **P2 开工前必须先查清**：解释器在何处为这类闭包填充捕获，JIT 侧新路径（`jit_callout_make_closure*`）必须走同一套填充，否则 U1/U2 的"防御性守卫"会变成常态 bailout（甚至 VM 侧崩）。
+4. **方法闭包的 upvalue 填充**（P2 前置，**已核实 2026-09-15**）：
+   - **语言允许** struct 方法捕获外层变量。实测（`build/` 下临时程序，已删）：
+     ```leno
+     func make(int base): int {
+         struct S { int x = 1; func add(): int { return x + base } }
+         var s = new S()
+         return s.add()
+     }
+     ```
+     反汇编显示 `S.add` 的方法体是 `OP_GET_FIELD_FAST slot=0 field=0` + **`OP_GET_UPVALUE 0`**
+     ⇒ 该方法 `func->upvalue_count == 1`。
+   - 而创建路径（`op_struct.inc:124-134` 明确"需要 upvalue 的方法，标记为 NULL，在运行时
+     动态创建"；`op_property.inc:111-121`、`op_struct.inc:949-955` / `1114-1120`、
+     `jit_callout_get_method`）新建时把 `upvalues[0..n)` **一律置 NULL**。
+   - **该形态在解释器侧当前另有问题**：上述程序运行到 `s.add()` 时报
+     「尝试在非 struct 类型上调用方法 'add'」（属 VM 侧另一处缺陷，本轮未追）。
+   - **结论（已落地）**：JIT 侧**不依赖**"方法闭包一定无捕获"这一假设，`GET/SET_UPVALUE`
+     一律做三级守卫（`closure == NULL` / `slot >= upvalue_count` / `upvalues[slot] == NULL`）
+     —— 任一不满足即 bailout 交解释器。JIT 在这里比 VM 更保守是正确的：宁可回退，
+     也不要 NULL 解引用（P2a 已实现，见 §P2 的实现记录）。
 
 ---
 

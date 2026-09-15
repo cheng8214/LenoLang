@@ -1552,10 +1552,19 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                 break;
             }
             case OP_CLOSURE: {
-                /* R5-P0：`OP_CLOSURE` 是「弹 0 压 1」。这里必须给出 case —— 否则会落到
-                 * default 被报成 unsupported 并在**第一条**闭包处停止扫描，那样就测不到
-                 * 同一循环体里其余的闭包形态了。最终由末尾的 closure_seen 统一拒收。 */
+                /* R5-P1：`OP_CLOSURE` 是「弹 0 压 1」（长度/形态在上面的 OP_CLOSURE 块里
+                 * 解析：零捕获放行，C1/C2/C3 置 closure_seen 由末尾统一拒收）。 */
                 vstack++;
+                break;
+            }
+            case OP_GET_UPVALUE: {
+                /* R5-P2：读捕获变量 = 弹 0 压 1。语义与长度见 op_variables.inc /
+                 * jit_scan.c 的 3 字节长度表；codegen 用本帧闭包 + slot 走 callout。 */
+                vstack++;
+                break;
+            }
+            case OP_SET_UPVALUE: {
+                /* R5-P2：写捕获变量 = **peek TOS**（不弹不压），net 0。 */
                 break;
             }
             default:

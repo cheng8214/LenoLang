@@ -878,6 +878,11 @@ int compile_loop(CodegenCtx* ctx) {
     int co_rcx_disp = -8 * (total_locals + sr->max_vstack + 5);
     int co_r9_disp  = -8 * (total_locals + sr->max_vstack + 6);
 
+    /* R5-P2：本帧的 closure（第三参）。序言存入、upvalue 访问从这里取。
+     * 放**本帧**而不是全局槽：A 调 B 时 B 的 closure 覆盖不到 A 的槽，
+     * 嵌套天然隔离（设计文档不变量 I7）。 */
+    int closure_disp = -8 * (total_locals + sr->max_vstack + 7);
+
     /* ---- Function prologue ---- */
     emit_push_rbp(cb);                        /* push rbp          */
     for (int _i = 0; _i < pin_n; _i++)        /* §8.45 pin 值寄存器（callee-saved） */
@@ -909,19 +914,26 @@ int compile_loop(CodegenCtx* ctx) {
      * this shim covers the *entry* convention, which is the only place that
      * is not reached through those macros. */
 #ifndef _WIN32
+    /* R5-P2：第三参（closure）在 SysV 的 RDX 里 —— 必须**先**搬走，否则被
+     * 下面的 `RDX = globals` 覆盖。Win64 的 arg3 本来就在 R8，无需搬运。 */
+    emit_mov_rr(cb, JIT_R8, JIT_RDX);         /* R8 = closure (arg3) */
     emit_mov_rr(cb, JIT_RCX, JIT_RDI);        /* RCX = locals  (arg1) */
     emit_mov_rr(cb, JIT_RDX, JIT_RSI);        /* RDX = globals (arg2) */
 #endif
 
     /* Allocate: scratch area (total_locals*8) + max_vstack*8 + callout temps (3*8)
-     * + callout 状态保存槽 (3*8，§8.45)，rounded to 16 */
-    int frame_sz = total_locals * 8 + sr->max_vstack * 8 + 16 + 24 + 24;
+     * + callout 状态保存槽 (3*8，§8.45) + closure 槽 (1*8，R5-P2)，rounded to 16 */
+    int frame_sz = total_locals * 8 + sr->max_vstack * 8 + 16 + 24 + 24 + 8;
     frame_sz = (frame_sz + 15) & ~15;        /* align to 16 */
     if (frame_sz <= 127) {
         emit_sub_rsp_imm8(cb, (uint8_t)frame_sz);
     } else {
         emit_sub_rsp_imm32(cb, frame_sz);
     }
+
+    /* R5-P2：把闭包指针落进本帧固定槽。R8 = 第三参（Win64 原生；SysV 已由上面的
+     * shim 搬进来）。**必须在这里就存**：后续 callout 会把 R8 当 ARG3 用。 */
+    EMIT_STORE_TMP(closure_disp, JIT_R8);
 
     /* ---- Load constants into R10/R11 ---- */
     /* R10 = JIT_PAYLOAD_MASK */

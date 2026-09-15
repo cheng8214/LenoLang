@@ -89,6 +89,68 @@ case OP_TRUE:
                 break;                                    /* pop0 push1 → net +1 */
             }
 
+            /* ---- R5-P2：OP_GET_UPVALUE（读捕获变量）----
+             * 弹 0 压 1。闭包指针取自**本帧固定槽**（序言存入的第三参），slot 是 2 字节操作数。
+             * 三级守卫（闭包 NULL / slot 越界 / upvalue NULL）都在 callout 里做，失败即
+             * bailout 交解释器 —— 机器码绝不 NULL 解引用。
+             * ⚠ 每次都走 callout 重新取 `upvalue->location`（设计文档不变量 I2）：
+             * open→closed 转换会改写 location，任何形式的缓存都会读到过期地址。 */
+            case OP_GET_UPVALUE: {
+                uint16_t uv_get_slot = rd_short(ip + 1);
+                TOS_SPILL();
+                EMIT_CALLOUT_BEGIN();
+                EMIT_LOAD_TMP(JIT_ARG1, closure_disp);
+                emit_mov_reg_imm64(cb, JIT_ARG2, (uint64_t)uv_get_slot);
+                EMIT_CALL(jit_callout_upvalue_get);
+                EMIT_CALLOUT_END();                       /* RAX = 捕获变量的 Value */
+                EMIT_STORE_TMP(tmp2_disp, JIT_RAX);
+                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_callout_failed);
+                emit_mov_reg_mem8(cb, JIT_RAX, JIT_R8, 0);
+                emit_test_rr(cb, JIT_RAX, JIT_RAX);
+                {
+                    EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                    int uv_get_fail = emit_jcc(cb, 0x85);   /* JNZ → bailout */
+                    patch_add(ctx, uv_get_fail, -1, 0);
+                }
+                emit_xor_rr(cb, JIT_RAX, JIT_RAX);
+                emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
+                EMIT_LOAD_TMP(JIT_RAX, tmp2_disp);
+                EMIT_VALUE_TO_RAW();                      /* tagged int → 裸 int48（统一收尾） */
+                TOS_PRODUCE();
+                vstack++;
+                break;                                    /* pop0 push1 → net +1 */
+            }
+
+            /* ---- R5-P2：OP_SET_UPVALUE（写捕获变量）----
+             * **peek TOS**（不弹栈），net 0 —— 与 VM 的 `*location = peek(0)` 一致。
+             * 顺序很关键：先 TOS_SPILL 把 TOS 的**原始表示**（可能是裸 int48 / 裸 double）
+             * 原样落进内存栈，再读出来装箱；反过来做会让 RAW→VALUE 的转换污染内存栈里的表示，
+             * 后续按"裸"解释这条槽的指令就会算错。 */
+            case OP_SET_UPVALUE: {
+                uint16_t uv_set_slot = rd_short(ip + 1);
+                TOS_SPILL();                              /* 保住 TOS 原始表示，tos_live=0 */
+                TOS_PEEK_TO(JIT_RAX);                     /* 读出 TOS（内存栈顶，不消费） */
+                EMIT_RAW_TO_VALUE();                      /* 裸 int48 → 装箱（只影响这次副本） */
+                EMIT_STORE_TMP(tmp1_disp, JIT_RAX);
+                EMIT_CALLOUT_BEGIN();
+                EMIT_LOAD_TMP(JIT_ARG1, closure_disp);
+                emit_mov_reg_imm64(cb, JIT_ARG2, (uint64_t)uv_set_slot);
+                EMIT_LOAD_TMP(JIT_ARG3, tmp1_disp);
+                EMIT_CALL(jit_callout_upvalue_set);
+                EMIT_CALLOUT_END();
+                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_callout_failed);
+                emit_mov_reg_mem8(cb, JIT_RAX, JIT_R8, 0);
+                emit_test_rr(cb, JIT_RAX, JIT_RAX);
+                {
+                    EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                    int uv_set_fail = emit_jcc(cb, 0x85);   /* JNZ → bailout */
+                    patch_add(ctx, uv_set_fail, -1, 0);
+                }
+                emit_xor_rr(cb, JIT_RAX, JIT_RAX);
+                emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
+                break;                                    /* net 0：TOS 保持不动 */
+            }
+
             /* ---- OP_LENGTH（`.len()`）—— 第 5 节 L1 ----
              * 解释器语义（vm/vminc/op_utils.inc OP_LENGTH）：数字 → `(int)value_to_double`
              *   向零截断、负数 clamp 到 0（`for n to i` 依赖后者）；string→char_len、

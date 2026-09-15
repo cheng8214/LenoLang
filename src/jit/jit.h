@@ -37,8 +37,16 @@
 
 /* ---- JIT function type ---- */
 /* Calling convention is target-ABI specific (see backend/x86_64.c);
- * from C's perspective it is a plain function pointer. */
-typedef int (*JitLoopFn)(Value* locals, Value* globals);
+ * from C's perspective it is a plain function pointer.
+ *
+ * 第三参 closure（R5-P2）：被编译函数自己的 ObjClosure，供函数体内的
+ * `OP_GET_UPVALUE` / `OP_SET_UPVALUE` 与 by-upvalue 捕获使用。
+ * 机器码序言把它存进**本帧的固定槽**（不是全局槽）⇒ 嵌套调用天然安全
+ * （A 调 B 时 B 的 closure 覆盖不到 A 的槽）。设计依据见
+ * docs/JIT闭包与upvalue设计_R5.md 的不变量 I7。
+ * 没有闭包环境的入口（裸 ObjFunction、未被包成闭包的模块函数）传 NULL：
+ * 机器码遇到 upvalue 访问会 bailout 交解释器，与 VM 的"没有闭包环境"报错一致。 */
+typedef int (*JitLoopFn)(Value* locals, Value* globals, ObjClosure* closure);
 
 /* ---- Cache entry ---- */
 typedef struct {

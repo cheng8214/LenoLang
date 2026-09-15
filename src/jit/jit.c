@@ -509,7 +509,7 @@ int jit_try_hot_func_call(ObjClosure* closure, int arg_count, int typed, VM* vm_
     jit_func_depth++;
     jit_fn_result = NULL_VAL;
     jit_callout_failed = 0;
-    int jr = jfn(flocals, vm_ptr->globals);
+    int jr = jfn(flocals, vm_ptr->globals, closure);   /* R5-P2：闭包通道 */
     jit_func_depth--;
     jit_retire_drain();   /* §8.60：回到「C 栈上无机器码」时冲刷延迟释放队列 */
     if (jr != 0 || jit_callout_failed) {
@@ -668,7 +668,9 @@ fprintf(stderr, "[JIT-DEBUG] EXEC call #%d, fn=%p, locals=%p\n",
      * 函数级 JIT 入口早已这么做（见 jit_try_hot_func_call 的 `jit_callout_failed = 0`），
      * 这里补齐循环侧。复位是安全的：本次执行中任何真实失败都会在 codegen 检查前重新置位。 */
     jit_callout_failed = 0;
-    int result = entry->fn(frame->locals, vm_ptr->globals);
+    /* R5-P2：第三参 = 本帧的闭包（循环 JIT 的入口手里就有 frame）。
+     * 循环体里出现 upvalue 访问时，机器码靠它取 `upvalues[i]->location`。 */
+    int result = entry->fn(frame->locals, vm_ptr->globals, frame->closure);
     jit_loop_depth--;
     jit_retire_drain();   /* §8.60：循环退出时若已无机器码在跑，冲刷延迟释放队列 */
     if (jit_debug_on()) {

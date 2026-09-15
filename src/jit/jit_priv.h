@@ -375,6 +375,15 @@ Value jit_callout_set_field(Value obj_val, uint8_t field_idx, Value value);
  * arr_val 由编译期从 chunk->constants[const_idx] 取出（常量表是 GC 根）。 */
 int jit_callout_switch_lookup(Value switch_val, Value arr_val, int case_count);
 
+/* ---- R5-P2：读写捕获变量（OP_GET_UPVALUE / OP_SET_UPVALUE）----
+ * 语义对齐 vm/vminc/op_variables.inc：GET 解引用 `upvalues[slot]->location` 压栈；
+ * SET 用 peek（**不弹栈**）写穿同一地址。**每次都要重新取 location**（不变量 I2：
+ * open→closed 转换会改写它）。守卫（closure==NULL / slot 越界 / upvalue==NULL）
+ * 一律置 failed → 调用方 bailout，交解释器处理（绝不 NULL 解引用）。
+ * 不分配；报错由解释器做 ⇒ 除守卫外无失败通道。SET 与 VM 一致**不加写屏障**。 */
+Value jit_callout_upvalue_get(ObjClosure* closure, int slot);
+void  jit_callout_upvalue_set(ObjClosure* closure, int slot, Value v);
+
 /* ---- R5-P1：建闭包（OP_CLOSURE，**仅零捕获 C0**）----
  * 语义逐字对齐 vm/vminc/op_call.inc 的 OP_CLOSURE 在 upvalue_count==0 的情形：
  * `gc_alloc` 一个 ObjClosure、只设 function/upvalue_count（其余字段由 gc_alloc 的

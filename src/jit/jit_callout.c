@@ -945,7 +945,7 @@ Value jit_callout_call_module_func(ObjModule* module, int64_t* vstack_top,
                 flocals[i] = jit_raw_to_value(vstack_top[arg_count - 1 - i]);
             jit_func_depth++;
             jit_fn_result = NULL_VAL;
-            int jr = jfn(flocals, vm->globals);
+            int jr = jfn(flocals, vm->globals, closure);   /* R5-P2：闭包通道 */
             jit_func_depth--;
             jit_retire_drain();   /* §8.60：可能已回到顶层，冲刷延迟释放队列 */
             if (jr == 0 && !jit_callout_failed) {
@@ -1032,6 +1032,38 @@ int jit_callout_switch_lookup(Value switch_val, Value arr_val, int case_count) {
  * 纯判断：不分配、不报错 ⇒ 永不置 jit_callout_failed。 */
 Value jit_callout_is_null(Value v) {
     return val_bool(val_is_null(v));
+}
+
+/* Callout: OP_GET_UPVALUE / OP_SET_UPVALUE（R5-P2）—— 经闭包环境读写捕获变量。
+ *
+ * 语义逐条对齐 vm/vminc/op_variables.inc：
+ *   GET：`vm_stack_push(*frame->closure->upvalues[slot]->location)`
+ *   SET：`*frame->closure->upvalues[slot]->location = peek(0)`（**不弹栈**）
+ * 关键不变量（设计文档 I2）：**每次都重新取 `upvalue->location`** —— close_upvalues
+ * 会把 open 转成 closed（location 改指向 upvalue 自身的 closed 字段），缓存地址必错。
+ *
+ * 守卫（任一不满足 → 置 failed，调用方 bailout 交解释器，**绝不 NULL 解引用**）：
+ *   · closure == NULL    → VM 报"没有闭包环境"；
+ *   · slot 越界          → VM 报"闭包捕获变量索引越界"；
+ *   · upvalues[slot]==NULL → VM 侧会直接解引用 NULL（已知可达：方法闭包的
+ *     "运行时动态创建"路径把 upvalues 全置 NULL，见设计稿 §7 疑点 4）。
+ *     JIT 在这里比 VM 更保守是正确的：宁可 bailout，也不要段错误。
+ *
+ * 不分配、不报错；SET 与 VM 一致**不加写屏障**（写成什么样的历史债照抄，见 §7 疑点 2）。 */
+Value jit_callout_upvalue_get(ObjClosure* closure, int slot) {
+    if (!closure || slot < 0 || slot >= closure->upvalue_count || !closure->upvalues[slot]) {
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+    return *closure->upvalues[slot]->location;
+}
+
+void jit_callout_upvalue_set(ObjClosure* closure, int slot, Value v) {
+    if (!closure || slot < 0 || slot >= closure->upvalue_count || !closure->upvalues[slot]) {
+        jit_callout_failed = 1;
+        return;
+    }
+    *closure->upvalues[slot]->location = v;
 }
 
 /* Callout: OP_CLOSURE（R5-P1，**仅零捕获** C0）—— 建一个闭包对象。
@@ -1425,6 +1457,13 @@ static Value jit_invoke_closure(ObjFunction* mfunc, Value callee_val, int arg_co
      * 任何不成功情况 → 回退到下方 VM 重入路径（栈/VM 状态在快路径中
      * 保持不变：只有 jit_callout_failed 可能被内部嵌套 callout 设置，
      * 回退前必须复位）。 */
+    /* R5-P2：闭包通道。callee_val 可能是**裸 ObjFunction**（此时没有闭包环境，
+     * 与 VM 的 OBJ_FUNCTION 分支"新建零捕获闭包"等价）⇒ 传 NULL，机器码遇到
+     * upvalue 访问会 bailout 交解释器，由解释器按自己的语义处理。 */
+    ObjClosure* callee_closure = NULL;
+    if (val_is_obj(callee_val) && val_as_obj(callee_val)->type == OBJ_CLOSURE)
+        callee_closure = (ObjClosure*)val_as_obj(callee_val);
+
     if (mfunc && ret_count == 1 && jit_state.enabled && jit_func_depth < JIT_FUNC_MAX_DEPTH) {
         JIT_FT_T0();
         JitLoopFn jfn = jit_func_lookup_or_compile(mfunc, vm);
@@ -1446,7 +1485,7 @@ static Value jit_invoke_closure(ObjFunction* mfunc, Value callee_val, int arg_co
                         who, (void*)jfn, mfunc->name ? mfunc->name : "?", lcount, arg_count, jit_func_depth);
             }
             JIT_FT_T1();
-            int jr = jfn(flocals, vm->globals);
+            int jr = jfn(flocals, vm->globals, callee_closure);   /* R5-P2：闭包通道 */
             JIT_FT_T2();
             jit_func_depth--;
             jit_retire_drain();   /* §8.60：可能已回到顶层，冲刷延迟释放队列 */
@@ -1763,7 +1802,9 @@ Value jit_callout_global_func(int64_t* vstack_top, int arg_count,
                     fprintf(stderr, "[FT-G] jfn=%p func='%s' lc=%d ac=%d depth=%d\n",
                             (void*)jfn, gfunc->name ? gfunc->name : "?", lcount, arg_count, jit_func_depth);
                 }
-                int jr = jfn(flocals, vm->globals);
+                int jr = jfn(flocals, vm->globals,
+                             (val_is_obj(callee) && val_as_obj(callee)->type == OBJ_CLOSURE)
+                                 ? (ObjClosure*)val_as_obj(callee) : NULL);   /* R5-P2 */
                 jit_func_depth--;
                 jit_retire_drain();   /* §8.60：可能已回到顶层，冲刷延迟释放队列 */
                 if (JIT_FT_TRACE_ON())

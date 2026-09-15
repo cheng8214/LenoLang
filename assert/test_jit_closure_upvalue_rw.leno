@@ -1,0 +1,57 @@
+// R5-P2 回归：闭包体内读写捕获变量进 JIT（OP_GET_UPVALUE / OP_SET_UPVALUE）
+//
+// 背景（docs/JIT闭包与upvalue设计_R5.md）：JIT 没有"当前帧"，所以闭包环境必须由
+// **ABI 第三参**带进来（本帧固定槽），upvalue 访问走 callout 每次重新取
+// `upvalue->location` —— 不变量 I2：open→closed 转换会改写 location，缓存必错。
+//
+// 覆盖点：
+//   ① **closed 形态**：makeCounter 返回后才调用闭包 ⇒ upvalue 已被 close_upvalues
+//      转成 closed（location 指向 upvalue 自身的 closed 字段）。这里故意连续调用
+//      两次：第二次必须接续累加（同一份存储，不是每轮复制）；
+//   ② **open 形态**：makeOpen 未返回就调用闭包 ⇒ location 指向仍在栈上的帧 locals；
+//   ③ **两个闭包共享同一 upvalue**（解释器的核心语义）：inc 写、get 读必须看到同一份；
+//   ④ 上面 ③ 的 inc() 在热循环里被调用 ⇒ 顺带覆盖**函数级 JIT** 里的 SET_UPVALUE。
+//
+// 判据：JIT 与 `LENO_NO_JIT=1` 都必须 exit=0；JIT 侧相关循环 Compiled 增长、Bailouts 不增长。
+
+func makeCounter(int limit): any {
+    var total = 0
+    return func(): int {
+        for limit {
+            total = total + 1
+        }
+        return total
+    }
+}
+
+func makeOpen(int limit): int {
+    var total = 0
+    var f = func(): int {
+        for limit {
+            total = total + 1
+        }
+        return total
+    }
+    return f()          // 此时 makeOpen 尚未返回 ⇒ upvalue 仍是 open 形态
+}
+
+func sharedTwo(int n): int {
+    var a = 0
+    var inc = func(): int { a = a + 1 }
+    var get = func(): int { return a }
+    for n {
+        inc()           // 热循环里调用闭包 ⇒ inc 的体会进函数级 JIT（内含 SET_UPVALUE）
+    }
+    return get()
+}
+
+main() {
+    var c = makeCounter(200000)
+    assert_eq(c(), 200000)
+    assert_eq(c(), 400000)      // 同一份 upvalue 存储 ⇒ 接续累加
+
+    assert_eq(makeOpen(100000), 100000)
+    assert_eq(sharedTwo(1000), 1000)
+
+    print("test_jit_closure_upvalue_rw: OK")
+}

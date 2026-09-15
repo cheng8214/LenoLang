@@ -1,0 +1,32 @@
+// R5-P2 探针：闭包体内热循环**读写捕获变量**（OP_GET_UPVALUE / OP_SET_UPVALUE）
+//
+// 形态：捕获的是**循环外声明**的局部（`total` 在 make 的帧里）⇒ 引用捕获：
+//   upvalue 是 **open** 形态，location 直接指向 make 的 frame->locals 槽；
+//   make 返回时 close_upvalues 把它转成 closed（location 改指向 upvalue 自身的
+//   closed 字段）。**本探针在 make 返回之后才调用闭包** ⇒ 同时覆盖不变量 I2
+//   （每次访问都必须重新取 location，缓存地址必错）。
+//
+// 覆盖点：
+//   ① 闭包体内热循环里 `total = total + 1`（一条 SET_UPVALUE + 一条 GET_UPVALUE）；
+//   ② 同一闭包连续调用两次 ⇒ 第二次的结果必须接着累加（捕获的是**同一份**存储，
+//      不是每轮复制）—— 这是 upvalue 指针语义的核心；
+//   ③ 该循环必须能进 JIT（loop JIT：循环在闭包体内，入口 frame->closure 就是它）。
+//
+// 判据：JIT 与 `LENO_NO_JIT=1` 输出逐位一致；JIT 侧该循环 Compiled 增长、Bailouts 不增长。
+
+func make(int limit): any {
+    var total = 0
+    return func(): int {
+        for limit {
+            total = total + 1
+        }
+        return total
+    }
+}
+
+main() {
+    var c = make(200000)
+    print("u1= " + c())      // 200000
+    print("u2= " + c())      // 400000（同一份 upvalue 存储，继续累加）
+    return 0
+}
