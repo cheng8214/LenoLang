@@ -71,6 +71,32 @@ func bench_bigval(int n): int {
     return acc
 }
 
+// E) 对照：只做「字符串分配 + 拼接」、不碰字典。
+//    用来把 `new` 组的 10 倍慢定位到「分配/拼接（callout）」还是「字典插入」。
+func bench_str_only(int n): int {
+    var acc = 0
+    var t0 = times.ms()
+    for 0 : n to var i {
+        var t = "k" + _str(i)
+        acc = acc + t.len()
+    }
+    var dt = times.ms() - t0
+    print("  str  n=" + n + " ms=" + dt + "  acc=" + acc)
+    return dt
+}
+
+// F) 对照：int 键写字典（走数组部分，无字符串分配）
+func bench_intkey(int n): int {
+    var d = {}
+    var t0 = times.ms()
+    for 0 : n to var i {
+        d[i] = i
+    }
+    var dt = times.ms() - t0
+    print("  ikey n=" + n + " ms=" + dt + "  v=" + _int(d[n - 1]))
+    return dt
+}
+
 main() {
     // n 可由命令行覆盖：`times.ms()` 刻度约 16ms，太小的 n 测不出差异（用 2000 万）
     var n = 2000000
@@ -78,7 +104,9 @@ main() {
     if args.len() > 0 { n = _int(args[0]) }
     bench_hit(n)
     bench_objval(n)
+    bench_str_only(n / 10)     /* 定位用：与 bench_new 同量级的分配/拼接 */
     bench_new(n / 10)
+    bench_intkey(n / 10)       /* 定位用：int 键走数组部分，无字符串分配 */
     bench_bigval(n / 20)
     // 收尾校验：快路径写入的值必须可被正常读回
     var d = {}

@@ -4417,13 +4417,30 @@ callout）—— 那已经把省下的 callout 开销吃掉，**与 §11 P5 早�
 | 2,000,000 | **12484 ms** | **2359 ms** | 两个循环都编译成功、**`Bailouts` 为 0**（不是 bailout 风暴） |
 
 同一探针的 `hit` 组（命中已有条目）JIT 266ms vs 解释器 407ms —— JIT 在命中路径上是正常受益的。
-⇒ 慢的不是字典读取本身，而是这条**「每轮分配字符串 + 新键插入（`dict_add_to_order` / `dict_resize`）」**
-的循环；怀疑与 JIT 循环内分配触发的**回边让出 + 每次让出回收**（§8.38/§8.39）有关，
-**未证实**。复现：
+
+**已做的 4 个定因实验（2026-09-15，20 万轮同机同轮）**
+
+| # | 实验 | JIT | `LENO_NO_JIT=1` | 结论 |
+| --- | --- | --- | --- | --- |
+| 1 | 看 `Yields` 计数 | `Yields: 4` | — | **不是**回边让出风暴（每轮让出会到百万级）；`EXEC returned 4` 只出现 4 次 |
+| 2 | `str` 组：只做 `"k"+_str(i)` 分配+拼接，不碰字典 | 171 ms | 157 ms | **分配/拼接的 callout 没问题**（两边基本相等） |
+| 3 | `new` 组：同样的分配+拼接**再写进字典（每轮新键）** | **671 ms** | 156 ms | 差异**全在"写进字典"这一步**（+515ms / 20 万轮 ≈ 2.5µs/轮） |
+| 4 | `hit` 组：同样的字典写但**键已存在**（哈希+探测+写值，无分配） | **16 ms** | 47 ms | 哈希查找+写值本身在 JIT 下**很快**（8ns/轮）⇒ 慢的是**新键专属**的那串（`dict_add_to_order` / `dict_resize` / 写屏障） |
+
+⇒ **已定位到"新键插入"这一串，但根因未查明**（不是 callout 本身、不是 codegen、不是让出）。
+下一步该做的**唯一实验**（未做）：把年轻代阈值拉到 2GB 彻底关掉 GC/晋升，看 671ms 是否塌回 156ms 附近
+—— 若是，则根因在**晋升 + 写屏障（`gc_remembered_set_add` 的去重线性扫描）**这条 GC 路径上，
+而不是 JIT：
 
 ```
-build\leno.exe jit_probes\probe_dict_set.leno 20000000
-set LENO_NO_JIT=1 && build\leno.exe jit_probes\probe_dict_set.leno 20000000
+set LENO_GC_YOUNG_THRESHOLD=2GB && build\leno.exe jit_probes\probe_dict_set.leno 2000000
+```
+
+复现本轮实验：
+
+```
+build\leno.exe jit_probes\probe_dict_set.leno 2000000      # JIT：看 str / new / ikey 三行
+set LENO_NO_JIT=1 && build\leno.exe jit_probes\probe_dict_set.leno 2000000
 ```
 
 **回退后的基线（i5-14400F，20,000,000 轮）**
