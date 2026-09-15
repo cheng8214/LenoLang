@@ -280,7 +280,7 @@ static void* thread_entry_point(void* arg) {
     native_register_globals();
 
     // 初始化所有模块方法（与主 VM 一致）
-    extern void native_init_module(const char* module_name);
+    extern int native_init_module(const char* module_name);
     native_init_module("io");
     native_init_module("times");
     native_init_module("arrays");

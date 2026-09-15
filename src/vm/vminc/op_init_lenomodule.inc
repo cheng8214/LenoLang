@@ -22,7 +22,13 @@ OPCODE(OP_INIT_LENOMODULE) {
 
         if (module->native_imports && module->native_import_count > 0) {
             for (int i = 0; i < module->native_import_count; i++) {
-                native_init_module(module->native_imports[i]);
+                // 编译期已校验过模块名；失败说明字节码与运行时注册表不一致（如 leno_vm.exe 版本不同）
+                if (native_init_module(module->native_imports[i]) != 0) {
+                    char nmsg[256];
+                    snprintf(nmsg, sizeof(nmsg), "未知的原生模块: %s", module->native_imports[i]);
+                    runtime_error(nmsg, GET_CURRENT_LINE());
+                    return -1;
+                }
             }
         }
 
@@ -95,7 +101,13 @@ OPCODE(OP_INIT_LENOMODULE) {
 
         if (module->native_imports && module->native_import_count > 0) {
             for (int i = 0; i < module->native_import_count; i++) {
-                native_init_module(module->native_imports[i]);
+                // 编译期已校验过模块名；失败说明字节码与运行时注册表不一致（如 leno_vm.exe 版本不同）
+                if (native_init_module(module->native_imports[i]) != 0) {
+                    char nmsg[256];
+                    snprintf(nmsg, sizeof(nmsg), "未知的原生模块: %s", module->native_imports[i]);
+                    runtime_error(nmsg, GET_CURRENT_LINE());
+                    return -1;
+                }
             }
         }
     }

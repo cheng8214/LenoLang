@@ -1308,23 +1308,15 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
         ObjModule* mod = NULL;
         if (source_path) {
             mod = find_loaded_module(source_path);
-            if (!mod) {
-                mod = (ObjModule*)gc_alloc(sizeof(ObjModule), OBJ_MODULE);
-                mod->name = strdup(name);
-                mod->source_path = strdup(source_path);
-                mod->exports = dict_new(4);
-                mod->frame = NULL;
-                mod->native_imports = NULL;
-                mod->native_import_count = 0;
-                mod->globals = NULL;
-                mod->global_count = 0;
-                mod->global_capacity = 0;
-                mod->init_chunk = NULL;
-                mod->initialized = 0;
-                mod->export_mappings = NULL;
-                mod->export_mapping_count = 0;
-                add_loaded_module_public(source_path, mod);
-            }
+        }
+        if (source_path && !mod) {
+            // 不再造「空壳模块」。空壳的 exports 是空字典、globals 为空、没有 init_chunk，
+            // 程序会带着「模块存在但内容为空」静默跑下去；而且空壳会被 add_loaded_module
+            // 注册进已加载列表，之后真正要加载该模块时 find_loaded_module 命中的是这个空壳。
+            // 返回失败让上层回退（入口缓存 → 回源码编译；模块缓存 → 重新编译该模块）。
+            free(name);
+            free(source_path);
+            return 0;
         }
         free(name);
         free(source_path);

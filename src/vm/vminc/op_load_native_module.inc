@@ -21,7 +21,14 @@ OPCODE(OP_LOAD_NATIVE_MODULE) {
     const char* module_name = ((ObjString*)val_as_obj(module_val))->chars;
 
     // 运行时加载原生模块（调用对应的 *_init_module()）
-    native_init_module(module_name);
+    // 编译期已校验过模块名；这里失败说明字节码与运行时注册表不一致（例如 leno_vm.exe 版本不同），
+    // 必须显式报错而不是静默跳过 —— 否则后续调用该模块方法时的报错会指向错误的原因。
+    if (native_init_module(module_name) != 0) {
+        char nmsg[256];
+        snprintf(nmsg, sizeof(nmsg), "未知的原生模块: %s", module_name);
+        runtime_error(nmsg, GET_CURRENT_LINE());
+        return -1;
+    }
 
     // 压入 null 占位，保持栈平衡（import 语句作为表达式语句需要有一个值）
     vm_stack_push(&vm, val_null());

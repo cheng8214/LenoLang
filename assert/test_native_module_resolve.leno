@@ -1,0 +1,99 @@
+// 原生模块名解析的编译期校验回归测试
+//
+// 背景：原生模块清单本身是编译期确定的（native.c 的 module_init_table，加上只有全局
+// 函数命名空间的 types/sys），但此前 `import <不存在的模块>` 编译期静默通过，运行期
+// native_init_module 找不到就静默 no-op —— 直到调用该模块的方法才报错（不调用则永不
+// 报错），报错位置与真实原因不符。现在改为编译期报错并列出可用模块。
+//
+// 同时钉住两个容易踩的边界（我第一版校验口径就踩了）：
+//   - `import types` 合法：它只有全局函数命名空间、没有 init_module，
+//     assert/test_types_module.leno 依赖这一条；
+//   - `import sys` 同理。
+//
+// 为什么这里自己起进程断言：assert/run_tests.leno 的判定是 `exit code != 0 → FAIL`，
+// 只认正向用例，"必须编译失败"的场景在其中表达不出来。
+
+import dirs
+import files
+import strings
+
+// 拼 _exec 的命令行（exe 不能加引号，见 assert/test_dup_type_kind.leno 的说明：
+// cmd /c 后首字符是引号时会剥掉整串最外两层引号）
+func cmd_for(string script_path):string {
+    return _executable() + " \"" + script_path + "\""
+}
+
+// 期望编译并运行成功；expect_out 非空时还要求输出包含它
+func expect_ok(string work, string name, string src, string expect_out) {
+    var path = dirs.join(work, name + ".leno")
+    files.write(path, src)
+
+    var r = _exec(cmd_for(path))
+    assert_ne(r, null, name + "：_exec 返回 null")
+    assert_eq(r[1], 0, name + "：应编译运行成功，实际 exit=" + r[1] + "；输出=" + r[0])
+    if expect_out != "" {
+        assert_true(strings.has(r[0], expect_out),
+            name + "：输出应包含「" + expect_out + "」；实际=" + r[0])
+    }
+}
+
+// 期望编译失败：报错落在第 line 行，且包含 msg
+func expect_compile_error(string work, string name, string src, int line, string msg) {
+    var path = dirs.join(work, name + ".leno")
+    files.write(path, src)
+
+    var r = _exec(cmd_for(path))
+    assert_ne(r, null, name + "：_exec 返回 null")
+
+    var out = r[0]
+    assert_true(r[1] != 0, name + "：未知原生模块应在编译期失败，实际 exit=" + r[1] + "；输出=" + out)
+
+    var loc = "(" + line + ",1): error:"
+    assert_true(strings.has(out, loc), name + "：报错应落在第 " + line + " 行 " + loc + "；输出=" + out)
+    assert_true(strings.has(out, msg), name + "：报错应包含「" + msg + "」；输出=" + out)
+}
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_native_module_resolve")
+    // 先清一次：上次若中途断言失败会留下工作目录与 .lenocache
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    var n = "\n"
+
+    // === 对照组：合法模块必须照常通过 ===
+    expect_ok(work, "ok_strings",
+        "import strings" + n + n + "main() { print(strings.trim(\"  hi  \")) }" + n, "hi")
+
+    // 只有全局函数命名空间、没有 init_module 的模块
+    expect_ok(work, "ok_types", "import types" + n + n + "main() { print(type(42)) }" + n, "int")
+    expect_ok(work, "ok_sys", "import sys" + n + n + "main() { print(1) }" + n, "1")
+
+    // 全部原生模块一起导入，确保校验清单没有漏项
+    var all_src = "import io" + n + "import times" + n + "import arrays" + n + "import strings" + n
+        + "import maths" + n + "import rands" + n + "import files" + n + "import asyncs" + n
+        + "import dirs" + n + "import jsons" + n + "import sockets" + n + "import ffi" + n
+        + "import threads" + n + "import regexs" + n + n + "main() { print(1) }" + n
+    expect_ok(work, "ok_all_modules", all_src, "1")
+
+    // === 负向：未知原生模块名必须编译期报错 ===
+    expect_compile_error(work, "bad_unknown",
+        "import nosuchmodule" + n + n + "main() { print(1) }" + n,
+        1, "未知的原生模块 'nosuchmodule'")
+
+    // 拼写错误：报错行号应指向出错那行（不是文件首行）
+    expect_compile_error(work, "bad_typo",
+        "import strings" + n + n + "import stringss" + n + n + "main() { print(1) }" + n,
+        3, "未知的原生模块 'stringss'")
+
+    // 报错应给出可用模块清单（含 types 这类无 init_module 的模块）
+    expect_compile_error(work, "bad_hint",
+        "import stringss" + n + n + "main() { print(1) }" + n,
+        1, "可用的原生模块: io, times")
+    expect_compile_error(work, "bad_hint_types",
+        "import stringss" + n + n + "main() { print(1) }" + n,
+        1, "types")
+
+    dirs.delete(work)
+    print("test_native_module_resolve passed")
+}

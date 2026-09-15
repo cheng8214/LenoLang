@@ -142,7 +142,16 @@ const char* native_resolve_module_alias(const char* alias);
 void native_reset_module_aliases(void);
 
 // 统一模块初始化
-void native_init_module(const char* module_name);
+// 返回 0 = 成功；-1 = 未知模块名。不再静默 no-op —— 字节码里带的模块名与运行时注册表
+// 不一致时（例如 leno_vm.exe 版本不同）必须显式失败，否则「模块没被初始化」会一直潜伏到
+// 调用其方法时才暴露，且报错位置与真实原因不符。
+int native_init_module(const char* module_name);
+
+// 该模块名是否是已注册的原生模块（编译期校验用；权威清单 = native.c 的 module_init_table）
+int native_module_is_registered(const char* module_name);
+
+// 已注册原生模块名的逗号分隔列表（编译期报错提示用；返回静态缓冲区，勿释放）
+const char* native_module_names_csv(void);
 
 // 注册所有内置 Native 函数（全局函数）
 void native_register_globals(void);

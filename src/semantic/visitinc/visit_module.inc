@@ -199,6 +199,18 @@
                 }
             } else {
                 // 原生模块：运行时通过 OP_LOAD_NATIVE_MODULE 加载
+                // 编译期先校验模块名。原生模块清单本身是编译期确定的（native.c 的
+                // module_init_table），名字写错必须在这里报错：否则字节码带着这个名字跑到
+                // 运行期，native_init_module 找不到（此前是静默 no-op），直到调用该模块的
+                // 方法才失败 —— 报错位置与真实原因不符，且从不调用就永不报错。
+                if (!native_module_is_registered(ast->u.import.module_name)) {
+                    char msg[1024];
+                    snprintf(msg, sizeof(msg), "未知的原生模块 '%s'（可用的原生模块: %s）",
+                             ast->u.import.module_name, native_module_names_csv());
+                    error_add_at(ERR_UNDEFINED_VAR, ast->line, ast->column, msg);
+                    break;
+                }
+
                 // 记录原生模块导入，用于编译时检查
                 const char* alias = ast->u.import.alias ? ast->u.import.alias : ast->u.import.module_name;
                 if (s->imported_module_count < 64) {

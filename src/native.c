@@ -955,15 +955,85 @@ void native_reset_module_aliases(void) {
 // 统一模块初始化
 // ============================================================================
 
+// 「只有全局函数命名空间、没有 init_module」的模块名。
+// 依据：本文件的 *_init_globals 声明（io/types/strings/times/threads/sys）里，只有
+// types 与 sys 没有对应的 *_init_module。import 它们合法，但运行时无需初始化 ——
+// assert/test_types_module.leno 就是 `import types` 的既有用例，不得被判为未知模块。
+static const char* native_namespace_only_modules[] = {
+    "types",
+    "sys",
+    NULL
+};
+
+// 该模块是否在方法表里出现过（只比模块名，不带方法名）
+static int module_has_any_method(const char* module_name) {
+    if (!moduleMethodTable.entries || moduleMethodTable.count == 0) return 0;
+    for (int i = 0; i < moduleMethodTable.capacity; i++) {
+        for (ModuleMethodEntry* e = moduleMethodTable.entries[i]; e; e = e->next) {
+            if (strcmp(e->module_name, module_name) == 0) return 1;
+        }
+    }
+    return 0;
+}
+
+// 该模块是否在常量表里出现过（只比模块名，不带常量名）
+static int module_has_any_const(const char* module_name) {
+    if (!moduleConstTable.entries || moduleConstTable.count == 0) return 0;
+    for (int i = 0; i < moduleConstTable.capacity; i++) {
+        for (ModuleConstEntry* e = moduleConstTable.entries[i]; e; e = e->next) {
+            if (strcmp(e->module_name, module_name) == 0) return 1;
+        }
+    }
+    return 0;
+}
+
+// 该模块名是否是已注册的原生模块（编译期校验用）
+// 口径与本文件各注册表一致：有 init_module 的、只有全局函数命名空间的、注册过方法或常量的，
+// 都算「已知模块」；其余视为拼错的模块名。
+int native_module_is_registered(const char* module_name) {
+    if (!module_name) return 0;
+    for (int i = 0; module_init_table[i].name != NULL; i++) {
+        if (strcmp(module_name, module_init_table[i].name) == 0) return 1;
+    }
+    for (int i = 0; native_namespace_only_modules[i] != NULL; i++) {
+        if (strcmp(module_name, native_namespace_only_modules[i]) == 0) return 1;
+    }
+    return module_has_any_method(module_name) || module_has_any_const(module_name);
+}
+
+// 已知原生模块名的逗号分隔列表（报错提示用；静态缓冲区，勿释放）
+const char* native_module_names_csv(void) {
+    static char buf[512];
+    int pos = 0;
+    buf[0] = '\0';
+    for (int i = 0; module_init_table[i].name != NULL; i++) {
+        if (pos >= (int)sizeof(buf) - 32) break;
+        pos += snprintf(buf + pos, sizeof(buf) - pos, "%s%s",
+                        i > 0 ? ", " : "", module_init_table[i].name);
+    }
+    for (int i = 0; native_namespace_only_modules[i] != NULL; i++) {
+        if (pos >= (int)sizeof(buf) - 32) break;
+        pos += snprintf(buf + pos, sizeof(buf) - pos, "%s%s",
+                        pos > 0 ? ", " : "", native_namespace_only_modules[i]);
+    }
+    return buf;
+}
+
 // 根据模块名初始化对应的模块
-void native_init_module(const char* module_name) {
+// 返回 0 = 成功（含「合法但无需初始化」的模块），-1 = 未知模块名
+int native_init_module(const char* module_name) {
     for (int i = 0; module_init_table[i].name != NULL; i++) {
         if (strcmp(module_name, module_init_table[i].name) == 0) {
             module_init_table[i].init_func();
-            return;
+            return 0;
         }
     }
-    // 未找到对应模块，不执行任何操作
+    // 无 init_module 但已知的模块（types / sys 这类只有全局函数命名空间，方法/常量已在
+    // 启动时注册）——无需初始化，属于正常情况
+    if (native_module_is_registered(module_name)) return 0;
+    // 未知模块名：显式失败。此前是静默 no-op —— 模块名拼错/字节码与运行时不一致时
+    // 什么都不会发生，直到调用该模块的方法才报错（甚至可能永远不报错），归因跑偏。
+    return -1;
 }
 
 // 注册所有内置 Native 函数（全局函数）
