@@ -800,19 +800,24 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
          * 最终由末尾的 closure_seen 统一拒收 —— 对编译结果而言行为不变。 */
         int size = opcode_size_chunk(chunk, ip);
         if (op == OP_CLOSURE && size > 0) {
-            int clo_caps = 0;
-            closure_probe(chunk, ip, &clo_caps, NULL, NULL, NULL);
-            if (clo_caps == 0) {
-                /* ---- R5-P1：**零捕获**闭包（C0）放行 ----
-                 * 捕获表为空 ⇒ 不涉及"JIT 的 locals 没有稳定 Value* 地址"这个核心冲突
-                 * （见 docs/JIT闭包与upvalue设计_R5.md §3/§4）：既不新建 upvalue、
-                 * 也不捕获任何帧槽，只是分配一个闭包对象。
-                 * 记账：弹 0 压 1（与下面的 case OP_CLOSURE 一致）。 */
+            int clo_caps = 0, clo_rl = 0, clo_vl = 0, clo_by = 0;
+            closure_probe(chunk, ip, &clo_caps, &clo_rl, &clo_vl, &clo_by);
+            if (clo_rl == 0 && clo_vl == 0) {
+                /* ---- R5-P1/P2b：可放行的闭包 ----
+                 * (a) 零捕获（C0）：不新建 upvalue、不捕获任何帧槽，只分配闭包对象；
+                 * (b) 全部是 by-upvalue（C1，`is_local=0`）：只是把**当前闭包**的
+                 *     upvalues[index] 指针复制一份（VM 侧 op_call.inc:600-611）。
+                 *     生命周期仍归 upvalue 的创建者（外层帧 locals 或它自己的 closed），
+                 *     JIT 不制造新的 open upvalue ⇒ 不触碰"locals 没有稳定 Value*"
+                 *     这个核心冲突（设计文档 §3/§4，不变量 I1）。
+                 * 记账：弹 0 压 1（见下面的 case OP_CLOSURE）。 */
                 if (jit_closure_log_on())
-                    jit_debug_closure_shape(chunk, ip, (int)(ip - body_start), "scan:ALLOW-C0");
+                    jit_debug_closure_shape(chunk, ip, (int)(ip - body_start),
+                                            clo_caps == 0 ? "scan:ALLOW-C0" : "scan:ALLOW-C1");
             } else {
-                /* C1（by-upvalue）/ C2（值捕获）/ C3（引用捕获本帧）尚未实现
-                 * （P2/P3/P4）⇒ 维持拒收，行为与 P0 之前一致。 */
+                /* C2（值捕获本帧局部）/ C3（引用捕获本帧局部）尚未实现（P3/P4）
+                 * ⇒ 维持拒收 —— 它们需要"把本帧某个局部槽的值/地址交给新闭包"，
+                 * 而 JIT 的 locals 在 scratch/寄存器上（没有稳定地址）。 */
                 if (jit_closure_log_on())
                     jit_debug_closure_shape(chunk, ip, (int)(ip - body_start), "scan:REJECT");
                 r->closure_seen = 1;

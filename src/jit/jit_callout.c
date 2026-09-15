@@ -1034,6 +1034,55 @@ Value jit_callout_is_null(Value v) {
     return val_bool(val_is_null(v));
 }
 
+/* Callout: OP_CLOSURE 的 **by-upvalue 捕获**（R5-P2b，形态 C1）。
+ *
+ * 逐条复刻 vm/vminc/op_call.inc:600-611 的 `is_local == 0` 分支：
+ *   `closure->upvalues[i] = frame->closure->upvalues[index];`
+ * —— 纯**指针复制**：不新建 upvalue、不改它的生命周期，upvalue 仍归创建者
+ * （外层帧 locals 的 open 形态，或它自己的 closed 字段）。这正是 I1 的收益：
+ * JIT 不制造新的 open upvalue，所以"关闭时机 / 悬空 / bailout 回滚"整类问题
+ * 都不在这条路径上。
+ *
+ * `desc` = 字节码里紧随 OP_CLOSURE 的捕获描述表（每条 6 字节：is_local(2)
+ * index(2) is_value_capture(2)），由 codegen 直接把**字节码指针**传进来 ——
+ * 它是静态只读、与 chunk 同寿命，不需要拷贝也不怕 GC。
+ *
+ * 守卫（任一不满足 → failed → 调用方 bailout 交解释器）：
+ *   · 常量不是函数对象 / upvalue_count 与描述条数不一致；
+ *   · `cur == NULL`（VM 报"没有闭包环境"）；
+ *   · 出现 `is_local=1` 的条目（值捕获/引用捕获属 P3/P4，scan 已拒，这里再兜一次）；
+ *   · `index` 越界或源 upvalue 为 NULL（VM 会解引用 NULL，JIT 宁可回退）。 */
+Value jit_callout_make_closure_upvals(Value func_val, ObjClosure* cur,
+                                      const uint8_t* desc, int n) {
+    if (!val_is_obj(func_val) || val_as_obj(func_val)->type != OBJ_FUNCTION || !desc || n < 0) {
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+    ObjFunction* fn = (ObjFunction*)val_as_obj(func_val);
+    if (fn->upvalue_count != n || !cur) {
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+    ObjClosure* cl = (ObjClosure*)gc_alloc(sizeof(ObjClosure), OBJ_CLOSURE);
+    if (!cl) {
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+    cl->function = fn;
+    cl->upvalue_count = n;
+    for (int i = 0; i < n; i++) {
+        const uint8_t* p = desc + i * 6;
+        uint16_t is_local = rd_short(p);
+        uint16_t index    = rd_short(p + 2);
+        if (is_local || index >= cur->upvalue_count || !cur->upvalues[index]) {
+            jit_callout_failed = 1;
+            return NULL_VAL;
+        }
+        cl->upvalues[i] = cur->upvalues[index];
+    }
+    return val_obj((Object*)cl);
+}
+
 /* Callout: OP_GET_UPVALUE / OP_SET_UPVALUE（R5-P2）—— 经闭包环境读写捕获变量。
  *
  * 语义逐条对齐 vm/vminc/op_variables.inc：

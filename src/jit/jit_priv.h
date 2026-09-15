@@ -392,6 +392,17 @@ void  jit_callout_upvalue_set(ObjClosure* closure, int slot, Value v);
  * 捕获表非空 / 常量不是函数对象 / 内存不足 ⇒ 置 jit_callout_failed（调用方 bailout）。 */
 Value jit_callout_make_closure(Value func_val);
 
+/* ---- R5-P2b：建闭包（OP_CLOSURE 的 by-upvalue 捕获，C1）----
+ * 逐条复刻 vm/vminc/op_call.inc:600-611：`is_local=0` 时
+ *   `closure->upvalues[i] = frame->closure->upvalues[index]`
+ * —— 纯指针复制：**不新建 upvalue、不改生命周期**（upvalue 仍归它的创建者）。
+ * `desc` 指向字节码里紧随 OP_CLOSURE 的捕获描述表（每条 6 字节：is_local/index/
+ * is_value_capture），静态只读、与 chunk 同寿命 ⇒ 直接传指针，无需拷贝。
+ * 仅接受 `is_local=0` 的条目；出现 `is_local=1`（值/引用捕获）或守卫不满足
+ * （cur==NULL / 索引越界 / 源 upvalue 为 NULL）即置 failed → 调用方 bailout。 */
+Value jit_callout_make_closure_upvals(Value func_val, ObjClosure* cur,
+                                      const uint8_t* desc, int n);
+
 /* ---- R2：判空（`?.` / `??` 编译出的 OP_IS_NULL）----
  * 纯判断：不分配、不报错 ⇒ 无失败通道、调用方没有 bailout 分支。
  * 语义与 vm/vminc/op_compare.inc 的 OP_IS_NULL 一致（val_bool(val_is_null(v))）。 */

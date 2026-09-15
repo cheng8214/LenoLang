@@ -64,12 +64,27 @@ case OP_TRUE:
             case OP_CLOSURE: {
                 uint16_t clo_ci = rd_short(ip + 1);
                 Value clo_fn = NULL_VAL;
-                if (ctx->chunk && ctx->chunk->constants && (int)clo_ci < ctx->chunk->const_cnt)
+                int clo_n = 0;
+                if (ctx->chunk && ctx->chunk->constants && (int)clo_ci < ctx->chunk->const_cnt) {
                     clo_fn = ctx->chunk->constants[clo_ci];   /* 常量表是 GC 根 ⇒ 无需额外保活 */
+                    if (val_is_obj(clo_fn) && val_as_obj(clo_fn)->type == OBJ_FUNCTION)
+                        clo_n = ((ObjFunction*)val_as_obj(clo_fn))->upvalue_count;
+                }
                 TOS_SPILL();
                 EMIT_CALLOUT_BEGIN();
                 emit_mov_reg_imm64(cb, JIT_ARG1, (uint64_t)clo_fn);
-                EMIT_CALL(jit_callout_make_closure);
+                if (clo_n > 0) {
+                    /* C1（by-upvalue）：把**当前闭包**的 upvalue 指针复制进新闭包。
+                     * desc = 紧随本指令的捕获描述表（静态只读、与 chunk 同寿命 ⇒
+                     * 直接把字节码指针传进 callout，无需拷贝）。scan 已保证这里的
+                     * 条目全是 is_local=0；callout 会复核（含 NULL/越界守卫）。 */
+                    EMIT_LOAD_TMP(JIT_ARG2, closure_disp);
+                    emit_mov_reg_imm64(cb, JIT_ARG3, (uint64_t)(uintptr_t)(ip + 3));
+                    emit_mov_reg_imm64(cb, JIT_ARG4, (uint64_t)clo_n);
+                    EMIT_CALL(jit_callout_make_closure_upvals);
+                } else {
+                    EMIT_CALL(jit_callout_make_closure);
+                }
                 EMIT_CALLOUT_END();                       /* RAX = 闭包（NaN-boxed） */
                 EMIT_STORE_TMP(tmp2_disp, JIT_RAX);
                 emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_callout_failed);
