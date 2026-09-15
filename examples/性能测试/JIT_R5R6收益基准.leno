@@ -1,0 +1,102 @@
+// ============================================================================
+// R5 / R6 收益基准：闭包（C1/C2）+ 多返回值 + 尾调用
+//
+// 为什么单独一份：`JIT覆盖面基准.leno` 的 8 项对应的是更早那批 opcode，
+// 不含 R5（闭包）与 R6（多返回值 / 尾调用）新解锁的形态。
+//
+// 用法：
+//   build\leno.exe "examples\性能测试\JIT_R5R6收益基准.leno"
+//   set LENO_NO_JIT=1 & build\leno.exe "examples\性能测试\JIT_R5R6收益基准.leno"
+//
+// 计时一律用 times.us()（times.ms() 在 Windows 只有 ~15.6ms 粒度）。
+// 判据：两侧 `CHECK:` 必须**逐字一致**（正确性），再比耗时与加速比（收益）。
+//
+// **两个必须遵守的构造细节**（否则等于没测，见 docs/JIT实现与调试记录.md §8.75/§8.76）：
+//   · 多返回值项用**直接调用**（`divmod(j+7, 3)`）—— 走 OP_CALL_GLOBAL_FUNC_TYPED，
+//     JIT 按 callee 的静态 return_count 记栈并交付多值（R6-a）；改写成函数值调用会被
+//     §8.59 的"rc != 1 即 bailout"守卫挡下（那是设计取舍，不是本项要测的东西）。
+//   · 尾调用项必须**经函数值调用**（`var f = withTail; f(m)`）—— 直接调用会被编译器在
+//     调用点**内联展开**，`OP_TAIL_CALL` 根本不会出现，函数级 JIT 也不会被触发。
+// ============================================================================
+import times
+
+// ---- 多返回值（R6-a）：被调方需要**函数级 JIT 发布多值** ----
+func divmod(int a, int b): [int, int] {
+    return a / b, a % b
+}
+
+// ---- 尾调用（R6-b）：withTail 的末尾是尾调用 ⇒ 需 R6-b 才能进函数级 JIT ----
+func add2(int x): int { return x + 2 }
+func withTail(int x): int { return add2(x) }
+
+// ---- 闭包 C1（by-upvalue）：内层闭包捕获的 base 是"外层闭包的 upvalue" ----
+// mid 自己捕获 base 是引用捕获（C3），但它在**循环外**创建，不在循环扫描视野里。
+func outerByUp(int base, int n): int {
+    var mid = func(): int {
+        var acc = 0
+        for n {
+            var f = func(): int { return base }
+            acc = acc + f()
+        }
+        return acc
+    }
+    return mid()
+}
+
+var tailF = withTail
+
+func bench() {
+    int acc = 0
+    float t1 = 0.0
+    float t2 = 0.0
+
+    // [1] C2：循环体内建闭包（值捕获）+ 立即调用（R5-P3 收益主体）
+    t1 = times.us()
+    int s1 = 0
+    for 500000 {
+        var k = 7
+        var f = func(): int { return k }
+        s1 = s1 + f()
+    }
+    t2 = times.us()
+    print("[1] C2 闭包(值捕获)     : " + (t2 - t1) + " us")
+    acc = acc + s1
+
+    // [2] C1：by-upvalue 捕获 + 调用（R5-P2 闭包通道）
+    t1 = times.us()
+    int s2 = outerByUp(3, 500000)
+    t2 = times.us()
+    print("[2] C1 闭包(by-upvalue): " + (t2 - t1) + " us")
+    acc = acc + s2
+
+    // [3] R6-a：多返回值（函数级 JIT 发布多值 + 调用点按静态 rc 交付）
+    t1 = times.us()
+    int s3 = 0
+    var j = 0
+    for 2000000 {
+        var[int, int](q, r) = divmod(j + 7, 3)
+        s3 = s3 + q + r
+        j = j + 1
+    }
+    t2 = times.us()
+    print("[3] R6-a 多返回值       : " + (t2 - t1) + " us")
+    acc = acc + s3
+
+    // [4] R6-b：尾调用（经函数值调用，避免调用点内联）
+    t1 = times.us()
+    int s4 = 0
+    var m = 0
+    for 2000000 {
+        s4 = s4 + tailF(m)
+        m = m + 1
+    }
+    t2 = times.us()
+    print("[4] R6-b 尾调用         : " + (t2 - t1) + " us")
+    acc = acc + s4
+
+    print("CHECK: acc=" + acc)
+}
+
+main() {
+    bench()
+}

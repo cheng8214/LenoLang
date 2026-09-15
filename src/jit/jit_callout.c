@@ -1858,6 +1858,75 @@ Value jit_callout_tail_call(int64_t* vstack_top, int arg_count) {
     /* callee 在实参块之上（与 jit_callout_call_value 同一约定） */
     Value callee_val = jit_raw_to_value(vstack_top[-1]);
 
+    /* ---- 快路径：callee 自身走函数级 JIT（**必须有**，否则 R6-b 是负优化）----
+     * 实测依据（`examples/性能测试/JIT_R5R6收益基准.leno` [4]）：只走下面 vm_call_value 的
+     * VM 重入时，JIT **比纯解释器慢约 12%**（130.8ms vs 114.7ms）—— 因为解释器的
+     * OP_TAIL_CALL 只是"复用当前帧 + 跳转"，近乎零成本，而 VM 重入每轮都要压参、压 callee、
+     * 建帧再拆帧。（与 §9 那条 2026-09-13 的评估结论一致："尾调用本身一点都不慢"。）
+     * 快路径的价值：callee 也是 JIT 函数时直接进机器码；而且 callee 的**发布区**
+     * （jit_fn_results[] + jit_fn_result_count）**正好就是本函数要发布的东西** ⇒ 原地返回即可，
+     * 连拷贝都不需要。
+     * 参数提升逐条对齐 call()（与 jit_try_hot_func_call 同一段逻辑）：尾调用的 callee 是
+     * 运行期值，调用点没有静态类型 ⇒ 不能指望调用方插了转换指令。
+     * 任何一步不成功 → 复位 failed，回落到下面的 VM 重入路径。 */
+    if (val_is_obj(callee_val) && val_as_obj(callee_val)->type == OBJ_CLOSURE &&
+        jit_state.enabled && jit_func_depth < JIT_FUNC_MAX_DEPTH) {
+        ObjClosure* tc_closure = (ObjClosure*)val_as_obj(callee_val);
+        ObjFunction* tc_fn = tc_closure->function;
+        if (tc_fn && tc_fn->chunk && tc_fn->chunk->len > 0) {
+            JitLoopFn jfn = jit_func_lookup_or_compile(tc_fn, vm);
+            if (jfn) {
+                int lcount = tc_fn->local_count > tc_fn->arity ? tc_fn->local_count : tc_fn->arity;
+                if (lcount < arg_count) lcount = arg_count;
+                if (lcount > JIT_MAX_LOCALS) lcount = JIT_MAX_LOCALS;
+                Value* flocals = jit_func_locals_pool[jit_func_depth];
+                for (int i = 0; i < lcount; i++) flocals[i] = NULL_VAL;
+                TypeKind* pt = tc_fn->param_types;
+                for (int i = 0; i < arg_count && i < lcount; i++) {
+                    Value a = jit_raw_to_value(vstack_top[arg_count - 1 - i]);
+                    if (pt && i < tc_fn->arity) {
+                        TypeKind t = pt[i];
+                        if (t == TYPE_FLOAT && val_is_int(a))
+                            a = val_float((double)val_as_int(a));
+                        else if (t == TYPE_FLOAT && val_is_bigint(a))
+                            a = val_float(bigint_to_double(val_as_bigint(a)));
+                        else if (t == TYPE_INT && val_is_float(a))
+                            a = val_int((int)val_as_num(a));
+                    }
+                    flocals[i] = a;
+                }
+                jit_func_depth++;
+                jit_fn_result = NULL_VAL;
+                jit_fn_result_count = 1;   /* 默认单返回；多返回由机器码覆写 */
+                jit_callout_failed = 0;
+                int tc_jr = jfn(flocals, vm->globals, tc_closure);
+                jit_func_depth--;
+                jit_retire_drain();
+                if (tc_jr == 0 && !jit_callout_failed) {
+                    int tc_rc = (int)jit_fn_result_count;
+                    if (tc_rc >= 1 && tc_rc <= VM_MAX_RETURNS) {
+                        /* callee 已发布结果 ⇒ 就是本函数的返回值，原地返回。
+                         * ⚠ 必须区分单返回/多返回：单返回路径只写 `jit_fn_result`，
+                         * **不写数组**（数组里是上一次多返回调用的残留）。这里踩过一次：
+                         * 直接读数组 ⇒ 结果静默错误（收益基准的 `CHECK` 立刻抓出来了）。 */
+                        if (tc_rc == 1) {
+                            if (vm->frame_cnt > 0) {
+                                jit_reloaded_locals = vm->frames[vm->frame_cnt - 1].locals;
+                            }
+                            return jit_fn_result;
+                        }
+                        jit_fn_result = jit_fn_results[0];
+                        if (vm->frame_cnt > 0) {
+                            jit_reloaded_locals = vm->frames[vm->frame_cnt - 1].locals;
+                        }
+                        return jit_fn_results[tc_rc - 1];
+                    }
+                }
+                jit_callout_failed = 0;   /* 回落 VM 重入前复位 */
+            }
+        }
+    }
+
     int saved_sp = vm->sp;
     /* JIT 虚拟栈向下增长：vstack_top[arg_count-1] 是第 0 个实参 */
     for (int i = 0; i < arg_count; i++) {
