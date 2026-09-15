@@ -349,6 +349,12 @@ struct Symbol {
     Scope* scope;
     Symbol* next;
     TypeInfo* type;
+    // 类型定义符号的"来源声明"（仅当该符号由某条 struct/cstruct/enum/face 声明注册时非空）。
+    // 用途：把「预注册占位 + 主阶段复用同一条声明」与「同名同种类的第二条声明」区分开 ——
+    // 前者必须静默复用，后者必须报重复定义（见 visit_type_def.inc / visit_ffi.inc /
+    // visit_enum.inc 的复用路径）。由 use 导入等非声明途径建立的符号该字段为 NULL，
+    // 沿用旧的静默复用行为，避免把跨模块导入的同名类型误判为重复定义。
+    const void* type_decl_ast;
     // 字典键集合（仅当类型为 dict 时使用）
     char** dict_keys;
     int dict_key_count;

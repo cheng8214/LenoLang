@@ -16,10 +16,23 @@
                 // 的 else 当成"重复定义"误报。kind 保持与预注册时一致。
                 Symbol* sym = scope_resolve_local(s->current, ast->u.enum_def.name);
                 if (sym && sym->type && sym->type->kind == TYPE_ENUM) {
+                    // 同名同种类：type_decl_ast 为空 = 预注册刚建的、主阶段还没认领（同一条声明）；
+                    // 已有值且不等于当前 AST = 源码里真的又写了一条同种类同名声明 ⇒ 报重复定义。
+                    // 注意这条报错是"补回来"的：02a3d50f 加复用路径之前，第二条 `enum E1` 会走
+                    // 下面的 else 报"enum 'E1' 重复定义"，加复用后连真·重复定义也一起吞掉了。
+                    if (sym->type_decl_ast && sym->type_decl_ast != (const void*)ast) {
+                        char msg[BUFFER_MEDIUM];
+                        snprintf(msg, sizeof(msg), "enum '%s' 重复定义", ast->u.enum_def.name);
+                        error_add_at(ERR_DUPLICATE_VAR, ast->line, ast->column, msg);
+                        type_free(enum_type);
+                        break;  // 不注册成员、不更新符号
+                    }
                     type_free(sym->type);
                     sym->type = enum_type;
+                    sym->type_decl_ast = ast;
                 } else {
                     sym = scope_define(s->current, ast->u.enum_def.name, kind);
+                    if (sym) sym->type_decl_ast = ast;
                 }
                 if (sym) {
                     sym->type = enum_type;

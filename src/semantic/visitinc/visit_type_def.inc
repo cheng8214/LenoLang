@@ -90,12 +90,26 @@
                 // 先检查是否已经预注册
                 Symbol* sym = scope_resolve_local(s->current, ast->u.struct_def.name);
                 if (sym && sym->type && sym->type->kind == TYPE_STRUCT) {
-                    // 已预注册，更新现有符号
+                    // 同名同种类：既可能是"预注册占位"（同一条声明），也可能是"源码里又写了
+                    // 一条"。type_decl_ast 记的是该符号归哪条声明：为空 = 预注册刚建的、主阶段
+                    // 还没认领，故必是同一条声明；已有值且不等于当前 AST，就是真的又声明了一次。
+                    // 此前这里只看 kind 就无条件复用，于是 `struct E1 {..}` 写两遍静默通过，
+                    // 且第二份把第一份的字段整份顶掉（直到用 E1.x 才报"没有字段 x"，归因跑偏）。
+                    if (sym->type_decl_ast && sym->type_decl_ast != (const void*)ast) {
+                        char msg[BUFFER_MEDIUM];
+                        snprintf(msg, sizeof(msg), "struct '%s' 重复定义", ast->u.struct_def.name);
+                        error_add_at(ERR_DUPLICATE_VAR, ast->line, ast->column, msg);
+                        type_free(struct_type);
+                        break;  // 不更新符号、不写全局定义表
+                    }
+                    // 已预注册（或同一条声明重复进入），更新现有符号
                     type_free(sym->type);
                     sym->type = struct_type;
+                    sym->type_decl_ast = ast;
                 } else {
                     // 未注册，创建新符号
                     sym = scope_define(s->current, ast->u.struct_def.name, kind);
+                    if (sym) sym->type_decl_ast = ast;
                 }
 
                 if (sym) {
@@ -479,8 +493,19 @@
 
                 Symbol* existing = scope_resolve_local(s->current, ast->u.face_def.name);
                 if (existing && existing->type && existing->type->kind == TYPE_FACE) {
+                    // 同名同种类：type_decl_ast 为空 = 预注册刚建的、主阶段还没认领（同一条声明）；
+                    // 已有值且不等于当前 AST = 源码里真的又写了一条同种类同名声明 ⇒ 报重复定义。
+                    // 此前只看 kind 就无条件复用，`face E1 {..}` 写两遍静默通过、后写的那份生效。
+                    if (existing->type_decl_ast && existing->type_decl_ast != (const void*)ast) {
+                        char msg[BUFFER_MEDIUM];
+                        snprintf(msg, sizeof(msg), "face '%s' 重复定义", ast->u.face_def.name);
+                        error_add_at(ERR_DUPLICATE_VAR, ast->line, ast->column, msg);
+                        type_free(face_type);
+                        break;  // 不更新符号、不写全局定义表
+                    }
                     type_free(existing->type);
                     existing->type = face_type;
+                    existing->type_decl_ast = ast;
                 } else if (existing && existing->type) {
                     // 跨种类同名：struct 分支早已检查（cstruct/enum 亦然），唯独 face 漏了，
                     // 于是 `struct Foo` + `face Foo` 不报错、两张全局表各存一份，后续按名查
@@ -504,6 +529,7 @@
                     if (sym) {
                         type_free(sym->type);
                         sym->type = face_type;
+                        sym->type_decl_ast = ast;
                         sym->struct_field_count = ast->u.face_def.method_count;
                         sym->struct_field_names = (char**)malloc(sizeof(char*) * ast->u.face_def.method_count);
                         sym->struct_field_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * ast->u.face_def.method_count);

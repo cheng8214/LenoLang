@@ -1,14 +1,26 @@
-// 测试 struct 重新定义（覆盖）
-// 验证内存泄漏修复
+// 测试 struct 重复定义（应当报错）
+//
+// 本文件原先验证的是"struct 重定义 = 覆盖"（期待最后一份定义生效，顺带验证覆盖时的
+// 资源清理）。当时四张类型表（struct/cstruct/enum/face）的预注册复用路径只比 kind 就
+// 无条件复用，于是"真·重复定义"被静默吞掉，后写的那份悄悄顶掉了前一份 —— 直到用到
+// c.version 之类才可能报"没有字段 xxx"，归因跑偏。
+//
+// 现在复用路径会区分"预注册占位（同一条声明，必须静默复用）"与"源码里又写了一条
+// （必须报错）"（依据 Symbol::type_decl_ast），所以这里与其它三个种类一样会报重复定义，
+// 本文件随之改为负面示例 —— 与 examples/enum/test_enum_errors.leno 同一形态。
+//
+// 期望：编译失败，报错 2 处，均落在"后声明"的那条 struct Config 上
+//   (24,1): [重复定义] struct 'Config' 重复定义
+//   (32,1): [重复定义] struct 'Config' 重复定义
 
-// 第一次定义
+// 第一次定义（正常）
 struct Config
 {
     int version = 1
     string name = "old"
 }
 
-// 第二次定义（覆盖）
+// 第二次定义 —— 应当报错：重复定义
 struct Config
 {
     int version = 2
@@ -16,7 +28,7 @@ struct Config
     float extra = 3.14
 }
 
-// 第三次定义（再次覆盖）
+// 第三次定义 —— 应当报错：重复定义
 struct Config
 {
     int version = 3
@@ -24,25 +36,6 @@ struct Config
 
 main()
 {
-    print("测试 struct 重新定义")
-    
-    Config c = new Config()
-    
-    print($"version: {c.version}, 期望: 3")
-    
-    if c.version == 3
-    {
-        print("测试通过! Struct 覆盖工作正常")
-    }
-    else
-    {
-        print("测试失败!")
-    }
-    
-    // 多次重复定义测试内存稳定性
-    print("")
-    print("重复定义测试...")
-    
-    // 循环中多次定义（模拟多次加载/热更新场景）
-    // 注意：实际语法不支持循环内定义 struct，这里只是概念演示
+    // 编译期已报错，不会执行到这里
+    print("不应该执行到这里")
 }

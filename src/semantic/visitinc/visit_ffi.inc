@@ -109,12 +109,24 @@
                 // 先检查是否已经预注册
                 Symbol* sym = scope_resolve_local(s->current, ast->u.cstruct_def.name);
                 if (sym && sym->type && sym->type->kind == TYPE_CSTRUCT) {
-                    // 已预注册，更新现有符号
+                    // 同名同种类：type_decl_ast 为空 = 预注册刚建的、主阶段还没认领（同一条声明）；
+                    // 已有值且不等于当前 AST = 源码里真的又写了一条同种类同名声明 ⇒ 报重复定义。
+                    // 此前只看 kind 就无条件复用，`cstruct E1 {..}` 写两遍静默通过、后写的那份生效。
+                    if (sym->type_decl_ast && sym->type_decl_ast != (const void*)ast) {
+                        char msg[BUFFER_MEDIUM];
+                        snprintf(msg, sizeof(msg), "cstruct '%s' 重复定义", ast->u.cstruct_def.name);
+                        error_add_at(ERR_DUPLICATE_VAR, ast->line, ast->column, msg);
+                        type_free(cstruct_type);
+                        break;  // 不更新符号、不写全局定义表
+                    }
+                    // 已预注册（或同一条声明重复进入），更新现有符号
                     type_free(sym->type);
                     sym->type = cstruct_type;
+                    sym->type_decl_ast = ast;
                 } else {
                     // 未注册，创建新符号
                     sym = scope_define(s->current, ast->u.cstruct_def.name, kind);
+                    if (sym) sym->type_decl_ast = ast;
                 }
 
                 if (sym) {
