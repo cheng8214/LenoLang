@@ -1,0 +1,77 @@
+// 内联侧缺口探针：被调函数体内含「经函数值调用」（裸 OP_CALL）+ 「取全局函数值」
+//
+// 背景（§8.77 实测：`inline|unsupported opcode 59(OP_CALL)` 20 个被调方）：
+//   `var f = foo; f(x)` / `arr[i](x)` / `self.cb(x)` 编译出 **OP_CALL**（callee 是运行期值），
+//   而 `scan_callee_for_inline()` 没有它的 case ⇒ 落到 default ⇒
+//   **被调函数体内只要有一次"经函数值调用"，该函数就永远不能内联进热循环**。
+//   顺带一起补了 `OP_GET_GLOBAL_FUNC`(18) —— `var f = foo` 的前半指令，
+//   loop scan 在 R6-b 已补、inline scan 此前没有。
+//
+// ⚠ 三个必须绕开的坑（前两条同 §8.68，第三条是本探针新增）：
+//   ① **编译器层内联器**（`codegen_inline.c`，体内含 `for` 即拒绝）：能被它内联的函数
+//      在字节码里根本不存在 ⇒ 让被调方体内带 `for`；
+//   ② **调用点必须是 JIT 会尝试内联的形态**：`scan_loop_body` 只对
+//      `OP_CALL_GLOBAL_FUNC_TYPED`（带静态类型）与 `OP_INVOKE_METHOD_TYPED` 尝试内联；
+//      非 TYPED 的 `OP_CALL_GLOBAL_FUNC` 压根不尝试 ⇒ 这里用**顶层函数直接调用**；
+//   ③ 测的是"**内联**"而不是"函数级 JIT"：用**同一二进制**的 `LENO_JIT_NOINLINE=1`
+//      做 A/B（它只关掉 JIT 级内联，等价于修复前该调用点的形态），不必重建旧版本。
+//
+// 验收判据：
+//   ① `LENO_JIT_DEBUG=1` 下应出现 `inline: '<name>' bc_off=... arg_count=...`
+//      （修复前只有 `inline-scan FAIL: unsupported opcode 59`）；
+//   ② JIT 与 `LENO_NO_JIT=1` 输出逐位一致；
+//   ③ `Bailouts` 不回归（本探针应为 0）。
+
+import times
+
+// 被内联方的两种 callee 形态：全局函数值 与 局部零捕获闭包
+func addv(int a, int b): int { return a + b }
+
+// 被内联方 1：`var f = addv`（OP_GET_GLOBAL_FUNC）+ `f(1,2)`（OP_CALL，argc=2）
+func sumViaGlobal(int n): int {
+    var f = addv
+    var acc = 0
+    for n {
+        acc = acc + f(1, 2)
+    }
+    return acc
+}
+
+// 被内联方 2：局部零捕获闭包（纯 OP_CALL，无 GET_GLOBAL_FUNC）
+func sumViaClosure(int n): int {
+    var g = func(int a, int b): int { return a + b }
+    var acc = 0
+    for n {
+        acc = acc + g(1, 2)
+    }
+    return acc
+}
+
+// 热循环里的调用点：顶层函数直接调用 ⇒ OP_CALL_GLOBAL_FUNC_TYPED（JIT 会尝试内联）
+// 计时用 us()：ms() 在 Windows 只有 ~15.6ms 粒度，会把差异量化掉。
+func bench(int n): int {
+    int total = 0
+    float t0 = times.us()
+    for n {
+        total = total + sumViaGlobal(4)
+    }
+    print("  sumViaGlobal  n=" + n + " us=" + (times.us() - t0))
+    t0 = times.us()
+    for n {
+        total = total + sumViaClosure(4)
+    }
+    print("  sumViaClosure n=" + n + " us=" + (times.us() - t0))
+    return total
+}
+
+main() {
+    // n 可由命令行覆盖（默认 500000）。
+    // ⚠ 开 `LENO_JIT_DEBUG=1` 时必须用小 n（如 2000）：debug 输出是**按执行**打的，
+    //   大 n 会让 stderr 涨到 MB 级并把运行拖到分钟级（本探针踩过两次）。
+    var n = 500000
+    var args = _args()
+    if args.len() > 0 { n = _int(args[0]) }
+    // 每轮 sumViaGlobal(4)=4×3=12、sumViaClosure(4)=12 ⇒ 两侧合计 24/轮
+    print("total= " + bench(n))
+    return 0
+}

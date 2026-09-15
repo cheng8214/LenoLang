@@ -43,6 +43,23 @@
 **注意**：这项基准的 `CHECK` 曾当场抓出尾调用快路径的一个静默错误（单返回只写
 `jit_fn_result`、数组是残留）—— 量化收益时**必须**同时校验结果一致性。
 
+## 内联侧「经函数值调用」（`probe_inline_call_value.leno`，R7④）
+
+被调函数体内含 `var f = foo; f(x)`（`OP_GET_GLOBAL_FUNC` + `OP_CALL`）时，此前**不能内联**。
+
+```powershell
+build\leno.exe jit_probes\probe_inline_call_value.leno 500000                     # 有内联
+$env:LENO_JIT_NOINLINE='1'; build\leno.exe jit_probes\probe_inline_call_value.leno 500000
+# 实测 34.5 ms vs 93.9 ms = 2.72x（同二进制 A/B，不需要重建旧版）；对照项两侧 ±1%
+```
+
+**三个必须绕开的坑**（探针注释里有完整说明）：① 被调方体内要带 `for`（否则被**编译器层**
+内联器吃掉，字节码里根本不存在该函数）；② 调用点必须用**顶层函数直接调用/方法调用**
+（`OP_CALL_GLOBAL_FUNC_TYPED` / `INVOKE_METHOD_TYPED`），非 TYPED 形态 JIT 压根不尝试内联；
+③ 要测"内联收益"就用 `LENO_JIT_NOINLINE=1` 做同二进制 A/B。
+⚠ **开 `LENO_JIT_DEBUG=1` 时必须用小 n**（如 2000）：debug 输出是**按执行**打的，
+大 n 会让 stderr 涨到 MB 级并把运行拖到分钟级（本探针踩过两次）。
+
 ## R6-b：尾调用 + 函数级 JIT（`probe_tail_call_jit.leno`）
 
 `sumTo`（深尾递归）/ `scale`（末尾是尾调用的中间层）/ `loopTail`（循环体内尾调用）。

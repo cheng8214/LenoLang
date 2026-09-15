@@ -739,6 +739,23 @@ static int scan_callee_for_inline(Chunk* cc, ObjModule* callee_module,
                 vstack--; break;
             case OP_RETURN_MULTI:
                 vstack -= ip[1]; break;
+            case OP_CALL: {
+                /* ---- 裸 OP_CALL（R7④，2026-09-16）----
+                 * callee 是**运行期值**：局部函数值 / 参数 / 字段 / 容器元素
+                 * （`var f = foo; f(x)`、`arr[i](x)`、`self.cb(x)` …）。
+                 * 记账与 scan_loop_body 的同名 case **完全一致**：
+                 *   [args(ac)][callee] → 返回后留下 rc 个值 ⇒ 净效应 = rc - (ac + 1)，
+                 *   而 rc 静态不可知（callee 是值）⇒ **按 rc = 1 记账**，
+                 *   由 callout 在**调用前**用 callee 的 return_count 复核：
+                 *   不等于 1 就 bailout（多返回值解构调用点交解释器）。
+                 * 少了这个 case 的后果：**被调函数体内只要有一次"经函数值调用"，
+                 * 该函数就永远不能被内联进热循环**（落到 default 报
+                 * `inline-scan FAIL: unsupported opcode 59`）—— 实测 file_manager 里
+                 * 有 20 个这样的被调方（`LENO_JIT_GAPS=1`）。 */
+                int ac = rd_short(ip + 1);
+                vstack -= ac;
+                break;
+            }
             case OP_TAIL_CALL:
                 /* R6-b：内联体里的尾调用**不能**内联 —— 尾调用要求「callee 的结果直接成为
                  * **外层函数**的返回值」，而内联机制只能把结果变成「这次调用的结果」
@@ -762,6 +779,12 @@ static int scan_callee_for_inline(Chunk* cc, ObjModule* callee_module,
             case OP_MOVE_LOCAL_POP: break;
             case OP_SET_LOCAL_CONST: break;
             case OP_GET_GLOBAL: vstack++; break;
+            case OP_GET_GLOBAL_FUNC:
+                /* push global_funcs[slot]（函数值）→ vstack++。
+                 * 与 scan_loop_body 的同名 case 一致（R6-b 补的那条）；内联侧此前没有 ⇒
+                 * 被调函数体内只要有 `var f = foo`（取全局函数值）就不能内联。 */
+                vstack++;
+                break;
             case OP_SET_GLOBAL: break;
             case OP_INC_LOCAL: case OP_DEC_LOCAL:
             case OP_PRE_INC_LOCAL: case OP_PRE_DEC_LOCAL:

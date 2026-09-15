@@ -655,7 +655,7 @@ R2 的多批 opcode 已补齐。⇒ **当前剩余缺口的完整清单见 §8.7
 | ~~R3~~ | ~~L0 诊断收口~~ | ~~`opcode_size` 余项补全；把 scan 的 default 报错区分成 `unknown opcode`（缺长度）与 `unsupported opcode`（已收录长度但缺 case）~~ | ~~纯诊断，无行为变化~~ | ~~极低~~ | **已完成（§8.63，2026-09-14）**：补齐约 40 条长度（逐条与 VM 的 `READ_*`、`debug.c` 反汇编器交叉核对）；`OP_CLOSURE` 因长度依赖常量表而**故意保持"未知"**；报错分为 `unknown（长度未知）`/`unsupported（已收录长度、未实现）`。**实测收益**：同一负载的拒收清单从"含糊的 138"变成分类可排期（76×4 / 93×3 / 14×2 / 142×2 / 138×49），R2 的下一批因此是测出来的而不是猜的 |
 | R5 | 闭包创建与捕获变量（`OP_CLOSURE` / `GET/SET/CLOSE_UPVALUE`） | 循环里建闭包、闭包体内读写捕获变量都不进 JIT（被调函数带 upvalue 时自动退回 VM 重入 ⇒ 语义正确但不快） | 两件基础：**(a)** func-JIT ABI 要加 closure 通道（现为 `jfn(flocals, globals)`，无 upvalue 入口）；**(b)** 循环 JIT 的 locals 在 scratch 区（迭代即复用）⇒ 直接捕获会产生**悬空 upvalue**，只能先允许"捕获已在 upvalue 链上的变量"，或改 locals 布局 | 高（ABI + 生命周期不变量） | **已完成（§8.72，2026-09-15）**：C0（零捕获）/ C1（by-upvalue）/ C2（值捕获）+ `GET/SET_UPVALUE` 全部进 JIT（P1 `34508a90` / P2a `68002778` / P2b `6c119bd3` / P3 `2a572102`，assert 304→307/0）；设计稿与不变量 I1~I8 见 `JIT闭包与upvalue设计_R5.md`。**C3（引用捕获本帧局部）与内联体内的闭包维持拒绝**（P4 需实测授权 / I8） |
 | R6 | 函数级 JIT 的多返回值 + `OP_TAIL_CALL` | `jit_compile_function` 直接拒收 `return_count > 1`；`OP_TAIL_CALL` 在循环 JIT 里等价"提前返回"（应归入 `has_reachable_return` 拒绝），只有函数级 JIT 有价值 | 多返回：扩返回值通道（`jit_fn_result` 单值 → 多槽约定），调用方回填约定已就绪（§8.59 的 helper）；尾调用：帧复用语义另算 | 中 | **R6-a（多返回值）已完成（§8.75，2026-09-15）**：发布区 `jit_fn_results[] + jit_fn_result_count` + `jit_fastpath_deliver_multi()`；三处快路径与解释器热入口全部支持多值；`return_count == -1` 靠交付前复核回落。探针 `probe_multi_ret_jit.leno` JIT/NO_JIT 逐字一致、快路径 3903 次零回退、assert 307/0。**R6-b（`OP_TAIL_CALL`）已完成（§8.76，同日）**：函数模式=「调用 + 发布结果 + epilogue」，循环/内联维持拒绝；关键是**先补上 `OP_GET_GLOBAL_FUNC`（opcode 18）的缺口**（尾调用形态是它 + `OP_TAIL_CALL`，此前整函数被拒）。"关闭本帧 upvalue"对 JIT 恒为空操作（R5 的 I1 + C3 拒绝）；空间行为靠深度守卫交解释器做真 TCO（探针 20000 层 ×200 轮不崩、0.1s）。探针 `probe_tail_call_jit.leno`、assert 307/0。**仍未支持**：`OP_TAIL_CALL_NATIVE` |
-| R7 | 内联的跨模块限制 + 内联侧 opcode 缺口 | ① 模块变量/函数访问被 inline scan 一刀拒绝（§8.55/§8.56）——内联后没有 callee 的帧，模块归属不可知（**实测 ×166**，内联侧第一大）；② inline scan 没有 `OP_GET_METHOD` 的 case ⇒ 含方法调用的函数一律不能内联（**实测 ×36**）；③ `138:GET_CSTRUCT_DEF ×116`（维持拒绝） | ① 在 inline site 记录 callee 的 module，与 caller 相同才允许内联；② 照 loop scan 的记账补 `GET_METHOD`（配对形态 `-(argc+1-rc)`，rc 用同样的 `jit_resolve_method_ret_count`，解析不出就拒绝内联） | 低 | **② 已完成（§8.68，2026-09-15）**：`scan_callee_for_inline` 补 `OP_GET_METHOD`（配对/独立两形态），探针 `probe_inline_method_call.leno` 2.27~2.40x、用例 `test_jit_inline_method_dispatch.leno`。**① 已完成（§8.69，同日）**：加「callee 与 caller 同模块」守卫后放行模块变量/函数访问，探针 `probe_inline_module_var.leno` ≈2~3x、跨模块仍拒绝（安全边界）、用例 `test_jit_inline_module_var.leno`；assert 298/0。③ 维持拒绝 |
+| R7 | 内联的跨模块限制 + 内联侧 opcode 缺口 | ① 模块变量/函数访问被 inline scan 一刀拒绝（§8.55/§8.56）——内联后没有 callee 的帧，模块归属不可知（**实测 ×166**，内联侧第一大）；② inline scan 没有 `OP_GET_METHOD` 的 case ⇒ 含方法调用的函数一律不能内联（**实测 ×36**）；③ `138:GET_CSTRUCT_DEF ×116`（维持拒绝） | ① 在 inline site 记录 callee 的 module，与 caller 相同才允许内联；② 照 loop scan 的记账补 `GET_METHOD`（配对形态 `-(argc+1-rc)`，rc 用同样的 `jit_resolve_method_ret_count`，解析不出就拒绝内联） | 低 | **② 已完成（§8.68，2026-09-15）**：`scan_callee_for_inline` 补 `OP_GET_METHOD`（配对/独立两形态），探针 `probe_inline_method_call.leno` 2.27~2.40x、用例 `test_jit_inline_method_dispatch.leno`。**① 已完成（§8.69，同日）**：加「callee 与 caller 同模块」守卫后放行模块变量/函数访问，探针 `probe_inline_module_var.leno` ≈2~3x、跨模块仍拒绝（安全边界）、用例 `test_jit_inline_module_var.leno`；assert 298/0。③ 维持拒绝。**④ 已完成（2026-09-16，§8.77）**：内联侧补 `OP_CALL`(59) 与 `OP_GET_GLOBAL_FUNC`(18)（"取函数值再调用"形态此前使被调方永不可内联），拒收清零、探针同二进制 A/B **2.72x**、用例 `test_jit_inline_call_value.leno`、assert 308/0 |
 | ~~R8~~ | ~~性能基准复盘~~ | ~~§9 的数据需要按最新覆盖面重跑（JIT vs `LENO_NO_JIT=1`），量化"覆盖面增长到底换来多少"~~ | ~~纯测量；也顺便验证 R4 的延迟回收没有性能回退~~ | ~~极低~~ | **已完成（§9 的「R8 基准复盘」小节，2026-09-14）**：新增可复用基准 `examples/性能测试/JIT覆盖面基准.leno`（8 项，专测本轮补齐的 opcode）；JIT/VM 加速比 2.2x\~18.6x，**字符串插值 1.0x（分配主导，非测错）**；与历史基线交叉核对无回退（i++ 75 vs 78 ms/亿、arr.add 620 vs 625 ms/亿）⇒ R4 延迟释放无可测代价 |
 | ~~R9~~ | ~~`OP_SWITCH_LOOKUP` 的 callout 开销~~ | ~~R9 前的基准显示：JIT 下 switch 每轮一次 callout（+15.5ms/3M 轮），比等价的 if 链慢 3.7 倍~~ | ~~编译期分流：case 值全 int 时发内联比较链~~ | ~~低（非 int 一律退回原 callout 路径）~~ | **已完成（§8.62，2026-09-14）**：int 快路径 + int48 守卫（bailout 交解释器，保住 bigint 值能命中 int case 的语义）+ 重复值排除；switch 的 JIT 时间 30.4 → **15.7 ms**，与 if 同级 |
 | — | **建议维持拒绝** | `OP_THROW`、`OP_AWAIT`/`OP_ASYNC_CALL`、`OP_CLIB_CALL`/`OP_CFUNC_CALLBACK`、`OP_GET_FIELD_ADDR`、`OP_DTOR_LOCAL`、`OP_TAIL_CALL_NATIVE`、`OP_PUSH_TYPE_ARGS`、**`OP_GET_CSTRUCT_DEF`(138)**、模块定义期指令 | 语义特殊（异常/协程/FFI/泛型/仅初始化期出现），收益低、风险高 | — | 维持 |
@@ -4884,7 +4884,7 @@ v1 的逐次计数**不可用**：编译尝试会因 `jit_func_cache` 冲突驱�
 | 36 + 28 | func | 函数体含循环（`OP_FOR_PREP` 95 / `OP_LOOP` 58） | **设计限制**（`func_mode` 只保证无循环函数正确） |
 | 28 + 20 + 4 | inline / func / loop | `OP_GET_CSTRUCT_DEF`(138) | **FFI / cstruct**，需单独立项 |
 | 12 + 12 + 8 | func / loop / inline | `OP_CLIB_CALL`(142) | **FFI / C 库调用**，同上 |
-| 20 | inline | **`OP_CALL`(59) 内联扫描没有 case** | **可做且便宜**：照 loop scan 的同名 case 补记账 |
+| ~~20~~ → **0** | inline | ~~`OP_CALL`(59) 内联扫描没有 case~~ | **✅ 已解决（2026-09-16，R7④，见下）** |
 | 10 | loop | 循环体含可达 return | 设计限制（loop JIT 无法从机器码返回函数） |
 | 3 | func | `OP_DICT`(69)（字典字面量 `{}`） | 可做，但**量很小** |
 
@@ -4892,9 +4892,25 @@ v1 的逐次计数**不可用**：编译尝试会因 `jit_func_cache` 冲突驱�
 > 按 v1 的数据会把"字典字面量"误判成第一大缺口。这正是"**先让测量稳定、再下结论**"的价值；
 > 也说明：**任何随编译次数变化的计数，都必须先与缓存驱逐解耦**。
 
+**R7④（2026-09-16 完成）：内联侧补 `OP_CALL`(59) 与 `OP_GET_GLOBAL_FUNC`(18)**
+
+`scan_callee_for_inline()` 此前**没有这两条 case** ⇒ **被调函数体内只要有一次"取函数值再调用"
+（`var f = foo; f(x)` / `arr[i](x)` / `self.cb(x)`），该函数就永远不能内联**（落 default 报
+`unsupported opcode 59` / `18`）。修法照 loop scan 的同名 case 补记账：
+`[args(ac)][callee]` → 净效应 `rc - (ac + 1)`，rc 静态不可知 ⇒ **按 `rc = 1` 记账**，
+由 callout 在**调用前**复核 `return_count`（不等于 1 就 bailout，多返回值解构交解释器）。
+
+- **实测（拒收清零）**：file_manager / cache_cleaner 的 `opcode 59` 与 `opcode 18` 计数
+  **双双归零**，且**没有前移到新的 opcode**。
+- **实测（收益）**：探针 `jit_probes/probe_inline_call_value.leno` 用**同一二进制**跑
+  `LENO_JIT_NOINLINE=1` 做 A/B —— **34.5 ms vs 93.9 ms = 2.72x**；
+  对照组（`sumViaClosure`：体内含闭包、按 I8 不被内联）两侧 **±1%** ⇒ 差异确实来自内联本身。
+- **用例**：`assert/test_jit_inline_call_value.leno`（argc = 1/2/3 + 局部零捕获闭包当 callee +
+  同体三处调用，**数值精确**判据）。assert **308 passed / 0 failed**。
+
 **分布特征**：FFI 两类合计 **84 个对象**（最大的一档）、"函数体含循环" **64**（设计限制）、
-"跨模块访问" **48**（刻意保留）⇒ **真正"补 opcode 就能拿下"的只剩内联侧 `OP_CALL`(20)
-与 `OP_DICT`(3)**。覆盖面工作基本收尾：剩下的要么是刻意保留 / 设计限制，要么需要按 FFI 单独立项。
+"跨模块访问" **48**（刻意保留）⇒ 内联侧 `OP_CALL` 补齐后，**"补 opcode 就能拿下"的只剩
+`OP_DICT`(3)**。覆盖面工作基本收尾：剩下的要么是刻意保留 / 设计限制，要么需按 FFI 单独立项。
 
 **负面结论（确认前几轮的收口）**：清单里**没有** `OP_GET/SET_UPVALUE`(14/15)、
 `OP_CLOSURE`(61)、`OP_TAIL_CALL`、`OP_GET_GLOBAL_FUNC`(18) ⇒ **R5 / R6 的缺口确实清零了**
