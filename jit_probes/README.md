@@ -36,6 +36,22 @@
 > **不要**为此开 `LENO_JIT_DEBUG=1` —— 它会把每次编译尝试的 body raw hex（最多 1200 字节）
 > 整段打印，真实负载上输出量极大（观测体验是"这个命令跑不完"）。
 
+## R6-b：尾调用 + 函数级 JIT（`probe_tail_call_jit.leno`）
+
+`sumTo`（深尾递归）/ `scale`（末尾是尾调用的中间层）/ `loopTail`（循环体内尾调用）。
+
+```powershell
+build\leno.exe jit_probes\probe_tail_call_jit.leno 20000                        # JIT
+cmd /c "set LENO_NO_JIT=1&& build\leno.exe jit_probes\probe_tail_call_jit.leno 20000"
+# 两侧逐字一致；FuncCompiled: 2 / Bailouts: 0；20000 层 × 200 轮 ~0.1s 不崩
+```
+
+**两个写探针的坑（否则等于没测）**：
+1. **必须经函数值调用**（`var sumF = sumTo; sumF(n,0)`）——直接 `sumTo(n,0)` 会被编译器在
+   调用点**内联展开**，函数级 JIT 根本不触发（`FuncCompiled: 0`）；
+2. 函数级 JIT 有**热度阈值**——只调用一次不编译，要在循环里跑热。
+详见 §8.76。
+
 ## R6-a：多返回值 + 函数级 JIT（`probe_multi_ret_jit.leno`）
 
 覆盖 2 值（int）/ 2 值（float）/ 3 值 / **多返回值嵌套**（被调函数内部再调多返回值函数）。

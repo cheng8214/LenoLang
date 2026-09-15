@@ -1,0 +1,54 @@
+// R6-b 探针：尾调用（函数级 JIT）
+//
+// ⚠ 关键前提：**必须通过"函数值"调用被测函数**。
+//    原因：编译器会在调用点把这类小函数**内联展开**（一开始写 `sumTo(n,0)` 时，
+//    main 里出现的是展开后的循环体，函数级 JIT 根本没被触发 ⇒ FuncCompiled=0，
+//    探针等于没测）。经函数值（`var f = sumTo; f(n, 0)`）调用时目标在运行期才可知，
+//    调用点不可能被静态内联 ⇒ 必然走 callout → 函数级 JIT 快路径。
+//
+// 判据（三条）：
+//   1. `LENO_NO_JIT=1` 与开 JIT 的输出**逐字一致**；
+//   2. **深尾递归不崩**：VM 的 OP_TAIL_CALL 复用当前帧（真 TCO、frame_cnt 不增长），
+//      而 JIT 侧是"调用 + 返回"的 C 调用链 —— 空间行为靠 `jit_func_depth >=
+//      JIT_FUNC_MAX_DEPTH` 时的 bailout 保住（交解释器做真 TCO）⇒ 必须不崩且结果正确；
+//   3. `FuncCompiled > 0`（真的编译了含 OP_TAIL_CALL 的函数）+
+//      `LENO_JIT_FTRACE=1` 下能看到快路径完成。
+
+// 1) 深尾递归
+func sumTo(int n, int acc): int {
+    if n <= 0 { return acc }
+    return sumTo(n - 1, acc + n)
+}
+
+// 2) 末尾是尾调用的"中间层"函数
+func add2(int x): int { return x + 2 }
+func scale(int x): int { return add2(x) }
+
+// 3) 循环体内的尾调用（loop JIT 必须整体拒收，正确性靠解释器）
+func loopTail(int n): int {
+    for 0 : n to i {
+        if i == n - 1 { return sumTo(i, 0) }
+    }
+    return -1
+}
+
+var sumF = sumTo
+var scaleF = scale
+
+main() {
+    var n = 20000
+    var args = _args()
+    if args.len() > 0 { n = _int(args[0]) }
+
+    // 一次调用不够热（函数级 JIT 有热度阈值）⇒ 用循环把它跑热，
+    // 同时保留"深尾递归"（每轮都从 n 递到 0，靠 VM 的 TCO 走完 20000 层）
+    int acc = 0
+    for 0 : 200 to k { acc = acc + sumF(n, 0) }
+    print("sumTo=" + acc + "\n")
+
+    int s = 0
+    for 0 : n to i { s = s + scaleF(i) }
+    print("scale=" + s + "\n")
+
+    print("loopTail=" + loopTail(5) + "\n")
+}

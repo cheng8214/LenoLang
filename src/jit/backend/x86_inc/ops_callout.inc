@@ -70,6 +70,61 @@
                 break;
             }
 
+            /* ---- OP_TAIL_CALL（尾调用，R6-b）—— 只对**函数级 JIT** 有意义 ----
+             * VM 语义（op_call.inc:35-134）：关闭本帧 upvalue → 释放本帧 locals →
+             * **复用本帧**执行 callee（真 TCO、永不返回本函数）。
+             *
+             * JIT 侧 = 「调用 + 把结果当作本函数的返回值」：
+             *   1) callout 走 vm_call_value 完整路径（callee 可能是闭包 / 原生 / bound
+             *      method / 裸函数），并按 VM **实际发布**的个数把结果搬进
+             *      jit_fn_results[] + jit_fn_result_count（**不对 rc 做静态假设**，
+             *      多返回值同样正确）；
+             *   2) 机器码只做失败检查 → epilogue（结果由发布区带走，RAX 不再需要）。
+             * 于是 VM 那步"关闭本帧 upvalue"对 JIT 函数**恒为空操作**：按 R5 不变量 I1 +
+             * C3 拒绝，JIT 函数不可能有指向自己 locals 的 open upvalue。
+             * 空间行为由 callout 的 `jit_func_depth >= JIT_FUNC_MAX_DEPTH` bailout 保住
+             * （交解释器做真正的 TCO）。详见 §8.76。
+             *
+             * 循环模式与内联体一律拒绝：两者都没有"返回调用者"的能力。循环模式本不该走到
+             * 这里（scan 已置 has_reachable_return 让 jit_compile 拒绝整循环）—— 这里是
+             * 防御性兜底，绝不放行。 */
+            case OP_TAIL_CALL: {
+                if (inline_depth > 0 || !ctx->func_mode) {
+                    if (jit_debug_on())
+                        fprintf(stderr, "[JIT-DEBUG] TAIL_CALL 仅函数级 JIT 支持"
+                                        "（inline_depth=%d func_mode=%d）→ 拒绝编译\n",
+                                inline_depth, ctx->func_mode);
+                    return 0;
+                }
+                int tc_argc = rd_short(ip + 1);
+                TOS_SPILL();
+                EMIT_STORE_TMP(tmp1_disp, JIT_RSP);          /* vstack_top = TOS = callee */
+                EMIT_CALLOUT_BEGIN();
+                EMIT_LOAD_TMP(JIT_RAX, tmp1_disp);
+                /* add rax, 8 —— 跳过 callee 槽，指向最后一个实参（与 OP_CALL 同款） */
+                emit_byte(cb, 0x48); emit_byte(cb, 0x83); emit_byte(cb, 0xC0); emit_byte(cb, 0x08);
+                emit_mov_rr(cb, JIT_ARG1, JIT_RAX);
+                emit_mov_reg_imm64(cb, JIT_ARG2, (uint64_t)tc_argc);
+                EMIT_CALL(jit_callout_tail_call);
+                EMIT_CALLOUT_END();
+                /* 失败检查（结果已在发布区，无需回读 RAX） */
+                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_callout_failed);
+                emit_mov_reg_mem8(cb, JIT_RAX, JIT_R8, 0);
+                emit_test_rr(cb, JIT_RAX, JIT_RAX);
+                {
+                    EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                    int tc_fail = emit_jcc(cb, 0x85);        /* JNZ → bailout（交解释器） */
+                    patch_add(ctx, tc_fail, -1, 0);
+                }
+                emit_xor_rr(cb, JIT_RAX, JIT_RAX);
+                emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);   /* jit_callout_failed = 0 */
+                /* RAX 此刻为 0 = jr 成功（返回值已在 jit_fn_results 发布区） */
+                EMIT_EPILOGUE();
+                vstack -= (tc_argc + 1);
+                vstack = VSTACK_UNREACHABLE;
+                break;
+            }
+
             /* ---- OP_GET_METHOD + OP_CALL（动态派发方法调用）—— §8.57 ----
              * 形态与记账见 jit_scan.c 的同名 case：调用方在 `[self][args...]` 之上**多压了一个
              * receiver** 供 GET_METHOD 消费，所以
@@ -327,6 +382,39 @@
                 EMIT_VALUE_TO_RAW();
                 TOS_PRODUCE();
                 vstack -= (arg_count - ret_count);
+                break;
+            }
+
+            /* ---- OP_GET_GLOBAL_FUNC（R6-b 前置）—— push global_funcs[slot] ----
+             * 解释器语义（op_variables.inc:206-214）：越界报"全局函数索引越界"，
+             * 否则 push vm.global_funcs[slot]（通常是 OBJ_CLOSURE）。
+             * 为什么需要它：`return f(x)` 的尾调用形态是
+             * `OP_GET_GLOBAL_FUNC + OP_TAIL_CALL`，而它此前没有 case ⇒ 含尾调用的函数
+             * 整体被拒（实测拒收原因："unsupported opcode 18 at offset 3"）。
+             * 顺带解锁「取函数值再调用」的一般形态（`OP_GET_GLOBAL_FUNC + OP_CALL`）。
+             * net +1（压入一个值）；越界/空 VM → failed → bailout 交解释器报错。 */
+            case OP_GET_GLOBAL_FUNC: {
+                uint16_t ggf_slot = rd_short(ip + 1);
+                TOS_SPILL();
+                EMIT_CALLOUT_BEGIN();
+                emit_mov_reg_imm64(cb, JIT_ARG1, (uint64_t)ggf_slot);
+                EMIT_CALL(jit_callout_get_global_func);
+                EMIT_CALLOUT_END();
+                EMIT_STORE_TMP(tmp2_disp, JIT_RAX);
+                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_callout_failed);
+                emit_mov_reg_mem8(cb, JIT_RAX, JIT_R8, 0);
+                emit_test_rr(cb, JIT_RAX, JIT_RAX);
+                {
+                    EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                    int ggf_fail = emit_jcc(cb, 0x85);       /* JNZ → bailout */
+                    patch_add(ctx, ggf_fail, -1, 0);
+                }
+                emit_xor_rr(cb, JIT_RAX, JIT_RAX);
+                emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
+                EMIT_LOAD_TMP(JIT_RAX, tmp2_disp);
+                EMIT_VALUE_TO_RAW();
+                TOS_PRODUCE();
+                vstack++;
                 break;
             }
 

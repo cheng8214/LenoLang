@@ -512,6 +512,20 @@ Value jit_callout_module_call_meta(int64_t* vstack_top, int arg_count, ModuleMet
  * 实参块在 callee 槽之上（codegen 传 rsp + 8）。 */
 Value jit_callout_call_value(int64_t* vstack_top, int arg_count);
 
+/* ---- OP_TAIL_CALL（尾调用，R6-b）—— 仅函数级 JIT 使用 ----
+ * 语义 = 「调用 callee + 把结果当作**本函数**的返回值」（VM 侧是复用当前帧，
+ * 见 op_call.inc:35-134）。不做 rc 静态假设：走 vm_call_value 完整路径，再按 VM
+ * **实际发布**的 last_return_count/last_return_values 原样搬到 jit_fn_results[]
+ * （含多返回值），并在 jit_func_depth >= JIT_FUNC_MAX_DEPTH 时直接置 failed
+ * 让解释器执行这条指令（解释器有真正的 TCO ⇒ C 栈与 VM 帧数都有界）。 */
+Value jit_callout_tail_call(int64_t* vstack_top, int arg_count);
+
+/* ---- OP_GET_GLOBAL_FUNC（读全局函数槽，R6-b 前置）----
+ * 解释器语义（op_variables.inc:206-214）：越界报"全局函数索引越界"，否则 push
+ * vm.global_funcs[slot]。JIT 只做「读值」，越界/空 VM → failed → bailout。
+ * 需要它的原因：`return f(x)` 的尾调用形态 = OP_GET_GLOBAL_FUNC + OP_TAIL_CALL。 */
+Value jit_callout_get_global_func(uint16_t slot);
+
 /* ---- struct 方法返回值个数（按方法名推断，jit_scan.c）----
  * OP_INVOKE_METHOD_TYPED 正常路径用字节码里的静态类型名直接定位方法，解析失败时
  * 退回本函数（要求方法名在全部 def 中唯一）。JIT 的栈记账必须知道调用后留下几个

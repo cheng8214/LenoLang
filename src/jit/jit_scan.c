@@ -617,6 +617,15 @@ static int scan_callee_for_inline(Chunk* cc, ObjModule* callee_module,
                 vstack--; break;
             case OP_RETURN_MULTI:
                 vstack -= ip[1]; break;
+            case OP_TAIL_CALL:
+                /* R6-b：内联体里的尾调用**不能**内联 —— 尾调用要求「callee 的结果直接成为
+                 * **外层函数**的返回值」，而内联机制只能把结果变成「这次调用的结果」
+                 * （jump 到 inline_end）。语义不等价 ⇒ 拒绝内联该 callee（循环照常 JIT）。
+                 * 与 OP_SWITCH_LOOKUP 同一取舍：宁可不编，不要猜。 */
+                if (jit_debug_on())
+                    fprintf(stderr, "[JIT-DEBUG] inline-scan FAIL: OP_TAIL_CALL at off %d\n",
+                            (int)(ip - cc->code));
+                return 0;
             case OP_MODULE_CALL: {
                 int ac = rd_short(ip + 5);
                 vstack -= (ac - 1);
@@ -1056,6 +1065,22 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                 dead = 1;
                 break;
             }
+            case OP_TAIL_CALL: {
+                /* ---- R6-b：尾调用 ----
+                 * VM 语义（op_call.inc:35-134）：关闭本帧 upvalue → 释放本帧 locals →
+                 * **复用本帧**执行 callee ⇒ **永不返回本函数**（结果直接给本函数的调用者）。
+                 * 对两种模式的含义完全不同：
+                 *   · 循环模式 —— 与 OP_RETURN 完全同类（loop JIT 无法从机器码返回函数），
+                 *     置 has_reachable_return 让 jit_compile 拒绝整循环；
+                 *   · 函数模式 —— 实现为「调用 + 发布结果 + epilogue」
+                 *     （见 ops_callout.inc 的同名 case），它**不检查**这个标志 ⇒ 正常编译。
+                 * 记账：[args(ac)][callee] 一次性全部消费（后面的代码不可达）。 */
+                int tc_ac = rd_short(ip + 1);
+                vstack -= (tc_ac + 1);
+                r->has_reachable_return = 1;
+                dead = 1;
+                break;
+            }
             case OP_MODULE_CALL: {
                 /* opcode + module_idx(2) + method_idx(2) + arg_count(2) */
                 int ac = rd_short(ip + 5);
@@ -1340,6 +1365,18 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
             /* 3-byte global ops */
             case OP_GET_GLOBAL: {
                 /* push globals[slot] → vstack++ */
+                vstack++;
+                break;
+            }
+            case OP_GET_GLOBAL_FUNC: {
+                /* ---- R6-b 前置：push global_funcs[slot]（函数值）→ vstack++ ----
+                 * 为什么必须补：`return f(x)` 的尾调用形态是
+                 * `OP_GET_GLOBAL_FUNC + OP_TAIL_CALL`（**不是**合体的
+                 * OP_CALL_GLOBAL_FUNC），而这条指令此前没有 case ⇒ 落在 default 被报成
+                 * "unsupported opcode 18" ⇒ **含尾调用的函数整体被拒**（实测：`scale`）。
+                 * 顺带也解锁「取函数值」的一般形态（`var f = foo` 后再调用：
+                 * `OP_GET_GLOBAL_FUNC + OP_CALL`）。
+                 * 越界由 callout 置 failed → bailout，报错文本交解释器。 */
                 vstack++;
                 break;
             }

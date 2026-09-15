@@ -919,6 +919,30 @@ Value jit_callout_set_module_var(ObjModule* module, uint16_t index, Value value)
     return value;   /* 解释器 peek 后 TOS 不变；返回值仅便于调试 */
 }
 
+/* Callout: OP_GET_GLOBAL_FUNC（R6-b 前置）—— 把全局函数槽的值压到 JIT 操作数栈。
+ *
+ * 逐字对齐 op_variables.inc:206-214：越界报"全局函数索引越界"，否则 push
+ * `vm.global_funcs[slot]`（通常是 OBJ_CLOSURE）。JIT 只做读值，越界/空 VM 一律
+ * 置 failed → bailout，把报错文本交回解释器。
+ *
+ * 为什么 R6-b 需要它：`return f(x)` 的尾调用形态是
+ * `OP_GET_GLOBAL_FUNC + OP_TAIL_CALL`（不是合体的 OP_CALL_GLOBAL_FUNC），
+ * 而这条指令此前没有 scan case ⇒ 含尾调用的函数整体被拒
+ * （实测 `scale` 的拒收原因正是 "unsupported opcode 18 at offset 3"）。
+ * 顺带也解锁「取函数值后再调用」的一般形态（`OP_GET_GLOBAL_FUNC + OP_CALL`）。 */
+Value jit_callout_get_global_func(uint16_t slot) {
+    VM* vm = jit_callout_vm;
+    if (!vm || slot >= vm->global_func_capacity) {
+        if (jit_debug_on())
+            fprintf(stderr, "[JIT-CALLOUT-FAIL] get_global_func: 越界或空 VM"
+                            "（slot=%u cap=%d）\n",
+                    (unsigned)slot, vm ? vm->global_func_capacity : -1);
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+    return vm->global_funcs[slot];
+}
+
 /* Callout: 模块函数调用（`OP_GET_MODULE_FUNC + OP_CALL` 窥孔，§8.56）。
  * JIT 栈约定与 jit_callout_invoke_method / OP_CALL_GLOBAL_FUNC 完全一致：
  *   vstack_top[0] = TOS = 最后一个实参；vstack_top[arg_count-1-i] = 第 i 个实参。
@@ -1792,6 +1816,92 @@ Value method_name_val = chunk->constants[method_name_idx];
      * 与 GET_METHOD+CALL / 裸 OP_CALL 共用同一份机械。 */
     return jit_invoke_closure(closure->function, val_obj((Object*)closure),
                               arg_count, vstack_top, ret_count, "invoke_method");
+}
+
+/* Callout: OP_TAIL_CALL（尾调用，R6-b）—— 「调用 + 把结果当作本函数的返回值」。
+ *
+ * VM 语义（op_call.inc:35-134）：关闭本帧全部 upvalue → 释放本帧 locals → **复用本帧**
+ * 执行 callee ⇒ 不增长 frame_cnt（真 TCO），且**永不返回本函数**：callee 的结果直接
+ * 成为本函数调用者的结果。
+ *
+ * JIT 的等价实现与两处必须在文档留痕的差异：
+ *
+ *  1) **不复用帧**：机器码没有 interpreter frame，callee 走一次正常的 call（内部 push/pop
+ *     一帧）。于是 VM 那步「关闭本帧 upvalue」对 JIT 函数**恒为空操作** —— 因为按 R5 的
+ *     不变量 I1（JIT 永不制造新的 open upvalue）+ C3（引用捕获本帧局部）维持拒绝，
+ *     JIT 化的函数不可能有指向自己 locals 的 open upvalue。
+ *     ⚠ 若将来 P4（C3 提升槽）落地，**本处必须重新审查**（见 §8.76 / 设计稿 I1）。
+ *
+ *  2) **空间行为靠 JIT 深度守卫保住**：帧复用的意义是"尾递归不增长 VM 栈"。JIT 走 C 调用链，
+ *     不设限的话深尾递归会同时吃掉 C 栈与 vm.frames。因此 `jit_func_depth >=
+ *     JIT_FUNC_MAX_DEPTH` 时**直接 bailout**，把这条指令整个交给解释器 —— 解释器有真正的
+ *     TCO，于是深递归的空间行为与纯解释执行一致（C 栈有界、VM 帧数有界）。
+ *     代价是这条指令被重跑一次（§14 的"堆侧副作用不回滚"取舍），换来的是"不会因尾递归爆栈"。
+ *
+ * 返回值个数**不做静态假设**：`call_value` 那条路只支持 rc 由编译期确定的调用点，
+ * 而尾调用的 callee 是运行期值（`return f(x)` 里的 f 可能是局部闭包 / 参数 / 全局…），
+ * 所以这里读 VM **实际发布**的个数 —— 多返回值、单返回值、原生函数全都正确。 */
+Value jit_callout_tail_call(int64_t* vstack_top, int arg_count) {
+    VM* vm = jit_callout_vm;
+    if (!vm || arg_count < 0) {
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+    if (jit_func_depth >= JIT_FUNC_MAX_DEPTH) {
+        /* 见上：交解释器做真正的 TCO（C 栈 / VM 帧都保持有界） */
+        if (jit_debug_on())
+            fprintf(stderr, "[JIT-CALLOUT] tail_call: JIT 深度 %d ≥ %d → 交解释器（真 TCO）\n",
+                    jit_func_depth, JIT_FUNC_MAX_DEPTH);
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+    /* callee 在实参块之上（与 jit_callout_call_value 同一约定） */
+    Value callee_val = jit_raw_to_value(vstack_top[-1]);
+
+    int saved_sp = vm->sp;
+    /* JIT 虚拟栈向下增长：vstack_top[arg_count-1] 是第 0 个实参 */
+    for (int i = 0; i < arg_count; i++) {
+        vm_stack_push(vm, jit_raw_to_value(vstack_top[arg_count - 1 - i]));
+    }
+    vm_stack_push(vm, callee_val);
+    int saved_frame_cnt = vm->frame_cnt;
+    int call_r = vm_call_value(callee_val, arg_count, 0);
+    if (call_r == 0) {
+        /* 异常未被捕获：清理泄漏的 callee 帧，交回解释器（报错文本一致） */
+        while (vm->frame_cnt > saved_frame_cnt) {
+            vm->frame_cnt--;
+            CallFrame* leaked = &vm->frames[vm->frame_cnt];
+            if (leaked->locals && leaked->locals_is_dynamic) {
+                free(leaked->locals);
+                leaked->locals = NULL;
+            }
+        }
+        vm->sp = saved_sp;
+        jit_callout_failed = 1;
+        if (jit_debug_on())
+            fprintf(stderr, "[JIT-CALLOUT-FAIL] tail_call: vm_call_value 失败（交解释器）\n");
+        return NULL_VAL;
+    }
+
+    /* ---- 把 VM 发布的结果原样搬进本函数的发布区（个数不做静态假设）---- */
+    int rc = vm->last_return_count;
+    if (rc < 1 || rc > VM_MAX_RETURNS) {
+        /* 边界防御：VM 侧未按预期发布时退化为单返回（last_return_value 必有值） */
+        jit_fn_results[0] = vm->last_return_value;
+        rc = 1;
+    } else {
+        for (int i = 0; i < rc; i++) {
+            jit_fn_results[i] = vm->last_return_values[i];
+        }
+    }
+    jit_fn_result = jit_fn_results[0];
+    jit_fn_result_count = rc;
+
+    vm->sp = saved_sp;
+    if (vm->frame_cnt > 0) {
+        jit_reloaded_locals = vm->frames[vm->frame_cnt - 1].locals;
+    }
+    return jit_fn_results[rc - 1];
 }
 
 /* Callout: 裸 OP_CALL（callee 是运行时值：局部闭包 / 回调表元素 / 字段 …）—— §8.59

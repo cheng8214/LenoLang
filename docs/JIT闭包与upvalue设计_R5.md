@@ -21,6 +21,9 @@ JIT 只做两件事：
 
 只要 I1 成立，「open upvalue 的关闭时机 / 悬空 location / bailout 回滚 open 状态 / `vm_grow_frames` 地址重映射」这一整类问题**被结构性消除**，而不是被小心地绕开。
 
+> **I1 的第三条下游依赖（2026-09-15 补）**：`OP_TAIL_CALL` 的 JIT 实现（`docs/JIT实现与调试记录.md` §8.76）**依赖 I1 + C3 拒绝**。VM 的尾调用必须"关闭本帧全部 upvalue"（因为它复用当前帧，`op_call.inc:42-46`），而 JIT 侧不复用帧 —— 之所以可以不做这一步，正是因为 I1 保证 JIT 永不创建 open upvalue、C3 拒绝保证 JIT 函数不引用本帧 locals ⇒ 被跳过的"关闭"恒为空操作。
+> **⇒ 若 P4（C3 提升槽）将来落地，必须重新审查 `OP_TAIL_CALL`。**（前两条下游依赖见 §3 的 C1 与 §7 第 4 条。）
+
 收益侧同样乐观：语义分析已经保证「**循环体内的变量 ⇒ 值捕获**」（`src/semantic/semantic_upvalue.c:200`：`is_value_capture = target_sym->is_in_loop`），也就是说真实负载里「循环里建闭包捕获循环变量」这一最高频形态，**正好落在最安全的 C2 上**。
 
 ---
