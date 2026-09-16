@@ -422,6 +422,11 @@ Symbol* scope_resolve_local(Scope* s, const char* name);
 
 // 字典键管理 API
 void symbol_add_dict_key(Symbol* sym, const char* key);
+
+// 释放"语义阶段临时造的虚拟符号"（不是作用域拥有的符号！）。
+// 只给 visit_struct_init.inc 的"模块限定 new a.X()"分支用：那里 calloc 了一份 Symbol 并复制了
+// 字段/泛型信息，用完必须整份释放。作用域里的符号请勿用这个函数（由 scope_free 统一管）。
+void symbol_free_virtual(Symbol* sym);
 int symbol_has_dict_key(Symbol* sym, const char* key);
 
 // ============================================================================

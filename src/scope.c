@@ -128,6 +128,31 @@ void scope_free(Scope* scope) {
     free(scope);
 }
 
+// 释放"语义阶段临时造的虚拟符号"（专属释放器，见 leno_vm.h 的说明）。
+// 只用于 visit_struct_init.inc 里"模块限定的 new a.Point()"分支：那里为了让字段检查跑起来，
+// 会 calloc 一个 Symbol 并从模块符号表复制字段/泛型信息 —— 这些指针是它独占的，
+// 用完必须整份释放（此前从不释放 ⇒ 每次模块限定实例化漏一份）。
+void symbol_free_virtual(Symbol* sym) {
+    if (!sym) return;
+    free(sym->name);
+    if (sym->type) type_free(sym->type);
+    if (sym->struct_field_names) {
+        for (int i = 0; i < sym->struct_field_count; i++) free(sym->struct_field_names[i]);
+        free(sym->struct_field_names);
+    }
+    if (sym->struct_field_types) {
+        for (int i = 0; i < sym->struct_field_count; i++) {
+            if (sym->struct_field_types[i]) type_free(sym->struct_field_types[i]);
+        }
+        free(sym->struct_field_types);
+    }
+    if (sym->struct_type_params) {
+        for (int i = 0; i < sym->struct_type_param_count; i++) free(sym->struct_type_params[i]);
+        free(sym->struct_type_params);
+    }
+    free(sym);
+}
+
 // 添加字典键到符号
 void symbol_add_dict_key(Symbol* sym, const char* key) {
     if (!sym || !key) return;

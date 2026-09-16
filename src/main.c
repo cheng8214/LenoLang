@@ -23,6 +23,7 @@
 #include <sys/stat.h>
 #else
 #include <sys/stat.h>
+#include <dirent.h>
 #endif
 
 // 版本信息
@@ -218,6 +219,126 @@ static void entry_deps_remove(const char* path) {
 #else
     remove(path);
 #endif
+}
+
+// ============================================================================
+// 旧入口缓存的回收（entry_<hash>.lenb 以前只增不减）
+// ----------------------------------------------------------------------------
+// 入口缓存的文件名由**入口源内容哈希**决定 ⇒ 改一次入口文件就换一个键，旧文件（典型 2~3MB）
+// 永不回收、同目录里悄悄堆积（LenoSDL3 那种 2.7MB 的产物改几次就几十 MB）。
+// 这里在"成功写入新缓存"之后，把同目录下的 entry_*.lenb 与 entry_*.lenb.deps 按 mtime 排序，
+// 保留最新 ENTRY_CACHE_KEEP_FILES 个文件（≈ 一半数量的键；每个键 = .lenb + .deps 两个文件），
+// 其余删除。
+//
+// 为什么是"保留最新 K 个"而不是"只留当前键"：`.lenocache` 是该目录**所有入口文件共享**的
+// （缓存目录 = <entry 所在目录>/.lenocache），只留当前键会把同目录其它入口文件的缓存一起清掉
+// —— 不至于错，但会莫名重编译。保留最新 K 个既让总量有界，又不误伤常用的邻居。
+// 只认 entry_ 前缀：.lenomc / .lenosymc 是模块级缓存、各有自己的失效判定，不在这里管。
+// ============================================================================
+#define ENTRY_CACHE_KEEP_FILES 8
+
+typedef struct { char* name; long long mtime; } EntryCacheEntry;
+
+static int entry_cache_prune_cmp(const void* a, const void* b) {
+    long long ma = ((const EntryCacheEntry*)a)->mtime;
+    long long mb = ((const EntryCacheEntry*)b)->mtime;
+    if (ma < mb) return 1;    // 新的排前面
+    if (ma > mb) return -1;
+    return 0;
+}
+
+// 是入口缓存文件吗：entry_<hash>.lenb 或 entry_<hash>.lenb.deps
+static int entry_cache_name_is_target(const char* name) {
+    if (!name || strncmp(name, "entry_", 6) != 0) return 0;
+    size_t n = strlen(name);
+    if (n > 5 && strcmp(name + n - 5, ".lenb") == 0) return 1;
+    if (n > 10 && strcmp(name + n - 10, ".lenb.deps") == 0) return 1;
+    return 0;
+}
+
+static void entry_cache_list_add(EntryCacheEntry** list, int* count, int* cap,
+                                 const char* name, long long mtime) {
+    if (*count == *cap) {
+        int nc = *cap ? *cap * 2 : 8;
+        EntryCacheEntry* nl = (EntryCacheEntry*)realloc(*list, sizeof(EntryCacheEntry) * (size_t)nc);
+        if (!nl) return;   // 内存不足就放弃收集：只是不回收旧文件，不影响正确性
+        *list = nl;
+        *cap = nc;
+    }
+    char* dup = strdup(name);
+    if (!dup) return;
+    (*list)[*count].name = dup;
+    (*list)[*count].mtime = mtime;
+    (*count)++;
+}
+
+// 给定 "…/entry_x.lenb"，回收同目录里过旧的入口缓存
+static void entry_cache_prune_stale(const char* current_cache_path) {
+    if (!current_cache_path || !current_cache_path[0]) return;
+
+    // 取目录部分（含结尾分隔符）
+    char dir[MAX_PATH_LEN];
+    strncpy(dir, current_cache_path, sizeof(dir) - 1);
+    dir[sizeof(dir) - 1] = '\0';
+    char* sep = strrchr(dir, '\\');
+    char* sep2 = strrchr(dir, '/');
+    if (!sep || (sep2 && sep2 > sep)) sep = sep2;
+    if (!sep) return;
+    *(sep + 1) = '\0';
+
+    EntryCacheEntry* list = NULL;
+    int count = 0, cap = 0;
+
+#ifdef _WIN32
+    char pattern[MAX_PATH_LEN + 8];
+    snprintf(pattern, sizeof(pattern), "%sentry_*", dir);
+    wchar_t* wpat = utf8_to_utf16(pattern);
+    if (!wpat) return;
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW(wpat, &fd);
+    free(wpat);
+    if (h == INVALID_HANDLE_VALUE) return;
+    do {
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        int wlen = WideCharToMultiByte(CP_UTF8, 0, fd.cFileName, -1, NULL, 0, NULL, NULL);
+        if (wlen <= 0) continue;
+        char* name = (char*)malloc((size_t)wlen);
+        if (!name) continue;
+        WideCharToMultiByte(CP_UTF8, 0, fd.cFileName, -1, name, wlen, NULL, NULL);
+        if (entry_cache_name_is_target(name)) {
+            long long mt = ((long long)fd.ftLastWriteTime.dwHighDateTime << 32) |
+                           (long long)fd.ftLastWriteTime.dwLowDateTime;
+            entry_cache_list_add(&list, &count, &cap, name, mt);
+        }
+        free(name);
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
+#else
+    DIR* d = opendir(dir);
+    if (!d) return;
+    struct dirent* ent;
+    while ((ent = readdir(d)) != NULL) {
+        if (!entry_cache_name_is_target(ent->d_name)) continue;
+        char full[MAX_PATH_LEN];
+        snprintf(full, sizeof(full), "%s%s", dir, ent->d_name);
+        struct stat st;
+        if (stat(full, &st) != 0) continue;
+        entry_cache_list_add(&list, &count, &cap, ent->d_name, (long long)st.st_mtime);
+    }
+    closedir(d);
+#endif
+
+    if (count > ENTRY_CACHE_KEEP_FILES) {
+        qsort(list, (size_t)count, sizeof(EntryCacheEntry), entry_cache_prune_cmp);
+        // 保留最新的 K 个文件；本次刚写的那两个必然在最前面，绝不会被自己删掉
+        for (int i = ENTRY_CACHE_KEEP_FILES; i < count; i++) {
+            char full[MAX_PATH_LEN];
+            snprintf(full, sizeof(full), "%s%s", dir, list[i].name);
+            entry_deps_remove(full);
+        }
+    }
+    for (int i = 0; i < count; i++) free(list[i].name);
+    free(list);
 }
 
 // 写依赖清单。必须在入口 .lenb 写成功之后调用。
@@ -448,6 +569,9 @@ int lenolang_run(const char* source) {
                 if (!entry_written || entry_deps_write(g_entry_deps_path) != 0) {
                     entry_deps_remove(g_entry_deps_path);
                     entry_deps_remove(g_entry_cache_path);
+                } else {
+                    // 写成功：顺手回收同目录里过旧的入口缓存（只增不减会堆到几十 MB）
+                    entry_cache_prune_stale(g_entry_cache_path);
                 }
             }
 

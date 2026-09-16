@@ -4,6 +4,9 @@
                 // 检查是否是模块限定的 struct 名称（如 "math.Point"）
                 const char* dot_pos = strchr(ast->u.struct_init.struct_name, '.');
                 Symbol* sym = NULL;
+                // 模块限定分支会临时 calloc 一份"虚拟符号"（用于字段检查），用完要整份释放 ——
+                // 此前从不释放 ⇒ 每次模块限定实例化漏一份（S2 清理时发现，2026-09-16）。
+                int sym_is_virtual = 0;
 
                 if (dot_pos) {
                     // 模块限定的 struct：从导入的模块中查找
@@ -18,6 +21,7 @@
                         if (mod_struct) {
                             // 从模块符号表创建虚拟符号用于字段检查
                             sym = (Symbol*)calloc(1, sizeof(Symbol));
+                            sym_is_virtual = 1;   // 见上面的说明：本分支结束时整份释放
                             sym->name = strdup(struct_name_part);
                             sym->type = type_new(TYPE_STRUCT);
                             sym->type->struct_name = strdup(struct_name_part);
@@ -193,5 +197,8 @@
                         }
                     }
                 }
+                // 模块限定分支的虚拟符号只服务于本节点的检查，用完整份释放（见分支开头的说明）。
+                // 必须放在这个显式块 **内部**：sym / sym_is_virtual 的作用域就是这个块。
+                if (sym_is_virtual) symbol_free_virtual(sym);
             }
             break;
