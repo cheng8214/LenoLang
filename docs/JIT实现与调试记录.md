@@ -5417,6 +5417,36 @@ codegen 侧（`codegen_expr.c` 的 `AST_DICT`）按 `key_i, value_i` 顺序逐�
 ③ **应当顺手扫一遍其它 callout 是否也有同样的"`error_add_at` + `NULL_VAL` + 调用方不检查"
 组合**（这是同一类隐患）。
 
+#### 修复完成（2026-09-17，同日）
+
+按上面的"正确修法"落地：
+
+| 位置 | 改动 |
+| --- | --- |
+| `jit_callout_index` | **20 处错误路径全部去掉 `error_add_at`，改为只置 `jit_callout_failed`**（含末尾兜底：接收者类型未被任何分支覆盖，也置 failed ⇒ 解释器会抛 `不支持的索引类型: '%s' 不支持索引访问`，对齐 `op_utils.inc` 的 `default`）|
+| `ops_index.inc`（OP_INDEX 慢路径） | callout 之后加失败检查：结果先存 `tmp3` → `mov r8,&jit_callout_failed` → `test` → `EMIT_BAILOUT_SITE_NONOVF` + `jnz` + `patch_add(-1,0)` → 清标志 → 恢复结果。注释写明**不能用"结果是 NULL_VAL"判断失败**（`d["missing"]` 的 null 是合法结果）|
+
+**前后实测对比**（`probe_index_error_channel.leno`，`n=60`）
+
+| | 修复前 | 修复后 |
+| --- | --- | --- |
+| JIT stdout | `caught=50 ok=61` | **`caught=61 ok=61`** ✓ |
+| JIT exit | **−1** ✗ | **0** ✓ |
+| JIT stderr | `发现 11 个错误（字符串索引越界）` ✗ | 只有 JIT stats ✓ |
+| JIT `Bailouts` | 0（静默吞） | **3**（该循环 3 次后被拉黑 ⇒ 其余走解释器 ⇒ 每次错误都被捕获，正是设计意图）|
+| NO_JIT | `caught=61 / exit=0` | 不变 ✓ |
+
+真实应用回归：fm `sum=21600`、cc `sum=4800`（JIT/NO_JIT 一致）、`Bailouts` 6/3（与修复前相同 ⇒ 无回归）、**无错误汇总、exit=0** ✓；assert **311/0** ✓。
+
+**同类隐患的系统性扫描（待做，已量化）**：`grep -n 'error_add_at(ERR_RUNTIME' src/jit/jit_callout.c`
+**还剩 36 处**（分布在 `jit_callout_index_set`、`jit_callout_div`、`jit_callout_get_method`、
+`jit_callout_acc_fields`、`jit_callout_module_call`、`jit_callout_get_property` 等）。审计判据两条：
+1. 该 callout 的错误路径是否**也置了** `jit_callout_failed`（只 `error_add_at` 不置 failed
+   ⇒ 就是本次修掉的那种"静默吞 + 污染收集器"✗）；
+2. 对应 codegen 站点是否**检查并清除**该标志（不检查 ⇒ 标志会残留、污染后续 callout 的判断 ✗✗）。
+⚠ 不能一刀切：`test_jit_int_div.leno`（热循环内除零必须可捕获）**已经通过** ⇒ 说明部分站点
+（如除零）是**正确配对**的，要逐条核对。
+
 ***
 
 ## 9. 性能数据

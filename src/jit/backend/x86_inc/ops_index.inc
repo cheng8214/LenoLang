@@ -98,7 +98,26 @@
                 emit_mov_rr(cb, JIT_ARG2, JIT_R8);
                 EMIT_CALL(jit_callout_index);
                 EMIT_CALLOUT_END();
+                /* ---- §8.86：错误通道 ----
+                 * callout 的错误路径**只置 jit_callout_failed、不再 error_add_at**
+                 * （后者会把错误永久记进全局收集器：即使 Leno 层 try/catch 成功，
+                 * 进程仍以 "发现 N 个错误" + 非零退出码结束 ✗）。
+                 * 这里检查该标志 ⇒ bailout ⇒ 解释器重放本条指令并抛**可捕获的原文错误**。
+                 * ⚠ 不能用"结果是 NULL_VAL"判断失败：null 也是合法的索引结果
+                 * （`d["missing"]`）。结果先存 tmp3，标志检查会用 RAX 当 scratch。 */
+                EMIT_STORE_TMP(tmp3_disp, JIT_RAX);
+                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_callout_failed);
+                emit_mov_reg_mem8(cb, JIT_RAX, JIT_R8, 0);
+                emit_test_rr(cb, JIT_RAX, JIT_RAX);
+                {
+                    EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                    int idx_fail = emit_jcc(cb, 0x85);       /* JNZ → bailout */
+                    patch_add(ctx, idx_fail, -1, 0);
+                }
+                emit_xor_rr(cb, JIT_RAX, JIT_RAX);
+                emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
                 /* Convert result */
+                EMIT_LOAD_TMP(JIT_RAX, tmp3_disp);
                 EMIT_VALUE_TO_RAW();
                 /* 慢路径执行完必须**跳过**下面的越界 bailout 桩直达 done：
                  * 否则每次非数组索引（dict 取键 / struct 按字段名 / 非 int 索引）

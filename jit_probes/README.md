@@ -114,18 +114,17 @@ cmd /c "set LENO_NO_JIT=1&& build\leno.exe jit_probes\probe_as_cast_jit.leno 200
 ⚠ 附带修掉长度表的两处混用缺陷（`AS_CAST`+`CSTRUCT` 应 4 字节、`AS_CAST`+`ENUM` 应 3 字节），
 细节见 §8.83。
 
-## 已知缺口基线：`OP_INDEX` 的错误通道（`probe_index_error_channel.leno`）
+## 已知缺口基线：`OP_INDEX` 的错误通道（`probe_index_error_channel.leno`）—— **已修复**
 
-**这个探针目前是"记录缺口"用的，JIT 侧还不通过** —— 实测（n=60）：
+修复后实测（n=60）：JIT 与 NO_JIT **都是** `caught=61 ok=61`、**exit=0** ✓
+（修复前 JIT 是 `caught=50` + **exit=−1** + `发现 11 个错误`）。JIT 侧 `Bailouts: 3`
+（该循环 3 次后被拉黑 ⇒ 其余走解释器 ⇒ 每次错误都被捕获）。详见 §8.86。
 
-| | stdout | exit | stderr |
-| --- | --- | --- | --- |
-| JIT | `caught=50 ok=61` | **−1** ✗ | `发现 11 个错误（字符串索引越界）` |
-| `LENO_NO_JIT=1` | `caught=61 ok=61` | 0 ✓ | 干净 |
-
-即：JIT 编译过的循环里，`jit_callout_index` 的错误**既没作为可捕获异常抛出**，
-又**永久记进了全局错误收集器**（⇒ 正常程序以 exit=-1 结束）。正确修法与反例见 §8.86。
-**修完这里之后，本探针应变成绿色基线**（`caught=61`、`exit=0`）。
+```powershell
+build\leno.exe jit_probes\probe_index_error_channel.leno 60                              # JIT
+cmd /c "set LENO_NO_JIT=1&& build\leno.exe jit_probes\probe_index_error_channel.leno 60"   # 解释器
+# 判据：两侧 caught=61 / ok=61 且**退出码为 0**、stderr 里**没有**"发现 N 个错误"
+```
 
 ## 取证：`OP_INDEX` 的产出到底是什么（`probe_index_callee.leno`）
 

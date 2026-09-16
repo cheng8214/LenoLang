@@ -205,18 +205,18 @@ static inline int64_t jit_value_to_raw(Value v) {
 /* Callout: OP_INDEX (array/dict index access).
  * Returns NaN-boxed result, or NULL_VAL on error.
  *
- * ⚠ 已知缺口（§8.86，**本轮尝试修复后回退**）：`NULL_VAL` 在这里同时表示
- * "合法的 null 结果"（如 `d["missing"]`）与"错误 / 未覆盖的接收者类型"，调用方无法区分；
- * 而且错误路径用的是 `error_add_at`（**全局错误收集器**，原本是编译期/解释器的报错通道），
- * 在 JIT 里会留下**永久记录**：即使 Leno 层异常被 try/catch 捕获，进程仍会以
- * "发现 N 个错误" + 非零退出码结束 ✗。
- * 试过的修法（比较调用前后 errors.count → 置 jit_callout_failed 让 codegen bailout）
- * 实测**两头都不达标**：`caught` 仍与解释器不等（51 vs 61），并且错误退出依旧。
- * ⇒ 正确的修法应是：本 callout 的错误路径**不调 error_add_at**，只置 `jit_callout_failed`
- * 让解释器重放本条指令、由解释器抛原文错误（与 jit_callout_call_native 的既有约定一致）。 */
+ * 错误通道（§8.86 修法）：**错误路径只置 `jit_callout_failed`，不调 `error_add_at`**。
+ * 为什么：`error_add_at` 写的是**全局错误收集器**（编译期/解释器的报错通道）⇒ 在 JIT 里
+ * 会留下**永久记录**：即使 Leno 层异常被 try/catch 捕获，进程仍以 "发现 N 个错误" +
+ * 非零退出码结束 ✗（实测：热循环里字符串索引越界 ⇒ JIT 侧 `caught` 少 11 次、`exit=-1`，
+ * 而 NO_JIT 是 `caught` 全中、`exit=0`）。
+ * 现在：置 failed ⇒ codegen bailout ⇒ **解释器重放本条指令**，由解释器抛原文错误
+ * （可被 try/catch 捕获）—— 与 `jit_callout_call_native` / `jit_callout_get_field` 同约定。
+ * ⚠ 注意 `NULL_VAL` 仍是"合法的 null 结果"（如 `d["missing"]`）的返回值：正因如此，
+ * 调用方**不能**用"结果是 NULL_VAL"判断失败，必须以 `jit_callout_failed` 为准。 */
 Value jit_callout_index(Value obj_val, Value idx_val) {
     if (!val_is_obj(obj_val)) {
-        error_add_at(ERR_RUNTIME, 0, 0, "索引操作需要对象类型");
+        jit_callout_failed = 1;   /* 报错交解释器（"索引操作需要对象类型…"）*/
         return NULL_VAL;
     }
     Object* obj = val_as_obj(obj_val);
@@ -229,14 +229,12 @@ Value jit_callout_index(Value obj_val, Value idx_val) {
             }
         }
         if (!val_is_num(idx_val)) {
-            error_add_at(ERR_RUNTIME, 0, 0, "数组索引必须是数字");
+            jit_callout_failed = 1;   /* "数组索引必须是数字" */
             return NULL_VAL;
         }
         int index = (int)value_to_double(idx_val);
         if (index < 0 || index >= arr->count) {
-            char msg[256];
-            snprintf(msg, sizeof(msg), "数组索引越界: 索引=%d, 数组长度=%d", index, arr->count);
-            error_add_at(ERR_RUNTIME, 0, 0, msg);
+            jit_callout_failed = 1;   /* "数组索引越界: …"（JIT 侧另有越界 bailout 桩，通常到不了这）*/
             return NULL_VAL;
         }
         return arr->elements[index];
@@ -248,13 +246,13 @@ if (obj->type == OBJ_DICT) {
     if (obj->type == OBJ_STRING) {
         /* 对齐解释器 OP_INDEX 字符串分支：str[i] 返回单字符子串（UTF-8 感知） */
         if (!val_is_num(idx_val)) {
-            error_add_at(ERR_RUNTIME, 0, 0, "字符串索引必须是数字");
+            jit_callout_failed = 1;   /* "字符串索引必须是数字" */
             return NULL_VAL;
         }
         ObjString* str = (ObjString*)obj;
         int index = (int)value_to_double(idx_val);
         if (index < 0 || index >= str->char_len) {
-            error_add_at(ERR_RUNTIME, 0, 0, "字符串索引越界");
+            jit_callout_failed = 1;   /* "字符串索引越界"（§8.86 的触发点）*/
             return NULL_VAL;
         }
         int byte_offset = utf8_char_offset(str->chars, str->len, index);
@@ -265,7 +263,7 @@ if (obj->type == OBJ_DICT) {
     /* ---- 以下分支对齐解释器 op_utils.inc OP_INDEX 语义 ---- */
     if (obj->type == OBJ_MODULE) {
         if (!val_is_obj(idx_val) || val_as_obj(idx_val)->type != OBJ_STRING) {
-            error_add_at(ERR_RUNTIME, 0, 0, "模块键必须是字符串");
+            jit_callout_failed = 1;   /* "模块键必须是字符串" */
             return NULL_VAL;
         }
         ObjModule* module = (ObjModule*)obj;
@@ -273,7 +271,7 @@ if (obj->type == OBJ_DICT) {
     }
     if (obj->type == OBJ_STRUCT) {
         if (!val_is_obj(idx_val) || val_as_obj(idx_val)->type != OBJ_STRING) {
-            error_add_at(ERR_RUNTIME, 0, 0, "struct 字段名必须是字符串");
+            jit_callout_failed = 1;   /* "struct 字段名必须是字符串" */
             return NULL_VAL;
         }
         ObjStruct* st = (ObjStruct*)obj;
@@ -295,14 +293,12 @@ if (obj->type == OBJ_DICT) {
         if (native_method) {
             return val_obj((Object*)bound_method_new(obj_val, native_method));
         }
-        char msg[256];
-        snprintf(msg, sizeof(msg), "struct '%s' 没有字段或方法 '%s'", st->def->name, key->chars);
-        error_add_at(ERR_RUNTIME, 0, 0, msg);
+        jit_callout_failed = 1;   /* "struct 'X' 没有字段或方法 'Y'" */
         return NULL_VAL;
     }
     if (obj->type == OBJ_CSTRUCT) {
         if (!val_is_obj(idx_val) || val_as_obj(idx_val)->type != OBJ_STRING) {
-            error_add_at(ERR_RUNTIME, 0, 0, "cstruct 字段名必须是字符串");
+            jit_callout_failed = 1;   /* "cstruct 字段名必须是字符串" */
             return NULL_VAL;
         }
         ObjCStruct* cst = (ObjCStruct*)obj;
@@ -317,14 +313,12 @@ if (obj->type == OBJ_DICT) {
         if (native_method) {
             return val_obj((Object*)bound_method_new(obj_val, native_method));
         }
-        char msg[256];
-        snprintf(msg, sizeof(msg), "cstruct '%s' 没有字段或方法 '%s'", cst->def->name, key->chars);
-        error_add_at(ERR_RUNTIME, 0, 0, msg);
+        jit_callout_failed = 1;   /* "cstruct 'X' 没有字段或方法 'Y'" */
         return NULL_VAL;
     }
     if (obj->type == OBJ_ENUM_DEF) {
         if (!val_is_obj(idx_val) || val_as_obj(idx_val)->type != OBJ_STRING) {
-            error_add_at(ERR_RUNTIME, 0, 0, "enum 成员名必须是字符串");
+            jit_callout_failed = 1;   /* "enum 成员名必须是字符串" */
             return NULL_VAL;
         }
         ObjEnumDef* def = (ObjEnumDef*)obj;
@@ -332,16 +326,14 @@ if (obj->type == OBJ_DICT) {
         // 用 found 出参判定，不能用「值 < 0」——枚举成员值本身可以是负数
         int64_t value = 0;
         if (!enum_def_lookup_member_value(def, key->chars, &value)) {
-            char msg[256];
-            snprintf(msg, sizeof(msg), "enum '%s' 没有成员 '%s'", def->name, key->chars);
-            error_add_at(ERR_RUNTIME, 0, 0, msg);
+            jit_callout_failed = 1;   /* "enum 'X' 没有成员 'Y'" */
             return NULL_VAL;
         }
         return val_int_safe(value);
     }
     if (obj->type == OBJ_CSTRUCT_DEF) {
         if (!val_is_obj(idx_val) || val_as_obj(idx_val)->type != OBJ_STRING) {
-            error_add_at(ERR_RUNTIME, 0, 0, "cstruct 方法名必须是字符串");
+            jit_callout_failed = 1;   /* "cstruct 方法名必须是字符串" */
             return NULL_VAL;
         }
         ObjCStructDef* def = (ObjCStructDef*)obj;
@@ -350,20 +342,18 @@ if (obj->type == OBJ_DICT) {
         if (native_method) {
             return val_obj((Object*)bound_method_new(obj_val, native_method));
         }
-        char msg[256];
-        snprintf(msg, sizeof(msg), "cstruct '%s' 没有方法 '%s'", def->name, key->chars);
-        error_add_at(ERR_RUNTIME, 0, 0, msg);
+        jit_callout_failed = 1;   /* "cstruct 'X' 没有方法 'Y'"（T.malloc() 等形态走这里）*/
         return NULL_VAL;
     }
     if (obj->type == OBJ_CSTRUCT_ARRAY_VIEW) {
         if (!val_is_num(idx_val)) {
-            error_add_at(ERR_RUNTIME, 0, 0, "cstruct 数组索引必须是数字");
+            jit_callout_failed = 1;   /* "cstruct 数组索引必须是数字" */
             return NULL_VAL;
         }
         int index = (int)value_to_double(idx_val);
         ObjCStructArrayView* view = (ObjCStructArrayView*)obj;
         if (index < 0 || index >= view->array_dim) {
-            error_add_at(ERR_RUNTIME, 0, 0, "cstruct 数组索引越界");
+            jit_callout_failed = 1;   /* "cstruct 数组索引越界" */
             return NULL_VAL;
         }
         ObjCStruct* cst = view->cstruct;
@@ -411,7 +401,7 @@ if (obj->type == OBJ_DICT) {
             int index = (int)value_to_double(idx_val);
             ObjCStructArray* array = (ObjCStructArray*)obj;
             if (index < 0 || index >= array->count) {
-                error_add_at(ERR_RUNTIME, 0, 0, "cstruct 数组索引越界");
+                jit_callout_failed = 1;   /* "cstruct 数组索引越界"（批量数组形态）*/
                 return NULL_VAL;
             }
             ObjCStruct* element = cstruct_array_get(array, index);
@@ -423,15 +413,16 @@ if (obj->type == OBJ_DICT) {
             if (native_method) {
                 return val_obj((Object*)bound_method_new(obj_val, native_method));
             }
-            char msg[256];
-            snprintf(msg, sizeof(msg), "cstruct 数组没有方法 '%s'", key->chars);
-            error_add_at(ERR_RUNTIME, 0, 0, msg);
+            jit_callout_failed = 1;   /* "cstruct 数组没有方法 'Y'" */
             return NULL_VAL;
         }
-        error_add_at(ERR_RUNTIME, 0, 0, "cstruct 数组索引必须是数字或方法名");
+        jit_callout_failed = 1;   /* "cstruct 数组索引必须是数字或方法名" */
         return NULL_VAL;
     }
-    error_add_at(ERR_RUNTIME, 0, 0, "索引操作需要数组、字典、字符串、struct、模块或 cstruct");
+    /* 兜底：接收者类型没有被上面任何分支覆盖 ⇒ 交解释器抛
+     * "不支持的索引类型: '%s' 不支持索引访问"（op_utils.inc 的 default 分支）。
+     * 修复前这里**既不置 failed 也不记错**，JIT 会静默压一个 null ✗。 */
+    jit_callout_failed = 1;
     return NULL_VAL;
 }
 
