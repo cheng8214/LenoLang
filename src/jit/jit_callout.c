@@ -943,6 +943,33 @@ Value jit_callout_get_global_func(uint16_t slot) {
     return vm->global_funcs[slot];
 }
 
+/* Callout: OP_GET_CSTRUCT_DEF（R6-d）—— 按名字查 cstruct 定义注册表并交出 def 对象。
+ *
+ * 逐字对齐 op_cstruct.inc:103-129：名字常量必须是字符串（codegen 已在编译期保证，
+ * 这里只做防御），查到就返回 `val_obj(def)`；查不到一律置 failed → bailout，
+ * 由解释器报出原文"找不到 cstruct 定义 'X'"（JIT 不自己造报错文本）。
+ *
+ * 为什么每次执行都现查、不嵌入 def 指针：同名 cstruct 重声明会覆盖注册表条目并把
+ * 旧 def 的 name/字段表清空（object_cstruct.c:229-241）⇒ 编译期解析出的指针可能已
+ * 废弃。线性表 + 条目数极少（一个程序里 cstruct 定义通常个位数），现查最安全。 */
+Value jit_callout_get_cstruct_def(ObjString* name) {
+    if (!name || !name->chars) {
+        if (jit_debug_on())
+            fprintf(stderr, "[JIT-CALLOUT-FAIL] get_cstruct_def: 空名字\n");
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+    ObjCStructDef* def = cstruct_def_find(name->chars);
+    if (!def) {
+        if (jit_debug_on())
+            fprintf(stderr, "[JIT-CALLOUT-FAIL] get_cstruct_def: 找不到 cstruct 定义 '%s'"
+                            "（交解释器报错）\n", name->chars);
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+    return val_obj((Object*)def);
+}
+
 /* Callout: 模块函数调用（`OP_GET_MODULE_FUNC + OP_CALL` 窥孔，§8.56）。
  * JIT 栈约定与 jit_callout_invoke_method / OP_CALL_GLOBAL_FUNC 完全一致：
  *   vstack_top[0] = TOS = 最后一个实参；vstack_top[arg_count-1-i] = 第 i 个实参。

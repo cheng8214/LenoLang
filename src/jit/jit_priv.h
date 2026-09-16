@@ -544,6 +544,18 @@ Value jit_callout_tail_call(int64_t* vstack_top, int arg_count);
  * 需要它的原因：`return f(x)` 的尾调用形态 = OP_GET_GLOBAL_FUNC + OP_TAIL_CALL。 */
 Value jit_callout_get_global_func(uint16_t slot);
 
+/* ---- OP_GET_CSTRUCT_DEF（按名字查 cstruct 定义注册表，R6-d）----
+ * 解释器语义（op_cstruct.inc:103-129）：名字常量（字符串）→ `cstruct_def_find` →
+ * 查到 push `val_obj(def)`，查不到报"找不到 cstruct 定义 'X'"。
+ *
+ * ⚠ 与 §8.56 的模块方法 / OP_CALL_NATIVE 不同，这里**不做编译期解析**：
+ * cstruct 定义是**运行时注册**的（`cstruct_def_register` 在 `OP_DEFINE_CSTRUCT`
+ * 执行时才发生），而且同名重声明会**覆盖**注册表条目、把旧 def 的 name/字段表清空
+ * （object_cstruct.c:229-241）⇒ 编译期嵌入的 def 指针可能已被废弃，与解释器分叉。
+ * 所以 codegen 只嵌入**名字字符串指针**（GC 非移动 ⇒ 稳定），查找每次执行做一遍。
+ * 查不到 → failed → bailout（报错文本与覆盖语义都交回解释器）。 */
+Value jit_callout_get_cstruct_def(ObjString* name);
+
 /* ---- struct 方法返回值个数（按方法名推断，jit_scan.c）----
  * OP_INVOKE_METHOD_TYPED 正常路径用字节码里的静态类型名直接定位方法，解析失败时
  * 退回本函数（要求方法名在全部 def 中唯一）。JIT 的栈记账必须知道调用后留下几个

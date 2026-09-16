@@ -76,6 +76,37 @@ cmd /c "set LENO_NO_JIT=1&& build\leno.exe jit_probes\probe_tail_call_jit.leno 2
 2. 函数级 JIT 有**热度阈值**——只调用一次不编译，要在循环里跑热。
 详见 §8.76。
 
+## R6-d：`OP_GET_CSTRUCT_DEF`（cstruct 类型名取定义，`probe_cstruct_jit.leno`）
+
+```powershell
+build\leno.exe jit_probes\probe_cstruct_jit.leno 20000                             # JIT
+cmd /c "set LENO_NO_JIT=1&& build\leno.exe jit_probes\probe_cstruct_jit.leno 20000"  # 解释器
+# 两侧逐字一致（defLoop=20001 / loopDef=20001）、统计 Compiled: 2
+# 二次确认"这条指令真在体里"（**必做**，否则可能整个探针不含目标指令）：
+build\leno.exe --debug-out build\dump_cs.txt jit_probes\probe_cstruct_jit.leno 10
+#   → 应出现 OP_GET_CSTRUCT_DEF ... (Cell) / (Vec2) 落在循环体的 bc_off 上
+# 三次确认"失败来自谁"：
+cmd /c "set LENO_JIT_DEBUG=1&& build\leno.exe jit_probes\probe_cstruct_jit.leno 200" 2>&1 | findstr CALLOUT-FAIL
+#   → 本探针实测全是 call_value（def 的消费方，独立缺口），get_cstruct_def 零失败
+```
+
+**⚠ 两条"看着像失败、其实不是"的读数**（详见 §8.80）：
+- `Bailouts: 6` 全部来自 `call_value: callee 是对象但 function 为空（obj_type=10）`
+  —— `T.malloc()/T.size()/T.offset_of()` 这类**类型名上的方法调用**（native 方法对象）
+  在 JIT 里每次执行都 bailout。**与 R6-d 无关**，但也说明 cstruct 的"取定义"通了、"用"还差一步。
+- `c.v as int` 会引入 `OP_AS_CAST(94)` ⇒ 整循环被 scan 拒（`loop|unsupported opcode 94`）。
+
+## 使用约定：census 每个对象只记「第一个」遮断原因
+
+`scan` 遇到不认识的 opcode 就 `return`（长度未知无法继续走）⇒ **修掉一个原因后必须
+重测 + 做逐对象集合差**，否则会把"换了个遮断原因"当成"解锁"。R6-d 正是靠差分才发现
+**循环级净解锁 = 0**（原来被 cstruct 挡的循环转为被 `OP_CLIB_CALL` 挡）。差分方法：
+
+```powershell
+# 改前/改后各跑一次 LENO_JIT_GAPS=1，把 '^\s+\d+\s+(loop|func|inline)\|' 行收成集合再相减
+# （计数是集合元素的一部分 ⇒ 计数变化会同时出现在"仅前有/仅后有"，要看的是**原因**的出现与消失）
+```
+
 ## R6-a：多返回值 + 函数级 JIT（`probe_multi_ret_jit.leno`）
 
 覆盖 2 值（int）/ 2 值（float）/ 3 值 / **多返回值嵌套**（被调函数内部再调多返回值函数）。

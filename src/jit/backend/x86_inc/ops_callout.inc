@@ -418,6 +418,54 @@
                 break;
             }
 
+            /* ---- OP_GET_CSTRUCT_DEF（R6-d）—— 按名字查 cstruct 定义注册表并压栈 ----
+             * 解释器语义（op_cstruct.inc:103-129）：名字常量（字符串）→ cstruct_def_find
+             * → 查到 push `val_obj(def)`，查不到报"找不到 cstruct 定义 'X'"。
+             *
+             * ⚠ 为什么**不做编译期解析**（对比 §8.56 模块方法、OP_CALL_NATIVE 的 native 表）：
+             * cstruct 定义是**运行时注册**的（`cstruct_def_register` 在 `OP_DEFINE_CSTRUCT`
+             * 执行时才发生），且同名重声明会**覆盖**条目并把旧 def 的 name/字段表清空
+             * （object_cstruct.c:229-241）⇒ 编译期嵌入 def 指针会被"换掉"，与解释器分叉。
+             * 所以这里只做「能不能编」的解码检查（常量存在且是字符串），查找每次执行在
+             * callout 里做一遍 —— 与解释器逐字一致（含覆盖语义与报错路径）。
+             * net +1；查不到 → callout 置 failed → bailout。 */
+            case OP_GET_CSTRUCT_DEF: {
+                uint16_t csd_ci = rd_short(ip + 1);
+                if (!cur_chunk || !cur_chunk->constants || (int)csd_ci >= cur_chunk->const_cnt) {
+                    if (jit_debug_on())
+                        fprintf(stderr, "[JIT-DEBUG] get_cstruct_def: 名字常量越界 → 拒编\n");
+                    return 0;
+                }
+                Value csd_name = cur_chunk->constants[csd_ci];
+                if (!val_is_obj(csd_name) || val_as_obj(csd_name)->type != OBJ_STRING) {
+                    if (jit_debug_on())
+                        fprintf(stderr, "[JIT-DEBUG] get_cstruct_def: 名字常量非字符串 → 拒编\n");
+                    return 0;
+                }
+                TOS_SPILL();
+                EMIT_CALLOUT_BEGIN();
+                emit_mov_reg_imm64(cb, JIT_ARG1,
+                                   (uint64_t)(uintptr_t)(ObjString*)val_as_obj(csd_name));
+                EMIT_CALL(jit_callout_get_cstruct_def);
+                EMIT_CALLOUT_END();
+                EMIT_STORE_TMP(tmp2_disp, JIT_RAX);
+                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_callout_failed);
+                emit_mov_reg_mem8(cb, JIT_RAX, JIT_R8, 0);
+                emit_test_rr(cb, JIT_RAX, JIT_RAX);
+                {
+                    EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                    int csd_fail = emit_jcc(cb, 0x85);       /* JNZ → bailout */
+                    patch_add(ctx, csd_fail, -1, 0);
+                }
+                emit_xor_rr(cb, JIT_RAX, JIT_RAX);
+                emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
+                EMIT_LOAD_TMP(JIT_RAX, tmp2_disp);
+                EMIT_VALUE_TO_RAW();
+                TOS_PRODUCE();
+                vstack++;
+                break;
+            }
+
             /* ---- OP_GET_MODULE_VAR / OP_GET_MODULE_FUNC / OP_SET_MODULE_VAR（§5 覆盖面 L6）----
              * 解释器语义：vm/vminc/op_module_var.inc（module 取自当前帧 frame->module，
              * 而 frame->module 又来自被调函数 → 见 jit_scan.c 里内联侧的拒绝理由）。

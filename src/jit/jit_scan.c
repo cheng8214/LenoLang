@@ -785,6 +785,12 @@ static int scan_callee_for_inline(Chunk* cc, ObjModule* callee_module,
                  * 被调函数体内只要有 `var f = foo`（取全局函数值）就不能内联。 */
                 vstack++;
                 break;
+            case OP_GET_CSTRUCT_DEF:
+                /* 与 scan_loop_body 的同名 case 一致（R6-d）：push def → vstack++。
+                 * 查找在 callout 里按名字做（不做编译期解析，理由见 ops_callout.inc
+                 * 的 case 注释：定义运行时注册、重声明会覆盖并废弃旧 def）。 */
+                vstack++;
+                break;
             case OP_SET_GLOBAL: break;
             case OP_INC_LOCAL: case OP_DEC_LOCAL:
             case OP_PRE_INC_LOCAL: case OP_PRE_DEC_LOCAL:
@@ -1531,6 +1537,16 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                  * 顺带也解锁「取函数值」的一般形态（`var f = foo` 后再调用：
                  * `OP_GET_GLOBAL_FUNC + OP_CALL`）。
                  * 越界由 callout 置 failed → bailout，报错文本交解释器。 */
+                vstack++;
+                break;
+            }
+            case OP_GET_CSTRUCT_DEF: {
+                /* ---- R6-d：push cstruct 定义对象 → vstack++ ----
+                 * 解释器语义（op_cstruct.inc:103-129）：名字常量（字符串）→
+                 * `cstruct_def_find` → 查到 push def，查不到报"找不到 cstruct 定义 'X'"。
+                 * codegen 走 callout，**每次执行现查**（不做编译期解析：定义是运行时注册的、
+                 * 同名重声明还会覆盖条目并废弃旧 def ⇒ 嵌入指针会分叉；见 ops_callout.inc
+                 * 的 case 注释）。查不到 → failed → bailout，报错文本交解释器。 */
                 vstack++;
                 break;
             }

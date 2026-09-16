@@ -1,0 +1,62 @@
+// R6-d 探针：OP_GET_CSTRUCT_DEF（cstruct 类型名作为表达式 → 查定义注册表）在 JIT 下的行为
+//
+// 目标：验证「取 cstruct 定义」这条指令在**函数级 / 循环级** JIT 里被正确支持：
+//   · scan 侧记账 net +1（push def 对象）；
+//   · codegen 只嵌入**名字字符串指针**，查找每次执行在 callout 里做
+//     （不做编译期解析：定义是运行时注册的，且同名重声明会覆盖条目并废弃旧 def）；
+//   · 查不到 → failed → bailout，报错文本与覆盖语义交回解释器。
+//
+// 判据（四条都要满足，缺一条就说明"没测到东西"）：
+//   1. `LENO_NO_JIT=1` 与开启 JIT 的输出**逐字一致**（实测 n=20000 时 defLoop=20001、loopDef=20001；
+//      注：`for 0 : n to i` 是闭区间 ⇒ n+1 次迭代）；
+//   2. JIT 统计里 `Compiled` 覆盖本文件的两个热循环（实测 Compiled: 2）；
+//   3. **本文件的循环体里真的有这条指令** —— 用字节码转储核对：
+//        build\leno.exe --debug-out build\dump_cs.txt jit_probes\probe_cstruct_jit.leno 10
+//        → 实测出现 `OP_GET_CSTRUCT_DEF 2 (Cell)`（bc_off=29）与 `... 11 (Vec2)`（bc_off=105）
+//      只跑对拍不看这条，可能整个探针根本不含目标指令（本项目踩过，见 §8.80）。
+//   4. **`get_cstruct_def` 本身零失败**：`LENO_JIT_DEBUG=1` 下应看到 0 条
+//      `[JIT-CALLOUT-FAIL] ... get_cstruct_def`。
+//
+// ⚠ 实测 `Bailouts: 6` 是**已知的独立缺口**，与本条无关，别误判成 R6-d 失败：
+//   本文件全部 6 条 bailout 都是 `call_value: callee 是对象但 function 为空（obj_type=10）`
+//   —— def 的**消费方**（`Cell.malloc()/free()`、`Vec2.malloc()`）是类型上的方法调用，
+//   走 call_value 动态派发，callee 是 native 方法对象 ⇒ JIT 的 call_value 不支持它，
+//   于是每条循环 bailout 3 次后交解释器。也就是说：**def 压栈本身执行了且零失败**，
+//   但它的消费被另一个缺口挡住了。两条相邻缺口（都值得单独立项）：
+//     · `OP_AS_CAST(94)`：`c.v as int` 这种 i32 字段取值必用转换 ⇒ 整循环被 scan 拒
+//       （实测 census：`1 loop|unsupported opcode 94(OP_AS_CAST)`）；
+//     · `call_value` 对 native 方法对象：`T.size()/T.offset_of()/T.malloc()` 全中。
+import ffi
+
+cstruct Cell { i32 v }
+cstruct Vec2 { f32 x; f32 y }
+
+// ① 函数级：热点函数每轮取一次 Cell 定义 + 分配/写字段/释放
+func defLoop(int n): int {
+    int acc = 0
+    for 0 : n to i {
+        var c = Cell.malloc()     // ← OP_GET_CSTRUCT_DEF(Cell)
+        c.v = 7
+        c.free()
+        acc = acc + 1
+    }
+    return acc
+}
+
+main() {
+    int n = 20000
+    var args = _args()
+    if args.len() > 0 { n = _int(args[0]) }
+
+    print("defLoop=" + defLoop(n) + "\n")
+
+    // ② 循环级（主函数里另一个 cstruct 名）
+    int s = 0
+    for 0 : n to i {
+        var w = Vec2.malloc()     // ← OP_GET_CSTRUCT_DEF(Vec2)
+        w.x = 1.0
+        w.free()
+        s = s + 1
+    }
+    print("loopDef=" + s + "\n")
+}

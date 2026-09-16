@@ -654,7 +654,7 @@ R2 的多批 opcode 已补齐。⇒ **当前剩余缺口的完整清单见 §8.7
 | R2 | L7 余项成批补齐 | 余项：`OP_AS_CAST`(94)、`OP_GET_METHOD`(134，**裸方法取值**形态)、`OP_ARRAY_GET/SET`、`OP_DICT*`、`OP_SLICE`(79)、`OP_IN`、`OP_RANGE`、`OP_NEG`(33)、`OP_U8_TO_F64`(146) | 多为 callout 型，照 §8.52~§8.59 的模板走（`opcode_size` + 两处 scan + callout + codegen + 用例）；需要"语义唯一来源"抽取的（VM 里就地 READ 的那类）照 §8.61/§8.64/§8.65 的做法 | 低 | **批次 1（§8.63）**：`OP_IS_NULL`(48)。**批次 2（§8.64）**：`OP_STRING_ADD`(76)（由插值 `$"..."` 产生，不是 `+`；顺带解开内联侧）。**批次 3（§8.65）**：`OP_TYPE_CHECK`(93)——抽出 `type_check_value` 共用，顺带修掉 `TYPE_ENUM` 的 4 字节长度 bug；实测 `FuncCompiled 123 → 289`。**下一批候选**（实测排序）：**内联侧**补 `OP_GET_METHOD`（×36，见 R7；这是"内联能否成立"的问题，不影响循环编译）、`94:AS_CAST`（带值改写语义，直方图未出现）。注：`-d["k"]`、`x == null` 实测走已支持的路径，不必做；**循环级拒收此刻只剩刻意保留项**（`138`）/ R5 前置（`14`）/ 维持拒绝（`142`） |
 | ~~R3~~ | ~~L0 诊断收口~~ | ~~`opcode_size` 余项补全；把 scan 的 default 报错区分成 `unknown opcode`（缺长度）与 `unsupported opcode`（已收录长度但缺 case）~~ | ~~纯诊断，无行为变化~~ | ~~极低~~ | **已完成（§8.63，2026-09-14）**：补齐约 40 条长度（逐条与 VM 的 `READ_*`、`debug.c` 反汇编器交叉核对）；`OP_CLOSURE` 因长度依赖常量表而**故意保持"未知"**；报错分为 `unknown（长度未知）`/`unsupported（已收录长度、未实现）`。**实测收益**：同一负载的拒收清单从"含糊的 138"变成分类可排期（76×4 / 93×3 / 14×2 / 142×2 / 138×49），R2 的下一批因此是测出来的而不是猜的 |
 | R5 | 闭包创建与捕获变量（`OP_CLOSURE` / `GET/SET/CLOSE_UPVALUE`） | 循环里建闭包、闭包体内读写捕获变量都不进 JIT（被调函数带 upvalue 时自动退回 VM 重入 ⇒ 语义正确但不快） | 两件基础：**(a)** func-JIT ABI 要加 closure 通道（现为 `jfn(flocals, globals)`，无 upvalue 入口）；**(b)** 循环 JIT 的 locals 在 scratch 区（迭代即复用）⇒ 直接捕获会产生**悬空 upvalue**，只能先允许"捕获已在 upvalue 链上的变量"，或改 locals 布局 | 高（ABI + 生命周期不变量） | **已完成（§8.72，2026-09-15）**：C0（零捕获）/ C1（by-upvalue）/ C2（值捕获）+ `GET/SET_UPVALUE` 全部进 JIT（P1 `34508a90` / P2a `68002778` / P2b `6c119bd3` / P3 `2a572102`，assert 304→307/0）；设计稿与不变量 I1~I8 见 `JIT闭包与upvalue设计_R5.md`。**C3（引用捕获本帧局部）与内联体内的闭包维持拒绝**（P4 需实测授权 / I8） |
-| R6 | 函数级 JIT 的多返回值 + `OP_TAIL_CALL` | `jit_compile_function` 直接拒收 `return_count > 1`；`OP_TAIL_CALL` 在循环 JIT 里等价"提前返回"（应归入 `has_reachable_return` 拒绝），只有函数级 JIT 有价值 | 多返回：扩返回值通道（`jit_fn_result` 单值 → 多槽约定），调用方回填约定已就绪（§8.59 的 helper）；尾调用：帧复用语义另算 | 中 | **R6-a（多返回值）已完成（§8.75，2026-09-15）**：发布区 `jit_fn_results[] + jit_fn_result_count` + `jit_fastpath_deliver_multi()`；三处快路径与解释器热入口全部支持多值；`return_count == -1` 靠交付前复核回落。探针 `probe_multi_ret_jit.leno` JIT/NO_JIT 逐字一致、快路径 3903 次零回退、assert 307/0。**R6-b（`OP_TAIL_CALL`）已完成（§8.76，同日）**：函数模式=「调用 + 发布结果 + epilogue」，循环/内联维持拒绝；关键是**先补上 `OP_GET_GLOBAL_FUNC`（opcode 18）的缺口**（尾调用形态是它 + `OP_TAIL_CALL`，此前整函数被拒）。"关闭本帧 upvalue"对 JIT 恒为空操作（R5 的 I1 + C3 拒绝）；空间行为靠深度守卫交解释器做真 TCO（探针 20000 层 ×200 轮不崩、0.1s）。探针 `probe_tail_call_jit.leno`、assert 307/0。**仍未支持**：`OP_TAIL_CALL_NATIVE` |
+| R6 | 函数级 JIT 的多返回值 + `OP_TAIL_CALL` | `jit_compile_function` 直接拒收 `return_count > 1`；`OP_TAIL_CALL` 在循环 JIT 里等价"提前返回"（应归入 `has_reachable_return` 拒绝），只有函数级 JIT 有价值 | 多返回：扩返回值通道（`jit_fn_result` 单值 → 多槽约定），调用方回填约定已就绪（§8.59 的 helper）；尾调用：帧复用语义另算 | 中 | **R6-a（多返回值）已完成（§8.75，2026-09-15）**：发布区 `jit_fn_results[] + jit_fn_result_count` + `jit_fastpath_deliver_multi()`；三处快路径与解释器热入口全部支持多值；`return_count == -1` 靠交付前复核回落。探针 `probe_multi_ret_jit.leno` JIT/NO_JIT 逐字一致、快路径 3903 次零回退、assert 307/0。**R6-b（`OP_TAIL_CALL`）已完成（§8.76，同日）**：函数模式=「调用 + 发布结果 + epilogue」，循环/内联维持拒绝；关键是**先补上 `OP_GET_GLOBAL_FUNC`（opcode 18）的缺口**（尾调用形态是它 + `OP_TAIL_CALL`，此前整函数被拒）。"关闭本帧 upvalue"对 JIT 恒为空操作（R5 的 I1 + C3 拒绝）；空间行为靠深度守卫交解释器做真 TCO（探针 20000 层 ×200 轮不崩、0.1s）。探针 `probe_tail_call_jit.leno`、assert 307/0。**仍未支持**：`OP_TAIL_CALL_NATIVE`。**R6-d（`OP_GET_CSTRUCT_DEF`）已完成（§8.80，2026-09-16）**：三侧（loop/func/inline）全部支持，**只嵌名字常量、查找在 callout 里每次现做**（定义是运行时注册的 + 同名重声明会废弃旧 def ⇒ 不能编译期解析）；实测解锁 **8 个函数级编译 + 13 个内联点**，**循环级净解锁 0**（原来被 cstruct 挡的热循环现在被 `OP_CLIB_CALL` 挡）⇒ 下一步做 `OP_CLIB_CALL`(142)，其后是 `OP_AS_CAST`(94) 与 native 方法派发（两者都是本次露出的相邻缺口，见 §8.80）|
 | R7 | 内联的跨模块限制 + 内联侧 opcode 缺口 | ① 模块变量/函数访问被 inline scan 一刀拒绝（§8.55/§8.56）——内联后没有 callee 的帧，模块归属不可知（**实测 ×166**，内联侧第一大）；② inline scan 没有 `OP_GET_METHOD` 的 case ⇒ 含方法调用的函数一律不能内联（**实测 ×36**）；③ `138:GET_CSTRUCT_DEF ×116`（维持拒绝） | ① 在 inline site 记录 callee 的 module，与 caller 相同才允许内联；② 照 loop scan 的记账补 `GET_METHOD`（配对形态 `-(argc+1-rc)`，rc 用同样的 `jit_resolve_method_ret_count`，解析不出就拒绝内联） | 低 | **② 已完成（§8.68，2026-09-15）**：`scan_callee_for_inline` 补 `OP_GET_METHOD`（配对/独立两形态），探针 `probe_inline_method_call.leno` 2.27~2.40x、用例 `test_jit_inline_method_dispatch.leno`。**① 已完成（§8.69，同日）**：加「callee 与 caller 同模块」守卫后放行模块变量/函数访问，探针 `probe_inline_module_var.leno` ≈2~3x、跨模块仍拒绝（安全边界）、用例 `test_jit_inline_module_var.leno`；assert 298/0。③ 维持拒绝。**④ 已完成（2026-09-16，§8.77）**：内联侧补 `OP_CALL`(59) 与 `OP_GET_GLOBAL_FUNC`(18)（"取函数值再调用"形态此前使被调方永不可内联），拒收清零、探针同二进制 A/B **2.72x**、用例 `test_jit_inline_call_value.leno`、assert 308/0 |
 | ~~R8~~ | ~~性能基准复盘~~ | ~~§9 的数据需要按最新覆盖面重跑（JIT vs `LENO_NO_JIT=1`），量化"覆盖面增长到底换来多少"~~ | ~~纯测量；也顺便验证 R4 的延迟回收没有性能回退~~ | ~~极低~~ | **已完成（§9 的「R8 基准复盘」小节，2026-09-14）**：新增可复用基准 `examples/性能测试/JIT覆盖面基准.leno`（8 项，专测本轮补齐的 opcode）；JIT/VM 加速比 2.2x\~18.6x，**字符串插值 1.0x（分配主导，非测错）**；与历史基线交叉核对无回退（i++ 75 vs 78 ms/亿、arr.add 620 vs 625 ms/亿）⇒ R4 延迟释放无可测代价 |
 | ~~R9~~ | ~~`OP_SWITCH_LOOKUP` 的 callout 开销~~ | ~~R9 前的基准显示：JIT 下 switch 每轮一次 callout（+15.5ms/3M 轮），比等价的 if 链慢 3.7 倍~~ | ~~编译期分流：case 值全 int 时发内联比较链~~ | ~~低（非 int 一律退回原 callout 路径）~~ | **已完成（§8.62，2026-09-14）**：int 快路径 + int48 守卫（bailout 交解释器，保住 bigint 值能命中 int case 的语义）+ 重复值排除；switch 的 JIT 时间 30.4 → **15.7 ms**，与 if 同级 |
@@ -5015,6 +5015,90 @@ R5 设计稿 2026-09-15 的 **静态普查**口径已给出"57 条 C3 捕获，�
 **建议顺序**：**cstruct 优先**（编译期解析 + 压栈，与 §8.56/§8.68 同构，风险低），
 CLIB 次之（ABI/类型展开/报错文本要逐条对齐）。两者都必须带"解析不出来就拒绝编译"的守卫
 （宁可不编，不要猜），并配 `assert/test_jit_*.leno` 用例 + `LENO_JIT_GAPS` 复核拒收清零。
+
+**更新（2026-09-16，R6-d 落地后）**：cstruct 已做完（§8.80），但上面对 cstruct 的
+"编译期解析"判断**是错的** —— 实测发现定义是**运行时注册**的、且同名重声明会覆盖条目并废弃旧
+def（`object_cstruct.c:229-241`）⇒ 只能嵌名字常量、在 callout 里每次现查（详见 §8.80）。
+结果：cstruct 在 census 里**归零**，但**循环级净解锁 = 0** —— 原来被 138 挡的 4 个热循环
+全部转为被 `142(OP_CLIB_CALL)` 挡（fm / cc / gomoku 各剩 4 个热循环，全部是 CLIB）
+⇒ **`OP_CLIB_CALL` 现在是循环级唯一剩下的 FFI 遮断原因**，优先级应排在 cstruct 的后续项
+（`OP_AS_CAST`、native 方法派发）之前。
+
+***
+
+### 8.80 R6-d：`OP_GET_CSTRUCT_DEF` 进 JIT（+ 度量：解锁 8 个函数 / 13 个内联点，循环级净 0，并露出两个相邻缺口）（2026-09-16）
+
+**原状态**：`OP_GET_CSTRUCT_DEF`(138) 在 scan 的长度表里有（3 字节，`name_const(2)`），但
+`scan_loop_body` / `scan_callee_for_inline` 都**没有 case** ⇒ 落 `default` 被报成
+"unsupported opcode 138" ⇒ 含它的**整个循环 / 函数 / 被调方**全被拒（§8.77 实测：
+loop 4 / func 20 / inline 28 个对象）。这是 R6-c 之后**唯一有量化收益面的剩余 FFI 缺口的一半**
+（另一半是 `OP_CLIB_CALL`）。
+
+**语义取证**（`op_cstruct.inc:103-129`）：读名字常量（必须是字符串）→ `cstruct_def_find(name)`
+→ 找不到报"找不到 cstruct 定义 'X'"，找到则 push `val_obj(def)`。codegen 侧触发点是
+「**cstruct 类型名当表达式**」（`codegen_expr.c` 的 `SYM_CSTRUCT` / `cached_type` 两处），
+所以真实写法就是 `T.malloc()` / `T.size()` 这种"类型名当接收者"。
+
+**关键设计判断：这里**不能**做编译期解析（与 §8.56 模块方法、`OP_CALL_NATIVE` 的 native 表相反）**
+
+| 事实 | 来源 | 后果 |
+| --- | --- | --- |
+| cstruct 定义是**运行时注册**的（`OP_DEFINE_CSTRUCT` 执行时才注册） | `op_cstruct.inc:76` | 编译期可能查不到（不是"不会变"，是"可能还没有"）|
+| 同名重声明会**覆盖**注册表条目，并把**旧 def 的 name / 字段表清空** | `object_cstruct.c:229-241` | 编译期嵌入的 `def*` 会被废弃 ⇒ 与解释器分叉 |
+
+⇒ 采用：**只嵌入名字字符串指针**（GC 非移动 = "槽地址稳定"，`gc.c:295`，与
+`ops_callout.inc:450` 嵌模块指针同一前提），**查找每次执行在 callout 里做一遍**。
+代价是每次执行一次线性表 + `strcmp`（一个程序里 cstruct 定义通常个位数），换来的是
+**与解释器逐字一致**（含覆盖语义与报错文本）。
+
+**实现**（4 处，全部对照既有模板抄）
+
+| 位置 | 内容 |
+| --- | --- |
+| `jit_scan.c`（`scan_loop_body`） | `case OP_GET_CSTRUCT_DEF: vstack++`（net +1）|
+| `jit_scan.c`（`scan_callee_for_inline`） | 同上（内联侧允许 callout 类 opcode，与 `OP_GET_GLOBAL_FUNC` 同一先例）|
+| `ops_callout.inc` | codegen 照 `OP_GET_GLOBAL_FUNC`（§8.68）逐行同构：常量解码检查 → `TOS_SPILL` → callout → `failed` 检查 → `VALUE_TO_RAW` → `TOS_PRODUCE`；**常量越界/非字符串一律 `return 0` 拒编**（交解释器报"cstruct 名称必须是字符串"，报错文本零改动）|
+| `jit_callout.c` | `jit_callout_get_cstruct_def(ObjString*)`：查到返回 `val_obj(def)`；查不到 `failed=1` + `NULL_VAL` ⇒ bailout 交解释器报原文 |
+
+**验证**
+
+1. **探针 `jit_probes/probe_cstruct_jit.leno`**（n=20000）：
+   - JIT 与 `LENO_NO_JIT=1` 输出**逐字一致**（`defLoop=20001` / `loopDef=20001`）；
+   - `Compiled: 2`（两个热循环都编了）；
+   - **字节码转储核对**（`--debug-out`）：循环体里确有 `OP_GET_CSTRUCT_DEF 2 (Cell)`（bc_off=29）
+     与 `... 11 (Vec2)`（bc_off=105）——**只跑对拍不看这条是不够的**，否则可能整个探针
+     根本不含目标指令（本次差点如此：第一版探针用的是 `Vec2.size()`，被下面的缺口掩盖）；
+   - `LENO_JIT_DEBUG=1` 下 `get_cstruct_def` **零失败**（0 条 `[JIT-CALLOUT-FAIL]`）。
+2. **真实应用逐对象差分**（改前/改后两份 `LENO_JIT_GAPS` census 做集合差，三应用）：
+
+   | 侧 | 138 消除 | 转移到其它原因 | **净解锁** |
+   | --- | --- | --- | --- |
+   | loop | fm 1 / cc 1 / gomoku 1 | 全部转 `142(OP_CLIB_CALL)`（各 3→4） | **0** |
+   | func | fm 8 / cc 4 | fm：2 转 142、**1 转 `133(OP_GET_FIELD_ADDR)`** | **8 个函数** |
+   | inline | fm 9 / cc 7 / gomoku 3 | 各 +2 转 142 | **13 个被调方** |
+
+3. **两个真实应用端到端 JIT / `LENO_NO_JIT=1`**（headless 300 帧）：`[SDL-BENCH]` 的
+   `sum` 逐字相同（file_manager 21600、cache_cleaner 4800），`exit=0`；JIT 侧
+   `FuncCompiled: 109 / 72`、`Bailouts: 3 / 0`。
+4. assert **308 passed / 0 failed**。
+
+**⚠ 本次最重要的方法论教训：census 每个对象只记「第一个」遮断原因**
+
+`scan` 一遇到不认识的 opcode 就 `return`（长度未知无法继续）。所以修掉一个原因后，
+**必须重测并做逐对象集合差**，否则会把"换了个遮断原因"当成"解锁" —— 本次正是靠差分才发现
+**循环级净解锁 = 0**（原来被 cstruct 挡的循环现在被 `OP_CLIB_CALL` 挡）。这条已写进
+`jit_probes/README.md` 的使用约定。
+
+**顺带露出的两个相邻缺口（都值得单独立项，本次不夹带）**
+
+| 缺口 | 实测证据 | 影响 |
+| --- | --- | --- |
+| `OP_AS_CAST(94)`（`x as T` 转换） | 探针 census：`1 loop\|unsupported opcode 94(OP_AS_CAST)` | i32 字段取值**必须**用它（`c.v as int`）⇒ 含 cstruct 字段读的循环整循环被拒 |
+| `call_value` 对 **native 方法对象** | 探针 6 条 bailout 全是 `[JIT-CALLOUT-FAIL] call_value: callee 是对象但 function 为空（obj_type=10）` | `T.size()/T.offset_of()/T.malloc()/T.free()` 这些"类型名上的方法调用"在 JIT 里每次执行都 bailout |
+
+⇒ 含义：**cstruct 的"取定义"已通，但它的"用"还差两步**（`as` 转换 + native 方法派发）。
+下一步按 §8.79 的顺序做 **`OP_CLIB_CALL`(142)**（它现在是循环级唯一剩下的 FFI 遮断原因：
+fm / cc / gomoku 各 4 个热循环）；`OP_AS_CAST`(94) 与 native 方法派发可作为紧随其后的两项。
 
 ***
 
