@@ -1,0 +1,78 @@
+// 跨模块同名类型（S2）回归测试
+//
+// 覆盖三态：
+//
+// A. 同名 + **形状不同**（字段不同）⇒ 必须报错
+//    背景（2a）：四张定义表全局只按名字索引，同名即"后注册者覆盖先注册者"，而字段索引在编译期
+//    按各自模块的定义定死 ⇒ `new A.Point()` 读出的却可能是 B 的字段（实测 `pa.x` 读出 B 的 111），
+//    编译器一声不吭。
+//
+// B. 同名 + 字段相同、**只有方法体不同** ⇒ 必须报错
+//    背景（2a+）：形状比对里没有方法体 / 构造体 / impl 实现，只有它们的**名字**，于是
+//    `Point{int x  func tag():int {return 1|2}}` 会被判"覆盖无害"⇒ `new a.Point().tag()`
+//    跑到 b 的方法体，**静默返回 2（期望 1）、exit 0、零诊断**。修法：任一方带方法/ctor/dtor/impl
+//    即判为不一致（无法证明行为等价 ⇒ 响亮报错）；关联常量连**值**一起比。
+//
+// C. 同名 + 纯数据且完全相同 ⇒ 必须**放行**
+//    语料里 `use_mod_a.leno` / `use_mod_c.leno` 各自独立声明了同形的 `Point{x,y}`（见
+//    assert/test_use_batch_mixed.leno 的导入闭包），报错会误伤；此时覆盖在行为上是空操作。
+//
+// 报错走的是运行时错误收集（模块 init 阶段，`OP_DEFINE_*`），落点是第 0 行 ⇒ expect_line 传 0。
+// 子进程与判据机器复用 assert/helpers/compiler.leno（S7），本文件只负责"造源码"。
+
+import dirs
+import files
+
+import "helpers/compiler.leno" as ce
+
+// 造一个「入口同时 import lib/a.leno 与 lib/b.leno」的用例，返回入口文件路径。
+func make_case(string work, string name, string src_a, string src_b, string entry_body):string {
+    var root = dirs.join(work, name)
+    dirs.delete(root)
+    dirs.mkdir_p(dirs.join(root, "lib"))
+    files.write(dirs.join(root, "lib/a.leno"), src_a)
+    files.write(dirs.join(root, "lib/b.leno"), src_b)
+    var main_path = dirs.join(root, "main.leno")
+    files.write(main_path,
+        "import \"lib/a.leno\" as a\nimport \"lib/b.leno\" as b\n\nmain() {\n" + entry_body + "}\n")
+    return main_path
+}
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_cross_module_type_conflict")
+    // 先清一次：上次若中途失败会留下工作目录与 .lenocache，而"必须失败"的用例一旦命中旧缓存
+    // 就可能变成"直接跑起来" ⇒ 回归验不出来（与 test_dup_type_kind 同一理由）
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // A. 形状不同：A 是 {int x}、B 是 {int p, int y}
+    var path = make_case(work, "shape_diff",
+        "export struct Point {\n    int x = 11\n}\n",
+        "export struct Point {\n    int p = 111\n    int y = 222\n}\n",
+        "    var pa = new a.Point()\n    print(pa.x)\n")
+    ce.expect_error(path, "S2 同名异源形状不同",
+        "跨模块同名struct 'Point'", 0)
+
+    // B. 字段相同、只有方法体不同（2a+ 的那个洞）
+    path = make_case(work, "body_diff",
+        "export struct Point {\n    int x\n    func tag(): int {\n        return 1\n    }\n}\n",
+        "export struct Point {\n    int x\n    func tag(): int {\n        return 2\n    }\n}\n",
+        "    var pa = new a.Point()\n    print(pa.tag())\n")
+    ce.expect_error(path, "S2 同名异源方法体不同",
+        "跨模块同名struct 'Point'", 0)
+
+    // C. 对照组：纯数据、字段与默认值完全相同 ⇒ 放行（覆盖是空操作）
+    //    注意不在这里读写字段：`var pa = new a.Pair()` 之后写 `pa.x` 会以
+    //    "无法确定字段索引，struct 类型可能未定义" 编译失败 —— 那是**另一个**问题
+    //    （推断类型与模块限定名的关系，属 2b-2 的前哨），且它是响亮报错，不属于本用例要守的
+    //    "静默错值"。本组只要证明"两份同名纯数据定义能共存、程序照常跑起来"。
+    path = make_case(work, "pure_data_same",
+        "export struct Pair {\n    int x\n    int y\n}\n",
+        "export struct Pair {\n    int x\n    int y\n}\n",
+        "    var pa = new a.Pair()\n    print(3)\n")
+    ce.expect_ok(path, "S2 对照组（同名同形纯数据放行）", "3")
+
+    dirs.delete(work)
+
+    print("test_cross_module_type_conflict passed")
+}

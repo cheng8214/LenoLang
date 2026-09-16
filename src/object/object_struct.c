@@ -91,6 +91,16 @@ int def_str_eq(const char* a, const char* b) {
 }
 
 // 两个 struct 定义的"形状"是否一致（跨模块同名时判断覆盖是否无害）
+//
+// ⚠ "形状一致"**不等于**"行为一致"：方法体 / 构造函数体 / impl 实现都不在形状里
+// （它们的 `func` 各自指向各自模块的字节码）。实测（2026-09-16）：
+//   lib/a.leno 与 lib/b.leno 各定义 `Point { int x  func tag(): int { return 1 | 2 } }`
+//   —— 字段、方法**名**、参数个数全同，只有方法体不同 ⇒ 被判"覆盖无害" ⇒ 表里只剩后注册的
+//   那份 ⇒ `new a.Point().tag()` 跑的是 b 的方法体，**静默返回 2（期望 1）**，一条错误都没有。
+// 因此这里收紧为：
+//   - 任一方带方法 / ctor / dtor / impl ⇒ 无法证明行为等价 ⇒ 判为**不一致**（响亮报错）；
+//   - 关联常量除名字外还要比**值**（值会随定义序列化、运行期可见，只比名字不够）。
+// 只有"纯数据、且常量值也相同"的同名定义才算一致（此时覆盖确为空操作）。
 static int struct_def_same_shape(ObjStructDef* a, ObjStructDef* b) {
     if (a->field_count != b->field_count) return 0;
     if (a->method_count != b->method_count) return 0;
@@ -99,6 +109,11 @@ static int struct_def_same_shape(ObjStructDef* a, ObjStructDef* b) {
     if (a->type_param_count != b->type_param_count) return 0;
     if (a->has_ctor != b->has_ctor || a->ctor_index != b->ctor_index) return 0;
     if (a->has_dtor != b->has_dtor || a->dtor_index != b->dtor_index) return 0;
+
+    // 行为承载成员：形状比不出行为是否等价 ⇒ 一律按不一致处理（见函数头注释）
+    if (a->method_count > 0 || b->method_count > 0) return 0;
+    if (a->has_ctor || b->has_ctor || a->has_dtor || b->has_dtor) return 0;
+    if (a->impl_count > 0 || b->impl_count > 0) return 0;
 
     for (int i = 0; i < a->field_count; i++) {
         StructFieldInfo* fa = &a->fields[i];
@@ -110,14 +125,9 @@ static int struct_def_same_shape(ObjStructDef* a, ObjStructDef* b) {
         if (!def_str_eq(fa->name, fb->name)) return 0;
         if (!def_str_eq(fa->struct_type_name, fb->struct_type_name)) return 0;
     }
-    for (int i = 0; i < a->method_count; i++) {
-        if (!def_str_eq(a->methods[i].name, b->methods[i].name)) return 0;
-    }
-    for (int i = 0; i < a->impl_count; i++) {
-        if (!def_str_eq(a->impl_names[i], b->impl_names[i])) return 0;
-    }
     for (int i = 0; i < a->const_count; i++) {
         if (!def_str_eq(a->const_names[i], b->const_names[i])) return 0;
+        if (a->const_values[i] != b->const_values[i]) return 0;   // 值也参与比对
     }
     return 1;
 }
@@ -139,9 +149,10 @@ int def_owner_conflict(const char* kind, const char* name,
 
     char msg[BUFFER_XLARGE];
     snprintf(msg, sizeof(msg),
-             "跨模块同名%s '%s'：%s 与 %s 各定义了一份（形状不同），而四张类型表全局只按名字索引、"
-             "运行期只能保留一份（保留先注册的定义）。字段索引/成员值在编译期按各自模块的定义"
-             "确定，混用会静默读到同序号的错误字段 —— 请给其中一个改名。",
+             "跨模块同名%s '%s'：%s 与 %s 各定义了一份且无法证明等价（字段/成员不完全相同，"
+             "或带方法体/构造析构/impl 等本判定比不出来的成员），而四张类型表全局只按名字索引、"
+             "运行期只能保留一份（保留先注册的定义）。字段索引、方法体、成员值在编译期都按各自"
+             "模块的定义确定，混用会静默读到同序号的错误字段、或跑到另一份的方法体 —— 请给其中一个改名。",
              kind, name, def_owner_label(old_owner), def_owner_label(new_owner));
     error_add_at(ERR_RUNTIME, 0, 0, msg);
     return 1;
