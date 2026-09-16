@@ -1,0 +1,59 @@
+// R6-e 探针：OP_CLIB_CALL（FFI 动态库调用）在 JIT 下的行为
+//
+// 目标：验证「FFI 动态库调用」这条指令在**函数级 / 循环级** JIT 里被正确支持：
+//   · scan 记账：弹 arg_count（含 lib_obj 与函数名两个）压 1 个结果 ⇒ 净 -(arg_count-1)；
+//   · codegen 把整条指令的 `ip` 交给 callout（操作数变长：arg_count(2) ret_type(1)
+//     user_arg_count(1) arg_types[]），callout 按 `ip` 现读；
+//   · 参数搬上 VM 栈（call 期间是 GC 根）再调 `ffi_clib_call`；异常 → failed → bailout。
+//
+// 判据（四条都要满足）：
+//   1. `LENO_NO_JIT=1` 与开启 JIT 的输出**逐字一致**；
+//   2. `Compiled` 覆盖本文件的热循环；
+//   3. **循环体里真的有这条指令** —— 字节码转储核对：
+//        build\leno.exe --debug-out build\dump_clib.txt jit_probes\probe_clib_call_jit.leno 10
+//        → 应出现 `OP_CLIB_CALL` 落在循环体的 bc_off 上；
+//   4. `clib_call` 零失败：`LENO_JIT_DEBUG=1` 下 0 条
+//      `[JIT-CALLOUT-FAIL] clib_call`。
+//
+// 形态说明：
+//   · ① `ffSleep`：每轮一次 **void** FFI 调用（`Sleep(0)`）—— 结果不参与运算，
+//     所以不需要任何类型转换（`as` 转换是 OP_AS_CAST(94)，JIT 未支持，会整循环拒收）。
+//   · ② `ffAbs`：每轮一次**有返回值**的 FFI 调用（`abs`），结果用 `_int()` 原生桥
+//     转成 int 累加 —— `_int` 是 OP_CALL_NATIVE，JIT 已支持（还有内联快速路径）。
+import ffi
+
+clib kernel32 {
+    void Sleep(u32 ms)
+}
+
+clib msvcrt {
+    i32 abs(i32 n)
+}
+
+func ffSleep(int n): int {
+    kernel32 k32 = ffi.load("kernel32.dll")
+    int acc = 0
+    for 0 : n to i {
+        k32.Sleep(0)          // ← OP_CLIB_CALL（void 返回）
+        acc = acc + 1
+    }
+    return acc
+}
+
+func ffAbs(int n): int {
+    msvcrt m = ffi.load("msvcrt.dll")
+    int acc = 0
+    for 0 : n to i {
+        acc = acc + _int(m.abs(i - 1000))   // ← OP_CLIB_CALL（i32 返回）+ 原生转换
+    }
+    return acc
+}
+
+main() {
+    int n = 20000
+    var args = _args()
+    if args.len() > 0 { n = _int(args[0]) }
+
+    print("ffSleep=" + ffSleep(n) + "\n")
+    print("ffAbs=" + ffAbs(n) + "\n")
+}

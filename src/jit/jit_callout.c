@@ -8,6 +8,7 @@
 #include "jit_mem.h"
 #include "../include/leno_error.h"
 #include "../include/native.h"
+#include "../module/ffi/ffi_clib.h"   /* R6-e：OP_CLIB_CALL 走 ffi_clib_call + FFI_MAX_ARGS */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -2553,6 +2554,63 @@ Value jit_callout_call_native(int64_t* vstack_top, ObjNative* native,
     if (vm->has_exception) {
         jit_callout_failed = 1;
         if (jit_debug_on()) fprintf(stderr, "[JIT-CALLOUT-FAIL] call_native: native raised exception\n");
+        return NULL_VAL;
+    }
+    return result;
+}
+
+/* Callout: OP_CLIB_CALL（FFI 动态库调用，R6-e）。
+ *
+ * 契约与取舍见 jit_priv.h 的声明处注释。要点：
+ *   · 字节码变长（`arg_count(2) ret_type(1) user_arg_count(1) arg_types[]`）⇒ 由
+ *     codegen 传 `ip`，这里现读（与 OP_CLOSURE 的 desc 指针同一先例）；
+ *   · 参数搬上 **VM 栈**再调 `ffi_clib_call`（与解释器逐字一致的位置：
+ *     `vm.stack + vm.sp - arg_count`）—— 既保证 call 期间它们是 GC 根，也满足
+ *     `ffi_call_impl` 对 str16/窄化转换的假设；
+ *   · 任何异常（`vm.has_exception`）→ failed → bailout，让解释器按原指令重新执行
+ *     并抛出同一文本的错误 —— 与 `jit_callout_call_native` 完全一致的既有取舍。 */
+Value jit_callout_clib_call(int64_t* vstack_top, const uint8_t* ip) {
+    VM* vm = jit_callout_vm;
+    if (!vm || !ip || !vstack_top) {
+        if (jit_debug_on())
+            fprintf(stderr, "[JIT-CALLOUT-FAIL] clib_call: 空 VM/ip/vstack\n");
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+
+    int arg_count      = rd_short(ip + 1);   /* = user_arg_count + 2（含 lib 与函数名） */
+    int ret_type_kind  = (int)ip[3];
+    int user_arg_count = (int)ip[4];
+
+    /* 防御：字节码形状不合法就交解释器（它有自己的报错路径），绝不按猜的个数记账。 */
+    if (user_arg_count < 0 || user_arg_count > FFI_MAX_ARGS ||
+        arg_count != user_arg_count + 2) {
+        if (jit_debug_on())
+            fprintf(stderr, "[JIT-CALLOUT-FAIL] clib_call: 操作数字节不合法"
+                            "（arg_count=%d user_arg_count=%d）\n", arg_count, user_arg_count);
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+
+    int arg_types[FFI_MAX_ARGS];
+    for (int i = 0; i < user_arg_count; i++)
+        arg_types[i] = (int)ip[5 + i];
+
+    /* 参数按序搬到 VM 栈（vstack_top[0] 是 TOS = 最后一个实参）。 */
+    int saved_sp = vm->sp;
+    for (int i = 0; i < arg_count; i++)
+        vm_stack_push(vm, jit_raw_to_value(vstack_top[arg_count - 1 - i]));
+
+    Value result = ffi_clib_call(arg_count, vm->stack + vm->sp - arg_count,
+                                 ret_type_kind, arg_types);
+    vm->sp = saved_sp;
+
+    /* ⚠ `ffi_clib_call` 内部可能回调进 VM（自动泵送 → vm_call_value → vm_grow_frames）：
+     * 这里只依赖 vm->sp / vm->stack 的**当前值**，不持有跨调用的指针（已全部重取）。 */
+    if (vm->has_exception) {
+        if (jit_debug_on())
+            fprintf(stderr, "[JIT-CALLOUT-FAIL] clib_call: FFI 抛异常（交解释器按原指令重执）\n");
+        jit_callout_failed = 1;
         return NULL_VAL;
     }
     return result;

@@ -1186,6 +1186,53 @@
                 break;
             }
 
+            /* ---- OP_CLIB_CALL（FFI 动态库调用，R6-e）----
+             * 解释器语义（op_clib_call.inc）：栈上是 [lib_obj, func_name, user_args...]，
+             * arg_count = user_arg_count + 2；结果压栈 ⇒ net -(arg_count-1)。
+             * 操作数**变长**（`arg_count(2) ret_type(1) user_arg_count(1) arg_types[]`），
+             * 所以整条指令的 `ip` 直接交给 callout 现读 —— 只占 2 个寄存器参数，
+             * 与 OP_CLOSURE 传捕获描述表指针同一先例。
+             * 走 callout 而不是内联机器码的原因：`ffi_clib_call` 要按 ret_type_kind 做
+             * 返回值展开、按 arg_types 做参数窄化，且内部可能回调进 VM（自动泵送）。 */
+            case OP_CLIB_CALL: {
+                uint16_t cc_argc = rd_short(ip + 1);
+                TOS_SPILL();
+                EMIT_STORE_TMP(tmp1_disp, JIT_RSP);   /* vstack_top */
+                EMIT_CALLOUT_BEGIN();
+                EMIT_LOAD_TMP(JIT_ARG1, tmp1_disp);   /* vstack_top (1st arg) */
+                emit_mov_reg_imm64(cb, JIT_ARG2, (uint64_t)(uintptr_t)ip);  /* 指令指针 (2nd) */
+                EMIT_CALL(jit_callout_clib_call);
+                EMIT_CALLOUT_END();
+                EMIT_STORE_TMP(tmp2_disp, JIT_RAX);
+                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_callout_failed);
+                emit_mov_reg_mem8(cb, JIT_RAX, JIT_R8, 0);
+                emit_test_rr(cb, JIT_RAX, JIT_RAX);
+                {
+                    EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                    int cc_fail = emit_jcc(cb, 0x85);       /* JNZ → bailout */
+                    patch_add(ctx, cc_fail, -1, 0);
+                }
+                emit_xor_rr(cb, JIT_RAX, JIT_RAX);
+                emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
+                EMIT_LOAD_TMP(JIT_RAX, tmp2_disp);
+                /* 弹掉全部 arg_count 个实参；callout 的返回值占其中一个槽成为新 TOS
+                 * （与 OP_CALL_NATIVE 同款：物理栈收缩 arg_count 槽 = vstack -= (argc-1)）。 */
+                int cc_pop = (int)cc_argc * 8;
+                if (cc_pop > 0) {
+                    if (cc_pop <= 127) {
+                        emit_byte(cb, 0x48); emit_byte(cb, 0x83); emit_byte(cb, 0xC4);
+                        emit_byte(cb, (uint8_t)cc_pop);
+                    } else {
+                        emit_byte(cb, 0x48); emit_byte(cb, 0x81); emit_byte(cb, 0xC4);
+                        emit_uint32(cb, (uint32_t)cc_pop);
+                    }
+                }
+                EMIT_VALUE_TO_RAW();
+                TOS_PRODUCE();
+                vstack -= (cc_argc - 1);
+                break;
+            }
+
             /* ---- Callout: OP_GET_PROPERTY (obj.name / obj.name(args) peephole) ---- */
             case OP_GET_PROPERTY: {
                 uint16_t name_idx = rd_short(ip + 1);

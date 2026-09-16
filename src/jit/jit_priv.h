@@ -589,6 +589,26 @@ int jit_resolve_method_typed(Chunk* chunk, uint16_t name_const_idx, uint16_t typ
 void* jit_thin_bridge_for(int arity);
 Value jit_callout_array_new(int64_t* vstack_top, uint16_t count);
 Value jit_callout_call_native(int64_t* vstack_top, ObjNative* native, uint16_t arg_count);
+
+/* ---- OP_CLIB_CALL（FFI 动态库调用，R6-e）----
+ * 解释器语义（`op_clib_call.inc`）：字节码是**变长**的
+ *   `arg_count(2) ret_type_kind(1) user_arg_count(1) arg_types[user_arg_count](1 each)`
+ * （长度 = 5 + user_arg_count，`opcode_size` 已收录）；VM 栈上是
+ *   `[lib_obj, func_name_str, user_arg1..user_argN]`（arg_count = user_arg_count + 2）；
+ * 结果压栈 ⇒ net -(arg_count-1)。
+ *
+ * `ip` = **本条指令的字节码指针**（操作数全在里面；静态只读、与 chunk 同寿命）——
+ * 变长操作数交给 callout 现读，从而只占 2 个寄存器参数，与 `OP_CLOSURE` 传捕获描述表
+ * 指针同一先例。
+ *
+ * 复刻 `jit_callout_call_native` 的既有取舍：参数逐个搬上 **VM 栈**再调用
+ * （call 期间它们是 GC 根，且 `ffi_call_impl` 会做类型窄化/str16 转换/分配），
+ * 调用后恢复 sp；`vm.has_exception` → failed → bailout，由解释器按原字节码重新执行
+ * 并抛出同一文本的错误（含 `GET_CURRENT_LINE()` 的行号）。
+ * ⚠ 与 native 调用同一条已知取舍：**已发生的 FFI 副作用不回滚**（§14）⇒ bailout 后
+ * 解释器会重新执行这条指令。触发条件只有 `vm.has_exception`（FFI 自己报错），
+ * 那时解释器语义本来就要抛错终止，故取舍可接受（与 call_native 完全一致）。 */
+Value jit_callout_clib_call(int64_t* vstack_top, const uint8_t* ip);
 Value jit_callout_get_property(int64_t* vstack_top, uint16_t name_const_idx, uint16_t call_or_args, Chunk* chunk);
 
 /* ---- Scanning (jit_scan.c) ---- */

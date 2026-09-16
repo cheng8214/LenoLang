@@ -904,6 +904,18 @@ case OP_GET_FIELD_FAST: vstack++; break;
                 vstack -= (ac - 1);
                 break;
             }
+            case OP_CLIB_CALL: {
+                /* 与 scan_loop_body 的同名 case 一致（R6-e）：FFI 动态库调用
+                 * → 弹 arg_count（含 lib/func_name）压 1 个结果 ⇒ 净 -(arg_count-1)。
+                 * 内联体里允许它：callout 属可内联的调用形态（与 OP_CALL_NATIVE 同）。 */
+                uint16_t cc_ac = rd_short(ip + 1);
+                if (cc_ac < 2) {
+                    jit_gaps_record_inline("OP_CLIB_CALL arg_count<2（畸形）");
+                    return 0;
+                }
+                vstack -= (cc_ac - 1);
+                break;
+            }
             case OP_CLEAR_LOCAL_RANGE: break;
             default:
                 if (jit_debug_on())
@@ -1538,6 +1550,21 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                  * `OP_GET_GLOBAL_FUNC + OP_CALL`）。
                  * 越界由 callout 置 failed → bailout，报错文本交解释器。 */
                 vstack++;
+                break;
+            }
+            case OP_CLIB_CALL: {
+                /* ---- R6-e：FFI 动态库调用 → 净 -(arg_count-1) ----
+                 * 解释器语义（op_clib_call.inc）：VM 栈 [lib, func_name, user_args...]，
+                 * arg_count = user_arg_count + 2（含前两个）⇒ 弹 arg_count、压 1 个结果。
+                 * 长度是变长的（5 + ip[4]），`opcode_size` 已收录 —— 之前只是没有 case，
+                 * 所以被报成 "unsupported opcode 142"（§8.77 census 的"已收录长度、未实现"）。
+                 * arg_count < 2 属畸形字节码：拒收，交解释器（那里有自己的报错路径）。 */
+                uint16_t cc_argc = rd_short(ip + 1);
+                if (cc_argc < 2) {
+                    r->capable = 0;
+                    return;
+                }
+                vstack -= (cc_argc - 1);
                 break;
             }
             case OP_GET_CSTRUCT_DEF: {

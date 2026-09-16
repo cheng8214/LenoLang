@@ -76,6 +76,21 @@ cmd /c "set LENO_NO_JIT=1&& build\leno.exe jit_probes\probe_tail_call_jit.leno 2
 2. 函数级 JIT 有**热度阈值**——只调用一次不编译，要在循环里跑热。
 详见 §8.76。
 
+## R6-e：`OP_CLIB_CALL`（FFI 动态库调用，`probe_clib_call_jit.leno`）
+
+```powershell
+build\leno.exe jit_probes\probe_clib_call_jit.leno 5000                              # JIT
+cmd /c "set LENO_NO_JIT=1&& build\leno.exe jit_probes\probe_clib_call_jit.leno 5000"   # 解释器
+# 两侧逐字一致（ffSleep=5001 / ffAbs=8502500）、Compiled: 2、**Bailouts: 0**
+build\leno.exe --debug-out build\dump_clib.txt jit_probes\probe_clib_call_jit.leno 10
+#   → 循环体里应有 OP_CLIB_CALL args=3 ret_kind=.. user_args=1 types=[..]
+```
+
+**为什么这个探针是"干净"的**：形态刻意选成 ① `Sleep(0)`（void，无需类型转换）
+② `abs(i-1000)` + `_int()` 累加（原生桥已支持）—— 避开 `OP_AS_CAST` 与 `call_value`
+两个相邻缺口，所以 `Bailouts: 0`。**真实应用里做不到这么干净**：R6-e 之后 fm/cc 的
+`Bailouts` 3/0 → 6/3，全部来自 `call_value`（`T.native方法()`），见 §8.81。
+
 ## R6-d：`OP_GET_CSTRUCT_DEF`（cstruct 类型名取定义，`probe_cstruct_jit.leno`）
 
 ```powershell
