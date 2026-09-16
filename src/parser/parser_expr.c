@@ -1313,6 +1313,8 @@ Ast* parse_type_check(Parser* p, Ast* left) {
         error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "类型检查表达式期望类型名（如 int, float, string, bool, Array[int] 等）");
         return left;
     }
+    // 模块限定类型名（`v is a.Point`）：此前会静默 misparse 成 `(v is a).Point`
+    if (!parser_reject_module_qualified_type(p, type_info)) return left;
 
     // 创建类型检查 AST 节点
     Ast* ast = ast_new(AST_TYPE_CHECK, line);
@@ -1330,6 +1332,8 @@ Ast* parse_as_cast(Parser* p, Ast* left) {
         error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "as 转型表达式期望类型名");
         return left;
     }
+    // 模块限定类型名（`v as a.Point`）：此前**语法通过**、运行期才炸（最坏的一种）
+    if (!parser_reject_module_qualified_type(p, type_info)) return left;
 
     Ast* ast = ast_new(AST_AS_CAST, line);
     ast->u.type_check.expr = left;

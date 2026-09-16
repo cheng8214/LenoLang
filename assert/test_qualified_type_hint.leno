@@ -1,0 +1,74 @@
+// 模块限定类型名出现在"类型位置"时，必须给出明确提示（防回退：此前是 misparse + 误导报错）
+//
+// 背景（2026-09-16 实测，S2 清理期间发现）：
+//   parse_type_internal 只吃单个类型名、不吃 `a.Point` ⇒ 它吃掉 `a`，剩下的 `.Point` 落到外层
+//   被当成属性访问，于是同一个 bug 有三种误导表现：
+//     `if v is a.Point { }`   ⇒ 报 "if 语句体必须用大括号 {} 包裹"（完全指不到原因）
+//     `(v is a.Point)`        ⇒ 报 "类型 'bool' 不支持属性访问 '.Point'"
+//     `var w = v as a.Point`  ⇒ **语法通过**，运行期才炸 "索引操作需要对象类型，但实际类型为 'null'"
+//   现在三处（含 `case is`）统一报"不支持带模块前缀的类型名（如 'a.Point'）：请先 use a.Point…"，
+//   与声明处 parser.c 里那条既有提示同口径。
+//
+// 注：声明处不支持限定名是**刻意设计**（parser.c 早就给了提示）；本用例守的是"漏了提示的那几处"。
+// 报错列号随位置变化，而 helpers/compiler.leno 的落点断言假定列 1，故这里只断言文案（expect_line=0）。
+
+import dirs
+import files
+
+import "helpers/compiler.leno" as ce
+
+// 造一个"导入模块 m 并在 main 里踩坑"的入口，body 是被测语句（自带缩进）
+func build_entry(string work, string name, string body):string {
+    var root = dirs.join(work, name)
+    dirs.delete(root)
+    dirs.mkdir_p(dirs.join(root, "lib"))
+    files.write(dirs.join(root, "lib/m.leno"), "export struct Point {\n    int x\n}\n")
+    var path = dirs.join(root, "main.leno")
+    files.write(path, "import \"lib/m.leno\" as m\n\nmain() {\n" + body + "}\n")
+    return path
+}
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_qualified_type_hint")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    var hint = "不支持带模块前缀的类型名"
+
+    // as 转型
+    var p = build_entry(work, "as_cast",
+        "    var v = new m.Point()\n    var w = v as m.Point\n")
+    ce.expect_error(p, "as 后限定类型名", hint, 0)
+
+    // 表达式里的 is
+    p = build_entry(work, "is_expr",
+        "    var v = new m.Point()\n    var b = (v is m.Point)\n")
+    ce.expect_error(p, "表达式 is 后限定类型名", hint, 0)
+
+    // 类型守卫（if 条件）
+    p = build_entry(work, "is_guard",
+        "    var v = new m.Point()\n    if v is m.Point { print(1) }\n")
+    ce.expect_error(p, "类型守卫后限定类型名", hint, 0)
+
+    // case is
+    p = build_entry(work, "case_is",
+        "    var v = new m.Point()\n    switch v {\n        case is m.Point { print(1) }\n    }\n")
+    ce.expect_error(p, "case is 后限定类型名", hint, 0)
+
+    // 对照组：use 导入后用裸名，四种写法都必须正常
+    var croot = dirs.join(work, "bare_ok")
+    dirs.delete(croot)
+    dirs.mkdir_p(dirs.join(croot, "lib"))
+    files.write(dirs.join(croot, "lib/m.leno"), "export struct Point {\n    int x\n}\n")
+    var cpath = dirs.join(croot, "main.leno")
+    files.write(cpath,
+        "import \"lib/m.leno\" as m\nuse m.Point\n\nmain() {\n"
+        + "    var v = new m.Point()\n"
+        + "    var w = v as Point\n"
+        + "    var b = (v is Point)\n"
+        + "    switch v {\n        case is Point { print(\"C=\") }\n    }\n}\n")
+    ce.expect_ok(cpath, "对照组（use 后裸名）", "C=")
+
+    dirs.delete(work)
+    print("test_qualified_type_hint passed")
+}

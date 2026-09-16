@@ -572,6 +572,28 @@ TypeInfo* parse_type(Parser* p) {
     return parse_type_internal(p);
 }
 
+// 类型位置不接受模块限定类型名（如 `a.Point`）—— 与声明处的既有提示
+// （src/parser/parser.c 的"不支持带模块前缀的类型声明…请先 use"）保持同一口径。
+//
+// 为什么必须有（2026-09-16 实测）：`is` / `case is` / `as` 这些位置此前**静默 misparse** ——
+// parse_type_internal 只吃掉前面的标识符 `a`，剩下的 `.Point` 落到外层被当成属性访问，于是：
+//   `if v is a.Point {`      ⇒ 报 "if 语句体必须用大括号 {} 包裹"（完全指不到真正原因）
+//   `(v is a.Point)`         ⇒ 报 "类型 'bool' 不支持属性访问 '.Point'"
+//   `var w = v as a.Point`   ⇒ **语法通过**，运行期才炸 "索引操作需要对象类型，但实际类型为 'null'"
+// 这比"明确不支持"更糟：既误导，又可能把问题拖到运行期。返回 0 = 已报错并释放 t。
+int parser_reject_module_qualified_type(Parser* p, TypeInfo* t) {
+    if (!t) return 0;
+    if (p->lex.current.type != TOK_DOT) return 1;   // 后面不是点号 ⇒ 正常类型
+
+    char msg[256];
+    snprintf(msg, sizeof(msg),
+             "不支持带模块前缀的类型名（如 'a.Point'）：请先 use a.Point，然后直接写 'Point'"
+             "（use 会把类型导入当前作用域）");
+    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, msg);
+    type_free(t);
+    return 0;
+}
+
 // ============================================================================
 // 类型别名解析
 // ============================================================================

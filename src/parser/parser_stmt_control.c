@@ -129,6 +129,12 @@ Ast* parse_if_stmt(Parser* p) {
                 if (field_name) free(field_name);
                 return NULL;
             }
+            // 模块限定类型名（`if v is a.Point`）：此前 misparse ⇒ 报"if 语句体必须用大括号 {}"
+            if (!parser_reject_module_qualified_type(p, type_info)) {
+                free(var_name);
+                if (field_name) free(field_name);
+                return NULL;
+            }
 
             guard_var = strdup(var_name);
             guard_type = type_info;
@@ -244,6 +250,13 @@ Ast* parse_if_stmt(Parser* p) {
                         TypeInfo* next_type_info = parse_type(p);
                         if (!next_type_info) {
                             error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望类型名");
+                            free(next_var_name);
+                            if (next_field_name) free(next_field_name);
+                            type_guard_list_free(&guard_conds);
+                            return NULL;
+                        }
+                        // 模块限定类型名：同类型守卫（and/or 链上的后续条件）
+                        if (!parser_reject_module_qualified_type(p, next_type_info)) {
                             free(next_var_name);
                             if (next_field_name) free(next_field_name);
                             type_guard_list_free(&guard_conds);
@@ -666,6 +679,13 @@ Ast* parse_switch_stmt(Parser* p) {
                 TypeInfo* type_info = parse_type(p);
                 if (!type_info) {
                     error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "case is 后期望类型名");
+                    free(mt_arr);
+                    free(switch_var_name);
+                    free(cases);
+                    return NULL;
+                }
+                // 模块限定类型名：同类型守卫（case is a.Point）
+                if (!parser_reject_module_qualified_type(p, type_info)) {
                     free(mt_arr);
                     free(switch_var_name);
                     free(cases);
