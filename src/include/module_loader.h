@@ -15,17 +15,6 @@ ObjModule* load_module_file(const char* file_path, const char* current_file, con
 
 ObjModule* find_loaded_module(const char* path);
 
-// 把 import 语句里写的路径，解析成「该模块在运行期的名字」（= ObjModule.name）。
-//
-// 为什么需要（docs/待办_单一事实来源与重复实现收敛.md 的 S2/2b）：源码里写的是 import 别名
-// （`import "x" as a` 里的 a），而运行期的模块名**并不总等于别名** —— 模块按路径去重，
-// "首次用什么名字加载，之后一直是那个名字"（实测 assert/test_use_batch.leno：源码写 `as a`，
-// 运行期名字却是文件名 use_mod_a）。类型精查是按 owner->name 比的，所以编译期要先把别名换算成
-// 运行期名字再写进字节码。
-//
-// 返回 NULL = 该模块尚未加载或路径解析失败（调用方应原样使用源码里的名字，运行期会回退裸名）。
-const char* module_runtime_name_for_import(const char* import_path, const char* current_file);
-
 void add_loaded_module_public(const char* path, ObjModule* module);
 
 // 重置已加载模块列表（用于新程序运行）

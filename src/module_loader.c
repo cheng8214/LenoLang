@@ -561,19 +561,6 @@ static int module_resolve_path(char* full_path, const char* file_path, const cha
     return 1;
 }
 
-// 把 import 里写的路径换算成「运行期模块名」（见 module_loader.h 的说明）。
-// 用与加载时**同一套**路径解析（module_resolve_path）保证能命中 loaded_modules 的键。
-const char* module_runtime_name_for_import(const char* import_path, const char* current_file) {
-    if (!import_path || !import_path[0]) return NULL;
-
-    char full_path[MAX_PATH_LEN];
-    if (!module_resolve_path(full_path, import_path, current_file)) return NULL;
-
-    ObjModule* m = find_loaded_module(full_path);
-    if (!m || !m->name || !m->name[0]) return NULL;
-    return m->name;
-}
-
 // 读取模块文件
 char* read_module_file(const char* file_path, const char* current_file) {
     char full_path[MAX_PATH_LEN];
