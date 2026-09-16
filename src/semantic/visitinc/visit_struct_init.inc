@@ -105,7 +105,10 @@
                     }
                 } else {
                     // 检查 struct 是否有析构函数，设置 has_dtor 标志供 codegen 使用
-                    ObjStructDef* sdef = struct_def_find(ast->u.struct_init.struct_name);
+                    // 注意用"带模块前缀"的查找：这里的名字可能是 "a.Point"，裸名查找永远查不到
+                    // （带前缀的名字不是表里的键）⇒ has_dtor 恒为假、`new a.Point()` 的析构登记
+                    // 会被漏掉。struct_def_find_qualified 对不带前缀的名字与裸名查找等价（S2/2b）。
+                    ObjStructDef* sdef = struct_def_find_qualified(ast->u.struct_init.struct_name);
                     if (sdef) {
                         ast->u.struct_init.has_dtor = sdef->has_dtor;
                     }
