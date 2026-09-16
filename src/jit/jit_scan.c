@@ -866,6 +866,12 @@ case OP_GET_FIELD_FAST: vstack++; break;
                 vstack -= (cnt - 1);
                 break;
             }
+            case OP_DICT: {
+                /* 与 scan_loop_body 的同名 case 一致（R6-i）：pop 2*count 压 1 ⇒ net 1-2*count */
+                uint16_t dcnt = rd_short(ip + 1);
+                vstack -= (2 * dcnt - 1);
+                break;
+            }
             case OP_GET_PROPERTY: {
                 /* Peephole: GET_PROPERTY + OP_CALL merges into a single
                  * method call (receiver + args collapsed into result). */
@@ -1132,6 +1138,13 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                 /* opcode + count16: pop count 元素 push 1 数组 → net -(count-1) */
                 uint16_t cnt = rd_short(ip + 1);
                 vstack -= (cnt - 1);
+                break;
+            }
+            case OP_DICT: {
+                /* opcode + count16: pop 2*count（键值对）push 1 字典 → net 1-2*count，R6-i。
+                 * count=0 是「空字典字面量」⇒ net +1（与 OP_ARRAY 的 0 元素同形）。 */
+                uint16_t dcnt = rd_short(ip + 1);
+                vstack -= (2 * dcnt - 1);
                 break;
             }
             case OP_GET_PROPERTY: {

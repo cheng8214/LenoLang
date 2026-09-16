@@ -1,0 +1,43 @@
+// R6-i 探针：OP_DICT（字典字面量）在 JIT 下的行为
+//
+// 目标：验证「字典字面量」在循环 / 函数级 JIT 里被正确支持。语义与解释器逐字对齐
+// （vm/vminc/op_dict.inc）：逆序取 count 组「键、值」→ 正序 dict_set → 压回；
+// 写屏障等由共享的 dict_set 负责（语义唯一来源）。
+//
+// 判据（四条都要满足）：
+//   1. `LENO_NO_JIT=1` 与开启 JIT 的输出**逐字一致**；
+//   2. `Compiled` 覆盖本文件的热循环、`Bailouts: 0`；
+//   3. 字节码转储核对循环体里确有 OP_DICT：
+//        build\leno.exe --debug-out build\dump_dict.txt jit_probes\probe_dict_jit.leno 10
+//   4. 覆盖 **count=0（空字典字面量，net +1）** 与 count=2（键值对）两种形态。
+import ffi
+
+// ① count=2：键是常量、值是循环变量（覆盖"值来自前面压栈的任意表达式"）
+func dictPairs(int n): int {
+    int acc = 0
+    for 0 : n to i {
+        var d = {"a": 1, "b": i}             // ← OP_DICT count=2
+        acc = acc + _int(d["a"]) + _int(d["b"])
+    }
+    return acc
+}
+
+// ② count=0：未初始化的字典声明（codegen 发 `OP_DICT 0`，net **+1**）＋ DICT_SET
+func dictEmpty(int n): int {
+    int acc = 0
+    for 0 : n to i {
+        Dict[string, int] e                  // ← OP_DICT count=0（空字典）
+        e["z"] = i
+        acc = acc + _int(e["z"])
+    }
+    return acc
+}
+
+main() {
+    int n = 2000
+    var args = _args()
+    if args.len() > 0 { n = _int(args[0]) }
+
+    print("dictPairs=" + dictPairs(n) + "\n")
+    print("dictEmpty=" + dictEmpty(n) + "\n")
+}

@@ -1062,6 +1062,50 @@
                 break;
             }
 
+            /* ---- OP_DICT（字典字面量 `{k:v, ...}`）—— R6-i ----
+             * 解释器语义（vm/vminc/op_dict.inc）：从栈上逆序取 count 组「键、值」→
+             * 正序写入新字典 → 压回（弹 2*count 压 1 ⇒ **net 1-2*count**；
+             * count=0 是「空字典字面量 `{}`」⇒ net **+1**，与 OP_ARRAY 的 0 元素同形）。
+             * 与 OP_ARRAY 完全同构，只是弹两倍槽位；整块交给 callout 收集+插入。
+             * 有失败通道（分配失败 / dict_set 抛错）⇒ failed 检查 → bailout 交解释器。 */
+            case OP_DICT: {
+                uint16_t di_cnt = rd_short(ip + 1);
+                TOS_SPILL();
+                EMIT_STORE_TMP(tmp1_disp, JIT_RSP);   /* vstack_top */
+                EMIT_CALLOUT_BEGIN();
+                EMIT_LOAD_TMP(JIT_ARG1, tmp1_disp);   /* vstack_top (1st arg) */
+                emit_mov_reg_imm64(cb, JIT_ARG2, (uint64_t)di_cnt);   /* count (2nd) */
+                EMIT_CALL(jit_callout_dict_new);
+                EMIT_CALLOUT_END();
+                EMIT_STORE_TMP(tmp2_disp, JIT_RAX);
+                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_callout_failed);
+                emit_mov_reg_mem8(cb, JIT_RAX, JIT_R8, 0);
+                emit_test_rr(cb, JIT_RAX, JIT_RAX);
+                {
+                    EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                    int di_fail = emit_jcc(cb, 0x85);        /* JNZ → bailout */
+                    patch_add(ctx, di_fail, -1, 0);
+                }
+                emit_xor_rr(cb, JIT_RAX, JIT_RAX);
+                emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
+                EMIT_LOAD_TMP(JIT_RAX, tmp2_disp);
+                /* 弹掉 2*count 个槽（键值对）；返回的字典成为新 TOS */
+                int di_pop = (int)di_cnt * 16;
+                if (di_pop > 0) {
+                    if (di_pop <= 127) {
+                        emit_byte(cb, 0x48); emit_byte(cb, 0x83); emit_byte(cb, 0xC4);
+                        emit_byte(cb, (uint8_t)di_pop);
+                    } else {
+                        emit_byte(cb, 0x48); emit_byte(cb, 0x81); emit_byte(cb, 0xC4);
+                        emit_uint32(cb, (uint32_t)di_pop);
+                    }
+                }
+                EMIT_VALUE_TO_RAW();
+                TOS_PRODUCE();
+                vstack -= (2 * di_cnt - 1);               /* count=0 ⇒ +1（空字典）*/
+                break;
+            }
+
             /* ---- Callout: OP_ARRAY (array literal [e1..eN]) ---- */
             case OP_ARRAY: {
                 uint16_t count = rd_short(ip + 1);

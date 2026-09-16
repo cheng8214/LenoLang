@@ -76,6 +76,18 @@ cmd /c "set LENO_NO_JIT=1&& build\leno.exe jit_probes\probe_tail_call_jit.leno 2
 2. 函数级 JIT 有**热度阈值**——只调用一次不编译，要在循环里跑热。
 详见 §8.76。
 
+## R6-i：`OP_DICT`（字典字面量，`probe_dict_jit.leno`）
+
+```powershell
+build\leno.exe jit_probes\probe_dict_jit.leno 2000                              # JIT
+cmd /c "set LENO_NO_JIT=1&& build\leno.exe jit_probes\probe_dict_jit.leno 2000"   # 解释器
+# 两侧逐字一致：dictPairs=2003001 / dictEmpty=2001000；Compiled: 2、Bailouts: 0
+```
+
+**两种形态都要测**：`count=2`（键值对）与 **`count=0`（空字典字面量 ⇒ net +1，
+最容易把栈记账写成 -1 的那个 case）**；字节码转储里应同时出现 `OP_DICT 2` 与 `OP_DICT 0`。
+语义细节（逆序取、正序插、失败通道）见 §8.85。
+
 ## R6-h：`OP_GET_FIELD_ADDR`（`&c.field` 取字段地址，`probe_field_addr_jit.leno`）
 
 ```powershell

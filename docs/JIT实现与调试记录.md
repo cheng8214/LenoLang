@@ -5304,6 +5304,49 @@ cstruct 字段（实际类型: %s）"）→ 索引越界检查（报"cstruct 'X'
 
 ***
 
+### 8.85 R6-i：`OP_DICT`进 JIT（字典字面量；解锁 2 个函数）（2026-09-16）
+
+**原状态**：`OP_DICT`(69) 长度早已登记（3 字节 = opcode + `count(2)`），但没有 case
+⇒ 落 `default` 报 "unsupported opcode 69"。§8.84 之后的 census 显示 **fm / cc 各有 1 个函数**
+卡在它上面（`func|unsupported opcode 69`）、**loop 级 0 个** —— 合理：字典字面量每轮都要分配，
+不会出现在热循环里；但含字典字面量的函数进不了函数级 JIT。
+
+**语义取证**（`op_dict.inc:5-33`）：`dict_new(max(count,8))` → 从栈顶**逆序**取 `count` 组
+「键、值」（每组**先弹 value 再弹 key**）→ 按**正序** `dict_set` 写入 → 压回字典。
+栈效应：弹 `2*count` 压 1 ⇒ **net `1 - 2*count`**（`count=0` 是"空字典字面量"⇒ **net +1**）。
+codegen 侧（`codegen_expr.c` 的 `AST_DICT`）按 `key_i, value_i` 顺序逐个压栈
+⇒ `vstack_top[0]` 是最后一组的 value，**从 `vstack_top[0]` 递增读 = 从栈顶往下**，
+与解释器的 `vm_stack_pop` 顺序逐字一致。
+
+**实现（4 处，全部照 `OP_ARRAY` 抄 —— 二者完全同构，只差两倍槽位）**
+
+| 位置 | 内容 |
+| --- | --- |
+| `jit_callout.c` | `jit_callout_dict_new(vstack_top, count)`：`dict_new` → 逆序收集到两个临时数组（**必须先收集再正序插入**：重复键的覆盖次序才与解释器一致）→ 共享的 `dict_set` 逐对插入（**写屏障在它里面**，语义唯一来源）→ 返回 dict |
+| `ops_callout.inc` | `case OP_DICT`：照 `OP_ARRAY` 的结构（`TOS_SPILL` → callout → failed 检查 → 弹 `2*count*8` 字节 → `VALUE_TO_RAW` + `TOS_PRODUCE` → `vstack -= (2*count-1)`）|
+| `jit_scan.c` | loop / inline 各加 case（`vstack -= (2*cnt - 1)`）—— inline 侧此前连 case 都没有 ⇒ 顺带解锁"造字典的被调方"|
+| `jit_priv.h` | 声明 + 契约注释（栈映射 / 覆盖次序 / 失败通道）|
+
+**失败通道**（与 `as`、`cstruct def` 那两条不同，这条**有**失败）：`dict_new` / 临时数组
+分配失败 → `failed`（交解释器报"内存分配失败"）；`dict_set` 若置了 `vm.has_exception`
+（如不可哈希的键）也一并 bailout —— JIT 不吞异常，与 `jit_callout_call_native` 同款
+（此时字典刚建好、无外部可见副作用）。
+
+**验证**
+
+1. 新探针 `jit_probes/probe_dict_jit.leno`，覆盖两种形态：
+   - ① `count=2`（键常量 + 值是循环变量）：`{"a": 1, "b": i}`；
+   - ② **`count=0`**（未初始化字典声明 ⇒ codegen 发 `OP_DICT 0`，net **+1**）+ 后续 `DICT_SET`；
+   - JIT / `LENO_NO_JIT=1` **逐字一致**（`dictPairs=2003001`、`dictEmpty=2001000`，
+     与手算 `(n+1) + n(n+1)/2` / `n(n+1)/2` 一致）；
+   - `Compiled: 2 / Executed: 2 / **Bailouts: 0**`；
+   - 字节码转储核对：`OP_DICT 2` 与 `OP_DICT 0` 都在循环体里（两种形态都真被测到）。
+2. `LENO_JIT_GAPS=1` 三应用：**`69` 条目全部消失**，fm / cc 条目数 **6→5**（各解锁 1 个函数）、
+   gomoku 不变（本来就没有）—— 干净的净解锁，无"换原因"。
+3. assert **311 passed / 0 failed**。
+
+***
+
 ## 9. 性能数据
 
 ### 测试环境

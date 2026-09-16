@@ -2611,6 +2611,53 @@ Value jit_callout_array_new(int64_t* vstack_top, uint16_t count) {
     return val_obj((Object*)arr);
 }
 
+/* Callout: OP_DICT（字典字面量 `{k1:v1, k2:v2, ...}`，R6-i）。
+ * 语义对齐 vm/vminc/op_dict.inc：`dict_new(max(count,8))` → 从栈顶**逆序**取出 count 组
+ * 「键、值」（每组先弹 value 再弹 key）→ 按**正序** dict_set 写入 → 返回字典。
+ * 契约与栈映射见 jit_priv.h 的声明处注释（含"为什么必须先收集再正序插入"）。 */
+Value jit_callout_dict_new(int64_t* vstack_top, uint16_t count) {
+    VM* vm = jit_callout_vm;
+
+    ObjDict* dict = dict_new(count > 0 ? (int)count : 8);
+    if (!dict) {
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+    if (count == 0) return val_obj((Object*)dict);   /* 空字典字面量 `{}`（net +1）*/
+    if (!vstack_top) {
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+
+    Value* keys = (Value*)malloc((size_t)count * sizeof(Value));
+    Value* values = (Value*)malloc((size_t)count * sizeof(Value));
+    if (!keys || !values) {
+        free(keys);
+        free(values);
+        jit_callout_failed = 1;                      /* 交解释器报"内存分配失败" */
+        return NULL_VAL;
+    }
+
+    int idx = 0;
+    for (int i = (int)count - 1; i >= 0; i--) {      /* 与解释器弹栈顺序逐字一致 */
+        values[i] = jit_raw_to_value(vstack_top[idx++]);
+        keys[i]   = jit_raw_to_value(vstack_top[idx++]);
+    }
+    for (int i = 0; i < (int)count; i++) {
+        dict_set(dict, keys[i], values[i]);          /* 正序插入（覆盖次序与解释器一致）*/
+    }
+    free(keys);
+    free(values);
+
+    /* dict_set 可能置异常（如不可哈希的键）—— JIT 不吞异常：交解释器重放并报原文
+     * （与 jit_callout_call_native 同款；此时字典刚建好、无外部可见副作用）。 */
+    if (vm && vm->has_exception) {
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+    return val_obj((Object*)dict);
+}
+
 /* Callout: OP_CALL_NATIVE (direct native function call, e.g. sha256_init).
  * Args are on the JIT virtual stack: vstack_top[0] = last arg.
  * native was resolved at compile time (see codegen) to avoid a strcmp scan

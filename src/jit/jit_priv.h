@@ -614,6 +614,16 @@ int jit_resolve_method_typed(Chunk* chunk, uint16_t name_const_idx, uint16_t typ
  * 支持 1..4 个 double 参数（xmm0..3；首参寄存器位放桥函数指针）。 */
 void* jit_thin_bridge_for(int arity);
 Value jit_callout_array_new(int64_t* vstack_top, uint16_t count);
+
+/* ---- R6-i：字典字面量 `{k:v, ...}`（OP_DICT）----
+ * 解释器语义（vm/vminc/op_dict.inc）：`dict_new(max(count,8))` → 从栈顶**逆序**取 count 组
+ * 「键、值」（每组先弹 value 再弹 key）→ 按**正序** dict_set → 压回（弹 2*count 压 1）。
+ * JIT 栈映射：codegen 按 `key_i, value_i` 顺序逐个压栈（codegen_expr.c 的 AST_DICT）
+ * ⇒ 从 `vstack_top[0]` 递增读即"从栈顶往下"，与解释器的 vm_stack_pop 顺序逐字一致。
+ * ⚠ 必须"先全部收集、再正序插入"（不能边弹边插）：重复键的**覆盖次序**与解释器一致。
+ * 失败通道（分配失败 / dict_set 抛错如不可哈希键）→ failed → bailout 交解释器报原文。
+ * 写屏障等由共享的 `dict_set` 负责（语义唯一来源）。 */
+Value jit_callout_dict_new(int64_t* vstack_top, uint16_t count);
 Value jit_callout_call_native(int64_t* vstack_top, ObjNative* native, uint16_t arg_count);
 
 /* ---- OP_CLIB_CALL（FFI 动态库调用，R6-e）----
