@@ -76,6 +76,20 @@ cmd /c "set LENO_NO_JIT=1&& build\leno.exe jit_probes\probe_tail_call_jit.leno 2
 2. 函数级 JIT 有**热度阈值**——只调用一次不编译，要在循环里跑热。
 详见 §8.76。
 
+## R6-g：`OP_AS_CAST`（`as` 安全转换，`probe_as_cast_jit.leno`）
+
+```powershell
+build\leno.exe jit_probes\probe_as_cast_jit.leno 2000                              # JIT
+cmd /c "set LENO_NO_JIT=1&& build\leno.exe jit_probes\probe_as_cast_jit.leno 2000"   # 解释器
+# 两侧逐字一致（asFloatToInt=1003001 / asRoundTrip=3002001 / asMismatch=2001）
+# Compiled: 3、Bailouts: 0；字节码转储里循环体应有 OP_AS_CAST
+```
+
+转换语义在 `vm.c` 的 **`vm_as_cast`**（语义唯一来源，解释器与 JIT callout 共用同一份，
+与 `type_check_value` 同一模式）—— 所以这个探针同时也守着重构等价性。
+⚠ 附带修掉长度表的两处混用缺陷（`AS_CAST`+`CSTRUCT` 应 4 字节、`AS_CAST`+`ENUM` 应 3 字节），
+细节见 §8.83。
+
 ## （已回退）R6-f：把非闭包 callee 交 `vm_call_value`
 
 **不要重试这个改法**（除非先查清 JIT 的 `OP_INDEX`）：它让本目录的 `probe_cstruct_jit.leno`

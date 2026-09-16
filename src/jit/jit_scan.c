@@ -472,11 +472,23 @@ int opcode_size(const uint8_t* ip) {
          * **TYPE_ENUM 也读 2 字节名字常量**（op_type_check.inc 里 case TYPE_ENUM 与
          * case TYPE_STRUCT/FACE 同形）—— 早先只写 FACE/STRUCT 是错的，会让含 enum
          * 类型检查的字节流少走 1 字节。教训：长度表必须逐条对 VM 的 READ_* 核对，
-         * 不能照抄 debug.c 的反汇编器（那里有同一个漏项，本轮一并修掉）。 */
-        case OP_TYPE_CHECK:
-        case OP_AS_CAST: {
+         * 不能照抄 debug.c 的反汇编器（那里有同一个漏项，本轮一并修掉）。
+         *
+         * ⚠ §8.83：OP_TYPE_CHECK 与 OP_AS_CAST 的**名字常量集合不同**，必须分开登记：
+         *   · OP_TYPE_CHECK：STRUCT / FACE / **ENUM**（op_type_check.inc:27-30）
+         *   · OP_AS_CAST   ：STRUCT / FACE / **CSTRUCT**（op_as_cast.inc 的 case TYPE_CSTRUCT
+         *                    用 READ_SHORT）；而 **ENUM 落到 default**、只消费 1 字节
+         * 此前两者共用上面一条（STRUCT/FACE/ENUM ⇒ 4），后果：
+         *   · AS_CAST + CSTRUCT 少读 1 字节（会把它后面那字节当下一条指令的开始）
+         *   · AS_CAST + ENUM   多读 1 字节
+         * 这两个缺陷此前被"OP_AS_CAST 一律被 default 拒收（扫描到它就 return）"掩盖着。 */
+        case OP_TYPE_CHECK: {
             uint8_t tk = ip[1];
             return (tk == TYPE_FACE || tk == TYPE_STRUCT || tk == TYPE_ENUM) ? 4 : 3;
+        }
+        case OP_AS_CAST: {
+            uint8_t tk = ip[1];
+            return (tk == TYPE_FACE || tk == TYPE_STRUCT || tk == TYPE_CSTRUCT) ? 4 : 3;
         }
         /* count(1) + const_index(2) * count */
         case OP_PUSH_TYPE_ARGS:
@@ -677,6 +689,7 @@ static int scan_callee_for_inline(Chunk* cc, ObjModule* callee_module,
             case OP_GET_FIELD: /* pop 1 push 1 → net 0 */
             case OP_IS_NULL:  /* pop 1 push 1 → net 0，R2 批次 1 */
             case OP_TYPE_CHECK: /* pop 1 push 1（`is`）→ net 0，R2 批次 3 */
+            case OP_AS_CAST:    /* pop 1 push 1（`as`）→ net 0，R6-g */
             case OP_SET_PTR_ELEM_TYPE: case OP_SET_DECLARED_FACE: /* peek TOS → net 0 */
                 break;
             case OP_GET_MODULE_VAR: case OP_SET_MODULE_VAR: case OP_GET_MODULE_FUNC: {
@@ -1154,6 +1167,10 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                 break;
             case OP_TYPE_CHECK:
                 /* pop 1 push 1（`is` 的 bool 结果）→ net 0，R2 批次 3 */
+                break;
+            case OP_AS_CAST:
+                /* pop 1 push 1（`as` 的转换结果或 null）→ net 0，R6-g。
+                 * 转换语义在 vm_as_cast（vm.c，与解释器共用）⇒ 这里只记栈效应。 */
                 break;
             case OP_SET_PTR_ELEM_TYPE: case OP_SET_DECLARED_FACE:
                 /* 存值前的类型标记：**peek TOS**、不弹不推 → net 0（见 op_unary.inc） */

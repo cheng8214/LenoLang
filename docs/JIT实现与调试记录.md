@@ -5209,6 +5209,59 @@ codegen 去掉多传的第 3 个参数）。回退后：单跑该用例 `OK`、�
 
 ***
 
+### 8.83 R6-g：`OP_AS_CAST`进 JIT（`as` 安全转换；顺带修掉长度表两处混用缺陷）（2026-09-16）
+
+**原状态**：`OP_AS_CAST`(94) 在两个扫描器里都没有 case ⇒ 落 `default` 报 "unsupported opcode 94"
+⇒ **含 `as` 的热循环整循环被拒**（实测探针 census：`1 loop|unsupported opcode 94(OP_AS_CAST)`）。
+它是 §8.80/§8.81 之后剩下的"小而有明确收益面"的缺口之一，且是 **cstruct / FFI 字段取值的搭档**
+（`c.v as int` 是 i32 字段取值的唯一途径）。
+
+**语义取证**（`op_as_cast.inc`）：`[type_kind:1]` + 操作数 = 名字常量(2) 或 元素类型(1)；
+弹栈顶 → 按期望类型检查/转换 → **匹配（可能是转换后的值）或 null 压回**（pop 1 push 1，net 0）。
+**永不报错**，但可能分配（字符串转换 / 整数转 FFI 指针）。
+
+**实现：照 `OP_TYPE_CHECK` 的"语义唯一来源"模式（§8.65）**
+
+| 位置 | 内容 |
+| --- | --- |
+| `vm.c` | **新增 `vm_as_cast(value, expected_type, elem_type, name_val)`**：把 `op_as_cast.inc` 里那一坨 TypeKind switch（`+442` 行）**整段搬过来**，只把 `READ_BYTE/READ_SHORT` 换成入参（名字常量要查 `chunk->constants`，JIT 在编译期就能查好）|
+| `vminc/op_as_cast.inc` | 收缩为「读 `type_kind` → 读操作数 → `vm_as_cast` → 压结果」；**消费顺序与旧实现逐字一致** |
+| `leno_vm.h` | 声明 `vm_as_cast`（与 `type_check_value` 并列，注释写明"两处共用同一份"）|
+| `jit_callout.c` | `jit_callout_as_cast(...)` —— 一行转发（与 `jit_callout_type_check` 同款）|
+| `ops_callout.inc` | `case OP_AS_CAST`：编译期解出 `type_kind/elem/name_val` → `TOS_CONSUME_RAX` + `RAW_TO_VALUE` → callout → `VALUE_TO_RAW` + `TOS_PRODUCE`（net 0；**不设失败通道**，本操作码不报错）|
+| `jit_scan.c` | loop / inline 两个扫描器各加 `case OP_AS_CAST`（net 0）|
+
+**顺带修掉的两处长度表缺陷（此前被"94 一律拒收"掩盖）**
+
+长度表原来把 `OP_TYPE_CHECK` 与 `OP_AS_CAST` **合并成一条**（`STRUCT/FACE/ENUM ⇒ 4`），
+但两者的名字常量集合**不同**：
+
+| 操作码 | 带 2 字节名字常量的类型 | 来源 |
+| --- | --- | --- |
+| `OP_TYPE_CHECK` | `STRUCT` / `FACE` / **`ENUM`** | `op_type_check.inc:27-30` |
+| `OP_AS_CAST` | `STRUCT` / `FACE` / **`CSTRUCT`**（`ENUM` **落到 default ⇒ 只读 1 字节**）| `op_as_cast.inc` 的 `case TYPE_CSTRUCT`（`READ_SHORT`）|
+
+⇒ 混用的后果：**`AS_CAST`+`CSTRUCT` 少读 1 字节**（把它后面那个字节当成下一条指令的开始）、
+**`AS_CAST`+`ENUM` 多读 1 字节**。两者此前不会暴露，只因为扫描遇到 `OP_AS_CAST` 就 `return` 了
+—— 一旦支持该操作码，长度错就会让**扫描走错字节流**（`§8.83` 已拆成两条，各自的注释写明依据）。
+
+**验证**
+
+1. 新探针 `jit_probes/probe_as_cast_jit.leno`（三个热循环：① float→int 截断 ② int→float→int
+   往返 + `(i%2==0) as int` ③ **不匹配 `"x" as int` 必须得 null**）：
+   - JIT / `LENO_NO_JIT=1` **逐字一致**（`asFloatToInt=1003001` / `asRoundTrip=3002001` /
+     **`asMismatch=2001`** —— 最后一条专门盯"不匹配 ⇒ null"的语义）；
+   - `Compiled: 3 / Executed: 3 / **Bailouts: 0**`；
+   - 字节码转储核对：循环体里确有 `OP_AS_CAST`（如 `OP_AS_CAST 2 11`）。
+2. `LENO_JIT_GAPS=1` 三应用（fm/cc/gomoku）：**`94` / `AS_CAST` 条目全部消失**（改前探针口径为
+   `1 loop|unsupported opcode 94`）。⚠ 按 §8.80 的教训说明：这一条只能证明"94 不再是任何对象的
+   **首个**遮断原因"，不能证明它们都变成了可编译（可能换成了别的原因）。
+3. **等价性最强的一条**：`vm_as_cast` 是解释器与 JIT 的**同一份**实现（抽取式重构），
+   加上 assert **311 passed / 0 failed**（含全部 `as` 相关用例），语义分歧只可能来自
+   "操作数解码"这一处，而它已按上表逐条对照 `READ_*` 核对过。
+
+***
+
 ## 9. 性能数据
 
 ### 测试环境

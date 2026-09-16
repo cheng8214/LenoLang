@@ -312,6 +312,448 @@ Value string_add(Value a, Value b) {
 }
 
 // ============================================================================
+// OP_AS_CAST 的安全类型转换 —— **语义唯一来源**（§8.83）
+//   从 vm/vminc/op_as_cast.inc 整段抽出（解释器那一坨 TypeKind switch）。
+//   与 type_check_value 同一做法：操作数不再用 READ_BYTE/READ_SHORT 就地消费，
+//   而是由调用方把 elem_type / name_val 传进来（名字常量要查 chunk->constants，
+//   JIT 在编译期就查好 —— 与 §8.61/§8.65 同一套路）。
+//   ⚠ 行为必须与抽取前**逐字一致**（含各类型不匹配时压 null 的语义），
+//     特别是：**TYPE_ENUM 不在本 switch 里**（抽取前它是落到 default ⇒ matches=0），
+//     所以调用方对 TYPE_ENUM 仍按 1 字节操作数读，不能想当然当成"带名字常量"。
+//   匹配则返回（可能已转换的）value，不匹配返回 null —— 不报错、但可能分配
+//   （字符串转换 / 整数转 FFI 指针），在 JIT 帧里安全（GC 只置让出标志，§8.36）。
+// ============================================================================
+Value vm_as_cast(Value value, TypeKind expected_type, TypeKind elem_type, Value name_val) {
+    int matches = 0;
+
+    switch (expected_type) {
+        case TYPE_INT: {
+            if (val_is_int(value)) {
+                matches = 1;
+            } else if (val_is_bigint(value)) {
+                // bigint 在 int32 范围内 → 转为 int，否则保持原值
+                ObjBigInt* bi = val_as_bigint(value);
+                if (bigint_fits_in_int64(bi)) {
+                    int64_t i64 = bigint_to_int64(bi);
+                    if (i64 >= INT32_MIN && i64 <= INT32_MAX) {
+                        value = val_int((int)i64);
+                    }
+                }
+                matches = 1;
+            } else if (val_is_float(value)) {
+                // float 转换为 int（截断小数）
+                value = val_num((int64_t)val_as_double(value));
+                matches = 1;
+            } else if (val_is_bool(value)) {
+                // bool 转 int（true→1, false→0）
+                value = val_int(val_as_bool(value) ? 1 : 0);
+                matches = 1;
+            } else {
+                matches = 0;
+            }
+            break;
+        }
+        case TYPE_FLOAT: {
+            if (val_is_float(value)) {
+                matches = 1;
+            } else if (val_is_int(value)) {
+                // int 转换为 float
+                value = val_float((double)val_as_int(value));
+                matches = 1;
+            } else if (val_is_bigint(value)) {
+                // bigint 转换为 float
+                value = val_float(bigint_to_double(val_as_bigint(value)));
+                matches = 1;
+            } else if (val_is_bool(value)) {
+                // bool 转换为 float（true→1.0, false→0.0）
+                value = val_float(val_as_bool(value) ? 1.0 : 0.0);
+                matches = 1;
+            } else {
+                matches = 0;
+            }
+            break;
+        }
+        case TYPE_STRING:
+            if (val_is_obj(value) && val_as_obj(value)->type == OBJ_STRING) {
+                matches = 1;
+            } else if (!val_is_null(value)) {
+                // 与 as int/as float 一致：非字符串类型自动转换
+                const char* str = val_to_string(value);
+                value = val_obj((struct Object*)str_copy(str, (int)strlen(str)));
+                matches = 1;
+            } else {
+                matches = 0;
+            }
+            break;
+        case TYPE_BOOL:
+            matches = val_is_bool(value);
+            break;
+
+        case TYPE_ARRAY: {
+            TypeKind expected_elem_type = elem_type;
+            if (!val_is_obj(value) || val_as_obj(value)->type != OBJ_ARRAY) {
+                matches = 0;
+                break;
+            }
+            if (expected_elem_type != TYPE_ANY) {
+                ObjArray* arr = (ObjArray*)val_as_obj(value);
+                matches = 1;
+                for (int i = 0; i < arr->count; i++) {
+                    Value elem = arr->elements[i];
+                    int elem_matches = 0;
+                    switch (expected_elem_type) {
+                        case TYPE_INT:
+                            elem_matches = val_is_int(elem) || val_is_bigint(elem);
+                            break;
+                        case TYPE_FLOAT:
+                            elem_matches = val_is_float(elem);
+                            break;
+                        case TYPE_STRING:
+                            elem_matches = (val_is_obj(elem) && val_as_obj(elem)->type == OBJ_STRING);
+                            break;
+                        case TYPE_BOOL:
+                            elem_matches = val_is_bool(elem);
+                            break;
+                        default:
+                            elem_matches = 1;
+                            break;
+                    }
+                    if (!elem_matches) {
+                        matches = 0;
+                        break;
+                    }
+                }
+            } else {
+                matches = 1;
+            }
+            break;
+        }
+
+        case TYPE_DICT:
+            matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_DICT);
+            break;
+        case TYPE_STRUCT: {
+            if (!val_is_obj(name_val) || val_as_obj(name_val)->type != OBJ_STRING) {
+                matches = 0;
+                break;
+            }
+            const char* struct_name = ((ObjString*)val_as_obj(name_val))->chars;
+            if (val_is_obj(value) && val_as_obj(value)->type == OBJ_STRUCT) {
+                ObjStruct* obj = (ObjStruct*)val_as_obj(value);
+                if (obj->def && obj->def->name) {
+                    matches = (strcmp(obj->def->name, struct_name) == 0);
+                } else {
+                    matches = 0;
+                }
+            } else {
+                matches = 0;
+            }
+            break;
+        }
+
+        case TYPE_FACE: {
+            if (!val_is_obj(name_val) || val_as_obj(name_val)->type != OBJ_STRING) {
+                matches = 0;
+                break;
+            }
+            const char* face_name = ((ObjString*)val_as_obj(name_val))->chars;
+            if (val_is_obj(value) && val_as_obj(value)->type == OBJ_STRUCT) {
+                ObjStruct* obj = (ObjStruct*)val_as_obj(value);
+                if (!obj->def) {
+                    matches = 0;
+                    break;
+                }
+                ObjFaceDef* fdef = face_def_find(face_name);
+                if (fdef) {
+                    matches = struct_implements_face(obj->def, fdef);
+                } else {
+                    matches = 0;
+                }
+            }
+            break;
+        }
+
+        case TYPE_FILE:
+            matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_FILE);
+            break;
+        case TYPE_SOCKET:
+            matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_SOCKET);
+            break;
+        case TYPE_CHANNEL:
+            matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_CHANNEL);
+            break;
+        case TYPE_THREAD:
+            matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_THREAD);
+            break;
+        case TYPE_PTR:
+            if (val_is_obj(value) &&
+                (val_as_obj(value)->type == OBJ_FFI_POINTER ||
+                 val_as_obj(value)->type == OBJ_FFI_LIBRARY ||
+                 val_as_obj(value)->type == OBJ_FFI_CALLBACK)) {
+                matches = 1;
+            } else if (val_is_int(value)) {
+                // 整数转指针（如 -1 表示 SQLITE_TRANSIENT）
+                int64_t addr = (int64_t)val_as_int(value);
+                ObjFFIPointer* ffi_ptr = (ObjFFIPointer*)gc_alloc(sizeof(ObjFFIPointer), OBJ_FFI_POINTER);
+                if (ffi_ptr) {
+                    ffi_ptr->ptr = (void*)addr;
+                    ffi_ptr->size = 0;
+                    ffi_ptr->owned = 0;
+                    ffi_ptr->freed = 0;
+                    ffi_ptr->element_type = TYPE_PTR;
+                    value = val_obj((Object*)ffi_ptr);
+                    matches = 1;
+                } else {
+                    matches = 0;
+                }
+            } else if (val_is_float(value)) {
+                int64_t addr = (int64_t)val_as_double(value);
+                ObjFFIPointer* ffi_ptr = (ObjFFIPointer*)gc_alloc(sizeof(ObjFFIPointer), OBJ_FFI_POINTER);
+                if (ffi_ptr) {
+                    ffi_ptr->ptr = (void*)addr;
+                    ffi_ptr->size = 0;
+                    ffi_ptr->owned = 0;
+                    ffi_ptr->freed = 0;
+                    ffi_ptr->element_type = TYPE_PTR;
+                    value = val_obj((Object*)ffi_ptr);
+                    matches = 1;
+                } else {
+                    matches = 0;
+                }
+            } else {
+                matches = 0;
+            }
+            break;
+        case TYPE_PTR_GENERIC: {
+            TypeKind elem_kind = elem_type;
+            matches = (val_is_obj(value) &&
+                      (val_as_obj(value)->type == OBJ_FFI_POINTER ||
+                       val_as_obj(value)->type == OBJ_FFI_LIBRARY ||
+                       val_as_obj(value)->type == OBJ_FFI_CALLBACK));
+            // 如果匹配，将元素类型记录到 FFI 指针对象中
+            if (matches && val_as_obj(value)->type == OBJ_FFI_POINTER) {
+                ObjFFIPointer* ffi_ptr = (ObjFFIPointer*)val_as_obj(value);
+                if (ffi_ptr->element_type == TYPE_ANY || ffi_ptr->element_type == TYPE_PTR) {
+                    ffi_ptr->element_type = elem_kind;
+                }
+            }
+            break;
+        }
+        case TYPE_NULL:
+            matches = val_is_null(value);
+            break;
+        case TYPE_ANY:
+            matches = 1;
+            break;
+
+        /* 整数截断类型：as i8/u8/i16/u16/i32/u32/i64/u64 — 显式截断高位，始终成功 */
+        case TYPE_I8: {
+            if (val_is_int(value)) {
+                value = val_int((int)(int8_t)val_as_int(value));
+                matches = 1;
+            } else if (val_is_bigint(value)) {
+                value = val_int((int)(int8_t)bigint_to_int64(val_as_bigint(value)));
+                matches = 1;
+            } else if (val_is_float(value)) {
+                value = val_int((int)(int8_t)(int64_t)val_as_double(value));
+                matches = 1;
+            } else if (val_is_bool(value)) {
+                value = val_int(val_as_bool(value) ? 1 : 0);
+                matches = 1;
+            } else {
+                matches = 0;
+            }
+            break;
+        }
+        case TYPE_U8: {
+            if (val_is_int(value)) {
+                value = val_int((int)(uint8_t)val_as_int(value));
+                matches = 1;
+            } else if (val_is_bigint(value)) {
+                value = val_int((int)(uint8_t)bigint_to_int64(val_as_bigint(value)));
+                matches = 1;
+            } else if (val_is_float(value)) {
+                value = val_int((int)(uint8_t)(int64_t)val_as_double(value));
+                matches = 1;
+            } else if (val_is_bool(value)) {
+                value = val_int(val_as_bool(value) ? 1 : 0);
+                matches = 1;
+            } else {
+                matches = 0;
+            }
+            break;
+        }
+        case TYPE_I16: {
+            if (val_is_int(value)) {
+                value = val_int((int)(int16_t)val_as_int(value));
+                matches = 1;
+            } else if (val_is_bigint(value)) {
+                value = val_int((int)(int16_t)bigint_to_int64(val_as_bigint(value)));
+                matches = 1;
+            } else if (val_is_float(value)) {
+                value = val_int((int)(int16_t)(int64_t)val_as_double(value));
+                matches = 1;
+            } else if (val_is_bool(value)) {
+                value = val_int(val_as_bool(value) ? 1 : 0);
+                matches = 1;
+            } else {
+                matches = 0;
+            }
+            break;
+        }
+        case TYPE_U16: {
+            if (val_is_int(value)) {
+                value = val_int((int)(uint16_t)val_as_int(value));
+                matches = 1;
+            } else if (val_is_bigint(value)) {
+                value = val_int((int)(uint16_t)bigint_to_int64(val_as_bigint(value)));
+                matches = 1;
+            } else if (val_is_float(value)) {
+                value = val_int((int)(uint16_t)(int64_t)val_as_double(value));
+                matches = 1;
+            } else if (val_is_bool(value)) {
+                value = val_int(val_as_bool(value) ? 1 : 0);
+                matches = 1;
+            } else {
+                matches = 0;
+            }
+            break;
+        }
+        case TYPE_I32: {
+            if (val_is_int(value)) {
+                value = val_int((int)(int32_t)val_as_int(value));
+                matches = 1;
+            } else if (val_is_bigint(value)) {
+                value = val_int((int)(int32_t)bigint_to_int64(val_as_bigint(value)));
+                matches = 1;
+            } else if (val_is_float(value)) {
+                value = val_int((int)(int32_t)(int64_t)val_as_double(value));
+                matches = 1;
+            } else if (val_is_bool(value)) {
+                value = val_int(val_as_bool(value) ? 1 : 0);
+                matches = 1;
+            } else {
+                matches = 0;
+            }
+            break;
+        }
+        case TYPE_U32: {
+            if (val_is_int(value)) {
+                value = val_int((int)(uint32_t)val_as_int(value));
+                matches = 1;
+            } else if (val_is_bigint(value)) {
+                value = val_int((int)(uint32_t)bigint_to_int64(val_as_bigint(value)));
+                matches = 1;
+            } else if (val_is_float(value)) {
+                value = val_int((int)(uint32_t)(int64_t)val_as_double(value));
+                matches = 1;
+            } else if (val_is_bool(value)) {
+                value = val_int(val_as_bool(value) ? 1 : 0);
+                matches = 1;
+            } else {
+                matches = 0;
+            }
+            break;
+        }
+        case TYPE_I64: {
+            if (val_is_int(value)) {
+                matches = 1;
+            } else if (val_is_bigint(value)) {
+                value = val_int((int)bigint_to_int64(val_as_bigint(value)));
+                matches = 1;
+            } else if (val_is_float(value)) {
+                value = val_int((int)(int64_t)val_as_double(value));
+                matches = 1;
+            } else if (val_is_bool(value)) {
+                value = val_int(val_as_bool(value) ? 1 : 0);
+                matches = 1;
+            } else {
+                matches = 0;
+            }
+            break;
+        }
+        case TYPE_U64: {
+            if (val_is_int(value)) {
+                matches = 1;
+            } else if (val_is_bigint(value)) {
+                value = val_int((int)(int64_t)(uint64_t)bigint_to_int64(val_as_bigint(value)));
+                matches = 1;
+            } else if (val_is_float(value)) {
+                value = val_int((int)(uint64_t)val_as_double(value));
+                matches = 1;
+            } else if (val_is_bool(value)) {
+                value = val_int(val_as_bool(value) ? 1 : 0);
+                matches = 1;
+            } else {
+                matches = 0;
+            }
+            break;
+        }
+        /* 浮点窄化类型 */
+        case TYPE_F32: {
+            if (val_is_float(value)) {
+                /* float→f32: 始终可转换（可能损失精度） */
+                value = val_float((double)(float)val_as_double(value));
+                matches = 1;
+            } else if (val_is_int(value)) {
+                value = val_float((double)(float)val_as_int(value));
+                matches = 1;
+            } else if (val_is_bigint(value)) {
+                value = val_float((double)(float)bigint_to_double(val_as_bigint(value)));
+                matches = 1;
+            } else if (val_is_bool(value)) {
+                value = val_float(val_as_bool(value) ? 1.0 : 0.0);
+                matches = 1;
+            } else {
+                matches = 0;
+            }
+            break;
+        }
+        case TYPE_F64: {
+            if (val_is_float(value)) {
+                matches = 1;
+            } else if (val_is_int(value)) {
+                value = val_float((double)val_as_int(value));
+                matches = 1;
+            } else if (val_is_bigint(value)) {
+                value = val_float(bigint_to_double(val_as_bigint(value)));
+                matches = 1;
+            } else if (val_is_bool(value)) {
+                value = val_float(val_as_bool(value) ? 1.0 : 0.0);
+                matches = 1;
+            } else {
+                matches = 0;
+            }
+            break;
+        }
+        /* cstruct 类型 */
+        case TYPE_CSTRUCT: {
+            if (!val_is_obj(name_val) || val_as_obj(name_val)->type != OBJ_STRING) {
+                matches = 0;
+                break;
+            }
+            const char* cs_name = ((ObjString*)val_as_obj(name_val))->chars;
+            if (val_is_obj(value) && val_as_obj(value)->type == OBJ_CSTRUCT) {
+                ObjCStruct* obj = (ObjCStruct*)val_as_obj(value);
+                if (obj->def && obj->def->name) {
+                    matches = (strcmp(obj->def->name, cs_name) == 0);
+                } else {
+                    matches = 0;
+                }
+            } else {
+                matches = 0;
+            }
+            break;
+        }
+        default:
+            matches = 0;
+            break;
+    }
+
+    return matches ? value : val_null();
+}
+
+// ============================================================================
 // OP_TYPE_CHECK 的类型判定 —— **语义唯一来源**（§8.65）
 //   从 vm/vminc/op_type_check.inc 整段抽出（解释器那一坨 TypeKind switch）。
 //   区别只有两点：操作数不再用 READ_BYTE/READ_SHORT 就地消费，而是由调用方

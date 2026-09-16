@@ -716,6 +716,45 @@
                 break;                                 /* net 0 */
             }
 
+            /* ---- OP_AS_CAST（`as` 安全转换）—— R6-g ----
+             * 解释器语义（vm/vminc/op_as_cast.inc）：弹栈顶 → 按期望类型检查/转换 →
+             * 匹配（可能是转换后的值）或 null 压回（pop 1 push 1，**net 0**）。
+             * 编码：type_kind(1) + [name_const(2)]（**TYPE_STRUCT / TYPE_FACE / TYPE_CSTRUCT**）
+             *   或 + [elem_type(1)]（其余，**含 TYPE_ENUM**）。
+             *   ⚠ 与上面 OP_TYPE_CHECK 的名字常量集合**不同**（那边是 STRUCT/FACE/ENUM、
+             *     没有 CSTRUCT）—— 长度表因此分成两条（见 jit_scan.c 的 opcode_size）。
+             * 转换整个交给 callout（它调 VM 的 vm_as_cast —— 语义唯一来源）；
+             * 名字常量在编译期从 chunk->constants 取好（常量表是 GC 根、指针稳定）。
+             * 不报错（不匹配 ⇒ null），但可能分配（字符串转换 / 整数转 FFI 指针）——
+             * JIT 帧里安全（GC 只置让出标志）⇒ 无失败通道、无 bailout 分支。 */
+            case OP_AS_CAST: {
+                uint8_t tk = ip[1];
+                int elem = (int)TYPE_ANY;
+                Value name_val = NULL_VAL;
+                if (tk == TYPE_STRUCT || tk == TYPE_FACE || tk == TYPE_CSTRUCT) {
+                    uint16_t ni = rd_short(ip + 2);
+                    if (ctx->chunk && ctx->chunk->constants &&
+                        (int)ni < ctx->chunk->const_cnt) {
+                        name_val = ctx->chunk->constants[ni];
+                    }
+                } else {
+                    elem = (int)ip[2];
+                }
+                TOS_CONSUME_RAX();                     /* 弹操作数（raw）→ RAX */
+                EMIT_RAW_TO_VALUE();                   /* 裸 int48 → 装箱；其余原样 */
+                EMIT_STORE_TMP(tmp1_disp, JIT_RAX);
+                EMIT_CALLOUT_BEGIN();
+                EMIT_LOAD_TMP(JIT_ARG1, tmp1_disp);
+                emit_mov_reg_imm64(cb, JIT_ARG2, (uint32_t)tk);
+                emit_mov_reg_imm64(cb, JIT_ARG3, (uint32_t)elem);
+                emit_mov_reg_imm64(cb, JIT_ARG4, (uint64_t)name_val);
+                EMIT_CALL(jit_callout_as_cast);
+                EMIT_CALLOUT_END();                    /* RAX = Value（转换结果或 NULL_VAL） */
+                EMIT_VALUE_TO_RAW();
+                TOS_PRODUCE();
+                break;                                 /* net 0 */
+            }
+
             /* ---- OP_GET_FIELD / OP_SET_FIELD（struct 字段读写）—— §5 覆盖面 L3 ----
              * 解释器语义：vm/vminc/op_struct.inc。
              *   GET_FIELD：弹 obj、压 field（net 0）；struct 走越界检查 + struct_get_field。

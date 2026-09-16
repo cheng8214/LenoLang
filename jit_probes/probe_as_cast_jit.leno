@@ -1,0 +1,56 @@
+// R6-g 探针：OP_AS_CAST（`as` 安全转换）在 JIT 下的行为
+//
+// 目标：验证「安全类型转换」在**函数级 / 循环级** JIT 里被正确支持。转换语义整段搬到了
+// vm.c 的 vm_as_cast（**语义唯一来源**，与 type_check_value 同一模式）：
+// 解释器（op_as_cast.inc）与 JIT callout（jit_callout_as_cast）调的是同一个函数。
+//
+// 判据（四条都要满足）：
+//   1. `LENO_NO_JIT=1` 与开启 JIT 的输出**逐字一致**；
+//   2. `Compiled` 覆盖本文件的三个热循环、`Bailouts: 0`；
+//   3. `LENO_JIT_DEBUG=1` 下 0 条与 as_cast 相关的失败（本 callout 不设 failed）；
+//   4. 字节码转储核对循环体里确有 OP_AS_CAST：
+//        build\leno.exe --debug-out build\dump_ascast.txt jit_probes\probe_as_cast_jit.leno 10
+//
+// 覆盖形态（都刻意选成"能编进热循环"的）：
+//   · ① float → int（向零截断）—— 最常见的 cstruct 字段/像素坐标换算
+//   · ② int → float → int 往返 + bool → int（`(i%2==0) as int`）
+//   · ③ **不匹配 → null**：`"x" as int` 必须与解释器一致地得到 null（不是报错、不是原值）
+import ffi
+
+func asFloatToInt(float base): int {
+    int acc = 0
+    for 0 : 2000 to i {
+        float f = base + _float(i) * 0.5
+        acc = acc + (f as int)          // ← OP_AS_CAST(TYPE_INT)：float 截断
+    }
+    return acc
+}
+
+func asRoundTrip(int n): int {
+    int acc = 0
+    for 0 : n to i {
+        float f = (i as float) * 1.5    // ← OP_AS_CAST(TYPE_FLOAT)：int → float
+        int b = (i % 2 == 0) as int     // ← OP_AS_CAST(TYPE_INT)：bool → int
+        acc = acc + (f as int) + b      // ← OP_AS_CAST(TYPE_INT)：截断
+    }
+    return acc
+}
+
+func asMismatch(int n): int {
+    int nulls = 0
+    for 0 : n to i {
+        var v = "x" as int              // ← 不匹配 ⇒ 必须得到 null（与解释器逐字一致）
+        if v == null { nulls = nulls + 1 }
+    }
+    return nulls
+}
+
+main() {
+    int n = 2000
+    var args = _args()
+    if args.len() > 0 { n = _int(args[0]) }
+
+    print("asFloatToInt=" + asFloatToInt(1.5) + "\n")
+    print("asRoundTrip=" + asRoundTrip(n) + "\n")
+    print("asMismatch=" + asMismatch(n) + "\n")
+}

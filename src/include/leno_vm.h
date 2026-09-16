@@ -240,6 +240,17 @@ Value string_add(Value a, Value b);
 // 返回 1 = 匹配。纯判定：不分配、不报错。
 int type_check_value(Value value, TypeKind expected_type, TypeKind elem_type, Value name_val);
 
+// OP_AS_CAST 的安全类型转换（定义在 vm.c）—— **语义唯一来源**（§8.83）。
+// 解释器（vm/vminc/op_as_cast.inc）与 JIT callout（jit_callout_as_cast）都调它：
+//   value        : 被转换的值
+//   expected_type: 期望类型（TypeKind）
+//   elem_type    : 元素类型字节（TYPE_ANY = 不检查元素；仅数组 / 泛型指针用）
+//   name_val     : TYPE_STRUCT / TYPE_FACE / TYPE_CSTRUCT 的名字字符串常量
+//                  （其余类型忽略；ENUM **不在**本函数处理的类型里 —— 与解释器一致）
+// 返回：匹配则为（可能已转换的）值，不匹配为 null。不报错；可能分配
+//       （字符串转换 / 整数转 FFI 指针）。
+Value vm_as_cast(Value value, TypeKind expected_type, TypeKind elem_type, Value name_val);
+
 // struct 方法表查找（定义在 vm.c）—— 规则唯一来源（§8.66）。
 // 按名字线性比对、跳过 ctor/dtor；找到返回 1 并回填 out_closure（预创建闭包，可为 NULL）
 // 与 out_func。inline cache / GC 安全的 push-pop / 报错文本留在调用方（解释器与 JIT 各自处理）。

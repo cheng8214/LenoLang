@@ -451,6 +451,16 @@ Value jit_callout_string_add(Value a, Value b);
  * 纯判定：不分配、不报错 ⇒ 永不置 jit_callout_failed（无 bailout 分支）。 */
 int jit_callout_type_check(Value value, int expected_type, int elem_type, Value name_val);
 
+/* ---- R6-g：`as` 安全转换（OP_AS_CAST）----
+ * 一行转发到 VM 的 vm_as_cast（vm.c，解释器用的是同一份）—— **语义唯一来源**。
+ * 操作数（TypeKind / elem_type / 名字常量）由 codegen **编译期**解出：
+ *   STRUCT / FACE / **CSTRUCT** 带 2 字节名字常量；其余（**含 ENUM**）带 1 字节元素类型。
+ * ⚠ 与 OP_TYPE_CHECK 的名字常量集合**不同**（那边是 STRUCT/FACE/ENUM、无 CSTRUCT）——
+ *   长度表也据此分成两条（§8.83）。
+ * 不报错（不匹配 ⇒ 结果是 null），但可能分配（字符串转换 / 整数转 FFI 指针）——
+ * 在 JIT 帧里安全（GC 只置让出标志，§8.36）。⇒ 不置 jit_callout_failed，无 bailout 分支。 */
+Value jit_callout_as_cast(Value value, int expected_type, int elem_type, Value name_val);
+
 /* ---- R2 批次 4：独立的方法取值（`OP_GET_METHOD` 不紧跟 `OP_CALL`）----
  * 解释器要建 closure / bound method（会分配）。成功路径复用 VM 的
  * struct_method_lookup（规则唯一来源，§8.66）；找不到 / 类型不支持 ⇒ failed →

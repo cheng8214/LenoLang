@@ -1323,6 +1323,19 @@ int jit_callout_type_check(Value value, int expected_type, int elem_type, Value 
     return type_check_value(value, (TypeKind)expected_type, (TypeKind)elem_type, name_val);
 }
 
+/* Callout: OP_AS_CAST（`as` 安全转换，R6-g）—— 一行转发。
+ * 调 VM 的 vm_as_cast（**语义唯一来源**）：解释器与 JIT 共用同一套 TypeKind 转换
+ * （int/float/bool/string 互转、i8..u64 截断、f32 窄化、数组逐元素检查、
+ * struct/face/cstruct 按名字比对、整数转 FFI 指针……），
+ * 抽取前那一坨 switch 就在 op_as_cast.inc 里，现已整段搬进 vm.c。
+ * 编译期解出的三个参数直接传进来，运行时零解析。
+ * 不报错（不匹配 ⇒ 压 null），但**可能分配**（字符串转换 / 整数转 FFI 指针）——
+ * JIT 帧里安全：GC 只置让出标志、不就地回收（§8.36/§8.37）。
+ * ⇒ 永不置 jit_callout_failed（调用方无 bailout 分支，与 type_check 同款）。 */
+Value jit_callout_as_cast(Value value, int expected_type, int elem_type, Value name_val) {
+    return vm_as_cast(value, (TypeKind)expected_type, (TypeKind)elem_type, name_val);
+}
+
 /* Callout: OP_GET_METHOD 的**独立取值形态**（`obj.m` 不紧跟 `OP_CALL`）—— R2 批次 4（§8.66）。
  * 只做**成功路径**的查找；失败一律 failed → bailout → 解释器重放
  * （报错文本、行号、分配语义全与 NO_JIT 一致，含"类型 'X' 没有方法 'Y'"）。
