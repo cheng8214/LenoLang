@@ -71,6 +71,10 @@ typedef struct {
     int            last_bailout_site;
     int            last_bailout_bc_off; /* 循环体起始字节码偏移 */
     const char*    last_bailout_fn;     /* 所属函数名（main 为 "<main>"） */
+    /* 触发 bailout 的**指令名**（opcode_name 的静态字符串）。用 site 编码还原偏移后
+     * 从 chunk->code[loop_bc + rel] 取 —— 常驻的零成本诊断：真实应用上
+     * `LENO_JIT_DEBUG=1` 会产出 8MB+ stderr 且跑不完，不能用来回答"哪条指令 bail"。 */
+    const char*    last_bailout_op;
 } JitCacheEntry;
 
 /* ---- JIT state ---- */

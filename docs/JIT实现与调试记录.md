@@ -5583,8 +5583,9 @@ native 绑定方法把**接收者插到 `args[0]`**（与 `call_value` 的 bound
   取结果 ⇒ 若传 native 值会拿到陈值**并**让解释器多跑一段字节码。建议单独立项：
   让 `vm_call_value` 对 native 类 callee 显式处理（直调后发布结果）或**明确拒绝**
   （宁可不做，不要静默错）。
-- fm 仍有 **3** 条 bailout（来自**别的**站点，非 native 绑定方法）：用
-  `LENO_JIT_DEBUG=1` 的 `Bailout:` 汇总定位。
+- ~~fm 仍有 **3** 条 bailout（来自别的站点）：用 `LENO_JIT_DEBUG=1` 定位~~ → **已定位（§8.89）**：
+  是内层 **float 步长** for 循环的序言检查（`OP_FOR_PREP`），属**设计限制**、bail 正确；
+  并因此补了"bailout 触发指令名"的**常驻诊断**（零成本，替代跑不完的 `LENO_JIT_DEBUG`）。
 
 #### 方法论教训（已同步进 `jit_probes/README.md`）
 
@@ -5595,6 +5596,39 @@ native 绑定方法把**接收者插到 `args[0]`**（与 `call_value` 的 bound
 3. **修共享机械而无效时，先证明"数据有没有到达"**（双向仪器），再改取值位置。
 4. **`native 不压帧`** 是本次所有怪象的总开关：凡把 native callee 送进"假定会压帧"的
    路径（`vm_call_value`）都会静默错，不是崩溃 —— 所以必须用**对拍 + 探针**兜住。
+
+***
+
+### 8.89 常驻诊断：bailout 的**触发指令名**（+ fm 剩余 3 条 bailout 定位为设计限制）（2026-09-17）
+
+**动机（一次自找的教训）**：定位 fm 剩余 3 条 bailout 时，我又用 `LENO_JIT_DEBUG=1` 跑真实应用
+—— 产出 8MB+ stderr、**10 分钟没跑完被中止**。这条在 §8.71 就记过，但当时**只记了"不能这么做"，
+没有给替代工具** ⇒ 于是又栽一次。本次补上替代：**零成本**的 `stats` 诊断
+（"是哪条指令 bail 的"这件事，不该需要 debug 洪水才能回答）。
+
+**实现**（`jit.h` + `jit.c`，约 25 行）
+
+| 位置 | 内容 |
+| --- | --- |
+| `JitCacheEntry`（jit.h） | 新增 `const char* last_bailout_op;` |
+| bailout 记录处（jit.c） | 用与 `jit_bailout_reason` **同一套编码**还原偏移（非溢出类 `rel = -1000 - site`、溢出/截断类 `rel = site`；两者都相对循环体起点，内联帧先剥 `0x10000 * depth` 基址），再从 `chunk->code[loop_bc_off + rel]` 取 `opcode_name()`（静态字符串）；边界检查 `abs_off ∈ [0, chunk->len)`，取不到打 `?` |
+| `jit_print_stats`（jit.c） | `Bailout: fn=… — <原因> \| 触发指令=OP_xxx` |
+
+**它立刻给出了答案**（fm，300 帧，无需 debug）
+
+```
+Bailout: fn='render' loop_bc=414 x3 — 非溢出类 @bc_off=787（= loop_bc 414 + 373） | 触发指令=OP_FOR_PREP
+```
+
+⇒ **不是 callout 失败**，而是**内层 for 循环的序言检查**：`ops_loop.inc:31-40` 的
+`BT RBX, step_si` —— **step 的静态类型是 float** ⇒ JIT 的 `FOR_LOOP` 只走 int48 快路径，
+处理不了 double 位模式的方向/比较 ⇒ **按设计交回解释器**（bail 是**正确行为**）。
+唯一后果：外层 `render` 热循环因此被 `JIT_BAILOUT_LIMIT`(3) 拉黑、退化为解释执行
+（fm 的 `us_per_frame` 3796，仍是 NOJIT 6679 的 **1.76x**）。
+
+**裁决：不修**（float 步长循环进 JIT 是独立特性：方向/比较要改走 SSE）。但它现在**可见**了：
+stats 里 `Bailouts` 连同**触发指令名**一起输出；`LENO_JIT_GAPS`（scan 期口径）看不到它
+—— 两者互补：**scan 期拒收**看 `LENO_JIT_GAPS`，**运行期 bailout** 看 stats 的 `Bailout:` 行。
 
 ***
 

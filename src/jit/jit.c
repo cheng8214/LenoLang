@@ -798,6 +798,24 @@ fprintf(stderr, "[JIT-DEBUG] EXEC call #%d, fn=%p, locals=%p\n",
         entry->last_bailout_site = (int)jit_bailout_site;
         entry->last_bailout_bc_off = loop_bc_off;
         entry->last_bailout_fn = loop_fn;
+        /* ★ 常驻诊断：把触发 bailout 的**指令名**也记下来（R6-k 补）。
+         * 动机：`LENO_JIT_DEBUG=1` 在真实应用上会产出 8MB+ stderr、把运行拖到跑不完，
+         * 所以必须有一个零成本的方式回答"是哪条指令 bail 的"（stats 输出即可见）。
+         * 偏移还原规则与 jit_bailout_reason 一致：非溢出类 rel = -1000 - site，
+         * 溢出/截断类 rel = site；两者都是**相对循环体起点**，内联帧带 0x10000*depth
+         * 基址 ⇒ 先剥掉。绝对偏移 = loop_bc_off + rel（与 --debug 的转储对齐）。 */
+        {
+            int site = (int)jit_bailout_site;
+            int rel  = (site <= -1000) ? (-1000 - site) : site;
+            rel &= 0xFFFF;
+            int abs_off = loop_bc_off + rel;
+            const char* opn = "?";
+            if (frame && frame->chunk && frame->chunk->code &&
+                abs_off >= 0 && abs_off < frame->chunk->len) {
+                opn = opcode_name(frame->chunk->code[abs_off]);
+            }
+            entry->last_bailout_op = opn;
+        }
         if (jit_debug_on())
             fprintf(stderr, "[JIT-DEBUG] BAILOUT at body_start=%d, count=%d\n",
                     loop_bc_off, entry->bailout_count);
@@ -853,9 +871,10 @@ void jit_print_stats(void) {
             if (e->bailout_count <= 0) continue;
             char reason[96];
             jit_bailout_reason(e->last_bailout_site, e->last_bailout_bc_off, reason, sizeof(reason));
-            fprintf(stderr, "  Bailout: fn='%s' loop_bc=%d x%d — %s\n",
+            fprintf(stderr, "  Bailout: fn='%s' loop_bc=%d x%d — %s | 触发指令=%s\n",
                     e->last_bailout_fn ? e->last_bailout_fn : "?",
-                    e->last_bailout_bc_off, e->bailout_count, reason);
+                    e->last_bailout_bc_off, e->bailout_count, reason,
+                    e->last_bailout_op ? e->last_bailout_op : "?");
         }
     }
     fprintf(stderr, "  Enabled:  %s\n", jit_state.enabled ? "yes" : "no");
