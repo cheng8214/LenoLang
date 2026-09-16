@@ -25,6 +25,8 @@ OPCODE(OP_CSTRUCT_DEF) {
 
     // 创建 C 布局结构体定义
     ObjCStructDef* def = cstruct_def_new(name->chars, field_count, total_size, alignment);
+    // 记录声明来源（跨模块同名检测用，见 S2）
+    if (def && !def->owner) def->owner = module_frame_current_module();
     def->is_packed = (is_packed != 0);
     def->explicit_align = (int)explicit_align;
 

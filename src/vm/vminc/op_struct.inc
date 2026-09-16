@@ -24,6 +24,8 @@ OPCODE(OP_STRUCT_DEF) {
 
     // 创建结构体定义
     ObjStructDef* def = struct_def_new(name->chars, field_count, method_count);
+    // 记录声明来源（跨模块同名检测用，见 S2）：此刻正在本模块的 init_chunk 里执行
+    if (def && !def->owner) def->owner = module_frame_current_module();
 
     // 读取 impl 声明的 face 名称
     uint8_t impl_count = READ_BYTE();
@@ -186,6 +188,8 @@ OPCODE(OP_FACE_DEF) {
     ObjString* name = (ObjString*)val_as_obj(name_val);
 
     ObjFaceDef* def = face_def_new(name->chars, method_count);
+    // 记录声明来源（跨模块同名检测用，见 S2）
+    if (def && !def->owner) def->owner = module_frame_current_module();
 
     // 读取泛型类型参数
     if (type_param_count > 0) {

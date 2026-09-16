@@ -503,6 +503,7 @@ typedef struct {
     char* name;                    // enum 名称
     EnumMemberInfo* members;       // 成员信息数组
     int member_count;              // 成员数量
+    ObjModule* owner;              // 声明来源模块（同 ObjStructDef::owner）
 } ObjEnumDef;
 
 // C 布局结构体字段信息
@@ -536,6 +537,7 @@ typedef struct {
     // 字段名哈希表（运行时 O(1) 查找）
     CStructFieldHashEntry** field_hash_table;  // 哈希表数组
     int field_hash_capacity;       // 哈希表容量
+    ObjModule* owner;              // 声明来源模块（同 ObjStructDef::owner）
 } ObjCStructDef;
 
 // C 布局结构体实例对象
@@ -586,6 +588,9 @@ typedef struct {
     char** const_names;             // 关联常量名数组
     Value* const_values;            // 关联常量值数组
     int const_count;                // 关联常量数量
+    // 声明来源模块（跨模块同名检测用，见 S2）。运行时由 OP_DEFINE_* 从 module frame 取；
+    // NULL = 来源未知（编译期早期注册、反序列化产生的定义、入口程序自身的类型）。
+    ObjModule* owner;
 } ObjStructDef;
 
 // 结构体实例对象
@@ -616,6 +621,7 @@ typedef struct {
     int type_param_count;          // 泛型类型参数数量
     char** type_param_names;       // 泛型类型参数名称数组
     char** type_param_constraints;  // 泛型类型参数约束 face 名数组
+    ObjModule* owner;              // 声明来源模块（同 ObjStructDef::owner）
 } ObjFaceDef;
 
 // ============================================================================
@@ -1207,6 +1213,25 @@ void struct_def_import_from_thread(ObjStructDef** defs, int count);
 
 // 更新所有结构体方法函数的 module 指针
 void struct_def_update_method_modules(ObjModule* old_module, ObjModule* new_module);
+
+// 跨模块同名类型的冲突判定（四张定义表共用，实现在 object_struct.c；见 docs 的 S2）。
+// struct/cstruct/face/enum 四张表都是**全局、只按名字**索引，后注册者覆盖先注册者；
+// 而字段索引/成员值是在编译期按**各自模块**的定义定死的 ⇒ 覆盖后 A 模块生成的访问
+// 会读到 B 定义里的同序号字段（静默错值，实测见 S2）。
+//
+// 判定分三层：
+//   - **声明来源相同 / 未知**（同模块重注册、子线程按指针重注册、编译期早期注册、
+//     反序列化产生的定义）⇒ 放行，避免误报；
+//   - 来源不同但**形状完全一致**（same_shape ⇒ 字段序号、方法名、成员值都对得上）⇒ 放行：
+//     此时"覆盖"在行为上是空操作，报错反而是误伤（语料里就有这种同名同形的写法）；
+//   - 来源不同且**形状不一致** ⇒ 冲突：报错并让调用方**保留先注册的那份**（不再覆盖）。
+// same_shape 由各方调用点用自己那份逐项比对得出（字段/方法/impl/关联常量、enum 成员值等）。
+// 返回 1 = 已报错（调用方应保留先注册的那份，不要再覆盖）。
+int def_owner_conflict(const char* kind, const char* name,
+                       ObjModule* old_owner, ObjModule* new_owner, int same_shape);
+
+// NULL 安全的字符串相等（跨模块同名形状比对用，四张定义表共用；实现见 object_struct.c）
+int def_str_eq(const char* a, const char* b);
 
 // ============================================================================
 // face 定义管理

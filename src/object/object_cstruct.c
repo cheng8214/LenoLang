@@ -154,6 +154,7 @@ static int cstruct_def_hash_find_field(ObjCStructDef* def, const char* name) {
 ObjCStructDef* cstruct_def_new(const char* name, int field_count, int total_size, int alignment) {
     ObjCStructDef* def = (ObjCStructDef*)gc_alloc(sizeof(ObjCStructDef), OBJ_CSTRUCT_DEF);
     def->name = strdup(name);
+    def->owner = NULL;   // 声明来源：由 OP_DEFINE_CSTRUCT 从 module frame 补上（见 S2）
     def->field_count = field_count;
     def->fields = (CStructFieldInfo*)calloc(field_count, sizeof(CStructFieldInfo));
     def->total_size = total_size;
@@ -218,6 +219,21 @@ int cstruct_get_field_index(ObjCStructDef* def, const char* name) {
 }
 
 // 注册 C 布局结构体定义
+// 两个 cstruct 定义的形状是否一致（字段名/类型/偏移 + 布局参数）
+static int cstruct_def_same_shape(ObjCStructDef* a, ObjCStructDef* b) {
+    if (a->field_count != b->field_count) return 0;
+    if (a->total_size != b->total_size) return 0;
+    if (a->alignment != b->alignment) return 0;
+    if (a->is_packed != b->is_packed) return 0;
+    if (a->explicit_align != b->explicit_align) return 0;
+    for (int i = 0; i < a->field_count; i++) {
+        if (!def_str_eq(a->fields[i].name, b->fields[i].name)) return 0;
+        if (a->fields[i].type != b->fields[i].type) return 0;
+        if (a->fields[i].offset != b->fields[i].offset) return 0;
+    }
+    return 1;
+}
+
 void cstruct_def_register(ObjCStructDef* def) {
     // 确保容量足够（需要 count + 1 个位置）
     if (!cstruct_def_ensure_capacity(cstruct_def_count + 1)) {
@@ -228,6 +244,12 @@ void cstruct_def_register(ObjCStructDef* def) {
     // 检查是否已存在同名结构体
     for (int i = 0; i < cstruct_def_count; i++) {
         if (strcmp(cstruct_def_table[i]->name, def->name) == 0) {
+            // 跨模块同名：拦住，别覆盖（否则就是 S2 那个静默错值）
+            if (def_owner_conflict("cstruct", def->name,
+                                   cstruct_def_table[i]->owner, def->owner,
+                                   cstruct_def_same_shape(cstruct_def_table[i], def))) {
+                return;
+            }
             // 覆盖旧定义：将旧定义的资源指针置 NULL，防止 gc_free_all 时 double-free
             ObjCStructDef* old_def = cstruct_def_table[i];
             old_def->name = NULL;

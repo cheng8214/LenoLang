@@ -10,6 +10,7 @@ ObjFaceDef* face_def_new(const char* name, int method_count) {
     if (!def) return NULL;
 
     def->name = strdup(name);
+    def->owner = NULL;   // 声明来源：由 OP_DEFINE_FACE 从 module frame 补上（见 S2）
     def->method_count = method_count;
     def->type_param_count = 0;
     def->type_param_names = NULL;
@@ -37,6 +38,17 @@ void face_def_set_type_params(ObjFaceDef* def, int count, char** names, char** c
     }
 }
 
+// 两个 face 定义的形状是否一致（方法名 + 参数个数 + 泛型参数个数）
+static int face_def_same_shape(ObjFaceDef* a, ObjFaceDef* b) {
+    if (a->method_count != b->method_count) return 0;
+    if (a->type_param_count != b->type_param_count) return 0;
+    for (int i = 0; i < a->method_count; i++) {
+        if (!def_str_eq(a->methods[i].name, b->methods[i].name)) return 0;
+        if (a->methods[i].param_count != b->methods[i].param_count) return 0;
+    }
+    return 1;
+}
+
 void face_def_register(ObjFaceDef* def) {
     if (face_def_count >= MAX_FACE_DEFS) {
         error_add_at(ERR_RUNTIME, 0, 0, "face 定义数量超过上限");
@@ -45,6 +57,12 @@ void face_def_register(ObjFaceDef* def) {
 
     for (int i = 0; i < face_def_count; i++) {
         if (face_def_table[i]->name && strcmp(face_def_table[i]->name, def->name) == 0) {
+            // 跨模块同名：拦住，别覆盖（否则就是 S2 那个静默错值）
+            if (def_owner_conflict("face", def->name,
+                                   face_def_table[i]->owner, def->owner,
+                                   face_def_same_shape(face_def_table[i], def))) {
+                return;
+            }
             // 覆盖旧定义：将旧定义的资源指针置 NULL，防止 gc_free_all 时 double-free
             // （与 struct_def_register / cstruct_def_register / enum_def_register 统一策略；
             //  旧定义对象仍由 GC 管理，gc_free_all 会调用 free_object_resources）

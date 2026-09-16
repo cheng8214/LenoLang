@@ -19,6 +19,8 @@ OPCODE(OP_ENUM_DEF) {
 
     // 创建 enum 定义
     ObjEnumDef* def = enum_def_new(name->chars, member_count);
+    // 记录声明来源（跨模块同名检测用，见 S2）
+    if (def && !def->owner) def->owner = module_frame_current_module();
 
     // 读取成员信息
     for (int i = 0; i < member_count; i++) {

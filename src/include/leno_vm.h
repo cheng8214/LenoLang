@@ -692,6 +692,10 @@ void module_frame_enter(ModuleFrame* frame);
 // 退出模块帧
 void module_frame_exit(void);
 
+// 当前模块帧所属的模块（不在模块 init 中时返回 NULL）
+// 供 OP_DEFINE_* 记录类型定义的"声明来源"（跨模块同名检测，见 docs 的 S2）
+ObjModule* module_frame_current_module(void);
+
 // 获取当前模块帧中的变量
 Value module_get_var(int index);
 

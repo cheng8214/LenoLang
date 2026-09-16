@@ -69,6 +69,15 @@ void module_frame_exit(void) {
     target_vm->current_module_frame = target_vm->current_module_frame->parent;
 }
 
+// 当前模块帧所属的模块（不在任何模块 init 中时返回 NULL）。
+// 供 OP_DEFINE_STRUCT / ENUM / FACE / CSTRUCT 记录"声明来源"（跨模块同名检测，见 S2）：
+// 这些操作码是在模块自己的 init_chunk 里执行的，此时当前模块就在模块帧里。
+ObjModule* module_frame_current_module(void) {
+    VM* target_vm = get_current_vm();
+    if (!target_vm || !target_vm->current_module_frame) return NULL;
+    return target_vm->current_module_frame->module;
+}
+
 // 确保模块变量数组容量
 int module_ensure_var_capacity(int slot) {
     VM* target_vm = get_current_vm();
