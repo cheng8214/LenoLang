@@ -429,8 +429,13 @@ static Token read_number(Lexer* lex) {
     Token tok = make_token(lex, TOK_NUM);
     const char* start = lex->src + lex->pos;
 
-    // 检查十六进制前缀 (0x 或 0X)
+    // 检查进制前缀：0x/0X 十六进制、0b/0B 二进制
+    // 注：0b 此前完全没有支持，`0b1010` 会被切成 `0` + 标识符 `b1010`——
+    //   在语句里报语法错误（响亮），但在 enum 成员值里被当成字面量 0（静默错值：
+    //   同模块内 `= 0b1010` 得 0，而跨模块 use 导入时扫描器算出的却是 10）。
     int is_hex = 0;
+    int is_bin = 0;
+    int bin_digits = 0;
     if (peek(lex) == '0' && (peek_next(lex) == 'x' || peek_next(lex) == 'X')) {
         is_hex = 1;
         advance(lex); // 跳过 '0'
@@ -438,6 +443,18 @@ static Token read_number(Lexer* lex) {
         // 读取十六进制数字
         while (isxdigit(peek(lex))) {
             advance(lex);
+        }
+    } else if (peek(lex) == '0' && (peek_next(lex) == 'b' || peek_next(lex) == 'B')) {
+        is_bin = 1;
+        advance(lex); // 跳过 '0'
+        advance(lex); // 跳过 'b' 或 'B'
+        while (peek(lex) == '0' || peek(lex) == '1') {
+            advance(lex);
+            bin_digits++;
+        }
+        if (bin_digits == 0) {
+            error_add_at(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1,
+                         "二进制字面量需要 0b 后跟至少一位 0/1");
         }
     } else {
         // 普通十进制数字
@@ -447,7 +464,7 @@ static Token read_number(Lexer* lex) {
     }
 
     int is_float = 0;
-    if (!is_hex && peek(lex) == '.' && isdigit(peek_next(lex))) {
+    if (!is_hex && !is_bin && peek(lex) == '.' && isdigit(peek_next(lex))) {
         is_float = 1;
         advance(lex);
         while (isdigit(peek(lex))) {
@@ -463,6 +480,43 @@ static Token read_number(Lexer* lex) {
         tok.is_bigint = 0;
         tok.bigint_str = NULL;
         tok.is_float = 1;
+    } else if (is_bin) {
+        // 二进制：手动累加。不能用 strtoull(..., 2) —— 它不吃 "0b" 前缀，
+        // 会停在 'b' 上得到 0（这正是以前静默错值的来源）。
+        if (bin_digits > 63) {
+            // 超 63 位：响亮报错，不再留静默值（跨模块比对需要编译期确定的值）
+            error_add_at(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1,
+                         "二进制字面量超过 63 位，超出 int64 可表示范围");
+            tok.is_bigint = 0;
+            tok.bigint_str = NULL;
+            tok.num_val = 0;
+            tok.is_float = 0;
+        } else {
+            unsigned long long bval = 0;
+            for (const char* p = start + 2; p < lex->src + lex->pos; p++) {
+                if (*p == '0' || *p == '1') bval = bval * 2 + (unsigned long long)(*p - '0');
+            }
+            if (bval > 9007199254740992ULL) {
+                // 超出 double 精确表示：与十六进制同理升级为 bigint。
+                // 内部按 0x 十六进制文本存：下游（eval_const_expr 等）按 base 0 解析，
+                // 认 0x 但不认 0b。
+                tok.is_bigint = 1;
+                tok.bigint_str = (char*)malloc(32);
+                if (tok.bigint_str) {
+                    snprintf(tok.bigint_str, 32, "0x%llX", bval);
+                    tok.num_val = 0;
+                } else {
+                    tok.is_bigint = 0;   // 内存不足：退化为 double，但不至于静默变 0
+                    tok.num_val = (double)bval;
+                }
+                tok.is_float = 0;
+            } else {
+                tok.is_bigint = 0;
+                tok.bigint_str = NULL;
+                tok.num_val = (double)bval;
+                tok.is_float = 0;
+            }
+        }
     } else if (is_hex) {
         // 解析十六进制数字
         // 检查是否需要 BigInt（长度超过16位，或值超过 2^53 无法精确表示为 double）
