@@ -2164,6 +2164,67 @@ static char* read_file_for_hash(const char* path) {
     return buf;
 }
 
+// ============================================================================
+// 模块源快照 API —— 唯一实现（docs/待办_单一事实来源与重复实现收敛.md 的 Phase 3 / S8）
+//
+// 三处缓存产物（.lenomc / .lenosymc / entry_*.lenb.deps）要回答的是同一件事：
+// 「这段字节码/符号表当初由哪一版源码编出来，那份源码现在变了没有」。
+// 此前三处各写一份（入口那处 2026-09-16 才补上，等于第二份实现），失败方向还一度相反
+// （模块缓存 fail-open、符号表 fail-closed）。现在只有下面三个函数，新增缓存产物时只许调它们。
+// ============================================================================
+
+int module_source_snapshot_now(const char* src_path, uint64_t* out_size, uint64_t* out_hash) {
+    if (!src_path) return -1;
+    if (out_size) {
+        struct stat st;
+        if (leno_stat(src_path, &st) != 0) return -1;
+        *out_size = (uint64_t)st.st_size;
+    }
+    if (!out_hash) return 0;
+    char* src = read_file_for_hash(src_path);
+    if (!src) return -1;
+    *out_hash = serialize_source_hash(src, strlen(src));
+    free(src);
+    return 0;
+}
+
+int module_cache_read_source_snapshot(const char* cache_dir, const char* src_path,
+                                      uint64_t* out_size, uint64_t* out_hash) {
+    if (!cache_dir || !src_path) return -1;
+    char* cache_path = module_cache_path_for(src_path, cache_dir);
+    if (!cache_path) return -1;
+    FILE* f = leno_fopen(cache_path, "rb");
+    free(cache_path);
+    if (!f) return -1;
+    // header = magic(4) + version(4) + src_hash(8) + src_size(8)，大端序（与 ctx_read_* 一致）
+    uint8_t h[24];
+    int ok = (fread(h, 24, 1, f) == 1);
+    fclose(f);
+    if (!ok) return -1;
+    uint32_t magic = ((uint32_t)h[0] << 24) | ((uint32_t)h[1] << 16) |
+                     ((uint32_t)h[2] << 8) | (uint32_t)h[3];
+    uint32_t ver = ((uint32_t)h[4] << 24) | ((uint32_t)h[5] << 16) |
+                   ((uint32_t)h[6] << 8) | (uint32_t)h[7];
+    if (magic != LENO_MODCACHE_MAGIC || ver != LENO_MODCACHE_VERSION) return -1;
+    uint64_t hash = 0, size = 0;
+    for (int i = 0; i < 8; i++) hash = (hash << 8) | h[8 + i];
+    for (int i = 0; i < 8; i++) size = (size << 8) | h[16 + i];
+    if (out_hash) *out_hash = hash;
+    if (out_size) *out_size = size;
+    return 0;
+}
+
+int module_source_snapshot_matches(const char* src_path, uint64_t size, uint64_t hash,
+                                   int check_size) {
+    uint64_t cur_size = 0, cur_hash = 0;
+    // 读不到源文件（不存在 / 不可访问 / 被独占锁）一律判「不成立」：fail-closed。
+    // 方向必须统一 —— 模块缓存那处曾在 stat / 读失败时静默跳过检查（fail-open），
+    // 符号表那处判失效，同一件事实两处方向相反（S8-b）。
+    if (module_source_snapshot_now(src_path, &cur_size, &cur_hash) != 0) return 0;
+    if (check_size && cur_size != size) return 0;
+    return cur_hash == hash;
+}
+
 // 从缓存文件反序列化单个模块
 ObjModule* module_cache_deserialize(const char* cache_path, const char* full_path) {
     if (!cache_path || !full_path) return NULL;
@@ -2245,78 +2306,24 @@ ObjModule* module_cache_deserialize(const char* cache_path, const char* full_pat
         }
     }
 
-    // 依赖缓存一致性检查：对每个依赖模块，读取其缓存 header 中的 src_hash/src_size，
-    // 再与依赖源文件当前内容比对。如果任何依赖的源文件已被修改，则父缓存也失效。
+    // 依赖缓存一致性检查：对每个依赖模块，取其「已编译版本」快照（.lenomc header），
+    // 再与依赖源文件当前内容比对。任何一个依赖的源文件变了、或快照取不到，父缓存都失效。
     //
-    // 失败方向一律是「失效」（fail-closed）：**依赖源 stat 不到、读不出来**同样属于
-    // "快照不可信"，不能当有效放过去。同一件事实的另一处实现（.lenosymc 的依赖校验，
-    // 见 sym_table_cache.inc 的「依赖文件不存在或无法读取 → 缓存失效」）就是 fail-closed；
-    // 这里原先 stat / 读失败会静默**跳过检查**继续（fail-open），两处方向相反。
-    // 当前实害有限（依赖随后仍会被 load_module_file 以「找不到模块文件」报错），
-    // 但方向必须对齐 —— 这正是 docs/待办_单一事实来源与重复实现收敛.md 的 S8 要消灭的形态。
+    // 取快照与判定都在 module_source_snapshot_*（本文件上方）里 —— 那是全仓库唯一实现，
+    // 这里不再自己解析 header、也不再自己决定 fail-open / fail-closed（S8 的收敛结果）。
     if (dep_count > 0 && dep_paths) {
         const char* cache_dir = module_loader_get_cache_dir();
         int deps_ok = 1;
         for (uint32_t i = 0; i < dep_count && deps_ok; i++) {
             if (!dep_paths[i] || !cache_dir) continue;
-            char* dep_cache_path = module_cache_path_for(dep_paths[i], cache_dir);
-            if (!dep_cache_path) continue;
-
-            // 读取依赖缓存文件的 header（magic + version + src_hash + src_size = 24字节）
-            FILE* dep_file = leno_fopen(dep_cache_path, "rb");
-            if (!dep_file) {
-                // 缓存文件不存在 → 依赖从未缓存或缓存被删 → 父缓存失效
-                free(dep_cache_path);
-                deps_ok = 0;
+            uint64_t dep_size = 0, dep_hash = 0;
+            if (module_cache_read_source_snapshot(cache_dir, dep_paths[i],
+                                                  &dep_size, &dep_hash) != 0) {
+                deps_ok = 0;   // 依赖没缓存 / 缓存损坏 / 版本不符 → 父缓存失效
                 break;
             }
-            uint32_t dep_magic = 0, dep_version = 0;
-            uint64_t dep_src_hash = 0, dep_src_size = 0;
-            int header_ok = 1;
-            uint8_t header_buf[24];
-            if (fread(header_buf, 24, 1, dep_file) != 1) header_ok = 0;
-            fclose(dep_file);
-            if (header_ok) {
-                // 解析大端序 header（与 ctx_read_u32/ctx_read_u64 一致）
-                dep_magic = ((uint32_t)header_buf[0] << 24) | ((uint32_t)header_buf[1] << 16) |
-                            ((uint32_t)header_buf[2] << 8) | header_buf[3];
-                dep_version = ((uint32_t)header_buf[4] << 24) | ((uint32_t)header_buf[5] << 16) |
-                              ((uint32_t)header_buf[6] << 8) | header_buf[7];
-                for (int bi = 0; bi < 8; bi++) {
-                    dep_src_hash = (dep_src_hash << 8) | header_buf[8 + bi];
-                }
-                for (int bi = 0; bi < 8; bi++) {
-                    dep_src_size = (dep_src_size << 8) | header_buf[16 + bi];
-                }
-            }
-            free(dep_cache_path);
-
-            if (!header_ok || dep_magic != LENO_MODCACHE_MAGIC || dep_version != LENO_MODCACHE_VERSION) {
-                // header 无效 → 依赖缓存损坏 → 父缓存失效
-                deps_ok = 0;
-                break;
-            }
-
-            // 与当前源文件比对：先比大小（O(1) stat），再比哈希
-            struct stat dep_st;
-            if (leno_stat(dep_paths[i], &dep_st) != 0) {
-                deps_ok = 0;   // 依赖源 stat 不到（被删 / 不可访问）→ 父缓存失效
-                break;
-            }
-            if ((uint64_t)dep_st.st_size != dep_src_size) {
-                deps_ok = 0;   // 大小不同 → 源文件已变 → 父缓存失效
-                break;
-            }
-            // 大小相同也要比哈希（内容可能变了但大小恰好不变）
-            char* dep_src = read_file_for_hash(dep_paths[i]);
-            if (!dep_src) {
-                deps_ok = 0;   // 读不出来（权限 / 被独占锁）→ 快照不可信 → 父缓存失效
-                break;
-            }
-            uint64_t dep_cur_hash = serialize_source_hash(dep_src, strlen(dep_src));
-            free(dep_src);
-            if (dep_cur_hash != dep_src_hash) {
-                deps_ok = 0;   // 哈希不同 → 源文件已变 → 父缓存失效
+            if (!module_source_snapshot_matches(dep_paths[i], dep_size, dep_hash, 1)) {
+                deps_ok = 0;   // 依赖源已变或读不到 → 父缓存失效
                 break;
             }
         }

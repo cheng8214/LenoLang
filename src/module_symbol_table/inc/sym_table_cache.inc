@@ -171,27 +171,8 @@ break;
     return ti;
 }
 
-// 读取文件内容（文本模式）并计算源哈希
-// 返回 0=成功（out_hash 被设置），-1=失败
-static int sym_cache_compute_file_hash(const char* path, uint64_t* out_hash) {
-#ifdef _WIN32
-    wchar_t* wp = utf8_to_utf16(path);
-    if (!wp) return -1;
-    FILE* sf = _wfopen(wp, L"r");
-    free(wp);
-#else
-    FILE* sf = fopen(path, "r");
-#endif
-    if (!sf) return -1;
-    fseek(sf, 0, SEEK_END); long sz = ftell(sf); fseek(sf, 0, SEEK_SET);
-    if (sz < 0) { fclose(sf); return -1; }
-    char* src = (char*)malloc(sz + 1);
-    if (!src) { fclose(sf); return -1; }
-    size_t rd = fread(src, 1, sz, sf); src[rd] = '\0'; fclose(sf);
-    *out_hash = serialize_source_hash(src, strlen(src));
-    free(src);
-    return 0;
-}
+// （原先这里有一份自己的「文本模式读文件 + 算哈希」实现，2026-09-16 收敛到 serialize.c 的
+//   module_source_snapshot_now —— 见 docs/待办_单一事实来源与重复实现收敛.md 的 Phase 3）
 
 // 序列化 ModuleSymbolTable 到文件
 static int sym_cache_serialize(const char* cache_path, ModuleSymbolTable* table,
@@ -219,9 +200,9 @@ static int sym_cache_serialize(const char* cache_path, ModuleSymbolTable* table,
     fwrite(&dc, 4, 1, f);
     for (uint32_t i = 0; i < dc; i++) {
         sym_cache_write_string(f, table->dep_paths[i]);
-        // 计算依赖源文件当前哈希并存储
+        // 依赖源文件当前哈希（统一实现 module_source_snapshot_now；取不到就写 0 ⇒ 读出来必然不符 ⇒ 失效）
         uint64_t dep_hash = 0;
-        sym_cache_compute_file_hash(table->dep_paths[i], &dep_hash);
+        module_source_snapshot_now(table->dep_paths[i], NULL, &dep_hash);
         fwrite(&dep_hash, 8, 1, f);
     }
 
@@ -581,14 +562,9 @@ static int sym_cache_deserialize(const char* cache_path, ModuleSymbolTable* tabl
         if (!dep_path) { fclose(f); return -1; }
         uint64_t dep_stored_hash;
         if (fread(&dep_stored_hash, 8, 1, f) != 1) { free(dep_path); fclose(f); return -1; }
-        // 读当前依赖源文件算哈希并比对
-        uint64_t dep_cur_hash = 0;
-        if (sym_cache_compute_file_hash(dep_path, &dep_cur_hash) != 0) {
-            // 依赖文件不存在或无法读取 → 缓存失效
-            free(dep_path); fclose(f); return -1;
-        }
-        if (dep_cur_hash != dep_stored_hash) {
-            // 依赖源文件已变更 → 缓存失效
+        // 依赖快照是否仍成立（统一实现，见 Phase 3）：本格式只存了哈希、没存大小 ⇒ check_size=0；
+        // 依赖源不存在 / 读不出来同样判失效（fail-closed，与模块缓存方向一致）
+        if (!module_source_snapshot_matches(dep_path, 0, dep_stored_hash, 0)) {
             free(dep_path); fclose(f); return -1;
         }
         // 记录依赖路径到 table（供上层传递依赖收集使用）

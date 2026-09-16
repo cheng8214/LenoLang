@@ -190,23 +190,9 @@ static int g_entry_cache_enabled = 0;
 //   本清单的格式标识属该表登记项；改行格式/字段前先看表，并写明"为什么不升 .lenb 版本号"。
 #define ENTRY_DEPS_MAGIC "LENODEPS1"
 
-// 跨平台 stat / fopen / remove：Windows 上走宽字符，避免中文路径（如 文件管理器）失败
-static int entry_deps_stat(const char* path, uint64_t* out_size) {
-#ifdef _WIN32
-    wchar_t* wp = utf8_to_utf16(path);
-    if (!wp) return -1;
-    struct _stat st;
-    int ret = _wstat(wp, &st);
-    free(wp);
-#else
-    struct stat st;
-    int ret = stat(path, &st);
-#endif
-    if (ret != 0) return -1;
-    *out_size = (uint64_t)st.st_size;
-    return 0;
-}
-
+// 跨平台 fopen / remove：Windows 上走宽字符，避免中文路径（如 文件管理器）失败
+// （原先这里还有一份自己的 stat / 哈希 / 读 .lenomc header 的实现，2026-09-16 收敛到
+//   serialize.c 的 module_source_snapshot_* —— 见 docs/待办_单一事实来源与重复实现收敛.md 的 Phase 3）
 static FILE* entry_deps_fopen(const char* path, const char* mode) {
 #ifdef _WIN32
     wchar_t* wp = utf8_to_utf16(path);
@@ -232,53 +218,6 @@ static void entry_deps_remove(const char* path) {
 #else
     remove(path);
 #endif
-}
-
-// 读源文件并算内容哈希（文本模式打开，与 module_loader.c / serialize.c 的约定一致：
-// Windows 下 CRLF→LF，所以「大小」用 stat 的磁盘字节数、「哈希」用文本模式内容）
-static int entry_deps_hash_file(const char* path, uint64_t* out_hash) {
-    FILE* f = entry_deps_fopen(path, "r");
-    if (!f) return -1;
-    fseek(f, 0, SEEK_END);
-    long sz = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    if (sz < 0) { fclose(f); return -1; }
-    char* buf = (char*)malloc((size_t)sz + 1);
-    if (!buf) { fclose(f); return -1; }
-    size_t rd = fread(buf, 1, (size_t)sz, f);
-    buf[rd] = '\0';
-    fclose(f);
-    *out_hash = serialize_source_hash(buf, strlen(buf));
-    free(buf);
-    return 0;
-}
-
-// 取某模块「已编译版本」的源码快照：读它在模块缓存里的 .lenomc header
-// （大端序 magic(4) + version(4) + src_hash(8) + src_size(8)，与 serialize.c 的
-//  依赖一致性检查读法保持一致）。返回 0=成功，-1=拿不到（调用方按失效处理）
-static int entry_deps_module_snapshot(const char* cache_dir, const char* src_path,
-                                      uint64_t* out_size, uint64_t* out_hash) {
-    if (!cache_dir || !src_path) return -1;
-    char* cache_path = module_cache_path_for(src_path, cache_dir);
-    if (!cache_path) return -1;
-    FILE* f = entry_deps_fopen(cache_path, "rb");
-    free(cache_path);
-    if (!f) return -1;
-    uint8_t h[24];
-    int ok = (fread(h, 24, 1, f) == 1);
-    fclose(f);
-    if (!ok) return -1;
-    uint32_t magic = ((uint32_t)h[0] << 24) | ((uint32_t)h[1] << 16) |
-                     ((uint32_t)h[2] << 8) | (uint32_t)h[3];
-    uint32_t ver = ((uint32_t)h[4] << 24) | ((uint32_t)h[5] << 16) |
-                   ((uint32_t)h[6] << 8) | (uint32_t)h[7];
-    if (magic != LENO_MODCACHE_MAGIC || ver != LENO_MODCACHE_VERSION) return -1;
-    uint64_t hash = 0, size = 0;
-    for (int i = 0; i < 8; i++) hash = (hash << 8) | h[8 + i];
-    for (int i = 0; i < 8; i++) size = (size << 8) | h[16 + i];
-    *out_hash = hash;
-    *out_size = size;
-    return 0;
 }
 
 // 写依赖清单。必须在入口 .lenb 写成功之后调用。
@@ -313,7 +252,7 @@ static int entry_deps_write(const char* deps_path) {
         }
         if (dup) continue;
         uint64_t size = 0, hash = 0;
-        if (entry_deps_module_snapshot(cache_dir, m->source_path, &size, &hash) != 0) {
+        if (module_cache_read_source_snapshot(cache_dir, m->source_path, &size, &hash) != 0) {
             // 拿不到该模块「已编译版本」的快照 ⇒ 清单不完整 ⇒ 整体作废
             failed = 1;
             break;
@@ -384,12 +323,8 @@ static int entry_deps_valid(const char* deps_path) {
                 if (plen == 0) { ok = 0; break; }
                 uint64_t want_size = strtoull(line, NULL, 10);
                 uint64_t want_hash = strtoull(rest, NULL, 16);
-                uint64_t cur_size = 0;
-                if (entry_deps_stat(path, &cur_size) != 0 || cur_size != want_size) {
-                    ok = 0; break;
-                }
-                uint64_t cur_hash = 0;
-                if (entry_deps_hash_file(path, &cur_hash) != 0 || cur_hash != want_hash) {
+                // 判定走统一实现（统计口径与失败方向都在 serialize.c 里，见 Phase 3）
+                if (!module_source_snapshot_matches(path, want_size, want_hash, 1)) {
                     ok = 0; break;
                 }
             }

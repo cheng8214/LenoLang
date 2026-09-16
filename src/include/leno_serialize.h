@@ -201,4 +201,26 @@ SerializeResult module_cache_serialize(const char* cache_path,
 ObjModule* module_cache_deserialize(const char* cache_path,
                                      const char* full_path);
 
+// ============================================================================
+// 模块源快照 API —— 「这段字节码/符号表当初由哪一版源码编出来，那份源码变了没有」的
+// 唯一实现。三处缓存产物（.lenomc / .lenosymc / entry_*.lenb.deps）都只允许调这三个，
+// 不要再写第四份比对（见 docs/待办_单一事实来源与重复实现收敛.md 的 Phase 3 / S8）。
+// 哈希口径：文本模式读入（Windows 下 CRLF→LF）+ FNV-1a；大小取 stat 的磁盘字节数。
+// ============================================================================
+
+// ① 取「当前源文件」的快照。out_size 可传 NULL（跳过 stat）；
+//    out_hash 传 NULL 时只取大小。返回 0=成功，-1=读不到
+int module_source_snapshot_now(const char* src_path, uint64_t* out_size, uint64_t* out_hash);
+
+// ② 取「已编译版本」的快照：读该模块在 cache_dir 下 .lenomc 的 header。
+//    返回 0=成功（out_size/out_hash 被填），-1=拿不到（缓存不存在/损坏/版本不符）
+int module_cache_read_source_snapshot(const char* cache_dir, const char* src_path,
+                                      uint64_t* out_size, uint64_t* out_hash);
+
+// ③ 判定某个快照是否仍成立：先比大小（check_size=0 时跳过，给只存了哈希的格式用），
+//    再比内容哈希；源文件读不到一律判「不成立」（fail-closed）。
+//    返回 1=成立，0=不成立
+int module_source_snapshot_matches(const char* src_path, uint64_t size, uint64_t hash,
+                                   int check_size);
+
 #endif // LENO_SERIALIZE_H
