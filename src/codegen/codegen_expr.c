@@ -1875,15 +1875,38 @@ void gen_expr(CodeGen* gen, Ast* ast) {
         }
         case AST_STRUCT_INIT: {
             // 生成结构体构造函数调用
-            // 模块限定的 struct 名称（如 "math.Point"）**原样写进常量池**（S2/2b）：
-            // 前缀是 import 的别名，也就是模块的 name，运行期要靠它精确取回"哪一份同名定义"
-            // （旧字节码只有裸名，运行期按裸名回退，行为不变）。编译期的符号解析仍用裸名
-            // （模块符号表里就是裸名），故下面单独取 actual_struct_name。
+            // 模块限定的 struct 名称（如 "math.Point"）要写进常量池，供运行期精确取回"哪一份
+            // 同名定义"（S2/2b）。但**不能直接用源码里的别名**：别名字面量与运行期
+            // `ObjModule.name` 并不总相等 —— 模块按路径去重，"首次用什么名字加载，之后一直是
+            // 那个名字"（实测 assert/test_use_batch.leno：源码写 `as a`，运行期名字是文件名
+            // use_mod_a）。所以先把别名换算成运行期模块名再发；换算不出来就原样发出，
+            // 运行期会回退裸名（= 旧行为，不会比以前更差）。
+            // 编译期的符号解析仍用裸名（模块符号表里就是裸名），故下面单独取 actual_struct_name。
             const char* dot_pos = strchr(ast->u.struct_init.struct_name, '.');
             const char* actual_struct_name = dot_pos ? dot_pos + 1 : ast->u.struct_init.struct_name;
 
-            ObjString* struct_name = str_copy(ast->u.struct_init.struct_name,
-                                              strlen(ast->u.struct_init.struct_name));
+            char qualified_buf[BUFFER_MEDIUM];
+            const char* emit_name = ast->u.struct_init.struct_name;
+            if (dot_pos && dot_pos != ast->u.struct_init.struct_name) {
+                size_t alias_len = (size_t)(dot_pos - ast->u.struct_init.struct_name);
+                char alias[BUFFER_MEDIUM];
+                if (alias_len < sizeof(alias)) {
+                    memcpy(alias, ast->u.struct_init.struct_name, alias_len);
+                    alias[alias_len] = '\0';
+                    ImportedModuleInfo* im = find_imported_module(gen->sem, alias);
+                    const char* rt_name = NULL;
+                    if (im && im->file_path) {
+                        rt_name = module_runtime_name_for_import(im->file_path, error_get_filename());
+                    }
+                    if (rt_name && rt_name[0]) {
+                        snprintf(qualified_buf, sizeof(qualified_buf), "%s.%s",
+                                 rt_name, actual_struct_name);
+                        emit_name = qualified_buf;
+                    }
+                }
+            }
+
+            ObjString* struct_name = str_copy(emit_name, strlen(emit_name));
             int name_const = make_constant(gen, val_obj((Object*)struct_name));
             
             // 编译期从符号表查找 struct 定义和字段索引

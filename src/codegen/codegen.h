@@ -14,6 +14,8 @@
 extern char* read_module_file(const char* file_path, const char* current_file);
 extern void extract_module_exports(const char* source, char exports[][64], int* count);
 extern ObjModule* load_module_file(const char* file_path, const char* current_file, const char* alias_name);
+// 把 import 别名换算成运行期模块名（S2/2b：别名与 ObjModule.name 并不总相等）
+extern const char* module_runtime_name_for_import(const char* import_path, const char* current_file);
 
 // 前向声明 - 类型推断（用于 struct 方法调用）
 TypeInfo* infer_expr_type(Semantic* s, Ast* ast);

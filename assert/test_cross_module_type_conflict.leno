@@ -72,6 +72,12 @@ main() {
         "    var pa = new a.Pair()\n    print(3)\n")
     ce.expect_ok(path, "S2 对照组（同名同形纯数据放行）", "3")
 
+    // 用例 D（"别名 ≠ 运行期模块名"）暂缺，完整形态与期望值记在
+    // docs/待办_单一事实来源与重复实现收敛.md 的 2b-2 设计里（期望 A=1 / M=1 / G=3，其中 A=1
+    // 有判别力：不在运行期把别名解析成模块，就会退回裸名、拿到先注册的那份 tag=3）。
+    // 实测否掉了"编译期换算"这条捷径：编译期 loaded_modules 通常是空的（语义阶段用符号表
+    // 扫描读文件，不建模块对象），而运行期名是运行期由"首次加载用哪个别名"决定的。
+
     dirs.delete(work)
 
     print("test_cross_module_type_conflict passed")
