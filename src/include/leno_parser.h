@@ -30,6 +30,13 @@ typedef struct {
 void parser_init(Parser* p, const char* src);
 int parser_parse(Parser* p);
 
+// 把一段**独立表达式文本**按语言真语法求值（实现见 parser_func.c）。
+// 符号表扫描器靠它复用同一套词法/语法/求值，不再自己复刻一份求值器（见 docs 的 Phase 1）。
+//   text: NUL 结尾的稳定缓冲区；names/values/count: 先前 enum 成员引用上下文（可为空）
+//   成功返回 1 并写 *out；失败返回 0（*out 不动）且**不产生任何诊断**
+int parser_eval_const_expr_text(const char* text, char** names, int64_t* values,
+                                int count, int64_t* out);
+
 // 语句（递归下降）
 Ast* parse_program(Parser* p);
 Ast* parse_stmt(Parser* p);

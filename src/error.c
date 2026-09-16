@@ -31,7 +31,36 @@ const char* error_get_filename(void) {
     return current_filename[0] ? current_filename : NULL;
 }
 
+// ============================================================================
+// 静默段（error_silence_begin / error_silence_end）
+// ----------------------------------------------------------------------------
+// 用途：符号表扫描器在**扫描别人的模块**时要借真解析器求值一段表达式（见 docs 的 Phase 1）。
+// 那段解析若失败，诊断绝不能进当前编译的错误列表：一是归因错（错的不是当前文件），
+// 二是扫描器对求值失败本来就是宽松处理（当作"无显式值"），该报的错留给模块自身编译时。
+// 进入静默段后 error_add / warning_add 一律丢弃并计数；error_silence_end 返回**被丢弃的
+// 错误条数**，调用方据此判断"这段解析是否干净"（>0 ⇒ 结果不可信）。支持嵌套，最外层归零。
+// ============================================================================
+static int silence_depth = 0;
+static int silenced_errors = 0;
+static int silenced_warnings = 0;
+
+int error_silence_begin(void) {
+    silence_depth++;
+    return 0;
+}
+
+int error_silence_end(void) {
+    if (silence_depth > 0) silence_depth--;
+    int silenced = silenced_errors;
+    if (silence_depth == 0) {
+        silenced_errors = 0;
+        silenced_warnings = 0;
+    }
+    return silenced;
+}
+
 void error_add(ErrorType type, int line, const char* msg) {
+    if (silence_depth > 0) { silenced_errors++; return; }
     // 检查是否与最后一条错误相同（同类型、同文件、同行、同消息），相同则合并
     if (errors.count > 0) {
         Error* last = &errors.list[errors.count - 1];
@@ -149,6 +178,7 @@ void error_print_all(void) {
 // ============================================================================
 
 void warning_add(WarnType type, int line, const char* msg) {
+    if (silence_depth > 0) { silenced_warnings++; return; }
     // 合并相同警告（同类型、同文件、同行、同消息）
     if (warnings.count > 0) {
         Warning* last = &warnings.list[warnings.count - 1];

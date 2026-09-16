@@ -54,6 +54,8 @@ enum LocalFX {
     ZERO_MOD = 7 % 0
     BIG = 1 << 62
     NEG = -1
+    FLOAT = 1.5
+    HUGE = 99999999999999999999
 }
 
 // 三路径 + 绝对值：只比"三处互等"拦不住"三处一致地错"，所以每一项都另外钉一个绝对值；
@@ -133,6 +135,10 @@ main() {
     check3("ZERO_MOD", LocalFX.ZERO_MOD, FX.ZERO_MOD, m.FX.ZERO_MOD, 0)
     check3("BIG", LocalFX.BIG, FX.BIG, m.FX.BIG, 4611686018427387904)
     check3("NEG", LocalFX.NEG, FX.NEG, m.FX.NEG, -1)
+    // 这两条是"扫描器原先**失败**、解析器成功"的形态（旧实现下 use 路径会拿到自动递增值）；
+    // 现在两边同一条路径，值按解析器（权威）算：浮点被截断、大整数饱和到 INT64_MAX。
+    check3("FLOAT", LocalFX.FLOAT, FX.FLOAT, m.FX.FLOAT, 1)
+    check3("HUGE", LocalFX.HUGE, FX.HUGE, m.FX.HUGE, 9223372036854775807)
 
     print("test_enum_value_consistency passed")
 }

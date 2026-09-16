@@ -2896,6 +2896,71 @@ static int64_t eval_const_expr(Ast* expr, int* ok) {
 }
 
 // ============================================================================
+// 供外部调用者（符号表扫描器）复用的常量表达式求值入口
+// ============================================================================
+// 为什么需要它：符号表扫描器是**纯文本**扫描，不能自己建 AST，但 enum 成员值必须在扫描阶段
+// 定下来（跨模块 `use mod.E` 与模块限定访问都取自这里）。历史上它为此复刻了一整套词法 +
+// 递归下降求值器，语义靠手工与解析器维持对齐 —— 反复漂移且都是**静默错值**
+// （`0b`、`not`、除零，每次都只在 use 路径错）。现在它直接调这里：词法与语法都是语言本身的
+// 那一套，不再有第二份实现（见 docs/待办_单一事实来源与重复实现收敛.md 的 Phase 1）。
+//
+// 约定：
+//   - text 必须是 NUL 结尾的稳定缓冲区（内部复制一份给 Lexer，调用方缓冲区的生命周期无关）；
+//   - names/values/count 是"先前成员"引用上下文，可为空；
+//   - 成功返回 1 并写 *out；失败返回 0（*out 不动）且**不产生任何诊断** ——
+//     调用方按"无显式值"宽松处理，该报的错留给模块自身编译时的 parse_enum_stmt；
+//   - "成功"的判定：整段文本被消费光（到达 EOF）且解析/求值全程无错误（与旧扫描器求值器
+//     的"必须到 '\0' 且 ok"等价）。
+int parser_eval_const_expr_text(const char* text, char** names, int64_t* values,
+                                int count, int64_t* out) {
+    if (!text || !out) return 0;
+
+    size_t n = strlen(text);
+    char* src = (char*)malloc(n + 1);
+    if (!src) return 0;
+    memcpy(src, text, n + 1);
+
+    // 诊断静默化：这里是在读"别人的模块"，失败不该记到当前文件头上
+    error_silence_begin();
+
+    // 成员引用上下文：保存 → 设置 → 恢复（本函数可重入）
+    char** saved_names = g_enum_member_names;
+    int64_t* saved_values = g_enum_member_values;
+    int saved_count = g_enum_member_count;
+    g_enum_member_names = names;
+    g_enum_member_values = values;
+    g_enum_member_count = count;
+
+    int ok = 0;
+    int64_t result = 0;
+    Parser p;
+    parser_init(&p, src);
+    Ast* expr = parse_expression(&p);
+    if (expr) {
+        int eval_ok = 0;
+        int64_t v = eval_const_expr(expr, &eval_ok);
+        // 必须整段消费光：`1 + (2` 这类残句不能因为"解析出了前缀"就算成功
+        if (eval_ok && p.lex.current.type == TOK_EOF) {
+            result = v;
+            ok = 1;
+        }
+        ast_free(expr);
+    }
+
+    g_enum_member_names = saved_names;
+    g_enum_member_values = saved_values;
+    g_enum_member_count = saved_count;
+
+    // 解析期间只要报过任何错，这次求值就不可信
+    int silenced_errors_count = error_silence_end();
+    free(src);
+    if (silenced_errors_count > 0) ok = 0;
+
+    if (ok) *out = result;
+    return ok;
+}
+
+// ============================================================================
 // enum 定义解析
 // ============================================================================
 

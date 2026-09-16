@@ -79,9 +79,12 @@
 //   并写明"为什么升 / 为什么不升"；改前先 git fetch（2026-09-16 撞过车：两个会话都用 v23
 //   但格式不同，数值相同、格式不同 ⇒ 靠版本号区分不开）。
 #define LENO_BIN_MAGIC      0x424E454C  // "LENB" little-endian
+// v2.7.2（2026-09-16）：Phase 1 —— 扫描阶段的 enum 成员求值改由真解析器执行（删掉复刻求值器）。
+//   对"旧扫描器失败、解析器成功"的形态（浮点截断、超大整数饱和），旧产物里烙的是自动递增值
+//   ⇒ .lenb / entry_*.lenb 必须整体失效重编译。
 // v2.7.1（2026-09-16）：枚举成员求值语义修正 —— 扫描器补 `not`、除零/取模零改为与解析器同结论
 //   ⇒ 修正前编译出的 .lenb / entry_*.lenb 里可能烙着错的常量值，必须整体失效重编译。
-#define LENO_BIN_VERSION    0x00020701  // v2.7.0 - 序列化不再写出 ObjFFIPointer（原始地址跨进程无效，
+#define LENO_BIN_VERSION    0x00020702  // v2.7.0 - 序列化不再写出 ObjFFIPointer（原始地址跨进程无效，
                                         //   读回来即悬空；owned 的还会被下个进程 free ⇒ 堆破坏）；
                                         //   空 chunk 的表示由 5×u32(20B) 改为 4×u32+u8(17B)，与
                                         //   deserialize_chunk_data 的读取逐字节对齐。
@@ -99,8 +102,10 @@
 // 模块编译缓存格式（.lenomc）—— 跨运行的模块编译产物缓存
 // ⚠ 版本号登记表：docs/待办_单一事实来源与重复实现收敛.md 第七节（与 .lenb 同源改动要一起评估）
 #define LENO_MODCACHE_MAGIC    0x434D4E4C  // "LNMC" little-endian
-// v7（2026-09-16）：同 LENO_BIN_VERSION 的求值语义修正 —— 模块产物里可能烙着跨模块枚举的错值。
-#define LENO_MODCACHE_VERSION  0x00000007  // v6 - 不再序列化 ObjFFIPointer（原始地址跨进程无意义：
+#define LENO_MODCACHE_VERSION  0x00000008  // v8 - 同 LENO_BIN_VERSION v2.7.2（Phase 1：扫描阶段 enum
+                                          //      求值改由真解析器执行）—— 模块产物里可能烙着错值。
+                                          // v7 - 同 LENO_BIN_VERSION v2.7.1（求值语义修正）。
+                                          // v6 - 不再序列化 ObjFFIPointer（原始地址跨进程无意义：
                                           //      owned 的还会被下个进程 free ⇒ 堆破坏）。旧缓存里
                                           //      可能存着这种指针，必须整体失效重编译。
                                           //      同一处改动同时把 LENO_BIN_VERSION 升到 v2.7.0。

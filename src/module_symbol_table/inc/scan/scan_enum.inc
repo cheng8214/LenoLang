@@ -94,23 +94,25 @@
                                         strncpy(expr_buf, expr_start, real_len);
                                         expr_buf[real_len] = '\0';
 
-                                        // 常量表达式求值：统一走与解析器同优先级的递归下降求值器
-                                        // （定义见 inc/sym_table_enum_expr.inc）。
-                                        // 历史：此处曾有两段自制逻辑 —— 先「试简单数字」，失败再退回
-                                        // 「从左到右」求值（不处理优先级，括号被当未知字符丢弃），与
-                                        // 解析器对同一表达式给出不同值（P = 2 + 3 * 4：解析器 14、
-                                        // 扫描器 20），同一程序里成员值随访问写法而变。两段均已删除。
+                                        // 常量表达式求值：**直接调真解析器**（同一套词法/语法/求值），
+                                        // 本模块不再有自己的求值器（原先的 inc/sym_table_enum_expr.inc
+                                        // 已删除 —— Phase 1 的收敛）。
+                                        // 历史教训：自制求值器反复与解析器漂移 —— 先是从左到右不处理
+                                        // 优先级（P = 2 + 3 * 4：解析器 14、扫描器 20），后来补齐语义时又
+                                        // 缺 `0b`、缺 `not`、把除零判成"求值失败"，每次都是**只在 use 路径
+                                        // 静默错值**。借真解析器后，"词表/优先级/失败口径"不再需要对齐。
                                         {
                                             int64_t ev_val = 0;
-                                            if (sym_enum_eval_expr(expr_buf, member_names_buf,
-                                                                   member_values_buf, member_count,
-                                                                   &ev_val)) {
+                                            if (parser_eval_const_expr_text(expr_buf, member_names_buf,
+                                                                            member_values_buf, member_count,
+                                                                            &ev_val)) {
                                                 member_values_buf[member_count] = ev_val;
                                                 has_explicit = 1;
                                             }
                                             // 求值失败：保持 has_explicit = 0（按「无显式值」自动递增）。
                                             // 此处不报错 —— 扫描器同时服务 LSP 与跨模块查询；模块自身
                                             // 编译时解析器（parse_enum_stmt）会对不可求值的表达式报错。
+                                            // 求值入口本身也已静默：不会往当前编译的错误列表里写东西。
                                         }
                                     }
                                 }        // 结束 if (*after_enum == '=')：显式值表达式已解析完毕

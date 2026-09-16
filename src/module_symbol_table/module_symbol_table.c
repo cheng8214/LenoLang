@@ -5,6 +5,7 @@
 #include "../include/module_symbol_table.h"
 #include "../include/module_loader.h"
 #include "../include/leno_serialize.h"
+#include "../include/leno_parser.h"   // parser_eval_const_expr_text（扫描阶段的 enum 成员求值）
 #include "../include/leno_error.h"
 #include "../include/platform.h"
 #include <sys/stat.h>
@@ -104,8 +105,9 @@ static int mod_source_line(const char* source, const char* pos) {
 // 导入别名类型依赖传导
 #include "inc/sym_table_import_alias.inc"
 
-// 枚举成员常量表达式求值（扫描阶段用；语义与解析器对齐，见文件内说明）
-#include "inc/sym_table_enum_expr.inc"
+// 枚举成员常量表达式求值：**不再有本模块自己的求值器**。
+// 扫描阶段需要值时调 parser_eval_const_expr_text（parser_func.c），词法/语法/求值全是语言本身
+// 那一套 —— 原先复刻在这里的 inc/sym_table_enum_expr.inc 已删除（Phase 1 的收敛）。
 
 // 前向声明（定义在 sym_table_entry.inc，但 scan 阶段需要使用）
 static void resolve_module_full_path(char* full_path, int max_len,
