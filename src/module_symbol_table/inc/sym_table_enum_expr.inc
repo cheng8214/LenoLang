@@ -98,11 +98,25 @@ static int64_t sym_enum_parse_primary(SymEnumExpr* e) {
     return 0;
 }
 
+// 匹配关键字：必须紧跟非标识符字符，避免把 `notx` 当成 `not`
+static int sym_enum_match_kw(SymEnumExpr* e, const char* kw) {
+    size_t n = strlen(kw);
+    if (strncmp(e->p, kw, n) != 0) return 0;
+    char next = e->p[n];
+    if (isalnum((unsigned char)next) || next == '_') return 0;
+    e->p += n;
+    return 1;
+}
+
 static int64_t sym_enum_parse_unary(SymEnumExpr* e) {
     sym_enum_skip_ws(e);
     if (*e->p == '-') { e->p++; return -sym_enum_parse_unary(e); }
     if (*e->p == '+') { e->p++; return sym_enum_parse_unary(e); }
     if (*e->p == '~') { e->p++; return ~sym_enum_parse_unary(e); }
+    // `not` 逻辑非：解析器侧（parser_func.c 的 eval_const_expr，TOK_NOT）认它，扫描器必须同词表。
+    // 2026-09-16 实测漂移：`A = not 0` 在同模块 / 模块限定都是 1，而 `use` 路径得 0 ——
+    // 扫描器不认 not ⇒ 求值失败 ⇒ 调用方按"无显式值"宽松处理 ⇒ 静默退化成自动递增值。
+    if (sym_enum_match_kw(e, "not")) return !sym_enum_parse_unary(e);
     return sym_enum_parse_primary(e);
 }
 
@@ -117,7 +131,11 @@ static int64_t sym_enum_parse_mul(SymEnumExpr* e) {
         if (c == '*') {
             v *= r;
         } else if (r == 0) {
-            e->ok = 0;   // 除零：判失败（解析器同样不接受）
+            // 除零 / 取模零：必须与解析器同结论。解析器（parser_func.c 的 eval_const_expr）写的是
+            // `right != 0 ? left / right : 0` —— 既不报错、结果 0。这里原先判「求值失败」，调用方
+            // 按"无显式值"宽松处理 ⇒ 静默退化成自动递增值（2026-09-16 实测 `ZERO_DIV = 5 / 0`
+            // 在 use 路径得 273，而同模块 / 模块限定是 0；原注释"解析器同样不接受"是错的）。
+            // 注：除零该不该报错是另一个问题（语义收紧，属 S1 备注），先把两处结论对齐。
             return 0;
         } else {
             v = (c == '/') ? v / r : v % r;

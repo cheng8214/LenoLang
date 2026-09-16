@@ -1,0 +1,70 @@
+// 诊断类用例的共享工具：起一个编译器子进程 + 判据 + 报错文案，全部收在这一个实现里
+//
+// 为什么需要（docs/待办_单一事实来源与重复实现收敛.md 的 S7）：
+//   run_tests.leno 的判据是「exit != 0 → FAIL」，只认正向用例，"必须编译失败"的场景在
+//   套件里表达不出来，于是每个诊断用例各自手搓 _exec + 命令行拼接 + 判据 —— 连
+//   cmd /c 剥引号这个坑都各抄一遍（此前 test_dup_type_kind / test_native_module_resolve /
+//   test_module_dep_memo / test_module_cache_dep_invalidate 各有一份 cmd_for）。
+//   本文件是这套机器的唯一实现：新增用例只写"造源码 + 调这里"，不再自己拼命令行。
+//
+// 用法：
+//   import "helpers/compiler.leno" as ce
+//   ce.expect_ok(path, "场景标签", "")                    // 期望编译+运行成功
+//   ce.expect_ok(path, "场景标签", "TAG=22")              // 还要求输出包含 TAG=22
+//   ce.expect_error(path, "场景标签", "重复定义", 4)       // 期望编译失败：文案 + 落点行
+//   ce.expect_error(path, "场景标签", "未知的原生模块", 0)  // 落点行传 0 = 不检查落点
+//
+// 关于静态 fixture：assert/ 下**不以 test_ 开头**的 .leno 不会被 run_tests.leno 当用例跑，
+// 所以"必须编译失败"的源码也能做成静态文件；但当前没有"测试自己的目录"这类 API（`_args()`
+// 里拿不到本文件路径），静态 fixture 只能以 cwd 为基准定位（run_tests.leno 从仓库根启动）。
+// 因此既有用例一律走**动态**形态：把源码写进 `_tmpdir()` 再断言 —— 路径自持、互不干扰。
+//
+// 为什么不把判据做成 assert/run_tests.leno 的 `// EXPECT_ERROR:` 行内约定：本仓库两个
+// 诊断用例（同名类型、原生模块名）都是**动态生成**源码（组合/循环），行内约定表达不了；
+// 再加一套同样能力的机制就等于又留两个实现者，与本文信条冲突。
+
+import strings
+
+// _exec 的命令行。exe 不能加引号：native_exec 用 `cmd /c <cmd> > tmp 2>&1` 启动，
+// cmd 会剥掉 `/c` 后紧跟的最外两层引号（`"exe" "script"` 会被解析成 `exe" "script`，
+// 报 "The filename, directory name, or volume label syntax is incorrect."），
+// 所以只给脚本路径加引号（临时目录路径可能含空格），并假定仓库路径本身不含空格。
+export func cmd_for(string script_path):string {
+    return _executable() + " \"" + script_path + "\""
+}
+
+// 期望编译并运行成功（exit == 0）；expect_out 非空时还要求输出包含它。返回输出。
+export func expect_ok(string script_path, string tag, string expect_out):string {
+    var r = _exec(cmd_for(script_path))
+    assert_ne(r, null, tag + "：_exec 返回 null（子进程起不来？）")
+
+    var out = _str(r[0])
+    assert_eq(r[1], 0, tag + "：应编译运行成功，实际 exit=" + r[1] + "；输出=" + out)
+
+    if expect_out != "" {
+        assert_true(strings.has(out, expect_out),
+            tag + "：输出应包含「" + expect_out + "」；实际=" + out)
+    }
+    return out
+}
+
+// 期望编译失败（exit != 0），且输出包含 expect_text；
+// expect_line > 0 时还要求输出里有 "<line>,1): error:"（报错落点）。返回输出。
+export func expect_error(string script_path, string tag, string expect_text, int expect_line):string {
+    var r = _exec(cmd_for(script_path))
+    assert_ne(r, null, tag + "：_exec 返回 null（子进程起不来？）")
+
+    var out = _str(r[0])
+    var code = r[1]
+    assert_true(code != 0, tag + "：应当编译失败，实际 exit=0；输出=" + out)
+
+    assert_true(strings.has(out, expect_text),
+        tag + "：报错文案应包含「" + expect_text + "」；输出=" + out)
+
+    if expect_line > 0 {
+        var loc = "(" + expect_line + ",1): error:"
+        assert_true(strings.has(out, loc),
+            tag + "：报错应落在第 " + expect_line + " 行（期望包含「" + loc + "」）；输出=" + out)
+    }
+    return out
+}

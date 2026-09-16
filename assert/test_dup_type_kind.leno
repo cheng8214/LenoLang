@@ -17,10 +17,14 @@
 //
 // 为什么这里自己起进程断言：assert/run_tests.leno 的判定是 `exit code != 0 → FAIL`，
 // 只认正向用例，"必须编译失败"的场景在其中表达不出来，所以用 _exec 直接跑编译器。
+// 起子进程、判失败文案与落点的那套机器已收敛到 assert/helpers/compiler.leno（S7），
+// 本文件只负责"造源码"，不再自己拼命令行。
 
 import dirs
 import files
-import strings
+
+// 起编译器子进程 + 判据的共享工具（命令行拼接、失败判据的唯一实现，见 S7）
+import "helpers/compiler.leno" as ce
 
 // 单个声明片段的文本。enum 占 3 行，struct / cstruct / face 各占 1 行。
 func decl_text(string kind):string {
@@ -49,16 +53,6 @@ func build_src(string kind_a, string kind_b):string {
     return "import ffi\n\n" + decl_text(kind_a) + decl_text(kind_b) + "\nmain() { print(1) }\n"
 }
 
-// 拼 _exec 的命令行。
-// 注意：native_exec 是用 `cmd /c <cmd> > tmp 2>&1` 起来的，而 cmd 有个坑 ——
-// 当 `/c` 后面第一个字符就是引号时，它会把整串最外两层引号剥掉：`"exe" "script"`
-// 会被解析成 `exe" "script`，报 "The filename, directory name, or volume label
-// syntax is incorrect."。所以 exe 不能加引号（与 assert/run_tests.leno 同一约定，
-// 即假定仓库路径不含空格），只给脚本路径加引号（临时目录可能含空格）。
-func cmd_for(string script_path):string {
-    return _executable() + " \"" + script_path + "\""
-}
-
 // 断言：kind_a 先声明、kind_b 后声明时，编译器必须报错，且报错落在 kind_b 那条上、
 // 文案点名 kind_a。
 func expect_dup(string work, string kind_a, string kind_b) {
@@ -67,21 +61,8 @@ func expect_dup(string work, string kind_a, string kind_b) {
     var path = dirs.join(work, kind_a + "_" + kind_b + ".leno")
     files.write(path, build_src(kind_a, kind_b))
 
-    var r = _exec(cmd_for(path))
-    assert_ne(r, null, tag + "：_exec 返回 null")
-
-    var out = r[0]
-    var code = r[1]
-
-    assert_true(code != 0, tag + "：跨种类同名应先报错再失败，实际 exit=" + code + "；输出=" + out)
-
-    var loc = "(" + line_b + ",1): error:"
-    assert_true(strings.has(out, loc),
-        tag + "：报错行应落在后声明的 " + kind_b + "（第 " + line_b + " 行 " + loc + "）；输出=" + out)
-
-    var msg = "已经定义为 " + kind_a + "，不能重复定义为 " + kind_b
-    assert_true(strings.has(out, msg),
-        tag + "：文案应点名先声明的 " + kind_a + "，期望包含「" + msg + "」；输出=" + out)
+    ce.expect_error(path, tag,
+        "已经定义为 " + kind_a + "，不能重复定义为 " + kind_b, line_b)
 }
 
 // 断言：同一个种类、同一个名字声明两次，必须报"<kind> 'E1' 重复定义"，且落在后声明那条。
@@ -92,21 +73,7 @@ func expect_dup_same_kind(string work, string kind) {
     // 两份声明文本相同：这正是"同一条源码写两遍"的形态（第二份只改了声明位置）
     files.write(path, "import ffi\n\n" + decl_text(kind) + decl_text(kind) + "\nmain() { print(1) }\n")
 
-    var r = _exec(cmd_for(path))
-    assert_ne(r, null, tag + "：_exec 返回 null")
-
-    var out = r[0]
-    var code = r[1]
-
-    assert_true(code != 0, tag + "：同种类重复定义应先报错再失败，实际 exit=" + code + "；输出=" + out)
-
-    var loc = "(" + line_b + ",1): error:"
-    assert_true(strings.has(out, loc),
-        tag + "：报错行应落在后声明那条（第 " + line_b + " 行 " + loc + "）；输出=" + out)
-
-    var msg = kind + " 'E1' 重复定义"
-    assert_true(strings.has(out, msg),
-        tag + "：期望包含「" + msg + "」；输出=" + out)
+    ce.expect_error(path, tag, kind + " 'E1' 重复定义", line_b)
 }
 
 // 对照组：四个种类各声明一次（不同名）必须正常编译，防止同名检查过度触发。
@@ -120,9 +87,7 @@ func expect_distinct_ok(string work) {
         + "main() { print(1) }\n"
     files.write(path, src)
 
-    var r = _exec(cmd_for(path))
-    assert_ne(r, null, "对照组：_exec 返回 null")
-    assert_eq(r[1], 0, "对照组：四个不同名的类型定义不应报错，实际 exit=" + r[1] + "；输出=" + r[0])
+    ce.expect_ok(path, "对照组", "")
 }
 
 main() {

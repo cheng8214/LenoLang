@@ -21,9 +21,8 @@ import dirs
 import files
 import strings
 
-func cmd_for(string script_path):string {
-    return _executable() + " \"" + script_path + "\""
-}
+// 起编译器子进程的共享工具（命令行拼接的唯一实现，见 S7）
+import "helpers/compiler.leno" as ce
 
 main() {
     var work = dirs.join(_tmpdir(), "leno_module_dep_memo")
@@ -71,7 +70,7 @@ main() {
     files.write(top_path, top)
 
     // 关缓存编译 + 运行：命中记忆化路径
-    var cmd = "set LENO_NO_CACHE=1 && " + cmd_for(top_path)
+    var cmd = "set LENO_NO_CACHE=1 && " + ce.cmd_for(top_path)
     var r = _exec(cmd)
     assert_ne(r, null, "关缓存编译：_exec 返回 null")
     var out = r[0]
@@ -80,7 +79,7 @@ main() {
         "三条路径到达同一依赖，符号解析结果应一致（期望 7+7+8+3+7=32）；实际输出=" + out)
 
     // 开缓存再跑一次：磁盘缓存路径与记忆化路径结果必须一致
-    var cmd2 = cmd_for(top_path)
+    var cmd2 = ce.cmd_for(top_path)
     var r2 = _exec(cmd2)
     assert_ne(r2, null, "开缓存编译：_exec 返回 null")
     assert_eq(r2[1], 0, "开缓存编译应成功，exit=" + r2[1] + "；输出=" + r2[0])

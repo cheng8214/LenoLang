@@ -21,12 +21,8 @@ import dirs
 import files
 import strings
 
-// _exec 的命令行。exe 不能加引号：native_exec 用 `cmd /c <cmd> > tmp 2>&1` 启动，
-// cmd 会剥掉 `/c` 后紧跟的最外两层引号（见 assert/test_dup_type_kind.leno 的注释），
-// 所以只给脚本路径加引号（临时目录路径可能含空格）。
-func cmd_for(string script_path):string {
-    return _executable() + " \"" + script_path + "\""
-}
+// 起编译器子进程的共享工具（命令行拼接、判成功/失败的唯一实现，见 S7）
+import "helpers/compiler.leno" as ce
 
 func module_src(int v):string {
     return "export func tag(): int\n{\n    return " + v + "\n}\n"
@@ -50,14 +46,6 @@ func chain_b_src(int v):string {
     return "export func g(): int\n{\n    return " + v + "\n}\n"
 }
 
-// 跑一次并断言"编译 + 运行都成功"，返回输出
-func run_ok(string path, string tag):string {
-    var r = _exec(cmd_for(path))
-    assert_ne(r, null, tag + "：_exec 返回 null")
-    assert_eq(r[1], 0, tag + "：退出码应为 0，实际 " + r[1] + "；输出=" + r[0])
-    return _str(r[0])
-}
-
 // 断言输出里出现了 TAG=<want>。
 // 取值刻意避开前缀关系（11/22、101/202），免得 "TAG=1" 被 "TAG=11" 误命中。
 func expect_tag(string out, int want, string tag) {
@@ -78,15 +66,15 @@ main() {
     files.write(m1, module_src(11))
 
     // ① 冷缓存首跑：编译并写缓存（.lenb + .deps）
-    expect_tag(run_ok(e1, "场景1-首跑"), 11, "场景1-首跑")
+    expect_tag(ce.expect_ok(e1, "场景1-首跑", ""), 11, "场景1-首跑")
     // ② 无改动再跑：结果必须稳定（不管命中缓存还是重编译，都不许漂移）
-    expect_tag(run_ok(e1, "场景1-无改动"), 11, "场景1-无改动")
+    expect_tag(ce.expect_ok(e1, "场景1-无改动", ""), 11, "场景1-无改动")
     // ③ 只改被引用模块：必须用上新模块 —— 修复前这里打印的仍是 TAG=11（旧缓存）
     files.write(m1, module_src(22))
-    expect_tag(run_ok(e1, "场景1-改模块"), 22, "场景1-改模块")
+    expect_tag(ce.expect_ok(e1, "场景1-改模块", ""), 22, "场景1-改模块")
     // ④ 再改回去：双向都要生效（排除"只在某种大小关系下才失效"这类巧合）
     files.write(m1, module_src(11))
-    expect_tag(run_ok(e1, "场景1-改回"), 11, "场景1-改回")
+    expect_tag(ce.expect_ok(e1, "场景1-改回", ""), 11, "场景1-改回")
 
     // ================= 场景 2：传递依赖（只改末端 b）=================
     var w2 = dirs.join(_tmpdir(), "leno_cache_dep_chain")
@@ -100,10 +88,10 @@ main() {
     files.write(a2, chain_a_src())
     files.write(b2, chain_b_src(101))
 
-    expect_tag(run_ok(e2, "场景2-首跑"), 101, "场景2-首跑")
+    expect_tag(ce.expect_ok(e2, "场景2-首跑", ""), 101, "场景2-首跑")
     // 只改 b（a 与入口都不动）：依赖快照必须覆盖到传递依赖，否则这里仍旧是 TAG=101
     files.write(b2, chain_b_src(202))
-    expect_tag(run_ok(e2, "场景2-改末端依赖"), 202, "场景2-改末端依赖")
+    expect_tag(ce.expect_ok(e2, "场景2-改末端依赖", ""), 202, "场景2-改末端依赖")
 
     // 清理（含两处 .lenocache）
     dirs.delete(w1)

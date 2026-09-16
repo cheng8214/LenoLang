@@ -15,42 +15,22 @@
 
 import dirs
 import files
-import strings
 
-// 拼 _exec 的命令行（exe 不能加引号，见 assert/test_dup_type_kind.leno 的说明：
-// cmd /c 后首字符是引号时会剥掉整串最外两层引号）
-func cmd_for(string script_path):string {
-    return _executable() + " \"" + script_path + "\""
-}
+// 起编译器子进程 + 判据的共享工具（命令行拼接、失败判据的唯一实现，见 S7）
+import "helpers/compiler.leno" as ce
 
 // 期望编译并运行成功；expect_out 非空时还要求输出包含它
 func expect_ok(string work, string name, string src, string expect_out) {
     var path = dirs.join(work, name + ".leno")
     files.write(path, src)
-
-    var r = _exec(cmd_for(path))
-    assert_ne(r, null, name + "：_exec 返回 null")
-    assert_eq(r[1], 0, name + "：应编译运行成功，实际 exit=" + r[1] + "；输出=" + r[0])
-    if expect_out != "" {
-        assert_true(strings.has(r[0], expect_out),
-            name + "：输出应包含「" + expect_out + "」；实际=" + r[0])
-    }
+    ce.expect_ok(path, name, expect_out)
 }
 
 // 期望编译失败：报错落在第 line 行，且包含 msg
 func expect_compile_error(string work, string name, string src, int line, string msg) {
     var path = dirs.join(work, name + ".leno")
     files.write(path, src)
-
-    var r = _exec(cmd_for(path))
-    assert_ne(r, null, name + "：_exec 返回 null")
-
-    var out = r[0]
-    assert_true(r[1] != 0, name + "：未知原生模块应在编译期失败，实际 exit=" + r[1] + "；输出=" + out)
-
-    var loc = "(" + line + ",1): error:"
-    assert_true(strings.has(out, loc), name + "：报错应落在第 " + line + " 行 " + loc + "；输出=" + out)
-    assert_true(strings.has(out, msg), name + "：报错应包含「" + msg + "」；输出=" + out)
+    ce.expect_error(path, name, msg, line)
 }
 
 main() {

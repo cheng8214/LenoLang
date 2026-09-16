@@ -9,9 +9,15 @@
 //   5) 解析器不接受逗号分隔 enum 成员（而扫描器接受 ⇒ 模块内外行为不同）。
 //   6) 词法器完全不支持 0b 二进制字面量：`0b1010` 被切成 `0` + 标识符 `b1010` ⇒
 //      语句里报语法错误、enum 成员值却静默变 0（模块内/运行期 0，扫描器 10）。
+//   7) 扫描器的词表比解析器**少**两样（2026-09-16 由本文件的 FX 矩阵探出）：
+//      ① 不认 `not` 关键字：`A = not 0` 同模块/模块限定都是 1，use 路径得 0；
+//      ② 把除零当"求值失败"：解析器写的是 `right != 0 ? left / right : 0`（不报错、结果 0），
+//         扫描器判失败后被调用方按"无显式值"宽松处理 ⇒ `5 / 0` 在 use 路径得自动递增值。
+//      两者都是**静默错值**，且只在 `use` 路径错。已修（扫描器补 `not`、除零与解析器同结论）。
 
 import "test_enum_value_consistency_mod.leno" as m
 use m.EV
+use m.FX
 
 // 同模块 enum：顺便锁定「逗号分隔」、「隐式自动递增」与「0b 二进制字面量」（解析器路径）
 enum LocalEV {
@@ -19,6 +25,43 @@ enum LocalEV {
     B = 2 * (3 + 4),
     C,
     BIN = 0b1010,
+}
+
+// 表达式形态矩阵的同模块一份：表达式文本与模块里的 FX **逐字相同**，
+// 这样三条路径比的是"同一个表达式"，差异只可能来自求值器实现。
+enum LocalFX {
+    PREC = 1 + 2 * 3
+    PAREN = (1 + 2) * 3
+    NEST = 2 * (3 + 4)
+    LEFT = 10 - 3 - 2
+    DIV = 100 / 7
+    MOD = 100 % 7
+    SHL = 1 << 4
+    SHR = 256 >> 4
+    MIX = 5 ^ 3 & 1
+    ORSH = 1 | 2 << 3
+    BNOT = ~0
+    LOGNOT = not 0
+    LOGNOT5 = not 5
+    NEGP = -(2 + 3)
+    NEGM = -7 % 3
+    HEX = 0xFF
+    HEXBIN = 0x10 + 0b10
+    REF1 = PAREN + 1
+    REF2 = SHL + HEX
+    IMPL
+    ZERO_DIV = 5 / 0
+    ZERO_MOD = 7 % 0
+    BIG = 1 << 62
+    NEG = -1
+}
+
+// 三路径 + 绝对值：只比"三处互等"拦不住"三处一致地错"，所以每一项都另外钉一个绝对值；
+// 而只比 use 与模块限定也会漏（两处都可能走扫描器），必须把同模块那份一起比进来。
+func check3(string name, int local_val, int via_use, int qual, int want) {
+    assert_eq(local_val, want, name + "：同模块路径应得 " + want + "，实际 " + local_val)
+    assert_eq(via_use, want, name + "：use 导入路径应得 " + want + "，实际 " + via_use)
+    assert_eq(qual, want, name + "：模块限定路径应得 " + want + "，实际 " + qual)
 }
 
 main() {
@@ -62,6 +105,34 @@ main() {
     assert_eq(bits, 10)
     assert_eq(0b1111, 15)
     assert_eq(0b0, 0)
+
+    // ---- 表达式形态矩阵：三路径 + 绝对值（文档 Phase 0.1）----
+    // 矩阵探出的第 7) 类漂移（扫描器不认 `not` / 把除零判成失败）就在这里被钉住：
+    // 修复前 LOGNOT 的 use 路径得 0、LOGNOT5 得 1、ZERO_DIV 得 273、ZERO_MOD 得 274。
+    check3("PREC", LocalFX.PREC, FX.PREC, m.FX.PREC, 7)
+    check3("PAREN", LocalFX.PAREN, FX.PAREN, m.FX.PAREN, 9)
+    check3("NEST", LocalFX.NEST, FX.NEST, m.FX.NEST, 14)
+    check3("LEFT", LocalFX.LEFT, FX.LEFT, m.FX.LEFT, 5)
+    check3("DIV", LocalFX.DIV, FX.DIV, m.FX.DIV, 14)
+    check3("MOD", LocalFX.MOD, FX.MOD, m.FX.MOD, 2)
+    check3("SHL", LocalFX.SHL, FX.SHL, m.FX.SHL, 16)
+    check3("SHR", LocalFX.SHR, FX.SHR, m.FX.SHR, 16)
+    check3("MIX", LocalFX.MIX, FX.MIX, m.FX.MIX, 4)
+    check3("ORSH", LocalFX.ORSH, FX.ORSH, m.FX.ORSH, 17)
+    check3("BNOT", LocalFX.BNOT, FX.BNOT, m.FX.BNOT, -1)
+    check3("LOGNOT", LocalFX.LOGNOT, FX.LOGNOT, m.FX.LOGNOT, 1)
+    check3("LOGNOT5", LocalFX.LOGNOT5, FX.LOGNOT5, m.FX.LOGNOT5, 0)
+    check3("NEGP", LocalFX.NEGP, FX.NEGP, m.FX.NEGP, -5)
+    check3("NEGM", LocalFX.NEGM, FX.NEGM, m.FX.NEGM, -1)
+    check3("HEX", LocalFX.HEX, FX.HEX, m.FX.HEX, 255)
+    check3("HEXBIN", LocalFX.HEXBIN, FX.HEXBIN, m.FX.HEXBIN, 18)
+    check3("REF1", LocalFX.REF1, FX.REF1, m.FX.REF1, 10)
+    check3("REF2", LocalFX.REF2, FX.REF2, m.FX.REF2, 271)
+    check3("IMPL", LocalFX.IMPL, FX.IMPL, m.FX.IMPL, 272)
+    check3("ZERO_DIV", LocalFX.ZERO_DIV, FX.ZERO_DIV, m.FX.ZERO_DIV, 0)
+    check3("ZERO_MOD", LocalFX.ZERO_MOD, FX.ZERO_MOD, m.FX.ZERO_MOD, 0)
+    check3("BIG", LocalFX.BIG, FX.BIG, m.FX.BIG, 4611686018427387904)
+    check3("NEG", LocalFX.NEG, FX.NEG, m.FX.NEG, -1)
 
     print("test_enum_value_consistency passed")
 }
