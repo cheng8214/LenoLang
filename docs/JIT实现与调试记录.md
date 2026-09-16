@@ -5173,6 +5173,42 @@ CALLOUT-FAIL（797 条）都是 `call_value: callee 是对象但 function 为空
 
 ***
 
+### 8.82 R6-f（**已回退**）：把非闭包 callee 交 `vm_call_value` 的尝试与两个反证（2026-09-16）
+
+**动机**：§8.80/§8.81 实测到"被解锁的循环立刻 bail"——真实应用 fm/cc 的 `Bailouts` 3/0 → 6/3，
+`LENO_JIT_DEBUG=1` 下 CALLOUT-FAIL **全部**是 `call_value: callee 是对象但 function 为空
+（obj_type=10 = OBJ_BOUND_METHOD）`。看起来只要把这类 callee 交给 VM 的 `vm_call_value`
+（它确实支持 bound method：`vm_call.inc:272` 的 `OBJ_BOUND_METHOD` 分支同时覆盖用户 struct 方法
+与 **native 绑定方法**）就能兑现收益。**动手前先验证**，结论是**不能**。
+
+**两个反证（都在真机上，且都复现）**
+
+1. `probe_cstruct_jit.leno` 直接**跑错**（本来 NO_JIT/JIT 逐字一致的探针）：
+   `只能调用函数（不是对象类型）`（`vm_call.inc:374` 的**外层**错误 ⇒ 传进去的**不是对象**）。
+   而**同一处**旧代码（失败前的诊断打印）报的却是 `obj_type=10`（一个合法对象）。
+   ⇒ 这些调用点上 callee 槽的内容**不可靠**。形态是 `OP_GET_LOCAL + OP_CONST(name) + OP_INDEX + OP_CALL 0`
+   （`c.free()` / `T.malloc()`），怀疑 **JIT 的 `OP_INDEX` 在「cstruct 定义 / 类型名 + 字符串键」上
+   与解释器产出不同**。**在查清 `OP_INDEX` 之前，把这里的 callee 交给 VM 执行 = 拿脏值调用**
+   （比"安全地 bailout"危险得多）。
+2. **更严重的一条**：`assert/test_jit_closure_byupvalue.leno` 开始**算出错值**
+   （第 46 行 `assert_eq(nested(2000), 2001000)` 实际得 **2006847**，JIT 确定性复现、NO_JIT 通过；
+   全套回归 310/1）。注意这**不是**崩溃而是**静默算错** —— 说明这次改动破坏了别处的状态。
+
+**结论与动作**：**整块回退**（`jit_callout_call_value` 恢复 2 参数 + `vstack_top[-1]` 读法；
+codegen 去掉多传的第 3 个参数）。回退后：单跑该用例 `OK`、全套 **311 passed / 0 failed** ✓、
+三个探针（cstruct / clib / multi-ret）全部 `IDENTICAL` ✓。
+
+**留给下一步的两条硬信息**
+
+- 想修这条路径，**先查 JIT 的 `OP_INDEX`**（cstruct 定义 / 类型名 + 字符串键）产出什么、
+  与解释器差在哪；查清之前不要动这里的 callee。
+- **告警（值得写进编码约定）**：`OP_CALL` 的 callout 参数装载区**不要再用 R8/JIT_ARG3**。
+  Windows 下 `JIT_ARG3 = R8`（`x86_64.c:800-803`），而 R8 同时是大量发射器宏的 scratch，
+  并且可能承载 **pinned TOS** —— 本次"只多读一个槽"的改动就造成了静默算错。
+  在 callout 里加参数时，先把「该寄存器此刻是否被 TOS_SPILL/发射器约定占用」查清。
+
+***
+
 ## 9. 性能数据
 
 ### 测试环境

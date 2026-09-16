@@ -76,6 +76,12 @@ cmd /c "set LENO_NO_JIT=1&& build\leno.exe jit_probes\probe_tail_call_jit.leno 2
 2. 函数级 JIT 有**热度阈值**——只调用一次不编译，要在循环里跑热。
 详见 §8.76。
 
+## （已回退）R6-f：把非闭包 callee 交 `vm_call_value`
+
+**不要重试这个改法**（除非先查清 JIT 的 `OP_INDEX`）：它让本目录的 `probe_cstruct_jit.leno`
+从"逐字一致"变成报 `只能调用函数（不是对象类型）`，并让
+`assert/test_jit_closure_byupvalue.leno` **静默算错**（2001000 → 2006847）。证据与回退记录见 §8.82。
+
 ## R6-e：`OP_CLIB_CALL`（FFI 动态库调用，`probe_clib_call_jit.leno`）
 
 ```powershell

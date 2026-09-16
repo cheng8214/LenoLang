@@ -527,7 +527,14 @@ Value jit_callout_module_call_meta(int64_t* vstack_top, int arg_count, ModuleMet
  * null 报"函数未定义" ⇒ JIT 只处理 OBJ_CLOSURE，其余置 failed 交解释器（报错/分配语义一致）。
  * ★ 返回值个数守卫在**调用之前**：不等于 1（多返回解构调用点）直接 bailout ——
  *   若先调用再检查，bailout 后解释器重跑整轮会让 callee 执行两次、副作用翻倍。
- * 实参块在 callee 槽之上（codegen 传 rsp + 8）。 */
+ * 实参块在 callee 槽之上（codegen 传 rsp + 8）。
+ * ★ R6-f 结论（2026-09-16，**已回退**）：试过把非闭包 callee 交给 `vm_call_value` 慢路径
+ *   （它确实支持 OBJ_BOUND_METHOD，`vm_call.inc:272`），结果 `probe_cstruct_jit.leno` 报
+ *   `只能调用函数（不是对象类型）`（vm_call.inc:374 的**外层**错误 ⇒ 传进去的不是对象），
+ *   而**同一处**旧代码打印的 obj_type 却是 10。⇒ 这些调用点上 callee 槽的内容不可靠
+ *   （形态是 `OP_INDEX + OP_CALL 0`，怀疑 JIT 的 `OP_INDEX` 在「cstruct 定义/类型名 + 字符串键」
+ *   上与解释器产出不同）。**查清 `OP_INDEX` 之前不能把这里的 callee 交给 VM 执行** ——
+ *   那会把"安全地 bailout"变成"拿脏值调用"。维持 failed（慢但正确）。 */
 Value jit_callout_call_value(int64_t* vstack_top, int arg_count);
 
 /* ---- OP_TAIL_CALL（尾调用，R6-b）—— 仅函数级 JIT 使用 ----
