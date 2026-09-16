@@ -341,6 +341,22 @@
                 emit_mov_rr(cb, JIT_ARG2, JIT_R8);
                 EMIT_CALL(jit_callout_array_append);
                 EMIT_CALLOUT_END();
+                /* ---- §8.91：callout 失败必须 bailout（**原先漏了守卫** ✗）----
+                 * `jit_callout_array_append` 的错误路径（"append 操作需要数组" /
+                 * "数组扩容失败"）只置 `jit_callout_failed` + 返回 -1 ⇒ 没有这段检查时
+                 * JIT 会把失败当成功继续跑（append 语句形式没有返回值，所以连"看到 NULL"
+                 * 的机会都没有 ⇒ 完全静默）。失败路径都在**变异之前**返回，所以 bailout
+                 * 后解释器重放这条指令不会重复副作用 ✓。 */
+                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_callout_failed);
+                emit_mov_reg_mem8(cb, JIT_RAX, JIT_R8, 0);
+                emit_test_rr(cb, JIT_RAX, JIT_RAX);
+                {
+                    EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                    int ap_fail = emit_jcc(cb, 0x85);     /* JNZ → bailout */
+                    patch_add(ctx, ap_fail, -1, 0);
+                }
+                emit_xor_rr(cb, JIT_RAX, JIT_RAX);
+                emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
                 patch_rel32(cb, ap_done, cb->len);
                 vstack -= 2;
                 break;
@@ -363,6 +379,21 @@
                 EMIT_LOAD_TMP(JIT_ARG3, tmp1_disp);
                 EMIT_CALL(jit_callout_dict_set);
                 EMIT_CALLOUT_END();
+                /* ---- §8.91：失败（"赋值操作需要字典"）→ bailout 交解释器重放 ----
+                 * 这条**有返回值**（dict），所以失败时会把 NULL_VAL 当字典压栈 ⇒
+                 * 静默错更难发现（后续 `d[k]` 变成在 null 上取索引）。 */
+                EMIT_STORE_TMP(tmp2_disp, JIT_RAX);
+                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_callout_failed);
+                emit_mov_reg_mem8(cb, JIT_RAX, JIT_R8, 0);
+                emit_test_rr(cb, JIT_RAX, JIT_RAX);
+                {
+                    EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                    int ds_fail = emit_jcc(cb, 0x85);     /* JNZ → bailout */
+                    patch_add(ctx, ds_fail, -1, 0);
+                }
+                emit_xor_rr(cb, JIT_RAX, JIT_RAX);
+                emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
+                EMIT_LOAD_TMP(JIT_RAX, tmp2_disp);
                 EMIT_VALUE_TO_RAW();
                 TOS_PRODUCE();
                 vstack -= 2;
@@ -462,6 +493,23 @@
                 EMIT_LOAD_TMP(JIT_ARG3, tmp1_disp);  /* value (3rd arg) */
                 EMIT_CALL(jit_callout_index_set);
                 EMIT_CALLOUT_END();
+                /* ---- §8.91：callout 失败必须 bailout（**原先漏了守卫** ✗）----
+                 * 快路径已把「非对象 / 非数组 / 浮点索引 / 需要写屏障」都跳到这条慢路径，
+                 * 慢路径自己还会因「索引越界 / 其余接收者类型」失败 ⇒ 只置 failed 没人看的话
+                 * JIT 会把这条**赋值**当成功继续跑（静默算错）。
+                 * 实测 `probe_index_set_error.leno`：3 元素数组写 `arr[1000]`，
+                 * JIT 侧 250 次越界写**全部静默成功**（`caught=50`），而 NO_JIT 每次都抛
+                 * （`caught=300`）⇒ 补上守卫后两侧一致。 */
+                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_callout_failed);
+                emit_mov_reg_mem8(cb, JIT_RAX, JIT_R8, 0);
+                emit_test_rr(cb, JIT_RAX, JIT_RAX);
+                {
+                    EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                    int is_fail = emit_jcc(cb, 0x85);     /* JNZ → bailout */
+                    patch_add(ctx, is_fail, -1, 0);
+                }
+                emit_xor_rr(cb, JIT_RAX, JIT_RAX);
+                emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
                 patch_rel32(cb, is_done, cb->len);
                 vstack -= 3;
                 break;

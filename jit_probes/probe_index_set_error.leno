@@ -1,0 +1,28 @@
+// B 审计探针 3：`OP_INDEX_SET_NOPUSH`（`arr[idx] = v`）的失败通道
+//
+// 背景（§8.91 的同一类）：`jit_callout_index_set` 的错误路径只置 `jit_callout_failed`
+// （数组索引越界 / 非数字索引 / 非对象接收者 …），而 `ops_index.inc` 的
+// `case OP_INDEX_SET_NOPUSH` 慢路径接在 `EMIT_CALLOUT_END()` 之后**没有检查这个标志**
+// ✗ ⇒ JIT 会把 NULL/半成品当成功继续跑 = **静默算错**。
+//
+// 判据：`caught` 与 `LENO_NO_JIT=1` 一致、`exit=0`、且 **不出现「发现 N 个错误」**
+// （越界是**可被 try/catch 捕获**的运行时错误，不该留下全局错误记录）。
+//
+// 触发方式：热循环里对 3 元素数组写 `arr[1000]` ⇒ 每次都是越界错误 ⇒ 解释器每次都抛、
+// 每次都被 catch ⇒ `caught` 应等于迭代次数。
+main() {
+    var arr = [1, 2, 3]
+    int caught = 0
+    int i = 0
+    while i < 300 {
+        try {
+            arr[1000] = i        // 越界 ⇒ JIT 慢路径 callout 置 failed
+            i = i + 1
+        } catch (e) {
+            caught = caught + 1
+            i = i + 1
+        }
+    }
+    print("caught=" + caught + "\n")
+    print("arr_len=" + arr.len() + "\n")
+}

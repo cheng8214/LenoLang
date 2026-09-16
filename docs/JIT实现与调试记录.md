@@ -5724,24 +5724,34 @@ keep_len=0`）、assert **311 passed / 0 failed**。
 `EMIT_STORE_TMP(tmp2)` → 读 `&jit_callout_failed` → `test` → `EMIT_BAILOUT_SITE_NONOVF(bc_off)`
 跳 bailout → 清标志 → 恢复 RAX → `EMIT_VALUE_TO_RAW / TOS_PRODUCE`。
 
-#### 剩余审计（已用"计数法"定位，必须逐条核，不能靠计数推断）
+#### 第 3 步：把 17 处"无守卫"逐条核完 —— 又抓出 **3 处真漏**（并确认 13 处无害）
 
-backend 里 `EMIT_CALL(jit_callout_*)` **45** 处 vs `&jit_callout_failed` 守卫 **28** 处
-⇒ 17 处无守卫 ✗。已核实的 4 个单点文件：
+用"调用点 vs 守卫点行号配对"先定位 17 处可疑 ✗，再**逐条读代码**核实
+（⚠ 配对法会**高报**：守卫常常放在 `if/else` 的**合并点之后**、两个调用点共用；
+也可能用**返回值**当守卫 ⇒ 不能靠计数下结论）：
 
-| 文件 | callout | 结论 |
+| 站点 | callout | 判定 |
 | --- | --- | --- |
-| `ops_arith.inc` | `jit_callout_concat` | ✓ 用**返回值**判 `NULL_VAL` 当守卫（等价手段）|
-| `ops_jump.inc` | `jit_callout_switch_lookup` | ✓ 无失败模式（-1 = default 是合法结果）|
-| `ops_icmp.inc` | `jit_callout_value_eq` | ✓ 无失败模式 |
-| `ops_float.inc` | `jit_callout_div` | ✗ **本次修掉** ✓ |
+| `ops_index.inc` `OP_ARRAY_APPEND_NOPUSH` 慢路径 | `array_append` | ✗ **补守卫**（失败路径在变异之前 ⇒ 重放无副作用）|
+| `ops_index.inc` `OP_DICT_SET` | `dict_set` | ✗ **补守卫**（失败时会把 NULL_VAL 当字典压栈 ⇒ 后续在 null 上取索引）|
+| `ops_index.inc` `OP_INDEX_SET_NOPUSH` 慢路径 | `index_set` | ✗ **补守卫**（新探针实测：JIT `caught=50` ✗ → 补后 `caught=300` ✓）|
+| `ops_callout.inc` `OP_GET_FIELD_FAST` 慢路径 | `get_field_fast` | ✗ **补守卫**（快路径的三项检查都跳慢路径 ⇒ 非 struct 接收者必进 callout；代码证据）|
+| `ops_return.inc` `MODULE_CALL` | `module_call_meta` | ✓ 守卫在 `if/else` 之后、两个调用点共用 |
+| `ops_callout.inc` `OP_SET_FIELD` | `set_field` | ✓ 同上（`OP_GET_FIELD` 共用后置守卫）|
+| `ops_misc` `is_null` / `ops_icmp` `value_eq` / `ops_jump` `switch_lookup` | — | ✓ 无失败模式（不是"忘了检查"）|
+| `ops_arith` `concat` | `jit_callout_concat` | ✓ 用**返回值**判 `NULL_VAL` 当守卫（等价手段）|
+| `ops_callout` `set_ptr_elem_type` / `set_declared_face` | — | ✓ 静默 no-op（`jit_callout.c:1153-1165`），永不置 `failed` |
+| `ops_callout` `string_add` / `type_check` / `as_cast` | — | ✓ 一行转发，"永不置 `failed`"（注释与实现一致）|
 
-其余 13 处在 `ops_callout.inc` / `ops_index.inc` / `ops_misc.inc` —— **待逐条核**
-"该 callout 是否可能失败 + 失败时是否只置 `failed`"（多数应是"无失败模式"或"用返回值当守卫"，
-但必须逐条确认）。
+⇒ 审计结论：**4 处真漏全部补上**，其余 13 处逐条核实为无害 ✓。
 
-**验证**：7 个探针（3 个错误通道 + cstruct / CLIB / native 回调 / bound method）
-JIT/`LENO_NO_JIT=1` **逐字一致** ✓、assert **311 passed / 0 failed** ✓。
+⚠ **本次最重要的连带教训**：第 1 步"把 `error_add_at` 换成只置 `failed`"会**放大**第 2/3 步
+这类漏洞 —— 原来错误至少会被记进全局表（可见但结果错），换掉之后如果调用点没守卫，
+就变成**彻底静默**。所以"统一错误通道"和"核对每个调用点的守卫"**必须同时做完**，
+不能分两次发布。
+
+**最终验证**：10 个探针（4 个错误通道 + `get_field_addr` / cstruct / CLIB / native 回调 /
+dict / bound method）JIT/`LENO_NO_JIT=1` **逐字一致** ✓、assert **311 passed / 0 failed** ✓。
 
 ***
 

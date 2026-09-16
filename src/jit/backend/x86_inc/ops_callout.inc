@@ -908,6 +908,24 @@
                 emit_mov_reg_imm64(cb, JIT_ARG2, (uint64_t)field_idx);  /* field_idx (2nd arg) */
                 EMIT_CALL(jit_callout_get_field_fast);
                 EMIT_CALLOUT_END();
+                /* ---- §8.91：失败（接收者不是 struct）→ bailout（**原先漏了守卫** ✗）----
+                 * 快路径的 `gf_not_obj` / `gf_not_struct` / `gf_oob` 都跳到这条慢路径 ⇒
+                 * 非 struct 接收者一定会走进 callout，而它只置 `failed` + 返回 NULL_VAL
+                 * ⇒ 没有这段检查就会把 null 当成字段值继续用（**静默算错**）。
+                 * 守卫放在 `gf_done` 合并点**之前**：快路径（三项检查已通过、RAX 已是字段值）
+                 * 直接跳过守卫；慢路径检查通过后也走同一段收尾 ✓。 */
+                EMIT_STORE_TMP(tmp2_disp, JIT_RAX);
+                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_callout_failed);
+                emit_mov_reg_mem8(cb, JIT_RAX, JIT_R8, 0);
+                emit_test_rr(cb, JIT_RAX, JIT_RAX);
+                {
+                    EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                    int gff_fail = emit_jcc(cb, 0x85);    /* JNZ → bailout */
+                    patch_add(ctx, gff_fail, -1, 0);
+                }
+                emit_xor_rr(cb, JIT_RAX, JIT_RAX);
+                emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
+                EMIT_LOAD_TMP(JIT_RAX, tmp2_disp);
                 EMIT_VALUE_TO_RAW();
                 patch_rel32(cb, gf_done, cb->len);
                 TOS_PRODUCE();
