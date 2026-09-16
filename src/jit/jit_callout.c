@@ -2108,8 +2108,20 @@ Value jit_callout_call_value(int64_t* vstack_top, int arg_count) {
     }
     if (!fn) {
         /* null（"函数未定义"）、OBJ_NATIVE / bound method 等 ⇒ 交解释器，报错文本一致。
-         * 打印**实际读到的值**：只报"不是闭包/函数"无法区分"callee 槽的内容不是对象"
-         * 与"是 OBJ_CLOSURE 但 function 为空"（前者是栈记账/取址问题，后者是构造问题）。 */
+         *
+         * ⚠ 两次尝试交付这条路径都失败了，**先读 §8.82 / §8.87 再动手**：
+         *   · R6-f（§8.82）：改 codegen 把 callee 当第 3 个参数传（`JIT_ARG3 = R8`）+ 这里交慢路径
+         *     ⇒ `test_jit_closure_byupvalue` **静默算错**。**归因于 R8 被当 scratch 踩了**。
+         *   · R6-j（§8.87）：**只**改这一支、完全不碰 codegen/R8 ⇒ 闭包用例**恢复正常**
+         *     （证实上面那条归因成立 ✓），但 `probe_cstruct_jit` 仍报
+         *     "只能调用函数（不是对象类型）"（`vm_call.inc:374` 的**外层**错误 ⇒ 传进去的不是对象）
+         *     ⇒ **callee 槽内容在 `T.malloc()` 这类站点确实不是对象**，与 R8 无关。
+         * 结论：**同一个症状背后有两个独立原因**，必须先查清"为什么这条 OP_CALL 的
+         * `vstack_top[-1]` 不是 callee 槽"（怀疑 `OP_INDEX` 慢路径 pop 了 2 个槽之后
+         * `TOS_PRODUCE()` 只把结果 pin 在寄存器、没有补回物理栈 ⇒ 之后的 rsp 相对寻址偏移；
+         * 但 `c.free()` 那种站点又是对的 ⇒ 要按站点分类取证，带仪器打印
+         * `vstack_top` / `[vstack_top-1]` / 期望值 三者对照）。
+         * 在此之前维持 `failed` ⇒ bailout（慢但正确）。 */
         if (jit_debug_on()) {
             long long raw = (long long)vstack_top[-1];
             if (val_is_obj(callee))

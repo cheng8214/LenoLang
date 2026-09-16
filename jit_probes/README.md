@@ -138,11 +138,19 @@ cmd /c "set LENO_JIT_DEBUG=1&& build\leno.exe jit_probes\probe_index_callee.leno
 判据：`n=101`（JIT/NO_JIT 一致）、`Compiled: 1`、`Bailouts: 3`（3 次后循环被拉黑 ⇒
 只剩 3 条诊断，便于读）。**读诊断行时务必先读到函数尾部再下结论**（§8.86 的教训）。
 
-## （已回退）R6-f：把非闭包 callee 交 `vm_call_value`
+## （已回退 ×2）R6-f / R6-j：把非闭包 callee 交 `vm_call_value`
 
-**不要重试这个改法**（除非先查清 JIT 的 `OP_INDEX`）：它让本目录的 `probe_cstruct_jit.leno`
-从"逐字一致"变成报 `只能调用函数（不是对象类型）`，并让
-`assert/test_jit_closure_byupvalue.leno` **静默算错**（2001000 → 2006847）。证据与回退记录见 §8.82。
+**同一个症状、两个独立原因**（两次尝试都回退，详见 §8.82 与 §8.87）：
+
+| 症状 | 触发条件（两次的差异） |
+| --- | --- |
+| `test_jit_closure_byupvalue` 静默算错（2001000→2006847） | **只在改 codegen 那次**出现 ⇒ 元凶是 `JIT_ARG3 = R8`（R8 是发射器 scratch / 可能承载 pinned TOS）⇒ **加 callout 参数不要用 ARG3/R8** |
+| `probe_cstruct_jit` 报 `只能调用函数（不是对象类型）` | **两次都出现**、且与 R8 无关 ⇒ 那些站点的 `vstack_top[-1]` **确实不是 callee 槽**（`T.malloc()` 这类站点）|
+
+**动手前必须先做的取证**：按站点分类（`T.method()` / `c.method()` / 局部闭包）打印
+`vstack_top`、`*(vstack_top-8)`、期望 callee 三者对照 —— **不要靠单点观测下结论**
+（前两次翻车都是这个原因：只看 `probe_index_callee` 就否掉了"callee 槽不可靠"，
+而它在别的站点上是对的）。
 
 ## R6-e：`OP_CLIB_CALL`（FFI 动态库调用，`probe_clib_call_jit.leno`）
 

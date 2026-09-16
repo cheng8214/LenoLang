@@ -5449,6 +5449,54 @@ codegen 侧（`codegen_expr.c` 的 `AST_DICT`）按 `key_i, value_i` 顺序逐�
 
 ***
 
+### 8.87 R6-j：bound-method callee 的第二次尝试（也回退）—— 把"两个症状"干净分开（2026-09-17）
+
+**动机**：§8.86 修完 `OP_INDEX` 的错误通道后，`OP_CALL` 的 bound-method 缺口成了"**已解锁但
+每次执行都 bail**"的唯一来源（fm/cc 的 `Bailouts` 3/6、797 条 CALLOUT-FAIL 全是它）。
+而 §8.82 的结论是"思路对、失败在实现细节"，所以做一次**隔离实验**再试。
+
+**实验设计（关键：只改一处）**：只改 `jit_callout_call_value` 的 `!fn` 分支 ——
+交 `jit_invoke_closure(NULL, callee, arg_count, vstack_top, 1, "call_value(non-fn)")`
+（传 NULL ⇒ 跳过函数级快路径、直接走 VM 重入；`vm_call_value` 本来就支持 `OBJ_BOUND_METHOD`）。
+**完全不碰 codegen、不碰 `JIT_ARG3`/R8** —— 与 R6-f 唯一的差异就是这个。
+
+**对照结果（决定性）**
+
+| 症状 | R6-f（含 codegen ARG3=R8 改动） | **R6-j（只改 callout）** | 结论 |
+| --- | --- | --- | --- |
+| `assert/test_jit_closure_byupvalue.leno` 静默算错（2001000→2006847） | ✗ 出现 | **✓ 通过** | ⇒ 那个症状**就是 R8/ARG3**（§8.82 的归因成立）|
+| `probe_cstruct_jit.leno` 报 `只能调用函数（不是对象类型）` | ✗ 出现 | ✗ **仍然出现** | ⇒ 与 R8 **无关**，是**独立原因** |
+| `probe_index_callee.leno` | — | ✗ `n=50` + `发现 1 个错误` | 同上 |
+| assert 全套 | 310/1 ✗ | **311/0** ✓ | 症状隔离成功 |
+
+⇒ **同一个"bound-method callee 不能交 VM"的表象背后有两个独立原因**：
+
+1. **闭包用例算错 = codegen 里用 R8 传 callee**（`JIT_ARG3 = R8`，而 R8 是发射器 scratch /
+   可能承载 pinned TOS）⇒ §8.82 的告警**成立**，以后加 callout 参数**不要用 ARG3/R8**。
+2. **"不是对象" = 这些站点的 `vstack_top[-1]` 确实不是 callee 槽** ✗ —— 与 R8 无关。
+   ⚠ §8.82 关于这一条的归因（"callee 槽内容不可靠 / 怀疑 OP_INDEX 产出不同"）**当时猜对了**，
+   但 §8.86 的取证只看了 `probe_index_callee` 那**一类**站点（那里 callee 是合法 bound method）
+   就把它否掉了 —— **教训：同一现象在不同站点可能不同因，单点观测不足以否定它。**
+   现在的怀疑点：`OP_INDEX` 慢路径 pop 掉 2 个原始槽后 `TOS_PRODUCE()` 可能只把结果 pin 在
+   寄存器、没有补回物理栈 ⇒ 之后的 `rsp` 相对寻址（`vstack_top = rsp + 8`）整体偏移
+   （这也解释了为什么 `c.free()` 那类站点是对的、`T.malloc()` 这类不对 —— 走的路径不同）。
+
+**动作**：**再次整块回退**。回退后三探针 `IDENTICAL`（`n=101` / `defLoop=20001` / `ffAbs=8502500`）、
+闭包用例 `OK`、assert **311/0**，与 R6-j 之前逐字一致 ⇒ 现状仍是"**能编但每次执行 bail
+（3 次后被拉黑）、正确但慢**"（fm/cc `Bailouts` 6/3）。
+
+**下一步取证计划（必须先做，带仪器、按站点分类）**
+
+不要再靠单点观测下结论（前两次都栽在这里）。要一起打印三样东西做对照：
+`vstack_top`、`*(int64_t*)(vstack_top - 8)`（实际读到的 callee raw）、以及**期望的 callee 值**
+（在 `OP_INDEX` 的 callout 返回时把它记到一个旁路变量里）。分类维度：
+`T.method()`（OP_GET_CSTRUCT_DEF/类型名接收者）vs `c.method()`（实例接收者）vs 局部闭包。
+若确认是 `OP_INDEX` 慢路径的物理栈记账问题，修法应在**那条指令**（把结果真正补回栈、
+或让 `TOS_PRODUCE` 与快路径一致），而不是在 `OP_CALL` 侧绕开 —— 这也解释了为什么
+"把 callee 显式传参"这种绕法会踩到别的坑（R8）。
+
+***
+
 ## 9. 性能数据
 
 ### 测试环境
