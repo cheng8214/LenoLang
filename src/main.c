@@ -338,6 +338,27 @@ static int entry_deps_valid(const char* deps_path) {
     return ok ? 0 : -1;
 }
 
+// ============================================================================
+// 空源文件告警
+// ----------------------------------------------------------------------------
+// 空文件（或只有空白）会"编译成功"：exit 0、什么都不打印，还会写一份缓存
+// （键 = FNV-1a 空串基值 cbf29ce484222325）。这种"假成功"与"真的跑了但没输出"无法区分 ——
+// 2026-09-16 就被它骗过一次（探针文件写入落空 ⇒ 编译了个空程序，却毫无提示）。
+// 只告警不报错：空程序在语法上合法，"什么都不做"也可能是刻意的。
+// 覆盖范围是 CLI 入口（run / -c / -p）；被 import 的模块为空不算 —— 一个不导出任何东西的
+// 模块是合法形态，不该报警。
+// ============================================================================
+static void warn_if_source_empty(const char* source) {
+    if (!source) return;
+    for (const unsigned char* p = (const unsigned char*)source; *p; p++) {
+        if (*p != ' ' && *p != '\t' && *p != '\r' && *p != '\n' && *p != '\f' && *p != '\v') {
+            return;   // 有实义字符
+        }
+    }
+    warning_add_at(WARN_EMPTY_SOURCE, 1, 1,
+                   "源文件为空（或只有空白）：编译出来的程序不会做任何事");
+}
+
 int lenolang_run(const char* source) {
       if (debugMode) {
          printf("debug模式:进入主执行流程\n");
@@ -347,6 +368,7 @@ int lenolang_run(const char* source) {
     warning_clear();
     module_symbol_table_reset_scan_stack();
     module_symbol_table_reset_memo();
+    warn_if_source_empty(source);
      if (debugMode) {
          printf("debug模式:进入语法分析阶段\n");
      }
@@ -573,6 +595,7 @@ int lenolang_compile(const char* source, const char* output_path) {
     warning_clear();
     module_symbol_table_reset_scan_stack();
     module_symbol_table_reset_memo();
+    warn_if_source_empty(source);   // 空源文件别"假成功"（-c / -p 也走这里）
 
     gc_init();
     vm_init();

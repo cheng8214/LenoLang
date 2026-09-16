@@ -261,6 +261,7 @@ void warning_print_all(void) {
             case WARN_OR_TYPE_GUARD:   type_str = "or类型守卫"; break;
             case WARN_GENERIC_NO_CONSTRAINT: type_str = "泛型无约束"; break;
             case WARN_NULLABLE_ARITH:  type_str = "可空类型运算"; break;
+            case WARN_EMPTY_SOURCE:    type_str = "空源文件"; break;
             default: break;
         }
 

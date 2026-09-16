@@ -92,6 +92,7 @@ typedef enum {
     WARN_OR_TYPE_GUARD,    // or 条件中的类型守卫不会收窄
     WARN_GENERIC_NO_CONSTRAINT, // 泛型参数参与运算但无约束
     WARN_NULLABLE_ARITH,    // nullable 值类型参与算术运算（可能为 null）
+    WARN_EMPTY_SOURCE,     // 源文件为空（或只有空白）：会"编译成功"却不做任何事
 } WarnType;
 
 // ============================================================================
