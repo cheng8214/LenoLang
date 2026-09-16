@@ -5207,6 +5207,35 @@ codegen 去掉多传的第 3 个参数）。回退后：单跑该用例 `OK`、�
   并且可能承载 **pinned TOS** —— 本次"只多读一个槽"的改动就造成了静默算错。
   在 callout 里加参数时，先把「该寄存器此刻是否被 TOS_SPILL/发射器约定占用」查清。
 
+#### 取证更正（同日，§8.86）：上面两条结论**有一条是错的**
+
+按"先查 `OP_INDEX`"的建议做了一次最小探针取证（`jit_probes/probe_index_callee.leno`：
+一个热循环里放 `Cell.malloc()`（类型名接收者）与 `c.free()`（实例接收者）两个调用点），
+用 `LENO_JIT_DEBUG=1` 只看诊断行，结论**推翻**了本节的第 1 条：
+
+- 探针实测（`Compiled: 1 / Bailouts: 3`，3 次后循环被拉黑，结果仍正确 `n=101`）：
+  **全部 3 条诊断都是** `[JIT-CALLOUT-FAIL] call_value: callee 是对象但 function 为空（obj_type=10）`
+  —— 即 **callee 是一个合法的 `OBJ_BOUND_METHOD`**。**没有**任何"callee 不是对象"的记录。
+- 读完 `jit_callout_index`（`jit_callout.c:255-330`）后确认：它对 **MODULE / STRUCT /
+  CSTRUCT / ENUM_DEF** 等接收者都有分支，并在 cstruct 原生方法处返回
+  `bound_method_new(obj_val, native_method)`（:305-309）⇒ **JIT 的 `OP_INDEX` 产出与解释器一致**。
+  ⇒ 本节的"callee 槽的内容不可靠 / 怀疑 `OP_INDEX` 产出不同"是**错误推断**（当时只读了
+  `jit_callout_index` 的前半段就下了结论 —— 教训：**读到函数尾部再下结论**）。
+
+**更正后的正确结论**：真正的缺口只是「**裸 `OP_CALL` 的 callee 是 `OBJ_BOUND_METHOD` 时
+`jit_callout_call_value` 不支持**」（它只认 CLOSURE / FUNCTION）。而这恰恰是
+`vm_call_value` **支持**的类型（`vm_call.inc:272` 的 `OBJ_BOUND_METHOD` 分支）⇒
+R6-f 的**思路是对的**，失败出在**实现细节**（最可疑的仍是 R8/JIT_ARG3 那个点，
+或者 `arg_count == 0` 时 slow path 的实参/接收者排布），应当**带仪器重试**，而不是放弃。
+
+**顺带发现一个潜在隐患（单独立项）**：`OP_INDEX` 的慢路径**不检查任何失败标志**
+（`ops_index.inc:99-127` 直接 `TOS_PRODUCE`），而 `jit_callout_index` 用 **`NULL_VAL`**
+同时表示"合法的 null 结果"与"未覆盖的接收者类型"。⇒ 对**没有被分支覆盖**的接收者类型
+（如 `OBJ_FUNCTION` / `FILE` / `THREAD` 之类），JIT 会**静默压 null**，而解释器会报错
+（例如"索引操作需要对象类型"之类）⇒ 语义分歧。已知被覆盖的类型足够常用，所以现在没暴露；
+修法是给该 callout 加一个**独立的失败出参**（或返回一个哨兵），让 codegen 能区分
+"null 结果"与"不支持"。**在动 ⑥ 之前应先确认这一点**。
+
 ***
 
 ### 8.83 R6-g：`OP_AS_CAST`进 JIT（`as` 安全转换；顺带修掉长度表两处混用缺陷）（2026-09-16）

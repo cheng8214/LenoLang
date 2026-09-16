@@ -1,0 +1,25 @@
+// OP_INDEX 取证探针（配合 §8.82 的 R6-f 结论）
+//
+// 问题：`T.malloc()` / `c.free()` 编译成
+//     [OP_GET_CSTRUCT_DEF | OP_GET_LOCAL] + OP_CONST("名字") + OP_INDEX + OP_CALL 0
+// 在 JIT 里，`OP_CALL` 读到的 callee 时而像 bound method（obj_type=10）、
+// 时而又"不是对象" ⇒ 说明 OP_INDEX 的产出与解释器不一致。
+//
+// 本探针极小（一个热循环、两个调用点），专供 `LENO_JIT_DEBUG=1` 抓诊断：
+//   · `[JIT-CALLOUT-FAIL] call_value: callee 是对象但 function 为空（obj_type=N）`
+//   · `[JIT-CALLOUT-FAIL] call_value: callee 不是对象（raw=0x.., is_int48=..）`
+// 两条分别指向"OP_INDEX 产出了什么"。判据：JIT 与 NO_JIT 输出一致（n=101）。
+import ffi
+
+cstruct Cell { i32 v }
+
+main() {
+    int acc = 0
+    for 0 : 100 to i {
+        var c = Cell.malloc()     // ← 类型名当接收者：OP_GET_CSTRUCT_DEF + OP_INDEX + OP_CALL 0
+        c.v = i
+        c.free()                  // ← 实例当接收者：OP_GET_LOCAL + OP_INDEX + OP_CALL 0
+        acc = acc + 1
+    }
+    print("n=" + acc + "\n")
+}

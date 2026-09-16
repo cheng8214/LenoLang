@@ -114,6 +114,18 @@ cmd /c "set LENO_NO_JIT=1&& build\leno.exe jit_probes\probe_as_cast_jit.leno 200
 ⚠ 附带修掉长度表的两处混用缺陷（`AS_CAST`+`CSTRUCT` 应 4 字节、`AS_CAST`+`ENUM` 应 3 字节），
 细节见 §8.83。
 
+## 取证：`OP_INDEX` 的产出到底是什么（`probe_index_callee.leno`）
+
+```powershell
+# 极小探针（一个热循环 + 两个调用点），只用来抓 call_value 的诊断行
+cmd /c "set LENO_JIT_DEBUG=1&& build\leno.exe jit_probes\probe_index_callee.leno" 2>&1 | findstr call_value
+# 实测只出现：callee 是对象但 function 为空（obj_type=10 = OBJ_BOUND_METHOD）
+# ⇒ JIT 的 OP_INDEX 产出与解释器一致（bound method），§8.82 的"产出不可靠"推断已被推翻
+```
+
+判据：`n=101`（JIT/NO_JIT 一致）、`Compiled: 1`、`Bailouts: 3`（3 次后循环被拉黑 ⇒
+只剩 3 条诊断，便于读）。**读诊断行时务必先读到函数尾部再下结论**（§8.86 的教训）。
+
 ## （已回退）R6-f：把非闭包 callee 交 `vm_call_value`
 
 **不要重试这个改法**（除非先查清 JIT 的 `OP_INDEX`）：它让本目录的 `probe_cstruct_jit.leno`
