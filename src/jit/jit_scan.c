@@ -406,9 +406,10 @@ int opcode_size(const uint8_t* ip) {
             return 4;
         /* Variable-length: OP_STRUCT_INIT =
          *   opcode(1) + name_const(2) + arg_count(1) + generic_count(1)
-         *   + generic_args(generic_count*2) + field_idx[arg_count] */
+         *   + generic_args(generic_count*2) + field_idx[arg_count]
+         *   + mod_space(1) + mod_slot(2)   ← S2/2b-2：导入模块的槽位（见 codegen_expr.c） */
         case OP_STRUCT_INIT:
-            return 5 + 2 * ip[4] + ip[3];
+            return 8 + 2 * ip[4] + ip[3];
         /* 10-byte (CMPJMP variants) */
         case OP_CMPJMP_LL_INT:
         case OP_CMPJMP_LG_INT:

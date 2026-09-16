@@ -412,28 +412,75 @@ OPCODE(OP_STRUCT_INIT) {
     }
     ObjString* name = (ObjString*)val_as_obj(name_val);
 
+    // ---- 模块限定操作数（S2/2b-2）----
+    // 追加在**字段索引之后**，此处只"窥探"不消费（真实消费在下面字段循环之后，与写入顺序一致）。
+    // 语义：0 = 无（模块内裸名 / 旧字节码）；1 = 别名的槽位在 vm.globals[]（入口程序）；
+    //       2 = 别名的槽位在 frame->module->globals[]（模块文件）。
+    // 为什么可行：import 会把模块对象压成常量、再存进别名的槽位（见 codegen_import.c），
+    // 冷/热两条路径都会执行这段 store（已实测：热跑命中缓存时别名方法调用照常工作）。
+    // 为什么不发"模块名"：别名与运行期 ObjModule.name 并不总相等（模块按路径去重、首次加载定名），
+    // 而槽位里的对象是**确定的** —— 这正是"按名字猜"换成的"按身份取"。
+    const uint8_t* mod_ops = frame->ip + (size_t)generic_type_count * 2 + (size_t)arg_count;
+    uint8_t mod_space = mod_ops[0];
+    uint16_t mod_slot = (uint16_t)(((uint16_t)mod_ops[1] << 8) | mod_ops[2]);
+
+    ObjModule* mod_owner = NULL;
+    if (mod_space == 1) {
+        if (mod_slot < vm.global_count) {
+            Value mv = vm.globals[mod_slot];
+            if (val_is_obj(mv) && val_as_obj(mv)->type == OBJ_MODULE) {
+                mod_owner = (ObjModule*)val_as_obj(mv);
+            }
+        }
+    } else if (mod_space == 2) {
+        ObjModule* self_mod = (ObjModule*)frame->module;
+        if (self_mod && mod_slot < self_mod->global_count) {
+            Value mv = self_mod->globals[mod_slot];
+            if (val_is_obj(mv) && val_as_obj(mv)->type == OBJ_MODULE) {
+                mod_owner = (ObjModule*)val_as_obj(mv);
+            }
+        }
+    }
+
+    // 裸名部分（定义表里存的都是裸名）
+    const char* bare_name = name->chars;
+    {
+        const char* dotp = strchr(bare_name, '.');
+        if (dotp) bare_name = dotp + 1;
+    }
+
     // 查找结构体定义：优先走内联缓存，避免每次分配都做 struct_def_find
     // 全局字符串查找（对象版光线追踪实测：这是 struct 分配慢于 Python 的主因之一）
+    // 缓存键连 owner 一起比：同名不同 owner 的调用点必须各自命中自己那份，不能互相污染。
+    //
+    // 三级查找（"精查 → 按前缀比名字 → 裸名"），保证**不比旧行为更差**：
+    //   ① owner 级：字节码带了导入模块的槽位 ⇒ 该模块声明的那份（最精确，与名字无关）；
+    //   ② 前缀级：名字带 "a." 前缀且某定义 owner->name == "a" ⇒ 那份；
+    //   ③ 裸名级：旧字节码 / 原生桥接 / 按名反射的既有行为。
 #ifndef VM_USE_THREAD_LOCAL
     int sd_cache_idx = ((uintptr_t)sd_ic_ip >> 2) & (IC_STRUCTDEF_CACHE_SIZE - 1);
     InlineStructDefCacheEntry* sd_cache = &vm.ic_structdef_cache[sd_cache_idx];
     ObjStructDef* def = NULL;
     if (sd_cache->valid && sd_cache->name_hash == name->hash &&
-        sd_cache->gen == struct_def_generation()) {
+        sd_cache->gen == struct_def_generation() && sd_cache->owner == mod_owner) {
         vm.ic_hits++;
         def = sd_cache->def;
     } else {
         vm.ic_misses++;
-        def = struct_def_find_qualified(name->chars);
+        if (mod_owner) def = struct_def_find_in_module(mod_owner, bare_name);
+        if (!def) def = struct_def_find_qualified(name->chars);
         if (def) {
             sd_cache->valid = 1;
             sd_cache->name_hash = name->hash;
             sd_cache->gen = struct_def_generation();
+            sd_cache->owner = mod_owner;
             sd_cache->def = def;
         }
     }
 #else
-    ObjStructDef* def = struct_def_find_qualified(name->chars);
+    ObjStructDef* def = NULL;
+    if (mod_owner) def = struct_def_find_in_module(mod_owner, bare_name);
+    if (!def) def = struct_def_find_qualified(name->chars);
 #endif
     if (!def) {
         char _undef_msg[256];
@@ -484,6 +531,10 @@ OPCODE(OP_STRUCT_INIT) {
 
         struct_set_field(obj, field_idx, field_value);
     }
+
+    // 消费上面"窥探"过的模块限定操作数（space8 + slot16），保持 ip 与字节流同步
+    (void)READ_BYTE();
+    (void)READ_SHORT();
     
     // 将实例压入栈
     vm_stack_push(&vm, val_obj((Object*)obj));

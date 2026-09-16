@@ -1572,7 +1572,35 @@ Value jit_callout_struct_init(int64_t* vstack_top, uint16_t name_const_idx,
     }
     ObjString* name = (ObjString*)val_as_obj(name_val);
 
-    ObjStructDef* def = struct_def_find_qualified(name->chars);
+    // 模块限定操作数（S2/2b-2）：追加在字段索引之后 ⇒ 地址 = ip + 5 + 2*generic + arg
+    // （与 jit_scan 的长度表、debug 的反汇编同一布局）。解释器与 JIT 必须同口径，
+    // 否则同一段程序在 JIT 生效前后会取回不同的同名定义。
+    uint8_t mod_space = ip[5 + 2 * ip[4] + ip[3]];
+    uint16_t mod_slot = (uint16_t)(((uint16_t)ip[6 + 2 * ip[4] + ip[3]] << 8) |
+                                   (uint16_t)ip[7 + 2 * ip[4] + ip[3]]);
+    ObjModule* mod_owner = NULL;
+    if (mod_space == 1) {
+        if (mod_slot < vm->global_count) {
+            Value mv = vm->globals[mod_slot];
+            if (val_is_obj(mv) && val_as_obj(mv)->type == OBJ_MODULE) {
+                mod_owner = (ObjModule*)val_as_obj(mv);
+            }
+        }
+    } else if (mod_space == 2 && vm->frame_cnt > 0) {
+        ObjModule* self_mod = (ObjModule*)vm->frames[vm->frame_cnt - 1].module;
+        if (self_mod && mod_slot < self_mod->global_count) {
+            Value mv = self_mod->globals[mod_slot];
+            if (val_is_obj(mv) && val_as_obj(mv)->type == OBJ_MODULE) {
+                mod_owner = (ObjModule*)val_as_obj(mv);
+            }
+        }
+    }
+    const char* bare_part = strchr(name->chars, '.');
+    bare_part = bare_part ? bare_part + 1 : name->chars;
+
+    ObjStructDef* def = NULL;
+    if (mod_owner) def = struct_def_find_in_module(mod_owner, bare_part);
+    if (!def) def = struct_def_find_qualified(name->chars);
     if (!def) {
         char msg[256];
         snprintf(msg, sizeof(msg), "未定义的结构体 '%s'", name->chars);

@@ -1202,6 +1202,9 @@ ObjStructDef* struct_def_find(const char* name);
 // 取不到再回退裸名查找。不带前缀的名字行为与 struct_def_find 一致。
 ObjStructDef* struct_def_find_qualified(const char* qualified_name);
 
+// 在指定模块声明的定义里按裸名查找（S2/2b-2）：最精确的一级，不依赖名字是否等于别名。
+ObjStructDef* struct_def_find_in_module(ObjModule* owner, const char* name);
+
 // 注册结构体定义
 void struct_def_register(ObjStructDef* def);
 

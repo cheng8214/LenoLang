@@ -122,6 +122,12 @@ static int struct_def_same_shape(ObjStructDef* a, ObjStructDef* b) {
         if (fa->element_type != fb->element_type) return 0;
         if (fa->nullable != fb->nullable) return 0;
         if (fa->has_default != fb->has_default) return 0;
+        // 默认值**本身**也要比（S2/2a++，2026-09-16 实测）：`{int x = 1}` 与 `{int x = 3}`
+        // 只差默认值时，旧口径判"同形" ⇒ 覆盖 ⇒ 两份同名定义的实例都拿到同一个默认值
+        // （实测 A=3 / B=3，期望 1 / 3，**零诊断**）。比原始位是保守做法：值不同即判不一致 ⇒
+        // 走冲突报错（响亮），而不是静默换值；对象类默认值（字符串/数组）指针不同也判不一致，
+        // 宁可报错也不赌"它们相等"。
+        if (fa->has_default && fa->default_value != fb->default_value) return 0;
         if (!def_str_eq(fa->name, fb->name)) return 0;
         if (!def_str_eq(fa->struct_type_name, fb->struct_type_name)) return 0;
     }
@@ -244,6 +250,20 @@ ObjStructDef* struct_def_find(const char* name) {
     for (int i = 0; i < struct_def_count; i++) {
         if (strcmp(struct_def_table[i]->name, name) == 0) {
             return struct_def_table[i];
+        }
+    }
+    return NULL;
+}
+
+// 在指定模块**声明**的定义里按裸名查找（S2/2b-2）：这是最精确的一级 —— 编译期把
+// "别名 → 该导入模块的槽位"写进字节码，运行期取出模块对象后就能唯一确定该取哪一份，
+// 完全不依赖"别名是否等于模块名"。
+ObjStructDef* struct_def_find_in_module(ObjModule* owner, const char* name) {
+    if (!owner || !name) return NULL;
+    for (int i = 0; i < struct_def_count; i++) {
+        ObjStructDef* d = struct_def_table[i];
+        if (d->owner == owner && d->name && strcmp(d->name, name) == 0) {
+            return d;
         }
     }
     return NULL;

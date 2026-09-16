@@ -1972,6 +1972,37 @@ void gen_expr(CodeGen* gen, Ast* ast) {
                 }
                 emit_byte(gen, (uint8_t)field_idx, ast->line);
             }
+
+            // 模块限定解析操作数（S2/2b-2，追加在字段索引之后）：1 字节"空间" + 2 字节槽位。
+            // 运行期据它取出**导入模块对象**（不是名字！），再精确取回该模块声明的那份定义 ——
+            // 因为别名与运行期 ObjModule.name 并不总相等（模块按路径去重、首次加载定名）。
+            //   空间：0 = 无；1 = vm.globals[]（入口程序的 import 别名是 SYM_GLOBAL）；
+            //        2 = frame->module->globals[]（模块文件里是 SYM_MODULE）。
+            // 符号来源与 codegen_import.c 里"把模块存进别名槽位"用的是同一个符号 ⇒ 槽位必然对得上。
+            uint8_t mod_space = 0;
+            int mod_slot = 0;
+            if (dot_pos && dot_pos != ast->u.struct_init.struct_name) {
+                size_t alias_len = (size_t)(dot_pos - ast->u.struct_init.struct_name);
+                char alias[BUFFER_MEDIUM];
+                if (alias_len < sizeof(alias)) {
+                    memcpy(alias, ast->u.struct_init.struct_name, alias_len);
+                    alias[alias_len] = '\0';
+                    Symbol* alias_sym = scope_resolve(gen->sem->root_scope, alias);
+                    if (!alias_sym) alias_sym = scope_resolve(gen->sem->current, alias);
+                    if (alias_sym) {
+                        if (alias_sym->kind == SYM_GLOBAL) {
+                            mod_space = 1;
+                            mod_slot = alias_sym->index;
+                        } else if (alias_sym->kind == SYM_MODULE) {
+                            mod_space = 2;
+                            mod_slot = alias_sym->index;
+                        }
+                    }
+                }
+            }
+            emit_byte(gen, mod_space, ast->line);
+            emit_byte(gen, (mod_slot >> 8) & 0xff, ast->line);
+            emit_byte(gen, mod_slot & 0xff, ast->line);
             break;
         }
         case AST_FIELD_ACCESS: {

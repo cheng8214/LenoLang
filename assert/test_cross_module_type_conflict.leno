@@ -22,6 +22,7 @@
 
 import dirs
 import files
+import strings
 
 import "helpers/compiler.leno" as ce
 
@@ -72,11 +73,54 @@ main() {
         "    var pa = new a.Pair()\n    print(3)\n")
     ce.expect_ok(path, "S2 对照组（同名同形纯数据放行）", "3")
 
-    // 用例 D（"别名 ≠ 运行期模块名"）暂缺：它要验的正是 2b-2 的运行期解析，当前必然拿不到
-    // 运行期模块名（观测：入口里 `new p2.Point()` 的生成早于模块被加载，那一刻 loaded_modules
-    // 计数为 0；缓存路径更彻底——反序列化依赖时 load_module_file(path, NULL, NULL)，别名不存在）。
-    // 完整形态与期望值（A=1 / M=1 / G=3，A=1 有判别力、A=3 是实测到的反例）记在
-    // docs/待办_单一事实来源与重复实现收敛.md 的 2b-2 设计里，随 module_slot16 一起补回来。
+    // E. 同名 + 字段全同但**默认值不同**（2a++）：必须报错
+    //    背景（2026-09-16 实测）：旧口径只比"有没有默认值"、不比默认值本身 ⇒ `{int x = 1}` 与
+    //    `{int x = 3}` 被判同形 ⇒ 覆盖 ⇒ 两份定义的实例都拿到同一个默认值
+    //    （实测 A=3 / B=3，期望 1 / 3，**零诊断**）。收紧后：报冲突错，且因为两份共存 +
+    //    按导入模块精查，各自仍取回自己的默认值（A=1 / B=3）。
+    path = make_case(work, "default_diff",
+        "export struct Q {\n    int x = 1\n}\n",
+        "export struct Q {\n    int x = 3\n}\n",
+        "    var va = new a.Q()\n    print(\"A=\" + va.x)\n")
+    var eout = ce.expect_error(path, "S2 同名异源默认值不同",
+        "跨模块同名struct 'Q'", 0)
+    assert_true(strings.has(eout, "A=1"),
+        "默认值不同：`new a.Q()` 应取回 a.leno 那份（x=1）；实际输出=" + eout)
+
+    // D. 别名 ≠ 运行期模块名（S2/2b-2 的判别用例）：同一模块先被别人用**别的别名**加载过，
+    //    入口再用另一个别名 import 它 —— 运行期名字仍是"首次那个"（模块按路径去重）。
+    //    这里 lib/p.leno 先被 lib/m.leno 以别名 first 加载（⇒ 运行期名 = first），入口再
+    //    `import "lib/p.leno" as p2` 复用它；而 lib/r.leno 的 Point 先注册（拼裸名时会先命中它）。
+    //    A 有判别力：不按"导入模块的槽位"取定义，"p2.Point" 就落空 ⇒ 回退裸名 ⇒ 拿到先注册的
+    //    r.Point（tag=3）。修复前实测就是 A=3。
+    {
+        var root = dirs.join(work, "alias_not_name")
+        dirs.delete(root)
+        dirs.mkdir_p(dirs.join(root, "lib"))
+        files.write(dirs.join(root, "lib/p.leno"),
+            "export struct Point {\n    int x\n    func tag(): int {\n        return 1\n    }\n}\n")
+        files.write(dirs.join(root, "lib/r.leno"),
+            "export struct Point {\n    int x\n    func tag(): int {\n        return 3\n    }\n}\n")
+        files.write(dirs.join(root, "lib/m.leno"),
+            "import \"p.leno\" as first\n\nexport func f(): int {\n    var v = new first.Point()\n    return v.tag()\n}\n")
+        files.write(dirs.join(root, "lib/m2.leno"),
+            "import \"r.leno\" as rr\n\nexport func g(): int {\n    var v = new rr.Point()\n    return v.tag()\n}\n")
+        var dpath = dirs.join(root, "main.leno")
+        files.write(dpath,
+            "import \"lib/m2.leno\" as m2\nimport \"lib/m.leno\" as m\nimport \"lib/p.leno\" as p2\n\nmain() {\n"
+            + "    var x = new p2.Point()\n    print(\"A=\" + x.tag())\n"
+            + "    print(\"M=\" + m.f())\n"
+            + "    print(\"G=\" + m2.g())\n}\n")
+
+        var dout = ce.expect_error(dpath, "S2 别名≠运行期模块名（owner 级精查）",
+            "跨模块同名struct 'Point'", 0)
+        assert_true(strings.has(dout, "A=1"),
+            "别名≠模块名：`new p2.Point()` 应取回 p.leno 那份（tag=1）；实际输出=" + dout)
+        assert_true(strings.has(dout, "M=1"),
+            "模块内部 `new first.Point()` 应取回 p.leno 那份（tag=1）；实际输出=" + dout)
+        assert_true(strings.has(dout, "G=3"),
+            "`new rr.Point()` 应取回 r.leno 那份（tag=3）；实际输出=" + dout)
+    }
 
     dirs.delete(work)
 

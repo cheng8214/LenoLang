@@ -519,7 +519,9 @@ typedef struct {
     int valid;
     uint32_t name_hash;      // struct 名的 FNV-1a 哈希
     uint32_t gen;            // 写入缓存时的 struct 定义表代数（防同名 def 被覆盖后拿到旧 def）
-    ObjStructDef* def;       // 缓存的 struct 定义（struct_def_find 的结果）
+    ObjModule* owner;        // 该次查找解析出的"声明模块"（S2/2b-2）；缓存键必须连它一起比，
+                             // 否则同名不同 owner 的两个调用点会互相污染（各自要取自己那份）
+    ObjStructDef* def;       // 缓存的 struct 定义
 } InlineStructDefCacheEntry;
 
 #define IC_STRUCTDEF_CACHE_SIZE 1024  // 必须是 2 的幂（分配点远少于方法调用点）

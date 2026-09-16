@@ -1,0 +1,12 @@
+export struct Point {
+    int x
+}
+
+export enum Color {
+    red = 1
+    green = 2
+}
+
+export cstruct CS {
+    i32 a
+}
