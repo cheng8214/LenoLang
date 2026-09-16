@@ -904,21 +904,14 @@ OPCODE(OP_GET_FIELD_ADDR) {
         return -1;
     }
     
-    CStructFieldInfo* field = &def->fields[field_idx];
-    void* addr = obj->data + field->offset;
-    
-    // 创建 ObjFFIPointer（非拥有，指向 cstruct 字段内存）
-    ObjFFIPointer* ffi_ptr = (ObjFFIPointer*)gc_alloc(sizeof(ObjFFIPointer), OBJ_FFI_POINTER);
+    // 创建 ObjFFIPointer（非拥有，指向 cstruct 字段内存）—— 构造抽到
+    // cstruct_field_addr_new（object_cstruct.c），**JIT callout 调的是同一个函数**（§8.84）。
+    ObjFFIPointer* ffi_ptr = cstruct_field_addr_new(obj, (int)field_idx);
     if (!ffi_ptr) {
         runtime_error("内存不足", GET_CURRENT_LINE());
         return -1;
     }
-    ffi_ptr->ptr = addr;
-    ffi_ptr->size = (size_t)field->size;
-    ffi_ptr->owned = 0;   // 不拥有内存（cstruct 拥有）
-    ffi_ptr->freed = 0;
-    ffi_ptr->element_type = field->type;
-    
+
     vm_stack_push(&vm, val_obj((Object*)ffi_ptr));
     
     DISPATCH;

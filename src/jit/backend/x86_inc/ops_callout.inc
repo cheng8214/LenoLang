@@ -755,6 +755,40 @@
                 break;                                 /* net 0 */
             }
 
+            /* ---- OP_GET_FIELD_ADDR（`&c.field`）—— R6-h ----
+             * 解释器语义（vm/vminc/op_struct.inc:866-925）：弹 obj → **必须是 cstruct** →
+             * 索引越界检查 → 构造**非拥有**的 FFI 指针（指向 obj->data + field->offset）→
+             * 压回（pop 1 push 1，**net 0**）。编码：field_idx(1)（长度 2，早已登记）。
+             * 指针构造调 `cstruct_field_addr_new`（object_cstruct.c）—— 语义唯一来源，
+             * 解释器用的是同一个；错误路径（非 cstruct / 越界 / 分配失败）→ failed →
+             * bailout → 解释器重放本条指令报原文（"& 取地址仅支持 cstruct 字段…"等）。 */
+            case OP_GET_FIELD_ADDR: {
+                uint8_t fa_idx = ip[1];
+                TOS_CONSUME_RAX();                     /* 弹 obj（raw）→ RAX */
+                EMIT_RAW_TO_VALUE();
+                EMIT_STORE_TMP(tmp1_disp, JIT_RAX);
+                EMIT_CALLOUT_BEGIN();
+                EMIT_LOAD_TMP(JIT_ARG1, tmp1_disp);
+                emit_mov_reg_imm64(cb, JIT_ARG2, (uint32_t)fa_idx);
+                EMIT_CALL(jit_callout_get_field_addr);
+                EMIT_CALLOUT_END();
+                EMIT_STORE_TMP(tmp2_disp, JIT_RAX);
+                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_callout_failed);
+                emit_mov_reg_mem8(cb, JIT_RAX, JIT_R8, 0);
+                emit_test_rr(cb, JIT_RAX, JIT_RAX);
+                {
+                    EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                    int fa_fail = emit_jcc(cb, 0x85);      /* JNZ → bailout */
+                    patch_add(ctx, fa_fail, -1, 0);
+                }
+                emit_xor_rr(cb, JIT_RAX, JIT_RAX);
+                emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
+                EMIT_LOAD_TMP(JIT_RAX, tmp2_disp);
+                EMIT_VALUE_TO_RAW();
+                TOS_PRODUCE();
+                break;                                 /* net 0 */
+            }
+
             /* ---- OP_GET_FIELD / OP_SET_FIELD（struct 字段读写）—— §5 覆盖面 L3 ----
              * 解释器语义：vm/vminc/op_struct.inc。
              *   GET_FIELD：弹 obj、压 field（net 0）；struct 走越界检查 + struct_get_field。

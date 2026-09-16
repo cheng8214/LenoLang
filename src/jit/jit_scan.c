@@ -690,6 +690,7 @@ static int scan_callee_for_inline(Chunk* cc, ObjModule* callee_module,
             case OP_IS_NULL:  /* pop 1 push 1 → net 0，R2 批次 1 */
             case OP_TYPE_CHECK: /* pop 1 push 1（`is`）→ net 0，R2 批次 3 */
             case OP_AS_CAST:    /* pop 1 push 1（`as`）→ net 0，R6-g */
+            case OP_GET_FIELD_ADDR: /* pop 1（cstruct）push 1（字段地址）→ net 0，R6-h */
             case OP_SET_PTR_ELEM_TYPE: case OP_SET_DECLARED_FACE: /* peek TOS → net 0 */
                 break;
             case OP_GET_MODULE_VAR: case OP_SET_MODULE_VAR: case OP_GET_MODULE_FUNC: {
@@ -1171,6 +1172,10 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
             case OP_AS_CAST:
                 /* pop 1 push 1（`as` 的转换结果或 null）→ net 0，R6-g。
                  * 转换语义在 vm_as_cast（vm.c，与解释器共用）⇒ 这里只记栈效应。 */
+                break;
+            case OP_GET_FIELD_ADDR:
+                /* pop 1（cstruct 实例）push 1（字段地址 FFI 指针）→ net 0，R6-h。
+                 * 构造语义在 cstruct_field_addr_new（object_cstruct.c，与解释器共用）。 */
                 break;
             case OP_SET_PTR_ELEM_TYPE: case OP_SET_DECLARED_FACE:
                 /* 存值前的类型标记：**peek TOS**、不弹不推 → net 0（见 op_unary.inc） */

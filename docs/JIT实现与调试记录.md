@@ -5262,6 +5262,48 @@ codegen 去掉多传的第 3 个参数）。回退后：单跑该用例 `OK`、�
 
 ***
 
+### 8.84 R6-h：`OP_GET_FIELD_ADDR`进 JIT（`&c.field` 取字段地址）（2026-09-16）
+
+**原状态**：`OP_GET_FIELD_ADDR`(133) 长度早已登记（2 字节 = opcode + `field_idx(1)`），但没有 case
+⇒ 落 `default` 报 "unsupported opcode 133" ⇒ 含 `&c.field` 的循环 / 函数 / 被调方全被拒。
+它是 §8.81 的 census 差分**新露出**的缺口，且**三个应用完全一致**（R6-e/§8.83 两轮都显示
+fm / cc / gomoku 各有 1 个热循环卡在它上面）。
+
+**语义取证**（`op_struct.inc:866-925`）：弹 obj → **必须是 cstruct**（否则报"& 取地址仅支持
+cstruct 字段（实际类型: %s）"）→ 索引越界检查（报"cstruct 'X' 字段索引越界…"）→
+构造**非拥有**（`owned=0`）的 `ObjFFIPointer`，指向 `obj->data + field->offset`、
+`size = field->size`、`element_type = field->type` → 压回（pop 1 push 1，**net 0**）。
+
+**实现：指针构造抽成"语义唯一来源"（与 §8.83 的 `vm_as_cast` 同一手法）**
+
+| 位置 | 内容 |
+| --- | --- |
+| `object_cstruct.c` | **新增 `cstruct_field_addr_new(obj, field_idx)`**：把那段构造（10 行）从 `op_struct.inc` 搬过来；分配失败返回 NULL，由调用方各自报错 |
+| `vminc/op_struct.inc` | 保留类型/越界校验与两条报错文本（**逐字不变**），构造改为调新 helper |
+| `leno_value.h` | 声明 `cstruct_field_addr_new`（与 `cstruct_get_field_value` 并列）|
+| `jit_callout.c` | `jit_callout_get_field_addr(obj_val, field_idx)`：**同一套校验**（非 cstruct / 无 def 或 data / 越界 / 分配失败 → `failed`）→ 调同一 helper |
+| `ops_callout.inc` | `case OP_GET_FIELD_ADDR`：`TOS_CONSUME_RAX` + `RAW_TO_VALUE` → callout → `failed` 检查 → `VALUE_TO_RAW` + `TOS_PRODUCE`（net 0）|
+| `jit_scan.c` | loop / inline 各加 `case OP_GET_FIELD_ADDR`（net 0）|
+
+错误路径一律 `failed` → bailout → 解释器重放本条指令报原文 ⇒ 报错文本与行号零改动
+（与 `jit_callout_get_field` 对 cstruct 的处理同一取舍）。
+
+**验证**
+
+1. 新探针 `jit_probes/probe_field_addr_jit.leno`：
+   - 热循环里每轮 `&c.v`（`OP_GET_FIELD_ADDR`），JIT / `LENO_NO_JIT=1` **逐字一致**
+     （`addrNonNull=2001`）；
+   - **语义侧**（只比"非 null"不够 —— 指针算错也非 null）：`ffi.write_int(&c.v, 0, 7)` 之后
+     `c.v == 7`（`fieldAfterWrite=7`），证明确实指向那个字段；
+   - `Compiled: 1 / Executed: 1 / **Bailouts: 0**`；字节码转储核对循环体里确有
+     `OP_GET_FIELD_ADDR`（offset 108/166）。
+2. `LENO_JIT_GAPS=1` 三应用：**`133` 条目全部消失**，且条目总数**净减**
+   （fm 8→6、cc 7→6、gomoku 5→4 ⇒ **1 个 func + 3 个 loop** 解除遮断，**没有**"换个原因"的转移）
+   —— 与 §8.83 相比，这次 census 差分给出了干净的净解锁读数。
+3. assert **311 passed / 0 failed**。
+
+***
+
 ## 9. 性能数据
 
 ### 测试环境

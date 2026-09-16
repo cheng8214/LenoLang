@@ -519,6 +519,15 @@ Value jit_callout_struct_init(int64_t* vstack_top, uint16_t name_const_idx,
 Value jit_callout_invoke_method(int64_t* vstack_top, int arg_count, const uint8_t* ip, Chunk* chunk);
 Value jit_callout_global_func(int64_t* vstack_top, int arg_count, uint16_t func_slot);
 Value jit_callout_get_field_fast(Value obj_val, uint8_t field_idx);
+
+/* ---- R6-h：`&c.field` 取字段地址（OP_GET_FIELD_ADDR）----
+ * 解释器语义（vm/vminc/op_struct.inc）：弹 obj → **必须是 cstruct** → 索引越界检查 →
+ * 构造指向 `obj->data + fields[idx].offset` 的**非拥有** ObjFFIPointer → 压回（net 0）。
+ * 指针构造整段复用 `cstruct_field_addr_new`（object_cstruct.c，解释器用的是同一个）
+ * —— **语义唯一来源**；两处的校验/报错各自保留（保证报错文本与行号零改动）：
+ *   非 cstruct / 越界 / 分配失败 → failed → bailout → 解释器重放本条指令报原文。
+ * 会分配（ObjFFIPointer）但在 JIT 帧里安全（GC 只置让出标志，§8.36）。 */
+Value jit_callout_get_field_addr(Value obj_val, uint8_t field_idx);
 Value jit_callout_module_call(int64_t* vstack_top, int arg_count, uint16_t module_idx, uint16_t method_idx, Chunk* chunk);
 
 /* ---- 模块方法编译期解析（codegen 用）----

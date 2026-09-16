@@ -1,0 +1,40 @@
+// R6-h 探针：OP_GET_FIELD_ADDR（`&c.field` 取 cstruct 字段地址）在 JIT 下的行为
+//
+// 目标：验证「取字段地址」这条指令在 JIT 里被正确支持。指针构造整段复用
+// object_cstruct.c 的 cstruct_field_addr_new（**语义唯一来源**，解释器用的是同一个），
+// 两处各自保留校验与报错文本：
+//   · 非 cstruct / 索引越界 / 分配失败 → failed → bailout → 解释器重放本条指令报原文
+//
+// 判据（四条都要满足）：
+//   1. `LENO_NO_JIT=1` 与开启 JIT 的输出**逐字一致**；
+//   2. `Compiled` 覆盖本文件的热循环、`Bailouts: 0`；
+//   3. 字节码转储核对循环体里确有 OP_GET_FIELD_ADDR：
+//        build\leno.exe --debug-out build\dump_faddr.txt jit_probes\probe_field_addr_jit.leno 10
+//   4. 语义侧：拿到的指针必须**真的能用于 FFI 写入**（`ffi.write_int(&c.v, 0, 7)` 后 `c.v == 7`）
+//      —— 只比"非 null"是不够的（指针算错也非 null）。
+import ffi
+
+cstruct Cell { i32 v }
+
+main() {
+    int n = 2000
+    var args = _args()
+    if args.len() > 0 { n = _int(args[0]) }
+
+    var c = Cell.malloc()
+    c.v = 0
+
+    // ① 热循环里每轮取一次字段地址（← OP_GET_FIELD_ADDR）
+    int acc = 0
+    for 0 : n to i {
+        var p = &c.v
+        if p != null { acc = acc + 1 }
+    }
+    print("addrNonNull=" + acc + "\n")
+
+    // ② 语义侧验证：指针指向的**确实是那个字段**
+    ffi.write_int(&c.v, 0, 7)
+    print("fieldAfterWrite=" + (c.v as int) + "\n")
+
+    c.free()
+}

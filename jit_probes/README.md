@@ -76,6 +76,18 @@ cmd /c "set LENO_NO_JIT=1&& build\leno.exe jit_probes\probe_tail_call_jit.leno 2
 2. 函数级 JIT 有**热度阈值**——只调用一次不编译，要在循环里跑热。
 详见 §8.76。
 
+## R6-h：`OP_GET_FIELD_ADDR`（`&c.field` 取字段地址，`probe_field_addr_jit.leno`）
+
+```powershell
+build\leno.exe jit_probes\probe_field_addr_jit.leno 2000                              # JIT
+cmd /c "set LENO_NO_JIT=1&& build\leno.exe jit_probes\probe_field_addr_jit.leno 2000"   # 解释器
+# 两侧逐字一致：addrNonNull=2001 / fieldAfterWrite=7；Compiled: 1、Bailouts: 0
+```
+
+**注意这个探针的第 2 条判据**：只检查"指针非 null"是**不够**的（指针算错也非 null）——
+所以它用 `ffi.write_int(&c.v, 0, 7)` 后读回 `c.v == 7` 来证明"指向的确实是那个字段"。
+指针构造复用 `object_cstruct.c` 的 `cstruct_field_addr_new`（语义唯一来源），详见 §8.84。
+
 ## R6-g：`OP_AS_CAST`（`as` 安全转换，`probe_as_cast_jit.leno`）
 
 ```powershell

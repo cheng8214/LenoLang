@@ -218,6 +218,27 @@ int cstruct_get_field_index(ObjCStructDef* def, const char* name) {
     return -1;
 }
 
+// OP_GET_FIELD_ADDR 的"字段地址指针"构造 —— **语义唯一来源**（§8.84）
+// 从 vm/vminc/op_struct.inc 的 OP_GET_FIELD_ADDR 主体抽出（那里只留校验 + 报错）。
+// 前置条件（调用方负责校验，两处都做同一套检查）：
+//   obj 必须是 ObjCStruct；0 <= field_idx < obj->def->field_count。
+// 返回指向 obj->data + fields[field_idx].offset 的 **非拥有** ObjFFIPointer
+//   （owned = 0：内存归 cstruct 所有，指针只是视图）；
+// 分配失败返回 NULL —— 调用方各自报"内存不足"（解释器 runtime_error / JIT bailout 交解释器）。
+ObjFFIPointer* cstruct_field_addr_new(ObjCStruct* obj, int field_idx) {
+    CStructFieldInfo* field = &obj->def->fields[field_idx];
+    void* addr = obj->data + field->offset;
+
+    ObjFFIPointer* ffi_ptr = (ObjFFIPointer*)gc_alloc(sizeof(ObjFFIPointer), OBJ_FFI_POINTER);
+    if (!ffi_ptr) return NULL;
+    ffi_ptr->ptr = addr;
+    ffi_ptr->size = (size_t)field->size;
+    ffi_ptr->owned = 0;   // 不拥有内存（cstruct 拥有）
+    ffi_ptr->freed = 0;
+    ffi_ptr->element_type = field->type;
+    return ffi_ptr;
+}
+
 // 注册 C 布局结构体定义
 // 两个 cstruct 定义的形状是否一致（字段名/类型/偏移 + 布局参数）
 static int cstruct_def_same_shape(ObjCStructDef* a, ObjCStructDef* b) {

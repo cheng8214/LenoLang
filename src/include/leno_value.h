@@ -1297,6 +1297,11 @@ void cstruct_def_register(ObjCStructDef* def);
 // 查找 C 布局结构体定义
 ObjCStructDef* cstruct_def_find(const char* name);
 
+// 取字段地址并包成 FFI 指针（OP_GET_FIELD_ADDR 的构造部分）—— **语义唯一来源**（§8.84）。
+// 前置条件由调用方校验：obj 是 cstruct 且 0 <= field_idx < def->field_count。
+// 返回**非拥有**（owned=0）的 ObjFFIPointer；分配失败返回 NULL（调用方自行报"内存不足"）。
+ObjFFIPointer* cstruct_field_addr_new(ObjCStruct* obj, int field_idx);
+
 // 获取字段值
 Value cstruct_get_field_value(ObjCStruct* obj, int field_index);
 

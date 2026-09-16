@@ -804,6 +804,43 @@ Value jit_callout_get_field(Value obj_val, uint8_t field_idx) {
     return struct_get_field(obj, field_idx);
 }
 
+/* Callout: OP_GET_FIELD_ADDR（`&c.field`，R6-h）—— 弹出 cstruct 实例、构造字段地址指针。
+ * 与解释器（vm/vminc/op_struct.inc:866-925）**同一套校验**；指针构造调
+ * `cstruct_field_addr_new`（object_cstruct.c，解释器用的是同一个）—— 语义唯一来源。
+ * 错误路径（非 cstruct / 无 def 或 data / 索引越界 / 分配失败）一律 failed → bailout →
+ * 解释器重放本条指令报原文（"& 取地址仅支持 cstruct 字段（实际类型: %s）"、
+ * "cstruct 'X' 字段索引越界…"、"内存不足"）—— 与 jit_callout_get_field 对 cstruct 的取舍一致。 */
+Value jit_callout_get_field_addr(Value obj_val, uint8_t field_idx) {
+    if (!val_is_obj(obj_val) || val_as_obj(obj_val)->type != OBJ_CSTRUCT) {
+        if (jit_debug_on())
+            fprintf(stderr, "[FIELD-FAIL] get_field_addr: obj 不是 cstruct"
+                            "（bits=0x%016llx, type=%d）\n",
+                    (unsigned long long)obj_val,
+                    val_is_obj(obj_val) ? (int)val_as_obj(obj_val)->type : -1);
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+    ObjCStruct* obj = (ObjCStruct*)val_as_obj(obj_val);
+    if (!obj->def || !obj->data) {   /* 防御：解释器会直接解引用，这里宁可交解释器报错 */
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+    if ((int)field_idx >= obj->def->field_count) {
+        if (jit_debug_on())
+            fprintf(stderr, "[FIELD-FAIL] get_field_addr: idx=%u >= count=%d（def=%s）\n",
+                    (unsigned)field_idx, obj->def->field_count,
+                    obj->def->name ? obj->def->name : "?");
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+    ObjFFIPointer* p = cstruct_field_addr_new(obj, (int)field_idx);
+    if (!p) {                        /* 分配失败：交解释器报"内存不足" */
+        jit_callout_failed = 1;
+        return NULL_VAL;
+    }
+    return val_obj((Object*)p);
+}
+
 /* Callout: OP_SET_FIELD（写 struct / cstruct 字段，并把写进去的值压回栈 —— 赋值表达式的值）。
  * 语义对齐 vm/vminc/op_struct.inc 的 OP_SET_FIELD：
  *   struct  → 越界检查 + int→float / bigint→float 自动提升 + struct_set_field（**含 GC 写屏障**，
