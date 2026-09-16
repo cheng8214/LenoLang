@@ -5497,6 +5497,107 @@ codegen 侧（`codegen_expr.c` 的 `AST_DICT`）按 `key_i, value_i` 顺序逐�
 
 ***
 
+### 8.88 R6-k：native 绑定方法（`T.malloc()` / `c.free()`）进 JIT —— 三次归因的取证 + 同条件 A/B **1.79x**（2026-09-17）
+
+**目标（⑥ 的正路）**：§8.80 露出的两个相邻缺口之一 —— `call_value` 对 **native 方法对象**
+（`T.malloc()` / `T.size()` / `T.offset_of()` / `c.free()`，callee 是
+`OBJ_BOUND_METHOD` 且 `closure == NULL`）不支持 ⇒ 含这类调用的热循环**能编但每次执行都
+bail**（3 次后被拉黑 ⇒ 退化为解释执行）：§8.80/§8.85 实测 fm/cc `Bailouts` 6/3、
+`LENO_JIT_DEBUG=1` 下 **797 条 CALLOUT-FAIL 全是这一条**。
+
+#### 三次尝试：前两次的**归因都是错的**（本节最重要的部分）
+
+| 尝试 | 改动 | 症状 | 当时的归因 | 实际根因 |
+| --- | --- | --- | --- | --- |
+| **R6-f**（§8.82）| codegen 把 callee 当第 3 个参数（`JIT_ARG3 = R8`）+ callout 交 VM | ① `test_jit_closure_byupvalue` 静默算错 ② `只能调用函数（不是对象类型）` | "思路对，失败在实现细节" | ① 是 **R8 被当 scratch 踩** ✓ ② 与 R8 **无关** ✗ |
+| **R6-j**（§8.87）| **只**改 callout 一支（隔离实验）| ① 闭包用例 ✓ 通过 ② 探针返回**陈值**（`NULL_VAL` / int48 50）| "`vstack_top[-1]` 不是 callee 槽" ✗ | 差得远：**native 类 callee 经 `vm_call_value` 调用本身就不成立** ✗ |
+| **R6-k**（本节）| native 类 callee **绕过 `vm_call_value`、原地直调** | 三探针 `IDENTICAL`、`Bailouts` 全 0 ✓ | — | ✓ |
+
+#### 取证过程（可复现的四步仪器法）
+
+1. **站点诊断**（回退状态，`LENO_JIT_DEBUG=1`）：这些站点 `不是对象 0 条 / obj_type=10 6 条`
+   ⇒ **推翻** R6-j 的"callee 槽不是 callee"假设（对该类站点不成立）。
+2. **委派前后打印**：`callee = bound name=malloc closure=NULL method=…` ✓ 是合法对象；
+   但**委派返回** `raw=NULL_VAL`（探针 A）/ `int48 50`（探针 B）✗。
+3. **试修 `last_return_value`**（在 `vm.c` 的 `vm_call_value` 里发布 native 结果）⇒ **无效** ✗
+   ⇒ 说明"数据没到那儿"，而不是"取值位置不对"。
+4. **双向仪器**（决定性）：
+   `[R6K-VM] publish=0xfffc019fda2c9350 last_return_value=0xfffc019fda2c9350`（发布成功 ✓）
+   → `[R6K-JIT] raw=0xfff8000000000000 last_return_value=0xfff8000000000000`（**被冲掉** ✗）
+   ⇒ 锁定**被调用的那个函数本身** ✗。
+
+#### 根因：`vm_call_value` 是「脚本调用」入口，对 native callee 不成立
+
+`src/vm/vm.c:1021`：
+```c
+if (!call_value(callee, arg_count, line)) return 0;
+vm.stop_frame_cnt = saved_frame_cnt;
+int r = vm_run_with_vm(vm_ptr);   /* ← 进解释器循环，跑到"新帧"返回 */
+```
+`call_value` 的 native 分支（`vm_call.inc:268-270` / `328-330`）是
+`vm.sp -= arg_count + 1; vm_stack_push(&vm, result); return 1;` —— **同步执行完、不压帧**
+⇒ 随后的解释器循环**继续执行调用方的字节码** ✗（此时栈上还多着一个结果槽）。三条实测后果：
+
+| 后果 | 实测 |
+| --- | --- |
+| 刚算出的结果被冲成 `NULL_VAL` | `Cell.malloc()` 返回 null ⇒ `c.v = …` 报"在非对象类型上设置字段（实际类型: null）" |
+| 热循环局部量被写坏 | `probe_index_callee` 的 acc 只加到 **50**（应 101）|
+| 执行到栈布局不符的 `OP_CALL` | `只能调用函数（不是对象类型）`（`vm_call.inc:374`）|
+
+#### 修法（最小且语义对齐解释器）
+
+在 `jit_invoke_closure` 的慢路径**之前**加 native 分支：`OBJ_NATIVE` /
+`OBJ_BOUND_METHOD` 且 `closure == NULL` ⇒ **复用 `jit_callout_call_native` 的机械原地直调**
+（实参搬上 VM 栈当 GC 根 → `native->function(total, args)` → 恢复 sp）；
+native 绑定方法把**接收者插到 `args[0]`**（与 `call_value` 的 bound-native 分支同序）；
+`vm.has_exception` → `failed` → bailout（与 `jit_callout_call_native` 既有取舍一致）。
+
+**仍走 `vm_call_value` 的三类**（它们确实压帧、结果由帧返回写 `last_return_value` ✓）：
+闭包、裸 `ObjFunction`、**用户 struct 方法的绑定闭包**（`bound->closure != NULL`）。
+
+#### 验证
+
+1. 三个探针 JIT / `LENO_NO_JIT=1` **逐字一致** ✓ 且 `Bailouts` 全 **0**：
+   `probe_index_callee` `n=101`（3→**0**）；`probe_cstruct_jit` `defLoop=20001 / loopDef=20001`
+   （6→**0**）；`probe_clib_call_jit`（0，未回归）。
+2. `assert/test_jit_closure_byupvalue.leno` **OK** ✓（R6-f 会算错的那个）。
+3. assert **311 passed / 0 failed**。
+4. 真实应用 headless 300 帧：JIT/NOJIT 的 `sum` **逐字一致**
+   （fm 21600 / cc 4800 / 五子棋 1500）；`FuncCompiled` 114→**120**（fm）、73→**77**（cc）；
+   `Bailouts` 6→**3**（fm）、3→**0**（cc）。
+5. **同条件 A/B**（fm，300 帧，3 轮交替：R6-k 与改前源码各自编译的二进制）：
+
+   | 轮 | R6-k | 改前 | 比值 |
+   | --- | --- | --- | --- |
+   | 1 | 3823 | 6794 | 1.78x |
+   | 2 | 3804 | 6789 | 1.78x |
+   | 3 | 3788 | 6830 | 1.80x |
+
+   波动 **±0.5%** ⇒ **1.79x**。注意改前的 **6804 ≈ NOJIT 的 6679** ⇒ 那些热循环原本
+   被 bailout **拉黑、退化成解释执行**（这也是"JIT 打开却几乎不提速"的成因）。
+
+#### 顺带留下的事项
+
+- **`vm_call_value` 对 native callee 的陷阱仍在**（本节只在 JIT 侧绕开）：`arrays.c:341`
+  （`arr.map` 回调）与 `ffi.c:2607`（FFI 回调）同样按"成功 ⇒ `last_return_value` 有效"
+  取结果 ⇒ 若传 native 值会拿到陈值**并**让解释器多跑一段字节码。建议单独立项：
+  让 `vm_call_value` 对 native 类 callee 显式处理（直调后发布结果）或**明确拒绝**
+  （宁可不做，不要静默错）。
+- fm 仍有 **3** 条 bailout（来自**别的**站点，非 native 绑定方法）：用
+  `LENO_JIT_DEBUG=1` 的 `Bailout:` 汇总定位。
+
+#### 方法论教训（已同步进 `jit_probes/README.md`）
+
+1. **只改一处做隔离实验**：R6-j 把"R8 改动"从"callout 改动"里分离出来，才确认闭包算错
+   只由 R8 引起。
+2. **单点观测不足以否定一个假设**：§8.86 只看 `probe_index_callee` 一类站点就否掉了
+   "callee 槽不可靠" —— 该结论对**别的**站点是错的（真正的错还更底层）。
+3. **修共享机械而无效时，先证明"数据有没有到达"**（双向仪器），再改取值位置。
+4. **`native 不压帧`** 是本次所有怪象的总开关：凡把 native callee 送进"假定会压帧"的
+   路径（`vm_call_value`）都会静默错，不是崩溃 —— 所以必须用**对拍 + 探针**兜住。
+
+***
+
 ## 9. 性能数据
 
 ### 测试环境

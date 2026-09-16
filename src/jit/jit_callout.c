@@ -1725,6 +1725,12 @@ Value jit_callout_struct_init(int64_t* vstack_top, uint16_t name_const_idx,
  *           （注意：这条路径**不压帧**，所以任何依赖「当前帧」的东西都不能用 —— 见 §8.56）。
  *   慢路径：VM 重入（vm_call_value），语义与解释器完全一致（异常/多返回值都在这里兜底）。
  * ========================================================================== */
+
+/* ⚠ R6-k 已把「native 类 callee 的结果发布」下沉到 `vm_call_value`（vm.c）：
+ * 在此之前，native 绑定方法（`T.malloc()` / `c.free()`）经 `vm_call_value` 调用后
+ * **不会**写 `vm.last_return_value` ⇒ 调用方读到上一次帧返回的陈值（静默算错）。
+ * 现在该包装函数对 native 也发布单返回 ⇒ 本文件**无需**再按 callee 类别分流取结果
+ * （下面 `result = vm->last_return_value` 对所有类别都成立）。 */
 static Value jit_invoke_closure(ObjFunction* mfunc, Value callee_val, int arg_count,
                                 int64_t* vstack_top, int ret_count, const char* who) {
     VM* vm = jit_callout_vm;
@@ -1786,6 +1792,67 @@ static Value jit_invoke_closure(ObjFunction* mfunc, Value callee_val, int arg_co
                 /* 发布个数与编译期假设不符 → 回落 VM 重入（既有取舍，§14）。 */
             }
             jit_callout_failed = 0;  /* 回退解释路径前复位 */
+        }
+    }
+
+    /* ---- R6-k：**native 类 callee 不能走 `vm_call_value`**（必须原地直调）----
+     * `vm_call_value`（vm.c）是给「**脚本**调用」用的：它假定 `call_value` 压了一个新帧，
+     * 然后 `vm_run_with_vm` 进解释器循环跑到该帧返回。**native callee 不压帧** ——
+     * `call_value` 的 OBJ_NATIVE / OBJ_BOUND_METHOD(native) 分支同步执行完 native、
+     * 把结果 push 回 VM 栈就返回（vm_call.inc:268-270 / 328-330）⇒ 那个解释器循环
+     * 会**继续执行调用方的字节码**（栈上还多着一个结果槽）。实测后果（§8.88 取证）：
+     *   · 刚算出的结果被冲成 `NULL_VAL` ⇒ `T.malloc()` 返回 null ⇒ `c.v = …` 报
+     *     "在非对象类型上设置字段（实际类型: null）"；`last_return_value` 也变成陈值
+     *     （实测拿到 int48 50 这种上一次帧返回的值）；
+     *   · 热循环里的局部量被写坏（`probe_index_callee` 实测 acc 只加到 50，应 101）；
+     *   · 甚至执行到栈布局不符的 `OP_CALL` ⇒ "只能调用函数（不是对象类型）"。
+     * 所以这里按解释器 `call_value` 的 native 分支**原地直调**，复用
+     * `jit_callout_call_native` 的既有机械：实参搬上 VM 栈（call 期间是 GC 根）→
+     * 调用 → 恢复 sp；异常（`vm.has_exception`）→ failed → bailout 交解释器重放。
+     * 语义与解释器逐字一致，包括 native 绑定方法的**接收者插到 args[0]**
+     * （与 `call_value` 的 `ObjNative* native = bound->method;` + "插入 receiver" 同序）。
+     * ⚠ 仍走 `vm_call_value` 的是：闭包 / 裸 ObjFunction / **用户 struct 方法的绑定闭包**
+     * （`bound->closure != NULL`）—— 那几种确实压帧，且结果由帧返回写进
+     * `last_return_value` ✓（下面慢路径读它是对的）。 */
+    if (val_is_obj(callee_val)) {
+        Object* co = val_as_obj(callee_val);
+        ObjNative* nf = NULL;
+        Value nrecv = NULL_VAL;
+        int nhas_recv = 0;
+        if (co->type == OBJ_NATIVE) {
+            nf = (ObjNative*)co;
+        } else if (co->type == OBJ_BOUND_METHOD) {
+            ObjBoundMethod* bm = (ObjBoundMethod*)co;
+            if (bm->closure == NULL) {          /* native 绑定方法：T.malloc() / c.free() */
+                nf = bm->method;
+                nrecv = bm->receiver;
+                nhas_recv = 1;
+            }
+        }
+        if (nf) {
+            if (!nf->function) {                /* 防御：交解释器报"只能调用函数…" */
+                jit_callout_failed = 1;
+                if (jit_debug_on())
+                    fprintf(stderr, "[JIT-CALLOUT-FAIL] native 直调: native->function 为空\n");
+                return NULL_VAL;
+            }
+            int saved_sp_n = vm->sp;
+            int total = arg_count + nhas_recv;
+            if (nhas_recv) vm_stack_push(vm, nrecv);   /* args[0] = 接收者（先压 ⇒ 最低地址）*/
+            for (int i = 0; i < arg_count; i++)
+                vm_stack_push(vm, jit_raw_to_value(vstack_top[arg_count - 1 - i]));
+            Value nres = nf->function(total, vm->stack + vm->sp - total);
+            vm->sp = saved_sp_n;
+            if (vm->has_exception) {
+                jit_callout_failed = 1;
+                if (jit_debug_on())
+                    fprintf(stderr, "[JIT-CALLOUT-FAIL] native 直调: native raised exception\n");
+                return NULL_VAL;
+            }
+            if (jit_debug_on())
+                fprintf(stderr, "[JIT-CALLOUT] native 直调成功: total=%d is_obj=%d raw=0x%llx\n",
+                        total, val_is_obj(nres) ? 1 : 0, (unsigned long long)nres);
+            return nres;
         }
     }
 
@@ -2122,19 +2189,43 @@ Value jit_callout_call_value(int64_t* vstack_top, int arg_count) {
          * 但 `c.free()` 那种站点又是对的 ⇒ 要按站点分类取证，带仪器打印
          * `vstack_top` / `[vstack_top-1]` / 期望值 三者对照）。
          * 在此之前维持 `failed` ⇒ bailout（慢但正确）。 */
-        if (jit_debug_on()) {
-            long long raw = (long long)vstack_top[-1];
-            if (val_is_obj(callee))
-                fprintf(stderr, "[JIT-CALLOUT-FAIL] call_value: callee 是对象但 function 为空"
-                                "（obj_type=%d）（交解释器）\n", (int)val_as_obj(callee)->type);
-            else
-                fprintf(stderr, "[JIT-CALLOUT-FAIL] call_value: callee 不是对象（raw=0x%llx, "
-                                "is_int48=%d）（交解释器）\n",
-                        (unsigned long long)raw,
-                        val_is_int(callee) ? 1 : 0);
+        if (jit_debug_on() && !val_is_obj(callee)) {
+            fprintf(stderr, "[JIT-CALLOUT-FAIL] call_value: callee 不是对象（raw=0x%llx, "
+                            "is_int48=%d）⇒ 交解释器报错\n",
+                    (unsigned long long)(long long)vstack_top[-1],
+                    val_is_int(callee) ? 1 : 0);
         }
-        jit_callout_failed = 1;
-        return NULL_VAL;
+        /* ---- R6-k：非闭包 callee ⇒ 交 `jit_invoke_closure` 的 **VM 重入慢路径** ----
+         * 覆盖真实应用里最常见的"类型名 / 实例上的方法调用"：
+         *   `T.malloc()` / `T.size()` / `T.offset_of()` / `T.free()`（cstruct 静态方法）、
+         *   `c.free()`（实例方法）—— callee 是 **`OBJ_BOUND_METHOD`（native 绑定，
+         *   `closure == NULL`）** 或 `OBJ_NATIVE`。
+         * 此前一律 `failed` → bailout ⇒ 含这类调用的热循环"能编但每次执行都 bail"
+         * （3 次后被拉黑）：§8.80/§8.85 实测 fm/cc 的 `Bailouts` 6/3、797 条 CALLOUT-FAIL
+         * 全是这一条。
+         *
+         * 为什么现在才对（R6-f / R6-j 两次回退各踩一个坑，本次已分别解决）：
+         *   · **R6-f**：那次同时改了 codegen，把 callee 当第 3 个参数传 ⇒ `JIT_ARG3 = R8`，
+         *     而 R8 是发射器 scratch、还可能承载 pinned TOS ⇒ `test_jit_closure_byupvalue`
+         *     **静默算错**。R6-j 的隔离实验（只改这一支）证明该症状**确实来自 R8 改动**
+         *     ⇒ 本次**不碰 codegen、不碰 R8**：callee 仍从 `vstack_top[-1]` 读（与快路径同一处）。
+         *   · **R6-j**：只改这一支后闭包用例恢复正常 ✓，但探针返回**陈旧值**（仪器取证：
+         *     委派"成功"却返回 `NULL_VAL` / `0xfffb…0032` = int48 50）。根因**不在本函数**，
+         *     而在共享机械 `jit_invoke_closure` 慢路径的 `Value result = vm->last_return_value;`
+         *     —— 见下方慢路径里新增的 native 早返回分支（`vm_call.inc` 的 OBJ_NATIVE /
+         *     OBJ_BOUND_METHOD(native) 分支**不压帧**，只把结果 push 回 VM 栈、
+         *     **从不写 `vm->last_return_value`**）⇒ 那是共享机械的**潜在缺陷**，
+         *     R6-k 一并修掉（此前没有调用方传 native callee，所以一直没暴露）。
+         * 失败（`call_r == 0`，例如 native 自己抛错）时慢路径已恢复 VM 栈并置 failed ⇒
+         * bailout 交解释器按原指令重放，报错文本一致；已发生的 native 副作用不回滚
+         * （§14 既有取舍，与 `jit_callout_call_native` 完全一致）。 */
+        if (jit_debug_on())
+            fprintf(stderr, "[JIT-CALLOUT] call_value 委派 VM 重入: is_obj=%d obj_type=%d "
+                            "arg_count=%d\n",
+                    val_is_obj(callee) ? 1 : 0,
+                    val_is_obj(callee) ? (int)val_as_obj(callee)->type : -1, arg_count);
+        return jit_invoke_closure(NULL, callee, arg_count, vstack_top, 1,
+                                  "call_value(non-fn)");
     }
     int rc = (fn->return_count > 0) ? fn->return_count : -1;
     if (rc != 1) {
