@@ -1572,7 +1572,7 @@ Value jit_callout_struct_init(int64_t* vstack_top, uint16_t name_const_idx,
     }
     ObjString* name = (ObjString*)val_as_obj(name_val);
 
-    ObjStructDef* def = struct_def_find(name->chars);
+    ObjStructDef* def = struct_def_find_qualified(name->chars);
     if (!def) {
         char msg[256];
         snprintf(msg, sizeof(msg), "未定义的结构体 '%s'", name->chars);

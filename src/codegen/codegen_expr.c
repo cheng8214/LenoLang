@@ -1875,12 +1875,15 @@ void gen_expr(CodeGen* gen, Ast* ast) {
         }
         case AST_STRUCT_INIT: {
             // 生成结构体构造函数调用
-            // 处理模块限定的 struct 名称（如 "math.Point"），提取实际的 struct 名称
+            // 模块限定的 struct 名称（如 "math.Point"）**原样写进常量池**（S2/2b）：
+            // 前缀是 import 的别名，也就是模块的 name，运行期要靠它精确取回"哪一份同名定义"
+            // （旧字节码只有裸名，运行期按裸名回退，行为不变）。编译期的符号解析仍用裸名
+            // （模块符号表里就是裸名），故下面单独取 actual_struct_name。
             const char* dot_pos = strchr(ast->u.struct_init.struct_name, '.');
             const char* actual_struct_name = dot_pos ? dot_pos + 1 : ast->u.struct_init.struct_name;
 
-            ObjString* struct_name = str_copy(actual_struct_name,
-                                              strlen(actual_struct_name));
+            ObjString* struct_name = str_copy(ast->u.struct_init.struct_name,
+                                              strlen(ast->u.struct_init.struct_name));
             int name_const = make_constant(gen, val_obj((Object*)struct_name));
             
             // 编译期从符号表查找 struct 定义和字段索引

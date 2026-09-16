@@ -166,39 +166,54 @@ uint32_t struct_def_generation(void) {
     return struct_def_gen;
 }
 
+// 覆盖注册表中第 i 个条目：把旧定义的资源指针置 NULL，防止 gc_free_all 时 double-free
+// （旧定义对象仍由 GC 管理，gc_free_all 会调用 free_object_resources）
+static void struct_def_replace(int i, ObjStructDef* def) {
+    ObjStructDef* old_def = struct_def_table[i];
+    old_def->name = NULL;
+    old_def->fields = NULL;
+    old_def->field_count = 0;
+    old_def->methods = NULL;
+    old_def->method_count = 0;
+    old_def->impl_names = NULL;
+    old_def->impl_count = 0;
+    old_def->const_names = NULL;
+    old_def->const_values = NULL;
+    old_def->const_count = 0;
+
+    struct_def_table[i] = def;
+    struct_def_gen++;
+}
+
 void struct_def_register(ObjStructDef* def) {
     if (struct_def_count >= MAX_STRUCT_DEFS) {
         error_add_at(ERR_RUNTIME, 0, 0, "结构体定义数量超过上限");
         return;
     }
 
-    // 检查是否已存在同名结构体
+    // 1) 同一来源的同名条目：覆盖（同模块重注册、子线程按指针重注册、模块重新加载）
     for (int i = 0; i < struct_def_count; i++) {
-        if (struct_def_table[i]->name && strcmp(struct_def_table[i]->name, def->name) == 0) {
-            // 跨模块同名：拦住，别覆盖（否则就是 S2 那个静默错值）
-            if (def_owner_conflict("struct", def->name,
-                                   struct_def_table[i]->owner, def->owner,
-                                   struct_def_same_shape(struct_def_table[i], def))) {
-                return;
-            }
-            // 覆盖旧定义：将旧定义的资源指针置 NULL，防止 gc_free_all 时 double-free
-            // 旧定义对象仍由 GC 管理，gc_free_all 会调用 free_object_resources
-            ObjStructDef* old_def = struct_def_table[i];
-            old_def->name = NULL;
-            old_def->fields = NULL;
-            old_def->field_count = 0;
-            old_def->methods = NULL;
-            old_def->method_count = 0;
-            old_def->impl_names = NULL;
-            old_def->impl_count = 0;
-            old_def->const_names = NULL;
-            old_def->const_values = NULL;
-            old_def->const_count = 0;
+        ObjStructDef* old = struct_def_table[i];
+        if (!old->name || strcmp(old->name, def->name) != 0) continue;
+        if (old->owner != def->owner) continue;
+        if (old == def) return;   // 同一个对象再注册一次：空操作
+        struct_def_replace(i, def);
+        return;
+    }
 
-            struct_def_table[i] = def;
-            struct_def_gen++;
-            return;
+    // 2) 跨模块同名：判定冲突（冲突**仍然报错**），但两份都留在表里（S2/2b）——
+    //    带模块前缀的查找（struct_def_find_qualified）要能各自取回自己那份；
+    //    裸名查找按"先注册者"返回，给尚未迁移的调用点（cast / face / JIT / 原生桥接）用，
+    //    而那些点一旦拿错，当前的响亮报错就是兜底。故这里**不能**直接丢弃新定义。
+    for (int i = 0; i < struct_def_count; i++) {
+        ObjStructDef* old = struct_def_table[i];
+        if (!old->name || strcmp(old->name, def->name) != 0) continue;
+        if (def_owner_conflict("struct", def->name, old->owner, def->owner,
+                               struct_def_same_shape(old, def))) {
+            break;   // 已报错 ⇒ 让两份共存：跳出循环走末尾 append
         }
+        struct_def_replace(i, def);
+        return;
     }
 
     struct_def_table[struct_def_count++] = def;
@@ -232,6 +247,38 @@ ObjStructDef* struct_def_find(const char* name) {
         }
     }
     return NULL;
+}
+
+// 按"可能带模块前缀的名字"查找定义（S2/2b）。
+//
+// 背景：同名类型可以来自不同模块（A、B 各声明 Point），裸名查找只能返回"先注册者"，
+// 于是跨模块引用会静默拿到**别人**的定义 —— 字段索引/方法体都是按各自模块编译期定死的。
+// 编译期其实完整知道声明来源（`new a.Point()` 里的前缀 `a` 就是 `import ... as a` 的别名，
+// 与模块的 `name` 一致），只是过去在 codegen 里被剥掉了；这里让运行期按前缀精查。
+//
+// 名字不带前缀时（模块内 `new Point()`、旧字节码、原生桥接、按名反射）行为与
+// struct_def_find 完全一致 ⇒ 向后兼容。
+ObjStructDef* struct_def_find_qualified(const char* qualified_name) {
+    if (!qualified_name) return NULL;
+
+    const char* dot = strchr(qualified_name, '.');
+    if (dot && dot != qualified_name && dot[1]) {
+        size_t mod_len = (size_t)(dot - qualified_name);
+        const char* bare = dot + 1;
+        for (int i = 0; i < struct_def_count; i++) {
+            ObjStructDef* d = struct_def_table[i];
+            if (!d->name || strcmp(d->name, bare) != 0) continue;
+            if (!d->owner || !d->owner->name) continue;
+            if (strlen(d->owner->name) == mod_len &&
+                strncmp(d->owner->name, qualified_name, mod_len) == 0) {
+                return d;
+            }
+        }
+    }
+    // 回退：按**裸名部分**查找（不是整串！）——精查没命中时（前缀对不上模块名、
+    // 定义无 owner 等）必须退回旧行为：拿 "Point" 去裸名查找，而不是拿 "a.Point"。
+    // 这一步是"精查是增量、绝不比旧行为更差"的保证。
+    return struct_def_find(dot ? dot + 1 : qualified_name);
 }
 
 // 返回当前线程结构体定义表的数量（供主线程抓取快照传给子线程）

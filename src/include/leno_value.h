@@ -1198,6 +1198,10 @@ static inline void struct_set_field(ObjStruct* obj, int index, Value value) {
 // 结构体定义查找（运行时）
 ObjStructDef* struct_def_find(const char* name);
 
+// 按"可能带模块前缀的名字"查找（S2/2b）："a.Point" ⇒ 先按 (模块名 a, 名字 Point) 精查，
+// 取不到再回退裸名查找。不带前缀的名字行为与 struct_def_find 一致。
+ObjStructDef* struct_def_find_qualified(const char* qualified_name);
+
 // 注册结构体定义
 void struct_def_register(ObjStructDef* def);
 

@@ -424,7 +424,7 @@ OPCODE(OP_STRUCT_INIT) {
         def = sd_cache->def;
     } else {
         vm.ic_misses++;
-        def = struct_def_find(name->chars);
+        def = struct_def_find_qualified(name->chars);
         if (def) {
             sd_cache->valid = 1;
             sd_cache->name_hash = name->hash;
@@ -433,7 +433,7 @@ OPCODE(OP_STRUCT_INIT) {
         }
     }
 #else
-    ObjStructDef* def = struct_def_find(name->chars);
+    ObjStructDef* def = struct_def_find_qualified(name->chars);
 #endif
     if (!def) {
         char _undef_msg[256];
