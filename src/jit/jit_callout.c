@@ -203,7 +203,17 @@ static inline int64_t jit_value_to_raw(Value v) {
 }
 
 /* Callout: OP_INDEX (array/dict index access).
- * Returns NaN-boxed result, or NULL_VAL on error. */
+ * Returns NaN-boxed result, or NULL_VAL on error.
+ *
+ * ⚠ 已知缺口（§8.86，**本轮尝试修复后回退**）：`NULL_VAL` 在这里同时表示
+ * "合法的 null 结果"（如 `d["missing"]`）与"错误 / 未覆盖的接收者类型"，调用方无法区分；
+ * 而且错误路径用的是 `error_add_at`（**全局错误收集器**，原本是编译期/解释器的报错通道），
+ * 在 JIT 里会留下**永久记录**：即使 Leno 层异常被 try/catch 捕获，进程仍会以
+ * "发现 N 个错误" + 非零退出码结束 ✗。
+ * 试过的修法（比较调用前后 errors.count → 置 jit_callout_failed 让 codegen bailout）
+ * 实测**两头都不达标**：`caught` 仍与解释器不等（51 vs 61），并且错误退出依旧。
+ * ⇒ 正确的修法应是：本 callout 的错误路径**不调 error_add_at**，只置 `jit_callout_failed`
+ * 让解释器重放本条指令、由解释器抛原文错误（与 jit_callout_call_native 的既有约定一致）。 */
 Value jit_callout_index(Value obj_val, Value idx_val) {
     if (!val_is_obj(obj_val)) {
         error_add_at(ERR_RUNTIME, 0, 0, "索引操作需要对象类型");

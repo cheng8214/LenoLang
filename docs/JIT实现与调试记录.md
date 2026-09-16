@@ -5376,6 +5376,49 @@ codegen 侧（`codegen_expr.c` 的 `AST_DICT`）按 `key_i, value_i` 顺序逐�
 
 ***
 
+### 8.86 `OP_INDEX` 慢路径的错误通道：现状测量、一次尝试（已回退）与**正确修法**（2026-09-17）
+
+**触发探针** `jit_probes/probe_index_error_channel.leno`：热循环里做**字符串索引越界**
+（走 `jit_callout_index` 的 STRING 分支 `error_add_at("字符串索引越界")`，**不是**数组越界
+——那条本来就有专门的 bailout 桩），外面套 `try/catch` 计数；另有一个正常索引的对照循环。
+
+**现状基线（回退后实测，`n=60`）**
+
+| | stdout | exit | stderr |
+| --- | --- | --- | --- |
+| JIT | `caught=50 ok=61` | **−1** ✗ | `发现 11 个错误（字符串索引越界，已合并重复 11 次）` |
+| `LENO_NO_JIT=1` | `caught=61 ok=61` | 0 ✓ | 干净 |
+
+⇒ **两个独立缺陷**（都在 JIT 侧）：
+1. 有 **11 次**错误**没有作为可捕获异常抛出**（`caught` 少 11）⇒ `try/catch` 语义分歧；
+2. 这些错误进了**全局错误收集器** ⇒ **即使 Leno 层 catch 成功，进程仍以 `发现 N 个错误`
+   + **exit = -1** 结束** —— 这一条比 ① 更严重：**正常程序会"看起来失败"**（CI/脚本会误判）。
+
+**根因**：`jit_callout_index` 的错误路径用 `error_add_at`（**编译期/解释器的报错通道**）+ 返回
+`NULL_VAL`，而 `OP_INDEX` 的慢路径（`ops_index.inc`）**不检查任何失败标志** ⇒ 两者叠加：
+错误既没被抛出（被 `NULL_VAL` 吞掉）又被永久记进收集器。
+
+**尝试过的修法（已回退，记为反例）**：把 `jit_callout_index` 包一层，比较调用前后的
+`errors.count`，**本次新增了错误**就置 `jit_callout_failed`，codegen 检查后 bailout。
+实测：`caught` 只从 50 → **51**（几乎没变）、`exit = -1` **依旧** ⇒ **无效**。
+原因很直白：**错误已经被 `error_add_at` 记进收集器了**，再 bailout 只是"记完再退出"，
+收集器里的记录不会消失 ⇒ 治不了根。
+
+**正确修法（已定位，待做）**：`jit_callout_index` 的 ~20 条错误路径**不要调 `error_add_at`**，
+**只置 `jit_callout_failed`**（`return` 一个哨兵值），codegen 侧加失败检查
+（形状已在本次尝试中写好过：`EMIT_STORE_TMP` → `mov r8,&jit_callout_failed` →
+`test` → `EMIT_BAILOUT_SITE_NONOVF` + `jnz` + `patch_add(-1,0)` → 清标志 → 恢复结果）。
+这样才与项目既有约定一致（**报错文本与抛异常都交回解释器**，同 `jit_callout_call_native` /
+`jit_callout_get_field`）：不污染收集器 ✓，bailout 后解释器重放本条指令 ⇒ 每次都是
+可捕获的**原文**错误 ⇒ 预期 `caught=61`、`exit=0`。
+
+**风险与注意**：① 错误迭代会触发 bailout ⇒ 该循环可能被拉黑（性能权衡，正确性优先）；
+② 该 callout 里哪些 `error_add_at` 是"给解释器用"的、哪些是 JIT 路径可达的，要逐条过一遍；
+③ **应当顺手扫一遍其它 callout 是否也有同样的"`error_add_at` + `NULL_VAL` + 调用方不检查"
+组合**（这是同一类隐患）。
+
+***
+
 ## 9. 性能数据
 
 ### 测试环境

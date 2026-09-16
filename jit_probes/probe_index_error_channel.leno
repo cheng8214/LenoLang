@@ -1,0 +1,50 @@
+// R6-j 探针：OP_INDEX 慢路径的**错误通道**（§8.86 修复项）
+//
+// 背景：`jit_callout_index` 用 **NULL_VAL** 同时表示"合法的 null 结果"与"错误/未覆盖类型"，
+// 而 OP_INDEX 的慢路径（ops_index.inc）原本不检查任何标志 ⇒ **修复前** JIT 会把错误
+// 静默压成 null 继续跑完循环（该隐患在 ops_index.inc 注释里被记录过，越界那一条已用
+// 专门的 bailout 桩绕过，其余错误没有），而解释器抛的是**可被 try/catch 捕获**的异常。
+//
+// 修复：`jit_callout_index` 变成包装器 —— 比较调用前后的 `errors.count`，**只在本次调用
+// 新增了错误**时置 `jit_callout_failed`；codegen 检查后 bailout → 解释器重放本条指令并抛
+// 同一异常（可捕获）。
+//
+// 判据（三条）：
+//   1. JIT 与 `LENO_NO_JIT=1` 的 `caught` **相等**且 > 0（相等 ⇒ 语义一致；>0 ⇒ 错误真的抛了）；
+//   2. JIT 侧该循环 `Bailouts > 0`（证明走的是 bailout 交解释器，而不是静默吞掉）；
+//   3. 正常索引不受影响：`ok` 与 NO_JIT 相等。
+//
+// 触发用的是**错误路径**（不是数组越界 —— 那条本来就有专门的 bailout 桩）：
+// **字符串索引越界**走 `jit_callout_index` 的 STRING 分支（error_add_at("字符串索引越界")）。
+func strOob(int n): int {
+    var s = "abc"                 // 长度 3
+    int caught = 0
+    for 0 : n to i {
+        try {
+            var ch = s[i + 5]     // 索引恒 >= 5 ⇒ 越界（运行期错误路径）
+            caught = caught + 0
+        } catch e {
+            caught = caught + 1
+        }
+    }
+    return caught
+}
+
+func indexOk(int n): int {
+    var d = {"a": 1, "b": 2}
+    var s = "xyz"
+    int ok = 0
+    for 0 : n to i {
+        if d["a"] == 1 and s[1] == "y" { ok = ok + 1 }   // 正常索引（dict / 字符串）
+    }
+    return ok
+}
+
+main() {
+    int n = 60
+    var args = _args()
+    if args.len() > 0 { n = _int(args[0]) }
+
+    print("caught=" + strOob(n) + "\n")
+    print("ok=" + indexOk(n) + "\n")
+}
