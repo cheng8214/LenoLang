@@ -1726,11 +1726,13 @@ Value jit_callout_struct_init(int64_t* vstack_top, uint16_t name_const_idx,
  *   慢路径：VM 重入（vm_call_value），语义与解释器完全一致（异常/多返回值都在这里兜底）。
  * ========================================================================== */
 
-/* ⚠ R6-k 已把「native 类 callee 的结果发布」下沉到 `vm_call_value`（vm.c）：
- * 在此之前，native 绑定方法（`T.malloc()` / `c.free()`）经 `vm_call_value` 调用后
- * **不会**写 `vm.last_return_value` ⇒ 调用方读到上一次帧返回的陈值（静默算错）。
- * 现在该包装函数对 native 也发布单返回 ⇒ 本文件**无需**再按 callee 类别分流取结果
- * （下面 `result = vm->last_return_value` 对所有类别都成立）。 */
+/* ⚠ native 类 callee 的结果发布已下沉到 `vm_call_value`（vm.c，§8.90）：
+ * 那之前，native 绑定方法（`T.malloc()` / `c.free()`）经 `vm_call_value` 调用后
+ * **不会**写 `vm.last_return_value`，且随后的 `vm_run_with_vm` 会继续执行**调用方**的
+ * 字节码（把结果冲成陈值）⇒ 静默算错。现在该包装函数对 native 类 callee
+ * **同步直调 + 发布单返回 + 跳过 vm_run_with_vm** ⇒ 本文件**无需**再按 callee 类别
+ * 分流取结果（下面 `result = vm->last_return_value` 对所有类别都成立）。
+ * JIT 侧仍保留 native 直调分支（上面那段）—— 少一次栈搬运，语义与之一致。 */
 static Value jit_invoke_closure(ObjFunction* mfunc, Value callee_val, int arg_count,
                                 int64_t* vstack_top, int ret_count, const char* who) {
     VM* vm = jit_callout_vm;

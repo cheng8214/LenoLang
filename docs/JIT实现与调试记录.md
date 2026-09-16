@@ -5578,11 +5578,12 @@ native 绑定方法把**接收者插到 `args[0]`**（与 `call_value` 的 bound
 
 #### 顺带留下的事项
 
-- **`vm_call_value` 对 native callee 的陷阱仍在**（本节只在 JIT 侧绕开）：`arrays.c:341`
+- ~~**`vm_call_value` 对 native callee 的陷阱仍在**（本节只在 JIT 侧绕开）：`arrays.c:341`
   （`arr.map` 回调）与 `ffi.c:2607`（FFI 回调）同样按"成功 ⇒ `last_return_value` 有效"
-  取结果 ⇒ 若传 native 值会拿到陈值**并**让解释器多跑一段字节码。建议单独立项：
-  让 `vm_call_value` 对 native 类 callee 显式处理（直调后发布结果）或**明确拒绝**
-  （宁可不做，不要静默错）。
+  取结果 ⇒ 若传 native 值会拿到陈值**并**让解释器多跑一段字节码。~~ → **已修（§8.90）**：
+  在 `vm_call_value` 里对 native 类 callee **同步直调 + 发布单返回 + 跳过 `vm_run_with_vm`**，
+  一处修掉 `arrays.c` / `ffi.c` / JIT 三个调用方；新探针 `probe_vm_call_value_native.leno`
+  用 A/B 证明它在**解释器里也是活的 bug**（改前：6 个运行时错误）。
 - ~~fm 仍有 **3** 条 bailout（来自别的站点）：用 `LENO_JIT_DEBUG=1` 定位~~ → **已定位（§8.89）**：
   是内层 **float 步长** for 循环的序言检查（`OP_FOR_PREP`），属**设计限制**、bail 正确；
   并因此补了"bailout 触发指令名"的**常驻诊断**（零成本，替代跑不完的 `LENO_JIT_DEBUG`）。
@@ -5629,6 +5630,60 @@ Bailout: fn='render' loop_bc=414 x3 — 非溢出类 @bc_off=787（= loop_bc 414
 **裁决：不修**（float 步长循环进 JIT 是独立特性：方向/比较要改走 SSE）。但它现在**可见**了：
 stats 里 `Bailouts` 连同**触发指令名**一起输出；`LENO_JIT_GAPS`（scan 期口径）看不到它
 —— 两者互补：**scan 期拒收**看 `LENO_JIT_GAPS`，**运行期 bailout** 看 stats 的 `Bailout:` 行。
+
+***
+
+### 8.90 修掉 `vm_call_value` 的 native callee 陷阱（一处修所有调用方；附 A/B + 新探针）（2026-09-17）
+
+**问题（§8.88 遗留项①）**：`vm_call_value`（`vm.c`）是「**脚本**调用」入口 —— `call_value`
+之后进 `vm_run_with_vm` 跑到"新帧"返回。但 **native 类 callee 不压帧**
+（`call_value` 同步执行完、把结果 push 回栈、**从不写 `vm.last_return_value`**）⇒ 那个解释器
+循环**继续执行调用方帧的字节码**（栈上还多着一个结果槽）⇒ 静默错。JIT 侧（§8.88 / R6-k）
+只是**绕开**了它；另两个调用方仍按"成功 ⇒ `last_return_value` 有效"取结果：
+`arrays.c:341`（`arr.map` / `filter` 的脚本回调）、`ffi.c:2607`（FFI 回调派发）。
+
+**它是活 bug，不是理论隐患（A/B 实测）**：新探针 `jit_probes/probe_vm_call_value_native.leno`
+用**原生函数值**当回调（`nums.map(print)` / `nums.filter(print)`）：
+
+| | 改前（无修复） | 修复后 |
+| --- | --- | --- |
+| `LENO_NO_JIT=1` | `probe:24 可空值（null）不能访问属性或方法`、`函数未定义`、`加法运算: null 不能参与运算`、**发现 6 个错误** ✗ | 干净 ✓ `after_len=3` / `total=6` |
+| JIT | 同样 6 个错误 ✗ | 同上 ✓ |
+
+⇒ **传原生函数值当回调在解释器里也是坏的**（不只 JIT ✗）。
+
+**修法（`vm.c` 的 `vm_call_value`，一处修所有调用方）**
+
+```c
+if (call_callee_is_native_like(callee)) {      /* OBJ_NATIVE / bound method(closure==NULL) */
+    int base = saved_sp - arg_count - 1;       /* call_value 把 arg_count+1 槽换成 1 个结果 */
+    Value res = (base >= 0 && vm_ptr->sp > base) ? vm_ptr->stack[base] : val_null();
+    vm_ptr->last_return_value     = res;       /* ① 发布成单返回（native 恒 1 个返回值） */
+    vm_ptr->last_return_values[0] = res;
+    vm_ptr->last_return_count     = 1;
+    vm_ptr->stop_frame_cnt        = saved_stop_frame_cnt;
+    return 1;                                  /* ② **跳过** vm_run_with_vm */
+}
+```
+
+① 让「成功 ⇒ `last_return_value` 有效」这条契约对**所有** callee 类别成立；
+② **跳过**解释器循环 —— native 调用不产生帧，没有属于它的东西要跑（native 内部若回调脚本，
+那些嵌套调用由各自的 `vm_call_value` 收尾）。
+⚠ **上一次尝试只做了 ① 没做 ②** ⇒ 结果被 `vm_run_with_vm` 的收尾冲成 `NULL_VAL`
+（§8.88 的双向仪器）：
+
+```
+[R6K-VM]  publish=0xfffc019fda2c9350 last_return_value=0xfffc019fda2c9350   ← 发布了 ✓
+[R6K-JIT] raw=0xfff8000000000000     last_return_value=0xfff8000000000000   ← 又被冲掉 ✗
+```
+
+⇒ **教训：修共享机械时，必须同时检查"之后谁会覆盖它"**（发布成功 ≠ 最终有效）。
+
+**JIT 侧的 native 直调保留**（§8.88 的分支）：它比走 `vm_call_value` 少一次栈搬运、已在探针上
+验证；两侧语义一致（接收者插 `args[0]` + 同步直调 + `has_exception` → failed → bailout）。
+
+**验证**：四个探针 JIT/`LENO_NO_JIT=1` **逐字一致**（新探针 `before=3 / after_len=3 / total=6 /
+keep_len=0`）、assert **311 passed / 0 failed**。
 
 ***
 

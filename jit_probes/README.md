@@ -138,6 +138,21 @@ cmd /c "set LENO_JIT_DEBUG=1&& build\leno.exe jit_probes\probe_index_callee.leno
 判据：`n=101`（JIT/NO_JIT 一致）、`Compiled: 1`、`Bailouts: 3`（3 次后循环被拉黑 ⇒
 只剩 3 条诊断，便于读）。**读诊断行时务必先读到函数尾部再下结论**（§8.86 的教训）。
 
+## R6-k 后续（§8.90）：`vm_call_value` 的 native callee 路径（`probe_vm_call_value_native.leno`）
+
+用**原生函数值**当回调（`nums.map(print)` / `nums.filter(print)`）—— 走 `vm_call_value` 的
+native 分支。判据：`after_len=3`、`total=6`（**回调之后**的热循环计数没被写坏）、
+`keep_len=0`，且与 `LENO_NO_JIT=1` 逐字一致。
+
+```powershell
+build\leno.exe jit_probes\probe_vm_call_value_native.leno
+cmd /c "set LENO_NO_JIT=1&& build\leno.exe jit_probes\probe_vm_call_value_native.leno"
+```
+
+**改前的症状（这就是它抓到的东西）**：`...:24 可空值（null）不能访问属性或方法`、
+`函数未定义`、`加法运算: null 不能参与运算`、`=== 发现 6 个错误 ===`
+（native callee 不压帧 ⇒ 解释器循环多跑了调用方字节码 ⇒ 静默错，见 §8.90）。
+
 ## （已解决）R6-f / R6-j / R6-k：把非闭包 callee 交出去
 
 **同一个症状、三个层次的原因**（前两次都回退，**R6-k 已修好**；详见 §8.82 / §8.87 / §8.88）：

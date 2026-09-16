@@ -1,0 +1,33 @@
+// ② 探针：`vm_call_value` 的 **native 类 callee** 路径（`arr.map` / `filter` 传原生函数值）
+//
+// 背景（§8.88 遗留项 → §8.90 修复）：`vm_call_value` 是「**脚本**调用」入口 —— 它假定
+// `call_value` 压了一个新帧，然后进解释器循环 (`vm_run_with_vm`) 跑到该帧返回。
+// 而 **native callee 不压帧**（`call_value` 同步执行完、把结果 push 回 VM 栈就返回，
+// 且**从不写 `vm.last_return_value`**）⇒ 那个循环会**继续执行调用方帧的字节码**
+// ⇒ 静默错：结果被冲成陈值、调用方局部量/控制流多跑一遍、甚至执行到栈布局不符的 OP_CALL。
+//
+// 判据（每条都能抓住"多跑一遍 / 陈值"这类**静默**错）：
+//   1. `map` 对 3 个元素各回调一次（下面用 `print` 当回调 ⇒ 打印行数必须是 3 行 × 2 个数）；
+//   2. `after_len == 3`（结果数组长度正确 ⇒ 回调恰好 3 次，不是 0/6 次）；
+//   3. `total == 6`（**回调之后**的热循环计数没被写坏 —— 这是最锋利的一条：
+//      修复前实测同类症状是"acc 只加到 50、应 101"）；
+//   4. 与 `LENO_NO_JIT=1` 逐字一致（本条与 JIT 无关，是 VM 层路径）。
+main() {
+    var nums = [1, 2, 3]
+
+    int before = 0
+    for 0 : 2 to i { before = before + 1 }
+    print("before=" + before + "\n")
+
+    // native 回调：`print` 是原生函数值（OBJ_NATIVE）⇒ 走 vm_call_value 的 native 分支
+    var r = nums.map(print)
+    print("after_len=" + r.len() + "\n")
+
+    int total = 0
+    for 0 : 2 to i { total = total + nums[i] }
+    print("total=" + total + "\n")
+
+    // 另一个 native 回调入口（filter），只求不崩且长度可预测
+    var keep = nums.filter(print)
+    print("keep_len=" + keep.len() + "\n")
+}

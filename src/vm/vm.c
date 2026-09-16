@@ -1018,6 +1018,18 @@ int vm_run_with_vm(VM* vm_ptr) {
     return result;
 }
 
+/* callee 是否属于「**native 类**」—— 即 `call_value` 里**不压帧**、直接把结果 push 回
+ * VM 栈（**从不写 `vm.last_return_value`**）的那两支（判据与 jit_callout.c 的 R6-k 一致）：
+ *   · `OBJ_NATIVE`：模块函数 / 原生函数值（vm_call.inc 的 native 分支）；
+ *   · `OBJ_BOUND_METHOD` 且 `closure == NULL`：native 绑定方法（`T.malloc()` / `c.free()`）。 */
+static int call_callee_is_native_like(Value callee) {
+    if (!val_is_obj(callee)) return 0;
+    Object* o = val_as_obj(callee);
+    if (o->type == OBJ_NATIVE) return 1;
+    if (o->type == OBJ_BOUND_METHOD) return ((ObjBoundMethod*)o)->closure == NULL;
+    return 0;
+}
+
 int vm_call_value(Value callee, int arg_count, int line) {
     VM* vm_ptr = current_exec_vm ? current_exec_vm : &vm;
     int saved_frame_cnt = vm_ptr->frame_cnt;
@@ -1025,12 +1037,37 @@ int vm_call_value(Value callee, int arg_count, int line) {
     // 内层返回会把 stop_frame_cnt 清零，导致外层的停止条件失效、一直跑到
     // 字节码结束。改为保存/恢复，而不是无条件清零。
     int saved_stop_frame_cnt = vm_ptr->stop_frame_cnt;
+    int saved_sp = vm_ptr->sp;   /* 调用前：实参(arg_count) + callee 已在栈上 */
 
     current_exec_vm = vm_ptr;
     #define vm (*current_exec_vm)
     if (!call_value(callee, arg_count, line)) {
         #undef vm
         return 0;
+    }
+    /* ---- native 类 callee：`call_value` 已**同步完成**整个调用、**不压帧** ----
+     * （vm_call.inc:268-270 与 :328-330 都是 `vm.sp -= arg_count+1;
+     *   vm_stack_push(&vm, result); return 1;` —— **从不写 `vm.last_return_value`**。）
+     * ⇒ 此时若照常进 `vm_run_with_vm`，那个解释器循环会**继续执行调用方帧的字节码**
+     * （栈上还多着一个结果槽）⇒ **静默错**，实测三种形态：
+     *   · 结果被冲成陈值（`T.malloc()` 返回 NULL_VAL 或 int48 50 ⇒ 随后"在 null 上设置字段"）；
+     *   · 调用方局部量/控制流多跑一遍（热循环 acc 只加到 50，应 101）；
+     *   · 执行到栈布局不符的 OP_CALL（"只能调用函数（不是对象类型）"）。
+     * 修法：① 从**基准位**取出结果并发布成单返回（native 恒 1 个返回值）——
+     * 这样「成功 ⇒ `last_return_value` 有效」这条契约对**所有** callee 类别成立；
+     * ② **跳过** `vm_run_with_vm`（native 调用不产生帧，没有属于它的东西要跑；
+     * native 内部若回调脚本，那些嵌套调用由各自的 vm_call_value 收尾）。
+     * 这一处修掉即修**所有**调用方：arrays.c 的 arr.map/filter 回调、ffi.c 的 FFI
+     * 回调派发、jit_callout.c 的慢路径（第 ①/② 条正是 §8.88 里 JIT 侧绕开的原因）。 */
+    if (call_callee_is_native_like(callee)) {
+        int base = saved_sp - arg_count - 1;   /* call_value 把 arg_count+1 个槽换成 1 个结果 */
+        Value res = (base >= 0 && vm_ptr->sp > base) ? vm_ptr->stack[base] : val_null();
+        vm_ptr->last_return_value     = res;
+        vm_ptr->last_return_values[0] = res;
+        vm_ptr->last_return_count     = 1;
+        vm_ptr->stop_frame_cnt        = saved_stop_frame_cnt;
+        #undef vm
+        return 1;
     }
     vm.stop_frame_cnt = saved_frame_cnt;
     #undef vm
