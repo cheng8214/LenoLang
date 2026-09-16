@@ -74,6 +74,10 @@
 //
 // ============================================================================
 
+// ⚠ 改这个版本号之前先看 docs/待办_单一事实来源与重复实现收敛.md 第七节
+//   「缓存格式与版本号登记表」：.lenb / .lenomc / .lenosymc / .lenb.deps 四处要一起评估，
+//   并写明"为什么升 / 为什么不升"；改前先 git fetch（2026-09-16 撞过车：两个会话都用 v23
+//   但格式不同，数值相同、格式不同 ⇒ 靠版本号区分不开）。
 #define LENO_BIN_MAGIC      0x424E454C  // "LENB" little-endian
 #define LENO_BIN_VERSION    0x00020700  // v2.7.0 - 序列化不再写出 ObjFFIPointer（原始地址跨进程无效，
                                         //   读回来即悬空；owned 的还会被下个进程 free ⇒ 堆破坏）；
@@ -91,6 +95,7 @@
 #define LENO_BIN_EXT        ".lenb"
 
 // 模块编译缓存格式（.lenomc）—— 跨运行的模块编译产物缓存
+// ⚠ 版本号登记表：docs/待办_单一事实来源与重复实现收敛.md 第七节（与 .lenb 同源改动要一起评估）
 #define LENO_MODCACHE_MAGIC    0x434D4E4C  // "LNMC" little-endian
 #define LENO_MODCACHE_VERSION  0x00000006  // v6 - 不再序列化 ObjFFIPointer（原始地址跨进程无意义：
                                           //      owned 的还会被下个进程 free ⇒ 堆破坏）。旧缓存里
