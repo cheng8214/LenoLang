@@ -34,6 +34,25 @@ int jit_debug_on(void) {
     return v;
 }
 
+/* ---- JIT 侧统一的「callout 错误通道」（§8.91）----
+ * 本文件里 callout 的错误路径**一律只置 `jit_callout_failed`，绝不写全局错误收集器**。
+ * 理由与 §8.86 修 `OP_INDEX` 时完全相同：
+ *   · 那类 `error_add_at(ERR_RUNTIME, …)` 写的是**编译期/解释器**的全局错误表 ⇒ 在 JIT
+ *     里会留下**永久记录**：即使 Leno 层 `try/catch` 成功捕获，进程仍以
+ *     「发现 N 个错误」+ **非零退出码**结束 ✗（实测 §8.86：NO_JIT 捕获 61 次、JIT 0 次）；
+ *   · 正确通道只有一个：置 `failed` ⇒ codegen 的既有检查命中 ⇒ **bailout ⇒ 解释器重放
+ *     本条指令**，抛出与 `LENO_NO_JIT=1` **完全一致**、可被 `try/catch` 捕获的原文错误
+ *     （含行号）。JIT 侧自己造报错文本**必然**与解释器分叉，所以文本交给解释器。
+ * 于是：本文件所有错误路径都走这一个 helper，用一次文本替换统一掉、不会再漏一处。
+ * 原文只在 `LENO_JIT_DEBUG` 下打到 stderr，便于定位"是哪条 callout 失败"。 */
+static void jit_callout_error(const char* msg) {
+    if (jit_debug_on()) {
+        fprintf(stderr, "[JIT-CALLOUT-FAIL] %s（置 failed ⇒ bailout 交解释器报原文）\n",
+                msg ? msg : "?");
+    }
+    jit_callout_failed = 1;
+}
+
 /* ---- Bailout debug function ---- */
 int64_t jit_bailout_rax = 0;
 int32_t jit_bailout_site = 0;
@@ -470,13 +489,13 @@ Value jit_callout_concat(Value a, Value b) {
  * Returns 0 on success, -1 on error. */
 int jit_callout_array_append(Value arr_val, Value value) {
     if (!val_is_obj(arr_val) || val_as_obj(arr_val)->type != OBJ_ARRAY) {
-        error_add_at(ERR_RUNTIME, 0, 0, "append 操作需要数组");
+        jit_callout_error("append 操作需要数组");
         return -1;
     }
     ObjArray* arr = (ObjArray*)val_as_obj(arr_val);
     if (arr->count >= arr->capacity) {
         if (!arr_grow(arr)) {
-            error_add_at(ERR_RUNTIME, 0, 0, "数组扩容失败");
+            jit_callout_error("数组扩容失败");
             return -1;
         }
     }
@@ -489,7 +508,7 @@ int jit_callout_array_append(Value arr_val, Value value) {
  * Returns dict_val on success, NULL_VAL on error. */
 Value jit_callout_dict_set(Value dict_val, Value key_val, Value value) {
     if (!val_is_obj(dict_val) || val_as_obj(dict_val)->type != OBJ_DICT) {
-        error_add_at(ERR_RUNTIME, 0, 0, "赋值操作需要字典");
+        jit_callout_error("赋值操作需要字典");
         return NULL_VAL;
     }
     ObjDict* dict = (ObjDict*)val_as_obj(dict_val);
@@ -501,19 +520,19 @@ Value jit_callout_dict_set(Value dict_val, Value key_val, Value value) {
  * Returns 0 on success, -1 on error. */
 int jit_callout_index_set(Value obj_val, Value idx_val, Value value) {
     if (!val_is_obj(obj_val)) {
-        error_add_at(ERR_RUNTIME, 0, 0, "索引赋值需要对象类型");
+        jit_callout_error("索引赋值需要对象类型");
         return -1;
     }
     Object* obj = val_as_obj(obj_val);
     if (obj->type == OBJ_ARRAY) {
         if (!val_is_num(idx_val)) {
-            error_add_at(ERR_RUNTIME, 0, 0, "数组索引必须是数字");
+            jit_callout_error("数组索引必须是数字");
             return -1;
         }
         ObjArray* arr = (ObjArray*)obj;
         int index = val_is_int(idx_val) ? (int)val_as_int(idx_val) : (int)value_to_double(idx_val);
         if (index < 0 || index >= arr->capacity) {
-            error_add_at(ERR_RUNTIME, 0, 0, "数组索引越界");
+            jit_callout_error("数组索引越界");
             return -1;
         }
         arr->elements[index] = value;
@@ -529,7 +548,7 @@ if (obj->type == OBJ_DICT) {
     /* ---- 以下分支对齐解释器 op_index_slice.inc DO_INDEX_SET 语义 ---- */
     if (obj->type == OBJ_STRUCT) {
         if (!val_is_obj(idx_val) || val_as_obj(idx_val)->type != OBJ_STRING) {
-            error_add_at(ERR_RUNTIME, 0, 0, "struct 字段名必须是字符串");
+            jit_callout_error("struct 字段名必须是字符串");
             return -1;
         }
         ObjStruct* struct_obj = (ObjStruct*)obj;
@@ -537,7 +556,7 @@ if (obj->type == OBJ_DICT) {
         ObjString* field_name = (ObjString*)val_as_obj(idx_val);
         int field_idx = struct_get_field_index(def, field_name->chars);
         if (field_idx < 0) {
-            error_add_at(ERR_RUNTIME, 0, 0, "struct 字段不存在");
+            jit_callout_error("struct 字段不存在");
             return -1;
         }
         TypeKind expected_type = def->fields[field_idx].type;
@@ -551,7 +570,7 @@ if (obj->type == OBJ_DICT) {
     }
     if (obj->type == OBJ_CSTRUCT) {
         if (!val_is_obj(idx_val) || val_as_obj(idx_val)->type != OBJ_STRING) {
-            error_add_at(ERR_RUNTIME, 0, 0, "cstruct 字段名必须是字符串");
+            jit_callout_error("cstruct 字段名必须是字符串");
             return -1;
         }
         ObjCStruct* cstruct_obj = (ObjCStruct*)obj;
@@ -559,7 +578,7 @@ if (obj->type == OBJ_DICT) {
         ObjString* field_name = (ObjString*)val_as_obj(idx_val);
         int field_idx = cstruct_get_field_index(def, field_name->chars);
         if (field_idx < 0) {
-            error_add_at(ERR_RUNTIME, 0, 0, "cstruct 字段不存在");
+            jit_callout_error("cstruct 字段不存在");
             return -1;
         }
         CStructFieldInfo* field = &def->fields[field_idx];
@@ -573,13 +592,13 @@ if (obj->type == OBJ_DICT) {
     }
     if (obj->type == OBJ_CSTRUCT_ARRAY_VIEW) {
         if (!val_is_num(idx_val)) {
-            error_add_at(ERR_RUNTIME, 0, 0, "cstruct 数组索引必须是数字");
+            jit_callout_error("cstruct 数组索引必须是数字");
             return -1;
         }
         int index = (int)value_to_double(idx_val);
         ObjCStructArrayView* view = (ObjCStructArrayView*)obj;
         if (index < 0 || index >= view->array_dim) {
-            error_add_at(ERR_RUNTIME, 0, 0, "cstruct 数组索引越界");
+            jit_callout_error("cstruct 数组索引越界");
             return -1;
         }
         ObjCStruct* cst = view->cstruct;
@@ -614,7 +633,7 @@ if (obj->type == OBJ_DICT) {
         }
         return 0;
     }
-    error_add_at(ERR_RUNTIME, 0, 0, "索引赋值需要数组、字典、struct 或 cstruct");
+    jit_callout_error("索引赋值需要数组、字典、struct 或 cstruct");
     return -1;
 }
 
@@ -625,7 +644,7 @@ Value jit_callout_div(Value a, Value b) {
     if (val_is_int(a) && val_is_int(b)) {
         int64_t b_val = val_as_int(b);
         if (b_val == 0) {
-            error_add_at(ERR_RUNTIME, 0, 0, "除零错误：除数为 0");
+            jit_callout_error("除零错误：除数为 0");
             return NULL_VAL;
         }
         int64_t a_val = val_as_int(a);
@@ -635,7 +654,7 @@ Value jit_callout_div(Value a, Value b) {
     if (val_is_float(a) || val_is_float(b)) {
         double b_val = val_as_num_ex(b);
         if (b_val == 0) {
-            error_add_at(ERR_RUNTIME, 0, 0, "除零错误：除数为 0");
+            jit_callout_error("除零错误：除数为 0");
             return NULL_VAL;
         }
         double result = val_as_num_ex(a) / b_val;
@@ -646,11 +665,11 @@ Value jit_callout_div(Value a, Value b) {
         if (val_is_bigint(b)) {
             ObjBigInt* bb = val_as_bigint(b);
             if (bb->limb_count == 1 && bb->limbs[0] == 0) {
-                error_add_at(ERR_RUNTIME, 0, 0, "除零错误：除数为 0");
+                jit_callout_error("除零错误：除数为 0");
                 return NULL_VAL;
             }
         } else if (val_as_num(b) == 0) {
-            error_add_at(ERR_RUNTIME, 0, 0, "除零错误：除数为 0");
+            jit_callout_error("除零错误：除数为 0");
             return NULL_VAL;
         }
         ObjBigInt* ba = val_is_bigint(a) ? val_as_bigint(a)
@@ -659,7 +678,7 @@ Value jit_callout_div(Value a, Value b) {
                                          : bigint_from_int64((int64_t)val_as_num(b));
         return bigint_div(ba, bb);
     }
-    error_add_at(ERR_RUNTIME, 0, 0, "操作数必须是数字");
+    jit_callout_error("操作数必须是数字");
     return NULL_VAL;
 }
 
@@ -1565,7 +1584,7 @@ Value jit_callout_value_eq(Value a, Value b, int invert) {
 Value jit_callout_acc_fields(Value obj_val, uint8_t count,
                                     const uint8_t* field_indices) {
     if (!val_is_obj(obj_val) || val_as_obj(obj_val)->type != OBJ_STRUCT) {
-        error_add_at(ERR_RUNTIME, 0, 0, "OP_ACC_FIELDS: 需要 struct 类型");
+        jit_callout_error("OP_ACC_FIELDS: 需要 struct 类型");
         return NULL_VAL;
     }
     ObjStruct* obj = (ObjStruct*)val_as_obj(obj_val);
@@ -1574,7 +1593,7 @@ Value jit_callout_acc_fields(Value obj_val, uint8_t count,
     for (int i = 0; i < count; i++) {
         uint8_t idx = field_indices[i];
         if (idx >= def->field_count) {
-            error_add_at(ERR_RUNTIME, 0, 0, "字段索引越界");
+            jit_callout_error("字段索引越界");
             return NULL_VAL;
         }
         Value fv = struct_get_field(obj, idx);
@@ -1617,7 +1636,7 @@ Value jit_callout_struct_init(int64_t* vstack_top, uint16_t name_const_idx,
 
     Value name_val = chunk->constants[name_const_idx];
     if (!val_is_obj(name_val) || val_as_obj(name_val)->type != OBJ_STRING) {
-        error_add_at(ERR_RUNTIME, 0, 0, "结构体名称必须是字符串");
+        jit_callout_error("结构体名称必须是字符串");
         jit_callout_failed = 1;
         return NULL_VAL;
     }
@@ -1655,7 +1674,7 @@ Value jit_callout_struct_init(int64_t* vstack_top, uint16_t name_const_idx,
     if (!def) {
         char msg[256];
         snprintf(msg, sizeof(msg), "未定义的结构体 '%s'", name->chars);
-        error_add_at(ERR_RUNTIME, 0, 0, msg);
+        jit_callout_error(msg);
         jit_callout_failed = 1;
         return NULL_VAL;
     }
@@ -1686,7 +1705,7 @@ Value jit_callout_struct_init(int64_t* vstack_top, uint16_t name_const_idx,
             char msg[256];
             snprintf(msg, sizeof(msg), "struct '%s' 字段索引越界（索引 %d，共 %d 个字段）",
                      def->name ? def->name : "?", (int)field_idx, def->field_count);
-            error_add_at(ERR_RUNTIME, 0, 0, msg);
+            jit_callout_error(msg);
             jit_callout_failed = 1;
             return NULL_VAL;
         }
@@ -1938,7 +1957,7 @@ VM* vm = jit_callout_vm;
 
 Value method_name_val = chunk->constants[method_name_idx];
     if (!val_is_obj(method_name_val) || val_as_obj(method_name_val)->type != OBJ_STRING) {
-        error_add_at(ERR_RUNTIME, 0, 0, "方法名必须是字符串");
+        jit_callout_error("方法名必须是字符串");
         return NULL_VAL;
     }
     ObjString* method_name = (ObjString*)val_as_obj(method_name_val);
@@ -1949,7 +1968,7 @@ Value method_name_val = chunk->constants[method_name_idx];
     if (!val_is_obj(obj_val) || val_as_obj(obj_val)->type != OBJ_STRUCT) {
         char msg[256];
         snprintf(msg, sizeof(msg), "尝试在非 struct 类型上调用方法 '%s'", method_name->chars);
-        error_add_at(ERR_RUNTIME, 0, 0, msg);
+        jit_callout_error(msg);
         /* §8.57：本 callout 现在也被 `OP_GET_METHOD + OP_CALL` 的动态派发复用，
          * 而那种调用点**可能**是原生方法布局（先压实参再压 receiver）——
          * 此时这里取到的不是接收者。必须置 failed 让 JIT bailout 交解释器，
@@ -1973,7 +1992,7 @@ Value method_name_val = chunk->constants[method_name_idx];
         char msg[256];
         snprintf(msg, sizeof(msg), "类型 '%s' 没有方法 '%s'",
                  def->name ? def->name : "?", method_name->chars);
-        error_add_at(ERR_RUNTIME, 0, 0, msg);
+        jit_callout_error(msg);
         jit_callout_failed = 1;   /* §8.57：动态派发路径可能落到这里，必须交解释器 */
         return NULL_VAL;
     }
@@ -2259,7 +2278,7 @@ Value jit_callout_global_func(int64_t* vstack_top, int arg_count,
     if (func_slot >= vm->global_func_capacity) {
         if (jit_debug_on())
             fprintf(stderr, "[JIT-DEBUG] global_func: slot %d >= capacity %d\n", func_slot, vm->global_func_capacity);
-        error_add_at(ERR_RUNTIME, 0, 0, "全局函数索引越界");
+        jit_callout_error("全局函数索引越界");
         return NULL_VAL;
     }
 
@@ -2267,7 +2286,7 @@ Value jit_callout_global_func(int64_t* vstack_top, int arg_count,
     if (!val_is_obj(callee)) {
         if (jit_debug_on())
             fprintf(stderr, "[JIT-DEBUG] global_func: callee not obj, slot=%d\n", func_slot);
-        error_add_at(ERR_RUNTIME, 0, 0, "全局函数未定义");
+        jit_callout_error("全局函数未定义");
         return NULL_VAL;
     }
 
@@ -2477,7 +2496,7 @@ Value jit_callout_global_func(int64_t* vstack_top, int arg_count,
  * Same semantics as VM's OP_GET_FIELD_FAST: locals[slot] → struct → field_values[idx]. */
 Value jit_callout_get_field_fast(Value obj_val, uint8_t field_idx) {
     if (!val_is_obj(obj_val) || val_as_obj(obj_val)->type != OBJ_STRUCT) {
-        error_add_at(ERR_RUNTIME, 0, 0, "OP_GET_FIELD_FAST: 需要 struct 类型");
+        jit_callout_error("OP_GET_FIELD_FAST: 需要 struct 类型");
         return NULL_VAL;
     }
     ObjStruct* obj = (ObjStruct*)val_as_obj(obj_val);
@@ -2552,11 +2571,11 @@ void* jit_thin_bridge_for(int arity) {
 Value jit_callout_module_call_meta(int64_t* vstack_top, int arg_count,
                                    ModuleMethodMeta* meta) {
     if (!meta || !meta->function) {
-        error_add_at(ERR_RUNTIME, 0, 0, "OP_MODULE_CALL: 模块方法未解析");
+        jit_callout_error("OP_MODULE_CALL: 模块方法未解析");
         return NULL_VAL;
     }
     if (arg_count > 16) {
-        error_add_at(ERR_RUNTIME, 0, 0, "模块方法参数过多");
+        jit_callout_error("模块方法参数过多");
         return NULL_VAL;
     }
 
@@ -2588,7 +2607,7 @@ Value jit_callout_module_call(int64_t* vstack_top, int arg_count,
 
     if (module_idx >= (uint16_t)chunk->const_cnt ||
         method_idx >= (uint16_t)chunk->const_cnt) {
-        error_add_at(ERR_RUNTIME, 0, 0, "OP_MODULE_CALL: 常量索引越界");
+        jit_callout_error("OP_MODULE_CALL: 常量索引越界");
         return NULL_VAL;
     }
 
@@ -2596,7 +2615,7 @@ Value jit_callout_module_call(int64_t* vstack_top, int arg_count,
     Value method_val = chunk->constants[method_idx];
     if (!val_is_obj(module_val) || val_as_obj(module_val)->type != OBJ_STRING ||
         !val_is_obj(method_val) || val_as_obj(method_val)->type != OBJ_STRING) {
-        error_add_at(ERR_RUNTIME, 0, 0, "模块方法名必须是字符串");
+        jit_callout_error("模块方法名必须是字符串");
         return NULL_VAL;
     }
 
@@ -2607,7 +2626,7 @@ Value jit_callout_module_call(int64_t* vstack_top, int arg_count,
     if (!meta) {
         char msg[256];
         snprintf(msg, sizeof(msg), "未找到模块方法: %s.%s", module_name, method_name);
-        error_add_at(ERR_RUNTIME, 0, 0, msg);
+        jit_callout_error(msg);
         return NULL_VAL;
     }
 
@@ -2617,7 +2636,7 @@ Value jit_callout_module_call(int64_t* vstack_top, int arg_count,
      * Native function expects args[0] = first argument. */
     Value args[16];
     if (arg_count > 16) {
-        error_add_at(ERR_RUNTIME, 0, 0, "模块方法参数过多");
+        jit_callout_error("模块方法参数过多");
         return NULL_VAL;
     }
 for (int i = 0; i < arg_count; i++) {
@@ -2859,7 +2878,7 @@ Value jit_callout_get_property(int64_t* vstack_top, uint16_t name_const_idx,
 
     Value name_val = chunk->constants[name_const_idx];
     if (!val_is_obj(name_val) || val_as_obj(name_val)->type != OBJ_STRING) {
-        error_add_at(ERR_RUNTIME, 0, 0, "属性名必须是字符串");
+        jit_callout_error("属性名必须是字符串");
         jit_callout_failed = 1;
         if (jit_debug_on()) fprintf(stderr, "[JIT-CALLOUT-FAIL] get_property: name not string\n");
         return NULL_VAL;

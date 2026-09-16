@@ -1,0 +1,31 @@
+// B 审计探针 2：**通用除法** callout 的错误通道（`jit_callout_div`，走 OP_DIV 而非内联的 OP_DIV_INT）
+//
+// 与 `probe_error_channel_more.leno` 互补：那个用的是 `10 / (i - 150)`（静态 int）⇒ codegen 走
+// **内联**的 `OP_DIV_INT` + 自己的零检查 bailout 桩（实测 `触发指令=OP_DIV_INT`、行为已正确 ✓），
+// 根本到不了 `jit_callout_div` 的 `error_add_at` 站点。这里让操作数**静态类型未知**
+// （`any` 形参 ⇒ `OP_DIV` 通用 callout，运行时类型分发）⇒ 直接压那条错误路径。
+//
+// 判据：JIT 与 `LENO_NO_JIT=1` 的 `caught` 一致、**exit=0**、不出现「发现 N 个错误」
+// （改前：JIT 侧会往全局错误表里记下每次除零 ⇒ 即使被 catch，进程仍报错并非零退出 ✗）。
+func hotDiv(any n): int {
+    int caught = 0
+    int ok = 0
+    int i = 0
+    while i < 300 {
+        try {
+            var b = n              // any ⇒ 类型未知
+            var z = 100 / (b - b)  // 通用 OP_DIV ⇒ 动态类型 ⇒ 除零走 jit_callout_div
+            ok = ok + 1
+        } catch (e) {
+            caught = caught + 1
+        }
+        i = i + 1
+    }
+    print("ok=" + ok + "\n")
+    return caught
+}
+
+main() {
+    var n = 300
+    print("caught=" + hotDiv(n) + "\n")
+}

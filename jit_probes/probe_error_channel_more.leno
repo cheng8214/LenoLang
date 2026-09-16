@@ -1,0 +1,35 @@
+// B 审计探针：JIT 里的「错误通道」——`OP_INDEX` 之外的那些 `error_add_at` 站点
+//
+// 背景（§8.86 的同类隐患）：`error_add_at` 写的是**全局错误收集器**（编译期/解释器的
+// 报错通道）⇒ 在 JIT 里会留下**永久记录**：即使 Leno 层 try/catch 成功捕获，
+// 进程仍以「发现 N 个错误」+ 非零退出码结束 ✗。§8.86 只修了 `OP_INDEX` 一处；
+// `jit_callout.c` 里还有 ~37 处同类调用（除零 / append / 索引赋值 / struct / cstruct /
+// 模块调用 / 属性 …）。本探针用**除零**验证：这一类在 `OP_INDEX` 之外是否也真实存在。
+//
+// 判据（必须全部成立）：
+//   1. `caught` 与 `LENO_NO_JIT=1` **完全一致**；
+//   2. 进程以 **0** 退出（不出现「发现 N 个错误」+ 非零退出码）；
+//   3. 循环确实是**热**的（回边 ≥ JIT_HOT_THRESHOLD，否则测的是解释器，什么也证明不了）
+//      —— 上面同时放一个纯算术累加 `acc`，两侧应逐字一致。
+//
+// 为什么用 `while`：它的回边是 OP_LOOP，能被循环级 JIT 编译；`try/catch` 在 JIT 里是
+// no-op（见 ops_misc.inc 的说明）⇒ 错误路径本来就该走「置 failed → bailout → 解释器
+// 重放本条指令并抛**可被 try/catch 捕获**的原文错误」这条通道。
+main() {
+    int caught = 0
+    int acc = 0
+    int i = 0
+    while i < 300 {
+        try {
+            // i == 150 时除数为 0 ⇒ 走 callout 的除零错误路径
+            var z = 10 / (i - 150)
+            acc = acc + 1
+        } catch (e) {
+            caught = caught + 1
+        }
+        i = i + 1
+    }
+    print("caught=" + caught + "\n")
+    print("acc=" + acc + "\n")
+    print("i=" + i + "\n")
+}

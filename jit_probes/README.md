@@ -138,6 +138,25 @@ cmd /c "set LENO_JIT_DEBUG=1&& build\leno.exe jit_probes\probe_index_callee.leno
 判据：`n=101`（JIT/NO_JIT 一致）、`Compiled: 1`、`Bailouts: 3`（3 次后循环被拉黑 ⇒
 只剩 3 条诊断，便于读）。**读诊断行时务必先读到函数尾部再下结论**（§8.86 的教训）。
 
+## B 审计（§8.91）：错误通道 —— 3 个探针
+
+| 探针 | 压的是什么 | 判据 |
+| --- | --- | --- |
+| `probe_error_channel_more.leno` | 热循环里的 `10 / (i - 150)`（**静态 int** ⇒ JIT 内联 `OP_DIV_INT` + 自有零检查）| `caught=1 / acc=299 / i=300`，与 NO_JIT 一致、exit=0 |
+| `probe_error_channel_div.leno` | `any` 形参做除数 ⇒ **通用 `OP_DIV` callout**（`jit_callout_div`）| `ok=0 / caught=300`，与 NO_JIT 一致、exit=0、**无「发现 N 个错误」** |
+| `probe_index_error_channel.leno` | 字符串索引越界（§8.86 的原始用例）| `caught=61 / ok=61`，与 NO_JIT 一致、exit=0 |
+
+```powershell
+foreach ($f in @('probe_error_channel_more','probe_error_channel_div','probe_index_error_channel')) {
+  build\leno.exe jit_probes\$f.leno
+  cmd /c "set LENO_NO_JIT=1&& build\leno.exe jit_probes\$f.leno"   # 两侧输出必须逐字一致、exit=0
+}
+```
+
+**这三种"坏法"都出现过**（详见 §8.86 / §8.91）：① `error_add_at` 写全局表 ⇒ 即使 try/catch
+成功，进程仍 `发现 N 个错误` + **非零退出码** ✗；② callout 置了 `failed` 但 **调用点没有守卫**
+⇒ 错误被**彻底静默**（JIT 把 NULL 当结果继续跑）✗；③ 两者都修好才对 ✓。
+
 ## R6-k 后续（§8.90）：`vm_call_value` 的 native callee 路径（`probe_vm_call_value_native.leno`）
 
 用**原生函数值**当回调（`nums.map(print)` / `nums.filter(print)`）—— 走 `vm_call_value` 的

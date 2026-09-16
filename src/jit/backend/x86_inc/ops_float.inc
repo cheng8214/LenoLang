@@ -89,6 +89,25 @@
                 emit_mov_rr(cb, JIT_ARG2, JIT_R8);    /* b */
                 EMIT_CALL(jit_callout_div);
                 EMIT_CALLOUT_END();
+                /* ---- §8.91：callout 失败必须 bailout（**这里原先漏了守卫** ✗）----
+                 * `jit_callout_div` 的错误路径（除零 / 操作数非数字）只置
+                 * `jit_callout_failed` + 返回 NULL_VAL ⇒ 没有这段检查时 JIT 会把 NULL
+                 * 当结果继续跑：实测热循环里 250 次除零**全部静默成功**（`ok=250`），
+                 * 而 `LENO_NO_JIT=1` 每次都抛（`caught=300`）⇒ try/catch 捕获次数与退出码
+                 * 都对不上（`probe_error_channel_div.leno` 抓到的就是这个）。
+                 * 加上守卫：bailout ⇒ 解释器重放本条指令 ⇒ 抛**可被 try/catch 捕获**的原文错误。 */
+                EMIT_STORE_TMP(tmp2_disp, JIT_RAX);
+                emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_callout_failed);
+                emit_mov_reg_mem8(cb, JIT_RAX, JIT_R8, 0);
+                emit_test_rr(cb, JIT_RAX, JIT_RAX);
+                {
+                    EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                    int dv_fail = emit_jcc(cb, 0x85);     /* JNZ → bailout */
+                    patch_add(ctx, dv_fail, -1, 0);
+                }
+                emit_xor_rr(cb, JIT_RAX, JIT_RAX);
+                emit_mov_mem8_reg(cb, JIT_R8, 0, JIT_RAX);
+                EMIT_LOAD_TMP(JIT_RAX, tmp2_disp);
                 EMIT_VALUE_TO_RAW();
                 TOS_PRODUCE();
                 vstack--;

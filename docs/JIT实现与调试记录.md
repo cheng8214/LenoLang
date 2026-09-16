@@ -5687,6 +5687,64 @@ keep_len=0`）、assert **311 passed / 0 failed**。
 
 ***
 
+### 8.91 错误通道统一（36 处 `error_add_at` → 只置 failed）+ 补上 `OP_DIV` 漏掉的守卫（2026-09-17）
+
+**背景**：§8.86 只修了 `OP_INDEX` 一处"在 JIT 里写全局错误收集器"✗。审计 `src/jit/`：
+`ops_index.inc` 的 3 处命中**全是注释** ✓；真正的调用点在 **`jit_callout.c` 36 处** ✗
+（除零 / append / 索引赋值 / struct / cstruct / 模块调用 / 属性 …）。
+
+#### 第 1 步：统一通道（一次性文本替换，不会再漏一处）
+
+新增 `jit_callout_error(msg)` —— **只做一件事：置 `jit_callout_failed = 1`**
+（原文只在 `LENO_JIT_DEBUG` 下打到 stderr，便于定位是哪条 callout 失败）；然后把
+`error_add_at(ERR_RUNTIME, 0, 0, X)` 用一次 `replace_all` 全部换成 `jit_callout_error(X)`
+（36 处 ✓，剩余命中全是注释 ✓）。之后按既有约定：codegen 的 `failed` 检查 → bailout →
+**解释器重放本条指令** ⇒ 抛与 `LENO_NO_JIT=1` 一致、**可被 try/catch 捕获**的原文错误 ✓。
+
+#### 第 2 步：新探针抓出"光置 failed 还不够"✗（本节最重要的教训）
+
+`probe_error_channel_div.leno`：让操作数**静态类型未知**（`any`）⇒ 走**通用 `OP_DIV` callout**，
+而不是 JIT 内联的 `OP_DIV_INT`（那条自带零检查 bailout 桩，本来就是对的 ✓）。
+
+| | 改前（`error_add_at`）| 只做第 1 步（统一通道）| 第 1+2 步（补守卫）|
+| --- | --- | --- | --- |
+| JIT | `ok=250 caught=50`，**exit=-1** + `发现 250 个错误` ✗ | `ok=250 caught=50`，exit=0 ✗（**彻底静默**）| **`ok=0 caught=300`**，exit=0 ✓ |
+| NO_JIT | `ok=0 caught=300`，exit=0 | 同左 | 同左 ✓ |
+
+- "改前 exit=-1" = §8.86 的既有 bug 形态（250 次除零被**永久**记进全局表 ✓）；
+- "只做第 1 步"却**更糟**：`jit_callout_div` 置了 `failed`，但 `case OP_DIV`
+  （`ops_float.inc:77-96`）**没有检查它** ⇒ JIT 把 NULL 当结果继续跑（`Bailouts: 0` ✗），
+  错误**彻底静默** ✗；
+- ⇒ **教训：`failed` 只是"信号"，必须有"检查者"**。改造 callout 的错误通道时，
+  必须同时核对该 callout 在 **codegen 侧的调用点**是否含 `failed` 守卫。
+
+#### 第 2 步的修法
+
+给 `case OP_DIV` 补上与 `OP_INDEX` / `OP_CALL` 同款的守卫块：
+`EMIT_STORE_TMP(tmp2)` → 读 `&jit_callout_failed` → `test` → `EMIT_BAILOUT_SITE_NONOVF(bc_off)`
+跳 bailout → 清标志 → 恢复 RAX → `EMIT_VALUE_TO_RAW / TOS_PRODUCE`。
+
+#### 剩余审计（已用"计数法"定位，必须逐条核，不能靠计数推断）
+
+backend 里 `EMIT_CALL(jit_callout_*)` **45** 处 vs `&jit_callout_failed` 守卫 **28** 处
+⇒ 17 处无守卫 ✗。已核实的 4 个单点文件：
+
+| 文件 | callout | 结论 |
+| --- | --- | --- |
+| `ops_arith.inc` | `jit_callout_concat` | ✓ 用**返回值**判 `NULL_VAL` 当守卫（等价手段）|
+| `ops_jump.inc` | `jit_callout_switch_lookup` | ✓ 无失败模式（-1 = default 是合法结果）|
+| `ops_icmp.inc` | `jit_callout_value_eq` | ✓ 无失败模式 |
+| `ops_float.inc` | `jit_callout_div` | ✗ **本次修掉** ✓ |
+
+其余 13 处在 `ops_callout.inc` / `ops_index.inc` / `ops_misc.inc` —— **待逐条核**
+"该 callout 是否可能失败 + 失败时是否只置 `failed`"（多数应是"无失败模式"或"用返回值当守卫"，
+但必须逐条确认）。
+
+**验证**：7 个探针（3 个错误通道 + cstruct / CLIB / native 回调 / bound method）
+JIT/`LENO_NO_JIT=1` **逐字一致** ✓、assert **311 passed / 0 failed** ✓。
+
+***
+
 ## 9. 性能数据
 
 ### 测试环境
