@@ -442,13 +442,8 @@ OPCODE(OP_STRUCT_INIT) {
         }
     }
 
-    // 裸名部分（定义表里存的都是裸名）
-    const char* bare_name = name->chars;
-    {
-        const char* dotp = strchr(bare_name, '.');
-        if (dotp) bare_name = dotp + 1;
-    }
-
+    // 裸名部分（定义表里存的都是裸名）在**未命中**分支里现算 —— 命中路径用不到它，
+    // 而这里是每次分配都会走到的地方（原先无条件算，等于白花一次 strchr）。
     // 查找结构体定义：优先走内联缓存，避免每次分配都做 struct_def_find
     // 全局字符串查找（对象版光线追踪实测：这是 struct 分配慢于 Python 的主因之一）
     // 缓存键连 owner 一起比：同名不同 owner 的调用点必须各自命中自己那份，不能互相污染。
@@ -467,6 +462,9 @@ OPCODE(OP_STRUCT_INIT) {
         def = sd_cache->def;
     } else {
         vm.ic_misses++;
+        const char* bare_name = name->chars;
+        const char* dotp = strchr(bare_name, '.');
+        if (dotp) bare_name = dotp + 1;
         if (mod_owner) def = struct_def_find_in_module(mod_owner, bare_name);
         if (!def) def = struct_def_find_qualified(name->chars);
         if (def) {
@@ -479,6 +477,9 @@ OPCODE(OP_STRUCT_INIT) {
     }
 #else
     ObjStructDef* def = NULL;
+    const char* bare_name = name->chars;
+    const char* dotp = strchr(bare_name, '.');
+    if (dotp) bare_name = dotp + 1;
     if (mod_owner) def = struct_def_find_in_module(mod_owner, bare_name);
     if (!def) def = struct_def_find_qualified(name->chars);
 #endif

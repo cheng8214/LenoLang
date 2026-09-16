@@ -14,6 +14,85 @@
 static THREAD_LOCAL ObjStructDef* struct_def_table[MAX_STRUCT_DEFS];
 static THREAD_LOCAL int struct_def_count = 0;
 
+// ----------------------------------------------------------------------------
+// 名字 → 定义 的桶索引（S2/性能，2026-09-16）：把 *_def_find* 从 O(定义数) 降到 O(1)
+// ----------------------------------------------------------------------------
+// 为什么需要（实测，不是推断）：JIT 把 OP_STRUCT_INIT 实现为 **callout**
+// （jit/jit_callout.c 的 jit_callout_struct_init），那条路径**没有内联缓存** ⇒ 每次 `new`
+// 都真查一次定义表。探针（200 个 struct 声明、循环 300 万次 `new T199()`）：
+//   1 个定义 215ms → 200 个定义 6250ms（**29×**，扫描成本吃掉全部时间）。
+// 链按**注册顺序**串（新条目接到桶尾）⇒ "同名取先注册者"这条既有语义天然保持：
+// 桶内第一个就是过去线性扫描时先遇到的那个。
+// 覆盖替换（struct_def_replace）**不需要**动索引 —— 它只在同名分支发生（调用方保证），
+// 槽位号与名字都不变，桶里那条记录指的仍是同一个名字。
+// 桶数取 2 × MAX_STRUCT_DEFS ⇒ 负载因子 ≤ 0.5，桶内链平均 1~2 条。
+#define STRUCT_DEF_NAME_BUCKETS 512
+
+// 表很小时**线性扫描更快**：走桶要先算哈希、再两级依赖加载（桶 → 槽位 → 名字）。
+// 实测（-O2，3M 次 new 的 JIT callout 路径，四路交错 A/B）：
+//   基线（纯线性）                     208.7ms
+//   保留索引维护 + 查找还原成基线        211~216ms   ← 索引维护本身不要钱
+//   查找经辅助函数（小表特判在函数里）   235.4ms     ← 多一次调用 + 重复取下标，+8ns/次分配
+// 所以小表分支必须**就地**写在各查找函数里（内容 = 改动前那几行原样），
+// 而不是塞进辅助函数里特判。阈值两侧语义**完全相同**（都返回注册最早的同名者）。
+#define SD_LINEAR_SCAN_MAX 4
+
+// 编码：0 = 空；i + 1 = 表下标 i（静态存储零初始化即"空"，无需显式初始化）
+static THREAD_LOCAL int sd_bucket_head[STRUCT_DEF_NAME_BUCKETS];
+static THREAD_LOCAL int sd_bucket_tail[STRUCT_DEF_NAME_BUCKETS];
+static THREAD_LOCAL int sd_chain_next[MAX_STRUCT_DEFS];
+
+static uint32_t sd_name_hash(const char* s) {
+    uint32_t h = 2166136261u;   // FNV-1a
+    for (const unsigned char* p = (const unsigned char*)s; *p; p++) {
+        h ^= (uint32_t)*p;
+        h *= 16777619u;
+    }
+    return h;
+}
+
+// 把已就位的槽位登记进桶（只在 append 路径调用；末尾追加 ⇒ 桶内自然按注册顺序）
+static void sd_index_append(int idx) {
+    const char* name = struct_def_table[idx]->name;
+    if (!name) return;
+    uint32_t b = sd_name_hash(name) & (STRUCT_DEF_NAME_BUCKETS - 1);
+    int code = idx + 1;
+    if (sd_bucket_head[b] == 0) {
+        sd_bucket_head[b] = code;
+    } else {
+        sd_chain_next[sd_bucket_tail[b] - 1] = code;
+    }
+    sd_bucket_tail[b] = code;
+}
+
+// 桶内**同名**的第一个槽位（= 注册最早的那个）；没有返回 -1
+// （桶按哈希取，可能混入哈希碰撞的别的名字，故这里仍要比名字）
+//
+// ⚠ 这两个是**纯哈希桶**走法：只给"大表"与注册路径用。小表不要在**这里**加特判 ——
+// 实测那样做等于每次查找多一次（不可内联的）调用 + 一次重复下标，1 个定义时 +8ns/次分配
+// （3M 次 new：基线 208.7ms → 经辅助函数 235.4ms），而"就地线性扫描"与基线无差
+// （保留索引维护、只把查找还原成基线 ⇒ 211~216ms）。所以小表分支写在各个查找函数里，
+// 内容是改动前那几行**原样**。
+static int sd_hash_first(const char* name) {
+    if (!name) return -1;
+    uint32_t b = sd_name_hash(name) & (STRUCT_DEF_NAME_BUCKETS - 1);
+    for (int i = sd_bucket_head[b] - 1; i >= 0; i = sd_chain_next[i] - 1) {
+        const char* n = struct_def_table[i]->name;
+        if (n && strcmp(n, name) == 0) return i;
+    }
+    return -1;
+}
+
+// 从 i 往后找**同名**的下一个槽位（同样按注册顺序）；没有返回 -1。
+// 调用前 i 必须是 sd_hash_first/sd_hash_next_same 返回过的合法下标。
+static int sd_hash_next_same(int i, const char* name) {
+    for (i = sd_chain_next[i] - 1; i >= 0; i = sd_chain_next[i] - 1) {
+        const char* n = struct_def_table[i]->name;
+        if (n && strcmp(n, name) == 0) return i;
+    }
+    return -1;
+}
+
 // ============================================================================
 // 结构体定义操作
 // ============================================================================
@@ -187,6 +266,8 @@ static void struct_def_replace(int i, ObjStructDef* def) {
     old_def->const_values = NULL;
     old_def->const_count = 0;
 
+    // 索引无需维护：调用方保证 def 与旧条目**同名**（只有同名分支才会走到覆盖），
+    // 槽位号与名字都不变 ⇒ 桶里那条记录仍然指向这个同名的槽位。
     struct_def_table[i] = def;
     struct_def_gen++;
 }
@@ -198,9 +279,9 @@ void struct_def_register(ObjStructDef* def) {
     }
 
     // 1) 同一来源的同名条目：覆盖（同模块重注册、子线程按指针重注册、模块重新加载）
-    for (int i = 0; i < struct_def_count; i++) {
+    //    只走"同名"的桶内链（S2/性能）⇒ 不再遍历整张表
+    for (int i = sd_hash_first(def->name); i >= 0; i = sd_hash_next_same(i, def->name)) {
         ObjStructDef* old = struct_def_table[i];
-        if (!old->name || strcmp(old->name, def->name) != 0) continue;
         if (old->owner != def->owner) continue;
         if (old == def) return;   // 同一个对象再注册一次：空操作
         struct_def_replace(i, def);
@@ -211,9 +292,8 @@ void struct_def_register(ObjStructDef* def) {
     //    带模块前缀的查找（struct_def_find_qualified）要能各自取回自己那份；
     //    裸名查找按"先注册者"返回，给尚未迁移的调用点（cast / face / JIT / 原生桥接）用，
     //    而那些点一旦拿错，当前的响亮报错就是兜底。故这里**不能**直接丢弃新定义。
-    for (int i = 0; i < struct_def_count; i++) {
+    for (int i = sd_hash_first(def->name); i >= 0; i = sd_hash_next_same(i, def->name)) {
         ObjStructDef* old = struct_def_table[i];
-        if (!old->name || strcmp(old->name, def->name) != 0) continue;
         if (def_owner_conflict("struct", def->name, old->owner, def->owner,
                                struct_def_same_shape(old, def))) {
             break;   // 已报错 ⇒ 让两份共存：跳出循环走末尾 append
@@ -222,7 +302,9 @@ void struct_def_register(ObjStructDef* def) {
         return;
     }
 
-    struct_def_table[struct_def_count++] = def;
+    struct_def_table[struct_def_count] = def;
+    sd_index_append(struct_def_count);   // 只有在 append 时才需要登记索引
+    struct_def_count++;
     struct_def_gen++;
 }
 
@@ -245,14 +327,18 @@ void struct_def_update_method_modules(ObjModule* old_module, ObjModule* new_modu
     }
 }
 
-// 查找结构体定义
+// 查找结构体定义（小表就地线性扫描；大表走名字桶索引 —— 见 SD_LINEAR_SCAN_MAX）
 ObjStructDef* struct_def_find(const char* name) {
-    for (int i = 0; i < struct_def_count; i++) {
-        if (strcmp(struct_def_table[i]->name, name) == 0) {
-            return struct_def_table[i];
+    if (struct_def_count <= SD_LINEAR_SCAN_MAX) {
+        for (int i = 0; i < struct_def_count; i++) {
+            if (strcmp(struct_def_table[i]->name, name) == 0) {
+                return struct_def_table[i];
+            }
         }
+        return NULL;
     }
-    return NULL;
+    int i = sd_hash_first(name);   // 桶内第一个同名 = 注册最早的那个（与线性扫描同解）
+    return i >= 0 ? struct_def_table[i] : NULL;
 }
 
 // 在指定模块**声明**的定义里按裸名查找（S2/2b-2）：这是最精确的一级 —— 编译期把
@@ -260,9 +346,19 @@ ObjStructDef* struct_def_find(const char* name) {
 // 完全不依赖"别名是否等于模块名"。
 ObjStructDef* struct_def_find_in_module(ObjModule* owner, const char* name) {
     if (!owner || !name) return NULL;
-    for (int i = 0; i < struct_def_count; i++) {
+    if (struct_def_count <= SD_LINEAR_SCAN_MAX) {   // 小表：就地线性扫描（与改动前同）
+        for (int i = 0; i < struct_def_count; i++) {
+            ObjStructDef* d = struct_def_table[i];
+            if (d->owner == owner && d->name && strcmp(d->name, name) == 0) {
+                return d;
+            }
+        }
+        return NULL;
+    }
+    // 大表：只走"同名"的桶内链 ⇒ "取哪个模块声明的那份"由 O(定义数) 降为 O(1)
+    for (int i = sd_hash_first(name); i >= 0; i = sd_hash_next_same(i, name)) {
         ObjStructDef* d = struct_def_table[i];
-        if (d->owner == owner && d->name && strcmp(d->name, name) == 0) {
+        if (d->owner == owner) {
             return d;
         }
     }
@@ -285,13 +381,24 @@ ObjStructDef* struct_def_find_qualified(const char* qualified_name) {
     if (dot && dot != qualified_name && dot[1]) {
         size_t mod_len = (size_t)(dot - qualified_name);
         const char* bare = dot + 1;
-        for (int i = 0; i < struct_def_count; i++) {
-            ObjStructDef* d = struct_def_table[i];
-            if (!d->name || strcmp(d->name, bare) != 0) continue;
-            if (!d->owner || !d->owner->name) continue;
-            if (strlen(d->owner->name) == mod_len &&
-                strncmp(d->owner->name, qualified_name, mod_len) == 0) {
-                return d;
+        if (struct_def_count <= SD_LINEAR_SCAN_MAX) {   // 小表：就地线性扫描（与改动前同）
+            for (int i = 0; i < struct_def_count; i++) {
+                ObjStructDef* d = struct_def_table[i];
+                if (!d->name || strcmp(d->name, bare) != 0) continue;
+                if (!d->owner || !d->owner->name) continue;
+                if (strlen(d->owner->name) == mod_len &&
+                    strncmp(d->owner->name, qualified_name, mod_len) == 0) {
+                    return d;
+                }
+            }
+        } else {                                        // 大表：只扫同名的桶内链
+            for (int i = sd_hash_first(bare); i >= 0; i = sd_hash_next_same(i, bare)) {
+                ObjStructDef* d = struct_def_table[i];
+                if (!d->owner || !d->owner->name) continue;
+                if (strlen(d->owner->name) == mod_len &&
+                    strncmp(d->owner->name, qualified_name, mod_len) == 0) {
+                    return d;
+                }
             }
         }
     }

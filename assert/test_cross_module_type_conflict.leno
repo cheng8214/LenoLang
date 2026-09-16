@@ -106,8 +106,17 @@ main() {
         files.write(dirs.join(root, "lib/m2.leno"),
             "import \"r.leno\" as rr\n\nexport func g(): int {\n    var v = new rr.Point()\n    return v.tag()\n}\n")
         var dpath = dirs.join(root, "main.leno")
+        // 末尾补几个**无关**的 struct 声明：把定义表条目数顶过 SD_LINEAR_SCAN_MAX(4)，
+        // 让这段判别的查询走"哈希桶"那条路 —— 定义表查找有小表线性 / 大表哈希两条路
+        // （S2/性能），两条路都必须有回归覆盖，否则改动只测到其中一条。
         files.write(dpath,
-            "import \"lib/m2.leno\" as m2\nimport \"lib/m.leno\" as m\nimport \"lib/p.leno\" as p2\n\nmain() {\n"
+            "import \"lib/m2.leno\" as m2\nimport \"lib/m.leno\" as m\nimport \"lib/p.leno\" as p2\n\n"
+            + "struct Pad1 {\n    int a\n}\n"
+            + "struct Pad2 {\n    int a\n}\n"
+            + "struct Pad3 {\n    int a\n}\n"
+            + "struct Pad4 {\n    int a\n}\n"
+            + "struct Pad5 {\n    int a\n}\n\n"
+            + "main() {\n"
             + "    var x = new p2.Point()\n    print(\"A=\" + x.tag())\n"
             + "    print(\"M=\" + m.f())\n"
             + "    print(\"G=\" + m2.g())\n}\n")
