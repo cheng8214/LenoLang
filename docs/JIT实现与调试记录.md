@@ -5170,6 +5170,12 @@ CALLOUT-FAIL（797 条）都是 `call_value: callee 是对象但 function 为空
 > **踩坑提醒（自己又踩了一次）**：`LENO_JIT_DEBUG=1` 跑真实应用会输出爆量
 > （§8.77 已记"8.4MB 且 60 帧跑不完"）—— 本次为查 bailout 分类而开，300 帧被 150s 超时杀掉。
 > 只需分类时**用部分输出就够**，或改用轻量开关。
+>
+> ⚠ **后续（2026-09-17，必读）**：R6-e 解锁的 `OP_CLIB_CALL` 在**真实游戏**里让飞机大战
+> **开火后窗口卡死** ⇒ **已临时回滚**（`jit_scan.c` 两处 case 改回拒收），**真因未查清**。
+> **动手改这条路径前先读 §8.98。** 本节的"797 条 CALLOUT-FAIL **不构成可测损耗**"结论
+> **只在 GUI 长跑之外成立** —— 在游戏里它对应的是"函数被 JIT 跑一半 + 解释器从头重跑"，
+> 那是**正确性**问题，不是性能问题。
 
 ***
 
@@ -6032,6 +6038,137 @@ JIT 尝试）⇒ **外层与内层两条循环都被拒** ✓（6 条 bailout �
   对齐解释器的方向（正/负步长）、含端点与 NaN 语义，并放开类型位图那条守卫 ✓。
 - **量级**：以 `ops_loop.inc` 为主，约 150~250 行 + 探针/回归 ✓（属**特性**而非修补 ✓）。
 - **收益**：本形状 ≈ **2x**；并**解除 fm `render` 主循环的拉黑**（§8.89 的 3 条 bailout 一并归零 ✓）。
+
+***
+
+### 8.98 【已回滚·真因待查】R6-e 解锁的 `OP_CLIB_CALL` 让飞机大战**开火后窗口卡死**（2026-09-17）
+
+> **一句话**：§8.81（R6-e）让 `OP_CLIB_CALL` 进 JIT 后，LenoSDL3 的**真实游戏**在开火后卡死；
+> 二分定位到 `26875acf`（该提交**唯一**的代码改动就是 R6-e）；**已临时回滚**（两处 scan case 改回拒收），
+> assert 311/0 ✓。真因**未查清**，⚠ **在修复前不要把这两处 case 删回去**。
+
+#### 现象（真实游戏，不是探针）
+
+`leno_module/LenoSDL3/examples/应用示例/游戏/飞机大战/plane_war.leno`：
+回车开始游戏 → **打两发子弹 → 窗口卡死**（无异常文本、无 0xC0000005；JIT stats 能正常打印，
+无 SIGSEGV 迹象）。`LENO_NO_JIT=1` 或 R6-e 之前（`294c6e2`）**不崩** ✓。
+
+`26875acf` 上的 stats（可复现，稳定）：
+
+```
+Compiled: 13   Executed: 2026   Bailouts: 4
+Bailout: fn='_flushTexBatch' loop_bc=25  x3 — 非溢出类 @bc_off=138（= loop_bc 25 + 113）
+Bailout: fn='renderPlay'     loop_bc=1004 x1 — 非溢出类 @bc_off=1056（= loop_bc 1004 + 52）
+FuncCompiled: 3   FuncExecuted: 899
+```
+
+⚠ 这 4 条**不能**当成证据：`非溢出类` 是一个大杂烩（callout 失败 / NaN-boxed 浮点操作数 /
+其它守卫），而 `26875ac` 时的 stats **还不会打印触发指令名**（那是 §8.89 的 `last_bailout_op`，更晚才有）
+⇒ 无法从 site 值分辨是哪条指令。**不要把"有 "bailout" 直接等同于"就是 CLIB 那条"**。
+
+#### 二分定位（决定性）
+
+| 步骤 | 提交 | 结果 |
+| --- | --- | --- |
+| 起点 good | `294c6e2` `perf(JIT): 尾调用加 callee-亦-JIT 快路径…` | 不崩 ✓ |
+| 起点 bad | `26875acf` `feat(JIT): R6-e 支持 OP_CLIB_CALL` | **必崩** ✗ |
+| 中间点 1 | `bebff66b`（纯 docs） | 不崩 ✓ |
+| 中间点 2 | `b0f0f6b6`（函数级缓存 256→1024） | 不崩 ✓ |
+| 中间点 3 | `207dbe25`（R6-d `OP_GET_CSTRUCT_DEF`） | 不崩 ✓ |
+| **首坏** | **`26875acf`（R6-e）** | **崩** ✗ |
+
+区间 `294c6e2..26875ac` 共 10 个提交，其中只有 5 个动了代码（其余是 docs/diag/test），
+R6-d 已被中间点 3 单独证清白 ⇒ **指向 R6-e** ✓。
+
+**复现每个测试点的固定流程**（缺一不可，否则结论不可信）：
+
+```powershell
+git switch --detach <commit>
+cmd /c build.bat                       # 或 .\build.bat
+Remove-Item -Recurse -Force "D:\CLeno\Leno\.lenocache","…\飞机大战\.lenocache"
+leno --no-cache "plane_war.leno"       # --no-cache 同时禁用模块缓存与入口缓存
+```
+
+> ⚠ 缓存 key 只基于**入口文件内容**哈希 ⇒ 只换编译器不换入口脚本时**必然命中旧缓存**，
+> 表现为"切了提交但行为不变"。`--no-cache` 是这件事的标准解法（见 main.c 对
+> `module_loader_is_cache_enabled()` 的两处 gate）。
+
+#### 为什么探针没抓住（本次最重要的教训）
+
+`jit_probes/probe_clib_call_jit.leno` 在 R6-e 交付时是**全绿**的：JIT/`LENO_NO_JIT=1` 逐字一致、
+**Bailouts 0**、`LENO_JIT_DEBUG=1` 下 `clib_call` 方向 0 条 CALLOUT-FAIL ✓。
+
+差别在**形态与时长**：
+
+| | 探针 | 飞机大战 |
+| --- | --- | --- |
+| 用户实参个数 | 1 | 多个（含 float / 指针 / 字符串）|
+| `ret_type_kind` | void / i32 | 各式（含 float、指针、void）|
+| 循环轮数 | 20000 轮纯计算 | 长跑 + 与 SDL 渲染/状态耦合 |
+| 上下文 | 无外部副作用 | 每次调用都在改 SDL 资源（纹理批、渲染队列）|
+
+⇒ **"探针绿"只证明"这条 opcode 的记账在简单形态下自洽"，不能证明它在真实负载里可用** ✓。
+（§8.81 其实已经留了线索：R6-e 后 fm/cc 出现 **797 条 CALLOUT-FAIL**，当时按"性能噪声"放过了 —— 
+**"能编但每次执行都 bail"在 GUI 长跑里不是性能问题，是正确性问题**。）
+
+#### 已逐条排除（把 CLIB 路径与解释器/既有 callout 逐行对照）
+
+| 怀疑点 | 结论 |
+| --- | --- |
+| emit 的物理栈账：`TOS_SPILL → callout → failed 检查 → add rsp,arg_count*8 → VALUE_TO_RAW → TOS_PRODUCE` + `vstack -= (arg_count-1)` | 与 `OP_CALL_NATIVE` **逐行同构**，且 `tos_live` 不变量（mem = vstack-1）两边都对得上 ✓ |
+| 实参顺序：callout 的 `vstack_top[arg_count-1-i]`（i 递增 ⇒ 先压 lib、再 func_name、再实参） | 与 VM 的 `vm.stack + vm.sp - arg_count`（= 最先压入者）语义一致 ✓；`ffi_call_impl` 的 `arg_start = 2` 对得上 ✓ |
+| 变长操作数交给 callout 现读（`ip+1/ip[3]/ip[4]/ip[5..]`） | emit 里的 `ip` 是**opcode 字节**（与 `OP_CALL` 的 `rd_short(ip+1)`、`OP_CALL_NATIVE` 的 `rd_short(ip+3)` 同一约定）✓ |
+| `arg_types[]` 未初始化（JIT 只填 `[0,user_arg_count)`，解释器额外 `memset` 整个数组） | **无害**：`ffi_call_impl` 只读 `i < sig.nargs(= user_arg_count)` ✓（但建议顺手 memset 对齐解释器）|
+| callout 失败守卫是否漏（§8.91 的 45 处审计）| CLIB 站点**不在** 4 处真漏里 ✓ |
+| §8.42 pin 走查（局部量驻留寄存器）需要的新增排除项 | CLIB emit **不访问局部量**（无 `cur_local_map[`）⇒ 无需同步 ✓ |
+| `opcode_size` 的变长长度 `5 + ip[4]` | 与解释器的 `READ_*` 次数一致 ✓，R6-e 之前就已收录 ✓ |
+
+#### 尚未排除的三个方向（下一步取证）
+
+1. **函数级 bailout 是"从头 VM 重入"**：`jit_callout_global_func` / `invoke_method` / `call_value`
+   的失败路径都落到 `vm_call_value(callee, arg_count, 0)`（**把整个函数在解释器里从头重跑**）。
+   R6-e 让一批**原本被整体拒收**的函数新解锁（`func 净解锁 11`）⇒ 只要它们在某个缺口处 bail，
+   **bail 点之前的所有副作用会执行两遍**（子弹、数组 push、状态机……）。
+   对纯函数无所谓，对游戏循环可能就是"状态错位 → 某个等待条件的循环永不结束 → 卡死"。
+   ※ 与 §8.81 记录的"797 条 CALLOUT-FAIL / 每次执行都 bail"是同一现象的**正确性**侧面。
+2. **`jit_callout_clib_call` 是唯一不更新 `jit_reloaded_locals` 的重入型 callout**：
+   `ffi_clib_call` 内部**会**回调进 VM（自动泵送 → `vm_call_value` → `vm_grow_frames`），
+   而 `global_func` / `invoke_method` / `call_value` / `tail_call` 四条都写了
+   `jit_reloaded_locals = vm->frames[vm->frame_cnt-1].locals`，**只有 clib_call 没写** ✗。
+   （它只在机器码**写回 locals** 时被读 ⇒ 影响面可能是"写回到旧数组"，需实测确认。）
+3. **长跑才暴露的物理栈漂移**：§8.67 已证过同类（`OP_GET_PROPERTY` 独立取值漏弹 receiver
+   ⇒ 每次泄漏 8 字节 ⇒ ~2MB 栈界崩）。CLIB 的 `arg_count` 是**变长**的，
+   这类"每轮差一个槽"的 bug 在小探针里完全看不出来。
+   ⇒ 推荐做法：写一个 **多实参 + 长跑 + 带副作用**的 CLIB 探针（例如在循环里
+   `ffi` 调一个带状态的 DLL 函数并核对状态），把"轮数"拉过 262144。
+
+#### 诊断命令（main 上的诊断能力比 26875ac 强得多，先用它）
+
+```powershell
+# ① stats 现在会打印 bailout 的触发指令名（§8.89）
+leno --no-cache "plane_war.leno"
+# ② 卡死前到底是谁失败：重定向到文件，卡死后关窗口再看尾部
+$env:LENO_JIT_DEBUG="1"; leno --no-cache "plane_war.leno" 2> jit.log
+Select-String -Path jit.log -Pattern "CALLOUT-FAIL|BAILOUT" | Select-Object -Last 40
+Remove-Item Env:LENO_JIT_DEBUG
+```
+
+#### 处置：临时回滚（本次，2026-09-17）
+
+`src/jit/jit_scan.c` **两处** `case OP_CLIB_CALL` 改回拒收（emit / callout 的代码**保留不删**）：
+
+| 位置 | 改法 | 效果 |
+| --- | --- | --- |
+| `scan_callee_for_inline`（inline 侧）| `jit_gaps_record_inline("OP_CLIB_CALL（R6-e 已回滚：卡死）"); return 0;` | 含 FFI 调用的被调方不再内联 |
+| `scan_loop_body`（loop 侧）| `r->capable = 0; return;` | 含 FFI 调用的循环整循环拒收 → 交解释器 |
+
+= **等价于 R6-e 之前的行为**（`294c6e2` 已实测不崩 ✓），代价是丢掉 R6-e 的
+`loop -9 / func -11 / inline -5` 收益。
+
+**验证**：assert **311 passed / 0 failed** ✓（与基线一致）；飞机大战待人工复测。
+
+**恢复条件**：上面三个方向查清并修好后，**删掉这两处 case** 即恢复 R6-e（emit/callout 一行没动，
+所以恢复是纯删除 ✓）。
 
 ***
 

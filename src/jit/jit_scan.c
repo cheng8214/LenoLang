@@ -951,16 +951,15 @@ case OP_GET_FIELD_FAST: vstack++; break;
                 break;
             }
             case OP_CLIB_CALL: {
-                /* 与 scan_loop_body 的同名 case 一致（R6-e）：FFI 动态库调用
-                 * → 弹 arg_count（含 lib/func_name）压 1 个结果 ⇒ 净 -(arg_count-1)。
-                 * 内联体里允许它：callout 属可内联的调用形态（与 OP_CALL_NATIVE 同）。 */
-                uint16_t cc_ac = rd_short(ip + 1);
-                if (cc_ac < 2) {
-                    jit_gaps_record_inline("OP_CLIB_CALL arg_count<2（畸形）");
-                    return 0;
-                }
-                vstack -= (cc_ac - 1);
-                break;
+                /* ---- 临时回滚 R6-e（2026-09-17）----
+                 * 现象：飞机大战（LenoSDL3）回车开火后窗口卡死。
+                 * 二分证据：294c6e2 = 不崩 / 26875ac = 必崩，而 26875ac 的**唯一代码改动**
+                 * 就是 R6-e「OP_CLIB_CALL 进 JIT」（loop/func/inline 三侧）。
+                 * 真因待定（疑在 emit 的物理栈/寄存器账与 callout 的实参搬运之间，
+                 * 小探针覆盖不到、长跑才暴露），在查清前维持拒收 ⇒ 交解释器，
+                 * 行为回到 R6-e 之前。恢复支持时删掉本 case 即可（emit/callout 代码仍在）。 */
+                jit_gaps_record_inline("OP_CLIB_CALL（R6-e 已回滚：卡死）");
+                return 0;
             }
             case OP_CLEAR_LOCAL_RANGE: break;
             default:
@@ -1644,19 +1643,12 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                 break;
             }
             case OP_CLIB_CALL: {
-                /* ---- R6-e：FFI 动态库调用 → 净 -(arg_count-1) ----
-                 * 解释器语义（op_clib_call.inc）：VM 栈 [lib, func_name, user_args...]，
-                 * arg_count = user_arg_count + 2（含前两个）⇒ 弹 arg_count、压 1 个结果。
-                 * 长度是变长的（5 + ip[4]），`opcode_size` 已收录 —— 之前只是没有 case，
-                 * 所以被报成 "unsupported opcode 142"（§8.77 census 的"已收录长度、未实现"）。
-                 * arg_count < 2 属畸形字节码：拒收，交解释器（那里有自己的报错路径）。 */
-                uint16_t cc_argc = rd_short(ip + 1);
-                if (cc_argc < 2) {
-                    r->capable = 0;
-                    return;
-                }
-                vstack -= (cc_argc - 1);
-                break;
+                /* ---- 临时回滚 R6-e（2026-09-17）：见 scan_callee_for_inline 同名 case ----
+                 * 飞机大战开火后窗口卡死；二分定位 294c6e2(不崩) → 26875ac(必崩)，
+                 * 而 R6-e 是该提交唯一的代码改动。真因未定前维持拒收（交解释器），
+                 * 等价于 R6-e 之前的行为。恢复时删掉本 case。 */
+                r->capable = 0;
+                return;
             }
             case OP_GET_CSTRUCT_DEF: {
                 /* ---- R6-d：push cstruct 定义对象 → vstack++ ----
