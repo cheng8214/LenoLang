@@ -723,11 +723,29 @@ static Value ffi_call_impl(int argc, Value* args, int ret_type_kind, const int* 
                     sig.arg_types[i] = FFI_TYPE_INT; ffi_args[i].type = FFI_TYPE_INT;
                     ffi_args[i].value.i = ival ? 1 : 0;
                     break;
-                default:
+                default: {
+                    /* ---- 声明为浮点的形参收到整数：必须走浮点通道（XMM）----
+                     * 否则会被当整数塞进 GPR：
+                     *   ① Win64 精确分发的"前 4 个形参浮点计数"对不上 ⇒ 直接抛
+                     *      「超过 Win64 精确分发上限」（飞机大战卡死的直接触发点）；
+                     *   ② 即便 ① 不触发，被调方读到的是陈旧的 XMM ⇒ 静默拿到错值。
+                     * 为什么会发生：JIT 把 SSE 算出的浮点结果以**裸 double** 留在寄存器里，
+                     * 而 `jit_raw_to_value` 的类型启发式（`raw>>47 ∈ {-1,0}` ⇒ int48）与
+                     * **double 0.0**（位型 0x0）撞码 ⇒ 0.0 被当成 int 0 交付给 FFI。
+                     * 判据复用 `typekind_to_ffitype`（与返回类型同一处语义来源）。 */
+                    FFIType ft = typekind_to_ffitype(param_tk);
+                    if (ft == FFI_TYPE_FLOAT || ft == FFI_TYPE_DOUBLE) {
+                        sig.arg_types[i] = ft;
+                        ffi_args[i].type = ft;
+                        if (ft == FFI_TYPE_FLOAT) ffi_args[i].value.f = (float)ival;
+                        else                      ffi_args[i].value.d = (double)ival;
+                        break;
+                    }
                     /* 旧路径或未知类型，默认 FFI_TYPE_INT */
                     sig.arg_types[i] = FFI_TYPE_INT; ffi_args[i].type = FFI_TYPE_INT;
                     ffi_args[i].value.i = ival;
                     break;
+                }
             }
         }
         else if (val_is_float(arg)) {

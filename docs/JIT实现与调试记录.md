@@ -5171,8 +5171,12 @@ CALLOUT-FAIL（797 条）都是 `call_value: callee 是对象但 function 为空
 > （§8.77 已记"8.4MB 且 60 帧跑不完"）—— 本次为查 bailout 分类而开，300 帧被 150s 超时杀掉。
 > 只需分类时**用部分输出就够**，或改用轻量开关。
 >
+> ✅ **已解决（2026-09-17）**：根因是 JIT 把浮点 **0.0** 当成 int48 交给 FFI ⇒ Win64 浮点分发
+> 报「超过上限」⇒ CLIB callout 失败 ⇒ bailout ⇒ 卡死；修在 `ffi.c` 的浮点通道判定
+> （声明为浮点的形参收到整数时走 XMM），**R6-e 已恢复**，详见 **§8.99** ✓。
+
 > ⚠ **后续（2026-09-17，必读）**：R6-e 解锁的 `OP_CLIB_CALL` 在**真实游戏**里让飞机大战
-> **开火后窗口卡死** ⇒ **已临时回滚**（`jit_scan.c` 两处 case 改回拒收），**真因未查清**。
+> **开火后窗口卡死** ⇒ **曾临时回滚**（`jit_scan.c` 两处 case 改回拒收），**真因已查清（§8.99）**。
 > **动手改这条路径前先读 §8.98。** 本节的"797 条 CALLOUT-FAIL **不构成可测损耗**"结论
 > **只在 GUI 长跑之外成立** —— 在游戏里它对应的是"函数被 JIT 跑一半 + 解释器从头重跑"，
 > 那是**正确性**问题，不是性能问题。
@@ -6041,7 +6045,11 @@ JIT 尝试）⇒ **外层与内层两条循环都被拒** ✓（6 条 bailout �
 
 ***
 
-### 8.98 【已回滚·真因待查】R6-e 解锁的 `OP_CLIB_CALL` 让飞机大战**开火后窗口卡死**（2026-09-17）
+### 8.98 【真因见 §8.99，回滚已撤销】R6-e 解锁的 `OP_CLIB_CALL` 让飞机大战**开火后窗口卡死**（2026-09-17）
+
+> ✅ **更新（同日）**：根因**已查清并修复** —— 见 **§8.99**（JIT 的「裸 double 0.0」与 int48 撞码
+> ⇒ FFI 收到整数 ⇒ Win64 浮点分发报错）。**临时回滚已撤销，R6-e 已恢复**。
+> 本节保留二分定位与排除过程作为记录；下面「真因未查清 / 修好前不要把 case 删回去」的说法**已过期** ✓。
 
 > **一句话**：§8.81（R6-e）让 `OP_CLIB_CALL` 进 JIT 后，LenoSDL3 的**真实游戏**在开火后卡死；
 > 二分定位到 `26875acf`（该提交**唯一**的代码改动就是 R6-e）；**已临时回滚**（两处 scan case 改回拒收），
@@ -6171,6 +6179,95 @@ Remove-Item Env:LENO_JIT_DEBUG
 
 **恢复条件**：上面三个方向查清并修好后，**删掉这两处 case** 即恢复 R6-e（emit/callout 一行没动，
 所以恢复是纯删除 ✓）。
+
+***
+
+### 8.99 【已修复】§8.98 的根因：JIT 的「裸 double 0.0」与 int48 **撞码** ⇒ FFI 收到整数 ⇒ Win64 浮点分发失败（2026-09-17）
+
+**一句话**：R6-e 之后，SSE 算出的**浮点 0.0** 被 `jit_raw_to_value` 判成 **int 0** 交给 FFI；
+`SDL_SetRenderDrawColorFloat(renderer, 0.9, 1.0, **0.0**, 1.0)` 的 `b=0.0` 就是触发点 ⇒
+`ffi_call_impl` 的 Win64 精确分发检查报「超过 Win64 精确分发上限」⇒ 抛异常 ⇒
+CLIB callout failed ⇒ bailout ⇒ 解释器按原指令重放（异常仍在）⇒ **飞机大战卡死**。
+
+#### 根因链（每一环都有实测）
+
+1. JIT 把浮点运算结果以**裸 double** 留在寄存器里（`EMIT_MOVQ_RAX_XMM0` ⇒ TOS = raw double）。
+2. `jit_raw_to_value` 判类型用位型启发式：`test = raw >> 47; test++; if ((uint64_t)test <= 1) ⇒ int48`。
+   **double 0.0 的位型正好是 `0x0000000000000000`** ⇒ `test == 1` ⇒ 被当成 **int 0** ✓
+   （`-0.0`（`0x8000…`）与次正规数同理）。
+3. 该值经 `vm_stack_push(jit_raw_to_value(...))` 交给 `ffi_clib_call` ⇒ 是一个 **VAL_INT** ✓
+   （实测 trace：`arg[3] raw=0000000000000000 kind=int`，而 `arg_types[] = 40 25 25 25 25`，
+   第 4 个形参声明为浮点）。
+4. `ffi_call_impl` 的整数分支按 `param_tk` 分流，**没有 `TYPE_F32/TYPE_F64` 的 case** ⇒
+   `default` 落成 `FFI_TYPE_INT` ⇒ 0.0 被安排进**整数寄存器（GPR）**而不是 XMM ✓。
+5. 调用前的 Win64 检查（`ffi.c`「前 4 个形参浮点计数」）：形状本该是 `(ptr, f32, f32, f32, f32)`
+   ⇒ `float_in_reg == 3 && f32_total == 4` ⇒ 命中「路径 3.5」精确分发 ✓；
+   但第 4 个变成 INT ⇒ `f32_total == 3` ⇒ 例外不成立 ⇒ **抛「超过 Win64 精确分发上限」** ✓。
+6. callout 置 `jit_callout_failed` ⇒ 机器码 bailout ⇒ 解释器按原指令重放
+   （**FFI 副作用已发生**，且 `vm.has_exception` 未清）⇒ 卡死 ✓。
+
+**为什么探针抓不到**（呼应 §8.98）：探针的浮点实参是 `i - 1000` 这类**非零**值，
+位型不落 int48 区间；只有 **0.0 / -0.0 / 次正规数**才撞码 ⇒ 这是**值域依赖**的 bug，
+形状探针（哪怕 JIT/NO_JIT 逐字比对）也测不出来 ✓。
+
+#### 定位方法（可复用：GUI 负载自动化 —— 不再需要人工按键）
+
+1. 复制游戏脚本为 `_pw_auto.leno`，只加两处：`startGame(g)` + 渲染回调里每帧 `g.player.shooting = true`；
+2. `$env:LENO_SDL_FRAMES="600"; $env:SDL_VIDEODRIVER="dummy"` ⇒ **无窗口、定帧、自动退出、可判超时**；
+3. 外层 `Start-Process … -PassThru` + `WaitForExit(ms)` ⇒ 「卡死」= 超时不退出，可自动化判定 ✓；
+4. 专用轻量 trace（`LENO_CLIB_TRACE=1`，保留在 `debug/r6e-clib` 分支）打印每次 CLIB 的
+   实参**原值 + 类型判定**，失败那次一眼就是根因 ✓；
+5. 对照：`LENO_NO_JIT=1` 同脚本同帧数 ⇒ 跑完、零错误 ⇒ 确认是 JIT 侧问题 ✓。
+
+#### 修复
+
+`src/module/ffi/ffi.c` 的 `ffi_call_impl` 整数分支：**声明为浮点的形参收到整数时走浮点通道**
+（判据复用 `typekind_to_ffitype`，与返回类型同一处语义来源）：
+
+```c
+default: {
+    FFIType ft = typekind_to_ffitype(param_tk);
+    if (ft == FFI_TYPE_FLOAT || ft == FFI_TYPE_DOUBLE) {
+        sig.arg_types[i] = ft; ffi_args[i].type = ft;
+        if (ft == FFI_TYPE_FLOAT) ffi_args[i].value.f = (float)ival;
+        else                      ffi_args[i].value.d = (double)ival;
+        break;
+    }
+    /* …旧路径：默认 FFI_TYPE_INT… */
+}
+```
+
+同时**撤销 §8.98 的临时回滚**（`jit_scan.c` 两处 `case OP_CLIB_CALL` 恢复 R6-e）。
+
+**为什么修在 FFI 边界而不是 CLIB callout 里**：① 它顺带修掉一个**解释器侧也存在**的隐患 ——
+`clib { void f(f32 x) }` 里写 `f(1)`，整数会被安排进 GPR 而 XMM 是陈旧值（静默错值）；
+② 符合本项目「语义唯一来源」的做法；③ 不必在 JIT 侧猜类型 ✓。
+
+#### 验证
+
+| 项 | 结果 |
+| --- | --- |
+| 自动驱动 600 帧（JIT）| 修复前**卡死**（90s 未退出，`[CLIB-FAIL] #4659`）/ 修复后**跑完并退出**，`CLIB-FAIL 0`、`Bailouts 0`、129000 次 CLIB 全成功 ✓ |
+| 自动驱动 1800 帧（JIT）| 跑完，`sum=19822`、`CLIB-FAIL 0`、`Bailouts 0` ✓ |
+| 自动驱动 600 帧（`LENO_NO_JIT=1`）| 跑完、零错误（对照）✓ |
+| assert | **311 passed / 0 failed** ✓ |
+
+#### 同类隐患（同一根因，本次**未**修，记录备查）
+
+「裸 double vs int48」的歧义是 JIT 的**固有**表示问题，凡是"把 JIT 值交给需要精确类型的一方"
+都可能同病：
+
+| 位置 | 现状 |
+| --- | --- |
+| FFI 实参（clib / native 方法）| **本次已修**（FFI 边界统一提升）✓ |
+| struct 字段赋值（`jit_callout_struct_init`）| 已有同类保护（`expected_type == TYPE_FLOAT && val_is_int` ⇒ 提升）✓ |
+| 函数级 JIT 的实参（`jit_callout_global_func` 填 `flocals`）| **未修**：浮点形参可能拿到 int 0；因 JIT 浮点运算走「三态取操作数」（int48 → CVTSI2SD），数值上一致 ⇒ 目前只在「对形参做 `is float` 判断」这类形态下才可见 |
+| `OP_TYPE_CHECK`（`x is float`）| **未修**：裸 double 0.0 会被判成 int ⇒ 与解释器分叉（同样值域依赖、探针测不出）|
+| `OP_AS_CAST` / 类型化形参守卫 | 同上，需逐条评估 |
+
+**教训**：`raw >> 47 ∈ {-1,0}` 这条启发式的边界是 **0.0 / -0.0 / 次正规数 / 部分 NaN**，
+而「值为 0 的浮点」是最常见的浮点值之一 ⇒ 凡是跨**类型敏感边界**都要按**声明类型**兜底，
+不能只信位型启发式 ✓。
 
 ***
 
