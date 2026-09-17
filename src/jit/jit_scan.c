@@ -55,6 +55,17 @@ static int g_gap_n = 0;
 static int g_gap_on = -1;
 static const char* g_gap_mode = "loop";
 
+/* ---- 内联体字节码长度上限（§8.94 把硬编码的 256 提为具名常量）----
+ * 历史：两条内联路径都硬编码 `256`，超限就**静默**退回 callout —— census 里完全不可见 ✗。
+ * §8.94 补上记录后发现 3 个真实应用里有 **61 处**被这条阈值挡住
+ * （file_manager 33 / cache_cleaner 20 / 五子棋 8）。
+ * §8.95 做过实验：把它提到 1024 后 **没有可测收益**（fm 3 轮 A/B 完全重叠 ✗）——
+ * 因为那 30 个多进来的 callee 立刻被**别的门**挡住（跨模块访问 17→21、OP_SWITCH_LOOKUP 1）
+ * ⇒ 瓶颈只是换了位置（同 §8.80 的"census 只记第一个原因"）。
+ * 所以**还原成 256**（保留具名常量与全部诊断）：量了没收益就还原，不留无依据的改动。
+ * ⚠ 下次想调它，先看 `LENO_JIT_GAPS` 里"长度超上限"是不是**第一名**。 */
+#define JIT_INLINE_MAX_BODY 256
+
 static int jit_gaps_on(void) {
     if (g_gap_on < 0) g_gap_on = getenv("LENO_JIT_GAPS") ? 1 : 0;
     return g_gap_on;
@@ -1371,7 +1382,7 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                  *   - 单返回值（=1），与 codegen/内联退出记账一致；
                  *   - 能定位方法体：优先用字节码里的静态类型名直接定位；失败再
                  *     退回「方法名在所有 def 中唯一」的推断（有歧义就放弃）；
-                 *   - 体内可内联（scan_callee_for_inline）、无 try、体长 ≤256；
+                 *   - 体内可内联（scan_callee_for_inline）、无 try、体长 ≤ JIT_INLINE_MAX_BODY；
                  *   - callee locals 放得下（callee_lc >= arg_count，避免越界映射）。
                  * 接收者的运行时类型由 codegen 生成 def 守卫兜底。 */
                 if (ret_count == 1 && arg_count >= 1 && r->inline_count < 4
@@ -1379,8 +1390,15 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                     ObjStructDef* mdef = typed_def;
                     ObjFunction* mf = typed_fn;
                     if (!mf) mf = jit_resolve_method_func(chunk, name_idx, &mdef);
+                    /* §8.94：与全局函数内联侧对称 —— 这些门以前静默失败、不可观测 ✗ */
+                    if (!mf || !mdef || !mf->chunk)
+                        jit_gaps_record_inline("内联未尝试：方法体定位不出来");
+                    else if (mf->has_try)
+                        jit_gaps_record_inline("内联未尝试：方法体含 try");
+                    else if (mf->chunk->len > JIT_INLINE_MAX_BODY)
+                        jit_gaps_record_inline("内联未尝试：方法体字节码长度超上限");
                     if (mf && mdef && mf->chunk && !mf->has_try &&
-                        mf->chunk->len > 0 && mf->chunk->len <= 256) {
+                        mf->chunk->len > 0 && mf->chunk->len <= JIT_INLINE_MAX_BODY) {
                         int callee_lc = mf->local_count;
                         int base = r->num_locals + r->inline_extra_locals;
                         if (callee_lc >= arg_count && base + callee_lc <= JIT_MAX_LOCALS) {
@@ -1436,6 +1454,16 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                  * with a known ObjFunction, use its return_count. */
                 int arg_count = rd_short(ip + 3);
                 int ret_count = 1;
+                /* §8.94：**观测盲区**修复 —— 未类型化的 `OP_CALL_GLOBAL_FUNC` 从来没有内联路径
+                 * （下面的内联块历史上只对 TYPED 变体开放）⇒ "被调方含循环、无法内联"这种情况
+                 * 在 census 里**完全不可见** ✗。§8.93 的探针 A 就是它：净损失 **2.36x**，
+                 * 而 `LENO_JIT_GAPS` 只显示一行与它无关的 `func|函数体含循环`。
+                 * 这里把它记成显式的「未实现」，而不是假装它不是缺口 ——
+                 * 修复需要给内联加"运行时 callee 仍是编译期那个"的守卫（见 §8.94 的说明）。 */
+                if (op == OP_CALL_GLOBAL_FUNC) {
+                    jit_gaps_set_inline_id((const void*)chunk);
+                    jit_gaps_record_inline("未实现内联：未类型化 OP_CALL_GLOBAL_FUNC 调用点");
+                }
                 if (op == OP_CALL_GLOBAL_FUNC_TYPED && vm_ptr) {
                     uint16_t func_slot = rd_short(ip + 1);
                     if (func_slot < vm_ptr->global_func_capacity) {
@@ -1451,13 +1479,24 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                                 ret_count = func2->return_count;
 
                             /* ---- Try to inline the callee ---- */
+                            /* §8.94：这几道门以前**静默失败** ⇒ "为什么没内联"完全不可观测
+                             * （§8.93 的探针 A 就卡在这里，census 里连 inline| 行都没有 ✗）。
+                             * 现在每道门都有记录 —— 它们才是"含循环的被调方无法内联"的真凶。 */
+                            if (!func2 || !func2->chunk)
+                                jit_gaps_record_inline("内联未尝试：全局函数值解析不出来");
+                            else if (r->inline_count >= 4)
+                                jit_gaps_record_inline("内联未尝试：已达 inline_count 上限");
                             if (func2 && func2->chunk && r->inline_count < 4
                                 && !getenv("LENO_JIT_NOINLINE")) {
                                 Chunk* cc = func2->chunk;
                                 int callee_lc = func2->local_count;
                                 int base = r->num_locals + r->inline_extra_locals;
+                                if (base + callee_lc > JIT_MAX_LOCALS)
+                                    jit_gaps_record_inline("内联未尝试：callee locals 放不下");
+                                else if (cc->len > 0 && cc->len > JIT_INLINE_MAX_BODY)
+                                    jit_gaps_record_inline("内联未尝试：callee 字节码长度超上限");
                                 /* Check capacity: base + callee_lc must fit in JIT_MAX_LOCALS */
-                                if (base + callee_lc <= JIT_MAX_LOCALS && cc->len <= 256) {
+                                if (base + callee_lc <= JIT_MAX_LOCALS && cc->len <= JIT_INLINE_MAX_BODY) {
                                     int callee_mv = 0;
                                     InlineSite* is = &r->inline_sites[r->inline_count];
                                     if (scan_callee_for_inline(cc, func2->module, callee_lc, base,

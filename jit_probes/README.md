@@ -154,6 +154,12 @@ powershell -File jit_probes\jit_census.ps1 -Frames 60   # 热循环需 ≥ JIT_H
 输出：每个应用的 `Compiled/Executed/Bailouts/FuncCompiled` 与 `[SDL-BENCH]` 基准、
 运行期 bailout 明细、scan 期拒收清单（按编译对象去重计数）。
 
+**内联侧的记录已补齐（§8.94）**：以前"为什么没内联"完全不可见 ✗，现在每道门都有记录 ——
+包括 `内联未尝试：…字节码长度超上限`、`内联未尝试：callee locals 放不下`、
+`未实现内联：未类型化 OP_CALL_GLOBAL_FUNC 调用点` 等 ✓。
+⚠ 看 census 时记住：**每个对象只记第一个原因**（§8.80）—— 修掉第一名后必须重测，
+否则会把"换了个原因"当成"解锁" ✗（§8.95 的 256→1024 实验就是这么暴露瓶颈换位的 ✓）。
+
 **⚠ 不要用 `LENO_JIT_DEBUG=1` 来回答"还有哪些没进 JIT"**：真实应用上它产出 8MB+ stderr
 并把运行拖到跑不完（§8.71 / §8.89 各栽过一次）。本表用的两个开关都是"退出时打印一次"量级。
 
