@@ -1,0 +1,71 @@
+// §8.120：把"调用边界"按种类钉死 —— 为什么 `函数调用数学计算` 只有 5% 提速、
+// `内联缓存(arr.len())` 甚至比 NO_JIT 还慢 ✗（两者都指向"JIT 的 callout 边界比
+// 解释器的派发更贵"这一条假设 ✓，本探针用来证实/否证它）。
+import times
+import maths
+
+func moduleCall(int n): float {          // maths.sqrt(i)：模块方法（可变实参、可失败）
+    var acc = 0.0
+    var t1 = times.ms()
+    var i = 1
+    while i < n {
+        acc = acc + maths.sqrt(_float(i))
+        i = i + 1
+    }
+    var t2 = times.ms()
+    if acc < 0.0 { print("") }
+    return t2 - t1
+}
+
+func nativeNoArg(int n): float {         // times.ms()：模块方法、无实参
+    var acc = 0.0
+    var t1 = times.ms()
+    var i = 0
+    while i < n {
+        acc = acc + times.ms() * 0.0
+        i = i + 1
+    }
+    var t2 = times.ms()
+    if acc < 0.0 { print("") }
+    return t2 - t1
+}
+
+func methodCall(int n): float {          // arr.len()：实例方法（走 OP_CALL）
+    Array[int] arr = []
+    arr.add(1)
+    var acc = 0.0
+    var t1 = times.ms()
+    var i = 0
+    while i < n {
+        acc = acc + _float(arr.len())
+        i = i + 1
+    }
+    var t2 = times.ms()
+    if acc < 0.0 { print("") }
+    return t2 - t1
+}
+
+func pureLoop(int n): float {            // 参照：同结构但不调用
+    var acc = 0.0
+    var t1 = times.ms()
+    var i = 0
+    while i < n {
+        acc = acc + 1.5
+        i = i + 1
+    }
+    var t2 = times.ms()
+    if acc < 0.0 { print("") }
+    return t2 - t1
+}
+
+main() {
+    int n = 2000000
+    float p = pureLoop(n)
+    float m = moduleCall(n)
+    float z = nativeNoArg(n)
+    float d = methodCall(n)
+    print("pure       = " + (p * 1000000.0 / _float(n)) + " ns/iter")
+    print("moduleCall = " + (m * 1000000.0 / _float(n)) + " ns/iter  (边界≈" + ((m - p) * 1000000.0 / _float(n)) + ")")
+    print("nativeNoArg= " + (z * 1000000.0 / _float(n)) + " ns/iter  (边界≈" + ((z - p) * 1000000.0 / _float(n)) + ")")
+    print("methodCall = " + (d * 1000000.0 / _float(n)) + " ns/iter  (边界≈" + ((d - p) * 1000000.0 / _float(n)) + ")")
+}
