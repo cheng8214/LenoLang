@@ -330,6 +330,20 @@ build\leno.exe jit_probes\nlev_f_intstep_loop.leno     # ≈100ms（int 步长�
   （`diag_mask_split` / `diag_promote_neg` ✓）—— 它们**不是门禁**（打印大量绝对值 ✓），
   但改动 `bigint.c` / `vm_helpers.inc` / `op_bitwise.inc` / `op_type_specialized.inc` 后值得手跑一遍 ✓。
 
+## 用户提交的原始复现件（§8.123 / §8.124，**非门禁** ✓ 但改动相关代码后值得手跑）
+
+- `repro_bug1_shift.leno`（在 `jit_probes/` ✓）—— **门禁探针**：最小复现"乘法得 2^63 + 循环内右移"
+  曾经**段错误** ✗（§8.123）。确定性输出 `acc=8` ✓，必须与 `LENO_NO_JIT=1` 逐字一致 ✓
+  （实测 `fc: no differences encountered` ✓）。与 `probe_bitwise_bigint_sign` 同一族 ✓。
+- `_jit_bugs/bug1_segfault_shift.leno` —— 段错误/移位：字面量 `0xffffffffffffffff`、`-1`、
+  `2^63`、`2^63+1` 的 hex 形态（判据：全部 `ffffffffffffffff`/`8000…` ✓）。
+- `_jit_bugs/bug2_shl48.leno` —— `<<` 越过 48 位的截断/提升（`a<<8` 与 `a*256` 必须相同 ✓）。
+- `_jit_bugs/bug3_control_toplevel.leno` —— 顶层 `2^63` 及其 `>>32` / `>>1`。
+- `_jit_bugs/bug4_control_masked.leno` —— `(2^63) & 0xffffffffffffffff` 必须为**正** `9223372036854775808` ✓。
+
+> 端到端回归资产：`examples/crypto/sha512.leno`（标准向量 3 条，JIT 与 NO_JIT 都必须 PASS ✓）
+> —— §8.125 的事故现场就是它 ✗。
+
 ## 覆盖面合成表（§8.92）：`jit_census.ps1`
 
 JIT 覆盖面有两个**互不相通**的口径，过去只能手工分别看 ——

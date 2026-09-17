@@ -1,0 +1,20 @@
+import strings
+func hex64(int v):string {
+    var hx = "0123456789abcdef"
+    string s = ""
+    for 0:15 to i {
+        int bb = (v >> (60 - i*4)) & 0xf
+        s += strings.char(hx.byte(bb))
+    }
+    return s
+}
+main() {
+    int a = 0x123456789ab
+    print("a_mul256 = "+hex64(a * 256))
+    print("a_shl8   = "+hex64(a << 8))
+    int b = 0x123456789ab00
+    print("b_shl4   = "+hex64(b << 4))
+    int c = 0x123456789ab0
+    print("c_shl8   = "+hex64(c << 8))
+    print("DONE")
+}

@@ -1,0 +1,19 @@
+import strings
+func hex64(int v):string {
+    var hx = "0123456789abcdef"
+    string s = ""
+    for 0:15 to i {
+        int bb = (v >> (60 - i*4)) & 0xf
+        s += strings.char(hx.byte(bb))
+    }
+    return s
+}
+main() {
+    int calc = 0x80000000 * 4294967296
+    print("v="+calc)
+    int q1 = calc >> 32
+    print("q1(>>32)="+q1)
+    int q2 = calc >> 1
+    print("q2(>>1)="+q2)
+    print("DONE")
+}
