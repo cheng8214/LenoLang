@@ -172,17 +172,20 @@ $env:LENO_NO_JIT="1"; build\leno.exe jit_probes\probe_type_check_float_zero.leno
 ⚠ 本方言**不支持科学计数法字面量**（`1.0e-324` 会报"声明语句后期望换行"）⇒
 次正规数用 `0.5` 连乘 1074 次现算 ✓。
 
-## 已知分叉的**跟踪探针**（当前故意 DIFF，**不是**门禁项）
+## int/float 歧义区的三个探针（§8.100 / §8.101 → §8.103 已全部修好，**并入常规门禁**）
 
-| 探针 | 现象 | 说明 |
+| 探针 | 覆盖 | 修前 → 修后 |
 | --- | --- | --- |
-| `probe_is_int_ambiguous.leno` | JIT `hitsInt=2950` vs NO_JIT `0` | §8.100 的**反向**分叉：值实际是 float 0.0 时 JIT 判 `is int` 为真。修它须在 int 族检查也 bail ⇒ 代价是"对非负小整数 `is int`"全部回退 ⇒ 先量热路径占比 |
-| `probe_float_param_faithful.leno` | JIT `fmt=[0]` vs NO_JIT `fmt=[0.0]` | §8.101：声明为 `float` 的形参在 JIT 调用边界被贴成 int（`jit_raw_to_value` 的位型启发式）。已修 4 处 callout 边界（按声明类型提升）**但未覆盖本路径**，污染点待定位 |
+| `probe_type_check_float_zero.leno` | `is float` 对 +0.0 / -0.0 / 次正规 | `zero=50` ✗ → `zero=2000` ✓ |
+| `probe_is_int_ambiguous.leno` | **反向**：值实际是 float 0.0 时的 `is int` | `hitsInt=2950` ✗ → `0` ✓ |
+| `probe_float_param_faithful.leno` | 泛型值边界：`"" + p`（p 为 float 0.0）| `fmt=[0]` ✗ → `fmt=[0.0]` ✓ |
+| `probe_float_param_int0.leno` | 同一缺陷的"格式计数"形态 | `hitsF=50 hitsI=2950` ✗ → `3000/0` ✓ |
 
-**方法论（§8.102）**：这类"值域/类型污染"缺陷，观测口径必须**忠实** ——
-`is float` 会被 §8.100 的 bailout 掩盖、`is int` 会因同一歧义**假阳性**、连调用方 JIT 里的
-`"" + v` 也会经过 concat callout 的同一启发式 ✗。可靠做法：把格式化/转换放到
-**callee 侧（解释器执行）**，或直接比对值本身。
+**观测口径（§8.102，踩坑换来的）**：这类值域/类型污染缺陷，**不要只用 `is`** ——
+`is float` 会被歧义区 bailout 掩盖、`is int` 会因同一歧义**假阳性**；连调用方 JIT 里的
+`"" + v` 也会经过 concat 的同一启发式 ✗。而且**"把格式化放进 callee"也不够**：
+若 callee 自己也被函数级 JIT 编（本例就是），观测点仍在启发式之后 ✗
+⇒ 先确认 callee 未被 JIT 编（`LENO_JIT_DEBUG=1` 看 `COMPILE:` 行）或直接比对值本身。
 
 ## 覆盖面合成表（§8.92）：`jit_census.ps1`
 

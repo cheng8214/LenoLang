@@ -77,6 +77,30 @@
                 patch_rel32(cb, tagged_jcc_r, cb->len);
                 patch_rel32(cb, tagged_jcc_l, cb->len);
 
+                /* ---- §8.103：歧义区不猜（concat 需要精确类型）----
+                 * 裸位型里 float 与 int48 在 `[0, 2^47)` 上**重合**（float 侧 = +0.0 与正次正规数），
+                 * 而下面两次 EMIT_RAW_TO_VALUE 的启发式（raw>>47 ∈ {-1,0} ⇒ 当 int48）会把
+                 * 浮点 0.0 贴成 int 0 ⇒ `"" + p`（p 是 float 0.0）拼出 "0" 而不是 "0.0" ✗。
+                 * 实测：jit_probes/probe_float_param_faithful.leno（JIT "0" vs NO_JIT "0.0"）。
+                 * ⇒ 任一操作数落在歧义区就 bailout，交解释器按**真实类型**拼接（正确性优先；
+                 * 代价是小非负整数参与拼接的循环会回退，后续用 TOS 静态类型跟踪消除，见 §8.103）。 */
+                emit_mov_rr(cb, JIT_R8, JIT_RDX);
+                emit_sar_imm(cb, JIT_R8, 47);
+                emit_test_rr(cb, JIT_R8, JIT_R8);
+                {
+                    EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                    int _amb_a = emit_jcc(cb, 0x84);    /* JZ（左操作数歧义）→ bailout */
+                    patch_add(ctx, _amb_a, -1, 0);
+                }
+                emit_mov_rr(cb, JIT_R8, JIT_RAX);
+                emit_sar_imm(cb, JIT_R8, 47);
+                emit_test_rr(cb, JIT_R8, JIT_R8);
+                {
+                    EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                    int _amb_b = emit_jcc(cb, 0x84);    /* JZ（右操作数歧义）→ bailout */
+                    patch_add(ctx, _amb_b, -1, 0);
+                }
+
                 /* RAX=右(raw), RDX=左(raw) → Value（int 转 int48 Value，对象保持） */
                 EMIT_RAW_TO_VALUE();                 /* RAX = Value(右) */
                 emit_push_reg(cb, JIT_RAX);          /* 暂存 Value(右) */

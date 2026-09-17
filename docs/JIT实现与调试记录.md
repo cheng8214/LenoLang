@@ -6410,6 +6410,54 @@ codegen 发出的 `EMIT_CALL(jit_callout_global_func)` 之后各自加一行仪�
 
 ***
 
+### 8.103 【已修】int/float 歧义区不再"猜"：类型判定族 + concat 全部保守化（正确性优先）（2026-09-17）
+
+**方针**（用户定的优先级：**正确性 > 效率**）：JIT 裸位型表示里，浮点 **+0.0 / -0.0 / 正次正规数**
+与 **int48** 位型重合 ⇒ 任何"从裸位型猜类型"的地方都会**静默**把 float 当 int。
+彻底修 = 让 JIT 在这些地方**不猜**：**能用声明类型就用，不能就交回解释器**。
+
+**本轮修的两类边界**
+
+1. **类型判定族（`OP_TYPE_CHECK`）**：期望类型属**数值族**
+   （`TYPE_INT` / `TYPE_FLOAT` / `TYPE_I8…TYPE_C_SSIZE`）**且** 操作数 `raw>>47 == 0`
+   （⇔ `0 ≤ raw < 2^47`，即 int48 与 float 位型重合的唯一区间）⇒ **bailout** ✓。
+   覆盖 `is int` / `is float` / `switch case int|float` 的**两个方向** ✓。
+2. **值物化边界（`OP_ADD` 的 concat 段）**：任一操作数落歧义区 ⇒ **bailout** ✓。
+   **这是本轮定位到的真正污染点**：`fmtFloat(float p) { return "" + p }` —— `"" + p` 编译成
+   **generic `OP_ADD`**（不是 `OP_STRING_ADD`），而 callee **自己也被函数级 JIT 编**
+   ⇒ concat 段的 `EMIT_RAW_TO_VALUE` 把浮点 0.0 贴成 int 0 ⇒ 拼出 `"0"`（解释器 `"0.0"`）✗。
+
+**定位过程（两个"零输出"仪器 + 字节码转储）**：在 `jit_callout_global_func` 入口与
+`jit_invoke_closure` 的 **VM 重入**各加一行仪器 ⇒ **都没触发** ✗；配合 `LENO_JIT_DEBUG=1` 的
+`COMPILE: fn='main' … inline=0`（未内联 ✗）、和 `--debug-out` 转储（`fmtFloat` =
+`OP_CONST ""` / `OP_GET_LOCAL 0` / **`OP_ADD`** / `OP_RETURN`）⇒ 锁定污染在 **callee 内部那条 `OP_ADD`** ✓。
+⇒ 教训：**"忠实探针"必须确认 callee 自己没被 JIT 编**，否则观测点仍在启发式之后 ✗（§8.102 的延伸）。
+
+**验证：15 探针全绿 + 真实应用零代价**
+
+| 探针 | 修前 | 修后 |
+| --- | --- | --- |
+| `probe_float_param_faithful` | `fmt=[0]` ✗ | **`fmt=[0.0]`** ✓ |
+| `probe_float_param_int0` | `hitsF=50 hitsI=2950` ✗ | **`hitsF=3000 hitsI=0`** ✓ |
+| `probe_is_int_ambiguous` | `hitsInt=2950` ✗ | **`hitsInt=0`** ✓ |
+| 其余 12 个 | IDENTICAL | IDENTICAL ✓ |
+
+三应用（headless 300 帧）：`sum` 逐字一致 ✓、**`Bailouts` 无新增** ✓（fm 3 = 仍是 FOR_PREP、
+cc 0、五子棋 0）、`upf` 全在噪声内（3803 / 5559 / 2941 vs 3791~3830 / 5490~5527 / 2977~2995）
+⇒ **"不猜"的守卫在真实应用里一次都没触发** ✓；assert **311 passed / 0 failed** ✓。
+
+**延伸原则（与 §8.99 / §8.101 同一条线）**：凡"从裸位型推断类型"的边界 ——
+- **声明类型可得** ⇒ 用它 ✓（形参 `jit_promote_arg_by_decl` 已覆盖 4 处 callout 边界、
+  struct 字段赋值 ✓、FFI 实参 ✓）
+- **不可得** ⇒ **bail** ✓（类型判定 ✓、concat ✓）
+- **剩余待办**：其余泛型值边界（容器写入 / `_string()` / 其它 callout）按同一原则过一遍；
+  审计口径 = `jit_raw_to_value` 全库约 **24** 处调用点逐个判定"是否跨类型敏感边界" ✓。
+
+**代价与后续**：本轮 bail 会让"小非负整数参与 concat / `is int` 判定"的循环回退解释器（实测三应用**未触发** ✓）；
+若将来在别处成为瓶颈，正解是给 **TOS / 栈槽补静态类型跟踪**（或不再擦除 int 标签 ✓），届时可回收 ✓。
+
+***
+
 ## 9. 性能数据
 
 ### 测试环境

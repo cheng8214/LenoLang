@@ -717,7 +717,8 @@
                  * 交解释器按真实类型判定（代价只落在"对 {0, 正次正规} 做 is float"这一形态上）。
                  * 注：`raw>>47 == -1`（负 int48 / 负 NaN）与其它值域都不在歧义区，不受影响；
                  * 反向的 `int 0 is int`（JIT 判真）属同一表示缺口的另一面，见 §8.100 的待决记录。 */
-                if (tk == TYPE_FLOAT || tk == TYPE_F32 || tk == TYPE_F64) {
+                if (tk == TYPE_INT || tk == TYPE_FLOAT ||
+                    (tk >= TYPE_I8 && tk <= TYPE_C_SSIZE)) {
                     emit_mov_rr(cb, JIT_R8, JIT_RAX);
                     emit_sar_imm(cb, JIT_R8, 47);       /* 歧义 ⇔ 0 ≤ raw < 2^47 ⇔ raw>>47 == 0 */
                     emit_test_rr(cb, JIT_R8, JIT_R8);
