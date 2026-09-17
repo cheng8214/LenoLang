@@ -6357,6 +6357,59 @@ JIT 会把它判成 int（如 `0.0 is int` JIT 判真）。要修得在同族检
 
 ***
 
+### 8.101 【部分修复 / 定位未完成】float 形参在 JIT 调用边界被贴成 int（2026-09-17）
+
+**症状（忠实值域探针 `jit_probes/probe_float_param_faithful.leno`）**
+
+```leno
+func fmtFloat(float p): string { return "" + p }   // 格式化放在 callee 侧（解释器）
+```
+⇒ JIT `fmt=[0]` ✗ vs `LENO_NO_JIT=1` `fmt=[0.0]` ✓ —— 声明为 `float` 的形参**在 callee 里已经是 int**。
+
+**机制**：JIT 虚拟栈用裸位型表示数值 ⇒ 实参经 `jit_raw_to_value`（启发式 `raw>>47 ∈ {-1,0}` ⇒ int48）
+转成 Value 时，浮点 **0.0**（位型全 0）被贴成 **int 0** ⇒ 之后 VM 侧的形参提升
+（`vm_call.inc:101-109`，逻辑正确）已无从恢复（它只把 int 升成 float，值已是 int 0）。
+
+**本轮已落地（正确但未覆盖到本探针的路径）**：抽 `jit_promote_arg_by_decl(a, fn, i)` —— 按 **callee 的
+声明形参类型**补齐提升（float←int / float←bigint / int←float，与 `call()` / `jit_try_hot_func_call` 逐条对齐），
+并应用到 4 处 callout 实参边界（`jit_callout_global_func` 的函数级快路径、`jit_invoke_closure` 的函数级快路径
+与其 **VM 重入**、另一处闭包快路径），另补「全局函数槽可以是**裸 `OBJ_FUNCTION`**」的提取分支。
+原则与 §8.99 / struct 字段赋值一致：**跨类型敏感边界按声明类型兜底，不只信位型启发式**。
+
+**为什么本探针仍红（已排除的路径 + 已知证据）**
+
+| 证据 | 含义 |
+| --- | --- |
+| 4 处补丁应用后探针**无变化** | 污染点不在这些 callout 的实参填充处 |
+| 在 `jit_callout_global_func` 的**函数级快路径**内加临时仪器 ⇒ **零输出** | 该路径**没被走到**（`jfn == NULL`，callee 未被函数级 JIT 编）|
+| `vm_call.inc:101-109` 有正确的形参提升 | 到 VM 时值已是 int 0 ⇒ 污染在其**上游**（JIT→VM 交接）|
+
+⇒ **下一步（精确）**：在 `jit_invoke_closure` 的 **VM 重入前**（`vm_stack_push` 循环）与
+codegen 发出的 `EMIT_CALL(jit_callout_global_func)` 之后各自加一行仪器，打印
+`callee 类型 / 声明 param_types / 每个槽的 raw→Value`，逐点缩小；`jit_raw_to_value` 全库约 24 处调用点
+需按"是否跨类型敏感边界"分类治理。
+
+**两个跟踪探针（当前**故意**保留 DIFF，不是门禁项）**
+
+- `probe_float_param_faithful.leno`：上面这条（未修完）。
+- `probe_is_int_ambiguous.leno`：§8.100 的**反向**分叉 —— 值实际是 float 0.0 时 JIT 判 `is int`
+  为真（`hitsInt=2950` ✗ vs 0 ✓）；修它需在 int 族检查上也 bail，代价是"对非负小整数做 `is int`"
+  全部回退 ⇒ **先量热路径占比**。
+
+#### 8.102 方法论：`is` 观测会被同一歧义污染（两条 confound）
+
+本次最初两个探针都**误报**了，值得记下来：
+
+1. 用 `is float` 观测 ⇒ 被 §8.100 的**歧义区 bailout** 兜住（回退解释器）⇒ 缺陷被**掩盖**；
+2. 改用 `is int` 观测 ⇒ 恰好命中**同一歧义的反向**（float 0.0 的位型被贴成 int）⇒ **假阳性**；
+3. 连 `"" + v` 都不行 —— 当它在**调用方 JIT** 里执行时，会经过 concat callout 的同一个启发式 ✗。
+
+⇒ **类型污染的观测口径必须"忠实"**：把转换/格式化放到**不受该启发式影响的一侧**
+（本项目里 = 放进 callee 由解释器执行，见 `probe_float_param_faithful.leno`），
+或直接比对**值本身**。**凡是跨 JIT 边界的类型判定，都别只在调用方一侧观测。**
+
+***
+
 ## 9. 性能数据
 
 ### 测试环境

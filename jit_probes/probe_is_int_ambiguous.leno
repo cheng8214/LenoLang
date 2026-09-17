@@ -1,0 +1,30 @@
+// §8.100 待决项跟踪探针：**int 族 `is` 在歧义区**（值实际是 float 0.0）JIT 与解释器分叉
+//
+// 背景：JIT 虚拟栈用裸位型表示数值 —— 浮点 0.0 的位型与 int 0 完全相同。
+// §8.100 只给**浮点族** `is`（`is float`）加了"歧义区 ⇒ bailout"的兜底；
+// **int 族**（`is int` / `switch case int`）没有兜底（否则每次对非负小整数做 `is int`
+// 都会回退，代价太大）⇒ 反向分叉仍在：**值实际是 float 0.0 时，JIT 判 `is int` 为真**。
+//
+// 本探针**故意**保留该分叉，用来跟踪"待决项"是否仍在（不是门禁项）：
+//   JIT: hitsInt ≈ 2950（热阈值后判真 ✗）  NO_JIT: hitsInt = 0 ✓
+// 何时它变成全绿，就说明这条缺口被真正修掉了（届时把它并入常规门禁）。
+//
+// 另注（§8.101 的教训）：正因为它会在 `is` 上制造假阳性，
+// "float 形参是否被贴成 int"这类**类型污染**必须用**值本身**的口径（如字符串形态）观测，
+// 不能用 `is` —— 见 probe_float_param_int0.leno。
+func echoFloat(float p): float {
+    return p
+}
+
+main() {
+    var z = 1.0 - 1.0                 // 浮点 0.0
+    int hitsInt = 0
+    int i = 0
+    while i < 3000 {
+        if echoFloat(z) is int {
+            hitsInt = hitsInt + 1
+        }
+        i = i + 1
+    }
+    print("hitsInt=" + hitsInt + "\n")
+}

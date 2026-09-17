@@ -1,0 +1,35 @@
+// §8.101 探针：**声明为 float 的形参**在 JIT 调用边界是否被贴成 int（用"格式"观测）
+//
+// 路径：`jit_callout_global_func` 搬实参用 `jit_raw_to_value(vstack_top[...])`
+//（裸位型 → Value；启发式 raw>>47 ∈ {-1,0} ⇒ 当 int48）⇒ 浮点 0.0（位型全 0）
+// 可能在装入形参前被判成 int 0 ⇒ callee 里 p 是 int，而解释器里是 float。
+//
+// ⚠ 观测口径（踩过坑）：**不能用 `is`**。
+//   · `p is float`：被 §8.100 的歧义区 bailout 兜住 ⇒ 回退解释器 ⇒ 掩盖
+//   · `p is int` ：恰好命中同一歧义的反向（float 0.0 的位型 0x0 被贴成 int）⇒ 假阳性
+//   ⇒ 改用**值本身的形态**（字符串表示）观测：int 0 与 float 0.0 的 `"" + v` 不同。
+// 本探针先把两种形态打出来（wantF / wantI），再用它们计数 ⇒ 口径自证。
+func echoFloat(float p): float {
+    return p
+}
+
+main() {
+    string wantF = "" + 0.0
+    string wantI = "" + 0
+    print("wantF=[" + wantF + "] wantI=[" + wantI + "]\n")
+    if wantF == wantI {
+        print("口径无效：int 0 与 float 0.0 的字符串形态相同，需换观测方式\n")
+        return
+    }
+    var z = 1.0 - 1.0                 // 浮点 0.0（SSE 结果 ⇒ 裸 double）
+    int hitsF = 0
+    int hitsI = 0
+    int i = 0
+    while i < 3000 {
+        string s = "" + echoFloat(z)
+        if s == wantF { hitsF = hitsF + 1 }
+        if s == wantI { hitsI = hitsI + 1 }
+        i = i + 1
+    }
+    print("hitsF=" + hitsF + " hitsI=" + hitsI + "\n")
+}

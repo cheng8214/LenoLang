@@ -1,0 +1,21 @@
+// §8.101 忠实探针：把"格式化"放在 **callee 侧**（解释器执行）⇒ 只反映**实参搬运**的结果，
+// 绕开调用方 JIT 的 concat callout（那一层也用 jit_raw_to_value 的同一枚启发式，
+// 会把 float 0.0 也贴成 int 0 —— 见 §8.102 的系统性发现）。
+//
+// 判读：fmt 应为 [0.0]（callee 里 p 是 float）。
+//   · [0.0] ⇒ 实参搬运正确（形参声明类型提升生效）
+//   · [0]   ⇒ p 在 callee 里已是 int ⇒ 实参被贴成 int 0（§8.101 未修好）
+func fmtFloat(float p): string {
+    return "" + p
+}
+
+main() {
+    var z = 1.0 - 1.0                 // 浮点 0.0（SSE 结果 ⇒ 裸 double）
+    string f = ""
+    int n = 0
+    while n < 300 {
+        f = fmtFloat(z)
+        n = n + 1
+    }
+    print("fmt=[" + f + "]\n")
+}

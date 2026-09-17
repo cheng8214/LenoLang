@@ -206,6 +206,30 @@ static inline Value jit_raw_to_value(int64_t raw) {
     return (Value)raw;
 }
 
+/* ---- §8.101：按 callee 的**声明形参类型**补齐提升（与解释器 call() 逐条对齐）----
+ * 为什么必须做：`jit_raw_to_value` 用的是位型启发式（raw>>47 ∈ {-1,0} ⇒ 当 int48），
+ * 而 JIT 虚拟栈里 float 与 int48 都是"裸"位型 ⇒ **浮点 0.0（位型全 0）会在装入形参之前
+ * 被贴成 int 0**，而调用点声明的是 `float p` ⇒ callee 里 p 变成 int（解释器里是 float）：
+ * 这是**静默类型污染**（返回值、落字段、`_string()` 都会带着错类型继续跑），不只影响 `is`。
+ * 实测（`jit_probes/probe_float_param_int0.leno`，用"字符串形态"观测 —— 刻意不用 `is`，
+ * 因为 `is float` 被 §8.100 的歧义区 bailout 兜住会掩盖、`is int` 又恰是同一歧义的反向会假阳性）：
+ * 修前 `hitsF=50 hitsI=2950`（JIT）vs `hitsF=3000 hitsI=0`（NO_JIT）✗。
+ * 原则与 §8.99（FFI 边界）、§8.101 前身（struct 字段赋值）一致：
+ * 跨**类型敏感边界**时按**声明类型**兜底，不只信位型启发式。
+ * 与 `jit_try_hot_func_call`（jit.c）里那段同一套规则：float←int / float←bigint / int←float。 */
+static inline Value jit_promote_arg_by_decl(Value a, ObjFunction* fn, int i) {
+    if (fn && fn->param_types && i < fn->arity) {
+        TypeKind t = fn->param_types[i];
+        if (t == TYPE_FLOAT && val_is_int(a))
+            return val_float((double)val_as_int(a));
+        if (t == TYPE_FLOAT && val_is_bigint(a))
+            return val_float(bigint_to_double(val_as_bigint(a)));
+        if (t == TYPE_INT && val_is_float(a))
+            return val_int((int)val_as_num(a));
+    }
+    return a;
+}
+
 /* Convert NaN-boxed Value to JIT virtual-stack raw format.
  * NaN-boxed int → extract int48, sign-extend; non-int → raw bits. */
 static inline int64_t jit_value_to_raw(Value v) {
@@ -1086,7 +1110,8 @@ Value jit_callout_call_module_func(ObjModule* module, int64_t* vstack_top,
             for (int i = 0; i < lcount; i++) flocals[i] = NULL_VAL;
             /* JIT 栈：vstack_top[0]=TOS=最后实参；函数参数 slot 0=第一个实参。 */
             for (int i = 0; i < arg_count && i < lcount; i++)
-                flocals[i] = jit_raw_to_value(vstack_top[arg_count - 1 - i]);
+                flocals[i] = jit_promote_arg_by_decl(
+                    jit_raw_to_value(vstack_top[arg_count - 1 - i]), mfunc, i);   /* §8.101 */
             jit_func_depth++;
             jit_fn_result = NULL_VAL;
             jit_fn_result_count = 1;   /* R6-a：默认单返回；多返回由机器码覆写 */
@@ -1108,8 +1133,21 @@ Value jit_callout_call_module_func(ObjModule* module, int64_t* vstack_top,
 
     /* ---- 慢路径：VM 重入（push args + callee，跑完折叠栈）---- */
     int saved_sp = vm->sp;
-    for (int i = 0; i < arg_count; i++)
-        vm_stack_push(vm, jit_raw_to_value(vstack_top[arg_count - 1 - i]));
+    /* §8.101：VM 重入前同样按声明类型提升（否则 int 0 会顶替 float 0.0 交给 VM；
+     * 这条路径上 VM 不会替我们补提升 —— 实测探针正是走这里才暴露的）。 */
+    {
+        ObjFunction* _pfn = mfunc;
+        if (!_pfn && val_is_obj(callee)) {
+            Object* _o = val_as_obj(callee);
+            if (_o->type == OBJ_CLOSURE)
+                _pfn = ((ObjClosure*)_o)->function;
+            else if (_o->type == OBJ_FUNCTION)
+                _pfn = (ObjFunction*)_o;   /* 全局函数槽可以直接是裸 ObjFunction */
+        }
+        for (int i = 0; i < arg_count; i++)
+            vm_stack_push(vm, jit_promote_arg_by_decl(
+                jit_raw_to_value(vstack_top[arg_count - 1 - i]), _pfn, i));
+    }
     vm_stack_push(vm, callee);
     int saved_frame_cnt = vm->frame_cnt;
     if (vm_call_value(callee, arg_count, 0) == 0) {
@@ -1785,7 +1823,8 @@ static Value jit_invoke_closure(ObjFunction* mfunc, Value callee_val, int arg_co
             for (int i = 0; i < lcount; i++) flocals[i] = NULL_VAL;
             /* JIT 栈：vstack_top[0]=TOS=最后实参；函数参数 slot 0=第一个实参。 */
             for (int i = 0; i < arg_count && i < lcount; i++) {
-                flocals[i] = jit_raw_to_value(vstack_top[arg_count - 1 - i]);
+                flocals[i] = jit_promote_arg_by_decl(
+                    jit_raw_to_value(vstack_top[arg_count - 1 - i]), mfunc, i);   /* §8.101 */
             }
             jit_func_depth++;
             jit_fn_result = NULL_VAL;
@@ -2362,7 +2401,20 @@ Value jit_callout_global_func(int64_t* vstack_top, int arg_count,
                 /* 实参槽由下面第二个循环覆写 ⇒ 不必先置 NULL（省 arg_count 次写） */
                 for (int i = arg_count; i < lcount; i++) flocals[i] = NULL_VAL;
                 for (int i = 0; i < arg_count && i < lcount; i++) {
-                    flocals[i] = jit_raw_to_value(vstack_top[arg_count - 1 - i]);
+                    Value a = jit_raw_to_value(vstack_top[arg_count - 1 - i]);
+                    /* ---- §8.101：按**声明类型**补齐形参提升（与解释器 call() 逐条对齐，
+                     * 与 `jit_try_hot_func_call` 里那段同一逻辑）----
+                     * 为什么必须做：`jit_raw_to_value` 用的是位型启发式
+                     * （raw>>47 ∈ {-1,0} ⇒ 当 int48），而虚拟栈里 float 与 int48 都是"裸"位型
+                     * ⇒ **浮点 0.0（位型全 0）在装入形参之前就被贴成 int 0**，而调用点声明的是
+                     * `float p` ⇒ callee 里 p 变成 int（解释器里是 float）。
+                     * 实测（jit_probes/probe_float_param_int0.leno）：把 p 原样返回后调用方判
+                     * `is int` —— JIT **2950** 次为真 vs NO_JIT **0** 次 ⇒ 静默**类型污染**
+                     * （不只是 `is float` 判错：返回值、落字段都会带着错类型继续跑）。
+                     * 原则与 §8.99（FFI 边界）一致：跨**类型敏感边界**时按**声明类型**兜底，
+                     * 不只信位型启发式。注：`is float` 那条已被 §8.100 的歧义区 bailout 兜住
+                     * （会回退解释器）⇒ 本缺陷只能从"值本身"这一侧观测到。 */
+                    flocals[i] = jit_promote_arg_by_decl(a, gfunc, i);
                 }
                 jit_func_depth++;
                 jit_fn_result = NULL_VAL;

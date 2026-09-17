@@ -172,6 +172,18 @@ $env:LENO_NO_JIT="1"; build\leno.exe jit_probes\probe_type_check_float_zero.leno
 ⚠ 本方言**不支持科学计数法字面量**（`1.0e-324` 会报"声明语句后期望换行"）⇒
 次正规数用 `0.5` 连乘 1074 次现算 ✓。
 
+## 已知分叉的**跟踪探针**（当前故意 DIFF，**不是**门禁项）
+
+| 探针 | 现象 | 说明 |
+| --- | --- | --- |
+| `probe_is_int_ambiguous.leno` | JIT `hitsInt=2950` vs NO_JIT `0` | §8.100 的**反向**分叉：值实际是 float 0.0 时 JIT 判 `is int` 为真。修它须在 int 族检查也 bail ⇒ 代价是"对非负小整数 `is int`"全部回退 ⇒ 先量热路径占比 |
+| `probe_float_param_faithful.leno` | JIT `fmt=[0]` vs NO_JIT `fmt=[0.0]` | §8.101：声明为 `float` 的形参在 JIT 调用边界被贴成 int（`jit_raw_to_value` 的位型启发式）。已修 4 处 callout 边界（按声明类型提升）**但未覆盖本路径**，污染点待定位 |
+
+**方法论（§8.102）**：这类"值域/类型污染"缺陷，观测口径必须**忠实** ——
+`is float` 会被 §8.100 的 bailout 掩盖、`is int` 会因同一歧义**假阳性**、连调用方 JIT 里的
+`"" + v` 也会经过 concat callout 的同一启发式 ✗。可靠做法：把格式化/转换放到
+**callee 侧（解释器执行）**，或直接比对值本身。
+
 ## 覆盖面合成表（§8.92）：`jit_census.ps1`
 
 JIT 覆盖面有两个**互不相通**的口径，过去只能手工分别看 ——
