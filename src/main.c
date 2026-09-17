@@ -179,17 +179,32 @@ static int g_entry_cache_enabled = 0;
 // .lenomc header（本轮刚编译，或本轮从缓存载入时已校验过），而不是当场 stat 磁盘：
 // 后者在「编译期间源码又被改动」时会记下新哈希却内联着旧字节码，反而制造假命中。
 // 清单格式（文本、制表符分隔、末行 END）：
-//     LENODEPS1
+//     LENODEPS2
+//     BIN\t<运行中 exe 的指纹：size+mtime+内容 FNV-1a(64)，十六进制>
 //     <count>
 //     <st_size>\t<fnv1a 十六进制>\t<模块源文件路径>
 //     END
 // 校验失败 / 清单缺失 / 任一模块拿不到 .lenomc header ⇒ 返回失效，回退源码编译。
 // （注：覆盖范围是参与编译的 .leno 模块；被 cfunc/extern 绑定的原生库如 SDL3.dll
 //   是运行时加载的，不在缓存失效范围内。）
+//
+// §8.112（2026-09-17）：第二行 BIN 是**新增**的失效输入，因此格式标识从 LENODEPS1
+// 升为 LENODEPS2（旧清单必然被拒 ⇒ 自动重编译一次，这正是我们要的方向）。
+// 为什么必须加：字节码里烙着编译期决策，其中一部分来自**原生模块注册表**
+// （native 方法签名 / 模块常量 / 实例方法表）—— 它们**没有源文件**，改 C 代码不会让任何
+// .leno 源快照变化 ⇒ 三个 source snapshot 都"成立" ⇒ 缓存被判有效却已过期 ✗。
+// 实测事故：`times.ms()` 的注册由 TYPE_INT 改成 TYPE_FLOAT 后，基准脚本仍按"int 签名"
+// 编译 ⇒ `t2 - t1` 整数相减 ⇒ 打印 10^9 量级的"毫秒"（静默错误代码）。
+// 取 exe 自身当输入 ⇒ ABI / 注册表 / 编译器语义任何改动都要重新构建 ⇒ 指纹必变 ⇒
+// 一次覆盖整类问题（不必逐表枚举，也就不会漏表）。
+// 失败方向：指纹取不到（0）一律判失效（fail-closed）—— 宁可重编译，不要跑旧码。
+//
+// 本行格式标识已登记在 docs/待办_单一事实来源与重复实现收敛.md 第七节；
+// **不升 `LENO_BIN_VERSION`** 的理由：`.lenb` 自身的字节格式与序列化语义一字未改，
+// 变的只是"什么时候认这份缓存"的外部判定条件 ⇒ 升它会让所有模块级缓存（.lenomc /
+// .lenosymc）跟着无谓失效，而它们各自有独立的失效判定。
 // ============================================================================
-// ⚠ 版本号登记表：docs/待办_单一事实来源与重复实现收敛.md 第七节
-//   本清单的格式标识属该表登记项；改行格式/字段前先看表，并写明"为什么不升 .lenb 版本号"。
-#define ENTRY_DEPS_MAGIC "LENODEPS1"
+#define ENTRY_DEPS_MAGIC "LENODEPS2"
 
 // 跨平台 fopen / remove：Windows 上走宽字符，避免中文路径（如 文件管理器）失败
 // （原先这里还有一份自己的 stat / 哈希 / 读 .lenomc header 的实现，2026-09-16 收敛到
@@ -385,12 +400,18 @@ static int entry_deps_write(const char* deps_path) {
     }
 
     int rc = 0;
-    if (!failed) {
+    // §8.112：运行中 exe 的指纹（缓存失效的第四类输入）。取不到就**不写缓存** ——
+    // 写一份无从校验的清单等于留一颗定时炸弹（调用方会据此删掉 .lenb）。
+    uint64_t bin_fp = cache_runtime_binary_fingerprint();
+    if (!failed && bin_fp == 0) rc = -1;
+    if (!failed && bin_fp != 0) {
         FILE* f = entry_deps_fopen(deps_path, "w");
         if (!f) {
             rc = -1;
         } else {
-            fprintf(f, ENTRY_DEPS_MAGIC "\n%d\n", count);
+            fprintf(f, ENTRY_DEPS_MAGIC "\n");
+            fprintf(f, "BIN\t%llx\n", (unsigned long long)bin_fp);
+            fprintf(f, "%d\n", count);
             for (int i = 0; i < count; i++) {
                 fprintf(f, "%llu\t%llx\t%s\n",
                         (unsigned long long)sizes[i],
@@ -424,34 +445,47 @@ static int entry_deps_valid(const char* deps_path) {
     if (fgets(line, sizeof(line), f) &&
         strncmp(line, ENTRY_DEPS_MAGIC, strlen(ENTRY_DEPS_MAGIC)) == 0 &&
         fgets(line, sizeof(line), f)) {
-        int count = atoi(line);
-        if (count >= 0) {
-            ok = 1;
-            for (int i = 0; i < count && ok; i++) {
-                if (!fgets(line, sizeof(line), f)) { ok = 0; break; }
-                char* tab1 = strchr(line, '\t');
-                if (!tab1) { ok = 0; break; }
-                *tab1 = '\0';
-                char* rest = tab1 + 1;
-                char* tab2 = strchr(rest, '\t');
-                if (!tab2) { ok = 0; break; }
-                *tab2 = '\0';
-                char* path = tab2 + 1;
-                size_t plen = strlen(path);
-                while (plen > 0 && (path[plen - 1] == '\n' || path[plen - 1] == '\r')) {
-                    path[--plen] = '\0';
+        // 第二行：运行中 exe 的指纹（见 leno_serialize.h ④ / §8.112）。
+        // 取不到当前指纹（返回 0）一律判失效：宁可不编，不要猜。
+        uint64_t want_bin = 0;
+        int bin_ok = 0;
+        if (strncmp(line, "BIN\t", 4) == 0) {
+            char* endp = NULL;
+            want_bin = (uint64_t)strtoull(line + 4, &endp, 16);
+            bin_ok = (endp && *endp != '\0' && (*endp == '\n' || *endp == '\r'));
+        }
+        uint64_t cur_bin = cache_runtime_binary_fingerprint();
+        if (bin_ok && cur_bin != 0 && want_bin == cur_bin &&
+            fgets(line, sizeof(line), f)) {
+            int count = atoi(line);
+            if (count >= 0) {
+                ok = 1;
+                for (int i = 0; i < count && ok; i++) {
+                    if (!fgets(line, sizeof(line), f)) { ok = 0; break; }
+                    char* tab1 = strchr(line, '\t');
+                    if (!tab1) { ok = 0; break; }
+                    *tab1 = '\0';
+                    char* rest = tab1 + 1;
+                    char* tab2 = strchr(rest, '\t');
+                    if (!tab2) { ok = 0; break; }
+                    *tab2 = '\0';
+                    char* path = tab2 + 1;
+                    size_t plen = strlen(path);
+                    while (plen > 0 && (path[plen - 1] == '\n' || path[plen - 1] == '\r')) {
+                        path[--plen] = '\0';
+                    }
+                    if (plen == 0) { ok = 0; break; }
+                    uint64_t want_size = strtoull(line, NULL, 10);
+                    uint64_t want_hash = strtoull(rest, NULL, 16);
+                    // 判定走统一实现（统计口径与失败方向都在 serialize.c 里，见 Phase 3）
+                    if (!module_source_snapshot_matches(path, want_size, want_hash, 1)) {
+                        ok = 0; break;
+                    }
                 }
-                if (plen == 0) { ok = 0; break; }
-                uint64_t want_size = strtoull(line, NULL, 10);
-                uint64_t want_hash = strtoull(rest, NULL, 16);
-                // 判定走统一实现（统计口径与失败方向都在 serialize.c 里，见 Phase 3）
-                if (!module_source_snapshot_matches(path, want_size, want_hash, 1)) {
-                    ok = 0; break;
+                // 收尾标记：清单被截断时这里也会失败（不依赖原子替换）
+                if (ok) {
+                    if (!fgets(line, sizeof(line), f) || strncmp(line, "END", 3) != 0) ok = 0;
                 }
-            }
-            // 收尾标记：清单被截断时这里也会失败（不依赖原子替换）
-            if (ok) {
-                if (!fgets(line, sizeof(line), f) || strncmp(line, "END", 3) != 0) ok = 0;
             }
         }
     }

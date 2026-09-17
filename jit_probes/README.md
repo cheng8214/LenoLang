@@ -249,15 +249,27 @@ $env:LENO_NO_JIT="1"; build\leno.exe jit_probes\probe_type_check_float_zero.leno
   （要求三者 delta 精确成 ×1000 关系：如 `0.368 / 367.9 / 367899` ✓）；顺带照抄"热循环两端取
   `times.ms()`"的形态。⚠ 它打印**绝对**时刻，故不进 IDENTICAL 门禁 ✓。
 
-**⚠ `.lenocache` 陷阱（§8.111，必读）**：`entry_<hash>.lenb` 是**整程序**快照，其键**只含入口
-文件哈希**、`.deps` 只登记**有源码的模块**（native 模块登记不上 ✗）⇒ **改了 `src/module/**`
-（C 侧 native）不会让缓存失效** ✗。症状往往是"计时/类型诡异地不对，但数值计算看着正常" ✓
-（本例：`times.ms()` 的注册由 `TYPE_INT` 变 `TYPE_FLOAT` ⇒ 缓存里仍是 int 签名 ✗ ⇒
-`t2 - t1` 按整数相减 ⇒ 打印 10^9 量级"毫秒" ✗）。**改过 native 模块后先删缓存** ✓：
+**⚠ `.lenocache` 陷阱（§8.111 症状 / §8.112 已修）**：`entry_<hash>.lenb` 是**整程序**快照，
+键只含入口文件哈希；`.deps` 里原先只登记**有源码的模块**（native 模块没有 source_path ✗）
+⇒ **改了 `src/module/**`（C 侧 native）不会让缓存失效** ✗。症状是"计时/类型诡异地不对，
+但数值计算看着正常" ✓（实例：`times.ms()` 的注册由 `TYPE_INT` 变 `TYPE_FLOAT` ⇒ 缓存里仍是
+int 签名 ✗ ⇒ `t2 - t1` 按整数相减 ⇒ 打印 10^9 量级"毫秒" ✗）。
+
+**§8.112 起自动失效** ✓：`.deps` 第二行记入**运行中 exe 的指纹**（size+mtime+内容哈希 ✓），
+任何"必须重建 exe 才能发生"的变化（native 签名/常量/实例方法/编译器语义 ✓）都会让缓存作废 ✓。
+手工核对与兜底（怀疑旧 `LENODEPS1` 清单时）：
 
 ```powershell
+# 看清单头两行：应为 LENODEPS2 + 一行 BIN <hex>
+Get-Content .\examples\性能测试\.lenocache\entry_*.lenb.deps -TotalCount 2
+# 兜底：直接删掉缓存（会重编译一次）
 Remove-Item -Recurse -Force .\examples\性能测试\.lenocache
 ```
+
+**回归验证步骤（本项无法写成普通 assert 用例 ✓）**：该机制的触发条件是"exe 变了" ✗，
+而 `assert/run_tests.leno` 只能跑当前 exe ✗ ⇒ 手工 e2e（§8.112 记录里有完整步骤）：
+① 临时把 `times.ms` 改成自洽旧形态（int 签名+返回 int）→ 重建 → 跑一次（写缓存 ✓）；
+② `git checkout` 恢复 → 重建 → 再跑 ⇒ 输出必须**正常**（若不是，说明缓存没被失效 ✗）。
 
 ## 覆盖面合成表（§8.92）：`jit_census.ps1`
 

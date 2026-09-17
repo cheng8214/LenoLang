@@ -234,4 +234,19 @@ int module_cache_read_source_snapshot(const char* cache_dir, const char* src_pat
 int module_source_snapshot_matches(const char* src_path, uint64_t size, uint64_t hash,
                                    int check_size);
 
+// ④ 取「**运行中的可执行文件**」的指纹（size + mtime + 内容 FNV-1a）。
+//    返回 >0 = 指纹；0 = 取不到（调用方必须按 fail-closed 处理：把缓存判为失效）。
+//
+//    为什么需要它（§8.112，2026-09-17）：字节码里烙着**编译期决策**（类型、opcode、名字解析），
+//    其中一部分来自**原生模块注册表**（native 方法签名 / 模块常量 / 实例方法表）—— 这些东西
+//    **没有源文件**，改一处 C 代码不会让任何 .leno 源快照变化 ⇒ 三个 source snapshot 全都
+//    「成立」⇒ 缓存被判有效却已过期 ✗。实测事故：`times.ms()` 的注册由 TYPE_INT 改成
+//    TYPE_FLOAT 后，`examples/性能测试/光线追踪对比.leno` 仍用旧缓存的"int 签名"编译
+//    ⇒ `t2 - t1` 按整数相减 ⇒ 打印出 10^9 量级的"毫秒"（静默错误代码）。
+//
+//    做法：直接把**当前 exe 自身**当输入 —— ABI、注册表、编译器语义任何一处改动都必须
+//    重新构建 ⇒ 指纹必变 ⇒ 一次覆盖**整类**问题（不必逐张表去枚举，也就不会漏表）。
+//    方向是 fail-closed：指纹取不到时调用方须判缓存失效（宁可重编译，不要跑旧码）。
+uint64_t cache_runtime_binary_fingerprint(void);
+
 #endif // LENO_SERIALIZE_H

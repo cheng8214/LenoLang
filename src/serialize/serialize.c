@@ -2225,6 +2225,51 @@ int module_source_snapshot_matches(const char* src_path, uint64_t size, uint64_t
     return cur_hash == hash;
 }
 
+// ④ 运行中可执行文件的指纹（见 leno_serialize.h 的说明 / §8.112）
+//    口径：size + mtime + 内容 FNV-1a(64)。一次全文件读（leno.exe ≈ 1.8MB，约 1ms），
+//    只在入口缓存校验时调用一次。返回 0 表示「取不到」——调用方按 fail-closed 处理。
+uint64_t cache_runtime_binary_fingerprint(void) {
+    char path[4096];
+    path[0] = '\0';
+#ifdef _WIN32
+    wchar_t wpath[4096];
+    DWORD wn = GetModuleFileNameW(NULL, wpath, 4096);
+    if (wn == 0 || wn >= 4096) return 0;
+    if (WideCharToMultiByte(CP_UTF8, 0, wpath, -1, path, 4096, NULL, NULL) <= 0) return 0;
+#else
+    // Linux: /proc/self/exe。其它 POSIX（如 macOS）取不到 ⇒ 返回 0 ⇒ 调用方判缓存失效
+    // （fail-closed：宁可重编译，也不要拿"不知道是不是自己"的 exe 去认旧字节码）。
+    ssize_t rl = readlink("/proc/self/exe", path, sizeof(path) - 1);
+    if (rl <= 0) return 0;
+    path[rl] = '\0';
+#endif
+    struct stat st;
+    if (leno_stat(path, &st) != 0) return 0;
+
+    FILE* f = leno_fopen(path, "rb");
+    if (!f) return 0;
+    uint64_t h = 1469598103934665603ULL;       // FNV-1a 64 offset basis
+    unsigned char buf[65536];
+    size_t rd;
+    while ((rd = fread(buf, 1, sizeof(buf), f)) > 0) {
+        for (size_t i = 0; i < rd; i++) {
+            h ^= (uint64_t)buf[i];
+            h *= 1099511628211ULL;             // FNV-1a 64 prime
+        }
+    }
+    int read_err = ferror(f);
+    fclose(f);
+    if (read_err) return 0;                    // 读一半失败：不敢给指纹
+
+    // 混入 size 与 mtime：内容相同但"重新构建/被替换"的二进制也应当让缓存失效 ——
+    // 这一步只会**多失效**，不会漏失效（方向安全）。
+    uint64_t fp = h;
+    fp ^= (uint64_t)st.st_size * 1099511628211ULL;
+    fp ^= (uint64_t)st.st_mtime * 0x9E3779B97F4A7C15ULL;
+    if (fp == 0) fp = 1;                       // 0 是"取不到"的哨兵，不能与真指纹撞
+    return fp;
+}
+
 // 从缓存文件反序列化单个模块
 ObjModule* module_cache_deserialize(const char* cache_path, const char* full_path) {
     if (!cache_path || !full_path) return NULL;
