@@ -291,6 +291,26 @@ build\leno.exe jit_probes\nlev_f_intstep_loop.leno     # ≈100ms（int 步长�
 ⚠ **顶层**形态仍会命中序言 `-3` 守卫并 bail（§8.113 残余 ✓，报告里显示
 `序言: step 为 float（非 int 循环）`），数值仍与解释器一致 ✓ ⇒ 可作门禁 ✓。
 
+## 2026-09-17 新增探针总表（§8.110 ~ §8.120）
+
+| 探针 | 钉住什么 | 判据 |
+| --- | --- | --- |
+| `probe_mul_float_min` / `probe_tiny_make_where` / `probe_tiny_fetch_or_store` / `probe_native_arg_float` | 浮点**正次正规**结果（位型撞 int48）会毁掉整条计算链 ✓ | 数值与 `LENO_NO_JIT=1` **逐字一致**（§8.110）|
+| `probe_type_check_float_zero` | `0.0 is float` / `x is int` 的类型判定 ✓ | 一致；`zero=2000` 是修复标志（§8.100/§8.117）|
+| `probe_float_param_int0` / `probe_float_param_faithful` | 跨调用边界按**声明类型**提升（浮点形参不许被贴成 int）✓ | 用**字符串形态**观测，别用 `is`（会被歧义守卫掩盖）|
+| `probe_float_str_point` | 拼接里的浮点**不丢小数点** ✓ | 一致（§8.111）|
+| `probe_times_units` | `times.ms()/us()/ns()` 的**真实单位** ✓ | 三者 delta 精确成 ×1000（**诊断探针，不进门禁**——它打印绝对时刻）|
+| `nlev_e_floatstep_loop` / `nlev_f_intstep_loop` | 浮点步长循环的**收益对**（§8.97 的 2x 目标 ✓）| 数值一致；E 与 F 的耗时应当**持平**（§8.113 后 ✓）|
+| `probe_floatstep_toplevel` | 浮点 for 的**四形态**（正/反向、step=0、嵌套）| 一致；⚠ 顶层形态仍会命中序言 `-3` 守卫并 bail（报告里写 `序言: step 为 float`）——**数值仍须一致** ✓ |
+| `probe_is_int_loop` | `is int` / `is float` 在热循环里的行为 ✓ | 一致（§8.117；⚠ 该守卫**尚未真正放开**，见文档）|
+| `probe_arr_add_loop` | 热循环里 `arr.add(...)`（bound method 调用）✓ | 一致；此路径**本已可用**（R6-k ✓），作回归钉 |
+| `probe_frame_cost_split` | 纯循环 / 每次调 native / 调 Leno 函数的**边界成本** ✓ | 打印 ns/轮（JIT 应显著低于 NO_JIT 的 36/61/46 ✓）|
+| `probe_callout_kinds` | 调用边界**分种类**成本 ✓ | 打印 ns/轮（§8.120 的结构性结论：JIT 边界比解释器派发贵 ✗）|
+| `probe_float_param_int0` 等 | — | — |
+
+**本表全部 19 枚**（含上文各节的老探针 ✓）构成本仓库的 IDENTICAL 门禁 ✓；
+一键跑法见 `README.md` 顶部与本表的命令示例 ✓。**新增探针时请补这张表** ✓。
+
 ## 覆盖面合成表（§8.92）：`jit_census.ps1`
 
 JIT 覆盖面有两个**互不相通**的口径，过去只能手工分别看 ——
