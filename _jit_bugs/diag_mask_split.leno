@@ -1,0 +1,16 @@
+// §8.124 诊断切分：`-1 & 0xffffffffffffffff` 得 0xffffffff ✗（丢高位 limb）
+// 要分清三件事：①字面量本身是否完整 ②赋给 int 变量是否被截 ③运算是否丢 limb
+int mask = 0xffffffffffffffff        // 全局变量形态
+
+main() {
+    print("mask 全局     = " + mask)
+    print("mask>>32      = " + ((mask >> 32) & 0xffffffff))      // 2^64-1 ⇒ 4294967295
+    int m2 = 0xffffffffffffffff      // 局部变量形态
+    print("m2 局部       = " + m2)
+    print("字面量直接    = " + (-1 & 0xffffffffffffffff))
+    print("-1 & mask     = " + (-1 & mask))
+    print("-1 & m2       = " + (-1 & m2))
+    print("mask 与自身   = " + (mask & mask))
+    print("mask | 0      = " + (mask | 0))
+    print("DONE")
+}

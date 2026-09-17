@@ -1,0 +1,17 @@
+// §8.124 诊断 2：`-1 & mask` 得 0xffffffff ✗ —— 到底是"负 int 被提升成 +0xffffffff"还是"AND 丢 limb"？
+// 判别法：用 `+`（也走 promote_to_bigint + bigint_add）看 -1 被提升成的值 ✓
+//   若 -1 提升正确 ⇒ (-1) + mask = 18446744073709551614 ✓
+//   若被提升成 +0xffffffff ✗ ⇒ (-1) + mask = 18446744073709555710 ✗（一眼可辨）
+int mask = 0xffffffffffffffff
+
+main() {
+    print("add      = " + ((-1) + mask))
+    print("sub      = " + (mask - 1))
+    print("and_swap = " + (mask & -1))
+    print("and      = " + ((-1) & mask))
+    print("and2     = " + ((-2) & mask))
+    print("or       = " + ((-1) | mask))
+    print("xor      = " + ((-1) ^ mask))
+    print("neg_big  = " + (-1 * mask))
+    print("DONE")
+}

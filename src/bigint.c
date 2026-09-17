@@ -806,19 +806,27 @@ static inline uint32_t from_twos_complement(uint32_t val, int is_negative) {
 
 // 辅助函数：将多 limb 负数转换为补码表示（在临时数组中）
 // 返回值：1 表示成功，0 表示失败
+//
+// §8.124 修复 ✗：这里原来用 `get_limb_with_sign_ext` 取"符号扩展后的第 i 个 limb" ✗ ——
+// 那是**补码**的形态，不是**幅值**的形态 ✗。对负数在 i ≥ limb_count 处它会给出 0xffffffff ✗，
+// 于是 `~val + carry` 变成 0 ✗ ⇒ 高位补码全成 0 ✗（`-1` 的 3-limb 补码本应**全 1** ✓，
+// 却成了 `[0xffffffff, 0, 0]` ✗）⇒ 与掩码 AND 后只剩低 32 位 ✗（实测 `-1 & 0xffffffffffffffff`
+// 得 `4294967295` ✗；用 `+`/`*` 却正确 ✓ ⇒ 只有位运算受影响 ✓）。
+// 正确做法：**幅值**不足的 limb 一律补 0 ✓（正数零扩展 ✓、负数零扩展后再"取反加 1" ✓），
+// 符号只在这一步体现 ✓。
 static int bigint_to_twos_complement_array(const ObjBigInt* bigint, uint32_t* out, int count) {
     if (!bigint->is_negative) {
-        // 正数：直接复制
+        // 正数：幅值 + 零扩展
         for (int i = 0; i < count; i++) {
-            out[i] = get_limb_with_sign_ext(bigint, i);
+            out[i] = (i < bigint->limb_count) ? bigint->limbs[i] : 0;
         }
         return 1;
     }
 
-    // 负数：取反加 1
+    // 负数：幅值（不足补 0）取反加 1
     uint64_t carry = 1;
     for (int i = 0; i < count; i++) {
-        uint32_t val = get_limb_with_sign_ext(bigint, i);
+        uint32_t val = (i < bigint->limb_count) ? bigint->limbs[i] : 0;
         uint64_t sum = (uint64_t)(~val) + carry;
         out[i] = (uint32_t)(sum & BASE_MASK);
         carry = sum >> BASE_BITS;
@@ -842,10 +850,15 @@ static int bigint_from_twos_complement_array(uint32_t* arr, int count, int is_ne
 
 Value bigint_and(ObjBigInt* a, ObjBigInt* b) {
     int max_limbs = (a->limb_count > b->limb_count) ? a->limb_count : b->limb_count;
+    /* §8.124：补码运算要**多一个 limb** 的工作宽度 —— 无限精度补码靠符号扩展补齐高位，
+     * 只按 max_limbs 截断时，"结果幅值用满最高 limb 的最高位"就会被误判成负数 ✗
+     * （实测 `(2^63) & 0xffffffffffffffff`：幅值 2^63 的最高位是 1 ⇒ 打印成负数 ✗）。
+     * 多留一个 limb 同时让"幅值增长"的情形（如 XOR 全掩码 ⇒ -2^64）也精确 ✓。 */
+    const int work_limbs = max_limbs + 1;
 
-    uint32_t* a_complement = (uint32_t*)calloc(max_limbs, sizeof(uint32_t));
-    uint32_t* b_complement = (uint32_t*)calloc(max_limbs, sizeof(uint32_t));
-    uint32_t* result_limbs = (uint32_t*)calloc(max_limbs, sizeof(uint32_t));
+    uint32_t* a_complement = (uint32_t*)calloc(work_limbs, sizeof(uint32_t));
+    uint32_t* b_complement = (uint32_t*)calloc(work_limbs, sizeof(uint32_t));
+    uint32_t* result_limbs = (uint32_t*)calloc(work_limbs, sizeof(uint32_t));
 
     if (!a_complement || !b_complement || !result_limbs) {
         free(a_complement);
@@ -854,25 +867,27 @@ Value bigint_and(ObjBigInt* a, ObjBigInt* b) {
         return val_null();
     }
 
-    // 转换为补码表示（正确处理多 limb 借位）
-    bigint_to_twos_complement_array(a, a_complement, max_limbs);
-    bigint_to_twos_complement_array(b, b_complement, max_limbs);
+    // 转换为补码表示（正确处理多 limb 借位 + 符号扩展）
+    bigint_to_twos_complement_array(a, a_complement, work_limbs);
+    bigint_to_twos_complement_array(b, b_complement, work_limbs);
 
     // 执行位与操作
-    for (int i = 0; i < max_limbs; i++) {
+    for (int i = 0; i < work_limbs; i++) {
         result_limbs[i] = a_complement[i] & b_complement[i];
     }
 
-    // 确定结果符号（看最高位）
-    int result_negative = (result_limbs[max_limbs - 1] >> (BASE_BITS - 1)) & 1;
+    /* 确定结果符号 —— **按操作数符号**，不看位型 ✗（§8.124）。
+     * 无限精度补码下：`a & b` 为负 ⇔ **两操作数都为负** ✓
+     * （正&正 ⇒ 非负 ✓；一正一负 ⇒ 非负 ✓；两负 ⇒ 负 ✓）。 */
+    int result_negative = a->is_negative && b->is_negative;
 
     // 如果结果是负数，从补码转回原码
     if (result_negative) {
-        bigint_from_twos_complement_array(result_limbs, max_limbs, 1);
+        bigint_from_twos_complement_array(result_limbs, work_limbs, 1);
     }
 
     // 去除前导零
-    int result_count = max_limbs;
+    int result_count = work_limbs;
     while (result_count > 1 && result_limbs[result_count - 1] == 0) {
         result_count--;
     }
@@ -888,10 +903,12 @@ Value bigint_and(ObjBigInt* a, ObjBigInt* b) {
 
 Value bigint_or(ObjBigInt* a, ObjBigInt* b) {
     int max_limbs = (a->limb_count > b->limb_count) ? a->limb_count : b->limb_count;
+    /* §8.124：同 bigint_and —— 工作宽度多留一个 limb（符号扩展位 ✓） */
+    const int work_limbs = max_limbs + 1;
 
-    uint32_t* a_complement = (uint32_t*)calloc(max_limbs, sizeof(uint32_t));
-    uint32_t* b_complement = (uint32_t*)calloc(max_limbs, sizeof(uint32_t));
-    uint32_t* result_limbs = (uint32_t*)calloc(max_limbs, sizeof(uint32_t));
+    uint32_t* a_complement = (uint32_t*)calloc(work_limbs, sizeof(uint32_t));
+    uint32_t* b_complement = (uint32_t*)calloc(work_limbs, sizeof(uint32_t));
+    uint32_t* result_limbs = (uint32_t*)calloc(work_limbs, sizeof(uint32_t));
 
     if (!a_complement || !b_complement || !result_limbs) {
         free(a_complement);
@@ -900,25 +917,26 @@ Value bigint_or(ObjBigInt* a, ObjBigInt* b) {
         return val_null();
     }
 
-    // 转换为补码表示（正确处理多 limb 借位）
-    bigint_to_twos_complement_array(a, a_complement, max_limbs);
-    bigint_to_twos_complement_array(b, b_complement, max_limbs);
+    // 转换为补码表示（正确处理多 limb 借位 + 符号扩展）
+    bigint_to_twos_complement_array(a, a_complement, work_limbs);
+    bigint_to_twos_complement_array(b, b_complement, work_limbs);
 
     // 执行位或操作
-    for (int i = 0; i < max_limbs; i++) {
+    for (int i = 0; i < work_limbs; i++) {
         result_limbs[i] = a_complement[i] | b_complement[i];
     }
 
-    // 确定结果符号（看最高位）
-    int result_negative = (result_limbs[max_limbs - 1] >> (BASE_BITS - 1)) & 1;
+    /* 确定结果符号 —— 按操作数符号（§8.124）：`a | b` 为负 ⇔ **任一方为负** ✓
+     * （两正 ⇒ 非负 ✓；有负 ⇒ 负 ✓ —— 负侧高位全 1，或出来仍是全 1 ✓）。 */
+    int result_negative = a->is_negative || b->is_negative;
 
     // 如果结果是负数，从补码转回原码
     if (result_negative) {
-        bigint_from_twos_complement_array(result_limbs, max_limbs, 1);
+        bigint_from_twos_complement_array(result_limbs, work_limbs, 1);
     }
 
     // 去除前导零
-    int result_count = max_limbs;
+    int result_count = work_limbs;
     while (result_count > 1 && result_limbs[result_count - 1] == 0) {
         result_count--;
     }
@@ -934,10 +952,13 @@ Value bigint_or(ObjBigInt* a, ObjBigInt* b) {
 
 Value bigint_xor(ObjBigInt* a, ObjBigInt* b) {
     int max_limbs = (a->limb_count > b->limb_count) ? a->limb_count : b->limb_count;
+    /* §8.124：工作宽度多留一个 limb —— XOR 是三种里**唯一会放大幅值**的
+     * （`-1 ^ (2^64-1)` = -2^64 ✗ 需要 65 位 ⇒ 只用 max_limbs 会算成 0 ✗） */
+    const int work_limbs = max_limbs + 1;
 
-    uint32_t* a_complement = (uint32_t*)calloc(max_limbs, sizeof(uint32_t));
-    uint32_t* b_complement = (uint32_t*)calloc(max_limbs, sizeof(uint32_t));
-    uint32_t* result_limbs = (uint32_t*)calloc(max_limbs, sizeof(uint32_t));
+    uint32_t* a_complement = (uint32_t*)calloc(work_limbs, sizeof(uint32_t));
+    uint32_t* b_complement = (uint32_t*)calloc(work_limbs, sizeof(uint32_t));
+    uint32_t* result_limbs = (uint32_t*)calloc(work_limbs, sizeof(uint32_t));
 
     if (!a_complement || !b_complement || !result_limbs) {
         free(a_complement);
@@ -946,25 +967,26 @@ Value bigint_xor(ObjBigInt* a, ObjBigInt* b) {
         return val_null();
     }
 
-    // 转换为补码表示（正确处理多 limb 借位）
-    bigint_to_twos_complement_array(a, a_complement, max_limbs);
-    bigint_to_twos_complement_array(b, b_complement, max_limbs);
+    // 转换为补码表示（正确处理多 limb 借位 + 符号扩展）
+    bigint_to_twos_complement_array(a, a_complement, work_limbs);
+    bigint_to_twos_complement_array(b, b_complement, work_limbs);
 
     // 执行位异或操作
-    for (int i = 0; i < max_limbs; i++) {
+    for (int i = 0; i < work_limbs; i++) {
         result_limbs[i] = a_complement[i] ^ b_complement[i];
     }
 
-    // 确定结果符号（看最高位）
-    int result_negative = (result_limbs[max_limbs - 1] >> (BASE_BITS - 1)) & 1;
+    /* 确定结果符号 —— 按操作数符号（§8.124）：`a ^ b` 为负 ⇔ **恰有一方为负** ✓
+     * （两正 ⇒ 非负 ✓；两负 ⇒ 非负 ✓；一正一负 ⇒ 负 ✓）。 */
+    int result_negative = (a->is_negative != b->is_negative);
 
     // 如果结果是负数，从补码转回原码
     if (result_negative) {
-        bigint_from_twos_complement_array(result_limbs, max_limbs, 1);
+        bigint_from_twos_complement_array(result_limbs, work_limbs, 1);
     }
 
     // 去除前导零
-    int result_count = max_limbs;
+    int result_count = work_limbs;
     while (result_count > 1 && result_limbs[result_count - 1] == 0) {
         result_count--;
     }
