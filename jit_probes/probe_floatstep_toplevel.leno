@@ -1,0 +1,52 @@
+// §8.113：**顶层**浮点步长 for 循环（不套在别的热循环里）—— 它自己就是 JIT 区域，
+// 命中的是序言那道 -3 守卫（"step 为 float"）。放开后这条循环应当被 JIT 编译并拿到加速。
+func hotTop(): float {
+    var acc = 0.0
+    var t = 0.0
+    for 0.0 : 1.0 : 0.00001 to t {
+        acc += t
+    }
+    return acc
+}
+
+// 反向浮点步长（step < 0），检查方向语义
+func hotDown(): float {
+    var acc = 0.0
+    var t = 0.0
+    for 1.0 : 0.0 : -0.00001 to t {
+        acc += t
+    }
+    return acc
+}
+
+// step 为 0.0（解释器语义：不进循环）
+func hotZero(): float {
+    var acc = 123.0
+    var t = 0.0
+    for 0.0 : 1.0 : 0.0 to t {
+        acc += t
+    }
+    return acc
+}
+
+// 内层浮点步长循环（E 的形态；用于定位"少跑一轮"的路径）
+func nested(): float {
+    var tot = 0.0
+    var i = 0
+    while i < 200 {
+        var sum = 0.0
+        for 0.0 : 1.0 : 0.05 to t {
+            sum = sum + t
+        }
+        tot = tot + sum
+        i = i + 1
+    }
+    return tot
+}
+
+main() {
+    print("top=" + hotTop())
+    print("down=" + hotDown())
+    print("zero=" + hotZero())
+    print("nested=" + nested())
+}

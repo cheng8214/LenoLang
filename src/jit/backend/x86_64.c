@@ -778,12 +778,11 @@ int compile_loop(CodegenCtx* ctx) {
     /* 序言 bailout 的 site 取值（jit_print_stats 会翻译成可读原因）：
      *   -1 = 进入自增 int48 溢出，-2 = step == 0，-3 = step 是 float */
     #define EMIT_BAILOUT_SITE_NONOVF(off) EMIT_BAILOUT_SITE_WRITE(-1000 - (int)(off))
-    /* §8.97：`OP_FOR_PREP` 里有**两个**守卫（静态"step 是 float" / 运行期"step == 0"），
-     * 它们历史上都记在同一个 `bc_off` 上 ⇒ 只看 `非溢出类 @bc_off=N` **分不出是哪一个** ✗
-     * （§8.89 就是因此把 fm 的 bailout 猜成"内层 float 步长"，而序列编码里的专用值
-     * `-3 = step 为 float` 从来没被那个守卫用过 ⇒ 猜测是错的 ✗）。
-     * 给"step == 0"单独一个基址，`jit_bailout_reason` 就能报出具体那一条。 */
-    #define EMIT_BAILOUT_SITE_FORSTEP0(off) EMIT_BAILOUT_SITE_WRITE(-2000 - (int)(off))
+    /* §8.97 曾给 `OP_FOR_PREP` 的"step == 0"守卫单独一个基址 `-2000 - off` 以便区分它与
+     * float 守卫 —— **已停用并删除** ✗：该基址会与"非溢出类"的 `-1000 - off` **撞号**
+     * （只要 off ≥ 1000，`-1000-off` 就落进 `<= -2000` 区间 ⇒ 被误报成 FOR_PREP ✗；
+     * 实测 fm 的 off=64674 就撞上了）。§8.113 之后那个守卫本身也不再存在（step == 0
+     * 改为**跳过循环**而不是 bailout）。诊断区间约定见 jit_bailout_debug 的注释。 */
 
     /* ---- 类型化浮点运算（OP_*_FLOAT / OP_*_FLOAT 比较）的操作数取值 ----
      * 这些 opcode 名字里带 FLOAT，但**操作数不保证已经是 float**：编译器只在
@@ -818,7 +817,7 @@ int compile_loop(CodegenCtx* ctx) {
      * 且 cast_float 的结果恒为 0 或 |x|≥1（cvtsi2sd）⇒ 守卫在那里不触发 ✓。
      * 代价：只有当**结果本身是正次正规数**才回退 —— 值域上极罕见 ✓（正常代码几乎不产生次正规）。
      * 注：负次正规（`0x8000…1`）的 `raw>>47` 非 0 ⇒ 不在歧义区 ⇒ 不受影响 ✓（与 §8.100 的值域表一致）。 */
-    #define EMIT_MOVQ_RAX_XMM0() do { \
+    #define EMIT_MOVQ_RAX_XMM0_AT(off) do { \
         emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F); \
         emit_byte(cb, 0x7E); emit_byte(cb, modrm(3, 0, 0)); \
         emit_mov_rr(cb, JIT_R8, JIT_RAX); \
@@ -827,11 +826,14 @@ int compile_loop(CodegenCtx* ctx) {
         int _fl_ok = emit_jcc(cb, 0x85);       /* JNZ → 非歧义区，安全，跳过 */ \
         emit_test_rr(cb, JIT_RAX, JIT_RAX); \
         int _fl_zero = emit_jcc(cb, 0x84);     /* JZ（raw == 0 ⇒ +0.0）→ 放行 */ \
-        EMIT_BAILOUT_SITE_NONOVF(bc_off); \
+        EMIT_BAILOUT_SITE_NONOVF(off); \
         { int _fl_bail = emit_jmp(cb); patch_add(ctx, _fl_bail, -1, 0); } \
         patch_rel32(cb, _fl_ok, cb->len); \
         patch_rel32(cb, _fl_zero, cb->len); \
     } while(0)
+    /* 便捷形式：调用点在循环体内（`bc_off` 在作用域内，bailout 报告指向该指令）。
+     * 序言里没有 `bc_off`（§8.113 的 float 循环入口），用 `..._AT(0)`。 */
+    #define EMIT_MOVQ_RAX_XMM0() EMIT_MOVQ_RAX_XMM0_AT(bc_off)
 
     /* 把 EMIT_FLOAT_ARGS2 挂起的两条 tagged 跳转落到 bailout 桩：
      * 非溢出类 bailout，site 用负值编码，日志可定位到具体 bc_off。 */
@@ -1125,6 +1127,15 @@ int compile_loop(CodegenCtx* ctx) {
      *   site -3: step 是 float（类型位图为 1）——JIT 的 FOR_LOOP 走 int48 快路径，
      *            无法对 double 位模式做方向/比较判断；
      *   site -2: step == 0 —— VM 语义为“不进循环”，交给解释器处理。 */
+    /* §8.113：float 步长入口里"条件满足 ⇒ 进循环体"的跳转要等循环体起点
+     * （loop_start_mc）确定后才能补 ⇒ 先声明在函数作用域。
+     * for_loop_entry_patches 也一并上移：float 入口的"条件不满足 ⇒ 退出"复用同一张表，
+     * 由既有代码统一补到 exit_mc（不必在此处知道 exit_mc）。 */
+    int for_loop_entry_patches[16];
+    int for_loop_patch_cnt = 0;
+    int float_body_patches[4];
+    int float_body_cnt = 0;
+
     if (sr->back_edge_type == 2) {
         int step_scratch = cur_local_map[sr->for_step_slot];
         if (step_scratch < 0) {
@@ -1134,7 +1145,9 @@ int compile_loop(CodegenCtx* ctx) {
         }
         int disp = scratch_disp(step_scratch);
 
-        /* 类型位图：bit(step_scratch) == 1 表示该 local 是 float → bailout */
+        /* 类型位图：bit(step_scratch) == 1 表示该 local 是 float → bailout
+         * （§8.113 曾尝试在这里也接一条 SSE 入口，实测会让嵌套的浮点内层循环
+         *   少跑一轮 ⇒ 数值分叉 ✗，已回退；详见 §8.113 的残余记录。此处保持 bail。） */
         emit_byte(cb, 0x48);
         emit_byte(cb, 0x0F);
         emit_byte(cb, 0xBA);
@@ -1162,8 +1175,6 @@ int compile_loop(CodegenCtx* ctx) {
      * the JIT body, its initial-condition check also emits a Jcc that must be
      * patched to the exit point.  We keep a small stack of these patches.
      */
-    int for_loop_entry_patches[8];
-    int for_loop_patch_cnt = 0;
     if (sr->back_edge_type == 2) {
         int si_lv = cur_local_map[sr->for_loop_var_slot];
         int si_st = cur_local_map[sr->for_step_slot];
@@ -1216,6 +1227,10 @@ int compile_loop(CodegenCtx* ctx) {
 
     /* ---- Loop body start ---- */
     ctx->loop_start_mc = cb->len;
+    /* §8.113：float 入口里"条件满足 ⇒ 进循环体"的跳转，此时才知道体起点 */
+    for (int _fi = 0; _fi < float_body_cnt; _fi++) {
+        patch_rel32(cb, float_body_patches[_fi], ctx->loop_start_mc);
+    }
 
     /* ---- Generate loop body code ---- */
     const uint8_t* ip = ctx->body_start;

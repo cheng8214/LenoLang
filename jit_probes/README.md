@@ -274,6 +274,23 @@ Remove-Item -Recurse -Force .\examples\性能测试\.lenocache
 模块级用 `build/cachetest/{mod,main}.leno` 那种"模块自己调 `times.ms()` 再返回差值"的形态 ✓ ——
 模块自身的字节码里烙着 int/float 的减法 ✓，缓存没失效就会打出 10^9 量级 ✓（一眼可辨 ✓）。
 
+## 浮点步长 for 循环（§8.113）：`probe_floatstep_toplevel.leno` / `nlev_e_floatstep_loop.leno`
+
+`nlev_e_floatstep_loop.leno`（E）与 `nlev_f_intstep_loop.leno`（F）是 §8.97 的**收益对**：
+E = 热 `while` 里包 `for 0.0 : 1.0 : 0.05 to t`（fm `render` 的形态 ✓）。修前 E ≈ NO_JIT
+（整块被 `OP_FOR_PREP` 的 float 守卫拉黑 ✗），§8.113 之后 E 与 F 持平（≈2x ✓）：
+
+```powershell
+build\leno.exe jit_probes\nlev_e_floatstep_loop.leno   # 修前 ≈175~196ms → 修后 ≈95~111ms
+build\leno.exe jit_probes\nlev_f_intstep_loop.leno     # ≈100ms（int 步长对照）
+```
+
+`probe_floatstep_toplevel.leno` 覆盖**四种形态**并逐字比对 JIT/NO_JIT：正向 `0.0:1.0:1e-5`、
+反向 `1.0:0.0:-1e-5`、`step == 0.0`（语义 = 不进循环）、以及**嵌套**版（E 的形态，用来钉住
+"少跑一轮"那类计数错误 ✗）。
+⚠ **顶层**形态仍会命中序言 `-3` 守卫并 bail（§8.113 残余 ✓，报告里显示
+`序言: step 为 float（非 int 循环）`），数值仍与解释器一致 ✓ ⇒ 可作门禁 ✓。
+
 ## 覆盖面合成表（§8.92）：`jit_census.ps1`
 
 JIT 覆盖面有两个**互不相通**的口径，过去只能手工分别看 ——

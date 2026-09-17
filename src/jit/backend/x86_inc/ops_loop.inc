@@ -16,6 +16,8 @@
                 uint8_t lv_sl    = ip[4];
                 uint8_t incl     = ip[5];
                 uint16_t joff    = rd_short(ip + 6);
+                /* §8.113：step == 0 的"跳过循环"分支要用它 ⇒ 提前算（原来是后面才算） */
+                int skip_target = bc_off + size + (int)joff;
 
                 int si_start = cur_local_map[start_sl];
                 int si_end   = cur_local_map[end_sl];
@@ -26,27 +28,26 @@
                 int d_step  = scratch_disp(si_step);
                 int d_lv    = scratch_disp(si_lv);
 
-                /* step 为 float（类型位图 bit=1）→ JIT 的 FOR_LOOP 走 int48 快路径，
-                 * 无法处理 double 位模式的方向/比较 → 交回解释器 */
+                /* §8.113：step 为 float（类型位图 bit=1）⇒ 跳到下面的 **SSE float 路径**
+                 * （此前是 bailout 交解释器 ⇒ 含循环的被调方整块被拉黑，实测 ≈2x 损失，§8.97）。
+                 * bit=0（int 循环）时下面这套 int48 代码**一个字节都不变** ⇒ 零税 ✓。 */
+                int prep_float_patch = -1;
                 if (si_step >= 0) {
                     emit_byte(cb, 0x48);
                     emit_byte(cb, 0x0F);
                     emit_byte(cb, 0xBA);
                     emit_byte(cb, 0xE3);  /* BT RBX, imm8 */
                     emit_byte(cb, (uint8_t)(si_step & 0xFF));
-                    EMIT_BAILOUT_SITE_NONOVF(bc_off);
-                    int step_float_bail = emit_jcc(cb, 0x82);  /* JC -> bailout */
-                    patch_add(ctx, step_float_bail, -1, 0);
+                    prep_float_patch = emit_jcc(cb, 0x82);  /* JC -> float 路径 */
                 }
 
-                /* Check step != 0 (bailout if step == 0)
-                 * §8.45：这四个槽的访问全部走宏 —— 它们可能已被 pin（见
-                 * pick_pin_locals 的三元组优先），此时读写都落在寄存器上。 */
+                /* step == 0：**不再 bailout** —— 解释器 OP_FOR_PREP 的语义就是"不进循环"
+                 * （should_run = 0 ⇒ ip += jump_offset），且 int 0 与 +0.0 的裸位型同为 0、
+                 * 两者语义一致 ⇒ 直接跳到 skip_target 即可（§8.113；这也消掉了 fm `render`
+                 * 里那条残留的 FOR_PREP bailout）。循环变量仍先赋成 start（解释器同样如此）。 */
                 EMIT_LOAD_LOCAL(JIT_RAX, si_step, d_step);
                 emit_test_rr(cb, JIT_RAX, JIT_RAX);
-                EMIT_BAILOUT_SITE_FORSTEP0(bc_off);   /* §8.97：与上面的 float 位图检查区分开 */
-                int step_bail = emit_jcc(cb, 0x84);  /* JE (step==0) → bailout */
-                patch_add(ctx, step_bail, -1, 0);
+                { int p = emit_jcc(cb, 0x84); patch_add(ctx, p, skip_target, 0); }
 
                 /* step 符号分流：step < 0 走反向初始条件检查（支持倒序循环） */
                 EMIT_LOAD_LOCAL(JIT_RAX, si_step, d_step);
@@ -65,7 +66,6 @@
                 uint8_t cc_skip = incl ? 0x8F /*JG*/ : 0x8D /*JGE*/;
                 int skip_patch = emit_jcc(cb, cc_skip);
                 /* Forward jump: target = bc_off + 8 + joff (past inner body + FOR_LOOP) */
-                int skip_target = bc_off + size + (int)joff;
                 patch_add(ctx, skip_patch, skip_target, 0);
 
                 int prep_done_patch = emit_jmp(cb);   /* 正向检查结束，跳过反向块 */
@@ -83,6 +83,78 @@
                     patch_add(ctx, skip_patch_neg, skip_target, 0);
                 }
                 patch_rel32(cb, prep_done_patch, cb->len);
+                /* int 路径在此完成 ⇒ 跳过 float 块（"跳过循环体"的那个分支另走 skip_target） */
+                int prep_skip_float = emit_jmp(cb);
+
+                /* ---- §8.113 float 步长路径（SSE）----
+                 * 语义逐条对齐解释器 op_for_loop.inc 的 OP_FOR_PREP：
+                 *   loop_var = start（**原样搬运** —— 解释器也是存原 Value，不改类型）
+                 *   step > 0 : incl ? start <= end : start < end
+                 *   step < 0 : incl ? start >= end : start > end
+                 *   step == 0 或 step 为 NaN ⇒ 不执行；start/end 为 NaN ⇒ 不执行（C 的 double 比较对 NaN 恒 false）
+                 * 三态取操作数复用 EMIT_NUM_TO_XMM（int48 → CVTSI2SD / 裸 double → MOVQ /
+                 * NaN-boxed → bailout）：对象 / BigInt 一律回退解释器，安全且语义一致。 */
+                if (prep_float_patch >= 0) {
+                    patch_rel32(cb, prep_float_patch, cb->len);
+                    int tg_step = -1, tg_start = -1, tg_end = -1;
+
+                    EMIT_LOAD_LOCAL(JIT_RAX, si_start, d_start);
+                    EMIT_STORE_LOCAL(JIT_RAX, si_lv, d_lv);
+
+                    emit_xorpd_xmm_xmm(cb, 3, 3);                 /* xmm3 = 0.0 */
+                    EMIT_LOAD_LOCAL(JIT_RAX, si_step, d_step);
+                    EMIT_NUM_TO_XMM(1, JIT_RAX, JIT_R8, tg_step);
+                    EMIT_LOAD_LOCAL(JIT_RAX, si_start, d_start);
+                    EMIT_NUM_TO_XMM(0, JIT_RAX, JIT_R8, tg_start);
+                    EMIT_LOAD_LOCAL(JIT_RAX, si_end, d_end);
+                    EMIT_NUM_TO_XMM(2, JIT_RAX, JIT_R8, tg_end);
+
+                    emit_ucomisd_rr(cb, 1, 3);                    /* step vs 0.0 */
+                    int p_nan  = emit_jcc(cb, 0x8A);              /* JP -> skip */
+                    int p_pos  = emit_jcc(cb, 0x87);              /* JA -> 正向 */
+                    int p_neg  = emit_jcc(cb, 0x82);              /* JB -> 反向 */
+                    int p_zero = emit_jmp(cb);                    /* step == 0 -> skip */
+
+                    /* 正向：不满足初始条件 ⇒ skip（满足则落到共同末端） */
+                    patch_rel32(cb, p_pos, cb->len);
+                    emit_ucomisd_rr(cb, 0, 2);                    /* start vs end */
+                    int p_nan_pos = emit_jcc(cb, 0x8A);
+                    {
+                        uint8_t cc = incl ? 0x87 /*JA*/ : 0x83 /*JAE*/;
+                        int p = emit_jcc(cb, cc);
+                        patch_add(ctx, p, skip_target, 0);
+                    }
+                    int p_pos_run = emit_jmp(cb);
+
+                    /* 反向 */
+                    patch_rel32(cb, p_neg, cb->len);
+                    emit_ucomisd_rr(cb, 0, 2);
+                    int p_nan_neg = emit_jcc(cb, 0x8A);
+                    {
+                        uint8_t cc = incl ? 0x82 /*JB*/ : 0x86 /*JBE*/;
+                        int p = emit_jcc(cb, cc);
+                        patch_add(ctx, p, skip_target, 0);
+                    }
+                    /* 落空 ⇒ 共同末端（执行循环体） */
+
+                    /* skip 汇合 */
+                    patch_rel32(cb, p_nan, cb->len);
+                    patch_rel32(cb, p_nan_pos, cb->len);
+                    patch_rel32(cb, p_nan_neg, cb->len);
+                    patch_rel32(cb, p_zero, cb->len);
+                    { int p = emit_jmp(cb); patch_add(ctx, p, skip_target, 0); }
+
+                    /* 共同末端 = 执行循环体；跳过 tagged 回退块 */
+                    patch_rel32(cb, p_pos_run, cb->len);
+                    int prep_run_jmp = emit_jmp(cb);
+                    patch_rel32(cb, tg_step, cb->len);
+                    patch_rel32(cb, tg_start, cb->len);
+                    patch_rel32(cb, tg_end, cb->len);
+                    EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                    { int p = emit_jmp(cb); patch_add(ctx, p, -1, 0); }
+                    patch_rel32(cb, prep_run_jmp, cb->len);
+                }
+                patch_rel32(cb, prep_skip_float, cb->len);
                 break;
             }
 
@@ -184,6 +256,19 @@
                     yield_jmp_patches[yield_jmp_cnt++] = emit_jcc(cb, 0x85);  /* JNZ → yield */
                 }
 
+                /* §8.113：step 为 float（位图 bit=1）⇒ 跳到下面的 SSE float 回边。
+                 * 与 FOR_PREP 用的是**同一个** step 槽位的同一位（位图在序言里一次定下、
+                 * 运行期不再改）⇒ 两条指令的 float/int 判定必然一致，不会半路换语义。 */
+                int for_float_patch = -1;
+                if (si_st >= 0) {
+                    emit_byte(cb, 0x48);
+                    emit_byte(cb, 0x0F);
+                    emit_byte(cb, 0xBA);
+                    emit_byte(cb, 0xE3);  /* BT RBX, imm8 */
+                    emit_byte(cb, (uint8_t)(si_st & 0xFF));
+                    for_float_patch = emit_jcc(cb, 0x82);  /* JC -> float 回边 */
+                }
+
                 /* loop_var += step (+ int48 check)，再与 end 比较；
                  * 继续循环的跳转由方向决定（正/负步长各一份）。 */
                 #define EMIT_FOR_STEP_AND_CMP() do { \
@@ -233,6 +318,74 @@
                 }
                 patch_rel32(cb, done_patch, cb->len);
                 patch_rel32(cb, zero_patch, cb->len);
+
+                /* int 路径的"退出循环"汇合点：跳过 float 回边块 */
+                int for_skip_float = emit_jmp(cb);
+
+                /* ---- §8.113 float 步长回边（SSE）----
+                 * 语义逐条对齐解释器 op_for_loop.inc 的 OP_FOR_LOOP 浮点分支：
+                 *   loop_var = val_num(loop_var + step)   ← 结果一律写成**裸 double**
+                 *   step > 0 : incl ? lv <= end : lv < end
+                 *   step < 0 : incl ? lv >= end : lv > end
+                 *   NaN（step/end）⇒ 不继续（C 比较恒 false）⇒ 用 UCOMISD + JP 显式排除无序
+                 * 写回走 EMIT_MOVQ_RAX_XMM0 ⇒ 顺带获得 §8.110 的"正次正规 ⇒ bail"守卫。 */
+                if (for_float_patch >= 0) {
+                    patch_rel32(cb, for_float_patch, cb->len);
+                    int tg_st = -1, tg_lv = -1, tg_en = -1;
+
+                    emit_xorpd_xmm_xmm(cb, 3, 3);              /* xmm3 = 0.0 */
+                    EMIT_LOAD_LOCAL(JIT_RAX, si_st, d_st);
+                    EMIT_NUM_TO_XMM(1, JIT_RAX, JIT_R8, tg_st);
+                    EMIT_LOAD_LOCAL(JIT_RAX, si_lv, d_lv);
+                    EMIT_NUM_TO_XMM(0, JIT_RAX, JIT_R8, tg_lv);
+                    EMIT_LOAD_LOCAL(JIT_RAX, si_en, d_en);
+                    EMIT_NUM_TO_XMM(2, JIT_RAX, JIT_R8, tg_en);
+
+                    emit_sse2_rr(cb, 0x58, 0, 1);              /* ADDSD xmm0, xmm1: lv + step */
+                    EMIT_MOVQ_RAX_XMM0();                      /* 裸 double + §8.110 次正规守卫 */
+                    EMIT_STORE_LOCAL(JIT_RAX, si_lv, d_lv);
+
+                    emit_ucomisd_rr(cb, 1, 3);                 /* step vs 0.0 */
+                    int f_nan  = emit_jcc(cb, 0x8A);           /* JP -> exit */
+                    int f_pos  = emit_jcc(cb, 0x87);           /* JA -> 正向 */
+                    int f_neg  = emit_jcc(cb, 0x82);           /* JB -> 反向 */
+                    int f_zero = emit_jmp(cb);                 /* step == 0 -> exit */
+
+                    patch_rel32(cb, f_pos, cb->len);
+                    emit_ucomisd_rr(cb, 0, 2);                 /* lv vs end */
+                    int f_pos_nan = emit_jcc(cb, 0x8A);
+                    {
+                        uint8_t cc = incl ? 0x86 /*JBE*/ : 0x82 /*JB*/;
+                        int p = emit_jcc(cb, cc);
+                        patch_rel32(cb, p, target_mc);
+                    }
+                    int f_pos_done = emit_jmp(cb);
+
+                    patch_rel32(cb, f_neg, cb->len);
+                    emit_ucomisd_rr(cb, 0, 2);
+                    int f_neg_nan = emit_jcc(cb, 0x8A);
+                    {
+                        uint8_t cc = incl ? 0x83 /*JAE*/ : 0x87 /*JA*/;
+                        int p = emit_jcc(cb, cc);
+                        patch_rel32(cb, p, target_mc);
+                    }
+                    /* 落空 ⇒ exit */
+
+                    patch_rel32(cb, f_nan, cb->len);
+                    patch_rel32(cb, f_zero, cb->len);
+                    patch_rel32(cb, f_pos_done, cb->len);
+                    patch_rel32(cb, f_pos_nan, cb->len);
+                    patch_rel32(cb, f_neg_nan, cb->len);
+
+                    int for_f_exit = emit_jmp(cb);             /* 跳过 tagged 回退块 */
+                    patch_rel32(cb, tg_st, cb->len);
+                    patch_rel32(cb, tg_lv, cb->len);
+                    patch_rel32(cb, tg_en, cb->len);
+                    EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                    { int p = emit_jmp(cb); patch_add(ctx, p, -1, 0); }
+                    patch_rel32(cb, for_f_exit, cb->len);
+                }
+                patch_rel32(cb, for_skip_float, cb->len);
 
                 #undef EMIT_FOR_STEP_AND_CMP
                 break;

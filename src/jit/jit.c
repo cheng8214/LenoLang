@@ -806,8 +806,7 @@ fprintf(stderr, "[JIT-DEBUG] EXEC call #%d, fn=%p, locals=%p\n",
          * 基址 ⇒ 先剥掉。绝对偏移 = loop_bc_off + rel（与 --debug 的转储对齐）。 */
         {
             int site = (int)jit_bailout_site;
-            int rel  = (site <= -2000) ? (-2000 - site)       /* §8.97: FOR_PREP step==0 */
-                     : (site <= -1000) ? (-1000 - site) : site;
+            int rel  = (site <= -1000) ? (-1000 - site) : site;
             rel &= 0xFFFF;
             int abs_off = loop_bc_off + rel;
             const char* opn = "?";
@@ -832,12 +831,6 @@ static void jit_bailout_reason(int site, int loop_bc, char* out, size_t out_sz) 
     if (site >= 0)
         snprintf(out, out_sz, "int48 溢出/截断 @bc_off=%d（= loop_bc %d + %d）",
                  loop_bc + site, loop_bc, site);
-    else if (site <= -2000) {
-        /* §8.97：`OP_FOR_PREP` 的"运行期 step == 0"守卫专用基址（与"静态 step 是 float"分开） */
-        int rel = -2000 - site;
-        snprintf(out, out_sz, "FOR_PREP: step == 0（运行期）@bc_off=%d（= loop_bc %d + %d）",
-                 loop_bc + (rel & 0xFFFF), loop_bc, rel & 0xFFFF);
-    }
     else if (site <= -1000) {
         int rel = -1000 - site;
         /* 内联帧（inlined callee）的偏移带 0x10000 * depth 基址（见 x86_64.c 的
@@ -851,6 +844,8 @@ static void jit_bailout_reason(int site, int loop_bc, char* out, size_t out_sz) 
             snprintf(out, out_sz, "非溢出类 @bc_off=%d（= loop_bc %d + %d）",
                      loop_bc + rel_in_body, loop_bc, rel_in_body);
     }
+    else if (site == -4)
+        snprintf(out, out_sz, "序言: float 循环的操作数不是数值（对象/BigInt/null）");
     else if (site == -3)
         snprintf(out, out_sz, "序言: step 为 float（非 int 循环）");
     else if (site == -2)
