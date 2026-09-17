@@ -806,10 +806,31 @@ int compile_loop(CodegenCtx* ctx) {
         EMIT_NUM_TO_XMM(1, JIT_RAX, JIT_R8, tagged_b);    /* xmm1 = b */ \
     } while(0)
 
-    /* 浮点结果（xmm0）写回 RAX，作为新的 TOS */
+    /* 浮点结果（xmm0）写回 RAX，作为新的 TOS —— 并做 §8.110 的"歧义区"守卫
+     *
+     * §8.110：位型落进 `[0, 2^47)` 的浮点只有两类 ——
+     *   · `+0.0`（raw == 0）：**数值上无害**（被当 int 0 参与算术结果相同）⇒ 放行 ✓
+     *   · **正次正规数**（raw != 0）：会被下游的位型启发式当成 int48 ⇒ **数值失真**
+     *     （实测 2^-1060 → `16384.0`、2^-1074 → `1.0`；探针 probe_mul_float_min /
+     *      probe_tiny_make_where / probe_tiny_fetch_or_store）⇒ 在这里就 bailout，
+     *     交解释器算这一轮 ✓。
+     * 为什么放这里：本宏只用于**浮点结果**（add/sub/mul/div/neg/cast_float）⇒ 一处收口 ✓；
+     * 且 cast_float 的结果恒为 0 或 |x|≥1（cvtsi2sd）⇒ 守卫在那里不触发 ✓。
+     * 代价：只有当**结果本身是正次正规数**才回退 —— 值域上极罕见 ✓（正常代码几乎不产生次正规）。
+     * 注：负次正规（`0x8000…1`）的 `raw>>47` 非 0 ⇒ 不在歧义区 ⇒ 不受影响 ✓（与 §8.100 的值域表一致）。 */
     #define EMIT_MOVQ_RAX_XMM0() do { \
         emit_byte(cb, 0x66); emit_byte(cb, 0x48); emit_byte(cb, 0x0F); \
         emit_byte(cb, 0x7E); emit_byte(cb, modrm(3, 0, 0)); \
+        emit_mov_rr(cb, JIT_R8, JIT_RAX); \
+        emit_sar_imm(cb, JIT_R8, 47); \
+        emit_test_rr(cb, JIT_R8, JIT_R8); \
+        int _fl_ok = emit_jcc(cb, 0x85);       /* JNZ → 非歧义区，安全，跳过 */ \
+        emit_test_rr(cb, JIT_RAX, JIT_RAX); \
+        int _fl_zero = emit_jcc(cb, 0x84);     /* JZ（raw == 0 ⇒ +0.0）→ 放行 */ \
+        EMIT_BAILOUT_SITE_NONOVF(bc_off); \
+        { int _fl_bail = emit_jmp(cb); patch_add(ctx, _fl_bail, -1, 0); } \
+        patch_rel32(cb, _fl_ok, cb->len); \
+        patch_rel32(cb, _fl_zero, cb->len); \
     } while(0)
 
     /* 把 EMIT_FLOAT_ARGS2 挂起的两条 tagged 跳转落到 bailout 桩：

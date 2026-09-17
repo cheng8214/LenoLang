@@ -199,7 +199,25 @@ $env:LENO_NO_JIT="1"; build\leno.exe jit_probes\probe_type_check_float_zero.leno
 
 ⇒ 一句话：**测"值被污染"必须让污染值活过 JIT 区域**，否则守卫会把症状掩盖掉 ✓。
 
-## 跟踪项（当前故意 DIFF，**不是**门禁）：`probe_tiny_make_where.leno` / `probe_tiny_fetch_or_store.leno` / `probe_native_arg_float.leno`
+## 值域：次正规数（**§8.110 已修，现为常规门禁**）—— 四个探针
+
+`probe_mul_float_min.leno` / `probe_tiny_make_where.leno` / `probe_tiny_fetch_or_store.leno` / `probe_native_arg_float.leno`
+
+**触发条件**：浮点结果的位型落进 `[0, 2^47)` ⇒ 与 int48 **撞码** ⇒ 被判成整数、数值失真
+（`0x4000`→`16384`、`0x1`→`1` —— 输出恰等于位型当整数）。`+0.0` 除外（数值上无害 ⇒ 放行）。
+
+**判读**：四个探针的数值必须与 `LENO_NO_JIT=1` **逐字一致**；JIT 侧会出现
+`Bailout: fn='…' … 触发指令=OP_MUL_FLOAT`（§8.110 的结果守卫 ✓，这是**预期**行为）。
+
+⚠ 口径要点：`0.0` 区分不了 int/float（`_str(0.0)` 与 `_str(0)` 都输出 `"0"`）；
+必须用 **2^-1074**（位型 `0x1`，撞码对象是 int 1）这类值才能一眼可辨 ✓。
+
+## （历史过程记录；**最终结论见上方 §8.110**，本段描述的是中途的排除轨迹）
+
+> 这段记录了三步取证（native 实参 ✗ → 写回/物化 ✗ → **浮点结果守卫 ✓**）中的**排除过程** ✓；
+> 其中"真因是物化/写回"的中间结论**已被推翻** ✗ —— 反汇编（§8.109）证明取操作数的 `CVTSI2SD`
+> 分支同样命中，而**最终修复**是在**浮点结果处**加守卫（§8.110 ✓）。
+> 保留本段是因为"哪些路径被实验排除过"对后来者有价值 ✓。
 
 **§8.106 真因**（初版归因 native 实参是**错的** ✓）：JIT 的**物化/写回**把裸 double 按 int48 装箱。
 `probe_tiny_make_where.leno` 用 `2^-n` 夹逼给出铁证 —— JIT 输出**恰好等于该 float 的位型当整数**：
