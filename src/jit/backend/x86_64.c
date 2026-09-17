@@ -637,8 +637,28 @@ int compile_loop(CodegenCtx* ctx) {
 
 /* ---- Callout helpers ---- */
     /* Convert RAX from virtual-stack raw to NaN-boxed Value (in-place).
-     * Uses R8 as scratch, R10/R11 as constants. */
+     * Uses R8 as scratch, R10/R11 as constants.
+     *
+     * §8.104：若本指令的 TOS 来自某个 scratch 槽（`tos_from_si`，仅 OP_GET_LOCAL 置），
+     * 先用 **RBX 类型位图**判该槽是否"已知非 int"（bit=1）——是则**跳过装箱**。
+     * 为什么：位型启发式（raw>>47 ∈ {-1,0} ⇒ 当 int48）与浮点 **+0.0/正次正规数**撞码
+     * ⇒ 会把 float 0.0 贴成 int 0（§8.99/§8.100/§8.101/§8.103 同一根因）。
+     * RBX 位图由 prologue 按入参"是否 int48"建立、写回路径也按它判定（见下文写回宏）
+     * ⇒ bit=1 表示该槽的值**不是裸 int48**（是裸 double 的 float / 对象 / bool / null），
+     * 这些全都**已经是合法的 Value** ⇒ 跳过装箱总是对的（保守且精确）。
+     * 仅在 `tos_from_si ∈ [0, 64)` 时启用（BT 的立即数位索引必须落在 64 位寄存器内）；
+     * 其余情形保持原启发式 —— §8.103 的"不猜"守卫仍在各类型敏感边界上兜底。
+     * ⚠ 本宏以 R8 为 scratch；带 _skip 分支多用一个 rel8 补丁，不改变寄存器约定。 */
     #define EMIT_RAW_TO_VALUE() do { \
+        int _skip_p = -1; \
+        if (tos_from_si >= 0 && tos_from_si < 64) { \
+            emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0xBA); \
+            emit_byte(cb, 0xE3);  /* ModRM(11, 4, 3) = BT RBX, imm8 */ \
+            emit_byte(cb, (uint8_t)(tos_from_si & 0xFF)); \
+            emit_byte(cb, 0x72);  /* JC rel8 → 跳过装箱（该槽已知非 int） */ \
+            _skip_p = cb->len; \
+            emit_byte(cb, 0x00); \
+        } \
         emit_mov_rr(cb, JIT_R8, JIT_RAX); \
         emit_sar_imm(cb, JIT_R8, 47); \
         emit_inc_reg(cb, JIT_R8); \
@@ -649,6 +669,7 @@ int compile_loop(CodegenCtx* ctx) {
         emit_and_rr(cb, JIT_RAX, JIT_R10); \
         emit_or_rr(cb, JIT_RAX, JIT_R11); \
         cb->buf[_rp] = (uint8_t)(cb->len - (_rp + 1)); \
+        if (_skip_p >= 0) cb->buf[_skip_p] = (uint8_t)(cb->len - (_skip_p + 1)); \
     } while(0)
 
     /* Convert RAX from NaN-boxed Value to virtual-stack raw (in-place).
@@ -1297,6 +1318,11 @@ int compile_loop(CodegenCtx* ctx) {
 
         /* offmap_add 必须记在 spill 之后：跳转目标要落在 spill 之后。 */
         offmap_add(ctx, bc_off, cb->len);
+
+        /* §8.104：本指令 TOS 的"来源 scratch 槽"（-1 = 未知）。只有 OP_GET_LOCAL 会置它，
+         * 供 EMIT_RAW_TO_VALUE 用 RBX 类型位图判断"该槽已知非 int"（见宏内注释）。
+         * 每轮迭代重置 ⇒ 只对"紧跟 GET_LOCAL 的那次转换"生效，绝不外溢到别的操作数。 */
+        int tos_from_si = -1;
 
         switch (op) {
             #include "x86_inc/ops_stack.inc"

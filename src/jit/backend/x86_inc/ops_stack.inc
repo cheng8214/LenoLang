@@ -38,6 +38,9 @@
             case OP_GET_LOCAL: {
                 uint16_t slot = rd_short(ip + 1);
                 int si = cur_local_map[slot];
+                /* §8.104：记下 TOS 的来源槽 —— 供本次转换（EMIT_RAW_TO_VALUE）用 RBX
+                 * 类型位图判定"该槽已知非 int"⇒ 跳过装箱（避免把 float 0.0 贴成 int 0）。 */
+                tos_from_si = si;
                 int disp = scratch_disp(si);
                 int fold_reg = pin_reg_of(pin_si, pin_n, si);   /* §8.45：本槽自己的寄存器 */
                 /* ---- §8.44 语句级折叠：pinned 槽上的 `x = x ⊕ k` 直接落在寄存器上 ---- */
