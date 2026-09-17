@@ -241,6 +241,24 @@ $env:LENO_NO_JIT="1"; build\leno.exe jit_probes\probe_type_check_float_zero.leno
 已在 4 处 native 实参边界加守卫（`jit_raw_block_ambiguous`），但本路径走的是 `OP_CALL_NATIVE`
 的通用 callout（尚未定位）⇒ 探针仍红，作为跟踪项保留。
 
+## 浮点转字符串与时钟单位（§8.111 的诊断双探针）
+
+- `probe_float_str_point.leno` —— **门禁探针**：浮点在拼接里是否保留小数点 ✓
+  （§8.111 曾怀疑"拼接丢小数点"，此探针否掉了它：`1224.9280279999998` ✓ JIT/解释器逐字一致）。
+- `probe_times_units.leno` —— **诊断探针（非门禁）**：核对 `times.ms()/us()/ns()` 的真实单位
+  （要求三者 delta 精确成 ×1000 关系：如 `0.368 / 367.9 / 367899` ✓）；顺带照抄"热循环两端取
+  `times.ms()`"的形态。⚠ 它打印**绝对**时刻，故不进 IDENTICAL 门禁 ✓。
+
+**⚠ `.lenocache` 陷阱（§8.111，必读）**：`entry_<hash>.lenb` 是**整程序**快照，其键**只含入口
+文件哈希**、`.deps` 只登记**有源码的模块**（native 模块登记不上 ✗）⇒ **改了 `src/module/**`
+（C 侧 native）不会让缓存失效** ✗。症状往往是"计时/类型诡异地不对，但数值计算看着正常" ✓
+（本例：`times.ms()` 的注册由 `TYPE_INT` 变 `TYPE_FLOAT` ⇒ 缓存里仍是 int 签名 ✗ ⇒
+`t2 - t1` 按整数相减 ⇒ 打印 10^9 量级"毫秒" ✗）。**改过 native 模块后先删缓存** ✓：
+
+```powershell
+Remove-Item -Recurse -Force .\examples\性能测试\.lenocache
+```
+
 ## 覆盖面合成表（§8.92）：`jit_census.ps1`
 
 JIT 覆盖面有两个**互不相通**的口径，过去只能手工分别看 ——

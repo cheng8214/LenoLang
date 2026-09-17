@@ -1,0 +1,38 @@
+// §8.111 诊断：①三个时钟的真实单位 ②照抄基准脚本形态复现"耗时会缩小/放大 10^6"
+import times
+
+func burn(float seed): float {
+    var sum = seed
+    for 200000 {
+        sum += 0.5
+    }
+    return sum
+}
+
+// 基准脚本的形态：热循环两端各取一次 times.ms()，函数本身会被 JIT 编译
+func phase(): float {
+    var t1 = times.ms()
+    var sum = 0.0
+    for 3000000 {
+        sum += 0.5
+    }
+    var t2 = times.ms()
+    return t2 - t1
+}
+
+main() {
+    burn(0.5)
+    var a = times.ms()
+    var b = times.us()
+    var c = times.ns()
+    burn(1.5)
+    var a2 = times.ms()
+    var b2 = times.us()
+    var c2 = times.ns()
+    print("ms abs=" + a + "  delta=" + (a2 - a))
+    print("us abs=" + b + "  delta=" + (b2 - b))
+    print("ns abs=" + c + "  delta=" + (c2 - c))
+
+    print("phase1 = " + phase())
+    print("phase2 = " + phase())
+}

@@ -1,0 +1,34 @@
+// §8.111 诊断：拼接里的浮点何时**丢掉小数点**
+// 现象：examples/性能测试/光线追踪对比.leno 里
+//   print($"..." + (t2 - t1) + "ms (sum=" + sum + ")")
+// 打印出 "1224928028ms"（应为 "1224.928028ms"），而同一行的 sum 却是
+// "50730000.000273108"（带小数点 ✓）⇒ 同一拼接里两个浮点走了不同分支。
+
+func show(string tag, float v) {
+    print(tag + " : " + v)
+}
+
+func accTest(): float {
+    var acc = 0.0
+    for 3 {
+        acc += 16910000.000091036
+    }
+    return acc
+}
+
+main() {
+    var sum = 50730000.0
+    var t1 = 1000.5
+    var t2 = 2225.428028
+
+    print("A tmpSub  = " + (t2 - t1))
+    print("B varSum  = " + sum)
+    print("C literal = " + 1224928028.0 / 1000000.0)
+    print("D line    = " + (t2 - t1) + "ms (sum=" + sum + ")")
+    print("E raw     = ")
+    print(t2 - t1)
+    show("F arg", t2 - t1)
+    print("G tiny    = " + 0.001 + "  huge = " + 123456789.123456)
+    print("H acc     = " + accTest())
+    print("I frac4   = " + 0.5 + "  " + 2.25 + "  " + 1224.9)
+}
