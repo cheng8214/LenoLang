@@ -1910,12 +1910,13 @@ static Value jit_invoke_closure(ObjFunction* mfunc, Value callee_val, int arg_co
                     fprintf(stderr, "[JIT-CALLOUT-FAIL] native 直调: native->function 为空\n");
                 return NULL_VAL;
             }
-            if (jit_raw_block_ambiguous(vstack_top, arg_count)) {   /* §8.106 */
-                jit_callout_failed = 1;
-                if (jit_debug_on())
-                    fprintf(stderr, "[JIT-CALLOUT-FAIL] native 直调实参落在歧义区 ⇒ 交解释器（§8.106）\n");
-                return NULL_VAL;
-            }
+            /* §8.115：原来的"歧义区 ⇒ bailout"（§8.106）判据等于"所有非负 int48" ✗，
+             * 会把 `T.malloc_array(vcnt)` 这类**正常**调用点整体挡掉 ⇒ 热循环被拉黑 ✗。
+             * 本条路径拿不到声明形参类型（分派在这里已经完成 ✓）⇒ 只删掉整体 bailout，
+             * 实参按 `jit_raw_to_value` 的整数解读装入（`+0.0` 与 `int 0` 数值相同 ⇒ 值正确 ✓）。
+             * ⚠ 残余：若 native 真的关心"这个 0 是 float 还是 int"（`is float` / 字符串化），
+             * 会出现类型标签分叉 ✗ —— 这条路径上极罕见 ✓；模块方法那条路径已按声明类型
+             * 精确提升 ✓（见 jit_callout_module_call_meta）。 */
             int saved_sp_n = vm->sp;
             int total = arg_count + nhas_recv;
             if (nhas_recv) vm_stack_push(vm, nrecv);   /* args[0] = 接收者（先压 ⇒ 最低地址）*/
@@ -2652,16 +2653,21 @@ Value jit_callout_module_call_meta(int64_t* vstack_top, int arg_count,
     }
 
     /* JIT 虚拟栈向低地址增长：vstack_top[0] = TOS（最后压入的实参），
-     * native 期望 args[0] = 第一个实参。 */
-    if (jit_raw_block_ambiguous(vstack_top, arg_count)) {   /* §8.106 */
-        jit_callout_failed = 1;
-        if (jit_debug_on())
-            fprintf(stderr, "[JIT-CALLOUT-FAIL] native 实参落在歧义区 ⇒ 交解释器（§8.106）\n");
-        return NULL_VAL;
-    }
+     * native 期望 args[0] = 第一个实参。
+     * §8.115：原先这里有一条"实参落在歧义区 ⇒ 整体 bailout"的守卫（§8.106）✗ ——
+     * 它的判据 `raw>>47 == 0` 实际是 `0 ≤ raw < 2^47`，即**所有非负 int48** ✗，
+     * 于是任何带非负整数实参的 native 调用点都会 bail ⇒ 所在热循环被拉黑 ✗
+     * （实测 PvZ：60 帧里 16 次失败全出在这条，7 个循环 ×3 的 bailout 由此而来 ✗）。
+     * 改法：**按声明形参类型消歧**——歧义区里 int48 与浮点 +0.0/正次正规撞码，
+     * 若声明为 float 就按整数提升成 double（`+0.0` 与 `int 0` 数值相同 ⇒ 无损 ✓），
+     * 其余类型按整数处理（与解释器给出的值一致 ✓）⇒ 不 bail ✓。 */
     Value args[16];
     for (int i = 0; i < arg_count; i++) {
-        args[i] = jit_raw_to_value(vstack_top[arg_count - 1 - i]);
+        Value a = jit_raw_to_value(vstack_top[arg_count - 1 - i]);
+        if (i < MAX_METHOD_PARAMS && meta->param_types[i] == TYPE_FLOAT && val_is_int(a)) {
+            a = val_float((double)val_as_int(a));
+        }
+        args[i] = a;
     }
 
     Value result = meta->function(arg_count, args);
@@ -2717,14 +2723,14 @@ Value jit_callout_module_call(int64_t* vstack_top, int arg_count,
         jit_callout_error("模块方法参数过多");
         return NULL_VAL;
     }
-    if (jit_raw_block_ambiguous(vstack_top, arg_count)) {   /* §8.106 */
-        jit_callout_failed = 1;
-        if (jit_debug_on())
-            fprintf(stderr, "[JIT-CALLOUT-FAIL] native 实参落在歧义区 ⇒ 交解释器（§8.106）\n");
-        return NULL_VAL;
-    }
-for (int i = 0; i < arg_count; i++) {
-        args[i] = jit_raw_to_value(vstack_top[arg_count - 1 - i]);
+    /* §8.115：把 §8.106 的"歧义区 ⇒ 整体 bailout"换成**按声明形参类型消歧**
+     * （理由见 jit_callout_module_call_meta 的注释：原判据等于"所有非负 int48" ✗）。 */
+    for (int i = 0; i < arg_count; i++) {
+        Value a = jit_raw_to_value(vstack_top[arg_count - 1 - i]);
+        if (i < MAX_METHOD_PARAMS && meta->param_types[i] == TYPE_FLOAT && val_is_int(a)) {
+            a = val_float((double)val_as_int(a));
+        }
+        args[i] = a;
     }
 
     Value result = meta->function(arg_count, args);

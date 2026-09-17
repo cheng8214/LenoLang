@@ -1,0 +1,46 @@
+// §8.115：复现 `_flushTexBatch` 那个 bailout 的**最小形状** ——
+// 热循环体里对数组调 **bound method**（`arr.add(...)`）⇒ JIT 的 OP_CALL callout
+// 只认 OBJ_CLOSURE / OBJ_FUNCTION，其余一律「交解释器 ⇒ bailout」⇒ 整个循环被拉黑。
+// 这个形状在四个真实应用里都出现（fm / cc / 五子棋 / PvZ 的 _flushTexBatch）。
+func hotArrAdd(int n): int {
+    int acc = 0
+    int i = 0
+    while i < n {
+        Array[int] arr = []
+        int k = 0
+        while k < 20 {
+            arr.add(k)
+            k = k + 1
+        }
+        acc = acc + arr.len()
+        i = i + 1
+    }
+    return acc
+}
+
+// 对照：同样 20 次写入，但用预分配 + 下标赋值（不经过 OP_CALL 的方法调用）
+func hotArrSet(int n): int {
+    int acc = 0
+    int i = 0
+    while i < n {
+        Array[int] arr = []
+        int k = 0
+        while k < 20 {
+            arr.add(0)
+            k = k + 1
+        }
+        k = 0
+        while k < 20 {
+            arr[k] = k
+            k = k + 1
+        }
+        acc = acc + arr.len()
+        i = i + 1
+    }
+    return acc
+}
+
+main() {
+    print("add=" + hotArrAdd(20000))
+    print("set=" + hotArrSet(20000))
+}
