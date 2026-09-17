@@ -719,12 +719,37 @@
                  * 反向的 `int 0 is int`（JIT 判真）属同一表示缺口的另一面，见 §8.100 的待决记录。 */
                 if (tk == TYPE_INT || tk == TYPE_FLOAT ||
                     (tk >= TYPE_I8 && tk <= TYPE_C_SSIZE)) {
-                    emit_mov_rr(cb, JIT_R8, JIT_RAX);
-                    emit_sar_imm(cb, JIT_R8, 47);       /* 歧义 ⇔ 0 ≤ raw < 2^47 ⇔ raw>>47 == 0 */
-                    emit_test_rr(cb, JIT_R8, JIT_R8);
-                    EMIT_BAILOUT_SITE_NONOVF(bc_off);
-                    int amb_p = emit_jcc(cb, 0x84);     /* JZ（歧义）→ bailout */
-                    patch_add(ctx, amb_p, -1, 0);
+                    /* §8.117：先**证明** TOS 是裸 int48；证明了就不必猜 ✓（判据同族缺陷：
+                     * `raw>>47 == 0` 等于"所有非负 int48" ✗ ⇒ `v is int` 每次迭代都 bail ✗
+                     * ⇒ 含 `is` 的热循环被拉黑 ✓。实测 probe_is_int_loop。）
+                     * 两条证明都取自**既有**判据，不新增假设 ✓：
+                     *   a) `prev_int48`：紧邻的上一条指令在白名单里（§8.41）⇒ 结果必是裸 int48 ✓
+                     *   b) `tos_from_si` + RBX 位图 bit=0：本 JIT 一贯的"该槽按 int 处理"判据，
+                     *      与 `EMIT_RAW_TO_VALUE`（装箱）用的是**同一条** ✓（要么一起信、要么一起不信）
+                     * 两条都不成立 ⇒ 保持原来的"歧义 ⇒ bailout"（不猜 ✓）。 */
+                    int _proven = prev_int48;
+                    if (!_proven && tos_from_si >= 0 && tos_from_si < 64) {
+                        /* BT RBX, si；JNC → 跳过下面的歧义检查（bit=0 ⇒ 按 int 处理） */
+                        emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0xBA);
+                        emit_byte(cb, 0xE3);
+                        emit_byte(cb, (uint8_t)(tos_from_si & 0xFF));
+                        int _slot_int_skip = emit_jcc(cb, 0x83);   /* JNC rel32 */
+                        emit_mov_rr(cb, JIT_R8, JIT_RAX);
+                        emit_sar_imm(cb, JIT_R8, 47);
+                        emit_test_rr(cb, JIT_R8, JIT_R8);
+                        EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                        int amb_p = emit_jcc(cb, 0x84);     /* JZ（歧义）→ bailout */
+                        patch_add(ctx, amb_p, -1, 0);
+                        patch_rel32(cb, _slot_int_skip, cb->len);
+                    } else if (!_proven) {
+                        emit_mov_rr(cb, JIT_R8, JIT_RAX);
+                        emit_sar_imm(cb, JIT_R8, 47);       /* 歧义 ⇔ 0 ≤ raw < 2^47 */
+                        emit_test_rr(cb, JIT_R8, JIT_R8);
+                        EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                        int amb_p = emit_jcc(cb, 0x84);     /* JZ（歧义）→ bailout */
+                        patch_add(ctx, amb_p, -1, 0);
+                    }
+                    /* _proven ⇒ 什么都不发：正常装箱 + callout 判定即为精确答案 ✓ */
                 }
                 EMIT_RAW_TO_VALUE();                   /* 裸 int48 → 装箱；其余原样 */
                 EMIT_STORE_TMP(tmp1_disp, JIT_RAX);
