@@ -1,0 +1,42 @@
+// §8.106.2 决定性实验：污染发生在「**浮点运算取操作数**」还是「**返回/写回**」
+//
+// 已知（probe_tiny_make_where）：JIT 下 2^-1060 会变成 16384.0（= 其位型 0x4000 当整数）、
+// 2^-1074 → 1.0 —— 且**位图忠实化（§8.107）后仍是如此** ⇒ 写回不是（唯一）嫌疑点 ✗。
+//
+// 本探针把两件事分开：
+//   ① `half(tiny)`：**没有循环**、只有一个浮点乘 ⇒ 若 JIT 把 tiny 的裸位型当 int 参与运算，
+//      half 的结果会是 16384*0.5 = 8192（或 2^-1061 附近）⇒ 立刻可判；
+//   ② `keep(tiny)`：原样返回（不做运算）⇒ 只可能错在「返回/落局部」。
+// tiny 在**单独小函数**里算（不会被函数级 JIT 编，见 §8.106 教训）。
+func makePow2(int n): float {
+    var t = 1.0
+    int k = 0
+    while k < n {
+        t = t * 0.5
+        k = k + 1
+    }
+    return t
+}
+
+func half(float x): float {          // ① 一次浮点乘
+    return x * 0.5
+}
+
+func keep(float x): float {          // ② 原样返回
+    return x
+}
+
+main() {
+    var tiny = makePow2(1060)        // = 2^-1060（位型 0x4000，落在歧义区）
+    var h = half(tiny)
+    var k = keep(tiny)
+    int i = 0
+    while i < 300 {
+        if i == 0 {
+            print("tiny="); print(tiny); print("\n")
+            print("half="); print(h); print("\n")
+            print("keep="); print(k); print("\n")
+        }
+        i = i + 1
+    }
+}

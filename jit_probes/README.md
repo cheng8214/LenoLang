@@ -199,7 +199,7 @@ $env:LENO_NO_JIT="1"; build\leno.exe jit_probes\probe_type_check_float_zero.leno
 
 ⇒ 一句话：**测"值被污染"必须让污染值活过 JIT 区域**，否则守卫会把症状掩盖掉 ✓。
 
-## 跟踪项（当前故意 DIFF，**不是**门禁）：`probe_tiny_make_where.leno` / `probe_native_arg_float.leno`
+## 跟踪项（当前故意 DIFF，**不是**门禁）：`probe_tiny_make_where.leno` / `probe_tiny_fetch_or_store.leno` / `probe_native_arg_float.leno`
 
 **§8.106 真因**（初版归因 native 实参是**错的** ✓）：JIT 的**物化/写回**把裸 double 按 int48 装箱。
 `probe_tiny_make_where.leno` 用 `2^-n` 夹逼给出铁证 —— JIT 输出**恰好等于该 float 的位型当整数**：
