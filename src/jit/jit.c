@@ -806,13 +806,23 @@ fprintf(stderr, "[JIT-DEBUG] EXEC call #%d, fn=%p, locals=%p\n",
          * 基址 ⇒ 先剥掉。绝对偏移 = loop_bc_off + rel（与 --debug 的转储对齐）。 */
         {
             int site = (int)jit_bailout_site;
-            int rel  = (site <= -1000) ? (-1000 - site) : site;
-            rel &= 0xFFFF;
+            int raw  = (site <= -1000) ? (-1000 - site) : site;
+            /* §8.114：内联帧的偏移带 0x10000 * depth 基址。此时**不能**用 frame->chunk
+             * 还原指令名 ✗ —— bailout 发生在**被内联函数**的字节码里，而 frame->chunk 是
+             * **调用方**的 chunk ⇒ 读到的只是"那个偏移上碰巧是什么字节" ✗（实测 PvZ 报出
+             * `触发指令=OP_NULL` 这种不可能的原因）。所以：depth>0 时如实标注"不可还原"，
+             * 而不是给一个看着像答案的错值 ✓（与 §8.97 撞号那条同一类教训）。 */
+            int depth   = raw >> 16;
+            int rel     = raw & 0xFFFF;
             int abs_off = loop_bc_off + rel;
             const char* opn = "?";
-            if (frame && frame->chunk && frame->chunk->code &&
-                abs_off >= 0 && abs_off < frame->chunk->len) {
-                opn = opcode_name(frame->chunk->code[abs_off]);
+            if (depth == 0) {
+                if (frame && frame->chunk && frame->chunk->code &&
+                    abs_off >= 0 && abs_off < frame->chunk->len) {
+                    opn = opcode_name(frame->chunk->code[abs_off]);
+                }
+            } else {
+                opn = "<不可还原：内联帧的字节码在 callee chunk>";
             }
             entry->last_bailout_op = opn;
         }
