@@ -1,0 +1,26 @@
+// §8.97 探针 F：与 nlev_e_floatstep_loop.leno **逐位等价**，但内层 for 用 **int 步长**
+//（⇒ 外层循环不含浮点步长的 FOR_PREP ⇒ 能整块进 JIT）。
+//
+// 为了与 E 的浮点累加**逐位相同**，这里刻意用"累加 0.05"而不是"k * 0.05"：
+//   E: t 由循环变量的浮点步进得到（0.0, +0.05, +0.05, …）
+//   F: t 由显式累加得到（0.0, +0.05, +0.05, …）  ⇒ 完全相同的加法序列 ✓
+// checksum 必须与 E 相同（acc=2000000）。
+func hotIntStep(int n): int {
+    int acc = 0
+    int i = 0
+    while i < n {
+        var sum = 0.0
+        var t = 0.0
+        for 0 : 20 to k {               // ← int 步长：外层循环可以进 JIT
+            sum = sum + t
+            t = t + 0.05
+        }
+        acc = acc + _int(sum)
+        i = i + 1
+    }
+    return acc
+}
+
+main() {
+    print("acc=" + hotIntStep(200000) + "\n")
+}

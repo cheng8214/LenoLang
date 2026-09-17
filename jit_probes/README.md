@@ -138,6 +138,23 @@ cmd /c "set LENO_JIT_DEBUG=1&& build\leno.exe jit_probes\probe_index_callee.leno
 判据：`n=101`（JIT/NO_JIT 一致）、`Compiled: 1`、`Bailouts: 3`（3 次后循环被拉黑 ⇒
 只剩 3 条诊断，便于读）。**读诊断行时务必先读到函数尾部再下结论**（§8.86 的教训）。
 
+## 浮点步长循环的净损失（§8.97）：`nlev_e_floatstep_loop.leno` / `nlev_f_intstep_loop.leno`
+
+E = 热外层循环里包 `for 0.0 : 1.0 : 0.05 to t`（fm 的 `render` 形态）；F = 同形状但内层 **int 步长**。
+E 会命中 `OP_FOR_PREP` 的"step 静态类型是 float ⇒ bail"守卫，**外层循环整块被拉黑** ✗。
+
+```powershell
+build\leno.exe jit_probes\nlev_e_floatstep_loop.leno     # JIT ≈ NO_JIT（完全没享受到）✗
+build\leno.exe jit_probes\nlev_f_intstep_loop.leno       # 2.2x ✓
+```
+
+实测（3 轮）：E 174/196/187ms（NO_JIT 158ms）、F 93/95/97ms（NO_JIT 211ms）⇒ 修好浮点步长 ≈ 2x 收益。
+⚠ E 与 F 的迭代数因浮点漂移并不完全相等（1800000 vs 2000000），该比值**偏保守** ✓。
+
+**另记（§8.97 的观测修正）**：`OP_FOR_PREP` 的两个守卫（静态 float / 运行期 `step == 0`）历史上
+共用同一 `bc_off` ✗ ⇒ 只能看到 `非溢出类 @bc_off=N`；现在 `step == 0` 有独立编码
+（`FOR_PREP: step == 0（运行期）`），两者**可区分** ✓。
+
 ## 覆盖面合成表（§8.92）：`jit_census.ps1`
 
 JIT 覆盖面有两个**互不相通**的口径，过去只能手工分别看 ——

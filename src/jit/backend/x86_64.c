@@ -757,6 +757,12 @@ int compile_loop(CodegenCtx* ctx) {
     /* 序言 bailout 的 site 取值（jit_print_stats 会翻译成可读原因）：
      *   -1 = 进入自增 int48 溢出，-2 = step == 0，-3 = step 是 float */
     #define EMIT_BAILOUT_SITE_NONOVF(off) EMIT_BAILOUT_SITE_WRITE(-1000 - (int)(off))
+    /* §8.97：`OP_FOR_PREP` 里有**两个**守卫（静态"step 是 float" / 运行期"step == 0"），
+     * 它们历史上都记在同一个 `bc_off` 上 ⇒ 只看 `非溢出类 @bc_off=N` **分不出是哪一个** ✗
+     * （§8.89 就是因此把 fm 的 bailout 猜成"内层 float 步长"，而序列编码里的专用值
+     * `-3 = step 为 float` 从来没被那个守卫用过 ⇒ 猜测是错的 ✗）。
+     * 给"step == 0"单独一个基址，`jit_bailout_reason` 就能报出具体那一条。 */
+    #define EMIT_BAILOUT_SITE_FORSTEP0(off) EMIT_BAILOUT_SITE_WRITE(-2000 - (int)(off))
 
     /* ---- 类型化浮点运算（OP_*_FLOAT / OP_*_FLOAT 比较）的操作数取值 ----
      * 这些 opcode 名字里带 FLOAT，但**操作数不保证已经是 float**：编译器只在

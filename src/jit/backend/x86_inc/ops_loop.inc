@@ -44,7 +44,7 @@
                  * pick_pin_locals 的三元组优先），此时读写都落在寄存器上。 */
                 EMIT_LOAD_LOCAL(JIT_RAX, si_step, d_step);
                 emit_test_rr(cb, JIT_RAX, JIT_RAX);
-                EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                EMIT_BAILOUT_SITE_FORSTEP0(bc_off);   /* §8.97：与上面的 float 位图检查区分开 */
                 int step_bail = emit_jcc(cb, 0x84);  /* JE (step==0) → bailout */
                 patch_add(ctx, step_bail, -1, 0);
 

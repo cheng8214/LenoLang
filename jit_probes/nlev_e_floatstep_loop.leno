@@ -1,0 +1,27 @@
+// §8.97 探针 E：热外层循环里包一个**浮点步长**的内层 for（= fm 的 `render` 形态）
+//
+// 为什么值得单独量：JIT 的 `OP_FOR_PREP` 有一条守卫「step 的**静态类型**是 float ⇒ bail」
+// （ops_loop.inc 的类型位图检查，`非溢出类 @bc_off=<PREP 偏移>`，§8.97 已定论）。
+// 它 bail 掉的是**外层**循环那一整块编译区域 ⇒ 外层退化成解释执行；
+// 内层循环自身的回边是独立候选、仍可能被循环级 JIT 编掉 ⇒ 损失只落在
+// **外层自己的那段代码**上 —— 正是本探针要量的。
+//
+// 与 nlev_f_intstep_loop.leno **逐位等价**：同样的迭代数、同样的加法顺序
+// （0.0 起每次 +0.05）⇒ checksum 必须完全相同（acc=200000×10 截断 = 2000000）。
+func hotFloatStep(int n): int {
+    int acc = 0
+    int i = 0
+    while i < n {
+        var sum = 0.0
+        for 0.0 : 1.0 : 0.05 to t {     // ← 浮点步长：FOR_PREP 序言 bail
+            sum = sum + t
+        }
+        acc = acc + _int(sum)
+        i = i + 1
+    }
+    return acc
+}
+
+main() {
+    print("acc=" + hotFloatStep(200000) + "\n")
+}
