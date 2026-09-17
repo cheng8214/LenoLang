@@ -138,6 +138,25 @@ cmd /c "set LENO_JIT_DEBUG=1&& build\leno.exe jit_probes\probe_index_callee.leno
 判据：`n=101`（JIT/NO_JIT 一致）、`Compiled: 1`、`Bailouts: 3`（3 次后循环被拉黑 ⇒
 只剩 3 条诊断，便于读）。**读诊断行时务必先读到函数尾部再下结论**（§8.86 的教训）。
 
+## 覆盖面合成表（§8.92）：`jit_census.ps1`
+
+JIT 覆盖面有两个**互不相通**的口径，过去只能手工分别看 ——
+**scan 期拒收**（`LENO_JIT_GAPS=1`，编译前就拒绝的对象）与
+**运行期 bailout**（stats 的 `Bailout:` 行，编了但执行中失败、最终被拉黑的对象，行内含
+**触发指令名**）。只看前者会漏掉"编了却每次都 bail"（R6-k 之前的 bound-method 就是 ✗），
+只看后者会漏掉"根本没尝试编" ✗。
+
+```powershell
+powershell -File jit_probes\jit_census.ps1              # 默认 3 个真实应用 × 300 帧
+powershell -File jit_probes\jit_census.ps1 -Frames 60   # 热循环需 ≥ JIT_HOT_THRESHOLD(50) 回边
+```
+
+输出：每个应用的 `Compiled/Executed/Bailouts/FuncCompiled` 与 `[SDL-BENCH]` 基准、
+运行期 bailout 明细、scan 期拒收清单（按编译对象去重计数）。
+
+**⚠ 不要用 `LENO_JIT_DEBUG=1` 来回答"还有哪些没进 JIT"**：真实应用上它产出 8MB+ stderr
+并把运行拖到跑不完（§8.71 / §8.89 各栽过一次）。本表用的两个开关都是"退出时打印一次"量级。
+
 ## B 审计（§8.91）：错误通道 —— 4 个探针
 
 | 探针 | 压的是什么 | 判据 |
