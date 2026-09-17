@@ -1,0 +1,125 @@
+// §8.123 / §8.124 / §8.125 回归：**大整数算术 / 位运算 / 函数级 JIT 的形参与返回值**
+//
+// 为什么必须单列（都是实测踩过的真 bug ✓）：
+//   · 三组 bug 的共同根因是"**静态 `int` ⇒ 值是 int48**" ✗ —— 而 bigint 的静态类型
+//     同样是 `int`（值是 `0xFFFC|对象指针`）⇒ 任何按位型猜类型的环节都会静默算错 ✗；
+//   · 其中 §8.125 只在 **JIT** 下暴露 ✗（解释器一直是对的 ✓），且**只在函数被调用超过
+//     `JIT_FUNC_HOT_THRESHOLD`(=50) 次、函数级 JIT 生效之后**才出现 ✓
+//     ⇒ 所以本测试里那个 `add64` 必须被调用 **100 次以上** ✓（少于 50 次测不出来 ✗）。
+//
+// 断言一律用**绝对期望值** ✓（hex64 字符串 = 手算/已验证输出 ✓，与运行模式无关 ✓）
+// ⇒ 同一个文件在 JIT 与 `LENO_NO_JIT=1` 下都必须 PASS ✓。
+//
+// 期望值来源：`jit_probes/probe_bitwise_bigint_sign.leno`、`probe_bigint_const_ops.leno`、
+// `_jit_bugs/diag_shl_large.leno`、`_jit_bugs/diag_add64_many.leno` 的实测输出 ✓。
+
+import strings
+
+func hex64(int v):string {
+    var hx = "0123456789abcdef"
+    string s = ""
+    for 0:15 to i {
+        int bb = (v >> (60 - i*4)) & 0xf
+        s += strings.char(hx.byte(bb))
+    }
+    return s
+}
+
+// ---- 64 位字原语：与 examples/crypto/sha512.leno 同形（这里刻意复刻形状 ✓
+//      因为出问题的正是「这些函数被反复调用后进入函数级 JIT」这条路径 ✓）----
+func mask32():int { return 0xffffffff }
+func mask64():int { return 0xffffffffffffffff }
+func pack64(int hi, int lo):int { return (_uint32(hi) * 4294967296 + _uint32(lo)) & mask64() }
+
+func add64(int a, int b):int {
+    int al = _uint32(a & mask32())
+    int bl = _uint32(b & mask32())
+    int lo_sum = al + bl
+    int carry = lo_sum >> 32
+    int lo = lo_sum & mask32()
+    int ah = _uint32((a >> 32) & mask32())
+    int bh = _uint32((b >> 32) & mask32())
+    int hi = (ah + bh + carry) & mask32()
+    return pack64(hi, lo)
+}
+
+func rot(int x, int n):int { return (x >> n) | (x << (64 - n)) }
+
+// 64 位异或（便于写 3 元 Σ 表达式 ✓）
+func xor64(int a, int b):int { return (a ^ b) & mask64() }
+
+main() {
+    // ============ ① §8.123：大整数乘法 / 移位 / 常量折叠 ============
+    int h = 0x472a31970310840c
+    assert_eq(hex64(0x80000000 * 4294967296), "8000000000000000")   // 2^63 不能被当成负 int48
+    assert_eq(hex64(0x80000000 * 4294967296 + 1), "8000000000000001")
+    assert_eq(hex64(1 << 63), "8000000000000000")
+    assert_eq(hex64(1 << 48), "0001000000000000")                   // 越过 int48 边界
+    assert_eq(hex64(1 << 47), "0000800000000000")
+    assert_eq(hex64(1 << 46), "0000400000000000")
+    assert_eq(hex64(3 << 62), "c000000000000000")
+    assert_eq(hex64(0x123456789ab << 16), "0123456789ab0000")
+    assert_eq(hex64(-1 << 63), "8000000000000000")
+    assert_eq((1 << 63) >> 63, 1)
+    assert_eq(hex64(0xffffffffffffffff), "ffffffffffffffff")         // 字面量本身是 2^64-1（不是 -1）
+
+    // ============ ② §8.124：位运算的符号与补码（无限精度补码语义 ✓ 与 Python 一致）============
+    int m64 = 0xffffffffffffffff
+    int a63 = 0x80000000 * 4294967296
+    assert_eq(hex64(a63), "8000000000000000")
+    assert_eq(hex64(a63 & m64), "8000000000000000")                  // 修前：被当成负数 ✗
+    assert_eq(hex64(a63 | 0), "8000000000000000")
+    assert_eq(hex64((0 - 1) & m64), "ffffffffffffffff")              // (-1) & 2^64-1 = 2^64-1
+    assert_eq((0 - 1) | 0, -1)
+    assert_eq((0 - 1) ^ m64, 0 - 0x10000000000000000)                // -1 ^ (2^64-1) = -2^64
+    assert_eq((0 - 2) & (0 - 3), -4)
+    assert_eq((0 - 1) & 5, 5)
+    assert_eq((0 - 6) ^ 3, -7)
+    assert_eq(~5, -6)
+
+    // ============ ③ §8.125：bigint × **常量**运算符（走 IMM / 折叠路径 ✓）============
+    // 症状特征是"只有常量运算数坏、动态的没事" ✗ ⇒ 这一组专门盯它 ✓
+    assert_eq(hex64(h >> 32), "00000000472a3197")
+    assert_eq(hex64(h << 4), "72a31970310840c0")
+    assert_eq(hex64(h & 0xffffffff), "000000000310840c")
+    assert_eq(hex64(h | 0x8000000000000000), "c72a31970310840c")
+    assert_eq(hex64(h ^ 0xffffffffffffffff), "b8d5ce68fcef7bf3")
+    assert_eq(h > 5, true)
+    assert_eq(h == 0x472a31970310840c, true)
+    assert_eq(h < 5, false)
+    assert_eq(hex64(rot(1, 1)), "8000000000000000")
+    assert_eq(hex64(rot(1, 63)), "0000000000000002")
+    assert_eq(hex64(rot(0x0123456789abcdef, 8)), "ef0123456789abcd")
+
+    // ============ ④ §8.125 主项：**函数级 JIT 生效后**形参/返回值语义不变 ============
+    // 定值用例（失败时一眼可辨 ✓）
+    assert_eq(hex64(add64(0x472a31970310840c, 0x0400200000000008)), "4b2a519703108414")
+    assert_eq(hex64(add64(0, 0x8000000000000000)), "8000000000000000")   // 修前：裸指针 ✗
+    assert_eq(hex64(add64(0, 0)), "0000000000000000")
+    assert_eq(hex64(add64(m64, 1)), "0000000000000000")                   // mod 2^64 回绕
+    assert_eq(hex64(pack64(0x80000000, 0)), "8000000000000000")
+
+    // 热调用：**必须超过 50 次** ✓（JIT_FUNC_HOT_THRESHOLD）才覆盖到"函数级 JIT 生效后" ✓
+    int bad = 0
+    for 0:199 to i {
+        int aa = 0x472a31970310840c + i
+        int bb = 0x0400200000000008
+        int got = add64(aa, bb)
+        int want = (aa + bb) & m64
+        if got != want { bad = bad + 1 }
+    }
+    assert_eq(bad, 0)        // 修前：第 49 次起恒为裸指针 ✗ ⇒ bad > 0
+
+    // 3 元 Σ 形态（sha512 的 σ 形状 ✓）：xor64(rot…, rot…) ⊕ shr —— 同样跑过热阈值 ✓
+    int bad2 = 0
+    for 0:199 to i {
+        int x = 0x0123456789abcdef + i * 0x1000000007
+        int s1 = xor64(xor64(rot(x, 19), rot(x, 61)), (x >> 6) & m64)
+        int s0 = xor64(xor64(rot(x, 1), rot(x, 8)), (x >> 7) & m64)
+        if s1 != ((rot(x, 19) ^ rot(x, 61) ^ (x >> 6)) & m64) { bad2 = bad2 + 1 }
+        if s0 != ((rot(x, 1) ^ rot(x, 8) ^ (x >> 7)) & m64) { bad2 = bad2 + 1 }
+    }
+    assert_eq(bad2, 0)
+
+    print("OK")
+}

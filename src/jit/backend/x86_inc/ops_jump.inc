@@ -276,6 +276,12 @@
                 } else {
                     emit_mov_reg_mem32(cb, JIT_RDX, JIT_RBP, db);
                 }
+                /* §8.125：**bigint 的静态类型也是 int** ✗ ⇒ 不能盲比原始位型
+                 * （两个"值相等但对象不同"的 bigint 会被按指针判成不等 ✗）。
+                 * 任一操作数不是裸 int48 ⇒ bailout，交解释器的融合指令（已按
+                 * val_is_int 分流到 compare_values ✓）。 */
+                EMIT_INT48_CHECK(bc_off);
+                EMIT_INT48_CHECK_REG(JIT_RDX, bc_off);
                 emit_cmp_rr(cb, JIT_RAX, JIT_RDX);
                 /* Jump if comparison is FALSE (i.e., NOT the condition) */
                 /* cmp_op: 0=EQ,1=NE,2=LT,3=GT,4=LE,5=GE */
@@ -313,6 +319,8 @@
                 } else {
                     emit_mov_reg_mem32(cb, JIT_RAX, JIT_RBP, da);
                 }
+                /* §8.125：同上（立即数是 int ✓，但 local 可能是 bigint ✗）⇒ 不是 int48 就 bailout */
+                EMIT_INT48_CHECK(bc_off);
                 /* cmp rax, imm32（符号扩展） */
                 emit_cmp_reg_imm32(cb, JIT_RAX, (uint32_t)imm);
                 /* Jump if comparison is FALSE（与 LL/LG 同一套反转） */
@@ -355,6 +363,10 @@
                 } else {
                     emit_mov_reg_mem32(cb, JIT_RDX, JIT_R9, gd);
                 }
+                /* §8.125：同上 —— local 与 global 都可能是 bigint（静态都是 int ✗）⇒
+                 * 不是裸 int48 就 bailout（下面的 SHL/SAR 取载荷对 bigint 会削掉标签 ✗） */
+                EMIT_INT48_CHECK(bc_off);
+                EMIT_INT48_CHECK_REG(JIT_RDX, bc_off);
                 /* Extract int48 payload from NaN-boxed value: shl rdx,16; sar rdx,16 */
                 {
                     int b = (JIT_RDX >> 3) & 1;

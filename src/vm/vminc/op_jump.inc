@@ -89,24 +89,44 @@ OPCODE(OP_CMPJMP_LL_INT) {
     uint16_t slot_b = READ_SHORT();
     int32_t offset = READ_INT32();
 
-    int64_t a, b;
+    Value va, vb;
     if (frame->locals != NULL) {
-        a = val_as_int(frame->locals[slot_a]);
-        b = val_as_int(frame->locals[slot_b]);
+        va = frame->locals[slot_a];
+        vb = frame->locals[slot_b];
     } else {
-        a = val_as_int(vm.stack[frame->stack_base + slot_a]);
-        b = val_as_int(vm.stack[frame->stack_base + slot_b]);
+        va = vm.stack[frame->stack_base + slot_a];
+        vb = vm.stack[frame->stack_base + slot_b];
     }
 
     int result = 0;
-    switch (cmp_op) {
-        case 0: result = (a == b); break;  // EQ
-        case 1: result = (a != b); break;  // NE
-        case 2: result = (a <  b); break;  // LT
-        case 3: result = (a >  b); break;  // GT
-        case 4: result = (a <= b); break;  // LE
-        case 5: result = (a >= b); break;  // GE
-        default: result = 0; break;
+    /* §8.125：**bigint 的静态类型同样是 int** ✗ ⇒ 不能盲用 `val_as_int` 比整数 ✗
+     * —— 那会把两个"值相等但对象不同"的 bigint 按**位型/指针**比成"不相等" ✗
+     * （实测：`if got != want` 恒真、而同一次迭代里 `got == want` 恒真 ✗，
+     *   即 `==` 与 `!=` 在同一表达式上给出相反结论 ✓）。
+     * int48 走原快路径 ✓；其余（bigint / float / …）交 `compare_values` ✓
+     * —— 与解释器 OP_EQ/OP_NE/OP_LT… 的数值语义一致 ✓。 */
+    if (val_is_int(va) && val_is_int(vb)) {
+        int64_t a = val_as_int(va), b = val_as_int(vb);
+        switch (cmp_op) {
+            case 0: result = (a == b); break;  // EQ
+            case 1: result = (a != b); break;  // NE
+            case 2: result = (a <  b); break;  // LT
+            case 3: result = (a >  b); break;  // GT
+            case 4: result = (a <= b); break;  // LE
+            case 5: result = (a >= b); break;  // GE
+            default: result = 0; break;
+        }
+    } else {
+        int c = compare_values(va, vb);
+        switch (cmp_op) {
+            case 0: result = (c == 0); break;
+            case 1: result = (c != 0); break;
+            case 2: result = (c <  0); break;
+            case 3: result = (c >  0); break;
+            case 4: result = (c <= 0); break;
+            case 5: result = (c >= 0); break;
+            default: result = 0; break;
+        }
     }
 
     if (!result) {
@@ -122,23 +142,38 @@ OPCODE(OP_CMPJMP_LG_INT) {
     uint16_t global_idx = READ_SHORT();
     int32_t offset = READ_INT32();
 
-    int64_t a;
+    Value va;
     if (frame->locals != NULL) {
-        a = val_as_int(frame->locals[slot]);
+        va = frame->locals[slot];
     } else {
-        a = val_as_int(vm.stack[frame->stack_base + slot]);
+        va = vm.stack[frame->stack_base + slot];
     }
-    int64_t b = val_as_int(vm.globals[global_idx]);
+    Value vb = vm.globals[global_idx];
 
     int result = 0;
-    switch (cmp_op) {
-        case 0: result = (a == b); break;  // EQ
-        case 1: result = (a != b); break;  // NE
-        case 2: result = (a <  b); break;  // LT
-        case 3: result = (a >  b); break;  // GT
-        case 4: result = (a <= b); break;  // LE
-        case 5: result = (a >= b); break;  // GE
-        default: result = 0; break;
+    /* §8.125：同上 —— bigint 也静态是 int ⇒ 不能盲比 ✗ */
+    if (val_is_int(va) && val_is_int(vb)) {
+        int64_t a = val_as_int(va), b = val_as_int(vb);
+        switch (cmp_op) {
+            case 0: result = (a == b); break;  // EQ
+            case 1: result = (a != b); break;  // NE
+            case 2: result = (a <  b); break;  // LT
+            case 3: result = (a >  b); break;  // GT
+            case 4: result = (a <= b); break;  // LE
+            case 5: result = (a >= b); break;  // GE
+            default: result = 0; break;
+        }
+    } else {
+        int c = compare_values(va, vb);
+        switch (cmp_op) {
+            case 0: result = (c == 0); break;
+            case 1: result = (c != 0); break;
+            case 2: result = (c <  0); break;
+            case 3: result = (c >  0); break;
+            case 4: result = (c <= 0); break;
+            case 5: result = (c >= 0); break;
+            default: result = 0; break;
+        }
     }
 
     if (!result) {
@@ -156,23 +191,38 @@ OPCODE(OP_CMPJMP_LI_INT) {
     int32_t imm = READ_INT32();
     int32_t offset = READ_INT32();
 
-    int64_t a;
+    Value va;
     if (frame->locals != NULL) {
-        a = val_as_int(frame->locals[slot]);
+        va = frame->locals[slot];
     } else {
-        a = val_as_int(vm.stack[frame->stack_base + slot]);
+        va = vm.stack[frame->stack_base + slot];
     }
-    int64_t b = (int64_t)imm;
+    Value vb = val_int((int64_t)imm);
 
     int result = 0;
-    switch (cmp_op) {
-        case 0: result = (a == b); break;  // EQ
-        case 1: result = (a != b); break;  // NE
-        case 2: result = (a <  b); break;  // LT
-        case 3: result = (a >  b); break;  // GT
-        case 4: result = (a <= b); break;  // LE
-        case 5: result = (a >= b); break;  // GE
-        default: result = 0; break;
+    /* §8.125：同上（立即数是 int ✓，但 local 可能是 bigint ✗） */
+    if (val_is_int(va) && val_is_int(vb)) {
+        int64_t a = val_as_int(va), b = val_as_int(vb);
+        switch (cmp_op) {
+            case 0: result = (a == b); break;  // EQ
+            case 1: result = (a != b); break;  // NE
+            case 2: result = (a <  b); break;  // LT
+            case 3: result = (a >  b); break;  // GT
+            case 4: result = (a <= b); break;  // LE
+            case 5: result = (a >= b); break;  // GE
+            default: result = 0; break;
+        }
+    } else {
+        int c = compare_values(va, vb);
+        switch (cmp_op) {
+            case 0: result = (c == 0); break;
+            case 1: result = (c != 0); break;
+            case 2: result = (c <  0); break;
+            case 3: result = (c >  0); break;
+            case 4: result = (c <= 0); break;
+            case 5: result = (c >= 0); break;
+            default: result = 0; break;
+        }
     }
 
     if (!result) {
