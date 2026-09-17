@@ -57,7 +57,7 @@ main() {
     web.start(crawler)
 
     int totalQuotes = 0
-    int startTime = times.ms()
+    int startTime = _int(times.ms())
 
     // ---- 4. 主爬取循环 ----
     print("[3] 开始爬取 ...")
@@ -127,7 +127,7 @@ main() {
         print("")
     }
 
-    int elapsed = times.ms() - startTime
+    int elapsed = _int(times.ms()) - startTime
     print("=== 爬取完成 ===")
     int pageCount = crawler.page_count
     print("总访问页面: " + pageCount)

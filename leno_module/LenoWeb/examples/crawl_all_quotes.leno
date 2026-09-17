@@ -21,7 +21,7 @@ main() {
     web.start(c)
 
     int totalQuotes = 0
-    int startTime = times.ms()
+    int startTime = _int(times.ms())
 
     while not web.shouldStop(c) {
         CrawlItem entry = web.nextUrl(c)
@@ -77,7 +77,7 @@ main() {
         print("")
     }
 
-    int elapsed = times.ms() - startTime
+    int elapsed = _int(times.ms()) - startTime
     print("=== 爬取完成 ===")
     print("总访问页面: " + c.page_count)
     print("总名言数: " + totalQuotes)

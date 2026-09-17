@@ -118,19 +118,19 @@ main() {
     int target = 49   // 最坏情况：命中最后一个分支
 
     // 测试 if-elif
-    int t1_start = times.ms()
+    int t1_start = _int(times.ms())
     for 0:ITERATIONS-1 to i {
         testIfChain(target)
     }
-    int t1_end = times.ms()
+    int t1_end = _int(times.ms())
     int if_time = t1_end - t1_start
 
     // 测试 switch
-    int t2_start = times.ms()
+    int t2_start = _int(times.ms())
     for 0:ITERATIONS-1 to i {
         testSwitch(target)
     }
-    int t2_end = times.ms()
+    int t2_end = _int(times.ms())
     int switch_time = t2_end - t2_start
 
     print("=== Leno Benchmark: if-elif vs switch ===")

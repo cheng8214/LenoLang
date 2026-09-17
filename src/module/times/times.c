@@ -10,60 +10,70 @@
     #include <sys/time.h>
 #endif
 
-// 获取当前时间（毫秒）
+// ============================================================================
+// 高精度单调计时：ms() / us() / ns() 三者共用同一个时钟源
+//
+// 历史问题（2026-09-16 修）：
+//   1) ms() 走 GetTickCount64 —— 那是分辨率 ≈15.625ms 的"刻度计数器"，且返回 int；
+//      于是"1000 万次函数调用 16ms"这种测量其实只有 1 个刻度的分辨率，单次误差可达
+//      ±15.6ms。docs/性能测试总结_Leno_vs_Python.md 里成片的 15.6ms 整数倍
+//      （16/31/47/62/78/94/109/125/140…）就是这么来的。
+//   2) QPC 取不到时，us()/ns() 用 GetTickCount()*1000 / *1000000 冒充——
+//      分辨率仍是 15.6ms（还有 32 位 49.7 天回绕），只是看起来精确，属"静默给假精度"。
+//
+// 现在：三者统一走 QPC（Windows）/ CLOCK_MONOTONIC（POSIX），只是换算单位不同。
+// **精度由时钟源决定，不由单位决定** —— 所以 ms() 换算成 float 后精度与 us 版一致。
+// ms() 返回值类型随之由 int 改为 float（int 会把毫秒截断成 1ms 粒度）。
+//
+// 语义：ms/us/ns 都是**单调计时**（用于取差值），不是挂钟时间；挂钟走 now()/format()。
+// 取不到时钟时返回 0：宁可给 0，也不再拿 15.6ms 粒度的计数器冒充高精度。
+// ============================================================================
+
+// 取单调计数器的原始计数与频率；成功返回 1
+static int times_monotonic_counter(long long* counter, long long* freq) {
+#ifdef _WIN32
+    LARGE_INTEGER f, c;
+    if (!QueryPerformanceFrequency(&f) || !QueryPerformanceCounter(&c)) return 0;
+    *freq = (long long)f.QuadPart;
+    *counter = (long long)c.QuadPart;
+    return 1;
+#else
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
+    *freq = 1000000000LL;   // 纳秒分辨率
+    *counter = (long long)ts.tv_sec * 1000000000LL + (long long)ts.tv_nsec;
+    return 1;
+#endif
+}
+
+// 获取当前时间（毫秒，float：带小数，分辨率与 us()/ns() 相同，只是单位不同）
 static Value native_times_ms(int argCount, Value* args) {
     (void)argCount;
     (void)args;
 
-#ifdef _WIN32
-    ULONGLONG ms = GetTickCount64();
-    return val_int_safe((int64_t)ms);
-#else
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    long long ms = (long long)tv.tv_sec * 1000LL + tv.tv_usec / 1000;
-    return val_int_safe((int64_t)ms);
-#endif
+    long long counter = 0, freq = 0;
+    if (!times_monotonic_counter(&counter, &freq) || freq <= 0) return val_num(0.0);
+    return val_num((double)counter * 1000.0 / (double)freq);
 }
 
 // 获取当前时间（微秒）
 static Value native_times_us(int argCount, Value* args) {
     (void)argCount;
     (void)args;
-    
-#ifdef _WIN32
-    LARGE_INTEGER freq, count;
-    if (QueryPerformanceFrequency(&freq) && QueryPerformanceCounter(&count)) {
-        double us = (double)count.QuadPart * 1000000.0 / (double)freq.QuadPart;
-        return val_num(us);
-    }
-    return val_num((double)GetTickCount() * 1000.0);
-#else
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    long long us = (long long)tv.tv_sec * 1000000LL + tv.tv_usec;
-    return val_num((double)us);
-#endif
+
+    long long counter = 0, freq = 0;
+    if (!times_monotonic_counter(&counter, &freq) || freq <= 0) return val_num(0.0);
+    return val_num((double)counter * 1000000.0 / (double)freq);
 }
 
 // 获取当前时间（纳秒）
 static Value native_times_ns(int argCount, Value* args) {
     (void)argCount;
     (void)args;
-    
-#ifdef _WIN32
-    LARGE_INTEGER freq, count;
-    if (QueryPerformanceFrequency(&freq) && QueryPerformanceCounter(&count)) {
-        double ns = (double)count.QuadPart * 1000000000.0 / (double)freq.QuadPart;
-        return val_num(ns);
-    }
-    return val_num((double)GetTickCount() * 1000000.0);
-#else
-    struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
-    long long ns = (long long)ts.tv_sec * 1000000000LL + ts.tv_nsec;
-    return val_num((double)ns);
-#endif
+
+    long long counter = 0, freq = 0;
+    if (!times_monotonic_counter(&counter, &freq) || freq <= 0) return val_num(0.0);
+    return val_num((double)counter * 1000000000.0 / (double)freq);
 }
 
 // 全局 sleep(ms) - 休眠指定毫秒
@@ -179,7 +189,8 @@ void times_init_globals(void) {
 // 初始化 times 模块（import times 时调用）
 void times_init_module(void) {
     // 注册 times.ms 方法（模块名，方法名，函数指针，参数数量，返回类型，参数类型数组）
-    native_register_module_method("times", "ms", native_times_ms, 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, NULL);
+    // 返回类型为 float：毫秒也要带小数（int 会把毫秒截断成 1ms 粒度，白白丢掉精度）
+    native_register_module_method("times", "ms", native_times_ms, 0, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, NULL);
 
     // 注册 times.us 方法（模块名，方法名，函数指针，参数数量，返回类型，参数类型数组）
     native_register_module_method("times", "us", native_times_us, 0, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, NULL);

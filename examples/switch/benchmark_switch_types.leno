@@ -87,26 +87,26 @@ func testString(string v): int {
 
 main() {
     // 整数
-    int t1 = times.ms()
+    int t1 = _int(times.ms())
     for 0:ITERATIONS-1 to i {
         testInt(19)
     }
-    int t2 = times.ms()
+    int t2 = _int(times.ms())
     print("int switch:    " + (t2 - t1) + " ms")
 
     // 浮点
-    int t3 = times.ms()
+    int t3 = _int(times.ms())
     for 0:ITERATIONS-1 to i {
         testFloat(19.1)
     }
-    int t4 = times.ms()
+    int t4 = _int(times.ms())
     print("float switch:  " + (t4 - t3) + " ms")
 
     // 字符串
-    int t5 = times.ms()
+    int t5 = _int(times.ms())
     for 0:ITERATIONS-1 to i {
         testString("s19")
     }
-    int t6 = times.ms()
+    int t6 = _int(times.ms())
     print("string switch: " + (t6 - t5) + " ms")
 }
