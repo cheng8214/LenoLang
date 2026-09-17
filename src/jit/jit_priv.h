@@ -87,6 +87,10 @@ typedef struct {
     int arg_count;           /* number of args（方法含 self） */
     int ret_count;           /* number of return values (1 or 2) */
     Chunk* callee_chunk;     /* callee's bytecode chunk */
+    /* callee 所属模块（§8.95）。内联体里的 `OP_GET_MODULE_VAR` / `OP_SET_MODULE_VAR` /
+     * `OP_GET_MODULE_FUNC` 必须用**这个**模块去查 globals，而不是调用方的 ——
+     * codegen 在内联帧里用 `cur_module` 取它（`jit_scan_get_module()` 始终是调用方的）。 */
+    ObjModule* callee_module;
     int callee_local_count;  /* callee's local_count */
     int callee_local_base;   /* base scratch index for callee locals */
     int callee_body_size;    /* bytecode size of callee body */
@@ -512,6 +516,10 @@ const char* opcode_name(int op);
 ObjModule* jit_scan_get_module(void);
 /* 解析模块函数：模块 globals[index] 处的闭包 → 返回其 return_count；0 = 解析失败 */
 int jit_resolve_module_func(uint16_t index);
+/* §8.95：显式指定模块的版本 —— 内联**跨模块**被调方的函数体时，被调方体内的
+ * `GET_MODULE_FUNC + CALL` 必须按**callee 的**模块解析返回个数，
+ * `jit_resolve_module_func` 用的是全局"当前编译模块"（= 调用方）⇒ 会读错 globals ✗。 */
+int jit_resolve_module_func_in(ObjModule* module, uint16_t index);
 Value jit_callout_value_eq(Value a, Value b, int invert);
 Value jit_callout_acc_fields(Value obj_val, uint8_t count, const uint8_t* field_indices);
 Value jit_callout_struct_init(int64_t* vstack_top, uint16_t name_const_idx,

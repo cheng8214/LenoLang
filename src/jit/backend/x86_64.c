@@ -409,6 +409,10 @@ int compile_loop(CodegenCtx* ctx) {
      * cur_chunk similarly switches for constant access. */
     const int* cur_local_map = sr->local_map;
     Chunk* cur_chunk = ctx->chunk;
+    /* §8.95：当前生效的模块。调用方 = `jit_scan_get_module()`；进入内联体时切到
+     * **callee 的模块**（`InlineSite.callee_module`）—— 内联体里的模块变量访问必须按
+     * 被调方的 globals 下标解析，否则会读到调用方模块的同名下标（静默算错 ✗）。 */
+    ObjModule* cur_module = jit_scan_get_module();
 
     /* Inline frame stack: saved when entering an inlined callee,
      * restored when the callee body ends. */
@@ -417,6 +421,7 @@ int compile_loop(CodegenCtx* ctx) {
         const uint8_t* end;
         const int* local_map;
         Chunk* chunk;
+        ObjModule* module;      /* §8.95：进入内联体时切 module，退出时恢复 */
         int bc_off;
         int vstack;
         int tos_live;
@@ -1212,6 +1217,7 @@ int compile_loop(CodegenCtx* ctx) {
                 end = f->end;
                 cur_local_map = f->local_map;
                 cur_chunk = f->chunk;
+                cur_module = f->module;      /* §8.95：恢复调用方模块 */
                 continue;
             }
             break;  /* normal end of loop body */

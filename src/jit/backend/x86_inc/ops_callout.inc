@@ -304,11 +304,13 @@
                         mf_frame->tos_live = 0;
                         mf_frame->callee_ret_count = mis->ret_count;
                         mf_frame->callee_arg_count = arg_count;
+                        mf_frame->module = cur_module;   /* §8.95：切模块（callee 的）*/
                         inline_depth++;
                         ip = mis->callee_chunk->code;
                         end = ip + mis->callee_body_size;
                         cur_local_map = mis->callee_local_map;
                         cur_chunk = mis->callee_chunk;
+                        cur_module = mis->callee_module;   /* §8.95：切到 callee 模块 */
                         bc_off = 0x10000 * (method_inline_idx + 1);
                         vstack = 0;
                         tos_live = 0;
@@ -541,7 +543,7 @@
                 }
                 TOS_SPILL();
                 EMIT_CALLOUT_BEGIN();
-                emit_mov_reg_imm64(cb, JIT_ARG1, (uint64_t)(uintptr_t)jit_scan_get_module());
+                emit_mov_reg_imm64(cb, JIT_ARG1, (uint64_t)(uintptr_t)cur_module);   /* §8.95 */
                 emit_mov_reg_imm64(cb, JIT_ARG2, (uint64_t)index);
                 EMIT_CALL(jit_callout_get_module_var);
                 EMIT_CALLOUT_END();
@@ -566,7 +568,7 @@
                 uint16_t index = rd_short(ip + 1);
                 TOS_SPILL();
                 EMIT_CALLOUT_BEGIN();
-                emit_mov_reg_imm64(cb, JIT_ARG1, (uint64_t)(uintptr_t)jit_scan_get_module());
+                emit_mov_reg_imm64(cb, JIT_ARG1, (uint64_t)(uintptr_t)cur_module);   /* §8.95 */
                 emit_mov_reg_imm64(cb, JIT_ARG2, (uint64_t)index);
                 EMIT_CALL(jit_callout_get_module_var);
                 EMIT_CALLOUT_END();
@@ -596,7 +598,7 @@
                 EMIT_RAW_TO_VALUE();
                 EMIT_STORE_TMP(tmp1_disp, JIT_RAX);
                 EMIT_CALLOUT_BEGIN();
-                emit_mov_reg_imm64(cb, JIT_ARG1, (uint64_t)(uintptr_t)jit_scan_get_module());
+                emit_mov_reg_imm64(cb, JIT_ARG1, (uint64_t)(uintptr_t)cur_module);   /* §8.95 */
                 emit_mov_reg_imm64(cb, JIT_ARG2, (uint64_t)index);
                 EMIT_LOAD_TMP(JIT_ARG3, tmp1_disp);            /* TOS 的 Value 形态 */
                 EMIT_CALL(jit_callout_set_module_var);
@@ -980,6 +982,7 @@
                         f->tos_live = 0;  /* TOS already spilled */
                         f->callee_ret_count = is->ret_count;
                         f->callee_arg_count = arg_count;
+                        f->module = cur_module;          /* §8.95：切模块（callee 的）*/
                         inline_depth++;
 
                         /* Switch to callee bytecode.
@@ -1005,6 +1008,7 @@
                         end = ip + is->callee_body_size;
                         cur_local_map = is->callee_local_map;
                         cur_chunk = is->callee_chunk;
+                        cur_module = is->callee_module;   /* §8.95：切到 callee 模块 */
                         bc_off = 0x10000 * (inline_idx + 1);
                         vstack = 0;
                         tos_live = 0;

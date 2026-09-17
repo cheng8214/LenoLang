@@ -5929,6 +5929,39 @@ JIT/`LENO_NO_JIT=1` **IDENTICAL** ✓（含净损失 A/B 的 checksum ✓）、a
 
 ***
 
+### 8.95 解锁「跨模块变量访问」的被调方内联（+ 一个诚实的负结果：fm 无可测收益）（2026-09-17）
+
+**背景**：§8.94 把内联侧的头号门定位为**跨模块访问**（3 应用合计 52 处 ✗）。旧实现在
+`scan_callee_for_inline` 里直接拒绝跨模块 ✓，理由写得对：内联后 codegen 嵌入的 module 是
+**调用方**的（`jit_scan_get_module()`）⇒ 跨模块会用错 globals 下标、**静默读错变量** ✗。
+
+**修法：把 callee 的模块随内联点带下去**
+
+| 位置 | 改动 |
+| --- | --- |
+| `InlineSite`（`jit_priv.h`）| 新增 `ObjModule* callee_module` |
+| `jit_scan.c`（两个创建路径）| 分别填 `func2->module` / `mf->module`；**解除跨模块拒绝**（只保留"拿不到 callee 模块"→ 记为 `（无 callee 模块）`）|
+| `jit_scan.c` | 新增 `jit_resolve_module_func_in(module, index)` —— ⚠ **关键坑**：内联体里 `GET_MODULE_FUNC + CALL` 的 `ret_count` 解析**也必须用 callee 的模块** ✗，否则读的是调用方 globals 的同名下标（静默算错 ✓）|
+| `x86_64.c` | 新增 `cur_module`（初值 = 调用方模块）+ `InlineFrame.module` 保存/恢复 |
+| `ops_callout.inc` | 两个内联入口切 `cur_module = <site>->callee_module`；三处模块访问发射（`get/set_module_var`）改用 `cur_module` |
+| `jit_scan.c` | **本轮只解锁 VAR 两形态**（`OP_GET_MODULE_VAR` / `OP_SET_MODULE_VAR`，fm 20 / cc 17 / 五子棋 11 的绝大多数）；`OP_GET_MODULE_FUNC`（值形态与配对形态走**模块方法解析**）单独记为 `OP_GET_MODULE_FUNC（§8.95 暂未放行）` |
+
+**验证**
+
+1. **语义（关键）**：两个真实多模块应用逐字对拍 —— fm `sum=21600/21600` ✓、cc `4800/4800` ✓
+   （跨模块内联**没有算错**）；assert **311 passed / 0 failed** ✓；10 个探针
+   JIT/`LENO_NO_JIT=1` **IDENTICAL** ✓。
+2. **census**：fm 的 `模块变量/函数访问（跨模块）` **17 + 3 → 0** ✓✓；新出现
+   `OP_GET_MODULE_FUNC（暂未放行）` 3 ✓；`方法体字节码长度超上限` 33 → **28**（5 个对象越过了这一层 ✓）。
+3. **性能：负结果** ✗ —— fm 的 `us_per_frame` **3764**（改前 3754/3738/3773）⇒ **无可测变化** ✓。
+   原因：fm 里被解锁的那些被调方**不够热**（内联省下的是调用开销，但它们不在最热路径上 ✓）。
+
+**结论**：改动**结构上正确、语义已验证、性能中性** ⇒ **保留**（它是一条真实限制的解除，
+也是后续"热点内联"的前提 ✓）；但**不得宣称收益** ✗。下一步按 §8.79：找一个**真正热的**
+跨模块调用点做等价改写 A/B（像 §8.93 那样量 ✓），或继续放行 `OP_GET_MODULE_FUNC` ✓。
+
+***
+
 ## 9. 性能数据
 
 ### 测试环境

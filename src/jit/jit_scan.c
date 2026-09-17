@@ -165,8 +165,7 @@ void jit_gaps_print(void) {
  * return_count 的语义见 codegen_func.c：>=1 编译期确定（无显式 return 按 1 个，
  * 即隐式 null）；-1 = 静态不可知（各 return 个数不一致 / fall-through）。
  * 返回 0 表示「解析不出来 / 静态不可知」，调用方必须拒绝 JIT（见 jit_priv.h）。 */
-int jit_resolve_module_func(uint16_t index) {
-    ObjModule* module = g_jit_scan_module;
+int jit_resolve_module_func_in(ObjModule* module, uint16_t index) {
     if (!module || !module->globals) return 0;
     if (index >= (uint16_t)module->global_count) return 0;
     Value v = module->globals[index];
@@ -177,6 +176,10 @@ int jit_resolve_module_func(uint16_t index) {
     else if (o->type == OBJ_FUNCTION) fn = (ObjFunction*)o;
     if (!fn || fn->return_count <= 0) return 0;
     return fn->return_count;
+}
+
+int jit_resolve_module_func(uint16_t index) {
+    return jit_resolve_module_func_in(g_jit_scan_module, index);
 }
 
 /* ---- struct 方法返回值个数（按方法名推断；_TYPED 解析失败时的兜底）----
@@ -714,12 +717,21 @@ static int scan_callee_for_inline(Chunk* cc, ObjModule* callee_module,
                  *   跨模块时它会指向**调用方**的模块 ⇒ 用错 globals 下标，静默读错变量。
                  * 所以只在「callee 与 caller 同模块且都非 NULL」时放行，其余照旧拒绝内联
                  * （循环本身仍可 JIT，只是不内联该函数）。 */
-                if (!callee_module || callee_module != jit_scan_get_module()) {
+                if (!callee_module) {
                     if (jit_debug_on())
                         fprintf(stderr, "[JIT-DEBUG] inline-scan FAIL: 模块变量访问 op=%d at off %d"
-                                        "（callee 与 caller 不同模块）\n",
-                                op, (int)(ip - cc->code));
-                    jit_gaps_record_inline("模块变量/函数访问 op=%d(%s)（跨模块）", op, opcode_name(op));
+                                        "（拿不到 callee 模块）\n", op, (int)(ip - cc->code));
+                    jit_gaps_record_inline("模块变量/函数访问 op=%d(%s)（无 callee 模块）",
+                                           op, opcode_name(op));
+                    return 0;
+                }
+                /* §8.95 本轮**只解锁 VAR 两种形态**（`OP_GET_MODULE_VAR` / `OP_SET_MODULE_VAR`）：
+                 * 它们的 codegen 直接吃 `cur_module`（已随 InlineSite 带下去 ✓）。
+                 * `OP_GET_MODULE_FUNC` 的值形态/配对形态走的是**模块方法解析**（按名字查模块
+                 * 方法表，见 ops_callout.inc 的 `jit_callout_call_module_func`），那条路需要
+                 * 单独的模块上下文核对 —— 留待下一步，先拒但**记明原因**（不再与 VAR 混在一起）。 */
+                if (op == OP_GET_MODULE_FUNC) {
+                    jit_gaps_record_inline("OP_GET_MODULE_FUNC（§8.95 暂未放行）");
                     return 0;
                 }
                 /* 记账与 scan_loop_body 的同名 case **完全一致**：
@@ -729,7 +741,9 @@ static int scan_callee_for_inline(Chunk* cc, ObjModule* callee_module,
                  *   写模块变量 → **peek** TOS，不弹不推（net 0）。 */
                 if (op == OP_GET_MODULE_FUNC && ip + 6 <= end && ip[3] == OP_CALL) {
                     uint16_t func_idx = rd_short(ip + 1);
-                    int rc = jit_resolve_module_func(func_idx);
+                    /* §8.95：**必须按 callee 的模块**解析返回个数 —— 用全局模块
+                     * （= 调用方）会读到调用方 globals 的同名下标，静默算错 ✗ */
+                    int rc = jit_resolve_module_func_in(callee_module, func_idx);
                     if (rc <= 0) {
                         if (jit_debug_on())
                             fprintf(stderr, "[JIT-DEBUG] inline-scan FAIL: 模块函数 ret_count 不可知"
@@ -1411,6 +1425,7 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                                 is->arg_count = arg_count;
                                 is->ret_count = ret_count;
                                 is->callee_chunk = mf->chunk;
+                                is->callee_module = mf->module;      /* §8.95 */
                                 is->callee_local_count = callee_lc;
                                 is->callee_local_base = base;
                                 is->callee_body_size = mf->chunk->len;
@@ -1507,6 +1522,7 @@ void scan_loop_body(const uint8_t* body_start, int body_size,
                                         is->arg_count = arg_count;
                                         is->ret_count = ret_count;
                                         is->callee_chunk = cc;
+                                        is->callee_module = func2->module;   /* §8.95 */
                                         is->callee_local_count = callee_lc;
                                         is->callee_local_base = base;
                                         is->callee_body_size = cc->len;
