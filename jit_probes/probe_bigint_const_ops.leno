@@ -1,0 +1,39 @@
+// §8.125：JIT 的 **IMM / 折叠**形态在 bigint 操作数上必须 bailout（交解释器）——
+// 原先这些地方依据「静态类型是 int ⇒ 值是 int48」省掉了运行期检查 ✗，
+// 但 **bigint 的静态类型也是 int** ✗ ⇒ 直接按位型/指针运算 ⇒ 静默算错。
+//
+// 本探针全部用**常量**运算符（走 IMM / 折叠路径 ✓）—— 与"动态移位量走通用路径"区分开：
+// sha512 的 `a >> 32`（a 是 bigint）曾因此算错，而 `v >> (60 - i*4)` 一直正常 ✓。
+//
+// 期望值（手算 ✓）：
+//   a           = 472a31970310840c
+//   a >> 32     = 00000000472a3197
+//   a << 4      = 72a31970310840c0
+//   a & 0xffffffff = 000000000310840c
+//   a | 0x8000.. = c72a31970310840c
+//   a ^ 0xffff.. = b8d5ce68fcef7bf3
+//   a > 5       = true      a == a = true      a < 5 = false
+import strings
+
+func hex64(int v):string {
+    var hx = "0123456789abcdef"
+    string s = ""
+    for 0:15 to i {
+        int bb = (v >> (60 - i*4)) & 0xf
+        s += strings.char(hx.byte(bb))
+    }
+    return s
+}
+
+main() {
+    int a = 0x472a31970310840c
+    print("shr32 = " + hex64(a >> 32))
+    print("shl4  = " + hex64(a << 4))
+    print("and32 = " + hex64(a & 0xffffffff))
+    print("or_hi = " + hex64(a | 0x8000000000000000))
+    print("xor_m = " + hex64(a ^ 0xffffffffffffffff))
+    print("cmp_gt = " + (a > 5))
+    print("cmp_eq = " + (a == 0x472a31970310840c))
+    print("cmp_lt = " + (a < 5))
+    print("DONE")
+}

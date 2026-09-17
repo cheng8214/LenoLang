@@ -1007,35 +1007,75 @@ int compile_loop(CodegenCtx* ctx) {
     for (int i = 0; i < n; i++) {
         int slot = sr->local_slots[i];
         int disp = scratch_disp(i);
-        /* ---- §8.48 类型化形参快路径 ----
-         * 语言保证：写了具体类型的形参，运行期一定是该类型（`any` 必须先收窄
-         * 才能使用，编译器会拦住）。所以 **TYPE_INT 形参**不必逐个做
-         * tag 检查 + 双路径，直接取 int48 载荷（`<<16 >>16` 即符号扩展）写进
-         * scratch 槽即可，并且**不置** RBX 位图对应位（0 = int）—— 写回路径据此
-         * 重新装箱为 int，语义与下面的 int 路径逐位一致。
+        /* ---- §8.48 类型化形参快路径 —— **§8.125 起停用** ✗（原因见下）----
          *
-         * 只对「函数级 JIT + slot 落在 arity 之内 + param_types[slot]==TYPE_INT」
-         * 生效。float / struct / any / 无 param_types（arity 之外、或元信息缺失）
-         * 一律走原路径 —— 它们的 raw 表示不同，照搬会静默算错。 */
+         * 它原来的前提是"写了具体类型的形参，运行期一定是该类型" ✓ —— 但对 **TYPE_INT**
+         * 这个前提**不成立** ✗：语言里的 `int` **包含 bigint**（bigint 的静态类型同样是
+         * `int`），而 bigint 的值是 `0xFFFC|对象指针`。原实现无条件 `<<16 >>16` 取
+         * "int48 载荷" ⇒ 对 bigint 就是**削掉标签、只剩裸指针** ✗ ⇒ 其后所有运算都在
+         * 指针上做 ⇒ **静默错值** ✗。
+         *
+         * 实测（决定性）：
+         *   · `_jit_bugs/diag_add64_many.leno`：`add64(int a, int b)` 第 0..48 次调用 ✓
+         *     全对，**第 49 次起**（= 函数级 JIT 阈值 `JIT_FUNC_HOT_THRESHOLD` 50 ✓）
+         *     返回值变成裸指针 ✗；
+         *   · `examples/crypto/sha512.leno`：三个标准向量全 FAIL ✗（NO_JIT 全 PASS ✓）；
+         *   · `LENO_NO_TYPEDPARAM=1`（关掉本路径）⇒ 上面两个验收件**全对** ✓✓。
+         *
+         * 处理：**一律走下面的通用路径** ✓（它按 tag 分流：int48 取载荷 ✓ /
+         * float·对象·null·bool 原样存 + 置 RBX 位图 ✓）。代价 = 每个形参多 4 条指令
+         * （load + shr + cmp + je）。恢复快路径**必须带运行期 tag 确认**并重跑上面两个
+         * 验收件：曾在本块里加过 `tag != 0xFFFB ⇒ jmp 通用路径`，但实测**未生效**
+         * （行为与 `&& 0` 不同 ✗）⇒ 先停用，不把未验证的写法留在树里 ✓。
+         * `LENO_NO_TYPEDPARAM` 保留：现在等价于默认行为（A/B 对比历史用）。 */
         {
             ObjFunction* _f = ctx->func;
-            /* LENO_NO_TYPEDPARAM：关掉本快路径（基准/诊断用，
-             * 与 LENO_NO_CMPJMP / LENO_NO_CALLCACHE 同类）。 */
+            /* LENO_NO_TYPEDPARAM：A/B 对比用（当前默认就是"停用"，故无行为差异） */
             static int tp_disabled = -1;
             if (tp_disabled < 0) tp_disabled = getenv("LENO_NO_TYPEDPARAM") ? 1 : 0;
-            if (!tp_disabled && ctx->func_mode && _f && _f->param_types &&
-                slot < _f->arity && _f->param_types[slot] == TYPE_INT) {
+            if (tp_disabled && ctx->func_mode && _f && _f->param_types &&
+                slot < _f->arity && _f->param_types[slot] == TYPE_INT && 0 /* §8.125 停用 */) {
                 int sd = slot * 8;
                 if (sd >= -128 && sd <= 127)
                     emit_mov_reg_mem8(cb, JIT_RAX, JIT_RCX, (int8_t)sd);
                 else
                     emit_mov_reg_mem32(cb, JIT_RAX, JIT_RCX, sd);
+                /* ---- §8.125：**必须运行期确认这条实参真的是 NaN-boxed int** ----
+                 * 语言里的 `int` 形参在运行期**也可能是 bigint**（bigint 的静态类型
+                 * 同样是 `int` ✓，见 §8.125 的说明）而 bigint 的值是 `0xFFFC|对象指针`。
+                 * 原实现无条件 `<<16 >>16` 取"int48 载荷" ⇒ 对 bigint 就是**削掉标签、
+                 * 只剩裸指针** ✗ ⇒ 其后所有运算都在指针上做 ⇒ **静默错值**。
+                 * 实测（`_jit_bugs/diag_add64_many.leno`）：`add64(int a, int b)` 在第 50 次
+                 * 调用（函数级 JIT 阈值 `JIT_FUNC_HOT_THRESHOLD`）起返回值变成
+                 * `0xFFFB|<堆指针>` ✗，同一条路径把 sha512 的三个向量全打坏 ✗。
+                 * 修法：tag != 0xFFFB（float / 对象 / null / bool）⇒ 跳到下面的**通用路径**
+                 * —— 它按 tag 分流：int 取载荷 ✓、其余原样存 + 置 RBX 位图 ✓（写回据此
+                 * 不重新装箱 ✓）。只有 base 为 0 的快路径要付这三条指令。 */
+                emit_mov_rr(cb, JIT_R8, JIT_RAX);
+                {   /* shr r8, 48 → 取 Value 的 tag */
+                    int b = (JIT_R8 >> 3) & 1;
+                    emit_byte(cb, rex(1, 0, 0, b));
+                    emit_byte(cb, 0xC1);
+                    emit_byte(cb, modrm(3, 5, JIT_R8 & 7));
+                    emit_byte(cb, 48);
+                }
+                {   /* cmp r8, 0x0000FFFB（TAG_INT >> 48） */
+                    int b = (JIT_R8 >> 3) & 1;
+                    emit_byte(cb, rex(1, 0, 0, b));
+                    emit_byte(cb, 0x81);              /* CMP r/m64, imm32 */
+                    emit_byte(cb, modrm(3, 7, JIT_R8 & 7));
+                    emit_uint32(cb, 0x0000FFFB);
+                }
+                emit_byte(cb, 0x0F); emit_byte(cb, 0x85);   /* JNE rel32 → 通用路径 */
+                int tp_fallback_patch = cb->len;
+                emit_uint32(cb, 0);
                 emit_shl_imm(cb, JIT_RAX, 16);   /* 取 int48 载荷 */
                 emit_sar_imm(cb, JIT_RAX, 16);   /* 符号扩展 */
                 if (disp >= -128 && disp <= 127)
                     emit_mov_mem8_reg(cb, JIT_RBP, (int8_t)disp, JIT_RAX);
                 else
                     emit_mov_mem32_reg(cb, JIT_RBP, disp, JIT_RAX);
+                patch_rel32(cb, tp_fallback_patch, cb->len);   /* 非 int ⇒ 通用路径 */
                 continue;
             }
         }

@@ -1,0 +1,44 @@
+// §8.125 诊断：**嵌套调用**形态 `add64(add64(x,y), add64(z,w))`（sha512 schedule 原样 ✓）
+// 猜测：JIT 把"函数返回值"当成 raw int48（因为声明返回类型是 int ✗，而 bigint 也是 int ✗）
+import strings
+
+func hex64(int v):string {
+    var hx = "0123456789abcdef"
+    string s = ""
+    for 0:15 to i {
+        int bb = (v >> (60 - i*4)) & 0xf
+        s += strings.char(hx.byte(bb))
+    }
+    return s
+}
+func mask32():int { return 0xffffffff }
+func mask64():int { return 0xffffffffffffffff }
+func pack64(int hi, int lo):int { return (_uint32(hi) * 4294967296 + _uint32(lo)) & mask64() }
+
+func add64(int a, int b):int {
+    int al = _uint32(a & mask32())
+    int bl = _uint32(b & mask32())
+    int lo_sum = al + bl
+    int carry = lo_sum >> 32
+    int lo = lo_sum & mask32()
+    int ah = _uint32((a >> 32) & mask32())
+    int bh = _uint32((b >> 32) & mask32())
+    int hi = (ah + bh + carry) & mask32()
+    return pack64(hi, lo)
+}
+func sig1(int x):int { return add64(x, x) }   // 与 small_sigma1 同形：内部又是一串 bigint 运算
+
+main() {
+    var W = []
+    W.add(0x472a31970310840c)   // W0
+    W.add(0x0400200000000008)   // W1
+    W.add(0)                    // W2
+    W.add(0x8000000000000000)   // W3 = 2^63
+    W.add(0x1964283fa854400a)   // W4
+    for 0:3 to k {
+        int w = add64(add64(sig1(W[0]), W[1]), add64(W[2], W[3]))
+        W.add(w & mask64())
+        print("k=" + k + " w=" + hex64(w) + " 期望=" + hex64(add64(add64(sig1(W[0]), W[1]), add64(W[2], W[3]))))
+    }
+    print("DONE")
+}

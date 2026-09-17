@@ -1,0 +1,40 @@
+// §8.125 诊断：add64 被反复调用（直到"函数级 JIT"编译它）后是否开始返回垃圾 ✗
+// 若是 ⇒ 病灶在 [函数级 JIT 编译的 add64] 体内（它自己还调用 mask32/pack64 ✓）
+import strings
+
+func hex64(int v):string {
+    var hx = "0123456789abcdef"
+    string s = ""
+    for 0:15 to i {
+        int bb = (v >> (60 - i*4)) & 0xf
+        s += strings.char(hx.byte(bb))
+    }
+    return s
+}
+func mask32():int { return 0xffffffff }
+func mask64():int { return 0xffffffffffffffff }
+func pack64(int hi, int lo):int { return (_uint32(hi) * 4294967296 + _uint32(lo)) & mask64() }
+
+func add64(int a, int b):int {
+    int al = _uint32(a & mask32())
+    int bl = _uint32(b & mask32())
+    int lo_sum = al + bl
+    int carry = lo_sum >> 32
+    int lo = lo_sum & mask32()
+    int ah = _uint32((a >> 32) & mask32())
+    int bh = _uint32((b >> 32) & mask32())
+    int hi = (ah + bh + carry) & mask32()
+    return pack64(hi, lo)
+}
+
+main() {
+    for 0:99 to i {
+        int aa = 0x472a31970310840c + i
+        int bb = 0x0400200000000008
+        int v = add64(aa, bb)
+        int want = aa + bb
+        if i >= 45 and i <= 55 { print("  i=" + i + " a=" + hex64(aa) + " v=" + hex64(v) + " want=" + hex64(want) + " " + (v == want)) }
+        else if v != want and i < 45 { print("  i=" + i + " 意外不等 v=" + hex64(v)) }
+    }
+    print("DONE")
+}

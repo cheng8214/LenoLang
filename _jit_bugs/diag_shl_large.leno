@@ -1,0 +1,31 @@
+// §8.125 诊断：JIT 的**大移位量**左移是否与解释器一致（sha512 的 σ0/σ1 里满是 x << (64-n) ✓）
+// 期望（全部可用 NO_JIT 对照 ✓）：
+//   1<<63  = 8000000000000000     1<<48  = 0001000000000000    1<<47 = 0000800000000000
+//   3<<62  = c000000000000000     0x123456789ab<<16 = 123456789ab0000
+//   -1<<63 = 8000000000000000     (1<<63)>>63 = 1
+import strings
+func hex64(int v):string {
+    var hx = "0123456789abcdef"
+    string s = ""
+    for 0:15 to i {
+        int bb = (v >> (60 - i*4)) & 0xf
+        s += strings.char(hx.byte(bb))
+    }
+    return s
+}
+func rot(int x, int n):int { return (x >> n) | (x << (64 - n)) }
+
+main() {
+    print("shl63   = " + hex64(1 << 63))
+    print("shl48   = " + hex64(1 << 48))
+    print("shl47   = " + hex64(1 << 47))
+    print("shl46   = " + hex64(1 << 46))
+    print("shl3_62 = " + hex64(3 << 62))
+    print("shl16   = " + hex64(0x123456789ab << 16))
+    print("neg_shl = " + hex64(-1 << 63))
+    print("backshl = " + ((1 << 63) >> 63))
+    print("rot1    = " + hex64(rot(1, 1)))
+    print("rot63   = " + hex64(rot(1, 63)))
+    print("rot8    = " + hex64(rot(0x0123456789abcdef, 8)))
+    print("DONE")
+}

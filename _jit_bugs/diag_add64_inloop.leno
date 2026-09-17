@@ -1,0 +1,45 @@
+// §8.125 诊断：add64 在**循环里**（JIT 内联语境）调用时是否出错 ✗
+// 形态照抄 sha512 的 schedule：W[t] = add64(W[t-16], W[t-1])，且 t=32 处恰好是
+// add64(0, 2^63) —— 正是 JIT 首次发散的那一次调用 ✓
+import strings
+
+func hex64(int v):string {
+    var hx = "0123456789abcdef"
+    string s = ""
+    for 0:15 to i {
+        int bb = (v >> (60 - i*4)) & 0xf
+        s += strings.char(hx.byte(bb))
+    }
+    return s
+}
+func mask32():int { return 0xffffffff }
+func mask64():int { return 0xffffffffffffffff }
+func pack64(int hi, int lo):int { return (_uint32(hi) * 4294967296 + _uint32(lo)) & mask64() }
+
+func add64(int a, int b):int {
+    int al = _uint32(a & mask32())
+    int bl = _uint32(b & mask32())
+    int lo_sum = al + bl
+    int carry = lo_sum >> 32
+    int lo = lo_sum & mask32()
+    int ah = _uint32((a >> 32) & mask32())
+    int bh = _uint32((b >> 32) & mask32())
+    int hi = (ah + bh + carry) & mask32()
+    return pack64(hi, lo)
+}
+
+main() {
+    var W = []
+    for 0:15 to j { W.add(0x4180000000000000) }    // W[0..15]：bigint
+    W.add(0)                                        // W[16] = 0         ← 小 int
+    for 17:30 to j { W.add(0x4180000000000000) }    // W[17..30]：bigint
+    W.add(0x8000000000000000)                       // W[31] = 2^63      ← bigint（最高位为 1）
+    for 32:36 to t {
+        int a = W[t - 16]
+        int b = W[t - 1]
+        int w = add64(a, b)
+        W.add(w & 0xffffffffffffffff)
+        print("t=" + t + " a=" + hex64(a) + " b=" + hex64(b) + " w=" + hex64(w))
+    }
+    print("DONE")
+}

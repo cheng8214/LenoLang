@@ -1,0 +1,33 @@
+// §8.125 诊断：函数级 JIT 的**对象返回值**是否被当成 int48（bigint 已证实 ✗，这里看 string ✓）
+import strings
+
+func hex64(int v):string {
+    var hx = "0123456789abcdef"
+    string s = ""
+    for 0:15 to i {
+        int bb = (v >> (60 - i*4)) & 0xf
+        s += strings.char(hx.byte(bb))
+    }
+    return s
+}
+func mkstr(int x):string {
+    if x == 7 { return "seven" }
+    return "n" + _str(x)
+}
+func mkbig(int x):int {
+    int r = x * 4294967296 + 1
+    if r == 0 { r = 1 }
+    return r
+}
+
+main() {
+    for 0:80 to i {
+        string sv = mkstr(i)
+        int bv = mkbig(i)
+        int bwant = i * 4294967296 + 1
+        if i >= 46 and i <= 52 {
+            print("  i=" + i + " s=" + sv + " b=" + hex64(bv) + " want=" + hex64(bwant) + " " + (bv == bwant))
+        }
+    }
+    print("DONE")
+}

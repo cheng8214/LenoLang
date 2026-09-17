@@ -1,0 +1,26 @@
+// §8.125 诊断：**函数级 JIT 的返回值**（返回 bigint 时）是否被吞掉 NaN 标签 ✗
+// mk() 返回 bigint；反复调用直到函数级 JIT 触发（阈值约 8 次）⇒ 期望"从某一刻起全变指针状垃圾" ✓
+import strings
+
+func hex64(int v):string {
+    var hx = "0123456789abcdef"
+    string s = ""
+    for 0:15 to i {
+        int bb = (v >> (60 - i*4)) & 0xf
+        s += strings.char(hx.byte(bb))
+    }
+    return s
+}
+func mk(int x):int { return x * 4294967296 + 1 }
+
+main() {
+    for 0:300 to i {
+        int arg = 0x40000000 + i
+        int v = mk(arg)
+        int want = arg * 4294967296 + 1
+        if v != want or i < 2 or i > 250 {
+            print("  i=" + i + " v=" + hex64(v) + " want=" + hex64(want) + " " + (v == want))
+        }
+    }
+    print("DONE")
+}

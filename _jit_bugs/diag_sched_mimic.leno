@@ -1,0 +1,56 @@
+// §8.125 诊断：照抄 sha512 schedule 的**结构**（循环 + 函数调用返回 bigint + 三层 add64），
+// 但把 σ 换成普通函数 ✓ —— 用来找"最小可复现形态"
+import strings
+
+func hex64(int v):string {
+    var hx = "0123456789abcdef"
+    string s = ""
+    for 0:15 to i {
+        int bb = (v >> (60 - i*4)) & 0xf
+        s += strings.char(hx.byte(bb))
+    }
+    return s
+}
+func mask32():int { return 0xffffffff }
+func mask64():int { return 0xffffffffffffffff }
+func pack64(int hi, int lo):int { return (_uint32(hi) * 4294967296 + _uint32(lo)) & mask64() }
+
+func add64(int a, int b):int {
+    int al = _uint32(a & mask32())
+    int bl = _uint32(b & mask32())
+    int lo_sum = al + bl
+    int carry = lo_sum >> 32
+    int lo = lo_sum & mask32()
+    int ah = _uint32((a >> 32) & mask32())
+    int bh = _uint32((b >> 32) & mask32())
+    int hi = (ah + bh + carry) & mask32()
+    return pack64(hi, lo)
+}
+
+func sig(int x):int {
+    int r = add64(add64(x, 0x123456789ab), x)
+    if x != 0x4180000000000000 {
+        print("    [sig] x=" + hex64(x) + " -> r=" + hex64(r))
+    }
+    return r
+}
+
+main() {
+    var W = []
+    for 0:15 to j { W.add(0x4180000000000000 + j) }
+    for 16:79 to t {
+        int s1 = sig(W[t - 2])
+        int w7 = W[t - 7]
+        int s0 = sig(W[t - 15])
+        int w16 = W[t - 16]
+        // §8.125：分阶段打印 —— 判断 s0 是"一开始就错"还是"被后续调用踩掉"
+        if t <= 26 { print("  A t=" + t + " s0=" + hex64(s0) + " s1=" + hex64(s1) + " w16=" + hex64(w16)) }
+        int p1 = add64(s1, w7)
+        if t <= 26 { print("  B t=" + t + " s0=" + hex64(s0) + " s1=" + hex64(s1)) }
+        int p2 = add64(s0, w16)
+        int w = add64(p1, p2)
+        W.add(w & mask64())
+        if t <= 26 { print("  C t=" + t + " s0=" + hex64(s0) + " p1=" + hex64(p1) + " p2=" + hex64(p2) + " w=" + hex64(w)) }
+    }
+    print("DONE")
+}

@@ -514,6 +514,13 @@
             case OP_BITAND:
                 TOS_CONSUME_TO(JIT_RDX);
                 TOS_CONSUME_TO(JIT_RAX);
+                /* §8.125：**两个操作数**都要运行期确认是 raw int48。
+                 * 原先只检查**结果** ✗ —— 若某个操作数是 NaN-boxed 对象（bigint/字符串…），
+                 * 裸 `and` 会把它的**标签位**一起 and 掉 ⇒ 得到一个"看起来合法的小整数" ✗
+                 * ⇒ 结果检查**通过** ⇒ 静默错值（实测 sha512：`pack64` 里 `… & mask64()`，
+                 * 大整数被 and 成裸指针；函数级 JIT 的返回值 = `0x00000020300000a0` ✗）。 */
+                EMIT_INT48_CHECK_REG(JIT_RDX, bc_off);
+                EMIT_INT48_CHECK(bc_off);
                 emit_and_rr(cb, JIT_RAX, JIT_RDX);
                 EMIT_INT48_CHECK_TOS(bc_off);   /* §8.41 白名单 */
                 TOS_PRODUCE();
@@ -522,6 +529,8 @@
             case OP_BITOR:
                 TOS_CONSUME_TO(JIT_RDX);
                 TOS_CONSUME_TO(JIT_RAX);
+                EMIT_INT48_CHECK_REG(JIT_RDX, bc_off);   /* §8.125：同 OP_BITAND */
+                EMIT_INT48_CHECK(bc_off);
                 emit_or_rr(cb, JIT_RAX, JIT_RDX);
                 EMIT_INT48_CHECK_TOS(bc_off);   /* §8.41 白名单 */
                 TOS_PRODUCE();
@@ -530,6 +539,8 @@
             case OP_BITXOR:
                 TOS_CONSUME_TO(JIT_RDX);
                 TOS_CONSUME_TO(JIT_RAX);
+                EMIT_INT48_CHECK_REG(JIT_RDX, bc_off);   /* §8.125：同 OP_BITAND */
+                EMIT_INT48_CHECK(bc_off);
                 emit_xor_rr(cb, JIT_RAX, JIT_RDX);
                 EMIT_INT48_CHECK_TOS(bc_off);   /* §8.41 白名单 */
                 TOS_PRODUCE();
@@ -537,6 +548,7 @@
                 break;
             case OP_BITNOT:
                 TOS_CONSUME_RAX();
+                EMIT_INT48_CHECK(bc_off);   /* §8.125：位非同理（对象的标签会被 not 成"合法小整数"） */
                 {
                     int b = 0;
                     emit_byte(cb, rex(1, 0, 0, b));

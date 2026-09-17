@@ -81,6 +81,17 @@
                                 if (lo >= -(1LL << 47) && hi <= (1LL << 47) - 1) skip_check = 1;
                             }
                         }
+                        /* §8.125：**折叠路径同样不能假定操作数是 int48** ✗ ——
+                         * 下面那条"位运算不会溢出 ⇒ 不需要检查"只对"静态类型是 int"成立，
+                         * 而 **bigint 的静态类型也是 int** ⇒ 一个 bigint（NaN-boxed 指针）
+                         * 落进 pinned 槽时，位运算/移位会作用在它的**位型**上 ⇒ 静默算错
+                         * （实测 sha512 的 add64：`a >> 32`，a 是 bigint；动态移位量走通用
+                         * 路径有检查 ⇒ 正常，只有 IMM/折叠形态漏了）。
+                         * 这里对**没有自带检查**的 alu 补一步运行期确认；ADD/SUB 下面已有检查。 */
+                        if (alu == OP_BITAND || alu == OP_BITOR || alu == OP_BITXOR ||
+                            alu == OP_SHL_IMM || alu == OP_SHR_IMM) {
+                            EMIT_INT48_CHECK_REG(fold_reg, bc_off);
+                        }
                         if (!noop_and) {
                             switch (alu) {
                                 case OP_BITAND:      emit_alu_imm32_reg(cb, 4, fold_reg, (uint32_t)fold_imm); break;
@@ -244,6 +255,9 @@
                                       bc_off < JIT_SCAN_JT_MAX && !sr->jt_fwd[bc_off];
                         int noop_and = mask_ok && falu == OP_BITAND && fimm >= 0 &&
                                        (fold_prev_mask & ~(uint64_t)(uint32_t)fimm) == 0;
+                        /* §8.125：形态 B（`k ⊕ x`）同样要运行期确认 —— 见形态 A 处的说明
+                         * （"静态类型是 int"推不出"值是 int48"，bigint 静态也是 int ✗）。 */
+                        EMIT_INT48_CHECK_REG(freg, bc_off);
                         if (!noop_and) {
                             if (falu == OP_BITAND)     emit_alu_imm32_reg(cb, 4, freg, (uint32_t)fimm);
                             else if (falu == OP_BITOR) emit_alu_imm32_reg(cb, 1, freg, (uint32_t)fimm);

@@ -19,6 +19,10 @@
                 }
                 TOS_CONSUME_TO(JIT_RDX);  /* b */
                 TOS_CONSUME_RAX();         /* a */
+                /* §8.125：两个操作数都要运行期确认是 int48（bigint 静态也是 int ✗，
+                 * 直接按位型比较会给出静默错误的真假值）⇒ 任一不合格即 bailout 交解释器。 */
+                EMIT_INT48_CHECK_REG(JIT_RDX, bc_off);
+                EMIT_INT48_CHECK(bc_off);
                 emit_cmp_rr(cb, JIT_RAX, JIT_RDX);
                 /* setcc al; movzx eax, al (don't xor between cmp and setcc — destroys flags!) */
                 emit_setcc_reg(cb, cc, JIT_RAX);
@@ -44,6 +48,9 @@
                 }
                 int8_t imm = rd_byte(ip + 1);
                 TOS_CONSUME_RAX();
+                /* §8.125：bigint 的静态类型也是 int ✗ ⇒ 必须运行期确认操作数是 int48，
+                 * 否则按位型/指针比较会给出**静默错误的真假值**；不合格就 bailout。 */
+                EMIT_INT48_CHECK(bc_off);
                 /* cmp rax, imm8 (sign-extended) */
                 emit_byte(cb, 0x48);
                 emit_byte(cb, 0x83);
@@ -70,6 +77,13 @@
                     TOS_PRODUCE();
                     break;
                 }
+                /* §8.125：**必须**运行期确认操作数是 int48。原先依据"静态类型是 int
+                 * ⇒ int48"（扫描器保证）省掉了这一步 —— 但 **bigint 的静态类型也是 int**
+                 * ⇒ 该推理不成立 ✗：bigint 在虚拟栈里是 NaN-boxed 值，直接 shl/sar 移的是
+                 * 它的位型/指针 ⇒ 静默算错（实测 sha512：add64 的 `a >> 32`，a 是 bigint）。
+                 * 通用 OP_SHL/OP_SHR/OP_USHR 一直有这步检查（ops_icmp.inc 的通用分支），
+                 * 只有 IMM/折叠形态漏了 ⇒ 表现为「只有常量移位量坏、动态移位量走 bailout 正常」。 */
+                EMIT_INT48_CHECK(bc_off);
                 emit_shl_imm(cb, JIT_RAX, (uint8_t)imm);
                 /* VM 语义：int64 左移后 val_int() 截断为 48 位，不 bailout */
                 EMIT_INT48_TRUNCATE();
@@ -80,6 +94,7 @@
             case OP_SHR_IMM: {
                 int8_t imm = rd_byte(ip + 1);
                 TOS_CONSUME_RAX();
+                EMIT_INT48_CHECK(bc_off);   /* §8.125：同 OP_SHL_IMM —— bigint 也静态是 int */
                 emit_sar_imm(cb, JIT_RAX, (uint8_t)imm);
                 MARK_TOS_RAW_INT48();   /* §8.41 白名单：算术右移结果必在 int48 内 */
                 TOS_PRODUCE();
@@ -88,6 +103,7 @@
             case OP_USHR_IMM: {
                 int8_t imm = rd_byte(ip + 1);
                 TOS_CONSUME_RAX();
+                EMIT_INT48_CHECK(bc_off);   /* §8.125：同上（bigint 走 bailout 交解释器） */
                 /* SHR rax, imm (unsigned right shift) */
                 {
                     int b = (JIT_RAX >> 3) & 1;

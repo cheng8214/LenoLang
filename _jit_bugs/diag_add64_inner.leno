@@ -1,0 +1,34 @@
+// §8.125 诊断：add64 内部哪一步在 JIT 下出错 ✗（三个 case 覆盖 通过/失败 ✓）
+import strings
+
+func hex64(int v):string {
+    var hx = "0123456789abcdef"
+    string s = ""
+    for 0:15 to i {
+        int bb = (v >> (60 - i*4)) & 0xf
+        s += strings.char(hx.byte(bb))
+    }
+    return s
+}
+func mask32():int { return 0xffffffff }
+func pack64(int hi, int lo):int { return (_uint32(hi) * 4294967296 + _uint32(lo)) & 0xffffffffffffffff }
+
+func add64_dbg(int a, int b):int {
+    int al = _uint32(a & mask32())
+    int bl = _uint32(b & mask32())
+    int lo_sum = al + bl
+    int carry = lo_sum >> 32
+    int lo = lo_sum & mask32()
+    int ah = _uint32((a >> 32) & mask32())
+    int bh = _uint32((b >> 32) & mask32())
+    int hi = (ah + bh + carry) & mask32()
+    print("  [a64] a=" + hex64(a) + " b=" + hex64(b) + " lo_sum=" + lo_sum + " carry=" + carry + " ah=" + hex64(ah) + " bh=" + hex64(bh) + " hi=" + hex64(hi) + " lo=" + hex64(lo))
+    return pack64(hi, lo)
+}
+
+main() {
+    print("case1(big+0，t=31 曾通过) = " + hex64(add64_dbg(0x4180000000000000, 0)))
+    print("case2(0+2^63，t=32 曾失败) = " + hex64(add64_dbg(0, 0x8000000000000000)))
+    print("case3(big+0，t=33 曾失败) = " + hex64(add64_dbg(0x0506083000000002, 0)))
+    print("DONE")
+}
