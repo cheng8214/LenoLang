@@ -1115,6 +1115,17 @@
             case OP_DICT: {
                 uint16_t di_cnt = rd_short(ip + 1);
                 TOS_SPILL();
+                /* ---- §8.105：与 OP_ARRAY 同款守卫（键与值共 2*count 个槽）----
+                 * 元素由 `jit_callout_dict_new` 内部转换、无来源槽信息 ⇒ 歧义区必须交解释器。 */
+                for (int _e = 0; _e < (int)(2 * di_cnt); _e++) {
+                    emit_mov_reg_mem32(cb, JIT_RAX, JIT_RSP, _e * 8);
+                    emit_mov_rr(cb, JIT_R8, JIT_RAX);
+                    emit_sar_imm(cb, JIT_R8, 47);
+                    emit_test_rr(cb, JIT_R8, JIT_R8);
+                    EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                    int _amb_e = emit_jcc(cb, 0x84);    /* JZ（歧义）→ bailout */
+                    patch_add(ctx, _amb_e, -1, 0);
+                }
                 EMIT_STORE_TMP(tmp1_disp, JIT_RSP);   /* vstack_top */
                 EMIT_CALLOUT_BEGIN();
                 EMIT_LOAD_TMP(JIT_ARG1, tmp1_disp);   /* vstack_top (1st arg) */
@@ -1154,6 +1165,23 @@
             case OP_ARRAY: {
                 uint16_t count = rd_short(ip + 1);
                 TOS_SPILL();
+                /* ---- §8.105：字面量元素若落在歧义区 ⇒ bailout ----
+                 * 元素转换发生在 **callout 内部**（`jit_callout_array_new` 用 `jit_raw_to_value`），
+                 * 那里拿不到"来源槽" ⇒ §8.104 的 RBX 位图判据用不上 ✗ ⇒ 浮点 0.0（位型全 0）
+                 * 会被贴成 int 0 并**存进数组**；污染值能活过循环（实测
+                 * `probe_array_literal_float`：JIT `g=[0]` vs NO_JIT `g=[0.0]`，且 Bailouts=0
+                 * ⇒ 循环确实在 JIT 里跑，不是被守卫掩盖）。
+                 * 守卫放在交给 callout **之前**（此刻元素就在 RSP 上）⇒ 命中即交解释器
+                 * 按真实类型建数组。代价只落在"JIT 循环内建的字面量含歧义区值"这一形态上。 */
+                for (int _e = 0; _e < (int)count; _e++) {
+                    emit_mov_reg_mem32(cb, JIT_RAX, JIT_RSP, _e * 8);
+                    emit_mov_rr(cb, JIT_R8, JIT_RAX);
+                    emit_sar_imm(cb, JIT_R8, 47);
+                    emit_test_rr(cb, JIT_R8, JIT_R8);
+                    EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                    int _amb_e = emit_jcc(cb, 0x84);    /* JZ（歧义）→ bailout */
+                    patch_add(ctx, _amb_e, -1, 0);
+                }
                 EMIT_STORE_TMP(tmp1_disp, JIT_RSP);   /* vstack_top */
                 EMIT_CALLOUT_BEGIN();
                 EMIT_LOAD_TMP(JIT_ARG1, tmp1_disp);   /* vstack_top (1st arg) */
