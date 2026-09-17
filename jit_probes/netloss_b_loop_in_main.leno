@@ -1,0 +1,21 @@
+// 净损失实验 B：与 netloss_a_func_with_loop.leno **完全等价**的代码，
+// 但把内层循环**直接写在 main 的热循环里** ⇒ 全部落进循环级 JIT 的编译范围（无跨函数调用）。
+//
+// A 与 B 的耗时差 = 「函数体含循环」这条 scan 期拒收的**净损失**。
+// checksum 必须与 A 相同（total=240000000）。
+main() {
+    var a = [1, 2, 3, 4, 5, 6, 7, 8]
+    var b = [2, 3, 4, 5, 6, 7, 8, 9]
+
+    int total = 0
+    int i = 0
+    while i < 1000000 {
+        int s = 0
+        for 0 : 7 to j {
+            s = s + a[j] * b[j]
+        }
+        total = total + s
+        i = i + 1
+    }
+    print("total=" + total + "\n")
+}
