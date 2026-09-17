@@ -95,7 +95,14 @@
                 emit_mov_rr(cb, JIT_R8, JIT_RAX);
                 emit_sar_imm(cb, JIT_R8, 47);
                 emit_test_rr(cb, JIT_R8, JIT_R8);
-                {
+                /* §8.116：右操作数（TOS）若由**白名单指令**产出（`prev_int48`，见 §8.41 的
+                 * EMIT_INT48_CHECK_TOS / MARK_TOS_RAW_INT48）⇒ 它**已被证明是裸 int48** ✓
+                 * ⇒ 位型启发式不会被浮点撞码，不必 bail ✓。这一条正是最常见的形态
+                 * `"" + (i + 1)`（`i+1` 走 ADD_INT_IMM 白名单 ✓）—— 修前它每次迭代都 bail，
+                 * 把 drawHUD 的循环整块拉黑 ✗（PvZ 实测 ✓）。
+                 * 注意：`prev_int48` 只对**紧邻的上一条指令**有效（一次性 ✓），而右操作数恰好
+                 * 就是它 ✓；left 侧没有这个保证 ⇒ 保持原检查（不猜 ✓）。 */
+                if (!prev_int48) {
                     EMIT_BAILOUT_SITE_NONOVF(bc_off);
                     int _amb_b = emit_jcc(cb, 0x84);    /* JZ（右操作数歧义）→ bailout */
                     patch_add(ctx, _amb_b, -1, 0);

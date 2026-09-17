@@ -2883,13 +2883,13 @@ Value jit_callout_call_native(int64_t* vstack_top, ObjNative* native,
     if (!vm || !native) return NULL_VAL;
 
     /* Push args onto the VM stack (GC roots during the call), in order:
-     * VM stack [arg1..argN] = JIT vstack_top[N-1..0]. */
-    if (jit_raw_block_ambiguous(vstack_top, (int)arg_count)) {   /* §8.106 */
-        jit_callout_failed = 1;
-        if (jit_debug_on())
-            fprintf(stderr, "[JIT-CALLOUT-FAIL] native 实参落在歧义区 ⇒ 交解释器（§8.106）\n");
-        return NULL_VAL;
-    }
+     * VM stack [arg1..argN] = JIT vstack_top[N-1..0].
+     * §8.115：原先这里也有一条"实参落在歧义区 ⇒ 整体 bailout"（§8.106）✗ ——
+     * 判据等于"所有非负 int48" ✗，于是 `OP_CALL_NATIVE` 带非负整数实参就 bail
+     * （实测 PvZ 的 `loadAnim` ×2 就是这条）⇒ 所在热循环被拉黑 ✗。按 §8.115 的方针
+     * 删掉：实参按 `jit_raw_to_value` 的整数解读装入（`+0.0` 与 `int 0` 数值相同 ⇒ 值正确 ✓）。
+     * ⚠ 残余同 §8.115：native 若关心"这个 0 是 float 还是 int"（`is float` / 字符串化）
+     * 会有类型标签分叉 ✗ —— 该路径上极罕见 ✓。 */
     int saved_sp = vm->sp;
     for (int i = 0; i < arg_count; i++) {
         vm_stack_push(vm, jit_raw_to_value(vstack_top[arg_count - 1 - i]));
