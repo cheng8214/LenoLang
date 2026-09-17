@@ -105,7 +105,14 @@
 // 模块编译缓存格式（.lenomc）—— 跨运行的模块编译产物缓存
 // ⚠ 版本号登记表：docs/待办_单一事实来源与重复实现收敛.md 第七节（与 .lenb 同源改动要一起评估）
 #define LENO_MODCACHE_MAGIC    0x434D4E4C  // "LNMC" little-endian
-#define LENO_MODCACHE_VERSION  0x00000009  // v9 - 同 LENO_BIN_VERSION v2.7.3（OP_STRUCT_INIT 追加
+#define LENO_MODCACHE_VERSION  0x0000000A  // v10 - §8.112：header 末尾追加 bin_fp(8)（运行中 exe 的
+                                           //       指纹）。模块字节码里烙着 native 方法签名 /
+                                           //       模块常量 / 实例方法表 / 求值语义等**没有源文件**
+                                           //       的编译期输入，只看 src_hash+dep_hash 会漏整类
+                                           //       失效（实测：静默错误代码）。**不**跟升
+                                           //       LENO_BIN_VERSION：.lenb 的字节布局未改，
+                                           //       字段只加在 .lenomc 自己的 header 上。
+                                           // v9 - 同 LENO_BIN_VERSION v2.7.3（OP_STRUCT_INIT 追加
                                           //      mod_space + mod_slot 操作数 —— 模块字节码里同样存在，
                                           //      旧构建按旧长度推进会错位）。
                                           // v8 - 同 LENO_BIN_VERSION v2.7.2（Phase 1：扫描阶段 enum

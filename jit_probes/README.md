@@ -267,9 +267,12 @@ Remove-Item -Recurse -Force .\examples\性能测试\.lenocache
 ```
 
 **回归验证步骤（本项无法写成普通 assert 用例 ✓）**：该机制的触发条件是"exe 变了" ✗，
-而 `assert/run_tests.leno` 只能跑当前 exe ✗ ⇒ 手工 e2e（§8.112 记录里有完整步骤）：
+而 `assert/run_tests.leno` 只能跑当前 exe ✗ ⇒ 手工 e2e（§8.112 / §8.112.1 记录里有完整步骤）：
 ① 临时把 `times.ms` 改成自洽旧形态（int 签名+返回 int）→ 重建 → 跑一次（写缓存 ✓）；
 ② `git checkout` 恢复 → 重建 → 再跑 ⇒ 输出必须**正常**（若不是，说明缓存没被失效 ✗）。
+**三类产物都要看** ✓：入口 `entry_*.lenb`（§8.112）+ **模块** `.lenomc` / `.lenosymc`（§8.112.1）；
+模块级用 `build/cachetest/{mod,main}.leno` 那种"模块自己调 `times.ms()` 再返回差值"的形态 ✓ ——
+模块自身的字节码里烙着 int/float 的减法 ✓，缓存没失效就会打出 10^9 量级 ✓（一眼可辨 ✓）。
 
 ## 覆盖面合成表（§8.92）：`jit_census.ps1`
 

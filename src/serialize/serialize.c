@@ -2097,6 +2097,19 @@ SerializeResult module_cache_serialize(const char* cache_path, ObjModule* mod, c
         return SERIALIZE_ERR_FORMAT;
     }
 
+    // §8.112：把「运行中 exe 的指纹」写进 header —— 模块字节码里同样烙着**编译期决策**
+    // （native 方法签名 / 模块常量 / 实例方法表 / 求值语义），而这些东西**没有源文件**
+    // ⇒ 只看 src_hash + dep_hash 会漏掉整类失效输入（实测事故见 §8.111 / §8.112：
+    //   `times.ms` 注册由 TYPE_INT 改 TYPE_FLOAT 后，缓存仍被判有效 ⇒ 静默错误代码）。
+    // 取不到指纹（返回 0）就不写这份缓存：fail-closed，宁可重编译。
+    uint64_t bin_fp = cache_runtime_binary_fingerprint();
+    if (bin_fp == 0) {
+        wb_free(&wb_body);
+        cache_dep_paths_clear();
+        clear_serialized_modules();
+        return SERIALIZE_ERR_FORMAT;
+    }
+
     // 组装最终文件：header + dep_count + dep_paths + body
     WriteBuffer wb;
     wb_init(&wb);
@@ -2104,6 +2117,7 @@ SerializeResult module_cache_serialize(const char* cache_path, ObjModule* mod, c
     wb_write_u32(&wb, LENO_MODCACHE_VERSION);
     wb_write_u64(&wb, src_hash);
     wb_write_u64(&wb, src_size);
+    wb_write_u64(&wb, bin_fp);
     wb_write_u32(&wb, (uint32_t)cache_dep_count);
     for (int i = 0; i < cache_dep_count; i++) {
         wb_write_string(&wb, cache_dep_paths[i], (uint32_t)strlen(cache_dep_paths[i]));
@@ -2196,9 +2210,10 @@ int module_cache_read_source_snapshot(const char* cache_dir, const char* src_pat
     FILE* f = leno_fopen(cache_path, "rb");
     free(cache_path);
     if (!f) return -1;
-    // header = magic(4) + version(4) + src_hash(8) + src_size(8)，大端序（与 ctx_read_* 一致）
-    uint8_t h[24];
-    int ok = (fread(h, 24, 1, f) == 1);
+    // header = magic(4) + version(4) + src_hash(8) + src_size(8) + bin_fp(8)，大端序
+    // （与 ctx_read_* 一致。§8.112 起末尾多一个 bin_fp ⇒ 少读一个字节即视为格式不符）
+    uint8_t h[32];
+    int ok = (fread(h, 32, 1, f) == 1);
     fclose(f);
     if (!ok) return -1;
     uint32_t magic = ((uint32_t)h[0] << 24) | ((uint32_t)h[1] << 16) |
@@ -2206,9 +2221,15 @@ int module_cache_read_source_snapshot(const char* cache_dir, const char* src_pat
     uint32_t ver = ((uint32_t)h[4] << 24) | ((uint32_t)h[5] << 16) |
                    ((uint32_t)h[6] << 8) | (uint32_t)h[7];
     if (magic != LENO_MODCACHE_MAGIC || ver != LENO_MODCACHE_VERSION) return -1;
-    uint64_t hash = 0, size = 0;
+    uint64_t hash = 0, size = 0, bin_fp = 0;
     for (int i = 0; i < 8; i++) hash = (hash << 8) | h[8 + i];
     for (int i = 0; i < 8; i++) size = (size << 8) | h[16 + i];
+    for (int i = 0; i < 8; i++) bin_fp = (bin_fp << 8) | h[24 + i];
+    // §8.112：exe 指纹不符（或当前取不到）一律判失效 —— fail-closed，交调用方重编译
+    {
+        uint64_t cur_fp = cache_runtime_binary_fingerprint();
+        if (cur_fp == 0 || cur_fp != bin_fp) return -1;
+    }
     if (out_hash) *out_hash = hash;
     if (out_size) *out_size = size;
     return 0;
@@ -2301,17 +2322,26 @@ ObjModule* module_cache_deserialize(const char* cache_path, const char* full_pat
     ctx.size = (size_t)file_size;
     ctx.pos = 0;
 
-    // 读 header
+    // 读 header（§8.112 起末尾多一个 bin_fp = 运行中 exe 的指纹）
     uint32_t magic, version;
-    uint64_t src_hash, src_size;
+    uint64_t src_hash, src_size, bin_fp;
     if (!ctx_read_u32(&ctx, &magic) || !ctx_read_u32(&ctx, &version) ||
-        !ctx_read_u64(&ctx, &src_hash) || !ctx_read_u64(&ctx, &src_size)) {
+        !ctx_read_u64(&ctx, &src_hash) || !ctx_read_u64(&ctx, &src_size) ||
+        !ctx_read_u64(&ctx, &bin_fp)) {
         free(data);
         return NULL;
     }
     if (magic != LENO_MODCACHE_MAGIC || version != LENO_MODCACHE_VERSION) {
         free(data);
         return NULL;
+    }
+    // exe 指纹不符（或当前取不到）一律判失效：fail-closed（宁可重编译，不要跑旧码）
+    {
+        uint64_t cur_fp = cache_runtime_binary_fingerprint();
+        if (cur_fp == 0 || cur_fp != bin_fp) {
+            free(data);
+            return NULL;
+        }
     }
 
     // 失效判定：先比对文件大小（O(1) stat），再比对内容哈希

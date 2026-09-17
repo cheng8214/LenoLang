@@ -6,7 +6,11 @@
 // ⚠ 版本号登记表：docs/待办_单一事实来源与重复实现收敛.md 第七节
 //   （只覆盖符号表缓存；2026-09-16 撞过车：与上游都用 v23 但格式不同）
 #define LENOSYMC_MAGIC   0x4D59534C  // "LSYM" little-endian
-#define LENOSYMC_VERSION 0x00000019  // v25: 扫描阶段的 enum 成员求值改由**真解析器**执行（Phase 1，删除复刻的求值器）——对"旧扫描器失败、解析器成功"的形态（浮点截断、超大整数饱和、以及此前的 not/除零），旧缓存里存的是自动递增值，必须整体失效重扫
+#define LENOSYMC_VERSION 0x0000001A  // v26: §8.112 —— header 末尾追加 bin_fp(8)（运行中 exe 的指纹）：
+                                     //      符号表里同样烙着 native 方法签名 / 模块常量等**没有源文件**
+                                     //      的编译期输入，只看 src/dep 哈希会漏掉整类失效（实测评测：
+                                     //      签名改动后旧符号表仍被判有效 ⇒ 静默错误代码）。
+// 历史：v25: 扫描阶段的 enum 成员求值改由**真解析器**执行（Phase 1，删除复刻的求值器）——对"旧扫描器失败、解析器成功"的形态（浮点截断、超大整数饱和、以及此前的 not/除零），旧缓存里存的是自动递增值，必须整体失效重扫
 // 历史：v24: 扫描器求值器与解析器对齐两处（认 `not`；除零/取模零一律得 0 而非"求值失败"）；旧缓存里这两类成员的值是错的，必须失效
 // 历史：v23: 扫描器不再丢弃「无显式值」的 enum 成员（此前 member_count++ 被误关在 if ('=') 内）；旧缓存缺这些成员，必须失效
 // 历史：v22: enum 成员值不再用 -1 当「无显式值」哨兵（显式 `= -1` 曾被改写成下标）；自动递增改在扫描阶段解析
@@ -178,6 +182,11 @@ break;
 // 序列化 ModuleSymbolTable 到文件
 static int sym_cache_serialize(const char* cache_path, ModuleSymbolTable* table,
                                uint64_t src_hash, uint64_t src_size) {
+    // §8.112：把「运行中 exe 的指纹」写进 header（符号表里同样烙着 native 签名 / 模块常量等
+    // **没有源文件**的编译期输入）。取不到指纹就**不写**这份缓存 —— fail-closed，宁可重扫。
+    // （在打开文件**之前**算：失败时不留下半截文件。）
+    uint64_t bin_fp = cache_runtime_binary_fingerprint();
+    if (bin_fp == 0) return -1;
 #ifdef _WIN32
     int wl = MultiByteToWideChar(CP_UTF8, 0, cache_path, -1, NULL, 0);
     wchar_t* wp = (wchar_t*)malloc(wl * sizeof(wchar_t));
@@ -195,6 +204,7 @@ static int sym_cache_serialize(const char* cache_path, ModuleSymbolTable* table,
     fwrite(&version, 4, 1, f);
     fwrite(&src_hash, 8, 1, f);
     fwrite(&src_size, 8, 1, f);
+    fwrite(&bin_fp, 8, 1, f);   /* §8.112：运行中 exe 的指纹（见 v26 的说明） */
 
     // 依赖模块路径及源哈希（用于传递依赖缓存失效判定）
     uint32_t dc = (uint32_t)table->dep_count;
@@ -500,13 +510,19 @@ static int sym_cache_deserialize(const char* cache_path, ModuleSymbolTable* tabl
     if (!f) return -1;
 
     uint32_t magic, version;
-    uint64_t src_hash, src_size;
+    uint64_t src_hash, src_size, bin_fp;
     if (fread(&magic, 4, 1, f) != 1 || fread(&version, 4, 1, f) != 1 ||
-        fread(&src_hash, 8, 1, f) != 1 || fread(&src_size, 8, 1, f) != 1) {
+        fread(&src_hash, 8, 1, f) != 1 || fread(&src_size, 8, 1, f) != 1 ||
+        fread(&bin_fp, 8, 1, f) != 1) {
         fclose(f); return -1;
     }
     if (magic != LENOSYMC_MAGIC || version != LENOSYMC_VERSION) {
         fclose(f); return -1;
+    }
+    // §8.112：exe 指纹不符（或当前取不到）一律判失效 —— fail-closed，交调用方重扫
+    {
+        uint64_t cur_fp = cache_runtime_binary_fingerprint();
+        if (cur_fp == 0 || cur_fp != bin_fp) { fclose(f); return -1; }
     }
 
     // 失效判定：先比对文件大小（O(1) stat），再比对内容哈希
