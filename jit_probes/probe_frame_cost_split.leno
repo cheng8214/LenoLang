@@ -1,0 +1,60 @@
+// §8.119：把"per-frame 的 Leno 侧时间"拆成可归因的三块，用来判断还要不要继续优化 JIT。
+//   A) 纯算术 JIT 循环       —— 每轮成本（引擎下界）
+//   B) 循环里每次调 native   —— native callout 边界的实价（PvZ 每帧 ≈145 次）
+//   C) 循环里调 Leno 小函数  —— 函数调用/内联边界的实价
+import times
+
+func small(int x): float {
+    return _float(x) * 0.5
+}
+
+func pureLoop(int n): float {
+    var acc = 0.0
+    var t1 = times.ms()
+    var i = 0
+    while i < n {
+        acc = acc + 1.5
+        i = i + 1
+    }
+    var t2 = times.ms()
+    if acc < 0.0 { print("") }   // 防优化掉
+    return t2 - t1
+}
+
+func nativeLoop(int n): float {
+    var acc = 0.0
+    var t1 = times.ms()
+    var i = 0
+    while i < n {
+        acc = acc + (times.ms() * 0.0)
+        i = i + 1
+    }
+    var t2 = times.ms()
+    if acc < 0.0 { print("") }
+    return t2 - t1
+}
+
+func callLoop(int n): float {
+    var acc = 0.0
+    var t1 = times.ms()
+    var i = 0
+    while i < n {
+        acc = acc + small(i)
+        i = i + 1
+    }
+    var t2 = times.ms()
+    if acc < 0.0 { print("") }
+    return t2 - t1
+}
+
+main() {
+    int n = 2000000
+    float a = pureLoop(n)
+    float b = nativeLoop(n)
+    float c = callLoop(n)
+    print("pure   = " + a + "ms  (" + (a * 1000000.0 / _float(n)) + " ns/iter)")
+    print("native = " + b + "ms  (" + (b * 1000000.0 / _float(n)) + " ns/iter)")
+    print("call   = " + c + "ms  (" + (c * 1000000.0 / _float(n)) + " ns/iter)")
+    print("native-call 边界成本 ≈ " + ((b - a) * 1000000.0 / _float(n)) + " ns/次")
+    print("leno-call   边界成本 ≈ " + ((c - a) * 1000000.0 / _float(n)) + " ns/次")
+}
