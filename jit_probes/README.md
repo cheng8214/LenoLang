@@ -199,6 +199,17 @@ $env:LENO_NO_JIT="1"; build\leno.exe jit_probes\probe_type_check_float_zero.leno
 
 ⇒ 一句话：**测"值被污染"必须让污染值活过 JIT 区域**，否则守卫会把症状掩盖掉 ✓。
 
+## 跟踪项（当前故意 DIFF，**不是**门禁）：`probe_native_arg_float.leno`
+
+§8.106：native 实参路径（`_str` / `print`，编译成 **`OP_CALL_NATIVE`**）把**次正规浮点**贴成 int
+⇒ JIT `"1"` vs NO_JIT `"4.94066e-324"` ✗（**量级**都变了，不只是类型）。
+
+**口径要点**：这类缺陷必须用**能区分 int 与 float 的值** —— `0.0` 不行 ✗
+（`_str(0.0)` 与 `_str(0)` 都输出 `"0"`）；**2^-1074**（位型 `0x1`，撞码对象是 int 1）才可以 ✓。
+
+已在 4 处 native 实参边界加守卫（`jit_raw_block_ambiguous`），但本路径走的是 `OP_CALL_NATIVE`
+的通用 callout（尚未定位）⇒ 探针仍红，作为跟踪项保留。
+
 ## 覆盖面合成表（§8.92）：`jit_census.ps1`
 
 JIT 覆盖面有两个**互不相通**的口径，过去只能手工分别看 ——

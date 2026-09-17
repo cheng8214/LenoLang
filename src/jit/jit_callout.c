@@ -217,6 +217,20 @@ static inline Value jit_raw_to_value(int64_t raw) {
  * 原则与 §8.99（FFI 边界）、§8.101 前身（struct 字段赋值）一致：
  * 跨**类型敏感边界**时按**声明类型**兜底，不只信位型启发式。
  * 与 `jit_try_hot_func_call`（jit.c）里那段同一套规则：float←int / float←bigint / int←float。 */
+/* ---- §8.106：实参块里是否有落在**歧义区**的裸位型 ----
+ * 歧义区 = `0 ≤ raw < 2^47`（即 `raw>>47 == 0`）：int48 与浮点 **+0.0 / 正次正规数**的位型重合。
+ * 凡"callout 内部转换实参"的路径（拿不到来源槽 ⇒ §8.104 的 RBX 位图判据用不上）都无法从位型
+ * 判断它是小整数还是浮点 ⇒ 命中即交解释器按真实类型处理（正确性优先，见 §8.103 的方针）。
+ * 实测（`jit_probes/probe_native_arg_float.leno`，口径用次正规数才有区分度）：
+ *   `_str(tiny)` ⇒ JIT `"1"` vs NO_JIT `"4.94066e-324"` ✗ —— 连**量级**都变了，不只是类型；
+ *   `print(tiny)` 同病（`"1.0"` vs `"4.9406564584124654e-324"`）。 */
+static inline int jit_raw_block_ambiguous(const int64_t* vstack_top, int arg_count) {
+    for (int i = 0; i < arg_count; i++) {
+        if ((vstack_top[arg_count - 1 - i] >> 47) == 0) return 1;
+    }
+    return 0;
+}
+
 static inline Value jit_promote_arg_by_decl(Value a, ObjFunction* fn, int i) {
     if (fn && fn->param_types && i < fn->arity) {
         TypeKind t = fn->param_types[i];
@@ -1896,6 +1910,12 @@ static Value jit_invoke_closure(ObjFunction* mfunc, Value callee_val, int arg_co
                     fprintf(stderr, "[JIT-CALLOUT-FAIL] native 直调: native->function 为空\n");
                 return NULL_VAL;
             }
+            if (jit_raw_block_ambiguous(vstack_top, arg_count)) {   /* §8.106 */
+                jit_callout_failed = 1;
+                if (jit_debug_on())
+                    fprintf(stderr, "[JIT-CALLOUT-FAIL] native 直调实参落在歧义区 ⇒ 交解释器（§8.106）\n");
+                return NULL_VAL;
+            }
             int saved_sp_n = vm->sp;
             int total = arg_count + nhas_recv;
             if (nhas_recv) vm_stack_push(vm, nrecv);   /* args[0] = 接收者（先压 ⇒ 最低地址）*/
@@ -2633,6 +2653,12 @@ Value jit_callout_module_call_meta(int64_t* vstack_top, int arg_count,
 
     /* JIT 虚拟栈向低地址增长：vstack_top[0] = TOS（最后压入的实参），
      * native 期望 args[0] = 第一个实参。 */
+    if (jit_raw_block_ambiguous(vstack_top, arg_count)) {   /* §8.106 */
+        jit_callout_failed = 1;
+        if (jit_debug_on())
+            fprintf(stderr, "[JIT-CALLOUT-FAIL] native 实参落在歧义区 ⇒ 交解释器（§8.106）\n");
+        return NULL_VAL;
+    }
     Value args[16];
     for (int i = 0; i < arg_count; i++) {
         args[i] = jit_raw_to_value(vstack_top[arg_count - 1 - i]);
@@ -2689,6 +2715,12 @@ Value jit_callout_module_call(int64_t* vstack_top, int arg_count,
     Value args[16];
     if (arg_count > 16) {
         jit_callout_error("模块方法参数过多");
+        return NULL_VAL;
+    }
+    if (jit_raw_block_ambiguous(vstack_top, arg_count)) {   /* §8.106 */
+        jit_callout_failed = 1;
+        if (jit_debug_on())
+            fprintf(stderr, "[JIT-CALLOUT-FAIL] native 实参落在歧义区 ⇒ 交解释器（§8.106）\n");
         return NULL_VAL;
     }
 for (int i = 0; i < arg_count; i++) {
@@ -2846,6 +2878,12 @@ Value jit_callout_call_native(int64_t* vstack_top, ObjNative* native,
 
     /* Push args onto the VM stack (GC roots during the call), in order:
      * VM stack [arg1..argN] = JIT vstack_top[N-1..0]. */
+    if (jit_raw_block_ambiguous(vstack_top, (int)arg_count)) {   /* §8.106 */
+        jit_callout_failed = 1;
+        if (jit_debug_on())
+            fprintf(stderr, "[JIT-CALLOUT-FAIL] native 实参落在歧义区 ⇒ 交解释器（§8.106）\n");
+        return NULL_VAL;
+    }
     int saved_sp = vm->sp;
     for (int i = 0; i < arg_count; i++) {
         vm_stack_push(vm, jit_raw_to_value(vstack_top[arg_count - 1 - i]));

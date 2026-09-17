@@ -6524,6 +6524,33 @@ NOJIT : g=[0.0]      ✓        （Compiled: 1, Bailouts: 0 ⇒ 循环确实在 
 
 ***
 
+### 8.106 【部分修复 / 定位未完】native 实参（`_str` / `print`）会把**次正规浮点**变成 int（2026-09-17）
+
+**探针 `jit_probes/probe_native_arg_float.leno`** —— 口径必须用**次正规数**：
+`0.0` 不行 ✗（`_str(0.0)` 本来就输出 `"0"`，与 `_str(0)` **无法区分**，实测两边都是 `"0"`）；
+改用 **2^-1074**（位型 `0x1`，撞码对象正好是 **int 1**）后一眼可辨：
+
+```
+JIT   : cast:   tiny=[1]                     native: tiny=[1.0]                     ✗
+NOJIT : cast:   tiny=[4.94066e-324]          native: tiny=[4.9406564584124654e-324] ✓
+```
+
+⇒ 不只是"类型错"—— **量级都变了**（5e-324 → 1）✗。机制与 §8.105 同源：callout 内部
+`jit_raw_to_value` 的位型启发式把 float 的裸位型贴成 int 字面量。
+
+**本轮已落地**：新增判据 `jit_raw_block_ambiguous(vstack_top, n)`（实参块里是否存在
+`raw>>47 == 0` 的歧义区值），并在 **4 处 native 实参边界**加守卫：`jit_callout_module_call`
+的两个变体、`jit_callout_call_native`、`jit_invoke_closure` 的 native 直调。
+
+**仍未修（探针依旧红）**：字节码转储确认 `_str` / `print` 编译成 **`OP_CALL_NATIVE`** 专用
+opcode ✓（`ops_callout.inc:1223`，先解析 native 指针、`_int`/`_float` 有专用内联快路径），
+它的**通用 callout 路径尚未定位** ✗ —— 下一步就是在这个 case 里找出 `EMIT_CALL(jit_callout_…)`
+后把同一判据接上去。**注意**：这也解释了为何先前的 4 处守卫"零触发"（`Bailouts: 0`）。
+
+**门禁**：17 探针 IDENTICAL ✓、assert **311 passed / 0 failed** ✓（本探针作为**跟踪项**保留 DIFF）。
+
+***
+
 ## 9. 性能数据
 
 ### 测试环境

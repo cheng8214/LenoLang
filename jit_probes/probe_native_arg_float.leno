@@ -1,0 +1,31 @@
+// §8.106 探针：**native 调用实参**与 **`_str()` 转换**在 JIT 边界是否被贴成 int
+//
+// ⚠ 口径必须用"能区分 int 与 float 的值"（§8.102 的延伸）：
+//   用 0.0 不行 ✗ —— `_str(0.0)` 本来就输出 "0"，与 `_str(0)` 无法区分（实测两边都是 "0"）。
+//   改用**最小正次正规数 2^-1074**（位型 0x1，撞码对象正好是 **int 1** ✓）：
+//     正确（float）⇒ 输出近似 "0"；若被贴成 int ⇒ 输出 "1" ✗ —— 一眼可辨 ✓。
+//
+// 被筛的两条路径（都是"callout 内部转换"，拿不到来源槽 ⇒ §8.104 判据用不上）：
+//   ① `_str(tiny)`：类型化转换（无专用快路径；`_int`/`_float` 有专用路径，`_str` 没有）
+//   ② `print(tiny)`：native 调用实参
+// 对照 `1`（int）标定"int 长什么样"。期望 JIT 与 LENO_NO_JIT=1 逐行一致。
+main() {
+    var tiny = 1.0
+    int k = 0
+    while k < 1074 {                  // 0.5 连乘 1074 次 ⇒ 2^-1074
+        tiny = tiny * 0.5
+        k = k + 1
+    }
+    int i = 0
+    while i < 300 {
+        if i == 0 {
+            print("cast:   tiny=[" + _str(tiny) + "] one=[" + _str(1) + "]\n")
+            print("native: tiny=[")
+            print(tiny)
+            print("] one=[")
+            print(1)
+            print("]\n")
+        }
+        i = i + 1
+    }
+}
