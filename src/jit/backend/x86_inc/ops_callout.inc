@@ -704,6 +704,27 @@
                     elem = (int)ip[2];
                 }
                 TOS_CONSUME_RAX();                     /* 弹操作数（raw）→ RAX */
+                /* ---- §8.100：`is float` 在**歧义区**交回解释器（不猜）----
+                 * JIT 虚拟栈用"裸位型"表示数值：int48 = 裸 int64、float = 裸 double；
+                 * 二者在 `raw ∈ [0, 2^47)` 上位型**重合**（float 侧恰好是 +0.0 与正次正规数）
+                 * ⇒ 而下面 EMIT_RAW_TO_VALUE 的启发式（raw>>47 ∈ {-1,0} ⇒ 当 int48 装箱）
+                 * 会把浮点 0.0 贴成 int 0 ⇒ `0.0 is float` 在 JIT 判**假**、解释器判**真**
+                 * （静默分叉；与 §8.99 那个 SDL `0.0` 是同一根因的另一个出口）。
+                 * 实测（值域探针 jit_probes/probe_type_check_float_zero.leno）：
+                 * `zero=50` —— 热阈值前 50 次解释执行判真、之后 JIT 判假 —— vs NO_JIT 2000。
+                 * ⚠ 这条信息在裸表示里**已丢失**（int 0 与 float 0.0 位型相同，无法用位型恢复），
+                 * 所以唯一"不猜"的做法是：期望类型属浮点族且 raw 落在歧义区 ⇒ bailout，
+                 * 交解释器按真实类型判定（代价只落在"对 {0, 正次正规} 做 is float"这一形态上）。
+                 * 注：`raw>>47 == -1`（负 int48 / 负 NaN）与其它值域都不在歧义区，不受影响；
+                 * 反向的 `int 0 is int`（JIT 判真）属同一表示缺口的另一面，见 §8.100 的待决记录。 */
+                if (tk == TYPE_FLOAT || tk == TYPE_F32 || tk == TYPE_F64) {
+                    emit_mov_rr(cb, JIT_R8, JIT_RAX);
+                    emit_sar_imm(cb, JIT_R8, 47);       /* 歧义 ⇔ 0 ≤ raw < 2^47 ⇔ raw>>47 == 0 */
+                    emit_test_rr(cb, JIT_R8, JIT_R8);
+                    EMIT_BAILOUT_SITE_NONOVF(bc_off);
+                    int amb_p = emit_jcc(cb, 0x84);     /* JZ（歧义）→ bailout */
+                    patch_add(ctx, amb_p, -1, 0);
+                }
                 EMIT_RAW_TO_VALUE();                   /* 裸 int48 → 装箱；其余原样 */
                 EMIT_STORE_TMP(tmp1_disp, JIT_RAX);
                 EMIT_CALLOUT_BEGIN();

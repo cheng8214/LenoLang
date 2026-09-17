@@ -1,0 +1,88 @@
+// §8.100 值域探针：`is float` 在 **0.0 / -0.0 / 次正规数** 上 JIT 与解释器分叉
+//
+// 为什么形状探针测不出（§8.99 的教训）：JIT 虚拟栈里 float 与 int48 都是"裸"位型，
+// 而 {+0.0, 正次正规} 的 double 位型落在 int48 判定区间（raw>>47 ∈ {-1,0}）⇒
+// `EMIT_RAW_TO_VALUE` 会给它贴上 **int 标签** ⇒ `is float` 判假（解释器判真）。
+// ⇒ 只有**值域**维度能暴露这类 bug（与 SDL 那个 0.0 是同一根因）。
+//
+// 期望：五个计数在 JIT 与 LENO_NO_JIT=1 下**逐字一致**。
+//   zero/negzero/sub 应为 2000（它们是浮点）；normal 应为 2000；intzero 应为 0。
+// 注：次正规数用 0.5^1074 现算（最小正次正规，位型 0x1 ⇒ 与 int 1 撞码）；
+//     本方言不支持科学计数法字面量（此前实测报"声明语句后期望换行"）。
+func hitsZero(int n): int {          // 浮点 0.0（SSE 结果 1.0-1.0 ⇒ 裸 double 0x0）
+    int h = 0
+    var v = 1.0 - 1.0
+    int i = 0
+    while i < n {
+        if v is float {
+            h = h + 1
+        }
+        i = i + 1
+    }
+    return h
+}
+
+func hitsNegZero(int n): int {       // 浮点 -0.0（0.0 * -1.0 ⇒ 0x8000000000000000）
+    int h = 0
+    var v = 0.0 * (0.0 - 1.0)
+    int i = 0
+    while i < n {
+        if v is float {
+            h = h + 1
+        }
+        i = i + 1
+    }
+    return h
+}
+
+func hitsSubnormal(int n): int {     // 最小正次正规：0.5 连乘 1074 次 ⇒ 2^-1074
+    var v = 1.0
+    int k = 0
+    while k < 1074 {
+        v = v * 0.5
+        k = k + 1
+    }
+    int h = 0
+    int i = 0
+    while i < n {
+        if v is float {
+            h = h + 1
+        }
+        i = i + 1
+    }
+    return h
+}
+
+func hitsNormal(int n): int {        // 对照：普通浮点（位型不在 int48 区间）⇒ 应恒真
+    int h = 0
+    var v = 3.5
+    int i = 0
+    while i < n {
+        if v is float {
+            h = h + 1
+        }
+        i = i + 1
+    }
+    return h
+}
+
+func hitsIntZero(int n): int {       // 对照：整数 0（同一枚位型 0x0）⇒ 应恒假
+    int h = 0
+    int v = 0
+    int i = 0
+    while i < n {
+        if v is float {
+            h = h + 1
+        }
+        i = i + 1
+    }
+    return h
+}
+
+main() {
+    print("zero=" + hitsZero(2000)
+        + " negzero=" + hitsNegZero(2000)
+        + " sub=" + hitsSubnormal(2000)
+        + " normal=" + hitsNormal(2000)
+        + " intzero=" + hitsIntZero(2000) + "\n")
+}

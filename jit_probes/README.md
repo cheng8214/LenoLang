@@ -155,6 +155,23 @@ build\leno.exe jit_probes\nlev_f_intstep_loop.leno       # 2.2x ✓
 共用同一 `bc_off` ✗ ⇒ 只能看到 `非溢出类 @bc_off=N`；现在 `step == 0` 有独立编码
 （`FOR_PREP: step == 0（运行期）`），两者**可区分** ✓。
 
+## 值域探针（§8.99 / §8.100 的教训）：`probe_type_check_float_zero.leno`
+
+**形状探针测不出"值域依赖"的 bug** —— `probe_cstruct_jit` 那种 JIT/NOJIT 逐字比对，
+在 §8.99 的 SDL `0.0` 与 §8.100 的 `is float` 上都**通过**，因为触发条件是**具体的值**
+（0.0 / -0.0 / 次正规数）而不是形状。本探针把值域维度补齐：
+
+```powershell
+build\leno.exe jit_probes\probe_type_check_float_zero.leno
+$env:LENO_NO_JIT="1"; build\leno.exe jit_probes\probe_type_check_float_zero.leno
+```
+
+⇒ 五个计数必须逐字一致（`zero/negzero/sub/normal=2000`、`intzero=0`）。
+修前实测 `zero=50`（热阈值前 50 次解释执行判真、之后 JIT 判假）✗；修后一致 ✓（§8.100）。
+
+⚠ 本方言**不支持科学计数法字面量**（`1.0e-324` 会报"声明语句后期望换行"）⇒
+次正规数用 `0.5` 连乘 1074 次现算 ✓。
+
 ## 覆盖面合成表（§8.92）：`jit_census.ps1`
 
 JIT 覆盖面有两个**互不相通**的口径，过去只能手工分别看 ——
