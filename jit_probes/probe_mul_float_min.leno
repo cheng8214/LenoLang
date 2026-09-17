@@ -1,0 +1,29 @@
+// §8.109 最小用例：`t = t * 0.5` 逐次乘到**次正规**（位型落进歧义区）后被污染
+//
+// 用途：给"反汇编取证"提供最小场景 —— 循环体只有 `t = t * 0.5` 与 `k = k + 1`，
+// 便于逐条核对 OP_MUL_FLOAT + OP_SET_LOCAL_POP 的机器码。
+// 已知现象（JIT）：1074 次后得到 1.0（正确 4.94e-324）；1060 次后得到 16384.0
+//（= 位型 0x4000 当整数）⇒ 说明某个环节把裸 double 按 int48 处理了。
+// 期望：与 LENO_NO_JIT=1 逐字一致。
+func mulTo(int n): float {
+    var t = 1.0
+    int k = 0
+    while k < n {
+        t = t * 0.5
+        k = k + 1
+    }
+    return t
+}
+
+main() {
+    var a = mulTo(1060)
+    int i = 0
+    while i < 300 {
+        if i == 0 {
+            print("a=")
+            print(a)
+            print("\n")
+        }
+        i = i + 1
+    }
+}

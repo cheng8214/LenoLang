@@ -6604,6 +6604,46 @@ float 判定**三处同时变正确** ✓。代价：每次 store 多几条指�
 
 ***
 
+### 8.109 反汇编取证：歧义位型的浮点走 `CVTSI2SD`；且浮点局部量**被 pin 在寄存器**（2026-09-17）
+
+**手段**：`LENO_JIT_DUMP=1` ⇒ `jit_mc_dump.txt`（十六进制文本）+ `jitdump<N>.bin`（原始机器码）；
+用 PowerShell 脚本按字节模式定位（`F2 0F 59` = MULSD、`F2 48 0F 2A` = CVTSI2SD r64、
+`66 48 0F 6E` = MOVQ xmm,r64 —— 注意 CVTSI2SD 带 **REX.W**，只搜 `F2 0F 2A` 会漏 ✗）。
+
+**发现（最小用例 `jit_probes/probe_mul_float_min.leno` 的循环机器码）**
+
+```asm
+    49 89 d0                mov  r8, rdx
+    49 c1 f8 2f             sar  r8, 47
+    49 ff c0                inc  r8
+    49 83 f8 01             cmp  r8, 1
+    0f 87 0a 00 00 00       ja   .not_int48
+    f2 48 0f 2a c2          cvtsi2sd xmm0, rdx      ← 歧义位型（2^-1060 的 0x4000）走**这条** ✗
+    e9 18 00 00 00          jmp  .done
+.not_int48:
+    66 48 0f 6e c2          movq xmm0, rdx          ← 只有"非 int48"才搬位 ✓
+    f2 0f 59 c1             mulsd xmm0, xmm1
+    66 48 0f 7e c0          movq rax, xmm0
+```
+
+⇒ ① 代码与设计**完全一致** ✓ —— 缺陷就是"浮点裸位型落进 int48 区间时走了整数提升" ✗
+（注释里"数值上一致"只对**真整数**成立）；
+② 操作数来自 **`r14`**（`mov rax, r14`）⇒ **浮点局部量 `t` 被 pin 在寄存器** ✓
+⇒ **这解释了为什么前两次"维护写回 / 内存侧位图"都没碰到它** ✗（值根本不在内存 scratch 里）；
+③ 也说明 `pick_pin_locals` 选中的槽，其类型信息（位图）必须**随寄存器 store 一起维护** ✓。
+
+**据此确定的修法（下一步，逐步小改、每步跑门禁）**
+
+1. **只在"静态已知类型"的 store 上维护位图**：给 codegen 加 `tos_kind ∈ {UNKNOWN, INT, FLOAT}`
+   （`OP_*_FLOAT` 结果置 FLOAT、整数运算置 INT、其余 UNKNOWN），在 `EMIT_STORE_LOCAL` 里按它发
+   **单条** `BTS/BTR RBX, si` ✓ ⇒ **不需要任何临时寄存器** ✓（前两次失败的原因之一正是借
+   R8 / RSI 踩了活值 ✗ ⇒ 这次从根上避开）。
+2. `tos_kind` 未知时才用运行期判据 —— 这一档**先不动** ✓（一次只改一处 ✓）。
+3. 把 §8.108 的"来源槽提示"改成**跨指令粘性** ✓：按"每次入栈"更新历史 ✓，
+   而不是每条指令清零 ✗ —— 上次清零导致提示恒为 -1 ✗（`t * 0.5` 的 `GET_LOCAL t` 在**前一条**指令里）。
+
+***
+
 ## 9. 性能数据
 
 ### 测试环境
