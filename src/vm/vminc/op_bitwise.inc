@@ -189,8 +189,20 @@ OPCODE(OP_SHL_IMM) {
     // 快速路径：int << imm（最常见，imm < 32）
     if (likely(val_is_int(a))) {
         if (likely(imm < 32)) {
-            vm_stack_push(&vm, val_int(val_as_int(a) << imm));
-            DISPATCH;
+            /* §8.123 修复（bug2：静默按 48 位截断 ✗）：原来直接 `val_int(a << imm)` ✗ ——
+             * `val_int` 会把结果**截断到 int48** ✗，于是 `0x123456789ab << 8`（49 位 ✗）
+             * 丢掉最高位（实测 `000023456789ab00` ✗ vs 期望 `000123456789ab00` ✓），
+             * 而 >48 位字面量的同形态却能正确（走 bigint ✓）⇒ 两条路径语义不一致 ✗。
+             * 修法：先判断结果是否**装得下 int48**（用移位前的值比较，避免溢出乘法/移位 ✓）：
+             *   正数：_a <= INT48_MAX >> imm ；负数：_a >= INT48_MIN >> imm（算术右移 ✓）
+             * 装得下走 int 快路径 ✓，装不下提升为 bigint ✓（与 OP_ADD/SUB/MUL 的溢出语义一致 ✓）。 */
+            int64_t _a = val_as_int(a);
+            int in_range = (_a >= 0) ? (_a <= (INT48_MAX >> imm))
+                                     : (_a >= (INT48_MIN >> imm));
+            if (in_range) {
+                vm_stack_push(&vm, val_int(_a << imm));
+                DISPATCH;
+            }
         }
         ObjBigInt* ba = promote_to_bigint(a);
         Value result = bigint_shl(ba, imm);

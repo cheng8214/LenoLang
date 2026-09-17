@@ -70,12 +70,17 @@ OPCODE(OP_MUL_INT) {
     if (likely(!val_is_bigint(va) && !val_is_bigint(vb))) {
         int64_t a = val_as_int(va);
         int64_t b = val_as_int(vb);
-        // 检测 int64 溢出（通过除法回验）
+        // 检测 int64 溢出
         if (a == 0 || b == 0) {
             vm_stack_push(&vm, val_int(0));
         } else {
-            int64_t result = a * b;
-            if (result / a != b) {
+            /* §8.123：原来写 `int64_t result = a * b; if (result / a != b)` ✗ ——
+             * 溢出乘法本身是 **UB** ✗，而编译器有权按"不会溢出"假设把那条判等优化掉
+             * ⇒ 实测 `0x80000000 * 4294967296` 直接走进下面的 int48 分支，得到**负** 2^63 ✗
+             * （bug3：与字面量的无符号语义分裂 ✓，并喂给 bigint_shr 引发 bug1 崩溃 ✗）。
+             * 改用不执行溢出乘法的检测（`LENO_MUL_OVERFLOW`，vm_helpers.inc ✓）。 */
+            int64_t result = 0;
+            if (LENO_MUL_OVERFLOW(a, b, &result)) {
                 // int64 溢出，使用 BigInt
                 ObjBigInt* ba = bigint_from_int64(a);
                 ObjBigInt* bb = bigint_from_int64(b);
@@ -363,9 +368,9 @@ OPCODE(OP_MUL_INT_IMM) {
         if (a == 0 || imm == 0) {
             vm_stack_push(&vm, val_int(0));
         } else {
-            int64_t result = a * imm;
-            // 通过除法回验检测 int64 溢出
-            if (result / a != imm) {
+            int64_t result = 0;
+            // §8.123：同 OP_MUL_INT —— 溢出检测不能依赖"先溢出乘、再除法回验"（UB ✗）
+            if (LENO_MUL_OVERFLOW(a, (int64_t)imm, &result)) {
                 ObjBigInt* ba = bigint_from_int64(a);
                 ObjBigInt* bimm = bigint_from_int64(imm);
                 Value r = bigint_mul(ba, bimm);

@@ -1,0 +1,15 @@
+// Bug1 最小切分（在用户原始复现基础上，把崩点逐步隔离）：
+//   L4 证明 hex64(2^63) 是好的 ✓，L5（hex64(2^63 + 1)）崩 ✗
+//   ⇒ 先问：是"加法本身"坏，还是"把大值传给 int 形参"坏，还是"对它的右移"坏？
+main() {
+    int c = 0x80000000 * 4294967296          // 2^63
+    print("s1  c        = " + c)
+    int c1 = c + 1
+    print("s2  c1=c+1   = " + c1)
+    int c2 = c1 - 1
+    print("s3  c2=c1-1  = " + c2)
+    print("s4  c1>>60   = " + (c1 >> 60))
+    print("s5  c1>>32   = " + (c1 >> 32))
+    print("s6  c1 & mask= " + (c1 & 0xffffffffffffffff))
+    print("DONE")
+}

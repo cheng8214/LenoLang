@@ -147,6 +147,15 @@ static void fold_binary(Ast* ast) {
                 return;
         }
 
+        /* §8.123：**整数**折叠结果的精度守卫 ✗
+         * 本函数的中间计算全用 double ✓，而 double 只能**精确**表示 ≤ 2^53 的整数 ✗
+         * ⇒ 超出后折出来的常量就已经失真 ✗（实测 `0x80000000 * 4294967296`：
+         * 折出 2^63 ⇒ 回落 int64 时溢出 ⇒ 变成 **-2^63** ✗ —— 这正是 bug3 的"字面量表达式
+         * 与变量运算语义分裂"里**字面量那一半** ✓；变量那一半已在 OP_MUL_INT 修好 ✓）。
+         * 与既有"移位量 ≥ 32 就不折叠、交给 VM 的 BigInt 路径"同一策略 ✓：
+         * **不精确就不折** ✓ —— 折叠只是优化，跳过它语义不变 ✓（VM 侧现已按 bigint 正确 ✓）。 */
+        if (!result_is_float && fabs(result) > 9007199254740992.0) return;
+
         ast_free(l);
         ast_free(r);
         replace_with_num(ast, result, result_is_float);

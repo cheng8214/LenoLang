@@ -1036,6 +1036,15 @@ Value bigint_shl(ObjBigInt* a, int shift) {
 }
 
 Value bigint_shr(ObjBigInt* a, int shift) {
+    /* §8.123 取证插桩（`LENO_DBG_SHR=1` 才打印）：bug1 崩在负数分支的某一环，
+     * 静态读不出是哪一步 ⇒ 逐步打点，崩溃前最后一行就是现场。 */
+    int _dbg = getenv("LENO_DBG_SHR") ? 1 : 0;
+    if (_dbg) {
+        fprintf(stderr, "[SHR] enter shift=%d neg=%d limbs=%d [", shift,
+                a ? a->is_negative : -1, a ? a->limb_count : -1);
+        if (a) for (int _i = 0; _i < a->limb_count; _i++) fprintf(stderr, "%08x ", a->limbs[_i]);
+        fprintf(stderr, "]\n");
+    }
     if (shift < 0) {
         return bigint_shl(a, -shift);
     }
@@ -1048,6 +1057,8 @@ Value bigint_shr(ObjBigInt* a, int shift) {
 
     // 计算结果需要的 limb 数量
     int result_limbs = a->limb_count - limb_shift;
+    if (_dbg) fprintf(stderr, "[SHR] limb_shift=%d bit_shift=%d result_limbs=%d\n",
+                      limb_shift, bit_shift, result_limbs);
 
     // 对于负数算术右移，需要特殊处理
     // 负数右移时，高位补 1，相当于向负无穷取整
@@ -1080,6 +1091,7 @@ Value bigint_shr(ObjBigInt* a, int shift) {
         if (bit_shift > 0) {
             // 检查移出的低位中是否有 1
             uint32_t low_mask = (1U << bit_shift) - 1;
+            if (_dbg) fprintf(stderr, "[SHR] probe limbs[%d] (limb_count=%d)\n", limb_shift, a->limb_count);
             if ((a->limbs[limb_shift] & low_mask) != 0) {
                 need_round_up = 1;
             }
@@ -1091,11 +1103,13 @@ Value bigint_shr(ObjBigInt* a, int shift) {
                 break;
             }
         }
+        if (_dbg) fprintf(stderr, "[SHR] need_round_up=%d → bigint_new\n", need_round_up);
 
         ObjBigInt* result = bigint_new(result_arr, result_limbs, 0);
         free(result_arr);
 
         if (!result) return val_null();
+        if (_dbg) fprintf(stderr, "[SHR] bigint_new ok (limbs=%d)\n", result->limb_count);
 
         // 对结果加 1（取反加 1 的方式实现负数）
         // 实际上我们需要的是 ~result + 1 的负数形式
@@ -1103,10 +1117,20 @@ Value bigint_shr(ObjBigInt* a, int shift) {
         if (need_round_up) {
             // 转换为正数加 1 后再转负
             Value one = val_bigint_from_int64(1);
+            if (_dbg) fprintf(stderr, "[SHR] round_up: bigint_add\n");
             Value added = bigint_add(result, val_as_bigint(one));
+            /* §8.123 修复（崩溃）：`bigint_add` 内部会 `bigint_compact_to_int` ✗ ——
+             * 当和落回 int48 时它返回的是 **int** 而不是 bigint ✓（本例 7+1=8 正是如此 ✓）
+             * ⇒ `val_as_bigint(added)` 得到 **NULL** ⇒ 原来的 `bigint_neg(NULL)` 直接解引用
+             * ⇒ 0xC0000005（实测 bug1：`-(2^63-1) >> 60` 崩在负数 round_up 这一支 ✓）。
+             * 修法：按**实际类型**分派 —— int 就在整数域取负 ✓，bigint 才走 bigint_neg ✓。 */
+            if (val_is_int(added)) return val_int(-val_as_int(added));
+            if (!val_is_bigint(added)) return val_null();   /* 防御：不猜，返回 null 交上层报错 */
+            if (_dbg) fprintf(stderr, "[SHR] round_up: added ok, bigint_neg\n");
             return bigint_neg(val_as_bigint(added));
         }
 
+        if (_dbg) fprintf(stderr, "[SHR] bigint_neg\n");
         return bigint_neg(result);
     }
 
