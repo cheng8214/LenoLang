@@ -199,7 +199,20 @@ $env:LENO_NO_JIT="1"; build\leno.exe jit_probes\probe_type_check_float_zero.leno
 
 ⇒ 一句话：**测"值被污染"必须让污染值活过 JIT 区域**，否则守卫会把症状掩盖掉 ✓。
 
-## 跟踪项（当前故意 DIFF，**不是**门禁）：`probe_native_arg_float.leno`
+## 跟踪项（当前故意 DIFF，**不是**门禁）：`probe_tiny_make_where.leno` / `probe_native_arg_float.leno`
+
+**§8.106 真因**（初版归因 native 实参是**错的** ✓）：JIT 的**物化/写回**把裸 double 按 int48 装箱。
+`probe_tiny_make_where.leno` 用 `2^-n` 夹逼给出铁证 —— JIT 输出**恰好等于该 float 的位型当整数**：
+
+| n | 位型 | 歧义区 | JIT | 正确 |
+| --- | --- | --- | --- | --- |
+| 1021~1023 | ≥ `0x0008…` | 否 | 正确 ✓ | ✓ |
+| 1060 | `0x4000` | 是 | **16384.0** ✗ | 8.0948e-320 |
+| 1074 | `0x1` | 是 | **1.0** ✗ | 4.94e-324 |
+
+⇒ **正解**：让 `RBX` 类型位图成为"该槽当前是否非 int48"的忠实标志（store/写回按实际类型置位/清位）。
+
+## （同源）`probe_native_arg_float.leno`
 
 §8.106：native 实参路径（`_str` / `print`，编译成 **`OP_CALL_NATIVE`**）把**次正规浮点**贴成 int
 ⇒ JIT `"1"` vs NO_JIT `"4.94066e-324"` ✗（**量级**都变了，不只是类型）。

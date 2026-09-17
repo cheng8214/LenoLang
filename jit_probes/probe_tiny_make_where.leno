@@ -1,0 +1,39 @@
+// §8.106 复核三：是不是**次正规数**这一档（而不是循环/打印/native 路径）
+//
+// 已知：`mulByHalf(3)` ⇒ 0.125 ✓（循环正常）；`mulByHalf(1074)` ⇒ **1.0** ✗。
+// 而 `jit_callout_call_native` 经仪器确认**零调用** ⇒ 打印/native 路径无辜 ✗。
+// 用 2^-n 的几个档位夹逼，判断是不是"次正规（位型落在 int48 歧义区）"才出错：
+//   · n=1021 ⇒ 2^-1021 ≈ 4.5e-308  —— **正规**数，位型 0x0020… ⇒ raw>>47 ≠ 0（不歧义）
+//   · n=1022 ⇒ 2^-1022 = 最小正规数，同属正规
+//   · n=1023 ⇒ 2^-1023 ≈ 1.1e-308 —— **次正规**（指数全 0），位型 0x0010… ⇒ 仍不算歧义区
+//   · n=1060 ⇒ 位型 0x0000_0010… ⇒ 仍 > 2^47 ⇒ 不歧义
+//   · n=1074 ⇒ 位型 0x1 ⇒ **落在歧义区**（与 int 1 撞码）
+// 若只有最末一档为 1.0 ✗ ⇒ 与"歧义区"完全对应 ✓（就是那条根因，只是出错点在**返回/落局部**而非打印）。
+func mulByHalf(int n): float {
+    var t = 1.0
+    int k = 0
+    while k < n {
+        t = t * 0.5
+        k = k + 1
+    }
+    return t
+}
+
+main() {
+    var v1021 = mulByHalf(1021)
+    var v1022 = mulByHalf(1022)
+    var v1023 = mulByHalf(1023)
+    var v1060 = mulByHalf(1060)
+    var v1074 = mulByHalf(1074)
+    int i = 0
+    while i < 300 {
+        if i == 0 {
+            print("1021="); print(v1021); print("\n")
+            print("1022="); print(v1022); print("\n")
+            print("1023="); print(v1023); print("\n")
+            print("1060="); print(v1060); print("\n")
+            print("1074="); print(v1074); print("\n")
+        }
+        i = i + 1
+    }
+}
