@@ -510,6 +510,14 @@ Object* gc_alloc(size_t size, ObjType type) {
 // deferred_gc」，与 gc_alloc 开头的逻辑完全重复，且 src/ 下零调用点（死代码）。
 void gc_force_collect(void) {
     if (!gc.enabled || gc.running) return;
+
+    /* 同 gc_try_collect_deferred：JIT 帧内不做就地回收（理由与实测见那里）。
+     * 这里额外把请求转成延迟标志，别把"要回收"这个请求丢掉。 */
+    if (jit_in_frame()) {
+        gc.deferred_gc = 1;
+        return;
+    }
+
     gc.deferred_gc = 0;
     gc_minor_collect();
     // Minor 之后仍超阈值 → 升级一次 Major（与 gc_try_collect_deferred 同形）
@@ -1849,6 +1857,24 @@ static void clear_all_marks(void) {
 // 这确保 GC 不会在帧中途（如 draw callback 创建几百个粒子时）触发暂停。
 void gc_try_collect_deferred(void) {
     if (!gc.deferred_gc || gc.running || !gc.enabled) return;
+
+    /* ★ 2026-09-18（Bug5）：**JIT 帧内禁止就地回收**（与 gc_alloc 的 malloc 失败路径同一条
+     * 理由，见 §8.36）：JIT 的活值在它自己的 scratch/vstack 里（机器栈），`mark_roots`
+     * 只扫 `vm.stack` 与各帧 `frame->locals` —— 看不到它们。
+     *
+     * 为什么这里会漏：解释器的 `OP_RETURN` 安全点注释写"函数返回是天然的 GC 安全点"，
+     * 那只在**调用方也在解释器里**时成立 ✗。JIT 热循环/函数级 JIT 调一个解释器函数，
+     * 那个函数 `OP_RETURN` 时就会走到这里（每 256 次返回一次）⇒ **调用方 JIT 帧还活着**
+     * ⇒ 就地回收 = 把仍在使用的对象当垃圾（静默 use-after-free）。
+     *
+     * 实测（`_jit_bugs/bug5_aes_int_array_float.leno`）：JIT 下 AES 在第 57 轮出错
+     * （`LENO_NO_JIT=1` 60/60 全对）；判据是"第一次回收与错值同轮"，且
+     * `LENO_NO_JIT_YIELD=1`（禁掉回边让出）**无效** ⇒ 回收入口不在让出侧，正是这里 ✓。
+     *
+     * 处置：**保持 deferred_gc 置位**、直接返回；真正的回收留到 JIT 出口后的解释器安全点
+     * （回边让出 / 循环或函数级 JIT 全部退出时，那时活值已被出口路径写回/发布）。 */
+    if (jit_in_frame()) return;
+
     gc.deferred_gc = 0;
 
     // 使用与原 gc_alloc 相同的判断逻辑：先 Minor，不够再 Major

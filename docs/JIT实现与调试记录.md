@@ -7356,6 +7356,97 @@ sha512 全红 ✗ → 结构同形复现 ✓ → **打印实际参与运算的�
 
 ***
 
+### 8.126 Bug5：`Array[int]` 元素被当成 float 污染 AES —— 两处修复（①`OP_ARRAY` 守卫 ②**GC 在 JIT 帧内禁止就地回收**）（2026-09-18）
+
+**来源**：另一台机器的发现（`Trae签到/mini_loop.leno`，未随仓库传过来）⇒ 本地按报告重建复现件
+`_jit_bugs/bug5_aes_int_array_float.leno`（基于 `examples/crypto/aes128.leno`；aes128 的函数无
+`export`，**单文件主脚本模式**正是报告的必现形态）。
+
+**症状**：JIT 下 `bad_count=1`，**确定性固定在第 57 轮（i=56）**；`LENO_NO_JIT=1` 连跑 5 次全 0。
+失败项固定为「字符串多块往返」（块级 NIST 向量 / 块往返 / `add_round_key` 三项都正确）。
+
+#### ① `OP_ARRAY` 的"歧义区"守卫（§8.105）会造成**数据污染** —— 已撤销（`7d593a7f`）
+
+判据 `raw>>47 == 0` 等价于**所有非负 int48**，且漏掉 `== -1` 那一半（`emit_mov_reg_mem32` 是
+**64 位读**，后缀指位移宽度）⇒ 两个方向都错。后果远大于它保护的东西：机器码 bailout 块
+**不写回 locals**（源码注释：`locals not written back (VM re-executes from back-edge)`）⇒
+解释器**重做整轮**、JIT 半轮的副作用不回滚 ⇒ **副作用执行两遍**：
+
+| 探针 | 修前 | 修后 |
+| --- | --- | --- |
+| `_jit_bugs/diag_array_literal_guard.leno` | `[1,2,3]`/`[0,0,0]` 各 `OP_ARRAY x3`（拉黑）、`[-1,-2,-3]` 不 bail | **`Bailouts: 0`** ✓（三种形态都保持 JIT）|
+| `_jit_bugs/diag_bailout_double_side_effect.leno` | `sum=201` **`len=204`**（循环体里 `G.add(i)` 多执行 3 次）✗ | **`len=201`** ✓ |
+
+处置同 §8.115（对 native 实参守卫）。**残余（如实记录）**：JIT 区域内**多元素**字面量若含
+"浮点 ±0.0 / 次正规"元素会被贴成 int ⇒ 类型标签与解释器分叉（数值相同）；门禁探针
+`probe_array_literal_float` 因此由 `g=[0.0]` 变为 `g=[0]`（已知代价）。精确修法（待做）：按
+§8.116 给每个元素挂"来源证明" —— 当前**无局部量静态类型表**，需要新增来源跟踪 ✓。
+
+#### ② 真正的根因：解释器 `OP_RETURN` 安全点在"调用方是 JIT"时**不是**安全点
+
+排除链（每步实测）：
+
+| 步骤 | 结果 | 结论 |
+| --- | --- | --- |
+| 撤销守卫后重跑 | `Bailouts: 0`，仍 `i=56` | 与 bailout / 重放**无关** |
+| `JIT_FUNC_HOT_THRESHOLD`→100000 | 仍 `i=56` | 不是函数级 JIT |
+| 新增 `LENO_JIT_CLOG=1` 轻量编译日志 | i=49 后编译外层循环；**i=50..56 无任何编译事件** | 不是"刚编译就错" |
+| 同日志的 YIELD 打点 | `YIELD #1` 与 i=56 错值**同轮** | 错值出现在**第一次回收**那一轮 |
+| 新增 `LENO_NO_JIT_YIELD=1`（禁回边让出）| 仍 `i=56` | **不是让出机制** ⇒ 回收入口在别处 |
+
+**根因（代码可证）**：`op_call.inc` 的 `OP_RETURN` 安全点注释写"函数返回是天然的 GC 安全点"——
+**那只在调用方也在解释器里时成立** ✗。JIT 热循环 / 函数级 JIT 调一个解释器函数，该函数
+`OP_RETURN` 时（每 256 次返回检查一次）就会调用 `gc_try_collect_deferred()` ⇒ **调用方 JIT 帧
+仍然活着**；而 JIT 的活值在它自己的 scratch / vstack（机器栈）里，`mark_roots` 只扫 `vm.stack`
+与各帧 `frame->locals` ⇒ **就地回收 = 把仍在使用的对象当垃圾**（静默 use-after-free）✓✓。
+这解释了全部现象：`NO_JIT` 干净 ✓（根本没有 JIT 帧）、禁让出无效 ✓（回收来自 `OP_RETURN`
+而不是让出）、i=56 ≈ 第一次 `deferred_gc` 置位且跨过 256 次返回边界 ✓。
+
+**修法**（`src/gc.c` 两处入口，JIT 帧内一律**推迟**而非就地回收）：
+
+```c
+void gc_try_collect_deferred(void) {
+    if (!gc.deferred_gc || gc.running || !gc.enabled) return;
+    if (jit_in_frame()) return;          /* 保持 deferred_gc 置位 ⇒ 留到 JIT 出口后再收 */
+    gc.deferred_gc = 0; ...
+}
+void gc_force_collect(void) {
+    if (!gc.enabled || gc.running) return;
+    if (jit_in_frame()) { gc.deferred_gc = 1; return; }   /* 请求不丢 */
+    gc.deferred_gc = 0; ...
+}
+```
+
+与 `gc_alloc` 的 malloc 失败路径（§8.36 已有 `jit_in_frame()` 守卫）**同一条理由**；真正的回收
+留给 JIT 出口（回边让出 / 循环与函数级 JIT 全部退出时，活值已被出口路径写回/发布）✓。
+
+#### 验证（全绿）
+
+| 项 | 结果 |
+| --- | --- |
+| `_jit_bugs/bug5_aes_int_array_float.leno`（JIT，连跑 3 次）| **`bad_count=0`** ✓（修前固定 `1 @ i=56`）|
+| 同上（`LENO_NO_JIT=1`）| 0 ✓ |
+| crypto 端到端（sha512 / sha256 / hmac_sha256 / pbkdf2 / aes128，JIT 与 NO_JIT 双模式）| **FAIL=0** ✓✓ |
+| `diag_array_literal_guard` / `diag_bailout_double_side_effect` | `Bailouts: 0` / `sum=201 len=201` ✓ |
+| 飞机大战自动驱动 600 帧（`SDL_VIDEODRIVER=dummy` + `LENO_SDL_FRAMES=600`）| 跑完退出、`Bailouts 0`、`Yields 4` ✓ |
+| assert 全套 | **312 passed / 0 failed** ✓ |
+
+**新增诊断开关**（默认零开销）：`LENO_JIT_CLOG=1`（编译/让出事件走 **stdout**，与脚本 `print`
+保序，用于定位"哪次编译/让出对应哪一轮"）、`LENO_NO_JIT_YIELD=1`（关闭回边 GC 让出，判定用）。
+
+#### 教训
+
+1. **"天然安全点"要按调用方的执行引擎判** ✗ —— 同一个 `OP_RETURN`，调用方在解释器里是安全点、
+   调用方是 JIT 就**不是**（活值在机器栈里，GC 看不见）。凡是新增/复用 GC 安全点，都要问一句
+   **"此刻还有 JIT 帧活着吗？"** ✓
+2. **"偶发污染"先别当随机**：原报告是 8%/随机，本地复现是**确定性 i=56** —— 确定性的那个才能
+   二分、才有判据、才可修 ✓。
+3. **保守守卫若在普通输入上触发，它就不是保守而是 bug**（§8.115 已立）—— 这次是同一个判据的
+   **第 3 处落点**（native 实参 §8.115、concat §8.116、数组字面量 §8.126）⇒ 立守卫时**必须拿
+   真实语料数一数触发次数** ✓。
+
+***
+
 ## 9. 性能数据
 
 ### 测试环境
