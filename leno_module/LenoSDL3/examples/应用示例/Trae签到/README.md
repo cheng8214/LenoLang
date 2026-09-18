@@ -41,11 +41,19 @@ set TRAE_CHECKIN_DEBUG=1                   # 打印 HTTP 码与原始响应（�
 
 ⇒ 两者解出的 token **完全一致** ✓✓（`tools/check_real.js` 是 node 侧脚本，只打印可公开的元信息）。
 
-**`status` 结果**：HTTP 200，服务端返回
-`{"checked_in":false,"code":1001,"enable":false,"message":"...not able to authenticate you..."}`
-⇒ 工具按参考件逻辑报「账号状态异常（token 可能已过期）」✓ —— 既然 token 与参考实现逐字相同，
-**这不是移植问题**，而是本机这份登录态已失效（需在 Trae 客户端重新登录后再点/跑一次）✓。
-`TRAE_CHECKIN_DEBUG=1` 可看到同样的原始响应 ✓。
+**`status` / 签到结果**（修掉下面的坑之后）：
+
+```
+status → 今日未签到。积分 base=150 extra=50
+签到   → 签到成功！积分 base=150 extra=50        ← 真跑完了 claim + 二次确认 ✓
+```
+
+> ⚠ **踩坑（已修，值得所有 LenoWeb 使用者注意）**：`client.setHeaders([...])` 是**替换**语义（不是追加）⇒
+> 我一开始先设 `Content-Type/Authorization/x-device-id`、再用第二次调用补 `X-User-Region`，
+> 结果前三个头**被覆盖掉** ⇒ 服务端看到未鉴权请求，返回
+> `{"code":1001,"message":"...not able to authenticate you..."}` ✗。
+> 现象很像「token 过期」，其实不是（token 与参考实现逐字相同 ✓）。**⇒ 所有头必须一次设完** ✓。
+> `TRAE_CHECKIN_DEBUG=1` 会打印 HTTP 码与原始响应，用来分辨这类问题 ✓。
 
 ## 语言侧注意点（踩过的）
 

@@ -226,7 +226,7 @@ main() {
     }
     // ---- diag：与参考实现交叉验证用（只打印可公开的元信息，**不打印 token**）----
     if mode == "diag" {
-        print("[leno] 品牌=" + acct_brand + " 账号=" + username + " token长度=" + token.len() + " 设备ID=" + dc_id + "\n")
+        print("[leno] 品牌=" + acct_brand + " 账号=" + username + " token长度=" + token.len() + " 设备ID=" + dc_id + " region=" + region + "\n")
         return
     }
 
@@ -234,12 +234,23 @@ main() {
     net.globalInit()
     HttpClient c = net.createClient()
     c.setTimeout(20000)
-    c.setHeaders([
-        "Content-Type: application/json",
-        "Authorization: Cloud-IDE-JWT " + token,
-        "x-device-id: " + dc_id
-    ])
-    if region != "" { c.setHeaders(["X-User-Region: " + region]) }
+    // ⚠ 必须**一次**设完所有头：`setHeaders` 若是替换语义，分两次调用会把 Authorization /
+    // x-device-id 覆盖掉 ⇒ 服务端看到未鉴权请求，返回 `code:1001 not able to authenticate you`
+    // （实测踩过这个坑 ✗）。所以这里按有无 region 走两条完整列表，绝不追加第二次。
+    if region != "" {
+        c.setHeaders([
+            "Content-Type: application/json",
+            "Authorization: Cloud-IDE-JWT " + token,
+            "x-device-id: " + dc_id,
+            "X-User-Region: " + region
+        ])
+    } else {
+        c.setHeaders([
+            "Content-Type: application/json",
+            "Authorization: Cloud-IDE-JWT " + token,
+            "x-device-id: " + dc_id
+        ])
+    }
 
     say("品牌: " + acct_brand + "  账号: " + username + "  设备ID: " + dc_id + "\n")
 
