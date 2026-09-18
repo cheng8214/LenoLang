@@ -1,0 +1,44 @@
+// diag: 验证 `OP_ARRAY` 的"歧义区守卫"判据（见 README-bug5.md 可疑点 1）
+//
+// 守卫（ops_callout.inc 的 case OP_ARRAY）：
+//     r8 = raw >> 47(算术);  test r8,r8;  JZ ⇒ bailout
+// 即 `raw >> 47 == 0` ⇔ `0 <= raw < 2^47` —— **所有非负 int48**。
+//
+// 预期（若判据过宽）：
+//   · pos()（元素 1/2/3，非负）→ 每轮在 OP_ARRAY bail，x3 后被拉黑；
+//   · zer()（元素 0）        → 同上（raw = 0 ⇒ 也是 0）；
+//   · neg()（元素 -1/-2/-3） → raw>>47 == -1 ⇒ 不 bail，保持 JIT。
+// 判读：JIT stats 里若出现 fn='pos'/'zer' 的 `触发指令=OP_ARRAY x3` 且 **没有** fn='neg'
+//       ⇒ 判据确实只看"非负"这一半，= 值域判据不可用（需 §8.104 的来源槽类型位图）。
+func pos(int n): int {
+    var acc = 0
+    for 0:n to i {
+        var a = [1, 2, 3]
+        acc = acc + a[0] + a[1] + a[2]
+    }
+    return acc
+}
+
+func neg(int n): int {
+    var acc = 0
+    for 0:n to i {
+        var a = [-1, -2, -3]
+        acc = acc + a[0] + a[1] + a[2]
+    }
+    return acc
+}
+
+func zer(int n): int {
+    var acc = 0
+    for 0:n to i {
+        var a = [0, 0, 0]
+        acc = acc + a[0] + a[1] + a[2]
+    }
+    return acc
+}
+
+main() {
+    print("pos=" + _str(pos(2000)) + "\n")
+    print("neg=" + _str(neg(2000)) + "\n")
+    print("zer=" + _str(zer(2000)) + "\n")
+}

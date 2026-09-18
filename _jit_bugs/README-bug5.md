@@ -74,7 +74,20 @@ Bailout: fn='aes_encrypt_block' loop_bc=236 x3 — 非溢出类 @bc_off=439（= 
 - 三个函数各自的循环里都含数组字面量（如 `aes128_decrypt` 的 16 元素块构造，
   绝对 `bc_off=198` ↔ 源码 `aes128.leno:364`）。
 
-## 可疑点 1：`OP_ARRAY` 的"歧义区守卫"判据过宽（`src/jit/backend/x86_inc/ops_callout.inc`）
+## 可疑点 1【已证实】：`OP_ARRAY` 的"歧义区守卫"判据过宽（`src/jit/backend/x86_inc/ops_callout.inc`）
+
+**已证实（2026-09-18，`_jit_bugs/diag_array_literal_guard.leno`，10 行最小探针，JIT 开）**：
+
+| 探针 | 循环内字面量 | `raw>>47` | JIT stats |
+| --- | --- | --- | --- |
+| `pos()` | `[1, 2, 3]` | 0（非负）| **`fn='pos' 触发指令=OP_ARRAY x3`**（三次后拉黑）|
+| `zer()` | `[0, 0, 0]` | 0 | **`fn='zer' 触发指令=OP_ARRAY x3`**（三次后拉黑）|
+| `neg()` | `[-1, -2, -3]` | -1 | **无 bailout**（循环保持 JIT）|
+
+⇒ 判据确实只命中"非负"这一半：**合法非负 int48 被误杀（过宽）**，
+而 `raw>>47 == -1`（负 int48，同样是歧义区）**反而被放行（漏报）**。
+两个方向都错 ⇒ **值域判据在这件事上不可用**：要么改成"来源槽类型"判据（§8.104 的 RBX 位图），
+要么让 OP_ARRAY 直接走 §8.104 的物化通道 ✓。
 
 §8.105 在该 case 里加的守卫（交给 callout **之前**逐元素检查）：
 
