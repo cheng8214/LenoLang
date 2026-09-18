@@ -1,0 +1,42 @@
+// type_to_string 的缓冲区终结 —— 回归测试
+//
+// 背景（2026-09-18 实测）：type_to_string 用 thread-local 缓冲区，每次先 buf[0]='\0'，
+// 但 build_generic_type_string 的**多数分支只在"追加名字/闭合括号"时补 '\0'**；
+// 只写前缀就 break 的分支不终结 ⇒ 会把**上一次调用**留在缓冲区里的尾巴带出来：
+//   实测 struct 字段 `Array items`（元素类型未指定）报错时输出 `实际 Arrayg`
+//   —— "Array"(5 字符) 覆写到上一轮的 "string" 上，第 6 位留下 'string' 的 'g'。
+// 影响面：所有走"类型字符串"的错误文案 —— 可能带出别的类型名尾巴，误导诊断。
+//
+// 判据：文案里不得出现残留尾巴（`Arrayg`），且必须能读出 `Array`。
+// 触发顺序是确定性的：报错先算"期望 string"（缓冲写入 "string"）再算"实际 Array"，
+// 所以残留字符必然是 'g'。
+//
+// 子进程机器复用 assert/helpers/compiler.leno（S7）。
+
+import dirs
+import files
+import strings
+
+import "helpers/compiler.leno" as ce
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_type_to_string_termination")
+    dirs.delete(work)
+    dirs.mkdir_p(dirs.join(work, "lib"))
+
+    files.write(dirs.join(work, "lib/plain.leno"),
+        "export struct Plain {\n    Array items\n}\n")
+    var main_path = dirs.join(work, "main.leno")
+    files.write(main_path,
+        "import \"lib/plain.leno\" as p\nuse p.Plain\n\n"
+        + "func probe(Plain x): string {\n    return x.items\n}\n\n"
+        + "main() {\n    print(\"OK\")\n}\n")
+
+    var out = ce.expect_error(main_path, "无元素类型的 Array 报错文案", "实际 Array", 0)
+    assert_true(not strings.has(out, "Arrayg"),
+        "类型字符串不应带出上一轮缓冲区的尾巴（Arrayg）；实际输出=" + out)
+
+    dirs.delete(work)
+
+    print("test_type_to_string_termination passed")
+}

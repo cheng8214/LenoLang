@@ -616,6 +616,15 @@ static void build_generic_type_string(TypeInfo* type, char* buf, size_t buf_size
             buf[*offset] = '\0';
         }
     }
+
+    // 统一终结（2026-09-18 修）：各分支**只在"追加名字/闭合括号"时补 '\0'**，只写前缀就
+    // break 的分支（如元素类型未指定的 Array、无名 struct/face/cstruct/clib、无返回类型的
+    // func(...)）不会终结 ⇒ 把**上一次调用**留在 thread-local 缓冲区里的尾巴带出来。
+    // 实测：struct 字段 `Array items` 报错时输出 `实际 Arrayg` —— "Array"(5) 覆写到上一轮的
+    // "string" 上、第 6 位留下 'g'。这一行放在函数末尾，一次覆盖所有分支（各分支自己的终结
+    // 保留不动：递归调用途中也需要终止符，缺了会读到上一层的残留）。
+    // 守这个行为的用例：assert/test_type_to_string_termination.leno
+    if (*offset < buf_size) buf[*offset] = '\0';
 }
 
 // 类型转字符串（使用线程本地存储，确保线程安全）

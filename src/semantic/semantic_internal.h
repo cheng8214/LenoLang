@@ -18,6 +18,11 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast);
 TypeInfo* infer_method_return_type(Semantic* s, TypeInfo* obj_type, const char* method_name);
 TypeInfo* infer_field_type(Semantic* s, TypeInfo* obj_type, const char* field_name, int* out_field_index);
 
+// 把模块符号表里的一条 struct/cstruct 符号，按完整精度搬进当前作用域的符号
+// （字段类型 + 泛型参数）。这是"怎么把模块里的 struct 字段搬进当前作用域"的**唯一实现**：
+// 此前 AST_USE 与 import_type_deps 各写一遍，后者丢嵌套泛型（详见 semantic_type_utils.c）。
+void semantic_attach_struct_fields(Symbol* sym, const ModuleStructSymbol* ssym);
+
 // ============================================================================
 // 前置声明 - 变量解析
 // ============================================================================

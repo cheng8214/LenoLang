@@ -290,51 +290,12 @@
                     break;
                 }
                 if (sym) {
-                    // 根据 is_cstruct 标记决定类型
-                    TypeKind struct_type = struct_sym->is_cstruct ? TYPE_CSTRUCT : TYPE_STRUCT;
-                    sym->type = type_new(struct_type);
-                    sym->type->struct_name = strdup(symbol_name);
-                    sym->struct_field_count = struct_sym->field_count;
-                    sym->struct_field_names = (char**)malloc(sizeof(char*) * struct_sym->field_count);
-                    sym->struct_field_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * struct_sym->field_count);
-                    for (int i = 0; i < struct_sym->field_count; i++) {
-                        sym->struct_field_names[i] = strdup(struct_sym->fields[i].name);
-                        // ★ 优先使用完整类型信息（支持 Array[Array[int]]/Array[Ptr[u8]] 等嵌套泛型）
-                        if (struct_sym->fields[i].type_info) {
-                            sym->struct_field_types[i] = type_copy(struct_sym->fields[i].type_info);
-                            // 传播 nullable 标记（type_info 可能未设置 nullable）
-                            if (struct_sym->fields[i].nullable) {
-                                sym->struct_field_types[i]->nullable = 1;
-                            }
-                        } else {
-                            // 向后兼容：从扁平字段重建类型
-                            sym->struct_field_types[i] = type_new(struct_sym->fields[i].type);
-                            if (struct_sym->fields[i].struct_name) {
-                                sym->struct_field_types[i]->struct_name = strdup(struct_sym->fields[i].struct_name);
-                            }
-                            // 传播 nullable 标记
-                            if (struct_sym->fields[i].nullable) {
-                                sym->struct_field_types[i]->nullable = 1;
-                            }
-                            // 重建 Array[T]/Dict[K,V] 的元素类型信息
-                            if ((struct_sym->fields[i].type == TYPE_ARRAY || struct_sym->fields[i].type == TYPE_DICT)
-                                && struct_sym->fields[i].element_type != TYPE_PTR) {
-                                TypeInfo* elem_type = type_new(struct_sym->fields[i].element_type);
-                                if (struct_sym->fields[i].element_struct_name) {
-                                    elem_type->struct_name = strdup(struct_sym->fields[i].element_struct_name);
-                                }
-                                sym->struct_field_types[i]->element_type = elem_type;
-                            }
-                        }
-                    }
-                    // 设置泛型类型参数信息
-                    sym->struct_type_param_count = struct_sym->type_param_count;
-                    if (struct_sym->type_param_count > 0 && struct_sym->type_param_names) {
-                        sym->struct_type_params = (char**)malloc(sizeof(char*) * struct_sym->type_param_count);
-                        for (int i = 0; i < struct_sym->type_param_count; i++) {
-                            sym->struct_type_params[i] = strdup(struct_sym->type_param_names[i]);
-                        }
-                    }
+                    // 字段与泛型参数：走**唯一实现**（与 import_type_deps 那份收成一份 ——
+                    // 此前两份的字段重建深度不同：那份**不用 type_info**，实测把
+                    // Array[Array[int]] 搬成 Array[Array]。见 semantic_type_utils.c 的
+                    // semantic_attach_struct_fields 说明与
+                    // assert/test_alias_type_deps_struct_fields.leno）
+                    semantic_attach_struct_fields(sym, struct_sym);
                 }
                 // 同时注册 struct 定义到全局表，用于类型检查（face 实现检查）
                 if (!struct_sym->is_cstruct && !struct_def_find(symbol_name)) {

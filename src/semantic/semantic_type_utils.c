@@ -4,6 +4,74 @@
 // 类型推断工具函数
 // ============================================================================
 
+// ============================================================================
+// 把模块符号表里的一条 struct/cstruct 符号，按**完整精度**搬进当前作用域的符号
+// ----------------------------------------------------------------------------
+// 这是"怎么把模块里的 struct 字段搬进当前作用域"的**唯一实现**。此前有两份：
+//   · visit_module.inc 的 AST_USE  —— 优先用 type_info（正确）
+//   · semantic_visit_ast.c 的 import_type_deps —— 只用扁平字段重建（**丢嵌套泛型**）
+// 实测差异（assert/test_alias_type_deps_struct_fields.leno）：声明方 `Array[Array[int]] grid`
+//   经 import_type_deps 进来 → `Array[Array]`，取一层元素后更是**裸 Array**；
+//   经 AST_USE 进来          → `Array[Array[int]]` / `Array[int]` ✓
+// ⇒ 同一个类型因"怎么被导入"得到不同精度，且丢失方向是**静默变粗**。
+//
+// 规则：字段类型优先用 type_info（扫描器对含 `[` 的类型会存完整 TypeInfo，支持
+// Array[Array[int]] / Dict[K,V] / Ptr[T] 等嵌套）；没有 type_info 时才按扁平字段重建
+// （此时才用得上 element_type/element_struct_name）。nullable 必须单独传播 ——
+// type_info 里可能没带（另一处漏过这一条，见 visit_module.inc 的注释）。
+//
+// 不负责：把 struct_def / 方法占位符注册到全局表与 func_table —— 那部分两个调用点
+// 各有差异（dup 处理、错误分支不同），属另一轮收敛；本函数只填"符号自己的类型与字段"。
+// ============================================================================
+void semantic_attach_struct_fields(Symbol* sym, const ModuleStructSymbol* ssym) {
+    if (!sym || !ssym) return;
+
+    TypeKind tk = ssym->is_cstruct ? TYPE_CSTRUCT : TYPE_STRUCT;
+    sym->type = type_new(tk);
+    sym->type->struct_name = strdup(ssym->name ? ssym->name : "");
+
+    sym->struct_field_count = ssym->field_count;
+    sym->struct_field_names = (char**)malloc(sizeof(char*) * ssym->field_count);
+    sym->struct_field_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * ssym->field_count);
+    for (int i = 0; i < ssym->field_count; i++) {
+        sym->struct_field_names[i] = strdup(ssym->fields[i].name);
+        // ★ 优先完整类型信息（嵌套泛型靠它）
+        if (ssym->fields[i].type_info) {
+            sym->struct_field_types[i] = type_copy(ssym->fields[i].type_info);
+            if (ssym->fields[i].nullable) {
+                sym->struct_field_types[i]->nullable = 1;
+            }
+        } else {
+            // 向后兼容：从扁平字段重建类型
+            sym->struct_field_types[i] = type_new(ssym->fields[i].type);
+            if (ssym->fields[i].struct_name) {
+                sym->struct_field_types[i]->struct_name = strdup(ssym->fields[i].struct_name);
+            }
+            if (ssym->fields[i].nullable) {
+                sym->struct_field_types[i]->nullable = 1;
+            }
+            // 重建 Array[T]/Dict[K,V] 的**第一层**元素类型（嵌套层靠上面的 type_info）
+            if ((ssym->fields[i].type == TYPE_ARRAY || ssym->fields[i].type == TYPE_DICT)
+                && ssym->fields[i].element_type != TYPE_PTR) {
+                TypeInfo* elem_type = type_new(ssym->fields[i].element_type);
+                if (ssym->fields[i].element_struct_name) {
+                    elem_type->struct_name = strdup(ssym->fields[i].element_struct_name);
+                }
+                sym->struct_field_types[i]->element_type = elem_type;
+            }
+        }
+    }
+
+    // 泛型类型参数（如 Box[T] 的 [T]）
+    sym->struct_type_param_count = ssym->type_param_count;
+    if (ssym->type_param_count > 0 && ssym->type_param_names) {
+        sym->struct_type_params = (char**)malloc(sizeof(char*) * ssym->type_param_count);
+        for (int i = 0; i < ssym->type_param_count; i++) {
+            sym->struct_type_params[i] = strdup(ssym->type_param_names[i]);
+        }
+    }
+}
+
 // 检查方法名是否是数组元素修改方法
 // 返回：1 = 是，0 = 否
 int type_utils_is_array_element_mutator(const char* method_name) {

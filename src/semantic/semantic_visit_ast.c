@@ -64,39 +64,11 @@ static void import_type_deps(Semantic* s, ImportedModuleInfo* module_info, TypeI
                 SymKind kind = ssym->is_cstruct ? SYM_CSTRUCT : SYM_STRUCT;
                 Symbol* sym = scope_define(s->current, dep_name, kind);
                 if (sym) {
-                    TypeKind tk = ssym->is_cstruct ? TYPE_CSTRUCT : TYPE_STRUCT;
-                    sym->type = type_new(tk);
-                    sym->type->struct_name = strdup(dep_name);
-                    // 复制字段信息（与方法与正常 use struct 一致）
-                    sym->struct_field_count = ssym->field_count;
-                    sym->struct_field_names = (char**)malloc(sizeof(char*) * ssym->field_count);
-                    sym->struct_field_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * ssym->field_count);
-                    for (int fi = 0; fi < ssym->field_count; fi++) {
-                        sym->struct_field_names[fi] = strdup(ssym->fields[fi].name);
-                        sym->struct_field_types[fi] = type_new(ssym->fields[fi].type);
-                        if (ssym->fields[fi].struct_name) {
-                            sym->struct_field_types[fi]->struct_name = strdup(ssym->fields[fi].struct_name);
-                        }
-                        // 复制 nullable 标记（Type? 可空类型）
-                        sym->struct_field_types[fi]->nullable = ssym->fields[fi].nullable;
-                        // 重建 Array[T]/Dict[K,V] 的元素类型信息
-                        if ((ssym->fields[fi].type == TYPE_ARRAY || ssym->fields[fi].type == TYPE_DICT)
-                            && ssym->fields[fi].element_type != TYPE_PTR) {
-                            TypeInfo* elem_type = type_new(ssym->fields[fi].element_type);
-                            if (ssym->fields[fi].element_struct_name) {
-                                elem_type->struct_name = strdup(ssym->fields[fi].element_struct_name);
-                            }
-                            sym->struct_field_types[fi]->element_type = elem_type;
-                        }
-                    }
-                    // 设置泛型类型参数信息
-                    sym->struct_type_param_count = ssym->type_param_count;
-                    if (ssym->type_param_count > 0 && ssym->type_param_names) {
-                        sym->struct_type_params = (char**)malloc(sizeof(char*) * ssym->type_param_count);
-                        for (int tpi = 0; tpi < ssym->type_param_count; tpi++) {
-                            sym->struct_type_params[tpi] = strdup(ssym->type_param_names[tpi]);
-                        }
-                    }
+                    // 字段与泛型参数：走**唯一实现**（此前这份只按扁平字段重建 ⇒ 丢嵌套泛型，
+                    // 与 AST_USE 那份不一致；实测 Array[Array[int]] → Array[Array]。
+                    // 详见 assert/test_alias_type_deps_struct_fields.leno 与
+                    // semantic_type_utils.c 里 semantic_attach_struct_fields 的说明）
+                    semantic_attach_struct_fields(sym, ssym);
                     // 注册 struct 定义到全局表
                     if (!ssym->is_cstruct && !struct_def_find(dep_name)) {
                         ObjStructDef* sdef = struct_def_new(dep_name, ssym->field_count, ssym->method_count);
