@@ -12,6 +12,7 @@
              * val_as_num_ex 提升，所以这里统一用 EMIT_FLOAT_ARGS2 取操作数，
              * NaN-boxed（含 BigInt）一律 bailout 交解释器。 */
             case OP_ADD_FLOAT: {
+                tos_float_prov = 1;   /* §8.127：单路径浮点产出 ⇒ 结果必是 double 位型 */
                 int ta, tb, end_jmp;
                 EMIT_FLOAT_ARGS2(ta, tb);
                 emit_sse2_rr(cb, 0x58, 0, 1);  /* ADDSD xmm0, xmm1 → xmm0 = a + b */
@@ -24,6 +25,7 @@
                 break;
             }
             case OP_SUB_FLOAT: {
+                tos_float_prov = 1;   /* §8.127：同上 */
                 int ta, tb, end_jmp;
                 EMIT_FLOAT_ARGS2(ta, tb);
                 emit_sse2_rr(cb, 0x5C, 0, 1);  /* SUBSD xmm0, xmm1 */
@@ -36,6 +38,7 @@
                 break;
             }
             case OP_MUL_FLOAT: {
+                tos_float_prov = 1;   /* §8.127：同上 */
                 int ta, tb, end_jmp;
                 EMIT_FLOAT_ARGS2(ta, tb);
                 emit_sse2_rr(cb, 0x59, 0, 1);  /* MULSD xmm0, xmm1 */
@@ -54,6 +57,7 @@
              * 无序（NaN 除数，PF=1）不走 bailout：DIVSD 得 NaN，与解释器
              * 结果一致，避免把含 NaN 的热循环整片踢回解释器。 */
             case OP_DIV_FLOAT: {
+                tos_float_prov = 1;   /* §8.127：同上（除零走 bailout ⇒ 不消费该标记）*/
                 int ta, tb, izero, jnan, end_jmp;
                 EMIT_FLOAT_ARGS2(ta, tb);
                 emit_xorpd_xmm_xmm(cb, 2, 2);        /* xmm2 = 0.0 */
@@ -115,6 +119,7 @@
             }
             /* 一元负号：解释器用 val_as_num（int 提升为 double）→ 同样三态取值 */
             case OP_NEG_FLOAT: {
+                tos_float_prov = 1;   /* §8.127：结果必是 double 位型（int 操作数也提升为 double）*/
                 int ta, end_jmp;
                 TOS_CONSUME_RAX();
                 EMIT_NUM_TO_XMM(0, JIT_RAX, JIT_R8, ta);   /* xmm0 = 操作数 */
@@ -142,6 +147,8 @@
                  *      比较结果的新表示会以 NaN-boxed 形式原样漏进 float slot）
                  *   4) NULL_VAL         → 原样（解释器也保持 null）
                  * 其余 NaN-boxed（BigInt/对象）bailout 交解释器，语义与报错天然一致。 */
+                tos_float_prov = 1;   /* §8.127：成功路径结果必是 double 位型（null 原样透传 ⇒
+                                       * 它不是 int48 位型 ⇒ 掩码对它是 no-op，无害 ✓）*/
                 TOS_CONSUME_RAX();
                 emit_mov_rr(cb, JIT_R8, JIT_RAX);
                 emit_sar_imm(cb, JIT_R8, 47);

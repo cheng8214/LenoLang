@@ -1190,6 +1190,62 @@
             case OP_ARRAY: {
                 uint16_t count = rd_short(ip + 1);
                 TOS_SPILL();
+                /* ---- §8.127：给每个元素挂"来源证明"（bit i = 元素 i，按**源码顺序** 0 起）----
+                 * bit=1 ⇒ 该元素的 raw 必是 double 位型 ⇒ callout 内**跳过** int48 装箱启发式
+                 * （`[0.0]` 的 0.0 位型全 0，启发式会把它贴成 int 0 ✗ ⇒ JIT `g=[0]` vs
+                 * NO_JIT `g=[0.0]`）。来源位图由产出该元素的指令置位，见 x86_64.c 的
+                 * `slot_float_prov` 记账（单路径浮点产出 + float 常量 ⇒ 已证明）。
+                 * 元素按源码顺序入栈 ⇒ 元素 i 占 vstack 槽 `vstack - count + i` ✓；
+                 * callout 侧 vstack_top[count-1-i] 与 bit i 一一对应 ✓。 */
+                uint32_t elem_float_prov = 0;      /* 静态通道（编译期已证明）*/
+                int dyn_bt_si[32];                 /* 动态通道：待 BT 的局部量 scratch 槽 */
+                int dyn_bit[32];
+                int dyn_cnt = 0;
+                {
+                    int _base = vstack - (int)count;
+                    for (int _e = 0; _e < (int)count && _e < 32; _e++) {
+                        int _sl = _base + _e;
+                        if (_sl < 0 || _sl >= 64) continue;
+                        if (slot_float_prov[_sl]) { elem_float_prov |= (1u << _e); continue; }
+                        /* ---- 动态通道：元素由 `OP_GET_LOCAL` 产出（`slot_from_si`）----
+                         * RBX 类型位图（bit si = "局部量 si 非 int"）由**序言按所有局部量**
+                         * 逐槽 tag 测试建立 ✓ ⇒ 运行期 `BT RBX, si` 就能拿到"该槽是 float"✓
+                         * （对 int48 值域的 raw：非 int ⇒ 只能是 float ✓，对象的 raw 是
+                         *  NaN-boxed、永不落在 int48 值域 ✓）。
+                         * 两个前提（缺一即弃用，退回默认启发式，**不会**产生新错误）：
+                         *   · 循环体内**不写**该局部量（`local_written_mask`）—— 否则位图是
+                         *     入口快照、会陈旧 ✗（例：循环里 `z = 5` 后仍是 float 位 ⇒ 错 ✗）；
+                         *   · 当前不在内联展开中（`inline_depth == 0`）—— callee 的槽号不在
+                         *     位图覆盖范围（序言只建 n = 调用方局部量）✗。
+                         * 实测收益：`probe_array_literal_float` 的 `[z]`（z 是循环外算出的
+                         * float 0.0，循环内不写 ✓）从 `g=[0]` 回到 `g=[0.0]` ✓。 */
+                        if (inline_depth != 0) continue;
+                        int _si = slot_from_si[_sl];
+                        if (_si < 0 || _si >= 64 || _si >= n) continue;
+                        if (local_written_mask & (1ull << (unsigned)_si)) continue;
+                        dyn_bt_si[dyn_cnt] = _si;
+                        dyn_bit[dyn_cnt]   = _e;
+                        dyn_cnt++;
+                    }
+                }
+                /* 动态部分发码：mask(静态) 存 tmp3；每个动态元素 `bt rbx, si` + 条件 OR。
+                 * 只用 RAX（R8 是 callout 的 ARG3 ✗ 不能借）、不动 RSP ✓（caller 稍后
+                 * 才用 RSP 取 vstack_top）。 */
+                if (dyn_cnt > 0) {
+                    emit_mov_reg_imm64(cb, JIT_RAX, (uint64_t)elem_float_prov);
+                    EMIT_STORE_TMP(tmp3_disp, JIT_RAX);
+                    for (int _d = 0; _d < dyn_cnt; _d++) {
+                        /* bt rbx, si（48 0F BA E3 imm8）→ CF */
+                        emit_byte(cb, 0x48); emit_byte(cb, 0x0F); emit_byte(cb, 0xBA);
+                        emit_byte(cb, 0xE3);
+                        emit_byte(cb, (uint8_t)(dyn_bt_si[_d] & 0xFF));
+                        int _skip = emit_jcc(cb, 0x83);            /* JNC：CF=0（int）⇒ 跳过 */
+                        EMIT_LOAD_TMP(JIT_RAX, tmp3_disp);
+                        emit_alu_imm32_reg(cb, 1, JIT_RAX, (uint32_t)(1u << dyn_bit[_d])); /* OR */
+                        EMIT_STORE_TMP(tmp3_disp, JIT_RAX);
+                        patch_add(ctx, _skip, -1, 0);
+                    }
+                }
                 /* ---- §8.105：字面量元素若落在歧义区 ⇒ bailout ----
                  * 元素转换发生在 **callout 内部**（`jit_callout_array_new` 用 `jit_raw_to_value`），
                  * 那里拿不到"来源槽" ⇒ §8.104 的 RBX 位图判据用不上 ✗ ⇒ 浮点 0.0（位型全 0）
@@ -1219,6 +1275,10 @@
                 EMIT_CALLOUT_BEGIN();
                 EMIT_LOAD_TMP(JIT_ARG1, tmp1_disp);   /* vstack_top (1st arg) */
                 emit_mov_reg_imm64(cb, JIT_ARG2, (uint64_t)count);  /* count (2nd) */
+                if (dyn_cnt > 0)
+                    EMIT_LOAD_TMP(JIT_ARG3, tmp3_disp);          /* §8.127 第3参（含动态位）*/
+                else
+                    emit_mov_reg_imm64(cb, JIT_ARG3, (uint64_t)elem_float_prov);
                 EMIT_CALL(jit_callout_array_new);
                 EMIT_CALLOUT_END();
                 EMIT_STORE_TMP(tmp2_disp, JIT_RAX);

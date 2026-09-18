@@ -2776,7 +2776,7 @@ static ObjNative* jitc_find_method(ObjType type, const char* name) {
 /* Callout: OP_ARRAY (array literal [e1, ..., eN]).
  * JIT virtual stack grows downward: vstack_top[0] = LAST pushed element,
  * vstack_top[count-1] = FIRST pushed element. VM wants [e1..eN] in order. */
-Value jit_callout_array_new(int64_t* vstack_top, uint16_t count) {
+Value jit_callout_array_new(int64_t* vstack_top, uint16_t count, uint32_t float_prov_mask) {
     VM* vm = jit_callout_vm;
     if (!vm) return NULL_VAL;
 
@@ -2787,7 +2787,17 @@ Value jit_callout_array_new(int64_t* vstack_top, uint16_t count) {
         return NULL_VAL;
     }
     for (int i = 0; i < count; i++) {
-        arr->elements[i] = jit_raw_to_value(vstack_top[count - 1 - i]);
+        int64_t raw = vstack_top[count - 1 - i];
+        /* ---- §8.127 来源证明 ----：bit i（源码顺序）由**产出该元素的指令**置位
+         * （单路径浮点产出 / float 常量 ⇒ raw 必是 double 位型 ✓，见 x86_64.c 的
+         * `slot_float_prov`）。置位时**跳过** int48 装箱启发式：否则 `[0.0]` 的 0.0
+         * （位型全 0）会被贴成 int 0 ✗ ⇒ 数组元素类型与解释器分叉（JIT `g=[0]` vs
+         * NO_JIT `g=[0.0]`）。float Value 就是裸 double 位型（同上文注释）⇒ `(Value)raw` ✓。
+         * 未置位 ⇒ 保持原启发式（与今天完全一致，不漏不错）。 */
+        if (i < 32 && (float_prov_mask & (1u << (unsigned)i)))
+            arr->elements[i] = (Value)raw;
+        else
+            arr->elements[i] = jit_raw_to_value(raw);
     }
     arr->count = count;
 

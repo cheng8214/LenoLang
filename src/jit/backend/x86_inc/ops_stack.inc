@@ -287,6 +287,7 @@
                 } else if (val_is_float(cv)) {
                     emit_mov_reg_imm64(cb, JIT_RAX, cv);
                     TOS_PRODUCE();
+                    tos_float_prov = 1;   /* §8.127：float 常量 ⇒ raw 必是 double 位型 ✓ */
                 } else {
                     emit_mov_reg_imm64(cb, JIT_RAX, cv);
                     TOS_PRODUCE();

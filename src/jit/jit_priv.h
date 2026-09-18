@@ -621,7 +621,7 @@ int jit_resolve_method_typed(Chunk* chunk, uint16_t name_const_idx, uint16_t typ
  *   - native 内部抛错 → 置 jit_callout_failed，codegen 检查后 bailout
  * 支持 1..4 个 double 参数（xmm0..3；首参寄存器位放桥函数指针）。 */
 void* jit_thin_bridge_for(int arity);
-Value jit_callout_array_new(int64_t* vstack_top, uint16_t count);
+Value jit_callout_array_new(int64_t* vstack_top, uint16_t count, uint32_t float_prov_mask);
 
 /* ---- R6-i：字典字面量 `{k:v, ...}`（OP_DICT）----
  * 解释器语义（vm/vminc/op_dict.inc）：`dict_new(max(count,8))` → 从栈顶**逆序**取 count 组

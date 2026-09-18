@@ -1279,6 +1279,61 @@ int compile_loop(CodegenCtx* ctx) {
     int vstack = 0;
     int tos_live = 0;  /* TOS register cache: 1=RAX holds TOS, 0=all on memory stack */
 
+    /* ---- §8.127：vstack 各槽的「来源证明」位图 ----
+     * 语义：bit=1 ⇒ **该槽的 raw 一定是一个 double 的位置模式**（必须按浮点装箱，不能走
+     * "在 int48 值域内就当 int" 的默认启发式）。这正是 §8.105/§8.116 那族"值域判据无解"
+     * 问题的**精确判据**：值域永远判不出 `0.0`（位型全 0）与 int 0 的区别，但产出指令可以 ✓。
+     *
+     * 置位规则（严格保守，宁可漏不可错）：
+     *   · 只由**语义上确为浮点**的产出指令置位：`OP_CONST`（常量表里就是 float ✓）、
+     *     `OP_ADD_FLOAT / SUB / MUL / DIV / NEG_FLOAT / CAST_FLOAT`（单路径 ⇒ 结果必是
+     *     IEEE double ✓）。多路径 opcode（通用 `OP_ADD/SUB/MUL/DIV/MOD`）**一律不置位** ✓
+     *     （同一写法在 §8.116 已被证明会误信 ⇒ 只进白名单单路径指令）；
+     *   · 其余一切情况**清零**（未知）：包括局部量读取、下标、callout 结果、净推 ≠ 1 的指令。
+     *     ⇒ 漏标的唯一代价 = 回到今天的行为（该元素仍走默认启发式），**不会**产生新错误 ✓。
+     *   · 顶槽每当可能被覆盖（净推 ≤ 0）就先清零 ⇒ 不存在"陈旧标记"✗。
+     * 消费方：`ops_callout.inc` 的 `OP_ARRAY`（把每个元素的证明位打包成掩码交给 callout）。 */
+    unsigned char slot_float_prov[64];
+    /* §8.127 第二通道：该槽若由 `OP_GET_LOCAL`（读局部量）产出，记下它的 scratch 槽号 si
+     * （-1 = 不是局部量读取）。用途：局部量的类型位图（RBX，序言按**所有**局部量逐槽
+     * 按 tag 建立 ✓，见 prologue 的 `for (i < n = num_locals)`）在 OP_ARRAY 处可用
+     * `BT RBX, si` **运行期**取得"该局部量当前非 int"⇒ 对 int48 值域的 raw 即"是 float"✓。
+     * 前提：该局部量在**循环体内不被写入**（否则位图是入口快照、会陈旧 ✗）—— 由下面的
+     * local_written_mask 判定（保守：不确定的一律当作"被写"⇒ 弃用该通道 ✓）。 */
+    int slot_from_si[64];
+    for (int _i = 0; _i < 64; _i++) { slot_float_prov[_i] = 0; slot_from_si[_i] = -1; }
+
+    /* §8.127：循环体内**被写入**的局部量集合（bit si）。前置线性扫描 + 保守缺省：
+     * 长度未知的 opcode ⇒ 直接全 1（放弃本优化，行为回到今天 ✓）。 */
+    uint64_t local_written_mask = 0;
+    {
+        const uint8_t* _p  = ctx->body_start;
+        const uint8_t* _pe = ctx->body_start + sr->body_size;
+        while (_p < _pe) {
+            uint8_t _op = *_p;
+            int _sz = opcode_size_chunk(ctx->chunk, _p);
+            if (_sz <= 0) { local_written_mask = ~0ull; break; }
+            switch (_op) {
+                case OP_SET_LOCAL: case OP_SET_LOCAL_POP:
+                case OP_MOVE_LOCAL: case OP_MOVE_LOCAL_POP:
+                case OP_SET_LOCAL_CONST:
+                case OP_INC_LOCAL: case OP_DEC_LOCAL:
+                case OP_PRE_INC_LOCAL: case OP_PRE_DEC_LOCAL:
+                case OP_INC_LOCAL_NOPUSH: case OP_DEC_LOCAL_NOPUSH: {
+                    int _si = sr->local_map[rd_short(_p + 1)];
+                    if (_si >= 0 && _si < 64) local_written_mask |= (1ull << _si);
+                    break;
+                }
+                case OP_CLEAR_LOCAL_RANGE:      /* base+count 整段清 ⇒ 不逐个分析，保守全置 */
+                    local_written_mask = ~0ull;
+                    break;
+                default: break;
+            }
+            if (local_written_mask == ~0ull) break;
+            _p += _sz;
+        }
+    }
+
     /* Helper: check if current bc_off matches an inline site */
     #define FIND_INLINE_SITE(off) \
         ({ int _idx = -1; \
@@ -1400,6 +1455,11 @@ int compile_loop(CodegenCtx* ctx) {
          * 每轮迭代重置 ⇒ 只对"紧跟 GET_LOCAL 的那次转换"生效，绝不外溢到别的操作数。 */
         int tos_from_si = -1;
 
+        /* §8.127：本指令的"结果必为 double raw"声明（默认 0 = 未知）。各 case 在**单路径
+         * 浮点产出**位置上置 1；配合下面的净推 1 记账写进 slot_float_prov。 */
+        int tos_float_prov = 0;
+        int vs_before = vstack;
+
         switch (op) {
             #include "x86_inc/ops_stack.inc"
             #include "x86_inc/ops_globals.inc"
@@ -1416,6 +1476,26 @@ int compile_loop(CodegenCtx* ctx) {
             #include "x86_inc/ops_callout.inc"
             #include "x86_inc/ops_return.inc"
             #include "x86_inc/ops_misc.inc"
+        }
+
+        /* ---- §8.127：来源位图记账（保守：除"净推 1 且已声明为 double"外一律清零）----
+         * 净推 = vstack - vs_before。多推（净推 > 1）的槽、净推 ≤ 0 时被覆盖的顶槽、
+         * 以及未声明类型的指令 ⇒ 全部记为"未知"（继续走默认装箱启发式）。 */
+        if (vstack != VSTACK_UNREACHABLE) {
+            int _vb = (vs_before == VSTACK_UNREACHABLE) ? vstack : vs_before;
+            for (int _s = (_vb < vstack ? _vb : vstack); _s < vstack && _s < 64; _s++)
+                if (_s >= 0) { slot_float_prov[_s] = 0; slot_from_si[_s] = -1; }  /* 新增槽：未知 */
+            int _vt = vstack - 1;
+            if (_vt >= 0 && _vt < 64) {
+                slot_float_prov[_vt] = 0;                     /* 顶槽可能被 pop→push 覆盖 */
+                slot_from_si[_vt] = -1;
+                if (vstack == _vb + 1) {
+                    if (tos_float_prov)
+                        slot_float_prov[_vt] = 1;             /* 单路径浮点产出 ⇒ 已证明 */
+                    else if (tos_from_si >= 0)
+                        slot_from_si[_vt] = tos_from_si;      /* 局部量读取 ⇒ 第二通道 */
+                }
+            }
         }
 
         ip += size;
