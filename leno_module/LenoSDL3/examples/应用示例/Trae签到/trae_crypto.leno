@@ -780,7 +780,7 @@ func trae_pkcs7_unpad(Array[int] bs):Array[int] {
 }
 
 // 完整解密：enc(base64) → auth JSON 字符串
-func trae_decrypt_auth(string enc_b64):string {
+export func trae_decrypt_auth(string enc_b64):string {
     Array[int] t = trae_b64_to_bytes(enc_b64)
     if t.len() < TRAE_EM + TRAE_RV + 16 { return "" }
     var key = []

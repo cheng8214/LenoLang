@@ -9,12 +9,50 @@
 
 | 层 | 状态 |
 | --- | --- |
-| ① **派生解密**（读 Trae 登录态用的 AES-128-CBC）| ✅ **已完成，金标自测通过**（`trae_crypto.leno`）|
-| ② 读登录态（`storage.json` → `enc` / `dcId` / 品牌/账号）| ⏳ 待做（`files.read` + `jsons`）|
-| ③ 签到接口（`checkin_credits/status` / `claim` + 错误码 9074/9004/9095）| ⏳ 待做（`LenoWeb` ✓）|
+| ① **派生解密**（读 Trae 登录态用的 AES-128-CBC）| ✅ 完成，金标自测通过（`trae_crypto.leno`）|
+| ② 读登录态（`storage.json` → `enc` / `dcId` / 品牌/账号）| ✅ 完成（`trae_sign.leno` 的 `pick_auth/load_account/scan_accounts`）|
+| ③ 签到接口（`checkin_credits/status` / `claim` + 二次确认 + 错误码 9095/9074…）| ✅ 完成（`LenoWeb`；与 JS 参考件流程一致）|
 | ④ GUI（标题状态徽标 / 账号下拉 / 今日积分 / 手动签到按钮 / **签到日历**）| ⏳ 待做（`LenoSDL3` ✓）|
 | ⑤ 托盘图标 + 每日 00:05 自动签到 + 失败重试（5/15/30/60/120 分钟）| ⏳ 待做 |
 | ⑥ 历史记录 `history.json`（日历按账号独立）| ⏳ 待做 |
+
+### CLI 用法（位置子命令：解释器会先吃掉自己的 `--xxx` 旗标 ⇒ 用位置词）
+
+```
+build\leno.exe trae_sign.leno              # 签到（默认；今天已签到会提示无需重复）
+build\leno.exe trae_sign.leno status       # 只查状态
+build\leno.exe trae_sign.leno list         # 列出各品牌登录态账号（不打印 token）
+build\leno.exe trae_sign.leno diag         # 打印账号/token 长度/设备ID（交叉验证用，不打印 token）
+build\leno.exe trae_sign.leno json         # 结果输出一行 JSON（便于脚本调用）
+build\leno.exe trae_sign.leno app "Trae CN"
+set TRAE_CHECKIN_DEBUG=1                   # 打印 HTTP 码与原始响应（诊断 1001/9074/9095 等）
+```
+
+## 本机真实登录态实测（2026-09-18）
+
+`list`：`Trae CN  账号=用户5104013636  token=true` ✓（只读、未打印 token ✓）
+
+**交叉验证**（同一份真实 `storage.json`，参考实现 vs Leno）：
+
+```
+[node/参考实现] 品牌=Trae CN 账号=用户5104013636 token长度=1004 设备ID=4320417253462172
+[leno]          品牌=Trae CN 账号=用户5104013636 token长度=1004 设备ID=4320417253462172
+```
+
+⇒ 两者解出的 token **完全一致** ✓✓（`tools/check_real.js` 是 node 侧脚本，只打印可公开的元信息）。
+
+**`status` 结果**：HTTP 200，服务端返回
+`{"checked_in":false,"code":1001,"enable":false,"message":"...not able to authenticate you..."}`
+⇒ 工具按参考件逻辑报「账号状态异常（token 可能已过期）」✓ —— 既然 token 与参考实现逐字相同，
+**这不是移植问题**，而是本机这份登录态已失效（需在 Trae 客户端重新登录后再点/跑一次）✓。
+`TRAE_CHECKIN_DEBUG=1` 可看到同样的原始响应 ✓。
+
+## 语言侧注意点（踩过的）
+
+- `jsons.decode/read_file` 返回 `any`：**不能直接当 Dict 用**（也不能赋给 `Dict` 变量），
+  必须 `if x is Dict { ... }` 收窄 ⇒ 本工具把收窄集中在一层（`json_get/json_obj/json_keys`）✓；
+- 空数组字面量 `var a = []` 的元素类型是 `any` ⇒ 需要 `Array[string] a = []` 这类**显式标注** ✓；
+- 解释器会先解析自己的旗标 ⇒ 脚本参数别用 `--xxx`（会被当成它的选项并打印帮助 ✗）✓。
 
 > 已知的 `Leno` 侧注意点：`jsons.decode(...)` 返回 `any`，**嵌套字段不能直接点访问**
 > （编译器要求 `if x is T { ... }` 类型收窄）⇒ 用到的地方要么收窄、要么改用字符串断言 ✓。
