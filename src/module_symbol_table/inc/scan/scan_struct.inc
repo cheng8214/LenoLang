@@ -803,7 +803,16 @@
                                                 }
                                                 fields[field_count].line = fl;
                                             }
-                                            // 如果是未识别的自定义类型，检查是否是 alias、clib 或 struct
+                                            // 未识别的自定义类型：alias / clib / struct / cstruct / face 五处都要查
+                                            // ⚠ 2026-09-18：此前只查 alias/clib/struct，**漏了 cstruct 与 face**
+                                            //   ⇒ 用它们声明的字段在**别的文件里**静默降级成 any，且消费方是
+                                            //   **硬编译错**（「不能在 any 类型上调用方法」「不能在 any 类型上直接访问
+                                            //   字段」），不是"能跑但降级"。实测：SDL3 里 14 处 face 字段
+                                            //   （Window._root / Splitter._first / Panel._layoutChild … 声明类型都是 Widget）。
+                                            //   同一文件里另两处口径还各不相同（元素类型段查 struct/face/clib、
+                                            //   函数参数段查 clib/face/cstruct）—— 三处都该是这五处。
+                                            //   名字表两条来源都已填好：本地声明 scan_pass1.inc（cstruct:139 / face:157）、
+                                            //   use 传导 scan_pass2_init.inc（cstruct:414 / face:450）⇒ 补分支即可覆盖。
                                             if (ft == TYPE_ANY) {
                                                 // ★ 先检查本地 alias（如 Color = int）
                                                 //   alias 在 scan_alias.inc 中注册到 local_alias 表，
@@ -811,8 +820,13 @@
                                                 TypeInfo* alias_ti = FIND_LOCAL_ALIAS(type_str);
                                                 if (alias_ti) {
                                                     fields[field_count].type = alias_ti->kind;
-                                                    // alias 可能指向 struct/face/clib（如 Node = TreeNode）
-                                                    if (alias_ti->kind == TYPE_STRUCT && alias_ti->struct_name) {
+                                                    // alias 可能指向 struct/face/cstruct/clib（如 Node = TreeNode）
+                                                    // —— 这四类都要把**底层名字**带过去，否则消费方拿到的是
+                                                    // "有种类没名字"的半截类型信息（本行注释原就写着 face/clib，
+                                                    // 但代码只处理了 struct，顺手补齐）
+                                                    if (alias_ti->struct_name &&
+                                                        (alias_ti->kind == TYPE_STRUCT || alias_ti->kind == TYPE_CSTRUCT ||
+                                                         alias_ti->kind == TYPE_FACE || alias_ti->kind == TYPE_CLIB)) {
                                                         fields[field_count].struct_name = strdup(alias_ti->struct_name);
                                                     }
                                                 } else if (is_known_clib(type_str, clib_names, clib_name_count)) {
@@ -821,11 +835,17 @@
                                                 } else if (is_known_struct(type_str, struct_names, struct_name_count)) {
                                                     fields[field_count].type = TYPE_STRUCT;
                                                     fields[field_count].struct_name = strdup(type_str);
+                                                } else if (is_known_cstruct(type_str, cstruct_names, cstruct_name_count)) {
+                                                    fields[field_count].type = TYPE_CSTRUCT;
+                                                    fields[field_count].struct_name = strdup(type_str);
+                                                } else if (is_known_face(type_str, face_names, face_name_count)) {
+                                                    fields[field_count].type = TYPE_FACE;
+                                                    fields[field_count].struct_name = strdup(type_str);
                                                 }
                                             }
                                             // ---- 静默降级要出声 ----
                                             // 走到这里仍是 TYPE_ANY，说明这个类型的名字**一个都没认出来**：不是内置类型，
-                                            // 也不是本地 alias/clib/struct，更不在"从依赖模块传导来的类型名"里。消费方
+                                            // 也不是本地 alias/clib/struct/cstruct/face，更不在"从依赖模块传导来的类型名"里。消费方
                                             // （visit_module.inc 的 AST_USE）会照单全收 ⇒ 字段在**别的文件里**退化成 any，
                                             // 而错误在很远的调用点才爆发 —— 本次实测就是这种形态：声明方用裸名 import 时
                                             // Sound 传导不过来，消费方 `h.bgm.ok` 报"不能在 any 类型上直接访问字段"。

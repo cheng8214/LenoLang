@@ -2190,20 +2190,22 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     ast->cached_type = type_new(TYPE_STRING);
                     return type_copy(ast->cached_type);
                 } else if ((obj_type->kind == TYPE_STRUCT || obj_type->kind == TYPE_CSTRUCT) && obj_type->struct_name) {
-                    // 处理 struct/cstruct 字段访问：从符号表查找 struct/cstruct 定义并获取字段类型
-                    Symbol* struct_sym = scope_resolve(s->current, obj_type->struct_name);
-                    if (struct_sym && struct_sym->struct_field_names && struct_sym->struct_field_types) {
-                        // 获取索引的字段名（应该是字符串字面量）
-                        if (ast->u.index.index && ast->u.index.index->kind == AST_STRING) {
-                            const char* field_name = ast->u.index.index->u.string.value;
-                            for (int i = 0; i < struct_sym->struct_field_count; i++) {
-                                if (strcmp(struct_sym->struct_field_names[i], field_name) == 0) {
-                                    ast->cached_type = type_copy(struct_sym->struct_field_types[i]);
-                                    fix_struct_to_face(ast->cached_type);
-                                    type_free(obj_type);
-                                    return type_copy(ast->cached_type);
-                                }
-                            }
+                    // 处理 struct/cstruct 字段访问：走**统一**的字段类型推断（infer_field_type）
+                    // ⚠ 2026-09-18 修：此前这里只用 `scope_resolve(struct_name)` **一级**查找
+                    //   ⇒ 消费方没有 use 该 struct/cstruct 类型名时（如 `h.v.x`，h.v 是别的模块
+                    //   的 cstruct）取不到字段、**静默返回 any**；而同一件事在 AST_FIELD_ACCESS
+                    //   那条路（infer_field_type）是**三级**查找：作用域 → 全局定义表 →
+                    //   导入模块的符号表。两处深度不一致 ⇒ 同一个表达式仅因写法不同得到不同结论
+                    //   （实测：`h.v.x` 在没 use `Vec` 时是 any、use 了才是 int）。
+                    //   顺带对齐 cstruct 字段的 C 布局类型映射（i32→int，见 c_layout_type_to_leno）。
+                    if (ast->u.index.index && ast->u.index.index->kind == AST_STRING) {
+                        const char* field_name = ast->u.index.index->u.string.value;
+                        TypeInfo* field_type = infer_field_type(s, obj_type, field_name, NULL);
+                        if (field_type) {
+                            ast->cached_type = field_type;   // 所有权转移（调用方负责 type_free）
+                            fix_struct_to_face(ast->cached_type);
+                            type_free(obj_type);
+                            return type_copy(ast->cached_type);
                         }
                     }
 
