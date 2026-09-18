@@ -1,0 +1,29 @@
+// §8.128 诊断（形态扫描 v5）：显式 any 容器来源 = **dict 值**（`Array[any]` 声明语法不支持 ✗）。
+// 若这条也不分叉，则"写回位图陈旧"在源码层不可达 ⇒ 根因只影响精度（数组字面量元素类型）。
+// 期望：所有形态 JIT == LENO_NO_JIT。
+
+var D = {"k": 1.0, "j": 2}
+
+main() {
+    // A：入口 = dict 值（运行期 float ⇒ bit=1），循环内赋 **int**
+    var a = null
+    a = D["k"]
+    print("pre=[" + a + "]\n")        // 诊断：进循环前 a 的"观测类型"（1.0=float / 1=int）
+    int i = 0
+    while i < 300 { a = 7; i = i + 1 }
+    print("A=[" + a + "]\n")
+
+    // B：入口 = dict 值（float ⇒ bit=1），循环内赋"运行期 int 的 dict 值"
+    var b = null
+    b = D["k"]
+    int j = 0
+    while j < 300 { b = D["j"]; j = j + 1 }
+    print("B=[" + b + "]\n")
+
+    // C（对照）：入口 = dict 值（int ⇒ bit=0），循环内赋 float
+    var c = null
+    c = D["j"]
+    int k = 0
+    while k < 300 { c = 1.5; k = k + 1 }
+    print("C=[" + c + "]\n")
+}

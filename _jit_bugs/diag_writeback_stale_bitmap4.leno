@@ -1,0 +1,24 @@
+// §8.128 诊断（形态 v6）：写回的另一半 —— **入口 int（bit=0）→ 循环内变成 float 0.0**。
+// 机制（由 v5 的 `A=[7]` 反推）：`any` 类型局部量在 JIT 里按 **Value（装箱）** 存，所以
+// bit=1 的"原样存回"是对的 ✓；但 bit=0 时写回走"运行期判 tag 再决定装箱"⇒ 而 float 0.0 的
+// Value 位型恰好落在 int48 值域（全 0）⇒ 会被**再装箱成 int 0** ✗ ⇒ 与解释器分叉。
+// 期望：A=[0.0]（JIT 与 NO_JIT 一致）。
+
+var D = {"i": 5, "z": 0.0}
+
+main() {
+    // A：入口 = dict 的 int 值（bit=0），循环内变成 float 0.0
+    var a = null
+    a = D["i"]
+    print("pre=[" + a + "]\n")
+    int i = 0
+    while i < 300 { a = D["z"]; i = i + 1 }
+    print("A=[" + a + "]\n")
+
+    // B：入口 int（bit=0），循环内变小 float 1.5（位型不在 int48 值域 ⇒ 应正确，对照）
+    var b = null
+    b = D["i"]
+    int j = 0
+    while j < 300 { b = 1.5; j = j + 1 }
+    print("B=[" + b + "]\n")
+}

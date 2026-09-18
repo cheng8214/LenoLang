@@ -458,6 +458,9 @@ int compile_loop(CodegenCtx* ctx) {
      * 明确**不能**置位的：OP_ADD/SUB/MUL 通用版（int/float/concat 多路径）、
      * OP_USHR_IMM（shr 结果可能越出 int48）、OP_CAST_INT 自身（null 路径原样返回）。 */
     int prev_raw_int48 = 0;
+    /* §8.128：紧邻的上一条指令是否由 `EMIT_VALUE_TO_RAW_F()` 产出（即 callout 返回值）。
+     * 与 `prev_raw_int48` 同一套"一次性"语义：跨一条指令即失效 ✓。 */
+    int prev_ret_dbl_flag = 0;
 
     /* ---- §8.46 折叠「一步回看」状态：紧邻的上一条被折叠语句留下的值域掩码 ----
      * 语义：prev_fold_si >= 0 时，该槽的值 ∈ [0, prev_fold_mask]（掩码的位即
@@ -690,6 +693,17 @@ int compile_loop(CodegenCtx* ctx) {
             emit_byte(cb, modrm(3, 7, JIT_R8 & 7)); \
             emit_uint32(cb, 0x0000FFFB); \
         } \
+        /* §8.128：顺手记下"这个 raw 不是 int48"（setne 复用上面算好的 ZF ⇒ 多 1 条指令）\
+         * ⇒ 供 OP_ARRAY 的 callout 来源通道用（值域判据分不出 float 0.0 与 int 0 ✗）。 */ \
+        emit_byte(cb, 0x0F); emit_byte(cb, 0x95);   /* SETNE r/m8 */ \
+        if (ret_dbl_disp >= -128 && ret_dbl_disp <= 127) { \
+            emit_byte(cb, 0x45);                   /* ModRM(01,000,101) = [rbp+disp8] */ \
+            emit_byte(cb, (uint8_t)(int8_t)ret_dbl_disp); \
+        } else { \
+            emit_byte(cb, 0x85);                   /* ModRM(10,000,101) = [rbp+disp32] */ \
+            emit_uint32(cb, (uint32_t)ret_dbl_disp); \
+        } \
+        prev_ret_dbl_flag = 1;                     /* 一次性：只对紧邻的下一条指令有效 */ \
         emit_byte(cb, 0x75); /* jne .not_int */ \
         int _vp = cb->len; \
         emit_byte(cb, 0x00); \
@@ -937,6 +951,12 @@ int compile_loop(CodegenCtx* ctx) {
      * 放**本帧**而不是全局槽：A 调 B 时 B 的 closure 覆盖不到 A 的槽，
      * 嵌套天然隔离（设计文档不变量 I7）。 */
     int closure_disp = -8 * (total_locals + sr->max_vstack + 7);
+
+    /* §8.128：callout 返回值的"是 double 吗"标志（1 字节）。
+     * 位置落在 frame_sz 公式里那多出来的 16 字节（= 2 个空闲槽）内 ⇒ 不必改帧大小 ✓。
+     * 写入点：`EMIT_VALUE_TO_RAW()`（它本来就做 tag 测试 ⇒ 只多付一条 setne ✓）；
+     * 读取点：`OP_ARRAY`（紧邻的 callout 产出元素）。 */
+    int ret_dbl_disp = -8 * (total_locals + sr->max_vstack + 8);
 
     /* ---- Function prologue ---- */
     emit_push_rbp(cb);                        /* push rbp          */
@@ -1390,6 +1410,9 @@ int compile_loop(CodegenCtx* ctx) {
          * 只有**紧邻的前一条**指令作过证明才算数，跨一条就失效）。 */
         int prev_int48 = prev_raw_int48;
         prev_raw_int48 = 0;
+        /* §8.128：消费上一条指令留下的"是 callout 产出"标记（一次性，同 §8.41 的花样）。 */
+        int prev_ret_dbl = prev_ret_dbl_flag;
+        prev_ret_dbl_flag = 0;
 
         /* Restore vstack at forward jump targets — but ONLY when the
          * current code position is truly unreachable via fall-through.

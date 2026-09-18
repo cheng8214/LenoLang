@@ -1,0 +1,24 @@
+// §8.128 诊断（决定性）：any 局部量的 scratch 里到底存的是**裸 raw**还是**装箱 Value**？
+// 判据：入口 bool（非 int ⇒ 位图 bit=1），循环内改成 int（5）。
+//   · 若写回按 bit=1 走"原样存回"：
+//       - scratch 里是**装箱 Value**（0xFFFB|5）⇒ 原样写回 ⇒ VM 读到 int 5 ✓
+//       - scratch 里是**裸 int48**（5）⇒ 原样写回 ⇒ VM 按 double 读到 2.5e-323 ✗✗
+//   所以这一条能一次性判定（并且能判定写回是否真有错值 bug）。
+// 期望：A=[5]（JIT 与 NO_JIT 一致）。
+
+var D = {"b": true, "i": 5, "z": 0.0}
+
+main() {
+    var a = null
+    a = D["b"]                    // 入口 bool ⇒ bit=1
+    print("pre=[" + a + "]\n")
+    int i = 0
+    while i < 300 { a = D["i"]; i = i + 1 }    // 循环内 → int 5
+    print("A=[" + a + "]\n")
+
+    var b = null
+    b = D["i"]                    // 入口 int ⇒ bit=0
+    int j = 0
+    while j < 300 { b = D["z"]; j = j + 1 }    // 循环内 → float 0.0
+    print("B=[" + b + "]\n")
+}

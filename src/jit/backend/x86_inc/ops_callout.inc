@@ -1228,10 +1228,21 @@
                         dyn_cnt++;
                     }
                 }
+                /* ---- §8.128 第三通道：紧邻的上一条指令是 **callout 产出** ----
+                 * `EMIT_VALUE_TO_RAW` 在 tag 转换点上已把"这个 raw 是不是 int48"记进帧标志
+                 * （`setne`，多 1 条指令）⇒ 这里只需读标志就能精确判定装箱方式 ✓。
+                 * 为什么它能修 Docker 形态（`[t[i%2]]`）：元素是 `OP_INDEX` callout 返回的
+                 * VM Value（带 tag ✓）⇒ 位型虽是全 0，但类型在转换那一刻是**已知**的 ✓，
+                 * 而 §8.127 的两条通道（产出指令白名单 / 局部量位图）都覆盖不到它 ✗。
+                 * 覆盖面：**只有最后一个元素**（标志是单字节、只描述最近一次转换；元素按
+                 * 源码顺序入栈 ⇒ 最后入栈者 = 第 count-1 个 ⇒ 与"紧邻"一一对应 ✓）。
+                 * 与 §8.116 的"紧邻白名单"同一取舍：不猜、不 bail，只认得出就认 ✓。 */
+                int use_ret_dbl = (prev_ret_dbl && count > 0 && (int)count <= 32);
+
                 /* 动态部分发码：mask(静态) 存 tmp3；每个动态元素 `bt rbx, si` + 条件 OR。
                  * 只用 RAX（R8 是 callout 的 ARG3 ✗ 不能借）、不动 RSP ✓（caller 稍后
                  * 才用 RSP 取 vstack_top）。 */
-                if (dyn_cnt > 0) {
+                if (dyn_cnt > 0 || use_ret_dbl) {
                     emit_mov_reg_imm64(cb, JIT_RAX, (uint64_t)elem_float_prov);
                     EMIT_STORE_TMP(tmp3_disp, JIT_RAX);
                     for (int _d = 0; _d < dyn_cnt; _d++) {
@@ -1244,6 +1255,24 @@
                         emit_alu_imm32_reg(cb, 1, JIT_RAX, (uint32_t)(1u << dyn_bit[_d])); /* OR */
                         EMIT_STORE_TMP(tmp3_disp, JIT_RAX);
                         patch_add(ctx, _skip, -1, 0);
+                    }
+                    if (use_ret_dbl) {
+                        /* cmp byte [rbp+ret_dbl_disp], 0 ; JE → 跳过（int48 载荷）*/
+                        emit_byte(cb, 0x80);                       /* CMP r/m8, imm8 */
+                        if (ret_dbl_disp >= -128 && ret_dbl_disp <= 127) {
+                            emit_byte(cb, 0x7D);                   /* ModRM(01,111,101) */
+                            emit_byte(cb, (uint8_t)(int8_t)ret_dbl_disp);
+                        } else {
+                            emit_byte(cb, 0xBD);                   /* ModRM(10,111,101) */
+                            emit_uint32(cb, (uint32_t)ret_dbl_disp);
+                        }
+                        emit_byte(cb, 0x00);
+                        int _skip_f = emit_jcc(cb, 0x84);          /* JE：标志=0 ⇒ 是 int48 */
+                        EMIT_LOAD_TMP(JIT_RAX, tmp3_disp);
+                        emit_alu_imm32_reg(cb, 1, JIT_RAX,
+                                           (uint32_t)(1u << (unsigned)(count - 1)));  /* OR */
+                        EMIT_STORE_TMP(tmp3_disp, JIT_RAX);
+                        patch_add(ctx, _skip_f, -1, 0);
                     }
                 }
                 /* ---- §8.105：字面量元素若落在歧义区 ⇒ bailout ----
@@ -1275,8 +1304,8 @@
                 EMIT_CALLOUT_BEGIN();
                 EMIT_LOAD_TMP(JIT_ARG1, tmp1_disp);   /* vstack_top (1st arg) */
                 emit_mov_reg_imm64(cb, JIT_ARG2, (uint64_t)count);  /* count (2nd) */
-                if (dyn_cnt > 0)
-                    EMIT_LOAD_TMP(JIT_ARG3, tmp3_disp);          /* §8.127 第3参（含动态位）*/
+                if (dyn_cnt > 0 || use_ret_dbl)
+                    EMIT_LOAD_TMP(JIT_ARG3, tmp3_disp);   /* §8.127/§8.128 第3参（含动态位）*/
                 else
                     emit_mov_reg_imm64(cb, JIT_ARG3, (uint64_t)elem_float_prov);
                 EMIT_CALL(jit_callout_array_new);
