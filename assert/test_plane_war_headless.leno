@@ -1,0 +1,77 @@
+// 无界面门禁：用 SDL 模块自带的**确定性基准模式**跑真实游戏脚本（飞机大战）。
+//
+// 覆盖：启动（SDL3 模块加载 / 字体 / 音频）→ 逐帧渲染循环 → 跑满退出；
+//       顺带看 JIT 健康度（Bailouts）。
+// 不覆盖：需要键盘输入的交互路径（"回车开始 → 开火两发"）—— SDL dummy 驱动收不到键盘
+//         事件 ⇒ 那条路径仍只能人工跑（或用 SDL_PushEvent 注入，未做）。
+//
+// 依赖的机制：`LENO_SDL_FRAMES=<n>` + `SDL_VIDEODRIVER=dummy`（见 leno_module/LenoSDL3/lib/
+// sdl_window.leno:1067 的说明：跑满 n 帧后自动清理退出并打印一行确定性摘要；纯软件、不开窗口）。
+// 语言没有 setenv 内建（sys.c 只注册了 _env/_os/_exec/_args/_exit）⇒ 环境变量只能在
+// **子进程命令行**里设置，且 Windows(cmd) 与 POSIX(sh) 写法不同 ⇒ 用 `_os()` 分支。
+//
+// 判据：① 正常退出（不卡死）② 出口码 0 ③ 输出含"启动成功" ④ 输出含 frames=<N> 摘要
+//      （=真跑满，不是提前退出）⑤ 若 stderr 可被捕获，则 Bailouts 必须为 0。
+
+import dirs
+import strings
+
+func tail_lines(string s, int n):string {
+    var lines = strings.split(s, "\n")
+    var out = ""
+    int i = lines.len() - n
+    if i < 0 { i = 0 }
+    while i < lines.len() {
+        out = out + lines[i] + "\n"
+        i = i + 1
+    }
+    return out
+}
+
+main() {
+    int frames = 120
+    var leno = dirs.abspath("build\\leno.exe")
+    var game = dirs.abspath("leno_module\\LenoSDL3\\examples\\应用示例\\游戏\\飞机大战\\plane_war.leno")
+    assert_eq(leno != null, true)     // 必须先编译好 build\leno.exe（套件就是用它跑测试的）
+    assert_eq(game != null, true)
+
+    var run = "\"" + leno + "\" --no-cache \"" + game + "\""
+    // 注意：`_exec` 在 Windows 下已经经过 `cmd /c`，这里不要再自己加 "cmd /c"；
+    // `set X=v&&` 里 `&&` 前不留空格，否则值会带上尾空格。
+    var cmd = ""
+    if _os() == "windows" {
+        cmd = "set SDL_VIDEODRIVER=dummy&& set LENO_SDL_FRAMES=" + frames + "&& " + run
+    } else {
+        cmd = "SDL_VIDEODRIVER=dummy LENO_SDL_FRAMES=" + frames + " " + run
+    }
+
+    var r = _exec(cmd)
+    if r == null {
+        assert_eq("_exec 返回 null", "期望 [输出, 退出码]")
+        return
+    }
+    var out = r[0]
+    var code = r[1]
+    if out == null { out = "" }
+
+    // 失败时把尾部输出打出来，便于定位（成功时不打印，保持套件安静）
+    var want_frames = "frames=" + frames + " "
+    if code != 0 or not strings.has(out, want_frames) {
+        print("---- 飞机大战（无界面，" + frames + " 帧）输出尾部 ----")
+        print(tail_lines(out, 25))
+        print("----------------------------------------------")
+    }
+
+    assert_eq(code, 0)                                         // ① 正常退出（卡死会超时/异常收尾）
+    assert_eq(strings.has(out, "[OK] 飞机大战启动成功"), true)        // ② 真的启动起来了
+    assert_eq(strings.has(out, want_frames), true)             // ③ 真跑满 N 帧（不是提前退出）
+
+    // ④ JIT 健康度：仅当 stderr 被 _exec 捕获时才判（捕获不到就跳过，避免误报）
+    if strings.has(out, "Bailouts:") {
+        assert_eq(strings.has(out, "Bailouts: 0"), true)
+    } else {
+        print("  (提示：本次未捕获到 JIT 统计，跳过 Bailouts 判据)")
+    }
+
+    print("test_plane_war_headless passed")
+}

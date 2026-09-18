@@ -7579,7 +7579,20 @@ NaN-boxed int"（`shr 48 / cmp 0xFFFB`）⇒ 顺手加一条 `setne [rbp+ret_dbl
 | `probe_array_literal_float` | `g=[0.0]` ✓，`Bailouts: 0` ✓ |
 | 探针门禁全量 A/B（滤 JIT 统计块）| **IDENTICAL 42 / DIFF 9**；9 个 DIFF 仍是计时类探针 ✓ |
 | `diag_array_literal_guard` / `diag_bailout_double_side_effect` | `Bailouts: 0` ✓ / `sum=201 len=201` ✓ |
-| Bug5 / assert / crypto 五项（双模式）/ 飞机大战 600 帧 | `bad_count=0` ✓ / **312-0** ✓ / FAIL=0 ✓ / 跑完 + `Bailouts 0` ✓ |
+| Bug5 / assert / crypto 五项（双模式）| `bad_count=0` ✓ / **313-0**（含下面的新门禁）✓ / FAIL=0 ✓ |
+| **`assert/test_plane_war_headless.leno`（本轮新增门禁）** | `[PASS]` ⇒ 套件 **313 passed / 0 failed** ✓ |
+
+**飞机大战门禁的落地方式（本轮）**：原先那份手写驱动 `_pw_auto.leno`（41KB、未跟踪）已按用户要求删除 ⇒
+改用 **SDL 模块自带的确定性基准模式**：`SDL_VIDEODRIVER=dummy` + `LENO_SDL_FRAMES=<n>`
+（`leno_module/LenoSDL3/lib/sdl_window.leno:1067` 就是为此设计的：纯软件、不开窗口、跑满 n 帧后自动退出
+并打印一行确定性摘要 ✓），把它包成套件测试 **`assert/test_plane_war_headless.leno`** ✓（跑**真实游戏脚本**、
+120 帧；判据：① 正常退出（不卡死）② 出口码 0 ③ 含 `[OK] 飞机大战启动成功` ④ 含 `frames=120 ` 摘要
+（=真跑满，不是提前退出）；stderr 被捕获时再判 `Bailouts: 0` ✓）。语言没有 setenv 内建
+（`sys.c` 只注册 `_env/_os/_exec/_args/_exit`）⇒ 环境变量只能在子进程命令行里设，且 Windows(cmd) 与
+POSIX(sh) 写法不同 ⇒ 用 `_os()` 分支 ✓。
+**已知不覆盖**：SDL dummy 驱动收不到键盘事件 ⇒ "回车开始 → 开火两发"那条交互路径不在门禁里
+（需人工跑，或用 `SDL_PushEvent` 注入，未做）✓。
+**⇒ 这个文件别再删**：它是飞机大战目前唯一的自动化回归门禁 ✓。
 
 ***
 
