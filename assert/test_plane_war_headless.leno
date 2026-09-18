@@ -31,7 +31,7 @@ func tail_lines(string s, int n):string {
 main() {
     int frames = 120
     var leno = dirs.abspath("build\\leno.exe")
-    var game = dirs.abspath("leno_module\\LenoSDL3\\examples\\应用示例\\游戏\\飞机大战\\plane_war.leno")
+    var game = dirs.abspath("leno_gui\\游戏\\飞机大战\\plane_war.leno")
     assert_eq(leno != null, true)     // 必须先编译好 build\leno.exe（套件就是用它跑测试的）
     assert_eq(game != null, true)
 

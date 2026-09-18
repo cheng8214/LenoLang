@@ -53,6 +53,27 @@ static void resolve_module_full_path(char* full_path, int max_len,
     full_path[0] = '\0';
     if (!module_path) return;
 
+    // ---- 包名写法（不含 .leno）先走搜索路径，与 parser_module.c 的 import 解析**同一口径** ----
+    // 为什么必须有这一步：解析器在 AST 里已经把 "Music" 换成了解析后的真路径，而扫描器是去
+    // **原始源码文本**里反查字面串的（scan/scan_pass2_init.inc、scan/scan_var.inc），拿到的
+    // 仍是裸名。此前这里只按"相对当前文件"拼 ⇒ 得到 <目录>/Music 这种**不存在**的路径 ⇒
+    // 依赖符号表永远取不回来 ⇒ 该模块导出的 struct 里"用那个包的类型声明的字段"静默降级成 any
+    // （实测：声明方用裸名导入时消费方看它的字段类型全是 any；声明方**自己**那一遍完全正常 ——
+    //   那条路走的是语义分析器，不是这张表。相对路径/绝对路径能解析，所以只有裸名塌方。）
+    // 搜索路径由 main.c 在编译前装好（项目 lib/、源文件所在目录、exe_dir/leno_module/<包>/lib/、
+    // 全局缓存包），且都是绝对路径，解析结果可直接交给下面的归一化/绝对化。
+    // VM-only 构建（build_vm.bat）不编 src/package/*：那里扫描链运行期够不到（见
+    // module_symbol_table.c 顶部说明），故整体挡掉，避免为一个不可达路径拖入依赖。
+#ifndef LENO_VM_ONLY
+    char pkg_resolved[MAX_PATH_LEN];
+    if (strstr(module_path, ".leno") == NULL) {
+        extern int package_resolve_module_file(const char* module_name, char* out_path, int out_len);
+        if (package_resolve_module_file(module_path, pkg_resolved, MAX_PATH_LEN) == 1) {
+            module_path = pkg_resolved;
+        }
+    }
+#endif
+
     if (module_path[0] != '/' && module_path[0] != '\\' &&
         !(module_path[1] == ':' && (module_path[2] == '/' || module_path[2] == '\\'))) {
         // 相对路径，基于 current_file 解析

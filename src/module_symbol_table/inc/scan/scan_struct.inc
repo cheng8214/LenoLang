@@ -823,6 +823,23 @@
                                                     fields[field_count].struct_name = strdup(type_str);
                                                 }
                                             }
+                                            // ---- 静默降级要出声 ----
+                                            // 走到这里仍是 TYPE_ANY，说明这个类型的名字**一个都没认出来**：不是内置类型，
+                                            // 也不是本地 alias/clib/struct，更不在"从依赖模块传导来的类型名"里。消费方
+                                            // （visit_module.inc 的 AST_USE）会照单全收 ⇒ 字段在**别的文件里**退化成 any，
+                                            // 而错误在很远的调用点才爆发 —— 本次实测就是这种形态：声明方用裸名 import 时
+                                            // Sound 传导不过来，消费方 `h.bgm.ok` 报"不能在 any 类型上直接访问字段"。
+                                            // 以前这一步完全无声，害得从"报错文件"倒查到"声明方那一行 import"手工找了一轮。
+                                            // 显式写 `any` 的字段不报（那是本意，不是降级）。
+                                            if (fields[field_count].type == TYPE_ANY && type_str[0] &&
+                                                strcmp(type_str, "any") != 0) {
+                                                fprintf(stderr,
+                                                    "[警告] %s:%d: struct '%s' 的字段 '%s' 声明类型 '%s' 无法解析，"
+                                                    "被跨模块使用时会按 any 处理\n",
+                                                    table->module_path ? table->module_path : "?",
+                                                    fields[field_count].line,
+                                                    struct_name, fields[field_count].name, type_str);
+                                            }
                                             fields[field_count].element_type = element_type;
                                             fields[field_count].element_struct_name = element_struct_name;
                                             fields[field_count].nullable = is_nullable;
