@@ -204,6 +204,23 @@ const char* package_search_path_get(int index);
  */
 int package_resolve_module_file(const char* module_name, char* out_path, int out_len);
 
+/**
+ * 把 import 的**写法**解析为搜索路径中的文件 —— "什么算包名写法"的**唯一实现**。
+ *
+ * 规则：写法里**不含 ".leno"** 才按包名处理（在各搜索路径下找 <写法>.leno）；
+ *       含 ".leno" 的一律返回 -1（那是文件路径写法，交给调用方按相对/绝对解析）。
+ *
+ * 调用方：`parser/parser_module.c`（把 AST 里的模块名换成真路径）、
+ *         `module_symbol_table/inc/sym_table_entry.inc`（扫描器解析 import 依赖）。
+ * 加载器 `load_module_file` 不做包搜索（它拿到的是已解析的路径，只拼当前目录 + normalize）。
+ *
+ * @param spec       import 语句里的原始写法（如 "SDL3" / "lib/m.leno" / 绝对路径）
+ * @param out_path   成功时写入找到的完整路径
+ * @param out_len    out_path 大小
+ * @return 1 找到；-1 未找到或不是包名写法
+ */
+int package_resolve_import_spec(const char* spec, char* out_path, int out_len);
+
 /* ============================================================================
  * 全局包缓存
  * ============================================================================ */

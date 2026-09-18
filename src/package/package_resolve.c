@@ -165,3 +165,21 @@ int package_resolve_module_file(const char* module_name, char* out_path, int out
 
     return -1;
 }
+
+/* ============================================================================
+ * "什么算包名写法" —— 唯一实现（S9 收敛）
+ * ----------------------------------------------------------------------------
+ * 规则：写法里**不含 ".leno"** 才按包名处理（在各搜索路径下找 <写法>.leno）；
+ *       含 ".leno" 的一律返回 -1（那是文件路径写法，交给调用方按相对/绝对路径解析）。
+ *
+ * 为什么需要这个包装：这条"包名 vs 文件路径"的判断此前在**多处各写一遍**
+ * （parser_module.c 两处、module_symbol_table 的 resolve_module_full_path 一处；
+ * 加载器 load_module_file 只做"相对路径拼当前目录 + normalize"，不做包搜索）。
+ * 任一处漏改或写歪，就是"同一个 import 在不同阶段解析到不同文件"——S9 那类
+ * 静默降级（裸名导入时跨模块字段类型变 any）正是这么来的。现在两边都只调这里。
+ * ============================================================================ */
+int package_resolve_import_spec(const char* spec, char* out_path, int out_len) {
+    if (!spec || !out_path || out_len <= 0) return -1;
+    if (strstr(spec, ".leno") != NULL) return -1;   /* 文件路径写法，不是包名 */
+    return package_resolve_module_file(spec, out_path, out_len);
+}

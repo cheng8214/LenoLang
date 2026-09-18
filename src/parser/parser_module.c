@@ -51,21 +51,10 @@ Ast* parse_import_stmt(Parser* p) {
         module_name = copy_string(p->lex.current.text, p->lex.current.len);
         lexer_next(&p->lex);
 
-        /*
-         * 如果字符串不包含 .leno（即不是明确的文件路径），
-         * 尝试在搜索路径中查找该模块。
-         * 例如 import "test_pkg" → 在 lib/ 搜索 test_pkg.leno
-         */
-        if (strstr(module_name, ".leno") == NULL) {
-            char resolved_path[1024];
-            if (package_resolve_module_file(module_name, resolved_path, sizeof(resolved_path)) == 1) {
-                /* 找到了！用解析后的路径替换 module_name */
-                free(module_name);
-                module_name = strdup(resolved_path);
-            }
-            /* 找不到也不报错，留给后续阶段（语义分析/codegen）判断 */
-        }
-
+        // 包名解析**不在这里做** —— 见下方 AST 构造后的统一解析：
+        // 那里对"标识符形式"与"字符串形式"走**同一条路**，而这里原先还另抄过一份
+        // （同一个条件 + 同一次 package_resolve_module_file）⇒ 同一规则两份实现，已删。
+        //
         // 检查是否有 as 别名
         if (p->lex.current.type == TOK_AS) {
             lexer_next(&p->lex); // as
@@ -127,12 +116,14 @@ Ast* parse_import_stmt(Parser* p) {
     ast->u.import.module_name = module_name;
     ast->u.import.alias = alias;  // 如果没有别名，alias 为 NULL
     
-    // 如果模块名不含 .leno，尝试通过搜索路径解析为文件模块
-    // 例如 import "SDL3" → 解析为 leno_module/LenoSDL3/lib/SDL3.leno
-    if (strstr(module_name, ".leno") == NULL) {
-        extern int package_resolve_module_file(const char* module_name, char* out_path, int out_len);
+    // 包名写法（不含 .leno）→ 搜索路径里的文件。**"什么算包名写法"这条规则收在
+    // package_resolve_import_spec 里**（解析器 / 扫描器共用一份，见 leno_package.h）。
+    // 例如 import "SDL3" 与 import SDL3 都解析为 leno_module/LenoSDL3/lib/SDL3.leno。
+    // ⚠ 2026-09-18：字符串形式此前在读到字符串时先解析过一次，这里又解析一次 —— 后者对
+    // 字符串形式已是空操作、只对标识符形式有效 ⇒ 同一规则两份实现，已删前一份（S9 收敛）。
+    {
         char resolved[MAX_PATH_LEN] = {0};
-        if (package_resolve_module_file(module_name, resolved, sizeof(resolved)) == 1) {
+        if (package_resolve_import_spec(module_name, resolved, sizeof(resolved)) == 1) {
             // 找到了，将 module_name 替换为完整路径
             free(module_name);
             module_name = strdup(resolved);

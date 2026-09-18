@@ -65,10 +65,12 @@ static void resolve_module_full_path(char* full_path, int max_len,
     // VM-only 构建（build_vm.bat）不编 src/package/*：那里扫描链运行期够不到（见
     // module_symbol_table.c 顶部说明），故整体挡掉，避免为一个不可达路径拖入依赖。
 #ifndef LENO_VM_ONLY
+    // "什么算包名写法"这条规则由 package_resolve_import_spec 统一表达（解析器同款，
+    // 见 leno_package.h）—— 扫描器与解析器不再各写一份 strstr + package_resolve_module_file
     char pkg_resolved[MAX_PATH_LEN];
-    if (strstr(module_path, ".leno") == NULL) {
-        extern int package_resolve_module_file(const char* module_name, char* out_path, int out_len);
-        if (package_resolve_module_file(module_path, pkg_resolved, MAX_PATH_LEN) == 1) {
+    {
+        extern int package_resolve_import_spec(const char* spec, char* out_path, int out_len);
+        if (package_resolve_import_spec(module_path, pkg_resolved, MAX_PATH_LEN) == 1) {
             module_path = pkg_resolved;
         }
     }

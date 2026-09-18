@@ -32,23 +32,28 @@
                     info->alias = module_name;
                     info->file_path = strdup(ast->u.import.file_path);
 
-                    // 创建模块符号表并扫描模块文件
-                    info->sym_table = module_symbol_table_create(ast->u.import.file_path);
-                    if (info->sym_table) {
-                        const char* current_file = error_get_filename();
-                        int scan_result = module_symbol_table_scan(info->sym_table, current_file);
-
-                        // 模块文件扫描失败（文件不存在或读取失败）时，注册错误并跳过后续注册
-                        // 否则空符号表会导致下游变量被推断为 any，掩盖根因
-                        if (scan_result != 0) {
-                            char err_msg[BUFFER_MEDIUM];
-                            snprintf(err_msg, sizeof(err_msg), "找不到模块文件: %s", ast->u.import.file_path);
-                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, err_msg);
-                            // 标记模块信息为加载失败，避免后续任何注册
-                            info->load_failed = 1;
-                            // 设置全局标志，抑制下游级联 any 错误
-                            s->has_module_load_failure = 1;
-                        } else {
+                    // 取（必要时扫描）模块符号表 —— **走进程内记忆化**，与依赖侧（扫描器解析
+                    // use / 变量类型依赖时走的 module_symbol_table_get_shared）**共用同一张表**。
+                    // ⚠ 2026-09-18：此前这里是 create + scan，**绕过记忆化** ⇒ 同一个文件被反复
+                    //   重扫：实测 47 模块的应用冷扫建表 **380 次**、`sdl_core.leno` 被建 **41 次**，
+                    //   其中 327 次的 module_path 还是**裸文件名**（"没解析过"的痕迹）。
+                    //   记忆化的键是**解析后的绝对路径** ⇒ 同一文件无论被裸名还是绝对路径引用，
+                    //   都只扫一次；且与依赖侧同实例（不再出现"同一模块两张表"）。
+                    //   返回的表由记忆化持有：调用方只读，destroy 对它已是 no-op
+                    //   （module_symbol_table_destroy 的 shared 分支）。
+                    // 扫描失败（文件不存在 / 读取失败）返回 NULL。
+                    const char* current_file = error_get_filename();
+                    info->sym_table = module_symbol_table_get_shared(ast->u.import.file_path, current_file);
+                    if (!info->sym_table) {
+                        // 注册错误并跳过后续注册：否则空符号表会让下游变量被推断为 any，掩盖根因
+                        char err_msg[BUFFER_MEDIUM];
+                        snprintf(err_msg, sizeof(err_msg), "找不到模块文件: %s", ast->u.import.file_path);
+                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, err_msg);
+                        // 标记模块信息为加载失败，避免后续任何注册
+                        info->load_failed = 1;
+                        // 设置全局标志，抑制下游级联 any 错误
+                        s->has_module_load_failure = 1;
+                    } else {
 
                         // 注意：不再将模块中的 struct 定义注册到当前作用域
                         // struct 必须通过模块名访问，例如：new module.Point()
@@ -192,8 +197,7 @@
                                 }
                             }
                         }
-                        } // end else (scan_result == 0)
-                    }
+                        } // end else（sym_table 非 NULL ⇒ 必然已扫描完成）
                 } else {
                     free(module_name);
                 }
