@@ -1,0 +1,35 @@
+// diag_array_value_corruption.leno — 数组字面量**数值**是否被 JIT 污染
+// 判据：JIT 与 NO_JIT 打印的校验和必须逐字相同
+// （无头基准只比"绘制条数"，数值被污染时条数不变 ✗ ⇒ 必须比数值 ✓）
+// 出处：§8.129「所有 GUI 应用在 JIT 下闪烁」定位时用来**排除**"数组装箱污染"这条假设 ✓
+main() {
+    int acc = 0
+    float f = 0.0
+    int k = 0
+    while k < 20000 {
+        // ① 全 float 字面量（含 0.0 / 负小数 —— §8.127 的"float 落 int48 值域"形态）
+        Array[float] a = [1.5, 2.5, 0.0, -0.5]
+        f = f + a[0] + a[1] + a[2] + a[3]
+
+        // ② 全 int 字面量
+        Array[int] b = [k, k * 2, k & 7]
+        acc = acc + b[0] + b[1] + b[2]
+
+        // ③ 元素来自变量（§8.127 静态通道 + 动态 BT 通道）
+        float z = 0.25
+        Array[float] c = [z, 0.0, 3.5]
+        f = f + c[0] + c[1] + c[2]
+
+        int m = k % 5
+        Array[int] d = [m, 7, k]
+        acc = acc + d[0] + d[1] + d[2]
+
+        // ④ 元素来自容器取值（§8.128 第三条通道）
+        Array[float] src = [0.5, 4.0]
+        Array[float] e = [src[0], src[1], 1.0]
+        f = f + e[0] + e[1] + e[2]
+
+        k = k + 1
+    }
+    print("acc=" + acc + "  f=" + f + "\n")
+}

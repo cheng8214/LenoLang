@@ -1904,36 +1904,31 @@ static Value jit_invoke_closure(ObjFunction* mfunc, Value callee_val, int arg_co
             }
         }
         if (nf) {
-            if (!nf->function) {                /* 防御：交解释器报"只能调用函数…" */
-                jit_callout_failed = 1;
-                if (jit_debug_on())
-                    fprintf(stderr, "[JIT-CALLOUT-FAIL] native 直调: native->function 为空\n");
-                return NULL_VAL;
-            }
-            /* §8.115：原来的"歧义区 ⇒ bailout"（§8.106）判据等于"所有非负 int48" ✗，
-             * 会把 `T.malloc_array(vcnt)` 这类**正常**调用点整体挡掉 ⇒ 热循环被拉黑 ✗。
-             * 本条路径拿不到声明形参类型（分派在这里已经完成 ✓）⇒ 只删掉整体 bailout，
-             * 实参按 `jit_raw_to_value` 的整数解读装入（`+0.0` 与 `int 0` 数值相同 ⇒ 值正确 ✓）。
-             * ⚠ 残余：若 native 真的关心"这个 0 是 float 还是 int"（`is float` / 字符串化），
-             * 会出现类型标签分叉 ✗ —— 这条路径上极罕见 ✓；模块方法那条路径已按声明类型
-             * 精确提升 ✓（见 jit_callout_module_call_meta）。 */
-            int saved_sp_n = vm->sp;
-            int total = arg_count + nhas_recv;
-            if (nhas_recv) vm_stack_push(vm, nrecv);   /* args[0] = 接收者（先压 ⇒ 最低地址）*/
-            for (int i = 0; i < arg_count; i++)
-                vm_stack_push(vm, jit_raw_to_value(vstack_top[arg_count - 1 - i]));
-            Value nres = nf->function(total, vm->stack + vm->sp - total);
-            vm->sp = saved_sp_n;
-            if (vm->has_exception) {
-                jit_callout_failed = 1;
-                if (jit_debug_on())
-                    fprintf(stderr, "[JIT-CALLOUT-FAIL] native 直调: native raised exception\n");
-                return NULL_VAL;
-            }
+            /* ★ 2026-09-18：R6-k 的「native 绑定方法 / OBJ_NATIVE 原地直调」按实测**回退**为
+             * `failed → bailout`（交解释器执行 —— 即 R6-k 之前的行为）。
+             *
+             * 依据（本轮用户实测 + 二分定位，详见 §8.129）：
+             *   · 二分：`858367a2`（引入本路径）之后**闪** ✗；其父 `124a3e4e`（无本路径）**不闪** ✓；
+             *   · `LENO_NO_JIT=1` 完全干净 ✓（该模式永远走解释器）；
+             *   · 无头对照：JIT 与 VM 的**绘制指令流**（fill/line/out/sum 逐字相同）与
+             *     **像素哈希**（BMP 逐字节相同）都一致 ✓ ⇒ 病灶不在渲染层，而在"让这类调用
+             *     留在 JIT 里执行"这件事本身 —— 控件库热循环里全是 `Array.add()` / `Dict.set()`
+             *     这类 native 绑定方法，一旦原地直调就会写坏控件状态
+             *     （症状：控件消失/闪烁/点击不响应 ✗）。
+             *   · 真窗口 + 鼠标事件这条路径无法无头复现 ⇒ 先恢复正确性；缺陷本身按 §8.82/§8.87 的
+             *     带仪器取证路线另开一轮（要核对：接收者插 args[0] 的顺序、异常路径、
+             *     `vm->sp` / `frame_cnt` 恢复、以及 native 重入时 JIT 侧未入根的 callee/receiver）。
+             *
+             * 代价（如实记录）：fm 热循环重新回到"能编但每次 bail、3 次后拉黑"⇒ 丢掉该提交实测的
+             * 1.79x ✗；换来 GUI 应用在 JIT 下恢复正常 ✓。
+             * 保留原先的识别与诊断：`LENO_JIT_DEBUG=1` 时打一行说明是这类 callee 触发的回退 ✓。 */
             if (jit_debug_on())
-                fprintf(stderr, "[JIT-CALLOUT] native 直调成功: total=%d is_obj=%d raw=0x%llx\n",
-                        total, val_is_obj(nres) ? 1 : 0, (unsigned long long)nres);
-            return nres;
+                fprintf(stderr, "[JIT-CALLOUT-FAIL] R6-k native 直调已回退（§8.129）: obj_type=%d "
+                                "has_recv=%d total=%d ⇒ 交解释器\n",
+                        (int)co->type, nhas_recv, arg_count + nhas_recv);
+            (void)nrecv;
+            jit_callout_failed = 1;
+            return NULL_VAL;
         }
     }
 

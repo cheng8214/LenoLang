@@ -1,0 +1,38 @@
+// diag_cmp_branch_stress.leno — 比较/分支压力测试（对照 JIT/NO_JIT 校验和）
+// 模拟控件命中测试与 hover 判定的写法（float 坐标 + int 计数 + int/float 混合比较）
+// 判据：两模式 hits/acc 必须逐字相同
+// 出处：§8.129 定位时用来**排除**"比较/分支（OP_CMPJMP_*）被 JIT 算错"这条假设 ✓
+main() {
+    int hits = 0
+    float acc = 0.0
+    int k = 0
+    while k < 20000 {
+        // ① 命中测试（与 sdl_widget/sdl_button 同构）
+        float mx = _float(k % 400)
+        float my = _float(k % 300)
+        float x = 20.0
+        float y = 60.0
+        float w = 120.0
+        float h = 40.0
+        if mx >= x and mx <= x + w and my >= y and my <= y + h { hits = hits + 1 }
+
+        // ② int / float 混合比较
+        int i2 = k % 7
+        float f2 = _float(k) * 0.5
+        if f2 > _float(i2) { hits = hits + 2 }
+        if i2 == 3 { hits = hits + 3 }
+        if i2 != 3 { hits = hits + 5 }
+        if _float(k) > f2 { hits = hits + 11 }
+        if i2 >= 4 and f2 < 9999.0 { hits = hits + 13 }
+
+        // ③ 浮点相等/不等（hover 从控件上移开时的判定形态）
+        float e1 = 0.0
+        float e2 = 0.0 - 0.0
+        if e1 == e2 { hits = hits + 17 }
+        if e1 != 1.0 { hits = hits + 19 }
+
+        acc = acc + my + f2
+        k = k + 1
+    }
+    print("hits=" + hits + "  acc=" + acc + "\n")
+}

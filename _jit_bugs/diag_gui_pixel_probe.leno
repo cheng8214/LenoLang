@@ -1,0 +1,59 @@
+// diag_gui_pixel_probe.leno — 客观判据：同一控件场景在 JIT / NO_JIT 下渲染出的**像素**是否一致
+//
+// 为什么需要它：无头基准只能比"绘制条数"（fill/line/out/sum）⇒ **指令条数相同测不出数值污染** ✗
+// （坐标/颜色被污染时条数不变）。这里直接读回像素存 BMP，再用 Get-FileHash 对比两种模式 ⇒
+// 只要 JIT 把控件画坏（错位/变色/消失），哈希就会不同 ✓
+//
+// 出处：§8.129 定位时用来**排除**"渲染层被 JIT 画坏"这条假设 ✓
+//   实测（2026-09-18）：两模式 BMP **逐字节相同**（62B904B8C7CB7939，360054 B）✓
+//
+// 用法：
+//   set LENO_SDL_FRAMES=60            （自带确定性驱动：每帧真渲染，跑满自动退出 ✓）
+//   set PROBE_OUT=jit.bmp             （输出名，两种模式写不同文件）
+//   build\leno.exe --no-cache _jit_bugs\diag_gui_pixel_probe.leno
+//   （加 LENO_NO_JIT=1 跑对照）
+import "../leno_module/LenoSDL3/lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Window
+
+main() {
+    var out = _env("PROBE_OUT")
+    if out == null { out = "probe_out.bmp" }
+
+    var win = SDL3.createWindow({title:"pixel probe", w:400, h:300})
+    if not win.ok { return }
+    SDL3.ttfInit()
+    var f = SDL3.createFontAuto(18.0)
+
+    // 场景：文字 + 圆角面板 +（画布内）色块与文字 —— 覆盖 GUI 最常用的几条绘制路径 ✓
+    var lbl = SDL3.createLabel({x:20, y:16, text:"HELLO 签到 0123", font_size:20, text_color:#FF0000FF})
+    win.add(lbl)
+    var pnl = win.addPanel({x:20, y:60, w:200, h:120, bg_color:#00A0FFFF, radius:8, border_color:#FFFFFFFF})
+    var cv = win.addCanvas({x:240, y:60, w:140, h:120, bg_color:#202020FF})
+    cv.on_draw(func(Renderer r, float ox, float oy, float cw, float ch) {
+        r.setColor(#FFCC00FF)
+        r.fillRect(10.0, 10.0, 60.0, 40.0)
+        r.setColor(#00FF00FF)
+        r.fillRect(10.0, 60.0, 60.0, 40.0)
+        r.drawText(f, "AB", 80.0, 10.0, #FFFFFFFF)
+    })
+
+    var fr = 0
+    win.run(
+        func(Event ev): bool { return true },
+        func(Renderer r) {
+            fr = fr + 1
+            // 先读后清 ✓（读的是上一帧已渲染内容 ⇒ 两种模式读到同一序列 ⇒ 可比 ✓）
+            if fr == 40 {
+                var surf = r.readPixelsAt(0, 0, 400, 300)
+                var ok = SDL3.saveImageBMP(surf, out)
+                print("[probe] frame=" + (fr as string) + " saved=" + (ok as string) + " -> " + out + "\n")
+            }
+            r.clearColor(#101010FF)
+        }
+    )
+    print("[probe] done frames=" + (fr as string) + "\n")
+    if f.ok { f.close() }
+    SDL3.ttfQuit()
+}
