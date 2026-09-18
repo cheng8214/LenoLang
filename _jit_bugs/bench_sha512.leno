@@ -1,0 +1,30 @@
+// SHA-512 热路径基准（对应待办文档 J1）：
+// TraeSign 每次签到要算 2~3 次 SHA-512（派生密钥），而纯 Leno 的 sha512_bytes 目前被 JIT
+// 在 OP_CAST_INT 处 bail 3 次后**拉黑** ⇒ 掉回解释器跑（结果正确、纯性能损失）。
+// 用法：
+//   1) JIT：   build\leno.exe --no-cache _jit_bugs\bench_sha512.leno
+//   2) 对照：  set LENO_NO_JIT=1 & build\leno.exe --no-cache _jit_bugs\bench_sha512.leno
+// 判据：两模式的 checksum 必须完全一致（正确性），比较自报耗时（性能）。
+import "../leno_module/LenoCrypto/lib/Crypto.leno" as crypto
+import times
+
+main() {
+    // 64 字节输入（SHA-512 一个 block 的规模，与派生密钥的 key/comb 同量级）
+    var msg = []
+    for 0:63 to i { msg.add((i * 7 + 3) & 0xFF) }
+
+    int rounds = 2000
+    float t0 = times.us()
+    var acc = 0
+    int k = 0
+    while k < rounds {
+        Array[int] h = crypto.sha512_bytes(msg)
+        // 取值防优化掉，同时做个小校验和
+        acc = acc + h[0] + h[63]
+        k = k + 1
+    }
+    float t1 = times.us()
+
+    print("rounds=" + rounds + " checksum=" + acc + "\n")
+    print("elapsed_us=" + (t1 - t0) + "\n")
+}
