@@ -21,6 +21,7 @@
 | P6 | `_exec` 与 `assert/run_tests.leno` **都没有超时** | 工具链 | 中 | 只能外部兜 ✗ |
 | P7 | 跨模块相对路径冗长 ＋ **示例腐化**（硬编码别机器路径）| 工程 | 中 | 若干 ✗ |
 | P8 | `files.read` 失败语义未写明（`""` 还是 `null`）| 文档 | 低 | 1 轮 ✗ |
+| P9 | `build_vm.bat` 与 `build.bat` 是**两套源码清单**，且它是 GBK 文件 | 构建 | 中 | 一次全断 ✗✗ |
 | J1 | 真实热点 `sha512_bytes` 被 `OP_CAST_INT` bail 拉黑 | JIT 性能 | 中 | 签到工具每次都要算 SHA-512 |
 
 ---
@@ -110,6 +111,56 @@ POSIX `X=v cmd` ⇒ 平台分支 ＋ 引号坑 ✓（写 `assert/test_plane_war_
 **实测**：写 fixture 冒烟测试时得靠 `enc.len() < 32` 兜底 ✗；`module_files.md` 没写失败返回值 ✓。
 
 **建议**：文档写明；或提供 `files.read_or(path, default)` / 失败返回 `null` 且类型上可见 ✓。
+
+## P9 构建：`build_vm.bat` 与 `build.bat` 是**两套源码清单**；且 `build_vm.bat` 是 GBK 文件
+
+**现象**（2026-09-18，本机）：
+
+```
+module_symbol_table.c:(.text+...): undefined reference to `parser_eval_const_expr_text'
+jit_scan.c:(.text+...):           undefined reference to `opcode_name'   ×6（jit.c 还有）
+collect2.exe: error: ld returned 1 exit status
+VM build failed
+```
+
+**真因**（两条都是**清单漏项**，不是代码错 ✗）：
+
+1. `src\debug.c` 被 `build.bat` 收录、被 `build_vm.bat` **漏掉** —— 而 `debug.c` 不只有反汇编函数，
+   它还是 `opcode_name()` 的**唯一**定义点，JIT 拒收直方图直接用（`jit_scan.c` ×5、`jit.c` ×3）✓。
+   `build_vm.bat` 里原本写着"debug.c 仅包含反汇编函数 ⇒ 通过 LENO_VM_ONLY 条件编译排除" ✗，
+   **但 `debug.c` 从来没有这个守卫**（`LENO_VM_ONLY` 只出现在 `type.c` / `leno_vm.h`）⇒ 注释与事实不符。
+2. 整个 `src\parser\` 不在 VM 清单里（这是"no compiler"的**本意** ✓），但 `module_symbol_table.c` 的
+   **扫描链**（`inc/sym_table_scan.inc → inc/scan/*.inc → scan_enum.inc`）在 Phase 1 收敛后
+   开始调用真 parser 的 `parser_eval_const_expr_text` ✗ ⇒ VM-only 链接缺符号。
+
+**修法**（已做）：
+
+- `build_vm.bat` 补 `src\debug.c` ✓（反汇编在 VM 里没人调，链进去无害，`-s` 会剥符号 ✓）；
+- `parser_eval_const_expr_text`：VM 运行时**不做源码扫描**（`module_symbol_table_scan` 的唯一外部
+  调用方是语义分析 `src/semantic/visitinc/visit_module.inc`；VM 侧 `module_loader.c` / `vm.c` /
+  `serialize.c` 都不碰 `module_symbol_table_*`，它靠**反序列化**符号表 + 吃 `.lenb` ✓）⇒ VM-only 下
+  给占位实现，**够不到就硬失败**（`abort()` + `[fatal]`：宁可炸，也不要静默给错枚举值 ✓）；
+- **验证手段**（可照抄）：链接后拿**只存在于 `debug.c` 的枚举名**当探针，在 exe 字节流里搜
+  `OP_CMPJMP_LI_INT` ⇒ `True` 才说明表真链进去了 ✓（只看 `build successful` 会被下面的坑骗 ✗）；
+  再加端到端 `leno.exe -c x.leno` → `leno_vm.exe x.lenb` 真跑一遍 ✓。
+
+**附带踩到（比上面阴得多）**：`build_vm.bat` 原本是 **GBK** 文件，我用编辑器改一次 ⇒ **整个文件被重写成
+UTF-8** ✗ ⇒ cmd 按 GBK 控制台解码 ⇒ 中文注释被切碎、碎片被当命令执行：
+
+```
+'ebug.c' 不是内部或外部命令
+'defined' 不是内部或外部命令
+'入此版本，启动时无黑窗口' 不是内部或外部命令
+```
+
+却因为**功能性的 `set` 行都是 ASCII** 而照样 `VM build successful` ✗✗ —— 最危险的"看起来成功了"。
+⇒ 该文件现已**纯 ASCII** ✓（文件头写明原因 ✓）；**`build.bat` 里也有中文注释、同样是 GBK** ✗，
+下次谁用 UTF-8 编辑器改它就会复现 ✓。
+
+**建议（根治）**：① 两份清单**合一**（抽 `sources_core.txt` / `sources_compiler.txt`：`build.bat`
+= 两者相加、`build_vm.bat` = 前者，或让 VM 清单由全量清单**减去**编译器清单生成 ✓）；
+② 加**构建门禁**：改了公共文件就至少 `build_vm.bat` 必须能过（这次是"只跑了 `build.bat`" ⇒ VM-only
+静默腐化 ✓）；③ `.bat` 一律 ASCII 注释（中文解释放文档/源码注释 ✓，或用 `chcp 65001` 且确保无 BOM ✓）。
 
 ## J1 JIT（性能向，非正确性）：真实热点 `sha512_bytes` 被 `OP_CAST_INT` bail 拉黑
 

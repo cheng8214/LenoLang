@@ -3,6 +3,14 @@ setlocal enabledelayedexpansion
 
 echo Building LenoLang VM Runtime (no compiler)...
 
+REM ---------------------------------------------------------------------------
+REM NOTE: keep this file ASCII-only.
+REM Batch files are parsed with the *active console code page*; a UTF-8 comment
+REM in a GBK console gets mis-decoded and its fragments are executed as commands
+REM (seen 2026-09-18: 'ebug.c' is not recognized as an internal command ...).
+REM Explanations in Chinese belong in the docs / in the source comments instead.
+REM ---------------------------------------------------------------------------
+
 if not exist build mkdir build
 
 set SOURCES=
@@ -26,7 +34,13 @@ set SOURCES=!SOURCES! src\object\object_socket.c
 set SOURCES=!SOURCES! src\bound_method.c
 set SOURCES=!SOURCES! src\coroutine.c
 set SOURCES=!SOURCES! src\vm\vm.c
-REM debug.c 仅包含反汇编函数，VM 运行时不需要，通过 LENO_VM_ONLY 条件编译排除
+REM debug.c provides opcode_name(), which the JIT rejection histogram uses
+REM (jit_scan.c x5, jit.c x3). The old comment here claimed debug.c was
+REM "excluded via LENO_VM_ONLY", but that guard never existed in debug.c, so
+REM omitting it broke this build with "undefined reference to `opcode_name'".
+REM Fixed 2026-09-18. The disassembler in debug.c is unreferenced in the VM;
+REM linking it in is harmless (-s strips the symbols).
+set SOURCES=!SOURCES! src\debug.c
 set SOURCES=!SOURCES! src\type.c
 set SOURCES=!SOURCES! src\native.c
 set SOURCES=!SOURCES! src\bigint.c
@@ -57,21 +71,30 @@ set SOURCES=!SOURCES! src\module\sys\sys.c
 set SOURCES=!SOURCES! src\module\regexs\regexs.c
 set SOURCES=!SOURCES! src\platform\platform_thread.c
 set SOURCES=!SOURCES! src\serialize\serialize.c
-REM JIT 是 VM 运行时的一部分：OP_CALL / 回边会调 jit_try_hot_*，gc 会调 jit_in_frame()
-REM 等，缺这些文件会链接失败，故 VM 清单必须包含（与 build.bat 保持一致）
+REM NOTE: the parser (src\parser\*.c) is deliberately NOT here -- this build is
+REM "no compiler". module_symbol_table.c still *compiles* the source-scan chain
+REM (inc\sym_table_scan.inc -> inc\scan\*.inc -> scan_enum.inc), which is the
+REM only thing that calls parser_eval_const_expr_text(); that path is unreachable
+REM at runtime (its sole external caller is the semantic analyser,
+REM src\semantic\visitinc\visit_module.inc), so module_symbol_table.c provides a
+REM VM-only stub for it. See the comment above that stub.
+REM JIT is part of the VM runtime: OP_CALL / back-edges call jit_try_hot_*,
+REM gc calls jit_in_frame(); omitting these files breaks the link
+REM (keep in sync with build.bat)
 set SOURCES=!SOURCES! src\jit\jit_callout.c
 set SOURCES=!SOURCES! src\jit\jit_scan.c
 set SOURCES=!SOURCES! src\jit\jit.c
-REM JIT 后端按 CPU 架构选择（arm64 预留：实现 src\jit\backend\arm64.c 后自动启用）
+REM JIT backend selected by CPU architecture (arm64 reserved:
+REM implement src\jit\backend\arm64.c and it is picked up automatically)
 if /i "%PROCESSOR_ARCHITECTURE%"=="ARM64" (
   set SOURCES=!SOURCES! src\jit\backend\arm64.c
 ) else (
   set SOURCES=!SOURCES! src\jit\backend\x86_64.c
 )
 
-REM 1. 控制台版 leno_vm.exe（命令行调试用）
-REM    -s: 剥离符号表和调试信息，避免暴露函数名/变量名/类型结构
-REM    如需调试 VM 本身，去掉 -s 重新 build_vm.bat 即可
+REM 1. Console build (leno_vm.exe, for command-line debugging)
+REM    -s: strip the symbol table and debug info so function / variable / type
+REM    names are not exposed. Drop -s here if you need to debug the VM itself.
 gcc -o build\leno_vm.exe !SOURCES! -Isrc -Wall -Wextra -std=c99 -O2 -s -DLENO_VM_ONLY -lm -municode -lws2_32
 
 if %ERRORLEVEL% neq 0 (
@@ -79,9 +102,8 @@ if %ERRORLEVEL% neq 0 (
     exit /b 1
 )
 
-REM 2. 无控制台版 leno_vm_gui.exe（GUI 打包用，-mwindows 链接）
-REM    GUI 程序打包时嵌入此版本，启动时无黑窗口
-REM    脚本仍可通过 _console(true) 动态分配控制台（AllocConsole）
+REM 2. Windowed build (leno_vm_gui.exe, for packaging GUI apps: no console window
+REM    on startup; scripts can still get one via _console(true) / AllocConsole)
 gcc -o build\leno_vm_gui.exe !SOURCES! -Isrc -Wall -Wextra -std=c99 -O2 -s -DLENO_VM_ONLY -lm -municode -lws2_32 -mwindows
 
 if %ERRORLEVEL% neq 0 (

@@ -393,7 +393,8 @@ if (obj->type == OBJ_DICT) {
             jit_callout_failed = 1;   /* "cstruct 方法名必须是字符串" */
             return NULL_VAL;
         }
-        ObjCStructDef* def = (ObjCStructDef*)obj;
+        // 注意：cstruct 方法表是**全局**的（object_cstruct.c 的 cstructMethodTable），
+        // 不需要 def 参与查找 —— VM 的解释器路径同样只传方法名（op_utils.inc:169）✓
         ObjString* key = (ObjString*)val_as_obj(idx_val);
         ObjNative* native_method = cstruct_find_method(key->chars);
         if (native_method) {

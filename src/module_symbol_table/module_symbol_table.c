@@ -108,6 +108,24 @@ static int mod_source_line(const char* source, const char* pos) {
 // 枚举成员常量表达式求值：**不再有本模块自己的求值器**。
 // 扫描阶段需要值时调 parser_eval_const_expr_text（parser_func.c），词法/语法/求值全是语言本身
 // 那一套 —— 原先复刻在这里的 inc/sym_table_enum_expr.inc 已删除（Phase 1 的收敛）。
+//
+// ⚠ VM-only 构建（build_vm.bat，不带编译器）：parser 整个目录都不在清单里，而扫描链
+// （sym_table_scan.inc → scan/*.inc → scan_enum.inc）在 VM 里只是被**编译进来**、
+// 运行时**够不到** —— module_symbol_table_scan 的唯一外部调用方是语义分析
+// （src/semantic/visitinc/visit_module.inc:39），属编译器阶段；VM 运行时靠**反序列化**
+// 符号表 + 吃 .lenb（module_loader.c / vm.c / serialize.c 都不碰 module_symbol_table_*）。
+// ⇒ VM-only 下给个占位实现即可，不必把 lexer / AST / parser 拖进"无编译器"的产物
+// （那正是 build_vm.bat 存在的意义）。若真被调到 ⇒ 说明 VM 走了源码扫描路径（本不该发生）
+// 就**立即硬失败**：宁可炸，也不要静默给出错误的枚举值（Phase 1 收敛就是为消灭静默错值）。
+#ifdef LENO_VM_ONLY
+int parser_eval_const_expr_text(const char* text, char** names, int64_t* values,
+                                int count, int64_t* out) {
+    (void)text; (void)names; (void)values; (void)count; (void)out;
+    fprintf(stderr, "[fatal] VM-only 构建里调用了 parser_eval_const_expr_text："
+                    "VM 运行时不扫描源码符号表，这条路径不该出现\n");
+    abort();
+}
+#endif
 
 // 前向声明（定义在 sym_table_entry.inc，但 scan 阶段需要使用）
 static void resolve_module_full_path(char* full_path, int max_len,
