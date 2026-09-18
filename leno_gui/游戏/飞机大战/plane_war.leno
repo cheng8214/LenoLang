@@ -1,0 +1,1327 @@
+// plane_war.leno — 飞机大战（经典纵向卷轴射击游戏）
+//
+// 操作：
+//   方向键 / WASD — 移动飞机
+//   空格 — 射击（按住连发）
+//   B — 使用炸弹（清除全屏弹幕并重创敌机）
+//   回车 — 开始 / 重新开始
+//   ESC — 退出
+//
+// 道具：击落敌机有概率掉落
+//   P 火力升级 / S 护盾 / L 生命 / B 炸弹 / ★ 加分星
+//
+// 关卡：共 5 关，每关达到目标分数后 BOSS 出场，
+//       击败 BOSS 进入下一关（每关 BOSS 造型与强度不同）
+//
+// 资源目录：
+//   image/  — 精灵图片（f1.png 玩家, dxf.png 小敌机, dzf.png 中敌机, ddf.png 大敌机, boss1.png BOSS）
+//   bkmusic/ — 音频文件（bk.mp3 背景, boss.mp3 BOSS, zq.wav 射击, chi.wav 击中, db.wav 爆炸, si.wav 死亡）
+
+import "SDL3" as SDL3
+import "sdl_core" as core
+use SDL3.(Event, Renderer, WindowFlag, Scancode, Font, Flip)
+import maths
+import rands
+import files
+import dirs
+import "Music" as audio
+use audio.(Sound, Sfx)
+
+// ==================== 常量 ====================
+
+var GAME_W = 480.0
+var GAME_H = 720.0
+var PLAYER_SPEED = 5.0
+var BULLET_SPEED = 10.0
+var ENEMY_BULLET_SPEED = 4.0
+var PLAYER_W = 48.0
+var PLAYER_H = 34.0
+var PLAYER_SHOOT_INTERVAL = 12   // 射击间隔（帧）
+var PI = 3.14159265
+
+// 精灵尺寸
+var SMALL_W = 42.0;  var SMALL_H = 28.0
+var MED_W = 48.0;    var MED_H = 48.0
+var BIG_W = 54.0;    var BIG_H = 38.0
+var BOSS_W = 130.0;  var BOSS_H = 98.0
+
+// 游戏状态
+var ST_MENU = 0
+var ST_PLAY = 1
+var ST_BOSS = 2
+var ST_OVER = 3
+var ST_WIN = 4
+
+// 关卡系统
+var MAX_LEVEL = 5
+var BOSS_HP = 80               // 第 1 关 BOSS 血量，之后每关 +40
+
+// 道具类型
+var PU_POWER = 0    // 火力升级
+var PU_SHIELD = 1   // 护盾
+var PU_LIFE = 2     // 生命
+var PU_BOMB = 3     // 炸弹
+var PU_STAR = 4     // 加分星
+
+var POWER_MAX = 3
+var SHIELD_TIME = 480          // 护盾持续帧数
+var BOMB_MAX = 3
+var PU_SIZE = 24.0             // 道具图标尺寸
+
+// ==================== 数据结构 ====================
+
+struct Bullet {
+    float x, y, vx, vy
+    int kind       // 0=玩家子弹, 1=敌机子弹
+    bool active
+}
+
+struct Enemy {
+    float x, y, vx, vy
+    int hp, maxHp, kind   // 0=小, 1=中, 2=大
+    int shootTimer, shootInterval
+    float w, h
+    int score
+    bool active
+    int movePattern   // 0=直线, 1=正弦, 2=追踪
+    float baseX      // 正弦运动基准 X
+    int hitFlash     // 被击中闪烁
+}
+
+struct Boss {
+    float x, y, w, h
+    int hp, maxHp
+    int shootTimer, phase, moveTimer
+    bool active, entered
+    float targetY
+    int hitFlash
+}
+
+struct Particle {
+    float x, y, vx, vy
+    int life, maxLife
+    int r, g, b
+    float size
+}
+
+struct Star {
+    float x, y
+    float speed
+    int bright
+}
+
+struct PowerUp {
+    float x, y
+    float vy
+    float swayT       // 左右摆动相位
+    int kind          // PU_* 之一
+    bool active
+}
+
+struct Player {
+    float x, y, w, h
+    int lives
+    int shootCooldown
+    int invincibleTimer
+    int shieldTimer    // 护盾剩余帧数（>0 时免伤）
+    int power          // 火力等级 1..POWER_MAX
+    int bombs          // 炸弹数
+    bool moveLeft, moveRight, moveUp, moveDown, shooting
+}
+
+struct Game {
+    int state
+    int score
+    int spawnTimer
+    int frameCount
+
+    int level              // 当前关卡 1..MAX_LEVEL
+    int levelScore         // 本关内累计分数（BOSS 出场判定用，过关清零）
+    int levelBannerTimer   // 关卡/BOSS 横幅剩余帧数
+    int bombFlash          // 炸弹全屏闪光剩余帧数
+
+    Player player
+    Array[Enemy] enemies
+    Array[Bullet] bullets
+    Array[Particle] particles
+    Array[PowerUp] powerups
+    Array[Star] stars
+    Boss boss
+    bool bossDefeated
+
+    // 纹理
+    Ptr[u8] texPlayer
+    Ptr[u8] texSmall
+    Ptr[u8] texMed
+    Ptr[u8] texBig
+    Array[Ptr[u8]] bossTexes   // 每关一张 BOSS 图：boss1.png .. boss5.png
+
+    // 音频
+    Sound bgm
+    Sound bossBgm
+    Sfx   sfxShoot
+    Sfx   sfxHit
+    Sfx   sfxExplode
+    Sfx   sfxDeath
+    bool audioOk
+
+    Font font
+}
+
+// ==================== 工具函数 ====================
+
+func aabb(float ax, float ay, float aw, float ah,
+          float bx, float by, float bw, float bh): bool {
+    return ax < bx + bw and ax + aw > bx and ay < by + bh and ay + ah > by
+}
+
+func clampf(float v, float lo, float hi): float {
+    if v < lo { return lo }
+    if v > hi { return hi }
+    return v
+}
+
+// ==================== 游戏逻辑 ====================
+
+func newGame(): Game {
+    var g = new Game()
+    g.state = ST_MENU
+    g.score = 0
+    g.spawnTimer = 60
+    g.frameCount = 0
+    g.bossDefeated = false
+    g.level = 1
+    g.levelScore = 0
+    g.levelBannerTimer = 0
+    g.bombFlash = 0
+
+    g.player = new Player(
+        x=GAME_W / 2.0 - PLAYER_W / 2.0,
+        y=GAME_H - 100.0,
+        w=PLAYER_W, h=PLAYER_H,
+        lives=3,
+        shootCooldown=0,
+        invincibleTimer=0,
+        shieldTimer=0,
+        power=1,
+        bombs=1,
+        moveLeft=false, moveRight=false, moveUp=false, moveDown=false,
+        shooting=false
+    )
+
+    g.enemies = []
+    g.bullets = []
+    g.particles = []
+    g.powerups = []
+    g.stars = []
+
+    // 初始化星空背景
+    for 0 : 80 to i {
+        var s = new Star()
+        s.x = _float(rands.ints(0, _int(GAME_W)))
+        s.y = _float(rands.ints(0, _int(GAME_H)))
+        s.speed = _float(rands.ints(1, 4)) * 0.5
+        s.bright = rands.ints(80, 255)
+        g.stars.add(s)
+    }
+
+    g.boss = new Boss(
+        x=GAME_W / 2.0 - BOSS_W / 2.0,
+        y=-BOSS_H,
+        w=BOSS_W, h=BOSS_H,
+        hp=BOSS_HP, maxHp=BOSS_HP,
+        shootTimer=0, phase=0, moveTimer=0,
+        active=false, entered=false,
+        targetY=60.0,
+        hitFlash=0
+    )
+
+    g.texPlayer = null as Ptr[u8]
+    g.texSmall = null as Ptr[u8]
+    g.texMed = null as Ptr[u8]
+    g.texBig = null as Ptr[u8]
+    g.bossTexes = []
+    g.audioOk = false
+
+    return g
+}
+
+func loadResources(Game g, Ptr[u8] renderer) {
+    // 确定资源目录（脚本所在目录）
+    string base = dirs.script_dir()
+
+    // 加载纹理
+    g.texPlayer = SDL3.loadImageTexture(renderer, base + "/image/f1.png")
+    g.texSmall  = SDL3.loadImageTexture(renderer, base + "/image/dxf.png")
+    g.texMed    = SDL3.loadImageTexture(renderer, base + "/image/dzf.png")
+    g.texBig    = SDL3.loadImageTexture(renderer, base + "/image/ddf.png")
+    // 每关一张 BOSS 贴图：boss1.png .. boss5.png
+    g.bossTexes = []
+    for 1 : MAX_LEVEL to lv {
+        var bt = SDL3.loadImageTexture(renderer, base + "/image/boss" + _str(lv) + ".png")
+        if bt == null { print("[警告] 无法加载 boss" + _str(lv) + ".png") }
+        g.bossTexes.add(bt)
+    }
+
+    if g.texPlayer == null { print("[警告] 无法加载 f1.png") }
+    if g.texSmall == null  { print("[警告] 无法加载 dxf.png") }
+    if g.texMed == null    { print("[警告] 无法加载 dzf.png") }
+    if g.texBig == null    { print("[警告] 无法加载 ddf.png") }
+
+    // 初始化音频——用相对路径，避免中文路径导致 fopen 失败
+    // miniaudio 内部用 fopen()，Windows 上不支持 UTF-8 路径
+
+    g.bgm = audio.createSound("bkmusic/bk.mp3")
+    g.bgm.setLooping(true)
+    g.bgm.setVolume(0.5)
+
+    g.bossBgm = audio.createSound("bkmusic/boss.mp3")
+    g.bossBgm.setLooping(true)
+    g.bossBgm.setVolume(0.5)
+
+    g.sfxShoot = audio.createSfx("bkmusic/zq.wav", 8, 0.3)
+    g.sfxHit   = audio.createSfx("bkmusic/chi.wav", 6, 0.4)
+    g.sfxExplode = audio.createSfx("bkmusic/db.wav", 6, 0.5)
+    g.sfxDeath = audio.createSfx("bkmusic/si.wav", 6, 0.5)
+
+    g.audioOk = g.bgm.ok
+    if g.audioOk {
+        print("[OK] 音频加载完成")
+    } else {
+        print("[警告] 音频初始化失败，游戏将以静音模式运行")
+    }
+}
+
+func startGame(Game g) {
+    g.state = ST_PLAY
+    g.score = 0
+    g.spawnTimer = 30
+    g.frameCount = 0
+    g.bossDefeated = false
+    g.level = 1
+    g.levelScore = 0
+    g.levelBannerTimer = 150
+    g.bombFlash = 0
+    g.enemies = []
+    g.bullets = []
+    g.particles = []
+    g.powerups = []
+
+    g.player.x = GAME_W / 2.0 - PLAYER_W / 2.0
+    g.player.y = GAME_H - 100.0
+    g.player.lives = 3
+    g.player.shootCooldown = 0
+    g.player.invincibleTimer = 120
+    g.player.shieldTimer = 0
+    g.player.power = 1
+    g.player.bombs = 1
+    g.player.shooting = false
+
+    g.boss.active = false
+    g.boss.entered = false
+    g.boss.hp = BOSS_HP
+    g.boss.y = -BOSS_H
+    g.boss.phase = 0
+
+    // 播放背景音乐
+    if g.audioOk {
+        g.bossBgm.stop()
+        g.bgm.play()
+    }
+}
+
+func spawnEnemy(Game g) {
+    int lv = g.level
+    int r = rands.ints(0, 100)
+    var e = new Enemy()
+    e.active = true
+    e.hitFlash = 0
+
+    // 关卡越高：大/中敌机占比越高、速度越快、耐久越厚
+    int smallCut = 60 - (lv - 1) * 4    // L1:60%  →  L5:44%
+    int medCut = 85 - (lv - 1) * 2      // L1:85%  →  L5:77%
+    float spd = 1.0 + _float(lv - 1) * 0.12
+
+    if r < smallCut {
+        // 小敌机
+        e.kind = 0
+        e.hp = 1; e.maxHp = 1
+        e.w = SMALL_W; e.h = SMALL_H
+        e.score = 10
+        e.shootInterval = 0   // 不射击
+        e.vx = 0.0
+        e.vy = _float(rands.ints(2, 4)) * spd
+        e.movePattern = rands.ints(0, 2)
+    } else if r < medCut {
+        // 中敌机
+        e.kind = 1
+        e.hp = 3 + (lv - 1) / 2; e.maxHp = e.hp
+        e.w = MED_W; e.h = MED_H
+        e.score = 30
+        e.shootInterval = rands.ints(90, 150)
+        e.vx = 0.0
+        e.vy = _float(rands.ints(1, 3)) * spd
+        e.movePattern = rands.ints(0, 2)
+    } else {
+        // 大敌机
+        e.kind = 2
+        e.hp = 5 + (lv - 1); e.maxHp = e.hp
+        e.w = BIG_W; e.h = BIG_H
+        e.score = 50
+        e.shootInterval = rands.ints(70, 120)
+        e.vx = 0.0
+        e.vy = _float(rands.ints(1, 2)) * spd
+        e.movePattern = 0
+    }
+
+    e.x = _float(rands.ints(_int(e.w / 2.0), _int(GAME_W - e.w / 2.0))) - e.w / 2.0
+    e.y = -e.h
+    e.baseX = e.x
+    if e.shootInterval > 0 {
+        e.shootTimer = rands.ints(30, _int(e.shootInterval))
+    } else {
+        e.shootTimer = 0
+    }
+
+    g.enemies.add(e)
+}
+
+func spawnBoss(Game g) {
+    // 每关 BOSS 更强
+    int bossHp = BOSS_HP + (g.level - 1) * 40
+
+    g.boss.active = true
+    g.boss.entered = false
+    g.boss.maxHp = bossHp
+    g.boss.hp = bossHp
+    g.boss.y = -BOSS_H
+    g.boss.x = GAME_W / 2.0 - BOSS_W / 2.0
+    g.boss.phase = 0
+    g.boss.shootTimer = 60
+    g.boss.moveTimer = 0
+    g.boss.hitFlash = 0
+
+    g.state = ST_BOSS
+    g.levelBannerTimer = 120   // "BOSS 来袭" 横幅
+
+    // 切换 BOSS 音乐
+    if g.audioOk {
+        g.bgm.stop()
+        g.bossBgm.play()
+    }
+}
+
+func addPlayerBullet(Game g, float x, float y, float vx, float vy) {
+    var b = new Bullet()
+    b.x = x; b.y = y
+    b.vx = vx; b.vy = vy
+    b.kind = 0
+    b.active = true
+    g.bullets.add(b)
+}
+
+func playerShoot(Game g) {
+    float cx = g.player.x + g.player.w / 2.0
+    float cy = g.player.y
+    int pw = g.player.power
+
+    switch pw {
+        case 0, 1 {
+            // 火力 1：单发
+            addPlayerBullet(g, cx - 3.0, cy, 0.0, -BULLET_SPEED)
+        }
+        case 2 {
+            // 火力 2：双发平行
+            addPlayerBullet(g, cx - 11.0, cy, 0.0, -BULLET_SPEED)
+            addPlayerBullet(g, cx + 5.0, cy, 0.0, -BULLET_SPEED)
+        }
+        default {
+            // 火力 3：三向散射
+            float base = -PI / 2.0
+            addPlayerBullet(g, cx - 3.0, cy - 4.0, 0.0, -BULLET_SPEED)
+            addPlayerBullet(g, cx - 11.0, cy + 4.0,
+                            maths.cos(base - 0.18) * BULLET_SPEED,
+                            maths.sin(base - 0.18) * BULLET_SPEED)
+            addPlayerBullet(g, cx + 5.0, cy + 4.0,
+                            maths.cos(base + 0.18) * BULLET_SPEED,
+                            maths.sin(base + 0.18) * BULLET_SPEED)
+        }
+    }
+
+    if g.audioOk { g.sfxShoot.play() }
+}
+
+func enemyShoot(Game g, Enemy e) {
+    var b = new Bullet()
+    b.x = e.x + e.w / 2.0 - 3.0
+    b.y = e.y + e.h
+    b.vx = 0.0
+    b.vy = ENEMY_BULLET_SPEED
+    b.kind = 1
+    b.active = true
+    g.bullets.add(b)
+}
+
+func bossShoot(Game g) {
+    // BOSS 多方向弹幕
+    int pattern = g.boss.phase
+    switch pattern {
+        case 0 {
+            // 三连发
+            for 0 : 2 to i {
+                var b = new Bullet()
+                b.x = g.boss.x + g.boss.w / 2.0 - 3.0 + _float(i - 1) * 20.0
+                b.y = g.boss.y + g.boss.h
+                b.vx = 0.0
+                b.vy = ENEMY_BULLET_SPEED + 1.0
+                b.kind = 1
+                b.active = true
+                g.bullets.add(b)
+            }
+        }
+        case 1 {
+            // 扇形弹
+            float cx = g.boss.x + g.boss.w / 2.0
+            float cy = g.boss.y + g.boss.h
+            for 0 : 4 to i {
+                float angle = PI / 2.0 + (_float(i) - 2.0) * 0.3
+                var b = new Bullet()
+                b.x = cx - 3.0
+                b.y = cy
+                b.vx = maths.cos(angle) * (ENEMY_BULLET_SPEED + 1.0)
+                b.vy = maths.sin(angle) * (ENEMY_BULLET_SPEED + 1.0)
+                b.kind = 1
+                b.active = true
+                g.bullets.add(b)
+            }
+        }
+        default {
+            // 环形弹
+            float cx = g.boss.x + g.boss.w / 2.0
+            float cy = g.boss.y + g.boss.h
+            for 0 : 7 to i {
+                float angle = _float(i) * PI / 4.0
+                var b = new Bullet()
+                b.x = cx - 3.0
+                b.y = cy
+                b.vx = maths.cos(angle) * ENEMY_BULLET_SPEED
+                b.vy = maths.sin(angle) * ENEMY_BULLET_SPEED
+                b.kind = 1
+                b.active = true
+                g.bullets.add(b)
+            }
+        }
+    }
+
+    if g.audioOk { g.sfxShoot.play() }
+}
+
+func createExplosion(Game g, float x, float y, int scale) {
+    // 颗粒更细小、数量更多：爆炸细腻而不糊成一团
+    int cnt = 18 + scale * 8
+    for 0 : cnt - 1 to i {
+        var p = new Particle()
+        float angle = _float(rands.ints(0, 628)) / 100.0
+        float speed = _float(rands.ints(1, 3 + scale)) * 1.0
+        p.x = x; p.y = y
+        p.vx = maths.cos(angle) * speed
+        p.vy = maths.sin(angle) * speed
+        p.life = rands.ints(18, 36)
+        p.maxLife = p.life
+        p.r = rands.ints(200, 255)
+        p.g = rands.ints(100, 200)
+        p.b = rands.ints(0, 100)
+        p.size = 0.5 + _float(rands.ints(0, 10)) / 10.0 + _float(scale) * 0.12
+        g.particles.add(p)
+    }
+}
+
+// ==================== 道具系统 ====================
+
+// 每关 BOSS 出场的分数门槛（按本关内累计分判定）
+func levelTarget(int lv): int {
+    return lv * 400
+}
+
+// 加分：同时累加总分与本关分
+func addScore(Game g, int v) {
+    g.score = g.score + v
+    g.levelScore = g.levelScore + v
+}
+
+func spawnPowerUp(Game g, float x, float y) {
+    var pu = new PowerUp()
+    int r = rands.ints(0, 99)
+    if r < 30 { pu.kind = PU_POWER }        // 火力 30%
+    else if r < 50 { pu.kind = PU_SHIELD }  // 护盾 20%
+    else if r < 65 { pu.kind = PU_BOMB }    // 炸弹 15%
+    else if r < 75 { pu.kind = PU_LIFE }    // 生命 10%
+    else { pu.kind = PU_STAR }              // 加分星 25%
+
+    pu.x = clampf(x - PU_SIZE / 2.0, 0.0, GAME_W - PU_SIZE)
+    pu.y = y
+    pu.vy = 1.8
+    pu.swayT = _float(rands.ints(0, 628)) / 100.0
+    pu.active = true
+    g.powerups.add(pu)
+}
+
+// 敌机被击落时按体型概率掉落道具
+func maybeDropPowerUp(Game g, Enemy e) {
+    int chance = 8                 // 小敌机
+    if e.kind == 1 { chance = 15 }
+    if e.kind == 2 { chance = 25 }
+    if rands.ints(0, 99) < chance {
+        spawnPowerUp(g, e.x + e.w / 2.0, e.y + e.h / 2.0)
+    }
+}
+
+func applyPowerUp(Game g, int kind) {
+    switch kind {
+        case PU_POWER {
+            if g.player.power < POWER_MAX {
+                g.player.power = g.player.power + 1
+            } else {
+                addScore(g, 50)        // 已满级：折算分数
+            }
+        }
+        case PU_SHIELD {
+            g.player.shieldTimer = SHIELD_TIME
+        }
+        case PU_LIFE {
+            if g.player.lives < 5 {
+                g.player.lives = g.player.lives + 1
+            } else {
+                addScore(g, 100)
+            }
+        }
+        case PU_BOMB {
+            if g.player.bombs < BOMB_MAX {
+                g.player.bombs = g.player.bombs + 1
+            } else {
+                addScore(g, 100)
+            }
+        }
+        default {
+            addScore(g, 100)           // PU_STAR：加分星
+        }
+    }
+
+    if g.audioOk { g.sfxHit.play() }
+}
+
+// 使用炸弹：清屏弹幕 + 全场重创
+func useBomb(Game g) {
+    if g.player.bombs <= 0 { return }
+    if g.state != ST_PLAY and g.state != ST_BOSS { return }
+
+    g.player.bombs = g.player.bombs - 1
+    g.bombFlash = 22
+
+    // 清除所有敌机子弹，保留玩家子弹
+    Array[Bullet] keep = []
+    for g.bullets to b {
+        if b.kind == 0 { keep.add(b) }
+    }
+    g.bullets = keep
+
+    // 全场敌机受重创
+    for g.enemies to e {
+        e.hp = e.hp - 3
+        e.hitFlash = 10
+    }
+
+    // BOSS 受创
+    if g.boss.active and g.boss.entered {
+        g.boss.hp = g.boss.hp - 10
+        g.boss.hitFlash = 10
+        if g.boss.hp <= 0 { killBoss(g) }
+    }
+
+    // 全屏爆炸特效
+    createExplosion(g, GAME_W / 2.0, GAME_H / 2.0, 5)
+    createExplosion(g, GAME_W / 4.0, GAME_H / 3.0, 3)
+    createExplosion(g, GAME_W * 3.0 / 4.0, GAME_H * 2.0 / 3.0, 3)
+
+    if g.audioOk { g.sfxExplode.play() }
+}
+
+// BOSS 被击败：结算分数、掉落道具、推进关卡
+func killBoss(Game g) {
+    g.boss.active = false
+    g.bossDefeated = true
+    g.score = g.score + 500
+
+    float cx = g.boss.x + g.boss.w / 2.0
+    float cy = g.boss.y + g.boss.h / 2.0
+    createExplosion(g, cx, cy, 5)
+    createExplosion(g, cx - g.boss.w / 4.0, cy, 3)
+    createExplosion(g, cx + g.boss.w / 4.0, cy, 3)
+    if g.audioOk { g.sfxExplode.play() }
+
+    // 必掉两个道具
+    spawnPowerUp(g, cx - g.boss.w * 0.2, cy)
+    spawnPowerUp(g, cx + g.boss.w * 0.2, cy)
+
+    if g.level >= MAX_LEVEL {
+        // 通关
+        g.state = ST_WIN
+        if g.audioOk {
+            g.bossBgm.stop()
+            g.bgm.stop()
+        }
+    } else {
+        // 进入下一关（本关分清零，重新累计）
+        g.level = g.level + 1
+        g.levelScore = 0
+        g.levelBannerTimer = 150
+        g.bossDefeated = false
+        g.state = ST_PLAY
+        if g.audioOk {
+            g.bossBgm.stop()
+            g.bgm.play()
+        }
+    }
+}
+
+func playerHit(Game g) {
+    if g.player.invincibleTimer > 0 { return }
+    if g.player.shieldTimer > 0 { return }
+    g.player.lives = g.player.lives - 1
+    g.player.invincibleTimer = 120
+
+    createExplosion(g, g.player.x + g.player.w / 2.0, g.player.y + g.player.h / 2.0, 2)
+
+    if g.audioOk { g.sfxDeath.play() }
+
+    if g.player.lives <= 0 {
+        g.state = ST_OVER
+        if g.audioOk {
+            g.bgm.stop()
+            g.bossBgm.stop()
+        }
+    }
+}
+
+// ==================== 更新逻辑 ====================
+
+func updateGame(Game g) {
+    g.frameCount = g.frameCount + 1
+
+    // === 玩家移动 ===
+    Player p = g.player
+    if p.moveLeft  { p.x = p.x - PLAYER_SPEED }
+    if p.moveRight { p.x = p.x + PLAYER_SPEED }
+    if p.moveUp    { p.y = p.y - PLAYER_SPEED }
+    if p.moveDown  { p.y = p.y + PLAYER_SPEED }
+    p.x = clampf(p.x, 0.0, GAME_W - p.w)
+    p.y = clampf(p.y, 0.0, GAME_H - p.h)
+
+    // === 玩家射击（火力等级越高射速越快） ===
+    if p.shootCooldown > 0 { p.shootCooldown = p.shootCooldown - 1 }
+    if p.shooting and p.shootCooldown <= 0 {
+        playerShoot(g)
+        p.shootCooldown = PLAYER_SHOOT_INTERVAL - (p.power - 1) * 2
+        if p.shootCooldown < 6 { p.shootCooldown = 6 }
+    }
+
+    // === 无敌 / 护盾 / 横幅 / 闪光 计时 ===
+    if p.invincibleTimer > 0 { p.invincibleTimer = p.invincibleTimer - 1 }
+    if p.shieldTimer > 0 { p.shieldTimer = p.shieldTimer - 1 }
+    if g.levelBannerTimer > 0 { g.levelBannerTimer = g.levelBannerTimer - 1 }
+    if g.bombFlash > 0 { g.bombFlash = g.bombFlash - 1 }
+
+    // === 星空背景 ===
+    for g.stars to s {
+        s.y = s.y + s.speed
+        if s.y > GAME_H {
+            s.y = 0.0
+            s.x = _float(rands.ints(0, _int(GAME_W)))
+        }
+    }
+
+    // === 生成敌机 ===
+    if g.state == ST_PLAY {
+        g.spawnTimer = g.spawnTimer - 1
+        if g.spawnTimer <= 0 {
+            spawnEnemy(g)
+            // 关卡越高出机越密集；关内分数越高再略加速
+            int baseInterval = 60 - (g.level - 1) * 7
+            if baseInterval < 25 { baseInterval = 25 }
+            if g.score > (g.level - 1) * 400 + 200 { baseInterval = baseInterval - 8 }
+            g.spawnTimer = rands.ints(baseInterval - 15, baseInterval + 15)
+            if g.spawnTimer < 15 { g.spawnTimer = 15 }
+        }
+
+        // BOSS 出场条件：本关内累计分达到门槛
+        if g.levelScore >= levelTarget(g.level) and not g.bossDefeated {
+            spawnBoss(g)
+        }
+    }
+
+    // === BOSS 逻辑 ===
+    if g.boss.active {
+        Boss b = g.boss
+        b.moveTimer = b.moveTimer + 1
+
+        if not b.entered {
+            b.y = b.y + 1.5
+            if b.y >= b.targetY {
+                b.y = b.targetY
+                b.entered = true
+            }
+        } else {
+            // 左右移动
+            float centerX = GAME_W / 2.0 - BOSS_W / 2.0
+            b.x = centerX + maths.sin(_float(b.moveTimer) * 0.02) * 120.0
+
+            // 阶段切换
+            if b.hp < b.maxHp * 2 / 3 and b.phase < 1 { b.phase = 1 }
+            if b.hp < b.maxHp / 3 and b.phase < 2 { b.phase = 2 }
+
+            // 射击
+            b.shootTimer = b.shootTimer - 1
+            if b.shootTimer <= 0 {
+                bossShoot(g)
+                if b.phase == 0 { b.shootTimer = 60 }
+                else if b.phase == 1 { b.shootTimer = 45 }
+                else { b.shootTimer = 35 }
+            }
+        }
+
+        if b.hitFlash > 0 { b.hitFlash = b.hitFlash - 1 }
+    }
+
+    // === 更新敌机 ===
+    Array[Enemy] alive = []
+    for g.enemies to e {
+        e.y = e.y + e.vy
+
+        switch e.movePattern {
+            case 1 {
+                // 正弦运动
+                e.x = e.baseX + maths.sin(_float(e.y) * 0.02) * 80.0
+            }
+            case 2 {
+                // 追踪运动（中/大敌机，进入下半屏后停止追踪）
+                if e.y < GAME_H * 0.7 {
+                    if g.player.x + g.player.w / 2.0 > e.x + e.w / 2.0 {
+                        e.x = e.x + 1.0
+                    } else {
+                        e.x = e.x - 1.0
+                    }
+                }
+            }
+            default { }   // 0：直线下落
+        }
+
+        // 边界
+        e.x = clampf(e.x, 0.0, GAME_W - e.w)
+
+        // 射击
+        if e.shootInterval > 0 {
+            e.shootTimer = e.shootTimer - 1
+            if e.shootTimer <= 0 and e.y > 0 and e.y < GAME_H * 0.7 {
+                enemyShoot(g, e)
+                e.shootTimer = e.shootInterval
+            }
+        }
+
+        if e.hitFlash > 0 { e.hitFlash = e.hitFlash - 1 }
+
+        // 出屏移除
+        if e.y < GAME_H + e.h {
+            // 碰撞检测：敌机撞玩家
+            if aabb(e.x, e.y, e.w, e.h, g.player.x, g.player.y, g.player.w, g.player.h) {
+                playerHit(g)
+                createExplosion(g, e.x + e.w / 2.0, e.y + e.h / 2.0, 1)
+                if g.audioOk { g.sfxExplode.play() }
+            } else {
+                alive.add(e)
+            }
+        }
+    }
+    g.enemies = alive
+
+    // === 更新子弹 ===
+    Array[Bullet] liveBullets = []
+    for g.bullets to b {
+        b.x = b.x + b.vx
+        b.y = b.y + b.vy
+
+        if b.x < -10 or b.x > GAME_W + 10 or b.y < -10 or b.y > GAME_H + 10 {
+            continue
+        }
+
+        if b.kind == 0 {
+            // 玩家子弹 → 打敌机
+            bool hit = false
+            for g.enemies to e {
+                if e.active and e.hp > 0 and aabb(b.x, b.y, 6.0, 12.0, e.x, e.y, e.w, e.h) {
+                    e.hp = e.hp - 1
+                    e.hitFlash = 5
+                    hit = true
+                    if g.audioOk { g.sfxHit.play() }
+                    // 击杀结算（加分/爆炸/掉落）统一在下方"清理死亡敌机"处理
+                    break
+                }
+            }
+
+            // 玩家子弹 → 打 BOSS
+            if not hit and g.boss.active and g.boss.entered {
+                if aabb(b.x, b.y, 6.0, 12.0, g.boss.x, g.boss.y, g.boss.w, g.boss.h) {
+                    g.boss.hp = g.boss.hp - 1
+                    g.boss.hitFlash = 5
+                    hit = true
+                    if g.audioOk { g.sfxHit.play() }
+
+                    if g.boss.hp <= 0 {
+                        killBoss(g)
+                    }
+                }
+            }
+
+            if not hit { liveBullets.add(b) }
+        } else {
+            // 敌机子弹 → 打玩家
+            if aabb(b.x, b.y, 6.0, 12.0, g.player.x, g.player.y, g.player.w, g.player.h) {
+                playerHit(g)
+            } else {
+                liveBullets.add(b)
+            }
+        }
+    }
+    g.bullets = liveBullets
+
+    // === 清理死亡敌机（含炸弹炸死的） ===
+    Array[Enemy] survivors = []
+    for g.enemies to e {
+        if e.active {
+            if e.hp <= 0 {
+                addScore(g, e.score)
+                createExplosion(g, e.x + e.w / 2.0, e.y + e.h / 2.0, 1)
+                maybeDropPowerUp(g, e)
+                if g.audioOk { g.sfxExplode.play() }
+            } else {
+                survivors.add(e)
+            }
+        }
+    }
+    g.enemies = survivors
+
+    // === 更新道具 ===
+    Array[PowerUp] livePus = []
+    for g.powerups to pu {
+        pu.swayT = pu.swayT + 0.05
+        pu.y = pu.y + pu.vy
+        pu.x = clampf(pu.x + maths.sin(pu.swayT) * 0.6, 0.0, GAME_W - PU_SIZE)
+
+        if pu.y > GAME_H { continue }   // 漏掉则飞出屏幕消失
+
+        // 拾取判定
+        if aabb(pu.x, pu.y, PU_SIZE, PU_SIZE, g.player.x, g.player.y, g.player.w, g.player.h) {
+            applyPowerUp(g, pu.kind)
+            continue
+        }
+        livePus.add(pu)
+    }
+    g.powerups = livePus
+
+    // === 更新粒子 ===
+    Array[Particle] liveParts = []
+    for g.particles to p {
+        p.x = p.x + p.vx
+        p.y = p.y + p.vy
+        p.vy = p.vy + 0.05   // 重力
+        p.vx = p.vx * 0.98
+        p.life = p.life - 1
+        if p.life > 0 { liveParts.add(p) }
+    }
+    g.particles = liveParts
+
+    // 注：关卡推进 / 通关判定统一在 killBoss() 中处理
+}
+
+// ==================== 渲染逻辑 ====================
+
+func renderGame(Game g, Renderer r) {
+    // 清屏
+    r.setColor(#0a0a1aFF)
+    r.clear()
+
+    // === 星空背景 ===
+    for g.stars to s {
+        int c = s.bright
+        r.setColorFloat(c / 255.0, c / 255.0, c / 255.0, 0.8)
+        r.drawPoint(s.x, s.y)
+    }
+
+    switch g.state {
+        case ST_MENU {
+            renderMenu(g, r)
+        }
+        case ST_PLAY, ST_BOSS {
+            renderPlay(g, r)
+        }
+        case ST_OVER {
+            renderPlay(g, r)
+            renderGameOver(g, r)
+        }
+        case ST_WIN {
+            renderPlay(g, r)
+            renderWin(g, r)
+        }
+        default { }
+    }
+
+    core.requestRedraw()
+}
+
+func renderMenu(Game g, Renderer r) {
+    // 标题
+    r.setColorFloat(1.0, 0.8, 0.2, 1.0)
+    if g.font.ok {
+        r.drawTextCentered(g.font, "飞机大战", 0.0, GAME_W, GAME_H / 2.0 - 60.0, #FFD700FF)
+    }
+
+    // 闪烁的 "按回车开始"
+    if (g.frameCount / 30) % 2 == 0 {
+        if g.font.ok {
+            r.drawTextCentered(g.font, "按 回车 开始游戏", 0.0, GAME_W, GAME_H / 2.0 + 20.0, #FFFFFFFF)
+        }
+    }
+
+    // 操作说明
+    if g.font.ok {
+        r.drawTextCentered(g.font, "方向键/WASD 移动  空格 射击  B 炸弹", 0.0, GAME_W, GAME_H / 2.0 + 80.0, #AAAAAAFF)
+        r.drawTextCentered(g.font, "掉落的道具: P火力 S护盾 L生命 B炸弹 ★加分", 0.0, GAME_W, GAME_H / 2.0 + 110.0, #888888FF)
+        r.drawTextCentered(g.font, "ESC 退出", 0.0, GAME_W, GAME_H / 2.0 + 140.0, #AAAAAAFF)
+    }
+}
+
+func renderPlay(Game g, Renderer r) {
+    // === 绘制敌机 ===
+    for g.enemies to e {
+        Ptr[u8] tex = null as Ptr[u8]
+        if e.kind == 0 { tex = g.texSmall }
+        else if e.kind == 1 { tex = g.texMed }
+        else { tex = g.texBig }
+
+        if tex != null {
+            // 敌机贴图机头朝上，垂直翻转使其朝向玩家（机头朝下）
+            r.drawTextureRotated(tex, e.x, e.y, e.w, e.h, 0.0, 0.0, 0.0, Flip.VERTICAL)
+        }
+
+        // 闪烁效果（被击中）
+        if e.hitFlash > 0 {
+            r.setColorFloat(1.0, 0.0, 0.0, 0.3)
+            r.fillRect(e.x, e.y, e.w, e.h)
+        }
+
+        // 血条（中/大敌机）
+        if e.maxHp > 1 and e.hp < e.maxHp {
+            float bw = e.w
+            float bx = e.x
+            float by = e.y - 6.0
+            r.setColorFloat(0.3, 0.0, 0.0, 0.8)
+            r.fillRect(bx, by, bw, 3.0)
+            r.setColorFloat(1.0, 0.0, 0.0, 0.8)
+            r.fillRect(bx, by, bw * _float(e.hp) / _float(e.maxHp), 3.0)
+        }
+    }
+
+    // === 绘制 BOSS ===
+    if g.boss.active {
+        // 每关一张不同的 BOSS 贴图（boss1.png .. boss5.png）
+        Ptr[u8] bossTex = null as Ptr[u8]
+        if g.level >= 1 and g.level <= MAX_LEVEL {
+            if g.level - 1 < g.bossTexes.len() { bossTex = g.bossTexes[g.level - 1] }
+        }
+        if bossTex != null {
+            // BOSS 贴图同样是机头朝上，垂直翻转使其朝向玩家
+            r.drawTextureRotated(bossTex, g.boss.x, g.boss.y, g.boss.w, g.boss.h,
+                                 0.0, 0.0, 0.0, Flip.VERTICAL)
+        }
+
+        // 闪烁
+        if g.boss.hitFlash > 0 {
+            r.setColorFloat(1.0, 0.0, 0.0, 0.3)
+            r.fillRect(g.boss.x, g.boss.y, g.boss.w, g.boss.h)
+        }
+
+        // BOSS 血条
+        float bx = 20.0
+        float by = GAME_H - 30.0
+        float bw = GAME_W - 40.0
+        float bh = 12.0
+        r.setColorFloat(0.2, 0.0, 0.0, 0.8)
+        r.fillRect(bx, by, bw, bh)
+        float hpRatio = _float(g.boss.hp) / _float(g.boss.maxHp)
+        if hpRatio > 0.5 {
+            r.setColorFloat(0.2, 1.0, 0.2, 0.9)
+        } else if hpRatio > 0.25 {
+            r.setColorFloat(1.0, 0.8, 0.0, 0.9)
+        } else {
+            r.setColorFloat(1.0, 0.2, 0.0, 0.9)
+        }
+        r.fillRect(bx, by, bw * hpRatio, bh)
+
+        if g.font.ok {
+            r.drawTextCentered(g.font, "BOSS", 0.0, GAME_W, by - 18.0, #FF0000FF)
+        }
+    }
+
+    // === 绘制子弹 ===
+    for g.bullets to b {
+        if b.kind == 0 {
+            // 玩家子弹（黄色）
+            r.setColorFloat(0.0, 1.0, 1.0, 0.9)
+            r.fillRect(b.x, b.y, 6.0, 12.0)
+            r.setColorFloat(1.0, 1.0, 0.0, 0.7)
+            r.fillRect(b.x + 1.0, b.y + 1.0, 4.0, 10.0)
+        } else {
+            // 敌机子弹（红色）
+            r.setColorFloat(1.0, 0.3, 0.3, 0.9)
+            r.fillCircle(b.x + 3.0, b.y + 6.0, 4.0)
+        }
+    }
+
+    // === 绘制粒子 ===
+    for g.particles to p {
+        float alpha = _float(p.life) / _float(p.maxLife)
+        r.setColorFloat(_float(p.r) / 255.0, _float(p.g) / 255.0, _float(p.b) / 255.0, alpha)
+        r.fillCircle(p.x, p.y, p.size)
+    }
+
+    // === 绘制道具 ===
+    for g.powerups to pu {
+        float cx = pu.x + PU_SIZE / 2.0
+        float cy = pu.y + PU_SIZE / 2.0
+        float pulse = 0.85 + maths.sin(_float(g.frameCount) * 0.15 + pu.swayT) * 0.15
+
+        // 按道具类型取配色（实心色 / 光环色）与图标字母
+        float cr = 1.0; float cg = 1.0; float cb = 1.0
+        float hr = 1.0; float hg = 1.0; float hb = 1.0
+        string glyph = "P"
+        switch pu.kind {
+            case PU_POWER {
+                cr = 0.15; cg = 0.75; cb = 1.0
+                hr = 0.7;  hg = 0.95; hb = 1.0
+                glyph = "P"
+            }
+            case PU_SHIELD {
+                cr = 0.2;  cg = 0.95; cb = 0.4
+                hr = 0.6;  hg = 1.0;  hb = 0.7
+                glyph = "S"
+            }
+            case PU_LIFE {
+                cr = 1.0;  cg = 0.35; cb = 0.5
+                hr = 1.0;  hg = 0.7;  hb = 0.8
+                glyph = "L"
+            }
+            case PU_BOMB {
+                cr = 1.0;  cg = 0.6;  cb = 0.1
+                hr = 1.0;  hg = 0.85; hb = 0.4
+                glyph = "B"
+            }
+            default {
+                cr = 1.0;  cg = 0.85; cb = 0.2
+                hr = 1.0;  hg = 1.0;  hb = 0.6
+                glyph = "★"
+            }
+        }
+
+        // 实心圆 + 呼吸光晕环
+        r.setColorFloat(cr, cg, cb, 0.95)
+        r.fillCircle(cx, cy, 11.0)
+        r.setColorFloat(hr, hg, hb, 0.9)
+        r.drawCircle(cx, cy, 11.0 * pulse + 3.0)
+
+        // 图标字母：P 火力 / S 护盾 / L 生命 / B 炸弹 / ★ 加分
+        if g.font.ok {
+            r.drawTextCentered(g.font, glyph, cx - 20.0, cx + 20.0, cy - 9.0, #FFFFFFFF)
+        }
+    }
+
+    // === 绘制玩家（无敌时闪烁） ===
+    if g.player.invincibleTimer <= 0 or (g.player.invincibleTimer / 5) % 2 == 0 {
+        if g.texPlayer != null {
+            r.drawTextureAt(g.texPlayer, g.player.x, g.player.y, g.player.w, g.player.h)
+        }
+    }
+
+    // === 护盾圈（呼吸感双环） ===
+    if g.player.shieldTimer > 0 {
+        float px = g.player.x + g.player.w / 2.0
+        float py = g.player.y + g.player.h / 2.0
+        r.setColorFloat(0.3, 0.8, 1.0, 0.3 + maths.sin(_float(g.frameCount) * 0.2) * 0.15)
+        r.drawCircle(px, py, 32.0)
+        r.setColorFloat(0.5, 0.9, 1.0, 0.18)
+        r.drawCircle(px, py, 36.0)
+    }
+
+    // === 炸弹全屏闪光 ===
+    if g.bombFlash > 0 {
+        r.setColorFloat(1.0, 1.0, 1.0, _float(g.bombFlash) / 60.0)
+        r.fillRect(0.0, 0.0, GAME_W, GAME_H)
+    }
+
+    // === UI：分数 / 生命 / 关卡 / 火力 / 炸弹 ===
+    if g.font.ok {
+        r.drawText(g.font, "分数: " + _str(g.score), 10.0, 10.0, #FFFFFFFF)
+        r.drawText(g.font, "生命: " + _str(g.player.lives), 10.0, 30.0, #FF4444FF)
+        r.drawText(g.font, "关卡: " + _str(g.level) + " / " + _str(MAX_LEVEL), 10.0, 50.0, #88CCFFFF)
+        r.drawText(g.font, "火力: " + _str(g.player.power), 10.0, 70.0, #66FFFFFF)
+        r.drawText(g.font, "炸弹: " + _str(g.player.bombs) + " (B)", 10.0, 90.0, #FFAA44FF)
+
+        if g.state == ST_BOSS {
+            r.drawTextCentered(g.font, "BOSS 战!", 0.0, GAME_W, 10.0, #FF0000FF)
+        } else {
+            r.drawTextCentered(g.font, "目标: " + _str(g.levelScore) + " / " + _str(levelTarget(g.level)), 0.0, GAME_W, 10.0, #88CCFFFF)
+        }
+
+        // 关卡 / BOSS 横幅
+        if g.levelBannerTimer > 0 and (g.levelBannerTimer / 10) % 2 == 0 {
+            if g.state == ST_BOSS {
+                r.drawTextCentered(g.font, "BOSS 来袭!", 0.0, GAME_W, GAME_H / 3.0, #FF3333FF)
+            } else {
+                r.drawTextCentered(g.font, "第 " + _str(g.level) + " 关", 0.0, GAME_W, GAME_H / 3.0, #FFD700FF)
+            }
+        }
+    }
+}
+
+func renderGameOver(Game g, Renderer r) {
+    // 半透明遮罩
+    r.setColorFloat(0.0, 0.0, 0.0, 0.6)
+    r.fillRect(0.0, 0.0, GAME_W, GAME_H)
+
+    if g.font.ok {
+        r.drawTextCentered(g.font, "游戏结束", 0.0, GAME_W, GAME_H / 2.0 - 40.0, #FF0000FF)
+        r.drawTextCentered(g.font, "最终分数: " + _str(g.score), 0.0, GAME_W, GAME_H / 2.0 + 10.0, #FFFFFFFF)
+        if (g.frameCount / 30) % 2 == 0 {
+            r.drawTextCentered(g.font, "按 回车 重新开始", 0.0, GAME_W, GAME_H / 2.0 + 70.0, #AAAAAAFF)
+        }
+    }
+}
+
+func renderWin(Game g, Renderer r) {
+    r.setColorFloat(0.0, 0.0, 0.0, 0.6)
+    r.fillRect(0.0, 0.0, GAME_W, GAME_H)
+
+    if g.font.ok {
+        r.drawTextCentered(g.font, "通关!", 0.0, GAME_W, GAME_H / 2.0 - 40.0, #00FF00FF)
+        r.drawTextCentered(g.font, "最终分数: " + _str(g.score), 0.0, GAME_W, GAME_H / 2.0 + 10.0, #FFFFFFFF)
+        if (g.frameCount / 30) % 2 == 0 {
+            r.drawTextCentered(g.font, "按 回车 重新开始", 0.0, GAME_W, GAME_H / 2.0 + 70.0, #AAAAAAFF)
+        }
+    }
+}
+
+// ==================== 事件处理 ====================
+
+func handleEvent(Game g, Event e): bool {
+    if e.isQuit() or e.isWindowClose() { return false }
+
+    if e.isKeyDown() {
+        int sc = e.scancode()
+        if sc == Scancode.ESCAPE { return false }
+
+        if g.state == ST_MENU or g.state == ST_OVER or g.state == ST_WIN {
+            if sc == Scancode.RETURN {
+                startGame(g)
+            }
+        } else if g.state == ST_PLAY or g.state == ST_BOSS {
+            switch sc {
+                case Scancode.LEFT, Scancode.A  { g.player.moveLeft = true }
+                case Scancode.RIGHT, Scancode.D { g.player.moveRight = true }
+                case Scancode.UP, Scancode.W    { g.player.moveUp = true }
+                case Scancode.DOWN, Scancode.S  { g.player.moveDown = true }
+                case Scancode.SPACE             { g.player.shooting = true }
+                case Scancode.B                 { useBomb(g) }
+                default { }
+            }
+        }
+    }
+
+    if e.isKeyUp() {
+        int sc = e.scancode()
+        switch sc {
+            case Scancode.LEFT, Scancode.A  { g.player.moveLeft = false }
+            case Scancode.RIGHT, Scancode.D { g.player.moveRight = false }
+            case Scancode.UP, Scancode.W    { g.player.moveUp = false }
+            case Scancode.DOWN, Scancode.S  { g.player.moveDown = false }
+            case Scancode.SPACE             { g.player.shooting = false }
+            default { }
+        }
+    }
+
+    return true
+}
+
+// ==================== 主函数 ====================
+
+main() {
+    var win = SDL3.createWindow({
+        title: "飞机大战",
+        w: _int(GAME_W),
+        h: _int(GAME_H),
+        flags: WindowFlag.RESIZABLE
+    })
+    if not win.ok {
+        print("[错误] 窗口创建失败")
+        return
+    }
+
+    // 初始化字体
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(18.0)
+
+    var g = newGame()
+    g.font = font
+
+    win.setMaxFPS(60)
+
+    print("[OK] 飞机大战启动成功!")
+    print("     方向键/WASD 移动, 空格 射击, 回车 开始, ESC 退出")
+
+    win.run(
+        func(Event ev): bool {
+            return handleEvent(g, ev)
+        },
+        func(Renderer r) {
+            // 首帧加载资源（需要渲染器句柄）
+            if g.texPlayer == null {
+                loadResources(g, r.handle)
+            }
+
+            if g.state == ST_PLAY or g.state == ST_BOSS {
+                updateGame(g)
+            } else {
+                // 菜单/结束界面也更新帧计数和星空
+                g.frameCount = g.frameCount + 1
+                for g.stars to s {
+                    s.y = s.y + s.speed
+                    if s.y > GAME_H {
+                        s.y = 0.0
+                        s.x = _float(rands.ints(0, _int(GAME_W)))
+                    }
+                }
+            }
+            renderGame(g, r)
+        }
+    )
+
+    // 清理
+    if g.audioOk {
+        g.bgm.stop(); g.bgm.uninit()
+        g.bossBgm.stop(); g.bossBgm.uninit()
+        g.sfxShoot.uninit(); g.sfxHit.uninit()
+        g.sfxExplode.uninit(); g.sfxDeath.uninit()
+        audio.uninit()
+    }
+    if font.ok { font.close() }
+    win.destroy()
+    SDL3.quit()
+    print("飞机大战退出")
+}

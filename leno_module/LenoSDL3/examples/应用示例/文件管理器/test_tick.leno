@@ -1,9 +1,0 @@
-import "../../../lib/sdl_timer.leno" as timer
-use timer.Timer
-
-func test_tick(Timer t) {
-    timer.tickAllTimers()
-}
-
-main() {
-}

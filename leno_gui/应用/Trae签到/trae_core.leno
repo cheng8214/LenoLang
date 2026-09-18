@@ -1,0 +1,296 @@
+// trae_core.leno — TraeSign 共享核心（CLI 与 GUI 用**同一份**实现）
+//
+// 为什么单独成文件：② 读登录态、③ 签到接口要被 CLI（`trae_sign.leno`）与 GUI（`trae_gui.leno`）
+// 共用 ⇒ 抽到这里，避免两套实现漂移（见 `docs/待办_单一事实来源与重复实现收敛.md`）✓
+//
+// 约定：本文件**不打印任何东西**、不含 `main()`、不解析命令行参数 ⇒ 可安全被多方 import ✓
+// 安全：只**读** Trae 登录态文件；**不打印 token**；不修改登录态文件 ✓
+import jsons
+import strings
+import files
+import times
+import "web_net" as net
+use net.(HttpClient, Response)
+import "trae_crypto.leno" as crypt
+
+var BRANDS = ["TRAE SOLO CN", "Trae CN", "TraeWork"]
+var STATUS_URL = "https://api.trae.cn/trae/api/v2/ug/checkin_credits/status"
+var CLAIM_URL = "https://api.trae.cn/trae/api/v2/ug/checkin_credits/claim"
+var DC_PREFIX = "iCubeAuthInfo://icube-dc:"
+var CLOUD_PREFIX = "iCubeAuthInfo://icube.cloudide"
+
+// ==================== ① JSON 取值助手 ====================
+// 为什么要这一层：`jsons.decode/read_file` 返回 `any` ✗，语言不允许把 any 直接当 Dict 用
+// （也不能赋给 Dict 变量），必须**显式类型收窄**（`if x is Dict { ... }`）。
+// 收窄都收在这一层里，业务代码就只跟 string / Array[string] 打交道 ✓。
+export func json_get(any obj, string key): string {
+    if obj is Dict {
+        Dict d = obj
+        if d.has(key) {
+            var v = d[key]
+            if v != null { return _str(v) }
+        }
+    }
+    return ""
+}
+export func json_obj(any obj, string key): any {
+    if obj is Dict {
+        Dict d = obj
+        if d.has(key) { return d[key] }
+    }
+    return null
+}
+export func json_keys(any obj): Array[string] {
+    var out = []
+    if obj is Dict {
+        Dict d = obj
+        var ks = d.keys()
+        for ks to k {
+            out.add(_str(k))
+        }
+    }
+    return out
+}
+
+// ==================== ② 读登录态（只读） ====================
+
+export func storage_path(string brand): string {
+    var appdata = _env("APPDATA")
+    if appdata == null { return "" }
+    return appdata + "\\" + brand + "\\User\\globalStorage\\storage.json"
+}
+
+// 读某个品牌的登录态 → [enc, dcId]；没找到 ⇒ []
+export func pick_auth(string brand): Array[string] {
+    var p = storage_path(brand)
+    if p == "" { return [] }
+    if not files.exists(p) { return [] }
+    var s = jsons.read_file(p)
+    var keys = json_keys(s)
+    var enc = ""
+    var dc = ""
+    for keys to k {
+        if strings.starts_with(k, DC_PREFIX) {
+            dc = k.byte_slice(DC_PREFIX.byte_len(), k.byte_len())
+        } else if strings.starts_with(k, CLOUD_PREFIX) {
+            enc = json_get(s, k)
+        }
+    }
+    if enc == "" { return [] }
+    if dc == "" {
+        dc = json_get(s, "telemetry.devDeviceId")
+        if dc == "" { dc = json_get(s, "telemetry.machineId") }
+    }
+    return [enc, dc]
+}
+
+// 登录态 → [brand, username, token, region, dcId]；失败 ⇒ []
+export func load_account(string brand): Array[string] {
+    var a = pick_auth(brand)
+    if a.len() == 0 { return [] }
+    var json = crypt.trae_decrypt_auth(a[0])
+    if json == "" { return [] }
+    var ad = jsons.decode(json)
+    var token = json_get(ad, "token")
+    var username = json_get(json_obj(ad, "account"), "username")
+    var region = json_get(json_obj(ad, "userRegion"), "region")
+    return [brand, username, token, region, a[1]]
+}
+
+// 各品牌可用的登录态（只读扫描；不打印 token）→ Array[[brand, username, hasToken]]
+export func scan_accounts(): Array[Array[string]] {
+    var out = []
+    for BRANDS to brand {
+        var a = pick_auth(brand)
+        if a.len() == 0 { continue }
+        var json = crypt.trae_decrypt_auth(a[0])
+        var username = ""
+        var has_token = "false"
+        if json != "" {
+            var ad = jsons.decode(json)
+            if json_get(ad, "token") != "" { has_token = "true" }
+            username = json_get(json_obj(ad, "account"), "username")
+        }
+        out.add([brand, username, has_token])
+    }
+    return out
+}
+
+// 缺省账号（第一个可用的）→ 同 load_account
+export func default_account(): Array[string] {
+    for BRANDS to b {
+        var acc = load_account(b)
+        if acc.len() > 0 { return acc }
+    }
+    return []
+}
+
+// ==================== ③ 签到接口 ====================
+
+// 建好鉴权头的一次性客户端
+// ⚠ 必须**一次**设完所有头：`setHeaders` 是**替换**语义，分两次调用会把 Authorization /
+// x-device-id 覆盖掉 ⇒ 服务端看到未鉴权请求，返回 `code:1001 not able to authenticate you`
+// （实测踩过这个坑 ✗）⇒ 这里按有无 region 走两条完整列表，绝不追加第二次 ✓。
+export func authed_client(string token, string dc_id, string region): HttpClient {
+    net.globalInit()
+    HttpClient c = net.createClient()
+    c.setTimeout(20000)
+    if region != "" {
+        c.setHeaders([
+            "Content-Type: application/json",
+            "Authorization: Cloud-IDE-JWT " + token,
+            "x-device-id: " + dc_id,
+            "X-User-Region: " + region
+        ])
+    } else {
+        c.setHeaders([
+            "Content-Type: application/json",
+            "Authorization: Cloud-IDE-JWT " + token,
+            "x-device-id: " + dc_id
+        ])
+    }
+    return c
+}
+
+// 一次 JSON POST（带 Trae 的鉴权头）；HTTP 层失败 ⇒ 返回带 _http_error 的对象
+export func api_post(HttpClient c, string url, string body): any {
+    Response r = c.post(url, body)
+    if not r.ok() {
+        return {"_http_error": _str(r.statusCode), "_error": _str(r.error), "_raw": r.body}
+    }
+    var d = jsons.decode(r.body)
+    if d is Dict {
+        Dict dd = d
+        dd["_status"] = _str(r.statusCode)
+        dd["_raw"] = r.body
+    }
+    return d
+}
+
+export func jval(any d, string key): string {
+    return json_get(d, key)
+}
+
+// 查状态 → [ok, httpErr, err, code, raw, base, extra, checkedIn, msg]
+export func fetch_status(HttpClient c): Array[string] {
+    var st = api_post(c, STATUS_URL, "{}")
+    var he = jval(st, "_http_error")
+    if he != "" {
+        return ["false", he, jval(st, "_error"), jval(st, "_status"), jval(st, "_raw"),
+                "", "", "false", "HTTP " + he]
+    }
+    var base = jval(st, "credits")
+    var extra = jval(st, "extra_credits")
+    var checked = jval(st, "checked_in")
+    var code = jval(st, "code")
+    var raw = jval(st, "_raw")
+    if base == "" and extra == "" {
+        return ["false", "", "", code, raw, "", "", checked,
+                "账号状态异常（token 可能已过期），请重新登录该软件"]
+    }
+    return ["true", "", "", code, raw, base, extra, checked, ""]
+}
+
+// 签到（含二次确认：防 token 过期导致 claim 假成功）→ [ok, code, httpErr, base, extra, msg]
+export func do_claim(HttpClient c): Array[string] {
+    var cl = api_post(c, CLAIM_URL, "{\"req_source\":1}")
+    var he = jval(cl, "_http_error")
+    if he != "" { return ["false", "", he, "", "", "HTTP " + he] }
+    var code = jval(cl, "code")
+    var cchecked = jval(cl, "checked_in")
+    if code == "0" or cchecked == "true" {
+        var cf = api_post(c, STATUS_URL, "{}")
+        if jval(cf, "checked_in") == "true" {
+            return ["true", "0", "", jval(cf, "credits"), jval(cf, "extra_credits"), "签到成功"]
+        }
+        // 错误码 -6 与参考件/旧 CLI **逐字一致** ✓（"假成功"分支）
+        return ["false", "-6", "", "", "", "签到结果异常（token 可能已过期），请重新登录该软件"]
+    }
+    if code == "9095" {
+        return ["false", "9095", "", "", "", "本设备今日已有账号签到（同机每天只允许一个账号）"]
+    }
+    var mf = jval(cl, "message")
+    if mf == "" { mf = "签到失败" }
+    return ["false", code, "", "", "", mf]
+}
+
+// ---- fetch_status 结果字段访问（下标集中在函数里，业务代码不写魔法数字）----
+export func st_ok(Array[string] r): bool            { return r[0] == "true" }
+export func st_http_err(Array[string] r): string    { return r[1] }
+// 注意：slot 3 是 **HTTP 状态码**（原 CLI 的 `--debug` 打印它）✓ 不是业务 code
+export func st_http_code(Array[string] r): string   { return r[3] }
+export func st_err(Array[string] r): string         { return r[2] }
+export func st_raw(Array[string] r): string         { return r[4] }
+export func st_base(Array[string] r): string        { return r[5] }
+export func st_extra(Array[string] r): string       { return r[6] }
+export func st_checked(Array[string] r): bool       { return r[7] == "true" }
+export func st_msg(Array[string] r): string         { return r[8] }
+// 积分展示串（base + extra）；没数据 ⇒ ""
+export func st_score_text(Array[string] r): string {
+    if not st_ok(r) { return "" }
+    return "今日积分 " + r[5] + "（基础 " + r[5] + " + 额外 " + r[6] + "）"
+}
+
+// ---- do_claim 结果字段访问 ----
+export func cl_ok(Array[string] r): bool            { return r[0] == "true" }
+export func cl_code(Array[string] r): string        { return r[1] }
+export func cl_http_err(Array[string] r): string    { return r[2] }
+export func cl_base(Array[string] r): string        { return r[3] }
+export func cl_extra(Array[string] r): string       { return r[4] }
+export func cl_msg(Array[string] r): string         { return r[5] }
+
+// ==================== ④ 日期助手（日历用；纯整数算法） ====================
+// Howard Hinnant 的 days_from_civil：1970-01-01 = 0
+// 星期 = (days + 4) % 7 ⇒ 0=周日 ✓（1970-01-01 是周四 ✓，验证过）
+export func days_from_civil(int y, int m, int d): int {
+    int yy = y
+    if m <= 2 { yy = y - 1 }
+    int era = yy / 400
+    if yy < 0 and yy % 400 != 0 { era = era - 1 }
+    int yoe = yy - era * 400
+    int mp = m + 9
+    if m > 2 { mp = m - 3 }
+    int doy = (153 * mp + 2) / 5 + d - 1
+    int doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+    return era * 146097 + doe - 719468
+}
+export func weekday_of(int y, int m, int d): int {
+    return (days_from_civil(y, m, d) + 4) % 7
+}
+export func days_in_month(int y, int m): int {
+    if m == 2 {
+        if (y % 4 == 0 and y % 100 != 0) or y % 400 == 0 { return 29 }
+        return 28
+    }
+    if m == 4 or m == 6 or m == 9 or m == 11 { return 30 }
+    return 31
+}
+export func pad2(int n): string {
+    if n < 10 { return "0" + (n as string) }
+    return n as string
+}
+export func date_str(int y, int m, int d): string {
+    return (y as string) + "-" + pad2(m) + "-" + pad2(d)
+}
+// 某月的前缀（历史键用）："2026-09-"
+export func month_prefix(int y, int m): string {
+    return (y as string) + "-" + pad2(m) + "-"
+}
+// 今天：[y, m, d]（用 times.format 取本地日期，避开 datetime() 的数组元素类型不确定性 ✓）
+export func today_parts(): Array[int] {
+    var t = times.now()
+    return [_int(times.format(t, "%Y")), _int(times.format(t, "%m")), _int(times.format(t, "%d"))]
+}
+export func today_str(): string {
+    var p = today_parts()
+    return date_str(p[0], p[1], p[2])
+}
+// 上一个月 / 下一个月的 [y, m]
+export func prev_month(int y, int m): Array[int] {
+    if m <= 1 { return [y - 1, 12] }
+    return [y, m - 1]
+}
+export func next_month(int y, int m): Array[int] {
+    if m >= 12 { return [y + 1, 1] }
+    return [y, m + 1]
+}

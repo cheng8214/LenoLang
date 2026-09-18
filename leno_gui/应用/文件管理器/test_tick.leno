@@ -1,0 +1,9 @@
+import "sdl_timer" as timer
+use timer.Timer
+
+func test_tick(Timer t) {
+    timer.tickAllTimers()
+}
+
+main() {
+}

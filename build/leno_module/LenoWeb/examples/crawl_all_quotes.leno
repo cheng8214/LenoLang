@@ -1,0 +1,85 @@
+// 使用 LenoWeb 爬虫框架爬取 quotes.toscrape.com 全站名言
+
+import "Web" as web
+use web.(Crawler, CrawlItem, Page, createCrawler, start, nextUrl, shouldStop,
+         markVisited, enqueue, fetchPage, extractLinks, select, textContent)
+import times
+
+main() {
+    print("=== LenoCrawler 全站爬取演示 ===")
+    print("")
+
+    Dict[string, any] config = {}
+    config["start_urls"] = ["https://quotes.toscrape.com/"]
+    config["allowed_domains"] = ["quotes.toscrape.com"]
+    config["max_pages"] = 5
+    config["max_depth"] = 5
+    config["delay_ms"] = 500
+    config["user_agent"] = "LenoCrawler/1.0"
+
+    Crawler c = web.createCrawler(config)
+    web.start(c)
+
+    int totalQuotes = 0
+    int startTime = _int(times.ms())
+
+    while not web.shouldStop(c) {
+        CrawlItem entry = web.nextUrl(c)
+        if entry == null { break }
+        string url = entry.url
+        int depth = entry.depth
+
+        print("[ Depth " + depth + " ] 抓取: " + url)
+
+        Page page = web.fetchPage(url, "LenoCrawler/1.0")
+        if page == null {
+            print("  -> 抓取失败，跳过")
+        } else {
+            print("  -> 状态码: " + page.status)
+
+            var quotes = web.select(page.html, ".quote")
+            if quotes is Array {
+                print("  -> 找到 " + quotes.len() + " 条名言")
+                for quotes to quote {
+                    var tagNode = web.select(quote, ".text")
+                    var authorNode = web.select(quote, ".author")
+                    string text = ""
+                    string author = ""
+                    if tagNode is Array and tagNode.len() > 0 {
+                        text = web.textContent(tagNode[0])
+                    }
+                    if authorNode is Array and authorNode.len() > 0 {
+                        author = web.textContent(authorNode[0])
+                    }
+                    totalQuotes = totalQuotes + 1
+                    string showText = text
+                    if showText.len() > 50 {
+                        showText = showText.slice(0, 50) + "..."
+                    }
+                    print("    " + showText + " —— " + author)
+                }
+            }
+            web.markVisited(c, url)
+
+            var links = web.extractLinks(page)
+            if links is Array[string] {
+                for links to linkStr {
+                    web.enqueue(c, linkStr, depth + 1)
+                }
+                print("  -> 提取 " + links.len() + " 个链接")
+            }
+        }
+
+        int delayMs = c.delay_ms
+        if delayMs > 0 {
+            sleep(delayMs)
+        }
+        print("")
+    }
+
+    int elapsed = _int(times.ms()) - startTime
+    print("=== 爬取完成 ===")
+    print("总访问页面: " + c.page_count)
+    print("总名言数: " + totalQuotes)
+    print("耗时: " + elapsed / 1000 + " 秒")
+}

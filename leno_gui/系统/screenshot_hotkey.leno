@@ -1,0 +1,1154 @@
+// screenshot_hotkey.leno — Leno QQ 风格截图快捷工具
+// Ctrl+Shift+S 截图，选区后弹出工具栏（箭头/画笔/文字/保存/复制/退出）
+import ffi
+import times
+import dirs
+import maths
+import "Win32" as Win32
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer, Scancode, WindowFlag, MouseButton, Font, SDL_SurfaceInfo, SDL_Rect, sdl3_ttf)
+
+const MOD_CTRL = 0x00C0
+
+// ==== 工具栏模式 ====
+const MODE_NONE  = 0
+const MODE_ARROW = 1
+const MODE_PEN   = 2
+const MODE_TEXT  = 3
+
+// ==== 颜色选项 ====
+const _colorRed    = 0xFFFF0000
+const _colorGreen  = 0xFF00CC00
+const _colorBlue   = 0xFF3366FF
+const _colorYellow = 0xFFFFFF00
+const _colorWhite  = 0xFFFFFFFF
+const _colorBlack  = 0xFF000000
+
+Array[int] _colorList = [_colorRed, _colorGreen, _colorBlue, _colorYellow, _colorWhite, _colorBlack]
+Array[string] _colorNames = ["红", "绿", "蓝", "黄", "白", "黑"]
+
+// ==== 字号选项 ====
+Array[int] _sizeList = [14, 18, 24, 32]
+Array[string] _sizeNames = ["14", "18", "24", "32"]
+
+// ==== 全局状态 ====
+Ptr[u8] _pixels = null; var _sw = 0; var _sh = 0
+Ptr[u8] _magTex = null  // 放大镜纹理（跨帧复用）
+float _mx = 0.0; float _my = 0.0
+float _sx = 0.0; float _sy = 0.0; float _ex = 0.0; float _ey = 0.0
+var _selDone = false    // 选区是否完成
+var _saveReq = false
+var _hint = "拖拽选择区域"
+var _leftDown = false
+var _ready = false         // 窗口就绪标志：首帧渲染完成前忽略所有鼠标按下事件
+var _frameCount = 0        // 帧计数器：延迟几帧后才接受鼠标操作
+
+// 工具栏
+var _tbShow = false           // 是否显示工具栏
+float _tbX = 0.0; float _tbY = 0.0
+float _tbW = 524.0; float _tbH = 38.0
+var _tbHoverBtn = -1          // 鼠标悬停的按钮索引
+
+// 绘制模式
+var _mode = MODE_NONE          // 当前工具模式
+var _drawing = false           // 是否正在拖拽绘制
+float _drawX1 = 0.0; float _drawY1 = 0.0  // 绘制起点
+float _drawX2 = 0.0; float _drawY2 = 0.0  // 绘制终点
+var _penPts = []               // 画笔点集（flat: [x1,y1,x2,y2,...]）
+
+// 当前标注颜色和字号
+int _curColor = _colorRed
+int _curSizeIdx = 1            // 默认 18px
+
+// 文字输入
+var _texting = false           // 是否正在输入文字
+var _textStr = ""              // 当前输入的文字
+float _textX = 0.0; float _textY = 0.0
+var _textCursorBlink = 0       // 光标闪烁计时器
+
+// 文字拖拽/编辑
+var _hoverAnno = -1            // 悬停的文字标注索引
+var _dragAnno = -1             // 正在拖拽的文字标注索引
+float _dragOffX = 0.0; float _dragOffY = 0.0  // 拖拽时鼠标相对文字原点的偏移
+int _lastClickTime = -9999     // 上次点击时间（双击检测）
+int _lastClickIdx = -1         // 上次点击的标注索引
+int _editAnnoIdx = -1          // 正在编辑的标注索引（渲染时跳过，ESC取消时保留，确认时删除）
+
+// ==== 标注项结构 ====
+struct AnnoItem {
+    int type = 0       // MODE_ARROW / MODE_PEN / MODE_TEXT
+    float x1 = 0.0, y1 = 0.0, x2 = 0.0, y2 = 0.0          // 箭头用
+    Array[float] strokes = []          // 画笔用（flat: [x1,y1,x2,y2,...]）
+    string text = ""                    // 文字用
+    float tx = 0.0, ty = 0.0                   // 文字位置
+    int color = 0xFFFF0000                      // 标注颜色
+    int fontSize = 18                   // 字号（文字用）
+    // 换行缓存
+    Array[string] cachedLines = []     // 缓存的换行结果
+    string cacheKey = ""               // 缓存键: text + "|" + wrapW
+    // 包围盒缓存
+    float cachedMaxW = 0.0             // 缓存的最大宽度
+    float cachedTotalH = 0.0           // 缓存的总高度
+    string boundsKey = ""              // 包围盒缓存键
+}
+
+// ==== 标注列表 ====
+Array[AnnoItem] _annos = []
+
+// ==== 选区辅助 ====
+func hasSel(): bool {
+    float fx = if _sx < _ex then _ex - _sx else _sx - _ex
+    float fy = if _sy < _ey then _ey - _sy else _sy - _ey
+    return _int(fx) > 3 and _int(fy) > 3
+}
+func resetSel() {
+    _selDone = false; _sx = 0.0; _sy = 0.0; _ex = 0.0; _ey = 0.0
+    _tbShow = false; _mode = MODE_NONE; _annos.clear()
+    _texting = false; _textStr = ""
+    _leftDown = false; _drawing = false
+    _hoverAnno = -1; _dragAnno = -1; _editAnnoIdx = -1
+}
+func getRect(): [float, float, float, float] {
+    return if _sx < _ex then _sx else _ex, if _sy < _ey then _sy else _ey,
+           if _sx > _ex then _sx - _ex else _ex - _sx,
+           if _sy > _ey then _sy - _ey else _ey - _sy
+}
+
+// ==== 工具栏辅助 ====
+// 主按钮标签（全局常量，避免每帧分配数组）
+const Array[string] _TB_LABELS = ["箭头", "画笔", "文字", "保存", "复制", "退出"]
+
+// 工具栏分区：主按钮 0-5，颜色 6-11，字号 12-15
+// 主按钮宽度 42，颜色块宽度 18，字号块宽度 26
+
+// 返回被点击的区域索引（-1 = 无）
+// 0-5: 主按钮, 6-11: 颜色, 12-15: 字号
+func _tbHit(float x, float y): int {
+    if not _tbShow { return -1 }
+    if x < _tbX or x > _tbX + _tbW or y < _tbY or y > _tbY + _tbH { return -1 }
+    float cx = _tbX
+    // 主按钮区域：6 个按钮，每个 42+3
+    float bx = cx + 6.0; float bw = 42.0; float bgap = 3.0
+    for 0:5 to i {
+        float left = bx + i * (bw + bgap)
+        if x >= left and x < left + bw { return i }
+    }
+    // 分隔线后是颜色区域
+    float colorStart = bx + 6 * (bw + bgap) + 4.0
+    float cw = 18.0; float cgap = 2.0
+    for 0:5 to i {
+        float left = colorStart + i * (cw + cgap)
+        if x >= left and x < left + cw { return 6 + i }
+    }
+    // 字号区域
+    float sizeStart = colorStart + 6 * (cw + cgap) + 6.0
+    float sw = 26.0; float sgap = 2.0
+    for 0:3 to i {
+        float left = sizeStart + i * (sw + sgap)
+        if x >= left and x < left + sw { return 12 + i }
+    }
+    return -1
+}
+
+// 根据选区重新计算工具栏位置（选区下方，不够则上方）
+func _updateToolbarPos() {
+    var[float, float, float, float](rx, ry, rw, rh) = getRect()
+    _tbX = rx + (rw - _tbW) * 0.5
+    // 选区下方
+    _tbY = ry + rh + 8.0
+    // 如果超出屏幕，放到选区上方
+    if _tbY + _tbH > _float(_sh) - 4.0 {
+        _tbY = ry - _tbH - 8.0
+        if _tbY < 4.0 { _tbY = 4.0 }
+    }
+    // 水平边界修正
+    if _tbX < 4.0 { _tbX = 4.0 }
+    if _tbX + _tbW > _float(_sw) - 4.0 { _tbX = _float(_sw) - _tbW - 4.0 }
+}
+
+// ==== 颜色辅助 ====
+func _r(int c): int { return (c >> 16) & 0xFF }
+func _g(int c): int { return (c >> 8) & 0xFF }
+func _b(int c): int { return c & 0xFF }
+
+// ==== 截图 Session ====
+func doScreenshot() {
+    var shot = Win32.captureScreen()
+    if shot is Dict {
+        _sw = _int(shot["w"]); _sh = _int(shot["h"])
+        _pixels = shot["pixels"] as Ptr[u8]
+    } else { return }
+    if _sw <= 0 or _sh <= 0 or _pixels == null { return }
+
+    SDL3.init(0x20)
+    var win = SDL3.createWindow({
+        title: "LenoScreenshot", w: _sw, h: _sh,
+        flags: WindowFlag.BORDERLESS | WindowFlag.ALWAYS_ON_TOP
+    })
+    if not win.ok { ffi.free(_pixels); _pixels = null; return }
+    win.raise()
+
+    // 重置所有状态，_ready 和 _frameCount 防止残留鼠标事件触发自动选区
+    resetSel(); _saveReq = false; _ready = false; _frameCount = 0
+    _curColor = _colorRed; _curSizeIdx = 1
+    _hint = "拖拽选择区域"
+    var fontSmall = SDL3.createFontAuto(14.0)
+    var font = SDL3.createFontAuto(18.0)
+    var fontLarge = SDL3.createFontAuto(24.0)
+    var fontXLarge = SDL3.createFontAuto(32.0)
+    Array[Font] fontList = [fontSmall, font, fontLarge, fontXLarge]
+    Ptr[u8] tex = null
+
+    win.run(
+        func(Event ev): bool {
+            if ev.isQuit() or ev.isWindowClose() { return false }
+            if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE {
+                if _texting { _texting = false; _textStr = ""; _editAnnoIdx = -1; SDL3.stopTextInput(win.getHandle()); SDL3.markFrameRedraw(); return true }
+                return false
+            }
+
+            // 文字输入模式下：处理键盘和文本输入事件
+            if _texting {
+                if ev.isTextInput() {
+                    // 接收输入法/键盘输入的字符
+                    _textStr = _textStr + ev.text()
+                    _updateIMEPos(win.getHandle(), fontList)
+                    SDL3.markFrameRedraw()
+                    return true
+                }
+                if ev.isKeyDown() {
+                    if ev.scancode() == Scancode.RETURN {
+                        // 回车换行
+                        _textStr = _textStr + "\n"
+                        _updateIMEPos(win.getHandle(), fontList)
+                        SDL3.markFrameRedraw(); return true
+                    }
+                    if ev.scancode() == Scancode.BACKSPACE and _textStr.len() > 0 {
+                        // 退格删除最后一个字符
+                        _textStr = _textStr.slice(0, -1)
+                        _updateIMEPos(win.getHandle(), fontList)
+                        SDL3.markFrameRedraw(); return true
+                    }
+                }
+                // 鼠标点击任意位置：确认文字并退出编辑
+                if ev.isMouseButtonDown() {
+                    // 如果是编辑已有文字，先删除原标注
+                    if _editAnnoIdx >= 0 and _editAnnoIdx < _annos.len() {
+                        _annos.remove(_editAnnoIdx)
+                    }
+                    _editAnnoIdx = -1
+                    if _textStr.len() > 0 {
+                        AnnoItem a = new AnnoItem()
+                        a.type = MODE_TEXT; a.text = _textStr; a.tx = _textX; a.ty = _textY
+                        a.color = _curColor; a.fontSize = _sizeList[_curSizeIdx]
+                        _annos.add(a)
+                    }
+                    _texting = false; _textStr = ""; _hint = ""
+                    SDL3.stopTextInput(win.getHandle())
+                    SDL3.markFrameRedraw(); return true
+                }
+                return true
+            }
+
+            // 快捷键
+            if ev.isKeyDown() and ev.scancode() == Scancode.Z and (ev.keyMod() & MOD_CTRL) != 0 {
+                if _annos.len() > 0 { _annos.remove(_annos.len() - 1); _hint = "已撤销"; SDL3.markFrameRedraw() }
+            }
+            if ev.isKeyDown() and ev.scancode() == Scancode.C and (ev.keyMod() & MOD_CTRL) != 0 {
+                if hasSel() { _doCopy(fontList); _hint = "已复制"; SDL3.markFrameRedraw() }
+            }
+            // 右键：重置选区或退出
+            if ev.isMouseButtonDown() and ev.mouseButton() == MouseButton.RIGHT {
+                if hasSel() {
+                    if _texting { SDL3.stopTextInput(win.getHandle()) }
+                    resetSel(); _hint = "已重置"; SDL3.markFrameRedraw()
+                }
+                else { return false }
+            }
+
+            // 鼠标移动（_ready 前也更新坐标，用于十字准星和放大镜）
+            if ev.isMouseMotion() {
+                var[float, float](_ev_mx, _ev_my) = ev.mousePos(); _mx = _ev_mx; _my = _ev_my
+                _tbHoverBtn = _tbHit(_mx, _my)
+                // _ready 前不允许选区拖拽
+                if _ready and not _selDone and _leftDown {
+                    _ex = _mx; _ey = _my
+                }
+                if _ready and _drawing and _mode != MODE_TEXT {
+                    _drawX2 = _mx; _drawY2 = _my
+                    if _mode == MODE_PEN { _penPts.add(_mx); _penPts.add(_my) }
+                }
+                // 文字拖拽中：移动文字位置
+                if _dragAnno >= 0 {
+                    _annos[_dragAnno].tx = _mx - _dragOffX
+                    _annos[_dragAnno].ty = _my - _dragOffY
+                }
+                // 文字模式悬停检测
+                if _ready and _selDone and _mode == MODE_TEXT and not _texting and _dragAnno < 0 {
+                    _hoverAnno = _findTextAnnoAt(_mx, _my, fontList)
+                } else if _mode != MODE_TEXT or _texting {
+                    _hoverAnno = -1
+                }
+                SDL3.markFrameRedraw()
+            }
+
+            // 左键按下（_ready 前完全忽略，防止残留事件触发自动选区）
+            if _ready and ev.isMouseButtonDown() and ev.mouseButton() == MouseButton.LEFT {
+                // 先检查工具栏点击
+                int btn = _tbHit(_mx, _my)
+                if btn >= 0 {
+                    if btn == 0 { _mode = MODE_ARROW; _hint = "拖拽绘制箭头" }
+                    else if btn == 1 { _mode = MODE_PEN; _hint = "拖拽绘制画笔" }
+                    else if btn == 2 { _mode = MODE_TEXT; _hint = "文字模式(字号" + _sizeNames[_curSizeIdx] + ")，点击放置文字" }
+                    else if btn == 3 {
+                        // 保存后直接退出
+                        _doSave(fontList); return false
+                    }
+                    else if btn == 4 { _doCopy(fontList); _hint = "已复制到剪贴板" }
+                    else if btn == 5 { return false }  // 退出
+                    // 颜色选择
+                    else if btn >= 6 and btn < 12 {
+                        _curColor = _colorList[btn - 6]
+                        _hint = "颜色: " + _colorNames[btn - 6]
+                    }
+                    // 字号选择
+                    else if btn >= 12 and btn < 16 {
+                        _curSizeIdx = btn - 12
+                        _hint = "字号: " + _sizeNames[btn - 12] + (if _mode == MODE_TEXT then " (点击画面输入文字)" else " (请先点文字按钮)")
+                    }
+                    SDL3.markFrameRedraw(); return true
+                }
+
+                // 不在工具栏 → 如果是绘制模式且选区已完成 → 开始绘制
+                if _selDone and _mode != MODE_NONE {
+                    // 文字模式：先检查是否点击了已有文字
+                    if _mode == MODE_TEXT {
+                        int hitIdx = _findTextAnnoAt(_mx, _my, fontList)
+                        if hitIdx >= 0 {
+                            int now = SDL3.getTicks()
+                            // 双击检测：300ms 内点击同一个标注 → 进入编辑
+                            if _lastClickIdx == hitIdx and (now - _lastClickTime) < 300 {
+                                // 双击：加载文字进入编辑模式
+                                _textStr = _annos[hitIdx].text
+                                _textX = _annos[hitIdx].tx; _textY = _annos[hitIdx].ty
+                                _curColor = _annos[hitIdx].color
+                                // 恢复字号索引
+                                for 0:_sizeList.len() to si {
+                                    if _sizeList[si] == _annos[hitIdx].fontSize { _curSizeIdx = si; break }
+                                }
+                                // 标记编辑索引（渲染时跳过，确认时删除）
+                                _editAnnoIdx = hitIdx
+                                _texting = true; _hoverAnno = -1; _dragAnno = -1
+                                _hint = "编辑文字，Enter换行，点击其他位置确认"
+                                SDL3.startTextInput(win.getHandle())
+                                _updateIMEPos(win.getHandle(), fontList)
+                                _lastClickTime = -9999; _lastClickIdx = -1
+                                SDL3.markFrameRedraw(); return true
+                            }
+                            // 单击：开始拖拽
+                            _lastClickTime = now; _lastClickIdx = hitIdx
+                            _dragAnno = hitIdx
+                            _dragOffX = _mx - _annos[hitIdx].tx
+                            _dragOffY = _my - _annos[hitIdx].ty
+                            _leftDown = true
+                            _hint = "拖拽移动文字，双击编辑"
+                            SDL3.markFrameRedraw(); return true
+                        }
+                        // 点击空白处：新建文字输入
+                        _textX = _mx; _textY = _my
+                        _texting = true; _textStr = ""; _drawing = false
+                        _hint = "输入文字(字号" + _sizeNames[_curSizeIdx] + ")，Enter换行，点击其他位置确认"
+                        SDL3.startTextInput(win.getHandle())
+                        _updateIMEPos(win.getHandle(), fontList)
+                        SDL3.markFrameRedraw(); return true
+                    }
+                    _drawing = true; _leftDown = true
+                    _drawX1 = _mx; _drawY1 = _my; _drawX2 = _mx; _drawY2 = _my
+                    if _mode == MODE_PEN { _penPts.clear(); _penPts.add(_mx); _penPts.add(_my) }
+                    SDL3.markFrameRedraw(); return true
+                }
+
+                // 不在工具栏、不是绘制模式 → 开始选区
+                if not _selDone and not _drawing {
+                    _sx = _mx; _sy = _my; _ex = _mx; _ey = _my
+                    _selDone = false; _tbShow = false
+                    _hint = "拖拽选择区域"
+                    _leftDown = true
+                    SDL3.markFrameRedraw()
+                }
+            }
+
+            // 左键释放（仅处理真正的按下→释放，忽略残留孤儿事件）
+            if ev.isMouseButtonUp() and ev.mouseButton() == MouseButton.LEFT {
+                bool wasDown = _leftDown   // 记录是否真的有过按下
+                _leftDown = false
+                // 结束文字拖拽
+                if _dragAnno >= 0 {
+                    _dragAnno = -1; _hint = ""; SDL3.markFrameRedraw()
+                }
+                // wasDown=false 说明这个释放是孤儿事件（如点击退出按钮后的残留）
+                // 没有对应的 MOUSEBUTTONDOWN，不应触发任何选区/标注逻辑
+                if wasDown {
+                    if not _selDone {
+                        _ex = _mx; _ey = _my
+                        if hasSel() {
+                            _selDone = true; _tbShow = true; _mode = MODE_NONE
+                            _updateToolbarPos()
+                            _hint = ""
+                        } else {
+                            _hint = "选区太小"
+                        }
+                        SDL3.markFrameRedraw()
+                    }
+                    else if _drawing and _mode != MODE_TEXT {
+                        _drawing = false
+                        _drawX2 = _mx; _drawY2 = _my
+                        // 完成标注
+                        AnnoItem a = new AnnoItem()
+                        a.type = _mode; a.color = _curColor
+                        if _mode == MODE_ARROW {
+                            a.x1 = _drawX1; a.y1 = _drawY1; a.x2 = _drawX2; a.y2 = _drawY2
+                        }
+                        else if _mode == MODE_PEN {
+                            Array[float] copy = []
+                            for _penPts to p { copy.add(p) }
+                            a.strokes = copy
+                        }
+                        _annos.add(a)
+                        _hint = ""; SDL3.markFrameRedraw()
+                    }
+                }
+            }
+
+            return true
+        },
+        func(Renderer ren) {
+            // 截屏纹理
+            if tex == null and _pixels != null {
+                tex = ren.createTexture(SDL3.PIXELFORMAT_ARGB8888, 0, _sw, _sh)
+                if tex != null { ren.updateTexture(tex, null, _pixels, _sw * 4) }
+            }
+            ren.setColor(#000000FF); ren.clear()
+            if tex != null { ren.drawTextureAt(tex, 0.0, 0.0, _float(_sw), _float(_sh)) }
+
+            var[float, float, float, float](x0, y0, rw, rh) = getRect()
+
+            // 遮罩
+            ren.setBlendMode(1); ren.setColor(#00000078)
+            if not _selDone {
+                // 选区未完成：始终绘制当前拖拽中的遮罩和框
+                // 还没框选好选区
+                if _sx == _ex and _sy == _ey and _sx == 0.0 {
+                    // 还没开始拖拽
+                } else {
+                    // 框选拖拽中：遮罩选区外
+                    float ax = if _sx < _ex then _sx else _ex
+                    float ay = if _sy < _ey then _sy else _ey
+                    float aw = if _sx > _ex then _sx - _ex else _ex - _sx
+                    float ah = if _sy > _ey then _sy - _ey else _ey - _sy
+                    ren.setColor(#00000078)
+                    ren.fillRect(0.0, 0.0, _float(_sw), ay)
+                    ren.fillRect(0.0, ay + ah, _float(_sw), _float(_sh) - ay - ah)
+                    ren.fillRect(0.0, ay, ax, ah)
+                    ren.fillRect(ax + aw, ay, _float(_sw) - ax - aw, ah)
+                    ren.setColor(#FFFFFFFF); ren.drawRect(ax, ay, aw, ah)
+                }
+            }
+            else if _selDone and rw > 0 {
+                // 选区完成：选区外遮罩
+                ren.fillRect(0.0, 0.0, _float(_sw), y0)
+                ren.fillRect(0.0, y0 + rh, _float(_sw), _float(_sh) - y0 - rh)
+                ren.fillRect(0.0, y0, x0, rh)
+                ren.fillRect(x0 + rw, y0, _float(_sw) - x0 - rw, rh)
+                // 选区边框
+                ren.setColor(#FFFFFFFF); ren.drawRect(x0, y0, rw, rh)
+                // 四角手柄
+                float hs=6; ren.setColor(#FFFFFFC8)
+                ren.fillRect(x0-hs,y0-hs,hs*2,hs*2); ren.fillRect(x0+rw-hs,y0-hs,hs*2,hs*2)
+                ren.fillRect(x0-hs,y0+rh-hs,hs*2,hs*2); ren.fillRect(x0+rw-hs,y0+rh-hs,hs*2,hs*2)
+                // 尺寸
+                if font.ok {
+                    string ss = _int(rw) + " x " + _int(rh)
+                    var[float, float](sz_w, sz_h) = font.measureString(ss)
+                    float swW=sz_w; float swX=x0+rw/2-swW/2
+                    float swY=if y0>28 then y0-24 else y0+rh+4
+                    ren.setColor(#000000C8); ren.fillRect(swX-4, swY, swW+8, 20)
+                    ren.drawText(font, ss, swX, swY+2, #FFFFFFFF)
+                }
+            }
+            ren.setBlendMode(0)
+
+            // 绘制已完成的标注
+            _renderAnnos(ren, fontList)
+
+            // 文字编辑框（悬停或拖拽时显示四边长方形）
+            int showBox = if _dragAnno >= 0 then _dragAnno else _hoverAnno
+            if showBox >= 0 and showBox < _annos.len() and not _texting {
+                var[float, float, float, float](bx, by, bw, bh) = _getTextBounds(showBox, fontList)
+                if bw > 0.0 and bh > 0.0 {
+                    ren.setBlendMode(1)
+                    // 虚线边框效果（用半透明白色）
+                    ren.setColor(#FFFFFFC8)
+                    ren.drawRect(bx - 3.0, by - 2.0, bw + 6.0, bh + 4.0)
+                    // 四角手柄
+                    float hs = 4.0
+                    ren.setColor(#50A0FFFF)
+                    ren.fillRect(bx - 3.0 - hs, by - 2.0 - hs, hs*2, hs*2)
+                    ren.fillRect(bx + bw + 3.0 - hs, by - 2.0 - hs, hs*2, hs*2)
+                    ren.fillRect(bx - 3.0 - hs, by + bh + 2.0 - hs, hs*2, hs*2)
+                    ren.fillRect(bx + bw + 3.0 - hs, by + bh + 2.0 - hs, hs*2, hs*2)
+                    ren.setBlendMode(0)
+                }
+            }
+
+            // 绘制正在拖拽的预览
+            if _drawing and _mode != MODE_TEXT {
+                _renderDrawingPreview(ren)
+            }
+
+            // 文字输入状态：绘制输入光标和文字
+            if _texting { _renderTextInput(ren, fontList) }
+
+            // 十字准星（空闲时）
+            if not _selDone and not _drawing and not _texting and _tbHoverBtn < 0 {
+                ren.setBlendMode(1); ren.setColor(#FFFFFF3C)
+                ren.fillRect(_mx, 0.0, 1.0, _float(_sh))
+                ren.fillRect(0.0, _my, _float(_sw), 1.0)
+                ren.setBlendMode(0)
+            }
+
+            // 放大镜
+            if not _drawing and not _texting and _tbHoverBtn < 0 {
+                _drawMagnifier(ren)
+            }
+
+            // 工具栏
+            if _tbShow { _drawToolbar(ren, font) }
+
+            // 底部状态栏
+            if _hint.len() > 0 {
+                float bh=28; ren.setBlendMode(1); ren.setColor(#000000B4)
+                ren.fillRect(0.0, _float(_sh)-bh, _float(_sw), bh)
+                ren.setBlendMode(0)
+                if font.ok { ren.drawText(font, _hint, 10.0, _float(_sh)-21, #FFFFFFFF) }
+            }
+
+            // 延迟就绪：渲染 5 帧后才接受鼠标操作，确保残留事件被消费
+            _frameCount = _frameCount + 1
+            if _frameCount >= 5 { _ready = true }
+            // 文字输入模式下持续重绘，驱动光标闪烁
+            if _texting { SDL3.markFrameRedraw() }
+        }
+    )
+
+    if _texting { SDL3.stopTextInput(win.getHandle()) }
+    for fontList to f { if f.ok { f.close() } }
+    if _saveReq and hasSel() { _doSave(fontList) }
+    // 销毁纹理资源
+    if tex != null { SDL3.destroyTexture(tex); tex = null }
+    if _magTex != null { SDL3.destroyTexture(_magTex); _magTex = null }
+    ffi.free(_pixels); _pixels = null
+    // 强制清零所有状态，防止跨 session 残留（每次截图结束后彻底清理）
+    resetSel()
+    _saveReq = false
+    _ready = false
+    _frameCount = 0
+    _mx = 0.0; _my = 0.0
+    _tbHoverBtn = -1
+    _drawX1 = 0.0; _drawY1 = 0.0; _drawX2 = 0.0; _drawY2 = 0.0
+    _penPts.clear()
+    _textCursorBlink = 0
+    _curColor = _colorRed; _curSizeIdx = 1
+    _hoverAnno = -1; _dragAnno = -1
+    _lastClickTime = -9999; _lastClickIdx = -1
+    _editAnnoIdx = -1
+}
+
+// 获取指定字号的 Font
+func _getFont(Array[Font] fontList, int fontSize): Font {
+    for 0:_sizeList.len() to i {
+        if _sizeList[i] == fontSize { return fontList[i] }
+    }
+    return fontList[1]
+}
+
+// 计算文字可用宽度（从文字起点到选区右边缘）
+func _getWrapWidth(float tx): float {
+    var[float, float, float, float](rx, _ry, rw, _rh) = getRect()
+    float right = rx + rw - 4.0
+    float w = right - tx
+    if w < 20.0 { w = 20.0 }
+    return w
+}
+
+// 将单行文字按像素宽度自动换行（逐字符测量，支持中英文）
+func _wrapLine(string line, Font f, float maxW): Array[string] {
+    Array[string] result = []
+    if line.len() == 0 { result.add(""); return result }
+    string cur = ""
+    for line.len() to i {
+        string ch = line.slice(i, i+1)
+        string test = cur + ch
+        var[float, float](sz_w, sz_h) = f.measureString(test)
+        if sz_w > maxW and cur.len() > 0 {
+            result.add(cur)
+            cur = ch
+        } else {
+            cur = test
+        }
+    }
+    if cur.len() > 0 { result.add(cur) }
+    return result
+}
+
+// 将多行文字按选区宽度自动换行（先按 \n 分行，再对每行自动换行）
+func _wrapText(string text, Font f, float maxW): Array[string] {
+    Array[string] lines = text.replace("\r", "").split("\n")
+    Array[string] result = []
+    for lines to line {
+        var wrapped = _wrapLine(line, f, maxW)
+        for wrapped to wl { result.add(wl) }
+    }
+    if result.len() == 0 { result.add("") }
+    return result
+}
+
+// 带缓存的换行：避免每帧对相同文字重复计算
+func _wrapTextCached(AnnoItem a, Font f, float maxW): Array[string] {
+    string key = a.text + "|" + _str(a.fontSize) + "|" + _str(_int(maxW))
+    if a.cacheKey == key and a.cachedLines.len() > 0 {
+        return a.cachedLines
+    }
+    a.cachedLines = _wrapText(a.text, f, maxW)
+    a.cacheKey = key
+    return a.cachedLines
+}
+
+// 获取文字标注的包围盒（屏幕坐标）: [x, y, w, h]
+// 使用缓存避免重复调用 measureString
+func _getTextBounds(int idx, Array[Font] fontList): [float, float, float, float] {
+    AnnoItem a = _annos[idx]
+    Font tf = _getFont(fontList, a.fontSize)
+    if not tf.ok { return a.tx, a.ty, 0.0, 0.0 }
+    float wrapW = _getWrapWidth(a.tx)
+    var lines = _wrapTextCached(a, tf, wrapW)
+    // 检查包围盒缓存
+    string key = a.cacheKey + "|" + _str(tf.height)
+    if a.boundsKey == key {
+        return a.tx, a.ty, a.cachedMaxW, a.cachedTotalH
+    }
+    float maxW = 0.0
+    for lines to ln {
+        if ln.len() > 0 {
+            var[float, float](sz_w, sz_h) = tf.measureString(ln)
+            if sz_w > maxW { maxW = sz_w }
+        }
+    }
+    float totalH = lines.len() * _float(tf.height)
+    a.cachedMaxW = maxW; a.cachedTotalH = totalH; a.boundsKey = key
+    return a.tx, a.ty, maxW, totalH
+}
+
+// 查找鼠标位置下的文字标注索引（从上层开始查找，后添加的优先）
+func _findTextAnnoAt(float x, float y, Array[Font] fontList): int {
+    int n = _annos.len()
+    if n == 0 { return -1 }
+    for 0:(n-1) to ri {
+        int i = n - 1 - ri
+        if i == _editAnnoIdx { continue }
+        if _annos[i].type != MODE_TEXT or _annos[i].text.len() == 0 { continue }
+        var[float, float, float, float](bx, by, bw, bh) = _getTextBounds(i, fontList)
+        // 扩大 4px 容差方便点击
+        if x >= bx - 4.0 and x <= bx + bw + 4.0 and y >= by - 4.0 and y <= by + bh + 4.0 {
+            return i
+        }
+    }
+    return -1
+}
+
+// 设置 IME 输入法候选框位置（对齐光标）
+func _updateIMEPos(Ptr[u8] winHandle, Array[Font] fontList) {
+    Font tf = _getFont(fontList, _sizeList[_curSizeIdx])
+    if not tf.ok { return }
+    float wrapW = _getWrapWidth(_textX)
+    var lines = _wrapText(_textStr, tf, wrapW)
+    int lastIdx = lines.len() - 1
+    string lastLine = lines[lastIdx]
+    float lineH = _float(tf.height)
+    float cursorX = _textX
+    if lastLine.len() > 0 {
+        var[float, float](sz_w, sz_h) = tf.measureString(lastLine)
+        cursorX = _textX + sz_w
+    }
+    float cursorY = _textY + lastIdx * lineH
+    // rect 描述文字输入区域，cursor 为光标相对 rect.x 的像素偏移
+    var rect = SDL_Rect.malloc()
+    rect.x = _int(_textX); rect.y = _int(cursorY)
+    rect.w = _int(wrapW); rect.h = _int(lineH)
+    int icur = _int(cursorX - _textX)
+    SDL3.setTextInputArea(winHandle, rect.to_ptr(), icur)
+    rect.free()
+}
+
+// ==== 渲染标注 ====
+func _renderAnnos(Renderer ren, Array[Font] fontList) {
+    for _annos.len() to ai {
+        if ai == _editAnnoIdx { continue }  // 跳过正在编辑的标注
+        AnnoItem a = _annos[ai]
+        if a.type == MODE_ARROW {
+            _drawArrow(ren, a, a.color)
+        }
+        else if a.type == MODE_PEN and a.strokes.len() >= 4 {
+            ren.setBlendMode(1)
+            ren.setColor(SDL3.withAlpha(a.color, 255))
+            for 0 : (a.strokes.len()/2 - 2) to i {
+                float x1 = a.strokes[i*2]; float y1 = a.strokes[i*2+1]
+                float x2 = a.strokes[i*2+2]; float y2 = a.strokes[i*2+3]
+                ren.drawLine(x1, y1, x2, y2)
+            }
+            ren.setBlendMode(0)
+        }
+        else if a.type == MODE_TEXT and a.text.len() > 0 {
+            Font tf = _getFont(fontList, a.fontSize)
+            if tf.ok {
+                float wrapW = _getWrapWidth(a.tx)
+                var lines = _wrapTextCached(a, tf, wrapW)
+                ren.setBlendMode(1)
+                float lineH = _float(tf.height)
+                for lines.len() to li {
+                    ren.drawText(tf, lines[li], a.tx, a.ty + li * lineH, a.color)
+                }
+                ren.setBlendMode(0)
+            }
+        }
+    }
+}
+
+// 绘制拖拽预览
+func _renderDrawingPreview(Renderer ren) {
+    if _mode == MODE_ARROW {
+        // 箭头预览
+        ren.setBlendMode(1)
+        ren.setColor(SDL3.withAlpha(_curColor, 180))
+        ren.drawLine(_drawX1, _drawY1, _drawX2, _drawY2)
+        ren.setBlendMode(0)
+    }
+    else if _mode == MODE_PEN and _penPts.len() >= 4 {
+        ren.setBlendMode(1)
+        ren.setColor(SDL3.withAlpha(_curColor, 255))
+        for 0 : (_penPts.len()/2 - 2) to i {
+            float x1=_penPts[i*2]; float y1=_penPts[i*2+1]
+            float x2=_penPts[i*2+2]; float y2=_penPts[i*2+3]
+            ren.drawLine(x1, y1, x2, y2)
+        }
+        ren.setBlendMode(0)
+    }
+}
+
+// 绘制文字输入（透明背景，仅显示文字和光标）
+func _renderTextInput(Renderer ren, Array[Font] fontList) {
+    Font tf = _getFont(fontList, _sizeList[_curSizeIdx])
+    if not tf.ok { return }
+    float wrapW = _getWrapWidth(_textX)
+    float lineH = _float(tf.height)
+    // 已输入文字（自动换行，透明背景）
+    var lines = _wrapText(_textStr, tf, wrapW)
+    if _textStr.len() > 0 {
+        ren.setBlendMode(1)
+        for lines.len() to li {
+            ren.drawText(tf, lines[li], _textX, _textY + li * lineH, _curColor)
+        }
+        ren.setBlendMode(0)
+    }
+    // 闪烁光标（定位到最后一行末尾）
+    _textCursorBlink = _textCursorBlink + 1
+    if (_textCursorBlink / 30) % 2 == 0 {
+        int lastIdx = lines.len() - 1
+        string lastLine = lines[lastIdx]
+        float cursorX = _textX
+        if lastLine.len() > 0 {
+            var[float, float](sz_w, sz_h) = tf.measureString(lastLine)
+            cursorX = _textX + sz_w
+        }
+        float cursorY = _textY + lastIdx * lineH
+        ren.setBlendMode(1)
+        ren.setColor(SDL3.withAlpha(_curColor, 255))
+        ren.fillRect(cursorX, cursorY, 2.0, lineH)
+        ren.setBlendMode(0)
+    }
+}
+
+// 绘制箭头（带箭头头部）
+func _drawArrow(Renderer ren, AnnoItem a, int color) {
+    float dx = a.x2 - a.x1; float dy = a.y2 - a.y1
+    float len = maths.sqrt(dx * dx + dy * dy)
+    if len < 2.0 { return }
+
+    ren.setBlendMode(1)
+    ren.setColor(SDL3.withAlpha(color, 255))
+    // 主线
+    ren.drawLine(a.x1, a.y1, a.x2, a.y2)
+    // 箭头头部
+    float ux = dx / len; float uy = dy / len
+    float al = maths.min(len * 0.25, 16.0)
+    float cos30 = 0.866; float sin30 = 0.5
+    // 左翼
+    float lx = a.x2 - al * (ux * cos30 + uy * sin30)
+    float ly = a.y2 - al * (uy * cos30 - ux * sin30)
+    ren.drawLine(a.x2, a.y2, lx, ly)
+    // 右翼
+    float rx = a.x2 - al * (ux * cos30 - uy * sin30)
+    float ry = a.y2 - al * (uy * cos30 + ux * sin30)
+    ren.drawLine(a.x2, a.y2, rx, ry)
+    ren.setBlendMode(0)
+}
+
+// ==== 工具栏绘制 ====
+func _drawToolbar(Renderer ren, Font font) {
+    ren.setBlendMode(1)
+    // 背景
+    ren.setColor(#282828E6)
+    ren.fillRect(_tbX, _tbY, _tbW, _tbH)
+    ren.setColor(#3C3C3CFF)
+    ren.drawRect(_tbX, _tbY, _tbW, _tbH)
+
+    // 主按钮
+    var labels = _TB_LABELS
+    float bx = _tbX + 6.0; float bw = 42.0; float bh = 26.0; float gap = 3.0
+    float btnTop = _tbY + (_tbH - bh) * 0.5   // 按钮垂直居中
+    for 0:5 to i {
+        float tx = bx + i * (bw + gap)
+        // 高亮/选中
+        bool active = false
+        if i < 3 and _mode == i+1 { active = true }
+        if i == _tbHoverBtn { active = true }
+        ren.setColor(SDL3.packColor(if active then 80 else 55, if active then 80 else 55, if active then 80 else 55, 255))
+        ren.fillRect(tx, btnTop, bw, bh)
+        ren.setColor(#646464FF)
+        ren.drawRect(tx, btnTop, bw, bh)
+        if font.ok {
+            ren.drawTextCentered(font, labels[i], tx, bw, btnTop + (bh - _float(font.height)) * 0.5,
+                         SDL3.packColor(if active then 255 else 200, if active then 255 else 200, if active then 255 else 200))
+        }
+    }
+
+    // 颜色选择区域
+    float colorStart = bx + 6 * (bw + gap) + 4.0
+    float cw = 18.0; float cgap = 2.0
+    float colorTop = _tbY + (_tbH - cw) * 0.5   // 颜色块垂直居中
+    // 分隔线
+    ren.setColor(#505050FF)
+    ren.drawLine(colorStart - 3.0, _tbY + 6, colorStart - 3.0, _tbY + _tbH - 6)
+    for 0:5 to i {
+        float left = colorStart + i * (cw + cgap)
+        int c = _colorList[i]
+        ren.setColor(SDL3.withAlpha(c, 255))
+        ren.fillRect(left, colorTop, cw, cw)
+        // 选中边框
+        if _curColor == c {
+            ren.setColor(#FFFFFFFF)
+            ren.drawRect(left - 1, colorTop - 1, cw + 2, cw + 2)
+        }
+    }
+
+    // 字号选择区域
+    float sizeStart = colorStart + 6 * (cw + cgap) + 6.0
+    float sw = 26.0; float sgap = 2.0
+    float sizeTop = _tbY + (_tbH - bh) * 0.5   // 字号块垂直居中
+    // 分隔线
+    ren.setColor(#505050FF)
+    ren.drawLine(sizeStart - 4.0, _tbY + 6, sizeStart - 4.0, _tbY + _tbH - 6)
+    for 0:3 to i {
+        float left = sizeStart + i * (sw + sgap)
+        bool active = _curSizeIdx == i
+        ren.setColor(SDL3.packColor(if active then 80 else 55, if active then 80 else 55, if active then 80 else 55, 255))
+        ren.fillRect(left, sizeTop, sw, bh)
+        ren.setColor(#646464FF)
+        ren.drawRect(left, sizeTop, sw, bh)
+        if font.ok {
+            ren.drawTextCentered(font, _sizeNames[i], left, sw, sizeTop + (bh - _float(font.height)) * 0.5,
+                         SDL3.packColor(if active then 255 else 200, if active then 255 else 200, if active then 255 else 200))
+        }
+    }
+    ren.setBlendMode(0)
+}
+
+// ==== 放大镜 ====
+func _drawMagnifier(Renderer ren) {
+    float ms=120.0; int magSize=24
+    float mx = if _mx > _float(_sw)*0.5 then _mx - ms - 30 else _mx + 30
+    float my = if _my > _float(_sh)*0.5 then _my - ms - 30 else _my + 30
+    if mx<0 { mx=0 }; if my<0 { my=0 }
+    if mx+ms>_float(_sw) { mx=_float(_sw)-ms }
+    if my+ms>_float(_sh) { my=_float(_sh)-ms }
+    int cx=_int(_mx); int cy=_int(_my); int half=magSize/2
+
+    if _magTex == null { _magTex = ren.createTexture(SDL3.PIXELFORMAT_ARGB8888, 1, magSize, magSize) }
+    if _magTex != null and _pixels != null {
+        Ptr[u8] magBuf = ffi.malloc(magSize*magSize*4)
+        if magBuf != null {
+            int srcX0 = cx - half; int srcY0 = cy - half
+            int copyBytes = magSize * 4  // 一行字节数
+            for 0:(magSize-1) to dy {
+                int sy = srcY0 + dy
+                int di = dy * copyBytes
+                if sy >= 0 and sy < _sh {
+                    // 判断该行是否有越界像素
+                    int availStart = if srcX0 < 0 then -srcX0 else 0
+                    int availEnd = if srcX0 + magSize > _sw then _sw - srcX0 else magSize
+                    if availStart == 0 and availEnd == magSize {
+                        // 整行完整在屏幕内：memcpy 批量拷贝
+                        int si = (sy * _sw + srcX0) * 4
+                        ffi.memcpy(ffi.offset(magBuf, di), ffi.offset(_pixels, si), copyBytes)
+                    } else {
+                        // 行有越界像素：逐像素处理边界行
+                        for 0:(magSize-1) to dx {
+                            int sx = srcX0 + dx
+                            int dp = di + dx * 4
+                            if sx >= 0 and sx < _sw {
+                                int si = (sy * _sw + sx) * 4
+                                ffi.memcpy(ffi.offset(magBuf, dp), ffi.offset(_pixels, si), 4)
+                            } else {
+                                ffi.write_byte(magBuf, dp, 0); ffi.write_byte(magBuf, dp+1, 0)
+                                ffi.write_byte(magBuf, dp+2, 0); ffi.write_byte(magBuf, dp+3, 255)
+                            }
+                        }
+                    }
+                } else {
+                    // 整行在屏幕外：填黑色不透明
+                    for 0:(magSize-1) to dx {
+                        int dp = di + dx * 4
+                        ffi.write_byte(magBuf, dp, 0); ffi.write_byte(magBuf, dp+1, 0)
+                        ffi.write_byte(magBuf, dp+2, 0); ffi.write_byte(magBuf, dp+3, 255)
+                    }
+                }
+            }
+            ren.updateTexture(_magTex, null, magBuf, magSize*4)
+            ffi.free(magBuf)
+        }
+        ren.drawTextureAt(_magTex, mx, my, ms, ms)
+    }
+    ren.setColor(#FFFFFFC8); ren.drawRect(mx, my, ms, ms)
+    // 中心十字
+    float mcX=mx+ms*0.5; float mcY=my+ms*0.5
+    ren.setColor(#FF5050FF); ren.fillRect(mcX-5,mcY,11,1); ren.fillRect(mcX,mcY-5,1,11)
+}
+
+// ==== 裁剪像素（含标注绘制） ====
+func _cropPixels(Array[Font] fontList): Dict {
+    var[float, float, float, float](fx, fy, fw, fh) = getRect()
+    int x=_int(fx); int y=_int(fy); int w=_int(fw); int h=_int(fh)
+    if w<=0 or h<=0 { return null }
+    if x<0 { x=0 }; if y<0 { y=0 }
+    if x+w>_sw { w=_sw-x }; if y+h>_sh { h=_sh-y }
+    if w<=0 or h<=0 { return null }
+    int sp=_sw*4; int dp=w*4
+    Ptr[u8] cp=ffi.malloc(w*h*4); if cp==null { return null }
+    // 复制原始桌面像素（按行批量拷贝）
+    for 0:(h-1) to row {
+        int si=(y+row)*sp+x*4; int di=row*dp
+        ffi.memcpy(ffi.offset(cp, di), ffi.offset(_pixels, si), dp)
+    }
+    // 将标注绘制到裁剪后的像素缓冲区上
+    for _annos to a {
+        if a.type == MODE_ARROW {
+            _drawArrowOnBuf(cp, w, h, a, a.color, x, y)
+        } else if a.type == MODE_PEN and a.strokes.len() >= 4 {
+            _drawPenOnBuf(cp, w, h, a, a.color, x, y)
+        } else if a.type == MODE_TEXT and a.text.len() > 0 {
+            _drawTextOnBuf(cp, w, h, a, x, y, fontList)
+        }
+    }
+    return { pixels: cp, w: w, h: h, dp: dp }
+}
+
+// ==== 像素缓冲区绘制辅助 ====
+// ARGB8888 小端内存布局：byte0=B, byte1=G, byte2=R, byte3=A
+
+func _setPixelBuf(Ptr[u8] buf, int bw, int bh, int px, int py, int r, int g, int b) {
+    if px < 0 or px >= bw or py < 0 or py >= bh { return }
+    int off = (py * bw + px) * 4
+    ffi.write_byte(buf, off + 0, b)       // B
+    ffi.write_byte(buf, off + 1, g)       // G
+    ffi.write_byte(buf, off + 2, r)       // R
+    ffi.write_byte(buf, off + 3, 255)     // A
+}
+
+// Bresenham 画线（2px 粗细）
+func _drawLineOnBuf(Ptr[u8] buf, int bw, int bh, int x0, int y0, int x1, int y1, int r, int g, int b) {
+    int dx = if x1 > x0 then x1 - x0 else x0 - x1
+    int dy = if y1 > y0 then y1 - y0 else y0 - y1
+    int sx = if x0 < x1 then 1 else -1
+    int sy = if y0 < y1 then 1 else -1
+    int err = dx - dy
+    int cx = x0; int cy = y0
+    while true {
+        _setPixelBuf(buf, bw, bh, cx, cy, r, g, b)
+        _setPixelBuf(buf, bw, bh, cx + 1, cy, r, g, b)
+        _setPixelBuf(buf, bw, bh, cx, cy + 1, r, g, b)
+        if cx == x1 and cy == y1 { break }
+        int e2 = err * 2
+        if e2 > -dy { err = err - dy; cx = cx + sx }
+        if e2 < dx { err = err + dx; cy = cy + sy }
+    }
+}
+
+// 箭头绘制到像素缓冲区（ox,oy 为选区左上角在屏幕上的偏移）
+func _drawArrowOnBuf(Ptr[u8] buf, int bw, int bh, AnnoItem a, int color, int ox, int oy) {
+    int cr = _r(color); int cg = _g(color); int cb = _b(color)
+    int ax1 = _int(a.x1) - ox; int ay1 = _int(a.y1) - oy
+    int ax2 = _int(a.x2) - ox; int ay2 = _int(a.y2) - oy
+    // 主线
+    _drawLineOnBuf(buf, bw, bh, ax1, ay1, ax2, ay2, cr, cg, cb)
+    // 箭头头部
+    float dx = a.x2 - a.x1; float dy = a.y2 - a.y1
+    float len = maths.sqrt(dx * dx + dy * dy)
+    if len < 2.0 { return }
+    float ux = dx / len; float uy = dy / len
+    float al = maths.min(len * 0.25, 16.0)
+    float cos30 = 0.866; float sin30 = 0.5
+    // 左翼
+    float lx = a.x2 - al * (ux * cos30 + uy * sin30)
+    float ly = a.y2 - al * (uy * cos30 - ux * sin30)
+    _drawLineOnBuf(buf, bw, bh, ax2, ay2, _int(lx) - ox, _int(ly) - oy, cr, cg, cb)
+    // 右翼
+    float rx = a.x2 - al * (ux * cos30 - uy * sin30)
+    float ry = a.y2 - al * (uy * cos30 + ux * sin30)
+    _drawLineOnBuf(buf, bw, bh, ax2, ay2, _int(rx) - ox, _int(ry) - oy, cr, cg, cb)
+}
+
+// 画笔绘制到像素缓冲区
+func _drawPenOnBuf(Ptr[u8] buf, int bw, int bh, AnnoItem a, int color, int ox, int oy) {
+    int cr = _r(color); int cg = _g(color); int cb = _b(color)
+    for 0 : (a.strokes.len()/2 - 2) to i {
+        int px1 = _int(a.strokes[i*2]) - ox
+        int py1 = _int(a.strokes[i*2+1]) - oy
+        int px2 = _int(a.strokes[i*2+2]) - ox
+        int py2 = _int(a.strokes[i*2+3]) - oy
+        _drawLineOnBuf(buf, bw, bh, px1, py1, px2, py2, cr, cg, cb)
+    }
+}
+
+// 文字绘制到像素缓冲区：复用已有 fontList，避免每次 OpenFont/CloseFont
+func _drawTextOnBuf(Ptr[u8] buf, int bw, int bh, AnnoItem a, int ox, int oy, Array[Font] fontList) {
+    Font tf = _getFont(fontList, a.fontSize)
+    if not tf.ok { return }
+    sdl3_ttf ttf = SDL3.ttfLib()
+    if ttf == null { return }
+    Ptr[u8] tmpFont = tf.handle  // 复用 fontList 中已加载的字体
+
+    int cr = _r(a.color); int cg = _g(a.color); int cb = _b(a.color)
+    int color = (255 << 24) | (cb << 16) | (cg << 8) | cr
+    // 计算换行宽度（像素）
+    int wrapW = bw - (_int(a.tx) - ox) - 4
+    if wrapW < 20 { wrapW = 20 }
+    int fontH = tf.height
+    // 文字在裁剪缓冲区中的起始位置
+    int baseX = _int(a.tx) - ox
+    int baseY = _int(a.ty) - oy
+    // 按 \n 分行，每行用 Wrapped 渲染（自动换行）
+    Array[string] paragraphs = a.text.replace("\r", "").split("\n")
+    int curY = baseY
+    for paragraphs to para {
+        string renderStr = if para.len() > 0 then para else " "
+        Ptr[u8] surf = ttf.TTF_RenderText_Blended_Wrapped(tmpFont, renderStr, 0, color, wrapW) as Ptr[u8]
+        if surf != null {
+            SDL_SurfaceInfo info = SDL_SurfaceInfo.from_ptr(surf)
+            int sw = info.w; int sh = info.h
+            int spitch = ffi.read_int(surf, 16)
+            Ptr[u8] spixels = ffi.read_ptr(surf, 24)
+            if spixels != null {
+                for 0:(sh-1) to row { for 0:(sw-1) to col {
+                    int bx = baseX + col; int by = curY + row
+                    if bx < 0 or bx >= bw or by < 0 or by >= bh { continue }
+                    int sOff = row * spitch + col * 4
+                    int sa = ffi.read_byte(spixels, sOff + 3)
+                    if sa == 0 { continue }
+                    int sr = ffi.read_byte(spixels, sOff + 2)
+                    int sg = ffi.read_byte(spixels, sOff + 1)
+                    int sb = ffi.read_byte(spixels, sOff + 0)
+                    int dOff = (by * bw + bx) * 4
+                    if sa == 255 {
+                        ffi.write_byte(buf, dOff + 0, sb)
+                        ffi.write_byte(buf, dOff + 1, sg)
+                        ffi.write_byte(buf, dOff + 2, sr)
+                        ffi.write_byte(buf, dOff + 3, 255)
+                    } else {
+                        int dr = ffi.read_byte(buf, dOff + 2)
+                        int dg = ffi.read_byte(buf, dOff + 1)
+                        int db = ffi.read_byte(buf, dOff + 0)
+                        int inv = 255 - sa
+                        int outR = (sr * sa + dr * inv) / 255
+                        int outG = (sg * sa + dg * inv) / 255
+                        int outB = (sb * sa + db * inv) / 255
+                        ffi.write_byte(buf, dOff + 0, outB)
+                        ffi.write_byte(buf, dOff + 1, outG)
+                        ffi.write_byte(buf, dOff + 2, outR)
+                        ffi.write_byte(buf, dOff + 3, 255)
+                    }
+                }}
+            }
+            curY = curY + sh
+            SDL3.destroySurface(surf)
+        } else {
+            curY = curY + fontH
+        }
+    }
+    // 不需要 TTF_CloseFont，字体由 fontList 管理
+}
+
+// ==== 保存 ====
+func _doSave(Array[Font] fontList) {
+    var c = _cropPixels(fontList)
+    if c == null { return }
+    Ptr[u8] cp = c["pixels"] as Ptr[u8]
+    int w = _int(c["w"]); int h = _int(c["h"]); int dp = _int(c["dp"])
+    Ptr[u8] sf=SDL3.createSurfaceFromRaw(w,h,SDL3.PIXELFORMAT_ARGB8888,cp,dp)
+    if sf!=null {
+        var p=dirs.join(_homedir(),"Desktop","screenshot_"+times.format(times.now(),"%Y%m%d_%H%M%S")+".png")
+        if SDL3.saveImagePNG(sf,p) { print("[保存] "+p) }
+        else { print("[保存] 失败: "+SDL3.getError()) }
+        SDL3.destroySurface(sf)
+    }
+    ffi.free(cp)
+}
+
+// ==== 复制到剪贴板 ====
+func _doCopy(Array[Font] fontList) {
+    var c = _cropPixels(fontList)
+    if c == null { return }
+    Ptr[u8] cp = c["pixels"] as Ptr[u8]
+    int w = _int(c["w"]); int h = _int(c["h"])
+    if Win32.copyToClipboard(cp,w,h) { print("[剪贴板] 已复制 "+w+"x"+h) }
+    else { print("[剪贴板] 失败") }
+    ffi.free(cp)
+}
+
+// ==== 入口 ====
+main() {
+    SDL3.ttfInit()
+    print("Leno QQ 截图工具 - Ctrl+Shift+S 截图")
+    print("选区后弹出工具栏（箭头/画笔/文字/保存/复制/退出）")
+
+    var _hkDown = false
+    var msgBuf = Win32.allocMsg()
+    while true {
+        while Win32.peekMessage(msgBuf, true) > 0 {
+            Win32.dispatchMsg(msgBuf)
+        }
+        var ctrl  = Win32.isKeyDown(Win32.VK_CONTROL)
+        var shift = Win32.isKeyDown(Win32.VK_SHIFT)
+        var sKey  = Win32.isKeyDown(0x53)
+        var hk = ctrl and shift and sKey
+
+        if hk and not _hkDown {
+            print("[热键] Ctrl+Shift+S")
+            doScreenshot()
+            print("[截图] 完成")
+        }
+        _hkDown = hk
+        sleep(50)
+    }
+    Win32.freeMsg(msgBuf)
+    SDL3.ttfQuit()
+}

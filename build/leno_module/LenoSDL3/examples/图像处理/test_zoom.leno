@@ -1,0 +1,107 @@
+// test_zoom.leno — 鼠标滚轮放大/缩小图片
+import "SDL3" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.WindowFlag
+use SDL3.MouseButton
+
+main() {
+    var win = SDL3.createWindow({title: "图片缩放 — 滚轮放大缩小", w: 800, h: 600, flags: WindowFlag.RESIZABLE})
+    if not win.ok { return }
+
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(16.0)
+
+    var imgPath   = "d:\\1.png"
+    var loadedTex = null as Ptr[u8]
+    var texLoaded = false
+
+    var scale     = 1.0     // 缩放比例
+    var offsetX   = 0.0     // 拖动偏移
+    var offsetY   = 0.0
+    var mx = 0.0; var my = 0.0
+    var dragging  = false
+    var dragStartX = 0.0; var dragStartY = 0.0
+    var dragOffX  = 0.0; var dragOffY  = 0.0
+    var wheelVal   = 0.0
+    var imgX = 0.0; var imgY = 0.0; var imgW = 0.0; var imgH = 0.0  // 图片在屏幕上的位置和尺寸
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+
+            // 鼠标移动
+            if e.isMouseMotion() { var[float, float](_mx, _my) = e.mousePos(); mx = _mx; my = _my }
+
+            // 鼠标滚轮：放大/缩小
+            if e.isMouseWheel() {
+                wheelVal = e.wheelY()
+                if wheelVal > 0 { scale = scale * 1.15 }       // 向上滚 = 放大
+                if wheelVal < 0 { scale = scale / 1.15 }       // 向下滚 = 缩小
+                if scale < 0.1  { scale = 0.1 }                // 最小缩放
+                if scale > 10.0 { scale = 10.0 }               // 最大缩放
+            }
+
+            // 鼠标拖拽平移（仅在图片上按住左键）
+            if e.isMouseButtonDown() and e.mouseButton() == MouseButton.LEFT
+               and mx >= imgX and mx <= imgX + imgW and my >= imgY and my <= imgY + imgH {
+                dragging   = true
+                dragStartX = mx
+                dragStartY = my
+                dragOffX   = offsetX
+                dragOffY   = offsetY
+            }
+            if e.isMouseButtonUp() and e.mouseButton() == MouseButton.LEFT {
+                dragging = false
+            }
+
+            // R 重置
+            if e.isKeyDown() and e.scancode() == Scancode.R {
+                scale = 1.0; offsetX = 0.0; offsetY = 0.0
+            }
+
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(#141428FF)
+
+            // 首次加载纹理
+            if not texLoaded {
+                loadedTex = SDL3.loadImageTexture(r.handle, imgPath)
+                texLoaded = true
+            }
+
+            // 拖动中更新偏移
+            if dragging {
+                offsetX = dragOffX + (mx - dragStartX)
+                offsetY = dragOffY + (my - dragStartY)
+            }
+
+            // 绘制缩放后的图片
+            if loadedTex != null {
+                var[float, float](_tsw, _tsh) = r.getTextureSize(loadedTex)
+                float sw = _tsw * scale
+                float sh = _tsh * scale
+                // 居中 + 偏移
+                imgX = 400.0 - sw/2.0 + offsetX
+                imgY = 300.0 - sh/2.0 + offsetY
+                imgW = sw; imgH = sh
+
+                r.drawTextureAt(loadedTex, imgX, imgY, sw, sh)
+            }
+
+            // HUD 信息
+            r.drawText(font, "图片缩放测试 — 滚轮放大/缩小", 10, 8, #FFDC50FF)
+            r.drawText(font, "缩放: " + scale + "x  滚轮: " + wheelVal, 10, 30, #B4C8FFFF)
+            r.drawText(font, "鼠标: (" + mx + ", " + my + ")", 10, 52, #969696FF)
+
+            int ly = 560
+            r.drawText(font, "滚轮: 放大/缩小  |  左键拖拽: 平移  |  R: 重置  |  ESC: 退出", 10, ly, #787878FF)
+        }
+    )
+
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
+}

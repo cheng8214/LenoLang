@@ -1,0 +1,42 @@
+// Trae 专用解密：登录态密文 → auth JSON
+//
+// 通用加密（Base64 / SHA-512 / AES-128-CBC+PKCS7）已收进标准库 **LenoCrypto** ✓
+// ⇒ 本文件只留 Trae 特有的"派生密钥"4 步（对齐参考件 trae-checkin.js 的 decrypt()）✓
+//    旧版这里是 800+ 行纯 Leno 的 AES/SHA-512 机械拼接 ✗ ⇒ 现在 40 行 ✓
+import "Crypto" as crypto
+
+// 两张 64 字节表（源自官方客户端派生逻辑；逐字取自参考件）
+var TRAE_URE = [82, 9, 106, 213, 48, 54, 165, 56, 191, 64, 163, 158, 129, 243, 215, 251, 124, 227, 57, 130, 155, 47, 255, 135, 52, 142, 67, 68, 196, 222, 233, 203, 84, 123, 148, 50, 166, 194, 35, 61, 238, 76, 149, 11, 66, 250, 195, 78, 8, 46, 161, 102, 40, 217, 36, 178, 118, 91, 162, 73, 109, 139, 209, 37]
+var TRAE_DRE = [31, 221, 168, 51, 136, 7, 199, 49, 177, 18, 16, 89, 39, 128, 236, 95, 96, 81, 127, 169, 25, 181, 74, 13, 45, 229, 122, 159, 147, 201, 156, 239, 160, 224, 59, 77, 174, 42, 245, 176, 200, 235, 187, 60, 131, 83, 153, 97, 23, 43, 4, 126, 186, 119, 214, 38, 225, 105, 20, 99, 85, 33, 12, 125]
+
+// 完整解密：enc(base64) → auth JSON 字符串
+//   enc 布局 = [6B 前缀][32B key][AES-128-CBC 密文]
+//   派生：sha512(key) → 与 (ure ^ dre) 拼 128B → sha512 → 前 16B=aesKey、次 16B=iv
+//   解密：CBC 解密（库内自动去 PKCS7）→ 丢掉前 64B → 剩下就是 auth JSON
+export func trae_decrypt_auth(string enc_b64):string {
+    Array[int] t = crypto.b64_to_bytes(enc_b64)
+    if t.len() < 38 + 16 { return "" }
+
+    var key = []
+    for 6:37 to i { key.add(t[i]) }
+
+    Array[int] sha = crypto.sha512_bytes(key)
+    var comb = []
+    for 0:sha.len() - 1 to i { comb.add(sha[i]) }
+    for 0:63 to i { comb.add(TRAE_URE[i] ^ TRAE_DRE[i]) }
+    Array[int] h = crypto.sha512_bytes(comb)
+
+    var aes_key = []
+    var iv = []
+    for 0:15 to i { aes_key.add(h[i]) }
+    for 16:31 to i { iv.add(h[i]) }
+
+    var ct = []
+    for 38:t.len() - 1 to i { ct.add(t[i]) }
+
+    Array[int] dec = crypto.aes128_cbc_decrypt_bytes(aes_key, iv, ct)
+    if dec.len() <= 64 { return "" }
+    var body = []
+    for 64:dec.len() - 1 to i { body.add(dec[i]) }
+    return crypto.bytes_to_str(body)
+}

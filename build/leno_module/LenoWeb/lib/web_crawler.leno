@@ -1,0 +1,854 @@
+// web_crawler.leno — LenoWeb 爬虫框架（URL 工具 + 队列爬取）
+// 依赖 web_net.leno（HTTP）和 web_html.leno（HTML 解析）
+
+import strings
+import "web_html.leno" as htmls
+import "web_net.leno" as web_net
+use web_net.(HttpClient, Response, createClient)
+use htmls.(HtmlNode)
+
+// ==================== 辅助转换 ====================
+// 通用 any -> 具体类型安全转换（处理仍使用 Dict 的旧路径）
+
+func _s(any v): string {
+    if v is string { return v }
+    return ""
+}
+
+func _i(any v): int {
+    if v is int { return v }
+    return 0
+}
+
+// ==================== Url 结构 ====================
+// 强类型 URL，替代旧的 Dict 表示，提供完整的解析/重组/规范化能力
+
+export struct Url {
+    string scheme      // 协议（http/https 等）
+    string host        // 主机名
+    int port           // 端口（-1 表示未显式指定）
+    string path        // 路径（默认 "/"）
+    string query       // 查询字符串（不含 ?）
+    string fragment    // 锚点（不含 #）
+    bool isAbsolute    // 是否为绝对 URL
+
+    // 重新拼接为完整 URL 字符串
+    func str(): string {
+        if not isAbsolute {
+            string rp = path
+            if rp == "" { rp = "/" }
+            return rp
+        }
+        string result = scheme + "://" + host
+        if port > 0 and not ((scheme == "http" and port == 80) or (scheme == "https" and port == 443)) {
+            result = result + ":" + format("%d", port)
+        }
+        string p = path
+        if p == "" { p = "/" }
+        result = result + p
+        if query != "" { result = result + "?" + query }
+        if fragment != "" { result = result + "#" + fragment }
+        return result
+    }
+
+    // 是否使用默认端口
+    func hasDefaultPort(): bool {
+        if port <= 0 { return true }
+        if scheme == "http" and port == 80 { return true }
+        if scheme == "https" and port == 443 { return true }
+        return false
+    }
+
+    // 默认端口号（未显式指定时）
+    func defaultPort(): int {
+        if scheme == "https" { return 443 }
+        return 80
+    }
+
+    // 实际生效的端口号
+    func effectivePort(): int {
+        if port > 0 { return port }
+        return defaultPort()
+    }
+
+    // 主机 + 端口（用于域限制）
+    func authority(): string {
+        string result = host
+        if not hasDefaultPort() {
+            result = result + ":" + format("%d", port)
+        }
+        return result
+    }
+
+    // 规范化路径（合并 ./ .. 等）
+    func normalizedPath(): string {
+        Array segs = []
+        string cur = ""
+        int i = 0
+        int plen = path.len()
+        while i < plen {
+            int b = path.byte(i)
+            if b == 47 {
+                if cur == ".." {
+                    if segs.len() > 0 { segs = segs[:segs.len() - 1] }
+                } else if cur != "." and cur != "" {
+                    segs.add(cur)
+                }
+                cur = ""
+            } else {
+                cur = cur + strings.char(b)
+            }
+            i = i + 1
+        }
+        if cur == ".." {
+            if segs.len() > 0 { segs = segs[:segs.len() - 1] }
+        } else if cur != "." and cur != "" {
+            segs.add(cur)
+        }
+        string result = ""
+        if path.len() > 0 and path.byte(0) == 47 { result = "/" }
+        result = result + strings.join(segs, "/")
+        if path.len() > 0 and path.byte(path.len() - 1) == 47 and result != "/" {
+            result = result + "/"
+        }
+        return result
+    }
+
+    // 去掉 query 和 fragment，返回纯路径 URL
+    func withoutQuery(): Url {
+        Url u = new Url()
+        u.scheme = scheme
+        u.host = host
+        u.port = port
+        u.path = path
+        u.query = ""
+        u.fragment = ""
+        u.isAbsolute = isAbsolute
+        return u
+    }
+
+    // 提取 query 中指定参数的值
+    func queryParam(string key): string {
+        if query == "" { return "" }
+        int start = 0
+        int qlen = query.len()
+        while start <= qlen {
+            int amp = strings.find(query.slice(start, qlen), "&")
+            int segEnd = qlen
+            if amp >= 0 { segEnd = start + amp }
+            string seg = query.slice(start, segEnd)
+            int eq = strings.find(seg, "=")
+            string k = seg
+            string v = ""
+            if eq >= 0 {
+                k = seg.slice(0, eq)
+                v = seg.slice(eq + 1, seg.len())
+            }
+            if k == key { return v }
+            if amp < 0 { break }
+            start = segEnd + 1
+        }
+        return ""
+    }
+
+    // 拼接相对引用（类似 RFC 3986 resolve）
+    func resolve(string ref): Url {
+        if ref.len() > 4 and ref.slice(0, 4).has("://") {
+            return parseUrl(ref)
+        }
+        // 协议相对 //host/path
+        if ref.len() > 2 and ref.byte(0) == 47 and ref.byte(1) == 47 {
+            return parseUrl(scheme + ":" + ref)
+        }
+        Url u = new Url()
+        u.scheme = scheme
+        u.host = host
+        u.port = port
+        u.isAbsolute = isAbsolute
+        u.query = ""
+        u.fragment = ""
+        // 绝对路径引用
+        if ref.len() > 0 and ref.byte(0) == 47 {
+            u.path = _collapsePath(ref)
+        } else {
+            // 相对路径：基于当前目录
+            string base = normalizedPath()
+            int lastSlash = -1
+            int bi = 0
+            while bi < base.len() {
+                if base.byte(bi) == 47 { lastSlash = bi }
+                bi = bi + 1
+            }
+            string dir = "/"
+            if lastSlash >= 0 { dir = base.slice(0, lastSlash + 1) }
+            u.path = _collapsePath(dir + ref)
+        }
+        // 拆分 ref 中的 query/fragment
+        int qi = strings.find(ref, "?")
+        int fi = strings.find(ref, "#")
+        string refNoFrag = ref
+        if fi >= 0 {
+            u.fragment = ref.slice(fi + 1, ref.len())
+            refNoFrag = ref.slice(0, fi)
+        }
+        if qi >= 0 {
+            u.query = refNoFrag.slice(qi + 1, refNoFrag.len())
+        }
+        return u
+    }
+
+    // 规范化：小写 host、去 fragment、清理路径
+    func normalize(): Url {
+        Url u = new Url()
+        u.scheme = strings.to_lower(scheme)
+        u.host = strings.to_lower(host)
+        u.port = port
+        u.path = normalizedPath()
+        u.query = query
+        u.fragment = ""
+        u.isAbsolute = isAbsolute
+        return u
+    }
+
+    // 转为可读字符串
+    func str2(): string { return str() }
+}
+
+// 内部辅助：路径规范化（无状态，供 Url.resolve 使用）
+func _collapsePath(string path): string {
+    Array segs = []
+    string cur = ""
+    int i = 0
+    int plen = path.len()
+    while i < plen {
+        int b = path.byte(i)
+        if b == 47 {
+            if cur == ".." {
+                if segs.len() > 0 { segs = segs[:segs.len() - 1] }
+            } else if cur != "." and cur != "" {
+                segs.add(cur)
+            }
+            cur = ""
+        } else {
+            cur = cur + strings.char(b)
+        }
+        i = i + 1
+    }
+    if cur == ".." {
+        if segs.len() > 0 { segs = segs[:segs.len() - 1] }
+    } else if cur != "." and cur != "" {
+        segs.add(cur)
+    }
+    string result = ""
+    if path.len() > 0 and path.byte(0) == 47 { result = "/" }
+    result = result + strings.join(segs, "/")
+    if path.len() > 0 and path.byte(path.len() - 1) == 47 and result != "/" {
+        result = result + "/"
+    }
+    return result
+}
+
+// ==================== URL 解析 ====================
+// 完整解析 URL，返回强类型 Url
+
+export func parseUrl(string url): Url {
+    Url u = new Url()
+    u.scheme = ""
+    u.host = ""
+    u.port = -1
+    u.path = "/"
+    u.query = ""
+    u.fragment = ""
+    u.isAbsolute = false
+
+    int len = url.len()
+    int qi = strings.find(url, "?")
+    int fi = strings.find(url, "#")
+    // 分离 fragment
+    string noFrag = url
+    if fi >= 0 {
+        u.fragment = url.slice(fi + 1, len)
+        noFrag = url.slice(0, fi)
+    }
+    // 分离 query
+    string noQuery = noFrag
+    if qi >= 0 {
+        u.query = noFrag.slice(qi + 1, noFrag.len())
+        noQuery = noFrag.slice(0, qi)
+    }
+    // 解析 scheme://host[:port]/path
+    int pos = 0
+    string scheme = ""
+    while pos < noQuery.len() and noQuery.byte(pos) != 58 {
+        scheme = scheme + strings.char(noQuery.byte(pos))
+        pos = pos + 1
+    }
+    u.scheme = scheme
+    if pos + 2 < noQuery.len() and noQuery.byte(pos) == 58 and noQuery.byte(pos + 1) == 47 and noQuery.byte(pos + 2) == 47 {
+        u.isAbsolute = true
+        pos = pos + 3
+        string host = ""
+        while pos < noQuery.len() {
+            int b = noQuery.byte(pos)
+            if b == 58 or b == 47 { break }
+            host = host + strings.char(b)
+            pos = pos + 1
+        }
+        u.host = host
+        if pos < noQuery.len() and noQuery.byte(pos) == 58 {
+            pos = pos + 1
+            int port = 0
+            while pos < noQuery.len() {
+                int b = noQuery.byte(pos)
+                if b >= 48 and b <= 57 {
+                    port = port * 10 + (b - 48)
+                    pos = pos + 1
+                } else { break }
+            }
+            u.port = port
+        }
+        string path = "/"
+        if pos < noQuery.len() {
+            path = noQuery.slice(pos, noQuery.len())
+        }
+        if path == "" { path = "/" }
+        u.path = path
+    } else if scheme != "" and pos >= noQuery.len() {
+        // 只有 scheme，没有 //，视为相对/非标准
+        u.isAbsolute = false
+    } else {
+        // 相对路径（无 scheme://）
+        u.isAbsolute = false
+        string p = noQuery
+        if p == "" { p = "/" }
+        u.path = p
+        u.scheme = ""
+    }
+    return u
+}
+
+// ==================== CrawlItem / Page / Crawler 结构 ====================
+
+// 队列项：待抓取的 URL 及其深度
+export struct CrawlItem {
+    string url
+    int depth
+
+    func toString(): string {
+        return url
+    }
+}
+
+// 抓取的页面结果：URL + 状态码 + 原始 HTML + 解析后的 DOM
+export struct Page {
+    string url
+    int status
+    string body
+    HtmlNode html
+
+    // 页面中所有链接（绝对 URL）
+    func links(): Array[string] {
+        return extractLinks(self)
+    }
+
+    // 页面标题
+    func title(): string {
+        return htmls.getTitle(html)
+    }
+
+    // 页面 meta 信息
+    func metas(): Dict {
+        return htmls.getMetas(html)
+    }
+
+    // 页面纯文本
+    func text(): string {
+        return htmls.allText(html)
+    }
+}
+
+// 爬虫对象：状态 + 配置
+export struct Crawler {
+    Array[string] start_urls
+    Array[string] allowed_domains
+    int max_pages
+    int max_depth
+    int delay_ms
+    string user_agent
+    bool respect_robots
+    string robots_rules
+    Dict[string, bool] visited
+    Array[CrawlItem] queue
+    int page_count
+    bool running
+
+    // 设置 robots.txt 规则
+    func setRobots(string robotsText) {
+        robots_rules = robotsText
+    }
+
+    // 开始爬取：把 start_urls 入队
+    func start() {
+        running = true
+        page_count = 0
+        for start_urls.len() to i {
+            queue.add(newCrawlItem(start_urls[i], 0))
+        }
+    }
+
+    // 取出下一个待抓取的 URL（跳过已访问/超深/域名不符/robots 禁止）
+    func nextUrl(): CrawlItem? {
+        while queue.len() > 0 {
+            CrawlItem entry = queue[0]
+            queue.remove(0)
+            if visited.get(entry.url, false) { continue }
+            if entry.depth > max_depth { continue }
+            if allowed_domains.len() > 0 {
+                string d = domain(entry.url)
+                if not allowed_domains.has(d) { continue }
+            }
+            if respect_robots and robots_rules != "" {
+                if not isRobotsAllowed(robots_rules, user_agent, entry.url) {
+                    continue
+                }
+            }
+            return entry
+        }
+        return null
+    }
+
+    // 标记已访问
+    func markVisited(string url) {
+        visited[url] = true
+        page_count = page_count + 1
+    }
+
+    // 入队一个 URL
+    func enqueue(string url, int depth) {
+        if visited.get(url, false) { return }
+        if depth > max_depth { return }
+        queue.add(newCrawlItem(url, depth))
+    }
+
+    // 是否应停止
+    func shouldStop(): bool {
+        if not running { return true }
+        if page_count >= max_pages { return true }
+        if queue.len() == 0 { return true }
+        return false
+    }
+
+    // 停止爬取
+    func stop() {
+        running = false
+    }
+}
+
+// 内部辅助：创建队列项
+func newCrawlItem(string url, int depth): CrawlItem {
+    CrawlItem item = new CrawlItem()
+    item.url = url
+    item.depth = depth
+    return item
+}
+
+// 内部构造实现：从配置 Dict 初始化 Crawler
+func _buildCrawler(Dict config): Crawler {
+    Crawler c = new Crawler()
+    c.start_urls = []
+    c.allowed_domains = []
+    c.max_pages = 100
+    c.max_depth = 3
+    c.delay_ms = 0
+    c.user_agent = "LenoCrawler/1.0"
+    c.respect_robots = false
+    c.robots_rules = ""
+    c.visited = {}
+    c.queue = []
+    c.page_count = 0
+    c.running = false
+    var v_start = config["start_urls"]
+    if v_start is Array { c.start_urls = v_start }
+    var v_allowed = config["allowed_domains"]
+    if v_allowed is Array { c.allowed_domains = v_allowed }
+    var v_pages = config["max_pages"]
+    if v_pages is int { c.max_pages = v_pages }
+    var v_depth = config["max_depth"]
+    if v_depth is int { c.max_depth = v_depth }
+    var v_delay = config["delay_ms"]
+    if v_delay is int { c.delay_ms = v_delay }
+    var v_ua = config["user_agent"]
+    if v_ua is string { c.user_agent = v_ua }
+    var v_robots = config["respect_robots"]
+    if v_robots is bool { c.respect_robots = v_robots }
+    return c
+}
+
+// 完整解析 URL（等价于 parseUrl，返回强类型 Url）
+export func urlParse(string url): Url {
+    return parseUrl(url)
+}
+
+// 将 Url 对象重组为字符串
+export func buildUrl(Url u): string {
+    return u.str()
+}
+
+// 兼容层：buildUrlDict 接收旧的 Dict 表示（内部转 Url）
+export func buildUrlDict(Dict parts): string {
+    Url u = new Url()
+    u.scheme = _s(parts["scheme"])
+    u.host = _s(parts["host"])
+    u.port = _i(parts["port"])
+    u.path = _s(parts["path"])
+    u.query = _s(parts["query"])
+    u.fragment = _s(parts["fragment"])
+    u.isAbsolute = true
+    return u.str()
+}
+
+export func domain(string url): string {
+    return parseUrl(url).host
+}
+
+export func baseUrl(string url): string {
+    Url u = parseUrl(url)
+    string path = u.path
+    int lastSlash = -1
+    int i = 0
+    while i < path.len() {
+        if path.byte(i) == 47 { lastSlash = i }
+        i = i + 1
+    }
+    string base = "/"
+    if lastSlash > 0 { base = path[:lastSlash + 1] }
+    Url b = new Url()
+    b.scheme = u.scheme
+    b.host = u.host
+    b.port = u.port
+    b.path = base
+    b.query = ""
+    b.fragment = ""
+    b.isAbsolute = u.isAbsolute
+    return b.str()
+}
+
+// 拼接相对引用（基于 Url struct 的 RFC3986 resolve）
+export func resolveUrl(string base, string ref): string {
+    return parseUrl(base).resolve(ref).str()
+}
+
+export func normalizeUrl(string url): string {
+    return parseUrl(url).normalize().str()
+}
+
+// 提取 URL 中指定 query 参数的值，找不到返回空串
+export func getQueryParam(string url, string key): string {
+    int qi = strings.find(url, "?")
+    if qi < 0 {
+        return ""
+    }
+    // 截取 query 部分（去掉 fragment）
+    int end = url.len()
+    int fi = strings.find(url, "#")
+    if fi >= 0 and fi > qi {
+        end = fi
+    }
+    string qs = url.slice(qi + 1, end)
+    // 按 & 分割各参数
+    int start = 0
+    int len = qs.len()
+    while start <= len {
+        int amp = strings.find(qs.slice(start, len), "&")
+        int segEnd = len
+        if amp >= 0 {
+            segEnd = start + amp
+        }
+        string seg = qs.slice(start, segEnd)
+        // 按 = 分割 key=value
+        int eq = strings.find(seg, "=")
+        string k = ""
+        string v = ""
+        if eq >= 0 {
+            k = seg.slice(0, eq)
+            v = seg.slice(eq + 1, seg.len())
+        } else {
+            k = seg
+        }
+        if k == key {
+            return v
+        }
+        if amp < 0 {
+            break
+        }
+        start = segEnd + 1
+    }
+    return ""
+}
+
+// 去掉 URL 的 query 和 fragment，返回纯净 URL
+export func stripQuery(string url): string {
+    int len = url.len()
+    int end = len
+    int qi = strings.find(url, "?")
+    int fi = strings.find(url, "#")
+    if qi >= 0 and (fi < 0 or qi < fi) {
+        end = qi
+    } else if fi >= 0 {
+        end = fi
+    }
+    return url.slice(0, end)
+}
+
+// ==================== Robots.txt 解析 ====================
+
+// 解析 robots.txt 文本，返回规则结构：
+// {groups: [{user_agents: [...], allow: [...], disallow: [...]}]}
+export func parseRobots(string text): Dict {
+    var lines = strings.split(text, "\n")
+    Array groups = []
+    Dict[string, any] cur = {user_agents: [], allow: [], disallow: []}
+    for lines to ln {
+        string line = strings.trim(ln)
+        if line == "" or line.starts_with("#") {
+            continue
+        }
+        int ci = strings.find(line, ":")
+        if ci < 0 {
+            continue
+        }
+        string field = strings.to_lower(strings.trim(line.slice(0, ci)))
+        string value = strings.trim(line.slice(ci + 1, line.len()))
+        if field == "user-agent" {
+            // 新一组
+            var prevUas = cur["user_agents"]
+            if prevUas is Array and prevUas.len() > 0 {
+                groups.add(cur)
+            }
+            cur = {user_agents: [value], allow: [], disallow: []}
+        } else if field == "allow" {
+            if value != "" {
+                var allows = cur["allow"]
+                if allows is Array {
+                    allows.add(value)
+                }
+            }
+        } else if field == "disallow" {
+            if value != "" {
+                var disallows = cur["disallow"]
+                if disallows is Array {
+                    disallows.add(value)
+                }
+            }
+        }
+    }
+    var lastUas = cur["user_agents"]
+    if lastUas is Array and lastUas.len() > 0 {
+        groups.add(cur)
+    }
+    return {groups: groups}
+}
+
+// 判断是否允许抓取 url。userAgent 不区分大小写，支持通配 *
+func _robotsRuleMatch(string rule, string path): bool {
+    // 支持 * 通配符的简单前缀匹配
+    int star = strings.find(rule, "*")
+    if star < 0 {
+        return path.starts_with(rule)
+    }
+    string prefix = rule.slice(0, star)
+    string suffix = rule.slice(star + 1, rule.len())
+    if not path.starts_with(prefix) {
+        return false
+    }
+    if suffix == "" {
+        return true
+    }
+    return path.has(suffix)
+}
+
+// 从 URL 中提取用于 robots 匹配的路径
+func _robotsPath(string url): string {
+    string clean = stripQuery(url)
+    int hi = strings.find(clean, "://")
+    if hi < 0 {
+        return clean
+    }
+    int slash = strings.find(clean.slice(hi + 3, clean.len()), "/")
+    if slash < 0 {
+        return "/"
+    }
+    string p = clean.slice(hi + 3 + slash, clean.len())
+    if p == "" {
+        p = "/"
+    }
+    return p
+}
+
+// 判断 robots.txt 是否允许抓取指定 URL
+export func isRobotsAllowed(string robotsText, string userAgent, string url): bool {
+    var parsed = parseRobots(robotsText)
+    var groups = parsed["groups"]
+    string ua = strings.to_lower(userAgent)
+    string path = _robotsPath(url)
+
+    // 查找最匹配的 UA 组（精确匹配优先，其次 *)
+    Dict[string, any] selected = null
+    bool selectedIsStar = false
+    if groups is Array {
+        for groups to g {
+            if g is Dict[string, any] {
+                var uas = g["user_agents"]
+                if uas is Array {
+                    for uas to gagent {
+                        string gs = strings.to_lower(gagent)
+                        if gs == "*" {
+                            if selected == null {
+                                selected = g
+                                selectedIsStar = true
+                            }
+                        } else if gs == ua {
+                            selected = g
+                            selectedIsStar = false
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if selected == null {
+        return true
+    }
+
+    // 检查 Allow / Disallow 规则
+    bool allowed = true
+    var allows = selected["allow"]
+    var disallows = selected["disallow"]
+
+    // Disallow 命中即拒绝，除非 Allow 覆盖
+    if disallows is Array {
+        for disallows to rule {
+            if _robotsRuleMatch(rule as string, path) {
+                allowed = false
+            }
+        }
+    }
+    if allows is Array {
+        for allows to rule {
+            if _robotsRuleMatch(rule as string, path) {
+                allowed = true
+            }
+        }
+    }
+    return allowed
+}
+
+// ==================== Sitemap.xml 解析 ====================
+
+// 解析 sitemap.xml 文本，提取所有 <loc> 中的 URL
+export func parseSitemap(string xml): Array[string] {
+    Array[string] urls = []
+    int pos = 0
+    int n = xml.len()
+    while true {
+        // 查找 <loc>（大小写不敏感：支持 <loc> 和 <LOC>）
+        int open = strings.find(xml.slice(pos, n), "<loc")
+        if open < 0 {
+            break
+        }
+        int start = pos + open
+        // 跳过标签内容 <loc> 或 <loc ...>
+        int gt = strings.find(xml.slice(start, n), ">")
+        if gt < 0 {
+            break
+        }
+        int contentStart = start + gt + 1
+        // 查找 </loc>
+        int closeTag = strings.find(xml.slice(contentStart, n), "</loc")
+        if closeTag < 0 {
+            break
+        }
+        int contentEnd = contentStart + closeTag
+        string url = xml.slice(contentStart, contentEnd)
+        url = strings.trim(url)
+        if url != "" {
+            urls.add(url)
+        }
+        pos = contentEnd
+    }
+    return urls
+}
+
+// 从 URL 获取其 sitemap.xml 路径（简化：直接返回 /sitemap.xml）
+export func sitemapUrl(string baseUrl): string {
+    string clean = baseUrl
+    if clean.ends_with("/") {
+        clean = clean.slice(0, clean.len() - 1)
+    }
+    return clean + "/sitemap.xml"
+}
+
+// ==================== Crawler 核心 ====================
+
+// ==================== Crawler 便捷组合函数 ====================
+
+// 创建爬虫（构造函数，返回强类型 Crawler）
+export func createCrawler(Dict config): Crawler {
+    return _buildCrawler(config)
+}
+
+// 抓取页面，返回强类型 Page struct（失败返回 null）
+export func fetchPage(string url, string user_agent): Page? {
+    HttpClient c = createClient()
+    c.setHeaders(["User-Agent: " + user_agent])
+    Response resp = c.get(url)
+    c.close()
+    if not resp.ok() { return null }
+    Page p = new Page()
+    p.url = url
+    p.status = resp.statusCode
+    p.body = resp.body
+    p.html = htmls.parse(resp.body)
+    return p
+}
+
+// 提取页面中所有链接（绝对 URL）
+export func extractLinks(Page page): Array[string] {
+    Array[string] links = []
+    Array[HtmlNode] allRaw = htmls.select(page.html, "a")
+    for allRaw.len() to i {
+        HtmlNode node = allRaw[i]
+        string href = htmls.attr(node, "href")
+        if href != "" { links.add(resolveUrl(page.url, href)) }
+    }
+    return links
+}
+
+// 从站点获取 robots.txt 文本（成功返回文本，失败返回空串）
+export func fetchRobots(string siteUrl, string userAgent): string {
+    string robotsUrl = sitemapUrl(siteUrl).replace("/sitemap.xml", "/robots.txt")
+    HttpClient c = createClient()
+    if userAgent != "" {
+        c.setHeaders(["User-Agent: " + userAgent])
+    }
+    Response r = c.get(robotsUrl)
+    c.close()
+    if r.ok() {
+        return r.body
+    }
+    return ""
+}
+
+// 从站点 sitemap 提取所有 URL 列表
+export func fetchSitemapUrls(string siteUrl, string userAgent): Array[string] {
+    HttpClient c = createClient()
+    if userAgent != "" {
+        c.setHeaders(["User-Agent: " + userAgent])
+    }
+    Response r = c.get(sitemapUrl(siteUrl))
+    c.close()
+    if r.ok() {
+        return parseSitemap(r.body)
+    }
+    return []
+}

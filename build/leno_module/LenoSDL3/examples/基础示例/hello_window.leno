@@ -1,0 +1,81 @@
+// hello_window.leno — SDL3 绘图示例（矩形、圆、线、混合模式）
+import "SDL3" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.WindowFlag
+use SDL3.BlendMode
+use SDL3.(Scancode,Window)
+main() {
+    Window win = SDL3.createWindow({title: "Hello LenoSDL3 - 绘图演示", w: 800, h: 600, flags: WindowFlag.RESIZABLE})
+    if not win.ok { return }
+    win.setResizable(false)
+
+    win.run(
+        func(Event e): bool {
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            // 深色背景
+            r.setColor(#141E32FF)
+            r.clear()
+
+            // ---- 1. 填充矩形 ----
+            r.setColor(#3C78DCFF)
+            r.fillRect(30, 30, 150, 100)
+
+            // ---- 2. 矩形轮廓 ----
+            r.setColor(#FFFFFFFF)
+            r.drawRect(30, 30, 150, 100)
+
+            // ---- 3. 填充圆 ----
+            r.setColor(#DCA032FF)
+            r.fillCircle(280, 80, 50)
+
+            // ---- 4. 圆轮廓 ----
+            r.setColor(#FFFF00FF)
+            r.drawCircle(400, 80, 55)
+
+            // ---- 5. 十字线 ----
+            r.setColor(#C8C8C8FF)
+            r.drawLine(400, 180, 400, 350)
+            r.drawLine(250, 265, 550, 265)
+
+            // ---- 6. 对角线（X形） ----
+            r.setColor(#969696FF)
+            r.drawLine(250, 180, 550, 350)
+            r.drawLine(550, 180, 250, 350)
+
+            // ---- 7. 气泡圆组 ----
+            r.setColor(#64C864B4)
+            r.fillCircle(100, 420, 30)
+            r.fillCircle(170, 440, 25)
+            r.fillCircle(240, 420, 30)
+            r.fillCircle(310, 440, 25)
+
+            // ---- 8. 点阵 ----
+            r.setColor(#FFFFFFFF)
+            for 0:10 to i {
+                r.drawPoint(500 + i * 22, 160)
+            }
+
+            // ---- 9. 矩形组 ----
+            r.setColor(#B450B4FF)
+            r.fillRect(500, 250, 50, 80)
+            r.fillRect(560, 230, 50, 100)
+            r.fillRect(620, 250, 50, 80)
+
+            // ---- 10. 半透明混合 ----
+            r.setBlendMode(BlendMode.BLEND)
+            r.setColor(#FF5050A0)
+            r.fillRect(500, 400, 80, 80)
+            r.setColor(#5050FFA0)
+            r.fillRect(540, 410, 80, 80)
+            r.setColor(#50FF50A0)
+            r.fillRect(560, 430, 80, 80)
+            r.setBlendMode(BlendMode.NONE)
+        }
+    )
+
+    print("退出成功")
+}

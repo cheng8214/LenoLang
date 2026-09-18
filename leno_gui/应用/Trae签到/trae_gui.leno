@@ -1,0 +1,453 @@
+// trae_gui.leno — ④ GUI：窗口 + 标题状态徽标 + 账号下拉 + 今日积分 + 手动签到 + **签到日历**
+//
+// 对标参考件：`TraeSign-main/TraeCheckinApp.cs`（WinForms 主窗体）+ `CalendarControl.cs`（**自绘**日历）✓
+// 这里同样**自绘日历**（`SDL3.createCanvas` + `Renderer`，见 `examples/UI组件/画布/` ✓）
+//
+// 数据流（单一事实来源，不重复实现）：
+//   `trae_core.leno`    ← ② 登录态读取 / ③ 签到接口 / 日期助手
+//   `trae_history.leno` ← ⑥ `history.json`（按账号独立）
+//   本文件只做两件事：**把数据画出来** + **把点击接回数据层** ✓
+//
+// 安全：点"签到/刷新"时才去读登录态并解密（token 不进模块级状态、不打印 ✓）
+//
+// 环境变量（调试 / 无头冒烟）：
+//   TRAE_GUI_NO_NET=1   启动不做网络查询（离线只看日历与界面 ✓）
+//   TRAE_GUI_AUTO=90    跑满 N 帧后自动退出（配合 SDL_VIDEODRIVER=dummy 做无头验证 ✓）
+import "SDL3" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.Label
+use SDL3.Font
+use SDL3.Canvas
+use SDL3.Button
+import "trae_core.leno" as core
+import "trae_history.leno" as hist
+
+// ==================== 状态（模块级 = 界面的单一数据源） ====================
+Array[Array[string]] BRANDS_AVAIL = []
+var SEL_BRAND = ""
+var SEL_USER = ""
+
+var CAL_Y = 2026
+var CAL_M = 1
+var SEL_DAY = 0                    // 日历里选中的日（0 = 无）
+
+Array[string] OK_DAYS = []         // 当前账号当前月"签到成功"的日（"DD"）
+Array[string] HAS_DAYS = []        // 当前账号当前月"有记录（含失败）"的日
+
+var BADGE_TEXT = "… 查询中"
+var BADGE_KEY = ""                 // 变更检测键（Label 只在键变化时才 set_text ✓ 避免每帧重建纹理）
+var SCORE_TEXT = "今日积分 —"
+var MONTH_TEXT = ""
+var STATUS_TEXT = "就绪"
+
+// 日历画布几何（**必须**与下面 createCanvas 的 x/y/w/h 一致 ✓）
+var CAL_W = 540.0
+var CAL_H = 300.0
+var CAL_HEAD = 26.0                 // 表头（星期行）高度
+var CAL_CW = 540.0 / 7.0            // 列宽
+var CAL_CH = (300.0 - 26.0) / 6.0   // 行高（最多 6 行 ✓）
+
+// 界面缓存（只在变化时写 Label ✓）
+var _c_badge = ""
+var _c_badge_key = ""
+var _c_score = ""
+var _c_month = ""
+var _c_status = ""
+
+// 自动驱动
+var FRAMES = 0
+var AUTO_FRAMES = 0
+
+// ==================== 小工具 ====================
+func in_days(Array[string] arr, string d): bool {
+    for arr to x {
+        if x == d { return true }
+    }
+    return false
+}
+
+// 日历一行里"当天记录"的说明串
+func day_detail(int day): string {
+    var ds = core.date_str(CAL_Y, CAL_M, day)
+    var rec = hist.get_day(SEL_BRAND, SEL_USER, ds)
+    if rec == "" { return ds + "   无记录" }
+    if hist.field(rec, 0) == "1" {
+        return ds + "   已签到  积分 " + hist.field(rec, 1) + "+" + hist.field(rec, 2)
+    }
+    return ds + "   未成功  code=" + hist.field(rec, 3)
+}
+
+// ==================== 数据层动作（不碰控件 ⇒ 可单独测） ====================
+func refresh_days() {
+    OK_DAYS = []
+    HAS_DAYS = []
+    SEL_DAY = 0
+    if SEL_BRAND == "" { return }
+    var two = hist.month_days(SEL_BRAND, SEL_USER, CAL_Y, CAL_M)
+    OK_DAYS = two[0]
+    HAS_DAYS = two[1]
+}
+
+func goto_month(int y, int m) {
+    CAL_Y = y
+    CAL_M = m
+    MONTH_TEXT = (y as string) + " 年 " + (m as string) + " 月"
+    refresh_days()
+}
+
+func select_account(string brand, string user) {
+    SEL_BRAND = brand
+    SEL_USER = user
+    refresh_days()
+}
+
+// 查状态（网络）；顺带**背填**历史：接口说今天已签到但本地没记录 ⇒ 补一条（日历才准 ✓）
+func rpc_status() {
+    if SEL_BRAND == "" {
+        BADGE_TEXT = "○ 未选择账号"
+        BADGE_KEY = "none"
+        SCORE_TEXT = "今日积分 —"
+        STATUS_TEXT = "未找到 Trae 登录态"
+        return
+    }
+    STATUS_TEXT = "查询中…"
+    BADGE_TEXT = "… 查询中"
+    BADGE_KEY = "query"
+    var acc = core.load_account(SEL_BRAND)
+    if acc.len() == 0 or acc[2] == "" {
+        BADGE_TEXT = "× 无登录态"
+        BADGE_KEY = "err"
+        SCORE_TEXT = "今日积分 —"
+        STATUS_TEXT = "读不到登录态（请在 Trae 客户端登录 " + SEL_BRAND + "）"
+        return
+    }
+    var c = core.authed_client(acc[2], acc[4], acc[3])
+    var st = core.fetch_status(c)
+    if not core.st_ok(st) {
+        BADGE_TEXT = "× 查询失败"
+        BADGE_KEY = "err"
+        SCORE_TEXT = "今日积分 —"
+        STATUS_TEXT = core.st_msg(st)
+        if core.st_http_err(st) != "" { STATUS_TEXT = STATUS_TEXT + "（HTTP " + core.st_http_err(st) + "）" }
+        return
+    }
+    if core.st_checked(st) {
+        BADGE_TEXT = "● 今日已签到"
+        BADGE_KEY = "checked"
+    } else {
+        BADGE_TEXT = "○ 今日未签到"
+        BADGE_KEY = "unchecked"
+    }
+    SCORE_TEXT = "今日积分 " + core.st_base(st) + "（基础 " + core.st_base(st) + " + 额外 " + core.st_extra(st) + "）"
+    STATUS_TEXT = "状态已刷新"
+    var td = core.today_str()
+    if core.st_checked(st) and not hist.has_day(SEL_BRAND, SEL_USER, td) {
+        hist.mark(SEL_BRAND, SEL_USER, td, true, core.st_base(st), core.st_extra(st), "backfill")
+        STATUS_TEXT = STATUS_TEXT + "（历史已补记今天）"
+    }
+    refresh_days()
+}
+
+// 手动签到（网络 + 二次确认）
+func rpc_claim() {
+    if SEL_BRAND == "" {
+        STATUS_TEXT = "未选择账号"
+        return
+    }
+    STATUS_TEXT = "签到中…"
+    BADGE_TEXT = "… 签到中"
+    BADGE_KEY = "query"
+    var acc = core.load_account(SEL_BRAND)
+    if acc.len() == 0 or acc[2] == "" {
+        BADGE_TEXT = "× 无登录态"
+        BADGE_KEY = "err"
+        STATUS_TEXT = "读不到登录态（请在 Trae 客户端登录 " + SEL_BRAND + "）"
+        return
+    }
+    var c = core.authed_client(acc[2], acc[4], acc[3])
+    var r = core.do_claim(c)
+    var td = core.today_str()
+    if core.cl_ok(r) {
+        BADGE_TEXT = "● 今日已签到"
+        BADGE_KEY = "checked"
+        SCORE_TEXT = "今日积分 " + core.cl_base(r) + "（基础 " + core.cl_base(r) + " + 额外 " + core.cl_extra(r) + "）"
+        STATUS_TEXT = "签到成功   积分 " + core.cl_base(r) + "+" + core.cl_extra(r)
+        hist.mark(SEL_BRAND, SEL_USER, td, true, core.cl_base(r), core.cl_extra(r), "0")
+    } else {
+        BADGE_TEXT = "× 签到失败"
+        BADGE_KEY = "err"
+        STATUS_TEXT = "签到失败：code=" + core.cl_code(r) + "  " + core.cl_msg(r)
+        // 失败也记（ok=0）：日历上画"暖色"，⑤ 的失败重试因此有据可查 ✓
+        hist.mark(SEL_BRAND, SEL_USER, td, false, "", "", core.cl_code(r))
+    }
+    refresh_days()
+}
+
+// ==================== 视图同步（每帧调用；只在变化时写控件 ✓） ====================
+func apply_view(Label badge, Label score, Label status, Label month) {
+    if _c_badge != BADGE_TEXT {
+        badge.set_text(BADGE_TEXT)
+        _c_badge = BADGE_TEXT
+    }
+    if _c_badge_key != BADGE_KEY {
+        if BADGE_KEY == "checked" {
+            badge.set_text_color(#7BE0A0FF)
+        } else if BADGE_KEY == "err" {
+            badge.set_text_color(#FF8A8AFF)
+        } else if BADGE_KEY == "unchecked" {
+            badge.set_text_color(#FFC86EFF)
+        } else {
+            badge.set_text_color(#C8D2E6FF)
+        }
+        _c_badge_key = BADGE_KEY
+    }
+    if _c_score != SCORE_TEXT {
+        score.set_text(SCORE_TEXT)
+        _c_score = SCORE_TEXT
+    }
+    if _c_month != MONTH_TEXT {
+        month.set_text(MONTH_TEXT)
+        _c_month = MONTH_TEXT
+    }
+    if _c_status != STATUS_TEXT {
+        status.set_text(STATUS_TEXT)
+        _c_status = STATUS_TEXT
+    }
+}
+
+main() {
+    var auto = _env("TRAE_GUI_AUTO")
+    if auto != null { AUTO_FRAMES = _int(auto) }
+    var no_net = _env("TRAE_GUI_NO_NET") != null
+
+    // ---- 账号扫描（只读、不解密 token 用于展示）----
+    BRANDS_AVAIL = core.scan_accounts()
+    Array[string] items = []
+    int i = 0
+    while i < BRANDS_AVAIL.len() {
+        var a = BRANDS_AVAIL[i]
+        items.add(a[0] + " / " + a[1])
+        i = i + 1
+    }
+    if items.len() == 0 {
+        items.add("（未找到登录态）")
+    } else {
+        SEL_BRAND = BRANDS_AVAIL[0][0]
+        SEL_USER = BRANDS_AVAIL[0][1]
+    }
+
+    // ---- 日历定位到今天 ----
+    var tp = core.today_parts()
+    CAL_Y = tp[0]
+    CAL_M = tp[1]
+    MONTH_TEXT = (CAL_Y as string) + " 年 " + (CAL_M as string) + " 月"
+    refresh_days()
+
+    var win = SDL3.createWindow({title:"Trae 签到助手", w:620, h:720, resizable:false})
+    if not win.ok { return }
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(14.0)
+
+    // ---- 顶部：标题 + 状态徽标 ----
+    win.add(SDL3.createLabel({x:24, y:14, text:"Trae 签到助手", font_size:22, text_color:#DCE6FFFF}))
+    var badgeLbl = SDL3.createLabel({x:412, y:22, text:BADGE_TEXT, font_size:15, text_color:#C8D2E6FF})
+    win.add(badgeLbl)
+
+    // ---- 卡片 A：账号 + 今日积分 ----
+    var cardA = win.addPanel({x:24, y:56, w:572, h:112, bg_color:#1C1E26FF, radius:10, border_color:#505564FF})
+    cardA.add(SDL3.createLabel({x:44, y:74, text:"账号", font_size:14, text_color:#B4C8FFFF}))
+    var cbAcc = SDL3.createComboBox({x:100, y:70, w:330, items:items, selected:0, tip:"选择要签到 / 查看的账号"})
+    cardA.add(cbAcc)
+    var scoreLbl = SDL3.createLabel({x:44, y:122, text:SCORE_TEXT, font_size:14, text_color:#AAC8AAFF})
+    cardA.add(scoreLbl)
+    cardA.add(SDL3.createLabel({x:400, y:124, text:"只读登录态 · 不打印 token", font_size:12, text_color:#787D87FF}))
+
+    // ---- 动作按钮 ----
+    var btnClaim = win.addButton({x:24, y:184, w:150, h:38, text:"立即签到", type:"primary", tip:"调 claim 接口并做二次确认"})
+    var btnStatus = win.addButton({x:186, y:184, w:130, h:38, text:"刷新状态", tip:"只查 status，不签到"})
+    var btnToday = win.addButton({x:328, y:184, w:90, h:38, text:"回到今天", tip:"日历跳回本月"})
+
+    // ---- 卡片 B：签到日历 ----
+    var cardB = win.addPanel({x:24, y:238, w:572, h:372, bg_color:#1C1E26FF, radius:10, border_color:#505564FF})
+    var btnPrev = SDL3.createButton({x:44, y:252, w:34, h:28, text:"<", tip:"上个月"})
+    var monthLbl = SDL3.createLabel({x:90, y:256, text:MONTH_TEXT, font_size:16, text_color:#DCE6FFFF})
+    var btnNext = SDL3.createButton({x:230, y:252, w:34, h:28, text:">", tip:"下个月"})
+    cardB.add(btnPrev)
+    cardB.add(monthLbl)
+    cardB.add(btnNext)
+    cardB.add(SDL3.createLabel({x:330, y:258, text:"🟩 已签到   🟨 有记录未成功   □ 今天", font_size:12, text_color:#8A93A8FF}))
+    var cv = SDL3.createCanvas({x:40, y:290, w:540, h:300, bg_color:#14171EFF, border_color:#4A5166FF})
+    cardB.add(cv)
+
+    // ---- 底部：状态栏 + 提示 ----
+    var statusLbl = SDL3.createLabel({x:24, y:626, text:STATUS_TEXT, font_size:14, text_color:#C8D2E6FF})
+    win.add(statusLbl)
+    win.add(SDL3.createLabel({x:24, y:656, text:"左键点日历格子看当天记录 · Esc 退出 · 历史文件 %APPDATA%\\TraeSignLeno\\history.json", font_size:12, text_color:#787D87FF}))
+
+    // ==================== 日历绘制（局部坐标：画布左上角 = (0,0) ✓ 见画布示例） ====================
+    cv.on_draw(func(Renderer r, float ox, float oy, float cw, float ch) {
+        // ⚠ 坐标系（踩过的坑）：`r` **没有**被平移到画布原点 —— 画布只设置了**裁剪矩形**（窗口绝对
+        // 坐标 ✓），`ox`/`oy` 才是内容区左上角的窗口绝对坐标 ✓。之前按"局部坐标(0,0)"绘制 ⇒ 全画到
+        // 画布外面 ⇒ 用户看到"画布没有日期" ✗。⇒ 所有绘制坐标都要 + ox/oy ✓
+        //    （鼠标回调 `on_click` 给的仍是**画布局部坐标** ✓ ⇒ 那里的格子换算是另一套 ✓ 保持不动）
+        // 1) 表头：星期（日=0 ✓ 与 core.weekday_of 一致）
+        Array[string] wd = ["日", "一", "二", "三", "四", "五", "六"]
+        int k = 0
+        while k < 7 {
+            // 注意：`measureString` 是**多返回值**，必须解构 ✓（写成 `var m = f.measureString(x)`
+            // 只会拿到第一个 float ⇒ 之后 `m[0]` 报"索引操作需要对象类型" ✗，实测踩过）
+            var[float, float](hw, hh) = font.measureString(wd[k])
+            r.drawText(font, wd[k], ox + k * CAL_CW + (CAL_CW - hw) / 2.0,
+                       oy + (CAL_HEAD - hh) / 2.0, #8A93A8FF)
+            k = k + 1
+        }
+        // 2) 当月格子
+        var first = core.weekday_of(CAL_Y, CAL_M, 1)      // 1 号是周几
+        var dmax = core.days_in_month(CAL_Y, CAL_M)
+        var tp2 = core.today_parts()
+        var today_no = core.days_from_civil(tp2[0], tp2[1], tp2[2])
+        int day = 1
+        while day <= dmax {
+            int idx = first + day - 1
+            int row = idx / 7
+            int col = idx % 7
+            float x = ox + col * CAL_CW
+            float y = oy + CAL_HEAD + row * CAL_CH
+            string dd = core.pad2(day)
+            bool is_ok = in_days(OK_DAYS, dd)
+            bool is_has = in_days(HAS_DAYS, dd)
+            bool is_today = (core.days_from_civil(CAL_Y, CAL_M, day) == today_no)
+            bool is_future = (core.days_from_civil(CAL_Y, CAL_M, day) > today_no)
+
+            // 2.1 底：签到成功=绿、有记录但失败=暖黄
+            if is_ok {
+                r.setColor(#1E4A32FF)
+                r.fillRoundedRect(x + 4.0, y + 4.0, CAL_CW - 8.0, CAL_CH - 8.0, 6.0)
+            } else if is_has {
+                r.setColor(#4A3A1EFF)
+                r.fillRoundedRect(x + 4.0, y + 4.0, CAL_CW - 8.0, CAL_CH - 8.0, 6.0)
+            }
+            // 2.2 今天 / 选中 ⇒ 描边
+            if is_today {
+                r.setColor(#64B4FFFF)
+                r.drawRect(x + 4.0, y + 4.0, CAL_CW - 8.0, CAL_CH - 8.0)
+            } else if day == SEL_DAY {
+                r.setColor(#B4C8FFFF)
+                r.drawRect(x + 4.0, y + 4.0, CAL_CW - 8.0, CAL_CH - 8.0)
+            }
+            // 2.3 日期数字（今天那一格：数字 + "今天" 作为**一组**在格子里居中 ✓）
+            // ⚠ 踩过的坑：原来 "今天" 按固定左边距 `x + 6.0` 画 ⇒ 与居中的数字**不在同一竖轴**
+            //   ⇒ 看起来就是"两个字和 18 错位" ✗。正解：两者都按 `(CAL_CW - w)/2` 居中 ✓，
+            //   竖直方向按"数字高 + 标签高"整组居中 ✓（今天格因此比别的格上下更平衡 ✓）
+            var[float, float](dnum_w, dnum_h) = font.measureString(dd)
+            var cnum = #E6EAF2FF
+            if is_ok {
+                cnum = #7BE0A0FF
+            } else if is_has {
+                cnum = #FFC86EFF
+            } else if is_future {
+                cnum = #5A6270FF
+            }
+            if is_today {
+                var[float, float](tday_w, tday_h) = font.measureString("今天")
+                float num_y = y + (CAL_CH - (dnum_h + tday_h)) / 2.0   // 整组（数字+标签）竖直居中
+                r.drawText(font, dd, x + (CAL_CW - dnum_w) / 2.0, num_y, cnum)
+                r.drawText(font, "今天", x + (CAL_CW - tday_w) / 2.0, num_y + dnum_h, #64B4FFFF)
+            } else {
+                r.drawText(font, dd, x + (CAL_CW - dnum_w) / 2.0,
+                           y + CAL_CH / 2.0 - dnum_h / 2.0, cnum)
+            }
+            day = day + 1
+        }
+    })
+
+    // 点日历格子 ⇒ 选中该日，状态栏显示当天记录
+    cv.on_click(func(float lx, float ly) {
+        if ly < CAL_HEAD { return }
+        int col = _int(lx / CAL_CW)
+        int row = _int((ly - CAL_HEAD) / CAL_CH)
+        if col < 0 or col > 6 or row < 0 or row > 5 { return }
+        var first = core.weekday_of(CAL_Y, CAL_M, 1)
+        int day = row * 7 + col - first + 1
+        var dmax = core.days_in_month(CAL_Y, CAL_M)
+        if day < 1 or day > dmax {
+            SEL_DAY = 0
+            return
+        }
+        SEL_DAY = day
+        STATUS_TEXT = day_detail(day)
+    })
+
+    // ==================== 回调接线 ====================
+    cbAcc.on_change(func(int idx) {
+        if idx >= 0 and idx < BRANDS_AVAIL.len() {
+            var a = BRANDS_AVAIL[idx]
+            select_account(a[0], a[1])
+            STATUS_TEXT = "已切换账号：" + a[0] + " / " + a[1]
+        }
+    })
+    btnPrev.on_click(func():void {
+        var p = core.prev_month(CAL_Y, CAL_M)
+        goto_month(p[0], p[1])
+    })
+    btnNext.on_click(func():void {
+        var p = core.next_month(CAL_Y, CAL_M)
+        goto_month(p[0], p[1])
+    })
+    btnToday.on_click(func():void {
+        var t = core.today_parts()
+        goto_month(t[0], t[1])
+        STATUS_TEXT = "已回到本月"
+    })
+    btnStatus.on_click(func():void { rpc_status() })
+    btnClaim.on_click(func():void { rpc_claim() })
+
+    // ---- 启动时查一次状态（`TRAE_GUI_NO_NET=1` 时跳过，便于离线/无头验证 ✓）----
+    if no_net {
+        STATUS_TEXT = "离线模式（TRAE_GUI_NO_NET=1）：未查询接口"
+    } else {
+        rpc_status()
+    }
+
+    // ==================== 主循环 ====================
+    // ⚠ 踩过的坑（GUI 卡死）：`win.run` 是**事件驱动重绘**（空闲时 `delay(5)` 挂起、**没有事件
+    // 就不重绘** ✗）⇒ 无头（`SDL_VIDEODRIVER=dummy`）下"在 onEvent 里数帧"永远不前进 ⇒ 卡死 ✗。
+    // 做法：① 用**定时器**保证 idle 期间也有重绘 ✓（库注释原话："确保 idle 期间也能触发定时器
+    // 与自动重绘" ✓）；② 在**渲染回调**里数帧；③ 到点直接 `_exit(0)` —— 窗口库**没有**
+    // "请求关闭"的 API（只有 SDL_QUIT 事件或 onEvent 返回 false ✗），对自动冒烟而言 `_exit`
+    // 是最确定的做法 ✓（交互模式不受影响 ✓）。
+    if AUTO_FRAMES > 0 {
+        win.addTimer(50, func():void { })
+    }
+
+    win.run(
+        func(Event ev): bool {
+            if ev.isQuit() or ev.isWindowClose() { return false }
+            if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(#12141AFF)
+            apply_view(badgeLbl, scoreLbl, statusLbl, monthLbl)
+            FRAMES = FRAMES + 1
+            if FRAMES == 1 {
+                print("[gui] 首帧渲染 ok  日历=" + (CAL_W as string) + "x" + (CAL_H as string)
+                    + "  " + MONTH_TEXT + "  账号=" + SEL_BRAND + "/" + SEL_USER + "\n")
+            }
+            if AUTO_FRAMES > 0 and FRAMES >= AUTO_FRAMES {
+                print("[gui] frames=" + (FRAMES as string)
+                    + "  accounts=" + (BRANDS_AVAIL.len() as string)
+                    + "  month=" + MONTH_TEXT
+                    + "  已签到日=" + (OK_DAYS.len() as string)
+                    + "  状态=" + STATUS_TEXT + "\n")
+                _exit(0)
+            }
+        }
+    )
+
+    print("[gui] 主循环退出  frames=" + (FRAMES as string) + "  状态=" + STATUS_TEXT + "\n")
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
+}

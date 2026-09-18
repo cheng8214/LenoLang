@@ -1,0 +1,297 @@
+// fireworks.leno — 对齐 Python 版结构（紧凑索引 + 交换删除）
+// 内联 ffi 版：手写 ffi.write_int 直写像素（最高性能基准）
+// 对比封装版：fireworks_pixelbuf.leno（PixelBuffer struct，代码更清晰）
+import "SDL3" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+import maths
+import rands
+import ffi
+use SDL3.Scancode
+use SDL3.WindowFlag
+
+struct Particle {
+    float x; float y
+    float vx; float vy
+    int life; int r; int g; int b
+    int ptype
+}
+
+struct Rocket {
+    float x; float y
+    float vy
+    int r; int g; int b
+    float burst_y
+    int burst_count
+}
+
+struct Star {
+    float x; float y
+    float twinkle
+    int r; int g; int b
+}
+
+main() {
+    int W = 800; int H = 600
+    var win = SDL3.createWindow({title: "Fireworks - Leno Aligned", w: W, h: H})
+    if not win.ok { return }
+
+    var ren = SDL3.createRenderer(win.handle)
+    if not ren.ok { win.destroy(); return }
+
+    var colors = [
+        [255, 50, 50], [255, 140, 0], [255, 220, 0],
+        [50, 255, 50], [0, 200, 255], [180, 50, 255],
+        [255, 50, 200], [100, 255, 100], [255, 255, 100]
+    ]
+
+    var MAX_P = 6000
+    // 原生数组（连续内存，CPU 缓存友好，O(1) 追加/弹出）
+    var particles = []
+
+    var rockets = []
+
+    var stars = []
+
+    var frame = 0
+    var peak = 0
+
+    var fps_display = 0
+    var fps_frames = 0
+    var fps_start = SDL3.getTicks()
+
+    // 性能统计：每帧记录 [粒子数, 帧耗时ms]
+    var perf_log = {}
+    var perf_idx = 0
+
+    // 星空（100 颗）
+    for 0 : 99 to i {
+        stars.add(new Star(
+            x=rands.floats(0.0, 800.0), y=rands.floats(0.0, 500.0),
+            twinkle=rands.floats(0.0, 6.28),
+            r=150 + rands.ints(0, 105), g=150 + rands.ints(0, 105), b=200 + rands.ints(0, 55)
+        ))
+    }
+
+    func clamp(int v): int {
+        if v < 0 { return 0 }
+        if v > 255 { return 255 }
+        return v
+    }
+
+    func burst(float x, float y, int cr, int cg, int cb, int count, int min_l, int max_l, int ptype, float smin, float smax) {
+        for 0 : count - 1 to _ {
+            if particles.len() >= MAX_P { return }
+            var a = rands.floats(0.0, 6.283)
+            var s = rands.floats(smin, smax)
+            particles.add(new Particle(
+                x=x, y=y, vx=maths.cos(a) * s, vy=maths.sin(a) * s,
+                life=rands.ints(min_l, max_l),
+                r=clamp(cr + rands.ints(-30, 30)),
+                g=clamp(cg + rands.ints(-30, 30)),
+                b=clamp(cb + rands.ints(-30, 30)),
+                ptype=ptype
+            ))
+        }
+    }
+
+    func secBurst(float x, float y, int cr, int cg, int cb) {
+        burst(x, y, cr, cg, cb, rands.ints(10, 25), 10, 25, 0, 0.5, 3.0)
+    }
+
+    var ev = SDL3.createEvent()
+    var running = true
+
+    // 像素缓冲直写（对标 Python 的 surface.set_at）：手写 ffi 管理内存，
+    // 逐点 ffi.write_int 写内存（无 SDL 调用开销），整帧只 1 次 updateTexture 上传。
+    // 像素格式 = RGBA8888，SDL3 little-endian 内存字节序 [A,B,G,R]，u32 = (r<<24)|(g<<16)|(b<<8)|a
+    var pixBuf = ffi.malloc(W * H * 4)
+    var bgBuf  = ffi.malloc(W * H * 4)
+    // 预生成背景（背景 RGB = 2,2,15，a=255）
+    for 0 : W - 1 to xx {
+        for 0 : H - 1 to yy {
+            ffi.write_int(bgBuf, (yy * W + xx) * 4, (2 << 24) | (2 << 16) | (15 << 8) | 255)
+        }
+    }
+    // 流式纹理（全程复用，无需每帧创建/销毁）
+    var pixelTex = ren.createTexture(SDL3.PIXELFORMAT_RGBA8888, 1, W, H)
+    if pixelTex == null { win.destroy(); return }
+
+    while running {
+        var t0 = SDL3.getTicks()
+
+        while ev.poll() {
+            if ev.isQuit() or ev.isWindowClose() { running = false }
+        }
+
+        frame += 1
+        // 背景：整块从预生成 bgBuf 复制（C 级 memcpy，约 0.1ms）
+        ffi.memcpy(pixBuf, bgBuf, W * H * 4)
+
+        // ---- 星空 ----
+        for 0 : stars.len() - 1 to si {
+            var s = stars[si]
+            s.twinkle += 0.03
+            var a = 80 + _int(maths.sin(s.twinkle) * 60.0 + 60.0)
+            if a > 255 { a = 255 }
+           var px = _int(s.x); var py = _int(s.y)
+            if 0 <= px and px < W and 0 <= py and py < H {
+                ffi.write_int(pixBuf, (py * W + px) * 4,
+                    (s.r << 24) | (s.g << 16) | (s.b << 8) | a)
+            }
+        }
+
+        // ---- 发射（对齐 Python：每 8 帧，1~2 枚） ----
+        if frame % 8 == 0 {
+            var launch_count = rands.ints(1, 2)
+            for 0 : launch_count - 1 to _ {
+                var c = colors[rands.ints(0, 8)]
+                rockets.add(new Rocket(
+                    x=rands.floats(80.0, 720.0), y=600.0,
+                    vy=rands.floats(-6.0, -10.0),
+                    r=c[0], g=c[1], b=c[2],
+                    burst_y=rands.floats(60.0, 450.0),
+                    burst_count=rands.ints(200, 450)
+                ))
+            }
+        }
+
+        // ---- 火箭（倒序 for + 交换删除） ----
+        for rockets.len() - 1 : 0 : -1 to ri {
+            var rk = rockets[ri]
+            rk.y += rk.vy
+            if rk.y <= rk.burst_y {
+                burst(rk.x, rk.y, rk.r, rk.g, rk.b, rk.burst_count, 30, 70, 0, 1.5, 6.0)
+                burst(rk.x, rk.y, 255, 255, 240, rands.ints(5, 12), 5, 12, 1, 0.3, 2.5)
+                burst(rk.x, rk.y, rk.r, rk.g, rk.b, rands.ints(15, 30), 20, 40, 2, 0.5, 3.5)
+                burst(rk.x + rands.floats(-30.0, 30.0), 595.0,
+                      rk.r, rk.g, rk.b, rands.ints(15, 35), 8, 20, 3, 0.5, 3.0)
+                // 交换删除：把最后一个移到当前位置，弹掉末尾（倒序遍历下安全）
+                var last_r = rockets.len() - 1
+                rockets[ri] = rockets[last_r]
+                rockets.pop()
+            } else {
+                var px = _int(rk.x); var py = _int(rk.y)
+                if 0 <= px and px < W and 0 <= py and py < H {
+                    ffi.write_int(pixBuf, (py * W + px) * 4,
+                        (rk.r << 24) | (rk.g << 16) | (rk.b << 8) | 255)
+                }
+                var px2 = _int(rk.x + 1); var py2 = _int(rk.y + 2)
+                if 0 <= px2 and px2 < W and 0 <= py2 and py2 < H {
+                    ffi.write_int(pixBuf, (py2 * W + px2) * 4,
+                        (rk.r << 24) | (rk.g << 16) | (rk.b << 8) | 255)
+                }
+            }
+        }
+
+        // ---- 粒子（倒序 for + 交换删除） ----
+        if particles.len() > peak { peak = particles.len() }
+
+        for particles.len() - 1 : 0 : -1 to i {
+            var p = particles[i]
+            p.x += p.vx
+            p.y += p.vy + 0.04
+            p.vy *= 0.98
+            p.life -= 1
+            if p.ptype != 1 {
+                p.r = clamp(p.r - 1)
+                p.g = clamp(p.g - 1)
+                p.b = clamp(p.b - 1)
+            }
+
+            if p.life <= 0 or p.r <= 0 or p.y > 610 or p.y < -10 {
+                var last_p = particles.len() - 1
+                particles[i] = particles[last_p]
+                particles.pop()
+            } else {
+                var px = _int(p.x); var py = _int(p.y)
+                if 0 <= px and px < W and 0 <= py and py < H {
+                    if p.ptype == 1 {
+                        var col = (p.r << 24) | (p.g << 16) | (p.b << 8) | 255
+                        ffi.write_int(pixBuf, (py * W + px) * 4, col)
+                        if px + 1 < W { ffi.write_int(pixBuf, (py * W + px + 1) * 4, col) }
+                        if py + 1 < H { ffi.write_int(pixBuf, ((py + 1) * W + px) * 4, col) }
+                    } else if p.ptype == 3 {
+                        ffi.write_int(pixBuf, (py * W + px) * 4,
+                            (p.r << 24) | (clamp(p.g + 50) << 16) | (p.b << 8) | 255)
+                    } else {
+                        ffi.write_int(pixBuf, (py * W + px) * 4,
+                            (p.r << 24) | (p.g << 16) | (p.b << 8) | 255)
+                        if p.ptype == 2 and p.life == _int(_float(p.life) * 0.3) and rands.ints(0, 100) < 5 {
+                            secBurst(p.x, p.y, p.r, p.g, p.b)
+                        }
+                    }
+                }
+            }
+        }
+
+        // ---- FPS 统计 ----
+        fps_frames += 1
+        var now = SDL3.getTicks()
+        if now - fps_start >= 1000 {
+            fps_display = fps_frames
+            fps_frames = 0
+            fps_start = now
+        }
+
+        // 整帧像素缓冲一次性上传纹理并绘制（对标 Python 的 display.flip）
+        ren.updateTexture(pixelTex, null, pixBuf, W * 4)
+        ren.drawTextureAt(pixelTex, 0.0, 0.0, _float(W), _float(H))
+
+        ren.present()
+
+        var t1 = SDL3.getTicks()
+        perf_log[perf_idx] = [particles.len(), t1 - t0]
+        perf_idx += 1
+    }
+
+    SDL3.destroyTexture(pixelTex)
+    ffi.free(pixBuf)
+    ffi.free(bgBuf)
+    ren.destroy()
+    win.destroy()
+    ev.uninit()
+
+    // ========== 输出性能报告（对齐 Python 版格式） ==========
+    print("\n总帧数: " + frame + "  峰值粒子: " + peak)
+    print("=======================================================")
+
+    var buckets = {}
+    for 0 : perf_idx - 1 to bidx {
+        var entry = perf_log[bidx]
+        var pcount = entry[0]
+        var ms = entry[1]
+        var b = (pcount / 500) * 500
+        if buckets[b] == null {
+            buckets[b] = [0, 0.0]
+        }
+        buckets[b][0] = buckets[b][0] + 1
+        buckets[b][1] = buckets[b][1] + ms
+    }
+
+    print("粒子区间               帧数      平均fps       平均ms/帧")
+    print("-------------------------------------------------------")
+
+    for 0 : 5500 : 500 to b {
+        if buckets[b] != null {
+            var info = buckets[b]
+            var fcount = info[0]
+            var total_ms = info[1]
+            var avg_ms = total_ms / fcount
+            var avg_fps = 1000.0 / avg_ms
+            var b_end = b + 499
+            print(b + "-" + b_end + "          " + fcount + "      " + avg_fps + "         " + avg_ms)
+        }
+    }
+
+    if perf_idx > 0 {
+        var total_ms = 0.0
+        for 0 : perf_idx - 1 to tidx {
+            total_ms = total_ms + perf_log[tidx][1]
+        }
+        var avg_ms = total_ms / perf_idx
+        var avg_fps = 1000.0 / avg_ms
+        print("-------------------------------------------------------")
+        print("整体平均             " + perf_idx + "      " + avg_fps + "         " + avg_ms)
+    }
+}
