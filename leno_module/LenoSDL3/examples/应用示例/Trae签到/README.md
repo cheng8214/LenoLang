@@ -12,9 +12,9 @@
 | ① **派生解密**（读 Trae 登录态用的 AES-128-CBC）| ✅ 完成，金标自测通过（`trae_crypto.leno`）|
 | ② 读登录态（`storage.json` → `enc` / `dcId` / 品牌/账号）| ✅ 完成（`trae_sign.leno` 的 `pick_auth/load_account/scan_accounts`）|
 | ③ 签到接口（`checkin_credits/status` / `claim` + 二次确认 + 错误码 9095/9074…）| ✅ 完成（`LenoWeb`；与 JS 参考件流程一致）|
-| ④ GUI（标题状态徽标 / 账号下拉 / 今日积分 / 手动签到按钮 / **签到日历**）| ⏳ 待做（`LenoSDL3` ✓）|
+| ④ GUI（标题状态徽标 / 账号下拉 / 今日积分 / 手动签到按钮 / **签到日历**）| ✅ 完成（`trae_gui.leno`；日历用 `Canvas` **自绘**，对标参考件的 `CalendarControl.cs` ✓）|
 | ⑤ 托盘图标 + 每日 00:05 自动签到 + 失败重试（5/15/30/60/120 分钟）| ⏳ 待做 |
-| ⑥ 历史记录 `history.json`（日历按账号独立）| ⏳ 待做 |
+| ⑥ 历史记录 `history.json`（日历按账号独立）| ✅ 完成（`trae_history.leno`；键 = `brand+username+日期` ⇒ **天然按账号独立** ✓）|
 
 ### CLI 用法（位置子命令：解释器会先吃掉自己的 `--xxx` 旗标 ⇒ 用位置词）
 
@@ -27,6 +27,32 @@ build\leno.exe trae_sign.leno json         # 结果输出一行 JSON（便于脚
 build\leno.exe trae_sign.leno app "Trae CN"
 set TRAE_CHECKIN_DEBUG=1                   # 打印 HTTP 码与原始响应（诊断 1001/9074/9095 等）
 ```
+
+### ④ GUI 用法
+
+```
+build\leno.exe trae_gui.leno               # 打开窗口（手动签到 / 看签到日历）
+```
+
+无头自检（本机没有显示器/在 CI 里也能跑）：
+
+```
+set SDL_VIDEODRIVER=dummy
+set TRAE_GUI_AUTO=40                       # 跑满 40 帧自动退出
+set TRAE_GUI_NO_NET=1                      # 启动不查接口（离线看界面/日历）
+```
+
+界面构成：顶部**状态徽标**（`● 今日已签到` / `○ 今日未签到` / `× 失败`，颜色随之变）＋
+**账号下拉**（多品牌登录态）＋ **今日积分** ＋ `立即签到` / `刷新状态` / `回到今天` 三个按钮 ＋
+**自绘签到日历**（🟩 已签到 / 🟨 有记录但未成功 / 蓝框 = 今天；点格子看当天记录 ✓）。
+
+两条实现约定：
+- **启动背填**：接口说"今天已签到"而本地 `history.json` 没有 ⇒ 补记一条（`code=backfill`），
+  否则"程序没开着的那几天"日历会漏显示 ✓；
+- **签到失败也记**（`ok=0` + code）⇒ 日历画成暖色，⑤ 的失败重试因此**有据可查** ✓。
+
+已知限制（⑤ 一起处理）：网络调用是**同步阻塞**的（点签到/刷新时窗口僵约 1 秒 ✗）；
+托盘图标、每日 00:05 自动签到、失败重试（5/15/30/60/120 分钟）尚未接 ✓。
 
 ## 本机真实登录态实测（2026-09-18）
 
@@ -61,6 +87,18 @@ status → 今日未签到。积分 base=150 extra=50
   必须 `if x is Dict { ... }` 收窄 ⇒ 本工具把收窄集中在一层（`json_get/json_obj/json_keys`）✓；
 - 空数组字面量 `var a = []` 的元素类型是 `any` ⇒ 需要 `Array[string] a = []` 这类**显式标注** ✓；
 - 解释器会先解析自己的旗标 ⇒ 脚本参数别用 `--xxx`（会被当成它的选项并打印帮助 ✗）✓。
+
+### ④⑥ 这轮新踩到的（都改成"用之前先看一眼实现"了）
+
+- `jsons.write_file(path, v)` 会把 `v` **再 JSON 编码**一次 ⇒ 想写"空对象"**不能**传字符串 `"{}"`
+  （落盘成带引号的 `"{}"`，读回来是 `string` 而不是对象 ✗）；而 `{}` 字面量的类型是 `any` ✗ 又不能
+  直接赋给 `Dict` ⇒ 正解：`var cur = jsons.decode("{}")` ＋ `if old is Dict { cur = old }` ＋ 收窄 ✓；
+- `var X: T = v` 这种**类型后置**写法不支持 ✗ ⇒ 写 `T X = v`（空数组更要这样标注，否则元素类型是 `any` ✓）；
+- `Font.measureString(s)` 是**多返回值** ⇒ 必须 `var[float, float](w, h) = f.measureString(s)` ✓
+  （写成 `var m = ...` 只会拿到第一个 float，之后 `m[0]` 报"索引操作需要对象类型" ✗）；
+- `win.run` 是**事件驱动重绘**且窗口库**没有程序化关闭 API** ⇒ 无头（`SDL_VIDEODRIVER=dummy`）下
+  "在 `onEvent` 里数帧然后退出"会**永久挂起** ✗（dummy 无事件 ⇒ onEvent 不被调用、也不重绘）；
+  自动退出要：定时器保证 idle 也重绘 ＋ 渲染回调里数帧 ＋ `_exit()` ✓（或外部超时杀进程 ✓）。
 
 > 已知的 `Leno` 侧注意点：`jsons.decode(...)` 返回 `any`，**嵌套字段不能直接点访问**
 > （编译器要求 `if x is T { ... }` 类型收窄）⇒ 用到的地方要么收窄、要么改用字符串断言 ✓。
@@ -107,6 +145,10 @@ build\leno.exe trae_crypto.leno → trae_crypto fixture test passed   （exit=0 
 | 路径 | 用途 |
 | --- | --- |
 | `trae_crypto.leno` | ① 派生解密（**40 行**；通用加密已抽到标准库 `leno_module/LenoCrypto` ✓，之前这里是 829 行机械拼接 ✗）|
+| `trae_core.leno` | ②③ **共享核心**（登录态读取 / 签到接口 / JSON 收窄 / 日期助手）—— CLI 与 GUI **共用同一份** ✓ |
+| `trae_history.leno` | ⑥ `history.json` 读写（扁平键 = `brand+username+日期`，值 = `ok+base+extra+code` ⇒ 按账号独立 ✓）|
+| `trae_gui.leno` | ④ GUI（`LenoSDL3`：窗口 / 徽标 / 账号下拉 / 积分 / 按钮 ＋ `Canvas` **自绘签到日历**）✓ |
+| `test/test_core_and_history.leno` | 数据层自测（日历算法用**已知日期**锚定 ✓ ＋ 历史 round-trip ✓，无 SDL、无网络 ⇒ 快）|
 | `test/test_trae_decrypt_fixture.leno` | 金标 fixture 回归（绝对期望值 ✓）|
 | `tools/gen_fixture.js` | 金标 fixture 生成器（node，无依赖）✓ |
 | `tools/fixture_enc.txt` / `tools/fixture_expect_json.txt` | 合成 fixture（纯文本，无 BOM）✓ |

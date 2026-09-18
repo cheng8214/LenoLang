@@ -1,0 +1,91 @@
+// test_core_and_history.leno — 数据层自测（**无 SDL、无网络请求** ⇒ 快）
+//   运行：build\leno.exe --no-cache test\test_core_and_history.leno
+//
+// 覆盖：
+//   1) 日历算法（weekday_of / days_in_month / prev_month / next_month）—— 用**已知日期**锚定：
+//      1970-01-01 是周四 ✓、2024-02-29 是周四 ✓、**2026-09-18 是周五** ✓（本机当前日期）；
+//   2) `history.json` 读 / 写 / 删 round-trip（用 `__selftest__` 品牌，测完**删除** ✓ 不留垃圾）；
+//   3) 真实登录态只读扫描（不打印 token，只打印长度 ✓）。
+//
+// 失败计数：累计后统一 _exit(1) ⇒ 一次跑完能看到**所有**失败项，不是第一个就停 ✓
+import "../trae_core.leno" as core
+import "../trae_history.leno" as hist
+
+var fails = 0
+
+func eq(string name, string got, string want) {
+    if got == want {
+        print("  ok    " + name + " = " + got + "\n")
+    } else {
+        print("  FAIL  " + name + "  got=[" + got + "]  want=[" + want + "]\n")
+        fails = fails + 1
+    }
+}
+
+func ym(Array[int] a): string { return (a[0] as string) + "-" + core.pad2(a[1]) }
+
+main() {
+    print("=== 1) 日历算法 ===\n")
+    eq("days_from_civil(1970,1,1)", _str(core.days_from_civil(1970, 1, 1)), "0")
+    eq("weekday_of(1970,1,1) 周四=4", _str(core.weekday_of(1970, 1, 1)), "4")
+    eq("weekday_of(2024,2,29) 周四=4", _str(core.weekday_of(2024, 2, 29)), "4")
+    eq("weekday_of(2026,9,18) 周五=5", _str(core.weekday_of(2026, 9, 18)), "5")
+    eq("weekday_of(2026,9,1) 周二=2", _str(core.weekday_of(2026, 9, 1)), "2")
+    eq("days_in_month(2024,2) 闰", _str(core.days_in_month(2024, 2)), "29")
+    eq("days_in_month(2026,2) 平", _str(core.days_in_month(2026, 2)), "28")
+    eq("days_in_month(2026,9)", _str(core.days_in_month(2026, 9)), "30")
+    eq("days_in_month(2026,12)", _str(core.days_in_month(2026, 12)), "31")
+    eq("prev_month(2026,1)", ym(core.prev_month(2026, 1)), "2025-12")
+    eq("prev_month(2026,9)", ym(core.prev_month(2026, 9)), "2026-08")
+    eq("next_month(2026,12)", ym(core.next_month(2026, 12)), "2027-01")
+    eq("date_str(2026,9,8)", core.date_str(2026, 9, 8), "2026-09-08")
+    eq("month_prefix(2026,9)", core.month_prefix(2026, 9), "2026-09-")
+    // 今天（本机时钟）：换机器会不同 ⇒ 只校验格式与"能被解析回同一天"✓
+    var tp = core.today_parts()
+    eq("today_str 与 today_parts 一致", core.today_str(), core.date_str(tp[0], tp[1], tp[2]))
+    print("  今天 = " + core.today_str() + "  weekday=" + _str(core.weekday_of(tp[0], tp[1], tp[2])) + "\n")
+
+    print("=== 2) history.json round-trip ===\n")
+    var brand = "__selftest__"
+    var user = "u1"
+    var day = "2026-09-18"
+    if hist.has_day(brand, user, day) { hist.remove_day(brand, user, day) }
+    eq("初始 has_day=false", _str(hist.has_day(brand, user, day)), "false")
+    eq("mark 成功", _str(hist.mark(brand, user, day, true, "150", "50", "0")), "true")
+    eq("has_day=true", _str(hist.has_day(brand, user, day)), "true")
+    eq("ok_day=true", _str(hist.ok_day(brand, user, day)), "true")
+    eq("get_day 原样", hist.get_day(brand, user, day), "1|150|50|0")
+    eq("field(1)=base", hist.field(hist.get_day(brand, user, day), 1), "150")
+    eq("field(2)=extra", hist.field(hist.get_day(brand, user, day), 2), "50")
+    eq("ok_days_in_month 含 18", _str(hist.ok_days_in_month(brand, user, 2026, 9).len()), "1")
+    // 失败记录（ok=false）不算"已签到"✓
+    hist.mark(brand, user, "2026-09-19", false, "", "", "9095")
+    eq("失败记录 ok_day=false", _str(hist.ok_day(brand, user, "2026-09-19")), "false")
+    eq("失败记录 has_day=true", _str(hist.has_day(brand, user, "2026-09-19")), "true")
+    eq("本月成功数仍为 1", _str(hist.ok_days_in_month(brand, user, 2026, 9).len()), "1")
+    eq("mark 不吞旧记录", _str(hist.has_day(brand, user, day)), "true")
+    // 清理
+    eq("remove_day(9-19)", _str(hist.remove_day(brand, user, "2026-09-19")), "true")
+    eq("remove_day(9-18)", _str(hist.remove_day(brand, user, day)), "true")
+    eq("清理后 has_day=false", _str(hist.has_day(brand, user, day)), "false")
+    print("  history 路径 = " + hist.history_path() + "\n")
+
+    print("=== 3) 真实登录态只读扫描（不打印 token）===\n")
+    var accs = core.scan_accounts()
+    print("  可用登录态数 = " + _str(accs.len()) + "\n")
+    for accs to a {
+        print("  品牌=" + a[0] + "  账号=" + a[1] + "  hasToken=" + a[2] + "\n")
+    }
+    var d = core.default_account()
+    if d.len() > 0 {
+        print("  缺省账号 = " + d[0] + " / " + d[1] + "  token长度=" + _str(d[2].len()) + "  设备ID=" + d[4] + "\n")
+    } else {
+        print("  （本机无登录态，跳过）\n")
+    }
+
+    if fails > 0 {
+        print("\nFAILED: " + _str(fails) + " 项\n")
+        _exit(1)
+    }
+    print("\ntest_core_and_history: 全部通过\n")
+}

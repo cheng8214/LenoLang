@@ -1,4 +1,5 @@
-// Trae 签到（Leno 版 · CLI）
+// Trae 签到（Leno 版 · CLI）—— ②③ 的逻辑在 `trae_core.leno`，本文件只做"参数解析 + 输出格式"
+//
 // 对标参考件 D:\Leno工程\TraeSign-main\trae-checkin.js —— 算法与流程以它为准：
 //   读本机 Trae 登录态 → 派生解密拿 token/dcId → 调 checkin_credits/status|claim → 打印结果
 //
@@ -7,142 +8,21 @@
 //   leno trae_sign.leno                      # 签到（默认；今天已签到会提示无需重复）
 //   leno trae_sign.leno status               # 只查状态，不签到
 //   leno trae_sign.leno list                 # 列出各品牌登录态账号（不打印 token）
+//   leno trae_sign.leno diag                 # 打印账号/设备ID/token 长度（交叉验证用）
 //   leno trae_sign.leno json                 # 结果用一行 JSON 输出（便于脚本调用）
 //   leno trae_sign.leno app "Trae CN"        # 指定品牌（缺省取第一个可用）
 //
 // 安全（与参考件一致）：只**读**登录态文件；**不打印 token**；不修改登录态文件 ✓
-import jsons
-import strings
-import files
-import "../../../../LenoWeb/lib/web_net.leno" as net
-use net.(HttpClient, Response)
-import "trae_crypto.leno" as crypt
-
-var BRANDS = ["TRAE SOLO CN", "Trae CN", "TraeWork"]
-var STATUS_URL = "https://api.trae.cn/trae/api/v2/ug/checkin_credits/status"
-var CLAIM_URL = "https://api.trae.cn/trae/api/v2/ug/checkin_credits/claim"
-var DC_PREFIX = "iCubeAuthInfo://icube-dc:"
-var CLOUD_PREFIX = "iCubeAuthInfo://icube.cloudide"
+//
+// 注：逻辑与 GUI（`trae_gui.leno`）**共用** `trae_core.leno` ✓ —— 单一事实来源，
+//     避免两套实现漂移（见 `docs/待办_单一事实来源与重复实现收敛.md` ✓）。
+import "trae_core.leno" as core
 
 var JSON_MODE = false
 
 func say(string s) {
     // JSON 模式下诊断信息不上 stdout（保持 stdout 只有一行 JSON）✓
     if not JSON_MODE { print(s) }
-}
-
-func storage_path(string brand): string {
-    var appdata = _env("APPDATA")
-    if appdata == null { return "" }
-    return appdata + "\\" + brand + "\\User\\globalStorage\\storage.json"
-}
-
-// ---- JSON 取值助手 ----
-// 为什么要这一层：`jsons.decode/read_file` 返回 `any` ✗，语言不允许把 any 直接当 Dict 用
-// （也不能赋给 Dict 变量），必须**显式类型收窄**（`if x is Dict { ... }`）。
-// 收窄都收在这一层里，业务代码就只跟 string / Array[string] 打交道 ✓。
-func json_get(any obj, string key): string {
-    if obj is Dict {
-        Dict d = obj
-        if d.has(key) {
-            var v = d[key]
-            if v != null { return _str(v) }
-        }
-    }
-    return ""
-}
-func json_obj(any obj, string key): any {
-    if obj is Dict {
-        Dict d = obj
-        if d.has(key) { return d[key] }
-    }
-    return null
-}
-func json_keys(any obj): Array[string] {
-    var out = []
-    if obj is Dict {
-        Dict d = obj
-        var ks = d.keys()
-        for ks to k {
-            out.add(_str(k))
-        }
-    }
-    return out
-}
-
-// 读某个品牌的登录态 → [enc, dcId]；没找到 ⇒ []
-func pick_auth(string brand): Array[string] {
-    var p = storage_path(brand)
-    if p == "" { return [] }
-    if not files.exists(p) { return [] }
-    var s = jsons.read_file(p)
-    var keys = json_keys(s)
-    var enc = ""
-    var dc = ""
-    for keys to k {
-        if strings.starts_with(k, DC_PREFIX) {
-            dc = k.byte_slice(DC_PREFIX.byte_len(), k.byte_len())
-        } else if strings.starts_with(k, CLOUD_PREFIX) {
-            enc = json_get(s, k)
-        }
-    }
-    if enc == "" { return [] }
-    if dc == "" {
-        dc = json_get(s, "telemetry.devDeviceId")
-        if dc == "" { dc = json_get(s, "telemetry.machineId") }
-    }
-    return [enc, dc]
-}
-
-// 登录态 → [brand, username, token, region, dcId]；失败 ⇒ []
-func load_account(string brand): Array[string] {
-    var a = pick_auth(brand)
-    if a.len() == 0 { return [] }
-    var json = crypt.trae_decrypt_auth(a[0])
-    if json == "" { return [] }
-    var ad = jsons.decode(json)
-    var token = json_get(ad, "token")
-    var username = json_get(json_obj(ad, "account"), "username")
-    var region = json_get(json_obj(ad, "userRegion"), "region")
-    return [brand, username, token, region, a[1]]
-}
-
-// 各品牌可用的登录态（只读扫描；不打印 token）→ Array[[brand, username, hasToken]]
-func scan_accounts(): Array[Array[string]] {
-    var out = []
-    for BRANDS to brand {
-        var a = pick_auth(brand)
-        if a.len() == 0 { continue }
-        var json = crypt.trae_decrypt_auth(a[0])
-        var username = ""
-        var has_token = "false"
-        if json != "" {
-            var ad = jsons.decode(json)
-            if json_get(ad, "token") != "" { has_token = "true" }
-            username = json_get(json_obj(ad, "account"), "username")
-        }
-        out.add([brand, username, has_token])
-    }
-    return out
-}
-
-// 一次 JSON POST（带 Trae 的鉴权头）；HTTP 层失败 ⇒ 返回带 _http_error 的对象
-func api_post(HttpClient c, string url, string body): any {
-    Response r = c.post(url, body)
-    if not r.ok() {
-        return {"_http_error": _str(r.statusCode), "_error": _str(r.error), "_raw": r.body}
-    }
-    var d = jsons.decode(r.body)
-    if d is Dict {
-        Dict dd = d
-        dd["_status"] = _str(r.statusCode)
-        dd["_raw"] = r.body
-    }
-    return d
-}
-
-func jval(any d, string key): string {
-    return json_get(d, key)
 }
 
 func emit_json(string brand, string username, string ok, string code, string checked, string base, string extra, string msg) {
@@ -174,9 +54,9 @@ main() {
     }
     if mode == "json" { JSON_MODE = true; mode = "claim" }
 
-    // ---- --list：列出各品牌可用账号 ----
+    // ---- list：列出各品牌可用账号 ----
     if mode == "list" {
-        var all = scan_accounts()
+        var all = core.scan_accounts()
         if JSON_MODE {
             print("{\"accounts\":[")
             int n = 0
@@ -191,7 +71,7 @@ main() {
                 print("未找到任何 Trae 登录态。请先在 Trae 桌面端登录（TRAE SOLO CN / Trae CN / TraeWork）。\n")
                 _exit(1)
             }
-            print("找到 " + all.len() + " 个登录态（不打印 token）：\n")
+            print("找到 " + (all.len() as string) + " 个登录态（不打印 token）：\n")
             for all to row {
                 print("  " + row[0] + "  账号=" + row[1] + "  token=" + row[2] + "\n")
             }
@@ -202,12 +82,9 @@ main() {
     // ---- 选账号 ----
     Array[string] acc = []
     if brand != "" {
-        acc = load_account(brand)
+        acc = core.load_account(brand)
     } else {
-        for BRANDS to b {
-            acc = load_account(b)
-            if acc.len() > 0 { break }
-        }
+        acc = core.default_account()
     }
     if acc.len() == 0 {
         if JSON_MODE { emit_json(brand, "", "false", "-1", "false", "null", "null", "未找到登录态，请先用 Trae 桌面端登录") }
@@ -226,54 +103,37 @@ main() {
     }
     // ---- diag：与参考实现交叉验证用（只打印可公开的元信息，**不打印 token**）----
     if mode == "diag" {
-        print("[leno] 品牌=" + acct_brand + " 账号=" + username + " token长度=" + token.len() + " 设备ID=" + dc_id + " region=" + region + "\n")
+        print("[leno] 品牌=" + acct_brand + " 账号=" + username
+            + " token长度=" + (token.len() as string)
+            + " 设备ID=" + dc_id + " region=" + region + "\n")
         return
     }
 
-    // ---- HTTP ----
-    net.globalInit()
-    HttpClient c = net.createClient()
-    c.setTimeout(20000)
-    // ⚠ 必须**一次**设完所有头：`setHeaders` 若是替换语义，分两次调用会把 Authorization /
-    // x-device-id 覆盖掉 ⇒ 服务端看到未鉴权请求，返回 `code:1001 not able to authenticate you`
-    // （实测踩过这个坑 ✗）。所以这里按有无 region 走两条完整列表，绝不追加第二次。
-    if region != "" {
-        c.setHeaders([
-            "Content-Type: application/json",
-            "Authorization: Cloud-IDE-JWT " + token,
-            "x-device-id: " + dc_id,
-            "X-User-Region: " + region
-        ])
-    } else {
-        c.setHeaders([
-            "Content-Type: application/json",
-            "Authorization: Cloud-IDE-JWT " + token,
-            "x-device-id: " + dc_id
-        ])
-    }
-
+    // ---- HTTP（所有头必须一次设完 ✓ 见 trae_core.authed_client 的注释）----
+    var c = core.authed_client(token, dc_id, region)
     say("品牌: " + acct_brand + "  账号: " + username + "  设备ID: " + dc_id + "\n")
 
-    var st = api_post(c, STATUS_URL, "{}")
-    if jval(st, "_http_error") != "" {
-        if JSON_MODE { emit_json(acct_brand, username, "false", "-3", "false", "null", "null", "HTTP " + jval(st, "_http_error")) }
-        else { print("ERROR: 查询状态失败 HTTP " + jval(st, "_http_error") + " " + jval(st, "_error") + "\n") }
+    var st = core.fetch_status(c)
+    if core.st_http_err(st) != "" {
+        if JSON_MODE { emit_json(acct_brand, username, "false", "-3", "false", "null", "null", "HTTP " + core.st_http_err(st)) }
+        else { print("ERROR: 查询状态失败 HTTP " + core.st_http_err(st) + " " + core.st_err(st) + "\n") }
         _exit(1)
     }
-    var base = jval(st, "credits")
-    var extra = jval(st, "extra_credits")
-    var checked = jval(st, "checked_in")
-    if base == "" and extra == "" {
+    var base = core.st_base(st)
+    var extra = core.st_extra(st)
+    if not core.st_ok(st) {
         // 诊断（与参考件的 TRAE_CHECKIN_DEBUG 同旨）：打印 HTTP 码与原始响应，便于分辨
         // 「token 过期」/「设备不匹配(9074)」/「本机已被另一账号签到(9095)」等
         if _env("TRAE_CHECKIN_DEBUG") != null {
-            print("[debug] HTTP=" + jval(st, "_status") + " 响应=" + jval(st, "_raw") + "\n")
+            print("[debug] HTTP=" + core.st_http_code(st) + " 响应=" + core.st_raw(st) + "\n")
         }
-        var msg = "账号状态异常（token 可能已过期），请重新登录该软件"
+        var msg = core.st_msg(st)
         if JSON_MODE { emit_json(acct_brand, username, "false", "-6", "false", "null", "null", msg) }
         else { print("ERROR: " + msg + "\n") }
         _exit(1)
     }
+    var checked = "false"
+    if core.st_checked(st) { checked = "true" }
     if checked == "true" {
         if JSON_MODE { emit_json(acct_brand, username, "true", "0", "true", base, extra, "今日已签到") }
         else { print("今日已签到（无需重复）。积分 base=" + base + " extra=" + extra + "\n") }
@@ -286,38 +146,35 @@ main() {
     }
 
     // ---- 签到 ----
-    var cl = api_post(c, CLAIM_URL, "{\"req_source\":1}")
-    if jval(cl, "_http_error") != "" {
-        if JSON_MODE { emit_json(acct_brand, username, "false", "-3", "false", base, extra, "HTTP " + jval(cl, "_http_error")) }
-        else { print("ERROR: 签到请求失败 HTTP " + jval(cl, "_http_error") + "\n") }
+    var r = core.do_claim(c)
+    if core.cl_http_err(r) != "" {
+        if JSON_MODE { emit_json(acct_brand, username, "false", "-3", "false", base, extra, "HTTP " + core.cl_http_err(r)) }
+        else { print("ERROR: 签到请求失败 HTTP " + core.cl_http_err(r) + "\n") }
         _exit(1)
     }
-    var code = jval(cl, "code")
-    var cchecked = jval(cl, "checked_in")
-    if code == "0" or cchecked == "true" {
-        // 二次确认（与参考件一致：防 token 过期导致 claim 假成功）
-        var cf = api_post(c, STATUS_URL, "{}")
-        if jval(cf, "checked_in") == "true" {
-            var nb = jval(cf, "credits")
-            var ne = jval(cf, "extra_credits")
-            if JSON_MODE { emit_json(acct_brand, username, "true", "0", "true", nb, ne, "签到成功") }
-            else { print("签到成功！积分 base=" + nb + " extra=" + ne + "\n") }
-            return
-        }
-        var msg2 = "签到结果异常（token 可能已过期），请重新登录该软件"
-        if JSON_MODE { emit_json(acct_brand, username, "false", "-6", "false", base, extra, msg2) }
-        else { print("ERROR: " + msg2 + "\n") }
+    if core.cl_ok(r) {
+        var nb = core.cl_base(r)
+        var ne = core.cl_extra(r)
+        if JSON_MODE { emit_json(acct_brand, username, "true", "0", "true", nb, ne, "签到成功") }
+        else { print("签到成功！积分 base=" + nb + " extra=" + ne + "\n") }
+        return
+    }
+    // "-6"：claim 说成功但二次确认说没签到（token 过期导致的"假成功"）⇒ 与旧 CLI/参考件逐字一致 ✓
+    if core.cl_code(r) == "-6" {
+        var m6 = core.cl_msg(r)
+        if JSON_MODE { emit_json(acct_brand, username, "false", "-6", "false", base, extra, m6) }
+        else { print("ERROR: " + m6 + "\n") }
         _exit(1)
     }
-    if code == "9095" {
-        var m95 = "本设备今日已有账号签到（同机每天只允许一个账号）"
+    if core.cl_code(r) == "9095" {
+        var m95 = core.cl_msg(r)
         if JSON_MODE { emit_json(acct_brand, username, "false", "9095", "false", base, extra, m95) }
         else { print(m95 + "\n") }
         _exit(1)
     }
-    var mf = jval(cl, "message")
+    var mf = core.cl_msg(r)
     if mf == "" { mf = "签到失败" }
-    if JSON_MODE { emit_json(acct_brand, username, "false", code, "false", base, extra, mf) }
-    else { print("签到失败：code=" + code + " " + mf + "\n") }
+    if JSON_MODE { emit_json(acct_brand, username, "false", core.cl_code(r), "false", base, extra, mf) }
+    else { print("签到失败：code=" + core.cl_code(r) + " " + mf + "\n") }
     _exit(1)
 }
