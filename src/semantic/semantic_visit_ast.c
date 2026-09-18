@@ -69,57 +69,11 @@ static void import_type_deps(Semantic* s, ImportedModuleInfo* module_info, TypeI
                     // 详见 assert/test_alias_type_deps_struct_fields.leno 与
                     // semantic_type_utils.c 里 semantic_attach_struct_fields 的说明）
                     semantic_attach_struct_fields(sym, ssym);
-                    // 注册 struct 定义到全局表
-                    if (!ssym->is_cstruct && !struct_def_find(dep_name)) {
-                        ObjStructDef* sdef = struct_def_new(dep_name, ssym->field_count, ssym->method_count);
-                        if (sdef) {
-                            sdef->type_param_count = ssym->type_param_count;
-                            if (ssym->type_param_count > 0 && ssym->type_param_names) {
-                                sdef->type_param_names = (char**)malloc(sizeof(char*) * ssym->type_param_count);
-                                for (int tpi = 0; tpi < ssym->type_param_count; tpi++) {
-                                    sdef->type_param_names[tpi] = strdup(ssym->type_param_names[tpi]);
-                                }
-                            }
-                            for (int mi = 0; mi < ssym->method_count; mi++) {
-                                const char* full = ssym->methods[mi].name;
-                                const char* mn = full;
-                                const char* sep = strstr(full, "::");
-                                if (sep) mn = sep + 2;
-                                sdef->methods[mi].name = strdup(mn);
-                            }
-                            // 设置 impl 信息
-                            if (ssym->impl_count > 0) {
-                                sdef->impl_count = ssym->impl_count;
-                                sdef->impl_names = (char**)malloc(sizeof(char*) * ssym->impl_count);
-                                for (int ii = 0; ii < ssym->impl_count; ii++) {
-                                    sdef->impl_names[ii] = strdup(ssym->impl_names[ii]);
-                                }
-                            }
-                            struct_def_register(sdef);
-                        }
-                    }
-                    // 注册 struct 方法到 func_table
-                    for (int mi = 0; mi < ssym->method_count; mi++) {
-                        const char* full_method_name = ssym->methods[mi].name;
-                        Ast* existing_func = func_table_find(&s->func_table, full_method_name);
-                        if (!existing_func) {
-                            Ast* placeholder = ast_new(AST_FUNC_DEF, 0);
-                            if (placeholder) {
-                                placeholder->u.func.name = strdup(full_method_name);
-                                placeholder->u.func.pcnt = 1 + ssym->methods[mi].param_count;
-                                // 优先使用完整的 return_type_info（支持 TYPE_MULTI_RET 等复杂类型）
-                                if (ssym->methods[mi].return_type_info) {
-                                    placeholder->u.func.return_type = type_copy(ssym->methods[mi].return_type_info);
-                                } else {
-                                    placeholder->u.func.return_type = type_new(ssym->methods[mi].return_type);
-                                    if (ssym->methods[mi].return_struct_name) {
-                                        placeholder->u.func.return_type->struct_name = strdup(ssym->methods[mi].return_struct_name);
-                                    }
-                                }
-                                func_table_add(&s->func_table, full_method_name, placeholder);
-                            }
-                        }
-                    }
+                    // 全局 struct_def 注册 + 方法占位符注册：走**唯一实现**
+                    // （此前这里那份贫：方法占位符不填 param_types / type_params ⇒ 泛型方法经
+                    //   alias 这条导入路时返回类型停在未替换的 `T`、类型检查被静默跳过。
+                    //   见 assert/test_generic_type_param_paths.leno 判据 3）
+                    semantic_register_struct_from_module(s, ssym);
                 }
                 break;
             }

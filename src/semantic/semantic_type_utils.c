@@ -72,6 +72,144 @@ void semantic_attach_struct_fields(Symbol* sym, const ModuleStructSymbol* ssym) 
     }
 }
 
+// ============================================================================
+// 把模块符号表里的一条 struct/cstruct 符号，**完整注册**进当前编译
+// ----------------------------------------------------------------------------
+// 与 semantic_attach_struct_fields 的分工：那个只管"符号自己的类型与字段"；这里管两件事：
+//   ① 全局 struct_def 注册（类型检查 / face 实现检查用；cstruct 有自己的表，不注册）
+//   ② 方法占位符注册到 func_table（方法调用解析用）
+//
+// 这是这件事的**唯一实现**。此前 visit_module.inc 的 AST_USE 与
+// semantic_visit_ast.c 的 import_type_deps 各写一份，**后者贫**：
+//   方法占位符只填 name / pcnt / 返回类型，**不填 param_types 与 type_params，
+//   也不带返回类型的泛型实参** ⇒ 泛型方法经那条路进来时 resolve_generic_in_type 拿不到
+//   类型参数表 ⇒ 返回类型停在**未替换的 `T`**，而未约束的泛型参数与任何类型都兼容
+//   ⇒ 类型检查被**静默跳过**。
+// 实测（assert/test_generic_type_param_paths.leno 判据 3）：
+//   `func probe(Box[int] b): string { return b.get() }`
+//     直接 `use m.Box`   ⇒ 正确报「返回类型不匹配：期望 string，实际 int」
+//     经 `use m.F`（alias）⇒ **什么都不报**、exit 0
+// ============================================================================
+void semantic_register_struct_from_module(Semantic* s, const ModuleStructSymbol* ssym) {
+    if (!s || !ssym || !ssym->name) return;
+    const char* symbol_name = ssym->name;
+
+    // ---- ① 全局 struct_def（用于类型检查 / face 实现检查）----
+    if (!ssym->is_cstruct && !struct_def_find(symbol_name)) {
+        ObjStructDef* sdef = struct_def_new(symbol_name, ssym->field_count, ssym->method_count);
+        if (sdef) {
+            // 泛型类型参数数量与名称
+            sdef->type_param_count = ssym->type_param_count;
+            if (ssym->type_param_count > 0 && ssym->type_param_names) {
+                sdef->type_param_names = (char**)malloc(sizeof(char*) * ssym->type_param_count);
+                for (int tpi = 0; tpi < ssym->type_param_count; tpi++) {
+                    sdef->type_param_names[tpi] = strdup(ssym->type_param_names[tpi]);
+                }
+            }
+            // 方法名（模块符号表里是 "StructName::method_name" 格式 ⇒ 剥成纯方法名）
+            for (int i = 0; i < ssym->method_count; i++) {
+                const char* full_method_name = ssym->methods[i].name;
+                const char* method_name = full_method_name;
+                const char* sep = strstr(full_method_name, "::");
+                if (sep) method_name = sep + 2;
+                sdef->methods[i].name = strdup(method_name);
+            }
+            // impl 信息（face 实现）
+            if (ssym->impl_count > 0) {
+                sdef->impl_count = ssym->impl_count;
+                sdef->impl_names = (char**)malloc(sizeof(char*) * ssym->impl_count);
+                for (int i = 0; i < ssym->impl_count; i++) {
+                    sdef->impl_names[i] = strdup(ssym->impl_names[i]);
+                }
+            }
+            struct_def_register(sdef);
+        }
+    }
+
+    // ---- ② 方法占位符 → func_table（即使 struct_def 已存在也要注册方法）----
+    for (int mi = 0; mi < ssym->method_count; mi++) {
+        const char* full_method_name = ssym->methods[mi].name;
+        Ast* existing = func_table_find(&s->func_table, full_method_name);
+        if (existing) continue;
+        Ast* placeholder = ast_new(AST_FUNC_DEF, 0);
+        if (!placeholder) continue;
+        placeholder->u.func.name = strdup(full_method_name);
+        // pcnt 含 self
+        placeholder->u.func.pcnt = 1 + ssym->methods[mi].param_count;
+        // 返回类型：优先完整 return_type_info（支持 TYPE_MULTI_RET 等复杂类型）
+        if (ssym->methods[mi].return_type_info) {
+            placeholder->u.func.return_type = type_copy(ssym->methods[mi].return_type_info);
+        } else {
+            placeholder->u.func.return_type = type_new(ssym->methods[mi].return_type);
+            if (ssym->methods[mi].return_struct_name) {
+                placeholder->u.func.return_type->struct_name = strdup(ssym->methods[mi].return_struct_name);
+            }
+            if (ssym->methods[mi].return_type == TYPE_GENERIC_PARAM && ssym->methods[mi].return_type_param_name) {
+                placeholder->u.func.return_type->type_param_name = strdup(ssym->methods[mi].return_type_param_name);
+            }
+            // 返回类型的泛型实参（如 Holder[K] 里的 [K]）
+            if (ssym->methods[mi].return_generic_count > 0 && ssym->methods[mi].return_generic_param_names) {
+                placeholder->u.func.return_type->generic_count = ssym->methods[mi].return_generic_count;
+                placeholder->u.func.return_type->generic_args = (TypeInfo**)malloc(sizeof(TypeInfo*) * ssym->methods[mi].return_generic_count);
+                for (int gi = 0; gi < ssym->methods[mi].return_generic_count; gi++) {
+                    // 是类型参数名（K/V/T）还是具体类型（int/string…）
+                    int is_type_param = 0;
+                    for (int tpi = 0; tpi < ssym->type_param_count; tpi++) {
+                        if (ssym->type_param_names[tpi] &&
+                            strcmp(ssym->methods[mi].return_generic_param_names[gi], ssym->type_param_names[tpi]) == 0) {
+                            is_type_param = 1;
+                            placeholder->u.func.return_type->generic_args[gi] = type_new(TYPE_GENERIC_PARAM);
+                            placeholder->u.func.return_type->generic_args[gi]->type_param_name =
+                                strdup(ssym->methods[mi].return_generic_param_names[gi]);
+                            break;
+                        }
+                    }
+                    if (!is_type_param) {
+                        // 具体类型（简单判断）
+                        TypeInfo* arg_type = type_new(TYPE_ANY);
+                        if (strcmp(ssym->methods[mi].return_generic_param_names[gi], "int") == 0) arg_type = type_new(TYPE_INT);
+                        else if (strcmp(ssym->methods[mi].return_generic_param_names[gi], "float") == 0) arg_type = type_new(TYPE_FLOAT);
+                        else if (strcmp(ssym->methods[mi].return_generic_param_names[gi], "string") == 0) arg_type = type_new(TYPE_STRING);
+                        else if (strcmp(ssym->methods[mi].return_generic_param_names[gi], "bool") == 0) arg_type = type_new(TYPE_BOOL);
+                        placeholder->u.func.return_type->generic_args[gi] = arg_type;
+                    }
+                }
+            }
+        }
+        // 参数类型（self + 各参数，含泛型参数名）
+        int total_pcnt = 1 + ssym->methods[mi].param_count;
+        placeholder->u.func.param_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * total_pcnt);
+        placeholder->u.func.param_types[0] = type_new(TYPE_STRUCT);
+        placeholder->u.func.param_types[0]->struct_name = strdup(ssym->name);
+        if (ssym->type_param_count > 0 && ssym->type_param_names) {
+            placeholder->u.func.param_types[0]->generic_count = ssym->type_param_count;
+            placeholder->u.func.param_types[0]->generic_args = (TypeInfo**)malloc(sizeof(TypeInfo*) * ssym->type_param_count);
+            for (int tpi = 0; tpi < ssym->type_param_count; tpi++) {
+                placeholder->u.func.param_types[0]->generic_args[tpi] = type_new(TYPE_GENERIC_PARAM);
+                placeholder->u.func.param_types[0]->generic_args[tpi]->type_param_name = strdup(ssym->type_param_names[tpi]);
+            }
+        }
+        for (int pi = 0; pi < ssym->methods[mi].param_count; pi++) {
+            if (ssym->methods[mi].param_generic_names && ssym->methods[mi].param_generic_names[pi]) {
+                placeholder->u.func.param_types[1 + pi] = type_new(TYPE_GENERIC_PARAM);
+                placeholder->u.func.param_types[1 + pi]->type_param_name = strdup(ssym->methods[mi].param_generic_names[pi]);
+            } else {
+                placeholder->u.func.param_types[1 + pi] = type_new(ssym->methods[mi].param_types[pi]);
+            }
+        }
+        // 泛型类型参数表（供 resolve_generic_in_type 用）—— 缺了它泛型替换就做不了
+        if (ssym->type_param_count > 0 && ssym->type_param_names) {
+            placeholder->u.func.type_param_count = ssym->type_param_count;
+            placeholder->u.func.type_params = (char**)malloc(sizeof(char*) * ssym->type_param_count);
+            for (int tpi = 0; tpi < ssym->type_param_count; tpi++) {
+                placeholder->u.func.type_params[tpi] = strdup(ssym->type_param_names[tpi]);
+            }
+        }
+        placeholder->u.func.default_count = 0;
+        func_table_add(&s->func_table, full_method_name, placeholder);
+    }
+}
+
 // 检查方法名是否是数组元素修改方法
 // 返回：1 = 是，0 = 否
 int type_utils_is_array_element_mutator(const char* method_name) {

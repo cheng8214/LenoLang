@@ -23,6 +23,13 @@ TypeInfo* infer_field_type(Semantic* s, TypeInfo* obj_type, const char* field_na
 // 此前 AST_USE 与 import_type_deps 各写一遍，后者丢嵌套泛型（详见 semantic_type_utils.c）。
 void semantic_attach_struct_fields(Symbol* sym, const ModuleStructSymbol* ssym);
 
+// 把模块符号表里的一条 struct/cstruct 符号**完整注册**进当前编译：
+// 全局 struct_def（含泛型参数/方法名/impl）+ 方法占位符注册到 func_table
+// （带 param_types / type_params / 返回泛型实参 —— 泛型替换靠它）。
+// 这是这件事的**唯一实现**：此前 AST_USE 与 import_type_deps 各写一份，后者贫到
+// 泛型方法经那条路会**静默跳过类型检查**（详见 semantic_type_utils.c 的说明）。
+void semantic_register_struct_from_module(Semantic* s, const ModuleStructSymbol* ssym);
+
 // ============================================================================
 // 前置声明 - 变量解析
 // ============================================================================

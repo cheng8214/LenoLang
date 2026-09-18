@@ -841,6 +841,20 @@
                                                 } else if (is_known_face(type_str, face_names, face_name_count)) {
                                                     fields[field_count].type = TYPE_FACE;
                                                     fields[field_count].struct_name = strdup(type_str);
+                                                } else {
+                                                    // 泛型类型参数（T / K / V）：**这一处此前漏了**，而同一文件里
+                                                    // "函数参数"（:339-346）与"方法返回"（:487-497）两处都有该检查
+                                                    // ⇒ 泛型 struct 的字段（`T v`）被记成 TYPE_ANY：既丢了类型参数、
+                                                    // 又会触发降级警告误报（实测 `struct 'Box' 的字段 'v' 声明类型
+                                                    // 'T' 无法解析`）。名字写进 type_info —— 消费方优先用它，
+                                                    // 后续能按泛型实参替换（与另一条路一致）。
+                                                    for (int tpi = 0; tpi < type_param_count; tpi++) {
+                                                        if (type_param_names[tpi] && strcmp(type_str, type_param_names[tpi]) == 0) {
+                                                            fields[field_count].type = TYPE_GENERIC_PARAM;
+                                                            field_type_info = type_generic_param(type_str);
+                                                            break;
+                                                        }
+                                                    }
                                                 }
                                             }
                                             // ---- 静默降级要出声 ----
