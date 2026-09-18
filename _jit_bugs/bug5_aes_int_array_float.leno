@@ -398,6 +398,7 @@ func bug5_torture() {
         var ok_arkey = false
         var ok_str = false
 
+        print("[i] " + _str(i) + "\n")
         try {
             Array[int] ct = aes_encrypt_block(nist_pt, nist_key)
             ok_block = bytes_to_hex(ct) == ct_expect

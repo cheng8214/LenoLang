@@ -196,7 +196,8 @@
                  * 位置在 jmp 回边**之前**，语义上正是解释器 OP_LOOP 的执行点，
                  * 所以解释器接手时 `frame->ip -= offset` 恰好从循环头继续、
                  * 不重放本轮（这正是 bailout 做不到的，见 §8.37）。 */
-                if (body_has_callout && yield_jmp_cnt < JIT_YIELD_MAX &&
+                if (!getenv("LENO_NO_JIT_YIELD") && body_has_callout &&
+                    yield_jmp_cnt < JIT_YIELD_MAX &&
                     bc_off + size == sr->body_size) {
                     emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_gc_yield_flag);
                     emit_cmp_mem8_imm8(cb, JIT_R8, 0, 0);
@@ -249,7 +250,8 @@
                  * 增量语义；放在它后面就会多加一次（表现为迭代跳步）。
                  * 只认 JIT 自己那条回边（理由同 OP_LOOP：嵌套/内联回边让出会
                  * 从外层循环头重跑）。 */
-                if (body_has_callout && yield_jmp_cnt < JIT_YIELD_MAX &&
+                if (!getenv("LENO_NO_JIT_YIELD") && body_has_callout &&
+                    yield_jmp_cnt < JIT_YIELD_MAX &&
                     bc_off + size == sr->body_size) {
                     emit_mov_reg_imm64(cb, JIT_R8, (uint64_t)(uintptr_t)&jit_gc_yield_flag);
                     emit_cmp_mem8_imm8(cb, JIT_R8, 0, 0);

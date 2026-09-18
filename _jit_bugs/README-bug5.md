@@ -120,6 +120,42 @@ for (int _e = 0; _e < (int)count; _e++) {
 ⇒ 下一步应同时看两处：**① `OP_ARRAY` 守卫的判据**；**② bailout 时 JIT 操作数栈写回 VM 栈的转换**
 （int 0 / raw 0 是否被写成 float 0.0）。
 
+## 进展（2026-09-18，第二轮）
+
+### 已修：`OP_ARRAY` 守卫（独立子缺陷，会造成**数据污染**）
+
+`ops_callout.inc` 的 `case OP_ARRAY` 里 §8.105 守卫判据 = `raw>>47 == 0` = **所有非负 int48** ⇒
+循环内建非负元素字面量必 bail（三次后拉黑）。而机器码 bailout 块**不写回 locals**
+（源码注释：`locals not written back (VM re-executes from back-edge)`）⇒ 解释器**重做整轮**、
+JIT 半轮的副作用不回滚 ⇒ **副作用执行两遍**：
+
+| 探针 | 修前 | 修后 |
+| --- | --- | --- |
+| `_jit_bugs/diag_array_literal_guard.leno` | `pos`/`zer` 各 `OP_ARRAY x3` | **`Bailouts: 0`** ✓ |
+| `_jit_bugs/diag_bailout_double_side_effect.leno` | `sum=201 **len=204**`（多追加 3 次）✗ | **`len=201`** ✓ |
+
+处置：**撤销该守卫**（同 §8.115 对 native 实参守卫的处置）。残余：JIT 区域内多元素字面量
+若含"浮点 ±0.0/次正规"元素会被贴成 int（类型标签分叉，数值相同）——
+门禁探针 `probe_array_literal_float` 因此从 `g=[0.0]` 变为 `g=[0]`（**已知代价**）。
+
+### 未修完：Bug5 的错值是**第一次 GC 回收**造成的，与守卫/让出无关
+
+排除过程（每一步都有实测）：
+
+| 步骤 | 结果 | 结论 |
+| --- | --- | --- |
+| 撤销守卫后重跑 | `Bailouts: 0`，仍 `bad_count=1 @ i=56` | 与 bailout/重放**无关** |
+| `JIT_FUNC_HOT_THRESHOLD` 拉到 100000 | 仍 `i=56` | **不是函数级 JIT** |
+| 新增轻量编译日志 `LENO_JIT_CLOG=1`（`jit.c`） | i=49 后编译了外层循环，i=50–56 之间**无任何编译** | 不是"刚编译就错" |
+| 同日志的 YIELD 打点 | **`[CLOG] YIELD at body_bc=30 (#1)` 与 `[BUG5] i=56 结果错` 同轮** | 错值出现在**第一次 GC 让出**那一轮 |
+| `LENO_NO_JIT_YIELD=1`（禁止让出，新开关） | 仍 `bad_count=1` | **不是 YIELD 机制** ⇒ 指向 **GC 回收本身** |
+
+⇒ 剩余根因（待查）：**第一次 GC 回收发生在 JIT 场景下会破坏状态**
+（`LENO_NO_JIT=1` 全程干净）—— 头号嫌疑是 §8.36 那一类"**JIT 活值 GC 看不见**"：
+某个在 JIT 机器栈/寄存器里存活的值在回收点上没有被当根 ⇒ 被当垃圾回收 ⇒ 后续读到污染值。
+建议下一步：在 GC 回收点打印 `jit_in_frame()` / `jit_loop_depth` / `jit_func_depth`，
+并用一个"强制提前回收"的小用例把窗口定到指令级。
+
 ## 复现方法
 
 ```

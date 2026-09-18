@@ -501,6 +501,9 @@ JitLoopFn jit_func_lookup_or_compile(ObjFunction* func, VM* vm_ptr) {
     if (!e->tried) {
         e->tried = 1;
         e->fn = jit_compile_function(func, vm_ptr, &e->code_size);
+        if (getenv("LENO_JIT_CLOG"))
+            printf("[CLOG] FUNC '%s' compiled=%d\n",
+                   func->name ? func->name : "?", e->fn != NULL);
     }
     return e->fn;   /* 命中（含尝试失败缓存 NULL） */
 }
@@ -704,6 +707,11 @@ int jit_try_hot_loop(CallFrame* frame, VM* vm_ptr, int32_t loop_offset, int back
                                 &entry->code_size);
         entry->is_compiled = (entry->fn != NULL);
         jit_state.compile_count++;
+        /* 轻量编译日志（`LENO_JIT_CLOG=1`，走 stdout 以便与脚本 print 保持顺序）：
+         * 排查"某个循环第一次被编译后结果就错"这类问题（Bug5）。 */
+        if (getenv("LENO_JIT_CLOG"))
+            printf("[CLOG] loop fn='%s' body_bc=%d back_edge=%d compiled=%d\n",
+                   loop_fn, loop_bc_off, back_edge, entry->is_compiled);
         if (jit_debug_on() && !entry->is_compiled)
             fprintf(stderr, "[JIT-DEBUG] compile FAIL at body_start=%d, back_edge=%d\n",
                     (int)(body_start - frame->chunk->code), back_edge);
@@ -786,6 +794,8 @@ fprintf(stderr, "[JIT-DEBUG] EXEC call #%d, fn=%p, locals=%p\n",
          * 并在安全状态下回收。**不是失败**：不计 bailout、不碰 hot_disabled，
          * 否则每跨一次年轻代阈值都会烧掉 1/3 的 JIT_BAILOUT_LIMIT。 */
         jit_state.yield_count++;
+        if (getenv("LENO_JIT_CLOG"))
+            printf("[CLOG] YIELD at body_bc=%d (#%d)\n", loop_bc_off, jit_state.yield_count);
         if (jit_debug_on())
             fprintf(stderr, "[JIT-DEBUG] YIELD at body_start=%d (#%d)\n",
                     loop_bc_off, jit_state.yield_count);

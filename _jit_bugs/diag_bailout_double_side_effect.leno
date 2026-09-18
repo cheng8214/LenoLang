@@ -1,0 +1,28 @@
+// diag: bailout ⇒ 解释器重做整轮 ⇒ JIT 半轮的副作用**执行两遍**（Bug5 的污染机制）
+//
+// 背景（见 README-bug5.md）：
+//   · `case OP_ARRAY` 的守卫判据 = `raw>>47 == 0` = **所有非负 int48** ⇒ 循环内任何
+//     非负元素的数组字面量都会让循环 bail（三次后被拉黑）；
+//   · 机器码的 bailout 块**不写回 locals**（源码注释：`locals not written back
+//     (VM re-executes from back-edge)`）⇒ 解释器重新执行**整轮迭代**；
+//   · JIT 那半轮已经发生的副作用（数组 append / 计数 / 状态改写）**不回滚**。
+//
+// 判据：循环体里先做一次 `G.add(i)`（副作用），**之后**才建数组字面量（触发守卫 bail）。
+//   · 若 len == 200 ⇒ 副作用没有重复（理论不成立）；
+//   · 若 len >  200 ⇒ **副作用被重复执行**（Bug5 的污染机制坐实）。
+var G = []
+
+func f(int n): int {
+    var acc = 0
+    for 0:n to i {
+        G.add(i)              // ← 副作用（JIT 半轮里已执行）
+        var t = [1, 2, 3]     // ← §8.105 守卫：非负元素 ⇒ bailout
+        acc = acc + t[0]
+    }
+    return acc
+}
+
+main() {
+    var r = f(200)
+    print("sum=" + _str(r) + " len=" + _str(G.len()) + "\n")
+}

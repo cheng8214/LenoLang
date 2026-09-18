@@ -1198,15 +1198,23 @@
                  * ⇒ 循环确实在 JIT 里跑，不是被守卫掩盖）。
                  * 守卫放在交给 callout **之前**（此刻元素就在 RSP 上）⇒ 命中即交解释器
                  * 按真实类型建数组。代价只落在"JIT 循环内建的字面量含歧义区值"这一形态上。 */
-                for (int _e = 0; _e < (int)count; _e++) {
-                    emit_mov_reg_mem32(cb, JIT_RAX, JIT_RSP, _e * 8);
-                    emit_mov_rr(cb, JIT_R8, JIT_RAX);
-                    emit_sar_imm(cb, JIT_R8, 47);
-                    emit_test_rr(cb, JIT_R8, JIT_R8);
-                    EMIT_BAILOUT_SITE_NONOVF(bc_off);
-                    int _amb_e = emit_jcc(cb, 0x84);    /* JZ（歧义）→ bailout */
-                    patch_add(ctx, _amb_e, -1, 0);
-                }
+                /* ⚠ 上面的守卫**已撤销**（2026-09-18）。原因与实测：
+                 * · 判据 `raw>>47 == 0` 等价于 **所有非负 int48**（`emit_mov_reg_mem32` 是
+                 *   64 位读，后缀指位移宽度）⇒ 命中"非负"这一半、漏掉 `== -1` 那一半，
+                 *   两个方向都错（`_jit_bugs/diag_array_literal_guard.leno` 实测：
+                 *   [1,2,3] / [0,0,0] 都 bail，[-1,-2,-3] 不 bail）；
+                 * · 值域判据在这件事上**无解**：任何 int48 raw 同时都是 ±0.0/次正规的
+                 *   double 位型，要精确只能挂"来源证明"（§8.116 的做法）；
+                 * · 代价远大于收益：循环里若先有副作用（如 `arr.add`）再建非负元素字面量，
+                 *   守卫会让循环 bail ⇒ 解释器**重做整轮**且 JIT 半轮副作用不回滚 ⇒
+                 *   **数据污染**（`_jit_bugs/diag_bailout_double_side_effect.leno`：
+                 *   `G.len()=204` 应为 201 ✗✗）。这正是 Bug5（AES 解密偶发污染）的根因，
+                 *   也解释了它的 8% 随机率（3 次 bail 后拉黑 ⇒ 窗口只覆盖几轮）。
+                 * 处置同 §8.115（对 native 实参守卫）：撤销。
+                 * 残余（如实记录）：JIT 区域内建的**多元素**字面量若含"浮点 ±0.0/次正规"
+                 * 元素，会被贴成 int ⇒ 类型标签与解释器分叉（数值相同）。
+                 * 精确修法（待做）：按 §8.116 为每个元素挂"来源证明" —— 元素产出指令可
+                 * 证明为裸 int48 时放行；当前无局部量静态类型表，需要新增来源跟踪。 */
                 EMIT_STORE_TMP(tmp1_disp, JIT_RSP);   /* vstack_top */
                 EMIT_CALLOUT_BEGIN();
                 EMIT_LOAD_TMP(JIT_ARG1, tmp1_disp);   /* vstack_top (1st arg) */
