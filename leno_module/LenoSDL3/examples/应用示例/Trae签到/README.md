@@ -1,0 +1,66 @@
+# Trae 签到（Leno 移植）
+
+对标参考件：`D:\Leno工程\TraeSign-main` —— C# 主程序 `TraeCheckinApp.cs` + 自绘日历 `CalendarControl.cs`
++ 早期 Node 原型 `trae-checkin.js`（**算法以此为准**，exe 只是把 JS 逻辑内置了）。
+
+目标：用 Leno + `LenoSDL3`（GUI）+ `LenoWeb`（HTTP）复刻这个"每日自动签到托盘助手"。
+
+## 进度
+
+| 层 | 状态 |
+| --- | --- |
+| ① **派生解密**（读 Trae 登录态用的 AES-128-CBC）| ✅ **已完成，金标自测通过**（`trae_crypto.leno`）|
+| ② 读登录态（`storage.json` → `enc` / `dcId` / 品牌/账号）| ⏳ 待做（`files.read` + `jsons`）|
+| ③ 签到接口（`checkin_credits/status` / `claim` + 错误码 9074/9004/9095）| ⏳ 待做（`LenoWeb` ✓）|
+| ④ GUI（标题状态徽标 / 账号下拉 / 今日积分 / 手动签到按钮 / **签到日历**）| ⏳ 待做（`LenoSDL3` ✓）|
+| ⑤ 托盘图标 + 每日 00:05 自动签到 + 失败重试（5/15/30/60/120 分钟）| ⏳ 待做 |
+| ⑥ 历史记录 `history.json`（日历按账号独立）| ⏳ 待做 |
+
+> 已知的 `Leno` 侧注意点：`jsons.decode(...)` 返回 `any`，**嵌套字段不能直接点访问**
+> （编译器要求 `if x is T { ... }` 类型收窄）⇒ 用到的地方要么收窄、要么改用字符串断言 ✓。
+
+## ① 派生解密：算法（与 `trae-checkin.js` 的 `decrypt()` 逐字对齐）
+
+```
+enc(base64) 布局 = [6B 前缀][32B key][AES-128-CBC 密文]
+派生: sha512(key) ─┐
+      ure ^ dre  ─┴→ 拼成 128B → sha512 → 前 16B = aesKey、次 16B = iv
+解密: AES-128-CBC 解出 → 去 PKCS7 填充 → 丢掉前 64B → 剩下的就是 auth JSON
+     （JSON 里含 token / account.username / expiredAt / userRegion.region）
+```
+
+`ure` / `dre` 两张 64 字节表逐字取自参考件（源自官方客户端派生逻辑）✓。
+AES 核与 SHA-512 是**机械拼接**自仓库现成的纯 Leno 实现（避免手抄 400 行出错）：
+`examples/crypto/aes128.leno`（AES 块核）+ `examples/crypto/sha512.leno`（含 `sha512_bytes(Array[int])` ✓），
+再去掉两份各自的 `main()`、删掉重复的 `byte_to_hex`（两份语义等价）、补上 CBC 链接与派生 ✓。
+
+## 金标 fixture 与验证方式
+
+真实登录态是**机密**（含 token）⇒ 不进仓库 ✗；派生算法又没有公开测试向量 ✗。
+⇒ 用"**同算法正向加密**一段合成 payload + **参考实现反向自校验**"造 fixture：
+
+```bash
+node tools/gen_fixture.js            # 产出 fixture_enc.txt / fixture_expect_json.txt / fixture_login_state.json
+build\leno.exe trae_crypto.leno      # Leno 侧解密必须与 fixture_expect_json.txt 逐字一致
+```
+
+- fixture 里的 token 是假串（`FAKE-TOKEN-...`）、含中文与 UTF-8 往返用例 ✓，**非机密、可进仓库** ✓；
+- 生成器内部会先用自己的 `refDecrypt()`（`trae-checkin.js` 的移植）解一遍，自校验不通过就不产出 fixture ✓；
+- ⚠ 纯文本 fixture 必须**无 BOM**（PowerShell 的 `-Encoding UTF8` 会写 BOM，会让逐字比对失败 ✗）
+  ⇒ 生成器用 node 写 ✓（`gen_fixture.js` 同时输出 `.txt` 与 `.json`）。
+
+实测（2026-09-18）：
+
+```
+node tools/gen_fixture.js   → OK: fixture 已生成（自校验通过 ✓）  enc 长度 = 392
+build\leno.exe trae_crypto.leno → trae_crypto fixture test passed   （exit=0 ✓）
+```
+
+## 目录
+
+| 路径 | 用途 |
+| --- | --- |
+| `trae_crypto.leno` | ① 派生解密 + 金标自测（`main`）✓ |
+| `tools/gen_fixture.js` | 金标 fixture 生成器（node，无依赖）✓ |
+| `tools/fixture_enc.txt` / `tools/fixture_expect_json.txt` | 合成 fixture（纯文本，无 BOM）✓ |
+| `tools/fixture_login_state.json` | 同上（JSON 版，便于人看）✓ |

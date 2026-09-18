@@ -1,0 +1,829 @@
+﻿import strings
+import files
+
+// ==================== AES-128 加密算法 ====================
+// Advanced Encryption Standard (FIPS-197)
+// 128 位密钥，128 位块，10 轮加密
+
+// ==================== 常量表 ====================
+
+// S-Box（字节替换表）
+Array[int] SBOX = [
+    0x63, 0x7c, 0x77, 0x7b, 0xf2, 0x6b, 0x6f, 0xc5, 0x30, 0x01, 0x67, 0x2b, 0xfe, 0xd7, 0xab, 0x76,
+    0xca, 0x82, 0xc9, 0x7d, 0xfa, 0x59, 0x47, 0xf0, 0xad, 0xd4, 0xa2, 0xaf, 0x9c, 0xa4, 0x72, 0xc0,
+    0xb7, 0xfd, 0x93, 0x26, 0x36, 0x3f, 0xf7, 0xcc, 0x34, 0xa5, 0xe5, 0xf1, 0x71, 0xd8, 0x31, 0x15,
+    0x04, 0xc7, 0x23, 0xc3, 0x18, 0x96, 0x05, 0x9a, 0x07, 0x12, 0x80, 0xe2, 0xeb, 0x27, 0xb2, 0x75,
+    0x09, 0x83, 0x2c, 0x1a, 0x1b, 0x6e, 0x5a, 0xa0, 0x52, 0x3b, 0xd6, 0xb3, 0x29, 0xe3, 0x2f, 0x84,
+    0x53, 0xd1, 0x00, 0xed, 0x20, 0xfc, 0xb1, 0x5b, 0x6a, 0xcb, 0xbe, 0x39, 0x4a, 0x4c, 0x58, 0xcf,
+    0xd0, 0xef, 0xaa, 0xfb, 0x43, 0x4d, 0x33, 0x85, 0x45, 0xf9, 0x02, 0x7f, 0x50, 0x3c, 0x9f, 0xa8,
+    0x51, 0xa3, 0x40, 0x8f, 0x92, 0x9d, 0x38, 0xf5, 0xbc, 0xb6, 0xda, 0x21, 0x10, 0xff, 0xf3, 0xd2,
+    0xcd, 0x0c, 0x13, 0xec, 0x5f, 0x97, 0x44, 0x17, 0xc4, 0xa7, 0x7e, 0x3d, 0x64, 0x5d, 0x19, 0x73,
+    0x60, 0x81, 0x4f, 0xdc, 0x22, 0x2a, 0x90, 0x88, 0x46, 0xee, 0xb8, 0x14, 0xde, 0x5e, 0x0b, 0xdb,
+    0xe0, 0x32, 0x3a, 0x0a, 0x49, 0x06, 0x24, 0x5c, 0xc2, 0xd3, 0xac, 0x62, 0x91, 0x95, 0xe4, 0x79,
+    0xe7, 0xc8, 0x37, 0x6d, 0x8d, 0xd5, 0x4e, 0xa9, 0x6c, 0x56, 0xf4, 0xea, 0x65, 0x7a, 0xae, 0x08,
+    0xba, 0x78, 0x25, 0x2e, 0x1c, 0xa6, 0xb4, 0xc6, 0xe8, 0xdd, 0x74, 0x1f, 0x4b, 0xbd, 0x8b, 0x8a,
+    0x70, 0x3e, 0xb5, 0x66, 0x48, 0x03, 0xf6, 0x0e, 0x61, 0x35, 0x57, 0xb9, 0x86, 0xc1, 0x1d, 0x9e,
+    0xe1, 0xf8, 0x98, 0x11, 0x69, 0xd9, 0x8e, 0x94, 0x9b, 0x1e, 0x87, 0xe9, 0xce, 0x55, 0x28, 0xdf,
+    0x8c, 0xa1, 0x89, 0x0d, 0xbf, 0xe6, 0x42, 0x68, 0x41, 0x99, 0x2d, 0x0f, 0xb0, 0x54, 0xbb, 0x16
+]
+
+// 逆 S-Box
+Array[int] INV_SBOX = [
+    0x52, 0x09, 0x6a, 0xd5, 0x30, 0x36, 0xa5, 0x38, 0xbf, 0x40, 0xa3, 0x9e, 0x81, 0xf3, 0xd7, 0xfb,
+    0x7c, 0xe3, 0x39, 0x82, 0x9b, 0x2f, 0xff, 0x87, 0x34, 0x8e, 0x43, 0x44, 0xc4, 0xde, 0xe9, 0xcb,
+    0x54, 0x7b, 0x94, 0x32, 0xa6, 0xc2, 0x23, 0x3d, 0xee, 0x4c, 0x95, 0x0b, 0x42, 0xfa, 0xc3, 0x4e,
+    0x08, 0x2e, 0xa1, 0x66, 0x28, 0xd9, 0x24, 0xb2, 0x76, 0x5b, 0xa2, 0x49, 0x6d, 0x8b, 0xd1, 0x25,
+    0x72, 0xf8, 0xf6, 0x64, 0x86, 0x68, 0x98, 0x16, 0xd4, 0xa4, 0x5c, 0xcc, 0x5d, 0x65, 0xb6, 0x92,
+    0x6c, 0x70, 0x48, 0x50, 0xfd, 0xed, 0xb9, 0xda, 0x5e, 0x15, 0x46, 0x57, 0xa7, 0x8d, 0x9d, 0x84,
+    0x90, 0xd8, 0xab, 0x00, 0x8c, 0xbc, 0xd3, 0x0a, 0xf7, 0xe4, 0x58, 0x05, 0xb8, 0xb3, 0x45, 0x06,
+    0xd0, 0x2c, 0x1e, 0x8f, 0xca, 0x3f, 0x0f, 0x02, 0xc1, 0xaf, 0xbd, 0x03, 0x01, 0x13, 0x8a, 0x6b,
+    0x3a, 0x91, 0x11, 0x41, 0x4f, 0x67, 0xdc, 0xea, 0x97, 0xf2, 0xcf, 0xce, 0xf0, 0xb4, 0xe6, 0x73,
+    0x96, 0xac, 0x74, 0x22, 0xe7, 0xad, 0x35, 0x85, 0xe2, 0xf9, 0x37, 0xe8, 0x1c, 0x75, 0xdf, 0x6e,
+    0x47, 0xf1, 0x1a, 0x71, 0x1d, 0x29, 0xc5, 0x89, 0x6f, 0xb7, 0x62, 0x0e, 0xaa, 0x18, 0xbe, 0x1b,
+    0xfc, 0x56, 0x3e, 0x4b, 0xc6, 0xd2, 0x79, 0x20, 0x9a, 0xdb, 0xc0, 0xfe, 0x78, 0xcd, 0x5a, 0xf4,
+    0x1f, 0xdd, 0xa8, 0x33, 0x88, 0x07, 0xc7, 0x31, 0xb1, 0x12, 0x10, 0x59, 0x27, 0x80, 0xec, 0x5f,
+    0x60, 0x51, 0x7f, 0xa9, 0x19, 0xb5, 0x4a, 0x0d, 0x2d, 0xe5, 0x7a, 0x9f, 0x93, 0xc9, 0x9c, 0xef,
+    0xa0, 0xe0, 0x3b, 0x4d, 0xae, 0x2a, 0xf5, 0xb0, 0xc8, 0xeb, 0xbb, 0x3c, 0x83, 0x53, 0x99, 0x61,
+    0x17, 0x2b, 0x04, 0x7e, 0xba, 0x77, 0xd6, 0x26, 0xe1, 0x69, 0x14, 0x63, 0x55, 0x21, 0x0c, 0x7d
+]
+
+// 轮常量
+Array[int] RCON = [0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36]
+
+// ==================== GF(2^8) 运算 ====================
+
+// GF(2^8) 乘法（不可约多项式 x^8 + x^4 + x^3 + x + 1 = 0x11b）
+func gf_mul(int a, int b):int {
+    a = _uint8(a)
+    b = _uint8(b)
+    int p = 0
+    for 8 {
+        if ((b & 1) != 0) { p = p ^ a }
+        int hi = a & 0x80
+        a = _uint8(a << 1)
+        if (hi != 0) { a = a ^ 0x1b }
+        b = b >> 1
+    }
+    return p
+}
+
+// ==================== AES 核心操作 ====================
+
+// SubBytes：字节替换
+func sub_bytes(Array[int] state):Array[int] {
+    var result = []
+    for 0:15 to i {
+        result.add(SBOX[state[i]])
+    }
+    return result
+}
+
+// InvSubBytes：逆字节替换
+func inv_sub_bytes(Array[int] state):Array[int] {
+    var result = []
+    for 0:15 to i {
+        result.add(INV_SBOX[state[i]])
+    }
+    return result
+}
+
+// ShiftRows：行移位
+// state 按 4x4 矩阵排列（列优先）
+// 行0: 不移, 行1: 左移1, 行2: 左移2, 行3: 左移3
+func shift_rows(Array[int] state):Array[int] {
+    // 列优先索引: state[row + 4*col]
+    // 行1: [1,5,9,13] -> [5,9,13,1]
+    // 行2: [2,6,10,14] -> [10,14,2,6]
+    // 行3: [3,7,11,15] -> [15,3,7,11]
+    Array[int] s = state.copy()
+    // 行1
+    s[1] = state[5]; s[5] = state[9]; s[9] = state[13]; s[13] = state[1]
+    // 行2
+    s[2] = state[10]; s[6] = state[14]; s[10] = state[2]; s[14] = state[6]
+    // 行3
+    s[3] = state[15]; s[7] = state[3]; s[11] = state[7]; s[15] = state[11]
+    return s
+}
+
+// InvShiftRows：逆行移位
+func inv_shift_rows(Array[int] state):Array[int] {
+    Array[int] s =state.copy()
+    // 行1: 右移1
+    s[1] = state[13]; s[5] = state[1]; s[9] = state[5]; s[13] = state[9]
+    // 行2: 右移2
+    s[2] = state[10]; s[6] = state[14]; s[10] = state[2]; s[14] = state[6]
+    // 行3: 右移3
+    s[3] = state[7]; s[7] = state[11]; s[11] = state[15]; s[15] = state[3]
+    return s
+}
+
+// MixColumns：列混合
+func mix_columns(Array[int] state):Array[int] {
+    var result = []
+    for 0:3 to c {
+        int col = c * 4
+        int s0 = state[col]
+        int s1 = state[col + 1]
+        int s2 = state[col + 2]
+        int s3 = state[col + 3]
+        result.add(gf_mul(2, s0) ^ gf_mul(3, s1) ^ s2 ^ s3)
+        result.add(s0 ^ gf_mul(2, s1) ^ gf_mul(3, s2) ^ s3)
+        result.add(s0 ^ s1 ^ gf_mul(2, s2) ^ gf_mul(3, s3))
+        result.add(gf_mul(3, s0) ^ s1 ^ s2 ^ gf_mul(2, s3))
+    }
+    return result
+}
+
+// InvMixColumns：逆列混合
+func inv_mix_columns(Array[int] state):Array[int] {
+    var result = []
+    for 0:3 to c {
+        int col = c * 4
+        int s0 = state[col]
+        int s1 = state[col + 1]
+        int s2 = state[col + 2]
+        int s3 = state[col + 3]
+        result.add(gf_mul(0x0e, s0) ^ gf_mul(0x0b, s1) ^ gf_mul(0x0d, s2) ^ gf_mul(0x09, s3))
+        result.add(gf_mul(0x09, s0) ^ gf_mul(0x0e, s1) ^ gf_mul(0x0b, s2) ^ gf_mul(0x0d, s3))
+        result.add(gf_mul(0x0d, s0) ^ gf_mul(0x09, s1) ^ gf_mul(0x0e, s2) ^ gf_mul(0x0b, s3))
+        result.add(gf_mul(0x0b, s0) ^ gf_mul(0x0d, s1) ^ gf_mul(0x09, s2) ^ gf_mul(0x0e, s3))
+    }
+    return result
+}
+
+// AddRoundKey：轮密钥加
+func add_round_key(Array[int] state, Array[int] round_key):Array[int] {
+    var result = []
+    for 0:15 to i {
+        result.add(state[i] ^ round_key[i])
+    }
+    return result
+}
+
+// ==================== 密钥扩展 ====================
+
+// AES-128 密钥扩展：16 字节 -> 176 字节 (11 个轮密钥)
+func key_expansion(Array[int] key):Array[int] {
+    var w = []
+    // 复制原始密钥
+    for 0:15 to i { w.add(key[i]) }
+
+    int i = 4
+    while (i < 44) {
+        // 获取前一个字
+        int t0 = w[(i - 1) * 4]
+        int t1 = w[(i - 1) * 4 + 1]
+        int t2 = w[(i - 1) * 4 + 2]
+        int t3 = w[(i - 1) * 4 + 3]
+
+        if (i % 4 == 0) {
+            // RotWord
+            int tmp = t0
+            t0 = t1; t1 = t2; t2 = t3; t3 = tmp
+            // SubWord
+            t0 = SBOX[t0]; t1 = SBOX[t1]; t2 = SBOX[t2]; t3 = SBOX[t3]
+            // Rcon
+            t0 = t0 ^ RCON[i / 4 - 1]
+        }
+
+        w.add(w[(i - 4) * 4] ^ t0)
+        w.add(w[(i - 4) * 4 + 1] ^ t1)
+        w.add(w[(i - 4) * 4 + 2] ^ t2)
+        w.add(w[(i - 4) * 4 + 3] ^ t3)
+        i = i + 1
+    }
+
+    return w
+}
+
+// 获取第 r 轮的轮密钥（16 字节）
+func get_round_key(Array[int] w, int r):Array[int] {
+    int offset = r * 16
+    return [w[offset], w[offset + 1], w[offset + 2], w[offset + 3], w[offset + 4], w[offset + 5], w[offset + 6], w[offset + 7], w[offset + 8], w[offset + 9], w[offset + 10], w[offset + 11], w[offset + 12], w[offset + 13], w[offset + 14], w[offset + 15]]
+}
+
+// ==================== AES 加密/解密 ====================
+
+// AES-128 加密一个 16 字节块
+func aes_encrypt_block(Array[int] plaintext, Array[int] key):Array[int] {
+    Array[int] w = key_expansion(key)
+
+    // 初始轮密钥加
+    Array[int] state = add_round_key(plaintext, get_round_key(w, 0))
+
+    // 第 1-9 轮
+    for 1:9 to round {
+        state = sub_bytes(state)
+        state = shift_rows(state)
+        state = mix_columns(state)
+        state = add_round_key(state, get_round_key(w, round))
+    }
+
+    // 最后一轮（无 MixColumns）
+    state = sub_bytes(state)
+    state = shift_rows(state)
+    state = add_round_key(state, get_round_key(w, 10))
+
+    return state
+}
+
+// AES-128 解密一个 16 字节块
+func aes_decrypt_block(Array[int] ciphertext, Array[int] key):Array[int] {
+    Array[int] w = key_expansion(key)
+
+    // 初始轮密钥加
+    Array[int] state = add_round_key(ciphertext, get_round_key(w, 10))
+
+    // 第 9-1 轮
+    for 9:1:-1 to round {
+        state = inv_shift_rows(state)
+        state = inv_sub_bytes(state)
+        state = add_round_key(state, get_round_key(w, round))
+        state = inv_mix_columns(state)
+    }
+
+    // 最后一轮
+    state = inv_shift_rows(state)
+    state = inv_sub_bytes(state)
+    state = add_round_key(state, get_round_key(w, 0))
+
+    return state
+}
+
+// ==================== 字符串接口 ====================
+
+// Hex 工具
+func byte_to_hex(int b):string {
+    b = _uint8(b)
+    var hex_chars = "0123456789abcdef"
+    return hex_chars.slice(_uint8(b >> 4) & 0xF, (_uint8(b >> 4) & 0xF) + 1) + hex_chars.slice(b & 0xF, (b & 0xF) + 1)
+}
+
+func hex_nibble(int b):int {
+    if (b >= 48 and b <= 57) { return b - 48 }
+    if (b >= 97 and b <= 102) { return b - 87 }
+    if (b >= 65 and b <= 70) { return b - 55 }
+    return 0
+}
+
+func hex_to_bytes(string hex):Array[int] {
+    var result = []
+    int i = 0
+    while (i + 1 < hex.byte_len()) {
+        int hi = hex_nibble(hex.byte(i))
+        int lo = hex_nibble(hex.byte(i + 1))
+        result.add((hi << 4) | lo)
+        i = i + 2
+    }
+    return result
+}
+
+func bytes_to_hex(Array[int] bytes):string {
+    var result = ""
+    for 0:bytes.len() - 1 to i {
+        result += byte_to_hex(bytes[i])
+    }
+    return result
+}
+
+// PKCS7 填充
+func pkcs7_pad(string data, int block_size):string {
+    int pad_len = block_size - (data.byte_len() % block_size)
+    var result = data
+    for 0:pad_len - 1 to i {
+        result += strings.char(pad_len)
+    }
+    return result
+}
+
+func pkcs7_unpad(string data):string {
+    if (data.byte_len() == 0) { return data }
+    int pad_len = data.byte(data.byte_len() - 1)
+    if (pad_len > data.byte_len() or pad_len == 0) { return data }
+    // 验证填充
+    for 0:pad_len - 1 to i {
+        if (data.byte(data.byte_len() - 1 - i) != pad_len) { return data }
+    }
+    return data.byte_slice(0, data.byte_len() - pad_len)
+}
+
+// 字符串转字节块（16 字节）
+func str_to_block(string s, int offset):Array[int] {
+    var block = []
+    for 0:15 to i {
+        if (offset + i < s.byte_len()) {
+            block.add(s.byte(offset + i))
+        } else {
+            block.add(0)
+        }
+    }
+    return block
+}
+
+// 字节块转字符串
+func block_to_str(Array[int] block):string {
+    var result = ""
+    for 0:block.len() - 1 to i {
+        result += strings.char(block[i])
+    }
+    return result
+}
+
+// AES-128 加密字符串（ECB 模式 + PKCS7 填充）
+// key: 16 字节密钥字符串
+// plaintext: 明文字符串
+// 返回 hex 编码的密文
+func aes128_encrypt(string key, string plaintext):string {
+    // 填充
+    var padded = pkcs7_pad(plaintext, 16)
+
+    // 密钥转字节
+    Array[int] key_bytes = str_to_block(key, 0)
+
+    var result = ""
+    int i = 0
+    while (i < padded.byte_len()) {
+        Array[int] block = str_to_block(padded, i)
+        Array[int] encrypted = aes_encrypt_block(block, key_bytes)
+        result += bytes_to_hex(encrypted)
+        i = i + 16
+    }
+
+    return result
+}
+
+// AES-128 解密字符串（ECB 模式 + PKCS7 填充）
+// key: 16 字节密钥字符串
+// hex_ciphertext: hex 编码的密文
+func aes128_decrypt(string key, string hex_ciphertext):string {
+    Array[int] key_bytes = str_to_block(key, 0)
+    Array[int] ct_bytes = hex_to_bytes(hex_ciphertext)
+
+    var result = ""
+    int i = 0
+    while (i + 15 < ct_bytes.len()) {
+        Array[int] block = [ct_bytes[i], ct_bytes[i + 1], ct_bytes[i + 2], ct_bytes[i + 3], ct_bytes[i + 4], ct_bytes[i + 5], ct_bytes[i + 6], ct_bytes[i + 7], ct_bytes[i + 8], ct_bytes[i + 9], ct_bytes[i + 10], ct_bytes[i + 11], ct_bytes[i + 12], ct_bytes[i + 13], ct_bytes[i + 14], ct_bytes[i + 15]]
+        Array[int] decrypted = aes_decrypt_block(block, key_bytes)
+        result += block_to_str(decrypted)
+        i = i + 16
+    }
+
+    return pkcs7_unpad(result)
+}
+
+// ==================== 测试 ====================
+
+// SHA-512 哈希算法 —— 纯 LenoC 实现
+// FIPS 180-4 标准，64 位版本，生成 512 位（64 字节）摘要
+//
+// 实现要点（Leno 语言适配）：
+//   LenoC 的 int 为 64 位，但 << 左移在 >48 位结果时存在截断风险，
+//   因此全部 64 位运算拆为【已验证可靠的 32 位原子操作】：
+//   每个 64 位字以单个 int 打包存储（低 32 位=lo，高 32 位=hi，& 0xffffffffffffffff 截断），
+//   32 位内移位/旋转用 _uint32 包裹（与 sha256.leno 相同写法，全部通过标准向量）。
+//
+// 注意：0x8000000000000000 及以上字面量在 Leno 中为无符号 64 位语义
+//       （>> 为逻辑右移，& MASK64 截断回 64 位，+/* 溢出自动提升为大整数）
+
+import strings
+
+// ==================== 64 位字运算原语（全部基于已验证的 32 位原子操作） ====================
+
+// 64 位常数掩码
+func mask64():int { return 0xffffffffffffffff }
+func mask32():int { return 0xffffffff }
+
+// 打包两 32 位字为 64 位（均视为无符号）
+func pack64(int hi, int lo):int {
+    return (_uint32(hi) * 4294967296 + _uint32(lo)) & mask64()
+}
+
+// 解包 64 位字的高 32 位
+func hi32(int v):int { return _int32((v >> 32) & mask32()) }
+
+// 解包 64 位字的低 32 位
+func lo32(int v):int { return _int32(v & mask32()) }
+
+// 64 位循环右移 n 位（1 <= n <= 63）
+// 双字旋转公式（Hacker's Delight）：
+//   n<32 : hi'=(hi>>n)|(lo<<(32-n))   lo'=(lo>>n)|(hi<<(32-n))
+//   n=32 : 交换 hi/lo
+//   n>32 : 令 m=n-32: hi'=(lo>>m)|(hi<<(32-m))  lo'=(hi>>m)|(lo<<(32-m))
+func rotr64(int v, int n):int {
+    int hi = hi32(v)
+    int lo = lo32(v)
+    int nh, nl
+    if n == 32 {
+        nh = lo
+        nl = hi
+    } else if n < 32 {
+        nh = _int32((_uint32(hi) >> n) | (_uint32(lo) << (32 - n)))
+        nl = _int32((_uint32(lo) >> n) | (_uint32(hi) << (32 - n)))
+    } else {
+        int m = n - 32
+        nh = _int32((_uint32(lo) >> m) | (_uint32(hi) << (32 - m)))
+        nl = _int32((_uint32(hi) >> m) | (_uint32(lo) << (32 - m)))
+    }
+    return pack64(nh, nl)
+}
+
+// 64 位逻辑右移 n 位（0 <= n <= 64）
+func shr64(int v, int n):int {
+    int hi = hi32(v)
+    int lo = lo32(v)
+    int nh, nl
+    if n == 0 {
+        return v & mask64()
+    } else if n < 32 {
+        nh = _int32(_uint32(hi) >> n)
+        nl = _int32((_uint32(lo) >> n) | (_uint32(hi) << (32 - n)))
+    } else if n == 32 {
+        nh = 0
+        nl = hi
+    } else if n == 64 {
+        nh = 0
+        nl = 0
+    } else {
+        int m = n - 32
+        nh = 0
+        nl = _int32(_uint32(hi) >> m)
+    }
+    return pack64(nh, nl)
+}
+
+// 64 位加法（mod 2^64，带进位）
+func add64(int a, int b):int {
+    int al = _uint32(a & mask32())
+    int bl = _uint32(b & mask32())
+    int lo_sum = al + bl
+    int carry = lo_sum >> 32
+    int lo = lo_sum & mask32()
+    int ah = _uint32((a >> 32) & mask32())
+    int bh = _uint32((b >> 32) & mask32())
+    int hi = (ah + bh + carry) & mask32()
+    return pack64(hi, lo)
+}
+
+// 64 位异或
+func xor64(int a, int b):int { return (a ^ b) & mask64() }
+
+// 64 位与
+func and64(int a, int b):int { return (a & b) & mask64() }
+
+// 64 位取反
+func not64(int a):int { return (~a) & mask64() }
+
+// ==================== SHA-512 逻辑函数 ====================
+
+// Ch(x,y,z) = (x & y) ^ (~x & z)，x 的每个字位
+func ch512(int x, int y, int z):int { return xor64(and64(x, y), and64(not64(x), z)) }
+
+// Maj(x,y,z) = (x & y) ^ (x & z) ^ (y & z)
+func maj512(int x, int y, int z):int { return xor64(xor64(and64(x, y), and64(x, z)), and64(y, z)) }
+
+// 大 Σ0(x) = ROTR28(x) ^ ROTR34(x) ^ ROTR39(x)
+func big_sigma0(int x):int { return xor64(xor64(rotr64(x, 28), rotr64(x, 34)), rotr64(x, 39)) }
+
+// 大 Σ1(x) = ROTR14(x) ^ ROTR18(x) ^ ROTR41(x)
+func big_sigma1(int x):int { return xor64(xor64(rotr64(x, 14), rotr64(x, 18)), rotr64(x, 41)) }
+
+// 小 σ0(x) = ROTR1(x) ^ ROTR8(x) ^ SHR7(x)
+func small_sigma0(int x):int { return xor64(xor64(rotr64(x, 1), rotr64(x, 8)), shr64(x, 7)) }
+
+// 小 σ1(x) = ROTR19(x) ^ ROTR61(x) ^ SHR6(x)
+func small_sigma1(int x):int { return xor64(xor64(rotr64(x, 19), rotr64(x, 61)), shr64(x, 6)) }
+
+// ==================== SHA-512 主算法 ====================
+
+// 计算字节数组的 SHA-512 摘要，返回 64 字节大端字节数组
+func sha512_bytes(Array[int] msg):Array[int] {
+    // 初始哈希值 H0..H7（前 8 个素数的平方根小数部分前 64 位）
+    int H0 = 0x6a09e667f3bcc908
+    int H1 = 0xbb67ae8584caa73b
+    int H2 = 0x3c6ef372fe94f82b
+    int H3 = 0xa54ff53a5f1d36f1
+    int H4 = 0x510e527fade682d1
+    int H5 = 0x9b05688c2b3e6c1f
+    int H6 = 0x1f83d9abfb41bd6b
+    int H7 = 0x5be0cd19137e2179
+
+    // 轮常量 K[0..79]（前 80 个素数的立方根小数部分前 64 位）
+    var K = [
+        0x428a2f98d728ae22, 0x7137449123ef65cd, 0xb5c0fbcfec4d3b2f, 0xe9b5dba58189dbbc,
+        0x3956c25bf348b538, 0x59f111f1b605d019, 0x923f82a4af194f9b, 0xab1c5ed5da6d8118,
+        0xd807aa98a3030242, 0x12835b0145706fbe, 0x243185be4ee4b28c, 0x550c7dc3d5ffb4e2,
+        0x72be5d74f27b896f, 0x80deb1fe3b1696b1, 0x9bdc06a725c71235, 0xc19bf174cf692694,
+        0xe49b69c19ef14ad2, 0xefbe4786384f25e3, 0x0fc19dc68b8cd5b5, 0x240ca1cc77ac9c65,
+        0x2de92c6f592b0275, 0x4a7484aa6ea6e483, 0x5cb0a9dcbd41fbd4, 0x76f988da831153b5,
+        0x983e5152ee66dfab, 0xa831c66d2db43210, 0xb00327c898fb213f, 0xbf597fc7beef0ee4,
+        0xc6e00bf33da88fc2, 0xd5a79147930aa725, 0x06ca6351e003826f, 0x142929670a0e6e70,
+        0x27b70a8546d22ffc, 0x2e1b21385c26c926, 0x4d2c6dfc5ac42aed, 0x53380d139d95b3df,
+        0x650a73548baf63de, 0x766a0abb3c77b2a8, 0x81c2c92e47edaee6, 0x92722c851482353b,
+        0xa2bfe8a14cf10364, 0xa81a664bbc423001, 0xc24b8b70d0f89791, 0xc76c51a30654be30,
+        0xd192e819d6ef5218, 0xd69906245565a910, 0xf40e35855771202a, 0x106aa07032bbd1b8,
+        0x19a4c116b8d2d0c8, 0x1e376c085141ab53, 0x2748774cdf8eeb99, 0x34b0bcb5e19b48a8,
+        0x391c0cb3c5c95a63, 0x4ed8aa4ae3418acb, 0x5b9cca4f7763e373, 0x682e6ff3d6b2b8a3,
+        0x748f82ee5defb2fc, 0x78a5636f43172f60, 0x84c87814a1f0ab72, 0x8cc702081a6439ec,
+        0x90befffa23631e28, 0xa4506cebde82bde9, 0xbef9a3f7b2c67915, 0xc67178f2e372532b,
+        0xca273eceea26619c, 0xd186b8c721c0c207, 0xeada7dd6cde0eb1e, 0xf57d4f7fee6ed178,
+        0x06f067aa72176fba, 0x0a637dc5a2c898a6, 0x113f9804bef90dae, 0x1b710b35131c471b,
+        0x28db77f523047d84, 0x32caab7b40c72493, 0x3c9ebe0a15c9bebc, 0x431d67c49c100d4c,
+        0x4cc5d4becb3e42b6, 0x597f299cfc657e2a, 0x5fcb6fab3ad6faec, 0x6c44198c4a475817
+    ]
+
+    // ===== 消息填充 =====
+    // 原消息长度（字节）
+    int orig_len = msg.len()
+
+    var m = []
+    for orig_len to i {
+        m.add(msg[i])
+    }
+
+    // 追加 0x80
+    m.add(0x80)
+
+    // 填充 0，使 (m.len() % 128) == 112（预留 16 字节长度域）
+    int pad_len = (112 - m.len() % 128 + 128) % 128
+    for pad_len to i {
+        m.add(0)
+    }
+
+    // 追加原始 bit 长度（128 位大端；本实现高 64 位恒为 0，低 64 位 = orig_len*8）
+    var len_pad = []
+    be64_append(len_pad, 0)
+    be64_append(len_pad, orig_len * 8)
+    for len_pad.len() to i {
+        m.add(len_pad[i])
+    }
+
+    // ===== 处理每个 1024 位（128 字节）块 =====
+    int num_blocks = m.len() / 128
+    for 0:(num_blocks - 1) to block_idx {
+        int base = block_idx * 128
+
+        // 提取 16 个 64 位字 W[0..15]（大端序）
+        var W = []
+        for 0:15 to j {
+            W.add(be_bytes_to_u64(m, base + j * 8))
+        }
+
+        // 扩展为 80 个字：W[t] = σ1(W[t-2]) + W[t-7] + σ0(W[t-15]) + W[t-16]
+        for 16:79 to t {
+            int w = add64(add64(small_sigma1(W[t - 2]), W[t - 7]),
+                          add64(small_sigma0(W[t - 15]), W[t - 16]))
+            W.add(w & mask64())
+        }
+
+        // 初始化工作变量 a..h
+        int a = H0
+        int b = H1
+        int c = H2
+        int d = H3
+        int e = H4
+        int f = H5
+        int g = H6
+        int h = H7
+
+        // 80 轮压缩
+        for 0:79 to t {
+            int T1 = add64(add64(add64(add64(h, big_sigma1(e)), ch512(e, f, g)), K[t]), W[t])
+            int T2 = add64(big_sigma0(a), maj512(a, b, c))
+            h = g
+            g = f
+            f = e
+            e = add64(d, T1)
+            d = c
+            c = b
+            b = a
+            a = add64(T1, T2)
+        }
+
+        // 累加到哈希状态
+        H0 = add64(H0, a)
+        H1 = add64(H1, b)
+        H2 = add64(H2, c)
+        H3 = add64(H3, d)
+        H4 = add64(H4, e)
+        H5 = add64(H5, f)
+        H6 = add64(H6, g)
+        H7 = add64(H7, h)
+    }
+
+    // ===== 输出 64 字节摘要（大端序） =====
+    var digest = []
+    be64_append(digest, H0)
+    be64_append(digest, H1)
+    be64_append(digest, H2)
+    be64_append(digest, H3)
+    be64_append(digest, H4)
+    be64_append(digest, H5)
+    be64_append(digest, H6)
+    be64_append(digest, H7)
+    return digest
+}
+
+// 计算字符串的 SHA-512 摘要，返回 128 位十六进制字符串
+func sha512(string input):string {
+    Array[int] msg = []
+    int n = input.byte_len()
+    for n to i {
+        msg.add(input.byte(i))
+    }
+    var digest = sha512_bytes(msg)
+    string out = ""
+    for digest.len() to i {
+        out += byte_to_hex(digest[i])
+    }
+    return out
+}
+
+// ==================== 大端序辅助 ====================
+
+// 64 位字追加为 8 字节（大端序）到字节数组
+func be64_append(Array[int] arr, int v) {
+    int hi = _int32((v >> 32) & mask32())
+    int lo = _int32(v & mask32())
+    arr.add(_uint8((hi >> 24) & 0xff))
+    arr.add(_uint8((hi >> 16) & 0xff))
+    arr.add(_uint8((hi >> 8) & 0xff))
+    arr.add(_uint8(hi & 0xff))
+    arr.add(_uint8((lo >> 24) & 0xff))
+    arr.add(_uint8((lo >> 16) & 0xff))
+    arr.add(_uint8((lo >> 8) & 0xff))
+    arr.add(_uint8(lo & 0xff))
+}
+
+// 从字节数组 offset 处读 8 字节大端序为 64 位字
+func be_bytes_to_u64(Array[int] arr, int offset):int {
+    int hi = _int32((_uint32(arr[offset]) << 24) | (_uint32(arr[offset + 1]) << 16) | (_uint32(arr[offset + 2]) << 8) | _uint32(arr[offset + 3]))
+    int lo = _int32((_uint32(arr[offset + 4]) << 24) | (_uint32(arr[offset + 5]) << 16) | (_uint32(arr[offset + 6]) << 8) | _uint32(arr[offset + 7]))
+    return pack64(hi, lo)
+}
+
+// 字节转两位十六进制字符串
+
+// ==================== 自测 ====================
+
+
+// ============================================================================
+// TraeSign 移植（Leno）：派生密钥 + AES-128-CBC 解密
+// 对齐参考件 D:\Leno工程\TraeSign-main\trae-checkin.js 的 decrypt()（逐字）：
+//   enc(base64) 布局 = [6B 前缀][32B key][AES-128-CBC 密文]
+//   派生：sha512(key) → 与 (ure ^ dre) 拼成 128B → sha512 → 前 16B=aesKey、次 16B=iv
+//   解密：AES-128-CBC → 去 PKCS7 → 丢掉前 64B → 剩下就是 auth JSON
+// 上面已拼接 `examples/crypto/aes128.leno`（AES 核）+ `sha512.leno`（含 sha512_bytes ✓）
+// ============================================================================
+Array[int] TRAE_URE = [82, 9, 106, 213, 48, 54, 165, 56, 191, 64, 163, 158, 129, 243, 215, 251, 124, 227, 57, 130, 155, 47, 255, 135, 52, 142, 67, 68, 196, 222, 233, 203, 84, 123, 148, 50, 166, 194, 35, 61, 238, 76, 149, 11, 66, 250, 195, 78, 8, 46, 161, 102, 40, 217, 36, 178, 118, 91, 162, 73, 109, 139, 209, 37]
+Array[int] TRAE_DRE = [31, 221, 168, 51, 136, 7, 199, 49, 177, 18, 16, 89, 39, 128, 236, 95, 96, 81, 127, 169, 25, 181, 74, 13, 45, 229, 122, 159, 147, 201, 156, 239, 160, 224, 59, 77, 174, 42, 245, 176, 200, 235, 187, 60, 131, 83, 153, 97, 23, 43, 4, 126, 186, 119, 214, 38, 225, 105, 20, 99, 85, 33, 12, 125]
+
+int TRAE_EM = 6
+int TRAE_RV = 32
+int TRAE_RH = 64
+
+// 字符串 ↔ 字节数组（按字节，不做 UTF-8 语义；用 strings.char 逐字节构造以保留原始字节）
+func trae_bytes_of(string s):Array[int] {
+    var out = []
+    int i = 0
+    while i < s.byte_len() {
+        out.add(s.byte(i))
+        i = i + 1
+    }
+    return out
+}
+func trae_str_of(Array[int] bs):string {
+    var out = ""
+    for 0:bs.len() - 1 to i {
+        out = out + strings.char(bs[i])
+    }
+    return out
+}
+
+// base64 → 字节数组（自己写：标准库的 base64_decode 返回 string，二进制不安全 ✗）
+func trae_b64_val(int c):int {
+    if c >= 65 and c <= 90 { return c - 65 }
+    if c >= 97 and c <= 122 { return c - 97 + 26 }
+    if c >= 48 and c <= 57 { return c - 48 + 52 }
+    if c == 43 { return 62 }
+    if c == 47 { return 63 }
+    return -1
+}
+func trae_b64_to_bytes(string s):Array[int] {
+    var out = []
+    int acc = 0
+    int nbits = 0
+    int i = 0
+    while i < s.byte_len() {
+        int v = trae_b64_val(s.byte(i))
+        if v < 0 { break }                     // '=' 或空白 ⇒ 结束
+        acc = ((acc << 6) | v) & 0xFFFFFF
+        nbits = nbits + 6
+        if nbits >= 8 {
+            nbits = nbits - 8
+            out.add(_uint8((acc >> nbits) & 0xFF))
+        }
+        i = i + 1
+    }
+    return out
+}
+
+// ure ^ dre（64B）
+func trae_xor_tables():Array[int] {
+    var out = []
+    for 0:63 to i {
+        out.add(TRAE_URE[i] ^ TRAE_DRE[i])
+    }
+    return out
+}
+
+// 派生：返回 32 字节（前 16 = aesKey，次 16 = iv）
+func trae_derive(Array[int] key32):Array[int] {
+    Array[int] sha = sha512_bytes(key32)        // 64B
+    Array[int] xo = trae_xor_tables()           // 64B
+    var comb = []
+    for 0:sha.len() - 1 to i { comb.add(sha[i]) }
+    for 0:xo.len() - 1 to i { comb.add(xo[i]) }
+    Array[int] h = sha512_bytes(comb)           // 64B
+    var out = []
+    for 0:31 to i { out.add(h[i]) }
+    return out
+}
+
+// AES-128-CBC 解密（ECB 单块核 → CBC 链接）
+func trae_cbc_decrypt(Array[int] kiv32, Array[int] ct):Array[int] {
+    var aesKey = []
+    var iv = []
+    for 0:15 to i { aesKey.add(kiv32[i]) }
+    for 16:31 to i { iv.add(kiv32[i]) }
+    var out = []
+    var prev = iv
+    int i = 0
+    while i + 15 < ct.len() {
+        var blk = []
+        for 0:15 to j { blk.add(ct[i + j]) }
+        Array[int] dec = aes_decrypt_block(blk, aesKey)
+        for 0:15 to j { out.add(dec[j] ^ prev[j]) }
+        prev = blk
+        i = i + 16
+    }
+    return out
+}
+
+func trae_pkcs7_unpad(Array[int] bs):Array[int] {
+    int n = bs.len()
+    if n == 0 { return bs }
+    int p = bs[n - 1]
+    if p < 1 or p > 16 or p > n { return bs }
+    var out = []
+    for 0:n - p - 1 to i { out.add(bs[i]) }
+    return out
+}
+
+// 完整解密：enc(base64) → auth JSON 字符串
+func trae_decrypt_auth(string enc_b64):string {
+    Array[int] t = trae_b64_to_bytes(enc_b64)
+    if t.len() < TRAE_EM + TRAE_RV + 16 { return "" }
+    var key = []
+    for TRAE_EM:TRAE_EM + TRAE_RV - 1 to i { key.add(t[i]) }
+    Array[int] kiv = trae_derive(key)
+    var ct = []
+    for (TRAE_RV + TRAE_EM):t.len() - 1 to i { ct.add(t[i]) }
+    Array[int] dec = trae_pkcs7_unpad(trae_cbc_decrypt(kiv, ct))
+    if dec.len() <= TRAE_RH { return "" }
+    var body = []
+    for TRAE_RH:dec.len() - 1 to i { body.add(dec[i]) }
+    return trae_str_of(body)
+}
+
+// ---------------------------------------------------------------------------
+// 金标自测：读 tools/fixture_login_state.json（合成、非机密），逐字比对期望 JSON
+// 用法： build\leno.exe trae_crypto.leno [fixture 路径]
+// ---------------------------------------------------------------------------
+main() {
+    var args = _args()
+    var dir = "tools/"
+    if args.len() > 0 { dir = args[0] }
+
+    string enc = files.read(dir + "fixture_enc.txt")
+    string exp = files.read(dir + "fixture_expect_json.txt")
+    if enc.len() < 32 or exp.len() == 0 {
+        print("读不到 fixture ⇒ 先在 tools 下运行 `node gen_fixture.js`\n")
+        assert_eq(1, 0)
+        return
+    }
+
+    var got = trae_decrypt_auth(enc)
+    if got != exp {
+        print("---- 解密结果与期望不一致 ----\n")
+        print("期望: " + exp + "\n")
+        print("实际: " + got + "\n")
+    }
+    assert_eq(got, exp)                                   // 与 JS 参考实现逐字一致 ✓
+    // 免 JSON 解析：直接对解出的字符串做包含断言（`jsons.decode` 返回 any，嵌套字段需类型收窄）
+    assert_eq(strings.has(got, "\"token\":\"FAKE-TOKEN-0000-1111-2222-333344445555\""), true)
+    assert_eq(strings.has(got, "\"username\":\"demo@example.com\""), true)
+    assert_eq(strings.has(got, "\"region\":\"cn\""), true)
+    assert_eq(strings.has(got, "合成夹具"), true)          // UTF-8 中文逐字节往返 ✓
+
+    print("trae_crypto fixture test passed")
+}
