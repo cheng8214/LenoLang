@@ -67,15 +67,11 @@ main() {
     assert_eq(strings.has(out, want_frames), true)             // ③ 真跑满 N 帧（不是提前退出）
 
     // ④ JIT 健康度：仅当 stderr 被 _exec 捕获时才判（捕获不到就跳过，避免误报）
-    // ⚠ 2026-09-18（§8.129）：R6-k 的「native 原地直调」按实测**回退**后，本应用会重新出现 bailout ✗
-    //   ⇒ 本判据暂时改为**可选严格模式**（`set LENO_GATE_STRICT=1` 时才要求 0）。
-    //   ⚠ 这是**临时状态**：待 §8.129 的真缺陷修好、R6-k 重新打开后，必须去掉开关、恢复"必须 0" ✓
+    // ⚠ 2026-09-18（§8.129）：这条**必须**是 0 ✓ —— 它曾因"临时回退 R6-k"被放宽过一次，
+    //   真因（JIT 的 cstruct 字段读每轮 bailout ⇒ 解释器重放整轮 ⇒ 同轮副作用执行两遍）
+    //   修复后已恢复**强制** ✓。教训：稳定 bailout 的指令 + 同轮堆侧副作用 = 静默重复执行 ✗。
     if strings.has(out, "Bailouts:") {
-        if _env("LENO_GATE_STRICT") != null {
-            assert_eq(strings.has(out, "Bailouts: 0"), true)
-        } else {
-            print("  [§8.129 待恢复] 已捕获到 Bailouts 行但未判 0（严格模式：set LENO_GATE_STRICT=1）")
-        }
+        assert_eq(strings.has(out, "Bailouts: 0"), true)
     } else {
         print("  (提示：本次未捕获到 JIT 统计，跳过 Bailouts 判据)")
     }

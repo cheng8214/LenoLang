@@ -842,14 +842,15 @@ fail:
  * 报错路径一律置 jit_callout_failed → bailout → 解释器重放本条指令
  * （报错文本、分配语义、行号全部与 NO_JIT 一致）。 */
 Value jit_callout_get_field(Value obj_val, uint8_t field_idx) {
-    if (!val_is_obj(obj_val) || val_as_obj(obj_val)->type != OBJ_STRUCT) {
+    if (!val_is_obj(obj_val)) {
         if (jit_debug_on())
-            fprintf(stderr, "[FIELD-FAIL] get_field: obj 不是 struct（bits=0x%016llx, type=%d）\n",
-                    (unsigned long long)obj_val,
-                    val_is_obj(obj_val) ? (int)val_as_obj(obj_val)->type : -1);
+            fprintf(stderr, "[FIELD-FAIL] get_field: 不是对象（bits=0x%016llx）\n",
+                    (unsigned long long)obj_val);
         jit_callout_failed = 1;
         return NULL_VAL;
     }
+
+    if (val_as_obj(obj_val)->type == OBJ_STRUCT) {
     ObjStruct* obj = (ObjStruct*)val_as_obj(obj_val);
     if (field_idx >= obj->def->field_count) {
         if (jit_debug_on())
@@ -860,6 +861,76 @@ Value jit_callout_get_field(Value obj_val, uint8_t field_idx) {
         return NULL_VAL;
     }
     return struct_get_field(obj, field_idx);
+    }
+
+    /* ---- ★ 2026-09-18（§8.129 真修复）：补上 **cstruct 字段读** ----
+     * 为什么必须补（不是优化，是正确性）：GUI 热循环里同时有
+     *   ① cstruct 字段读（`pt.x` / `ev.type` —— 原来在这里一律 bailout ✗）
+     *   ② native 绑定方法调用（R6-k 之后不再 bail ✓）
+     * ⇒ ②让循环**留在 JIT**、①让它**每轮都 bailout + 解释器重放整轮** ⇒ 同一轮的
+     *   **堆侧副作用执行两遍** ✗（§14 的老问题）⇒ 控件列表被反复改写 ⇒ 用户可见的
+     *   「控件一个个消失 / 闪烁 / 点击不响应」✗✗（实测日志：`FIELD-FAIL … type=17`
+     *   与绑定方法调用**严格各 291 次**一一对应 ✓）。VM 模式（`LENO_NO_JIT=1`）没有这回事 ✓。
+     *
+     * 语义照 `vm/vminc/op_struct.inc:665-728`（**唯一来源**）逐条搬：
+     *   · 越界 / 找不到嵌套定义 / 分配失败 ⇒ 仍置 failed → bailout（报错原文交解释器 ✓）；
+     *   · `str16 + array_dim>0` ⇒ `cstruct_get_field_value`（UTF-16→UTF-8 转换）✓；
+     *   · `array_dim>0` ⇒ 新建 `ObjCStructArrayView` ✓；
+     *   · `TYPE_CSTRUCT` ⇒ 新建指向父结构体内存的嵌套实例（`owns_memory=0`）✓；
+     *   · 其余 ⇒ `cstruct_get_field_value`（一次解引用）✓。 */
+    if (val_as_obj(obj_val)->type == OBJ_CSTRUCT) {
+        ObjCStruct* obj = (ObjCStruct*)val_as_obj(obj_val);
+        ObjCStructDef* def = obj->def;
+        if (!def || field_idx >= def->field_count) {
+            if (jit_debug_on())
+                fprintf(stderr, "[FIELD-FAIL] get_field(cstruct): 越界或无 def（idx=%u）\n", (unsigned)field_idx);
+            jit_callout_failed = 1;      /* 交解释器报 "cstruct 'X' 字段索引越界…" ✓ */
+            return NULL_VAL;
+        }
+        CStructFieldInfo* field = &def->fields[field_idx];
+
+        if (field->type == TYPE_STR16 && field->array_dim > 0) {
+            return cstruct_get_field_value(obj, field_idx);
+        }
+        if (field->array_dim > 0) {
+            ObjCStructArrayView* view =
+                (ObjCStructArrayView*)gc_alloc(sizeof(ObjCStructArrayView), OBJ_CSTRUCT_ARRAY_VIEW);
+            if (!view) {
+                jit_callout_failed = 1;  /* 交解释器报 "内存不足，无法创建数组视图" ✓ */
+                return NULL_VAL;
+            }
+            view->cstruct = obj;
+            view->field_index = field_idx;
+            view->element_type = field->type;
+            view->element_size = field->size;
+            view->array_dim = field->array_dim;
+            return val_obj((Object*)view);
+        }
+        if (field->type == TYPE_CSTRUCT) {
+            const char* nested_struct_name = field->struct_name ? field->struct_name : field->name;
+            ObjCStructDef* nested_def = cstruct_def_find(nested_struct_name);
+            if (!nested_def) {
+                jit_callout_failed = 1;  /* 交解释器报 "找不到嵌套 cstruct 定义 '%s'" ✓ */
+                return NULL_VAL;
+            }
+            ObjCStruct* nested_obj = (ObjCStruct*)gc_alloc(sizeof(ObjCStruct), OBJ_CSTRUCT);
+            if (!nested_obj) {
+                jit_callout_failed = 1;  /* 交解释器报 "内存不足，无法创建嵌套 cstruct" ✓ */
+                return NULL_VAL;
+            }
+            nested_obj->def = nested_def;
+            nested_obj->data = obj->data + field->offset;
+            nested_obj->owns_memory = 0;   /* 不拥有内存，由父结构体管理 ✓ */
+            return val_obj((Object*)nested_obj);
+        }
+        return cstruct_get_field_value(obj, field_idx);
+    }
+
+    if (jit_debug_on())
+        fprintf(stderr, "[FIELD-FAIL] get_field: 非 struct/cstruct（bits=0x%016llx, type=%d）\n",
+                (unsigned long long)obj_val, (int)val_as_obj(obj_val)->type);
+    jit_callout_failed = 1;              /* 报错原文交解释器 ✓ */
+    return NULL_VAL;
 }
 
 /* Callout: OP_GET_FIELD_ADDR（`&c.field`，R6-h）—— 弹出 cstruct 实例、构造字段地址指针。
@@ -1904,31 +1975,34 @@ static Value jit_invoke_closure(ObjFunction* mfunc, Value callee_val, int arg_co
             }
         }
         if (nf) {
-            /* ★ 2026-09-18：R6-k 的「native 绑定方法 / OBJ_NATIVE 原地直调」按实测**回退**为
-             * `failed → bailout`（交解释器执行 —— 即 R6-k 之前的行为）。
-             *
-             * 依据（本轮用户实测 + 二分定位，详见 §8.129）：
-             *   · 二分：`858367a2`（引入本路径）之后**闪** ✗；其父 `124a3e4e`（无本路径）**不闪** ✓；
-             *   · `LENO_NO_JIT=1` 完全干净 ✓（该模式永远走解释器）；
-             *   · 无头对照：JIT 与 VM 的**绘制指令流**（fill/line/out/sum 逐字相同）与
-             *     **像素哈希**（BMP 逐字节相同）都一致 ✓ ⇒ 病灶不在渲染层，而在"让这类调用
-             *     留在 JIT 里执行"这件事本身 —— 控件库热循环里全是 `Array.add()` / `Dict.set()`
-             *     这类 native 绑定方法，一旦原地直调就会写坏控件状态
-             *     （症状：控件消失/闪烁/点击不响应 ✗）。
-             *   · 真窗口 + 鼠标事件这条路径无法无头复现 ⇒ 先恢复正确性；缺陷本身按 §8.82/§8.87 的
-             *     带仪器取证路线另开一轮（要核对：接收者插 args[0] 的顺序、异常路径、
-             *     `vm->sp` / `frame_cnt` 恢复、以及 native 重入时 JIT 侧未入根的 callee/receiver）。
-             *
-             * 代价（如实记录）：fm 热循环重新回到"能编但每次 bail、3 次后拉黑"⇒ 丢掉该提交实测的
-             * 1.79x ✗；换来 GUI 应用在 JIT 下恢复正常 ✓。
-             * 保留原先的识别与诊断：`LENO_JIT_DEBUG=1` 时打一行说明是这类 callee 触发的回退 ✓。 */
-            if (jit_debug_on())
-                fprintf(stderr, "[JIT-CALLOUT-FAIL] R6-k native 直调已回退（§8.129）: obj_type=%d "
-                                "has_recv=%d total=%d ⇒ 交解释器\n",
-                        (int)co->type, nhas_recv, arg_count + nhas_recv);
-            (void)nrecv;
-            jit_callout_failed = 1;
-            return NULL_VAL;
+            /* 2026-09-18（§8.129）：R6-k 的「native 绑定方法 / OBJ_NATIVE 原地直调」**保留** ✓
+             * —— 实测真凶**不是它**，而是同一热循环里的另一条 **cstruct 字段读**路径每轮
+             * `bailout` ⇒ 解释器重放整轮 ⇒ **同轮堆侧副作用执行两遍** ⇒ 控件状态被写坏
+             * （用户可见：控件一个个消失 / 闪烁 / 点击不响应 ✗）。
+             * 已补 `jit_callout_get_field` 的 **cstruct 分支**（照 op_struct.inc:665-728 搬 ✓）
+             * ⇒ 该路径不再 bailout，循环整体留在 JIT ✓（性能与"零 bailout"门禁同时保住 ✓）。
+             * 取证：`LENO_JIT_DEBUG=1` 下日志里 `[FIELD-FAIL] … type=17`（=`OBJ_CSTRUCT`）
+             * 与本路径的调用**严格各 291 次**一一对应 ✓ */
+            if (!nf->function) {
+                jit_callout_failed = 1;
+                if (jit_debug_on())
+                    fprintf(stderr, "[JIT-CALLOUT-FAIL] native 直调: native->function 为空\n");
+                return NULL_VAL;
+            }
+            int saved_sp_n = vm->sp;
+            int total = arg_count + nhas_recv;
+            if (nhas_recv) vm_stack_push(vm, nrecv);   /* args[0] = 接收者（先压 ⇒ 最低地址）*/
+            for (int i = 0; i < arg_count; i++)
+                vm_stack_push(vm, jit_raw_to_value(vstack_top[arg_count - 1 - i]));
+            Value nres = nf->function(total, vm->stack + vm->sp - total);
+            vm->sp = saved_sp_n;
+            if (vm->has_exception) {
+                jit_callout_failed = 1;
+                if (jit_debug_on())
+                    fprintf(stderr, "[JIT-CALLOUT-FAIL] native 直调: native raised exception\n");
+                return NULL_VAL;
+            }
+            return nres;
         }
     }
 

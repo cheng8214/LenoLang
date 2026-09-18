@@ -1,0 +1,46 @@
+// probe_native_arg_from_index.leno — R6-k 直调路径的**实参来源 = 容器取值**（§8.129 首要线索）
+//
+// 为什么是它：§8.129 定位到"所有 GUI 应用在 JIT 下闪烁"的元凶是 R6-k 的「native 绑定方法原地直调」，
+// 而 docs §8.82/§8.87 早就怀疑 —— `OP_INDEX` 慢路径 pop 了两个槽之后 `TOS_PRODUCE()` 只把结果
+// pin 在寄存器、**没补回物理栈** ⇒ 之后的 `rsp` 相对寻址偏移 ✗。R6-k 的直调正是**从 `vstack_top`
+// 取实参** ⇒ 布局一错就会给 native 传**错值** ⇒ 控件库（`Array.add` 热循环）状态被写坏 ✓
+//
+// 本探针把这条形态压到最小：`dst.add(src[idx])` —— `src[idx]` 走 `OP_INDEX` 慢路径（callout），
+// 结果立刻当作 native 绑定方法 `Array.add` 的实参 ✓。判据：JIT 与 NO_JIT 的 `acc`/`len` 必须逐字相同。
+//
+// 运行：
+//   build\leno.exe --no-cache jit_probes\probe_native_arg_from_index.leno
+//   set LENO_NO_JIT=1 & ...（对照）
+main() {
+    // 源数组：值域刻意选成"能一眼看出错位"（i*3+1，隔 3 递增）
+    Array[int] src = []
+    int i = 0
+    while i < 100 {
+        src.add(i * 3 + 1)
+        i = i + 1
+    }
+
+    Array[int] dst = []
+    int acc = 0
+    int k = 0
+    while k < 2000 {
+        int idx = k % 100
+        dst.add(src[idx])                 // ← 实参来自容器取值（OP_INDEX 慢路径）
+        acc = acc + dst[dst.len() - 1]    // ← 读回来的值必须等于 src[idx]
+        k = k + 1
+    }
+
+    // 再叠一层"实参来自容器 + 另一条 native 路径"（同族形态，防只修一条路）
+    // 注：这里刻意**不再用字典字面量**（`{}` 在当前语言里是 `any` ⇒ 不能赋给 `Dict` 变量 ✗，
+    //     见 §8.129 踩坑记录）⇒ 换成 `Array.insert` 这条同族 native 绑定方法 ✓
+    Array[int] dst2 = []
+    int k2 = 0
+    while k2 < 500 {
+        int idx2 = k2 % 100
+        dst2.insert(0, src[idx2])         // ← 插入位置是常量、实参同样来自容器取值
+        acc = acc + dst2[0]
+        k2 = k2 + 1
+    }
+
+    print("acc=" + acc + " len=" + dst.len() + " len2=" + dst2.len() + "\n")
+}
