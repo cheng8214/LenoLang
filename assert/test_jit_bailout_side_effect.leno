@@ -1,0 +1,29 @@
+// bailout 不得让**副作用执行两遍**（§8.126 的数据污染回归）。
+//
+// 背景：机器码的 bailout 块**不写回 locals**（源码注释：`locals not written back
+// (VM re-executes from back-edge)`）⇒ 解释器会**重做整轮迭代**，而 JIT 那半轮已发生的
+// 副作用（数组 append / 计数 / 状态改写）**不回滚** ⇒ 副作用执行两遍 ✗。
+// §8.105 的"歧义区"守卫（判据 `raw>>47 == 0` = 所有非负 int48）正是这样把循环打成
+// bailout 的：普通输入（`[1,2,3]`）就命中 ⇒ 数据污染。修法：撤销守卫（§8.126）。
+//
+// 判据（绝对期望值 ⇒ JIT 与 LENO_NO_JIT=1 都必须 PASS）：
+//   · sum == 201（`for 0:200` 含两端 ⇒ 201 轮）
+//   · G.len() == 201 —— 修前是 204（循环里 `G.add(i)` 多执行了 3 次 = JIT_BAILOUT_LIMIT）
+var G = []
+
+func f(int n): int {
+    var acc = 0
+    for 0:n to i {
+        G.add(i)                // ← 副作用（JIT 半轮里已执行）
+        var t = [1, 2, 3]       // ← §8.105 守卫会在这里 bailout（非负元素）
+        acc = acc + t[0]
+    }
+    return acc
+}
+
+main() {
+    var r = f(200)
+    assert_eq(r, 201)
+    assert_eq(G.len(), 201)
+    print("test_jit_bailout_side_effect passed")
+}
