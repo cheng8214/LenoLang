@@ -1,0 +1,56 @@
+// LenoCrypto —— 通用加密库统一入口
+// 与 LenoWeb / LenoSDL3 同一组织方式：import 子模块 → 重新导出 → export func 转发
+//
+// 设计取舍：
+//   · 加解密一律走 **byte 数组（Array[int]）** ✓（字符串只是"顺手的糖"，因为 Leno 的
+//     string 是字节串、二进制经 string 往返容易失真 ✗）；
+//   · 子模块之间**互不依赖**（门面负责组合），改名/替换实现不影响别人 ✓；
+//   · 全部来自 examples/crypto/*.leno 的**机械搬运**（截断各自 main()、逻辑逐字保留 ✓），
+//     所以库里没有"新写但没验证"的算法 —— 校验见 test/test_crypto_vectors.leno
+//     （向量由 node:crypto 生成，作为绝对期望值 ✓）。
+
+import "crypto_base64.leno" as b64
+import "crypto_sha256.leno" as s256
+import "crypto_sha512.leno" as s512
+import "crypto_hmac_sha256.leno" as hmac
+import "crypto_aes.leno" as aes
+
+// ==================== Base64 ====================
+export func base64_encode(string input):string { return b64.base64_encode(input) }
+export func base64_decode(string input):string { return b64.base64_decode(input) }
+export func b64_to_bytes(string s):Array[int] { return b64.b64_to_bytes(s) }
+export func bytes_to_b64(Array[int] bs):string { return b64.bytes_to_b64(bs) }
+export func str_to_bytes(string s):Array[int] { return b64.str_to_bytes(s) }
+export func bytes_to_str(Array[int] bs):string { return b64.bytes_to_str(bs) }
+
+// ==================== 哈希 ====================
+// sha256 / sha512 返回**十六进制小写字符串**；*_bytes 返回原始 32/64 字节
+export func sha256(string input):string { return s256.sha256(input) }
+// 注：sha256 的 bytes 版在 hmac 子模块里（那里也实现了一份 SHA-256），这里转发以免重复实现
+export func sha256_bytes(Array[int] msg):Array[int] { return hmac.sha256_bytes(msg) }
+export func sha512(string input):string { return s512.sha512(input) }
+export func sha512_bytes(Array[int] msg):Array[int] { return s512.sha512_bytes(msg) }
+
+// ==================== HMAC ====================
+export func hmac_sha256(string key, string message):string { return hmac.hmac_sha256(key, message) }
+export func hmac_sha256_bytes(Array[int] key_bytes, string message):string { return hmac.hmac_sha256_bytes(key_bytes, message) }
+
+// ==================== AES（ECB 单块 + CBC 常用模式）====================
+export func aes_encrypt_block(Array[int] plaintext, Array[int] key):Array[int] { return aes.aes_encrypt_block(plaintext, key) }
+export func aes_decrypt_block(Array[int] ciphertext, Array[int] key):Array[int] { return aes.aes_decrypt_block(ciphertext, key) }
+export func pkcs7_pad_bytes(Array[int] data, int block_size):Array[int] { return aes.pkcs7_pad_bytes(data, block_size) }
+export func pkcs7_unpad_bytes(Array[int] data):Array[int] { return aes.pkcs7_unpad_bytes(data) }
+// CBC：**内置 PKCS7**（加密自动补、解密自动去）⇒ 调用方不用管填充 ✓
+export func aes128_cbc_encrypt_bytes(Array[int] key16, Array[int] iv16, Array[int] pt):Array[int] { return aes.aes128_cbc_encrypt_bytes(key16, iv16, pt) }
+export func aes128_cbc_decrypt_bytes(Array[int] key16, Array[int] iv16, Array[int] ct):Array[int] { return aes.aes128_cbc_decrypt_bytes(key16, iv16, ct) }
+// 字符串糖（内部按 UTF-8 字节处理）
+export func aes128_cbc_encrypt_str(Array[int] key16, Array[int] iv16, string plaintext):Array[int] {
+    return aes.aes128_cbc_encrypt_bytes(key16, iv16, b64.str_to_bytes(plaintext))
+}
+export func aes128_cbc_decrypt_str(Array[int] key16, Array[int] iv16, Array[int] ct):string {
+    return b64.bytes_to_str(aes.aes128_cbc_decrypt_bytes(key16, iv16, ct))
+}
+
+// ==================== hex ====================
+export func hex_to_bytes(string hex):Array[int] { return aes.hex_to_bytes(hex) }
+export func bytes_to_hex(Array[int] bytes):string { return aes.bytes_to_hex(bytes) }

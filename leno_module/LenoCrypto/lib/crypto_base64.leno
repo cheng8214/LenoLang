@@ -1,0 +1,227 @@
+﻿// LenoCrypto · 通用加密库（由 examples\crypto\base64.leno 机械搬运：截断 main()、一律加 export，逻辑逐字保留）
+
+// Base64 编码/解码 —— 纯 LenoC 实现
+// 展示 LenoC 的位运算、字符串操作能力
+
+import strings
+
+// Base64 编码表
+var ENCODE_TABLE = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+// 位掩码常量
+int MASK_3F = 0x3F  // 6 位掩码
+int MASK_FF = 0xFF  // 8 位掩码
+
+// 从编码表取一个字符（0-based 索引）
+// 用 byte() + strings.char() 避免 slice 分配新字符串
+export func table_char(int index):string {
+    return strings.char(ENCODE_TABLE.byte(index))
+}
+
+// 合法 Base64 字符集合（用 byte 值作 int 键，O(1) 数组查找）
+export func build_valid_set():Dict[int, int] {
+    Dict[int, int] s = {}
+    for 0:63 to i {
+        s[ENCODE_TABLE.byte(i)] = 1
+    }
+    s[61] = 1  // '=' 的 ASCII 值
+    return s
+}
+
+var VALID_SET = build_valid_set()
+
+// Base64 解码表（byte 值 -> 6 位索引，int 键 O(1) 数组查找）
+export func build_decode_table():Dict[int, int] {
+    Dict[int, int] table = {}
+    for 0:63 to i {
+        table[ENCODE_TABLE.byte(i)] = i
+    }
+    return table
+}
+
+var DECODE_TABLE = build_decode_table()
+
+// 检查字符串是否为合法的 Base64 字符
+export func is_valid_base64(string input):bool {
+    int len = input.byte_len()
+    for len to i {
+        if (not VALID_SET.has(input.byte(i))) {
+            return false
+        }
+    }
+    return true
+}
+
+// Base64 编码
+export func base64_encode(string input):string {
+    var result = ""
+    int i = 0
+    int len = input.byte_len()
+
+    // 每次处理 3 个字节
+    while i + 2 < len {
+        // byte() 是 0-based 索引
+        int b0 = input.byte(i)
+        int b1 = input.byte(i + 1)
+        int b2 = input.byte(i + 2)
+
+        // 拼成 24 位
+        int n = (b0 << 16) | (b1 << 8) | b2
+
+        // 拆成 4 个 6 位单元，查表
+        result += table_char((n >> 18) & MASK_3F)
+        result += table_char((n >> 12) & MASK_3F)
+        result += table_char((n >> 6) & MASK_3F)
+        result += table_char(n & MASK_3F)
+
+        i = i + 3
+    }
+
+    // 处理剩余字节
+    int remain = len - i
+    if (remain == 1) {
+        int b0 = input.byte(i)
+        int n = b0 << 16
+        result += table_char((n >> 18) & MASK_3F)
+        result += table_char((n >> 12) & MASK_3F)
+        result += "=="
+    } else if (remain == 2) {
+        int b0 = input.byte(i)
+        int b1 = input.byte(i + 1)
+        int n = (b0 << 16) | (b1 << 8)
+        result += table_char((n >> 18) & MASK_3F)
+        result += table_char((n >> 12) & MASK_3F)
+        result += table_char((n >> 6) & MASK_3F)
+        result += "="
+    }
+
+    return result
+}
+
+// Base64 解码
+export func base64_decode(string input):string {
+    var result = ""
+    int len = input.byte_len()
+
+    if (not is_valid_base64(input)) {
+        throw "Invalid Base64 input"
+    }
+
+    // 检查 padding（'=' 的 ASCII 码是 61）
+    int pad = 0
+    if (len > 0 and input.byte(len - 1) == 61) {
+        pad = 1
+        if (len > 1 and input.byte(len - 2) == 61) {
+            pad = 2
+        }
+    }
+
+    int valid_len = len - pad
+
+    int i = 0
+    while (i + 4 <= valid_len) {
+        int c0 = DECODE_TABLE[input.byte(i)]
+        int c1 = DECODE_TABLE[input.byte(i + 1)]
+        int c2 = DECODE_TABLE[input.byte(i + 2)]
+        int c3 = DECODE_TABLE[input.byte(i + 3)]
+
+        int n = (c0 << 18) | (c1 << 12) | (c2 << 6) | c3
+
+        result += strings.char((n >> 16) & MASK_FF)
+        result += strings.char((n >> 8) & MASK_FF)
+        result += strings.char(n & MASK_FF)
+
+        i = i + 4
+    }
+
+    // 处理带 padding 的尾部
+    if (pad == 1) {
+        int c0 = DECODE_TABLE[input.byte(i)]
+        int c1 = DECODE_TABLE[input.byte(i + 1)]
+        int c2 = DECODE_TABLE[input.byte(i + 2)]
+
+        int n = (c0 << 18) | (c1 << 12) | (c2 << 6)
+
+        result += strings.char((n >> 16) & MASK_FF)
+        result += strings.char((n >> 8) & MASK_FF)
+    } else if (pad == 2) {
+        int c0 = DECODE_TABLE[input.byte(i)]
+        int c1 = DECODE_TABLE[input.byte(i + 1)]
+
+        int n = (c0 << 18) | (c1 << 12)
+
+        result += strings.char((n >> 16) & MASK_FF)
+    }
+
+    return result
+}
+
+// 获取 Base64 字符对应的 6 位值
+export func base64_char_value(string ch):int {
+    int b = ch.byte(0)
+    if (DECODE_TABLE.has(b)) {
+        return DECODE_TABLE[b]
+    }
+    throw "Invalid Base64 character: " + ch
+}
+
+// ==================== 测试 ====================
+
+// ============================================================================
+// 追加（LenoCrypto）：bytes 友好接口
+// 为什么需要：上面是从 examples/crypto/base64.leno 搬来的，只有 string 版
+// （`base64_decode` 返回 string ⇒ **二进制会失真** ✗）。加解密一律走 byte 数组，
+// 所以这里补一组 byte 版 ✓。
+// ============================================================================
+export func str_to_bytes(string s):Array[int] {
+    var out = []
+    int i = 0
+    while i < s.byte_len() {
+        out.add(s.byte(i))
+        i = i + 1
+    }
+    return out
+}
+
+export func bytes_to_str(Array[int] bs):string {
+    var out = ""
+    for 0:bs.len() - 1 to i {
+        out = out + strings.char(bs[i])
+    }
+    return out
+}
+
+// base64 字符值（非法字符返回 -1）
+export func b64_char_val(int c):int {
+    if c >= 65 and c <= 90 { return c - 65 }
+    if c >= 97 and c <= 122 { return c - 97 + 26 }
+    if c >= 48 and c <= 57 { return c - 48 + 52 }
+    if c == 43 { return 62 }        // '+'
+    if c == 47 { return 63 }        // '/'
+    return -1
+}
+
+// base64 字符串 → byte 数组（二进制安全 ✓；遇 '=' 或非法字符即结束）
+export func b64_to_bytes(string s):Array[int] {
+    var out = []
+    int acc = 0
+    int nbits = 0
+    int i = 0
+    while i < s.byte_len() {
+        int v = b64_char_val(s.byte(i))
+        if v < 0 { break }
+        acc = ((acc << 6) | v) & 0xFFFFFF
+        nbits = nbits + 6
+        if nbits >= 8 {
+            nbits = nbits - 8
+            out.add(_uint8((acc >> nbits) & 0xFF))
+        }
+        i = i + 1
+    }
+    return out
+}
+
+// byte 数组 → base64 字符串（复用上面的 base64_encode ✓）
+export func bytes_to_b64(Array[int] bs):string {
+    return base64_encode(bytes_to_str(bs))
+}

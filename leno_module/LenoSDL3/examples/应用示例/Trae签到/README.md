@@ -106,7 +106,8 @@ build\leno.exe trae_crypto.leno → trae_crypto fixture test passed   （exit=0 
 
 | 路径 | 用途 |
 | --- | --- |
-| `trae_crypto.leno` | ① 派生解密 + 金标自测（`main`）✓ |
+| `trae_crypto.leno` | ① 派生解密（**40 行**；通用加密已抽到标准库 `leno_module/LenoCrypto` ✓，之前这里是 829 行机械拼接 ✗）|
+| `test/test_trae_decrypt_fixture.leno` | 金标 fixture 回归（绝对期望值 ✓）|
 | `tools/gen_fixture.js` | 金标 fixture 生成器（node，无依赖）✓ |
 | `tools/fixture_enc.txt` / `tools/fixture_expect_json.txt` | 合成 fixture（纯文本，无 BOM）✓ |
 | `tools/fixture_login_state.json` | 同上（JSON 版，便于人看）✓ |

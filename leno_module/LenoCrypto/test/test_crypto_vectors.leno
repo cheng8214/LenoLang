@@ -1,0 +1,42 @@
+// LenoCrypto 校验：断言值**全部由 node:crypto 生成**（权威）⇒ 绝对期望值 ✓
+// 跑：build\leno.exe leno_module\LenoCrypto\test\test_crypto_vectors.leno
+import "../lib/Crypto.leno" as crypto
+
+main() {
+    // ==================== 哈希 ====================
+    assert_eq(crypto.sha256("abc"),
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+    assert_eq(crypto.sha512("abc"),
+        "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f")
+    assert_eq(crypto.sha512_bytes(crypto.str_to_bytes("abc")).len(), 64)   // 原始 64 字节 ✓
+
+    // ==================== HMAC-SHA256 ====================
+    assert_eq(crypto.hmac_sha256("key", "msg"),
+        "2d93cbc1be167bcb1637a4a23cbff01a7878f0c50ee833954ea5221bb1b8c628")
+
+    // ==================== Base64（含二进制安全性）====================
+    assert_eq(crypto.bytes_to_b64([0, 1, 2, 253, 254, 255]), "AAEC/f7/")
+    var back = crypto.b64_to_bytes("AAEC/f7/")
+    assert_eq(back.len(), 6)
+    assert_eq(back[3], 253)                       // 253 是二进制字节 ⇒ string 版会失真，bytes 版必须原样 ✓
+    assert_eq(back[5], 255)
+    assert_eq(crypto.base64_encode("foobar"), "Zm9vYmFy")
+    assert_eq(crypto.base64_decode("Zm9vYmFy"), "foobar")
+
+    // ==================== AES-128-CBC（node 权威密文）====================
+    var key = crypto.str_to_bytes("0123456789abcdef")
+    var iv = crypto.str_to_bytes("abcdef0123456789")
+    var ct_hex = "fd0ebb658338068b87dfb8b53954244e6b3a747633cc201a0ef5ead3f6fb4a09"
+    var plain = "hello leno crypto"
+    // 加密方向（PKCS7 自动补填充）
+    assert_eq(crypto.bytes_to_hex(crypto.aes128_cbc_encrypt_bytes(key, iv, crypto.str_to_bytes(plain))), ct_hex)
+    // 解密方向（PKCS7 自动去填充）
+    assert_eq(crypto.aes128_cbc_decrypt_str(key, iv, crypto.hex_to_bytes(ct_hex)), plain)
+
+    // ==================== AES ECB 单块往返（自洽）====================
+    var blk = crypto.str_to_bytes("1234567890abcdef")
+    assert_eq(crypto.bytes_to_hex(crypto.aes_decrypt_block(crypto.aes_encrypt_block(blk, key), key)),
+        crypto.bytes_to_hex(blk))
+
+    print("test_crypto_vectors passed")
+}
