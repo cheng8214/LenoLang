@@ -1,6 +1,7 @@
 // verify_slime.leno — 检查 史莱姆.png 是否真的有透明背景（alpha=0 的像素）
 import "SDL3" as SDL3
 import ffi
+import dirs
 
 // SDL3 SDL_Surface 头部布局（64 位）：
 // flags@0  format@4  w@8  h@12  pitch@16  pixels@24
@@ -14,7 +15,10 @@ cstruct SInfo {
 }
 
 main() {
-    string DST = "d:\\CLeno\\LenoC\\leno_module\\LenoSDL3\\examples\\应用示例\\游戏\\塔防\\image\\史莱姆.png"
+    // 不写死：默认校验**本脚本所在目录**下的 史莱姆.png，命令行可覆盖
+    //   leno verify_slime.leno [待校验的 png]
+    var args = _args()
+    string DST = if args.len() >= 1 then args[0] else dirs.join(dirs.script_dir(), "史莱姆.png")
 
     Ptr[u8] surf = SDL3.loadImage(DST)
     if surf == null {

@@ -23,6 +23,7 @@
 // 运行：build\leno.exe resize_slime.leno
 import "SDL3" as SDL3
 import ffi
+import dirs
 use SDL3.(WindowFlag, Window, Renderer)
 
 // 读回 surface 头部布局（64 位）：flags@0 format@4 w@8 h@12 pitch@16 pixels@24
@@ -46,10 +47,14 @@ func _isNearWhite(Ptr[u8] px, int pitch, int bpp, int x, int y, int thr): bool {
 }
 
 main() {
-    string name = "boss1走.png"
-    string SRC = "d:\\CLeno\\" + name
-    string DST = "d:\\CLeno\\LenoC\\leno_module\\LenoSDL3\\examples\\应用示例\\游戏\\塔防\\image\\" + name
-    string TMP = "d:\\CLeno\\LenoC\\_slime_tmp.png"
+    // 路径不再写死：默认以**本脚本所在目录**为基准，命令行可覆盖
+    //   leno resize_slime.leno [源图] [输出文件]
+    // （原先写死 d:\CLeno\boss1走.png / d:\CLeno\LenoC\...\塔防\image\ —— 那个仓库副本已不存在）
+    var args = _args()
+    string baseDir = dirs.script_dir()
+    string SRC = if args.len() >= 1 then args[0] else dirs.join(baseDir, "boss1走.png")
+    string DST = if args.len() >= 2 then args[1] else dirs.join(baseDir, "boss1走_288x48.png")
+    string TMP = dirs.join(baseDir, "_slime_tmp.png")
 
     int FRAMES = 6    // 精灵表帧数：人物3 = 8 帧(384x48)；人物1/2/史莱姆 = 6 帧(288x48)
     int W = 48 * FRAMES   // 每帧 48x48 横排

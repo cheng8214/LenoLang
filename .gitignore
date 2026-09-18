@@ -1,5 +1,5 @@
-# 构建输出
-build/
+# 构建输出（build/ **允许入库**：随 exe 分发的 leno_module/ 与 leno_gui/ 就在里面；
+# 二进制仍不入库 —— *.exe 由下面这行统一排除，勿删）
 *.exe
 *.o
 *.obj
@@ -30,3 +30,6 @@ jit_mc_dump.txt
 1.txt 
 
 jit_eaamples/
+
+# 临时探针 / 实验目录（放在 build 外、不入库；与历史上的 .probe_perf / .probe_s2b 同族）
+.probe*/
