@@ -133,8 +133,8 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
                     emit_getupval_to(gen, dst, ref->index, ast->line);
                     break;
                 case SYM_MODULE:
-                    // 模块变量：由 OP_GET_MODULE_VAR 处理（索引在 ref->index）
-                    reg_encode_iABC(gen->chunk, OP_GET_MODULE_VAR, dst, ref->index, 0, ast->line);
+                    // 模块变量：索引是 16 位 Bx（与 VM 的 READ_Bx 一致）
+                    reg_encode_iABx(gen->chunk, OP_GET_MODULE_VAR, dst, ref->index, ast->line);
                     break;
                 case SYM_NATIVE:
                 case SYM_TYPE:

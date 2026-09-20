@@ -246,7 +246,8 @@ void gen_func(CodeGen* gen, Ast* ast) {
         // 模块内的函数：写进 module->globals[ref->index]
         int r = reg_alloc(gen);
         emit_closure_upvals(gen, r, const_idx, ast);
-        reg_encode_iABC(gen->chunk, OP_DEFINE_MODULE_FUNC, r, ref->index, 0, ast->line);
+        // 编码必须与 VM 的 READ_Bx() 一致（模块槽位是 16 位 Bx，不是 8 位 B）
+        reg_encode_iABx(gen->chunk, OP_DEFINE_MODULE_FUNC, r, ref->index, ast->line);
         reg_free(gen, r);
     }
 }

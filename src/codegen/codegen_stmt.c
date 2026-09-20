@@ -648,7 +648,7 @@ static void gen_var_decl(CodeGen* gen, Ast* ast) {
         } else {
             emit_loadnil_to(gen, r, ast->line);
         }
-        reg_encode_iABC(gen->chunk, OP_SET_MODULE_VAR, r, ref->index, 0, ast->line);
+        reg_encode_iABx(gen->chunk, OP_SET_MODULE_VAR, r, ref->index, ast->line);
         reg_free(gen, r);
         return;
     }
@@ -728,7 +728,7 @@ void gen_assign(CodeGen* gen, Ast* ast) {
                     case SYM_MODULE: {
                         int r = gen_expr(gen, value);
                         emit_cast_for_target(gen, ref->type_kind, value, r, ast->line);
-                        reg_encode_iABC(gen->chunk, OP_SET_MODULE_VAR, r, ref->index, 0, ast->line);
+                        reg_encode_iABx(gen->chunk, OP_SET_MODULE_VAR, r, ref->index, ast->line);
                         reg_free(gen, r);
                         break;
                     }
@@ -1077,7 +1077,7 @@ static void gen_enum_def(CodeGen* gen, Ast* ast) {
     } else if (ref->kind == SYM_LOCAL || ref->kind == SYM_PARAM) {
         emit_mov(gen, ref->index, r, ast->line);
     } else if (ref->kind == SYM_MODULE) {
-        reg_encode_iABC(gen->chunk, OP_SET_MODULE_VAR, r, ref->index, 0, ast->line);
+        reg_encode_iABx(gen->chunk, OP_SET_MODULE_VAR, r, ref->index, ast->line);
     }
     reg_free(gen, r);
 }
@@ -1225,7 +1225,7 @@ static void gen_import(CodeGen* gen, Ast* ast) {
         if (sym->kind == SYM_GLOBAL) {
             emit_defglobal(gen, r, sym->index, ast->line);
         } else if (sym->kind == SYM_MODULE) {
-            reg_encode_iABC(gen->chunk, OP_SET_MODULE_VAR, r, sym->index, 0, ast->line);
+            reg_encode_iABx(gen->chunk, OP_SET_MODULE_VAR, r, sym->index, ast->line);
         } else if (sym->kind == SYM_LOCAL || sym->kind == SYM_PARAM) {
             if (sym->index >= gen->next_reg) {
                 gen->next_reg = sym->index + 1;
