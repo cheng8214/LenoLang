@@ -1,0 +1,23 @@
+// 测试 face 访问限制 - 错误场景
+
+face Speaker {
+    func speak(): string
+}
+
+struct Dog impl Speaker {
+    string name
+    int age
+
+    func speak(): string {
+        return "woof from " + self.name
+    }
+
+    func getAge(): int {
+        return self.age
+    }
+}
+
+var d = new Dog(name="Rex", age=3)
+Speaker s = d
+
+print(s.name)

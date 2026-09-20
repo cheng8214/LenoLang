@@ -1,0 +1,30 @@
+// 跨模块 clib re-export 模式测试
+import "clib_cross_mid.leno" as mid
+use mid.core_lib
+use mid.extra_lib
+
+main() {
+    // 1. 通过中间层获取 clib
+    core_lib c = mid.getCore()
+    assert_eq(c.abs(-5), 5)
+
+    // 2. 链式
+    assert_eq(mid.getCore().abs(-7), 7)
+
+    // 3. 多类型
+    extra_lib e = mid.getExtra()
+    core_lib c2 = mid.getCore()
+    assert_eq(c2.abs(-11), 11)
+
+    // 4. 复用
+    core_lib cc = mid.getCore()
+    assert_eq(cc.abs(-13), 13)
+    assert_eq(cc.abs(-17), 17)
+
+    // 5. 包装函数
+    assert_eq(mid.wrapAbs(-19), 19)
+
+    // 6. 参数传递
+    core_lib cp = mid.getCore()
+    assert_eq(mid.callWith(cp, -23), 23)
+}

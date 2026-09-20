@@ -1,0 +1,123 @@
+// struct 关联常量（Associated Constants）测试
+// 测试 struct 体内 const 声明，通过 StructName.CONST 访问
+
+// 测试1: 整数关联常量（类型推断）
+struct Widget {
+    const MAX_CHILDREN = 256
+    const MIN_SIZE = 1
+
+    int x = 0
+    int y = 0
+}
+
+// 测试2: 多类型关联常量
+struct Font {
+    const DEFAULT_SIZE = 16.0
+    const FAMILY_NAME = "sans-serif"
+    const STYLE_NORMAL = 0
+    const STYLE_BOLD = 1
+    const IS_UNICODE = true
+
+    float size = 12.0
+    string name = "default"
+}
+
+// 测试3: 显式类型关联常量
+struct Config {
+    const int MAX_RETRY = 3
+    const float TIMEOUT = 30.0
+    const string VERSION = "1.0.0"
+    const bool DEBUG = false
+
+    int retries = 0
+}
+
+// 测试4: 关联常量与方法共存
+struct Counter {
+    const MAX = 100
+    const MIN = 0
+
+    int value = 0
+
+    func increment(): int {
+        if value < MAX {
+            value = value + 1
+        }
+        return value
+    }
+
+    func reset() {
+        value = MIN
+    }
+}
+
+// 测试5: 多常量逗号分隔声明
+struct Colors {
+    const RED = 0xFF0000, GREEN = 0x00FF00, BLUE = 0x0000FF
+
+    int rgb = 0
+}
+
+// 测试6: 关联常量在字段之后声明
+struct Layout {
+    float x = 0.0
+    float y = 0.0
+
+    const ALIGN_LEFT = 0
+    const ALIGN_CENTER = 1
+    const ALIGN_RIGHT = 2
+}
+
+main() {
+    // 测试1: 整数常量访问
+    assert_eq(Widget.MAX_CHILDREN, 256)
+    assert_eq(Widget.MIN_SIZE, 1)
+    print("[1] integer const passed")
+
+    // 测试2: 多类型常量访问
+    assert_eq(Font.DEFAULT_SIZE, 16.0)
+    assert_eq(Font.FAMILY_NAME, "sans-serif")
+    assert_eq(Font.STYLE_NORMAL, 0)
+    assert_eq(Font.STYLE_BOLD, 1)
+    assert_eq(Font.IS_UNICODE, true)
+    print("[2] multi-type const passed")
+
+    // 测试3: 显式类型常量访问
+    assert_eq(Config.MAX_RETRY, 3)
+    assert_eq(Config.TIMEOUT, 30.0)
+    assert_eq(Config.VERSION, "1.0.0")
+    assert_eq(Config.DEBUG, false)
+    print("[3] explicit type const passed")
+
+    // 测试4: 常量与方法共存
+    var c = new Counter()
+    assert_eq(Counter.MIN, 0)
+    assert_eq(Counter.MAX, 100)
+    c.increment()
+    c.increment()
+    assert_eq(c.value, 2)
+    c.reset()
+    assert_eq(c.value, 0)
+    print("[4] const with methods passed")
+
+    // 测试5: 逗号分隔多常量
+    assert_eq(Colors.RED, 0xFF0000)
+    assert_eq(Colors.GREEN, 0x00FF00)
+    assert_eq(Colors.BLUE, 0x0000FF)
+    print("[5] comma-separated const passed")
+
+    // 测试6: 常量在字段之后
+    assert_eq(Layout.ALIGN_LEFT, 0)
+    assert_eq(Layout.ALIGN_CENTER, 1)
+    assert_eq(Layout.ALIGN_RIGHT, 2)
+    print("[6] const after fields passed")
+
+    // 测试7: 常量用于表达式
+    var max_w = Widget.MAX_CHILDREN + 10
+    assert_eq(max_w, 266)
+    var style = Font.STYLE_BOLD | Font.STYLE_NORMAL
+    assert_eq(style, 1)
+    print("[7] const in expressions passed")
+
+    print("=== ALL struct associated const tests passed ===")
+}

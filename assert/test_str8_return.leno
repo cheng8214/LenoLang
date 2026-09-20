@@ -1,0 +1,24 @@
+// 测试: clib str8 返回类型基本功能
+// 使用 msvcrt 的 strerror，返回 char*，不需要释放
+
+import ffi
+
+clib msvcrt {
+    str8 strerror(i32 errnum)
+    i32 strlen(str8 s)
+}
+
+main() {
+    msvcrt lib = ffi.load("msvcrt.dll")
+
+    // str8 返回值自动转为 string
+    string msg = lib.strerror(2)
+    assert_true(msg.len() > 0)
+    assert_true(msg.has("file") or msg.has("No"))
+
+    // str8 参数接受 string
+    int len = lib.strlen("hello")
+    assert_eq(len, 5)
+
+    print("test_str8_return passed")
+}

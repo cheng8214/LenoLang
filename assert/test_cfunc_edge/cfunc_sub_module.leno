@@ -1,0 +1,5 @@
+// cfunc 在子文件（被 import 的文件）中定义，非 export
+// 验证扫描器能从子文件中收集裸 cfunc
+
+cfunc SortCb(Ptr a, Ptr b): i32
+cfunc HashCb(Ptr key, i32 len): u32

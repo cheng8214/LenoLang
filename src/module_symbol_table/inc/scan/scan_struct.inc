@@ -1,0 +1,1141 @@
+            // 检查是否是 struct 定义
+            if (strncmp(after_export, "struct", 6) == 0 && (after_export[6] == ' ' || after_export[6] == '\t' || after_export[6] == '\n' || after_export[6] == '\r' || after_export[6] == '\0')) {
+                char* after_struct = after_export + 6;
+                while (*after_struct && (*after_struct == ' ' || *after_struct == '\t')) after_struct++;
+
+                const char* name_start = after_struct;
+                while (*after_struct && (isalnum((unsigned char)*after_struct) || *after_struct == '_')) after_struct++;
+                int name_len = (int)(after_struct - name_start);
+
+                if (name_len > 0 && name_len < 64) {
+                    char struct_name[64];
+                    strncpy(struct_name, name_start, name_len);
+                    struct_name[name_len] = '\0';
+
+                    // 解析泛型参数 [T] 或 [K, V] 或 [T: Face, K]
+                    int type_param_count = 0;
+                    char* type_param_names[MOD_MAX_TYPE_PARAMS] = {NULL};
+                    while (*after_struct && (*after_struct == ' ' || *after_struct == '\t')) after_struct++;
+                    if (*after_struct == '[') {
+                        after_struct++; // skip '['
+                        while (*after_struct && *after_struct != ']') {
+                            const char* tp_iter_start = after_struct;   // 进度守卫基准
+                            // 跳过空白（含换行，泛型参数列表可跨行）
+                            while (*after_struct && (*after_struct == ' ' || *after_struct == '\t' ||
+                                                     *after_struct == '\n' || *after_struct == '\r')) after_struct++;
+                            if (*after_struct && (isalnum((unsigned char)*after_struct) || *after_struct == '_')) {
+                                const char* tp_name_start = after_struct;
+                                while (*after_struct && (isalnum((unsigned char)*after_struct) || *after_struct == '_')) after_struct++;
+                                int tp_name_len = (int)(after_struct - tp_name_start);
+                                if (tp_name_len > 0 && tp_name_len < 64 && type_param_count < MOD_MAX_TYPE_PARAMS) {
+                                    type_param_names[type_param_count] = (char*)malloc(tp_name_len + 1);
+                                    strncpy(type_param_names[type_param_count], tp_name_start, tp_name_len);
+                                    type_param_names[type_param_count][tp_name_len] = '\0';
+                                }
+                                type_param_count++;
+                            }
+                            while (*after_struct && (*after_struct == ' ' || *after_struct == '\t' ||
+                                                     *after_struct == '\n' || *after_struct == '\r')) after_struct++;
+                            // 跳过约束语法 T: FaceName
+                            if (*after_struct == ':') {
+                                after_struct++; // skip ':'
+                                while (*after_struct && (*after_struct == ' ' || *after_struct == '\t' ||
+                                                         *after_struct == '\n' || *after_struct == '\r')) after_struct++;
+                                while (*after_struct && (isalnum((unsigned char)*after_struct) || *after_struct == '_')) after_struct++;
+                            }
+                            if (*after_struct == ',') after_struct++;
+                            // 本圈没推进就退出，避免死循环
+                            if (after_struct == tp_iter_start) break;
+                        }
+                        if (*after_struct == ']') after_struct++; // skip ']'
+                    }
+
+                    while (*after_struct && (*after_struct == ' ' || *after_struct == '\t' || *after_struct == '\n' || *after_struct == '\r')) after_struct++;
+
+                    // 解析 impl 声明（名称数组动态增长，无固定上限）
+                    char** impl_names = NULL;
+                    int impl_capacity = 0;
+                    int impl_count = 0;
+                    if (strncmp(after_struct, "impl", 4) == 0 && (after_struct[4] == ' ' || after_struct[4] == '\t')) {
+                        after_struct += 4;
+                        while (*after_struct && (*after_struct == ' ' || *after_struct == '\t')) after_struct++;
+
+                        // 解析 face 名称（支持多个，用逗号分隔）
+                        while (*after_struct && (isalnum((unsigned char)*after_struct) || *after_struct == '_')) {
+                            const char* face_name_start = after_struct;
+                            while (*after_struct && (isalnum((unsigned char)*after_struct) || *after_struct == '_')) after_struct++;
+                            int face_name_len = (int)(after_struct - face_name_start);
+
+                            if (face_name_len > 0 && face_name_len < 64) {
+                                // 动态扩容（容量不足时翻倍）
+                                int impl_slot_ok = 0;
+                                if (impl_count < impl_capacity) {
+                                    impl_slot_ok = 1;
+                                } else {
+                                    int new_cap = impl_capacity == 0 ? 8 : impl_capacity * 2;
+                                    char** grown = (char**)realloc(impl_names, sizeof(char*) * new_cap);
+                                    if (grown) {
+                                        impl_names = grown;
+                                        impl_capacity = new_cap;
+                                        impl_slot_ok = 1;
+                                    }
+                                }
+                                if (impl_slot_ok) {
+                                    impl_names[impl_count] = (char*)malloc(face_name_len + 1);
+                                    strncpy(impl_names[impl_count], face_name_start, face_name_len);
+                                    impl_names[impl_count][face_name_len] = '\0';
+                                    impl_count++;
+                                }
+                            }
+
+                            // 跳过泛型参数 [TypeArg]（如 Comparable[int]）
+                            while (*after_struct && (*after_struct == ' ' || *after_struct == '\t')) after_struct++;
+                            if (*after_struct == '[') {
+                                after_struct++; // skip '['
+                                int bracket_depth = 1;
+                                while (*after_struct && bracket_depth > 0) {
+                                    if (*after_struct == '[') bracket_depth++;
+                                    else if (*after_struct == ']') bracket_depth--;
+                                    after_struct++;
+                                }
+                            }
+
+                            // 跳过空白
+                            while (*after_struct && (*after_struct == ' ' || *after_struct == '\t')) after_struct++;
+                            // 跳过逗号
+                            if (*after_struct == ',') {
+                                after_struct++;
+                                while (*after_struct && (*after_struct == ' ' || *after_struct == '\t')) after_struct++;
+                            }
+                        }
+
+                        while (*after_struct && (*after_struct == ' ' || *after_struct == '\t' || *after_struct == '\n' || *after_struct == '\r')) after_struct++;
+                    }
+
+                    if (*after_struct == '{') {
+                        after_struct++;
+
+                        // 字段/方法数组按需动态增长（无固定上限）
+                        // 修复：原固定栈数组上限 MOD_MAX_FIELDS/MOD_MAX_METHODS=128，
+                        // struct 方法超过 128 个时被静默丢弃，导致跨模块调用报
+                        // "类型 'struct X' 没有方法 'Y'"（如 LenoSDL3 Table 的 contains/on_dbl_click）
+                        ModuleStructField* fields = NULL;
+                        ModuleStructMethod* methods = NULL;
+                        int field_capacity = 0;
+                        int method_capacity = 0;
+                        int field_count = 0;
+                        int method_count = 0;
+                        // 关联常量临时数组
+                        char* const_names_tmp[64];
+                        char* const_values_tmp[64];
+                        int const_count_tmp = 0;
+
+                        while (*after_struct && *after_struct != '}') {
+                            while (*after_struct && (*after_struct == ' ' || *after_struct == '\t' || *after_struct == '\n' || *after_struct == '\r')) after_struct++;
+                            if (!*after_struct || *after_struct == '}') break;
+
+                            if (*after_struct == '/' && *(after_struct+1) == '/') {
+                                while (*after_struct && *after_struct != '\n') after_struct++;
+                                continue;
+                            }
+                            // 跳过多行注释 /* ... */
+                            if (*after_struct == '/' && *(after_struct+1) == '*') {
+                                after_struct += 2;
+                                while (*after_struct && !(*after_struct == '*' && *(after_struct+1) == '/')) after_struct++;
+                                if (*after_struct) after_struct += 2;
+                                continue;
+                            }
+
+                            // 检查是否是关联常量声明 (const NAME = value)
+                            if (strncmp(after_struct, "const", 5) == 0 && (after_struct[5] == ' ' || after_struct[5] == '\t')) {
+                                char* after_const = after_struct + 5;
+                                while (*after_const && (*after_const == ' ' || *after_const == '\t')) after_const++;
+
+                                // 跳过可选的类型注解 (const int X = 1)
+                                // 预读：如果标识符后面跟 = 或 ,，说明是类型推断形式
+                                const char* peek_start = after_const;
+                                while (*after_const && (isalnum((unsigned char)*after_const) || *after_const == '_')) after_const++;
+                                // 跳过空白
+                                while (*after_const && (*after_const == ' ' || *after_const == '\t')) after_const++;
+                                if (*after_const != '=' && *after_const != ',') {
+                                    // 显式类型形式：token 是类型，跳过类型后再读名称
+                                    after_const = (char*)peek_start; // 回退
+                                    // 跳过类型
+                                    while (*after_const && (isalnum((unsigned char)*after_const) || *after_const == '_')) after_const++;
+                                    // 跳过 [T] 泛型部分
+                                    while (*after_const && (*after_const == ' ' || *after_const == '\t')) after_const++;
+                                    if (*after_const == '[') {
+                                        after_const++;
+                                        int depth = 1;
+                                        while (*after_const && depth > 0) {
+                                            if (*after_const == '[') depth++;
+                                            else if (*after_const == ']') depth--;
+                                            after_const++;
+                                        }
+                                    }
+                                    while (*after_const && (*after_const == ' ' || *after_const == '\t')) after_const++;
+                                } else {
+                                    // 类型推断形式：token 就是常量名
+                                    after_const = (char*)peek_start;
+                                }
+
+                                // 支持逗号分隔多个常量：const A = 1, B = 2
+                                do {
+                                    // 跳过空白
+                                    while (*after_const && (*after_const == ' ' || *after_const == '\t')) after_const++;
+
+                                    // 读取常量名
+                                    const char* cname_start = after_const;
+                                    while (*after_const && (isalnum((unsigned char)*after_const) || *after_const == '_')) after_const++;
+                                    int cname_len = (int)(after_const - cname_start);
+
+                                    if (cname_len > 0 && cname_len < 64) {
+                                        // 存入临时 const_names 数组
+                                        if (const_count_tmp < 64) {
+                                            const_names_tmp[const_count_tmp] = (char*)malloc(cname_len + 1);
+                                            strncpy(const_names_tmp[const_count_tmp], cname_start, cname_len);
+                                            const_names_tmp[const_count_tmp][cname_len] = '\0';
+                                            // 捕获常量值文本
+                                            const_values_tmp[const_count_tmp] = NULL;
+                                            // 跳过空白后检查 '='
+                                            char* after_name = after_const;
+                                            while (*after_name && (*after_name == ' ' || *after_name == '\t')) after_name++;
+                                            if (*after_name == '=') {
+                                                after_name++;
+                                                // 跳过空白
+                                                while (*after_name && (*after_name == ' ' || *after_name == '\t')) after_name++;
+                                                const char* val_start = after_name;
+                                                // 值表达式到逗号或行尾或分号或}
+                                                while (*after_name && *after_name != ',' && *after_name != ';' && *after_name != '\n' && *after_name != '}') after_name++;
+                                                int val_len = (int)(after_name - val_start);
+                                                // 去除尾部空白
+                                                while (val_len > 0 && (val_start[val_len-1] == ' ' || val_start[val_len-1] == '\t' || val_start[val_len-1] == '\r')) val_len--;
+                                                if (val_len > 0) {
+                                                    const_values_tmp[const_count_tmp] = (char*)malloc(val_len + 1);
+                                                    strncpy(const_values_tmp[const_count_tmp], val_start, val_len);
+                                                    const_values_tmp[const_count_tmp][val_len] = '\0';
+                                                }
+                                                after_const = after_name;
+                                            }
+                                            const_count_tmp++;
+                                        }
+                                    }
+
+                                    // 跳过空白
+                                    while (*after_const && (*after_const == ' ' || *after_const == '\t')) after_const++;
+                                } while (*after_const == ',' && (after_const++, 1));
+
+                                after_struct = after_const;
+                                // 跳过已处理的值表达式部分
+                                // （值已在上面处理完毕）
+                                // 跳过分号
+                                if (*after_struct == ';') after_struct++;
+                                continue;
+                            }
+
+                            // 检查是否是方法定义 (func 关键字)
+                            if (strncmp(after_struct, "func", 4) == 0 && (after_struct[4] == ' ' || after_struct[4] == '\t')) {
+                                char* after_func = after_struct + 4;
+                                while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
+
+                                // 读取方法名
+                                const char* method_name_start = after_func;
+                                while (*after_func && (isalnum((unsigned char)*after_func) || *after_func == '_')) after_func++;
+                                int method_name_len = (int)(after_func - method_name_start);
+
+                                if (method_name_len > 0 && method_name_len < 64) {
+                                    char method_name[64];
+                                    strncpy(method_name, method_name_start, method_name_len);
+                                    method_name[method_name_len] = '\0';
+
+                                    // 使用 struct_name::method_name 格式，避免与全局函数冲突
+                                    char method_key[256];
+                                    snprintf(method_key, sizeof(method_key), "%s::%s", struct_name, method_name);
+                                    int method_key_len = (int)strlen(method_key);
+
+                                    // 解析参数列表
+                                    int param_count = 0;
+                                    TypeKind param_types[MOD_MAX_PARAMS] = {0};
+                                    char param_struct_names[MOD_MAX_PARAMS][MOD_MAX_NAMES] = {{0}};
+                                    char* param_generic_names[MOD_MAX_PARAMS] = {NULL};  // 泛型参数名（如 T, K, V）
+
+                                    while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
+                                    if (*after_func == '(') {
+                                        after_func++;
+                                        int paren_depth = 1;
+                                        int has_param = 0;
+
+                                        while (*after_func && paren_depth > 0) {
+                                            // 跳过注释
+                                            if (*after_func == '/' && *(after_func+1) == '/') {
+                                                while (*after_func && *after_func != '\n') after_func++;
+                                                continue;
+                                            }
+                                            if (*after_func == '/' && *(after_func+1) == '*') {
+                                                after_func += 2;
+                                                while (*after_func && !(*after_func == '*' && *(after_func+1) == '/')) after_func++;
+                                                if (*after_func) after_func += 2;
+                                                continue;
+                                            }
+                                            if (*after_func == '(') {
+                                                paren_depth++;
+                                                after_func++;
+                                            } else if (*after_func == ')') {
+                                                paren_depth--;
+                                                if (paren_depth == 0) {
+                                                    after_func++;
+                                                    break;
+                                                }
+                                                after_func++;
+                                            } else if (paren_depth == 1) {
+                                                // 解析参数：type name 或 name（无类型）
+                                                while (*after_func && (*after_func == ' ' || *after_func == '\t' || *after_func == '\n' || *after_func == '\r')) after_func++;
+                                                if (*after_func == ')' || *after_func == '\0') continue;
+
+                                                // 检查是否是类型注解（简单启发式：如果看起来像类型，则解析为类型）
+                                                const char* token_start = after_func;
+                                                while (*after_func && (isalnum((unsigned char)*after_func) || *after_func == '_')) after_func++;
+                                                int token_len = (int)(after_func - token_start);
+
+                                                if (token_len > 0 && token_len < 64) {
+                                                    char token[64];
+                                                    strncpy(token, token_start, token_len);
+                                                    token[token_len] = '\0';
+
+                                                    // 类型名解析走**唯一实现**（⑳ 收尾）：基本类型 → clib → face →
+                                                    // cstruct → struct → 本 struct 的泛型参数名（命中即覆盖为
+                                                    // TYPE_GENERIC_PARAM）。此前这里是内联的四表检查 + 泛型循环，
+                                                    // 与 `mod_scan_params` 里那份是**同一政策的两份实现** ——
+                                                    // ⑧ 那一族 bug（各处认的名字集合不一致）的根源就在这里。
+                                                    TypeKind param_type = TYPE_ANY;
+                                                    char param_struct_name[64] = {0};
+                                                    char param_generic_name_buf[64] = {0};
+                                                    param_type = mod_resolve_param_type(token,
+                                                        param_struct_name, (int)sizeof(param_struct_name),
+                                                        param_generic_name_buf, (int)sizeof(param_generic_name_buf),
+                                                        clib_names, clib_name_count,
+                                                        face_names, face_name_count,
+                                                        cstruct_names, cstruct_name_count,
+                                                        struct_names, struct_name_count,
+                                                        type_param_names, type_param_count);
+                                                    char* param_generic_name = param_generic_name_buf[0]
+                                                        ? strdup(param_generic_name_buf) : NULL;
+
+                                                    // （clib / face / cstruct / struct 四表检查已并入上面的唯一实现
+                                                    //   `mod_resolve_param_type`；此处不再重复一份名字集合）
+
+                                                    // （泛型类型参数 T/K/V 的识别已并入上面的唯一实现）
+
+                                                    // 跳过空白和注释
+                                                    while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
+                                                    while (*after_func == '/' && *(after_func+1) == '/') { while (*after_func && *after_func != '\n') after_func++; while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++; }
+                                                    while (*after_func == '/' && *(after_func+1) == '*') { after_func += 2; while (*after_func && !(*after_func == '*' && *(after_func+1) == '/')) after_func++; if (*after_func) after_func += 2; while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++; }
+
+                                                    // 如果后面跟着标识符，说明 token 是类型
+                                                    if (*after_func && (isalnum((unsigned char)*after_func) || *after_func == '_')) {
+                                                        // token 是类型，跳过参数名
+                                                        while (*after_func && (isalnum((unsigned char)*after_func) || *after_func == '_')) after_func++;
+                                                        has_param = 1;
+                                                    } else if (*after_func == ',' || *after_func == ')' || *after_func == '=') {
+                                                        // token 是参数名（无类型），使用 TYPE_ANY
+                                                        param_type = TYPE_ANY;
+                                                        has_param = 1;
+                                                    }
+
+                                                    if (has_param && param_count < MOD_MAX_PARAMS) {
+                                                        param_types[param_count] = param_type;
+                                                        param_generic_names[param_count] = param_generic_name;
+                                                        param_generic_name = NULL;  // 转移所有权
+                                                        if (param_struct_name[0]) {
+                                                            memcpy(param_struct_names[param_count], param_struct_name, MOD_MAX_NAMES);
+                                                            param_struct_names[param_count][MOD_MAX_NAMES - 1] = '\0';
+                                                        }
+                                                        param_count++;
+                                                    } else if (has_param && param_count >= MOD_MAX_PARAMS) {
+                                                        fprintf(stderr, "[错误] 函数参数数量超过上限 %d\n", MOD_MAX_PARAMS);
+                                                    } else if (param_generic_name) {
+                                                        free(param_generic_name);
+                                                        param_generic_name = NULL;
+                                                    }
+
+                                                    // 跳过默认值（如果有）
+                                                    while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
+                                                    while (*after_func == '/' && *(after_func+1) == '/') { while (*after_func && *after_func != '\n') after_func++; while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++; }
+                                                    while (*after_func == '/' && *(after_func+1) == '*') { after_func += 2; while (*after_func && !(*after_func == '*' && *(after_func+1) == '/')) after_func++; if (*after_func) after_func += 2; while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++; }
+                                                    if (*after_func == '=') {
+                                                        after_func++;
+                                                        while (*after_func && *after_func != ',' && *after_func != ')' && paren_depth == 1) {
+                                                            if (*after_func == '/' && *(after_func+1) == '/') { while (*after_func && *after_func != '\n') after_func++; continue; }
+                                                            if (*after_func == '/' && *(after_func+1) == '*') { after_func += 2; while (*after_func && !(*after_func == '*' && *(after_func+1) == '/')) after_func++; if (*after_func) after_func += 2; continue; }
+                                                            // 跳过字符串字面量（双引号和单引号，避免字符串中的 , ) / 等影响解析）
+                                                            if (*after_func == '"' || *after_func == '\'') {
+                                                                char quote = *after_func;
+                                                                after_func++;
+                                                                while (*after_func && *after_func != quote) {
+                                                                    if (*after_func == '\\' && *(after_func+1)) after_func += 2;
+                                                                    else after_func++;
+                                                                }
+                                                                if (*after_func) after_func++;
+                                                                continue;
+                                                            }
+                                                            if (*after_func == '(') paren_depth++;
+                                                            else if (*after_func == ')') paren_depth--;
+                                                            else after_func++;
+                                                        }
+                                                    }
+
+                                                    // 跳过逗号
+                                                    if (*after_func == ',') {
+                                                        after_func++;
+                                                        has_param = 0;
+                                                    }
+                                                } else {
+                                                    after_func++;
+                                                }
+                                            } else {
+                                                after_func++;
+                                            }
+                                        }
+
+                                        // 跳过空白
+                                        while (*after_func && (*after_func == ' ' || *after_func == '\t' || *after_func == '\n' || *after_func == '\r')) after_func++;
+
+                                        // 解析返回类型
+                                        TypeKind method_return_type = TYPE_ANY;
+                                        TypeInfo* method_return_type_info = NULL;
+                                        char method_return_struct[64] = {0};
+                                        char method_return_type_param[64] = {0};
+                                        int method_return_generic_count = 0;
+                                        char* method_return_generic_params[MOD_MAX_GENERIC_RET] = {NULL};
+
+                                        if (*after_func == ':') {
+                                            after_func++;
+                                            while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
+
+                                            const char* ret_type_start = after_func;
+                                            // 先读取标识符部分
+                                            while (*after_func && (isalnum((unsigned char)*after_func) || *after_func == '_')) after_func++;
+                                            int ret_type_len = (int)(after_func - ret_type_start);
+
+                                            // 继续读取泛型参数部分（如 [string,float]）
+                                            while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
+                                            if (*after_func == '[') {
+                                                int depth = 0;
+                                                while (*after_func) {
+                                                    if (*after_func == '[') depth++;
+                                                    else if (*after_func == ']') { depth--; if (depth == 0) { after_func++; break; } }
+                                                    after_func++;
+                                                }
+                                                ret_type_len = (int)(after_func - ret_type_start);
+                                            }
+
+                                            // ★ 消费可空返回类型的尾部 '?'（如 HtmlNode?）
+                                            // 若不消费，方法体将无法被跳过，导致从第一个可空返回方法起
+                                            // 之后的 struct 方法全部丢失（跨模块 use 时报"没有方法"）
+                                            while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
+                                            if (*after_func == '?') {
+                                                after_func++;
+                                            }
+
+                                            if (ret_type_len > 0 && ret_type_len < 128) {
+                                                char ret_type_str[128];
+                                                strncpy(ret_type_str, ret_type_start, ret_type_len);
+                                                ret_type_str[ret_type_len] = '\0';
+
+                                                // 先尝试从本地别名表解析
+                                                TypeInfo* alias_ti = FIND_LOCAL_ALIAS(ret_type_str);
+                                                if (alias_ti) {
+                                                    method_return_type_info = type_copy(alias_ti);
+                                                    method_return_type = method_return_type_info->kind;
+                                                } else {
+                                            // 解析完整类型信息
+                                            method_return_type_info = parse_type_from_string(ret_type_str);
+                                            if (method_return_type_info) {
+                                                method_return_type = method_return_type_info->kind;
+                                                    } else {
+                                                        method_return_type = parse_base_type(ret_type_str);
+                                                    }
+                                                }
+
+                                                // 用标识符部分检查
+                                                char base_str[64];
+                                                int base_len = ret_type_len < 64 ? ret_type_len : 63;
+                                                strncpy(base_str, ret_type_str, base_len);
+                                                base_str[base_len] = '\0';
+                                                char* bracket = strchr(base_str, '[');
+                                                if (bracket) *bracket = '\0';
+
+                                                if (method_return_type == TYPE_ANY || method_return_type == TYPE_STRUCT) {
+                                                    // 检查泛型参数名
+                                                    int is_type_param = 0;
+                                                    for (int tpi = 0; tpi < type_param_count; tpi++) {
+                                                        if (type_param_names[tpi] && strcmp(base_str, type_param_names[tpi]) == 0) {
+                                                            is_type_param = 1;
+                                                            memcpy(method_return_type_param, base_str, strlen(base_str) + 1);
+                                                            method_return_type = TYPE_GENERIC_PARAM;
+                                                            if (method_return_type_info) { type_free(method_return_type_info); method_return_type_info = NULL; }
+                                                            break;
+                                                        }
+                                                    }
+                                                    if (!is_type_param) {
+                                                        // 名字解析走**唯一政策点**（㉓）：泛型名已在上面单独
+                                                        // 判过（is_type_param），这里只负责四表
+                                                        char agg_name[64] = {0};
+                                                        TypeKind ak = mod_resolve_param_type(base_str,
+                                                            agg_name, (int)sizeof(agg_name), NULL, 0,
+                                                            clib_names, clib_name_count,
+                                                            face_names, face_name_count,
+                                                            cstruct_names, cstruct_name_count,
+                                                            struct_names, struct_name_count,
+                                                            NULL, 0);
+                                                        if (ak != TYPE_ANY) {
+                                                            method_return_type = ak;
+                                                            // struct 分支原本不更新 kind（默认即 TYPE_STRUCT）
+                                                            if (ak != TYPE_STRUCT && method_return_type_info) {
+                                                                method_return_type_info->kind = ak;
+                                                            }
+                                                            if (agg_name[0]) {
+                                                                size_t copy_len = strlen(agg_name);
+                                                                if (copy_len > sizeof(method_return_struct) - 1) copy_len = sizeof(method_return_struct) - 1;
+                                                                memcpy(method_return_struct, agg_name, copy_len);
+                                                                method_return_struct[copy_len] = '\0';
+                                                            }
+                                                        }
+                                                    }
+                                                }
+
+                                                // 解析泛型返回类型的类型参数（如 Holder[K] 中的 [K]），仅用于非 Dict/Array
+                                                if (!method_return_type_info && method_return_type != TYPE_DICT && method_return_type != TYPE_ARRAY) {
+                                                    char* gen_bracket = strchr(ret_type_str, '[');
+                                                    if (gen_bracket && (method_return_type == TYPE_STRUCT || method_return_type == TYPE_PTR)) {
+                                                        gen_bracket++;
+                                                        while (*gen_bracket && *gen_bracket != ']') {
+                                                            while (*gen_bracket && (*gen_bracket == ' ' || *gen_bracket == '\t')) gen_bracket++;
+                                                            if (*gen_bracket && (isalnum((unsigned char)*gen_bracket) || *gen_bracket == '_')) {
+                                                                const char* gp_start = gen_bracket;
+                                                                while (*gen_bracket && (isalnum((unsigned char)*gen_bracket) || *gen_bracket == '_')) gen_bracket++;
+                                                                int gp_len = (int)(gen_bracket - gp_start);
+                                                                if (gp_len > 0 && gp_len < 64 && method_return_generic_count < 8) {
+                                                                    method_return_generic_params[method_return_generic_count] = (char*)malloc(gp_len + 1);
+                                                                    strncpy(method_return_generic_params[method_return_generic_count], gp_start, gp_len);
+                                                                    method_return_generic_params[method_return_generic_count][gp_len] = '\0';
+                                                                    method_return_generic_count++;
+                                                                }
+                                                            }
+                                                            while (*gen_bracket && *gen_bracket != ',' && *gen_bracket != ']') gen_bracket++;
+                                                            if (*gen_bracket == ',') gen_bracket++;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        // 跳过方法体
+                                        while (*after_func && (*after_func == ' ' || *after_func == '\t' || *after_func == '\n' || *after_func == '\r')) after_func++;
+                                        if (*after_func == '{') {
+                                            after_func++;
+                                            int brace_depth = 1;
+                                            while (*after_func && brace_depth > 0) {
+                                                // 跳过单行注释 //（避免注释中的花括号影响深度计数）
+                                                if (*after_func == '/' && *(after_func+1) == '/') {
+                                                    while (*after_func && *after_func != '\n') after_func++;
+                                                    continue;
+                                                }
+                                                // 跳过多行注释 /* ... */
+                                                if (*after_func == '/' && *(after_func+1) == '*') {
+                                                    after_func += 2;
+                                                    while (*after_func && !(*after_func == '*' && *(after_func+1) == '/')) after_func++;
+                                                    if (*after_func) after_func += 2;
+                                                    continue;
+                                                }
+                                                // 跳过字符串字面量（双引号和单引号，避免字符串中的 { } / // 等影响深度计数和注释检测）
+                                                // 历史缺陷：原实现不跳过字符串，导致方法体中的 "://" 被误判为
+                                                // 单行注释，其后的 { 不被计入 brace_depth，使方法体跳过提前结束，
+                                                // 后续方法被静默丢弃（如 Url::normalize 和 Url::str2）
+                                                if (*after_func == '"' || *after_func == '\'') {
+                                                    char quote = *after_func;
+                                                    after_func++;
+                                                    while (*after_func && *after_func != quote) {
+                                                        if (*after_func == '\\' && *(after_func+1)) after_func += 2;
+                                                        else after_func++;
+                                                    }
+                                                    if (*after_func) after_func++;
+                                                    continue;
+                                                }
+                                                if (*after_func == '{') brace_depth++;
+                                                else if (*after_func == '}') brace_depth--;
+                                                after_func++;
+                                            }
+                                        }
+
+                                        // 添加方法（使用 struct_name::method_name 格式）
+                                        // 即时计算方法定义行号（从 source 开头数到 after_struct 的换行数 +1）
+                                        // after_struct 指向 "func" 关键字开头
+                                        int method_def_line = 1;
+                                        for (const char* c = source; c < after_struct; c++) {
+                                            if (*c == '\n') method_def_line++;
+                                        }
+                                        // 动态扩容方法数组（容量不足时翻倍，无固定上限）
+                                        int method_slot_ok = 0;
+                                        if (method_count < method_capacity) {
+                                            method_slot_ok = 1;
+                                        } else {
+                                            int new_cap = method_capacity == 0 ? 16 : method_capacity * 2;
+                                            ModuleStructMethod* new_methods = (ModuleStructMethod*)realloc(methods, sizeof(ModuleStructMethod) * new_cap);
+                                            if (new_methods) {
+                                                methods = new_methods;
+                                                method_capacity = new_cap;
+                                                method_slot_ok = 1;
+                                            }
+                                        }
+                                        if (method_slot_ok) {
+                                            methods[method_count].name = (char*)malloc(method_key_len + 1);
+                                            memcpy(methods[method_count].name, method_key, method_key_len);
+                                            methods[method_count].name[method_key_len] = '\0';
+                                            methods[method_count].line = method_def_line;
+                                            methods[method_count].return_type = method_return_type;
+                                            methods[method_count].return_type_info = method_return_type_info ? type_copy(method_return_type_info) : NULL;
+                                            // 释放临时 method_return_type_info（已复制到 methods 数组）
+                                            if (method_return_type_info) { type_free(method_return_type_info); method_return_type_info = NULL; }
+                                            methods[method_count].return_struct_name = method_return_struct[0] ? strdup(method_return_struct) : NULL;
+                                            methods[method_count].return_type_param_name = method_return_type_param[0] ? strdup(method_return_type_param) : NULL;
+                                            methods[method_count].return_generic_count = method_return_generic_count;
+                                            methods[method_count].return_generic_param_names = NULL;
+                                            if (method_return_generic_count > 0) {
+                                                methods[method_count].return_generic_param_names = (char**)malloc(sizeof(char*) * method_return_generic_count);
+                                                for (int gi = 0; gi < method_return_generic_count; gi++) {
+                                                    methods[method_count].return_generic_param_names[gi] = method_return_generic_params[gi];
+                                                    method_return_generic_params[gi] = NULL; // 转移所有权
+                                                }
+                                            }
+                                            methods[method_count].param_count = param_count;
+                                            methods[method_count].param_types = NULL;
+                                            methods[method_count].param_struct_names = NULL;   // ⑯ 补的字段
+                                            methods[method_count].param_generic_names = NULL;
+                                            if (param_count > 0) {
+                                                methods[method_count].param_types = (TypeKind*)malloc(sizeof(TypeKind) * param_count);
+                                                for (int pi = 0; pi < param_count; pi++) {
+                                                    methods[method_count].param_types[pi] = param_types[pi];
+                                                }
+                                                // 聚合类型参数名（⑯）：上面解析每个参数时已经算出
+                                                // `param_struct_name[64]`（clib/face/cstruct/struct 名），
+                                                // 此前**没地方存** ⇒ 跨模块方法的聚合参数不可判，只能跳过。
+                                                int has_sname = 0;
+                                                for (int pi = 0; pi < param_count; pi++) {
+                                                    if (param_struct_names[pi][0]) has_sname = 1;
+                                                }
+                                                if (has_sname) {
+                                                    methods[method_count].param_struct_names =
+                                                        (char**)calloc(param_count, sizeof(char*));
+                                                    for (int pi = 0; pi < param_count; pi++) {
+                                                        if (param_struct_names[pi][0]) {
+                                                            methods[method_count].param_struct_names[pi] =
+                                                                strdup(param_struct_names[pi]);
+                                                        }
+                                                    }
+                                                }
+                                                // 设置泛型参数名
+                                                int has_generic = 0;
+                                                for (int pi = 0; pi < param_count; pi++) {
+                                                    if (param_generic_names[pi]) has_generic = 1;
+                                                }
+                                                if (has_generic) {
+                                                    methods[method_count].param_generic_names = (char**)malloc(sizeof(char*) * param_count);
+                                                    for (int pi = 0; pi < param_count; pi++) {
+                                                        methods[method_count].param_generic_names[pi] = param_generic_names[pi];
+                                                        param_generic_names[pi] = NULL;  // 转移所有权
+                                                    }
+                                                }
+                                            }
+                                            method_count++;
+                                        } else {
+                                            // 内存不足（realloc 失败）：释放本次解析的临时类型信息，跳过该方法
+                                            if (method_return_type_info) { type_free(method_return_type_info); method_return_type_info = NULL; }
+                                            for (int gi = 0; gi < method_return_generic_count; gi++) {
+                                                free(method_return_generic_params[gi]);
+                                                method_return_generic_params[gi] = NULL;
+                                            }
+                                        }
+                                    }
+                                }
+
+                                after_struct = after_func;
+                                continue;
+                            }
+
+                            // 解析字段
+                            const char* type_start = after_struct;
+                            while (*after_struct && (isalnum((unsigned char)*after_struct) || *after_struct == '_')) after_struct++;
+                            // 检查类型名后的 ? (如 Font?)
+                            int is_nullable = 0;
+                            if (*after_struct == '?') {
+                                is_nullable = 1;
+                                after_struct++;
+                            }
+                            int type_len = (int)(after_struct - type_start);
+
+                            if (type_len > 0 && type_len < 64) {
+                                char type_str[64];
+                                // 如果类型以 ? 结尾，去掉 ?（已由上面的 is_nullable 标记）
+                                int copy_len = is_nullable ? type_len - 1 : type_len;
+                                strncpy(type_str, type_start, copy_len);
+                                type_str[copy_len] = '\0';
+
+                                // 检查可空类型后缀 Type?（泛型 ] 后的 ? 已在上面处理）
+
+                                // 检查是否是 Ptr[T] / Array[T] / Dict[K,V] 类型
+                                TypeKind element_type = TYPE_PTR;  // 默认元素类型
+                                char* element_struct_name = NULL;   // 元素类型的结构体/face/clib 名称
+                                // ★ 完整类型信息（支持 Array[Array[int]] / Array[Ptr[u8]] 等嵌套泛型）
+                                TypeInfo* field_type_info = NULL;
+                                while (*after_struct && (*after_struct == ' ' || *after_struct == '\t')) after_struct++;
+                                if (*after_struct == '[') {
+                                    // 提取完整的泛型类型字符串（如 Array[Array[int]]），用于 parse_type_from_string
+                                    const char* full_type_start = type_start;
+                                    // 如果类型名后有 ?（如 Array?），full_type 不含 ?
+                                    int full_type_skip = is_nullable ? 1 : 0; // 跳过的 ? 个数
+                                    // 用括号深度正确跳过嵌套的 []，而非简单找第一个 ]
+                                    after_struct++; // skip '['
+                                    int bracket_depth = 1;
+                                    while (*after_struct && bracket_depth > 0) {
+                                        if (*after_struct == '[') bracket_depth++;
+                                        else if (*after_struct == ']') { bracket_depth--; if (bracket_depth == 0) { after_struct++; break; } }
+                                        after_struct++;
+                                    }
+                                    // 提取完整类型字符串（如 "Array[Array[int]]" 或 "Array[Ptr[u8]]"）
+                                    int full_type_len = (int)(after_struct - full_type_start) - full_type_skip;
+                                    if (full_type_len > 0 && full_type_len < 256) {
+                                        char full_type_str[256];
+                                        strncpy(full_type_str, full_type_start, full_type_len);
+                                        full_type_str[full_type_len] = '\0';
+                                        // 先检查本地别名表
+                                        TypeInfo* alias_ti = FIND_LOCAL_ALIAS(full_type_str);
+                                        if (alias_ti) {
+                                            field_type_info = type_copy(alias_ti);
+                                        } else {
+                                            field_type_info = parse_type_from_string(full_type_str);
+                                        }
+                                    }
+
+                                    // 向后兼容：解析第一层元素类型（element_type / element_struct_name）
+                                    // 从完整类型字符串中提取第一层泛型参数
+                                    {
+                                        const char* gp = full_type_start + copy_len; // skip type name (e.g. "Array")
+                                        while (*gp && (*gp == ' ' || *gp == '\t')) gp++;
+                                        if (*gp == '[') {
+                                            gp++; // skip '['
+                                            while (*gp && (*gp == ' ' || *gp == '\t')) gp++;
+                                            const char* elem_type_start2 = gp;
+                                            while (*gp && (isalnum((unsigned char)*gp) || *gp == '_')) gp++;
+                                            int elem_type_len2 = (int)(gp - elem_type_start2);
+                                            if (elem_type_len2 > 0 && elem_type_len2 < 64) {
+                                                char elem_type_str[64];
+                                                strncpy(elem_type_str, elem_type_start2, elem_type_len2);
+                                                elem_type_str[elem_type_len2] = '\0';
+                                                element_type = parse_base_type(elem_type_str);
+                                                // 如果元素类型是未识别的自定义类型，检查是否是 struct/face/clib
+                                                if (element_type == TYPE_ANY) {
+                                                    if (is_known_struct(elem_type_str, struct_names, struct_name_count)) {
+                                                        element_type = TYPE_STRUCT;
+                                                        element_struct_name = strdup(elem_type_str);
+                                                    } else if (is_known_face(elem_type_str, face_names, face_name_count)) {
+                                                        element_type = TYPE_FACE;
+                                                        element_struct_name = strdup(elem_type_str);
+                                                    } else if (is_known_clib(elem_type_str, clib_names, clib_name_count)) {
+                                                        element_type = TYPE_CLIB;
+                                                        element_struct_name = strdup(elem_type_str);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    // 检查 ] 后是否有 ? (如 Array[Font]?)
+                                    while (*after_struct && (*after_struct == ' ' || *after_struct == '\t')) after_struct++;
+                                    if (*after_struct == '?') {
+                                        is_nullable = 1;
+                                        after_struct++;
+                                    }
+                                }
+
+                                while (*after_struct && (*after_struct == ' ' || *after_struct == '\t')) after_struct++;
+
+                                // 支持逗号分隔多字段：int a, b, c
+                                do {
+                                    // 跳过字段名前的空白（逗号后可能有空白）
+                                    while (*after_struct && (*after_struct == ' ' || *after_struct == '\t')) after_struct++;
+
+                                    const char* field_start = after_struct;
+                                    while (*after_struct && (isalnum((unsigned char)*after_struct) || *after_struct == '_')) after_struct++;
+                                    int field_len = (int)(after_struct - field_start);
+
+                                    if (field_len > 0 && field_len < 64) {
+                                        // 动态扩容字段数组（容量不足时翻倍，无固定上限）
+                                        int field_slot_ok = 0;
+                                        if (field_count < field_capacity) {
+                                            field_slot_ok = 1;
+                                        } else {
+                                            int new_cap = field_capacity == 0 ? 16 : field_capacity * 2;
+                                            ModuleStructField* new_fields = (ModuleStructField*)realloc(fields, sizeof(ModuleStructField) * new_cap);
+                                            if (new_fields) {
+                                                fields = new_fields;
+                                                field_capacity = new_cap;
+                                                field_slot_ok = 1;
+                                            }
+                                        }
+                                        if (field_slot_ok) {
+                                            TypeKind ft = parse_base_type(type_str);
+                                            fields[field_count].name = (char*)malloc(field_len + 1);
+                                            strncpy(fields[field_count].name, field_start, field_len);
+                                            fields[field_count].name[field_len] = '\0';
+                                            fields[field_count].type = ft;
+                                            fields[field_count].struct_name = NULL;
+                                            // 即时计算字段定义行号（从 source 开头数到 field_start 的换行数 +1）
+                                            {
+                                                int fl = 1;
+                                                for (const char* c = source; c < field_start; c++) {
+                                                    if (*c == '\n') fl++;
+                                                }
+                                                fields[field_count].line = fl;
+                                            }
+                                            // 未识别的自定义类型：alias / clib / struct / cstruct / face 五处都要查
+                                            // ⚠ 2026-09-18：此前只查 alias/clib/struct，**漏了 cstruct 与 face**
+                                            //   ⇒ 用它们声明的字段在**别的文件里**静默降级成 any，且消费方是
+                                            //   **硬编译错**（「不能在 any 类型上调用方法」「不能在 any 类型上直接访问
+                                            //   字段」），不是"能跑但降级"。实测：SDL3 里 14 处 face 字段
+                                            //   （Window._root / Splitter._first / Panel._layoutChild … 声明类型都是 Widget）。
+                                            //   同一文件里另两处口径还各不相同（元素类型段查 struct/face/clib、
+                                            //   函数参数段查 clib/face/cstruct）—— 三处都该是这五处。
+                                            //   名字表两条来源都已填好：本地声明 scan_pass1.inc（cstruct:139 / face:157）、
+                                            //   use 传导 scan_pass2_init.inc（cstruct:414 / face:450）⇒ 补分支即可覆盖。
+                                            if (ft == TYPE_ANY) {
+                                                // ★ 先检查本地 alias（如 Color = int）
+                                                //   alias 在 scan_alias.inc 中注册到 local_alias 表，
+                                                //   若匹配则直接用 alias 底层类型的 TypeKind
+                                                TypeInfo* alias_ti = FIND_LOCAL_ALIAS(type_str);
+                                                if (alias_ti) {
+                                                    fields[field_count].type = alias_ti->kind;
+                                                    // alias 可能指向 struct/face/cstruct/clib（如 Node = TreeNode）
+                                                    // —— 这四类都要把**底层名字**带过去，否则消费方拿到的是
+                                                    // "有种类没名字"的半截类型信息（本行注释原就写着 face/clib，
+                                                    // 但代码只处理了 struct，顺手补齐）
+                                                    if (alias_ti->struct_name &&
+                                                        (alias_ti->kind == TYPE_STRUCT || alias_ti->kind == TYPE_CSTRUCT ||
+                                                         alias_ti->kind == TYPE_FACE || alias_ti->kind == TYPE_CLIB)) {
+                                                        fields[field_count].struct_name = strdup(alias_ti->struct_name);
+                                                    }
+                                                } else {
+                                                    // 四个名字表的解析走**唯一政策点**（㉒，承 ㉑①）：认哪些名字
+                                                    // 算类型只此一份 —— ⑦/⑧ 那两个 bug（struct/cstruct 字段漏
+                                                    // 分支 ⇒ 跨模块静默降级成 any）就是这类分支各自为战的产物。
+                                                    char agg_name[64] = {0};
+                                                    TypeKind ak = mod_resolve_param_type(type_str,
+                                                        agg_name, (int)sizeof(agg_name), NULL, 0,
+                                                        clib_names, clib_name_count,
+                                                        face_names, face_name_count,
+                                                        cstruct_names, cstruct_name_count,
+                                                        struct_names, struct_name_count,
+                                                        NULL, 0);
+                                                    if (ak != TYPE_ANY) {
+                                                        fields[field_count].type = ak;
+                                                        if (agg_name[0]) {
+                                                            fields[field_count].struct_name = strdup(agg_name);
+                                                        }
+                                                    }
+                                                    // 泛型类型参数（T / K / V）：**这一处此前漏了**，而同一文件里
+                                                    // "函数参数"（:339-346）与"方法返回"（:487-497）两处都有该检查
+                                                    // ⇒ 泛型 struct 的字段（`T v`）被记成 TYPE_ANY：既丢了类型参数、
+                                                    // 又会触发降级警告误报（实测 `struct 'Box' 的字段 'v' 声明类型
+                                                    // 'T' 无法解析`）。名字写进 type_info —— 消费方优先用它，
+                                                    // 后续能按泛型实参替换（与另一条路一致）。
+                                                    for (int tpi = 0; tpi < type_param_count; tpi++) {
+                                                        if (type_param_names[tpi] && strcmp(type_str, type_param_names[tpi]) == 0) {
+                                                            fields[field_count].type = TYPE_GENERIC_PARAM;
+                                                            field_type_info = type_generic_param(type_str);
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            // ---- 静默降级要出声 ----
+                                            // 走到这里仍是 TYPE_ANY，说明这个类型的名字**一个都没认出来**：不是内置类型，
+                                            // 也不是本地 alias/clib/struct/cstruct/face，更不在"从依赖模块传导来的类型名"里。消费方
+                                            // （visit_module.inc 的 AST_USE）会照单全收 ⇒ 字段在**别的文件里**退化成 any，
+                                            // 而错误在很远的调用点才爆发 —— 本次实测就是这种形态：声明方用裸名 import 时
+                                            // Sound 传导不过来，消费方 `h.bgm.ok` 报"不能在 any 类型上直接访问字段"。
+                                            // 以前这一步完全无声，害得从"报错文件"倒查到"声明方那一行 import"手工找了一轮。
+                                            // 显式写 `any` 的字段不报（那是本意，不是降级）。
+                                            if (fields[field_count].type == TYPE_ANY && type_str[0] &&
+                                                strcmp(type_str, "any") != 0) {
+                                                fprintf(stderr,
+                                                    "[警告] %s:%d: struct '%s' 的字段 '%s' 声明类型 '%s' 无法解析，"
+                                                    "被跨模块使用时会按 any 处理\n",
+                                                    table->module_path ? table->module_path : "?",
+                                                    fields[field_count].line,
+                                                    struct_name, fields[field_count].name, type_str);
+                                            }
+                                            fields[field_count].element_type = element_type;
+                                            fields[field_count].element_struct_name = element_struct_name;
+                                            fields[field_count].nullable = is_nullable;
+                                            // ★ 存储完整类型信息（支持嵌套泛型，如 Array[Array[int]]）
+                                            // 非 NULL 时优先使用，element_type/element_struct_name 为向后兼容的扁平降级
+                                            fields[field_count].type_info = field_type_info ? type_copy(field_type_info) : NULL;
+                                            // 仅第一个字段转移 element_struct_name 所有权
+                                            if (field_count > 0) {
+                                                // 后续字段需要独立的 element_struct_name 副本
+                                                if (element_struct_name) {
+                                                    fields[field_count].element_struct_name = strdup(element_struct_name);
+                                                }
+                                            } else {
+                                                // 第一个字段直接使用 element_struct_name 指针
+                                            }
+                                            field_count++;
+                                        }
+                                        // 内存不足（realloc 失败）时跳过该字段，继续扫描
+                                    }
+
+                                    // 跳过空白
+                                    while (*after_struct && (*after_struct == ' ' || *after_struct == '\t')) after_struct++;
+
+                                    // 跳过字段默认值（逗号前的默认值：int a = 5, b = 3）
+                                    if (*after_struct == '=') {
+                                        after_struct++; // 跳过 =
+                                        while (*after_struct && (*after_struct == ' ' || *after_struct == '\t')) after_struct++;
+                                        // 处理默认值中的嵌套括号
+                                        if (*after_struct == '{') {
+                                            int depth = 1;
+                                            after_struct++;
+                                            while (*after_struct && depth > 0) {
+                                                if (*after_struct == '/' && *(after_struct+1) == '/') {
+                                                    while (*after_struct && *after_struct != '\n') after_struct++;
+                                                    continue;
+                                                }
+                                                if (*after_struct == '/' && *(after_struct+1) == '*') {
+                                                    after_struct += 2;
+                                                    while (*after_struct && !(*after_struct == '*' && *(after_struct+1) == '/')) after_struct++;
+                                                    if (*after_struct) after_struct += 2;
+                                                    continue;
+                                                }
+                                                if (*after_struct == '{') depth++;
+                                                else if (*after_struct == '}') depth--;
+                                                after_struct++;
+                                            }
+                                        } else if (*after_struct == '[') {
+                                            int depth = 1;
+                                            after_struct++;
+                                            while (*after_struct && depth > 0) {
+                                                if (*after_struct == '/' && *(after_struct+1) == '/') {
+                                                    while (*after_struct && *after_struct != '\n') after_struct++;
+                                                    continue;
+                                                }
+                                                if (*after_struct == '/' && *(after_struct+1) == '*') {
+                                                    after_struct += 2;
+                                                    while (*after_struct && !(*after_struct == '*' && *(after_struct+1) == '/')) after_struct++;
+                                                    if (*after_struct) after_struct += 2;
+                                                    continue;
+                                                }
+                                                if (*after_struct == '[') depth++;
+                                                else if (*after_struct == ']') depth--;
+                                                after_struct++;
+                                            }
+                                        } else {
+                                            // 简单值，跳到逗号或分号或行尾或 }
+                                            while (*after_struct && *after_struct != ',' && *after_struct != ';' && *after_struct != '\n' && *after_struct != '}') {
+                                                if (*after_struct == '/' && *(after_struct+1) == '/') {
+                                                    while (*after_struct && *after_struct != '\n') after_struct++;
+                                                    break;
+                                                }
+                                                if (*after_struct == '/' && *(after_struct+1) == '*') {
+                                                    after_struct += 2;
+                                                    while (*after_struct && !(*after_struct == '*' && *(after_struct+1) == '/')) after_struct++;
+                                                    if (*after_struct) after_struct += 2;
+                                                    continue;
+                                                }
+                                                after_struct++;
+                                            }
+                                        }
+                                        // 跳过空白
+                                        while (*after_struct && (*after_struct == ' ' || *after_struct == '\t')) after_struct++;
+                                    }
+                                } while (*after_struct == ',' && (after_struct++, 1));
+                                // 释放临时的 field_type_info（所有权已通过 type_copy 转移到字段数组）
+                                if (field_type_info) {
+                                    type_free(field_type_info);
+                                    field_type_info = NULL;
+                                }
+                            }
+
+                            // 跳过字段默认值（可能包含嵌套的 {} 或 []，如 Dict val = {}）
+	                            // 先跳过到 = 或行尾/分号/}
+	                            // 注意：遇到 // 注释时直接跳到行尾，避免注释中的 } 导致扫描错位
+	                            while (*after_struct && *after_struct != '\n' && *after_struct != ';' && *after_struct != '=' && *after_struct != '}') {
+	                                if (*after_struct == '/' && *(after_struct+1) == '/') {
+	                                    while (*after_struct && *after_struct != '\n') after_struct++;
+	                                    break;
+	                                }
+	                                if (*after_struct == '/' && *(after_struct+1) == '*') {
+	                                    after_struct += 2;
+	                                    while (*after_struct && !(*after_struct == '*' && *(after_struct+1) == '/')) after_struct++;
+	                                    if (*after_struct) after_struct += 2;
+	                                    continue;
+	                                }
+	                                after_struct++;
+	                            }
+	                            if (*after_struct == '=') {
+	                                after_struct++; // 跳过 =
+	                                // 跳过空白
+	                                while (*after_struct && (*after_struct == ' ' || *after_struct == '\t')) after_struct++;
+	                                // 处理默认值中的嵌套括号
+	                                if (*after_struct == '{') {
+	                                    int depth = 1;
+	                                    after_struct++;
+	                                    while (*after_struct && depth > 0) {
+	                                        if (*after_struct == '/' && *(after_struct+1) == '/') {
+	                                            while (*after_struct && *after_struct != '\n') after_struct++;
+	                                            continue;
+	                                        }
+	                                        if (*after_struct == '/' && *(after_struct+1) == '*') {
+	                                            after_struct += 2;
+	                                            while (*after_struct && !(*after_struct == '*' && *(after_struct+1) == '/')) after_struct++;
+	                                            if (*after_struct) after_struct += 2;
+	                                            continue;
+	                                        }
+	                                        if (*after_struct == '{') depth++;
+	                                        else if (*after_struct == '}') depth--;
+	                                        after_struct++;
+	                                    }
+	                                } else if (*after_struct == '[') {
+	                                    int depth = 1;
+	                                    after_struct++;
+	                                    while (*after_struct && depth > 0) {
+	                                        if (*after_struct == '/' && *(after_struct+1) == '/') {
+	                                            while (*after_struct && *after_struct != '\n') after_struct++;
+	                                            continue;
+	                                        }
+	                                        if (*after_struct == '/' && *(after_struct+1) == '*') {
+	                                            after_struct += 2;
+	                                            while (*after_struct && !(*after_struct == '*' && *(after_struct+1) == '/')) after_struct++;
+	                                            if (*after_struct) after_struct += 2;
+	                                            continue;
+	                                        }
+	                                        if (*after_struct == '[') depth++;
+	                                        else if (*after_struct == ']') depth--;
+	                                        after_struct++;
+	                                    }
+	                                } else {
+	                                    // 简单值（数字、字符串等），跳到 ; 或行尾或 }
+	                                    // 注意：遇到 // 注释时直接跳到行尾
+	                                    while (*after_struct && *after_struct != '\n' && *after_struct != ';' && *after_struct != '}') {
+	                                        if (*after_struct == '/' && *(after_struct+1) == '/') {
+	                                            while (*after_struct && *after_struct != '\n') after_struct++;
+	                                            break;
+	                                        }
+	                                        if (*after_struct == '/' && *(after_struct+1) == '*') {
+	                                            after_struct += 2;
+	                                            while (*after_struct && !(*after_struct == '*' && *(after_struct+1) == '/')) after_struct++;
+	                                            if (*after_struct) after_struct += 2;
+	                                            continue;
+	                                        }
+	                                        after_struct++;
+	                                    }
+	                                }
+	                            }
+	                            // 跳过分号（无论是否有默认值）
+	                            if (*after_struct == ';') after_struct++;
+                        }
+
+                        // 添加 struct 到符号表（包括字段和方法）
+                        module_symbol_table_add_struct(table, struct_name, field_count, fields, method_count, methods, 0, type_param_count, type_param_names);
+
+        // 设置 impl 信息
+        ModuleStructSymbol* added_struct = module_symbol_table_find_struct(table, struct_name);
+        if (added_struct) {
+            // 即时计算 struct 定义行号
+            int sdl = 1;
+            for (const char* c = source; c < p; c++) {
+                if (*c == '\n') sdl++;
+            }
+            added_struct->def_line = sdl;
+            if (impl_count > 0) {
+                added_struct->impl_count = impl_count;
+                added_struct->impl_names = (char**)malloc(sizeof(char*) * impl_count);
+                for (int i = 0; i < impl_count; i++) {
+                    added_struct->impl_names[i] = impl_names[i];
+                }
+            }
+        } else {
+            // 释放临时分配的 impl_names
+            for (int i = 0; i < impl_count; i++) {
+                free(impl_names[i]);
+            }
+        }
+        free(impl_names);  // 释放动态数组本体（元素所有权已转移或已释放）
+
+                        // 设置关联常量信息
+                        if (added_struct && const_count_tmp > 0) {
+                            added_struct->const_count = const_count_tmp;
+                            added_struct->const_names = (char**)malloc(sizeof(char*) * const_count_tmp);
+                            added_struct->const_value_strs = (char**)calloc(const_count_tmp, sizeof(char*));
+                            for (int i = 0; i < const_count_tmp; i++) {
+                                added_struct->const_names[i] = const_names_tmp[i];
+                                const_names_tmp[i] = NULL; // 转移所有权
+                                added_struct->const_value_strs[i] = const_values_tmp[i];
+                                const_values_tmp[i] = NULL; // 转移所有权
+                            }
+                        } else {
+                            // 释放临时分配的 const_names 和 const_values
+                            for (int i = 0; i < const_count_tmp; i++) {
+                                if (const_names_tmp[i]) free(const_names_tmp[i]);
+                                if (const_values_tmp[i]) free(const_values_tmp[i]);
+                            }
+                        }
+
+                        // 释放临时分配的内存
+                        for (int i = 0; i < type_param_count; i++) {
+                            free(type_param_names[i]);
+                        }
+                        for (int i = 0; i < field_count; i++) {
+                            free(fields[i].name);
+                            if (fields[i].type_info) {
+                                type_free(fields[i].type_info);
+                                fields[i].type_info = NULL;
+                            }
+                        }
+                        for (int i = 0; i < method_count; i++) {
+                            free(methods[i].name);
+                            free(methods[i].return_struct_name);
+                            if (methods[i].return_type_info) {
+                                type_free(methods[i].return_type_info);
+                            }
+                            free(methods[i].return_type_param_name);
+                            for (int gi = 0; gi < methods[i].return_generic_count; gi++) {
+                                free(methods[i].return_generic_param_names[gi]);
+                            }
+                            free(methods[i].return_generic_param_names);
+                            free(methods[i].param_types);
+                            // 释放聚合类型参数名（⑯ 补的字段）
+                            if (methods[i].param_struct_names) {
+                                for (int pi = 0; pi < methods[i].param_count; pi++) {
+                                    free(methods[i].param_struct_names[pi]);
+                                }
+                                free(methods[i].param_struct_names);
+                            }
+                            // 释放泛型参数名
+                            if (methods[i].param_generic_names) {
+                                for (int pi = 0; pi < methods[i].param_count; pi++) {
+                                    free(methods[i].param_generic_names[pi]);
+                                }
+                                free(methods[i].param_generic_names);
+                            }
+                        }
+                        // 释放动态数组本体
+                        free(fields);
+                        free(methods);
+
+                        while (*after_struct && *after_struct != '}') after_struct++;
+                        if (*after_struct == '}') after_struct++;
+                    }
+                }
+
+                p = after_struct;
+                continue;
+            }

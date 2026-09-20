@@ -1,0 +1,32 @@
+// 复现：cstruct 数组在 struct 方法内是否正常
+import ffi
+
+cstruct TestVertex {
+    f32 x; f32 y; f32 r; f32 g; f32 b; f32 a
+}
+
+struct Wrapper {
+    func crashy() {
+        print("crashy 进入")
+        var verts = TestVertex.malloc_array(3)
+        print("malloc_array OK")
+        verts[0].x = 1.0; verts[0].y = 2.0
+        verts[0].r = 1.0; verts[0].g = 0.0; verts[0].b = 0.0; verts[0].a = 1.0
+        verts[1].x = 2.0; verts[1].y = 3.0
+        verts[1].r = 0.0; verts[1].g = 1.0; verts[1].b = 0.0; verts[1].a = 1.0
+        verts[2].x = 3.0; verts[2].y = 1.0
+        verts[2].r = 0.0; verts[2].g = 0.0; verts[2].b = 1.0; verts[2].a = 1.0
+        print("赋值 OK")
+        var ptr = verts.to_ptr()
+        print("to_ptr OK: " + ptr)
+        verts.free()
+        print("free OK")
+    }
+}
+
+main() {
+    print("=== 开始 ===")
+    Wrapper w = new Wrapper()
+    w.crashy()
+    print("=== 完成 ===")
+}

@@ -1,0 +1,21 @@
+// 模块函数调用（OP_GET_MODULE_FUNC + OP_CALL 窥孔）回归 —— §8.56
+//
+// 覆盖三件事：
+//   1. 模块内部调用同模块函数的热循环（单返回值）→ sum(i+1), i=0..2999 = 4501500
+//   2. 多返回值模块函数调用（ret_count = 2）→ sum(i + 2i) = 3*4498500 = 13495500
+//   3. 模块归属：B 的帧里反复调用 A 的 readBase() —— 必须按**编译期**模块取
+//      A 的 _g_base（101）；若按运行时栈顶帧猜，就会读到 B 的模块变量（7 → 8）。
+// 断言是绝对期望值 ⇒ 任何执行配置下都必须通过。
+import "modcall_mod.leno" as m
+import "modcall_other.leno" as other
+
+main() {
+    assert_eq(m.run(3000), 4501500)
+    assert_eq(m.runPair(3000), 13495500)
+
+    // 直接读 + 反复调用（200 次）后再读，两次都必须正确
+    assert_eq(m.readBase(), 101)
+    assert_eq(other.hammer(200), 20200)   // 200 * 101
+
+    print("test_op_module_call: OK")
+}

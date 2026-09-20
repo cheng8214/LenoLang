@@ -1,0 +1,20 @@
+// 测试 throw 字符串未捕获时打印调用栈
+func validate(int x) {
+    try {
+        if x < 0 {
+            throw "x 不能为负数"
+        }
+    } catch e {
+        throw e
+    }
+}
+
+func do_check() {
+    try {
+        validate(-1)
+    } catch e {
+        throw e
+    }
+}
+
+do_check()

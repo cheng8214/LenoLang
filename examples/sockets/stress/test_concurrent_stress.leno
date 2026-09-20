@@ -1,0 +1,158 @@
+import sockets
+import asyncs
+import io
+
+// ============================================================
+// 压力测试 - 大量连接和消息
+// ============================================================
+
+int g_errors = 0
+int g_passed = 0
+int g_total_sent = 0
+
+// 服务器：处理大量客户端，每客户端处理 N 轮
+async func stress_server(int port, int client_count, int rounds) {
+    var srv = sockets.listen("127.0.0.1", port)
+    if srv == null { io.print("[SRV] null"); return }
+    
+    int handled = 0
+    while handled < client_count {
+        var c = await srv.aaccept()
+        if c == null { break }
+        
+        int r = 0
+        while r < rounds {
+            var data = await c.arecv(4096)
+            if data == null { break }
+            c.send("S_" + handled + "_" + data)
+            r = r + 1
+        }
+        c.close()
+        handled = handled + 1
+    }
+    srv.close()
+}
+
+// 客户端：连发多条并验证
+async func stress_client(int port, int id, int rounds) {
+    var s = sockets.connect("127.0.0.1", port)
+    if s == null { g_errors = g_errors + 1; return }
+    
+    int ok = 0
+    int i = 0
+    while i < rounds {
+        var msg = "C" + id + "_M" + i
+        if not s.send(msg) { break }
+        g_total_sent = g_total_sent + 1
+        
+        var reply = await s.arecv(4096)
+        if reply != null and reply == "S_" + id + "_" + msg {
+            ok = ok + 1
+        }
+        i = i + 1
+    }
+    s.close()
+    
+    if ok == rounds {
+        g_passed = g_passed + 1
+    } else {
+        g_errors = g_errors + 1
+    }
+}
+
+async func keeper(int ms) {
+    await asyncs.sleep(ms)
+}
+
+// 获取当前时间毫秒（用于粗略计时）
+func get_time_ms(): int {
+    return 0  // 没有高精度时钟，跳过
+}
+
+main() {
+    io.print("========================================")
+    io.print("  压力测试")
+    io.print("========================================")
+    
+    // 压力测试 1: 8 客户端 x 4 消息
+    g_errors = 0
+    g_passed = 0
+    g_total_sent = 0
+    
+    var port = 12800
+    stress_server(port, 8, 4)
+    
+    stress_client(port, 0, 4)
+    stress_client(port, 1, 4)
+    stress_client(port, 2, 4)
+    stress_client(port, 3, 4)
+    stress_client(port, 4, 4)
+    stress_client(port, 5, 4)
+    stress_client(port, 6, 4)
+    stress_client(port, 7, 4)
+    
+    keeper(8000)
+    asyncs.run()
+    
+    io.print("\n--- 压力测试1: 8客户端 x 4消息 ---")
+    io.print("发送消息: " + g_total_sent)
+    io.print("通过客户端: " + g_passed)
+    io.print("失败: " + g_errors)
+    if g_errors == 0 and g_passed == 8 {
+        io.print(">>> PASS")
+    } else {
+        io.print(">>> FAIL")
+    }
+    
+    // 压力测试 2: 4 客户端 x 10 消息（更多轮次）
+    g_errors = 0
+    g_passed = 0
+    g_total_sent = 0
+    
+    var port2 = 12801
+    stress_server(port2, 4, 10)
+    
+    stress_client(port2, 0, 10)
+    stress_client(port2, 1, 10)
+    stress_client(port2, 2, 10)
+    stress_client(port2, 3, 10)
+    
+    keeper(12000)
+    asyncs.run()
+    
+    io.print("\n--- 压力测试2: 4客户端 x 10消息 ---")
+    io.print("发送消息: " + g_total_sent)
+    io.print("通过客户端: " + g_passed)
+    io.print("失败: " + g_errors)
+    if g_errors == 0 and g_passed == 4 {
+        io.print(">>> PASS")
+    } else {
+        io.print(">>> FAIL")
+    }
+    
+    // 压力测试 3: 单客户端 20 消息（串行大量）
+    g_errors = 0
+    g_passed = 0
+    g_total_sent = 0
+    
+    var port3 = 12802
+    stress_server(port3, 1, 20)
+    stress_client(port3, 0, 20)
+    
+    keeper(10000)
+    asyncs.run()
+    
+    io.print("\n--- 压力测试3: 1客户端 x 20消息 ---")
+    io.print("发送消息: " + g_total_sent)
+    io.print("通过: " + g_passed)
+    io.print("失败: " + g_errors)
+    if g_errors == 0 {
+        io.print(">>> PASS")
+    } else {
+        io.print(">>> FAIL")
+    }
+    
+    io.print("\n========================================")
+    io.print("压力测试完成")
+    io.print("========================================")
+}

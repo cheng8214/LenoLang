@@ -1,0 +1,10 @@
+// 约束泛型模块
+
+export face Comparable {
+    func compare(Comparable other): int
+}
+
+export func maxBy[T: Comparable](T a, T b): T {
+    if a.compare(b) >= 0 { return a }
+    return b
+}

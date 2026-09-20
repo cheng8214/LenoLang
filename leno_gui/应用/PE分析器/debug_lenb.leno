@@ -1,0 +1,62 @@
+// debug_lenb.leno — 调试 LENB 头部解析
+import files
+
+func readU32(string data, int off): int {
+    int val = 0
+    for 0:3 to i { val = val | (data.byte(off + i) << (i * 8)) }
+    return val
+}
+
+const HEX_CHARS = "0123456789ABCDEF"
+func toHex8(int v): string {
+    string s = ""
+    for 7:0:-1 to i { s = s + HEX_CHARS[(v >> (i*4)) & 0xF] }
+    return s
+}
+func toHex2(int v): string {
+    return HEX_CHARS[(v>>4)&0xF] + HEX_CHARS[v&0xF]
+}
+
+main() {
+    File f = files.open("leno_module/LenoSDL3/examples/基础示例/hello_window.exe", "rb")
+    int sz = f.len()
+    string d = f.read(sz)
+    f.close()
+    
+    // 找到 LENB 偏移
+    int magic = readU32(d, sz - 4)
+    int lenbSize = readU32(d, sz - 8)
+    int base = sz - 8 - lenbSize
+    
+    print("文件大小: " + sz)
+    print("尾部 Magic: " + toHex8(magic))
+    print("LENB 大小: " + lenbSize)
+    print("LENB 偏移: " + toHex8(base))
+    print("")
+    
+    // 打印 LENB 头部前 64 字节的 hex dump
+    print("LENB 头部 (base ~ base+64):")
+    for 0:63 to i {
+        if i % 16 == 0 { print("") }
+        print(toHex2(d.byte(base + i)) + " ")
+    }
+    print("")
+    
+    // 解析各字段
+    print("[Header]")
+    print("  Magic:   " + toHex8(readU32(d, base)))
+    print("  Version: " + toHex8(readU32(d, base + 4)))
+    print("  Flags:   " + toHex8(readU32(d, base + 8)))
+    print("  SrcHash: " + toHex8(readU32(d, base + 16)))  // 低32位
+    print("")
+    print("[ScopeData @ base+20]")
+    print("  global_var_count: " + readU32(d, base + 20))
+    print("  global_func_count: " + readU32(d, base + 24))
+    print("  sym_count:         " + readU32(d, base + 28))
+    print("")
+    
+    // 也打印 base+20 处的原始字节
+    print("base+20 ~ base+31 原始字节:")
+    for 20:31 to i { print(toHex2(d.byte(base + i)) + " ") }
+    print("")
+}

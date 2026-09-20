@@ -1,0 +1,9 @@
+// 泛型编译期错误检测测试
+// 以下代码应该产生编译错误
+
+func strict[T](T a, T b): T {
+    return a
+}
+
+// 类型不匹配：T=int 但传入了 string
+strict[int](1, "x")

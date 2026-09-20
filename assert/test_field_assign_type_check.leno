@@ -1,0 +1,132 @@
+// 字段赋值的类型检查不得被静默跳过 —— 回归测试（S2 族"同一件事两处深度不一致"第 6 例）
+//
+// 背景（2026-09-18 实测）：字段赋值的类型检查（`visit_var.inc` 的 AST_ASSIGN→AST_FIELD_ACCESS 分支）
+//   解析目标 struct 符号只有**两级**（`scope_resolve` + `scope_resolve_tree_bfs`），**没有**
+//   "导入模块符号表"那一级；而同一件事的唯一实现 `infer_field_type` 是**三级**。
+//   ⇒ 只 `import ... as a`、**不** `use` 类型名时，`var pa = new a.Pair()` 之后
+//     `pa.x = "oops"`（int 字段赋 string）**零诊断**（静默通过！），
+//   而**同样代码加一句 `use a.Pair`** 就正确报「字段赋值类型不匹配 'x'」。
+//   这与 ⑦（泛型方法经 alias 导入时静默跳过类型检查）同类 —— 都属于"检查在一条路径上悄悄不执行"。
+//
+// 判据：
+//   ① 不 use 类型名：int 字段赋 string **必须报错**（修前：exit=0、什么都不报 ⇒ 用例失败）；
+//   ② 对照 use 类型名：同样代码同样报错（既有行为，防改坏）；
+//   ③ 反向守卫：不 use 时**正确**赋值（int→int）必须仍然编译通过（防"改完变成误报"）。
+// 子进程机器复用 assert/helpers/compiler.leno（S7）。
+
+import dirs
+import files
+
+import "helpers/compiler.leno" as ce
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_field_assign_type_check")
+    dirs.delete(work)
+    dirs.mkdir_p(dirs.join(work, "lib"))
+
+    files.write(dirs.join(work, "lib/a.leno"),
+        "export struct Pair {\n    int x\n    int y\n}\n")
+
+    files.write(dirs.join(work, "lib/v.leno"),
+        "export cstruct Vec {\n    i32 x\n    i32 y\n}\n")
+
+    // ① 不 use 类型名：错误赋值必须被拒绝（修前静默通过）
+    var bad_no_use = dirs.join(work, "bad_no_use.leno")
+    files.write(bad_no_use,
+        "import \"lib/a.leno\" as a\n\n"
+        + "main() {\n"
+        + "    var pa = new a.Pair()\n"
+        + "    pa.x = \"oops\"\n"
+        + "    print(\"X=\" + pa.x)\n"
+        + "}\n")
+    ce.expect_error(bad_no_use, "不 use：int 字段赋 string 必须报错（修前静默通过）",
+        "字段赋值类型不匹配", 5)
+
+    // ② 对照：use 类型名（既有行为）
+    var bad_use = dirs.join(work, "bad_use.leno")
+    files.write(bad_use,
+        "import \"lib/a.leno\" as a\nuse a.Pair\n\n"
+        + "main() {\n"
+        + "    var pa = new Pair()\n"
+        + "    pa.x = \"oops\"\n"
+        + "    print(\"X=\" + pa.x)\n"
+        + "}\n")
+    ce.expect_error(bad_use, "use：同样报错（对照）", "字段赋值类型不匹配", 6)
+
+    // ③ 反向守卫：不 use 时正确赋值仍须通过
+    var good_no_use = dirs.join(work, "good_no_use.leno")
+    files.write(good_no_use,
+        "import \"lib/a.leno\" as a\n\n"
+        + "main() {\n"
+        + "    var pa = new a.Pair()\n"
+        + "    pa.x = 7\n"
+        + "    print(\"X=\" + pa.x)\n"
+        + "}\n")
+    ce.expect_ok(good_no_use, "不 use：正确赋值必须仍然通过（防误报）", "X=7")
+
+    // ④ 索引赋值形式（`pa["x"] = ...`）：与 `pa.x = ...` 走**不同**的语义分支
+    //   （visit_expr.inc 的 AST_INDEX_ASSIGN），那里 struct 分支只有一级 ⇒ 修前**同样静默通过**。
+    var bad_idx = dirs.join(work, "bad_idx.leno")
+    files.write(bad_idx,
+        "import \"lib/a.leno\" as a\n\n"
+        + "main() {\n"
+        + "    var pa = new a.Pair()\n"
+        + "    pa[\"x\"] = \"oops\"\n"
+        + "    print(\"X=\" + pa[\"x\"])\n"
+        + "}\n")
+    ce.expect_error(bad_idx, "不 use：索引赋值形式的错赋值必须报错", "类型不匹配", 5)
+
+    // ⑤ 反向守卫：索引赋值形式的正确赋值仍须通过
+    var good_idx = dirs.join(work, "good_idx.leno")
+    files.write(good_idx,
+        "import \"lib/a.leno\" as a\n\n"
+        + "main() {\n"
+        + "    var pa = new a.Pair()\n"
+        + "    pa[\"x\"] = 7\n"
+        + "    print(\"X=\" + pa[\"x\"])\n"
+        + "}\n")
+    ce.expect_ok(good_idx, "不 use：索引赋值形式的正确赋值必须通过（防误报）", "X=7")
+
+    // ⑥ cstruct 的"索引形式"错赋值（与 struct 同形，但走另一条分支）
+    var bad_cs_idx = dirs.join(work, "bad_cs_idx.leno")
+    files.write(bad_cs_idx,
+        "import \"lib/v.leno\" as a\n\n"
+        + "main() {\n"
+        + "    var v = a.Vec.malloc()\n"
+        + "    v[\"x\"] = \"oops\"\n"
+        + "    print(\"X=\" + v.x)\n"
+        + "    v.free()\n"
+        + "}\n")
+    ce.expect_error(bad_cs_idx, "cstruct 索引形式错赋值必须报错（修前静默通过）", "类型不匹配", 5)
+
+    // ⑦ cstruct 的"复合赋值"错赋值（脱糖成 AST_INDEX_ASSIGN，cstruct 分支此前只设索引）
+    var bad_cs_comp = dirs.join(work, "bad_cs_comp.leno")
+    files.write(bad_cs_comp,
+        "import \"lib/v.leno\" as a\n\n"
+        + "main() {\n"
+        + "    var v = a.Vec.malloc()\n"
+        + "    v.x = 1\n"
+        + "    v.x += \"oops\"\n"
+        + "    print(\"X=\" + v.x)\n"
+        + "    v.free()\n"
+        + "}\n")
+    ce.expect_error(bad_cs_comp, "cstruct 复合赋值错赋值必须报错（修前静默通过）", "类型不匹配", 6)
+
+    // ⑧ 反向守卫：cstruct 的三种正确写法（点写 / 复合 / 索引写）仍须通过
+    var good_cs = dirs.join(work, "good_cs.leno")
+    files.write(good_cs,
+        "import \"lib/v.leno\" as a\n\n"
+        + "main() {\n"
+        + "    var v = a.Vec.malloc()\n"
+        + "    v.x = 1\n"
+        + "    v.x += 2\n"
+        + "    v[\"y\"] = 3\n"
+        + "    print(\"X=\" + v.x + \" Y=\" + v.y)\n"
+        + "    v.free()\n"
+        + "}\n")
+    ce.expect_ok(good_cs, "cstruct 三种正确写法必须通过（防误报）", "X=3 Y=3")
+
+    dirs.delete(work)
+
+    print("test_field_assign_type_check passed")
+}

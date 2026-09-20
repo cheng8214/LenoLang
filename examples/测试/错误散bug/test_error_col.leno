@@ -1,0 +1,4 @@
+main() {
+    print(unknown_func())
+    print(undefined_var)
+}

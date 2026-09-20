@@ -1,0 +1,12 @@
+// 测试9: switch 语句体缺少大括号 (语法错误)
+// 期望错误:
+//   第8行: switch 语句体必须用大括号 {} 包裹
+
+main()
+{
+    var x = 1
+    // 第7行: switch 后缺少大括号
+    switch x
+        case 1
+            print("one")
+}

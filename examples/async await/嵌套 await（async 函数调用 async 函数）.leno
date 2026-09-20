@@ -1,0 +1,21 @@
+import io
+import asyncs
+
+async func inner(int n):int {
+    await asyncs.sleep(100)
+    return n * 2
+}
+
+async func outer() {
+    io.print("outer 开始")
+    var a = await inner(5)
+    io.print($"inner(5) = {a}")
+    var b = await inner(10)
+    io.print($"inner(10) = {b}")
+    io.print($"总和: {a + b}")
+}
+
+main() {
+    outer()
+    asyncs.run()
+}

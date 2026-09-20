@@ -1,0 +1,53 @@
+// import 各种写法 → 同一个文件 —— S9 收敛的护栏
+//
+// 背景：**执行"import 串 → 哪个文件"的有三处**（解析器把 AST 里的模块名换成真路径、
+// 扫描器解析依赖建跨模块类型表、加载器拼当前目录 + normalize），而"什么算包名写法"这条
+// **规则**只许有一处实现（`package_resolve_import_spec`：不含 ".leno" 才按包名在搜索路径里找）。
+// 任一处漏改或写歪 ⇒ 同一个 import 在不同阶段解析到不同文件，就是 S9 那类静默降级
+// （裸名导入时跨模块字段类型变 any）的来源。
+// 历史：2026-09-18 前解析器把这条规则**抄了两份**（字符串形式解析一次、AST 构造后又解析一次），
+// 已收敛为一份。
+//
+// 本用例把"同一个模块的三种写法"各跑一遍，要求**结果完全一致**（都能编译、都读出 42）：
+//   ① 裸包名（字符串形式）：import "m"      ← 走搜索路径（源文件所在目录也在搜索路径里）
+//   ② 文件路径（带 .leno）：import "m.leno" ← 不该被当包名再拼一次 ".leno"
+//   ③ 标识符形式：         import m        ← 与 ① 是同一条解析（AST 构造后统一处理）
+// 子进程机器复用 assert/helpers/compiler.leno（S7）。
+
+import dirs
+import files
+
+import "helpers/compiler.leno" as ce
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_import_path_forms")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // 被导入的模块：与入口**同目录**（这样"裸包名"能通过搜索路径找到 —— main.c 会把
+    // 源文件所在目录加进搜索路径）
+    files.write(dirs.join(work, "m.leno"),
+        "export func tag(): int {\n    return 42\n}\n")
+
+    // ① 裸包名（字符串形式）
+    var e_bare = dirs.join(work, "e_bare.leno")
+    files.write(e_bare,
+        "import \"m\" as m\n\nmain() {\n    print(\"T=\" + m.tag())\n}\n")
+    ce.expect_ok(e_bare, "裸包名 import \"m\"", "T=42")
+
+    // ② 文件路径（带 .leno）
+    var e_rel = dirs.join(work, "e_rel.leno")
+    files.write(e_rel,
+        "import \"m.leno\" as m\n\nmain() {\n    print(\"T=\" + m.tag())\n}\n")
+    ce.expect_ok(e_rel, "文件路径 import \"m.leno\"", "T=42")
+
+    // ③ 标识符形式（无引号）
+    var e_ident = dirs.join(work, "e_ident.leno")
+    files.write(e_ident,
+        "import m\n\nmain() {\n    print(\"T=\" + m.tag())\n}\n")
+    ce.expect_ok(e_ident, "标识符形式 import m", "T=42")
+
+    dirs.delete(work)
+
+    print("test_import_path_forms passed")
+}

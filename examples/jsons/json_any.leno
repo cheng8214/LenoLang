@@ -1,0 +1,65 @@
+// ============================================================================
+// JSON 取值助手（示例共用）—— 让 `any` 型的 JSON 结果可读
+// ============================================================================
+// 为什么需要这一层（见 docs/待办_易用性痛点（TraeSign 移植实录）.md 的 P1 / P7）：
+//   `jsons.decode` / `jsons.read_file` 的**静态返回类型是 `any`** ⇒ 不能直接当 Dict/Array 用
+//   （「不能在 any 类型上直接访问字段 / 进行索引访问」，也不能赋给 `Dict[string, any]`）。
+//
+// ★ 语言**本来就有**正道，本文件就是它的示范：
+//   · `x as T` —— **安全类型转换**（`leno_ast.h` 的原话）：匹配则返回目标类型、
+//     **不匹配返回 null**（**不抛错**），而且**静态类型就是 T** ⇒ 一步到位 ✓；
+//   · `if x is T => v { ... }` —— 收窄 + 绑定 ✓。
+//   ⚠ 也正因为有它，**没有必要**再给语言加 `_Dict()` / `_Array()` 之类的内置
+//     —— 那会变成"同一件事的第二份实现"，而且规矩还相反（抛错 vs 返回 null）✗。
+//
+// 这一层只是**糖**：把"取不到就当作空"的默认值语义收在一处，示例代码才只跟 string 打交道。
+// ⚠ **收窄到裸 `Dict`/`Array` 时取出的元素仍是 `any`** ⇒ 嵌套结构要逐层过这里。
+
+// 取字符串值；缺失 / null / 非字典 ⇒ ""
+export func jstr(any obj, string key): string {
+    var d = obj as Dict
+    if d == null { return "" }
+    if not d.has(key) { return "" }
+    var v = d[key]
+    if v == null { return "" }
+    return _str(v)
+}
+
+// 取子对象 / 子数组（拿到后继续用 jstr / jats / jlen 往下取）
+export func jobj(any obj, string key): any {
+    var d = obj as Dict
+    if d == null { return null }
+    if not d.has(key) { return null }
+    return d[key]
+}
+
+// 取数组第 i 个元素（越界 / 非数组 ⇒ null）
+export func jat(any arr, int i): any {
+    var a = arr as Array
+    if a == null { return null }
+    if i < 0 or i >= a.len() { return null }
+    return a[i]
+}
+
+// 数组第 i 个元素转字符串
+export func jats(any arr, int i): string {
+    var v = jat(arr, i)
+    if v == null { return "" }
+    return _str(v)
+}
+
+// 长度：数组 / 字典 / 字符串；其它 ⇒ 0
+export func jlen(any v): int {
+    var a = v as Array
+    if a != null { return a.len() }
+    var d = v as Dict
+    if d != null { return d.len() }
+    if v is string { return _str(v).len() }
+    return 0
+}
+
+// 转成可打印字符串（null ⇒ ""）
+export func jshow(any v): string {
+    if v == null { return "" }
+    return _str(v)
+}

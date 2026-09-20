@@ -1,0 +1,16 @@
+// 嵌套数组类型问题演示
+// 结论：当前编译器对嵌套数组的类型推断是正确的！
+// 真正的问题在于：函数返回类型未声明导致返回 any
+
+main() {
+    // 错误示例：函数没有声明返回类型
+    func bad_evaluate_line(int r, int c, int dr, int dc, int player) {
+        var score = 100
+        return score  // 返回 any，不是 int！
+    }
+
+    // 使用未声明返回类型的函数 - 会报错
+    var total = 0
+    total = total + bad_evaluate_line(0, 0, 1, 1, 1)
+    print("total = " + total)
+}

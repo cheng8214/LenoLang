@@ -1,0 +1,22 @@
+import io
+import asyncs
+
+async func risky():string {
+    await asyncs.sleep(100)
+    throw "出错了"
+    return "不会执行"
+}
+
+async func safe_catch() {
+    try {
+        var result = await risky()
+        io.print($"成功: {result}")
+    } catch e {
+        io.print($"捕获异常: {e}")
+    }
+}
+
+main() {
+    safe_catch()
+    asyncs.run()
+}

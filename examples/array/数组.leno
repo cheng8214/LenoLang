@@ -1,0 +1,7 @@
+// 新建文件: Untitled.leno
+main()
+{
+	var arr=[1,2,3,40]
+	print(arr)
+	print(arr[0])
+}

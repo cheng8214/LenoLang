@@ -1,0 +1,34 @@
+import sockets
+import io
+
+main() {
+    io.print("=== 测试字节序转换 ===")
+    
+    // 测试 htons (16位)
+    var port = 8080
+    var port_be = sockets.htons(port)
+    io.print("htons(" + port + ") = " + port_be)
+    io.print("ntohs(" + port_be + ") = " + sockets.ntohs(port_be))
+    
+    // 测试 htonl (32位)
+    var addr = 0x7F000001  // 127.0.0.1
+    var addr_be = sockets.htonl(addr)
+    io.print("\nhtonl(0x" + addr + ") = 0x" + addr_be)
+    io.print("ntohl(0x" + addr_be + ") = 0x" + sockets.ntohl(addr_be))
+    
+    // 验证往返转换
+    io.print("\n=== 验证往返转换 ===")
+    if sockets.ntohs(sockets.htons(port)) == port {
+        io.print("htons -> ntohs: OK")
+    } else {
+        io.print("htons -> ntohs: FAILED")
+    }
+    
+    if sockets.ntohl(sockets.htonl(addr)) == addr {
+        io.print("htonl -> ntohl: OK")
+    } else {
+        io.print("htonl -> ntohl: FAILED")
+    }
+    
+    io.print("\n测试完成!")
+}

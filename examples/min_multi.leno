@@ -1,0 +1,7 @@
+func test(): [int, string] {
+    return 42, "hello"
+}
+
+var[int, string](a, b) = test()
+print(a)
+print(b)

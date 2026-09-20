@@ -1,0 +1,14 @@
+[package]
+name = "LenoMusic"
+version = "2.0.0"
+description = "Leno audio module (streaming playback) based on miniaudio"
+authors = ""
+license = "MIT"
+
+[modules]
+root = "lib"
+
+[native-libs.miniaudio]
+win   = "lib/miniaudio.dll"
+linux = "lib/libminiaudio.so"
+mac   = "lib/libminiaudio.dylib"

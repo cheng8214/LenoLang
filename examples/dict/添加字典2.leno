@@ -1,0 +1,7 @@
+main() 
+{
+  Dict d={}
+  print(type(d))
+  d["set"]("key", "value")
+  print(d)
+}

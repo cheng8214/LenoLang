@@ -1,0 +1,101 @@
+// 缓存依赖失效回归（S8）—— 入口不动、只改被引用模块，必须用上新模块
+//
+// 背景（docs/待办_单一事实来源与重复实现收敛.md 的 S8）：
+//   entry_<hash>.lenb 是**整程序**的序列化快照：所有 import 进来的模块字节码都被内联
+//   在同一个文件里，而文件名只由**入口文件自身**的内容哈希决定。于是"入口不动、只改 lib 模块"时：
+//   缓存键不变、内容却是旧的 ⇒ 直接跑改前的模块字节码，而且**不报错、不提示**。
+//   模块级 .lenomc 那套「自身 hash + 逐依赖 hash」校验根本没机会执行 —— 整个程序被入口
+//   缓存短路了，一次 load_module_file 都没走。
+//   修法见 fccd1534：写入口缓存时同批落盘 entry_<hash>.lenb.deps（每个参与模块的磁盘大小 +
+//   内容哈希，快照取自各模块 .lenomc header），加载入口缓存前逐条校验，不符即删除缓存回退源码编译。
+//
+// 为什么这里自己起进程断言：入口缓存是**跨运行**的进程外状态，必须跑两次不同的进程才看得出来；
+// run_tests.leno 的"一个文件一个进程、只判 exit code"表达不了这个形态。
+// （run_tests.leno 跑前会删 assert 子树的 .lenocache，但本用例的工作目录在 _tmpdir() 下，
+//   所以自己在开头/结尾各清一次，保证第一跑一定是冷缓存。）
+//
+// 反向验证（证明断言不是空转）：把 src/main.c 里 entry_deps_valid 的调用去掉再编译，
+// 本用例的核心断言必然失败（旧行为会打印改前的旧值）。
+
+import dirs
+import files
+import strings
+
+// 起编译器子进程的共享工具（命令行拼接、判成功/失败的唯一实现，见 S7）
+import "helpers/compiler.leno" as ce
+
+func module_src(int v):string {
+    return "export func tag(): int\n{\n    return " + v + "\n}\n"
+}
+
+// 直接依赖：入口 → lib/m.leno
+func entry_direct():string {
+    return "import \"lib/m.leno\" as m\n\nmain()\n{\n    print(\"TAG=\" + m.tag())\n}\n"
+}
+
+// 传递依赖：入口 → lib/a.leno → lib/b.leno（b 不在入口的 import 列表里，只能靠依赖快照覆盖）
+func entry_chain():string {
+    return "import \"lib/a.leno\" as a\n\nmain()\n{\n    print(\"TAG=\" + a.f())\n}\n"
+}
+
+func chain_a_src():string {
+    return "import \"b.leno\" as b\n\nexport func f(): int\n{\n    return b.g()\n}\n"
+}
+
+func chain_b_src(int v):string {
+    return "export func g(): int\n{\n    return " + v + "\n}\n"
+}
+
+// 断言输出里出现了 TAG=<want>。
+// 取值刻意避开前缀关系（11/22、101/202），免得 "TAG=1" 被 "TAG=11" 误命中。
+func expect_tag(string out, int want, string tag) {
+    var needle = "TAG=" + want
+    assert_true(strings.has(out, needle),
+        tag + "：输出里应出现「" + needle + "」——说明跑的是当前模块源码，不是旧缓存；输出=" + out)
+}
+
+main() {
+    // ================= 场景 1：直接依赖（1→2 个模块，大小相同的改动）=================
+    var w1 = dirs.join(_tmpdir(), "leno_cache_dep_direct")
+    dirs.delete(w1)
+    dirs.mkdir_p(dirs.join(w1, "lib"))
+
+    var e1 = dirs.join(w1, "main.leno")
+    var m1 = dirs.join(dirs.join(w1, "lib"), "m.leno")
+    files.write(e1, entry_direct())
+    files.write(m1, module_src(11))
+
+    // ① 冷缓存首跑：编译并写缓存（.lenb + .deps）
+    expect_tag(ce.expect_ok(e1, "场景1-首跑", ""), 11, "场景1-首跑")
+    // ② 无改动再跑：结果必须稳定（不管命中缓存还是重编译，都不许漂移）
+    expect_tag(ce.expect_ok(e1, "场景1-无改动", ""), 11, "场景1-无改动")
+    // ③ 只改被引用模块：必须用上新模块 —— 修复前这里打印的仍是 TAG=11（旧缓存）
+    files.write(m1, module_src(22))
+    expect_tag(ce.expect_ok(e1, "场景1-改模块", ""), 22, "场景1-改模块")
+    // ④ 再改回去：双向都要生效（排除"只在某种大小关系下才失效"这类巧合）
+    files.write(m1, module_src(11))
+    expect_tag(ce.expect_ok(e1, "场景1-改回", ""), 11, "场景1-改回")
+
+    // ================= 场景 2：传递依赖（只改末端 b）=================
+    var w2 = dirs.join(_tmpdir(), "leno_cache_dep_chain")
+    dirs.delete(w2)
+    dirs.mkdir_p(dirs.join(w2, "lib"))
+
+    var e2 = dirs.join(w2, "main.leno")
+    var a2 = dirs.join(dirs.join(w2, "lib"), "a.leno")
+    var b2 = dirs.join(dirs.join(w2, "lib"), "b.leno")
+    files.write(e2, entry_chain())
+    files.write(a2, chain_a_src())
+    files.write(b2, chain_b_src(101))
+
+    expect_tag(ce.expect_ok(e2, "场景2-首跑", ""), 101, "场景2-首跑")
+    // 只改 b（a 与入口都不动）：依赖快照必须覆盖到传递依赖，否则这里仍旧是 TAG=101
+    files.write(b2, chain_b_src(202))
+    expect_tag(ce.expect_ok(e2, "场景2-改末端依赖", ""), 202, "场景2-改末端依赖")
+
+    // 清理（含两处 .lenocache）
+    dirs.delete(w1)
+    dirs.delete(w2)
+
+    print("test_module_cache_dep_invalidate passed")
+}

@@ -1,0 +1,51 @@
+// 测试1: filter
+func filter[T](Array[T] arr, func(T):bool fn):Array[T] {
+    var result = []
+    for arr to item {
+        if fn(item) {
+            result.add(item)
+        }
+    }
+    return result
+}
+
+// map 泛型版本
+func map[T, U](Array[T] arr, func(T):U fn):Array[U] {
+    var result = []
+    for arr to item {
+        result.add(fn(item))
+    }
+    return result
+}
+
+func is_even(int x):bool {
+    return x % 2 == 0
+}
+
+// 测试2: identity
+func id[T](T val):T {
+    return val
+}
+
+// 测试3: string map
+func strlen(string s):int {
+    return s.len()
+}
+
+main() {
+    // filter 测试
+    var nums = [1, 2, 3, 4, 5, 6]
+    var evens = filter(nums, is_even)
+    print(evens)     // [2, 4, 6]
+    
+    // identity 测试
+    print(id(42))
+    print(id("hello"))
+    
+    // string map 测试
+    var words = ["hello", "world", "leno"]
+    // 用匿名函数作为参数
+    func get_len(string s):int { return s.len() }
+    var lengths = map(words, get_len)
+    print(lengths)  // [5, 5, 4]
+}

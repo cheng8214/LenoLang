@@ -1,0 +1,31 @@
+main()
+{
+    var x = 100
+    
+    if x == 100
+    {
+        var a = 0
+        print("first if:")
+        print(a)
+        
+        if a == 0
+        {
+            var a = 10
+            print("nested if:")
+            print(a)
+        }
+        
+        print("after nested:")
+        print(a)
+    }
+    
+    if x == 100
+    {
+        var a = 20
+        print("second if:")
+        print(a)
+    }
+    
+    print("final x:")
+    print(x)
+}

@@ -1,0 +1,23 @@
+import "bug1_base.leno" as b
+use b.core_lib
+use b.Holder
+
+main() {
+    print("=== BUG1: fixed ===")
+
+    // 原来崩溃: core_lib l = h.lib
+    var h = new Holder(lib = b.loadCore(), tag = "t")
+    core_lib l = h.lib          // 现在应该是 core_lib 了
+    var v = l.abs(-5) as int
+    print("1. direct: " + v)    // 期望 5
+
+    // 通过透传函数（之前就正常）
+    var h2 = new Holder(lib = b.loadCore(), tag = "t2")
+    print("2. viaFunc: " + b.useHolder(h2, -7))  // 7
+
+    core_lib l2 = h2.lib
+    var v2 = l2.abs(-11) as int
+    print("3. extract: " + v2)   // 11
+
+    print("=== 通过 ===")
+}

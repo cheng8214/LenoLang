@@ -1,0 +1,68 @@
+// type_narrowing_bug2.leno — Leno 编译器类型收窄 bug 复现（struct 字段版）
+//
+// struct 字段不允许使用 any，改用 nullable 类型（Type?）。
+// 验证 is 收窄在 try、while、嵌套 if、for 循环、赋值中都能正常传播。
+//
+// 编译：leno -c type_narrowing_bug2.leno
+
+import threads
+
+struct Container {
+    // nullable Channel 字段
+    Channel? data = null
+
+    func test_try() {
+        // is 收窄后在 try 块中调用方法
+        if data is Channel {
+            // 直接调用
+            data.close()
+
+            // try 块中调用
+            try {
+                data.close()
+            } catch e {
+            }
+        }
+    }
+
+    func test_while() {
+        // is 收窄后在 while 块中调用方法
+        if data is Channel {
+            int i = 0
+            while i < 3 {
+                var msg = data.try_receive()
+                i = i + 1
+            }
+        }
+    }
+
+    func test_nested_if() {
+        // is 收窄后在嵌套 if 中调用方法
+        if data is Channel {
+            if data.len() > 0 {
+                var msg = data.try_receive()
+            }
+        }
+    }
+
+    func test_assignment() {
+        // is 收窄后赋值给同类型变量
+        if data is Channel {
+            Channel ch = data
+            ch.close()
+        }
+    }
+
+    func test_for() {
+        // is 收窄后在 for 循环中调用方法
+        if data is Channel {
+            for 3 to i {
+                var msg = data.try_receive()
+            }
+        }
+    }
+}
+
+main() {
+    print("type narrowing bug - struct field edition")
+}

@@ -1,0 +1,44 @@
+// 多模块同时使用 - 模拟用户引用多个子模块
+import "sdl_renderer.leno" as renderer
+import "sdl_ttf.leno" as ttf
+import "sdl_core.leno" as core
+use renderer.core_lib
+use renderer.RenderContext
+use ttf.system_lib
+
+main() {
+    print("=== 多模块引用 ===")
+
+    // 1. 从 core 直接取 clib
+    core_lib c = core.loadCore()
+    print("1. core: " + c.abs(-5) as int)
+
+    // 2. 从 renderer 取同一个 clib 类型
+    core_lib c2 = renderer.getRendererCore()
+    print("2. renderer: " + c2.abs(-7) as int)
+
+    // 3. 从 ttf 取同一个 clib 类型
+    core_lib c3 = ttf.getTTFCore()
+    print("3. ttf: " + c3.abs(-11) as int)
+
+    // 4. 三个来源的 clib 混用
+    var v4a = c.abs(-13) as int
+    var v4b = c2.abs(-17) as int
+    var v4c = c3.abs(-19) as int
+    print("4. 混用: " + v4a + " " + v4b + " " + v4c)
+
+    // 5. system_lib
+    system_lib s = ttf.getTTFSys()
+    print("5. sys: OK")
+
+    // 6. struct + clib (通过透传函数间接访问)
+    var ctx = new RenderContext(lib = c, name = "multi")
+    var v6 = renderer.renderViaContext(ctx, -23)
+    print("6. struct: " + v6)
+
+    // 7. struct 透传函数
+    var v7 = renderer.renderViaContext(ctx, -29)
+    print("7. viaCtx: " + v7)
+
+    print("=== 全部通过 ===")
+}

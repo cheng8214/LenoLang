@@ -1,0 +1,70 @@
+// 回归测试：enum 成员值 >= 2^31 不被截断为 int32
+// 历史 bug：语义符号表用 int* 存储 enum 值，0x80000000 被截断为 -2147483648，
+// 经 EnumName.member 编译期取值后，位组合传给 ffi u32 报“超出 u32 范围”。
+// 修复：enum_values/member_values 全部改为 int64_t。
+
+import "test_enum_int64_mod.leno" as tm
+use tm.TrayEntryFlag
+use tm.SignedFlag
+
+// 同模块定义 enum（走 visit_enum.inc 路径）
+enum LocalFlag {
+    BUTTON   = 0x00000001
+    DISABLED = 0x80000000
+    CHECKED  = 0x40000000
+}
+
+// 自动递增紧跟大值成员：下一个应为 0x80000001
+enum AutoAfter {
+    BASE = 0x80000000
+    NEXT                  // 自动 = 0x80000001 = 2147483649
+}
+
+// 值别名指向大值 enum 成员
+alias DisabledFlag = TrayEntryFlag.DISABLED
+
+// 同模块定义的负值 enum（负值成员回归用）
+enum LocalSigned {
+    NEG  = -1
+    ZERO = 0
+    POS  = 7
+}
+
+main() {
+    // === 同模块 enum：visit_enum.inc 路径 ===
+    assert_eq(LocalFlag.DISABLED, 2147483648)
+    assert_eq(LocalFlag.BUTTON, 1)
+    assert_eq(LocalFlag.DISABLED | LocalFlag.BUTTON, 2147483649)
+    assert_eq(LocalFlag.CHECKED, 1073741824)
+    assert_eq(LocalFlag.DISABLED | LocalFlag.CHECKED, 3221225472)
+
+    // === use 导入 enum：semantic_visit_ast.c 路径（原始 sdl_tray bug 场景）===
+    assert_eq(TrayEntryFlag.DISABLED, 2147483648)
+    assert_eq(TrayEntryFlag.BUTTON, 1)
+    assert_eq(TrayEntryFlag.DISABLED | TrayEntryFlag.BUTTON, 2147483649)
+    assert_eq(TrayEntryFlag.CHECKED, 1073741824)
+    assert_eq(TrayEntryFlag.DISABLED | TrayEntryFlag.CHECKED, 3221225472)
+    assert_eq(TrayEntryFlag.DISABLED | TrayEntryFlag.BUTTON | TrayEntryFlag.CHECKED, 3221225473)
+
+    // === 自动递增紧跟大值成员 ===
+    assert_eq(AutoAfter.BASE, 2147483648)
+    assert_eq(AutoAfter.NEXT, 2147483649)
+
+    // === 值别名指向大值 enum 成员 ===
+    assert_eq(DisabledFlag, 2147483648)
+
+    // === 负值成员：不得被误判为「没有成员」 ===
+    // 旧 bug：运行期按名取成员值的函数用「返回 -1」表示未找到，调用方判 `值 < 0`，
+    // 于是合法的负值成员被报「enum 'X' 没有成员 'NEG'」。已改为 found 出参。
+    assert_eq(LocalSigned.NEG, -1)
+    assert_eq(LocalSigned.ZERO, 0)
+    assert_eq(LocalSigned.POS, 7)
+    assert_eq(SignedFlag.NEG_ONE, -1)
+    assert_eq(SignedFlag.NEG_BIG, -100)
+    assert_eq(SignedFlag.POS, 5)
+    // 模块限定访问：走枚举定义对象的运行期按名取值路径
+    assert_eq(tm.SignedFlag.NEG_ONE, -1)
+    assert_eq(tm.SignedFlag.NEG_BIG, -100)
+
+    print("enum int64 截断回归测试通过")
+}

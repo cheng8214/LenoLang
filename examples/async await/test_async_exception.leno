@@ -1,0 +1,58 @@
+import io
+import asyncs
+
+// 测试1: 协程内部 try-catch 捕获异常
+async func test_catch_inside():bool {
+    var caught = false
+    try {
+        await asyncs.sleep(10)
+        throw "内部异常"
+    } catch e {
+        caught = true
+        io.print("测试1 - 内部捕获: " + e)
+    }
+    return caught
+}
+
+// 测试2: 协程抛出异常，run() 收集并报告
+async func test_throw_no_catch() {
+    await asyncs.sleep(10)
+    throw "未捕获异常"
+}
+
+// 测试3: await 失败的 Future 时传播异常
+async func test_await_failed():bool {
+    var caught = false
+    try {
+        var f = test_throw_no_catch()
+        var result = await f
+        io.print("测试3 - 不应到达这里")
+    } catch e {
+        caught = true
+        io.print("测试3 - await 捕获: " + e)
+    }
+    return caught
+}
+
+main() {
+    // 测试1: 内部 try-catch
+    test_catch_inside()
+    asyncs.run()
+    io.print("测试1 通过")
+
+    // 测试3: await 失败 Future 传播异常
+    test_await_failed()
+    asyncs.run()
+    io.print("测试3 通过")
+
+    // 测试2: run() 收集未捕获异常
+    test_throw_no_catch()
+    try {
+        asyncs.run()
+    } catch e {
+        io.print("测试2 - run() 捕获: " + e)
+    }
+    io.print("测试2 通过")
+
+    io.print("所有 async 异常传播测试通过")
+}

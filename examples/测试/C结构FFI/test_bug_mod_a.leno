@@ -1,0 +1,4 @@
+// 模拟 sdl_core.leno
+export cstruct MyVertex { f32 x; f32 y; f32 r; f32 g; f32 b; f32 a }
+export cstruct MyRect   { f32 x; f32 y; f32 w; f32 h }
+export cstruct MyPoint  { i32 x; i32 y }

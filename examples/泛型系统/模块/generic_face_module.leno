@@ -1,0 +1,19 @@
+// 导出泛型 face 和 impl
+export face Comparable[T] {
+    func compareTo(T other): int
+}
+
+export struct IntVal impl Comparable[int] {
+    int val
+
+    func compareTo(int other): int {
+        if self.val < other { return -1 }
+        if self.val > other { return 1 }
+        return 0
+    }
+}
+
+export func max_val[T](Comparable[T] a, Comparable[T] b): Comparable[T] {
+    if a.compareTo(0) >= b.compareTo(0) { return a }
+    return b
+}

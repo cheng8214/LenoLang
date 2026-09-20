@@ -1,0 +1,30 @@
+// 测试链式 clib 调用：core.lib().SDL_DestroyTexture(tex) 模式
+// 只测试编译期语义分析是否支持链式调用，不实际调用
+import ffi
+
+// 定义一个简单的 clib
+clib mylib {
+    i32 add(i32 a, i32 b)
+    i32 mul(i32 x, i32 y)
+}
+
+// 模拟 sdl_core.leno 的 lib() 函数
+mylib g_lib = null
+
+export func lib(): mylib {
+    return g_lib
+}
+
+// 测试1: 通过变量调用 clib（sdl_font.leno 的方式）—— 已知能工作
+mylib _lib = lib()
+
+// 测试2: 编译期验证 —— lib() 返回 mylib 类型，链式调用应该能通过类型检查
+// 不实际运行，只验证编译不报错
+export func testChainCall(): mylib {
+    // 链式调用：这就是 core.lib().SDL_DestroyTexture(tex) 的模式
+    // 编译器需要识别 lib() 返回 mylib (TYPE_CLIB)，然后允许 .mul() 调用
+    var result = lib().mul(3, 4)
+    return _lib
+}
+
+print("clib 链式调用编译测试通过!")

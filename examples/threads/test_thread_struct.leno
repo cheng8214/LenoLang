@@ -1,0 +1,33 @@
+// test_thread_struct.leno — 最小多线程 struct 测试
+// 验证：两个子线程各自 new 一个 struct，是否卡死/崩溃
+import threads
+
+struct Point {
+    int x
+    int y
+}
+
+main() {
+    print("start")
+
+    var h1 = threads.start(func(any a) {
+        Point p = new Point()
+        p.x = 1
+        p.y = 2
+        return p.x + p.y
+    }, 0)
+    print("thread1 started")
+
+    var h2 = threads.start(func(any a) {
+        Point p = new Point()
+        p.x = 10
+        p.y = 20
+        return p.x + p.y
+    }, 0)
+    print("thread2 started")
+
+    var r1 = h1.join()
+    var r2 = h2.join()
+    print("r1=" + r1 + " r2=" + r2)
+    print("done")
+}

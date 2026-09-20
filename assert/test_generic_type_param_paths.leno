@@ -1,0 +1,72 @@
+// 泛型类型参数在"两条导入路径"上的传导 —— 回归测试
+//
+// 背景（2026-09-18，S2 族的第三处"同一件事两份实现"）：
+//   把模块里的 struct **搬进当前作用域**这件事有两份实现：
+//     · visit_module.inc 的 AST_USE（直接 `use m.Box`）—— 富：struct_def 注册（含关联常量
+//       补充）+ 方法占位符带 param_types / type_params / 返回泛型实参
+//     · semantic_visit_ast.c 的 import_type_deps（`use m.SomeAlias` 触发）—— 贫：方法占位符
+//       只填 name/pcnt/返回类型，**不填 param_types 与 type_params**
+//   ⇒ 泛型方法经 alias 那条路进来时，`resolve_generic_in_type` 拿不到类型参数表 ⇒ 返回类型
+//   停在未替换的 `T`，而**未约束的泛型参数与任何类型都兼容** ⇒ 类型检查被静默跳过
+//   （实测：`func probe(Box[int] b): string { return b.get() }` 在直接 use 时正确报
+//    "实际 int"，经 alias 时**什么都不报**）。
+//   顺带：扫描器的**字段**解析此前漏了"泛型类型参数"这一类（另两处——函数参数、方法返回——
+//   都有）⇒ 泛型字段 `T v` 被记成 any，还会误报降级警告。
+//
+// 三个判据都用"报错文案里的实际类型"当标尺（`any` 与 `int` 赋给 string 都报错，只有文案能区分）。
+// 子进程机器复用 assert/helpers/compiler.leno（S7）。
+
+import dirs
+import files
+import strings
+
+import "helpers/compiler.leno" as ce
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_generic_type_param_paths")
+    dirs.delete(work)
+    dirs.mkdir_p(dirs.join(work, "lib"))
+
+    files.write(dirs.join(work, "lib/g.leno"),
+        "export struct Box[T] {\n    T v\n\n"
+        + "    func get(): T {\n        return v\n    }\n}\n\n"
+        + "export alias F = func(Box): bool\n")
+
+    // 判据 1：泛型**字段**（扫描器字段解析的类型参数检查）
+    var field_main = dirs.join(work, "main_field.leno")
+    files.write(field_main,
+        "import \"lib/g.leno\" as g\nuse g.Box\n\n"
+        + "func probe(Box[int] b): string {\n    return b.v\n}\n\n"
+        + "main() {\n    print(\"OK\")\n}\n")
+    var fout = ce.expect_error(field_main, "泛型字段：类型参数应替换为实参（int）", "实际 int", 0)
+    assert_true(not strings.has(fout, "无法解析"),
+        "泛型字段 `T v` 不该有降级警告（它是合法写法）；实际输出=" + fout)
+
+    // 判据 2：泛型**方法返回值**，直接 use struct（本来就对，防改坏）
+    var direct_main = dirs.join(work, "main_direct.leno")
+    files.write(direct_main,
+        "import \"lib/g.leno\" as g\nuse g.Box\n\n"
+        + "func probe(Box[int] b): string {\n    return b.get()\n}\n\n"
+        + "main() {\n    print(\"OK\")\n}\n")
+    ce.expect_error(direct_main, "泛型方法返回：直接 use struct 时应替换为实参", "实际 int", 0)
+
+    // 判据 3：泛型**方法返回值**，经 alias 依赖导入（复现的那个：修前**什么都不报**）
+    var alias_main = dirs.join(work, "main_alias.leno")
+    files.write(alias_main,
+        "import \"lib/g.leno\" as g\nuse g.F\n\n"
+        + "func probe(Box[int] b): string {\n    return b.get()\n}\n\n"
+        + "main() {\n    print(\"OK\")\n}\n")
+    ce.expect_error(alias_main, "泛型方法返回：经 alias 导入时也应替换为实参（修前静默跳过检查）",
+        "实际 int", 0)
+
+    // 判据 4：泛型 struct 的端到端（赋值 + 读回）
+    var run_main = dirs.join(work, "main_run.leno")
+    files.write(run_main,
+        "import \"lib/g.leno\" as g\nuse g.Box\n\n"
+        + "main() {\n    var b = new Box[int]()\n    b.v = 5\n    print(\"V=\" + b.v)\n}\n")
+    ce.expect_ok(run_main, "泛型 struct 端到端（赋值 + 读回）", "V=5")
+
+    dirs.delete(work)
+
+    print("test_generic_type_param_paths passed")
+}

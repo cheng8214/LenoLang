@@ -1,0 +1,14 @@
+// 测试只使用 geo
+
+import "shape_math.leno" as sm
+
+main()
+{
+    print("=== 测试只使用 geo ===")
+    
+    var area = sm.circle_area(5)
+    print("Circle area = ")
+    print(area)
+    
+    print("=== 完成 ===")
+}

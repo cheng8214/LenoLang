@@ -1,0 +1,109 @@
+// face 高级特性测试：impl 检查、数组推断、类型守卫
+
+// ========== 1. struct 必须显式 impl face 才能作为 face 参数 ==========
+face Speaker {
+    func speak():string
+}
+
+struct Dog impl Speaker {
+    func speak():string { return "woof" }
+}
+
+struct Cat impl Speaker {
+    func speak():string { return "meow" }
+}
+
+// 有 impl 的 struct 可以作为 face 参数
+func make_sound(Speaker s) {
+    return s.speak()
+}
+
+var dog = new Dog()
+var cat = new Cat()
+assert_eq(make_sound(dog), "woof")
+assert_eq(make_sound(cat), "meow")
+
+// ========== 2. face 类型变量多态 ==========
+Speaker s1 = new Dog()
+Speaker s2 = new Cat()
+assert_eq(s1.speak(), "woof")
+assert_eq(s2.speak(), "meow")
+
+// ========== 3. 数组类型推断：同 struct → Array[Struct] ==========
+var dogs = [dog, dog]
+assert_eq(type(dogs), "Array[Dog]")
+
+// ========== 4. 数组类型推断：不同 struct 实现同一 face → Array[Face] ==========
+var speakers = [dog, cat]
+assert_eq(type(speakers), "Array[Speaker]")
+
+// ========== 5. 数组类型推断：face + struct 混合 → Array[Face] ==========
+Speaker s3 = new Dog()
+var mixed = [s3, cat]
+assert_eq(type(mixed), "Array[Speaker]")
+
+// ========== 6. 遍历 Array[Face] 调用 face 方法 ==========
+Array[string] results = []
+for speakers to sp {
+    results.add(sp.speak())
+}
+assert_eq(results[0], "woof")
+assert_eq(results[1], "meow")
+
+// ========== 7. 类型守卫 is Face ==========
+var obj = new Dog()
+if obj is Speaker {
+    assert_eq(obj.speak(), "woof")
+}
+
+// ========== 8. 类型守卫 is Array[Face] ==========
+var arr = [dog, cat]
+if arr is Array[Speaker] {
+    Array[string] sounds = []
+    for arr to item {
+        sounds.add(item.speak())
+    }
+    assert_eq(sounds[0], "woof")
+    assert_eq(sounds[1], "meow")
+}
+
+// ========== 9. as 安全类型转换 ==========
+var d2 = new Dog()
+var as_dog = d2 as Dog
+assert_eq(as_dog != null, true)
+
+var as_cat = d2 as Cat
+assert_eq(as_cat, null)
+
+var as_speaker = d2 as Speaker
+assert_eq(as_speaker != null, true)
+
+// ========== 10. 多 face 实现 ==========
+face Runner {
+    func run():string
+}
+
+struct Horse impl Speaker, Runner {
+    func speak():string { return "neigh" }
+    func run():string { return "gallop" }
+}
+
+var horse = new Horse()
+assert_eq(horse.speak(), "neigh")
+assert_eq(horse.run(), "gallop")
+
+Speaker sp = horse
+assert_eq(sp.speak(), "neigh")
+
+Runner rn = horse
+assert_eq(rn.run(), "gallop")
+
+// ========== 11. 多 face 数组推断 ==========
+var horses = [horse, horse]
+assert_eq(type(horses), "Array[Horse]")
+
+// ========== 12. face 不能实例化（编译期已验证，此处仅确认 struct 可实例化） ==========
+var h = new Horse()
+assert_eq(h != null, true)
+
+print("test_face_advanced passed")

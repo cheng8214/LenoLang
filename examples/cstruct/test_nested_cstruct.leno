@@ -1,0 +1,34 @@
+// 测试嵌套 cstruct
+
+cstruct Vec2 {
+    f32 x
+    f32 y
+}
+
+cstruct Rect {
+    Vec2 origin
+    Vec2 size
+}
+
+main() {
+    print("=== 测试嵌套 cstruct ===")
+    
+    // 测试 Vec2
+    var v = Vec2.malloc()
+    v.x = 10.0
+    v.y = 20.0
+    print("Vec2: x=" + v.x + ", y=" + v.y)
+    v.free()
+    
+    // 测试 Rect（嵌套结构体）
+    var r = Rect.malloc()
+    r.origin.x = 10.0
+    r.origin.y = 20.0
+    r.size.x = 100.0
+    r.size.y = 200.0
+    print("Rect origin: (" + r.origin.x + ", " + r.origin.y + ")")
+    print("Rect size: (" + r.size.x + ", " + r.size.y + ")")
+    r.free()
+    
+    print("=== 测试完成 ===")
+}

@@ -1,0 +1,29 @@
+// 跨模块泛型 struct 测试（双类型参数 + 嵌套泛型）
+import "generic_mod_a.leno" as ma
+import "generic_mod_cross.leno" as mc
+use ma.Container
+use mc.Pair
+use mc.Holder
+
+// 双类型参数泛型 struct
+var pair = new Pair[string, int](first="age", second=25)
+assert_eq(pair.getFirst(), "age")
+assert_eq(pair.getSecond(), 25)
+
+// 方法返回另一个泛型 struct，类型参数正确替换
+var h = pair.toHolder()
+assert_eq(h.getContent(), "age")
+assert_eq(type(h), "Holder[string]")
+
+// int 类型的 Pair
+var p2 = new Pair[int, string](first=99, second="world")
+var h2 = p2.toHolder()
+assert_eq(h2.getContent(), 99)
+assert_eq(type(h2), "Holder[int]")
+
+// 嵌套泛型：Container[Pair]
+var cp = new Container[Pair[string, int]](item=pair)
+assert_eq(cp.get().getFirst(), "age")
+assert_eq(cp.get().getSecond(), 25)
+
+print("test_generic_cross_level passed")

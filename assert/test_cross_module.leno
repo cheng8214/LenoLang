@@ -1,0 +1,341 @@
+// 跨模块 struct/face/use/alias 边界测试
+// 覆盖：跨模块 face 参数、struct impl face 传参、alias 类型、自递归 struct、
+//        re-export 链、Array[Face] 跨模块操作、工厂函数返回值、
+//        自递归 struct 直接传参、face 链式 use 多层传导、跨模块 struct 方法返回值
+
+import "cross_mod_base.leno" as base
+use base.IWidget
+use base.Button
+use base.Label
+use base.Panel
+use base.TreeNode
+use base.WidgetHandler
+use base.WidgetList
+
+import "cross_mod_mid.leno" as mid
+use mid.PanelHandler
+
+// face 链式 use 传导（4层）
+import "face_chain_a.leno" as fa
+use fa.Shape
+import "face_chain_d.leno" as fd
+use fd.Circle
+
+// ============================================================
+// 1. 跨模块 use 后直接创建 struct
+// ============================================================
+func test_use_create() {
+    Button b = new Button(); b._id = 1; b._label = "OK"
+    assert_eq(b.get_id(), 1)
+    assert_eq(b.render(), "Button(OK)")
+
+    Label l = new Label(); l._id = 2; l._text = "Hello"
+    assert_eq(l.get_id(), 2)
+    assert_eq(l.render(), "Label(Hello)")
+
+    print("[1] use_create passed")
+}
+
+// ============================================================
+// 2. 跨模块 face 类型参数
+// ============================================================
+func show(IWidget w): string { return w.render() }
+
+func test_face_param() {
+    Button b = new Button(); b._id = 1; b._label = "Click"
+    Label l = new Label(); l._id = 2; l._text = "Hi"
+
+    assert_eq(show(b), "Button(Click)")
+    assert_eq(show(l), "Label(Hi)")
+
+    print("[2] face_param passed")
+}
+
+// ============================================================
+// 3. 跨模块 face 变量赋值
+// ============================================================
+func test_face_variable() {
+    Button b = new Button(); b._id = 10; b._label = "X"
+    Label l = new Label(); l._id = 20; l._text = "Y"
+
+    IWidget w1 = b
+    IWidget w2 = l
+
+    assert_eq(w1.get_id(), 10)
+    assert_eq(w2.get_id(), 20)
+
+    print("[3] face_variable passed")
+}
+
+// ============================================================
+// 4. 跨模块 Array[Face] 操作
+// ============================================================
+func test_face_array() {
+    Array[IWidget] widgets = []
+    Button b = new Button(); b._id = 1; b._label = "B1"
+    Label l = new Label(); l._id = 2; l._text = "L1"
+    widgets.add(b)
+    widgets.add(l)
+
+    assert_eq(widgets.len(), 2)
+
+    int sum = 0
+    for widgets.len() to i {
+        IWidget wi = widgets[i]
+        sum = sum + wi.get_id()
+    }
+    assert_eq(sum, 3)
+
+    print("[4] face_array passed")
+}
+
+// ============================================================
+// 5. 跨模块 Panel（含 Array[Face] 字段）
+// ============================================================
+func test_panel_children() {
+    Panel p = new Panel(); p._id = 100
+    Button b = new Button(); b._id = 1; b._label = "Sub"
+    p.add_child(b)
+
+    assert_eq(p.child_count(), 1)
+    assert_eq(p.render(), "Panel(1)")
+
+    print("[5] panel_children passed")
+}
+
+// ============================================================
+// 6. 跨模块自递归 struct + 直接字段传参
+// ============================================================
+func findNodeById(TreeNode n, int id): TreeNode {
+    if n.id == id { return n }
+    // 直接传 n.children[i] 作为递归参数（之前推断为 any，已修复）
+    for n.children.len() to i {
+        TreeNode found = findNodeById(n.children[i], id)
+        if found.id > 0 { return found }
+    }
+    TreeNode e = new TreeNode(); return e
+}
+
+func test_recursive_struct() {
+    TreeNode root = new TreeNode(); root.id = 1; root.name = "root"
+    TreeNode c1 = new TreeNode(); c1.id = 2; c1.name = "c1"
+    TreeNode c2 = new TreeNode(); c2.id = 3; c2.name = "c2"
+    root.add_child(c1); root.add_child(c2)
+
+    // 直接访问字段
+    assert_eq(root.children.len(), 2)
+    assert_eq(root.children[0].id, 2)
+    assert_eq(root.children[1].id, 3)
+    assert_eq(root.children[1].name, "c2")
+
+    // 修改验证引用语义
+    root.children[1].name = "modified"
+    assert_eq(c2.name, "modified")
+
+    // 递归搜索（直接传 n.children[i]，验证修复）
+    TreeNode found = findNodeById(root, 3)
+    assert(found.id == 3)
+    assert(found.name == "modified")
+
+    // 搜索不存在的节点
+    TreeNode nf = findNodeById(root, 99)
+    assert_eq(nf.id, 0)  // 空节点 id=0
+
+    print("[6] recursive_struct passed")
+}
+
+// ============================================================
+// 7. 跨模块 alias 类型
+// ============================================================
+func test_alias_type() {
+    Button b = new Button(); b._id = 5; b._label = "Test"
+    WidgetHandler h = func(IWidget w): bool { return w.get_id() > 0 }
+    assert_eq(h(b), true)
+
+    WidgetList list = []
+    list.add(b)
+    assert_eq(list.len(), 1)
+
+    print("[7] alias_type passed")
+}
+
+// ============================================================
+// 8. 跨模块工厂函数返回值
+// ============================================================
+func test_factory_return() {
+    Button b = base.make_button(42, "Factory")
+    assert_eq(b.get_id(), 42)
+    assert_eq(b.render(), "Button(Factory)")
+
+    Label l = base.make_label(99, "Auto")
+    assert_eq(l.get_id(), 99)
+
+    print("[8] factory_return passed")
+}
+
+// ============================================================
+// 9. 跨中间模块 re-export
+// ============================================================
+func test_reexport() {
+    Panel p = mid.create_panel(77)
+    assert_eq(p.get_id(), 77)
+
+    PanelHandler ph = func(Panel pp): bool { return pp.get_id() > 0 }
+    assert_eq(ph(p), true)
+
+    print("[9] reexport passed")
+}
+
+// ============================================================
+// 10. 跨模块 face 数组传参给函数
+// ============================================================
+func firstWidgetId(Array[IWidget] list): int {
+    if list.len() > 0 {
+        IWidget w = list[0]
+        return w.get_id()
+    }
+    return -1
+}
+
+func test_cross_func_face_array() {
+    Array[IWidget] items = []
+    Button b = new Button(); b._id = 7; b._label = "X"
+    Label l = new Label(); l._id = 8; l._text = "Y"
+    items.add(b); items.add(l)
+
+    assert_eq(firstWidgetId(items), 7)
+
+    print("[10] cross_func_face_array passed")
+}
+
+// ============================================================
+// 11. 跨模块 struct 方法调用链
+// ============================================================
+func test_method_chain() {
+    Panel p = new Panel(); p._id = 1
+    Button b1 = new Button(); b1._id = 2; b1._label = "A"
+    Button b2 = new Button(); b2._id = 3; b2._label = "B"
+    p.add_child(b1); p.add_child(b2)
+
+    assert_eq(p.child_count(), 2)
+    assert_eq(p.render(), "Panel(2)")
+
+    print("[11] method_chain passed")
+}
+
+// ============================================================
+// 12. 跨模块 struct 的 null 字段安全性
+// ============================================================
+func test_null_field_safe() {
+    TreeNode n = new TreeNode(); n.id = 1
+    assert_eq(n.name, "")
+    assert_eq(n.children.len(), 0)
+
+    n.name = null
+    assert(n.name == null)
+    assert(not (n.name != null))
+
+    print("[12] null_field_safe passed")
+}
+
+// ============================================================
+// 13. 跨模块 struct 方法返回 struct 类型
+// ============================================================
+func test_method_return_struct() {
+    // make_button 返回 Button（struct 类型）
+    Button b = base.make_button(10, "Ret")
+    assert_eq(b.render(), "Button(Ret)")
+
+    // 工厂函数返回值可以赋给 face 变量
+    IWidget w = base.make_button(20, "Face")
+    assert_eq(w.get_id(), 20)
+
+    print("[13] method_return_struct passed")
+}
+
+// ============================================================
+// 14. 跨模块 face 链式 use 多层传导
+// ============================================================
+func test_face_chain_use() {
+    // Shape 通过 a→b→c→d 四层 use 传导
+    Circle c = new Circle(); c.r = 5
+    // Shape 方法调用
+    assert_eq(c.area(), 75)    // 3 * 5 * 5 = 75
+    assert_eq(c.name(), "Circle")
+
+    // 赋值给 face 变量
+    Shape s = c
+    assert_eq(s.area(), 75)
+    assert_eq(s.name(), "Circle")
+
+    print("[14] face_chain_use passed")
+}
+
+// ============================================================
+// 15. 跨模块 Array[Struct] 字段的元素类型推断
+// ============================================================
+func test_array_struct_field_infer() {
+    // TreeNode.children 是 Array[TreeNode]，验证元素类型正确推断
+    TreeNode root = new TreeNode(); root.id = 1
+    TreeNode c1 = new TreeNode(); c1.id = 2; c1.name = "child1"
+    root.add_child(c1)
+
+    // 索引访问后直接调用方法
+    assert_eq(root.children[0].id, 2)
+    assert_eq(root.children[0].name, "child1")
+
+    // 索引访问后修改
+    root.children[0].name = "changed"
+    assert_eq(c1.name, "changed")
+
+    print("[15] array_struct_field_infer passed")
+}
+
+// ============================================================
+// 16. 跨模块 struct 作为函数参数和返回值
+// ============================================================
+func cloneNode(TreeNode n): TreeNode {
+    TreeNode c = new TreeNode()
+    c.id = n.id
+    c.name = n.name
+    return c
+}
+
+func test_struct_param_return() {
+    TreeNode orig = new TreeNode(); orig.id = 42; orig.name = "orig"
+    TreeNode cloned = cloneNode(orig)
+
+    assert_eq(cloned.id, 42)
+    assert_eq(cloned.name, "orig")
+
+    // 修改克隆不影响原对象
+    cloned.name = "cloned"
+    assert_eq(orig.name, "orig")
+    assert_eq(cloned.name, "cloned")
+
+    print("[16] struct_param_return passed")
+}
+
+// ============================================================
+// main
+// ============================================================
+main() {
+    test_use_create()
+    test_face_param()
+    test_face_variable()
+    test_face_array()
+    test_panel_children()
+    test_recursive_struct()
+    test_alias_type()
+    test_factory_return()
+    test_reexport()
+    test_cross_func_face_array()
+    test_method_chain()
+    test_null_field_safe()
+    test_method_return_struct()
+    test_face_chain_use()
+    test_array_struct_field_infer()
+    test_struct_param_return()
+
+    print("=== ALL cross-module edge tests passed ===")
+}

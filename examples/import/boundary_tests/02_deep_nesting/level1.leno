@@ -1,0 +1,10 @@
+// 深层嵌套测试 - Level 1
+// 导入 Level 2
+
+import "level2.leno" as l2
+
+export var level1_value = 1
+
+export func level1_func() {
+    return "Level1 -> " + l2.level2_func()
+}

@@ -1,0 +1,25 @@
+// 测试3: 字典类型导出 + 类型提升
+import "mod_dicts.leno" as m
+{
+    print(m.strIntDict)
+    print(m.strStrDict)
+    print(m.strFloatDict)
+    print(m.emptyDict)
+
+    // 混合值类型字典 int+float → float
+    float mv = m.mixedDict["a"]
+    print(mv)
+    print(m.mixedDict)
+
+    // 显式类型字典
+    int tv = m.typedDict["key"]
+    string tsv = m.typedStrDict["lang"]
+    float tfv = m.typedFloatDict["pi"]
+    print(tv)
+    print(tsv)
+    print(tfv)
+
+    // 嵌套字典
+    var nd = m.nestedDict["outer"]
+    print(nd)
+}

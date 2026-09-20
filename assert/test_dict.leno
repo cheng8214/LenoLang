@@ -1,0 +1,12 @@
+// 字典测试
+var d = {"name": "leno", "version": 1}
+assert_eq(d["name"], "leno")
+assert_eq(d["version"], 1)
+
+d["new_key"] = "new_value"
+assert_eq(d["new_key"], "new_value")
+
+d["version"] = 2
+assert_eq(d["version"], 2)
+
+print("test_dict passed")

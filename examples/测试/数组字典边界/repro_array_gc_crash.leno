@@ -1,0 +1,64 @@
+// Bug复现: 数组并行读写 + FFI 调用 + 字符串 GC 压测
+import ffi
+import times
+
+main() {
+    var ids  = []
+    var alv  = []
+    var vals = []
+
+    var N = 500
+    var i = 0
+    while i < N {
+        ids.add(2000 + i)
+        alv.add(true)
+        vals.add(i * 10)
+        i += 1
+    }
+
+    var running = true
+    var frame  = 0
+    var k      = 0
+    var start  = times.ms()
+
+    while running {
+        // FFI 调用（模拟 SDL_PollEvent）
+        var buf = ffi.malloc(16)
+        ffi.memset(buf, 0, 16)
+        ffi.free(buf)
+
+        // GC 压力: 大量临时字符串分配再丢弃
+        k += 1
+        var s1 = "tmp" + k
+        var s2 = "data" + s1 + "end"
+        s2 = ""
+
+        // 并行读 3 个数组
+        var j = 0
+        while j < N {
+            if alv[j] {
+                var id = ids[j]
+                var v  = vals[j]
+                if id == 2500 {
+                    vals[j] = frame
+                }
+                if v > 9000 {
+                    alv[j] = false
+                }
+            }
+            j += 1
+        }
+
+        if frame % 100 == 0 and frame > 0 {
+            var t = frame % N
+            alv[t] = false
+            vals[t] = 0
+        }
+
+        frame += 1
+        if frame > 3000 { running = false }
+    }
+
+    print("frames=" + frame + " elapsed=" + (times.ms() - start) + "ms")
+    print("=== PASS ===")
+}

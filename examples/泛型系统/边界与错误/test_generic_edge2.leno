@@ -1,0 +1,72 @@
+// 边界测试 - 进阶
+
+// 1. 泛型递归（泛型函数调用自身）
+func repeat[T](T val, int count):Array[T] {
+    if count <= 0 {
+        return []
+    }
+    var rest = repeat(val, count - 1)  // 泛型递归
+    rest.add(val)
+    return rest
+}
+
+// 2. 3个类型参数
+func triple[T, U, V](T a, U b, V c) {
+    print(a)
+    print(b)
+    print(c)
+}
+
+// 3. 泛型与闭包（闭包中捕获泛型参数）
+func make_printer[T](T prefix):func(T):void {
+    func inner(T val):void {
+        print(prefix)
+        print(val)
+    }
+    return inner
+}
+
+// 4. 泛型函数数组
+func id[T](T val):T { return val }
+
+// 5. 返回值也是泛型容器
+func replicate[T](T val, int count):Array[T] {
+    var result = []
+    for 0:count - 1 to i {
+        result.add(val)
+    }
+    return result
+}
+
+// 6. 泛型在 for 循环中
+func sum_generic[T](Array[T] arr):int {
+    return arr.len()
+}
+
+main() {
+    // repeat
+    var r = repeat(42, 3)
+    print(r)                     // [42, 42, 42]
+    
+    // triple
+    triple(1, "two", 3.0)
+    
+    // make_printer + 闭包
+    var p = make_printer(">>> ")
+    p("hello")                   // >>>  hello
+    
+    // replicate
+    var rep = replicate("x", 3)
+    print(rep)                   // ["x", "x", "x"]
+    
+    // sum_generic - 多种类型数组
+    print(sum_generic([1, 2, 3]))          // 3
+    print(sum_generic(["a", "b", "c"]))    // 3
+    print(sum_generic([true, false]))      // 2
+    
+    // 同一个泛型函数用不同类型多次调用
+    print(id(42))
+    print(id("hello"))
+    print(id(3.14))
+    print(id([1, 2, 3]))
+}

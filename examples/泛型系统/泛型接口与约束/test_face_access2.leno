@@ -1,0 +1,38 @@
+// 测试 face 变量能否调用非 face 定义的方法
+
+face Speaker {
+    func speak(): string
+}
+
+struct Dog impl Speaker {
+    string name
+    int age
+
+    func speak(): string {
+        return "woof from " + self.name
+    }
+
+    func getAge(): int {
+        return self.age
+    }
+
+    func bark(int times) {
+        for 0:times to i {
+            print("bark!")
+        }
+    }
+}
+
+var d = new Dog(name="Rex", age=3)
+Speaker s = d
+
+// face 定义的方法
+print(s.speak())       // ✅ face 定义
+
+// 非 face 定义的方法
+print(s.getAge())      // 能否调用？
+s.bark(2)              // 能否调用？
+
+// 非 face 定义的字段
+s.name = "Buddy"       // 能否修改？
+print(s.name)

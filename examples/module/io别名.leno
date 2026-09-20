@@ -1,0 +1,7 @@
+import io as dd 
+main()
+{
+	print("Hello LenoLang")//这是注册的全局
+	dd.print("这是通过io模块访问")
+	
+}

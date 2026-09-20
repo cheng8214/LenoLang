@@ -1,0 +1,8 @@
+export var a=10
+
+
+
+func test():Dict[string,int]
+{
+	return {cs:a}
+}

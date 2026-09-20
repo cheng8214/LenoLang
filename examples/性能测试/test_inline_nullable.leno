@@ -1,0 +1,18 @@
+struct Inner2 {
+    int x = 0
+}
+
+func maybe_return(int n): Inner2? {
+    if n > 0 {
+        return new Inner2(x=n)
+    }
+    return null
+}
+
+main() {
+    var r1 = maybe_return(10)
+    print("r1 = " + _str(r1))
+    print("r1.x = " + _str(r1.x))
+    assert_eq(r1.x, 10)
+    print("PASSED")
+}

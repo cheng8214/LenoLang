@@ -1,0 +1,49 @@
+// 回归测试：struct 方法多返回值的栈记账
+//
+// 背景：OP_INVOKE_METHOD_TYPED 原先固定按「1 个返回值」做栈记账，多返回值方法
+// （如 LenoSDL3 的 Font.measureString → [float, float]）执行后第一个返回值
+// 会直接落在实参槽上，读到上一帧的栈残留 —— 表现为 PvZ 卡片数字每帧左右抖动。
+//
+// 循环 300 轮（反复调用 ⇒ 记账类错误会被放大）。
+
+struct MultiRetProbe {
+    int n = 0
+    func two(int a): [int, int] { return a, a + 100 }
+    func three(int a): [int, int, int] { return a, a + 1, a + 2 }
+}
+
+var mrp = new MultiRetProbe()
+
+// 在**被调函数体内**做多返回值方法调用（换个位置，覆盖另一条记账路径）。
+func probeViaFunc(int v): int {
+    var[int, int](a, b) = mrp.two(v)
+    if a != v or b != v + 100 { return 1 }
+    return 0
+}
+
+main() {
+    var bad = 0
+
+    // 1) 循环内直接调用双返回值方法
+    for 0 : 300 to i {
+        var[int, int](a, b) = mrp.two(i)
+        if a != i or b != i + 100 { bad = bad + 1 }
+    }
+
+    // 2) 三返回值方法
+    for 0 : 300 to i {
+        var[int, int, int](x, y, z) = mrp.three(i)
+        if x != i or y != i + 1 or z != i + 2 { bad = bad + 1 }
+    }
+
+    // 3) 多返回值方法调用位于**被调函数体内**
+    for 0 : 300 to i {
+        bad = bad + probeViaFunc(i)
+    }
+
+    if bad > 0 {
+        print("多返回值方法调用结果错误: " + bad + " 处")
+        _exit(1)
+    }
+    print("test_multiret_method ok")
+}

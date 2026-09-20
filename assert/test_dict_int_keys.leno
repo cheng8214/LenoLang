@@ -1,0 +1,223 @@
+// 字典 int 键测试
+// 测试 Dict[int, *] 的各项功能
+
+// ============================================================
+// 1. 基本 int 键字面量创建
+// ============================================================
+var d_empty = {}
+assert_eq(d_empty.len(), 0)
+
+var d1 = {1: "one", 2: "two", 3: "three"}
+assert_eq(d1.len(), 3)
+
+var d2 = {0: "zero"}
+assert_eq(d2.len(), 1)
+assert_eq(d2[0], "zero")
+
+var d3 = {1000: "big", 99999: "bigger"}
+assert_eq(d3.len(), 2)
+
+// ============================================================
+// 2. 索引读写
+// ============================================================
+var d4 = {1: "one", 2: "two", 3: "three"}
+assert_eq(d4[1], "one")
+assert_eq(d4[2], "two")
+assert_eq(d4[3], "three")
+
+d4[2] = "TWO"
+assert_eq(d4[2], "TWO")
+
+d4[4] = "four"
+assert_eq(d4[4], "four")
+assert_eq(d4.len(), 4)
+
+// ============================================================
+// 3. set 方法
+// ============================================================
+var d5 = {}
+d5.set(1, "one")
+d5.set(2, "two")
+d5.set(3, "three")
+assert_eq(d5.len(), 3)
+assert_eq(d5[1], "one")
+assert_eq(d5[2], "two")
+assert_eq(d5[3], "three")
+
+d5.set(2, "TWO")
+assert_eq(d5[2], "TWO")
+assert_eq(d5.len(), 3)
+
+// ============================================================
+// 4. get 方法
+// ============================================================
+var d6 = {1: "one", 2: "two", 3: "three"}
+assert_eq(d6.get(1), "one")
+assert_eq(d6.get(2), "two")
+assert_eq(d6.get(3), "three")
+assert_null(d6.get(999))
+assert_null(d6.get(0))
+
+// ============================================================
+// 5. has 方法
+// ============================================================
+assert_true(d6.has(1))
+assert_true(d6.has(2))
+assert_true(d6.has(3))
+assert_false(d6.has(0))
+assert_false(d6.has(4))
+assert_false(d6.has(999))
+
+// ============================================================
+// 6. remove 方法
+// ============================================================
+var d7 = {1: "one", 2: "two", 3: "three"}
+d7.remove(2)
+assert_eq(d7.len(), 2)
+assert_true(d7.has(1))
+assert_false(d7.has(2))
+assert_true(d7.has(3))
+
+d7.remove(1)
+assert_eq(d7.len(), 1)
+assert_false(d7.has(1))
+
+d7.remove(3)
+assert_eq(d7.len(), 0)
+
+// ============================================================
+// 7. keys/values 方法
+// ============================================================
+var d8 = {1: "one", 2: "two", 3: "three"}
+var keys_arr = d8.keys()
+assert_eq(keys_arr.len(), 3)
+assert_eq(keys_arr[0], 1)
+assert_eq(keys_arr[1], 2)
+assert_eq(keys_arr[2], 3)
+
+var vals_arr = d8.values()
+assert_eq(vals_arr.len(), 3)
+assert_eq(vals_arr[0], "one")
+assert_eq(vals_arr[1], "two")
+assert_eq(vals_arr[2], "three")
+
+// ============================================================
+// 8. 遍历
+// ============================================================
+var count = 0
+for d8 to k {
+    count = count + 1
+}
+assert_eq(count, 3)
+
+// 双变量遍历
+count = 0
+for d8 to k, v {
+    count = count + 1
+}
+assert_eq(count, 3)
+
+// ============================================================
+// 9. in / not in 运算符
+// ============================================================
+var d9 = {1: "one", 2: "two", 3: "three"}
+assert_true(1 in d9)
+assert_true(2 in d9)
+assert_true(3 in d9)
+assert_true(4 not in d9)
+assert_true(0 not in d9)
+assert_true(999 not in d9)
+assert_true("1" not in d9)
+assert_true("2" not in d9)
+
+// ============================================================
+// 10. 混合键类型
+// ============================================================
+var d10 = {1: "int_key", "str": "string_key", 2: "another_int"}
+assert_eq(d10.len(), 3)
+assert_eq(d10[1], "int_key")
+assert_eq(d10["str"], "string_key")
+assert_eq(d10[2], "another_int")
+assert_true(d10.has(1))
+assert_true(d10.has("str"))
+
+// ============================================================
+// 11. 嵌套结构
+// ============================================================
+var d11 = {
+    100: {"name": "张三", "age": 25},
+    200: {"name": "李四", "age": 30}
+}
+assert_eq(d11[100]["name"], "张三")
+assert_eq(d11[100]["age"], 25)
+assert_eq(d11[200]["name"], "李四")
+
+// int 键嵌套 int 键字典
+var d12 = {1: {10: "a", 20: "b"}, 2: {30: "c", 40: "d"}}
+assert_eq(d12[1][10], "a")
+assert_eq(d12[1][20], "b")
+assert_eq(d12[2][30], "c")
+assert_eq(d12[2][40], "d")
+
+// ============================================================
+// 12. 边界情况
+// ============================================================
+var d13 = {1: "one", 2: "two", 3: "three"}
+d13.remove(2)
+d13.set(2, "new_two")
+assert_eq(d13[2], "new_two")
+assert_eq(d13.len(), 3)
+
+// 全部删除后再添加
+d13.remove(1)
+d13.remove(2)
+d13.remove(3)
+assert_eq(d13.len(), 0)
+d13.set(5, "five")
+assert_eq(d13[5], "five")
+assert_eq(d13.len(), 1)
+
+// 覆盖已有键
+var d14 = {1: "a"}
+d14.set(1, "b")
+assert_eq(d14[1], "b")
+d14[1] = "c"
+assert_eq(d14[1], "c")
+
+// ============================================================
+// 13. 大整数键
+// ============================================================
+var d15 = {2147483647: "max_int"}
+assert_eq(d15[2147483647], "max_int")
+
+// ============================================================
+// 14. 值类型多样性
+// ============================================================
+var d16 = {1: [10, 20, 30], 2: [40, 50]}
+assert_eq(d16[1].len(), 3)
+assert_eq(d16[1][0], 10)
+assert_eq(d16[2][1], 50)
+
+var d17 = {1: true, 2: false}
+assert_true(d17[1])
+assert_false(d17[2])
+
+var d18 = {1: null}
+assert_null(d18[1])
+
+// ============================================================
+// 15. int 键与 string 键互不干扰
+// ============================================================
+var d19 = {}
+d19.set(1, "int_one")
+d19.set("1", "string_one")
+assert_eq(d19.len(), 2)
+assert_eq(d19[1], "int_one")
+assert_eq(d19["1"], "string_one")
+
+d19.remove(1)
+assert_false(d19.has(1))
+assert_true(d19.has("1"))
+assert_eq(d19.len(), 1)
+
+print("test_dict_int_keys passed")

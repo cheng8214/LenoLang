@@ -1,0 +1,33 @@
+// 底层模块（模拟 sdl_core.leno）
+// 导出函数、类型、常量
+
+export const VERSION = 3
+
+export func getVersion(): int {
+    return VERSION
+}
+
+export func greet(string name): string {
+    return "core: " + name
+}
+
+export func add(int a, int b): int {
+    return a + b
+}
+
+func coreInternal(): int {
+    return 999
+}
+
+// 导出类型
+export struct Point {
+    float x = 0.0
+    float y = 0.0
+}
+
+export func createPoint(float x, float y): Point {
+    var p = new Point()
+    p.x = x
+    p.y = y
+    return p
+}

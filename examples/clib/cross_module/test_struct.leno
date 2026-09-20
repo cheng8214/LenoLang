@@ -1,0 +1,44 @@
+// 测试: struct 字段使用 clib 类型
+import "lib_base.leno" as base
+use base.core_lib
+use base.extra_lib
+
+struct ClibHolder {
+    core_lib core = null
+    string   name = ""
+}
+
+main() {
+    print("=== struct + clib 测试 ===")
+
+    // 测试1: struct 创建
+    core_lib c = base.loadCore()
+    var holder = new ClibHolder(core = c, name = "test")
+    print("1. 创建OK: " + holder.name)
+
+    // 测试2: 通过字段调用
+    print("2. 字段abs: " + holder.core.abs(-5))
+
+    // 测试3: 重新赋值
+    core_lib c2 = base.loadCore()
+    holder.core = c2
+    print("3. 重新赋值: " + holder.core.abs(-7))
+
+    // 测试4: struct 数组
+    var holders = [ 
+        new ClibHolder(core = base.loadCore(), name = "a"),
+        new ClibHolder(core = base.loadCore(), name = "b"),
+        new ClibHolder(core = base.loadCore(), name = "c")
+    ]
+    print("4a. 数组长度: " + holders.len())
+    print("4b. [0]abs: " + holders[0].core.abs(-11))
+    print("4c. [1]abs: " + holders[1].core.abs(-13))
+    print("4d. [2]abs: " + holders[2].core.abs(-17))
+
+    // 测试5: 遍历
+    for holders to item {
+        print("5. 遍历: " + item.core.abs(-19))
+    }
+
+    print("=== 全部通过 ===")
+}

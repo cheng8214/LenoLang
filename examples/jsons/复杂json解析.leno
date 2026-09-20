@@ -1,0 +1,78 @@
+import jsons
+import "json_any.leno" as j
+
+print("========== 唐诗集赏析 ==========\n")
+
+// 读取 JSON 文件（**仓库相对路径**：从仓库根运行 `build\leno.exe examples\jsons\复杂json解析.leno`）
+// ⚠ 两处修正（2026-09-19，见 docs/待办_易用性痛点（TraeSign 移植实录）.md 的 P7）：
+//   ① 原路径硬编码了**另一台机器**的目录（`D:\CLeno\LenoC\test\jsons\cs.json`）⇒ 示例腐化；
+//      `cs.json` 其实就在**同目录**。
+//   ② `jsons.read_file/decode` 的静态返回类型是 `any` ⇒ 原来那种 `data["collection"]["name"]`
+//      多层取值**编译不过**（「不能在 any 类型上直接访问字段 / 进行索引访问」）。
+//      现在取值统一走同目录的 `json_any.leno`（`jstr/jobj/jat/jats/jlen`）—— 显式类型收窄收在那一层。
+var data = jsons.read_file("examples/jsons/cs.json")
+
+print("【" + j.jstr(j.jobj(data, "collection"), "name") + "】")
+print("描述: " + j.jstr(j.jobj(data, "collection"), "description"))
+print("共收录 " + j.jstr(j.jobj(data, "collection"), "total") + " 首")
+print("语言: " + j.jstr(j.jobj(data, "collection"), "language"))
+print("版本: " + j.jstr(j.jobj(data, "collection"), "version"))
+print("")
+
+// 遍历所有诗歌（`jobj` 拿到的是 any ⇒ 先收窄成 Array 再遍历）
+var poems = j.jobj(data, "poems")
+if poems is Array {
+    Array plist = poems
+    for plist to poem {
+        print("═══════════════════════════════════════")
+        print("【" + j.jstr(poem, "title") + "】")
+        print("作者: " + j.jstr(j.jobj(poem, "author"), "name")
+            + " (" + j.jstr(j.jobj(poem, "author"), "dynasty") + ")")
+        print("类型: " + j.jstr(poem, "type"))
+        print("难度: " + j.jstr(poem, "difficulty"))
+        print("")
+
+        // 显示诗歌内容
+        print("【原文】")
+        var content = j.jobj(poem, "content")
+        for 0:j.jlen(content) to li {
+            print("  " + j.jstr(j.jat(content, li), "text"))
+        }
+
+        // 显示现代文翻译
+        print("")
+        print("【现代文翻译】")
+        print("  " + j.jstr(j.jobj(poem, "translation"), "modern_chinese"))
+
+        // 显示赏析
+        print("")
+        print("【赏析】")
+        print("  " + j.jstr(poem, "appreciation"))
+
+        // 显示标签
+        print("")
+        print("【标签】")
+        var tags = j.jobj(poem, "tags")
+        var tag_str = ""
+        for 0:j.jlen(tags) to ti {
+            tag_str = tag_str + j.jats(tags, ti) + " "
+        }
+        print("  " + tag_str)
+
+        // 显示注释（如果有的话）
+        var annotations = j.jobj(poem, "annotations")
+        if j.jlen(annotations) > 0 {
+            print("")
+            print("【注释】")
+            for 0:j.jlen(annotations) to ai {
+                var note = j.jat(annotations, ai)
+                print("  " + j.jstr(note, "term") + ": " + j.jstr(note, "note"))
+            }
+        }
+
+        print("")
+    }
+}
+
+print("═══════════════════════════════════════")
+print("\n========== 唐诗集展示完毕 ==========")

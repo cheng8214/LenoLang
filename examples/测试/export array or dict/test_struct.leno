@@ -1,0 +1,32 @@
+// 测试5: struct/enum/alias 导出
+import "mod_struct.leno" as m
+use m.(Point, Rect, Color, IntList, StrDict, Coord)
+
+{
+    // struct 实例
+    Point p = new m.Point(x=3, y=4)
+    print(p.x)
+    print(p.y)
+
+    // struct 实例2
+    Rect r = new m.Rect(x=1.0, y=2.0, w=3.0, h=4.0)
+    print(r.w)
+
+    // enum
+    int c = m.Color.RED
+    print(c)
+
+    // alias
+    IntList arr = [1, 2, 3]
+    print(arr)
+
+    Coord pos = 42
+    print(pos)
+
+    // 通过模块访问 alias 变量
+    int n = m.nums[0]
+    print(n)
+
+    int cp = m.pos
+    print(cp)
+}

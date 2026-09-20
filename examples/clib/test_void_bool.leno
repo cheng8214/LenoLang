@@ -1,0 +1,46 @@
+// 测试 void 返回值和 bool 类型
+import ffi
+
+clib msvcrt {
+    void srand(i32 seed)
+    i32 rand()
+    void free(Ptr p)
+    Ptr malloc(i32 size)
+    i32 atoi(str8 s)
+}
+
+clib kernel32 {
+    u32 GetTickCount()
+    void Sleep(u32 ms)
+}
+
+main() {
+    msvcrt libc = ffi.load("msvcrt.dll")
+    kernel32 k32 = ffi.load("kernel32.dll")
+
+    // 测试 1: void 返回值赋给变量应为 null
+    libc.srand(12345)
+    print("  PASS: void 返回值调用成功")
+
+    // 测试 2: u32 返回值 → int（零摩擦）
+    int tick = k32.GetTickCount()
+    if tick > 0 { print("  PASS: u32 GetTickCount = " + tick) } else { print("  FAIL") }
+
+    // 测试 3: void Sleep（u32 参数用 1u 或直接传值）
+    k32.Sleep(1)
+    print("  PASS: void Sleep 调用成功")
+
+    // 测试 4: atoi 字符串转整数
+    int n = libc.atoi("42")
+    if n == 42 { print("  PASS: atoi('42') = " + n) } else { print("  FAIL: 期望 42, 实际 " + n) }
+
+    int n2 = libc.atoi("-7")
+    if n2 == -7 { print("  PASS: atoi('-7') = " + n2) } else { print("  FAIL: 期望 -7, 实际 " + n2) }
+
+    // 测试 5: 连续调用
+    int r1 = libc.rand()
+    int r2 = libc.rand()
+    if r1 != r2 { print("  PASS: 连续 rand 不同值") } else { print("  FAIL: rand 返回相同值") }
+
+    print("void/bool/u32 测试完成")
+}

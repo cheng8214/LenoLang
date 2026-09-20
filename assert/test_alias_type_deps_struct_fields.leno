@@ -1,0 +1,59 @@
+// use 导入 alias 时"递归导入的 struct 字段"精度 —— 回归测试
+//
+// 背景（2026-09-18 实测，S2 族：同一件事两份实现、深度不同）：
+//   `use m.SomeAlias` 会触发 import_type_deps —— 把 alias 底层类型引用的 struct **自动**
+//   导入当前作用域（alias 如 Handler = func(Holder): bool 里的 Holder）。
+//   这条路（semantic_visit_ast.c 里那份"从模块符号表复制 struct 符号"的实现）**完全忽略
+//   fields[fi].type_info**，只按扁平字段重建 ⇒ **嵌套泛型丢精度**：
+//     实测 `Array[Array[int]] grid` 经这条路变成 `Array[Array]`（最内层 int 丢），
+//     再取一层元素更是**裸 Array**（元素类型全丢）；
+//   而直接 `use m.Holder`（visit_module.inc 的 AST_USE 那条路）是 `Array[Array[int]]` ✓。
+//   ⇒ 同一个类型，仅因"怎么被导入"得到不同精度的字段类型（丢失方向是静默变粗）。
+//
+// 判据：用**报错文案里的实际类型**当标尺。`h.grid` 无论精度如何、赋给 string 都报错，
+// 只有文案能区分 `Array[Array[int]]` 与 `Array[Array]`（与 test_face_cstruct_field_type
+// 的场景 3 同一手法）。
+//
+// 子进程机器复用 assert/helpers/compiler.leno（S7）。
+
+import dirs
+import files
+import strings
+
+import "helpers/compiler.leno" as ce
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_alias_type_deps_struct_fields")
+    dirs.delete(work)
+    dirs.mkdir_p(dirs.join(work, "lib"))
+
+    // 声明模块：一个含嵌套泛型字段的 struct + 一个引用它的 alias
+    files.write(dirs.join(work, "lib/m.leno"),
+        "export struct Holder {\n    Array[Array[int]] grid\n}\n\n"
+        + "export alias Handler = func(Holder): bool\n")
+
+    // 消费方：只 use alias（把 Holder 走 import_type_deps 引进来）
+    var dep_main = dirs.join(work, "main_dep.leno")
+    files.write(dep_main,
+        "import \"lib/m.leno\" as m\nuse m.Handler\n\n"
+        + "func probe_field(Holder h): string {\n    return h.grid\n}\n\n"
+        + "func probe_elem(Holder h): string {\n    return h.grid[0]\n}\n\n"
+        + "main() {\n    print(\"OK\")\n}\n")
+    var out = ce.expect_error(dep_main, "alias 依赖导入的 struct 字段：嵌套泛型不丢",
+        "实际 Array[Array[int]]", 0)
+    assert_true(strings.has(out, "实际 Array[int]"),
+        "取一层元素后应仍是 Array[int]（不是裸 Array）；实际输出=" + out)
+
+    // 对照组：直接 use 那个 struct（本来就对，防止收敛时改坏）
+    var direct_main = dirs.join(work, "main_direct.leno")
+    files.write(direct_main,
+        "import \"lib/m.leno\" as m\nuse m.Holder\n\n"
+        + "func probe_field(Holder h): string {\n    return h.grid\n}\n\n"
+        + "main() {\n    print(\"OK\")\n}\n")
+    ce.expect_error(direct_main, "对照组：直接 use struct 时本来就是 Array[Array[int]]",
+        "实际 Array[Array[int]]", 0)
+
+    dirs.delete(work)
+
+    print("test_alias_type_deps_struct_fields passed")
+}

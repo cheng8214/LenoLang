@@ -1,0 +1,19 @@
+// 测试 export func 的 Array[struct] 参数
+// Bug: export func process(Array[Point] pts) 报 "未定义的类型: Point"
+
+export struct Point {
+    float x
+    float y
+}
+
+export func processOne(Point pt) {
+    print("point: " + _str(pt.x) + ", " + _str(pt.y))
+}
+
+export func process(Array[Point] pts) {
+    var i = 0
+    while i < pts.len() {
+        print("pts[" + _str(i) + "]: " + _str(pts[i].x) + ", " + _str(pts[i].y))
+        i = i + 1
+    }
+}

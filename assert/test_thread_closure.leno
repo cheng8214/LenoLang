@@ -1,0 +1,92 @@
+// 线程闭包捕获 + 新功能测试
+
+import threads
+
+main()
+{
+    // 测试1: 闭包捕获变量
+    var x = 42
+    var t1 = threads.start(func(){ return x })
+    var r1 = t1.join()
+    assert_eq(r1, 42)
+
+    // 测试2: 多线程捕获同一变量（深拷贝，互不影响）
+    var shared = 100
+    var t2 = threads.start(func(){ return shared })
+    var t3 = threads.start(func(){ return shared })
+    var r2 = t2.join()
+    var r3 = t3.join()
+    assert_eq(r2, 100)
+    assert_eq(r3, 100)
+
+    // 测试3: 闭包捕获 + 参数传递
+    var prefix = "hello"
+    var t4 = threads.start(func(int n){ return prefix + "_" + n }, 99)
+    var r4 = t4.join()
+    assert_eq(r4, "hello_99")
+
+    // 测试4: 多线程各自捕获不同变量
+    var a = 10
+    var b = 20
+    var c = 30
+    var t5 = threads.start(func(){ return a })
+    var t6 = threads.start(func(){ return b })
+    var t7 = threads.start(func(){ return c })
+    assert_eq(t5.join(), 10)
+    assert_eq(t6.join(), 20)
+    assert_eq(t7.join(), 30)
+
+    // 测试5: 闭包通过 channel 通信
+    var ch = threads.channel(10)
+    var msg = "ping"
+    var producer = threads.start(func(){
+        ch.send(msg)
+        ch.close()
+    })
+    var received = ch.receive()
+    producer.join()
+    assert_eq(received, "ping")
+
+    // 测试6: threads.sleep 不抛错
+    threads.sleep(10)
+
+    // 测试7: channel.is_closed
+    var ch2 = threads.channel(5)
+    assert_eq(ch2.is_closed(), false)
+    ch2.close()
+    assert_eq(ch2.is_closed(), true)
+
+    // 测试8: channel.len
+    var ch3 = threads.channel(10)
+    assert_eq(ch3.len(), 0)
+    ch3.send(1)
+    ch3.send(2)
+    ch3.send(3)
+    assert_eq(ch3.len(), 3)
+    ch3.receive()
+    assert_eq(ch3.len(), 2)
+
+    // 测试9: 闭包捕获字符串并拼接返回
+    var greeting = "world"
+    var t8 = threads.start(func(){ return "hello " + greeting })
+    assert_eq(t8.join(), "hello world")
+
+    // 测试10: 多线程闭包 + channel 生产消费
+    var ch4 = threads.channel(20)
+    var data = [1, 2, 3, 4, 5]
+    var p = threads.start(func(){
+        for data to d {
+            ch4.send(d)
+        }
+        ch4.close()
+    })
+    var sum = 0
+    for 5 {
+        var v = ch4.receive()
+        sum = sum + _int(v)
+    }
+    p.join()
+    assert_eq(sum, 15)
+
+    print("test_thread_closure passed")
+}

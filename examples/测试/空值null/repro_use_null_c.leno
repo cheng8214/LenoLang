@@ -1,0 +1,36 @@
+// 模块 C: 通过 B 链式访问 A 的 enum
+// B 用 use 导入了 Flag，C import B 后能否用 b.Flag.ON ?
+
+import "repro_use_null_b.leno" as b
+
+main() {
+    print("=== 测试1: b.Flag ===")
+    print(b.Flag)           // enum 类型本身是什么？
+
+    print("")
+    print("=== 测试2: b.Flag.ON ===")
+    print(b.Flag.ON)        // 期望 1，实际？
+
+    print("")
+    print("=== 测试3: b.Flag.OFF ===")
+    print(b.Flag.OFF)       // 期望 0，实际？
+
+    print("")
+    print("=== 测试4: int 比较 ===")
+
+    int v = b.Flag.ON
+    if v == 1 { print("v==1 ✓") }
+    else { print("v=" + v + " ✗") }
+
+    print("=== 测试5: 直接条件 ===")
+    if b.Flag.ON == 1 { print("b.Flag.ON==1 ✓") }
+    else { print("b.Flag.ON!=1 实际=" + b.Flag.ON + " ✗") }
+
+    print("")
+    print("=== 测试6: C 也 use 试试 ===")
+    // 如果 C 自己 use b.Flag
+    use b.Flag
+    print("Flag.ON =", Flag.ON)
+    print("Flag.OFF =", Flag.OFF)
+    print("=== DONE ===")
+}

@@ -1,0 +1,15 @@
+
+main()
+{
+    var a=input("Enter a number: ")
+    try{
+        int num = _int(a)
+        if num % 2 == 0 {
+            print("The number is even.")
+        } else {
+            print("The number is odd.")
+        }
+    } catch {
+        print("Invalid input. Please enter a valid number.")
+    }
+}

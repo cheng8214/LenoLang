@@ -1,0 +1,30 @@
+main()
+{
+    var arr10 = [1, 2, 3]
+    print(type(arr10))
+    
+    // 测试其他类型
+    var arr2d = [[1, 2], [3, 4]]
+    print(type(arr2d))
+    
+    var float_arr = [1.1, 2.2, 3.3]
+    print(type(float_arr))
+    
+    var str_arr = ["a", "b", "c"]
+    print(type(str_arr))
+    
+    var empty_arr = []
+    print(type(empty_arr))
+    
+    var dict1 = {"a": 1, "b": 2}
+    print(type(dict1))
+    
+    var int_val = 10
+    print(type(int_val))
+    
+    var float_val = 3.14
+    print(type(float_val))
+    
+    var str_val = "hello"
+    print(type(str_val))
+}

@@ -1,0 +1,102 @@
+// 模块限定 new 之后按字段读写 / 调方法 —— 回归测试（S2 族"同一件事两处深度不一致"第 5 例）
+//
+// 背景（2026-09-18 实测，文档里曾记为"2b-2 的前哨"）：
+//   `var pa = new a.Pair()` 之后写 `pa.x = 1` 会以
+//   「无法确定字段索引，struct 类型可能未定义」**编译失败**（codegen 兜底报的）。
+//   根因：**字段索引的取法有两份、深度不同** ——
+//     · `infer_field_type`（semantic_type.c）= **三级**：作用域 → 全局定义表 → 导入模块符号表；
+//     · `visit_field_access.inc` 自己那套 = **一级**（只 `scope_resolve(类型名)`，而同一文件里
+//       cstruct 那一支反而是三级）。
+//   表达式上下文（读 `pa.x`）会被 `infer_expr_type` 调一次三级推断把 `field_index` 补上 ✓；
+//   而**赋值目标**（`pa.x = 1`）没有任何人调推断 ⇒ 索引停在 -1 ⇒ codegen 报错 ✗。
+//   所以症状很反直觉：**同一个字段，读得到、赋不到**（且读那条不报错）。
+//
+// 为什么这个用例要覆盖这么多形态：这条模式（"模块限定 new，不 use 类型名"）此前是**用例刻意避开**
+// 的区域（见文档 2a++ 记录），所以下面把实测过的几种形态都钉住：直接字段写、方法调用、二级字段写、
+// 二级方法调用。
+//
+// 子进程机器复用 assert/helpers/compiler.leno（S7）。
+
+import dirs
+import files
+
+import "helpers/compiler.leno" as ce
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_module_qualified_new_field")
+    dirs.delete(work)
+    dirs.mkdir_p(dirs.join(work, "lib"))
+
+    files.write(dirs.join(work, "lib/a.leno"),
+        "export struct Pair {\n    int x\n    int y\n}\n")
+
+    files.write(dirs.join(work, "lib/o.leno"),
+        "export struct Inner {\n    int v\n    func tag(): int {\n        return 9\n    }\n}\n\n"
+        + "export struct Outer {\n    Inner inner\n    int z\n}\n")
+
+    // ① 只 import（不 use 类型名）：写字段 —— 复现的那条
+    var main_no_use = dirs.join(work, "main_no_use.leno")
+    files.write(main_no_use,
+        "import \"lib/a.leno\" as a\n\n"
+        + "main() {\n"
+        + "    var pa = new a.Pair()\n"
+        + "    pa.x = 1\n"
+        + "    pa.y = 2\n"
+        + "    print(\"X=\" + pa.x + \" Y=\" + pa.y)\n"
+        + "}\n")
+    ce.expect_ok(main_no_use, "模块限定 new 后写字段（修前：无法确定字段索引）", "X=1 Y=2")
+
+    // ② 对照：use 类型名 + 裸名 new（既有可用写法，防改坏）
+    var main_use = dirs.join(work, "main_use.leno")
+    files.write(main_use,
+        "import \"lib/a.leno\" as a\nuse a.Pair\n\n"
+        + "main() {\n"
+        + "    var pa = new Pair()\n"
+        + "    pa.x = 3\n"
+        + "    pa.y = 4\n"
+        + "    print(\"X=\" + pa.x + \" Y=\" + pa.y)\n"
+        + "}\n")
+    ce.expect_ok(main_use, "use 类型名 + 裸名 new 后写字段（对照）", "X=3 Y=4")
+
+    // ③ 模块限定 new 后**调方法**（这条本来就正常 —— 钉住，免得将来改路径时受伤）
+    var main_method = dirs.join(work, "main_method.leno")
+    files.write(main_method,
+        "import \"lib/o.leno\" as a\n\n"
+        + "main() {\n"
+        + "    var pi = new a.Inner()\n"
+        + "    pi.v = 8\n"
+        + "    print(\"V=\" + pi.v + \" T=\" + pi.tag())\n"
+        + "}\n")
+    ce.expect_ok(main_method, "模块限定 new 后调方法", "V=8 T=9")
+
+    // ④ 二级：字段写 + 方法调用（对象类型来自跨模块 struct 的字段）
+    var main_nest = dirs.join(work, "main_nest.leno")
+    files.write(main_nest,
+        "import \"lib/o.leno\" as a\n\n"
+        + "main() {\n"
+        + "    var po = new a.Outer()\n"
+        + "    po.inner = new a.Inner()\n"
+        + "    po.inner.v = 5\n"
+        + "    po.z = 6\n"
+        + "    print(\"V=\" + po.inner.v + \" Z=\" + po.z + \" T=\" + po.inner.tag())\n"
+        + "}\n")
+    ce.expect_ok(main_nest, "模块限定 new 后二级字段写 + 二级方法调用", "V=5 Z=6 T=9")
+
+    // ⑤ 模块限定 new 后**复合赋值**：`pa.x += 2` 被解析器脱糖成 AST_INDEX_ASSIGN
+    //   （parser_expr.c：obj=var(pa)、index=AST_STRING("x")），走的是语义里另一条字段解析路径
+    //   —— 那里 struct 分支只有一级（紧邻的 cstruct 分支是三级）⇒ 修前报「无法确定字段索引」。
+    var main_compound = dirs.join(work, "main_compound.leno")
+    files.write(main_compound,
+        "import \"lib/a.leno\" as a\n\n"
+        + "main() {\n"
+        + "    var pa = new a.Pair()\n"
+        + "    pa.x = 1\n"
+        + "    pa.x += 2\n"
+        + "    print(\"X=\" + pa.x)\n"
+        + "}\n")
+    ce.expect_ok(main_compound, "模块限定 new 后复合赋值 pa.x += 2（修前：无法确定字段索引）", "X=3")
+
+    dirs.delete(work)
+
+    print("test_module_qualified_new_field passed")
+}

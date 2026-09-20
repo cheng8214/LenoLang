@@ -1,0 +1,33 @@
+// 底层模块 - 定义 clib 类型
+import ffi
+
+clib core_lib {
+    i32 abs(i32 x)
+    i32 add(i32 a, i32 b)
+}
+
+clib extra_lib {
+    i32 get_value()
+}
+
+core_lib g_core = null
+extra_lib g_extra = null
+
+export func loadCore(): core_lib {
+    if g_core == null {
+        g_core = ffi.load("msvcrt.dll")
+    }
+    return g_core
+}
+
+export func loadExtra(): extra_lib {
+    if g_extra == null {
+        g_extra = ffi.load("kernel32.dll")
+    }
+    return g_extra
+}
+
+export func coreAbs(int x): int {
+    core_lib c = loadCore()
+    return c.abs(x) as int
+}

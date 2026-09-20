@@ -1,0 +1,12 @@
+// 数组索引微基准
+import times
+var scx = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
+var si = 0
+var sum = 0.0
+var n = 1000000
+var t = times.ms()
+for 0:n {
+    sum = sum + scx[si] + scx[si+1] + scx[si+2] + scx[si+3]
+}
+var dt = times.ms() - t
+print("索引4次/轮 x " + n + ": " + dt + "ms (sum=" + sum + ")")

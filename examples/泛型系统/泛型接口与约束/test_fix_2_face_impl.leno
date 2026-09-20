@@ -1,0 +1,28 @@
+// 测试：泛型 face impl 带类型参数
+print("=== 泛型 face impl ===")
+
+face Comparable[T] {
+    func compareTo(T other): int
+}
+
+struct OrdInt impl Comparable[int] {
+    int value
+    func compareTo(int other): int {
+        if self.value < other { return -1 }
+        if self.value > other { return 1 }
+        return 0
+    }
+}
+
+var a = new OrdInt(value=10)
+var b = new OrdInt(value=20)
+assert_eq(a.compareTo(20), -1)
+assert_eq(b.compareTo(10), 1)
+
+// 约束函数
+func maxBy[T: Comparable](T a, T b): T { return a }
+
+var r = maxBy(a, b) as OrdInt
+assert_eq(r.value, 10)
+
+print("PASS")

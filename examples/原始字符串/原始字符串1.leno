@@ -1,0 +1,28 @@
+main() {
+    // 测试1：简单原始字符串
+    var s1 = @"Hello World"
+    print("Test 1: " + s1)
+    
+    // 测试2：包含转义字符（应原样输出）
+    var s2 = @"Line1\nLine2\tTabbed"
+    print("Test 2: " + s2)
+    
+    // 测试3：包含引号（使用 "" 转义）
+    var s3 = @"He said ""Hello"" to me"
+    print("Test 3: " + s3)
+    
+    // 测试4：多行原始字符串
+    var s4 = @"Line 1
+Line 2
+Line 3"
+    print("Test 4:")
+    print(s4)
+    
+    // 测试5：空原始字符串
+    var s5 = @""
+    print("Test 5: [" + s5 + "]")
+    
+    // 测试6：只有引号
+    var s6 = @""""
+    print("Test 6: [" + s6 + "]")
+}

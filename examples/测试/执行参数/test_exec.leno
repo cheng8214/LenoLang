@@ -1,0 +1,9 @@
+main() {
+    var r = _exec("echo hello")
+    print(type(r))
+    print(r[0])
+    print(r[1])
+    
+    var r2 = _exec("exit 1")
+    print(r2[1])
+}

@@ -1,0 +1,122 @@
+// 回归测试：数组索引读 / 写与 append 的边界与语义（§8.28 / §8.29）
+//
+// 覆盖：越界读必须抛可被 try/catch 捕获的「数组索引越界」异常（正下标与负下标都测）、
+//       `arr.add(v)` 的扩容、`arr[i]=v` 的覆盖与相邻元素不受影响、
+//       写入的必须是 Value 而不是裸位模式、非数组接收者（dict）走通用路径。
+//
+// 背景（历史，§8.28/§8.29）：当时机器码里的索引快路径读 `count` 用了 64 位加载，
+// 把相邻的 `capacity` 一起读进来 ⇒ 越界检查失效、越界读**不再报错**（静默读到数组之外）。
+// 修法：改用 32 位零扩展加载；并把"越界"从"记录错误但继续跑完循环"改成
+// "立刻回到解释器报错"—— 否则错误会被静默吞掉（当时实测 caught=0，应为 239）。
+
+import arrays
+
+var bad = 0
+
+func fail(int tag):int {
+    print("FAIL case " + tag)
+    bad = bad + 1
+    return 0
+}
+
+main() {
+    // ---- 1) 越界读：必须与解释器一样可被 try/catch 捕获（61..299 共 239 次）----
+    var a = [1, 2, 3]
+    var caught = 0
+    var wrong = 0
+    var i = 0
+    while i < 300 {
+        var ix = 1
+        if i > 60 { ix = 9 }
+        try {
+            var v = a[ix]
+            if ix == 1 and v != 2 { wrong = wrong + 1 }
+        } catch {
+            caught = caught + 1
+        }
+        i = i + 1
+    }
+    if caught != 239 { print("越界捕获=" + caught); fail(1) }
+    if wrong != 0 { print("合法下标读值错误 " + wrong + " 次"); fail(1) }
+
+    // ---- 2) 负下标同样必须捕获 ----
+    var neg = 0
+    i = 0
+    while i < 300 {
+        var ix = 0
+        if i > 60 { ix = -1 }
+        try {
+            var v2 = a[ix]
+        } catch {
+            neg = neg + 1
+        }
+        i = i + 1
+    }
+    if neg != 239 { print("负下标捕获=" + neg); fail(2) }
+
+    // ---- 3) add 快路径：300 次 append（含扩容）后 len 与内容正确 ----
+    var b = []
+    i = 0
+    while i < 300 { b.add(i)
+        i = i + 1 }
+    if arrays.len(b) != 300 { print("len=" + arrays.len(b)); fail(3) }
+    var s = 0
+    i = 0
+    while i < 300 { s = s + b[i]
+        i = i + 1 }
+    if s != 44850 { print("sum=" + s); fail(3) }
+
+    // ---- 4) 下标写快路径：反复覆盖同一元素，其他元素不受影响 ----
+    var c = [1, 2, 3, 4, 5, 6, 7, 8]
+    i = 0
+    while i < 300 { c[1] = i
+        i = i + 1 }
+    if c[1] != 299 { fail(4) }
+    if c[0] != 1 or c[2] != 3 or c[7] != 8 { print("相邻元素被破坏"); fail(4) }
+
+    // ---- 5) 下标写 + 读回，验证写入的是 Value 而不是 raw 位模式 ----
+    var d = [0, 0, 0, 0, 0, 0, 0, 0]
+    i = 0
+    while i < 300 {
+        d[3] = i * 2
+        if d[3] != i * 2 { fail(5) }
+        i = i + 1
+    }
+
+    // ---- 6) 容量满 → 慢路径扩容，数据不能丢 ----
+    var e = []
+    i = 0
+    while i < 3000 { e.add(i)
+        i = i + 1 }
+    if arrays.len(e) != 3000 { print("len=" + arrays.len(e)); fail(6) }
+    var s2 = 0
+    i = 0
+    while i < 3000 { s2 = s2 + e[i]
+        i = i + 1 }
+    if s2 != 4498500 { print("sum2=" + s2); fail(6) }
+
+    // ---- 7) append 的结果类型：int 元素应仍是 int（不是 raw/garbage）----
+    var f = []
+    i = 0
+    while i < 300 { f.add(i)
+        i = i + 1 }
+    if f[299] is int {
+    } else {
+        print("元素类型错误")
+        fail(7)
+    }
+    if f[299] != 299 { fail(7) }
+
+    // ---- 8) 非数组接收者仍走慢路径且语义正确（dict）----
+    var h = {}
+    i = 0
+    while i < 300 { h["k"] = i
+        i = i + 1 }
+    if h["k"] != 299 { fail(8) }
+
+    if bad > 0 {
+        print("test_array_bounds FAILED: " + bad + " 处")
+        _exit(1)
+    }
+    print("test_array_bounds ok")
+}

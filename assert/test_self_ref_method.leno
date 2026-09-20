@@ -1,0 +1,34 @@
+// test_self_ref_method.leno — 验证 struct 方法返回自身可空类型（HtmlNode?）是否可行
+struct Node {
+    string tag
+    Node? parent
+
+    // 方法返回自身可空类型
+    func parent(): Node? {
+        return parent
+    }
+
+    func up(int n): Node? {
+        Node? cur = self
+        for n to i {
+            cur = cur.parent
+        }
+        return cur
+    }
+}
+
+main() {
+    Node a = new Node()
+    a.tag = "a"
+    Node b = new Node()
+    b.tag = "b"
+    b.parent = a
+
+    Node? p = b.parent()
+    if p == null {
+        print("FAIL: parent 为 null")
+    } else {
+        print("parent().tag = " + p.tag + " (期望 a)")
+    }
+    print("done")
+}

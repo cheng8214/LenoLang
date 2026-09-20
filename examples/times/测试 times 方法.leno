@@ -1,0 +1,30 @@
+import times
+
+main() {
+    print("=== 测试 times 新增方法 ===")
+    
+    // 测试 now()
+    print("\n1. now() - 当前时间戳:")
+    var now = times.now()
+    print("  当前时间戳: " + now)
+    
+    // 测试 format
+    print("\n2. format - 格式化时间:")
+    print("  标准格式: " + times.format(now, "%Y-%m-%d %H:%M:%S"))
+    print("  日期: " + times.format(now, "%Y年%m月%d日"))
+    print("  时间: " + times.format(now, "%H:%M:%S"))
+    
+    // 测试 datetime
+    print("\n3. datetime - 日期时间数组:")
+    var dt = times.datetime()
+    print("  [年,月,日,时,分,秒] = " + dt)
+    print("  现在是 " + dt[0] + "年" + dt[1] + "月" + dt[2] + "日 " + dt[3] + ":" + dt[4] + ":" + dt[5])
+    
+    // 测试 sleep
+    print("\n4. sleep - 休眠测试:")
+    print("  开始休眠 1 秒...")
+    var t1 = times.ms()
+    sleep(1000)  // 全局函数
+    var t2 = times.ms()
+    print("  休眠结束，实际耗时: " + (t2 - t1) + " ms")
+}

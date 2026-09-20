@@ -1,0 +1,7 @@
+main()
+{
+     var arr=[1,2]//这里已经推断为int[]了
+     print(type(arr))
+     arr.add("")//这里添加字符串要报错
+ 	print(arr)
+}

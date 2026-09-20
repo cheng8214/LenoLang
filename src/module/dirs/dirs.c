@@ -1,0 +1,1160 @@
+#include "include/lenolang.h"
+#include "include/native.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// 跨平台头文件
+#ifdef _WIN32
+    #include <windows.h>
+    #include <direct.h>
+    #include <io.h>
+    #include <errno.h>
+    #define PATH_SEP '\\'
+    #define PATH_SEP_STR "\\"
+#else
+    #include <sys/stat.h>
+    #include <sys/types.h>
+    #include <dirent.h>
+    #include <unistd.h>
+    #include <errno.h>
+    #define PATH_SEP '/'
+    #define PATH_SEP_STR "/"
+#endif
+
+// ==================== 辅助函数 ====================
+
+// 检查值是否是字符串
+static int is_string_value(Value value) {
+    return val_is_obj(value) && val_as_obj(value)->type == OBJ_STRING;
+}
+
+#ifdef _WIN32
+// UTF-16 宽字符转换为 UTF-8 字符串
+// 返回动态分配的内存，调用者需要释放
+static char* utf16_to_utf8(const wchar_t* wstr) {
+    if (!wstr) return NULL;
+    
+    // 计算需要的缓冲区大小
+    int size_needed = WideCharToMultiByte(CP_UTF8, 0, wstr, -1, NULL, 0, NULL, NULL);
+    if (size_needed <= 0) return NULL;
+    
+    char* str = (char*)malloc(size_needed);
+    if (!str) return NULL;
+    
+    // 执行转换
+    WideCharToMultiByte(CP_UTF8, 0, wstr, -1, str, size_needed, NULL, NULL);
+    return str;
+}
+
+// 将 UTF-8 路径转换为宽字符路径（用于 Windows API）
+static wchar_t* utf8_to_utf16(const char* str) {
+    if (!str) return NULL;
+    
+    int size_needed = MultiByteToWideChar(CP_UTF8, 0, str, -1, NULL, 0);
+    if (size_needed <= 0) return NULL;
+    
+    wchar_t* wstr = (wchar_t*)malloc(size_needed * sizeof(wchar_t));
+    if (!wstr) return NULL;
+    
+    MultiByteToWideChar(CP_UTF8, 0, str, -1, wstr, size_needed);
+    return wstr;
+}
+#endif
+
+// 获取字符串值
+static const char* get_string(Value value) {
+    if (is_string_value(value)) {
+        return ((ObjString*)val_as_obj(value))->chars;
+    }
+    return NULL;
+}
+
+// 创建数组辅助函数
+// ★ 使用 gc_track_memory 追踪 elements 缓冲区的内存占用，
+// 确保 GC 正确计算内存使用量（与 object_array.c 的 arr_new 一致）。
+static ObjArray* arr_new_with_capacity(int capacity) {
+    ObjArray* arr = (ObjArray*)gc_alloc(sizeof(ObjArray), OBJ_ARRAY);
+    if (!arr) return NULL;
+    
+    arr->elements = (Value*)malloc(sizeof(Value) * capacity);
+    if (!arr->elements) {
+        return NULL;
+    }
+    
+    // 追踪 elements 缓冲区的内存占用
+    gc_track_memory((Object*)arr, 0, capacity * sizeof(Value));
+    
+    arr->capacity = capacity;
+    arr->count = 0;
+    arr->type_info = NULL;
+    
+    // 初始化为 null，防止 GC 扫描到垃圾值
+    for (int i = 0; i < capacity; i++) {
+        arr->elements[i] = val_null();
+    }
+    
+    return arr;
+}
+
+// 向数组添加元素
+// ★ 使用 gc_write_barrier 确保写屏障正确（与 object_array.c 一致），
+// 防止老年代数组引用的年轻代对象在 Minor GC 时被遗漏。
+static void arr_push(ObjArray* arr, Value value) {
+    if (arr->count >= arr->capacity) {
+        int new_capacity = arr->capacity * 2;
+        Value* new_elements = (Value*)realloc(arr->elements, sizeof(Value) * new_capacity);
+        if (!new_elements) return;
+        arr->elements = new_elements;
+        arr->capacity = new_capacity;
+        // 追踪扩容后的内存变化
+        gc_track_memory((Object*)arr, (arr->count) * sizeof(Value), new_capacity * sizeof(Value));
+    }
+    arr->elements[arr->count++] = value;
+    gc_write_barrier((Object*)arr, value);
+}
+
+// ==================== 路径操作 ====================
+
+// dirs.cwd() - 获取当前工作目录
+static Value native_dirs_cwd(int argCount, Value* args) {
+    (void)argCount;
+    (void)args;
+
+#ifdef _WIN32
+    wchar_t wbuffer[4096];
+    if (_wgetcwd(wbuffer, sizeof(wbuffer) / sizeof(wchar_t)) == NULL) {
+        return val_null();
+    }
+    char* utf8 = utf16_to_utf8(wbuffer);
+    if (!utf8) {
+        return val_null();
+    }
+    Value result = val_obj((Object*)str_copy(utf8, (int)strlen(utf8)));
+    free(utf8);
+    return result;
+#else
+    char buffer[4096];
+    if (getcwd(buffer, sizeof(buffer)) == NULL) {
+        return val_null();
+    }
+    return val_obj((Object*)str_copy(buffer, (int)strlen(buffer)));
+#endif
+}
+
+// dirs.abspath(path) - 转换为绝对路径
+static Value native_dirs_abspath(int argCount, Value* args) {
+    if (argCount < 1) {
+        native_throw_error("abspath 需要路径参数");
+        return val_null();
+    }
+    
+    const char* path = get_string(args[0]);
+    if (!path) {
+        native_throw_error("abspath 参数必须是字符串");
+        return val_null();
+    }
+    
+#ifdef _WIN32
+    wchar_t* wpath = utf8_to_utf16(path);
+    if (!wpath) {
+        return val_null();
+    }
+    wchar_t wbuffer[4096];
+    if (_wfullpath(wbuffer, wpath, sizeof(wbuffer) / sizeof(wchar_t)) == NULL) {
+        free(wpath);
+        return val_null();
+    }
+    free(wpath);
+    char* abs_path = utf16_to_utf8(wbuffer);
+    if (!abs_path) {
+        return val_null();
+    }
+    Value result = val_obj((Object*)str_copy(abs_path, (int)strlen(abs_path)));
+    free(abs_path);
+    return result;
+#else
+    char buffer[4096];
+    if (realpath(path, buffer) == NULL) {
+        // 如果 realpath 失败，尝试简单拼接
+        char cwd[4096];
+        if (getcwd(cwd, sizeof(cwd)) == NULL) {
+            return val_null();
+        }
+        if (path[0] == '/') {
+            return val_obj((Object*)str_copy(path, (int)strlen(path)));
+        }
+        int n = snprintf(buffer, sizeof(buffer), "%s/%s", cwd, path);
+        if (n >= (int)sizeof(buffer)) { buffer[sizeof(buffer)-1] = '\0'; }
+        return val_obj((Object*)str_copy(buffer, (int)strlen(buffer)));
+    }
+    return val_obj((Object*)str_copy(buffer, (int)strlen(buffer)));
+#endif
+}
+
+// dirs.basename(path) - 获取文件名
+static Value native_dirs_basename(int argCount, Value* args) {
+    if (argCount < 1) {
+        native_throw_error("basename 需要路径参数");
+        return val_null();
+    }
+    
+    const char* path = get_string(args[0]);
+    if (!path) {
+        native_throw_error("basename 参数必须是字符串");
+        return val_null();
+    }
+    
+    // 找到最后一个路径分隔符
+    const char* last_sep = NULL;
+    for (const char* p = path; *p; p++) {
+        if (*p == '/' || *p == '\\') {
+            last_sep = p;
+        }
+    }
+    
+    if (last_sep == NULL) {
+        // 没有分隔符，整个就是文件名
+        return val_obj((Object*)str_copy(path, (int)strlen(path)));
+    }
+    
+    // 返回分隔符后面的部分
+    return val_obj((Object*)str_copy(last_sep + 1, (int)strlen(last_sep + 1)));
+}
+
+// dirs.dirname(path) - 获取目录名
+static Value native_dirs_dirname(int argCount, Value* args) {
+    if (argCount < 1) {
+        native_throw_error("dirname 需要路径参数");
+        return val_null();
+    }
+    
+    const char* path = get_string(args[0]);
+    if (!path) {
+        native_throw_error("dirname 参数必须是字符串");
+        return val_null();
+    }
+    
+    // 找到最后一个路径分隔符
+    const char* last_sep = NULL;
+    for (const char* p = path; *p; p++) {
+        if (*p == '/' || *p == '\\') {
+            last_sep = p;
+        }
+    }
+    
+    if (last_sep == NULL) {
+        // 没有分隔符，返回当前目录 "."
+        return val_obj((Object*)str_copy(".", 1));
+    }
+    
+    // 返回分隔符前面的部分
+    int len = (int)(last_sep - path);
+    if (len == 0) {
+        // 根目录
+        return val_obj((Object*)str_copy(PATH_SEP_STR, 1));
+    }
+    return val_obj((Object*)str_copy(path, len));
+}
+
+// dirs.extname(path) - 获取扩展名
+static Value native_dirs_extname(int argCount, Value* args) {
+    if (argCount < 1) {
+        native_throw_error("extname 需要路径参数");
+        return val_null();
+    }
+    
+    const char* path = get_string(args[0]);
+    if (!path) {
+        native_throw_error("extname 参数必须是字符串");
+        return val_null();
+    }
+    
+    // 先找到文件名（去掉目录）
+    const char* filename = path;
+    for (const char* p = path; *p; p++) {
+        if (*p == '/' || *p == '\\') {
+            filename = p + 1;
+        }
+    }
+    
+    // 找到最后一个点
+    const char* last_dot = NULL;
+    for (const char* p = filename; *p; p++) {
+        if (*p == '.') {
+            last_dot = p;
+        }
+    }
+    
+    if (last_dot == NULL || last_dot == filename) {
+        // 没有扩展名，或隐藏文件（如 .bashrc）
+        return val_obj((Object*)str_copy("", 0));
+    }
+    
+    return val_obj((Object*)str_copy(last_dot, (int)strlen(last_dot)));
+}
+
+// dirs.join(part1, part2, ...) - 拼接路径
+static Value native_dirs_join(int argCount, Value* args) {
+    if (argCount < 1) {
+        return val_obj((Object*)str_copy("", 0));
+    }
+    
+    // 计算总长度
+    int total_len = 0;
+    for (int i = 0; i < argCount; i++) {
+        const char* part = get_string(args[i]);
+        if (part) {
+            total_len += (int)strlen(part);
+            if (i < argCount - 1) {
+                total_len += 1; // 分隔符
+            }
+        }
+    }
+    
+    char* buffer = (char*)malloc(total_len + 1);
+    if (!buffer) {
+        return val_null();
+    }
+    
+    buffer[0] = '\0';
+    for (int i = 0; i < argCount; i++) {
+        const char* part = get_string(args[i]);
+        if (part) {
+            strcat(buffer, part);
+            if (i < argCount - 1) {
+                // 移除末尾已有的分隔符，避免重复
+                int len = (int)strlen(buffer);
+                if (len > 0 && (buffer[len-1] == '/' || buffer[len-1] == '\\')) {
+                    buffer[len-1] = PATH_SEP;
+                    buffer[len] = '\0';
+                } else {
+                    strcat(buffer, PATH_SEP_STR);
+                }
+            }
+        }
+    }
+    
+    ObjString* result = str_copy(buffer, (int)strlen(buffer));
+    free(buffer);
+    return val_obj((Object*)result);
+}
+
+// dirs.sep() - 获取路径分隔符
+static Value native_dirs_sep(int argCount, Value* args) {
+    (void)argCount;
+    (void)args;
+    return val_obj((Object*)str_copy(PATH_SEP_STR, 1));
+}
+
+// dirs.script_dir() - 获取脚本所在目录
+// 如果通过命令行运行脚本（如 leno d:\project\main.leno），返回脚本所在目录
+// 如果直接运行 exe 或 REPL 模式，返回 exe 所在目录
+static Value native_dirs_script_dir(int argCount, Value* args) {
+    (void)argCount;
+    (void)args;
+
+    // 外部声明全局参数
+    extern int g_argc;
+    extern char** g_argv;
+
+    const char* target = NULL;
+    char* target_heap = NULL;  // 若 target 来自 GetModuleFileNameW，需 free
+
+    // 优先从参数中找脚本路径（第一个非选项参数）
+    for (int i = 1; i < g_argc; i++) {
+        if (g_argv[i][0] != '-') {
+            target = g_argv[i];
+            break;
+        }
+    }
+
+    // 没有脚本路径，使用 exe 路径
+    if (!target && g_argc > 0 && g_argv[0]) {
+        target = g_argv[0];
+#ifdef _WIN32
+        // Windows: g_argv[0] 可能是相对路径（如"game.exe"），
+        // 在快捷方式 / 批处理中 CWD 可能不等于 exe 所在目录。
+        // 用 GetModuleFileNameW 获取当前 exe 的真实绝对路径，不依赖 CWD。
+        wchar_t exe_path[4096];
+        DWORD len = GetModuleFileNameW(NULL, exe_path, 4096);
+        if (len > 0 && len < 4096) {
+            target_heap = utf16_to_utf8(exe_path);
+            if (target_heap) {
+                target = target_heap;
+            }
+        }
+#endif
+    }
+
+    if (!target) {
+        return val_null();
+    }
+
+    // 转换为绝对路径
+#ifdef _WIN32
+    wchar_t* wtarget = utf8_to_utf16(target);
+    if (!wtarget) { return val_null(); }
+    wchar_t wabs[4096];
+    if (_wfullpath(wabs, wtarget, sizeof(wabs) / sizeof(wchar_t)) == NULL) {
+        free(wtarget);
+        return val_null();
+    }
+    free(wtarget);
+    char* abs_utf8 = utf16_to_utf8(wabs);
+    if (!abs_utf8) { return val_null(); }
+    char abs_path[4096];
+    strncpy(abs_path, abs_utf8, sizeof(abs_path) - 1);
+    abs_path[sizeof(abs_path) - 1] = '\0';
+    free(abs_utf8);
+#else
+    char abs_path[4096];
+    if (realpath(target, abs_path) == NULL) {
+        // realpath 失败，尝试拼接 cwd
+        char cwd[4096];
+        if (target[0] == '/') {
+            strncpy(abs_path, target, sizeof(abs_path) - 1);
+            abs_path[sizeof(abs_path) - 1] = '\0';
+        } else if (getcwd(cwd, sizeof(cwd))) {
+            int n = snprintf(abs_path, sizeof(abs_path), "%s/%s", cwd, target);
+            if (n >= (int)sizeof(abs_path)) { abs_path[sizeof(abs_path)-1] = '\0'; }
+        } else {
+            return val_null();
+        }
+    }
+#endif
+
+    // 截取目录部分（去掉最后一个路径分隔符之后的内容）
+    int len = (int)strlen(abs_path);
+    while (len > 0 && abs_path[len - 1] != '/' && abs_path[len - 1] != '\\') {
+        len--;
+    }
+
+    // 去掉末尾的分隔符（保留根目录的情况如 "C:\"）
+    if (len > 1) {
+        len--;
+    }
+
+    if (len == 0) {
+        if (target_heap) free(target_heap);
+        return val_obj((Object*)str_copy(".", 1));
+    }
+
+    ObjString* result = str_copy(abs_path, len);
+    if (target_heap) free(target_heap);
+    return val_obj((Object*)result);
+}
+
+// ==================== 目录操作 ====================
+
+// dirs.exists(path) - 检查路径是否存在
+static Value native_dirs_exists(int argCount, Value* args) {
+    if (argCount < 1) {
+        native_throw_error("exists 需要路径参数");
+        return val_null();
+    }
+    
+    const char* path = get_string(args[0]);
+    if (!path) {
+        native_throw_error("exists 参数必须是字符串");
+        return val_null();
+    }
+    
+#ifdef _WIN32
+    wchar_t* wpath = utf8_to_utf16(path);
+    if (!wpath) { return val_bool(0); }
+    DWORD attr = GetFileAttributesW(wpath);
+    free(wpath);
+    return val_bool(attr != INVALID_FILE_ATTRIBUTES);
+#else
+    struct stat st;
+    return val_bool(stat(path, &st) == 0);
+#endif
+}
+
+// dirs.is_file(path) - 检查是否是文件
+static Value native_dirs_is_file(int argCount, Value* args) {
+    if (argCount < 1) {
+        native_throw_error("is_file 需要路径参数");
+        return val_null();
+    }
+    
+    const char* path = get_string(args[0]);
+    if (!path) {
+        native_throw_error("is_file 参数必须是字符串");
+        return val_null();
+    }
+    
+#ifdef _WIN32
+    wchar_t* wpath = utf8_to_utf16(path);
+    if (!wpath) { return val_bool(0); }
+    DWORD attr = GetFileAttributesW(wpath);
+    free(wpath);
+    if (attr == INVALID_FILE_ATTRIBUTES) {
+        return val_bool(0);
+    }
+    return val_bool(!(attr & FILE_ATTRIBUTE_DIRECTORY));
+#else
+    struct stat st;
+    if (stat(path, &st) != 0) {
+        return val_bool(0);
+    }
+    return val_bool(S_ISREG(st.st_mode));
+#endif
+}
+
+// dirs.is_dir(path) - 检查是否是目录
+static Value native_dirs_is_dir(int argCount, Value* args) {
+    if (argCount < 1) {
+        native_throw_error("is_dir 需要路径参数");
+        return val_null();
+    }
+    
+    const char* path = get_string(args[0]);
+    if (!path) {
+        native_throw_error("is_dir 参数必须是字符串");
+        return val_null();
+    }
+    
+#ifdef _WIN32
+    wchar_t* wpath = utf8_to_utf16(path);
+    if (!wpath) { return val_bool(0); }
+    DWORD attr = GetFileAttributesW(wpath);
+    free(wpath);
+    if (attr == INVALID_FILE_ATTRIBUTES) {
+        return val_bool(0);
+    }
+    return val_bool(attr & FILE_ATTRIBUTE_DIRECTORY);
+#else
+    struct stat st;
+    if (stat(path, &st) != 0) {
+        return val_bool(0);
+    }
+    return val_bool(S_ISDIR(st.st_mode));
+#endif
+}
+
+// dirs.is_symlink(path) - 检查是否是符号链接/junction（reparse point）
+// 用于递归搜索时跳过，防止无限递归导致栈溢出
+static Value native_dirs_is_symlink(int argCount, Value* args) {
+    if (argCount < 1) {
+        native_throw_error("is_symlink 需要路径参数");
+        return val_null();
+    }
+    
+    const char* path = get_string(args[0]);
+    if (!path) {
+        native_throw_error("is_symlink 参数必须是字符串");
+        return val_null();
+    }
+    
+#ifdef _WIN32
+    // 使用 FindFirstFileW 检查 reparse point（junction/symlink）
+    // FindFirstFileW 不跟随符号链接，返回链接本身的属性
+    wchar_t* wpath = utf8_to_utf16(path);
+    if (!wpath) { return val_bool(0); }
+    
+    WIN32_FIND_DATAW findData;
+    HANDLE hFind = FindFirstFileW(wpath, &findData);
+    free(wpath);
+    
+    if (hFind == INVALID_HANDLE_VALUE) {
+        return val_bool(0);
+    }
+    
+    FindClose(hFind);
+    // FILE_ATTRIBUTE_REPARSE_POINT 涵盖 junction、symlink、mount point 等
+    return val_bool(findData.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT);
+#else
+    struct stat st;
+    // lstat 不跟随符号链接，返回链接本身的属性
+    if (lstat(path, &st) != 0) {
+        return val_bool(0);
+    }
+    return val_bool(S_ISLNK(st.st_mode));
+#endif
+}
+
+// dirs.mkdir(path) - 创建目录
+static Value native_dirs_mkdir(int argCount, Value* args) {
+    if (argCount < 1) {
+        native_throw_error("mkdir 需要路径参数");
+        return val_null();
+    }
+    
+    const char* path = get_string(args[0]);
+    if (!path) {
+        native_throw_error("mkdir 参数必须是字符串");
+        return val_null();
+    }
+    
+#ifdef _WIN32
+    wchar_t* wpath = utf8_to_utf16(path);
+    if (!wpath) {
+        return val_bool(0);
+    }
+    int result = _wmkdir(wpath);
+    free(wpath);
+#else
+    int result = mkdir(path, 0755);
+#endif
+    
+    return val_bool(result == 0);
+}
+
+// dirs.mkdir_p(path) - 递归创建目录
+static Value native_dirs_mkdir_p(int argCount, Value* args) {
+    if (argCount < 1) {
+        native_throw_error("mkdir_p 需要路径参数");
+        return val_null();
+    }
+    
+    const char* path = get_string(args[0]);
+    if (!path) {
+        native_throw_error("mkdir_p 参数必须是字符串");
+        return val_null();
+    }
+    
+    char* temp = strdup(path);
+    if (!temp) {
+        return val_bool(0);
+    }
+    
+    // 逐层创建
+    for (char* p = temp + 1; *p; p++) {
+        if (*p == '/' || *p == '\\') {
+            char sep = *p;
+            *p = '\0';
+            
+#ifdef _WIN32
+            wchar_t* wtmp = utf8_to_utf16(temp);
+            int r = wtmp ? _wmkdir(wtmp) : -1;
+            free(wtmp);
+            (void)r;
+#else
+            mkdir(temp, 0755);
+#endif
+            
+            *p = sep;
+        }
+    }
+    
+    // 创建最后一层
+#ifdef _WIN32
+    wchar_t* wtmp = utf8_to_utf16(temp);
+    int result = wtmp ? _wmkdir(wtmp) : -1;
+    free(wtmp);
+#else
+    int result = mkdir(temp, 0755);
+#endif
+    
+    free(temp);
+    return val_bool(result == 0 || errno == EEXIST);
+}
+
+// dirs.rmdir(path) - 删除空目录
+static Value native_dirs_rmdir(int argCount, Value* args) {
+    if (argCount < 1) {
+        native_throw_error("rmdir 需要路径参数");
+        return val_null();
+    }
+    
+    const char* path = get_string(args[0]);
+    if (!path) {
+        native_throw_error("rmdir 参数必须是字符串");
+        return val_null();
+    }
+    
+#ifdef _WIN32
+    wchar_t* wpath = utf8_to_utf16(path);
+    if (!wpath) {
+        return val_bool(0);
+    }
+    int result = _wrmdir(wpath);
+    free(wpath);
+#else
+    int result = rmdir(path);
+#endif
+    
+    return val_bool(result == 0);
+}
+
+// ---- 递归删除辅助 ----
+#ifdef _WIN32
+// 返回 1 成功 / 0 失败。目录递归删除其子项后移除，文件直接删除。
+static int dirs_recursive_delete_w(const wchar_t* wpath) {
+    DWORD attr = GetFileAttributesW(wpath);
+    if (attr == INVALID_FILE_ATTRIBUTES) {
+        return 0;
+    }
+    if (attr & FILE_ATTRIBUTE_DIRECTORY) {
+        wchar_t wsearch[4096];
+        swprintf(wsearch, sizeof(wsearch) / sizeof(wchar_t), L"%ls\\*", wpath);
+        WIN32_FIND_DATAW fd;
+        HANDLE h = FindFirstFileW(wsearch, &fd);
+        if (h != INVALID_HANDLE_VALUE) {
+            do {
+                if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) {
+                    continue;
+                }
+                wchar_t child[4096];
+                swprintf(child, sizeof(child) / sizeof(wchar_t), L"%ls\\%ls", wpath, fd.cFileName);
+                dirs_recursive_delete_w(child);
+            } while (FindNextFileW(h, &fd));
+            FindClose(h);
+        }
+        return RemoveDirectoryW(wpath) ? 1 : 0;
+    }
+    return DeleteFileW(wpath) ? 1 : 0;
+}
+#else
+static int dirs_recursive_delete_u(const char* path) {
+    struct stat st;
+    if (stat(path, &st) != 0) {
+        return 0;
+    }
+    if (S_ISDIR(st.st_mode)) {
+        DIR* d = opendir(path);
+        if (d) {
+            struct dirent* e;
+            while ((e = readdir(d)) != NULL) {
+                if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0) {
+                    continue;
+                }
+                char child[4096];
+                snprintf(child, sizeof(child), "%s/%s", path, e->d_name);
+                dirs_recursive_delete_u(child);
+            }
+            closedir(d);
+        }
+        return rmdir(path) == 0 ? 1 : 0;
+    }
+    return remove(path) == 0 ? 1 : 0;
+}
+#endif
+
+// dirs.delete(path) - 删除文件或目录（目录递归删除）
+static Value native_dirs_delete(int argCount, Value* args) {
+    if (argCount < 1) {
+        native_throw_error("delete 需要路径参数");
+        return val_null();
+    }
+
+    const char* path = get_string(args[0]);
+    if (!path) {
+        native_throw_error("delete 参数必须是字符串");
+        return val_null();
+    }
+
+#ifdef _WIN32
+    wchar_t* wpath = utf8_to_utf16(path);
+    if (!wpath) {
+        return val_bool(0);
+    }
+    int result = dirs_recursive_delete_w(wpath);
+    free(wpath);
+#else
+    int result = dirs_recursive_delete_u(path);
+#endif
+    return val_bool(result ? 1 : 0);
+}
+
+// dirs.rename(old, new) - 重命名
+static Value native_dirs_rename(int argCount, Value* args) {
+    if (argCount < 2) {
+        native_throw_error("rename 需要两个参数");
+        return val_null();
+    }
+    
+    const char* old_path = get_string(args[0]);
+    const char* new_path = get_string(args[1]);
+    
+    if (!old_path || !new_path) {
+        native_throw_error("rename 参数必须是字符串");
+        return val_null();
+    }
+    
+#ifdef _WIN32
+    wchar_t* wold = utf8_to_utf16(old_path);
+    wchar_t* wnew = utf8_to_utf16(new_path);
+    if (!wold || !wnew) {
+        free(wold);
+        free(wnew);
+        return val_bool(0);
+    }
+    int result = _wrename(wold, wnew);
+    free(wold);
+    free(wnew);
+#else
+    int result = rename(old_path, new_path);
+#endif
+    return val_bool(result == 0);
+}
+
+// ==================== 目录遍历 ====================
+
+// dirs.listdir(path) - 列出目录内容
+static Value native_dirs_listdir(int argCount, Value* args) {
+    if (argCount < 1) {
+        native_throw_error("listdir 需要路径参数");
+        return val_null();
+    }
+    
+    const char* path = get_string(args[0]);
+    if (!path) {
+        native_throw_error("listdir 参数必须是字符串");
+        return val_null();
+    }
+    
+    ObjArray* arr = arr_new_with_capacity(16);
+    if (!arr) {
+        return val_null();
+    }
+    
+    // ★ 将 arr 注册为 GC 额外根，防止 str_copy → gc_alloc 内部
+    // malloc 失败时触发 gc_major_collect() 误回收 arr 及其已添加的字符串。
+    // arr 是 C 局部变量，不在 VM 栈/帧局部变量中，GC mark_roots 看不到它。
+    Value arr_val = val_obj((Object*)arr);
+    gc_push_root(&arr_val);
+    
+#ifdef _WIN32
+    // 将 UTF-8 路径转换为宽字符
+    wchar_t* wpath = utf8_to_utf16(path);
+    if (!wpath) {
+        gc_pop_root();
+        return val_null();
+    }
+    
+    // 构建搜索路径
+    wchar_t search_path[4096];
+    swprintf(search_path, sizeof(search_path) / sizeof(wchar_t), L"%ls\\*", wpath);
+    free(wpath);
+    
+    WIN32_FIND_DATAW findData;
+    HANDLE hFind = FindFirstFileW(search_path, &findData);
+    
+    if (hFind == INVALID_HANDLE_VALUE) {
+        gc_pop_root();
+        return val_null();
+    }
+    
+    do {
+        // 跳过 . 和 ..
+        if (wcscmp(findData.cFileName, L".") == 0 || wcscmp(findData.cFileName, L"..") == 0) {
+            continue;
+        }
+        
+        // 将宽字符文件名转换为 UTF-8
+        char* utf8_name = utf16_to_utf8(findData.cFileName);
+        if (utf8_name) {
+            arr_push(arr, val_obj((Object*)str_copy(utf8_name, (int)strlen(utf8_name))));
+            free(utf8_name);
+        }
+    } while (FindNextFileW(hFind, &findData));
+    
+    FindClose(hFind);
+#else
+    DIR* dir = opendir(path);
+    if (!dir) {
+        gc_pop_root();
+        return val_null();
+    }
+    
+    struct dirent* entry;
+    while ((entry = readdir(dir)) != NULL) {
+        // 跳过 . 和 ..
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+        arr_push(arr, val_obj((Object*)str_copy(entry->d_name, (int)strlen(entry->d_name))));
+    }
+    
+    closedir(dir);
+#endif
+    
+    gc_pop_root();
+    return val_obj((Object*)arr);
+}
+
+// walk 的内部实现：扫描单个目录，将子目录和文件分类
+// 返回 [dirs_array, files_array]，dirs_array 中存放子目录的完整路径
+static void walk_scan_dir(const char* path, ObjArray* result) {
+    ObjArray* dir_names = arr_new_with_capacity(8);
+    ObjArray* file_names = arr_new_with_capacity(8);
+    ObjArray* subdirs = arr_new_with_capacity(8);  // 存放子目录完整路径，用于递归
+
+    if (!dir_names || !file_names || !subdirs) {
+        return;
+    }
+
+    // ★ 将临时数组注册为 GC 额外根，防止 str_copy → gc_alloc 内部
+    // malloc 失败时触发 gc_major_collect() 误回收这些 C 局部变量持有的数组。
+    Value dir_names_val = val_obj((Object*)dir_names);
+    Value file_names_val = val_obj((Object*)file_names);
+    Value subdirs_val = val_obj((Object*)subdirs);
+    gc_push_root(&dir_names_val);
+    gc_push_root(&file_names_val);
+    gc_push_root(&subdirs_val);
+
+#ifdef _WIN32
+    wchar_t* wpath = utf8_to_utf16(path);
+    if (!wpath) { gc_pop_root(); gc_pop_root(); gc_pop_root(); return; }
+
+    wchar_t wsearch[4096];
+    swprintf(wsearch, sizeof(wsearch) / sizeof(wchar_t), L"%ls\\*", wpath);
+    free(wpath);
+
+    WIN32_FIND_DATAW findData;
+    HANDLE hFind = FindFirstFileW(wsearch, &findData);
+
+    if (hFind != INVALID_HANDLE_VALUE) {
+        do {
+            if (wcscmp(findData.cFileName, L".") == 0 || wcscmp(findData.cFileName, L"..") == 0) {
+                continue;
+            }
+
+            char* utf8_name = utf16_to_utf8(findData.cFileName);
+            if (!utf8_name) { continue; }
+
+            ObjString* name = str_copy(utf8_name, (int)strlen(utf8_name));
+            if (findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+                arr_push(dir_names, val_obj((Object*)name));
+                // 构建子目录完整路径
+                char full_path[4096];
+                snprintf(full_path, sizeof(full_path), "%s\\%s", path, utf8_name);
+                arr_push(subdirs, val_obj((Object*)str_copy(full_path, (int)strlen(full_path))));
+            } else {
+                arr_push(file_names, val_obj((Object*)name));
+            }
+            free(utf8_name);
+        } while (FindNextFileW(hFind, &findData));
+        FindClose(hFind);
+    }
+#else
+    DIR* dir = opendir(path);
+    if (dir) {
+        struct dirent* entry;
+        while ((entry = readdir(dir)) != NULL) {
+            if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+                continue;
+            }
+
+            ObjString* name = str_copy(entry->d_name, (int)strlen(entry->d_name));
+
+            char full_path[4096];
+            snprintf(full_path, sizeof(full_path), "%s/%s", path, entry->d_name);
+            struct stat st;
+            if (stat(full_path, &st) == 0 && S_ISDIR(st.st_mode)) {
+                arr_push(dir_names, val_obj((Object*)name));
+                arr_push(subdirs, val_obj((Object*)str_copy(full_path, (int)strlen(full_path))));
+            } else {
+                arr_push(file_names, val_obj((Object*)name));
+            }
+        }
+        closedir(dir);
+    }
+#endif
+
+    // 创建 [root, dirs, files] 条目
+    ObjArray* entry = arr_new_with_capacity(3);
+    if (entry) {
+        arr_push(entry, val_obj((Object*)str_copy(path, (int)strlen(path))));
+        arr_push(entry, val_obj((Object*)dir_names));
+        arr_push(entry, val_obj((Object*)file_names));
+        arr_push(result, val_obj((Object*)entry));
+    }
+
+    // 递归处理子目录
+    for (int i = 0; i < subdirs->count; i++) {
+        const char* subdir_path = get_string(subdirs->elements[i]);
+        if (subdir_path) {
+            walk_scan_dir(subdir_path, result);
+        }
+    }
+
+    gc_pop_root();  // subdirs_val
+    gc_pop_root();  // file_names_val
+    gc_pop_root();  // dir_names_val
+}
+
+// dirs.walk(path) - 递归遍历目录树
+// 返回 [[root, dirs, files], ...]
+static Value native_dirs_walk(int argCount, Value* args) {
+    if (argCount < 1) {
+        native_throw_error("walk 需要路径参数");
+        return val_null();
+    }
+
+    const char* path = get_string(args[0]);
+    if (!path) {
+        native_throw_error("walk 参数必须是字符串");
+        return val_null();
+    }
+
+    ObjArray* result = arr_new_with_capacity(16);
+    if (!result) {
+        return val_null();
+    }
+
+    // ★ 将 result 注册为 GC 额外根，防止 walk_scan_dir 内部 str_copy
+    // → gc_alloc malloc 失败时触发 gc_major_collect() 误回收 result。
+    Value result_val = val_obj((Object*)result);
+    gc_push_root(&result_val);
+
+    walk_scan_dir(path, result);
+
+    gc_pop_root();
+    return val_obj((Object*)result);
+}
+
+// ==================== 文件信息 ====================
+
+// dirs.stat(path) - 获取文件信息
+static Value native_dirs_stat(int argCount, Value* args) {
+    if (argCount < 1) {
+        native_throw_error("stat 需要路径参数");
+        return val_null();
+    }
+    
+    const char* path = get_string(args[0]);
+    if (!path) {
+        native_throw_error("stat 参数必须是字符串");
+        return val_null();
+    }
+    
+    ObjDict* dict = dict_new(8);
+    if (!dict) {
+        return val_null();
+    }
+    
+    // 前向声明 dict_set
+    extern void dict_set(ObjDict* dict, Value key, Value value);
+    
+    // 初始化默认值
+    dict_set(dict, val_obj((Object*)str_copy("exists", 6)), val_bool(0));
+    dict_set(dict, val_obj((Object*)str_copy("size", 4)), val_int(0));
+    dict_set(dict, val_obj((Object*)str_copy("is_file", 7)), val_bool(0));
+    dict_set(dict, val_obj((Object*)str_copy("is_dir", 6)), val_bool(0));
+    dict_set(dict, val_obj((Object*)str_copy("mtime", 5)), val_int(0));
+    
+#ifdef _WIN32
+    wchar_t* wpath = utf8_to_utf16(path);
+    WIN32_FILE_ATTRIBUTE_DATA attrData;
+    if (wpath && GetFileAttributesExW(wpath, GetFileExInfoStandard, &attrData)) {
+        // 文件存在，更新信息
+        dict_set(dict, val_obj((Object*)str_copy("exists", 6)), val_bool(1));
+        
+        // size
+        LARGE_INTEGER size;
+        size.LowPart = attrData.nFileSizeLow;
+        size.HighPart = attrData.nFileSizeHigh;
+        dict_set(dict, val_obj((Object*)str_copy("size", 4)), val_int((int)size.QuadPart));
+        
+        // is_file, is_dir
+        int is_dir = attrData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY;
+        dict_set(dict, val_obj((Object*)str_copy("is_file", 7)), val_bool(!is_dir));
+        dict_set(dict, val_obj((Object*)str_copy("is_dir", 6)), val_bool(is_dir));
+        
+        // mtime (简化版，返回 0)
+        dict_set(dict, val_obj((Object*)str_copy("mtime", 5)), val_int(0));
+    }
+    if (wpath) { free(wpath); }
+#else
+    struct stat st;
+    if (stat(path, &st) == 0) {
+        // 文件存在，更新信息
+        dict_set(dict, val_obj((Object*)str_copy("exists", 6)), val_bool(1));
+        
+        // size
+        dict_set(dict, val_obj((Object*)str_copy("size", 4)), val_int((int)st.st_size));
+        
+        // is_file, is_dir
+        dict_set(dict, val_obj((Object*)str_copy("is_file", 7)), val_bool(S_ISREG(st.st_mode)));
+        dict_set(dict, val_obj((Object*)str_copy("is_dir", 6)), val_bool(S_ISDIR(st.st_mode)));
+        
+        // mtime
+        dict_set(dict, val_obj((Object*)str_copy("mtime", 5)), val_int((int)st.st_mtime));
+    }
+#endif
+    
+    return val_obj((Object*)dict);
+}
+
+// dirs.list_drives() - 返回盘符列表
+//   Windows: ["C:\\", "D:\\", ...]（按位枚举逻辑驱动器）
+//   Unix:    ["/"]
+static Value native_dirs_list_drives(int argCount, Value* args) {
+    (void)argCount;
+    (void)args;
+    ObjArray* arr = arr_new_with_capacity(8);
+    if (!arr) {
+        return val_null();
+    }
+
+    // ★ GC root 保护（与 listdir 同理）
+    Value arr_val = val_obj((Object*)arr);
+    gc_push_root(&arr_val);
+
+#ifdef _WIN32
+    DWORD mask = GetLogicalDrives();
+    for (int i = 0; i < 26; i++) {
+        if (mask & (1u << i)) {
+            wchar_t buf[8];
+            buf[0] = (wchar_t)('A' + i);
+            buf[1] = L':';
+            buf[2] = L'\\';
+            buf[3] = L'\0';
+            char* u = utf16_to_utf8(buf);
+            if (u) {
+                arr_push(arr, val_obj((Object*)str_copy(u, (int)strlen(u))));
+                free(u);
+            }
+        }
+    }
+#else
+    arr_push(arr, val_obj((Object*)str_copy("/", 1)));
+#endif
+
+    gc_pop_root();
+    return val_obj((Object*)arr);
+}
+
+// ==================== 初始化 ====================
+
+void dirs_init_module(void) {
+    // 路径操作
+    TypeKind string_params[] = {TYPE_STRING};
+    TypeKind string2_params[] = {TYPE_STRING, TYPE_STRING};
+    TypeKind no_params[] = {};
+
+    native_register_module_method("dirs", "list_drives", native_dirs_list_drives, 0, -1, -1, TYPE_ARRAY, TYPE_STRING, no_params);
+
+    native_register_module_method("dirs", "cwd", native_dirs_cwd, 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, no_params);
+    native_register_module_method("dirs", "abspath", native_dirs_abspath, 1, -1, -1, TYPE_STRING, TYPE_UNKNOWN, string_params);
+    native_register_module_method("dirs", "basename", native_dirs_basename, 1, -1, -1, TYPE_STRING, TYPE_UNKNOWN, string_params);
+    native_register_module_method("dirs", "dirname", native_dirs_dirname, 1, -1, -1, TYPE_STRING, TYPE_UNKNOWN, string_params);
+    native_register_module_method("dirs", "extname", native_dirs_extname, 1, -1, -1, TYPE_STRING, TYPE_UNKNOWN, string_params);
+    native_register_module_method("dirs", "join", native_dirs_join, -1, 0, -1, TYPE_STRING, TYPE_UNKNOWN, string_params);
+    native_register_module_method("dirs", "sep", native_dirs_sep, 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, no_params);
+    native_register_module_method("dirs", "script_dir", native_dirs_script_dir, 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, no_params);
+
+    // 检查操作
+    native_register_module_method("dirs", "exists", native_dirs_exists, 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, string_params);
+    native_register_module_method("dirs", "is_file", native_dirs_is_file, 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, string_params);
+    native_register_module_method("dirs", "is_dir", native_dirs_is_dir, 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, string_params);
+native_register_module_method("dirs", "is_symlink", native_dirs_is_symlink, 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, string_params);
+
+    // 目录操作
+    native_register_module_method("dirs", "mkdir", native_dirs_mkdir, 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, string_params);
+    native_register_module_method("dirs", "mkdir_p", native_dirs_mkdir_p, 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, string_params);
+    native_register_module_method("dirs", "rmdir", native_dirs_rmdir, 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, string_params);
+    native_register_module_method("dirs", "delete", native_dirs_delete, 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, string_params);
+    native_register_module_method("dirs", "rename", native_dirs_rename, 2, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, string2_params);
+
+    // 遍历操作
+    native_register_module_method("dirs", "listdir", native_dirs_listdir, 1, -1, -1, TYPE_ARRAY, TYPE_STRING, string_params);
+    native_register_module_method("dirs", "walk", native_dirs_walk, 1, -1, -1, TYPE_ARRAY, TYPE_ARRAY, string_params);
+
+    // 文件信息
+    native_register_module_method("dirs", "stat", native_dirs_stat, 1, -1, -1, TYPE_DICT, TYPE_UNKNOWN, string_params);
+}

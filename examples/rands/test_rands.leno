@@ -1,0 +1,88 @@
+import rands
+
+main()
+{
+    print("=== 测试 rands 模块 ===")
+    print("")
+    
+    // 1. 测试 rands.om() - 生成 0-1 随机小数
+    print("1. rands.om() - 0-1 随机小数:")
+    for 5 {
+        print($"  {rands.om()}")
+    }
+    print("")
+    
+    // 2. 测试 rands.ints(min, max) - 随机整数
+    print("2. rands.ints(1, 6) - 掷骰子:")
+    for 10 {
+        print($"  {rands.ints(1, 6)}")
+    }
+    print("")
+    
+    // 3. 测试 rands.floats(min, max) - 随机小数
+    print("3. rands.floats(0.0, 100.0) - 随机小数:")
+    for 5 {
+        print($"  {rands.floats(0.0, 100.0)}")
+    }
+    print("")
+    
+    // 4. 测试 rands.bools(prob) - 随机布尔值
+    print("4. rands.bools(0.3) - 30% 概率为 true:")
+    var true_count = 0
+    for 100 {
+        if rands.bools(0.3) {
+            true_count++
+        }
+    }
+    print($"  100 次中 true 出现了 {true_count} 次")
+    print("")
+    
+    // 5. 测试 rands.choice(arr) - 随机选择
+    print("5. rands.choice([1, 2, 3, 4, 5]) - 随机选择:")
+    var arr = [1, 2, 3, 4, 5]
+    for arr.len() {
+        print($"  选中: {rands.choice(arr)}")
+    }
+    print("")
+    
+    // 6. 测试 rands.sample(arr, n) - 随机采样
+    print("6. rands.sample([1,2,3,4,5,6,7,8,9,10], 3) - 随机采样 3 个:")
+    var big_arr = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    var sample = rands.sample(big_arr, 3)
+    print($"  结果: {sample}")
+    print("")
+    
+    // 7. 测试 rands.shuffle(arr) - 随机打乱
+    print("7. rands.shuffle([1,2,3,4,5]) - 随机打乱:")
+    var shuffle_arr = [1, 2, 3, 4, 5]
+    var shuffled = rands.shuffle(shuffle_arr)
+    print($"  原数组: {shuffle_arr}")
+    print($"  打乱后: {shuffled}")
+    print("")
+    
+    // 8. 测试 rands.str(len, chars) - 随机字符
+    print("   rands.str(8, 'abc') - 随机字符串 (字符集 'abc'):")
+    print($"  {rands.str(8, "abc")}")
+    print("")
+    
+    // 9. 测试 rands.int_array(min, max) - 生成随机排列
+    print("9. rands.int_array(1, 10) - 1-10 的随机排列:")
+    var rand_arr = rands.int_array(1, 10)
+    print($"  {rand_arr}")
+    print("")
+    
+    // 10. 测试 rands.seed() - 设置随机种子（可重复）
+    print("10. rands.seed(12345) - 设置种子后可重复:")
+    rands.seed(12345)
+    var seq1 = rands.ints(1, 100)
+    rands.seed(12345)
+    var seq2 = rands.ints(1, 100)
+    print($"   第一次: {seq1}")
+    print($"   第二次: {seq2}")
+    if seq1 == seq2 {
+        print("   ✓ 种子设置成功，序列可重复！")
+    }
+    print("")
+    
+    print("=== 测试完成 ===")
+}

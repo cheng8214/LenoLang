@@ -1,0 +1,15 @@
+// test_debug_narrowing.leno — 调试连续索引守卫
+
+func _getSetting(Dict config, string key): int {
+    // 简化：只测试两层连续索引 config["settings"][key]
+    if config is Dict and config["settings"] is Dict and config["settings"][key] is int {
+        return config["settings"][key]
+    }
+    return -1
+}
+
+main() {
+    var config = {settings: {timeout: 30}}
+    int t = _getSetting(config, "timeout")
+    printf("timeout = %d\n", t)
+}

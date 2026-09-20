@@ -1,0 +1,6 @@
+import "sub/lib_shared.leno" as sub
+use sub.Dir
+main() {
+    var v = Dir.Up     // 这行崩溃
+    print(v)
+}

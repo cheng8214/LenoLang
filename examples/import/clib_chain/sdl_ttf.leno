@@ -1,0 +1,17 @@
+// 字体模块 - 模拟 font.leno, 也依赖 core
+import "sdl_core.leno" as core
+use core.core_lib
+use core.system_lib
+
+// 同时使用两个 clib 类型
+export func ttfAbs(core_lib lib, int x): int {
+    return lib.abs(x) as int
+}
+
+export func getTTFCore(): core_lib {
+    return core.loadCore()
+}
+
+export func getTTFSys(): system_lib {
+    return core.loadSys()
+}

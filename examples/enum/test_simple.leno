@@ -1,0 +1,9 @@
+enum Color {
+    red
+    green
+    blue
+}
+
+main() {
+    print(Color.red)
+}

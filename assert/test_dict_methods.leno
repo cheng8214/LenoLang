@@ -1,0 +1,53 @@
+// 字典方法测试
+
+main()
+{
+    // 测试字典创建和基本操作
+    var d = {name: "leno", version: 1, active: true}
+    assert_eq(d["name"], "leno")
+    assert_eq(d["version"], 1)
+    assert_eq(d["active"], true)
+
+    // 测试点访问
+    assert_eq(d.name, "leno")
+    assert_eq(d.version, 1)
+
+    // 测试添加新键
+    d["author"] = "developer"
+    assert_eq(d["author"], "developer")
+
+    // 测试修改值
+    d["version"] = 2
+    assert_eq(d["version"], 2)
+
+    // 测试长度
+    assert_eq(d.len(), 4)
+
+    // 测试嵌套字典
+    var nested = {
+        user: {
+            name: "张三",
+            age: 25
+        },
+        settings: {
+            theme: "dark",
+            lang: "zh"
+        }
+    }
+    // 嵌套字典访问需要类型收窄：dict 值类型为 any，需先用 is Dict 收窄
+    var user = nested["user"]
+    if user is Dict {
+        assert_eq(user["name"], "张三")
+    }
+    var settings = nested["settings"]
+    if settings is Dict {
+        assert_eq(settings["theme"], "dark")
+    }
+    // 点访问语法同样需要收窄
+    var user2 = nested.user
+    if user2 is Dict {
+        assert_eq(user2["name"], "张三")
+    }
+
+    print("test_dict_methods passed")
+}

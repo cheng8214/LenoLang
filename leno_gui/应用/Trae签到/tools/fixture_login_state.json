@@ -1,0 +1,16 @@
+{
+  "_comment": "由 tools/gen_fixture.js 生成；合成数据，非真实登录态。Leno 侧的派生解密必须与 expect 完全一致。",
+  "enc": "VVVVVVVVMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWZD107fGQajQKurdGGk4mrXftMlIiGsHipZWTQ8YKxRrSwOz495UK4v4adQYRr72hMt+W+b9xWVg/oPhu4kkr0wbob8oFkjllGIvy78FiBNkAmUASYbeHqC+Aa3Vv0GyNWGtCwyVM2jIsHGOfAU/7kuEGwjx8lhS4FCanGAdsMJ4Q3DKuqOH0HssecsXlaIdEtXFVIyCttjfa9/vuV/W+mjxBsMsQ3zjBBVWMtAz4F7nGAGJDtIjfRjMaVxQenA7GkKMF9aoUZRR9RK0/8cxVvQdSuhWoPBZwmsPbVwNQ4qbhgR7ZhIpY3cCiKOVDfI6olPXube93lO26s+7V0leljJ",
+  "expect": {
+    "token": "FAKE-TOKEN-0000-1111-2222-333344445555",
+    "account": {
+      "username": "demo@example.com"
+    },
+    "expiredAt": 1893456000000,
+    "userRegion": {
+      "region": "cn"
+    },
+    "note": "合成夹具·仅用于回归"
+  },
+  "expect_json": "{\"token\":\"FAKE-TOKEN-0000-1111-2222-333344445555\",\"account\":{\"username\":\"demo@example.com\"},\"expiredAt\":1893456000000,\"userRegion\":{\"region\":\"cn\"},\"note\":\"合成夹具·仅用于回归\"}"
+}

@@ -1,0 +1,12 @@
+// 跨模块测试：调用端导入使用 Array[Point] 的函数
+import "test_export_array_struct_mod.leno" as mod
+use mod.Point
+
+Point p = new Point()
+p.x = 1.0
+p.y = 2.0
+mod.processOne(p)
+
+// 测试跨模块 Array[Point] 参数
+Array[Point] arr = [p]
+mod.process(arr)

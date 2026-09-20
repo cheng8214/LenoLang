@@ -1,0 +1,91 @@
+// 模块依赖符号表记忆化（module_symbol_table_get_shared）回归测试
+//
+// 背景：递归扫描依赖时，**唯一**的记忆化曾是磁盘上的 .lenosymc 缓存。缓存一关
+// （LENO_NO_CACHE=1 / --no-cache），同一个模块就被反复重扫，扫描次数 = 依赖图上的
+// 路径数 —— SDL3 的 40 多个 lib 互相 import 时是个天文数字，表现为编译"卡死"
+// （实测 20 秒内扫描 5000+ 次，全在重复扫 sdl_core.leno）。
+// 修法：按解析后的绝对路径做进程内记忆化（同一路径只扫描一次），并让
+// module_symbol_table_scan 幂等。两个细节必须同时成立才对：
+//   - 幂等：重复填充会追加重复符号，且是扫描爆炸的放大器；
+//   - 共享表只读：destroy 对共享表是 no-op，调用方不得释放/改写。
+//
+// 本用例构造「同一依赖被多条路径到达」的图，验证记忆化后符号解析仍然正确：
+//   top ──> base            （直接）
+//   top ──> mid_a ──> base  （经由 A）
+//   top ──> mid_b ──> base  （经由 B）
+//
+// 为什么自己起进程：需要在 **_关缓存** 的前提下编译（缓存开着的话，磁盘缓存会顶掉
+// 这条代码路径，等于没测到），而 assert/run_tests.leno 只认 exit code、不设环境变量。
+
+import dirs
+import files
+import strings
+
+// 起编译器子进程的共享工具（命令行拼接的唯一实现，见 S7）
+import "helpers/compiler.leno" as ce
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_module_dep_memo")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    var n = "\n"
+
+    // base：被三条路径到达的公共依赖（struct / func / enum 都要能正确解析）
+    var base = "export struct Base {" + n
+        + "    int v = 7" + n
+        + "}" + n
+        + "export func bv():int { return 7 }" + n
+        + "export enum BE {" + n
+        + "    BX = 3" + n
+        + "}" + n
+    files.write(dirs.join(work, "base.leno"), base)
+
+    // 经由 A 到达 base
+    var mid_a = "import \"base.leno\" as b" + n
+        + "use b.Base" + n
+        + "export func fa():int { return b.bv() }" + n
+    files.write(dirs.join(work, "mid_a.leno"), mid_a)
+
+    // 经由 B 到达 base（同一个依赖、第二条路径）
+    var mid_b = "import \"base.leno\" as b" + n
+        + "use b.Base" + n
+        + "export func fb():int { return b.bv() + 1 }" + n
+    files.write(dirs.join(work, "mid_b.leno"), mid_b)
+
+    // top：三条路径同时到达 base
+    // 打一行校验和（32 = 7+7+8+3+7）：单行输出不受 stdout/stderr 交错影响
+    var top = "import \"base.leno\" as b" + n
+        + "import \"mid_a.leno\" as a" + n
+        + "import \"mid_b.leno\" as bb" + n
+        + "use b.Base" + n
+        + n
+        + "main() {" + n
+        + "    var total = b.bv() + a.fa() + bb.fb() + b.BE.BX" + n
+        + "    var s = new Base()" + n
+        + "    total = total + s.v" + n
+        + "    print(\"memo_total=\" + total)" + n
+        + "}" + n
+    var top_path = dirs.join(work, "top.leno")
+    files.write(top_path, top)
+
+    // 关缓存编译 + 运行：命中记忆化路径
+    var cmd = "set LENO_NO_CACHE=1 && " + ce.cmd_for(top_path)
+    var r = _exec(cmd)
+    assert_ne(r, null, "关缓存编译：_exec 返回 null")
+    var out = r[0]
+    assert_eq(r[1], 0, "关缓存编译应成功（若挂起说明记忆化失效），exit=" + r[1] + "；输出=" + out)
+    assert_true(strings.has(out, "memo_total=32"),
+        "三条路径到达同一依赖，符号解析结果应一致（期望 7+7+8+3+7=32）；实际输出=" + out)
+
+    // 开缓存再跑一次：磁盘缓存路径与记忆化路径结果必须一致
+    var cmd2 = ce.cmd_for(top_path)
+    var r2 = _exec(cmd2)
+    assert_ne(r2, null, "开缓存编译：_exec 返回 null")
+    assert_eq(r2[1], 0, "开缓存编译应成功，exit=" + r2[1] + "；输出=" + r2[0])
+    assert_true(strings.has(r2[0], "memo_total=32"),
+        "开缓存与关缓存结果应一致（期望 32）；实际输出=" + r2[0])
+
+    dirs.delete(work)
+    print("test_module_dep_memo passed")
+}

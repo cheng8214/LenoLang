@@ -1,0 +1,14 @@
+// 主测试（对照组）：使用「单行 use」转导出的包装模块
+// 期望：正常编译运行，证明 SDL3.leno 那种转导出模式本身没问题
+import "repro_batchimport_wrap_single.leno" as Single
+
+use Single.Color      // 单行 use 转导出，应当可用
+use Single.Point
+
+main() {
+    var c = Single.Color.RED
+    var p = Single.makePointSingle(1, 2)
+    print("single Color.RED = " + c)
+    print("single point     = (" + p.x + ", " + p.y + ")")
+    print("=== SINGLE OK ===")
+}

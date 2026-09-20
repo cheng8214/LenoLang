@@ -1,0 +1,12 @@
+// 测试同文件 struct 方法调用
+struct Foo {
+    func bar(): int { return 42 }
+    func test() {
+        bar()  // 同 struct 方法调用
+    }
+}
+
+main() {
+    var f = new Foo()
+    f.bar()  // 实例方法调用
+}

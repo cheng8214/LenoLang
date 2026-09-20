@@ -1,0 +1,29 @@
+// 最小复现：嵌套调用 + 并行赋值
+// 模拟 test 8 场景：chacha20_decrypt(wrong_key, 0, nonce, chacha20_encrypt(key, 0, nonce, "test data"))
+
+func inner_with_parallel(Array[int] arr):Array[int] {
+    Array[int] working = [0, 0, 0, 0]
+    Array[int] r0 = [1, 2, 3, 4]
+    var result = []
+    
+    for 3 {
+        working[0], working[1], working[2], working[3] = r0[0], r0[1], r0[2], r0[3]
+    }
+    
+    for 0:3 to i {
+        result.add(working[i] + arr[i])
+    }
+    return result
+}
+
+func outer():string {
+    var arr = [10, 20, 30, 40]
+    var res = inner_with_parallel(arr)
+    // 验证结果: working[0]=1, arr[0]=10 => 11, etc.
+    int sum = res[0] + res[1] + res[2] + res[3]
+    return if sum == 110 then "PASS" else "FAIL (got " + _str(sum) + " expected 110)"
+}
+
+main() {
+    print("Nested call test: " + outer())
+}

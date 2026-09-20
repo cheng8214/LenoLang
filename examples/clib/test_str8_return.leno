@@ -1,0 +1,31 @@
+// 测试 str8 返回值自动转 Leno string（零摩擦）
+import ffi
+
+clib msvcrt {
+    str8 strerror(i32 errnum)
+    i32 strlen(str8 s)
+    i32 strcmp(str8 s1, str8 s2)
+}
+
+main() {
+    msvcrt lib = ffi.load("msvcrt.dll")
+
+    // 测试 1: str8 返回值 → string，零摩擦
+    string msg = lib.strerror(2)  // ENOENT = 2
+    print("strerror(2) = " + msg)
+    if msg != null and msg.len() > 0 { print("  PASS: str8 → string 零摩擦") } else { print("  FAIL") }
+
+    // 测试 2: str8 返回值可以直接当 string 用
+    int n = lib.strlen(lib.strerror(2))
+    print("strlen(strerror(2)) = " + n)
+    if n > 0 { print("  PASS: str8 返回值直接传给 str8 参数") } else { print("  FAIL") }
+
+    // 测试 3: strcmp 比较两个 str8
+    int cmp = lib.strcmp("abc", "abc")
+    if cmp == 0 { print("  PASS: strcmp 相等") } else { print("  FAIL: strcmp 期望 0, 实际 " + cmp) }
+
+    int cmp2 = lib.strcmp("abc", "abd")
+    if cmp2 != 0 { print("  PASS: strcmp 不等") } else { print("  FAIL: strcmp 期望非 0") }
+
+    print("str8 返回值测试完成")
+}

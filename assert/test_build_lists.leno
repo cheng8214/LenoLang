@@ -1,0 +1,109 @@
+// 构建清单门禁 —— 防"源码清单漂移"与 GBK 文件回潮（P9 的根治配件）
+//
+// 背景（P9，2026-09-18 实测）：
+//   · `build_vm.bat` 漏掉 `src\debug.c`（`opcode_name()` 的**唯一**定义点）⇒ VM-only 链接缺符号 ✗
+//     （多个编译单元都引用它）；于是"只跑 build.bat"时 VM 侧**静默腐化** ✗。
+//   · 更阴的一条：`build_vm.bat` 原本是 **GBK** 文件 —— 一旦被 UTF-8 编辑器保存，cmd 会按 GBK 控制台
+//     解码中文注释、把碎片当命令执行（`'ebug.c' 不是内部或外部命令`），**却因为功能性的 set 行都是
+//     ASCII 而照样 "VM build successful"** ✗✗（最危险的"看起来成功了"）。
+//
+// 根治（P9）：源清单**只有三份、且是数据文件** ——
+//   `sources_core.txt`（共享核心，两个产品都用）/ `sources_compiler.txt`（编译器专属）/
+//   `sources_vm.txt`（VM 专属入口）；`build.bat` / `build_vm.bat` / `build.sh` 都**读它们**。
+//
+// 本门禁（很便宜，每次套件都跑）守四件事：
+//   ① 三个清单文件存在且非空；
+//   ② 清单里每个路径**真实存在**（改了文件名却忘更新清单 ⇒ 这里立刻红）；
+//   ③ 同一个文件**不许同时出现在两个清单**里（重复编译 / 语义混乱）；
+//   ④ `build.bat` / `build_vm.bat` 必须**纯 ASCII**，且确实**读了清单文件**（防止有人把清单又内联回去）。
+//
+// 注：`build.sh` 的等价物在**本机没有 bash** ⇒ 只做了"也读清单"的一致性（无法在此自动验证）。
+
+import files
+import strings
+
+func read_lines(string path): Array[string] {
+    var out = []
+    if not files.exists(path) {
+        return out
+    }
+    var raw = _str(files.read(path))
+    var lines = strings.split(raw, "\n")
+    for lines to ln {
+        var t = strings.trim(ln)
+        if t != "" {
+            out.add(t)
+        }
+    }
+    return out
+}
+
+// 该文件是否含非 ASCII 字符 —— **纯 Leno** 判定：纯 ASCII 时「字节数 == 字符数」，
+// 只要出现一个多字节字符（中文/全角标点/emoji）就 byte_len > len ✓。
+// （先写过 findstr / grep 版本，实测引号玄学、还会把 ASCII 文件误判成含非 ASCII ✗ ——
+//   这个版本无 shell、跨平台、且拿含中文的 build.sh 做过阳性对照 ✓。）
+func has_non_ascii(string path): int {
+    if not files.exists(path) {
+        return 0
+    }
+    var raw = _str(files.read(path))
+    return if strings.byte_len(raw) != raw.len() then 1 else 0
+}
+
+main() {
+    var list_core = read_lines("sources_core.txt")
+    var list_cc = read_lines("sources_compiler.txt")
+    var list_vm = read_lines("sources_vm.txt")
+
+    // ① 三份清单都在、都非空
+    assert_true(list_core.len() > 0, "sources_core.txt 不存在或为空")
+    assert_true(list_cc.len() > 0, "sources_compiler.txt 不存在或为空")
+    assert_true(list_vm.len() > 0, "sources_vm.txt 不存在或为空")
+
+    // ② 清单里的路径必须真实存在
+    var all = []
+    for list_core to f { all.add(f) }
+    for list_cc to f { all.add(f) }
+    for list_vm to f { all.add(f) }
+    for all to f {
+        assert_true(files.exists(f),
+            "构建清单里的文件不存在（改名/删除后忘更新清单？）: " + f)
+    }
+
+    // ③ 不许跨清单重复
+    int dup = 0
+    var seen = []
+    for all to f {
+        for seen to s {
+            if s == f { dup = dup + 1 }
+        }
+        seen.add(f)
+    }
+    assert_eq(dup, 0, "同一个源文件出现在多个清单里（会重复编译）")
+
+    // ④ .bat 必须纯 ASCII，且确实读清单（别内联回去）
+    assert_eq(has_non_ascii("build.bat"), 0,
+        "build.bat 含非 ASCII —— GBK 陷阱：cmd 会把中文注释的碎片当命令执行，却照样报『构建成功』✗")
+    assert_eq(has_non_ascii("build_vm.bat"), 0,
+        "build_vm.bat 含非 ASCII —— 同上（这正是 P9 里最阴的那一条）")
+
+    assert_true(files.exists("build.bat") and files.exists("build_vm.bat"), "构建脚本不见了？")
+    var bat = _str(files.read("build.bat"))
+    var bat_vm = _str(files.read("build_vm.bat"))
+    // ⚠ 只匹配真正的 `for /f ... in ("清单")` 行 —— 注释里提到清单名是允许的
+    //   （build_vm.bat 就有一句"parser 列在 sources_compiler.txt 里"的说明 ✓；
+    //    一开始我拿整个文件的子串去判，结果被自己的注释绊倒 ✗）
+    assert_true(strings.has(bat, "in (\"sources_core.txt\")"),
+        "build.bat 应读 sources_core.txt（别把清单内联回去）")
+    assert_true(strings.has(bat, "in (\"sources_compiler.txt\")"),
+        "build.bat 应读 sources_compiler.txt")
+    assert_true(strings.has(bat_vm, "in (\"sources_core.txt\")"),
+        "build_vm.bat 应读 sources_core.txt")
+    assert_true(strings.has(bat_vm, "in (\"sources_vm.txt\")"),
+        "build_vm.bat 应读 sources_vm.txt")
+    assert_true(not strings.has(bat_vm, "in (\"sources_compiler.txt\")"),
+        "build_vm.bat **不该**把 sources_compiler.txt 也读进来（那是编译器专属：parser/lexer/semantic/codegen）")
+
+    print("test_build_lists passed（core=" + list_core.len()
+        + " compiler=" + list_cc.len() + " vm=" + list_vm.len() + "）")
+}

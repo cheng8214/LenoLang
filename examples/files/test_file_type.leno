@@ -1,0 +1,17 @@
+// 测试 File 类型声明
+import files
+
+// 使用 File 类型声明变量
+File f = files.open("test.txt", "w")
+f.write("Hello, File type!")
+f.close()
+
+// 读取文件
+File f2 = files.open("test.txt", "r")
+string content = f2.read()
+print(content)
+f2.close()
+
+// 删除测试文件
+files.delete("test.txt")
+print("File type test passed!")

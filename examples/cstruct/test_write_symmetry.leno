@@ -1,0 +1,66 @@
+// 测试 write_bool / write_uint16 — 补 API 对称性
+// 对应 read: read_bool / read_uint16 已有，write 现在补齐
+import ffi
+
+main() {
+    Ptr buf = ffi.malloc(64)
+
+    // ===== write_bool =====
+    // 写入 true，读取应得 true
+    ffi.write_bool(buf, 0, true)
+    bool b1 = ffi.read_bool(buf, 0)
+    if b1 == true { print("  PASS: write_bool(true) -> read_bool = true") } else { print("  FAIL") }
+
+    // 写入 false，读取应得 false
+    ffi.write_bool(buf, 1, false)
+    bool b2 = ffi.read_bool(buf, 1)
+    if b2 == false { print("  PASS: write_bool(false) -> read_bool = false") } else { print("  FAIL") }
+
+    // 写入非零整数（应视为 true）
+    ffi.write_bool(buf, 2, 42)
+    bool b3 = ffi.read_bool(buf, 2)
+    if b3 == true { print("  PASS: write_bool(42) -> read_bool = true") } else { print("  FAIL") }
+
+    // write_bool 写入 1 字节，不影响相邻数据
+    ffi.write_bool(buf, 4, true)
+    ffi.write_int(buf, 8, 12345)
+    bool b4 = ffi.read_bool(buf, 4)
+    int i4 = ffi.read_int(buf, 8)
+    if b4 == true and i4 == 12345 { print("  PASS: write_bool 不影响相邻数据") } else { print("  FAIL") }
+
+    // ===== write_uint16 =====
+    // 写入 0，读取应得 0
+    ffi.write_uint16(buf, 0, 0)
+    int u1 = ffi.read_uint16(buf, 0)
+    if u1 == 0 { print("  PASS: write_uint16(0) -> read_uint16 = 0") } else { print("  FAIL: " + u1) }
+
+    // 写入 65535 (0xFFFF)，读取应得 65535
+    ffi.write_uint16(buf, 2, 65535)
+    int u2 = ffi.read_uint16(buf, 2)
+    if u2 == 65535 { print("  PASS: write_uint16(65535) -> read_uint16 = 65535") } else { print("  FAIL: " + u2) }
+
+    // 写入 1000，读取应得 1000
+    ffi.write_uint16(buf, 4, 1000)
+    int u3 = ffi.read_uint16(buf, 4)
+    if u3 == 1000 { print("  PASS: write_uint16(1000) -> read_uint16 = 1000") } else { print("  FAIL: " + u3) }
+
+    // write_uint16 与 write_int16 对比：同一内存用两种方式读取
+    ffi.write_uint16(buf, 6, 60000)
+    int as_uint = ffi.read_uint16(buf, 6)
+    int as_int = ffi.read_int16(buf, 6)
+    // 60000 作为 int16 是 -5536（补码）
+    if as_uint == 60000 and as_int == -5536 {
+        print("  PASS: uint16/int16 同一内存不同解读正确")
+    } else {
+        print("  FAIL: as_uint=" + as_uint + " as_int=" + as_int)
+    }
+
+    // ===== write_uint (uint32) 对称性验证 =====
+    // write_uint 已有，验证与 read_uint 对称
+    ffi.write_uint(buf, 8, 0x80000000)
+    int u32_val = ffi.read_uint(buf, 8)
+    if u32_val == 2147483648 { print("  PASS: write_uint(0x80000000) -> read_uint = 2147483648") } else { print("  FAIL: " + u32_val) }
+
+    ffi.free(buf)
+    print("write 对称性测试完成")
+}

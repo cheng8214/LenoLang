@@ -1,0 +1,12 @@
+// 测试11: 未定义类型 (函数参数类型未定义)
+// 期望错误:
+//   第6行第22列: UndefinedType 未定义 (UndefinedType 从第22列开始)
+
+func test_undef_type(UndefinedType x) {
+    print("test")
+}
+
+main()
+{
+    test_undef_type(null)
+}

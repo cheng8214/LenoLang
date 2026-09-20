@@ -1,0 +1,7 @@
+// 复现验证（跨模块）：struct 跨模块 impl 另一个模块的 face
+import "repro_array_face_face.leno" as a
+use a.F
+
+export struct S impl F {
+    func f(): int { return 7 }
+}

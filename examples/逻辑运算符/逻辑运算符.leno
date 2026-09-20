@@ -1,0 +1,34 @@
+import io
+
+main() {
+    // 测试 and 关键字
+    var a = true
+    var b = false
+    
+    if a and b {
+        io.print("a and b is true")
+    } else {
+        io.print("a and b is false (correct)")
+    }
+    
+    // 测试 or 关键字
+    if a or b {
+        io.print("a or b is true (correct)")
+    } else {
+        io.print("a or b is false")
+    }
+    
+    // 测试 not 关键字
+    if not b {
+        io.print("not b is true (correct)")
+    } else {
+        io.print("not b is false")
+    }
+    
+    // 测试组合
+    if a and not b {
+        io.print("a and not b is true (correct)")
+    }
+    
+    io.print("All tests passed!")
+}

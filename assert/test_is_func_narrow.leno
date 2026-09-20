@@ -1,0 +1,36 @@
+// 测试 is func 类型的类型收窄
+alias MyHandler = func(int):int
+
+var x = func(int n): int { return n * 2 }
+
+// 测试1: is 收窄后能否当函数调用
+if x is func {
+    print("is func: " + _str(x(5)))
+} else {
+    print("not func")
+}
+
+// 测试2: is MyHandler 收窄
+if x is MyHandler {
+    print("is MyHandler: " + _str(x(10)))
+} else {
+    print("not MyHandler")
+}
+
+// 测试3: switch case is 收窄
+switch x {
+    case is func {
+        print("switch is func: " + _str(x(3)))
+    }
+    default {
+        print("switch default")
+    }
+}
+
+// 测试4: 非函数值 is func 应该返回 false
+var y = 42
+if y is func {
+    print("BUG: int is func returned true")
+} else {
+    print("int is not func: correct")
+}

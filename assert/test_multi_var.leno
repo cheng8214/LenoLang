@@ -1,0 +1,31 @@
+// 测试多变量声明
+
+main() {
+   // var 多变量声明
+   var a=10, b, c=1
+   
+   assert_eq(a, 10)
+   assert_eq(b, null)
+   assert_eq(c, 1)
+   
+   // 显式类型多变量声明
+   int x, y, z
+   x = 100
+   y = 200
+   z = 300
+   assert_eq(x, 100)
+   assert_eq(y, 200)
+   assert_eq(z, 300)
+   
+   // float 类型多变量声明
+   float f1, f2=3.14
+   f1 = 2.5
+   assert_eq(f1, 2.5)
+   assert_eq(f2, 3.14)
+   
+   // 混合初始化
+   var m=1, n=2, p=3
+   assert_eq(m+n+p, 6)
+   
+   print("test_multi_var passed")
+}

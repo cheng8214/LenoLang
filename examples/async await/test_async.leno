@@ -1,0 +1,70 @@
+import io
+import asyncs
+
+// 测试 async/await 协程功能
+
+// 测试1: 基本的 async 函数和 sleep
+async func test_sleep() {
+    io.print("开始 sleep 测试")
+    await asyncs.sleep(500)
+    io.print("sleep 500ms 完成")
+}
+
+// 测试2: async 函数返回值
+async func fetch_data(string name, int delay):string {
+    await asyncs.sleep(delay)
+    return $"数据: {name}"
+}
+
+async func test_return() {
+    io.print("")
+    io.print("开始返回值测试")
+    var result = await fetch_data("测试", 300)
+    io.print($"获取到: {result}")
+}
+
+// 测试3: 并发执行多个协程
+async func task(string name, int ms) {
+    await asyncs.sleep(ms)
+    io.print($"任务 {name} 完成 (耗时 {ms}ms)")
+}
+
+async func test_concurrent() {
+    io.print("")
+    io.print("开始并发测试")
+    // 同时启动多个任务，然后等待所有完成
+    var f1 = task("A", 800)
+    var f2 = task("B", 400)
+    var f3 = task("C", 600)
+    await f1
+    await f2
+    await f3
+}
+
+// 测试4: 在 for 循环中使用 await
+async func test_loop() {
+    io.print("")
+    io.print("开始循环测试")
+    for 0:3 to i {
+        await asyncs.sleep(200)
+        io.print($"循环第 {i} 次")
+    }
+}
+
+main() {
+    io.print("=== Leno Async/Await 协程测试 ===")
+    
+    // 启动所有测试
+    test_sleep()
+    test_return()
+    test_concurrent()
+    test_loop()
+    
+    // 运行事件循环
+    io.print("")
+    io.print("启动事件循环...")
+    asyncs.run()
+    
+    io.print("")
+    io.print("=== 所有测试完成 ===")
+}

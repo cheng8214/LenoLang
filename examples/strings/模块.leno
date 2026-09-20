@@ -1,0 +1,7 @@
+// 新建文件: Untitled.leno
+import strings
+main()
+{
+	var str="dd"
+	print(strings.to_lower(str))
+}

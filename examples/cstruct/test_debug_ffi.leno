@@ -1,0 +1,39 @@
+// 调试 FFI 修改问题
+import ffi
+
+cstruct Point {
+    i32 x
+    i32 y
+}
+
+main() {
+    print("=== 调试 FFI 修改 ===")
+    
+    var p = Point.malloc()
+    p.x = 100
+    p.y = 200
+    
+    print("初始值:")
+    print("  p.x = " + p.x)
+    print("  p.y = " + p.y)
+    
+    var ptr = p.to_ptr()
+    
+    print("\n通过 FFI 修改 x:")
+    ffi.write_int(ptr, 0, 300)
+    print("  p.x = " + p.x)
+    print("  p.y = " + p.y)
+    
+    print("\n通过 FFI 修改 y:")
+    ffi.write_int(ptr, 4, 400)
+    print("  p.x = " + p.x)
+    print("  p.y = " + p.y)
+    
+    print("\n直接读取内存:")
+    print("  x = " + ffi.read_int(ptr, 0))
+    print("  y = " + ffi.read_int(ptr, 4))
+    
+    p.free()
+    
+    print("\n=== 调试完成 ===")
+}

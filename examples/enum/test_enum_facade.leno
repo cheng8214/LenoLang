@@ -1,0 +1,29 @@
+// 模拟 SDL3.leno facade 模式
+//   sdl_core.leno → 定义 export enum Scancode { ESCAPE=41, SPACE=44, ... }
+//   SDL3.leno     → import + use 透传
+
+// 模块 A：原始定义（模拟 sdl_core.leno）
+export enum Scancode {
+    ESCAPE = 41
+    SPACE  = 44
+    A = 4
+    B = 5
+}
+
+export alias KeyEvent = int
+
+export func isEscape(int code): bool { return code == Scancode.ESCAPE }
+
+// ⚠️ 同一个文件充当 facade 测试方，模拟 SDL3.leno 的转发
+main() {
+    // 本模块内 enum 直接用
+    print("Scancode.ESCAPE =", Scancode.ESCAPE)
+    print("Scancode.A =", Scancode.A)
+    print("isEscape(41) =", isEscape(41))
+
+    // alias 可用
+    KeyEvent ke = Scancode.SPACE
+    print("KeyEvent ke =", ke)
+
+    print("=== PASS ===")
+}

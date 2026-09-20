@@ -1,0 +1,10 @@
+
+main()
+{
+	var a=5
+	var b=10
+	for a:b to i
+	{
+		print(i)
+	}
+}

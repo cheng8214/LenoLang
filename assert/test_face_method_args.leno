@@ -1,0 +1,99 @@
+// face 方法的实参检查 —— 回归测试（S2 族第 10 例 / ⑰）
+//
+// 背景（2026-09-18 打点定位）：`an.feed("oops")`（`face Animal { func feed(int n): int }`）
+//   **连同文件都静默** —— 而普通函数 `plain("oops")` 会报。
+//   打点实测：这条调用走 visit_module.inc 的 MODULE_CALL 那条路，且
+//     `is_struct_method == 1`（`obj_kind == 14 == TYPE_FACE`）
+//   ⇒ 它被带进 struct 那套逻辑（按 "Animal::feed" 找占位符 ⇒ 找不到 ⇒ **整块跳过**）⇒ 全不检查。
+//   修法：在该处**先按接收者类型分流**给 face 的检查（`semantic_check_face_method_args`）。
+//   数据来源：同文件用**解析器 face AST 的 method_param_types**（有！）判逐参类型；
+//   跨模块只有 `ModuleFaceMethodSymbol.param_count` ⇒ 只判"参数过多"。
+//
+// 判据：
+//   ① 同文件：错实参**必须报错**（修前静默）；
+//   ② 同文件：参数过多必须报错（修前只由 codegen 兜底，文案不同）；
+//   ③ 跨模块：参数过多必须报错；
+//   ④ 跨模块：错实参**必须报错**（⑰-2 补的签名数据；修前跨模块只判得了个数 ⇒ 静默）；
+//   ⑤ 守卫：跨模块的**正确**调用必须能编译并跑出结果（防误报）。
+// 子进程机器复用 assert/helpers/compiler.leno（S7）。
+
+import dirs
+import files
+
+import "helpers/compiler.leno" as ce
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_face_method_args")
+    dirs.delete(work)
+    dirs.mkdir_p(dirs.join(work, "lib"))
+
+    // 跨模块用的声明方：face + 返回它的函数（不必自己写 impl 就能拿到 face 值）
+    files.write(dirs.join(work, "lib/f.leno"),
+        "export face Animal {\n    func feed(int n): int\n}\n\n"
+        + "export func make_animal(): Animal {\n    return null\n}\n")
+
+    // ① 同文件：错实参必须报错
+    var same_bad = dirs.join(work, "same_bad.leno")
+    files.write(same_bad,
+        "face Animal {\n    func feed(int n): int\n}\n\n"
+        + "func mk(): Animal {\n    return null\n}\n\n"
+        + "main() {\n"
+        + "    var an = mk()\n"
+        + "    print(\"A=\" + an.feed(\"oops\"))\n"
+        + "}\n")
+    ce.expect_error(same_bad, "同文件：face 方法错实参必须报错（修前静默）",
+        "参数类型不匹配", 11)
+
+    // ② 同文件：参数过多必须报错
+    var same_arity = dirs.join(work, "same_arity.leno")
+    files.write(same_arity,
+        "face Animal {\n    func feed(int n): int\n}\n\n"
+        + "func mk(): Animal {\n    return null\n}\n\n"
+        + "main() {\n"
+        + "    var an = mk()\n"
+        + "    print(\"A=\" + an.feed(1, 2))\n"
+        + "}\n")
+    ce.expect_error(same_arity, "同文件：face 方法参数过多必须报错", "参数过多", 11)
+
+    // ③ 跨模块：参数过多必须报错
+    var cross_arity = dirs.join(work, "cross_arity.leno")
+    files.write(cross_arity,
+        "import \"lib/f.leno\" as a\nuse a.Animal\n\n"
+        + "main() {\n"
+        + "    var an = a.make_animal()\n"
+        + "    print(\"A=\" + an.feed(1, 2))\n"
+        + "}\n")
+    ce.expect_error(cross_arity, "跨模块：face 方法参数过多必须报错", "参数过多", 6)
+
+    // ===== ⑰-2：跨模块的**参数类型**（此前只判得了个数 ⇒ 静默）=====
+    // 声明方带一个 impl 该 face 的 struct + 工厂函数，判据 ⑤ 才能真的跑起来。
+    files.write(dirs.join(work, "lib/impl.leno"),
+        "export face Animal {\n    func feed(int n): int\n}\n\n"
+        + "export struct Cat impl Animal {\n"
+        + "    func feed(int n): int {\n        return n + 1\n    }\n}\n\n"
+        + "export func make_animal(): Animal {\n    return new Cat()\n}\n")
+
+    // ④ 跨模块：错实参必须报错（修前静默）
+    var cross_bad = dirs.join(work, "cross_bad.leno")
+    files.write(cross_bad,
+        "import \"lib/impl.leno\" as a\nuse a.Animal\n\n"
+        + "main() {\n"
+        + "    var an = a.make_animal()\n"
+        + "    print(\"A=\" + an.feed(\"oops\"))\n"
+        + "}\n")
+    ce.expect_error(cross_bad, "跨模块：face 方法错实参必须报错（修前静默）", "参数类型不匹配", 6)
+
+    // ⑤ 守卫：跨模块的正确调用必须通过（能真跑）
+    var cross_good = dirs.join(work, "cross_good.leno")
+    files.write(cross_good,
+        "import \"lib/impl.leno\" as a\nuse a.Animal\n\n"
+        + "main() {\n"
+        + "    var an = a.make_animal()\n"
+        + "    print(\"A=\" + an.feed(7))\n"
+        + "}\n")
+    ce.expect_ok(cross_good, "跨模块：face 方法正确实参必须通过（防误报）", "A=8")
+
+    dirs.delete(work)
+
+    print("test_face_method_args passed")
+}

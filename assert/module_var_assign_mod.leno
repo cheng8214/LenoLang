@@ -1,0 +1,45 @@
+// 测试：模块变量在函数内反复赋值不会导致栈损坏
+// 回归测试：修复 gen_assign 中 SYM_MODULE 分支多余 OP_POP 导致栈下溢
+
+import strings
+
+var _g_pos = 0
+var _g_html = ""
+
+func _parseWord(): string {
+    string word = ""
+    int len = _g_html.len()
+    while _g_pos < len {
+        int b = _g_html.byte(_g_pos)
+        if b >= 97 and b <= 122 {
+            word = word + strings.char(b)
+            _g_pos = _g_pos + 1
+        } else {
+            break
+        }
+    }
+    return word
+}
+
+export func parse(string html): string {
+    _g_html = html
+    _g_pos = 0
+    string result = ""
+    while _g_pos < _g_html.len() {
+        int b = _g_html.byte(_g_pos)
+        if b == 60 {
+            _g_pos = _g_pos + 1
+            string tag = _parseWord()
+            result = result + tag + ","
+            while _g_pos < _g_html.len() and _g_html.byte(_g_pos) != 62 {
+                _g_pos = _g_pos + 1
+            }
+            if _g_pos < _g_html.len() {
+                _g_pos = _g_pos + 1
+            }
+        } else {
+            _g_pos = _g_pos + 1
+        }
+    }
+    return result
+}

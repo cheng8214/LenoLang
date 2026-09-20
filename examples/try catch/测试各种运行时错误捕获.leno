@@ -1,0 +1,38 @@
+main()
+{
+    print("=== 测试各种运行时错误捕获 ===")
+    
+    // 1. 除零错误
+    try {
+        var a = 10 / 0
+    } catch e {
+        print($"1. 除零错误: {e}")
+    }
+    
+    // 2. 数组越界
+    try {
+        var arr = [1, 2, 3]
+        var x = arr[10]
+    } catch e {
+        print($"2. 数组越界: {e}")
+    }
+    
+  
+    
+    // 4. 自定义 throw
+    try {
+        throw "自定义异常"
+    } catch e {
+        print($"4. 自定义异常: {e}")
+    }
+    
+    // 5. 字符串索引越界
+    try {
+        var s = "hello"
+        var c = s[100]
+    } catch e {
+        print($"5. 字符串索引越界: {e}")
+    }
+    
+    print("=== 所有测试完成 ===")
+}

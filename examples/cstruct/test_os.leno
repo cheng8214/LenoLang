@@ -1,0 +1,38 @@
+// 测试 _os() 函数
+
+main() {
+    print("=== 测试 _os() 函数 ===")
+    
+    var os_name = _os()
+    print("当前操作系统: " + os_name)
+    
+    // 根据操作系统执行不同逻辑
+    if os_name == "windows" {
+        print("运行在 Windows 系统上")
+        print("可以使用 Windows API 和 Registry")
+    } else if os_name == "linux" {
+        print("运行在 Linux 系统上")
+        print("可以使用 POSIX API")
+    } else if os_name == "macos" {
+        print("运行在 macOS 系统上")
+        print("可以使用 Apple 特定 API")
+    } else {
+        print("未知操作系统: " + os_name)
+    }
+    
+    // 实际应用：加载不同平台的库
+    print("")
+    print("平台特定的库名:")
+    if os_name == "windows" {
+        print("  kernel32.dll")
+        print("  user32.dll")
+    } else if os_name == "linux" {
+        print("  libc.so.6")
+        print("  libm.so.6")
+    } else if os_name == "macos" {
+        print("  libSystem.dylib")
+    }
+    
+    print("")
+    print("=== 测试完成 ===")
+}

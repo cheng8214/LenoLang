@@ -1,0 +1,8 @@
+main()
+{
+    var a = null
+
+    int b = a + 1
+
+    print(b)
+}

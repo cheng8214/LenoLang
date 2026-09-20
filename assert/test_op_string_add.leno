@@ -1,0 +1,41 @@
+// OP_STRING_ADD 回归（§8.64）
+//
+// 这条 opcode 由**字符串插值** $"..." 编译出（codegen_expr.c 的 AST_INTERP_STRING 分支），
+// 所以它主要出现在"拼显示文本"的热循环里（file_manager 的直方图里 ×4，是 R2 的最高频项）。
+//
+// 语义（vm/vminc/op_string.inc）：弹 b、弹 a → 拼成新串 → 压回（net -1）。
+//   两侧都是 ObjString → str_concat（正确处理内嵌 NUL）
+//   否则            → 两侧各自 value_to_string 再拼
+// 拼接一律走 VM 的 string_add（语义唯一来源）—— 不做第二份实现。
+
+main() {
+    // ---- 1) int 插值 ⇒ 走 value_to_string 转换路径 ----
+    string last = ""
+    int i = 0
+    while i < 3000 {
+        last = $"v{i}"
+        i = i + 1
+    }
+    assert_eq(last, "v2999")
+
+    // ---- 2) string + int 混合 ⇒ 先 str_concat 快路径、再转换路径 ----
+    string pre = "x"
+    string last2 = ""
+    int j = 0
+    while j < 3000 {
+        last2 = $"{pre}{j}"
+        j = j + 1
+    }
+    assert_eq(last2, "x2999")
+
+    // ---- 3) 反复拼接（长度逐步增长）⇒ 核对每一步都真的拼上了 ----
+    string acc = ""
+    int k = 0
+    while k < 200 {
+        acc = $"{acc}ab"
+        k = k + 1
+    }
+    assert_eq(acc.len(), 400)
+
+    print("test_op_string_add: OK")
+}

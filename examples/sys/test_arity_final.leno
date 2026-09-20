@@ -1,0 +1,30 @@
+main() {
+    // 测试各种正常调用
+    print("=== 正常调用测试 ===")
+
+    // _gc: 0~1 个参数
+    _gc()
+    _gc(true)
+
+    // input: 0~1 个参数（这里只测带参数的，无参数会等待输入）
+    // input("prompt")
+
+    // assert: 1~2 个参数
+    assert(true)
+    assert(true, "msg")
+
+    // assert_eq: 2~3 个参数
+    assert_eq(1, 1)
+    assert_eq(1, 1, "msg")
+
+    // print: 0~∞ 个参数
+    print()
+    print("hello")
+    print("a", "b", "c")
+
+    // format: 1~∞ 个参数
+    format("hello")
+    format("hello %s", "world")
+
+    print("全部正常调用通过!")
+}

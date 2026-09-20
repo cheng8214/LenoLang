@@ -1,0 +1,54 @@
+// about_dialog.leno — 关于对话框（模态窗口，自动布局版）
+// 用法： about.show()
+import "SDL3" as SDL3
+import "sdl_core" as core
+import "sdl_theme" as theme
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.VBox
+use SDL3.HBox
+use SDL3.Label
+use SDL3.Button
+use SDL3.Widget
+use SDL3.Scancode
+
+// 显示模态"关于"对话框
+export func show() {
+    var dlg = SDL3.createDialogWindow({title:"关于", w:380, h:260})
+    VBox root = SDL3.createVBox({x:0, y:0, w:380, h:260, padX:40, padY:24, spacing:8})
+    dlg.setRoot(root)
+
+    // ★ 居中标题：dialogLabel(align:1) 内部 w:1，VBox align:1 定位到窗口中心
+    root.add(SDL3.dialogLabel("LenoSDL3 文件管理器", 18), {grow:0, shrink:0, align:1})
+    root.add(SDL3.dialogLabel("文件浏览 / 管理 Demo", 13), {grow:0, shrink:0, align:1})
+
+    // 间隔
+    root.add(SDL3.dialogSpacer(), {grow:0, shrink:0, basis:8, align:0})
+
+    // ★ 左对齐信息行：dialogLabel(align:0) 内部 w:300，VBox align:3 撑满宽度
+    root.add(SDL3.dialogLabel("版本：v1.0", 13), {grow:0, shrink:0, align:3})
+    root.add(SDL3.dialogLabel("基于 LenoSDL3 即时模式 UI 框架", 13), {grow:0, shrink:0, align:3})
+    root.add(SDL3.dialogLabel("文件夹树 / 列表 / 右键菜单 / 重命名", 13), {grow:0, shrink:0, align:3})
+    root.add(SDL3.dialogLabel("© 2026 LenoLang", 12), {grow:0, shrink:0, align:3})
+
+    // 弹性间隔
+    root.add(SDL3.dialogSpacer(), {grow:1, shrink:1, align:0})
+
+    // ★ 确定按钮居中：dialogButtonRow + VBox align:3(stretch)
+    Button btnOk = SDL3.createButton({x:0, y:0, w:100, h:34, text:"确定", type:"primary"})
+    HBox btnRow = SDL3.dialogButtonRow([btnOk], 0)
+    root.add(btnRow, {grow:0, shrink:0, align:3})
+
+    var shouldClose = false
+    btnOk.on_click(func() { shouldClose = true })
+
+    SDL3.runModal(dlg,
+        func(Event ev): bool {
+            if ev.isQuit() or ev.isWindowClose() { return false }
+            if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
+            if shouldClose { return false }
+            return true
+        },
+        func(Renderer r) { r.clearColor(theme.getTheme().bg) }
+    )
+}

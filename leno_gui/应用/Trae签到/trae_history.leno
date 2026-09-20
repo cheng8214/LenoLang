@@ -1,0 +1,128 @@
+// trae_history.leno — ⑥ 签到历史（`history.json`，**按账号独立**）
+//
+// 落盘位置：`%APPDATA%\TraeSignLeno\history.json`
+//   —— 用**自己**的目录，绝不碰 Trae 的任何文件 ✓（安全边界与 ② 的"只读登录态"一致）
+//
+// 结构（刻意**扁平**：键 = `brand|username|YYYY-MM-DD`，值 = `ok|base|extra|code`）：
+//   {
+//     "Trae CN|用户5104013636|2026-09-18": "1|150|50|0"
+//   }
+// 为什么扁平：`jsons.decode` 返回 `any`，嵌套对象在 Leno 里要做多层类型收窄 ✗ ⇒ 扁平结构让
+// "取某天记录"退化成一次等值查找、"取某月"退化成一次前缀扫描 ✓（见 README 的语言侧注意点）。
+import jsons
+import files
+import strings
+import dirs
+import "trae_core.leno" as core
+
+export func history_dir(): string {
+    var appdata = _env("APPDATA")
+    if appdata == null { return "" }
+    return appdata + "\\TraeSignLeno"
+}
+export func history_path(): string {
+    var d = history_dir()
+    if d == "" { return "" }
+    return d + "\\history.json"
+}
+
+// 全部历史（`any`；读取用 core.json_keys / core.json_get）
+export func load_all(): any {
+    var p = history_path()
+    if p == "" { return null }
+    if not files.exists(p) { return null }
+    return jsons.read_file(p)
+}
+
+export func key_of(string brand, string username, string day): string {
+    return brand + "|" + username + "|" + day
+}
+
+// 某账号某天的记录串（`ok|base|extra|code`）；没有 ⇒ ""
+export func get_day(string brand, string username, string day): string {
+    return core.json_get(load_all(), key_of(brand, username, day))
+}
+export func has_day(string brand, string username, string day): bool {
+    return get_day(brand, username, day) != ""
+}
+// 该天是否**签到成功**（记录串以 "1|" 开头）
+export func ok_day(string brand, string username, string day): bool {
+    var v = get_day(brand, username, day)
+    if v == "" { return false }
+    return strings.starts_with(v, "1|")
+}
+// 记录串的字段（| 分隔）：idx 越界 ⇒ ""
+export func field(string rec, int idx): string {
+    var parts = rec.split("|")            // 注意是**方法式**（`strings.split` 不存在 ✗）
+    if idx >= 0 and idx < parts.len() { return _str(parts[idx]) }
+    return ""
+}
+
+// 某账号某月**签到成功**的日期集合 → Array[string]（元素 = "DD"）
+export func ok_days_in_month(string brand, string username, int y, int m): Array[string] {
+    var out = []
+    var pre = brand + "|" + username + "|" + core.month_prefix(y, m)
+    var ks = core.json_keys(load_all())
+    for ks to k {
+        if not strings.starts_with(k, pre) { continue }
+        var day = k.byte_slice(pre.byte_len(), k.byte_len())
+        if ok_day(brand, username, (y as string) + "-" + core.pad2(m) + "-" + day) { out.add(day) }
+    }
+    return out
+}
+
+// 一次读盘取某月两个集合 → [_okDays, _hasDays]（元素 = "DD"）
+// 为什么合并：日历一屏 31 天，逐天调用 has_day/ok_day 会读 62 次盘 ✗ ⇒ 这里一次读盘 ✓
+// （虽然只在"动作后 / 切月"时调用，不进每帧路径，但在慢机器上这一步省得实）
+export func month_days(string brand, string username, int y, int m): Array[Array[string]] {
+    var ok = []
+    var has = []
+    var pre = brand + "|" + username + "|" + core.month_prefix(y, m)
+    var all = load_all()
+    var ks = core.json_keys(all)
+    for ks to k {
+        if not strings.starts_with(k, pre) { continue }
+        var day = k.byte_slice(pre.byte_len(), k.byte_len())
+        has.add(day)
+        if strings.starts_with(core.json_get(all, k), "1|") { ok.add(day) }
+    }
+    return [ok, has]
+}
+
+// 写一天记录（保留原有内容 ✓；成功 ⇒ true）
+// 注意：签到失败也记（`ok=0` + code），日历上画成"失败的叉"⇒ 失败重试有据可查 ✓
+export func mark(string brand, string username, string day, bool ok, string base, string extra, string code): bool {
+    var p = history_path()
+    if p == "" { return false }
+    var d = history_dir()
+    if not dirs.is_dir(d) { dirs.mkdir_p(d) }
+    // 起始对象：**必须**用 `jsons.decode("{}")` 或读回旧文件（都是 `any` + 收窄 ✓）
+    // ⚠ 踩过的坑：不能写 `jsons.write_file(p, "{}")` ✗ —— `write_file` 会把参数**再 JSON 编码**
+    // 一次 ⇒ 落盘是带引号的 `"{}"`（字符串），读回来是 `string` 而不是对象 ⇒ 后续 mark 全部失败。
+    var cur = jsons.decode("{}")
+    var old = load_all()
+    if old is Dict { cur = old }
+    if cur is Dict {
+        Dict db = cur
+        var flag = "0"
+        if ok { flag = "1" }
+        db[key_of(brand, username, day)] = flag + "|" + base + "|" + extra + "|" + code
+        return jsons.write_file(p, db)
+    }
+    return false
+}
+
+// 删除一天记录（自测清理 / ⑤ 重试用）⇒ true 表示删掉了
+export func remove_day(string brand, string username, string day): bool {
+    var p = history_path()
+    if p == "" { return false }
+    var all = load_all()
+    if all is Dict {
+        Dict db = all
+        var k = key_of(brand, username, day)
+        if not db.has(k) { return false }
+        db.remove(k)
+        return jsons.write_file(p, db)
+    }
+    return false
+}

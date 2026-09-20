@@ -1,0 +1,212 @@
+// sdl_filedialog.leno — 原生文件选择对话框（独立模块，不污染核心库）
+//
+// 设计要点（避免内存泄漏）：
+//   1. SDL3.dll 句柄【只加载一次】并缓存（参照 sdl_core.leno 的 lib() 范式），
+//      不要在每次 show* 里反复 ffi.load，否则每次弹框都泄漏一个 DLL 句柄。
+//   2. 增加【重入保护】：上一个对话框的回调尚未触发（_active=true）时，
+//      忽略新的 show* 调用。否则 _filterMem 会被覆盖，导致上一次的
+//      malloc 内存失去引用而泄漏。
+//   3. 过滤器内存（SDL_DialogFileFilter 数组 + 字符串缓冲）在 _buildFilters
+//      里分配、在 _dispatch 回调里统一 ffi.free，且 SDL 在回调返回后才释放
+//      filelist，故我们只【读取】filelist、不释放它（SDL 拥有其所有权）。
+//
+// 用法：
+//   import ".../lib/sdl_filedialog.leno" as fdlg
+//   fdlg.showOpenFileDialog(win,
+//       func(Array[string] files, int filter) { /* 主线程处理结果 */ },
+//       { allow_many: true,
+//         filters: [ {name:"Leno 脚本", pattern:"*.leno"}, {name:"全部", pattern:"*.*"} ],
+//         default_location: "." })
+//
+// 回调在主线程返回。若用 win.run() 事件循环，跨线程回调会在每帧 clib 调用后
+// 自动泵送执行（详见 docs/FFI使用指南.md 7.4 跨线程回调），无需额外处理。
+
+import ffi
+import dirs
+import "sdl_window.leno" as wnd
+use wnd.Window
+
+// ============ SDL3 文件对话框函数（本模块私有 clib 块） ============
+// 回调签名：void (*)(void* userdata, const char* const* filelist, int filter)
+// filelist 为 null 结尾的 const char* 数组；取消=空数组，错误=NULL。
+clib sdl3dlg {
+    void SDL_ShowOpenFileDialog(Ptr[u8] callback, Ptr[u8] userdata, Ptr[u8] window, Ptr[u8] filters, i32 nfilters, Ptr[u8] default_location, bool allow_many)
+    void SDL_ShowSaveFileDialog(Ptr[u8] callback, Ptr[u8] userdata, Ptr[u8] window, Ptr[u8] filters, i32 nfilters, Ptr[u8] default_location)
+    void SDL_ShowOpenFolderDialog(Ptr[u8] callback, Ptr[u8] userdata, Ptr[u8] window, Ptr[u8] filters, i32 nfilters, Ptr[u8] default_location)
+}
+
+// ============ 回调签名（C 侧函数指针类型） ============
+cfunc _DialogCb(Ptr[u8] userdata, Ptr[u8] filelist, i32 filter):void
+
+// ============ 模块级状态 ============
+var _onResult  = null   // 用户传入的回调闭包
+var _cb        = null   // 持久化的 C 函数指针（一次创建，重复使用）
+var _active    = false  // 是否还有对话框在等待结果
+var _filterMem = []     // 本次对话框分配的过滤器内存，回调后统一释放
+
+// SDL3 动态库句柄缓存（只加载一次，避免每次弹框泄漏句柄）
+sdl3dlg _lib = null
+
+func _ensureLib(): sdl3dlg {
+    if _lib == null {
+        string ext = if _os() == "windows" then ".dll" else ".so"
+        _lib = ffi.load("SDL3" + ext)
+    }
+    return _lib
+}
+
+// 确保 C 回调只创建一次（ffi.callback 最多 128 个，避免泄漏）
+func _ensureCb() {
+    if _cb == null {
+        _cb = ffi.callback(_dispatch, _DialogCb)
+    }
+}
+
+// C 侧回调入口：在工作线程被排队，主线程（run 循环每帧 clib 调用后）自动泵送执行
+func _dispatch(Ptr[u8] userdata, Ptr[u8] filelist, int filter) {
+    Array[string] out = []
+    if filelist != null {
+        int i = 0
+        while true {
+            Ptr[u8] p = ffi.read_ptr(filelist, i * 8)   // 64 位下每个指针 8 字节
+            if p == null { break }
+            out.add(ffi.read_string(p, 0))
+            i = i + 1
+        }
+    }
+    // 释放本次对话框分配的过滤器内存（必须在回调里，SDL 仍持有 filelist 期间释放安全）
+    for _filterMem.len() to k {
+        ffi.free(_filterMem[k])
+    }
+    _filterMem = []
+    _active = false
+    var cb = _onResult
+    _onResult = null
+    print($"[filedialog] _dispatch fired, count={out.len()} filter={filter}")
+    if cb != null { cb(out, filter) }
+}
+
+// SDL3 pattern 规范：分号分隔的扩展名列表（如 "doc;docx"），
+// 整个串可为单一 "*" 表示所有文件；【不能】带 "*" 通配符（"*.leno"、"*.*" 均非法）。
+// 此函数把用户习惯的 "*.leno" → "leno"、 "*.*" → "*"、 "*.txt;*.doc" → "txt;doc"。
+func _normPattern(string p): string {
+    if p == null or p.len() == 0 { return "*" }
+    if p == "*" or p == "*.*" { return "*" }
+    string r = p.replace("*.", "").replace("*", "")
+    if r.len() == 0 { return "*" }
+    return r
+}
+
+// default_location 规范化：SDL3 在 Windows 上不接受相对路径（传 "." 会导致对话框
+// 初始化失败而不弹出），故用 dirs.abspath 把相对路径 / "." 解析为绝对路径；
+// 已是绝对路径则原样返回。空串返回 null（交给 SDL 用默认目录）。
+func _normLocation(string s): string {
+    if s == null or s.len() == 0 { return null }
+    return dirs.abspath(s)
+}
+
+// 从 opts 取 default_location 并规范化；未设置则返回 null
+func _optDefaultLocation(Dict opts): string {
+    var v = opts.get("default_location", null)
+    if v == null { return null }
+    return _normLocation(v as string)
+}
+
+// 构造 SDL_DialogFileFilter 数组（每项 = {name ptr, pattern ptr}，16 字节）
+// 无过滤器时返回 null
+func _buildFilters(Dict opts): Ptr[u8] {
+    var fs = opts.get("filters", null)
+    if fs == null { _filterMem = []; return null }
+    if fs is Array {
+    int n = fs.len()
+    if n == 0 { _filterMem = []; return null }
+        Ptr[u8] arr = ffi.malloc(n * 16)
+        _filterMem = [arr]
+        int i = 0
+        while i < n {
+            Dict f = fs[i] as Dict
+            string nm = f.get("name", "")
+            string pt = _normPattern(f.get("pattern", ""))
+            // name 缓冲：按 UTF-8 真实字节数 +1 终止符；显式写 0 确保 null 结尾
+            // （SDL 的 const char* 必须 null 终止，否则工作线程读越界导致对话框不弹出）
+            int nblen = ffi.string_bytes(nm)
+            Ptr[u8] nb = ffi.malloc(nblen + 1)
+            ffi.write_string(nb, 0, nm)
+            ffi.write_int8(nb, nblen, 0)
+            // pattern 缓冲
+            int pblen = ffi.string_bytes(pt)
+            Ptr[u8] pb = ffi.malloc(pblen + 1)
+            ffi.write_string(pb, 0, pt)
+            ffi.write_int8(pb, pblen, 0)
+            ffi.write_ptr(arr, i * 16, nb)
+            ffi.write_ptr(arr, i * 16 + 8, pb)
+            _filterMem.add(nb); _filterMem.add(pb)
+            i = i + 1
+        }
+        return arr
+    }
+    return null
+}
+
+func _nfiltersOf(Dict opts): int {
+    var fs = opts.get("filters", null)
+    if fs is Array { return fs.len() }
+    return 0
+}
+
+// 把 Leno 字符串持久化为独立 C 字符串（malloc + null 终止），并登记到 _filterMem
+// 以便回调后统一释放。null 或空串返回 null。
+// 关键：SDL 文件对话框在【工作线程】异步读取该指针，直接传 Leno 内部字符串会被
+// GC/释放导致对话框初始化失败而不弹出，故必须 malloc 独立内存。
+func _makeCStr(string s): Ptr[u8] {
+    if s == null or s.len() == 0 { return null }
+    int blen = ffi.string_bytes(s)
+    Ptr[u8] p = ffi.malloc(blen + 1)
+    ffi.write_string(p, 0, s)
+    ffi.write_int8(p, blen, 0)
+    _filterMem.add(p)
+    return p
+}
+
+// 打开文件（opts: allow_many / filters / default_location）
+export func showOpenFileDialog(Window win, any onResult, Dict opts) {
+    if _active { print("[filedialog] BLOCKED: 上一个对话框尚未结束，已忽略本次调用"); return }
+    _ensureCb()
+    _onResult = onResult
+    _active = true
+    sdl3dlg lib = _ensureLib()
+    Ptr[u8] filters = _buildFilters(opts)
+    int nfilters = _nfiltersOf(opts)
+    bool many = opts.get("allow_many", false)
+    Ptr[u8] defPtr = _makeCStr(_optDefaultLocation(opts))
+    lib.SDL_ShowOpenFileDialog(_cb, null, win.getHandle(), filters, nfilters, defPtr, many)
+}
+
+// 保存文件（opts: filters / default_location）
+export func showSaveFileDialog(Window win, any onResult, Dict opts) {
+    if _active { print("[filedialog] BLOCKED: 上一个对话框尚未结束，已忽略本次调用"); return }
+    _ensureCb()
+    _onResult = onResult
+    _active = true
+    sdl3dlg lib = _ensureLib()
+    Ptr[u8] filters = _buildFilters(opts)
+    int nfilters = _nfiltersOf(opts)
+    Ptr[u8] defPtr = _makeCStr(_optDefaultLocation(opts))
+    lib.SDL_ShowSaveFileDialog(_cb, null, win.getHandle(), filters, nfilters, defPtr)
+}
+
+// 选择文件夹（opts: filters / default_location）
+export func showOpenFolderDialog(Window win, any onResult, Dict opts) {
+    if _active { print("[filedialog] BLOCKED: 上一个对话框尚未结束，已忽略本次调用"); return }
+    _ensureCb()
+    _onResult = onResult
+    _active = true
+    sdl3dlg lib = _ensureLib()
+    Ptr[u8] filters = _buildFilters(opts)
+    int nfilters = _nfiltersOf(opts)
+    Ptr[u8] defPtr = _makeCStr(_optDefaultLocation(opts))
+    lib.SDL_ShowOpenFolderDialog(_cb, null, win.getHandle(), filters, nfilters, defPtr)
+}
+
+// 当前是否还有对话框在等待结果（可选轮询用）
+export func isActive(): bool { return _active }

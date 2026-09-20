@@ -1,0 +1,6 @@
+import cs2
+
+main() {
+    cs2.test()
+    print("测试通过!")
+}

@@ -1,0 +1,39 @@
+// test_ffi_int.leno — 验证 FFI 返回值能否用 _int() 转换
+import ffi
+
+// 声明一个返回 i32 的 FFI 函数
+clib kernel32 {
+    i32 GetCurrentProcessId()
+    Ptr GetCurrentProcess()
+    i32 GetTickCount()
+}
+
+kernel32 _krnl = null
+func _krnlLib(): kernel32 {
+    if _krnl == null { _krnl = ffi.load("kernel32.dll") }
+    return _krnl
+}
+
+main() {
+    print("=== Bug2: FFI 返回值 _int() 转换 ===")
+    print("")
+
+    // 测试1: 直接赋值 FFI i32 返回值到 int
+    print("测试1: 直接赋值 i32 -> int")
+    int pid = _krnlLib().GetCurrentProcessId()
+    print("  pid = " + pid)
+    print("")
+
+    // 测试2: 用 _int() 转换 FFI i32 返回值
+    print("测试2: _int(ffi.i32 返回值)")
+    print("  尝试 _int(GetTickCount())...")
+    int tick = _int(_krnlLib().GetTickCount())
+    print("  tick = " + tick)
+    print("")
+
+    // 测试3: 用 _int() 转换 FFI Ptr 返回值
+    print("测试3: _int(ffi.Ptr 返回值)")
+    print("  尝试 _int(GetCurrentProcess())...")
+    int procPtr = _int(_krnlLib().GetCurrentProcess())
+    print("  procPtr = " + procPtr)
+}

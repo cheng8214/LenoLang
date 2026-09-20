@@ -1,0 +1,40 @@
+// 测试新的泛型类型系统
+
+// 基础类型（保持小写）
+int a = 10
+float b = 3.14
+string c = "hello"
+bool d = true
+var arr10=[1, 2, 3]
+print(type(arr10))
+// 泛型数组类型（大写）
+Array[int] arr1 = [1, 2, 3]
+Array[float] arr2 = [1.1, 2.2, 3.3]
+Array[string] arr3 = ["a", "b", "c"]
+Array e = []  // Array[any]
+
+// 二维数组
+Array[Array[int]] arr2d = [[1, 2], [3, 4]]
+
+// 泛型字典类型（大写）
+Dict[string, int] dict1 = {"a": 1, "b": 2}
+Dict f = {}  // Dict[any, any]
+
+// 类型推断
+var inferred_arr = [1, 2, 3]  // 推断为 Array[int]
+var inferred_dict = {"x": 10}  // 推断为 Dict[string, int]
+
+// 函数参数和返回类型
+func get_arr(): Array[int] {
+    return [1, 2, 3]
+}
+
+// 获取数组
+var result = get_arr()
+print(result)
+// 直接打印
+print(result[0])
+print(result[1])
+print(result[2])
+
+print("泛型类型测试通过！")

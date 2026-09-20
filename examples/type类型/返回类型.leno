@@ -1,0 +1,14 @@
+
+main() 
+{
+	int num=add(1, 2)
+	print(type(num))
+    print("输出3.0:"+num)//输出3.0
+}
+
+func add(int a, int b):int
+{
+     int c=a
+	print(type(c))
+    return b + c
+}

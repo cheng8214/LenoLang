@@ -1,0 +1,32 @@
+// 测试4: 跨变量引用和函数调用
+import "mod_cross_ref.leno" as m
+{
+    // 跨变量引用
+    int v1 = m.tt
+    print(v1)
+
+    // 函数调用作为数组元素
+    int f0 = m.arrWithFunc[2]
+    print(f0)
+    print(m.arrWithFunc)
+
+    float ff = m.arrWithFloatFunc[2]
+    print(ff)
+    print(m.arrWithFloatFunc)
+
+    string sf = m.arrWithStrFunc[2]
+    print(sf)
+    print(m.arrWithStrFunc)
+
+    // 表达式作为初始值
+    int e1 = m.expr1
+    float e2 = m.expr2
+    int e3 = m.expr3
+    print(e1)
+    print(e2)
+    print(e3)
+
+    // 函数调用作为标量
+    int ff1 = m.fromFunc
+    print(ff1)
+}

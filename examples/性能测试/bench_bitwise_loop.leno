@@ -1,0 +1,24 @@
+// test.len — 对齐 Java 的位运算跑分测试
+// 运行: leno test.len 或 leno test.len
+
+import times
+
+main() {
+    // Java 版是从 args 传入，这里为方便直接给固定初始值
+    var inp = 12345
+    var iterations = 2000000000  // 20亿次
+
+    var start = times.ms()  // 开始计时
+
+    for 0 : iterations to i {
+        inp = inp >> 8
+        inp = inp & 7
+        inp = 1125 ^ inp
+        inp = inp & 1135
+        inp = inp + 77
+    }
+
+    var end = times.ms()  // 结束计时
+    print("结果: " + inp)
+    print("耗时: " + (end - start) + " ms")
+}

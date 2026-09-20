@@ -1,0 +1,17 @@
+// 模块文件 - 定义带默认参数的导出函数
+
+export func test_int(int a, int b = 10): int {
+    return a + b
+}
+
+export func test_any(any a, any b = 10) {
+    return a + b
+}
+
+export func test_multi(int a, int b = 10, string c = "hi"): string {
+    return $"a={a} b={b} c={c}"
+}
+
+export func test_no_default(int a, int b): int {
+    return a + b
+}

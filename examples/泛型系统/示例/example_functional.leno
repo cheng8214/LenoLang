@@ -1,0 +1,75 @@
+// 泛型函数式编程 - map / filter / reduce
+
+// map: 将数组每个元素通过函数转换
+func map[T, U](Array[T] arr, func(T):U fn): Array[U] {
+    var result = []
+    for arr to item {
+        result.add(fn(item))
+    }
+    return result
+}
+
+// filter: 过滤数组元素
+func filter[T](Array[T] arr, func(T):bool fn): Array[T] {
+    var result = []
+    for arr to item {
+        if fn(item) {
+            result.add(item)
+        }
+    }
+    return result
+}
+
+// reduce: 将数组归约为单个值
+func reduce[T, U](Array[T] arr, U init, func(U, T):U fn): U {
+    var acc = init
+    for arr to item {
+        acc = fn(acc, item)
+    }
+    return acc
+}
+
+// --- 辅助函数 ---
+func double(int x): int { return x * 2 }
+func isEven(int x): bool { return x % 2 == 0 }
+func isPositive(int x): bool { return x > 0 }
+func addInt(int a, int b): int { return a + b }
+func strlen(string s): int { return s.len() }
+func concat(string a, string b): string { return a + b }
+
+// --- map 示例 ---
+var nums = [1, 2, 3, 4, 5]
+var doubled = map[int, int](nums, double)
+print(doubled)              // [2, 4, 6, 8, 10]
+
+// 字符串数组映射为长度
+var words = ["hello", "world", "leno"]
+var lengths = map[string, int](words, strlen)
+print(lengths)              // [5, 5, 4]
+
+// --- filter 示例 ---
+var evens = filter[int](nums, isEven)
+print(evens)                // [2, 4]
+
+var mixed = [-3, -1, 0, 2, 5]
+var positives = filter[int](mixed, isPositive)
+print(positives)            // [2, 5]
+
+// --- reduce 示例 ---
+var sum = reduce[int, int](nums, 0, addInt)
+print(sum)                  // 15
+
+// 字符串拼接
+var joined = reduce[string, string](words, "", concat)
+print(joined)               // helloworldleno
+
+// --- 组合使用：链式操作 ---
+// 先 filter 再 map：求所有偶数的平方
+func square(int x): int { return x * x }
+
+var evenSquares = map[int, int](filter[int](nums, isEven), square)
+print(evenSquares)          // [4, 16]
+
+// 先 map 再 reduce：求所有数的平方和
+var sumSquares = reduce[int, int](map[int, int](nums, square), 0, addInt)
+print(sumSquares)           // 55

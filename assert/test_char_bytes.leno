@@ -1,0 +1,30 @@
+// test_char_bytes.leno — 探查 strings.char 对 UTF-8 字节和 join 的行为
+import arrays
+import strings
+import io
+
+main() {
+    io.print("=== strings.char 字节行为探查 ===\n")
+
+    // 中文"你"的 UTF-8 字节（E4 BD A0）
+    string zh = "你"
+    io.print("[0] '你' 的字节数 = " + zh.len())
+    int b0 = zh.byte(0)
+    int b1 = zh.byte(1)
+    int b2 = zh.byte(2)
+    io.print("[1] 字节 = " + b0 + " " + b1 + " " + b2 + " (期望 228 189 160)")
+
+    // 每个字节 char 后拼接
+    string s = strings.char(b0) + strings.char(b1) + strings.char(b2)
+    io.print("[2] char+char+char = '" + s + "' (期望 你)")
+
+    // 数组收集 + join
+    Array[string] buf = []
+    for zh.len() to i {
+        buf.add(strings.char(zh.byte(i)))
+    }
+    string joined = arrays.join(buf, "")
+    io.print("[3] 数组join = '" + joined + "' (期望 你)")
+
+    io.print("\n=== 探查完成 ===")
+}

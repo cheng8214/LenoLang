@@ -1,0 +1,38 @@
+import io
+
+main() {
+    // 测试数组 in
+    var arr = [1, 2, 3, 4, 5]
+    
+    if 3 in arr {
+        io.print("3 is in array - PASS")
+    }
+    
+    if 10 not in arr {
+        io.print("10 is not in array - PASS")
+    }
+    
+    // 测试字典 in（检查 key）
+    var d = {"a": 1, "b": 2, "c": 3}
+    
+    if "a" in d {
+        io.print("'a' is in dict keys - PASS")
+    }
+    
+    if "z" not in d {
+        io.print("'z' is not in dict keys - PASS")
+    }
+    
+    // 测试字符串 in（子串检查）
+    var str = "hello world"
+    
+    if "world" in str {
+        io.print("'world' is in string - PASS")
+    }
+    
+    if "xyz" not in str {
+        io.print("'xyz' is not in string - PASS")
+    }
+    
+    io.print("All tests passed!")
+}

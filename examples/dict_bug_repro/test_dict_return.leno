@@ -1,0 +1,15 @@
+// 最小复刻用例：从另一个文件使用返回 Dict 的模块方法
+// Bug: Dict nd = container.get_data() 会报 "期望类型: Dict[unknown, unknown], 实际类型: struct Dict"
+// 原因: parse_simple_type_str 缺少 Array/Dict 条目，把 Dict 当 struct 名处理
+import "dict_module.leno" as mod
+use mod.Container
+
+main() {
+    Container c = new Container()
+    c.set_data({a: 1, b: 2})
+
+    // 这行会触发 bug：get_data() 返回类型被错误推断为 struct Dict 而非 TYPE_DICT
+    Dict nd = c.get_data()
+    print("nd = " + nd)
+    print("Bug fixed!")
+}

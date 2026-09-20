@@ -1,0 +1,220 @@
+// fireworks_run.leno — 烟花效果（win.run 回调模式 + 文字统计覆盖）
+import "SDL3" as SDL3
+import "sdl_core" as core
+use SDL3.Event
+use SDL3.Renderer
+import maths
+import rands
+import times
+use SDL3.WindowFlag
+
+struct Particle {
+    float x; float y
+    float vx; float vy
+    int life; int r; int g; int b
+    int ptype
+}
+
+struct Rocket {
+    float x; float y
+    float vy
+    int r; int g; int b
+    float burst_y
+    int burst_count
+}
+
+struct Star {
+    float x; float y
+    float twinkle
+    int r; int g; int b
+}
+
+main() {
+    var win = SDL3.createWindow({title: "Fireworks", w: 800, h: 600, flags: WindowFlag.RESIZABLE})
+    if not win.ok { return }
+    win.setMaxFPS(60)    // 动画场景：60 FPS 流畅
+
+    // 初始化 TTF 字体
+    SDL3.ttfInit()
+    var font = SDL3.createFont("C:/Windows/Fonts/msyh.ttc", 16.0)
+    if not font.ok {
+        font = SDL3.createFont("C:/Windows/Fonts/consola.ttf", 16.0)
+    }
+
+    var colors = [
+        [255, 50, 50], [255, 140, 0], [255, 220, 0],
+        [50, 255, 50], [0, 200, 255], [180, 50, 255],
+        [255, 50, 200], [100, 255, 100], [255, 255, 100]
+    ]
+
+    var MAX_P = 3000
+    var particles = []
+    var pc = 0
+
+    var rockets = []
+    var rc = 0
+
+    var stars = []
+    var sc = 0
+
+    var frame = 0
+    var peak = 0
+
+    // FPS 统计
+    var fps = 0
+    var fpsFrames = 0
+    var fpsStart = times.ns()
+
+    // 星空
+    for 0 : 99 to i {
+        stars.add(new Star(
+            x=rands.floats(0.0, 800.0), y=rands.floats(0.0, 500.0),
+            twinkle=rands.floats(0.0, 6.28),
+            r=150 + rands.ints(0, 105), g=150 + rands.ints(0, 105), b=200 + rands.ints(0, 55)
+        ))
+    }
+    sc = stars.len()
+
+    func clamp(int v): int {
+        if v < 0 { return 0 }
+        if v > 255 { return 255 }
+        return v
+    }
+
+    func burst(float x, float y, int cr, int cg, int cb, int count, int min_l, int max_l, int ptype, float smin, float smax) {
+        for 0 : count - 1 to i {
+            if pc >= MAX_P { return }
+            var a = rands.floats(0.0, 6.283)
+            var s = rands.floats(smin, smax)
+            var p = new Particle(
+                x=x, y=y, vx=maths.cos(a) * s, vy=maths.sin(a) * s,
+                life=rands.ints(min_l, max_l),
+                r=clamp(cr + rands.ints(-30, 30)),
+                g=clamp(cg + rands.ints(-30, 30)),
+                b=clamp(cb + rands.ints(-30, 30)),
+                ptype=ptype
+            )
+            particles.add(p); pc += 1
+        }
+    }
+
+    func secBurst(float x, float y, int cr, int cg, int cb) {
+        burst(x, y, cr, cg, cb, rands.ints(10, 25), 10, 25, 0, 0.5, 3.0)
+    }
+
+    func remP(int i) {
+        var last = pc - 1
+        particles[i] = particles[last]
+        particles.pop()
+        pc -= 1
+    }
+
+    func remR(int i) {
+        var last = rc - 1
+        rockets[i] = rockets[last]
+        rockets.pop()
+        rc -= 1
+    }
+
+    win.run(
+        func(Event e): bool { return true },
+        func(Renderer r) {
+            r.setVSync(1)
+            frame += 1
+
+            r.setColor(#02020FFF)
+            r.clear()
+
+            // ---- 星空 ----
+            for 0 : sc - 1 to si {
+                var s = stars[si]
+                s.twinkle += 0.03
+                var a = 80 + _int(maths.sin(s.twinkle) * 60.0 + 60.0)
+                r.setColor((a << 24) | (s.r << 16) | (s.g << 8) | s.b)
+                r.drawPoint(s.x, s.y)
+            }
+
+            // ---- 发射 ----
+            if frame % 8 == 0 {
+                var count = rands.ints(1, 2)
+                for 0 : count - 1 to _ {
+                    var c = colors[rands.ints(0, 8)]
+                    rockets.add(new Rocket(
+                        x=rands.floats(80.0, 720.0), y=600.0,
+                        vy=rands.floats(-6.0, -10.0),
+                        r=c[0], g=c[1], b=c[2],
+                        burst_y=rands.floats(60.0, 450.0),
+                        burst_count=rands.ints(200, 450)
+                    ))
+                    rc += 1
+                }
+            }
+
+            // ---- 火箭（倒序 for + 交换删除） ----
+            for rc - 1 : 0 : -1 to ri {
+                var rk = rockets[ri]
+                rk.y += rk.vy
+                if rk.y <= rk.burst_y {
+                    burst(rk.x, rk.y, rk.r, rk.g, rk.b, rk.burst_count, 30, 70, 0, 1.5, 6.0)
+                    burst(rk.x, rk.y, 255, 255, 240, rands.ints(5, 12), 5, 12, 1, 0.3, 2.5)
+                    burst(rk.x, rk.y, rk.r, rk.g, rk.b, rands.ints(15, 30), 20, 40, 2, 0.5, 3.5)
+                    burst(rk.x + rands.floats(-30.0, 30.0), 595.0, rk.r, rk.g, rk.b, rands.ints(15, 35), 8, 20, 3, 0.5, 3.0)
+                    remR(ri)
+                } else {
+                    r.setColor((200 << 24) | (rk.r << 16) | (rk.g << 8) | rk.b)
+                    r.drawPoint(rk.x, rk.y)
+                    r.drawPoint(rk.x + 1, rk.y + 2)
+                }
+            }
+
+            // ---- 粒子（倒序 for + 交换删除） ----
+            if pc > peak { peak = pc }
+            for pc - 1 : 0 : -1 to i {
+                var p = particles[i]
+                p.x += p.vx
+                p.y += p.vy + 0.04
+                p.vy *= 0.98
+                p.life -= 1
+                if p.ptype != 1 { p.r = clamp(p.r - 1); p.g = clamp(p.g - 1); p.b = clamp(p.b - 1) }
+
+                if p.life <= 0 or p.r <= 0 or p.y > 610 or p.y < -10 {
+                    remP(i)
+                } else {
+                    if p.ptype == 1 {
+                        r.setColor((160 << 24) | (p.r << 16) | (p.g << 8) | p.b)
+                        r.drawPoint(p.x, p.y); r.drawPoint(p.x+1, p.y); r.drawPoint(p.x, p.y+1)
+                    } else if p.ptype == 3 {
+                        r.setColor((220 << 24) | (p.r << 16) | (clamp(p.g+50) << 8) | p.b)
+                        r.drawPoint(p.x, p.y)
+                    } else {
+                        r.setColor((255 << 24) | (p.r << 16) | (p.g << 8) | p.b)
+                        r.drawPoint(p.x, p.y)
+                        if p.ptype == 2 and p.life == _int(_float(p.life) * 0.3) and rands.ints(0, 100) < 5 {
+                            secBurst(p.x, p.y, p.r, p.g, p.b)
+                        }
+                    }
+                }
+            }
+
+            // ---- FPS 计算 ----
+            fpsFrames += 1
+            var now = times.ns()
+            if now - fpsStart >= 1000000000 {
+                fps = fpsFrames
+                fpsFrames = 0
+                fpsStart = now
+            }
+
+            // ---- 文字覆盖 ----
+            if font.ok {
+                r.drawText(font, "FPS: " + fps + "  粒子: " + pc + "  峰值: " + peak, 10.0, 10.0, #FFFFFFFF)
+            }
+
+            core.requestRedraw()   // 动画需每帧重绘：请求下一帧继续渲染（否则空闲时零重绘会卡住）
+        }
+    )
+
+    if font.ok { font.close() }
+    SDL3.ttfQuit()
+    print("帧数: " + frame + "  峰值粒子: " + peak)
+}

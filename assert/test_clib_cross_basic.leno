@@ -1,0 +1,30 @@
+// 跨模块 clib 基础测试：单层导入、变量、链式、参数传递
+import "clib_cross_base.leno" as base
+use base.core_lib
+use base.extra_lib
+
+main() {
+    // 1. 桥接函数
+    assert_eq(base.coreAbs(-5), 5)
+
+    // 2. 取 clib 变量
+    core_lib c = base.loadCore()
+    assert_eq(c.abs(-3), 3)
+
+    // 3. 链式
+    assert_eq(base.loadCore().abs(-7), 7)
+
+    // 4. 变量复用
+    core_lib c2 = base.loadCore()
+    assert_eq(c2.abs(-10), 10)
+
+    // 5. 多 clib 类型
+    extra_lib e = base.loadExtra()
+    core_lib c3 = base.loadCore()
+    assert_eq(c3.abs(-11), 11)
+
+    // 6. 多次调用同一变量
+    core_lib c4 = base.loadCore()
+    assert_eq(c4.abs(-1), 1)
+    assert_eq(c4.abs(-2), 2)
+}

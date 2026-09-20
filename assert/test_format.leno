@@ -1,0 +1,70 @@
+// format 格式化函数测试
+
+main()
+{
+    // ========== 基础格式符 ==========
+    assert_eq(format("Hello %s", "World"), "Hello World")
+    assert_eq(format("Age: %d", 25), "Age: 25")
+    assert_eq(format("Hex: %x", 255), "Hex: ff")
+    assert_eq(format("Hex: %X", 255), "Hex: FF")
+    assert_eq(format("Oct: %o", 8), "Oct: 10")
+    assert_eq(format("Bin: %b", 10), "Bin: 1010")
+    assert_eq(format("Flag: %t", true), "Flag: true")
+    assert_eq(format("Flag: %t", false), "Flag: false")
+    assert_eq(format("Char: %c", 65), "Char: A")
+    assert_eq(format("100%% complete"), "100% complete")
+    assert_eq(format("Unsigned: %u", 42), "Unsigned: 42")
+
+    // ========== 浮点数 ==========
+    assert_eq(format("Pi = %f", 3.14159), "Pi = 3.141590")
+
+    // ========== 科学计数法 ==========
+    assert_eq(format("%e", 1234.5), "1.234500e+03")
+    assert_eq(format("%E", 1234.5), "1.234500E+03")
+
+    // ========== 自动格式 ==========
+    assert_eq(format("%g", 1234.5), "1234.5")
+
+    // ========== 宽度与对齐 ==========
+    assert_eq(format("%10s", "hi"), "        hi")
+    assert_eq(format("%-10s", "hi"), "hi        ")
+    assert_eq(format("%5d", 42), "   42")
+    assert_eq(format("%-5d", 42), "42   ")
+    assert_eq(format("%05d", 42), "00042")
+
+    // ========== 精度控制 ==========
+    assert_eq(format("%.2f", 3.14159), "3.14")
+    assert_eq(format("%.0f", 3.14159), "3")
+    assert_eq(format("%8.2f", 3.14), "    3.14")
+    assert_eq(format("%.3s", "Hello"), "Hel")
+
+    // ========== 标志位 ==========
+    assert_eq(format("%+d", 42), "+42")
+    assert_eq(format("%+d", -42), "-42")
+    assert_eq(format("%#x", 255), "0xff")
+    assert_eq(format("%#o", 8), "010")
+    assert_eq(format("%#b", 10), "0b1010")
+
+    // ========== 长字符串（无截断） ==========
+    var long_str = "abcdefghijklmnopqrstuvwxyz"
+    assert_eq(format("Long: %s", long_str), "Long: abcdefghijklmnopqrstuvwxyz")
+
+    // ========== 多参数 ==========
+    assert_eq(format("%s %s %s", "a", "b", "c"), "a b c")
+    assert_eq(format("Num: %d, %d, %d", 1, 2, 3), "Num: 1, 2, 3")
+
+    // ========== %s 自动转换 ==========
+    assert_eq(format("Int: %s", 42), "Int: 42")
+    assert_eq(format("Bool: %s", true), "Bool: true")
+
+    // ========== 组合格式 ==========
+    assert_eq(format("%+08.2f", 3.14), "+0003.14")
+    assert_eq(format("%-10s|", "hi"), "hi        |")
+    assert_eq(format("%05d", 0), "00000")
+
+    // ========== 空参数 ==========
+    assert_eq(format(""), "")
+    assert_eq(format("no placeholders"), "no placeholders")
+
+    print("test_format passed")
+}

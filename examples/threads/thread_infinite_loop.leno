@@ -1,0 +1,20 @@
+import threads 
+
+
+func test1() 
+{ 
+  while 1
+  {
+  }
+} 
+
+main() 
+{ 
+    var t1 = threads.start(test1) 
+   
+   var result=t1.join()
+  
+  
+   print(result)
+
+}

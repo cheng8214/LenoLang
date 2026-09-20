@@ -1,0 +1,79 @@
+// 测试 compound 赋值运算符
+// +=  -=  *=  /=  %=  &=  |=  ^=  <<=  >>=
+
+main() {
+    // === 算术 compound ===
+    int a = 10
+    a += 5
+    assert_eq(a, 15)
+
+    int b = 20
+    b -= 7
+    assert_eq(b, 13)
+
+    int c = 6
+    c *= 4
+    assert_eq(c, 24)
+
+    int d = 30
+    d /= 5
+    assert_eq(d, 6)
+
+    int e = 17
+    e %= 5
+    assert_eq(e, 2)
+
+    // === 位运算 compound ===
+    int f = 0xFF
+    f &= 0x0F
+    assert_eq(f, 0x0F)
+
+    int g = 0x0F
+    g |= 0xF0
+    assert_eq(g, 0xFF)
+
+    int h = 0xFF
+    h ^= 0x0F
+    assert_eq(h, 0xF0)
+
+    int i = 1
+    i <<= 3
+    assert_eq(i, 8)
+
+    int j = 32
+    j >>= 2
+    assert_eq(j, 8)
+
+    // === 连续 compound ===
+    int k = 2
+    k += 3
+    k *= 4
+    k -= 5
+    assert_eq(k, 15)
+
+    // === float compound ===
+    float f1 = 10.0
+    f1 += 5.5
+    assert_eq(f1, 15.5)
+
+    float f2 = 20.0
+    f2 -= 3.5
+    assert_eq(f2, 16.5)
+
+    float f3 = 3.0
+    f3 *= 2.5
+    assert_eq(f3, 7.5)
+
+    float f4 = 10.0
+    f4 /= 4.0
+    assert_eq(f4, 2.5)
+
+    // === 自增自减 ===
+    int n = 5
+    n++
+    assert_eq(n, 6)
+    n--
+    assert_eq(n, 5)
+
+    print("test_compound_assign passed")
+}

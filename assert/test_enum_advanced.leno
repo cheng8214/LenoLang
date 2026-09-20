@@ -1,0 +1,51 @@
+// 枚举高级测试
+
+enum Color
+{
+    red
+    green
+    blue
+}
+
+enum Status
+{
+    ok = 200
+    not_found = 404
+    error = 500
+}
+
+enum Priority
+{
+    low = 1
+    medium
+    high
+}
+
+main()
+{
+    // 测试基本枚举值
+    assert_eq(Color.red, 0)
+    assert_eq(Color.green, 1)
+    assert_eq(Color.blue, 2)
+
+    // 测试带显式值的枚举
+    assert_eq(Status.ok, 200)
+    assert_eq(Status.not_found, 404)
+    assert_eq(Status.error, 500)
+
+    // 测试混合枚举（自动递增）
+    assert_eq(Priority.low, 1)
+    assert_eq(Priority.medium, 2)
+    assert_eq(Priority.high, 3)
+
+    // 测试枚举比较
+    if Color.red == 0 {
+        assert_eq(true, true)
+    }
+
+    // 测试枚举作为变量
+    int color = Color.green
+    assert_eq(color, 1)
+
+    print("test_enum_advanced passed")
+}

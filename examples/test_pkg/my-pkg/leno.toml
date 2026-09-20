@@ -1,0 +1,14 @@
+[package]
+name = "my-pkg"
+version = "0.1.0"
+description = "示例包 - 演示包导入"
+authors = "Leno Dev"
+license = "MIT"
+leno_version = ">=1.0.0"
+
+[dependencies]
+
+[dev-dependencies]
+
+[modules]
+root = "lib"

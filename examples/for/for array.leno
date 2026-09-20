@@ -1,0 +1,9 @@
+// 新建文件: Untitled.leno
+main()
+{
+	var arr=[1,2,3,4,5,6,{id:10,name:"cheng8214"}]
+	for arr to a
+	{
+		print(a)
+	}
+}

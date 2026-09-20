@@ -1,0 +1,22 @@
+// 测试2：双层循环闭包
+main() {
+    var funcs = []
+    // 外层循环
+    for 1:2 to var outer {
+        // 内层循环
+        for 1:3 to var inner {
+            func closure() {
+                return outer * 10 + inner
+            }
+            funcs.add(closure)
+        }
+    }
+    
+    print("测试2 - 双层循环闭包：")
+    var results = []
+    for funcs to var fn {
+        results.add(fn())
+    }
+    print($"预期: [11,12,13,21,22,23] 实际: {results}")
+    print($"是否正确: {results == [11,12,13,21,22,23]}\n")
+}

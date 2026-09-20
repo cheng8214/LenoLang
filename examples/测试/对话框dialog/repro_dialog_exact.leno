@@ -1,0 +1,9 @@
+﻿// 检查 EventHandler/RenderCallback 是否可用
+import "../../leno_module/LenoSDL3/lib/SDL3.leno" as SDL3
+use SDL3.EventHandler
+use SDL3.RenderCallback
+
+main() {
+    print("EventHandler is func =", EventHandler is func)
+    print("ok")
+}

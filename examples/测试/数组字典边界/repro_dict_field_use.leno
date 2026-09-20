@@ -1,0 +1,12 @@
+// B.leno — 通过 import + use 导入，测试方法是否可见
+import "repro_dict_field_mod.leno" as m
+use m.A_Int
+use m.B_Dict
+
+// int 字段 struct — 应该正常
+A_Int a = new A_Int(val=1)
+print(a.ok())  // 应该输出 1
+
+// Dict 字段 struct — 方法丢失
+B_Dict b = new B_Dict(val={})
+print(b.ok())  // 应该输出 1，但报错 "没有方法 'ok'"

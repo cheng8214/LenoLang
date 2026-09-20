@@ -1,0 +1,27 @@
+import io
+import asyncs
+//_gc(false)
+// 创建多个协程并触发GC
+async func task(string name, int delay) {
+	var arr=[]
+	for 1000 to i{
+		arr.add(i)
+	}
+
+    await asyncs.sleep(delay)
+    io.print($"任务 {name} 完成")
+}
+
+async func create_many_tasks() {
+    // 创建大量协程，测试GC不会误删
+    for 1:1000 to i {
+        task($"T{i}", i * 10)
+    }
+}
+
+main() {
+    io.print("开始创建100个任务...")
+    create_many_tasks()
+    asyncs.run()
+    io.print("所有任务完成！")
+}

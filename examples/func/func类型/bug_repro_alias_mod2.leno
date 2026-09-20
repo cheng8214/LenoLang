@@ -1,0 +1,3 @@
+// 模块 A：导出函数类型别名
+export alias MyCB = func():void
+export alias IntFunc = func(int):int

@@ -1,0 +1,152 @@
+import sockets
+import asyncs
+import io
+
+// ============================================================
+// 综合并发测试：多客户端消息收发（纯异步版）
+// 所有客户端和服务端都作为协程运行在异步事件循环中
+// ============================================================
+
+int g_total_sent = 0
+int g_total_received = 0
+int g_total_errors = 0
+
+// ============================================================
+// 服务端处理协程
+// ============================================================
+async func server_echo_handler(Socket client, int client_id) {
+    int msg_idx = 0
+    while msg_idx < 5 {
+        var data = await client.arecv(4096)
+        if data == null {
+            io.print("[SERVER] 客户端 " + client_id + " 断开")
+            break
+        }
+        
+        var reply = "ECHO_" + client_id + "_" + data
+        client.send(reply)
+        msg_idx = msg_idx + 1
+    }
+    
+    client.close()
+}
+
+async func run_server(int port, int expected_clients) {
+    var server = sockets.listen("127.0.0.1", port)
+    if server == null {
+        io.print("[SERVER] 监听失败")
+        return
+    }
+    io.print("[SERVER] 监听 127.0.0.1:" + port)
+    
+    int accepted = 0
+    while accepted < expected_clients {
+        var client = await server.aaccept()
+        if client == null {
+            break
+        }
+        io.print("[SERVER] 客户端 " + accepted + " 已连接")
+        // 为每个客户端创建独立处理协程
+        server_echo_handler(client, accepted)
+        accepted = accepted + 1
+    }
+    
+    server.close()
+    io.print("[SERVER] 服务器关闭")
+}
+
+// ============================================================
+// 客户端协程
+// ============================================================
+async func client_task(int port, int client_id, int msg_count) {
+    // 稍微错开连接时间（随机延迟）
+    await asyncs.sleep(client_id * 50)
+    
+    var sock = sockets.connect("127.0.0.1", port)
+    if sock == null {
+        io.print("[CLIENT " + client_id + "] 连接失败")
+        g_total_errors = g_total_errors + 1
+        return
+    }
+    
+    int success = 0
+    int seq = 0
+    while seq < msg_count {
+        var payload = "C" + client_id + "_M" + seq
+        var ok = sock.send(payload)
+        if not ok {
+            io.print("[CLIENT " + client_id + "] 发送失败")
+            g_total_errors = g_total_errors + 1
+            seq = seq + 1
+            continue
+        }
+        g_total_sent = g_total_sent + 1
+        
+        // 异步等待回复
+        var reply = await sock.arecv(4096)
+        if reply == null {
+            io.print("[CLIENT " + client_id + "] 回复为空")
+            g_total_errors = g_total_errors + 1
+            seq = seq + 1
+            continue
+        }
+        
+        var expected = "ECHO_" + client_id + "_" + payload
+        if reply == expected {
+            success = success + 1
+            g_total_received = g_total_received + 1
+        } else {
+            io.print("[CLIENT " + client_id + "] 不匹配! 期望=" + expected + " 实际=" + reply)
+            g_total_errors = g_total_errors + 1
+        }
+        
+        seq = seq + 1
+    }
+    
+    sock.close()
+    
+    if success == msg_count {
+        io.print("[CLIENT " + client_id + "] PASS (" + success + "/" + msg_count + ")")
+    } else {
+        io.print("[CLIENT " + client_id + "] FAIL (" + success + "/" + msg_count + ")")
+    }
+}
+
+// ============================================================
+// 主测试
+// ============================================================
+main() {
+    io.print("==================================")
+    io.print("  Leno 网络并发综合测试 (纯异步)")
+    io.print("==================================")
+    
+    var port = 12350
+    int num_clients = 5
+    int msg_per_client = 5
+    
+    // 启动服务器
+    run_server(port, num_clients)
+    
+    // 并发启动多个客户端协程
+    client_task(port, 0, msg_per_client)
+    client_task(port, 1, msg_per_client)
+    client_task(port, 2, msg_per_client)
+    client_task(port, 3, msg_per_client)
+    client_task(port, 4, msg_per_client)
+    
+    // 运行事件循环
+    asyncs.run()
+    
+    io.print("\n==================================")
+    io.print("  测试总结")
+    io.print("==================================")
+    io.print("发送消息数:   " + g_total_sent)
+    io.print("接收消息数:   " + g_total_received)
+    io.print("错误数:       " + g_total_errors)
+    
+    if g_total_errors == 0 {
+        io.print("\n*** 所有测试 PASS ***")
+    } else {
+        io.print("\n*** 发现 " + g_total_errors + " 个问题 ***")
+    }
+}

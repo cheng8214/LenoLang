@@ -1,0 +1,1 @@
+{"token":"FAKE-TOKEN-0000-1111-2222-333344445555","account":{"username":"demo@example.com"},"expiredAt":1893456000000,"userRegion":{"region":"cn"},"note":"合成夹具·仅用于回归"}

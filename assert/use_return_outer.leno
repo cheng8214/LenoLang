@@ -1,0 +1,16 @@
+// 中间层模块 - 通过 use 导入 Inner 并作为 export func 返回类型
+// 这是 bug 回归测试的核心场景：use 导入的 struct 作为 export func 返回类型
+import "use_return_inner.leno" as inner
+use inner.Inner
+
+export func makeOuter(): Inner {
+    return inner.makeInner()
+}
+
+export func makeOuterNamed(string s): Inner {
+    return inner.makeInnerWithName(s)
+}
+
+export func makeOuterCustom(): Inner {
+    return new Inner(name = "outer_custom")
+}

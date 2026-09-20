@@ -1,0 +1,14 @@
+// 测试 print 输出
+
+cstruct Vec3 {
+    f32 x
+    f32 y
+    f32 z
+}
+
+main() {
+    var v = Vec3.malloc()
+    print(Vec3)
+    print(v)
+    v.free()
+}

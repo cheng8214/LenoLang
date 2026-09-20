@@ -1,0 +1,19 @@
+// Bug #4: struct 字段默认 null 时，不允许访问其子字段
+struct Link {
+    int val = 0
+    Link next = null
+}
+
+main() {
+    Link a = new Link(); a.val = 1
+    Link b = new Link(); b.val = 2
+    a.next = b
+
+    // a.next 赋值后应该可以访问
+    print("a.next.val = " + a.next.val)  // 编译器是否允许？
+
+    // 链式多级
+    Link c = new Link(); c.val = 3
+    b.next = c
+    print("a.next.next.val = " + a.next.next.val)  // 是否允许？
+}

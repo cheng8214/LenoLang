@@ -1,0 +1,7 @@
+import destruct_mod_var
+
+assert_eq(destruct_mod_var.get_mod_a(), 10)
+assert_eq(destruct_mod_var.get_mod_b(), 20)
+assert_eq(destruct_mod_var.get_mod_c(), 30)
+
+print("test_destruct_mod_var passed")

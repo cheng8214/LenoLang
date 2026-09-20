@@ -1,0 +1,49 @@
+// _exec 超时 —— 回归测试（易用性痛点 P6）
+//
+// 背景：`_exec` 原先只能阻塞等待 ⇒ 子进程一挂住，父进程乃至**整套断言**一起挂 ✗
+//   （写 GUI 测试时只能从外部 Start-Process + WaitForExit 兜）。
+// 修法：`_exec(cmd, timeout_ms)` —— 超时即杀掉子进程，退出码按 GNU `timeout` 惯例返回 **124**。
+//
+// 判据：
+//   ① 超时：跑一个约 5 s 的命令、超时给 1 s ⇒ 退出码必须是 124，且**实际耗时**明显小于命令时长
+//      （< 4 s ⇒ 证明真杀了，而不是等它跑完）；
+//   ② 守卫：正常命令 + timeout 参数照常成功（exit 0 + 输出正确）；
+//   ③ 守卫：**不传** timeout_ms 时行为不变（旧的阻塞语义）。
+//
+// ★ 这个用例的**判据顺序**本身就是一条守卫：先跑"被超时杀掉的子进程"、再跑普通 `_exec` ✓。
+//   第一版实现有两处坑，正是被它抓住的（随后整套件 241/330 挂 ✗）：
+//     · 临时文件名按 pid 复用 ⇒ 上一次残留的子进程握着它 ⇒ 之后**所有** _exec 败在
+//       「being used by another process」；
+//     · 只 TerminateProcess 杀 `cmd`、孙子（ping）活下来继续握文件 ⇒ 已改用 Job Object 收整棵树。
+
+import strings
+import times
+
+main() {
+    var is_win = _os() == "windows"
+    var slow = if is_win then "ping -n 6 127.0.0.1" else "sleep 5"
+
+    // ① 超时必须生效：1 s 就返回，且退出码 124
+    var t0 = times.ms()
+    var r1 = _exec(slow, 1000)
+    var elapsed = times.ms() - t0
+    assert_ne(r1, null, "①_exec 返回 null（子进程起不来？）")
+    assert_eq(r1[1], 124, "①超时的退出码应为 124；实际=" + r1[1])
+    assert_true(elapsed < 4000,
+        "①应在 ~1 s 内返回（证明子进程被杀），实际 " + elapsed + " ms")
+
+    // ② 守卫：正常命令 + timeout 参数
+    var r2 = _exec("echo leno_p6_ok", 10000)
+    assert_ne(r2, null, "②_exec 返回 null")
+    var o2 = _str(r2[0])
+    assert_eq(r2[1], 0, "②正常命令应成功（exit 0）；输出=" + o2)
+    assert_true(strings.has(o2, "leno_p6_ok"), "②输出应含 leno_p6_ok；实际=" + o2)
+
+    // ③ 守卫：不传 timeout_ms（旧行为不变）
+    var r3 = _exec("echo leno_p6_noarg")
+    assert_ne(r3, null, "③_exec 返回 null")
+    assert_eq(r3[1], 0, "③不传 timeout 也应成功；输出=" + _str(r3[0]))
+    assert_true(strings.has(_str(r3[0]), "leno_p6_noarg"), "③输出应含标记")
+
+    print("test_exec_timeout passed")
+}

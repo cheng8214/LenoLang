@@ -1,0 +1,62 @@
+// NaN-tagging 值系统测试
+print("测试1: type(42)")
+assert_eq(type(42), "int")
+print("通过")
+
+print("测试2: type(3.14)")
+assert_eq(type(3.14), "float")
+print("通过")
+
+print("测试3: type(true)")
+assert_eq(type(true), "bool")
+print("通过")
+
+print("测试4: type(null)")
+assert_eq(type(null), "null")
+print("通过")
+
+print("测试5: type(string)")
+assert_eq(type("hello"), "string")
+print("通过")
+
+print("测试6: type(array)")
+assert_eq(type([1,2,3]), "Array[int]")
+print("通过")
+
+print("测试7: type(dict)")
+assert_eq(type({"a":1}), "Dict[string, int]")
+print("通过")
+
+print("测试8: 大整数")
+assert_eq(2147483647, 2147483647)
+print("通过")
+
+print("测试9: 负大整数")
+assert_eq(-2147483648, -2147483648)
+print("通过")
+
+print("测试10: true == true")
+assert_eq(true == true, true)
+print("通过")
+
+print("测试11: false == false")
+assert_eq(false == false, true)
+print("通过")
+
+print("测试12: true == false")
+assert_eq(true == false, false)
+print("通过")
+
+print("测试13: null == null")
+assert_eq(null == null, true)
+print("通过")
+
+print("测试14: 1 + 2.0")
+assert_eq(1 + 2.0, 3.0)
+print("通过")
+
+print("测试15: 2.5 + 3")
+assert_eq(2.5 + 3, 5.5)
+print("通过")
+
+print("test_value_system passed")

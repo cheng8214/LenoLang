@@ -1,0 +1,14 @@
+[package]
+name = "LenoWeb"
+version = "1.0.0"
+description = "Leno Web 网络模块（HTTP 客户端 + HTML 解析 + 爬虫框架）"
+authors = ""
+license = "MIT"
+
+[modules]
+root = "lib"
+
+[native-libs.curl]
+win   = "lib/libcurl-x64.dll"
+linux = "lib/libcurl.so.4"
+mac   = "lib/libcurl.4.dylib"

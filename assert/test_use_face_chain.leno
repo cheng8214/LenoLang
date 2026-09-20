@@ -1,0 +1,18 @@
+// use face 链式传导 + 直接使用底层模块的类型
+import "face_chain_a.leno" as a
+use a.Shape
+
+import "face_chain_d.leno" as d
+
+func describe(Shape s) {
+    assert_eq(s.name(), "Circle")
+    assert_eq(s.area(), 12)
+}
+
+main() {
+    // 通过底层 D 模块创建 Circle
+    var c = new d.Circle(r = 2)
+    // 通过链式 use 的 Shape 作为参数类型
+    describe(c)
+    print("test_use_face_chain passed")
+}

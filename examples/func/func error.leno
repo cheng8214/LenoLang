@@ -1,0 +1,14 @@
+
+main()
+{
+	var a1=10
+	var c=test(a1,101)
+	print(c)
+}
+
+func test(int a,int b):int //可以test(a,b)，也可以test(var a,var b)也可以test(int a,int b)也可以test(a,b):int//要求返回int
+{
+	print(a)
+	print(b)
+	return a+b
+}

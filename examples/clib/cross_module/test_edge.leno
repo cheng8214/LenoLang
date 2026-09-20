@@ -1,0 +1,43 @@
+// 边界测试: 多引用、重赋值、表达式链、条件、null
+import "lib_base.leno" as base
+use base.core_lib
+use base.extra_lib
+
+main() {
+    print("=== 边界测试 ===")
+
+    // 1. 多次加载同一clib
+    var c1 = base.loadCore()
+    var c2 = base.loadCore()
+    var v1a = c1.abs(-3) as int
+    var v1b = c2.abs(-5) as int
+    print("1. 多引用: " + v1a + " " + v1b)
+
+    // 2. clib 变量重新赋值
+    var c = base.loadCore()
+    var a = c.abs(-7) as int
+    c = base.loadCore()
+    var b = c.abs(-11) as int
+    print("2. 重赋值: " + a + " " + b)
+
+    // 3. 表达式链
+    var r1 = base.loadCore().abs(-13) as int
+    var r2 = base.loadCore().abs(-17) as int
+    print("3. 链: " + r1 + " " + r2)
+
+    // 4. 多次调用同一变量
+    var c4 = base.loadCore()
+    var v4a = c4.abs(-19) as int
+    var v4b = c4.abs(-23) as int
+    print("4. 多次调用: " + v4a + " " + v4b)
+
+    // 5. extra_lib 空函数表
+    var e = base.loadExtra()
+    print("5. extra: OK")
+
+    // 6. null clib
+    core_lib cn = null
+    print("6. null: OK")
+
+    print("=== 全部通过 ===")
+}

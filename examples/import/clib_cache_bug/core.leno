@@ -1,0 +1,14 @@
+// core.leno — 模拟 sdl_core
+import ffi
+
+clib test_lib {
+    i32 abs(i32 x)
+    f64 pow(f64 x, f64 y)
+}
+
+test_lib g_lib = null
+
+export func lib(): test_lib {
+    if g_lib == null { g_lib = ffi.load("msvcrt.dll") }
+    return g_lib
+}

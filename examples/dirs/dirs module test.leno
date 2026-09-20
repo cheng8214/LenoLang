@@ -1,0 +1,54 @@
+import io
+import dirs
+
+main() {
+    io.print("=== dirs module test ===")
+    
+    // path operations
+    io.print("Current dir: " + dirs.cwd())
+    io.print("Separator: " + dirs.sep())
+    
+    var test_path = "src/module/io/io.c"
+    io.print("basename: " + dirs.basename(test_path))
+    io.print("dirname: " + dirs.dirname(test_path))
+    io.print("extname: " + dirs.extname(test_path))
+    
+    var joined = dirs.join("a", "b", "c")
+    io.print("joined: " + joined)
+    
+    // check operations
+    io.print("exists src: " + dirs.exists("src"))
+    io.print("is_dir src: " + dirs.is_dir("src"))
+    io.print("is_file build.bat: " + dirs.is_file("build.bat"))
+    io.print("exists not_exist: " + dirs.exists("not_exist"))
+    
+    // directory operations
+    var test_dir = "test_dir_123"
+    io.print("mkdir: " + dirs.mkdir(test_dir))
+    io.print("exists test_dir: " + dirs.exists(test_dir))
+    io.print("is_dir test_dir: " + dirs.is_dir(test_dir))
+    
+    // recursive create
+    io.print("mkdir_p a/b/c: " + dirs.mkdir_p("a/b/c"))
+    
+    // list directory
+    var files = dirs.listdir("src")
+    io.print("listdir src done")
+    
+    // walk
+    var entries = dirs.walk("src/module")
+    io.print("walk done")
+    
+    // stat
+    var info = dirs.stat("build.bat")
+    io.print("stat size: " + info.size)
+    io.print("stat is_file: " + info.is_file)
+    
+    // cleanup
+    io.print("rmdir test_dir: " + dirs.rmdir(test_dir))
+    dirs.rmdir("a/b/c")
+    dirs.rmdir("a/b")
+    dirs.rmdir("a")
+    
+    io.print("=== test completed ===")
+}

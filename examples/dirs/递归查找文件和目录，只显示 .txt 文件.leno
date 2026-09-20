@@ -1,0 +1,40 @@
+import dirs
+
+// 递归查找文件和目录，统计 txt 文件数量
+var count = 0
+var txt_count = 0
+
+func findfile(string dir) {
+    var entries = dirs.listdir(dir)
+    if entries != null {
+        for entries to entry {
+            // 构建完整路径
+            var fullpath = dirs.join(dir, entry)
+
+            // 跳过回收站和系统目录
+            var name = dirs.basename(fullpath)
+            if name.starts_with("$") {
+                continue
+            }
+            if dirs.is_dir(fullpath) {
+                // 是目录，递归处理
+                findfile(fullpath)
+            } else {
+                // 是文件，只显示 .txt 文件
+                var ext = dirs.extname(fullpath)
+                if ext == ".txt" {
+                    print("[TXT文件] " + fullpath)
+                    txt_count++
+                }
+            }
+            count++
+        }
+    }
+}
+
+main() {
+    var current = "D:\\"
+    findfile(current)
+    print("总文件/目录数: " + count)
+    print("TXT文件数量: " + txt_count)
+}

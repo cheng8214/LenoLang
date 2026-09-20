@@ -1,0 +1,7 @@
+// 新建文件: Untitled.leno
+main()
+{
+	var a=101
+	print($"{a}")
+}
+

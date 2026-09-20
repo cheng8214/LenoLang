@@ -1,0 +1,452 @@
+// 类型收窄边界测试 (Type Narrowing Edge Cases)
+// 测试各种边界情况，包括 and 短路收窄、or 不收窄、嵌套守卫、else 分支等
+
+struct Point { int x = 0; int y = 0 }
+struct Circle { float radius = 0.0 }
+
+face Shape { func area(): float }
+
+struct Rect impl Shape {
+    float w = 0.0
+    float h = 0.0
+    func area(): float { return self.w * self.h }
+}
+
+// ==================== 测试 1: and 短路收窄后方法调用 ====================
+func test_and_short_circuit_method(any ch): int {
+    if ch is Array[Dict] and ch.len() > 0 {
+        return ch.len()
+    }
+    return 0
+}
+
+// ==================== 测试 2: and 短路收窄后字段访问 ====================
+func test_and_short_circuit_field(any obj): int {
+    if obj is Point and obj.x > 5 {
+        return obj.x
+    }
+    return 0
+}
+
+// ==================== 测试 3: 多重 and 链（类型守卫 + 普通条件混合） ====================
+func test_mixed_and_chain(any x): int {
+    if x is int and x > 0 and x < 100 and x > 5 {
+        return x
+    }
+    return -1
+}
+
+// ==================== 测试 4: and 链中多个类型守卫 ====================
+func test_multi_guard_and(any x, any y): int {
+    if x is int and y is string and x > 0 and y.len() > 0 {
+        return x + y.len()
+    }
+    return 0
+}
+
+// ==================== 测试 5: or 不收窄（安全检查） ====================
+func test_or_no_narrow(any x): int {
+    if x is int or x is string {
+        // or 条件下不收窄，x 仍是 any
+        // 这里不能写 x > 0，因为 x 可能是 string
+        return 1
+    }
+    return 0
+}
+
+// ==================== 测试 6: else 分支类型恢复 ====================
+func test_else_recovery(any x): int {
+    if x is int {
+        return x + 1
+    } else {
+        // else 分支中 x 应该还是 any
+        if x is string {
+            return -1
+        }
+    }
+    return 0
+}
+
+// ==================== 测试 7: 嵌套 if 类型守卫 ====================
+func test_nested_if_guard(any x): int {
+    if x is Array[int] {
+        if x.len() > 2 {
+            return x[2]
+        }
+    }
+    return -1
+}
+
+// ==================== 测试 8: 类型守卫 + as 转型 ====================
+func test_guard_with_as(any x): int {
+    if x is int {
+        int n = x
+        return n
+    }
+    return 0
+}
+
+// ==================== 测试 9: 类型守卫后数组索引访问 ====================
+func test_array_index_after_guard(any arr): int {
+    if arr is Array[int] {
+        if arr.len() > 0 {
+            return arr[0]
+        }
+    }
+    return -1
+}
+
+// ==================== 测试 10: 类型守卫后 Dict 值访问 ====================
+func test_dict_access_after_guard(any d): int {
+    if d is Dict {
+        if d.count is int {
+            return d.count
+        }
+    }
+    return -1
+}
+
+// ==================== 测试 11: 否定类型守卫 (not is) ====================
+func test_negated_guard(any x): int {
+    if x not is int {
+        if x is string {
+            return 1
+        }
+    } else {
+        return 2
+    }
+    return 0
+}
+
+// ==================== 测试 12: 连续 if-else if 类型守卫 ====================
+func test_chained_if_else(any x): string {
+    if x is int {
+        return "int"
+    } else if x is string {
+        return "string"
+    } else if x is float {
+        return "float"
+    } else if x is bool {
+        return "bool"
+    } else {
+        return "other"
+    }
+}
+
+// ==================== 测试 13: 类型守卫后 for 遍历 ====================
+func test_for_after_guard(any arr): int {
+    if arr is Array[int] {
+        int total = 0
+        for arr to item {
+            total = total + item
+        }
+        return total
+    }
+    return -1
+}
+
+// ==================== 测试 14: 闭包捕获收窄变量 ====================
+func test_closure_capture_narrowed(any a): int {
+    if a is int {
+        func inner(): int {
+            return a + 10
+        }
+        return inner()
+    }
+    return 0
+}
+
+// ==================== 测试 15: face 类型守卫后调用方法 ====================
+func test_face_guard_method(any s): float {
+    if s is Shape {
+        return s.area()
+    }
+    return 0.0
+}
+
+// ==================== 测试 16: 类型守卫后修改值 ====================
+func test_mutate_after_guard(any arr): int {
+    if arr is Array[int] {
+        arr.add(99)
+        return arr[arr.len() - 1]
+    }
+    return -1
+}
+
+// ==================== 测试 17: 三元运算符中的类型守卫（不收窄） ====================
+func test_ternary_no_narrow(any x): int {
+    // 三元运算符不支持类型收窄
+    if x is int {
+        return x
+    }
+    return 0
+}
+
+// ==================== 测试 18: while 条件中的类型守卫 ====================
+func test_while_guard(any counter): int {
+    int count = 0
+    if counter is int {
+        while counter > 0 {
+            count = count + 1
+            counter = counter - 1
+        }
+    }
+    return count
+}
+
+// ==================== 测试 19: 嵌套泛型类型守卫 ====================
+func test_nested_generic(any arr): int {
+    if arr is Array[Array[int]] {
+        if arr.len() > 0 {
+            var first = arr[0]
+            if first.len() > 0 {
+                return first[0]
+            }
+        }
+    }
+    return -1
+}
+
+// ==================== 测试 20: 类型守卫后调用数组方法链 ====================
+func test_array_method_chain(any arr): int {
+    if arr is Array[int] {
+        arr.add(10)
+        arr.add(20)
+        return arr.len()
+    }
+    return -1
+}
+
+// ==================== 测试 21: 相同变量在不同分支不同收窄 ====================
+func test_different_narrow_branches(any x): string {
+    if x is int {
+        int n = x
+        return "int:" + n
+    } else if x is string {
+        string s = x
+        return "string:" + s
+    }
+    return "unknown"
+}
+
+// ==================== 测试 22: 类型守卫 + 字符串拼接 ====================
+func test_string_concat_after_guard(any x): string {
+    if x is int {
+        return "value: " + x
+    }
+    return "not int"
+}
+
+// ==================== 测试 23: 多层嵌套类型守卫 ====================
+func test_deep_nested_guard(any data): int {
+    if data is Dict {
+        if data.items is Array[int] {
+            var items = data.items
+            if items.len() > 0 {
+                return items[0]
+            }
+        }
+    }
+    return -1
+}
+
+// ==================== 测试 24: 类型守卫后使用 in 运算符 ====================
+func test_in_operator_after_guard(any arr): bool {
+    if arr is Array[int] {
+        return 2 in arr
+    }
+    return false
+}
+
+// ==================== 测试 25: 类型守卫 + null 安全 ====================
+func test_null_safety(any x): int {
+    if x is null {
+        return -1
+    }
+    if x is int {
+        return x
+    }
+    return 0
+}
+
+// ==================== 测试 26: and 链中右侧使用左侧收窄变量 ====================
+func test_and_right_uses_left_narrowed(any x): int {
+    if x is int and x > 10 {
+        // x 在右侧表达式中已经被收窄为 int
+        return x * 2
+    }
+    return 0
+}
+
+// ==================== 测试 27: and 链中多个类型守卫 + 普通条件 ====================
+func test_multi_guard_mixed(any x, any y): int {
+    if x is int and y is int and x > 0 and y > 0 and x > y {
+        return x - y
+    }
+    return 0
+}
+
+// ==================== 测试 28: 类型守卫后访问 struct 方法 ====================
+func test_struct_method_after_guard(any obj): float {
+    if obj is Rect {
+        return obj.area()
+    }
+    return 0.0
+}
+
+// ==================== 测试 29: 类型守卫后 new 构造 ====================
+func test_new_after_guard(any x): string {
+    if x is int {
+        var p = new Point()
+        p.x = x
+        return "ok"
+    }
+    return "fail"
+}
+
+// ==================== 测试 30: 类型守卫在函数参数中传递 ====================
+func helper_takes_int(int n): int {
+    return n * 2
+}
+
+func test_pass_narrowed_to_func(any x): int {
+    if x is int {
+        return helper_takes_int(x)
+    }
+    return 0
+}
+
+// ============================================================================
+// 运行所有测试
+// ============================================================================
+
+var arr_dict = [{name: "test"}, {name: "test2"}]
+var arr_int = [1, 2, 3, 4, 5]
+var nested_arr = [[10, 20], [30, 40]]
+var rect = new Rect(w=3.0, h=4.0)
+var pt = new Point(x=10, y=20)
+
+assert_eq(test_and_short_circuit_method(arr_dict), 2)
+print("test1: PASSED")
+
+assert_eq(test_and_short_circuit_field(pt), 10)
+print("test2: PASSED")
+
+assert_eq(test_mixed_and_chain(42), 42)
+assert_eq(test_mixed_and_chain(3), -1)
+assert_eq(test_mixed_and_chain(150), -1)
+print("test3: PASSED")
+
+assert_eq(test_multi_guard_and(5, "hello"), 10)
+assert_eq(test_multi_guard_and(0, "hello"), 0)
+assert_eq(test_multi_guard_and(5, ""), 0)
+print("test4: PASSED")
+
+assert_eq(test_or_no_narrow(42), 1)
+assert_eq(test_or_no_narrow("hi"), 1)
+assert_eq(test_or_no_narrow(null), 0)
+print("test5: PASSED")
+
+assert_eq(test_else_recovery(42), 43)
+assert_eq(test_else_recovery("hello"), -1)
+assert_eq(test_else_recovery(null), 0)
+print("test6: PASSED")
+
+assert_eq(test_nested_if_guard([10, 20, 30]), 30)
+assert_eq(test_nested_if_guard([1, 2]), -1)
+print("test7: PASSED")
+
+assert_eq(test_guard_with_as(42), 42)
+print("test8: PASSED")
+
+assert_eq(test_array_index_after_guard([100, 200]), 100)
+assert_eq(test_array_index_after_guard([]), -1)
+print("test9: PASSED")
+
+// 使用点号语法以支持类型守卫收窄
+var dict_with_count = {count: 42}
+assert_eq(test_dict_access_after_guard(dict_with_count), 42)
+var dict_without_count = {name: "test"}
+assert_eq(test_dict_access_after_guard(dict_without_count), -1)
+print("test10: PASSED")
+
+assert_eq(test_negated_guard("hello"), 1)
+assert_eq(test_negated_guard(42), 2)
+print("test11: PASSED")
+
+assert_eq(test_chained_if_else(42), "int")
+assert_eq(test_chained_if_else("hi"), "string")
+assert_eq(test_chained_if_else(3.14), "float")
+assert_eq(test_chained_if_else(true), "bool")
+assert_eq(test_chained_if_else(null), "other")
+print("test12: PASSED")
+
+assert_eq(test_for_after_guard([1, 2, 3, 4, 5]), 15)
+print("test13: PASSED")
+
+assert_eq(test_closure_capture_narrowed(42), 52)
+print("test14: PASSED")
+
+assert_eq(test_face_guard_method(rect), 12.0)
+print("test15: PASSED")
+
+assert_eq(test_mutate_after_guard([1, 2, 3]), 99)
+print("test16: PASSED")
+
+assert_eq(test_ternary_no_narrow(42), 42)
+assert_eq(test_ternary_no_narrow("hi"), 0)
+print("test17: PASSED")
+
+assert_eq(test_while_guard(5), 5)
+print("test18: PASSED")
+
+assert_eq(test_nested_generic(nested_arr), 10)
+assert_eq(test_nested_generic([[99]]), 99)
+print("test19: PASSED")
+
+assert_eq(test_array_method_chain([]), 2)
+print("test20: PASSED")
+
+assert_eq(test_different_narrow_branches(42), "int:42")
+assert_eq(test_different_narrow_branches("world"), "string:world")
+assert_eq(test_different_narrow_branches(null), "unknown")
+print("test21: PASSED")
+
+assert_eq(test_string_concat_after_guard(42), "value: 42")
+print("test22: PASSED")
+
+var nested_data = {items: [7, 8, 9]}
+assert_eq(test_deep_nested_guard(nested_data), 7)
+var empty_items = {items: []}
+assert_eq(test_deep_nested_guard(empty_items), -1)
+var no_items = {name: "test"}
+assert_eq(test_deep_nested_guard(no_items), -1)
+print("test23: PASSED")
+
+assert_eq(test_in_operator_after_guard([1, 2, 3]), true)
+assert_eq(test_in_operator_after_guard([4, 5, 6]), false)
+print("test24: PASSED")
+
+assert_eq(test_null_safety(null), -1)
+assert_eq(test_null_safety(42), 42)
+print("test25: PASSED")
+
+assert_eq(test_and_right_uses_left_narrowed(20), 40)
+assert_eq(test_and_right_uses_left_narrowed(5), 0)
+print("test26: PASSED")
+
+assert_eq(test_multi_guard_mixed(10, 3), 7)
+assert_eq(test_multi_guard_mixed(3, 10), 0)
+assert_eq(test_multi_guard_mixed(-1, 10), 0)
+print("test27: PASSED")
+
+assert_eq(test_struct_method_after_guard(rect), 12.0)
+print("test28: PASSED")
+
+assert_eq(test_new_after_guard(42), "ok")
+print("test29: PASSED")
+
+assert_eq(test_pass_narrowed_to_func(21), 42)
+print("test30: PASSED")
+
+print("=== test_narrow_edge: ALL PASSED ===")

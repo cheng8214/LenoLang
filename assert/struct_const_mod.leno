@@ -1,0 +1,84 @@
+// 跨模块关联常量测试 - 导出模块
+// 定义带关联常量的 struct 并导出
+
+// 导出带关联常量的 struct（各种类型）
+export struct Physics {
+    const GRAVITY = 9.8
+    const PI = 3.14159
+    const SPEED_OF_LIGHT = 299792458
+    const UNIT_NAME = "SI"
+    const USE_METRIC = true
+
+    float mass = 0.0
+    float velocity = 0.0
+}
+
+// 导出带显式类型关联常量的 struct
+export struct Config {
+    const int MAX_CONNECTIONS = 100
+    const int DEFAULT_PORT = 8080
+    const float TIMEOUT = 30.0
+    const string HOST = "localhost"
+    const bool DEBUG_MODE = false
+
+    int active = 0
+}
+
+// 导出带关联常量和方法的 struct
+export struct Counter {
+    const MAX_SIZE = 1024
+    const MIN_SIZE = 0
+    const DEFAULT_STEP = 1
+
+    int count = 0
+
+    func increment(): int {
+        if count < MAX_SIZE {
+            count = count + DEFAULT_STEP
+        }
+        return count
+    }
+
+    func decrement(): int {
+        if count > MIN_SIZE {
+            count = count - DEFAULT_STEP
+        }
+        return count
+    }
+
+    func is_max(): bool {
+        return count == MAX_SIZE
+    }
+
+    func is_min(): bool {
+        return count == MIN_SIZE
+    }
+
+    func reset() {
+        count = MIN_SIZE
+    }
+}
+
+// 导出只有关联常量没有字段的 struct（纯常量容器）
+export struct Constants {
+    const VERSION_MAJOR = 2
+    const VERSION_MINOR = 0
+    const VERSION_STRING = "2.0.0"
+    const MAX_INT = 2147483647
+}
+
+// 导出工厂函数，验证常量在模块内部也能正确使用
+export func make_default_config(): Config {
+    return new Config(
+        active = 0
+    )
+}
+
+// 导出使用关联常量的函数
+export func get_default_port(): int {
+    return Config.DEFAULT_PORT
+}
+
+export func get_max_connections(): int {
+    return Config.MAX_CONNECTIONS
+}

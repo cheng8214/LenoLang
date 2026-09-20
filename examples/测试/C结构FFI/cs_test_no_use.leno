@@ -1,0 +1,16 @@
+// 测试1: 不用 use，通过模块路径访问 cstruct
+import "cs_def.leno" as cs
+
+main() {
+    // 测试: 通过模块路径直接创建 cstruct
+    var t = cs.TT.malloc()
+    t.id = 1
+    t.value = 100
+    print("id=" + t.id + " value=" + t.value)
+    t.free()
+
+    // 测试: 调用返回 cstruct 的函数
+    var t2 = cs.makeTT(2, 200)
+    print("id=" + t2.id + " value=" + t2.value)
+    t2.free()
+}

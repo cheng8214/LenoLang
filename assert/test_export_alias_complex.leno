@@ -1,0 +1,16 @@
+// export alias 复杂类型 — 内联版本，避免 import 子进程问题
+alias Size = int
+alias IntList = Array[int]
+alias StrDict = Dict[string, string]
+
+main() {
+    Size s = 100
+    assert_eq(s, 100)
+
+    IntList arr = [1, 2, 3, 4, 5]
+    assert_eq(arr.len(), 5)
+    assert_eq(arr[0], 1)
+
+    StrDict d = {"key": "value", "x": "y"}
+    assert_eq(d["key"], "value")
+}

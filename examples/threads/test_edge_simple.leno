@@ -1,0 +1,21 @@
+import threads
+
+// 测试: 正常线程 join
+var t1 = threads.start(func(){
+    return 42
+})
+var r = t1.join()
+print("正常join结果: " + r)
+
+// 测试: 子线程异常
+var t2 = threads.start(func(){
+    throw "子线程出错"
+})
+var caught = false
+try {
+    t2.join()
+} catch e {
+    caught = true
+    print("捕获异常: " + e)
+}
+print("caught=" + caught)

@@ -1,0 +1,2 @@
+import "face_chain_c.leno" as c
+use c.Shape

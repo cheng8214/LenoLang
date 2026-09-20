@@ -1,0 +1,8 @@
+// 新建文件: Untitled.leno
+import rands
+main()
+{
+	 for 10 {
+        print($"  {rands.ints(1, 6)}")
+    }
+}

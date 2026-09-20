@@ -1,0 +1,65 @@
+// 测试：alias + 函数类型组合
+print("=== alias func类型测试 ===")
+
+// ===== 1. 简单别名 =====
+alias IntFunc = func(int):int
+alias VoidCB  = func():void
+alias BinOp   = func(int,int):int
+
+func triple(int x): int { return x * 3 }
+func add(int a, int b): int { return a + b }
+func hi() { print("hi") }
+
+IntFunc f1 = triple
+print("IntFunc: " + f1(5))
+
+BinOp f2 = add
+print("BinOp: " + f2(6, 4))
+
+VoidCB f3 = hi
+f3()
+
+// ===== 2. alias 做 struct 字段 =====
+struct Worker {
+    IntFunc  fn1
+    VoidCB   fn2
+    func run(int x) { print("fn1=" + fn1(x)); fn2() }
+}
+Worker w = new Worker(fn1 = triple, fn2 = hi)
+w.run(5)
+
+// ===== 3. alias 做返回类型 =====
+func getTriple(): IntFunc { return triple }
+var ft = getTriple()
+print("getTriple(7)=" + ft(7))
+
+// ===== 4. alias 做参数 =====
+func apply(IntFunc fn, int val): int { return fn(val) }
+print("apply(triple, 5)=" + apply(triple, 5))
+
+// ===== 5. 别名链 =====
+alias Op = BinOp
+func sub(int a, int b): int { return a - b }
+Op f4 = sub
+print("alias chain: " + f4(10, 3))
+
+// ===== 6. 泛型 + alias =====
+func apply_g[T](T val, func(T):T fn): T { return fn(val) }
+print("generic: " + apply_g[int](5, triple))
+
+// ===== 7. 多字段 struct 组合 =====
+alias IntOp = func(int):int
+struct MultiCB {
+    IntOp op1
+    IntOp op2
+    func apply(int x): int { return op2(op1(x)) }
+}
+MultiCB mc = new MultiCB(op1 = triple, op2 = func(int x): int { return x + 1 })
+print("multi compose: " + mc.apply(5))
+
+// ===== 8. func(T):T 泛型别名 =====
+alias Transform[T] = func(T):T
+func apply_tf[T](Transform[T] fn, T val): T { return fn(val) }
+print("generic alias: " + apply_tf[int](triple, 3))
+
+print("=== PASS ===")

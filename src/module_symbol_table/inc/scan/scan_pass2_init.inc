@@ -1,0 +1,528 @@
+    // 第二遍：解析所有符号（struct 和函数）
+    p = source;
+    int cur_line = 1;  // 当前行号（1-based），用于记录 struct/字段定义位置
+
+    // ---- 预扫描：收集所有非 export 的本地函数签名 ----
+    // export func 在主循环中由 scan_func.inc 处理，但非 export 的 func
+    // 不会被主循环扫描（主循环只处理 export 关键字开头的内容）。
+    // 当 export var 的初始化值引用本地函数时（如 export var arr = [test()]），
+    // 需要从符号表查找函数返回类型，因此必须预先收集所有函数签名。
+    {
+        const char* prescan = source;
+        int prescan_depth = 0;   // 花括号层级：只有 0 层的 func 才算模块级函数
+        while (*prescan) {
+            // 跳过空白、注释、字符串
+            while (*prescan && (*prescan == ' ' || *prescan == '\t' || *prescan == '\n' || *prescan == '\r')) prescan++;
+            if (!*prescan) break;
+            if (*prescan == '/' && *(prescan+1) == '/') {
+                while (*prescan && *prescan != '\n') prescan++;
+                continue;
+            }
+            if (*prescan == '/' && *(prescan+1) == '*') {
+                prescan += 2;
+                while (*prescan && !(*prescan == '*' && *(prescan+1) == '/')) prescan++;
+                if (*prescan) prescan += 2;
+                continue;
+            }
+            if (*prescan == '"' || *prescan == '\'') {
+                char q = *prescan++;
+                while (*prescan && *prescan != q) { if (*prescan == '\\' && *(prescan+1)) prescan += 2; else prescan++; }
+                if (*prescan) prescan++;
+                continue;
+            }
+
+            // 检查是否是 func 定义（仅收集非 export 的本地函数）
+            // export func 由主循环 scan_func.inc 处理（含完整类型修正），
+            // 预扫描只负责收集非 export 的本地函数签名，
+            // 使 export var 初始化值引用本地函数时能查到返回类型。
+            int has_export = 0;
+            const char* check_export = prescan;
+            if (strncmp(check_export, "export", 6) == 0 && (check_export[6] == ' ' || check_export[6] == '\t' || check_export[6] == '\n' || check_export[6] == '\r' || check_export[6] == '\0')) {
+                has_export = 1;
+            }
+
+            // 跳过 export 语句（整行跳过，直到行末）—— 由主循环处理。
+            // 跳过期间**仍要统计花括号**：`export func f(): int {` 的 '{' 就在这一行上，
+            // 漏计会让其后所有顶层函数都被误判成「在函数体内」而静默丢符号。
+            // 字符串/行注释里的花括号不算（与主循环的处理一致）。
+            if (has_export) {
+                while (*prescan && *prescan != '\n') {
+                    if (*prescan == '/' && *(prescan + 1) == '/') break;   // 行注释：其后不是代码
+                    if (*prescan == '"' || *prescan == '\'') {
+                        char q = *prescan++;
+                        while (*prescan && *prescan != q && *prescan != '\n') {
+                            if (*prescan == '\\' && *(prescan + 1)) prescan += 2; else prescan++;
+                        }
+                        if (*prescan && *prescan != '\n') prescan++;
+                        continue;
+                    }
+                    if (*prescan == '{') prescan_depth++;
+                    else if (*prescan == '}') { if (prescan_depth > 0) prescan_depth--; }
+                    prescan++;
+                }
+                continue;
+            }
+
+            const char* func_pos = prescan;
+
+            // 只收集**顶层**（花括号层级 0）的函数签名。层级 >0 的 `func` 要么是
+            // struct/cstruct/face 的方法（self 隐式，不计入形参），要么是函数体内的局部函数
+            // —— 两者都不属于模块函数命名空间。一旦被当作模块函数收进来就会与同名模块函数
+            // 撞名，而 module_symbol_table_find_func 返回数组里**第一个**匹配 ⇒
+            // `mod.name(实参...)` 解析到那一条：轻则误报「参数数量过多」（LenoWeb 的
+            // htmls.text/attr/select/selectOne/allText 就是此例），重则静默拿到局部函数的
+            // 返回类型（错类型且不报错，更危险）。
+            if (prescan_depth == 0 &&
+                strncmp(func_pos, "func", 4) == 0 && (func_pos[4] == ' ' || func_pos[4] == '\t' || func_pos[4] == '\n' || func_pos[4] == '\r' || func_pos[4] == '\0')) {
+                // 解析函数签名
+                const char* after_func = func_pos + 4;
+                while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
+
+                // 读函数名
+                const char* name_start = after_func;
+                while (*after_func && (isalnum((unsigned char)*after_func) || *after_func == '_')) after_func++;
+                int fname_len = (int)(after_func - name_start);
+
+                if (fname_len > 0 && fname_len < 64) {
+                    char func_name[64];
+                    memcpy(func_name, name_start, fname_len);
+                    func_name[fname_len] = '\0';
+
+                    // 只添加尚未在表中的函数（避免与 export func 重复）
+                    if (!module_symbol_table_find_func(table, func_name)) {
+                        // 跳过泛型参数 [T]
+                        while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
+                        if (*after_func == '[') {
+                            int d = 1; after_func++;
+                            while (*after_func && d > 0) {
+                                if (*after_func == '[') d++;
+                                else if (*after_func == ']') d--;
+                                after_func++;
+                            }
+                        }
+
+                        // 跳过空格
+                        while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
+
+                        // 解析参数列表 (...)
+                        char param_text[256] = {0};
+                        int param_count = 0;
+                        if (*after_func == '(') {
+                            const char* param_start = after_func + 1;
+                            int pd = 1; after_func++;
+                            while (*after_func && pd > 0) {
+                                if (*after_func == '(') pd++;
+                                else if (*after_func == ')') pd--;
+                                after_func++;
+                            }
+                            int plen = (int)(after_func - 1 - param_start);
+                            if (plen > 0 && plen < 256) {
+                                memcpy(param_text, param_start, plen);
+                                param_text[plen] = '\0';
+                                // 简单计数参数（逗号分割）
+                                if (param_text[0] != '\0') {
+                                    param_count = 1;
+                                    for (int i = 0; param_text[i]; i++) {
+                                        if (param_text[i] == ',') param_count++;
+                                    }
+                                }
+                            }
+                        }
+
+                        // 跳过空格和换行
+                        while (*after_func && (*after_func == ' ' || *after_func == '\t' || *after_func == '\n' || *after_func == '\r')) after_func++;
+
+                        // 解析返回类型 :Type
+                        TypeKind return_type = TYPE_ANY;
+                        TypeInfo* return_type_info = NULL;
+                        char return_struct_name[64] = {0};
+
+                        if (*after_func == ':') {
+                            after_func++;
+                            while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
+                            const char* type_start = after_func;
+
+                            // 读类型标识符
+                            while (*after_func && (isalnum((unsigned char)*after_func) || *after_func == '_')) after_func++;
+                            int type_len = (int)(after_func - type_start);
+
+                            // 读泛型参数 [K,V]
+                            while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
+                            if (*after_func == '[') {
+                                int d = 1; after_func++;
+                                while (*after_func && d > 0) {
+                                    if (*after_func == '[') d++;
+                                    else if (*after_func == ']') d--;
+                                    after_func++;
+                                }
+                                type_len = (int)(after_func - type_start);
+                            }
+
+                            // 消费可空 ?
+                            while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
+                            if (*after_func == '?') after_func++;
+
+                            if (type_len > 0 && type_len < 128) {
+                                char type_str[128];
+                                memcpy(type_str, type_start, type_len);
+                                type_str[type_len] = '\0';
+                                return_type_info = parse_type_from_string(type_str);
+                                if (return_type_info) {
+                                    return_type = return_type_info->kind;
+                                    if (return_type_info->struct_name) {
+                                        strncpy(return_struct_name, return_type_info->struct_name, 63);
+                                    }
+                                } else {
+                                    return_type = parse_base_type(type_str);
+                                }
+
+                                // 修正类型分类：检查是否是已知 clib/face/cstruct/struct
+                                // parse_simple_type_str 对未知标识符默认返回 TYPE_STRUCT
+                                {
+                                    char base_str[64];
+                                    int base_len = type_len < 64 ? type_len : 63;
+                                    strncpy(base_str, type_str, base_len);
+                                    base_str[base_len] = '\0';
+                                    char* bracket = strchr(base_str, '[');
+                                    if (bracket) *bracket = '\0';
+
+                                    if (return_type == TYPE_ANY || return_type == TYPE_STRUCT) {
+                                        // 名字解析走**唯一政策点**（㉓）。注意：拷贝仍用 memcpy + 显式补 '\0'
+                                        // 替代 strncpy，避免目标缓冲区恰满时丢失终止符（-Wstringop-truncation）
+                                        char agg_name[64] = {0};
+                                        TypeKind ak = mod_resolve_param_type(base_str,
+                                            agg_name, (int)sizeof(agg_name), NULL, 0,
+                                            clib_names, clib_name_count,
+                                            face_names, face_name_count,
+                                            cstruct_names, cstruct_name_count,
+                                            struct_names, struct_name_count,
+                                            NULL, 0);
+                                        if (ak != TYPE_ANY) {
+                                            return_type = ak;
+                                            // struct 分支原本不更新 kind（默认即 TYPE_STRUCT）⇒ 保持等价
+                                            if (ak != TYPE_STRUCT && return_type_info) {
+                                                return_type_info->kind = ak;
+                                            }
+                                            if (agg_name[0]) {
+                                                size_t base_copy_len = strlen(agg_name);
+                                                if (base_copy_len > sizeof(return_struct_name) - 1) base_copy_len = sizeof(return_struct_name) - 1;
+                                                memcpy(return_struct_name, agg_name, base_copy_len);
+                                                return_struct_name[base_copy_len] = '\0';
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        module_symbol_table_add_func(table, func_name,
+                            return_type,
+                            return_struct_name[0] ? return_struct_name : NULL,
+                            0, return_type_info, param_text, param_count, 0, NULL);
+                        if (return_type_info) type_free(return_type_info);
+                    }
+                }
+            }
+
+            // 维护花括号层级（字符串/注释在上面已 continue，不会误计）
+            if (*prescan == '{') prescan_depth++;
+            else if (*prescan == '}') { if (prescan_depth > 0) prescan_depth--; }
+
+            // skip to next token
+            prescan++;
+        }
+    }
+
+    // 本地别名解析表（支持 alias B = A 链式引用）
+    // （动态数组，无固定上限：修复超过 64 个别名被静默丢弃的问题）
+    char** local_alias_names = NULL;
+    TypeInfo** local_alias_types = NULL;
+    int local_alias_count = 0;
+    int local_alias_cap = 0;
+
+    // 注意：不再自动收集 import 模块的 export alias 到本地别名表
+    // alias 必须通过 use 语句显式导入才能使用
+
+    // 查找本地别名
+    #define FIND_LOCAL_ALIAS(n) ({ \
+        TypeInfo* _r = NULL; \
+        for (int _i = 0; _i < local_alias_count; _i++) { \
+            if (strcmp(local_alias_names[_i], n) == 0) { _r = local_alias_types[_i]; break; } \
+        } \
+        _r; \
+    })
+
+    while (*p) {
+        // 跳过空白、注释、字符串
+        while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) {
+            if (*p == '\n') cur_line++;
+            p++;
+        }
+        if (!*p) break;
+
+        if (*p == '/' && *(p+1) == '/') {
+            while (*p && *p != '\n') p++;
+            continue;
+        }
+        if (*p == '/' && *(p+1) == '*') {
+            p += 2;
+            while (*p && !(*p == '*' && *(p+1) == '/')) {
+                if (*p == '\n') cur_line++;
+                p++;
+            }
+            if (*p) p += 2;
+            continue;
+        }
+        if (*p == '"' || *p == '\'') {
+            char quote = *p;
+            p++;
+            while (*p && *p != quote) {
+                if (*p == '\\' && *(p+1)) { p += 2; continue; }
+                if (*p == '\n') cur_line++;
+                p++;
+            }
+            if (*p) p++;
+            continue;
+        }
+
+        // 查找 use 语句（跨模块类型链式传递）
+        // 格式: use module.Type           — 单个导入
+        //       use module.(A, B, C)      — 批量导入
+        if (strncmp(p, "use", 3) == 0 && (p[3] == ' ' || p[3] == '\t' || p[3] == '\n' || p[3] == '\r')) {
+            p += 3;
+            while (*p && (*p == ' ' || *p == '\t')) p++;
+            
+            // 读模块别名
+            const char* alias_start = p;
+            while (*p && (isalnum((unsigned char)*p) || *p == '_')) p++;
+            int alias_len = (int)(p - alias_start);
+            
+            if (alias_len > 0 && alias_len < 64 && *p == '.') {
+                char alias_name[64];
+                memcpy(alias_name, alias_start, alias_len);
+                alias_name[alias_len] = '\0';
+                p++; // skip '.'
+                
+                // 判断批量模式: use module.(A, B, C) 还是 use module.Type
+                int batch_mode = (*p == '(');
+                if (batch_mode) p++; // skip '('
+
+                // ---- 阶段 1：解析模块路径（只需一次） ----
+                // 在源码中反向查找 import "path" as alias 来解析模块路径
+                char resolved_path[1024] = {0};
+                {
+                    // 保存当前位置，用于限定 import 搜索范围
+                    const char* search_limit = p;
+                    char* import_search = source;
+                    while (import_search < search_limit) {
+                        if (strncmp(import_search, "import", 6) == 0 && (import_search[6] == ' ' || import_search[6] == '\t' || import_search[6] == '\"')) {
+                            import_search += 6;
+                            while (*import_search && (*import_search == ' ' || *import_search == '\t')) import_search++;
+                            if (*import_search == '"') {
+                                import_search++;
+                                const char* path_start = import_search;
+                                while (*import_search && *import_search != '"') import_search++;
+                                int path_len = (int)(import_search - path_start);
+                                import_search++; // skip closing "
+
+                                // 检查 as alias
+                                while (*import_search && (*import_search == ' ' || *import_search == '\t')) import_search++;
+                                if (strncmp(import_search, "as", 2) == 0 && (import_search[2] == ' ' || import_search[2] == '\t')) {
+                                    import_search += 2;
+                                    while (*import_search && (*import_search == ' ' || *import_search == '\t')) import_search++;
+                                    const char* as_start = import_search;
+                                    while (*import_search && (isalnum((unsigned char)*import_search) || *import_search == '_')) import_search++;
+                                    int as_len = (int)(import_search - as_start);
+                                    if (as_len == alias_len && strncmp(as_start, alias_name, alias_len) == 0) {
+                                        // 找到匹配的 import
+                                        if (path_len > 0 && path_len < 1023) {
+                                            memcpy(resolved_path, path_start, path_len);
+                                            resolved_path[path_len] = '\0';
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        if (*import_search) import_search++;
+                    }
+                }
+
+                // ---- 阶段 2：扫描依赖模块（只需一次） ----
+                ModuleSymbolTable* dep_table = NULL;
+                if (resolved_path[0]) {
+                    // 进程内记忆化（见 module_symbol_table_get_shared）：避免关缓存时
+                    // 同一依赖被反复重扫导致扫描次数随依赖图路径数爆炸
+                    dep_table = module_symbol_table_get_shared(resolved_path, normalized_current);
+                    if (dep_table) {
+                        // get_shared 返回的表内部已完成扫描，这里**不要**再显式调
+                        // module_symbol_table_scan：那只是幂等空操作，还容易被误读成
+                        // 「仍需再扫一次」—— 一旦幂等标志被去掉，扫描爆炸会立刻回来。
+                        {
+                            // 记录依赖路径（含传递依赖，用于 .lenosymc 缓存失效判定）
+                            char dep_full_path[MAX_PATH_LEN] = {0};
+                            resolve_module_full_path(dep_full_path, MAX_PATH_LEN, resolved_path, normalized_current);
+                            module_symbol_table_add_dep(table, dep_full_path);
+                            for (int di = 0; di < dep_table->dep_count; di++) {
+                                module_symbol_table_add_dep(table, dep_table->dep_paths[di]);
+                            }
+                        }
+                    }
+                }
+
+                // ---- 阶段 3：循环处理每个类型名（复用同一个 dep_table） ----
+                while (1) {
+                    const char* use_iter_start = p;   // 进度守卫基准（见循环末尾）
+                    if (batch_mode) {
+                        // 跳过所有空白（含换行，支持跨行 use 语句）
+                        while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) {
+                            if (*p == '\n') cur_line++;
+                            p++;
+                        }
+                        if (*p == ')') { p++; break; } // 批量模式结束
+                    }
+
+                    // 读类型名
+                    const char* type_start = p;
+                    while (*p && (isalnum((unsigned char)*p) || *p == '_')) p++;
+                    int type_len = (int)(p - type_start);
+
+                    if (type_len > 0 && type_len < 64) {
+                        char type_name[64];
+                        memcpy(type_name, type_start, type_len);
+                        type_name[type_len] = '\0';
+
+                        // 在已扫描的 dep_table 中查找类型
+                        if (dep_table) {
+                            // 查找 struct
+                            ModuleStructSymbol* s_sym = module_symbol_table_find_struct(dep_table, type_name);
+                            ModuleFaceSymbol* f_sym_ptr = module_symbol_table_find_face(dep_table, type_name);
+                            if (s_sym && !module_symbol_table_find_struct(table, type_name)) {
+                                module_symbol_table_add_struct(table, type_name,
+                                    s_sym->field_count, s_sym->fields,
+                                    s_sym->method_count, s_sym->methods,
+                                    s_sym->is_cstruct, s_sym->type_param_count, s_sym->type_param_names);
+                                // 将 use 导入的 struct/cstruct 名称添加到对应数组，使后续 export func 返回类型解析能识别
+                                if (s_sym->is_cstruct) {
+                                    mod_names_push_z(&cstruct_names, &cstruct_name_count, &cstruct_name_cap, type_name);
+                                } else {
+                                    mod_names_push_z(&struct_names, &struct_name_count, &struct_name_cap, type_name);
+                                }
+                                if (s_sym->impl_count > 0) {
+                                    ModuleStructSymbol* new_sym = module_symbol_table_find_struct(table, type_name);
+                                    if (new_sym) {
+                                        new_sym->impl_count = s_sym->impl_count;
+                                        new_sym->impl_names = (char**)malloc(sizeof(char*) * s_sym->impl_count);
+                                        for (int ii = 0; ii < s_sym->impl_count; ii++) {
+                                            new_sym->impl_names[ii] = strdup(s_sym->impl_names[ii]);
+                                        }
+                                    }
+                                }
+                                // 传导关联常量（module_symbol_table_add_struct 不含常量参数，需手动复制）
+                                if (s_sym->const_count > 0) {
+                                    ModuleStructSymbol* new_sym = module_symbol_table_find_struct(table, type_name);
+                                    if (new_sym && new_sym->const_count == 0) {
+                                        new_sym->const_count = s_sym->const_count;
+                                        new_sym->const_names = (char**)malloc(sizeof(char*) * s_sym->const_count);
+                                        new_sym->const_value_strs = (char**)calloc(s_sym->const_count, sizeof(char*));
+                                        for (int ci = 0; ci < s_sym->const_count; ci++) {
+                                            new_sym->const_names[ci] = strdup(s_sym->const_names[ci]);
+                                            if (s_sym->const_value_strs && s_sym->const_value_strs[ci]) {
+                                                new_sym->const_value_strs[ci] = strdup(s_sym->const_value_strs[ci]);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            // 查找 face
+                            ModuleFaceSymbol* f_sym = module_symbol_table_find_face(dep_table, type_name);
+                            if (f_sym && !module_symbol_table_find_face(table, type_name)) {
+                                module_symbol_table_add_face(table, type_name,
+                                    f_sym->method_count, f_sym->methods, f_sym->type_param_count);
+                                // 将 use 导入的 face 名称添加到 face_names，使后续 export func 返回类型解析能识别
+                                mod_names_push_z(&face_names, &face_name_count, &face_name_cap, type_name);
+                            }
+                            // 查找 clib 类型（通过函数返回类型识别）
+                            if (!s_sym && !f_sym_ptr) {
+                                for (int fi = 0; fi < dep_table->func_count; fi++) {
+                                    ModuleFuncSymbol* func = &dep_table->funcs[fi];
+                                    if (func->return_type == TYPE_CLIB && func->return_struct_name &&
+                                        strcmp(func->return_struct_name, type_name) == 0) {
+                                        int already = 0;
+                                        for (int ci = 0; ci < clib_name_count; ci++) {
+                                            if (strcmp(clib_names[ci], type_name) == 0) { already = 1; break; }
+                                        }
+                                        if (!already) {
+                                            mod_names_push_z(&clib_names, &clib_name_count, &clib_name_cap, type_name);
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                            // 查找 enum 类型
+                            if (!s_sym && !f_sym_ptr) {
+                                ModuleEnumSymbol* e_sym = module_symbol_table_find_enum(dep_table, type_name);
+                                if (e_sym && !module_symbol_table_find_enum(table, type_name)) {
+                                    // 将 enum 完整信息（成员名+成员值）添加到当前模块的符号表
+                                    module_symbol_table_add_enum(table, type_name,
+                                        e_sym->member_count, e_sym->member_names, e_sym->member_values);
+                                    int already = 0;
+                                    for (int ei = 0; ei < enum_name_count; ei++) {
+                                        if (strcmp(enum_names[ei], type_name) == 0) { already = 1; break; }
+                                    }
+                                    if (!already) {
+                                        mod_names_push_z(&enum_names, &enum_name_count, &enum_name_cap, type_name);
+                                    }
+                                }
+                            }
+                            // 查找 alias 类型
+                            if (!s_sym && !f_sym_ptr) {
+                                ModuleAliasSymbol* a_sym = module_symbol_table_find_alias(dep_table, type_name);
+                                if (a_sym && !module_symbol_table_find_alias(table, type_name)) {
+                                    module_symbol_table_add_alias(table, type_name,
+                                        a_sym->type_info ? type_copy(a_sym->type_info) : NULL);
+                                    // 同时添加到本地别名表，使后续方法返回类型解析能找到
+                                    mod_alias_push(&local_alias_names, &local_alias_types, &local_alias_count, &local_alias_cap,
+                                        type_name, a_sym->type_info ? type_copy(a_sym->type_info) : NULL);
+                                    // 递归传导 alias 底层类型依赖到当前模块符号表
+                                    // 如 EventHandler = func(Event):bool，需要把 Event 也传导过来
+                                    if (a_sym->type_info) {
+                                        import_alias_type_deps_to_sym_table(table, dep_table, a_sym->type_info,
+                                            &struct_names, &struct_name_count, &struct_name_cap,
+                                            &cstruct_names, &cstruct_name_count, &cstruct_name_cap,
+                                            &enum_names, &enum_name_count, &enum_name_cap,
+                                            &face_names, &face_name_count, &face_name_cap,
+                                            &local_alias_names, &local_alias_types, &local_alias_count, &local_alias_cap);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (!batch_mode) break; // 单模式：只处理一次
+
+                    // 批量模式：跳过逗号和空白（含换行，支持跨行 use 语句），继续下一个类型名
+                    while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) {
+                        if (*p == '\n') cur_line++;
+                        p++;
+                    }
+                    if (*p == ',') p++;
+                    while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) {
+                        if (*p == '\n') cur_line++;
+                        p++;
+                    }
+                    // 允许尾逗号
+                    if (*p == ')') { p++; break; }
+                    // 进度守卫：本圈没推进就退出。括号内出现杂字符（注释、';' 等）或
+                    // 缺少 ')' 时，上面的跳过与读名字全都原地不动 ⇒ 会死循环。
+                    // 畸形列表交由真正的解析器报错（与 parser_module.c 同一处理）。
+                    if (p == use_iter_start) break;
+                }
+
+                // 释放 dep_table（批量模式下所有类型都已处理完毕）
+                if (dep_table) module_symbol_table_destroy(dep_table);
+            } else {
+                // 没有 '.' 的情况，跳过本行
+            }
+            continue;
+        }

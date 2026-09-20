@@ -1,0 +1,4 @@
+// 测试 cfunc 跨模块 use 导入（模拟 LenoNet 的 WriteCb 场景）
+// 模块 A: 定义并导出 cfunc 签名
+export cfunc WriteCb(Ptr data, i32 size, i32 nmemb, Ptr userdata): i32
+export cfunc CompareCb(Ptr a, Ptr b): i32

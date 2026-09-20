@@ -1,0 +1,22 @@
+// === 类型不匹配测试（应该报错）===
+
+// 1. int 赋 string
+export int badInt = "wrong"
+
+// 2. float 赋 string
+export float badFloat = "wrong"
+
+// 3. string 赋 int
+export string badStr = 42
+
+// 4. bool 赋 int
+export bool badBool = 42
+
+// 5. int 赋 float（应该报错：float→int 不允许降级）
+export int badIntFromFloat = 3.14
+
+// 6. Array[int] 赋 string 元素
+export Array[int] badArr = [1, "two", 3]
+
+// 7. Dict[string,int] 赋 string 值
+export Dict[string, int] badDict = {"a": "not_int"}

@@ -1,0 +1,13 @@
+// 共享模块 - 测试重复导入
+// 预期：应该只被加载一次
+
+export var init_count = 0
+
+export func init() {
+    init_count = init_count + 1
+    return "initialized, count=" + init_count
+}
+
+export func get_count() {
+    return init_count
+}

@@ -1,0 +1,7 @@
+// 同名不同路径测试 - folder2/utils.leno
+
+export var version = "2.0"
+
+export func get_info() {
+    return "utils from folder2, version " + version
+}

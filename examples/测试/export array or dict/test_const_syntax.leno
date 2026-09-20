@@ -1,0 +1,8 @@
+import "const_syntax.leno" as cs
+{
+   print(cs.x)
+   print(cs.arr[0])
+   print(cs.s)
+   print(cs.d["a"])
+   cs.arr[0] = 99
+}

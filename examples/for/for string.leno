@@ -1,0 +1,9 @@
+// 新建文件: for string.leno
+main()
+{
+	var str="cheng8214"
+	for str to a
+	{
+		print(a)
+	}
+}

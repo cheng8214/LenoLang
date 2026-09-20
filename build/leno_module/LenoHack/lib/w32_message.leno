@@ -1,0 +1,74 @@
+// w32_message.leno — Windows 消息泵（MSG 操作 + GetMessage/PeekMessage）
+// 用于线程级消息循环，无需创建 Win32 窗口
+import ffi
+
+clib user32 {
+    i32  GetMessageA(Ptr[u8] msg, Ptr[u8] hwnd, u32 filterMin, u32 filterMax)
+    i32  PeekMessageA(Ptr[u8] msg, Ptr[u8] hwnd, u32 filterMin, u32 filterMax, u32 remove)
+    bool TranslateMessage(Ptr[u8] msg)
+    Ptr[u8] DispatchMessageA(Ptr[u8] msg)
+    i16  GetAsyncKeyState(i32 vk)
+}
+
+user32 _ulib = null
+func _lib(): user32 {
+    if _ulib == null { _ulib = ffi.load("user32.dll") }
+    return _ulib
+}
+
+// ── 常量 ──
+export const PM_NOREMOVE = 0
+export const PM_REMOVE   = 1
+export const WM_HOTKEY   = 0x0312
+
+// ── 虚拟键码 ──
+export const VK_SHIFT    = 0x10
+export const VK_CONTROL  = 0x11
+export const VK_MENU     = 0x12    // Alt
+export const VK_LWIN     = 0x5B
+
+// ── GetAsyncKeyState（轮询热键，不受 SDL 消息泵干扰）──
+// 返回值: 最高位 = 键当前按下; 最低位 = 上次调用后按过
+export func isKeyDown(int vk): bool {
+    int s = _int(_lib().GetAsyncKeyState(vk))
+    return (s & 0x8000) != 0
+}
+
+// ── MSG 结构体操作（x64: 48 字节） ──
+// layout: HWND(8) + UINT message(4) + pad(4) + WPARAM(8) + LPARAM(8) + DWORD time(4) + pad(4) + POINT(8)
+
+export func allocMsg(): Ptr[u8]     { return ffi.malloc(48) }
+export func freeMsg(Ptr[u8] msg)    { ffi.free(msg) }
+
+// 读取 message 字段（offset 8, 4 字节 UINT）
+export func msgMessage(Ptr[u8] msg): int {
+    return _int(ffi.read_uint(msg, 8))
+}
+// 读取 wParam 字段（offset 16, 低位 4 字节放热键 ID）
+export func msgWParam(Ptr[u8] msg): int {
+    return _int(ffi.read_uint(msg, 16))
+}
+
+// ── 消息泵 ──
+// 阻塞等待消息到达
+export func getMessage(Ptr[u8] msg): int {
+    return _int(_lib().GetMessageA(msg, null, 0, 0))
+}
+// 非阻塞尝试取消息（remove=true: 取出; false: 只看不取）
+export func peekMessage(Ptr[u8] msg, bool remove): int {
+    int flags = if remove then PM_REMOVE else PM_NOREMOVE
+    return _int(_lib().PeekMessageA(msg, null, 0, 0, flags))
+}
+// 仅等待 WM_HOTKEY（阻塞，其他消息照常分发）
+export func waitHotkey(Ptr[u8] msg): int {
+    // 仅过滤 WM_HOTKEY 消息，阻塞等待
+    return _int(_lib().GetMessageA(msg, null, WM_HOTKEY, WM_HOTKEY))
+}
+
+// 派发消息（非 WM_HOTKEY 消息需 Translate + Dispatch）
+export func translateMsg(Ptr[u8] msg): bool {
+    return _lib().TranslateMessage(msg)
+}
+export func dispatchMsg(Ptr[u8] msg): Ptr[u8] {
+    return _lib().DispatchMessageA(msg)
+}

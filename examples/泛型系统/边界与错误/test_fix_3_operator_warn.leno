@@ -1,0 +1,15 @@
+// 测试：泛型运算符约束警告（stderr，不阻塞）
+print("=== 运算符警告 ===")
+
+// 无约束算术 → stderr 警告，但运行正常
+func add[T](T a, T b): T { return a + b }
+func max[T](T a, T b): T { if a >= b { return a } return b }
+
+assert_eq(add[int](3, 5), 8)
+assert_eq(max[int](10, 20), 20)
+
+// == != 无警告
+func eq[T](T a, T b): bool { return a == b }
+assert_eq(eq[int](5, 5), true)
+
+print("PASS")

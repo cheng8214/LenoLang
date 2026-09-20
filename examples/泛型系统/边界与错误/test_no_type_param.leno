@@ -1,0 +1,8 @@
+// 测试：泛型 struct 不带类型参数能否实例化
+struct Box[T] {
+    T value
+}
+
+// 不带类型参数应该报错
+var b = new Box(value=42)
+print(b.value)

@@ -1,0 +1,185 @@
+// 泛型边界测试
+
+struct Box[T] {
+    T value
+}
+
+// --- 1. 泛型函数返回泛型 struct ---
+func makeBox[T](T v): Box[T] {
+    return new Box[T](value=v)
+}
+
+var ib = makeBox[int](42)
+assert_eq(ib.value, 42)
+
+var sb = makeBox[string]("hi")
+assert_eq(sb.value, "hi")
+
+// --- 2. 泛型函数嵌套调用 ---
+func wrap[T](T v): Box[T] {
+    return makeBox[T](v)
+}
+
+var wb = wrap[int](99)
+assert_eq(wb.value, 99)
+
+// --- 3. 泛型参数为 null 时显式指定类型 ---
+func defaultVal[T](): T {
+    return null
+}
+
+var dv = defaultVal[int]()
+assert_eq(dv, null)
+
+// --- 4. 多泛型参数混合使用 ---
+struct Pair[K, V] {
+    K key
+    V val
+}
+
+func makePair[K, V](K k, V v): Pair[K, V] {
+    return new Pair[K, V](key=k, val=v)
+}
+
+var p1 = makePair[string, int]("age", 25)
+assert_eq(p1.key, "age")
+assert_eq(p1.val, 25)
+
+var p2 = makePair[int, string](1, "one")
+assert_eq(p2.key, 1)
+assert_eq(p2.val, "one")
+
+// --- 5. 泛型 struct 嵌套 ---
+struct Wrapper[T] {
+    T inner
+}
+
+var nestedBox = new Box[Wrapper[int]](value=new Wrapper[int](inner=777))
+assert_eq(nestedBox.value.inner, 777)
+
+// --- 6. 泛型 struct 字段默认值 null ---
+struct Optional[T] {
+    T val = null
+    bool hasValue = false
+}
+
+var opt1 = new Optional[int]()
+assert_eq(opt1.val, null)
+assert_eq(opt1.hasValue, false)
+
+var opt2 = new Optional[string](val="yes", hasValue=true)
+assert_eq(opt2.val, "yes")
+assert_eq(opt2.hasValue, true)
+
+// --- 7. 泛型函数中泛型参数的算术运算 ---
+func add[T](T a, T b): T {
+    return a + b
+}
+
+assert_eq(add[int](3, 4), 7)
+assert_eq(add[float](1.5, 2.5), 4.0)
+assert_eq(add[string]("hello ", "world"), "hello world")
+
+// --- 8. 泛型 struct 方法返回另一个泛型 struct ---
+struct Result[T] {
+    T data
+    string error = ""
+
+    func isOk(): bool {
+        return self.error == ""
+    }
+}
+
+func ok[T](T val): Result[T] {
+    return new Result[T](data=val)
+}
+
+func err[T](string msg): Result[T] {
+    return new Result[T](data=null, error=msg)
+}
+
+var r1 = ok[int](42)
+assert_eq(r1.isOk(), true)
+assert_eq(r1.data, 42)
+
+var r2 = err[string]("not found")
+assert_eq(r2.isOk(), false)
+assert_eq(r2.error, "not found")
+
+// --- 9. 泛型参数为 Array 类型 ---
+func first[T](Array[T] arr): T {
+    if arr.len() > 0 {
+        return arr[0]
+    }
+    return null
+}
+
+assert_eq(first[int]([10, 20, 30]), 10)
+assert_eq(first[string](["a", "b"]), "a")
+
+// --- 10. 同名泛型函数不同类型参数调用 ---
+func echo[T](T v): T {
+    return v
+}
+
+assert_eq(echo[int](1), 1)
+assert_eq(echo[string]("s"), "s")
+assert_eq(echo[float](3.14), 3.14)
+assert_eq(echo[bool](true), true)
+
+// --- 11. 泛型函数条件返回 ---
+func coalesce[T](T a, T b): T {
+    if a != null { return a }
+    return b
+}
+
+assert_eq(coalesce[int](null, 42), 42)
+assert_eq(coalesce[int](10, 20), 10)
+assert_eq(coalesce[string](null, "default"), "default")
+
+// --- 12. 泛型 struct 方法修改泛型字段 ---
+struct Counter[T] {
+    T base
+    int count = 0
+
+    func add(T v): T {
+        self.count = self.count + 1
+        return v
+    }
+}
+
+var ic = new Counter[int](base=0)
+assert_eq(ic.add(5), 5)
+assert_eq(ic.count, 1)
+
+var sc = new Counter[string](base="")
+assert_eq(sc.add("hello"), "hello")
+assert_eq(sc.count, 1)
+
+// --- 13. 泛型函数比较操作 ---
+func max[T](T a, T b): T {
+    if a >= b { return a }
+    return b
+}
+
+assert_eq(max[int](3, 5), 5)
+assert_eq(max[int](10, 2), 10)
+assert_eq(max[string]("abc", "xyz"), "xyz")
+
+// --- 14. 泛型 struct 方法链式调用 ---
+struct Builder[T] {
+    T value
+    string tag = ""
+
+    func withTag(string t): Builder[T] {
+        self.tag = t
+        return self
+    }
+}
+
+var b1 = new Builder[int](value=42)
+b1.withTag("number")
+assert_eq(b1.value, 42)
+assert_eq(b1.tag, "number")
+
+print("test_generic_edge passed")

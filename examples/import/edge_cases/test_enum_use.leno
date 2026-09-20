@@ -1,0 +1,9 @@
+// 简化测试 - 不用 Level.High，直接用成员名
+import "bug5_enum.leno" as e
+
+main() {
+    // 通过模块名访问（正常方式）
+    print("Low: " + e.Level.Low)
+    print("Mid: " + e.Level.Mid)
+    print("High: " + e.Level.High)
+}

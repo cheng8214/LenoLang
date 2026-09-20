@@ -1,0 +1,214 @@
+// sdl_theme.leno — 全局主题系统（支持运行时切换）
+//
+// 设计：
+//   1. 全局单例 _theme，控件在 set() 时读取默认配色
+//   2. Themeable face — 控件实现 applyTheme(Theme) 即可支持运行时切换
+//   3. Window.applyThemeAll(Theme) 遍历所有控件，调用 applyTheme 刷新颜色
+//
+// 用法：
+//   // 创建前设置主题（传统方式）
+//   SDL3.setTheme(SDL3.lightTheme())
+//   win.addButton({text:"OK"})
+//
+//   // 运行时切换主题（无需关闭窗口！）
+//   win.applyThemeAll(SDL3.lightTheme())
+//
+// 优先级：opts 显式覆盖 > 主题默认 > 结构体硬编码
+// 注意：applyTheme 会用新主题覆盖所有主题派生颜色（包括 set() 时通过 opts 设置的）
+import "sdl_widget.leno" as wgt; use wgt.Widget
+
+// ==================== 颜色类型别名 ====================
+// Color 是 int 的语义别名，内部存储 0xAARRGGBB
+// 用法：Color c = #FF0000FF  或  func setBg(Color c)
+// 注：sdl_core.leno 也有 export alias Color = int，供 sdl_renderer 等底层模块使用
+export alias Color = int
+
+// ==================== 颜色辅助函数 ====================
+// 颜色格式：#RRGGBBAA（Alpha 在最后，与 CSS 一致）
+// 内部存储：int 0xAARRGGBB（Alpha 在最高字节）
+// 字面量 #RRGGBBAA 被编译器自动转为 0xAARRGGBB
+
+// 从打包色中提取各分量
+export func colorR(Color c): int { return (c >> 16) & 0xFF }
+export func colorG(Color c): int { return (c >> 8) & 0xFF }
+export func colorB(Color c): int { return c & 0xFF }
+export func colorA(Color c): int { return (c >> 24) & 0xFF }
+
+// 将 R/G/B/A 分量打包为 0xAARRGGBB 整数（a 默认 255 不透明）
+export func packColor(int r, int g, int b, int a = 255): Color {
+    if r > 255 { r = 255 }; if g > 255 { g = 255 }; if b > 255 { b = 255 }; if a > 255 { a = 255 }
+    if r < 0 { r = 0 }; if g < 0 { g = 0 }; if b < 0 { b = 0 }; if a < 0 { a = 0 }
+    return (a << 24) | (r << 16) | (g << 8) | b
+}
+
+// 替换打包色的 Alpha 通道（保留原 RGB，设置新 alpha）
+export func withAlpha(Color c, int a): Color {
+    if a > 255 { a = 255 }; if a < 0 { a = 0 }
+    return (a << 24) | (c & 0x00FFFFFF)
+}
+
+// 提亮打包色：各通道加 delta，Alpha 不变
+export func brighten(Color c, int delta): Color {
+    int r = colorR(c) + delta; if r > 255 { r = 255 }
+    int g = colorG(c) + delta; if g > 255 { g = 255 }
+    int b = colorB(c) + delta; if b > 255 { b = 255 }
+    return (c & 0xFF000000) | (r << 16) | (g << 8) | b
+}
+
+// 变暗打包色：各通道减 delta，Alpha 不变
+export func darken(Color c, int delta): Color {
+    int r = colorR(c) - delta; if r < 0 { r = 0 }
+    int g = colorG(c) - delta; if g < 0 { g = 0 }
+    int b = colorB(c) - delta; if b < 0 { b = 0 }
+    return (c & 0xFF000000) | (r << 16) | (g << 8) | b
+}
+
+// ==================== Theme 结构体 ====================
+export struct Theme {
+    string name = "dark"
+
+    // === 背景层次（从深到浅） ===
+    Color bg = #262830FF              // 控件主背景
+    Color bgAlt = #2C2E36FF           // 次级背景（面板/斑马纹/非激活标签）
+    Color bgInput = #232332FF         // 输入框背景（略深于主背景）
+    Color bgHover = #464E5CFF         // 悬停行背景
+    Color bgSel = #343A46FF           // 选中行背景（比 hover 更深，非蓝色）
+    Color bgZebra = #2C2E36FF         // 斑马纹行（与 bgAlt 相同）
+    Color bgHeader = #2E3038FF        // 表头/标签栏背景
+
+    // === 文字 ===
+    Color txt = #EBEBF5FF             // 主文字色
+    Color txtInput = #DCDCF0FF        // 输入框文字
+    Color txtOnAccent = #FFFFFFFF     // 强调色上的白字
+    Color txtDim = #78808CFF          // 暗淡/空状态文字
+    Color txtHeader = #DCE1EBFF       // 表头文字
+
+    // === 强调/交互色 ===
+    Color accent = #3C96EBFF          // 选中/开关/强调主色
+    Color accentFocus = #64B4FFFF     // 聚焦边框（比 accent 更亮）
+    Color accentBright = #50A0F5FF    // 更亮的强调色（tab 下划线等）
+
+    // === 边框/分隔 ===
+    Color border = #5A5F6EFF          // 普通边框
+    Color sep = #464A54FF             // 分隔线/连接线
+
+    // === 滚动条 ===
+    Color sb = #787D8CFF              // 滚动条颜色
+
+    // === 预设按钮色 ===
+    Color btnPrimary = #3C8CDCFF
+    Color btnDanger = #DC3C3CFF
+    Color btnSuccess = #3CC850FF
+    Color btnWarning = #F0A01EFF
+    Color btnDark = #3C3C46FF
+
+    // === Tooltip ===
+    Color tipBg = #262830FF
+    Color tipTxt = #E8EAF2FF
+    Color tipBrd = #6E7384FF
+
+    // === 字体 ===
+    float fontSize = 15.0
+}
+
+// ==================== Themeable 接口 ====================
+// 控件实现此接口即可支持运行时主题切换。
+// Window.applyThemeAll() 会遍历所有控件，对实现 Themeable 的调用 applyTheme。
+export face Themeable {
+    func applyTheme(Theme t)
+}
+
+// ==================== 全局单例 ====================
+Theme _theme = new Theme()
+
+export func getTheme(): Theme { return _theme }
+export func setTheme(Theme t) { _theme = t }
+
+// ==================== 预设主题 ====================
+
+// 深色主题（默认值已匹配，返回全新实例以便用户进一步微调）
+export func darkTheme(): Theme {
+    Theme t = new Theme()
+    t.name = "dark"
+    return t
+}
+
+// 浅色主题
+export func lightTheme(): Theme {
+    Theme t = new Theme()
+    t.name = "light"
+    // 背景层次（从浅到略深）
+    t.bg = #F0F0F5FF
+    t.bgAlt = #E8E8EEFF
+    t.bgInput = #FFFFFFFF
+    t.bgHover = #CED6E0FF
+    t.bgSel = #AAB2BEFF
+    t.bgZebra = #ECECF2FF
+    t.bgHeader = #E2E4EAFF
+    // 文字
+    t.txt = #1E1E28FF
+    t.txtInput = #191923FF
+    t.txtOnAccent = #FFFFFFFF
+    t.txtDim = #8C919BFF
+    t.txtHeader = #282D37FF
+    // 强调/交互
+    t.accent = #3C82DCFF
+    t.accentFocus = #5096E6FF
+    t.accentBright = #3C82DCFF
+    // 边框/分隔
+    t.border = #C8CDD4FF
+    t.sep = #D2D6DCFF
+    // 滚动条
+    t.sb = #A0A5AFFF
+    // 预设按钮色
+    t.btnPrimary = #3278D2FF
+    t.btnDanger = #D23232FF
+    t.btnSuccess = #32B446FF
+    t.btnWarning = #E69614FF
+    t.btnDark = #464650FF
+    // Tooltip
+    t.tipBg = #FAFAFFFF
+    t.tipTxt = #1E1E28FF
+    t.tipBrd = #B4B9C3FF
+    return t
+}
+
+// 午夜蓝主题（深色变体，偏蓝）
+export func midnightTheme(): Theme {
+    Theme t = new Theme()
+    t.name = "midnight"
+    // 背景层次（深蓝调）
+    t.bg = #161C2CFF
+    t.bgAlt = #1C2234FF
+    t.bgInput = #121828FF
+    t.bgHover = #283450FF
+    t.bgSel = #1E2840FF
+    t.bgZebra = #1C2234FF
+    t.bgHeader = #1E263AFF
+    // 文字
+    t.txt = #C8D7F0FF
+    t.txtInput = #BECDEBFF
+    t.txtOnAccent = #FFFFFFFF
+    t.txtDim = #647391FF
+    t.txtHeader = #BECDE6FF
+    // 强调/交互（偏青蓝）
+    t.accent = #32AADCFF
+    t.accentFocus = #50C8FFFF
+    t.accentBright = #46B4F0FF
+    // 边框/分隔
+    t.border = #3C4B6EFF
+    t.sep = #2D3755FF
+    // 滚动条
+    t.sb = #50648CFF
+    // 预设按钮色
+    t.btnPrimary = #2D96D2FF
+    t.btnDanger = #D23737FF
+    t.btnSuccess = #32B964FF
+    t.btnWarning = #EB9B19FF
+    t.btnDark = #283246FF
+    // Tooltip
+    t.tipBg = #161C2CFF
+    t.tipTxt = #C8D7F0FF
+    t.tipBrd = #465578FF
+    return t
+}

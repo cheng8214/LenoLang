@@ -1,0 +1,2 @@
+// 链式 use 导入 enum 测试模块（最底层）
+export enum Status { OK = 200; NOT_FOUND = 404; ERROR = 500 }

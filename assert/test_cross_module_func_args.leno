@@ -1,0 +1,106 @@
+// 跨模块"模块函数"的实参类型检查 —— 回归测试（S2 族第 11 例 / ⑱）
+//
+// 背景（2026-09-18 实测）：`a.take("oops")`（`export func take(int v): int`，只 import）**零诊断**；
+//   而同文件 `take("oops")` 会报（那条走 AST 里的 func_def）。
+//   根因：`ModuleFuncSymbol` **只有 `param_text`（原始文本）与 `param_count`，没有参数类型数组**
+//   —— 那个字段连语义侧都没人消费（死数据）。当时先就地解析 `param_text`（临时实现）；
+//   **⑱ 转正后**改为读 `param_types` / `param_struct_names`（扫描器用唯一实现 `mod_scan_params`
+//   填，随 `.lenosymc` v29 往返）。
+//
+// 判据：
+//   ① 跨模块：int 参数传 string **必须报错**（修前静默）；
+//   ② 跨模块：第二个参数错也要报（验证逐参而非只看第一个）；
+//   ③ 守卫：正确实参必须通过；
+//   ④ 守卫：int → float 的隐式转换不能被误判（`type_is_compatible` 允许）；
+//   ⑤ 对照：同文件同写法仍然报错（既有行为，防改坏）；
+//   ⑥ 跨模块：**聚合**参数（`move(Point p)`）传 string 必须报错 —— 转正前只判 4 个基本类型 ⇒ 静默；
+//   ⑦ 守卫：跨模块的**正确**聚合实参必须能编译并跑出结果（防误报）。
+// 子进程机器复用 assert/helpers/compiler.leno（S7）。
+
+import dirs
+import files
+
+import "helpers/compiler.leno" as ce
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_cross_module_func_args")
+    dirs.delete(work)
+    dirs.mkdir_p(dirs.join(work, "lib"))
+
+    files.write(dirs.join(work, "lib/g.leno"),
+        "export func take(int v): int {\n    return v\n}\n\n"
+        + "export func join(string a, string b): string {\n    return a + b\n}\n\n"
+        + "export func fscale(float x): float {\n    return x\n}\n\n"
+        // ⑥⑦：聚合类型的形参（判据需一个可运行的守卫 ⇒ 带 struct + 工厂函数）
+        + "export struct Point {\n    int x\n}\n\n"
+        + "export func make_point(int x): Point {\n    return new Point(x=x)\n}\n\n"
+        + "export func move(Point p): int {\n    return p.x + 1\n}\n")
+
+    // ① 跨模块：int 参数传 string
+    var bad1 = dirs.join(work, "bad1.leno")
+    files.write(bad1,
+        "import \"lib/g.leno\" as a\n\n"
+        + "main() {\n"
+        + "    print(\"R=\" + a.take(\"oops\"))\n"
+        + "}\n")
+    ce.expect_error(bad1, "跨模块：模块函数错实参必须报错（修前静默）", "参数类型不匹配", 4)
+
+    // ② 跨模块：第二个参数错
+    var bad2 = dirs.join(work, "bad2.leno")
+    files.write(bad2,
+        "import \"lib/g.leno\" as a\n\n"
+        + "main() {\n"
+        + "    print(\"R=\" + a.join(\"a\", 7))\n"
+        + "}\n")
+    ce.expect_error(bad2, "跨模块：第二个参数错也要报（逐参检查）", "参数类型不匹配", 4)
+
+    // ③ 守卫：正确实参
+    var good1 = dirs.join(work, "good1.leno")
+    files.write(good1,
+        "import \"lib/g.leno\" as a\n\n"
+        + "main() {\n"
+        + "    print(\"R=\" + a.take(7))\n"
+        + "}\n")
+    ce.expect_ok(good1, "跨模块：正确实参必须通过（防误报）", "R=7")
+
+    // ④ 守卫：int → float 隐式转换
+    var good2 = dirs.join(work, "good2.leno")
+    files.write(good2,
+        "import \"lib/g.leno\" as a\n\n"
+        + "main() {\n"
+        + "    print(\"R=\" + a.fscale(3))\n"
+        + "}\n")
+    ce.expect_ok(good2, "跨模块：int→float 隐式转换不得被误判", "R=3")
+
+    // ⑤ 对照：同文件（既有行为）
+    var same = dirs.join(work, "same.leno")
+    files.write(same,
+        "func take(int v): int {\n    return v\n}\n\n"
+        + "main() {\n"
+        + "    print(\"R=\" + take(\"oops\"))\n"
+        + "}\n")
+    ce.expect_error(same, "同文件：模块函数错实参仍然报错（对照）", "参数类型不匹配", 6)
+
+    // ⑥ 跨模块：聚合参数传 string（转正前只判 4 个基本类型 ⇒ 静默）
+    var bad3 = dirs.join(work, "bad3.leno")
+    files.write(bad3,
+        "import \"lib/g.leno\" as a\n\n"
+        + "main() {\n"
+        + "    print(\"R=\" + a.move(\"oops\"))\n"
+        + "}\n")
+    ce.expect_error(bad3, "跨模块：聚合参数错实参必须报错（转正前静默）", "参数类型不匹配", 4)
+
+    // ⑦ 守卫：跨模块的正确聚合实参必须通过（能真跑）
+    var good3 = dirs.join(work, "good3.leno")
+    files.write(good3,
+        "import \"lib/g.leno\" as a\n\n"
+        + "main() {\n"
+        + "    var p = a.make_point(3)\n"
+        + "    print(\"R=\" + a.move(p))\n"
+        + "}\n")
+    ce.expect_ok(good3, "跨模块：正确聚合实参必须通过（防误报）", "R=4")
+
+    dirs.delete(work)
+
+    print("test_cross_module_func_args passed")
+}

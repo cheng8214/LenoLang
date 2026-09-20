@@ -1,0 +1,14 @@
+// 测试：泛型默认类型参数
+print("=== 泛型默认类型 ===")
+
+struct Box[T = int] {
+    T value
+}
+
+var b1 = new Box[int](value=42)
+assert_eq(b1.value, 42)
+
+var b2 = new Box(value=100)
+assert_eq(b2.value, 100)
+
+print("PASS")

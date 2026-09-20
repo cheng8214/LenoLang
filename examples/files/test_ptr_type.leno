@@ -1,0 +1,18 @@
+// 测试 Ptr 类型声明
+import ffi
+
+main()
+{
+    // 使用 Ptr 类型声明
+    Ptr ptr = ffi.malloc(100)
+    print("Allocated pointer: " + ptr)
+    
+    // 写入数据 (使用正确的函数名 write_int)
+    ffi.write_int(ptr, 0, 42)
+    int value = ffi.read_int(ptr, 0)
+    print("Value: " + value)
+    
+    ffi.free(ptr)
+    print("Freed pointer")
+    print("Ptr type test passed!")
+}

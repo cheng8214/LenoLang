@@ -1,0 +1,3 @@
+// 定义 cfunc 并导出，供跨模块 use 导入测试
+export cfunc WriteCb(Ptr data, i32 size, i32 nmemb, Ptr userdata): i32
+export cfunc CompareCb(Ptr a, Ptr b): i32

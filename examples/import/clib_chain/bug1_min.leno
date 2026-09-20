@@ -1,0 +1,11 @@
+// bug1 最小复现
+import "bug1_base.leno" as b
+use b.core_lib
+use b.Holder
+
+main() {
+    print("=== min ===")
+    var h = new Holder(lib = b.loadCore(), tag = "t")
+    core_lib l = h.lib        // 崩溃在这里
+    print("done")
+}

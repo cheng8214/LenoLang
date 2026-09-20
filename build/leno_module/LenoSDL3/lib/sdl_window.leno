@@ -1,0 +1,1517 @@
+// sdl_window.leno — SDL3 窗口封装
+//
+// 提供两种使用模式：
+// 1. run() 回调模式（推荐）：
+//    win.run(onEvent, onRender)
+//       onEvent: func(Event): bool  — 返回 false 退出
+//       onRender: func(Renderer)    — 每帧绘制
+//
+// 2. 手动轮询模式：
+//    var ev = SDL3.createEvent()
+//    while running { while ev.poll() { ... } ren.clear(); ...; ren.present() }
+import ffi
+import "sdl_core.leno" as core
+use core.(sdl3, SDL_Point, Size)
+
+sdl3 _lib = core.lib()
+
+// 全局窗口引用计数，最后一个窗口销毁时才 quit
+var _windowCount = 0
+
+import "sdl_renderer.leno" as renderer
+use renderer.Renderer
+import "sdl_event.leno" as event
+use event.Event
+import "sdl_timer.leno" as timer
+use timer.Timer
+import "sdl_button.leno" as btn
+use btn.Button
+import "sdl_label.leno" as lbl
+use lbl.Label
+import "sdl_edit.leno" as edt
+use edt.Edit
+import "sdl_checkbox.leno" as chk
+use chk.CheckBox
+import "sdl_radio.leno" as rb
+use rb.RadioButton
+import "sdl_toggle.leno" as tgl
+use tgl.Toggle
+import "sdl_slider.leno" as sld
+use sld.Slider
+import "sdl_progress.leno" as prg
+use prg.ProgressBar
+import "sdl_listbox.leno" as lb
+use lb.ListBox
+import "sdl_combobox.leno" as cbb
+use cbb.ComboBox
+import "sdl_panel.leno" as pnl
+use pnl.Panel
+import "sdl_tab.leno" as tab
+use tab.TabControl
+import "sdl_spinbox.leno" as spb
+use spb.SpinBox
+import "sdl_table.leno" as tbl
+use tbl.Table
+import "sdl_layout.leno" as lay
+use lay.(HBox, VBox, AnchorBox)
+import "sdl_menu.leno" as menu
+use menu.MenuBar
+import "sdl_scrollview.leno" as scv
+use scv.ScrollView
+import "sdl_treeview.leno" as tvlib
+use tvlib.TreeView
+import "sdl_tooltip.leno" as tip
+import "sdl_widget.leno" as wgt
+use wgt.Widget
+import "sdl_chart.leno" as cht
+use cht.(BarChart, LineChart, PieChart)
+import "sdl_theme.leno" as theme
+use theme.Theme
+import "sdl_imageview.leno" as ivw
+use ivw.ImageView
+import "sdl_separator.leno" as seplib
+use seplib.Separator
+import "sdl_scrim.leno" as scrlib
+use scrlib.Scrim
+import "sdl_linkbutton.leno" as lnklib
+use lnklib.LinkButton
+import "sdl_spinner.leno" as spnlib
+use spnlib.Spinner
+import "sdl_groupbox.leno" as gbxlib
+use gbxlib.GroupBox
+import "sdl_splitter.leno" as spllib
+use spllib.Splitter
+import "sdl_gridlayout.leno" as grdlib
+use grdlib.GridLayout
+import "sdl_titlebar.leno" as tbarlib
+import "sdl_canvas.leno" as cnv
+use tbarlib.TitleBar
+use cnv.Canvas
+
+// ★ 注册扩展窗口句柄下发回调：布局容器（HBox/VBox/AnchorBox）遇到 Splitter/Panel/TabControl/
+// SpinBox/GroupBox/ScrollView/ComboBox 等后续扩展类型时，通过此回调下发窗口句柄，无需在 sdl_layout 中
+// import 这些类型（避免循环依赖）。此前示例需手动调用 _content._bind_window()，现在自动完成。
+lay.setExtraPassWindow(func(Widget c, Ptr[u8] hwnd) {
+    switch c {
+        case is Panel, ScrollView, TabControl, SpinBox, GroupBox, Splitter, ComboBox { c._bind_window(hwnd); return }
+        case is Edit { c.set_window(hwnd); return }
+        case is Table, TreeView { c.set_window_handle(hwnd); return }
+        case is TitleBar { c.set_window_handle(hwnd); return }
+    }
+})
+
+export alias EventHandler  = func(Event):bool
+export alias RenderCallback = func(Renderer)
+
+// ==================== 快捷键系统 ====================
+// 上层通过 win.addShortcut("Ctrl+C", func() { ... }) 注册快捷键，
+// 框架自动在事件循环中匹配并执行，无需手动判断 scancode/modifier。
+// setShortcutGuard 设置守卫回调：返回 true 时阻止快捷键（如 Edit/Table 编辑中）。
+
+export struct Shortcut {
+    string display    // 显示文本: "Ctrl+C", "F5", "Backspace"
+    int scancode      // 解析后的 scancode
+    int modFlags      // bit 0=Ctrl, 1=Shift, 2=Alt, 3=GUI
+    func():void callback
+    bool enabled = true
+}
+
+// 键名 → scancode 映射表（懒加载）
+Dict _keyNameMap = null
+
+func _ensureKeyNameMap() {
+    if _keyNameMap != null { return }
+    _keyNameMap = {
+        "F1": 58, "F2": 59, "F3": 60, "F4": 61, "F5": 62, "F6": 63,
+        "F7": 64, "F8": 65, "F9": 66, "F10": 67, "F11": 68, "F12": 69,
+        "BACKSPACE": 42, "DELETE": 76, "DEL": 76, "INSERT": 73,
+        "ESCAPE": 41, "ESC": 41, "RETURN": 40, "ENTER": 40, "SPACE": 44, "TAB": 43,
+        "HOME": 74, "END": 77, "PAGEUP": 75, "PAGEUP": 75, "PAGEDOWN": 78,
+        "LEFT": 80, "RIGHT": 79, "UP": 82, "DOWN": 81,
+        "A": 4, "B": 5, "C": 6, "D": 7, "E": 8, "F": 9, "G": 10,
+        "H": 11, "I": 12, "J": 13, "K": 14, "L": 15, "M": 16,
+        "N": 17, "O": 18, "P": 19, "Q": 20, "R": 21, "S": 22,
+        "T": 23, "U": 24, "V": 25, "W": 26, "X": 27, "Y": 28, "Z": 29,
+        "0": 39, "1": 30, "2": 31, "3": 32, "4": 33, "5": 34,
+        "6": 35, "7": 36, "8": 37, "9": 38
+    }
+}
+
+// 解析快捷键字符串: "Ctrl+C" → {scancode, modFlags}
+func _parseShortcut(string key): Dict {
+    _ensureKeyNameMap()
+    int mods = 0  // bit 0=Ctrl, 1=Shift, 2=Alt, 3=GUI
+    string k = key
+    while true {
+        if k.starts_with("Ctrl+") {
+            mods = mods | 1; k = k.slice(5, k.len())
+        } eif k.starts_with("Shift+") {
+            mods = mods | 2; k = k.slice(6, k.len())
+        } eif k.starts_with("Alt+") {
+            mods = mods | 4; k = k.slice(4, k.len())
+        } eif k.starts_with("GUI+") {
+            mods = mods | 8; k = k.slice(4, k.len())
+        } else {
+            break
+        }
+    }
+    int sc = _int(_keyNameMap.get(k.to_upper(), 0))
+    return {scancode: sc, mods: mods}
+}
+
+// 多窗口回调缓存
+Array[int]             _runWids   = []
+Array[Ptr[u8]]            _runHnds   = []
+Array[Renderer]        _runRens   = []
+Array[EventHandler]    _runEvts   = []
+Array[RenderCallback]  _runRends  = []
+Array[Array[Widget]]   _runWidgets = []
+Array[Array[float]]   _runWidgetZ = []     // 各窗口控件的 z 值数组（与 _runWidgets 并行）
+Array[Array[MenuBar]]   _runMenus   = []
+Array[MenuBar]          _runCtxBar  = []   // 各窗口级右击上下文菜单（由 setContextMenu 注册，run 自动接管弹出）
+Array[int]             _runCtxIdx  = []   // 对应的上下文菜单索引
+Array[Widget?]          _runRoots  = []     // 各窗口的根布局控件（setRoot 设置，可空）
+Array[float]           _runRootX = []     // 各窗口根布局 X 偏移（如 MenuBar 高度）
+Array[float]           _runRootY = []
+Array[int]             _runW     = []     // 各窗口逻辑宽（背景填充 + Tooltip 夹紧用）
+Array[int]             _runH     = []     // 各窗口逻辑高
+Array[bool]            _runDialogHidden = []  // 对话框窗口是否创建时隐藏（首次渲染后 show）
+Array[bool]            _runTransparent = []    // 各窗口是否透明（跳过背景填充）
+Array[RenderCallback]  _runOverlays = []    // 各窗口叠加层回调（在所有控件/弹层/Tooltip 之上、present 之前调用）
+Array[Array[Shortcut]]  _runShortcuts = []    // 各窗口快捷键列表
+Array[func():bool]       _runShortcutGuards = [] // 各窗口快捷键守卫回调
+var _runLoopActive = false    // 主循环是否已在运行
+Array[int] _modalStack = []   // 模态窗口栈（支持嵌套）
+
+// ★ 安全网：每帧向根控件下发窗口句柄，确保所有子控件（含动态添加的）都能拿到 _hwnd。
+//   与 Window._passWindowHandle 逻辑一致，但作为模块级函数供事件循环调用（可处理多窗口）。
+func _refreshWindowHandle(Widget w, Ptr[u8] hwnd, int ww, int hh) {
+    switch w {
+        case is Splitter { w._bind_window_size(hwnd, ww, hh); return }
+        case is Panel, ScrollView, HBox, VBox, AnchorBox, TabControl, SpinBox, GroupBox, GridLayout, ComboBox { w._bind_window(hwnd); return }
+        case is Edit { w.set_window(hwnd); return }
+        case is TreeView { w.set_window_handle(hwnd); w.set_window(ww, hh); return }
+        case is Table { w.set_window_handle(hwnd); w.set_window_size(ww, hh); return }
+        case is TitleBar { w.set_window_handle(hwnd); return }
+    }
+}
+
+// 模块级快捷键尝试匹配（事件循环中调用，必须在 _runShortcuts/_runShortcutGuards 定义之后）
+func _tryShortcut(int winIdx, Event ev): bool {
+    if winIdx >= _runShortcuts.len() { return false }
+    var shortcuts = _runShortcuts[winIdx]
+    if shortcuts.len() == 0 { return false }
+    var guard = _runShortcutGuards[winIdx]
+    if guard != null {
+        if guard() { return false }
+    }
+    int sc = ev.scancode()
+    int mod = ev.keyMod()
+    bool ctrl = (mod & 64) != 0 or (mod & 128) != 0
+    bool shift = (mod & 1) != 0 or (mod & 2) != 0
+    bool alt = (mod & 4) != 0 or (mod & 8) != 0
+    bool gui = (mod & 16) != 0 or (mod & 32) != 0
+    for shortcuts.len() to si {
+        Shortcut s = shortcuts[si]
+        if not s.enabled { continue }
+        if s.scancode != sc { continue }
+        int mf = s.modFlags
+        if (mf & 1) != 0 and not ctrl { continue }
+        if (mf & 2) != 0 and not shift { continue }
+        if (mf & 4) != 0 and not alt { continue }
+        if (mf & 8) != 0 and not gui { continue }
+        if s.callback != null { s.callback() }
+        return true
+    }
+    return false
+}
+
+// 查找控件列表中 TitleBar 的高度（用于 MenuBar 偏移）
+func _findTitleBarHeight(Array[Widget] widgets): float {
+    if widgets == null { return 0.0 }
+    for widgets.len() to i {
+        var w = widgets[i]
+        if w is TitleBar { TitleBar tb = w; return tb.get_h() }
+    }
+    return 0.0
+}
+
+// 推入模态窗口（runModal 内部调用）
+export func pushModal(int w) { _modalStack.add(w) }
+// 弹出栈顶：仅当栈顶匹配时才弹出（防止重复弹/弹错）
+export func popModalIfTop(int w) {
+    if _modalStack.len() > 0 and _modalStack[_modalStack.len() - 1] == w { _modalStack.pop() }
+}
+// 当前是否为模态状态（栈非空即模态）
+func _isModal(): bool { return _modalStack.len() > 0 }
+func _modalTop(): int {
+    if _modalStack.len() > 0 { return _modalStack[_modalStack.len() - 1] }
+    return -1
+}
+
+// 获取模态栈中指定窗口下方的窗口 ID（即打开该模态窗口的父窗口）
+func _modalParent(int wid): int {
+    for _modalStack.len() to i {
+        if _modalStack[i] == wid {
+            if i > 0 { return _modalStack[i - 1] }
+            return -1
+        }
+    }
+    return -1
+}
+
+// 按 wid 提升窗口到前台（SDL_RaiseWindow）
+export func raiseWindow(int wid) {
+    for _runWids.len() to i {
+        if _runWids[i] == wid { _lib.SDL_RaiseWindow(_runHnds[i]); return }
+    }
+}
+
+// 兼容旧 API（已废弃，仅 test_modal_dialog.leno 等旧示例使用）
+export func setModalWid(int w) {
+    if w < 0 { _modalStack = [] }
+    else { _modalStack.add(w) }
+}
+export func getModalWid(): int { return _modalTop() }
+
+// 仅为注册（不启动循环），给 Dialog 等外部 struct 用
+export func registerRun(Ptr[u8] hdl, int wid, Renderer ren, any onEvent, any onRender) {
+    _runWids.add(wid)
+    _runHnds.add(hdl)
+    _runRens.add(ren)
+    _runEvts.add(onEvent)
+    _runRends.add(onRender)
+    _runOverlays.add(null)   // 占位（Dialog 无叠加层）
+}
+
+
+export struct Window {
+    Ptr[u8] handle    // SDL_Window 指针
+    bool ok       // 窗口是否创建成功
+    int _w; int _h; float _aaScale
+    int _maxFPS = 30        // 最大渲染帧率（0=不限制）
+    Array[Widget] _widgets = []
+    Array[float]  _widgetZ = []   // 各控件的 z 值（与 _widgets 并行），渲染时按 z 升序排列
+    Array[MenuBar]  _menus  = []   // 菜单栏集合，第二遍画下拉层（盖在最上层）
+    MenuBar? _ctxBar              // 窗口级右击上下文菜单（setContextMenu 注册，run 自动接管弹出）
+    int    _ctxIdx = -1             // 对应的上下文菜单索引（-1 表示未注册）
+    Widget? _root                     // 根布局控件（setRoot/setRootAt 设置），缩放时自动跟随
+    float _rootX = 0.0, _rootY = 0.0  // 根布局偏移（如 MenuBar 高度偏移）
+    bool _dialogHidden = false        // 对话框窗口：创建时隐藏，首帧渲染完后 show（消除闪现）
+    bool _transparent = false          // 透明窗口（跳过背景填充）
+    RenderCallback? _overlay = null      // 叠加层渲染回调（setOverlay 设置，在所有控件/弹层之上绘制）
+    Array[Shortcut] _shortcuts = []    // 本窗口注册的快捷键
+    func():bool _shortcutGuard = null  // 快捷键守卫：返回 true 时阻止快捷键
+
+    // 设置叠加层渲染回调（在所有控件和弹层渲染之后、present 之前调用）
+    // 用途：拖拽浮动框、自定义全局浮层等需要绘制在所有控件之上的场景
+    func setOverlay(RenderCallback cb) { _overlay = cb }
+
+    // ==================== 快捷键注册 ====================
+    // 注册快捷键，key 格式: "F5", "Backspace", "Ctrl+C", "Ctrl+Shift+S"
+    // 返回 Shortcut 对象，可通过 .enabled = false 临时禁用
+    func addShortcut(string key, func():void cb): Shortcut {
+        var parsed = _parseShortcut(key)
+        Shortcut s = new Shortcut()
+        s.display = key
+        s.scancode = parsed.get("scancode", 0)
+        s.modFlags = parsed.get("mods", 0)
+        s.callback = cb
+        _shortcuts.add(s)
+        return s
+    }
+
+    // 移除已注册的快捷键
+    func removeShortcut(Shortcut s) {
+        for _shortcuts.len() to i {
+            if _shortcuts[i] == s { _shortcuts.remove(i); return }
+        }
+    }
+
+    // 设置守卫回调：返回 true 时阻止所有快捷键（如 Edit/Table 编辑中）
+    func setShortcutGuard(func():bool guard) { _shortcutGuard = guard }
+
+    // opts 支持字段：title(string), w(int), h(int), flags(int)
+    func init(Dict opts): bool {
+        if not core.initVideo() {
+            print($"[LenoSDL3] init failed: {core.getError()}")
+            return false
+        }
+        string title = opts.get("title", "LenoSDL3")
+        int w        = opts.get("w", 800)
+        int h        = opts.get("h", 600)
+        int flags    = opts.get("flags", 0)
+        _w = w; _h = h
+        // 检测透明窗口标志
+        _transparent = (flags & 0x0000000040000000) != 0
+        // 超采样抗锯齿：默认关闭；aa:true / aa:2 / aa:1.5 开启
+        _aaScale = 0.0
+        var aaOpt = opts.get("aa", 0.0)
+        if aaOpt is bool { if aaOpt { _aaScale = 2.0 } }
+        else { float a = aaOpt; if a > 0.0 { _aaScale = a } }
+        handle = _lib.SDL_CreateWindow(title, w, h, flags)
+        ok = handle != null
+        if ok { _windowCount = _windowCount + 1 }
+        return ok
+    }
+
+    // 获取窗口 ID
+    func getID(): int {
+        return _lib.SDL_GetWindowID(handle)
+    }
+
+    func getHandle(): Ptr[u8] { return handle }
+
+    // 设置窗口标题
+    func setTitle(string title): bool {
+        return _lib.SDL_SetWindowTitle(handle, title)
+    }
+
+    // 设置窗口大小
+    func setSize(int w, int h): bool {
+        return _lib.SDL_SetWindowSize(handle, w, h)
+    }
+
+    // 获取窗口真实像素尺寸（HiDPI 时大于逻辑尺寸）
+    func getSizeInPixels(): Size {
+        SDL_Point pt = SDL_Point.malloc()
+        _lib.SDL_GetWindowSizeInPixels(handle, &pt.x, &pt.y)
+        Size d = {w: pt.x, h: pt.y}
+        pt.free(); return d
+    }
+
+    // 获取窗口逻辑尺寸（绘图坐标系使用的尺寸，不受 HiDPI 放大影响）
+    func getSize(): Size {
+        SDL_Point pt = SDL_Point.malloc()
+        _lib.SDL_GetWindowSize(handle, &pt.x, &pt.y)
+        Size d = {w: pt.x, h: pt.y}
+        pt.free(); return d
+    }
+
+    // 设置窗口位置
+    func setPosition(int x, int y): bool {
+        return _lib.SDL_SetWindowPosition(handle, x, y)
+    }
+
+    // 设置窗口是否可调整大小
+    func setResizable(bool v) {
+        if ok { _lib.SDL_SetWindowResizable(handle, v) }
+    }
+
+    // 设置窗口是否有系统标题栏边框（false = 无边框，自绘标题栏用）
+    func setBordered(bool v) {
+        if ok { _lib.SDL_SetWindowBordered(handle, v) }
+    }
+
+    // ==================== 运行时主题切换 ====================
+    // 遍历所有控件（含根布局和 MenuBar），对实现 Themeable 的调用 applyTheme
+    // 无需关闭/重建窗口，立即生效
+    func applyThemeAll(Theme t) {
+        // 1. 更新全局主题单例
+        theme.setTheme(t)
+        // 2. 遍历 _widgets（覆盖层：MenuBar/TitleBar 等）
+        for _widgets.len() to i {
+            _applyThemeWidget(_widgets[i], t)
+        }
+        // 3. 遍历根布局控件（背景层：VBox/HBox 内的 Panel/Table/TreeView 等）
+        if _root != null { _applyThemeWidget(_root, t) }
+        // 4. 请求重绘
+        core.requestRedraw()
+    }
+
+    // 对单个控件及其子控件应用主题（递归容器）
+    func _applyThemeWidget(Widget w, Theme t) {
+        switch w {
+            case is Button { w.applyTheme(t) }
+            case is Label { w.applyTheme(t) }
+            case is Edit { w.applyTheme(t) }
+            case is Table { w.applyTheme(t) }
+            case is TreeView { w.applyTheme(t) }
+            case is ComboBox { w.applyTheme(t) }
+            case is MenuBar { w.applyTheme(t) }
+            case is TitleBar { w.applyTheme(t) }
+            case is Splitter {
+                w.applyTheme(t)
+                // 递归两侧子控件（_first / _second 为 Widget?）
+                var f = w._first
+                if f is Widget { _applyThemeWidget(f, t) }
+                var s = w._second
+                if s is Widget { _applyThemeWidget(s, t) }
+            }
+            case is Panel {
+                w.applyTheme(t)
+                // ★ 递归 _layoutChild（setLayoutPadded 设置的布局子控件，如 VBox）
+                var lc = w._layoutChild
+                if lc is Widget { _applyThemeWidget(lc, t) }
+                // 递归 children（通过 add() 添加的子控件）
+                for w.children.len() to ci { _applyThemeWidget(w.children[ci], t) }
+            }
+            case is GroupBox {
+                w.applyTheme(t)
+                // ★ 递归 _layoutChild（setLayoutPadded 设置的布局子控件，如 VBox）
+                var glc = w._layoutChild
+                if glc is Widget { _applyThemeWidget(glc, t) }
+                // 递归 children（通过 add() 添加的子控件）
+                for w.children.len() to ci { _applyThemeWidget(w.children[ci], t) }
+            }
+            case is HBox {
+                for w._c.len() to ci { _applyThemeWidget(w._c[ci], t) }
+            }
+            case is VBox {
+                for w._c.len() to ci { _applyThemeWidget(w._c[ci], t) }
+            }
+            case is GridLayout {
+                for w._c.len() to ci { _applyThemeWidget(w._c[ci], t) }
+            }
+        }
+    }
+
+    // 设置最大渲染帧率（默认 30 FPS；0 = 不限制）
+    func setMaxFPS(int fps) { _maxFPS = fps }
+
+    // 设置窗口置顶
+    func setAlwaysOnTop(bool v): bool {
+        return _lib.SDL_SetWindowAlwaysOnTop(handle, v)
+    }
+
+    // 设置窗口透明度（0.0 全透明 ~ 1.0 不透明）
+    func setOpacity(float v): bool {
+        return _lib.SDL_SetWindowOpacity(handle, v)
+    }
+
+    // 鼠标锁定 & 相对模式（FPS 游戏用）
+    func setMouseGrab(bool v): bool              { return _lib.SDL_SetWindowMouseGrab(handle, v) }
+    func getMouseGrab(): bool                    { return _lib.SDL_GetWindowMouseGrab(handle) }
+    func setRelativeMouse(bool v): bool          { return _lib.SDL_SetWindowRelativeMouseMode(handle, v) }
+    func getRelativeMouse(): bool                { return _lib.SDL_GetWindowRelativeMouseMode(handle) }
+
+    // 限制窗口最小尺寸
+    func setMinSize(int w, int h): bool          { return _lib.SDL_SetWindowMinimumSize(handle, w, h) }
+
+    // 窗口闪烁（FLASH_BRIEFLY=短暂, FLASH_UNTIL_FOCUSED=直到获得焦点, FLASH_CANCEL=取消）
+    func flash(int op): bool                     { return _lib.SDL_FlashWindow(handle, op) }
+
+    // 设置窗口图标（surface 来自 SDL3.loadImage 等）
+    func setIcon(Ptr[u8] icon): bool { return _lib.SDL_SetWindowIcon(handle, icon) }
+
+    // 全屏切换
+    func setFullscreen(bool v): bool { return _lib.SDL_SetWindowFullscreen(handle, v) }
+
+    // 前置窗口并获取焦点
+    func raise(): bool       { return _lib.SDL_RaiseWindow(handle) }
+
+    // 窗口状态控制
+    func show(): bool        { return _lib.SDL_ShowWindow(handle) }
+    func hide(): bool        { return _lib.SDL_HideWindow(handle) }
+    func maximize(): bool    { return _lib.SDL_MaximizeWindow(handle) }
+    func minimize(): bool    { return _lib.SDL_MinimizeWindow(handle) }
+    func restore(): bool     { return _lib.SDL_RestoreWindow(handle) }
+
+    // 销毁窗口（同时释放所有控件资源：字体等，避免窗口关闭后字体泄漏）
+    func destroy() {
+        if ok {
+            // 根销毁：先释放所有控件资源，沿父子树递归清理
+            for _widgets to w { w.dispose() }
+            _root?.dispose()
+            _lib.SDL_DestroyWindow(handle); handle = null; ok = false; _windowCount = _windowCount - 1
+        }
+    }
+
+    // 手动创建渲染器（供轮询模式使用）
+    func createRenderer(): Renderer {
+        return renderer.createRenderer(handle)
+    }
+
+    // 添加定时器（毫秒），用法: Timer t = win.addTimer(200, func() { ... })
+    func addTimer(int ms, func():void cb): Timer {
+        Timer t = new Timer(); t.set(ms, cb); timer.registerTimer(t); return t
+    }
+
+    // 添加一次性定时器
+    func addTimerOnce(int ms, func():void cb): Timer {
+        Timer t = new Timer(); t.setOnce(ms, cb); timer.registerTimer(t); return t
+    }
+
+    // 添加按钮，opts: {text, x, y, w, h, r, g, b}
+    // 返回 Button，可 .on_click(func() { ... })
+    func addButton(Dict opts): Button {
+        Button b = btn.createButton(opts)
+        _widgets.add(b as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
+        return b
+    }
+
+    // 添加标签，opts: {text, x, y, font_size, rgb, align}
+    func addLabel(Dict opts): Label {
+        Label l = lbl.createLabel(opts)
+        _widgets.add(l as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
+        return l
+    }
+
+    // 添加文本编辑框，opts: {text, x, y, w, h, placeholder, password, readonly}
+    func addEdit(Dict opts): Edit {
+        Edit ed = edt.createEdit(opts)
+        ed.set_window(handle)
+        ed.set_window_size(_w, _h)
+        if ed.is_context_menu_enabled() { menu.registerContextMenu(ed.get_context_menu()) }   // 上下文菜单登记，由窗口第二遍按窗口隔离绘制
+        _widgets.add(ed as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
+        return ed
+    }
+
+    // 通用控件注册：任何 impl Widget 的控件（含第三方自定义控件）都能被 run() 自动管理
+    // z 值默认 0.0；如需自定义层级用 addZ(w, z) 或 setWidgetZ(w, z)
+    func add(Widget w): Widget {
+        _widgets.add(w)
+        _widgetZ.add(0.0)
+        // 绑定窗口句柄：容器向下传递，Edit/Table/TreeView/TitleBar 直接设置
+        switch w {
+            case is Panel, ScrollView, HBox, VBox, AnchorBox, TabControl, SpinBox, GroupBox, Splitter {
+                w._bind_window(handle); return w
+            }
+            case is Edit {
+                w.set_window(handle); return w
+            }
+            case is TreeView {
+                w.set_window_handle(handle)
+                w.set_window(_w, _h); return w
+            }
+            case is Table {
+                w.set_window_handle(handle)
+                w.set_window_size(_w, _h); return w
+            }
+            case is TitleBar {
+                w.set_window_handle(handle); return w
+            }
+            case is Canvas {
+                w.set_window_handle(handle); return w
+            }
+        }
+        return w
+    }
+
+    // 带层级的控件注册：z 值大的控件画在 z 值小的控件之上
+    func addZ(Widget w, float z): Widget {
+        _widgets.add(w)
+        _widgetZ.add(z)
+        switch w {
+            case is Panel, ScrollView, HBox, VBox, AnchorBox, TabControl, SpinBox, GroupBox, Splitter {
+                w._bind_window(handle); return w
+            }
+            case is Edit {
+                w.set_window(handle); return w
+            }
+            case is TreeView {
+                w.set_window_handle(handle)
+                w.set_window(_w, _h); return w
+            }
+            case is Table {
+                w.set_window_handle(handle)
+                w.set_window_size(_w, _h); return w
+            }
+            case is TitleBar {
+                w.set_window_handle(handle); return w
+            }
+            case is Canvas {
+                w.set_window_handle(handle); return w
+            }
+        }
+        return w
+    }
+
+    // 设置已有控件的 z 值（用于运行时动态调整层级）
+    func setWidgetZ(Widget w, float z) {
+        for _widgets.len() to i {
+            if _widgets[i] == w { _widgetZ[i] = z; return }
+        }
+    }
+
+    // 设置根布局控件：窗口缩放时自动把根控件尺寸设为窗口大小并驱动内部布局重排
+    // ★ 同时下发窗口句柄（等价于 win.add 的 _bind_window），确保根控件内部的 Edit/TreeView/ComboBox 等能正常工作
+    func setRoot(Widget root) {
+        _root = root
+        _rootX = 0.0; _rootY = 0.0
+        root.set_pos(0, 0)
+        root.set_size(_w, _h)
+        _passWindowHandle(root)
+    }
+
+    // 设置根布局控件（带偏移）：窗口缩放时自动把根控件位置/尺寸设为 (x,y,winW-x,winH-y)
+    // 典型场景：顶部 MenuBar 占 h=30，根布局从 (0,30) 开始填满剩余空间
+    func setRootAt(Widget root, float ox, float oy) {
+        _root = root
+        _rootX = ox; _rootY = oy
+        root.set_pos(ox, oy)
+        root.set_size(_float(_w) - ox, _float(_h) - oy)
+        _passWindowHandle(root)
+    }
+
+    // 向控件下发窗口句柄（与 add() 中的 switch 逻辑一致）
+    // 容器类型递归向下传递；Edit/TreeView/Table 直接设置
+    func _passWindowHandle(Widget w) {
+        switch w {
+            case is Splitter {
+                // ★ Splitter 需要传递窗口尺寸，以便向下传播给内嵌的 Table/TreeView
+                w._bind_window_size(handle, _w, _h); return
+            }
+            case is Panel, ScrollView, HBox, VBox, AnchorBox, TabControl, SpinBox, GroupBox {
+                w._bind_window(handle); return
+            }
+            case is Edit {
+                w.set_window(handle); return
+            }
+            case is TreeView {
+                w.set_window_handle(handle)
+                w.set_window(_w, _h); return
+            }
+            case is Table {
+                w.set_window_handle(handle)
+                w.set_window_size(_w, _h); return
+            }
+            case is TitleBar {
+                w.set_window_handle(handle); return
+            }
+        }
+    }
+
+    // 添加复选框，opts: {text, x, y, box, checked, on_change}
+    // 返回 CheckBox，可 .on_change(func(bool){...}) / .set_checked(bool) / .is_checked()
+    func addCheckBox(Dict opts): CheckBox {
+        CheckBox c = chk.createCheckBox(opts)
+        _widgets.add(c as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
+        return c
+    }
+
+    // 添加单选按钮，opts: {text, x, y, group, checked, on_change}
+    // 同一 group 内互斥（由控件内部注册表实现）
+    func addRadioButton(Dict opts): RadioButton {
+        RadioButton r = rb.createRadioButton(opts)
+        r.setWindowHandle(handle)   // 让同组互斥按窗口隔离（避免跨窗口同组互相取消）
+        _widgets.add(r as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
+        return r
+    }
+
+    // 添加开关，opts: {text, x, y, w, h, on, on_change}
+    func addToggle(Dict opts): Toggle {
+        Toggle t = tgl.createToggle(opts)
+        _widgets.add(t as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
+        return t
+    }
+
+    // 添加滑块，opts: {x, y, w, h, min, max, value, step, vertical, on_change}
+    // 返回 Slider，可 .set_value(float) / .get_value() / .on_change(func(float){...})
+    func addSlider(Dict opts): Slider {
+        Slider s = sld.createSlider(opts)
+        _widgets.add(s as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
+        return s
+    }
+
+    // 添加进度条，opts: {x, y, w, h, min, max, value, clickable, show_text, on_change}
+    func addProgressBar(Dict opts): ProgressBar {
+        ProgressBar p = prg.createProgressBar(opts)
+        _widgets.add(p as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
+        return p
+    }
+
+    // 添加列表框，opts: {x, y, w, h, items, item_h, mode, selected, on_change}
+    // mode: 0=单选, 1=多选；on_change 回调收到选中的索引数组 Array[int]
+    func addListBox(Dict opts): ListBox {
+        ListBox lb2 = lb.createListBox(opts)
+        _widgets.add(lb2 as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
+        return lb2
+    }
+
+    // 添加下拉框，opts: {x, y, w, h, items, item_h, popup_h, placeholder, selected, on_change}
+    // on_change 回调收到选中索引 int
+    func addComboBox(Dict opts): ComboBox {
+        ComboBox cb = cbb.createComboBox(opts)
+        cb.setWindowHandle(handle)   // 让下拉层按窗口隔离绘制（工厂已登记到 registerComboBox）
+        _widgets.add(cb as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
+        return cb
+    }
+
+    // 添加菜单栏，opts: {x, y, w, h, menus:[{title, items:[...]}], item_h, font_size, ...}
+    // 下拉层自动盖在最上层（renderPopup 第二遍绘制 + 弹层捕获区）
+    func addMenuBar(Dict opts): MenuBar {
+        MenuBar m = menu.createMenuBar(opts)
+        m.setWindowHandle(handle)   // 让活动菜单按窗口隔离（避免跨窗口互相抢互斥）
+        _widgets.add(m as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
+        _menus.add(m)
+        m.setWindowSize(_w, _h)   // 供上下文菜单弹出时按窗口边界夹紧
+        return m
+    }
+
+    // 注册窗口级右击上下文菜单（只需调用一次）。之后 run 会在每帧事件处理中统一接管右击：
+    // 若命中控件自行弹出了自身菜单（占用弹层），则不弹窗口菜单；否则才弹本菜单。
+    // 这样「控件菜单优先、窗口菜单兜底」由底层统一保证，示例无需在 onEvent 里处理右键。
+    func setContextMenu(MenuBar bar, int ctxIdx) { bar.setWindowHandle(handle); _ctxBar = bar; _ctxIdx = ctxIdx }
+
+    // 添加面板容器，opts: {x, y, w, h, bg, border, radius, border_alpha, clip}
+    // 用 panel.add(win.addButton({...})) 把子控件挂到面板（子控件用窗口绝对坐标）
+    func addPanel(Dict opts): Panel {
+        Panel p = pnl.createPanel(opts)
+        _widgets.add(p as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
+        p._bind_window(handle)
+        return p
+    }
+
+    // 添加选项卡容器，opts: {x, y, w, h, tabs:[...], active, tab_h, font_size, ...}
+    // 用法：tab.addToPage(0, SDL3.createButton({...})) 把子控件挂到指定页（子控件用窗口绝对坐标，落在内容区）
+    func addTabControl(Dict opts): TabControl {
+        TabControl t = tab.createTabControl(opts)
+        _widgets.add(t as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
+        t._bind_window(handle)
+        return t
+    }
+
+    // 添加数值微调框，opts: {x, y, w, h, min, max, value, step, int, decimals, ...}
+    // 返回 SpinBox，可 .on_change(func(float){...}) / .set_value(float) / .get_value() / .set_range(lo,hi)
+    func addSpinBox(Dict opts): SpinBox {
+        SpinBox s = spb.createSpinBox(opts)
+        _widgets.add(s as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
+        s._bind_window(handle)
+        return s
+    }
+
+    // 添加表格，opts: {x, y, w, h, headers, col_widths, aligns, rows, row_h, header_h, sortable, zebra, ...}
+    // 返回 Table，可 .on_select(func(int){...}) / .on_cell(func(int,int){...}) / .set_rows(...) / .add_row(...)
+    func addTable(Dict opts): Table {
+        Table t = tbl.createTable(opts)
+        t.set_window_size(_w, _h)
+        t.set_window_handle(handle)
+        _widgets.add(t as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
+        if t.is_context_menu_enabled() { menu.registerContextMenu(t.get_context_menu()) }   // 上下文菜单登记，由窗口第二遍按窗口隔离绘制
+        return t
+    }
+
+    // 添加画布，opts: {x, y, w, h, bg_color, border, border_color, pad, cursor, ...}
+    // 返回 Canvas，可 .on_draw(func(Renderer, float, float){...}) / .on_click(func(float, float, int){...}) 等
+    func addCanvas(Dict opts): Canvas {
+        Canvas c = cnv.createCanvas(opts)
+        _widgets.add(c as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
+        c.set_window_handle(handle)
+        return c
+    }
+
+    // 添加水平布局容器，opts: {x, y, w, h, spacing, padX, padY}
+    // hb.add(win.addButton({...}), {expand:true}) 占满剩余宽度；{align:1} 交叉轴居中
+    func addHBox(Dict opts): HBox {
+        HBox b = lay.createHBox(opts)
+        _widgets.add(b as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
+        b._bind_window(handle)
+        return b
+    }
+
+    // 添加垂直布局容器，opts: {x, y, w, h, spacing, padX, padY}
+    func addVBox(Dict opts): VBox {
+        VBox b = lay.createVBox(opts)
+        _widgets.add(b as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
+        b._bind_window(handle)
+        return b
+    }
+
+    // 添加锚点布局容器，opts: {x, y, w, h, padX, padY}
+    // ab.add(win.addButton({...}), {left:10, top:10}) 钉在左上；{centerX:true,centerY:true} 居中
+    func addAnchorBox(Dict opts): AnchorBox {
+        AnchorBox b = lay.createAnchorBox(opts)
+        _widgets.add(b as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
+        b._bind_window(handle)
+        return b
+    }
+
+    // 添加网格布局容器，opts: {x, y, w, h, cols, spacing, padX, padY, col_weights}
+    // grid.add(win.addButton({...}), {align: 1})  align: 0=左上 1=居中 2=右下 3=撑满
+    func addGridLayout(Dict opts): GridLayout {
+        GridLayout b = grdlib.createGridLayout(opts)
+        _widgets.add(b as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
+        b._bind_window(handle)
+        return b
+    }
+
+    // 添加通用滚动容器，opts: {x, y, w, h, content_w, content_h, bg, border, radius}
+    // 用法：var box = SDL3.createVBox({...}); sv.set_content(box)；内容控件用 createXxx 创建（不要 win.add）
+    // content_w/h 不传则自动取内容自然尺寸；悬停滚轮滚动，可拖右侧/底部滚动条
+    func addScrollView(Dict opts): ScrollView {
+        ScrollView s = scv.createScrollView(opts)
+        _widgets.add(s as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
+        s._bind_window(handle)
+        return s
+    }
+
+    // 添加图片视图，opts: {x, y, w, h, image_path, image_mode, radius, border, alpha, tint, cursor, on_click, ...}
+    // image_mode: 0=aspectFit(默认) 1=stretch 2=aspectFill
+    // 返回 ImageView，可 .set_image(path) / .set_mode(mode) / .on_click(func(){...}) 等
+    func addImageView(Dict opts): ImageView {
+        ImageView iv = ivw.createImageView(opts)
+        _widgets.add(iv as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
+        return iv
+    }
+
+    // 添加分隔线，opts: {x, y, w, h, dir, thickness, rgb, alpha, margin}
+    // dir: 0=水平(默认) 1=垂直；布局容器中常用作视觉分隔
+    func addSeparator(Dict opts): Separator {
+        Separator s = seplib.createSeparator(opts)
+        _widgets.add(s as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
+        return s
+    }
+
+    // 添加模态遮罩（Scrim），默认 z=900（画在普通控件之上、弹层之下）
+    // 用法：scrim = win.addScrim({}); scrim.show() / scrim.hide()
+    func addScrim(Dict opts): Scrim {
+        float zv = opts.get("z", 900.0)
+        Scrim s = scrlib.createScrim(opts)
+        s.set_pos(0, 0)
+        s.set_size(_float(_w), _float(_h))
+        _widgets.add(s as Widget)
+        _widgetZ.add(zv)
+        return s
+    }
+
+    // 添加超链接按钮，opts: {text, x, y, url, font_size, rgb, hover_rgb, underline, visited, on_click, ...}
+    // 返回 LinkButton，可 .on_click(func(){...}) / .set_visited(bool) / .set_text(t) 等
+    func addLinkButton(Dict opts): LinkButton {
+        LinkButton lb = lnklib.createLinkButton(opts)
+        _widgets.add(lb as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
+        return lb
+    }
+
+    // 添加加载旋转动画，opts: {x, y, size, thickness, rgb, speed, running, full_track, ...}
+    // 返回 Spinner，可 .start() / .stop() / .is_running() / .set_color(r,g,b) 等
+    func addSpinner(Dict opts): Spinner {
+        Spinner s = spnlib.createSpinner(opts)
+        _widgets.add(s as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
+        return s
+    }
+
+    // 添加带标题的分组容器，opts: {x, y, w, h, title, bg_rgb, border_rgb, title_rgb, radius, ...}
+    // 用 gb.add(win.addButton({x, y, ...})) 把子控件挂到分组（子控件用窗口绝对坐标）
+    func addGroupBox(Dict opts): GroupBox {
+        GroupBox gb = gbxlib.createGroupBox(opts)
+        _widgets.add(gb as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
+        gb._bind_window(handle)
+        return gb
+    }
+
+    // 添加树视图，opts: {x, y, w, h, items, row_h, indent, mode, show_check, context_menu, on_change, ...}
+    // 返回 TreeView，可 .on_change(func(Array[int]){...}) / .on_context(...) / .on_toggle(...) /
+    //   .expand/.collapse_all/.get_selected_id/.get_node/.add_child/.remove_node 等
+    func addTreeView(Dict opts): TreeView {
+        TreeView t = tvlib.createTreeView(opts)
+        t.set_window(_w, _h)
+        t.set_window_handle(handle)
+        if t.is_context_menu_enabled() { menu.registerContextMenu(t.get_context_menu()) }   // 右键上下文菜单登记，由窗口第二遍按窗口隔离绘制
+        _widgets.add(t as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
+        return t
+    }
+
+    // 添加柱状图，opts: {x, y, w, h, title, font_size, show_values, show_grid}
+    // 返回 BarChart，可 .set_data(Array[string] cats, Array[float] vals)
+    func addBarChart(Dict opts): BarChart {
+        BarChart c = cht.createBarChart(opts)
+        _widgets.add(c as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
+        return c
+    }
+
+    // 添加折线图，opts: {x, y, w, h, title, font_size, show_grid, show_points}
+    // 返回 LineChart，可 .set_data(Array[string] xlabels, Array[Array[float]] series, Array[string] names)
+    func addLineChart(Dict opts): LineChart {
+        LineChart c = cht.createLineChart(opts)
+        _widgets.add(c as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
+        return c
+    }
+
+    // 添加饼图，opts: {x, y, w, h, title, font_size}
+    // 返回 PieChart，可 .set_data(Array[string] labels, Array[float] values)
+    func addPieChart(Dict opts): PieChart {
+        PieChart c = cht.createPieChart(opts)
+        _widgets.add(c as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
+        return c
+    }
+
+    // 仅注册窗口（不启动主循环），用于多窗口场景：先逐个 registerOnly，最后 run() 启动循环
+    func registerOnly(EventHandler onEvent, RenderCallback onRender) {
+        core.startTextInput(handle)      // 启用文本输入（供 Edit 控件使用）
+        // ★ 阻塞等待 OS 完成异步窗口状态变更（如创建时带 MAXIMIZED 标志的窗口）。
+        //   SDL3 官方 API：SDL_SyncWindow 阻塞直到所有 pending 的窗口状态变更被 OS 应用。
+        //   不调用此函数时，Windows 上最大化是异步的——getSize() 可能返回请求尺寸（1000x680）
+        //   而非最大化后的实际尺寸（如 1920x1080），导致 SSAA 纹理创建为小尺寸→迷你版闪现。
+        _lib.SDL_SyncWindow(handle)
+        // ★ 获取窗口实际尺寸（系统可能已最大化/恢复到不同尺寸），
+        //   用实际值初始化 SSAA 纹理和根布局，避免首帧渲染到旧尺寸纹理再贴到大窗口左上角
+        Size actualSz = getSize()
+        _w = actualSz.w; _h = actualSz.h
+        Renderer ren = renderer.createRenderer(handle)
+        if _aaScale > 0.0 { ren.enableSSAA(actualSz.w, actualSz.h, _aaScale) }
+        // ★ 同步根布局到实际窗口尺寸（setRootAt 在 run() 前调用，此时窗口可能已被系统改变尺寸）
+        if _root != null {
+            _root.set_pos(_rootX, _rootY)
+            _root.set_size(_float(actualSz.w) - _rootX, _float(actualSz.h) - _rootY)
+        }
+        // ★ 同步 MenuBar 到实际窗口尺寸（系统可能已最大化）
+        float _tbH0 = _findTitleBarHeight(_widgets)
+        for _menus.len() to mi {
+            MenuBar mb = _menus[mi]
+            mb.set_pos(0, _tbH0)
+            mb.set_size(_float(actualSz.w), mb.get_h())
+            mb.setWindowSize(actualSz.w, actualSz.h)
+        }
+        // ★ 同步 Table/TreeView 内嵌上下文菜单的窗口尺寸（供右键菜单边界夹紧）
+        for _widgets.len() to wi {
+            var widget = _widgets[wi]
+            if widget is Table {
+                Table t = widget; t.set_window_size(actualSz.w, actualSz.h)
+            } else if widget is TreeView {
+                TreeView tv = widget; tv.set_window(actualSz.w, actualSz.h)
+            }
+        }
+        _runWids.add(getID())
+        _runHnds.add(handle)
+        _runRens.add(ren)
+        _runEvts.add(onEvent)
+        _runRends.add(onRender)
+        _runWidgets.add(_widgets)    // 统一关联控件列表
+        _runWidgetZ.add(_widgetZ)    // 统一关联 z 值列表
+        _runMenus.add(_menus)        // 菜单栏集合（用于第二遍 overlay 绘制）
+        MenuBar? cb = _ctxBar
+        if cb is MenuBar { _runCtxBar.add(cb); _runCtxIdx.add(_ctxIdx) }
+        else { _runCtxBar.add(menu.createMenuBar({})); _runCtxIdx.add(-1) }   // 占位（idx=-1 表示未注册，run 中不弹）
+        _runRoots.add(_root)         // 根布局控件
+        _runRootX.add(_rootX)         // 根布局偏移
+        _runRootY.add(_rootY)
+        _runW.add(actualSz.w); _runH.add(actualSz.h)
+        _runDialogHidden.add(_dialogHidden)   // 对话框窗口：首帧渲染后自动 show
+        _runTransparent.add(_transparent)    // 透明窗口标志
+        _runOverlays.add(_overlay)           // 叠加层回调（可空）
+        _runShortcuts.add(_shortcuts)          // 快捷键列表
+        _runShortcutGuards.add(_shortcutGuard) // 快捷键守卫
+    }
+
+    // 运行主循环（回调模式，支持多窗口）
+    // 单窗口：直接调用 run() 注册并启动循环
+    // 多窗口：各窗口先 registerOnly()，最后一个 run() 启动循环
+    func run(EventHandler onEvent, RenderCallback onRender) {
+        registerOnly(onEvent, onRender)
+        if _runLoopActive { return }
+        _runLoopActive = true
+
+        // ★ 首帧前检测：SDL_SyncWindow 已在 registerOnly 中阻塞等待 OS 完成最大化，
+        //   正常情况下此处尺寸应与 registerOnly 时一致。此检测作为安全网，防止极端时序下
+        //   registerOnly 到 run() 之间窗口尺寸再次变化（如用户快速操作）。
+        for _runWids.len() to i {
+            SDL_Point pt = SDL_Point.malloc()
+            _lib.SDL_GetWindowSize(_runHnds[i], &pt.x, &pt.y)
+            if pt.x != _runW[i] or pt.y != _runH[i] {
+                _runRens[i].resizeSSAA(pt.x, pt.y)
+                _runW[i] = pt.x; _runH[i] = pt.y
+                var rootWid = _runRoots[i]
+                rootWid?.set_pos(_runRootX[i], _runRootY[i])
+                rootWid?.set_size(_float(pt.x) - _runRootX[i], _float(pt.y) - _runRootY[i])
+                // ★ 同步 MenuBar 尺寸到满宽（首帧尺寸可能与 registerOnly 时不同）
+                float _tbH1 = _findTitleBarHeight(_runWidgets[i])
+                var menus0 = _runMenus[i]
+                for menus0.len() to mi0 {
+                    MenuBar bar = menus0[mi0]
+                    bar.set_pos(0, _tbH1)
+                    bar.set_size(_float(pt.x), bar.get_h())
+                    bar.setWindowSize(pt.x, pt.y)
+                }
+                // ★ 同步 Table/TreeView 窗口尺寸 + Splitter 向下传播（供内部右键菜单边界夹紧）
+                var widgets0 = _runWidgets[i]
+                for widgets0.len() to wi0 {
+                    var widget = widgets0[wi0]
+                    if widget is Table { Table t = widget; t.on_window_resize(pt.x, pt.y) }
+                    else if widget is TreeView { TreeView tv = widget; tv.on_window_resize(pt.x, pt.y) }
+                    else if widget is Splitter { Splitter sp = widget; sp._bind_window_size(_runHnds[i], pt.x, pt.y) }
+                }
+                // 根布局为 Splitter 时向下传播窗口尺寸（根布局内嵌的 Table 可能不在 _widgets 顶层）
+                var rw0 = rootWid
+                if rw0 is Splitter { Splitter sp = rw0; sp._bind_window_size(_runHnds[i], pt.x, pt.y) }
+            }
+            pt.free()
+        }
+
+        Event ev = event.createEvent()
+        bool _needRedraw = true       // 初始绘制一次
+        int  _lastRenderTicks = core.getTicks()   // 上次渲染时刻，用于帧率节流
+        int  _throttleMs = if _maxFPS > 0 then 1000 / _maxFPS else 1
+        int _sizeSyncRemaining = 10   // 安全网：前 N 帧持续检查窗口尺寸（SDL_SyncWindow 已解决主问题）
+
+        // ---- 确定性 GUI 基准模式（2026-09-15）----
+        // `LENO_SDL_FRAMES=<n>`：跑满 n 帧后自动清理退出，并打印一行确定性摘要。
+        //
+        // 为什么需要它：GUI 负载的 A/B **必须固定帧数**。按"跑满 N 秒"测时，同一壁钟时长内
+        // 实际跑了多少帧会随系统噪声变化 —— 实测同一应用交替同轮测 CPU 时间能差 4 倍、
+        // 且两轮方向还会翻转（`FuncExecuted` 甚至差 60 倍），根本下不了结论。
+        // 配合 `SDL_VIDEODRIVER=dummy|offscreen`（**不开任何窗口**）⇒ 可重复、可自动化、
+        // 不需要人工交互，也不需要我在测试时弹窗。
+        //
+        // 默认不设这个环境变量 ⇒ 帧计数为 0、不强制重绘、不打印，行为与改动前逐字一致。
+        int _benchFrames = 0
+        {
+            var _bfEnv = _env("LENO_SDL_FRAMES")
+            if _bfEnv != null { _benchFrames = _int(_bfEnv) }
+            if _benchFrames < 0 { _benchFrames = 0 }
+        }
+        int _benchDone = 0
+        int _benchT0 = core.getPerfCounter()
+        if _benchFrames > 0 { _throttleMs = 0 }   // 基准模式去掉帧率节流（每轮都真渲染）
+        while true {
+            core.resetFrameCursor()   // 每帧开始：清空本帧光标请求
+            core.advanceFrame()       // 帧计数器递增（供控件做帧内去重）
+            // 基准模式：每轮都请求重绘 ⇒ "帧数"与"渲染次数"一一对应（负载可重复）
+            if _benchFrames > 0 { _needRedraw = true }
+            bool _hadEvent = false
+            // 动态计算等待时长：有重绘请求时节流至目标 FPS，空闲时按定时器触发时刻
+            int timeoutMs = 500
+            if _needRedraw {
+                int elapsed = core.getTicks() - _lastRenderTicks
+                int remain = _throttleMs - elapsed
+                if remain < 1 { remain = 1 }
+                if remain > timeoutMs { remain = timeoutMs }
+                timeoutMs = remain
+            } else {
+                int nextTM = timer.nextTimerMs()
+                if nextTM >= 0 {
+                    int wait = nextTM - core.getTicks()
+                    if wait < 1 { wait = 1 }
+                    if wait > 100 { wait = 100 }
+                    timeoutMs = wait
+                }
+                // ★ Tooltip 等待：将 poll 超时设为 tooltip 剩余等待时间，
+                //   到期后唤醒一次渲染以显示 tooltip，而非每帧 60fps 空转重绘。
+                //   旧方案 tipWaiting() 恒为 true → _needRedraw 恒 true → 60fps 全量重绘，
+                //   在弱 CPU 上仅 hover 表格就能占 30%+ CPU。
+                int tipRemain = tip.tipRemainingMs()
+                if tipRemain >= 0 and tipRemain < timeoutMs { timeoutMs = tipRemain }
+                if timeoutMs < 1 { timeoutMs = 1 }
+            }
+            int _t0 = core.getTicks()
+            ev.waitTimeout(timeoutMs)
+            // 兜底：若 waitTimeout 提前返回（实际等待 < 5ms 且无事件），
+            // 强制 Sleep 补足，防止事件循环高频空转→CPU 占用异常
+            int _wakeTick = core.getTicks()
+            int _wakeWait = _wakeTick - _t0
+            if not ev.has and _wakeWait < 5 { core.delay(5 - _wakeWait) }
+            // ★ Motion 事件合并：鼠标快速移动时 SDL 队列中会堆积大量连续 motion 事件，
+            //   每个都触发全控件 process()。弱 CPU 上导致 CPU 占用飙升。
+            //   合并策略：只保留同窗口的最后一个 motion 事件，丢弃中间的。
+            //   _motionBuf 保存最新 motion，_deferredBuf 保存合并期间遇到的非 motion 事件。
+            Ptr[u8] _motionBuf = ffi.malloc(128)
+            Ptr[u8] _deferredBuf = ffi.malloc(128)
+            bool _hasDeferred = false
+            while ev.has {
+                // 鼠标移动(motion)不强制整窗重绘：光标为 OS 级、hover 变化已由控件
+                // markFrameRedraw() 请求重绘；否则每次移动都触发全窗清屏+全控件重绘，
+                // 偶发呈现异常会让控件（如表）整块露出背景而“闪一下”。
+                // 滚轮/点击/resize/键盘等非 motion 事件仍强制重绘。
+                if not ev.isMouseMotion() { _hadEvent = true }
+                if ev.isQuit() {
+                    for _runWids.len() to i {
+                        // 根销毁：退出前先释放所有控件资源（字体等），沿父子树递归清理
+                        var ws = _runWidgets[i]
+                        if ws != null { for ws to w { w.dispose() } }
+                        _runRens[i].destroy()
+                        _lib.SDL_DestroyWindow(_runHnds[i])
+                        _windowCount -= 1
+                    }
+                    ev.uninit()
+                    if _windowCount <= 0 { core.quit() }
+                    _runLoopActive = false
+                    return
+                }
+                int wid = ev.windowID()
+                // 模态：仅栈顶窗口接收事件，其余全部跳过（含主窗口 + 下层模态）
+                // 注意：必须继续 poll 前进事件队列，否则 ev.has 恒为 true 导致 while 死循环（窗口假死）
+                if _isModal() and wid != _modalTop() {
+                    // 用户点击了非模态窗口（如父窗口标题栏），OS 已把父窗口提到前面；
+                    // 立刻把模态窗口 raise 回来，防止对话框被遮挡
+                    if ev.isWindowFocusGained() or ev.isMouseButtonDown() {
+                        raiseWindow(_modalTop())
+                    }
+                    ev.poll(); continue
+                }
+                // ★ Motion 事件合并：当前事件是鼠标移动时，连续 poll 直到找到最后一个
+                //   同窗口 motion 事件，中间的全部丢弃。若遇到非 motion 事件则暂存，
+                //   处理完 motion 后再处理。这样无论队列堆积多少 motion，每帧只处理 1 个。
+                if ev.isMouseMotion() and not _hasDeferred {
+                    ev.saveRaw(_motionBuf)
+                    bool _coalescing = true
+                    while _coalescing {
+                        ev.poll()
+                        if not ev.has {
+                            ev.restoreRaw(_motionBuf)
+                            ev.has = true
+                            _coalescing = false
+                        } else if ev.isMouseMotion() and ev.windowID() == wid {
+                            ev.saveRaw(_motionBuf)   // 更新为更新的 motion
+                        } else {
+                            // 遇到非 motion 事件（或其它窗口的 motion）：暂存，先处理 motion
+                            ev.saveRaw(_deferredBuf)
+                            ev.restoreRaw(_motionBuf)
+                            ev.has = true
+                            _hasDeferred = true
+                            _coalescing = false
+                        }
+                    }
+                }
+                for _runWids.len() to i {
+                    if _runWids[i] == wid {
+                        // ★ 快捷键优先处理：键按下事件先尝试匹配已注册快捷键，
+                        //   匹配成功则跳过用户事件处理器（避免重复处理）；
+                        //   守卫回调返回 true 时阻止快捷键（如 Edit/Table 编辑中）
+                        bool _shortcutHandled = false
+                        if ev.isKeyDown() { _shortcutHandled = _tryShortcut(i, ev) }
+                        if not _shortcutHandled and (not _runEvts[i](ev) or ev.isWindowClose()) {
+                            // 模态窗口关闭：弹出栈并恢复焦点到父窗口
+                            int _restoreWid = -1
+                            if _isModal() and _runWids[i] == _modalTop() {
+                                _restoreWid = _modalParent(_runWids[i])
+                                _modalStack.pop()
+                                // ★ 模态对话框关闭时清除 tooltip 状态：
+                                //   对话框打开期间主窗口不接收 motion 事件，tipEndMotion 无法触发清除，
+                                //   导致对话框前的 tip 状态残留（_tipText 非空、_tipVisible 可能已为 true）。
+                                //   关闭后残留的 tip 会自动弹出并跟随鼠标，必须在此主动清除。
+                                tip.tipClear()
+                            }
+                            // 根销毁：关闭窗口前先释放所有控件资源（字体等），沿父子树递归清理
+                            var ws = _runWidgets[i]
+                            if ws != null { for ws to w { w.dispose() } }
+                            var rt = _runRoots[i]
+                            rt?.dispose()
+                            _runRens[i].destroy()
+                            _lib.SDL_DestroyWindow(_runHnds[i])
+                            _windowCount -= 1
+                            _runWids.remove(i);  _runHnds.remove(i)
+                            _runRens.remove(i); _runEvts.remove(i)
+                            _runRends.remove(i); _runWidgets.remove(i); _runWidgetZ.remove(i); _runMenus.remove(i); _runRoots.remove(i); _runRootX.remove(i); _runRootY.remove(i); _runW.remove(i); _runH.remove(i)
+                            _runCtxBar.remove(i); _runCtxIdx.remove(i)
+                            _runDialogHidden.remove(i); _runTransparent.remove(i)
+                            _runOverlays.remove(i)
+                            _runShortcuts.remove(i); _runShortcutGuards.remove(i)
+                            // 恢复焦点到父窗口（非模态关闭时 _restoreWid 为 -1，跳过）
+                            if _restoreWid >= 0 { raiseWindow(_restoreWid) }
+                            break
+                        }
+                    }
+                }
+                // 自动处理该窗口的所有控件事件
+                // 鼠标运动事件：处理前重置 tip 上报标记，处理后若无人上报则清除
+                // （解决多控件处理顺序导致的 tipClear 覆盖 tipReport 问题）
+                bool _isMotion = ev.isMouseMotion()
+                if _isMotion { tip.tipSetWindow(wid); tip.tipBeginMotion() }
+                for _runWids.len() to j {
+                    if _runWids[j] == wid {
+                        // 先处理根布局控件（背景层），再处理 _widgets（覆盖层如 MenuBar）
+                        var rootWid = _runRoots[j]
+                        // ★ 安全网：每帧向根控件下发窗口句柄，确保所有子控件（含动态添加的、
+                        //   或因创建顺序/容器类型遗漏而未收到句柄的）都能拿到 _hwnd。
+                        //   _bind_window 是幂等操作（重复设置同一句柄无副作用），开销可忽略。
+                        if rootWid is Widget { _refreshWindowHandle(rootWid, _runHnds[j], _runW[j], _runH[j]) }
+                        rootWid?.process(ev)
+                        var ws = _runWidgets[j]
+                        for ws to w { w.process(ev) }
+                        break
+                    }
+                }
+                if _isMotion { tip.tipEndMotion() }
+                // 窗口级右击上下文菜单（统一在底层接管，而非示例 onEvent）：
+                // 先让命中控件自行处理右键（Edit/ComboBox 等会弹出自身菜单并占住弹层捕获区），
+                // 若没有任何控件占用弹层，才弹出窗口级菜单，避免「窗口菜单盖住控件菜单」。
+                if ev.isMouseButtonDown() and ev.mouseButton() == 3 {
+                    for _runWids.len() to j {
+                        if _runWids[j] == wid {
+                            var[float, float](_cmx, _cmy) = ev.mousePos()
+                            if _runCtxIdx[j] >= 0 and not core.inPopupCapture(_cmx, _cmy) {
+                                _runCtxBar[j].openContext(_runCtxIdx[j], _cmx, _cmy)
+                            }
+                            break
+                        }
+                    }
+                }
+                // 窗口缩放：重建 SSAA 离屏纹理 + 更新逻辑尺寸 + 驱动根布局跟随
+                // ★ 不在此处理 WINDOW_MAXIMIZED/WINDOW_RESTORED 事件：这些事件触发时窗口可能尚在
+                //   动画过程中，SDL_GetWindowSize 返回的是最终尺寸而非当前实际尺寸，此时重建 SSAA
+                //   会导致纹理尺寸与窗口实际尺寸不匹配→缩小版。首次最大化的同步由 _sizeSyncRemaining
+                //   在渲染阶段（窗口尺寸已稳定）可靠完成。
+                if ev.isWindowResized() {
+                    for _runWids.len() to k {
+                        if _runWids[k] == wid {
+                            SDL_Point pt = SDL_Point.malloc()
+                            _lib.SDL_GetWindowSize(_runHnds[k], &pt.x, &pt.y)
+                            _runRens[k].resizeSSAA(pt.x, pt.y)
+                            // ★ 更新逻辑尺寸（背景填充 + Tooltip 夹紧依赖此值）
+                            _runW[k] = pt.x; _runH[k] = pt.y
+                            // 驱动根布局控件跟随窗口大小（带偏移）
+                            var rootWid = _runRoots[k]
+                            rootWid?.set_pos(_runRootX[k], _runRootY[k])
+                            rootWid?.set_size(_float(pt.x) - _runRootX[k], _float(pt.y) - _runRootY[k])
+                            // ★ 自动同步 MenuBar 尺寸到满宽（此前示例需手动 _updateMenuBar）
+                            float _tbH2 = _findTitleBarHeight(_runWidgets[k])
+                            var menus = _runMenus[k]
+                            for menus.len() to m {
+                                MenuBar bar = menus[m]
+                                bar.set_pos(0, _tbH2)
+                                bar.set_size(_float(pt.x), bar.get_h())
+                                bar.setWindowSize(pt.x, pt.y)
+                            }
+                            // ★ 自动同步窗口尺寸到 Table/TreeView/Splitter（供内部右键菜单边界夹紧）
+                            var widgets = _runWidgets[k]
+                            for widgets.len() to w {
+                                var widget = widgets[w]
+                                if widget is Table {
+                                    Table t = widget; t.on_window_resize(pt.x, pt.y)
+                                } else if widget is TreeView {
+                                    TreeView tv = widget; tv.on_window_resize(pt.x, pt.y)
+                                } else if widget is Splitter {
+                                    Splitter sp = widget; sp._bind_window_size(_runHnds[k], pt.x, pt.y)
+                                }
+                            }
+                            // ★ 根布局为 Splitter 时向下传播窗口尺寸（根布局内嵌的 Table 可能不在 _widgets 顶层）
+                            var rootWid2 = _runRoots[k]
+                            if rootWid2 is Splitter {
+                                Splitter sp = rootWid2; sp._bind_window_size(_runHnds[k], pt.x, pt.y)
+                            }
+                            pt.free()
+                            break
+                        }
+                    }
+                }
+                // 获取队列中下一个事件（或恢复合并期间暂存的非 motion 事件）
+                if _hasDeferred {
+                    ev.restoreRaw(_deferredBuf)
+                    ev.has = true
+                    _hasDeferred = false
+                } else {
+                    ev.poll()
+                }
+            }
+            ffi.free(_motionBuf); ffi.free(_deferredBuf)
+            core.applyFrameCursor()    // 帧末：按本帧各控件的请求统一设置一次光标（避免互相覆盖）
+            if _runWids.len() == 0 {
+                ev.uninit()
+                if _windowCount <= 0 { core.quit() }
+                _runLoopActive = false
+                return
+            }
+            // 驱动所有定时器（在事件轮询外，确保 idle 期间也能触发定时器与自动重绘）
+            timer.tickAllTimers()
+            // 事件驱动重绘：非 motion 事件/动画请求/tooltip就绪时才渲染，空闲时跳过以降低 CPU 占用。
+            // 注意：纯鼠标移动(motion)不再触发整窗重绘——其光标为 OS 级、hover 变化由控件
+            // markFrameRedraw() 单独请求；否则每次移动都整窗清屏+重绘会偶发“闪一下”。
+            // ★ Tooltip 优化：旧方案 tipWaiting() 在等待延迟期间恒返回 true，导致每帧 60fps
+            //   全量重绘（即使画面无任何变化）。新方案仅在延迟到期时（tipRemainingMs()==0）
+            //   触发一次重绘以显示 tooltip，等待期间通过 poll 超时挂起，CPU 降至接近 0。
+            if _hadEvent { _needRedraw = true }
+            if core.consumeRedrawRequest() { _needRedraw = true }
+            if tip.tipRemainingMs() == 0 { _needRedraw = true }
+            if _needRedraw {
+                int now = core.getTicks()
+                if now - _lastRenderTicks >= _throttleMs {   // 节流：距上次渲染不足节流间隔则跳过
+                    _lastRenderTicks = now
+                    _needRedraw = false   // 清除标记；动画控件在 render 时可调用 requestRedraw() 请求下一帧
+                    // ★ 安全网尺寸同步：SDL_SyncWindow 已在 registerOnly 中阻塞等待 OS 完成最大化，
+                    //   正常情况下首帧 getSize() 已返回正确尺寸。此多帧检查仅作为极端时序下的
+                    //   兜底（如某些 Windows 版本 SyncWindow 返回后仍有微小延迟），检测到变化
+                    //   立即重建 SSAA 纹理并同步根布局。未变化时仅多一次 SDL_GetWindowSize 调用。
+                    if _sizeSyncRemaining > 0 {
+                        _sizeSyncRemaining = _sizeSyncRemaining - 1
+                        for _runWids.len() to fi {
+                            SDL_Point fpt = SDL_Point.malloc()
+                            _lib.SDL_GetWindowSize(_runHnds[fi], &fpt.x, &fpt.y)
+                            if fpt.x != _runW[fi] or fpt.y != _runH[fi] {
+                                _runRens[fi].resizeSSAA(fpt.x, fpt.y)
+                                _runW[fi] = fpt.x; _runH[fi] = fpt.y
+                                var fRoot = _runRoots[fi]
+                                fRoot?.set_pos(_runRootX[fi], _runRootY[fi])
+                                fRoot?.set_size(_float(fpt.x) - _runRootX[fi], _float(fpt.y) - _runRootY[fi])
+                                var fMenus = _runMenus[fi]
+                                float _tbH3 = _findTitleBarHeight(_runWidgets[fi])
+                                for fMenus.len() to fmi {
+                                    MenuBar fbar = fMenus[fmi]
+                                    fbar.set_pos(0, _tbH3)
+                                    fbar.set_size(_float(fpt.x), fbar.get_h())
+                                    fbar.setWindowSize(fpt.x, fpt.y)
+                                }
+                                var fWidgets = _runWidgets[fi]
+                                for fWidgets.len() to fwi {
+                                    var fw = fWidgets[fwi]
+                                    if fw is Table { Table ft = fw; ft.on_window_resize(fpt.x, fpt.y) }
+                                    else if fw is TreeView { TreeView ftv = fw; ftv.on_window_resize(fpt.x, fpt.y) }
+                                    else if fw is Splitter { Splitter fsp = fw; fsp._bind_window_size(_runHnds[fi], fpt.x, fpt.y) }
+                                }
+                                var frw = fRoot
+                                if frw is Splitter { Splitter fsp = frw; fsp._bind_window_size(_runHnds[fi], fpt.x, fpt.y) }
+                            }
+                            fpt.free()
+                        }
+                    }
+                    for _runWids.len() to i {
+                    // 每帧清屏：用 fillRect 打满整个窗口代替 SDL_RenderClear
+                    // SDL_RenderClear 在 Win/D3D 后端可能不走 back buffer 缓冲，导致短暂黑闪
+                    // 透明窗口跳过背景填充，保留 alpha=0 区域透明
+                    // 使用主题背景色而非硬编码黑色，消除首帧黑闪
+                    var ren = _runRens[i]
+                    // ★ SSAA：每帧渲染前重新设置渲染目标到离屏高分辨率纹理 + 缩放
+                    // present() 每帧执行后会重置渲染目标为窗口、缩放为 1.0，
+                    // 必须在此切回 SSAA 纹理，否则后续 fillRect/控件绘制全部直接画到窗口、SSAA 失效
+                    ren.beginFrame()
+                    if not _runTransparent[i] {
+                        Theme th = theme.getTheme()
+                        ren.setColor(th.bg)
+                        ren.fillRect(0, 0, _float(_runW[i]), _float(_runH[i]))
+                    }
+                    try {
+                        _runRends[i](_runRens[i])
+                    } catch e {
+                        print("[错误] 渲染异常: " + e)
+                        // 异常导致事件循环中断，手动执行清理（与 isQuit 路径一致）
+                        for _runWids.len() to j {
+                            var ws = _runWidgets[j]
+                            if ws != null { for ws to w { w.dispose() } }
+                            _runRens[j].destroy()
+                            _lib.SDL_DestroyWindow(_runHnds[j])
+                            _windowCount -= 1
+                        }
+                        ev.uninit()
+                        if _windowCount <= 0 { core.quit() }
+                        _runLoopActive = false
+                        return
+                    }
+                    // 弹层捕获区：每帧渲染前清空，由展开的下拉框在 renderPopup 里重新登记
+                    core.clearPopupCapture()
+                    // 先渲染根布局控件（背景层），再渲染 _widgets（按 z 值排序后层叠）
+                    var rootWid = _runRoots[i]
+                    rootWid?.render(_runRens[i])
+                    // 自动渲染该窗口的所有控件（z 值小的先画，大的后画；同 z 值保持添加顺序）
+                    // ★ 跳过已作为 root 渲染的控件，避免双重渲染导致闪烁
+                    //   （如 TabControl 既被 setRoot 又在 _widgets 中，双重渲染时
+                    //     第二次的内容区背景覆盖第一次 Table 内容 → 闪一下背景再画 Table）
+                    var ws = _runWidgets[i]
+                    var wz = _runWidgetZ[i]
+                    int wn = ws.len()
+                    if wn > 0 {
+                        // 构建排序索引（稳定排序：同 z 值保持原始顺序）
+                        Array[int] order = []
+                        for wn to k { order.add(k) }
+                        // 选择排序（控件数量通常 < 50，不需要复杂排序算法）
+                        for wn to k {
+                            int minIdx = k
+                            int j = k + 1
+                            while j < wn {
+                                if wz[order[j]] < wz[order[minIdx]] { minIdx = j }
+                                j = j + 1
+                            }
+                            if minIdx != k {
+                                int tmp = order[k]; order[k] = order[minIdx]; order[minIdx] = tmp
+                            }
+                        }
+                        for wn to k {
+                            var w = ws[order[k]]
+                            if rootWid != null and w == rootWid { continue }
+                            w.render(_runRens[i])
+                        }
+                    }
+                    // 第二遍：所有展开的下拉框画在最上层（按窗口隔离；含经 panel/tab/布局添加的，由 registerComboBox 兜底）
+                    cbb.renderComboBoxes(_runRens[i], _runHnds[i])
+                    // 第二遍：所有展开的下拉菜单画在最上层
+                    var mns = _runMenus[i]
+                    for mns to mn { mn.renderPopup(_runRens[i]) }
+                    // ★ 第二遍：TitleBar 的嵌入式 MenuBar 弹层（set_center_menu 嵌入的菜单下拉）
+                    var ws2 = _runWidgets[i]
+                    for ws2 to w2 {
+                        if w2 is TitleBar { TitleBar tb2 = w2; tb2.renderPopup(_runRens[i]) }
+                    }
+                    // 第二遍：所有展开的控件内嵌右击上下文菜单（Edit 经 panel.add 添加时未进 _menus，
+                    // 在此兜底绘制到最上层，避免被同级控件遮挡）
+                    menu.renderContextMenus(_runRens[i], _runHnds[i], _runW[i], _runH[i])
+                    // Tooltip 浮层：在所有控件与弹层之后绘制，浮在最上层；不拦截输入
+                    // tipTick 是全局状态更新，每帧只需调一次（在首个窗口时调用）
+                    if i == 0 { tip.tipTick() }
+                    tip.tipRender(_runRens[i], _runW[i], _runH[i], _runWids[i])
+                    // 叠加层：在所有控件/弹层/Tooltip 之上绘制（拖拽浮动框等），present 之前最后一遍
+                    var _ovl = _runOverlays[i]
+                    if _ovl != null { _ovl(_runRens[i]) }
+                    _runRens[i].present()
+                    // 对话框窗口：首帧渲染完后显示（避免创建时闪现默认背景）
+                    // show 后立即 raise，确保对话框在主窗口前面
+                    if _runDialogHidden[i] {
+                        _lib.SDL_ShowWindow(_runHnds[i])
+                        _lib.SDL_RaiseWindow(_runHnds[i])
+                        _runDialogHidden[i] = false
+                    }
+                }
+                }              // 闭合节流 if
+            }
+            // 动画控件可能在 render 中调用了 requestRedraw() → 标记快速轮询
+            if core.consumeRedrawRequest() { _needRedraw = true }
+
+            // ---- 确定性 GUI 基准：跑满 _benchFrames 帧后收尾 ----
+            // 摘要里的 `sum`（批处理计数之和）是**负载一致性判据**：两次运行的 sum 相同
+            // 才说明渲染工作量相同，此时比 us_per_frame 才有意义。
+            if _benchFrames > 0 {
+                _benchDone = _benchDone + 1
+                if _benchDone >= _benchFrames {
+                    int _bus = _int(_float(core.getPerfCounter() - _benchT0) * 1000000.0
+                                    / _float(core.getPerfFrequency()))
+                    int _bfill = renderer.getBatchFillBatched()
+                    int _bline = renderer.getBatchLineBatched()
+                    int _bout  = renderer.getBatchOutBatched()
+                    int _bsum  = _bfill + _bline + _bout
+                    print("[SDL-BENCH] frames=" + _benchDone
+                          + " total_us=" + _bus
+                          + " us_per_frame=" + _int(_float(_bus) / _float(_benchDone))
+                          + " fill=" + _bfill + " line=" + _bline + " out=" + _bout
+                          + " sum=" + _bsum + "\n")
+                    // 收尾：与 isQuit 路径一致（控件 dispose → 渲染器/窗口销毁 → 事件反初始化）
+                    for _runWids.len() to i {
+                        var benWs = _runWidgets[i]
+                        if benWs != null { for benWs to benW { benW.dispose() } }
+                        _runRens[i].destroy()
+                        _lib.SDL_DestroyWindow(_runHnds[i])
+                        _windowCount -= 1
+                    }
+                    ev.uninit()
+                    if _windowCount <= 0 { core.quit() }
+                    _runLoopActive = false
+                    return
+                }
+            }
+        }
+    }
+}
+
+// 创建窗口实例，opts: {title, w, h, flags}
+export func createWindow(Dict opts): Window {
+    Window win = new Window(); win.init(opts); return win
+}
+
+
+

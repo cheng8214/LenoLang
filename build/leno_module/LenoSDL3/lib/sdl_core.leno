@@ -1,0 +1,632 @@
+// sdl_core.leno — SDL3 核心绑定（cstruct/clib/常量/DLL）
+import ffi
+import dirs
+import files
+
+// ==================== cstruct ====================
+
+export cstruct SDL_FRect {
+    f32 x; f32 y; f32 w; f32 h
+}
+
+export cstruct SDL_Rect {
+    i32 x; i32 y; i32 w; i32 h
+}
+
+export cstruct SDL_FPoint {
+    f32 x; f32 y
+}
+
+export cstruct SDL_Point {
+    i32 x; i32 y
+}
+
+cstruct SDL_Event {
+    u32 type
+    u32 _reserved
+    u64 _timestamp
+    u32 _window_id
+    u8  _data[108]
+}
+
+// ==================== 各事件类型 cstruct（替换手动偏移读取） ====================
+
+export cstruct SDL_KeyboardEvent {
+    u32 type         // 0
+    u32 reserved     // 4
+    u64 timestamp    // 8
+    u32 windowID     // 16
+    u32 which        // 20
+    u32 scancode     // 24
+    i32 key          // 28
+    u16 mod          // 32
+    u16 raw_code     // 34
+    u8  down         // 36
+    u8  repeat       // 37
+}
+
+export cstruct SDL_MouseButtonEvent {
+    u32 type         // 0
+    u32 reserved     // 4
+    u64 timestamp    // 8
+    u32 windowID     // 16
+    u32 which        // 20
+    u8  button       // 24
+    u8  down         // 25
+    u8  clicks       // 26
+    u8  _pad         // 27
+    f32 x            // 28
+    f32 y            // 32
+}
+
+export cstruct SDL_MouseMotionEvent {
+    u32 type         // 0
+    u32 reserved     // 4
+    u64 timestamp    // 8
+    u32 windowID     // 16
+    u32 which        // 20
+    u32 state        // 24
+    f32 x            // 28
+    f32 y            // 32
+    f32 xrel         // 36
+    f32 yrel         // 40
+}
+
+export cstruct SDL_MouseWheelEvent {
+    u32 type         // 0
+    u32 reserved     // 4
+    u64 timestamp    // 8
+    u32 windowID     // 16
+    u32 which        // 20
+    f32 x            // 24
+    f32 y            // 28
+    u32 direction    // 32
+    f32 mouse_x      // 36
+    f32 mouse_y      // 40
+}
+
+export cstruct SDL_TextInputEvent {
+    u32 type         // 0
+    u32 reserved     // 4
+    u64 timestamp    // 8
+    u32 windowID     // 16
+    u32 _pad         // 20  (8字节对齐填充)
+    Ptr[u8] text     // 24  (const char*)
+}
+
+export cstruct SDL_WindowEvent {
+    u32 type         // 0
+    u32 reserved     // 4
+    u64 timestamp    // 8
+    u32 windowID     // 16
+    i32 data1        // 20
+    i32 data2        // 24
+}
+
+export cstruct SDL_DropEvent {
+    u32 type         // 0
+    u32 reserved     // 4
+    u64 timestamp    // 8
+    u32 windowID     // 16
+    f32 x            // 20
+    f32 y            // 24
+    u32 _pad         // 28  (8字节对齐填充)
+    Ptr[u8] source   // 32  (const char*)
+    Ptr[u8] data     // 40  (const char*)
+}
+
+export cstruct SDL_Color {
+    u8 r; u8 g; u8 b; u8 a
+}
+
+export cstruct SDL_FColor {
+    f32 r; f32 g; f32 b; f32 a
+}
+
+export cstruct SDL_GlyphMetrics {
+    i32 minX; i32 maxX; i32 minY; i32 maxY; i32 advance
+}
+
+export cstruct SDL_Vertex {
+    f32 x; f32 y    // position (SDL_FPoint)
+    f32 r; f32 g; f32 b; f32 a  // color (SDL_FColor)
+    f32 u; f32 v    // texcoord (SDL_FPoint)
+}
+
+// ==================== 返回类型别名 ====================
+
+export alias Color      = int               // 颜色：0xAARRGGBB 打包整数
+export alias FColor     = Dict[string, float]
+export alias Size       = Dict[string, int]
+export alias FSize      = Dict[string, float]
+export alias StringSize = Dict[string, float]
+export alias GlyphInfo  = Dict[string, int]
+
+// ==================== clib sdl3 ====================
+
+clib sdl3 {
+    bool SDL_SetHint(str8 name, str8 value)
+
+    bool SDL_Init(u32 flags)
+    void SDL_Quit()
+    str8 SDL_GetError()
+
+    Ptr[u8]  SDL_CreateWindow(str8 title, i32 w, i32 h, u64 flags)
+    void SDL_DestroyWindow(Ptr[u8] window)
+    u32  SDL_GetWindowID(Ptr[u8] window)
+    u32  SDL_GetWindowFlags(Ptr[u8] window)
+    bool SDL_SetWindowResizable(Ptr[u8] window, bool resizable)
+    bool SDL_SetWindowBordered(Ptr[u8] window, bool bordered)
+    bool SDL_GetWindowSize(Ptr[u8] window, Ptr[i32] w, Ptr[i32] h)
+    bool SDL_GetWindowPosition(Ptr[u8] window, Ptr[i32] x, Ptr[i32] y)
+    bool SDL_SyncWindow(Ptr[u8] window)
+
+
+    Ptr[u8]  SDL_CreateRenderer(Ptr[u8] window, str8 name)
+    void SDL_DestroyRenderer(Ptr[u8] renderer)
+    bool SDL_RenderClear(Ptr[u8] renderer)
+    bool SDL_RenderPresent(Ptr[u8] renderer)
+    bool SDL_SetRenderDrawColor(Ptr[u8] renderer, u8 r, u8 g, u8 b, u8 a)
+    bool SDL_SetRenderDrawColorFloat(Ptr[u8] renderer, f32 r, f32 g, f32 b, f32 a)
+    bool SDL_RenderFillRect(Ptr[u8] renderer, Ptr[u8] rect)
+    bool SDL_RenderRect(Ptr[u8] renderer, Ptr[u8] rect)
+    bool SDL_RenderLine(Ptr[u8] renderer, f32 x1, f32 y1, f32 x2, f32 y2)
+    bool SDL_RenderPoint(Ptr[u8] renderer, f32 x, f32 y)
+    bool SDL_SetRenderVSync(Ptr[u8] renderer, i32 vsync)
+
+    bool SDL_RenderLines(Ptr[u8] renderer, Ptr[u8] points, i32 count)
+    bool SDL_RenderPoints(Ptr[u8] renderer, Ptr[u8] points, i32 count)
+    bool SDL_RenderRects(Ptr[u8] renderer, Ptr[u8] rects, i32 count)
+    bool SDL_RenderFillRects(Ptr[u8] renderer, Ptr[u8] rects, i32 count)
+
+    bool SDL_SetRenderScale(Ptr[u8] renderer, f32 sx, f32 sy)
+    bool SDL_SetRenderDrawBlendMode(Ptr[u8] renderer, i32 mode)
+    bool SDL_SetRenderClipRect(Ptr[u8] renderer, Ptr[u8] rect)
+    bool SDL_SetRenderLogicalSize(Ptr[u8] renderer, i32 w, i32 h)
+    bool SDL_SetRenderViewport(Ptr[u8] renderer, Ptr[u8] rect)
+
+    bool SDL_GetRenderDrawColor(Ptr[u8] renderer, Ptr[u8] r, Ptr[u8] g, Ptr[u8] b, Ptr[u8] a)
+    bool SDL_GetRenderDrawColorFloat(Ptr[u8] renderer, Ptr[f32] r, Ptr[f32] g, Ptr[f32] b, Ptr[f32] a)
+    bool SDL_GetRenderOutputSize(Ptr[u8] renderer, Ptr[i32] w, Ptr[i32] h)
+
+    Ptr[u8]  SDL_GetKeyboardState(Ptr[i32] numkeys)
+    u16  SDL_GetModState()
+    bool SDL_PollEvent(Ptr[u8] event)
+    bool SDL_WaitEventTimeout(Ptr[u8] event, i32 timeoutMS)
+    bool SDL_StartTextInput(Ptr[u8] window)
+    bool SDL_StopTextInput(Ptr[u8] window)
+    bool SDL_TextInputActive(Ptr[u8] window)
+
+    void SDL_Delay(u32 ms)
+    u64  SDL_GetTicks()
+
+    Ptr[u8]  SDL_CreateTextureFromSurface(Ptr[u8] renderer, Ptr[u8] surface)
+    void SDL_DestroyTexture(Ptr[u8] texture)
+    bool SDL_GetTextureSize(Ptr[u8] texture, Ptr[f32] w, Ptr[f32] h)
+    bool SDL_RenderTexture(Ptr[u8] renderer, Ptr[u8] texture, Ptr[u8] src, Ptr[u8] dst)
+    bool SDL_RenderGeometry(Ptr[u8] renderer, Ptr[u8] texture, Ptr[u8] vertices, i32 num_vertices, Ptr[u8] indices, i32 num_indices)
+    bool SDL_RenderTextureRotated(Ptr[u8] renderer, Ptr[u8] texture, Ptr[u8] src, Ptr[u8] dst, f64 angle, Ptr[u8] center, i32 flip)
+    void SDL_DestroySurface(Ptr[u8] surface)
+
+    // 离屏表面（用于程序化生成图片，配合 SDL_image 保存）
+    Ptr[u8]  SDL_CreateSurface(i32 w, i32 h, i32 format)
+    Ptr[u8]  SDL_CreateSurfaceFrom(i32 w, i32 h, i32 format, Ptr[u8] pixels, i32 pitch)
+    i32  SDL_MapSurfaceRGBA(Ptr[u8] surface, u8 r, u8 g, u8 b, u8 a)
+    bool SDL_FillSurfaceRect(Ptr[u8] surface, Ptr[u8] rect, i32 color)
+
+
+    bool SDL_SetRenderTarget(Ptr[u8] renderer, Ptr[u8] texture)
+    bool SDL_SetTextureAlphaMod(Ptr[u8] texture, u8 alpha)
+    bool SDL_SetTextureBlendMode(Ptr[u8] texture, i32 blendMode)
+    bool SDL_SetTextureColorMod(Ptr[u8] texture, u8 r, u8 g, u8 b)
+    bool SDL_SetTextureScaleMode(Ptr[u8] texture, i32 scaleMode)
+    bool SDL_GetTextureScaleMode(Ptr[u8] texture, Ptr[i32] scaleMode)
+    bool SDL_FlushRenderer(Ptr[u8] renderer)
+    bool SDL_RenderTexture9Grid(Ptr[u8] renderer, Ptr[u8] texture, Ptr[u8] srcrect, f32 lw, f32 rw, f32 th, f32 bh, f32 scale, Ptr[u8] dstrect)
+    bool SDL_RenderTextureTiled(Ptr[u8] renderer, Ptr[u8] texture, Ptr[u8] srcrect, f32 scale, Ptr[u8] dstrect)
+    Ptr[u8]  SDL_RenderReadPixels(Ptr[u8] renderer, Ptr[u8] rect)
+    bool SDL_SetRenderColorScale(Ptr[u8] renderer, f32 scale)
+
+    Ptr[u8]  SDL_CreateTexture(Ptr[u8] renderer, i32 format, i32 access, i32 w, i32 h)
+    bool SDL_UpdateTexture(Ptr[u8] texture, Ptr[u8] rect, Ptr[u8] pixels, i32 pitch)
+    bool SDL_LockTexture(Ptr[u8] texture, Ptr[u8] rect, Ptr[u8] pixels, Ptr[i32] pitch)
+    void SDL_UnlockTexture(Ptr[u8] texture)
+
+    u32  SDL_GetMouseState(Ptr[f32] x, Ptr[f32] y)
+    u32  SDL_GetGlobalMouseState(Ptr[f32] x, Ptr[f32] y)
+    bool SDL_ShowCursor()
+    bool SDL_HideCursor()
+    bool SDL_CursorVisible()
+    bool SDL_SetTextInputArea(Ptr[u8] window, Ptr[u8] rect, i32 cursor)
+    bool SDL_WarpMouseInWindow(Ptr[u8] window, f32 x, f32 y)
+
+    Ptr[u8]  SDL_CreateSystemCursor(i32 kind)
+    bool SDL_SetCursor(Ptr[u8] cursor)
+    void SDL_DestroyCursor(Ptr[u8] cursor)
+
+    bool SDL_ShowSimpleMessageBox(u32 flags, str8 title, str8 message, Ptr[u8] window)
+    bool SDL_SetWindowMouseGrab(Ptr[u8] window, bool grabbed)
+    bool SDL_GetWindowMouseGrab(Ptr[u8] window)
+    bool SDL_SetWindowRelativeMouseMode(Ptr[u8] window, bool enabled)
+    bool SDL_GetWindowRelativeMouseMode(Ptr[u8] window)
+
+    bool SDL_SetWindowTitle(Ptr[u8] window, str8 title)
+    bool SDL_SetWindowSize(Ptr[u8] window, i32 w, i32 h)
+    bool SDL_SetWindowPosition(Ptr[u8] window, i32 x, i32 y)
+    bool SDL_SetWindowAlwaysOnTop(Ptr[u8] window, bool on_top)
+    bool SDL_SetWindowFullscreen(Ptr[u8] window, bool fullscreen)
+    bool SDL_RaiseWindow(Ptr[u8] window)
+    bool SDL_ShowWindow(Ptr[u8] window)
+    bool SDL_HideWindow(Ptr[u8] window)
+    bool SDL_MaximizeWindow(Ptr[u8] window)
+    bool SDL_MinimizeWindow(Ptr[u8] window)
+    bool SDL_RestoreWindow(Ptr[u8] window)
+    bool SDL_SetWindowOpacity(Ptr[u8] window, f32 opacity)
+    bool SDL_SetWindowIcon(Ptr[u8] window, Ptr[u8] icon)
+    bool SDL_SetWindowMinimumSize(Ptr[u8] window, i32 min_w, i32 min_h)
+    bool SDL_GetWindowSizeInPixels(Ptr[u8] window, Ptr[i32] w, Ptr[i32] h)
+
+    str8 SDL_GetClipboardText()
+    bool SDL_SetClipboardText(str8 text)
+    bool SDL_HasClipboardText()
+
+    u64  SDL_GetPerformanceCounter()
+    u64  SDL_GetPerformanceFrequency()
+    u64  SDL_GetTicksNS()
+    bool SDL_FlashWindow(Ptr[u8] window, i32 operation)
+
+    // Tray API（系统托盘，SDL 3.2.0+）
+    Ptr[u8] SDL_CreateTray(Ptr[u8] icon, str8 tooltip)
+    void    SDL_DestroyTray(Ptr[u8] tray)
+    Ptr[u8] SDL_CreateTrayMenu(Ptr[u8] tray)
+    Ptr[u8] SDL_CreateTraySubmenu(Ptr[u8] entry)
+    Ptr[u8] SDL_InsertTrayEntryAt(Ptr[u8] menu, i32 pos, str8 label, u32 flags)
+    void    SDL_RemoveTrayEntry(Ptr[u8] entry)
+    void    SDL_SetTrayEntryCallback(Ptr[u8] entry, Ptr[u8] callback, Ptr[u8] userdata)
+    void    SDL_SetTrayEntryLabel(Ptr[u8] entry, str8 label)
+    void    SDL_SetTrayEntryChecked(Ptr[u8] entry, bool checked)
+    void    SDL_SetTrayEntryEnabled(Ptr[u8] entry, bool enabled)
+    void    SDL_SetTrayIcon(Ptr[u8] tray, Ptr[u8] icon)
+    void    SDL_SetTrayTooltip(Ptr[u8] tray, str8 tooltip)
+    bool    SDL_GetTrayEntryChecked(Ptr[u8] entry)
+    bool    SDL_GetTrayEntryEnabled(Ptr[u8] entry)
+    str8    SDL_GetTrayEntryLabel(Ptr[u8] entry)
+    Ptr[u8] SDL_GetTrayMenu(Ptr[u8] tray)
+    Ptr[u8] SDL_GetTraySubmenu(Ptr[u8] entry)
+}
+
+// ==================== 枚举常量 ====================
+
+export enum InitFlag {
+    VIDEO  = 0x00000020
+    AUDIO  = 0x00000010
+    EVENTS = 0x00004000
+}
+
+export enum WindowFlag {
+    FULLSCREEN        = 0x0000000000000001
+    OPENGL            = 0x0000000000000002
+    HIDDEN            = 0x0000000000000008
+    BORDERLESS        = 0x0000000000000010
+    RESIZABLE         = 0x0000000000000020
+    MINIMIZED         = 0x0000000000000040
+    MAXIMIZED         = 0x0000000000000080
+    MOUSE_GRABBED     = 0x0000000000000100
+    ALWAYS_ON_TOP     = 0x0000000000010000
+    HIGH_PIXEL_DENSITY = 0x0000000000002000
+    MODAL             = 0x0000000000001000
+    TRANSPARENT       = 0x0000000040000000    // 透明窗口（alpha=0 区域透明）
+    UTILITY           = 0x0000000000020000
+}
+
+export enum EventType {
+    QUIT                   = 0x100
+    KEY_DOWN               = 0x300
+    KEY_UP                 = 0x301
+    MOUSE_MOTION           = 0x400
+    MOUSE_BUTTON_DOWN      = 0x401
+    MOUSE_BUTTON_UP        = 0x402
+    MOUSE_WHEEL           = 0x403
+    WINDOW_SHOWN              = 0x202
+    WINDOW_HIDDEN             = 0x203
+    WINDOW_EXPOSED            = 0x204
+    WINDOW_MOVED              = 0x205
+    WINDOW_RESIZED            = 0x206
+    WINDOW_PIXEL_SIZE_CHANGED = 0x207
+    WINDOW_METAL_VIEW_RESIZED = 0x208
+    WINDOW_MINIMIZED          = 0x209
+    WINDOW_MAXIMIZED          = 0x20A
+    WINDOW_RESTORED           = 0x20B
+    WINDOW_MOUSE_ENTER        = 0x20C
+    WINDOW_MOUSE_LEAVE        = 0x20D
+    WINDOW_FOCUS_GAINED       = 0x20E
+    WINDOW_FOCUS_LOST         = 0x20F
+    WINDOW_CLOSE_REQUESTED    = 0x210
+    TEXT_INPUT            = 0x303
+    DROP_FILE             = 0x1000
+    DROP_TEXT             = 0x1001
+}
+
+export enum Scancode {
+    ESCAPE    = 41; RETURN    = 40; SPACE     = 44
+    BACKSPACE = 42; TAB       = 43; CAPSLOCK  = 57
+
+    // 字母
+    A = 4;  B = 5;  C = 6;  D = 7;  E = 8;  F = 9
+    G = 10; H = 11; I = 12; J = 13; K = 14; L = 15
+    M = 16; N = 17; O = 18; P = 19; Q = 20; R = 21
+    S = 22; T = 23; U = 24; V = 25; W = 26; X = 27
+    Y = 28; Z = 29
+
+    // 数字
+    _0 = 39; _1 = 30; _2 = 31; _3 = 32; _4 = 33; _5 = 34
+    _6 = 35; _7 = 36; _8 = 37; _9 = 38
+
+    // 标点符号键
+    GRAVE = 53; MINUS = 45; EQUALS = 46
+    LEFTBRACKET = 47; RIGHTBRACKET = 48; BACKSLASH = 49
+    SEMICOLON = 51; APOSTROPHE = 52; COMMA = 54
+    PERIOD = 55; SLASH = 56
+
+    // 方向键
+    UP = 82; DOWN = 81; LEFT = 80; RIGHT = 79
+
+    // 编辑键
+    INSERT = 73; HOME = 74; PAGEUP = 75; DELETE = 76; END = 77; PAGEDOWN = 78
+
+    // 修饰键
+    LSHIFT = 225; RSHIFT = 229; LCTRL = 224; RCTRL = 228
+    LALT = 226; RALT = 230; LGUI = 227; RGUI = 231
+
+    // 功能键
+    F1 = 58; F2 = 59; F3 = 60; F4 = 61; F5 = 62; F6 = 63
+    F7 = 64; F8 = 65; F9 = 66; F10 = 67; F11 = 68; F12 = 69
+
+    // 系统键
+    PRINTSCREEN = 70; SCROLLLOCK = 71; PAUSE = 72
+
+    // 小键盘
+    NUMLOCKCLEAR = 83; KP_DIVIDE = 84; KP_MULTIPLY = 85
+    KP_MINUS = 86; KP_PLUS = 87; KP_ENTER = 88
+    KP_1 = 89; KP_2 = 90; KP_3 = 91; KP_4 = 92; KP_5 = 93; KP_6 = 94
+    KP_7 = 95; KP_8 = 96; KP_9 = 97; KP_0 = 98
+    KP_PERIOD = 99; APPLICATION = 101; KP_EQUALS = 103; KP_COMMA = 133
+}
+
+export enum MouseButton { LEFT = 1; MIDDLE = 2; RIGHT = 3 }
+
+export enum BlendMode { NONE = 0; BLEND = 1; ADD = 2; MOD = 4; MUL = 8 }
+
+export enum Flip { NONE = 0; HORIZONTAL = 1; VERTICAL = 2 }
+
+export enum SystemCursor {
+    DEFAULT = 0; TEXT = 1; WAIT = 2; CROSSHAIR = 3; PROGRESS = 4
+    NWSE_RESIZE = 5; NESW_RESIZE = 6; EW_RESIZE = 7; NS_RESIZE = 8
+    MOVE = 9; NOT_ALLOWED = 10; POINTER = 11
+}
+
+export enum TextureAccess { STATIC = 0; STREAMING = 1; TARGET = 2 }
+
+export enum ScaleMode { NEAREST = 0; LINEAR = 1; BEST = 2 }
+
+export const PIXELFORMAT_RGBA8888 = 373694468  // SDL_PIXELFORMAT_RGBA8888 = 0x16462004
+export const PIXELFORMAT_ARGB8888 = 372645892  // SDL_PIXELFORMAT_ARGB8888 = 0x16362004
+export const PIXELFORMAT_BGRA8888 = 377888772  // SDL_PIXELFORMAT_BGRA8888 = 0x16862004
+
+export const SDL_FRect_SIZE  = 16
+export const SDL_Rect_SIZE   = 16
+export const SDL_FPoint_SIZE = 8
+export const SDL_Point_SIZE  = 8
+export const SDL_Color_SIZE  = 4
+
+// ==================== DLL 加载 ====================
+
+sdl3 g_lib = null
+
+export func lib(): sdl3 {
+    if g_lib == null {
+        // 根据平台选择动态库扩展名
+        string ext = if _os() == "windows" then ".dll" else ".so"
+        // 从脚本目录和上级目录查找
+        var path = dirs.script_dir() + "/../SDL3" + ext
+        if not files.exists(path) { path = dirs.script_dir() + "/SDL3" + ext }
+        if not files.exists(path) { path = "SDL3" + ext }
+        g_lib = ffi.load(path)
+    }
+    return g_lib
+}
+
+
+
+// ==================== 核心函数 ====================
+
+export func init(int flags = 32): bool {
+    sdl3 l = lib()
+    if l == null { return false }
+    return l.SDL_Init(flags)
+}
+
+export func initVideo(): bool { return init(InitFlag.VIDEO) }
+
+export func quit() {
+    // 不释放 DLL——其他模块的 _lib 还引用同一对象
+    // ffi.free(g_lib) 会导致跨模块引用失效
+}
+
+export func getError(): string {
+    sdl3 l = lib()
+    if l == null { return "SDL3 not loaded" }
+    return l.SDL_GetError()
+}
+
+export func delay(int ms) { lib().SDL_Delay(ms) }
+export func getTicks(): int { return lib().SDL_GetTicks() }
+
+export func startTextInput(Ptr[u8] window): bool  { return lib().SDL_StartTextInput(window) }
+export func stopTextInput(Ptr[u8] window): bool   { return lib().SDL_StopTextInput(window) }
+export func textInputActive(Ptr[u8] window): bool { return lib().SDL_TextInputActive(window) }
+export func setTextInputArea(Ptr[u8] window, Ptr[u8] rect, int cursor): bool {
+    return lib().SDL_SetTextInputArea(window, rect, cursor)
+}
+
+export func getMouseState(): int { return lib().SDL_GetMouseState(null, null) }
+export func getGlobalMouseState(): int { return lib().SDL_GetGlobalMouseState(null, null) }
+// 注意：SDL_GetGlobalMouseState 写入 float*，必须用 SDL_FPoint (f32 字段)，
+// 不能用 SDL_Point (i32 字段) — 详见 BUG_FFI_Ptr类型擦除导致隐式错传.md
+// 一次 FFI 调用获取全局鼠标 x, y（省一半 malloc/free 开销）
+// 注意：SDL_GetGlobalMouseState 写入 float*，必须用 SDL_FPoint (f32 字段)，
+// 不能用 SDL_Point (i32 字段)
+export func getGlobalMouse(): [int, int] {
+    var pt = SDL_FPoint.malloc()
+    lib().SDL_GetGlobalMouseState(&pt.x, &pt.y)
+    var x = _int(pt.x); var y = _int(pt.y); pt.free()
+    return x, y
+}
+// 一次 FFI 调用获取窗口位置 x, y
+export func getWindowPos(Ptr[u8] window): [int, int] {
+    var pt = SDL_Point.malloc()
+    lib().SDL_GetWindowPosition(window, &pt.x, &pt.y)
+    int x = pt.x; int y = pt.y; pt.free()
+    return x, y
+}
+// 一次 FFI 调用获取窗口尺寸 w, h
+export func getWindowSize(Ptr[u8] window): [int, int] {
+    var pt = SDL_Point.malloc()
+    lib().SDL_GetWindowSize(window, &pt.x, &pt.y)
+    int w = pt.x; int h = pt.y; pt.free()
+    return w, h
+}
+// 查询窗口状态标志（SDL_GetWindowFlags）
+// SDL_WINDOW_MAXIMIZED = 0x80, SDL_WINDOW_MINIMIZED = 0x40, SDL_WINDOW_FULLSCREEN = 0x01
+export func getWindowFlags(Ptr[u8] window): int { return lib().SDL_GetWindowFlags(window) }
+export func isWindowMaximized(Ptr[u8] window): bool {
+int flags = lib().SDL_GetWindowFlags(window)
+return (flags & 0x80) != 0
+}
+export func showCursor(): bool    { return lib().SDL_ShowCursor() }
+export func hideCursor(): bool    { return lib().SDL_HideCursor() }
+export func cursorVisible(): bool { return lib().SDL_CursorVisible() }
+export func warpMouse(Ptr[u8] window, float x, float y): bool { return lib().SDL_WarpMouseInWindow(window, x, y) }
+
+// 系统光标缓存：每种 kind 只创建一次并复用，避免每次 mouse motion 都
+// SDL_CreateSystemCursor 新建+SDL_SetCursor，导致 Windows 下指针闪烁与内存泄漏
+Array[int] _curKinds = []
+Array[Ptr[u8]]  _curPtrs  = []
+
+// 设置系统光标（传入 SYSTEM_CURSOR_* 常量），返回当前光标指针
+// 注意：返回的光标由缓存持有，调用方不要 destroy（会被复用）
+export func setSystemCursor(int kind): Ptr[u8] {
+    sdl3 l = lib()
+    int idx = kind
+    if idx < 0 { idx = 0 }
+    if _curKinds.len() <= idx {
+        while _curKinds.len() <= idx { _curKinds.add(0); _curPtrs.add(null) }
+    }
+    Ptr[u8] cur = _curPtrs[idx]
+    if cur != null { l.SDL_SetCursor(cur); return cur }
+    cur = l.SDL_CreateSystemCursor(kind)
+    l.SDL_SetCursor(cur)
+    _curKinds[idx] = kind
+    _curPtrs[idx]  = cur
+    return cur
+}
+
+// ==================== 集中式光标决策 ====================
+// 问题：每个控件在 mouse motion 里各自 setSystemCursor，最终光标由“最后处理的控件”决定，
+// 导致后添加的控件（如下方的 ComboBox）会把上方控件（如弹出的下拉层）手型指针覆盖成箭头。
+// 解决：控件只“请求”光标，由 Window 在每帧事件处理完后统一“应用”一次。
+// DEFAULT(0) 优先级最低，其余（POINTER/HAND/TEXT...）取较大 kind，保证非默认光标优先。
+int  _frameCursorReq   = -1
+int  _frameCursorForce = -1   // 强制光标（拖拽等场景，优先级高于所有 requestCursor）
+bool _frameCursorSeen = false
+
+// 每帧事件处理开始前调用，清空本帧请求
+export func resetFrameCursor() { _frameCursorReq = -1; _frameCursorForce = -1; _frameCursorSeen = false }
+
+// 控件在 mouse motion 时调用：标记本帧发生了鼠标移动
+export func markFrameMotion() { _frameCursorSeen = true }
+
+// 控件在视觉状态变化时调用：标记本帧发生了鼠标移动 + 请求下一帧重绘
+export func markFrameRedraw() { _frameCursorSeen = true; requestRedraw() }
+
+// 控件命中自身敏感区域时调用：请求使用某种光标（取较大 kind）
+export func requestCursor(int kind) {
+    if kind > _frameCursorReq { _frameCursorReq = kind }
+}
+
+// 拖拽等场景强制光标：优先级高于所有 requestCursor 调用
+// 解决：拖拽中 MOVE(9) 被 TreeView 的 POINTER(11) 覆盖的问题
+export func forceFrameCursor(int kind) {
+    _frameCursorForce = kind
+    _frameCursorSeen = true
+}
+
+// 帧末统一应用：仅当本帧有鼠标移动才设置（静止帧保持上帧结果，避免闪烁/覆盖）
+export func applyFrameCursor() {
+    if not _frameCursorSeen { return }
+    int k = _frameCursorForce                     // 强制光标优先
+    if k < 0 {
+        k = _frameCursorReq
+        if k < 0 { k = SystemCursor.DEFAULT }   // 无任何控件请求 → 默认箭头
+    }
+    _frameCursorForce = -1                        // 用后重置
+    setSystemCursor(k)
+}
+
+// ==================== 重绘请求 ====================
+// 动画控件调用 requestRedraw() 请求下一帧重绘，Window 侧每帧检查并清除
+bool _redrawRequested = false
+
+// 帧计数器（每帧递增，供控件做帧内去重判断）
+int _frameId = 0
+
+export func requestRedraw() { _redrawRequested = true }
+export func consumeRedrawRequest(): bool {
+    if _redrawRequested { _redrawRequested = false; return true }
+    return false
+}
+export func frameId(): int { return _frameId }
+export func advanceFrame() { _frameId = _frameId + 1 }
+
+// ==================== 弹层事件捕获区 ====================
+// 问题：ComboBox 弹层是覆盖在其它控件之上的 overlay。当弹层展开并压在某 ListBox/Edit 之上时，
+// 弹层范围内的滚轮/鼠标事件仍会被下层控件处理（窗口把同一事件派发给所有控件），
+// 导致“在弹层上滚轮，下层列表却跟着滚”。
+// 解决：展开弹层的 ComboBox 把弹出矩形登记为捕获区；下层控件只要事件落在“他人的捕获区”内就忽略。
+// 注意：捕获区在 render 阶段登记、在 render 阶段开始前清空，跨帧持久（事件处理在 render 之前，
+// 用的是上一帧 render 登记的捕获区），从而不受控件处理顺序影响。
+Array[float] _popupCapture = []
+export func setPopupCapture(float x, float y, float w, float h) { _popupCapture = [x, y, w, h] }
+export func clearPopupCapture() { _popupCapture = [] }
+export func inPopupCapture(float mx, float my): bool {
+    if _popupCapture.len() < 4 { return false }
+    return mx >= _popupCapture[0] and mx <= _popupCapture[0] + _popupCapture[2]
+       and my >= _popupCapture[1] and my <= _popupCapture[1] + _popupCapture[3]
+}
+
+// 弹出消息框
+export func showMessageBox(string title, string msg, int flags = 0) {
+    sdl3 l = lib()
+    l.SDL_ShowSimpleMessageBox(flags, title, msg, null)
+}
+
+export func getClipboardText(): string { return lib().SDL_GetClipboardText()}
+export func setClipboardText(string text): bool { return lib().SDL_SetClipboardText(text) }
+
+export func getPerfCounter(): int { return lib().SDL_GetPerformanceCounter()}
+export func getPerfFrequency(): int { return lib().SDL_GetPerformanceFrequency() }
+export func getTicksNS(): int { return lib().SDL_GetTicksNS() }
+export func hasClipboardText(): bool { return lib().SDL_HasClipboardText() }
+
+export enum FlashOp { CANCEL = 0; BRIEFLY = 1; UNTIL_FOCUSED = 2 }
+
+// TrayEntryFlags — SDL3 系统托盘条目类型
+// 注意：DISABLED(0x80000000) 和 CHECKED(0x40000000) >= 2^31，
+// 编译器 enum 成员值已使用 int64_t 存储，支持 >= 2^31 的位标志（原 int 截断 bug 已修复，见 BUG_TRAY_COMPILER.md）
+export enum TrayEntryFlag {
+    BUTTON   = 0x00000001
+    CHECKBOX = 0x00000002
+    SUBMENU  = 0x00000004
+    DISABLED = 0x80000000
+    CHECKED  = 0x40000000
+}

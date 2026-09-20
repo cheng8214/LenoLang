@@ -1,0 +1,21 @@
+import times
+
+main() {
+    // 使用较小的循环次数，避免 sum 溢出为 BigInt
+    var sum = 0
+    var i = 1000
+    while i > 0 {
+        sum = sum + i
+        i = i - 1
+    }
+    print("sum = " + sum)
+
+    // 现在创建 BigInt 并立即使用
+    var start = times.ms()
+    print("start = " + start)
+
+    // 再次使用 start
+    var end = times.ms()
+    print("end = " + end)
+    print("elapsed = " + (end - start))
+}

@@ -1,0 +1,10 @@
+// 复现：struct 不支持 int a, b, c 多字段同行声明
+// string x = "hi" 单字段正常，不受影响
+
+struct S {
+    int a, b, c          // ❌ 期望字段类型
+}
+
+main() {
+    print("如果看到这行，bug 已修复")
+}

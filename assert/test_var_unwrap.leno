@@ -1,0 +1,45 @@
+// test_var_unwrap.leno — 验证：var 对可空类型是否会自动解包（问题一）
+// 猜想：var x = getNullable() 后，x 被推断为解包后的非可空类型，
+//       导致 x != null 判断失效或报警告
+
+// 返回可空类型的函数
+func getNullable(): string? {
+    return null
+}
+
+func getValue(): string? {
+    return "hello"
+}
+
+main() {
+    print("=== 测试 var 对可空类型的推断 ===\n")
+
+    // 场景1: var 接收可空返回值，然后判空
+    var a = getNullable()
+    print("[1] var a = getNullable() 后 a == null 判断")
+    if a == null {
+        print("    a == null 成立 (期望成立)")
+    } else {
+        print("    a == null 不成立 (异常)")
+    }
+
+    // 场景2: var 接收非空返回值
+    var b = getValue()
+    print("[2] var b = getValue() 后 b == null 判断")
+    if b == null {
+        print("    b == null 成立 (期望不成立)")
+    } else {
+        print("    b == null 不成立 (期望不成立)")
+    }
+
+    // 场景3: 显式可空类型声明
+    string? c = getValue()
+    print("[3] string? c = getValue() 后 c == null 判断")
+    if c == null {
+        print("    c == null 成立 (期望不成立)")
+    } else {
+        print("    c == null 不成立 (期望不成立)")
+    }
+
+    print("\n=== 测试完成 ===")
+}

@@ -1,0 +1,35 @@
+// arrays 模块测试
+
+import arrays
+
+main()
+{
+    // 测试1: sort
+    var arr1 = [3, 1, 4, 1, 5, 9, 2, 6]
+    arrays.sort(arr1)
+    assert_eq(arr1[0], 1)
+    assert_eq(arr1[7], 9)
+
+    // 测试2: reverse
+    var arr2 = [1, 2, 3, 4, 5]
+    arrays.reverse(arr2)
+    assert_eq(arr2[0], 5)
+    assert_eq(arr2[4], 1)
+
+    // 测试3: index_of
+    var arr3 = [10, 20, 30, 40, 50]
+    assert_eq(arrays.index_of(arr3, 30), 2)
+    assert_eq(arrays.index_of(arr3, 100), -1)
+
+    // 测试4: 使用数组实例方法 has
+    var arr4 = [1, 2, 3, 4, 5]
+    assert_eq(arr4.has(3), true)
+    assert_eq(arr4.has(10), false)
+
+    // 测试5: join
+    var arr5 = ["a", "b", "c"]
+    var joined = arrays.join(arr5, ",")
+    assert_eq(joined, "a,b,c")
+
+    print("test_arrays_module passed")
+}

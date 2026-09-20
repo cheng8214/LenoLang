@@ -1,0 +1,125 @@
+// 测试 FFI 新增函数: ptr_to_int, memset, write_uint
+
+import ffi
+
+main() {
+    print("=== 测试 ffi.ptr_to_int ===")
+
+    // 测试 1: ptr_from_int / ptr_to_int 往返转换
+    var p1 = ffi.ptr_from_int(0x12345678)
+    int addr1 = ffi.ptr_to_int(p1)
+    assert_eq(addr1, 0x12345678)
+    print("  ptr_from_int/ptr_to_int 往返: OK")
+
+    // 测试 2: malloc 指针获取地址值
+    var buf = ffi.malloc(64)
+    int addr2 = ffi.ptr_to_int(buf)
+    print("  malloc 指针地址: " + addr2)
+    assert_eq(addr2 != 0, true)
+    ffi.free(buf)
+    print("  malloc 指针地址非零: OK")
+
+    // 测试 3: nullptr 地址值为 0
+    var np = ffi.nullptr()
+    int null_addr = ffi.ptr_to_int(np)
+    assert_eq(null_addr, 0)
+    print("  nullptr 地址为 0: OK")
+
+    // 测试 4: 大地址值（HKEY 根键常量）
+    var hklm = ffi.ptr_from_int(0x80000002)
+    int hklm_addr = ffi.ptr_to_int(hklm)
+    assert_eq(hklm_addr, 0x80000002)
+    print("  大地址值 0x80000002 往返: OK")
+
+    print("")
+    print("=== 测试 ffi.memset ===")
+
+    // 测试 5: memset 清零
+    var buf2 = ffi.malloc(16)
+    // 先写入非零值
+    for 0 : 15 to i {
+        ffi.write_byte(buf2, i, 0xFF)
+    }
+    // memset 清零
+    ffi.memset(buf2, 0, 16)
+    // 验证全部为零
+    bool all_zero = true
+    for 0 : 15 to i {
+        if ffi.read_byte(buf2, i) != 0 {
+            all_zero = false
+        }
+    }
+    assert_eq(all_zero, true)
+    print("  memset 清零: OK")
+
+    // 测试 6: memset 填充特定值
+    ffi.memset(buf2, 0xAB, 8)
+    bool all_ab = true
+    for 0 : 7 to i {
+        if ffi.read_byte(buf2, i) != 0xAB {
+            all_ab = false
+        }
+    }
+    // 后 8 字节应该仍为 0
+    bool rest_zero = true
+    for 8 : 15 to i {
+        if ffi.read_byte(buf2, i) != 0 {
+            rest_zero = false
+        }
+    }
+    assert_eq(all_ab, true)
+    assert_eq(rest_zero, true)
+    print("  memset 填充 0xAB: OK")
+    ffi.free(buf2)
+
+    // 测试 7: memset 与 memcpy 对比
+    var src = ffi.malloc(32)
+    var dest = ffi.malloc(32)
+    ffi.memset(src, 0x42, 32)
+    ffi.memset(dest, 0, 32)
+    ffi.memcpy(dest, src, 32)
+    bool match = true
+    for 0 : 31 to i {
+        if ffi.read_byte(dest, i) != 0x42 {
+            match = false
+        }
+    }
+    assert_eq(match, true)
+    print("  memset + memcpy 配合: OK")
+    ffi.free(src)
+    ffi.free(dest)
+
+    print("")
+    print("=== 测试 ffi.write_uint ===")
+
+    // 测试 8: write_uint 写入普通值
+    var buf3 = ffi.malloc(16)
+    ffi.memset(buf3, 0, 16)
+    ffi.write_uint(buf3, 0, 12345)
+    assert_eq(ffi.read_uint(buf3, 0), 12345)
+    print("  write_uint 普通值 12345: OK")
+
+    // 测试 9: write_uint 写入超过 2^31 的值
+    ffi.write_uint(buf3, 0, 0x80000002)
+    int read_val = ffi.read_uint(buf3, 0)
+    assert_eq(read_val, 0x80000002)
+    print("  write_uint 大值 0x80000002: OK")
+
+    // 测试 10: write_uint 写入 0xFFFFFFFF
+    ffi.write_uint(buf3, 4, 0xFFFFFFFF)
+    int max_val = ffi.read_uint(buf3, 4)
+    assert_eq(max_val, 0xFFFFFFFF)
+    print("  write_uint 最大值 0xFFFFFFFF: OK")
+
+    // 测试 11: write_uint 与 read_int 对比（位模式相同，解释不同）
+    ffi.write_uint(buf3, 8, 0x80000000)
+    int as_int = ffi.read_int(buf3, 8)
+    int as_uint = ffi.read_uint(buf3, 8)
+    print("  0x80000000 as int: " + as_int + ", as uint: " + as_uint)
+    assert_eq(as_uint, 0x80000000)
+    print("  write_uint 位模式正确: OK")
+    ffi.free(buf3)
+
+    print("")
+    print("=== 所有测试通过 ===")
+}

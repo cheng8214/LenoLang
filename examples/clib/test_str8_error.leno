@@ -1,0 +1,14 @@
+import ffi
+import io
+
+// 测试 Ptr 参数不接受 string
+clib msvcrt {
+    i32 strlen(Ptr s)
+}
+
+main() {
+    msvcrt lib = ffi.load("msvcrt.dll")
+    int result = lib.strlen("hello") as int
+    io.print("strlen result: ")
+    io.print(result)
+}

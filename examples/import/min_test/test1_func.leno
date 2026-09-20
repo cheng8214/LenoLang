@@ -1,0 +1,2 @@
+import "mod_func.leno" as m
+print("1+2=" + m.add(1, 2))

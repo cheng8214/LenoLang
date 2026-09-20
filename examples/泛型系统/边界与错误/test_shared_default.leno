@@ -1,0 +1,36 @@
+// 演示：泛型 struct 中 Array 默认值共享问题 (坑 2)
+
+print("=== 场景1: 带默认值的 Array 字段 ===")
+
+struct Container[T] {
+    Array items = []     // 所有实例共享这同一个 []
+}
+
+var c1 = new Container[int]()
+var c2 = new Container[string]()
+
+print("c1.len=" + c1.items.len() + " c2.len=" + c2.items.len())
+
+c1.items.add(42)
+print("c1加42后: c1.len=" + c1.items.len() + " c2.len=" + c2.items.len())
+
+c2.items.add("hello")
+print("c2加hello后: c1.len=" + c1.items.len() + " c2.len=" + c2.items.len())
+
+print("")
+print("=== 场景2: 正确做法 - init() ===")
+
+struct SafeContainer[T] {
+    Array items
+    func init() {
+        self.items = []
+    }
+}
+
+var s1 = new SafeContainer[int]()
+s1.init()
+var s2 = new SafeContainer[string]()
+s2.init()
+
+s1.items.add(42)
+print("s1加42后: s1.len=" + s1.items.len() + " s2.len=" + s2.items.len())

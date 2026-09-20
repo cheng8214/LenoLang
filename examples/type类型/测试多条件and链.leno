@@ -1,0 +1,43 @@
+// 多条件 and 链 + => 绑定边界测试
+
+func test_multi_and_chain(any x): int {
+    if x is Array => a and a[0] is float and a[1] is int and a[2] is Dict {
+        var d = a[2]
+        if d["val"] is int {
+            return _int(a[0]) + a[1] + d["val"]
+        }
+    }
+    return -1
+}
+
+func test_and_with_dict(any x): string {
+    if x is Dict => d and d["name"] is string and d["age"] is int {
+        return d["name"]
+    }
+    return "NOT_FOUND"
+}
+
+func test_and_three_types(any x): string {
+    if x is Array => a and a[0] is int and a[1] is string and a[2] is float {
+        return a[1] + ":" + _str(_int(a[2]))
+    }
+    return "FAIL"
+}
+
+main() {
+    // 多类型 and 链：float + int + Dict
+    var data1 = [3.14, 42, {"val": 100}]
+    print(test_multi_and_chain(data1))   // 3+42+100 = 145
+
+    // Dict 多键 and 链
+    var data2 = {"name": "Alice", "age": 30}
+    print(test_and_with_dict(data2))     // Alice
+
+    // 三类型 and 链
+    var data3 = [42, "hello", 3.14]
+    print(test_and_three_types(data3))   // hello:3
+
+    // 不满足条件
+    print(test_multi_and_chain([1, 2, 3]))   // -1 (a[0] 不是 float)
+    print(test_and_with_dict({"name": "Bob"}))  // NOT_FOUND
+}

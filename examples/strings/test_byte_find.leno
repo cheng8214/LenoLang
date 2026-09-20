@@ -1,0 +1,90 @@
+// test_byte_find.leno - 验证 byte_find 二进制安全搜索功能
+import strings
+
+main() {
+    print("=== byte_find test ===")
+    print("")
+
+    // ---- 1. 基本文本搜索 (ASCII) ----
+    print("[1] 基本文本搜索")
+    string s1 = "Hello, World"
+    print("  s1 = " + s1)
+    print("  s1.byte_find('World') = " + s1.byte_find("World"))       // 7
+    print("  s1.byte_find('o') = " + s1.byte_find("o"))                 // 4
+    print("  s1.byte_find('xyz') = " + s1.byte_find("xyz"))            // -1
+    print("  s1.byte_find('Hello') = " + s1.byte_find("Hello"))       // 0
+    print("")
+
+    // ---- 2. start 参数 (多次搜索) ----
+    print("[2] start 参数 - 多次搜索")
+    string s2 = "ababab"
+    print("  s2 = " + s2)
+    int pos = s2.byte_find("ab")
+    int count = 0
+    while pos >= 0 {
+        print("    found at: " + pos)
+        count = count + 1
+        pos = s2.byte_find("ab", pos + 1)
+    }
+    print("  total found: " + count)  // 3
+    print("")
+
+    // ---- 3. 二进制安全搜索 (含 null 字节) ----
+    print("[3] 二进制安全搜索 (含 null 字节)")
+    // 构造含 \x00 的二进制数据: 00 01 00 02 00 03
+    string bin = strings.char(0x00, 0x01, 0x00, 0x02, 0x00, 0x03)
+    // 搜索 00 02 (在偏移 2)
+    string pat1 = strings.char(0x00, 0x02)
+    int bf1 = bin.byte_find(pat1)
+    print("  bin.byte_find(0x00 0x02) = " + bf1)  // 2
+
+    // 对比: find() 遇 \x00 截断, 应返回 -1
+    int f1 = bin.find(pat1)
+    print("  bin.find(0x00 0x02) = " + f1)        // -1 (strstr 截断)
+
+    // 搜索 00 03 (在偏移 4)
+    string pat2 = strings.char(0x00, 0x03)
+    int bf2 = bin.byte_find(pat2)
+    print("  bin.byte_find(0x00 0x03) = " + bf2)  // 4
+    print("")
+
+    // ---- 4. 边界情况 ----
+    print("[4] 边界情况")
+    // 空模式
+    int empty = "hello".byte_find("")
+    print("  'hello'.byte_find('') = " + empty)   // 0
+
+    // start 超出范围
+    int oob = "hello".byte_find("h", 100)
+    print("  'hello'.byte_find('h', 100) = " + oob)  // -1
+
+    // 负数 start
+    int neg = "hello".byte_find("o", -1)
+    print("  'hello'.byte_find('o', -1) = " + neg)   // 4 (从倒数第1字节)
+
+    // pattern 长度 > 字符串长度
+    int toolong = "hi".byte_find("hello")
+    print("  'hi'.byte_find('hello') = " + toolong)  // -1
+    print("")
+
+    // ---- 5. 模块函数调用 ----
+    print("[5] 模块函数调用")
+    int modcall = strings.byte_find("Hello, World", "World")
+    print("  strings.byte_find('Hello, World', 'World') = " + modcall)  // 7
+    int modcall2 = strings.byte_find("Hello, World", "o", 5)
+    print("  strings.byte_find('Hello, World', 'o', 5) = " + modcall2)   // 8
+    print("")
+
+    // ---- 6. Unicode 文本 ----
+    print("[6] Unicode 文本")
+    string s6 = "你好World"
+    // byte_find 返回字节偏移, "World" 从第6字节开始 (2中文=6字节)
+    int ubf = s6.byte_find("World")
+    print("  '你好World'.byte_find('World') = " + ubf)  // 6 (字节偏移)
+    // 对比 find 返回字符索引
+    int uf = s6.find("World")
+    print("  '你好World'.find('World') = " + uf)        // 2 (字符索引)
+    print("")
+
+    print("=== all tests passed ===")
+}

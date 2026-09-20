@@ -1,0 +1,40 @@
+// 回归：经**函数值**层叠调用（main → callIt → h0..h5），§8.59 / §8.60
+//
+// 形态：主循环通过函数值调用 callIt（裸 OP_CALL），callIt 体内又通过函数值调用
+// 六个 helper ⇒ 每次迭代要完成 7 次"运行期取 callee 再调用"，共 20000 轮。
+//
+// 历史（§8.60 的现场）：当时 callIt 会先被编译成机器码，而它在**执行期间**
+// 又触发对 h0..h5 的编译；若某个 helper 撞上 callIt 占用的槽，旧实现会直接释放
+// callIt **正在执行**的那段机器码 ⇒ 返回时 0xC0000005（4/4 必崩）。
+// 教训：释放"自己正在执行的东西"之前，必须先确认没有谁还在它上面跑。
+func h0(int x): int { return x + 1 }
+func h1(int x): int { return x + 2 }
+func h2(int x): int { return x + 3 }
+func h3(int x): int { return x + 4 }
+func h4(int x): int { return x + 5 }
+func h5(int x): int { return x + 6 }
+
+var ha = h0
+var hb = h1
+var hc = h2
+var hd = h3
+var he = h4
+var hf = h5
+
+func callIt(int x): int {
+    return ha(x) + hb(x) + hc(x) + hd(x) + he(x) + hf(x)
+}
+
+var entry = callIt
+
+main() {
+    int acc = 0
+    int i = 0
+    while i < 20000 {
+        acc = acc + entry(i)
+        i = i + 1
+    }
+    // callIt(i) = 6i + 21 ⇒ sum_{i<20000} = 6*(19999*20000/2) + 21*20000
+    assert_eq(acc, 1200360000)
+    print("test_func_cache_churn: OK")
+}

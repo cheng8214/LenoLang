@@ -1,0 +1,23 @@
+import times
+
+func test() {
+    var sum = 0
+    var i = 100000
+
+    var start = times.ms()
+
+    while i > 0 {
+        sum = sum + i
+        i = i - 1
+    }
+
+    var end = times.ms()
+    print("sum 预期: 5000050000, 实际: " + sum)
+    print("elapsed: " + (end - start))
+}
+
+main() {
+    _gc(false)  // 关闭 GC
+    test()
+    _gc(true)   // 重新开启 GC
+}

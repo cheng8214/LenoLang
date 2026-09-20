@@ -1,0 +1,52 @@
+// 嵌套 cstruct 字段的跨模块类型传导 —— 回归测试
+//
+// 背景（2026-09-18 实测，S2 族"同一份检查各处认的名字集合不一致"第 4 例）：
+//   `docs/module_cstructs.md` 明确记载 **嵌套 cstruct** 是支持的写法
+//   （`cstruct Rect { Point top_left }`），语料里也在用
+//   （`examples/import/win_process/win_process_str16.leno` 的
+//     `cstruct LUID_AND_ATTRIBUTES { LUID Luid ... }`）。
+//   但扫描器给"跨模块类型表"解析 **cstruct 字段**时只查 clib / struct 两张表
+//   （`scan_cstruct.inc:222-230`）——**漏了 cstruct 与 face**；而 cstruct 名与 struct 名是
+//   **两个独立数组**（`scan_pass1.inc:121` 收 struct、`:139` 收 cstruct）⇒
+//   `is_known_struct("Point")` 对 cstruct **匹配不到** ⇒ 嵌套字段落成 `TYPE_ANY` +
+//   `struct_name = NULL`，**而且这条路上连降级警告都没有**（上一轮加的警告只加在 struct 字段那条路）。
+//   消费方于是看到 `any`：实测 `r.top_left.x` 报「不能在 any 类型上直接访问字段 'x'」——
+//   硬编译错，不是"能跑但降级"。
+//
+// 判据：端到端 —— 消费方 malloc 含嵌套 cstruct 字段的 cstruct，写/读嵌套字段并打印。
+// 子进程机器复用 assert/helpers/compiler.leno（S7）。
+
+import dirs
+import files
+
+import "helpers/compiler.leno" as ce
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_nested_cstruct_field_type")
+    dirs.delete(work)
+    dirs.mkdir_p(dirs.join(work, "lib"))
+
+    // 声明方：嵌套 cstruct（与文档 / 语料同形）
+    files.write(dirs.join(work, "lib/nest.leno"),
+        "export cstruct Point {\n    i32 x\n    i32 y\n}\n\n"
+        + "export cstruct Rect {\n    Point top_left\n    i32 w\n}\n")
+
+    // 消费方：跨模块读写嵌套字段（字段类型只能从扫描器那张表里取到）
+    var main_path = dirs.join(work, "main.leno")
+    files.write(main_path,
+        "import \"lib/nest.leno\" as n\nuse n.Rect\nuse n.Point\n\n"
+        + "main() {\n"
+        + "    var r = Rect.malloc()\n"
+        + "    r.top_left.x = 1\n"
+        + "    r.top_left.y = 2\n"
+        + "    r.w = 3\n"
+        + "    print(\"X=\" + r.top_left.x + \" Y=\" + r.top_left.y + \" W=\" + r.w)\n"
+        + "    r.free()\n"
+        + "}\n")
+    ce.expect_ok(main_path, "嵌套 cstruct 字段跨模块可读写（修前是 any ⇒ 硬编译错）",
+        "X=1 Y=2 W=3")
+
+    dirs.delete(work)
+
+    print("test_nested_cstruct_field_type passed")
+}

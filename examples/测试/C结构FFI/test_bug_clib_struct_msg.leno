@@ -1,0 +1,7 @@
+// 复现：clib 返回类型报错为模糊的 "struct]"，且缺转换提示
+import "test_bug_clib_struct_msg_mod.leno" as m
+
+main() {
+    Ptr[u8] p = m.getHandle()
+    print("ok: " + p)
+}

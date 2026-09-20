@@ -1,0 +1,8 @@
+
+
+
+export struct info
+{
+	int x
+	int y 
+}

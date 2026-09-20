@@ -1,0 +1,11 @@
+// 测试 cstruct 类型
+
+cstruct Vec3 {
+    f32 x
+}
+
+main() {
+    var v = Vec3.malloc()
+    print("type of v: " + type(v))
+    v.free()
+}

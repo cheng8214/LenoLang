@@ -1,0 +1,73 @@
+// FFI 边界测试
+import ffi
+
+cstruct Point {
+    i32 x
+    i32 y
+}
+
+cfunc CompareCb(Ptr a, Ptr b): i32
+
+func cmp_ptr(Ptr a, Ptr b):int {
+    var va = ffi.read_int(a, 0)
+    var vb = ffi.read_int(b, 0)
+    if va < vb { return -1 }
+    if va > vb { return 1 }
+    return 0
+}
+
+main() {
+    // === cstruct 基本测试 ===
+    print("Point size=" + Point.size() + " align=" + Point.alignment())
+    var p = Point.malloc()
+    p.x = 100
+    p.y = 200
+    print("p=(" + p.x + "," + p.y + ")")
+    assert_eq(p.x, 100)
+    assert_eq(p.y, 200)
+
+    // === ffi 内存读写 ===
+    Ptr buf = ffi.malloc(8)
+    ffi.write_int(buf, 0, 0x12345678)
+    var v = ffi.read_int(buf, 0)
+    assert_eq(v, 0x12345678)
+    ffi.free(buf)
+
+    // === ffi.memcpy ===
+    Ptr dst = ffi.malloc(8)
+    ffi.memcpy(dst, p.to_ptr(), 8)
+    var pt2 = Point.from_ptr(dst)
+    print("copy=(" + pt2.x + "," + pt2.y + ")")
+    assert_eq(pt2.x, 100)
+    assert_eq(pt2.y, 200)
+
+    // === cfunc 回调 + qsort ===
+    var cb = ffi.callback(cmp_ptr, CompareCb)
+    var libc = ffi.load("msvcrt.dll")
+    var arr = ffi.malloc(20)
+    ffi.write_int(arr, 0,  5)
+    ffi.write_int(arr, 4,  3)
+    ffi.write_int(arr, 8,  1)
+    ffi.write_int(arr, 12, 4)
+    ffi.write_int(arr, 16, 2)
+    ffi.call_void(libc, "qsort", arr, 5, 4, cb)
+    assert_eq(ffi.read_int(arr, 0), 1)
+    assert_eq(ffi.read_int(arr, 16), 5)
+    print("qsort OK")
+
+    // === ffi.memset ===
+    Ptr zero = ffi.malloc(4)
+    ffi.write_int(zero, 0, 42)
+    ffi.memset(zero, 0, 4)
+    assert_eq(ffi.read_int(zero, 0), 0)
+
+    // 清理
+    ffi.free(p)
+    ffi.free(dst)
+    ffi.free(arr)
+    ffi.free(zero)
+    ffi.free(cb)
+    ffi.free(libc)
+
+    print("=== FFI 边界测试通过 ===")
+}

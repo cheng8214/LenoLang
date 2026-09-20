@@ -1,0 +1,9 @@
+main() {
+    print("_executable: " + _executable())
+    print("_script: " + _script())
+    var args = _args()
+    print("_args count: " + args.len())
+    for args to a {
+        print("  arg: " + a)
+    }
+}

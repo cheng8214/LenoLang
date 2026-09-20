@@ -1,0 +1,4 @@
+export const int x = 10
+export const Array[int] arr = [1,2,3]
+export const string s = "hello"
+export const Dict[string, int] d = {"a":1, "b":2}

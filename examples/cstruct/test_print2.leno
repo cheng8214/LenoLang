@@ -1,0 +1,24 @@
+// 测试 print 输出
+
+cstruct Vec3 {
+    f32 x
+    f32 y
+    f32 z
+}
+
+main() {
+    print("=== 测试 cstruct 打印 ===")
+    print("Vec3 定义:")
+    print(Vec3)
+    print("")
+    print("v 实例:")
+    var v = Vec3.malloc()
+    print(v)
+    v.x = 1.0
+    v.y = 2.0
+    v.z = 3.0
+    print("设置值后:")
+    print(v)
+    v.free()
+    print("=== 完成 ===")
+}

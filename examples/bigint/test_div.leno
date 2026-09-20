@@ -1,0 +1,24 @@
+main() 
+{ 
+    print("BigInt 除法测试:")
+    
+    // 测试 1: 普通整数除法
+    int x = 10 / 3
+    print("10 / 3 = " + x)
+    
+    // 测试 2: 大整数除法（超出 int64 范围）
+    int big = 99999999999999999999999999999999999999
+    int result = big / 3
+    print("99999999999999999999999999999999999999 / 3 = " + result)
+    print("type(result) = " + type(result))
+    
+    // 测试 3: 大整数取模
+    print("")
+    print("大整数取模测试:")
+    int big2 = 12345678901234567890
+    int mod_result = big2 % 1000000000
+    print("12345678901234567890 % 1000000000 = " + mod_result)
+    
+    print("")
+    print("所有测试完成!")
+}

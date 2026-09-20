@@ -1,0 +1,100 @@
+// 测试：泛型数组类型守卫 + 方法调用
+// 断言模式
+
+// 测试1：泛型数组类型守卫 + 方法调用
+func test1(any ch): int {
+    if ch is Array[Dict] and ch.len() > 0 {
+        return ch.len()
+    }
+    return 0
+}
+
+// 测试2：简单类型守卫 + 字段访问
+func test2(any x): int {
+    if x is int and x > 10 {
+        return x
+    }
+    return 0
+}
+
+// 测试3：字符串守卫 + 方法调用
+func test3(any s): int {
+    if s is string and s.len() > 0 {
+        return s.len()
+    }
+    return 0
+}
+
+// 测试4：多个 and 链
+func test4(any x, any y): int {
+    if x is int and y is string {
+        int nx = x
+        string sy = y
+        if nx > 0 and sy.len() > 0 {
+            return nx + sy.len()
+        }
+    }
+    return 0
+}
+
+// 测试5：or 不应收窄（不安全）
+func test5(any x): string {
+    if x is int {
+        return "int"
+    } else if x is string {
+        return "string"
+    } else {
+        return "other"
+    }
+}
+
+// 测试6：and 右侧不需要收窄的普通表达式
+func test6(any x): int {
+    if x is int and x > 5 {
+        return x
+    }
+    return 0
+}
+
+// 测试7：嵌套泛型
+func test7(any ch): int {
+    if ch is Array[Dict] and ch.len() > 0 {
+        var first = ch[0]
+        if first is Dict {
+            return ch.len()
+        }
+    }
+    return 0
+}
+
+// ============================================================================
+// 运行所有测试
+// ============================================================================
+
+var arr = [{name: "test"}]
+
+assert_eq(test1(arr), 1)
+print("test1: PASSED")
+
+assert_eq(test2(42), 42)
+print("test2: PASSED")
+
+assert_eq(test3("hello"), 5)
+print("test3: PASSED")
+
+assert_eq(test4(1, "world"), 6)
+print("test4: PASSED")
+
+assert_eq(test5(42), "int")
+assert_eq(test5("hello"), "string")
+assert_eq(test5(null), "other")
+print("test5: PASSED")
+
+assert_eq(test6(10), 10)
+assert_eq(test6(3), 0)
+print("test6: PASSED")
+
+assert_eq(test7(arr), 1)
+print("test7: PASSED")
+
+print("=== test_generic_narrow: ALL PASSED ===")

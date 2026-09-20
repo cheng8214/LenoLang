@@ -1,0 +1,12 @@
+// 最小复刻用例：模块方法返回 Dict 类型
+export struct Container {
+    Dict data = {}
+
+    func get_data(): Dict {
+        return data
+    }
+
+    func set_data(Dict d) {
+        data = d
+    }
+}

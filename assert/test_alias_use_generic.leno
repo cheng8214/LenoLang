@@ -1,0 +1,30 @@
+// test_alias_use_generic.leno - 测试 use 传导 alias 时泛型信息不丢失
+// Bug 场景：use r.SizeF 传导 alias 时，SizeF 被当作 struct 而非 Dict[string, float]
+// 修复后：float w = ts.w 编译时不再报错
+
+import "alias_generic_mid.leno" as mid
+use mid.SizeF
+
+main() {
+    // 测试1: struct 方法返回 alias 类型，字段应为 float 而非 any
+    var renderer = mid.createRenderer()
+    var ts = renderer.getSize()
+    float w = ts.w
+    float h = ts.h
+    assert_eq(w, 100.0)
+    assert_eq(h, 200.0)
+
+    // 测试2: 直接调用模块函数返回 alias 类型
+    var sz = mid.createRenderer().getSize()
+    float sw = sz.w
+    assert_eq(sw, 100.0)
+
+    // 测试3: SizeF 类型变量
+    SizeF sf = {w: 1.5, h: 2.5}
+    float sfw = sf.w
+    float sfh = sf.h
+    assert_eq(sfw, 1.5)
+    assert_eq(sfh, 2.5)
+
+    print("test_alias_use_generic passed")
+}

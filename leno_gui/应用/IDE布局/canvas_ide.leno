@@ -1,0 +1,436 @@
+// canvas_ide.leno — VSCode 风格布局 + 中间画布控件
+//
+// 布局结构：
+//   Window
+//   ├── TitleBar（自绘标题栏，含嵌入式 MenuBar）
+//   └── VBox root
+//       ├── Splitter mainSplit (HORIZONTAL, 左右)
+//       │   ├── TreeView sidebar（左侧文件树）
+//       │   └── Splitter rightSplit (VERTICAL, 上下)
+//       │       ├── Canvas editor（中间画布区 ← 核心测试对象）
+//       │       └── ListBox output（底部输出面板）
+//       └── Label statusLbl（状态栏）
+//
+// 测试要点：
+//   1) 画布在 Splitter 嵌套布局中正确缩放
+//   2) 拖拽分割条时画布跟随调整大小
+//   3) 窗口缩放时画布跟随缩放
+//   4) 画布内绘制内容用 ox/oy 绝对坐标，裁剪正确
+//   5) 鼠标事件坐标准确（内容区相对坐标）
+//   6) 侧边栏/输出面板可切换显隐
+//
+// 运行：leno canvas_ide.leno
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer, Window, WindowFlag, TitleBar, MenuBar, Splitter, TreeView, TreeViewNode, Canvas, ListBox, Label, Scancode, SystemCursor,Color)
+import "sdl_menu" as menuLib
+import maths
+
+// ==================== IDE 结构体 ====================
+struct CanvasIDE {
+    // ===== UI 控件引用 =====
+    Window   win
+    TitleBar titleBar
+    MenuBar  menuBar
+    Splitter mainSplit     // 左右分割（TreeView | 右侧上下分割）
+    Splitter rightSplit    // 上下分割（Canvas | ListBox）
+    TreeView sidebar
+    Canvas   canvas         // ★ 中间画布区
+    ListBox  output
+    Label    statusLbl
+
+    // ===== 状态 =====
+    bool sidebarVisible = true
+    bool outputVisible  = true
+    bool _wantQuit      = false
+
+    // ===== 画布状态 =====
+    Array[Array[float]] marks = []       // 点击标记 [x, y]（内容区相对坐标）
+    Array[Array[float]] strokes = []    // 涂鸦线段 [x1, y1, x2, y2]
+    Array[Color] strokeColors = []       // 线段颜色平行数组
+    bool stroking = false
+    float lastX = 0.0; float lastY = 0.0
+    Color drawColor = #3C96EBFF
+    int drawMode = 0                     // 0=标记模式, 1=涂鸦模式
+    float frame = 0.0                    // 动画帧计数
+
+    // ==================== UI 构建 ====================
+
+    func setupUI() {
+        float PAD = 1.0
+
+        // ★ 标题栏
+        titleBar = SDL3.createTitleBar({
+            title: "CanvasIDE — 画布布局测试",
+            height: 36,
+            font_size: 12,
+            title_align: "center"
+        })
+        win.add(titleBar)
+        float titleH = titleBar.get_h()
+
+        // ★ 菜单栏（嵌入标题栏）
+        menuBar = menuLib.createMenuBar({x: 0, y: 0, w: 0, h: titleH - 8, font_size: 12, transparent: true, auto_width: true})
+        menuBar.setWindowHandle(win.handle)
+
+        int mFile = menuBar.addMenu("文件")
+        menuBar.addItem(mFile, {label: "退出", id: "exit", shortcut: "Alt+F4"})
+
+        int mView = menuBar.addMenu("视图")
+        menuBar.addItem(mView, {label: "切换侧边栏", id: "toggle_sidebar", shortcut: "Ctrl+B"})
+        menuBar.addItem(mView, {label: "切换输出面板", id: "toggle_output", shortcut: "Ctrl+J"})
+        menuBar.addSeparator(mView)
+        menuBar.addItem(mView, {label: "重置布局", id: "reset_layout"})
+
+        int mDraw = menuBar.addMenu("绘制")
+        menuBar.addItem(mDraw, {label: "标记模式（点击画十字）", id: "mode_mark"})
+        menuBar.addItem(mDraw, {label: "涂鸦模式（拖拽画线）", id: "mode_draw"})
+        menuBar.addSeparator(mDraw)
+        menuBar.addItem(mDraw, {label: "清空画布", id: "clear"})
+        menuBar.addItem(mDraw, {label: "画笔: 蓝色", id: "color_blue"})
+        menuBar.addItem(mDraw, {label: "画笔: 红色", id: "color_red"})
+        menuBar.addItem(mDraw, {label: "画笔: 绿色", id: "color_green"})
+        menuBar.addItem(mDraw, {label: "画笔: 橙色", id: "color_orange"})
+
+        menuBar.on_select(func(string menu, string id) { onMenuSelect(menu, id) })
+        titleBar.set_center_menu(menuBar)
+
+        // ===== 侧边栏 TreeView =====
+        sidebar = SDL3.createTreeView({font_size: 14})
+        buildSidebarTree()
+        sidebar.on_change(func(Array[int] ids) {
+            if ids.len() > 0 {
+                TreeViewNode n = sidebar.get_node(ids[0])
+                if n.id >= 0 {
+                    output.add_item("[树] " + n.text)
+                    output.scroll_to_bottom()
+                    statusLbl.set_text("选中: " + n.text)
+                    SDL3.markFrameRedraw()
+                }
+            }
+        })
+
+        // ===== 中间画布区（核心！） =====
+        canvas = SDL3.createCanvas({
+            x: 0, y: 0, w: 600, h: 400,
+            bg_color: #15151DFF,
+            border: true,
+            border_color: #3A3F4EFF,
+            cursor: SystemCursor.CROSSHAIR
+        })
+
+        // 画布绘制回调：每次 render 时调用，用窗口绝对坐标 (ox, oy) 偏移
+        canvas.on_draw(func(Renderer r, float ox, float oy, float cw, float ch) {
+            frame = frame + 0.02
+
+            // 1. 背景网格（每 40px）
+            r.setColor(#1E1E28FF)
+            float step = 40.0
+            float gx = step
+            while gx < cw { r.drawLine(ox + gx, oy, ox + gx, oy + ch); gx = gx + step }
+            float gy = step
+            while gy < ch { r.drawLine(ox, oy + gy, ox + cw, oy + gy); gy = gy + step }
+
+            // 2. 中心十字线（画布中心）
+            r.setColor(#3A3F4EFF)
+            float ccx = cw / 2.0; float ccy = ch / 2.0
+            r.drawLine(ox, oy + ccy, ox + cw, oy + ccy)
+            r.drawLine(ox + ccx, oy, ox + ccx, oy + ch)
+
+            // 3. 动态圆形（旋转 + 脉动，验证每帧重绘）
+            float pulse = 30.0 + 10.0 * maths.sin(frame * 3.0)
+            r.setColor(#3C96EBAA)
+            r.drawCircle(ox + ccx, oy + ccy, pulse)
+            r.setColor(#50D29688)
+            r.fillCircle(ox + ccx, oy + ccy, pulse * 0.5)
+
+            // 4. 四角标记矩形（验证裁剪边界）
+            r.setColor(#FFAA5088)
+            r.drawRect(ox, oy, 20, 20)
+            r.drawRect(ox + cw - 20, oy, 20, 20)
+            r.drawRect(ox, oy + ch - 20, 20, 20)
+            r.drawRect(ox + cw - 20, oy + ch - 20, 20, 20)
+
+            // 5. 旋转三角形
+            r.setColor(#BE78FFFF)
+            r.drawTriangle(ox + ccx, oy + 60, 25, frame * 57.2958, 0.7, 0.5, 1.0, 0.8)
+
+            // 6. 涂鸦线段
+            int n = strokes.len()
+            for n to i {
+                var s = strokes[i]
+                r.setColor(strokeColors[i])
+                r.drawLine(ox + s[0], oy + s[1], ox + s[2], oy + s[3])
+            }
+
+            // 7. 点击标记（十字）
+            for marks to m {
+                float mx = m[0]; float my = m[1]
+                r.setColor(#FF6E82FF)
+                r.drawLine(ox + mx - 10, oy + my, ox + mx + 10, oy + my)
+                r.drawLine(ox + mx, oy + my - 10, ox + mx, oy + my + 10)
+                r.setColor(#FFAA50FF)
+                r.fillCircle(ox + mx, oy + my, 3)
+            }
+
+            // 8. 画布尺寸标注
+            r.setColor(#5A6070FF)
+            r.drawText(SDL3.createFontAuto(12.0), $"画布: {_int(cw)}x{_int(ch)}  模式: {if drawMode == 0 then "标记" else "涂鸦"}  线段:{strokes.len()} 标记:{marks.len()}",
+                       ox + 8, oy + 8, #78808CFF)
+
+            // ★ 持续动画：请求下一帧重绘（旋转三角形、脉动圆形需要）
+            SDL3.markFrameRedraw()
+        })
+
+        // 画布事件：鼠标坐标是内容区相对坐标 (0,0 起始)
+        canvas.on_click(func(float cx, float cy, int btn) {
+            if drawMode == 0 and btn == 1 {
+                marks.add([cx, cy])
+                statusLbl.set_text($"[标记] ({cx}, {cy}) — 共 {marks.len()} 个标记")
+                output.add_item($"[标记] ({cx}, {cy})")
+                output.scroll_to_bottom()
+            }
+            if btn == 3 {
+                marks.clear()
+                strokes.clear()
+                strokeColors.clear()
+                output.add_item("[清空] 右键清空画布")
+                output.scroll_to_bottom()
+            }
+            SDL3.markFrameRedraw()
+        })
+
+        canvas.on_mouse_down(func(float cx, float cy, int btn) {
+            if drawMode == 1 and btn == 1 {
+                stroking = true
+                lastX = cx; lastY = cy
+            }
+        })
+
+        canvas.on_mouse_up(func(float cx, float cy, int btn) {
+            if btn == 1 and stroking {
+                stroking = false
+                output.add_item($"[涂鸦] 结束 ({cx}, {cy})，共 {strokes.len()} 段")
+                output.scroll_to_bottom()
+            }
+        })
+
+        canvas.on_drag(func(float cx, float cy, float dx, float dy) {
+            if stroking {
+                strokes.add([lastX, lastY, cx, cy])
+                strokeColors.add(drawColor)
+                lastX = cx; lastY = cy
+                SDL3.markFrameRedraw()
+            }
+        })
+
+        canvas.on_mouse_move(func(float cx, float cy) {
+            statusLbl.set_text($"鼠标: ({_int(cx)}, {_int(cy)})  画布尺寸由布局决定")
+        })
+
+        canvas.on_mouse_enter(func(float cx, float cy) {
+            SDL3.markFrameRedraw()
+        })
+
+        canvas.on_mouse_leave(func() {
+            stroking = false
+            SDL3.markFrameRedraw()
+        })
+
+        // ===== 输出面板 =====
+        output = SDL3.createListBox({font_size: 13})
+        output.add_item("=== CanvasIDE 已就绪 ===")
+        output.add_item("中间区域为 Canvas 画布控件")
+        output.add_item("拖拽分割条 → 画布自动调整大小")
+        output.add_item("缩放窗口 → 画布跟随缩放")
+        output.add_item("菜单[绘制] 可切换标记/涂鸦模式")
+        output.add_item("---")
+
+        // ===== 状态栏 =====
+        statusLbl = SDL3.createLabel({text: "就绪 — 中间为画布区，拖拽分割条测试缩放", font_size: 13})
+
+        // ===== 布局：Splitter 嵌套 =====
+        // 上下分割：canvas(上) + output(下)，ratio 0.75
+        rightSplit = SDL3.createSplitter({
+            orientation: 1,  // VERTICAL
+            ratio: 0.75,
+            min_first: 100,
+            min_second: 60,
+            divider_width: 4,
+            hit_pad: 4
+        })
+        rightSplit.set_first(canvas)
+        rightSplit.set_second(output)
+
+        // 左右分割：sidebar(左) + rightSplit(右)，ratio 0.18
+        mainSplit = SDL3.createSplitter({
+            orientation: 0,  // HORIZONTAL
+            ratio: 0.18,
+            min_first: 120,
+            min_second: 200,
+            divider_width: 4,
+            hit_pad: 4
+        })
+        mainSplit.set_first(sidebar)
+        mainSplit.set_second(rightSplit)
+
+        // 根布局：状态栏固定底部，mainSplit 填满剩余
+        float topOffset = titleH
+        var root = SDL3.createVBox({padX: PAD, padY: PAD, spacing: 0})
+        root.add(statusLbl, {grow: 0, shrink: 0, basis: 22, align: 3})
+        root.add(mainSplit, {grow: 1, shrink: 1, align: 3})
+        win.setRootAt(root, 0, topOffset)
+    }
+
+    // ==================== 侧边栏树构建 ====================
+
+    func buildSidebarTree() {
+        Array[Dict] roots = [
+            {text: "项目", expanded: true, children: [
+                {text: "src", expanded: true, children: [
+                    {text: "main.leno"},
+                    {text: "canvas.leno"},
+                    {text: "renderer.leno"}
+                ]},
+                {text: "lib", expanded: false, children: [
+                    {text: "SDL3.leno"},
+                    {text: "sdl_core.leno"},
+                    {text: "sdl_canvas.leno"}
+                ]}
+            ]},
+            {text: "测试", expanded: false, children: [
+                {text: "test_tab_canvas.leno"},
+                {text: "canvas_ide.leno"}
+            ]}
+        ]
+        sidebar.set_items(roots)
+    }
+
+    // ==================== 菜单回调 ====================
+
+    func onMenuSelect(string menu, string id) {
+        if id == "exit" {
+            _wantQuit = true
+            return
+        }
+        if id == "toggle_sidebar" {
+            toggleSidebar()
+            return
+        }
+        if id == "toggle_output" {
+            toggleOutput()
+            return
+        }
+        if id == "reset_layout" {
+            mainSplit.set_ratio(0.18)
+            rightSplit.set_ratio(0.75)
+            output.add_item("[布局] 已重置")
+            output.scroll_to_bottom()
+            SDL3.markFrameRedraw()
+            return
+        }
+        if id == "mode_mark" {
+            drawMode = 0
+            output.add_item("[模式] 切换为标记模式")
+            output.scroll_to_bottom()
+            SDL3.markFrameRedraw()
+            return
+        }
+        if id == "mode_draw" {
+            drawMode = 1
+            output.add_item("[模式] 切换为涂鸦模式")
+            output.scroll_to_bottom()
+            SDL3.markFrameRedraw()
+            return
+        }
+        if id == "clear" {
+            marks.clear()
+            strokes.clear()
+            strokeColors.clear()
+            output.add_item("[清空] 画布已清空")
+            output.scroll_to_bottom()
+            SDL3.markFrameRedraw()
+            return
+        }
+        if id == "color_blue" { drawColor = #3C96EBFF; output.add_item("[画笔] 蓝色"); output.scroll_to_bottom(); return }
+        if id == "color_red" { drawColor = #E04050FF; output.add_item("[画笔] 红色"); output.scroll_to_bottom(); return }
+        if id == "color_green" { drawColor = #50C878FF; output.add_item("[画笔] 绿色"); output.scroll_to_bottom(); return }
+        if id == "color_orange" { drawColor = #FFAA50FF; output.add_item("[画笔] 橙色"); output.scroll_to_bottom(); return }
+        output.add_item("[菜单] " + menu + " -> " + id)
+        output.scroll_to_bottom()
+        SDL3.markFrameRedraw()
+    }
+
+    // 切换侧边栏
+    func toggleSidebar() {
+        sidebarVisible = not sidebarVisible
+        if sidebarVisible {
+            mainSplit.set_first(sidebar)
+            mainSplit.set_ratio(0.18)
+        } else {
+            mainSplit.set_ratio(0.0)
+        }
+        output.add_item("[视图] 侧边栏: " + (if sidebarVisible then "显示" else "隐藏"))
+        output.scroll_to_bottom()
+        SDL3.markFrameRedraw()
+    }
+
+    // 切换输出面板
+    func toggleOutput() {
+        outputVisible = not outputVisible
+        if outputVisible {
+            rightSplit.set_ratio(0.75)
+        } else {
+            rightSplit.set_ratio(1.0)
+        }
+        output.add_item("[视图] 输出面板: " + (if outputVisible then "显示" else "隐藏"))
+        output.scroll_to_bottom()
+        SDL3.markFrameRedraw()
+    }
+
+    // ==================== 事件处理 ====================
+
+    func handleEvent(Event ev): bool {
+        if _wantQuit { return false }
+        if ev.isQuit() or ev.isWindowClose() { return false }
+        if titleBar.is_close_requested() { titleBar.clear_close_request(); return false }
+        if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
+
+        // Ctrl+B 切换侧边栏
+        if ev.isKeyDown() and ev.scancode() == Scancode.B {
+            int mod = ev.keyMod()
+            if (mod & 64) != 0 or (mod & 128) != 0 { toggleSidebar(); return true }
+        }
+        // Ctrl+J 切换输出
+        if ev.isKeyDown() and ev.scancode() == Scancode.J {
+            int mod2 = ev.keyMod()
+            if (mod2 & 64) != 0 or (mod2 & 128) != 0 { toggleOutput(); return true }
+        }
+        return true
+    }
+
+    // ==================== 主入口 ====================
+
+    func run() {
+        SDL3.ttfInit()
+        win = SDL3.createWindow({
+            title: "CanvasIDE — 画布布局测试",
+            w: 1000, h: 680,
+            flags: WindowFlag.RESIZABLE
+        })
+        if not win.ok { SDL3.ttfQuit(); return }
+        win.setMinSize(600, 400)
+        setupUI()
+
+        win.run(
+            func(Event ev): bool { return handleEvent(ev) },
+            func(Renderer r) { }
+        )
+        SDL3.ttfQuit()
+    }
+}
+
+// ==================== 程序入口 ====================
+main() {
+    CanvasIDE app = new CanvasIDE()
+    app.run()
+}

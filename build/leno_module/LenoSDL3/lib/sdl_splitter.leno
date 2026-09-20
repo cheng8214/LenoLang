@@ -1,0 +1,304 @@
+// sdl_splitter.leno — 可拖拽分割容器（Splitter / SplitPane）
+//
+// 主流 GUI 框架的标准组件：
+//   - Qt:     QSplitter
+//   - GTK:    GtkPaned
+//   - WPF:    GridSplitter
+//   - Web:    react-split-pane / CSS resize
+//
+// 设计要点：
+//   1. 两个子控件（first / second），中间一条可拖拽分割条
+//   2. 用比例（ratio 0.0~1.0）而非绝对像素存储分割位置 → 父容器缩放时自动适配
+//   3. 分割条有视觉反馈：默认细线、悬停高亮、拖拽时加粗
+//   4. 支持最小尺寸约束，防止某一侧被拖到不可用
+//   5. 命中区域比视觉分割条更宽（±4px），降低拖拽难度
+//
+// 用法：
+//   Splitter sp = SDL3.createSplitter({x:0, y:0, w:800, h:600, orientation:0, ratio:0.3})
+//   sp.set_first(navPanel)
+//   sp.set_second(table)
+//   // 或构造时传入：createSplitter({..., first:navPanel, second:table})
+import "sdl_renderer.leno" as ren; use ren.Renderer
+import "sdl_event.leno" as evt; use evt.Event
+import "sdl_core.leno" as core; use core.SystemCursor
+import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_edit.leno" as edt; use edt.Edit
+import "sdl_layout.leno" as lay; use lay.(HBox, VBox, AnchorBox)
+import "sdl_panel.leno" as pnl; use pnl.Panel
+import "sdl_table.leno" as tbl; use tbl.Table
+import "sdl_treeview.leno" as tvlib; use tvlib.TreeView
+import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
+use theme.Color
+
+export struct Splitter impl Widget, Themeable {
+    // ==================== 关联常量 ====================
+    const HORIZONTAL = 0   // 左右分割（分割条竖向，左右拖拽）
+    const VERTICAL   = 1   // 上下分割（分割条横向，上下拖拽）
+
+    float x = 0.0, y = 0.0, w = 400.0, h = 300.0
+    Widget? _first               // 第一侧子控件（左侧 / 上侧）
+    Widget? _second              // 第二侧子控件（右侧 / 下侧）
+    int    _orientation = HORIZONTAL  // 方向（HORIZONTAL/VERTICAL）
+    float  _ratio = 0.3          // 分割比例：第一侧占比 (0.0~1.0)
+    float  _dividerW = 4.0       // 分割条视觉宽度
+    float  _hitPad   = 4.0       // 命中区域额外宽度（视觉宽度两侧各加 _hitPad）
+    float  _minFirst  = 80.0     // 第一侧最小尺寸
+    float  _minSecond = 80.0     // 第二侧最小尺寸
+    bool   _dragging = false     // 是否正在拖拽分割条
+    bool   _hover    = false     // 鼠标是否悬停在分割条上
+    float  _dragStartRatio = 0.0 // 拖拽起始比例（用于计算偏移）
+    float  _dragStartMouse = 0.0 // 拖拽起始鼠标坐标
+    // 分割条颜色
+    Color    _divColor = #5A5F6EFF      // 默认分割条色
+    Color    _hovColor = #3C96EBFF     // 悬停/拖拽高亮色
+    bool   _loaded = false
+    bool   enabled = true, visible = true
+    Ptr[u8] _hwnd                   // 绑定的窗口句柄
+    int    _winW = 0, _winH = 0     // 窗口尺寸（供向下传递）
+
+    func set(Dict opts) {
+        Theme th = theme.getTheme()
+        _divColor = th.border
+        _hovColor = th.accent
+        x           = opts.get("x", 0)
+        y           = opts.get("y", 0)
+        w           = opts.get("w", 400)
+        h           = opts.get("h", 300)
+        _orientation = opts.get("orientation", HORIZONTAL)
+        _ratio       = opts.get("ratio", 0.3)
+        _dividerW    = opts.get("divider_width", 4)
+        _hitPad      = opts.get("hit_pad", 4)
+        _minFirst    = opts.get("min_first", 80)
+        _minSecond   = opts.get("min_second", 80)
+        // 颜色：opts 未传则保持默认值
+        if opts.get("divider_color") is Color => t { _divColor = t }
+        if opts.get("hover_color") is Color => t { _hovColor = t }
+        // 构造时传入子控件
+        var f = opts.get("first")
+        if f is Widget { _first = f }
+        var s = opts.get("second")
+        if s is Widget { _second = s }
+        _clamp_ratio()
+        _loaded = true
+    }
+
+    // ==================== 子控件管理 ====================
+    func set_first(Widget c)  { _first = c; if _hwnd != null { _pass_hwnd(c, _hwnd) } }
+    func set_second(Widget c) { _second = c; if _hwnd != null { _pass_hwnd(c, _hwnd) } }
+
+    func _bind_window(Ptr[u8] hwnd) {
+        _hwnd = hwnd
+        var f = _first;  if f is Widget { _pass_hwnd(f, hwnd) }
+        var s = _second; if s is Widget { _pass_hwnd(s, hwnd) }
+    }
+    // ★ 新增：绑定窗口句柄和尺寸，并向下传递
+    func _bind_window_size(Ptr[u8] hwnd, int ww, int hh) {
+        _hwnd = hwnd; _winW = ww; _winH = hh
+        var f = _first;  if f is Widget { _pass_hwnd_size(f, hwnd, ww, hh) }
+        var s = _second; if s is Widget { _pass_hwnd_size(s, hwnd, ww, hh) }
+    }
+    func _pass_hwnd(Widget c, Ptr[u8] hwnd) {
+        lay.passWindowHandle(c, hwnd)
+    }
+    func _pass_hwnd_size(Widget c, Ptr[u8] hwnd, int ww, int hh) {
+        switch c {
+            case is Edit { c.set_window(hwnd); c.set_window_size(ww, hh); return }
+            case is Splitter { c._bind_window_size(hwnd, ww, hh); return }
+            case is HBox, VBox, AnchorBox, Panel { c._bind_window(hwnd); return }
+            case is TreeView { c.set_window_handle(hwnd); c.set_window(ww, hh); return }
+            case is Table { c.set_window_handle(hwnd); c.set_window_size(ww, hh); return }
+        }
+        // ★ 未识别的容器类型（ScrollView/TabControl/SpinBox/GroupBox 等）通过统一函数传递窗口句柄
+        lay.passWindowHandle(c, hwnd)
+    }
+
+    // ==================== 尺寸接口 ====================
+    func get_w(): float { return w }
+    func get_h(): float { return h }
+    func get_x(): float { return x }
+    func get_y(): float { return y }
+    func set_pos(float px, float py) { x = px; y = py }
+    func set_size(float sw, float sh) { w = sw; h = sh; _clamp_ratio() }
+    func set_enabled(bool e) { enabled = e }
+    func set_visible(bool v) { visible = v }
+    func is_visible(): bool { return visible }
+
+    func contains(float mx, float my): bool {
+        return mx >= x and mx <= x + w and my >= y and my <= y + h
+    }
+
+    // ==================== 比例管理 ====================
+    func _clamp_ratio() {
+        if _orientation == HORIZONTAL {
+            if w <= 0.0 { return }   // 占位尺寸（w:0），等布局系统下发实际尺寸后再 clamp
+            // 水平分割：ratio 受 minFirst/w 和 minSecond/w 约束
+            float lo = _minFirst / w
+            float hi = 1.0 - _minSecond / w
+            if lo > hi { lo = hi }   // 空间太小，取中点
+            if _ratio < lo { _ratio = lo }
+            if _ratio > hi { _ratio = hi }
+        } else {
+            if h <= 0.0 { return }
+            float lo = _minFirst / h
+            float hi = 1.0 - _minSecond / h
+            if lo > hi { lo = hi }
+            if _ratio < lo { _ratio = lo }
+            if _ratio > hi { _ratio = hi }
+        }
+    }
+
+    func set_ratio(float r) { _ratio = r; _clamp_ratio() }
+    func get_ratio(): float { return _ratio }
+
+    // 分割条位置（主轴坐标）
+    func _divider_pos(): float {
+        if _orientation == HORIZONTAL { return x + w * _ratio }
+        return y + h * _ratio
+    }
+
+    // 命中检测：鼠标是否在分割条可拖拽区域
+    func _in_divider(float mx, float my): bool {
+        float dp = _divider_pos()
+        float half = _dividerW / 2.0 + _hitPad
+        if _orientation == HORIZONTAL {
+            return mx >= dp - half and mx <= dp + half and my >= y and my <= y + h
+        }
+        return my >= dp - half and my <= dp + half and mx >= x and mx <= x + w
+    }
+
+    // ==================== 布局计算 ====================
+    func _relayout() {
+        float dp = _divider_pos()
+        var f = _first
+        var s = _second
+        if _orientation == HORIZONTAL {
+            // 水平：first 在左，second 在右
+            float fw = dp - x - _dividerW / 2.0
+            float sx = dp + _dividerW / 2.0
+            float sw = (x + w) - sx
+            if fw < 0.0 { fw = 0.0 }
+            if sw < 0.0 { sw = 0.0 }
+            if f is Widget { f.set_pos(x, y); f.set_size(fw, h) }
+            if s is Widget { s.set_pos(sx, y); s.set_size(sw, h) }
+        } else {
+            // 垂直：first 在上，second 在下
+            float fh = dp - y - _dividerW / 2.0
+            float sy = dp + _dividerW / 2.0
+            float sh = (y + h) - sy
+            if fh < 0.0 { fh = 0.0 }
+            if sh < 0.0 { sh = 0.0 }
+            if f is Widget { f.set_pos(x, y); f.set_size(w, fh) }
+            if s is Widget { s.set_pos(x, sy); s.set_size(w, sh) }
+        }
+    }
+
+    // ==================== 交互 ====================
+    func process(Event ev) {
+        if not _loaded or not enabled or not visible { return }
+        _relayout()
+
+        var[float, float](mx, my) = ev.mousePos()
+        if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
+
+        // 拖拽中：优先处理（即使鼠标移出分割条区域也继续跟随）
+        if _dragging {
+            if ev.isMouseButtonUp() {
+                _dragging = false
+                core.markFrameRedraw()
+                return
+            }
+            if ev.isMouseMotion() {
+                if _orientation == HORIZONTAL {
+                    float delta = mx - _dragStartMouse
+                    float newRatio = _dragStartRatio + delta / w
+                    _ratio = newRatio
+                } else {
+                    float delta = my - _dragStartMouse
+                    float newRatio = _dragStartRatio + delta / h
+                    _ratio = newRatio
+                }
+                _clamp_ratio()
+                core.markFrameRedraw()
+                return
+            }
+        }
+
+        // 弹层捕获：事件落在他人弹层范围内时，跳过自身交互（悬停/拖拽开始），
+        // 但仍转发给子控件——子控件可能拥有该弹层（如 Table 的右键菜单），需要接收事件。
+        // 各子控件在 process 内自行通过 inPopupCapture 守卫，与 TabControl/Panel 的处理方式一致。
+        bool inPopup = core.inPopupCapture(mx, my)
+        if not inPopup {
+            // 悬停检测
+            if ev.isMouseMotion() {
+                bool prevHover = _hover
+                _hover = _in_divider(mx, my)
+                if _hover != prevHover { core.markFrameRedraw() }
+                else { core.markFrameMotion() }
+                if _hover {
+                    if _orientation == HORIZONTAL { core.requestCursor(SystemCursor.EW_RESIZE) }
+                    else { core.requestCursor(SystemCursor.NS_RESIZE) }
+                }
+            }
+
+            // 开始拖拽
+            if ev.isMouseButtonDown() and _in_divider(mx, my) {
+                _dragging = true
+                if _orientation == HORIZONTAL { _dragStartMouse = mx } else { _dragStartMouse = my }
+                _dragStartRatio = _ratio
+                core.markFrameRedraw()
+                return   // 拖拽开始时不转发事件给子控件
+            }
+        } else {
+            // 弹层打开时清除悬停状态，避免分割条残留高亮
+            _hover = false
+        }
+
+        // 转发事件给子控件（非拖拽时）
+        var f = _first;  if f is Widget { f.process(ev) }
+        var s = _second; if s is Widget { s.process(ev) }
+    }
+
+    // ==================== 渲染 ====================
+    func render(Renderer r) {
+        if not _loaded or not visible { return }
+        _relayout()
+
+        // 渲染子控件
+        var f = _first;  if f is Widget { f.render(r) }
+        var s = _second; if s is Widget { s.render(r) }
+
+        // 渲染分割条
+        float dp = _divider_pos()
+        Color dc = _divColor
+        float dw = _dividerW
+        if _hover or _dragging {
+            dc = _hovColor
+            dw = _dividerW + 1.0   // 悬停/拖拽时稍粗
+        }
+        r.setColor(dc)
+        if _orientation == HORIZONTAL {
+            // 竖向分割条
+            r.fillRect(dp - dw / 2.0, y, dw, h)
+        } else {
+            // 横向分割条
+            r.fillRect(x, dp - dw / 2.0, w, dw)
+        }
+    }
+
+    func dispose() {
+        var f = _first;  if f is Widget { f.dispose() }
+        var s = _second; if s is Widget { s.dispose() }
+    }
+
+// ==================== 运行时主题切换 ====================
+func applyTheme(Theme t) {
+_divColor = t.border
+_hovColor = t.accent
+// 子控件的递归由 Window._applyThemeWidget 统一处理
+}
+}
+
+// 工厂
+export func createSplitter(Dict opts): Splitter {
+    Splitter sp = new Splitter(); sp.set(opts); return sp
+}

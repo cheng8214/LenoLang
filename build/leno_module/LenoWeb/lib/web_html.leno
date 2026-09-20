@@ -1,0 +1,1551 @@
+// web_html.leno — LenoWeb HTML 解析器（纯 Leno 实现）
+// 使用模块级全局变量管理解析状态
+// 使用泛型类型 Array[string]/Dict[string,string] 提高类型安全性
+// 支持：HTML 实体解码、DOCTYPE、CDATA、容错解析
+
+import strings
+
+// ==================== HtmlNode 结构 ====================
+// 强类型 DOM 节点，替代旧的 Dict 表示
+// tag 取值：普通元素为标签名(小写)；文本节点为 "#text"；文档根为 "#document"
+
+export struct HtmlNode {
+    string tag
+    Dict[string, string] attrs
+    Array[HtmlNode] children
+    string text
+    HtmlNode? _parent   // 父节点（根节点为 null），建树时由 _makeNode 设置；用 parent() 访问
+
+    // 获取属性值（不存在返回空串）
+    func attr(string name): string {
+        return attrs.get(name, "")
+    }
+
+    // 判断是否有指定属性
+    func hasAttr(string name): bool {
+        return attrs.has(name)
+    }
+
+    // 直接文本内容（不含子节点）
+    func text(): string {
+        return text
+    }
+
+    // 是否文本节点
+    func isTextNode(): bool {
+        return tag == "#text"
+    }
+
+    // 是否元素节点（非文本/非文档根）
+    func isElement(): bool {
+        return tag != "#text" and tag != "#document"
+    }
+
+    // 标签名
+    func tagName(): string {
+        return tag
+    }
+
+    // 获取 class 列表
+    func classes(): Array[string] {
+        string c = attrs.get("class", "")
+        Array[string] result = []
+        if c == "" { return result }
+        Array segs = c.split(" ")
+        for segs.len() to i {
+            if segs[i] != "" { result.add(segs[i]) }
+        }
+        return result
+    }
+
+    // 是否包含某 class
+    func hasClass(string name): bool {
+        Array cl = classes()
+        for cl.len() to i {
+            if cl[i] == name { return true }
+        }
+        return false
+    }
+
+    // 子节点数
+    func childCount(): int {
+        return children.len()
+    }
+
+    // 按选择器查询子元素（后代）
+    func select(string selector): Array[HtmlNode] {
+        Array[SelectorPart] parts = _splitSelector(selector)
+        if parts.len() == 0 { return [] }
+        Array[HtmlNode] current = [self]
+        int partsLen = parts.len()
+        for 0:partsLen-1 to pi {
+            SelectorPart p0 = parts[pi]
+            Array[HtmlNode] next = []
+            for current.len() to ci {
+                HtmlNode node = current[ci]
+                if p0.isChild {
+                    _findDirectChildren(node, p0, next)
+                } else {
+                    _findDescendants(node, p0, next)
+                }
+            }
+            current = next
+        }
+        return current
+    }
+
+    // 查询第一个匹配
+    func selectOne(string selector): HtmlNode? {
+        Array[HtmlNode] r = select(selector)
+        if r.len() > 0 { return r[0] }
+        return null
+    }
+
+    // 深度优先文本拼接
+    func allText(): string {
+        return _collectText(self)
+    }
+
+    // 移除匹配选择器的子节点，返回移除数量
+    func remove(string selector): int {
+        return removeElement(self, selector)
+    }
+
+    // ===== 向上查询 =====
+
+    // 父节点（根节点返回 null）
+    func parent(): HtmlNode? {
+        return _parent
+    }
+
+    // 向上查找第一个匹配选择器的祖先（含自身），找不到返回 null
+    func closest(string selector): HtmlNode? {
+        HtmlNode? cur = self
+        while cur != null {
+            if _nodeMatches(cur, selector) {
+                return cur
+            }
+            cur = cur._parent
+        }
+        return null
+    }
+
+    // 所有兄弟节点（不含自身）
+    func siblings(): Array[HtmlNode] {
+        Array[HtmlNode] result = []
+        if _parent == null {
+            return result
+        }
+        Array[HtmlNode] bros = _parent.children
+        for bros.len() to i {
+            if bros[i] != self {
+                result.add(bros[i])
+            }
+        }
+        return result
+    }
+
+    // 下一个兄弟节点（不存在返回 null）
+    func nextSibling(): HtmlNode? {
+        if _parent == null {
+            return null
+        }
+        Array[HtmlNode] bros = _parent.children
+        for bros.len() to i {
+            if bros[i] == self {
+                if i + 1 < bros.len() {
+                    return bros[i + 1]
+                }
+                break
+            }
+        }
+        return null
+    }
+
+    // 上一个兄弟节点（不存在返回 null）
+    func prevSibling(): HtmlNode? {
+        if _parent == null {
+            return null
+        }
+        Array[HtmlNode] bros = _parent.children
+        for bros.len() to i {
+            if bros[i] == self {
+                if i - 1 >= 0 {
+                    return bros[i - 1]
+                }
+                break
+            }
+        }
+        return null
+    }
+}
+
+// CSS 选择器的单个组成部分（tag / id / class / 属性 / 伪类）
+export struct SelectorPart {
+    string tag
+    string id
+    Array[string] classes
+    string attrName
+    string attrValue
+    string attrOp
+    bool hasAttr
+    bool isChild
+    string pseudo
+    string pseudoArg
+
+    // 是否为纯通配/空选择器（匹配所有元素）
+    func isWildcard(): bool {
+        return tag == "" and id == "" and classes.len() == 0 and not hasAttr and pseudo == ""
+    }
+}
+
+// ==================== 解析上下文 ====================
+
+// 解析器上下文：每次 parse 调用创建独立实例，保证多线程并发解析安全。
+// 取代原先的模块级全局 _g_pos/_g_html（共享会导致多线程串台）。
+struct _ParseCtx {
+    string html   // 当前解析的 HTML 文本
+    int pos       // 当前解析光标
+
+    func byte(int off): int {
+        if pos + off >= 0 and pos + off < html.len() {
+            return html.byte(pos + off)
+        }
+        return -1
+    }
+}
+
+// ==================== 辅助函数 ====================
+
+func _isAlpha(int b): bool {
+    return (b >= 97 and b <= 122) or (b >= 65 and b <= 90)
+}
+
+func _isAlphaNum(int b): bool {
+    return (b >= 97 and b <= 122) or (b >= 65 and b <= 90) or (b >= 48 and b <= 57)
+}
+
+func _isSpace(int b): bool {
+    return b == 32 or b == 9 or b == 10 or b == 13
+}
+
+// ==================== 解析器 ====================
+
+func _parseTagName(_ParseCtx ctx): string {
+    string tag = ""
+    while ctx.pos < ctx.html.len(){
+        int b = ctx.html.byte(ctx.pos)
+        if _isAlphaNum(b) or b == 45 or b == 95 {
+            tag = tag + strings.char(b)
+            ctx.pos = ctx.pos + 1
+        } else {
+            break
+        }
+    }
+    return tag
+}
+
+func _skipWs(_ParseCtx ctx) {
+    while ctx.pos <  ctx.html.len() {
+        int b = ctx.html.byte(ctx.pos)
+        if _isSpace(b) {
+            ctx.pos = ctx.pos + 1
+        } else {
+            break
+        }
+    }
+}
+
+func _parseAttrs(_ParseCtx ctx): Dict[string, string] {
+    Dict[string, string] attrs = {}
+    int len = ctx.html.len()
+    while ctx.pos < len {
+        while ctx.pos < len and _isSpace(ctx.html.byte(ctx.pos)) {
+            ctx.pos = ctx.pos + 1
+        }
+        if ctx.pos >= len {
+            break
+        }
+        int b = ctx.html.byte(ctx.pos)
+        if b == 62 or b == 47 {
+            break
+        }
+        // 跳过非法字符
+        if b == 60 or b == 38 {
+            ctx.pos = ctx.pos + 1
+            continue
+        }
+        string name = ""
+        while ctx.pos < len {
+            int ch = ctx.html.byte(ctx.pos)
+            if _isSpace(ch) or ch == 61 or ch == 62 or ch == 47 or ch == 60 or ch == 38 {
+                break
+            }
+            name = name + strings.char(ch)
+            ctx.pos = ctx.pos + 1
+        }
+        if name == "" {
+            ctx.pos = ctx.pos + 1
+            continue
+        }
+        // 属性名转小写
+        name = name.to_lower()
+        while ctx.pos < len and _isSpace(ctx.html.byte(ctx.pos)) {
+            ctx.pos = ctx.pos + 1
+        }
+        string val = ""
+        if ctx.pos < len and ctx.html.byte(ctx.pos) == 61 {
+            ctx.pos = ctx.pos + 1
+            while ctx.pos < len and _isSpace(ctx.html.byte(ctx.pos)) {
+                ctx.pos = ctx.pos + 1
+            }
+            int q = -1
+            if ctx.pos < len {
+                q = ctx.html.byte(ctx.pos)
+            }
+            if q == 34 or q == 39 {
+                ctx.pos = ctx.pos + 1
+                while ctx.pos < len {
+                    int ch = ctx.html.byte(ctx.pos)
+                    if ch == q {
+                        ctx.pos = ctx.pos + 1
+                        break
+                    }
+                    val = val + strings.char(ch)
+                    ctx.pos = ctx.pos + 1
+                }
+            } else {
+                // 无引号属性值
+                while ctx.pos < len {
+                    int ch = ctx.html.byte(ctx.pos)
+                    if _isSpace(ch) or ch == 62 or ch == 47 {
+                        break
+                    }
+                    val = val + strings.char(ch)
+                    ctx.pos = ctx.pos + 1
+                }
+            }
+        } else {
+            // 布尔属性：checked, disabled, selected 等
+            // HTML 中布尔属性存在即表示 true，值设为属性名本身
+            val = name
+        }
+        attrs[name] = val
+    }
+    return attrs
+}
+
+func _parseText(_ParseCtx ctx): string {
+    string text = ""
+    int len = ctx.html.len()
+    while ctx.pos < len {
+        int b = ctx.html.byte(ctx.pos)
+        if b == 60 {
+            break
+        }
+        text = text + strings.char(b)
+        ctx.pos = ctx.pos + 1
+    }
+    return text
+}
+
+// 判断是否为 void 标签（不需要闭合标签）
+func _isVoidTag(string tagName): bool {
+    // 用 in 简化多标签判断（void 元素：无内容、自闭合）
+    return tagName in ["br", "hr", "img", "input", "meta", "link",
+                       "area", "base", "col", "embed", "source", "track", "wbr"]
+}
+
+// ==================== HTML 实体解码 ====================
+
+func _namedEntity(string name): string {
+    switch name {
+        case "amp" { return "&" }
+        case "lt" { return "<" }
+        case "gt" { return ">" }
+        case "quot" { return "\"" }
+        case "apos" { return "'" }
+        case "nbsp" { return " " }
+        case "copy" { return "©" }
+        case "reg" { return "®" }
+        case "trade" { return "™" }
+        case "hellip" { return "…" }
+        case "mdash" { return "—" }
+        case "ndash" { return "–" }
+        case "laquo" { return "«" }
+        case "raquo" { return "»" }
+        case "ldquo" { return "\u201C" }
+        case "rdquo" { return "\u201D" }
+        case "lsquo" { return "‘" }
+        case "rsquo" { return "’" }
+        case "bull" { return "•" }
+        case "middot" { return "·" }
+        case "deg" { return "°" }
+        case "plusmn" { return "±" }
+        case "times" { return "×" }
+        case "divide" { return "÷" }
+        case "frac14" { return "¼" }
+        case "frac12" { return "½" }
+        case "frac34" { return "¾" }
+        default { return "" }
+    }
+}
+
+func _hexDigit(int ch): int {
+    if ch >= 48 and ch <= 57 { return ch - 48 }
+    if ch >= 65 and ch <= 70 { return ch - 55 }
+    if ch >= 97 and ch <= 102 { return ch - 87 }
+    return -1
+}
+
+func _codepointToUtf8(int cp): string {
+    if cp <= 127 {
+        return strings.char(cp)
+    }
+    if cp <= 2047 {
+        int b1 = 192 + (cp / 64)
+        int b2 = 128 + (cp % 64)
+        return strings.char(b1) + strings.char(b2)
+    }
+    if cp <= 65535 {
+        int b1 = 224 + (cp / 4096)
+        int b2 = 128 + ((cp / 64) % 64)
+        int b3 = 128 + (cp % 64)
+        return strings.char(b1) + strings.char(b2) + strings.char(b3)
+    }
+    int b1 = 240 + (cp / 262144)
+    int b2 = 128 + ((cp / 4096) % 64)
+    int b3 = 128 + ((cp / 64) % 64)
+    int b4 = 128 + (cp % 64)
+    return strings.char(b1) + strings.char(b2) + strings.char(b3) + strings.char(b4)
+}
+
+func _decodeEntities(string text): string {
+    string result = ""
+    int i = 0
+    int len = text.len()
+    while i < len {
+        int b = text.byte(i)
+        if b == 38 {
+            int savePos = i
+            i = i + 1
+            if i < len and text.byte(i) == 35 {
+                i = i + 1
+                int codepoint = 0
+                if i < len and (text.byte(i) == 120 or text.byte(i) == 88) {
+                    i = i + 1
+                    while i < len {
+                        int ch = text.byte(i)
+                        if ch == 59 {
+                            i = i + 1
+                            break
+                        }
+                        int d = _hexDigit(ch)
+                        if d < 0 { break }
+                        codepoint = codepoint * 16 + d
+                        i = i + 1
+                    }
+                } else {
+                    while i < len {
+                        int ch = text.byte(i)
+                        if ch == 59 {
+                            i = i + 1
+                            break
+                        }
+                        if ch >= 48 and ch <= 57 {
+                            codepoint = codepoint * 10 + (ch - 48)
+                            i = i + 1
+                        } else {
+                            break
+                        }
+                    }
+                }
+                if codepoint > 0 and codepoint <= 1114111 {
+                    result = result + _codepointToUtf8(codepoint)
+                } else {
+                    i = savePos + 1
+                    result = result + strings.char(38)
+                }
+            } else {
+                string name = ""
+                while i < len {
+                    int ch = text.byte(i)
+                    if ch == 59 {
+                        i = i + 1
+                        break
+                    }
+                    if ch == 38 or _isSpace(ch) or ch == 60 or ch == 62 {
+                        break
+                    }
+                    name = name + strings.char(ch)
+                    i = i + 1
+                }
+                string decoded = _namedEntity(name)
+                if decoded != "" {
+                    result = result + decoded
+                } else {
+                    i = savePos + 1
+                    result = result + strings.char(38)
+                }
+            }
+        } else {
+            result = result + strings.char(b)
+            i = i + 1
+        }
+    }
+    return result
+}
+
+// ==================== 元素解析 ====================
+
+// 内部节点工厂：创建 HtmlNode，并给所有子节点设置 parent 指针
+func _makeNode(string tag, Dict[string, string] attrs, Array[HtmlNode] children, string text): HtmlNode {
+    HtmlNode n = new HtmlNode()
+    n.tag = tag
+    n.attrs = attrs
+    n.children = children
+    n.text = text
+    // 为每个子节点回填 parent 指针（支持 parent()/closest() 向上查询）
+    for children.len() to i {
+        children[i]._parent = n
+    }
+    return n
+}
+
+func _parseElement(_ParseCtx ctx): HtmlNode? {
+    int len = ctx.html.len()
+    if ctx.pos >= len {
+        return null
+    }
+    if ctx.html.byte(ctx.pos) != 60 {
+        return null
+    }
+
+    // 注释 <!-- ... -->
+    if ctx.pos + 3 < len and ctx.html.byte(ctx.pos+1) == 33 and ctx.html.byte(ctx.pos+2) == 45 and ctx.html.byte(ctx.pos+3) == 45 {
+        ctx.pos = ctx.pos + 4
+        while ctx.pos < len {
+            if ctx.html.byte(ctx.pos) == 45 and ctx.pos+2 < len and ctx.html.byte(ctx.pos+1) == 45 and ctx.html.byte(ctx.pos+2) == 62 {
+                ctx.pos = ctx.pos + 3
+                break
+            }
+            ctx.pos = ctx.pos + 1
+        }
+        return null
+    }
+
+    // CDATA <![CDATA[ ... ]]>
+    if ctx.pos + 8 < len and ctx.html.byte(ctx.pos+1) == 33 and ctx.html.byte(ctx.pos+2) == 91 and ctx.html.byte(ctx.pos+3) == 67 and ctx.html.byte(ctx.pos+4) == 68 and ctx.html.byte(ctx.pos+5) == 65 and ctx.html.byte(ctx.pos+6) == 84 and ctx.html.byte(ctx.pos+7) == 65 and ctx.html.byte(ctx.pos+8) == 91 {
+        ctx.pos = ctx.pos + 9
+        string cdata = ""
+        while ctx.pos < len {
+            if ctx.pos + 2 < len and ctx.html.byte(ctx.pos) == 93 and ctx.html.byte(ctx.pos+1) == 93 and ctx.html.byte(ctx.pos+2) == 62 {
+                ctx.pos = ctx.pos + 3
+                break
+            }
+            cdata = cdata + strings.char(ctx.html.byte(ctx.pos))
+            ctx.pos = ctx.pos + 1
+        }
+        return _makeNode("#text", {}, [], cdata)
+    }
+
+    // DOCTYPE / 其他声明 <!...>
+    if ctx.pos + 1 < len and ctx.html.byte(ctx.pos+1) == 33 {
+        ctx.pos = ctx.pos + 2
+        while ctx.pos < len and ctx.html.byte(ctx.pos) != 62 {
+            ctx.pos = ctx.pos + 1
+        }
+        if ctx.pos < len and ctx.html.byte(ctx.pos) == 62 {
+            ctx.pos = ctx.pos + 1
+        }
+        return null
+    }
+
+    // 闭合标签 </...>
+    if ctx.pos + 1 < len and ctx.html.byte(ctx.pos+1) == 47 {
+        return null
+    }
+
+    ctx.pos = ctx.pos + 1
+
+    string tagName = _parseTagName(ctx)
+    if tagName == "" {
+        return null
+    }
+    tagName = strings.to_lower(tagName)
+
+    Dict[string, string] attrs = _parseAttrs(ctx)
+
+    bool selfClosing = false
+    if ctx.pos < len and ctx.html.byte(ctx.pos) == 47 {
+        selfClosing = true
+        ctx.pos = ctx.pos + 1
+    }
+    if ctx.pos < len and ctx.html.byte(ctx.pos) == 62 {
+        ctx.pos = ctx.pos + 1
+    }
+
+    if selfClosing {
+        return _makeNode(tagName, attrs, [], "")
+    }
+
+    if _isVoidTag(tagName) {
+        return _makeNode(tagName, attrs, [], "")
+    }
+
+    // script/style 标签：原始内容直接读取
+    if tagName == "script" or tagName == "style" {
+        string rawContent = ""
+        while ctx.pos < len {
+            if ctx.html.byte(ctx.pos) == 60 and ctx.pos+1 < len and ctx.html.byte(ctx.pos+1) == 47 {
+                int savePos = ctx.pos
+                ctx.pos = ctx.pos + 2
+                string closeTag = _parseTagName(ctx)
+                closeTag = strings.to_lower(closeTag)
+                if closeTag == tagName {
+                    _parseAttrs(ctx)
+                    if ctx.pos < len and ctx.html.byte(ctx.pos) == 62 {
+                        ctx.pos = ctx.pos + 1
+                    }
+                    return _makeNode(tagName, attrs, [], rawContent)
+                } else {
+                    ctx.pos = savePos
+                    rawContent = rawContent + strings.char(ctx.html.byte(ctx.pos))
+                    ctx.pos = ctx.pos + 1
+                }
+            } else {
+                rawContent = rawContent + strings.char(ctx.html.byte(ctx.pos))
+                ctx.pos = ctx.pos + 1
+            }
+        }
+        return _makeNode(tagName, attrs, [], rawContent)
+    }
+
+    // 普通标签
+    Array[HtmlNode] children = []
+    string textContent = ""
+
+    while ctx.pos < len {
+        if ctx.html.byte(ctx.pos) == 60 {
+            if ctx.pos + 3 < len and ctx.html.byte(ctx.pos+1) == 33 and ctx.html.byte(ctx.pos+2) == 45 and ctx.html.byte(ctx.pos+3) == 45 {
+                ctx.pos = ctx.pos + 4
+                while ctx.pos < len {
+                    if ctx.html.byte(ctx.pos) == 45 and ctx.pos+2 < len and ctx.html.byte(ctx.pos+1) == 45 and ctx.html.byte(ctx.pos+2) == 62 {
+                        ctx.pos = ctx.pos + 3
+                        break
+                    }
+                    ctx.pos = ctx.pos + 1
+                }
+                continue
+            }
+            // CDATA in body
+            if ctx.pos + 8 < len and ctx.html.byte(ctx.pos+1) == 33 and ctx.html.byte(ctx.pos+2) == 91 and ctx.html.byte(ctx.pos+3) == 67 and ctx.html.byte(ctx.pos+4) == 68 and ctx.html.byte(ctx.pos+5) == 65 and ctx.html.byte(ctx.pos+6) == 84 and ctx.html.byte(ctx.pos+7) == 65 and ctx.html.byte(ctx.pos+8) == 91 {
+                ctx.pos = ctx.pos + 9
+                string cdata = ""
+                while ctx.pos < len {
+                    if ctx.pos + 2 < len and ctx.html.byte(ctx.pos) == 93 and ctx.html.byte(ctx.pos+1) == 93 and ctx.html.byte(ctx.pos+2) == 62 {
+                        ctx.pos = ctx.pos + 3
+                        break
+                    }
+                    cdata = cdata + strings.char(ctx.html.byte(ctx.pos))
+                    ctx.pos = ctx.pos + 1
+                }
+                if cdata != "" {
+                    textContent = textContent + cdata
+                    children.add(_makeNode("#text", {}, [], cdata))
+                }
+                continue
+            }
+            if ctx.pos + 1 < len and ctx.html.byte(ctx.pos+1) == 47 {
+                ctx.pos = ctx.pos + 2
+                _parseTagName(ctx)
+                while ctx.pos < len and ctx.html.byte(ctx.pos) != 62 {
+                    ctx.pos = ctx.pos + 1
+                }
+                if ctx.pos < len and ctx.html.byte(ctx.pos) == 62 {
+                    ctx.pos = ctx.pos + 1
+                }
+                break
+            }
+            if _parseElement(ctx) is HtmlNode => child {
+                children.add(child)
+            }
+        } else {
+            string text = _parseText(ctx)
+            if text != "" {
+                text = _decodeEntities(text)
+                textContent = textContent + text
+                children.add(_makeNode("#text", {}, [], text))
+            }
+        }
+    }
+
+    return _makeNode(tagName, attrs, children, textContent)
+}
+
+// ==================== 对外接口 ====================
+
+export func parse(string html): HtmlNode {
+    // 每次 parse 创建独立解析上下文，多线程并发解析互不干扰
+    _ParseCtx ctx = new _ParseCtx()
+    ctx.html = html
+    ctx.pos = 0
+
+    HtmlNode root = _makeNode("#document", {}, [], "")
+    int len = ctx.html.len()
+
+    while ctx.pos < len {
+        while ctx.pos < len and _isSpace(ctx.html.byte(ctx.pos)) {
+            ctx.pos = ctx.pos + 1
+        }
+        if ctx.pos >= len {
+            break
+        }
+        if ctx.html.byte(ctx.pos) == 60 {
+            // 注释
+            if ctx.pos + 3 < len and ctx.html.byte(ctx.pos+1) == 33 and ctx.html.byte(ctx.pos+2) == 45 and ctx.html.byte(ctx.pos+3) == 45 {
+                ctx.pos = ctx.pos + 4
+                while ctx.pos < len {
+                    if ctx.html.byte(ctx.pos) == 45 and ctx.pos+2 < len and ctx.html.byte(ctx.pos+1) == 45 and ctx.html.byte(ctx.pos+2) == 62 {
+                        ctx.pos = ctx.pos + 3
+                        break
+                    }
+                    ctx.pos = ctx.pos + 1
+                }
+                continue
+            }
+            // DOCTYPE / CDATA / 其他声明
+            if ctx.pos + 1 < len and ctx.html.byte(ctx.pos+1) == 33 {
+                if ctx.pos + 8 < len and ctx.html.byte(ctx.pos+2) == 91 and ctx.html.byte(ctx.pos+3) == 67 and ctx.html.byte(ctx.pos+4) == 68 and ctx.html.byte(ctx.pos+5) == 65 and ctx.html.byte(ctx.pos+6) == 84 and ctx.html.byte(ctx.pos+7) == 65 and ctx.html.byte(ctx.pos+8) == 91 {
+                    // CDATA
+                    ctx.pos = ctx.pos + 9
+                    string cdata = ""
+                    while ctx.pos < len {
+                        if ctx.pos + 2 < len and ctx.html.byte(ctx.pos) == 93 and ctx.html.byte(ctx.pos+1) == 93 and ctx.html.byte(ctx.pos+2) == 62 {
+                            ctx.pos = ctx.pos + 3
+                            break
+                        }
+                        cdata = cdata + strings.char(ctx.html.byte(ctx.pos))
+                        ctx.pos = ctx.pos + 1
+                    }
+                    if cdata != "" {
+                        root.children.add(_makeNode("#text", {}, [], cdata))
+                    }
+                    continue
+                }
+                // 其他 <!...> 跳过
+                ctx.pos = ctx.pos + 2
+                while ctx.pos < len and ctx.html.byte(ctx.pos) != 62 {
+                    ctx.pos = ctx.pos + 1
+                }
+                if ctx.pos < len and ctx.html.byte(ctx.pos) == 62 {
+                    ctx.pos = ctx.pos + 1
+                }
+                continue
+            }
+            // 闭合标签（忽略孤立的）
+            if ctx.pos + 1 < len and ctx.html.byte(ctx.pos+1) == 47 {
+                ctx.pos = ctx.pos + 2
+                while ctx.pos < len and ctx.html.byte(ctx.pos) != 62 {
+                    ctx.pos = ctx.pos + 1
+                }
+                if ctx.pos < len and ctx.html.byte(ctx.pos) == 62 {
+                    ctx.pos = ctx.pos + 1
+                }
+                continue
+            }
+            if _parseElement(ctx) is HtmlNode => child {
+                root.children.add(child)
+            }
+        } else {
+            string text = _parseText(ctx)
+            if text != "" {
+                text = _decodeEntities(text)
+                root.children.add(_makeNode("#text", {}, [], text))
+            }
+        }
+    }
+
+    return root
+}
+
+// ==================== 便捷函数 ====================
+
+export func tag(HtmlNode node): string {
+    return node.tag
+}
+
+export func text(HtmlNode node): string {
+    return node.text
+}
+
+export func allText(HtmlNode node): string {
+    return _collectText(node)
+}
+
+// 内部：深度优先收集文本（用数组收集 + join 缓冲，避免逐字节 O(n²) 拼接）
+func _collectText(HtmlNode node): string {
+    Array[string] parts = []
+    _collectTextInto(node, parts)
+    return strings.join(parts, "")
+}
+
+// 深度优先把文本片段加入 parts（收集完整字符串片段，join 时安全还原含中文）
+func _collectTextInto(HtmlNode node, Array[string] parts) {
+    if node.tag == "#text" {
+        parts.add(node.text)
+        return
+    }
+    for node.children.len() to i {
+        _collectTextInto(node.children[i], parts)
+    }
+}
+
+// 清洗文本：合并连续空白（含换行）为单个空格，去首尾空白
+export func cleanText(string raw): string {
+    if raw == "" {
+        return ""
+    }
+    Array[string] out = []
+    bool lastWasSpace = false
+    int n = raw.len()
+    for 0:n-1 to i {
+        int b = raw.byte(i)
+        if _isSpace(b) {
+            if not lastWasSpace {
+                out.add(" ")
+            }
+            lastWasSpace = true
+        } else {
+            out.add(strings.char(b))
+            lastWasSpace = false
+        }
+    }
+    string result = strings.join(out, "")
+    // 去首尾空白
+    while result.len() > 0 and result.byte(0) == 32 {
+        result = result.slice(1, result.len())
+    }
+    while result.len() > 0 and result.byte(result.len() - 1) == 32 {
+        result = result.slice(0, result.len() - 1)
+    }
+    return result
+}
+
+// HTML 转可读纯文本（仿 html2text）：保留段落/标题/列表/换行结构
+export func htmlToText(HtmlNode node): string {
+    return _toText(node)
+}
+
+func _toText(HtmlNode node): string {
+    Array[string] parts = []
+    _toTextInto(node, parts)
+    return strings.join(parts, "")
+}
+
+func _toTextInto(HtmlNode node, Array[string] parts) {
+    string tag = node.tag
+    // 文本节点
+    if tag == "#text" {
+        parts.add(node.text)
+        return
+    }
+    // 块级标签：段落前后加换行
+    if tag in ["p", "div", "section", "article", "header", "footer"] {
+        parts.add("\n")
+    }
+    // 标题：前后空行，加 # 标记
+    if tag == "h1" {
+        parts.add("\n# ")
+    } else if tag == "h2" {
+        parts.add("\n## ")
+    } else if tag == "h3" {
+        parts.add("\n### ")
+    } else if tag in ["h4", "h5", "h6"] {
+        parts.add("\n#### ")
+    }
+    // 列表项：前缀 "- "
+    if tag == "li" {
+        parts.add("- ")
+    }
+    for node.children.len() to i {
+        _toTextInto(node.children[i], parts)
+    }
+    // 块级结束换行
+    if tag in ["p", "div", "li", "h1", "h2", "h3", "h4", "h5", "h6"] {
+        parts.add("\n")
+    }
+}
+
+// 去除 HTML 字符串中的所有标签，只保留文本（不解析 DOM，纯字符串处理）
+// 例："<p>Hi <b>there</b></p>" -> "Hi there"
+export func stripTags(string html): string {
+    string out = ""
+    int n = html.len()
+    bool inTag = false
+    for 0:n-1 to i {
+        int b = html.byte(i)
+        if b == 60 {
+            // <
+            inTag = true
+        } else if b == 62 {
+            // >
+            inTag = false
+        } else {
+            if not inTag {
+                out = out + strings.char(b)
+            }
+        }
+    }
+    return cleanText(out)
+}
+
+// 提取节点内所有文本（去标签、合并空白），等价于 allText + cleanText
+export func textContent(HtmlNode node): string {
+    return cleanText(allText(node))
+}
+
+// 提取 HTML 中第一个表格为二维数组（每行=一行，每格=cleanText 后的文本）
+// 每行中 th（表头单元格）排在前、td（数据单元格）排在后，与 pandas read_html 的"表头优先"语义一致
+export func extractTable(HtmlNode root): Array[Array[string]] {
+    Array[HtmlNode] tables = select(root, "table")
+    Array[Array[string]] tableData = []
+    if tables.len() > 0 {
+        HtmlNode tbl = tables[0]
+        Array[HtmlNode] rows = select(tbl, "tr")
+        for rows.len() to i {
+            HtmlNode tr = rows[i]
+            Array[HtmlNode] thCells = select(tr, "th")
+            Array[HtmlNode] cells = select(tr, "td")
+            Array[string] rowData = []
+            // 表头单元格在前
+            for thCells.len() to j {
+                rowData.add(cleanText(allText(thCells[j])))
+            }
+            // 数据单元格在后
+            for cells.len() to j {
+                rowData.add(cleanText(allText(cells[j])))
+            }
+            tableData.add(rowData)
+        }
+    }
+    return tableData
+}
+
+export func attr(HtmlNode node, string name): string {
+    string v = node.attrs.get(name, "")
+    if v == "" { return "" }
+    return _decodeEntities(v)
+}
+
+export func children(HtmlNode node): Array[HtmlNode] {
+    return node.children
+}
+
+export func getLinks(string html): Array[string] {
+    var root = parse(html)
+    var links = []
+    _collectLinks(root, links)
+    return links
+}
+
+// 提取 HTML 的 <title> 文本（不存在返回空串）
+export func getTitle(HtmlNode root): string {
+    Array[HtmlNode] titles = select(root, "title")
+    if titles.len() > 0 {
+        return cleanText(allText(titles[0]))
+    }
+    return ""
+}
+
+// 提取 HTML 中 <meta> 标签的属性值（按 name 或 property 匹配，取 content 属性）
+export func getMeta(HtmlNode root, string name): string {
+    Array[HtmlNode] metas = select(root, "meta")
+    for metas.len() to i {
+        HtmlNode m = metas[i]
+        string mname = attr(m, "name")
+        if mname == "" {
+            mname = attr(m, "property")
+        }
+        if mname == name {
+            return attr(m, "content")
+        }
+    }
+    return ""
+}
+
+// 提取 HTML 中所有 <meta> 标签为 Dict（name/property -> content）
+export func getMetas(HtmlNode root): Dict {
+    Dict result = {}
+    Array[HtmlNode] metas = select(root, "meta")
+    for metas.len() to i {
+        HtmlNode m = metas[i]
+        string mname = attr(m, "name")
+        if mname == "" {
+            mname = attr(m, "property")
+        }
+        if mname != "" {
+            result[mname] = attr(m, "content")
+        }
+    }
+    return result
+}
+
+// 从 DOM 中删除所有匹配 selector 的元素（修改传入的 root），返回删除个数
+export func removeElement(HtmlNode root, string selector): int {
+    Array[SelectorPart] sels = _splitSelector(selector)
+    if sels.len() == 0 {
+        return 0
+    }
+    return _removeRec(root, sels, 0, true)
+}
+
+// 从 node 的 children 中删除匹配选择器链 sels 的节点。
+// matchIdx：当前要匹配的选择器段索引（从 0 开始，匹配到最后一段则删除）。
+// allowDeep：当前段是否允许在未匹配节点的任意后代中继续查找（空格后代选择器为 true）。
+// 支持多段层级选择器（"div span"、"div > span"、"div > section span"）。
+func _removeRec(HtmlNode node, Array[SelectorPart] sels, int matchIdx, bool allowDeep): int {
+    int removed = 0
+    Array[HtmlNode] keep = []
+    SelectorPart sel = sels[matchIdx]
+    bool lastSeg = (matchIdx == sels.len() - 1)
+    for node.children.len() to i {
+        HtmlNode child = node.children[i]
+        if _matchSimple(child, sel) {
+            if lastSeg {
+                // 匹配到选择器链末尾：删除该节点
+                removed = removed + 1
+            } else {
+                // 匹配到中间段：进入 child 内部匹配下一段。
+                // 下一段是否要求"直接子"决定后续递归能否深入非匹配节点的后代
+                bool nextIsChild = sels[matchIdx + 1].isChild
+                removed = removed + _removeRec(child, sels, matchIdx + 1, not nextIsChild)
+                keep.add(child)
+            }
+        } else {
+            keep.add(child)
+            // 未匹配当前段：若当前段允许后代匹配（allowDeep），继续深入 child 后代找该段
+            if allowDeep {
+                removed = removed + _removeRec(child, sels, matchIdx, true)
+            }
+        }
+    }
+    node.children = keep
+    return removed
+}
+
+// 提取 HTML 中表单字段为 Dict（name -> value），仿 BeautifulSoup 表单解析
+// 支持 input/select/textarea，取 name 属性和 value/文本
+export func extractForm(HtmlNode root): Dict {
+    Dict result = {}
+    Array[HtmlNode] inputs = select(root, "input")
+    for inputs.len() to i {
+        HtmlNode inp = inputs[i]
+        string iname = attr(inp, "name")
+        if iname != "" {
+            string val = attr(inp, "value")
+            if val == "" and attr(inp, "type") == "checkbox" {
+                if attr(inp, "checked") != "" {
+                    val = "on"
+                }
+            }
+            result[iname] = val
+        }
+    }
+    Array[HtmlNode] selects = select(root, "select")
+    for selects.len() to i {
+        HtmlNode sel = selects[i]
+        string sname = attr(sel, "name")
+        if sname != "" {
+            Array[HtmlNode] options = select(sel, "option")
+            string selVal = ""
+            for options.len() to j {
+                if attr(options[j], "selected") != "" {
+                    selVal = cleanText(allText(options[j]))
+                    break
+                }
+            }
+            result[sname] = selVal
+        }
+    }
+    Array[HtmlNode] textareas = select(root, "textarea")
+    for textareas.len() to i {
+        HtmlNode ta = textareas[i]
+        string taname = attr(ta, "name")
+        if taname != "" {
+            result[taname] = cleanText(allText(ta))
+        }
+    }
+    return result
+}
+
+// ==================== 便捷查询 API（仿 BeautifulSoup） ====================
+
+// 按 id 查找节点，返回第一个匹配或 null
+export func getElementById(HtmlNode root, string id): HtmlNode? {
+    if id == "" {
+        return null
+    }
+    Array[SelectorPart] parts = _splitSelector("#" + id)
+    if parts.len() == 0 {
+        return null
+    }
+    Array[HtmlNode] current = [root]
+    for 0:parts.len()-1 to pi {
+        SelectorPart p0 = parts[pi]
+        Array[HtmlNode] next = []
+        for current.len() to ci {
+            _findDescendants(current[ci], p0, next)
+        }
+        current = next
+    }
+    if current.len() > 0 {
+        return current[0]
+    }
+    return null
+}
+
+// 按标签名查找所有节点
+export func getElementsByTag(HtmlNode root, string tagName): Array[HtmlNode] {
+    return select(root, tagName)
+}
+
+// 按 class 名查找所有节点
+export func getElementsByClass(HtmlNode root, string className): Array[HtmlNode] {
+    if className == "" {
+        return []
+    }
+    return select(root, "." + className)
+}
+
+// 通用查找：可按 tag/class/id 组合过滤（均为可选，传空串表示不过滤）
+export func findAll(HtmlNode root, string tagName, string className, string idName): Array[HtmlNode] {
+    Array[HtmlNode] all = []
+    _findAllRec(root, tagName, className, idName, all)
+    return all
+}
+
+func _findAllRec(HtmlNode node, string tagName, string className, string idName, Array[HtmlNode] results) {
+    bool matched = true
+    if tagName != "" {
+        if node.tag != tagName {
+            matched = false
+        }
+    }
+    if matched and className != "" {
+        if not _hasWord(attr(node, "class"), className) {
+            matched = false
+        }
+    }
+    if matched and idName != "" {
+        if attr(node, "id") != idName {
+            matched = false
+        }
+    }
+    if matched {
+        results.add(node)
+    }
+    for node.children.len() to ci {
+        _findAllRec(node.children[ci], tagName, className, idName, results)
+    }
+}
+
+func _collectLinks(HtmlNode node, Array[string] links) {
+    if node.tag == "a" {
+        string href = node.attrs.get("href", "")
+        if href != "" {
+            links.add(href)
+        }
+    }
+    for node.children.len() to ci {
+        _collectLinks(node.children[ci], links)
+    }
+}
+
+// ==================== CSS 选择器 ====================
+
+func _parseSimple(string selector): SelectorPart {
+    SelectorPart r = new SelectorPart()
+    r.tag = ""
+    r.id = ""
+    r.classes = []
+    r.attrName = ""
+    r.attrValue = ""
+    r.attrOp = "="
+    r.hasAttr = false
+    r.isChild = false
+    r.pseudo = ""
+    r.pseudoArg = ""
+    int i = 0
+    int slen = selector.len()
+
+    while i < slen {
+        int b = selector.byte(i)
+        if _isAlphaNum(b) or b == 42 or b == 45 or b == 95 {
+            r.tag = r.tag + strings.char(b)
+            i = i + 1
+        } else {
+            break
+        }
+    }
+
+    while i < slen {
+        int b = selector.byte(i)
+        if b == 46 {
+            i = i + 1
+            string cls = ""
+            while i < slen {
+                int ch = selector.byte(i)
+                if ch == 46 or ch == 35 or ch == 91 or ch == 58 {
+                    break
+                }
+                cls = cls + strings.char(ch)
+                i = i + 1
+            }
+            r.classes.add(cls)
+        } else if b == 35 {
+            i = i + 1
+            string idVal = ""
+            while i < slen {
+                int ch = selector.byte(i)
+                if ch == 46 or ch == 35 or ch == 91 or ch == 58 {
+                    break
+                }
+                idVal = idVal + strings.char(ch)
+                i = i + 1
+            }
+            r.id = idVal
+        } else if b == 91 {
+            i = i + 1
+            string attrName = ""
+            while i < slen {
+                int ch = selector.byte(i)
+                if ch == 61 or ch == 94 or ch == 36 or ch == 42 or ch == 93 {
+                    break
+                }
+                attrName = attrName + strings.char(ch)
+                i = i + 1
+            }
+            r.attrName = attrName
+            r.hasAttr = true
+            r.attrOp = "="
+            if i < slen {
+                int op = selector.byte(i)
+                if op == 61 {
+                    // =
+                    i = i + 1
+                } else if op == 94 and i + 1 < slen and selector.byte(i + 1) == 61 {
+                    // ^=
+                    r.attrOp = "^="
+                    i = i + 2
+                } else if op == 36 and i + 1 < slen and selector.byte(i + 1) == 61 {
+                    // $=
+                    r.attrOp = "$="
+                    i = i + 2
+                } else if op == 42 and i + 1 < slen and selector.byte(i + 1) == 61 {
+                    // *=
+                    r.attrOp = "*="
+                    i = i + 2
+                }
+                if i <= slen and i - 1 < slen {
+                    // 读取属性值：支持引号（'x' 或 "x"）和无引号，到 ] 为止
+                    string attrVal = ""
+                    // 跳过 '=' 后的空白
+                    while i < slen and _isSpace(selector.byte(i)) {
+                        i = i + 1
+                    }
+                    if i < slen {
+                        int q = selector.byte(i)
+                        if q == 34 or q == 39 {
+                            // 引号包裹的值：读引号内容（遇相同引号结束）
+                            i = i + 1
+                            while i < slen {
+                                int ch = selector.byte(i)
+                                if ch == q {
+                                    i = i + 1
+                                    break
+                                }
+                                if ch == 93 {
+                                    break
+                                }
+                                attrVal = attrVal + strings.char(ch)
+                                i = i + 1
+                            }
+                        } else {
+                            // 无引号：读到 ] 或空白为止
+                            while i < slen {
+                                int ch = selector.byte(i)
+                                if ch == 93 {
+                                    break
+                                }
+                                attrVal = attrVal + strings.char(ch)
+                                i = i + 1
+                            }
+                        }
+                    }
+                    r.attrValue = attrVal
+                }
+            }
+            if i < slen and selector.byte(i) == 93 {
+                i = i + 1
+            }
+        } else if b == 58 {
+            // 伪类 :first-child / :last-child / :nth-child(n) / :only-child
+            i = i + 1
+            string pseudo = ""
+            while i < slen {
+                int ch = selector.byte(i)
+                if ch == 40 or ch == 46 or ch == 35 or ch == 91 or ch == 58 or ch == 62 {
+                    break
+                }
+                pseudo = pseudo + strings.char(ch)
+                i = i + 1
+            }
+            r.pseudo = pseudo
+            if i < slen and selector.byte(i) == 40 {
+                // nth-child(n)
+                i = i + 1
+                string arg = ""
+                while i < slen {
+                    int ch = selector.byte(i)
+                    if ch == 41 {
+                        break
+                    }
+                    arg = arg + strings.char(ch)
+                    i = i + 1
+                }
+                if i < slen and selector.byte(i) == 41 {
+                    i = i + 1
+                }
+                r.pseudoArg = arg
+            }
+        } else {
+            break
+        }
+    }
+
+    return r
+}
+
+func _splitSelector(string selector): Array[SelectorPart] {
+    Array[SelectorPart] parts = []
+    string current = ""
+    int i = 0
+    int slen = selector.len()
+    bool lastWasChild = false
+    int bracketDepth = 0   // 属性选择器 [ ] 深度：内部空格不当作分隔符
+
+    while i < slen {
+        int b = selector.byte(i)
+        if b == 91 {   // '[' 进入属性选择器
+            bracketDepth = bracketDepth + 1
+            current = current + strings.char(b)
+            i = i + 1
+        } else if b == 93 {   // ']' 离开属性选择器
+            if bracketDepth > 0 { bracketDepth = bracketDepth - 1 }
+            current = current + strings.char(b)
+            i = i + 1
+        } else if b == 62 and bracketDepth == 0 {
+            if current != "" {
+                SelectorPart parsed = _parseSimple(current)
+                parsed.isChild = false
+                parts.add(parsed)
+                current = ""
+            }
+            lastWasChild = true
+            i = i + 1
+        } else if _isSpace(b) and bracketDepth == 0 {
+            if current != "" {
+                SelectorPart parsed = _parseSimple(current)
+                parsed.isChild = lastWasChild
+                parts.add(parsed)
+                current = ""
+                lastWasChild = false
+            }
+            i = i + 1
+        } else {
+            current = current + strings.char(b)
+            i = i + 1
+        }
+    }
+
+    if current != "" {
+        SelectorPart parsed = _parseSimple(current)
+        parsed.isChild = lastWasChild
+        parts.add(parsed)
+    }
+
+    return parts
+}
+
+func _hasWord(string str, string word): bool {
+    if str == "" or word == "" {
+        return false
+    }
+    int i = 0
+    int slen = str.len()
+    while i < slen {
+        while i < slen and _isSpace(str.byte(i)) {
+            i = i + 1
+        }
+        string w = ""
+        while i < slen {
+            int b = str.byte(i)
+            if _isSpace(b) {
+                break
+            }
+            w = w + strings.char(b)
+            i = i + 1
+        }
+        if w == word {
+            return true
+        }
+    }
+    return false
+}
+
+// 检查伪类匹配：node 是兄弟中第 idx 个（0 起），total 为兄弟总数
+func _matchPseudo(HtmlNode node, SelectorPart sel, int idx, int total): bool {
+    if sel.pseudo == "" {
+        return true
+    }
+    if sel.pseudo == "first-child" {
+        return idx == 0
+    } else if sel.pseudo == "last-child" {
+        return idx == total - 1
+    } else if sel.pseudo == "only-child" {
+        return total == 1
+    } else if sel.pseudo == "nth-child" {
+        int n = _int(sel.pseudoArg)
+        if n > 0 {
+            return idx == n - 1
+        }
+        return false
+    }
+    return true
+}
+
+func _matchSimple(HtmlNode node, SelectorPart sel): bool {
+    // tag
+    if sel.tag != "" and sel.tag != "*" {
+        if node.tag != sel.tag {
+            return false
+        }
+    }
+
+    // id
+    if sel.id != "" {
+        if node.attrs.get("id", "") != sel.id {
+            return false
+        }
+    }
+
+    // class
+    string nodeClass = node.attrs.get("class", "")
+    if nodeClass == "" {
+        if sel.classes.len() > 0 {
+            return false
+        }
+    } else {
+        for sel.classes.len() to ci {
+            if not _hasWord(nodeClass, sel.classes[ci]) {
+                return false
+            }
+        }
+    }
+
+    // 属性
+    if sel.hasAttr and sel.attrName != "" {
+        string actual = node.attrs.get(sel.attrName, "")
+        if sel.attrValue != "" {
+            if sel.attrOp == "=" {
+                if actual != sel.attrValue {
+                    return false
+                }
+            } else if sel.attrOp == "^=" {
+                if not actual.starts_with(sel.attrValue) {
+                    return false
+                }
+            } else if sel.attrOp == "$=" {
+                if not actual.ends_with(sel.attrValue) {
+                    return false
+                }
+            } else if sel.attrOp == "*=" {
+                if not actual.has(sel.attrValue) {
+                    return false
+                }
+            } else {
+                if actual != sel.attrValue {
+                    return false
+                }
+            }
+        }
+    }
+
+    return true
+}
+
+// 判断单个节点自身是否匹配选择器（供 HtmlNode.closest 使用）
+func _nodeMatches(HtmlNode node, string selector): bool {
+    Array[SelectorPart] parts = _splitSelector(selector)
+    if parts.len() == 0 {
+        return false
+    }
+    // 多段选择器（空格/>级联）用于祖先关系，单节点自身匹配只看最后一段
+    SelectorPart last = parts[parts.len() - 1]
+    return _matchSimple(node, last) and _matchPseudo(node, last, 0, 1)
+}
+
+func _findDescendants(HtmlNode node, SelectorPart sel, Array[HtmlNode] results) {
+    int total = node.children.len()
+    for 0:total-1 to i {
+        HtmlNode child = node.children[i]
+        if _matchSimple(child, sel) and _matchPseudo(child, sel, i, total) {
+            results.add(child)
+        }
+        _findDescendants(child, sel, results)
+    }
+}
+
+func _findDirectChildren(HtmlNode node, SelectorPart sel, Array[HtmlNode] results) {
+    int total = node.children.len()
+    for 0:total-1 to i {
+        HtmlNode child = node.children[i]
+        if _matchSimple(child, sel) and _matchPseudo(child, sel, i, total) {
+            results.add(child)
+        }
+    }
+}
+
+export func select(HtmlNode root, string selector): Array[HtmlNode] {
+    Array[SelectorPart] parts = _splitSelector(selector)
+    if parts.len() == 0 {
+        return []
+    }
+
+    Array[HtmlNode] current = [root]
+    int partsLen = parts.len()
+    for 0:partsLen-1 to pi {
+        SelectorPart p0 = parts[pi]
+        Array[HtmlNode] next = []
+        for current.len() to ci {
+            HtmlNode node = current[ci]
+            if p0.isChild {
+                _findDirectChildren(node, p0, next)
+            } else {
+                _findDescendants(node, p0, next)
+            }
+        }
+        current = next
+    }
+
+    return current
+}
+
+export func selectOne(HtmlNode root, string selector): HtmlNode? {
+    Array[HtmlNode] results = select(root, selector)
+    if results.len() > 0 {
+        return results[0]
+    }
+    return null
+}

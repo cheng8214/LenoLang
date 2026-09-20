@@ -1,0 +1,36 @@
+import io
+import asyncs
+
+// 测试 asyncs.timeout() - 超时等待
+async func slow_task():string {
+    await asyncs.sleep(1000)  // 1秒
+    return "慢任务完成"
+}
+
+async func fast_task():string {
+    await asyncs.sleep(100)   // 0.1秒
+    return "快任务完成"
+}
+
+async func test_timeout() {
+    io.print("开始 timeout 测试")
+    
+    // 测试1: 超时（任务比超时时间长）
+    io.print("\n测试1: 慢任务，超时 500ms")
+    var slow = slow_task()
+    var result1 = await asyncs.timeout(slow, 500)
+    io.print($"  结果: {result1}")
+    
+    // 测试2: 不超时（任务比超时时间短）
+    io.print("\n测试2: 快任务，超时 500ms")
+    var fast = fast_task()
+    var result2 = await asyncs.timeout(fast, 500)
+    io.print($"  结果: {result2}")
+}
+
+main() {
+    io.print("=== 测试 asyncs.timeout() ===")
+    test_timeout()
+    asyncs.run()
+    io.print("=== 完成 ===")
+}

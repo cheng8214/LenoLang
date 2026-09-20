@@ -1,0 +1,93 @@
+// 跨模块 packed/align cstruct 导入测试
+// 验证 packed/align 属性在序列化/反序列化后正确保留
+
+import "packed_cross_module_def.leno" as def
+use def.PacketHeader
+use def.AlignedBuffer
+use def.ComboPacket
+use def.NormalStruct
+
+func check(bool cond, string name): int {
+    if cond {
+        return 0
+    }
+    print("FAIL: " + name)
+    return 1
+}
+
+main() {
+    var fail = 0
+
+    print("=== 跨模块 packed cstruct 测试 ===")
+
+    // 测试 1: packed 属性跨模块保留
+    fail = fail + check(PacketHeader.size() == 10, "PacketHeader.size()==10 got " + PacketHeader.size())
+    fail = fail + check(PacketHeader.alignment() == 1, "PacketHeader.alignment()==1 got " + PacketHeader.alignment())
+    fail = fail + check(PacketHeader.offset_of("magic") == 0, "PacketHeader magic@0")
+    fail = fail + check(PacketHeader.offset_of("version") == 1, "PacketHeader version@1")
+    fail = fail + check(PacketHeader.offset_of("length") == 2, "PacketHeader length@2")
+    fail = fail + check(PacketHeader.offset_of("sequence") == 4, "PacketHeader sequence@4")
+    fail = fail + check(PacketHeader.offset_of("type") == 8, "PacketHeader type@8")
+    fail = fail + check(PacketHeader.offset_of("flags") == 9, "PacketHeader flags@9")
+
+    // 验证 packed 属性在 debug 输出中
+    var dbg = PacketHeader.debug()
+    fail = fail + check(dbg.has("packed"), "PacketHeader debug has 'packed'")
+
+    // 测试 2: align(32) 属性跨模块保留
+    fail = fail + check(AlignedBuffer.size() == 32, "AlignedBuffer.size()==32 got " + AlignedBuffer.size())
+    fail = fail + check(AlignedBuffer.alignment() == 32, "AlignedBuffer.alignment()==32 got " + AlignedBuffer.alignment())
+
+    var dbg2 = AlignedBuffer.debug()
+    fail = fail + check(dbg2.has("align(32)"), "AlignedBuffer debug has 'align(32)'")
+
+    // 测试 3: packed + align(16) 组合跨模块保留
+    fail = fail + check(ComboPacket.size() == 16, "ComboPacket.size()==16 got " + ComboPacket.size())
+    fail = fail + check(ComboPacket.alignment() == 16, "ComboPacket.alignment()==16 got " + ComboPacket.alignment())
+    fail = fail + check(ComboPacket.offset_of("type") == 0, "ComboPacket type@0")
+    fail = fail + check(ComboPacket.offset_of("payload_size") == 1, "ComboPacket payload_size@1")
+    fail = fail + check(ComboPacket.offset_of("checksum") == 3, "ComboPacket checksum@3")
+
+    var dbg3 = ComboPacket.debug()
+    fail = fail + check(dbg3.has("packed"), "ComboPacket debug has 'packed'")
+    fail = fail + check(dbg3.has("align(16)"), "ComboPacket debug has 'align(16)'")
+
+    // 测试 4: 普通结构体不受影响（向后兼容）
+    fail = fail + check(NormalStruct.size() == 8, "NormalStruct.size()==8 got " + NormalStruct.size())
+    fail = fail + check(NormalStruct.alignment() == 4, "NormalStruct.alignment()==4 got " + NormalStruct.alignment())
+
+    var dbg4 = NormalStruct.debug()
+    fail = fail + check(not dbg4.has("packed"), "NormalStruct debug does NOT have 'packed'")
+    fail = fail + check(not dbg4.has("align("), "NormalStruct debug does NOT have 'align('")
+
+    // 测试 5: 实例化跨模块 packed cstruct
+    var pkt = PacketHeader.malloc()
+    pkt.magic = 0xAB
+    pkt.version = 2
+    pkt.length = 512
+    pkt.sequence = 999
+    pkt.type = 0x01
+    pkt.flags = 0xFF
+
+    fail = fail + check(pkt.magic == 0xAB, "pkt.magic==0xAB")
+    fail = fail + check(pkt.version == 2, "pkt.version==2")
+    fail = fail + check(pkt.length == 512, "pkt.length==512")
+    fail = fail + check(pkt.sequence == 999, "pkt.sequence==999")
+    fail = fail + check(pkt.type == 0x01, "pkt.type==0x01")
+    fail = fail + check(pkt.flags == 0xFF, "pkt.flags==0xFF")
+    pkt.free()
+
+    // 测试 6: 实例化跨模块 align(32) cstruct
+    var buf = AlignedBuffer.malloc()
+    buf.data[0] = 0x42
+    buf.data[31] = 0x99
+    fail = fail + check(buf.data[0] == 0x42, "buf.data[0]==0x42")
+    fail = fail + check(buf.data[31] == 0x99, "buf.data[31]==0x99")
+    buf.free()
+
+    if fail == 0 {
+        print("跨模块测试全部通过!")
+    } else {
+        print("跨模块测试: " + fail + " 个失败")
+    }
+}

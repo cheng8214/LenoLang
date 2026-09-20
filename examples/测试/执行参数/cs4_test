@@ -1,0 +1,69 @@
+import threads
+import times as ti
+
+// 并发计数器：每个线程执行计算，通过 channel 返回结果
+func worker(var ch, int id) {
+    var sum = 0
+    // 模拟一些计算
+    for 1:1000 to var i {
+        sum = sum + i
+    }
+    // 通过 channel 发送结果
+    ch.send({id: id, sum: sum})
+}
+
+main() {
+    print("=== 十线程并发测试 ===")
+    print("")
+    
+    var start = ti.ms()
+    
+    // 创建 channel，容量设为 20（足够容纳所有结果）
+    var ch = threads.channel(20)
+    
+    // 启动 10 个线程
+    var threads_list = []
+    for 0:9 to var i {
+        var t = threads.start(worker, ch, i)
+        threads_list.add(t)
+    }
+    
+    print("已启动 " + threads_list.len() + " 个线程")
+    
+    // 收集结果
+    var results = []
+    for 0:9 to var i {
+        var msg = ch.receive()
+        results.add(msg)
+        print("收到线程 " + msg.id + " 的结果: sum=" + msg.sum)
+    }
+    
+    var end = ti.ms()
+    var elapsed = end - start
+    
+    print("")
+    print("总耗时: " + elapsed + "ms")
+    print("收集到 " + results.len() + " 个结果")
+    
+    // 验证所有结果正确
+    var all_correct = true
+    for results to var r {
+        // 1+2+...+1000 = 500500
+        if r.sum != 500500 {
+            print("❌ 线程 " + r.id + " 结果错误: " + r.sum + " (期望 500500)")
+            all_correct = false
+        }
+    }
+    
+    if all_correct {
+        print("✅ 所有线程计算结果正确!")
+    }
+    
+    // 等待所有线程结束
+    for threads_list to var t {
+        t.join()
+    }
+    
+    print("")
+    print("=== 十线程并发测试完成 ===")
+}

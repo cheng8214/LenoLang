@@ -1,0 +1,17 @@
+// 子目录模块 - 测试相对路径 import
+import ffi
+
+clib math_lib {
+    i32 abs(i32 x)
+}
+
+math_lib g = null
+export func loadMath(): math_lib {
+    if g == null { g = ffi.load("msvcrt.dll") }
+    return g
+}
+
+export enum Dir {
+    Up = 0
+    Down = 1
+}

@@ -1,0 +1,98 @@
+// 整数类型自动收窄测试
+// cstruct 字段的 C 布局类型（i32/u8 等）可以隐式转换为 int，无需 as int
+
+import ffi
+
+cstruct Point {
+    i32 x
+    i32 y
+}
+
+cstruct Event {
+    u8 code
+    u16 id
+    f32 speed
+}
+
+// 测试1：cstruct i32 字段赋值给 int 变量（零摩擦，无需 as int）
+func test_i32_to_int() {
+    var buf = ffi.malloc(8)
+    ffi.memset(buf, 0, 8)
+    var pt = Point.from_ptr(buf)
+    pt.x = 100
+    pt.y = 200
+    int x = pt.x
+    int y = pt.y
+    assert_eq(x, 100)
+    assert_eq(y, 200)
+    ffi.free(buf)
+}
+
+// 测试2：cstruct u8/u16 字段赋值给 int 变量
+func test_u8_u16_to_int() {
+    var buf = ffi.malloc(8)
+    ffi.memset(buf, 0, 8)
+    var e = Event.from_ptr(buf)
+    e.code = 65
+    e.id = 1000
+    int code = e.code
+    int id = e.id
+    assert_eq(code, 65)
+    assert_eq(id, 1000)
+    ffi.free(buf)
+}
+
+// 测试3：cstruct f32 字段赋值给 float 变量
+func test_f32_to_float() {
+    var buf = ffi.malloc(8)
+    ffi.memset(buf, 0, 8)
+    var e = Event.from_ptr(buf)
+    e.speed = 3.14
+    float speed = e.speed
+    assert_eq(speed > 3.0, true)
+    assert_eq(speed < 4.0, true)
+    ffi.free(buf)
+}
+
+// 测试4：cstruct 字段作为函数参数
+func take_int(int v): int {
+    return v + 1
+}
+
+func test_cstruct_field_as_param() {
+    var buf = ffi.malloc(8)
+    ffi.memset(buf, 0, 8)
+    var pt = Point.from_ptr(buf)
+    pt.x = 42
+    int result = take_int(pt.x)
+    assert_eq(result, 43)
+    ffi.free(buf)
+}
+
+// 测试5：cstruct 字段参与运算
+func test_cstruct_field_arithmetic() {
+    var buf = ffi.malloc(8)
+    ffi.memset(buf, 0, 8)
+    var pt = Point.from_ptr(buf)
+    pt.x = 10
+    pt.y = 20
+    int sum = pt.x + pt.y
+    assert_eq(sum, 30)
+    ffi.free(buf)
+}
+
+// 测试6：float 转 int 仍需要显式 as
+func test_float_to_int_still_requires_as() {
+    float f = 3.14
+    int i = f as int
+    assert_eq(i, 3)
+}
+
+test_i32_to_int()
+test_u8_u16_to_int()
+test_f32_to_float()
+test_cstruct_field_as_param()
+test_cstruct_field_arithmetic()
+test_float_to_int_still_requires_as()
+
+print("All int auto-narrowing tests passed!")

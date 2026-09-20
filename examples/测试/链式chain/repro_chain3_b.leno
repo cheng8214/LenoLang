@@ -1,0 +1,3 @@
+// 模块 B: 只 import，不用 use
+import "repro_chain3_def.leno" as a
+// 不 use 任何东西

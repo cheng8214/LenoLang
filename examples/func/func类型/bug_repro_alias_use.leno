@@ -1,0 +1,19 @@
+// 复现：use 跨模块 export alias func类型 在 struct 方法中失败
+import "bug_repro_alias_mod.leno" as m
+use m.MyCB
+
+// ✅ 场景 1: 普通函数参数（顶部 func）— 应该OK
+func callCB(MyCB cb) { cb() }
+func hi() { print("hi") }
+callCB(hi)
+
+// ✅ 场景 2: 调用导出模块的方法 — Helper.wrap 用 MyCB，应该OK
+m.Helper h = new m.Helper()
+h.wrap(hi)
+
+// ❌ 场景 3: 本地 struct 方法参数用 use 导入的 alias — BUG
+struct Local {
+    func test(MyCB cb) { cb() }
+}
+Local l = new Local()
+l.test(hi)

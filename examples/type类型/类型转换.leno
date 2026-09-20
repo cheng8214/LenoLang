@@ -1,0 +1,31 @@
+main()
+{
+    // 测试 _int
+    print("_int tests:")
+    print(_int(3.14))
+    print(_int("42"))
+    print(_int(true))
+    print(_int(false))
+
+    // 测试 _float
+    print("\n_float tests:")
+    print(_float(42))
+    print(_float("3.14"))
+    print(_float(true))
+
+    // 测试 _bool
+    print("\n_bool tests:")
+    print(_bool(1))
+    print(_bool(0))
+    print(_bool(""))
+    print(_bool("hello"))
+    print(_bool([]))
+    print(_bool([1,2,3]))
+
+    // 测试 _str
+    print("\n_str tests:")
+    print(_str(123))
+    print(_str(3.14159))
+    print(_str(true))
+    print(_str(null))
+}

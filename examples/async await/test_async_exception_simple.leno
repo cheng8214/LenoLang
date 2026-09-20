@@ -1,0 +1,18 @@
+import io
+import asyncs
+
+// 测试: 协程抛出异常，run() 收集并报告
+async func test_throw_no_catch() {
+    await asyncs.sleep(10)
+    throw "未捕获异常"
+}
+
+main() {
+    test_throw_no_catch()
+    try {
+        asyncs.run()
+    } catch e {
+        io.print("run() 捕获: " + e)
+    }
+    io.print("测试通过")
+}

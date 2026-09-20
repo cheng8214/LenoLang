@@ -1,0 +1,23 @@
+main() {
+    print("=== 命令行参数测试 ===")
+    print("")
+
+    // _args() 返回所有命令行参数数组
+    var args = _args()
+    print("参数个数: " + args.len())
+    print("所有参数:")
+    for args to var arg {
+        print("  " + arg)
+    }
+
+    print("")
+
+    // _executable() 返回可执行文件路径
+    print("可执行文件: " + _executable())
+
+    // _script() 返回当前脚本路径
+    print("脚本路径: " + _script())
+
+    print("")
+    print("=== 测试完成 ===")
+}

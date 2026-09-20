@@ -1,0 +1,108 @@
+// Type? 配合 is 类型窄化测试
+
+struct Point { int x = 0; int y = 0 }
+
+// ============================================================================
+// 1. Type? + is 窄化：if opt is Point 后可安全访问字段
+// ============================================================================
+func test_is_narrowing(): int {
+    Point? opt = null
+    int sum = 0
+    opt = new Point(x=10, y=20)
+    if opt is Point {
+        // is 窄化后，opt 在此分支内应被当作 Point 访问
+        sum = opt.x + opt.y
+    }
+    return sum
+}
+
+// ============================================================================
+// 2. Type? 为 null 时 is 不匹配
+// ============================================================================
+func test_is_null_not_match(): int {
+    Point? opt = null
+    if opt is Point {
+        return 1
+    }
+    return 0
+}
+
+// ============================================================================
+// 3. switch case is 窄化
+// ============================================================================
+func test_switch_is_narrowing(): int {
+    Point? opt = null
+    opt = new Point(x=42)
+    int result = -1
+    switch opt {
+        case is Point {
+            result = opt.x
+        }
+    }
+    return result
+}
+
+// ============================================================================
+// 4. 非 nullable struct 用 is（不应触发）
+// ============================================================================
+func test_non_nullable_is(): int {
+    Point normal = new Point(x=5)
+    if normal is Point {
+        return normal.x
+    }
+    return -1
+}
+
+// ============================================================================
+// 5. 多次 is 检查
+// ============================================================================
+func test_multi_is_check(): int {
+    Point? a = null
+    Point? b = new Point(x=7)
+    int result = 0
+    if a is Point {
+        result = result + a.x
+    }
+    if b is Point {
+        result = result + b.x
+    }
+    return result
+}
+
+// ============================================================================
+// 6. string? + is 窄化
+// ============================================================================
+func greet(string? name): string {
+    if name is string {
+        return name
+    }
+    return "world"
+}
+
+func test_string_is_narrowing() {
+    assert_eq(greet(null), "world")
+    assert_eq(greet("Leno"), "Leno")
+    print("test_string_is_narrowing: PASSED")
+}
+
+// ============================================================================
+// 运行所有测试
+// ============================================================================
+assert_eq(test_is_narrowing(), 30)
+print("test_is_narrowing: PASSED")
+
+assert_eq(test_is_null_not_match(), 0)
+print("test_is_null_not_match: PASSED")
+
+assert_eq(test_switch_is_narrowing(), 42)
+print("test_switch_is_narrowing: PASSED")
+
+assert_eq(test_non_nullable_is(), 5)
+print("test_non_nullable_is: PASSED")
+
+assert_eq(test_multi_is_check(), 7)
+print("test_multi_is_check: PASSED")
+
+test_string_is_narrowing()
+
+print("=== test_nullable_narrow: ALL PASSED ===")

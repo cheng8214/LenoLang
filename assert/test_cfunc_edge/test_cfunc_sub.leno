@@ -1,0 +1,9 @@
+// 从子模块导入裸 cfunc（非 export）
+import "cfunc_sub_module.leno" as sub
+use sub.SortCb
+use sub.HashCb
+
+main() {
+    assert(true, "cfunc sub-module import succeeded")
+    print("cfunc sub-module import test passed")
+}

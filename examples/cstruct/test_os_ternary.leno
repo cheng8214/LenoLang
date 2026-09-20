@@ -1,0 +1,23 @@
+// 测试 _os() 函数 使用三元运算符
+
+main() {
+    print("=== 测试 _os() 函数 ===")
+    
+    var os_name = _os()
+    print("当前操作系统: " + os_name)
+    
+    // 使用三元运算符选择路径分隔符
+    var path_sep = if os_name == "windows" then "\\" else "/"
+    print("路径分隔符: " + path_sep)
+    
+    // 使用三元运算符选择库扩展名
+    var lib_ext = if os_name == "windows" then ".dll" else (if os_name == "macos" then ".dylib" else ".so")
+    print("库扩展名: " + lib_ext)
+    
+    // 使用三元运算符选择描述
+    var desc = if os_name == "windows" then "Windows NT" else (if os_name == "linux" then "Linux" else (if os_name == "macos" then "macOS" else "Unknown"))
+    print("系统描述: " + desc)
+    
+    print("")
+    print("=== 测试完成 ===")
+}

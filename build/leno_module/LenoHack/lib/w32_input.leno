@@ -1,0 +1,412 @@
+// w32_input.leno — Windows 模拟输入（SendInput）
+// 封装 user32.dll 的 SendInput，模拟键盘按键和鼠标操作
+// 参考：易语言的「模拟按键」模块、AutoHotKey 的 Send/Click 命令
+// 用途：自动按键、连点、宏操作等
+//
+// 性能优化:
+//   - 预分配 _inputBatchBuf (800 bytes = 20 个 INPUT), 高频调用零堆分配
+//   - memset 清零确保 padding/未用字段不含垃圾值
+//   - keyPress/leftClick/rightClick 批量发送: 1 次 SendInput 传 2 个事件
+//   - keyCombo 批量发送: 1 次 SendInput 传 2n 个事件
+//   - 单次 keyPress/leftClick: 0 次 malloc + 1 次系统调用
+import ffi
+
+// ==================== USER32 ====================
+clib user32 {
+    u32 SendInput(u32 count, Ptr inputs, i32 size)
+    u32 MapVirtualKeyA(u32 code, u32 mapType)
+    i16 GetAsyncKeyState(i32 vk)
+}
+
+user32 _usr = null
+func _lib(): user32 {
+    if _usr == null { _usr = ffi.load("user32.dll") }
+    return _usr
+}
+
+// ==================== 常量 ====================
+// 输入类型
+const INPUT_KEYBOARD = 1
+const INPUT_MOUSE    = 0
+
+// 键盘事件标志
+const KEYEVENTF_KEYDOWN  = 0x0000   // 按下
+const KEYEVENTF_KEYUP     = 0x0002   // 释放
+const KEYEVENTF_SCANCODE  = 0x0008   // 使用扫描码
+
+// 鼠标事件标志
+const MOUSEEVENTF_MOVE       = 0x0001
+const MOUSEEVENTF_LEFTDOWN   = 0x0002
+const MOUSEEVENTF_LEFTUP     = 0x0004
+const MOUSEEVENTF_RIGHTDOWN  = 0x0008
+const MOUSEEVENTF_RIGHTUP    = 0x0010
+const MOUSEEVENTF_MIDDLEDOWN = 0x0020
+const MOUSEEVENTF_MIDDLEUP   = 0x0040
+const MOUSEEVENTF_WHEEL      = 0x0800
+const MOUSEEVENTF_HWHEEL     = 0x1000
+const MOUSEEVENTF_ABSOLUTE   = 0x8000
+
+// 虚拟键码（常用）
+export const VK_BACK    = 0x08
+export const VK_TAB     = 0x09
+export const VK_RETURN  = 0x0D
+export const VK_SHIFT   = 0x10
+export const VK_CONTROL = 0x11
+export const VK_MENU    = 0x12   // Alt
+export const VK_ESCAPE  = 0x1B
+export const VK_SPACE   = 0x20
+export const VK_LEFT    = 0x25
+export const VK_UP      = 0x26
+export const VK_RIGHT   = 0x27
+export const VK_DOWN    = 0x28
+export const VK_0 = 0x30
+export const VK_1 = 0x31
+export const VK_2 = 0x32
+export const VK_3 = 0x33
+export const VK_4 = 0x34
+export const VK_5 = 0x35
+export const VK_6 = 0x36
+export const VK_7 = 0x37
+export const VK_8 = 0x38
+export const VK_9 = 0x39
+export const VK_A = 0x41
+export const VK_B = 0x42
+export const VK_C = 0x43
+export const VK_D = 0x44
+export const VK_E = 0x45
+export const VK_F = 0x46
+export const VK_G = 0x47
+export const VK_H = 0x48
+export const VK_I = 0x49
+export const VK_J = 0x4A
+export const VK_K = 0x4B
+export const VK_L = 0x4C
+export const VK_M = 0x4D
+export const VK_N = 0x4E
+export const VK_O = 0x4F
+export const VK_P = 0x50
+export const VK_Q = 0x51
+export const VK_R = 0x52
+export const VK_S = 0x53
+export const VK_T = 0x54
+export const VK_U = 0x55
+export const VK_V = 0x56
+export const VK_W = 0x57
+export const VK_X = 0x58
+export const VK_Y = 0x59
+export const VK_Z = 0x5A
+export const VK_F1  = 0x70
+export const VK_F2  = 0x71
+export const VK_F3  = 0x72
+export const VK_F4  = 0x73
+export const VK_F5  = 0x74
+export const VK_F6  = 0x75
+export const VK_F7  = 0x76
+export const VK_F8  = 0x77
+export const VK_F9  = 0x78
+export const VK_F10 = 0x79
+export const VK_F11 = 0x7A
+export const VK_F12 = 0x7B
+
+// ==================== INPUT 结构体 ====================
+// INPUT 结构 on x64 (sizeof = 40 bytes):
+//   offset 0:  type     (DWORD, 4)     — INPUT.type
+//   offset 4:  padding  (4)
+//   offset 8:  wVk      (WORD, 2)      — KEYBDINPUT 开始
+//   offset 10: wScan    (WORD, 2)
+//   offset 12: dwFlags  (DWORD, 4)
+//   offset 16: time     (DWORD, 4)
+//   offset 20: padding  (4)              — 对齐 dwExtraInfo 到 8 字节边界
+//   offset 24: dwExtraInfo (ULONG_PTR, 8)
+//   offset 32: end
+// MOUSEINPUT 与 KEYBDINPUT 共用同一 union 区域:
+//   offset 8:  dx        (LONG, 4)
+//   offset 12: dy        (LONG, 4)
+//   offset 16: mouseData (DWORD, 4)
+//   offset 20: dwFlags   (DWORD, 4)
+//   offset 24: time       (DWORD, 4)
+//   offset 28: padding   (4)
+//   offset 32: dwExtraInfo (ULONG_PTR, 8)
+//   offset 40: end
+const INPUT_SIZE = 40
+
+// 最大批量 INPUT 数（keyCombo 最多 10 键 × 2 = 20 个事件）
+const MAX_INPUT_BATCH = 20
+
+// 预分配批量发送缓冲区（模块级单例，零分配）
+Ptr[u8] _inputBatchBuf = null
+
+func _ensureBatchBuf() {
+    if _inputBatchBuf == null {
+        _inputBatchBuf = ffi.malloc(INPUT_SIZE * MAX_INPUT_BATCH)
+    }
+}
+
+// 获取扫描码的辅助
+func _scan(int vk): int {
+    return _int(_lib().MapVirtualKeyA(vk, 0))
+}
+
+// ==================== 内部辅助（单事件发送，用于 keyDown/keyUp/move 等）====================
+
+// 构造并发送单个键盘 INPUT
+// vk: 虚拟键码, flags: KEYEVENTF_KEYDOWN 或 KEYEVENTF_KEYUP
+func _sendKey(int vk, int flags): bool {
+    _ensureBatchBuf()
+    // 清零整个 INPUT 结构，确保 padding/未用字段不含垃圾值
+    ffi.memset(_inputBatchBuf, 0, INPUT_SIZE)
+    // type = INPUT_KEYBOARD
+    ffi.write_int(_inputBatchBuf, 0, INPUT_KEYBOARD)
+    // wVk (offset 8, 2 bytes)
+    ffi.write_int16(_inputBatchBuf, 8, vk)
+    // wScan (offset 10, 2 bytes)
+    ffi.write_int16(_inputBatchBuf, 10, _scan(vk))
+    // dwFlags (offset 12, 4 bytes)
+    ffi.write_int(_inputBatchBuf, 12, flags)
+    // time=0, dwExtraInfo=0 已由 memset 清零
+    int sent = _int(_lib().SendInput(1, _inputBatchBuf, INPUT_SIZE))
+    return sent > 0
+}
+
+// 构造并发送单个鼠标 INPUT
+// dx, dy: 移动量（相对）或绝对坐标, flags: 鼠标事件标志
+func _sendMouse(int dx, int dy, int mouseData, int flags): bool {
+    _ensureBatchBuf()
+    ffi.memset(_inputBatchBuf, 0, INPUT_SIZE)
+    // type = INPUT_MOUSE
+    ffi.write_int(_inputBatchBuf, 0, INPUT_MOUSE)
+    // dx (offset 8)
+    ffi.write_int(_inputBatchBuf, 8, dx)
+    // dy (offset 12)
+    ffi.write_int(_inputBatchBuf, 12, dy)
+    // mouseData (offset 16)
+    ffi.write_int(_inputBatchBuf, 16, mouseData)
+    // dwFlags (offset 20)
+    ffi.write_int(_inputBatchBuf, 20, flags)
+    // time=0, dwExtraInfo=0 已由 memset 清零
+    int sent = _int(_lib().SendInput(1, _inputBatchBuf, INPUT_SIZE))
+    return sent > 0
+}
+
+// ==================== 公开 API - 键盘 ====================
+
+// 按下按键
+export func keyDown(int vk): bool {
+    return _sendKey(vk, KEYEVENTF_KEYDOWN)
+}
+
+// 释放按键
+export func keyUp(int vk): bool {
+    return _sendKey(vk, KEYEVENTF_KEYUP)
+}
+
+// 按一下按键（按下+释放）
+// 优化: 1 次 SendInput 发送 2 个事件（原子插入），零 malloc
+export func keyPress(int vk): bool {
+    _ensureBatchBuf()
+    int totalSize = INPUT_SIZE * 2
+    ffi.memset(_inputBatchBuf, 0, totalSize)
+
+    // INPUT[0]: KEYDOWN
+    ffi.write_int(_inputBatchBuf, 0, INPUT_KEYBOARD)
+    ffi.write_int16(_inputBatchBuf, 8, vk)
+    ffi.write_int16(_inputBatchBuf, 10, _scan(vk))
+    ffi.write_int(_inputBatchBuf, 12, KEYEVENTF_KEYDOWN)
+
+    // INPUT[1]: KEYUP (偏移 INPUT_SIZE)
+    int off = INPUT_SIZE
+    ffi.write_int(_inputBatchBuf, off, INPUT_KEYBOARD)
+    ffi.write_int16(_inputBatchBuf, off + 8, vk)
+    ffi.write_int16(_inputBatchBuf, off + 10, _scan(vk))
+    ffi.write_int(_inputBatchBuf, off + 12, KEYEVENTF_KEYUP)
+
+    int sent = _int(_lib().SendInput(2, _inputBatchBuf, INPUT_SIZE))
+    return sent == 2
+}
+
+// 按一下按键并等待间隔（毫秒）
+// 注意: 因为中间有 sleep，不能批量发送，只能分两次
+export func keyPressDelay(int vk, int delayMs): bool {
+    bool down = _sendKey(vk, KEYEVENTF_KEYDOWN)
+    sleep(delayMs)
+    bool up = _sendKey(vk, KEYEVENTF_KEYUP)
+    return down and up
+}
+
+// 组合键（如 Ctrl+C: 按下Ctrl → 按下C → 释放C → 释放Ctrl）
+// 优化: 1 次 SendInput 发送 2n 个事件（原子插入），零 malloc
+export func keyCombo(Array[int] keys): bool {
+    int n = keys.len()
+    if n == 0 { return true }
+
+    // 超过批量缓冲区上限，退化为逐次发送
+    if n * 2 > MAX_INPUT_BATCH {
+        bool ok = true
+        for keys to k {
+            if not _sendKey(k, KEYEVENTF_KEYDOWN) { ok = false }
+        }
+        int nn = keys.len()
+        for 0:(nn-1) to i {
+            int k = keys[nn - 1 - i]
+            if not _sendKey(k, KEYEVENTF_KEYUP) { ok = false }
+        }
+        return ok
+    }
+
+    _ensureBatchBuf()
+    int totalSize = INPUT_SIZE * n * 2
+    ffi.memset(_inputBatchBuf, 0, totalSize)
+
+    // 前 n 个 INPUT: 全部按下
+    for 0:(n-1) to i {
+        int off = i * INPUT_SIZE
+        int vk = keys[i]
+        ffi.write_int(_inputBatchBuf, off, INPUT_KEYBOARD)
+        ffi.write_int16(_inputBatchBuf, off + 8, vk)
+        ffi.write_int16(_inputBatchBuf, off + 10, _scan(vk))
+        ffi.write_int(_inputBatchBuf, off + 12, KEYEVENTF_KEYDOWN)
+    }
+
+    // 后 n 个 INPUT: 全部释放（逆序）
+    for 0:(n-1) to i {
+        int off = (n + i) * INPUT_SIZE
+        int vk = keys[n - 1 - i]
+        ffi.write_int(_inputBatchBuf, off, INPUT_KEYBOARD)
+        ffi.write_int16(_inputBatchBuf, off + 8, vk)
+        ffi.write_int16(_inputBatchBuf, off + 10, _scan(vk))
+        ffi.write_int(_inputBatchBuf, off + 12, KEYEVENTF_KEYUP)
+    }
+
+    int sent = _int(_lib().SendInput(n * 2, _inputBatchBuf, INPUT_SIZE))
+    return sent == n * 2
+}
+
+// 连续按键（连按 N 次）
+export func keyRepeat(int vk, int count, int intervalMs): bool {
+    bool ok = true
+    for 0:(count-1) to i {
+        if not keyPress(vk) { ok = false }
+        if i < count - 1 and intervalMs > 0 {
+            sleep(intervalMs)
+        }
+    }
+    return ok
+}
+
+// ==================== 公开 API - 鼠标 ====================
+
+// 鼠标左键单击
+// 优化: 1 次 SendInput 发送 2 个事件（原子插入），零 malloc
+export func leftClick(): bool {
+    _ensureBatchBuf()
+    ffi.memset(_inputBatchBuf, 0, INPUT_SIZE * 2)
+
+    // INPUT[0]: LEFTDOWN
+    ffi.write_int(_inputBatchBuf, 0, INPUT_MOUSE)
+    ffi.write_int(_inputBatchBuf, 20, MOUSEEVENTF_LEFTDOWN)
+
+    // INPUT[1]: LEFTUP
+    int off = INPUT_SIZE
+    ffi.write_int(_inputBatchBuf, off, INPUT_MOUSE)
+    ffi.write_int(_inputBatchBuf, off + 20, MOUSEEVENTF_LEFTUP)
+
+    int sent = _int(_lib().SendInput(2, _inputBatchBuf, INPUT_SIZE))
+    return sent == 2
+}
+
+// 鼠标左键双击
+export func leftDoubleClick(): bool {
+    bool c1 = leftClick()
+    sleep(50)
+    bool c2 = leftClick()
+    return c1 and c2
+}
+
+// 鼠标右键单击
+// 优化: 批量发送
+export func rightClick(): bool {
+    _ensureBatchBuf()
+    ffi.memset(_inputBatchBuf, 0, INPUT_SIZE * 2)
+
+    // INPUT[0]: RIGHTDOWN
+    ffi.write_int(_inputBatchBuf, 0, INPUT_MOUSE)
+    ffi.write_int(_inputBatchBuf, 20, MOUSEEVENTF_RIGHTDOWN)
+
+    // INPUT[1]: RIGHTUP
+    int off = INPUT_SIZE
+    ffi.write_int(_inputBatchBuf, off, INPUT_MOUSE)
+    ffi.write_int(_inputBatchBuf, off + 20, MOUSEEVENTF_RIGHTUP)
+
+    int sent = _int(_lib().SendInput(2, _inputBatchBuf, INPUT_SIZE))
+    return sent == 2
+}
+
+// 鼠标中键单击
+// 优化: 批量发送
+export func middleClick(): bool {
+    _ensureBatchBuf()
+    ffi.memset(_inputBatchBuf, 0, INPUT_SIZE * 2)
+
+    // INPUT[0]: MIDDLEDOWN
+    ffi.write_int(_inputBatchBuf, 0, INPUT_MOUSE)
+    ffi.write_int(_inputBatchBuf, 20, MOUSEEVENTF_MIDDLEDOWN)
+
+    // INPUT[1]: MIDDLEUP
+    int off = INPUT_SIZE
+    ffi.write_int(_inputBatchBuf, off, INPUT_MOUSE)
+    ffi.write_int(_inputBatchBuf, off + 20, MOUSEEVENTF_MIDDLEUP)
+
+    int sent = _int(_lib().SendInput(2, _inputBatchBuf, INPUT_SIZE))
+    return sent == 2
+}
+
+// 鼠标左键按下
+export func leftDown(): bool {
+    return _sendMouse(0, 0, 0, MOUSEEVENTF_LEFTDOWN)
+}
+
+// 鼠标左键释放
+export func leftUp(): bool {
+    return _sendMouse(0, 0, 0, MOUSEEVENTF_LEFTUP)
+}
+
+// 鼠标相对移动
+export func moveRelative(int dx, int dy): bool {
+    return _sendMouse(dx, dy, 0, MOUSEEVENTF_MOVE)
+}
+
+// 鼠标绝对移动（0-65535 范围）
+// screenW/screenH 为屏幕分辨率，x/y 为像素坐标
+export func moveAbsolute(int x, int y, int screenW, int screenH): bool {
+    int dx = _int(x * 65535 / screenW)
+    int dy = _int(y * 65535 / screenH)
+    return _sendMouse(dx, dy, 0, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE)
+}
+
+// 鼠标滚轮滚动
+// delta: 正值向上滚, 负值向下滚, 通常 ±120
+export func mouseWheel(int delta): bool {
+    return _sendMouse(0, 0, delta, MOUSEEVENTF_WHEEL)
+}
+
+// 鼠标水平滚轮
+// delta: 正值向右滚, 负值向左滚, 通常 ±120
+export func mouseHWheel(int delta): bool {
+    return _sendMouse(0, 0, delta, MOUSEEVENTF_HWHEEL)
+}
+
+// ==================== 状态查询 ====================
+
+// 检查按键是否按下
+export func isKeyDown(int vk): bool {
+    int s = _int(_lib().GetAsyncKeyState(vk))
+    return (s & 0x8000) != 0
+}
+
+// 检查组合键是否同时按下
+export func areKeysDown(Array[int] keys): bool {
+    for keys to k {
+        if not isKeyDown(k) { return false }
+    }
+    return true
+}

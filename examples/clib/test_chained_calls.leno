@@ -1,0 +1,56 @@
+// 测试链式调用和复杂场景
+import ffi
+
+clib msvcrt {
+    i32 strlen(str8 s)
+    str8 strerror(i32 errnum)
+    i32 strcmp(str8 s1, str8 s2)
+    f64 sqrt(f64 x)
+    f64 pow(f64 x, f64 y)
+    i32 abs(i32 n)
+    Ptr malloc(i32 size)
+    void free(Ptr p)
+    void memset(Ptr p, i32 c, i32 n)
+    void memcpy(Ptr dst, Ptr src, i32 n)
+}
+
+main() {
+    msvcrt lib = ffi.load("msvcrt.dll")
+
+    // 测试 1: 返回值直接当参数（链式调用）
+    int n = lib.strlen(lib.strerror(22))  // EINVAL
+    if n > 0 { print("  PASS: 链式调用 strlen(strerror(22)) = " + n) } else { print("  FAIL") }
+
+    // 测试 2: 数学表达式链式调用
+    float hypot = lib.sqrt(lib.pow(3.0, 2.0) + lib.pow(4.0, 2.0))
+    if hypot == 5.0 { print("  PASS: sqrt(pow(3,2)+pow(4,2)) = " + hypot) } else { print("  FAIL: 期望 5.0, 实际 " + hypot) }
+
+    // 测试 3: 多个 clib 调用在同一表达式
+    int total = lib.abs(-10) + lib.abs(-20) + lib.abs(-30)
+    if total == 60 { print("  PASS: 多调用求和 = " + total) } else { print("  FAIL: 期望 60, 实际 " + total) }
+
+    // 测试 4: 内存操作链
+    Ptr buf1 = lib.malloc(16)
+    Ptr buf2 = lib.malloc(16)
+    lib.memset(buf1, 65, 16)  // 填充 'A'
+    lib.memcpy(buf2, buf1, 16)
+    print("  PASS: memset + memcpy 链")
+    lib.free(buf1)
+    lib.free(buf2)
+
+    // 测试 5: 返回值用在 if 条件中
+    if lib.strcmp("hello", "hello") == 0 {
+        print("  PASS: strcmp 在 if 条件中")
+    } else {
+        print("  FAIL")
+    }
+
+    // 测试 6: 返回值用在循环中
+    int sum = 0
+    for 5 to i {
+        sum = sum + lib.abs(-(i + 1))
+    }
+    if sum == 15 { print("  PASS: 循环中 clib 调用, sum = " + sum) } else { print("  FAIL: 期望 15, 实际 " + sum) }
+
+    print("链式调用测试完成")
+}

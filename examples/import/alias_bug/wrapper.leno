@@ -1,0 +1,9 @@
+// 复现: alias 类型不支持跨模块 use
+// 运行 `leno wrapper.leno` 看报错
+import "types.leno" as t
+use t.MySize
+
+main() {
+    MySize s = {w: 100, h: 200}
+    print("w=" + s.w)
+}

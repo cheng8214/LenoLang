@@ -1,0 +1,94 @@
+// 测试错误堆栈追踪功能
+
+// 测试 1: 运行时错误的 catch e.stack 包含行号信息
+func inner() {
+    var arr = [1, 2, 3]
+    var x = arr[10]    // 数组越界 (第 6 行)
+}
+
+func middle() {
+    inner()             // 第 9 行
+}
+
+func outer() {
+    middle()             // 第 12 行
+}
+
+print("=== 测试 1: catch e 中的调用链 (包含 file:line) ===")
+try {
+    outer()              // 第 16 行
+} catch e {
+    print($"  e.msg: {e.msg}")
+    print($"  e.file: {e.file}")
+    print($"  e.line: {e.line}")
+    print("  e.stack:")
+    for e.stack to frame {
+        print($"    at {frame}")
+    }
+}
+
+// 测试 2: 未捕获的运行时异常打印调用栈
+print("\n=== 测试 2: 未捕获的运行时异常打印调用栈 ===")
+print("（预期输出: 错误信息 + 调用栈）")
+
+func deep1() {
+    var a = 1 / 0       // 除零错误
+}
+
+func deep2() {
+    deep1()
+}
+
+func deep3() {
+    deep2()
+}
+
+// 取消下面的注释来测试未捕获异常
+// deep3()
+
+// 测试 3: throw 字符串的 catch 仍然是字符串（向后兼容）
+print("\n=== 测试 3: throw 字符串向后兼容 ===")
+try {
+    throw "自定义错误消息"
+} catch e {
+    print($"  e 是字符串: {e}")
+    print("  （throw 字符串保持向后兼容，e 直接是字符串）")
+}
+
+// 测试 4: 未捕获的 throw 字符串也打印调用栈
+print("\n=== 测试 4: 未捕获的 throw 字符串打印调用栈 ===")
+print("（预期输出: 错误信息 + 调用栈）")
+
+func validate(int x) {
+    if x < 0 {
+        throw "x 不能为负数"    // 第 57 行
+    }
+}
+
+func do_check() {
+    validate(-1)              // 第 61 行
+}
+
+// 取消下面的注释来测试未捕获 throw
+// do_check()
+
+print("\n=== 测试 5: 除零错误的 e.stack ===")
+func calc() {
+    return 10 / 0
+}
+
+func compute() {
+    return calc()
+}
+
+try {
+    compute()
+} catch e {
+    print($"  e.msg: {e.msg}")
+    print("  e.stack:")
+    for e.stack to frame {
+        print($"    at {frame}")
+    }
+}
+
+print("\n=== 所有测试完成 ===")

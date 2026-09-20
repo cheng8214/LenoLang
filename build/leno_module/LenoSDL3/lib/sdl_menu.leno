@@ -1,0 +1,893 @@
+// sdl_menu.leno — 菜单栏控件（顶部菜单 + 下拉项 + 子菜单 + 右键上下文）
+// 通过 win.addMenuBar({...}) 创建，点击顶部标题展开下拉，悬停含子菜单的项弹出二级，
+// 点击叶子项触发回调；点击空白处 / 切换标题 / Esc 关闭。下拉层走第二遍 renderPopup，
+// 复用 sdl_core 的弹层捕获区机制（setPopupCapture），与 ComboBox 同一范式。
+//
+// 用法：
+//   var bar = win.addMenuBar({
+//     x: 0, y: 0, w: 600, h: 28,
+//     font_size: 14,          // 字号（标题与下拉项共用）；改大时行高/栏高自动跟随
+//     item_h: 26,             // 下拉项行高（<=0 或不传则按字号自适应）
+//     orientation: "horizontal",  // "horizontal" 顶部栏 / "vertical" 左侧栏
+//     align: "center",        // 顶级标题对齐："left" / "center" / "right"（vertical 默认 left，横竖通用）
+//     item_gap: 0,            // 竖直排列项之间的额外间距（下拉项 / 竖栏顶级项），默认 0
+//     menus: [
+//       { title: "文件", items: [
+//           { label: "新建", id: "new", shortcut: "Ctrl+N", action: func():void { ... } },
+//           { label: "最近打开", submenu: [ {label:"a.txt", id:"recent1"}, ... ] },
+//           { separator: true },
+//           { label: "退出", id: "exit" },
+//       ]},
+//       { title: "帮助", items: [ { label: "关于", id: "about" } ] },
+//     ]
+//   })
+//   bar.on_select(func(string menu, string id) { print($"{menu} -> {id}") })
+//
+// 额外选项：
+//   transparent     是否透明背景（默认 false，不画菜单栏背景，嵌入标题栏时推荐 true）
+//   auto_width      是否自动计算宽度（默认 false，使用 opts.w；true 时根据菜单项自适应）
+import "sdl_renderer.leno" as ren; use ren.Renderer
+import "sdl_font.leno" as fnt; use fnt.Font
+import "sdl_event.leno" as evt; use evt.Event
+import "sdl_core.leno" as core; use core.(SystemCursor, Scancode, SDL_Rect, sdl3, SDL_Point)
+import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_image.leno" as img
+import "sdl_tooltip.leno" as tip
+import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
+use theme.Color
+
+// 单个菜单项（可被子菜单嵌套）
+export struct MenuItem {
+    string label = ""
+    string id = ""
+    string shortcut = ""
+    string image = ""           // 图标路径（可选，空则不绘制图标）
+    bool enabled = true
+    bool separator = false
+    Array[MenuItem] submenu = []
+    func():void action
+}
+
+// 由 Dict 构造一个 MenuItem（递归支持子菜单）。供解析与构建器共用。
+func _makeItem(Dict d): MenuItem {
+    MenuItem mi = new MenuItem()
+    mi.label     = d.get("label", "")
+    mi.id        = d.get("id", mi.label)
+    mi.shortcut  = d.get("shortcut", "")
+    mi.image     = d.get("image", "")
+    mi.enabled   = d.get("enabled", true)
+    mi.separator = d.get("separator", false)
+    mi.action    = d.get("action", null) as func():void
+    var sub = d.get("submenu", [])
+    if sub is Array[Dict] { mi.submenu = parseMenuItems(sub)}
+    else { mi.submenu = [] }
+    return mi
+}
+
+// 把用户传入的 Array[Dict] 解析为 Array[MenuItem]（递归支持子菜单）
+export func parseMenuItems(Array[Dict] src): Array[MenuItem] {
+    Array[MenuItem] out = []
+    for src.len() to i { out.add(_makeItem(src[i])) }
+    return out
+}
+
+// ==================== 几何辅助（模块级，供命中判定/绘制共用） ====================
+func _colW(Array[MenuItem] items, Font f, float itemH, float imgSize, float imgPad, float imgGap): float {
+    float mw = 120.0
+    for items.len() to i {
+        var it = items[i]
+        if it.separator { continue }
+        float w = 60.0
+        if f.ok { var[float, float](_lw, _lh) = f.measureString(it.label); w = _lw }
+        if it.shortcut != "" and f.ok { var[float, float](_sw, _sh) = f.measureString(it.shortcut); w = w + 16.0 + _sw }
+        if it.image != "" and imgSize > 0.0 { w = w + imgPad + imgSize + imgGap }
+        if w > mw { mw = w }
+    }
+    return mw + 20.0
+}
+func _panelH(Array[MenuItem] items, float itemH, float gap): float {
+    float hh = 0.0
+    for items.len() to i {
+        if i > 0 { hh = hh + gap }
+        if items[i].separator { hh = hh + 9.0 } else { hh = hh + itemH }
+    }
+    return hh
+}
+func _itemOffsets(Array[MenuItem] items, float itemH, float gap): Array[float] {
+    Array[float] offs = []
+    float y = 0.0
+    for items.len() to i {
+        offs.add(y)
+        float rh = if items[i].separator then 9.0 else itemH
+        y = y + rh + (if i < items.len() - 1 then gap else 0.0)
+    }
+    return offs
+}
+func _itemAt(Array[MenuItem] items, float px, float py, float pw, float mx, float my, float itemH, float gap): int {
+    var offs = _itemOffsets(items, itemH, gap)
+    for items.len() to i {
+        float iy = py + offs[i]
+        float ih = if items[i].separator then 9.0 else itemH
+        if mx >= px and mx <= px + pw and my >= iy and my <= iy + ih { return i }
+    }
+    return -1
+}
+
+// 每窗口各自的活动菜单（窗口级单例）：同一时刻每窗口仅一个弹出菜单（模态弹层），
+// 按下新菜单前只关掉「本窗口」其它菜单，不再跨窗口互相抢互斥。嵌套（未拿到句柄）菜单
+// 走 key=null 的兜底桶，保持旧行为。关闭/销毁时摘除，无悬空引用累积。
+Array[Ptr[u8]] _activeHnds = []
+Array[MenuBar] _activeMenus = []
+
+export struct MenuBar impl Widget, Themeable {
+    float x = 0.0, y = 0.0, w = 600.0, h = 28.0
+    float _itemH = 26.0
+    float _itemGap = 0.0          // 竖直排列项之间的额外间距（下拉项 / 竖栏顶级项）
+    Array[string]       _titles = []
+    Array[Array[MenuItem]] _menus = []
+    int _open = -1        // 当前展开的顶部菜单索引，-1 无
+    int _hoverTop = -1    // 悬停的顶部标题索引，-1 无
+    int _hoverItem = -1   // 当前展开菜单中悬停项索引，-1 无
+    int _openSub = -1     // 当前展开菜单中“已展开子菜单”的项索引，-1 无
+    int _hoverSub = -1    // 子菜单中悬停项索引，-1 无
+
+    // 右击上下文菜单（复用同一套弹层/几何逻辑；与 _menus/_titles 平行存储）
+    Array[bool]         _ctxFlag = []    // 标记某条目是否为“上下文菜单”（无标题栏）
+    Array[Array[float]] _ctxAnchor = []  // 上下文菜单的弹出锚点 [x, y]
+
+    float _fontSize = 15.0; string _fontPath = ""; int _fontStyle = 0; Font? _font
+    Ptr[u8]? _winHnd            // 所属窗口句柄：上下文菜单按窗口隔离绘制；面板嵌套未拿到句柄则为 null
+
+    // 菜单项图标配置
+    float _imgSize = 16.0      // 图标边长（0 = 不绘制图标）
+    float _imgPad = 10.0       // 图标左侧内边距
+    float _imgGap = 6.0        // 图标与文字间距
+    Array[string]  _imgCachePaths = []   // 纹理缓存路径
+    Array[Ptr[u8]] _imgCacheTex = []     // 纹理缓存指针
+    string  _imgLastPath = ""            // MRU 快路径：最近访问的纹理路径
+    Ptr[u8] _imgLastTex = null           // MRU 快路径：最近访问的纹理指针
+    float _fontH = 0.0                   // 字体行高缓存（避免每帧 measureString）
+
+    // 配色 — 打包 int 颜色
+    Color _barColor = #22232CFF       // 菜单栏背景
+    Color _barHovColor = #32343EFF    // 悬停/激活标题背景
+    Color _bgColor = #1E2026FF        // 下拉面板背景
+    Color _hovColor = #3C78C8FF       // 项悬停背景
+    Color _txtColor = #E1E4EBFF       // 文字色
+    Color _disColor = #787A82FF       // 禁用文字色
+    Color _sepColor = #50545CFF       // 分隔线色
+    Color _bdrColor = #5A5F6EFF       // 边框色
+    Color _accColor = #50A0F5FF       // 激活下划线
+    int _cursor = SystemCursor.POINTER
+    int _winW = 0, _winH = 0          // 所属窗口逻辑宽高（边界夹紧用；0=未知）
+    string _orient = "horizontal"         // 布局方向："horizontal" 顶部栏 / "vertical" 左侧栏
+    string _align = ""                    // 顶级标题对齐："left" / "center" / "right"
+    bool enabled = true, visible = true, _loaded = false
+    bool _transparent = false             // 透明背景（不画菜单栏背景）
+    bool _autoWidth = false               // 自动根据内容计算宽度
+    func(string, string):void _onSelect
+    func _ensure_font() {
+        if _font == null or not _font.ok {
+            if _font != null and _font.ok { fnt.releaseFont(_font) }
+            if _fontPath != "" { _font = fnt.acquireFont(_fontPath, _fontSize) }
+            else { _font = fnt.acquireFontAuto(_fontSize) }
+            if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
+            if _font.ok { var[float, float](_agw, _agh) = _font.measureString("Ag"); _fontH = _agh }
+        }
+    }
+
+    // ==================== 布局接口 ====================
+    func get_w(): float { return w }
+    func get_h(): float { return h }
+    func get_x(): float { return x }
+    func get_y(): float { return y }
+    func set_pos(float px, float py) { x = px; y = py }
+    func set_size(float sw, float sh) { w = sw; h = sh }
+    // 设置所属窗口逻辑宽高，供上下文菜单弹出时做边界夹紧
+    func setWindowSize(int ww, int hh) { _winW = ww; _winH = hh }
+
+    func set(Dict opts) {
+        x       = opts.get("x", 0)
+        y       = opts.get("y", 0)
+        w       = opts.get("w", 600)
+        h       = opts.get("h", 28)
+        _fontSize = opts.get("font_size", 15)
+        _fontPath = opts.get("font_path", "")
+        _fontStyle = opts.get("font_style", 0)
+        _orient    = opts.get("orientation", "horizontal")
+        _align     = opts.get("align", "")
+        if _align == "" { _align = if _orient == "vertical" then "left" else "center" }
+        // item_h：显式传入则用，否则按字号自适应（避免大字号被裁切）
+        if opts.has("item_h") { _itemH = opts.get("item_h", 26) }
+        else { _itemH = _fontSize + 12.0; if _itemH < 24.0 { _itemH = 24.0 } }
+        _itemGap = opts.get("item_gap", 0)   // 竖直项间距，默认 0
+
+        _titles = []
+        _menus  = []
+        _ctxFlag = []
+        _ctxAnchor = []
+        var ms = opts.get("menus", [])
+        if ms is Array[Dict] {
+            for ms.len() to i {
+                _titles.add(ms[i].get("title", ""))
+                var its = ms[i].get("items", [])
+                if its is Array[Dict] { _menus.add(parseMenuItems(its)) }
+                else { _menus.add([]) }
+                _ctxFlag.add(false)
+                _ctxAnchor.add([0.0, 0.0])
+            }
+        }
+
+        // 默认配色见字段声明，以下仅 opts 覆盖
+        Theme th = theme.getTheme()
+        _barColor = th.bgHeader
+        _barHovColor = th.bgHover
+        _bgColor = th.bgAlt
+        _hovColor = th.accent
+        _txtColor = th.txt
+        _disColor = th.txtDim
+        _sepColor = th.sep
+        _bdrColor = th.border
+        _accColor = th.accentBright
+        // 颜色：opts 未传则保持默认值
+        if opts.get("bg_color") is Color => t { _bgColor = t }
+        if opts.get("border_color") is Color => t { _bdrColor = t }
+        if opts.get("accent_color") is Color => t { _accColor = t }
+
+        _cursor = opts.get("cursor", SystemCursor.POINTER)
+        _imgSize = opts.get("image_size", 16.0)
+        _imgPad  = opts.get("image_pad", 10.0)
+        _imgGap  = opts.get("image_gap", 6.0)
+        _open = -1; _hoverTop = -1; _hoverItem = -1; _openSub = -1; _hoverSub = -1   // 重置所有展开/悬停索引
+        enabled = opts.get("enabled", true)
+        visible = opts.get("visible", true)
+        _transparent = opts.get("transparent", false)
+        _autoWidth = opts.get("auto_width", false)
+        _ensure_font()
+        _loaded = true
+
+    }
+
+    // 关闭当前活动菜单（若有且非自身），保证同一时刻仅一个弹出菜单（模态弹层）
+    func _closeOtherMenus() {
+        var am = _getActiveMenu(self.getWindowHandle())
+        if am is MenuBar and am != self and am.isOpen() { am.close() }
+    }
+
+    // ==================== 设置方法 ====================
+    func on_select(func(string, string):void cb) { _onSelect = cb }
+    func set_enabled(bool e) { enabled = e }
+    func set_visible(bool v) { visible = v }
+    func is_visible(): bool { return visible }
+    func set_font_size(float s) {
+        _fontSize = s
+        if _font != null and _font.ok { fnt.releaseFont(_font) }
+        _font = null
+        _itemH = _fontSize + 12.0; if _itemH < 24.0 { _itemH = 24.0 }  // 字号变化时行高自适应
+        if h < _fontSize + 14.0 { h = _fontSize + 14.0 }                // 顶部栏高度跟随字号，避免标题被裁
+    }
+    // 设置顶级标题对齐方式："left" / "center" / "right"
+    func set_align(string a) { _align = a }
+    // 显式设置下拉项行高（传入 <=0 则忽略）
+    func set_item_h(float ih) { if ih > 0.0 { _itemH = ih } }
+    // 设置竖直项之间的额外间距（下拉项 / 竖栏顶级项）
+    func set_item_gap(float g) { _itemGap = g }
+    // 设置菜单项图标尺寸 / 内边距 / 间距
+    func set_image_size(float s) { _imgSize = s }
+    func set_image_pad(float p)  { _imgPad = p }
+    func set_image_gap(float g)  { _imgGap = g }
+    // 记录所属窗口句柄，供上下文菜单按窗口隔离绘制（渲染循环据 hwnd 只画本窗口菜单）
+    func setWindowHandle(Ptr[u8] hwnd) { _winHnd = hwnd }
+    func getWindowHandle(): Ptr[u8] { return _winHnd }
+    func close() { _open = -1; _openSub = -1; _hoverItem = -1; _hoverSub = -1; _clearActiveMenu(self) }
+    // 设置透明背景（嵌入标题栏时推荐开启）
+    func set_transparent(bool t) { _transparent = t; core.markFrameRedraw() }
+    // 设置自动宽度
+    func set_auto_width(bool aw) { _autoWidth = aw; core.markFrameRedraw() }
+
+    // ★ 根据所有顶级菜单标题计算所需宽度（仅计算非上下文菜单项）
+    func _recalcAutoWidth() {
+        if _titles.len() == 0 or _font == null or not _font.ok { return }
+        float totalW = 0.0
+        float fontH = _float(_font.height)
+        for _titles.len() to i {
+            if i < _ctxFlag.len() and _ctxFlag[i] { continue }  // 跳过上下文菜单
+            var[float, float](tw, th) = _font.measureString(_titles[i])
+            float itemW = tw + 28.0  // 内边距（与 _topRects 一致）
+            if itemW < 40.0 { itemW = 40.0 }
+            totalW = totalW + itemW
+        }
+        if totalW > 0.0 and totalW != w {
+            w = totalW
+        }
+    }
+    // 是否有菜单（含上下文菜单）处于展开状态
+    func isOpen(): bool { return _open >= 0 }
+
+    // ==================== 构建器（避免多层嵌套字面量；每项单行 Dict 即可） ====================
+    // 新增一个顶级菜单，返回其索引
+    func addMenu(string title): int {
+        _titles.add(title)
+        _menus.add([])
+        _ctxFlag.add(false)          // 与 _menus/_titles 平行存储，保持索引对齐
+        _ctxAnchor.add([0.0, 0.0])
+        return _titles.len() - 1
+    }
+    // 向指定顶级菜单追加一项，返回该项在菜单内的索引（可用于挂子菜单）
+    func addItem(int menuIdx, Dict opts): int {
+        if menuIdx < 0 or menuIdx >= _menus.len() { return -1 }
+        var mi = _makeItem(opts)
+        _menus[menuIdx].add(mi)
+        return _menus[menuIdx].len() - 1
+    }
+    // 向指定顶级菜单追加分隔线
+    func addSeparator(int menuIdx) {
+        if menuIdx < 0 or menuIdx >= _menus.len() { return }
+        var mi = new MenuItem(); mi.separator = true; mi.submenu = []
+        _menus[menuIdx].add(mi)
+    }
+    // 向某顶级菜单的某一项（parentIdx）追加子菜单项，返回子菜单内索引
+    func addSubmenuItem(int menuIdx, int parentIdx, Dict opts): int {
+        if menuIdx < 0 or menuIdx >= _menus.len() { return -1 }
+        var arr = _menus[menuIdx]
+        if parentIdx < 0 or parentIdx >= arr.len() { return -1 }
+        var mi = _makeItem(opts)
+        arr[parentIdx].submenu.add(mi)
+        return arr[parentIdx].submenu.len() - 1
+    }
+    // 向某顶级菜单的某一项追加子菜单分隔线
+    func addSubmenuSeparator(int menuIdx, int parentIdx) {
+        if menuIdx < 0 or menuIdx >= _menus.len() { return }
+        var arr = _menus[menuIdx]
+        if parentIdx < 0 or parentIdx >= arr.len() { return }
+        var mi = new MenuItem(); mi.separator = true; mi.submenu = []
+        arr[parentIdx].submenu.add(mi)
+    }
+
+    // ==================== 右击上下文菜单（与顶部菜单共用 _menus/_titles） ====================
+    // 定义（一次性）：返回一个“上下文菜单句柄”（即它在 _menus 中的索引，带 ctx 标记）
+    func addContextMenu(string name): int {
+        _titles.add(name)
+        _menus.add([])
+        _ctxFlag.add(true)
+        _ctxAnchor.add([0.0, 0.0])
+        return _titles.len() - 1
+    }
+    func addContextItem(int ctxIdx, Dict opts): int {
+        if ctxIdx < 0 or ctxIdx >= _menus.len() or not _ctxFlag[ctxIdx] { return -1 }
+        var mi = _makeItem(opts)
+        _menus[ctxIdx].add(mi)
+        return _menus[ctxIdx].len() - 1
+    }
+    func addContextSeparator(int ctxIdx) {
+        if ctxIdx < 0 or ctxIdx >= _menus.len() or not _ctxFlag[ctxIdx] { return }
+        var mi = new MenuItem(); mi.separator = true; mi.submenu = []
+        _menus[ctxIdx].add(mi)
+    }
+    // 清空某顶级菜单的全部项（供动态重建菜单项，如书签列表）
+    func clearMenu(int menuIdx) {
+        if menuIdx < 0 or menuIdx >= _menus.len() { return }
+        _menus[menuIdx] = []
+    }
+    // 清空某上下文菜单的全部项（供调用方在"弹出前"按当前状态动态重建菜单，例如文件/文件夹右键菜单不同）
+    func clearContextItems(int ctxIdx) {
+        if ctxIdx < 0 or ctxIdx >= _menus.len() or not _ctxFlag[ctxIdx] { return }
+        _menus[ctxIdx] = []
+    }
+    func addContextSubmenuItem(int ctxIdx, int parentIdx, Dict opts): int {
+        if ctxIdx < 0 or ctxIdx >= _menus.len() or not _ctxFlag[ctxIdx] { return -1 }
+        var arr = _menus[ctxIdx]
+        if parentIdx < 0 or parentIdx >= arr.len() { return -1 }
+        var mi = _makeItem(opts)
+        arr[parentIdx].submenu.add(mi)
+        return arr[parentIdx].submenu.len() - 1
+    }
+    func addContextSubmenuSeparator(int ctxIdx, int parentIdx) {
+        if ctxIdx < 0 or ctxIdx >= _menus.len() or not _ctxFlag[ctxIdx] { return }
+        var arr = _menus[ctxIdx]
+        if parentIdx < 0 or parentIdx >= arr.len() { return }
+        var mi = new MenuItem(); mi.separator = true; mi.submenu = []
+        arr[parentIdx].submenu.add(mi)
+    }
+    // 按 id 动态启用/禁用某个顶级菜单项（供调用方按当前状态刷新）
+    func setItemEnabled(int menuIdx, string id, bool en) {
+        if menuIdx < 0 or menuIdx >= _menus.len() { return }
+        if _ctxFlag[menuIdx] { return }   // 顶级菜单没有 ctx 标记才操作
+        for _menus[menuIdx].len() to i {
+            if _menus[menuIdx][i].id == id { _menus[menuIdx][i].enabled = en; return }
+        }
+    }
+    // 按 id 动态启用/禁用某个上下文菜单项（供调用方按当前状态刷新）
+    func setContextItemEnabled(int ctxIdx, string id, bool en) {
+        if ctxIdx < 0 or ctxIdx >= _menus.len() or not _ctxFlag[ctxIdx] { return }
+        for _menus[ctxIdx].len() to i {
+            if _menus[ctxIdx][i].id == id { _menus[ctxIdx][i].enabled = en; return }
+        }
+    }
+    // 统计某上下文菜单内“有效项”（非分隔线）数量；供调用方判断空菜单是否需要弹出
+    func contextItemCount(int ctxIdx): int {
+        if ctxIdx < 0 or ctxIdx >= _menus.len() { return 0 }
+        int n = 0
+        for _menus[ctxIdx].len() to i { if not _menus[ctxIdx][i].separator { n = n + 1 } }
+        return n
+    }
+
+    // 在光标处弹出（右键时调用）；x,y 为弹出锚点（一般为鼠标位置）
+    // 同一帧内立即登记弹层捕获区，避免右键穿透到下层控件
+    func openContext(int ctxIdx, float x, float y) {
+        if ctxIdx < 0 or ctxIdx >= _menus.len() or not _ctxFlag[ctxIdx] { return }
+        // 空菜单（无任何有效项）不弹出，否则会画出一个 0 高圆角矩形，视觉上是一条横线
+        if contextItemCount(ctxIdx) == 0 { return }
+        _closeOtherMenus()   // 展开前先关闭其它菜单（顶部菜单栏/其它右击菜单），保证仅一个
+        close()
+        _open = ctxIdx
+        _ctxAnchor[ctxIdx] = [x, y]
+        _openSub = -1; _hoverItem = -1; _hoverSub = -1
+        _ensure_font()
+        // 统一经 _panelRect 做窗口边界夹紧（主面板与子菜单共用同一逻辑）
+        // ★ _ctxAnchor 保持原始鼠标位置不变，_panelRect 每帧从原始锚点重新计算夹紧位置，
+        //   避免覆盖锚点后 _clampRect 在 renderPopup 中基于已夹紧位置二次计算导致漂移
+        var g = _panelRect(ctxIdx)
+        core.setPopupCapture(g[0], g[1], g[2], g[3])
+        _setActiveMenu(self)   // 标记本菜单为当前活动菜单（窗口级），供互斥关闭
+        // ★ 弹出上下文菜单时清除 tooltip，避免 tip 浮在菜单上层
+        tip.tipClear()
+    }
+
+    func _topRects(): Array[Array[float]] {
+        Array[Array[float]] out = []
+        int n = _titles.len()
+        if n == 0 { return out }
+        _ensure_font()
+        if _orient == "vertical" {
+            // 左侧栏：顶级项竖排（栏宽 w、项高 _itemH），项间加 _itemGap 间距
+            float ty = y
+            for n to i {
+                if i < _ctxFlag.len() and _ctxFlag[i] { out.add([0.0, 0.0, 0.0, 0.0]); continue }
+                out.add([x, ty, w, _itemH])
+                ty = ty + _itemH + _itemGap
+            }
+            return out
+        }
+        float tx = x
+        for n to i {
+            // 上下文菜单无标题栏：占位 [0,0,0,0] 以保持与 _menus 索引对齐
+            if i < _ctxFlag.len() and _ctxFlag[i] {
+                out.add([0.0, 0.0, 0.0, 0.0])
+                continue
+            }
+            float tw = 60.0
+            if _font != null and _font.ok { var[float, float](_tw, _th) = _font.measureString(_titles[i]); tw = _tw + 28.0 }
+            if tw < 40.0 { tw = 40.0 }
+            out.add([tx, y, tw, h])
+            tx = tx + tw
+        }
+        return out
+    }
+    // 按所属窗口边界夹紧面板矩形
+    // ★ 关键修复：上下文菜单在边缘时应翻转到锚点另一侧，而非硬挤进窗口
+    func _clampRect(float px, float py, float pw, float ph, bool isCtx): Array[float] {
+        // ★ 窗口尺寸未收到时（嵌套控件未传播到），从 SDL 查询实际窗口尺寸
+        if _winW <= 0 and _winHnd != null {
+            SDL_Point pt = SDL_Point.malloc()
+            core.lib().SDL_GetWindowSize(_winHnd, &pt.x, &pt.y)
+            _winW = pt.x; _winH = pt.y
+            pt.free()
+        }
+        // 使用实际窗口尺寸或保守估计（1080p 屏幕）
+        float winW = if _winW > 0 then _float(_winW) else 1920.0
+        float winH = if _winH > 0 then _float(_winH) else 1080.0
+
+        if isCtx {
+            // 上下文菜单：以锚点为基准，优先向右下展开，溢出则翻转
+            // 水平：右溢出则左翻转
+            if px + pw > winW { px = px - pw }
+            // 垂直：下溢出则上翻转
+            if py + ph > winH { py = py - ph }
+        } else {
+            // 顶部/侧边栏下拉：硬挤到窗口内（保持与触发点对齐）
+            if px + pw > winW { px = winW - pw }
+            if py + ph > winH { py = winH - ph }
+        }
+        // 最后保底：确保不超出左上角
+        if px < 0.0 { px = 0.0 }
+        if py < 0.0 { py = 0.0 }
+        return [px, py, pw, ph]
+    }
+    func _panelRect(int mIdx): Array[float] {
+        // 上下文菜单：直接使用弹出锚点，而非标题/侧栏旁
+        if mIdx >= 0 and mIdx < _ctxFlag.len() and _ctxFlag[mIdx] {
+            float ax = _ctxAnchor[mIdx][0], ay = _ctxAnchor[mIdx][1]
+            float pw = _colW(_menus[mIdx], _font, _itemH, _imgSize, _imgPad, _imgGap)
+            float ph = _panelH(_menus[mIdx], _itemH, _itemGap)
+            return _clampRect(ax, ay, pw, ph, true)
+        }
+        var rs = _topRects()
+        var r = rs[mIdx]
+        float pw = _colW(_menus[mIdx], _font, _itemH, _imgSize, _imgPad, _imgGap)
+        float ph = _panelH(_menus[mIdx], _itemH, _itemGap)
+        if _orient == "vertical" {
+            // 左侧栏：子菜单从顶级项右侧飞出
+            float px = r[0] + r[2]
+            float py = r[1]
+            return _clampRect(px, py, pw, ph, false)
+        }
+        // 顶部栏：下拉自标题下方
+        float px = r[0]
+        float py = y + h
+        return _clampRect(px, py, pw, ph, false)
+    }
+    func _subRect(int parentIdx): Array[float] {
+        var g = _panelRect(_open)
+        var offs = _itemOffsets(_menus[_open], _itemH, _itemGap)
+        float iy = g[1] + offs[parentIdx]
+        var sub = _menus[_open][parentIdx].submenu
+        float fw = _colW(sub, _font, _itemH, _imgSize, _imgPad, _imgGap)
+        float fh = _panelH(sub, _itemH, _itemGap)
+        float fx = g[0] + g[2] - 2.0
+        float fy = iy
+        // 水平超界则翻转到父菜单左侧弹出；垂直超界则上移夹紧
+        if _winW > 0 and fx + fw > _winW { fx = g[0] - fw + 2.0 }
+        if _winH > 0 and fy + fh > _winH { fy = _winH - fh }
+        if fx < 0.0 { fx = 0.0 }
+        if fy < 0.0 { fy = 0.0 }
+        return [fx, fy, fw, fh]
+    }
+
+    // ==================== 动作 ====================
+    func _invokeItem(int mIdx, int itIdx) {
+        var it = _menus[mIdx][itIdx]
+        if it.action != null { it.action() }
+        if _onSelect != null { _onSelect(_titles[mIdx], it.id) }
+        close()
+    }
+    func _invokeSub(int parentIdx, int subIdx) {
+        var sub = _menus[_open][parentIdx].submenu
+        var it = sub[subIdx]
+        if it.action != null { it.action() }
+        if _onSelect != null { _onSelect(_titles[_open], it.id) }
+        close()
+    }
+
+    // ==================== 交互 ====================
+    func process(Event ev) {
+        if not _loaded { return }
+        if not visible { return }
+        if not enabled { close(); return }
+
+        var[float, float](mx, my) = ev.mousePos()
+
+        if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { close(); return }
+
+        if ev.isMouseMotion() {
+            int prevHoverTop = _hoverTop, prevHoverItem = _hoverItem
+            int prevHoverSub = _hoverSub, prevOpenSub = _openSub
+            var rs = _topRects()
+            _hoverTop = -1
+            for rs.len() to i {
+                var r = rs[i]
+                if mx >= r[0] and mx <= r[0] + r[2] and my >= r[1] and my <= r[1] + r[3] { _hoverTop = i }
+            }
+            if _open >= 0 {
+                var g = _panelRect(_open)
+                _hoverItem = _itemAt(_menus[_open], g[0], g[1], g[2], mx, my, _itemH, _itemGap)
+                if _openSub >= 0 {
+                    // 先看光标是否落在已展开的子菜单飞出层内（避免移到飞出层时父项悬停丢失导致关闭）
+                    var sg = _subRect(_openSub)
+                    int si = _itemAt(_menus[_open][_openSub].submenu, sg[0], sg[1], sg[2], mx, my, _itemH, _itemGap)
+                    if si >= 0 {
+                        _hoverSub = si
+                    } else {
+                        if _hoverItem >= 0 and _menus[_open][_hoverItem].submenu.len() > 0 and _menus[_open][_hoverItem].enabled {
+                            _openSub = _hoverItem; _hoverSub = -1
+                        } else {
+                            _openSub = -1; _hoverSub = -1
+                        }
+                    }
+                } else {
+                    if _hoverItem >= 0 and _menus[_open][_hoverItem].submenu.len() > 0 and _menus[_open][_hoverItem].enabled {
+                        _openSub = _hoverItem; _hoverSub = -1
+                    }
+                }
+            }
+            core.markFrameMotion()
+            if _hoverTop != prevHoverTop or _hoverItem != prevHoverItem or _hoverSub != prevHoverSub or _openSub != prevOpenSub { core.requestRedraw() }
+            if (_hoverTop >= 0 or (_open >= 0 and _hoverItem >= 0)) and _cursor >= 0 { core.requestCursor(_cursor) }
+        }
+
+        if ev.isMouseButtonUp() { return }
+
+        // 仅左键参与菜单展开/选择/关闭；右键由应用层 onEvent 调 openContext 处理
+        if ev.isMouseButtonDown() and ev.mouseButton() == 1 {
+            var rs = _topRects()
+            int hitTop = -1
+            for rs.len() to i {
+                var r = rs[i]
+                if mx >= r[0] and mx <= r[0] + r[2] and my >= r[1] and my <= r[1] + r[3] { hitTop = i }
+            }
+            if hitTop >= 0 {
+                if _open == hitTop { _open = -1; _clearActiveMenu(self) }   // 再次点击同一标题：收起
+                else {
+                    _closeOtherMenus()   // 展开新标题前关闭其它菜单（如编辑框右击菜单），保证仅一个
+                    _open = hitTop; _openSub = -1; _hoverItem = -1; _hoverSub = -1
+                    _setActiveMenu(self)   // 标记本菜单为当前活动菜单（窗口级），供互斥关闭
+                }
+                return
+            }
+            if _open >= 0 {
+                // 优先判定子菜单飞出层
+                if _openSub >= 0 {
+                    var sub = _menus[_open][_openSub].submenu
+                    var sg = _subRect(_openSub)
+                    int si = _itemAt(sub, sg[0], sg[1], sg[2], mx, my, _itemH, _itemGap)
+                    if si >= 0 and sub[si].enabled and not sub[si].separator { _invokeSub(_openSub, si); return }
+                }
+                // 主下拉项
+                var g = _panelRect(_open)
+                int it = _itemAt(_menus[_open], g[0], g[1], g[2], mx, my, _itemH, _itemGap)
+                if it >= 0 and _menus[_open][it].enabled and not _menus[_open][it].separator {
+                    if _menus[_open][it].submenu.len() > 0 { _openSub = it; _hoverSub = -1 }
+                    else { _invokeItem(_open, it) }
+                    return
+                }
+                // 点击下拉区域外：收起
+                close()
+            }
+        }
+    }
+
+    // ==================== 渲染：仅画菜单栏（下拉走 renderPopup 第二遍） ====================
+    func render(Renderer r) {
+        if not _loaded or not visible { return }
+        _ensure_font()
+
+        // ★ 自动宽度：根据菜单项标题计算所需宽度
+        if _autoWidth { _recalcAutoWidth() }
+
+        // 仅当存在"顶部菜单"时才绘制菜单栏背景；纯上下文菜单管理器无需画栏
+        bool anyTop = false
+        for _ctxFlag.len() to i { if not _ctxFlag[i] { anyTop = true; break } }
+        if anyTop and not _transparent {
+            r.setColor(_barColor)
+            r.fillRect(x, y, w, h)
+            r.setColor(theme.withAlpha(_bdrColor, 220))
+            if _orient == "vertical" { r.drawLine(x + w, y, x + w, y + h) }
+            else { r.drawLine(x, y + h, x + w, y + h) }
+        }
+
+        var rs = _topRects()
+        for rs.len() to i {
+            if i < _ctxFlag.len() and _ctxFlag[i] { continue }   // 上下文菜单不画标题栏
+            var rr = rs[i]
+            bool active = (_open == i)
+            bool hov = (_hoverTop == i) or active
+            if hov { r.setColor(_barHovColor); r.fillRect(rr[0], rr[1], rr[2], rr[3]) }
+            if _font != null and _font.ok and _titles[i] != "" {
+                float th = _fontH
+                var[float, float](tw, _mh) = _font.measureString(_titles[i])
+                float ty = rr[1] + (if th > rr[3] then 0.0 else (rr[3] - th) / 2.0)
+                // 水平对齐：left 缩进 / right 靠右 / center 居中（横栏竖栏共用）
+                float tx
+                if _align == "left" { tx = rr[0] + 12.0 }
+                else if _align == "right" { tx = rr[0] + rr[2] - tw - 12.0 }
+                else { tx = rr[0] + (rr[2] - tw) / 2.0 }
+                if tx < rr[0] + 2.0 { tx = rr[0] + 2.0 }   // 防止过宽标题溢出左边界
+                r.drawText(_font, _titles[i], r.snapX(tx), r.snapY(ty), _txtColor)
+            }
+            if active {
+                if _orient == "vertical" { r.setColor(_accColor); r.fillRect(rr[0], rr[1], 2.0, rr[3]) }
+                else { r.setColor(_accColor); r.fillRect(rr[0], rr[1] + rr[3] - 2.0, rr[2], 2.0) }
+            }
+        }
+    }
+
+    // 第二遍：把下拉面板（含子菜单）画在最上层，并登记弹层捕获区
+    func renderPopup(Renderer r) {
+        if not _loaded or _open < 0 { return }
+        var items = _menus[_open]
+        var g = _panelRect(_open)
+        float px = g[0], py = g[1], pw = g[2], ph = g[3]
+
+        // 捕获区取“下拉 + 子菜单飞出”的包围盒，抑制其范围内其它控件的事件
+        float capX = px, capY = py, capR = px + pw, capB = py + ph
+        if _openSub >= 0 and _openSub < items.len() and items[_openSub].submenu.len() > 0 {
+            var sg = _subRect(_openSub)
+            if sg[0] < capX { capX = sg[0] }
+            if sg[1] < capY { capY = sg[1] }
+            if sg[0] + sg[2] > capR { capR = sg[0] + sg[2] }
+            if sg[1] + sg[3] > capB { capB = sg[1] + sg[3] }
+        }
+        core.setPopupCapture(capX, capY, capR - capX, capB - capY)
+
+        _drawPanel(r, items, px, py, pw, _hoverItem)
+        if _openSub >= 0 and _openSub < items.len() and items[_openSub].submenu.len() > 0 {
+            var sg = _subRect(_openSub)
+            _drawPanel(r, items[_openSub].submenu, sg[0], sg[1], sg[2], _hoverSub)
+        }
+    }
+
+    // 纹理缓存：按 path 取/载纹理，避免每帧重载与纹理泄漏（对齐 Table/ComboBox 模式）
+    // ★ MRU 快路径：连续多行常共用同一图标（如全选复制/粘贴），单槽快路径将 O(n) 线性扫描降为 O(1)
+    func _get_tex(Renderer r, string path): Ptr[u8] {
+        if path == _imgLastPath and _imgLastTex != null { return _imgLastTex }
+        for _imgCachePaths.len() to i {
+            if _imgCachePaths[i] == path {
+                _imgLastPath = path; _imgLastTex = _imgCacheTex[i]
+                return _imgCacheTex[i]
+            }
+        }
+        Ptr[u8] t = img.loadTexture(r.handle, path)
+        _imgCachePaths.add(path); _imgCacheTex.add(t)
+        _imgLastPath = path; _imgLastTex = t
+        return t
+    }
+    func _free_img_cache() {
+        sdl3 _lib = core.lib()
+        for _imgCacheTex.len() to i {
+            if _imgCacheTex[i] != null { _lib.SDL_DestroyTexture(_imgCacheTex[i]) }
+        }
+        _imgCachePaths = []; _imgCacheTex = []
+        _imgLastPath = ""; _imgLastTex = null
+    }
+
+    // 绘制菜单项图标（aspectFit 模式），返回图标占据的总宽度（含间距），供文字偏移
+    func _draw_icon(Renderer r, string ipath, float px, float ry): float {
+        if ipath == "" or _imgSize <= 0.0 { return 0.0 }
+        Ptr[u8] tex = _get_tex(r, ipath)
+        if tex == null { return 0.0 }
+        float imgX = px + _imgPad
+        float imgY = ry + (_itemH - _imgSize) / 2.0
+        r.setTextureAlpha(tex, 255)
+        r.setTextureColor(tex, #FFFFFFFF)
+        var[float, float](nw, nh) = r.getTextureSize(tex)
+        // aspectFit：保持比例完整显示
+        float s = _imgSize / nw; if _imgSize / nh < s { s = _imgSize / nh }
+        float dw = nw * s, dh = nh * s
+        r.drawTextureFromTo(tex, 0.0, 0.0, nw, nh,
+            imgX + (_imgSize - dw) / 2.0, imgY + (_imgSize - dh) / 2.0, dw, dh)
+        return _imgPad + _imgSize + _imgGap
+    }
+
+    func _drawPanel(Renderer r, Array[MenuItem] items, float px, float py, float pw, int hoverIdx) {
+        float ph = _panelH(items, _itemH, _itemGap)
+        r.setColor(_bgColor)
+        r.fillRoundedRect(px, py, pw, ph, 6.0)
+
+        SDL_Rect clip = SDL_Rect.malloc()
+        clip.x = _int(px); clip.y = _int(py)
+        clip.w = _int(pw) + 1; clip.h = _int(ph) + 1   // +1 覆盖浮点截断的亚像素
+        r.pushClipRect(clip.to_ptr())
+
+        float iy = py
+        for items.len() to i {
+            var it = items[i]
+            if it.separator {
+                r.setColor(theme.withAlpha(_sepColor, 200))
+                r.drawLine(px + 10.0, iy + 4.0, px + pw - 10.0, iy + 4.0)
+                iy = iy + 9.0 + (if i < items.len() - 1 then _itemGap else 0.0)
+                continue
+            }
+            float ry = iy
+            bool hov = (i == hoverIdx) and it.enabled
+            if hov {
+                r.setColor(_hovColor)
+                // ★ 修复：首尾项的悬停矩形需与面板圆角对齐，否则直角溢出圆角背景。
+                //   对齐 ListBox 的做法：首行/末行用 fillRoundedRect + 填补缺口。
+                float radius = 6.0
+                bool atTop = (ry <= py + 0.5)
+                bool atBottom = (ry + _itemH >= py + ph - 0.5)
+                if atTop and atBottom {
+                    r.fillRoundedRect(px, ry, pw, _itemH, radius)
+                } eif atTop {
+                    r.fillRoundedRect(px, ry, pw, _itemH, radius)
+                    r.fillRect(px, ry + _itemH - radius, radius, radius)
+                    r.fillRect(px + pw - radius, ry + _itemH - radius, radius, radius)
+                } eif atBottom {
+                    r.fillRoundedRect(px, ry, pw, _itemH, radius)
+                    r.fillRect(px, ry, radius, radius)
+                    r.fillRect(px + pw - radius, ry, radius, radius)
+                } else {
+                    r.fillRect(px, ry, pw, _itemH)
+                }
+            }
+            Color lc = _txtColor
+            if not it.enabled { lc = _disColor }
+            // 图标
+            float iconW = _draw_icon(r, it.image, px, ry)
+            if _font != null and _font.ok {
+                float th = _fontH
+                float ty = ry + (if th > _itemH then 0.0 else (_itemH - th) / 2.0)
+                r.drawText(_font, it.label, r.snapX(px + 12.0 + iconW), r.snapY(ty), lc)
+                if it.shortcut != "" {
+                    var[float, float](sw, _sh2) = _font.measureString(it.shortcut)
+                    r.drawText(_font, it.shortcut, r.snapX(px + pw - 12.0 - sw), r.snapY(ty), lc)
+                }
+                if it.submenu.len() > 0 {
+                    float ax = px + pw - 14.0, ay = ry + _itemH / 2.0
+                    // drawTriangle 仍使用 R/G/B 分量，从打包色中提取
+                    r.drawTriangle(ax, ay, 5.0, 90.0, theme.colorR(lc), theme.colorG(lc), theme.colorB(lc), 255)
+                }
+            }
+            iy = iy + _itemH + (if i < items.len() - 1 then _itemGap else 0.0)
+        }
+        r.popClipRect()
+        clip.free()
+
+        r.setColor(theme.withAlpha(_bdrColor, 220))
+        r.drawRoundedRect(px, py, pw, ph, 6.0)
+    }
+
+    func dispose() {
+        if _font != null and _font.ok { fnt.releaseFont(_font) }
+        _font = null
+        _free_img_cache()
+        _clearActiveMenu(self)
+        _unregisterContextMenu(self)   // 从上下文菜单登记表摘除自身，避免窗口销毁后悬空引用累积
+    }
+
+// ==================== 运行时主题切换 ====================
+func applyTheme(Theme t) {
+    _barColor = t.bgHeader
+    _barHovColor = t.bgHover
+    _bgColor = t.bgAlt
+    _hovColor = t.accent
+    _txtColor = t.txt
+    _disColor = t.txtDim
+    _sepColor = t.sep
+    _bdrColor = t.border
+    _accColor = t.accentBright
+}
+}
+
+// ==================== 控件内嵌右击上下文菜单登记 ====================
+// 控件在创建/加入窗口时登记自身（自带窗口句柄）；面板/布局嵌套等拿不到句柄的控件也登记，
+// 但 _winHnd 为 null，绘制时由任意窗口兜底绘制（保持旧行为，避免嵌套控件右键菜单不显示）。
+// 区别于旧的「全局数组永不摘除」反模式：本数组在 MenuBar.dispose() 时摘除自身，
+// 窗口销毁（递归 dispose 所有控件）后不残留，无悬空引用累积、无跨窗口数组无限增长。
+Array[MenuBar] _ctxMenuRegistry = []
+export func registerContextMenu(MenuBar m) {
+    if not (m is MenuBar) { return }
+    for _ctxMenuRegistry.len() to k { if _ctxMenuRegistry[k] == m { return } }  // 去重
+    _ctxMenuRegistry.add(m)
+}
+// 第二遍：仅绘制归属本窗口（hwnd）的上下文菜单；未登记句柄（嵌套控件）兜底画到任意窗口
+export func renderContextMenus(Renderer r, Ptr[u8] hwnd, int winW, int winH) {
+    for _ctxMenuRegistry.len() to k {
+        var cm = _ctxMenuRegistry[k]
+        if cm is MenuBar and cm.isOpen() {
+            if cm.getWindowHandle() == null or cm.getWindowHandle() == hwnd {
+                cm.setWindowSize(winW, winH)
+                cm.renderPopup(r)
+            }
+        }
+    }
+}
+// 摘除某个上下文菜单（在 MenuBar.dispose 时调用；置于文件末尾以便引用 _ctxMenuRegistry）
+func _unregisterContextMenu(MenuBar m) {
+    for _ctxMenuRegistry.len() to k { if _ctxMenuRegistry[k] == m { _ctxMenuRegistry.remove(k); break } }
+}
+
+// ==================== 窗口级活动菜单（按窗口句柄分桶） ====================
+// 置于文件末尾，便于引用 _activeHnds/_activeMenus 且解析 MenuBar 方法。
+func _setActiveMenu(MenuBar m) {
+    if not (m is MenuBar) { return }
+    var h = m.getWindowHandle()
+    for _activeHnds.len() to i { if _activeHnds[i] == h { _activeMenus[i] = m; return } }
+    _activeHnds.add(h); _activeMenus.add(m)
+}
+func _getActiveMenu(Ptr[u8] h): MenuBar {
+    for _activeHnds.len() to i { if _activeHnds[i] == h { return _activeMenus[i] } }
+    return null
+}
+func _clearActiveMenu(MenuBar m) {
+    if not (m is MenuBar) { return }
+    var h = m.getWindowHandle()
+    for _activeHnds.len() to i {
+        if _activeHnds[i] == h and _activeMenus[i] == m { _activeHnds.remove(i); _activeMenus.remove(i); return }
+    }
+}
+
+// 工厂
+export func createMenuBar(Dict opts): MenuBar {
+    MenuBar m = new MenuBar(); m.set(opts); return m
+}

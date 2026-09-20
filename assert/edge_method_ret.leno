@@ -1,0 +1,21 @@
+// 边界测试：struct方法返回use导入的struct类型
+import "edge_base.leno" as base
+use base.Item
+use base.Box
+
+// 本模块定义一个struct，其方法返回use导入的Item类型
+export struct Container {
+    string name = ""
+
+    func getItem(): Item {
+        return base.makeItem(1, name)
+    }
+
+    func getBox(): Box {
+        return base.makeBox(10, 20)
+    }
+}
+
+export func makeContainer(string name): Container {
+    return new Container(name = name)
+}

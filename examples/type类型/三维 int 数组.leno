@@ -1,0 +1,7 @@
+main()
+{
+    // 二维 int 数组
+    Array[Array[int]] arr1 = [[1,2],[3,4]]
+    Array[Array[Array[int]]] a=arr1.copy()//这行会报错
+    print(type(a))
+}

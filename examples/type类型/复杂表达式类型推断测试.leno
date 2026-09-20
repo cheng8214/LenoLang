@@ -1,0 +1,112 @@
+// 复杂类型推断测试
+
+main()
+{
+    print("=== 复杂表达式类型推断测试 ===")
+    
+    // 1. 嵌套算术运算
+    var expr1 = (1 + 2) * (3 + 4)        // int * int = int
+    var expr2 = (1 + 2.5) * 3            // float * int = float
+    var expr3 = 10 / 2 + 3               // float + int = float
+    var expr4 = 10 / (2 + 3)             // float / int = float
+    
+    print("expr1 (1+2)*(3+4):", type(expr1), "值:", expr1)
+    print("expr2 (1+2.5)*3:", type(expr2), "值:", expr2)
+    print("expr3 10/2+3:", type(expr3), "值:", expr3)
+    print("expr4 10/(2+3):", type(expr4), "值:", expr4)
+    
+    // 2. 数组字面量推断
+    var arr1 = [1, 2, 3]                 // Array[int]
+    var arr2 = [1.5, 2.5, 3.5]           // Array[float]
+    var arr3 = [1, 2.5, 3]               // Array[float] (混合提升)
+    var arr4 = []                        // Array
+    var arr5 = [[1, 2], [3, 4]]          // Array[Array[int]]
+    var arr6 = [[1, 2.5], [3, 4]]        // Array[Array[float]] (混合)
+    
+    print("arr1 [1,2,3]:", type(arr1))
+    print("arr2 [1.5,2.5,3.5]:", type(arr2))
+    print("arr3 [1,2.5,3]:", type(arr3))
+    print("arr4 []:", type(arr4))
+    print("arr5 [[1,2],[3,4]]:", type(arr5))
+    print("arr6 [[1,2.5],[3,4]]:", type(arr6))
+    
+    // 3. 字典字面量推断
+    var dict1 = {"a": 1, "b": 2}         // Dict[string, int]
+    var dict2 = {"x": 1.5, "y": 2.5}     // Dict[string, float]
+    var dict3 = {}                       // Dict
+    
+    print("dict1 {a:1,b:2}:", type(dict1))
+    print("dict2 {x:1.5,y:2.5}:", type(dict2))
+    print("dict3 {}:", type(dict3))
+    
+    // 4. 数组索引访问推断
+    var elem1 = arr1[0]                  // int
+    var elem2 = arr2[0]                  // float
+    var elem3 = arr5[0]                  // Array[int]
+    
+    print("elem1 arr1[0]:", type(elem1), "值:", elem1)
+    print("elem2 arr2[0]:", type(elem2), "值:", elem2)
+    print("elem3 arr5[0]:", type(elem3))
+    
+    // 5. 数组操作返回值推断
+    var len1 = arr1.len()                // int
+    var copied = arr1.copy()             // Array[int]
+    var sliced = arr1[0:2]               // Array[int]
+    
+    print("len1 arr1.len():", type(len1), "值:", len1)
+    print("copied arr1.copy():", type(copied))
+    print("sliced arr1[0:2]:", type(sliced))
+    
+    // 6. 字符串操作
+    var str = "hello"                    // string
+    var str2 = str + " world"            // string
+    var str_len = str.len()              // int
+    
+    print("str:", type(str))
+    print("str2 str+world:", type(str2))
+    print("str_len str.len():", type(str_len), "值:", str_len)
+    
+    // 7. 混合复杂表达式
+    var mixed1 = arr1.len() + 10         // int + int = int
+    var mixed2 = arr1.len() * 1.5        // int * float = float
+    var mixed3 = arr1[0] + arr2[0]       // int + float = float
+    var mixed4 = dict1["a"] + 5          // int + int = int
+    
+    print("mixed1 len+10:", type(mixed1), "值:", mixed1)
+    print("mixed2 len*1.5:", type(mixed2), "值:", mixed2)
+    print("mixed3 arr1[0]+arr2[0]:", type(mixed3), "值:", mixed3)
+    print("mixed4 dict[a]+5:", type(mixed4), "值:", mixed4)
+    
+    // 8. 类型转换函数
+    var to_int = _int(3.14)              // int
+    var to_float = _float(10)            // float
+    var to_str = _str(123)               // string
+    var to_bool = _bool(1)               // bool
+    
+    print("to_int _int(3.14):", type(to_int), "值:", to_int)
+    print("to_float _float(10):", type(to_float), "值:", to_float)
+    print("to_str _str(123):", type(to_str), "值:", to_str)
+    print("to_bool _bool(1):", type(to_bool), "值:", to_bool)
+    
+    // 9. 比较运算（总是 bool）
+    var cmp1 = 1 < 2                     // bool
+    var cmp2 = 1.5 < 2                   // bool
+    var cmp3 = "a" < "b"                 // bool
+    var cmp4 = arr1 == arr2              // bool
+    
+    print("cmp1 1<2:", type(cmp1), "值:", cmp1)
+    print("cmp2 1.5<2:", type(cmp2), "值:", cmp2)
+    print("cmp3 a<b:", type(cmp3), "值:", cmp3)
+    print("cmp4 arr1==arr2:", type(cmp4), "值:", cmp4)
+    
+    // 10. 逻辑运算（总是 bool）
+    var logic1 = true and false          // bool
+    var logic2 = 1 < 2 or 3 > 4          // bool
+    var logic3 = not true                // bool
+    
+    print("logic1 true and false:", type(logic1), "值:", logic1)
+    print("logic2 1<2 or 3>4:", type(logic2), "值:", logic2)
+    print("logic3 not true:", type(logic3), "值:", logic3)
+    
+    print("=== 所有复杂类型推断测试完成 ===")
+}

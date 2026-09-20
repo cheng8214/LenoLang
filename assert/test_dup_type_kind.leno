@@ -1,0 +1,123 @@
+// 同名类型定义（struct / cstruct / enum / face）诊断回归测试
+//
+// 覆盖两族冲突：
+//
+// A. 跨种类同名（如 `enum E1` + `face E1`）：必须报错，且
+//      1) 报错落在源码里【后声明】的那条上；2) 文案点名【先声明】的种类。
+//    背景：四个种类分居 visit_type_def.inc / visit_ffi.inc / visit_enum.inc，各自的
+//    「同名冲突」检查与文案长期不一致（struct/cstruct/enum 三处都漏 face；face 分支跨
+//    种类时甚至没有 else，直接静默通过）。a6a0973d / c69bb8cf / 02a3d50f 统一了注册策略。
+//    修复前实测是反的：`enum E1`(37 行) + `face E1`(40 行) 报在 37 行、说"已经定义为 face"。
+//
+// B. 同种类重复定义（如 `struct E1 {..}` 写两遍）：必须报"重复定义"，同样落在后声明那条。
+//    背景：预注册复用路径（scope_resolve_local 命中同名同种类就无条件复用）把真·重复定义
+//    也一并吞掉了 —— 第二份定义还会把第一份的字段/成员整份顶掉，直到用到 `E1.x` 才报
+//    "没有字段 x"，归因跑偏。修法：Symbol::type_decl_ast 记住"该符号归哪条声明"，复用路径
+//    只在同一条声明时静默复用，源码里另写一条就报重复定义。
+//
+// 为什么这里自己起进程断言：assert/run_tests.leno 的判定是 `exit code != 0 → FAIL`，
+// 只认正向用例，"必须编译失败"的场景在其中表达不出来，所以用 _exec 直接跑编译器。
+// 起子进程、判失败文案与落点的那套机器已收敛到 assert/helpers/compiler.leno（S7），
+// 本文件只负责"造源码"，不再自己拼命令行。
+
+import dirs
+import files
+
+// 起编译器子进程 + 判据的共享工具（命令行拼接、失败判据的唯一实现，见 S7）
+import "helpers/compiler.leno" as ce
+
+// 单个声明片段的文本。enum 占 3 行，struct / cstruct / face 各占 1 行。
+func decl_text(string kind):string {
+    if kind == "struct" {
+        return "struct E1 { int x = 1 }\n"
+    }
+    if kind == "cstruct" {
+        return "cstruct E1 { i32 x }\n"
+    }
+    if kind == "face" {
+        return "face E1 { func f():int }\n"
+    }
+    return "enum E1 {\n    a\n}\n"
+}
+
+func decl_lines(string kind):int {
+    if kind == "enum" {
+        return 3
+    }
+    return 1
+}
+
+// 生成源码：第 1 行 import、第 2 行空行、第 3 行起是 decl_a，紧接 decl_b。
+// 后声明那条的关键字所在行 = 3 + decl_a 的行数。
+func build_src(string kind_a, string kind_b):string {
+    return "import ffi\n\n" + decl_text(kind_a) + decl_text(kind_b) + "\nmain() { print(1) }\n"
+}
+
+// 断言：kind_a 先声明、kind_b 后声明时，编译器必须报错，且报错落在 kind_b 那条上、
+// 文案点名 kind_a。
+func expect_dup(string work, string kind_a, string kind_b) {
+    var tag = kind_a + " -> " + kind_b
+    var line_b = 3 + decl_lines(kind_a)
+    var path = dirs.join(work, kind_a + "_" + kind_b + ".leno")
+    files.write(path, build_src(kind_a, kind_b))
+
+    ce.expect_error(path, tag,
+        "已经定义为 " + kind_a + "，不能重复定义为 " + kind_b, line_b)
+}
+
+// 断言：同一个种类、同一个名字声明两次，必须报"<kind> 'E1' 重复定义"，且落在后声明那条。
+func expect_dup_same_kind(string work, string kind) {
+    var tag = kind + " -> " + kind
+    var line_b = 3 + decl_lines(kind)
+    var path = dirs.join(work, kind + "_same.leno")
+    // 两份声明文本相同：这正是"同一条源码写两遍"的形态（第二份只改了声明位置）
+    files.write(path, "import ffi\n\n" + decl_text(kind) + decl_text(kind) + "\nmain() { print(1) }\n")
+
+    ce.expect_error(path, tag, kind + " 'E1' 重复定义", line_b)
+}
+
+// 对照组：四个种类各声明一次（不同名）必须正常编译，防止同名检查过度触发。
+func expect_distinct_ok(string work) {
+    var path = dirs.join(work, "distinct_names.leno")
+    var src = "import ffi\n\n"
+        + "struct SA { int x = 1 }\n"
+        + "cstruct CA { i32 x }\n"
+        + "face FA { func f():int }\n"
+        + "enum EA {\n    a\n}\n\n"
+        + "main() { print(1) }\n"
+    files.write(path, src)
+
+    ce.expect_ok(path, "对照组", "")
+}
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_dup_type_kind")
+    // 先清一次：上次若中途断言失败会留下工作目录和 .lenocache，而对照组那条
+    // "应当编译成功"一旦命中旧缓存就直接通过，回归就验不出来了
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    var kinds = ["struct", "cstruct", "face", "enum"]
+
+    // 对照组：四个种类各声明一次（不同名）必须正常编译
+    expect_distinct_ok(work)
+
+    // A. 跨种类：4 个种类两两配对 × 2 种声明顺序 = 12 个用例
+    for kinds to kind_a {
+        for kinds to kind_b {
+            if kind_a != kind_b {
+                expect_dup(work, kind_a, kind_b)
+            }
+        }
+    }
+
+    // B. 同种类重复定义：4 个用例
+    for kinds to kind {
+        expect_dup_same_kind(work, kind)
+    }
+
+    // 清理临时文件（含对照组成功编译产生的 .lenocache）
+    dirs.delete(work)
+
+    print("test_dup_type_kind passed")
+}

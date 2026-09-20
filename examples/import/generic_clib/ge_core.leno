@@ -1,0 +1,24 @@
+// 底层: clib + 泛型 struct 定义
+import ffi
+
+clib math_lib {
+    i32 abs(i32 x)
+    i32 add(i32 a, i32 b)
+}
+
+math_lib g_math = null
+
+export func loadMath(): math_lib {
+    if g_math == null { g_math = ffi.load("msvcrt.dll") }
+    return g_math
+}
+
+// 泛型 struct 含 clib 字段
+export struct Wrapper[T] {
+    math_lib lib = null
+    T        data
+}
+
+export func wrapAbs[T](Wrapper[T] w, int x): int {
+    return w.lib.abs(x) as int
+}

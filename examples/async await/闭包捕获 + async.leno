@@ -1,0 +1,18 @@
+import io
+import asyncs
+
+main() {
+    var counter = 0
+
+    async func inc() {
+        await asyncs.sleep(50)
+        counter = counter + 1
+        io.print($"counter = {counter}")
+    }
+
+    inc()
+    inc()
+    inc()
+    asyncs.run()
+    io.print($"最终: {counter}")
+}

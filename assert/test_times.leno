@@ -1,0 +1,37 @@
+// times 模块测试
+
+import times as ti
+
+main()
+{
+    // 测试1: 获取当前时间戳
+    var now = ti.now()
+    print("当前时间戳: " + now)
+    assert_eq(now > 0, true)
+
+    // 测试2: 毫秒级时间戳
+    var ms = ti.ms()
+    print("毫秒时间戳: " + ms)
+    assert_eq(ms > 0, true)
+
+    // 测试3: 时间差计算
+    var start = ti.ms()
+    // 简单循环消耗时间
+    for 1000 to i {
+        var x = i * 2
+    }
+    var end = ti.ms()
+    var diff = end - start
+    print("耗时: " + diff + " ms")
+    assert_eq(diff >= 0, true)
+
+    // 测试4: sleep 函数 (sleep 是全局函数)
+    var sleep_start = ti.ms()
+    sleep(100)  // 休眠 100 毫秒
+    var sleep_end = ti.ms()
+    var sleep_diff = sleep_end - sleep_start
+    print("休眠耗时: " + sleep_diff + " ms")
+    assert_eq(sleep_diff >= 90, true)  // 允许一定误差
+
+    print("test_times passed")
+}

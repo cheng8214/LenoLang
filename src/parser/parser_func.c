@@ -1,0 +1,3111 @@
+#include "parser_internal.h"
+
+// ============================================================================
+// 类型解析 - 支持泛型语法 Array[T], Dict[K,V]
+// ============================================================================
+
+// 前向声明
+static TypeInfo* parse_type_internal(Parser* p);
+
+// 本地辅助：将 TypeInfo 树中匹配 param_names 的 TYPE_STRUCT 节点转换为 TYPE_GENERIC_PARAM
+static void convert_to_generic_params(TypeInfo* type, char** param_names, int count) {
+    if (!type || count <= 0) return;
+    if (type->kind == TYPE_STRUCT && type->struct_name) {
+        for (int i = 0; i < count; i++) {
+            if (param_names[i] && strcmp(type->struct_name, param_names[i]) == 0) {
+                free(type->struct_name);
+                type->struct_name = NULL;
+                type->kind = TYPE_GENERIC_PARAM;
+                type->type_param_name = strdup(param_names[i]);
+                return;
+            }
+        }
+    }
+    convert_to_generic_params(type->element_type, param_names, count);
+    convert_to_generic_params(type->key_type, param_names, count);
+    convert_to_generic_params(type->value_type, param_names, count);
+    convert_to_generic_params(type->return_type, param_names, count);
+    if (type->param_types) {
+        for (int i = 0; i < type->param_count; i++) {
+            convert_to_generic_params(type->param_types[i], param_names, count);
+        }
+    }
+    if (type->generic_args) {
+        for (int i = 0; i < type->generic_count; i++) {
+            convert_to_generic_params(type->generic_args[i], param_names, count);
+        }
+    }
+}
+
+// 解析基础类型 (int, float, string, bool, var, null) 或自定义 struct 类型
+static TypeInfo* parse_base_type(Parser* p) {
+    if (p->lex.current.type == TOK_INT_TYPE) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_INT);
+    }
+    if (p->lex.current.type == TOK_FLOAT_TYPE) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_FLOAT);
+    }
+    if (p->lex.current.type == TOK_STRING_TYPE) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_STRING);
+    }
+    if (p->lex.current.type == TOK_BOOL_TYPE) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_BOOL);
+    }
+    if (p->lex.current.type == TOK_VAR) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_INFER);
+    }
+    if (p->lex.current.type == TOK_NULL) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_NULL);
+    }
+    if (p->lex.current.type == TOK_ANY_TYPE) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_ANY);
+    }
+    // TOK_BINT 已移除：对外统一用 int，Bint 不再作为独立类型关键字
+    // if (p->lex.current.type == TOK_BINT) {
+    //     lexer_next(&p->lex);
+    //     return type_new(TYPE_BIGINT);
+    // }
+    if (p->lex.current.type == TOK_FILE_TYPE) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_FILE);
+    }
+    if (p->lex.current.type == TOK_SOCKET_TYPE) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_SOCKET);
+    }
+    if (p->lex.current.type == TOK_CHANNEL_TYPE) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_CHANNEL);
+    }
+    if (p->lex.current.type == TOK_THREAD_TYPE) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_THREAD);
+    }
+    if (p->lex.current.type == TOK_FUTURE_TYPE) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_FUTURE);
+    }
+    if (p->lex.current.type == TOK_PTR_TYPE) {
+        lexer_next(&p->lex);
+        // 检查是否有泛型参数 Ptr[T]
+        if (p->lex.current.type == TOK_LBRACKET) {
+            lexer_next(&p->lex); // 消费 '['
+            TypeInfo* element_type = parse_type_internal(p);
+            if (!element_type) {
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "Ptr 元素类型解析失败");
+                return type_ptr_generic(type_new(TYPE_ANY));
+            }
+            if (p->lex.current.type != TOK_RBRACKET) {
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 ']' 结束 Ptr 类型");
+                type_free(element_type);
+                return type_ptr_generic(type_new(TYPE_ANY));
+            }
+            lexer_next(&p->lex); // 消费 ']'
+            return type_ptr_generic(element_type);
+        }
+        return type_new(TYPE_PTR);
+    }
+    // C 布局类型
+    if (p->lex.current.type == TOK_I8) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_I8);
+    }
+    if (p->lex.current.type == TOK_U8) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_U8);
+    }
+    if (p->lex.current.type == TOK_I16) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_I16);
+    }
+    if (p->lex.current.type == TOK_U16) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_U16);
+    }
+    if (p->lex.current.type == TOK_I32) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_I32);
+    }
+    if (p->lex.current.type == TOK_U32) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_U32);
+    }
+    if (p->lex.current.type == TOK_I64) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_I64);
+    }
+    if (p->lex.current.type == TOK_U64) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_U64);
+    }
+    if (p->lex.current.type == TOK_STR8) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_STR8);
+    }
+    if (p->lex.current.type == TOK_STR16) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_STR16);
+    }
+    if (p->lex.current.type == TOK_F32) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_F32);
+    }
+    if (p->lex.current.type == TOK_F64) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_F64);
+    }
+    if (p->lex.current.type == TOK_C_INT) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_C_INT);
+    }
+    if (p->lex.current.type == TOK_C_UINT) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_C_UINT);
+    }
+    if (p->lex.current.type == TOK_C_LONG) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_C_LONG);
+    }
+    if (p->lex.current.type == TOK_C_ULONG) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_C_ULONG);
+    }
+    if (p->lex.current.type == TOK_C_LONGLONG) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_C_LONGLONG);
+    }
+    if (p->lex.current.type == TOK_C_ULONGLONG) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_C_ULONGLONG);
+    }
+    if (p->lex.current.type == TOK_C_SIZE) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_C_SIZE);
+    }
+    if (p->lex.current.type == TOK_C_SSIZE) {
+        lexer_next(&p->lex);
+        return type_new(TYPE_C_SSIZE);
+    }
+    // 支持自定义 struct 类型：标识符作为类型名
+    if (p->lex.current.type == TOK_IDENT) {
+        char* type_name = copy_string(p->lex.current.text, p->lex.current.len);
+        
+        // 检查是否是拼写错误的类型名（大小写不敏感比较）
+        // 使用 strcmp 模拟大小写不敏感比较
+        int is_dict = (strcmp(type_name, "dict") == 0 || strcmp(type_name, "Dict") == 0 || strcmp(type_name, "DICT") == 0);
+        int is_array = (strcmp(type_name, "array") == 0 || strcmp(type_name, "Array") == 0 || strcmp(type_name, "ARRAY") == 0);
+        int is_int = (strcmp(type_name, "int") == 0 || strcmp(type_name, "Int") == 0 || strcmp(type_name, "INT") == 0);
+        int is_float = (strcmp(type_name, "float") == 0 || strcmp(type_name, "Float") == 0 || strcmp(type_name, "FLOAT") == 0);
+        int is_string = (strcmp(type_name, "string") == 0 || strcmp(type_name, "String") == 0 || strcmp(type_name, "STRING") == 0);
+        int is_bool = (strcmp(type_name, "bool") == 0 || strcmp(type_name, "Bool") == 0 || strcmp(type_name, "BOOL") == 0);
+        int is_any = (strcmp(type_name, "any") == 0 || strcmp(type_name, "Any") == 0 || strcmp(type_name, "ANY") == 0);
+        int is_var = (strcmp(type_name, "var") == 0 || strcmp(type_name, "Var") == 0 || strcmp(type_name, "VAR") == 0);
+        int is_null = (strcmp(type_name, "null") == 0 || strcmp(type_name, "Null") == 0 || strcmp(type_name, "NULL") == 0);
+        int is_file = (strcmp(type_name, "file") == 0 || strcmp(type_name, "File") == 0 || strcmp(type_name, "FILE") == 0);
+        int is_ptr = (strcmp(type_name, "ptr") == 0 || strcmp(type_name, "Ptr") == 0 || strcmp(type_name, "PTR") == 0);
+        
+        if (is_dict || is_array || is_int || is_float || is_string || is_bool || is_any || is_var || is_null || is_file || is_ptr) {
+            char msg[BUFFER_MEDIUM];
+            const char* correct_name = type_name;
+            if (is_dict) correct_name = "Dict";
+            else if (is_array) correct_name = "Array";
+            else if (is_int) correct_name = "int";
+            else if (is_float) correct_name = "float";
+            else if (is_string) correct_name = "string";
+            else if (is_bool) correct_name = "bool";
+            else if (is_any) correct_name = "any";
+            else if (is_var) correct_name = "var";
+            else if (is_null) correct_name = "null";
+            else if (is_file) correct_name = "File";
+            else if (is_ptr) correct_name = "Ptr";
+            
+            snprintf(msg, sizeof(msg), "未知类型 '%s'，您是否想使用 '%s'？", 
+                     type_name, correct_name);
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, msg);
+            free(type_name);
+            lexer_next(&p->lex);
+            return type_new(TYPE_ANY); // 返回 any 类型继续解析
+        }
+        
+        lexer_next(&p->lex);
+        
+        // 检查是否是类型别名
+        char** alias_tp_names = NULL;
+        int alias_tp_count = 0;
+        TypeInfo* alias_type = find_alias_with_params(p, type_name, &alias_tp_names, &alias_tp_count);
+        if (alias_type) {
+            // 检查是否有泛型参数：MyBox[int], MyPair[string, float] 等
+            if (p->lex.current.type == TOK_LBRACKET && alias_tp_count > 0) {
+                lexer_next(&p->lex); // 消费 '['
+                TypeInfo* result = type_copy(alias_type);
+                // 先将别名体中的 TYPE_STRUCT 引用转为 TYPE_GENERIC_PARAM
+                convert_to_generic_params(result, alias_tp_names, alias_tp_count);
+                
+                // 解析泛型参数并依次替换
+                for (int tp = 0; tp < alias_tp_count; tp++) {
+                    TypeInfo* arg_type = parse_type_internal(p);
+                    if (!arg_type) {
+                        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "泛型类型参数解析失败");
+                        type_free(result);
+                        free(type_name);
+                        return type_new(TYPE_ANY);
+                    }
+                    TypeInfo* substituted = type_substitute(result, alias_tp_names[tp], arg_type);
+                    type_free(result);
+                    type_free(arg_type);
+                    result = substituted;
+                    if (tp + 1 < alias_tp_count && p->lex.current.type == TOK_COMMA) {
+                        lexer_next(&p->lex);
+                    }
+                }
+                
+                if (p->lex.current.type != TOK_RBRACKET) {
+                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 ']' 结束泛型别名参数");
+                    type_free(result);
+                    free(type_name);
+                    return type_new(TYPE_ANY);
+                }
+                lexer_next(&p->lex); // 消费 ']'
+                free(type_name);
+                return result;
+            }
+            free(type_name);
+            return type_copy(alias_type);
+        }
+        
+        TypeInfo* struct_type;
+        if (face_def_find(type_name)) {
+            struct_type = type_new(TYPE_FACE);
+        } else {
+            struct_type = type_new(TYPE_STRUCT);
+        }
+        struct_type->struct_name = type_name;
+        
+        // 检查是否有泛型参数：Box[int], Pair[string, int] 等
+        if (p->lex.current.type == TOK_LBRACKET) {
+            lexer_next(&p->lex); // 消费 '['
+            
+            int ga_capacity = 8;
+            struct_type->generic_args = (TypeInfo**)malloc(sizeof(TypeInfo*) * ga_capacity);
+            struct_type->generic_count = 0;
+            
+            do {
+                if (struct_type->generic_count >= ga_capacity) {
+                    ga_capacity *= 2;
+                    struct_type->generic_args = (TypeInfo**)realloc(struct_type->generic_args, sizeof(TypeInfo*) * ga_capacity);
+                }
+                TypeInfo* arg_type = parse_type_internal(p);
+                if (!arg_type) {
+                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "泛型类型参数解析失败");
+                    break;
+                }
+                struct_type->generic_args[struct_type->generic_count++] = arg_type;
+            } while (p->lex.current.type == TOK_COMMA && (lexer_next(&p->lex), 1));
+            
+            if (p->lex.current.type != TOK_RBRACKET) {
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 ']' 结束泛型类型参数");
+            } else {
+                lexer_next(&p->lex); // 消费 ']'
+            }
+        }
+        
+        return struct_type;
+    }
+    return NULL;
+}
+
+// 解析泛型参数列表 (用于 Dict[K, V])
+static TypeInfo* parse_dict_type(Parser* p) {
+    lexer_next(&p->lex); // 消费 'Dict'
+    
+    if (p->lex.current.type != TOK_LBRACKET) {
+        // Dict 不带参数，类型未指定（NULL表示），可以接受任何 Dict 赋值
+        return type_dict(NULL, NULL);
+    }
+    
+    lexer_next(&p->lex); // 消费 '['
+    
+    // 解析键类型
+    TypeInfo* key_type = parse_type_internal(p);
+    if (!key_type) {
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "Dict 键类型解析失败");
+        return type_dict(type_new(TYPE_ANY), type_new(TYPE_ANY));
+    }
+    
+    if (p->lex.current.type != TOK_COMMA) {
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "Dict 类型需要两个参数: Dict[KeyType, ValueType]");
+        type_free(key_type);
+        return type_dict(type_new(TYPE_ANY), type_new(TYPE_ANY));
+    }
+    lexer_next(&p->lex); // 消费 ','
+    
+    // 解析值类型
+    TypeInfo* value_type = parse_type_internal(p);
+    if (!value_type) {
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "Dict 值类型解析失败");
+        type_free(key_type);
+        return type_dict(type_new(TYPE_ANY), type_new(TYPE_ANY));
+    }
+    
+    if (p->lex.current.type != TOK_RBRACKET) {
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 ']' 结束 Dict 类型");
+        type_free(key_type);
+        type_free(value_type);
+        return type_dict(type_new(TYPE_ANY), type_new(TYPE_ANY));
+    }
+    lexer_next(&p->lex); // 消费 ']'
+    
+    return type_dict(key_type, value_type);
+}
+
+// 解析 Array 类型
+static TypeInfo* parse_array_type(Parser* p) {
+    lexer_next(&p->lex); // 消费 'Array'
+    
+    if (p->lex.current.type != TOK_LBRACKET) {
+        // Array 不带参数，元素类型未指定（NULL），可以接受任何具体类型
+        return type_array(NULL);
+    }
+    
+    lexer_next(&p->lex); // 消费 '['
+    
+    // 解析元素类型（递归支持 Array[Array[int]]）
+    TypeInfo* element_type = parse_type_internal(p);
+    if (!element_type) {
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "Array 元素类型解析失败");
+        return type_array(type_new(TYPE_ANY));
+    }
+    
+    if (p->lex.current.type != TOK_RBRACKET) {
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 ']' 结束 Array 类型");
+        type_free(element_type);
+        return type_array(type_new(TYPE_ANY));
+    }
+    lexer_next(&p->lex); // 消费 ']'
+    
+    return type_array(element_type);
+}
+
+// 解析多返回值类型: [T1, T2, ...] 或 {"k1": T1, "k2": T2, ...}
+// 用于函数返回类型: func f(): [int, string] { return 42, "hello" }
+static TypeInfo* parse_multi_return_type(Parser* p) {
+    int is_named = (p->lex.current.type == TOK_LBRACE);
+    int line = p->lex.current.line;
+    lexer_next(&p->lex);  // 消费 '[' 或 '{'
+
+    TypeInfo** ret_types = NULL;
+    int count = 0;
+    int capacity = 4;
+    ret_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * capacity);
+
+    if (is_named) {
+        // {"k1": T1, "k2": T2, ...} — 键名仅用于文档，忽略
+        if (p->lex.current.type != TOK_RBRACE) {
+            do {
+                // 解析键名（字符串字面量或标识符）
+                if (p->lex.current.type == TOK_STRING) {
+                    lexer_next(&p->lex);  // 消费键名
+                } else if (p->lex.current.type == TOK_IDENT) {
+                    lexer_next(&p->lex);  // 消费标识符作为键名
+                } else {
+                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                        "多返回值类型键名应为字符串或标识符");
+                    free(ret_types);
+                    return NULL;
+                }
+                consume(p, TOK_COLON, "期望 ':' 分隔键名和类型");
+                TypeInfo* t = parse_type_internal(p);
+                if (!t) {
+                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                        "期望返回值类型");
+                    free(ret_types);
+                    return NULL;
+                }
+                if (count >= capacity) {
+                    capacity *= 2;
+                    ret_types = (TypeInfo**)realloc(ret_types, sizeof(TypeInfo*) * capacity);
+                }
+                ret_types[count++] = t;
+            } while (match(p, TOK_COMMA));
+        }
+        consume(p, TOK_RBRACE, "期望 '}'");
+    } else {
+        // [T1, T2, ...]
+        if (p->lex.current.type != TOK_RBRACKET) {
+            do {
+                TypeInfo* t = parse_type_internal(p);
+                if (!t) {
+                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                        "期望返回值类型");
+                    free(ret_types);
+                    return NULL;
+                }
+                if (count >= capacity) {
+                    capacity *= 2;
+                    ret_types = (TypeInfo**)realloc(ret_types, sizeof(TypeInfo*) * capacity);
+                }
+                ret_types[count++] = t;
+            } while (match(p, TOK_COMMA));
+        }
+        consume(p, TOK_RBRACKET, "期望 ']'");
+    }
+
+    if (count == 0) {
+        error_add_at(ERR_SYNTAX, line, 0, "多返回值类型不能为空");
+        free(ret_types);
+        return NULL;
+    }
+
+    TypeInfo* type = type_multi_ret(ret_types, count);
+    // 释放临时数组（type_multi_ret 内部已做深拷贝）
+    for (int i = 0; i < count; i++) {
+        type_free(ret_types[i]);
+    }
+    free(ret_types);
+    return type;
+}
+
+// 解析函数类型: func 或 func():ReturnType 或 func(ParamType1, ParamType2):ReturnType
+static TypeInfo* parse_function_type(Parser* p) {
+    lexer_next(&p->lex); // 消费 'func'
+    
+    TypeInfo* return_type = NULL;
+    TypeInfo** param_types = NULL;
+    int param_count = 0;
+    int param_capacity = 8;
+    
+    // 检查是否有参数列表
+    if (p->lex.current.type == TOK_LPAREN) {
+        lexer_next(&p->lex); // 消费 '('
+        
+        // 解析参数类型列表
+        if (p->lex.current.type != TOK_RPAREN) {
+            param_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * param_capacity);
+            
+            do {
+                TypeInfo* param_type = parse_type_internal(p);
+                if (!param_type) {
+                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望参数类型");
+                    break;
+                }
+                
+                // 扩容检查
+                if (param_count >= param_capacity) {
+                    param_capacity *= 2;
+                    param_types = (TypeInfo**)realloc(param_types, sizeof(TypeInfo*) * param_capacity);
+                }
+                
+                param_types[param_count++] = param_type;
+            } while (match(p, TOK_COMMA));
+        }
+        
+        consume(p, TOK_RPAREN, "期望 ')'");
+        
+        // 解析可选的返回类型
+        if (p->lex.current.type == TOK_COLON) {
+            lexer_next(&p->lex); // 消费 ':'
+            return_type = parse_type_internal(p);
+            if (!return_type) {
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望返回类型");
+                return_type = type_new(TYPE_ANY);
+            }
+            // void 返回类型转换为 TYPE_NULL
+            if (return_type->kind == TYPE_STRUCT && return_type->struct_name &&
+                strcmp(return_type->struct_name, "void") == 0) {
+                type_free(return_type);
+                return_type = type_new(TYPE_NULL);  // TYPE_NULL 表示 void 返回
+            }
+        }
+    }
+    
+    return type_function(return_type, param_types, param_count);
+}
+
+// 内部类型解析 - 支持泛型和可空类型 Type?
+static TypeInfo* parse_type_internal(Parser* p) {
+    // 保存类型起始位置（用于错误报告）
+    int type_line = p->lex.current.line;
+    int type_column = p->lex.current.column;
+    TypeInfo* t = NULL;
+
+    // 尝试解析函数类型
+    if (p->lex.current.type == TOK_FUNC) {
+        t = parse_function_type(p);
+    }
+    // 尝试解析 Array[T]
+    else if (p->lex.current.type == TOK_ARRAY_TYPE) {
+        t = parse_array_type(p);
+    }
+    // 尝试解析 Dict[K,V]
+    else if (p->lex.current.type == TOK_DICT_TYPE) {
+        t = parse_dict_type(p);
+    }
+    // 解析基础类型
+    else {
+        t = parse_base_type(p);
+    }
+
+    // 设置位置信息（用于错误报告，如未定义类型）
+    if (t) {
+        t->line = type_line;
+        t->column = type_column;
+    }
+
+    // 统一检查 ? 后缀（可空类型：Type?）
+    if (t && p->lex.current.type == TOK_QUESTION) {
+        lexer_next(&p->lex); // 消费 '?'
+        t->nullable = 1;
+    }
+
+    return t;
+}
+
+// 公共接口：解析类型
+TypeInfo* parse_type(Parser* p) {
+    return parse_type_internal(p);
+}
+
+// 类型位置不接受模块限定类型名（如 `a.Point`）—— 与声明处的既有提示
+// （src/parser/parser.c 的"不支持带模块前缀的类型声明…请先 use"）保持同一口径。
+//
+// 为什么必须有（2026-09-16 实测）：`is` / `case is` / `as` 这些位置此前**静默 misparse** ——
+// parse_type_internal 只吃掉前面的标识符 `a`，剩下的 `.Point` 落到外层被当成属性访问，于是：
+//   `if v is a.Point {`      ⇒ 报 "if 语句体必须用大括号 {} 包裹"（完全指不到真正原因）
+//   `(v is a.Point)`         ⇒ 报 "类型 'bool' 不支持属性访问 '.Point'"
+//   `var w = v as a.Point`   ⇒ **语法通过**，运行期才炸 "索引操作需要对象类型，但实际类型为 'null'"
+// 这比"明确不支持"更糟：既误导，又可能把问题拖到运行期。返回 0 = 已报错并释放 t。
+int parser_reject_module_qualified_type(Parser* p, TypeInfo* t) {
+    if (!t) return 0;
+    if (p->lex.current.type != TOK_DOT) return 1;   // 后面不是点号 ⇒ 正常类型
+
+    char msg[256];
+    snprintf(msg, sizeof(msg),
+             "不支持带模块前缀的类型名（如 'a.Point'）：请先 use a.Point，然后直接写 'Point'"
+             "（use 会把类型导入当前作用域）");
+    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, msg);
+    type_free(t);
+    return 0;
+}
+
+// ============================================================================
+// 类型别名解析
+// ============================================================================
+
+Ast* parse_alias_stmt(Parser* p) {
+    int line = p->lex.current.line;
+    lexer_next(&p->lex); // 跳过 alias
+
+    if (p->lex.current.type != TOK_IDENT) {
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望别名名称");
+        return NULL;
+    }
+
+    char* name = copy_string(p->lex.current.text, p->lex.current.len);
+    lexer_next(&p->lex);
+
+    // 解析可选的泛型类型参数: alias MyBox[T, U] = Box[T, U]
+    char** type_params = NULL;
+    int type_param_count = 0;
+    if (p->lex.current.type == TOK_LBRACKET) {
+        lexer_next(&p->lex);  // 跳过 '['
+        int tp_capacity = 8;
+        type_params = (char**)malloc(sizeof(char*) * tp_capacity);
+        
+        do {
+            if (type_param_count >= tp_capacity) {
+                tp_capacity *= 2;
+                type_params = (char**)realloc(type_params, sizeof(char*) * tp_capacity);
+            }
+            if (p->lex.current.type != TOK_IDENT) {
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望类型参数名");
+                break;
+            }
+            type_params[type_param_count] = copy_string(p->lex.current.text, p->lex.current.len);
+            type_param_count++;
+            lexer_next(&p->lex);
+        } while (match(p, TOK_COMMA));
+        
+        consume(p, TOK_RBRACKET, "期望 ']' 结束泛型参数列表");
+    }
+
+    if (!match(p, TOK_EQ)) {
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 '='");
+        free(name);
+        for (int i = 0; i < type_param_count; i++) free(type_params[i]);
+        free(type_params);
+        return NULL;
+    }
+
+    // 检查是否是值别名模式：alias X = EnumName.member
+    // 模式：IDENT DOT IDENT — 即 . 紧跟在第一个标识符之后
+    if (p->lex.current.type == TOK_IDENT) {
+        // 保存当前词法位置以便回退
+        int saved_pos = p->lex.pos;
+        int saved_line = p->lex.line;
+        int saved_line_start = p->lex.line_start;
+        Token saved_current = p->lex.current;
+        // 防止回退时释放 saved_current.bigint_str（标识符不会有大整数字符串）
+        saved_current.bigint_str = NULL;
+
+        char* first_ident = copy_string(p->lex.current.text, p->lex.current.len);
+        lexer_next(&p->lex);
+
+        if (p->lex.current.type == TOK_DOT) {
+            // 这是值别名模式：alias X = EnumName.member
+            lexer_next(&p->lex); // 消费 '.'
+            if (p->lex.current.type != TOK_IDENT) {
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望枚举成员名");
+                free(name);
+                free(first_ident);
+                for (int i = 0; i < type_param_count; i++) free(type_params[i]);
+                free(type_params);
+                return NULL;
+            }
+
+            char* member_name = copy_string(p->lex.current.text, p->lex.current.len);
+            lexer_next(&p->lex); // 消费成员名
+
+            // 构建 AST_MODULE_ACCESS 表达式（与 parse_dot 中的逻辑一致）
+            Ast* expr = ast_new(AST_MODULE_ACCESS, line);
+            expr->u.module_access.module_name = first_ident;
+            expr->u.module_access.member_name = member_name;
+            expr->u.module_access.ref.kind = SYM_GLOBAL;
+            expr->u.module_access.ref.index = -1;
+            expr->u.module_access.ref.name = NULL;
+
+            Ast* ast = ast_new(AST_ALIAS, line);
+            ast->u.alias.name = name;
+            ast->u.alias.type = NULL;  // 值别名，无类型
+            ast->u.alias.expr = expr;
+            ast->u.alias.type_params = type_params;
+            ast->u.alias.type_param_count = type_param_count;
+            // 值别名不注册到解析器别名表
+            return ast;
+        }
+
+        // 不是值别名，回退词法分析器状态
+        free(first_ident);
+        p->lex.pos = saved_pos;
+        p->lex.line = saved_line;
+        p->lex.line_start = saved_line_start;
+        p->lex.current = saved_current;
+    }
+
+    TypeInfo* type = parse_type(p);
+    if (!type) {
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望类型");
+        free(name);
+        for (int i = 0; i < type_param_count; i++) free(type_params[i]);
+        free(type_params);
+        return NULL;
+    }
+
+    // 泛型别名：NOTE: 类型体中的泛型参数名在语义分析阶段转换为 TYPE_GENERIC_PARAM
+    Ast* ast = ast_new(AST_ALIAS, line);
+    ast->u.alias.name = name;
+    ast->u.alias.type = type;
+    ast->u.alias.expr = NULL;
+    ast->u.alias.type_params = type_params;
+    ast->u.alias.type_param_count = type_param_count;
+    
+    // 注册到解析器别名表，使后续类型解析可识别
+    add_alias_with_params(p, name, type, type_param_count, type_params);
+    
+    return ast;
+}
+
+// ============================================================================
+// 变量声明解析 - 支持新类型语法
+// ============================================================================
+
+// 检查变量声明语句边界：声明后同一行不允许出现未分隔的额外 token
+// 例如 `string str="Hello World" 1231` 应该报错，因为 1231 不是合法的分隔符
+static void check_var_decl_boundary(Parser* p, int decl_line) {
+    LenoTokenType t = p->lex.current.type;
+    if (t == TOK_EOF || t == TOK_SEMI || t == TOK_RBRACE) {
+        return; // 合法的语句结束位置（EOF、分号、右花括号）
+    }
+    // 同一行出现非分隔符 token，说明缺少换行或分号
+    if (p->lex.current.line == decl_line) {
+        char msg[128];
+        const char* found;
+        if (t == TOK_NUM) {
+            found = "数字";
+        } else if (t == TOK_STRING) {
+            found = "字符串";
+        } else if (t == TOK_IDENT) {
+            found = "标识符";
+        } else {
+            found = "符号";
+        }
+        snprintf(msg, sizeof(msg), "声明语句后期望换行或 ';'，但同一行出现%s", found);
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, msg);
+    }
+}
+
+// ============================================================================
+// 解构声明解析: var[T1, T2, ...](a, b, ...) = expr 或 var{"k": T, ...}(a, ...) = expr
+// ============================================================================
+Ast* parse_destruct_decl(Parser* p, TypeInfo* base_type, int is_const, int line, int column) {
+    int is_dict = (p->lex.current.type == TOK_LBRACE) ? 1 : 0;
+
+    // 动态数组
+    int slot_cap = 4;
+    int slot_count = 0;
+    TypeInfo** slot_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * slot_cap);
+    char** slot_keys = NULL;
+    if (is_dict) {
+        slot_keys = (char**)calloc(slot_cap, sizeof(char*));
+    }
+
+    // 消费 '[' 或 '{'
+    lexer_next(&p->lex);
+
+    // ★ 检测空形状: var[](a, b) 或 var{}(a, b) —— 自动推断
+    // 字典不支持空形状（需要键名），仅数组支持
+    if (is_dict && p->lex.current.type == TOK_RBRACE) {
+        // 空字典形状 var{}(...) —— 明确报错，提示使用 var[]
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                     "空形状自动推断仅支持数组 var[]，不支持字典 var{}。请使用 var[](变量名) 或 var{\"键名\": 类型}(变量名)");
+        free(slot_types);
+        if (slot_keys) free(slot_keys);
+        return NULL;
+    }
+    if (!is_dict && p->lex.current.type == TOK_RBRACKET) {
+        // 空数组形状 var[](...) —— 先消费 ']'，再解析变量名，最后生成 TYPE_INFER 槽位
+        lexer_next(&p->lex);  // 消费 ']'
+
+        // 解析绑定目标 (name, ...)
+        if (!match(p, TOK_LPAREN)) {
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                         "空形状解构声明期望 '(' 开始变量名列表");
+            free(slot_types);
+            return NULL;
+        }
+
+        int name_cap = 4;
+        int name_count = 0;
+        char** names = (char**)malloc(sizeof(char*) * name_cap);
+
+        do {
+            if (name_count >= name_cap) {
+                name_cap *= 2;
+                names = (char**)realloc(names, sizeof(char*) * name_cap);
+            }
+            if (p->lex.current.type != TOK_IDENT) {
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                             "解构声明期望变量名");
+                break;
+            }
+            names[name_count] = copy_string(p->lex.current.text, p->lex.current.len);
+            name_count++;
+            lexer_next(&p->lex);
+        } while (match(p, TOK_COMMA));
+
+        if (!match(p, TOK_RPAREN)) {
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                         "解构声明期望 ')' 结束变量名列表");
+        }
+
+        // 根据变量名数量生成 TYPE_INFER 槽位
+        for (int i = 0; i < name_count; i++) {
+            if (slot_count >= slot_cap) {
+                slot_cap *= 2;
+                slot_types = (TypeInfo**)realloc(slot_types, sizeof(TypeInfo*) * slot_cap);
+            }
+            slot_types[slot_count] = type_new(TYPE_INFER);
+            slot_count++;
+        }
+
+        // 解析 = expr
+        if (!match(p, TOK_EQ)) {
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                         "解构声明期望 '= 表达式'");
+            for (int i = 0; i < slot_count; i++) type_free(slot_types[i]);
+            free(slot_types);
+            for (int i = 0; i < name_count; i++) free(names[i]);
+            free(names);
+            return NULL;
+        }
+
+        Ast* init = parse_expression(p);
+        if (!init) {
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                         "解构声明的初始值表达式解析失败");
+            for (int i = 0; i < slot_count; i++) type_free(slot_types[i]);
+            free(slot_types);
+            for (int i = 0; i < name_count; i++) free(names[i]);
+            free(names);
+            return NULL;
+        }
+
+        // 创建 AST_DESTRUCT_DECL 节点
+        Ast* ast = ast_new(AST_DESTRUCT_DECL, line);
+        ast->column = column;
+        ast->u.destruct_decl.slot_types = slot_types;
+        ast->u.destruct_decl.slot_keys = NULL;
+        ast->u.destruct_decl.slot_count = slot_count;
+        ast->u.destruct_decl.names = names;
+        ast->u.destruct_decl.refs = (SymRef*)calloc(slot_count, sizeof(SymRef));
+        ast->u.destruct_decl.init = init;
+        ast->u.destruct_decl.is_dict = 0;
+        ast->u.destruct_decl.is_const = is_const;
+
+        check_var_decl_boundary(p, line);
+        (void)base_type;
+        return ast;
+    }
+
+    // 解析槽位
+    do {
+        if (slot_count >= slot_cap) {
+            slot_cap *= 2;
+            slot_types = (TypeInfo**)realloc(slot_types, sizeof(TypeInfo*) * slot_cap);
+            if (is_dict) {
+                slot_keys = (char**)realloc(slot_keys, sizeof(char*) * slot_cap);
+                memset(&slot_keys[slot_count], 0, sizeof(char*) * (slot_cap - slot_count));
+            }
+        }
+
+        if (is_dict) {
+            // 字典解构: "key": Type
+            if (p->lex.current.type != TOK_STRING) {
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                             "字典解构期望字符串键名");
+                break;
+            }
+            slot_keys[slot_count] = copy_string(p->lex.current.text, p->lex.current.len);
+            lexer_next(&p->lex);  // 消费键名
+            if (!match(p, TOK_COLON)) {
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                             "字典解构期望 ':' 分隔键名和类型");
+                break;
+            }
+        }
+
+        TypeInfo* slot_type = parse_type_internal(p);
+        if (!slot_type) {
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                         "解构槽位类型解析失败");
+            slot_type = type_new(TYPE_ANY);
+        }
+        slot_types[slot_count] = slot_type;
+        slot_count++;
+
+    } while (match(p, TOK_COMMA));
+
+    // 消费 ']' 或 '}'
+    if (is_dict) {
+        if (!match(p, TOK_RBRACE)) {
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                         "期望 '}' 结束字典解构形状");
+        }
+    } else {
+        if (!match(p, TOK_RBRACKET)) {
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                         "期望 ']' 结束数组解构形状");
+        }
+    }
+
+    // 解析绑定目标 (name, ...)
+    if (!match(p, TOK_LPAREN)) {
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                     "解构声明期望 '(' 开始变量名列表");
+        // 清理
+        for (int i = 0; i < slot_count; i++) type_free(slot_types[i]);
+        free(slot_types);
+        if (slot_keys) { for (int i = 0; i < slot_count; i++) free(slot_keys[i]); free(slot_keys); }
+        return NULL;
+    }
+
+    int name_cap = 4;
+    int name_count = 0;
+    char** names = (char**)malloc(sizeof(char*) * name_cap);
+
+    do {
+        if (name_count >= name_cap) {
+            name_cap *= 2;
+            names = (char**)realloc(names, sizeof(char*) * name_cap);
+        }
+        if (p->lex.current.type != TOK_IDENT) {
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                         "解构声明期望变量名");
+            break;
+        }
+        names[name_count] = copy_string(p->lex.current.text, p->lex.current.len);
+        name_count++;
+        lexer_next(&p->lex);
+    } while (match(p, TOK_COMMA));
+
+    if (!match(p, TOK_RPAREN)) {
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                     "解构声明期望 ')' 结束变量名列表");
+    }
+
+    // 检查槽位数量与变量名数量一致
+    if (slot_count != name_count) {
+        char msg[128];
+        snprintf(msg, sizeof(msg), "解构槽位数量(%d)与变量数量(%d)不匹配", slot_count, name_count);
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, msg);
+    }
+
+    // 解析 = expr
+    if (!match(p, TOK_EQ)) {
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                     "解构声明期望 '= 表达式'");
+        // 清理
+        for (int i = 0; i < slot_count; i++) type_free(slot_types[i]);
+        free(slot_types);
+        if (slot_keys) { for (int i = 0; i < slot_count; i++) free(slot_keys[i]); free(slot_keys); }
+        for (int i = 0; i < name_count; i++) free(names[i]);
+        free(names);
+        return NULL;
+    }
+
+    Ast* init = parse_expression(p);
+    if (!init) {
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                     "解构声明的初始值表达式解析失败");
+        for (int i = 0; i < slot_count; i++) type_free(slot_types[i]);
+        free(slot_types);
+        if (slot_keys) { for (int i = 0; i < slot_count; i++) free(slot_keys[i]); free(slot_keys); }
+        for (int i = 0; i < name_count; i++) free(names[i]);
+        free(names);
+        return NULL;
+    }
+
+    // const 声明必须有初始值（init 已经解析成功，所以这里总是满足）
+
+    // 创建 AST_DESTRUCT_DECL 节点
+    Ast* ast = ast_new(AST_DESTRUCT_DECL, line);
+    ast->column = column;
+    ast->u.destruct_decl.slot_types = slot_types;
+    ast->u.destruct_decl.slot_keys = slot_keys;
+    ast->u.destruct_decl.slot_count = slot_count;
+    ast->u.destruct_decl.names = names;
+    ast->u.destruct_decl.refs = (SymRef*)calloc(slot_count, sizeof(SymRef));
+    ast->u.destruct_decl.init = init;
+    ast->u.destruct_decl.is_dict = is_dict;
+    ast->u.destruct_decl.is_const = is_const;
+
+    // 检查声明语句边界
+    check_var_decl_boundary(p, line);
+
+    (void)base_type;  // base_type 不再使用（解构有自己的槽位类型）
+    return ast;
+}
+
+Ast* parse_var_decl_internal(Parser* p) {
+    int line = p->lex.current.line;
+    int decl_column = p->lex.current.column;  // 变量声明起始列号
+    TypeInfo* shared_type = NULL;
+    int is_const = 0;
+    
+    // 检查是否是 const 声明
+    if (p->lex.current.type == TOK_CONST) {
+        is_const = 1;
+        lexer_next(&p->lex); // 消费 const
+        // const 后面的标识符可能是变量名（如 const PI = 3.14）或自定义类型（如 const MyStruct x = ...）
+        // 如果标识符后面紧跟 = 或 ,，说明是变量名，使用类型推断
+        if (p->lex.current.type == TOK_IDENT) {
+            Lexer saved_lex = p->lex;
+            lexer_next(&p->lex);
+            LenoTokenType peek = p->lex.current.type;
+            p->lex = saved_lex;
+            error_set_column(saved_lex.current.column);  // 恢复列号
+            if (peek == TOK_EQ || peek == TOK_COMMA) {
+                shared_type = type_new(TYPE_INFER);
+            }
+        }
+        // const 后面直接跟 [ 或 { → 解构声明
+        if (p->lex.current.type == TOK_LBRACKET || p->lex.current.type == TOK_LBRACE) {
+            shared_type = type_new(TYPE_INFER);
+        }
+    }
+    
+    // 解析类型（如果尚未推断）
+    if (!shared_type) {
+        shared_type = parse_type(p);
+        if (!shared_type) {
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望类型 (int, float, string, bool, Array, Dict, var)");
+            return NULL;
+        }
+    }
+
+    // 检测解构声明语法: var[T1, T2, ...](a, b, ...) = expr 或 var{"k": T, ...}(a, ...) = expr
+    if (p->lex.current.type == TOK_LBRACKET || p->lex.current.type == TOK_LBRACE) {
+        Ast* destruct = parse_destruct_decl(p, shared_type, is_const, line, decl_column);
+        type_free(shared_type);
+        return destruct;
+    }
+
+    // 解析第一个变量名
+    if (p->lex.current.type != TOK_IDENT) {
+        if (is_type_keyword(p->lex.current.type)) {
+            char msg[64];
+            snprintf(msg, sizeof(msg), "不能使用关键字(%.*s)作为变量名", 
+                     p->lex.current.len, p->lex.current.text);
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, msg);
+        } else {
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望变量名");
+        }
+        type_free(shared_type);
+        return NULL;
+    }
+    
+    // 使用动态数组存储变量声明
+    Ast** decls = NULL;
+    int decl_count = 0;
+    int decl_capacity = 4;
+    decls = (Ast**)malloc(sizeof(Ast*) * decl_capacity);
+    
+    do {
+        // 解析变量名
+        char* name = copy_string(p->lex.current.text, p->lex.current.len);
+        lexer_next(&p->lex);
+        
+        // 复制类型
+        TypeInfo* var_type = type_copy(shared_type);
+        
+        // 解析可选的初始值
+        Ast* init = NULL;
+        if (match(p, TOK_EQ)) {
+            init = parse_expression(p);
+        }
+        
+        // const 声明必须有初始值
+        if (is_const && !init) {
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "const 声明必须有初始值");
+            type_free(var_type);
+            free(name);
+            for (int i = 0; i < decl_count; i++) ast_free(decls[i]);
+            free(decls);
+            type_free(shared_type);
+            return NULL;
+        }
+        
+        // 创建变量声明节点
+        Ast* ast = ast_new(AST_VAR_DECL, line);
+        ast->column = decl_column;
+        ast->u.var_decl.name = name;
+        ast->u.var_decl.init = init;
+        ast->u.var_decl.type = var_type;
+        ast->u.var_decl.is_const = is_const;
+        
+        // 添加到数组
+        if (decl_count >= decl_capacity) {
+            decl_capacity *= 2;
+            decls = (Ast**)realloc(decls, sizeof(Ast*) * decl_capacity);
+        }
+        decls[decl_count++] = ast;
+        
+    } while (match(p, TOK_COMMA)); // 如果有逗号，继续解析下一个变量
+    
+    type_free(shared_type);
+
+    // 检查声明语句边界（检测同一行缺少分隔符的情况）
+    check_var_decl_boundary(p, line);
+
+    // 如果只有一个变量，直接返回
+    if (decl_count == 1) {
+        Ast* result = decls[0];
+        free(decls);
+        return result;
+    }
+    
+    // 多个变量：返回一个 block 包含所有声明
+    Ast* block = ast_new(AST_BLOCK, line);
+    ast_list_init(&block->u.block);
+    for (int i = 0; i < decl_count; i++) {
+        ast_list_add(&block->u.block, decls[i]);
+    }
+    free(decls);
+    return block;
+}
+
+// ============================================================================
+// 函数定义解析
+// ============================================================================
+
+// 解析函数体和创建函数定义 AST
+Ast* parse_func_body_and_create(Parser* p, char* name, int line, int column) {
+    // 解析泛型类型参数: func name[T, U](...) 或 func name[T: FaceName = int](...)
+    char** type_params = NULL;
+    char** type_param_constraints = NULL;
+    char** type_param_defaults = NULL;
+    int type_param_count = 0;
+    if (p->lex.current.type == TOK_LBRACKET) {
+        lexer_next(&p->lex);  // 跳过 '['
+        int tp_capacity = 8;
+        type_params = (char**)malloc(sizeof(char*) * tp_capacity);
+        type_param_constraints = (char**)calloc(tp_capacity, sizeof(char*));
+        type_param_defaults = (char**)calloc(tp_capacity, sizeof(char*));
+        
+        do {
+            if (type_param_count >= tp_capacity) {
+                tp_capacity *= 2;
+                type_params = (char**)realloc(type_params, sizeof(char*) * tp_capacity);
+                type_param_constraints = (char**)realloc(type_param_constraints, sizeof(char*) * tp_capacity);
+                type_param_defaults = (char**)realloc(type_param_defaults, sizeof(char*) * tp_capacity);
+                memset(&type_param_constraints[type_param_count], 0, sizeof(char*) * (tp_capacity - type_param_count));
+                memset(&type_param_defaults[type_param_count], 0, sizeof(char*) * (tp_capacity - type_param_count));
+            }
+            if (p->lex.current.type != TOK_IDENT) {
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望类型参数名");
+                break;
+            }
+            type_params[type_param_count] = copy_string(p->lex.current.text, p->lex.current.len);
+            lexer_next(&p->lex);
+            
+            // 解析可选的约束: T: FaceName
+            if (p->lex.current.type == TOK_COLON) {
+                lexer_next(&p->lex); // 跳过 ':'
+                if (p->lex.current.type != TOK_IDENT) {
+                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望约束类型名（face 名称）");
+                } else {
+                    type_param_constraints[type_param_count] = copy_string(p->lex.current.text, p->lex.current.len);
+                    lexer_next(&p->lex);
+                }
+            }
+            // 解析可选的默认值: T = int
+            if (p->lex.current.type == TOK_EQ) {
+                lexer_next(&p->lex); // 跳过 '='
+                if (p->lex.current.type != TOK_IDENT &&
+                    p->lex.current.type != TOK_INT_TYPE &&
+                    p->lex.current.type != TOK_FLOAT_TYPE &&
+                    p->lex.current.type != TOK_STRING_TYPE &&
+                    p->lex.current.type != TOK_BOOL_TYPE) {
+                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望默认类型名");
+                } else {
+                    type_param_defaults[type_param_count] = copy_string(p->lex.current.text, p->lex.current.len);
+                    lexer_next(&p->lex);
+                }
+            }
+            type_param_count++;
+        } while (match(p, TOK_COMMA));
+        
+        consume(p, TOK_RBRACKET, "期望 ']'");
+    }
+    
+    consume(p, TOK_LPAREN, "期望 '('");
+
+    // 参数列表 - 新设计：每个参数有自己的完整类型
+    char** params = NULL;
+    TypeInfo** param_types = NULL;  // 改为 TypeInfo* 数组
+    Ast** param_defaults = NULL;    // 参数默认值表达式数组
+    int pcnt = 0;
+    int param_capacity = 16;
+
+    if (p->lex.current.type != TOK_RPAREN) {
+        params = (char**)malloc(sizeof(char*) * param_capacity);
+        param_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * param_capacity);
+        param_defaults = (Ast**)malloc(sizeof(Ast*) * param_capacity);
+        // 初始化为 NULL
+        memset(param_defaults, 0, sizeof(Ast*) * param_capacity);
+        
+        do {
+            // 解析参数类型
+            TypeInfo* param_type = parse_type(p);
+            if (!param_type) {
+                // 检查是否是省略了 var 的情况（如 func test(n)）
+                if (p->lex.current.type == TOK_IDENT) {
+                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, 
+                        "函数参数需要使用关键字，例如：func test(var a)");
+                } else {
+                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, 
+                        "期望参数类型（如 var, int, float, string, bool）");
+                }
+                break;
+            }
+
+            if (p->lex.current.type != TOK_IDENT) {
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望参数名");
+                type_free(param_type);
+                break;
+            }
+            
+            // 扩容检查
+            if (pcnt >= param_capacity) {
+                param_capacity *= 2;
+                params = (char**)realloc(params, sizeof(char*) * param_capacity);
+                param_types = (TypeInfo**)realloc(param_types, sizeof(TypeInfo*) * param_capacity);
+                param_defaults = (Ast**)realloc(param_defaults, sizeof(Ast*) * param_capacity);
+                // 新分配的空间初始化为 NULL
+                memset(&param_defaults[pcnt], 0, sizeof(Ast*) * (param_capacity - pcnt));
+            }
+            
+            params[pcnt] = copy_string(p->lex.current.text, p->lex.current.len);
+            param_types[pcnt] = param_type;
+            
+            lexer_next(&p->lex);
+            
+            // 解析可选的默认值: 类型 名 = 默认值
+            if (match(p, TOK_EQ)) {
+                // 解析默认值表达式
+                param_defaults[pcnt] = parse_expression(p);
+            } else {
+                param_defaults[pcnt] = NULL;
+            }
+            
+            pcnt++;
+        } while (match(p, TOK_COMMA));
+    }
+
+    consume(p, TOK_RPAREN, "期望 ')'");
+    
+    // 支持可选的返回类型注解: func test(): Array[int] { }
+    // 或多返回值类型: func test(): [int, string] { }
+    TypeInfo* return_type = type_new(TYPE_INFER);  // 默认为推断类型
+    
+    if (p->lex.current.type == TOK_COLON) {
+        lexer_next(&p->lex);
+        
+        // 检测多返回值类型: [T1, T2, ...] 或 {"k": T1, ...}
+        if (p->lex.current.type == TOK_LBRACKET || p->lex.current.type == TOK_LBRACE) {
+            TypeInfo* multi_ret = parse_multi_return_type(p);
+            if (multi_ret) {
+                type_free(return_type);
+                return_type = multi_ret;
+            } else {
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望返回类型");
+            }
+        } else {
+            // 解析普通返回类型
+            TypeInfo* parsed_return = parse_type(p);
+            if (parsed_return) {
+                type_free(return_type);
+                return_type = parsed_return;
+                // void 返回类型转换为 TYPE_NULL
+                if (return_type->kind == TYPE_STRUCT && return_type->struct_name &&
+                    strcmp(return_type->struct_name, "void") == 0) {
+                    type_free(return_type);
+                    return_type = type_new(TYPE_NULL);  // TYPE_NULL 表示 void 返回
+                }
+            } else {
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望返回类型");
+            }
+        }
+    }
+
+    Ast* body = parse_block_internal(p);
+
+    Ast* ast = ast_new(AST_FUNC_DEF, line);
+    ast->column = column;
+    ast->u.func.name = name;
+    ast->u.func.params = params;
+    ast->u.func.param_types = param_types;
+    ast->u.func.param_defaults = param_defaults;
+    ast->u.func.pcnt = pcnt;
+    ast->u.func.return_type = return_type;
+    ast->u.func.body = body;
+    ast->u.func.type_params = type_params;
+    ast->u.func.type_param_constraints = type_param_constraints;
+    ast->u.func.type_param_defaults = type_param_defaults;
+    ast->u.func.type_param_count = type_param_count;
+    
+    // 统计有默认值的参数数量
+    ast->u.func.default_count = 0;
+    for (int i = 0; i < pcnt; i++) {
+        if (param_defaults && param_defaults[i] != NULL) {
+            ast->u.func.default_count++;
+        }
+    }
+    
+    return ast;
+}
+
+// 解析普通函数定义（带 func 关键字）
+Ast* parse_func_stmt(Parser* p) {
+    int line = p->lex.current.line;
+    int func_column = p->lex.current.column;
+    int is_async = 0;
+    
+    // 检查是否是 async 函数
+    if (p->lex.current.type == TOK_ASYNC) {
+        is_async = 1;
+        lexer_next(&p->lex); // async
+        
+        // async 后面必须是 func
+        if (p->lex.current.type != TOK_FUNC) {
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "async 后面必须是 func 关键字");
+            return NULL;
+        }
+    }
+    
+    lexer_next(&p->lex); // func
+
+    if (p->lex.current.type != TOK_IDENT) {
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望函数名");
+        return NULL;
+    }
+
+    char* name = copy_string(p->lex.current.text, p->lex.current.len);
+    
+    // 检查是否是入口函数（如 main），入口函数不需要 func 关键字
+    if (strcmp(name, "main") == 0) {
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "入口函数 main 不需要 func 关键字，直接使用 main() { ... }");
+        free(name);
+        return NULL;
+    }
+    
+    // main 函数不能是 async
+    if (is_async && strcmp(name, "main") == 0) {
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "main 函数不能是 async 函数，请在 main 中启动协程并调用 async.run()");
+        free(name);
+        return NULL;
+    }
+    
+    lexer_next(&p->lex);
+
+    Ast* ast = parse_func_body_and_create(p, name, line, func_column);
+    if (ast) {
+        ast->u.func.is_async = is_async;
+    }
+    return ast;
+}
+
+// ============================================================================
+// 入口函数检测和解析（main() {} 这种省略 func 关键字的函数）
+// ============================================================================
+
+// 检查是否是入口函数定义（如 main() { }，没有 func 关键字）
+// 模式：main ( ) {
+// 只有 main 函数可以省略 func 关键字
+int is_entry_function_def(Parser* p) {
+    // 当前必须是标识符 "main"
+    if (p->lex.current.type != TOK_IDENT) return 0;
+    
+    // 检查是否是 main 函数名
+    if (strncmp(p->lex.current.text, "main", p->lex.current.len) != 0 ||
+        p->lex.current.len != 4) {
+        return 0;
+    }
+
+    // 保存当前状态，用于预读
+    Lexer saved_lex = p->lex;
+
+    // 预读：跳过标识符
+    lexer_next(&p->lex);
+
+    // 检查下一个 token 是否是 '('
+    if (p->lex.current.type != TOK_LPAREN) {
+        // 恢复状态
+        p->lex = saved_lex;
+            error_set_column(saved_lex.current.column);  // 恢复列号
+        return 0;
+    }
+
+    // 预读：跳过 '('
+    lexer_next(&p->lex);
+
+    // 检查是否是 ')'
+    if (p->lex.current.type != TOK_RPAREN) {
+        // 恢复状态
+        p->lex = saved_lex;
+            error_set_column(saved_lex.current.column);  // 恢复列号
+        return 0;
+    }
+
+    // 预读：跳过 ')'
+    lexer_next(&p->lex);
+
+    // 检查是否是 '{'
+    int result = (p->lex.current.type == TOK_LBRACE);
+
+    // 恢复状态
+    p->lex = saved_lex;
+            error_set_column(saved_lex.current.column);  // 恢复列号
+    return result;
+}
+
+// 解析入口函数定义（如 main() { }）
+Ast* parse_entry_func_stmt(Parser* p) {
+    int line = p->lex.current.line;
+    int entry_column = p->lex.current.column;
+
+    // 获取函数名
+    char* name = copy_string(p->lex.current.text, p->lex.current.len);
+    lexer_next(&p->lex); // 消费标识符
+
+    return parse_func_body_and_create(p, name, line, entry_column);
+}
+
+// ============================================================================
+// 匿名函数解析（用于表达式中的 func() {}）
+// ============================================================================
+
+Ast* parse_anonymous_func(Parser* p) {
+    int line = p->lex.current.line;
+    int anon_column = p->lex.current.column;
+    
+    // 消费 func 关键字
+    lexer_next(&p->lex);
+    
+    // 匿名函数使用空字符串作为名称（或生成唯一名称）
+    char* name = copy_string("<anonymous>", 11);
+    
+    return parse_func_body_and_create(p, name, line, anon_column);
+}
+
+// ============================================================================
+// 表达式语句解析
+// ============================================================================
+
+// 前向声明
+Ast* parse_expression(Parser* p);
+
+// 辅助函数：检查 AST 节点是否是合法的赋值目标
+static int is_valid_assign_target(Ast* ast) {
+    return ast && (ast->kind == AST_VAR || ast->kind == AST_INDEX);
+}
+
+// 辅助函数：释放赋值目标列表
+static void free_assign_targets(Ast** targets, int count) {
+    for (int i = 0; i < count; i++) {
+        ast_free(targets[i]);
+    }
+    free(targets);
+}
+
+Ast* parse_expression_stmt(Parser* p) {
+    int line = p->lex.current.line;
+    int stmt_column = p->lex.current.column;
+    
+    // 检查是否是并行赋值：a, b = c, d 或 arr[0], arr[4] = x, y
+    Ast** left_targets = NULL;
+    int left_count = 0;
+    int left_capacity = 8;
+    
+    // 保存当前位置，以便失败时恢复
+    Lexer save_lex = p->lex;
+    
+    // 尝试解析第一个赋值目标（变量或索引表达式）
+    if (p->lex.current.type == TOK_IDENT) {
+        // 调用 parse_call_expression 来解析完整的表达式（可能是索引如 arr[0]）
+        // 使用 parse_call_expression 而不是 parse_expression，避免把 '=' 当作运算符
+        Ast* first_target = parse_call_expression(p);
+        
+        // 检查是否是合法的赋值目标
+        if (!is_valid_assign_target(first_target)) {
+            // 不是合法的赋值目标，回退并作为普通表达式解析
+            if (first_target) ast_free(first_target);
+            p->lex = save_lex;
+            error_set_column(save_lex.current.column);  // 恢复列号
+            goto normal_parse;
+        }
+        
+        left_targets = (Ast**)malloc(sizeof(Ast*) * left_capacity);
+        left_targets[left_count++] = first_target;
+        
+        // 检查是否有更多赋值目标（逗号分隔）
+        while (p->lex.current.type == TOK_COMMA) {
+            lexer_next(&p->lex); // 消费 ','
+            
+            if (p->lex.current.type != TOK_IDENT) {
+                // 不是标识符开头，回退
+                free_assign_targets(left_targets, left_count);
+                p->lex = save_lex;
+                error_set_column(save_lex.current.column);  // 恢复列号
+                goto normal_parse;
+            }
+            
+            // 解析下一个赋值目标
+            Ast* next_target = parse_call_expression(p);
+            
+            if (!is_valid_assign_target(next_target)) {
+                // 不是合法的赋值目标，回退
+                free_assign_targets(left_targets, left_count);
+                if (next_target) ast_free(next_target);
+                p->lex = save_lex;
+                error_set_column(save_lex.current.column);  // 恢复列号
+                goto normal_parse;
+            }
+            
+            if (left_count >= left_capacity) {
+                left_capacity *= 2;
+                left_targets = (Ast**)realloc(left_targets, sizeof(Ast*) * left_capacity);
+            }
+            
+            left_targets[left_count++] = next_target;
+        }
+        
+        // 检查是否是赋值操作
+        if (p->lex.current.type == TOK_EQ || p->lex.current.type == TOK_PLUSEQ ||
+            p->lex.current.type == TOK_MINUSEQ || p->lex.current.type == TOK_STAREQ ||
+            p->lex.current.type == TOK_SLASHEQ || p->lex.current.type == TOK_MODEQ ||
+            p->lex.current.type == TOK_BITANDEQ || p->lex.current.type == TOK_BITOREQ ||
+            p->lex.current.type == TOK_BITXOREQ || p->lex.current.type == TOK_SHLEQ ||
+            p->lex.current.type == TOK_SHREQ || p->lex.current.type == TOK_USHREQ) {
+            
+            // 是赋值语句
+            LenoTokenType op = p->lex.current.type;
+            
+            // 处理复合赋值运算符 (+= -= *= /= %= &= |= ^= <<= >>= >>>=)
+            if (op == TOK_PLUSEQ || op == TOK_MINUSEQ || op == TOK_STAREQ || op == TOK_SLASHEQ ||
+                op == TOK_MODEQ || op == TOK_BITANDEQ || op == TOK_BITOREQ || op == TOK_BITXOREQ ||
+                op == TOK_SHLEQ || op == TOK_SHREQ || op == TOK_USHREQ) {
+                
+                // 复合赋值只支持单个变量
+                if (left_count != 1) {
+                    error_add_at(ERR_SYNTAX, line, p->lex.current.column, "复合赋值只支持单个变量");
+                    return NULL;
+                }
+                
+                // 复合赋值只支持简单变量，不支持索引
+                if (left_targets[0]->kind != AST_VAR) {
+                    error_add_at(ERR_SYNTAX, line, p->lex.current.column, "复合赋值只支持简单变量，请用 arr[i] = arr[i] + val 替代");
+                    return NULL;
+                }
+                
+                lexer_next(&p->lex); // 消费复合赋值运算符
+                
+                // 解析右侧表达式
+                Ast* value = parse_expression(p);
+                
+                // 创建复合赋值节点
+                Ast* ast = ast_new(AST_COMPOUND_ASSIGN, line);
+                ast->column = left_targets[0]->column;
+                ast->u.compound_assign.name = strdup(left_targets[0]->u.var.name);
+                ast->u.compound_assign.value = value;
+                ast->u.compound_assign.op = op;
+                // ref 信息在语义分析时填充
+                
+                // 释放临时变量节点
+                free(left_targets[0]->u.var.name);
+                free(left_targets[0]);
+                free(left_targets);
+                
+                // 包装成表达式语句
+                Ast* expr_stmt = ast_new(AST_EXPR_STMT, line);
+                expr_stmt->column = stmt_column;
+                expr_stmt->u.expr_stmt.expr = ast;
+                return expr_stmt;
+            }
+            
+            // 普通赋值 (=)
+            lexer_next(&p->lex); // 消费 '='
+            
+            // 收集右侧表达式
+            Ast** right_exprs = (Ast**)malloc(sizeof(Ast*) * left_count);
+            int right_count = 0;
+            
+            // 解析第一个右侧表达式
+            Ast* first_expr = parse_expression(p);
+            if (first_expr) {
+                right_exprs[right_count++] = first_expr;
+            }
+            
+            // 解析更多右侧表达式
+            while (p->lex.current.type == TOK_COMMA) {
+                lexer_next(&p->lex); // 消费 ','
+                Ast* next_expr = parse_expression(p);
+                if (next_expr) {
+                    if (right_count >= left_count) {
+                        // 右侧表达式太多，稍后报错
+                    }
+                    right_exprs[right_count++] = next_expr;
+                }
+            }
+            
+            // 创建赋值节点
+            Ast* assign_ast = ast_new(AST_ASSIGN, line);
+            assign_ast->column = left_targets[0]->column;  // 用左侧变量名的列号
+            assign_ast->u.assign.names = (char**)malloc(sizeof(char*) * left_count);
+            assign_ast->u.assign.name_count = left_count;
+            assign_ast->u.assign.targets = left_targets;
+            assign_ast->u.assign.refs = (SymRef*)calloc(left_count, sizeof(SymRef));
+            
+            for (int i = 0; i < left_count; i++) {
+                if (left_targets[i]->kind == AST_VAR) {
+                    assign_ast->u.assign.names[i] = strdup(left_targets[i]->u.var.name);
+                } else {
+                    // 索引表达式没有变量名，设为 NULL
+                    assign_ast->u.assign.names[i] = NULL;
+                }
+            }
+            
+            // 处理右侧表达式
+            if (right_count == 1) {
+                assign_ast->u.assign.value = right_exprs[0];
+                free(right_exprs);
+            } else {
+                // 多个右侧表达式，包装成数组
+                Ast* arr = ast_new(AST_ARRAY, line);
+                arr->u.array.items = right_exprs;
+                arr->u.array.count = right_count;
+                arr->u.array.capacity = right_count;
+                assign_ast->u.assign.value = arr;
+            }
+            
+            // 包装成表达式语句
+            Ast* ast = ast_new(AST_EXPR_STMT, line);
+            ast->column = stmt_column;
+            ast->u.expr_stmt.expr = assign_ast;
+            return ast;
+        }
+        
+        // 不是赋值，回退并作为普通表达式解析
+        free_assign_targets(left_targets, left_count);
+        p->lex = save_lex;
+        error_set_column(save_lex.current.column);  // 恢复列号
+    }
+    
+normal_parse:
+    // 普通表达式解析
+    Ast* expr = parse_expression(p);
+    
+    // 如果表达式解析失败，消费当前 token 避免无限循环
+    if (expr == NULL) {
+        if (p->lex.current.type != TOK_EOF) {
+            lexer_next(&p->lex);
+        }
+        return NULL;
+    }
+    
+    Ast* ast = ast_new(AST_EXPR_STMT, line);
+    ast->column = stmt_column;
+    ast->u.expr_stmt.expr = expr;
+    return ast;
+}
+
+// ============================================================================
+// struct 定义解析
+// ============================================================================
+
+Ast* parse_struct_stmt(Parser* p) {
+    int line = p->lex.current.line;
+    lexer_next(&p->lex); // 消费 'struct'
+
+    // 期望 struct 名称
+    if (p->lex.current.type != TOK_IDENT) {
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 struct 名称");
+        return NULL;
+    }
+
+    char* struct_name = copy_string(p->lex.current.text, p->lex.current.len);
+    lexer_next(&p->lex);
+
+    // 解析可选的泛型类型参数: struct Name[T, U] { ... } 或 struct Name[T: FaceName = int]
+    char** type_params = NULL;
+    char** type_param_constraints = NULL;
+    char** type_param_defaults = NULL;
+    int type_param_count = 0;
+    if (p->lex.current.type == TOK_LBRACKET) {
+        lexer_next(&p->lex);  // 跳过 '['
+        int tp_capacity = 8;
+        type_params = (char**)malloc(sizeof(char*) * tp_capacity);
+        type_param_constraints = (char**)calloc(tp_capacity, sizeof(char*));
+        type_param_defaults = (char**)calloc(tp_capacity, sizeof(char*));
+
+        do {
+            if (type_param_count >= tp_capacity) {
+                tp_capacity *= 2;
+                type_params = (char**)realloc(type_params, sizeof(char*) * tp_capacity);
+                type_param_constraints = (char**)realloc(type_param_constraints, sizeof(char*) * tp_capacity);
+                type_param_defaults = (char**)realloc(type_param_defaults, sizeof(char*) * tp_capacity);
+                memset(&type_param_constraints[type_param_count], 0, sizeof(char*) * (tp_capacity - type_param_count));
+                memset(&type_param_defaults[type_param_count], 0, sizeof(char*) * (tp_capacity - type_param_count));
+            }
+            if (p->lex.current.type != TOK_IDENT) {
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望类型参数名");
+                break;
+            }
+            type_params[type_param_count] = copy_string(p->lex.current.text, p->lex.current.len);
+            lexer_next(&p->lex);
+            
+            // 解析可选的约束: T: FaceName
+            if (p->lex.current.type == TOK_COLON) {
+                lexer_next(&p->lex);
+                if (p->lex.current.type != TOK_IDENT) {
+                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望约束类型名（face 名称）");
+                } else {
+                    type_param_constraints[type_param_count] = copy_string(p->lex.current.text, p->lex.current.len);
+                    lexer_next(&p->lex);
+                }
+            }
+            // 解析可选的默认值: T = int
+            if (p->lex.current.type == TOK_EQ) {
+                lexer_next(&p->lex);
+                if (p->lex.current.type != TOK_IDENT &&
+                    p->lex.current.type != TOK_INT_TYPE &&
+                    p->lex.current.type != TOK_FLOAT_TYPE &&
+                    p->lex.current.type != TOK_STRING_TYPE &&
+                    p->lex.current.type != TOK_BOOL_TYPE) {
+                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望默认类型名");
+                } else {
+                    type_param_defaults[type_param_count] = copy_string(p->lex.current.text, p->lex.current.len);
+                    lexer_next(&p->lex);
+                }
+            }
+            type_param_count++;
+        } while (match(p, TOK_COMMA));
+
+        consume(p, TOK_RBRACKET, "期望 ']' 结束泛型参数列表");
+    }
+
+    // 解析可选的 impl 声明: struct Name impl Face1, Face2[Type] { ... }
+    char** impl_names = NULL;
+    TypeInfo*** impl_type_args = NULL;
+    int* impl_type_arg_counts = NULL;
+    int impl_count = 0;
+    int impl_capacity = 4;
+
+    if (p->lex.current.type == TOK_IMPL) {
+        lexer_next(&p->lex); // 消费 'impl'
+        impl_names = (char**)malloc(sizeof(char*) * impl_capacity);
+        impl_type_args = (TypeInfo***)malloc(sizeof(TypeInfo**) * impl_capacity);
+        impl_type_arg_counts = (int*)malloc(sizeof(int) * impl_capacity);
+
+        while (1) {
+            if (p->lex.current.type != TOK_IDENT) {
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 face 名称");
+                break;
+            }
+            char* iface_name = copy_string(p->lex.current.text, p->lex.current.len);
+            lexer_next(&p->lex);
+
+            // 解析可选的泛型参数: impl Comparable[int]
+            TypeInfo** type_args = NULL;
+            int type_arg_count = 0;
+            if (p->lex.current.type == TOK_LBRACKET) {
+                int type_arg_capacity = 4;
+                type_args = (TypeInfo**)malloc(sizeof(TypeInfo*) * type_arg_capacity);
+                lexer_next(&p->lex); // 消费 '['
+                do {
+                    TypeInfo* arg_type = parse_type(p);
+                    if (arg_type) {
+                        if (type_arg_count >= type_arg_capacity) {
+                            type_arg_capacity *= 2;
+                            type_args = (TypeInfo**)realloc(type_args, sizeof(TypeInfo*) * type_arg_capacity);
+                        }
+                        type_args[type_arg_count++] = arg_type;
+                    }
+                } while (match(p, TOK_COMMA));
+                consume(p, TOK_RBRACKET, "期望 ']' 结束泛型参数列表");
+            }
+
+            if (impl_count >= impl_capacity) {
+                impl_capacity *= 2;
+                impl_names = (char**)realloc(impl_names, sizeof(char*) * impl_capacity);
+                impl_type_args = (TypeInfo***)realloc(impl_type_args, sizeof(TypeInfo**) * impl_capacity);
+                impl_type_arg_counts = (int*)realloc(impl_type_arg_counts, sizeof(int) * impl_capacity);
+            }
+            impl_names[impl_count] = iface_name;
+            impl_type_args[impl_count] = type_args;
+            impl_type_arg_counts[impl_count] = type_arg_count;
+            impl_count++;
+
+            if (p->lex.current.type == TOK_COMMA) {
+                lexer_next(&p->lex);
+            } else {
+                break;
+            }
+        }
+    }
+
+    // 期望 '{'
+    if (!consume(p, TOK_LBRACE, "期望 '{' 开始 struct 定义")) {
+        free(struct_name);
+        return NULL;
+    }
+
+    // 动态数组存储字段
+    char** field_names = NULL;
+    TypeInfo** field_types = NULL;
+    Ast** field_defaults = NULL;
+    int field_count = 0;
+    int field_capacity = 8;
+
+    field_names = (char**)malloc(sizeof(char*) * field_capacity);
+    field_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * field_capacity);
+    field_defaults = (Ast**)calloc(field_capacity, sizeof(Ast*));
+
+    // 动态数组存储方法
+    Ast** methods = NULL;
+    int method_count = 0;
+    int method_capacity = 8;
+    methods = (Ast**)malloc(sizeof(Ast*) * method_capacity);
+
+    // 动态数组存储关联常量
+    char** const_names = NULL;
+    Ast** const_values = NULL;
+    int const_count = 0;
+    int const_capacity = 8;
+    const_names = (char**)malloc(sizeof(char*) * const_capacity);
+    const_values = (Ast**)malloc(sizeof(Ast*) * const_capacity);
+
+    // 解析字段列表和方法
+    while (p->lex.current.type != TOK_RBRACE && p->lex.current.type != TOK_EOF) {
+        // 检查是否是注释（跳过）
+        if (p->lex.current.type == TOK_ERROR) {
+            lexer_next(&p->lex);
+            continue;
+        }
+
+        // 检查是否是关联常量声明（const NAME = value 或 const TYPE NAME = value）
+        if (p->lex.current.type == TOK_CONST) {
+            lexer_next(&p->lex); // 消费 const
+
+            // 复用 parse_var_decl_internal 的预读逻辑：
+            // const 后面可能是 NAME = value（类型推断）或 TYPE NAME = value（显式类型）
+            TypeInfo* const_type = NULL;
+            if (p->lex.current.type == TOK_IDENT) {
+                Lexer saved_lex = p->lex;
+                lexer_next(&p->lex);
+                LenoTokenType peek = p->lex.current.type;
+                p->lex = saved_lex;
+            error_set_column(saved_lex.current.column);  // 恢复列号
+                if (peek == TOK_EQ || peek == TOK_COMMA) {
+                    const_type = type_new(TYPE_INFER);  // 类型推断
+                }
+            }
+            if (!const_type) {
+                const_type = parse_type(p);  // 显式类型
+                if (!const_type) {
+                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "struct 关联常量期望类型或名称");
+                    while (p->lex.current.type != TOK_SEMI &&
+                           p->lex.current.type != TOK_RBRACE &&
+                           p->lex.current.type != TOK_EOF) {
+                        lexer_next(&p->lex);
+                    }
+                    if (p->lex.current.type == TOK_SEMI) lexer_next(&p->lex);
+                    continue;
+                }
+            }
+
+            // 解析常量名
+            if (p->lex.current.type != TOK_IDENT) {
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "struct 关联常量期望名称");
+                type_free(const_type);
+                while (p->lex.current.type != TOK_SEMI &&
+                       p->lex.current.type != TOK_RBRACE &&
+                       p->lex.current.type != TOK_EOF) {
+                    lexer_next(&p->lex);
+                }
+                if (p->lex.current.type == TOK_SEMI) lexer_next(&p->lex);
+                continue;
+            }
+
+            // 支持逗号分隔多个常量：const A = 1, B = 2
+            do {
+                char* cname = copy_string(p->lex.current.text, p->lex.current.len);
+                lexer_next(&p->lex);
+
+                // 期望 =
+                if (!match(p, TOK_EQ)) {
+                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "struct 关联常量必须有初始值");
+                    free(cname);
+                    type_free(const_type);
+                    break;
+                }
+
+                // 解析常量值表达式
+                Ast* cexpr = parse_expression(p);
+                if (!cexpr) {
+                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "struct 关联常量值解析失败");
+                    free(cname);
+                    type_free(const_type);
+                    break;
+                }
+
+                // 扩容检查
+                if (const_count >= const_capacity) {
+                    const_capacity *= 2;
+                    const_names = (char**)realloc(const_names, sizeof(char*) * const_capacity);
+                    const_values = (Ast**)realloc(const_values, sizeof(Ast*) * const_capacity);
+                }
+
+                const_names[const_count] = cname;
+                const_values[const_count] = cexpr;
+                const_count++;
+            } while (match(p, TOK_COMMA));
+
+            type_free(const_type);
+
+            // 可选的分号
+            if (p->lex.current.type == TOK_SEMI) {
+                lexer_next(&p->lex);
+            }
+            continue;
+        }
+
+        // 检查是否是方法定义（func 或 async func）
+        int is_async = 0;
+        if (p->lex.current.type == TOK_ASYNC) {
+            is_async = 1;
+            lexer_next(&p->lex); // 消费 'async'
+            // 消费完 async 后，期望 func
+            if (p->lex.current.type != TOK_FUNC) {
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "async 后面必须跟 func");
+                // 跳过错误恢复
+                while (p->lex.current.type != TOK_SEMI &&
+                       p->lex.current.type != TOK_RBRACE &&
+                       p->lex.current.type != TOK_EOF) {
+                    lexer_next(&p->lex);
+                }
+                continue;
+            }
+        }
+
+        if (p->lex.current.type == TOK_FUNC) {
+            // 预读：func 后面跟 ( 说明是函数类型字段（如 func(int):int op），走字段类型解析
+            // func 后面跟 IDENT 说明是方法定义（如 func calc()）
+            // func 后面跟 ~ 说明是析构函数（如 func ~StructName()）
+            Lexer saved = p->lex;
+            lexer_next(&p->lex);  // 跳过 func
+            int is_func_type_field = (p->lex.current.type == TOK_LPAREN);
+            p->lex = saved;  // 恢复
+            error_set_column(saved.current.column);  // 恢复列号
+
+            if (is_func_type_field) {
+                // 函数类型字段，不走方法定义路径，fall through 到下面的字段类型解析
+            } else {
+            int func_line = p->lex.current.line;
+            int func_col = p->lex.current.column;
+            lexer_next(&p->lex); // 消费 'func'
+
+            // 检查是否是析构函数（func ~StructName）
+            int is_dtor = 0;
+            int is_ctor = 0;
+            if (p->lex.current.type == TOK_BITNOT) {
+                is_dtor = 1;
+                lexer_next(&p->lex);  // 消费 '~'
+            }
+
+            // 期望方法名
+            if (p->lex.current.type != TOK_IDENT) {
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, is_dtor ? "析构函数名必须为 ~StructName" : "期望方法名");
+                // 跳过错误恢复
+                while (p->lex.current.type != TOK_SEMI &&
+                       p->lex.current.type != TOK_RBRACE &&
+                       p->lex.current.type != TOK_EOF) {
+                    lexer_next(&p->lex);
+                }
+                continue;
+            }
+
+            char* method_name = copy_string(p->lex.current.text, p->lex.current.len);
+            lexer_next(&p->lex);
+
+            // 判断构造函数（方法名与 struct 名相同且无 ~）
+            if (!is_dtor && strcmp(method_name, struct_name) == 0) {
+                is_ctor = 1;
+            }
+            // 析构函数名必须与 struct 名相同
+            if (is_dtor && strcmp(method_name, struct_name) != 0) {
+                char msg[BUFFER_MEDIUM];
+                snprintf(msg, sizeof(msg), "析构函数名必须为 ~%s，而不是 ~%s", struct_name, method_name);
+                error_add_at(ERR_SYNTAX, func_line, p->lex.current.column, msg);
+            }
+
+            // 解析函数体
+            Ast* func_ast = parse_func_body_and_create(p, method_name, func_line, func_col);
+            if (func_ast) {
+                // 设置标志
+                func_ast->u.func.is_async = is_async;
+                func_ast->u.func.is_ctor = is_ctor;
+                func_ast->u.func.is_dtor = is_dtor;
+                // 构造/析构函数不能有显式参数
+                if ((is_ctor || is_dtor) && func_ast->u.func.pcnt > 0) {
+                    char msg[BUFFER_MEDIUM];
+                    snprintf(msg, sizeof(msg), "%s不能有参数", is_ctor ? "构造函数" : "析构函数");
+                    error_add_at(ERR_SYNTAX, func_line, p->lex.current.column, msg);
+                }
+                // 扩容检查
+                if (method_count >= method_capacity) {
+                    method_capacity *= 2;
+                    methods = (Ast**)realloc(methods, sizeof(Ast*) * method_capacity);
+                }
+                methods[method_count++] = func_ast;
+            }
+
+            // 可选的分号
+            if (p->lex.current.type == TOK_SEMI) {
+                lexer_next(&p->lex);
+            }
+            continue;
+            } // end else (方法定义)
+        } // end if TOK_FUNC
+
+        // 解析字段类型
+        TypeInfo* field_type = NULL;
+
+        // struct 字段不能使用 var 或 any，必须有具体类型
+        if (p->lex.current.type == TOK_VAR) {
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "struct 字段不能使用 var，必须使用具体类型");
+            lexer_next(&p->lex);
+            // 尝试继续解析
+        } else if (p->lex.current.type == TOK_ANY_TYPE) {
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "struct 字段不能使用 any，必须使用具体类型");
+            lexer_next(&p->lex);
+            // 尝试继续解析
+        }
+
+        field_type = parse_type(p);
+        if (!field_type) {
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望字段类型");
+            // 跳过错误恢复
+            while (p->lex.current.type != TOK_SEMI &&
+                   p->lex.current.type != TOK_RBRACE &&
+                   p->lex.current.type != TOK_EOF) {
+                lexer_next(&p->lex);
+            }
+            if (p->lex.current.type == TOK_SEMI) {
+                lexer_next(&p->lex);
+            }
+            continue;
+        }
+
+        // 期望字段名（支持逗号分隔多字段：int a, b, c）
+        if (p->lex.current.type != TOK_IDENT) {
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望字段名");
+            type_free(field_type);
+            break;
+        }
+
+        do {
+            char* field_name = copy_string(p->lex.current.text, p->lex.current.len);
+            lexer_next(&p->lex);
+
+            // 扩容检查
+            if (field_count >= field_capacity) {
+                field_capacity *= 2;
+                field_names = (char**)realloc(field_names, sizeof(char*) * field_capacity);
+                field_types = (TypeInfo**)realloc(field_types, sizeof(TypeInfo*) * field_capacity);
+                field_defaults = (Ast**)realloc(field_defaults, sizeof(Ast*) * field_capacity);
+                memset(&field_defaults[field_count], 0, sizeof(Ast*) * (field_capacity - field_count));
+            }
+
+            field_names[field_count] = field_name;
+            field_types[field_count] = type_copy(field_type);
+
+            // 解析可选的默认值: 类型 名 = 默认值
+            if (match(p, TOK_EQ)) {
+                field_defaults[field_count] = parse_expression(p);
+            }
+
+            field_count++;
+        } while (match(p, TOK_COMMA));
+
+        type_free(field_type);
+
+        // 可选的分号
+        if (p->lex.current.type == TOK_SEMI) {
+            lexer_next(&p->lex);
+        }
+    }
+
+    // 期望 '}'
+    if (!consume(p, TOK_RBRACE, "期望 '}' 结束 struct 定义")) {
+        // 清理已分配的内存
+        for (int i = 0; i < field_count; i++) {
+            free(field_names[i]);
+            type_free(field_types[i]);
+            if (field_defaults[i]) {
+                ast_free(field_defaults[i]);
+            }
+        }
+        free(field_names);
+        free(field_types);
+        free(field_defaults);
+        for (int i = 0; i < method_count; i++) {
+            ast_free(methods[i]);
+        }
+        free(methods);
+        // 清理关联常量
+        for (int i = 0; i < const_count; i++) {
+            free(const_names[i]);
+            ast_free(const_values[i]);
+        }
+        free(const_names);
+        free(const_values);
+        free(struct_name);
+        return NULL;
+    }
+
+    // 创建 struct 定义 AST 节点
+    Ast* ast = ast_new(AST_STRUCT_DEF, line);
+    ast->u.struct_def.name = struct_name;
+    ast->u.struct_def.field_names = field_names;
+    ast->u.struct_def.field_types = field_types;
+    ast->u.struct_def.field_defaults = field_defaults;
+    ast->u.struct_def.field_count = field_count;
+    ast->u.struct_def.methods = methods;
+    ast->u.struct_def.method_count = method_count;
+    ast->u.struct_def.impl_names = impl_names;
+    ast->u.struct_def.impl_count = impl_count;
+    ast->u.struct_def.impl_type_args = impl_type_args;
+    ast->u.struct_def.impl_type_arg_counts = impl_type_arg_counts;
+    ast->u.struct_def.type_params = type_params;
+    ast->u.struct_def.type_param_constraints = type_param_constraints;
+    ast->u.struct_def.type_param_defaults = type_param_defaults;
+    ast->u.struct_def.type_param_count = type_param_count;
+    ast->u.struct_def.const_names = const_names;
+    ast->u.struct_def.const_values = const_values;
+    ast->u.struct_def.const_count = const_count;
+
+    return ast;
+}
+
+// ============================================================================
+// face 定义解析
+// ============================================================================
+
+Ast* parse_face_stmt(Parser* p) {
+    int line = p->lex.current.line;
+    lexer_next(&p->lex); // 消费 'face'
+
+    if (p->lex.current.type != TOK_IDENT) {
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 face 名称");
+        return NULL;
+    }
+
+    char* face_name = copy_string(p->lex.current.text, p->lex.current.len);
+    lexer_next(&p->lex);
+
+    // 解析可选的泛型类型参数: face Name[T, U] 或 face Name[T: FaceName]
+    char** type_params = NULL;
+    char** type_param_constraints = NULL;
+    int type_param_count = 0;
+    if (p->lex.current.type == TOK_LBRACKET) {
+        lexer_next(&p->lex);  // 跳过 '['
+        int tp_capacity = 8;
+        type_params = (char**)malloc(sizeof(char*) * tp_capacity);
+        type_param_constraints = (char**)calloc(tp_capacity, sizeof(char*));
+
+        do {
+            if (type_param_count >= tp_capacity) {
+                tp_capacity *= 2;
+                type_params = (char**)realloc(type_params, sizeof(char*) * tp_capacity);
+                type_param_constraints = (char**)realloc(type_param_constraints, sizeof(char*) * tp_capacity);
+                memset(&type_param_constraints[type_param_count], 0, sizeof(char*) * (tp_capacity - type_param_count));
+            }
+            if (p->lex.current.type != TOK_IDENT) {
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望类型参数名");
+                break;
+            }
+            type_params[type_param_count] = copy_string(p->lex.current.text, p->lex.current.len);
+            type_param_count++;
+            lexer_next(&p->lex);
+        } while (match(p, TOK_COMMA));
+
+        consume(p, TOK_RBRACKET, "期望 ']' 结束泛型参数列表");
+    }
+
+    if (!consume(p, TOK_LBRACE, "期望 '{' 开始 face 定义")) {
+        for (int i = 0; i < type_param_count; i++) free(type_params[i]);
+        free(type_params);
+        free(face_name);
+        return NULL;
+    }
+
+    char** method_names = NULL;
+    TypeInfo** method_return_types = NULL;
+    TypeInfo*** method_param_types = NULL;
+    int* method_param_counts = NULL;
+    int method_count = 0;
+    int method_capacity = 8;
+
+    method_names = (char**)malloc(sizeof(char*) * method_capacity);
+    method_return_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * method_capacity);
+    method_param_types = (TypeInfo***)malloc(sizeof(TypeInfo**) * method_capacity);
+    method_param_counts = (int*)malloc(sizeof(int) * method_capacity);
+
+    while (p->lex.current.type != TOK_RBRACE && p->lex.current.type != TOK_EOF) {
+        if (p->lex.current.type == TOK_ERROR) {
+            lexer_next(&p->lex);
+            continue;
+        }
+
+        if (p->lex.current.type != TOK_FUNC) {
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "face 中只允许方法签名");
+            while (p->lex.current.type != TOK_SEMI &&
+                   p->lex.current.type != TOK_RBRACE &&
+                   p->lex.current.type != TOK_EOF) {
+                lexer_next(&p->lex);
+            }
+            if (p->lex.current.type == TOK_SEMI) lexer_next(&p->lex);
+            continue;
+        }
+
+        lexer_next(&p->lex); // 消费 'func'
+
+        if (p->lex.current.type != TOK_IDENT) {
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望方法名");
+            while (p->lex.current.type != TOK_SEMI &&
+                   p->lex.current.type != TOK_RBRACE &&
+                   p->lex.current.type != TOK_EOF) {
+                lexer_next(&p->lex);
+            }
+            continue;
+        }
+
+        char* method_name = copy_string(p->lex.current.text, p->lex.current.len);
+        lexer_next(&p->lex);
+
+        TypeInfo** param_types = NULL;
+        int param_count = 0;
+        int param_capacity = 4;
+
+        if (match(p, TOK_LPAREN)) {
+            param_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * param_capacity);
+            while (p->lex.current.type != TOK_RPAREN && p->lex.current.type != TOK_EOF) {
+                TypeInfo* ptype = parse_type(p);
+                if (!ptype) {
+                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望参数类型");
+                    break;
+                }
+                if (p->lex.current.type == TOK_IDENT) {
+                    lexer_next(&p->lex);
+                }
+                if (param_count >= param_capacity) {
+                    param_capacity *= 2;
+                    param_types = (TypeInfo**)realloc(param_types, sizeof(TypeInfo*) * param_capacity);
+                }
+                param_types[param_count++] = ptype;
+                if (p->lex.current.type == TOK_COMMA) lexer_next(&p->lex);
+            }
+            consume(p, TOK_RPAREN, "期望 ')'");
+        }
+
+        TypeInfo* return_type = NULL;
+        if (match(p, TOK_COLON)) {
+            return_type = parse_type(p);
+        }
+
+        if (method_count >= method_capacity) {
+            method_capacity *= 2;
+            method_names = (char**)realloc(method_names, sizeof(char*) * method_capacity);
+            method_return_types = (TypeInfo**)realloc(method_return_types, sizeof(TypeInfo*) * method_capacity);
+            method_param_types = (TypeInfo***)realloc(method_param_types, sizeof(TypeInfo**) * method_capacity);
+            method_param_counts = (int*)realloc(method_param_counts, sizeof(int) * method_capacity);
+        }
+
+        method_names[method_count] = method_name;
+        method_return_types[method_count] = return_type;
+        method_param_types[method_count] = param_types;
+        method_param_counts[method_count] = param_count;
+        method_count++;
+
+        if (p->lex.current.type == TOK_SEMI) lexer_next(&p->lex);
+    }
+
+    if (!consume(p, TOK_RBRACE, "期望 '}' 结束 face 定义")) {
+        for (int i = 0; i < method_count; i++) {
+            free(method_names[i]);
+            if (method_return_types[i]) type_free(method_return_types[i]);
+            for (int j = 0; j < method_param_counts[i]; j++) {
+                type_free(method_param_types[i][j]);
+            }
+            free(method_param_types[i]);
+        }
+        free(method_names);
+        free(method_return_types);
+        free(method_param_types);
+        free(method_param_counts);
+        for (int i = 0; i < type_param_count; i++) free(type_params[i]);
+        free(type_params);
+        free(face_name);
+        return NULL;
+    }
+
+    Ast* ast = ast_new(AST_FACE_DEF, line);
+    ast->u.face_def.name = face_name;
+    ast->u.face_def.method_names = method_names;
+    ast->u.face_def.method_return_types = method_return_types;
+    ast->u.face_def.method_param_types = method_param_types;
+    ast->u.face_def.method_param_counts = method_param_counts;
+    ast->u.face_def.method_count = method_count;
+    ast->u.face_def.type_params = type_params;
+    ast->u.face_def.type_param_constraints = type_param_constraints;
+    ast->u.face_def.type_param_count = type_param_count;
+
+    return ast;
+}
+
+// ============================================================================
+// cstruct 定义解析（C 布局结构体）
+// ============================================================================
+
+Ast* parse_cstruct_stmt(Parser* p) {
+    int line = p->lex.current.line;
+
+    // 解析可选的 packed / align(N) 前缀（顺序可互换）
+    bool is_packed = false;
+    int explicit_align = 0;
+
+    // 最多循环两次，处理 packed 和 align 的任意顺序
+    // packed 和 align 是上下文关键字（普通标识符），通过文本匹配识别
+    for (int attr_pass = 0; attr_pass < 2; attr_pass++) {
+        if (p->lex.current.type == TOK_IDENT &&
+            p->lex.current.len == 6 &&
+            strncmp(p->lex.current.text, "packed", 6) == 0) {
+            if (is_packed) {
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "packed 重复指定");
+            }
+            is_packed = true;
+            lexer_next(&p->lex); // 消费 'packed'
+        } else if (p->lex.current.type == TOK_IDENT &&
+                   p->lex.current.len == 5 &&
+                   strncmp(p->lex.current.text, "align", 5) == 0) {
+            if (explicit_align > 0) {
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "align 重复指定");
+            }
+            lexer_next(&p->lex); // 消费 'align'
+            if (!consume(p, TOK_LPAREN, "期望 '(' 开始 align 参数")) {
+                return NULL;
+            }
+            if (p->lex.current.type != TOK_NUM || p->lex.current.is_float) {
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "align 参数必须是正整数");
+                return NULL;
+            }
+            int align_val = (int)p->lex.current.num_val;
+            if (align_val <= 0 || (align_val & (align_val - 1)) != 0) {
+                char msg[128];
+                snprintf(msg, sizeof(msg), "align 参数 %d 不是有效的 2 的幂（1/2/4/8/16/32/64）", align_val);
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, msg);
+                return NULL;
+            }
+            if (align_val > 64) {
+                char msg[128];
+                snprintf(msg, sizeof(msg), "align 参数 %d 超过最大值 64", align_val);
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, msg);
+                return NULL;
+            }
+            explicit_align = align_val;
+            lexer_next(&p->lex); // 消费数字
+            if (!consume(p, TOK_RPAREN, "期望 ')' 结束 align 参数")) {
+                return NULL;
+            }
+        } else {
+            break; // 不是 packed 也不是 align，退出循环
+        }
+    }
+
+    // 现在必须遇到 'cstruct' 关键字
+    if (p->lex.current.type != TOK_CSTRUCT) {
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 'cstruct' 关键字");
+        return NULL;
+    }
+    lexer_next(&p->lex); // 消费 'cstruct'
+
+    // 期望 cstruct 名称
+    if (p->lex.current.type != TOK_IDENT) {
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 cstruct 名称");
+        return NULL;
+    }
+
+    char* cstruct_name = copy_string(p->lex.current.text, p->lex.current.len);
+    lexer_next(&p->lex);
+
+    // 期望 '{'
+    if (!consume(p, TOK_LBRACE, "期望 '{' 开始 cstruct 定义")) {
+        free(cstruct_name);
+        return NULL;
+    }
+
+    // 动态数组存储字段
+    char** field_names = NULL;
+    TypeInfo** field_types = NULL;
+    int* field_array_dims = NULL;
+    int field_count = 0;
+    int field_capacity = 8;
+
+    field_names = (char**)malloc(sizeof(char*) * field_capacity);
+    field_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * field_capacity);
+    field_array_dims = (int*)malloc(sizeof(int) * field_capacity);
+
+    // 解析字段列表（cstruct 不支持方法）
+    while (p->lex.current.type != TOK_RBRACE && p->lex.current.type != TOK_EOF) {
+        // 检查是否是注释（跳过）
+        if (p->lex.current.type == TOK_ERROR) {
+            lexer_next(&p->lex);
+            continue;
+        }
+
+        // cstruct 不支持方法
+        if (p->lex.current.type == TOK_FUNC || p->lex.current.type == TOK_ASYNC) {
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "cstruct 不支持方法定义，请使用普通 struct");
+            // 跳过错误恢复
+            while (p->lex.current.type != TOK_SEMI &&
+                   p->lex.current.type != TOK_RBRACE &&
+                   p->lex.current.type != TOK_EOF) {
+                lexer_next(&p->lex);
+            }
+            if (p->lex.current.type == TOK_SEMI) {
+                lexer_next(&p->lex);
+            }
+            continue;
+        }
+
+        // 解析字段类型
+        TypeInfo* field_type = NULL;
+
+        // cstruct 字段不能使用 var，必须有具体类型
+        if (p->lex.current.type == TOK_VAR) {
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "cstruct 字段不能使用 var，必须使用 C 布局类型");
+            lexer_next(&p->lex);
+            // 尝试继续解析
+        }
+
+        field_type = parse_type(p);
+        if (!field_type) {
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望字段类型");
+            // 跳过错误恢复
+            while (p->lex.current.type != TOK_SEMI &&
+                   p->lex.current.type != TOK_RBRACE &&
+                   p->lex.current.type != TOK_EOF) {
+                lexer_next(&p->lex);
+            }
+            if (p->lex.current.type == TOK_SEMI) {
+                lexer_next(&p->lex);
+            }
+            continue;
+        }
+
+        // 期望字段名
+        if (p->lex.current.type != TOK_IDENT) {
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望字段名");
+            type_free(field_type);
+            break;
+        }
+
+        char* field_name = copy_string(p->lex.current.text, p->lex.current.len);
+        lexer_next(&p->lex);
+
+        // 解析可选的数组维度 [N]
+        int array_dim = 0;
+        if (p->lex.current.type == TOK_LBRACKET) {
+            lexer_next(&p->lex); // 消费 '['
+            
+            if (p->lex.current.type != TOK_NUM) {
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "数组维度必须是整数常量");
+                free(field_name);
+                type_free(field_type);
+                break;
+            }
+            
+            // 检查是否是整数
+            if (p->lex.current.is_float) {
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "数组维度必须是整数，不能是浮点数");
+                free(field_name);
+                type_free(field_type);
+                break;
+            }
+            
+            array_dim = (int)p->lex.current.num_val;
+            if (array_dim <= 0) {
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "数组维度必须是正整数");
+                free(field_name);
+                type_free(field_type);
+                break;
+            }
+            
+            lexer_next(&p->lex); // 消费数字
+            
+            if (!consume(p, TOK_RBRACKET, "期望 ']' 结束数组维度")) {
+                free(field_name);
+                type_free(field_type);
+                break;
+            }
+        }
+
+        // 扩容检查
+        if (field_count >= field_capacity) {
+            field_capacity *= 2;
+            field_names = (char**)realloc(field_names, sizeof(char*) * field_capacity);
+            field_types = (TypeInfo**)realloc(field_types, sizeof(TypeInfo*) * field_capacity);
+            field_array_dims = (int*)realloc(field_array_dims, sizeof(int) * field_capacity);
+        }
+
+        field_names[field_count] = field_name;
+        field_types[field_count] = field_type;
+        field_array_dims[field_count] = array_dim;
+        field_count++;
+
+        // 可选的分号
+        if (p->lex.current.type == TOK_SEMI) {
+            lexer_next(&p->lex);
+        }
+    }
+
+    // 期望 '}'
+    if (!consume(p, TOK_RBRACE, "期望 '}' 结束 cstruct 定义")) {
+        // 清理已分配的内存
+        for (int i = 0; i < field_count; i++) {
+            free(field_names[i]);
+            type_free(field_types[i]);
+        }
+        free(field_names);
+        free(field_types);
+        free(field_array_dims);
+        free(cstruct_name);
+        return NULL;
+    }
+
+    // 创建 cstruct 定义 AST 节点
+    Ast* ast = ast_new(AST_CSTRUCT_DEF, line);
+    ast->u.cstruct_def.name = cstruct_name;
+    ast->u.cstruct_def.field_names = field_names;
+    ast->u.cstruct_def.field_types = field_types;
+    ast->u.cstruct_def.field_array_dims = field_array_dims;
+    ast->u.cstruct_def.field_count = field_count;
+    ast->u.cstruct_def.total_size = 0;      // 语义分析时计算
+    ast->u.cstruct_def.alignment = 0;       // 语义分析时计算
+    ast->u.cstruct_def.field_offsets = NULL; // 语义分析时分配和计算
+    ast->u.cstruct_def.is_packed = is_packed;
+    ast->u.cstruct_def.explicit_align = explicit_align;
+    ast->u.cstruct_def.ref.kind = SYM_CSTRUCT;
+    ast->u.cstruct_def.ref.index = -1;
+    ast->u.cstruct_def.ref.name = strdup(cstruct_name);
+    ast->u.cstruct_def.ref.type_kind = TYPE_CSTRUCT;
+
+    return ast;
+}
+
+// ============================================================================
+// clib 定义解析 - C 库函数签名声明
+// ============================================================================
+
+Ast* parse_clib_stmt(Parser* p) {
+    int line = p->lex.current.line;
+    lexer_next(&p->lex); // 消费 'clib'
+
+    // 期望 clib 名称
+    if (p->lex.current.type != TOK_IDENT) {
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 clib 名称");
+        return NULL;
+    }
+
+    char* clib_name = copy_string(p->lex.current.text, p->lex.current.len);
+    lexer_next(&p->lex);
+
+    // 期望 '{'
+    if (!consume(p, TOK_LBRACE, "期望 '{' 开始 clib 定义")) {
+        free(clib_name);
+        return NULL;
+    }
+
+    // 动态数组存储函数签名
+    char** func_names = NULL;
+    TypeInfo** func_return_types = NULL;
+    TypeInfo*** func_param_types = NULL;
+    int* func_param_counts = NULL;
+    int func_count = 0;
+    int func_capacity = 8;
+
+    func_names = (char**)malloc(sizeof(char*) * func_capacity);
+    func_return_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * func_capacity);
+    func_param_types = (TypeInfo***)malloc(sizeof(TypeInfo**) * func_capacity);
+    func_param_counts = (int*)malloc(sizeof(int) * func_capacity);
+
+    // 解析函数签名列表
+    while (p->lex.current.type != TOK_RBRACE && p->lex.current.type != TOK_EOF) {
+        if (p->lex.current.type == TOK_SEMI) {
+            lexer_next(&p->lex);
+            continue;
+        }
+
+        // 解析返回类型
+        TypeInfo* return_type = parse_type(p);
+        if (!return_type) {
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "clib 函数缺少返回类型");
+            break;
+        }
+
+        // 支持 void 返回类型 - "void" 被 parse_type 解析为 TYPE_STRUCT
+        if (return_type->kind == TYPE_STRUCT && return_type->struct_name &&
+            (strcmp(return_type->struct_name, "void") == 0 ||
+             strcmp(return_type->struct_name, "void") == 0)) {
+            type_free(return_type);
+            return_type = type_new(TYPE_NULL);  // TYPE_NULL 表示 void 返回
+        }
+
+        // 期望函数名
+        if (p->lex.current.type != TOK_IDENT) {
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望函数名");
+            type_free(return_type);
+            break;
+        }
+
+        char* func_name = copy_string(p->lex.current.text, p->lex.current.len);
+        lexer_next(&p->lex);
+
+        // 期望 '('
+        if (!consume(p, TOK_LPAREN, "期望 '(' 开始参数列表")) {
+            free(func_name);
+            type_free(return_type);
+            break;
+        }
+
+        // 解析参数列表
+        int param_cap = 4;
+        TypeInfo** params = (TypeInfo**)malloc(sizeof(TypeInfo*) * param_cap);
+        int param_count = 0;
+
+        while (p->lex.current.type != TOK_RPAREN && p->lex.current.type != TOK_EOF) {
+            if (p->lex.current.type == TOK_COMMA) {
+                lexer_next(&p->lex);
+                continue;
+            }
+
+            // 解析参数类型
+            TypeInfo* param_type = parse_type(p);
+            if (!param_type) {
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望参数类型");
+                break;
+            }
+
+            // 解析参数名（可选）
+            if (p->lex.current.type == TOK_IDENT) {
+                lexer_next(&p->lex); // 消费参数名
+            }
+
+            // 扩容
+            if (param_count >= param_cap) {
+                param_cap *= 2;
+                params = (TypeInfo**)realloc(params, sizeof(TypeInfo*) * param_cap);
+            }
+            params[param_count] = param_type;
+            param_count++;
+        }
+
+        // 期望 ')'
+        if (p->lex.current.type == TOK_RPAREN) {
+            lexer_next(&p->lex);
+        } else {
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 ')' 结束参数列表");
+        }
+
+        // 扩容函数数组
+        if (func_count >= func_capacity) {
+            func_capacity *= 2;
+            func_names = (char**)realloc(func_names, sizeof(char*) * func_capacity);
+            func_return_types = (TypeInfo**)realloc(func_return_types, sizeof(TypeInfo*) * func_capacity);
+            func_param_types = (TypeInfo***)realloc(func_param_types, sizeof(TypeInfo**) * func_capacity);
+            func_param_counts = (int*)realloc(func_param_counts, sizeof(int) * func_capacity);
+        }
+
+        func_names[func_count] = func_name;
+        func_return_types[func_count] = return_type;
+        func_param_types[func_count] = params;
+        func_param_counts[func_count] = param_count;
+        func_count++;
+
+        // 可选的分号
+        if (p->lex.current.type == TOK_SEMI) {
+            lexer_next(&p->lex);
+        }
+    }
+
+    // 期望 '}'
+    if (!consume(p, TOK_RBRACE, "期望 '}' 结束 clib 定义")) {
+        for (int i = 0; i < func_count; i++) {
+            free(func_names[i]);
+            type_free(func_return_types[i]);
+            for (int j = 0; j < func_param_counts[i]; j++) {
+                type_free(func_param_types[i][j]);
+            }
+            free(func_param_types[i]);
+        }
+        free(func_names);
+        free(func_return_types);
+        free(func_param_types);
+        free(func_param_counts);
+        free(clib_name);
+        return NULL;
+    }
+
+    // 创建 clib 定义 AST 节点
+    Ast* ast = ast_new(AST_CLIB_DEF, line);
+    ast->u.clib_def.name = clib_name;
+    ast->u.clib_def.func_names = func_names;
+    ast->u.clib_def.func_return_types = func_return_types;
+    ast->u.clib_def.func_param_types = func_param_types;
+    ast->u.clib_def.func_param_counts = func_param_counts;
+    ast->u.clib_def.func_count = func_count;
+    ast->u.clib_def.ref.kind = SYM_CLIB;
+    ast->u.clib_def.ref.index = -1;
+    ast->u.clib_def.ref.name = strdup(clib_name);
+    ast->u.clib_def.ref.type_kind = TYPE_CLIB;
+
+    return ast;
+}
+
+// ============================================================================
+// cfunc 声明解析（C 回调函数签名）
+// 语法: cfunc Name(param_type param_name, ...): return_type
+// ============================================================================
+Ast* parse_cfunc_stmt(Parser* p) {
+    int line = p->lex.current.line;
+    lexer_next(&p->lex); // 消费 'cfunc'
+
+    // 期望 cfunc 名称
+    if (p->lex.current.type != TOK_IDENT) {
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 cfunc 名称");
+        return NULL;
+    }
+
+    char* cfunc_name = copy_string(p->lex.current.text, p->lex.current.len);
+    lexer_next(&p->lex);
+
+    // 期望 '('
+    if (!consume(p, TOK_LPAREN, "期望 '(' 开始参数列表")) {
+        free(cfunc_name);
+        return NULL;
+    }
+
+    // 解析参数列表
+    int param_cap = 4;
+    TypeInfo** param_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * param_cap);
+    char** param_names = (char**)malloc(sizeof(char*) * param_cap);
+    int param_count = 0;
+
+    while (p->lex.current.type != TOK_RPAREN && p->lex.current.type != TOK_EOF) {
+        if (p->lex.current.type == TOK_COMMA) {
+            lexer_next(&p->lex);
+            continue;
+        }
+
+        // 解析参数类型
+        TypeInfo* ptype = parse_type(p);
+        if (!ptype) {
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "cfunc 期望参数类型");
+            break;
+        }
+
+        // 解析参数名
+        char* pname = NULL;
+        if (p->lex.current.type == TOK_IDENT) {
+            pname = copy_string(p->lex.current.text, p->lex.current.len);
+            lexer_next(&p->lex);
+        }
+
+        // 扩容
+        if (param_count >= param_cap) {
+            param_cap *= 2;
+            param_types = (TypeInfo**)realloc(param_types, sizeof(TypeInfo*) * param_cap);
+            param_names = (char**)realloc(param_names, sizeof(char*) * param_cap);
+        }
+        param_types[param_count] = ptype;
+        param_names[param_count] = pname;
+        param_count++;
+    }
+
+    // 期望 ')'
+    if (p->lex.current.type == TOK_RPAREN) {
+        lexer_next(&p->lex);
+    } else {
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 ')' 结束参数列表");
+    }
+
+    // 解析返回类型: ': return_type'
+    TypeInfo* return_type = NULL;
+    if (p->lex.current.type == TOK_COLON) {
+        lexer_next(&p->lex);
+        return_type = parse_type(p);
+        if (!return_type) {
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "cfunc 期望返回类型");
+        }
+        // void 返回类型处理
+        if (return_type && return_type->kind == TYPE_STRUCT && return_type->struct_name &&
+            strcmp(return_type->struct_name, "void") == 0) {
+            type_free(return_type);
+            return_type = type_new(TYPE_NULL);  // TYPE_NULL 表示 void 返回
+        }
+    }
+
+    // 可选的分号
+    if (p->lex.current.type == TOK_SEMI) {
+        lexer_next(&p->lex);
+    }
+
+    // 创建 cfunc 声明 AST 节点
+    Ast* ast = ast_new(AST_CFUNC_DECL, line);
+    ast->u.cfunc_decl.name = cfunc_name;
+    ast->u.cfunc_decl.param_types = param_types;
+    ast->u.cfunc_decl.param_names = param_names;
+    ast->u.cfunc_decl.param_count = param_count;
+    ast->u.cfunc_decl.return_type = return_type;
+    ast->u.cfunc_decl.ref.kind = SYM_CFUNC;
+    ast->u.cfunc_decl.ref.index = -1;
+    ast->u.cfunc_decl.ref.name = strdup(cfunc_name);
+    ast->u.cfunc_decl.ref.type_kind = TYPE_CFUNC;
+
+    return ast;
+}
+
+// ============================================================================
+// 编译期常量表达式求值（用于 enum 成员值）
+// 支持：整数字面量、十六进制(0x)、二进制(0b)、加减乘除模、位运算(| & ^ << >>)
+// ============================================================================
+
+// 前向声明
+static int64_t eval_const_expr(Ast* expr, int* ok);
+
+// enum 成员引用上下文（用于在解析 enum 成员值时引用先前定义的成员）
+static char** g_enum_member_names = NULL;
+static int64_t* g_enum_member_values = NULL;
+static int g_enum_member_count = 0;
+
+static int64_t eval_const_expr(Ast* expr, int* ok) {
+    *ok = 1;
+    if (!expr) { *ok = 0; return 0; }
+
+    switch (expr->kind) {
+        case AST_NUM:
+            if (expr->u.num.is_bigint && expr->u.num.bigint_str) {
+                return (int64_t)strtoll(expr->u.num.bigint_str, NULL, 0);
+            }
+            return (int64_t)expr->u.num.value;
+
+        case AST_VAR: {
+            // 支持 enum 成员引用（如 ALL = READ | WRITE 中的 READ 和 WRITE）
+            if (g_enum_member_names && g_enum_member_count > 0) {
+                for (int i = 0; i < g_enum_member_count; i++) {
+                    if (strcmp(g_enum_member_names[i], expr->u.var.name) == 0) {
+                        return g_enum_member_values[i];
+                    }
+                }
+            }
+            *ok = 0;
+            return 0;
+        }
+
+        case AST_UNARY: {
+            int64_t val = eval_const_expr(expr->u.unary.operand, ok);
+            if (!*ok) return 0;
+            switch (expr->u.unary.op) {
+                case TOK_MINUS: return -val;
+                case TOK_PLUS:  return val;
+                case TOK_BITNOT: return ~val;
+                case TOK_NOT:   return !val;
+                default: *ok = 0; return 0;
+            }
+        }
+
+        case AST_BINOP: {
+            int64_t left = eval_const_expr(expr->u.binop.l, ok);
+            if (!*ok) return 0;
+            int64_t right = eval_const_expr(expr->u.binop.r, ok);
+            if (!*ok) return 0;
+            switch (expr->u.binop.op) {
+                case TOK_PLUS:    return left + right;
+                case TOK_MINUS:   return left - right;
+                case TOK_STAR:    return left * right;
+                case TOK_SLASH:   return right != 0 ? left / right : 0;
+                case TOK_MOD:   return right != 0 ? left % right : 0;
+                case TOK_BITOR:   return left | right;
+                case TOK_BITAND:  return left & right;
+                case TOK_BITXOR:  return left ^ right;
+                case TOK_SHL:    return left << right;
+                case TOK_SHR:    return left >> right;
+                default: *ok = 0; return 0;
+            }
+        }
+
+        default:
+            *ok = 0;
+            return 0;
+    }
+}
+
+// ============================================================================
+// 供外部调用者（符号表扫描器）复用的常量表达式求值入口
+// ============================================================================
+// 为什么需要它：符号表扫描器是**纯文本**扫描，不能自己建 AST，但 enum 成员值必须在扫描阶段
+// 定下来（跨模块 `use mod.E` 与模块限定访问都取自这里）。历史上它为此复刻了一整套词法 +
+// 递归下降求值器，语义靠手工与解析器维持对齐 —— 反复漂移且都是**静默错值**
+// （`0b`、`not`、除零，每次都只在 use 路径错）。现在它直接调这里：词法与语法都是语言本身的
+// 那一套，不再有第二份实现（见 docs/待办_单一事实来源与重复实现收敛.md 的 Phase 1）。
+//
+// 约定：
+//   - text 必须是 NUL 结尾的稳定缓冲区（内部复制一份给 Lexer，调用方缓冲区的生命周期无关）；
+//   - names/values/count 是"先前成员"引用上下文，可为空；
+//   - 成功返回 1 并写 *out；失败返回 0（*out 不动）且**不产生任何诊断** ——
+//     调用方按"无显式值"宽松处理，该报的错留给模块自身编译时的 parse_enum_stmt；
+//   - "成功"的判定：整段文本被消费光（到达 EOF）且解析/求值全程无错误（与旧扫描器求值器
+//     的"必须到 '\0' 且 ok"等价）。
+int parser_eval_const_expr_text(const char* text, char** names, int64_t* values,
+                                int count, int64_t* out) {
+    if (!text || !out) return 0;
+
+    size_t n = strlen(text);
+    char* src = (char*)malloc(n + 1);
+    if (!src) return 0;
+    memcpy(src, text, n + 1);
+
+    // 诊断静默化：这里是在读"别人的模块"，失败不该记到当前文件头上
+    error_silence_begin();
+
+    // 成员引用上下文：保存 → 设置 → 恢复（本函数可重入）
+    char** saved_names = g_enum_member_names;
+    int64_t* saved_values = g_enum_member_values;
+    int saved_count = g_enum_member_count;
+    g_enum_member_names = names;
+    g_enum_member_values = values;
+    g_enum_member_count = count;
+
+    int ok = 0;
+    int64_t result = 0;
+    Parser p;
+    parser_init(&p, src);
+    Ast* expr = parse_expression(&p);
+    if (expr) {
+        int eval_ok = 0;
+        int64_t v = eval_const_expr(expr, &eval_ok);
+        // 必须整段消费光：`1 + (2` 这类残句不能因为"解析出了前缀"就算成功
+        if (eval_ok && p.lex.current.type == TOK_EOF) {
+            result = v;
+            ok = 1;
+        }
+        ast_free(expr);
+    }
+
+    g_enum_member_names = saved_names;
+    g_enum_member_values = saved_values;
+    g_enum_member_count = saved_count;
+
+    // 解析期间只要报过任何错，这次求值就不可信
+    int silenced_errors_count = error_silence_end();
+    free(src);
+    if (silenced_errors_count > 0) ok = 0;
+
+    if (ok) *out = result;
+    return ok;
+}
+
+// ============================================================================
+// enum 定义解析
+// ============================================================================
+
+Ast* parse_enum_stmt(Parser* p) {
+    int line = p->lex.current.line;
+    lexer_next(&p->lex); // 消费 'enum'
+
+    // 期望 enum 名称
+    if (p->lex.current.type != TOK_IDENT) {
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 enum 名称");
+        return NULL;
+    }
+
+    char* enum_name = copy_string(p->lex.current.text, p->lex.current.len);
+    lexer_next(&p->lex);
+
+    // 期望 '{'
+    if (!consume(p, TOK_LBRACE, "期望 '{' 开始 enum 定义")) {
+        free(enum_name);
+        return NULL;
+    }
+
+    // 动态数组存储成员
+    char** member_names = NULL;
+    int64_t* member_values = NULL;
+    int member_count = 0;
+    int member_capacity = 8;
+
+    member_names = (char**)malloc(sizeof(char*) * member_capacity);
+    member_values = (int64_t*)malloc(sizeof(int64_t) * member_capacity);
+
+    int64_t next_auto_value = 0; // 下一个自动分配的值
+
+    // 解析成员列表
+    while (p->lex.current.type != TOK_RBRACE && p->lex.current.type != TOK_EOF) {
+        // 检查是否是注释（跳过）
+        if (p->lex.current.type == TOK_ERROR) {
+            lexer_next(&p->lex);
+            continue;
+        }
+
+        // 期望成员名
+        if (p->lex.current.type != TOK_IDENT) {
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 enum 成员名称");
+            break;
+        }
+
+        char* member_name = copy_string(p->lex.current.text, p->lex.current.len);
+        lexer_next(&p->lex);
+
+        int64_t member_value = next_auto_value;
+
+        // 检查是否有显式值: member = value
+        if (p->lex.current.type == TOK_EQ) {
+            lexer_next(&p->lex); // 消费 '='
+
+            // 解析常量表达式（支持 0x200000 + 0x0C 等表达式）
+            Ast* expr = parse_expression(p);
+            if (!expr) {
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "enum 成员值表达式解析失败");
+                free(member_name);
+                break;
+            }
+            // 设置 enum 成员引用上下文，允许后续成员引用先前定义的成员
+            g_enum_member_names = member_names;
+            g_enum_member_values = member_values;
+            g_enum_member_count = member_count;
+            int eval_ok = 0;
+            int64_t val = eval_const_expr(expr, &eval_ok);
+            if (!eval_ok) {
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "enum 成员显式值必须是编译期整数常量表达式");
+                free(member_name);
+                ast_free(expr);
+                break;
+            }
+            member_value = val;
+            ast_free(expr);
+            // 清除 enum 成员引用上下文
+            g_enum_member_names = NULL;
+            g_enum_member_values = NULL;
+            g_enum_member_count = 0;
+        }
+
+        // 扩容检查
+        if (member_count >= member_capacity) {
+            member_capacity *= 2;
+            member_names = (char**)realloc(member_names, sizeof(char*) * member_capacity);
+            member_values = (int64_t*)realloc(member_values, sizeof(int64_t) * member_capacity);
+        }
+
+        member_names[member_count] = member_name;
+        member_values[member_count] = member_value;
+        member_count++;
+
+        // 下一个自动分配的值为当前值 + 1
+        next_auto_value = member_value + 1;
+
+        // 可选的分隔符：分号或逗号。
+        // 扫描器（scan_enum.inc）一直支持逗号分隔，解析器此前只吃 ';'，
+        // 于是同一个 enum 在模块符号表里 vs 直接编译时表现不同（逗号版直接语法错误）。
+        if (p->lex.current.type == TOK_SEMI || p->lex.current.type == TOK_COMMA) {
+            lexer_next(&p->lex);
+        }
+    }
+
+    // 期望 '}'
+    if (!consume(p, TOK_RBRACE, "期望 '}' 结束 enum 定义")) {
+        // 清理已分配的内存
+        for (int i = 0; i < member_count; i++) {
+            free(member_names[i]);
+        }
+        free(member_names);
+        free(member_values);
+        free(enum_name);
+        return NULL;
+    }
+
+    // 创建 enum 定义 AST 节点
+    Ast* ast = ast_new(AST_ENUM_DEF, line);
+    ast->u.enum_def.name = enum_name;
+    ast->u.enum_def.member_names = member_names;
+    ast->u.enum_def.member_values = member_values;
+    ast->u.enum_def.member_count = member_count;
+
+    return ast;
+}

@@ -1,0 +1,436 @@
+// ripple_image.leno — 图片水波纹扭曲特效（60FPS 优化版）
+//
+// 加载 d:\sp.png 图片，鼠标点击在图片上产生水波纹扭曲效果。
+// 波纹从点击位置向外扩散，经过的像素产生扭曲位移。
+// 自动随机产生波纹，也可点击交互。
+// ESC 退出
+//
+// 性能优化策略：
+//   1. ffi.malloc 直接管理像素内存（对齐 fireworks 模式）
+//   2. ffi.memcpy 整块拷贝原图到输出缓冲（C 级 memcpy，极快）
+//   3. 只遍历波纹影响区域（波前附近的环形带），不全图遍历
+//   4. 分辨率降级：大图缩小到 MAX_RIP_W 处理，显示时 GPU 放大
+//   5. 波纹上限：超过 MAX_RIPPLES 时淘汰最老的，防止快速点击卡顿
+//   6. ren.updateTexture 一次性上传纹理
+//   7. maths.rsqrt 一步反平方根（省掉 sqrt + 除法）
+//   8. maths.sin_fast 快速正弦近似（Bhaskara I 公式）
+//   9. maths.clamp 替代手写 if 限幅
+//
+// 运行：leno ripple_image.leno
+
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer, Scancode, WindowFlag, BlendMode, Font, SDL_SurfaceInfo, Window)
+import ffi
+import maths
+import rands
+
+// ==================== 配置 ====================
+const int MAX_RIPPLES = 6          // 波纹上限，超过则淘汰最老的
+const float BAND_WIDTH = 16.0      // 波前影响带宽
+const int MAX_RIP_W = 384         // 处理分辨率上限（宽 > 此值则降级）
+
+// ==================== 波纹结构 ====================
+struct Ripple {
+    float x; float y           // 圆心（处理缓冲坐标）
+    float radius
+    float maxRadius
+    float speed
+    float life
+    float amplitude
+}
+
+// ==================== 全局状态 ====================
+Ptr[u8] srcPix = null          // 原始图片像素（降级后的 RGBA8888）
+Ptr[u8] dstPix = null          // 输出像素（每帧重写）
+int bufW = 0; int bufH = 0     // 处理缓冲尺寸
+int bufPitch = 0               // 每行字节数 = bufW * 4
+
+int origW = 0; int origH = 0   // 原图尺寸
+float dispScale = 1.0          // 显示缩放（处理缓冲 → 窗口）
+float dispX = 0.0; float dispY = 0.0
+float dispImgW = 0.0; float dispImgH = 0.0
+
+// 坐标转换系数：屏幕点击 → 处理缓冲坐标
+float imgToBufX = 1.0; float imgToBufY = 1.0
+
+Array[Ripple] ripples = []
+
+// 添加波纹（带上限淘汰）
+func addRipple(float x, float y) {
+    if ripples.len() >= MAX_RIPPLES {
+        ripples.remove(0)  // 淘汰最老的
+    }
+    ripples.add(new Ripple(
+        x = x, y = y,
+        radius = 0.0,
+        maxRadius = rands.floats(80.0, 150.0),
+        speed = rands.floats(2.0, 3.0),
+        life = 1.0,
+        amplitude = rands.floats(8.0, 16.0)
+    ))
+}
+
+// ==================== 渲染扭曲图像（只处理波纹影响区域） ====================
+func renderRipple() {
+    // 先整块拷贝原图到输出缓冲（memcpy 极快）
+    ffi.memcpy(dstPix, srcPix, bufW * bufH * 4)
+
+    if ripples.len() == 0 { return }
+
+    int w = bufW; int h = bufH; int pitch = bufPitch
+    float bw = BAND_WIDTH
+    float invBw = 1.0 / bw
+
+    // 对每个波纹，只遍历其波前附近的环形带区域
+    for ripples.len() to ri {
+        Ripple rp = ripples[ri]
+
+        float innerR = rp.radius - bw
+        float outerR = rp.radius + bw
+        if innerR < 0.0 { innerR = 0.0 }
+
+        // 外接矩形裁剪到图片范围
+        int x0 = _int(rp.x - outerR)
+        int y0 = _int(rp.y - outerR)
+        int x1 = _int(rp.x + outerR) + 1
+        int y1 = _int(rp.y + outerR) + 1
+        if x0 < 0 { x0 = 0 }
+        if y0 < 0 { y0 = 0 }
+        if x1 > w { x1 = w }
+        if y1 > h { y1 = h }
+
+        float outerR2 = outerR * outerR
+        float innerR2 = innerR * innerR
+        float lifeAmp = rp.amplitude * rp.life
+
+        // 遍历外接矩形内的像素
+        for y0 : y1 - 1 to y {
+            float fy = y
+            float dy = fy - rp.y
+            float dy2 = dy * dy
+            int rowBase = y * pitch
+
+            for x0 : x1 - 1 to x {
+                float fx = x
+                float dx = fx - rp.x
+                float dist2 = dx * dx + dy2
+
+                // 只处理环形带内的像素
+                if dist2 > outerR2 { continue }
+                if dist2 < innerR2 { continue }
+
+                // 用 maths.rsqrt 一步得到 1/dist，省掉 sqrt + 除法
+                if dist2 < 0.01 { continue }  // 跳过圆心像素避免除零
+                float invDist = maths.rsqrt(dist2)
+                float dist = dist2 * invDist
+
+                // diff 归一化到 [-1, 1]
+                float diff = (dist - rp.radius) * invBw
+                diff = maths.clamp(diff, -1.0, 1.0)
+
+                // 三角窗衰减 + 快速正弦波
+                float tri = 1.0 - maths.abs(diff)
+                float wave = maths.sin_fast(diff * 3.14159)
+                float amp = lifeAmp * tri * wave
+                if dist > 0.5 {
+                    // 沿径向方向位移，从 srcBuf 采样
+                    int sx = _int(maths.clamp(x+ dx * invDist * amp, 0.0, w - 1))
+                    int sy = _int(maths.clamp(y + dy * invDist * amp, 0.0, h - 1))
+
+                    int srcOff = sy * pitch + sx * 4
+                    int dstOff = rowBase + x * 4
+                    ffi.write_int(dstPix, dstOff, ffi.read_int(srcPix, srcOff))
+                }
+            }
+        }
+    }
+}
+
+// ==================== 坐标转换：屏幕 → 处理缓冲 ====================
+func screenToBuf(float sx, float sy): [float, float] {
+    return (sx - dispX) / dispScale, (sy - dispY) / dispScale
+}
+
+// ==================== 主函数 ====================
+main() {
+    SDL3.initVideo()
+
+    string imagePath = "d:\\sp.png"
+
+    // ---- 加载图片 ----
+    Ptr[u8] surface = SDL3.loadImage(imagePath)
+    if surface == null {
+        print("无法加载图片: " + imagePath)
+        print("SDL Error: " + SDL3.getError())
+        return
+    }
+
+    // 读取 Surface 信息
+    SDL_SurfaceInfo info = SDL_SurfaceInfo.from_ptr(surface)
+    origW = info.w; origH = info.h
+    int surfPitch = ffi.read_int(surface, 16)
+    Ptr[u8] surfPixels = ffi.read_ptr(surface, 24)
+    int surfFormat = info.format
+
+    if origW <= 0 or origH <= 0 or surfPixels == null {
+        print("图片数据无效")
+        SDL3.destroySurface(surface)
+        return
+    }
+    print("图片已加载: " + origW + " x " + origH + "  format=" + surfFormat)
+
+    // 适度降级：大图缩小到 MAX_RIP_W 以内（平衡清晰度与性能）
+    float downgradeScale = 1.0
+    if origW > MAX_RIP_W {
+        downgradeScale = _float(MAX_RIP_W) / _float(origW)
+    }
+    bufW = _int(_float(origW) * downgradeScale)
+    bufH = _int(_float(origH) * downgradeScale)
+    if bufW < 1 { bufW = 1 }
+    if bufH < 1 { bufH = 1 }
+    bufPitch = bufW * 4
+    int pixSize = bufW * bufH * 4
+
+    print("处理分辨率: " + bufW + " x " + bufH + "  scale=" + _int(downgradeScale * 100.0) + "%")
+
+    srcPix = ffi.malloc(pixSize)
+    dstPix = ffi.malloc(pixSize)
+    if srcPix == null or dstPix == null {
+        print("内存分配失败")
+        SDL3.destroySurface(surface)
+        return
+    }
+
+    // ---- 像素格式转换 + 降级采样 ----
+    // 从原始 Surface（RGB888/ARGB8888/RGBA8888）转为 RGBA8888 处理缓冲
+    // 如需降级（downgradeScale < 1.0），最近邻采样
+    // RGBA8888 小端 u32 = (R<<24)|(G<<16)|(B<<8)|A，内存 [A,B,G,R]
+
+    // 判断原图每像素字节数
+    int bpp = 4
+    if surfFormat == 376840196 {
+        bpp = 4  // RGB888 用 4 字节存储
+    } else if surfFormat == 373694468 {
+        bpp = 4  // RGBA8888
+    } else if surfFormat == 372645892 {
+        bpp = 4  // ARGB8888
+    } else if surfPitch == origW * 3 {
+        bpp = 3  // 真正的 24bit RGB
+    }
+
+    if downgradeScale == 1.0 and surfFormat == 373694468 {
+        // 无降级 + RGBA8888：直接整块拷贝（最快路径）
+        ffi.memcpy(srcPix, surfPixels, pixSize)
+    } else {
+        // 通用路径：逐像素降级采样 + 格式转换
+        for 0 : bufH - 1 to dy {
+            int srcY = _int(_float(dy) / downgradeScale)
+            if srcY >= origH { srcY = origH - 1 }
+            int srcRow = srcY * surfPitch
+            int dstRow = dy * bufPitch
+
+            for 0 : bufW - 1 to dx {
+                int srcX = _int(_float(dx) / downgradeScale)
+                if srcX >= origW { srcX = origW - 1 }
+                int si = srcRow + srcX * bpp
+                int di = dstRow + dx * 4
+
+                int r; int g; int b; int a = 255
+                if bpp == 4 {
+                    if surfFormat == 376840196 {
+                        // RGB888: 小端 [B, G, R, X]
+                        b = ffi.read_byte(surfPixels, si)
+                        g = ffi.read_byte(surfPixels, si + 1)
+                        r = ffi.read_byte(surfPixels, si + 2)
+                    } else if surfFormat == 372645892 {
+                        // ARGB8888: 小端 [B, G, R, A]
+                        b = ffi.read_byte(surfPixels, si)
+                        g = ffi.read_byte(surfPixels, si + 1)
+                        r = ffi.read_byte(surfPixels, si + 2)
+                        a = ffi.read_byte(surfPixels, si + 3)
+                    } else {
+                        // RGBA8888: 小端 [A, B, G, R]
+                        a = ffi.read_byte(surfPixels, si)
+                        b = ffi.read_byte(surfPixels, si + 1)
+                        g = ffi.read_byte(surfPixels, si + 2)
+                        r = ffi.read_byte(surfPixels, si + 3)
+                    }
+                } else {
+                    // 24bit RGB: [R, G, B]
+                    r = ffi.read_byte(surfPixels, si)
+                    g = ffi.read_byte(surfPixels, si + 1)
+                    b = ffi.read_byte(surfPixels, si + 2)
+                }
+                ffi.write_int(srcPix, di, (r << 24) | (g << 16) | (b << 8) | a)
+            }
+        }
+    }
+
+    // 初始 dstPix = srcPix
+    ffi.memcpy(dstPix, srcPix, pixSize)
+
+    // 释放 SDL Surface（像素已拷贝出来）
+    SDL3.destroySurface(surface)
+
+    // ---- 创建窗口 ----
+    int winW = 900; int winH = 650
+    // 计算显示缩放：处理缓冲 → 窗口（适配 + 居中）
+    float scaleX = _float(winW) / _float(bufW)
+    float scaleY = _float(winH) / _float(bufH)
+    dispScale = if scaleX < scaleY then scaleX else scaleY
+    dispImgW = _float(bufW) * dispScale
+    dispImgH = _float(bufH) * dispScale
+    dispX = (_float(winW) - dispImgW) * 0.5
+    dispY = (_float(winH) - dispImgH) * 0.5
+
+    Window win = SDL3.createWindow({
+        title: "图片水波纹 Ripple Image 60FPS - 点击产生扭曲",
+        w: winW, h: winH,
+        flags: WindowFlag.RESIZABLE
+    })
+    if not win.ok { ffi.free(srcPix); ffi.free(dstPix); return }
+
+    Renderer ren = SDL3.createRenderer(win.handle)
+    if not ren.ok { ffi.free(srcPix); ffi.free(dstPix); win.destroy(); return }
+    // 性能对比基准模式：关闭 VSync 跑满上限（与 ripple_image.py 一致）
+    // ren.setVSync(1)
+    ren.setVSync(0)
+
+    // 流式纹理（全程复用，尺寸=处理缓冲尺寸，GPU 放大显示）
+    Ptr[u8] pixelTex = ren.createTexture(SDL3.PIXELFORMAT_RGBA8888, 1, bufW, bufH)
+    if pixelTex == null {
+        print("纹理创建失败")
+        ffi.free(srcPix); ffi.free(dstPix); ren.destroy(); win.destroy(); return
+    }
+    Font font = SDL3.acquireFontAuto(16.0)
+
+    Event ev = SDL3.createEvent()
+    bool running = true
+    int lastAuto = 0
+    int fpsCount = 0; int curFps = 0; int lastFpsTime = 0
+
+    // ===== 性能统计 =====
+    int testDuration = 15000  // 测试时长 15 秒
+    int perfStart = SDL3.getTicks()
+    int totalFrames = 0
+    int minFrameMs = 9999
+    int maxFrameMs = 0
+    int totalMs = 0
+
+    // 初始产生几个波纹
+    addRipple(_float(bufW) * 0.3, _float(bufH) * 0.4)
+    addRipple(_float(bufW) * 0.7, _float(bufH) * 0.6)
+
+    while running {
+        int t0 = SDL3.getTicks()
+
+        // ===== 超过测试时长自动退出 =====
+        if t0 - perfStart >= testDuration {
+            running = false
+        }
+
+        // ---- 事件处理 ----
+        while ev.poll() {
+            if ev.isQuit() or ev.isWindowClose() { running = false }
+            if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { running = false }
+            if ev.isMouseButtonDown() and ev.mouseButton() == 1 {
+                var[float, float](mx, my) = ev.mousePos()
+                var[float, float](bx, by) = screenToBuf(mx, my)
+                if bx >= 0.0 and bx < _float(bufW) and by >= 0.0 and by < _float(bufH) {
+                    addRipple(bx, by)
+                }
+            }
+        }
+
+        // ---- 自动产生波纹（每 2.5 秒随机位置）----
+        if t0 - lastAuto > 2500 {
+            addRipple(
+                rands.floats(20.0, _float(bufW) - 20.0),
+                rands.floats(20.0, _float(bufH) - 20.0)
+            )
+            lastAuto = t0
+        }
+
+        // ---- 更新波纹（倒序删除消亡的波纹）----
+        int rcount = ripples.len()
+        for rcount - 1 : 0 : -1 to i {
+            Ripple rp = ripples[i]
+            rp.radius = rp.radius + rp.speed
+            rp.life = 1.0 - rp.radius / rp.maxRadius
+            if rp.life <= 0.0 {
+                ripples.remove(i)
+            }
+        }
+
+        // ---- 渲染扭曲图像 ----
+        renderRipple()
+
+        // ---- 绘制 ----
+        ren.setColor(#0A0F1EFF)
+        ren.clear()
+
+        // 整帧像素缓冲一次性上传纹理并绘制（GPU 放大到窗口尺寸）
+        ren.updateTexture(pixelTex, null, dstPix, bufPitch)
+        ren.drawTextureAt(pixelTex, dispX, dispY, dispImgW, dispImgH)
+
+        // 波纹中心标记
+        ren.setBlendMode(BlendMode.BLEND)
+        for ripples.len() to i {
+            Ripple rp = ripples[i]
+            float sx = rp.x * dispScale + dispX
+            float sy = rp.y * dispScale + dispY
+            int a = _int(rp.life * 100.0)
+            if a > 0 {
+                ren.setColor(SDL3.packColor(100, 200, 255, a))
+                ren.drawCircle(sx, sy, rp.radius * dispScale)
+            }
+        }
+        ren.setBlendMode(BlendMode.NONE)
+
+        // ---- 提示文字 ----
+        ren.drawText(font, "图片水波纹 60FPS版  |  点击产生扭曲  |  ESC 退出  |  " + ripples.len() + "/" + MAX_RIPPLES + " 波纹  " + curFps + " FPS", 16.0, 12.0, #8090B0FF)
+
+        ren.present()
+
+        // ---- 帧率控制 + FPS 统计 ----
+        fpsCount = fpsCount + 1
+        if t0 - lastFpsTime >= 1000 {
+            curFps = fpsCount
+            fpsCount = 0
+            lastFpsTime = t0
+        }
+
+        int elapsed = SDL3.getTicks() - t0
+        totalMs = totalMs + elapsed
+        if elapsed < minFrameMs { minFrameMs = elapsed }
+        if elapsed > maxFrameMs { maxFrameMs = elapsed }
+        // 基准模式：不延迟，跑满上限（与 ripple_image.py 一致）
+        // if elapsed < 16 { SDL3.delay(16 - elapsed) }
+        totalFrames = totalFrames + 1
+    }
+
+    // ===== 性能报告 =====
+    int actualDuration = SDL3.getTicks() - perfStart
+    float avgFps = _float(totalFrames) * 1000.0 / _float(actualDuration)
+    float avgFrameMs = _float(totalMs) / _float(totalFrames)
+    print("\n======================================")
+    print("  Leno 性能报告")
+    print("======================================")
+    print("运行时长: " + actualDuration + " ms")
+    print("总帧数: " + totalFrames)
+    print("平均 FPS: " + avgFps)
+    print("平均每帧: " + avgFrameMs + " ms")
+    print("最低帧耗时: " + minFrameMs + " ms")
+    print("最高帧耗时: " + maxFrameMs + " ms")
+    print("分辨率: " + bufW + "x" + bufH + " (原图 " + origW + "x" + origH + ")")
+    print("波纹上限: " + MAX_RIPPLES + "  带宽: " + BAND_WIDTH)
+    print("======================================")
+
+    SDL3.releaseFont(font)
+    SDL3.destroyTexture(pixelTex)
+    ffi.free(srcPix)
+    ffi.free(dstPix)
+    ren.destroy()
+    win.destroy()
+    print("退出成功")
+}

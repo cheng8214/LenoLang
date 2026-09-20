@@ -1,0 +1,22 @@
+// 中间层模块 - 包装底层 clib
+import "lib_base.leno" as base
+use base.core_lib
+use base.extra_lib
+
+export func wrapAbs(int x): int {
+    core_lib c = base.loadCore()
+    return c.abs(x) as int
+}
+
+// 返回 clib（跨模块类型推断关键测试）
+export func getCore(): core_lib {
+    return base.loadCore()
+}
+
+export func callWith(core_lib lib, int x): int {
+    return lib.abs(x) as int
+}
+
+export func getExtra(): extra_lib {
+    return base.loadExtra()
+}

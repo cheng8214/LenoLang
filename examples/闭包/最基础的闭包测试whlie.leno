@@ -1,0 +1,15 @@
+// 最基础的闭包测试
+main()
+{
+    var x = 10
+
+    while x < 15 {
+        x = x + 1
+        var y = x * 2
+        func getY() {
+            return y
+        }
+
+        print(getY())
+    }
+}

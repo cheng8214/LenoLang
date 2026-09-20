@@ -1,0 +1,48 @@
+// 自增自减运算符测试
+
+main()
+{
+    // 测试1: 后置 ++
+    var a = 0
+    a++
+    assert_eq(a, 1)
+
+    // 测试2: 后置 ++ 返回值（先返回旧值）
+    var b = 10
+    var result = b++
+    assert_eq(result, 10)  // 返回旧值
+    assert_eq(b, 11)       // b 已增加
+
+    // 测试3: 前置 ++
+    var c = 5
+    var result2 = ++c
+    assert_eq(result2, 6)  // 返回新值
+    assert_eq(c, 6)        // c 已增加
+
+    // 测试4: 后置 --
+    var d = 10
+    var result3 = d--
+    assert_eq(result3, 10) // 返回旧值
+    assert_eq(d, 9)        // d 已减少
+
+    // 测试5: 前置 --
+    var e = 5
+    var result4 = --e
+    assert_eq(result4, 4)  // 返回新值
+    assert_eq(e, 4)        // e 已减少
+
+    // 测试6: 多次自增
+    var f = 0
+    f++
+    f++
+    f++
+    assert_eq(f, 3)
+
+    // 测试7: 自增自减混合
+    var g = 10
+    g++
+    g--
+    assert_eq(g, 10)
+
+    print("test_inc_dec passed")
+}

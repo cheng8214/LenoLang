@@ -1,0 +1,10 @@
+// 运行时错误模块
+// 用于测试导入运行时错误模块时的错误处理
+
+export var before_error = "initialized"
+
+// 模块级代码会在导入时执行
+// 这里故意制造运行时错误
+export var result = 10 / 0  // 除以零错误
+
+export var after_error = "never reached"

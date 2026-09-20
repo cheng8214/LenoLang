@@ -1,0 +1,6 @@
+# 示例冒烟门禁 —— 编译 **+ 运行** 的清单
+# 只放"能干净跑"的：不联网、不写仓库目录（落盘一律走 `_tmpdir()`）、不留垃圾。
+# 见 assert/examples_smoke.list 的说明与 docs/待办_易用性痛点（TraeSign 移植实录）.md 的 P7。
+examples/jsons/复杂json解析.leno
+examples/jsons/JSON 模块功能测试 .leno
+examples/jsons/JSON 中文支持测试.leno

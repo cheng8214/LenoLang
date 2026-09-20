@@ -1,0 +1,163 @@
+// patch_files.leno — 使用内置 files 模块静态修改 cache_cleaner.exe 标题
+//
+// 测试 Leno 内置 files 模块的二进制文件 I/O 能力:
+//   - files.open(path, "rb") / "r+b" 二进制读写
+//   - f.read(n) 在 "rb" 模式下跳过 UTF-8 处理, 保留原始字节
+//   - f.write(string) 用 str->len 写入, null 字节安全
+//   - f.seek(pos, "set") / f.len() / f.close()
+//
+// 搜索方案: str.byte(i+4) 过滤 + byte_slice + == 完整比较
+//   (strings.find() 内部用 strstr, 遇 \x00 会截断, 不适合二进制搜索)
+//   (pattern 首字节 0x00 在 PE 中太常见, 用 byte[4]=0x6C 做过滤)
+//
+// 用法: leno.exe patch_files.leno
+
+import files
+import strings
+
+// 在二进制字符串中搜索 pattern 的所有出现位置
+// 使用 byte(pos+4) 做过滤 (避开 0x00 首字节), byte_slice + == 完整比较
+func findPattern(string content, string pattern, int contentLen, int pLen): Array[int] {
+    Array[int] results = []
+    if pLen == 0 or contentLen < pLen { return results }
+    int maxOff = contentLen - pLen
+    // 用 pattern 的第 5 个字节 (index 4) 做快速过滤
+    // Leno pattern byte[4] = 0x6C ('l'), 比 0x00 稀有得多
+    int filterOff = 4
+    if pLen <= 4 { filterOff = 0 }
+    int filterByte = pattern.byte(filterOff)
+    int pos = 0
+    while pos <= maxOff {
+        if content.byte(pos + filterOff) == filterByte {
+            // 过滤命中, 用 byte_slice 取出完整 pLen 字节比较
+            string slice = content.byte_slice(pos, pos + pLen)
+            if slice == pattern {
+                results.add(pos)
+                pos = pos + pLen
+            } else {
+                pos = pos + 1
+            }
+        } else {
+            pos = pos + 1
+        }
+    }
+    return results
+}
+
+main() {
+    print("========================================")
+    print("  Leno 静态 Patch (files 模块版)")
+    print("  目标: cache_cleaner.exe")
+    print("========================================")
+    print("")
+
+    string exePath = "D:/cs/cache_cleaner.exe"
+    int pLen = 23
+
+    // 原始标题 "Leno 缓存清理工具" XOR(LENO=4C454E4F) 编码 (23 bytes)
+    // byte[0]=0x00 (太常见), byte[4]=0x6C (适合做过滤)
+    string oldPattern = strings.char(
+        0x00, 0x20, 0x20, 0x20, 0x6C, 0xA2, 0xF2, 0xDC,
+        0xA9, 0xE8, 0xD6, 0xA9, 0xF4, 0xC0, 0xA9, 0xDF,
+        0xCA, 0xA0, 0xF9, 0xEA, 0xA9, 0xC0, 0xF9
+    )
+
+    // 新标题 "DuMate 破解版-Crack!" XOR(LENO) 编码 (23 bytes)
+    string newPattern = strings.char(
+        0x08, 0x30, 0x03, 0x2E, 0x38, 0x20, 0x6E, 0xA8,
+        0xEC, 0xF1, 0xA6, 0xE8, 0xEF, 0xA2, 0xC7, 0xC7,
+        0x61, 0x06, 0x3C, 0x2E, 0x2F, 0x2E, 0x6F
+    )
+
+    print("  旧标题: Leno 缓存清理工具")
+    print("  新标题: DuMate 破解版-Crack!")
+    print("  Pattern 长度: " + pLen + " bytes")
+    print("  过滤字节: pattern.byte(4) = 0x6C")
+    print("")
+
+    // ---- 1. 检查文件 ----
+    print("[1] 检查文件: " + exePath)
+    if not files.exists(exePath) {
+        print("  x 文件不存在!")
+        return
+    }
+    print("  v 文件存在")
+    print("")
+
+    // ---- 2. 读取文件 ----
+    print("[2] 读取文件内容...")
+    File rf = files.open(exePath, "rb")
+    int fileSize = rf.len()
+    print("  文件大小: " + fileSize + " bytes")
+
+    // 读取整个文件到内存 (二进制模式, 保留原始字节)
+    string content = rf.read(fileSize)
+    rf.close()
+    print("  读取 " + fileSize + " bytes")
+
+    // 调试: 检查 content 在已知偏移处的字节
+    print("  调试: content.byte(0) = " + content.byte(0))
+    print("  调试: content.byte(0xf9293) = " + content.byte(0xf9293))
+    print("  调试: content.byte(0xfbb9d) = " + content.byte(0xfbb9d))
+    print("  调试: oldPattern.byte(0) = " + oldPattern.byte(0))
+    print("  调试: oldPattern.byte(4) = " + oldPattern.byte(4))
+    print("")
+
+    // ---- 3. 搜索旧标题 ----
+    print("[3] 搜索 XOR 编码的旧标题...")
+    Array[int] offsets = findPattern(content, oldPattern, fileSize, pLen)
+    print("  找到 " + offsets.len() + " 处匹配")
+
+    if offsets.len() == 0 {
+        print("  x 未找到旧标题! 文件可能已被修改")
+        return
+    }
+    for offsets to off {
+        print("    偏移: " + off)
+    }
+    print("")
+
+    // ---- 4. 写入新标题 ----
+    print("[4] 写入新标题到文件...")
+    File wf = files.open(exePath, "r+b")
+    int patched = 0
+    for offsets to off {
+        wf.seek(off, "set")
+        int written = wf.write(newPattern)
+        if written == 23 {
+            print("  v 偏移 " + off + " 写入成功 (" + written + " bytes)")
+            patched = patched + 1
+        } else {
+            print("  x 偏移 " + off + " 写入失败 (written=" + written + ")")
+        }
+    }
+    wf.close()
+    print("  共修补 " + patched + " 处")
+    print("")
+
+    // ---- 5. 验证 ----
+    print("[5] 验证 patch 结果...")
+    File vf = files.open(exePath, "rb")
+    string verify = vf.read(fileSize)
+    vf.close()
+
+    Array[int] oldLeft = findPattern(verify, oldPattern, fileSize, pLen)
+    Array[int] newFound = findPattern(verify, newPattern, fileSize, pLen)
+    print("  旧标题 pattern 残留: " + oldLeft.len() + " 处")
+    print("  新标题 pattern 出现: " + newFound.len() + " 处")
+
+    if oldLeft.len() == 0 and newFound.len() == offsets.len() {
+        print("  v 验证通过!")
+    } else {
+        print("  x 验证失败!")
+    }
+    print("")
+
+    // ---- 6. 完成 ----
+    print("========================================")
+    print("  静态 Patch 完成! (纯 files 模块)")
+    print("  旧标题: Leno 缓存清理工具")
+    print("  新标题: DuMate 破解版-Crack!")
+    print("  修补处数: " + patched)
+    print("========================================")
+}

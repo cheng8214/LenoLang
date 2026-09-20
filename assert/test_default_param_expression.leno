@@ -1,0 +1,84 @@
+// 默认参数表达式测试 — 防止回归
+// 验证默认参数支持全局变量引用（enum 常量）和常量表达式
+// 同时覆盖全局函数和局部函数两种场景
+
+enum Flags {
+    ALL  = 0xFF    // 255
+    NONE = 0x00    // 0
+    HIGH = 0x80    // 128
+}
+
+int GLOBAL_MAX = 100
+
+// === 全局函数场景 ===
+func set_flags(int x, int flags = Flags.ALL):int {
+    return x + flags
+}
+
+func calc(int x, int y = 10 + 20):int {
+    return x + y
+}
+
+func limit(int x, int max_val = GLOBAL_MAX):int {
+    return x + max_val
+}
+
+func multi(int a, int b = Flags.ALL, int c = 5 * 2):int {
+    return a + b + c
+}
+
+func simple(int x, int y = 42):int {
+    return x + y
+}
+
+func greet(string name, string greeting = "Hello"):string {
+    return greeting + ", " + name
+}
+
+main() {
+    // === 全局函数测试 ===
+    assert_eq(set_flags(1), 256)
+    assert_eq(set_flags(1, Flags.NONE), 1)
+    assert_eq(set_flags(1, Flags.HIGH), 129)
+
+    assert_eq(calc(1), 31)
+    assert_eq(calc(1, 100), 101)
+
+    assert_eq(limit(1), 101)
+    assert_eq(limit(1, 50), 51)
+
+    assert_eq(multi(1), 266)
+    assert_eq(multi(1, 2), 13)
+    assert_eq(multi(1, 2, 3), 6)
+
+    assert_eq(simple(1), 43)
+    assert_eq(simple(1, 2), 3)
+
+    assert_eq(greet("World"), "Hello, World")
+    assert_eq(greet("World", "Hi"), "Hi, World")
+
+    // === 局部函数场景（在 main 内部定义） ===
+    func local_set_flags(int x, int flags = Flags.ALL):int {
+        return x + flags
+    }
+    assert_eq(local_set_flags(1), 256)
+    assert_eq(local_set_flags(1, Flags.NONE), 1)
+
+    func local_calc(int x, int y = 10 + 20):int {
+        return x + y
+    }
+    assert_eq(local_calc(1), 31)
+
+    func local_limit(int x, int max_val = GLOBAL_MAX):int {
+        return x + max_val
+    }
+    assert_eq(local_limit(1), 101)
+
+    func local_multi(int a, int b = Flags.ALL, int c = 5 * 2):int {
+        return a + b + c
+    }
+    assert_eq(local_multi(1), 266)
+    assert_eq(local_multi(1, 2, 3), 6)
+
+    print("test_default_param_expression passed")
+}

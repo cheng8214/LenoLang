@@ -1,0 +1,105 @@
+// 示例冒烟门禁 —— 防"示例腐化"（易用性痛点 P7 的根治手段）
+//
+// 为什么需要：`examples/jsons/` 三个示例曾**全部编译不过**（47 / 87 / 87 个「不能在 any 类型上
+//   直接访问字段 / 进行索引访问」）却长期没人发现 ✗ —— 因为它们不在任何门禁里（套件只自动发现
+//   `assert/test_*.leno`，示例只被个别用例按需 import）。
+//
+// 做法：读两份清单，对每个示例起一个编译器子进程**编译**（`-c`）；`run` 清单里的还要求**真跑**
+//   且退出码为 0（带 60 s 超时，见 P6）：
+//     · `assert/examples_smoke.list`      —— 只编译
+//     · `assert/examples_smoke_run.list`  —— 编译 + 运行
+//   ⚠ 扩清单 = 承诺"它以后不许坏" ⇒ 只放**本来就绿**的；发现坏的先修、再进清单。
+//
+// 判据：① 两份清单都非空且文件都在；② 每个示例编译 exit=0；③ run 清单里的运行 exit=0；
+//   ④ 汇总失败数为 0（失败的会打印示例路径 + 首个 error 行，便于直接定位）。
+
+import files
+import strings
+
+// 取输出里第一行含 "error" 的（失败时便于直接看到原因）
+func first_error_line(string out): string {
+    var lines = strings.split(out, "\n")
+    for lines to ln {
+        if strings.has(ln, "error") {
+            return strings.trim(ln)
+        }
+    }
+    return ""
+}
+
+// 跑一份清单；返回 [检查数, 失败数]
+func check_list(string exe, string list_path, int must_run): Array[int] {
+    var out = [0, 0]
+    if not files.exists(list_path) {
+        return out
+    }
+
+    var raw = _str(files.read(list_path))
+    var lines = strings.split(raw, "\n")
+    for lines to raw_line {
+        var line = strings.trim(raw_line)
+        if line == "" { continue }
+        if strings.starts_with(line, "#") { continue }
+
+        assert_true(files.exists(line), "冒烟清单里的示例不存在: " + line)
+        out[0] = out[0] + 1
+
+        // ① 必须能**编译**（示例腐化最典型的形态就是这里先坏）
+        var r = _exec(exe + " -c \"" + line + "\"", 60000)
+        var code = 0
+        if r == null {
+            code = -1
+        } else {
+            code = _int(r[1])
+        }
+        if code != 0 {
+            out[1] = out[1] + 1
+            print("  [FAIL] " + line + " 编译失败 exit=" + code)
+            if r != null {
+                var e = first_error_line(_str(r[0]))
+                if e != "" { print("         " + e) }
+            }
+            continue
+        }
+
+        // ② run 清单：还要**真跑**一遍
+        if must_run == 1 {
+            var rr = _exec(exe + " \"" + line + "\"", 60000)
+            var code2 = 0
+            if rr == null {
+                code2 = -1
+            } else {
+                code2 = _int(rr[1])
+            }
+            if code2 != 0 {
+                out[1] = out[1] + 1
+                print("  [FAIL] " + line + " 运行失败 exit=" + code2)
+                if rr != null {
+                    var e2 = first_error_line(_str(rr[0]))
+                    if e2 != "" { print("         " + e2) }
+                }
+                continue
+            }
+        }
+
+        print("  [PASS] " + line)
+    }
+    return out
+}
+
+main() {
+    var exe = _executable()
+    print("示例冒烟门禁（编译" + " + 运行）")
+
+    var compile_only = check_list(exe, "assert/examples_smoke.list", 0)
+    var run_too = check_list(exe, "assert/examples_smoke_run.list", 1)
+
+    var checked = compile_only[0] + run_too[0]
+    var failed = compile_only[1] + run_too[1]
+
+    assert_true(checked > 0, "冒烟清单是空的（清单文件丢了？）")
+    assert_eq(failed, 0,
+        "示例冒烟门禁：失败 " + failed + " 个（共检查 " + checked + " 个）—— 见上面 [FAIL] 行")
+
+    print("test_examples_smoke passed（检查 " + checked + " 个示例）")
+}

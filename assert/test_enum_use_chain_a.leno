@@ -1,0 +1,12 @@
+// 链式 use 导入 enum 测试顶层
+// Bug: use 链式导入不传递（A ← B ← C）
+import "test_enum_use_chain_b.leno" as b
+use b.Status
+
+main() {
+    assert(Status.OK == 200)
+    assert(Status.NOT_FOUND == 404)
+    assert(Status.ERROR == 500)
+
+    print("enum use chain: all tests passed")
+}

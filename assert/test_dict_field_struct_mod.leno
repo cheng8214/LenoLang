@@ -1,0 +1,6 @@
+// 测试模块：含各种类型字段的 export struct
+export struct A_Int  { int  val = 0; func ok(): int { return val } }
+export struct B_Dict { Dict val = {}; func ok(): int { return 1 } }
+export struct C_Array { Array[int] val = []; func ok(): int { return 2 } }
+export struct D_DictArr { Dict val = {}; Array[int] nums = []; func hello(): string { return "hi" } }
+export struct E_Multi { Dict d = {}; int n = 0; string s = ""; func combo(): int { return n + 1 } }

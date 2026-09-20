@@ -1,0 +1,80 @@
+main()
+{
+    print("=== 测试 INC/DEC 操作码 ===")
+    print("")
+    
+    // 1. 基本自增
+    print("1. 基本自增 ++:")
+    var a = 5
+    print($"   a = {a}")
+    a++
+    print($"   a++ = {a}")
+    
+    // 2. 基本自减
+    print("")
+    print("2. 基本自减 --:")
+    var b = 10
+    print($"   b = {b}")
+    b--
+    print($"   b-- = {b}")
+    
+    // 3. 前缀自增
+    print("")
+    print("3. 前缀自增 ++var:")
+    var c = 3
+    print($"   c = {c}")
+    var d = ++c
+    print($"   d = ++c = {d}, c = {c}")
+    
+    // 4. 前缀自减
+    print("")
+    print("4. 前缀自减 --var:")
+    var e = 8
+    print($"   e = {e}")
+    var f = --e
+    print($"   f = --e = {f}, e = {e}")
+    
+    // 5. 后缀 vs 前缀区别
+    print("")
+    print("5. 后缀 vs 前缀区别:")
+    var g = 5
+    var h = g++  // 后缀：先赋值再自增
+    print($"   g = 5, h = g++ = {h}, g 变为 {g}")
+    
+    var i = 5
+    var j = ++i  // 前缀：先自增再赋值
+    print($"   i = 5, j = ++i = {j}, i 变为 {i}")
+    
+    // 6. 浮点数自增
+    print("")
+    print("6. 浮点数自增:")
+    var k = 3.5
+    k++
+    print($"   3.5++ = {k}")
+    
+    // 7. 负数自增
+    print("")
+    print("7. 负数自增:")
+    var l = -5
+    l++
+    print($"   -5++ = {l}")
+    
+    // 8. 大数自增（溢出测试）
+    print("")
+    print("8. 大数自增:")
+    var m = 2147483647  // INT32_MAX
+    m++
+    print($"   INT32_MAX++ = {m}")
+    
+    // 9. 循环中的自增
+    print("")
+    print("9. 循环中的自增:")
+    var n = 0
+    for 5 {
+        n++
+    }
+    print($"   循环5次 n++: n = {n}")
+    
+    print("")
+    print("=== 所有测试通过! ===")
+}

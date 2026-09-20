@@ -1,0 +1,14 @@
+// test_null_clib.leno — 验证 clib 空接收方报错改进
+import ffi
+clib Foo {
+    i32 bar(Ptr[u8] self, i32 x)
+}
+Foo g_foo = null
+
+main() {
+    var foo = g_foo   // null 实例
+    var p = ffi.nullptr()  // 占位 Ptr[u8] 参数
+    // foo 是 null，应触发"clib 库对象为空"的明确报错，而不是崩溃
+    var r = foo.bar(p, 42)
+    print("r="); print(r)
+}

@@ -1,0 +1,127 @@
+// 字段读写的"写法矩阵" —— 回归测试（S2 族 ⑩~⑬ 的收割）
+//
+// 为什么要这张矩阵：⑩~⑬ 连着四例都是"**同一件语义因写法分叉成多条 AST 路径**、深度各不同"，
+// 而且 ⑬ 就是 ⑫ 教训的即时重演（修 struct 时漏了 cstruct）。所以把这件事的所有写法 ×
+// {struct / cstruct} × {use / 不 use} 一次钉住，免得下次又漏一个格子。
+//
+// 三条路径（对应三种写法）：
+//   `x.f = v`     → AST_ASSIGN + FIELD_ACCESS（visit_var.inc）
+//   `x.f += v`    → AST_INDEX_ASSIGN（脱糖，parser_expr.c）
+//   `x["f"] = v`  → AST_ASSIGN + AST_INDEX 目标（visit_var.inc 另一分支）
+// 错误赋值（该报错）的判据在 test_field_assign_type_check.leno（那边 8 条）；
+// 这里只放**正例**（该过得过、值要对）+ 一条"设计如此"的诊断格。
+//
+// 子进程机器复用 assert/helpers/compiler.leno（S7）。
+
+import dirs
+import files
+
+import "helpers/compiler.leno" as ce
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_field_access_matrix")
+    dirs.delete(work)
+    dirs.mkdir_p(dirs.join(work, "lib"))
+
+    files.write(dirs.join(work, "lib/api.leno"),
+        "export struct Pair {\n    int x\n    int y\n}\n\n"
+        + "export cstruct Vec {\n    i32 x\n    i32 y\n}\n\n"
+        + "export face Animal {\n    func name(): string\n}\n\n"
+        + "export struct Zoo {\n    Animal? pet\n}\n")
+
+    // ① struct：不 use（模块限定 new）—— 点写 / 复合写 / 索引写 / 点读 / 索引读 全走一遍
+    var st_no_use = dirs.join(work, "st_no_use.leno")
+    files.write(st_no_use,
+        "import \"lib/api.leno\" as a\n\n"
+        + "main() {\n"
+        + "    var pa = new a.Pair()\n"
+        + "    pa.x = 1\n"
+        + "    pa.x += 2\n"
+        + "    pa[\"y\"] = 4\n"
+        + "    print(\"X=\" + pa.x + \" Y=\" + pa[\"y\"])\n"
+        + "}\n")
+    ce.expect_ok(st_no_use, "struct·不 use：三种写法 + 两种读法", "X=3 Y=4")
+
+    // ② struct：use 类型名（既有写法，防改坏）
+    var st_use = dirs.join(work, "st_use.leno")
+    files.write(st_use,
+        "import \"lib/api.leno\" as a\nuse a.Pair\n\n"
+        + "main() {\n"
+        + "    var pa = new Pair()\n"
+        + "    pa.x = 1\n"
+        + "    pa.x += 2\n"
+        + "    pa[\"y\"] = 4\n"
+        + "    print(\"X=\" + pa.x + \" Y=\" + pa[\"y\"])\n"
+        + "}\n")
+    ce.expect_ok(st_use, "struct·use：三种写法 + 两种读法", "X=3 Y=4")
+
+    // ③ cstruct：不 use（模块限定 malloc）
+    var cs_no_use = dirs.join(work, "cs_no_use.leno")
+    files.write(cs_no_use,
+        "import \"lib/api.leno\" as a\n\n"
+        + "main() {\n"
+        + "    var v = a.Vec.malloc()\n"
+        + "    v.x = 1\n"
+        + "    v.x += 2\n"
+        + "    v[\"y\"] = 4\n"
+        + "    print(\"X=\" + v.x + \" Y=\" + v[\"y\"])\n"
+        + "    v.free()\n"
+        + "}\n")
+    ce.expect_ok(cs_no_use, "cstruct·不 use：三种写法 + 两种读法", "X=3 Y=4")
+
+    // ④ cstruct：use 类型名
+    var cs_use = dirs.join(work, "cs_use.leno")
+    files.write(cs_use,
+        "import \"lib/api.leno\" as a\nuse a.Vec\n\n"
+        + "main() {\n"
+        + "    var v = Vec.malloc()\n"
+        + "    v.x = 1\n"
+        + "    v.x += 2\n"
+        + "    v[\"y\"] = 4\n"
+        + "    print(\"X=\" + v.x + \" Y=\" + v[\"y\"])\n"
+        + "    v.free()\n"
+        + "}\n")
+    ce.expect_ok(cs_use, "cstruct·use：三种写法 + 两种读法", "X=3 Y=4")
+
+    // ⑤ face 类型字段（跨模块）+ 安全访问（此前被 ⑧/审计修过的那条链）
+    var face_field = dirs.join(work, "face_field.leno")
+    files.write(face_field,
+        "import \"lib/api.leno\" as a\n\n"
+        + "main() {\n"
+        + "    var z = new a.Zoo()\n"
+        + "    if z.pet == null {\n"
+        + "        print(\"PET=NONE\")\n"
+        + "    }\n"
+        + "}\n")
+    ce.expect_ok(face_field, "face 类型字段跨模块 + null 判定", "PET=NONE")
+
+    // ⑥ "设计如此"的诊断格：字段自增不支持（**两种 kind 都一致报**，故不是不对称）
+    var st_inc = dirs.join(work, "st_inc.leno")
+    files.write(st_inc,
+        "import \"lib/api.leno\" as a\n\n"
+        + "main() {\n"
+        + "    var pa = new a.Pair()\n"
+        + "    pa.x = 1\n"
+        + "    pa.x++\n"
+        + "    print(\"X=\" + pa.x)\n"
+        + "}\n")
+    ce.expect_error(st_inc, "struct 字段自增：报「只能用于变量」（设计如此）",
+        "只能用于变量", 6)
+
+    var cs_inc = dirs.join(work, "cs_inc.leno")
+    files.write(cs_inc,
+        "import \"lib/api.leno\" as a\n\n"
+        + "main() {\n"
+        + "    var v = a.Vec.malloc()\n"
+        + "    v.x = 1\n"
+        + "    v.x++\n"
+        + "    print(\"X=\" + v.x)\n"
+        + "    v.free()\n"
+        + "}\n")
+    ce.expect_error(cs_inc, "cstruct 字段自增：同样报（两 kind 一致）",
+        "只能用于变量", 6)
+
+    dirs.delete(work)
+
+    print("test_field_access_matrix passed")
+}

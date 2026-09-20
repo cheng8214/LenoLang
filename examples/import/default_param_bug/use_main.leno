@@ -1,0 +1,17 @@
+// 主文件 - 测试 use 导入函数的默认参数
+
+import "use_mod.leno" as um
+
+main() {
+    // 模块名调用方式
+    print("=== 模块名调用 ===")
+    print(um.greet("World"))           // Hello World
+    print(um.greet("World", "Hi"))    // Hi World
+    print(um.calc(1))                  // 16
+    print(um.calc(1, 2))              // 8
+    print(um.calc(1, 2, 3))           // 6
+    print(um.with_null(10))           // 10
+    print(um.with_null(10, 3))        // 7
+
+    print("ALL PASSED")
+}

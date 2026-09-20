@@ -1,0 +1,121 @@
+// 值比较统一测试 — 覆盖 value_shallow_equal 和 value_deep_equal
+// 相关 Issue: 统一与优化 values_equal, dict_key_equals 与 value_deep_equal 的比较逻辑
+
+main()
+{
+    // ==================== 基本类型 ====================
+    assert_eq(1, 1)
+    assert_eq(3.14, 3.14)
+    assert_eq(true, true)
+    assert_eq(false, false)
+    assert_eq(null, null)
+    assert_eq("hello", "hello")
+    assert_ne(1, 2)
+    assert_ne(true, false)
+    assert_ne("hello", "world")
+    assert_ne(1, null)
+
+    // ==================== 跨类型 int <-> float ====================
+    // 修复了 values_equal 原先不支持跨类型比较的问题
+    assert_eq(1, 1.0)
+    assert_eq(0, 0.0)
+    assert_eq(42, 42.0)
+    assert_ne(1, 1.5)
+    assert_ne(3, 3.14)
+
+    // ==================== BigInt 比较 ====================
+    var big1 = 12345678901234567890
+    var big2 = 12345678901234567890
+    assert_eq(big1, big2)
+
+    // int <-> BigInt 跨类型比较（无临时对象分配）
+    assert_eq(0, 0 * 1000000000000)
+    assert_eq(42, 42 * 1000000000000 / 1000000000000)
+
+    // 负 BigInt
+    var neg_big = -12345678901234567890
+    assert_eq(neg_big, -12345678901234567890)
+    assert_ne(big1, neg_big)
+
+    // ==================== 嵌套 Array ====================
+    assert_eq([1, 2, 3], [1, 2, 3])
+    assert_eq([1, [2, 3], 4], [1, [2, 3], 4])
+    assert_ne([1, 2, 3], [1, 2, 4])
+    assert_ne([1, 2, 3], [1, 2])
+    assert_eq([], [])
+    assert_ne([1], [])
+
+    // Array 包含混合类型
+    assert_eq([1, "two", true, null], [1, "two", true, null])
+    assert_ne([1, "two", true], [1, "two", false])
+
+    // Array 包含 BigInt
+    assert_eq([big1, 1], [12345678901234567890, 1])
+    assert_ne([big1], [neg_big])
+
+    // 深层嵌套
+    assert_eq([[1, 2], [3, [4, 5]]], [[1, 2], [3, [4, 5]]])
+    assert_ne([[1, 2], [3, [4, 5]]], [[1, 2], [3, [4, 6]]])
+
+    // ==================== 嵌套 Dict ====================
+    assert_eq({"a": 1, "b": 2}, {"a": 1, "b": 2})
+    assert_ne({"a": 1, "b": 2}, {"a": 1, "b": 3})
+    assert_ne({"a": 1}, {"a": 1, "b": 2})
+
+    // Dict 嵌套 Array
+    assert_eq({"items": [1, 2, 3], "count": 3}, {"items": [1, 2, 3], "count": 3})
+    assert_ne({"items": [1, 2, 3], "count": 3}, {"items": [1, 2, 4], "count": 3})
+
+    // Dict 嵌套 Dict
+    assert_eq({"inner": {"x": 1, "y": 2}}, {"inner": {"x": 1, "y": 2}})
+    assert_ne({"inner": {"x": 1, "y": 2}}, {"inner": {"x": 1, "y": 3}})
+
+    // Dict 包含 BigInt 值
+    assert_eq({"big": big1}, {"big": 12345678901234567890})
+
+    // ==================== 循环引用（VisitedSet 测试） ====================
+    // 修复了原先 depth > 20 导致循环引用判断错误的问题
+
+    // 同一对象的循环引用
+    var a = []
+    a.add(a)
+    assert_eq(a, a)  // 同对象，浅比较直接返回 true
+
+    // 两个不同的循环结构，结构相同应相等
+    var b = []
+    b.add(b)
+    assert_eq(a, b)  // 不同对象，但结构相同
+
+    // 不同结构的循环引用应不相等
+    // a = [a] (1 个元素) vs 下面 f 有 2 个元素
+    var f = []
+    f.add(f)
+    f.add(f)
+    assert_ne(a, f)  // a 有 1 个元素，f 有 2 个元素
+
+    // Dict 循环引用
+    var d = {}
+    d["self"] = d
+    var e = {}
+    e["self"] = e
+    assert_eq(d, e)  // 两个自引用 dict 应相等
+
+    // ==================== 字典键查找（dict_key_equals 测试） ====================
+    // 修复了原先 dict_key_equals 不支持 BigInt 键的问题
+    var dict = {}
+    dict[42] = "int_key"
+    assert_eq(dict[42], "int_key")
+
+    var str_dict = {}
+    str_dict["hello"] = "world"
+    assert_eq(str_dict["hello"], "world")
+
+    // String 键匹配（hash + content 比较）
+    var s1 = "test_key"
+    var s2 = "test_key"
+    var key_dict = {}
+    key_dict[s1] = 100
+    assert_eq(key_dict[s2], 100)  // 不同字符串对象，内容相同
+
+    print("test_value_equal passed")
+}

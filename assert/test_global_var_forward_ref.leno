@@ -1,0 +1,23 @@
+// 测试：结构体方法引用后定义的全局变量
+// 这是一个前向引用问题——struct 方法体中引用了在 struct 之后定义的全局变量
+
+struct Config {
+    string name
+    int value
+
+    func getTimeout(): int {
+        return DEFAULT_TIMEOUT
+    }
+}
+
+// 全局变量定义在 struct 之后
+int DEFAULT_TIMEOUT = 30
+
+main() {
+    var c = new Config()
+    c.name = "test"
+    c.value = 42
+    int t = c.getTimeout()
+    assert_eq(t, 30)
+    print("test_global_var_forward_ref passed")
+}

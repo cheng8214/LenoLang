@@ -1,0 +1,52 @@
+// 综合: struct/clib/face/enum/cstruct 混合
+import "mid.leno" as mid
+import "core.leno" as c
+use mid.sys_lib
+use mid.Data
+use mid.Engine
+use mid.Runable
+use mid.Wrapper
+
+main() {
+    print("=== 综合 ===")
+
+    // 1. clib
+    sys_lib lib = mid.getSys()
+    var v1 = lib.abs(-5) as int
+    print("1. clib: " + v1)
+
+    // 2. cstruct
+    var d = mid.makeData(10, 20)
+    var d2 = Data.malloc()
+    d2.id = 30; d2.value = 40
+    print("2. cstruct: " + d.id + " " + d2.id)
+    d.free(); d2.free()
+
+    // 3. struct+clib字段
+    Engine e = c.makeEngine("t")
+    sys_lib el = e.lib
+    var v3 = el.abs(-13) as int
+    print("3. struct: " + v3)
+
+    // 4. face impl
+    Runable r = mid.getRunable()
+    var v4 = r.execute()
+    print("4. face: " + v4)
+
+    // 5. enum 模块名访问
+    print("5. enum: " + c.Color.Red)
+
+    // 6. wrapper struct
+    Wrapper w = mid.wrapEngine()
+    var v6a = w.lib.abs(-19) as int
+    var v6b = w.eng.lib.abs(-23) as int
+    print("6. wrapper: " + v6a + " " + v6b)
+
+    // 7. 复用
+    sys_lib l1 = mid.getSys()
+    var v7a = l1.abs(-29) as int
+    var v7b = l1.abs(-31) as int
+    print("7. 复用: " + v7a + " " + v7b)
+
+    print("=== 通过 ===")
+}

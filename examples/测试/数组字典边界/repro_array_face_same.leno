@@ -1,0 +1,27 @@
+// 复现验证：同模块内 Array[face] 的 arr[0].method() 与 for-to 遍历
+// 对照 bug/bug_array_face_element_any.md 中“bug 1/2”
+face F {
+    func f(): int
+}
+
+struct S impl F {
+    func f(): int { return 7 }
+}
+
+main() {
+    Array[F] arr = []
+    S s = new S()
+    arr.add(s as F)            // 同模块：显式 as 存入 Array[face]
+
+    // ① 索引后直接调用 face 方法
+    int v = arr[0].f()
+    print("same arr[0].f() = " + v)
+
+    // ② for-to 遍历变量直接调用 face 方法
+    for arr to w {
+        int x = w.f()
+        print("same for-to w.f() = " + x)
+    }
+
+    print("SAME_MODULE_OK")
+}

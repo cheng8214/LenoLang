@@ -1,0 +1,113 @@
+// 测试 use 导入函数 — 覆盖跨模块多层导出等复杂场景
+// 模拟 LenoSDL3 的模块结构：top -> mid -> core
+
+import "use_func_top.leno" as top
+import "use_func_mid.leno" as mid
+import "use_func_core.leno" as core
+
+// ==================== 基础：单模块 use 导入函数 ====================
+
+// 测试1: use 导入底层模块函数
+use core.greet
+use core.add
+use core.getVersion
+use core.createPoint
+
+string s1 = greet("leno")
+assert(s1 == "core: leno", "use 导入底层模块函数 greet")
+
+int r1 = add(10, 20)
+assert(r1 == 30, "use 导入底层模块函数 add")
+
+int v1 = getVersion()
+assert(v1 == 3, "use 导入底层模块函数 getVersion")
+
+// 测试2: use 导入的函数返回 struct 类型
+var p1 = createPoint(1.5, 2.5)
+assert(p1.x == 1.5, "use 导入函数返回 struct — x")
+assert(p1.y == 2.5, "use 导入函数返回 struct — y")
+
+// ==================== 中间层：跨模块函数调用 ====================
+
+// 测试3: use 导入中间层函数（内部调底层模块）
+use mid.makeGreeting
+use mid.double
+use mid.coreVersion
+
+string s2 = makeGreeting("world")
+assert(s2 == "font: core: world", "中间层函数调用底层模块")
+
+int r2 = double(5)
+assert(r2 == 10, "中间层函数调用底层 add")
+
+int v2 = coreVersion()
+assert(v2 == 3, "中间层函数调用底层 getVersion")
+
+// ==================== 顶层：多层转发 ====================
+
+// 测试4: use 导入顶层转发函数
+use top.greet
+use top.midGreet
+use top.add
+use top.version
+
+string s3 = greet("top")
+assert(s3 == "core: top", "顶层转发底层 greet")
+
+string s4 = midGreet("top")
+assert(s4 == "font: core: top", "顶层转发中间层 makeGreeting")
+
+int r3 = add(100, 200)
+assert(r3 == 300, "顶层转发底层 add")
+
+int v3 = version()
+assert(v3 == 3, "顶层转发底层 getVersion")
+
+// ==================== 批量导入函数 ====================
+
+// 测试5: use mod.(func1, func2, func3) 批量导入
+use core.(greet, add, getVersion)
+
+string s5 = greet("batch")
+assert(s5 == "core: batch", "批量导入函数 greet")
+
+int r5 = add(1, 2)
+assert(r5 == 3, "批量导入函数 add")
+
+// ==================== 混合导入：类型 + 函数 ====================
+
+// 测试6: 同时 use 导入类型和函数
+use core.Point
+use core.createPoint
+
+var pt = new Point()
+pt.x = 10.0
+pt.y = 20.0
+assert(pt.x == 10.0, "use 导入类型 Point")
+assert(pt.y == 20.0, "use 导入类型 Point — y 字段")
+
+var pt2 = createPoint(3.0, 4.0)
+assert(pt2.x == 3.0, "use 导入函数 createPoint 返回导入类型")
+
+// ==================== 模块名调用和 use 导入并存 ====================
+
+// 测试7: use 导入后，模块名调用仍有效
+string s6 = core.greet("mod")
+assert(s6 == "core: mod", "use 导入后模块名调用仍有效")
+
+string s7 = mid.makeGreeting("mod")
+assert(s7 == "font: core: mod", "use 导入后中间层模块名调用仍有效")
+
+string s8 = top.greet("mod")
+assert(s8 == "core: mod", "use 导入后顶层模块名调用仍有效")
+
+// ==================== 同名函数不同模块（后导入覆盖） ====================
+
+// 测试8: 两个模块都有 greet 函数，后 use 的覆盖
+// core.greet 返回 "core: xxx"
+// top.greet 也返回 "core: xxx"（因为它就是转发 core.greet）
+// mid.makeGreeting 返回 "font: core: xxx"
+// 注意：如果两个 use 导入同名函数，后导入的覆盖先导入的
+// 这里 top.greet 和 core.greet 功能相同，验证不冲突即可
+
+print("use 导入函数 — 跨模块多层导出测试全部通过!")

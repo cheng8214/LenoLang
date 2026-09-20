@@ -1,0 +1,14 @@
+// test_func_access.leno — 测试函数访问 vs 直接访问 _lib
+import "core.leno" as core
+use core.test_lib
+import "renderer_func.leno" as renderer
+
+main() {
+    test_lib l = core.lib()
+    var v0 = l.abs(-5) as int
+    print("local OK: " + v0)
+
+    var r = renderer.createRenderer()
+    var v = r.doThing()
+    print("renderer: " + v)
+}

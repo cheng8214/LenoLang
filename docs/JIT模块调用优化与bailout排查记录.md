@@ -1,0 +1,734 @@
+# JIT 模块调用优化与 bailout 排查记录（2026-09-11）
+
+本文记录：`ripple_image.leno` 残留 bailout 的排查结论、JIT 模块调用（callout）的三项优化、
+度量方法、踩到的 ABI 陷阱、性能数据与遗留问题。
+
+相关文档：`docs/JIT实现与调试记录.md`（JIT 结构、寄存器约定、bailout site 编码、踩坑清单）。
+
+---
+
+## 1. 起因：ripple_image 的残留 bailout
+
+现象（未修复前）：
+
+```
+=== JIT Statistics ===
+  Compiled: 15   Executed: 3279   Bailouts: 3
+  Bailout: fn='main' loop_bc=2158 x3 — 非溢出类 @bc_off=159
+```
+
+定位步骤（诊断能力是本轮新加的，见 §3.1）：
+
+1. 统计行给出「函数名 + 循环体起始 bc_off + 触发指令的循环内偏移 + 可读原因」；
+2. 用 `leno --debug-out <file> -c <src.leno>` 导出字节码（不运行），按偏移反查源码；
+3. `loop_bc=2158` → 源码 `ripple_image.leno:331` 的 `while ev.poll()`；
+   循环体内偏移 159（绝对 2317）→ `OP_GE_FLOAT`，即 `if bx >= 0.0 ...`（第 337 行）。
+
+根因有两个，均已修复（上一个提交 `701692d4`）：
+
+| 根因 | 说明 | 修法 |
+| --- | --- | --- |
+| 倒序 for 循环 | JIT 序言一句 `test step; jle → bailout` 把 `step < 0` 的循环整段踢回解释器（示例里 `for rcount-1 : 0 : -1 to i` 每次进入都 bailout） | 序言/`OP_FOR_LOOP` 回边/`OP_FOR_PREP` 三处按 step 符号分流；`step == 0`（site -2）与 float step（site -3）改为显式 bailout |
+| 浮点比较遇 NaN | JIT 对无序（NaN）比较一律 `jp → bailout`；鼠标坐标经 `screenToBuf()` 算出 NaN（SDL 无有效鼠标位置时）即可触发 | 按 VM 的 IEEE 语义实现：`>`/`>=` 用 `JA`/`JAE`（无序天然为 0），`==`/`<`/`<=` 再 `AND 非 PF` 屏蔽无序 |
+
+---
+
+## 2. 度量方法（可复现，必须关 vsync）
+
+`ripple_image.leno` 自带 `setVSync(1)` + `delay(16-elapsed)`，帧率被钉在 ~50-60 FPS，
+**JIT 的真实差距会被完全掩盖**（实测关掉 vsync 后同一程序 26 FPS → 220+ FPS）。
+
+分阶段探针（与示例同逻辑的临时副本）：
+
+* 关 vsync、去掉限速；
+* 用 `SDL3.getTicksNS()` 分段累计：事件+波纹更新 / 波纹列表更新 / `renderRipple`（再细分 memcpy 与像素循环）/ 绘制+上传+present；
+* 统计内层循环迭代次数、写入像素数 → 得到 ns/迭代、ns/像素（跨帧稳定，不受波纹数量波动影响）。
+
+**自动随机点击**（不依赖人工操作，压住「点击分支 + 满 6 波纹」这条最重路径）：
+SDL3 的 Leno 绑定没有 `pushEvent`，但可以用 `ffi` 直接调：
+
+```leno
+import "../../lib/sdl_core.leno" as sdlcore   // 提供 lib() 句柄
+...
+ffi.memset(buf, 0, 128)
+ffi.write_int(buf, 0, 0x401)     // SDL_EVENT_MOUSE_BUTTON_DOWN
+ffi.write_int(buf, 16, 0)        // windowID
+ffi.write_byte(buf, 24, 1)       // button = LEFT
+ffi.write_byte(buf, 25, 1)       // down = true
+ffi.write_byte(buf, 26, 1)       // clicks = 1
+ffi.write_float(buf, 28, x)      // x（与 SDL_MouseMotionEvent 同偏移）
+ffi.write_float(buf, 32, y)      // y
+ffi.call_int(sdlcore.lib(), "SDL_PushEvent", buf)
+```
+
+每 120ms 推一次随机位置点击；**每 4 次改用 NaN 坐标**，专门覆盖 §1 里那个 `OP_GE_FLOAT`
+NaN 路径（修复后 16 次 NaN 点击全部被正确忽略、`Bailouts: 0`）。
+
+微基准（每项 2000 万次迭代，JIT 下 ns/次）用于定位单次调用成本。
+
+---
+
+## 3. 本轮三项优化
+
+### 3.1 JIT 统计新增 bailout 定位行
+
+`jit.h` 的 `JitCacheEntry` 增加 `last_bailout_site / last_bailout_bc_off / last_bailout_fn`，
+`jit_try_hot_loop()` 在 bailout 分支记录，`jit_print_stats()` 输出可读原因
+（`jit_bailout_reason()` 翻译 site 编码）。**无需 LENO_JIT_DEBUG** 即可定位残留 bailout。
+
+### 3.2 模块方法解析提前到编译期（消掉每次调用的字符串查表）
+
+`jit_callout_module_call()` 原来每次调用都做
+`native_find_module_method(module_name, method_name)` —— 内部是「字符串哈希 + strcmp」
+（解释器侧有 `vm.ic_module_cache` inline cache 规避，**JIT 侧没有**）。
+
+改为：codegen 期调用 `jit_resolve_module_method(chunk, module_idx, method_idx)` 解析一次，
+把 `ModuleMethodMeta*` 直接嵌进机器码，运行期走新的 `jit_callout_module_call_meta()`
+（无索引/名字检查、无查表）。解析失败仍退回原 callout，保留原有报错语义。
+模块方法表启动注册后不再变更（`native_reset_registry()` 未被调用），指针长期有效。
+
+### 3.3 `_int` / `_float` 降级为内联转换
+
+两者是语言内建转换原语（`types.c` 注册，语义 = `(int)` 截断 / 提升 double，
+编译器的类型推导也把它们当 cast）。`OP_CALL_NATIVE` 的 codegen 现在识别这两个名字并直接生成：
+
+* `_int`：int48 → 原样；裸 double → `CVTTSD2SI eax` + `movsxd`（与 C 的 `(int)` 一致，含越界/NaN 的 x86 行为）；NaN-boxed（bool/null/string/bigint/ptr）→ bailout 交回解释器
+* `_float`：int48 → `CVTSI2SD`；裸 double → 原样；NaN-boxed → bailout
+
+### 3.4 通用「数值薄调用」——**不含任何模块名/方法名特判**
+
+判据完全来自模块方法自身注册的元信息：
+
+```
+arg_count ∈ [1,3]  且  param_types[0..n-1] 全为 TYPE_FLOAT  且  return_type == TYPE_FLOAT
+```
+
+则把实参按 `raw → double` 送进 `xmm0..xmm(N-1)`，直接调用通用桥 `jit_thin_f1/2/3`；
+桥内部仍调用**模块原本的 NativeFn**，因此**数学实现只有模块里那一份**，JIT 不复制公式。
+maths 里所有 `double → double` 函数（abs/clamp/sqrt/rsqrt/pow/floor/ceil/round/sin_fast/cos_fast…）
+一次性都走这条路，**模块零改动**。
+
+> 为什么不逐个内联 `maths.abs` / `maths.clamp`（虽然更快）：
+> 那样必须按 `module_name/method_name` 在 JIT 里特判，每加一个函数就要改一次 JIT，
+> 且 JIT 里那份 SSE 实现会与 maths.c 漂移。薄调用把「谁来算」留在 C，
+> 把「怎么传参」变成一套通用代码。若日后个别函数需要极致性能（去掉调用延迟），
+> 可在同一机制上加一个可选的 `jit_thin` 直连入口，而不是散落特判。
+
+---
+
+## 4. 关键陷阱（务必记住）
+
+### 4.1 Win64 浮点参数按「位置」分配寄存器
+
+Win64 前四个参数按**位置**分配：位置 1→`RCX`/`XMM0`，位置 2→`RDX`/`XMM1`，
+位置 3→`R8`/`XMM2`，位置 4→`R9`/`XMM3`。
+即 `f(NativeFn fn, double a)` 里 `a` 在 **XMM1**（不是 XMM0）——第一版把
+「fn 放第 1 位、double 放 XMM0」，桥读到的 `a` 是垃圾值（结果全错，但不崩溃）。
+
+因此薄桥签名定为 **double 参数在前、NativeFn 最后**：
+
+```c
+double jit_thin_f1(double a, NativeFn fn);
+double jit_thin_f2(double a, double b, NativeFn fn);
+double jit_thin_f3(double a, double b, double c, NativeFn fn);
+```
+
+这样 double 参数在两个 ABI 下都落在 `xmm0..N-1`；`fn` 的寄存器按 ABI 不同：
+Win64 按位置 → 第 N+1 个位置寄存器（`RDX`/`R8`/`R9`，codegen 里 `JIT_ARG2..4`），
+SysV 按「第几个整型参数」→ 第 1 个整型寄存器（`RDI`，即 `JIT_ARG1`）。
+
+### 4.2 失败信号沿用 callout 约定
+
+桥内部若 native 抛错（`vm->has_exception`）→ 桥置 `jit_callout_failed`；
+codegen 在调用后检查该标志 → bailout → 解释器重跑该循环迭代并给出正确报错。
+薄桥参数为 NaN-boxed 非数值时，codegen 侧直接 bailout（保持 `get_number` 的宽松语义）。
+
+### 4.3 调试手段
+
+`LENO_JIT_DUMP=1` 导出 `jitdump<N>.bin`，配合
+`objdump -D -b binary -m i386:x86-64 -M intel jitdump0.bin` 反汇编，
+可直接核对接线（本次就是靠它确认 `movabs rcx, ...; call rcx` 与 xmm 装载序列）。
+
+---
+
+## 5. 性能数据
+
+环境：关 vsync、无帧限速、8 秒；探针见 §2。
+
+> **机器标注（跨机比较必读）**：本文数据产生于两台机器 —— **i5-14400F**（Raptor Lake）
+> 与 **i5-3450**（Ivy Bridge），单核性能差约 2 倍。解释器是逐指令分派，对 IPC / 主频
+> 比 JIT 代码更敏感，慢机上退化更多，因此**绝对时间不可跨机比较，只能比同机比值**
+> （`JIT / VM`）；JIT 的相对收益在慢机上反而更大。§7.1 末尾附 i5-3450 复测值。
+
+### 5.1 自动点击 + 满 6 波纹（最重路径）
+
+| 指标 | VM（`LENO_NO_JIT=1`） | JIT | 倍数 |
+| --- | --- | --- | --- |
+| 每次内层迭代 | 708.9 ns | **122.2 ns** | 5.8x |
+| 每写 1 像素 | 1181.9 ns | **282.1 ns** | 4.2x |
+| 像素循环 / 帧 | 38.4 ms | 2.4–6.6 ms | 6–16x |
+| 总 FPS | 25.3 | 132–310 | 5–12x |
+
+### 5.2 纵向对比（无点击、2 波纹的探针）
+
+| 阶段 | 优化前 JIT | 本轮后 JIT | VM |
+| --- | --- | --- | --- |
+| 像素循环 / 帧 | 3.47 ms | **0.096 ms** | 36.6 ms |
+| `renderRipple` / 帧 | 3.54 ms | **0.154 ms** | 36.7 ms |
+| 总 FPS | 220.8 | **982** | 26.3 |
+
+### 5.3 微基准（ns/次，2000 万次）
+
+| 循环体 | 优化前 | 本轮后 | 说明 |
+| --- | --- | --- | --- |
+| 纯 float `a*c+b` | 8.5 | 8.5 | JIT 原生算术（基线） |
+| `+maths.abs(x)` | ~73（注：该循环当时未被 JIT） | **20.3** | 薄调用 |
+| `+_int(x)` | 31.1 | **13.6** | 内联转换 |
+| `+ffi.read_int+write_int` | 109.6（同上未 JIT） | 37.0 | 仍是 2 次 callout |
+| `+rsqrt+clamp+sin_fast`（串行链） | — | 73.1 | 3 次薄调用，受调用延迟限制 |
+
+结论：内层循环已从「**callout 固定开销主导**」变为「**调用延迟串行链主导**」；
+帧时间构成也变了 —— 6 波纹场景里 `绘制+上传+present` 约 0.70ms（约 25%），
+继续压 JIT 收益递减。
+
+---
+
+## 6. 回归验证清单
+
+* `assert/run_tests.leno`：263 passed / 0 failed
+* `maths.*` 一致性：abs（float/int 实参）、clamp（float/int 参数）、sqrt、rsqrt、pow、
+  floor、ceil、round、sin_fast、cos_fast —— JIT 与 `LENO_NO_JIT=1` **逐位一致**
+* `ripple_image.leno`：vsync 下 ~50 FPS、`Bailouts: 0`
+* 自动点击探针（含 16 次 NaN 坐标点击）：`Bailouts: 0`
+* 正/倒序（±1/±2/±3）、嵌套 for、float 步长、NaN 比较：JIT 与解释器一致
+* 2026-09-12 在 `2e5fdebb`（i5-3450）重新构建复跑：263 passed / 0 failed；
+  `ripple_image.leno` `Bailouts: 0`、~50 FPS；`性能测试/for性能测试.leno` 与
+  `While vs For 性能对比.leno` 均 `Bailouts: 0`；通用 opcode 差分探针逐位一致（见 §7.1）
+* 2026-09-12 修掉 callout 实参反序（§7.6）/ `OP_*_FLOAT` int 提升（§8.18）/
+  浮点除零（§8.19）后复跑：`assert/run_tests.leno` **266 passed / 0 failed**
+  （含新增 `test_jit_method_args.leno`、`test_jit_float_ops.leno`，两者在未修复代码上
+  会失败已实测）；`ripple_image.leno` `Bailouts: 0`、59.7 FPS（关 JIT 41.9 FPS）；
+  `file_manager.leno` 布局恢复正常（3 次稳定）
+
+---
+
+## 7. 遗留问题 / 待办
+
+### 7.1 通用 `OP_MUL`（以及 `OP_MOD` / `OP_EQ`/`OP_NEQ`）不被 JIT 支持 —— ✅ 已修复（2026-09-12）
+
+**修复前**：`jit_scan.c` 未收录这些通用 opcode → `scan FAIL: unknown opcode N` → **整个循环**
+不被编译（不是 bailout，排查时容易看错方向）。
+
+**修复**（三处必须同步，漏一处就白改）：
+
+1. `jit_scan.c`：`opcode_size()` 的 1-byte 段补 4 个 opcode；
+   `scan_loop_body()` 与 `scan_callee_for_inline()` 的 vstack switch 都登记为「pop 2 push 1 → -1」
+2. `ops_arith.inc`：新增通用 `OP_MUL`（int 快路径 → float 慢路径 → NaN-boxed bailout）
+   与通用 `OP_MOD`（**仅 int 快路径**，其余 bailout）
+3. `ops_icmp.inc`：新增通用 `OP_EQ` / `OP_NEQ`（int 快路径 → float 慢路径 → NaN-boxed bailout）
+
+**语义对齐要点**（严格照解释器的分派顺序写）：
+
+- `OP_MUL`：int×int → `imul` + `EMIT_INT64_OVF_CHECK` + `EMIT_INT48_CHECK`（两个检查缺一不可：
+  前者捕 int64 溢出，后者捕「不溢出 int64 但超 48 位」）；任一是 float → `MULSD`；NaN-boxed → bailout
+- `OP_MOD`：解释器**没有 float 路径**（float 落到「取模操作数必须是整数」类型错误），
+  所以 JIT 只能做 int48 快路径，**绝不能照抄 OP_SUB 的 float 中间段**。另外必须自行挡除数为 0
+  ——`idiv` 除零会触发 `#DE` 硬件异常，挡下后 bailout 交解释器抛「取模除零错误」。
+  余数必然落在 int48 内（`|a%b| < |b|`），无需 INT48 检查
+- `OP_EQ`/`OP_NEQ`：int48 对 int48 → `cmp` + `JE`/`JNE`；两边非 NaN-boxed → `UCOMISD`，
+  并按 IEEE 修正无序（`==` 结果再 `AND SETNP`、`!=` 结果再 `OR SETP`）；NaN-boxed
+  （字符串按内容、数组逐元素、其它对象按指针、BigInt）一律 bailout 交解释器
+
+**实测**（临时探针，JIT 与 `LENO_NO_JIT=1` 输出**逐位一致**）：
+
+| 场景 | 结果 |
+| --- | --- |
+| 通用 MUL：float×float / int×float / int×int | 走 JIT，0 bailout |
+| 通用 MOD：int % int | 走 JIT，0 bailout |
+| 通用 EQ/NEQ：int、float 混比、NaN、inf | 走 JIT **原生比较路径**（`UCOMISD` + `SETNP`/`SETP`），0 bailout；`nan==nan` false、`nan!=nan` true、`nan==1.0` false、`inf==inf` true |
+| 通用 MUL：int64 溢出 | 按设计 bailout → 解释器升 BigInt，结果正确 |
+| 字符串 `==` / `!=` | 按设计 bailout → 解释器，结果正确（**探针里 bailout 的唯一来源**：删掉这两行后 `Bailouts: 0`） |
+
+> 探针手法：用「声明返回 `any` 的函数」或模块调用结果当操作数，让**编译期类型未知**
+> （→ 发通用 opcode）而**运行时类型确定**（→ 分别命中整数快路径 / float 慢路径 / bailout）。
+> `any` 参与运算后结果也是 `any`，赋值处需 `_int()/_float()` 收敛，否则类型检查会报错。
+> 运行时 NaN / inf 的构造：`_float("nan")` / `_float("inf")`（`0.0/0.0`、`maths.sqrt(-1.0)`
+> 等在语言层会直接抛错，不能用来造 NaN）。
+
+**复测（2026-09-12，i5-3450，`2e5fdebb`；差分探针 `dyn(any v): any { return v }`）**：
+
+* 输出 JIT 与 `LENO_NO_JIT=1` **逐位一致**：`fsum=900.0 isum=1200 eqn=22020022200`
+* `Bailouts: 3`，全部指向同一条：`main loop_bc=63 非溢出类 @bc_off=510` —— 即字符串
+  `==`/`!=`。删掉字符串比较后（**保留 NaN / inf 比较**）`Bailouts: 0` → 证实 NaN / inf
+  比较走 JIT 原生路径、并未回退，字符串比较的 bailout 是设计内行为而非回归
+* 顺带覆盖：`-17 % 5` 负数取模、`2.0 == 2` 的 int/float 混比、`±int` 乘法，均与解释器一致
+
+**副产品：7.2 的 A 写法循环现在能进 JIT 了**（本轮最大收益）：
+
+```
+修复前: [JIT-DEBUG] scan FAIL: unknown opcode 23 (size<0) at offset 16
+        [JIT-DEBUG] COMPILE: fn='main' bc_off=34 ... capable=0
+修复后: [JIT-DEBUG] COMPILE: fn='main' bc_off=34 ... capable=1
+        Executed: 1   Bailouts: 0
+```
+
+`s = s + maths.abs(gacc) * 1.0000001` 跑 100 万次：解释 38ms → JIT **17ms（2.26x）**
+（i5-14400F）。i5-3450 复测：解释 **64.7–67.7ms** → JIT **20.4–21.6ms（约 3.2x）**
+—— 与 §5 的机器标注一致：慢机上解释器退化更多（38→65ms），JIT 本身只慢约 20%
+（17→21ms），所以**JIT 的相对收益在慢机上反而更高**。
+
+### 7.2 编译器侧：`AST_MODULE_CALL` 没有写回 `cached_type` —— ✅ A′ 已实现（2026-09-12）
+
+`src/semantic/semantic_type.c` 的 `case AST_MODULE_CALL:` 多条 `return type;` 路径
+**都没有** `ast->cached_type = ...`（而 `AST_NUM`/`AST_VAR`/`AST_BINOP`/`AST_CALL`/实例方法都有）。
+后果：codegen 的 `get_expr_type_kind()` 读到 `TYPE_ANY` → 发**通用 opcode**。
+
+实测对比（同一源码，只差一个中间变量）：
+
+```leno
+// A：直接参与运算
+s = s + maths.abs(gacc) * 1.0000001
+//   OP_MODULE_CALL 3 4 1 / OP_MUL          ← 通用乘法（opcode 23）
+
+// B：先存到 float 局部
+float t = maths.abs(gacc)
+s = s + t * 1.0000001
+//   OP_MODULE_CALL 3 4 1 / OP_CAST_FLOAT / OP_MUL_FLOAT   ← 特化乘法
+```
+
+即：**语义分析算出了 float，但只用于类型检查，没传给代码生成**，运行时看到的是动态类型。
+`ripple_image.leno` 没中招是因为它把 `maths.rsqrt(...)` 先赋给了 `float` 局部变量。
+
+**修复现状**：7.1 已落地 —— 通用 opcode 现在 JIT 能编、能跑，所以这里的后果从
+「**整个循环进不了 JIT**」降级为「解释器里多一层类型分派 + 多发一条字节码」。
+上例 A 写法的循环已实测 `capable=1`（见 7.1）。
+
+**A′ 实现（2026-09-12，`src/semantic/visitinc/visit_module.inc`）**：在
+`case AST_MODULE_CALL:` 的末尾（`break` 前）统一写回：
+
+```c
+if (ast->kind == AST_MODULE_CALL && ast->cached_type == NULL) {
+    TypeInfo* mc_type = infer_expr_type(s, ast);
+    if (mc_type) {
+        if (mc_type->kind != TYPE_ANY) ast->cached_type = type_copy(mc_type);
+        type_free(mc_type);
+    }
+}
+```
+
+为什么放语义访问、而不是 `semantic_type.c` 里那若干条 `return` 上：模块调用节点在语义阶段
+必经此处，且语义阶段早于 `optimize_constant_fold` / `optimize_dead_code_elimination` / `codegen`；
+`optimize.c` 对 `AST_MODULE_CALL` 只递归参数、**不会清它的 `cached_type`**（清缓存的只有
+`if/while` 被分支原地替换那几处），所以 codegen 一定读得到。三条守卫各有用途：
+
+* `ast->kind == AST_MODULE_CALL` —— 实例方法在这条路径上已被改写成 `AST_CALL`，跳过；
+* `cached_type == NULL` —— clib 路径已写入 `TYPE_CLIB` 哨兵（供 codegen 识别），不能覆盖；
+* `kind != TYPE_ANY` —— 返回类型运行期才确定的方法保持走通用路径，语义不变。
+
+**效果**（同一源码 `--debug` 逐指令比，**全程序只差一条**）：
+
+```leno
+// 修复前
+0040 OP_MODULE_CALL 4 5 1
+0050 OP_MUL                 ← 通用乘法
+// 修复后
+0050 OP_MUL_FLOAT          ← 特化乘法
+```
+
+`s = s + maths.abs(gacc) * 1.0000001` 跑 100 万次（i5-3450）：
+**20.0–23.8ms → 18.0–18.6ms**（约 +10~15%），对解释器（61.7–67.7ms）约 **3.5x**。
+
+**验证**：`assert/run_tests.leno` 263/263（JIT 与 `LENO_NO_JIT=1` 两种模式）；
+`ripple_image.leno` `Bailouts: 0`；差分探针覆盖 `maths.abs/sqrt/floor/ceil/round/pow`、
+`strings.len/to_upper/has/trim`、`strings.split`→`Array[string]`、`times.datetime`→`Array[int]`，
+JIT 与解释器输出**逐位一致**；`examples/` 下 73 个非 GUI 示例两模式 stdout 全一致
+（`测试 times 方法.leno` 因打印时间戳天然不同；`深拷贝功能.leno` 是 `Start-Process`
+重定向未排空的测量假象，严格 `WaitForExit()` 后一致）。
+
+> A′ 只解决「已知类型没传给 codegen」。**跨语句的 `OP_CAST_FLOAT` 仍然存在**
+> （见下条收益修正），所以 A 写法与 B 写法的 opcode 差异缩小到「同一表达式内的一层分派」。
+
+两条修法：
+
+* **B′（JIT 侧）**：见 7.1，纯兜底、不改语义 —— **已完成**。
+* **A′（编译器侧）**：✅ **已实现（2026-09-12，见上）**。原方案是「让 `AST_MODULE_CALL`
+  各 return 路径写回 `cached_type`」
+  （或让 codegen 按需查 `native_get_module_method_return_type`）→ 直接发特化指令。
+
+  收益需修正：**A′ 并不会省掉 `OP_CAST_FLOAT`**。`assign_cast_needed()`
+  （`src/codegen/codegen_stmt.c:93-104`）只对字面量（`AST_NUM/STRING/BOOL/NULL`）消除 CAST，
+  其余一律保留 1，所以跨语句的规范化照旧。A′ 的收益仅限于**同一表达式内的 opcode 特化**
+  （少一层通用分派），比原估的小。
+
+  风险描述也需修正三处：
+
+  1. **失败形态是静默偏差，不是崩溃**。特化浮点指令内部走 `val_as_num_ex()`
+     （`src/vm/vminc/op_type_specialized.inc:159-178`）：int/float/bigint 正常转换，
+     **其它类型一律按 0.0**。而解释器通用 `OP_MUL` 对 null 是
+     `check_null_binary` → 抛「乘法运算: null 不能参与运算」。即 A′ 会把「报错」变成
+     「静默算 0.0」，比崩溃更隐蔽。
+  2. **信任级别弱于「用户函数返回值」**。用户函数的返回类型是语义分析**校验过**的
+     （声明 `: float` 却 `return null` 会编译报错）；native 元信息是 C 里手写注册、
+     **无人校验**。真实形式反例：`maths.sqrt/asin/acos/log/log2/rsqrt/fmod` 都注册
+     `TYPE_FLOAT`，非法输入时 `native_throw_error(...) + return val_null()`
+     （`src/module/maths/maths.c:33-41` 等）。**缓解因素**：它们都伴随 native 抛错，
+     实际影响被掩盖；且 maths 模块所有成功路径都是 `val_float(...)`，目前不存在
+     「不报错却返回非 float」的实例 —— 风险属于「未来新增 native 可能违反契约」。
+  3. **这份「信任元信息」JIT 侧其实已经在用了**。本轮的通用数值薄调用就是按
+     `ModuleMethodMeta.param_types/return_type` 决定走 xmm0..N 的 double ABI，返回也按
+     `val_as_num(result)` 取 double，仅用 `vm->has_exception` 兜底
+     （`src/jit/jit_callout.c:1094-1104`）。所以 A′ 不是新建信任边界，而是把同一份信任
+     从「JIT 薄调用」扩展到「解释器 + 特化 opcode」。
+
+  若将来要动 A′，建议加一道门槛：仅当 `meta->return_type` 明确（非 `TYPE_ANY`）**且**该
+  调用点的参数类型已通过 `param_types` 校验时才写回 `cached_type`。
+
+### 7.3 `ffi.read_int` / `ffi.write_int` 是 2 次 callout —— **✅ 已内联（2026-09-12）**
+
+**为什么之前只能走 callout**（两层原因，缺一不可）：
+
+1. JIT 唯一的模块调用快速路径「数值薄调用」的判据是
+   `arg_count ∈ [1,3] && 所有 param_types == TYPE_FLOAT && return_type == TYPE_FLOAT`
+   （`ops_return.inc`）。而 `ffi.read_int` 注册的是 `{TYPE_PTR, TYPE_INT} → TYPE_INT`、
+   `ffi.write_int` 是 `{TYPE_PTR, TYPE_INT, TYPE_INT} → TYPE_NULL` —— 一条都不满足。
+2. 那条判据之所以只认 float，是因为它靠**双 ABI 恰好一致**：Win64/SysV 都把前 4 个
+   浮点实参放 `xmm0..3`、float 结果也回 `xmm0`；`Ptr`/`int` 走整型寄存器，
+   两个 ABI 的位置完全不同（`RCX/RDX/R8/R9` vs `RDI/RSI/RDX/RCX`），要写两套。
+
+于是每次调用都要付：`EMIT_CALLOUT_BEGIN` + 逐个装箱成 `Value args[16]` + 调 native +
+`has_exception` 检查 + `EMIT_VALUE_TO_RAW` 回转换。而 native 内部真正干的只有一次
+4 字节 `memcpy`。
+
+**实现**（`src/jit/backend/x86_inc/ops_return.inc`，插在薄调用判据之前）：编译期按
+`meta->module_name == "ffi"` + `meta->method_name` 识别这两个方法，直接生成：
+
+* 前置检查（任一不过就写 site → bailout，交解释器抛**原样报错**）：
+  offset 是 int48（解释器 `parse_offset` 对非 int 按 0 处理，这里直接回退）；
+  `top16 == 0xFFFC`（TAG_OBJ）且 `Object.type == OBJ_FFI_POINTER`；
+  `ptr->ptr != NULL && !freed`（`CHECK_NULL_PTR`）；`owned && size > 0` 时校验
+  `(uint64)offset + 4 <= size`（`CHECK_BOUNDS`）
+* 访存：`movsxd rax, dword [rdx + rax]`（读 4 字节并符号扩展，结果本身就是 JIT 的
+  raw int48，**不需要装箱**）；`mov dword [rdx + rax], ecx`（只写低 32 位 =
+  `(int32_t)value`）；`write_int` 返回 `NULL_VAL` 与通用路径一致
+
+**踩到的坑（重要，未来写内联必看）**：Win64 下 **`RSI`/`RDI` 是非易失寄存器**，
+而 JIT 序言只保存 `rbp/rbx/r12-r14` —— 用它们当临时寄存器会悄悄破坏调用方。
+第一次实现用了 `RSI`（存 `size`）与 `RDI`（存 `offset+4`），结果在 bailout 之后
+`jit_try_hot_loop` 里段错误（gdb：`addl $0x1,0x4008(%rsi)`，而 `RSI=0x10` 正是刚读出的
+`size=16`）。**内联只能用易失寄存器 `RAX/RCX/RDX/R8`**（`R9`=globals、`R10`=payload mask、
+`R11`=int tag、`RBX`=类型位图，都不可动）。边界比较需要第 4 个临时值时，用
+`EMIT_STORE_TMP/LOAD_TMP` 的 frame spill 槽，而不是 RSI/RDI。
+
+> 完整的寄存器 / ABI 约定、内联写法清单、跨平台矩阵与校验基线，见
+> 《JIT实现与调试记录.md》**§2 寄存器约定与内联规则**。
+
+**语义等价性细节**：`CHECK_BOUNDS` 的 `(size_t)offset + 4 > size` 在 offset 为负时会
+**回绕**（如 `offset = -4` → `(size_t)(-4)+4 == 0`，`0 > size` 为假 → **不报错**）。
+内联用同样的 64 位加法 + 无符号 `ja` 比较，实测 `-4` 两边都不报错、`-5` 两边都报
+「内存访问越界」，逐字一致。
+
+**实测**（i5-3450，同机 A/B：`read_int/write_int` 内联 vs `read_int16/write_int16`
+仍走 callout，500 万次，int16 的访存代价与 int32 相同，差值即 callout 开销）：
+
+| 实现 | 每次 read+write |
+| --- | --- |
+| callout（未内联） | **45.6–48.2 ns** |
+| 内联 | **26.7–28.4 ns** |
+
+省 **约 19ns/次（~40%）**。验证：七场景（正常 / 非对齐 / 非 owned / 越界 / 已释放 /
+空指针 / 负偏移）JIT 与 `LENO_NO_JIT=1` 输出**逐位一致**（含两条报错文本）；
+「先跑热 150 次再出错」的三个用例确认真的走了 JIT 内联的 bailout 路径
+（`@bc_off=96（= loop_bc 47 + 49）` 正是边界检查）且报错一致；
+assert 263/263（两模式）、`ripple_image.leno` `Bailouts: 0`、72 个示例双模式 stdout 全一致。
+
+同类方法（`read_int8/16/32/64`、`read_uint*`、`read_float/double`、`write_*`、
+`write_float/double`）目前仍走 callout，可按同一模板扩展（宽度/符号不同）。
+
+### 7.4 其它
+
+* `cache_hash()` 只用地址的 8 位（`>>4 & 255`），热循环多时会出现槽位冲突 → 反复重编译
+  （调试运行中曾观察到 305 次编译）—— **✅ 已修复（2026-09-12）**：
+
+  * `jit_scan.c::cache_hash()`：先把低 4 位（16 字节对齐，无信息）移掉，再
+    `v ^= v >> 8; v ^= v >> 16;` 把高位折回低位，槽位不再只由地址的 8 位决定
+  * `jit.c::jit_try_hot_loop()`：循环缓存从 **direct-mapped 就地覆盖**改为
+    **线性探测**（窗口 `JIT_CACHE_PROBES = 8`）：窗口内先找同一循环、再找空槽，
+    窗口满了才驱逐「价值」最低的条目（未编译成功的优先，其次命中次数少的）。
+    老实现只要两个循环落同一槽位就互相驱逐 —— 刚被驱逐的那个要重新攒够 50 次
+    命中才能再编，于是"每次进来都重编"或"一直编不上"
+  * 新增 `Evicted:` 统计（只有窗口满才 > 0），把「该调大 `JIT_CACHE_SIZE`」
+    这个信号显式暴露出来
+
+  **实测**（探针：120 个函数各含一个 200 次迭代的热循环，顺序调用 3 轮 = 360 次执行）：
+
+  | 指标 | 修复前 | 修复后 |
+  | --- | --- | --- |
+  | `Compiled` | **360 / 328**（≈每次执行都重编） | **120**（每个循环只编一次） |
+  | `Cached` | 32 / 68 | **120** |
+  | `Executed` | 360 | 360 |
+  | `Evicted` | — | 0（窗口足够） |
+  | 程序输出 | 7164000 | 7164000（一致） |
+
+  真实用例：`全部测试.leno` 的 `Compiled` 由 35 降到 **31**（消掉的 4 次正是冗余重编译）；
+  `ripple_image.leno`（9 个循环）`Cached: 9 / Tried: 14`、`Bailouts: 0` 不变；
+  assert 263/263（两模式）、72 个示例双模式 stdout 全一致。
+
+  仍待做：`jit_func_lookup_or_compile()` 的函数级缓存（`JIT_FUNC_CACHE_SIZE`）也是
+  `(ptr >> 4) & (size-1)` 的 direct-mapped，同样会互相覆盖，尚未改成探测。
+* 函数级 JIT 已覆盖部分热点，但 `maths` 这类「叶子函数」的极致优化仍受调用延迟限制。
+
+### 7.5 A′ 验证中发现的两个既有 JIT 缺口（与 A′ 无关，已用回退基线对比确认）
+
+1. **`OP_CAST_STRING` 未收录进 `jit_scan.c`** → 循环体里只要出现「赋值/声明为 `string`」
+   （如 `ssum = strings.to_upper("ab")`：赋的若不是字面量，`assign_cast_needed()` 会补 CAST），
+   就报 `scan FAIL: unknown opcode 37 (OP_CAST_STRING) at offset 144`，**整个循环 `capable=0`**。
+   回退 A′ 的基线与 A′ 后报错位置完全一致（`offset 144` 是相对循环体起点，绝对偏移 183），
+   确认是既有缺口而非 A′ 引入。
+
+   **✅ 已修复（2026-09-12）**：
+
+   * `src/jit/jit_scan.c`：`opcode_size()` 记 1 字节；`scan_callee_for_inline()` 与
+     `scan_loop_body()` 两处 vstack 栈效应都登记为「pop 1 push 1 → 净 0」
+   * `src/jit/backend/x86_inc/ops_arith.inc`：新增 `OP_CAST_STRING` codegen。语义按解释器
+     （`vm/vminc/op_unary.inc:100`）：`null` 保持 null、`string` 原样、其它类型走 `val_to_string`。
+     JIT 只放行**已经是 string 对象**的快路径（`top16 == 0xFFFC`（TAG_OBJ）
+     且 `((Object*)payload)->type == OBJ_STRING`），其余一律写 site 后 bailout 交解释器 ——
+     不在 JIT 里复制一套字符串格式化，字符串化结果与报错因此天然一致。
+     由于语义层禁止 `any → string` 隐式赋值，`OP_CAST_STRING` 的实际运行期值**几乎总是 string**，
+     快路径基本全覆盖；非字符串（如声明为 `string` 但未赋值的字段 = null）才回退。
+   * 实测：循环里给 string 变量赋值 → `capable=1`、`Executed: 1`、`Bailouts: 0`；
+     该循环 100 万次 **59.5–60.9ms → 44.8ms（1.33x）**（修复前 JIT 与解释器同速，因为压根没编）。
+     回退路径验证：未赋值 string 字段（运行期 null）→ `Bailouts: 3`、site 指向该指令、
+     输出与 `LENO_NO_JIT=1` 逐位一致。回归：assert 263/263（两模式）、
+     `ripple_image.leno` `Bailouts: 0`、72 个示例双模式 stdout 全一致。
+2. **`_int(<bool>)` / `_float(<bool>)` 每次进 JIT 都 bailout**
+   （原记录写作「`_int(<返回 float 的模块调用>)`、怀疑薄桥返回值没搬回 RAX」，
+   **结论已订正** —— 与薄桥、与 A′ 都无关）：
+
+   真正原因：`OP_CALL_NATIVE` 的 `_int/_float` 内联快路径（`ops_callout.inc`）在 int48
+   判定失败后，对**任何 NaN-boxed 值**（含 bool）一律 `cmp rax, 0xFFF8…; jae bailout`。
+   证据：`RAX=0xFFFA000000000000` 是 `TRUE_VAL`，不是 `maths.round(2.6)` 的裸 double；
+   触发点是 `_int(strings.has(...))`、`_int(flag)`、`_float(flag)`。
+   定位过程中还发现**site 里的偏移是相对循环体起点**的：最小组合 `g_min`（loop_bc=29）
+   报 `@bc_off=39`，而 39 = 68 − 29 正是第二个 `OP_CALL_NATIVE(_int)` 的位置。
+
+   **✅ 已修复（2026-09-12）**：在 `_int`/`_float` 内联路径加 **bool + null 快路径** ——
+   用**全值精确比较**认出 `TRUE_VAL`/`FALSE_VAL`/`NULL_VAL`（与 VM 的 `val_is_bool`
+   `v == TRUE_VAL || v == FALSE_VAL`、`val_is_null` 的判据一致），按 `types.c` 的
+   `native_to_int`/`native_to_float` 语义产出：
+
+   | 输入 | `_int` | `_float` |
+   | --- | --- | --- |
+   | `true` | `1` | `1.0` |
+   | `false` | `0` | `0.0` |
+   | `null` | `0`（`VAL_NULL → val_int(0)`） | `0.0`（`VAL_NULL → val_float(0.0)`） |
+
+   实现上 `false` 与 `null` 复用同一个「产出 0 / 0.0」的分支（位模式全 0）；
+   其余 NaN-boxed（string/bigint/ptr）仍按设计 bailout 交解释器。
+
+   实测：`_int(strings.has(...))`、`_int(flag)`、`_float(flag)`、`_int(<null>)`、
+   `_float(<null>)` 五个循环全部 `Bailouts: 0`；此前 bailout 的 mct2 型组合
+   （`g_full`/`g_nolast`/`g_min`）从 `Bailouts: 3` 变 `0` 且结果逐位不变；
+   `_int(<string>)` 仍 bailout、输出与解释器逐位一致（`isum=84000`）；
+   assert 263/263（两模式，含 `_int(true)==1` / `_float(false)==0.0` 用例）、
+   `ripple_image.leno` `Bailouts: 0`、72 个示例双模式 stdout 全一致。
+
+   顺带修正诊断：`jit_print_stats` 现在同时打出**绝对偏移与分解**
+   （`非溢出类 @bc_off=40（= loop_bc 29 + 11）`）。此前只打相对偏移，排查时极易
+   把它当成别的指令 —— 这次的误判就是这么来的。
+
+### 7.6 原生方法调用 callout 取实参反序 —— file_manager 界面错位 —— ✅ 已修复（2026-09-12）
+
+**现象**：`LenoSDL3/examples/应用示例/文件管理器/file_manager.leno` 界面错位
+（工具栏被压窄、状态栏贴在工具栏下方、splitter 高度≈0、导航树与表格行消失），
+`LENO_NO_JIT=1` 正常。
+
+**根因**：`OP_GET_PROPERTY` + `OP_CALL` 窥孔合并成的调用 callout
+（`jit_callout_get_property`）用 `vstack_top[i + 1]` 取实参。JIT 虚拟栈栈顶在低地址：
+`vstack_top[0]` 是 receiver、`vstack_top[i]` 的第 i 个实参是**倒序**的
+⇒ `d.get(key, def)` 实际执行 `d.get(def, key)`，键落空返回默认值
+⇒ `sdl_layout.leno` 的 `_relayout` 累加出 `sumGrow = "grow"`（字符串）→ 布局整体退化。
+
+**修复**：`arg[i] = vstack_top[arg_count - i]`（`src/jit/jit_callout.c`）。
+
+**实测**：file_manager 布局恢复正常（3 次稳定，判定指标与关 JIT 基线一致）；
+`assert` **266 passed / 0 failed**（含新增 2 个回归断言）；`ripple_image.leno`
+`Bailouts: 0`、59.7 FPS（关 JIT 41.9 FPS）。
+
+**完整排查链路见第 8 节**；语义对照与检查清单见 `JIT实现与调试记录.md` §8.17 / §14。
+
+**同批修掉的另两处**（同属「JIT 与解释器语义不一致」，详见 `JIT实现与调试记录.md`
+§8.18 / §8.19）：`OP_*_FLOAT` 不提升 int 操作数、`OP_DIV_FLOAT` 除零静默算 inf。
+
+### 7.7 又一批「静默算错」型缺口（2026-09-12 晚，详见 `JIT实现与调试记录.md` §8.20~8.22）
+
+由五子棋「AI 对 AI 全部下在一个点」和 PvZ「选卡数字每帧左右抖动」两个报障牵出，
+三处都属「不崩、只在热循环里静默算错」：
+
+| 缺口 | 症状 | 归属 |
+| --- | --- | --- |
+| `OP_INVOKE_METHOD_TYPED` 多返回值只按 1 个记账 | 第一个返回值读到实参槽残留 → 用 `measureString` 算的文字水平位置每帧乱跳 | §8.20 |
+| 循环体内可达的 `return` 被 codegen 当 no-op 丢掉 | 提前返回的函数恒走到末尾（`nearStone` 恒 false） | §8.21 |
+| `OP_NOT` 把 NaN-boxed `TRUE_VAL`/`FALSE_VAL` 当裸 double 比 0 | `not <任何 bool>` 恒为真 → 所有 `if not xxx { continue }` 分支方向全反 | §8.22 |
+| `OP_DIV_INT` 把 int/int 的商转成 double 压栈（解释器是 int48） | 商之后一旦再当整数用（`%`、`is int`、位运算）就出垃圾 → 基数排序 digit 全错 + 数组越界；同时 `DIV_INT`/`MOD_INT` 除零会 `#DE` 崩进程 | §8.23 |
+| 比较 opcode 只压裸 0/1（解释器压 `val_bool`） | `while` 循环条件恒假、第一轮退出（`for` 不受影响）；bool 变量写成次正规 float `4.9e-324`、全局/返回值 bool 退化成 int、JSON 写出 `4.9e-324` | §8.24 |
+
+三者的**共同特征**（值得写进排查直觉）：报障现象都是"数值/位置不稳定"或"逻辑反了"，
+且**关掉 JIT 就正常**；用「`LENO_NO_JIT=1` 对照 + 结果计数与 `JIT_HOT_THRESHOLD=50` 对齐」
+就能在几分钟内确认是 JIT 路径的错值（§8.22 的 301 次里错 251 次 = 301 − 50）。
+
+回归：`assert` **268 passed / 0 failed**；五子棋自带的 `SELFTEST` 开关（改 `var SELFTEST = true`，
+不建窗口纯跑 AI 对弈）是这类 AI 逻辑 bug 最快的复现工具 —— 它把「AI 全部下在一个点」
+直接暴露成「4 组智力梯度全是 225 手平局」。
+
+---
+
+## 8. 排查手记：从「界面错位」到「callout 实参反序」（2026-09-12）
+
+这次报障是**界面错位**这种"说不清哪里错"的症状，排查路径有复用价值，完整记一遍。
+
+### 8.1 第 0 步：先做「JIT 还是解释器」的二分
+
+`LENO_NO_JIT=1` 跑同一个二进制 → 界面正常 ⇒ 问题在 JIT 生成的机器码或 JIT 的语义差，
+与示例代码、SDL3 库都无关。**这一步把搜索空间直接砍半，且成本只有一次运行。**
+
+### 8.2 第 1 步：把「界面错位」翻译成数值判据
+
+肉眼看截图得不出结论，换成两件可量化的事：
+
+* **从像素位置反推布局分支**：工具栏 combo 宽度恰好等于它的 `basis`（300）、
+  4 个按钮按 32 依次排开 ⇒ 说明 `HBox._relayout` 的 `childMain()` 返回的是 `basis`
+  ⇒ 只可能是「`free >= 0` 且 `sumGrow == 0`」这条分支 ⇒ **累加器 `sumGrow` 不是数值**。
+  从"结果长什么样"反推"走了哪个分支"，比通读布局代码快一个数量级。
+* **截屏 + 亮度指标做量化判定**：导航面板区域的亮点像素数，
+  正常 **2078** / 错位 **459**。之后每次改动跑一次脚本即可判定，不用肉眼比图
+  （`build/shot.ps1` 截屏、`build/metric.ps1` 计分、`build/trial.ps1` 连跑多轮）。
+
+### 8.3 第 2 步：字节码定位到源码行
+
+`leno --debug --debug-out bc.txt x.leno` 导出反汇编，把 JIT 日志里的 `body_start`
+对上源码行号：
+
+```
+[JIT-DEBUG] COMPILE: fn='_relayout' bc_off=350 back_edge=2, body_size=193 ...
+```
+
+`0350-0543` 与 `sdl_layout.leno:157-166`（`totalBasis/sumGrow/sumShrinkBasis` 累加）
+逐行对应 ⇒ 锁定循环。
+
+### 8.4 第 3 步：把「整个 GUI 程序」缩成「单循环差分探针」
+
+一路缩到 `build/probe3.leno`（20 行、单 while 循环）：
+
+```
+NO JIT: s1= 200.0
+JIT:    s1= grow        ← 复现
+```
+
+再用变体（`build/probe4.leno`）把出错阶段切出来：
+`acc = acc + 1.0` 正常、`acc = g`（`g = o.get(...)`）出错 ⇒ **错在 `get` 的返回值**，
+不在累加、不在写回。
+
+> 探针三原则：秒级迭代、不依赖 GUI、直接给「期望 vs 实际」。
+> 并且一定要看 `LENO_JIT_DEBUG=1` 的 `Executed > 0`，否则探针根本没走 JIT，差分是假的。
+
+### 8.5 第 4 步：反汇编 JIT 机器码
+
+`LENO_JIT_DEBUG=1` 的 `[JIT-DUMP]` 默认只打前 420 字节，本次序言就吃满了，
+临时把上限调到 2048，把 hex 落成 `.bin`，再 `objdump -D -b binary -m i386:x86-64 -M intel`
+（脚本 `build/disasm.ps1`）。直接读 callout 前的 `push` 序列就能看出实参在栈上的地址顺序，
+与 callout 里的取参下标不匹配 —— **一眼可见，不需要跑起来猜**。
+
+### 8.6 第 5 步：「是不是我这个提交引入的」——对比两版编译日志
+
+把相关源文件 `git checkout HEAD~1 --` 回退、重建、再跑一次 `LENO_JIT_DEBUG=1`，
+把两次的 `COMPILE:` / `compile FAIL` 行按 `capable` 分组对比：
+
+```
+HEAD~1: _relayout 350     capable=1        HEAD: _relayout 350     capable=1
+        drawRoundedRect 463 capable=0             drawRoundedRect 463 capable=1  ← 新增可 JIT
+        fillRoundedRect 608 capable=0             fillRoundedRect 608 capable=1  ← 新增可 JIT
+```
+
+结论：本次提交让**两个绘制循环**从「整体不可 JIT」变成「可 JIT」，
+而布局循环两版都可 JIT ⇒ 布局错位是**既有隐患**，新提交只是把另一批循环也推进了 JIT。
+
+**这一步能避免"凭印象归因提交"**（用户报「某提交引入」时尤其值得做），
+成本只有一次重建 + 一次运行。
+
+### 8.7 第 6 步：修完做「双模式 + 计数」验证
+
+* `LENO_NO_JIT=1` 与默认模式输出**逐位一致**（探针 / 示例 stdout）
+* `LENO_JIT_DEBUG=1` 确认 `Executed > 0`（否则没走 JIT）
+* **`Bailouts` 必须回到基线** —— 本次因为把判零写成 `UCOMISD xmm1, xmm1`（自己比自己恒相等），
+  功能正确但每次浮点除法都回退（`Bailouts: 0 → 12`），靠「`git stash` 收起改动做基线对比」
+  才发现是本次引入
+* 断言落成 `assert/test_jit_*.leno`，并**在未修复代码上先跑一遍确认它会失败**，
+  否则可能写出恒过的假断言
+
+### 8.8 可复用的 30 分钟路径
+
+```
+关 JIT 二分 → 把现象翻译成数值/像素判据 → 单循环差分探针 →（必要时）反汇编
+→ 定位 → 双模式 + Bailouts 计数验证 → 落断言（并验证未修时会失败）
+```
+
+---
+
+## 9. 涉及文件
+
+本轮（callout 实参 + 浮点操作数语义，2026-09-12）：
+
+* `src/jit/jit_callout.c`：`jit_callout_get_property` 合并调用路径取实参改
+  `vstack_top[arg_count - i]`（§7.6，修 file_manager 界面错位）
+* `src/jit/backend/x86_64.c`：新增 `EMIT_FLOAT_ARGS2` / `EMIT_MOVQ_RAX_XMM0` /
+  `EMIT_FLOAT_TAGGED_BAILOUT`（§8.18）
+* `src/jit/backend/x86_inc/ops_float.inc`：`ADD/SUB/MUL/DIV/NEG_FLOAT` 改用
+  `EMIT_FLOAT_ARGS2`；`OP_DIV_FLOAT` 补除零检查（§8.19）
+* `src/jit/backend/x86_inc/ops_fcmp.inc`：`EQ/LT/GT/LE/GE_FLOAT` 改用
+  `EMIT_FLOAT_ARGS2`（§8.18）
+* `assert/test_jit_method_args.leno`、`assert/test_jit_float_ops.leno`：新增回归断言
+* `docs/JIT实现与调试记录.md`：§8.17–§8.19 踩坑、§9 浮点提升开销、**§14
+  JIT 与解释器语义差异清单（核对用）**
+
+最近三轮（2026-09-12，`ad9ba582` → `25a4c1c2`）：
+
+* `src/semantic/visitinc/visit_module.inc`：A′ —— 模块调用返回类型写回 `cached_type`
+* `src/jit/jit_scan.c`：收录 `OP_CAST_STRING`（size + 两处 vstack 表）；
+  `cache_hash()` 位混合
+* `src/jit/backend/x86_inc/ops_arith.inc`：`OP_CAST_STRING` 的 codegen
+  （已是 string → 原样，否则 bailout）
+* `src/jit/backend/x86_inc/ops_callout.inc`：`_int`/`_float` 内联转换支持
+  `bool`（1/0、1.0/0.0）与 `null`（0、0.0）
+* `src/jit/jit.c`：循环缓存线性探测（`jit_try_hot_loop`）、`cache_evictions` 统计、
+  bailout 诊断输出绝对偏移
+* `src/jit/jit.h`：`JIT_CACHE_PROBES`、`JitState.cache_evictions`
+* `src/jit/backend/x86_inc/ops_return.inc`：`ffi.read_int` / `ffi.write_int` 内联
+* `docs/JIT实现与调试记录.md` §2：寄存器 / ABI 约定与内联规则（新增 §2.3–§2.5）
+
+更早：A′ 编译期类型落地（2026-09-12）：
+
+* `src/semantic/visitinc/visit_module.inc`：`case AST_MODULE_CALL` 末尾把推断出的返回类型
+  写回 `cached_type`（仅 `AST_MODULE_CALL` 且未缓存且非 `TYPE_ANY` 时）
+
+本轮（通用 opcode 兜底，2026-09-12）：
+
+* `src/jit/jit_scan.c`：`opcode_size()` 补 `OP_MUL/OP_MOD/OP_EQ/OP_NEQ`；
+  `scan_loop_body()` 与 `scan_callee_for_inline()` 的 vstack 登记
+* `src/jit/backend/x86_inc/ops_arith.inc`：通用 `OP_MUL` / `OP_MOD` 的 codegen
+* `src/jit/backend/x86_inc/ops_icmp.inc`：通用 `OP_EQ` / `OP_NEQ` 的 codegen
+
+上一轮（模块调用优化）：
+
+* `src/jit/jit_callout.c`：`jit_resolve_module_method`、`jit_callout_module_call_meta`、
+  `jit_thin_f1/2/3` + `jit_thin_bridge_for`（通用数值薄桥）
+* `src/jit/jit_priv.h`：上述声明
+* `src/jit/backend/x86_inc/ops_return.inc`：`OP_MODULE_CALL` 的薄调用快速路径
+* `src/jit/backend/x86_inc/ops_callout.inc`：`OP_CALL_NATIVE` 的 `_int`/`_float` 内联
+
+更早（bailout 修复）：
+
+* `src/jit/backend/x86_64.c`（序言 step 分流 + bailout 诊断埋点）
+* `src/jit/backend/x86_inc/ops_loop.inc`（`OP_FOR_LOOP` / `OP_FOR_PREP` 负步长）
+* `src/jit/backend/x86_inc/ops_fcmp.inc`、`ops_icmp.inc`（浮点比较 NaN 的 IEEE 语义）
+* `src/jit/jit.c`、`src/jit/jit.h`（bailout 定位信息 + 统计输出）

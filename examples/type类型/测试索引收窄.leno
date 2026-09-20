@@ -1,0 +1,123 @@
+// 测试数组索引收窄：arr[0] is int 的编译期类型收窄
+// 修复前：arr[0] is int 运行时判断正常，但编译期收窄失效
+// 修复后：arr[0] is int 在 then 块内 arr[0] 类型已收窄为 int
+
+
+// 测试 1：数组索引收窄 + 直接使用
+func test_array_index_narrow(any x): int {
+    if x is Array => arr {
+        if arr[0] is int {
+            return arr[0] + 1   // 修复前：报错 arr[0] 仍是 any；修复后：✅ arr[0] 已收窄为 int
+        }
+    }
+    return -1
+}
+
+// 测试 2：数组索引收窄 + => 绑定
+func test_array_index_bind(any x): int {
+    if x is Array => arr {
+        if arr[0] is int => n {
+            return n + 10       // n 是 int
+        }
+    }
+    return -1
+}
+
+// 测试 3：大索引 arr[10] is int
+func test_large_index(any x): int {
+    if x is Array => arr {
+        if arr[10] is int {
+            return arr[10] + 100  // arr[10] 已收窄为 int
+        }
+    }
+    return -1
+}
+
+// 测试 4：Dict 索引收窄 d["name"] is string
+func test_dict_string_index(any x): string {
+    if x is Dict => d {
+        if d["name"] is string {
+            return d["name"] + "!"  // 修复前：报错 d["name"] 仍是 any；修复后：✅ 已收窄为 string
+        }
+    }
+    return "NOT_FOUND"
+}
+
+// 测试 5：Dict 多键收窄
+func test_dict_multi_key(any x): int {
+    if x is Dict => d {
+        if d["a"] is int and d["b"] is int {
+            // 这里走 and 短路路径，d["a"] 和 d["b"] 都应该收窄
+            return d["a"] + d["b"]
+        }
+    }
+    return -1
+}
+
+// 测试 6：嵌套 - 数组元素是 Dict
+func test_nested_array_dict(any x): string {
+    if x is Array => arr {
+        if arr[0] is Dict => c {
+            if c["name"] is string => d {
+                return d
+            }
+        }
+    }
+    return "NOT_FOUND"
+}
+
+// 测试 7：多个索引收窄在同一个 if 块
+func test_multi_index_narrow(any x): int {
+    if x is Array => arr {
+        if arr[0] is int {
+            if arr[1] is int {
+                return arr[0] + arr[1]  // 两个索引都收窄了
+            }
+        }
+    }
+    return -1
+}
+
+// 测试 8：数组索引收窄为 string
+func test_index_narrow_string(any x): string {
+    if x is Array => arr {
+        if arr[0] is string {
+            return arr[0] + "_suffix"  // arr[0] 已收窄为 string
+        }
+    }
+    return "NOT_FOUND"
+}
+
+// 主测试函数
+main() {
+    // 测试 1
+    assert(test_array_index_narrow([10, 20, 30]) == 11, "test1: arr[0] is int 收窄")
+    assert(test_array_index_narrow(["hello"]) == -1, "test1: 非 int 元素")
+
+    // 测试 2
+    assert(test_array_index_bind([5, 10]) == 15, "test2: arr[0] is int => n 绑定")
+
+    // 测试 3
+    var big_arr = []
+    for 0:20 to i {
+        big_arr.add(i * 2)
+    }
+    assert(test_large_index(big_arr) == 120, "test3: arr[10] is int 大索引")
+
+    // 测试 4
+    assert(test_dict_string_index({"name": "world"}) == "world!", "test4: d[\"name\"] is string")
+
+    // 测试 5
+    assert(test_dict_multi_key({"a": 10, "b": 20}) == 30, "test5: d[\"a\"] and d[\"b\"] 收窄")
+
+    // 测试 6
+    assert(test_nested_array_dict([{"name": "Alice"}]) == "Alice", "test6: 嵌套解包")
+
+    // 测试 7
+    assert(test_multi_index_narrow([10, 20, 30]) == 30, "test7: 多索引收窄")
+
+    // 测试 8
+    assert(test_index_narrow_string(["hello"]) == "hello_suffix", "test8: 索引收窄为 string")
+
+    print("所有索引收窄测试通过！")
+}

@@ -1,0 +1,13 @@
+// 泛型基础模块：Pair[K,V]
+export struct Pair[K, V] {
+    K key
+    V val
+
+    func getKey(): K {
+        return self.key
+    }
+
+    func getVal(): V {
+        return self.val
+    }
+}

@@ -1,0 +1,66 @@
+// 综合边界测试：跨模块use返回类型的各种场景
+import "edge_mid.leno" as mid
+import "edge_outer.leno" as outer
+import "edge_method_ret.leno" as mret
+import "edge_local.leno" as local_mod
+import "edge_face_ret.leno" as fret
+use mid.Item
+use mid.Box
+use mret.Container
+use local_mod.LocalObj
+use fret.Describable
+
+main() {
+    print("=== 边界测试开始 ===")
+
+    // T1: 中间层函数返回use导入的struct - 调用方法
+    var item1 = mid.createItem(1, "hello")
+    assert_eq(item1.describe(), "Item(1:hello)")
+
+    // T2: use导入的struct作为参数类型
+    var item2 = mid.createItem(2, "world")
+    assert_eq(mid.describeItem(item2), "Item(2:world)")
+
+    // T3: 多个use类型混合
+    var item3 = mid.createItem(3, "inbox")
+    var box3 = mid.createBox(5, 6)
+    assert_eq(mid.itemInBox(item3, box3), "inbox in 30")
+
+    // T4: 中间层返回Box
+    var box4 = mid.createBox(10, 20)
+    assert_eq(box4.area(), 200)
+
+    // T5: 三层use链 - 返回类型
+    var item5 = outer.wrapCreateItem(5, "deep")
+    assert_eq(item5.describe(), "Item(5:deep)")
+
+    // T6: 三层use链 - 参数类型
+    var item6 = outer.wrapCreateItem(6, "param")
+    assert_eq(outer.wrapDescribeItem(item6), "Item(6:param)")
+
+    // T7: 三层use链 - Box返回
+    var box7 = outer.wrapCreateBox(3, 4)
+    assert_eq(box7.area(), 12)
+
+    // T8: struct方法返回use导入的struct
+    var container = mret.makeContainer("test")
+    var cItem = container.getItem()
+    assert_eq(cItem.describe(), "Item(1:test)")
+
+    // T9: struct方法返回use导入的Box
+    var cBox = container.getBox()
+    assert_eq(cBox.area(), 200)
+
+    // T10: 本地struct + use导入的struct共存
+    var localItem = local_mod.makeItem(10)
+    assert_eq(localItem.describe(), "Item(10:from_mid)")
+
+    var localObj = local_mod.makeLocal("mine")
+    assert_eq(localObj.greet(), "local:mine")
+
+    // T11: face作为返回类型
+    var desc = fret.getDescribable()
+    assert_eq(desc.describe(), "Item(42:desc)")
+
+    print("=== 边界测试全部通过 ===")
+}

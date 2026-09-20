@@ -1,0 +1,49 @@
+// maths 模块测试
+
+import maths
+
+main()
+{
+    // 测试1: 绝对值
+    assert_eq(maths.abs(-5), 5)
+    assert_eq(maths.abs(5), 5)
+    assert_eq(maths.abs(0), 0)
+
+    // 测试2: 平方根
+    assert_eq(maths.sqrt(16), 4)
+    assert_eq(maths.sqrt(25), 5)
+
+    // 测试3: 幂运算
+    assert_eq(maths.pow(2, 3), 8)
+    assert_eq(maths.pow(3, 2), 9)
+
+    // 测试4: 最大值和最小值
+    assert_eq(maths.max(10, 20), 20)
+    assert_eq(maths.min(10, 20), 10)
+
+    // 测试5: 四舍五入
+    assert_eq(maths.round(3.4), 3)
+    assert_eq(maths.round(3.6), 4)
+
+    // 测试6: 向上取整和向下取整
+    assert_eq(maths.ceil(3.1), 4)
+    assert_eq(maths.floor(3.9), 3)
+
+    // 测试7: 三角函数
+    var pi = maths.pi()
+    print("pi = " + pi)
+    assert_eq(pi > 3.14, true)
+    assert_eq(pi < 3.15, true)
+
+    // sin(0) = 0
+    var sin0 = maths.sin(0)
+    assert_eq(sin0 < 0.001, true)
+    assert_eq(sin0 > -0.001, true)
+
+    // cos(0) = 1
+    var cos0 = maths.cos(0)
+    assert_eq(cos0 > 0.999, true)
+    assert_eq(cos0 < 1.001, true)
+
+    print("test_maths passed")
+}

@@ -1,0 +1,44 @@
+// 纯 wrapper 模式 - 用户只看顶层包装
+import "sdl_wrapper.leno" as sdl
+import "sdl_renderer.leno" as renderer
+use sdl.core_lib
+use sdl.system_lib
+use sdl.RenderContext
+
+main() {
+    print("=== wrapper 模式 ===")
+
+    // 1. 包装函数
+    print("1. wrapAbs: " + sdl.wrapAbs(-5))
+
+    // 2. 获取 clib
+    var c = sdl.wrapGetCore()
+    var v2 = c.abs(-7) as int
+    print("2. getCore: " + v2)
+
+    // 3. 链式
+    var v3 = sdl.wrapGetCore().abs(-11) as int
+    print("3. 链式: " + v3)
+
+    // 4. 多类型
+    var s = sdl.wrapGetSys()
+    var c2 = sdl.wrapGetCore()
+    var v4 = c2.abs(-13) as int
+    print("4. 多类型: " + v4)
+
+    // 5. ttf 透传
+    print("5. ttfAbs: " + sdl.wrapTTFAbs(c, -17))
+
+    // 6. struct 创建+使用
+    var ctx = sdl.createContext("wrapper")
+    var v6 = renderer.renderViaContext(ctx, -19)
+    print("6. struct: " + v6)
+
+    // 7. 变量复用
+    var cc = sdl.wrapGetCore()
+    var v7a = cc.abs(-23) as int
+    var v7b = cc.abs(-29) as int
+    print("7. 复用: " + v7a + " " + v7b)
+
+    print("=== 全部通过 ===")
+}

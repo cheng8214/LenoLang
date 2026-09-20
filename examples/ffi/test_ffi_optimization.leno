@@ -1,0 +1,214 @@
+import ffi
+
+cstruct POINT {
+    i32 x
+    i32 y
+}
+
+main() {
+    var pass = 0
+    var fail = 0
+
+    // ===== 测试 1: write_bytes / read_bytes =====
+    print("--- 测试 write_bytes / read_bytes ---")
+    var buf = ffi.malloc(64)
+
+    ffi.write_bytes(buf, 0, "ABCDE")
+    var s = ffi.read_bytes(buf, 0, 5)
+    if s == "ABCDE" {
+        print("[PASS] write_bytes + read_bytes")
+        pass = pass + 1
+    } else {
+        print("[FAIL] write_bytes + read_bytes: 期望 ABCDE 实际 " + s)
+        fail = fail + 1
+    }
+
+    // write_bytes 不写 '\0'，读 0 字节应返回空字符串
+    var empty = ffi.read_bytes(buf, 0, 0)
+    if empty == "" {
+        print("[PASS] read_bytes len=0")
+        pass = pass + 1
+    } else {
+        print("[FAIL] read_bytes len=0: 期望空 实际 " + empty)
+        fail = fail + 1
+    }
+
+    ffi.free(buf)
+
+    // ===== 测试 2: 显式字节序函数 =====
+    print("\n--- 测试显式字节序函数 ---")
+    var buf2 = ffi.malloc(16)
+
+    // 小端 i16: 值 258
+    ffi.write_le_i16(buf2, 0, 258)
+    var le16 = ffi.read_le_i16(buf2, 0)
+    if le16 == 258 {
+        print("[PASS] write_le_i16 + read_le_i16")
+        pass = pass + 1
+    } else {
+        print("[FAIL] write_le_i16 + read_le_i16: 期望 258 实际 " + le16)
+        fail = fail + 1
+    }
+
+    // 大端 i16: 值 258
+    ffi.write_be_i16(buf2, 0, 258)
+    var be16 = ffi.read_be_i16(buf2, 0)
+    if be16 == 258 {
+        print("[PASS] write_be_i16 + read_be_i16")
+        pass = pass + 1
+    } else {
+        print("[FAIL] write_be_i16 + read_be_i16: 期望 258 实际 " + be16)
+        fail = fail + 1
+    }
+
+    // 交叉验证：用大端写、用小端读 → 值不同
+    ffi.write_be_i16(buf2, 2, 4660)  // 0x1234 = 4660, 字节 [12, 34]
+    var cross = ffi.read_le_i16(buf2, 2)  // 小端读 → 0x3412 = 13330
+    if cross == 13330 {
+        print("[PASS] be_write + le_read cross")
+        pass = pass + 1
+    } else {
+        print("[FAIL] be_write + le_read cross: 期望 13330 实际 " + cross)
+        fail = fail + 1
+    }
+
+    // 小端 i32: 值 305419896 = 0x12345678
+    ffi.write_le_i32(buf2, 4, 305419896)
+    var le32 = ffi.read_le_i32(buf2, 4)
+    if le32 == 305419896 {
+        print("[PASS] write_le_i32 + read_le_i32")
+        pass = pass + 1
+    } else {
+        print("[FAIL] write_le_i32 + read_le_i32: 期望 305419896 实际 " + le32)
+        fail = fail + 1
+    }
+
+    // 大端 i32
+    ffi.write_be_i32(buf2, 8, 305419896)
+    var be32 = ffi.read_be_i32(buf2, 8)
+    if be32 == 305419896 {
+        print("[PASS] write_be_i32 + read_be_i32")
+        pass = pass + 1
+    } else {
+        print("[FAIL] write_be_i32 + read_be_i32: 期望 305419896 实际 " + be32)
+        fail = fail + 1
+    }
+
+    ffi.free(buf2)
+
+    // ===== 测试 3: ffi.dlsym 符号解析 =====
+    print("\n--- 测试 ffi.dlsym ---")
+    var libc = ffi.load("msvcrt.dll")
+    if libc != null {
+        var strlen_ptr = ffi.dlsym(libc, "strlen")
+        if strlen_ptr != null {
+            print("[PASS] dlsym('strlen') != null")
+            pass = pass + 1
+        } else {
+            print("[FAIL] dlsym('strlen') != null")
+            fail = fail + 1
+        }
+
+        var bogus_ptr = ffi.dlsym(libc, "this_function_does_not_exist_12345")
+        if bogus_ptr == null {
+            print("[PASS] dlsym(bogus) == null")
+            pass = pass + 1
+        } else {
+            print("[FAIL] dlsym(bogus) == null")
+            fail = fail + 1
+        }
+        ffi.free(libc)
+    } else {
+        print("[SKIP] msvcrt.dll 不可用")
+    }
+
+    // ===== 测试 4: 符号地址缓存（连续调用不出错）=====
+    print("\n--- 测试符号地址缓存 ---")
+    var libc2 = ffi.load("msvcrt.dll")
+    if libc2 != null {
+        var total = 0
+        for 100 to i {
+            total = total + ffi.call_int(libc2, "abs", -5)
+        }
+        if total == 500 {
+            print("[PASS] 缓存热路径 100 次调用")
+            pass = pass + 1
+        } else {
+            print("[FAIL] 缓存热路径 100 次调用: 期望 500 实际 " + total)
+            fail = fail + 1
+        }
+        ffi.free(libc2)
+    } else {
+        print("[SKIP] msvcrt.dll 不可用")
+    }
+
+    // ===== 测试 5: cstruct.offset_of =====
+    print("\n--- 测试 cstruct.offset_of ---")
+    var off_x = POINT.offset_of("x")
+    if off_x == 0 {
+        print("[PASS] POINT.offset_of('x')")
+        pass = pass + 1
+    } else {
+        print("[FAIL] POINT.offset_of('x'): 期望 0 实际 " + off_x)
+        fail = fail + 1
+    }
+
+    var off_y = POINT.offset_of("y")
+    if off_y == 4 {
+        print("[PASS] POINT.offset_of('y')")
+        pass = pass + 1
+    } else {
+        print("[FAIL] POINT.offset_of('y'): 期望 4 实际 " + off_y)
+        fail = fail + 1
+    }
+
+    // ===== 测试 6: ffi.call deprecated 警告 =====
+    print("\n--- 测试 ffi.call deprecated ---")
+    print("（stderr 应输出 deprecation 警告）")
+    var libc3 = ffi.load("msvcrt.dll")
+    if libc3 != null {
+        var r = ffi.call(libc3, "abs", -42)
+        if r == 42 {
+            print("[PASS] ffi.call 仍然正常工作")
+            pass = pass + 1
+        } else {
+            print("[FAIL] ffi.call 仍然正常工作: 期望 42 实际 " + r)
+            fail = fail + 1
+        }
+        ffi.free(libc3)
+    } else {
+        print("[SKIP] msvcrt.dll 不可用")
+    }
+
+    // ===== 测试 7: int/bigint 合并窄化 =====
+    print("\n--- 测试 int/bigint 合并窄化 ---")
+    var libc4 = ffi.load("msvcrt.dll")
+    if libc4 != null {
+        var r1 = ffi.call_int(libc4, "abs", -7)
+        if r1 == 7 {
+            print("[PASS] int abs(-7)")
+            pass = pass + 1
+        } else {
+            print("[FAIL] int abs(-7): 期望 7 实际 " + r1)
+            fail = fail + 1
+        }
+
+        // bigint 值（在小范围内）
+        var big = 1000000
+        var r2 = ffi.call_int(libc4, "abs", -big)
+        if r2 == 1000000 {
+            print("[PASS] bigint abs(-1000000)")
+            pass = pass + 1
+        } else {
+            print("[FAIL] bigint abs(-1000000): 期望 1000000 实际 " + r2)
+            fail = fail + 1
+        }
+        ffi.free(libc4)
+    } else {
+        print("[SKIP] msvcrt.dll 不可用")
+    }
+
+    print("\n================================")
+    print("总计: " + pass + " 通过, " + fail + " 失败")
+    print("================================")
+}

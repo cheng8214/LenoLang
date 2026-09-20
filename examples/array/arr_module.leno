@@ -1,0 +1,35 @@
+import arrays
+
+var arr = [1, 2, 3]
+print("初始数组:", arr)
+
+// 测试 len
+print("长度:", arrays.len(arr))
+
+// 测试 add
+arrays.add(arr, 4)
+print("add(4)后:", arr)
+
+// 测试 pop
+var popped = arrays.pop(arr)
+print("pop()返回:", popped, ", 数组:", arr)
+
+// 测试 has
+print("has(2):", arrays.has(arr, 2))
+print("has(99):", arrays.has(arr, 99))
+
+// 测试 insert
+arrays.insert(arr, 1, 99)
+print("insert(1, 99)后:", arr)
+
+// 测试 remove
+var removed = arrays.remove(arr, 1)
+print("remove(1)返回:", removed, ", 数组:", arr)
+
+// 测试 copy
+var arr2 = arrays.copy(arr)
+arrays.add(arr, 100)
+print("原数组添加100后:", arr)
+print("拷贝数组:", arr2)
+
+print("\n所有测试通过!")

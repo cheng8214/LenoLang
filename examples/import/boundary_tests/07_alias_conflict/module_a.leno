@@ -1,0 +1,7 @@
+// 别名冲突测试 - 模块 A
+
+export var name = "Module A"
+
+export func get_name() {
+    return name
+}

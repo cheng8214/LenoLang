@@ -1,0 +1,41 @@
+// 测试嵌套内联场景下析构是否正常（还原 tetris 集成一行后消除崩溃的场景）
+int alive = 0
+
+struct Block {
+    int x = 0
+
+    func Block() {
+        alive = alive + 1
+    }
+
+    func ~Block() {
+        alive = alive - 1
+    }
+}
+
+// 小函数，会被内联 — 在函数内创建并使用 struct
+func use_block(): int {
+    var b = new Block()
+    return b.x
+}
+
+// 小函数调用另一个小函数（嵌套内联）
+func clear_line(): int {
+    var b = new Block()
+    var val = use_block()
+    return val + b.x
+}
+
+main() {
+    assert_eq(alive, 0)
+
+    // 多次调用嵌套内联
+    for 5 to i {
+        var x = clear_line()
+        assert_eq(alive, 0)  // 每次调用后析构应触发
+    }
+
+    assert_eq(alive, 0)
+
+    print("test_dtor_inline_nested passed")
+}

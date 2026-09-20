@@ -1,0 +1,54 @@
+// 测试 Dict[string,bool] 类型化字典的行为（回归测试）
+// 覆盖：类型化赋值/读取、下标读不存在键返回 null、.get 默认值、has/remove/keys
+
+main() {
+    // 测试1: 类型化 Dict 赋值和读取
+    Dict[string, bool] visited = {}
+    visited["a"] = true
+    visited["b"] = false
+    assert_eq(visited["a"], true)
+    assert_eq(visited["b"], false)
+
+    // 测试2: 下标读取不存在的键 -> 返回 null（注意不是该类型默认值 false）
+    var vMissing = visited["nonexist"]
+    assert_eq(vMissing, null)
+
+    // 测试3: .get(key, default) 键存在 -> 返回实际值
+    assert_eq(visited.get("a", false), true)
+
+    // 测试4: .get(key, default) 键不存在 -> 返回默认值 false
+    assert_eq(visited.get("zzz", false), false)
+
+    // 测试5: .get 键不存在且默认 true
+    assert_eq(visited.get("zzz", true), true)
+
+    // 测试6: 下标读取不存在的键直接用于 if（null 当 false 用）
+    if visited["nonexist"] {
+        assert_true(false)   // 不应走到这里
+    } else {
+        assert_true(true)
+    }
+
+    // 测试7: .get 结果直接用于 if
+    if visited.get("a", false) {
+        assert_true(true)
+    } else {
+        assert_true(false)   // 不应走到这里
+    }
+
+    // 测试8: keys() 遍历
+    var keys = visited.keys()
+    assert_eq(keys.has("a"), true)
+    assert_eq(keys.has("b"), true)
+
+    // 测试9: has() 检查键存在
+    assert_eq(visited.has("a"), true)
+    assert_eq(visited.has("zzz"), false)
+
+    // 测试10: remove 删除后 .get 返回默认值
+    visited.remove("b")
+    assert_eq(visited.get("b", false), false)
+    assert_eq(visited.has("b"), false)
+
+    print("test_dict_bool: OK")
+}

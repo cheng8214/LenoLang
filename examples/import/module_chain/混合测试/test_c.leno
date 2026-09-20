@@ -1,0 +1,7 @@
+
+export struct Point3
+{
+    int x
+    int y
+    int z
+}

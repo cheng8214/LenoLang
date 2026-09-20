@@ -1,0 +1,52 @@
+// 学生管理系统 - 用数组+字典实现
+// 对比一下和 struct 版本的区别
+
+main() {
+    // Student 用字典表示
+    var s1 = {
+        name: "张三",
+        age: 18,
+        scores: [85, 90, 78]
+    }
+    
+    var s2 = {
+        name: "李四",
+        age: 19,
+        scores: [92, 88, 95]
+    }
+    
+    // Class 用字典表示
+    var mathClass = {
+        name: "数学一班",
+        students: []
+    }
+    
+    // 添加学生（手动操作数组）
+    mathClass.students.add(s1)
+    mathClass.students.add(s2)
+    
+    // 计算平均分（需要外部函数或内联计算）
+    print("班级: " + mathClass.name)
+    
+    // 计算平均年龄（手动遍历）
+    if (mathClass.students.len() == 0) {
+        print("平均年龄: 0")
+    } else {
+        int total = 0
+        for mathClass.students to s {
+            total = total + _int(s.age)    // 需要显式转换
+        }
+        print("平均年龄: " + (total / mathClass.students.len()))
+    }
+    
+    // 计算张三的平均分（手动计算）
+    if (s1.scores.len() == 0) {
+        print("张三平均分: 0")
+    } else {
+        int total = 0
+        for s1.scores to score {
+            total = total + _int(score)    // 需要显式转换
+        }
+        print("张三平均分: " + (total / s1.scores.len()))
+    }
+}

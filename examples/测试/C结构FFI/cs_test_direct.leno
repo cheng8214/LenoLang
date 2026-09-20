@@ -1,0 +1,15 @@
+// 直接测试 cstruct
+import ffi
+
+cstruct TT {
+    u32 id
+    u32 value
+}
+
+main() {
+    var t = TT.malloc()
+    t.id = 1
+    t.value = 100
+    print("id=" + t.id + " value=" + t.value)
+    t.free()
+}

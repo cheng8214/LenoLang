@@ -1,0 +1,11 @@
+// 简化测试：泛型方法参数检查
+struct Calc[T] {
+    T base
+
+    func add(T v): T {
+        return self.base + v
+    }
+}
+
+var calc = new Calc[int](base=5)
+print(calc.add(3))

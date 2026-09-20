@@ -1,0 +1,6 @@
+import "const_mod.leno" as cm
+{
+   print(cm.x)
+   print(cm.arr[0])
+   print(cm.s)
+}

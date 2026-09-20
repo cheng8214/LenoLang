@@ -1,0 +1,1905 @@
+// sdl_edit.leno — 文本编辑控件（单行/多行 + 滚动条）
+// 通过 win.addEdit({...}) 创建，run() 自动处理交互和渲染
+import "sdl_renderer.leno" as ren; use ren.Renderer
+import "sdl_font.leno" as fnt; use fnt.Font
+import "sdl_event.leno" as evt; use evt.Event
+import "sdl_core.leno" as core; use core.Scancode
+use core.sdl3
+import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_tooltip.leno" as tip
+import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
+use theme.Color
+import "sdl_menu.leno" as menu; use menu.MenuBar
+import "sdl_timer.leno" as tmr; use tmr.Timer
+
+export struct Edit impl Widget, Themeable {
+    string text
+    float x = 0.0, y = 0.0, w = 200.0, h = 30.0
+    float _radius = 4.0             // 圆角半径
+bool _drawBorder = true          // 是否绘制边框（嵌入 ComboBox 时设为 false）
+    bool _drawBg = true              // 是否绘制背景（默认 true；Table 内嵌需背景遮住单元格文字）
+    float _fontSize = 15.0          // 字体大小
+    string _fontPath = ""
+    int _fontStyle = 0
+    Font? _font                    // 字体缓存
+    Ptr[u8]? _hwnd                   // 窗口句柄（IME 定位）
+    Color _bgColor = #232332FF             // 背景色（默认深色主题）
+    Color _txtColor = #DCDCF0FF           // 文字色（默认浅色）
+    Color _focusColor = #64B4FFFF          // 聚焦边框色
+    Color _sbColor = #787D8CFF             // 滚动条颜色
+
+    // 单行模式
+    int _cursorPos = 0               // 光标字符位置（单行）
+    float _scrollX = 0.0             // 水平滚动偏移
+
+    // 多行模式
+    bool _multiline = false
+    Array[string] _lines = []         // 行缓存
+    int _cursorLine = 0, _cursorCol = 0   // 多行光标
+    float _scrollY = 0.0              // 垂直滚动偏移
+    float _lineHeight = 20.0          // 行高缓存
+
+    string _placeholder = ""          // 占位文字
+    bool _focused = false
+    // IME 候选框位置缓存：仅在坐标/光标变化时调用 SDL，避免每帧无谓刷新
+    int _imeX = -1, _imeY = -1, _imeW = -1, _imeH = -1, _imeCursor = -1
+    bool _mouseDown = false, _draggingVScroll = false, _draggingHScroll = false, _hoverVScroll = false
+    float _hDragOffset = 0.0            // 横向拖动：抓取点在滑块内的偏移（避免拖动跳变）
+    bool _hDragThumb = false, _hoverHScroll = false, _hoverText = false
+    int _blinkTime = 0               // 光标闪烁 tick
+    Timer? _blinkTimer              // 光标闪烁定时器（500ms 间隔驱动空闲闪烁）
+    bool _showCursor = true
+    bool _password = false               // 密码模式
+    bool _readOnly = false               // 只读
+    bool _loaded = false
+    bool enabled = true
+    bool visible = true
+    string _tip = ""             // 悬停提示文本（空 = 不提示）
+    bool _dirty = true                  // 行缓存需重建
+    bool _textDirty = false              // text 需要从 _lines 重建
+    int  _cachedLen = -1              // 缓存总字符数（不含换行符）
+    float _cachedMaxW = 0.0            // 缓存最大行宽（脏时重算）
+
+    // 撤销/重做
+    Array[Array[string]] _undoStack = []
+    Array[Array[string]] _redoStack = []
+    Array[int] _undoCursorStack = []       // 撤销光标栈：每项存 line*10000+col
+    Array[int] _redoCursorStack = []
+    bool _mergeUndo = false              // 连续输入可合并为一次撤销
+    int  _mergePos = 0               // 合并基准：上次输入结束处的光标字符位置
+    int  _lastClickTime = -100000    // 上次点击 tick（双击检测）；初值足够小，避免首点误判双击
+    float _lastClickX = 0.0, _lastClickY = 0.0
+
+    // 自动换行
+    bool _wordWrap = false
+    // 显示行表（自动换行时一行逻辑行拆成多显示行）：每行 [逻辑行, 段起始列, 段结束列]
+    Array[int] _drLi = []
+    Array[int] _drC0 = []
+    Array[int] _drC1 = []
+    int _drCount = 0
+    bool _drDirty = true               // 显示行表需重建
+    float _drVisW = 0.0               // 上次构建显示行表用的可视宽度
+    bool _drWrap = false                // 上次构建时的换行模式
+    Array[int] _drLStart = []        // 每逻辑行在显示行表中的起始索引
+    Array[int] _drLCnt = []          // 每逻辑行的显示行段数
+    int _dirtyLine = -1              // 仅单行内容变化时需增量重算的逻辑行（-1 表示无）
+    Array[float] _lineW = []         // 每行像素宽度缓存（增量更新）
+    float _maxLineW = 0.0             // 当前最大行宽
+    bool _lwDirty = true               // 行宽缓存需全量重算
+
+    // 滚动条尺寸缓存（避免同一帧内重复调用 _compute_sb）
+    Array[float] _sbCache = [0.0, 0.0]   // [sbW, sbH]
+    bool _sbDirty = true                  // 滚动条尺寸需重算
+
+    // 文本选取
+    int  _selStart = -1               // 选区起始（-1 表示无选区）
+    int  _selEnd = 0                 // 选区结束
+    bool _selActive = false              // 有活跃选区
+
+    func():void _onChange
+    func():void _onEnter
+
+    // 内嵌右击上下文菜单（复制/剪切/粘贴/全选/撤销/重做），复用 MenuBar 弹层渲染与捕获
+    MenuBar? _ctxMenu
+    int _ctxMenuH = -1
+    bool _ctxMenuEnabled = true       // 是否启用右击上下文菜单
+    int _winW = 0, _winH = 0       // 所属窗口逻辑宽高（上下文菜单边界夹紧用）
+    func(string):void _onCtxSelect     // 上下文菜单自定义回调（内置动作之后触发，可选）
+
+    // ==================== 字体 ====================
+    func _ensure_font() {
+        if _font == null or not _font.ok {
+            if _font != null and _font.ok { fnt.releaseFont(_font) }
+            if _fontPath != "" {
+                _font = fnt.acquireFont(_fontPath, _fontSize)
+            } else {
+                _font = fnt.acquireFontAuto(_fontSize)
+            }
+            if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
+            _cachedMaxW = -1.0       // 字体变了，行宽缓存失效
+            _invalidate_sb()           // 字体变化，行高/行宽变化，滚动条尺寸需重算
+            // 缓存行高
+            if _font.ok {
+                var[float, float](_agw, _agh) = _font.measureString("Ag")
+                _lineHeight = _agh + 2.0
+            }
+        }
+    }
+
+    // 单行：测量到 pos 的宽度
+    func _text_width_to(int pos): float {
+        if _font == null or not _font.ok { return 0.0 }
+        if pos <= 0 { return 0.0 }
+        if pos > text.len() { pos = text.len() }
+        var sub = text.slice(0, pos)
+        if _password { sub = "*".rep(pos) }
+        var[float, float](_msw, _msh) = _font.measureString(sub)
+        return _msw
+    }
+
+    // 多行：测量某行到某列的宽度
+    func _line_width_to(int line, int col): float {
+        if _font == null or not _font.ok { return 0.0 }
+        _rebuild_lines()
+        if line < 0 { return 0.0 }
+        if line >= _lines.len() { return 0.0 }
+        var ln = _lines[line]
+        if col <= 0 { return 0.0 }
+        if col > ln.len() { col = ln.len() }
+        var sub = ln.slice(0, col)
+        if _password { sub = "*".rep(col) }
+        var[float, float](_msw, _msh) = _font.measureString(sub)
+        return _msw
+    }
+
+    // ==================== 行管理 ====================
+    func _rebuild_lines() {
+        if not _dirty { return }
+        _dirty = false
+        _cachedMaxW = -1.0
+        _drDirty = true
+        _lwDirty = true
+        _invalidate_sb()   // 文本结构变化，滚动条尺寸需重算
+
+        // 从 text 拆分行（用 split 处理所有 \n，包括末尾换行产生的空行）
+        // ★ 空文本时保持 _lines = [""] 而非 []，确保 _process_ml 等处访问 _lines[0] 不越界
+        if text == "" { _lines = [""]; return }
+        _lines = text.replace("\r", "").split("\n")
+    }
+
+    // 总内容高度
+    func _content_height(): float {
+        _rebuild_lines()
+        if _lines.len() == 0 { return _lineHeight }
+        if _wordWrap {
+            if _drDirty or _drWrap != _wordWrap { _ensure_layout(w - 16.0) }
+            if _drCount == 0 { return _lineHeight }
+            return _lineHeight * _drCount
+        }
+        return _lineHeight * _lines.len()
+    }
+
+    // ==================== 滚动 ====================
+    func _adjust_scroll() {
+        if _multiline {
+            _adjust_scroll_ml()
+        } else {
+            _adjust_scroll_sl()
+        }
+    }
+
+    func _adjust_scroll_sl() {
+        float pad = 8.0
+        float visW = w - pad * 2.0
+        if visW <= 0 { return }
+        float curX = _text_width_to(_cursorPos)
+        // ★ 全文宽度 ≤ 可视宽度时强制归零（避免 Edit 被 set_size 加宽后 scroll 残留导致开头被裁）
+        float fullW = _text_width_to(text.len())
+        if fullW <= visW { _scrollX = 0.0; return }
+        if curX - _scrollX > visW { _scrollX = curX - visW + 4.0 }
+        if curX - _scrollX < 0 { _scrollX = curX - 4.0 }
+        if _scrollX < 0 { _scrollX = 0 }
+    }
+
+    func _adjust_scroll_ml() {
+        float pad = 8.0
+        // 先用不含滚动条的宽度构建显示行表，再算滚动条，避免每帧重排
+        float provVisW = w - pad * 2.0
+        if provVisW <= 0 { provVisW = 1.0 }
+        _ensure_layout(provVisW)
+        float sbW = _sb_width(), sbH = _sb_height(), visW = w - pad * 2.0 - sbW, visH = h - pad * 2.0 - sbH
+        if visH <= 0 { return }
+
+        // 构建显示行表并定位光标所在显示行
+        if not _wordWrap { _ensure_layout(visW) }
+        var di = _disp_row_of(_cursorLine, _cursorCol)
+
+        // 垂直滚动
+        float curY = di * _lineHeight
+        if curY - _scrollY > visH - _lineHeight {
+            _scrollY = curY - visH + _lineHeight
+        }
+        if curY - _scrollY < 0 {
+            _scrollY = curY
+        }
+        if _scrollY < 0 { _scrollY = 0 }
+
+        // 水平滚动（自动换行模式不横向滚动）
+        if not _wordWrap {
+            float curX = _line_width_to(_cursorLine, _cursorCol)
+            if curX - _scrollX > visW { _scrollX = curX - visW + 4.0 }
+            if curX - _scrollX < 0 { _scrollX = curX - 4.0 }
+            if _scrollX < 0 { _scrollX = 0 }
+        } else {
+            _scrollX = 0.0
+        }
+
+        // 限制最大滚动
+        float maxSY = _content_height() - visH
+        if _scrollY > maxSY { _scrollY = maxSY }
+        if maxSY < 0 { _scrollY = 0 }
+    }
+
+    // ==================== set 初始化 ====================
+    func set(Dict opts) {
+        // 主题默认配色（opts 覆盖优先级更高）
+        Theme th = theme.getTheme()
+        _bgColor = th.bgInput
+        _txtColor = th.txtInput
+        _focusColor = th.accentFocus
+        _sbColor = th.sb
+        text        = opts.get("text", "")
+        x           = opts.get("x", 0)
+        y           = opts.get("y", 0)
+        w           = opts.get("w", 180)
+        h           = opts.get("h", 36)
+        _radius     = opts.get("radius", 5)
+_drawBorder = opts.get("border", true)
+        _drawBg = opts.get("draw_bg", true)
+        _fontSize   = opts.get("font_size", 15)
+        _fontPath   = opts.get("font_path", "")
+        _fontStyle  = opts.get("font_style", 0)
+
+        // 颜色：opts 未传则保持默认值
+        if opts.get("bg_color") is Color => t { _bgColor = t }
+        if opts.get("text_color") is Color => t { _txtColor = t }
+        if opts.get("focus_color") is Color => t { _focusColor = t }
+
+        _placeholder = opts.get("placeholder", "")
+        _tip = opts.get("tip", "")
+
+        // 模式
+        _multiline  = opts.get("multiline", false)
+        _password   = opts.get("password", false)
+        _readOnly   = opts.get("readonly", false)
+        _wordWrap   = opts.get("wordWrap", false)
+
+        // 状态
+        _focused    = false
+        _hoverText  = false
+        _showCursor = true
+        _blinkTime  = core.getTicks()
+        _blinkTimer = new Timer()
+        _blinkTimer.set(500, func() {
+            _showCursor = not _showCursor
+            core.requestRedraw()
+        })
+        tmr.registerTimer(_blinkTimer)
+        _blinkTimer.stop()    // 默认不运行，聚焦时由 focus() 启动
+        _cursorPos  = text.len()
+        _cursorLine = 0; _cursorCol = 0
+        _scrollX    = 0.0; _scrollY  = 0.0
+        _lines      = []
+        _drLi = []; _drC0 = []; _drC1 = []; _drCount = 0
+        _drDirty = true; _drVisW = 0.0; _drWrap = _wordWrap
+        _drLStart = []; _drLCnt = []; _dirtyLine = -1
+        _lineW = []; _maxLineW = 0.0; _lwDirty = true
+        _dirty      = true
+        _cachedLen  = -1
+        _lastClickTime = -100000; _lastClickX = 0; _lastClickY = 0
+        _undoStack  = []; _redoStack = []; _undoCursorStack = []; _redoCursorStack = []
+        _mergeUndo = false; _mergePos = 0
+        _selStart   = -1; _selEnd = 0; _selActive = false
+
+        _ensure_font()
+        enabled = opts.get("enabled", true)
+        visible = opts.get("visible", true)
+        _loaded = true
+
+        // —— 内嵌右击上下文菜单（撤销/重做/剪切/复制/粘贴/全选）——
+        _ctxMenu = menu.createMenuBar({})
+        _ctxMenu.setWindowSize(_winW, _winH)
+        _ctxMenuH = _ctxMenu.addContextMenu("edit_ctx")
+        _ctxMenu.addContextItem(_ctxMenuH, { label: "撤销", id: "undo", shortcut: "Ctrl+Z" })
+        _ctxMenu.addContextItem(_ctxMenuH, { label: "重做", id: "redo", shortcut: "Ctrl+Y" })
+        _ctxMenu.addContextSeparator(_ctxMenuH)
+        _ctxMenu.addContextItem(_ctxMenuH, { label: "剪切", id: "cut", shortcut: "Ctrl+X" })
+        _ctxMenu.addContextItem(_ctxMenuH, { label: "复制", id: "copy", shortcut: "Ctrl+C" })
+        _ctxMenu.addContextItem(_ctxMenuH, { label: "粘贴", id: "paste", shortcut: "Ctrl+V" })
+        _ctxMenu.addContextSeparator(_ctxMenuH)
+        _ctxMenu.addContextItem(_ctxMenuH, { label: "全选", id: "select_all", shortcut: "Ctrl+A" })
+        _ctxMenu.on_select(func(string m, string id) { _ctx_action(id) })
+        // 登记到全局注册表，由窗口第二遍绘制兜底画在最上层（panel 添加的 Edit 也能被覆盖）
+        menu.registerContextMenu(_ctxMenu)
+
+    }
+
+    // ==================== 设置方法 ====================
+    func set_text(string t) {
+        text = t; _cursorPos = text.len(); _cursorLine = 0; _cursorCol = 0
+        _scrollX = 0.0   // ★ 强制归零：避免短文本替换长文本时 scroll 残留导致显示不完整
+        _dirty = true; _invalidate_sb(); _adjust_scroll()
+    }
+    func set_pos(float px, float py)    { x = px; y = py }
+    func set_size(float sw, float sh)   { w = sw; h = sh; _invalidate_sb(); _adjust_scroll() }
+    func get_w(): float                 { return w }
+    func get_h(): float                 { return h }
+    func set_bg_color(Color color)         { _bgColor = color }
+    func set_text_color(Color color)       { _txtColor = color }
+    func set_font_size(float s) {
+        _fontSize = s
+        if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
+    }
+    func set_readonly(bool ro)  { _readOnly = ro }
+    func set_password(bool pw)  { _password = pw }
+    func set_multiline(bool ml) {
+        if not ml { text = get_text() }   // 切单行前 flush lines → text
+        _multiline = ml; _dirty = true; _invalidate_sb()
+    }
+    func set_placeholder(string p) { _placeholder = p }
+    func set_tip(string t) { _tip = t }
+    func set_enabled(bool e) { enabled = e }
+    func set_visible(bool v) { visible = v }
+    func is_visible(): bool { return visible }
+    func set_window(Ptr[u8] hwnd) {
+        _hwnd = hwnd
+        _ctxMenu?.setWindowHandle(hwnd)   // 让右击菜单按窗口隔离绘制
+    }
+    // 设置所属窗口逻辑宽高，供上下文菜单弹出时做边界夹紧
+    func set_window_size(int ww, int hh) {
+        _winW = ww; _winH = hh
+        _ctxMenu?.setWindowSize(ww, hh)
+    }
+    // 返回内嵌上下文菜单（MenuBar），应用可经 addContextItem 等扩展菜单项
+    func get_context_menu(): MenuBar { return _ctxMenu }
+    // 返回内嵌上下文菜单句柄（addContextMenu 返回的索引），用于扩展菜单项
+    func get_context_menu_handle(): int { return _ctxMenuH }
+    // 启用/禁用右击上下文菜单
+    func set_context_menu_enabled(bool en) { _ctxMenuEnabled = en }
+    func is_context_menu_enabled(): bool { return _ctxMenuEnabled }
+    // 检查内嵌右击上下文菜单是否处于展开状态（供 Table 等容器判断是否拦截事件）
+    func isContextMenuOpen(): bool { return _ctxMenu != null and _ctxMenu.isOpen() }
+    // 注册上下文菜单自定义回调（内置动作执行之后触发，参数为项 id）
+    func on_context_select(func(string):void cb) { _onCtxSelect = cb }
+    func set_word_wrap(bool w)  { _wordWrap = w; _scrollX = 0.0; _drDirty = true; _invalidate_sb() }
+    func focus()    { _focused = true; _blinkTimer?.start() }
+    func blur()     { _focused = false; _blinkTimer?.stop() }
+
+    // 保存当前状态到撤销栈
+    func _save_undo() {
+        // 单行模式：text 是源，_lines 仅惰性同步，撤销依赖 _lines，故先同步；
+        // 光标统一折成“行0 + 字符位置”，与 _undo/_redo 的 _col_to_pos 还原一致
+        if not _multiline {
+            _rebuild_lines()
+            _cursorLine = 0
+            _cursorCol = _cursorPos
+        }
+        _undoStack.add(_lines.copy())
+        _undoCursorStack.add(_cursorLine * 10000 + _cursorCol)
+        if _undoStack.len() > 200 { _undoStack.remove(0); _undoCursorStack.remove(0) }
+        _redoStack.clear(); _redoCursorStack.clear()
+    }
+
+    // Ctrl+Z
+    func _undo() {
+        if _undoStack.len() == 0 { return }
+        // 单行模式：先把当前 text 同步进 _lines（数据源是 text，缓存可能陈旧），
+        // 保证 redo 栈存的是真实当前状态；并折出正确光标。
+        if not _multiline {
+            _rebuild_lines()
+            _cursorLine = 0
+            _cursorCol = _cursorPos
+        }
+        // 保存当前状态到 redo 栈
+        _redoStack.add(_lines.copy())
+        _redoCursorStack.add(_cursorLine * 10000 + _cursorCol)
+        // 恢复行内容
+        _lines = _undoStack[_undoStack.len() - 1]
+        _undoStack.remove(_undoStack.len() - 1)
+        // 恢复光标位置
+        var cursorInfo = _undoCursorStack[_undoCursorStack.len() - 1]
+        _undoCursorStack.remove(_undoCursorStack.len() - 1)
+        _cursorLine = cursorInfo / 10000
+        _cursorCol = cursorInfo % 10000
+        _textDirty = true; _cachedLen = -1; _cachedMaxW = -1; _mergeUndo = false
+        _clear_sel()
+        if _lines.len() > 0 {
+            if _cursorLine >= _lines.len() { _cursorLine = _lines.len() - 1 }
+            if _cursorLine < 0 { _cursorLine = 0 }
+            if _cursorCol > _lines[_cursorLine].len() { _cursorCol = _lines[_cursorLine].len() }
+        } else { _cursorLine = 0; _cursorCol = 0 }
+        _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
+        if not _multiline {
+            // 单行：直接由还原后的 _lines 重建 text，并禁止 get_text 再用旧 text 反写 _lines
+            _dirty = false
+            _textDirty = false
+            text = _lines.join("\n")
+        } else {
+            text = get_text()
+        }
+        _drDirty = true; _lwDirty = true; _invalidate_sb()
+        _adjust_scroll()
+    }
+
+    // Ctrl+Y
+    func _redo() {
+        if _redoStack.len() == 0 { return }
+        // 单行模式：先把当前 text 同步进 _lines，保证 undo 栈存的是真实当前状态
+        if not _multiline {
+            _rebuild_lines()
+            _cursorLine = 0
+            _cursorCol = _cursorPos
+        }
+        // 保存当前状态到 undo 栈
+        _undoStack.add(_lines.copy())
+        _undoCursorStack.add(_cursorLine * 10000 + _cursorCol)
+        // 恢复行内容
+        _lines = _redoStack[_redoStack.len() - 1]
+        _redoStack.remove(_redoStack.len() - 1)
+        // 恢复光标位置
+        var cursorInfo = _redoCursorStack[_redoCursorStack.len() - 1]
+        _redoCursorStack.remove(_redoCursorStack.len() - 1)
+        _cursorLine = cursorInfo / 10000
+        _cursorCol = cursorInfo % 10000
+        _textDirty = true; _cachedLen = -1; _cachedMaxW = -1; _mergeUndo = false
+        _clear_sel()
+        if _lines.len() > 0 {
+            if _cursorLine >= _lines.len() { _cursorLine = _lines.len() - 1 }
+            if _cursorLine < 0 { _cursorLine = 0 }
+            if _cursorCol > _lines[_cursorLine].len() { _cursorCol = _lines[_cursorLine].len() }
+        } else { _cursorLine = 0; _cursorCol = 0 }
+        _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
+        if not _multiline {
+            // 单行：直接由还原后的 _lines 重建 text，并禁止 get_text 再用旧 text 反写 _lines
+            _dirty = false
+            _textDirty = false
+            text = _lines.join("\n")
+        } else {
+            text = get_text()
+        }
+        _drDirty = true; _lwDirty = true; _invalidate_sb()
+        _adjust_scroll()
+    }
+
+    // ==================== 查询 ====================
+    func is_focused(): bool { return _focused }
+    func is_loaded(): bool { return _loaded }
+
+    // ==================== 右击上下文菜单 ====================
+    // 在 (x,y) 弹出，并按当前状态刷新各项可用性
+    func _open_ctx_menu(float x, float y) {
+        if _ctxMenu == null { return }
+        focus()
+        _ctxMenu.setContextItemEnabled(_ctxMenuH, "undo", _undoStack.len() > 0)
+        _ctxMenu.setContextItemEnabled(_ctxMenuH, "redo", _redoStack.len() > 0)
+        bool hasSel = _selActive and _selStart >= 0 and _selStart != _selEnd
+        _ctxMenu.setContextItemEnabled(_ctxMenuH, "cut", not _readOnly and hasSel)
+        _ctxMenu.setContextItemEnabled(_ctxMenuH, "copy", hasSel)
+        var cbp = core.getClipboardText()
+        _ctxMenu.setContextItemEnabled(_ctxMenuH, "paste", not _readOnly and cbp != "")
+        _ctxMenu.openContext(_ctxMenuH, x, y)
+    }
+
+    // 上下文菜单项动作分发
+    func _ctx_action(string id) {
+        switch id {
+            case "undo"       { _undo() }
+            case "redo"       { _redo() }
+            case "cut"        { _ctx_cut() }
+            case "copy"       { _ctx_copy() }
+            case "paste"      { _ctx_paste() }
+            case "select_all" { _ctx_select_all() }
+        }
+        if _onCtxSelect != null { _onCtxSelect(id) }
+    }
+
+    func _ctx_copy() {
+        _rebuild_lines()
+        var sel = _sel_text()
+        if sel == "" { sel = if _multiline then get_text() else text }
+        if sel != "" { core.setClipboardText(sel) }
+    }
+
+    func _ctx_cut() {
+        if _readOnly { return }
+        _rebuild_lines()
+        var sel = _sel_text()
+        if sel == "" { return }
+        core.setClipboardText(sel)
+        if _multiline {
+            _save_undo(); _mergeUndo = false; _del_sel_lines()
+            _cachedLen = -1; _cachedMaxW = -1; _lwDirty = true; _drDirty = true
+            _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
+            _textDirty = true; _invalidate_sb(); _on_text_changed()
+        } else {
+            _cursorPos = _del_sel(); _dirty = true; _on_text_changed()
+        }
+    }
+
+    func _ctx_paste() {
+        if _readOnly { return }
+        var paste = core.getClipboardText()
+        if paste == "" { return }
+        if _multiline {
+            _rebuild_lines()
+            _save_undo(); _mergeUndo = false; _del_sel_lines()
+            if _lines.len() == 0 { _lines.add("") }
+            var left = _lines[_cursorLine].slice(0, _cursorCol)
+            var right = _lines[_cursorLine].slice(_cursorCol, _lines[_cursorLine].len())
+            var full = left + paste
+            var plines = full.replace("\r", "").split("\n")
+            _lines.remove(_cursorLine)
+            for plines.len() to pi {
+                _lines.insert(_cursorLine + pi, plines[pi] as string)
+            }
+            var li = _cursorLine + plines.len() - 1
+            _lines[li] = _lines[li] + right
+            _cursorLine = li
+            _cursorCol = (plines[plines.len() - 1] as string).len()
+            _cachedLen = -1; _cachedMaxW = -1; _lwDirty = true; _drDirty = true
+            _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
+            _textDirty = true; _invalidate_sb(); _on_text_changed()
+        } else {
+            paste = paste.replace("\r", "").replace("\n", " ")
+            _cursorPos = _del_sel()
+            text = text.slice(0, _cursorPos) + paste + text.slice(_cursorPos, text.len())
+            _cursorPos += paste.len()
+            _dirty = true; _on_text_changed()
+        }
+    }
+
+    func _ctx_select_all() {
+        _rebuild_lines()
+        if _multiline { _selStart = 0; _selEnd = get_text().len() }
+        else          { _selStart = 0; _selEnd = text.len() }
+        _selActive = true
+        _showCursor = true; _blinkTime = core.getTicks()
+    }
+    func get_text_length(): int {
+        if _cachedLen < 0 {
+            _rebuild_lines()
+            var len = 0
+            for _lines.len() to li { len = len + _lines[li].len() }
+            if _lines.len() > 1 { len = len + _lines.len() - 1 }
+            _cachedLen = len
+        }
+        return _cachedLen
+    }
+    func get_text(): string {
+        if _textDirty {
+            _rebuild_lines()
+            text = _lines.join("\n")
+            _textDirty = false
+        }
+        return text
+    }
+
+    // ==================== 回调 ====================
+    func on_change(func():void cb) { _onChange = cb }
+    func on_enter(func():void cb)  { _onEnter = cb }
+
+    // ==================== 交互 ====================
+    func contains(float mx, float my): bool {
+        return mx >= x and mx <= x + w and my >= y and my <= y + h
+    }
+
+    // 判断鼠标是否悬停在可编辑区域（多行模式排除滚动条）
+    func _edit_hit(float mx, float my): bool {
+        if not contains(mx, my) { return false }
+        if _multiline {
+            float pad = 8.0
+            float sbW = _sb_width(); float sbH = _sb_height()
+            float visW = w - pad * 2.0 - sbW
+            float visH = h - pad * 2.0 - sbH
+            if sbW > 0.0 {
+                float vsbX = x + w - sbW - 4.0
+                if mx >= vsbX and mx <= vsbX + sbW
+                   and my >= y + pad and my <= y + pad + visH { return false }
+            }
+            if sbH > 0.0 {
+                float hsbY = y + h - sbH - 4.0
+                if my >= hsbY and my <= hsbY + sbH
+                   and mx >= x + pad and mx <= x + pad + visW { return false }
+            }
+        }
+        return true
+    }
+
+    func _update_ime() {
+        // 仅在聚焦且窗口有效时更新；未聚焦时不应干涉 IME
+        if not _focused or _hwnd == null {
+            _imeX = -1; _imeY = -1; _imeW = -1; _imeH = -1; _imeCursor = -1
+            return
+        }
+        float pad = 8.0
+        float cx
+        int rx = 0, ry = 0, rw = 0, rh = 0
+        if _multiline {
+            _rebuild_lines()
+            cx = x + pad + _line_width_to(_cursorLine, _cursorCol) - _scrollX
+            rx = _int(x)
+            ry = _int(y + pad + _cursorLine * _lineHeight - _scrollY)
+            rw = _int(w)
+            rh = _int(_lineHeight)
+        } else {
+            cx = x + pad + _text_width_to(_cursorPos) - _scrollX
+            rx = _int(x)
+            // 单行文字垂直居中绘制，IME 矩形应只覆盖文字所在那一行
+            // （与多行的「单行文字矩形」保持一致），否则候选框会落在整框下方、偏低
+            float textH = _lineHeight - 2.0
+            ry = _int(y + (h - textH) / 2.0)
+            rw = _int(w)
+            rh = _int(textH)
+        }
+        int icur = _int(cx - x)
+        // 仅在位置或光标相对上次发送有变化时才调用 SDL：
+        // 1) 避免每帧无谓刷新；2) 保证滚动/布局/resize 导致坐标变化后候选框跟随。
+        if rx == _imeX and ry == _imeY and rw == _imeW and rh == _imeH and icur == _imeCursor { return }
+        _imeX = rx; _imeY = ry; _imeW = rw; _imeH = rh; _imeCursor = icur
+        var rect = core.SDL_Rect.malloc()
+        rect.x = rx; rect.y = ry; rect.w = rw; rect.h = rh
+        core.setTextInputArea(_hwnd, rect.to_ptr(), icur)
+        rect.free()
+    }
+
+    // 单行：从 x 算光标位置
+    func _pos_from_x(float mx): int {
+        if _font == null or not _font.ok { return 0 }
+        if text.len() == 0 { return 0 }
+        float relX = mx - x - 8.0 + _scrollX
+        if relX <= 0 { return 0 }
+        var lo = 0
+        var hi = text.len()
+        while lo < hi {
+            var mid = (lo + hi + 1) / 2
+            if _text_width_to(mid) <= relX { lo = mid } else { hi = mid - 1 }
+        }
+        return lo
+    }
+
+    // 多行：从 mx,my 算 (line, col)
+    func _pos_from_xy(float mx, float my) {
+        float pad = 8.0; float sbW = _sb_width()
+        float visW = w - pad * 2.0 - sbW
+        if _wordWrap { visW = w - pad * 2.0 }   // 换行模式布局宽度与渲染一致（不含滚动条）
+        float relX = mx - x - pad + _scrollX
+        float relY = my - y - pad + _scrollY
+        if relY < 0 { relY = 0 }
+        _rebuild_lines()
+        _ensure_layout(visW)
+        if _drCount == 0 { _cursorLine = 0; _cursorCol = 0; _cursorPos = 0; return }
+
+        var di = _int(relY / _lineHeight)
+        if di < 0 { di = 0 }
+        if di >= _drCount { di = _drCount - 1 }
+
+        var li = _drLi[di]; var c0 = _drC0[di]; var c1 = _drC1[di]
+        _cursorLine = li
+
+        if _lines.len() == 0 { _cursorCol = c0; _cursorPos = _col_to_pos(li, c0); return }
+        if relX <= 0 { _cursorCol = c0; _cursorPos = _col_to_pos(li, c0); return }
+
+        // 在段 [c0, c1] 内二分查找列
+        var lo = c0
+        var hi = c1
+        while lo < hi {
+            var mid = (lo + hi + 1) / 2
+            var segW = _line_width_to(li, mid) - _line_width_to(li, c0)
+            if segW <= relX { lo = mid } else { hi = mid - 1 }
+        }
+        _cursorCol = lo
+        _cursorPos = _col_to_pos(li, lo)
+    }
+
+    // ==================== 滚动条尺寸 ====================
+    // 一次性计算横/竖滚动条尺寸（双向耦合，用两段式避免相互递归）：
+    // 竖条存在会挤占横向轨道宽度，横条存在会挤占竖向轨道高度，
+    // 两者“是否出现”需互相参考对方的存在性，否则任一存在时另一个会判断错。
+    // 滚动条尺寸计算结果缓存：避免同一帧内 process/render 多次调用 _compute_sb
+    // （_compute_sb 内部涉及 _content_height → _ensure_layout 等重操作）。
+    // 在文本/尺寸/字体/换行模式变化时通过 _invalidate_sb() 置脏，下次查询时才重算。
+    func _invalidate_sb() { _sbDirty = true }
+
+    func _compute_sb(): Array[float] {
+        if not _sbDirty { return _sbCache }
+        _sbDirty = false
+        if not _multiline { _sbCache = [0.0, 0.0]; return _sbCache }
+        float contentH = _content_height()
+        float visH0 = h - 16.0
+        float visW0 = w - 16.0
+        float sbW = 0.0
+        float sbH = 0.0
+        if _wordWrap {
+            // 自动换行模式不出现横向滚动条（sbH 恒为 0），竖向轨道高度不受影响
+            if contentH > visH0 { sbW = 10.0 }
+        } else {
+            // 第一段：先忽略对方，各自判断是否超出
+            if contentH > visH0          { sbW = 10.0 }
+            if _max_line_width() > visW0 { sbH = 10.0 }
+            // 第二段：竖条存在 → 横向轨道变窄 → 可能需横条；
+            //         横条存在 → 竖向轨道变矮 → 可能需竖条
+            if sbW > 0.0 and _max_line_width() > visW0 - sbW { sbH = 10.0 }
+            if sbH > 0.0 and contentH > visH0 - sbH           { sbW = 10.0 }
+        }
+        _sbCache = [sbW, sbH]
+        return _sbCache
+    }
+
+    func _sb_width(): float  { return _compute_sb()[0] }
+    func _sb_height(): float { return _compute_sb()[1] }
+
+    func _max_line_width(): float {
+        _rebuild_lines()
+        if _cachedMaxW >= 0.0 { return _cachedMaxW }
+        _ensure_line_widths()
+        return _cachedMaxW
+    }
+
+    // 全量重算每行宽度并得出最大行宽（仅在行结构/字体变化时触发）
+    func _ensure_line_widths() {
+        if not _lwDirty and _cachedMaxW >= 0.0 { return }
+        if _font == null or not _font.ok { return }
+        _rebuild_lines()
+        _lineW = []
+        _maxLineW = 0.0
+        for _lines.len() to li {
+            var[float, float](w0, _h0) = _font.measureString(_lines[li])
+            _lineW.add(w0)
+            if w0 > _maxLineW { _maxLineW = w0 }
+        }
+        _lwDirty = false
+        _cachedMaxW = _maxLineW
+    }
+
+    // 单行内容变化时的增量更新（避免每次按键全量重测所有行）
+    func _update_line_width(int li) {
+        if li < 0 or li >= _lines.len() { return }
+        if _font == null or not _font.ok { return }
+        if _lineW.len() != _lines.len() { _lwDirty = true }
+        _ensure_line_widths()
+        var[float, float](w0, _h0) = _font.measureString(_lines[li])
+        var old = _lineW[li]
+        _lineW[li] = w0
+        if w0 > _maxLineW {
+            _maxLineW = w0; _cachedMaxW = w0
+        } else if old >= _maxLineW - 0.5 {
+            // 该行可能曾是最大值，安全起见重扫一次
+            _maxLineW = 0.0
+            for _lineW.len() to i { if _lineW[i] > _maxLineW { _maxLineW = _lineW[i] } }
+            _cachedMaxW = _maxLineW
+        }
+    }
+
+    // ==================== 事件处理 ====================
+    func process(Event ev) {
+        if not _loaded { return }
+        if not visible { return }
+        if not enabled { return }
+
+        // 内嵌右击上下文菜单已展开：所有事件先交菜单处理（选择/关闭由菜单自身负责）
+        if _ctxMenuEnabled and _ctxMenu != null and _ctxMenu.isOpen() {
+            // 菜单已展开时再次右键：编辑框内 → 移动到新位置重开；编辑框外 → 关闭。
+            // 否则右键会被 MenuBar.process 静默忽略，导致“旧菜单卡在原地、必须单击关闭再右键”的别扭流程。
+            if ev.isMouseButtonDown() and ev.mouseButton() == 3 {
+                var[float, float](_rmx, _rmy) = ev.mousePos()
+                if contains(_rmx, _rmy) {
+                    _open_ctx_menu(_rmx, _rmy)
+                } else {
+                    _ctxMenu.close()
+                }
+                return
+            }
+            _ctxMenu.process(ev)
+            return
+        }
+
+        // 弹层捕获：光标落在“他人的下拉弹层”范围内时，本控件忽略该事件（避免穿透到下层）
+        var[float, float](emx, emy) = ev.mousePos()
+        if ev.isMouseWheel() { emx = ev.wheelMouseX(); emy = ev.wheelMouseY() }
+        if core.inPopupCapture(emx, emy) { return }
+
+        // 右键：在编辑框内弹出上下文菜单（复制/剪切/粘贴/全选/撤销/重做）
+        if _ctxMenuEnabled and _ctxMenu != null and ev.isMouseButtonDown() and ev.mouseButton() == 3 {
+            if contains(emx, emy) {
+                _open_ctx_menu(emx, emy)
+                return
+            }
+        }
+
+        // ---- 悬停光标：鼠标移入编辑框 → 文本(I型)光标；移出 → 默认光标 ----
+        // 走集中式光标决策（requestCursor），由 Window 帧末统一 apply，避免多控件互相覆盖
+        if ev.isMouseMotion() {
+            bool hit = _edit_hit(emx, emy)
+            if hit != _hoverText { core.markFrameRedraw() } else { core.markFrameMotion() }
+            _hoverText = hit
+            if hit { core.requestCursor(core.SystemCursor.TEXT) }
+            // 悬停提示：命中编辑区上报；离开由 tipEndMotion 统一清除
+            if hit and _tip != "" { tip.tipReport(_tip, emx, emy) }
+        }
+
+        // ---- 鼠标滚轮（所有模式，仅当光标在本控件内才响应）----
+        if ev.isMouseWheel() {
+            if not contains(ev.wheelMouseX(), ev.wheelMouseY()) { return }
+            if _multiline {
+                float sy = _scrollY - ev.wheelY() * _lineHeight * 3.0
+                if sy < 0 { sy = 0 }
+                // 可见高度需减去横向滚动条高度（sbH），否则横条存在时滚不到底
+                float maxSY = _content_height() - (h - 16.0 - _sb_height())
+                if maxSY < 0 { maxSY = 0 }
+                if sy > maxSY { sy = maxSY }
+                _scrollY = sy
+            } else {
+                float sx = _scrollX - ev.wheelX() * 20.0
+                if sx < 0 { sx = 0 }
+                _scrollX = sx
+            }
+            return
+        }
+
+        // ---- 滚动条交互（多行模式）----
+        if _multiline {
+            float pad = 8.0, sbW = _sb_width(), sbH = _sb_height(), visW = w - pad * 2.0 - sbW, visH = h - pad * 2.0 - sbH
+            float contentH = _content_height()
+
+            // hover 检测
+            _hoverVScroll = false; _hoverHScroll = false
+            if sbW > 0.0 {
+                float vsbX = x + w - sbW - 4.0
+                if emx >= vsbX and emx <= vsbX + sbW
+                   and emy >= y + pad and emy <= y + pad + visH {
+                    _hoverVScroll = true
+                }
+            }
+            if sbH > 0.0 {
+                float hsbY = y + h - sbH - 4.0
+                if emy >= hsbY and emy <= hsbY + sbH
+                   and emx >= x + pad and emx <= x + pad + visW {
+                    _hoverHScroll = true
+                }
+            }
+
+            // 竖向拖动
+            if sbW > 0.0 and ev.isMouseButtonDown() and _hoverVScroll and not _draggingHScroll {
+                _draggingVScroll = true; _mouseDown = false
+            }
+            if _draggingVScroll {
+                if ev.isMouseButtonUp() { _draggingVScroll = false }
+                else if ev.isMouseMotion() {
+                    float maxSY = contentH - visH
+                    if maxSY < 0 { maxSY = 0 }
+                    float thumbH = visH * visH / contentH
+                    if thumbH < 20 { thumbH = 20 }
+                    float relY = emy - y - pad
+                    _scrollY = relY * maxSY / (visH - thumbH)
+                    if _scrollY < 0 { _scrollY = 0 }
+                    if _scrollY > maxSY { _scrollY = maxSY }
+                    core.markFrameRedraw()
+                }
+            }
+
+            // 横向拖动：在横向滚动条区域内按下即开始（直接命中测试，不依赖每事件 hover 布尔，
+            // 避免点击稍偏时“有时拖不动”）；抓在滑块上记录偏移，做到抓哪拖哪不跳变。
+            if sbH > 0.0 {
+                var maxLineW = _max_line_width() + 8.0
+                float maxSX = maxLineW - visW
+                if maxSX < 0 { maxSX = 0 }
+                float thumbW = visW * visW / maxLineW
+                if thumbW < 20 { thumbW = 20 }
+                float hsbY = y + h - sbH - 4.0
+                float trackX0 = x + pad
+                float trackX1 = x + pad + visW
+                float thumbX = trackX0
+                if maxSX > 0 { thumbX = trackX0 + _scrollX * visW / maxLineW }
+                if thumbX + thumbW > trackX1 { thumbX = trackX1 - thumbW }
+
+                if ev.isMouseButtonDown() and not _draggingVScroll {
+                    bool onBar = emy >= hsbY and emy <= hsbY + sbH
+                                and emx >= trackX0 and emx <= trackX1
+                    if onBar {
+                        _draggingHScroll = true; _mouseDown = false
+                        if emx >= thumbX and emx <= thumbX + thumbW {
+                            _hDragThumb = true
+                            _hDragOffset = emx - thumbX
+                        } else {
+                            _hDragThumb = false
+                        }
+                    }
+                }
+            }
+            if _draggingHScroll {
+                if ev.isMouseButtonUp() { _draggingHScroll = false }
+                else if ev.isMouseMotion() {
+                    var maxLineW = _max_line_width() + 8.0
+                    float maxSX = maxLineW - visW
+                    if maxSX < 0 { maxSX = 0 }
+                    float thumbW = visW * visW / maxLineW
+                    if thumbW < 20 { thumbW = 20 }
+                    float trackX0 = x + pad
+                    float trackX1 = x + pad + visW
+                    float tx
+                    if _hDragThumb { tx = emx - _hDragOffset }
+                    else { tx = emx - thumbW * 0.5 }
+                    if tx < trackX0 { tx = trackX0 }
+                    if tx > trackX1 - thumbW { tx = trackX1 - thumbW }
+                    if maxSX <= 0 { _scrollX = 0 }
+                    else { _scrollX = (tx - trackX0) * maxSX / (trackX1 - thumbW - trackX0) }
+                    if _scrollX < 0 { _scrollX = 0 }
+                    if _scrollX > maxSX { _scrollX = maxSX }
+                    core.markFrameRedraw()
+                }
+            }
+        }
+
+        // ---- 选区 + 聚焦 ----
+        if ev.isMouseButtonDown() {
+            var inside = contains(emx, emy)
+            if inside { focus() } else { blur() }
+            if inside and not _draggingVScroll and not _draggingHScroll {
+                // 双击检测（400ms 内，位置接近）
+                var now = core.getTicks()
+                var isDbl = now - _lastClickTime < 400
+                        and emx >= _lastClickX - 10 and emx <= _lastClickX + 10
+                        and emy >= _lastClickY - 10 and emy <= _lastClickY + 10
+                _lastClickTime = now
+                _lastClickX = emx; _lastClickY = emy
+                if isDbl {
+                    if _multiline { _pos_from_xy(emx, emy) }
+                    else { _cursorPos = _pos_from_x(emx) }
+                    _select_word()
+                    return
+                } else {
+                    _mouseDown = true
+                }
+                if not isDbl and _focused {
+                    if _multiline {
+                        _pos_from_xy(emx, emy)
+                    } else {
+                        _cursorPos = _pos_from_x(emx)
+                    }
+                    _selStart = _cursorPos; _selEnd = _cursorPos; _selActive = false
+                    _adjust_scroll()
+                    _showCursor = true; _blinkTime = core.getTicks()
+                    _update_ime()
+                    core.markFrameRedraw()
+                } else {
+                    _selActive = false; _selStart = -1
+                }
+            }
+        }
+
+        // 按住拖动扩展选区
+        if _mouseDown and ev.isMouseMotion() and _focused and not _draggingVScroll and not _draggingHScroll {
+            // ★ 鼠标拖出编辑框时，钳制到边界继续扩展选区（避免选中一半）
+            float mx = emx
+            float pad = 8.0
+            if mx < x + pad { mx = x + pad }
+            if mx > x + w - pad { mx = x + w - pad }
+            if _multiline {
+                float my = emy
+                if my < y + pad { my = y + pad }
+                if my > y + h - pad { my = y + h - pad }
+                _pos_from_xy(mx, my)
+            } else {
+                _cursorPos = _pos_from_x(mx)
+            }
+            if _cursorPos != _selEnd {
+                _selEnd = _cursorPos
+                _selActive = true
+                _adjust_scroll()
+                core.markFrameRedraw()
+            }
+        }
+
+        if ev.isMouseButtonUp() {
+            _mouseDown = false
+            if _selStart == _selEnd { _selActive = false; _selStart = -1 }
+        }
+
+        if not _focused { return }
+        if _readOnly { return }
+
+        if _multiline {
+            _process_ml(ev)
+        } else {
+            _process_sl(ev)
+        }
+    }
+
+    // 清除选区
+    func _clear_sel() {
+        _selActive = false
+        _selStart = -1
+    }
+
+    // 双击选词
+    func _select_word() {
+        if not _multiline {
+            // 单行模式：直接基于 text 和 _cursorPos
+            if text.len() == 0 { return }
+            var s = _cursorPos; var e = _cursorPos
+            while s > 0 and _is_word_char(text.slice(s - 1, s)) { s -= 1 }
+            while e < text.len() and _is_word_char(text.slice(e, e + 1)) { e += 1 }
+            if s >= e { return }
+            _selStart = s; _selEnd = e; _selActive = true
+            return
+        }
+        _rebuild_lines()
+        if _lines.len() == 0 or _cursorLine >= _lines.len() { return }
+        var ln = _lines[_cursorLine]
+        if ln.len() == 0 { return }
+        var s = _cursorCol; var e = _cursorCol
+        while s > 0 and _is_word_char(ln.slice(s - 1, s)) { s -= 1 }
+        while e < ln.len() and _is_word_char(ln.slice(e, e + 1)) { e += 1 }
+        if s >= e { return }
+        _selStart = _line_pos(_cursorLine) + s
+        _selEnd = _line_pos(_cursorLine) + e
+        _selActive = true
+    }
+
+    func _is_word_char(string c): bool {
+        if c == "" or c == " " or c == "\n" or c == "\r" or c == "\t" { return false }
+        if ".,!?:;()[]\"'：。，！？（）【】；".has(c) { return false }
+        return true
+    }
+
+    // 获取选中的文本
+    func _sel_text(): string {
+        if not _selActive or _selStart < 0 { return "" }
+        var s = _selStart; var e = _selEnd
+        if s > e { var t = s; s = e; e = t }
+        if s < 0 { s = 0 }
+        var t = get_text()
+        if e > t.len() { e = t.len() }
+        if s >= e { return "" }
+        return t.slice(s, e)
+    }
+
+    // 删除选区并返回删除的起始位置
+    func _del_sel(): int {
+        if not _selActive or _selStart < 0 { return _cursorPos }
+        var s = _selStart; var e = _selEnd
+        if s > e { var t = s; s = e; e = t }
+        if s < 0 { s = 0 }
+        if e > text.len() { e = text.len() }
+        if s < e { text = text.slice(0, s) + text.slice(e, text.len()) }
+        _clear_sel()
+        return s
+    }
+
+    // ---- 单行事件处理 ----
+    func _process_sl(Event ev) {
+        if ev.isKeyDown() {
+            int sc = ev.scancode()
+            bool changed = false
+
+            // Ctrl 组合键
+            int mod = ev.keyMod()
+            bool ctrl = (mod & 64) != 0 or (mod & 128) != 0
+            if ctrl {
+                if sc == Scancode.A {
+                    _selStart = 0; _selEnd = text.len(); _selActive = true
+                    return
+                }
+                if sc == Scancode.C {
+                    var sel = _sel_text()
+                    if sel != "" { core.setClipboardText(sel) }
+                    else { core.setClipboardText(text) }
+                    return
+                }
+                if sc == Scancode.X {
+                    var sel = _sel_text()
+                    if sel != "" { core.setClipboardText(sel) }
+                    else { core.setClipboardText(text) }
+                    _save_undo(); _mergeUndo = false; _cursorPos = _del_sel()
+                    changed = true
+                }
+                if sc == Scancode.V {
+                    var paste = core.getClipboardText()
+                    if paste != "" {
+                        paste = paste.replace("\r", "").replace("\n", " ")
+                        _save_undo(); _mergeUndo = false
+                        _cursorPos = _del_sel()
+                        text = text.slice(0, _cursorPos) + paste + text.slice(_cursorPos, text.len())
+                        _cursorPos += paste.len()
+                        changed = true
+                    }
+                }
+                if sc == Scancode.Z { _undo(); return }
+                if sc == Scancode.Y { _redo(); return }
+            }
+
+            if sc == Scancode.BACKSPACE {
+                if _selActive and _selStart != _selEnd {
+                    _save_undo(); _mergeUndo = false
+                    _cursorPos = _del_sel(); changed = true
+                } else if _cursorPos > 0 {
+                    _save_undo(); _mergeUndo = false
+                    text = text.slice(0, _cursorPos - 1) + text.slice(_cursorPos, text.len())
+                    _cursorPos -= 1; changed = true
+                }
+            }
+            if sc == Scancode.DELETE {
+                if _selActive and _selStart != _selEnd {
+                    _save_undo(); _mergeUndo = false
+                    _cursorPos = _del_sel(); changed = true
+                } else if _cursorPos < text.len() {
+                    _save_undo(); _mergeUndo = false
+                    text = text.slice(0, _cursorPos) + text.slice(_cursorPos + 1, text.len())
+                    changed = true
+                }
+            }
+            if sc == Scancode.LEFT  { if _cursorPos > 0 { _cursorPos -= 1; _clear_sel() }; _mergeUndo = false }
+            if sc == Scancode.RIGHT { if _cursorPos < text.len() { _cursorPos += 1; _clear_sel() }; _mergeUndo = false }
+            if sc == Scancode.HOME  { _cursorPos = 0; _clear_sel(); _mergeUndo = false }
+            if sc == Scancode.END   { _cursorPos = text.len(); _clear_sel(); _mergeUndo = false }
+            _adjust_scroll()
+            if sc == Scancode.RETURN {
+                if _onEnter != null { _onEnter() }
+            }
+
+            if changed { _dirty = true; _on_text_changed() }
+        }
+
+        if ev.isTextInput() {
+            var ch = ev.text()
+            if ch != "" {
+                _cursorPos = _del_sel()
+                // 连续输入合并为一次撤销（与多行一致）；选区删除/光标移动则断开
+                bool canMerge = _mergeUndo and not _selActive and _cursorPos == _mergePos
+                if not canMerge { _save_undo() }
+                text = text.slice(0, _cursorPos) + ch + text.slice(_cursorPos, text.len())
+                _cursorPos += ch.len()
+                _on_text_changed()
+                _dirty = true
+                _mergeUndo = true; _mergePos = _cursorPos
+            }
+        }
+    }
+
+    // ---- 多行事件处理（直接改 _lines，O(行长度) 非 O(全文)）----
+    func _process_ml(Event ev) {
+        if ev.isKeyDown() {
+            int sc = ev.scancode()
+            bool moved = false; bool changed = false
+
+            _rebuild_lines()
+
+            // Ctrl 组合键
+            int mod = ev.keyMod()
+            bool ctrl = (mod & 64) != 0 or (mod & 128) != 0
+            if ctrl {
+                if sc == Scancode.A { _selStart = 0; _selEnd = get_text().len(); _selActive = true; return }
+                if sc == Scancode.Z { _undo(); return }
+                if sc == Scancode.Y { _redo(); return }
+                if sc == Scancode.C {
+                    var t = get_text()
+                    var sel = _sel_text()
+                    if sel != "" { core.setClipboardText(sel) }
+                    else { core.setClipboardText(t) }
+                    return
+                }
+                if sc == Scancode.X {
+                    var t = get_text()
+                    var sel = _sel_text()
+                    if sel != "" { core.setClipboardText(sel) }
+                    else { core.setClipboardText(t) }
+                    _save_undo(); _mergeUndo = false; _del_sel_lines(); _cachedLen = -1; _lwDirty = true; changed = true
+                }
+                if sc == Scancode.V {
+                    var paste = core.getClipboardText()
+                    if paste != "" {
+                        _save_undo(); _mergeUndo = false
+                        _del_sel_lines()
+                        if _lines.len() == 0 { _lines.add("") }
+                        var left = _lines[_cursorLine].slice(0, _cursorCol)
+                        var right = _lines[_cursorLine].slice(_cursorCol, _lines[_cursorLine].len())
+                        var full = left + paste
+                        var plines = full.replace("\r", "").split("\n")
+                        _lines.remove(_cursorLine)
+                        for plines.len() to pi {
+                            _lines.insert(_cursorLine + pi, plines[pi])
+                        }
+                        // 末行拼右侧
+                        var li = _cursorLine + plines.len() - 1
+                        _lines[li] = _lines[li] + right
+                        _cursorLine = li
+                        _cursorCol = (plines[plines.len() - 1] as string).len()
+                        _cachedLen = -1; _cachedMaxW = -1; _lwDirty = true; changed = true
+                    }
+                }
+            }
+
+            // 退格
+            if sc == Scancode.BACKSPACE {
+                if _selActive and _selStart != _selEnd {
+                    _save_undo(); _mergeUndo = false; _del_sel_lines(); _cachedLen = -1; _lwDirty = true; changed = true
+                } else if _cursorCol > 0 {
+                    _save_undo(); _mergeUndo = false; var ln = _lines[_cursorLine]
+                    _lines[_cursorLine] = ln.slice(0, _cursorCol - 1) + ln.slice(_cursorCol, ln.len())
+                    _cursorCol -= 1; _cachedLen -= 1; _update_line_width(_cursorLine); _dirtyLine = _cursorLine; changed = true
+                } else if _cursorLine > 0 {
+                    _save_undo(); _mergeUndo = false; _cursorCol = _lines[_cursorLine - 1].len()
+                    _lines[_cursorLine - 1] = _lines[_cursorLine - 1] + _lines[_cursorLine]
+                    _lines.remove(_cursorLine)
+                    _cursorLine -= 1; _cachedLen -= 1; _cachedMaxW = -1; _lwDirty = true; changed = true
+                }
+            }
+
+            // Delete
+            if sc == Scancode.DELETE {
+                if _selActive and _selStart != _selEnd {
+                    _save_undo(); _mergeUndo = false; _del_sel_lines(); _cachedLen = -1; _cachedMaxW = -1; _lwDirty = true; changed = true
+                } else if _cursorCol < _lines[_cursorLine].len() {
+                    _save_undo(); _mergeUndo = false; var ln = _lines[_cursorLine]
+                    _lines[_cursorLine] = ln.slice(0, _cursorCol) + ln.slice(_cursorCol + 1, ln.len())
+                    _cachedLen -= 1; _update_line_width(_cursorLine); _dirtyLine = _cursorLine; changed = true
+                } else if _cursorLine < _lines.len() - 1 {
+                    _save_undo(); _mergeUndo = false; _lines[_cursorLine] = _lines[_cursorLine] + _lines[_cursorLine + 1]
+                    _lines.remove(_cursorLine + 1)
+                    _cachedLen -= 1; _cachedMaxW = -1; _lwDirty = true; changed = true
+                }
+            }
+
+            // 方向键
+            if sc == Scancode.LEFT {
+                if _cursorCol > 0 { _cursorCol -= 1; moved = true; _clear_sel() }
+                else if _cursorLine > 0 { _cursorLine -= 1; _cursorCol = _lines[_cursorLine].len(); moved = true; _clear_sel() }
+                _mergeUndo = false
+            }
+            if sc == Scancode.RIGHT {
+                if _cursorCol < _lines[_cursorLine].len() { _cursorCol += 1; moved = true; _clear_sel() }
+                else if _cursorLine < _lines.len() - 1 { _cursorLine += 1; _cursorCol = 0; moved = true; _clear_sel() }
+                _mergeUndo = false
+            }
+            if sc == Scancode.UP     { _move_up(); moved = true; _clear_sel(); _mergeUndo = false }
+            if sc == Scancode.DOWN   { _move_down(); moved = true; _clear_sel(); _mergeUndo = false }
+            if sc == Scancode.HOME   { _cursorCol = 0; moved = true; _clear_sel(); _mergeUndo = false }
+            if sc == Scancode.END    { _cursorCol = _lines[_cursorLine].len(); moved = true; _clear_sel(); _mergeUndo = false }
+
+            // 回车
+            if sc == Scancode.RETURN {
+                _save_undo(); _mergeUndo = false; var ln = _lines[_cursorLine]
+                var rest = ln.slice(_cursorCol, ln.len())
+                _lines[_cursorLine] = ln.slice(0, _cursorCol)
+                _lines.insert(_cursorLine + 1, rest)
+                _cursorLine += 1; _cursorCol = 0; _cachedLen += 1; _cachedMaxW = -1; _lwDirty = true; changed = true
+            }
+
+            if _cursorLine >= _lines.len() { _cursorLine = _lines.len() - 1 }
+            if _cursorLine < 0 { _cursorLine = 0 }
+
+            if changed {
+                if _dirtyLine < 0 { _drDirty = true }
+                _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
+                _textDirty = true
+                _invalidate_sb()   // 文本变化 → 内容高度/宽度可能变 → 滚动条尺寸需重算
+                _adjust_scroll()
+                _showCursor = true; _blinkTime = core.getTicks()
+                _update_ime()
+                if _onChange != null { _onChange() }
+            } else if moved {
+                _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
+                _adjust_scroll()
+                _showCursor = true; _blinkTime = core.getTicks()
+                _update_ime()
+            }
+        }
+
+        // 文本输入
+        if ev.isTextInput() {
+            var ch = ev.text()
+            if ch != "" {
+                _rebuild_lines()
+                // 连续输入合并撤销：仅当上次也是文本输入、无选区删除、且光标紧接上次结束位置
+                bool canMerge = _mergeUndo and not _selActive and _cursorPos == _mergePos
+                if not canMerge { _save_undo() }
+                _del_sel_lines()
+                if _lines.len() == 0 { _lines.add("") }
+                var ln = _lines[_cursorLine]
+                _lines[_cursorLine] = ln.slice(0, _cursorCol) + ch + ln.slice(_cursorCol, ln.len())
+                _cursorCol += ch.len()
+                _cachedLen = -1; _update_line_width(_cursorLine)
+                _dirtyLine = _cursorLine
+                _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
+                _textDirty = true
+                _invalidate_sb()   // 文本变化 → 内容高度/宽度可能变 → 滚动条尺寸需重算
+                _adjust_scroll()
+                _showCursor = true; _blinkTime = core.getTicks()
+                _update_ime()
+                if _onChange != null { _onChange() }
+                _mergeUndo = true; _mergePos = _cursorPos
+            }
+        }
+    }
+
+    // 计算某行在全文中的起始字节位置
+    func _line_pos(int line): int {
+        return _col_to_pos(line, 0)
+    }
+
+    // 总字符数（用于 Ctrl+A）
+    func _line_count_pos(): int {
+        _rebuild_lines()
+        var pos = 0
+        for _lines.len() to li { pos = pos + _lines[li].len() + 1 }
+        if pos > 0 { pos -= 1 }    // 去掉最后一个 \n
+        return pos
+    }
+
+    // 删除选区(行级别)
+    func _del_sel_lines() {
+        if not _selActive or _selStart < 0 { return }
+        var s = _selStart; var e = _selEnd
+        if s > e { var t = s; s = e; e = t }
+        if s < 0 { s = 0 }
+        if s >= e { _clear_sel(); return }
+        // 转换为行列
+        var cs = _pos_to_col(s)
+        var ce = _pos_to_col(e)
+        var ls = _pos_to_line(s)
+        var le = _pos_to_line(e)
+        if ls < 0 or le < 0 or ls >= _lines.len() or le >= _lines.len() { _clear_sel(); return }
+        // 删除选区
+        if ls == le {
+            var ln = _lines[ls]
+            _lines[ls] = ln.slice(0, cs) + ln.slice(ce, ln.len())
+        } else {
+            _lines[ls] = _lines[ls].slice(0, cs) + _lines[le].slice(ce, _lines[le].len())
+            var cnt = le - ls
+            for cnt to _ { _lines.remove(ls + 1) }
+        }
+        _cursorLine = ls; _cursorCol = cs
+        _clear_sel()
+    }
+
+    func _pos_to_line(int pos): int {
+        var p = 0
+        for _lines.len() to li {
+            var len = _lines[li].len() + 1
+            if pos < p + len { return li }
+            p += len
+        }
+        return _lines.len() - 1
+    }
+
+    func _pos_to_col(int pos): int {
+        var p = 0
+        for _lines.len() to li {
+            var len = _lines[li].len() + 1
+            if pos < p + len {
+                var col = pos - p
+                if col > _lines[li].len() { col = _lines[li].len() }
+                return col
+            }
+            p += len
+        }
+        return _lines[_lines.len() - 1].len()
+    }
+
+    // ---- 多行方向键辅助（基于 _cursorPos）----
+    func _move_up() {
+        _sync_line_col()
+        _rebuild_lines()
+        float visW = w - 16.0 - _sb_width()
+        if _wordWrap { visW = w - 16.0 }
+        _ensure_layout(visW)
+        var di = _disp_row_of(_cursorLine, _cursorCol)
+        if di > 0 {
+            // 在同一逻辑行内的上一显示行，或上一逻辑行的末显示行
+            var pli = _drLi[di - 1]; var pc0 = _drC0[di - 1]; var pc1 = _drC1[di - 1]
+            var off = _cursorCol - _drC0[di]
+            if off < 0 { off = 0 }
+            var ncol = pc0 + off
+            if ncol > pc1 { ncol = pc1 }
+            _cursorLine = pli; _cursorCol = ncol
+            _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
+        } else if _cursorLine > 0 {
+            _cursorLine -= 1
+            if _cursorCol > _lines[_cursorLine].len() { _cursorCol = _lines[_cursorLine].len() }
+            _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
+            _adjust_scroll()
+        }
+    }
+
+    func _move_down() {
+        _sync_line_col()
+        _rebuild_lines()
+        float visW = w - 16.0 - _sb_width()
+        if _wordWrap { visW = w - 16.0 }
+        _ensure_layout(visW)
+        var di = _disp_row_of(_cursorLine, _cursorCol)
+        if di < _drCount - 1 {
+            var nli = _drLi[di + 1]; var nc0 = _drC0[di + 1]; var nc1 = _drC1[di + 1]
+            var off = _cursorCol - _drC0[di]
+            if off < 0 { off = 0 }
+            var ncol = nc0 + off
+            if ncol > nc1 { ncol = nc1 }
+            _cursorLine = nli; _cursorCol = ncol
+            _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
+        } else if _cursorLine < _lines.len() - 1 {
+            _cursorLine += 1
+            if _cursorCol > _lines[_cursorLine].len() { _cursorCol = _lines[_cursorLine].len() }
+            _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
+            _adjust_scroll()
+        }
+    }
+
+    func _move_home() {
+        _sync_line_col()
+        _cursorCol = 0
+        _cursorPos = _col_to_pos(_cursorLine, 0)
+    }
+
+    func _move_end() {
+        _sync_line_col()
+        _rebuild_lines()
+        _cursorCol = _lines[_cursorLine].len()
+        _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
+    }
+
+    // 从 _cursorPos 同步 _cursorLine / _cursorCol
+    func _sync_line_col() {
+        _rebuild_lines()
+        var pos = 0
+        _cursorLine = 0; _cursorCol = 0
+        for _lines.len() to li {
+            var len = _lines[li].len() + 1   // +1 for \n
+            if _cursorPos < pos + len {
+                _cursorLine = li
+                _cursorCol = _cursorPos - pos
+                if _cursorCol > _lines[li].len() { _cursorCol = _lines[li].len() }
+                return
+            }
+            pos = pos + len
+        }
+        // 光标在末尾
+        if _lines.len() > 0 {
+            _cursorLine = _lines.len() - 1
+            _cursorCol = _lines[_cursorLine].len()
+        }
+    }
+
+    // 根据 line/col 计算 _cursorPos
+    func _col_to_pos(int line, int col): int {
+        if _lines.len() == 0 { return 0 }
+        var pos = 0
+        var end = line
+        if end > _lines.len() { end = _lines.len() }
+        if end > 0 {
+            for 0 : end - 1 to i {
+                pos = pos + _lines[i].len() + 1
+            }
+        }
+        if line < _lines.len() {
+            var c = col
+            if c > _lines[line].len() { c = _lines[line].len() }
+            pos = pos + c
+        }
+        return pos
+    }
+
+    // 数组中指定位置插入元素
+    func _on_text_changed() {
+        _adjust_scroll()
+        _showCursor = true
+        _blinkTime = core.getTicks()
+        _update_ime()
+        if _onChange != null { _onChange() }
+    }
+
+    // ==================== 渲染 ====================
+    func render(Renderer r) {
+        if not _loaded { return }
+        if not visible { return }
+        // 聚焦时每帧用当前绝对坐标刷新 IME 候选框位置。
+        // 容器(ScrollView/VBox/Panel 等)会动态设置 edit 的绝对坐标，
+        // render 阶段的坐标是最终权威值，可修正“容器内 IME 位置不对”的问题。
+        if _focused { _update_ime() }
+        _ensure_font()
+        if not _font.ok { return }
+
+        // 背景（由 draw_bg 选项控制：ComboBox/SpinBox 嵌入时可关闭，Table 内嵌时开启以遮住单元格文字）
+        if _drawBg {
+            r.setColor(_bgColor)
+            r.fillRoundedRect(x, y, w, h, _radius)
+        }
+
+        // 边框（由 border 选项控制是否绘制）
+        if _drawBorder {
+            if _focused { r.setColor(_focusColor) }
+            else         { r.setColor(theme.brighten(_bgColor, 40)) }
+            r.drawRoundedRect(x, y, w, h, _radius)
+        }
+
+        if _multiline {
+            _render_ml(r)
+        } else {
+            _render_sl(r)
+        }
+    }
+
+    // ---- 单行渲染 ----
+    func _render_sl(Renderer r) {
+        _font.setSSAA(r.getSSAA())   // 让 measureString 与 SSAA 绘制宽度一致，光标/选区对齐且不变形
+        float pad = 8.0
+        // 裁剪
+        var clip = core.SDL_Rect.malloc()
+        clip.x = _int(x + pad); clip.y = _int(y)
+        clip.w = _int(w - pad * 2.0) + 1; clip.h = _int(h) + 1   // +1 覆盖浮点截断的亚像素
+        r.pushClipRect(clip.to_ptr())
+
+        // 文字几何（先算，供选区/光标对齐）
+        // ★ 复用 _ensure_font 中缓存的 _lineHeight（= _agh + 2.0），避免每帧 measureString
+        float textH = _lineHeight - 2.0
+        float ty = y + (h - textH) / 2.0
+        var display = text
+        if _password and text != "" { display = "*".rep(text.len()) }
+        if text != "" {
+            var[float, float](_dw, _dh) = _font.measureString(display)
+            textH = _dh
+            ty = y + (h - textH) / 2.0
+        }
+
+        // 选区高亮（画在文字【后面】，文字再叠上去仍可见）
+        if _selActive and _selStart >= 0 and _selStart != _selEnd and text != "" {
+            var ss = _selStart; var se = _selEnd
+            if ss > se { var t = ss; ss = se; se = t }
+            if ss < 0 { ss = 0 }
+            if se > text.len() { se = text.len() }
+            float sx = r.snapX(x + pad + _text_width_to(ss) - _scrollX)
+            float ex = r.snapX(x + pad + _text_width_to(se) - _scrollX)
+            float rx = sx; float rw = ex - sx
+            if rw < 0 { rx = ex; rw = -rw }
+            r.setColor(#3C64B4B4)
+            r.fillRect(rx, r.snapY(ty), rw, textH)
+        }
+
+        // 文字（叠在选区之上）
+        if text == "" and not _focused and _placeholder != "" {
+            var[float, float](_pw, _ph) = _font.measureString(_placeholder)
+            float py = y + (h - _ph) / 2.0
+            r.drawText(_font, _placeholder, r.snapX(x + pad), r.snapY(py),
+                       theme.darken(_txtColor, 80))
+        } else if text != "" {
+            r.drawText(_font, display, r.snapX(x + pad - _scrollX), r.snapY(ty), _txtColor)
+        }
+
+        // 光标（与文字同高、垂直对齐；画在裁剪区域内，与 _render_ml 行为一致，
+        // 避免在容器嵌套（Panel/VBox/HBox 内嵌 Table 含 Edit）时光标溢出到右下角）
+        if _focused and _showCursor {
+            float cx = r.snapX(x + pad + _text_width_to(_cursorPos) - _scrollX)
+            if cx < x + pad { cx = x + pad }
+            if cx > x + w - pad { cx = x + w - pad }
+            r.setColor(theme.withAlpha(_txtColor, 200))
+            r.drawLine(cx, r.snapY(ty), cx, r.snapY(ty + textH))
+        }
+
+        r.popClipRect(); clip.free()
+    }
+
+    // ---- 多行渲染 ----
+    func _render_ml(Renderer r) {
+        _font.setSSAA(r.getSSAA())   // 让 measureString 与 SSAA 绘制宽度一致，光标/选区对齐且不变形
+        _rebuild_lines()
+        _sync_line_col()                // 进入渲染时统一同步行列
+        float pad = 8.0
+        // 先用不含滚动条的宽度构建显示行表（仅脏时重建），再算滚动条
+        float provVisW = w - pad * 2.0
+        if provVisW <= 0 { provVisW = 1.0 }
+        _ensure_layout(provVisW)
+        float sbW = _sb_width(), sbH = _sb_height(), visW = w - pad * 2.0 - sbW, visH = h - pad * 2.0 - sbH
+        if visW <= 0 { visW = 1.0 }
+        if visH <= 0 { visH = 1.0 }
+        if not _wordWrap { _ensure_layout(visW) }
+
+
+        // 裁剪区域
+        var clip = core.SDL_Rect.malloc()
+        clip.x = _int(x + pad); clip.y = _int(y + pad)
+        clip.w = _int(visW) + 1; clip.h = _int(visH) + 1   // +1 覆盖浮点截断的亚像素
+        r.pushClipRect(clip.to_ptr())
+
+        // 计算可见行范围（选区和文本渲染共用）
+        var firstLine = _int(_scrollY / _lineHeight)
+        var lastLineV = firstLine + _int(visH / _lineHeight) + 2
+        if lastLineV > _drCount { lastLineV = _drCount }
+        if firstLine < 0 { firstLine = 0 }
+
+        // ---- 选区高亮（画在文字后面）----
+        if _selActive and _selStart >= 0 and _selStart != _selEnd and _lines.len() > 0 {
+            var ss = _selStart; var se = _selEnd
+            if ss > se { var t = ss; ss = se; se = t }
+            for firstLine : lastLineV - 1 to di {
+                if di >= _drCount { break }
+                var li = _drLi[di]; var c0 = _drC0[di]; var c1 = _drC1[di]
+                var segStart = _line_pos(li) + c0
+                var segEnd = _line_pos(li) + c1
+                var selS = ss; var selE = se
+                if selS > segEnd { continue }
+                if selE < segStart { continue }
+                if selS < segStart { selS = segStart }
+                if selE > segEnd { selE = segEnd }
+                if selS >= selE { continue }
+                var colS = selS - segStart
+                var colE = selE - segStart
+                var full = _lines[li]
+                var[float, float](ms1w, ms1h) = _font.measureString(full.slice(c0, c0 + colS))
+                var[float, float](ms2w, ms2h) = _font.measureString(full.slice(c0, c0 + colE))
+                float sx = r.snapX(x + pad + ms1w - _scrollX), ew = ms2w - ms1w, sy = r.snapY(y + pad + di * _lineHeight - _scrollY)
+                if ew < 0 { ew = 0 }
+                r.setColor(#3C64B4B4)
+                r.fillRect(sx, sy, ew, _lineHeight)
+            }
+        }
+
+        // 占位文字 / 内容
+        if _lines.len() == 0 and not _focused and _placeholder != "" {
+            var phLines = _placeholder.split("\n")
+            var dy = 0
+            for phLines.len() to pl {
+                var seg = phLines[pl]
+                var wraps = _wrap_line(seg, visW)
+                for wraps.len() to wi {
+                    float ly = y + pad + dy * _lineHeight - _scrollY
+                    r.drawText(_font, wraps[wi], r.snapX(x + pad), r.snapY(ly), theme.darken(_txtColor, 80))
+                    dy += 1
+                }
+            }
+        } else if _lines.len() > 0 {
+            for firstLine : lastLineV - 1 to di {
+                if di >= _drCount { break }
+                var li = _drLi[di]; var c0 = _drC0[di]; var c1 = _drC1[di]
+                var seg = _lines[li].slice(c0, c1)
+                if _password { seg = "*".rep(seg.len()) }
+                float ly = y + pad + di * _lineHeight - _scrollY
+                r.drawText(_font, seg, r.snapX(x + pad - _scrollX), r.snapY(ly), _txtColor)
+            }
+        }
+
+        // 光标（在裁剪区域内）
+        _cursorPos = _col_to_pos(_cursorLine, _cursorCol)
+        if _focused and _showCursor {
+            if _lines.len() > 0 and _drCount > 0 {
+                var cdi = _disp_row_of(_cursorLine, _cursorCol)
+                float cy = r.snapY(y + pad + cdi * _lineHeight - _scrollY)
+                if cy + _lineHeight > y + pad and cy < y + pad + visH {
+                    // ★ 复用 _lineHeight（= _agh + 2.0），避免每帧 measureString
+                    float ch = _lineHeight - 2.0
+                    float cx = x + pad
+                    if _wordWrap {
+                        // 直接测量段内子串（ln.slice(c0, col)）作为段内偏移，
+                        // 不能用 整行slice - 整行slice(c0) 相减：跨段边界的字偶距
+                        // 不计入，会随换行段数累积误差导致光标错位。
+                        var cm0 = 0
+                        if cdi >= 0 and cdi < _drC0.len() { cm0 = _drC0[cdi] }
+                        if _cursorCol < cm0 { cm0 = _cursorCol }
+                        var ln = _lines[_cursorLine]
+                        var seg = ln.slice(cm0, _cursorCol)
+                        var[float, float](_segw, _segh) = _font.measureString(seg); cx = cx + _segw - _scrollX
+                    } else {
+                        cx = cx + _line_width_to(_cursorLine, _cursorCol) - _scrollX
+                    }
+                    cx = r.snapX(cx)
+                    r.setColor(theme.withAlpha(_txtColor, 200))
+                    r.drawLine(cx, cy, cx, cy + ch)
+                }
+            } else {
+                // 空内容：光标固定在左上角
+                float cy = r.snapY(y + pad)
+                // ★ 复用 _lineHeight（= _agh + 2.0），避免每帧 measureString
+                float ch = _lineHeight - 2.0
+                float cx = r.snapX(x + pad)
+                r.setColor(theme.withAlpha(_txtColor, 200))
+                r.drawLine(cx, cy, cx, cy + ch)
+            }
+        }
+
+        r.popClipRect(); clip.free()
+
+        // ---- 竖向滚动条 ----
+        if sbW > 0.0 {
+            float sbX = x + w - sbW - 4.0
+            float contentH = _content_height()
+
+            r.setColor(theme.withAlpha(_sbColor, 180))
+            r.fillRoundedRect(sbX, y + pad, sbW, visH, sbW / 2.0)
+
+            float thumbH = visH * visH / contentH
+            if thumbH < 20 { thumbH = 20 }
+            float maxSY = contentH - visH
+            float thumbY = y + pad
+            if maxSY > 0 { thumbY = y + pad + _scrollY * visH / contentH }
+            if thumbY + thumbH > y + pad + visH { thumbY = y + pad + visH - thumbH }
+
+            if _hoverVScroll or _draggingVScroll {
+                r.setColor(theme.brighten(_sbColor, 40))
+            } else {
+                r.setColor(theme.withAlpha(_sbColor, 220))
+            }
+            r.fillRoundedRect(sbX, thumbY, sbW, thumbH, sbW / 2.0)
+        }
+
+        // ---- 横向滚动条 ----
+        if sbH > 0.0 {
+            float sbY = y + h - sbH - 4.0
+            float maxLineW = _max_line_width() + 8.0
+
+            r.setColor(theme.withAlpha(_sbColor, 180))
+            r.fillRoundedRect(x + pad, sbY, visW, sbH, sbH / 2.0)
+
+            float thumbW = visW * visW / maxLineW
+            if thumbW < 20 { thumbW = 20 }
+            float maxSX = maxLineW - visW
+            if maxSX < 0 { maxSX = 0 }
+            float thumbX = x + pad
+            if maxSX > 0 { thumbX = x + pad + _scrollX * visW / maxLineW }
+            if thumbX + thumbW > x + pad + visW { thumbX = x + pad + visW - thumbW }
+
+            if _hoverHScroll or _draggingHScroll {
+                r.setColor(theme.brighten(_sbColor, 40))
+            } else {
+                r.setColor(theme.withAlpha(_sbColor, 220))
+            }
+            r.fillRoundedRect(thumbX, sbY, thumbW, sbH, sbH / 2.0)
+        }
+
+        // ---- 滚动条交叉角落 ----
+        if sbW > 0.0 and sbH > 0.0 {
+            float cornerX = x + w - sbW - 4.0
+            float cornerY = y + h - sbH - 4.0
+            r.setColor(theme.withAlpha(_sbColor, 200))
+            r.fillRoundedRect(cornerX, cornerY, sbW, sbH, sbW / 2.0)
+        }
+    }
+
+    // 按像素宽度拆分一行（逐字符累加宽度，O(n) 而非 O(n^2)）
+    func _wrap_line(string ln, float maxW): Array[string] {
+        var result = []
+        if ln == "" { result.add(""); return result }
+        var n = ln.len()
+        var segStart = 0
+        var curW = 0.0
+        for :n to i {
+            var ch = ln.slice(i, i + 1)
+            var[float, float](cw, _ch) = _font.measureString(ch)
+            if curW + cw > maxW and i > segStart {
+                result.add(ln.slice(segStart, i))
+                segStart = i
+                curW = cw
+            } else {
+                curW = curW + cw
+            }
+        }
+        if segStart < n { result.add(ln.slice(segStart, n)) }
+        return result
+    }
+
+    // 仅在行表脏（内容/字体/换行模式/可视宽度变化）时全量重建，避免每帧重排全文；
+    // 否则若仅单行内容变化则增量重算该行（O(该行) 而非 O(全文)）
+    func _ensure_layout(float visW): int {
+        if _drDirty or _drWrap != _wordWrap or (_wordWrap and _drVisW != visW) {
+            _build_display_rows(visW)
+            _drVisW = visW
+            _drWrap = _wordWrap
+            _drDirty = false
+            _dirtyLine = -1
+        } else if _dirtyLine >= 0 {
+            _rebuild_line_segment(_dirtyLine, visW)
+            _dirtyLine = -1
+        }
+        return _drCount
+    }
+
+    // 仅重算单个逻辑行的显示行段（增量），代价 O(该行长度) 而非 O(全文)
+    func _rebuild_line_segment(int li, float visW) {
+        if _drLStart.len() != _lines.len() or li < 0 or li >= _lines.len() or visW != _drVisW {
+            _build_display_rows(visW); _drVisW = visW; _drWrap = _wordWrap
+            _drDirty = false; _dirtyLine = -1; return
+        }
+        int pos = _drLStart[li]
+        int oldCnt = _drLCnt[li]
+        Array[int] nc0 = []; Array[int] nc1 = []
+        var ln = _lines[li]
+        if not _wordWrap {
+            nc0.add(0); nc1.add(ln.len())
+        } else {
+            var wl = _wrap_line(ln, visW)
+            var col0 = 0
+            for wl.len() to wi {
+                var segLen = (wl[wi]).len()
+                nc0.add(col0); nc1.add(col0 + segLen); col0 = col0 + segLen
+            }
+            if wl.len() == 0 { nc0.add(0); nc1.add(0) }
+        }
+        int newCnt = nc0.len()
+        // 删除旧段
+        for oldCnt to k { _drLi.remove(pos); _drC0.remove(pos); _drC1.remove(pos) }
+        // 插入新段
+        for newCnt to s {
+            _drLi.insert(pos + s, li)
+            _drC0.insert(pos + s, nc0[s])
+            _drC1.insert(pos + s, nc1[s])
+        }
+        int delta = newCnt - oldCnt
+        if delta != 0 and li + 1 <= _lines.len() - 1 {
+            for li + 1 : _lines.len() - 1 to k { _drLStart[k] = _drLStart[k] + delta }
+        }
+        _drLCnt[li] = newCnt
+        _drCount = _drLi.len()
+    }
+
+    // 构建显示行表：自动换行时一行逻辑行会被拆成多显示行。
+    // 非换行模式下显示行与逻辑行 1:1。结果存入 _drLi/_drC0/_drC1，并维护 _drLStart/_drLCnt。
+    func _build_display_rows(float visW): int {
+        _drLi = []; _drC0 = []; _drC1 = []
+        _drLStart = []; _drLCnt = []
+        if visW <= 0 { visW = 1.0 }
+        for _lines.len() to li {
+            var ln = _lines[li]
+            _drLStart.add(_drLi.len())
+            if not _wordWrap {
+                _drLi.add(li); _drC0.add(0); _drC1.add(ln.len())
+                _drLCnt.add(1)
+            } else {
+                var wl = _wrap_line(ln, visW)
+                var col0 = 0
+                for wl.len() to wi {
+                    var seg = wl[wi]
+                    var segLen = seg.len()
+                    _drLi.add(li); _drC0.add(col0); _drC1.add(col0 + segLen)
+                    col0 = col0 + segLen
+                }
+                if wl.len() == 0 { _drLi.add(li); _drC0.add(0); _drC1.add(0) }
+                _drLCnt.add(wl.len())
+            }
+        }
+        _drCount = _drLi.len()
+        return _drCount
+    }
+
+    // 给定逻辑行列，返回其所在的显示行索引
+    func _disp_row_of(int li, int col): int {
+        var best = -1
+        for _drCount to di {
+            if _drLi[di] == li {
+                if col >= _drC0[di] and col <= _drC1[di] { return di }
+                best = di
+            }
+        }
+        if best >= 0 { return best }
+        return 0
+    }
+
+    func dispose() {
+        if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
+        // 释放内嵌右击菜单（MenuBar）。它不在窗口 _widgets 中，需由持有者负责清理，
+        // 对齐 SpinBox.dispose 释放子控件的做法，避免右键菜单字体泄漏
+        _ctxMenu?.dispose(); _ctxMenu = null
+        // 停止并注销光标闪烁定时器
+        _blinkTimer?.stop()
+        if _blinkTimer != null { tmr.unregisterTimer(_blinkTimer) }
+    }
+
+// ==================== 运行时主题切换 ====================
+func applyTheme(Theme t) {
+    _bgColor = t.bgInput
+    _txtColor = t.txtInput
+    _focusColor = t.accentFocus
+    _sbColor = t.sb
+}
+}
+
+// 工厂
+export func createEdit(Dict opts): Edit {
+    Edit ed = new Edit(); ed.set(opts); return ed
+}

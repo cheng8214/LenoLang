@@ -1,0 +1,10 @@
+main()
+{
+    string s = null
+    Dict d = null
+    Array a = null
+
+    int x = null
+
+    print(s)
+}

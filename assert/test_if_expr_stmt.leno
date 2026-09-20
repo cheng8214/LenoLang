@@ -1,0 +1,70 @@
+// 语句位置的 if 表达式：**栈平衡** —— 回归测试
+//
+// 背景（2026-09-19 用户实测报的「if a.xx() then a else b 会报错」）：
+//   语句位置的表达式 if（`if c then a else b` 当语句用；函数体**最后一行**这种写法最常见）
+//   在 codegen 里两个分支只 `gen_expr` 而**不 `OP_POP`** ✗ ⇒ 值残留在栈上 ⇒
+//   同一表达式 / 后续语句的**栈配对错乱**：字符串拼接被打乱（实测打出 `yesnull>]` 这类 ✗）、
+//   严重时直接报类型错 ✓。
+//   修法：`gen_if` 拆成两个入口 —— 语句位置 `gen_if(gen, ast)`（want_value=0 ⇒ 分支值 POP ✓）
+//   与表达式位置 `gen_if_ex(gen, ast, 1)`（保留值 ✓）；分支生成抽成唯一实现 `gen_if_branch()` ✓。
+//
+// 判据（栈错乱是**运行期**现象 ⇒ 用子进程输出当断言 ✓）：
+//   ① 函数最后一行是 if 表达式 ⇒ 调用方的**字符串拼接必须完好**（修前输出被打乱 ✗）；
+//   ② 语句位置的 `if c then a else b` 之后，后续语句必须正常 ✓；
+//   ③ 表达式位置（赋值 / return）**必须仍返回值** ✓（防修坏）；
+//   ④ 两处"隐式 if"都**不返回值**（Leno 无隐式返回 ⇒ 返回 null ✓ 与其它语句一致 ✓）；
+// 子进程机器复用 assert/helpers/compiler.leno（S7）。
+
+import dirs
+import files
+
+import "helpers/compiler.leno" as ce
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_if_expr_stmt")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+    var src = dirs.join(work, "t.leno")
+
+    files.write(src,
+        "struct P {\n"
+        + "    bool xx = true\n\n"
+        + "    func is_x(): bool {\n        return self.xx\n    }\n"
+        + "}\n\n"
+        + "func implicit_field(P p, string a, string b): string {\n    if p.xx then a else b\n}\n\n"
+        + "func implicit_call(P p): string {\n    if p.is_x() then \"yes\" else \"no\"\n}\n\n"
+        + "func explicit_ret(P p, string a, string b): string {\n    return if p.xx then a else b\n}\n\n"
+        // ④ `eif` 语句链：else 是 AST_IF（不是块 ✗）—— 修 gen_if_branch 时把它误当表达式
+        //    求值 + POP ⇒ 栈下溢 ✗（实测 test_destruct_sdl3_sim 就是这样被抓出来的 ✓）
+        + "func sc_of(string k): int {\n"
+        + "    int sc = 0\n"
+        + "    if k == \"C\" { sc = 6 }\n"
+        + "    eif k == \"V\" { sc = 25 }\n"
+        + "    else { sc = -1 }\n"
+        + "    return sc\n"
+        + "}\n\n"
+        + "main() {\n"
+        + "    var p = new P()\n"
+        + "    print(\"[r=<\" + implicit_field(p, \"yes\", \"no\") + \">]\\n\")\n"
+        + "    print(\"[m=<\" + implicit_call(p) + \">]\\n\")\n"
+        + "    if p.xx then \"x\" else \"y\"\n"          // 语句位置（值丢弃）
+        + "    print(\"[after-bare]\\n\")\n"
+        + "    print(\"[e=<\" + explicit_ret(p, \"yes\", \"no\") + \">]\\n\")\n"
+        + "    var v = if p.xx then \"A\" else \"B\"\n"
+        + "    print(\"[v=<\" + v + \">]\\n\")\n"
+        + "    print(\"[sc=<\" + (sc_of(\"V\") as string) + \">]\\n\")\n"
+        + "}\n")
+
+    // ①：修前这里是 `yesnull>]`（拼接被残留值打乱）⇒ 该断言会**失败** ✓
+    ce.expect_ok(src, "① 函数最后一行 if ⇒ 调用方拼接必须完好（修前被打乱）", "[r=<null>]")
+    // ②：语句位置 if 之后，后续语句照常
+    ce.expect_ok(src, "② 语句位置 if 之后后续语句必须正常", "[after-bare]")
+    // ③：表达式位置仍返回值
+    ce.expect_ok(src, "③ 表达式位置（return if）必须仍返回值", "[e=<yes>]")
+    ce.expect_ok(src, "③ 表达式位置（var 赋值）必须仍返回值", "[v=<A>]")
+    // ④：`eif` 语句链（else 是 AST_IF，不是块 ✗）—— 修 gen_if_branch 时最容易被踩坏的形状 ✓
+    ce.expect_ok(src, "④ eif 语句链必须栈平衡（else 是 AST_IF）", "[sc=<25>]")
+
+    dirs.delete(work)
+    print("test_if_expr_stmt passed")
+}

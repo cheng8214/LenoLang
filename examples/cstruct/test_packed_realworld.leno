@@ -1,0 +1,277 @@
+// 实际项目场景测试：网络协议头、文件格式、Windows API 结构体
+
+import ffi
+
+func check(bool cond, string name): int {
+    if cond {
+        return 0
+    }
+    print("FAIL: " + name)
+    return 1
+}
+
+// ====================================================================
+// 场景 1: TCP/IP 协议头（packed 网络协议结构体）
+// 网络协议头通常使用 #pragma pack(1)，字段紧挨无 padding
+// ====================================================================
+
+// TCP 头部（20 字节，packed）
+packed cstruct TCPHeader {
+    u16 src_port       // 0-1: 源端口
+    u16 dst_port       // 2-3: 目标端口
+    u32 seq_num        // 4-7: 序列号
+    u32 ack_num        // 8-11: 确认号
+    u8  data_offset    // 12: 数据偏移+保留 (4+4 bits)
+    u8  flags          // 13: 标志位
+    u16 window         // 14-15: 窗口大小
+    u16 checksum       // 16-17: 校验和
+    u16 urgent_ptr     // 18-19: 紧急指针
+}
+// 预期: total=20, alignment=1
+
+// IPv4 头部（20 字节，packed）
+packed cstruct IPv4Header {
+    u8  version_ihl    // 0: 版本(4) + 首部长度(4)
+    u8  tos            // 1: 服务类型
+    u16 total_length   // 2-3: 总长度
+    u16 identification  // 4-5: 标识
+    u16 flags_offset   // 6-7: 标志+片偏移
+    u8  ttl            // 8: 生存时间
+    u8  protocol       // 9: 协议
+    u16 checksum       // 10-11: 首部校验和
+    u32 src_addr       // 12-15: 源地址
+    u32 dst_addr       // 16-19: 目标地址
+}
+// 预期: total=20, alignment=1
+
+// ====================================================================
+// 场景 2: BMP 文件头（packed 文件格式结构体）
+// BMP 文件格式使用紧凑的文件头
+// ====================================================================
+
+packed cstruct BMPFileHeader {
+    u8  signature[2]   // "BM"
+    u32 file_size      // 文件大小
+    u16 reserved1      // 保留
+    u16 reserved2      // 保留
+    u32 data_offset    // 像素数据偏移
+}
+// 预期: total=14, alignment=1
+
+packed cstruct BMPInfoHeader {
+    u32 header_size    // 信息头大小
+    i32 width          // 宽度
+    i32 height         // 高度
+    u16 planes         // 颜色平面数
+    u16 bpp            // 每像素位数
+    u32 compression    // 压缩方式
+    u32 image_size     // 图像数据大小
+    i32 x_ppm          // 水平分辨率
+    i32 y_ppm          // 垂直分辨率
+    u32 colors_used    // 使用的颜色数
+    u32 colors_important // 重要颜色数
+}
+// 预期: total=40, alignment=1
+
+// ====================================================================
+// 场景 3: Windows API 结构体（正常对齐）
+// Windows API 结构体通常使用自然对齐
+// ====================================================================
+
+// POINT 结构体（自然对齐）
+cstruct WinPoint {
+    i32 x
+    i32 y
+}
+// 预期: total=8, alignment=4
+
+// RECT 结构体（自然对齐）
+cstruct WinRect {
+    i32 left
+    i32 top
+    i32 right
+    i32 bottom
+}
+// 预期: total=16, alignment=4
+
+// MEMORYSTATUSEX（Windows API，自然对齐，有 padding）
+cstruct MemoryStatusEx {
+    u32 dwLength
+    u32 dwMemoryLoad
+    u64 ullTotalPhys
+    u64 ullAvailPhys
+    u64 ullTotalPageFile
+    u64 ullAvailPageFile
+    u64 ullTotalVirtual
+    u64 ullAvailVirtual
+    u64 ullAvailExtendedVirtual
+}
+// 预期: total=64, alignment=8
+
+// ====================================================================
+// 场景 4: 缓存行对齐结构体（align(64)）
+// 用于 SIMD / DMA 操作
+// ====================================================================
+
+align(64) cstruct CacheLineAligned {
+    i64 data[8]        // 64 字节数据
+}
+// 预期: total=64, alignment=64
+
+// ====================================================================
+// 场景 5: 混合 packed + align(16) — 网络包对齐到缓存行
+// ====================================================================
+
+packed align(16) cstruct NetworkPacket {
+    u8  magic          // 0: 魔数
+    u8  version        // 1: 版本
+    u16 length         // 2-3: 长度
+    u32 crc32          // 4-7: CRC
+    u8  payload[8]     // 8-15: 负载
+}
+// packed 后 16 字节, align(16) 后 total=16, alignment=16
+
+main() {
+    var fail = 0
+
+    print("=== 场景 1: TCP/IP 协议头 ===")
+    fail = fail + check(TCPHeader.size() == 20, "TCPHeader.size()==20 got " + TCPHeader.size())
+    fail = fail + check(TCPHeader.alignment() == 1, "TCPHeader.alignment()==1 got " + TCPHeader.alignment())
+    fail = fail + check(TCPHeader.offset_of("src_port") == 0, "TCP src_port@0")
+    fail = fail + check(TCPHeader.offset_of("dst_port") == 2, "TCP dst_port@2")
+    fail = fail + check(TCPHeader.offset_of("seq_num") == 4, "TCP seq_num@4")
+    fail = fail + check(TCPHeader.offset_of("ack_num") == 8, "TCP ack_num@8")
+    fail = fail + check(TCPHeader.offset_of("data_offset") == 12, "TCP data_offset@12")
+    fail = fail + check(TCPHeader.offset_of("flags") == 13, "TCP flags@13")
+    fail = fail + check(TCPHeader.offset_of("window") == 14, "TCP window@14")
+    fail = fail + check(TCPHeader.offset_of("checksum") == 16, "TCP checksum@16")
+    fail = fail + check(TCPHeader.offset_of("urgent_ptr") == 18, "TCP urgent_ptr@18")
+
+    fail = fail + check(IPv4Header.size() == 20, "IPv4Header.size()==20 got " + IPv4Header.size())
+    fail = fail + check(IPv4Header.alignment() == 1, "IPv4Header.alignment()==1 got " + IPv4Header.alignment())
+    fail = fail + check(IPv4Header.offset_of("version_ihl") == 0, "IPv4 version_ihl@0")
+    fail = fail + check(IPv4Header.offset_of("protocol") == 9, "IPv4 protocol@9")
+    fail = fail + check(IPv4Header.offset_of("src_addr") == 12, "IPv4 src_addr@12")
+    fail = fail + check(IPv4Header.offset_of("dst_addr") == 16, "IPv4 dst_addr@16")
+
+    // 实例化 TCP 头并填充字段
+    var tcp = TCPHeader.malloc()
+    tcp.src_port = 8080
+    tcp.dst_port = 443
+    tcp.seq_num = 1000
+    tcp.ack_num = 2000
+    tcp.data_offset = 0x50  // 5*4=20 bytes, no options
+    tcp.flags = 0x18        // PSH+ACK
+    tcp.window = 65535
+    tcp.checksum = 0xABCD
+    tcp.urgent_ptr = 0
+
+    fail = fail + check(tcp.src_port == 8080, "tcp.src_port==8080 got " + tcp.src_port)
+    fail = fail + check(tcp.dst_port == 443, "tcp.dst_port==443 got " + tcp.dst_port)
+    fail = fail + check(tcp.seq_num == 1000, "tcp.seq_num==1000 got " + tcp.seq_num)
+    fail = fail + check(tcp.flags == 0x18, "tcp.flags==0x18 got " + tcp.flags)
+    fail = fail + check(tcp.window == 65535, "tcp.window==65535 got " + tcp.window)
+    fail = fail + check(tcp.checksum == 0xABCD, "tcp.checksum==0xABCD got " + tcp.checksum)
+    tcp.free()
+
+    print("\n=== 场景 2: BMP 文件头 ===")
+    fail = fail + check(BMPFileHeader.size() == 14, "BMPFileHeader.size()==14 got " + BMPFileHeader.size())
+    fail = fail + check(BMPFileHeader.alignment() == 1, "BMPFileHeader.alignment()==1 got " + BMPFileHeader.alignment())
+    fail = fail + check(BMPFileHeader.offset_of("signature") == 0, "BMP signature@0")
+    fail = fail + check(BMPFileHeader.offset_of("file_size") == 2, "BMP file_size@2")
+    fail = fail + check(BMPFileHeader.offset_of("data_offset") == 10, "BMP data_offset@10")
+
+    fail = fail + check(BMPInfoHeader.size() == 40, "BMPInfoHeader.size()==40 got " + BMPInfoHeader.size())
+    fail = fail + check(BMPInfoHeader.alignment() == 1, "BMPInfoHeader.alignment()==1 got " + BMPInfoHeader.alignment())
+    fail = fail + check(BMPInfoHeader.offset_of("width") == 4, "BMP width@4")
+    fail = fail + check(BMPInfoHeader.offset_of("height") == 8, "BMP height@8")
+    fail = fail + check(BMPInfoHeader.offset_of("bpp") == 14, "BMP bpp@14")
+    fail = fail + check(BMPInfoHeader.offset_of("compression") == 16, "BMP compression@16")
+
+    // 实例化 BMP 头
+    var bmp = BMPFileHeader.malloc()
+    bmp.signature[0] = 0x42  // 'B'
+    bmp.signature[1] = 0x4D  // 'M'
+    bmp.file_size = 1024
+    bmp.data_offset = 54
+
+    fail = fail + check(bmp.signature[0] == 0x42, "BMP sig[0]==0x42")
+    fail = fail + check(bmp.signature[1] == 0x4D, "BMP sig[1]==0x4D")
+    fail = fail + check(bmp.file_size == 1024, "BMP file_size==1024")
+    fail = fail + check(bmp.data_offset == 54, "BMP data_offset==54")
+    bmp.free()
+
+    print("\n=== 场景 3: Windows API 结构体 ===")
+    fail = fail + check(WinPoint.size() == 8, "WinPoint.size()==8 got " + WinPoint.size())
+    fail = fail + check(WinPoint.alignment() == 4, "WinPoint.alignment()==4 got " + WinPoint.alignment())
+
+    fail = fail + check(WinRect.size() == 16, "WinRect.size()==16 got " + WinRect.size())
+    fail = fail + check(WinRect.alignment() == 4, "WinRect.alignment()==4 got " + WinRect.alignment())
+
+    fail = fail + check(MemoryStatusEx.size() == 64, "MemoryStatusEx.size()==64 got " + MemoryStatusEx.size())
+    fail = fail + check(MemoryStatusEx.alignment() == 8, "MemoryStatusEx.alignment()==8 got " + MemoryStatusEx.alignment())
+    fail = fail + check(MemoryStatusEx.offset_of("dwLength") == 0, "MemoryStatusEx dwLength@0")
+    // u32 dwMemoryLoad 后面有 4 字节 padding 对齐 u64
+    fail = fail + check(MemoryStatusEx.offset_of("ullTotalPhys") == 8, "MemoryStatusEx ullTotalPhys@8 got " + MemoryStatusEx.offset_of("ullTotalPhys"))
+    fail = fail + check(MemoryStatusEx.offset_of("ullAvailExtendedVirtual") == 56, "MemoryStatusEx ullAvailExtendedVirtual@56")
+
+    // 实际调用 Windows API GetCursorPos
+    var user32 = ffi.load("user32.dll")
+    if user32 != null {
+        var pt = WinPoint.malloc()
+        ffi.call_void(user32, "GetCursorPos", pt.to_ptr())
+        print("当前鼠标位置: x=" + pt.x + ", y=" + pt.y)
+        pt.free()
+        ffi.free(user32)
+    }
+
+    print("\n=== 场景 4: 缓存行对齐 ===")
+    fail = fail + check(CacheLineAligned.size() == 64, "CacheLineAligned.size()==64 got " + CacheLineAligned.size())
+    fail = fail + check(CacheLineAligned.alignment() == 64, "CacheLineAligned.alignment()==64 got " + CacheLineAligned.alignment())
+
+    print("\n=== 场景 5: packed + align(16) 网络包 ===")
+    fail = fail + check(NetworkPacket.size() == 16, "NetworkPacket.size()==16 got " + NetworkPacket.size())
+    fail = fail + check(NetworkPacket.alignment() == 16, "NetworkPacket.alignment()==16 got " + NetworkPacket.alignment())
+    fail = fail + check(NetworkPacket.offset_of("magic") == 0, "NetworkPacket magic@0")
+    fail = fail + check(NetworkPacket.offset_of("version") == 1, "NetworkPacket version@1")
+    fail = fail + check(NetworkPacket.offset_of("length") == 2, "NetworkPacket length@2")
+    fail = fail + check(NetworkPacket.offset_of("crc32") == 4, "NetworkPacket crc32@4")
+    fail = fail + check(NetworkPacket.offset_of("payload") == 8, "NetworkPacket payload@8")
+
+    // 实例化网络包
+    var np = NetworkPacket.malloc()
+    np.magic = 0xAA
+    np.version = 1
+    np.length = 256
+    np.crc32 = 0xDEADBEEF
+    np.payload[0] = 0x01
+    np.payload[7] = 0xFF
+
+    fail = fail + check(np.magic == 0xAA, "np.magic==0xAA")
+    fail = fail + check(np.version == 1, "np.version==1")
+    fail = fail + check(np.length == 256, "np.length==256")
+    fail = fail + check(np.crc32 == 0xDEADBEEF, "np.crc32==0xDEADBEEF")
+    fail = fail + check(np.payload[0] == 0x01, "np.payload[0]==0x01")
+    fail = fail + check(np.payload[7] == 0xFF, "np.payload[7]==0xFF")
+    np.free()
+
+    // debug 输出验证
+    print("\n=== debug 输出验证 ===")
+    var dbg_tcp = TCPHeader.debug()
+    fail = fail + check(dbg_tcp.has("packed"), "TCP debug has 'packed'")
+    fail = fail + check(dbg_tcp.has("20 字节"), "TCP debug has '20 字节'")
+
+    var dbg_pkt = NetworkPacket.debug()
+    fail = fail + check(dbg_pkt.has("packed"), "NetworkPacket debug has 'packed'")
+    fail = fail + check(dbg_pkt.has("align(16)"), "NetworkPacket debug has 'align(16)'")
+
+    var dbg_mem = MemoryStatusEx.debug()
+    fail = fail + check(not dbg_mem.has("packed"), "MemoryStatusEx debug does NOT have 'packed'")
+    fail = fail + check(not dbg_mem.has("align("), "MemoryStatusEx debug does NOT have 'align('")
+
+    if fail == 0 {
+        print("\n实际项目测试全部通过!")
+    } else {
+        print("\n实际项目测试: " + fail + " 个失败")
+    }
+}

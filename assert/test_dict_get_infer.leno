@@ -1,0 +1,74 @@
+// 测试 Dict.get 默认值类型推断
+// opts.get("x", 0) → int, opts.get("y", 0.0) → float, opts.get("z", true) → bool, opts.get("name", "") → string
+
+main() {
+    var opts = {x: 42, y: 3.14, z: true, name: "leno"}
+
+    // === 基本类型推断 ===
+
+    // int 默认值 → 推断返回 int
+    int xi = opts.get("x", 0)
+    assert_eq(xi, 42)
+
+    // float 默认值 → 推断返回 float
+    float yf = opts.get("y", 0.0)
+    assert_eq(yf, 3.14)
+
+    // bool 默认值 → 推断返回 bool
+    bool zb = opts.get("z", false)
+    assert_eq(zb, true)
+
+    // string 默认值 → 推断返回 string
+    string ns = opts.get("name", "")
+    assert_eq(ns, "leno")
+
+    // === 键不存在时返回默认值 ===
+
+    int missing_int = opts.get("nokey", 99)
+    assert_eq(missing_int, 99)
+
+    float missing_float = opts.get("nofloat", 1.5)
+    assert_eq(missing_float, 1.5)
+
+    string missing_str = opts.get("nostr", "default")
+    assert_eq(missing_str, "default")
+
+    bool missing_bool = opts.get("nobool", false)
+    assert_eq(missing_bool, false)
+
+    // === int → float 自动提升 ===
+
+    // int 默认值推断为 int，赋给 float 变量时自动提升
+    float xf = opts.get("x", 0)
+    assert_eq(xf, 42.0)
+
+    float missing_promote = opts.get("nokey", 0)
+    assert_eq(missing_promote, 0.0)
+
+    // === 无默认值：返回 any ===
+    var v = opts.get("x")
+    assert_eq(v, 42)
+
+    // === Dict[string, any] 外部 dict 场景 ===
+
+    Dict[string, any] data = {x: 42, y: 3.14, name: "leno", active: true}
+    var dv1 = data.get("x", 0)
+    assert_eq(dv1, 42)
+    var dv2 = data.get("y", 0.0)
+    assert_eq(dv2, 3.14)
+    var dv3 = data.get("name", "")
+    assert_eq(dv3, "leno")
+    var dv4 = data.get("active", false)
+    assert_eq(dv4, true)
+
+    // 混合类型 dict
+    var config = {width: 800, height: 600, title: "window"}
+    var w = config.get("width", 0)
+    var h = config.get("height", 0)
+    var t = config.get("title", "")
+    assert_eq(w, 800)
+    assert_eq(h, 600)
+    assert_eq(t, "window")
+
+    print("test_dict_get_infer passed")
+}

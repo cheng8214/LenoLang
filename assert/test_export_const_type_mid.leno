@@ -1,0 +1,12 @@
+// 中间模块：从 base 模块 re-export const
+// 这是 bug 的核心场景：export const X = core.Y
+// 修复前：X 的类型在符号表中退化为 any
+// 修复后：X 的类型应正确传播为 int/float/bool/string
+
+import "test_export_const_type_mod.leno" as base
+
+export const RE_INT = base.INT_VAL
+export const RE_FLOAT = base.FLOAT_VAL
+export const RE_BOOL = base.BOOL_VAL
+export const RE_STRING = base.STRING_VAL
+export const RE_NEG = base.NEG_VAL

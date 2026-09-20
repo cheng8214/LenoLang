@@ -1,0 +1,13 @@
+// 泛型中间模块：Box[T]，导入 base
+import "generic_mod_base.leno" as base
+export struct Box[T] {
+    T value
+
+    func get(): T {
+        return self.value
+    }
+
+    func set(T v) {
+        self.value = v
+    }
+}

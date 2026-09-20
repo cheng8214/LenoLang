@@ -1,0 +1,41 @@
+main()
+{
+    print("=== 测试 finally ===")
+    
+    // 测试1：try-catch-finally，发生异常
+    try {
+        print("1. try块开始")
+        var a = 10 / 0
+        print("1. 这行不会执行")
+    } catch e {
+        print($"1. catch块: {e}")
+    } finally {
+        print("1. finally块")
+    }
+    
+    print("")
+    
+    // 测试2：try-catch-finally，无异常
+    try {
+        print("2. try块开始")
+        var b = 10 / 2
+        print($"2. 计算结果: {b}")
+    } catch e {
+        print($"2. catch块: {e}")
+    } finally {
+        print("2. finally块")
+    }
+    
+    print("")
+    
+    // 测试3：try-finally（无catch），发生异常
+    try {
+        print("3. try块开始")
+        throw "测试异常"
+        print("3. 这行不会执行")
+    } finally {
+        print("3. finally块（应该执行）")
+    }
+    
+    print("3. 这行不会执行，因为异常未捕获")
+}

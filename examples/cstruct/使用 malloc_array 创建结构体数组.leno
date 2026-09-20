@@ -1,0 +1,52 @@
+// 测试 cstruct 批量操作功能
+
+cstruct Point {
+    i32 x
+    i32 y
+}
+
+main() {
+    print("=== 测试 cstruct 批量操作 ===\n")
+    
+    // 1. 使用 malloc_array 创建结构体数组
+    print("1. 创建结构体数组 (10个 Point):")
+    var points = Point.malloc_array(10)
+    print("   数组长度: " + points.len())
+    print("")
+    
+    // 2. 初始化数组元素
+    print("2. 初始化数组元素:")
+    for 0 : 9 to i {
+        points[i].x = i * 10
+        points[i].y = i * 20
+    }
+    
+    // 3. 读取数组元素
+    print("3. 读取数组元素:")
+    for 0 : 4 to i {
+        print("   points[" + i + "] = (" + points[i].x + ", " + points[i].y + ")")
+    }
+    print("   ...")
+    print("")
+    
+    // 4. 修改数组元素
+    print("4. 修改数组元素:")
+    points[5].x = 999
+    points[5].y = 888
+    print("   points[5] = (" + points[5].x + ", " + points[5].y + ")")
+    print("")
+    
+    // 5. 使用 to_ptr() 获取数组指针
+    print("5. 获取数组指针:")
+    var ptr = points.to_ptr()
+    print("   指针: " + ptr)
+    print("")
+    
+    // 6. 使用 free_all 释放整个数组
+    print("6. 释放数组:")
+    var result = points.free_all()
+    print("   释放结果: " + result)
+    print("")
+    
+    print("=== 测试完成 ===")
+}

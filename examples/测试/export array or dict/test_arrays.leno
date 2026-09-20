@@ -1,0 +1,37 @@
+// 测试2: 数组类型导出 + 类型提升
+import "mod_arrays.leno" as m
+{
+    // 基本数组
+    print(m.intArr)
+    print(m.floatArr)
+    print(m.strArr)
+    print(m.boolArr)
+    print(m.emptyArr)
+
+    // 混合数组 int+float → float 提升
+    float val = m.mixedArr[0]
+    print(val)
+    print(m.mixedArr)
+
+    // 类型提升数组
+    float pv = m.promotedArr[0]
+    print(pv)
+    print(m.promotedArr)
+
+    // 显式类型数组
+    int t0 = m.typedIntArr[0]
+    float tf = m.typedFloatArr[0]
+    string ts = m.typedStrArr[0]
+    print(t0)
+    print(tf)
+    print(ts)
+
+    // 嵌套数组
+    int n0 = m.nestedArr[0][0]
+    print(n0)
+    print(m.nestedArr)
+
+    // 显式嵌套
+    int tn = m.typedNested[0][0]
+    print(tn)
+}

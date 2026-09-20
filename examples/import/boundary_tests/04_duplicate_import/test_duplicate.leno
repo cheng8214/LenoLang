@@ -1,0 +1,16 @@
+// 重复导入测试主文件
+// 测试：同一个模块被多个模块导入，确保只加载一次
+
+import "module_a.leno" as ma
+import "module_b.leno" as mb
+import "shared_module.leno" as direct
+
+main() {
+    print("=== 重复导入测试 ===")
+    print(ma.use_shared())
+    print(mb.use_shared())
+    print("A count: " + ma.get_shared_count())
+    print("B count: " + mb.get_shared_count())
+    print("Direct count: " + direct.get_count())
+    print("=== 测试完成 ===")
+}

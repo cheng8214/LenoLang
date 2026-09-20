@@ -1,0 +1,26 @@
+import io
+import asyncs
+
+async func task(string name, int ms) {
+    io.print($"{name} 开始")
+    await asyncs.sleep(ms)
+    io.print($"{name} 完成")
+}
+
+async func test() {
+    io.print("test 开始")
+    var f1 = task("A", 200)
+    var f2 = task("B", 100)
+    io.print("tasks 已启动")
+    await f1
+    io.print("await f1 完成")
+    await f2
+    io.print("await f2 完成")
+}
+
+main() {
+    io.print("=== 开始 ===")
+    test()
+    asyncs.run()
+    io.print("=== 结束 ===")
+}

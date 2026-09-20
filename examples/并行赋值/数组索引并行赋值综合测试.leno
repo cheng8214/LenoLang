@@ -1,0 +1,55 @@
+// 数组索引并行赋值综合测试
+
+main() {
+    print("=== 测试1: 两个数组索引交换 ===")
+    var arr1 = [1, 2, 3, 4, 5]
+    print("before: " + arr1)
+    arr1[0], arr1[4] = arr1[4], arr1[0]
+    print("after swap: " + arr1)
+    if arr1[0] == 5 and arr1[4] == 1 {
+        print("✓ 测试1通过")
+    } else {
+        print("✗ 测试1失败")
+    }
+    print("")
+
+    print("=== 测试2: 三个数组索引赋值 ===")
+    var arr2 = [10, 20, 30, 40, 50]
+    print("before: " + arr2)
+    arr2[0], arr2[2], arr2[4] = 100, 300, 500
+    print("after: " + arr2)
+    if arr2[0] == 100 and arr2[2] == 300 and arr2[4] == 500 {
+        print("✓ 测试2通过")
+    } else {
+        print("✗ 测试2失败")
+    }
+    print("")
+
+    print("=== 测试3: 混合变量和数组索引 ===")
+    var arr3 = [1, 2, 3]
+    var x = 100
+    var y = 200
+    print("before: arr=" + arr3 + ", x=" + x + ", y=" + y)
+    arr3[0], x, arr3[2], y = x, arr3[0], y, arr3[2]
+    print("after: arr=" + arr3 + ", x=" + x + ", y=" + y)
+    if arr3[0] == 100 and x == 1 and arr3[2] == 200 and y == 3 {
+        print("✓ 测试3通过")
+    } else {
+        print("✗ 测试3失败")
+    }
+    print("")
+
+    print("=== 测试4: 同一数组多个索引 ===")
+    var arr4 = [0, 0, 0, 0, 0]
+    print("before: " + arr4)
+    arr4[1], arr4[3] = 10, 40
+    print("after: " + arr4)
+    if arr4[1] == 10 and arr4[3] == 40 {
+        print("✓ 测试4通过")
+    } else {
+        print("✗ 测试4失败")
+    }
+    print("")
+
+    print("=== 所有测试完成 ===")
+}

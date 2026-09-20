@@ -1,0 +1,29 @@
+# 构建输出（build/ **允许入库**：随 exe 分发的 leno_module/ 与 leno_gui/ 就在里面；
+# 二进制仍不入库 —— *.exe 由下面这行统一排除，勿删）
+*.exe
+*.o
+*.obj
+
+# IDE
+.vscode/
+.idea/
+*.sln
+*.vcxproj
+
+# 临时文件
+*.tmp
+*.temp
+*.log
+test_serialize_tmp.*
+assert/run_tests.lenb
+assert/run_tests.exe
+
+# 编译器产物（leno -c 生成的字节码）
+*.lenb
+
+# 模块编译缓存（跨运行缓存 import 的 .leno 模块编译产物）
+.lenocache/
+1.txt 
+
+# 临时探针 / 实验目录（放在 build 外、不入库；与历史上的 .probe_perf / .probe_s2b 同族）
+.probe*/

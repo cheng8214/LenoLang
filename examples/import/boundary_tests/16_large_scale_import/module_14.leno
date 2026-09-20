@@ -1,0 +1,5 @@
+// 大规模导入测试 - 模块 14
+export var id = 14
+export var name = "module_14"
+export func get_value() { return id * 10 }
+export func compute(int x) { return x + id }

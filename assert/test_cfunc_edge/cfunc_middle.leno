@@ -1,0 +1,7 @@
+// 中间模块：从 cfunc_source 导入并再导出（模拟 re-export 场景）
+import "cfunc_source.leno" as src
+use src.ProgressCb
+use src.LoggerCb
+
+// 也可以直接定义自己的 cfunc
+export cfunc TimerCb(Ptr timer_id, i32 event): i32

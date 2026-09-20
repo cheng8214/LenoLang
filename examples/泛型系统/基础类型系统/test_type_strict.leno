@@ -1,0 +1,30 @@
+// 严格测试：泛型函数内 type() 对参数显示
+func showType[T](T v) {
+    print(type(v))  // 应该显示 int/string/float，而非 T
+}
+
+showType[int](42)
+showType[string]("hello")
+showType[float](3.14)
+
+// 泛型函数多参数
+func pairType[T, U](T a, U b) {
+    print(type(a))
+    print(type(b))
+}
+
+pairType[int, string](1, "x")
+pairType[float, bool](1.0, true)
+
+// 泛型 struct 方法中 type(self)
+struct Wrapper[T] {
+    T data
+
+    func inspect() {
+        print(type(self))
+        print(type(self.data))
+    }
+}
+
+new Wrapper[int](data=42).inspect()
+new Wrapper[string](data="hi").inspect()

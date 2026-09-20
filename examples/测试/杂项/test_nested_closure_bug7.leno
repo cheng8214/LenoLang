@@ -1,0 +1,52 @@
+// 最小复现 v7：嵌套闭包的 if 块内访问 upvalue
+// 触发条件：
+//   1. 方法内注册 Level 2 闭包（捕获 self）
+//   2. Level 2 闭包内有局部变量 p
+//   3. Level 3 闭包捕获 p（upvalue）和 self（upvalue）
+//   4. Level 3 闭包内有 if 块
+//   5. 在 if 块内访问 upvalue p → 之前会崩溃，修复后正常
+
+struct Test {
+    string name = "hello"
+    int counter = 0
+    string statusText = ""
+
+    func setup() {
+        // 回调1：简单闭包，只有 self upvalue
+        registerCb1(func(int row) {
+            print(name)
+            return
+        })
+
+        // 回调2：有嵌套闭包，捕获 self + 局部变量 p
+        registerCb2(func(int row, string id) {
+            if row < 0 { return }
+            var r = ["a", "b", "c", "path_value", "1"]
+            if r.len() < 5 { return }
+            string p = r[3]
+            bool isDir = (r[4] == "1")
+
+            if id == "del" {
+                doDelete(p, isDir, func() {
+                    if true {
+                        statusText = "ok " + p   // 在 if 块内访问 upvalue p
+                        counter = counter + 1
+                    }
+                })
+            }
+            return
+        })
+    }
+
+    func registerCb1(func(int) cb) { cb(1) }
+    func registerCb2(func(int, string) cb) { cb(1, "del") }
+    func doDelete(string p, bool isDir, func() cb) { cb() }
+    func bump() { counter = counter + 1 }
+}
+
+main() {
+    Test t = new Test()
+    t.setup()
+    print("counter = " + t.counter)
+    print("status = " + t.statusText)
+}

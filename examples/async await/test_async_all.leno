@@ -1,0 +1,41 @@
+import io
+import asyncs
+
+// 测试 asyncs.all() - 收集已完成 Future 的结果
+async func fetch_data(string name, int delay):string {
+    await asyncs.sleep(delay)
+    return $"数据-{name}"
+}
+
+async func test_all() {
+    io.print("开始 asyncs.all 测试")
+    
+    // 启动多个并发任务
+    var f1 = fetch_data("A", 300)
+    var f2 = fetch_data("B", 200)
+    var f3 = fetch_data("C", 400)
+    
+    io.print("三个任务已启动")
+    
+    // 先 await 等待每个 Future 完成
+    await f1
+    await f2
+    await f3
+    
+    io.print("所有任务已完成，收集结果...")
+    
+    // 然后用 all 收集结果
+    var results = asyncs.all([f1, f2, f3])
+    
+    io.print("结果:")
+    io.print(results[0])
+    io.print(results[1])
+    io.print(results[2])
+}
+
+main() {
+    io.print("=== 测试 asyncs.all() ===")
+    test_all()
+    asyncs.run()
+    io.print("=== 完成 ===")
+}

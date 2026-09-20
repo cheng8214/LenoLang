@@ -1,0 +1,22 @@
+// 测试：use 导入 alias 时，底层类型依赖应自动带入作用域
+// 修复前：use mod.EventHandler 后 Event 不可见，需要手动 import
+// 修复后：Event 自动可见
+
+import "test_use_alias_dep_mod.leno" as mod
+use mod.EventHandler
+
+// 关键测试：EventHandler = func(Event):bool
+// Event 应该自动可见，否则 new Event() 会报错
+Event e = new Event(type=3)
+assert(e.get_type() == 3)
+
+// EventHandler 作为函数类型可以直接使用
+EventHandler h = func(Event ev):bool { return ev.get_type() > 0 }
+assert(h(e) == true)
+
+// 也可以创建数组
+Array[EventHandler] handlers = []
+handlers.add(h)
+assert(handlers[0](e) == true)
+
+print("test_use_alias_dep: 所有测试通过 ✅")

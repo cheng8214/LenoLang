@@ -1,0 +1,9 @@
+// 测试数组元素的 struct 方法调用
+struct Foo {
+    func bar(): int { return 42 }
+}
+
+main() {
+    Array[Foo] arr = [new Foo()]
+    arr[0].bar()  // 数组元素的 struct 方法调用
+}

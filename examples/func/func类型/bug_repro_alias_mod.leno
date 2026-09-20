@@ -1,0 +1,6 @@
+// bug_repro_alias_mod.leno — 导出函数类型别名
+export alias MyCB = func():void
+
+export struct Helper {
+    func wrap(MyCB cb) { print("before"); cb(); print("after") }
+}

@@ -1,0 +1,154 @@
+// 康托尔对角线论证
+import strings
+
+// 模拟无穷数列的第 n 项第 k 位（0-9）
+func get_digit(int n, int k): int {
+    int a = n * 2654435761
+    int b = k * 2246822519
+    int c = (n + 1) * (k + 1) * 0x9E3779B9
+    int hash = a ^ b ^ c
+    hash = hash ^ (hash >> 16)
+    hash = hash ^ (hash >> 8)
+    return _int32(hash & 0x7FFFFFFF) % 10
+}
+
+// 获取第 n 项的前 len 位
+func get_item_prefix(int n, int len): string {
+    var result = ""
+    for 0 : len - 1 to i {
+        result = result + strings.char(48 + get_digit(n, i))
+    }
+    return result
+}
+
+// 对角线构造：新数的第 k 位 = (第 k 项的第 k 位 + 1) mod 10
+func construct_new_number(int max_k): string {
+    var result = ""
+    for 0 : max_k to k {
+        int digit = get_digit(k, k)
+        int new_digit = (digit + 1) % 10
+        result = result + strings.char(48 + new_digit)
+    }
+    return result
+}
+
+// 验证：确认新数的第 n 位确实 ≠ 第 n 项的第 n 位
+func verify_construction(string new_num, int max_check): bool {
+    int len = new_num.len()
+    print("验证构造正确性（前 " + max_check + " 项）：")
+    
+    for 0 : max_check - 1 to n {
+        if n >= len {
+            break
+        }
+        
+        int item_diag = get_digit(n, n)
+        int new_diag = _int(new_num.byte(n) - 48)
+        int expected = (item_diag + 1) % 10
+        
+        if new_diag != expected {
+            print("  ❌ 第 " + n + " 位构造错误：期望 " + expected + ", 实际 " + new_diag)
+            return false
+        }
+        
+        if item_diag == new_diag {
+            print("  ❌ 第 " + n + " 位与第 " + n + " 项相同！")
+            return false
+        }
+        
+        print("  第 " + n + " 位: 项=" + item_diag + ", 新数=" + new_diag + " ✓")
+    }
+    
+    return true
+}
+
+// 强验证：逐位比较，确认新数前缀与任何项前缀都不同
+func verify_not_equal(string new_num, int max_check): bool {
+    int len = new_num.len()
+    print("\n强验证：逐位比较新数与各项前缀：")
+    
+    for 0 : max_check - 1 to n {
+        if n >= len {
+            break
+        }
+        
+        var prefix = get_item_prefix(n, len)
+        bool same = true
+        
+        for 0 : len - 1 to i {
+            if prefix.byte(i) != new_num.byte(i) {
+                same = false
+                break
+            }
+        }
+        
+        if same {
+            print("  ❌ 第 " + n + " 项前缀与新数完全相同！")
+            return false
+        }
+    }
+    
+    print("  ✓ 新数与所有前 " + max_check + " 项都不同")
+    return true
+}
+
+main() {
+    print("")
+    print("原理：假设有一个包含所有实数的无穷数列")
+    print("      构造一个新数，使其第 k 位 ≠ 第 k 项的第 k 位")
+    print("      则新数 ≠ 数列中的任何一项 → 矛盾 → 实数不可数")
+    print("")
+
+    int digits = 20
+    int checks = 10
+
+    // 展示数列前 checks 项
+    print("【步骤1】数列的前 " + checks + " 项（前 " + digits + " 位）：")
+    for 0 : checks - 1 to n {
+        var item = get_item_prefix(n, digits)
+        var marked = ""
+        for 0 : digits - 1 to i {
+            if i == n {
+                marked = marked + "[" + strings.char(item.byte(i)) + "]"
+            } else {
+                marked = marked + strings.char(item.byte(i))
+            }
+        }
+        print("  第 " + n + " 项: " + marked)
+    }
+    print("")
+
+    // 构造新数
+    print("【步骤2】对角线构造新数：")
+    var new_num = construct_new_number(digits - 1)
+    
+    var diag = ""
+    for 0 : digits - 1 to k {
+        diag = diag + strings.char(48 + get_digit(k, k))
+    }
+    print("  对角线位: " + diag)
+    print("  新数    : " + new_num)
+    print("")
+
+    // 验证
+    print("【步骤3】验证：")
+    bool ok1 = verify_construction(new_num, checks)
+    bool ok2 = verify_not_equal(new_num, checks)
+    
+    print("")
+    if ok1 and ok2 {
+        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        print("✅ 验证通过！")
+        print("")
+        print("结论：构造的新数与数列前 " + checks + " 项均不相等")
+        print("      因为对每一项 n，新数的第 n 位 = (第 n 项的第 n 位 + 1) mod 10")
+        print("      所以新数的第 n 位 ≠ 第 n 项的第 n 位")
+        print("      → 新数 ≠ 第 n 项（至少第 n 位不同）")
+        print("")
+        print("  任何试图枚举所有实数的无穷数列，都可以构造出一个")
+        print("  不在其中的新实数，因此实数集是不可数的。")
+        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    } else {
+        print("❌ 验证失败")
+    }
+}

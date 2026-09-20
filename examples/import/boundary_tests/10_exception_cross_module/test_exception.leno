@@ -1,0 +1,42 @@
+// 异常处理跨模块测试主文件
+// 测试：模块抛出异常，调用方捕获
+
+import "error_module.leno" as err
+
+main() {
+    print("=== 异常处理跨模块测试 ===")
+    
+    // 测试1: 正常情况
+    try {
+        var result = err.may_throw(false)
+        print("Test1: " + result)
+    } catch e {
+        print("Test1 failed: " + e)
+    }
+    
+    // 测试2: 捕获模块异常
+    try {
+        err.may_throw(true)
+        print("Test2: Should not reach here")
+    } catch e {
+        print("Test2 caught: " + e)
+    }
+    
+    // 测试3: 捕获 always_throw
+    try {
+        err.always_throw()
+        print("Test3: Should not reach here")
+    } catch e {
+        print("Test3 caught: " + e)
+    }
+    
+    // 测试4: 捕获嵌套异常
+    try {
+        err.nested_error()
+        print("Test4: Should not reach here")
+    } catch e {
+        print("Test4 caught: " + e)
+    }
+    
+    print("=== 测试完成 ===")
+}

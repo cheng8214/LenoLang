@@ -1,0 +1,65 @@
+// alias 边界测试 - 全面
+alias IntList = Array[int]
+alias IntMatrix = Array[IntList]         // 嵌套别名
+alias StrDict = Dict[string, string]
+alias Callback = func(int):int
+alias TripleArray = Array[Array[Array[float]]]  // 深度嵌套
+alias NamedMap = Dict[string, StrDict]   // 两个别名组合
+
+// 1. 别名在函数签名中
+func sum_arr(IntList arr):int {
+    var total = 0
+    for arr to item { total = total + item }
+    return total
+}
+
+// 2. 别名作为返回类型
+func make_list():IntList {
+    return [1, 2, 3]
+}
+
+// 3. 别名用于 func 类型参数
+func apply_op(int x, Callback op):int {
+    return op(x)
+}
+
+// 4. 别名用于嵌套容器
+func flatten_matrix(IntMatrix m):IntList {
+    var result = []
+    for m to row {
+        for row to item { result.add(item) }
+    }
+    return result
+}
+
+// 5. 别名用于 dict 操作
+func get_user(NamedMap db, string id):StrDict {
+    return db[id]
+}
+
+func double(int x):int { return x * 2 }
+
+main() {
+    // 基本别名
+    IntList nums = [10, 20, 30]
+    print(sum_arr(nums))
+
+    // 返回类型
+    var l = make_list()
+    print(l)
+
+    // func 类型别名
+    print(apply_op(5, double))
+
+    // 嵌套别名
+    IntMatrix matrix = [[1,2], [3,4]]
+    print(flatten_matrix(matrix))
+
+    // 组合别名
+    NamedMap db = {"u1": {"name": "Alice", "age": "30"}}
+    print(get_user(db, "u1"))
+
+    // type() 验证
+    print(type(nums))
+    print(type(matrix))
+}

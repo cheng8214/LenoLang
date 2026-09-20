@@ -1,0 +1,556 @@
+// sdl_font.leno — SDL3_ttf 字体绑定
+import ffi
+import dirs
+import files
+import "sdl_core.leno" as core
+use core.(sdl3, SDL_Point, SDL_GlyphMetrics, StringSize, GlyphInfo)
+
+sdl3 _lib = core.lib()
+
+// ==================== clib sdl3_ttf ====================
+
+export clib sdl3_ttf {
+    bool TTF_Init()
+    void TTF_Quit()
+    Ptr[u8]  TTF_OpenFont(str8 file, f32 ptsize)
+    void TTF_CloseFont(Ptr[u8] font)
+    i32  TTF_GetFontHeight(Ptr[u8] font)
+    i32  TTF_GetFontAscent(Ptr[u8] font)
+    i32  TTF_GetFontDescent(Ptr[u8] font)
+    bool TTF_GetStringSize(Ptr[u8] font, str8 text, u64 length, Ptr[i32] w, Ptr[i32] h)
+    Ptr[u8]  TTF_RenderText_Blended(Ptr[u8] font, str8 text, u64 length, u32 color)
+    Ptr[u8]  TTF_RenderText_Solid(Ptr[u8] font, str8 text, u64 length, u32 color)
+    Ptr[u8]  TTF_RenderText_Shaded(Ptr[u8] font, str8 text, u64 length, u32 fg, u32 bg)
+    Ptr[u8]  TTF_RenderText_Blended_Wrapped(Ptr[u8] font, str8 text, u64 length, u32 color, i32 wrapWidth)
+    void TTF_SetFontStyle(Ptr[u8] font, i32 style)
+    i32  TTF_GetFontStyle(Ptr[u8] font)
+    void TTF_SetFontOutline(Ptr[u8] font, i32 outline)
+    i32  TTF_GetFontOutline(Ptr[u8] font)
+    str8 TTF_GetFontStyleName(Ptr[u8] font)
+    str8 TTF_GetFontFamilyName(Ptr[u8] font)
+    void TTF_SetFontHinting(Ptr[u8] font, i32 hinting)
+    i32  TTF_GetFontHinting(Ptr[u8] font)
+    void TTF_SetFontKerning(Ptr[u8] font, i32 kerning)
+    i32  TTF_GetFontKerning(Ptr[u8] font)
+    bool TTF_GetStringSizeWrapped(Ptr[u8] font, str8 text, u64 length, i32 wrapWidth, Ptr[i32] w, Ptr[i32] h)
+    Ptr[u8]  TTF_RenderGlyph_Blended(Ptr[u8] font, u32 glyph, u32 color)
+    void TTF_SetFontSize(Ptr[u8] font, f32 ptsize)
+    void TTF_SetFontWrapAlignment(Ptr[u8] font, i32 align)
+    bool TTF_GetGlyphMetrics(Ptr[u8] font, u32 glyph, Ptr[i32] minx, Ptr[i32] maxx, Ptr[i32] miny, Ptr[i32] maxy, Ptr[i32] advance)
+}
+
+// ==================== DLL 加载 ====================
+
+sdl3_ttf g_ttf = null
+
+export func ttfLib(): sdl3_ttf {
+    if g_ttf == null {
+        string ext = if _os() == "windows" then ".dll" else ".so"
+        var path = dirs.script_dir() + "/../SDL3_ttf" + ext
+        if not files.exists(path) { path = dirs.script_dir() + "/SDL3_ttf" + ext }
+        if not files.exists(path) { path = "SDL3_ttf" + ext }
+        g_ttf = ffi.load(path)
+    }
+    return g_ttf
+}
+
+// SDL_Surface 头部字段（用于 from_ptr 读取真实宽高）
+export cstruct SDL_SurfaceInfo {
+    u32 flags     // offset 0
+    i32 format    // offset 4
+    i32 w         // offset 8
+    i32 h         // offset 12
+}
+
+export const STYLE_NORMAL        = 0x00
+export const STYLE_BOLD          = 0x01
+export const STYLE_ITALIC        = 0x02
+export const STYLE_UNDERLINE     = 0x04
+export const STYLE_STRIKETHROUGH = 0x08
+
+export const HINTING_NORMAL = 0
+export const HINTING_LIGHT  = 1
+export const HINTING_MONO   = 2
+export const HINTING_NONE   = 3
+
+export const WRAP_ALIGN_LEFT   = 0
+export const WRAP_ALIGN_CENTER = 1
+export const WRAP_ALIGN_RIGHT  = 2
+
+// ==================== 初始化/工具（需在 Font/TextTexture 之前定义，struct 方法会引用） ====================
+
+export var _ttfInited = false
+
+
+
+// ==================== Font ====================
+
+// 文字纹理缓存条目（ring buffer 固定容量，避免每帧重建 2x 栅格化纹理）
+export struct CachedTex {
+    string key
+    Ptr[u8] texture
+    int w; int h; bool ok
+    Ptr[u8] ren   // 创建该纹理的渲染器；渲染器销毁时据此精准失效，避免跨渲染器复用指针导致命中失效纹理
+}
+
+// 字符串尺寸缓存条目（measureString 高频调用，缓存避免重复 TTF_SetFontSize + 测量）
+export struct CachedMeas {
+    string key
+    float w; float h
+}
+
+export struct Font {
+    Ptr[u8] handle; bool ok; int height; int ascent; int descent; float _pt
+    int _refCount = 0           // 引用计数：acquireFont/acquireFontAuto 获取时 +1，releaseFont 归零才真正 close 并从池摘除
+    string _fontPath = ""       // 缓存池查询用
+    float _aaScale = 0.0   // SSAA 倍数：>0 时 measureString 按「2x 测量再除 scale」计算，
+                           // 与 Renderer.drawText 的 SSAA 绘制宽度（tex.width/scale）完全一致
+
+    // 文字纹理缓存（ring buffer，固定容量）：drawText 命中时直接复用纹理，
+    // 避免每帧 TTF_RenderText_Blended（CPU 栅格化）+ SDL_CreateTextureFromSurface（上传）的重复开销
+    // 容量不宜过大：动画场景下 FPS 等数字每秒变化，每个不同文字各占一个纹理（~20-30KB/个），
+    // 512 个条目需要 ~8.5 分钟才填满才开始淘汰，期间纹理内存持续累积。
+    // 文字纹理缓存容量。早期 64 槽在「表格 + 目录树 + 菜单 + 标签」同屏存在大量不重复文字时
+    // 会每帧淘汰/重建大量纹理，导致重绘（如鼠标移到其它控件、弹对话框）时偶发卡顿/闪烁。
+    // 放大到足以容纳整窗可见文字即可避免淘汰，内存实际由“不重复文字数”决定，不会无谓增长。
+    Array[CachedTex] _texCache = []
+    int _texCap = 1024
+    int _texHead = 0
+    // MRU 快路径：上次命中的缓存 key 与索引。渲染循环中同一文字常被连续多次调用
+    // （如 _fit_cell_text 先 measure 再 draw），单槽快路径将 O(1024) 线性扫描降为 O(1)。
+    string _texLastKey = ""
+    int _texLastIdx = -1
+    // 尺寸缓存：measureString 高频调用，缓存避免重复测量
+    Array[CachedMeas] _measCache = []
+    int _measCap = 256
+    int _measHead = 0
+    // MRU 快路径：上次命中的测量 key 与结果。measureString 在渲染中被同一文字
+    // 连续调用（如截断检查 + 实际绘制），单槽快路径将 O(256) 线性扫描降为 O(1)。
+    string _measLastKey = ""
+    float _measLastW = 0.0, _measLastH = 0.0
+
+    func load(string path, float ptsize): bool {
+        if not ttfInit() { return false }
+        handle = ttfLib().TTF_OpenFont(path, ptsize)
+        ok = handle != null
+        if ok {
+            height  = ttfLib().TTF_GetFontHeight(handle)
+            ascent  = ttfLib().TTF_GetFontAscent(handle)
+            descent = ttfLib().TTF_GetFontDescent(handle)
+            _pt     = ptsize
+        }
+        return ok
+    }
+
+    func close() {
+        if ok {
+            // 释放所有缓存文字纹理，避免显存泄漏
+            for _texCache.len() to i {
+                if _texCache[i].ok and _texCache[i].texture != null {
+                    _lib.SDL_DestroyTexture(_texCache[i].texture)
+                }
+            }
+            _texCache = []
+            ttfLib().TTF_CloseFont(handle); handle = null; ok = false
+        }
+    }
+
+    func renderTextBlended(string text, int r, int g, int b): Ptr[u8] {
+        if not ok { return null }
+        return ttfLib().TTF_RenderText_Blended(handle, text, 0, packColor(r, g, b))
+    }
+
+    func renderTextSolid(string text, int r, int g, int b): Ptr[u8] {
+        if not ok { return null }
+        return ttfLib().TTF_RenderText_Solid(handle, text, 0, packColor(r, g, b))
+    }
+
+    func renderTextShaded(string text, int fr, int fg, int fb, int br, int bg, int bb): Ptr[u8] {
+        if not ok { return null }
+        return ttfLib().TTF_RenderText_Shaded(handle, text, 0, packColor(fr, fg, fb), packColor(br, bg, bb))
+    }
+
+    func renderTextBlendedWrapped(string text, int r, int g, int b, int wrapWidth): Ptr[u8] {
+        if not ok { return null }
+        return ttfLib().TTF_RenderText_Blended_Wrapped(handle, text, 0, packColor(r, g, b), wrapWidth)
+    }
+
+    func measureString(string text): [float, float] {
+        if not ok { return 0.0, 0.0 }
+        // 实际测量字号：SSAA 下为 2x，否则 1x。作为缓存 key 维度，自动区分两种测量方式，
+        // 缓存命中时连 TTF_SetFontSize 都省掉（measure 在 Edit 中调用极密集）。
+        float mpt = if _aaScale > 0.0 then _pt * _aaScale else _pt
+        string key = $"{mpt}\x01{text}"
+        // MRU 快路径：同一文字连续调用时直接命中，跳过 256 槽线性扫描
+        if key == _measLastKey { return _measLastW, _measLastH }
+        for _measCache.len() to i {
+            if _measCache[i].key == key {
+                _measLastKey = key
+                _measLastW = _measCache[i].w; _measLastH = _measCache[i].h
+                return _measCache[i].w, _measCache[i].h
+            }
+        }
+        float mw = 0.0
+        float mh = 0.0
+        if _aaScale > 0.0 {
+            // SSAA 一致测量：临时放大到 pt*scale 测量，再除以 scale 得到逻辑宽度。
+            // 必须与 drawText 在 SSAA 下「渲染 2x 纹理、按 tex.width/scale 绘制」的
+            // 精确（非取整）宽度完全一致，否则命中测试/光标/选区边界会和真实文字错位
+            // （最坏每字符边界差 0.5px，点击字符间隙时光标会落到前一格）。
+            float origPt = _pt
+            ttfLib().TTF_SetFontSize(handle, origPt * _aaScale)
+            SDL_Point pt = SDL_Point.malloc()
+            ttfLib().TTF_GetStringSize(handle, text, 0, &pt.x, &pt.y)
+            ttfLib().TTF_SetFontSize(handle, origPt)
+            // 注意：不取整。tex.width(2x) == TTF_GetStringSize(2x)，故 tex.width/scale == pt.x/scale
+            mw = pt.x / _aaScale
+            mh = pt.y / _aaScale
+            pt.free()
+        } else {
+            SDL_Point pt = SDL_Point.malloc()
+            ttfLib().TTF_GetStringSize(handle, text, 0, &pt.x, &pt.y)
+            mw = pt.x; mh = pt.y
+            pt.free()
+        }
+        // 写入 ring 缓存（容量满则覆盖最旧）
+        CachedMeas e = new CachedMeas()
+        e.key = key; e.w = mw; e.h = mh
+        if _measCache.len() < _measCap {
+            _measCache.add(e)
+        } else {
+            _measCache[_measHead] = e
+            _measHead = (_measHead + 1) % _measCap
+        }
+        _measLastKey = key; _measLastW = mw; _measLastH = mh
+        return mw, mh
+    }
+
+    // 设置 SSAA 倍数（与所用 Renderer 的 getSSAA() 一致）；传 0 关闭。
+    // 仅影响 measureString 的测量方式，使其与 drawText 的 2x 渲染对齐。
+    func setSSAA(float scale) { _aaScale = scale }
+
+    // 文字纹理缓存查询/创建：命中返回缓存纹理（调用方不得 destroy），未命中创建并写入 ring 缓存。
+    // 调用前由 Renderer.drawText 负责把字号临时设为 2x（SSAA）或保持 1x；本方法直接用当前字号渲染，
+    // 并以当前 _pt 作为缓存 key 维度，与 drawText 的 2x 渲染天然对应。
+    func _getCachedTex(Ptr[u8] renderer, string text, int r, int g, int b): TextTexture {
+        if not ok { return new TextTexture() }
+        string key = $"{_pt}\x01{r}\x01{g}\x01{b}\x01{text}"
+        // MRU 快路径：同一文字连续调用时直接命中，跳过 1024 槽线性扫描
+        if _texLastIdx >= 0 and _texLastIdx < _texCache.len() and _texLastKey == key {
+            CachedTex c = _texCache[_texLastIdx]
+            if c.ok and c.ren == renderer and c.texture != null {
+                TextTexture t = new TextTexture()
+                t.texture = c.texture; t.ok = true; t.width = c.w; t.height = c.h
+                return t
+            }
+        }
+        for _texCache.len() to i {
+            CachedTex c = _texCache[i]
+            // 必须校验 ren 匹配且纹理仍有效：避免命中「属于已销毁渲染器、且 SDL 复用了同一指针」的失效纹理
+            if c.ok and c.ren == renderer and c.texture != null and c.key == key {
+                _texLastKey = key; _texLastIdx = i
+                TextTexture t = new TextTexture()
+                t.texture = c.texture
+                t.ok = true
+                t.width = c.w
+                t.height = c.h
+                return t
+            }
+        }
+        Ptr[u8] surface = ttfLib().TTF_RenderText_Blended(handle, text, 0, packColor(r, g, b))
+        TextTexture tex = new TextTexture()
+        if surface != null {
+            // 内联创建纹理（等价 TextTexture.createFromSurface），避免前向引用 TextTexture 方法
+            SDL_SurfaceInfo info = SDL_SurfaceInfo.from_ptr(surface)
+            int tw = info.w; int th = info.h
+            Ptr[u8] texPtr = _lib.SDL_CreateTextureFromSurface(renderer, surface)
+            _lib.SDL_DestroySurface(surface)
+            if texPtr != null {
+                tex.texture = texPtr
+                tex.width = tw; tex.height = th
+                tex.ok = true
+                CachedTex e = new CachedTex()
+                e.key = key; e.texture = texPtr; e.w = tw; e.h = th; e.ok = true; e.ren = renderer
+                if _texCache.len() < _texCap {
+                    _texCache.add(e)
+                    _texLastKey = key; _texLastIdx = _texCache.len() - 1
+                } else {
+                    CachedTex old = _texCache[_texHead]
+                    if old.ok and old.texture != null { _lib.SDL_DestroyTexture(old.texture) }
+                    _texCache[_texHead] = e
+                    _texLastKey = key; _texLastIdx = _texHead
+                    _texHead = (_texHead + 1) % _texCap
+                }
+            }
+        }
+        return tex
+    }
+
+    // 渲染器销毁时调用：使所有由该渲染器创建的纹理缓存失效（仅置空，不 SDL_DestroyTexture）。
+    // 渲染器销毁时其纹理已由 SDL 内部释放，再次 Destroy 会 double-free/崩溃；
+    // 置空后即便 SDL 复用同一指针新建渲染器，也不会命中旧渲染器的失效纹理（表现为“字体消失”）。
+    func invalidateRenderer(Ptr[u8] renderer) {
+        if renderer == null { return }
+        for _texCache.len() to i {
+            if _texCache[i].ren == renderer {
+                _texCache[i].ok = false
+                _texCache[i].texture = null
+                _texCache[i].ren = null
+                _texCache[i].key = ""
+            }
+        }
+        _texLastKey = ""; _texLastIdx = -1
+    }
+
+    func setStyle(int style) {
+        if ok { ttfLib().TTF_SetFontStyle(handle, style) }
+    }
+
+    func getStyle(): int {
+        if not ok { return 0 }
+        return ttfLib().TTF_GetFontStyle(handle)
+    }
+
+    func setOutline(int outline) {
+        if ok { ttfLib().TTF_SetFontOutline(handle, outline) }
+    }
+
+    func getOutline(): int {
+        if not ok { return 0 }
+        return ttfLib().TTF_GetFontOutline(handle)
+    }
+
+    func getStyleName(): string {
+        if not ok { return "" }
+        return ttfLib().TTF_GetFontStyleName(handle)
+    }
+
+    func getFamilyName(): string {
+        if not ok { return "" }
+        return ttfLib().TTF_GetFontFamilyName(handle)
+    }
+
+    func setHinting(int hinting) {
+        if ok { ttfLib().TTF_SetFontHinting(handle, hinting) }
+    }
+
+    func getHinting(): int {
+        if not ok { return 0 }
+        return ttfLib().TTF_GetFontHinting(handle)
+    }
+
+    func setKerning(int kerning) {
+        if ok { ttfLib().TTF_SetFontKerning(handle, kerning) }
+    }
+
+    func getKerning(): int {
+        if not ok { return 0 }
+        return ttfLib().TTF_GetFontKerning(handle)
+    }
+
+    func measureStringWrapped(string text, int wrapWidth): StringSize {
+        if not ok { return {w: 0, h: 0} }
+        SDL_Point pt = SDL_Point.malloc()
+        ttfLib().TTF_GetStringSizeWrapped(handle, text, 0, wrapWidth, &pt.x, &pt.y)
+        var d = {w: pt.x, h: pt.y}
+        pt.free(); return d
+    }
+
+    func renderGlyphBlended(int glyph, int r, int g, int b): Ptr[u8] {
+        if not ok { return null }
+        return ttfLib().TTF_RenderGlyph_Blended(handle, glyph, packColor(r, g, b))
+    }
+
+    func setFontSize(float ptsize) {
+        if ok {
+            ttfLib().TTF_SetFontSize(handle, ptsize)
+            height  = ttfLib().TTF_GetFontHeight(handle)
+            ascent  = ttfLib().TTF_GetFontAscent(handle)
+            descent = ttfLib().TTF_GetFontDescent(handle)
+            _pt     = ptsize
+        }
+    }
+
+    func setWrapAlignment(int align) {
+        if ok { ttfLib().TTF_SetFontWrapAlignment(handle, align) }
+    }
+
+    func getGlyphMetrics(int glyph): GlyphInfo {
+        if not ok { return {} }
+        SDL_GlyphMetrics m = SDL_GlyphMetrics.malloc()
+        ttfLib().TTF_GetGlyphMetrics(handle, glyph, &m.minX, &m.maxX, &m.minY, &m.maxY, &m.advance)
+        var r = {
+            minX: m.minX, maxX: m.maxX,
+            minY: m.minY, maxY: m.maxY,
+            advance: m.advance
+        }
+        m.free(); return r
+    }
+}
+
+// ==================== TextTexture ====================
+
+export struct TextTexture {
+    Ptr[u8] texture; bool ok; int width; int height
+
+    func createFromSurface(Ptr[u8] renderer, Ptr[u8] surface): bool {
+        if surface == null { return false }
+        texture = _lib.SDL_CreateTextureFromSurface(renderer, surface)
+        ok = texture != null
+        _lib.SDL_DestroySurface(surface)
+        return ok
+    }
+
+    func createFromText(Ptr[u8] renderer, Font font, string text, int r, int g, int b): bool {
+        if not font.ok { return false }
+        Ptr[u8] surface = font.renderTextBlended(text, r, g, b)
+        if surface == null { return false }
+        // 通过 cstruct from_ptr 读取表面真实宽高
+        SDL_SurfaceInfo info = SDL_SurfaceInfo.from_ptr(surface)
+        width  = info.w
+        height = info.h
+        var result = createFromSurface(renderer, surface)
+        return result
+    }
+
+    func destroy() {
+        if ok { _lib.SDL_DestroyTexture(texture); texture = null; ok = false }
+    }
+
+    func setWidth(int w)  { width = w }
+    func setHeight(int h) { height = h }
+
+    func createFromSurfaceW(Ptr[u8] renderer, Ptr[u8] surface): bool {
+        SDL_SurfaceInfo info = SDL_SurfaceInfo.from_ptr(surface)
+        width = info.w
+        height = info.h
+        return createFromSurface(renderer, surface)
+    }
+}
+
+// ==================== 工厂 ====================
+export func ttfInit(): bool {
+    if _ttfInited { return true }
+    sdl3_ttf l = ttfLib()
+    if l == null { return false }
+    _ttfInited = l.TTF_Init()
+    return _ttfInited
+}
+
+// 打包 RGB 为 32 位颜色（0xAARRGGBB，Alpha=255）
+export func packColor(int r, int g, int b): int {
+    return r | (g << 8) | (b << 16) | (255 << 24)
+}
+export func ttfQuit() {
+    // 不释放 TTF DLL——避免跨模块引用失效
+    _ttfInited = false
+}
+
+// ==================== 全局字体缓存池 ====================
+// 相同 path+ptsize 复用同一个 Font 对象，避免 N 个控件各自创建独立 Font + 纹理缓存。
+// 典型场景：30 个控件共用 2-3 个 Font，内存从 ~130MB 降到 ~30MB。
+// 所有权采用引用计数（见 acquireFont/acquireFontAuto/releaseFont）：控件「获取即 +1，释放即 -1」，
+// 归零才从池摘除并真正 close，彻底消除「共享字体被任一控件直接 close 误关 → 其它控件悬空、池残留失效条目」的旧隐患。
+
+Array[Font] _fontPool = []
+
+func _findCachedFont(string path, float ptsize): Font {
+    string key = $"{path}\x01{ptsize}"
+    for _fontPool.len() to i {
+        Font f = _fontPool[i]
+        if f.ok and $"{f._fontPath}\x01{f._pt}" == key { return f }
+    }
+    Font empty = new Font(); return empty
+}
+
+export func createFont(string path, float ptsize): Font {
+    Font cached = _findCachedFont(path, ptsize)
+    if cached.ok { return cached }
+    Font font = new Font(); font.load(path, ptsize); font._fontPath = path
+    if font.ok { _fontPool.add(font) }
+    return font
+}
+// 获取一个 Font 并登记引用（引用计数 +1）。配对 releaseFont 释放；
+// 多个控件可共享同一 path+ptsize 的 Font，任一控件 dispose/换字号时只 release 自身引用，
+// 归零才真正关闭并从池摘除，避免旧「直接 _font.close() 误关共享对象」导致其它控件悬空、池残留失效条目。
+export func acquireFont(string path, float ptsize): Font {
+    Font f = createFont(path, ptsize); f._refCount = f._refCount + 1; return f
+}
+
+// 加载字体（自动尝试平台默认中文字体回退）
+export func createFontAuto(float ptsize): Font {
+    if _os() == "windows" {
+        // Windows: 微软雅黑 → 宋体
+        Font cached = _findCachedFont("C:/Windows/Fonts/msyh.ttc", ptsize)
+        if cached.ok { return cached }
+        Font font = createFont("C:/Windows/Fonts/msyh.ttc", ptsize)
+        if not font.ok { font = createFont("C:/Windows/Fonts/simsun.ttc", ptsize) }
+        return font
+    }
+    // Linux: Noto Sans CJK → 文泉驿 → DejaVu
+    string linuxFont = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
+    Font cached = _findCachedFont(linuxFont, ptsize)
+    if cached.ok { return cached }
+    Font font = createFont(linuxFont, ptsize)
+    if not font.ok {
+        font = createFont("/usr/share/fonts/truetype/arphic/uming.ttc", ptsize)
+    }
+    if not font.ok {
+        font = createFont("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", ptsize)
+    }
+    return font
+}
+// 获取一个 Font 并登记引用（引用计数 +1）。配对 releaseFont 释放（见 acquireFont 注释）。
+export func acquireFontAuto(float ptsize): Font {
+    Font f = createFontAuto(ptsize); f._refCount = f._refCount + 1; return f
+}
+// 释放一个 Font 持有引用：引用计数 -1，归零才真正关闭并从池摘除。
+// 不归零时不关闭，保证共享同一 Font 的其它控件仍可正常使用（旧行为靠 _font.ok 自愈，会残留失效池条目）。
+export func releaseFont(Font f) {
+    if not f.ok { return }
+    f._refCount = f._refCount - 1
+    if f._refCount <= 0 {
+        for _fontPool.len() to i { if _fontPool[i] == f { _fontPool.remove(i); break } }
+        if f.ok { f.close() }
+        f._refCount = 0
+    }
+}
+
+// 全局：某渲染器销毁时，使所有 Font 缓存中由它创建的纹理失效（避免命中失效纹理导致字体不显示）。
+// 由 Renderer.destroy() 在 SDL_DestroyRenderer 之前调用。
+export func invalidateRendererTextures(Ptr[u8] renderer) {
+    if renderer == null { return }
+    for _fontPool.len() to i {
+        Font f = _fontPool[i]
+        if f.ok { f.invalidateRenderer(renderer) }
+    }
+}
+
+
+export func createTextTexture(Ptr[u8] renderer, Font font, string text, int r, int g, int b): TextTexture {
+    TextTexture tex = new TextTexture(); tex.createFromText(renderer, font, text, r, g, b); return tex
+}
+
+export func createTextTextureWrapped(Ptr[u8] renderer, Font font, string text, int r, int g, int b, int wrapWidth): TextTexture {
+    Ptr[u8] surface = font.renderTextBlendedWrapped(text, r, g, b, wrapWidth)
+    if surface == null { return new TextTexture() }
+    TextTexture tex = new TextTexture(); tex.createFromSurfaceW(renderer, surface); return tex
+}
+
+export func createGlyphTexture(Ptr[u8] renderer, Font font, int glyph, int r, int g, int b): TextTexture {
+    Ptr[u8] surface = font.renderGlyphBlended(glyph, r, g, b)
+    if surface == null { return new TextTexture() }
+    TextTexture tex = new TextTexture(); tex.createFromSurfaceW(renderer, surface); return tex
+}
+
+export func createTextTextureSolid(Ptr[u8] renderer, Font font, string text, int r, int g, int b): TextTexture {
+    Ptr[u8] surface = font.renderTextSolid(text, r, g, b)
+    if surface == null { return new TextTexture() }
+    TextTexture tex = new TextTexture(); tex.createFromSurfaceW(renderer, surface); return tex
+}
+
+export func createTextTextureShaded(Ptr[u8] renderer, Font font, string text, int fr, int fg, int fb, int br, int bg, int bb): TextTexture {
+    Ptr[u8] surface = font.renderTextShaded(text, fr, fg, fb, br, bg, bb)
+    if surface == null { return new TextTexture() }
+    TextTexture tex = new TextTexture(); tex.createFromSurfaceW(renderer, surface); return tex
+}

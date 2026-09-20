@@ -1,0 +1,245 @@
+// sdl_gridlayout.leno — 网格布局容器（行列排列）
+//
+// 对标成熟 UI 框架：
+//   - Qt:     QGridLayout (简化版，不支持 row/col span)
+//   - GTK:    GtkGrid
+//   - WPF:    UniformGrid
+//   - CSS:    display: grid; grid-template-columns: repeat(N, 1fr)
+//
+// 设计要点：
+//   1. 固定列数（cols），子控件按添加顺序从左到右、从上到下排列
+//   2. 每列等宽（可用 col_weights 不等分），每行高度取该行最高子控件
+//   3. 子控件可在格子内对齐（align: 0=左上 1=居中 2=右下 3=撑满）
+//   4. 支持 padding、spacing、独立的行列间距
+//   5. 实现 measure_w/measure_h 供 ScrollView 自动测算内容尺寸
+//
+// 用法：
+//   var grid = SDL3.createGridLayout({w: 600, h: 400, cols: 3, spacing: 8})
+//   grid.add(SDL3.createButton({text: "A", w: 100, h: 32}))
+//   grid.add(SDL3.createButton({text: "B", w: 100, h: 32}), {align: 1})
+//   grid.add(SDL3.createButton({text: "C", w: 100, h: 32}), {align: 3})
+//   grid.add(SDL3.createButton({text: "D", w: 100, h: 32}))
+//   // A B C
+//   // D _ _
+import "sdl_renderer.leno" as ren; use ren.Renderer
+import "sdl_event.leno" as evt; use evt.Event
+import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_edit.leno" as edt; use edt.Edit
+import "sdl_layout.leno" as lay; use lay.(HBox, VBox, AnchorBox)
+import "sdl_table.leno" as tbl; use tbl.Table
+import "sdl_treeview.leno" as tvlib; use tvlib.TreeView
+import "sdl_panel.leno" as pnl; use pnl.Panel
+import "sdl_theme.leno" as theme; use theme.Theme
+
+export struct GridLayout impl Widget {
+    float x = 0.0, y = 0.0, w = 400.0, h = 300.0
+    int _cols = 2               // 列数
+    float padX = 8.0, padY = 8.0
+    float spacing = 8.0         // 通用间距
+    float _colSpacing = -1.0    // 列间距（-1 = 用 spacing）
+    float _rowSpacing = -1.0    // 行间距（-1 = 用 spacing）
+    Array[float] _colWeights   // 列权重（不等分时用），为空则等分
+
+    Array[Widget] _c = []
+    Array[Dict]   _opt = []     // 每个子项的布局选项（align 等）
+    Array[float]  _natW = []    // 子项添加时的自然宽度
+    Array[float]  _natH = []    // 子项添加时的自然高度
+    bool _loaded = false, visible = true, enabled = true
+    Ptr[u8] _hwnd
+
+    func set(Dict opts) {
+        x      = opts.get("x", 0)
+        y      = opts.get("y", 0)
+        w      = opts.get("w", 400)
+        h      = opts.get("h", 300)
+        _cols  = opts.get("cols", 2)
+        if _cols < 1 { _cols = 1 }
+        padX   = opts.get("padX", 8)
+        padY   = opts.get("padY", 8)
+        spacing = opts.get("spacing", 8)
+        _colSpacing = opts.get("col_spacing", -1.0)
+        _rowSpacing = opts.get("row_spacing", -1.0)
+        var cw = opts.get("col_weights")
+        if cw is Array[float] { _colWeights = cw }
+        enabled = opts.get("enabled", true)
+        visible = opts.get("visible", true)
+        _loaded = true
+    }
+
+    // ==================== 子项管理 ====================
+    func add(Widget c, Dict opts): Widget {
+        if opts == null { opts = {} }
+        _c.add(c); _opt.add(opts)
+        _natW.add(c.get_w()); _natH.add(c.get_h())
+        if _hwnd != null { _pass_hwnd(c, _hwnd) }
+        return c
+    }
+    func remove(Widget c) {
+        for _c.len() to i { if _c[i] == c { _c.remove(i); _opt.remove(i); _natW.remove(i); _natH.remove(i); return } }
+    }
+    func clear() { _c = []; _opt = []; _natW = []; _natH = [] }
+    func count(): int { return _c.len() }
+
+    func _bind_window(Ptr[u8] hwnd) {
+        _hwnd = hwnd
+        for _c to c { _pass_hwnd(c, hwnd) }
+    }
+    func _pass_hwnd(Widget c, Ptr[u8] hwnd) {
+        lay.passWindowHandle(c, hwnd)
+    }
+
+    // ==================== 尺寸接口 ====================
+    func get_w(): float { return w }
+    func get_h(): float { return h }
+    func set_pos(float px, float py) { x = px; y = py }
+    func set_size(float sw, float sh) { w = sw; h = sh }
+    func set_enabled(bool e) { enabled = e }
+    func set_visible(bool v) { visible = v }
+    func is_visible(): bool { return visible }
+
+    func contains(float mx, float my): bool {
+        return mx >= x and mx <= x + w and my >= y and my <= y + h
+    }
+
+    // ==================== 尺寸测量 ====================
+    // measure_h：行数 * 每行最大高度 + padding + 行间距
+    func measure_h(): float {
+        if not _loaded or _c.len() == 0 { return 2.0 * padY }
+        int nrows = (_c.len() + _cols - 1) / _cols
+        float rs = if _rowSpacing >= 0.0 then _rowSpacing else spacing
+        float total = 2.0 * padY + rs * (nrows - 1)
+        for nrows to r {
+            float maxH = 0.0
+            int start = r * _cols
+            for _cols to ci {
+                int idx = start + ci
+                if idx < _c.len() {
+                    float ch = _natH[idx]
+                    if ch > maxH { maxH = ch }
+                }
+            }
+            total = total + maxH
+        }
+        return total
+    }
+    // measure_w：cols * 每列最大宽度 + padding + 列间距
+    func measure_w(): float {
+        if not _loaded or _c.len() == 0 { return 2.0 * padX }
+        float cs = if _colSpacing >= 0.0 then _colSpacing else spacing
+        float total = 2.0 * padX + cs * (_cols - 1)
+        for _cols to ci {
+            float maxW = 0.0
+            int idx = ci
+            while idx < _c.len() {
+                float cw = _natW[idx]
+                if cw > maxW { maxW = cw }
+                idx = idx + _cols
+            }
+            total = total + maxW
+        }
+        return total
+    }
+
+    // ==================== 布局计算 ====================
+    func _relayout() {
+        if not _loaded { return }
+        int n = _c.len()
+        if n == 0 { return }
+        int nrows = (n + _cols - 1) / _cols
+        float cs = if _colSpacing >= 0.0 then _colSpacing else spacing
+        float rs = if _rowSpacing >= 0.0 then _rowSpacing else spacing
+        float innerW = w - 2.0 * padX - cs * (_cols - 1)
+        float innerH = h - 2.0 * padY - rs * (nrows - 1)
+        if innerW < 0.0 { innerW = 0.0 }
+        if innerH < 0.0 { innerH = 0.0 }
+
+        // 计算每列宽度
+        Array[float] colW = []
+        float sumWeight = 0.0
+        for _cols to ci {
+            float wt = 1.0
+            if ci < _colWeights.len() { wt = _colWeights[ci] }
+            colW.add(wt)
+            sumWeight = sumWeight + wt
+        }
+        for _cols to ci {
+            colW[ci] = innerW * colW[ci] / sumWeight
+        }
+
+        // 计算每行高度（取该行最高子项）
+        Array[float] rowH = []
+        for nrows to r {
+            float maxH = 0.0
+            int start = r * _cols
+            for _cols to ci {
+                int idx = start + ci
+                if idx < n {
+                    float ch = _natH[idx]
+                    if ch > maxH { maxH = ch }
+                }
+            }
+            rowH.add(maxH)
+        }
+
+        // 摆放子项
+        float startY = y + padY
+        for nrows to r {
+            float startX = x + padX
+            for _cols to ci {
+                int idx = r * _cols + ci
+                if idx < n {
+                    Widget c = _c[idx]
+                    Dict o = _opt[idx]
+                    float cw = colW[ci]
+                    float ch = rowH[r]
+                    int align = o.get("align", 0)
+                    float ix, iy, iw, ih
+                    if align == 3 {
+                        // 撑满
+                        ix = startX; iy = startY; iw = cw; ih = ch
+                    } else {
+                        // 子项自然尺寸
+                        iw = _natW[idx]; ih = _natH[idx]
+                        // 约束不超过格子
+                        if iw > cw { iw = cw }
+                        if ih > ch { ih = ch }
+                        if align == 1 {
+                            // 居中
+                            ix = startX + (cw - iw) / 2.0
+                            iy = startY + (ch - ih) / 2.0
+                        } else if align == 2 {
+                            // 右下
+                            ix = startX + cw - iw
+                            iy = startY + ch - ih
+                        } else {
+                            // 左上
+                            ix = startX; iy = startY
+                        }
+                    }
+                    c.set_pos(ix, iy)
+                    c.set_size(iw, ih)
+                }
+                startX = startX + colW[ci] + cs
+            }
+            startY = startY + rowH[r] + rs
+        }
+    }
+
+    // ==================== Widget 接口 ====================
+    func process(Event ev) {
+        if not _loaded or not enabled or not visible { return }
+        _relayout()
+        for _c to c { c.process(ev) }
+    }
+    func render(Renderer r) {
+        if not _loaded or not visible { return }
+        _relayout()
+        for _c to c { c.render(r) }
+    }
+    func dispose() { for _c to c { c.dispose() } }
+}
+
+// 工厂
+export func createGridLayout(Dict opts): GridLayout {
+    GridLayout g = new GridLayout(); g.set(opts); return g
+}

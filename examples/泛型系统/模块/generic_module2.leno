@@ -1,0 +1,57 @@
+// 泛型模块 - 包含多种泛型定义
+
+// 单类型参数泛型 struct
+export struct Box[T] {
+    T value
+
+    func get(): T {
+        return self.value
+    }
+
+    func set(T v): void {
+        self.value = v
+    }
+}
+
+// 双类型参数泛型 struct
+export struct Pair[K, V] {
+    K key
+    V val
+
+    func getKey(): K {
+        return self.key
+    }
+
+    func getVal(): V {
+        return self.val
+    }
+}
+
+// 单类型参数泛型函数
+export func identity[T](T v): T {
+    return v
+}
+
+// 双类型参数泛型函数
+export func makePair[K, V](K k, V v): Pair[K, V] {
+    return new Pair[K, V](key=k, val=v)
+}
+
+// 泛型 struct 带默认值
+export struct Container[T] {
+    T data = null
+    bool hasData = false
+
+    func put(T v): void {
+        self.data = v
+        self.hasData = true
+    }
+
+    func get(): T {
+        return self.data
+    }
+
+    func isEmpty(): bool {
+        return not self.hasData
+    }
+}

@@ -1,0 +1,17 @@
+// 深层模块 - 第4层，再包装一层
+import "lib_mid.leno" as mid
+use mid.core_lib
+use mid.extra_lib
+
+export func deepAbs(int x): int {
+    core_lib c = mid.getCore()
+    return c.abs(x) as int
+}
+
+export func deepGetCore(): core_lib {
+    return mid.getCore()
+}
+
+export func deepGetExtra(): extra_lib {
+    return mid.getExtra()
+}

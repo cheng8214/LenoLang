@@ -1,0 +1,12 @@
+// 辅助模块 - 提供工具函数
+export struct Wrapper[T] {
+    T inner
+
+    func unwrap(): T {
+        return self.inner
+    }
+}
+
+export func wrap[T](T v): Wrapper[T] {
+    return new Wrapper[T](inner=v)
+}

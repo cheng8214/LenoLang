@@ -1,0 +1,3 @@
+// A: 定义 struct——一个用 int 字段，一个用 Dict
+export struct A_Int  { int  val = 0; func ok(): int { return val } }
+export struct B_Dict { Dict val = {}; func ok(): int { return 1 } }

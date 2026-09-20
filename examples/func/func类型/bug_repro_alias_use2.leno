@@ -1,0 +1,30 @@
+// 测试：use 跨模块 export alias func 类型
+import "bug_repro_alias_mod2.leno" as m
+use m.MyCB
+use m.IntFunc
+
+// 场景 1: 普通函数参数（顶部 func）
+func callCB(MyCB cb) { cb() }
+func hi() { print("hi") }
+callCB(hi)
+
+// 场景 2: struct 方法参数
+struct Local {
+    func test(MyCB cb) { cb() }
+    func compute(IntFunc f, int x): int { return f(x) }
+}
+
+var l = new Local()
+l.test(hi)
+
+func double(int x): int { return x * 2 }
+print(l.compute(double, 5))
+
+// 场景 3: 变量声明
+MyCB callback = hi
+callback()
+
+IntFunc fn = double
+print(fn(10))
+
+print("all passed")

@@ -1,0 +1,14 @@
+main() {
+
+    var arr = [10, 20, 30, 40, 50]
+    var index = "2"  // string 类型的索引
+    print(type(index))
+    var value = arr[index]  // 允许吗？
+    print(value)
+    
+     //或者
+    var idx = 2.7 //  float 索引
+    var val2 = arr[idx]  // 截断？报错？
+    
+    
+}

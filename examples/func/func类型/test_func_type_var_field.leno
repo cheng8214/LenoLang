@@ -1,0 +1,37 @@
+// 测试：函数类型 —— 变量声明、struct 字段、匿名闭包传参
+
+// 场景 1：函数类型变量声明
+func sayHello() { print("hi") }
+func():void fv = sayHello
+fv()
+
+func triple(int x): int { return x * 3 }
+func(int):int fi = triple
+print("func(int):int var → " + fi(5))
+
+// 场景 2：struct 字段
+struct Calculator {
+    func(int, int):int op
+
+    func calc(int a, int b): int {
+        return op(a, b)
+    }
+}
+
+func add(int a, int b): int { return a + b }
+func multiply(int a, int b): int { return a * b }
+
+Calculator c1 = new Calculator(op = add)
+Calculator c2 = new Calculator(op = multiply)
+print("calc add: " + c1.calc(6, 4))
+print("calc mul: " + c2.calc(6, 4))
+
+// 场景 3：匿名闭包作实参
+func apply(func(int):int fn, int val): int {
+    return fn(val)
+}
+
+var r = apply(func(int x):int { return x + 100 }, 1)
+print("anon closure apply → " + r)
+
+print("=== PASS ===")

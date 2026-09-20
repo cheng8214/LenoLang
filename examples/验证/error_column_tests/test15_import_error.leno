@@ -1,0 +1,10 @@
+// 测试15: import 不存在的模块
+// 期望错误:
+//   第6行第1列: import 语句语法或找不到模块
+
+import "nonexistent_module_xyz"
+
+main()
+{
+    print("test")
+}

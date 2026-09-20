@@ -1,0 +1,52 @@
+// 测试 cstruct 字段值用于 dict 字面量的类型推断
+// 验证：cstruct u8/i32/f32 字段应自动经 c_layout_type_to_leno 映射为 int/float
+
+cstruct TestU8 {
+    u8 a; u8 b
+}
+cstruct TestI32 {
+    i32 x; i32 y
+}
+cstruct TestF32 {
+    f32 x; f32 y
+}
+
+main() {
+    print("=== 测试 cstruct 字段 -> Dict 字面量类型推断 ===")
+
+    // 测试1：u8 字段应自动映射为 int
+    var u = TestU8.malloc()
+    u.a = 10; u.b = 20
+    Dict[string, int] d1 = {a: u.a, b: u.b}
+    print("d1.a = " + d1["a"])
+    if d1["a"] == 10 and d1["b"] == 20 {
+        print("OK u8 -> Dict[string, int]")
+    } else {
+        print("FAIL u8 -> Dict[string, int]")
+    }
+    u.free()
+
+    // 测试2：i32 字段应自动映射为 int
+    var p = TestI32.malloc()
+    p.x = 100; p.y = 200
+    Dict[string, int] d2 = {x: p.x, y: p.y}
+    print("d2.x = " + d2["x"])
+    if d2["x"] == 100 and d2["y"] == 200 {
+        print("OK i32 -> Dict[string, int]")
+    } else {
+        print("FAIL i32 -> Dict[string, int]")
+    }
+    p.free()
+
+    // 测试3：f32 字段应自动映射为 float
+    var f = TestF32.malloc()
+    f.x = 1.5; f.y = 2.5
+    Dict[string, float] d3 = {x: f.x, y: f.y}
+    print("d3.x = " + d3["x"])
+    if d3["x"] == 1.5 and d3["y"] == 2.5 {
+        print("OK f32 -> Dict[string, float]")
+    } else {
+        print("FAIL f32 -> Dict[string, float]")
+    }
+    f.free()
+}

@@ -1,0 +1,250 @@
+// Win32.leno — LenoWin32 统一入口模块
+// Windows 系统 API 封装：桌面截屏、全局热键、进程管理、注册表操作等
+// 非 Windows 平台无法使用
+import "w32_capture.leno" as cap
+import "w32_process.leno" as proc
+import "w32_reg.leno" as reg
+import "w32_hotkey.leno" as hotkey
+import "w32_message.leno" as msg
+import "w32_clipboard.leno" as cb
+
+// 注册表结果类型：引入后用裸名给下面的转发函数标注返回类型
+// （与 Web.leno 的 use net.(Response, HttpClient, Session) 同一写法）
+use reg.(OpenKeyResult, CreateKeyResult, ReadStringResult, 
+ReadDwordResult, ReadQwordResult, EnumSubKeysResult, EnumValuesResult)
+
+// ── OS 守卫 ──
+export func _is_supported(): bool { return _os() == "windows" }
+
+// ==================== 桌面截屏 ====================
+
+export func captureScreen(): Dict {
+    if not _is_supported() {
+        print("[LenoWin32] 桌面截屏仅支持 Windows")
+        return {}
+    }
+    return cap.captureScreen()
+}
+
+// ==================== 全局热键 ====================
+
+// 注册全局热键（hwnd=null 时为线程级热键）
+export func registerHotKey(int id, int mod, int vk): bool {
+    if not _is_supported() {
+        print("[LenoWin32] 全局热键仅支持 Windows")
+        return false
+    }
+    return hotkey.register(null, id, mod, vk)
+}
+
+export func unregisterHotKey(int id): bool {
+    if not _is_supported() {
+        print("[LenoWin32] 全局热键仅支持 Windows")
+        return false
+    }
+    return hotkey.unregister(null, id)
+}
+
+// 修饰键常量（透传）
+export const HOTKEY_MOD_ALT     = hotkey.MOD_ALT
+export const HOTKEY_MOD_CONTROL = hotkey.MOD_CONTROL
+export const HOTKEY_MOD_SHIFT   = hotkey.MOD_SHIFT
+export const HOTKEY_MOD_WIN     = hotkey.MOD_WIN
+export const HOTKEY_MOD_NOREPEAT = hotkey.MOD_NOREPEAT
+
+// 消息常量
+export const WM_HOTKEY = msg.WM_HOTKEY
+
+// 等待热键（阻塞）
+export func waitHotKey(): int {
+    if not _is_supported() { return -1 }
+    var m = msg.allocMsg()
+    var ret = msg.waitHotkey(m)  // >0=有消息, 0=WM_QUIT, -1=错误
+    var id = -1
+    if ret > 0 {
+        id = msg.msgWParam(m)   // wParam = 注册时的 id
+    }
+    msg.freeMsg(m)
+    return id
+}
+
+// 消息工具（用于非阻塞热键轮询）
+export func allocMsg(): Ptr[u8]       { return msg.allocMsg() }
+export func freeMsg(Ptr[u8] m)        { msg.freeMsg(m) }
+export func msgMessage(Ptr[u8] m): int { return msg.msgMessage(m) }
+export func msgWParam(Ptr[u8] m): int  { return msg.msgWParam(m) }
+export func peekMessage(Ptr[u8] m, bool remove): int { return msg.peekMessage(m, remove) }
+export func getMessage(Ptr[u8] m): int       { return msg.getMessage(m) }
+export func dispatchMsg(Ptr[u8] m)           { msg.dispatchMsg(m) }
+export func isKeyDown(int vk): bool          { return msg.isKeyDown(vk) }
+
+// 虚拟键码
+export const VK_SHIFT   = msg.VK_SHIFT
+export const VK_CONTROL = msg.VK_CONTROL
+
+// ==================== 剪贴板 ====================
+
+// 将 BGRA 像素数据以 DIB 格式写入剪贴板（可直接粘贴到微信/QQ/PS）
+export func copyToClipboard(Ptr[u8] pixels, int w, int h): bool {
+    if not _is_supported() { return false }
+    return cb.setBitmap(pixels, w, h)
+}
+
+// ==================== 进程管理 ====================
+// 便捷函数，完整 API 请直接 import "w32_process.leno" as proc
+
+// 获取当前进程 PID
+export func getCurrentPid():int {
+    if not _is_supported() { return 0 }
+    return proc.getCurrentPid()
+}
+
+// 获取进程列表
+export func listProcesses(): Dict {
+    if not _is_supported() { return {processes: [], errorCode: -1} }
+    var pm = new proc.StandardProcessManager()
+    return pm.listProcesses()
+}
+
+// 根据名称查找进程
+export func findProcess(string name): Dict {
+    if not _is_supported() { return {found: false, pid: 0} }
+    var pm = new proc.StandardProcessManager()
+    return pm.findByName(name)
+}
+
+// 终止进程
+export func terminateProcess(int pid): Dict {
+    if not _is_supported() { return {success: false, errorCode: -1} }
+    var pm = new proc.StandardProcessManager()
+    return pm.terminate(pid)
+}
+
+// 检查进程是否存在
+export func processExists(int pid):bool {
+    if not _is_supported() { return false }
+    var pm = new proc.StandardProcessManager()
+    return pm.exists(pid)
+}
+
+// 获取进程内存信息（KB 单位）
+export func getProcessMemory(int pid): Dict[string, int] {
+    if not _is_supported() { return {workingSet: 0, peakWorkingSet: 0, errorCode: -1} }
+    return proc.getProcessMemory(pid)
+}
+
+// ==================== 注册表操作 ====================
+// 便捷函数，完整 API 请直接 import "w32_reg.leno" as reg
+
+// HKEY 根键常量
+export var HKEY_CLASSES_ROOT   = reg.HKEY_CLASSES_ROOT
+export var HKEY_CURRENT_USER   = reg.HKEY_CURRENT_USER
+export var HKEY_LOCAL_MACHINE  = reg.HKEY_LOCAL_MACHINE
+export var HKEY_USERS          = reg.HKEY_USERS
+export var HKEY_CURRENT_CONFIG = reg.HKEY_CURRENT_CONFIG
+
+// 常用注册表访问权限（完整枚举请使用 reg.KeyAccess）
+export const KEY_READ       = 0x20019
+export const KEY_WRITE      = 0x20006
+export const KEY_ALL_ACCESS = 0xF003F
+
+// 打开注册表键
+export func regOpenKey(any hKey, string subKey, int samDesired): OpenKeyResult {
+    if not _is_supported() { return new reg.OpenKeyResult(handle = null, errorCode = -1) }
+    return reg.openKey(hKey, subKey, samDesired)
+}
+
+// 创建注册表键
+export func regCreateKey(any hKey, string subKey, int samDesired): CreateKeyResult {
+    if not _is_supported() { return new reg.CreateKeyResult(handle = null, errorCode = -1, created = false) }
+    return reg.createKey(hKey, subKey, samDesired)
+}
+
+// 关闭注册表键
+export func regCloseKey(Ptr hKey):int {
+    if not _is_supported() { return -1 }
+    return reg.closeKey(hKey)
+}
+
+// 删除注册表键
+export func regDeleteKey(any hKey, string subKey):int {
+    if not _is_supported() { return -1 }
+    return reg.deleteKey(hKey, subKey)
+}
+
+// 读取字符串值
+export func regReadString(Ptr hKey, string valueName): ReadStringResult {
+    if not _is_supported() { return new reg.ReadStringResult(value = "", errorCode = -1) }
+    return reg.readString(hKey, valueName)
+}
+
+// 读取 DWORD 值
+export func regReadDword(Ptr hKey, string valueName): ReadDwordResult {
+    if not _is_supported() { return new reg.ReadDwordResult(value = 0, errorCode = -1) }
+    return reg.readDword(hKey, valueName)
+}
+
+// 读取 QWORD 值
+export func regReadQword(Ptr hKey, string valueName): ReadQwordResult {
+    if not _is_supported() { return new reg.ReadQwordResult(value = 0, errorCode = -1) }
+    return reg.readQword(hKey, valueName)
+}
+
+// 写入字符串值
+export func regWriteString(Ptr hKey, string valueName, string value):int {
+    if not _is_supported() { return -1 }
+    return reg.writeString(hKey, valueName, value)
+}
+
+// 写入 DWORD 值
+export func regWriteDword(Ptr hKey, string valueName, int value):int {
+    if not _is_supported() { return -1 }
+    return reg.writeDword(hKey, valueName, value)
+}
+
+// 写入 QWORD 值
+export func regWriteQword(Ptr hKey, string valueName, int value):int {
+    if not _is_supported() { return -1 }
+    return reg.writeQword(hKey, valueName, value)
+}
+
+// 删除值
+export func regDeleteValue(Ptr hKey, string valueName):int {
+    if not _is_supported() { return -1 }
+    return reg.deleteValue(hKey, valueName)
+}
+
+// 检查键是否存在
+export func regKeyExists(any hKey, string subKey):bool {
+    if not _is_supported() { return false }
+    return reg.keyExists(hKey, subKey)
+}
+
+// 检查值是否存在
+export func regValueExists(Ptr hKey, string valueName):bool {
+    if not _is_supported() { return false }
+    return reg.valueExists(hKey, valueName)
+}
+
+// 递归删除键
+export func regDeleteKeyRecursive(any hKey, string subKey):int {
+    if not _is_supported() { return -1 }
+    return reg.deleteKeyRecursive(hKey, subKey)
+}
+
+// 枚举子键
+export func regEnumSubKeys(Ptr hKey): EnumSubKeysResult {
+    if not _is_supported() { return new reg.EnumSubKeysResult(subKeys = [], errorCode = -1) }
+    return reg.enumSubKeys(hKey)
+}
+
+// 枚举值
+export func regEnumValues(Ptr hKey): EnumValuesResult {
+    if not _is_supported() { return new reg.EnumValuesResult(values = [], errorCode = -1) }
+    return reg.enumValues(hKey)
+}
+
+// 错误码转可读字符串
+export func regErrorToString(int errorCode):string {
+    return reg.errorToString(errorCode)
+}

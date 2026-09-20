@@ -1,0 +1,12 @@
+main() {
+    var a = 0
+    a++        // a = 1
+    print(a)   // 输出: 1
+    
+    var b = 10
+    print(b++) // 输出: 10 (先返回旧值)
+    print(b)   // 输出: 11
+    
+    var c = 5
+    print(++c) // 输出: 6 (先加1再返回)
+}

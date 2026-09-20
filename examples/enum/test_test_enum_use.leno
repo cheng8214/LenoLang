@@ -1,0 +1,22 @@
+// 测试 use 导入 enum 成员
+import "color_module.leno" as cm
+use cm.Color
+use cm.Status
+
+main() {
+    // ✅ use enum → 直接访问成员
+    print("Color.red =", Color.red)
+    print("Color.green =", Color.green)
+    print("Color.blue =", Color.blue)
+
+    // ✅ 值比较
+    if Color.red == 0 { print("Color.red==0 ✓") }
+    int c = Color.blue
+    if c == Color.blue { print("c==Color.blue ✓") }
+
+    // ✅ use Status
+    print("Status.ok =", Status.ok)
+    print("Status.error =", Status.error)
+
+    print("=== PASS ===")
+}

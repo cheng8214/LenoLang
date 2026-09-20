@@ -1,0 +1,30 @@
+import ffi
+
+cstruct MEMORYSTATUS {
+    u32 dwLength
+    u32 dwMemoryLoad
+    u64 dwTotalPhys
+    u64 dwAvailPhys
+    u64 dwTotalPageFile
+    u64 dwAvailPageFile
+    u64 dwTotalVirtual
+    u64 dwAvailVirtual
+}
+
+main() {
+    var kernel32 = ffi.load("kernel32.dll")
+    var memStatus = MEMORYSTATUS.malloc()
+
+    try {
+        memStatus.dwLength = MEMORYSTATUS.size()
+        ffi.call(kernel32, "GlobalMemoryStatus", memStatus.to_ptr())
+
+        string s = memStatus.to_str()
+        print("to_str length: " + s.len())
+        print(s)
+
+    } finally {
+        memStatus.free()
+        ffi.free(kernel32)
+    }
+}

@@ -1,0 +1,36 @@
+// test_dict_len.leno — 验证 Dict["len"] 键访问是否冲突
+// 理论上 dict["len"] 应返回存储的值, 不应返回 dict 的长度
+
+import ffi
+
+main() {
+    print("=== Bug1: Dict[\"len\"] 键访问冲突 ===")
+    print("")
+
+    // 测试1: 基本键访问
+    Dict d1 = {a: 1, b: 2, c: 3}
+    print("d1 = {a:1, b:2, c:3}")
+    print("d1[\"a\"] = " + d1["a"])
+    print("d1[\"b\"] = " + d1["b"])
+    print("d1[\"c\"] = " + d1["c"])
+    print("")
+
+    // 测试2: 用 "len" 作为键
+    Dict d2 = {bytes: 100, mask: 200, len: 23}
+    print("d2 = {bytes:100, mask:200, len:23}")
+    print("d2[\"bytes\"] = " + d2["bytes"])
+    print("d2[\"mask\"] = " + d2["mask"])
+    print("d2[\"len\"] = " + d2["len"])
+    print("")
+
+    // 测试3: _int() 转换
+    print("用 _int() 转换:")
+    int aVal = _int(d2["bytes"])
+    print("  _int(d2[\"bytes\"]) = " + aVal)
+    int bVal = _int(d2["mask"])
+    print("  _int(d2[\"mask\"]) = " + bVal)
+    
+    print("  尝试 _int(d2[\"len\"])...")
+    int cVal = _int(d2["len"])
+    print("  _int(d2[\"len\"]) = " + cVal)
+}

@@ -1,0 +1,60 @@
+import sockets
+import io
+
+// 测试 Socket 新增功能
+main() {
+    io.print("=== Socket 新功能测试 ===")
+    io.print("")
+
+    // 测试1: DNS 解析
+    io.print("测试1: DNS 解析")
+    var ip = sockets.resolve("www.baidu.com")
+    io.print("  baidu.com -> " + ip)
+    io.print("")
+
+    // 测试2: 连接信息
+    io.print("测试2: 连接信息")
+    Socket conn = sockets.connect("www.baidu.com", 80)
+    if conn != null {
+        io.print("  连接成功!")
+        io.print("  对端地址: " + conn.peer_addr())
+        io.print("  对端端口: " + conn.peer_port())
+        io.print("  本地地址: " + conn.local_addr())
+        io.print("  本地端口: " + conn.local_port())
+        io.print("  错误码: " + conn.error())
+
+        // 测试3: set_timeout
+        io.print("")
+        io.print("测试3: 设置超时")
+        var result = conn.set_timeout(5000)
+        io.print("  设置超时5000ms: " + result)
+
+        // 测试4: 发送和接收
+        io.print("")
+        io.print("测试4: 发送HTTP请求")
+        var request = "GET / HTTP/1.0\r\nHost: www.baidu.com\r\n\r\n"
+        var sent = conn.send(request)
+        io.print("  发送: " + sent)
+
+        var response = conn.recv(1024)
+        if response != null {
+            io.print("  收到响应长度: " + response.len())
+        } else {
+            io.print("  接收失败，错误码: " + conn.error())
+        }
+
+        // 测试5: shutdown
+        io.print("")
+        io.print("测试5: 优雅关闭")
+        var shut = conn.shutdown(2)
+        io.print("  shutdown(2): " + shut)
+
+        conn.close()
+        io.print("  连接已关闭")
+    } else {
+        io.print("  连接失败")
+    }
+
+    io.print("")
+    io.print("=== 测试完成 ===")
+}

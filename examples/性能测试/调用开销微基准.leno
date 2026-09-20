@@ -1,0 +1,28 @@
+import times
+// 纯调用开销微基准：函数体含循环（阻止内联），返回参数本身
+func f(int x):int {
+    for 1 {}
+    return x
+}
+func g(float x):float {
+    for 1 {}
+    return x
+}
+main() {
+    int N = 10000000
+    var t1 = times.ms()
+    var s = 0
+    for N {
+        s = f(s)
+    }
+    var t2 = times.ms()
+    print($"int调用: " + (t2-t1) + "ms")
+    t1 = times.ms()
+    var d = 0.0
+    for N {
+        d = g(d)
+    }
+    t2 = times.ms()
+    print($"float调用: " + (t2-t1) + "ms")
+    return 0
+}

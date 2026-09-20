@@ -1,0 +1,53 @@
+// 测试1: face 作为函数参数
+face Speaker {
+    func speak(): string
+}
+
+struct Dog impl Speaker {
+    string name
+    func speak(): string { return "woof from " + self.name }
+}
+
+struct Cat impl Speaker {
+    func speak(): string { return "meow" }
+}
+
+// face 作为参数
+func make_sound(Speaker s) {
+    print(s.speak())
+}
+
+var d = new Dog(name="Rex")
+make_sound(d)
+
+// 测试2: type() 返回泛型信息
+struct Box[T] {
+    T value
+}
+
+var intBox = new Box[int](value=42)
+var strBox = new Box[string](value="hello")
+print(type(intBox))
+print(type(strBox))
+
+// 测试3: 泛型 face 作为参数
+face Comparable[T] {
+    func compareTo(T other): int
+}
+
+struct IntVal impl Comparable[int] {
+    int val
+    func compareTo(int other): int {
+        if self.val < other { return -1 }
+        if self.val > other { return 1 }
+        return 0
+    }
+}
+
+func max[T](Comparable[T] a, Comparable[T] b): T {
+    return 0
+}
+
+var x = new IntVal(val=3)
+var y = new IntVal(val=5)
+// print(max[int](x, y))

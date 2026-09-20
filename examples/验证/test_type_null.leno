@@ -1,0 +1,6 @@
+main()
+{
+    int? a=null
+    int b=a+1
+    print(a)
+}

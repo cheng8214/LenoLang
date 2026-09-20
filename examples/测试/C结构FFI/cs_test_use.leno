@@ -1,0 +1,21 @@
+// 测试：use 导入后 TT.malloc() 是否正常
+import "cs_def.leno" as cs
+use cs.TT
+
+main() {
+    // 方式1: use 导入后直接用 TT
+    var t = TT.malloc()
+    if t == null {
+        print("TT.malloc() 返回 null!")
+    } else {
+        t.id = 1
+        t.value = 100
+        print("TT.malloc(): id=" + t.id + " value=" + t.value)
+        t.free()
+    }
+
+    // 方式2: 通过 makeTT 函数
+    var t3 = cs.makeTT(3, 300)
+    print("makeTT: id=" + t3.id + " value=" + t3.value)
+    t3.free()
+}

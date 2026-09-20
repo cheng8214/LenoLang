@@ -1,0 +1,17 @@
+// repro_array_handler_cross.leno — 跨模块调用
+import "repro_handler_mod.leno" as mod
+use mod.EventHandler
+
+main() {
+    EventHandler h1 = func(int x): bool { print("h1: " + _str(x)); return true }
+    EventHandler h2 = func(int x): bool { print("h2: " + _str(x)); return true }
+
+    mod.addHandler(h1)
+    mod.addHandler(h2)
+
+    print("=== runVar ===")
+    mod.runVar()
+
+    print("=== runDirect ===")
+    mod.runDirect()
+}

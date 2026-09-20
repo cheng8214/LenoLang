@@ -1,0 +1,749 @@
+// sdl_chart.leno — 图表控件：柱状图(BarChart) / 折线图(LineChart) / 饼图(PieChart)
+// 均为即时模式 Widget：win.add(SDL3.createBarChart({...})) 注册后，主循环自动 render。
+// 特性：坐标轴 / 网格 / 类目与数值标签 / 多系列 / 悬停高亮（柱、点）/ 图例（饼图）。
+import "sdl_renderer.leno" as ren; use ren.Renderer
+import "sdl_event.leno"   as evt; use evt.Event
+import "sdl_widget.leno"  as wgt; use wgt.Widget
+import "sdl_font.leno"    as fnt; use fnt.Font
+import "sdl_core.leno"     as core; use core.SystemCursor; use core.SDL_Rect
+import "sdl_theme.leno"    as theme; use theme.(Theme, Color)
+
+// ===================== 模块级辅助 =====================
+// 系列配色（与看板风格一致）— 打包 int 颜色 0xAARRGGBB
+Array[Color] _CHART_PALETTE = [
+    #58A0FFFF, #50D296FF, #FFAA50FF, #BE78FFFF,
+    #FF6E82FF, #78D2EBFF, #EBD26EFF, #AAB4C8FF
+]
+
+func _cmin(float a, float b): float { if a < b { return a }; return b }
+func _cmax(float a, float b): float { if a > b { return a }; return b }
+func _clampf(float v, float lo, float hi): float { if v < lo { return lo }; if v > hi { return hi }; return v }
+
+// 计算「漂亮」的上界（1/2/5 ×10^n）
+func _niceMax(float v): float {
+    if v <= 1.0 { return 1.0 }
+    float mag = 1.0; float t = v
+    while t >= 10.0 { t = t / 10.0; mag = mag * 10.0 }
+    float step
+    if t <= 1.0 { step = 1.0 } else if t <= 2.0 { step = 2.0 }
+    else if t <= 5.0 { step = 5.0 } else { step = 10.0 }
+    return step * mag
+}
+
+func _palette(int i): Color {
+    int n = _CHART_PALETTE.len()
+    return _CHART_PALETTE[i % n]
+}
+
+// 数值转字符串（整数显示，图表数据通常为整数指标）
+func _fmtNum(float v): string { return (_int(v) as string) }
+
+// 超长标签截断为 availW 宽度并追加省略号（复用 sdl_table 的二分 + slice 范式）
+func _truncLabel(Font f, string t, float availW): string {
+    if availW <= 0.0 { return t }
+    var[float, float](ew_w, ew_h) = f.measureString("\u2026")   // "…"
+    float limit = availW - ew_w
+    if limit <= 0.0 { return "\u2026" }
+    int n = t.len()
+    int lo = 0; int hi = n
+    while lo < hi {
+        int mid = (lo + hi + 1) / 2
+        var[float, float](mw, mh) = f.measureString(t.slice(0, mid))
+        if mw <= limit { lo = mid } else { hi = mid - 1 }
+    }
+    if lo >= n { return t }
+    return t.slice(0, lo) + "\u2026"
+}
+
+// 绘制悬停提示气泡（背景圆角框 + 描边 + 文字）
+func _drawTip(Renderer r, Font f, float mx, float my, string text) {
+    Theme th = theme.getTheme()
+    var[float, float](tw, th2) = f.measureString(text)
+    float bx = mx + 12.0; float by = my + 12.0
+    float pad = 6.0
+    r.setColor(theme.withAlpha(th.tipBg, 235))
+    r.fillRoundedRect(bx, by, tw + pad * 2.0, th2 + pad * 2.0, 5.0)
+    r.setColor(th.tipBrd)
+    r.drawRoundedRect(bx, by, tw + pad * 2.0, th2 + pad * 2.0, 5.0)
+    r.drawText(f, text, bx + pad, by + pad, th.tipTxt)
+}
+
+// ===================== 柱状图 =====================
+export struct BarChart impl Widget {
+    float x = 0.0; float y = 0.0; float w = 300.0; float h = 200.0
+    string title = ""
+    Array[string] cats = []
+    Array[float] vals = []
+    int fsize = 12
+    bool showValues = true
+    bool showGrid = true
+    bool _hover = false
+    float _mx = -1.0; float _my = -1.0
+    bool _loaded = false
+    Font? _font
+    float _fontSize = 0.0
+    Array[float] _animVals = []      // 柱高动画当前显示值
+    bool _animating = false
+    float _animLast = 0.0
+    float _animSpeed = 12.0
+    // 标签测量缓存（避免每帧重复 measureString）
+    float _maxCatW = 0.0
+    Array[float] _catW = []         // 每个类目标签宽度缓存（绘制居中用，随 _catDirty 一起重算）
+    bool _catDirty = true
+    // Y 轴刻度缓存（避免每帧 measureString）：ymax 不变时 padL/maxYLabW 直接复用
+    float _cachedYMax = -1.0
+    float _cachedMaxYLabW = 0.0
+    // 主题配色 — 打包 int 颜色
+    Color _titleColor = #CDDAFFFF
+    Color _gridColor = #3C404CFF
+    Color _axisColor = #5A6070FF
+    Color _labColor = #96A0B2FF
+    Color _valColor = #E1E6F0FF
+    Color _catColor = #A0AABCFF
+
+    func set(Dict opts) {
+        Theme th = theme.getTheme()
+        _titleColor = th.txt
+        _gridColor = th.sep
+        _axisColor = th.border
+        _labColor = th.txtDim
+        _valColor = th.txt
+        _catColor = th.txtDim
+        x = opts.get("x", 0); y = opts.get("y", 0)
+        w = opts.get("w", 300); h = opts.get("h", 200)
+        title = opts.get("title", "")
+        fsize = opts.get("font_size", 12)
+        showValues = opts.get("show_values", true)
+        showGrid = opts.get("show_grid", true)
+        _loaded = true
+    }
+    func set_data(Array[string] _cats, Array[float] _vals) {
+        cats = _cats; vals = _vals
+        _catDirty = true   // 标签变化，需重算最大宽度
+        _cachedYMax = -1.0   // 数据变化，Y 轴缓存失效
+        if _animVals.len() != vals.len() {
+            Array[float] nv = []
+            for vals.len() to i { nv.add(0.0) }
+            _animVals = nv
+        }
+        _animating = true; _animLast = 0.0
+    }
+
+    func get_w(): float { return w }
+    func get_h(): float { return h }
+    func set_pos(float px, float py) { x = px; y = py }
+    func set_size(float sw, float sh) { w = sw; h = sh }
+
+    func process(Event ev) {
+        if not _loaded { return }
+        if ev.isMouseMotion() {
+            var[float, float](_emx, _emy) = ev.mousePos(); _mx = _emx; _my = _emy
+            bool wasHover = _hover
+            _hover = _mx >= x and _mx <= x + w and _my >= y and _my <= y + h
+            if wasHover != _hover { core.markFrameRedraw() }
+        }
+    }
+
+    func render(Renderer r) {
+        if not _loaded { return }
+        _step_anim()
+        if _animating { core.requestRedraw() }
+        if _font == null or not _font.ok or _fontSize != fsize {
+            if _font != null and _font.ok { fnt.releaseFont(_font) }
+            _font = fnt.acquireFontAuto(fsize)
+            _fontSize = fsize
+        }
+        Font? f = _font
+        int n = vals.len()
+        if n == 0 { return }
+
+        float padR = 14.0; float padT = 26.0; float padB = 30.0
+        int ticks = 4
+
+        float vmax = 0.0
+        for n to i { vmax = _cmax(vmax, vals[i]) }
+        float ymax = _niceMax(vmax)
+        if ymax <= 0.0 { ymax = 1.0 }
+
+        // 根据 Y 轴刻度标签的最大宽度动态确定左侧边距，预留距离避免最左侧数字被裁剪
+        // ★ 缓存：ymax 不变时直接复用上次结果，避免每帧 ticks+1 次 measureString
+        if ymax != _cachedYMax {
+            _cachedYMax = ymax
+            _cachedMaxYLabW = 0.0
+            for 0 : ticks to ti {
+                string lab = _fmtNum(ymax * ti / _float(ticks))
+                var[float, float](mww, mwh) = f.measureString(lab)
+                if mww > _cachedMaxYLabW { _cachedMaxYLabW = mww }
+            }
+        }
+        float padL = _cachedMaxYLabW + 12.0
+        if padL < 38.0 { padL = 38.0 }
+
+        float plotX = x + padL; float plotY = y + padT
+        float plotW = w - padL - padR; float plotH = h - padT - padB
+        if plotW <= 0 or plotH <= 0 { return }
+
+        // 标题固定在最上方
+        if title != "" { r.setColor(_titleColor); r.drawText(f, title, x + 10.0, y + 6.0, _titleColor) }
+
+        // 类目标签抽稀：类目过多时只画不重叠的，避免挤在一起
+        // 使用缓存的标签最大宽度（仅在 set_data 时重算），避免每帧 O(n) measureString
+        if _catDirty and f.ok {
+            _maxCatW = 0.0
+            _catW = []
+            for cats.len() to i {
+                var[float, float](mw, mh) = f.measureString(cats[i])
+                _catW.add(mw)
+                if mw > _maxCatW { _maxCatW = mw }
+            }
+            _catDirty = false
+        }
+        float maxCatW = _maxCatW
+        float slot = plotW / n
+        float bw = slot * 0.6
+        int catStride = 1
+        if slot > 0.0 { int s = _int((maxCatW + 6.0) / slot) + 1; if s > catStride { catStride = s } }
+        if catStride > n { catStride = n }
+        int hi = -1
+        if _hover {
+            float idx = (_mx - plotX) / slot
+            if idx >= 0.0 and idx < n { hi = _int(idx) }
+        }
+
+        // 裁剪绘图区到图表主体范围：顶部紧贴 plotY，柱子一旦超过上边界即被裁剪，不会压到标题。
+        // 左界取 x 以容纳 Y 轴刻度标签，底部类目标签在取消裁剪后绘制。
+        SDL_Rect _clip = SDL_Rect.malloc()
+        _clip.x = _int(x); _clip.y = _int(plotY)
+        _clip.w = _int(w) + 1; _clip.h = _int(plotH) + 1   // +1 覆盖浮点截断的亚像素
+        r.pushClipRect(_clip.to_ptr())
+
+        // 网格线（Y 轴数字标签放到取消裁剪后绘制，避免上下半被裁剪显示不完整）
+        if showGrid {
+            for 0 : ticks to ti {
+                float frac = ti / _float(ticks)
+                float gy = plotY + plotH * (1.0 - frac)
+                r.setColor(_gridColor); r.drawLine(plotX, gy, plotX + plotW, gy)
+            }
+        }
+
+        // 轴线
+        r.setColor(_axisColor)
+        r.drawLine(plotX, plotY, plotX, plotY + plotH)
+        r.drawLine(plotX, plotY + plotH, plotX + plotW, plotY + plotH)
+
+        // 第一遍：在裁剪区内绘制柱子（超出上边界的部分被裁掉）
+        for n to i {
+            float vh = plotH * (_animVals[i] / ymax)
+            float bx = plotX + slot * i + (slot - bw) / 2.0
+            float by = plotY + plotH - vh
+            Color c = _palette(i)
+            r.setColor(c)
+            r.fillRect(bx, by, bw, vh)
+        }
+
+        // 取消裁剪，绘制数值标签与类目标签（不再受上边界限制，但需避免与标题重叠）
+        r.popClipRect(); _clip.free()
+
+        // Y 轴数字标签（不裁剪，完整显示）
+        for 0 : ticks to ti {
+            float frac = ti / _float(ticks)
+            float gy = plotY + plotH * (1.0 - frac)
+            string lab = _fmtNum(ymax * frac)
+            var[float, float](msw, msh) = f.measureString(lab)
+            r.setColor(_labColor)
+            r.drawText(f, lab, plotX - 6.0 - msw, gy - msh / 2.0, _labColor)
+        }
+
+        // 第二遍：数值标签与类目标签
+        for n to i {
+            float vh = plotH * (_animVals[i] / ymax)
+            float bx = plotX + slot * i + (slot - bw) / 2.0
+            float by = plotY + plotH - vh
+            if showValues {
+                string s = _fmtNum(_animVals[i])
+                var[float, float](msw, msh) = f.measureString(s)
+                // 若标签会顶到上边界（可能压到标题），改为绘制到柱子内部，避免与标题重叠
+                float ly = by - msh - 3.0
+                Color lc = _valColor
+                if ly < plotY { ly = by + 2.0; lc = _labColor }
+                r.drawText(f, s, bx + (bw - msw) / 2.0, ly, lc)
+            }
+            if i < cats.len() and (i % catStride) == 0 {
+                string cat = _truncLabel(f, cats[i], slot - 4.0)
+                // 截断后宽度可能变化，仅在未截断时使用缓存宽度
+                float drawW
+                if cat == cats[i] and i < _catW.len() {
+                    drawW = _catW[i]
+                } else {
+                    var[float, float](_cw, _ch) = f.measureString(cat); drawW = _cw
+                }
+                r.setColor(_catColor)
+                r.drawText(f, cat, bx + (bw - drawW) / 2.0, plotY + plotH + 6.0, _catColor)
+            }
+        }
+
+        // 末尾类目：若与上个标签间隔足够则补绘，并截断到可用宽度，避免与上一个重叠
+        if (n - 1) > _int((n - 1) / _float(catStride)) * catStride and (n - 1) < cats.len() {
+            int rgap = (n - 1) - _int((n - 1) / _float(catStride)) * catStride
+            float avail = (2.0 * rgap - catStride) * slot + 6.0
+            if avail > 0.0 {
+                float aw = slot - 4.0
+                if avail < aw { aw = avail }
+                string cat = _truncLabel(f, cats[n - 1], aw)
+                float drawW
+                if cat == cats[n - 1] and (n - 1) < _catW.len() {
+                    drawW = _catW[n - 1]
+                } else {
+                    var[float, float](_cw, _ch) = f.measureString(cat); drawW = _cw
+                }
+                r.setColor(_catColor)
+                float bx = plotX + slot * (n - 1) + (slot - bw) / 2.0
+                r.drawText(f, cat, bx + (bw - drawW) / 2.0, plotY + plotH + 6.0, _catColor)
+            }
+        }
+
+        if hi >= 0 and hi < n {
+            string tip = $"{cats[hi]}: {_fmtNum(vals[hi])}"
+            _drawTip(r, f, _mx, _my, tip)
+        }
+    }
+
+    func _step_anim() {
+        if not _animating { return }
+        if _animSpeed <= 0.0 { _animVals = vals; _animating = false; return }
+        float now = _float(core.getTicks())
+        float dt = 0.0
+        if _animLast > 0.0 { dt = (now - _animLast) / 1000.0 }
+        _animLast = now
+        float eps = 0.05
+        bool done = true
+        for vals.len() to i {
+            float diff = vals[i] - _animVals[i]
+            if diff < 0.0 { diff = -diff }
+            if diff > eps { done = false }
+            float f = _animSpeed * dt
+            if f > 1.0 { f = 1.0 }
+            _animVals[i] = _animVals[i] + (vals[i] - _animVals[i]) * f
+        }
+        if done {
+            for vals.len() to i { _animVals[i] = vals[i] }
+            _animating = false
+        }
+    }
+
+    func applyTheme(Theme t) {
+        _titleColor = t.txt
+        _gridColor = t.sep
+        _axisColor = t.border
+        _labColor = t.txtDim
+        _valColor = t.txt
+        _catColor = t.txtDim
+    }
+
+    func dispose() { if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null }
+}
+
+// ===================== 折线图 =====================
+export struct LineChart impl Widget {
+    float x = 0.0; float y = 0.0; float w = 300.0; float h = 200.0
+    string title = ""
+    Array[string] xlabels = []
+    Array[Array[float]] series = []
+    Array[string] seriesNames = []
+    int fsize = 12
+    bool showGrid = true
+    bool showPoints = true
+    bool _hover = false; float _mx = -1.0; float _my = -1.0
+    bool _loaded = false
+    Font? _font
+    float _fontSize = 0.0
+    Array[Array[float]] _animSeries = []   // 折线各点 y 动画当前显示值
+    bool _animating = false
+    float _animLast = 0.0
+    float _animSpeed = 12.0
+    // 标签测量缓存（避免每帧重复 measureString）
+    float _maxLabelW = 0.0
+    Array[float] _labelW = []       // 每个X轴标签宽度缓存（绘制居中用，随 _labelDirty 一起重算）
+    bool _labelDirty = true
+    // Y 轴刻度缓存（避免每帧 measureString）：ymax 不变时直接复用
+    float _cachedYMax = -1.0
+    Array[float] _cachedYLabW = []  // 各刻度标签宽度缓存
+    float _cachedYLabH = 0.0         // 刻度标签高度缓存
+    // 主题配色 — 打包 int 颜色
+    Color _titleColor = #CDDAFFFF
+    Color _gridColor = #3C404CFF
+    Color _axisColor = #5A6070FF
+    Color _labColor = #96A0B2FF
+    Color _catColor = #A0AABCFF
+    Color _hlColor = #FFFFFFFF
+
+    func set(Dict opts) {
+        Theme th = theme.getTheme()
+        _titleColor = th.txt
+        _gridColor = th.sep
+        _axisColor = th.border
+        _labColor = th.txtDim
+        _catColor = th.txtDim
+        _hlColor = th.txt
+        x = opts.get("x", 0); y = opts.get("y", 0)
+        w = opts.get("w", 300); h = opts.get("h", 200)
+        title = opts.get("title", "")
+        fsize = opts.get("font_size", 12)
+        showGrid = opts.get("show_grid", true)
+        showPoints = opts.get("show_points", true)
+        _loaded = true
+    }
+    func set_data(Array[string] _xlabels, Array[Array[float]] _series, Array[string] _names) {
+        xlabels = _xlabels; series = _series; seriesNames = _names
+        _labelDirty = true   // 标签变化，需重算最大宽度
+        _cachedYMax = -1.0   // 数据变化，Y 轴缓存失效
+        // 同步动画数组结构：已有点保留作起点，新点从 0 长出
+        Array[Array[float]] ans = []
+        for series.len() to s {
+            Array[float] src = series[s]
+            Array[float] dst = []
+            int have = 0
+            if s < _animSeries.len() { have = _animSeries[s].len() }
+            for src.len() to i {
+                if i < have { dst.add(_animSeries[s][i]) } else { dst.add(0.0) }
+            }
+            ans.add(dst)
+        }
+        _animSeries = ans
+        _animating = true; _animLast = 0.0
+    }
+
+    func get_w(): float { return w }
+    func get_h(): float { return h }
+    func set_pos(float px, float py) { x = px; y = py }
+    func set_size(float sw, float sh) { w = sw; h = sh }
+
+    func process(Event ev) {
+        if not _loaded { return }
+        if ev.isMouseMotion() {
+            var[float, float](_emx, _emy) = ev.mousePos(); _mx = _emx; _my = _emy
+            bool wasHover = _hover
+            _hover = _mx >= x and _mx <= x + w and _my >= y and _my <= y + h
+            if wasHover != _hover { core.markFrameRedraw() }
+        }
+    }
+
+    func render(Renderer r) {
+        if not _loaded { return }
+        _step_anim()
+        if _animating { core.requestRedraw() }
+        if _font == null or not _font.ok or _fontSize != fsize {
+            if _font != null and _font.ok { fnt.releaseFont(_font) }
+            _font = fnt.acquireFontAuto(fsize)
+            _fontSize = fsize
+        }
+        Font? f = _font
+        float padL = 40.0; float padR = 14.0; float padT = 26.0; float padB = 30.0
+        float plotX = x + padL; float plotY = y + padT
+        float plotW = w - padL - padR; float plotH = h - padT - padB
+        if plotW <= 0 or plotH <= 0 or series.len() == 0 { return }
+
+        int n = xlabels.len()
+        int maxn = 0
+        for _animSeries.len() to s {
+            int m2 = _animSeries[s].len()
+            if m2 > maxn { maxn = m2 }
+        }
+        if n == 0 { n = maxn }
+        if n == 0 { return }
+
+        if title != "" { r.setColor(_titleColor); r.drawText(f, title, x + 10.0, y + 6.0, _titleColor) }
+
+        float ymax = 0.0
+        for series.len() to s { for series[s].len() to i { ymax = _cmax(ymax, series[s][i]) } }
+        ymax = _niceMax(ymax); if ymax <= 0.0 { ymax = 1.0 }
+
+        int ticks = 4
+        // ★ 缓存 Y 轴刻度标签宽度：ymax 不变时直接复用
+            if ymax != _cachedYMax {
+            _cachedYMax = ymax
+            _cachedYLabW = []
+            _cachedYLabH = 0.0
+            for 0 : ticks to ti {
+                string lab = _fmtNum(ymax * ti / _float(ticks))
+                var[float, float](_w, _h) = f.measureString(lab)
+                _cachedYLabW.add(_w)
+                if _h > _cachedYLabH { _cachedYLabH = _h }
+            }
+        }
+        for 0 : ticks to ti {
+            float frac = ti / _float(ticks)
+            float gy = plotY + plotH * (1.0 - frac)
+            if showGrid { r.setColor(_gridColor); r.drawLine(plotX, gy, plotX + plotW, gy) }
+            string lab = _fmtNum(ymax * frac)
+            float labW
+            if ti < _cachedYLabW.len() {
+                labW = _cachedYLabW[ti]
+            } else {
+                var[float, float](_w, _h) = f.measureString(lab); labW = _w
+            }
+            r.setColor(_labColor)
+            r.drawText(f, lab, plotX - 6.0 - labW, gy - _cachedYLabH / 2.0, _labColor)
+        }
+        r.setColor(_axisColor)
+        r.drawLine(plotX, plotY, plotX, plotY + plotH)
+        r.drawLine(plotX, plotY + plotH, plotX + plotW, plotY + plotH)
+
+        int denom = n - 1
+        if n - 1 < 1 { denom = 1 }
+        float stepX = plotW / denom
+
+        // X 轴类目标签：类目过多 / 文字过长时按步长抽稀并截断，保证均匀间隔、不重叠
+        // 使用缓存的标签最大宽度（仅在 set_data 时重算），避免每帧 O(n) measureString
+        if _labelDirty and f.ok {
+            _maxLabelW = 0.0
+            _labelW = []
+            for xlabels.len() to i {
+                var[float, float](mw, mh) = f.measureString(xlabels[i])
+                _labelW.add(mw)
+                if mw > _maxLabelW { _maxLabelW = mw }
+            }
+            _labelDirty = false
+        }
+        float maxLW = _maxLabelW
+        float labelGap = 6.0
+        int stride = 1
+        if stepX > 0.0 {
+            int s = _int((maxLW + labelGap) / stepX) + 1
+            if s > stride { stride = s }
+        }
+        if stride > n { stride = n }
+        float slotW = stride * stepX - labelGap
+        int lastMul = _int((n - 1) / _float(stride)) * stride
+        for n to i {
+            if i < xlabels.len() and (i % stride) == 0 {
+                string xl = _truncLabel(f, xlabels[i], slotW)
+                float xlW
+                if xl == xlabels[i] and i < _labelW.len() {
+                    xlW = _labelW[i]
+                } else {
+                    var[float, float](_w, _h) = f.measureString(xl); xlW = _w
+                }
+                r.setColor(_catColor)
+                float lx = plotX + stepX * i - xlW / 2.0
+                lx = _clampf(lx, plotX, plotX + plotW - xlW)
+                r.drawText(f, xl, lx, plotY + plotH + 6.0, _catColor)
+            }
+        }
+        // 末尾类目：若与上个标签间隔足够则补绘，并截断到可用宽度，避免与上一个重叠
+        if (n - 1) > lastMul and (n - 1) < xlabels.len() {
+            int rgap = (n - 1) - lastMul
+            float avail = (2.0 * rgap - stride) * stepX + labelGap
+            if avail > 0.0 {
+                string xl = _truncLabel(f, xlabels[n - 1], avail)
+                float xlW
+                if xl == xlabels[n - 1] and (n - 1) < _labelW.len() {
+                    xlW = _labelW[n - 1]
+                } else {
+                    var[float, float](_w, _h) = f.measureString(xl); xlW = _w
+                }
+                r.setColor(_catColor)
+                float lx = plotX + stepX * (n - 1) - xlW / 2.0
+                r.drawText(f, xl, lx, plotY + plotH + 6.0, _catColor)
+            }
+        }
+
+        // 悬停检测：取距离鼠标最近的具体点（某条折线上的某一点），而非按列高亮所有折线的同列点
+        int hiS = -1; int hiI = -1
+        if _hover {
+            float pickR2 = 64.0   // 拾取半径 8px 的平方
+            float best = 1000000000.0
+            for series.len() to s {
+                Array[float] d = _animSeries[s]
+                for d.len() to i {
+                    float px = plotX + stepX * i; float py = plotY + plotH * (1.0 - d[i] / ymax)
+                    float dx = _mx - px; float dy = _my - py
+                    float dist2 = dx * dx + dy * dy
+                    if dist2 <= pickR2 and dist2 < best { best = dist2; hiS = s; hiI = i }
+                }
+            }
+        }
+
+        for series.len() to s {
+            Array[float] d = _animSeries[s]
+            Color c = _palette(s)
+            r.setColor(theme.withAlpha(c, 235))
+            for 1 : d.len() - 1 to i {
+                float x1 = plotX + stepX * (i - 1); float y1 = plotY + plotH * (1.0 - d[i - 1] / ymax)
+                float x2 = plotX + stepX * i;   float y2 = plotY + plotH * (1.0 - d[i] / ymax)
+                r.drawLine(x1, y1, x2, y2)
+            }
+            if showPoints {
+                for d.len() to i {
+                    float px = plotX + stepX * i; float py = plotY + plotH * (1.0 - d[i] / ymax)
+                    bool hl = (s == hiS and i == hiI)
+                    if hl { r.setColor(_hlColor) } else { r.setColor(c) }
+                    r.fillCircle(px, py, if hl then 5.0 else 3.0)
+                }
+            }
+        }
+
+        if hiS >= 0 and hiI >= 0 and hiI < n and series[hiS].len() > hiI {
+            string sname = if hiS < seriesNames.len() then seriesNames[hiS] else ""
+            string tip = format("{0}{1}: {2}", (if sname != "" then sname + " " else ""), xlabels[hiI], _fmtNum(series[hiS][hiI]))
+            _drawTip(r, f, _mx, _my, tip)
+        }
+    }
+
+    func _step_anim() {
+        if not _animating { return }
+        if _animSpeed <= 0.0 { _animSeries = series; _animating = false; return }
+        float now = _float(core.getTicks())
+        float dt = 0.0
+        if _animLast > 0.0 { dt = (now - _animLast) / 1000.0 }
+        _animLast = now
+        float f = _animSpeed * dt
+        if f > 1.0 { f = 1.0 }
+        float eps = 0.05
+        bool done = true
+        for series.len() to s {
+            for series[s].len() to i {
+                float diff = series[s][i] - _animSeries[s][i]
+                if diff < 0.0 { diff = -diff }
+                if diff > eps { done = false }
+                _animSeries[s][i] = _animSeries[s][i] + (series[s][i] - _animSeries[s][i]) * f
+            }
+        }
+        if done {
+            for series.len() to s { for series[s].len() to i { _animSeries[s][i] = series[s][i] } }
+            _animating = false
+        }
+    }
+
+    func applyTheme(Theme t) {
+        _titleColor = t.txt
+        _gridColor = t.sep
+        _axisColor = t.border
+        _labColor = t.txtDim
+        _catColor = t.txtDim
+        _hlColor = t.txt
+    }
+
+    func dispose() { if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null }
+}
+
+// ===================== 饼图 =====================
+export struct PieChart impl Widget {
+    float x = 0.0; float y = 0.0; float w = 300.0; float h = 200.0
+    string title = ""
+    Array[string] labels = []
+    Array[float] values = []
+    int fsize = 12
+    bool _loaded = false
+    Font? _font
+    float _fontSize = 0.0
+    Array[float] _animValues = []   // 饼图各扇形占比动画当前显示值
+    bool _animating = false
+    float _animLast = 0.0
+    float _animSpeed = 12.0
+    // 主题配色 — 打包 int 颜色
+    Color _titleColor = #CDDAFFFF
+    Color _legColor = #DCE1EBFF
+
+    func set(Dict opts) {
+        Theme th = theme.getTheme()
+        _titleColor = th.txt
+        _legColor = th.txt
+        x = opts.get("x", 0); y = opts.get("y", 0)
+        w = opts.get("w", 300); h = opts.get("h", 200)
+        title = opts.get("title", "")
+        fsize = opts.get("font_size", 12)
+        _loaded = true
+    }
+    func set_data(Array[string] _labels, Array[float] _values) {
+        labels = _labels; values = _values
+        if _animValues.len() != values.len() {
+            Array[float] nv = []
+            for values.len() to i { nv.add(0.0) }
+            _animValues = nv
+        }
+        _animating = true; _animLast = 0.0
+    }
+
+    func get_w(): float { return w }
+    func get_h(): float { return h }
+    func set_pos(float px, float py) { x = px; y = py }
+    func set_size(float sw, float sh) { w = sw; h = sh }
+    func process(Event ev) {}
+    func render(Renderer r) {
+        if not _loaded { return }
+        _step_anim()
+        if _animating { core.requestRedraw() }
+        if _font == null or not _font.ok or _fontSize != fsize {
+            if _font != null and _font.ok { fnt.releaseFont(_font) }
+            _font = fnt.acquireFontAuto(fsize)
+            _fontSize = fsize
+        }
+        Font? f = _font
+        if title != "" { r.setColor(_titleColor); r.drawText(f, title, x + 10.0, y + 6.0, _titleColor) }
+        int n = values.len()
+        if n == 0 { return }
+        float total = 0.0
+        for n to i { total = total + _animValues[i] }
+        if total <= 0.0 { return }
+
+        float pieSize = _cmin(w * 0.55, h - 30.0)
+        if pieSize < 10.0 { pieSize = 10.0 }
+        float rad = pieSize / 2.0
+        float cx = x + 8.0 + rad
+        float cy = y + 30.0 + rad
+        float legendX = x + pieSize + 24.0
+        float ly = y + 34.0
+
+        float a = 0.0
+        for n to i {
+            float frac = _animValues[i] / total
+            float a1 = a + frac * 360.0
+            Color c = _palette(i)
+            // fillPie 仍使用 R/G/B/A 分量，从打包色中提取
+            r.fillPie(cx, cy, rad, a, a1, theme.colorR(c), theme.colorG(c), theme.colorB(c), 255)
+            // 图例
+            r.setColor(c); r.fillRect(legendX, ly, 12.0, 12.0)
+            r.setColor(_legColor)
+            string lab = $"{labels[i]}  {_fmtNum(_animValues[i])}"
+            r.drawText(f, lab, legendX + 18.0, ly - 1.0, _legColor)
+            ly = ly + 20.0
+            a = a1
+        }
+    }
+
+    func _step_anim() {
+        if not _animating { return }
+        if _animSpeed <= 0.0 { _animValues = values; _animating = false; return }
+        float now = _float(core.getTicks())
+        float dt = 0.0
+        if _animLast > 0.0 { dt = (now - _animLast) / 1000.0 }
+        _animLast = now
+        float eps = 0.05
+        bool done = true
+        for values.len() to i {
+            float diff = values[i] - _animValues[i]
+            if diff < 0.0 { diff = -diff }
+            if diff > eps { done = false }
+            float f = _animSpeed * dt
+            if f > 1.0 { f = 1.0 }
+            _animValues[i] = _animValues[i] + (values[i] - _animValues[i]) * f
+        }
+        if done {
+            for values.len() to i { _animValues[i] = values[i] }
+            _animating = false
+        }
+    }
+
+    func applyTheme(Theme t) {
+        _titleColor = t.txt
+        _legColor = t.txt
+    }
+
+    func dispose() { if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null }
+}
+
+// ===================== 工厂 =====================
+export func createBarChart(Dict opts): BarChart { BarChart c = new BarChart(); c.set(opts); return c }
+export func createLineChart(Dict opts): LineChart { LineChart c = new LineChart(); c.set(opts); return c }
+export func createPieChart(Dict opts): PieChart { PieChart c = new PieChart(); c.set(opts); return c }

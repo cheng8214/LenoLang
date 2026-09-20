@@ -1,0 +1,42 @@
+// 测试三元表达式：if condition then value1 else value2
+
+main()
+{
+    // 基本用法
+    var a = 10
+    var b = 20
+    
+    // 简单的三元表达式
+    var max = if a > b then a else b
+    print("max of 10 and 20: " + max)
+    
+    // 带括号的三元表达式
+    var min = if (a < b) then a else b
+    print("min of 10 and 20: " + min)
+    
+    // 嵌套三元表达式
+    var c = 15
+    var middle = if a > b then (if a > c then a else c) else (if b > c then b else c)
+    print("middle value: " + middle)
+    
+    // 在函数调用中使用
+    print("result: " + (if a == 10 then "ten" else "not ten"))
+    
+    // 在表达式中使用
+    var x = 5
+    var y = if x > 0 then x * 2 else x * -2
+    print("y = " + y)
+    
+    // 布尔条件
+    var flag = true
+    var result = if flag then "yes" else "no"
+    print("result: " + result)
+    
+    // 复杂表达式作为条件
+    var score = 85
+    var grade = if score >= 90 then "A" else (if score >= 80 then "B" else "C")
+    print("grade: " + grade)
+    
+    print("All ternary expression tests passed!")
+}
+//注意then 成为 if 表达式的专属标记

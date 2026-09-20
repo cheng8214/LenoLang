@@ -1,0 +1,114 @@
+// 跨模块「face / cstruct 类型字段」的类型传导 —— 回归测试
+//
+// 两个 bug（同一个病：**同一件事有多份实现，深度各不相同**）：
+//
+// ① 扫描器建"跨模块类型表"时，**字段类型解析**只查 alias → clib → struct 三张表，
+//    **漏了 cstruct 与 face**（同一文件里另两处口径还各不相同：泛型元素类型那段查
+//    struct/face/clib、函数参数那段查 clib/face/cstruct）⇒ 声明方用 face/cstruct 类型
+//    声明字段时，该字段在**别的文件里**降级成 any —— 而且消费方是**硬编译错**
+//    （「不能在 any 类型上调用方法」），不是"能跑但降级"。
+//    SDL3 里 14 处就是这个（Window._root / Splitter._first / …，声明类型都是 `Widget`）。
+//
+// ② 消费方读 cstruct 的字段（`h.v.x`）时，**推断不出类型**（→ any）：`a.b.c` 里 cstruct
+//    的字段访问被表示成 **AST_INDEX**，而那条路解析字段**只用 scope_resolve 一级**；
+//    同一件事在 AST_FIELD_ACCESS 那条路（infer_field_type）是**三级**（作用域 → 全局
+//    定义表 → 导入模块符号表）⇒ 消费方没 `use` 该 cstruct 类型名时就取不到。
+//
+// 为什么"声明方自己"看不出来：同一个文件内的类型解析走的是**语义分析器**（真解析器），
+// 只有**跨模块**才经过扫描器建的那张表 ⇒ ①只在"别人用你的字段"时显形。
+//
+// 子进程机器复用 assert/helpers/compiler.leno（S7）。
+
+import dirs
+import files
+import strings
+
+import "helpers/compiler.leno" as ce
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_face_cstruct_field_type")
+    // 与另两个诊断用例同样的清场理由：命中旧缓存就验不出来了
+    dirs.delete(work)
+    dirs.mkdir_p(dirs.join(work, "lib"))
+
+    // ---- 场景 1：face 类型字段（真实实例：SDL3 的 Widget 字段）----
+    // 声明方 lib/box.leno 用 face 声明字段；消费方**对那个字段**调 face 方法。
+    // 修前实测：消费方编译错「不能在 any 类型上调用方法 'get_n'」。用 int 而非 float
+    // 是为了让断言是"精确等值"，不受浮点格式化影响。
+    files.write(dirs.join(work, "lib/w.leno"),
+        "export face Widget {\n    func get_n(): int\n}\n")
+    files.write(dirs.join(work, "lib/box.leno"),
+        "import \"w.leno\" as wgt\nuse wgt.Widget\n\n"
+        + "export struct Leaf impl Widget {\n"
+        + "    func get_n(): int {\n        return 7\n    }\n}\n\n"
+        + "export struct Holder {\n    Widget child\n}\n\n"
+        + "export func makeHolder(): Holder {\n"
+        + "    var h = new Holder()\n"
+        + "    h.child = new Leaf()\n"
+        + "    return h\n}\n")
+    var face_main = dirs.join(work, "main_face.leno")
+    // 消费方不自己 use Widget：字段类型只能从扫描器那张表里取到，这样才测到"传导"本身
+    files.write(face_main,
+        "import \"lib/box.leno\" as b\nuse b.Holder\n\n"
+        + "main() {\n"
+        + "    var h = b.makeHolder()\n"
+        + "    print(\"N=\" + h.child.get_n())\n"
+        + "}\n")
+    ce.expect_ok(face_main, "face 类型字段跨模块可用（修前是 any ⇒ 编译错）", "N=7")
+
+    // ---- 场景 2 + 3 共用的声明模块 ----
+    // cstruct 字段是**指针语义**（与 C 的指针字段一致）：默认 null，必须先给实例
+    // （`Vec.malloc()`），否则读字段是"在 null 上索引"的运行期错误 —— 那是正当行为，
+    // 所以工厂函数里先 malloc 再写值，消费方拿到的就是可用的实例。
+    files.write(dirs.join(work, "lib/cs.leno"),
+        "export cstruct Vec {\n    i32 x\n    i32 y\n}\n")
+    files.write(dirs.join(work, "lib/hascs.leno"),
+        "import \"cs.leno\" as cslib\nuse cslib.Vec\n\n"
+        + "export struct HasCs {\n    Vec v\n}\n\n"
+        + "export func makeHasCs(): HasCs {\n"
+        + "    var h = new HasCs()\n"
+        + "    h.v = Vec.malloc()\n"
+        + "    h.v.x = 3\n"
+        + "    return h\n}\n")
+
+    // ---- 场景 2：声明方的降级警告（bug ①）----
+    // 判据只取"**不再有降级警告**"。修前该警告确实出现
+    // （`lib/hascs.leno:7: 字段 'v' 声明类型 'Vec' 无法解析`）。
+    var cs_main = dirs.join(work, "main_cs.leno")
+    files.write(cs_main,
+        "import \"lib/hascs.leno\" as hc\nuse hc.HasCs\n\n"
+        + "main() {\n    print(\"OK\")\n}\n")
+    var cs_out = ce.expect_ok(cs_main, "cstruct 类型字段不再出降级警告", "OK")
+    assert_true(not strings.has(cs_out, "无法解析"),
+        "cstruct 字段不应再有「无法解析」降级警告；实际输出=" + cs_out)
+
+    // ---- 场景 3：消费方**没有 use** 那个 cstruct 类型时读它的字段（bug ②）----
+    // 判据是"类型不匹配报错文案里的**实际类型**"：修前 `实际 any`（推断不出来）、
+    // 修后 `实际 int`（改为走统一推断后，C 布局类型按设计映射为 Leno 类型：i32→int，
+    // 与 AST_FIELD_ACCESS 那条路一致 —— 见 type.c 的 c_layout_type_to_leno 注释
+    // "使 i32/u8 等自动映射为 int，无需 as int"）。
+    // 为什么不能用"编译通过 / 运行输出"当判据：`h.v.x` 无论是 any 还是 int，赋给 string
+    // 都是类型错（两者都不通过）；而"推断成 any"正是要修的那个静默降级，
+    // 只有文案里的实际类型能把它和 int 区分开。
+    var noscope_main = dirs.join(work, "main_cs_noscope.leno")
+    files.write(noscope_main,
+        "import \"lib/hascs.leno\" as hc\nuse hc.HasCs\n\n"
+        + "func probe(HasCs h): string {\n    return h.v.x\n}\n\n"
+        + "main() {\n    print(\"OK\")\n}\n")
+    ce.expect_error(noscope_main, "cstruct 字段类型不依赖 use（修前是 any）", "实际 int", 0)
+
+    // ---- 场景 3b：对照 —— 消费方 use 了该类型名时本来就对（不用修，防止改坏）----
+    var scope_main = dirs.join(work, "main_cs_scope.leno")
+    files.write(scope_main,
+        "import \"lib/hascs.leno\" as hc\nimport \"lib/cs.leno\" as cslib\n"
+        + "use hc.HasCs\nuse cslib.Vec\n\n"
+        + "main() {\n"
+        + "    var h = hc.makeHasCs()\n"
+        + "    print(\"X=\" + h.v.x)\n"
+        + "}\n")
+    ce.expect_ok(scope_main, "use 了类型名时：端到端可读字段（对照组）", "X=3")
+
+    dirs.delete(work)
+
+    print("test_face_cstruct_field_type passed")
+}

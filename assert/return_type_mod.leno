@@ -1,0 +1,8 @@
+export struct Point {
+    int x = 0
+    int y = 0
+}
+
+export func make_point(int x, int y):Point {
+    return new Point(x = x, y = y)
+}

@@ -1,0 +1,36 @@
+// OP_GET_METHOD + OP_CALL（动态派发方法调用）回归 —— §8.57
+//
+// face 调用永远走动态派发（编译期只有 face 类型、没有具体 struct），所以字节码是
+//   [self][args...] + 多压一个 receiver + OP_GET_METHOD name + OP_CALL argc
+// 合并后的净效应 = -(argc + 1) + rc。用**两种实现**交替调用（每轮切换接收者）来验证
+// 运行时方法查找正确（按接收者的实际类型决定调用哪个方法体）。
+// 断言是绝对期望值 ⇒ 任何执行配置下都必须通过。
+face Shape {
+    func area(): int
+}
+
+struct Sq impl Shape {
+    int s = 0
+    func area(): int { return self.s * self.s }
+}
+
+struct Rc impl Shape {
+    int w = 0
+    int h = 0
+    func area(): int { return self.w * self.h }
+}
+
+main() {
+    Shape a = new Sq(s=3)
+    Shape b = new Rc(w=4, h=5)
+
+    int acc = 0
+    int i = 0
+    while i < 3000 {
+        acc = acc + a.area() + b.area()     // 9 + 20 = 29 每轮
+        i = i + 1
+    }
+    assert_eq(acc, 87000)                   // 3000 * 29
+
+    print("test_op_get_method: OK")
+}

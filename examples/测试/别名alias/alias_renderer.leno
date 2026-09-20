@@ -1,0 +1,15 @@
+// alias_renderer.leno - 中间层，use alias 并作为 struct 方法返回类型
+import "alias_core.leno" as core
+use core.SizeF
+
+export struct Renderer {
+    int id = 0
+
+    func getSize(): SizeF {
+        return core.makeSizeF(100.0, 200.0)
+    }
+}
+
+export func createRenderer(): Renderer {
+    return new Renderer()
+}

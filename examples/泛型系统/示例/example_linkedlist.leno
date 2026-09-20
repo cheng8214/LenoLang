@@ -1,0 +1,101 @@
+// 泛型链表（LinkedList）- 链式数据结构
+
+struct Node[T] {
+    T data
+    Node next = null
+}
+
+struct LinkedList[T] {
+    Node head = null
+    int length = 0
+
+    // 在头部插入
+    func prepend(T val) {
+        var node = new Node[T](data=val)
+        node.next = self.head
+        self.head = node
+        self.length = self.length + 1
+    }
+
+    // 在尾部追加
+    func append(T val) {
+        var node = new Node[T](data=val)
+        if self.head == null {
+            self.head = node
+        } else {
+            var curr = self.head
+            while curr.next != null {
+                curr = curr.next
+            }
+            curr.next = node
+        }
+        self.length = self.length + 1
+    }
+
+    // 转为数组
+    func toArray(): Array[T] {
+        var result = []
+        var curr = self.head
+        while curr != null {
+            result.add(curr.data)
+            curr = curr.next
+        }
+        return result
+    }
+
+    // 查找元素
+    func contains(T val): bool {
+        var curr = self.head
+        while curr != null {
+            if curr.data == val { return true }
+            curr = curr.next
+        }
+        return false
+    }
+
+    // 获取指定位置的元素
+    func get(int index): T {
+        if index < 0 or index >= self.length { return null }
+        var curr = self.head
+        var i = 0
+        while i < index {
+            curr = curr.next
+            i = i + 1
+        }
+        return curr.data
+    }
+}
+
+// --- 整数链表 ---
+var intList = new LinkedList[int]()
+intList.append(10)
+intList.append(20)
+intList.append(30)
+intList.prepend(5)
+print(intList.toArray())        // [5, 10, 20, 30]
+print(intList.contains(20))     // true
+print(intList.contains(99))     // false
+print(intList.get(2))           // 20
+print(intList.length)           // 4
+
+// --- 字符串链表 ---
+var strList = new LinkedList[string]()
+strList.append("hello")
+strList.append("world")
+strList.prepend("start")
+print(strList.toArray())        // ["start", "hello", "world"]
+print(strList.get(1))           // hello
+
+// --- 泛型函数：链表转字符串 ---
+func joinList[T](LinkedList[T] list, string sep): string {
+    var arr = list.toArray()
+    var result = ""
+    for arr to item {
+        if result != "" { result = result + sep }
+        result = result + item
+    }
+    return result
+}
+
+var joined = joinList[string](strList, " -> ")
+print(joined)                   // start -> hello -> world

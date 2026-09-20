@@ -1,0 +1,28 @@
+// 泛型 struct + clib 组合测试
+import "ge_core.leno" as core
+use core.Wrapper
+use core.math_lib
+
+main() {
+    print("=== 泛型+clib ===")
+
+    // 1. 泛型 struct 含 clib 字段: Wrapper[int]
+    var w1 = new Wrapper[int](lib = core.loadMath(), data = 42)
+    print("1. int: " + core.wrapAbs(w1, -5))
+
+    // 2. string 版本
+    var w2 = new Wrapper[string](lib = core.loadMath(), data = "hello")
+    print("2. string: " + core.wrapAbs(w2, -7))
+
+    // 3. clib 直接
+    math_lib m = core.loadMath()
+    var v3 = m.abs(-11) as int
+    print("3. clib: " + v3)
+
+    // 4. 共用 clib
+    var w3a = new Wrapper[int](lib = m, data = 10)
+    var w3b = new Wrapper[int](lib = m, data = 20)
+    print("4. 共用: " + core.wrapAbs(w3a, -13) + " " + core.wrapAbs(w3b, -17))
+
+    print("=== 通过 ===")
+}

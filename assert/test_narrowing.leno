@@ -1,0 +1,44 @@
+// test_narrowing.leno — 验证：类型收窄后能否自动传递（问题二）
+// 猜想：if x != null 或 if x is string 后，x 仍不会自动收窄为具体类型，
+//       需要显式 as 强转
+
+// 接收 string 的普通函数（非可空参数）
+func len_str(string s): int {
+    return s.len()
+}
+
+// 返回 any 的函数
+func getAny(): any {
+    return "hello"
+}
+
+main() {
+    print("=== 测试类型收窄 ===\n")
+
+    // 场景1: is string 收窄后，能否直接传给 string 参数
+    var a = getAny()
+    if a is string {
+        // 如果自动收窄，这里 a 应该能直接传给 len_str(string)
+        int n = len_str(a)
+        print("[1] is string 收窄后直接传参: len = " + n)
+    } else {
+        print("[1] 类型不是 string")
+    }
+
+    // 场景2: is string 收窄后，能否直接访问 string 方法
+    var b = getAny()
+    if b is string {
+        // 如果自动收窄，b 应该能直接调 .len()
+        int m = b.len()
+        print("[2] is string 收窄后直接调方法: len = " + m)
+    }
+
+    // 场景3: 显式 as 转换（对照）
+    var c = getAny()
+    if c is string {
+        int k = len_str(c as string)
+        print("[3] 显式 as string 传参: len = " + k)
+    }
+
+    print("\n=== 测试完成 ===")
+}

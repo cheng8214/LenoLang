@@ -1,0 +1,88 @@
+// §8.132 回归：内联"多返回点被调方"时算错 ✗
+//
+// 来源：PE 分析器 XOR 字符串页第 11 个串起 `DLLLLD` 乱码 ✗（当时关掉内联就全对 ✓）。
+// 最小化后的形态：
+//   · 被调方 `xorKey` 是 **switch**（编译器降成"比较链 + 4 个 return"）⇒ **多返回点** ✓；
+//   · 它被内联进循环之后，`byte ^ key(j)` 的**取值**算错 ✗（病灶在"内联发射"这一侧 ✓）；
+//   · 触发点与"内层 while 的累计回边越过 50"吻合（前 10 个串长度合计 = 49 ✓）。
+//
+// 判据用**绝对期望值**（明文名字本身 ✓，与运行模式无关）：
+//   必须 `bad=0` ✓，且第 11 / 20 个串必须逐字等于名字 ✓（修前：第 11 个解成 `_DLLLDL` ✗）。
+import strings
+
+// XOR 密钥 "LENO" —— **switch 形态**（多返回点，就是触发面 ✓）
+func xorKey(int j): int {
+    switch j % 4 {
+        case 0 { return 0x4C }
+        case 1 { return 0x45 }
+        case 2 { return 0x4E }
+        default { return 0x4F }
+    }
+}
+
+// 造密文：u32 大端长度 + XOR(key=LENO) 编码 ✓
+func makeXorString(string plain): string {
+    int n = plain.byte_len()
+    string header = strings.char((n >> 24) & 0xFF, (n >> 16) & 0xFF, (n >> 8) & 0xFF, n & 0xFF)
+    string body = ""
+    int j = 0
+    while j < n {
+        int b = plain.byte(j) & 0xFF
+        body = body + strings.char((b ^ xorKey(j)) & 0xFF)
+        j = j + 1
+    }
+    return header + body
+}
+
+// 解密：**循环内调用全局函数 xorKey** ✓（= 会被内联的形态 ✓）
+func decryptAt(string data, int off): string {
+    int strLen = ((data.byte(off) & 0xFF) << 24) | ((data.byte(off + 1) & 0xFF) << 16) | ((data.byte(off + 2) & 0xFF) << 8) | (data.byte(off + 3) & 0xFF)
+    string result = ""
+    int j = 0
+    while j < strLen {
+        int b = data.byte(off + 4 + j) & 0xFF
+        int dec = (b ^ xorKey(j)) & 0xFF
+        result = result + strings.char(dec)
+        j = j + 1
+    }
+    return result
+}
+
+Array[string] names = [
+    "print", "printf", "input", "type", "_int",
+    "_float", "_bool", "_str", "_ptr", "_int32",
+    "_uint32", "_uint64", "_uint8", "_byte", "format",
+    "sleep", "assert", "_args", "_script", "PEAnalyzer"
+]
+
+main() {
+    // 20 个串 × 20 遍 = 400 个串、约 2400 次内层迭代 ✓
+    string blob = ""
+    for 0:19 to i { blob = blob + makeXorString(names[i]) }
+    string big = ""
+    for 0:19 to r { big = big + blob }
+
+    int pos = 0
+    int total = big.byte_len()
+    int idx = 0
+    int bad = 0
+    string got11 = ""
+    string got20 = ""
+    while pos + 4 <= total {
+        int slen = ((big.byte(pos) & 0xFF) << 24) | ((big.byte(pos + 1) & 0xFF) << 16) | ((big.byte(pos + 2) & 0xFF) << 8) | (big.byte(pos + 3) & 0xFF)
+        if slen < 0 or slen > 10000 or pos + 4 + slen > total { break }
+        string got = decryptAt(big, pos)
+        string want = names[idx % 20]
+        idx = idx + 1
+        if got != want { bad = bad + 1 }
+        if idx == 11 { got11 = got }
+        if idx == 20 { got20 = got }
+        pos = pos + 4 + slen
+    }
+
+    assert_eq(idx, 400)          // 全部 400 个串都覆盖到 ✓
+    assert_eq(bad, 0)            // 修前：从第 11 个起全错 ✗
+    assert_eq(got11, "_uint32")  // 修前：`_DLLLDL` ✗
+    assert_eq(got20, "PEAnalyzer")
+    print("OK")
+}

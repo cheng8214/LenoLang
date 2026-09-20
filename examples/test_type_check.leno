@@ -1,0 +1,7 @@
+func ok_func(): [int, string] {
+    return 42, "hello"
+}
+
+var[int, string](a, b) = ok_func()
+print(a)
+print(b)

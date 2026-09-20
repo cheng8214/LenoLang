@@ -1,0 +1,88 @@
+// 测试 cstruct 直接字段访问
+
+cstruct Vec3 {
+    f32 x
+    f32 y
+    f32 z
+}
+
+cstruct Point {
+    i32 x
+    i32 y
+}
+
+main() {
+    print("=== 测试 cstruct 直接字段访问 ===")
+    
+    // 测试 Vec3
+    print("1. 测试 Vec3 字段访问")
+    var v = Vec3.malloc()
+    
+    // 使用直接字段访问（新语法）
+    v.x = 1.0
+    v.y = 2.0
+    v.z = 3.0
+    
+    print("   v.x = " + v.x)
+    print("   v.y = " + v.y)
+    print("   v.z = " + v.z)
+    
+    // 验证值是否正确
+    if (v.x == 1.0 and v.y == 2.0 and v.z == 3.0) {
+        print("   OK Vec3 字段访问测试通过")
+    } else {
+        print("   FAIL Vec3 字段访问测试失败")
+    }
+    
+    v.free()
+    
+    // 测试 Point
+    print("")
+    print("2. 测试 Point 字段访问")
+    var p = Point.malloc()
+    
+    p.x = 100
+    p.y = 200
+    
+    print("   p.x = " + p.x)
+    print("   p.y = " + p.y)
+    
+    // 验证值是否正确
+    if (p.x == 100 and p.y == 200) {
+        print("   OK Point 字段访问测试通过")
+    } else {
+        print("   FAIL Point 字段访问测试失败")
+    }
+    
+    p.free()
+    
+    // 测试混合类型
+    print("")
+    print("3. 测试混合类型 cstruct")
+    cstruct Mixed {
+        i32 id
+        f32 weight
+        f64 precision
+    }
+    
+    var m = Mixed.malloc()
+    m.id = 42
+    m.weight = 3.14
+    m.precision = 2.718281828
+    
+    print("   m.id = " + m.id)
+    print("   m.weight = " + m.weight)
+    print("   m.precision = " + m.precision)
+    
+    // 简化验证
+    if (m.id == 42) {
+        print("   OK 混合类型测试通过")
+    } else {
+        print("   FAIL 混合类型测试失败")
+    }
+    
+    m.free()
+    
+    print("")
+    print("=== 所有测试完成 ===")
+}

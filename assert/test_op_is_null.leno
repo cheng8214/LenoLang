@@ -1,0 +1,44 @@
+// OP_IS_NULL 回归（§8.63）
+//
+// `??` / `?.` 会编译出 OP_IS_NULL。这条 opcode 存在就是为了**避开 OP_EQ 的
+// `0.0 == null` 陷阱**（op_compare.inc），所以判据必须是 val_is_null
+// （位比较 NULL_VAL），**不能**退化成"等于零"。
+//
+// 注意 `??` 的结果静态类型是 any ⇒ 只做比较/累加计数，不直接参与 int 算术。
+
+main() {
+    // ---- 1) 左侧非 null：?? 取左侧 ----
+    var d = {"k": 5}
+    int cnt = 0
+    int i = 0
+    while i < 3000 {
+        var v = d["k"] ?? 0
+        if v == 5 { cnt = cnt + 1 }
+        i = i + 1
+    }
+    assert_eq(cnt, 3000)
+
+    // ---- 2) 左侧是 null：?? 取右侧 ----
+    var n = null
+    int cnt2 = 0
+    int j = 0
+    while j < 3000 {
+        var w = n ?? 7
+        if w == 7 { cnt2 = cnt2 + 1 }
+        j = j + 1
+    }
+    assert_eq(cnt2, 3000)
+
+    // ---- 3) 判空结果参与比较（另一条路径，确认两者并存不冲突）----
+    var z = null
+    int hits = 0
+    int k = 0
+    while k < 3000 {
+        var q = z ?? 1
+        if q == 1 { hits = hits + 1 }
+        k = k + 1
+    }
+    assert_eq(hits, 3000)
+
+    print("test_op_is_null: OK")
+}

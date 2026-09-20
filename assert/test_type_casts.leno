@@ -1,0 +1,81 @@
+// any → 容器的"正道" —— 回归测试（易用性痛点 P1）
+//
+// 背景（docs/待办_易用性痛点（TraeSign 移植实录）.md 的 P1）：
+//   `jsons.decode` / `jsons.read_file` 的静态返回类型是 `any`，于是
+//     · `data["collection"]["name"]` ⇒ 「不能在 any 类型上直接访问字段」✗；
+//     · `Dict[string, any] d = jsons.decode(...)` ⇒ 「声明类型与初始化值类型不匹配」✗。
+//   **关键**：语言其实**早已有正道**（当时没人把它点给用户 ✗）——
+//     · `x as T` —— **安全类型转换**（`leno_ast.h` 的原话）：匹配则返回目标类型、
+//       **不匹配返回 null**（不抛错），**静态类型就是 T**
+//       ⇒ `Dict[string, any] d = raw as Dict[string, any]` 一步到位 ✓；
+//     · `if x is T => v { ... }` —— 收窄 + 绑定 ✓。
+//   （我曾顺手加了 `_Dict()` / `_Array()` 内置，实测后**撤掉**：多余，而且"不匹配就抛错"
+//     与语言既有的"安全转换返回 null"**规矩相反** ✗ —— 那正是"同一件事第二份实现"的样子。）
+//
+// 判据：
+//   ① `as Dict[string, any]` 直接赋给同类型变量（P1 的"错误 2"形状）并能取值；
+//   ② 类型不匹配时 `as` 给 **null**（不是异常），且程序继续；
+//   ③ `as Array[any]` 同理；
+//   ④ `is` 收窄 + `=>` 绑定在 JSON 结果上可用；
+//   ⑤ 嵌套：逐层 `as` 可行（示例里的 json_any 助手层就是它的糖）；
+//   ⑥ 守卫：**没有** `as` 时仍必须报错，且提示要**点名 `as`**（P1 的要点）。
+//
+// 既有的 assert/test_as_cast.leno 覆盖 as 的通用语义（基本/struct/face/null）；
+// 本用例补的是"**JSON 的 any → 带泛型参数的容器**"这个真实形状。
+
+import jsons
+import dirs
+import files
+import strings
+
+main() {
+    var raw = jsons.decode("{\"name\": \"Leno\", \"ver\": 3, \"nested\": {\"k\": \"v\"}}")
+
+    // ① as 一步到位（这正是 P1 里"报错 2"的形状，此前编译不过）
+    Dict[string, any] d = raw as Dict[string, any]
+    assert_eq(d["name"], "Leno", "①as Dict[string, any] 后应能按名取值")
+
+    // ② 失败给 null，不抛错
+    var not_dict = jsons.decode("\"hello\"")
+    var bad = not_dict as Dict
+    assert_eq(bad, null, "②类型不匹配时 as 必须给 null（不是抛错）")
+
+    // ③ Array 侧同理
+    var raw_arr = jsons.decode("[10, 20, 30]")
+    Array[any] a = raw_arr as Array[any]
+    assert_eq(a[1], 20, "③as Array[any] 后应能按下标取值")
+
+    // ④ is 收窄 + => 绑定
+    var got = ""
+    if raw is Dict[string, any] => dd {
+        got = _str(dd["name"])
+    }
+    assert_eq(got, "Leno", "④is 收窄 + => 绑定应可用")
+
+    // ⑤ 嵌套：逐层 as（helper 层就是它的糖）
+    var inner = (raw as Dict[string, any])["nested"] as Dict[string, any]
+    assert_eq(inner["k"], "v", "⑤嵌套逐层 as 应可行")
+
+    // ⑥ 守卫：没有 as 时仍必须报错，且提示点名 as
+    var work = dirs.join(_tmpdir(), "leno_type_casts")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+    var src = dirs.join(work, "no_as.leno")
+    files.write(src,
+        "import jsons\n\n"
+        + "main() {\n"
+        + "    var raw = jsons.decode(\"{\\\"a\\\": 1}\")\n"
+        + "    Dict[string, any] d = raw\n"
+        + "    print(_str(d[\"a\"]))\n"
+        + "}\n")
+    var ce = _exec(_executable() + " -c \"" + src + "\"", 30000)
+    assert_ne(ce, null, "⑥子进程没起来")
+    assert_true(_int(ce[1]) != 0, "⑥缺 as 的 any → Dict[string, any] 赋值必须仍报错")
+    var out6 = _str(ce[0])
+    assert_true(strings.has(out6, "不匹配"), "⑥报错文案应含「不匹配」；实际=" + out6)
+    assert_true(strings.has(out6, "as Dict[string, any]"),
+        "⑥提示必须点名 `as Dict[string, any]`（P1 的要点：把人引到既有的安全转换）；实际=" + out6)
+
+    dirs.delete(work)
+    print("test_type_casts passed")
+}

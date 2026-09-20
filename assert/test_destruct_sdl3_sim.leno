@@ -1,0 +1,318 @@
+// 解构声明压力测试 — 模拟 SDL3 使用场景
+// 覆盖：SDL3 中的数组返回值解构、字典返回值解构、嵌套解构、
+//       const解构、alias类型解构、边界条件（空数组、部分解构）
+//
+// ★ 关键规则：源元素/值类型为 any 时不允许解构
+//   只有函数显式声明返回类型（如 Array[int]）或同类型字面量才允许解构
+
+// ============================================================================
+// 1. 模拟 SDL3 _compute_sb() — 返回 Array[float] 的函数解构
+//    SDL3 中 sdl_table._compute_sb() 返回 [vw, hh]（滚动条宽高）
+// ============================================================================
+func compute_sb(float bodyW, float bodyH, float contentW, float contentH): Array[float] {
+    float vw = 0.0
+    float hh = 0.0
+    if contentH > bodyH { vw = 8.0 }
+    if contentW > bodyW { hh = 8.0 }
+    return [vw, hh]
+}
+
+// 模拟有滚动条的情况
+var[float, float](sb_vw1, sb_hh1) = compute_sb(100.0, 200.0, 300.0, 400.0)
+assert_eq(sb_vw1, 8.0)
+assert_eq(sb_hh1, 8.0)
+
+// 模拟无滚动条的情况
+var[float, float](sb_vw2, sb_hh2) = compute_sb(500.0, 500.0, 100.0, 100.0)
+assert_eq(sb_vw2, 0.0)
+assert_eq(sb_hh2, 0.0)
+
+// ============================================================================
+// 2. 模拟 SDL3 _parseShortcut() — 返回 Dict 的函数解构
+//    SDL3 中 _parseShortcut("Ctrl+C") 返回 {scancode, mods}
+// ============================================================================
+func parse_shortcut(string key): Dict[string, int] {
+    int mods = 0
+    string k = key
+    // 模拟解析 Ctrl+ 前缀
+    if k.starts_with("Ctrl+") {
+        mods = mods | 1
+        k = k.slice(5, k.len())
+    }
+    // 简化映射
+    int sc = 0
+    if k == "C" { sc = 6 }
+    eif k == "V" { sc = 25 }
+    eif k == "A" { sc = 4 }
+    eif k == "ESCAPE" { sc = 41 }
+    return {scancode: sc, mods: mods}
+}
+
+var{"scancode": int, "mods": int}(sc1, mod1) = parse_shortcut("Ctrl+C")
+assert_eq(sc1, 6)
+assert_eq(mod1, 1)
+
+var{"scancode": int, "mods": int}(sc2, mod2) = parse_shortcut("Ctrl+V")
+assert_eq(sc2, 25)
+assert_eq(mod2, 1)
+
+var{"scancode": int, "mods": int}(sc3, mod3) = parse_shortcut("ESCAPE")
+assert_eq(sc3, 41)
+assert_eq(mod3, 0)
+
+// ============================================================================
+// 3. 模拟 SDL3 measureText — 返回 Dict {w, h}
+//    SDL3 中 sdl_font.measureText 返回 {w, h}
+// ============================================================================
+func measure_text(string text, float fontSize): Dict[string, float] {
+    // 模拟文本测量
+    float w = text.len() * fontSize * 0.6
+    float h = fontSize * 1.2
+    return {w: w, h: h}
+}
+
+var{"w": float, "h": float}(tw1, th1) = measure_text("Hello", 16.0)
+assert_eq(tw1, 48.0)
+assert_eq(th1, 19.2)
+
+var{"w": float, "h": float}(tw2, th2) = measure_text("", 12.0)
+assert_eq(tw2, 0.0)
+assert_eq(th2, 14.399999999999999)
+
+// ============================================================================
+// 4. 模拟 SDL3 menu _clampRect — 返回 [px, py, pw, ph] 四元数组
+// ============================================================================
+func clamp_rect(float px, float py, float pw, float ph, float winW, float winH): Array[float] {
+    if px + pw > winW { px = winW - pw }
+    if py + ph > winH { py = winH - ph }
+    if px < 0.0 { px = 0.0 }
+    if py < 0.0 { py = 0.0 }
+    return [px, py, pw, ph]
+}
+
+var[float, float, float, float](rpx, rpy, rpw, rph) = clamp_rect(600.0, 400.0, 200.0, 100.0, 480.0, 360.0)
+assert_eq(rpx, 280.0)
+assert_eq(rpy, 260.0)
+assert_eq(rpw, 200.0)
+assert_eq(rph, 100.0)
+
+// 边界：完全在窗口内
+var[float, float, float, float](rpx2, rpy2, rpw2, rph2) = clamp_rect(10.0, 20.0, 100.0, 50.0, 800.0, 600.0)
+assert_eq(rpx2, 10.0)
+assert_eq(rpy2, 20.0)
+assert_eq(rpw2, 100.0)
+assert_eq(rph2, 50.0)
+
+// ============================================================================
+// 5. 模拟 SDL3 treeview _computeView — 返回7元数组
+//    [sx, sw, ty0, ty1, thH, thy, maxs]
+// ============================================================================
+func compute_view(float x, float y, float w, float h): Array[float] {
+    float sx = x
+    float sw = w
+    float ty0 = y
+    float ty1 = y + h
+    float thH = 24.0
+    float thy = ty0 + thH
+    float maxs = 1000.0
+    return [sx, sw, ty0, ty1, thH, thy, maxs]
+}
+
+var[float, float, float, float, float, float, float](vsx, vsw, vty0, vty1, vthH, vthy, vmaxs) = compute_view(10.0, 20.0, 300.0, 500.0)
+assert_eq(vsx, 10.0)
+assert_eq(vsw, 300.0)
+assert_eq(vty0, 20.0)
+assert_eq(vty1, 520.0)
+assert_eq(vthH, 24.0)
+assert_eq(vthy, 44.0)
+assert_eq(vmaxs, 1000.0)
+
+// ============================================================================
+// 6. 模拟 SDL3 combobox _dropdownRect — 返回10元数组
+// ============================================================================
+func dropdown_rect(float x, float y, float w, float h): Array[float] {
+    return [x, w, y, y + h, 24.0, y + 24.0, 500.0, x, y + h, 200.0]
+}
+
+var[float, float, float, float, float, float, float, float, float, float](
+    dr_sx, dr_sw, dr_ty0, dr_ty1, dr_thH, dr_thy, dr_maxs, dr_px, dr_py, dr_ph
+) = dropdown_rect(30.0, 50.0, 120.0, 32.0)
+assert_eq(dr_sx, 30.0)
+assert_eq(dr_sw, 120.0)
+assert_eq(dr_ty0, 50.0)
+assert_eq(dr_ty1, 82.0)
+assert_eq(dr_thH, 24.0)
+assert_eq(dr_thy, 74.0)
+assert_eq(dr_maxs, 500.0)
+assert_eq(dr_px, 30.0)
+assert_eq(dr_py, 82.0)
+assert_eq(dr_ph, 200.0)
+
+// ============================================================================
+// 7. const 解构 — 模拟 SDL3 常量配置
+// ============================================================================
+const SDL3_COLORS = [#FF0000FF, #00FF00FF, #0000FFFF]
+const[int, int, int](COLOR_R, COLOR_G, COLOR_B) = SDL3_COLORS
+assert_eq(COLOR_R, 4294901760)
+assert_eq(COLOR_G, 4278255360)
+assert_eq(COLOR_B, 4278190335)
+
+const SDL3_CONFIG = {"vsync": 1, "fullscreen": 0, "fps": 60}
+const{"vsync": int, "fullscreen": int, "fps": int}(cfg_vsync, cfg_fullscreen, cfg_fps) = SDL3_CONFIG
+assert_eq(cfg_vsync, 1)
+assert_eq(cfg_fullscreen, 0)
+assert_eq(cfg_fps, 60)
+
+// ============================================================================
+// 8. alias 类型解构 — 模拟 SDL3 中的类型别名
+// ============================================================================
+alias Pixel = int
+alias Coord = float
+alias Label = string
+
+// 同类型数组才允许解构（Array[int]）
+var sdl_point = [100, 200, 300]
+var[Pixel, Pixel, Pixel](pt_x, pt_y, pt_z) = sdl_point
+assert_eq(pt_x, 100)
+assert_eq(pt_y, 200)
+assert_eq(pt_z, 300)
+
+// int → float 通过 alias（Array[int] → Coord[float]）
+var sdl_coords = [100, 200]
+var[Coord, Coord](cx, cy) = sdl_coords
+assert_eq(cx, 100.0)
+assert_eq(cy, 200.0)
+
+// 字典同值类型才允许解构（Dict[string, int]）
+var sdl_rect = {"x": 10, "y": 20, "w": 30}
+var{"x": Pixel, "y": Pixel, "w": Pixel}(rx2, ry2, rw2) = sdl_rect
+assert_eq(rx2, 10)
+assert_eq(ry2, 20)
+assert_eq(rw2, 30)
+
+// ============================================================================
+// 9. 部分解构 — 只取部分元素
+// ============================================================================
+var multi_data = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+var[int, int, int](p1, p2, p3) = multi_data
+assert_eq(p1, 1)
+assert_eq(p2, 2)
+assert_eq(p3, 3)
+
+var partial_dict = {"a": 100, "b": 200, "c": 300, "d": 400, "e": 500}
+var{"c": int, "e": int}(pc, pe) = partial_dict
+assert_eq(pc, 300)
+assert_eq(pe, 500)
+
+// ============================================================================
+// 10. 边界测试 — 空数组/空字典部分解构
+// ============================================================================
+var single_arr = [42]
+var[int](single_val) = single_arr
+assert_eq(single_val, 42)
+
+var empty_dict = {"only_key": 999}
+var{"only_key": int}(only_val) = empty_dict
+assert_eq(only_val, 999)
+
+// ============================================================================
+// 11. any 槽位解构 — 混合类型用 any 槽位解构（不转换类型）
+// ============================================================================
+// 混合类型数组推断为 Array[any]，用 any 槽位解构，直接取值不做类型转换
+var sdl_event_data = [42, "SDL_KEYDOWN", true]
+var[any, any, any](ed_code, ed_name, ed_pressed) = sdl_event_data
+assert_eq(ed_code, 42)
+assert_eq(ed_name, "SDL_KEYDOWN")
+assert_eq(ed_pressed, true)
+
+// 混合值类型字典推断为 Dict[string, any]，用 any 槽位解构
+var sdl_config = {"title": "MyApp", "vsync": 1, "fps": 60.5}
+var{"title": any, "vsync": any, "fps": any}(sc_title, sc_vsync, sc_fps) = sdl_config
+assert_eq(sc_title, "MyApp")
+assert_eq(sc_vsync, 1)
+assert_eq(sc_fps, 60.5)
+
+// ============================================================================
+// 12. 类型转换压力测试 — 各种基本类型之间的转换
+// ============================================================================
+// bool 解构（bool 只接受 bool，不允许转 string/int）
+var bool_arr = [true, false]
+var[bool, bool](bi1, bi2) = bool_arr
+assert_eq(bi1, true)
+assert_eq(bi2, false)
+
+// int → float 转换（类型系统允许 int → float 提升）
+var cycle_arr = [100]
+var[float](cf1) = cycle_arr
+assert_eq(cf1, 100.0)
+
+// 注：float → int 截断不被类型系统允许（type_is_compatible(int, float) = false）
+
+// ============================================================================
+// 13. 嵌套函数调用解构 — 函数返回值直接解构
+// ============================================================================
+func get_nested_data(): Array[int] {
+    func inner(): Array[int] {
+        return [1, 2, 3]
+    }
+    return inner()
+}
+
+var[int, int, int](nn1, nn2, nn3) = get_nested_data()
+assert_eq(nn1, 1)
+assert_eq(nn2, 2)
+assert_eq(nn3, 3)
+
+// ============================================================================
+// 14. 循环内解构 — 模拟 SDL3 事件循环中多次解构
+// ============================================================================
+func get_frame_data(int frame): Array[float] {
+    return [frame * 1.0, frame * 2.0, frame * 3.0]
+}
+
+float total = 0.0
+for 5 to i {
+    var[float, float, float](fd1, fd2, fd3) = get_frame_data(i)
+    total = total + fd1 + fd2 + fd3
+}
+assert_eq(total, 60.0)
+
+// ============================================================================
+// 15. 大数组解构 — 模拟 SDL3 批量数据处理
+// ============================================================================
+func make_large_array(int n): Array[int] {
+    Array[int] result = []
+    for n to i {
+        result.add(i * 10)
+    }
+    return result
+}
+
+var large = make_large_array(10)
+var[int, int, int, int, int](la1, la2, la3, la4, la5) = large
+assert_eq(la1, 0)
+assert_eq(la2, 10)
+assert_eq(la3, 20)
+assert_eq(la4, 30)
+assert_eq(la5, 40)
+
+// ============================================================================
+// 16. 字典嵌套结构解构
+// ============================================================================
+// 字典同值类型才允许解构（Dict[string, int]）
+var nested_config = {
+    "width": 800,
+    "height": 600,
+    "flags": 0,
+    "vsync": 1
+}
+
+var{"width": int, "height": int, "flags": int, "vsync": int}(
+    nc_width, nc_height, nc_flags, nc_vsync
+) = nested_config
+assert_eq(nc_width, 800)
+assert_eq(nc_height, 600)
+assert_eq(nc_flags, 0)
+assert_eq(nc_vsync, 1)
+
+print("test_destruct_sdl3_sim passed")

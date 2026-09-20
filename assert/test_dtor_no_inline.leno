@@ -1,0 +1,41 @@
+// 测试非内联函数中析构是否正常（函数体足够大，不会被内联）
+int alive = 0
+
+struct Resource {
+    int handle = 0
+
+    func Resource() {
+        handle = 42
+        alive = alive + 1
+    }
+
+    func ~Resource() {
+        alive = alive - 1
+    }
+}
+
+// 不会被内联的大函数
+func test(): void {
+    var r = new Resource()
+    assert_eq(alive, 1)
+    assert_eq(r.handle, 42)
+    // 填充语句超过内联阈值
+    var a = 1
+    var b = 2
+    var c = 3
+    var d = 4
+    var e = 5
+    var f = 6
+    var g = 7
+    var h = 8
+    var i = 9
+    var j = 10
+    print("dummy line to prevent inlining")
+}
+
+main() {
+    assert_eq(alive, 0)
+    test()
+    assert_eq(alive, 0)  // 析构后应回 0
+    print("test_dtor_no_inline passed")
+}

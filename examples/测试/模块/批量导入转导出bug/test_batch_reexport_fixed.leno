@@ -1,0 +1,11 @@
+import "repro_batchimport_wrap_batch.leno" as Batch
+use Batch.Color
+use Batch.Point
+
+main() {
+    var c = Color.RED
+    var p = Batch.makePointBatch(3, 4)
+    print("batch Color.RED = " + c)
+    print("batch point     = (" + p.x + ", " + p.y + ")")
+    print("=== BATCH OK ===")
+}

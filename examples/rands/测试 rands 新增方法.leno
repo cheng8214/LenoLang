@@ -1,0 +1,30 @@
+import rands
+
+main() {
+    print("=== 测试 rands 新增方法 ===")
+    
+    // 测试 array
+    print("\n1. array - 批量生成随机数:")
+    var arr = rands.array(10, 1, 100)
+    print("  array(10, 1, 100) = " + arr)
+    
+    var small_arr = rands.array(5, 0, 9)
+    print("  array(5, 0, 9) = " + small_arr)
+    
+    // 测试 gauss
+    print("\n2. gauss - 正态分布随机数:")
+    print("  标准正态分布 (0, 1):")
+    for 1:5 to i {
+        print("    " + rands.gauss(0, 1))
+    }
+    
+    print("  均值为50，标准差为10:")
+    for 1:5 to i {
+        print("    " + rands.gauss(50, 10))
+    }
+    
+    // 对比 int_array 和 array
+    print("\n3. int_array vs array:")
+    print("  int_array(1, 5) = " + rands.int_array(1, 5) + " (不重复)")
+    print("  array(5, 1, 5) = " + rands.array(5, 1, 5) + " (可重复)")
+}

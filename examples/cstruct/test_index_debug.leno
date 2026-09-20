@@ -1,0 +1,19 @@
+// 调试索引访问
+
+cstruct Vec3 {
+    f32 x
+}
+
+main() {
+    var v = Vec3.malloc()
+    
+    // 先测试赋值
+    v["x"] = 1.0
+    print("after set")
+    
+    // 再测试读取
+    var val = v["x"]
+    print("val = " + val)
+    
+    v.free()
+}

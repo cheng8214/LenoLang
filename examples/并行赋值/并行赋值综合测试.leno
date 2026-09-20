@@ -1,0 +1,29 @@
+// 并行赋值综合测试
+
+main() {
+    print("=== 测试1: 基本变量交换 ===")
+    var a = 1
+    var b = 2
+    print("before: a=" + a + ", b=" + b)
+    a, b = b, a
+    print("after: a=" + a + ", b=" + b)
+    print("")
+    
+    print("=== 测试2: 与常量赋值 ===")
+    var m = 0
+    var n = 0
+    print("before: m=" + m + ", n=" + n)
+    m, n = 100, 200
+    print("after: m=" + m + ", n=" + n)
+    print("")
+    
+    print("=== 测试3: 表达式计算 ===")
+    var p = 5
+    var q = 3
+    print("before: p=" + p + ", q=" + q)
+    p, q = p + q, p - q
+    print("after: p=" + p + ", q=" + q)
+    print("")
+    
+    print("=== 所有测试完成 ===")
+}

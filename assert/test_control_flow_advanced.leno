@@ -1,0 +1,66 @@
+// 高级控制流测试
+
+main()
+{
+    // 测试 if-else if-else
+    var x = 10
+    var result = ""
+    if x < 5 {
+        result = "small"
+    } eif x < 15 {
+        result = "medium"
+    } else {
+        result = "large"
+    }
+    assert_eq(result, "medium")
+
+    // 测试 while
+    var i = 0
+    var sum = 0
+    while i < 5 {
+        sum = sum + i
+        i = i + 1
+    }
+    assert_eq(sum, 10)  // 0+1+2+3+4
+
+    // 测试 for（范围循环）- 1:6 包含 6
+    var total = 0
+    for 1:6 to j {
+        total = total + j
+    }
+    assert_eq(total, 21)  // 1+2+3+4+5+6 = 21（包含6）
+
+    // 测试 for（次数循环）
+    var count = 0
+    for 3 {
+        count = count + 1
+    }
+    assert_eq(count, 3)
+
+    // 测试 switch
+    var grade = "B"
+    var score = 0
+    switch grade {
+        case "A" {
+            score = 90
+        }
+        case "B" {
+            score = 80
+        }
+        case "C" {
+            score = 70
+        }
+        default {
+            score = 60
+        }
+    }
+    assert_eq(score, 80)
+
+    // 测试三元表达式
+    var a = 10
+    var b = 20
+    var max = if a > b then a else b
+    assert_eq(max, 20)
+
+    print("test_control_flow_advanced passed")
+}

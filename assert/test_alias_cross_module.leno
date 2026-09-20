@@ -1,0 +1,26 @@
+// 跨模塊 alias use 導入測試
+import "alias_cross_wrapper.leno" as w
+import "alias_cross_types.leno" as t
+
+// 測試1: 直接從底層模塊 use alias
+use t.MySize
+
+main() {
+    // 測試2: 通過包裝模塊調用使用 alias 類型的函數
+    var s = w.createSize(100, 200)
+    assert_eq(s.w, 100)
+    assert_eq(s.h, 200)
+
+    // 測試3: 驗證 use 導入後 MySize 在作用域中可用
+    var sz = t.makeSize(50, 75)
+    assert_eq(sz.w, 50)
+    assert_eq(sz.h, 75)
+
+    // 測試4: 通過包裝模塊調用另一個 alias 類型的函數
+    var c = w.createColor(0.5, 0.3, 0.8)
+    assert_eq(c.r, 0.5)
+    assert_eq(c.g, 0.3)
+    assert_eq(c.b, 0.8)
+
+    print("test_alias_cross_module passed")
+}

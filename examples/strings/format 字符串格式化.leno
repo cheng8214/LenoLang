@@ -1,0 +1,30 @@
+import strings
+
+main() {
+    print("=== 测试 format 字符串格式化 ===")
+    
+    // 测试全局 format 函数
+    print("\n1. 全局 format 函数:")
+    print(format("Hello %s", "World"))
+    print(format("Name: %s, Age: %d", "Leno", 5))
+    print(format("Pi = %f", 3.14159))
+    print(format("Hex: %x / %X", 255, 255))
+    print(format("Char: %c", 65))
+    print(format("100%% complete"))
+    
+    // 测试模块调用
+    print("\n2. 模块 strings.format:")
+    print(strings.format("Hello %s", "Leno"))
+    print(strings.format("Count: %d, Value: %f", 42, 3.14))
+    
+    // 测试多个参数
+    print("\n3. 多个参数:")
+    print(format("%s %s %s", "a", "b", "c"))
+    print(format("Num: %d, %d, %d", 1, 2, 3))
+    
+    // 测试边界情况
+    print("\n4. 边界情况:")
+    print(format("No format"))
+    print(format("Empty string: '%s'", ""))
+    print(format("Missing: %s %d"))  // 缺少参数
+}

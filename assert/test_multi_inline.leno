@@ -1,0 +1,116 @@
+// 回归测试：循环体内**多个函数内联点**共用 bc_off 命名空间（§8.26）
+//
+// 背景：codegen 给内联体分配的 bc_off 基址是 `0x10000 * inline_depth`，
+// 而内联只有 depth=1 —— 于是同一个循环里的第 1..N 个内联点**共用同一个
+// offmap 命名空间**。offmap_lookup 返回第一个匹配项，所以第 2..N 个内联体的
+// 内部跳转（OP_JUMP_IF_FALSE / OP_JUMP / OP_FOR_PREP 的 skip / OP_FOR_LOOP
+// 回边）会错误地解析到**第 1 个内联体**的目标，表现为死循环 + 栈逐轮漂移
+// → 首次执行即栈溢出（退出码 0xC00000FD）。
+//
+// 触发条件（缺一不可）：
+//   1. 循环体内有 ≥ 2 个可内联调用（调用同一个函数即可）
+//   2. 被内联函数体内有前向跳转（if 分支）或自己的循环
+// 本文件用 GF(2^8) 乘法 gm()（内部有 for 循环 + 两处 if）复刻 aes128 的形状。
+//
+// 期望值都是编译期算好的绝对数值；这些断言在未修复的代码上会以 0xC00000FD
+// 崩掉（不是断言失败，是进程崩溃）。
+
+var bad = 0
+
+func fail(int tag):int {
+    print("FAIL case " + tag)
+    bad = bad + 1
+    return 0
+}
+
+// 内部含 for 循环 + 两处 if（前向跳转）→ 内联后必须自行解析跳转目标
+func gm(int a, int b):int {
+    a = _uint8(a)
+    b = _uint8(b)
+    int p = 0
+    for 8 {
+        if ((b & 1) != 0) { p = p ^ a }
+        int hi = a & 0x80
+        a = _uint8(a << 1)
+        if (hi != 0) { a = a ^ 0x1b }
+        b = b >> 1
+    }
+    return p
+}
+
+// 2 个内联点
+func two(Array[int] st):Array[int] {
+    var out = []
+    for 0:3 to c {
+        int col = c * 4
+        int s0 = st[col]
+        int s1 = st[col + 1]
+        out.add(gm(2, s0) ^ gm(3, s1))
+    }
+    return out
+}
+
+// 4 个内联点（正好是 scan 的 inline_count 上限，aes128 mix_columns 的形状）
+func four(Array[int] st):Array[int] {
+    var out = []
+    for 0:3 to c {
+        int col = c * 4
+        int s0 = st[col]
+        int s1 = st[col + 1]
+        int s2 = st[col + 2]
+        int s3 = st[col + 3]
+        out.add(gm(2, s0) ^ gm(3, s1) ^ s2 ^ s3)
+        out.add(s0 ^ gm(2, s1) ^ gm(3, s2) ^ s3)
+        out.add(s0 ^ s1 ^ gm(2, s2) ^ gm(3, s3))
+        out.add(gm(3, s0) ^ s1 ^ s2 ^ gm(2, s3))
+    }
+    return out
+}
+
+main() {
+    var st = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+
+    // ---- 1) 4 个内联点：逐元素全文比对（解释器基准） ----
+    var r4 = four(st)
+    var want = "3,4,9,10,15,8,21,30,11,12,1,2,23,16,45,54"
+    var got = ""
+    var j = 0
+    while j < 16 {
+        if j > 0 { got = got + "," }
+        got = got + _str(r4[j])
+        j = j + 1
+    }
+    if got != want {
+        print("four 逐元素不符: " + got)
+        fail(1)
+    }
+
+    // ---- 2) 2 个内联点：逐元素比对 ----
+    var r2 = two(st)
+    if r2[0] != 4 or r2[1] != 0 or r2[2] != 12 or r2[3] != 8 { fail(2) }
+
+    // ---- 3) 反复调用（20 次 × 每次 4 轮内层 for = 80 次回边）
+    //         确认多轮执行后仍稳定（漂移类 bug 会随迭代累积） ----
+    var sum2 = 0
+    var sum4 = 0
+    var k = 0
+    while k < 20 {
+        var a = two(st)
+        sum2 = sum2 + a[0] + a[1] + a[2] + a[3]
+        var b = four(st)
+        var m = 0
+        while m < 16 {
+            sum4 = sum4 + b[m]
+            m = m + 1
+        }
+        k = k + 1
+    }
+    if sum2 != 20 * 24 { fail(3) }
+    if sum4 != 20 * 264 { fail(4) }
+
+    if bad > 0 {
+        print("test_multi_inline FAILED: " + bad + " 处")
+        _exit(1)
+    }
+    print("test_multi_inline ok")
+}

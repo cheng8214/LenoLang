@@ -1,0 +1,36 @@
+main() {
+    // 测试1: var 声明 null 后可以赋任何值
+    var a = null
+    print("var a = null, type: " + type(a))
+    a = 42
+    print("a = 42, type: " + type(a))
+    a = "hello"
+    print("a = 'hello', type: " + type(a))
+
+    // 测试2: 具体类型可以接收 null
+    int b = null
+    print("int b = null, type: " + type(b) + ", value: " + b)
+
+    string c = null
+    print("string c = null, type: " + type(c))
+
+    // 测试3: 函数返回 null
+    var result = findUser(0)
+    print("findUser(0): " + result)
+
+    result = findUser(1)
+    print("findUser(1): " + result)
+
+    // 测试4: 清空变量
+    var name = "cheng"
+    print("name before: " + name)
+    name = null
+    print("name after null: " + name)
+}
+
+func findUser(int id): string {
+    if id == 0 {
+        return null
+    }
+    return "cheng"
+}

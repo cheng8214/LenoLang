@@ -1,0 +1,8 @@
+// 深度嵌套测试 - Level 4
+import "deep_l5.leno" as l5
+
+export var deep4_value = 4
+
+export func deep4_func() {
+    return "L4->" + l5.deep5_func()
+}

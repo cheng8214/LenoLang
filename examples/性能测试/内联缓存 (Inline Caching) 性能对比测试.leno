@@ -1,0 +1,109 @@
+import times
+
+// ========================================
+// 内联缓存 (Inline Caching) 性能对比测试
+// ========================================
+// 
+// 测试方法：
+// 1. 先运行此文件，记录启用内联缓存的性能
+// 2. 然后注释掉 vm.c 中的内联缓存代码，重新编译
+// 3. 再次运行，对比性能差异
+//
+// 禁用内联缓存的方法：
+// 在 vm.c 中，将 ic_type_supported 函数改为始终返回 0：
+//   static inline int ic_type_supported(ObjType type) { return 0; }
+//
+
+main() {
+    print("=== 内联缓存性能对比测试 ===")
+    print("")
+    
+    var iterations = 1000000
+    
+    // 测试1: 数组方法调用
+    print("--- 测试1: 数组方法调用 (arr.len()) ---")
+    var arr = []
+    for 1000 { arr.add(1) }
+    
+    var t1 = times.ms()
+    for iterations {
+        arr.len()
+    }
+    var t2 = times.ms()
+    var arr_time = t2 - t1
+    print($"  {iterations}次 arr.len(): {arr_time}ms")
+    
+    // 测试2: 字符串方法调用
+    print("")
+    print("--- 测试2: 字符串方法调用 (str.len()) ---")
+    var str = "hello world test string"
+    
+    t1 = times.ms()
+    for iterations {
+        str.len()
+    }
+    t2 = times.ms()
+    var str_time = t2 - t1
+    print($"  {iterations}次 str.len(): {str_time}ms")
+    
+    // 测试3: 字典方法调用
+    print("")
+    print("--- 测试3: 字典方法调用 (d.has()) ---")
+    var d = {}
+    d["key1"] = "value1"
+    d["key2"] = "value2"
+    
+    t1 = times.ms()
+    for iterations {
+        d.has("key1")
+    }
+    t2 = times.ms()
+    var dict_time = t2 - t1
+    print($"  {iterations}次 d.has(): {dict_time}ms")
+    
+    // 测试4: 混合类型调用（测试缓存切换）
+    print("")
+    print("--- 测试4: 混合类型调用（缓存切换测试） ---")
+    var arr2 = [1, 2, 3]
+    var str2 = "test"
+    
+    t1 = times.ms()
+    for iterations {
+        arr2.len()   // 数组方法
+        str2.len()   // 字符串方法 - 这会触发缓存切换
+    }
+    t2 = times.ms()
+    var mixed_time = t2 - t1
+    print($"  {iterations}次交替调用: {mixed_time}ms")
+    
+    // 测试5: 链式调用（更复杂的场景）
+    print("")
+    print("--- 测试5: 链式调用场景 ---")
+    var arr3 = []
+    for 100 { arr3.add("item") }
+    
+    t1 = times.ms()
+    for iterations {
+        var len = arr3.len()
+        var first = arr3[0]
+    }
+    t2 = times.ms()
+    var chain_time = t2 - t1
+    print($"  {iterations}次属性+索引访问: {chain_time}ms")
+    
+    // 测试结果汇总
+    print("")
+    print("=== 测试结果汇总 ===")
+    print($"数组方法:  {arr_time}ms")
+    print($"字符串方法: {str_time}ms")
+    print($"字典方法:   {dict_time}ms")
+    print($"混合调用:  {mixed_time}ms")
+    print($"链式调用:  {chain_time}ms")
+    print("")
+    print("总计: " + (arr_time + str_time + dict_time + mixed_time + chain_time) + "ms")
+    print("")
+    print("提示: 注释掉内联缓存代码后重新编译，再次运行对比！")
+}
+
+// 辅助函数：获取当前缓存命中率（需要修改 VM 暴露统计信息）
+// 目前 VM 内部有 ic_hits 和 ic_misses 统计，但暂未暴露到脚本层

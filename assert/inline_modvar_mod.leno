@@ -1,0 +1,48 @@
+// R7① 回归用例的辅助模块：模块级变量 + 访问它们的 struct 方法
+//
+// 只有**模块文件**里的顶层 var 才会编译成 OP_GET_MODULE_VAR / OP_SET_MODULE_VAR
+// （入口脚本的顶层 var 是 globals[]，走 OP_GET_GLOBAL），所以「同模块内联」这一侧
+// 必须整个放在本模块里：runSame() 是调用方，Acc.bump() 是被内联方。
+
+var _sum = 0
+var _seen = 0
+
+export struct Acc {
+    int step = 1
+
+    // 体内带 for（绕开编译器层内联器 codegen_inline.c）+ 模块级变量读写
+    func bump(int n): int {
+        var acc = 0
+        for n {
+            _sum = _sum + step
+            acc = acc + _sum
+        }
+        _seen = _seen + 1
+        return acc
+    }
+}
+
+// 调用方与被内联方同属本模块 ⇒ 允许内联（R7①）
+export func runSame(int n): int {
+    _sum = 0
+    _seen = 0
+    var a = new Acc(step = 1)
+    var total = 0
+    for n {
+        total = total + a.bump(4)
+    }
+    return total
+}
+
+// 供主用例做跨模块对照 / 观察模块状态
+export func make_acc(int step): Acc {
+    return new Acc(step = step)
+}
+
+export func get_sum(): int {
+    return _sum
+}
+
+export func get_seen(): int {
+    return _seen
+}

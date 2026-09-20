@@ -1,0 +1,3 @@
+// 导出函数类型别名模块（供 test_func_type_alias_use 导入）
+export alias MyCB = func():void
+export alias IntFunc = func(int):int

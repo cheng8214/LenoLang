@@ -1,0 +1,128 @@
+// 跨模块 struct 方法的实参检查 —— 回归测试（S2 族第 9 例）
+//
+// 背景（2026-09-18 实测）：方法调用的实参检查（visit_expr.inc 的
+// `else if (receiver_type->kind == TYPE_STRUCT ...)` 分支）是这么找方法定义的：
+//
+//     for (int si = 0; si < s->root->u.block.count; si++)   // 只在本编译单元的 root AST 里找
+//         if (stmt->kind == AST_STRUCT_DEF && strcmp(stmt->u.struct_def.name, ...) == 0) ...
+//     if (struct_def_ast) { /* 参数个数 + 逐参类型 */ }
+//
+// 跨模块的 struct **不在本文件里** ⇒ struct_def_ast 恒为 NULL ⇒ 整块检查跳过
+// ⇒ **跨模块方法的实参类型与个数完全不检查**（而且与是否 use 无关）。
+// 实测：`pa.set("oops")`（`set(int v)`）零诊断、exit=0 —— 而同文件同写法**会**报
+// 「set 第 1 个参数类型不匹配: 期望 int, 实际 string」。
+//
+// 判据：跨模块（另一模块声明的 struct）
+//   ① 不 use：错实参**必须报错**（修前 exit=0）；
+//   ② use：错实参同样必须报错（修前 exit=0）；
+//   ③ 不 use：参数**过多**必须报错（修前静默）；
+//   ④ 守卫：正确实参 + 正确个数仍须编译运行通过（防"改完变误报"）。
+// 子进程机器复用 assert/helpers/compiler.leno（S7）。
+
+import dirs
+import files
+
+import "helpers/compiler.leno" as ce
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_cross_module_method_args")
+    dirs.delete(work)
+    dirs.mkdir_p(dirs.join(work, "lib"))
+
+    files.write(dirs.join(work, "lib/p.leno"),
+        "export struct Pair {\n"
+        + "    int x\n\n"
+        + "    func set(int v): int {\n"
+        + "        x = v\n"
+        + "        return x\n"
+        + "    }\n\n"
+        + "    func merge(Pair o): int {\n"
+        + "        return x + o.x\n"
+        + "    }\n"
+        + "}\n")
+
+    // ① 不 use + 错实参
+    var no_use_bad = dirs.join(work, "no_use_bad.leno")
+    files.write(no_use_bad,
+        "import \"lib/p.leno\" as a\n\n"
+        + "main() {\n"
+        + "    var pa = new a.Pair()\n"
+        + "    print(\"R=\" + pa.set(\"oops\"))\n"
+        + "}\n")
+    ce.expect_error(no_use_bad, "不 use：跨模块方法错实参必须报错（修前静默通过）",
+        "参数类型不匹配", 5)
+
+    // ② use + 错实参
+    var use_bad = dirs.join(work, "use_bad.leno")
+    files.write(use_bad,
+        "import \"lib/p.leno\" as a\nuse a.Pair\n\n"
+        + "main() {\n"
+        + "    var pa = new Pair()\n"
+        + "    print(\"R=\" + pa.set(\"oops\"))\n"
+        + "}\n")
+    ce.expect_error(use_bad, "use：跨模块方法错实参同样必须报错（修前静默通过）",
+        "参数类型不匹配", 6)
+
+    // ③ 不 use + 参数过多
+    var too_many = dirs.join(work, "too_many.leno")
+    files.write(too_many,
+        "import \"lib/p.leno\" as a\n\n"
+        + "main() {\n"
+        + "    var pa = new a.Pair()\n"
+        + "    print(\"R=\" + pa.set(1, 2))\n"
+        + "}\n")
+    ce.expect_error(too_many, "不 use：跨模块方法参数过多必须报错", "参数过多", 5)
+
+    // ④ 守卫：正确实参 + 正确个数
+    var good = dirs.join(work, "good.leno")
+    files.write(good,
+        "import \"lib/p.leno\" as a\n\n"
+        + "main() {\n"
+        + "    var pa = new a.Pair()\n"
+        + "    print(\"R=\" + pa.set(7))\n"
+        + "}\n")
+    ce.expect_ok(good, "不 use：正确实参必须仍然通过（防误报）", "R=7")
+
+    // ===== ⑯ 的验证判据：**聚合类型参数**（上面三条只覆盖基本类型 int）=====
+    // ⑯ 之前：扫描器算出了聚合参数名却没处存（ModuleStructMethod 没有 param_struct_names），
+    // 两处检查都显式 `continue` 跳过聚合类型 ⇒ 下面 ⑤⑦ **必然不报**（静默）。
+    // 故这三条既是回归守卫，也是 ⑯ 的验证（若谁把那个字段去掉，这里立刻红）。
+
+    // ⑤ 不 use：把 int 传给 Pair 参数 ⇒ 必须报错
+    var agg_bad = dirs.join(work, "agg_bad.leno")
+    files.write(agg_bad,
+        "import \"lib/p.leno\" as a\n\n"
+        + "main() {\n"
+        + "    var pa = new a.Pair()\n"
+        + "    print(\"R=\" + pa.merge(1))\n"
+        + "}\n")
+    ce.expect_error(agg_bad, "不 use：聚合类型参数类型不符必须报错（⑯ 之前静默）",
+        "参数类型不匹配", 5)
+
+    // ⑥ 守卫：正确的聚合参数必须通过
+    var agg_good = dirs.join(work, "agg_good.leno")
+    files.write(agg_good,
+        "import \"lib/p.leno\" as a\n\n"
+        + "main() {\n"
+        + "    var pa = new a.Pair()\n"
+        + "    var pb = new a.Pair()\n"
+        + "    pb.x = 3\n"
+        + "    print(\"R=\" + pa.merge(pb))\n"
+        + "}\n")
+    ce.expect_ok(agg_good, "不 use：正确的聚合参数必须通过（防误报）", "R=3")
+
+    // ⑦ use：同样必须报错（这条走占位符路径，聚合名来自 ⑯ 新字段）
+    var agg_bad_use = dirs.join(work, "agg_bad_use.leno")
+    files.write(agg_bad_use,
+        "import \"lib/p.leno\" as a\nuse a.Pair\n\n"
+        + "main() {\n"
+        + "    var pa = new Pair()\n"
+        + "    print(\"R=\" + pa.merge(1))\n"
+        + "}\n")
+    ce.expect_error(agg_bad_use, "use：聚合类型参数类型不符必须报错（⑯ 之前静默）",
+        "参数类型不匹配", 6)
+
+    dirs.delete(work)
+
+    print("test_cross_module_method_args passed")
+}

@@ -1,0 +1,98 @@
+// sdl_timer.leno — 基于 getTicks() 的定时器，Array 存回调
+// 注意：Timer 统一由 tickAllTimers() 在主循环中驱动（不要在各处手动 tick），
+// 定时器回调触发后自动 requestRedraw，无需在 onRender 中持续 requestRedraw。
+
+import "sdl_core" as core
+use core.sdl3
+sdl3 _lib = core.lib()
+
+export alias TimerCallback = func():void
+
+// 全局定时器注册表（供窗口主循环统一 tick + 自动 requestRedraw）
+Array[Timer] _timers = []
+
+export func registerTimer(Timer t) {
+    _timers.add(t)
+}
+
+export func unregisterTimer(Timer t) {
+    for _timers.len() to i {
+        if _timers[i] == t { _timers.remove(i); break }
+    }
+}
+
+// 窗口主循环每帧调用：驱动所有注册的定时器，任意一个触发回调则自动 requestRedraw
+export func tickAllTimers() {
+    bool anyFired = false
+    for _timers.len() to i {
+        if _timers[i].tick() { anyFired = true }
+    }
+    if anyFired { core.requestRedraw() }
+}
+
+// 返回所有运行中定时器的最近触发时刻（getTicks 毫秒），用于主循环动态计算 waitTimeout；
+// 无运行定时器时返回 -1
+export func nextTimerMs(): int {
+    int best = -1
+    for _timers.len() to i {
+        var t = _timers[i]
+        if t is Timer and t.running {
+            int n = _int(t._next)
+            if best < 0 or n < best { best = n }
+        }
+    }
+    return best
+}
+
+export struct Timer {
+    float   _ms = 0.0     // 定时间隔（毫秒）
+    float   _next = 0.0    // 下次触发时间（getTicks 毫秒）
+    bool    running       // 是否运行中
+    bool    once          // true=一次性
+    Array   _cb           // 回调存 [0]
+
+    // 设置并启动（循环），ms=毫秒，=0 只存回调不启动
+    func set(int ms, TimerCallback cb) {
+        _cb.clear(); _cb.add(cb); _ms = ms
+        if ms > 0 { _next = _float(_lib.SDL_GetTicks()) + _ms; running = true }
+        else { running = false }
+        once = false
+    }
+
+    // 设置一次性定时器
+    func setOnce(int ms, TimerCallback cb) {
+        _cb.clear(); _cb.add(cb); _ms = ms
+        _next = _float(_lib.SDL_GetTicks()) + _ms
+        running = true; once = true
+    }
+
+    // 暂停
+    func stop() { running = false }
+
+    // 恢复（需先有间隔）
+    func start() {
+        if _ms <= 0.0 { return }
+        _next = _float(_lib.SDL_GetTicks()) + _ms; running = true
+    }
+
+    // 修改间隔 + 立即重启计时
+    func reset(int ms) {
+        _ms = ms
+        _next = _float(_lib.SDL_GetTicks()) + _ms; running = true
+    }
+
+    // 每帧调用，自动触发回调。返回是否触发了回调（供 tickAllTimers 判断是否需 requestRedraw）
+    func tick(): bool {
+        if not running or _cb.len() == 0 or _ms <= 0.0 { return false }
+        float now = _float(_lib.SDL_GetTicks())
+        bool fired = false
+        var cb = _cb[0]
+        while now >= _next {
+            cb()
+            fired = true
+            if once { running = false; return fired }
+            _next += _ms
+        }
+        return fired
+    }
+}

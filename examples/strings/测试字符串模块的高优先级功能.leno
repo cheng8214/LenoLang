@@ -1,0 +1,45 @@
+// 测试字符串模块的高优先级功能
+
+main()
+{
+    // 1. 大小写转换
+    print("=== 1. 大小写转换 ===")
+    var s = "Hello World"
+    print("原字符串: " + s)
+    print("to_upper: " + s.to_upper())
+    print("to_lower: " + s.to_lower())
+
+    // 2. 修剪空白
+    print("\n=== 2. 修剪空白 ===")
+    var s2 = "  hello world  "
+    print("原字符串: '" + s2 + "'")
+    print("trim: '" + s2.trim() + "'")
+    print("trim_start: '" + s2.trim_start() + "'")
+    print("trim_end: '" + s2.trim_end() + "'")
+
+    // 3. 包含检查
+    print("\n=== 3. 包含检查 ===")
+    var s3 = "hello.txt"
+    print("原字符串: " + s3)
+    print("starts_with 'hello': " + s3.starts_with("hello"))
+    print("starts_with 'world': " + s3.starts_with("world"))
+    print("ends_with '.txt': " + s3.ends_with(".txt"))
+    print("ends_with '.jpg': " + s3.ends_with(".jpg"))
+
+    // 4. 查找替换
+    print("\n=== 4. 查找替换 ===")
+    var s4 = "hello world hello"
+    print("原字符串: " + s4)
+    print("replace 'hello' -> 'hi': " + s4.replace("hello", "hi"))
+
+    // 5. 子串提取
+    print("\n=== 5. 子串提取 ===")
+    var s5 = "hello world"
+    print("原字符串: " + s5)
+    print("slice(0, 5): " + s5.slice(0, 5))
+    print("slice(6, 11): " + s5.slice(6, 11))
+    print("sub_str(0, 5): " + s5.sub_str(0, 5))
+    print("sub_str(6, 5): " + s5.sub_str(6, 5))
+
+    print("\n=== 所有测试完成! ===")
+}

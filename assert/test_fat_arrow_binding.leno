@@ -1,0 +1,218 @@
+// => 绑定语法测试 (if expr is Type => var { ... })
+// 覆盖：基本类型、struct、else 分支、嵌套、作用域隔离
+// 注意：any 只能用于函数参数/返回类型，变量声明用 var
+
+// ==================== 测试 1: 基本类型绑定（参数 any） ====================
+
+func test_basic_int(any x): int {
+    if x is int => n {
+        return n
+    }
+    return -1
+}
+
+func test_basic_string(any x): int {
+    if x is string => s {
+        assert_eq(s, "hello")
+        return 1
+    }
+    return -1
+}
+
+func test_basic_float(any x): int {
+    if x is float => f {
+        assert_eq(f, 3.14)
+        return 1
+    }
+    return -1
+}
+
+func test_basic_bool(any x): int {
+    if x is bool => b {
+        assert_eq(b, true)
+        return 1
+    }
+    return -1
+}
+
+// ==================== 测试 2: 类型不匹配走 else ====================
+
+func test_mismatch_else(any x): int {
+    if x is string => s {
+        // 不应该执行
+        return 0
+    } else {
+        return 99
+    }
+}
+
+// ==================== 测试 3: 无 else 且类型不匹配 ====================
+
+func test_mismatch_no_else(any x): int {
+    if x is string => s {
+        return 0
+    }
+    return 55
+}
+
+// ==================== 测试 4: 函数调用表达式 ====================
+
+func get_value(): any {
+    return 100
+}
+
+func test_func_call_expr(): int {
+    if get_value() is int => v {
+        assert_eq(v, 100)
+        return v
+    }
+    return -1
+}
+
+// ==================== 测试 5: 绑定变量作用域隔离 ====================
+
+func test_scope_isolation(any x): int {
+    int outer = 999
+    if x is int => outer {
+        // 这里的 outer 是绑定变量，遮蔽外层
+        assert_eq(outer, 42)
+        return 1
+    }
+    // 出了 if 块，outer 还是 999
+    assert_eq(outer, 999)
+    return 2
+}
+
+// ==================== 测试 6: 嵌套绑定 ====================
+
+func test_nested_binding(any x): int {
+    if x is int => a {
+        if "hello" is string => b {
+            assert_eq(a, 42)
+            assert_eq(b, "hello")
+            return 3
+        }
+    }
+    return -1
+}
+
+// ==================== 测试 7: nullable 类型解包 ====================
+
+func maybe_int(): any {
+    return 777
+}
+
+func maybe_null(): any {
+    return null
+}
+
+func test_nullable_unwrap(): int {
+    if maybe_int() is int => val {
+        assert_eq(val, 777)
+        return 1
+    }
+    // null 不匹配 int
+    if maybe_null() is int => val2 {
+        return 0
+    }
+    return 2
+}
+
+// ==================== 测试 8: 数组元素绑定 ====================
+
+func test_array_element(): int {
+    var arr = [10, "hello", 3.14]
+    int sum = 0
+    for arr to item {
+        if item is int => n {
+            sum = sum + n
+        }
+    }
+    // 只有 10 是 int
+    assert_eq(sum, 10)
+    return 1
+}
+
+// ==================== 测试 9: struct 类型绑定 ====================
+
+struct Point {
+    int x
+    int y
+}
+
+func make_point(): any {
+    var p = new Point()
+    p.x = 10
+    p.y = 20
+    return p
+}
+
+func test_struct_binding(): int {
+    if make_point() is Point => p {
+        assert_eq(p.x, 10)
+        assert_eq(p.y, 20)
+        return 1
+    }
+    return -1
+}
+
+// ==================== 测试 10: 链式调用表达式 ====================
+
+func get_wrapper(): any {
+    return "chain_result"
+}
+
+func test_chained_expr(): int {
+    if get_wrapper() is string => result {
+        assert_eq(result, "chain_result")
+        return 1
+    }
+    return -1
+}
+
+// ==================== 测试 11: 绑定变量在 then 内被修改 ====================
+
+func test_bind_modify(any x): int {
+    if x is int => n {
+        n = n + 100
+        assert_eq(n, 105)
+        return 1
+    }
+    return -1
+}
+
+// ==================== 测试 12: 多个 => 绑定在同一函数 ====================
+
+func test_multiple_binds(any a, any b): int {
+    int found = 0
+    if a is int => av {
+        assert_eq(av, 10)
+        found = found + 1
+    }
+    if b is string => bv {
+        assert_eq(bv, "test")
+        found = found + 1
+    }
+    assert_eq(found, 2)
+    return found
+}
+
+// ==================== 运行所有测试 ====================
+
+test_basic_int(42)
+test_basic_string("hello")
+test_basic_float(3.14)
+test_basic_bool(true)
+test_mismatch_else(42)
+test_mismatch_no_else(42)
+test_func_call_expr()
+test_scope_isolation(42)
+test_nested_binding(42)
+test_nullable_unwrap()
+test_array_element()
+test_struct_binding()
+test_chained_expr()
+test_bind_modify(5)
+test_multiple_binds(10, "test")
+
+print("All => binding tests passed!")

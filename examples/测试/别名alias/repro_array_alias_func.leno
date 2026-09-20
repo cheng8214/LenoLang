@@ -1,0 +1,19 @@
+// Bug复现: Array[alias_func_type] 元素推断丢失别名
+
+export alias MyHandler = func(int):int
+
+main() {
+    MyHandler h = func(int x): int { return x + 1 }
+    print("h is MyHandler =", h is MyHandler)
+
+    // ❌ Array[MyHandler] = [h] 报错:
+    // 期望 Array[struct MyHandler], 实际 Array[func(int):int]
+    // Array[MyHandler] arr = [h]
+
+    // 实际推断为 Array[func(int):int]
+    var arr = [h]
+    print("arr[0] is func =", arr[0] is func)
+    print("arr[0] is MyHandler =", arr[0] is MyHandler)
+
+    print("=== DONE ===")
+}

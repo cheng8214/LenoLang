@@ -1,0 +1,11 @@
+import "test_math.leno" as m
+
+main()
+{
+    // 测试普通函数调用
+    var result = m.add(10, 20)
+    print("add(10, 20) = " + result)
+
+    // 测试带命名参数的函数调用（不应该被识别为struct初始化）
+    m.greet("World")
+}

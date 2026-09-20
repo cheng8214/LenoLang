@@ -1,0 +1,31 @@
+// 测试 cstruct.to_str() 方法
+
+cstruct Vec3 {
+    f32 x
+    f32 y
+    f32 z
+}
+
+main() {
+    print("=== 测试 cstruct.to_str() ===")
+    
+    // 测试定义对象的 to_str()
+    print("1. cstruct 定义的内存布局:")
+    print(Vec3.to_str())
+    print("")
+    
+    // 创建实例并设置值
+    var v = Vec3.malloc()
+    v.x = 1.5
+    v.y = 2.5
+    v.z = 3.5
+    
+    // 测试实例的 to_str()
+    print("2. cstruct 实例的内存布局（含当前值）:")
+    print(v.to_str())
+    print("")
+    
+    v.free()
+    
+    print("=== 测试完成 ===")
+}

@@ -1,0 +1,35 @@
+main() {
+    // and/or 返回什么类型？
+    var a = true and false
+    print(type(a))
+    print(a)
+
+    var b = 1 and 2
+    print(type(b))
+    print(b)
+
+    var c = 1 or 0
+    print(type(c))
+    print(c)
+
+    var d = "" or "hello"
+    print(type(d))
+    print(d)
+
+    var e = null or "default"
+    print(type(e))
+    print(e)
+
+    var f = "value" or "default"
+    print(type(f))
+    print(f)
+
+    // not 运算
+    var g = not true
+    print(type(g))
+    print(g)
+
+    var h = not 1
+    print(type(h))
+    print(h)
+}

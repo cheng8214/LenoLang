@@ -1,0 +1,119 @@
+// 测试 LenoC 字符串中 null 字节是否导致截断
+import files
+import strings
+
+main() {
+    print("=== LenoC 字符串 null 字节截断测试 ===")
+    print("")
+
+    // 测试 1：\0 转义 + 字符串拼接
+    print("--- 测试 1：\\0 转义 + 拼接 ---")
+    var s1 = "AB" + "\0" + "CD"
+    print("s1 = \"AB\" + \"\\0\" + \"CD\"")
+    print("s1.len() = " + s1.len() + " 预期=5")
+    if (s1.len() == 5) {
+        print("通过: null 字节不会截断拼接")
+    } else {
+        print("BUG: null 字节导致拼接截断!")
+    }
+    print("")
+
+    // 测试 2：strings.char(0) 拼接
+    print("--- 测试 2：strings.char(0) 拼接 ---")
+    var s2 = "A" + strings.char(0) + "B"
+    print("s2 = \"A\" + strings.char(0) + \"B\"")
+    print("s2.len() = " + s2.len() + " 预期=3")
+    print("s2.byte(0)=" + s2.byte(0) + " byte(1)=" + s2.byte(1) + " byte(2)=" + s2.byte(2))
+    if (s2.len() == 3 and s2.byte(1) == 0) {
+        print("通过: strings.char(0) 拼接正确")
+    } else {
+        print("BUG: strings.char(0) 拼接截断! len=" + s2.len())
+    }
+    print("")
+
+    // 测试 3：连续 null 字节
+    print("--- 测试 3：连续 null 字节 ---")
+    var s3 = strings.char(0, 0, 0, 0)
+    print("strings.char(0,0,0,0): len=" + s3.len() + " 预期=4")
+    if (s3.len() == 4) {
+        print("通过: 连续 null 字节不截断")
+    } else {
+        print("BUG: 连续 null 字节截断! len=" + s3.len())
+    }
+    print("")
+
+    // 测试 4：开头为 null
+    print("--- 测试 4：开头为 null ---")
+    var s4 = "\0ABC"
+    print("\"\\0ABC\": len=" + s4.len() + " 预期=4")
+    if (s4.len() == 4) {
+        print("通过: 开头 null 不截断")
+    } else {
+        print("BUG: 开头 null 截断! len=" + s4.len())
+    }
+    print("")
+
+    // 测试 5：文件读写含 null 字节
+    print("--- 测试 5：文件读写 ---")
+    var test_data = "Hello" + strings.char(0) + "World"
+    print("写入: len=" + test_data.len() + " 预期=11")
+
+    var f = files.open("d:\\test_null.bin", "wb")
+    f.write(test_data)
+    f.close()
+
+    var f2 = files.open("d:\\test_null.bin", "rb")
+    var read_data = f2.read()
+    f2.close()
+    print("读出: len=" + read_data.len() + " 预期=11")
+
+    if (read_data.len() == 11) {
+        print("通过: 文件读写含 null 字节不截断")
+    } else {
+        print("BUG: 文件读写时 null 字节截断! len=" + read_data.len())
+    }
+
+    // 逐字节验证
+    int diff = 0
+    for 0:10 to i {
+        if (test_data.byte(i) != read_data.byte(i)) {
+            diff += 1
+            print("  差异 at " + i + ": 写入=" + test_data.byte(i) + " 读出=" + read_data.byte(i))
+        }
+    }
+    if (diff == 0) {
+        print("逐字节验证通过")
+    }
+    files.delete("d:\\test_null.bin")
+    print("")
+
+    // 测试 6：整数转字符串（模拟加密场景）
+    print("--- 测试 6：整数转字符串（模拟加密场景）---")
+    // 0x41004243 = 'A' '\0' 'B' 'C'
+    int val = 0x41004243
+    var s6 = strings.char((val >> 24) & 0xFF, (val >> 16) & 0xFF, (val >> 8) & 0xFF, val & 0xFF)
+    print("0x41004243 转字符串: len=" + s6.len() + " 预期=4")
+    print("byte(0)=" + s6.byte(0) + " byte(1)=" + s6.byte(1) + " byte(2)=" + s6.byte(2) + " byte(3)=" + s6.byte(3))
+    if (s6.len() == 4 and s6.byte(0) == 0x41 and s6.byte(1) == 0x00 and s6.byte(2) == 0x42 and s6.byte(3) == 0x43) {
+        print("通过: 含 null 字节的整数转字符串正确")
+    } else {
+        print("BUG: 整数转字符串时 null 截断! len=" + s6.len())
+    }
+    print("")
+
+    // 测试 7：大量 null 字节
+    print("--- 测试 7：大量 null 字节 ---")
+    var s7 = ""
+    for 0:99 to i {
+        s7 += strings.char(0)
+    }
+    print("100个null字节: len=" + s7.len() + " 预期=100")
+    if (s7.len() == 100) {
+        print("通过: 大量 null 字节不截断")
+    } else {
+        print("BUG: 大量 null 字节截断! len=" + s7.len())
+    }
+    print("")
+
+    print("=== 测试完成 ===")
+}

@@ -1,0 +1,4 @@
+// 复现验证（跨模块）：face 定义模块
+export face F {
+    func f(): int
+}

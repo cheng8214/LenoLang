@@ -1,0 +1,12 @@
+// 类型推断测试
+
+cstruct Vec3 {
+    f32 x
+}
+
+main() {
+    var v = Vec3.malloc()
+    var t = type(v)
+    print("type(v) = '" + t + "'")
+    v.free()
+}

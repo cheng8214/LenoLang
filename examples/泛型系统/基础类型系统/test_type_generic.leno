@@ -1,0 +1,23 @@
+// 测试泛型函数内 type() 显示实际类型
+func identity[T](T v): T {
+    print(type(v))
+    return v
+}
+
+identity[int](42)
+identity[string]("hello")
+identity[float](3.14)
+
+// 泛型 struct 方法内 type()
+struct Box[T] {
+    T value
+
+    func showType() {
+        print(type(self.value))
+    }
+}
+
+var ib = new Box[int](value=42)
+var sb = new Box[string](value="hi")
+ib.showType()
+sb.showType()

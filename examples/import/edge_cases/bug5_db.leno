@@ -1,0 +1,7 @@
+import "bug5_enum.leno" as e
+use e.Level
+main() {
+    print("Low=" + Level.Low)
+    print("Mid=" + Level.Mid)
+    print("High=" + Level.High)
+}

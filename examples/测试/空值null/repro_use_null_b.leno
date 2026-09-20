@@ -1,0 +1,5 @@
+// 模块 B: 用 use 导入 A 的 enum（模拟 SDL3.leno 模式）
+import "repro_use_null_a.leno" as a
+use a.Flag         // B 自己能用 Flag.ON
+
+// 不 export，靠 import 链式传递

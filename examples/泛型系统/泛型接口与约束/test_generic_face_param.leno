@@ -1,0 +1,30 @@
+// 测试泛型 face 作为参数类型
+
+face Comparable[T] {
+    func compareTo(T other): int
+}
+
+struct IntVal impl Comparable[int] {
+    int val
+    func compareTo(int other): int {
+        if self.val < other { return -1 }
+        if self.val > other { return 1 }
+        return 0
+    }
+}
+
+// 泛型函数：参数类型为泛型 face
+func max_val[T](Comparable[T] a, Comparable[T] b): Comparable[T] {
+    return a
+}
+
+var x = new IntVal(val=3)
+var y = new IntVal(val=5)
+
+// 返回 Comparable[int] 类型，需要 as 转型访问底层字段
+var result = max_val[int](x, y)
+var intResult = result as IntVal
+print(intResult.val)
+
+// 也可以调用 face 定义的方法
+print(result.compareTo(5))

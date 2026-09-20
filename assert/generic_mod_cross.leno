@@ -1,0 +1,25 @@
+// 跨模块泛型 struct 互引用
+export struct Holder[T] {
+    T content
+
+    func getContent(): T {
+        return self.content
+    }
+}
+
+export struct Pair[K, V] {
+    K first
+    V second
+
+    func getFirst(): K {
+        return self.first
+    }
+
+    func getSecond(): V {
+        return self.second
+    }
+
+    func toHolder(): Holder[K] {
+        return new Holder[K](content=self.first)
+    }
+}

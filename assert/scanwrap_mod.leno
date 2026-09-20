@@ -1,0 +1,25 @@
+// scanwrap_mod.leno — 回归测试辅助模块：**所有列表都跨行写**
+//
+// 目的：模块的 parse + 符号扫描阶段，凡是"文本扫描循环"都必须保证推进。
+// 历史上（同一天发现的同族 bug）有 5 处循环只跳空格/制表符不跳换行、
+// 或缺进度守卫，跨行列表会让编译器**死循环**（CPU 空转、只能杀进程）：
+//   - parser_module.c       批量 use 的 alias 传导扫描（已修）
+//   - scan_pass2_init.inc   批量 use 的类型名扫描（已修）
+//   - scan_var.inc          解构变量名列表（已修）
+//   - module_loader.c       export 解构名提取（已修）
+//   - scan_struct/scan_face 泛型参数列表（已修）
+// 本文件把这些形状都摆一遍：一旦有人改回"只跳空格"，这里会立刻卡死暴露出来。
+import "scanwrap_base.leno" as base
+use base.(Base,
+          Other)
+
+export struct Pair[K,
+                   V] {
+    K k
+    V v
+}
+
+export face Mapper[T,
+                   U] {
+    func map(T t): U
+}

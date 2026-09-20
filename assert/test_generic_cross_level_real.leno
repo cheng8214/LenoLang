@@ -1,0 +1,20 @@
+// 跨级模块泛型 struct 测试
+import "generic_mod_base.leno" as base
+import "generic_mod_mid.leno" as mid
+use base.Pair
+use mid.Box
+
+var pair = new Pair[string, int](key="age", val=25)
+print(pair.getKey())
+print(pair.getVal())
+
+var box = new Box[int](value=42)
+print(box.get())
+box.set(100)
+print(box.get())
+
+var boxPair = new Box[Pair[string, int]](value=pair)
+print(boxPair.get().getKey())
+print(boxPair.get().getVal())
+
+print("test_generic_cross_level_real passed")

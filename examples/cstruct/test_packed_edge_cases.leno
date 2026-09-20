@@ -1,0 +1,164 @@
+// 边界条件测试：packed / align 的各种极端情况
+
+// ===== 1. align(1) 等价于 packed 的效果 =====
+align(1) cstruct Align1 {
+    u8  a
+    i32 b
+    u8  c
+}
+// align(1) 不取消字段间 padding，只是最终对齐为 max(4, 1) = 4
+// 所以 total 应该是 12 (正常布局), alignment=4
+
+// ===== 2. align(64) 最大值 =====
+align(64) cstruct Align64 {
+    i32 x
+}
+// total=64, alignment=64
+
+// ===== 3. packed 空结构体 =====
+packed cstruct PackedEmpty {
+    u8 a
+}
+// total=1, alignment=1
+
+// ===== 4. packed 全相同类型 =====
+packed cstruct PackedSameType {
+    u8 a
+    u8 b
+    u8 c
+    u8 d
+}
+// total=4, alignment=1
+
+// ===== 5. packed 嵌套 cstruct =====
+packed cstruct PackedInner {
+    u8  flag
+    i32 value
+}  // total=5, alignment=1
+
+packed cstruct PackedOuter {
+    u8        type
+    PackedInner inner
+    u8        checksum
+}
+// packed 模式下嵌套 cstruct 也按 1 对齐
+// type@0, inner@1 (5 bytes), checksum@6, total=7, alignment=1
+
+// ===== 6. align(2) 小于自然对齐 =====
+align(2) cstruct Align2Small {
+    i64 a    // 自然对齐 8
+    i64 b
+}
+// 自然对齐 max=8, align(2) 不影响（2 < 8）
+// total=16, alignment=8
+
+// ===== 7. align(4) 等于自然对齐 =====
+align(4) cstruct Align4Equal {
+    i32 a
+    i32 b
+}
+// total=8, alignment=4
+
+// ===== 8. packed 大数组字段 =====
+packed cstruct PackedBigArray {
+    u8  type
+    u8  data[255]
+}
+// total=256, alignment=1
+
+// ===== 9. 正常嵌套 packed 到非 packed =====
+cstruct NormalOuter {
+    PackedInner inner   // 嵌套 packed cstruct 到正常结构体
+    i32  pad
+}
+// inner 的自然对齐是 1（packed），所以 offset=0, size=5
+// pad 的自然对齐是 4, 需要 padding 到 offset=8
+// total=12, alignment=4
+
+func check(bool cond, string name): int {
+    if cond {
+        return 0
+    }
+    print("FAIL: " + name)
+    return 1
+}
+
+main() {
+    var fail = 0
+
+    // 测试 1: align(1) 不取消 padding
+    fail = fail + check(Align1.size() == 12, "Align1.size()==12 got " + Align1.size())
+    fail = fail + check(Align1.alignment() == 4, "Align1.alignment()==4 got " + Align1.alignment())
+
+    // 测试 2: align(64)
+    fail = fail + check(Align64.size() == 64, "Align64.size()==64 got " + Align64.size())
+    fail = fail + check(Align64.alignment() == 64, "Align64.alignment()==64 got " + Align64.alignment())
+
+    // 测试 3: packed 单字段
+    fail = fail + check(PackedEmpty.size() == 1, "PackedEmpty.size()==1 got " + PackedEmpty.size())
+    fail = fail + check(PackedEmpty.alignment() == 1, "PackedEmpty.alignment()==1 got " + PackedEmpty.alignment())
+
+    // 测试 4: packed 全相同类型
+    fail = fail + check(PackedSameType.size() == 4, "PackedSameType.size()==4 got " + PackedSameType.size())
+    fail = fail + check(PackedSameType.alignment() == 1, "PackedSameType.alignment()==1 got " + PackedSameType.alignment())
+
+    // 测试 5: packed 嵌套
+    fail = fail + check(PackedInner.size() == 5, "PackedInner.size()==5 got " + PackedInner.size())
+    fail = fail + check(PackedInner.alignment() == 1, "PackedInner.alignment()==1 got " + PackedInner.alignment())
+
+    fail = fail + check(PackedOuter.size() == 7, "PackedOuter.size()==7 got " + PackedOuter.size())
+    fail = fail + check(PackedOuter.alignment() == 1, "PackedOuter.alignment()==1 got " + PackedOuter.alignment())
+    fail = fail + check(PackedOuter.offset_of("type") == 0, "PackedOuter.type offset==0 got " + PackedOuter.offset_of("type"))
+    fail = fail + check(PackedOuter.offset_of("inner") == 1, "PackedOuter.inner offset==1 got " + PackedOuter.offset_of("inner"))
+    fail = fail + check(PackedOuter.offset_of("checksum") == 6, "PackedOuter.checksum offset==6 got " + PackedOuter.offset_of("checksum"))
+
+    // 测试 6: align(2) 小于自然对齐
+    fail = fail + check(Align2Small.size() == 16, "Align2Small.size()==16 got " + Align2Small.size())
+    fail = fail + check(Align2Small.alignment() == 8, "Align2Small.alignment()==8 got " + Align2Small.alignment())
+
+    // 测试 7: align(4) 等于自然对齐
+    fail = fail + check(Align4Equal.size() == 8, "Align4Equal.size()==8 got " + Align4Equal.size())
+    fail = fail + check(Align4Equal.alignment() == 4, "Align4Equal.alignment()==4 got " + Align4Equal.alignment())
+
+    // 测试 8: packed 大数组
+    fail = fail + check(PackedBigArray.size() == 256, "PackedBigArray.size()==256 got " + PackedBigArray.size())
+    fail = fail + check(PackedBigArray.alignment() == 1, "PackedBigArray.alignment()==1 got " + PackedBigArray.alignment())
+
+    // 测试 9: 正常嵌套 packed
+    fail = fail + check(NormalOuter.size() == 12, "NormalOuter.size()==12 got " + NormalOuter.size())
+    fail = fail + check(NormalOuter.alignment() == 4, "NormalOuter.alignment()==4 got " + NormalOuter.alignment())
+    fail = fail + check(NormalOuter.offset_of("inner") == 0, "NormalOuter.inner offset==0 got " + NormalOuter.offset_of("inner"))
+    fail = fail + check(NormalOuter.offset_of("pad") == 8, "NormalOuter.pad offset==8 got " + NormalOuter.offset_of("pad"))
+
+    // 测试 10: 实例读写 — packed cstruct 字段正确读写
+    var pkt = PackedOuter.malloc()
+    pkt.type = 0xAA
+    pkt.inner.flag = 1
+    pkt.inner.value = 0x12345678
+    pkt.checksum = 0xFF
+
+    fail = fail + check(pkt.type == 0xAA, "pkt.type==0xAA got " + pkt.type)
+    fail = fail + check(pkt.inner.flag == 1, "pkt.inner.flag==1 got " + pkt.inner.flag)
+    fail = fail + check(pkt.inner.value == 0x12345678, "pkt.inner.value got " + pkt.inner.value)
+    fail = fail + check(pkt.checksum == 0xFF, "pkt.checksum==0xFF got " + pkt.checksum)
+    pkt.free()
+
+    // 测试 11: debug/to_str 输出
+    var dbg = PackedOuter.debug()
+    fail = fail + check(dbg.has("packed"), "debug has 'packed'")
+    var str = PackedOuter.to_str()
+    fail = fail + check(str.has("packed"), "to_str has 'packed'")
+
+    var dbg2 = Align64.debug()
+    fail = fail + check(dbg2.has("align(64)"), "Align64 debug has 'align(64)'")
+
+    var dbg3 = PackedOuter.debug()
+    fail = fail + check(not dbg3.has("align("), "PackedOuter debug does not have 'align('")
+
+    if fail == 0 {
+        print("边界测试全部通过!")
+    } else {
+        print("边界测试: " + fail + " 个失败")
+    }
+    return fail
+}

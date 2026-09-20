@@ -1,0 +1,21 @@
+main() 
+{ 
+    print("BigInt For 循环测试:")
+    
+    // 测试 1: 普通整数 for 循环
+    print("普通整数循环 (1 到 5):")
+    for 1:5 to var i {
+        print("i = " + i)
+    }
+    
+    print("")
+    
+    // 测试 2: BigInt 的 for 循环
+    print("BigInt 循环 (9999999999999 到 10000000000003):")
+    for 9999999999999:10000000000003 to var j {
+        print("j = " + j)
+    }
+    
+    print("")
+    print("测试完成!")
+}

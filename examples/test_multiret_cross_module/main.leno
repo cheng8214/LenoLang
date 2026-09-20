@@ -1,0 +1,11 @@
+// main.leno — 跨模块导入并解构调用
+import "mod_a.leno" as mod
+use mod.(Box, makeBox)
+
+main() {
+    Box b = makeBox(3.0, 4.0)
+    // 这里应该解构出 3.0 和 4.0
+    var[float, float](mx, my) = b.getPos()
+    print(mx)   // 期望 3.0
+    print(my)   // 期望 4.0
+}

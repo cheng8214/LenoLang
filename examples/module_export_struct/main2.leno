@@ -1,0 +1,23 @@
+// 测试直接使用导入的 struct
+
+import "math.leno"
+
+main()
+{
+    print("测试直接使用导入的 struct")
+    
+    // 使用导入的函数创建 Point
+    var p1 = math.create_point(10, 20)
+    print($"Point1: x={p1.x}, y={p1.y}")
+    var p=math.get()
+    print(p.test())
+    int a=p1.x
+    var p2 = math.create_point(30, 40)
+    print($"Point2: x={p2.x}, y={p2.y}")
+    
+    // 使用导入的函数计算距离
+    int dist = math.distance(p1, p2)
+    print($"Distance: {dist}")
+    
+    print("测试完成!")
+}

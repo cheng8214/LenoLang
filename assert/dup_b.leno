@@ -1,0 +1,7 @@
+// 模块 B - 也导入共享模块
+import "dup_shared.leno" as s
+
+export func use_shared() {
+    s.increment()
+    return s.get_count()
+}

@@ -1,0 +1,6 @@
+import io
+main()
+{
+	print("Hello LenoLang")//这是注册的全局
+	io.print("这是通过io模块访问")
+}

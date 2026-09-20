@@ -1,0 +1,73 @@
+// 解释器与脚本的命令行边界 —— 回归测试（易用性痛点 P2）
+//
+// 背景（2026-09-18 实测）：`leno.exe trae_sign.leno --list` 会被解释器当成**自己的**未知选项 ⇒
+//   打印帮助、**脚本根本不跑** ✗（移植 TraeSign 时几乎静默地卡住；参考件 `trae-checkin.js`
+//   的 CLI 全是 `--status/--json/--list`，照抄必踩）。
+//
+// 修法（与 `_args()` 的取法对齐成**同一条边界**）：
+//   · 脚本路径**之后**的 '-' 开头参数 ⇒ 原样交给脚本（`_args()` 能拿到）；
+//   · `--` 终止解释器自己的选项解析（其后的第一个参数就是脚本，哪怕它以 '-' 开头）；
+//   · 未知旗标写在**脚本路径之前**仍报「未知选项」+ 打印帮助（别把这个提示弄丢）。
+//
+// 判据：
+//   ① 脚本路径之后的旗标必须原样进 `_args()`（修前脚本根本不跑）；
+//   ② `--` 终止符之后的参数同样进 `_args()`；
+//   ③ 守卫：脚本**之前**的未知旗标仍必须报错（退出码非 0 + 文案含「未知选项」）；
+//   ④ 守卫：无参数时照常跑（`_args()` 为空）。
+
+import dirs
+import files
+import strings
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_cli_script_args")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    var echo = dirs.join(work, "echoargs.leno")
+    files.write(echo,
+        "main() {\n"
+        + "    var a = _args()\n"
+        + "    print(\"N=\" + a.len())\n"
+        + "    for a to v {\n"
+        + "        print(\"A=\" + v)\n"
+        + "    }\n"
+        + "}\n")
+
+    // exe 不能加引号（native_exec 走 `cmd /c <cmd> > tmp 2>&1`，cmd 会剥最外两层引号）；
+    // 只给脚本路径加引号（临时目录路径可能含空格）。与 assert/helpers/compiler.leno 同理。
+    var exe = _executable()
+
+    // ① 脚本路径之后的旗标 ⇒ 进 _args()
+    var r1 = _exec(exe + " \"" + echo + "\" --list status")
+    assert_ne(r1, null, "①_exec 返回 null（子进程起不来？）")
+    var o1 = _str(r1[0])
+    assert_eq(r1[1], 0, "①脚本后带旗标必须照常运行（修前脚本不跑）；输出=" + o1)
+    assert_true(strings.has(o1, "N=2"), "①_args() 应有 2 个参数；输出=" + o1)
+    assert_true(strings.has(o1, "A=--list"), "①_args() 应含 --list（原样透传）；输出=" + o1)
+    assert_true(strings.has(o1, "A=status"), "①_args() 应含 status；输出=" + o1)
+
+    // ② '--' 终止解释器选项解析
+    var r2 = _exec(exe + " -- \"" + echo + "\" -x")
+    assert_ne(r2, null, "②_exec 返回 null")
+    var o2 = _str(r2[0])
+    assert_eq(r2[1], 0, "②'--' 之后必须照常运行；输出=" + o2)
+    assert_true(strings.has(o2, "A=-x"), "②'--' 之后的 -x 应进 _args()；输出=" + o2)
+
+    // ③ 守卫：脚本之前的未知旗标仍要报错（提示别弄丢）
+    var r3 = _exec(exe + " --nope \"" + echo + "\"")
+    assert_ne(r3, null, "③_exec 返回 null")
+    var o3 = _str(r3[0])
+    assert_true(r3[1] != 0, "③脚本前的未知旗标必须报错（exit != 0）；输出=" + o3)
+    assert_true(strings.has(o3, "未知选项"), "③应提示「未知选项」；输出=" + o3)
+
+    // ④ 守卫：无参数时照常跑，_args() 为空
+    var r4 = _exec(exe + " \"" + echo + "\"")
+    assert_ne(r4, null, "④_exec 返回 null")
+    var o4 = _str(r4[0])
+    assert_eq(r4[1], 0, "④无参数应照常运行；输出=" + o4)
+    assert_true(strings.has(o4, "N=0"), "④无参数时 _args() 应为空；输出=" + o4)
+
+    dirs.delete(work)
+    print("test_cli_script_args passed")
+}

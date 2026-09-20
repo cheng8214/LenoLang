@@ -1,0 +1,43 @@
+// 跨模块 enum 值注释回归测试模块
+// 每个成员都有行注释，验证 scan_enum.inc 正确截断注释并解析值
+export enum OptWithComments {
+    VERBOSE             = 41      // CURLOPTTYPE_LONG + 41
+    HEADER              = 42      // CURLOPTTYPE_LONG + 42
+    NOPROGRESS          = 43      // CURLOPTTYPE_LONG + 43
+    NOBODY              = 44      // CURLOPTTYPE_LONG + 44
+    FAILONERROR         = 45      // CURLOPTTYPE_LONG + 45
+    FOLLOWLOCATION      = 52      // CURLOPTTYPE_LONG + 52
+    MAXREDIRS           = 68      // CURLOPTTYPE_LONG + 68
+    POST                = 47      // CURLOPTTYPE_LONG + 47
+    HTTPGET             = 80      // CURLOPTTYPE_LONG + 80
+    TIMEOUT             = 13      // 超时（秒）
+    TIMEOUT_MS          = 155     // 超时（毫秒）
+    URL                 = 10002   // CURLOPTTYPE_STRINGPOINT + 2, 请求 URL
+    WRITEDATA           = 10001   // 写回调用户数据
+    USERAGENT           = 10018   // User-Agent 字符串
+    ACCEPT_ENCODING     = 10102   // Accept-Encoding
+    WRITEFUNCTION       = 20011   // 写回调函数
+    HEADERFUNCTION      = 20079   // header 回调函数
+    HTTPHEADER          = 10023   // HTTP header slist
+    POSTFIELDS          = 10015   // POST 字段
+    CUSTOMREQUEST       = 10036   // 自定义请求方法
+}
+
+// 十六进制带注释
+export enum InfoWithComments {
+    EFFECTIVE_URL       = 0x100001  // CURLINFO_STRING + 1
+    RESPONSE_CODE       = 0x200002  // CURLINFO_LONG + 2
+    TOTAL_TIME          = 0x300003  // CURLINFO_DOUBLE + 3
+    CONNECT_TIME        = 0x300005  // CURLINFO_DOUBLE + 5
+    CONTENT_TYPE        = 0x100012  // CURLINFO_STRING + 18
+    HEADER_SIZE         = 0x20000B  // CURLINFO_LONG + 11
+    REDIRECT_COUNT      = 0x200014  // CURLINFO_LONG + 20
+}
+
+// 无注释版本（对照组）
+export enum OptNoComments {
+    VERBOSE             = 41
+    HEADER              = 42
+    URL                 = 10002
+    WRITEFUNCTION       = 20011
+}

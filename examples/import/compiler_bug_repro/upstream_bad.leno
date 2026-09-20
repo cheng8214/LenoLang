@@ -1,0 +1,9 @@
+// upstream_bad.leno — 配合 bug2_cascade_errors.leno 使用
+// 本模块包含一个类型错误（返回类型不匹配），
+// 会导致依赖此模块的 bug2_cascade_errors.leno 报"模块加载失败"。
+
+export func compute(any x): int
+{
+    // any 参数返回时声明 int，但 any 不能自动收窄到 int
+    return x
+}

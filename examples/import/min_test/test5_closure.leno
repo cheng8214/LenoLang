@@ -1,0 +1,5 @@
+import "mod_closure.leno" as m
+var c = m.make_counter(0)
+print("count1=" + c())
+print("count2=" + c())
+print("count3=" + c())

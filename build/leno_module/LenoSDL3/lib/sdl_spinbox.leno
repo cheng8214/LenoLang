@@ -1,0 +1,297 @@
+// sdl_spinbox.leno — 数值微调框（SpinBox）
+// 通过 win.addSpinBox({...}) 创建：左侧 Edit 编辑数值，右侧上下箭头按钮 ±step，滚轮也可调整。
+// 复用 Edit 实现文本输入 / 光标 / IME / 剪贴板，SpinBox 仅负责箭头与数值约束。
+import "sdl_renderer.leno" as ren; use ren.Renderer
+import "sdl_event.leno" as evt; use evt.Event
+import "sdl_core.leno" as core; use core.SystemCursor
+import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_tooltip.leno" as tip
+import maths
+import "sdl_edit.leno" as edt; use edt.Edit
+import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
+use theme.Color
+
+export struct SpinBox impl Widget, Themeable {
+    float x = 0.0, y = 0.0, w = 140.0, h = 34.0
+    float _arrowW = 20.0            // 右侧箭头区宽度
+    float minV = 0.0, maxV = 100.0, value = 0.0, step = 1.0
+    bool _intMode = false           // 整数模式（true 时显示为整数）
+    int _decimals = 2               // 浮点显示小数位
+    Edit? _edit   // 内嵌编辑框（文本输入/IME）
+    Ptr[u8]? _hwnd
+
+    Color _bgColor = #262830FF       // 整体背景
+    Color _bdrColor = #5A5F6EFF      // 边框色
+    Color _focusColor = #64B4FFFF     // 聚焦边框色
+    Color _arrowColor = #2C2E36FF    // 箭头区背景
+    Color _btnColor = #DCE1EBFF     // 箭头符号色
+
+    bool _hoverUp = false, _hoverDown = false, _wasUp = false, _wasDown = false
+    bool _wasFocused = false
+    int _cursor = SystemCursor.POINTER
+    bool enabled = true, visible = true, _loaded = false
+    string _tip = ""
+    func(float):void _onChange
+
+    // ==================== 工具 ====================
+
+    func _quantize(float v): float {
+        if step > 0.0 { v = maths.round(v / step) * step }
+        return maths.max(minV, maths.min(v, maxV))
+    }
+    func _digit(string c): int {
+        switch c {
+            case "0" { return 0 } case "1" { return 1 } case "2" { return 2 }
+            case "3" { return 3 } case "4" { return 4 } case "5" { return 5 }
+            case "6" { return 6 } case "7" { return 7 } case "8" { return 8 }
+            case "9" { return 9 }
+            default  { return 0 }
+        }
+    }
+    func _fmt(): string {
+        if _intMode { return (_int(value)) as string }
+        if _decimals > 0 {
+            float p = 1.0
+            for _decimals to _ { p = p * 10.0 }
+            float r = maths.round(value * p) / p
+            return (r) as string
+        }
+        return (value) as string
+    }
+    func _sync_text() {
+        _edit?.set_text(_fmt())
+    }
+    // 解析内嵌 Edit 的文本为数值（手动解析，避免依赖不确定转换）
+    func _try_apply_text() {
+        if _edit == null { return }
+        string s = _edit.get_text()
+        int n = s.len()
+        if n == 0 { return }
+        int i = 0
+        bool neg = false
+        if s.slice(0, 1) == "-" { neg = true; i = 1 }
+        if neg and n == 1 { return }
+        bool anyDigit = false
+        float intPart = 0.0; float frac = 0.0; bool hasFrac = false; float fdiv = 1.0
+        for i : n - 1 to k {
+            string c = s.slice(k, k + 1)
+            if c == "." {
+                if hasFrac { return }
+                hasFrac = true
+                continue
+            }
+            if c >= "0" and c <= "9" {
+                anyDigit = true
+                int d = _digit(c)
+                if hasFrac { fdiv = fdiv * 10.0; frac = frac + d / fdiv }
+                else { intPart = intPart * 10.0 + d }
+            } else { return }
+        }
+        if not anyDigit { return }
+        float v = intPart + frac
+        if neg { v = -v }
+        if step > 0.0 { v = _quantize(v) }
+        value = maths.max(minV, maths.min(v, maxV))
+        if _onChange != null { _onChange(value) }
+    }
+    func _step_delta(): float { return if step > 0.0 then step else 1.0 }
+
+    // ==================== set 初始化 ====================
+    func set(Dict opts) {
+        Theme th = theme.getTheme()
+        _bgColor = th.bg
+        _bdrColor = th.border
+        _focusColor = th.accentFocus
+        _arrowColor = th.bgAlt
+        _btnColor = th.txtHeader
+        x = opts.get("x", 0)
+        y = opts.get("y", 0)
+        w = opts.get("w", 140)
+        h = opts.get("h", 34)
+        minV = opts.get("min", 0.0)
+        maxV = opts.get("max", 100.0)
+        value = opts.get("value", 0.0)
+        step = opts.get("step", 1.0)
+        _intMode = opts.get("int_mode", false)
+        _decimals = opts.get("decimals", 2)
+        _arrowW = opts.get("arrow_w", 20.0)
+        if _arrowW < 12.0 { _arrowW = 12.0 }
+
+        float ew = w - _arrowW
+        if ew < 10.0 { ew = 10.0 }
+        _edit = edt.createEdit({x: x, y: y, w: ew, h: h, border: false, draw_bg: false, radius: 0,
+                                font_size: opts.get("font_size", 15),
+                                placeholder: opts.get("placeholder", "")})
+        _edit.on_change(func() { _try_apply_text() })
+
+        // 颜色：opts 未传则保持默认值
+        if opts.get("bg_color") is Color => t { _bgColor = t }
+        _edit.set_bg_color(_bgColor)
+        _edit.set_text_color(th.txtInput)
+        if opts.get("border_color") is Color => t { _bdrColor = t }
+        if opts.get("focus_color") is Color => t { _focusColor = t }
+
+        if opts.get("arrow_color") is Color => t { _arrowColor = t }
+        // 默认箭头符号色见字段声明（_btnColor）
+
+        _cursor = opts.get("cursor", SystemCursor.POINTER)
+        enabled = opts.get("enabled", true)
+        visible = opts.get("visible", true)
+        _tip = opts.get("tip", "")
+
+        value = maths.max(minV, maths.min(value, maxV))
+        _sync_text()
+        _loaded = true
+    }
+
+    // ==================== 布局接口 ====================
+    func get_w(): float { return w }
+    func get_h(): float { return h }
+    func get_x(): float { return x }
+    func get_y(): float { return y }
+    func set_pos(float px, float py) {
+        x = px; y = py
+        _edit?.set_pos(x, y); _edit?.set_size(w - _arrowW, h)
+    }
+    func set_size(float sw, float sh) {
+        w = sw; h = sh
+        _edit?.set_pos(x, y); _edit?.set_size(w - _arrowW, h)
+    }
+
+    // ==================== 设置方法 ====================
+    func set_value(float v) {
+        float nv = _quantize(v)
+        if nv != value {
+            value = nv
+            _sync_text()
+            if _onChange != null { _onChange(value) }
+        }
+    }
+    func get_value(): float { return value }
+    func set_range(float lo, float hi) { minV = lo; maxV = hi; value = maths.max(minV, maths.min(value, maxV)); _sync_text() }
+    func set_step(float s) { step = s }
+    func set_int_mode(bool m) { _intMode = m; if m { _decimals = 0 }; _sync_text() }
+    func set_decimals(int d) { _decimals = d; if _intMode { _decimals = 0 }; _sync_text() }
+    func set_tip(string t) { _tip = t }
+    func set_enabled(bool e) { enabled = e; _edit?.set_enabled(e) }
+    func set_visible(bool v) { visible = v }
+    func is_visible(): bool { return visible }
+    func is_enabled(): bool { return enabled }
+    func get_text(): string { return _edit?.get_text() ?? "" }
+    func on_change(func(float):void cb) { _onChange = cb }
+    func _bind_window(Ptr[u8] hwnd) { _hwnd = hwnd; _edit?.set_window(hwnd) }
+
+    func contains(float mx, float my): bool {
+        return mx >= x and mx <= x + w and my >= y and my <= y + h
+    }
+
+    // ==================== 交互 ====================
+    func process(Event ev) {
+        if not _loaded or not visible or not enabled {
+            _hoverUp = false; _hoverDown = false
+            return
+        }
+        var[float, float](mx, my) = ev.mousePos()
+        if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
+        // 弹层捕获：事件落在他人弹层范围内时，跳过自身交互（滚轮/箭头），
+        // 但仍转发给内嵌 Edit——Edit 可能拥有该弹层（如右键菜单），需要接收事件。
+        bool inPopup = core.inPopupCapture(mx, my)
+
+        // 其余事件转发给内嵌 Edit（箭头区在 Edit 之外，Edit 自动忽略）
+        // Edit 内部自行通过 inPopupCapture 守卫，无需在此阻断
+        _edit?.process(ev)
+
+        if inPopup { return }
+
+        // 滚轮：整框内 → ±step
+        if ev.isMouseWheel() {
+            if not contains(ev.wheelMouseX(), ev.wheelMouseY()) { return }
+            float d = ev.wheelY()
+            if d == 0.0 { return }
+            float delta = _step_delta()
+            if d > 0.0 { set_value(value + delta) } else { set_value(value - delta) }
+            return
+        }
+
+        float ax = x + (w - _arrowW)
+        float midY = y + h / 2.0
+        bool upHit = mx >= ax and mx <= x + w and my >= y and my <= midY
+        bool downHit = mx >= ax and mx <= x + w and my > midY and my <= y + h
+
+        if ev.isMouseMotion() {
+            _wasUp = _hoverUp; _wasDown = _hoverDown
+            _hoverUp = upHit; _hoverDown = downHit
+            if _hoverUp != _wasUp or _hoverDown != _wasDown { core.markFrameRedraw() } else { core.markFrameMotion() }
+            if (upHit or downHit) and _cursor >= 0 { core.requestCursor(_cursor) }
+            if _tip != "" {
+                if upHit or downHit { tip.tipReport(_tip, mx, my) }
+            }
+        }
+
+        if ev.isMouseButtonDown() {
+            float delta = _step_delta()
+            if upHit { set_value(value + delta) }
+            else if downHit { set_value(value - delta) }
+        }
+
+        // 失焦时把文本同步为规范值
+        bool f = _edit?.is_focused() ?? false
+        if _wasFocused and not f { _sync_text() }
+        _wasFocused = f
+    }
+
+    // ==================== 渲染 ====================
+    func render(Renderer r) {
+        if not _loaded or not visible { return }
+        _edit?.render(r)
+
+        float ax = x + (w - _arrowW)
+        Color aC = _arrowColor
+        if _hoverUp or _hoverDown { aC = theme.brighten(_arrowColor, 10) }
+        r.setColor(aC)
+        r.fillRect(ax, y, _arrowW, h)
+
+        r.setColor(_bdrColor)
+        r.drawLine(ax, y, ax, y + h)
+
+        float s = 4.0
+        float cxA = ax + _arrowW / 2.0
+        // 上箭头
+        Color bC = _btnColor
+        if _hoverUp { bC = theme.brighten(_btnColor, 40) }
+        r.setColor(bC)
+        float uy = y + h / 4.0
+        r.drawLine(cxA - s, uy + s * 0.5, cxA, uy - s * 0.5)
+        r.drawLine(cxA, uy - s * 0.5, cxA + s, uy + s * 0.5)
+        // 下箭头
+        Color dC = _btnColor
+        if _hoverDown { dC = theme.brighten(_btnColor, 40) }
+        r.setColor(dC)
+        float dy = y + h * 0.75
+        r.drawLine(cxA - s, dy - s * 0.5, cxA, dy + s * 0.5)
+        r.drawLine(cxA, dy + s * 0.5, cxA + s, dy - s * 0.5)
+
+        // 外边框（聚焦高亮）
+        if _edit != null and _edit.is_focused() { r.setColor(_focusColor) }
+        else { r.setColor(_bdrColor) }
+        r.drawRect(x, y, w, h)
+    }
+
+    func dispose() {
+        _edit?.dispose(); _edit = null
+    }
+
+    func applyTheme(Theme t) {
+        _bgColor = t.bg
+        _bdrColor = t.border
+        _focusColor = t.accentFocus
+        _arrowColor = t.bgAlt
+        _btnColor = t.txtHeader
+        _edit?.applyTheme(t)
+    }
+}
+
+// 工厂
+export func createSpinBox(Dict opts): SpinBox {
+    SpinBox s = new SpinBox(); s.set(opts); return s
+}

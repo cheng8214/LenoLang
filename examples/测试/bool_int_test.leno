@@ -1,0 +1,51 @@
+// bool vs int 隐式转换测试
+// 验证 bool 可以隐式转换为 int/float/bigint
+
+func test_int_param(int x) {
+    print("  int 参数 = " + x)
+}
+
+func test_float_param(float x) {
+    print("  float 参数 = " + x)
+}
+
+main() {
+    print("=== bool -> int 隐式转换 ===")
+    int a = true
+    print("  int a = true => " + a)
+    int b = false
+    print("  int b = false => " + b)
+
+    print("\n=== bool -> float 隐式转换 ===")
+    float c = true
+    print("  float c = true => " + c)
+    float d = false
+    print("  float d = false => " + d)
+
+    print("\n=== bool 作为函数参数 ===")
+    test_int_param(true)
+    test_int_param(false)
+    test_float_param(true)
+    test_float_param(false)
+
+    print("\n=== bool 赋给 var 变量后再使用 ===")
+    var flag = true
+    int n = flag
+    print("  int n = flag(true) => " + n)
+
+    print("\n=== as int 转换 ===")
+    var x = true as int
+    print("  true as int => " + x)
+    var y = false as int
+    print("  false as int => " + y)
+
+    print("\n=== 数组中的 bool -> int ===")
+    Array[int] arr = [true, false, true]
+    print("  Array[int] = [true, false, true] => " + arr)
+
+    print("\n=== 字典中的 bool -> int ===")
+    Dict[string, int] dict = {"a": true, "b": false}
+    print("  Dict[string, int] => a=" + dict["a"] + ", b=" + dict["b"])
+
+    print("\n✅ 所有测试通过!")
+}

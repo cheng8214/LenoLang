@@ -1,0 +1,27 @@
+import times
+// 参数数量扩展性：1参 vs 7参
+func f1(int a):int {
+    for 1 {}
+    return a
+}
+func f7(int a,int b,int c,int d,int e,int f,int g):int {
+    for 1 {}
+    return a
+}
+main() {
+    int N = 10000000
+    var t1 = times.ms()
+    var s = 0
+    for N {
+        s = f1(s)
+    }
+    var t2 = times.ms()
+    print($"1参调用: " + (t2-t1) + "ms")
+    t1 = times.ms()
+    for N {
+        s = f7(1,2,3,4,5,6,s)
+    }
+    t2 = times.ms()
+    print($"7参调用: " + (t2-t1) + "ms")
+    return 0
+}

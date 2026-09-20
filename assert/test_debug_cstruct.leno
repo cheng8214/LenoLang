@@ -1,0 +1,36 @@
+import ffi
+
+cstruct MEMORYSTATUS {
+    u32 dwLength
+    u32 dwMemoryLoad
+    u64 dwTotalPhys
+    u64 dwAvailPhys
+    u64 dwTotalPageFile
+    u64 dwAvailPageFile
+    u64 dwTotalVirtual
+    u64 dwAvailVirtual
+}
+
+main() {
+    var kernel32 = ffi.load("kernel32.dll")
+    var memStatus = MEMORYSTATUS.malloc()
+
+    try {
+        memStatus.dwLength = MEMORYSTATUS.size()
+        ffi.call(kernel32, "GlobalMemoryStatus", memStatus.to_ptr())
+
+        // 直接读取字段值
+        print("dwLength: " + memStatus.dwLength)
+        print("dwMemoryLoad: " + memStatus.dwMemoryLoad)
+        print("dwTotalPhys: " + memStatus.dwTotalPhys)
+        print("dwAvailPhys: " + memStatus.dwAvailPhys)
+        print("dwTotalPageFile: " + memStatus.dwTotalPageFile)
+        print("dwAvailPageFile: " + memStatus.dwAvailPageFile)
+        print("dwTotalVirtual: " + memStatus.dwTotalVirtual)
+        print("dwAvailVirtual: " + memStatus.dwAvailVirtual)
+
+    } finally {
+        memStatus.free()
+        ffi.free(kernel32)
+    }
+}

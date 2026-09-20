@@ -1,0 +1,14 @@
+// 简化测试
+
+import "color_module.leno"
+
+main() {
+    // 先测试能否访问 Color 本身
+    var c = color_module.Color
+    print("Color:", c)
+
+    // 测试访问 enum 成员
+    print("Color.red:", color_module.Color.red)
+    print("Color.green:", color_module.Color.green)
+    print("Color.blue:", color_module.Color.blue)
+}

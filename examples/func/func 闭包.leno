@@ -1,0 +1,17 @@
+main() 
+{
+    var a=10
+     test()
+	func test()
+	{
+		var a=100
+		print("test:"+a)
+		func test1()
+		{
+			print("test1:"+a)
+		}
+		test1()
+	}
+   
+    print(a)
+}

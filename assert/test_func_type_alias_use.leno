@@ -1,0 +1,32 @@
+// 函数类型别名跨模块 use 导入断言
+// 防止回归 bug_use_alias_func_type
+
+import "func_type_alias_mod.leno" as m
+use m.MyCB
+use m.IntFunc
+
+// 场景 1: 普通函数参数使用 use 导入的函数类型别名
+func callCB(MyCB cb) { cb() }
+func hi() { print("hi from callCB") }
+callCB(hi)
+
+// 场景 2: struct 方法参数使用 use 导入的函数类型别名
+struct Local {
+    func test(MyCB cb) { cb() }
+    func compute(IntFunc f, int x): int { return f(x) }
+}
+
+var l = new Local()
+l.test(hi)
+
+func double(int x): int { return x * 2 }
+assert_eq(l.compute(double, 5), 10)
+
+// 场景 3: 变量声明使用 use 导入的函数类型别名
+MyCB callback = hi
+callback()
+
+IntFunc fn = double
+assert_eq(fn(10), 20)
+
+print("test_func_type_alias_use passed")

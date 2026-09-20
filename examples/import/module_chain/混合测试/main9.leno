@@ -1,0 +1,9 @@
+import "test_math.leno" as m
+
+main()
+{
+    // 测试：普通函数调用使用命名参数形式
+    // 这会被错误地识别为 struct 初始化吗？
+    var result = m.add(a=10, b=20)
+    print("add(a=10, b=20) = " + result)
+}

@@ -1,0 +1,11 @@
+// 模块 C - 依赖 logger
+
+import "init_logger.leno" as logger
+
+logger.log_init("module_c")
+
+export var c_value = 3
+
+export func get_value() {
+    return c_value
+}

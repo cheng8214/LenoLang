@@ -1,0 +1,104 @@
+// 回归测试：OP_NOT 对 NaN-boxed bool 的处理
+//
+// 背景（历史）：旧实现只区分「int48 / 其它」两类，把 NaN-boxed 的 true / false / null
+// 当裸 double 走 ucomisd —— NaN 比较是 unordered（ZF=1），`sete` 恒得 1，
+// 于是 `not <任何 bool>` 恒为真。五子棋 bestMove 里 `if not nearStone(...) { continue }`
+// 因此永远 continue，候选点恒为空，AI 每步都落天元（AI 对 AI 全部下在一个点）。
+//
+// 每个 case 单独一个热循环（300 轮），逐一覆盖各自的操作数形态。
+
+func alwaysTrue(): bool { return true }
+func alwaysFalse(): bool { return false }
+
+struct Flag {
+    bool on
+    int v
+}
+
+var flag = new Flag()
+
+// not <true> 应为 false → 计数 0
+func cntNotTrue(): int {
+    var c = 0
+    for 0 : 300 to i { if not alwaysTrue() { c = c + 1 } }
+    return c
+}
+
+// not <false> 应为 true → 计数 301
+func cntNotFalse(): int {
+    var c = 0
+    for 0 : 300 to i { if not alwaysFalse() { c = c + 1 } }
+    return c
+}
+
+// not <bool 局部量>
+func cntNotLocal(): int {
+    var c = 0
+    for 0 : 300 to i {
+        bool y = false
+        if not y { c = c + 1 }
+    }
+    return c
+}
+
+// not <bool 结构体字段>（flag.on = true → 计数 0）
+func cntNotField(): int {
+    var c = 0
+    for 0 : 300 to i { if not flag.on { c = c + 1 } }
+    return c
+}
+
+// not <int48 比较结果>（i < 0 恒假 → 计数 301）
+func cntNotInt(): int {
+    var c = 0
+    for 0 : 300 to i { if not (i < 0) { c = c + 1 } }
+    return c
+}
+
+// not <裸 double 0.0> → 计数 301
+func cntNotFloat(): int {
+    var c = 0
+    for 0 : 300 to i { if not 0.0 { c = c + 1 } }
+    return c
+}
+
+// 嵌套循环 + not + continue（与五子棋 bestMove 同型）→ 31 × 31 = 961
+func cntNestedContinue(): int {
+    var n = 0
+    for 0 : 30 to r {
+        for 0 : 30 to c {
+            if not alwaysTrue() { continue }
+            if not (c < 0) { n = n + 1 }
+        }
+    }
+    return n
+}
+
+main() {
+    flag.on = true
+
+    var bad = 0
+    var r1 = cntNotTrue()
+    var r2 = cntNotFalse()
+    var r3 = cntNotLocal()
+    var r4 = cntNotField()
+    var r5 = cntNotInt()
+    var r6 = cntNotFloat()
+    var r7 = cntNestedContinue()
+
+    if r1 != 0 { bad = bad + 1 }
+    if r2 != 301 { bad = bad + 1 }
+    if r3 != 301 { bad = bad + 1 }
+    if r4 != 0 { bad = bad + 1 }
+    if r5 != 301 { bad = bad + 1 }
+    if r6 != 301 { bad = bad + 1 }
+    if r7 != 961 { bad = bad + 1 }
+
+    if bad > 0 {
+        print("OP_NOT 结果错误: " + _str(bad) + " 项  期望 0,301,301,0,301,301,961 实得 "
+              + _str(r1) + "," + _str(r2) + "," + _str(r3) + "," + _str(r4)
+              + "," + _str(r5) + "," + _str(r6) + "," + _str(r7))
+        _exit(1)
+    }
+    print("test_not_bool ok")
+}

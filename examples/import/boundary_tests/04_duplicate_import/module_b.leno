@@ -1,0 +1,11 @@
+// 模块 B - 也导入共享模块
+
+import "shared_module.leno" as shared
+
+export func use_shared() {
+    return "B: " + shared.init()
+}
+
+export func get_shared_count() {
+    return shared.get_count()
+}

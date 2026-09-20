@@ -1,0 +1,99 @@
+// leno-grep v2  — 正则 + 递归 + 大文件检测 + 跨平台路径
+// 用法: leno leno-grep.leno [line] [icase] [regex] [recursive] pattern file/dir...
+import files
+import strings
+import regexs
+import dirs
+
+int opt_line     = 0
+int opt_icase    = 0
+int opt_regex    = 0
+int opt_recurse  = 0
+int matched      = 0
+int files_done   = 0
+string sep       = if _os() == "windows" then "\\" else "/"
+
+func is_match(string line, string pattern):bool {
+    var l = if opt_icase then strings.to_lower(line)   else line
+    var p = if opt_icase then strings.to_lower(pattern) else pattern
+    return if opt_regex then regexs.match(l, p) else strings.has(l, p)
+}
+
+// 检查文件大小（不读取内容）
+func file_size(string path):int {
+    var f = files.open(path, "r")
+    if f == null { return -1 }
+    var sz = f.len()
+    f.close()
+    return sz
+}
+
+func grep_file(string path, string pattern) {
+    // 大文件检测（先看大小，不读内容）
+    var sz = file_size(path)
+    if sz < 0 {
+        print("  skip " + path)
+        return
+    }
+    if sz > 52428800 {
+        print("  large " + path + " (" + (sz / 1048576) + " MB)")
+    }
+
+    var content = files.read(path)
+    if content == null { return }
+
+    int found = 0
+    int ln = 1
+    var lines = strings.split(content, "\n")
+    for lines to line {
+        if is_match(line, pattern) {
+            found = found + 1
+            print(path + ":" + (if opt_line then ln + ": " else "") + line)
+        }
+        ln = ln + 1
+    }
+    if found > 0 { files_done = files_done + 1; matched = matched + found }
+}
+
+func grep_dir(string dirpath, string pattern) {
+    var walks = dirs.walk(dirpath)
+    for walks to w {
+        var root = w[0]
+        var fnames = w[2]
+        for fnames to f {
+            grep_file(root + sep + f, pattern)
+        }
+    }
+}
+
+main() {
+    var args = _args()
+    if args.len() < 1 {
+        print("用法: leno leno-grep.leno [line] [icase] [regex] [recursive] pattern file/dir...")
+        return
+    }
+
+    int i = 0
+    while i < args.len() {
+        var a = args[i]
+        if a == "line"      { opt_line = 1;   i = i + 1 }
+        else if a == "icase" { opt_icase = 1;  i = i + 1 }
+        else if a == "regex" { opt_regex = 1;  i = i + 1 }
+        else if a == "recursive" { opt_recurse = 1; i = i + 1 }
+        else { break }
+    }
+    if i >= args.len() { print("no pattern"); return }
+    var pat = args[i]
+    i = i + 1
+    if i >= args.len() { print("no file/dir"); return }
+
+    while i < args.len() {
+        var target = args[i]
+        if opt_recurse { grep_dir(target, pat) }
+        else           { grep_file(target, pat) }
+        i = i + 1
+    }
+    if files_done >= 1 {
+        print("--- " + matched + " matches in " + files_done + " files")
+    }
+}

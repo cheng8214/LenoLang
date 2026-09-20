@@ -1,0 +1,11 @@
+main() {
+    var sum = 0
+    var i = 1000
+
+    while i > 0 {
+        sum = sum + i
+        i = i - 1
+    }
+
+    print("sum = " + sum)
+}

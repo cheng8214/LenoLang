@@ -1,0 +1,13 @@
+import dirs
+
+// 测试 script_dir：从文件运行，应返回脚本所在目录
+print("=== dirs.script_dir ===")
+var sd = dirs.script_dir()
+print("脚本目录:", sd)
+
+// 对比 cwd
+print("当前工作目录:", dirs.cwd())
+
+// 用 script_dir 拼接同目录文件
+var config_path = dirs.join(dirs.script_dir(), "config.ini")
+print("配置文件路径:", config_path)

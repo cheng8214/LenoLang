@@ -1,0 +1,85 @@
+// 测试：struct 实例默认值 Array/Dict 独立副本（不再共享）
+// 防止回归：每个 new Struct() 实例都有独立的默认值副本
+
+// ===== Array 默认值隔离 =====
+
+struct MyContainer {
+    Array items = []
+    int extra
+}
+
+var a1 = new MyContainer(extra=1)
+var a2 = new MyContainer(extra=2)
+
+assert(a1.items.len() == 0)
+assert(a2.items.len() == 0)
+
+a1.items.add(10)
+a1.items.add(20)
+
+assert(a1.items.len() == 2)
+assert(a2.items.len() == 0)       // ✅ 关键断言：a2 不受 a1 影响
+
+a2.items.add(99)
+
+assert(a1.items.len() == 2)       // ✅ a1 不受 a2 影响
+assert(a2.items.len() == 1)
+assert(a2.items[0] == 99)
+
+// ===== 泛型 struct Array 默认值隔离 =====
+
+struct GenericContainer[T] {
+    Array items = []
+    T name
+}
+
+var g1 = new GenericContainer[int](name=1)
+var g2 = new GenericContainer[string](name="two")
+
+g1.items.add(100)
+assert(g1.items.len() == 1)
+assert(g2.items.len() == 0)       // ✅ 泛型不同实例化也隔离
+
+g2.items.add("hello")
+assert(g2.items.len() == 1)
+assert(g1.items.len() == 1)       // ✅ 互不干扰
+
+// ===== Dict 默认值隔离 =====
+
+struct DictHolder {
+    Dict map = {}
+}
+
+var d1 = new DictHolder()
+var d2 = new DictHolder()
+
+d1.map["a"] = 1
+d2.map["b"] = 2
+
+assert(d1.map["a"] == 1)
+assert(d2.map["a"] == null)       // ✅ d2 没有 "a"
+assert(d2.map["b"] == 2)
+assert(d1.map["b"] == null)       // ✅ d1 没有 "b"
+
+// ===== 多个实例 Array 默认值隔离 =====
+
+struct MultiHolder {
+    Array list = []
+}
+
+var m1 = new MultiHolder()
+var m2 = new MultiHolder()
+var m3 = new MultiHolder()
+
+m1.list.add(1)
+m2.list.add(2)
+m3.list.add(3)
+
+assert(m1.list.len() == 1)
+assert(m1.list[0] == 1)
+assert(m2.list.len() == 1)
+assert(m2.list[0] == 2)
+assert(m3.list.len() == 1)
+assert(m3.list[0] == 3)
+
+print("test_struct_default_copy passed")

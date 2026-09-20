@@ -1,0 +1,89 @@
+// music_generator.leno -- Waveform + Noise (audio synthesis)
+import "music_core.leno" as core
+use core.miniaudio
+
+// ==================== Waveform ====================
+export struct Waveform {
+    Ptr h; bool ok
+
+    func init(int f, int c, int s, int t, float a, float fr): bool {
+        miniaudio l = core.lib()
+        if l == null { return false }
+        h = l.ma_dll_waveform_create(f, c, s, t, a, fr) as Ptr
+        ok = h != null
+        return ok
+    }
+
+    func read(Ptr b, int n): int {
+        if not ok { return 0 }
+        return core.lib().ma_dll_waveform_read(h, b, n)
+    }
+
+    func setAmp(float v): bool {
+        if not ok { return false }
+        return core.lib().ma_dll_waveform_set_amplitude(h, v) == 0
+    }
+
+    func setFreq(float v): bool {
+        if not ok { return false }
+        return core.lib().ma_dll_waveform_set_frequency(h, v) == 0
+    }
+
+    func setType(int v): bool {
+        if not ok { return false }
+        return core.lib().ma_dll_waveform_set_type(h, v) == 0
+    }
+
+    func uninit() {
+        if ok { core.lib().ma_dll_waveform_destroy(h); h = null; ok = false }
+    }
+
+    func isInit(): bool { return ok }
+}
+
+// ==================== Noise ====================
+export struct Noise {
+    Ptr h; bool ok
+
+    func init(int f, int c, int t, int s, float a): bool {
+        miniaudio l = core.lib()
+        if l == null { return false }
+        h = l.ma_dll_noise_create(f, c, t, s, a) as Ptr
+        ok = h != null
+        return ok
+    }
+
+    func read(Ptr b, int n): int {
+        if not ok { return 0 }
+        return core.lib().ma_dll_noise_read(h, b, n)
+    }
+
+    func setAmp(float v): bool {
+        if not ok { return false }
+        return core.lib().ma_dll_noise_set_amplitude(h, v) == 0
+    }
+
+    func setSeed(int v): bool {
+        if not ok { return false }
+        return core.lib().ma_dll_noise_set_seed(h, v) == 0
+    }
+
+    func uninit() {
+        if ok { core.lib().ma_dll_noise_destroy(h); h = null; ok = false }
+    }
+
+    func isInit(): bool { return ok }
+}
+
+// ==================== Factory ====================
+export func createWaveform(int f, int c, int s, int t, float a, float fr): Waveform {
+    var w = new Waveform()
+    w.init(f, c, s, t, a, fr)
+    return w
+}
+
+export func createNoise(int f, int c, int t, int s, float a): Noise {
+    var n = new Noise()
+    n.init(f, c, t, s, a)
+    return n
+}

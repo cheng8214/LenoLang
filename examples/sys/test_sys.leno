@@ -1,0 +1,27 @@
+main() {
+    print("=== Sys 模块测试 ===")
+    print("")
+
+    // 测试 _os()
+    print("操作系统: " + _os())
+
+    // 测试 _gc()
+    print("GC 状态: " + _gc())
+    _gc(false)
+    print("GC 禁用后: " + _gc())
+    _gc(true)
+    print("GC 启用后: " + _gc())
+
+    // 测试 _args()
+    var args = _args()
+    print("参数个数: " + args.len())
+
+    // 测试 _executable()
+    print("可执行文件: " + _executable())
+
+    // 测试 _script()
+    print("脚本路径: " + _script())
+
+    print("")
+    print("=== 测试完成 ===")
+}

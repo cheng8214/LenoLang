@@ -1,0 +1,65 @@
+// 全局变量前向引用边界测试
+// 测试 struct 方法引用多个后定义的全局变量、跨模块全局变量
+
+struct AppConfig {
+    string name
+    int timeout
+    int retries
+
+    func get_full_config(): string {
+        return name + ":" + DEFAULT_TIMEOUT + ":" + MAX_RETRIES + ":" + APP_VERSION
+    }
+
+    func get_timeout(): int {
+        return DEFAULT_TIMEOUT
+    }
+
+    func get_retries(): int {
+        return MAX_RETRIES
+    }
+
+    func get_version(): int {
+        return APP_VERSION
+    }
+
+    func get_combined(): int {
+        return DEFAULT_TIMEOUT + MAX_RETRIES + APP_VERSION
+    }
+}
+
+// 全局变量定义在 struct 之后 —— 前向引用
+int DEFAULT_TIMEOUT = 30
+int MAX_RETRIES = 5
+int APP_VERSION = 100
+
+// 另一个 struct 也引用同一批全局变量
+struct NetworkConfig {
+    string host
+
+    func get_timeout(): int {
+        return DEFAULT_TIMEOUT
+    }
+
+    func get_retries(): int {
+        return MAX_RETRIES
+    }
+}
+
+main() {
+    var cfg = new AppConfig()
+    cfg.name = "test_app"
+    cfg.timeout = 10
+    cfg.retries = 3
+
+    assert_eq(cfg.get_timeout(), 30)
+    assert_eq(cfg.get_retries(), 5)
+    assert_eq(cfg.get_version(), 100)
+    assert_eq(cfg.get_combined(), 135)
+
+    var net = new NetworkConfig()
+    net.host = "localhost"
+    assert_eq(net.get_timeout(), 30)
+    assert_eq(net.get_retries(), 5)
+
+    print("global var forward ref edge test passed")
+}

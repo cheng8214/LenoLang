@@ -1,0 +1,608 @@
+// sdl_layout.leno — 自动布局容器（HBox / VBox / AnchorBox）
+//
+// 解决的问题：此前所有控件都用窗口绝对坐标摆放，调整一个就得手动算其它所有坐标。
+// 布局容器接管子控件的 x/y（必要时还有 w/h），按规则自动排布。
+//
+// 关键依赖：控件通过 Widget 接口的 get_w()/get_h()/set_pos()/set_size() 与布局协作，
+// 因此任何 impl Widget 的控件（含未来新增的 TabControl/Menu/Table）都能直接放进布局，
+// 无需布局本身做修改 —— 这是“不影响后面扩展”的基础。
+//
+// 用法：
+//   HBox hb = win.addHBox({x, y, w, h, spacing, padX, padY, justify})
+//   hb.add(SDL3.createButton({text:"A"}), {grow:1})            // 占满剩余宽度（可写 grow:2 拿两倍）
+//   hb.add(SDL3.createButton({text:"B"}), {grow:1, shrink:0})  // 可增长、但不被压缩
+//   hb.add(SDL3.createButton({text:"C"}), {align:1})           // 交叉轴居中
+//   hb.add(SDL3.createButton({text:"D"}), {basis:80, minW:40}) // 显式主轴基准尺寸 + 最小宽度
+// 子控件创建时仍需给定 w/h（作为自然尺寸/basis）；布局会按需用 set_size 改写它们。
+//
+// 每个子项 opts 支持（模拟 CSS Flexbox，沿主轴是 HBox 的水平 / VBox 的竖直）：
+//   grow      : 数字权重，剩余空间按权重分配（默认 0）。expand:true 等价于 grow:1（向后兼容）。
+//   shrink    : 数字权重，空间不足时按 shrink*basis 比例收缩（默认 1；写 0 即不收缩、允许溢出）。
+//   basis     : 显式主轴基准尺寸，覆盖控件自然尺寸（默认 -1 表示用 get_w()/get_h()）。
+//   align     : 交叉轴对齐 0=start 1=center 2=end 3=stretch（覆盖容器默认）。
+//   minW/maxW/minH/maxH : 主/交叉轴尺寸约束下限/上限（默认 -1 不约束）。
+// 容器 opts 支持：
+//   justify   : 主轴分布（仅当无 grow 且有剩余空间时生效）
+//               0=start 1=center 2=end 3=space-between 4=space-around 5=space-evenly。
+// 注意：放进布局的控件用 SDL3.createXxx 创建（不注册进窗口，避免被窗口与布局双重绘制），
+//       只把布局容器注册进窗口。容器会把窗口句柄自动下发给需要它的子控件（如 Edit 的 IME）。
+// 注意：放进布局的控件用 SDL3.createXxx 创建（不注册进窗口，避免被窗口与布局双重绘制），
+//       只把布局容器注册进窗口。容器会把窗口句柄自动下发给需要它的子控件（如 Edit 的 IME）。
+import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_event.leno" as evt; use evt.Event
+import "sdl_renderer.leno" as ren; use ren.Renderer
+import "sdl_edit.leno" as edt; use edt.Edit
+import "sdl_table.leno" as tbl; use tbl.Table
+import "sdl_treeview.leno" as tvlib; use tvlib.TreeView
+
+// 扩展窗口句柄下发回调（由 sdl_window 模块注册，避免循环依赖）
+// _layout_pass_window 只认识本模块导入的类型（Edit/HBox/VBox/AnchorBox/Table/TreeView），
+// 对于 Splitter/Panel/TabControl 等后续扩展类型，通过此回调下发，无需在本模块 import。
+func(Widget, Ptr[u8]):void _extraPassWindow
+export func setExtraPassWindow(func(Widget, Ptr[u8]):void cb) { _extraPassWindow = cb }
+
+// 交叉轴对齐方式
+export const LAYOUT_START   = 0   // 靠起始边（左/上）
+export const LAYOUT_CENTER  = 1   // 居中
+export const LAYOUT_END     = 2   // 靠结束边（右/下）
+export const LAYOUT_STRETCH = 3   // 撑满交叉轴
+
+// ============================================================
+// HBox — 子控件沿水平方向依次排列
+// ============================================================
+export struct HBox impl Widget {
+    // ==================== 关联常量 ====================
+    const JUSTIFY_START        = 0   // 靠起始边
+    const JUSTIFY_CENTER       = 1   // 居中
+    const JUSTIFY_END          = 2   // 靠结束边
+    const JUSTIFY_SPACE_BETWEEN = 3   // 两端对齐，间距等分
+    const JUSTIFY_SPACE_AROUND  = 4   // 每项两侧等距
+    const JUSTIFY_SPACE_EVENLY  = 5   // 含首尾等距
+
+    float x = 0.0, y = 0.0, w = 300.0, h = 40.0
+    float padX = 8.0, padY = 8.0, spacing = 6.0
+    float padTop = -1.0, padBottom = -1.0, padLeft = -1.0, padRight = -1.0  // 分立内边距（<0 时回退 padX/padY）
+    int justify = JUSTIFY_START  // 主轴分布（JUSTIFY_START/CENTER/END/SPACE_BETWEEN/SPACE_AROUND/SPACE_EVENLY）
+    Array[Widget] _c = []
+    Array[Dict]    _opt = []
+    Array[float]  _natW = []   // 子项自然尺寸（add 时捕获，不被 set_size 改写，作为 flex basis 基准）
+    Array[float]  _natH = []
+    bool _loaded = false
+    Ptr[u8] _hwnd              // 绑定的窗口句柄，下发给需要的子控件
+
+    func set(Dict opts) {
+        x = opts.get("x", 0)
+        y = opts.get("y", 0)
+        w = opts.get("w", 300)
+        h = opts.get("h", 40)
+        padX = opts.get("padX", 8)
+        padY = opts.get("padY", 8)
+        spacing = opts.get("spacing", 6)
+        justify = opts.get("justify", JUSTIFY_START)
+        padTop = opts.get("padTop", -1.0)
+        padBottom = opts.get("padBottom", -1.0)
+        padLeft = opts.get("padLeft", -1.0)
+        padRight = opts.get("padRight", -1.0)
+        _loaded = true
+    }
+
+    func add(Widget c, Dict opts): Widget {
+        if opts == null { opts = {} }
+        _c.add(c); _opt.add(opts)
+        _natW.add(c.get_w()); _natH.add(c.get_h())
+        if _hwnd != null { _layout_pass_window(c, _hwnd) }
+        return c
+    }
+    func remove(Widget c) {
+        for _c.len() to i { if _c[i] == c { _c.remove(i); _opt.remove(i); _natW.remove(i); _natH.remove(i); return } }
+    }
+    func clear() { _c = []; _opt = []; _natW = []; _natH = [] }
+    // 绑定窗口句柄：记录自身，并把已添加的子控件一并下发
+    func _bind_window(Ptr[u8] hwnd) {
+        _hwnd = hwnd
+        for _c to c { _layout_pass_window(c, hwnd) }
+    }
+
+    // 布局容器自身也实现尺寸接口，从而可被嵌套进其它布局
+    func get_w(): float { return w }
+    func get_h(): float { return h }
+    func set_pos(float px, float py) { x = px; y = py }
+    func set_size(float sw, float sh) { w = sw; h = sh }
+
+    // ==================== 尺寸测量（供 ScrollView 自动内容尺寸用） ====================
+    // HBox 主轴为水平：measure_w 返回所有子项宽度之和 + padding + spacing
+    func measure_w(): float {
+        if not _loaded or _c.len() == 0 { return 0.0 }
+        float pl = if padLeft >= 0.0 then padLeft else padX
+        float pr = if padRight >= 0.0 then padRight else padX
+        float total = pl + pr + spacing * (_c.len() - 1)
+        for _c.len() to i {
+            float basis = _natW[i]
+            float b = _opt[i].get("basis", -1.0)
+            if b >= 0.0 { basis = b }
+            total = total + basis
+        }
+        return total
+    }
+    // HBox 交叉轴为竖直：measure_h 返回最大子项高度 + padding
+    func measure_h(): float {
+        if not _loaded or _c.len() == 0 { return 0.0 }
+        float pt = if padTop >= 0.0 then padTop else padY
+        float pb = if padBottom >= 0.0 then padBottom else padY
+        float maxH = 0.0
+        for _c.len() to i {
+            float ch = _natH[i]
+            if ch > maxH { maxH = ch }
+        }
+        return pt + pb + maxH
+    }
+
+    func _relayout() {
+        if not _loaded { return }
+        int n = _c.len()
+        if n == 0 { return }
+        float pl = if padLeft >= 0.0 then padLeft else padX
+        float pr = if padRight >= 0.0 then padRight else padX
+        float pt = if padTop >= 0.0 then padTop else padY
+        float pb = if padBottom >= 0.0 then padBottom else padY
+        float innerW = w - pl - pr
+        float innerH = h - pt - pb
+        if innerW < 0 { innerW = 0 }
+        if innerH < 0 { innerH = 0 }
+        float totalSpacing = spacing * (n - 1)
+        float totalBasis = 0.0
+        float sumGrow = 0.0
+        float sumShrinkBasis = 0.0
+        for n to i {
+            Dict o = _opt[i]
+            float g = o.get("grow", 0.0)
+            if o.get("expand", false) and g <= 0.0 { g = 1.0 }
+            float s = o.get("shrink", 1.0)
+            float basis = _natW[i]
+            float b = o.get("basis", -1.0)
+            if b >= 0.0 { basis = b }
+            totalBasis = totalBasis + basis
+            sumGrow = sumGrow + g
+            sumShrinkBasis = sumShrinkBasis + s * basis
+        }
+        float free = innerW - totalBasis - totalSpacing
+        func childMain(int i): float {
+            Dict o = _opt[i]
+            float g = o.get("grow", 0.0)
+            if o.get("expand", false) and g <= 0.0 { g = 1.0 }
+            float s = o.get("shrink", 1.0)
+            float basis = _natW[i]
+            float b = o.get("basis", -1.0)
+            if b >= 0.0 { basis = b }
+            if free >= 0.0 {
+                if sumGrow > 0.0 { return basis + free * g / sumGrow }
+                return basis
+            }
+            if sumShrinkBasis > 0.0 {
+                float cut = (s * basis) / sumShrinkBasis * (-free)
+                float sz = basis - cut
+                if sz < 0.0 { return 0.0 }
+                return sz
+            }
+            return basis
+        }
+        float lead = 0.0
+        float extraGap = 0.0
+        if sumGrow == 0.0 and free > 0.0 {
+            if justify == JUSTIFY_CENTER { lead = free / 2.0 }
+            else if justify == JUSTIFY_END { lead = free }
+            else if justify == JUSTIFY_SPACE_BETWEEN { if n > 1 { extraGap = free / (n - 1) } }
+            else if justify == JUSTIFY_SPACE_AROUND { extraGap = free / n; lead = extraGap / 2.0 }
+            else if justify == JUSTIFY_SPACE_EVENLY { extraGap = free / (n + 1); lead = extraGap }
+        }
+        float cx = x + pl + lead
+        for n to i {
+            Widget c = _c[i]
+            Dict o = _opt[i]
+            float cw = childMain(i)
+            float ch = _natH[i]
+            float g = o.get("grow", 0.0)
+            if o.get("expand", false) and g <= 0.0 { g = 1.0 }
+            int align = o.get("align", 0)
+            float cy
+            if align == 3 { ch = innerH; cy = y + pt }
+            else if g > 0.0 { ch = innerH; cy = y + pt }
+            else if align == 1 { cy = y + pt + (innerH - ch) / 2.0 }
+            else if align == 2 { cy = y + pt + innerH - ch }
+            else { cy = y + pt }
+            float mn = o.get("minW", -1.0); if mn >= 0.0 and cw < mn { cw = mn }
+            float mx = o.get("maxW", -1.0); if mx >= 0.0 and cw > mx { cw = mx }
+            float mnh = o.get("minH", -1.0); if mnh >= 0.0 and ch < mnh { ch = mnh }
+            float mxh = o.get("maxH", -1.0); if mxh >= 0.0 and ch > mxh { ch = mxh }
+            c.set_pos(cx, cy)
+            c.set_size(cw, ch)
+            cx = cx + cw + spacing + extraGap
+        }
+    }
+
+    func process(Event ev) {
+        if not _loaded { return }
+        _relayout()
+        for _c to c { c.process(ev) }
+    }
+    func render(Renderer r) {
+        if not _loaded { return }
+        _relayout()
+        for _c to c { c.render(r) }
+    }
+    func dispose() { for _c to c { c.dispose() } }
+}
+
+// ============================================================
+// VBox — 子控件沿垂直方向依次排列（主轴为竖直）
+// ============================================================
+export struct VBox impl Widget {
+    // ==================== 关联常量 ====================
+    const JUSTIFY_START        = 0   // 靠起始边
+    const JUSTIFY_CENTER       = 1   // 居中
+    const JUSTIFY_END          = 2   // 靠结束边
+    const JUSTIFY_SPACE_BETWEEN = 3   // 两端对齐，间距等分
+    const JUSTIFY_SPACE_AROUND  = 4   // 每项两侧等距
+    const JUSTIFY_SPACE_EVENLY  = 5   // 含首尾等距
+
+    float x = 0.0; float y = 0.0; float w = 200.0; float h = 300.0
+    float padX = 8.0; float padY = 8.0; float spacing = 6.0
+    float padTop = -1.0, padBottom = -1.0, padLeft = -1.0, padRight = -1.0  // 分立内边距（<0 时回退 padX/padY）
+    int justify = JUSTIFY_START  // 主轴分布（JUSTIFY_START/CENTER/END/SPACE_BETWEEN/SPACE_AROUND/SPACE_EVENLY）
+    Array[Widget] _c = []
+    Array[Dict]    _opt = []
+    Array[float]  _natW = []   // 子项自然尺寸（add 时捕获，不被 set_size 改写，作为 flex basis 基准）
+    Array[float]  _natH = []
+    bool _loaded = false
+    Ptr[u8] _hwnd              // 绑定的窗口句柄，下发给需要的子控件
+
+    func set(Dict opts) {
+        x = opts.get("x", 0)
+        y = opts.get("y", 0)
+        w = opts.get("w", 200)
+        h = opts.get("h", 300)
+        padX = opts.get("padX", 8)
+        padY = opts.get("padY", 8)
+        spacing = opts.get("spacing", 6)
+        justify = opts.get("justify", JUSTIFY_START)
+        padTop = opts.get("padTop", -1.0)
+        padBottom = opts.get("padBottom", -1.0)
+        padLeft = opts.get("padLeft", -1.0)
+        padRight = opts.get("padRight", -1.0)
+        _loaded = true
+    }
+
+    func add(Widget c, Dict opts): Widget {
+        if opts == null { opts = {} }
+        _c.add(c); _opt.add(opts)
+        _natW.add(c.get_w()); _natH.add(c.get_h())
+        if _hwnd != null { _layout_pass_window(c, _hwnd) }
+        return c
+    }
+    func remove(Widget c) {
+        for _c.len() to i { if _c[i] == c { _c.remove(i); _opt.remove(i); _natW.remove(i); _natH.remove(i); return } }
+    }
+    func clear() { _c = []; _opt = []; _natW = []; _natH = [] }
+    // 绑定窗口句柄：记录自身，并把已添加的子控件一并下发
+    func _bind_window(Ptr[u8] hwnd) {
+        _hwnd = hwnd
+        for _c to c { _layout_pass_window(c, hwnd) }
+    }
+
+    // 布局容器自身也实现尺寸接口，从而可被嵌套进其它布局
+    func get_w(): float { return w }
+    func get_h(): float { return h }
+    func set_pos(float px, float py) { x = px; y = py }
+    func set_size(float sw, float sh) { w = sw; h = sh }
+
+    // ==================== 尺寸测量（供 ScrollView 自动内容尺寸用） ====================
+    // VBox 主轴为竖直：measure_h 返回所有子项高度之和 + padding + spacing
+    func measure_h(): float {
+        if not _loaded or _c.len() == 0 { return 0.0 }
+        float pt = if padTop >= 0.0 then padTop else padY
+        float pb = if padBottom >= 0.0 then padBottom else padY
+        float total = pt + pb + spacing * (_c.len() - 1)
+        for _c.len() to i {
+            float basis = _natH[i]
+            float b = _opt[i].get("basis", -1.0)
+            if b >= 0.0 { basis = b }
+            total = total + basis
+        }
+        return total
+    }
+    // VBox 交叉轴为水平：measure_w 返回最大子项宽度 + padding
+    func measure_w(): float {
+        if not _loaded or _c.len() == 0 { return 0.0 }
+        float pl = if padLeft >= 0.0 then padLeft else padX
+        float pr = if padRight >= 0.0 then padRight else padX
+        float maxW = 0.0
+        for _c.len() to i {
+            float cw = _natW[i]
+            if cw > maxW { maxW = cw }
+        }
+        return pl + pr + maxW
+    }
+
+    func _relayout() {
+        if not _loaded { return }
+        int n = _c.len()
+        if n == 0 { return }
+        // 有效内边距：分立值 >=0 时优先，否则回退 padX/padY
+        float pl = if padLeft >= 0.0 then padLeft else padX
+        float pr = if padRight >= 0.0 then padRight else padX
+        float pt = if padTop >= 0.0 then padTop else padY
+        float pb = if padBottom >= 0.0 then padBottom else padY
+        float innerW = w - pl - pr
+        float innerH = h - pt - pb
+        if innerW < 0 { innerW = 0 }
+        if innerH < 0 { innerH = 0 }
+
+        // 先扫描，统计各 flex 总和（用于 free / justify 计算）
+        float totalSpacing = spacing * (n - 1)
+        float totalBasis = 0.0
+        float sumGrow = 0.0
+        float sumShrinkBasis = 0.0
+        for n to i {
+            Dict o = _opt[i]
+            float g = o.get("grow", 0.0)
+            if o.get("expand", false) and g <= 0.0 { g = 1.0 }
+            float s = o.get("shrink", 1.0)
+            float basis = _natH[i]
+            float b = o.get("basis", -1.0)
+            if b >= 0.0 { basis = b }
+            totalBasis = totalBasis + basis
+            sumGrow = sumGrow + g
+            sumShrinkBasis = sumShrinkBasis + s * basis
+        }
+        float free = innerH - totalBasis - totalSpacing
+
+        // 嵌套闭包：计算第 i 个子项的主轴尺寸（捕获 free/sumGrow/sumShrinkBasis 等外层变量）
+        func childMain(int i): float {
+            Dict o = _opt[i]
+            float g = o.get("grow", 0.0)
+            if o.get("expand", false) and g <= 0.0 { g = 1.0 }
+            float s = o.get("shrink", 1.0)
+            float basis = _natH[i]
+            float b = o.get("basis", -1.0)
+            if b >= 0.0 { basis = b }
+            if free >= 0.0 {
+                if sumGrow > 0.0 { return basis + free * g / sumGrow }
+                return basis
+            }
+            if sumShrinkBasis > 0.0 {
+                float cut = (s * basis) / sumShrinkBasis * (-free)
+                float sz = basis - cut
+                if sz < 0.0 { return 0.0 }
+                return sz
+            }
+            return basis
+        }
+
+        // 主轴起始偏移与间隙（justify-content，仅在无 grow 且有剩余空间时生效）
+        float lead = 0.0
+        float extraGap = 0.0
+        if sumGrow == 0.0 and free > 0.0 {
+            if justify == JUSTIFY_CENTER { lead = free / 2.0 }
+            else if justify == JUSTIFY_END { lead = free }
+            else if justify == JUSTIFY_SPACE_BETWEEN { if n > 1 { extraGap = free / (n - 1) } }
+            else if justify == JUSTIFY_SPACE_AROUND { extraGap = free / n; lead = extraGap / 2.0 }
+            else if justify == JUSTIFY_SPACE_EVENLY { extraGap = free / (n + 1); lead = extraGap }
+        }
+
+        float cy = y + pt + lead
+        for n to i {
+            Widget c = _c[i]
+            Dict o = _opt[i]
+            float ch = childMain(i)
+            float cw = _natW[i]
+            float g = o.get("grow", 0.0)
+            if o.get("expand", false) and g <= 0.0 { g = 1.0 }
+            int align = o.get("align", 0)
+            float cx
+            if align == 3 { cw = innerW; cx = x + pl }
+            else if g > 0.0 { cw = innerW; cx = x + pl }   // grow 同时撑满交叉轴
+            else if align == 1 { cx = x + pl + (innerW - cw) / 2.0 }
+            else if align == 2 { cx = x + pl + innerW - cw }
+            else { cx = x + padX }
+            // 最小/最大约束
+            float mn = o.get("minW", -1.0); if mn >= 0.0 and cw < mn { cw = mn }
+            float mx = o.get("maxW", -1.0); if mx >= 0.0 and cw > mx { cw = mx }
+            float mnh = o.get("minH", -1.0); if mnh >= 0.0 and ch < mnh { ch = mnh }
+            float mxh = o.get("maxH", -1.0); if mxh >= 0.0 and ch > mxh { ch = mxh }
+            c.set_pos(cx, cy)
+            c.set_size(cw, ch)
+            cy = cy + ch + spacing + extraGap
+        }
+    }
+
+    func process(Event ev) {
+        if not _loaded { return }
+        _relayout()
+        for _c to c { c.process(ev) }
+    }
+    func render(Renderer r) {
+        if not _loaded { return }
+        _relayout()
+        for _c to c { c.render(r) }
+    }
+    func dispose() { for _c to c { c.dispose() } }
+}
+
+// ============================================================
+// AnchorBox — 子控件按锚点（left/top/right/bottom 或 center）定位
+// opts 支持：left, top, right, bottom（像素偏移，-1 表示不约束）、
+//            centerX, centerY（bool）、w, h（显式尺寸，覆盖自然尺寸）
+// ============================================================
+export struct AnchorBox impl Widget {
+    float x = 0.0; float y = 0.0; float w = 300.0; float h = 200.0
+    float padX = 0.0; float padY = 0.0
+    Array[Widget] _c = []
+    Array[Dict]    _opt = []
+    Array[float]  _natW = []   // 子项自然尺寸（add 时捕获，不被 set_size 改写）
+    Array[float]  _natH = []
+    bool _loaded = false
+    Ptr[u8] _hwnd              // 绑定的窗口句柄，下发给需要的子控件
+
+    func set(Dict opts) {
+        x = opts.get("x", 0)
+        y = opts.get("y", 0)
+        w = opts.get("w", 300)
+        h = opts.get("h", 200)
+        padX = opts.get("padX", 0)
+        padY = opts.get("padY", 0)
+        _loaded = true
+    }
+
+    func add(Widget c, Dict opts): Widget {
+        if opts == null { opts = {} }
+        _c.add(c); _opt.add(opts)
+        _natW.add(c.get_w()); _natH.add(c.get_h())
+        if _hwnd != null { _layout_pass_window(c, _hwnd) }
+        return c
+    }
+    func remove(Widget c) {
+        for _c.len() to i { if _c[i] == c { _c.remove(i); _opt.remove(i); _natW.remove(i); _natH.remove(i); return } }
+    }
+    func clear() { _c = []; _opt = []; _natW = []; _natH = [] }
+    // 绑定窗口句柄：记录自身，并把已添加的子控件一并下发
+    func _bind_window(Ptr[u8] hwnd) {
+        _hwnd = hwnd
+        for _c to c { _layout_pass_window(c, hwnd) }
+    }
+
+    // 布局容器自身也实现尺寸接口，从而可被嵌套进其它布局
+    func get_w(): float { return w }
+    func get_h(): float { return h }
+    func set_pos(float px, float py) { x = px; y = py }
+    func set_size(float sw, float sh) { w = sw; h = sh }
+
+    // ==================== 尺寸测量（供 ScrollView 自动内容尺寸用） ====================
+    // AnchorBox：按子项锚点计算所需最小尺寸
+    func measure_w(): float {
+        if not _loaded or _c.len() == 0 { return 2.0 * padX }
+        float maxR = 0.0
+        for _c.len() to i {
+            float cw = _natW[i]
+            float ow = _opt[i].get("w", -1.0); if ow >= 0.0 { cw = ow }
+            float l = _opt[i].get("left", -1.0)
+            float r = _opt[i].get("right", -1.0)
+            float edge
+            if l >= 0.0 and r >= 0.0 { edge = l + r }
+            else if l >= 0.0 { edge = l + cw }
+            else if r >= 0.0 { edge = r + cw }
+            else { edge = cw }
+            if edge > maxR { maxR = edge }
+        }
+        return 2.0 * padX + maxR
+    }
+    func measure_h(): float {
+        if not _loaded or _c.len() == 0 { return 2.0 * padY }
+        float maxB = 0.0
+        for _c.len() to i {
+            float ch = _natH[i]
+            float oh = _opt[i].get("h", -1.0); if oh >= 0.0 { ch = oh }
+            float t = _opt[i].get("top", -1.0)
+            float b = _opt[i].get("bottom", -1.0)
+            float edge
+            if t >= 0.0 and b >= 0.0 { edge = t + b }
+            else if t >= 0.0 { edge = t + ch }
+            else if b >= 0.0 { edge = b + ch }
+            else { edge = ch }
+            if edge > maxB { maxB = edge }
+        }
+        return 2.0 * padY + maxB
+    }
+
+    func _relayout() {
+        if not _loaded { return }
+        float bx = x + padX
+        float by = y + padY
+        float bw = w - 2.0 * padX
+        float bh = h - 2.0 * padY
+        if bw < 0 { bw = 0 }
+        if bh < 0 { bh = 0 }
+
+        for _c.len() to i {
+            Widget c = _c[i]
+            Dict o = _opt[i]
+            float cw = _natW[i]; float ch = _natH[i]
+            float ow = o.get("w", -1.0); if ow >= 0.0 { cw = ow }
+            float oh = o.get("h", -1.0); if oh >= 0.0 { ch = oh }
+            float l = o.get("left", -1.0)
+            float t = o.get("top", -1.0)
+            float r = o.get("right", -1.0)
+            float b = o.get("bottom", -1.0)
+            bool cX = o.get("centerX", false)
+            bool cY = o.get("centerY", false)
+            float px = bx; float py = by
+
+            // 水平
+            if l >= 0.0 and r >= 0.0 { cw = bw - l - r; px = bx + l }
+            else if l >= 0.0 and cX { px = bx + (bw - cw) / 2.0 }
+            else if l >= 0.0 { px = bx + l }
+            else if r >= 0.0 { px = bx + bw - r - cw }
+            else if cX { px = bx + (bw - cw) / 2.0 }
+            else { px = bx }
+            // 垂直
+            if t >= 0.0 and b >= 0.0 { ch = bh - t - b; py = by + t }
+            else if t >= 0.0 and cY { py = by + (bh - ch) / 2.0 }
+            else if t >= 0.0 { py = by + t }
+            else if b >= 0.0 { py = by + bh - b - ch }
+            else if cY { py = by + (bh - ch) / 2.0 }
+            else { py = by }
+
+            c.set_pos(px, py)
+            c.set_size(cw, ch)
+        }
+    }
+
+    func process(Event ev) {
+        if not _loaded { return }
+        _relayout()
+        for _c to c { c.process(ev) }
+    }
+    func render(Renderer r) {
+        if not _loaded { return }
+        _relayout()
+        for _c to c { c.render(r) }
+    }
+    func dispose() { for _c to c { c.dispose() } }
+}
+
+// ★ 核心窗口句柄下发逻辑（必须定义在使用它的函数之前，避免前向引用问题）
+func _passWindowHandle(Widget c, Ptr[u8] hwnd) {
+    switch c {
+        case is Edit { c.set_window(hwnd); return }
+        case is HBox, VBox, AnchorBox { c._bind_window(hwnd); return }
+        case is Table, TreeView { c.set_window_handle(hwnd); return }
+    }
+    // 未匹配的扩展类型（Splitter/Panel/TabControl/ScrollView/SpinBox/GroupBox/ComboBox 等）交给回调处理
+    if _extraPassWindow != null { _extraPassWindow(c, hwnd) }
+}
+
+// 把窗口句柄下发给需要它的子控件：
+// - Edit 需要窗口句柄做 IME 候选框定位（SDL_SetTextInputArea）；
+// - 嵌套的布局容器（HBox/VBox/AnchorBox）继续向下传递，保证深层子控件也能拿到句柄。
+// 其它控件忽略即可（无 set_window 需求）。
+func _layout_pass_window(Widget c, Ptr[u8] hwnd) {
+    _passWindowHandle(c, hwnd)
+}
+
+// ★ 导出统一的窗口句柄下发函数，供 Panel/GroupBox/Splitter/TabControl/ScrollView
+//   等容器的 _pass_hwnd 调用，确保所有容器类型（含未来新增的）都能正确传递句柄给 Edit。
+//   此前各容器的 _pass_hwnd 只处理了部分类型（如 Panel 不认识 ScrollView），导致嵌套
+//   容器内的 Edit 收不到窗口句柄，IME 候选框位置始终在 (0,0)。
+export func passWindowHandle(Widget c, Ptr[u8] hwnd) {
+    _passWindowHandle(c, hwnd)
+}
+
+// ==================== 工厂 ====================
+export func createHBox(Dict opts): HBox {
+    HBox b = new HBox(); b.set(opts); return b
+}
+export func createVBox(Dict opts): VBox {
+    VBox b = new VBox(); b.set(opts); return b
+}
+export func createAnchorBox(Dict opts): AnchorBox {
+    AnchorBox b = new AnchorBox(); b.set(opts); return b
+}

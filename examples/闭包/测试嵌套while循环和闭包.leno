@@ -1,0 +1,151 @@
+// 测试嵌套while循环和闭包
+
+main()
+{
+    print("=== 测试嵌套while循环和闭包 ===")
+    
+    // 测试1: 基本嵌套while
+    print("\n1. 基本嵌套while循环:")
+    var i = 0
+    while i < 3 {
+        i = i + 1
+        var j = 0
+        var row = ""
+        while j < 3 {
+            j = j + 1
+            row = row + "(" + i + "," + j + ") "
+        }
+        print("  " + row)
+    }
+    
+    // 测试2: 嵌套while + 闭包捕获外层变量
+    print("\n2. 嵌套while + 闭包捕获外层变量:")
+    var outer = 0
+    var results = []
+    while outer < 3 {
+        outer = outer + 1
+        var inner = 0
+        
+        // 闭包捕获outer和inner
+        func makeClosure() {
+            var captured_outer = outer
+            var captured_inner = inner
+            return captured_outer * 10 + captured_inner
+        }
+        
+        while inner < 2 {
+            inner = inner + 1
+            results.add(makeClosure())
+        }
+    }
+    print("  结果: " + results)
+    
+    // 测试3: 闭包在嵌套while中修改外部变量
+    print("\n3. 闭包在嵌套while中修改外部变量:")
+    var counter = 0
+    var x = 0
+    while x < 2 {
+        x = x + 1
+        var y = 0
+        
+        func increment() {
+            counter = counter + 1
+            return counter
+        }
+        
+        while y < 3 {
+            y = y + 1
+            print("  x=" + x + ", y=" + y + ", counter=" + increment())
+        }
+    }
+    print("  最终counter: " + counter)
+    
+    // 测试4: 多层嵌套闭包
+    print("\n4. 多层嵌套闭包:")
+    var level1 = 0
+    var output = []
+    while level1 < 2 {
+        level1 = level1 + 1
+        var level2 = 0
+        
+        func closureL1() {
+            return level1 * 100
+        }
+        
+        while level2 < 2 {
+            level2 = level2 + 1
+            var level3 = 0
+            
+            func closureL2() {
+                return closureL1() + level2 * 10
+            }
+            
+            while level3 < 2 {
+                level3 = level3 + 1
+                
+                func closureL3() {
+                    return closureL2() + level3
+                }
+                
+                output.add(closureL3())
+            }
+        }
+    }
+    print("  结果: " + output)
+    
+    // 测试5: 闭包作为返回值在嵌套while中
+    print("\n5. 闭包作为返回值在嵌套while中:")
+    func createCounters() {
+        var counters = []
+        var n = 0
+        while n < 3 {
+            n = n + 1
+            var local_n = n
+            
+            func counter() {
+                return local_n * local_n
+            }
+            counters.add(counter)
+        }
+        return counters
+    }
+    
+    var counterFuncs = createCounters()
+    var counterResults = []
+    for counterFuncs to var fn {
+        counterResults.add(fn())
+    }
+    print("  平方值: " + counterResults)
+    
+    // 测试6: 嵌套while中的闭包共享变量
+    print("\n6. 嵌套while中的闭包共享变量:")
+    var shared = 0
+    var funcs = []
+    var a = 0
+    while a < 2 {
+        a = a + 1
+        var b = 0
+        while b < 2 {
+            b = b + 1
+            
+            func makeAdder(int val) {
+                func adder() {
+                    shared = shared + val
+                    return shared
+                }
+                return adder
+            }
+            
+            funcs.add(makeAdder(a + b))
+        }
+    }
+    
+    var sharedResults = []
+    for funcs to var f {
+        sharedResults.add(f())
+    }
+    print("  累加过程: " + sharedResults)
+    print("  最终shared: " + shared)
+    
+    print("\n=== 所有测试完成 ===")
+}

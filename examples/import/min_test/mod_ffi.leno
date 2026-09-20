@@ -1,0 +1,2 @@
+import ffi
+export var ADVAPI32 = ffi.load("advapi32")

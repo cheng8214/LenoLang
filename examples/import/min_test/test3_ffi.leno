@@ -1,0 +1,2 @@
+import "mod_ffi.leno" as m
+print("ADVAPI32=" + m.ADVAPI32)

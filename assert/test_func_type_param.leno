@@ -1,0 +1,70 @@
+// 函数类型参数测试
+// 验证 struct 方法的函数类型参数（无返回类型签名）不被解析为 any
+//
+// 之前的 bug: func(Renderer) 类型的参数在方法体内被当作 any，
+// 导致赋值给同类型字段时报类型不匹配
+
+struct Renderer {
+    int dummy = 0
+}
+
+struct Window {
+    func(Renderer)? _overlay = null
+    func():bool _guard = null
+
+    // 测试1: 无返回类型的函数类型参数
+    func setOverlay(func(Renderer) cb) {
+        _overlay = cb
+    }
+
+    // 测试2: 有返回类型的函数类型参数
+    func setGuard(func():bool cb) {
+        _guard = cb
+    }
+
+    // 测试3: 调用函数类型参数
+    func callOverlay(Renderer r) {
+        if _overlay is func(Renderer) {
+            func(Renderer) cb = _overlay
+            cb(r)
+        }
+    }
+}
+
+// 测试4: 全局函数的函数类型参数也正常工作
+func globalCallback(func(Renderer) cb, Renderer r) {
+    cb(r)
+}
+
+main() {
+    var w = new Window()
+    var r = new Renderer()
+
+    // 设置 overlay 回调
+    int counter = 0
+    w.setOverlay(func(Renderer r) {
+        counter = counter + 1
+    })
+
+    // 调用 overlay
+    w.callOverlay(r)
+    assert_eq(counter, 1)
+
+    // 再次调用
+    w.callOverlay(r)
+    assert_eq(counter, 2)
+
+    // 测试全局函数
+    globalCallback(func(Renderer r) {
+        counter = counter + 10
+    }, r)
+    assert_eq(counter, 12)
+
+    // 测试有返回类型的函数类型参数
+    w.setGuard(func():bool {
+        return true
+    })
+    assert_eq(w._guard != null, true)
+
+    print("test_func_type_param passed")
+}

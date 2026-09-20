@@ -1,0 +1,17 @@
+func double(int x):int {
+    return x * 2
+}
+
+func map[T, U](Array[T] arr, func(T):U fn):Array[U] {
+    var result = []
+    for arr to item {
+        result.add(fn(item))
+    }
+    return result
+}
+
+main() {
+    var arr = [1, 2, 3]
+    var doubled = map(arr, double)
+    print(doubled)
+}

@@ -1,0 +1,3 @@
+// 链式 use 导入 enum 测试中间层
+import "test_enum_use_chain_c.leno" as c
+use c.Status

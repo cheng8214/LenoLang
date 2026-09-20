@@ -1,0 +1,433 @@
+// sdl_tab.leno — 选项卡容器控件（TabControl）
+// 多页签切换容器：顶部标签栏（点击切换页）+ 内容区（仅当前页子控件参与事件与绘制）。
+//
+// 用法（与 Panel/布局一致：子控件用 SDL3.createXxx 创建，不在窗口注册，避免双重处理）：
+//   TabControl tab = win.addTabControl({x, y, w, h, tabs: ["常规", "高级"], active: 0})
+//   // 子控件坐标按「内容区左上角」给出（dx, dy 相对内容区），Tab 移动/缩放时内部整体跟随：
+//   tab.addToPage(0, SDL3.createButton({w: 120, h: 32, text: "页1按钮"}), 50, 80)
+//   tab.addToPage(1, SDL3.createSlider({...}), 30, 20)
+//   tab.on_change(func(int idx){ print($"切到页 {idx}") })
+//
+// 说明：每页子控件以「内容区左上角」为原点布置（创建时给定的坐标会被记录为相对偏移），
+//       TabControl 每帧以「内容区原点 + 相对偏移」重排子控件，因此移动/缩放 Tab 时内部整体跟随，
+//       与布局容器（HBox/VBox/AnchorBox）的每帧 _relayout 同一机制。内容区裁剪到 (x, y+tab_h, w, h-tab_h)。
+import "sdl_renderer.leno" as ren; use ren.Renderer
+import "sdl_event.leno" as evt; use evt.Event
+import "sdl_font.leno" as fnt; use fnt.Font
+import "sdl_core.leno" as core; use core.SystemCursor; use core.SDL_Rect
+import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_edit.leno" as edt; use edt.Edit
+import "sdl_layout.leno" as lay; use lay.HBox; use lay.VBox; use lay.AnchorBox
+import "sdl_combobox.leno" as cbx; use cbx.ComboBox
+import "sdl_panel.leno" as pnl; use pnl.Panel
+import "sdl_table.leno" as tbl; use tbl.Table
+import "sdl_treeview.leno" as tvlib; use tvlib.TreeView
+import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
+use theme.Color
+
+export struct TabControl impl Widget, Themeable {
+    float x = 0.0, y = 0.0, w = 400.0, h = 300.0
+    float _tabH = 32.0         // 标签栏高度
+    Array[string] _tabs = []     // 各页标题
+    Array[Array[Widget]] _pages = []  // 每页的子控件集合（仅当前页被处理/绘制）
+    Array[VBox] _pageLayouts = []    // 每页的布局容器
+    Array[bool] _hasLayout = []       // 每页是否设置了布局容器
+    Array[Array[Array[float]]] _rel = []  // 每页每子控件相对「内容区原点」的偏移 [relX, relY]
+    int _active = 0            // 当前激活页索引
+    int _hover = -1            // 悬停的标签索引，-1 无
+    bool _loaded = false
+    Ptr[u8] _hwnd              // 绑定的窗口句柄，下发给需要它的子控件（如 Edit 的 IME）
+
+    // 字体（画标签文字）
+    float _fontSize = 15.0; string _fontPath = ""; int _fontStyle = 0; Font? _font
+    // 标签宽度缓存（避免每次 _tabRects 都 measureString）
+    Array[float] _tabW = []
+    bool _tabDirty = true
+
+    // 配色
+    Color _bgColor = #262830FF       // 内容区背景
+    Color _barColor = #232332FF      // 标签栏背景
+    Color _tabColor = #2C2E36FF      // 非激活标签
+    Color _actColor = #3C96EBFF     // 激活标签
+    Color _txtColor = #78808CFF     // 文字色（非激活）
+    Color _actTxtColor = #EBEBF5FF  // 激活文字色
+    Color _accColor = #50A0F5FF     // 激活标签下划线
+    Color _brdColor = #5A5F6EFF     // 边框色
+    int _cursor = SystemCursor.POINTER
+    bool enabled = true, visible = true
+    func(int):void _onChange
+
+    func _ensure_font() {
+        if _font == null or not _font.ok {
+            if _font != null and _font.ok { fnt.releaseFont(_font) }
+            if _fontPath != "" { _font = fnt.acquireFont(_fontPath, _fontSize) }
+            else { _font = fnt.acquireFontAuto(_fontSize) }
+            if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
+            _tabDirty = true   // 字体变化，标签宽度需重算
+        }
+    }
+
+    func set(Dict opts) {
+        Theme th = theme.getTheme()
+        _bgColor = th.bg
+        _barColor = th.bgInput
+        _tabColor = th.bgAlt
+        _actColor = th.accent
+        _txtColor = th.txtDim
+        _actTxtColor = th.txt
+        _accColor = th.accentBright
+        _brdColor = th.border
+        x    = opts.get("x", 0)
+        y    = opts.get("y", 0)
+        w    = opts.get("w", 400)
+        h    = opts.get("h", 300)
+        _tabH = opts.get("tab_h", 32)
+
+        var ts = opts.get("tabs", [])
+        if ts is Array[string] { _tabs = ts as Array[string] } else { _tabs = [] }
+        _tabDirty = true   // 标签列表变化，宽度需重算
+        // 每页一个子控件数组 + 对应的相对偏移数组
+        _pages = []
+        _rel = []
+        _pageLayouts = []
+        _hasLayout = []
+        for _tabs.len() to i {
+            _pages.add([])
+            _rel.add([])
+            _pageLayouts.add(new VBox())
+            _hasLayout.add(false)
+        }
+
+        _active = opts.get("active", 0)
+        if _active < 0 or _active >= _tabs.len() { _active = 0 }
+
+        _fontSize = opts.get("font_size", 15)
+        _fontPath = opts.get("font_path", "")
+        _fontStyle = opts.get("font_style", 0)
+
+        // 颜色：opts 未传则保持默认值
+        if opts.get("bg_color") is Color => t { _bgColor = t }
+        if opts.get("border_color") is Color => t { _brdColor = t }
+        if opts.get("active_color") is Color => t { _actColor = t }
+        if opts.get("accent_color") is Color => t { _accColor = t }
+
+        _cursor = opts.get("cursor", SystemCursor.POINTER)
+        _hover = -1   // 重置悬停标签（二次 set 时归零）
+        enabled = opts.get("enabled", true)
+        visible = opts.get("visible", true)
+        _ensure_font()
+        _loaded = true
+    }
+
+    // ==================== 布局接口（可被嵌套进其它布局） ====================
+    func get_w(): float { return w }
+    func get_h(): float { return h }
+    func set_pos(float px, float py) { x = px; y = py }
+    func set_size(float sw, float sh) { w = sw; h = sh }
+    func get_x(): float { return x }
+    func get_y(): float { return y }
+
+    // ==================== 设置方法 ====================
+    // 添加子控件到指定页（page 从 0 起）
+    // 添加子控件到指定页（page 从 0 起）。dx, dy 为「内容区左上角」相对坐标，
+    // TabControl 每帧以内容区原点 (x, y+tab_h) + (dx, dy) 重排，故移动/缩放 Tab 时内部整体跟随。
+    func addToPage(int page, Widget c, float dx, float dy): Widget {
+        if page < 0 or page >= _pages.len() { return c }
+        _pages[page].add(c)
+        _rel[page].add([dx, dy])
+        if _hwnd != null { _tab_pass_window(c, _hwnd) }
+        return c
+    }
+    // 添加到当前激活页（dx, dy 相对内容区左上角）
+    func addToActivePage(Widget c, float dx, float dy): Widget { return addToPage(_active, c, dx, dy) }
+
+    // 把某页的内容区设为布局容器（如 VBox），自动填满内容区
+    // 布局容器接管该页的子控件排布，不再用手写 dx,dy
+    func setPageLayout(int page, VBox layout) {
+        if page < 0 or page >= _pages.len() { return }
+        _pageLayouts[page] = layout
+        _hasLayout[page] = true
+        // 初始位置和大小：内容区 = (x, y+tabH, w, h-tabH)
+        layout.set_pos(x, y + _tabH)
+        layout.set_size(w, h - _tabH)
+        if _hwnd != null { _tab_pass_window(layout as Widget, _hwnd) }
+    }
+
+    // 向某页的布局容器添加子控件（opts 传给布局容器的 add 方法，如 {align:3, expand:true}）
+    func addToPageLayout(int page, Widget c, Dict opts): Widget {
+        if page < 0 or page >= _pages.len() { return c }
+        if not _hasLayout[page] { return c }
+        var layout = _pageLayouts[page]
+        // 调用布局容器的 add 方法
+        layout.add(c, opts)
+        // 同时加入该页的子控件列表（供 process/render 遍历）
+        _pages[page].add(c)
+        _rel[page].add([0.0, 0.0])  // 布局模式下偏移无效，但保持数组对齐
+        if _hwnd != null { _tab_pass_window(c, _hwnd) }
+        return c
+    }
+    // 动态新增一页，返回新页索引
+    func addPage(string title): int {
+        _tabs.add(title)
+        _pages.add([])
+        _rel.add([])
+        _pageLayouts.add(new VBox())
+        _hasLayout.add(false)
+        _tabDirty = true
+        return _tabs.len() - 1
+    }
+    // 从某页移除子控件
+    func removeFromPage(int page, Widget c) {
+        if page < 0 or page >= _pages.len() { return }
+        var pg = _pages[page]
+        for pg.len() to i {
+            if pg[i] == c { pg.remove(i); _rel[page].remove(i); return }
+        }
+    }
+    func set_active(int idx) {
+        if idx < 0 or idx >= _tabs.len() { return }
+        if idx == _active { return }
+        _active = idx
+        _closePopups()   // 切页时关闭所有已展开的下拉框，避免弹层残留/错位（修复切 tab 下拉仍显示）
+        core.markFrameRedraw()   // ★ 切页后强制请求重绘，避免节流跳帧时画面停留在旧页 → 闪烁
+        if _onChange != null { _onChange(_active) }
+    }
+    func get_active(): int { return _active }
+    func tab_count(): int  { return _tabs.len() }
+    func set_enabled(bool e) { enabled = e }
+    func set_visible(bool v) { visible = v }
+    func is_visible(): bool { return visible }
+    func set_font_size(float s) { _fontSize = s; if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null; _tabDirty = true }
+    func on_change(func(int):void cb) { _onChange = cb }
+    // 绑定窗口句柄（由 Window.addTabControl 调用）
+    func _bind_window(Ptr[u8] hwnd) {
+        _hwnd = hwnd
+        for _pages.len() to p {
+            // 先把句柄下发给通过 setPageLayout 设置的布局容器，
+            // 布局容器内部会递归传递给 Edit 等子控件
+            if _hasLayout[p] {
+                _tab_pass_window(_pageLayouts[p] as Widget, hwnd)
+            }
+            // 再下发给通过 addToPage 直接添加的子控件
+            var pg = _pages[p]
+            for pg to c { _tab_pass_window(c, hwnd) }
+        }
+    }
+
+    // 每帧把当前页子控件重排到「内容区原点 + 相对偏移」：
+    // 外层布局/拖拽改了 Tab 位置（set_pos）后，内部子控件整体跟随，与布局容器 _relayout 同一机制。
+    // 如果该页设置了布局容器（setPageLayout），则只更新布局容器位置/大小并触发布局重排，
+    // 子控件的位置由布局容器内部管理。
+    func _applyOffsets(int page) {
+        if page < 0 or page >= _pages.len() { return }
+        if _hasLayout[page] {
+            // 布局页：更新布局容器位置和大小，触发内部重排
+            var layout = _pageLayouts[page]
+            layout.set_pos(x, y + _tabH)
+            layout.set_size(w, h - _tabH)
+            return
+        }
+        // 普通页：逐个更新子控件相对偏移
+        var pg = _pages[page]
+        var of = _rel[page]
+        float ox = x
+        float oy = y + _tabH
+        for pg.len() to i {
+            var c = pg[i]
+            var r = of[i]
+            c.set_pos(ox + r[0], oy + r[1])
+        }
+    }
+
+    func contains(float mx, float my): bool {
+        return mx >= x and mx <= x + w and my >= y and my <= y + h
+    }
+
+    // 计算各标签矩形：[rx, ry, rw, rh]
+    // ★ 使用缓存的标签宽度，避免每次调用都 measureString
+    func _tabRects(): Array[Array[float]] {
+        Array[Array[float]] out = []
+        int n = _tabs.len()
+        if n == 0 { return out }
+        _ensure_font()
+        if _tabDirty and _font != null and _font.ok {
+            _tabW = []
+            for n to i {
+                float tw = 60.0
+                var[float, float](_tw, _th) = _font.measureString(_tabs[i]); tw = _tw + 28.0
+                if tw < 48.0 { tw = 48.0 }
+                _tabW.add(tw)
+            }
+            _tabDirty = false
+        }
+        float total = 0.0
+        for _tabW.len() to i { total = total + _tabW[i] }
+        float tx = x
+        if total > w {
+            // 放不下则等宽分配
+            float ew = w / n
+            for n to i { out.add([tx, y, ew, _tabH]); tx = tx + ew }
+        } else {
+            for n to i { out.add([tx, y, _tabW[i], _tabH]); tx = tx + _tabW[i] }
+        }
+        return out
+    }
+
+    // ==================== 交互 ====================
+    func process(Event ev) {
+        if not _loaded or not enabled or not visible { return }
+        _applyOffsets(_active)
+        var[float, float](mx, my) = ev.mousePos()
+
+
+        var rs = _tabRects()
+        int hitTab = -1
+        for rs.len() to i {
+            var r = rs[i]
+            if mx >= r[0] and mx <= r[0] + r[2] and my >= r[1] and my <= r[1] + r[3] { hitTab = i }
+        }
+
+        if ev.isMouseMotion() {
+            int prevHover = _hover
+            _hover = hitTab
+            if _cursor >= 0 and _hover >= 0 { core.requestCursor(_cursor) }
+            if _hover != prevHover { core.markFrameRedraw() } else { core.markFrameMotion() }
+        }
+
+        // 点击标签栏：切换页。若光标落在某打开的弹层（下拉/菜单）范围内则不切换，避免误触；
+        // 同时关闭所有打开的下拉框，确保切页后弹层不残留/错位。
+        if ev.isMouseButtonDown() and hitTab >= 0 {
+            if not core.inPopupCapture(mx, my) {
+                set_active(hitTab)   // 内部会关闭所有已展开的下拉框
+            } else {
+                _closePopups()
+            }
+            return
+        }
+
+        // 转发事件给当前页子控件（隐藏页不参与，避免误触）。
+        // 注意：不再因「存在弹层」而整体跳过转发——否则 combo 自身展开的下拉层无法收到
+        // 鼠标移动/点击（hover 高亮与选中失效）。各子控件（如 ComboBox）在 process 内自行
+        // 通过 inPopupCapture(+_open) 守卫：只有自身的弹层会响应，其余控件因 inPopupCapture
+        // 为真而忽略，与顶层 combo（win.addComboBox）的处理方式一致。
+        if _hasLayout[_active] {
+            (_pageLayouts[_active] as Widget).process(ev)
+        } else {
+            var page = _pages[_active]
+            for page to c { c.process(ev) }
+        }
+    }
+
+    // 切页 / 关闭弹层时，关闭所有页（含嵌套在 Panel 内的）已展开的下拉框，
+    // 避免弹层残留到其它页或停留在旧坐标（修复「切 tab 下拉框仍在」）。
+    func _closePopups() {
+        for _pages.len() to p {
+            var pg = _pages[p]
+            for pg to c { _closePopupsIn(c) }
+        }
+    }
+    func _closePopupsIn(Widget w) {
+        if w is ComboBox { w.close(); return }
+        if w is Panel {
+            for w.children to c { _closePopupsIn(c) }
+        }
+    }
+
+    // ==================== 渲染 ====================
+    func render(Renderer r) {
+        if not _loaded or not enabled or not visible { return }
+        _ensure_font()
+
+        // 标签栏背景
+        r.setColor(_barColor)
+        r.fillRect(x, y, w, _tabH)
+
+        // 各标签
+        var rs = _tabRects()
+        for rs.len() to i {
+            var rr = rs[i]
+            Color bC = _tabColor
+            Color tC = _txtColor
+            if i == _active { bC = _actColor; tC = _actTxtColor }
+            else if i == _hover { bC = theme.brighten(_tabColor, 15) }
+            r.setColor(bC)
+            r.fillRect(rr[0], rr[1], rr[2], rr[3])
+
+            // 标签文字（居中裁剪）
+            if _font != null and _font.ok and _tabs[i] != "" {
+                var[float, float](tw, th) = _font.measureString(_tabs[i])
+                float tx = rr[0] + (rr[2] - tw) / 2.0
+                float ty = rr[1] + (rr[3] - th) / 2.0
+                r.drawText(_font, _tabs[i], r.snapX(tx), r.snapY(ty), tC)
+            }
+
+            // 激活标签下划线
+            if i == _active {
+                r.setColor(_accColor)
+                r.fillRect(rr[0], rr[1] + rr[3] - 3.0, rr[2], 3.0)
+            }
+        }
+
+        // 标签栏底边
+        r.setColor(_brdColor)
+        r.drawLine(x, y + _tabH, x + w, y + _tabH)
+
+        // 内容区
+        float cx = x, cy = y + _tabH, cw = w, ch = h - _tabH
+        if cw < 0 { cw = 0 }
+        if ch < 0 { ch = 0 }
+        r.setColor(_bgColor)
+        r.fillRect(cx, cy, cw, ch)
+
+        // 裁剪到内容区，绘制当前页子控件
+        SDL_Rect clip = SDL_Rect.malloc()
+        clip.x = _int(cx); clip.y = _int(cy); clip.w = _int(cw) + 1; clip.h = _int(ch) + 1   // +1 防止浮点坐标截断丢失亚像素，避免子控件边缘闪烁
+        r.pushClipRect(clip.to_ptr())
+
+        _applyOffsets(_active)
+        // 如果该页有布局容器，渲染布局容器（它内部会渲染子控件并调用 _relayout）
+        if _hasLayout[_active] {
+            (_pageLayouts[_active] as Widget).render(r)
+        } else {
+            var page = _pages[_active]
+            for page to c { c.render(r) }
+        }
+
+        r.popClipRect()
+        clip.free()
+
+        // 内容区边框
+        r.setColor(_brdColor)
+        r.drawRect(cx, cy, cw, ch)
+    }
+
+    func dispose() {
+        for _pages.len() to p {
+            var pg = _pages[p]
+            for pg to c { c.dispose() }
+        }
+        if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
+    }
+
+    func applyTheme(Theme t) {
+        _bgColor = t.bg
+        _barColor = t.bgInput
+        _tabColor = t.bgAlt
+        _actColor = t.accent
+        _txtColor = t.txtDim
+        _actTxtColor = t.txt
+        _accColor = t.accentBright
+        _brdColor = t.border
+    }
+}
+
+// 把窗口句柄下发给需要它的子控件：委托给 sdl_layout 的统一函数，
+// 确保所有容器类型（含 Panel/ScrollView/Splitter/GroupBox/SpinBox 等此前遗漏的类型）都能正确传递
+func _tab_pass_window(Widget c, Ptr[u8] hwnd) {
+    lay.passWindowHandle(c, hwnd)
+}
+
+// 工厂
+export func createTabControl(Dict opts): TabControl {
+    TabControl t = new TabControl(); t.set(opts); return t
+}

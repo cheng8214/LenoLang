@@ -1,0 +1,68 @@
+// ============================================================
+// 闭包返回多返回值时类型退化测试
+// ============================================================
+
+// ---------- 情况 1: 函数直接返回多返回值（正常，类型保留） ----------
+func direct_multi(): [int, string] {
+    return 42, "ok"
+}
+
+var[int, string](d1, d2) = direct_multi()
+print(d1)   // 42
+print(d2)   // ok
+
+// ---------- 情况 2: 函数返回一个闭包，闭包返回多返回值 ----------
+// 问题：无法声明 "返回一个 func(): [int,int] 的函数"
+// 因为 parser 不支持 func(): func(): [int, int] 这种嵌套函数类型注解
+// 只能写成 any，导致类型丢失
+
+func make_closure(): any {
+    var count = 0
+    func inner(): [int, int] {
+        count = count + 1
+        return count, count * 2
+    }
+    return inner
+}
+
+var closure = make_closure()
+// closure 的类型是 any，closure() 的 cached_type 也是 any
+// 所以解构会走数组解构路径而不是多返回值路径 → 报错或行为错误
+
+// 取消注释看效果：
+// var[int, string](c1, c2) = closure()
+// print(c1)
+// print(c2)
+
+// 普通调用只取第一个值（any 不会触发多返回值弹出逻辑）
+var first = closure()
+print(first)   // 1（但只有 luck，因为栈上其实有两个值，第二个没被弹出）
+
+// ---------- 情况 3: 闭包直接赋值给变量（类型推断） ----------
+// 这里 inner 是局部函数，直接调用它时类型是保留的
+func test_local(): [int, string] {
+    func inner(): [int, string] {
+        return 99, "local"
+    }
+    var[int, string](a, b) = inner()   // inner 是本地函数，类型信息完整
+    return a, b
+}
+
+var[int, string](t1, t2) = test_local()
+print(t1)   // 99
+print(t2)   // local
+
+// ---------- 情况 4: 匿名函数直接返回多返回值 ----------
+func use_anon(): [int, int] {
+    var f = func(): [int, int] {
+        return 10, 20
+    }
+    var[int, int](a, b) = f()
+    return a, b
+}
+
+var[int, int](u1, u2) = use_anon()
+print(u1)   // 10
+print(u2)   // 20
+
+print("=== 闭包多返回值测试结束 ===")

@@ -1,0 +1,35 @@
+import strings
+
+main() {
+    print("=== 测试新增方法 ===")
+    
+    // 测试 split
+    print("\n1. split - 字符串分割:")
+    var parts = "a,b,c".split(",")
+    print("  'a,b,c'.split(',') = " + parts)
+    print("  长度: " + parts.len())
+    
+    var path = "/usr/local/bin"
+    print("  '" + path + "'.split('/') = " + path.split("/"))
+    
+    // 测试 join
+    print("\n2. join - 数组连接:")
+    var arr = ["Hello", "World", "Leno"]
+    var joined = strings.join(arr, " ")
+    print("  join(['Hello','World','Leno'], ' ') = '" + joined + "'")
+    
+    var csv = strings.join(["name", "age", "city"], ",")
+    print("  join csv = '" + csv + "'")
+    
+    // 测试 has
+    print("\n3. has - 包含检查:")
+    print("  'Hello'.has('ell') = " + "Hello".has("ell"))
+    print("  'Hello'.has('xyz') = " + "Hello".has("xyz"))
+    print("  'Hello World'.has('World') = " + "Hello World".has("World"))
+    
+    // 实例方法调用
+    print("\n4. 实例方法调用:")
+    var text = "one,two,three"
+    print("  '" + text + "'.split(',') = " + text.split(","))
+    print("  'LenoLang'.has('Lang') = " + "LenoLang".has("Lang"))
+}

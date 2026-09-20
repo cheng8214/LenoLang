@@ -1,0 +1,49 @@
+// types 模块测试
+
+import types
+
+main()
+{
+    // 测试1: type() 函数获取类型
+    assert_eq(type(42), "int")
+    assert_eq(type(3.14), "float")
+    assert_eq(type("hello"), "string")
+    assert_eq(type(true), "bool")
+    assert_eq(type(null), "null")
+
+    // 测试2: 数组和字典类型
+    var arr = [1, 2, 3]
+    var arr_type = type(arr)
+    assert_eq(arr_type.has("Array"), true)
+
+    var dict = {a: 1, b: 2}
+    var dict_type = type(dict)
+    assert_eq(dict_type.has("Dict"), true)
+
+    // 测试3: 类型转换函数 _int()
+    assert_eq(_int("42"), 42)
+    assert_eq(_int(3.14), 3)
+    assert_eq(_int(true), 1)
+    assert_eq(_int(false), 0)
+
+    // 测试4: 类型转换函数 _float()
+    assert_eq(_float("3.14"), 3.14)
+    assert_eq(_float(42), 42.0)
+    assert_eq(_float(true), 1.0)
+
+    // 测试5: 类型转换函数 _str()
+    assert_eq(_str(42), "42")
+    assert_eq(_str(true), "true")
+    assert_eq(_str(false), "false")
+    assert_eq(_str(null), "null")
+
+    // 测试6: 类型转换函数 _bool()
+    assert_eq(_bool(1), true)
+    assert_eq(_bool(0), false)
+    assert_eq(_bool("hello"), true)
+    assert_eq(_bool(""), false)
+    assert_eq(_bool([1, 2]), true)
+    assert_eq(_bool([]), false)
+
+    print("test_types_module passed")
+}

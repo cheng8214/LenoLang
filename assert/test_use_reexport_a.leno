@@ -1,0 +1,5 @@
+// use re-export 测试：定义原始类型
+export enum Flag { ON = 1; OFF = 0 }
+export struct Counter {
+    int value = 0
+}

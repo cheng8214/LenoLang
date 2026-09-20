@@ -1,0 +1,158 @@
+// 解构声明测试 - 断言形式
+// 覆盖：数组解构、字典解构、类型转换、返回值解构、const解构、alias类型、any解构
+//
+// ★ 类型检查规则（any 槽位优先）：
+//   - any 槽位：总是兼容，跳过检查，不生成 CAST
+//     var[any, any](a, b) = [1, "x"]   ✓ Array[any] + any 槽位
+//     var[any](a) = [1, 2, 3]           ✓ Array[int] + any 槽位
+//   - 具体类型槽位 + 具体元素类型：走 type_is_compatible 检查
+//   - 具体类型槽位 + any 元素类型：报错（不能从 any 转具体类型）
+//   - 源是 any/infer（无返回类型注解的函数）：报错
+
+// ============================================================================
+// 1. 数组解构 - 同类型数组（元素类型为具体类型）
+// ============================================================================
+var arr1 = [10, 20, 30]
+var[int, int, int](a, b, c) = arr1
+assert_eq(a, 10)
+assert_eq(b, 20)
+assert_eq(c, 30)
+
+// int → float 转换：数组中存的是 int，槽位声明 float
+var arr2 = [42, 99]
+var[float, float](f1, f2) = arr2
+assert_eq(f1, 42.0)
+assert_eq(f2, 99.0)
+
+// 注：bigint 在 Leno 中对外统一为 int，不需要单独测试
+// 注：混合类型数组如 [1, 2.0, "x"] 推断为 Array[any] → 可用 any 槽位解构
+// 注：float → int 截断转换不被类型系统允许（type_is_compatible(int, float) = false）
+// 注：int → string 和 float → string 跨类别转换同样不被允许
+
+// ============================================================================
+// 2. 字典解构 - 同类型值（值类型为具体类型）
+// ============================================================================
+var d1 = {"x": 42, "y": 100}
+var{"x": int, "y": int}(x, y) = d1
+assert_eq(x, 42)
+assert_eq(y, 100)
+
+// 字典 int → float 转换
+var d2 = {"a": 1, "b": 2}
+var{"a": float, "b": float}(fa, fb) = d2
+assert_eq(fa, 1.0)
+assert_eq(fb, 2.0)
+
+// 注：bigint 在 Leno 中对外统一为 int
+// 注：混合值类型字典如 {"x": 42, "y": 2.71} 推断为 Dict[string, any] → 可用 any 槽位解构
+
+// ============================================================================
+// 3. 函数返回值解构 - 必须有显式返回类型声明
+// ============================================================================
+func make_array(): Array[int] {
+    return [100, 200, 300]
+}
+
+func make_dict(): Dict[string, int] {
+    return {"a": 1, "b": 2, "c": 3}
+}
+
+var[int, int, int](rx, ry, rz) = make_array()
+assert_eq(rx, 100)
+assert_eq(ry, 200)
+assert_eq(rz, 300)
+
+var{"a": int, "b": int, "c": int}(ra, rb, rc) = make_dict()
+assert_eq(ra, 1)
+assert_eq(rb, 2)
+assert_eq(rc, 3)
+
+// int → float：函数返回 Array[int]，槽位声明 float
+func make_ints(): Array[int] {
+    return [10, 20]
+}
+var[float, float](rf1, rf2) = make_ints()
+assert_eq(rf1, 10.0)
+assert_eq(rf2, 20.0)
+
+// 注：func test() { return [1, 2.0] } 无显式返回类型 → 返回 infer → 不允许解构
+
+// ============================================================================
+// 3.5 any 槽位解构 - 不做类型转换，直接取值
+// ============================================================================
+// any 槽位 + 具体元素类型：允许，不转换
+var arr_any1 = [1, 2, 3]
+var[any, any, any](any_a, any_b, any_c) = arr_any1
+assert_eq(any_a, 1)
+assert_eq(any_b, 2)
+assert_eq(any_c, 3)
+
+// any 槽位 + Array[any]（混合类型）：允许，不转换
+var mixed_arr = [42, "hello", true]
+var[any, any, any](mix_a, mix_b, mix_c) = mixed_arr
+assert_eq(mix_a, 42)
+assert_eq(mix_b, "hello")
+assert_eq(mix_c, true)
+
+// any 槽位 + Dict[string, any]（混合值类型）：允许，不转换
+var mixed_dict = {"count": 10, "ratio": 0.5}
+var{"count": any, "ratio": any}(mix_d1, mix_d2) = mixed_dict
+assert_eq(mix_d1, 10)
+assert_eq(mix_d2, 0.5)
+
+// 部分槽位 any + 部分槽位具体类型（源是具体类型）：允许
+var arr_part = [10, 20, 30]
+var[int, any, int](part_a, part_b, part_c) = arr_part
+assert_eq(part_a, 10)
+assert_eq(part_b, 20)
+assert_eq(part_c, 30)
+
+// ============================================================================
+// 4. const 解构声明
+// ============================================================================
+const arr6 = [1, 2, 3]
+const[int, int, int](ca, cb, cc) = arr6
+assert_eq(ca, 1)
+assert_eq(cb, 2)
+assert_eq(cc, 3)
+
+const d5 = {"p": 10, "q": 20}
+const{"p": int, "q": int}(cp, cq) = d5
+assert_eq(cp, 10)
+assert_eq(cq, 20)
+
+// ============================================================================
+// 5. alias 类型作为解构槽位类型
+// ============================================================================
+alias IntAlias = int
+alias FloatAlias = float
+
+var arr7 = [42, 99]
+var[IntAlias, IntAlias](al_a, al_b) = arr7
+assert_eq(al_a, 42)
+assert_eq(al_b, 99)
+
+var d6 = {"key": 99, "val": 100}
+var{"key": IntAlias, "val": IntAlias}(al_k, al_v) = d6
+assert_eq(al_k, 99)
+assert_eq(al_v, 100)
+
+// int → float 通过 alias
+var arr8 = [1, 2]
+var[FloatAlias, FloatAlias](al_f1, al_f2) = arr8
+assert_eq(al_f1, 1.0)
+assert_eq(al_f2, 2.0)
+
+// ============================================================================
+// 6. 部分解构（只取部分元素）
+// ============================================================================
+var arr9 = [1, 2, 3, 4, 5]
+var[int, int](pa, pb) = arr9
+assert_eq(pa, 1)
+assert_eq(pb, 2)
+
+var d7 = {"a": 100, "b": 200, "c": 300}
+var{"b": int}(pd) = d7
+assert_eq(pd, 200)
+
+print("test_destruct passed")

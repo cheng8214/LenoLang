@@ -1,0 +1,97 @@
+// 跨模块关联常量边界测试
+// 测试从其他模块导入的 struct 的关联常量访问
+
+import "struct_const_mod.leno" as scm
+
+main() {
+    // ========== 测试1: 跨模块访问浮点和整数关联常量 ==========
+    assert_eq(scm.Physics.GRAVITY, 9.8)
+    assert_eq(scm.Physics.PI, 3.14159)
+    assert_eq(scm.Physics.SPEED_OF_LIGHT, 299792458)
+    assert_eq(scm.Physics.UNIT_NAME, "SI")
+    assert_eq(scm.Physics.USE_METRIC, true)
+    print("[1] cross-module multi-type const passed")
+
+    // ========== 测试2: 跨模块访问显式类型关联常量 ==========
+    assert_eq(scm.Config.MAX_CONNECTIONS, 100)
+    assert_eq(scm.Config.DEFAULT_PORT, 8080)
+    assert_eq(scm.Config.TIMEOUT, 30.0)
+    assert_eq(scm.Config.HOST, "localhost")
+    assert_eq(scm.Config.DEBUG_MODE, false)
+    print("[2] cross-module explicit type const passed")
+
+    // ========== 测试3: 跨模块创建实例 + 常量使用 ==========
+    var p = new scm.Physics(mass = 10.0, velocity = 5.0)
+    assert_eq(p.mass, 10.0)
+    assert_eq(p.velocity, 5.0)
+    // 动能公式：E = 0.5 * m * v^2
+    var ke = 0.5 * p.mass * p.velocity * p.velocity
+    assert_eq(ke, 125.0)
+    print("[3] cross-module instance + const in expression passed")
+
+    // ========== 测试4: 跨模块常量在工厂函数中使用 ==========
+    var cfg = scm.make_default_config()
+    assert_eq(cfg.active, 0)
+    assert_eq(scm.get_default_port(), 8080)
+    assert_eq(scm.get_max_connections(), 100)
+    print("[4] cross-module factory function with const passed")
+
+    // ========== 测试5: 跨模块 struct 方法的关联常量 ==========
+    var c = new scm.Counter()
+    assert_eq(c.is_min(), true)
+    c.increment()
+    c.increment()
+    c.increment()
+    assert_eq(c.count, 3)
+    assert_eq(c.is_min(), false)
+    c.decrement()
+    assert_eq(c.count, 2)
+    c.reset()
+    assert_eq(c.count, 0)
+    assert_eq(c.is_min(), true)
+    assert_eq(scm.Counter.MAX_SIZE, 1024)
+    assert_eq(scm.Counter.MIN_SIZE, 0)
+    assert_eq(scm.Counter.DEFAULT_STEP, 1)
+    print("[5] cross-module method with associated const passed")
+
+    // ========== 测试6: 跨模块纯常量容器 struct ==========
+    assert_eq(scm.Constants.VERSION_MAJOR, 2)
+    assert_eq(scm.Constants.VERSION_MINOR, 0)
+    assert_eq(scm.Constants.VERSION_STRING, "2.0.0")
+    assert_eq(scm.Constants.MAX_INT, 2147483647)
+    print("[6] cross-module pure constant container passed")
+
+    // ========== 测试7: 常量在跨模块表达式中的混合使用 ==========
+    var energy = scm.Physics.GRAVITY * 10.0  // 重力势能 mgh (m=10, h=1)
+    assert_eq(energy, 98.0)
+    var version = scm.Constants.VERSION_MAJOR + scm.Constants.VERSION_MINOR
+    assert_eq(version, 2)
+    print("[7] cross-module const mixed expressions passed")
+
+    // ========== 测试8: 跨模块常量赋值给变量 ==========
+    var vmaj = scm.Constants.VERSION_MAJOR
+    assert_eq(vmaj, 2)
+    var vmin = scm.Constants.VERSION_MINOR
+    assert_eq(vmin, 0)
+    var vstr = scm.Constants.VERSION_STRING
+    assert_eq(vstr, "2.0.0")
+    var vmax = scm.Constants.MAX_INT
+    assert_eq(vmax, 2147483647)
+    print("[8] cross-module const assigned to variables passed")
+
+    // ========== 测试9: 跨模块常量用于条件判断 ==========
+    if scm.Config.DEBUG_MODE == false {
+        print("[9] cross-module const in condition passed")
+    } else {
+        assert_eq(1, 0)  // 不应到达
+    }
+
+    // ========== 测试10: 多个模块的常量互不干扰 ==========
+    // Physics 和 Config 各有独立的常量空间
+    assert_eq(scm.Physics.GRAVITY, 9.8)
+    assert_eq(scm.Config.MAX_CONNECTIONS, 100)
+    // 不同 struct 的同名常量不会冲突
+    print("[10] cross-module const isolation passed")
+
+    print("=== ALL cross-module struct const tests passed ===")
+}

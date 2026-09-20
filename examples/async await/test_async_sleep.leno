@@ -1,0 +1,16 @@
+import io
+import asyncs
+
+// 只测试 sleep
+async func test_sleep() {
+    io.print("开始 sleep")
+    await asyncs.sleep(200)
+    io.print("sleep 完成")
+}
+
+main() {
+    io.print("=== 测试 sleep ===")
+    test_sleep()
+    asyncs.run()
+    io.print("=== 完成 ===")
+}

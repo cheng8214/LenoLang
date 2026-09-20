@@ -1,0 +1,26 @@
+// 测试: re-export 模式
+import "lib_mid.leno" as mid
+use mid.core_lib
+use mid.extra_lib
+
+main() {
+    print("=== re-export ===")
+
+    core_lib c = mid.getCore()
+    print("1. abs: " + c.abs(-5))
+
+    print("2. 链式: " + mid.getCore().abs(-7))
+
+    extra_lib e = mid.getExtra()
+    print("3. extra: OK")
+
+    core_lib cc = mid.getCore()
+    print("4. 复用: " + cc.abs(-13) + " " + cc.abs(-17))
+
+    print("5. 包装: " + mid.wrapAbs(-19))
+
+    core_lib cp = mid.getCore()
+    print("6. 参数: " + mid.callWith(cp, -23))
+
+    print("=== 完成 ===")
+}

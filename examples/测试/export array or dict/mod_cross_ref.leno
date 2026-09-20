@@ -1,0 +1,31 @@
+// === 跨变量引用和函数调用 ===
+// 用户 main.leno 测试了这些场景
+
+func helper():int {
+    return 100
+}
+
+func getFloat():float {
+    return 2.5
+}
+
+func getString():string {
+    return "from_func"
+}
+
+// export 变量引用另一个 export 变量
+export int x = 42
+export int tt = x
+
+// 函数调用作为数组字面量元素
+export Array[int] arrWithFunc = [10, 20, helper()]
+export Array[float] arrWithFloatFunc = [1.0, 2.0, getFloat()]
+export Array[string] arrWithStrFunc = ["a", "b", getString()]
+
+// 表达式作为初始值
+export int expr1 = 1 + 2
+export float expr2 = 1.5 + 2.5
+export int expr3 = x + 8
+
+// 函数调用作为标量初始值
+export int fromFunc = helper()

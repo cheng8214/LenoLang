@@ -1,0 +1,18 @@
+// 循环依赖模块导入测试
+import "circular_a.leno" as a
+import "circular_b.leno" as b
+
+main() {
+    // 测试直接导出的变量
+    assert_eq(a.a_value, 10)
+    assert_eq(b.b_value, 20)
+
+    // 测试各自独立可用的函数（不触发循环调用）
+    assert_eq(a.a_get_own(), 10)
+    assert_eq(b.b_get_own(), 20)
+
+    // 测试 A 的函数（不依赖 B 的函数）
+    assert_eq(a.a_func(), "A")
+
+    print("test_import_circular passed")
+}

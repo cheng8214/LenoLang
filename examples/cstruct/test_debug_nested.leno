@@ -1,0 +1,21 @@
+import ffi
+
+cstruct POINT {
+    i32 x
+    i32 y
+}
+
+cstruct MSG {
+    Ptr hwnd
+    i32 message
+    Ptr wParam
+    Ptr lParam
+    i32 time
+    POINT pt
+}
+
+main() {
+    MSG msg = MSG.malloc()
+    print(msg.debug())
+    msg.free()
+}

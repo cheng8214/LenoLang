@@ -1,0 +1,25 @@
+// 测试模块：导出 enum
+
+export enum Color {
+    RED = 1
+    GREEN = 2
+    BLUE = 3
+}
+
+export enum Status {
+    OK = 200
+    NOT_FOUND = 404
+    ERROR = 500
+}
+
+export func get_color_name(Color c): string
+{
+    if c == Color.RED {
+        return "red"
+    } else if c == Color.GREEN {
+        return "green"
+    } else if c == Color.BLUE {
+        return "blue"
+    }
+    return "unknown"
+}

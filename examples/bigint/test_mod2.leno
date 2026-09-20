@@ -1,0 +1,22 @@
+main() 
+{ 
+    print("取模测试:")
+    
+    // 测试 1: 普通整数取模
+    int x = 123 % 100
+    print("123 % 100 = " + x)
+    
+    // 测试 2: 大整数取模（结果在 int 范围内）
+    int big = 123456789012345
+    int result = big % 1000
+    print("123456789012345 % 1000 = " + result)
+    print("预期: 345")
+    print("type(big) = " + type(big))
+    
+    // 测试 3: 更大的整数取模
+    print("")
+    int big2 = 12345678901234567890
+    int mod_result = big2 % 1000000000
+    print("12345678901234567890 % 1000000000 = " + mod_result)
+    print("预期: 234567890")
+}

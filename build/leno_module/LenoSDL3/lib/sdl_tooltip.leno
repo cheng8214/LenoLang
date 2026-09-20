@@ -1,0 +1,170 @@
+// sdl_tooltip.leno — 悬停提示（Tooltip）
+//
+// 设计：全局单例。任意控件在 hover 且有 tip 文本时调用 tipReport(text, mx, my)；
+// Window 每帧先 tipTick()（按悬停时长决定是否显示），最后一遍 tipRender() 画在最上层。
+// Tooltip 不处理任何输入事件（无 process），纯展示，因此不会拦截点击/滚轮。
+//
+// 用法（控件侧，已内置到 Button/Label/CheckBox/RadioButton/Toggle/Slider/Edit）：
+//   win.addButton({tip: "保存当前文件", ...})
+//   // 或运行时：btn.set_tip("保存")
+// 全局可调：SDL3.setTipDelay(ms) 修改悬停多久才弹出（默认 500ms）。
+import "sdl_renderer.leno" as ren; use ren.Renderer
+import "sdl_font.leno" as fnt; use fnt.Font
+import "sdl_core.leno" as core
+import "sdl_theme.leno" as theme; use theme.Theme
+
+// ==================== 全局状态 ====================
+string _tipText  = ""          // 当前要显示的提示文本（空 = 无）
+float _tipAX = 0.0, _tipAY = 0.0   // 锚点（最近一次上报的光标位置）
+int _tipStart = 0           // 首次 hover 该文本的 tick（用于延迟）
+bool _tipVisible = false
+int _tipDelay  = 500        // 悬停多久才显示（毫秒）
+Font? _font
+bool _fontDirty = true
+float _fontSize  = 12.0
+bool _tipReported = false   // 本帧 mouse motion 事件中是否有控件上报了 tip
+int _tipWindowId = -1       // 当前上报 tip 的窗口 ID（确保 tip 只画在该窗口上）
+
+// 配色从 theme.getTheme() 动态读取（tipBg/tipBrd/tipTxt）
+
+// ==================== 外部可调 ====================
+export func setTipDelay(int ms) { _tipDelay = ms }
+
+// 每次鼠标运动事件处理前由 Window 调用：重置上报标记。
+// 解决多控件处理顺序导致的 tipClear 覆盖 tipReport 问题：
+//   控件 A（先处理）命中 hover → tipReport 设文本
+//   控件 B（后处理）离开 hover → tipClear 清空文本 ← 覆盖了 A 的上报
+// 改为：控件只上报（tipReport），不再自行 tipClear；
+//   全部控件处理完后由 tipEndMotion 统一决定是否清除。
+export func tipBeginMotion() { _tipReported = false }
+
+// 设置当前鼠标交互的窗口 ID（由 Window 在分发 motion 事件前调用）。
+export func tipSetWindow(int wid) { _tipWindowId = wid }
+
+// 每次鼠标运动事件处理后由 Window 调用：若无任何控件上报 tip 则清除。
+export func tipEndMotion() {
+    if not _tipReported { tipClear() }
+}
+
+// 控件在 hover 时调用（每次 mouse motion 上报）。text 为空表示此控件无 tip。
+// 每次上报都重置延迟计时——鼠标移动中不显示，仅当停留 _tipDelay 毫秒后才弹出。
+export func tipReport(string text, float ax, float ay) {
+    if text == null or text == "" { return }
+    _tipReported = true
+    if text != _tipText {
+        _tipText = text
+    }
+    _tipStart = core.getTicks()
+    _tipAX = ax; _tipAY = ay
+}
+
+// 鼠标在同一 tooltip 目标（同一行/同一单元格）内移动时调用。
+// 仅更新锚点坐标并标记已上报（防止 tipEndMotion 清除），但不重置 _tipStart 延迟计时器。
+// 这样 tooltip 仍会在首次进入目标后 _tipDelay 毫秒准时显示，
+// 而不会因鼠标在同一目标内微动而无限推迟，从而避免 tipWaiting() 持续为 true
+// 导致窗口 60fps 空转重绘。
+export func tipKeep(float ax, float ay) {
+    if _tipText == "" { return }
+    _tipReported = true
+    _tipAX = ax; _tipAY = ay
+}
+
+// 立即隐藏并清空提示文本（tipEndMotion 内部调用，也可由非 motion 场景调用）。
+export func tipClear() {
+    _tipText = ""
+    _tipVisible = false
+    _tipWindowId = -1
+}
+
+// 每帧由 Window 调用：根据悬停时长决定是否可见。
+export func tipTick() {
+    if _tipText == "" {
+        _tipVisible = false
+        return
+    }
+    int now = core.getTicks()
+    if now - _tipStart >= _tipDelay {
+        if not _tipVisible { _tipVisible = true }
+    } else { _tipVisible = false }
+}
+
+// tooltip 是否正在等待延迟显示（Window 用来判断是否需要持续重绘）
+export func tipWaiting(): bool { return _tipText != "" and not _tipVisible }
+
+// 返回 tooltip 距离显示还需多少毫秒。
+// 返回  0：延迟已到期，应立即触发一次重绘以显示 tooltip。
+// 返回 -1：无等待中的 tooltip（无文本或已可见），无需额外重绘。
+// 返回 >0：仍在延迟等待中，Window 应将 poll 超时设为此值，到期后再唤醒渲染。
+export func tipRemainingMs(): int {
+    if _tipText == "" or _tipVisible { return -1 }
+    int remaining = _tipDelay - (core.getTicks() - _tipStart)
+    if remaining < 0 { remaining = 0 }
+    return remaining
+}
+
+func _ensureFont(Renderer r) {
+    if _fontDirty or _font == null or not _font.ok {
+        if _font != null and _font.ok { fnt.releaseFont(_font) }
+        _font = fnt.acquireFontAuto(_fontSize)
+        _fontDirty = false
+    }
+    if _font != null and _font.ok { _font.setSSAA(r.getSSAA()) }
+}
+
+// 每帧由 Window 在"所有控件 + ComboBox/Menu 弹层"之后调用，浮在最上层。
+// vw / vh 为窗口逻辑尺寸，用于把浮层夹紧在窗口内。
+// wid 为当前渲染的窗口 ID，仅当与 tip 上报的窗口一致时才绘制。
+// 支持多行文本（以 \n 分隔）。
+export func tipRender(Renderer r, float vw, float vh, int wid) {
+    if not _tipVisible or _tipText == "" { return }
+    if wid != _tipWindowId { return }
+    _ensureFont(r)
+    if not _font.ok { return }
+
+    // 按 \n 拆分行
+    Array[string] lines = _splitLines(_tipText)
+    float padX = 10.0; float padY = 7.0
+    float lineH = 0.0
+    float maxW = 0.0
+    for lines.len() to i {
+        var[float, float](msw, msh) = _font.measureString(lines[i])
+        if msw > maxW { maxW = msw }
+        if msh > lineH { lineH = msh }
+    }
+    if lineH == 0.0 { lineH = _fontSize }
+    float gapY = 2.0
+    float tw = maxW
+    float th = lineH * lines.len() + gapY * (lines.len() - 1)
+    float bw = tw + padX * 2.0
+    float bh = th + padY * 2.0
+
+    // 默认显示在光标右下方
+    float bx = _tipAX + 14.0
+    float by = _tipAY + 20.0
+
+    // 横向越界则翻到光标左侧
+    if bx + bw > vw { bx = _tipAX - 14.0 - bw }
+    if bx < 0.0    { bx = 4.0 }
+    // 纵向越界则翻到光标上方
+    if by + bh > vh { by = _tipAY - 14.0 - bh }
+    if by < 0.0     { by = 4.0 }
+
+    // 背景
+    Theme tm = theme.getTheme()
+    r.setColor(theme.withAlpha(tm.tipBg, 240))
+    r.fillRoundedRect(bx, by, bw, bh, 5.0)
+    // 边框
+    r.setColor(theme.withAlpha(tm.tipBrd, 220))
+    r.drawRoundedRect(bx, by, bw, bh, 5.0)
+    // 文字逐行绘制
+    float ty = by + padY
+    for lines.len() to i {
+        r.drawText(_font, lines[i], r.snapX(bx + padX), r.snapY(ty), tm.tipTxt)
+        ty = ty + lineH + gapY
+    }
+}
+
+// 将文本按换行符拆行（使用内置 split，避免逐字符拼接的 O(n²) 开销）
+func _splitLines(string s): Array[string] {
+    return s.replace("\r", "").split("\n")
+}

@@ -1,0 +1,15 @@
+// lib_def.leno — 模拟 sdl_core，定义 clib 和返回它的函数
+import ffi
+
+clib test_lib {
+    i32 abs(i32 x)
+}
+
+test_lib g_lib = null
+
+export func lib(): test_lib {
+    if g_lib == null {
+        g_lib = ffi.load("msvcrt.dll")
+    }
+    return g_lib
+}

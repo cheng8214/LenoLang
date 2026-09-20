@@ -1,0 +1,26 @@
+// 测试增强文本扫描的边界场景
+// export var arr = [test()]  — 函数调用元素无显式类型
+func getNum(): int { return 42 }
+func getFloat(): float { return 3.14 }
+func getStr(): string { return "hello" }
+
+// 无显式类型 + 函数调用元素
+export var arrFunc = [getNum()]
+export var arrFuncF = [getFloat()]
+export var arrFuncS = [getStr()]
+
+// 无显式类型 + 变量引用元素
+export int base = 10
+export var arrVar = [base]
+
+// 无显式类型 + 混合: 字面量 + 函数调用
+export var arrMixed = [1, getNum(), 3]
+export var arrMixedF = [1.0, getFloat(), 3.0]
+
+// 标量: 函数调用
+export var fromFunc = getNum()
+export var fromFuncF = getFloat()
+export var fromFuncS = getStr()
+
+// 标量: 变量引用
+export var fromVar = base

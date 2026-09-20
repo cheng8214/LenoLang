@@ -1,0 +1,164 @@
+// offsets_config.leno — 偏移/配置管理
+// 游戏每次更新后偏移会变，外置 JSON 配置实现热重载
+// 参考：CE 的 offset 文件、各类外挂框架的 config 系统
+//
+// 功能:
+//   - 从 JSON 文件加载偏移配置
+//   - 按模块名 + 字段名获取偏移
+//   - 支持多版本配置（自动按版本号匹配）
+//   - 热重载（运行中按指定键重新加载配置）
+//
+// 配置文件格式 (JSON):
+// {
+//   "version": "1.2.3",
+//   "modules": {
+//     "game.exe": {
+//       "hp_offset": "0x1A2B3C0",
+//       "mp_offset": "0x1A2B3C4"
+//     },
+//     "unityplayer.dll": {
+//       "world_to_screen": "0xABC123"
+//     }
+//   },
+//   "signatures": {
+//     "get_health_func": "48 8B 05 ?? ?? ?? ?? 89 45 FC",
+//     "get_ammo_func": "48 8B 05 ?? ?? ?? ?? 89 45 F8"
+//   }
+// }
+import jsons
+import strings
+
+// ==================== 辅助函数 ====================
+
+// hex 字符转 int
+func _hex_char_val(string ch): int {
+    int c = strings.byte(ch)
+    if c >= 0x30 and c <= 0x39 { return c - 0x30 }
+    if c >= 0x41 and c <= 0x46 { return c - 0x41 + 10 }
+    if c >= 0x61 and c <= 0x66 { return c - 0x61 + 10 }
+    return 0
+}
+
+// hex 字符串转 int（如 "FF" -> 255, "8B" -> 139）
+func _hex_str_to_int(string hex): int {
+    int result = 0
+    int n = hex.len()
+    for 0:(n - 1) to i {
+        result = result * 16 + _hex_char_val(hex[i])
+    }
+    return result
+}
+
+// ==================== OffsetConfig 结构 ====================
+
+export struct OffsetConfig {
+    string version = ""
+    Dict modules = {}        // 模块 -> {字段 -> 偏移}
+    Dict signatures = {}    // 特征码名 -> pattern 字符串
+    string configPath = ""
+
+    // 从 JSON 文件加载配置
+    func load(string path): bool {
+        configPath = path
+        var parsed = jsons.read_file(path)
+        if parsed == null {
+            print("[OffsetConfig] JSON 读取失败: " + path)
+            return false
+        }
+
+        if parsed is Dict {
+            version = _str(parsed["version"])
+            var mods = parsed["modules"]
+            if mods != null { modules = mods as Dict }
+            if modules == null { modules = {} }
+            var sigs = parsed["signatures"]
+            if sigs != null { signatures = sigs as Dict }
+            if signatures == null { signatures = {} }
+        }
+
+        print("[OffsetConfig] 已加载配置 v" + version + " (" + path + ")")
+        return true
+    }
+
+    // 获取模块偏移
+    // moduleName: 模块名, fieldName: 字段名
+    // 返回偏移值（int），失败返回 0
+    func getOffset(string moduleName, string fieldName): int {
+        var mod = modules[moduleName]
+        if mod == null { return 0 }
+        Dict modDict = mod as Dict
+        if modDict == null { return 0 }
+        var val = modDict[fieldName]
+        if val == null { return 0 }
+        string hexStr = _str(val)
+        // 去掉 "0x" 前缀如果有
+        if strings.starts_with(hexStr, "0x") or strings.starts_with(hexStr, "0X") {
+            hexStr = strings.sub_str(hexStr, 2, hexStr.len())
+        }
+        return _hex_str_to_int(hexStr)
+    }
+
+    // 获取特征码
+    // sigName: 特征码名
+    // 返回 pattern 字符串，失败返回 ""
+    func getSignature(string sigName): string {
+        var val = signatures[sigName]
+        if val == null { return "" }
+        return _str(val)
+    }
+
+    // 获取所有模块名
+    func getModuleNames(): Array[string] {
+        Array[string] names = []
+        if modules is Dict {
+            for modules to key {
+                names.add(_str(key))
+            }
+        }
+        return names
+    }
+
+    // 打印当前配置（调试用）
+    func dump() {
+        print("===== OffsetConfig Dump =====")
+        print("Version: " + version)
+        print("Modules:")
+        if modules is Dict {
+            for modules to key {
+                var mod = modules[key]
+                if mod is Dict {
+                    Dict modDict = mod as Dict
+                    print("  " + _str(key) + ":")
+                    for modDict to field {
+                        print("    " + _str(field) + " = " + _str(modDict[field]))
+                    }
+                }
+            }
+        }
+        print("Signatures:")
+        if signatures is Dict {
+            for signatures to key {
+                print("  " + _str(key) + " = " + _str(signatures[key]))
+            }
+        }
+        print("============================")
+    }
+
+    // 热重载配置
+    func reload(): bool {
+        if configPath == "" {
+            print("[OffsetConfig] 无配置路径，无法重载")
+            return false
+        }
+        return load(configPath)
+    }
+}
+
+// ==================== 便捷函数 ====================
+
+// 加载偏移配置（便捷入口）
+export func loadConfig(string path): OffsetConfig {
+    OffsetConfig cfg = new OffsetConfig()
+    cfg.load(path)
+    return cfg
+}

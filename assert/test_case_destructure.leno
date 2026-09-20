@@ -1,0 +1,65 @@
+// 测试 case 解构：switch case is Point(x, y) 提取字段
+
+struct Point {
+    float x
+    float y
+}
+
+struct Rect {
+    float w
+    float h
+}
+
+struct Circle {
+    float radius
+}
+
+main() {
+    // 基本解构
+    var p = new Point(x = 3.0, y = 4.0)
+    switch p {
+        case is Point(a, b) {
+            assert_eq(a, 3.0)
+            assert_eq(b, 4.0)
+        }
+        default {
+            print("no match")
+        }
+    }
+
+    // 多类型匹配 + 解构
+    var c = new Circle(radius = 5.0)
+    switch c {
+        case is Point(px, py) {
+            print("should not match")
+        }
+        case is Circle(r) {
+            assert_eq(r, 5.0)
+        }
+        default {
+            print("no match")
+        }
+    }
+
+    // 不解构也能工作
+    var rect = new Rect(w = 10.0, h = 20.0)
+    switch rect {
+        case is Rect {
+            assert_eq(rect.w, 10.0)
+            assert_eq(rect.h, 20.0)
+        }
+        default {}
+    }
+
+    // 解构变量类型推断
+    var pt = new Point(x = 1.5, y = 2.5)
+    switch pt {
+        case is Point(xv, yv) {
+            float sum = xv + yv
+            assert_eq(sum, 4.0)
+        }
+        default {}
+    }
+
+    print("test_case_destructure passed")
+}

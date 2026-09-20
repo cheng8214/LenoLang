@@ -1,0 +1,46 @@
+// 并行赋值测试
+
+main()
+{
+    // 测试1: 基本变量交换
+    var a = 1
+    var b = 2
+    a, b = b, a
+    assert_eq(a, 2)
+    assert_eq(b, 1)
+
+    // 测试2: 与常量赋值
+    var m = 0
+    var n = 0
+    m, n = 100, 200
+    assert_eq(m, 100)
+    assert_eq(n, 200)
+
+    // 测试3: 表达式计算
+    var p = 5
+    var q = 3
+    p, q = p + q, p - q
+    assert_eq(p, 8)   // 5 + 3
+    assert_eq(q, 2)   // 5 - 3
+
+    // 测试4: 三个变量交换
+    var x = 1
+    var y = 2
+    var z = 3
+    x, y, z = z, x, y
+    assert_eq(x, 3)
+    assert_eq(y, 1)
+    assert_eq(z, 2)
+
+    // 测试5: 多变量赋值不同类型
+    var i = 0
+    var s = ""
+    var arr = []
+    i, s, arr = 42, "hello", [1, 2, 3]
+    assert_eq(i, 42)
+    assert_eq(s, "hello")
+    assert_eq(arr.len(), 3)
+    assert_eq(arr[0], 1)
+
+    print("test_parallel_assignment passed")
+}

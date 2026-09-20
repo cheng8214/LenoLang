@@ -1,0 +1,261 @@
+// Type? 可空类型边界测试
+
+// ============================================================================
+// 1. 各种基础类型的 nullable
+// ============================================================================
+struct TestBasicNullable {
+    int? ni
+    float? nf
+    bool? nb
+    string? ns
+}
+
+func test_basic_nullable() {
+    TestBasicNullable t = new TestBasicNullable()
+    // 所有 nullable 基础类型字段默认为 null
+    assert_eq(t.ni == null, true)
+    assert_eq(t.nf == null, true)
+    assert_eq(t.nb == null, true)
+    assert_eq(t.ns == null, true)
+    // 赋值后不为 null
+    t.ni = 42
+    assert_eq(t.ni != null, true)
+    assert_eq(t.ni, 42)
+    t.nf = 3.14
+    assert_eq(t.nf != null, true)
+    assert_eq(t.nf, 3.14)
+    t.nb = true
+    assert_eq(t.nb != null, true)
+    assert_eq(t.nb, true)
+    t.ns = "hello"
+    assert_eq(t.ns != null, true)
+    assert_eq(t.ns, "hello")
+    print("test_basic_nullable: PASSED")
+}
+
+// ============================================================================
+// 2. Nullable Array / Dict 字段（默认 null 而非空容器）
+// ============================================================================
+struct TestContainerNullable {
+    Array[int]? narr
+    Dict[string, int]? ndict
+    Array[int] normal_arr    // 非 nullable，默认空数组
+    Dict[string, int] normal_dict  // 非 nullable，默认空字典
+}
+
+func test_container_nullable() {
+    TestContainerNullable t = new TestContainerNullable()
+    // nullable 容器默认 null
+    assert_eq(t.narr == null, true)
+    assert_eq(t.ndict == null, true)
+    // 非 nullable 容器默认空容器
+    assert_eq(t.normal_arr != null, true)
+    assert_eq(t.normal_arr.len(), 0)
+    assert_eq(t.normal_dict != null, true)
+    // 赋值空数组
+    t.narr = []
+    assert_eq(t.narr != null, true)
+    assert_eq(t.narr.len(), 0)
+    t.narr.add(1)
+    assert_eq(t.narr.len(), 1)
+    // 赋值空字典
+    t.ndict = {}
+    assert_eq(t.ndict != null, true)
+    t.ndict.set("key", 99)
+    assert_eq(t.ndict.get("key", 0), 99)
+    print("test_container_nullable: PASSED")
+}
+
+// ============================================================================
+// 3. Nullable struct 嵌套
+// ============================================================================
+struct Inner2 {
+    int x = 0
+    int y = 0
+}
+
+struct Outer {
+    Inner2? child
+    Inner2 normal_child
+}
+
+func test_nested_nullable() {
+    Outer o = new Outer()
+    // nullable 嵌套默认 null
+    assert_eq(o.child == null, true)
+    // 非 nullable 嵌套默认分配
+    assert_eq(o.normal_child != null, true)
+    assert_eq(o.normal_child.x, 0)
+    // 赋值 nullable 字段
+    o.child = new Inner2(x=10, y=20)
+    assert_eq(o.child != null, true)
+    assert_eq(o.child.x, 10)
+    assert_eq(o.child.y, 20)
+    // 再次赋 null
+    o.child = null
+    assert_eq(o.child == null, true)
+    print("test_nested_nullable: PASSED")
+}
+
+// ============================================================================
+// 4. Nullable 字段带显式默认值
+// ============================================================================
+struct TestExplicitDefault {
+    int? ni = 100       // nullable + 显式默认值
+    string? ns = "abc"  // nullable + 显式默认值
+    int? nj             // nullable + 无默认值 = null
+}
+
+func test_explicit_default() {
+    TestExplicitDefault t = new TestExplicitDefault()
+    assert_eq(t.ni != null, true)
+    assert_eq(t.ni, 100)
+    assert_eq(t.ns != null, true)
+    assert_eq(t.ns, "abc")
+    assert_eq(t.nj == null, true)
+    // 可以赋 null 覆盖默认值
+    t.ni = null
+    assert_eq(t.ni == null, true)
+    print("test_explicit_default: PASSED")
+}
+
+// ============================================================================
+// 5. Nullable 类型局部变量
+// ============================================================================
+func test_nullable_local_var() {
+    Inner2? a = null
+    assert_eq(a == null, true)
+    a = new Inner2(x=5)
+    assert_eq(a != null, true)
+    assert_eq(a.x, 5)
+    a = null
+    assert_eq(a == null, true)
+    print("test_nullable_local_var: PASSED")
+}
+
+// ============================================================================
+// 6. Nullable 函数参数
+// ============================================================================
+func process_nullable(Inner2? item): int {
+    if item != null {
+        return item.x
+    }
+    return -1
+}
+
+func test_nullable_param() {
+    Inner2? a = null
+    assert_eq(process_nullable(a), -1)
+    a = new Inner2(x=77)
+    assert_eq(process_nullable(a), 77)
+    assert_eq(process_nullable(null), -1)
+    assert_eq(process_nullable(new Inner2(x=33)), 33)
+    print("test_nullable_param: PASSED")
+}
+
+// ============================================================================
+// 7. Nullable 函数返回类型
+// ============================================================================
+func maybe_return(int n): Inner2? {
+    if n > 0 {
+        return new Inner2(x=n)
+    }
+    return null
+}
+
+func test_nullable_return() {
+    Inner2? r1 = maybe_return(10)
+    assert_eq(r1 != null, true)
+    assert_eq(r1.x, 10)
+    Inner2? r2 = maybe_return(-1)
+    assert_eq(r2 == null, true)
+    print("test_nullable_return: PASSED")
+}
+
+// ============================================================================
+// 8. Nullable 链式赋值
+// ============================================================================
+func test_nullable_chain_assign() {
+    Inner2? a = null
+    Inner2? b = null
+    a = new Inner2(x=1)
+    b = a  // Type? ← Type? 应该兼容
+    assert_eq(b != null, true)
+    assert_eq(b.x, 1)
+    print("test_nullable_chain_assign: PASSED")
+}
+
+// ============================================================================
+// 9. 多个 nullable 字段独立状态
+// ============================================================================
+struct MultiNullable {
+    Inner2? a
+    Inner2? b
+    Inner2? c
+}
+
+func test_multi_nullable() {
+    MultiNullable m = new MultiNullable()
+    assert_eq(m.a == null, true)
+    assert_eq(m.b == null, true)
+    assert_eq(m.c == null, true)
+    m.a = new Inner2(x=1)
+    m.c = new Inner2(x=3)
+    // b 仍为 null
+    assert_eq(m.a != null, true)
+    assert_eq(m.b == null, true)
+    assert_eq(m.c != null, true)
+    assert_eq(m.a.x, 1)
+    assert_eq(m.c.x, 3)
+    print("test_multi_nullable: PASSED")
+}
+
+// ============================================================================
+// 10. Nullable 与非 nullable 同名 struct 赋值
+// ============================================================================
+func test_nullable_to_nonnullable() {
+    Inner2 normal = new Inner2(x=42)
+    Inner2? opt = normal   // Type → Type? 应该兼容
+    assert_eq(opt != null, true)
+    assert_eq(opt.x, 42)
+    print("test_nullable_to_nonnullable: PASSED")
+}
+
+// ============================================================================
+// 11. Nullable struct 在 if 分支中的使用
+// ============================================================================
+func test_nullable_if_branch() {
+    Inner2? p = null
+    int result = 0
+    if p != null {
+        result = p.x
+    } else {
+        result = -99
+    }
+    assert_eq(result, -99)
+    p = new Inner2(x=55)
+    if p != null {
+        result = p.x
+    } else {
+        result = -99
+    }
+    assert_eq(result, 55)
+    print("test_nullable_if_branch: PASSED")
+}
+
+// ============================================================================
+// 运行所有测试
+// ============================================================================
+test_basic_nullable()
+test_container_nullable()
+test_nested_nullable()
+test_explicit_default()
+test_nullable_local_var()
+test_nullable_param()
+test_nullable_return()
+test_nullable_chain_assign()
+test_multi_nullable()
+test_nullable_to_nonnullable()
+test_nullable_if_branch()
+
+print("=== test_nullable_edge: ALL PASSED ===")

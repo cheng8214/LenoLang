@@ -1,0 +1,966 @@
+#include "include/leno_vm_runtime.h"
+#include "include/module_dispatch.h"
+#include "include/leno_serialize.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <ctype.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#include <direct.h>  // _wmkdir
+#endif
+
+#define MAX_MODULE_NAME 128
+#define MAX_EXPORT_NAME 128
+#define MAX_EXPORTS 512
+#define MAX_LOADED_MODULES 128
+
+typedef struct {
+    char names[MAX_EXPORTS][MAX_EXPORT_NAME];
+    int count;
+} ExportList;
+
+typedef struct {
+    char paths[MAX_LOADED_MODULES][MAX_PATH_LEN];
+    ObjModule* modules[MAX_LOADED_MODULES];
+    int count;
+} LoadedModules;
+
+static LoadedModules loaded_modules = {0};
+
+// 模块编译缓存配置
+static char* g_cache_dir = NULL;   // 缓存目录（NULL 表示未配置/禁用）
+static int g_cache_enabled = 1;    // 缓存开关
+
+// 检查模块是否已加载，如果已加载返回模块对象
+static void add_loaded_module(const char* path, ObjModule* module);
+
+void add_loaded_module_public(const char* path, ObjModule* module) {
+    add_loaded_module(path, module);
+}
+
+ObjModule* find_loaded_module(const char* path) {
+    for (int i = 0; i < loaded_modules.count; i++) {
+        if (strcmp(loaded_modules.paths[i], path) == 0) {
+            return loaded_modules.modules[i];
+        }
+    }
+    return NULL;
+}
+
+// 获取已加载模块数量（供序列化遍历依赖）
+int loaded_modules_get_count(void) {
+    return loaded_modules.count;
+}
+
+// 获取指定索引的已加载模块
+ObjModule* loaded_modules_get(int index) {
+    if (index < 0 || index >= loaded_modules.count) return NULL;
+    return loaded_modules.modules[index];
+}
+
+// 启用/禁用模块编译缓存
+void module_loader_set_cache_enabled(int enabled) {
+    g_cache_enabled = enabled;
+}
+
+// 查询缓存是否启用（供 main.c 在设置缓存目录前判断）
+int module_loader_is_cache_enabled(void) {
+    return g_cache_enabled;
+}
+
+// 获取缓存目录路径（供符号表缓存计算缓存文件路径）
+const char* module_loader_get_cache_dir(void) {
+    return g_cache_dir;
+}
+
+// 递归创建目录（用于缓存目录）
+static void ensure_cache_dir(const char* dir) {
+    if (!dir || !*dir) return;
+    char tmp[MAX_PATH_LEN];
+    strncpy(tmp, dir, MAX_PATH_LEN - 1);
+    tmp[MAX_PATH_LEN - 1] = '\0';
+    size_t len = strlen(tmp);
+    // 去掉末尾分隔符
+    if (len > 0) {
+        char last = tmp[len - 1];
+        if (last == '/' || last == '\\') {
+            tmp[len - 1] = '\0';
+        }
+    }
+    // 逐级创建
+    for (char* p = tmp + 1; *p; p++) {
+        if (*p == '/' || *p == '\\') {
+            char c = *p;
+            *p = '\0';
+#ifdef _WIN32
+            {
+                int wl = MultiByteToWideChar(CP_UTF8, 0, tmp, -1, NULL, 0);
+                wchar_t* wp = (wchar_t*)malloc(wl * sizeof(wchar_t));
+                if (wp) {
+                    MultiByteToWideChar(CP_UTF8, 0, tmp, -1, wp, wl);
+                    _wmkdir(wp);
+                    free(wp);
+                }
+            }
+#else
+            mkdir(tmp, 0755);
+#endif
+            *p = c;
+        }
+    }
+    // 最后一级
+#ifdef _WIN32
+    {
+        int wl = MultiByteToWideChar(CP_UTF8, 0, tmp, -1, NULL, 0);
+        wchar_t* wp = (wchar_t*)malloc(wl * sizeof(wchar_t));
+        if (wp) {
+            MultiByteToWideChar(CP_UTF8, 0, tmp, -1, wp, wl);
+            _wmkdir(wp);
+            free(wp);
+        }
+    }
+#else
+    mkdir(tmp, 0755);
+#endif
+}
+
+// 设置模块缓存目录
+void module_loader_set_cache_dir(const char* dir) {
+    if (g_cache_dir) {
+        free(g_cache_dir);
+        g_cache_dir = NULL;
+    }
+    if (dir && *dir) {
+        g_cache_dir = strdup(dir);
+        ensure_cache_dir(g_cache_dir);
+    }
+}
+
+// 添加已加载模块
+static void add_loaded_module(const char* path, ObjModule* module) {
+    if (loaded_modules.count >= MAX_LOADED_MODULES) {
+        fprintf(stderr, "[错误] 已加载模块数量超过上限 %d，'%s' 被忽略\n",
+                MAX_LOADED_MODULES, path);
+        return;
+    }
+    size_t path_len = strlen(path);
+    if (path_len >= MAX_PATH_LEN) path_len = MAX_PATH_LEN - 1;
+    memcpy(loaded_modules.paths[loaded_modules.count], path, path_len);
+    loaded_modules.paths[loaded_modules.count][path_len] = '\0';
+    loaded_modules.modules[loaded_modules.count] = module;
+    loaded_modules.count++;
+}
+
+// 更新已加载模块（用于循环依赖场景）
+static void update_loaded_module(const char* path, ObjModule* module) {
+    for (int i = 0; i < loaded_modules.count; i++) {
+        if (strcmp(loaded_modules.paths[i], path) == 0) {
+            loaded_modules.modules[i] = module;
+            return;
+        }
+    }
+}
+
+// 提取模块名称（从文件路径）
+static void extract_module_name(const char* file_path, char* out_name, int max_len) {
+    const char* base = strrchr(file_path, '/');
+    if (!base) base = strrchr(file_path, '\\');
+    if (!base) base = file_path;
+    else base++;
+
+    const char* dot = strrchr(base, '.');
+    if (dot) {
+        int len = (int)(dot - base);
+        if (len >= max_len) len = max_len - 1;
+        strncpy(out_name, base, len);
+        out_name[len] = '\0';
+    } else {
+        strncpy(out_name, base, max_len - 1);
+        out_name[max_len - 1] = '\0';
+    }
+}
+
+// 提取导出项
+static void extract_exports(const char* source, ExportList* list) {
+    list->count = 0;
+    const char* p = source;
+
+    while (*p) {
+        // 跳过空白字符
+        while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) p++;
+
+        if (!*p) break;
+
+        // 处理单行注释 //
+        if (*p == '/' && *(p+1) == '/') {
+            while (*p && *p != '\n') p++;
+            continue;
+        }
+
+        // 处理多行注释 /* ... */
+        if (*p == '/' && *(p+1) == '*') {
+            p += 2;  // 跳过 /*
+            while (*p && !(*p == '*' && *(p+1) == '/')) p++;
+            if (*p) p += 2;  // 跳过 */
+            continue;
+        }
+
+        // 处理双引号字符串 "..."
+        if (*p == '"') {
+            p++;  // 跳过起始 "
+            while (*p && *p != '"') {
+                if (*p == '\\' && *(p+1)) p += 2;  // 跳过转义字符
+                else p++;
+            }
+            if (*p) p++;  // 跳过结束 "
+            continue;
+        }
+
+        // 处理单引号字符串 '...'
+        if (*p == '\'') {
+            p++;  // 跳过起始 '
+            while (*p && *p != '\'') {
+                if (*p == '\\' && *(p+1)) p += 2;  // 跳过转义字符
+                else p++;
+            }
+            if (*p) p++;  // 跳过结束 '
+            continue;
+        }
+
+        // 处理原始字符串 `...`
+        if (*p == '`') {
+            p++;  // 跳过起始 `
+            while (*p && *p != '`') p++;
+            if (*p) p++;  // 跳过结束 `
+            continue;
+        }
+
+        // 查找 export 关键字
+        if (strncmp(p, "export", 6) == 0 && !isalnum((unsigned char)p[6]) && p[6] != '_') {
+            p += 6;
+            while (*p && (*p == ' ' || *p == '\t')) p++;
+
+            // 跳过可能的 "func"、"var"、"const"、"struct"、"cstruct"、"enum" 关键字
+            if (strncmp(p, "func", 4) == 0 && !isalnum((unsigned char)p[4]) && p[4] != '_') {
+                p += 4;
+                while (*p && (*p == ' ' || *p == '\t')) p++;
+            } else if (strncmp(p, "const", 5) == 0 && !isalnum((unsigned char)p[5]) && p[5] != '_') {
+                p += 5;
+                while (*p && (*p == ' ' || *p == '\t')) p++;
+                // const 后面可能还有类型关键字（如 const int, const float 等），继续跳过
+                // 需要循环跳过，因为可能有多级（虽然当前语法只有一级）
+                int skipped_type = 1;
+                while (skipped_type) {
+                    skipped_type = 0;
+                    if (strncmp(p, "int", 3) == 0 && !isalnum((unsigned char)p[3]) && p[3] != '_') {
+                        p += 3; while (*p && (*p == ' ' || *p == '\t')) p++; skipped_type = 1;
+                    } else if (strncmp(p, "float", 5) == 0 && !isalnum((unsigned char)p[5]) && p[5] != '_') {
+                        p += 5; while (*p && (*p == ' ' || *p == '\t')) p++; skipped_type = 1;
+                    } else if (strncmp(p, "string", 6) == 0 && !isalnum((unsigned char)p[6]) && p[6] != '_') {
+                        p += 6; while (*p && (*p == ' ' || *p == '\t')) p++; skipped_type = 1;
+                    } else if (strncmp(p, "bool", 4) == 0 && !isalnum((unsigned char)p[4]) && p[4] != '_') {
+                        p += 4; while (*p && (*p == ' ' || *p == '\t')) p++; skipped_type = 1;
+                    } else if (strncmp(p, "var", 3) == 0 && !isalnum((unsigned char)p[3]) && p[3] != '_') {
+                        p += 3; while (*p && (*p == ' ' || *p == '\t')) p++; skipped_type = 1;
+                    } else if (strncmp(p, "any", 3) == 0 && !isalnum((unsigned char)p[3]) && p[3] != '_') {
+                        p += 3; while (*p && (*p == ' ' || *p == '\t')) p++; skipped_type = 1;
+                    } else if (strncmp(p, "Array", 5) == 0 && !isalnum((unsigned char)p[5]) && p[5] != '_') {
+                        p += 5; while (*p && (*p == ' ' || *p == '\t')) p++; skipped_type = 1;
+                    } else if (strncmp(p, "Dict", 4) == 0 && !isalnum((unsigned char)p[4]) && p[4] != '_') {
+                        p += 4; while (*p && (*p == ' ' || *p == '\t')) p++; skipped_type = 1;
+                    } else if (strncmp(p, "Ptr", 3) == 0 && !isalnum((unsigned char)p[3]) && p[3] != '_') {
+                        p += 3; while (*p && (*p == ' ' || *p == '\t')) p++; skipped_type = 1;
+                    }
+                    // 跳过泛型参数（如 Array[int] 中的 [int]）
+                    if (*p == '[') {
+                        p++;
+                        while (*p && *p != ']') p++;
+                        if (*p == ']') p++;
+                        while (*p && (*p == ' ' || *p == '\t')) p++;
+                    }
+                }
+            } else if (strncmp(p, "var", 3) == 0 && !isalnum((unsigned char)p[3]) && p[3] != '_') {
+                p += 3;
+                while (*p && (*p == ' ' || *p == '\t')) p++;
+                // 检测解构语法: var[T1, T2](a, b) 或 var{"k": T}(a)
+                if (*p == '[' || *p == '{') {
+                    // 跳过形状部分 [...] 或 {...}
+                    int depth = 1;
+                    p++;
+                    while (*p && depth > 0) {
+                        if (*p == '[' || *p == '{') depth++;
+                        else if (*p == ']' || *p == '}') depth--;
+                        if (depth == 0) { p++; break; }
+                        p++;
+                    }
+                    // 跳过空格
+                    while (*p && (*p == ' ' || *p == '\t')) p++;
+                    // 解析 (name, name, ...)
+                    if (*p == '(') {
+                        p++;
+                        while (*p) {
+                            const char* dname_iter_start = p;   // 进度守卫基准
+                            // 跳过空白与逗号。**含换行**：解构列表换行写合法；漏掉 '\n'
+                            // 会让指针停住、本圈一步不推进 ⇒ 死循环（同 scan_var.inc）。
+                            while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r' || *p == ',')) p++;
+                            if (*p == ')') { p++; break; }
+                            const char* dname_start = p;
+                            while (*p && (isalnum((unsigned char)*p) || *p == '_')) p++;
+                            int dlen = (int)(p - dname_start);
+                            if (dlen > 0 && dlen < MAX_EXPORT_NAME && list->count < MAX_EXPORTS) {
+                                strncpy(list->names[list->count], dname_start, dlen);
+                                list->names[list->count][dlen] = '\0';
+                                list->count++;
+                            }
+                            // 本圈没推进就退出，畸形列表交由真正的解析器报错
+                            if (p == dname_iter_start) break;
+                        }
+                        continue;  // 已处理完，跳过下方的标识符读取
+                    }
+                    continue;
+                }
+            } else if (strncmp(p, "cstruct", 7) == 0 && !isalnum((unsigned char)p[7]) && p[7] != '_') {
+                p += 7;
+                while (*p && (*p == ' ' || *p == '\t')) p++;
+            } else if (strncmp(p, "packed", 6) == 0 && !isalnum((unsigned char)p[6]) && p[6] != '_') {
+                // export packed cstruct / export packed align(N) cstruct
+                p += 6;
+                while (*p && (*p == ' ' || *p == '\t')) p++;
+                // 跳过可选的 align(N)
+                if (strncmp(p, "align", 5) == 0 && !isalnum((unsigned char)p[5]) && p[5] != '_') {
+                    p += 5;
+                    while (*p && (*p == ' ' || *p == '\t')) p++;
+                    if (*p == '(') {
+                        p++;
+                        while (*p && *p != ')') p++;
+                        if (*p == ')') p++;
+                        while (*p && (*p == ' ' || *p == '\t')) p++;
+                    }
+                }
+                // 跳过 cstruct 关键字
+                if (strncmp(p, "cstruct", 7) == 0 && !isalnum((unsigned char)p[7]) && p[7] != '_') {
+                    p += 7;
+                    while (*p && (*p == ' ' || *p == '\t')) p++;
+                }
+            } else if (strncmp(p, "align", 5) == 0 && !isalnum((unsigned char)p[5]) && p[5] != '_') {
+                // export align(N) cstruct / export align(N) packed cstruct
+                p += 5;
+                while (*p && (*p == ' ' || *p == '\t')) p++;
+                if (*p == '(') {
+                    p++;
+                    while (*p && *p != ')') p++;
+                    if (*p == ')') p++;
+                    while (*p && (*p == ' ' || *p == '\t')) p++;
+                }
+                // 跳过可选的 packed
+                if (strncmp(p, "packed", 6) == 0 && !isalnum((unsigned char)p[6]) && p[6] != '_') {
+                    p += 6;
+                    while (*p && (*p == ' ' || *p == '\t')) p++;
+                }
+                // 跳过 cstruct 关键字
+                if (strncmp(p, "cstruct", 7) == 0 && !isalnum((unsigned char)p[7]) && p[7] != '_') {
+                    p += 7;
+                    while (*p && (*p == ' ' || *p == '\t')) p++;
+                }
+            } else if (strncmp(p, "struct", 6) == 0 && !isalnum((unsigned char)p[6]) && p[6] != '_') {
+                p += 6;
+                while (*p && (*p == ' ' || *p == '\t')) p++;
+            } else if (strncmp(p, "enum", 4) == 0 && !isalnum((unsigned char)p[4]) && p[4] != '_') {
+                p += 4;
+                while (*p && (*p == ' ' || *p == '\t')) p++;
+            } else {
+                // "类型在前"声明: export int x = 42, export Array[int] arr = value, export MyStruct b = ...
+                // 跳过类型部分（类型名 + 可选泛型 [T] 或 [K,V]）
+                // 跳过类型名标识符
+                while (*p && (isalnum((unsigned char)*p) || *p == '_')) p++;
+                while (*p && (*p == ' ' || *p == '\t')) p++;
+                // 跳过泛型参数 [T] 或 [K,V]（支持嵌套如 Array[Array[int]]）
+                if (*p == '[') {
+                    int depth = 1;
+                    p++;
+                    while (*p && depth > 0) {
+                        if (*p == '[') depth++;
+                        else if (*p == ']') { depth--; if (depth == 0) { p++; break; } }
+                        p++;
+                    }
+                    while (*p && (*p == ' ' || *p == '\t')) p++;
+                }
+                // 跳过可能的第二级类型（如 Array[Array[int]] 中外层 Array 后还有 [Array[int]]）
+                // 上面已处理嵌套，这里不需要再循环
+            }
+
+            // 读取标识符名称
+            const char* start = p;
+            while (*p && (isalnum(*p) || *p == '_')) p++;
+
+            int len = (int)(p - start);
+            if (len > 0 && len < MAX_EXPORT_NAME) {
+                if (list->count >= MAX_EXPORTS) {
+                    fprintf(stderr, "[错误] 模块导出项数量超过上限 %d，'%.*s' 被忽略\n",
+                            MAX_EXPORTS, len, start);
+                } else {
+                    strncpy(list->names[list->count], start, len);
+                    list->names[list->count][len] = '\0';
+                    list->count++;
+                }
+            } else if (len >= MAX_EXPORT_NAME) {
+                fprintf(stderr, "[错误] 导出项名称长度超过上限 %d：'%.*s'\n",
+                        MAX_EXPORT_NAME, len, start);
+            }
+            continue;
+        }
+
+        p++;
+    }
+}
+
+// 规范化路径（统一使用平台特定的分隔符，处理 . 和 ..）
+int normalize_path(char* path, int max_len) {
+    char result[MAX_PATH_LEN];
+    int result_len = 0;
+
+#ifdef _WIN32
+    // Windows: 统一转换为反斜杠
+    for (int i = 0; path[i] && i < max_len; i++) {
+        if (path[i] == '/') path[i] = '\\';
+    }
+    const char sep = '\\';
+#else
+    // Linux/macOS: 统一转换为正斜杠
+    for (int i = 0; path[i] && i < max_len; i++) {
+        if (path[i] == '\\') path[i] = '/';
+    }
+    const char sep = '/';
+#endif
+
+    const char* p = path;
+    while (*p && result_len < MAX_PATH_LEN - 1) {
+        if (*p == sep && *(p+1) == '.') {
+            if (*(p+2) == sep || *(p+2) == '\0') {
+                // ./ 跳过
+                p += 2;
+                continue;
+            } else if (*(p+2) == '.' && (*(p+3) == sep || *(p+3) == '\0')) {
+                // ../ 返回上一级
+                p += 3;
+                while (result_len > 0 && result[result_len-1] != sep) {
+                    result_len--;
+                }
+                if (result_len > 0) result_len--;
+                continue;
+            }
+        }
+        result[result_len++] = *p++;
+    }
+    result[result_len] = '\0';
+
+    strncpy(path, result, max_len - 1);
+    path[max_len - 1] = '\0';
+    return 1;
+}
+
+// 读取文件内容
+static char* read_file(const char* file_path) {
+#ifdef _WIN32
+    // Windows 下使用宽字符版本以支持中文路径
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, file_path, -1, NULL, 0);
+    if (wlen <= 0) {
+        return NULL;
+    }
+    wchar_t* wpath = (wchar_t*)malloc(wlen * sizeof(wchar_t));
+    if (!wpath) return NULL;
+    MultiByteToWideChar(CP_UTF8, 0, file_path, -1, wpath, wlen);
+    
+    FILE* file = _wfopen(wpath, L"r");
+    free(wpath);
+#else
+    FILE* file = fopen(file_path, "r");
+#endif
+    if (!file) {
+        return NULL;
+    }
+
+    fseek(file, 0, SEEK_END);
+    long size = ftell(file);
+    fseek(file, 0, SEEK_SET);
+
+    char* content = (char*)malloc(size + 1);
+    if (!content) {
+        fclose(file);
+        return NULL;
+    }
+
+    size_t read = fread(content, 1, size, file);
+    content[read] = '\0';
+    fclose(file);
+
+    return content;
+}
+
+// 解析模块文件的完整（规范化）路径
+// 成功返回 1 并写入 full_path，失败返回 0。
+// 与 read_module_file / load_module_file 原来的内联逻辑完全一致，抽出来是为了让
+// 调用方（如导出项扫描缓存）能用同一个「完整路径」做缓存键 / stat。
+static int module_resolve_path(char* full_path, const char* file_path, const char* current_file) {
+    char normalized_current[MAX_PATH_LEN];
+
+    if (current_file != NULL) {
+        strncpy(normalized_current, current_file, MAX_PATH_LEN - 1);
+        normalized_current[MAX_PATH_LEN - 1] = '\0';
+        // 统一使用平台特定的分隔符
+#ifdef _WIN32
+        for (int i = 0; normalized_current[i]; i++) {
+            if (normalized_current[i] == '/') normalized_current[i] = '\\';
+        }
+#else
+        for (int i = 0; normalized_current[i]; i++) {
+            if (normalized_current[i] == '\\') normalized_current[i] = '/';
+        }
+#endif
+    }
+
+    if (current_file != NULL && file_path[0] != '/' && file_path[0] != '\\' &&
+        !(file_path[1] == ':' && (file_path[2] == '/' || file_path[2] == '\\'))) {
+#ifdef _WIN32
+        const char* last_slash = strrchr(normalized_current, '\\');
+#else
+        const char* last_slash = strrchr(normalized_current, '/');
+#endif
+
+        if (last_slash != NULL) {
+            size_t dir_len = last_slash - normalized_current + 1;
+            if (dir_len >= MAX_PATH_LEN) {
+                return 0;
+            }
+            memcpy(full_path, normalized_current, dir_len);
+            full_path[dir_len] = '\0';
+            if (strlen(full_path) + strlen(file_path) >= MAX_PATH_LEN) {
+                return 0;
+            }
+            strcat(full_path, file_path);
+        } else {
+            if (strlen(file_path) >= MAX_PATH_LEN) {
+                return 0;
+            }
+            strcpy(full_path, file_path);
+        }
+    } else {
+        if (strlen(file_path) >= MAX_PATH_LEN) {
+            return 0;
+        }
+        strcpy(full_path, file_path);
+    }
+
+    if (!normalize_path(full_path, MAX_PATH_LEN)) {
+        return 0;
+    }
+    return 1;
+}
+
+// 读取模块文件
+char* read_module_file(const char* file_path, const char* current_file) {
+    char full_path[MAX_PATH_LEN];
+    if (!module_resolve_path(full_path, file_path, current_file)) {
+        return NULL;
+    }
+    return read_file(full_path);
+}
+
+// 编译模块 - 通过函数指针调用，实现编译器与加载器解耦
+// 编译模块 - 通过函数指针调用，实现编译器与加载器解耦
+static ObjModule* compile_module_dispatch(const char* source, const char* module_name, ExportList* exports) {
+    ModuleCompileFunc compile_func = get_module_compile_func();
+    if (!compile_func) {
+        fprintf(stderr, "[错误] 模块编译器未注册\n");
+        return NULL;
+    }
+    // 将 ExportList 转换为 char[][MAX_EXPORT_NAME] 格式（堆分配避免栈溢出）
+    char (*export_names)[MAX_EXPORT_NAME] = (char(*)[MAX_EXPORT_NAME])malloc(exports->count * MAX_EXPORT_NAME);
+    if (!export_names) {
+        fprintf(stderr, "[错误] 内存分配失败\n");
+        return NULL;
+    }
+    for (int i = 0; i < exports->count && i < MAX_EXPORTS; i++) {
+        strncpy(export_names[i], exports->names[i], MAX_EXPORT_NAME - 1);
+        export_names[i][MAX_EXPORT_NAME - 1] = '\0';
+    }
+    ObjModule* result = compile_func(source, module_name, export_names, exports->count);
+    free(export_names);
+    return result;
+}
+
+// 重置已加载模块列表
+void reset_loaded_modules(void) {
+    loaded_modules.count = 0;
+}
+
+// 标记所有已加载模块（供 GC 使用）
+void loaded_modules_mark_all(void) {
+    for (int i = 0; i < loaded_modules.count; i++) {
+        if (loaded_modules.modules[i]) {
+            extern void gc_mark_object(Object* obj);
+            gc_mark_object((Object*)loaded_modules.modules[i]);
+        }
+    }
+}
+
+// ============================================================================
+// 导出项扫描缓存（进程内，按「完整路径 + mtime + size」校验）
+// ----------------------------------------------------------------------------
+// 每个「模块调用点」（mod.foo()）在语义分析阶段都会走
+// module_has_method → extract_module_exports_from_file，而它此前**每次都重读整份模块
+// 源码**并重跑一遍 export 词法统计。一个模块文件被同一文件里的 k 个调用点引用，
+// 就白读 k 次；SDL3 这类工程模块多、调用点多，累加起来很可观。
+// 这里缓存扫描结果：mtime + size 变化即失效（用户在 LSP 里改了文件保存后，
+// 下一次查询会重新扫描），因此不需要显式清缓存的接口。
+// ============================================================================
+typedef struct {
+    char* path;
+    int64_t mtime;
+    uint64_t size;
+    ExportList list;
+} ExportScanCacheEntry;
+
+static ExportScanCacheEntry* g_export_scan_cache = NULL;
+static int g_export_scan_cache_count = 0;
+static int g_export_scan_cache_cap = 0;
+
+// 取文件 mtime/size（Windows 下走宽字符 API 以支持中文路径）；失败返回 -1
+static int module_file_stamp(const char* full_path, int64_t* out_mtime, uint64_t* out_size) {
+#ifdef _WIN32
+    struct _stat st;
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, full_path, -1, NULL, 0);
+    if (wlen <= 0) return -1;
+    wchar_t* wpath = (wchar_t*)malloc(wlen * sizeof(wchar_t));
+    if (!wpath) return -1;
+    MultiByteToWideChar(CP_UTF8, 0, full_path, -1, wpath, wlen);
+    int ret = _wstat(wpath, &st);
+    free(wpath);
+    if (ret != 0) return -1;
+    *out_mtime = (int64_t)st.st_mtime;
+    *out_size = (uint64_t)st.st_size;
+#else
+    struct stat st;
+    if (stat(full_path, &st) != 0) return -1;
+    *out_mtime = (int64_t)st.st_mtime;
+    *out_size = (uint64_t)st.st_size;
+#endif
+    return 0;
+}
+
+// 命中返回列表指针（仅当路径存在且 mtime/size 均未变），否则 NULL
+static ExportList* export_scan_cache_lookup(const char* full_path) {
+    int64_t mtime = 0;
+    uint64_t size = 0;
+    if (module_file_stamp(full_path, &mtime, &size) != 0) return NULL;
+    for (int i = 0; i < g_export_scan_cache_count; i++) {
+        if (strcmp(g_export_scan_cache[i].path, full_path) == 0) {
+            if (g_export_scan_cache[i].mtime == mtime && g_export_scan_cache[i].size == size) {
+                return &g_export_scan_cache[i].list;
+            }
+            return NULL;   // 文件已变：本次重扫后会覆盖这一条
+        }
+    }
+    return NULL;
+}
+
+static void export_scan_cache_store(const char* full_path, const ExportList* list) {
+    int64_t mtime = 0;
+    uint64_t size = 0;
+    if (module_file_stamp(full_path, &mtime, &size) != 0) return;
+    for (int i = 0; i < g_export_scan_cache_count; i++) {
+        if (strcmp(g_export_scan_cache[i].path, full_path) == 0) {
+            g_export_scan_cache[i].mtime = mtime;
+            g_export_scan_cache[i].size = size;
+            g_export_scan_cache[i].list = *list;   // ExportList 为纯 POD，值拷贝即可
+            return;
+        }
+    }
+    if (g_export_scan_cache_count >= g_export_scan_cache_cap) {
+        int new_cap = g_export_scan_cache_cap == 0 ? 8 : g_export_scan_cache_cap * 2;
+        ExportScanCacheEntry* grown = (ExportScanCacheEntry*)realloc(
+            g_export_scan_cache, sizeof(ExportScanCacheEntry) * new_cap);
+        if (!grown) return;
+        g_export_scan_cache = grown;
+        g_export_scan_cache_cap = new_cap;
+    }
+    ExportScanCacheEntry* entry = &g_export_scan_cache[g_export_scan_cache_count++];
+    entry->path = strdup(full_path);
+    entry->mtime = mtime;
+    entry->size = size;
+    entry->list = *list;
+}
+
+// 从模块文件中提取导出项（用于语义分析）
+int extract_module_exports_from_file(const char* file_path, const char* current_file,
+                                      char exports[][MAX_EXPORT_NAME], int max_exports) {
+    char full_path[MAX_PATH_LEN];
+    if (!module_resolve_path(full_path, file_path, current_file)) return -1;
+
+    ExportList local;
+    ExportList* list = export_scan_cache_lookup(full_path);
+    if (!list) {
+        char* source = read_file(full_path);   // 路径已解析，避免二次解析
+        if (!source) return -1;
+        extract_exports(source, &local);
+        free(source);
+        export_scan_cache_store(full_path, &local);
+        list = &local;
+    }
+
+    int count = list->count < max_exports ? list->count : max_exports;
+    for (int i = 0; i < count; i++) {
+        strncpy(exports[i], list->names[i], MAX_EXPORT_NAME - 1);
+        exports[i][MAX_EXPORT_NAME - 1] = '\0';
+    }
+
+    return count;
+}
+
+// 检查模块中是否存在指定的方法
+int module_has_method(const char* file_path, const char* current_file, const char* method_name) {
+    char exports[MAX_EXPORTS][MAX_EXPORT_NAME];
+    int count = extract_module_exports_from_file(file_path, current_file, exports, MAX_EXPORTS);
+
+    if (count < 0) {
+        return -1;
+    }
+
+    for (int i = 0; i < count; i++) {
+        if (strcmp(exports[i], method_name) == 0) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+// 加载并编译模块文件
+ObjModule* load_module_file(const char* file_path, const char* current_file, const char* alias_name) {
+    char full_path[MAX_PATH_LEN];
+    char normalized_current[MAX_PATH_LEN];
+
+    if (current_file != NULL) {
+        strncpy(normalized_current, current_file, MAX_PATH_LEN - 1);
+        normalized_current[MAX_PATH_LEN - 1] = '\0';
+        for (int i = 0; normalized_current[i]; i++) {
+            if (normalized_current[i] == '/') normalized_current[i] = '\\';
+        }
+    }
+
+    if (current_file != NULL && file_path[0] != '/' && file_path[0] != '\\' &&
+        !(file_path[1] == ':' && (file_path[2] == '/' || file_path[2] == '\\'))) {
+        const char* last_slash = strrchr(normalized_current, '\\');
+
+        if (last_slash != NULL) {
+            size_t dir_len = last_slash - normalized_current + 1;
+            if (dir_len >= MAX_PATH_LEN) {
+                fprintf(stderr, "[错误] 路径过长\n");
+                return NULL;
+            }
+            memcpy(full_path, normalized_current, dir_len);
+            full_path[dir_len] = '\0';
+            if (strlen(full_path) + strlen(file_path) >= MAX_PATH_LEN) {
+                fprintf(stderr, "[错误] 路径过长\n");
+                return NULL;
+            }
+            strcat(full_path, file_path);
+        } else {
+            if (strlen(file_path) >= MAX_PATH_LEN) {
+                fprintf(stderr, "[错误] 路径过长\n");
+                return NULL;
+            }
+            strcpy(full_path, file_path);
+        }
+    } else {
+        if (strlen(file_path) >= MAX_PATH_LEN) {
+            fprintf(stderr, "[错误] 路径过长\n");
+            return NULL;
+        }
+        strcpy(full_path, file_path);
+    }
+
+    if (!normalize_path(full_path, MAX_PATH_LEN)) {
+        fprintf(stderr, "[错误] 路径规范化失败\n");
+        return NULL;
+    }
+
+    ObjModule* existing_module = find_loaded_module(full_path);
+    if (existing_module != NULL) {
+        return existing_module;
+    }
+
+    // 磁盘缓存查找：命中则跳过编译直接反序列化
+    if (g_cache_enabled && g_cache_dir) {
+        char* cache_path = module_cache_path_for(full_path, g_cache_dir);
+        if (cache_path) {
+            ObjModule* cached = module_cache_deserialize(cache_path, full_path);
+            free(cache_path);
+            if (cached) {
+                return cached;
+            }
+        }
+    }
+
+    char* source = read_file(full_path);
+    if (!source) {
+        // 文件不存在时，注册到错误收集器（而非仅 fprintf stderr），
+        // 确保根因错误出现在格式化错误输出中，不被下游 any 类型错误掩盖
+        char err_msg[BUFFER_MEDIUM];
+        snprintf(err_msg, sizeof(err_msg), "找不到模块文件: %s", full_path);
+        error_add_at(ERR_SEMANTIC, 1, 0, err_msg);
+        return NULL;
+    }
+
+    char module_name[MAX_MODULE_NAME];
+    if (alias_name != NULL && alias_name[0] != '\0') {
+        strncpy(module_name, alias_name, MAX_MODULE_NAME - 1);
+        module_name[MAX_MODULE_NAME - 1] = '\0';
+    } else {
+        extract_module_name(file_path, module_name, MAX_MODULE_NAME);
+    }
+
+    ExportList* exports = (ExportList*)malloc(sizeof(ExportList));
+    if (!exports) {
+        free(source);
+        return NULL;
+    }
+    extract_exports(source, exports);
+
+    // 保存原始文件名（在设置模块文件名之前）
+    const char* original_filename_ptr = error_get_filename();
+    char original_filename[MAX_PATH_LEN];
+    if (original_filename_ptr) {
+        strncpy(original_filename, original_filename_ptr, MAX_PATH_LEN - 1);
+        original_filename[MAX_PATH_LEN - 1] = '\0';
+    } else {
+        original_filename[0] = '\0';
+    }
+    
+    error_set_filename(full_path);
+
+    // 在编译之前，先创建一个占位符模块并添加到已加载列表
+    // 这样可以防止循环导入导致的无限递归
+    ObjModule* placeholder_module = module_new(module_name);
+    if (!placeholder_module) {
+        error_set_filename(original_filename[0] ? original_filename : NULL);
+        free(source);
+        free(exports);
+        return NULL;
+    }
+    placeholder_module->source_path = strdup(full_path);
+    
+    // 将导出项添加到占位符模块的导出表
+    // 这样循环依赖中的其他模块可以看到本模块的导出（虽然值暂时为null）
+    for (int i = 0; i < exports->count; i++) {
+        ObjString* key = str_copy(exports->names[i], (int)strlen(exports->names[i]));
+        dict_set(placeholder_module->exports, val_obj((Object*)key), val_null());
+    }
+    
+    // 提前添加到已加载列表，防止循环导入
+    add_loaded_module(full_path, placeholder_module);
+
+    ObjModule* module = compile_module_dispatch(source, module_name, exports);
+
+    // 恢复原始文件名
+    error_set_filename(original_filename[0] ? original_filename : NULL);
+
+    free(exports);
+    // 注意：source 延后释放，编译成功后用于写缓存的源文件哈希计算
+
+    if (module) {
+        // 编译成功，将编译后的模块内容复制到占位符模块
+        ObjDict* exports_dict = module->exports;
+        for (int i = 0; i < exports_dict->capacity; i++) {
+            ObjDictEntry* entry = &exports_dict->entries[i];
+            Value entry_key = entry->key;
+            if (!val_is_null(entry_key) && entry_key != DICT_TOMBSTONE_VAL) {
+                dict_set(placeholder_module->exports, entry_key, entry->value);
+            }
+        }
+        // 复制全局变量表
+        if (module->globals && module->global_count > 0) {
+            if (placeholder_module->globals) {
+                free(placeholder_module->globals);
+            }
+            placeholder_module->globals = (Value*)malloc(module->global_count * sizeof(Value));
+            if (placeholder_module->globals) {
+                memcpy(placeholder_module->globals, module->globals, module->global_count * sizeof(Value));
+            }
+        }
+        placeholder_module->global_count = module->global_count;
+        placeholder_module->global_capacity = module->global_capacity;
+        // 复制模块名称
+        if (placeholder_module->name) {
+            free(placeholder_module->name);
+        }
+        placeholder_module->name = module->name ? strdup(module->name) : NULL;
+        // 复制原生模块引用
+        if (module->native_imports && module->native_import_count > 0) {
+            placeholder_module->native_imports = (char**)malloc(module->native_import_count * sizeof(char*));
+            for (int ni = 0; ni < module->native_import_count; ni++) {
+                placeholder_module->native_imports[ni] = strdup(module->native_imports[ni]);
+            }
+            placeholder_module->native_import_count = module->native_import_count;
+        }
+        // 复制模块帧
+        placeholder_module->frame = module->frame;
+        module->frame = NULL;
+        // 转移 init_chunk
+        placeholder_module->init_chunk = module->init_chunk;
+        module->init_chunk = NULL;
+        placeholder_module->initialized = module->initialized;
+        // 复制 export_mappings
+        if (module->export_mappings && module->export_mapping_count > 0) {
+            placeholder_module->export_mappings = (ExportGlobalMapping*)malloc(module->export_mapping_count * sizeof(ExportGlobalMapping));
+            for (int ei = 0; ei < module->export_mapping_count; ei++) {
+                placeholder_module->export_mappings[ei].name = strdup(module->export_mappings[ei].name);
+                placeholder_module->export_mappings[ei].global_index = module->export_mappings[ei].global_index;
+            }
+            placeholder_module->export_mapping_count = module->export_mapping_count;
+        }
+        // 复制 use 导入的需要 re-export 的类型信息
+        if (module->use_reexport_names && module->use_reexport_count > 0) {
+            placeholder_module->use_reexport_names = (char**)malloc(module->use_reexport_count * sizeof(char*));
+            placeholder_module->use_reexport_kinds = (int*)malloc(module->use_reexport_count * sizeof(int));
+            for (int ei = 0; ei < module->use_reexport_count; ei++) {
+                placeholder_module->use_reexport_names[ei] = strdup(module->use_reexport_names[ei]);
+                placeholder_module->use_reexport_kinds[ei] = module->use_reexport_kinds[ei];
+            }
+            placeholder_module->use_reexport_count = module->use_reexport_count;
+        }
+        // 更新所有函数/闭包的 module 指针（统一调用）
+        update_module_function_ptrs(module, placeholder_module);
+        // 更新已加载列表
+        update_loaded_module(full_path, placeholder_module);
+        // 清空原 module 的内容（避免 GC 重复释放已转移的资源）
+        module->exports = dict_new(16);
+        module->globals = NULL;
+        module->global_count = 0;
+        module->global_capacity = 0;
+        module->init_chunk = NULL;
+        module->initialized = 0;
+        module->export_mappings = NULL;
+        module->export_mapping_count = 0;
+        char* transferred_name = module->name;
+        module->name = NULL;
+        if (transferred_name) free(transferred_name);
+        // 编译成功后写回缓存（source 仍可用，用于计算源文件哈希）
+        if (g_cache_enabled && g_cache_dir && placeholder_module->source_path) {
+            char* cache_path = module_cache_path_for(full_path, g_cache_dir);
+            if (cache_path) {
+                module_cache_serialize(cache_path, placeholder_module, source);
+                free(cache_path);
+            }
+        }
+        free(source);
+        return placeholder_module;
+    } else {
+        free(source);
+        return NULL;
+    }
+}

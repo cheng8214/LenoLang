@@ -1,0 +1,19 @@
+// 使用测试模块
+import "test_module.leno" as tm
+
+main() {
+    print("创建对象...")
+    var obj = tm.createTest()
+
+    if obj.isInit {
+        print("对象已初始化")
+
+        print("调用 obj.sleep(1000)...")
+        obj.sleep(1000)
+
+        print("调用 obj.uninit()...")
+        obj.uninit()
+    }
+
+    print("完成")
+}

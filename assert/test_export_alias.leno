@@ -1,0 +1,15 @@
+// export alias 断言测试
+alias Size = int
+alias Name = string
+
+main() {
+    // Size = int 被正确使用
+    Size a = 10
+    assert_eq(a, 10)
+
+    Size b = 20
+    Size c = a + b
+    assert_eq(c, 30)
+
+    print("test_export_alias passed")
+}

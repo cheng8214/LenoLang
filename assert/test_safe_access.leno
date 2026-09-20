@@ -1,0 +1,333 @@
+// ?. 安全访问运算符测试
+
+struct Inner {
+    int value = 0
+    string label = ""
+
+    func double_value() {
+        return value * 2
+    }
+
+    func greet(string prefix) {
+        return prefix + label
+    }
+}
+
+struct Outer {
+    Inner? inner       // nullable 内部结构体
+    string name = "outer"
+
+    func get_label() {
+        if inner != null {
+            return inner.label
+        }
+        return "none"
+    }
+
+    func add_value(int x) {
+        if inner != null {
+            return inner.value + x
+        }
+        return x
+    }
+}
+
+struct Deep {
+    Outer? outer
+    string tag = "deep"
+}
+
+// ============================================================
+// 测试1：obj?.field - 非 null 时正常访问字段
+// ============================================================
+func test_safe_field_non_null() {
+    Inner i = new Inner(value=10, label="hello")
+    var result = i?.value
+    assert_eq(result, 10)
+    var label = i?.label
+    assert_eq(label, "hello")
+    print("test_safe_field_non_null: passed")
+}
+
+// ============================================================
+// 测试2：obj?.field - null 时返回 null
+// ============================================================
+func test_safe_field_null() {
+    Outer o = new Outer()
+    // o.inner 默认为 null
+    var result = o.inner?.value
+    assert_eq(result == null, true)
+    var label = o.inner?.label
+    assert_eq(label == null, true)
+    print("test_safe_field_null: passed")
+}
+
+// ============================================================
+// 测试3：obj?.method() - 非 null 时正常调用方法
+// ============================================================
+func test_safe_method_non_null() {
+    Inner i = new Inner(value=5, label="world")
+    var result = i?.double_value()
+    assert_eq(result, 10)
+    var greet = i?.greet("hi ")
+    assert_eq(greet, "hi world")
+    print("test_safe_method_non_null: passed")
+}
+
+// ============================================================
+// 测试4：obj?.method() - null 时返回 null
+// ============================================================
+func test_safe_method_null() {
+    Outer o = new Outer()
+    var result = o.inner?.double_value()
+    assert_eq(result == null, true)
+    var greet = o.inner?.greet("hi ")
+    assert_eq(greet == null, true)
+    print("test_safe_method_null: passed")
+}
+
+// ============================================================
+// 测试5：链式安全访问 a?.b?.c
+// ============================================================
+func test_chaining() {
+    Inner i = new Inner(value=42, label="chain")
+    Outer o = new Outer()
+    o.inner = i
+
+    // 非空链式访问
+    var val = o.inner?.value
+    assert_eq(val, 42)
+    var dbl = o.inner?.double_value()
+    assert_eq(dbl, 84)
+
+    // 链中某层为 null
+    Deep d = new Deep()
+    // d.outer 默认为 null
+    var deep_val = d.outer?.inner?.value
+    assert_eq(deep_val == null, true)
+
+    var deep_method = d.outer?.inner?.double_value()
+    assert_eq(deep_method == null, true)
+
+    print("test_chaining: passed")
+}
+
+// ============================================================
+// 测试6：链式安全访问 - 中间层 null 短路
+// ============================================================
+func test_chaining_short_circuit() {
+    Deep d = new Deep()
+    Outer o = new Outer()
+    d.outer = o
+    // o.inner 仍为 null
+
+    var val = d.outer?.inner?.value
+    assert_eq(val == null, true)
+
+    var method = d.outer?.inner?.double_value()
+    assert_eq(method == null, true)
+
+    // 完整链路赋值后
+    o.inner = new Inner(value=7, label="full")
+    var full_val = d.outer?.inner?.value
+    assert_eq(full_val, 7)
+
+    var full_method = d.outer?.inner?.double_value()
+    assert_eq(full_method, 14)
+
+    print("test_chaining_short_circuit: passed")
+}
+
+// ============================================================
+// 测试7：安全访问与普通访问混合
+// ============================================================
+func test_mixed_access() {
+    Inner i = new Inner(value=3, label="mix")
+    Outer o = new Outer()
+    o.inner = i
+
+    // 普通 . 访问已确定非 null 的字段
+    var name = o.name
+    assert_eq(name, "outer")
+
+    // 安全访问可能为 null 的字段
+    var inner_val = o.inner?.value
+    assert_eq(inner_val, 3)
+
+    // 普通 + 安全混合链
+    var inner_label = o.inner?.label
+    assert_eq(inner_label, "mix")
+
+    print("test_mixed_access: passed")
+}
+
+// ============================================================
+// 测试8：安全访问方法带参数
+// ============================================================
+func test_safe_method_with_args() {
+    Inner i = new Inner(value=8, label="arg")
+    var result = i?.greet("say ")
+    assert_eq(result, "say arg")
+
+    // null 对象调用带参数方法
+    Outer o = new Outer()
+    var null_result = o.inner?.greet("say ")
+    assert_eq(null_result == null, true)
+
+    print("test_safe_method_with_args: passed")
+}
+
+// ============================================================
+// 测试9：安全访问返回值参与运算
+// ============================================================
+func test_safe_access_in_expression() {
+    Inner i = new Inner(value=10, label="expr")
+    Outer o = new Outer()
+    o.inner = i
+
+    // 安全访问结果与 int 运算（需要类型守卫）
+    var val = o.inner?.value
+    if val is int {
+        var doubled = val * 2
+        assert_eq(doubled, 20)
+    }
+
+    // null 情况
+    Outer o2 = new Outer()
+    var null_val = o2.inner?.value
+    if null_val == null {
+        assert_eq(true, true)
+    }
+
+    print("test_safe_access_in_expression: passed")
+}
+
+// ============================================================
+// 测试10：安全访问 int/string 基本类型字段
+// ============================================================
+func test_safe_access_primitive_fields() {
+    Inner i = new Inner(value=1, label="test")
+
+    var val = i?.value     // int 字段安全访问
+    assert_eq(val, 1)
+
+    var label = i?.label   // string 字段安全访问
+    assert_eq(label, "test")
+
+    print("test_safe_access_primitive_fields: passed")
+}
+
+// ============================================================
+// 测试11：多层嵌套安全访问 + 方法调用
+// ============================================================
+func test_deep_chain_method() {
+    Deep d = new Deep()
+    Outer o = new Outer()
+    Inner i = new Inner(value=100, label="deep_method")
+
+    d.outer = o
+    o.inner = i
+
+    var result = d.outer?.inner?.double_value()
+    assert_eq(result, 200)
+
+    var greet = d.outer?.inner?.greet("hey ")
+    assert_eq(greet, "hey deep_method")
+
+    print("test_deep_chain_method: passed")
+}
+
+// ============================================================
+// 测试12：安全访问结果与 null 比较
+// ============================================================
+func test_safe_access_null_compare() {
+    Outer o = new Outer()
+
+    // null 字段的安全访问结果
+    var val = o.inner?.value
+    assert_eq(val == null, true)
+    assert_eq(val != null, false)
+
+    // 非 null 字段的安全访问结果
+    o.inner = new Inner(value=5)
+    val = o.inner?.value
+    assert_eq(val != null, true)
+    assert_eq(val == null, false)
+
+    print("test_safe_access_null_compare: passed")
+}
+
+// ============================================================
+// 测试13：struct 方法内使用 ?.
+// ============================================================
+func test_safe_access_in_struct_method() {
+    Outer o = new Outer()
+    o.inner = new Inner(value=20, label="method")
+
+    // 调用 Outer 的方法（内部使用 if inner != null）
+    var label = o.get_label()
+    assert_eq(label, "method")
+
+    // 赋 null 后再调用
+    o.inner = null
+    label = o.get_label()
+    assert_eq(label, "none")
+
+    print("test_safe_access_in_struct_method: passed")
+}
+
+// ============================================================
+// 测试14：?. 后接字段 vs 方法区分
+// ============================================================
+func test_field_vs_method() {
+    Inner i = new Inner(value=6, label="fvm")
+
+    // ? 后是字段
+    var field_val = i?.value
+    assert_eq(field_val, 6)
+
+    // ? 后是方法
+    var method_val = i?.double_value()
+    assert_eq(method_val, 12)
+
+    print("test_field_vs_method: passed")
+}
+
+// ============================================================
+// 测试15：nullable 变量的安全访问
+// ============================================================
+func test_nullable_var_safe_access() {
+    Inner? maybe_inner = null
+    var val = maybe_inner?.value
+    assert_eq(val == null, true)
+
+    maybe_inner = new Inner(value=33, label="nullable")
+    val = maybe_inner?.value
+    assert_eq(val, 33)
+
+    var method_val = maybe_inner?.double_value()
+    assert_eq(method_val, 66)
+
+    print("test_nullable_var_safe_access: passed")
+}
+
+// ============================================================
+// 运行所有测试
+// ============================================================
+test_safe_field_non_null()
+test_safe_field_null()
+test_safe_method_non_null()
+test_safe_method_null()
+test_chaining()
+test_chaining_short_circuit()
+test_mixed_access()
+test_safe_method_with_args()
+test_safe_access_in_expression()
+test_safe_access_primitive_fields()
+test_deep_chain_method()
+test_safe_access_null_compare()
+test_safe_access_in_struct_method()
+test_field_vs_method()
+test_nullable_var_safe_access()
+
+print("test_safe_access: ALL PASSED")

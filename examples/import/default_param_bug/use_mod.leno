@@ -1,0 +1,13 @@
+// 模块文件 - 测试 use 导入的函数默认参数
+
+export func greet(string name, string prefix = "Hello"): string {
+    return prefix + " " + name
+}
+
+export func calc(int x, int y = 10, int z = 5): int {
+    return x + y + z
+}
+
+export func with_null(int a, int b = 0): int {
+    return a - b
+}

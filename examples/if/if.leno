@@ -1,0 +1,12 @@
+// 新建文件: Untitled.leno
+main()
+{
+	int a=10
+	if a==10
+	{
+	     var a=100 //这是局部变量a，不会覆盖外部的a
+	    print("输出100:"+a)//
+	    print("Hello LenoLang")
+	}
+	print("输出10:"+a)
+}

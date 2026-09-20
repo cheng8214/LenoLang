@@ -1,0 +1,18 @@
+// 最终 cstruct + FFI 测试
+import ffi
+
+cstruct Point {
+    i32 x
+    i32 y
+}
+
+main() {
+    print("=== cstruct + FFI 最终测试 ===")
+    
+    // 1. 测试基本功能
+    var p = Point.malloc()
+    p.x = 100
+    p.y = 200
+    
+    print("1. 基本功能测试:")
+    print("   x = " + p.x +

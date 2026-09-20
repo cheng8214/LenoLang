@@ -1,0 +1,35 @@
+// test_export_type_first.leno
+// 测试"类型在前"导出语法（const Type Name 和 export Type Name 两种写法）
+import "test_export_type_first_mod.leno" as mod
+
+main() {
+    // const Array[int]
+    int a0 = mod.INT_ARR[0]
+    int a1 = mod.INT_ARR[1]
+    int a2 = mod.INT_ARR[2]
+    assert_eq(a0, 10)
+    assert_eq(a1, 20)
+    assert_eq(a2, 30)
+
+    // const Array[string]
+    string s0 = mod.STR_ARR[0]
+    string s1 = mod.STR_ARR[1]
+    assert_eq(s0, "hello")
+    assert_eq(s1, "world")
+
+    // 无关键字: export int X = 42
+    int xv = mod.X
+    assert_eq(xv, 42)
+
+    // 无关键字: export string S = "world"
+    string sv = mod.S
+    assert_eq(sv, "world")
+
+    // 无关键字: export Array[int] ARR4 = [100, 200, 300]
+    int c0 = mod.ARR4[0]
+    int c1 = mod.ARR4[2]
+    assert_eq(c0, 100)
+    assert_eq(c1, 300)
+
+    print("test_export_type_first passed")
+}

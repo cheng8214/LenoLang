@@ -1,0 +1,224 @@
+import times as ti
+import rands
+// Leno语言实现的冒泡排序算法
+func bubble_sort(Array[int] arr):Array[int] {
+    var n = arr.len();
+    for n - 1 to var i {
+        for n - i - 1 to var j {
+            if arr[j] > arr[j + 1] {
+                var temp = arr[j];
+                arr[j] = arr[j+1];
+                arr[j+1] = temp;
+            }
+        }
+    }
+    return arr;
+}
+// 原始快速排序算法（有性能问题）
+func quick_sort_original(Array[int] arr):Array[int] {
+    if arr.len() <= 1 {
+        return arr
+    }
+    var pivot = arr[0]
+    var left = []
+    var right = []
+    for  1:arr.len()-1 to var i {
+        if arr[i] <= pivot {
+            left.add(arr[i])
+        } else {
+            right.add(arr[i])
+        }
+    }
+    var sorted_left = quick_sort_original(left)
+    var sorted_right = quick_sort_original(right)
+    var result = sorted_left;
+    result.add(pivot);
+    for sorted_right.len() to var i {
+        result.add(sorted_right[i]);
+    }
+    return result;
+}
+// 优化的原地快速排序算法
+func quick_sort(Array[int] arr):Array[int] {
+    return quick_sort_recursive(arr, 0, arr.len() - 1)
+}
+func quick_sort_recursive(Array[int] arr, int left, int right):Array[int] {
+    if left >= right {return arr}
+    var pivot_index = partition(arr, left, right)
+    quick_sort_recursive(arr, left, pivot_index - 1)
+    quick_sort_recursive(arr, pivot_index + 1, right)
+    return arr;
+}
+func partition(Array[int] arr, int left, int right): int {
+    // 选择中间元素作为基准值，避免最坏情况
+    var mid = (left + right) / 2;
+    var pivot = arr[mid];
+    // 将基准值移到最右边
+    var temp = arr[mid];
+    arr[mid] = arr[right];
+    arr[right] = temp;
+    var i = left;
+    for left:right-1 to var j {
+        if arr[j] <= pivot {
+            // 交换arr[i]和arr[j]
+            var temp = arr[i]
+            arr[i] = arr[j]
+            arr[j] = temp
+            i++;
+        }
+    }
+    // 将基准值放回正确位置
+    var temp1 = arr[i]
+    arr[i] = arr[right]
+    arr[right] = temp1
+    return i
+}
+// 进一步优化的快速排序（小数组用插入排序）
+func quick_sort_optimized(Array[int] arr):Array[int] {
+    return quick_sort_opt(arr, 0, arr.len() - 1)
+}
+func quick_sort_opt(Array[int] arr, int left, int right):Array[int] {
+    // 小数组使用插入排序
+    if right - left < 20 {
+        return insertion_sort_range(arr, left, right);
+    }
+    if left < right {
+        var pivot_index = partition_opt(arr, left, right);
+        quick_sort_opt(arr, left, pivot_index - 1);
+        quick_sort_opt(arr, pivot_index + 1, right);
+    }
+    return arr;
+}
+func partition_opt(Array[int] arr, int left, int right): int {
+    // 三数取中法选择基准值
+    var mid = (left + right) / 2;
+    // 确保arr[left] <= arr[mid] <= arr[right]
+    if arr[left] > arr[mid] {
+        var temp = arr[left];
+        arr[left] = arr[mid];
+        arr[mid] = temp;
+    }
+    if arr[mid] > arr[right] {
+        var temp = arr[mid];
+        arr[mid] = arr[right];
+        arr[right] = temp;
+    }
+    if arr[left] > arr[mid] {
+        var temp = arr[left];
+        arr[left] = arr[mid];
+        arr[mid] = temp;
+    }
+    var pivot = arr[mid];
+    // 将基准值移到right-1位置
+    var temp = arr[mid];
+    arr[mid] = arr[right - 1];
+    arr[right - 1] = temp;
+    var i = left;
+    var j = right - 1;
+    while true {
+        i = i + 1;
+        while arr[i] < pivot {i = i + 1}
+        j = j - 1;
+        while arr[j] > pivot {j = j - 1}
+        if i < j {
+            // 交换arr[i]和arr[j]
+            var temp = arr[i];
+            arr[i] = arr[j];
+            arr[j] = temp;
+        } else {
+            break
+        }
+    }
+    // 将基准值放回正确位置
+    var temp1 = arr[i];
+    arr[i] = arr[right - 1];
+    arr[right - 1] = temp1
+    return i
+}
+func insertion_sort_range(Array[int] arr, int left, int right):Array[int] {
+	 if left >= right {
+	        return arr
+	    }
+    for  left + 1:right to var i {
+        var key = arr[i];
+        var j = i - 1;
+        while j >= left and arr[j] > key {
+            arr[j + 1] = arr[j];
+            j = j - 1;
+        }
+        arr[j + 1] = key;
+    }
+    return arr;
+}
+// 辅助函数：验证数组是否已排序
+func verify_sorted(Array[int] arr) {
+    for arr.len() - 1 to var i {
+        if arr[i] > arr[i + 1]{
+            return false;
+        }
+    }
+    return true;
+}
+
+// 测试代码
+main() {
+    print("========== 排序算法性能对比 ==========\n");
+    // 测试不同规模的数据（规模拉开，便于看复杂度与常数项）
+    var test_cases = [
+        {"size": 2000, "name": "小规模"},
+        {"size": 5000, "name": "中规模"},
+        {"size": 20000, "name": "大规模"},
+        {"size": 100000, "name": "超大规模"},
+        {"size": 400000, "name": "巨大规模"}
+    ];
+    for test_cases to  var test_case {
+        int size = _int(test_case["size"]);
+        var name = test_case["name"];
+        print($"\n=== {name}测试 (数组大小: {size}) ===");
+        // 生成测试数据
+        var original = rands.int_array(0, size);
+        // 计时用微秒：Windows 上 ti.ms() 走 GetTickCount64，粒度约 15.6ms，
+        // 小规模会被量化成 0 / 16 / 31 这类值，看不出真实差异。
+        // 测试1：冒泡排序（O(n²)，只测试中小规模）
+        if size <= 5000 {
+            var arr1 = original.copy();
+            var s1 = ti.us();
+            var result1 = bubble_sort(arr1);
+            var s2 = ti.us();
+            var us1 = _int(s2 - s1);
+            print($"冒泡排序: {us1}微秒 (正确性: {verify_sorted(result1)})");
+        }
+        // 测试2：原始快速排序（递归 + 频繁分配数组，只测试中小规模）
+        if size <= 20000 {
+            var arr2 = original.copy();
+            var s3 = ti.us();
+            var result2 = quick_sort_original(arr2);
+            var s4 = ti.us();
+            var us2 = _int(s4 - s3);
+            print($"原始快速排序: {us2}微秒 (正确性: {verify_sorted(result2)})");
+        }
+        // 测试3：优化的原地快速排序
+        var arr3 = original.copy()
+        var s5 = ti.us();
+        var result3 = quick_sort(arr3);
+        var s6 = ti.us();
+        var us3 = _int(s6 - s5);
+        print($"原地快速排序: {us3}微秒 (正确性: {verify_sorted(result3)})");
+        // 测试4：进一步优化的快速排序
+        var arr4 = original.copy()
+        var s7 = ti.us();
+        var result4 = quick_sort_optimized(arr4);
+        var s8 = ti.us();
+        var us4 = _int(s8 - s7);
+        print($"优化快速排序: {us4}微秒 (正确性: {verify_sorted(result4)})");
+        // 说明本规模下被跳过的算法
+        if size > 5000 {
+            print("注：冒泡排序 O(n²) 在此规模下过慢，已跳过测试");
+        }
+        if size > 20000 {
+            print("注：原始快速排序（递归 + 频繁分配数组）在此规模下过慢，已跳过测试");
+        }
+    }
+    print("\n========== 测试完成 ==========");
+    print("计时口径：同一二进制内跑完全部规模，避免跨时段 CPU 频率/热漂移污染");
+}

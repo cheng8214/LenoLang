@@ -1,0 +1,23 @@
+import io
+import asyncs
+
+// 简化测试 - 只测试 sleep
+async func test1() {
+    io.print("test1 开始")
+    await asyncs.sleep(200)
+    io.print("test1 完成")
+}
+
+async func test2() {
+    io.print("test2 开始")
+    await asyncs.sleep(100)
+    io.print("test2 完成")
+}
+
+main() {
+    io.print("=== 开始测试 ===")
+    test1()
+    test2()
+    asyncs.run()
+    io.print("=== 测试完成 ===")
+}

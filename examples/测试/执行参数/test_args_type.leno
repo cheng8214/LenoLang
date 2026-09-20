@@ -1,0 +1,7 @@
+import strings
+main() {
+    var a = _args()
+    // 如果元素类型推断正确，a[0] 应该是 string 而不是 any
+    var s = a[0]
+    print(strings.to_upper(s))
+}

@@ -1,0 +1,4 @@
+import ffi
+import "mod_ffi_call.leno" as m
+var pid = ffi.call_int(m.KERNEL32, "GetCurrentProcessId")
+print("PID=" + pid)

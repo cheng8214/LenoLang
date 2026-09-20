@@ -1,0 +1,27 @@
+// 深度边界测试 - 中间模块
+import "widget_base.leno" as base
+use base.Widget
+use base.Label
+use base.Button
+use base.HBox
+use base.VBox
+use base.TreeNode
+use base.ClickHandler
+use base.WidgetList
+use base.WidgetMap
+use base.NamedWidgets
+
+// re-export alias
+export alias LayoutHandler = func(Widget): void
+export alias StringList = Array[string]
+
+// 中间模块工厂
+export func createNamedWidgets(): NamedWidgets {
+    return new NamedWidgets()
+}
+
+// 跨模块 face 工厂
+export func make_clickable_button(string text, ClickHandler cb): Button {
+    Button b = new Button(); b.text = text; b._onClick = cb
+    return b
+}

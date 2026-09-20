@@ -1,0 +1,39 @@
+// 测试：struct 中 Array/Dict 字段自动初始化为空容器
+// 修复前：new Struct() 后 Array/Dict 字段为 null，调用 .add()/.len() 等崩溃
+// 修复后：Array 字段自动为 []，Dict 字段自动为 {}
+
+struct Container {
+    Array items
+    Dict props
+    int count
+    func add_item(int v) { items.add(v); count = items.len() }
+    func set_prop(string k, int v) { props[k] = v }
+}
+
+main() {
+    Container c = new Container()
+
+    // Array 字段自动初始化为 []
+    assert_eq(c.items.len(), 0)
+    c.items.add(10)
+    c.items.add(20)
+    assert_eq(c.items.len(), 2)
+    assert_eq(c.items[0], 10)
+    assert_eq(c.items[1], 20)
+
+    // Dict 字段自动初始化为 {}
+    assert_eq(c.props.len(), 0)
+    c.props["x"] = 100
+    c.props["y"] = 200
+    assert_eq(c.props.len(), 2)
+    assert_eq(c.props["x"], 100)
+    assert_eq(c.props["y"], 200)
+
+    // 方法内也能正常使用
+    c.add_item(42)
+    assert_eq(c.count, 3)
+    c.set_prop("z", 300)
+    assert_eq(c.props["z"], 300)
+
+    print("test_struct_array_dict_field passed")
+}

@@ -1,0 +1,130 @@
+// test_modal_dialog.leno — 模态/非模态对话框完整测试
+// 覆盖：模态(不在任务栏) / 非模态(在任务栏) / 嵌套模态(栈) / 闪现消除
+//
+// === if/then/else 表达式解析（已修复） ===
+// 裸 `if cond then a else b` 现可在语句位置解析（parse_if_stmt 遇 then 时
+// 回退交给 parse_if_expr）。修复见 src/parser/parser_stmt_control.c。
+// 复现/验证脚本：examples/验证/repro_if_expr.leno
+// 注意：Leno 不支持裸表达式自动返回，函数需显式 return 返回 if 表达式结果。
+import "SDL3" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.WindowFlag
+
+main() {
+    var mainWin = SDL3.createWindow({title:"主窗口 — 1=模态 2=非模态 3=嵌套模态 ESC=退", w:660, h:440})
+    var eventCount = 0    // 主窗口收到的事件数——模态时暂停增长则证明阻塞有效
+
+    mainWin.run(
+        func(Event e): bool {
+            eventCount = eventCount + 1
+            if e.isKeyDown() {
+                if e.scancode() == Scancode.ESCAPE { return false }
+                if e.scancode() == Scancode._1 { testModal() }
+                if e.scancode() == Scancode._2 { testModeless() }
+                if e.scancode() == Scancode._3 { testNestedModal() }
+            }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(#141628FF)
+            r.drawText(SDL3.createFontAuto(18.0), "主窗口", 20, 20, #FFFFFFFF)
+            r.drawText(SDL3.createFontAuto(14.0), "1=模态对话框  2=非模态对话框  3=嵌套模态", 20, 55, #C8C8F0FF)
+            r.drawText(SDL3.createFontAuto(14.0), "ESC=退出主窗口", 20, 80, #9696B4FF)
+            r.drawText(SDL3.createFontAuto(13.0), "事件计数: " + eventCount, 20, 110, #78C878FF)
+            r.drawText(SDL3.createFontAuto(12.0), "模态弹出后此计数应停止增长", 20, 135, #646464FF)
+        }
+    )
+}
+
+// ---- 模态对话框（不在任务栏、alwaysOnTop、无闪现） ----
+func testModal() {
+    var dlg = SDL3.createDialogWindow({title:"模态对话框", w:360, h:200})
+
+    // 也可以加控件
+    dlg.addLabel({x:180, y:30, text:"这是模态对话框", font_size:16, text_color:#FFDC96FF, align:1})
+    dlg.addLabel({x:180, y:60, text:"不在任务栏显示", font_size:13, text_color:#B4BED2FF, align:1})
+    dlg.addLabel({x:180, y:85, text:"主窗口被阻塞无法操作", font_size:13, text_color:#C86450FF, align:1})
+    dlg.addLabel({x:180, y:110,text:"ESC = 关闭此对话框", font_size:13, text_color:#96A0B4FF, align:1})
+
+    SDL3.runModal(dlg,
+        func(Event e): bool {
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            if e.isWindowClose() { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(#231C26FF)
+        }
+    )
+}
+
+// ---- 非模态对话框（在任务栏、独立窗口） ----
+func testModeless() {
+    var dlg = SDL3.createModelessDialog({title:"非模态对话框", w:360, h:200})
+
+    dlg.addLabel({x:180, y:30, text:"这是非模态对话框", font_size:16, text_color:#96DCFFFF, align:1})
+    dlg.addLabel({x:180, y:60, text:"出现在任务栏", font_size:13, text_color:#B4BED2FF, align:1})
+    dlg.addLabel({x:180, y:85, text:"主窗口仍可操作", font_size:13, text_color:#64C864FF, align:1})
+    dlg.addLabel({x:180, y:110,text:"ESC = 关闭此对话框", font_size:13, text_color:#96A0B4FF, align:1})
+
+    dlg.run(
+        func(Event e): bool {
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            if e.isWindowClose() { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(#1E202AFF)
+        }
+    )
+}
+
+// ---- 嵌套模态（测试栈行为：外层→内层→关内层→外层依然模态） ----
+func testNestedModal() {
+    var depth = 1
+    var dlg = SDL3.createDialogWindow({title:"嵌套模态 — 第1层", w:380, h:200})
+
+    dlg.addLabel({x:190, y:25, text:"嵌套模态 第1层", font_size:16, text_color:#FFC878FF, align:1})
+    dlg.addLabel({x:190, y:60, text:"N=打开第2层  ESC=关闭", font_size:13, text_color:#B4BED2FF, align:1})
+
+    SDL3.runModal(dlg,
+        func(Event e): bool {
+            if e.isKeyDown() {
+                if e.scancode() == Scancode.ESCAPE {
+                    if depth == 1 { return false }   // 最外层关闭
+                    // 不应该到达这里，因为内层 runModal 会阻塞
+                }
+                if e.scancode() == Scancode.N {
+                    openInnerNested()
+                }
+            }
+            if e.isWindowClose() { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(#281923FF)
+            r.drawText(SDL3.createFontAuto(13.0),"外层模态 — 按 N 弹出内层",20,90,#C8B4DCFF)
+        }
+    )
+}
+
+func openInnerNested() {
+    var inner = SDL3.createDialogWindow({title:"嵌套模态 — 第2层", w:320, h:160})
+
+    inner.addLabel({x:160, y:25, text:"嵌套模态 第2层", font_size:16, text_color:#FF9664FF, align:1})
+    inner.addLabel({x:160, y:60, text:"ESC=关闭内层 回到外层", font_size:13, text_color:#B4BED2FF, align:1})
+    inner.addLabel({x:160, y:85, text:"外层此时被阻塞", font_size:13, text_color:#C86450FF, align:1})
+
+    SDL3.runModal(inner,
+        func(Event e): bool {
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            if e.isWindowClose() { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(#32141EFF)
+        }
+    )
+}

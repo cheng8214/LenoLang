@@ -1,0 +1,3 @@
+// 模拟 SDL3.leno：导入并 re-export
+import "test_bug_mod_b.leno" as b
+use b.RendererLike

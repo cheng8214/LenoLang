@@ -1,0 +1,65 @@
+main()
+{
+    // 测试普通整数（应该正常工作）
+    print("=== 普通整数测试 ===")
+    print("17 % 5 = " + (17 % 5))
+    print("17 & 5 = " + (17 & 5))
+    print("17 | 5 = " + (17 | 5))
+    print("17 ^ 5 = " + (17 ^ 5))
+    print("~17 = " + (~17))
+    print("17 << 2 = " + (17 << 2))
+    print("17 >> 2 = " + (17 >> 2))
+
+    // 测试大数（会触发 BigInt）
+    print("")
+    print("=== BigInt 测试 ===")
+    var big1 = 999999999999999999999999999999
+    var big2 = 12345678901234567890
+
+    print("big1 = " + big1)
+    print("big2 = " + big2)
+
+    // 取模测试
+    print("")
+    print("取模测试:")
+    var mod_result = big1 % big2
+    print("big1 % big2 = " + mod_result)
+
+    // 位运算测试
+    print("")
+    print("位运算测试:")
+    var a = 123456789012345
+    var b = 98765432109876
+
+    print("a = " + a)
+    print("b = " + b)
+
+    var and_result = a & b
+    var or_result = a | b
+    var xor_result = a ^ b
+
+    print("a & b = " + and_result)
+    print("a | b = " + or_result)
+    print("a ^ b = " + xor_result)
+
+    // 位移测试
+    print("")
+    print("位移测试:")
+    var c = 123456789012345
+    print("c = " + c)
+
+    var shl_result = c << 3
+    var shr_result = c >> 3
+
+    print("c << 3 = " + shl_result)
+    print("c >> 3 = " + shr_result)
+
+    // 位非测试
+    print("")
+    print("位非测试:")
+    var not_result = ~12345
+    print("~12345 = " + not_result)
+
+    print("")
+    print("所有测试完成!")
+}

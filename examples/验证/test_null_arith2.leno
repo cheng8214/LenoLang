@@ -1,0 +1,6 @@
+main()
+{
+    int b = null + 1
+
+    print(b)
+}

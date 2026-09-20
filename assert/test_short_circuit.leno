@@ -1,0 +1,49 @@
+// 短路运算符测试
+
+main()
+{
+    // 测试1: and 短路 - 第一个为 false 时不执行第二个
+    var and_executed = false
+    func side_effect_and() {
+        and_executed = true
+        return true
+    }
+    var result1 = false and side_effect_and()
+    assert_eq(result1, false)
+    assert_eq(and_executed, false)  // 短路，不执行
+
+    // 测试2: or 短路 - 第一个为 true 时不执行第二个
+    var or_executed = false
+    func side_effect_or() {
+        or_executed = true
+        return true
+    }
+    var result2 = true or side_effect_or()
+    assert_eq(result2, true)
+    assert_eq(or_executed, false)  // 短路，不执行
+
+    // 测试3: and 链式
+    var a = false
+    var b = true
+    var c = false
+    assert_eq(a and b and c, false)
+
+    // 测试4: or 链式
+    assert_eq(a or b or c, true)
+
+    // 测试5: 复杂表达式
+    var x = 10
+    assert_eq(x > 5 and x < 20, true)
+    assert_eq(x < 5 or x > 15, false)
+
+    // 测试6: 混合使用
+    var y = 15
+    assert_eq(y > 10 and y < 20 or y == 5, true)
+
+    // 测试7: not 运算符
+    var flag = true
+    assert_eq(not flag, false)
+    assert_eq(not false, true)
+
+    print("test_short_circuit passed")
+}

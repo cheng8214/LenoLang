@@ -1,0 +1,2 @@
+// 模块 A: 定义 enum
+export enum Flag { ON = 1; OFF = 0 }

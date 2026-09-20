@@ -1,0 +1,59 @@
+// files 模块测试
+
+import files
+import io
+
+main()
+{
+    // 测试1: 文件写入和读取
+    var test_content = "Hello, Leno!\n这是一行中文。"
+    var filename = "test_temp_file.txt"
+
+    // 写入文件
+    files.write(filename, test_content)
+
+    // 读取文件
+    var read_content = files.read(filename)
+    assert_eq(read_content, test_content)
+
+    // 测试2: 文件存在检查
+    var exists = files.exists(filename)
+    assert_eq(exists, true)
+
+    var not_exists = files.exists("non_existent_file.txt")
+    assert_eq(not_exists, false)
+
+    // 测试3: 删除文件
+    var delete_result = files.delete(filename)
+    assert_eq(delete_result, true)
+
+    var exists_after_delete = files.exists(filename)
+    assert_eq(exists_after_delete, false)
+
+    // 测试4: 文件对象操作
+    files.write(filename, "Line 1\nLine 2\nLine 3")
+    var f = files.open(filename, "r")
+
+    // 读取一行
+    var line1 = f.readline()
+    assert_eq(line1, "Line 1")
+
+    // 读取全部行
+    f.seek(0, "set")
+    var lines = f.readlines()
+    assert_eq(lines.len(), 3)
+    assert_eq(lines[0], "Line 1")
+    assert_eq(lines[1], "Line 2")
+    assert_eq(lines[2], "Line 3")
+
+    // 获取文件大小
+    var file_size = f.len()
+    assert_eq(file_size > 0, true)
+
+    f.close()
+
+    // 清理
+    files.delete(filename)
+
+    print("test_files passed")
+}

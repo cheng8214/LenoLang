@@ -1,0 +1,15 @@
+import times
+import maths
+main() {
+        var t=times.ms()
+        var result=0.0
+        for 1:50000000 to i
+        {
+                result+=maths.sin(i)*maths.cos(i)
+                result+=maths.sqrt(i)
+                result+=maths.log(i)
+        }
+        print(result)
+        var t1=times.ms()
+        print(t1-t+"ms")
+}

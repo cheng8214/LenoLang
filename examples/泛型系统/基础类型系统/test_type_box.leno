@@ -1,0 +1,9 @@
+// 测试 type() 对泛型 struct 的显示
+struct Box[T] {
+    T value
+}
+
+var ib = new Box[int](value=42)
+var sb = new Box[string](value="hi")
+print(type(ib))
+print(type(sb))

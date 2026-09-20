@@ -1,0 +1,175 @@
+// 回归测试：比较结果必须产出 val_bool（TRUE_VAL / FALSE_VAL）+ while 循环条件
+//
+// 背景（docs §8.24）：比较 opcode 以前只产出**裸 0/1**，而语言语义要求压的是
+// val_bool（TRUE_VAL/FALSE_VAL）。裸 0/1 是歧义的：
+//   - 写回 bool 变量时，0x1 会被读成次正规 double 4.9e-324：
+//       `is bool`→false、`_int()`→0、JSON 里写成 4.9e-324；
+//   - 存全局 / 返回 / 传实参时被「int48 重装箱」变成 int 1（bool 变 int）。
+// 正确做法是在**产生处**就做成 VM 的表示（TRUE_VAL/FALSE_VAL）。
+//
+// 注意实现上的坑：TRUE_VAL 与 FALSE_VAL 相差 1<<48，但 **必须用加法**
+// （TAG_FALSE 的第 48 位本来就是 1，`FALSE_VAL | (1<<48) == FALSE_VAL`）。
+// 当时误用 OR，导致比较结果恒为 FALSE_VAL —— 所有 while 循环第一轮就退出，
+// 而反汇编看起来完全正确。下面第 1 组用例专门盯这个。
+//
+// 循环 60 轮起步（足够暴露"条件恒假"这类错误）。
+
+import jsons
+
+// ============ 第 1 组：while 循环条件（条件值为真必须继续循环）============
+// 每种比较形式单独一个函数/循环。
+
+// 立即数比较：k < 60 → 正好 60 次
+func whileLtImm(): int {
+    int c = 0
+    var k = 0
+    while k < 60 {
+        c = c + 1
+        k = k + 1
+    }
+    return c
+}
+
+// 局部量比较：k < n（两个操作数都在栈上，走通用 OP_LT）
+func whileLtLocal(int n): int {
+    int c = 0
+    var k = 0
+    while k < n {
+        c = c + 1
+        k = k + 1
+    }
+    return c
+}
+
+// 不等比较
+func whileNe(int n): int {
+    int c = 0
+    var k = 0
+    while k != n {
+        c = c + 1
+        k = k + 1
+    }
+    return c
+}
+
+// 立即数比较（反向）：k > 0 递减
+func whileGtImm(): int {
+    int c = 0
+    var k = 60
+    while k > 0 {
+        c = c + 1
+        k = k - 1
+    }
+    return c
+}
+
+// 浮点比较作为循环条件
+func whileFloat(): int {
+    int c = 0
+    float f = 0.0
+    while f < 60.0 {
+        c = c + 1
+        f = f + 1.0
+    }
+    return c
+}
+
+// ============ 第 2 组：比较结果的表示与各种消费路径 ============
+
+var g_flag = false
+
+func boolRepresentation(): int {
+    bool b = false
+    int i = 0
+    float fl = 0.0
+    var k = 0
+    while k < 100 {
+        b = (k >= 0)
+        i = (k >= 0)
+        fl = (k >= 0)
+        g_flag = (k >= 0)
+        k = k + 1
+    }
+    assert_eq(b, true, "bool 局部量应为 true")
+    assert_eq(_int(b), 1, "_int(bool) 应为 1")
+    assert_eq(i, 1, "int 局部量接收比较结果应为 1")
+    assert_eq(fl, 1.0, "float 局部量接收比较结果应为 1.0")
+    assert_eq(g_flag, true, "全局 bool 应为 true")
+    return 0
+}
+
+// 返回值路径：return (比较结果)
+func retCompare(int iters): bool {
+    var r = false
+    var k = 0
+    while k < iters {
+        r = (k >= 0)
+        k = k + 1
+    }
+    return r
+}
+
+// callout 实参路径：比较结果进数组/字典 → JSON 必须是 true 而不是 1/4.9e-324
+func compareIntoTuple(): int {
+    var arr = []
+    var d = {}
+    var k = 0
+    while k < 100 {
+        arr.add(k >= 0)
+        d.set("flag", k >= 0)
+        k = k + 1
+    }
+    assert_eq(arr[0], true, "数组元素应为 bool true")
+    assert_eq(d.get("flag", false), true, "字典值应为 bool true")
+    assert_eq(jsons.encode(d), "{\"flag\":true}", "JSON 必须是 true")
+    return 0
+}
+
+// 逻辑组合：and / or / not 都要按 bool 语义工作
+func compareLogic(): int {
+    bool c1 = false
+    bool c2 = false
+    bool c3 = false
+    var k = 0
+    while k < 100 {
+        c1 = (k >= 0) and (k < 1000)
+        c2 = not (k > 1000)
+        c3 = (k == k) or (k != k)
+        k = k + 1
+    }
+    assert_eq(c1, true, "(a and b) 应为 true")
+    assert_eq(c2, true, "(not false) 应为 true")
+    assert_eq(c3, true, "(a or b) 应为 true")
+    return 0
+}
+
+// 提前返回：return (比较结果) 在热循环之后
+func compareReturnPath(): int {
+    assert_eq(retCompare(100), true, "热循环内赋值的 bool 变量返回值应为 true")
+    return 0
+}
+
+main() {
+    print("=== 比较结果语义 / while 循环条件 ===")
+
+    assert_eq(whileLtImm(), 60, "while k < 60 应立即数比较跑满 60 轮")
+    assert_eq(whileLtLocal(60), 60, "while k < n 局部量比较应跑满 60 轮")
+    assert_eq(whileNe(60), 60, "while k != n 应跑满 60 轮")
+    assert_eq(whileGtImm(), 60, "while k > 0 应跑满 60 轮")
+    assert_eq(whileFloat(), 60, "while f < 60.0 浮点条件应跑满 60 轮")
+    print("  [1] while 条件（立即数/局部/不等/反向/浮点）OK")
+
+    boolRepresentation()
+    print("  [2] 比较结果的表示（bool/int/float 局部量 + 全局）OK")
+
+    compareIntoTuple()
+    print("  [3] callout 实参路径（数组/字典/JSON）OK")
+
+    compareLogic()
+    print("  [4] and / or / not 组合 OK")
+
+    compareReturnPath()
+    print("  [5] 返回值路径 OK")
+
+    print("test_bool_compare passed")
+}

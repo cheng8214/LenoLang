@@ -1,0 +1,110 @@
+// 回归测试：int / int 必须产出 int（与 val_int(a / b) 一致）
+//
+// 背景（历史）：旧实现把 int/int 的商转成 double 压栈，而语言语义要求是 val_int(a / b)。
+// 后果：紧随其后的 `%` 会拿 double 的位模式做整数除 →
+// examples/排序测试/更多排序.leno 的基数排序 digit 全错、排错并报「数组索引越界」。
+//
+// 另：除数为 0 绝不能崩进程（那会是 #DE），必须抛「整数/取模除零错误」——
+// 这里一并回归「必须可捕获、不许崩」。
+//
+// 循环 300 轮（反复调用 ⇒ 类型/语义类错误会被放大）。
+
+var EXP = 1
+
+// (arr[i] / EXP) % 10：基数排序里取当前位的写法
+func digitsOf(Array[int] arr): string {
+    var s = ""
+    for 0 : arr.len() - 1 to var i {
+        var d = (arr[i] / EXP) % 10
+        s = s + _str(d)
+    }
+    return s
+}
+
+// int/int 的「向零截断」语义 + 商必须是整数
+// （用「整除结果再取模」侧面验证：商若被当成 double，这一步会算出垃圾值。）
+func divSemantics(): int {
+    var bad = 0
+    for 0 : 300 to var k {
+        var a = k * 7
+        var q = a / 3
+        var r = a - q * 3
+        if r < 0 { r = 0 - r }
+        if r >= 3 { bad = bad + 1 }     // 向零截断 ⇒ |余| < |除数|
+        var m = (a / 3) % 4             // a >= 0 ⇒ m 必须落在 [0,3]
+        if m < 0 or m > 3 { bad = bad + 1 }
+    }
+    return bad
+}
+
+// 热循环内除零/模零：必须抛出可捕获的错误（不是 #DE 崩进程）
+func divZeroCaught(): int {
+    var caught = 0
+    for 0 : 60 to var k {
+        try {
+            var z = k - k
+            var a = 100 / z
+            a = a + 1
+        } catch e {
+            caught = caught + 1
+        }
+        try {
+            var z2 = k - k
+            var b = 100 % z2
+            b = b + 1
+        } catch e2 {
+            caught = caught + 1
+        }
+    }
+    return caught
+}
+
+main() {
+    var bad = 0
+
+    // 0) 类型契约：int / int 结果是 int（不是 float）
+    var q0 = 100 / 3
+    if not (q0 is int) {
+        bad = bad + 1
+        print("100/3 不是 int")
+    }
+
+    // 1) 取位串必须与语言语义逐字符一致（跑 6 轮）
+    var arr = []
+    for 0 : 39 to var i { arr.add(i) }
+    var got = ""
+    for 0 : 5 to var k { got = digitsOf(arr) }
+    var want = "0123456789012345678901234567890123456789"
+    if got != want {
+        bad = bad + 1
+        print("digit 串错误: [" + got + "]")
+    }
+
+    // 2) int/int 结果类型 + 截断语义
+    var d1 = divSemantics()
+    if d1 != 0 {
+        bad = bad + 1
+        print("int/int 语义错误: " + _str(d1) + " 处")
+    }
+
+    // 3) 浮点除法不受影响（10.0/4.0 = 2.5，301 次 = 752.5）
+    var fs = 0.0
+    for 0 : 300 to var k { fs = fs + 10.0 / 4.0 }
+    if fs < 752.0 or fs > 753.0 {
+        bad = bad + 1
+        print("浮点除法异常: " + _str(fs))
+    }
+
+    // 4) 除零/模零必须可捕获（61 轮 × 2 = 122）
+    var caught = divZeroCaught()
+    if caught != 122 {
+        bad = bad + 1
+        print("除零未按预期抛错: " + _str(caught) + " (期望 122)")
+    }
+
+    if bad > 0 {
+        print("整除语义错误: " + _str(bad) + " 项")
+        _exit(1)
+    }
+    print("test_int_div ok")
+}

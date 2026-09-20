@@ -1,0 +1,131 @@
+// switch case is 基本类型匹配测试
+
+// 测试 int 类型匹配
+func test_int_match() {
+    var val = 42
+    string result = ""
+    switch val {
+        case is int {
+            result = "int"
+        }
+        case is string {
+            result = "string"
+        }
+        default {
+            result = "other"
+        }
+    }
+    assert_eq(result, "int")
+}
+
+// 测试 string 类型匹配
+func test_string_match() {
+    var val = "hello"
+    string result = ""
+    switch val {
+        case is int {
+            result = "int"
+        }
+        case is string {
+            result = "string"
+        }
+        default {
+            result = "other"
+        }
+    }
+    assert_eq(result, "string")
+}
+
+// 测试 float 类型匹配
+func test_float_match() {
+    var val = 3.14
+    string result = ""
+    switch val {
+        case is float {
+            result = "float"
+        }
+        default {
+            result = "other"
+        }
+    }
+    assert_eq(result, "float")
+}
+
+// 测试 bool 类型匹配
+func test_bool_match() {
+    var val = true
+    string result = ""
+    switch val {
+        case is bool {
+            result = "bool"
+        }
+        default {
+            result = "other"
+        }
+    }
+    assert_eq(result, "bool")
+}
+
+// 测试 default 分支
+func test_default_branch() {
+    var val = null
+    string result = ""
+    switch val {
+        case is int {
+            result = "int"
+        }
+        case is string {
+            result = "string"
+        }
+        default {
+            result = "default"
+        }
+    }
+    assert_eq(result, "default")
+}
+
+// 测试多个 case 全部不匹配走 default
+func test_no_match_default() {
+    var val = null
+    string result = ""
+    switch val {
+        case is int {
+            result = "int"
+        }
+        case is float {
+            result = "float"
+        }
+        case is bool {
+            result = "bool"
+        }
+        default {
+            result = "none"
+        }
+    }
+    assert_eq(result, "none")
+}
+
+// 测试 switch 中类型匹配后的值使用
+func test_use_value_in_case() {
+    var val = 100
+    int sum = 0
+    switch val {
+        case is int {
+            sum = val + 50
+        }
+        default {
+            sum = -1
+        }
+    }
+    assert_eq(sum, 150)
+}
+
+test_int_match()
+test_string_match()
+test_float_match()
+test_bool_match()
+test_default_branch()
+test_no_match_default()
+test_use_value_in_case()
+
+print("test_switch_case_is_basic passed")

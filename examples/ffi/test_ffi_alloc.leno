@@ -1,0 +1,49 @@
+import ffi
+
+main() {
+    print("=== ffi.alloc 测试 ===")
+
+    // 测试 int32
+    var p_int = ffi.alloc("int", 42)
+    print("int: " + ffi.read_int(p_int, 0))  // 42
+
+    // 测试 double
+    var p_double = ffi.alloc("double", 3.14)
+    print("double: " + ffi.read_double(p_double, 0))  // 3.14
+
+    // 测试 float
+    var p_float = ffi.alloc("float", 2.5)
+    print("float: " + ffi.read_float(p_float, 0))  // 2.5
+
+    // 测试 ptr（不传初始值，清零）
+    var p_ptr = ffi.alloc("ptr")
+    print("ptr value: " + ffi.read_ptr(p_ptr, 0) == ffi.nullptr())
+
+    // 测试 bool
+    var p_bool = ffi.alloc("bool", true)
+    print("bool: " + ffi.read_bool(p_bool, 0))  // true
+
+    // 测试 uint32
+    var p_uint = ffi.alloc("uint32", 0x80000000)
+    print("uint32: " + ffi.read_uint(p_uint, 0))  // 2147483648
+
+    // 测试 int64
+    var p_i64 = ffi.alloc("int64", 1234567890123)
+    print("int64: " + ffi.read_int64(p_i64, 0))  // 1234567890123
+
+    // 测试不传初始值（清零）
+    var p_zero = ffi.alloc("int")
+    print("zero int: " + ffi.read_int(p_zero, 0))  // 0
+
+    // 释放所有
+    ffi.free(p_int)
+    ffi.free(p_double)
+    ffi.free(p_float)
+    ffi.free(p_ptr)
+    ffi.free(p_bool)
+    ffi.free(p_uint)
+    ffi.free(p_i64)
+    ffi.free(p_zero)
+
+    print("=== 测试完成 ===")
+}

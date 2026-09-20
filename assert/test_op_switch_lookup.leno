@@ -1,0 +1,132 @@
+// OP_SWITCH_LOOKUP 回归 —— 覆盖面 R1（§8.61）+ int 快路径 R9（§8.62）
+//
+// 编译器只在「>= 4 个同类型常量 case」时才发 OP_SWITCH_LOOKUP
+// （codegen_stmt.c 的 gen_switch），所以这里都写 4 case + default。
+//
+// 覆盖的路径：
+//   A. int case + int 值 —— "switch 在循环体里"与"switch 在被调函数里"两种位置都覆盖。
+//   B. int case + **非 int 值**（float / 字符串）⇒ 一律走 default：
+//      float / string 配 int case 不该命中，而 **bigint 配 int case 是能命中的**
+//      ⇒ 判据不能只看"是不是 int48"。
+//   C. **字符串 case** ⇒ 走 VM 的 switch_lookup_index（语义唯一来源），命中与 default 都要对。
+//   D. 负数 case ⇒ 符号扩展形态的正确性。
+
+func classify(int v): int {
+    switch v {
+        case 0 { return 10 }
+        case 1 { return 20 }
+        case 2 { return 30 }
+        case 3 { return 40 }
+        default { return 99 }
+    }
+}
+
+func negClassify(int v): int {
+    switch v {
+        case -3 { return 1 }
+        case -2 { return 2 }
+        case -1 { return 3 }
+        case 0 { return 4 }
+        default { return 9 }
+    }
+}
+
+func strClassify(string s): int {
+    switch s {
+        case "apple" { return 1 }
+        case "banana" { return 2 }
+        case "cherry" { return 3 }
+        case "date" { return 4 }
+        default { return 9 }
+    }
+}
+
+main() {
+    // ---- A1. 热循环体里的 switch ----
+    int acc = 0
+    int i = 0
+    while i < 3000 {
+        int m = i % 5
+        switch m {
+            case 0 { acc = acc + 1 }
+            case 1 { acc = acc + 2 }
+            case 2 { acc = acc + 3 }
+            case 3 { acc = acc + 4 }
+            default { acc = acc + 99 }
+        }
+        i = i + 1
+    }
+    // 每 5 次一轮：1+2+3+4+99 = 109；3000/5 = 600 轮 ⇒ 65400
+    assert_eq(acc, 65400)
+
+    // ---- A2. 被调函数里的 switch（同一份语义，换个位置）----
+    int acc2 = 0
+    int j = 0
+    while j < 3000 {
+        acc2 = acc2 + classify(j % 5)
+        j = j + 1
+    }
+    // 每轮 10+20+30+40+99 = 199；600 轮 ⇒ 119400
+    assert_eq(acc2, 119400)
+
+    // ---- D. 负数 case ----
+    int nacc = 0
+    int n = 0
+    while n < 3000 {
+        nacc = nacc + negClassify(n % 5 - 3)
+        n = n + 1
+    }
+    // n%5-3 = -3,-2,-1,0,1 ⇒ 1+2+3+4+9 = 19；600 轮 ⇒ 11400
+    assert_eq(nacc, 11400)
+
+    // ---- C. 字符串 case（callout 路径）：命中 + default ----
+    int sacc = 0
+    int s = 0
+    while s < 3000 {
+        sacc = sacc + strClassify("cherry")
+        s = s + 1
+    }
+    assert_eq(sacc, 9000)
+
+    int sacc2 = 0
+    int s2 = 0
+    while s2 < 3000 {
+        sacc2 = sacc2 + strClassify("zzz")
+        s2 = s2 + 1
+    }
+    assert_eq(sacc2, 27000)
+
+    // ---- B. int case + 非 int 值（float / 字符串 一律 default）----
+    //     用小循环即可：这几项钉的是"别误命中"。
+    float fv = 1.5
+    int facc = 0
+    int f = 0
+    while f < 200 {
+        switch fv {
+            case 0 { facc = facc + 1 }
+            case 1 { facc = facc + 2 }
+            case 2 { facc = facc + 3 }
+            case 3 { facc = facc + 4 }
+            default { facc = facc + 7 }
+        }
+        f = f + 1
+    }
+    assert_eq(facc, 1400)   // 200 × 7（default）
+
+    string sv = "2"
+    int tacc = 0
+    int t = 0
+    while t < 200 {
+        switch sv {
+            case 0 { tacc = tacc + 1 }
+            case 1 { tacc = tacc + 2 }
+            case 2 { tacc = tacc + 3 }
+            case 3 { tacc = tacc + 4 }
+            default { tacc = tacc + 7 }
+        }
+        t = t + 1
+    }
+    assert_eq(tacc, 1400)   // 200 × 7（default）
+
+    print("test_op_switch_lookup: OK")
+}

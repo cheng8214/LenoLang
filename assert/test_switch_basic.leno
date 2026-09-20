@@ -1,0 +1,105 @@
+// switch 基本用法测试 — 覆盖值匹配、多值 case、default、类型匹配(is)
+import io
+
+main() {
+    // 测试1: 字符串值匹配
+    string name = "cc"
+    int result1 = 0
+    switch name {
+        case "ch", "cc" {
+            result1 = 100
+        }
+        case "c4" {
+            result1 = 200
+        }
+        default {
+            result1 = 300
+        }
+    }
+    assert_eq(result1, 100)
+    io.print("[PASS] 测试1: 字符串值匹配 + 多值 case")
+
+    // 测试2: default 分支
+    string s = "unknown"
+    int result2 = 0
+    switch s {
+        case "hello" {
+            result2 = 1
+        }
+        default {
+            result2 = 99
+        }
+    }
+    assert_eq(result2, 99)
+    io.print("[PASS] 测试2: default 分支")
+
+    // 测试3: 整数值匹配
+    int x = 42
+    string label = ""
+    switch x {
+        case 0 {
+            label = "zero"
+        }
+        case 42 {
+            label = "answer"
+        }
+        default {
+            label = "other"
+        }
+    }
+    assert_eq(label, "answer")
+    io.print("[PASS] 测试3: 整数值匹配")
+
+    // 测试4: switch 赋值后变量可在外部使用
+    var val = 10
+    int after = 0
+    switch val {
+        case 10 {
+            after = 1000
+        }
+        default {
+            after = -1
+        }
+    }
+    assert_eq(after, 1000)
+    io.print("[PASS] 测试4: switch 内赋值外部可用")
+
+    // 测试5: case is 类型匹配
+    var obj = "hello"
+    int type_result = 0
+    switch obj {
+        case is string {
+            type_result = 1
+        }
+        case is int {
+            type_result = 2
+        }
+        default {
+            type_result = 3
+        }
+    }
+    assert_eq(type_result, 1)
+    io.print("[PASS] 测试5: case is 类型匹配")
+
+    // 测试6: 多个 case 命中后只执行第一个匹配
+    var code = 404
+    string http = ""
+    switch code {
+        case 200 {
+            http = "OK"
+        }
+        case 404 {
+            http = "Not Found"
+        }
+        case 500 {
+            http = "Error"
+        }
+        default {
+            http = "Unknown"
+        }
+    }
+    assert_eq(http, "Not Found")
+    io.print("[PASS] 测试6: 多 case 精确匹配")
+
+    print("test_switch_basic all passed")
+}

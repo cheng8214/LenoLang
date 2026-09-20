@@ -1,0 +1,55 @@
+// 测试 ffi.last_error() — FFI 调用后获取错误码
+import ffi
+
+clib kernel32 {
+    Ptr OpenProcess(i32 access, i32 inherit, i32 pid)
+    i32 GetLastError()
+    i32 CloseHandle(Ptr h)
+    i32 GetCurrentProcessId()
+}
+
+main() {
+    kernel32 k32 = ffi.load("kernel32.dll")
+
+    // 测试 1: 成功调用后 last_error 应为 0
+    int pid = k32.GetCurrentProcessId()
+    int err1 = ffi.last_error()
+    if err1 == 0 {
+        print("  PASS: 成功调用后 last_error = 0")
+    } else {
+        print("  FAIL: 期望 0, 实际 " + err1)
+    }
+
+    // 测试 2: OpenProcess 传入无效 PID，应失败并设置错误码
+    Ptr h = k32.OpenProcess(0x0400, 0, 9999999)
+    int err2 = ffi.last_error()
+    if h == null and err2 != 0 {
+        print("  PASS: OpenProcess 失败后 last_error = " + err2 + " (非零)")
+    } else if h != null {
+        print("  NOTE: OpenProcess 意外成功（PID 9999999 可能存在）")
+        k32.CloseHandle(h)
+    } else {
+        print("  FAIL: 期望非零错误码, 实际 " + err2)
+    }
+
+    // 测试 3: 对比 ffi.last_error() 与直接调用 GetLastError()
+    Ptr h2 = k32.OpenProcess(0x0400, 0, 8888888)
+    int cached = ffi.last_error()
+    int direct = k32.GetLastError()
+    if cached == direct or (cached != 0 and direct != 0) {
+        print("  PASS: last_error 与 GetLastError 一致性检查通过")
+    } else {
+        print("  NOTE: cached=" + cached + " direct=" + direct + " (GetLastError 可能被内部调用覆盖)")
+    }
+
+    // 测试 4: 成功调用后错误码应重置为 0
+    int pid2 = k32.GetCurrentProcessId()
+    int err3 = ffi.last_error()
+    if err3 == 0 {
+        print("  PASS: 成功调用后错误码重置为 0")
+    } else {
+        print("  NOTE: 成功调用后 last_error = " + err3 + " (某些 API 不重置错误码)")
+    }
+
+    print("ffi.last_error() 测试完成")
+}

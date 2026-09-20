@@ -1,0 +1,48 @@
+// R12 回归：循环体内「按字面量属性名取值」obj["key"] —— 编译器发 OP_GET_PROPERTY。
+// （注意：obj[变量] 走的是 OP_INDEX，是另一条路径；本用例专门打前者。）
+//
+// 本用例钉的是：按**字面量属性名**取值（`obj["key"]`）在热循环里反复执行时值必须正确。
+// 历史（2026-09-13）：机器码生成路径在"独立访问"形态下忘了弹 receiver 槽 ⇒ 每轮泄漏 8 字节
+// ⇒ 栈下漂到 ~2MB 时以 0xC0000374（STATUS_HEAP_CORRUPTION）崩溃；
+// 实测阈值 200000 轮正常 / 262144 轮崩 ⇒ 本用例取 400000 轮，显著大于阈值。
+// （当时的修复后实测：栈漂移归零 rsp_delta=0。）
+// 另一条路径（`obj[变量]` 走 OP_INDEX）见下面的 burnIndex() 对照。
+
+struct P { int a = 7; int b = 9 }
+
+func burn(int n): int {
+    var box = {}
+    box["alpha"] = new P(a = 7, b = 9)
+    box["beta"] = new P(a = 11, b = 9)
+    var s = 0
+    var i = 0
+    while i < n {
+        var q = box["alpha"]     // ← OP_GET_PROPERTY（独立访问，正是漏槽点）
+        var r = box["beta"]      // ← 同一形态、另一个键，一起覆盖
+        s = s + q.a + r.a
+        i = i + 1
+    }
+    return s
+}
+
+// 对照：同样的取值，但键来自局部变量 ⇒ 走 OP_INDEX（另一条路径，修前就不崩）
+func burnIndex(int n): int {
+    var box = {}
+    box["alpha"] = new P(a = 7, b = 9)
+    var k = "alpha"
+    var s = 0
+    var i = 0
+    while i < n {
+        var q = box[k]
+        s = s + q.a
+        i = i + 1
+    }
+    return s
+}
+
+main() {
+    var n = 400000
+    assert_eq(burn(n), n * 18)        // 7 + 11
+    assert_eq(burnIndex(n), n * 7)
+    print("test_op_get_property: OK")
+}

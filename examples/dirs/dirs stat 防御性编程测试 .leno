@@ -1,0 +1,29 @@
+import io
+import dirs
+
+main() {
+    io.print("=== dirs stat 防御性编程测试 ===")
+    
+    // 测试存在的文件
+    var info1 = dirs.stat("build.bat")
+    io.print("build.bat exists: " + info1.exists)
+    if info1.exists {
+        io.print("build.bat size: " + info1.size)
+        io.print("build.bat is_file: " + info1.is_file)
+    }
+    
+    // 测试不存在的文件
+    var info2 = dirs.stat("not_exist_file.txt")
+    io.print("not_exist_file exists: " + info2.exists)
+    io.print("not_exist_file size: " + info2.size)
+    io.print("not_exist_file is_file: " + info2.is_file)
+    
+    // 安全访问，不会崩溃
+    if info2.exists {
+        io.print("文件存在，大小: " + info2.size)
+    } else {
+        io.print("文件不存在，安全处理")
+    }
+    
+    io.print("=== 测试完成 ===")
+}

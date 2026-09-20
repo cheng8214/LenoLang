@@ -1,0 +1,30 @@
+import io
+
+main() {
+    var a = 5
+    
+    // 测试范围检查 (0:9 包含 0 到 9)
+    if a in 0:9 {
+        io.print("5 is in 0:9 - PASS")
+    }
+    
+    // 测试边界
+    if 0 in 0:9 {
+        io.print("0 is in 0:9 - PASS")
+    }
+    
+    if 9 in 0:9 {
+        io.print("9 is in 0:9 - PASS")
+    }
+    
+    // 测试不在范围内
+    if 10 not in 0:9 {
+        io.print("10 is not in 0:9 - PASS")
+    }
+    
+    if -1 not in 0:9 {
+        io.print("-1 is not in 0:9 - PASS")
+    }
+    
+    io.print("All range tests passed!")
+}

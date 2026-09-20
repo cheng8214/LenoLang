@@ -1,0 +1,19 @@
+main() 
+{
+    var name = "cc"
+    var b = 10
+    switch name {
+        case "ch", "cc" {
+            print("ok")
+             b = 100
+        }
+        case "c4"{
+            print("c4")
+            }
+
+        default {
+            print("error")
+        }
+    }
+    print(b)
+}

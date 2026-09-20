@@ -1,0 +1,11 @@
+main()
+{
+    try {
+        print("try block")
+        throw "error message"
+    } catch e {
+        print($"caught: {e}")
+    } finally {
+        print("finally block")
+    }
+}

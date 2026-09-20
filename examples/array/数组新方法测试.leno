@@ -1,0 +1,64 @@
+// 测试数组新增的 5 个方法
+
+main() {
+    print("========== 数组新方法测试 ==========\n")
+    
+    // 1. index_of - 查找元素索引
+    print("1. index_of 测试:")
+    var arr1 = ["apple", "banana", "cherry", "banana"]
+    print("   数组: " + arr1)
+    print("   index_of('banana') = " + arr1.index_of("banana"))
+    print("   index_of('grape') = " + arr1.index_of("grape"))
+    print("")
+    
+    // 2. last_index_of - 反向查找
+    print("2. last_index_of 测试:")
+    print("   last_index_of('banana') = " + arr1.last_index_of("banana"))
+    print("   last_index_of('apple') = " + arr1.last_index_of("apple"))
+    print("")
+    
+    // 3. reverse - 原地反转
+    print("3. reverse 测试:")
+    var arr3 = [1, 2, 3, 4, 5]
+    print("   原数组: " + arr3)
+    arr3.reverse()
+    print("   反转后: " + arr3)
+    print("")
+    
+    // 4. sort - 排序
+    print("4. sort 测试:")
+    var arr4 = [64, 34, 25, 12, 22, 11, 90]
+    print("   原数组: " + arr4)
+    arr4.sort()
+    print("   排序后: " + arr4)
+    
+    // 字符串排序
+    var arr4s = ["cherry", "apple", "banana"]
+    print("   字符串原数组: " + arr4s)
+    arr4s.sort()
+    print("   字符串排序后: " + arr4s)
+    print("")
+    
+    // 5. join - 拼接字符串
+    print("5. join 测试:")
+    var arr5 = ["Hello", "World", "Leno"]
+    print("   数组: " + arr5)
+    print("   join(' ') = '" + arr5.join(" ") + "'")
+    print("   join(',') = '" + arr5.join(",") + "'")
+    print("   join('') = '" + arr5.join("") + "'")
+    
+    // 数字数组 join
+    var arr5n = [1, 2, 3, 4]
+    print("   数字数组: " + arr5n)
+    print("   join('-') = '" + arr5n.join("-") + "'")
+    print("")
+    
+    // 模块方式调用
+    print("6. 模块方式调用测试:")
+    import arrays
+    var arr6 = [10, 20, 30]
+    print("   arrays.index_of(arr6, 20) = " + arrays.index_of(arr6, 20))
+    print("   arrays.join(arr6, ',') = '" + arrays.join(arr6, ",") + "'")
+    
+    print("\n========== 测试完成 ==========")
+}

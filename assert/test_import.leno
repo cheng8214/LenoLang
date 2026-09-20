@@ -1,0 +1,15 @@
+// 模块导入测试
+
+import "test_module.leno" as test_module
+
+main()
+{
+    // 测试导入模块的变量
+    assert_eq(test_module.value, 100)
+
+    // 测试导入模块的函数
+    assert_eq(test_module.get_value(), 42)
+    assert_eq(test_module.add(10, 20), 30)
+
+    print("test_import passed")
+}

@@ -1,0 +1,242 @@
+// lang_struct_semantics_test.leno
+// Verify Leno struct value/reference semantics
+// Tests: assign, param, return, array index, .copy(), nested children, loop var
+
+struct Node {
+    int id = 0
+    string name = ""
+    Array[int] data = []
+    Node? child
+    Array[Node] children = []
+}
+
+func test_assign_ref() {
+    Node a = new Node()
+    a.id = 10
+    a.name = "alpha"
+    a.data.add(1)
+    a.data.add(2)
+
+    Node b = a
+    b.id = 999
+    b.data.add(3)
+
+    print("=== Test 1: struct assign ===")
+    print("  a.id = " + a.id + " (expect 999=ref, 10=copy)")
+    print("  a.data.len() = " + a.data.len() + " (expect 3=ref, 2=copy)")
+    if a.id == 999 and a.data.len() == 3 {
+        print("  RESULT: reference (no copy)")
+    } else {
+        print("  RESULT: value copy")
+    }
+}
+
+func mutate_node(Node n) {
+    n.id = 888
+    n.name = "mutated"
+    n.data.add(99)
+}
+
+func test_param_ref() {
+    Node a = new Node()
+    a.id = 1
+    a.name = "original"
+    a.data.add(10)
+
+    mutate_node(a)
+
+    print("=== Test 2: struct param ===")
+    print("  a.id = " + a.id + " (expect 888=ref, 1=copy)")
+    print("  a.name = " + a.name + " (expect mutated=ref, original=copy)")
+    print("  a.data.len() = " + a.data.len() + " (expect 2=ref, 1=copy)")
+    if a.id == 888 and a.name == "mutated" and a.data.len() == 2 {
+        print("  RESULT: reference (no copy)")
+    } else {
+        print("  RESULT: value copy")
+    }
+}
+
+func make_node(): Node {
+    Node n = new Node()
+    n.id = 42
+    n.name = "returned"
+    n.data.add(7)
+    return n
+}
+
+func test_return_ref() {
+    Node a = make_node()
+    a.data.add(8)
+
+    print("=== Test 3: struct return value ===")
+    print("  a.id = " + a.id + " (expect 42)")
+    print("  a.name = " + a.name + " (expect returned)")
+    print("  a.data.len() = " + a.data.len() + " (expect 2)")
+    if a.id == 42 and a.name == "returned" and a.data.len() == 2 {
+        print("  RESULT: return value usable (ref)")
+    } else {
+        print("  RESULT: return value broken")
+    }
+}
+
+func test_array_index_ref() {
+    Array[Node] arr = []
+    Node a = new Node()
+    a.id = 100
+    a.name = "element"
+    arr.add(a)
+
+    var n = arr[0]
+    n.id = 200
+    n.data.add(5)
+
+    print("=== Test 4: array index read ===")
+    print("  arr[0].id = " + arr[0].id + " (expect 200=ref, 100=copy)")
+    print("  arr[0].data.len() = " + arr[0].data.len() + " (expect 1=ref, 0=copy)")
+    if arr[0].id == 200 and arr[0].data.len() == 1 {
+        print("  RESULT: reference (no copy)")
+    } else {
+        print("  RESULT: value copy")
+    }
+}
+
+func test_copy_method() {
+    Node a = new Node()
+    a.id = 1
+    a.name = "original"
+    a.data.add(1)
+    a.data.add(2)
+
+    Node b = a.copy()
+    b.id = 999
+    b.data.add(3)
+
+    print("=== Test 5: .copy() deep copy ===")
+    print("  a.id = " + a.id + " (expect 1=deep copy)")
+    print("  a.data.len() = " + a.data.len() + " (expect 2=deep copy)")
+    print("  b.id = " + b.id + " (expect 999)")
+    print("  b.data.len() = " + b.data.len() + " (expect 3)")
+    if a.id == 1 and a.data.len() == 2 {
+        print("  RESULT: deep copy works")
+    } else {
+        print("  RESULT: not independent")
+    }
+}
+
+func test_nested_children() {
+    Node parent = new Node()
+    parent.id = 1
+    parent.name = "parent"
+
+    Node child1 = new Node()
+    child1.id = 2
+    child1.name = "child1"
+    parent.children.add(child1)
+
+    parent.children[0].id = 999
+    parent.children[0].name = "modified"
+
+    print("=== Test 6: nested children field ===")
+    print("  parent.children[0].id = " + parent.children[0].id + " (expect 999)")
+    print("  parent.children[0].name = " + parent.children[0].name + " (expect modified)")
+
+    var c = parent.children[0]
+    c.id = 555
+    print("  via temp var: parent.children[0].id = " + parent.children[0].id + " (expect 555=ref)")
+
+    if parent.children[0].id == 555 {
+        print("  RESULT: reference (no copy)")
+    } else {
+        print("  RESULT: value copy")
+    }
+}
+
+func test_loop_vs_direct() {
+    Array[Node] arr = []
+    for 3 to i {
+        Node n = new Node()
+        n.id = i + 10
+        n.name = "node" + i
+        arr.add(n)
+    }
+
+    print("=== Test 7: loop var index read ===")
+    for arr.len() to i {
+        print("  arr[" + i + "].id = " + arr[i].id + ", name = " + arr[i].name)
+    }
+
+    for arr.len() to i {
+        arr[i].id = arr[i].id + 100
+    }
+
+    bool allModified = true
+    for arr.len() to i {
+        if arr[i].id < 100 { allModified = false }
+        print("  after modify arr[" + i + "].id = " + arr[i].id)
+    }
+
+    if allModified {
+        print("  RESULT: loop var index reliable")
+    } else {
+        print("  RESULT: loop var index unreliable (lang bug)")
+    }
+}
+
+func find_node(Array[Node] list, int targetId): Node {
+    for list.len() to i {
+        if list[i].id == targetId { return list[i] }
+    }
+    Node empty = new Node()
+    return empty
+}
+
+func test_find_and_modify() {
+    Array[Node] arr = []
+    Node a = new Node()
+    a.id = 1; a.name = "first"; a.data.add(10)
+    Node b = new Node()
+    b.id = 2; b.name = "second"; b.data.add(20)
+    arr.add(a); arr.add(b)
+
+    Node found = find_node(arr, 2)
+    found.name = "modified_second"
+    found.data.add(99)
+
+    print("=== Test 8: return from find then modify ===")
+    print("  arr[1].name = " + arr[1].name + " (expect modified_second=ref, second=copy)")
+    print("  arr[1].data.len() = " + arr[1].data.len() + " (expect 2=ref, 1=copy)")
+    if arr[1].name == "modified_second" and arr[1].data.len() == 2 {
+        print("  RESULT: reference - comment about copy-on-return is WRONG")
+    } else {
+        print("  RESULT: value copy - comment is correct")
+    }
+}
+
+main() {
+    print("")
+    print("========================================")
+    print(" Leno Struct Value/Reference Semantics")
+    print("========================================")
+    print("")
+
+    test_assign_ref()
+    print("")
+    test_param_ref()
+    print("")
+    test_return_ref()
+    print("")
+    test_array_index_ref()
+    print("")
+    test_copy_method()
+    print("")
+    test_nested_children()
+    print("")
+    test_loop_vs_direct()
+    print("")
+    test_find_and_modify()
+
+    print("")
+    print("========================================")
+    print(" All tests done")
+    print("========================================")
+}

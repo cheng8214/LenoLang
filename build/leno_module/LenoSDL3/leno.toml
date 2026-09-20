@@ -1,0 +1,12 @@
+[package]
+name = "LenoSDL3"
+version = "0.1.0"
+description = "Leno SDL3 绑定模块 - 窗口、渲染器、事件、绘图"
+
+[modules]
+root = "lib"
+
+[native-libs.sdl3]
+win   = "lib/SDL3.dll"
+linux = "lib/libSDL3.so.0"
+mac   = "lib/libSDL3.0.dylib"

@@ -1,0 +1,15 @@
+// 测试5: struct 字段访问错误
+// 期望错误:
+//   第14行第7列: p.z = 10 struct 无字段 z (z 从第7列开始)
+
+struct Point {
+    int x
+    int y
+}
+
+main()
+{
+    Point p = new Point(x=1, y=2)
+    // 第14行: p.z = 10，z 从第7列 (p=第5列，.=第6列，z=第7列)
+    p.z = 10
+}

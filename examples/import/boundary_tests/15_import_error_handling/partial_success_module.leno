@@ -1,0 +1,17 @@
+// 部分成功模块
+// 用于测试部分导入失败后的恢复
+
+export var first = 1
+export var second = 2
+
+// 这个函数会在调用时产生运行时错误
+export func will_fail() {
+    return 100 / 0  // 除以零错误
+}
+
+export var third = 3
+
+// 正常函数
+export func normal_func() {
+    return "success"
+}

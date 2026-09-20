@@ -1,0 +1,14 @@
+func test(Dict d)
+{
+  int a=10
+  a=d.get("cs",a)//这里的测试get问题，我发现一个bug,这里按道理是这里报错才对，但是居然跑到c=a>>19才报错,导致行号不对
+
+  int c=0
+  c=a>>19
+  print(c)
+}
+
+main()
+{
+    test({"cs":[1,2,3]})//我传数组过去
+}

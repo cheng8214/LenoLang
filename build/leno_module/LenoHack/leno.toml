@@ -1,0 +1,7 @@
+[package]
+name = "LenoHack"
+version = "0.1.0"
+description = "Leno 进程操作模块 — 内存读写、模拟输入、进程附加、内存扫描"
+
+[modules]
+root = "lib"

@@ -1,0 +1,18 @@
+main() 
+{
+var a=10
+   // if-else
+var x = if a > 0 then a else 100
+print(x)
+var score=89
+// if-eif-else
+var grade = if score >= 90 then "A"
+            eif score >= 80 then "B"
+            eif score >= 60 then "C"
+            else "F"
+print(grade)
+var b=100,c=66
+// 
+var x1= if a > b then (if a > c then a else c) else b
+print(x1)
+}

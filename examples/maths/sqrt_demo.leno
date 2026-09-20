@@ -1,0 +1,6 @@
+// 新建文件: Untitled.leno 
+main() 
+{ 
+           var num = 3 
+    print("3.14.sqrt() = " + num.sqrt()) 
+}

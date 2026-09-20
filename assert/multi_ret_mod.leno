@@ -1,0 +1,36 @@
+// ============================================================
+// 多返回值跨模块测试模块
+// ============================================================
+
+// 1. 导出多返回值函数
+export func get_user_info(): [int, string, float] {
+    return 1, "admin", 99.9
+}
+
+// 2. 导出两个值的多返回值函数
+export func get_coords(): [int, int] {
+    return 100, 200
+}
+
+// 3. 多返回值函数在模块内被调用
+func helper(): [int, string] {
+    return 42, "ok"
+}
+
+export func use_helper(): [int, string] {
+    var[int, string](code, msg) = helper()
+    return code + 1, msg + "!"
+}
+
+// 4. 模块级解构声明（多返回值）
+export func get_config(): [string, int, bool] {
+    return "localhost", 8080, true
+}
+
+// 5. 多返回值 + 模块级变量
+var cached_id = 100
+var cached_name = "module"
+
+export func get_cached(): [int, string] {
+    return cached_id, cached_name
+}

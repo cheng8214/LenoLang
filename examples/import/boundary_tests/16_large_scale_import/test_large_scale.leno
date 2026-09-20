@@ -1,0 +1,65 @@
+// 大规模导入测试
+// 测试导入大量模块的性能和正确性
+
+import "module_01.leno" as m01
+import "module_02.leno" as m02
+import "module_03.leno" as m03
+import "module_04.leno" as m04
+import "module_05.leno" as m05
+import "module_06.leno" as m06
+import "module_07.leno" as m07
+import "module_08.leno" as m08
+import "module_09.leno" as m09
+import "module_10.leno" as m10
+import "module_11.leno" as m11
+import "module_12.leno" as m12
+import "module_13.leno" as m13
+import "module_14.leno" as m14
+import "module_15.leno" as m15
+import "module_16.leno" as m16
+import "module_17.leno" as m17
+import "module_18.leno" as m18
+import "module_19.leno" as m19
+import "module_20.leno" as m20
+
+main() {
+    print("=== 大规模导入测试 ===")
+    print("导入 20 个模块")
+
+    // 测试所有模块都能正常访问
+    print("\n1. 测试所有模块可访问:")
+
+    print("  m01.id = " + m01.id + " (期望: 1)")
+    print("  m02.id = " + m02.id + " (期望: 2)")
+    print("  m03.id = " + m03.id + " (期望: 3)")
+    print("  m04.id = " + m04.id + " (期望: 4)")
+    print("  m05.id = " + m05.id + " (期望: 5)")
+    print("  m10.id = " + m10.id + " (期望: 10)")
+    print("  m15.id = " + m15.id + " (期望: 15)")
+    print("  m20.id = " + m20.id + " (期望: 20)")
+
+    // 测试模块函数
+    print("\n2. 测试模块函数:")
+
+    print("  m01.get_value() = " + m01.get_value() + " (期望: 10)")
+    print("  m05.get_value() = " + m05.get_value() + " (期望: 50)")
+    print("  m10.get_value() = " + m10.get_value() + " (期望: 100)")
+    print("  m20.get_value() = " + m20.get_value() + " (期望: 200)")
+
+    // 测试模块间无冲突
+    print("\n3. 测试模块间无冲突:")
+
+    var sum = m01.compute(0) + m02.compute(0) + m03.compute(0) + m04.compute(0) + m05.compute(0)
+    print("  compute(0) 前5个模块之和: " + sum + " (期望: 15)")
+
+    // 测试重复导入（缓存）
+    print("\n4. 测试模块缓存:")
+
+    // 再次使用模块，应该使用缓存
+    var val1 = m10.get_value()
+    var val2 = m10.get_value()
+    print("  m10.get_value() 两次调用: " + val1 + ", " + val2 + " (期望: 100, 100)")
+
+    print("\n=== 大规模导入测试完成 ===")
+    print("成功导入并测试 20 个模块")
+}

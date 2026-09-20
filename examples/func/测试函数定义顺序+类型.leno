@@ -1,0 +1,16 @@
+// 测试函数定义顺序
+
+main() {
+    print("=== 测试定义顺序 ===")
+
+    // 先定义 outer，再定义 test
+    func outer():int {
+        return 100
+    }
+
+    func test():int {
+        return outer()
+    }
+
+    print("结果: " + test())
+}

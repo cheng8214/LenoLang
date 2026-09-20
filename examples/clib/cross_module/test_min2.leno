@@ -1,0 +1,12 @@
+// 最小跨模块 clib 测试（os_lib）
+import "mylib.leno" as ml
+use ml.math_lib
+use ml.os_lib
+
+main() {
+    print("=== 最小测试 ===")
+    print("桥接: " + ml.doAbs(-5))
+    os_lib o = ml.loadOs()
+    print("loadOs 成功")
+    print("完成")
+}

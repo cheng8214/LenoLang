@@ -1,0 +1,110 @@
+import sockets
+import asyncs
+import io
+
+// ============================================================
+// BUG-2 回归测试：asyncs.run() 无需保活协程即可完成 I/O
+// ============================================================
+// 修复前：所有协程都在 await arecv/aaccept 时，事件循环会立即退出
+// 修复后：事件循环会检查待处理的异步 I/O，直到所有 I/O 完成
+//
+// 验证方式：运行 echo server + 多客户端，不添加任何 keeper sleep
+//          如果修复有效，asyncs.run() 会在所有 I/O 完成后自然返回
+// ============================================================
+
+int g_sent = 0
+int g_recv = 0
+int g_errors = 0
+int g_clients_ok = 0
+
+async func echo_handler(Socket client, int cid, int rounds) {
+    var i = 0
+    while i < rounds {
+        var data = await client.arecv(4096)
+        if data == null { break }
+        g_recv = g_recv + 1
+        client.send("E_" + cid + "_" + data)
+        i = i + 1
+    }
+    client.close()
+}
+
+async func echo_server(int port, int num_clients, int rounds) {
+    var server = sockets.listen("127.0.0.1", port)
+    if server == null {
+        io.print("[BUG2] listen fail")
+        return
+    }
+    var accepted = 0
+    while accepted < num_clients {
+        var c = await server.aaccept()
+        if c == null { break }
+        echo_handler(c, accepted, rounds)
+        accepted = accepted + 1
+    }
+    server.close()
+}
+
+async func client_func(int port, int cid, int rounds) {
+    var sock = sockets.connect("127.0.0.1", port)
+    if sock == null {
+        io.print("[BUG2] C" + cid + " connect fail")
+        g_errors = g_errors + 1
+        return
+    }
+    var seq = 0
+    while seq < rounds {
+        var msg = "C" + cid + "_S" + seq
+        if not sock.send(msg) {
+            io.print("[BUG2] C" + cid + " send fail")
+            g_errors = g_errors + 1
+            sock.close()
+            return
+        }
+        g_sent = g_sent + 1
+        var reply = await sock.arecv(4096)
+        if reply == null {
+            g_errors = g_errors + 1
+            sock.close()
+            return
+        }
+        var expected = "E_" + cid + "_" + msg
+        if reply != expected {
+            io.print("[BUG2] C" + cid + " mismatch")
+            g_errors = g_errors + 1
+            sock.close()
+            return
+        }
+        seq = seq + 1
+    }
+    sock.close()
+    g_clients_ok = g_clients_ok + 1
+}
+
+main() {
+    io.print("========================================")
+    io.print(" BUG-2: asyncs.run() 无需保活协程")
+    io.print("========================================")
+    
+    // 测试场景：3 客户端 x 3 消息 echo，不使用 keeper
+    var port = 12500
+    
+    echo_server(port, 3, 3)
+    client_func(port, 0, 3)
+    client_func(port, 1, 3)
+    client_func(port, 2, 3)
+    
+    // 关键：不调用 keeper()！
+    // 如果 BUG-2 已修复，事件循环会自动等待所有 I/O 完成
+    asyncs.run()
+    
+    io.print("发送: " + g_sent + " 接收: " + g_recv + " 错误: " + g_errors)
+    io.print("客户端通过: " + g_clients_ok)
+    
+    if g_errors == 0 and g_clients_ok == 3 and g_sent == 9 and g_recv == 9 {
+        io.print(">>> BUG-2 FIXED!")
+    } else {
+        io.print(">>> BUG-2 NOT FIXED!")
+    }
+    io.print("========================================")
+}

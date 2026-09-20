@@ -1,0 +1,12 @@
+// 空模块测试主文件
+// 测试：导入没有任何导出的模块
+
+import "empty_module.leno" as empty
+
+main() {
+    print("=== 空模块测试 ===")
+    print("导入空模块完成")
+    // 尝试访问空模块的成员应该报错
+    // print(empty.anything)
+    print("=== 测试完成 ===")
+}

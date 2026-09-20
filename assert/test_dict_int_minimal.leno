@@ -1,0 +1,6 @@
+// 类型推断测试
+var ds = {"a": 1, "b": 2, "c": 3}
+print("string key type: " + type(ds))
+
+var di = {1: "one", 2: "two", 3: "three"}
+print("int key type: " + type(di))

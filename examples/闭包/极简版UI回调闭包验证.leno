@@ -1,0 +1,34 @@
+// 测试5：极简版UI回调闭包验证（无数组/字典越界风险）
+main() {
+    // 用两个独立数组存储ID和回调，避开字典索引问题
+    var btn_ids = []
+    var handlers = []
+    
+    // 1:10 左闭右闭 → 1-10（共10次）
+    for 1:10 to var btn_id {
+        func click_handler() {
+            return btn_id  // 只返回数字，避开字符串拼接可能的坑
+        }
+        btn_ids.add(btn_id)
+        handlers.add(click_handler)
+        
+        // 循环内实时验证
+        print(btn_id)
+        print($"循环中 btn_id={btn_id} → 闭包返回：{click_handler()}")
+    }
+
+    print("\n==== 最终闭包执行验证 ====")
+    var pass = true
+    // 遍历两个数组（长度一致，无索引问题）
+    for 0:9 to var idx {  // 0-9 对应10个元素，避开动态len()的索引计算
+        var expect_id = btn_ids[idx]
+        var actual_id = handlers[idx]()
+        
+        print($"第{idx+1}个闭包：预期={expect_id} | 实际={actual_id}")
+        if actual_id != expect_id {
+            pass = false
+        }
+    }
+    
+    print($"\n闭包捕获是否全部正确：{pass}")
+}

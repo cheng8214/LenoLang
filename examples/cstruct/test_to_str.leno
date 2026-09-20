@@ -1,0 +1,48 @@
+// 测试 to_str() 方法
+
+cstruct Vec2 {
+    f32 x
+    f32 y
+}
+
+cstruct Matrix4 {
+    f32 m[16]
+}
+
+cstruct Rect {
+    Vec2 origin
+    Vec2 size
+}
+
+main() {
+    print("=== 测试 to_str() ===")
+    
+    // 测试基本类型
+    var v = Vec2.malloc()
+    v.x = 10.0
+    v.y = 20.0
+    print("Vec2:")
+    print(v.to_str())
+    v.free()
+    
+    // 测试数组字段
+    var mat = Matrix4.malloc()
+    mat.m[0] = 1.0
+    mat.m[1] = 2.0
+    mat.m[15] = 16.0
+    print("\nMatrix4:")
+    print(mat.to_str())
+    mat.free()
+    
+    // 测试嵌套结构体
+    var r = Rect.malloc()
+    r.origin.x = 10.0
+    r.origin.y = 20.0
+    r.size.x = 100.0
+    r.size.y = 200.0
+    print("\nRect:")
+    print(r.to_str())
+    r.free()
+    
+    print("\n=== 测试完成 ===")
+}

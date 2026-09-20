@@ -1,0 +1,151 @@
+import times
+
+main()
+{
+    print("======== 算术运算与赋值性能分析 ========")
+    print("")
+
+    // 测试1: 纯整数自增 (baseline)
+    print("--- 测试1: 纯整数自增 (i++) ---")
+    var t1=times.ms()
+    var i=0
+    for 100000000
+    {
+        i++
+    }
+    var t2=times.ms()
+    print($"1亿次 i++: " + (t2-t1) + "ms")
+
+    // 测试2: 局部变量赋值
+    print("")
+    print("--- 测试2: 局部变量赋值 (a = b) ---")
+    t1=times.ms()
+    var a=0
+    var b=1
+    for 100000000
+    {
+        a = b
+    }
+    t2=times.ms()
+    print($"1亿次 a = b: " + (t2-t1) + "ms")
+
+    // 测试3: 常量赋值
+    print("")
+    print("--- 测试3: 常量赋值 (a = 1) ---")
+    t1=times.ms()
+    a=0
+    for 100000000
+    {
+        a = 1
+    }
+    t2=times.ms()
+    print($"1亿次 a = 1: " + (t2-t1) + "ms")
+
+    // 测试4: 简单加法 (两个常量)
+    print("")
+    print("--- 测试4: 加法 a = 1 + 2 ---")
+    t1=times.ms()
+    a=0
+    for 100000000
+    {
+        a = 1 + 2
+    }
+    t2=times.ms()
+    print($"1亿次 a = 1 + 2: " + (t2-t1) + "ms")
+
+    // 测试5: 变量加法
+    print("")
+    print("--- 测试5: 变量加法 a = b + c ---")
+    a=0
+    b=1
+    var c=2
+    t1=times.ms()
+    for 100000000
+    {
+        a = b + c
+    }
+    t2=times.ms()
+    print($"1亿次 a = b + c: " + (t2-t1) + "ms")
+
+    // 测试6: 复合加法赋值
+    print("")
+    print("--- 测试6: 复合加法 a += 1 ---")
+    a=0
+    t1=times.ms()
+    for 100000000
+    {
+        a += 1
+    }
+    t2=times.ms()
+    print($"1亿次 a += 1: " + (t2-t1) + "ms")
+
+    // 测试7: 自增 vs 加1 对比
+    print("")
+    print("--- 测试7: i++ vs i = i + 1 ---")
+    t1=times.ms()
+    i=0
+    for 100000000
+    {
+        i = i + 1
+    }
+    t2=times.ms()
+    var add1_time = t2-t1
+    print($"1亿次 i = i + 1: " + add1_time + "ms")
+
+    t1=times.ms()
+    i=0
+    for 100000000
+    {
+        i++
+    }
+    t2=times.ms()
+    var inc_time = t2-t1
+    print($"1亿次 i++: " + inc_time + "ms")
+    print($"比值: i++ / (i=i+1) = " + (inc_time * 100 / add1_time) + "%")
+
+    // 测试8: 乘法
+    print("")
+    print("--- 测试8: 乘法 a = b * c ---")
+    a=0
+    b=2
+    c=3
+    t1=times.ms()
+    for 100000000
+    {
+        a = b * c
+    }
+    t2=times.ms()
+    print($"1亿次 a = b * c: " + (t2-t1) + "ms")
+
+    // 测试9: 减法
+    print("")
+    print("--- 测试9: 减法 a = b - c ---")
+    a=0
+    b=10
+    c=3
+    t1=times.ms()
+    for 100000000
+    {
+        a = b - c
+    }
+    t2=times.ms()
+    print($"1亿次 a = b - c: " + (t2-t1) + "ms")
+
+    // 测试10: 连续操作
+    print("")
+    print("--- 测试10: 连续操作 a = b + c + d ---")
+    a=0
+    b=1
+    c=2
+    var d=3
+    t1=times.ms()
+    for 100000000
+    {
+        a = b + c + d
+    }
+    t2=times.ms()
+    print($"1亿次 a = b + c + d: " + (t2-t1) + "ms")
+
+    print("")
+    print("======== 分析结论 ========")
+}

@@ -1,0 +1,57 @@
+// 核心模块 - struct/clib/face/enum/cstruct
+import ffi
+
+// clib
+clib sys_lib {
+    i32 abs(i32 x)
+    i32 add(i32 a, i32 b)
+}
+
+// cstruct
+export cstruct Data {
+    u32 id
+    u32 value
+}
+
+// struct 含 clib 字段
+export struct Engine {
+    sys_lib   lib = null
+    string    tag = ""
+}
+
+// face
+export face Runable {
+    func execute(): int
+}
+
+// struct 实现 face
+export struct Runner impl Runable {
+    sys_lib _lib = null
+
+    func execute(): int {
+        return self._lib.abs(-1) as int
+    }
+}
+
+// enum
+export enum Color {
+    Red = 0
+    Green = 1
+    Blue = 2
+}
+
+// 全局
+sys_lib g_sys = null
+
+export func loadSys(): sys_lib {
+    if g_sys == null { g_sys = ffi.load("msvcrt.dll") }
+    return g_sys
+}
+
+export func makeRunner(): Runner {
+    return new Runner(_lib = loadSys())
+}
+
+export func makeEngine(string tag): Engine {
+    return new Engine(lib = loadSys(), tag = tag)
+}

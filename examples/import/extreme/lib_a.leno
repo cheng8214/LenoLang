@@ -1,0 +1,12 @@
+// 模块A - 与B使用相同的clib类型名但不同DLL
+import ffi
+
+clib handle_lib {
+    i32 abs(i32 x)
+}
+
+handle_lib g = null
+export func loadHandle(): handle_lib {
+    if g == null { g = ffi.load("msvcrt.dll") }
+    return g
+}

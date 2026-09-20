@@ -1,0 +1,18 @@
+// 导出 enum 供跨模块使用
+export enum HttpStatus {
+    OK = 200
+    NOT_FOUND = 404
+    SERVER_ERROR = 500
+    CREATED = 201
+    BAD_REQUEST = 400
+    UNAUTHORIZED = 401
+    FORBIDDEN = 403
+    INTERNAL_ERROR = 500 + 0
+}
+
+export enum BitFlags {
+    FLAG_A = 1 << 0
+    FLAG_B = 1 << 1
+    FLAG_C = 1 << 2
+    ALL_FLAGS = FLAG_A | FLAG_B | FLAG_C
+}

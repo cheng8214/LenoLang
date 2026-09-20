@@ -1,0 +1,15 @@
+import io
+import asyncs
+
+// 最简单的 async 测试
+async func hello() {
+    io.print("Hello from async!")
+}
+
+main() {
+    io.print("Before async call")
+    hello()
+    io.print("After async call")
+    asyncs.run()
+    io.print("After run")
+}

@@ -1,0 +1,551 @@
+// sqlite3.leno — LenoSqlite 入口模块
+// 用户只需 import sqlite3 即可使用所有功能
+
+import ffi
+import dirs
+import files
+import "sqlite3_core.leno" as core
+// 重新导出核心类型（use 自动 re-export enum/struct 类型）
+use core.sqlite3
+use core.ResultCode
+use core.OpenFlag
+use core.DataType
+
+// 重新导出核心函数
+export func lib(): sqlite3                     { return core.lib() }
+export func libversion(): string               { return core.libversion() }
+export func libversionNumber(): int            { return core.libversionNumber() }
+export func initialize(): int                  { return core.initialize() }
+export func shutdown(): int                    { return core.shutdown() }
+export func errstr(int errcode): string        { return core.errstr(errcode) }
+
+// 重新导出常用错误码常量（方便用户使用 sqlite3.OK, sqlite3.ROW 等）
+export var OK      = ResultCode.OK
+export var ERROR   = ResultCode.ERROR
+export var BUSY    = ResultCode.BUSY
+export var LOCKED  = ResultCode.LOCKED
+export var ROW     = ResultCode.ROW
+export var DONE    = ResultCode.DONE
+
+// 重新导出常量
+export var SQLITE_STATIC    = core.SQLITE_STATIC
+export var SQLITE_TRANSIENT = core.SQLITE_TRANSIENT
+
+// ==================== 行回调别名 ====================
+export alias RowCallback = func(Statement):bool  // 返回 false 停止遍历
+
+// ==================== Statement 预编译语句 ====================
+// 封装 sqlite3_stmt*，提供参数绑定、列值读取等功能
+export struct Statement {
+    Ptr[u8] handle   // sqlite3_stmt 指针
+    Ptr[u8] _db      // 所属数据库连接（用于错误消息查询）
+    bool ok          // 是否有效
+
+    // 初始化预编译语句
+    // db: 数据库连接指针, sql: SQL 语句
+    func init(Ptr[u8] dbHandle, string sql): bool {
+        sqlite3 l = core.lib()
+        if l == null { return false }
+        // 分配 stmt 输出指针的内存（8 字节）
+        Ptr[u8] stmtBuf = ffi.malloc(8)
+        if stmtBuf == null { return false }
+        // 执行预编译
+        int rc = l.sqlite3_prepare_v2(dbHandle, sql, -1, stmtBuf, null)
+        if rc != ResultCode.OK {
+            ffi.free(stmtBuf)
+            return false
+        }
+        // 读取返回的 stmt 指针
+        _db = dbHandle
+        handle = ffi.read_ptr(stmtBuf, 0) as Ptr[u8]
+        ffi.free(stmtBuf)
+        ok = handle != null
+        return ok
+    }
+
+    // 释放预编译语句
+    func finalize(): int {
+        if not ok { return ResultCode.MISUSE }
+        int rc = core.lib().sqlite3_finalize(handle)
+        handle = null; ok = false
+        return rc
+    }
+
+    // 重置预编译语句（不清除绑定的参数）
+    func reset(): int {
+        if not ok { return ResultCode.MISUSE }
+        return core.lib().sqlite3_reset(handle)
+    }
+
+    // 清除所有绑定的参数
+    func clearBindings(): int {
+        if not ok { return ResultCode.MISUSE }
+        return core.lib().sqlite3_clear_bindings(handle)
+    }
+
+    // ==================== 参数绑定 ====================
+    // 索引从 1 开始（SQLite 惯例）
+
+    // 绑定 int 值
+    func bind_int(int idx, int value): int {
+        if not ok { return ResultCode.MISUSE }
+        return core.lib().sqlite3_bind_int(handle, idx, value)
+    }
+
+    // 绑定 int64 值
+    func bind_int64(int idx, int value): int {
+        if not ok { return ResultCode.MISUSE }
+        return core.lib().sqlite3_bind_int64(handle, idx, value)
+    }
+
+    // 绑定 float 值
+    func bind_double(int idx, float value): int {
+        if not ok { return ResultCode.MISUSE }
+        return core.lib().sqlite3_bind_double(handle, idx, value)
+    }
+
+    // 绑定 text 值
+    func bind_text(int idx, string text): int {
+        if not ok { return ResultCode.MISUSE }
+        return core.lib().sqlite3_bind_text(handle, idx, text, -1, ffi.ptr_from_int(-1))
+    }
+
+    // 绑定 blob 值
+    func bind_blob(int idx, Ptr data, int nbyte): int {
+        if not ok { return ResultCode.MISUSE }
+        return core.lib().sqlite3_bind_blob(handle, idx, data, nbyte, ffi.ptr_from_int(-1))
+    }
+
+    // 绑定 null 值
+    func bind_null(int idx): int {
+        if not ok { return ResultCode.MISUSE }
+        return core.lib().sqlite3_bind_null(handle, idx)
+    }
+
+    // 按参数名绑定 int 值（参数名如 ":name" 或 "@name"）
+    func bind_int_by_name(string name, int value): int {
+        if not ok { return ResultCode.MISUSE }
+        int idx = core.lib().sqlite3_bind_parameter_index(handle, name)
+        if idx == 0 { return ResultCode.RANGE }
+        return core.lib().sqlite3_bind_int(handle, idx, value)
+    }
+
+    // 按参数名绑定 text 值
+    func bind_text_by_name(string name, string value): int {
+        if not ok { return ResultCode.MISUSE }
+        int idx = core.lib().sqlite3_bind_parameter_index(handle, name)
+        if idx == 0 { return ResultCode.RANGE }
+        return core.lib().sqlite3_bind_text(handle, idx, value, -1, ffi.ptr_from_int(-1))
+    }
+
+    // 按参数名绑定 double 值
+    func bind_double_by_name(string name, float value): int {
+        if not ok { return ResultCode.MISUSE }
+        int idx = core.lib().sqlite3_bind_parameter_index(handle, name)
+        if idx == 0 { return ResultCode.RANGE }
+        return core.lib().sqlite3_bind_double(handle, idx, value)
+    }
+
+    // 通用绑定方法（自动根据类型选择）
+    // 支持 int, float, string, null
+    func bind(int idx, any value): int {
+        if not ok { return ResultCode.MISUSE }
+        switch value {
+            case is int {
+                return core.lib().sqlite3_bind_int64(handle, idx, value as int)
+            }
+            case is float {
+                return core.lib().sqlite3_bind_double(handle, idx, value as float)
+            }
+            case is string {
+                return core.lib().sqlite3_bind_text(handle, idx, value as string, -1, ffi.ptr_from_int(-1))
+            }
+            case is null {
+                return core.lib().sqlite3_bind_null(handle, idx)
+            }
+            default {
+                return ResultCode.MISMATCH
+            }
+        }
+    }
+
+    // 获取参数个数
+    func bindParameterCount(): int {
+        if not ok { return 0 }
+        return core.lib().sqlite3_bind_parameter_count(handle)
+    }
+
+    // ==================== 列信息 ====================
+
+    // 获取列数
+    func columnCount(): int {
+        if not ok { return 0 }
+        return core.lib().sqlite3_column_count(handle)
+    }
+
+    // 获取列名（0-based）
+    func columnName(int col): string {
+        if not ok { return "" }
+        return core.lib().sqlite3_column_name(handle, col)
+    }
+
+    // 获取列声明类型（0-based）
+    func columnDeclType(int col): string {
+        if not ok { return "" }
+        return core.lib().sqlite3_column_decltype(handle, col)
+    }
+
+    // 获取列数据类型（0-based）
+    // 返回 DataType.INTEGER/FLOAT/TEXT/BLOB/NULL
+    func columnType(int col): int {
+        if not ok { return DataType.NULL }
+        return core.lib().sqlite3_column_type(handle, col)
+    }
+
+    // ==================== 列值读取 ====================
+
+    // 读取 int 值（0-based）
+    func column_int(int col): int {
+        if not ok { return 0 }
+        return core.lib().sqlite3_column_int(handle, col)
+    }
+
+    // 读取 int64 值（0-based）
+    func column_int64(int col): int {
+        if not ok { return 0 }
+        return core.lib().sqlite3_column_int64(handle, col)
+    }
+
+    // 读取 double 值（0-based）
+    func column_double(int col): float {
+        if not ok { return 0.0 }
+        return core.lib().sqlite3_column_double(handle, col)
+    }
+
+    // 读取 text 值（0-based）
+    func column_text(int col): string {
+        if not ok { return "" }
+        return core.lib().sqlite3_column_text(handle, col)
+    }
+
+    // 读取 blob 值（0-based），返回指针
+    func column_blob(int col): Ptr {
+        if not ok { return null }
+        return core.lib().sqlite3_column_blob(handle, col)
+    }
+
+    // 读取 blob 值的字节数
+    func column_bytes(int col): int {
+        if not ok { return 0 }
+        return core.lib().sqlite3_column_bytes(handle, col)
+    }
+
+    // ==================== 执行 ====================
+
+    // 执行一步预编译语句
+    // 返回 ResultCode.ROW（有新行）或 ResultCode.DONE（执行完毕）
+    func step(): int {
+        if not ok { return ResultCode.MISUSE }
+        return core.lib().sqlite3_step(handle)
+    }
+
+    // 遍历所有行并调用回调
+    // 回调返回 false 停止遍历
+    func forEach(RowCallback cb): int {
+        if not ok { return ResultCode.MISUSE }
+        int rc
+        while true {
+            rc = core.lib().sqlite3_step(handle)
+            if rc != ResultCode.ROW { break }
+            if not cb(self) { break }
+        }
+        return rc
+    }
+
+    // 获取句柄
+    func getHandle(): Ptr[u8] { return handle }
+
+    // 是否有效
+    func isOk(): bool { return ok }
+}
+
+// ==================== Database 数据库连接 ====================
+// 封装 sqlite3* 数据库连接
+export struct Database {
+    Ptr[u8] handle   // sqlite3* 数据库连接指针
+    bool ok          // 是否连接成功
+    string _lastError // 最近一次错误消息
+
+    // 打开数据库连接（简单接口）
+    // path: 数据库文件路径
+    // 返回: 是否成功
+    func open(string path): bool {
+        sqlite3 l = core.lib()
+        if l == null {
+            _lastError = "SQLite3 library not loaded"
+            ok = false
+            return false
+        }
+        // 分配 db 输出指针的内存（8 字节）
+        Ptr[u8] dbBuf = ffi.malloc(8)
+        if dbBuf == null {
+            _lastError = "Memory allocation failed"
+            ok = false
+            return false
+        }
+        // 默认以读写+创建方式打开
+        int flags = OpenFlag.READWRITE | OpenFlag.CREATE
+        int rc = l.sqlite3_open_v2(path, dbBuf, flags, null)
+        if rc != ResultCode.OK {
+            // 读取错误消息
+            Ptr[u8] dbPtr = ffi.read_ptr(dbBuf, 0) as Ptr[u8]
+            if dbPtr != null {
+                _lastError = l.sqlite3_errmsg(dbPtr)
+                l.sqlite3_close(dbPtr)
+            } else {
+                _lastError = l.sqlite3_errstr(rc)
+            }
+            ffi.free(dbBuf)
+            ok = false
+            return false
+        }
+        // 读取返回的 db 指针
+        handle = ffi.read_ptr(dbBuf, 0) as Ptr[u8]
+        ffi.free(dbBuf)
+        ok = handle != null
+        return ok
+    }
+
+    // 以只读方式打开数据库
+    func openReadonly(string path): bool {
+        sqlite3 l = core.lib()
+        if l == null {
+            _lastError = "SQLite3 library not loaded"
+            ok = false
+            return false
+        }
+        Ptr[u8] dbBuf = ffi.malloc(8)
+        if dbBuf == null {
+            _lastError = "Memory allocation failed"
+            ok = false
+            return false
+        }
+        int flags = OpenFlag.READONLY
+        int rc = l.sqlite3_open_v2(path, dbBuf, flags, null)
+        if rc != ResultCode.OK {
+            Ptr[u8] dbPtr = ffi.read_ptr(dbBuf, 0) as Ptr[u8]
+            if dbPtr != null {
+                _lastError = l.sqlite3_errmsg(dbPtr)
+                l.sqlite3_close(dbPtr)
+            } else {
+                _lastError = l.sqlite3_errstr(rc)
+            }
+            ffi.free(dbBuf)
+            ok = false
+            return false
+        }
+        handle = ffi.read_ptr(dbBuf, 0) as Ptr[u8]
+        ffi.free(dbBuf)
+        ok = handle != null
+        return ok
+    }
+
+    // 关闭数据库连接
+    func close(): int {
+        if not ok { return ResultCode.MISUSE }
+        int rc = core.lib().sqlite3_close(handle)
+        handle = null; ok = false
+        return rc
+    }
+
+    // ==================== 执行 SQL ====================
+
+    // 执行 SQL 语句（简单接口，不支持参数绑定）
+    // 适用于 DDL（CREATE TABLE 等）和不需要参数的 DML
+    func exec(string sql): int {
+        if not ok { return ResultCode.MISUSE }
+        return core.lib().sqlite3_exec(handle, sql, null, null, null)
+    }
+
+    // 执行 SQL 语句并返回错误消息
+    func execWithErr(string sql): Dict {
+        if not ok { return {rc: ResultCode.MISUSE, err: "Database not open"} }
+        Ptr[u8] errmsgBuf = ffi.malloc(8)
+        int rc = core.lib().sqlite3_exec(handle, sql, null, null, errmsgBuf)
+        string err = ""
+        if rc != ResultCode.OK {
+            Ptr[u8] errmsgPtr = ffi.read_ptr(errmsgBuf, 0) as Ptr[u8]
+            if errmsgPtr != null {
+                err = ffi.read_string(errmsgPtr, 0)
+                core.lib().sqlite3_free(errmsgPtr)
+            }
+        }
+        ffi.free(errmsgBuf)
+        return {rc: rc, err: err}
+    }
+
+    // ==================== 预编译语句 ====================
+
+    // 创建预编译语句
+    // sql: SQL 语句（可含 ? 或 :name 参数占位符）
+    // 返回 Statement 对象，使用后必须调用 finalize()
+    func prepare(string sql): Statement {
+        Statement stmt = new Statement()
+        stmt.init(handle, sql)
+        return stmt
+    }
+
+    // 便捷查询：执行 SQL 并对每行调用回调
+    // 回调返回 false 停止遍历
+    func query(string sql, RowCallback cb): int {
+        Statement stmt = prepare(sql)
+        int rc = stmt.forEach(cb)
+        stmt.finalize()
+        return rc
+    }
+
+    // 便捷查询：执行带参数的 SQL 并对每行调用回调
+    // params: 参数数组（按 ? 顺序绑定）
+    func queryWithParams(string sql, Array[any] params, RowCallback cb): int {
+        Statement stmt = prepare(sql)
+        for params.len() to i {
+            stmt.bind(i + 1, params[i])
+        }
+        int rc = stmt.forEach(cb)
+        stmt.finalize()
+        return rc
+    }
+
+    // ==================== 错误处理 ====================
+
+    // 获取最近一次错误消息
+    func errmsg(): string {
+        if not ok { return _lastError }
+        return core.lib().sqlite3_errmsg(handle)
+    }
+
+    // 获取最近一次错误码
+    func errcode(): int {
+        if not ok { return ResultCode.MISUSE }
+        return core.lib().sqlite3_errcode(handle)
+    }
+
+    // 获取最近一次扩展错误码
+    func extendedErrcode(): int {
+        if not ok { return ResultCode.MISUSE }
+        return core.lib().sqlite3_extended_errcode(handle)
+    }
+
+    // ==================== 行变化 ====================
+
+    // 获取最近一次 INSERT/UPDATE/DELETE 影响的行数
+    func changes(): int {
+        if not ok { return 0 }
+        return core.lib().sqlite3_changes(handle)
+    }
+
+    // 获取最近一次 INSERT 的 rowid
+    func lastInsertRowid(): int {
+        if not ok { return 0 }
+        return core.lib().sqlite3_last_insert_rowid(handle)
+    }
+
+    // 获取总共变化的行数
+    func totalChanges(): int {
+        if not ok { return 0 }
+        return core.lib().sqlite3_total_changes(handle)
+    }
+
+    // ==================== 事务 ====================
+
+    // 开始事务
+    func begin(): int { return exec("BEGIN") }
+
+    // 提交事务
+    func commit(): int { return exec("COMMIT") }
+
+    // 回滚事务
+    func rollback(): int { return exec("ROLLBACK") }
+
+    // 是否处于自动提交模式
+    func getAutocommit(): bool {
+        if not ok { return false }
+        return core.lib().sqlite3_get_autocommit(handle) != 0
+    }
+
+    // 设置忙等待超时（毫秒）
+    func busyTimeout(int ms): int {
+        if not ok { return ResultCode.MISUSE }
+        return core.lib().sqlite3_busy_timeout(handle, ms)
+    }
+
+    // 获取句柄
+    func getHandle(): Ptr[u8] { return handle }
+
+    // 是否连接成功
+    func isOk(): bool { return ok }
+}
+
+// ==================== 工厂函数 ====================
+
+// 打开数据库连接
+export func open(string path): Database {
+    Database db = new Database()
+    db.open(path)
+    return db
+}
+
+// 以只读方式打开数据库
+export func openReadonly(string path): Database {
+    Database db = new Database()
+    db.openReadonly(path)
+    return db
+}
+
+// 打开内存数据库
+export func openMemory(): Database {
+    return open(":memory:")
+}
+
+// ==================== 便捷函数 ====================
+
+// 执行简单 SQL（自动打开/关闭数据库）
+export func quickExec(string path, string sql): int {
+    Database db = open(path)
+    if not db.isOk() { return ResultCode.ERROR }
+    int rc = db.exec(sql)
+    db.close()
+    return rc
+}
+
+// 查询并收集所有行到数组
+export func queryAll(string path, string sql): Array[Dict] {
+    Database db = open(path)
+    if not db.isOk() { return [] }
+    Array[Dict] rows = []
+    Statement stmt = db.prepare(sql)
+    int ncol = stmt.columnCount()
+    while stmt.step() == ResultCode.ROW {
+        Dict row = {}
+        for ncol to i {
+            string colName = stmt.columnName(i)
+            int colType = stmt.columnType(i)
+            if colType == DataType.INTEGER {
+                row[colName] = _str(stmt.column_int64(i))
+            } else if colType == DataType.FLOAT {
+                row[colName] = _str(stmt.column_double(i))
+            } else if colType == DataType.TEXT {
+                row[colName] = stmt.column_text(i)
+            } else if colType == DataType.BLOB {
+                // BLOB 返回字节数
+                row[colName] = _str(stmt.column_bytes(i))
+            } else {
+                row[colName] = ""
+            }
+        }
+        rows.add(row)
+    }
+    stmt.finalize()
+    db.close()
+    return rows
+}

@@ -1,0 +1,55 @@
+// 导入错误处理测试主文件
+// 测试各种导入错误场景
+
+main() {
+    print("=== 导入错误处理测试 ===")
+
+    // ========== 测试 1: 导入不存在的模块 ==========
+    print("\n1. 导入不存在的模块测试:")
+    print("  尝试导入不存在的模块...")
+
+    // 这个导入应该失败
+    import "nonexistent_module.leno" as nonexistent
+
+    // 如果导入失败，下面的代码应该不会执行
+    print("  如果看到这行，说明导入没有正确报错")
+
+    // ========== 测试 2: 导入语法错误的模块 ==========
+    print("\n2. 导入语法错误的模块测试:")
+    print("  尝试导入有语法错误的模块...")
+
+    import "syntax_error_module.leno" as syntax_error
+
+    // 如果导入失败，下面的代码应该不会执行
+    print("  如果看到这行，说明语法错误没有正确报错")
+
+    // ========== 测试 3: 导入运行时错误的模块 ==========
+    print("\n3. 导入运行时错误的模块测试:")
+    print("  尝试导入有运行时错误的模块...")
+
+    import "runtime_error_module.leno" as runtime_error
+
+    // 如果导入失败，下面的代码应该不会执行
+    print("  如果看到这行，说明运行时错误没有正确报错")
+
+    // ========== 测试 4: 部分导入失败后的恢复 ==========
+    print("\n4. 部分导入失败后的恢复测试:")
+
+    import "partial_success_module.leno" as partial
+
+    // 测试可以正常访问的变量
+    print("  partial.first = " + partial.first + " (期望: 1)")
+    print("  partial.second = " + partial.second + " (期望: 2)")
+    print("  partial.third = " + partial.third + " (期望: 3)")
+
+    // 测试正常函数
+    var normal_result = partial.normal_func()
+    print("  partial.normal_func() = " + normal_result + " (期望: success)")
+
+    // 测试会失败的函数
+    print("  调用会失败的函数...")
+    var fail_result = partial.will_fail()
+    print("  如果看到这行，说明运行时错误没有正确报错")
+
+    print("\n=== 所有导入错误处理测试完成 ===")
+}

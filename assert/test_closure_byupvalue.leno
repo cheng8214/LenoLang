@@ -1,0 +1,47 @@
+// 回归：**by-upvalue 捕获**（形态 C1）的闭包
+//
+// 背景（docs/JIT闭包与upvalue设计_R5.md §3）：`is_local=0` 的捕获只是把"当前闭包"
+// 的 upvalues[index] 指针复制一份（VM 侧 op_call.inc）—— 不新建 upvalue、不改生命周期。
+//
+// 覆盖点：
+//   ① 循环体内建 C1 闭包并调用（本用例的覆盖面收益所在）；
+//   ② **共享存储**：C1 复制的是指针，内层闭包写穿后外层必须看到（不是各持一份拷贝）；
+//   ③ 三层嵌套（最内层捕获最外层变量，中间层各做一次 by-upvalue 复制），
+//      验证链式复制对（只复制一层会静默读到别的槽）。
+//
+// 判据：本文件必须 exit=0（run_tests.leno 判 FAIL）。
+
+// ① + ③：三层嵌套。inner 捕获的 base 对 mid 而言是 upvalue ⇒ inner 走 by-upvalue。
+// 每轮：base 先 +1，再让 inner() 读出来累加 ⇒ acc = Σ(1..limit)。
+func nested(int limit): int {
+    var base = 0
+    var mid = func(): int {
+        var acc = 0
+        for limit {
+            var inner = func(): int { return base }
+            base = base + 1
+            acc = acc + inner()
+        }
+        return acc
+    }
+    return mid()
+}
+
+// ② 共享存储：内层闭包写 n，外层闭包读 n —— 必须是同一份存储。
+func sharedSum(int limit): int {
+    var n = 0
+    var outer = func(): int {
+        for limit {
+            var inner = func(): int { n = n + 1 }
+            inner()
+        }
+        return n
+    }
+    return outer()
+}
+
+main() {
+    assert_eq(nested(2000), 2001000)     // 2000 * 2001 / 2
+    assert_eq(sharedSum(1000), 1000)     // 1000 次写穿都落在同一份 upvalue 上
+    print("test_closure_byupvalue: OK")
+}

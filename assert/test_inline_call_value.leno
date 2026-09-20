@@ -1,0 +1,64 @@
+// 回归：编译器内联的「经函数值调用」（裸 OP_CALL）栈记账（§8.77 / R7④）
+//
+// 背景：`scan_callee_for_inline()` 原先对 `OP_CALL` / `OP_GET_GLOBAL_FUNC` 没有 case
+//   ⇒ **被调函数体内只要有一次"取函数值再调用"，该函数就永远不能内联**。
+// 修法：照 `scan_loop_body` 的同名 case 补记账 ——
+//   `[args(ac)][callee]` → 返回后留 rc 个值 ⇒ 净效应 = rc - (ac + 1)，
+//   rc 静态不可知（callee 是运行期值）⇒ **按 rc = 1 记账**；多返回值解构走通用路径。
+//
+// ⚠️ 本用例是**记账守卫**，不是"修前必失败"型：缺这条记账只是「不内联」（结果依然正确、
+//    只是慢），所以判据是**数值精确** —— 一旦内联体的栈记账写错（少弹/多弹一个槽、
+//    size 消费错位），取值立刻错。
+//
+// 覆盖形态：argc = 1/2/3（不同记账值）、同一体内**三处**函数值调用、
+//   局部零捕获闭包当 callee、循环 300 轮（反复调用放大记账错误）。
+
+func one(int a): int { return a * 3 }
+func two(int a, int b): int { return a * 10 + b }
+func three(int a, int b, int c): int { return a * 100 + b * 10 + c }
+
+// 被内联方 1：体内带 for（挡掉编译器层内联器）+ 三种 argc 的"经全局函数值调用"
+func viaGlobal(int n): int {
+    var f1 = one
+    var f2 = two
+    var f3 = three
+    var acc = 0
+    for n {
+        acc = acc + f1(2) + f2(1, 2) + f3(1, 2, 3)
+    }
+    return acc
+}
+
+// 被内联方 2：局部零捕获闭包当 callee，且同一体内**两处**调用
+func viaClosure(int n): int {
+    var g = func(int a, int b): int { return a - b }
+    var acc = 0
+    for n {
+        acc = acc + g(9, 4) + g(7, 3)
+    }
+    return acc
+}
+
+func benchGlobal(int n): int {
+    var t = 0
+    for n {
+        t = t + viaGlobal(3)
+    }
+    return t
+}
+
+func benchClosure(int n): int {
+    var t = 0
+    for n {
+        t = t + viaClosure(3)
+    }
+    return t
+}
+
+main() {
+    // viaGlobal(3) 一轮 = 3 × ( 2*3 + (1*10+2) + (1*100+2*10+3) ) = 3 × (6 + 12 + 123) = 423
+    assert_eq(benchGlobal(300), 300 * 423)
+    // viaClosure(3) 一轮 = 3 × ( (9-4) + (7-3) ) = 3 × 9 = 27
+    assert_eq(benchClosure(300), 300 * 27)
+    print("test_inline_call_value: OK")
+}

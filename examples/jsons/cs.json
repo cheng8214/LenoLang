@@ -1,0 +1,304 @@
+{
+  "collection": {
+    "name": "经典唐诗选",
+    "description": "收录10首脍盐皆知的唐代诗歌，附带详细解析",
+    "total": 10,
+    "language": "zh-CN",
+    "version": "2.0"
+  },
+  "poems": [
+    {
+      "id": "poem_001",
+      "title": "静夜思",
+      "author": {
+        "name": "李白",
+        "dynasty": "唐",
+        "alias": ["李太白", "青莲居士"]
+      },
+      "type": "五言绝句",
+      "content": [
+        { "line": 1, "text": "床前明月光" },
+        { "line": 2, "text": "疑是地上霜" },
+        { "line": 3, "text": "举头望明月" },
+        { "line": 4, "text": "低头思故乡" }
+      ],
+      "rhyme_scheme": "AABB",
+      "translation": {
+        "modern_chinese": "明亮的月光洒在井栏前，好像地上泛起一层白霜。抬头望着天上的明月，低头深深思念自己的故乡。",
+        "english": "Before my bed a pool of light— / Can it be hoar-frost on the ground? / Looking up, I find the moon bright; / Bowing, in homesickness I’m drowned."
+      },
+      "annotations": [
+        { "term": "床", "note": "古代指井栏，或坐卧之具，有争议。" },
+        { "term": "疑", "note": "好像，仿佛。" }
+      ],
+      "appreciation": "此诗以明白如话的语言，写出游子对故乡的深切思念。明月意象与内心情感交织，成为千古绝唱。",
+      "tags": ["思乡", "月亮", "李白"],
+      "difficulty": "初级"
+    },
+    {
+      "id": "poem_002",
+      "title": "登鹳雀楼",
+      "author": {
+        "name": "王之涣",
+        "dynasty": "唐",
+        "alias": ["王之奂"]
+      },
+      "type": "五言绝句",
+      "content": [
+        { "line": 1, "text": "白日依山尽" },
+        { "line": 2, "text": "黄河入海流" },
+        { "line": 3, "text": "欲穷千里目" },
+        { "line": 4, "text": "更上一层楼" }
+      ],
+      "rhyme_scheme": "ABAB",
+      "translation": {
+        "modern_chinese": "夕阳傍着远山慢慢沉落，黄河朝着大海滔滔奔流。要想看尽更远的风光，就得再登上一层高楼。",
+        "english": "The sun beyond the mountains glows; / The Yellow River seawards flows. / You can enjoy a grander sight / By climbing to a greater height."
+      },
+      "annotations": [],
+      "appreciation": "前两句写壮阔景色，后两句升华哲理，鼓励积极进取，成为励志名篇。",
+      "tags": ["写景", "哲理", "登高"],
+      "difficulty": "初级"
+    },
+    {
+      "id": "poem_003",
+      "title": "春江花月夜",
+      "author": {
+        "name": "张若虚",
+        "dynasty": "唐",
+        "alias": []
+      },
+      "type": "七言古诗",
+      "content": [
+        { "line": 1, "text": "春江潮水连海平，海上明月共潮生。" },
+        { "line": 2, "text": "滟滟随波千万里，何处春江无月明。" },
+        { "line": 3, "text": "江流宛转绕芳甸，月照花林皆似霰。" },
+        { "line": 4, "text": "空里流霜不觉飞，汀上白沙看不见。" },
+        { "line": 5, "text": "江天一色无纤尘，皎皎空中孤月轮。" },
+        { "line": 6, "text": "江畔何人初见月？江月何年初照人？" }
+      ],
+      "rhyme_scheme": "随韵转韵",
+      "translation": {
+        "modern_chinese": "春天的江潮水势浩荡，与大海连成一片；一轮明月从海上随着潮水一同升起。月光照耀着春江，波光闪耀千万里……",
+        "english": "In spring the river rises as high as the sea, / And with the river's tide uprises the moon bright. / She follows the rolling waves for ten thousand li; / Where'er the river flows, there overflows her light."
+      },
+      "annotations": [
+        { "term": "滟滟", "note": "水波闪亮的样子。" },
+        { "term": "芳甸", "note": "花草茂盛的郊野。" },
+        { "term": "霰", "note": "雪珠，小冰粒。" }
+      ],
+      "appreciation": "被誉为‘孤篇横绝全唐’。全诗将春、江、花、月、夜五种意象融合，探讨宇宙与人生，意境空明深远。",
+      "tags": ["长篇", "哲理", "月夜", "春江"],
+      "difficulty": "高级"
+    },
+    {
+      "id": "poem_004",
+      "title": "将进酒",
+      "author": {
+        "name": "李白",
+        "dynasty": "唐",
+        "alias": ["李太白", "诗仙"]
+      },
+      "type": "乐府诗",
+      "content": [
+        { "line": 1, "text": "君不见黄河之水天上来，奔流到海不复回。" },
+        { "line": 2, "text": "君不见高堂明镜悲白发，朝如青丝暮成雪。" },
+        { "line": 3, "text": "人生得意须尽欢，莫使金樽空对月。" },
+        { "line": 4, "text": "天生我材必有用，千金散尽还复来。" }
+      ],
+      "rhyme_scheme": "自由转韵",
+      "translation": {
+        "modern_chinese": "你没看到吗？黄河之水仿佛从天上来，奔流到海不再返回。你没看到吗？高堂明镜前有人悲叹白发，早晨还是青丝傍晚就成了雪白……",
+        "english": "Do you not see the Yellow River come from the sky, / Rushing into the sea and ne'er come back? / Do you not see the mirrors bright in chambers high / Grieve o'er the snow-white hair though once silk-black?"
+      },
+      "annotations": [
+        { "term": "将进酒", "note": "请喝酒。将，请。" },
+        { "term": "会须一饮三百杯", "note": "豪饮之意，夸张写法。" }
+      ],
+      "appreciation": "李白借酒抒怀，既有时光易逝的悲感，又有‘天生我材必有用’的豪情，气势磅礴。",
+      "tags": ["饮酒", "李白", "豪放", "哲理"],
+      "difficulty": "中级"
+    },
+    {
+      "id": "poem_005",
+      "title": "锦瑟",
+      "author": {
+        "name": "李商隐",
+        "dynasty": "唐",
+        "alias": ["玉溪生"]
+      },
+      "type": "七言律诗",
+      "content": [
+        { "line": 1, "text": "锦瑟无端五十弦，一弦一柱思华年。" },
+        { "line": 2, "text": "庄生晓梦迷蝴蝶，望帝春心托杜鹃。" },
+        { "line": 3, "text": "沧海月明珠有泪，蓝田日暖玉生烟。" },
+        { "line": 4, "text": "此情可待成追忆，只是当时已惘然。" }
+      ],
+      "rhyme_scheme": "AABA",
+      "translation": {
+        "modern_chinese": "精美的瑟为什么竟有五十根弦？每弦每柱都让我追忆青春年华。庄周在梦中化为蝴蝶，望帝的春心托于杜鹃……",
+        "english": "The zither has fifty strings; each string, each fret / reminds me of the days of my flowing prime. / The sage in dream became a butterfly. / The Duke's sad feeling found in cuckoos' cry."
+      },
+      "annotations": [
+        { "term": "锦瑟", "note": "装饰华美的瑟。传说瑟原有五十弦，后改为二十五弦。" },
+        { "term": "庄生晓梦", "note": "庄周梦蝶典故，寓意人生如梦。" },
+        { "term": "望帝", "note": "古蜀王杜宇，死后化为杜鹃啼血。" }
+      ],
+      "appreciation": "李商隐最著名的朦胧诗，主题有爱情、悼亡、自伤身世等多种解读。意象凄美，对仗工整。",
+      "tags": ["怀旧", "朦胧", "典故", "七律"],
+      "difficulty": "高级"
+    },
+    {
+      "id": "poem_006",
+      "title": "茅屋为秋风所破歌",
+      "author": {
+        "name": "杜甫",
+        "dynasty": "唐",
+        "alias": ["杜少陵", "诗圣"]
+      },
+      "type": "歌行体",
+      "content": [
+        { "line": 1, "text": "八月秋高风怒号，卷我屋上三重茅。" },
+        { "line": 2, "text": "茅飞渡江洒江郊，高者挂罥长林梢，下者飘转沉塘坳。" },
+        { "line": 3, "text": "南村群童欺我老无力，忍能对面为盗贼。" },
+        { "line": 4, "text": "公然抱茅入竹去，唇焦口燥呼不得，归来倚杖自叹息。" },
+        { "line": 5, "text": "安得广厦千万间，大庇天下寒士俱欢颜，风雨不动安如山！" }
+      ],
+      "rhyme_scheme": "自由转韵",
+      "translation": {
+        "modern_chinese": "八月秋深狂风怒号，卷走我屋顶多层茅草。茅草飞过江洒在江边，高的挂树梢，低的沉塘坳……怎么才能得到千万间高楼大厦，让天下贫穷的读书人都喜笑颜开，在风雨中安稳如山！",
+        "english": "In eighth moon the autumn gales furiously howl; / They roll up three layers of straw from my thatched bower. / The straw flies across the river and spreads in shower, / Some hanging knotted on the tops of trees that tower, / Some swirling down and sinking into water foul.... / Could I get mansions covering ten thousand miles, / I'd house all scholars poor and make them beam with smiles."
+      },
+      "annotations": [
+        { "term": "三重茅", "note": "多层茅草。" },
+        { "term": "挂罥", "note": "挂结，缠绕。" },
+        { "term": "大庇", "note": "全部庇护。" }
+      ],
+      "appreciation": "杜甫推己及人，从个人遭遇联想到天下苍生，‘安得广厦千万间’升华出崇高的人文精神。",
+      "tags": ["现实主义", "杜甫", "济世", "风雨"],
+      "difficulty": "中级"
+    },
+    {
+      "id": "poem_007",
+      "title": "游子吟",
+      "author": {
+        "name": "孟郊",
+        "dynasty": "唐",
+        "alias": ["孟东野"]
+      },
+      "type": "五言古诗",
+      "content": [
+        { "line": 1, "text": "慈母手中线，游子身上衣。" },
+        { "line": 2, "text": "临行密密缝，意恐迟迟归。" },
+        { "line": 3, "text": "谁言寸草心，报得三春晖。" }
+      ],
+      "rhyme_scheme": "ABA",
+      "translation": {
+        "modern_chinese": "慈母用手中的针线，为远行的儿子缝补衣服。临行前密密地缝，怕儿子迟迟不归。谁说小草般的孝心，能报答春天阳光般的母爱？",
+        "english": "The thread in a fond mother's hand / Makes clothes for her departing son. / Before he leaves, she sews them tight, / Fearing he’d be long gone. / Who says the heart of a little blade of grass / Can repay the warmth of the vernal sun?"
+      },
+      "annotations": [
+        { "term": "寸草心", "note": "比喻子女微小的心意。" },
+        { "term": "三春晖", "note": "春天的阳光，比喻母爱。" }
+      ],
+      "appreciation": "语言朴素自然，却感人至深，成为歌颂母爱的经典。",
+      "tags": ["母爱", "亲情", "感恩"],
+      "difficulty": "初级"
+    },
+    {
+      "id": "poem_008",
+      "title": "念奴娇·赤壁怀古",
+      "author": {
+        "name": "苏轼",
+        "dynasty": "宋",
+        "alias": ["苏东坡", "东坡居士"]
+      },
+      "type": "词",
+      "content": [
+        { "line": 1, "text": "大江东去，浪淘尽，千古风流人物。" },
+        { "line": 2, "text": "故垒西边，人道是，三国周郎赤壁。" },
+        { "line": 3, "text": "乱石穿空，惊涛拍岸，卷起千堆雪。" },
+        { "line": 4, "text": "江山如画，一时多少豪杰。" },
+        { "line": 5, "text": "遥想公瑾当年，小乔初嫁了，雄姿英发。" },
+        { "line": 6, "text": "羽扇纶巾，谈笑间，樯橹灰飞烟灭。" },
+        { "line": 7, "text": "故国神游，多情应笑我，早生华发。" },
+        { "line": 8, "text": "人生如梦，一尊还酹江月。" }
+      ],
+      "rhyme_scheme": "词牌格律",
+      "translation": {
+        "modern_chinese": "长江朝东流去，波浪淘尽千古英雄人物。旧营垒西边，人们说那是三国周瑜的赤壁……",
+        "english": "The endless river eastward flows; / With its huge waves are gone all those / Gallant heroes of bygone years... / The Rock of the Brave, so people say, / Saw the defeat of Cao Cao's array, / Where General Zhou Yu won his name in history's page."
+      },
+      "annotations": [
+        { "term": "念奴娇", "note": "词牌名。" },
+        { "term": "周郎", "note": "周瑜，字公瑾。" },
+        { "term": "酹", "note": "洒酒祭奠。" }
+      ],
+      "appreciation": "苏轼豪放词的代表作，融历史感慨与人生哲理于一体，气势恢宏，又含超脱旷达。",
+      "tags": ["宋词", "怀古", "苏轼", "豪放"],
+      "difficulty": "中级"
+    },
+    {
+      "id": "poem_009",
+      "title": "天净沙·秋思",
+      "author": {
+        "name": "马致远",
+        "dynasty": "元",
+        "alias": ["马东篱"]
+      },
+      "type": "散曲·小令",
+      "content": [
+        { "line": 1, "text": "枯藤老树昏鸦，小桥流水人家，古道西风瘦马。" },
+        { "line": 2, "text": "夕阳西下，断肠人在天涯。" }
+      ],
+      "rhyme_scheme": "曲韵",
+      "translation": {
+        "modern_chinese": "枯藤缠绕的老树栖息着黄昏的乌鸦，小桥下流水旁住着几户人家，古道上秋风里走着一匹瘦马。夕阳向西落下，极度忧伤的旅人漂泊在天涯。",
+        "english": "Withered vines, old trees, crows at dusk; / A small bridge, a stream, a few cottages; / An ancient road, a lean horse in the west wind; / The sun setting in the west, / A heartbroken traveller at the edge of the world."
+      },
+      "annotations": [
+        { "term": "断肠人", "note": "形容极其伤心的人，此处指漂泊的游子。" }
+      ],
+      "appreciation": "全篇只有28字，却用九个意象勾勒悲凉秋景，最后一句点出天涯羁旅之愁，被誉为‘秋思之祖’。",
+      "tags": ["元曲", "秋思", "羁旅", "小令"],
+      "difficulty": "初级"
+    },
+    {
+      "id": "poem_010",
+      "title": "面朝大海，春暖花开",
+      "author": {
+        "name": "海子",
+        "dynasty": "当代",
+        "alias": ["查海生"]
+      },
+      "type": "现代诗",
+      "content": [
+        { "line": 1, "text": "从明天起，做一个幸福的人" },
+        { "line": 2, "text": "喂马，劈柴，周游世界" },
+        { "line": 3, "text": "从明天起，关心粮食和蔬菜" },
+        { "line": 4, "text": "我有一所房子，面朝大海，春暖花开" },
+        { "line": 5, "text": "从明天起，和每一个亲人通信" },
+        { "line": 6, "text": "告诉他们我的幸福" },
+        { "line": 7, "text": "那幸福的闪电告诉我的" },
+        { "line": 8, "text": "我将告诉每一个人" },
+        { "line": 9, "text": "给每一条河每一座山取一个温暖的名字" },
+        { "line": 10, "text": "陌生人，我也为你祝福" },
+        { "line": 11, "text": "愿你有一个灿烂的前程" },
+        { "line": 12, "text": "愿你有情人终成眷属" },
+        { "line": 13, "text": "愿你在尘世获得幸福" },
+        { "line": 14, "text": "我只愿面朝大海，春暖花开" }
+      ],
+      "rhyme_scheme": "无韵自由诗",
+      "translation": {
+        "modern_chinese": "（原文为现代汉语，同原文）",
+        "english": "From tomorrow on, I will be a happy man. / Grooming, chopping, and traveling all over the world. / From tomorrow on, I will care foodstuff and vegetables. / Living in a house towards the sea, with spring blossoms."
+      },
+      "annotations": [
+        { "term": "幸福闪电", "note": "比喻突然而强烈的幸福感。" }
+      ],
+      "appreciation": "海子最广为传颂的诗作，表面温暖明亮，背后却隐藏着诗人与世俗幸福之间的疏离与哀伤，具有强烈感染力。",
+      "tags": ["现代诗", "海子", "幸福", "大海"],
+      "difficulty": "初级"
+    }
+  ]
+}

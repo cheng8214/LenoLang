@@ -1,0 +1,110 @@
+// Leno 自举测试运行器
+// 用法：build\leno.exe assert\run_tests.leno [解释器] [测试目录]
+
+import dirs
+import strings
+
+func get_arg(int idx, string fallback):string {
+    var args = _args()
+    if idx < args.len() {
+        return args[idx]
+    }
+    return fallback
+}
+
+main() {
+    var leno_exe = get_arg(0, "build\\leno.exe")
+    var test_dir = get_arg(1, "assert")
+
+    // 将解释器转为绝对路径：Windows 下 _exec 用 cmd /c 执行，
+    // cmd 无法解析 POSIX 风格的正斜杠相对路径（如 ./build/leno.exe），
+    // 绝对路径（如 D:\...\build\leno.exe）才能被 cmd 正确执行。
+    var leno_abs = dirs.abspath(leno_exe)
+    if leno_abs != null {
+        leno_exe = leno_abs
+    }
+
+    print("LenoC 自举测试运行器")
+    print("解释器: " + leno_exe)
+    print("测试目录: " + test_dir)
+    print("========================================")
+
+    // 测试前删除测试目录下所有 .lenocache 缓存文件夹，避免旧缓存导致测试结果不一致
+    // _exec("cmd /c for /r \"" + test_dir + "\" %d in (.lenocache) do @if exist \"%d\" rmdir /s /q \"%d\" 2>nul")
+    var caches = dirs.walk(test_dir)
+    for caches to cw {
+        var croot = cw[0]
+        var cdirs = cw[1]
+        for cdirs to cd {
+            if cd == ".lenocache" {
+                dirs.delete(croot + "\\" + cd)
+            }
+        }
+    }
+
+    int passed = 0
+    int failed = 0
+
+    // 每个测试的超时（毫秒）。默认 120000（2 分钟）；可用 LENO_TEST_TIMEOUT_MS 覆盖，
+    // 传 0 = 不限制（**不推荐**：一个挂死的测试会拖死整套 —— 这正是加它的原因）。
+    var test_timeout_ms = 120000
+    var tt_env = _env("LENO_TEST_TIMEOUT_MS")
+    if tt_env != null {
+        test_timeout_ms = _int(tt_env)
+    }
+
+    // walk 递归遍历子目录，每个 entry 是 [root, [dirs], [files]]
+    var walks = dirs.walk(test_dir)
+    for walks to w {
+        var root = w[0]
+        var files = w[2]
+        for files to entry {
+            if strings.starts_with(entry, "test_") and strings.ends_with(entry, ".leno") {
+                var full = dirs.abspath(root + "\\" + entry)
+                // 直接传绝对路径，system() 包装层处理 stderr
+                var cmd = leno_exe + " " + full
+
+            // 执行测试（不重试）；★ P6：带**超时** —— 一个挂死的测试曾把整套拖死 ✗
+            var result = _exec(cmd, test_timeout_ms)
+
+            if result == null {
+                print("  [FAIL] " + entry + " - 执行失败")
+                failed = failed + 1
+            } else {
+                var output = result[0]
+                var code = result[1]
+
+                if code != 0 {
+                    if code == 124 {
+                        print("  [FAIL] " + entry + " - 超时（" + test_timeout_ms + " ms，已被杀掉）")
+                    } else {
+                        print("  [FAIL] " + entry)
+                    }
+                    failed = failed + 1
+                    if output != null and strings.len(output) > 0 {
+                        var lines = strings.split(output, "\n")
+                        int shown = 0
+                        for lines to line {
+                            if shown >= 3 { break }
+                            if strings.has(line, "错误") or strings.has(line, "error") {
+                                print("         " + strings.trim(line))
+                                shown = shown + 1
+                            }
+                        }
+                    }
+                } else {
+                    print("  [PASS] " + entry)
+                    passed = passed + 1
+                }
+            }
+        }
+    }
+    }
+
+    print("========================================")
+    print("Results: " + passed + " passed, " + failed + " failed (total " + (passed + failed) + ")")
+
+    if failed > 0 {
+        _exit(1)
+    }
+}

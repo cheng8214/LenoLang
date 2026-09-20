@@ -1,0 +1,13 @@
+// 模块级解构声明测试
+var data = [10, 20, 30]
+var[int, int, int](mod_a, mod_b, mod_c) = data
+
+export func get_mod_a() {
+    return mod_a
+}
+export func get_mod_b() {
+    return mod_b
+}
+export func get_mod_c() {
+    return mod_c
+}

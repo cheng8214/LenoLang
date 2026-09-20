@@ -1,0 +1,1629 @@
+#include "include/lenolang.h"
+#include "include/leno_ast.h"
+#include "include/leno_lexer.h"
+#include "include/leno_parser.h"
+#include "include/leno_semantic.h"
+#include "include/leno_codegen.h"
+#include "include/leno_optimize.h"
+#include "include/leno_serialize.h"
+#include "include/native.h"
+#include "include/module_compiler.h"
+#include "include/module_loader.h"
+#include "include/module_symbol_table.h"
+#include "include/leno_package.h"
+#include "include/platform.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdarg.h>
+#include <time.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#include <sys/stat.h>
+#else
+#include <sys/stat.h>
+#include <dirent.h>
+#endif
+
+// 版本信息
+#define LENO_VERSION "1.0.0"
+
+// 全局标志
+int debugMode = 0;
+static int pauseMode = 0;
+static int compileMode = 0;
+static int packMode = 0;
+static int initMode = 0;
+static int installMode = 0;
+static char* debugOutFile = NULL;  // --debug-out 指定的输出文件路径
+int g_use_gui_vm = 0;  // 语义分析阶段检测到 _console(false) 时置为 1
+
+// 字节码输出重定向辅助（Windows 用 _dup/_dup2 保存/恢复 stdout 句柄）
+#ifdef _WIN32
+#include <io.h>
+#include <fcntl.h>
+#endif
+
+static FILE* debug_redirect_stdout(const char* filename) {
+    if (!filename) return NULL;
+    fflush(stdout);
+#ifdef _WIN32
+    int backup_fd = _dup(_fileno(stdout));
+    FILE* backup = _fdopen(backup_fd, "w");
+    // UTF-8 路径支持：转宽字符后用 _wfreopen
+    wchar_t* wpath = utf8_to_utf16(filename);
+    if (wpath) {
+        _wfreopen(wpath, L"w", stdout);
+        free(wpath);
+    } else {
+        freopen(filename, "w", stdout);
+    }
+    return backup;
+#else
+    FILE* backup = stdout;
+    FILE* _r = freopen(filename, "w", stdout); (void)_r;
+    return backup;
+#endif
+}
+
+static void debug_restore_stdout(FILE* backup) {
+    if (!backup) return;
+    fflush(stdout);
+#ifdef _WIN32
+    _dup2(_fileno(backup), _fileno(stdout));
+    fclose(backup);
+    // 恢复 stdout 的行缓冲模式
+    setvbuf(stdout, NULL, _IOLBF, 0);
+#else
+    { FILE* _r = freopen("/dev/tty", "w", stdout); (void)_r; }
+    fclose(backup);
+#endif
+}
+
+// 统一输出全部字节码：主程序 + 所有已加载模块
+// 在编译全部完成后调用，确保缓存命中/未命中的模块都能输出
+static void debug_dump_all_bytecode(Chunk* main_chunk) {
+    FILE* backup = debug_redirect_stdout(debugOutFile);
+
+    // 1. 输出主程序字节码
+    if (main_chunk) {
+        disassembleChunk(main_chunk, "主程序");
+    }
+
+    // 2. 遍历所有已加载模块，输出每个模块的 init_chunk
+    int mod_count = loaded_modules_get_count();
+    for (int i = 0; i < mod_count; i++) {
+        ObjModule* mod = loaded_modules_get(i);
+        if (!mod) continue;
+        if (mod->init_chunk && mod->init_chunk->len > 0) {
+            char label[BUFFER_MEDIUM];
+            snprintf(label, sizeof(label), "模块: %s (%s)",
+                     mod->name ? mod->name : "<unnamed>",
+                     mod->source_path ? mod->source_path : "?");
+            disassembleChunk(mod->init_chunk, label);
+        }
+    }
+
+    debug_restore_stdout(backup);
+}
+
+// 命令行参数（供 _args() 全局函数使用）
+int g_argc = 0;
+char** g_argv = NULL;
+
+// 设置控制台UTF-8编码（Windows）
+static void setupConsole(void) {
+#ifdef _WIN32
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
+#endif
+}
+
+// 打印版本信息
+static void printVersion(void) {
+    printf("LenoLang Compiler %s\n", LENO_VERSION);
+    printf("Copyright (c) 2025 LenoLang Team\n");
+}
+
+// 打印帮助信息
+static void printHelp(const char* program) {
+    printf("LenoLang Compiler %s\n\n", LENO_VERSION);
+    printf("用法: %s [选项] <文件>\n\n", program);
+    printf("选项:\n");
+    printf("  -h, --help        显示帮助信息\n");
+    printf("  -v, --version     显示版本信息\n");
+    printf("  --pause           执行完毕后暂停\n");
+    printf("  --debug           启用调试模式（输出字节码）\n");
+    printf("  --debug-out <file> 字节码输出到指定文件（自动启用 --debug）\n");
+    printf("  -c, --compile     编译为二进制文件（.lenb），不执行\n");
+    printf("  -p, --pack        编译并打包为独立可执行文件（嵌入 leno_vm）\n");
+    printf("  --init [路径]     在当前目录创建新 Leno 包项目\n");
+    printf("  --install         安装包或依赖到全局缓存\n");
+    printf("  --                终止解释器选项解析：其后的参数都按位置参数处理\n");
+    printf("\n");
+    printf("说明: <文件> 之后的参数**原样传给脚本**（含 '-' 开头的，脚本内用 _args() 取）\n");
+    printf("\n");
+    printf("示例:\n");
+    printf("  %s script.leno       运行脚本\n", program);
+    printf("  %s script.leno --list  脚本参数：--list 原样传给脚本（_args()）\n", program);
+    printf("  %s -- script.lenb    用 -- 终止解释器选项解析\n", program);
+    printf("  %s script.lenb       运行编译后的二进制\n", program);
+    printf("  %s -c test.leno      编译为二进制\n", program);
+    printf("  %s -p test.leno      打包为独立可执行文件\n", program);
+    printf("  %s --debug test.leno 调试模式运行\n", program);
+    printf("  %s --init my-package 创建新包\n", program);
+    printf("  %s --install         安装当前项目依赖\n", program);
+    printf("  %s --install <路径>  安装指定包目录\n", program);
+    printf("  %s --install <git源> 从 Git 远程安装包\n", program);
+    printf("                       如: gitee:user/repo/pkg-a\n");
+}
+
+// 主执行流程
+
+// 入口文件缓存路径（由 lenolang_run_file 设置，lenolang_run 在序列化后写入缓存）
+static char g_entry_cache_path[MAX_PATH_LEN] = {0};
+// 入口缓存的依赖清单路径（<entry 缓存>.deps，与 .lenb 同目录、同批次落盘）
+static char g_entry_deps_path[MAX_PATH_LEN + 8] = {0};
+static int g_entry_cache_enabled = 0;
+
+// ============================================================================
+// 入口缓存依赖清单（entry_<hash>.lenb.deps）—— 修复「改被引用模块不失效」
+//
+// 背景：entry_<hash>.lenb 是**整个程序**的序列化快照——所有 import 进来的模块
+// 都被内联在同一个文件里（serialize.c 的 OBJ_MODULE 分支只有在「模块缓存序列化」
+// 时才把已加载模块预标记成 CONST_TAG_MODULE_REF，入口序列化走的是全量写出），
+// 而文件名只由【入口文件自身】的内容哈希决定（见 lenolang_run_file）。
+// 于是只修改被引用的 lib 模块（入口不变）时：缓存键不变、内容却是旧的 ⇒ 直接
+// vm_load 改前的模块字节码；模块级 .lenomc 那套「自身 hash + 逐依赖 hash」校验
+// 根本没机会执行（整个程序都没走 load_module_file）。
+//
+// 修法：写入口缓存时把本次编译涉及的**全部模块**做成快照落盘，加载入口缓存前逐条
+// 比对，任一不符即视为未命中（并删掉过期的 .lenb）。
+// 快照记录的是「这些字节码当初由哪一版源码编出来」——直接取自各模块自己的
+// .lenomc header（本轮刚编译，或本轮从缓存载入时已校验过），而不是当场 stat 磁盘：
+// 后者在「编译期间源码又被改动」时会记下新哈希却内联着旧字节码，反而制造假命中。
+// 清单格式（文本、制表符分隔、末行 END）：
+//     LENODEPS2
+//     BIN\t<运行中 exe 的指纹：size+mtime+内容 FNV-1a(64)，十六进制>
+//     <count>
+//     <st_size>\t<fnv1a 十六进制>\t<模块源文件路径>
+//     END
+// 校验失败 / 清单缺失 / 任一模块拿不到 .lenomc header ⇒ 返回失效，回退源码编译。
+// （注：覆盖范围是参与编译的 .leno 模块；被 cfunc/extern 绑定的原生库如 SDL3.dll
+//   是运行时加载的，不在缓存失效范围内。）
+//
+// §8.112（2026-09-17）：第二行 BIN 是**新增**的失效输入，因此格式标识从 LENODEPS1
+// 升为 LENODEPS2（旧清单必然被拒 ⇒ 自动重编译一次，这正是我们要的方向）。
+// 为什么必须加：字节码里烙着编译期决策，其中一部分来自**原生模块注册表**
+// （native 方法签名 / 模块常量 / 实例方法表）—— 它们**没有源文件**，改 C 代码不会让任何
+// .leno 源快照变化 ⇒ 三个 source snapshot 都"成立" ⇒ 缓存被判有效却已过期 ✗。
+// 实测事故：`times.ms()` 的注册由 TYPE_INT 改成 TYPE_FLOAT 后，基准脚本仍按"int 签名"
+// 编译 ⇒ `t2 - t1` 整数相减 ⇒ 打印 10^9 量级的"毫秒"（静默错误代码）。
+// 取 exe 自身当输入 ⇒ ABI / 注册表 / 编译器语义任何改动都要重新构建 ⇒ 指纹必变 ⇒
+// 一次覆盖整类问题（不必逐表枚举，也就不会漏表）。
+// 失败方向：指纹取不到（0）一律判失效（fail-closed）—— 宁可重编译，不要跑旧码。
+//
+// 本行格式标识已登记在 docs/待办_单一事实来源与重复实现收敛.md 第七节；
+// **不升 `LENO_BIN_VERSION`** 的理由：`.lenb` 自身的字节格式与序列化语义一字未改，
+// 变的只是"什么时候认这份缓存"的外部判定条件 ⇒ 升它会让所有模块级缓存（.lenomc /
+// .lenosymc）跟着无谓失效，而它们各自有独立的失效判定。
+// ============================================================================
+#define ENTRY_DEPS_MAGIC "LENODEPS2"
+
+// 跨平台 fopen / remove：Windows 上走宽字符，避免中文路径（如 文件管理器）失败
+// （原先这里还有一份自己的 stat / 哈希 / 读 .lenomc header 的实现，2026-09-16 收敛到
+//   serialize.c 的 module_source_snapshot_* —— 见 docs/待办_单一事实来源与重复实现收敛.md 的 Phase 3）
+static FILE* entry_deps_fopen(const char* path, const char* mode) {
+#ifdef _WIN32
+    wchar_t* wp = utf8_to_utf16(path);
+    if (!wp) return NULL;
+    wchar_t* wm = utf8_to_utf16(mode);
+    if (!wm) { free(wp); return NULL; }
+    FILE* f = _wfopen(wp, wm);
+    free(wp);
+    free(wm);
+    return f;
+#else
+    return fopen(path, mode);
+#endif
+}
+
+static void entry_deps_remove(const char* path) {
+    if (!path || !path[0]) return;
+#ifdef _WIN32
+    wchar_t* wp = utf8_to_utf16(path);
+    if (!wp) return;
+    _wremove(wp);
+    free(wp);
+#else
+    remove(path);
+#endif
+}
+
+// ============================================================================
+// 旧入口缓存的回收（entry_<hash>.lenb 以前只增不减）
+// ----------------------------------------------------------------------------
+// 入口缓存的文件名由**入口源内容哈希**决定 ⇒ 改一次入口文件就换一个键，旧文件（典型 2~3MB）
+// 永不回收、同目录里悄悄堆积（LenoSDL3 那种 2.7MB 的产物改几次就几十 MB）。
+// 这里在"成功写入新缓存"之后，把同目录下的 entry_*.lenb 与 entry_*.lenb.deps 按 mtime 排序，
+// 保留最新 ENTRY_CACHE_KEEP_FILES 个文件（≈ 一半数量的键；每个键 = .lenb + .deps 两个文件），
+// 其余删除。
+//
+// 为什么是"保留最新 K 个"而不是"只留当前键"：`.lenocache` 是该目录**所有入口文件共享**的
+// （缓存目录 = <entry 所在目录>/.lenocache），只留当前键会把同目录其它入口文件的缓存一起清掉
+// —— 不至于错，但会莫名重编译。保留最新 K 个既让总量有界，又不误伤常用的邻居。
+// 只认 entry_ 前缀：.lenomc / .lenosymc 是模块级缓存、各有自己的失效判定，不在这里管。
+// ============================================================================
+#define ENTRY_CACHE_KEEP_FILES 8
+
+typedef struct { char* name; long long mtime; } EntryCacheEntry;
+
+static int entry_cache_prune_cmp(const void* a, const void* b) {
+    long long ma = ((const EntryCacheEntry*)a)->mtime;
+    long long mb = ((const EntryCacheEntry*)b)->mtime;
+    if (ma < mb) return 1;    // 新的排前面
+    if (ma > mb) return -1;
+    return 0;
+}
+
+// 是入口缓存文件吗：entry_<hash>.lenb 或 entry_<hash>.lenb.deps
+static int entry_cache_name_is_target(const char* name) {
+    if (!name || strncmp(name, "entry_", 6) != 0) return 0;
+    size_t n = strlen(name);
+    if (n > 5 && strcmp(name + n - 5, ".lenb") == 0) return 1;
+    if (n > 10 && strcmp(name + n - 10, ".lenb.deps") == 0) return 1;
+    return 0;
+}
+
+static void entry_cache_list_add(EntryCacheEntry** list, int* count, int* cap,
+                                 const char* name, long long mtime) {
+    if (*count == *cap) {
+        int nc = *cap ? *cap * 2 : 8;
+        EntryCacheEntry* nl = (EntryCacheEntry*)realloc(*list, sizeof(EntryCacheEntry) * (size_t)nc);
+        if (!nl) return;   // 内存不足就放弃收集：只是不回收旧文件，不影响正确性
+        *list = nl;
+        *cap = nc;
+    }
+    char* dup = strdup(name);
+    if (!dup) return;
+    (*list)[*count].name = dup;
+    (*list)[*count].mtime = mtime;
+    (*count)++;
+}
+
+// 给定 "…/entry_x.lenb"，回收同目录里过旧的入口缓存
+static void entry_cache_prune_stale(const char* current_cache_path) {
+    if (!current_cache_path || !current_cache_path[0]) return;
+
+    // 取目录部分（含结尾分隔符）
+    char dir[MAX_PATH_LEN];
+    strncpy(dir, current_cache_path, sizeof(dir) - 1);
+    dir[sizeof(dir) - 1] = '\0';
+    char* sep = strrchr(dir, '\\');
+    char* sep2 = strrchr(dir, '/');
+    if (!sep || (sep2 && sep2 > sep)) sep = sep2;
+    if (!sep) return;
+    *(sep + 1) = '\0';
+
+    EntryCacheEntry* list = NULL;
+    int count = 0, cap = 0;
+
+#ifdef _WIN32
+    char pattern[MAX_PATH_LEN + 8];
+    snprintf(pattern, sizeof(pattern), "%sentry_*", dir);
+    wchar_t* wpat = utf8_to_utf16(pattern);
+    if (!wpat) return;
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW(wpat, &fd);
+    free(wpat);
+    if (h == INVALID_HANDLE_VALUE) return;
+    do {
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        int wlen = WideCharToMultiByte(CP_UTF8, 0, fd.cFileName, -1, NULL, 0, NULL, NULL);
+        if (wlen <= 0) continue;
+        char* name = (char*)malloc((size_t)wlen);
+        if (!name) continue;
+        WideCharToMultiByte(CP_UTF8, 0, fd.cFileName, -1, name, wlen, NULL, NULL);
+        if (entry_cache_name_is_target(name)) {
+            long long mt = ((long long)fd.ftLastWriteTime.dwHighDateTime << 32) |
+                           (long long)fd.ftLastWriteTime.dwLowDateTime;
+            entry_cache_list_add(&list, &count, &cap, name, mt);
+        }
+        free(name);
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
+#else
+    DIR* d = opendir(dir);
+    if (!d) return;
+    struct dirent* ent;
+    while ((ent = readdir(d)) != NULL) {
+        if (!entry_cache_name_is_target(ent->d_name)) continue;
+        char full[MAX_PATH_LEN];
+        snprintf(full, sizeof(full), "%s%s", dir, ent->d_name);
+        struct stat st;
+        if (stat(full, &st) != 0) continue;
+        entry_cache_list_add(&list, &count, &cap, ent->d_name, (long long)st.st_mtime);
+    }
+    closedir(d);
+#endif
+
+    if (count > ENTRY_CACHE_KEEP_FILES) {
+        qsort(list, (size_t)count, sizeof(EntryCacheEntry), entry_cache_prune_cmp);
+        // 保留最新的 K 个文件；本次刚写的那两个必然在最前面，绝不会被自己删掉
+        for (int i = ENTRY_CACHE_KEEP_FILES; i < count; i++) {
+            char full[MAX_PATH_LEN];
+            snprintf(full, sizeof(full), "%s%s", dir, list[i].name);
+            entry_deps_remove(full);
+        }
+    }
+    for (int i = 0; i < count; i++) free(list[i].name);
+    free(list);
+}
+
+// 写依赖清单。必须在入口 .lenb 写成功之后调用。
+// 返回 0=成功（清单可信），-1=失败（调用方须把 .lenb 一并删掉，让下次运行重编译）
+static int entry_deps_write(const char* deps_path) {
+    if (!deps_path || !deps_path[0]) return -1;
+
+    const char* cache_dir = module_loader_get_cache_dir();
+    int total = loaded_modules_get_count();
+    char** paths = NULL;
+    uint64_t* sizes = NULL;
+    uint64_t* hashes = NULL;
+    int count = 0;
+    int failed = 0;
+    if (total > 0) {
+        paths = (char**)malloc(sizeof(char*) * (size_t)total);
+        sizes = (uint64_t*)malloc(sizeof(uint64_t) * (size_t)total);
+        hashes = (uint64_t*)malloc(sizeof(uint64_t) * (size_t)total);
+        if (!paths || !sizes || !hashes) {
+            free(paths); free(sizes); free(hashes);
+            return -1;
+        }
+    }
+
+    for (int i = 0; i < total; i++) {
+        ObjModule* m = loaded_modules_get(i);
+        if (!m || !m->source_path || !m->source_path[0]) continue;
+        // 同一路径只记一次（loaded_modules 按理已去重，这里防御）
+        int dup = 0;
+        for (int j = 0; j < count; j++) {
+            if (strcmp(paths[j], m->source_path) == 0) { dup = 1; break; }
+        }
+        if (dup) continue;
+        uint64_t size = 0, hash = 0;
+        if (module_cache_read_source_snapshot(cache_dir, m->source_path, &size, &hash) != 0) {
+            // 拿不到该模块「已编译版本」的快照 ⇒ 清单不完整 ⇒ 整体作废
+            failed = 1;
+            break;
+        }
+        paths[count] = m->source_path;
+        sizes[count] = size;
+        hashes[count] = hash;
+        count++;
+    }
+
+    int rc = 0;
+    // §8.112：运行中 exe 的指纹（缓存失效的第四类输入）。取不到就**不写缓存** ——
+    // 写一份无从校验的清单等于留一颗定时炸弹（调用方会据此删掉 .lenb）。
+    uint64_t bin_fp = cache_runtime_binary_fingerprint();
+    if (!failed && bin_fp == 0) rc = -1;
+    if (!failed && bin_fp != 0) {
+        FILE* f = entry_deps_fopen(deps_path, "w");
+        if (!f) {
+            rc = -1;
+        } else {
+            fprintf(f, ENTRY_DEPS_MAGIC "\n");
+            fprintf(f, "BIN\t%llx\n", (unsigned long long)bin_fp);
+            fprintf(f, "%d\n", count);
+            for (int i = 0; i < count; i++) {
+                fprintf(f, "%llu\t%llx\t%s\n",
+                        (unsigned long long)sizes[i],
+                        (unsigned long long)hashes[i],
+                        paths[i]);
+            }
+            fprintf(f, "END\n");
+            if (ferror(f)) rc = -1;
+            fclose(f);
+        }
+    } else {
+        rc = -1;
+    }
+    if (rc != 0) entry_deps_remove(deps_path);
+
+    free(paths);
+    free(sizes);
+    free(hashes);
+    return rc;
+}
+
+// 校验依赖清单：0=有效（入口缓存的字节码与当前源码一致），-1=失效
+// 判定与模块缓存一致：先比磁盘大小（O(1) stat），再比内容哈希
+static int entry_deps_valid(const char* deps_path) {
+    if (!deps_path || !deps_path[0]) return -1;
+    FILE* f = entry_deps_fopen(deps_path, "r");
+    if (!f) return -1;
+
+    char line[MAX_PATH_LEN + 128];
+    int ok = 0;
+    if (fgets(line, sizeof(line), f) &&
+        strncmp(line, ENTRY_DEPS_MAGIC, strlen(ENTRY_DEPS_MAGIC)) == 0 &&
+        fgets(line, sizeof(line), f)) {
+        // 第二行：运行中 exe 的指纹（见 leno_serialize.h ④ / §8.112）。
+        // 取不到当前指纹（返回 0）一律判失效：宁可不编，不要猜。
+        uint64_t want_bin = 0;
+        int bin_ok = 0;
+        if (strncmp(line, "BIN\t", 4) == 0) {
+            char* endp = NULL;
+            want_bin = (uint64_t)strtoull(line + 4, &endp, 16);
+            bin_ok = (endp && *endp != '\0' && (*endp == '\n' || *endp == '\r'));
+        }
+        uint64_t cur_bin = cache_runtime_binary_fingerprint();
+        if (bin_ok && cur_bin != 0 && want_bin == cur_bin &&
+            fgets(line, sizeof(line), f)) {
+            int count = atoi(line);
+            if (count >= 0) {
+                ok = 1;
+                for (int i = 0; i < count && ok; i++) {
+                    if (!fgets(line, sizeof(line), f)) { ok = 0; break; }
+                    char* tab1 = strchr(line, '\t');
+                    if (!tab1) { ok = 0; break; }
+                    *tab1 = '\0';
+                    char* rest = tab1 + 1;
+                    char* tab2 = strchr(rest, '\t');
+                    if (!tab2) { ok = 0; break; }
+                    *tab2 = '\0';
+                    char* path = tab2 + 1;
+                    size_t plen = strlen(path);
+                    while (plen > 0 && (path[plen - 1] == '\n' || path[plen - 1] == '\r')) {
+                        path[--plen] = '\0';
+                    }
+                    if (plen == 0) { ok = 0; break; }
+                    uint64_t want_size = strtoull(line, NULL, 10);
+                    uint64_t want_hash = strtoull(rest, NULL, 16);
+                    // 判定走统一实现（统计口径与失败方向都在 serialize.c 里，见 Phase 3）
+                    if (!module_source_snapshot_matches(path, want_size, want_hash, 1)) {
+                        ok = 0; break;
+                    }
+                }
+                // 收尾标记：清单被截断时这里也会失败（不依赖原子替换）
+                if (ok) {
+                    if (!fgets(line, sizeof(line), f) || strncmp(line, "END", 3) != 0) ok = 0;
+                }
+            }
+        }
+    }
+    fclose(f);
+    return ok ? 0 : -1;
+}
+
+// ============================================================================
+// 空源文件告警
+// ----------------------------------------------------------------------------
+// 空文件（或只有空白）会"编译成功"：exit 0、什么都不打印，还会写一份缓存
+// （键 = FNV-1a 空串基值 cbf29ce484222325）。这种"假成功"与"真的跑了但没输出"无法区分 ——
+// 2026-09-16 就被它骗过一次（探针文件写入落空 ⇒ 编译了个空程序，却毫无提示）。
+// 只告警不报错：空程序在语法上合法，"什么都不做"也可能是刻意的。
+// 覆盖范围是 CLI 入口（run / -c / -p）；被 import 的模块为空不算 —— 一个不导出任何东西的
+// 模块是合法形态，不该报警。
+// ============================================================================
+static void warn_if_source_empty(const char* source) {
+    if (!source) return;
+    for (const unsigned char* p = (const unsigned char*)source; *p; p++) {
+        if (*p != ' ' && *p != '\t' && *p != '\r' && *p != '\n' && *p != '\f' && *p != '\v') {
+            return;   // 有实义字符
+        }
+    }
+    warning_add_at(WARN_EMPTY_SOURCE, 1, 1,
+                   "源文件为空（或只有空白）：编译出来的程序不会做任何事");
+}
+
+int lenolang_run(const char* source) {
+      if (debugMode) {
+         printf("debug模式:进入主执行流程\n");
+     }
+    // 0. 清空错误、扫描栈与符号表记忆化（记忆化是进程级缓存，跨编译必须清）
+    error_clear();
+    warning_clear();
+    module_symbol_table_reset_scan_stack();
+    module_symbol_table_reset_memo();
+    warn_if_source_empty(source);
+     if (debugMode) {
+         printf("debug模式:进入语法分析阶段\n");
+     }
+    // 1. 词法分析 + 语法分析
+    Parser parser;
+    parser_init(&parser, source);
+    if (parser_parse(&parser) < 0) {
+        // 语法分析失败，只释放 AST
+        error_print_all();
+        warning_print_all();
+        ast_free(parser.root);
+        return -1;
+    }
+
+    // 2. 语义分析（单遍）
+    Semantic sem;
+    semantic_init(&sem, parser.root);
+    // 提前初始化 CodeGen，确保 fail 路径上 codegen_cleanup 安全
+    Chunk chunk;
+    chunk_init(&chunk);
+    CodeGen gen;
+    codegen_init(&gen, &chunk, &sem);
+    semantic_analyze(&sem, parser.root);
+    if (error_has_any()) goto fail;
+
+    // 2.5 常量折叠优化
+    optimize_constant_fold(parser.root);
+
+    // 2.6 死代码消除
+    optimize_dead_code_elimination(parser.root);
+
+    // 3. 生成字节码
+    codegen(&gen, parser.root);
+    if (error_has_any()) goto fail;
+
+    // 调试模式：统一输出全部字节码（主程序 + 所有已加载模块）
+    // 此时所有模块已编译完成（含缓存命中和未命中），统一输出
+    if (debugMode) {
+        debug_dump_all_bytecode(&chunk);
+    }
+
+    // 4. 内存态序列化运行：编译 → 序列化 → 释放编译器 → 反序列化 → 运行
+    //    让 .leno 直跑与 .lenb 路径一致，消除编译器驻留导致的 CPU 缓存污染
+    {
+        uint8_t* lenb_buf = NULL;
+        size_t lenb_size = 0;
+        SerializeResult sr = chunk_serialize_to_memory(&chunk, sem.root_scope, &lenb_buf, &lenb_size);
+        if (sr == SERIALIZE_OK && lenb_buf) {
+            // 入口文件缓存写入：将序列化结果落盘，下次运行可直接加载跳过编译
+            if (g_entry_cache_enabled && g_entry_cache_path[0]) {
+                int entry_written = 0;
+#ifdef _WIN32
+                int wlen2 = MultiByteToWideChar(CP_UTF8, 0, g_entry_cache_path, -1, NULL, 0);
+                if (wlen2 > 0) {
+                    wchar_t* wpath2 = (wchar_t*)malloc(wlen2 * sizeof(wchar_t));
+                    if (wpath2) {
+                        MultiByteToWideChar(CP_UTF8, 0, g_entry_cache_path, -1, wpath2, wlen2);
+                        FILE* cf = _wfopen(wpath2, L"wb");
+                        if (cf) {
+                            size_t wrote = fwrite(lenb_buf, 1, lenb_size, cf);
+                            fclose(cf);
+                            entry_written = (wrote == lenb_size);
+                        }
+                        free(wpath2);
+                    }
+                }
+#else
+                FILE* cf = fopen(g_entry_cache_path, "wb");
+                if (cf) {
+                    size_t wrote = fwrite(lenb_buf, 1, lenb_size, cf);
+                    fclose(cf);
+                    entry_written = (wrote == lenb_size);
+                }
+#endif
+                // 依赖清单必须与 .lenb 一同成立：清单写不出来（或 .lenb 没写完整）就把两者
+                // 都删掉——宁可直接重编译，也不能留下一份无从校验的旧字节码。
+                if (!entry_written || entry_deps_write(g_entry_deps_path) != 0) {
+                    entry_deps_remove(g_entry_deps_path);
+                    entry_deps_remove(g_entry_cache_path);
+                } else {
+                    // 写成功：顺手回收同目录里过旧的入口缓存（只增不减会堆到几十 MB）
+                    entry_cache_prune_stale(g_entry_cache_path);
+                }
+            }
+
+            // 立刻释放编译器资源（核心！清零「内存税」）
+            codegen_cleanup(&gen);
+            ast_free(parser.root);
+            semantic_cleanup(&sem);
+            chunk_free(&chunk);
+
+            // 从内存反序列化出全新 chunk + scope
+            Chunk run_chunk;
+            chunk_init(&run_chunk);
+            Scope* run_scope = NULL;
+            sr = chunk_deserialize_from_memory(lenb_buf, lenb_size, &run_chunk, &run_scope);
+            free(lenb_buf);  // 缓冲已用完，立即释放
+
+            if (sr == SERIALIZE_OK) {
+                // 与 lenb 路径一致的运行前准备（补 native 函数指针）
+                register_defs_from_chunk(&run_chunk);
+                gc_init();
+                fix_module_function_ptrs(&run_chunk);
+                vm_init_with_scope(run_scope);
+                vm_load(&run_chunk);
+                int ret = vm_run();
+
+                chunk_free(&run_chunk);
+                // run_scope 已被 vm_init_with_scope 设为 vm.global_scope，由 gc_free_all 释放
+                gc_free_all();
+
+                if (ret != 0 || error_has_any()) {
+                    error_print_all();
+                    warning_print_all();
+                    return -1;
+                }
+                warning_print_all();
+                // main 的返回值作为进程退出码
+                return vm_get_exit_code();
+            }
+            // 反序列化失败，回退到原路径（需重新编译，因为编译器资源已释放）
+            // 这种情况理论上不会发生，但做兜底保护
+            fprintf(stderr, "[警告] 内存反序列化失败，回退到直接运行\n");
+            return -1;
+        }
+        // 序列化失败，回退到原 vm_run 直跑路径
+        if (lenb_buf) free(lenb_buf);
+    }
+
+    // 兜底：原 vm_run 直跑路径（序列化失败时走这里）
+    gc_init();
+    vm_init_with_scope(sem.root_scope);  // 使用语义分析的 scope，确保索引一致
+    vm_load(&chunk);
+    int ret = vm_run();
+
+    // 5. 释放
+    codegen_cleanup(&gen);
+    ast_free(parser.root);
+    // 释放语义分析中的资源（函数名列表）
+    semantic_cleanup(&sem);
+    // 释放字节码块
+    chunk_free(&chunk);
+    // gc_free_all 会释放 VM 的 global_scope
+    gc_free_all();
+    
+    // 如果有运行时错误，打印错误信息
+    if (ret != 0 || error_has_any()) {
+        error_print_all();
+        warning_print_all();
+        return -1;
+    }
+
+    warning_print_all();
+    // main 的返回值作为进程退出码
+    return vm_get_exit_code();
+
+fail:
+    if (debugMode) {
+        printf("debug模式:编译失败\n");
+    }
+    error_print_all();
+    warning_print_all();
+    codegen_cleanup(&gen);
+    ast_free(parser.root);
+    // 编译失败时释放 root_scope（VM 未初始化）
+    if (sem.root_scope) {
+        scope_free(sem.root_scope);
+        sem.root_scope = NULL;
+    }
+    // 释放语义分析中的其他资源
+    semantic_cleanup(&sem);
+    return -1;
+}
+
+
+// fix_module_function_ptrs 等函数已移至 module.c
+
+int lenolang_run_binary(const char* path) {
+    Chunk chunk;
+    Scope* scope = NULL;
+
+    SerializeResult result = chunk_deserialize(path, &chunk, &scope);
+    if (result != SERIALIZE_OK) {
+        const char* err_msg = "未知错误";
+        switch (result) {
+            case SERIALIZE_ERR_FILE:    err_msg = "无法打开文件"; break;
+            case SERIALIZE_ERR_MAGIC:   err_msg = "不是有效的 .lenb 文件"; break;
+            case SERIALIZE_ERR_VERSION: err_msg = "二进制文件版本不兼容"; break;
+            case SERIALIZE_ERR_FORMAT:  err_msg = "文件格式错误"; break;
+            case SERIALIZE_ERR_MEMORY:  err_msg = "内存不足"; break;
+            case SERIALIZE_ERR_READ:    err_msg = "读取文件失败"; break;
+            default: break;
+        }
+        fprintf(stderr, "加载二进制文件失败: %s (%s)\n", path, err_msg);
+        return -1;
+    }
+
+    if (debugMode) {
+        printf("debug模式:从二进制文件加载成功\n");
+        debug_dump_all_bytecode(&chunk);
+    }
+
+    gc_init();
+    vm_init_with_scope(scope);
+    fix_module_function_ptrs(&chunk);
+    vm_load(&chunk);
+    int ret = vm_run();
+
+    chunk_free(&chunk);
+    gc_free_all();
+
+    if (ret != 0 || error_has_any()) {
+        error_print_all();
+        warning_print_all();
+        return -1;
+    }
+
+    warning_print_all();
+    // main 的返回值作为进程退出码
+    return vm_get_exit_code();
+}
+
+// 编译源代码到二进制文件
+int lenolang_compile(const char* source, const char* output_path) {
+    clock_t compile_t0 = clock();
+    error_clear();
+    warning_clear();
+    module_symbol_table_reset_scan_stack();
+    module_symbol_table_reset_memo();
+    warn_if_source_empty(source);   // 空源文件别"假成功"（-c / -p 也走这里）
+
+    gc_init();
+    vm_init();
+
+    clock_t t_parse0 = clock();
+    Parser parser;
+    parser_init(&parser, source);
+    if (parser_parse(&parser) < 0) {
+        error_print_all();
+        warning_print_all();
+        ast_free(parser.root);
+        gc_free_all();
+        return -1;
+    }
+    clock_t t_parse1 = clock();
+    fprintf(stderr, "[TIME] parse: %.1f ms\n", (double)(t_parse1 - t_parse0) / CLOCKS_PER_SEC * 1000.0);
+
+    Semantic sem;
+    semantic_init(&sem, parser.root);
+    Chunk chunk;
+    chunk_init(&chunk);
+    CodeGen gen;
+    codegen_init(&gen, &chunk, &sem);
+    clock_t t_sem0 = clock();
+    semantic_analyze(&sem, parser.root);
+    clock_t t_sem1 = clock();
+    fprintf(stderr, "[TIME] semantic: %.1f ms\n", (double)(t_sem1 - t_sem0) / CLOCKS_PER_SEC * 1000.0);
+    if (error_has_any()) goto compile_fail;
+
+    clock_t t_opt0 = clock();
+    optimize_constant_fold(parser.root);
+    optimize_dead_code_elimination(parser.root);
+    clock_t t_opt1 = clock();
+    fprintf(stderr, "[TIME] optimize: %.1f ms\n", (double)(t_opt1 - t_opt0) / CLOCKS_PER_SEC * 1000.0);
+
+    clock_t t_cg0 = clock();
+    codegen(&gen, parser.root);
+    clock_t t_cg1 = clock();
+    fprintf(stderr, "[TIME] codegen: %.1f ms\n", (double)(t_cg1 - t_cg0) / CLOCKS_PER_SEC * 1000.0);
+    if (error_has_any()) goto compile_fail;
+
+    if (debugMode) {
+        debug_dump_all_bytecode(&chunk);
+    }
+
+    clock_t t_ser0 = clock();
+    SerializeResult result = chunk_serialize(output_path, &chunk, sem.root_scope);
+    clock_t t_ser1 = clock();
+    fprintf(stderr, "[TIME] serialize: %.1f ms\n", (double)(t_ser1 - t_ser0) / CLOCKS_PER_SEC * 1000.0);
+    if (result != SERIALIZE_OK) {
+        fprintf(stderr, "写入二进制文件失败: %s (错误码: %d)\n", output_path, result);
+        codegen_cleanup(&gen);
+        ast_free(parser.root);
+        semantic_cleanup(&sem);
+        chunk_free(&chunk);
+        gc_free_all();
+        return -1;
+    }
+
+    printf("编译成功: %s -> %s\n", chunk.filename ? chunk.filename : "stdin", output_path);
+    {
+        clock_t compile_t1 = clock();
+        double compile_ms = (double)(compile_t1 - compile_t0) / CLOCKS_PER_SEC * 1000.0;
+        printf("编译耗时: %.1f ms\n", compile_ms);
+    }
+
+    codegen_cleanup(&gen);
+    ast_free(parser.root);
+    semantic_cleanup(&sem);
+    chunk_free(&chunk);
+    gc_free_all();
+    warning_print_all();
+    return 0;
+
+compile_fail:
+    error_print_all();
+    warning_print_all();
+    codegen_cleanup(&gen);
+    ast_free(parser.root);
+    if (sem.root_scope) {
+        scope_free(sem.root_scope);
+        sem.root_scope = NULL;
+    }
+    semantic_cleanup(&sem);
+    gc_free_all();
+    return -1;
+}
+
+// 从文件运行
+int lenolang_run_file(const char* path) {
+    // 检查是否是 .lenb 二进制文件
+    if (serialize_is_binary_file(path)) {
+        return lenolang_run_binary(path);
+    }
+
+    // 将路径转换为绝对路径，确保模块导入时相对路径能正确解析
+    char abs_path[MAX_PATH_LEN];
+#ifdef _WIN32
+    // Windows: _fullpath 使用 ANSI 代码页，不支持 UTF-8 中文路径
+    // 需要先将 UTF-8 转为宽字符，用 _wfullpath，再转回 UTF-8
+    {
+        int wlen = MultiByteToWideChar(CP_UTF8, 0, path, -1, NULL, 0);
+        if (wlen > 0) {
+            wchar_t* wpath = (wchar_t*)malloc(wlen * sizeof(wchar_t));
+            if (wpath) {
+                MultiByteToWideChar(CP_UTF8, 0, path, -1, wpath, wlen);
+                wchar_t wabs[MAX_PATH_LEN];
+                if (_wfullpath(wabs, wpath, MAX_PATH_LEN) != NULL) {
+                    int abs_len = WideCharToMultiByte(CP_UTF8, 0, wabs, -1, abs_path, MAX_PATH_LEN, NULL, NULL);
+                    if (abs_len > 0) {
+                        error_set_filename(abs_path);
+                    } else {
+                        error_set_filename(path);
+                    }
+                } else {
+                    error_set_filename(path);
+                }
+                free(wpath);
+            } else {
+                error_set_filename(path);
+            }
+        } else {
+            error_set_filename(path);
+        }
+    }
+#else
+    if (realpath(path, abs_path) != NULL) {
+        error_set_filename(abs_path);
+    } else {
+        error_set_filename(path);
+    }
+#endif
+    
+#ifdef _WIN32
+    // Windows: 使用宽字符支持中文路径
+    int wideLen = MultiByteToWideChar(CP_UTF8, 0, path, -1, NULL, 0);
+    wchar_t* widePath = (wchar_t*)malloc(wideLen * sizeof(wchar_t));
+    if (widePath == NULL) {
+        fprintf(stderr, "内存不足\n");
+        return -1;
+    }
+    MultiByteToWideChar(CP_UTF8, 0, path, -1, widePath, wideLen);
+    
+    FILE* file = _wfopen(widePath, L"rb");
+    free(widePath);
+#else
+    FILE* file = fopen(path, "rb");
+#endif
+    
+    if (!file) {
+        fprintf(stderr, "无法打开文件: %s\n", path);
+        return -1;
+    }
+    
+    // 获取文件大小
+    fseek(file, 0, SEEK_END);
+    long size = ftell(file);
+    fseek(file, 0, SEEK_SET);
+    
+    // 读取文件内容
+    char* source = (char*)malloc(size + 1);
+    if (!source) {
+        fprintf(stderr, "内存分配失败\n");
+        fclose(file);
+        return -1;
+    }
+    
+    size_t read = fread(source, 1, size, file);
+    source[read] = '\0';
+    fclose(file);
+
+    // 设置模块搜索路径（根据项目根目录 + 全局缓存）
+    // 必须在编译/打包/运行之前设置，确保 import 能解析到包
+    {
+        package_search_path_clear();
+        const char* abs_file = error_get_filename();
+        if (abs_file) {
+            char* proj_root = package_find_project_root(abs_file);
+            if (proj_root) {
+                // 添加 <项目根>/lib/ 到搜索路径
+                char lib_path[MAX_PATH_LEN];
+                snprintf(lib_path, sizeof(lib_path), "%slib%c", proj_root, 
+#ifdef _WIN32
+                    '\\'
+#else
+                    '/'
+#endif
+                );
+                package_search_path_add(lib_path);
+
+                // 从 leno.toml 读取依赖，添加依赖包的 lib/ 到搜索路径
+                char toml_path[MAX_PATH_LEN];
+                snprintf(toml_path, sizeof(toml_path), "%sleno.toml", proj_root);
+                PackageConfig* pkg_cfg = package_config_parse(toml_path);
+                if (pkg_cfg) {
+                    for (int di = 0; di < pkg_cfg->dep_count; di++) {
+                        const char* dn = pkg_cfg->dependencies[di].name;
+                        if (!dn) continue;
+                        const char* cache = package_cache_dir();
+                        char dep_lib[MAX_PATH_LEN];
+                        snprintf(dep_lib, sizeof(dep_lib), "%s%s%clib%c",
+                                 cache, dn,
+#ifdef _WIN32
+                                 '\\',
+#else
+                                 '/',
+#endif
+#ifdef _WIN32
+                                 '\\'
+#else
+                                 '/'
+#endif
+                        );
+                        package_search_path_add(dep_lib);
+                    }
+                    package_config_free(pkg_cfg);
+                }
+                free(proj_root);
+            }
+            // 始终添加源文件所在目录作为搜索路径
+            char file_dir[MAX_PATH_LEN];
+            strncpy(file_dir, abs_file, MAX_PATH_LEN - 1);
+            file_dir[MAX_PATH_LEN - 1] = '\0';
+            char* last_sep = strrchr(file_dir, 
+#ifdef _WIN32
+                '\\'
+#else
+                '/'
+#endif
+            );
+            if (last_sep) *(last_sep + 1) = '\0';
+            package_search_path_add(file_dir);
+        }
+
+        // 添加内置模块搜索路径（exe_dir/leno_module/<包名>/lib/）
+        // 内置模块优先于全局缓存，确保随 exe 分发的模块版本不被缓存覆盖
+        package_builtin_add_to_search_paths();
+
+        // 添加全局缓存中所有已安装包的 lib/ 到搜索路径
+        package_cache_add_to_search_paths();
+
+        // 设置模块编译缓存目录：始终使用 entry 文件所在目录
+        // 每个运行目录有独立的 .lenocache，避免不同项目/示例的缓存混在同一目录
+        if (module_loader_is_cache_enabled()) {
+            const char* abs_f = error_get_filename();
+            if (abs_f) {
+                char dir_buf[MAX_PATH_LEN];
+                strncpy(dir_buf, abs_f, MAX_PATH_LEN - 1);
+                dir_buf[MAX_PATH_LEN - 1] = '\0';
+                char* ls = strrchr(dir_buf,
+#ifdef _WIN32
+                    '\\'
+#else
+                    '/'
+#endif
+                );
+                if (ls) *(ls + 1) = '\0';
+
+                char cache_dir[MAX_PATH_LEN + 16];
+                snprintf(cache_dir, sizeof(cache_dir), "%s.lenocache%c", dir_buf,
+#ifdef _WIN32
+                    '\\'
+#else
+                    '/'
+#endif
+                );
+                module_loader_set_cache_dir(cache_dir);
+            }
+        }
+    }
+
+    // 编译模式：编译为 .lenb 文件
+    if (compileMode) {
+        char* bin_path = serialize_get_bin_path(path);
+        if (!bin_path) {
+            fprintf(stderr, "无法生成输出路径\n");
+            free(source);
+            return -1;
+        }
+        int result = lenolang_compile(source, bin_path);
+        free(source);
+        free(bin_path);
+
+        if (pauseMode) {
+            printf("\n按任意键继续...");
+            getchar();
+        }
+        return result;
+    }
+
+    // 打包模式：编译为 .lenb 并嵌入 leno_vm.exe 尾部
+    if (packMode) {
+        char* bin_path = serialize_get_bin_path(path);
+        if (!bin_path) {
+            fprintf(stderr, "无法生成输出路径\n");
+            free(source);
+            return -1;
+        }
+        clock_t pack_t0 = clock();
+
+        // 先编译：语义分析阶段会自动检测 _console(false) 并设置 g_use_gui_vm
+        int result = lenolang_compile(source, bin_path);
+        free(source);
+        if (result != 0) {
+            free(bin_path);
+            return result;
+        }
+        clock_t pack_compile_end = clock();
+
+        // 编译完成后 g_use_gui_vm 已确定，选择对应的 VM 运行时
+#ifdef _WIN32
+        if (g_use_gui_vm) {
+            printf("[pack] 检测到 _console(false)，使用无控制台版 leno_vm_gui.exe\n");
+        }
+#endif
+
+        // 生成输出路径：与源文件同目录
+        char out_exe[MAX_PATH_LEN];
+        strncpy(out_exe, path, MAX_PATH_LEN - 1);
+        out_exe[MAX_PATH_LEN - 1] = '\0';
+        char* dot = strrchr(out_exe, '.');
+        if (dot) {
+            *dot = '\0';
+        }
+#ifdef _WIN32
+        strcat(out_exe, ".exe");
+#endif
+
+        // 查找 leno_vm：先在与 leno 同目录下找
+        // g_use_gui_vm=1 时用无控制台版 leno_vm_gui.exe（脚本调用了 _console(false)）
+        char vm_exe[MAX_PATH_LEN];
+#ifdef _WIN32
+        // 获取当前 exe 所在目录
+        char exe_dir[MAX_PATH_LEN];
+        GetModuleFileNameA(NULL, exe_dir, MAX_PATH_LEN);
+        exe_dir[MAX_PATH_LEN - 1] = '\0';
+        char* last_sep = strrchr(exe_dir, '\\');
+        const char* vm_name = g_use_gui_vm ? "leno_vm_gui.exe" : "leno_vm.exe";
+        if (last_sep) {
+            *(last_sep + 1) = '\0';
+            size_t dir_len = strlen(exe_dir);
+            size_t vm_name_len = strlen(vm_name);
+            if (dir_len + vm_name_len < MAX_PATH_LEN) {
+                memcpy(vm_exe, exe_dir, dir_len);
+                memcpy(vm_exe + dir_len, vm_name, vm_name_len + 1);
+            } else {
+                strcpy(vm_exe, vm_name);
+            }
+        } else {
+            strcpy(vm_exe, vm_name);
+        }
+#else
+        // Linux/macOS：获取当前可执行文件所在目录
+        char exe_dir[MAX_PATH_LEN];
+        ssize_t len = readlink("/proc/self/exe", exe_dir, sizeof(exe_dir) - 1);
+        if (len > 0) {
+            exe_dir[len] = '\0';
+            char* last_sep = strrchr(exe_dir, '/');
+            if (last_sep) {
+                *(last_sep + 1) = '\0';
+                const char* vm_name = "leno_vm";
+                size_t dir_len = strlen(exe_dir);
+                size_t vm_name_len = strlen(vm_name);
+                if (dir_len + vm_name_len < MAX_PATH_LEN) {
+                    memcpy(vm_exe, exe_dir, dir_len);
+                    memcpy(vm_exe + dir_len, vm_name, vm_name_len + 1);
+                } else {
+                    strcpy(vm_exe, "leno_vm");
+                }
+            } else {
+                strcpy(vm_exe, "leno_vm");
+            }
+        } else {
+            strcpy(vm_exe, "leno_vm");
+        }
+#endif
+
+        // 读取 leno_vm 文件
+#ifdef _WIN32
+        wchar_t wvm_exe[MAX_PATH_LEN];
+        MultiByteToWideChar(CP_UTF8, 0, vm_exe, -1, wvm_exe, MAX_PATH_LEN);
+        FILE* vm_fp = _wfopen(wvm_exe, L"rb");
+#else
+        FILE* vm_fp = fopen(vm_exe, "rb");
+#endif
+        if (!vm_fp) {
+            fprintf(stderr, "[错误] 找不到 leno_vm: %s\n", vm_exe);
+            fprintf(stderr, "请先运行 build_vm.sh 构建 VM 运行时\n");
+#ifdef _WIN32
+            { wchar_t wp[MAX_PATH_LEN]; MultiByteToWideChar(CP_UTF8, 0, bin_path, -1, wp, MAX_PATH_LEN); _wremove(wp); }
+#else
+            remove(bin_path);
+#endif
+            free(bin_path);
+            return -1;
+        }
+        fseek(vm_fp, 0, SEEK_END);
+        long vm_size = ftell(vm_fp);
+        fseek(vm_fp, 0, SEEK_SET);
+        unsigned char* vm_data = (unsigned char*)malloc(vm_size);
+        if (!vm_data) {
+            fclose(vm_fp);
+            free(bin_path);
+            return -1;
+        }
+        if (fread(vm_data, 1, vm_size, vm_fp) != (size_t)vm_size) {
+            fclose(vm_fp);
+            free(vm_data);
+            free(bin_path);
+            return -1;
+        }
+        fclose(vm_fp);
+
+        // 读取编译好的 .lenb 文件
+#ifdef _WIN32
+        wchar_t wlenb_path[MAX_PATH_LEN];
+        MultiByteToWideChar(CP_UTF8, 0, bin_path, -1, wlenb_path, MAX_PATH_LEN);
+        FILE* lenb_fp = _wfopen(wlenb_path, L"rb");
+#else
+        FILE* lenb_fp = fopen(bin_path, "rb");
+#endif
+        if (!lenb_fp) {
+            fprintf(stderr, "[错误] 无法读取编译产物: %s\n", bin_path);
+            free(vm_data);
+#ifdef _WIN32
+            { wchar_t wp[MAX_PATH_LEN]; MultiByteToWideChar(CP_UTF8, 0, bin_path, -1, wp, MAX_PATH_LEN); _wremove(wp); }
+#else
+            remove(bin_path);
+#endif
+            free(bin_path);
+            return -1;
+        }
+        fseek(lenb_fp, 0, SEEK_END);
+        long lenb_size = ftell(lenb_fp);
+        fseek(lenb_fp, 0, SEEK_SET);
+        unsigned char* lenb_data = (unsigned char*)malloc(lenb_size);
+        if (!lenb_data) {
+            fclose(lenb_fp);
+            free(vm_data);
+#ifdef _WIN32
+            { wchar_t wp[MAX_PATH_LEN]; MultiByteToWideChar(CP_UTF8, 0, bin_path, -1, wp, MAX_PATH_LEN); _wremove(wp); }
+#else
+            remove(bin_path);
+#endif
+            free(bin_path);
+            return -1;
+        }
+        if (fread(lenb_data, 1, lenb_size, lenb_fp) != (size_t)lenb_size) {
+            fclose(lenb_fp);
+            free(lenb_data);
+            free(vm_data);
+            free(bin_path);
+            return -1;
+        }
+        fclose(lenb_fp);
+
+        // 删除临时 .lenb 文件（已读入内存）
+#ifdef _WIN32
+        { wchar_t wp[MAX_PATH_LEN]; MultiByteToWideChar(CP_UTF8, 0, bin_path, -1, wp, MAX_PATH_LEN); _wremove(wp); }
+#else
+        remove(bin_path);
+#endif
+
+        // 写入输出文件: [vm 数据] [lenb 数据] [4字节 lenb_size] [4字节 LENB_MAGIC]
+#ifdef _WIN32
+        wchar_t wout_exe[MAX_PATH_LEN];
+        MultiByteToWideChar(CP_UTF8, 0, out_exe, -1, wout_exe, MAX_PATH_LEN);
+        FILE* out_fp = _wfopen(wout_exe, L"wb");
+#else
+        FILE* out_fp = fopen(out_exe, "wb");
+#endif
+        if (!out_fp) {
+            fprintf(stderr, "[错误] 无法创建输出文件: %s\n", out_exe);
+            free(lenb_data);
+            free(vm_data);
+            free(bin_path);
+            return -1;
+        }
+        fwrite(vm_data, 1, vm_size, out_fp);
+        fwrite(lenb_data, 1, lenb_size, out_fp);
+        uint32_t lenb_size_le = (uint32_t)lenb_size;
+        fwrite(&lenb_size_le, 4, 1, out_fp);
+        uint32_t magic = 0x424E454C; // "LENB"
+        fwrite(&magic, 4, 1, out_fp);
+        fclose(out_fp);
+
+#ifndef _WIN32
+        // Linux/macOS：添加可执行权限
+        chmod(out_exe, 0755);
+#endif
+
+        free(vm_data);
+        free(lenb_data);
+        free(bin_path);
+
+        {
+            clock_t pack_end = clock();
+            double embed_ms = (double)(pack_end - pack_compile_end) / CLOCKS_PER_SEC * 1000.0;
+            double total_ms = (double)(pack_end - pack_t0) / CLOCKS_PER_SEC * 1000.0;
+            printf("打包成功: %s -> %s (%.1f KB)\n", path, out_exe,
+                   (vm_size + lenb_size + 8) / 1024.0);
+            printf("打包嵌入耗时: %.1f ms\n", embed_ms);
+            printf("总耗时: %.1f ms\n", total_ms);
+        }
+
+        if (pauseMode) {
+            printf("\n按任意键继续...");
+            getchar();
+        }
+        return 0;
+    }
+
+    // 输出源代码
+   if (!debugMode) 
+    {
+        // printf("===== 源代码 =====\n");
+        //  printf("%s", source);
+        //  printf("\n===== 执行结果 =====\n\n");
+    }
+    
+    // ===== 入口文件缓存 =====
+    // 检查入口文件的 .lenb 缓存，如果源码哈希不变则直接加载跳过编译
+    if (module_loader_is_cache_enabled() && !compileMode && !packMode && !debugMode) {
+        const char* abs_f = error_get_filename();
+        const char* cache_dir = module_loader_get_cache_dir();
+        if (abs_f && cache_dir && cache_dir[0]) {
+            // 计算源码哈希
+            uint64_t src_hash = serialize_source_hash(source, strlen(source));
+            // 生成缓存路径：<cache_dir>entry_<hash>.lenb
+            char cache_dir_norm[MAX_PATH_LEN];
+            strncpy(cache_dir_norm, cache_dir, MAX_PATH_LEN - 1);
+            cache_dir_norm[MAX_PATH_LEN - 1] = '\0';
+            size_t dlen = strlen(cache_dir_norm);
+            // 确保目录后有分隔符
+    #ifdef _WIN32
+            if (dlen > 0 && cache_dir_norm[dlen-1] != '\\' && cache_dir_norm[dlen-1] != '/') {
+                cache_dir_norm[dlen] = '\\'; cache_dir_norm[dlen+1] = '\0';
+            }
+    #else
+            if (dlen > 0 && cache_dir_norm[dlen-1] != '/') {
+                cache_dir_norm[dlen] = '/'; cache_dir_norm[dlen+1] = '\0';
+            }
+    #endif
+            snprintf(g_entry_cache_path, sizeof(g_entry_cache_path),
+                     "%sentry_%llx.lenb", cache_dir_norm, (unsigned long long)src_hash);
+            snprintf(g_entry_deps_path, sizeof(g_entry_deps_path),
+                     "%s.deps", g_entry_cache_path);
+            g_entry_cache_enabled = 1;
+
+            // 依赖清单校验：.lenb 里内联了全部 import 模块的字节码，而它的键只含入口
+            // 文件——只改被引用模块（入口不变）时键不变却已过期。清单缺失/不符即视为
+            // 未命中，并把过期的入口缓存删掉（避免遗留与误用）。
+            if (entry_deps_valid(g_entry_deps_path) != 0) {
+                entry_deps_remove(g_entry_cache_path);
+                entry_deps_remove(g_entry_deps_path);
+            } else {
+                // 尝试加载缓存
+                Chunk entry_chunk;
+                Scope* entry_scope = NULL;
+                SerializeResult cache_sr = chunk_deserialize(g_entry_cache_path, &entry_chunk, &entry_scope);
+                if (cache_sr == SERIALIZE_OK) {
+                    register_defs_from_chunk(&entry_chunk);
+                    gc_init();
+                    fix_module_function_ptrs(&entry_chunk);
+                    vm_init_with_scope(entry_scope);
+                    vm_load(&entry_chunk);
+                    int ret = vm_run();
+                    chunk_free(&entry_chunk);
+                    gc_free_all();
+                    free(source);
+                    if (ret != 0 || error_has_any()) {
+                        error_print_all();
+                        warning_print_all();
+                        return -1;
+                    }
+                    warning_print_all();
+                    return vm_get_exit_code();
+                }
+            }
+        }
+    }
+
+    int result = lenolang_run(source);
+    free(source);
+    
+    // 暂停模式
+    if (pauseMode) {
+        printf("\n按任意键继续...");
+        getchar();
+    }
+    
+    return result;
+}
+
+
+// 主函数逻辑
+static int main_logic(int argc, char** argv) {
+    setupConsole();
+
+    // 注册模块编译器函数指针（解耦 module_loader 和编译器）
+    set_module_compile_func(compile_module_new);
+
+    // 环境变量禁用缓存（LENO_NO_CACHE=1）
+    if (getenv("LENO_NO_CACHE") != NULL) {
+        module_loader_set_cache_enabled(0);
+    }
+
+    // 保存命令行参数，供 _args() 全局函数使用
+    g_argc = argc;
+    g_argv = argv;
+
+    const char* filePath = NULL;
+    char* joined_path = NULL;  // 动态分配，用于拼接含空格的路径（需在返回前释放）
+    
+    // 解析参数
+    // Leno 内置选项（--pause, --debug 等）在任何位置都生效
+    // 第一个非选项参数作为脚本路径，之后的非选项参数传给脚本
+    // 支持含空格的路径：如果首个非选项参数不是有效文件，尝试拼接后续参数
+    int file_arg_start = -1;  // 第一个非选项参数的索引
+    int options_terminated = 0;  // 是否已遇到 '--'（终止解释器自己的选项解析；P2）
+    for (int i = 1; i < argc; i++) {
+        // 先检查是否是 Leno 内置选项（在任何位置都处理）
+        if (strcmp(argv[i], "--pause") == 0) {
+            pauseMode = 1;
+            continue;
+        } else if (strcmp(argv[i], "--debug") == 0) {
+            debugMode = 1;
+            continue;
+        } else if (strcmp(argv[i], "--debug-out") == 0) {
+            debugMode = 1;
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                debugOutFile = argv[i + 1];
+                i++;  // 消费文件名参数
+            } else {
+                fprintf(stderr, "错误: --debug-out 需要指定输出文件路径\n");
+                return 1;
+            }
+            continue;
+        } else if (strcmp(argv[i], "--compile") == 0 || strcmp(argv[i], "-c") == 0) {
+            compileMode = 1;
+            continue;
+        } else if (strcmp(argv[i], "--pack") == 0 || strcmp(argv[i], "-p") == 0) {
+            packMode = 1;
+            continue;
+        } else if (strcmp(argv[i], "--no-cache") == 0) {
+            module_loader_set_cache_enabled(0);
+            continue;
+        } else if (strcmp(argv[i], "--version") == 0 || strcmp(argv[i], "-v") == 0) {
+            printVersion();
+            return 0;
+        } else if (strcmp(argv[i], "--init") == 0) {
+            initMode = 1;
+            continue;
+        } else if (strcmp(argv[i], "--install") == 0) {
+            installMode = 1;
+            continue;
+        } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+            printHelp(argv[0]);
+            return 0;
+        }
+
+        // 非选项参数
+        if (argv[i][0] != '-') {
+            if (file_arg_start < 0) {
+                file_arg_start = i;
+            }
+            // 后续非选项参数保留给脚本（由 _args() 获取）
+            continue;
+        }
+
+        // '--'：显式终止**解释器自己**的选项解析。只在脚本路径之前有意义：
+        // 脚本路径之后的 '--' 与其它参数一样原样交给脚本（与 _args() 的取法保持一致）。
+        if (file_arg_start < 0 && strcmp(argv[i], "--") == 0) {
+            options_terminated = 1;
+            continue;
+        }
+
+        // ★ P2 修复（2026-09-18）：脚本路径**之后**的 '-' 开头参数，一律属于脚本 / 位置参数。
+        //   此前它走下面的"未知选项"分支 ⇒ `leno.exe trae_sign.leno --list` 会打印解释器帮助、
+        //   **脚本根本不跑** ✗（移植 TraeSign 时几乎静默地卡住；参考件的 CLI 全是 --status/--json/--list，
+        //   照抄必踩）。这条与 `_args()` 的取法一致：它把"脚本路径之后"的参数**原样**返回。
+        if (options_terminated || file_arg_start >= 0) {
+            if (file_arg_start < 0) {
+                // '--' 之后的第一个参数就是脚本路径，哪怕它以 '-' 开头
+                file_arg_start = i;
+            }
+            continue;
+        }
+
+        // 未知的 '-' 开头选项（只会在脚本路径之前、且未遇到 '--' 时到达这里）
+        fprintf(stderr, "未知选项: %s\n", argv[i]);
+        printHelp(argv[0]);
+        return 64;
+    }
+
+    // 尝试拼接非选项参数以支持含空格的文件路径
+    // 从 file_arg_start 开始，逐步拼接更多参数，直到找到存在的文件
+    if (file_arg_start >= 0) {
+        char buf[MAX_PATH_LEN];
+        buf[0] = '\0';
+        filePath = NULL;
+        for (int i = file_arg_start; i < argc; i++) {
+            // 跳过已被识别为选项的参数
+            if (strcmp(argv[i], "--pause") == 0 || strcmp(argv[i], "--debug") == 0 ||
+                strcmp(argv[i], "--compile") == 0 || strcmp(argv[i], "-c") == 0 ||
+                strcmp(argv[i], "--pack") == 0 || strcmp(argv[i], "-p") == 0 ||
+                strcmp(argv[i], "--no-cache") == 0 ||
+                strcmp(argv[i], "--init") == 0 || strcmp(argv[i], "--install") == 0 ||
+                strcmp(argv[i], "--version") == 0 || strcmp(argv[i], "-v") == 0 ||
+                strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+                continue;
+            }
+            // 跳过选项参数（但 '--' 之后不再跳过：那之后的 '-' 开头参数是脚本路径/参数，P2）
+            if (argv[i][0] == '-' && !options_terminated) continue;
+
+            if (buf[0] != '\0') {
+                size_t cur_len = strlen(buf);
+                if (cur_len + 1 < MAX_PATH_LEN) {
+                    buf[cur_len] = ' ';
+                    buf[cur_len + 1] = '\0';
+                }
+            }
+            size_t remain = MAX_PATH_LEN - strlen(buf) - 1;
+            strncat(buf, argv[i], remain);
+
+            // 检查拼接后的路径是否存在（文件或目录）
+#ifdef _WIN32
+            int wlen = MultiByteToWideChar(CP_UTF8, 0, buf, -1, NULL, 0);
+            if (wlen > 0) {
+                wchar_t* wcheck = (wchar_t*)malloc(wlen * sizeof(wchar_t));
+                if (wcheck) {
+                    MultiByteToWideChar(CP_UTF8, 0, buf, -1, wcheck, wlen);
+                    DWORD attrs = GetFileAttributesW(wcheck);
+                    free(wcheck);
+                    if (attrs != INVALID_FILE_ATTRIBUTES) {
+                        joined_path = strdup(buf);
+                        filePath = joined_path;
+                        break;
+                    }
+                }
+            }
+#else
+            struct stat st;
+            if (stat(buf, &st) == 0) {
+                joined_path = strdup(buf);
+                filePath = joined_path;
+                break;
+            }
+#endif
+        }
+        // 如果拼接后仍未找到有效路径，使用第一个非选项参数
+        if (!filePath) {
+            for (int i = file_arg_start; i < argc; i++) {
+                if (strcmp(argv[i], "--pause") == 0 || strcmp(argv[i], "--debug") == 0 ||
+                    strcmp(argv[i], "--compile") == 0 || strcmp(argv[i], "-c") == 0 ||
+                    strcmp(argv[i], "--pack") == 0 || strcmp(argv[i], "-p") == 0 ||
+                    strcmp(argv[i], "--no-cache") == 0 ||
+                    strcmp(argv[i], "--init") == 0 || strcmp(argv[i], "--install") == 0 ||
+                    strcmp(argv[i], "--version") == 0 || strcmp(argv[i], "-v") == 0 ||
+                    strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+                    continue;
+                }
+                if (argv[i][0] == '-') continue;
+                filePath = argv[i];
+                break;
+            }
+        }
+    }
+    
+    if (initMode) {
+        int result;
+        if (filePath) {
+            /* 如果参数包含路径分隔符，当作目录路径；否则在当前目录下创建子目录 */
+            int is_path = strchr(filePath, '/') || strchr(filePath, '\\');
+            if (is_path) {
+                result = package_init(filePath, NULL);
+            } else {
+                result = package_init(filePath, filePath);
+            }
+        } else {
+            result = package_init(".", NULL);
+        }
+        free(joined_path);
+        return result;
+    } else if (installMode) {
+        int result;
+        package_cache_ensure();
+        if (filePath) {
+            /* leno --install <git-url> 或 <本地目录路径> */
+            if (strncmp(filePath, "gitee:", 6) == 0 ||
+                strncmp(filePath, "github:", 7) == 0 ||
+                strncmp(filePath, "gitlab:", 7) == 0 ||
+                strncmp(filePath, "git:", 4) == 0 ||
+                strncmp(filePath, "https://", 8) == 0 ||
+                strncmp(filePath, "http://", 7) == 0 ||
+                strstr(filePath, "git@")) {
+                /* git 源 → 远程安装 */
+                result = package_install_from_git(filePath);
+            } else {
+                /* 本地目录路径 → 本地安装 */
+                result = package_install_from_dir(filePath);
+            }
+        } else {
+            /* leno --install - 从当前目录的 leno.toml 安装所有依赖 */
+            char toml_path[MAX_PATH_LEN];
+            snprintf(toml_path, sizeof(toml_path), "leno.toml");
+            result = package_install_deps(toml_path);
+        }
+        free(joined_path);
+        return result;
+    } else if (filePath == NULL) {
+        // 没有文件参数，显示帮助信息
+        printHelp(argv[0]);
+        // 暂停以便用户查看帮助信息
+        printf("\n按任意键继续...");
+        getchar();
+        free(joined_path);
+        return 0;
+    } else {
+        // 文件模式
+        int result = lenolang_run_file(filePath);
+        free(joined_path);
+        return result;
+    }
+    
+    free(joined_path);
+}
+
+#ifdef _WIN32
+// Windows: 使用 wmain 支持 Unicode 命令行
+int wmain(int argc, wchar_t* wargv[]) {
+    // 注册模块编译器函数指针（解耦 module_loader 和编译器）
+    set_module_compile_func(compile_module_new);
+
+    // 将宽字符参数转换为 UTF-8
+    char** argv = (char**)malloc((argc + 1) * sizeof(char*));
+    if (!argv) {
+        fprintf(stderr, "内存分配失败\n");
+        return 1;
+    }
+    
+    for (int i = 0; i < argc; i++) {
+        int len = WideCharToMultiByte(CP_UTF8, 0, wargv[i], -1, NULL, 0, NULL, NULL);
+        argv[i] = (char*)malloc(len);
+        if (!argv[i]) {
+            fprintf(stderr, "内存分配失败\n");
+            return 1;
+        }
+        WideCharToMultiByte(CP_UTF8, 0, wargv[i], -1, argv[i], len, NULL, NULL);
+    }
+    argv[argc] = NULL;
+    
+    int result = main_logic(argc, argv);
+    
+    // 释放内存
+    for (int i = 0; i < argc; i++) {
+        free(argv[i]);
+    }
+    free(argv);
+    
+    return result;
+}
+#else
+// Linux/macOS: 使用标准 main
+int main(int argc, char* argv[]) {
+    return main_logic(argc, argv);
+}
+#endif

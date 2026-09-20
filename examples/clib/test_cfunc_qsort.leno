@@ -1,0 +1,43 @@
+// 测试 cfunc 回调 + qsort 排序
+import ffi
+
+cfunc Compare(Ptr a, Ptr b): i32
+
+func my_compare(Ptr a, Ptr b): int {
+    int va = ffi.read_int(a, 0)
+    int vb = ffi.read_int(b, 0)
+    if va < vb { return -1 }
+    if va > vb { return 1 }
+    return 0
+}
+
+clib msvcrt {
+    void qsort(Ptr base, i32 nmemb, i32 size, Ptr compar)
+}
+
+main() {
+    msvcrt lib = ffi.load("msvcrt.dll")
+    int n = 5
+    Ptr[u32] arr = ffi.malloc(n * 4)
+    ffi.write_at(arr, 0, 50)
+    ffi.write_at(arr, 1, 20)
+    ffi.write_at(arr, 2, 40)
+    ffi.write_at(arr, 3, 10)
+    ffi.write_at(arr, 4, 30)
+
+    print("排序前:")
+    for n to i {
+        print("  arr[" + i + "] = " + ffi.read_at(arr, i))
+    }
+
+    var cb = ffi.callback(my_compare, Compare)
+    lib.qsort(arr, n, 4, cb)
+
+    print("排序后:")
+    for n to i {
+        print("  arr[" + i + "] = " + ffi.read_at(arr, i))
+    }
+
+    ffi.free(arr)
+    print("done")
+}

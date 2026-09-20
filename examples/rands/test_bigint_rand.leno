@@ -1,0 +1,20 @@
+import rands
+
+main() {
+    // 测试大范围随机数（返回 BigInt）
+    print("生成 1 到 10000000000 之间的随机 BigInt:")
+    var big_rand = rands.ints(1, 10000000000)
+    print("随机数: " + big_rand)
+    
+    // 测试普通范围（返回 int）
+    print("\n生成 1 到 100 之间的随机 int:")
+    var normal_rand = rands.ints(1, 100)
+    print("随机数: " + normal_rand)
+    
+    // 测试多次生成 BigInt 随机数
+    print("\n生成 4 个大范围随机数 (0 到 3):")
+    for 0:3 to var i {
+        var r = rands.ints(1, 1000000000000)
+        print("  " + r)
+    }
+}

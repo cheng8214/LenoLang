@@ -1,0 +1,21 @@
+main() {
+  // 测试1：嵌套字典（混合值）
+  var nested = {"user": {"name": "test", "age": 20}}
+  print("嵌套字典(混合): " + type(nested))
+
+  // 测试2：嵌套字典（同类型值）
+  var nested2 = {"a": {"x": 1}, "b": {"y": 2}}
+  print("嵌套字典(同类型): " + type(nested2))
+
+  // 测试3：数组包含字典
+  var arrDict = [{"name": "a"}, {"name": "b"}]
+  print("数组包含字典: " + type(arrDict))
+
+  // 测试4：字典包含数组
+  var dictArr = {"items": [1, 2, 3]}
+  print("字典包含数组: " + type(dictArr))
+
+  // 测试5：深层嵌套
+  var deep = {"level1": {"level2": {"level3": "value"}}}
+  print("深层嵌套: " + type(deep))
+}

@@ -1,0 +1,69 @@
+// 测试结构体字段直接做切片操作时的类型推断
+// 修复前：编译器报 "切片操作需要数组类型，实际为unknown"
+//          且报 "字段类型不匹配：期望Array[xxx]，实际any"
+//          根因：transform_method_body_ex 缺少 AST_SLICE case，
+//          切片表达式中的裸字段名不会被转换为 self.字段名
+// 修复后：transform_method_body_ex 新增 AST_SLICE case，
+//          递归处理 slice.obj/start/end，裸字段名正确转换
+
+struct SliceBug {
+    Array[int] _data = [1, 2, 3, 4, 5, 6, 7, 8]
+    Array[string] _strs = ["aa", "bb", "cc", "dd", "ee"]
+    
+    // ★ 修复后：直接对字段做切片——编译通过
+    func test_field_slice_direct(): Array[int] {
+        Array[int] result = _data[2 : 5]   // 预期 [3, 4, 5, 6]
+        return result
+    }
+
+    func test_str_field_slice_direct(): Array[string] {
+        Array[string] result = _strs[1 : 3]   // 预期 ["bb", "cc", "dd"]
+        return result
+    }
+    
+    // ✅ 规避方案：先赋给局部变量再切片
+    func test_field_slice_workaround(): Array[int] {
+        Array[int] tmp = _data
+        Array[int] result = tmp[2 : 5]    // 预期 [3, 4, 5, 6]
+        return result
+    }
+    
+    func test_str_field_slice_workaround(): Array[string] {
+        Array[string] tmp = _strs
+        Array[string] result = tmp[1 : 3]
+        return result
+    }
+}
+
+main() {
+    SliceBug sb = new SliceBug()
+    
+    print("=== 测试1: 直接字段切片 (int) ===")
+    Array[int] r1 = sb.test_field_slice_direct()
+    print("结果: " + r1)
+    print("长度: " + r1.len())   // 预期 4
+    
+    print("")
+    print("=== 测试2: 直接字段切片 (string) ===")
+    Array[string] r2 = sb.test_str_field_slice_direct()
+    print("结果: " + r2)
+    print("长度: " + r2.len())   // 预期 3
+    
+    print("")
+    print("=== 测试3: 局部变量规避切片 (int) ===")
+    Array[int] r3 = sb.test_field_slice_workaround()
+    print("结果: " + r3)
+    print("长度: " + r3.len())   // 预期 4
+    
+    print("")
+    print("=== 测试4: 局部变量规避切片 (string) ===")
+    Array[string] r4 = sb.test_str_field_slice_workaround()
+    print("结果: " + r4)
+    print("长度: " + r4.len())   // 预期 3
+    
+    print("")
+    print("=== 修复说明 ===")
+    print("transform_method_body_ex 新增 AST_SLICE case")
+    print("切片表达式 arr[start:end] 中的裸字段名现在")
+    print("会被正确转换为 self.字段名")
+}

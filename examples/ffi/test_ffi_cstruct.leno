@@ -1,0 +1,92 @@
+// 测试 cstruct 与 FFI 结合使用
+// 使用 Windows FILETIME 结构体作为示例
+
+import ffi
+
+cstruct FILETIME {
+    u32 dwLowDateTime
+    u32 dwHighDateTime
+}
+
+cstruct SYSTEMTIME {
+    u16 wYear
+    u16 wMonth
+    u16 wDayOfWeek
+    u16 wDay
+    u16 wHour
+    u16 wMinute
+    u16 wSecond
+    u16 wMilliseconds
+}
+
+main() {
+    print("=== 测试 cstruct 与 FFI 结合 ===")
+    
+    // 显示结构体信息
+    print("FILETIME size: " + FILETIME.size() + " bytes")
+    print("FILETIME alignment: " + FILETIME.alignment())
+    print("SYSTEMTIME size: " + SYSTEMTIME.size() + " bytes")
+    print("SYSTEMTIME alignment: " + SYSTEMTIME.alignment())
+    
+    // 加载 kernel32.dll
+    var kernel32 = ffi.load("kernel32.dll")
+    
+    // 使用 cstruct 分配内存
+    var ft = FILETIME.malloc()
+    var st = SYSTEMTIME.malloc()
+    
+    try {
+        // 获取当前系统时间（FILETIME 格式）
+        var result = ffi.call(kernel32, "GetSystemTimeAsFileTime", ft.to_ptr())
+        print("\n当前 FILETIME:")
+        print(ft.to_str())
+        
+        // 将 FILETIME 转换为 SYSTEMTIME
+        result = ffi.call(kernel32, "FileTimeToSystemTime", ft.to_ptr(), st.to_ptr())
+        if result != 0 {
+            print("\n当前系统时间 (SYSTEMTIME):")
+            print("  年: " + st.wYear)
+            print("  月: " + st.wMonth)
+            print("  日: " + st.wDay)
+            print("  时: " + st.wHour)
+            print("  分: " + st.wMinute)
+            print("  秒: " + st.wSecond)
+        }
+        
+        // 反向转换：SYSTEMTIME -> FILETIME
+        // 注意：FILETIME 精度为 100 纳秒，SYSTEMTIME 精度只到毫秒，
+        // 往返转换会丢失 100ns 级别的低位数据，因此 dwLowDateTime
+        // 可能有微小差异（差值在 10000 以内即 1 毫秒范围内属正常）
+        var ft2 = FILETIME.malloc()
+        try {
+            result = ffi.call(kernel32, "SystemTimeToFileTime", st.to_ptr(), ft2.to_ptr())
+            if result != 0 {
+                print("\n转换回 FILETIME:")
+                print("  dwLowDateTime: " + ft2.dwLowDateTime)
+                print("  dwHighDateTime: " + ft2.dwHighDateTime)
+                
+                // 验证：由于 FILETIME -> SYSTEMTIME -> FILETIME 往返转换
+                // 存在精度丢失（100ns -> 1ms），不能精确相等，
+                // 差值在 1 毫秒（10000 个 100ns 单位）内视为验证通过
+                var lowDiff = ft2.dwLowDateTime - ft.dwLowDateTime
+                if lowDiff < 0 { lowDiff = -lowDiff }
+                if ft.dwHighDateTime == ft2.dwHighDateTime and lowDiff < 10000 {
+                    print("  转换验证通过！（毫秒级精度差异）")
+                } else {
+                    print("  转换验证失败！")
+                }
+            }
+            ft2.free()
+        } catch e {
+            ft2.free()
+            throw e
+        }
+        
+    } finally {
+        ft.free()
+        st.free()
+        ffi.free(kernel32)
+    }
+    
+    print("\n=== 测试完成 ===")
+}

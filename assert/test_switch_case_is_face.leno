@@ -1,0 +1,152 @@
+// switch case is face 接口类型匹配测试
+
+face Shape {
+    func area():int
+    func name():string
+}
+
+struct Rect impl Shape {
+    int width = 0
+    int height = 0
+    func area():int { return width * height }
+    func name():string { return "Rect" }
+}
+
+struct Circle impl Shape {
+    float radius = 0.0
+    func area():int { return 0 }
+    func name():string { return "Circle" }
+}
+
+struct Triangle impl Shape {
+    int base = 0
+    int h = 0
+    func area():int { return base * h / 2 }
+    func name():string { return "Triangle" }
+}
+
+// 测试 face 类型匹配
+func test_face_match() {
+    var s = new Rect(width = 10, height = 20)
+    string result = ""
+    switch s {
+        case is Shape {
+            result = "Shape"
+        }
+        default {
+            result = "not Shape"
+        }
+    }
+    assert_eq(result, "Shape")
+}
+
+// 测试 face 匹配后调用接口方法
+func test_face_method_call() {
+    var s = new Rect(width = 5, height = 10)
+    int a = 0
+    switch s {
+        case is Shape {
+            a = s.area()
+        }
+        default {
+            a = -1
+        }
+    }
+    assert_eq(a, 50)
+}
+
+// 测试 Circle 也匹配同一个 face
+func test_circle_face_match() {
+    var c = new Circle(radius = 5.0)
+    string result = ""
+    switch c {
+        case is Shape {
+            result = "Shape"
+        }
+        default {
+            result = "not Shape"
+        }
+    }
+    assert_eq(result, "Shape")
+}
+
+// 测试 Triangle 匹配 face
+func test_triangle_face_match() {
+    var t = new Triangle(base = 10, h = 8)
+    int a = 0
+    switch t {
+        case is Shape {
+            a = t.area()
+        }
+        default {
+            a = -1
+        }
+    }
+    assert_eq(a, 40)
+}
+
+// 测试多个 face 匹配不同实现
+func test_multi_face_match() {
+    int count = 0
+    int total_area = 0
+
+    var r = new Rect(width = 2, height = 3)
+    switch r {
+        case is Shape {
+            count = count + 1
+            total_area = total_area + r.area()
+        }
+        default {
+        }
+    }
+
+    var c = new Circle(radius = 5.0)
+    switch c {
+        case is Shape {
+            count = count + 1
+            total_area = total_area + c.area()
+        }
+        default {
+        }
+    }
+
+    var t = new Triangle(base = 4, h = 6)
+    switch t {
+        case is Shape {
+            count = count + 1
+            total_area = total_area + t.area()
+        }
+        default {
+        }
+    }
+
+    assert_eq(count, 3)
+    assert_eq(total_area, 18)  // 6 + 0 + 12 = 18
+}
+
+// 测试非 face 实现的结构体不匹配
+func test_non_face_no_match() {
+    struct NotShape {
+        int x = 0
+    }
+    var ns = new NotShape(x = 5)
+    string result = ""
+    switch ns {
+        case is Shape {
+            result = "Shape"
+        }
+        default {
+            result = "not Shape"
+        }
+    }
+    assert_eq(result, "not Shape")
+}
+
+test_face_match()
+test_face_method_call()
+test_circle_face_match()
+test_triangle_face_match()
+test_multi_face_match()
+test_non_face_no_match()
+
+print("test_switch_case_is_face passed")

@@ -1,0 +1,56 @@
+// 测试嵌套 cstruct 作为 clib 参数传递
+import ffi
+
+cstruct POINT {
+    i32 x
+    i32 y
+}
+
+// RECT 包含两个 POINT（嵌套 cstruct）
+cstruct RECT {
+    POINT lt
+    POINT rb
+}
+
+// MSG 包含 POINT 字段
+cstruct MSG {
+    Ptr hwnd
+    i32 message
+    Ptr wParam
+    Ptr lParam
+    i32 time
+    POINT pt
+}
+
+clib user32 {
+    i32 GetCursorPos(POINT lpPoint)
+    i32 SetCursorPos(i32 x, i32 y)
+    i32 PeekMessageW(MSG lpMsg, Ptr hWnd, i32 wMsgFilterMin, i32 wMsgFilterMax, i32 wRemoveMsg)
+}
+
+main() {
+    user32 lib = ffi.load("user32.dll")
+
+    // 测试 1: 简单 cstruct 参数（POINT）
+    POINT pt = POINT.malloc()
+    int ok1 = lib.GetCursorPos(pt)
+    if ok1 != 0 {
+        print("  PASS: GetCursorPos x=" + pt.x + " y=" + pt.y)
+    } else {
+        print("  FAIL: GetCursorPos")
+    }
+
+    // 测试 2: 嵌套 cstruct 参数（MSG 包含 POINT）
+    MSG msg = MSG.malloc()
+    int ok2 = lib.PeekMessageW(msg, null, 0, 0, 0)
+    if ok2 != 0 {
+        print("  PASS: PeekMessageW 有消息, message=" + msg.message + ", pt.x=" + msg.pt.x + " pt.y=" + msg.pt.y)
+    } else {
+        print("  PASS: PeekMessageW 无消息（调用成功）, message=" + msg.message)
+    }
+	print(msg.debug())
+    pt.free()
+    msg.free()
+    ffi.free(lib)
+    print("嵌套 cstruct 传递测试完成")
+}

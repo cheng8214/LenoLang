@@ -1,0 +1,9 @@
+// 测试模块：定义一个 struct 和依赖该 struct 的 alias
+// 被 test_use_alias_dep.leno 导入测试
+
+export struct Event {
+    int type = 0
+    func get_type(): int { return type }
+}
+
+export alias EventHandler = func(Event):bool

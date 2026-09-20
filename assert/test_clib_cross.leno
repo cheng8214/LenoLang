@@ -1,0 +1,16 @@
+// 模拟 sdl_button.leno —— 跨模块使用 clib
+// 测试：core.lib().SDL_Delay(ms) 是否能编译通过
+import "use_clib_core.leno" as core
+
+// 方式1: sdl_font.leno 的方式 —— 已知能工作
+use core.sdl3
+sdl3 _lib = core.lib()
+
+// 方式2: 链式调用 —— 用户期望的方式
+// 这就是 core.lib().SDL_DestroyTexture(tex) 的模式
+export func testChainCall() {
+    // 链式调用 clib 方法
+    core.lib().SDL_Delay(100)
+}
+
+print("跨模块 clib 链式调用编译测试通过!")

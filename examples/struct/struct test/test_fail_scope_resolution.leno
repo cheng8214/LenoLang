@@ -1,0 +1,16 @@
+// 测试外部不能直接调用 struct 方法
+
+struct Point
+{
+    int y
+    int x
+    func test()
+    {
+        print(x + y)
+    }
+}
+
+main()
+{
+    Point::test()
+}

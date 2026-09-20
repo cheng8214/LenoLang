@@ -1,0 +1,2 @@
+import ffi
+export var KERNEL32 = ffi.load("kernel32")

@@ -1,0 +1,51 @@
+// 测试 clib 类型转换规则
+// 1. Ptr -> clib: 允许 (ffi.load 返回 Ptr 赋值给 clib 变量)
+// 2. clib -> Ptr: 允许 (向下兼容)
+// 3. 同名 clib -> 同名 clib: 允许
+// 4. null -> clib: 允许 (ffi.load 失败返回 null)
+// 5. 不同名 clib 互转: 编译报错 (见 test_clib_mismatch.leno)
+
+import ffi
+import io
+
+clib msvcrt {
+    i32 strlen(str8 s)
+    i32 strcmp(str8 a, str8 b)
+}
+
+main() {
+    // ===== 测试 1: Ptr -> clib (ffi.load 返回值赋给 clib 变量) =====
+    msvcrt lib = ffi.load("msvcrt.dll")
+    if lib == null {
+        io.print("FAIL: ffi.load returned null")
+        return
+    }
+    io.print("PASS: Ptr -> clib")
+
+    // ===== 测试 2: clib -> Ptr (向下兼容) =====
+    Ptr p = lib
+    io.print("PASS: clib -> Ptr")
+
+    // ===== 测试 3: 同名 clib 赋值 =====
+    msvcrt lib2 = lib
+    io.print("PASS: same clib assign")
+
+    // ===== 测试 4: null -> clib =====
+    msvcrt null_lib = null
+    if null_lib == null {
+        io.print("PASS: null -> clib")
+    }
+
+    // ===== 测试 5: clib 函数调用 =====
+    var len = lib.strlen("hello")
+    io.print("strlen: " + len)
+    if len == 5 {
+        io.print("PASS: clib call works")
+    }
+
+    // ===== 测试 6: ffi.free 接受 clib 变量 =====
+    ffi.free(lib2)
+    io.print("PASS: ffi.free(clib)")
+
+    io.print("All clib type tests passed!")
+}

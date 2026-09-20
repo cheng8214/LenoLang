@@ -1,0 +1,18 @@
+// BUG4: face 方法返回 clib 类型
+import ffi
+
+clib handle_lib {
+    i32 abs(i32 x)
+}
+
+export face Handleable {
+    func getHandle(): handle_lib
+}
+
+export struct Holder impl Handleable {
+    handle_lib _h = null
+
+    func getHandle(): handle_lib {
+        return self._h
+    }
+}

@@ -1,0 +1,23 @@
+// 精确复现 Bug 9: 模块函数中字符串 >= 比较
+// 如果这是 Bug 1 的副作用，修复 Bug 1 后应该不再出错
+
+var _g_html = ""
+
+func _check_range(int i): bool {
+    string c = _str(_g_html[i])
+    if c >= "a" and c <= "z" {
+        return true
+    }
+    return false
+}
+
+main() {
+    _g_html = "hello world"
+    int count = 0
+    for 0:_g_html.len()-1 to i {
+        if _check_range(i) {
+            count = count + 1
+        }
+    }
+    print(count)  // 应该输出 8 (h,e,l,l,o,_,w,o,r,l,d 中的小写字母)
+}

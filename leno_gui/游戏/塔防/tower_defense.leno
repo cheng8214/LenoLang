@@ -1,0 +1,2581 @@
+// tower_defense.leno — 塔防（Tower Defense）
+//
+// 操作：
+//   鼠标左键 — 放置塔 / 点塔弹出菜单(升级·出售) / 点面板按钮
+//   1 2 3 4  — 选择 箭塔 / 炮塔 / 冰塔 / 电塔
+//   空格     — 提前开始下一波（按剩余秒数奖励金币）
+//   点塔     — 弹出菜单：升级(金币够且未满级时塔旁自动显示↑) / 出售
+//   U        — 升级选中的塔      S — 出售选中的塔
+//   P        — 暂停 / 继续       R — 重新开始      ESC — 退出
+//
+// 规则：
+//   敌人沿路径从左上入口走向右下基地，漏怪扣生命，生命归零则失败。
+//   击杀获得金币，金币用于在草地格（石块与树木处不可建造）建造/升级塔；死亡掉落金币飞向左上角即收集成功；怪物有几率掉落宝箱，点击宝箱可随机获得金币。
+//   共 20 波，第 10 / 20 波带 BOSS，全部清空即通关。
+//
+// 资源目录：
+//   image/   — 精灵图片（由 gen_assets.leno 程序化生成，零外部素材）
+//   bkmusic/ — 音频：bk.mp3 背景, boss.mp3 BOSS 波,
+//                    anxia.mp3 通用开火, 箭塔射箭.mp3 箭塔开火, 放置.mp3 建造,
+//                    冻住.wav 冰冻, db.wav 爆炸, si.wav 漏怪, 怪物死亡.mp3 击杀,
+//                    升级.mp3 升级, 拾取.mp3 金币/宝箱, 小怪受击.mp3 受击, 波浪提示音.mp3 波次
+//
+// 素材生成：在本目录执行  leno.exe gen_assets.leno
+
+import "SDL3" as SDL3
+import "sdl_core" as core
+use SDL3.(Event, Renderer, WindowFlag, Scancode, Font, Flip)
+import maths
+import rands
+import dirs
+import "assets.leno" as assets
+import "td_types.leno" as types
+import "Music" as audio
+use audio.(Sound, Sfx)
+use types.(Enemy, Wave, Tower, Bullet, Particle, FloatText, Arc, Coin, Chest, Game)
+
+// ==================== 常量 ====================
+
+var TS      = 48.0               // 格子边长（像素）
+var COLS    = 20
+var ROWS    = 14
+var MAP_W   = 960.0              // 20 * 48
+var MAP_H   = 672.0              // 14 * 48
+var WIN_W   = 960                // 与地图同宽（无侧栏，HUD 叠加在地图上下边）
+var WIN_H   = 672
+var HUD_H   = 34.0               // 顶部状态条高
+var BAR_H   = 58.0               // 底部建塔栏高
+var BAR_Y   = MAP_H - BAR_H      // 底栏 y
+var CARD_W  = 96.0               // 底栏塔卡片宽
+
+// 格子类型
+var T_GRASS = 0
+var T_PATH  = 1
+var T_ROCK  = 2
+var T_START = 3
+var T_BASE  = 4
+var T_TREE  = 5   // 树木障碍（不可建造）
+var T_TREE2 = 6   // 树木2障碍（不可建造）
+
+// 塔类型
+var TW_ARROW  = 0
+var TW_CANNON = 1
+var TW_FROST  = 2
+var TW_TESLA  = 3
+
+var TOWER_COST   = [50, 100, 75, 150]
+var TOWER_RANGE  = [3.2, 2.8, 2.6, 3.0]     // 单位：格
+var TOWER_CD     = [28, 70, 45, 20]         // 单位：帧
+var TOWER_DMG    = [9.0, 26.0, 5.0, 7.0]
+var TOWER_SPD    = [7.0, 5.0, 6.0, 13.0]    // 子弹速度 px/帧
+var TOWER_SPLASH = [0.0, 1.2, 0.0, 0.0]     // 溅射半径（格）
+var TOWER_SLOW   = [0.0, 0.0, 0.45, 0.0]    // 减速比例
+var TOWER_CHAIN  = [0, 0, 0, 2]             // 链式额外目标数
+var TOWER_NAME   = ["箭塔", "炮塔", "冰塔", "电塔"]
+var MAX_LEVEL    = 3
+
+// 箭塔「塔上人物射箭」：塔射箭人物.png 帧 0=塔本体，帧 1-4=人物射箭动作，帧 5=箭矢
+var ARROW_ANIM_STEP = 9   // 射箭动作每个动画帧持续的帧数（4 帧 × 9 = 36 帧一轮）
+
+// 加农炮/冰塔「底座+炮管」：加农炮.png、冰塔炮.png 格式一致
+// 帧 0=底座，帧 1=炮管(朝左)，帧 3-4=开火动作，帧 5=炮弹/冰弹
+var CANNON_ANIM_STEP = 9  // 开火动作每个动画帧持续的帧数（2 帧 × 9 = 18 帧）
+
+// 敌人类型
+var EM_GRUNT  = 0
+var EM_RUNNER = 1
+var EM_TANK   = 2
+var EM_BOSS   = 3
+var EM_SLIME  = 4
+var EM_PERSON     = 5   // 人物：走路（素材帧 0-2）
+var EM_PERSON_RUN = 6   // 人物：奔跑（素材帧 3-5）
+var EM_PERSON4    = 7   // 人物4：自爆（素材帧 0-2 走路 3-5 跳跃 6-7 落地）
+
+// 宝箱掉落
+var CHEST_DROP_RATE = 15     // 普通怪掉落概率（%）；BOSS 必掉
+
+var ENEMY_HP    = [60.0, 40.0, 190.0, 1400.0, 55.0, 70.0, 50.0, 65.0]
+var ENEMY_SPD   = [0.55, 1.15, 0.38, 0.42, 0.72, 0.60, 1.30, 0.70]  // px/帧
+var ENEMY_GOLD  = [8, 10, 22, 260, 7, 9, 12, 15]
+var ENEMY_DMG   = [1, 1, 2, 12, 1, 1, 1, 1]             // 漏怪扣血
+var ENEMY_ARMOR = [0.0, 0.0, 0.30, 0.15, 0.0, 0.0, 0.0, 0.0] // 伤害减免
+var ENEMY_SIZE  = [42.0, 39.0, 45.0, 69.0, 51.0, 48.0, 45.0, 51.0]
+
+// 人物3（原 runner 位）：8 帧精灵表，前 4 帧走路、后 4 帧攻击（抬臂→挥出→击打→回收）
+// 靠近防御塔时会停下攻击，塔血量归零即被摧毁并腾出格子
+var ATK_RANGE = 1.3      // 攻击触发距离（单位：格）
+var ATK_STEP  = 11       // 每个攻击动作帧持续的帧数（4 帧 × 11 = 44 帧一轮）
+var ATK_HIT   = 2        // 在第几个动作帧落地伤害（0=抬臂 1=挥出 2=击打 3=回收）
+var ATK_DMG   = 14.0     // 每次命中对塔造成的伤害
+var ATK_CD    = 36       // 一轮攻击结束后的间隔帧数
+var TOWER_HP  = [120.0, 160.0, 100.0, 90.0]   // 各塔基础血量（随等级成长）
+
+// 人物4「自爆」：跳到防御塔身上后 落地→爆炸，对范围内塔造成大量伤害后死亡
+var P4_JUMP_STEP = 9      // 跳跃每个动作帧持续的帧数（3 帧 × 9 = 27 帧跳到塔上）
+var P4_JUMP_H    = 26.0   // 跳跃弧线高度（像素，仅渲染偏移）
+var P4_LAND_STEP = 8      // 落地每个动作帧持续的帧数（2 帧 × 8 = 16 帧落地）
+var P4_BOOM_STEP = 10     // 爆炸每个动作帧持续的帧数（4 帧 × 10 = 40 帧爆炸特效）
+var P4_BOOM_DMG  = 50.0   // 爆炸中心伤害（对最近的塔全额，范围内其余塔半额）
+var P4_BOOM_R    = 1.6    // 爆炸伤害半径（单位：格）
+
+// 人物2「哭泣声波」：血量降到阈值以下后原地定身，持续释放声波，
+// 让声波范围内的塔攻速变慢（冷却时间变长）
+var CRY_HP      = 0.33   // 进入哭泣状态的血量比例
+var CRY_R       = 3.0    // 声波影响半径（单位：格）
+var CRY_SLOW    = 0.60   // 每个声波源使塔冷却增加的倍率（+60%）
+var CRY_MAX     = 2.50   // 冷却倍率上限（防止叠加后完全打不出）
+var CRY_WAVECD  = 70     // 声波释放间隔（帧）
+var CRY_DMG     = 5.0    // 每圈声波对范围内防御塔的震荡伤害
+var CRY_DRAIN   = 0.22   // 哭泣时每帧流失的血量：保证不会永久卡住波次
+
+// BOSS 突袭：靠近防御塔有几率跳跃拆塔，抓着「战利品」回位
+var BOSS_ATK_STEP = 8      // 突袭/回位动画每个动作帧持续的帧数（6 帧动画）
+var BOSS_AGGRO_R  = 2.0    // 触发突袭的距离（格）
+var BOSS_CD       = 900    // 突袭冷却（帧，约 15 秒）
+var WAVE_LIFE   = 48     // 单圈声波存活帧数
+
+// 游戏状态
+var ST_MENU  = 0
+var ST_PLAY  = 1
+var ST_PAUSE = 2
+var ST_OVER  = 3
+var ST_WIN   = 4
+
+var _enemyIdSeq  = 1                        // 敌人唯一 id 分配器
+
+var MAX_WAVE     = 20
+var WAVE_GAP     = 300                      // 波间隔（帧）
+var START_GOLD   = 220
+var START_LIVES  = 20
+
+// 路径拐点（格坐标）：入口在屏幕外 (-1,2)，终点为基地 (19,5)
+var WPX = [-1, 4, 4, 8, 8, 12, 12, 16, 16, 19]
+var WPY = [2, 2, 6, 6, 2, 2, 9, 9, 5, 5]
+var WP_N = 10
+
+// 装饰石块（不可建造）
+var ROCK_GX = [2, 3, 6, 9, 13, 17, 1, 18, 10, 6, 0, 5, 9, 14, 19, 1]
+var ROCK_GY = [10, 11, 12, 11, 12, 11, 7, 1, 12, 9, 9, 12, 0, 1, 10, 12]
+
+// 树木障碍（不可建造，自动阻挡塔的放置；避开路径与石块）
+var TREE_GX  = [3, 6, 10, 14, 11, 15, 1, 7, 19, 8]
+var TREE_GY  = [4, 3, 4, 4, 7, 7, 10, 1, 3, 11]
+var TREE2_GX = [2, 5, 10, 7, 14, 18, 0, 12, 16, 6]
+var TREE2_GY = [8, 9, 10, 11, 11, 8, 5, 0, 0, 5]
+
+// ==================== 工具 ====================
+
+func dist2(float ax, float ay, float bx, float by): float {
+    var dx = ax - bx
+    var dy = ay - by
+    return dx * dx + dy * dy
+}
+
+// 把方向向量转成「素材默认朝上」体系的角度（0=上, 90=右, 180=下）
+func dirAngle(float dx, float dy): float {
+    return maths.atan2(dy, dx) * 180.0 / 3.14159265 + 90.0
+}
+
+func towerRange(int ttype, int level): float {
+    return TOWER_RANGE[ttype] * (1.0 + 0.12 * _float(level - 1)) * TS
+}
+
+func towerDamage(int ttype, int level): float {
+    return TOWER_DMG[ttype] * (1.0 + 0.60 * _float(level - 1))
+}
+
+// 塔的最大血量：随等级成长
+func towerMaxHp(int ttype, int level): float {
+    return TOWER_HP[ttype] * (1.0 + 0.6 * _float(level - 1))
+}
+
+// 找攻击范围内最近的防御塔，返回下标（-1 = 射程内无塔）
+func findTowerNear(Game g, float x, float y, float rad): int {
+    var best = -1
+    var bestD = rad * rad
+    var i = 0
+    for g.towers to t {
+        var d = dist2(x, y, t.x, t.y)
+        if d <= bestD {
+            bestD = d
+            best = i
+        }
+        i = i + 1
+    }
+    return best
+}
+
+// 对防御塔造成伤害；血量归零则摧毁（塔不占地图格，从数组移除即可腾出格子）
+func hitTower(Game g, int idx, float dmg) {
+    if idx < 0 or idx >= g.towers.len() { return }
+    var i = 0
+    for g.towers to t {
+        if i == idx {
+            t.hp = t.hp - dmg
+            addParticles(g, t.x, t.y, 6, #E67E22FF)
+            if t.hp <= 0 {
+                addParticles(g, t.x, t.y, 18, #C0392BFF)
+                addFloat(g, t.x, t.y - 18.0, "塔被摧毁", #E74C3CFF)
+                if g.audioOk and not g.muted { g.sfxBoom.play() }
+                destroyTower(g, i)
+            }
+            return
+        }
+        i = i + 1
+    }
+}
+
+func destroyTower(Game g, int idx) {
+    Array[Tower] keep = []
+    for 0 : g.towers.len() - 1 to i {
+        if i != idx { keep.add(g.towers[i]) }
+    }
+    g.towers = keep
+    // 修正选中下标，防止指向错误或越界
+    if g.selTower == idx { g.selTower = -1 }
+    else if g.selTower > idx { g.selTower = g.selTower - 1 }
+    if g.menuTower == idx { g.menuTower = -1 }
+    else if g.menuTower > idx { g.menuTower = g.menuTower - 1 }
+}
+
+func towerCooldown(int ttype, int level): int {
+    var f = 1.0 - 0.12 * _float(level - 1)
+    return _int(TOWER_CD[ttype] * f)
+}
+
+func upgradeCost(int ttype, int level): int {
+    return _int(TOWER_COST[ttype] * _float(level) * 0.7)
+}
+
+func sellValue(int ttype, int level): int {
+    var spent = TOWER_COST[ttype]
+    for 2 : level to lv {
+        spent = spent + upgradeCost(ttype, lv - 1)
+    }
+    return _int(spent * 0.6)
+}
+
+// 应用静音状态（BGM / BOSS 音乐音量置 0，音效在播放处单独拦截）
+func applyMute(Game g) {
+    if not g.audioOk { return }
+    if g.muted {
+        g.bgm.setVolume(0.0)
+        g.bossBgm.setVolume(0.0)
+    } else {
+        g.bgm.setVolume(0.35)
+        g.bossBgm.setVolume(0.4)
+    }
+}
+
+func toggleMute(Game g) {
+    g.muted = not g.muted
+    applyMute(g)
+}
+
+// 倍速循环：1 -> 2 -> 3 -> 1
+func cycleSpeed(Game g) {
+    g.speedMul = g.speedMul + 1
+    if g.speedMul > 3 { g.speedMul = 1 }
+}
+
+func cellAt(Game g, int gx, int gy): int {
+    if gx < 0 or gy < 0 or gx >= COLS or gy >= ROWS { return T_ROCK }
+    return g.map[gy * COLS + gx]
+}
+
+// 是否「可通行地面」（路径/出怪口/基地）：用于地形描边判断
+func isRoadTile(int t): bool {
+    return t == T_PATH or t == T_START or t == T_BASE
+}
+
+// ==================== 初始化 ====================
+
+func newGame(): Game {
+    var g = new Game()
+    g.state = ST_MENU
+    g.frameCount = 0
+    g.gold = START_GOLD
+    g.lives = START_LIVES
+    g.wave = 0
+    g.kills = 0
+    g.totalKilled = 0
+    g.waveState = 0
+    g.waveTimer = WAVE_GAP
+    g.spawnQueue = []
+    g.spawnIdx = 0
+    g.spawnTimer = 0
+    g.bannerTimer = 0
+    g.bannerText = ""
+    g.selType = -1
+    g.selTower = -1
+    g.menuTower = -1
+    g.mouseX = 0.0
+    g.mouseY = 0.0
+    g.speedMul = 1
+    g.muted = false
+    g.quitReq = false
+    g.map = []
+    g.enemies = []
+    g.towers = []
+    g.bullets = []
+    g.waves = []
+    g.particles = []
+    g.floats = []
+    g.arcs = []
+    g.coins = []
+    g.chests = []
+    g.pCount = 0
+    g.hitSfxCd = 0
+    g.texTower = []
+    g.texEnemy = []
+    g.texBullet = []
+    g.texSlime = []
+    g.texPerson = []
+    g.texPerson2 = []
+    g.texPerson3 = []
+    g.texPerson4 = []
+    g.texBoom4 = []
+    g.texGrunt = []
+    g.texArrowTower = []
+    g.texCannon = []
+    g.texFrost = []
+    g.texBossWalk = []
+    g.texBossJump = []
+    g.texBossReturn = []
+    g.loaded = false
+    g.audioOk = false
+    buildMap(g)
+    return g
+}
+
+func buildMap(Game g) {
+    g.map = []
+    for 0 : COLS * ROWS - 1 to i {
+        g.map.add(T_GRASS)
+    }
+    // 按路径拐点铺路（双通道：每段铺 2 格宽，敌人可并排走）
+    for 0 : WP_N - 2 to i {
+        var x0 = WPX[i]; var y0 = WPY[i]
+        var x1 = WPX[i + 1]; var y1 = WPY[i + 1]
+        if x0 == x1 {
+            var a = y0; var b = y1
+            if a > b { var tmp = a; a = b; b = tmp }
+            for a : b to y {
+                if x0 >= 0 and x0 < COLS and y >= 0 and y < ROWS {
+                    g.map[y * COLS + x0] = T_PATH
+                    if x0 + 1 < COLS { g.map[y * COLS + x0 + 1] = T_PATH }
+                }
+            }
+        } else {
+            var a = x0; var b = x1
+            if a > b { var tmp2 = a; a = b; b = tmp2 }
+            for a : b to x {
+                if x >= 0 and x < COLS and y0 >= 0 and y0 < ROWS {
+                    g.map[y0 * COLS + x] = T_PATH
+                    if y0 + 1 < ROWS { g.map[(y0 + 1) * COLS + x] = T_PATH }
+                }
+            }
+        }
+    }
+    // 起点 / 基地
+    var sy = WPY[0]
+    g.map[sy * COLS] = T_START
+    var ex = WPX[WP_N - 1]
+    var ey = WPY[WP_N - 1]
+    g.map[ey * COLS + ex] = T_BASE
+    // 装饰石块
+    for 0 : 15 to i {
+        var x = ROCK_GX[i]; var y = ROCK_GY[i]
+        if g.map[y * COLS + x] == T_GRASS { g.map[y * COLS + x] = T_ROCK }
+    }
+    // 树木（不可建造）
+    for 0 : 9 to i {
+        var x = TREE_GX[i]; var y = TREE_GY[i]
+        if g.map[y * COLS + x] == T_GRASS { g.map[y * COLS + x] = T_TREE }
+        x = TREE2_GX[i]; y = TREE2_GY[i]
+        if g.map[y * COLS + x] == T_GRASS { g.map[y * COLS + x] = T_TREE2 }
+    }
+}
+
+// ==================== 资源加载 ====================
+
+func loadResources(Game g, Renderer r) {
+    var base = dirs.script_dir()
+    g.texGrass = assets.loadSprite(r, base, "tile_grass")
+    g.texPath  = assets.loadSprite(r, base, "tile_path")
+    g.texStart = assets.loadSprite(r, base, "tile_start")
+    g.texBase  = assets.loadSprite(r, base, "tile_base")
+    g.texRock  = assets.loadSprite(r, base, "tile_rock")
+    g.texCoin  = assets.loadSprite(r, base, "icon_coin")
+    g.texHeart = assets.loadSprite(r, base, "icon_heart")
+    g.texStar  = assets.loadSprite(r, base, "icon_star")
+    g.texTree  = assets.loadSprite(r, base, "树木")
+    g.texTree2 = assets.loadSprite(r, base, "树木2")
+    g.texUp    = assets.loadSprite(r, base, "升级")
+    g.texCoinFly = assets.loadSprite(r, base, "金币")
+    g.texSell  = assets.loadSprite(r, base, "出售")
+    g.texChest = assets.loadSprite(r, base, "宝箱")
+
+    var tn = ["tower_arrow", "tower_cannon", "tower_frost", "tower_tesla"]
+    var en = ["", "enemy_runner", "", "enemy_boss"]   // 小兵/坦克已由「人物小兵」「人物2」取代
+    var bn = ["", "", "", "bullet_bolt"]   // 箭矢/炮弹/冰弹改用「塔射箭人物」「加农炮」「冰塔炮」第 6 帧
+    g.texTower = []
+    g.texEnemy = []
+    g.texBullet = []
+    for 0 : 3 to i {
+        g.texTower.add(assets.loadSprite(r, base, tn[i]))
+        // 空名字的槽位由 loadSprite 自动放占位纹理，保持下标与 EM_*/子弹类型常量对齐
+        g.texEnemy.add(assets.loadSprite(r, base, en[i]))
+        g.texBullet.add(assets.loadSprite(r, base, bn[i]))
+    }
+
+    // 塔射箭人物：288x48 横排 6 帧（每帧 48x48）：帧 0=箭塔本体，帧 1-4=塔上人物射箭动作，帧 5=箭矢
+    g.texArrowTower = assets.loadSheet(r, base + "/image/塔射箭人物.png", 6)
+    // 用新塔本体帧替换旧 tower_arrow 贴图（面板卡片 / 建造预览 / 塔底座自动生效）
+    if g.texArrowTower.len() > 0 { g.texTower[0] = g.texArrowTower[0] }
+
+    // 加农炮：288x48 横排 6 帧（每帧 48x48）：帧 0=底座，帧 1=炮管(朝左)，帧 3-4=开火动作，帧 5=炮弹
+    g.texCannon = assets.loadSheet(r, base + "/image/加农炮.png", 6)
+    // 面板卡片 / 建造预览改用底座帧
+    if g.texCannon.len() > 0 { g.texTower[1] = g.texCannon[0] }
+
+    // 冰塔炮：288x48 横排 6 帧，格式与加农炮一致：底座/炮管(朝左)/开火动作/冰弹
+    g.texFrost = assets.loadSheet(r, base + "/image/冰塔炮.png", 6)
+    // 面板卡片 / 建造预览改用底座帧
+    if g.texFrost.len() > 0 { g.texTower[2] = g.texFrost[0] }
+
+    // BOSS 三态精灵表：走 / 蹲下跳跃攻击 / 抓到回到原位（各 288x48 六帧）
+    var bimg = base + "/image/"
+    g.texBossWalk   = assets.loadSheet(r, bimg + "boss1走.png", 6)
+    g.texBossJump   = assets.loadSheet(r, bimg + "boss1蹲下跳跃攻击.png", 6)
+    g.texBossReturn = assets.loadSheet(r, bimg + "boss1抓到回到原位.png", 6)
+
+    // 史莱姆：288x48 横排 6 帧（每帧 48x48），侧视向左行走；向右移动时水平翻转
+    g.texSlime = assets.loadSheet(r, base + "/image/史莱姆.png", 6)
+
+    // 人物小兵：288x48 横排 6 帧（每帧 48x48）侧视行走；素材默认朝左，向右移动时水平翻转
+    g.texGrunt = assets.loadSheet(r, base + "/image/人物小兵.png", 6)
+
+    // 人物：288x48 横排 6 帧（每帧 48x48）：前 3 帧走路、后 3 帧奔跑；素材默认朝左，向右移动时水平翻转
+    g.texPerson = assets.loadSheet(r, base + "/image/人物1.png", 6)
+
+    // 人物2：288x48 横排 6 帧（每帧 48x48）：前 3 帧走路，后 3 帧为 含泪→趴地哭泣→倒下死亡
+    // 素材默认朝左，向右移动时水平翻转
+    g.texPerson2 = assets.loadSheet(r, base + "/image/人物2.png", 6)
+
+    // 人物3：384x48 横排 8 帧（每帧 48x48）：前 4 帧走路、后 4 帧攻击（抬臂→挥出→击打→回收）
+    // 素材默认朝左，向右移动时水平翻转
+    g.texPerson3 = assets.loadSheet(r, base + "/image/人物3.png", 8)
+
+    // 人物4：384x48 横排 8 帧（每帧 48x48）：前 3 帧走路、中 3 帧跳跃、后 2 帧落地
+    // 素材默认朝左，向右移动时水平翻转
+    g.texPerson4 = assets.loadSheet(r, base + "/image/人物4.png", 8)
+
+    // 人物4 爆炸：192x48 横排 4 帧（每帧 48x48），自爆时叠加播放
+    g.texBoom4 = assets.loadSheet(r, base + "/image/人物4爆炸.png", 4)
+
+    // 静态地图预渲染到一张纹理，之后每帧只需一次贴图
+    g.mapTex = r.createTexture(core.PIXELFORMAT_RGBA8888, 2, _int(MAP_W), _int(MAP_H))
+    if g.mapTex != null {
+        r.setRenderTarget(g.mapTex)
+        r.clearColor(#00000000)
+        for 0 : ROWS - 1 to gy {
+            for 0 : COLS - 1 to gx {
+                var t = g.map[gy * COLS + gx]
+                var px = _float(gx) * TS
+                var py = _float(gy) * TS
+                if t == T_PATH {
+                    r.drawTextureAt(g.texPath, px, py, TS, TS)
+                } else if t == T_START {
+                    r.drawTextureAt(g.texStart, px, py, TS, TS)
+                } else if t == T_BASE {
+                    r.drawTextureAt(g.texBase, px, py, TS, TS)
+                } else {
+                    r.drawTextureAt(g.texGrass, px, py, TS, TS)
+                    // 树木/石头随机水平翻转，避免同款贴图整齐划一
+                    var df = Flip.NONE
+                    if rands.ints(0, 1) == 1 { df = Flip.HORIZONTAL }
+                    var dsz = TS + 6.0
+                    if t == T_ROCK { r.drawTextureRotated(g.texRock, px, py, TS, TS, 0.0, TS * 0.5, TS * 0.5, df) }
+                    if t == T_TREE  { r.drawTextureRotated(g.texTree,  px - 3.0, py - 3.0, dsz, dsz, 0.0, dsz * 0.5, dsz * 0.5, df) }
+                    if t == T_TREE2 { r.drawTextureRotated(g.texTree2, px - 3.0, py - 3.0, dsz, dsz, 0.0, dsz * 0.5, dsz * 0.5, df) }
+                }
+            }
+        }
+
+        // 地形细节层：消除「管道感」的关键——
+        // 1) 草地逐格明暗抖动，打破纹理重复；2) 路缘描深色边；3) 草地侧投柔和阴影
+        for 0 : ROWS - 1 to gy {
+            for 0 : COLS - 1 to gx {
+                var tt = g.map[gy * COLS + gx]
+                var px = _float(gx) * TS
+                var py = _float(gy) * TS
+                if isRoadTile(tt) {
+                    // 路缘：与草地/障碍相邻的四边描 3px 深土色边，让路「有边界」而不是浮管
+                    r.setColor(#8F6F3FFF)
+                    if not isRoadTile(cellAt(g, gx, gy - 1)) { r.fillRect(px, py, TS, 3.0) }
+                    if not isRoadTile(cellAt(g, gx, gy + 1)) { r.fillRect(px, py + TS - 3.0, TS, 3.0) }
+                    if not isRoadTile(cellAt(g, gx - 1, gy)) { r.fillRect(px, py, 3.0, TS) }
+                    if not isRoadTile(cellAt(g, gx + 1, gy)) { r.fillRect(px + TS - 3.0, py, 3.0, TS) }
+                    // 光照来自左上：路的下侧/右侧在草地上投柔和阴影
+                    r.setColor(#00000030)
+                    if not isRoadTile(cellAt(g, gx, gy + 1)) { r.fillRect(px, py + TS, TS, 5.0) }
+                    if not isRoadTile(cellAt(g, gx + 1, gy)) { r.fillRect(px + TS, py, 5.0, TS) }
+                } else {
+                    // 草地：逐格随机提亮/压暗，破坏每格纹理完全一致的重复感
+                    var j = rands.ints(0, 2)
+                    if j == 0 { r.setColor(#FFFFFF12) } else { r.setColor(#00000016) }
+                    r.fillRect(px, py, TS, TS)
+                    // 草地上的小草丛点缀（位置随格子变化）
+                    var tx = px + _float(rands.ints(4, 26))
+                    var ty = py + _float(rands.ints(4, 26))
+                    r.setColor(#3E7A30FF)
+                    r.fillRect(tx, ty, 1.0, 3.0)
+                    r.fillRect(tx + 3.0, ty + 1.0, 1.0, 3.0)
+                    r.setColor(#5FAF4CFF)
+                    r.fillRect(tx + 1.0, ty + 1.0, 1.0, 2.0)
+                }
+            }
+        }
+        r.flush()
+        r.setRenderTarget(null)
+    }
+
+    // 音频（引擎已支持中文路径，可直接使用中文文件名）
+    g.bgm = audio.createSound(base + "/bkmusic/bk.mp3")
+    g.bgm.setLooping(true)
+    g.bgm.setVolume(0.35)
+
+    g.bossBgm = audio.createSound(base + "/bkmusic/boss.mp3")
+    g.bossBgm.setLooping(true)
+    g.bossBgm.setVolume(0.4)
+
+    g.sfxShoot = audio.createSfx(base + "/bkmusic/anxia.mp3", 6, 0.4)   // 复用扫雷「按下」音作开火声（调响，炮塔/冰塔/电塔共用）
+    g.sfxBoom  = audio.createSfx(base + "/bkmusic/db.wav", 5, 0.4)
+    g.sfxLose  = audio.createSfx(base + "/bkmusic/si.wav", 3, 0.28)
+    g.sfxShootArrow = audio.createSfx(base + "/bkmusic/箭塔射箭.mp3", 6, 0.18)   // 箭塔开火（换用专属射箭音）
+    g.sfxBuild      = audio.createSfx(base + "/bkmusic/放置.mp3", 4, 0.35)   // 建造
+    g.sfxFreeze     = audio.createSfx(base + "/bkmusic/冻住.wav", 4, 0.3)   // 冰塔冰冻
+    g.sfxWave       = audio.createSfx(base + "/bkmusic/波浪提示音.mp3", 2, 0.4)   // 波次开始
+    g.sfxDie        = audio.createSfx(base + "/bkmusic/怪物死亡.mp3", 5, 0.3)     // 怪物死亡
+    g.sfxUpgrade    = audio.createSfx(base + "/bkmusic/升级.mp3", 3, 0.4)         // 塔升级
+    g.sfxPickup     = audio.createSfx(base + "/bkmusic/拾取.mp3", 5, 0.35)        // 金币入账 / 开宝箱
+    g.sfxHit        = audio.createSfx(base + "/bkmusic/小怪受击.mp3", 6, 0.2)     // 小怪受击（节流播放）
+    g.sfxBoom4      = audio.createSfx(base + "/bkmusic/db.wav", 3, 0.55)          // 人物4 自爆（降调大爆炸）
+    for g.sfxBoom4.pool to ps {
+        ps.setPitch(0.6)   // 降调：比普通爆炸低沉，听起来是不同的大爆炸
+    }
+    g.sfxBossSmash = audio.createSfx(base + "/bkmusic/db.wav", 3, 0.5)
+    for g.sfxBossSmash.pool to ps { ps.setPitch(0.7) }   // 降调闷响：BOSS 拆塔击打，区别于普通爆炸
+    g.sfxBossFire  = audio.createSfx(base + "/bkmusic/anxia.mp3", 4, 0.3)         // 较轻的开炮声，与击打区分开
+
+    g.audioOk = g.bgm.ok
+    if g.audioOk {
+        g.bgm.play()
+        applyMute(g)
+        print("[OK] 音频加载完成")
+    } else {
+        print("[警告] 音频初始化失败，游戏将以静音模式运行")
+    }
+
+    g.loaded = true
+    print("[OK] 资源加载完成")
+}
+
+// ==================== 波次 ====================
+
+func buildWave(Game g, int wave): Array[int] {
+    Array[int] q = []
+    var count = 6 + wave * 2
+    if count > 30 { count = 30 }
+    for 0 : count - 1 to i {
+        var t = EM_GRUNT
+        var roll = rands.ints(0, 99)
+        if wave >= 2 and roll < 25 { t = EM_SLIME }
+        else if wave >= 3 and roll < 30 + wave { t = EM_RUNNER }
+        else if wave >= 5 and roll > 88 - wave { t = EM_TANK }
+        else if wave >= 2 and roll < 40 { t = EM_PERSON }
+        else if wave >= 4 and roll < 52 { t = EM_PERSON_RUN }
+        else if wave >= 6 and roll < 60 { t = EM_PERSON4 }
+        q.add(t)
+    }
+    // 每 10 波追加 BOSS
+    if wave % 10 == 0 {
+        q.add(EM_BOSS)
+        if wave >= 20 { q.add(EM_BOSS) }
+    }
+    return q
+}
+
+func startWave(Game g) {
+    g.wave = g.wave + 1
+    g.spawnQueue = buildWave(g, g.wave)
+    g.spawnIdx = 0
+    g.spawnTimer = 0
+    g.waveState = 1
+    g.bannerText = "第 " + g.wave + " 波"
+    g.bannerTimer = 120
+    if g.audioOk and not g.muted { g.sfxWave.play() }   // 波次开始提示音
+    if g.wave % 10 == 0 {
+        g.bannerText = "第 " + g.wave + " 波 — BOSS 来袭！"
+        if g.audioOk { g.bossBgm.play() }
+    }
+}
+
+func spawnEnemy(Game g, int etype) {
+    var e = new Enemy()
+    e.id = _enemyIdSeq
+    _enemyIdSeq = _enemyIdSeq + 1
+    e.etype = etype
+    e.x = _float(WPX[0]) * TS + TS * 0.5
+    e.y = _float(WPY[0]) * TS + TS * 0.5
+    e.wpIdx = 0
+    var scale = 1.0 + 0.18 * _float(g.wave - 1)
+    if etype == EM_BOSS { scale = scale * 0.55 }
+    e.maxHp = ENEMY_HP[etype] * scale
+    e.hp = e.maxHp
+    e.speed = ENEMY_SPD[etype]
+    e.armor = ENEMY_ARMOR[etype]
+    e.gold = ENEMY_GOLD[etype]
+    e.dmg = ENEMY_DMG[etype]
+    e.dir = 270.0
+    e.slowTimer = 0
+    e.slowAmount = 0.0
+    e.alive = true
+    e.reached = false
+    e.dying = 0
+    e.crying = false
+    e.waveTimer = 0
+    e.attacking = false
+    e.atkTimer = 0
+    e.atkHit = false
+    e.atkCd = 0
+    e.pm4State = 0
+    e.pm4Timer = 0
+    e.pm4Sx = 0.0
+    e.pm4Sy = 0.0
+    e.pm4Tx = 0.0
+    e.pm4Ty = 0.0
+    // 双通道：随机二选一车道，走道路正中（上/下车道中心分别为 ±0.25 格）
+    e.lane = if rands.ints(0, 1) == 0 then -0.25 else 0.25
+    if WPX[1] == WPX[0] {
+        e.x = e.x + (0.5 + e.lane) * TS
+    } else {
+        e.y = e.y + (0.5 + e.lane) * TS
+    }
+    // BOSS 突袭状态初始化
+    e.bState = 0
+    e.bTimer = 0
+    e.bCd = 300
+    e.bAx = 0.0
+    e.bAy = 0.0
+    e.bTx = 0.0
+    e.bTy = 0.0
+    e.bTowerType = 0
+    e.bHit = false
+    e.bRb = 0
+    e.bWpIdx = 0
+    e.bRb = 0
+    e.bWpIdx = 0
+    g.enemies.add(e)
+}
+
+// ==================== 战斗 ====================
+
+func addParticles(Game g, float x, float y, int n, int c) {
+    if g.pCount > 700 { return }
+    for 0 : n - 1 to i {
+        var p = new Particle()
+        var a = _float(rands.ints(0, 359)) * 3.14159265 / 180.0
+        var s = _float(rands.ints(10, 45)) / 10.0
+        p.x = x; p.y = y
+        p.vx = maths.cos(a) * s
+        p.vy = maths.sin(a) * s
+        p.size = _float(rands.ints(2, 5))
+        p.life = rands.ints(16, 32)
+        p.maxLife = p.life
+        p.c = c
+        p.alive = true
+        g.particles.add(p)
+        g.pCount = g.pCount + 1
+    }
+}
+
+func addFloat(Game g, float x, float y, string text, int c) {
+    var f = new FloatText()
+    f.x = x; f.y = y
+    f.text = text
+    f.c = c
+    f.life = 50
+    f.alive = true
+    f.bg = false
+    g.floats.add(f)
+}
+
+// 人物台词气泡：白底黑字，停留更久（life 可自定义）
+func addSpeech(Game g, float x, float y, string text, int life = 75) {
+    var f = new FloatText()
+    f.x = x; f.y = y
+    f.text = text
+    f.c = 0x1A1A1A         // 黑字
+    f.life = life
+    f.alive = true
+    f.bg = true
+    g.floats.add(f)
+}
+
+// 对指定下标的敌人造成伤害（在 for-in 内修改，确保写回数组元素）
+func damageIdx(Game g, int idx, float dmg) {
+    if idx < 0 { return }
+    var i = 0
+    for g.enemies to e {
+        if i == idx {
+            if not e.alive { return }
+            // 人物4（自爆女）：走路阶段可被正常削血；当血量降到一半以下时开启
+            // 「血量保持」——把 HP 锁定在半血并免疫后续伤害，保证它能活着去自爆，
+            // 而不是被半路点死。触发后由状态机立刻起跳跳向最近塔爆炸。
+            if e.etype == EM_PERSON4 {
+                // 已处于血量保持状态（半血及以下）→ 免疫一切伤害，不会死亡
+                if e.hp <= e.maxHp * 0.5 { return }
+                var real = dmg * (1.0 - e.armor)
+                // 本次伤害若会把血量打到半血以下 → 开启血量保持，锁在半血
+                if e.hp - real <= e.maxHp * 0.5 { e.hp = e.maxHp * 0.5; return }
+            }
+            e.hp = e.hp - dmg * (1.0 - e.armor)
+            // 小怪受击音效（全局节流，避免多塔齐射时刷屏）
+            if g.hitSfxCd <= 0 {
+                if g.audioOk and not g.muted { g.sfxHit.play() }
+                g.hitSfxCd = 8
+            }
+            // 人物小兵濒死求饶：被打后还活着且血量见底时，有几率头顶弹出「别射我」
+            if e.etype == EM_GRUNT and e.hp > 0 {
+                if e.hp / e.maxHp <= 0.35 and rands.ints(0, 99) < 35 {
+                    addSpeech(g, e.x - 12.0, e.y - ENEMY_SIZE[e.etype] * 0.5 - 14.0, "别射我")
+                }
+            }
+            if e.hp <= 0 { killEnemyAt(g, idx) }
+            return
+        }
+        i = i + 1
+    }
+}
+
+// 令指定下标的敌人死亡并结算奖励（人物2 哭泣流血致死也走这里）
+func killEnemyAt(Game g, int idx) {
+    if idx < 0 { return }
+    var i = 0
+    for g.enemies to e {
+        if i == idx {
+            if not e.alive { return }
+            e.alive = false
+            // 人物2（原 tank 位）：死亡后保留若干帧，播放「倒下死亡」动作再移除
+            if e.etype == EM_TANK { e.dying = 45 }
+            g.kills = g.kills + 1
+            g.totalKilled = g.totalKilled + 1
+            addParticles(g, e.x, e.y, 12, #F39C12FF)
+            spawnCoin(g, e.x, e.y, e.gold)        // 金币飞向左上角计数为收集
+            // 宝箱掉落：BOSS 必掉，普通怪按概率掉落
+            if e.etype == EM_BOSS or rands.ints(0, 99) < CHEST_DROP_RATE {
+                spawnChest(g, e.x, e.y)
+            }
+            if g.audioOk and not g.muted { g.sfxDie.play() }
+            return
+        }
+        i = i + 1
+    }
+}
+
+func applySlow(Game g, int idx, float amount, int frames) {
+    if idx < 0 { return }
+    var i = 0
+    for g.enemies to e {
+        if i == idx {
+            e.slowTimer = frames
+            e.slowAmount = amount
+            return
+        }
+        i = i + 1
+    }
+}
+
+// 按 id 查敌人下标（-1 = 已死/不存在）
+func findEnemyIdx(Game g, int id): int {
+    if id < 0 { return -1 }
+    var i = 0
+    for g.enemies to e {
+        if e.id == id and e.alive { return i }
+        i = i + 1
+    }
+    return -1
+}
+
+// 索敌：射程内「推进最靠前」的敌人，返回下标（-1 = 无目标）
+func findTargetIdx(Game g, Tower t): int {
+    var range = towerRange(t.ttype, t.level)
+    var r2 = range * range
+    var best = -1
+    var bestProg = -1.0
+    var i = 0
+    for g.enemies to e {
+        if e.alive and dist2(t.x, t.y, e.x, e.y) <= r2 {
+            var prog = _float(e.wpIdx) * 4096.0
+            if e.wpIdx + 1 < WP_N {
+                var tx = _float(WPX[e.wpIdx + 1]) * TS + TS * 0.5
+                var ty = _float(WPY[e.wpIdx + 1]) * TS + TS * 0.5
+                prog = prog + (4096.0 - maths.sqrt(dist2(e.x, e.y, tx, ty)))
+            }
+            if prog > bestProg {
+                bestProg = prog
+                best = i
+            }
+        }
+        i = i + 1
+    }
+    return best
+}
+
+func fire(Game g, Tower t, int ti) {
+    var e = g.enemies[ti]
+    var b = new Bullet()
+    b.btype = t.ttype
+    if t.ttype == TW_CANNON {
+        b.x = t.x; b.y = t.y            // 炮塔随炮管旋转，从中心发射
+    } else {
+        b.x = t.x; b.y = t.y - TS * 0.5  // 箭/冰/电塔武器在顶部，从塔顶发射
+    }
+    b.speed = TOWER_SPD[t.ttype]
+    b.damage = towerDamage(t.ttype, t.level)
+    b.splash = TOWER_SPLASH[t.ttype]
+    b.slowAmount = TOWER_SLOW[t.ttype]
+    b.slowFrames = 90
+    b.chain = TOWER_CHAIN[t.ttype]
+    b.targetId = e.id
+    b.alive = true
+    var dx = e.x - t.x
+    var dy = e.y - t.y
+    var d = maths.sqrt(dx * dx + dy * dy)
+    if d < 0.001 { d = 1.0 }
+    b.vx = dx / d
+    b.vy = dy / d
+    g.bullets.add(b)
+    if t.ttype == TW_ARROW { t.fireAnim = ARROW_ANIM_STEP * 4 }     // 塔上人物射箭动作
+    if t.ttype == TW_CANNON or t.ttype == TW_FROST { t.fireAnim = CANNON_ANIM_STEP * 2 }   // 炮管开火动作（帧 3-4）
+    if g.audioOk and not g.muted {
+        if t.ttype == TW_ARROW { g.sfxShootArrow.play() }   // 箭塔用专属开火音
+        else { g.sfxShoot.play() }                          // 其余塔复用通用开火音
+    }
+}
+
+func hitTarget(Game g, Bullet b, int ti) {
+    if ti < 0 { return }
+    damageIdx(g, ti, b.damage)
+
+    // 溅射
+    if b.splash > 0.0 {
+        var rad = b.splash * TS
+        var i = 0
+        for g.enemies to o {
+            if i != ti and o.alive {
+                if dist2(b.x, b.y, o.x, o.y) <= rad * rad {
+                    damageIdx(g, i, b.damage * 0.5)
+                }
+            }
+            i = i + 1
+        }
+        addParticles(g, b.x, b.y, 10, #E74C3CFF)
+    }
+
+    // 减速
+    if b.slowAmount > 0.0 {
+        applySlow(g, ti, b.slowAmount, b.slowFrames)
+        addParticles(g, b.x, b.y, 5, #5DADE2FF)
+        if g.audioOk and not g.muted { g.sfxFreeze.play() }
+    }
+
+    // 链式闪电
+    if b.chain > 0 {
+        var cx = b.x
+        var cy = b.y
+        var n = 0
+        var i2 = 0
+        for g.enemies to o {
+            if n >= b.chain { break }
+            if i2 != ti and o.alive {
+                if dist2(cx, cy, o.x, o.y) <= 4096.0 {
+                    var a = new Arc()
+                    a.x1 = cx; a.y1 = cy
+                    a.x2 = o.x; a.y2 = o.y
+                    a.life = 10
+                    a.alive = true
+                    g.arcs.add(a)
+                    damageIdx(g, i2, b.damage * 0.6)
+                    cx = o.x
+                    cy = o.y
+                    n = n + 1
+                }
+            }
+            i2 = i2 + 1
+        }
+    }
+}
+
+// 生成一圈向外扩散的声波（人物2 哭泣时释放）
+func spawnWave(Game g, float x, float y) {
+    var w = new Wave()
+    w.x = x
+    w.y = y
+    w.life = WAVE_LIFE
+    w.maxLife = WAVE_LIFE
+    w.r = 8.0
+    w.rMax = CRY_R * TS
+    w.alive = true
+    g.waves.add(w)
+}
+
+// 声波干扰倍率：塔落在哭泣中的人物2 声波范围内时，冷却被拉长（攻速变慢）
+func towerJamMul(Game g, float tx, float ty): float {
+    var rad = CRY_R * TS
+    var mul = 1.0
+    for g.enemies to e {
+        if not e.alive { continue }
+        if not e.crying { continue }
+        if dist2(tx, ty, e.x, e.y) <= rad * rad {
+            mul = mul + CRY_SLOW
+            if mul > CRY_MAX { mul = CRY_MAX }
+        }
+    }
+    return mul
+}
+
+func updateEnemies(Game g) {
+    Array[Enemy] live = []
+    var i = 0
+    for g.enemies to e {
+        if not e.alive {
+            // 临终动画：倒计时内仍留在列表中，用于渲染倒地动作
+            if e.dying > 0 {
+                e.dying = e.dying - 1
+                live.add(e)
+            }
+            i = i + 1
+            continue
+        }
+        if e.wpIdx >= WP_N - 1 {
+            // 抵达基地：漏怪
+            e.alive = false
+            g.lives = g.lives - e.dmg
+            addFloat(g, e.x, e.y - 10.0, "-" + e.dmg, #E74C3CFF)
+            addParticles(g, e.x, e.y, 14, #C0392BFF)
+            if g.audioOk and not g.muted { g.sfxLose.play() }
+            if g.lives <= 0 {
+                g.lives = 0
+                g.state = ST_OVER
+            }
+            i = i + 1
+            continue
+        }
+
+        // 人物3：靠近防御塔时停下攻击
+        if e.etype == EM_RUNNER {
+            if e.atkCd > 0 { e.atkCd = e.atkCd - 1 }
+            if not e.attacking and e.atkCd <= 0 {
+                if findTowerNear(g, e.x, e.y, ATK_RANGE * TS) >= 0 {
+                    e.attacking = true
+                    e.atkTimer = 0
+                    e.atkHit = false
+                }
+            }
+            if e.attacking {
+                // 目标可能已被摧毁，每帧重新取最近的一座
+                var ti = findTowerNear(g, e.x, e.y, ATK_RANGE * TS + 8.0)
+                if ti < 0 {
+                    e.attacking = false          // 塔没了，中断攻击
+                    e.atkCd = ATK_CD
+                } else {
+                    e.atkTimer = e.atkTimer + 1
+                    // 在「击打」动作帧结算一次伤害
+                    if not e.atkHit and e.atkTimer >= ATK_HIT * ATK_STEP {
+                        hitTower(g, ti, ATK_DMG)
+                        e.atkHit = true
+                    }
+                    if e.atkTimer >= ATK_STEP * 4 {
+                        e.attacking = false      // 一轮打完，进入间隔
+                        e.atkCd = ATK_CD
+                    }
+                    live.add(e)                  // 攻击期间原地不动
+                    i = i + 1
+                    continue
+                }
+            }
+        }
+
+        // 人物4：血量低于一半时开启「血量保持」并立即起跳自爆
+        //  （半血锁定已在 damageIdx 中处理，这里负责触发朝最近塔的跳跃）
+        if e.etype == EM_PERSON4 and e.pm4State == 0 and e.hp < e.maxHp * 0.5 {
+            var ti4 = findTowerNear(g, e.x, e.y, 999999.0)   // 不限射程，找最近的塔
+            if ti4 >= 0 {
+                var tt = g.towers[ti4]
+                e.pm4Sx = e.x
+                e.pm4Sy = e.y
+                e.pm4Tx = tt.x
+                e.pm4Ty = tt.y
+                e.dir = dirAngle(tt.x - e.x, tt.y - e.y)
+                e.pm4State = 1
+                e.pm4Timer = 0
+                // 触发自爆时给一句台词提示
+                addSpeech(g, e.x - 12.0, e.y - ENEMY_SIZE[e.etype] * 0.5 - 14.0, "要爆炸啦！", 45)
+            }
+        }
+        // 人物4：接近防御塔即锁定目标，起跳跳到塔身上
+        if e.etype == EM_PERSON4 and e.pm4State == 0 {
+            var ti4 = findTowerNear(g, e.x, e.y, ATK_RANGE * TS)
+            if ti4 >= 0 {
+                var tt = g.towers[ti4]
+                e.pm4Sx = e.x
+                e.pm4Sy = e.y
+                e.pm4Tx = tt.x
+                e.pm4Ty = tt.y
+                e.dir = dirAngle(tt.x - e.x, tt.y - e.y)
+                e.pm4State = 1
+                e.pm4Timer = 0
+            }
+        }
+        // 人物4 状态机：跳到塔上 → 落地 → 爆炸
+        if e.etype == EM_PERSON4 and e.pm4State > 0 {
+            e.pm4Timer = e.pm4Timer + 1
+            // 跳跃期间从起跳点插值移动到目标塔坐标
+            if e.pm4State == 1 {
+                var jp = _float(e.pm4Timer) / _float(P4_JUMP_STEP * 3)
+                if jp > 1.0 { jp = 1.0 }
+                e.x = e.pm4Sx + (e.pm4Tx - e.pm4Sx) * jp
+                e.y = e.pm4Sy + (e.pm4Ty - e.pm4Sy) * jp
+            }
+            if e.pm4State == 1 and e.pm4Timer >= P4_JUMP_STEP * 3 {
+                e.pm4State = 2                    // 跳跃结束 → 落地
+                e.pm4Timer = 0
+            } else if e.pm4State == 2 and e.pm4Timer >= P4_LAND_STEP * 2 {
+                // 落地即爆炸：中心最近塔全额伤害，范围内其余塔半额
+                e.pm4State = 3
+                e.pm4Timer = 0
+                var rad = P4_BOOM_R * TS
+                var bestD = -1.0
+                var bestI = -1
+                var bi = 0
+                for g.towers to t {
+                    var d = dist2(e.x, e.y, t.x, t.y)
+                    if d <= rad * rad and (bestI < 0 or d < bestD) { bestD = d; bestI = bi }
+                    bi = bi + 1
+                }
+                addParticles(g, e.x, e.y, 20, #E67E22FF)
+                // 从后往前结算：塔被摧毁移除时，未处理的更小下标不受影响
+                // （长度必须在循环前固定：炸毁塔会让 len() 变短，否则末尾 k 会算出负数）
+                var tlen = g.towers.len()
+                for 0 : tlen - 1 to k2 {
+                    var k = tlen - 1 - k2
+                    if dist2(e.x, e.y, g.towers[k].x, g.towers[k].y) <= rad * rad {
+                        if k == bestI { hitTower(g, k, P4_BOOM_DMG) }
+                        else { hitTower(g, k, P4_BOOM_DMG * 0.5) }
+                    }
+                }
+                if g.audioOk and not g.muted { g.sfxBoom4.play() }   // 自爆专用大爆炸音
+            } else if e.pm4State == 3 and e.pm4Timer >= P4_BOOM_STEP * 4 {
+                killEnemyAt(g, i)                 // 爆炸动画播完移除（正常掉金币）
+            }
+            live.add(e)                           // 跳跃/落地/爆炸期间原地不动
+            i++
+            continue
+        }
+
+        // BOSS 突袭：靠近防御塔有几率跳跃过去拆塔，抓着「战利品」回位
+        if e.etype == EM_BOSS {
+            if e.bCd > 0 { e.bCd = e.bCd - 1 }
+            if e.bState == 0 {
+                var bti = findTowerNear(g, e.x, e.y, BOSS_AGGRO_R * TS)
+                if bti >= 0 and e.bCd <= 0 and rands.ints(0, 99) < 2 {
+                    var bt = g.towers[bti]
+                    e.bAx = e.x; e.bAy = e.y
+                    e.bTx = bt.x; e.bTy = bt.y
+                    e.bTowerType = bt.ttype
+                    e.bRb = e.wpIdx
+                    e.bWpIdx = e.wpIdx
+                    e.bState = 1
+                    e.bTimer = 0
+                    e.bHit = false
+                    e.dir = dirAngle(bt.x - e.x, bt.y - e.y)
+                }
+            } else {
+                e.bTimer = e.bTimer + 1
+                if e.bState == 1 {
+                    // 跳跃突进：从触发点向塔移动
+                    var bp = _float(e.bTimer) / _float(BOSS_ATK_STEP * 3)
+                    if bp > 1.0 { bp = 1.0 }
+                    e.x = e.bAx + (e.bTx - e.bAx) * bp
+                    e.y = e.bAy + (e.bTy - e.bAy) * bp
+                    // 「击打」帧结算：塔直接被拆爆
+                    if not e.bHit and e.bTimer >= BOSS_ATK_STEP * 3 {
+                        e.bHit = true
+                        var bti2 = findTowerNear(g, e.x, e.y, TS * 1.5)
+                        if bti2 >= 0 {
+                            e.bTowerType = g.towers[bti2].ttype
+                            hitTower(g, bti2, 99999.0)
+                        }
+                        if g.audioOk and not g.muted { g.sfxBossSmash.play() }   // BOSS 拆塔击打音
+                    }
+                    if e.bTimer >= BOSS_ATK_STEP * 6 {
+                        e.bState = 2
+                        e.bTimer = 0
+                        // 抓着战利品回位，喊台词（四种塔各有一套）
+                        if e.bTowerType == TW_ARROW {
+                            addSpeech(g, e.x - 36.0, e.y - ENEMY_SIZE[e.etype] * 0.5 - 18.0, "抢压寨夫人回来咯", 100)
+                        } else if e.bTowerType == TW_CANNON {
+                            addSpeech(g, e.x - 36.0, e.y - ENEMY_SIZE[e.etype] * 0.5 - 18.0, "老子天下无敌，哈哈", 100)
+                        } else if e.bTowerType == TW_FROST {
+                            addSpeech(g, e.x - 36.0, e.y - ENEMY_SIZE[e.etype] * 0.5 - 18.0, "冰棍归我咯！", 100)
+                        } else {
+                            addSpeech(g, e.x - 36.0, e.y - ENEMY_SIZE[e.etype] * 0.5 - 18.0, "充电宝抢到手咯！", 100)
+                        }
+                    }
+                } else if e.bState == 2 {
+                    if e.bTowerType == TW_ARROW {
+                        // 抢到压寨夫人：沿原路（路点倒序）跑回出生点
+                        var wpx = _float(WPX[e.bRb]) * TS + TS * 0.5
+                        var wpy = _float(WPY[e.bRb]) * TS + TS * 0.5
+                        var wdx = wpx - e.x
+                        var wdy = wpy - e.y
+                        var wd = maths.sqrt(wdx * wdx + wdy * wdy)
+                        e.dir = dirAngle(wdx, wdy)
+                        var wspd = e.speed * 8.0 + 4.0
+                        if wd <= wspd {
+                            if e.bRb <= 0 {
+                                e.bState = 3    // 到达出生点 → 沿原路跑回来
+                                e.bRb = 0
+                                e.bTimer = 0
+                            } else {
+                                e.bRb = e.bRb - 1
+                            }
+                        } else {
+                            e.x = e.x + wdx / wd * wspd
+                            e.y = e.y + wdy / wd * wspd
+                        }
+                        // 跑回途中循环喊话
+                        if e.bTimer == 10 or e.bTimer == 100 or e.bTimer == 190 {
+                            var sTxt = "抢到了压寨夫人咯！"
+                            if (e.bTimer / 100) * 2 == 1 { sTxt = "洞房咯！" }
+                            addSpeech(g, e.x - 40.0, e.y - ENEMY_SIZE[e.etype] * 0.5 - 24.0, sTxt, 80)
+                        }
+                    } else {
+                        // 抢到武器（加农炮/冰塔/电塔）：原地架起来攻击，打完才归位
+                        // 加农炮每 45 帧朝全图最近的塔轰一炮（伤害立即结算，炮弹为飞行表现）；BOSS 始终面向目标塔
+                        var aimTi = findTowerNear(g, e.x, e.y, TS * 100.0)
+                        if aimTi >= 0 {
+                            e.dir = dirAngle(g.towers[aimTi].x - e.x, g.towers[aimTi].y - e.y)
+                        }
+                        if e.bTowerType == TW_CANNON {
+                            if e.bTimer == 45 or e.bTimer == 90 or e.bTimer == 135 {
+                                var ti3 = aimTi
+                                var bb = new Bullet()
+                                bb.btype = TW_CANNON
+                                bb.speed = 6.0
+                                bb.damage = 0.0
+                                bb.splash = 0.0
+                                bb.slowAmount = 0.0
+                                bb.slowFrames = 0
+                                bb.chain = 0
+                                bb.targetId = -1
+                                bb.alive = true
+                                bb.bossShot = true   // 纯表现弹：不与原敌碰撞，避免误伤 BOSS 自己
+                                var mx = e.x
+                                var my = e.y - 10.0
+                                if ti3 >= 0 {
+                                    var tdx = g.towers[ti3].x - mx
+                                    var tdy = g.towers[ti3].y - my
+                                    var tdd = maths.sqrt(tdx * tdx + tdy * tdy)
+                                    if tdd < 0.001 { tdd = 1.0 }
+                                    bb.vx = tdx / tdd
+                                    bb.vy = tdy / tdd
+                                    bb.x = mx + bb.vx * 26.0   // 从炮口前方出发，不压在 BOSS 身上被当成打自己
+                                    bb.y = my + bb.vy * 26.0
+                                    hitTower(g, ti3, 8.0)   // 开炮即对塔结算伤害，炮弹只做飞行表现
+                                } else {
+                                    bb.vx = 0.0; bb.vy = -1.0
+                                    bb.x = mx; bb.y = my
+                                }
+                                g.bullets.add(bb)
+                                // 开炮表现：炮口闪光（在 BOSS 处）+ 命中处火花与冲击波（在塔处）
+                                addParticles(g, mx, my, 7, #F9E79FFF)
+                                if g.audioOk and not g.muted { g.sfxBossFire.play() }   // BOSS 开炮音
+                                if ti3 >= 0 {
+                                    var tx2 = g.towers[ti3].x
+                                    var ty2 = g.towers[ti3].y
+                                    addParticles(g, tx2, ty2, 12, #E67E22FF)
+                                    var w3 = new Wave()
+                                    w3.x = tx2; w3.y = ty2
+                                    w3.life = 16; w3.maxLife = 16
+                                    w3.r = 6.0; w3.rMax = TS * 1.2
+                                    w3.alive = true
+                                    g.waves.add(w3)
+                                }
+                            }
+                        }
+                        if e.bTimer >= 180 {
+                            e.bState = 4    // 打爽了 → 空手走回原位
+                            e.bTimer = 0
+                        }
+                    }
+                } else if e.bState == 3 {
+                    // 抢到夫人后：沿原路（路点正序）跑回触发点，继续赶路
+                    var adx = e.bAx - e.x
+                    var ady = e.bAy - e.y
+                    var ad = maths.sqrt(adx * adx + ady * ady)
+                    var aspd = e.speed * 4.0 + 2.0
+                    if e.bRb <= e.bWpIdx {
+                        var fwx = _float(WPX[e.bRb]) * TS + TS * 0.5
+                        var fwy = _float(WPY[e.bRb]) * TS + TS * 0.5
+                        var fdx = fwx - e.x
+                        var fdy = fwy - e.y
+                        var fd = maths.sqrt(fdx * fdx + fdy * fdy)
+                        e.dir = dirAngle(fdx, fdy)
+                        if fd <= aspd {
+                            e.bRb = e.bRb + 1
+                        } else {
+                            e.x = e.x + fdx / fd * aspd
+                            e.y = e.y + fdy / fd * aspd
+                        }
+                    } else if ad <= aspd {
+                        e.x = e.bAx; e.y = e.bAy
+                        e.bState = 0
+                        e.bCd = BOSS_CD
+                    } else {
+                        e.x = e.x + adx / ad * aspd
+                        e.y = e.y + ady / ad * aspd
+                    }
+                } else if e.bState == 4 {
+                    // 抢到武器打完：空手走回原位
+                    var adx2 = e.bAx - e.x
+                    var ady2 = e.bAy - e.y
+                    var ad2 = maths.sqrt(adx2 * adx2 + ady2 * ady2)
+                    e.dir = dirAngle(adx2, ady2)
+                    var aspd2 = e.speed * 4.0 + 2.0
+                    if ad2 <= aspd2 {
+                        e.x = e.bAx; e.y = e.bAy
+                        e.bState = 0
+                        e.bCd = BOSS_CD
+                    } else {
+                        e.x = e.x + adx2 / ad2 * aspd2
+                        e.y = e.y + ady2 / ad2 * aspd2
+                    }
+                }
+                live.add(e)     // 突袭期间原地/往返移动，不走路点
+                i++
+                continue
+            }
+        }
+
+        // 人物2：血量降到阈值以下进入「哭泣」状态
+        if e.etype == EM_TANK and not e.crying {
+            if e.hp / e.maxHp <= CRY_HP { e.crying = true; e.waveTimer = 0 }
+        }
+        if e.crying {
+            // 哭泣中：原地定身，周期性释放声波干扰射程内的塔
+            e.waveTimer = e.waveTimer - 1
+            if e.waveTimer <= 0 {
+                spawnWave(g, e.x, e.y)
+                e.waveTimer = CRY_WAVECD
+                // 哭声波同时震伤范围内的防御塔（小额，从后往前结算防止下标位移）
+                var crad = CRY_R * TS
+                var ctlen = g.towers.len()
+                for 0 : ctlen - 1 to ci2 {
+                    var ci3 = ctlen - 1 - ci2
+                    if dist2(e.x, e.y, g.towers[ci3].x, g.towers[ci3].y) <= crad * crad {
+                        hitTower(g, ci3, CRY_DMG)
+                    }
+                }
+            }
+            // 哭坐时随机喊话（约每 3~4 秒一句）
+            if rands.ints(0, 199) < 1 {
+                var cryTxt = "我要回家"
+                if rands.ints(0, 1) == 1 { cryTxt = "妈妈有人打我" }
+                addSpeech(g, e.x - 18.0, e.y - ENEMY_SIZE[e.etype] * 0.5 - 14.0, cryTxt)
+            }
+            // 哭到力竭而亡：保证定身不会永久卡住波次
+            e.hp = e.hp - CRY_DRAIN
+            if e.hp <= 0 { killEnemyAt(g, i) }
+            live.add(e)          // 死亡时保留尸体播放倒地动画
+            i = i + 1
+            continue
+        }
+
+        var tx = _float(WPX[e.wpIdx + 1]) * TS + TS * 0.5
+        var ty = _float(WPY[e.wpIdx + 1]) * TS + TS * 0.5
+        // 双通道：目标点沿「加宽侧」偏移（横向路向下、纵向路向右，与 buildMap 一致），
+        // 每个敌人固定走自己的车道，两条道都有人走，转角处目标固定不打转
+        var side = 0.5 + e.lane
+        if WPX[e.wpIdx + 1] == WPX[e.wpIdx] {
+            tx = tx + side * TS   // 纵向路：向右加宽的一列
+        } else {
+            ty = ty + side * TS   // 横向路：向下加宽的一行
+        }
+        var dx = tx - e.x
+        var dy = ty - e.y
+        var d = maths.sqrt(dx * dx + dy * dy)
+        var spd = e.speed
+        if e.slowTimer > 0 {
+            spd = spd * (1.0 - e.slowAmount)
+            e.slowTimer = e.slowTimer - 1
+        }
+        e.dir = dirAngle(dx, dy)
+        if d <= spd {
+            e.x = tx
+            e.y = ty
+            e.wpIdx = e.wpIdx + 1
+        } else {
+            e.x = e.x + dx / d * spd
+            e.y = e.y + dy / d * spd
+        }
+        live.add(e)
+        i = i + 1
+    }
+    g.enemies = live
+}
+
+func updateTowers(Game g) {
+    for g.towers to t {
+        if t.cooldown > 0 { t.cooldown = t.cooldown - 1 }
+        if t.fireAnim > 0 { t.fireAnim = t.fireAnim - 1 }
+        var ti = findTargetIdx(g, t)
+        if ti >= 0 {
+            var e = g.enemies[ti]
+            // 加农炮/冰塔随目标旋转；箭塔记录目标方向供塔上人物翻转，电塔固定朝上
+            if t.ttype == TW_CANNON or t.ttype == TW_FROST {
+                t.angle = dirAngle(e.x - t.x, e.y - t.y)
+            } else if t.ttype == TW_ARROW {
+                t.angle = 0.0
+                t.aimDir = dirAngle(e.x - t.x, e.y - t.y)
+            } else {
+                t.angle = 0.0
+            }
+            if t.cooldown == 0 {
+                fire(g, t, ti)
+                // 被人物2 的哭泣声波覆盖时攻速变慢（冷却变长）
+                t.cooldown = _int(_float(towerCooldown(t.ttype, t.level)) * towerJamMul(g, t.x, t.y))
+            }
+        }
+    }
+}
+
+func updateBullets(Game g) {
+    Array[Bullet] live = []
+    for g.bullets to b {
+        if not b.alive { continue }
+        var ti = findEnemyIdx(g, b.targetId)
+        // 追踪目标
+        if ti >= 0 {
+            var e = g.enemies[ti]
+            var dx = e.x - b.x
+            var dy = e.y - b.y
+            var d = maths.sqrt(dx * dx + dy * dy)
+            if d > 0.001 { b.vx = dx / d; b.vy = dy / d }
+        }
+        b.x = b.x + b.vx * b.speed
+        b.y = b.y + b.vy * b.speed
+
+        if b.x < -20.0 or b.y < -20.0 or b.x > MAP_W + 20.0 or b.y > MAP_H + 20.0 {
+            continue
+        }
+        var hit = false
+        if ti >= 0 {
+            var e2 = g.enemies[ti]
+            if dist2(b.x, b.y, e2.x, e2.y) < 196.0 {
+                hitTarget(g, b, ti)
+                hit = true
+            }
+        }
+        if not hit and not b.bossShot {
+            // 无目标时与任意敌人碰撞（溅射弹/穿透判定）；BOSS 表现弹跳过，免得误伤自己
+            var i = 0
+            for g.enemies to e3 {
+                if e3.alive {
+                    if dist2(b.x, b.y, e3.x, e3.y) < 144.0 {
+                        hitTarget(g, b, i)
+                        hit = true
+                        break
+                    }
+                }
+                i = i + 1
+            }
+        }
+        if not hit { live.add(b) }
+    }
+    g.bullets = live
+}
+
+// 生成一枚飞向左上角金币计数处的金币（到达后入账，表示收集成功）
+func spawnCoin(Game g, float x, float y, int val) {
+    var c = new Coin()
+    c.sx = x; c.sy = y
+    c.x = x; c.y = y
+    c.tx = 18.0; c.ty = 17.0
+    c.p = 0.0
+    c.val = val
+    c.delay = 0
+    c.alive = true
+    g.coins.add(c)
+}
+
+// 宝箱金币雨：8 枚金币从宝箱位置向四周迸出，依次起飞飞向计数处
+func spawnCoinBurst(Game g, float x, float y, int total) {
+    var n = 8
+    var each = total / n
+    for 0 : n - 1 to k {
+        var c = new Coin()
+        var ang = _float(rands.ints(0, 359)) * 3.14159265 / 180.0
+        var rr = _float(rands.ints(6, 24))
+        c.sx = x + maths.cos(ang) * rr
+        c.sy = y + maths.sin(ang) * rr
+        c.x = c.sx; c.y = c.sy
+        c.tx = 18.0; c.ty = 17.0
+        c.p = 0.0
+        if k == n - 1 { c.val = total - each * (n - 1) } else { c.val = each }
+        c.delay = k * 5
+        c.alive = true
+        g.coins.add(c)
+    }
+}
+
+// 生成一枚停留在地图上的宝箱（点击后弹出随机金币奖励，约 10 秒后消失）
+func spawnChest(Game g, float x, float y) {
+    var ch = new Chest()
+    ch.x = x; ch.y = y
+    ch.life = 600
+    ch.alive = true
+    g.chests.add(ch)
+}
+
+func updateEffects(Game g) {
+    Array[Particle] lp = []
+    for g.particles to p {
+        p.x = p.x + p.vx
+        p.y = p.y + p.vy
+        p.vy = p.vy + 0.06
+        p.life = p.life - 1
+        if p.life > 0 { lp.add(p) }
+    }
+    g.particles = lp
+    g.pCount = 0
+    for lp to p { g.pCount = g.pCount + 1 }
+
+    // 声波：逐帧向外扩张，寿命结束即移除
+    Array[Wave] lwd = []
+    for g.waves to w {
+        w.life = w.life - 1
+        var wp = 1.0 - _float(w.life) / _float(w.maxLife)
+        w.r = 8.0 + (w.rMax - 8.0) * wp
+        if w.life > 0 { lwd.add(w) }
+    }
+    g.waves = lwd
+
+    Array[FloatText] lf = []
+    for g.floats to f {
+        f.y = f.y - 0.5
+        f.life = f.life - 1
+        if f.life > 0 { lf.add(f) }
+    }
+    g.floats = lf
+
+    Array[Arc] la = []
+    for g.arcs to a {
+        a.life = a.life - 1
+        if a.life > 0 { la.add(a) }
+    }
+    g.arcs = la
+
+    // 飞行金币：死亡后快速飞向左上角计数处，到达即收集入账
+    Array[Coin] lc = []
+    for g.coins to c {
+        // 金币雨：延迟帧内原地待命（停在迸出位置）
+        if c.delay > 0 {
+            c.delay = c.delay - 1
+            lc.add(c)
+            continue
+        }
+        c.p = c.p + 0.08
+        if c.p >= 1.0 {
+            g.gold = g.gold + c.val
+            addFloat(g, 34.0, 42.0, "+" + c.val, #FFD700FF)   // 入账提示显示在左上角金币计数下方
+            if g.audioOk and not g.muted { g.sfxPickup.play() }   // 金币收集入账
+        } else {
+            var e = c.p
+            c.x = c.sx + (c.tx - c.sx) * e
+            c.y = c.sy + (c.ty - c.sy) * e - maths.sin(e * 3.14159265) * 20.0
+            lc.add(c)
+        }
+    }
+    g.coins = lc
+
+    // 宝箱：停留一段时间后消失
+    Array[Chest] lch = []
+    for g.chests to ch {
+        ch.life = ch.life - 1
+        if ch.life > 0 { lch.add(ch) }
+    }
+    g.chests = lch
+}
+
+// ==================== 主更新 ====================
+
+func updateGame(Game g) {
+    g.frameCount = g.frameCount + 1
+    if g.bannerTimer > 0 { g.bannerTimer = g.bannerTimer - 1 }
+    if g.hitSfxCd > 0 { g.hitSfxCd = g.hitSfxCd - 1 }
+
+    // 波次调度
+    if g.waveState == 0 {
+        g.waveTimer = g.waveTimer - 1
+        if g.waveTimer <= 0 { startWave(g) }
+    } else if g.waveState == 1 {
+        g.spawnTimer = g.spawnTimer - 1
+        if g.spawnTimer <= 0 {
+            if g.spawnIdx < g.spawnQueue.len() {
+                var t = g.spawnQueue[g.spawnIdx]
+                g.spawnIdx = g.spawnIdx + 1
+                spawnEnemy(g, t)
+                var gap = 34 - g.wave / 2
+                if gap < 12 { gap = 12 }
+                if t == EM_BOSS { gap = 90 }
+                g.spawnTimer = gap
+            } else {
+                g.waveState = 2
+            }
+        }
+    } else if g.waveState == 2 {
+        if g.enemies.len() == 0 {
+            if g.wave >= MAX_WAVE {
+                g.state = ST_WIN
+            } else {
+                g.waveState = 0
+                g.waveTimer = WAVE_GAP
+                if g.audioOk and g.wave % 10 == 0 { g.bossBgm.stop() }
+            }
+        }
+    }
+
+    updateEnemies(g)
+    updateTowers(g)
+    updateBullets(g)
+    updateEffects(g)
+}
+
+// ==================== 建造 ====================
+
+func towerAt(Game g, int gx, int gy): int {
+    for 0 : g.towers.len() - 1 to i {
+        if g.towers[i].gx == gx and g.towers[i].gy == gy { return i }
+    }
+    return -1
+}
+
+func placeTower(Game g, int gx, int gy) {
+    if g.selType < 0 { return }
+    var c2 = cellAt(g, gx, gy)
+    if c2 != T_GRASS {
+        if c2 == T_TREE or c2 == T_TREE2 {
+            g.bannerText = "此处有树木，无法建造"
+        } else if c2 == T_PATH {
+            g.bannerText = "道路之上，无法建造"
+        } else {
+            g.bannerText = "此处无法建造"
+        }
+        g.bannerTimer = 70
+        return
+    }
+    if towerAt(g, gx, gy) >= 0 {
+        g.bannerText = "此处已有防御塔"
+        g.bannerTimer = 70
+        return
+    }
+    var cost = TOWER_COST[g.selType]
+    if g.gold < cost {
+        g.bannerText = "金币不足"
+        g.bannerTimer = 60
+        return
+    }
+    g.gold = g.gold - cost
+    var t = new Tower()
+    t.ttype = g.selType
+    t.gx = gx
+    t.gy = gy
+    t.x = _float(gx) * TS + TS * 0.5
+    t.y = _float(gy) * TS + TS * 0.5
+    t.level = 1
+    t.cooldown = 0
+    t.angle = 0.0
+    t.kills = 0
+    t.fireAnim = 0
+    t.aimDir = 90.0
+    t.maxHp = towerMaxHp(t.ttype, 1)
+    t.hp = t.maxHp
+    g.towers.add(t)
+    addParticles(g, t.x, t.y, 8, #AED6F1FF)
+    if g.audioOk and not g.muted { g.sfxBuild.play() }
+}
+
+func doUpgrade(Game g) {
+    if g.selTower < 0 or g.selTower >= g.towers.len() { return }
+    var t = g.towers[g.selTower]
+    if t.level >= MAX_LEVEL { return }
+    var cost = upgradeCost(t.ttype, t.level)
+    if g.gold < cost {
+        g.bannerText = "金币不足"
+        g.bannerTimer = 60
+        return
+    }
+    g.gold = g.gold - cost
+    t.level = t.level + 1
+    // 升级提升血量上限，并按新增的部分回血
+    var nh = towerMaxHp(t.ttype, t.level)
+    t.hp = t.hp + (nh - t.maxHp)
+    t.maxHp = nh
+    addParticles(g, t.x, t.y, 10, #F1C40FFF)
+    addFloat(g, t.x, t.y - 16.0, "LV" + t.level, #F1C40FFF)
+    if g.audioOk and not g.muted { g.sfxUpgrade.play() }   // 升级音效
+}
+
+func doSell(Game g) {
+    if g.selTower < 0 or g.selTower >= g.towers.len() { return }
+    var t = g.towers[g.selTower]
+    var v = sellValue(t.ttype, t.level)
+    g.gold = g.gold + v
+    addFloat(g, t.x, t.y - 16.0, "+" + v, #FFD700FF)
+    addParticles(g, t.x, t.y, 8, #95A5A6FF)
+    Array[Tower] keep = []
+    for 0 : g.towers.len() - 1 to i {
+        if i != g.selTower { keep.add(g.towers[i]) }
+    }
+    g.towers = keep
+    g.selTower = -1
+    g.menuTower = -1
+}
+
+// 塔是否可升级（金币足够且未满级）
+func towerCanUpgrade(Game g, Tower t): bool {
+    if t.level >= MAX_LEVEL { return false }
+    return g.gold >= upgradeCost(t.ttype, t.level)
+}
+
+// 可升级标识符：金币够且未满级时，返回塔旁的「↑」徽标矩形 [x,y,w,h]，否则 []
+func upgradeBadgeRect(Game g, Tower t): Array[float] {
+    if not towerCanUpgrade(g, t) { return [] }
+    var s = 18.0
+    var x = t.x + TS * 0.5 - s - 1.0   // 默认放在塔右上角外侧
+    var y = t.y - TS * 0.5 - 1.0
+    if x + s > MAP_W - 1.0 { x = t.x - TS * 0.5 - 1.0 }   // 贴右则改放左侧
+    if y < 1.0 { y = t.y + TS * 0.5 + 1.0 }               // 贴顶则改放下方
+    return [x, y, s, s]
+}
+
+// 选中塔弹出的操作菜单（升级 / 出售）。返回 12 个数：
+// [bx,by,bw,bh, ux,uy,uw,uh, sx,sy,sw,sh]，无菜单则 []
+func popupMenu(Game g): Array[float] {
+    if g.menuTower < 0 or g.menuTower >= g.towers.len() { return [] }
+    var t = g.towers[g.menuTower]
+    var bw = 156.0; var bh = 102.0             // 顶部留 38px 信息区（名称/等级/血量/伤害）
+    var bx = t.x - bw * 0.5
+    var by = t.y - TS * 0.5 - bh - 8.0          // 默认浮在塔上方
+    if by < 4.0 { by = t.y + TS * 0.5 + 8.0 }    // 贴顶则改放下方
+    if bx < 4.0 { bx = 4.0 }
+    if bx + bw > MAP_W - 4.0 { bx = MAP_W - 4.0 - bw }
+    if by + bh > MAP_H - 4.0 { by = MAP_H - 4.0 - bh }
+    var pad = 6.0
+    var ux = bx + pad;            var uy = by + 44.0;           var uw = bw - pad * 2.0; var uh = 22.0
+    var sx = bx + pad;            var sy = uy + uh + pad;       var sw = bw - pad * 2.0; var sh = 22.0
+    return [bx, by, bw, bh, ux, uy, uw, uh, sx, sy, sw, sh]
+}
+
+// ==================== 渲染 ====================
+
+func drawHUD(Game g, Renderer r) {
+    var f = g.font
+
+    // ===== 顶部状态条：资源 / 波次信息 / 控制按钮 =====
+    r.setColor(#16202AE8)
+    r.fillRect(0.0, 0.0, MAP_W, HUD_H)
+    r.setColor(#2C3E50FF)
+    r.fillRect(0.0, HUD_H - 2.0, MAP_W, 2.0)
+    r.drawTextureAt(g.texCoin, 10.0, 9.0, 16.0, 16.0)
+    r.drawText(f, "" + g.gold, 30.0, 10.0, #FFD700FF)
+    r.drawTextureAt(g.texHeart, 96.0, 9.0, 16.0, 16.0)
+    r.drawText(f, "" + g.lives, 116.0, 10.0, #E74C3CFF)
+    r.drawText(f, "第 " + g.wave + "/" + MAX_WAVE + " 波", 168.0, 10.0, #AED6F1FF)
+    if g.waveState == 0 {
+        var secs = g.waveTimer / 60 + 1
+        r.drawText(f, "下一波 " + secs + " 秒后 (空格提前 +" + (secs * 2) + " 金)", 268.0, 10.0, #A0AAB0FF)
+    } else {
+        r.drawText(f, "剩余敌人 " + (g.enemies.len() + g.spawnQueue.len() - g.spawnIdx), 268.0, 10.0, #A0AAB0FF)
+    }
+    // 右侧小按钮：倍速 / 静音 / 暂停
+    var bw = 66.0
+    var bx0 = MAP_W - (bw + 6.0) * 3.0 - 8.0
+    r.setColor(if g.speedMul > 1 then #1F618DFF else #1A252FFF)
+    r.fillRoundedRect(bx0, 5.0, bw, 24.0, 5.0)
+    r.drawTextCentered(f, "速度 x" + g.speedMul, bx0, bw, 11.0, #ECF0F1FF)
+    r.setColor(if g.muted then #7B241CFF else #1A252FFF)
+    r.fillRoundedRect(bx0 + bw + 6.0, 5.0, bw, 24.0, 5.0)
+    r.drawTextCentered(f, if g.muted then "静音" else "开声", bx0 + bw + 6.0, bw, 11.0, #ECF0F1FF)
+    r.setColor(#1A252FFF)
+    r.fillRoundedRect(bx0 + (bw + 6.0) * 2.0, 5.0, bw, 24.0, 5.0)
+    r.drawTextCentered(f, if g.state == ST_PAUSE then "继续" else "暂停", bx0 + (bw + 6.0) * 2.0, bw, 11.0, #ECF0F1FF)
+
+    // ===== 底部建塔栏：4 张塔卡片 + 波次按钮 =====
+    r.setColor(#16202AE8)
+    r.fillRect(0.0, BAR_Y, MAP_W, BAR_H)
+    r.setColor(#2C3E50FF)
+    r.fillRect(0.0, BAR_Y, MAP_W, 2.0)
+    var hovIdx = -1
+    for 0 : 3 to i {
+        var cx = 8.0 + _float(i) * (CARD_W + 6.0)
+        var cy = BAR_Y + 6.0
+        if inRect(g.mouseX, g.mouseY, cx, cy, CARD_W, BAR_H - 12.0) { hovIdx = i }
+        var sel = g.selType == i
+        var afford = g.gold >= TOWER_COST[i]
+        var bgc = #1A252FFF
+        if sel { bgc = #1F618DFF } else if hovIdx == i { bgc = #243447FF }
+        r.setColor(bgc)
+        r.fillRoundedRect(cx, cy, CARD_W, BAR_H - 12.0, 6.0)
+        r.setColor(if sel then #5DADE2FF else #34495EFF)
+        r.drawRoundedRect(cx, cy, CARD_W, BAR_H - 12.0, 6.0)
+        if g.texTower[i] != null { r.drawTextureAt(g.texTower[i], cx + 5.0, cy + 8.0, 34.0, 34.0) }
+        var nc = #ECF0F1FF
+        if not afford { nc = #7F8C8DFF }
+        r.drawText(f, TOWER_NAME[i], cx + 44.0, cy + 9.0, nc)
+        r.drawTextureAt(g.texCoin, cx + 44.0, cy + 26.0, 11.0, 11.0)
+        r.drawText(f, "" + TOWER_COST[i], cx + 58.0, cy + 25.0, #FFD700FF)
+        r.drawText(f, "[" + (i + 1) + "]", cx + CARD_W - 18.0, cy + 9.0, #6C7A89FF)
+    }
+    // 波次按钮（底栏右侧）
+    var wbx = MAP_W - 216.0
+    var wby = BAR_Y + 7.0
+    if g.waveState == 0 {
+        var secs = g.waveTimer / 60 + 1
+        r.setColor(#1E8449FF)
+        r.fillRoundedRect(wbx, wby, 208.0, BAR_H - 14.0, 6.0)
+        r.setColor(#2ECC71FF)
+        r.drawRoundedRect(wbx, wby, 208.0, BAR_H - 14.0, 6.0)
+        r.drawTextCentered(f, "开始下一波 (空格)  奖励 +" + (secs * 2) + " 金", wbx, 208.0, wby + 6.0, #ECF0F1FF)
+        r.drawTextCentered(f, secs + " 秒后自动开始", wbx, 208.0, wby + 24.0, #A0AAB0FF)
+    } else {
+        r.setColor(#566573FF)
+        r.fillRoundedRect(wbx, wby, 208.0, BAR_H - 14.0, 6.0)
+        r.drawTextCentered(f, "第 " + g.wave + " 波进行中", wbx, 208.0, wby + 6.0, #ECF0F1FF)
+        r.drawTextCentered(f, "剩余 " + (g.enemies.len() + g.spawnQueue.len() - g.spawnIdx) + " 敌", wbx, 208.0, wby + 24.0, #A0AAB0FF)
+    }
+
+    // 底栏卡片悬停：弹出详细信息（建塔栏上方）
+    if hovIdx >= 0 {
+        var tip = "单体速射 · 无特效"
+        if hovIdx == 1 { tip = "炮弹溅射 1.2 格范围伤害" }
+        else if hovIdx == 2 { tip = "冰冻减速 45% · 辅助控场" }
+        else if hovIdx == 3 { tip = "链式闪电 · 弹跳 2 个目标" }
+        var aps = _int(600 / TOWER_CD[hovIdx])
+        var ttx = 8.0 + _float(hovIdx) * (CARD_W + 6.0) - 20.0
+        if ttx < 4.0 { ttx = 4.0 }
+        if ttx + 226.0 > MAP_W - 4.0 { ttx = MAP_W - 230.0 }
+        var tty = BAR_Y - 96.0
+        r.setColor(#0B1016F2)
+        r.fillRoundedRect(ttx, tty, 226.0, 90.0, 8.0)
+        r.setColor(#5DADE2FF)
+        r.drawRoundedRect(ttx, tty, 226.0, 90.0, 8.0)
+        r.drawText(f, TOWER_NAME[hovIdx] + " · 用法", ttx + 8.0, tty + 6.0, #FFDC50FF)
+        r.drawText(f, "伤害 " + _int(TOWER_DMG[hovIdx]) + "  射程 " +
+                  _int(towerRange(hovIdx, 1) / TS * 10.0) / 10 + "格  攻速 " +
+                  (aps / 10) + "." + (aps % 10) + "/秒", ttx + 8.0, tty + 22.0, #ECF0F1FF)
+        r.drawText(f, "造价 " + TOWER_COST[hovIdx] + "  血量 " + _int(towerMaxHp(hovIdx, 1)), ttx + 8.0, tty + 36.0, #ECF0F1FF)
+        r.drawText(f, "特性: " + tip, ttx + 8.0, tty + 50.0, #AED6F1FF)
+        r.drawText(f, "点卡片 / 按数字键选择建造", ttx + 8.0, tty + 68.0, #7F8C8DFF)
+    }
+
+    // 选中塔的弹出操作菜单（信息 + 升级 / 出售）
+    var pm = popupMenu(g)
+    if pm.len() == 12 {
+        r.setColor(#0B1016F0)
+        r.fillRoundedRect(pm[0], pm[1], pm[2], pm[3], 8.0)
+        r.setColor(#34495EFF)
+        r.drawRoundedRect(pm[0], pm[1], pm[2], pm[3], 8.0)
+        var mt = g.towers[g.menuTower]
+        var canUp = towerCanUpgrade(g, mt)
+        r.drawText(f, TOWER_NAME[mt.ttype] + " Lv" + mt.level, pm[0] + 8.0, pm[1] + 6.0, #FFDC50FF)
+        r.drawText(f, "血量 " + _int(mt.hp) + "/" + _int(mt.maxHp) + "  伤害 " + _int(towerDamage(mt.ttype, mt.level)),
+                  pm[0] + 8.0, pm[1] + 21.0, #ECF0F1FF)
+        // 升级
+        r.setColor(if canUp then #1E8449FF else #566573FF)
+        r.fillRoundedRect(pm[4], pm[5], pm[6], pm[7], 4.0)
+        if g.texUp != null { r.drawTextureAt(g.texUp, pm[4] + 5.0, pm[5] + 3.0, 18.0, 18.0) }
+        r.drawTextCentered(f, (if mt.level >= MAX_LEVEL then "已满级" else "升级 " + upgradeCost(mt.ttype, mt.level) + " 金"),
+                   pm[4], pm[6], pm[5] + 4.0, #ECF0F1FF)
+        // 出售
+        r.setColor(#7B241CFF)
+        r.fillRoundedRect(pm[8], pm[9], pm[10], pm[11], 4.0)
+        if g.texSell != null { r.drawTextureAt(g.texSell, pm[8] + 5.0, pm[9] + 3.0, 18.0, 18.0) }
+        r.drawTextCentered(f, "出售 " + sellValue(mt.ttype, mt.level) + " 金", pm[8], pm[10], pm[9] + 4.0, #ECF0F1FF)
+    }
+}
+
+// 主菜单中央按钮：开始游戏 / 退出游戏
+func drawMenuButtons(Game g, Renderer r) {
+    var f = g.fontBig
+    var mbx = MAP_W * 0.5 - 110.0
+    var mb1 = MAP_H * 0.5 - 10.0
+    var mb2 = MAP_H * 0.5 + 46.0
+    var hov1 = inRect(g.mouseX, g.mouseY, mbx, mb1, 220.0, 44.0)
+    var hov2 = inRect(g.mouseX, g.mouseY, mbx, mb2, 220.0, 44.0)
+    r.setColor(if hov1 then #1E8449FF else #145A32FF)
+    r.fillRoundedRect(mbx, mb1, 220.0, 44.0, 10.0)
+    r.setColor(if hov1 then #2ECC71FF else #1E8449FF)
+    r.drawRoundedRect(mbx, mb1, 220.0, 44.0, 10.0)
+    r.drawTextCentered(f, "开 始 游 戏", mbx, 220.0, mb1 + 14.0, #ECF0F1FF)
+    r.setColor(if hov2 then #922B21FF else #641E16FF)
+    r.fillRoundedRect(mbx, mb2, 220.0, 44.0, 10.0)
+    r.setColor(#E74C3CFF)
+    r.drawRoundedRect(mbx, mb2, 220.0, 44.0, 10.0)
+    r.drawTextCentered(f, "退 出 游 戏", mbx, 220.0, mb2 + 14.0, #ECF0F1FF)
+}
+
+func drawGame(Game g, Renderer r) {
+    r.clearColor(#0F1620FF)
+
+    // 地图（预渲染纹理）
+    if g.mapTex != null {
+        r.drawTextureAt(g.mapTex, 0.0, 0.0, MAP_W, MAP_H)
+    }
+
+    // 鼠标悬停：建造预览
+    if g.selType >= 0 and g.mouseY > HUD_H and g.mouseY < BAR_Y {
+        var gx = _int(g.mouseX / TS)
+        var gy = _int(g.mouseY / TS)
+        if gx >= 0 and gy >= 0 and gx < COLS and gy < ROWS {
+            var canPlace = cellAt(g, gx, gy) == T_GRASS and towerAt(g, gx, gy) < 0
+            var px = _float(gx) * TS
+            var py = _float(gy) * TS
+            // 射程圈
+            var rad = towerRange(g.selType, 1)
+            r.setColor(if canPlace then #5DADE233 else #E74C3C33)
+            r.fillCircle(px + TS * 0.5, py + TS * 0.5, rad)
+            r.setColor(if canPlace then #5DADE2AA else #E74C3CAA)
+            r.drawCircle(px + TS * 0.5, py + TS * 0.5, rad)
+            // 格子高亮
+            r.setColor(if canPlace then #2ECC7199 else #E74C3C99)
+            r.fillRect(px, py, TS, TS)
+            r.setColor(if canPlace then #2ECC71FF else #E74C3CFF)
+            r.drawRect(px, py, TS, TS)
+            // 半透明塔预览
+            if canPlace and g.texTower[g.selType] != null {
+                r.drawTextureAt(g.texTower[g.selType], px + 1.0, py + 1.0, TS - 2.0, TS - 2.0)
+            }
+        }
+    }
+
+    // 选中塔的射程圈
+    if g.selTower >= 0 and g.selTower < g.towers.len() {
+        var st = g.towers[g.selTower]
+        var rad2 = towerRange(st.ttype, st.level)
+        r.setColor(#F1C40F33)
+        r.fillCircle(st.x, st.y, rad2)
+        r.setColor(#F1C40FCC)
+        r.drawCircle(st.x, st.y, rad2)
+    }
+
+    // 塔（画家算法：按 y 坐标从上到下排序绘制，下方的塔遮住上方的，避免相邻塔层级错乱）
+    Array[float] twYs = []
+    for 0 : g.towers.len() - 1 to twoi { twYs.add(g.towers[twoi].y) }
+    var twOrder = assets.orderByY(twYs)
+    for 0 : g.towers.len() - 1 to twi2 {
+        var t = g.towers[twOrder[twi2]]
+        var tex = g.texTower[t.ttype]
+        if tex == null { continue }
+        // 加农炮/冰塔：帧 0 底座不旋转；帧 1 炮管（素材朝左）按目标方向旋转
+        // 炮管旋转量 = dirAngle + 90（朝左基准），开火时用帧 3-4 的开火动作
+        // 冰塔底座不动，仅炮管抬高（约一张图高减一点），塔身显高
+        var bsheet = g.texCannon
+        if t.ttype == TW_FROST { bsheet = g.texFrost }
+        if (t.ttype == TW_CANNON or t.ttype == TW_FROST) and bsheet.len() > 4 {
+            var byoff = 0.0            // 底座：不偏移
+            var gyoff = 0.0            // 炮管：竖直偏移
+            if t.ttype == TW_FROST { gyoff = -TS * 0.90 }
+            r.drawTextureRotated(bsheet[0], t.x - TS * 0.75, t.y - TS * 0.75 + byoff, TS * 1.5, TS * 1.5,
+                                 0.0, TS * 0.75, TS * 0.75, Flip.NONE)
+            var brot = t.angle + 90.0
+            var bfi = 1
+            if t.fireAnim > 0 {
+                bfi = 3 + ((CANNON_ANIM_STEP * 2 - t.fireAnim) / CANNON_ANIM_STEP)
+                if bfi > 4 { bfi = 4 }
+            }
+            r.drawTextureRotated(bsheet[bfi], t.x - TS * 0.75, t.y - TS * 0.75 + gyoff, TS * 1.5, TS * 1.5,
+                                 brot, TS * 0.75, TS * 0.75, Flip.NONE)
+        } else {
+            r.drawTextureRotated(tex, t.x - TS * 0.75, t.y - TS * 0.75, TS * 1.5, TS * 1.5,
+                                 t.angle, TS * 0.75, TS * 0.75, Flip.NONE)
+        }
+        // 箭塔：塔上人物常驻——无目标时用帧 1 作待机姿势，开火时播放帧 1-4 射箭动作
+        // 人物缩小放在塔身中上部，并按目标方向水平翻转（素材默认朝左）
+        if t.ttype == TW_ARROW and g.texArrowTower.len() > 4 {
+            var ai = 1
+            if t.fireAnim > 0 {
+                ai = 1 + ((ARROW_ANIM_STEP * 4 - t.fireAnim) / ARROW_ANIM_STEP)
+                if ai > 4 { ai = 4 }
+            }
+            var psz = TS * 1.05
+            var pflip = assets.sideFlip(t.aimDir)
+            r.drawTextureRotated(g.texArrowTower[ai], t.x - psz * 0.5, t.y - TS * 0.65 - psz * 0.5, psz, psz,
+                                 0.0, psz * 0.5, psz * 0.5, pflip)
+        }
+        // 等级星
+        for 1 : t.level to lv {
+            r.drawTextureAt(g.texStar, t.x - 12.0 + _float(lv) * 7.0, t.y + 10.0, 10.0, 10.0)
+        }
+        // 塔血条（被人物3 打掉血后才显示）
+        if t.hp < t.maxHp {
+            var thw = TS - 6.0
+            var thr = t.hp / t.maxHp
+            if thr < 0.0 { thr = 0.0 }
+            r.setColor(#00000099)
+            r.fillRect(t.x - thw * 0.5, t.y - TS * 0.5 - 1.0, thw, 3.0)
+            if thr > 0.5 {
+                r.setColor(#2ECC71FF)
+            } else if thr > 0.25 {
+                r.setColor(#F1C40FFF)
+            } else {
+                r.setColor(#E74C3CFF)
+            }
+            r.fillRect(t.x - thw * 0.5, t.y - TS * 0.5 - 1.0, thw * thr, 3.0)
+        }
+    }
+
+    // 可升级标识符：金币够且未满级时，塔旁显示「升级」图标（上下浮动提示可点）
+    for g.towers to t {
+        var bd = upgradeBadgeRect(g, t)
+        if bd.len() == 4 and g.texUp != null {
+            var ubob = maths.sin(_float(g.frameCount) * 0.12) * 3.0
+            r.drawTextureAt(g.texUp, bd[0] - 2.0, bd[1] - 2.0 + ubob, bd[2] + 4.0, bd[3] + 4.0)
+        }
+    }
+
+    // 敌人（画家算法：按 y 坐标从上到下排序绘制，近处的敌人遮住远处的）
+    Array[float] eYs = []
+    for 0 : g.enemies.len() - 1 to oi { eYs.add(g.enemies[oi].y) }
+    var drawOrder = assets.orderByY(eYs)
+    for 0 : g.enemies.len() - 1 to ei2 {
+        var e = g.enemies[drawOrder[ei2]]
+        var sz = ENEMY_SIZE[e.etype]
+        if e.etype == EM_SLIME and g.texSlime.len() > 0 {
+            // 侧视行走帧：不旋转，按移动方向水平翻转（素材默认朝左）
+            var fidx = _int(g.frameCount / 8) % 6
+            fidx = assets.clampIdx(fidx, g.texSlime.len())
+            var flip = assets.sideFlip(e.dir)
+            r.drawTextureRotated(g.texSlime[fidx], e.x - sz * 0.5, e.y - sz * 0.5, sz, sz,
+                                 0.0, sz * 0.5, sz * 0.5, flip)
+        } else if e.etype == EM_GRUNT and g.texGrunt.len() > 0 {
+            // 人物小兵：6 帧侧视行走；不旋转，按移动方向水平翻转（素材默认朝左）
+            var fidx = _int(g.frameCount / 8) % 6
+            fidx = assets.clampIdx(fidx, g.texGrunt.len())
+            var flip = assets.sideFlip(e.dir)
+            r.drawTextureRotated(g.texGrunt[fidx], e.x - sz * 0.5, e.y - sz * 0.5, sz, sz,
+                                 0.0, sz * 0.5, sz * 0.5, flip)
+        } else if (e.etype == EM_PERSON or e.etype == EM_PERSON_RUN) and g.texPerson.len() > 0 {
+            // 人物：6 帧表中前 3 帧走路、后 3 帧奔跑；不旋转，按移动方向水平翻转（素材默认朝左）
+            var base = 0
+            if e.etype == EM_PERSON_RUN { base = 3 }
+            var fidx = base + (_int(g.frameCount / 8) % 3)
+            fidx = assets.clampIdx(fidx, g.texPerson.len())
+            var flip = assets.sideFlip(e.dir)
+            r.drawTextureRotated(g.texPerson[fidx], e.x - sz * 0.5, e.y - sz * 0.5, sz, sz,
+                                 0.0, sz * 0.5, sz * 0.5, flip)
+        } else if e.etype == EM_RUNNER and g.texPerson3.len() > 0 {
+            // 人物3：8 帧表，前 4 帧走路、后 4 帧攻击；不旋转，按移动方向水平翻转（素材默认朝左）
+            var fidx = 0
+            if e.attacking {
+                var st = e.atkTimer / ATK_STEP       // 0=抬臂 1=挥出 2=击打 3=回收
+                if st < 0 { st = 0 }
+                if st > 3 { st = 3 }
+                fidx = 4 + st
+            } else {
+                fidx = _int(g.frameCount / 8) % 4
+            }
+            fidx = assets.clampIdx(fidx, g.texPerson3.len())
+            var flip = assets.sideFlip(e.dir)
+            r.drawTextureRotated(g.texPerson3[fidx], e.x - sz * 0.5, e.y - sz * 0.5, sz, sz,
+                                 0.0, sz * 0.5, sz * 0.5, flip)
+        } else if e.etype == EM_PERSON4 and g.texPerson4.len() > 0 {
+            // 人物4：0-2 走路循环 / 3-5 跳跃 / 6-7 落地；爆炸帧用爆炸精灵表单独绘制
+            if e.pm4State < 3 {
+                var fidx = 0
+                if e.pm4State == 1 {
+                    var jst = e.pm4Timer / P4_JUMP_STEP
+                    if jst > 2 { jst = 2 }
+                    fidx = 3 + jst
+                } else if e.pm4State == 2 {
+                    var lst = e.pm4Timer / P4_LAND_STEP
+                    if lst > 1 { lst = 1 }
+                    fidx = 6 + lst
+                } else {
+                    fidx = _int(g.frameCount / 8) % 3
+                }
+                fidx = assets.clampIdx(fidx, g.texPerson4.len())
+                var flip = assets.sideFlip(e.dir)
+                // 跳跃期间叠加抛物线高度（正弦弧线），跳到塔上方
+                var yoff = 0.0
+                if e.pm4State == 1 {
+                    var jp = _float(e.pm4Timer) / _float(P4_JUMP_STEP * 3)
+                    if jp > 1.0 { jp = 1.0 }
+                    yoff = -maths.sin(jp * 3.14159265) * P4_JUMP_H
+                }
+                r.drawTextureRotated(g.texPerson4[fidx], e.x - sz * 0.5, e.y + yoff - sz * 0.5, sz, sz,
+                                     0.0, sz * 0.5, sz * 0.5, flip)
+            }
+        } else if e.etype == EM_TANK and g.texPerson2.len() > 0 {
+            // 人物2：前 3 帧走路循环；后 3 帧随血量递进 含泪→趴地哭泣→倒下死亡
+            // 不旋转，按移动方向水平翻转（素材默认朝左）
+            var fidx = 0
+            if not e.alive {
+                fidx = 5                                  // 倒下死亡（临终动画期间）
+            } else {
+                var hr = e.hp / e.maxHp
+                if hr > 0.66 {
+                    fidx = _int(g.frameCount / 8) % 3     // 健康：走路 0-2 循环
+                } else if hr > 0.33 {
+                    fidx = 3                              // 受伤：含泪
+                } else {
+                    fidx = 4                              // 濒死：趴地哭泣
+                }
+            }
+            fidx = assets.clampIdx(fidx, g.texPerson2.len())
+            var flip = assets.sideFlip(e.dir)
+            r.drawTextureRotated(g.texPerson2[fidx], e.x - sz * 0.5, e.y - sz * 0.5, sz, sz,
+                                 0.0, sz * 0.5, sz * 0.5, flip)
+        } else if e.etype == EM_BOSS and g.texBossWalk.len() > 0 {
+            // BOSS：三态精灵表（走 / 跳跃攻击 / 抓着战利品回位）；素材默认朝左，按方向翻转
+            var bflip = assets.sideFlip(e.dir)
+            if e.bState == 1 and g.texBossJump.len() > 0 {
+                var bfj = e.bTimer / BOSS_ATK_STEP
+                bfj = assets.clampIdx(bfj, g.texBossJump.len())
+                r.drawTextureRotated(g.texBossJump[bfj], e.x - sz * 0.5, e.y - sz * 0.5, sz, sz,
+                                     0.0, sz * 0.5, sz * 0.5, bflip)
+            } else if e.bState == 2 and e.bTowerType == TW_ARROW and g.texBossReturn.len() > 0 {
+                // 抢到夫人：扛着人沿原路返回，帧速放慢表现沉重感
+                var bfr = e.bTimer / (BOSS_ATK_STEP * 2)
+                bfr = assets.clampIdx(bfr, g.texBossReturn.len())
+                r.drawTextureRotated(g.texBossReturn[bfr], e.x - sz * 0.5, e.y - sz * 0.5, sz, sz,
+                                     0.0, sz * 0.5, sz * 0.5, bflip)
+            } else if e.bState == 2 and g.texBossJump.len() > 0 {
+                // 抢到武器：原地抡着武器攻击（攻击动画循环）
+                var raw = e.bTimer / BOSS_ATK_STEP
+                var bfj = raw - (raw / 6) * 6
+                bfj = assets.clampIdx(bfj, g.texBossJump.len())
+                r.drawTextureRotated(g.texBossJump[bfj], e.x - sz * 0.5, e.y - sz * 0.5, sz, sz,
+                                     0.0, sz * 0.5, sz * 0.5, bflip)
+            } else {
+                // 赶路 / 空手回位：走路动画（回程放慢，帧速恢复正常，避免滑步）
+                var wfr = 4
+                // 12 帧往返（ping-pong）：0→1→2→3→4→5→4→3→2→1→0，腿不会突跳，走路更顺滑（整轮节奏与原 6 帧一致）
+                var bfw = _int(g.frameCount / wfr) % 12
+                if bfw >= 6 { bfw = 11 - bfw }
+                bfw = assets.clampIdx(bfw, g.texBossWalk.len())
+                r.drawTextureRotated(g.texBossWalk[bfw], e.x - sz * 0.5, e.y - sz * 0.5, sz, sz,
+                                     0.0, sz * 0.5, sz * 0.5, bflip)
+            }
+        } else {
+            var tex = g.texEnemy[e.etype]
+            if tex != null {
+                // 素材默认朝下，旋转量需减去 180
+                r.drawTextureRotated(tex, e.x - sz * 0.5, e.y - sz * 0.5, sz, sz,
+                                     e.dir - 180.0, sz * 0.5, sz * 0.5, Flip.NONE)
+            }
+        }
+        // 减速光环（临终倒地期间不显示）
+        if e.alive and e.slowTimer > 0 {
+            r.setColor(#5DADE255)
+            r.fillCircle(e.x, e.y, sz * 0.55)
+        }
+        // 血条（临终倒地期间不显示）
+        if e.alive {
+            var bw = sz
+            var ratio = e.hp / e.maxHp
+            if ratio < 0.0 { ratio = 0.0 }
+            r.setColor(#00000099)
+            r.fillRect(e.x - bw * 0.5, e.y - sz * 0.5 - 7.0, bw, 4.0)
+            if ratio > 0.6 {
+                r.setColor(#2ECC71FF)
+            } else if ratio > 0.3 {
+                r.setColor(#F1C40FFF)
+            } else {
+                r.setColor(#E74C3CFF)
+            }
+            r.fillRect(e.x - bw * 0.5, e.y - sz * 0.5 - 7.0, bw * ratio, 4.0)
+        }
+    }
+
+    // BOSS 战利品独立绘制层：抓着战利品回位时，炮管/人物画在 BOSS 头顶
+    for g.enemies to e {
+        if not e.alive { continue }
+        if e.etype != EM_BOSS { continue }
+        // 箭塔：扛着人跑回出生点（state 2），到达后即放下，空手跑回（state 3）；武器类：仅原地攻击阶段（state 2）扛着
+        var showCarry = false
+        if e.bState == 2 { showCarry = true }
+        if not showCarry { continue }
+        var bsz = ENEMY_SIZE[e.etype]
+        var cflip = assets.sideFlip(e.dir)
+        var cbob = maths.sin(_float(g.frameCount) * 0.25) * 4.0
+        if cbob > 0.0 { cbob = -cbob }
+        if e.bTowerType == TW_CANNON and g.texCannon.len() > 1 {
+            // 扛着的加农炮：炮管放大（与人物一致），炮口朝上
+            r.drawTextureRotated(g.texCannon[1], e.x - 27.0, e.y - bsz * 0.5 - 40.0 + cbob, 54.0, 54.0,
+                                 0.0, 27.0, 27.0, cflip)
+        } else if e.bTowerType == TW_FROST and g.texFrost.len() > 1 {
+            r.drawTextureRotated(g.texFrost[1], e.x - 21.0, e.y - bsz * 0.5 - 30.0 + cbob, 42.0, 42.0,
+                                 0.0, 21.0, 21.0, cflip)
+        } else if e.bTowerType == TW_ARROW and g.texArrowTower.len() > 1 {
+            // 扛在肩上：人物横躺（旋转 90°），中心略下移搭在肩头
+            r.drawTextureRotated(g.texArrowTower[1], e.x - 27.0, e.y - bsz * 0.5 - 38.0 + cbob, 54.0, 54.0,
+                                 90.0, 27.0, 27.0, cflip)
+        } else if e.bTowerType == TW_TESLA and g.texTower[3] != null {
+            r.drawTextureRotated(g.texTower[3], e.x - 20.0, e.y - bsz * 0.5 - 32.0 + cbob, 40.0, 40.0,
+                                 0.0, 20.0, 20.0, cflip)
+        }
+    }
+
+    // 人物4 自爆特效（爆炸精灵表 4 帧，逐帧放大显示）
+    for g.enemies to e {
+        if not e.alive { continue }
+        if e.pm4State != 3 { continue }
+        if g.texBoom4.len() == 0 { continue }
+        var bst = e.pm4Timer / P4_BOOM_STEP
+        bst = assets.clampIdx(bst, g.texBoom4.len())
+        var bs = ENEMY_SIZE[e.etype] * 1.8
+        r.drawTextureRotated(g.texBoom4[bst], e.x - bs * 0.5, e.y - bs * 0.5, bs, bs,
+                             0.0, bs * 0.5, bs * 0.5, Flip.NONE)
+    }
+
+    // 人物2 哭泣声波：向外扩散的空心圈，越扩散越淡
+    for g.waves to w {
+        var wp = 1.0 - _float(w.life) / _float(w.maxLife)
+        var wa = _int(190.0 * (1.0 - wp))
+        if wa < 0 { wa = 0 }
+        if wa > 255 { wa = 255 }
+        r.setColor((wa << 24) | (0x85 << 16) | (0xC1 << 8) | 0xE9)
+        r.drawCircle(w.x, w.y, w.r)
+    }
+    // 哭泣中的人物2：脚下脉动光环，标出声波干扰范围
+    for g.enemies to e {
+        if not e.alive { continue }
+        if not e.crying { continue }
+        var pu = 0.5 + 0.5 * maths.cos(_float(g.frameCount) * 0.12)
+        var pa = _int(35.0 + 45.0 * pu)
+        r.setColor((pa << 24) | (0x85 << 16) | (0xC1 << 8) | 0xE9)
+        r.fillCircle(e.x, e.y, CRY_R * TS)
+    }
+
+    // 子弹
+    for g.bullets to b {
+        // 箭矢/炮弹/冰弹分别用「塔射箭人物」「加农炮」「冰塔炮」第 6 帧，其余子弹用各自贴图
+        var bt = g.texBullet[b.btype]
+        if b.btype == TW_ARROW and g.texArrowTower.len() > 5 { bt = g.texArrowTower[5] }
+        if b.btype == TW_CANNON and g.texCannon.len() > 5 { bt = g.texCannon[5] }
+        if b.btype == TW_FROST and g.texFrost.len() > 5 { bt = g.texFrost[5] }
+        if bt == null { continue }
+        var ang = dirAngle(b.vx, b.vy)
+        // 箭矢素材水平朝左：飞行方向角 = atan2(vy,vx)，素材基准朝左(180°)，旋转量 = 方向角 - 180
+        // 其余子弹素材朝上：用 dirAngle（方向角 + 90）
+        if b.btype == TW_ARROW {
+            var aang = maths.atan2(b.vy, b.vx) * 180.0 / 3.14159265 + 180.0
+            r.drawTextureRotated(bt, b.x - 15.0, b.y - 15.0, 30.0, 30.0, aang, 15.0, 15.0, Flip.NONE)
+        } else {
+            r.drawTextureRotated(bt, b.x - 8.0, b.y - 8.0, 16.0, 16.0, ang, 8.0, 8.0, Flip.NONE)
+        }
+    }
+
+    // 电弧
+    for g.arcs to a {
+        r.setColor(#F1C40FCC)
+        r.drawLine(a.x1, a.y1, a.x2, a.y2)
+    }
+
+    // 飞行金币（死亡后飞向左上角计数处）
+    if g.texCoinFly != null {
+        for g.coins to c {
+            r.drawTextureAt(g.texCoinFly, c.x - 8.0, c.y - 8.0, 16.0, 16.0)
+        }
+    }
+
+    // 宝箱（点击弹出随机金币奖励）
+    if g.texChest != null {
+        for g.chests to ch {
+            var bob = maths.sin(g.frameCount * 0.08 + ch.x * 0.05) * 3.0
+            r.drawTextureAt(g.texChest, ch.x - 11.0, ch.y - 13.0 + bob, 22.0, 22.0)
+        }
+    }
+
+    // 粒子
+    for g.particles to p {
+        var alpha = _int(255.0 * _float(p.life) / _float(p.maxLife))
+        r.setColor(assets.colorWithAlpha(p.c, alpha))
+        r.fillRect(p.x - p.size * 0.5, p.y - p.size * 0.5, p.size, p.size)
+    }
+
+    // 飘字
+    for g.floats to ft {
+        var a2 = _int(255.0 * _float(ft.life) / 50.0)
+        if a2 > 255 { a2 = 255 }
+        if ft.bg {
+            // 白底黑字气泡：宽度 = 字数 × 每字宽（11 号中文字约 13px）+ 内边距
+            var tw = _float(ft.text.len()) * 13.0
+            r.setColor(assets.colorWithAlpha(0x00FAFAFA, a2))
+            r.fillRoundedRect(ft.x - 5.0, ft.y - 3.0, tw + 10.0, 19.0, 6.0)
+            r.setColor(assets.colorWithAlpha(0x001A1A1A, a2))
+            r.drawText(g.font, ft.text, ft.x, ft.y, assets.colorWithAlpha(0x001A1A1A, a2))
+        } else {
+            r.drawText(g.font, ft.text, ft.x - 8.0, ft.y, assets.colorWithAlpha(ft.c, a2))
+        }
+    }
+
+    drawHUD(g, r)
+
+    // 波次横幅（背景半透明，不遮挡画面）
+    if g.bannerTimer > 0 {
+        var t = g.bannerTimer
+        var fade = 1.0
+        if t < 30 { fade = _float(t) / 30.0 }
+        var bgA = _int(110.0 * fade)          // 背景半透明黑（约 43%）
+        r.setColor(assets.colorWithAlpha(0x00000000, bgA))
+        r.fillRect(0.0, MAP_H * 0.5 - 26.0, MAP_W, 52.0)
+        var txA = _int(255.0 * fade)
+        r.drawTextCentered(g.fontBig, g.bannerText, 0.0, MAP_W, MAP_H * 0.5 - 12.0,
+                           assets.colorWithAlpha(0x00FFDC50, txA))
+    }
+
+}
+
+func drawOverlay(Game g, Renderer r, string title, string sub) {
+    // 只压暗地图区域，右侧面板保持明亮可见
+    r.setColor(#000000BB)
+    r.fillRect(0.0, 0.0, MAP_W, MAP_H)
+    r.drawTextCentered(g.fontBig, title, 0.0, MAP_W, MAP_H * 0.5 - 40.0, #FFDC50FF)
+    r.drawTextCentered(g.font, sub, 0.0, MAP_W, MAP_H * 0.5 + 6.0, #ECF0F1FF)
+}
+
+func renderGame(Game g, Renderer r) {
+    drawGame(g, r)
+
+    if g.state == ST_MENU {
+        // 主菜单：标题与说明文字在按钮上方，避免被「开始游戏」按钮盖住
+        r.setColor(#000000BB)
+        r.fillRect(0.0, 0.0, MAP_W, MAP_H)
+        r.drawTextCentered(g.fontBig, "塔 防", 0.0, MAP_W, MAP_H * 0.5 - 122.0, #FFDC50FF)
+        r.drawTextCentered(g.font, "守住院子，别让怪物摸到水晶   双通道 · 四种塔 · 二十波",
+                      0.0, MAP_W, MAP_H * 0.5 - 78.0, #ECF0F1FF)
+        drawMenuButtons(g, r)
+    } else if g.state == ST_PAUSE {
+        drawOverlay(g, r, "暂停", "按 P 或点顶部「继续」按钮返回战斗")
+    } else if g.state == ST_OVER {
+        drawOverlay(g, r, "游戏结束", "坚持到第 " + g.wave + " 波，击杀 " + g.totalKilled +
+                    " 个敌人   点击地图或按 R 重新开始")
+    } else if g.state == ST_WIN {
+        drawOverlay(g, r, "通关！", "剩余生命 " + g.lives + "   击杀 " + g.totalKilled + "   点击地图重新开始")
+    }
+}
+
+// ==================== 事件 ====================
+
+func inRect(float x, float y, float rx, float ry, float rw, float rh): bool {
+    return x >= rx and x <= rx + rw and y >= ry and y <= ry + rh
+}
+
+func onClick(Game g, float mx, float my, int button) {
+    if g.state == ST_MENU {
+        // 主菜单：开始游戏 / 退出游戏
+        var mbx = MAP_W * 0.5 - 110.0
+        if inRect(mx, my, mbx, MAP_H * 0.5 - 10.0, 220.0, 44.0) { g.state = ST_PLAY; return }
+        if inRect(mx, my, mbx, MAP_H * 0.5 + 46.0, 220.0, 44.0) { g.quitReq = true; return }
+        return
+    }
+    if g.state == ST_OVER or g.state == ST_WIN {
+        restartGame(g)
+        return
+    }
+    if g.state != ST_PLAY { return }
+
+    // 顶部状态条按钮：倍速 / 静音 / 暂停
+    if my < HUD_H {
+        var bw = 66.0
+        var bx0 = MAP_W - (bw + 6.0) * 3.0 - 8.0
+        if inRect(mx, my, bx0, 5.0, bw, 24.0) { cycleSpeed(g); return }
+        if inRect(mx, my, bx0 + bw + 6.0, 5.0, bw, 24.0) { toggleMute(g); return }
+        if inRect(mx, my, bx0 + (bw + 6.0) * 2.0, 5.0, bw, 24.0) {
+            if g.state == ST_PLAY { g.state = ST_PAUSE } else if g.state == ST_PAUSE { g.state = ST_PLAY }
+            return
+        }
+        return
+    }
+    // 底部建塔栏：选塔 / 开始下一波
+    if my >= BAR_Y {
+        g.menuTower = -1
+        for 0 : 3 to i {
+            var cx = 8.0 + _float(i) * (CARD_W + 6.0)
+            if inRect(mx, my, cx, BAR_Y + 6.0, CARD_W, BAR_H - 12.0) {
+                g.selType = i
+                g.selTower = -1
+                return
+            }
+        }
+        var wbx = MAP_W - 216.0
+        if g.waveState == 0 and inRect(mx, my, wbx, BAR_Y + 7.0, 208.0, BAR_H - 14.0) {
+            g.gold = g.gold + (g.waveTimer / 60 + 1) * 2
+            g.waveTimer = 0
+            return
+        }
+        return
+    }
+
+    // 地图
+    var gx = _int(mx / TS)
+    var gy = _int(my / TS)
+
+    // 点击落在宝箱上：打开随机金币奖励弹窗（宝箱即被消耗）
+    if g.chests.len() > 0 {
+    for 0 : g.chests.len() - 1 to i {
+        var chx = g.chests[i].x
+        var chy = g.chests[i].y
+        var bob = maths.sin(g.frameCount * 0.08 + chx * 0.05) * 3.0   // 与绘制时一致的上下浮动
+        var dx = mx - chx
+        var dy = my - (chy + bob)
+        if dx > -14.0 and dx < 14.0 and dy > -16.0 and dy < 14.0 {
+            var reward = rands.ints(40, 100) + g.wave * 3
+            spawnCoinBurst(g, chx, chy, reward)   // 金币从宝箱迸出后逐枚飞向计数处入账
+            addSpeech(g, chx - 20.0, chy - 26.0, "+" + reward + " 金币", 110)   // 宝箱旁白底黑字气泡，停留更久
+            if g.audioOk and not g.muted { g.sfxPickup.play() }   // 开宝箱拾取音
+            Array[Chest] ck = []
+            for 0 : g.chests.len() - 1 to j {
+                if j != i { ck.add(g.chests[j]) }
+            }
+            g.chests = ck
+            g.menuTower = -1
+            return
+        }
+    }
+    }
+
+    // 弹出的塔操作菜单优先处理（升级 / 出售）
+    var pm = popupMenu(g)
+    if pm.len() == 12 {
+        if inRect(mx, my, pm[4], pm[5], pm[6], pm[7]) { doUpgrade(g); return }
+        if inRect(mx, my, pm[8], pm[9], pm[10], pm[11]) { doSell(g); return }
+        // 点菜单外：交给下面的「选塔 / 关菜单」逻辑
+    }
+
+    if gx < 0 or gy < 0 or gx >= COLS or gy >= ROWS { return }
+
+    if button == 3 {
+        // 右键：取消选择 / 关闭菜单
+        g.selType = -1
+        g.selTower = -1
+        g.menuTower = -1
+        return
+    }
+
+    var ti = towerAt(g, gx, gy)
+    if ti >= 0 {
+        g.selTower = ti
+        g.selType = -1
+        g.menuTower = ti          // 点击塔 → 弹出操作菜单
+        return
+    }
+    // 点中「↑」可升级徽标也视为选中该塔并弹菜单
+    if g.towers.len() > 0 {
+    for 0 : g.towers.len() - 1 to i {
+        var bd = upgradeBadgeRect(g, g.towers[i])
+        if bd.len() == 4 and inRect(mx, my, bd[0], bd[1], bd[2], bd[3]) {
+            g.selTower = i
+            g.selType = -1
+            g.menuTower = i
+            return
+        }
+    }
+    }
+    if g.selType >= 0 {
+        placeTower(g, gx, gy)
+        return
+    }
+    g.selTower = -1
+    g.menuTower = -1            // 点空地：关闭菜单
+}
+
+func restartGame(Game g) {
+    g.state = ST_PLAY
+    g.gold = START_GOLD
+    g.lives = START_LIVES
+    g.wave = 0
+    g.kills = 0
+    g.totalKilled = 0
+    g.waveState = 0
+    g.waveTimer = WAVE_GAP
+    g.spawnQueue = []
+    g.spawnIdx = 0
+    g.spawnTimer = 0
+    g.bannerTimer = 0
+    g.selType = -1
+    g.selTower = -1
+    g.menuTower = -1
+    g.enemies = []
+    g.towers = []
+    g.bullets = []
+    g.waves = []
+    g.particles = []
+    g.floats = []
+    g.arcs = []
+    g.coins = []
+    g.chests = []
+    g.pCount = 0
+    g.hitSfxCd = 0
+    if g.audioOk {
+        g.bossBgm.stop()
+        g.bgm.play()
+        applyMute(g)
+    }
+}
+
+func handleEvent(Game g, Event e): bool {
+    if g.quitReq { return false }   // 主菜单「退出游戏」
+    if e.isQuit() or e.isWindowClose() { return false }
+
+    if e.isMouseMotion() {
+        var[float, float](mx, my) = e.mousePos()
+        g.mouseX = mx
+        g.mouseY = my
+    }
+
+    if e.isMouseButtonDown() {
+        var[float, float](cx, cy) = e.mousePos()
+        g.mouseX = cx
+        g.mouseY = cy
+        onClick(g, cx, cy, e.mouseButton())
+        return true
+    }
+
+    if e.isKeyDown() {
+        int sc = e.scancode()
+        if sc == Scancode.ESCAPE {
+            if g.state == ST_PLAY and (g.selType >= 0 or g.selTower >= 0) {
+                g.selType = -1
+                g.selTower = -1
+                return true
+            }
+            return false
+        }
+        if sc == Scancode._1 { g.selType = TW_ARROW;  g.selTower = -1; return true }
+        if sc == Scancode._2 { g.selType = TW_CANNON; g.selTower = -1; return true }
+        if sc == Scancode._3 { g.selType = TW_FROST;  g.selTower = -1; return true }
+        if sc == Scancode._4 { g.selType = TW_TESLA;  g.selTower = -1; return true }
+
+        if sc == Scancode.U { doUpgrade(g); return true }
+        if sc == Scancode.S { doSell(g); return true }
+
+        if sc == Scancode.P {
+            if g.state == ST_PLAY { g.state = ST_PAUSE }
+            else if g.state == ST_PAUSE { g.state = ST_PLAY }
+            return true
+        }
+
+        if sc == Scancode.F {
+            if g.state == ST_PLAY or g.state == ST_PAUSE { cycleSpeed(g) }
+            return true
+        }
+        if sc == Scancode.M {
+            toggleMute(g)
+            return true
+        }
+
+        if sc == Scancode.R {
+            restartGame(g)
+            return true
+        }
+
+        if sc == Scancode.SPACE {
+            if g.state == ST_MENU { g.state = ST_PLAY; return true }
+            if g.state == ST_PLAY and g.waveState == 0 {
+                g.gold = g.gold + (g.waveTimer / 60 + 1) * 2
+                g.waveTimer = 0
+            }
+            return true
+        }
+
+        if sc == Scancode.RETURN {
+            if g.state == ST_MENU { g.state = ST_PLAY }
+            else if g.state == ST_OVER or g.state == ST_WIN { restartGame(g) }
+            return true
+        }
+    }
+
+    return true
+}
+
+// ==================== 主函数 ====================
+
+main() {
+    _console(false)
+    var win = SDL3.createWindow({
+        title: "塔防 Tower Defense",
+        w: WIN_W,
+        h: WIN_H
+    })
+    if not win.ok {
+        print("[错误] 窗口创建失败")
+        return
+    }
+
+    SDL3.ttfInit()
+    // 游戏字体：得意黑 Smiley Sans（OFL 开源协议，免费商用）；加载失败自动回退系统字体
+    var fontPath = dirs.script_dir() + "/font/SmileySans-Oblique.ttf"
+    var font = SDL3.createFont(fontPath, 13.0)
+    if not font.ok { font = SDL3.createFontAuto(13.0) }
+    var fontBig = SDL3.createFont(fontPath, 20.0)
+    if not fontBig.ok { fontBig = SDL3.createFontAuto(20.0) }
+
+    var g = newGame()
+    g.font = font
+    g.fontBig = fontBig
+
+    win.setMaxFPS(60)
+
+    print("[OK] 塔防启动成功!")
+    print("     1-4 选塔，鼠标左键放置；点塔弹菜单升级/出售；空格 开始下一波；F 倍速 / M 静音 / P 暂停 / R 重开")
+
+    win.run(
+        func(Event ev): bool {
+            return handleEvent(g, ev)
+        },
+        func(Renderer r) {
+            // 框架默认是「事件驱动重绘」，游戏需要连续动画 → 每帧请求下一帧重绘
+            core.markFrameRedraw()
+            if not g.loaded { loadResources(g, r) }
+
+            if g.state == ST_PLAY {
+                for 0 : g.speedMul - 1 to s { updateGame(g) }
+            } else if g.state == ST_PAUSE {
+                g.frameCount = g.frameCount + 1
+            }
+            renderGame(g, r)
+        }
+    )
+
+    if g.audioOk {
+        g.bgm.stop(); g.bgm.uninit()
+        g.bossBgm.stop(); g.bossBgm.uninit()
+        g.sfxShoot.uninit(); g.sfxBoom.uninit(); g.sfxLose.uninit()
+        g.sfxShootArrow.uninit(); g.sfxBuild.uninit(); g.sfxFreeze.uninit()
+        g.sfxWave.uninit(); g.sfxDie.uninit(); g.sfxUpgrade.uninit()
+        g.sfxPickup.uninit(); g.sfxHit.uninit(); g.sfxBoom4.uninit()
+        audio.uninit()
+    }
+    if font.ok { font.close() }
+    if fontBig.ok { fontBig.close() }
+    win.destroy()
+    SDL3.quit()
+    print("塔防退出")
+}

@@ -1,0 +1,30 @@
+// test_strings_join.leno — 验证 strings.join 可用性（含中文）
+import strings
+import io
+
+main() {
+    io.print("=== strings.join 验证 ===\n")
+
+    // 完整字符串片段（含中文）
+    Array[string] parts = ["标题", "hello", "世界"]
+    string j = strings.join(parts, "")
+    assert_eq(j, "标题hello世界")
+    io.print("[1] strings.join 含中文 = '" + j + "'")
+
+    // 单元素
+    Array[string] single = ["abc"]
+    assert_eq(strings.join(single, ""), "abc")
+    io.print("[2] 单元素 join = OK")
+
+    // 空数组
+    Array[string] empty = []
+    assert_eq(strings.join(empty, ""), "")
+    io.print("[3] 空数组 join = OK")
+
+    // 带分隔符
+    Array[string] csv = ["a", "b", "c"]
+    assert_eq(strings.join(csv, ","), "a,b,c")
+    io.print("[4] join 分隔符 = 'a,b,c'")
+
+    io.print("\n=== strings.join 全部通过 ===")
+}

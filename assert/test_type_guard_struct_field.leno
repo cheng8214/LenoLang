@@ -1,0 +1,130 @@
+// struct 字段类型守卫收窄测试
+// 验证 bug 修复：struct 字段的 is 类型收窄不传播到嵌套块
+//
+// 之前的 bug：源码 "if data is int" 在 struct 方法中，
+// transform_method_body 将 "data" 转换为 "self.data"，
+// 但 parser 的 guard_conds 仍保存 var_name="data" 且 field_name=NULL，
+// 导致 resolve_variable_with_upvalue 找不到变量，守卫不生效。
+//
+// 注意：struct 字段不允许使用 any，必须使用具体类型或 nullable 类型（Type?）。
+
+struct Container {
+    int? numData = null
+    string? strData = null
+    int? extra = null
+
+    func set_num(int d) {
+        numData = d
+    }
+
+    func test_direct_narrowing() {
+        // 测试1: 直接在 if 块中收窄并访问
+        numData = 42
+        if numData is int {
+            int n = numData
+            assert_eq(n, 42)
+        }
+    }
+
+    func test_narrowing_in_try() {
+        // 测试2: is 收窄后在 try 块中访问
+        numData = 99
+        if numData is int {
+            try {
+                int n = numData
+                assert_eq(n, 99)
+            } catch e {
+            }
+        }
+    }
+
+    func test_narrowing_in_while() {
+        // 测试3: is 收窄后在 while 块中访问
+        numData = 5
+        if numData is int {
+            int sum = 0
+            int i = 0
+            while i < numData {
+                sum = sum + i
+                i = i + 1
+            }
+            assert_eq(sum, 10)
+        }
+    }
+
+    func test_narrowing_in_nested_if() {
+        // 测试4: is 收窄后在嵌套 if 中访问
+        numData = 7
+        if numData is int {
+            if numData > 5 {
+                assert_eq(numData, 7)
+            }
+        }
+    }
+
+    func test_narrowing_in_for() {
+        // 测试5: is 收窄后在 for 循环中访问
+        numData = 7
+        if numData is int {
+            int last = 0
+            for 0:3 to i {
+                // 在 for 循环中访问收窄后的 numData
+                last = numData
+            }
+            assert_eq(last, 7)
+        }
+    }
+
+    func test_narrowing_string() {
+        // 测试6: string? 字段收窄
+        strData = "hello"
+        if strData is string {
+            string s = strData
+            assert_eq(s, "hello")
+        }
+    }
+
+    func test_two_fields_narrowed() {
+        // 测试7: 两个字段同时收窄 (and 条件)
+        numData = 10
+        extra = 20
+        if numData is int and extra is int {
+            int n = numData
+            int e = extra
+            assert_eq(n, 10)
+            assert_eq(e, 20)
+        }
+    }
+
+    func test_narrowing_then_recovery() {
+        // 测试8: 离开 if 块后字段恢复为 nullable
+        numData = 42
+        if numData is int {
+            int n = numData
+            assert_eq(n, 42)
+        }
+        // 离开后 numData 恢复为 int?
+        numData = null
+        if numData is null {
+            assert_eq(numData, null)
+        }
+    }
+}
+
+// ==================== 运行测试 ====================
+
+var c = new Container()
+
+c.set_num(100)
+assert_eq(c.numData, 100)
+
+c.test_direct_narrowing()
+c.test_narrowing_in_try()
+c.test_narrowing_in_while()
+c.test_narrowing_in_nested_if()
+c.test_narrowing_in_for()
+c.test_narrowing_string()
+c.test_two_fields_narrowed()
+c.test_narrowing_then_recovery()
+
+print("test_type_guard_struct_field passed")

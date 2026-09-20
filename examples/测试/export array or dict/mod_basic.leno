@@ -1,0 +1,22 @@
+// === 测试1: 基本类型导出 ===
+export var iVar = 42
+export var fVar = 3.14
+export var sVar = "hello"
+export var bVar = true
+export var nVar = null
+
+// === 测试2: 显式类型导出 ===
+export int iExplicit = 100
+export float fExplicit = 2.71828
+export string sExplicit = "world"
+export bool bExplicit = false
+
+// === 测试3: const 导出 ===
+export const PI = 3.14159
+export const MAX = 1000
+export const NAME = "Leno"
+
+// === 测试4: const + 显式类型 ===
+export const int PORT = 8080
+export const float E = 2.71828
+export const string VERSION = "1.0"

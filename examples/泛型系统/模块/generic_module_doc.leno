@@ -1,0 +1,16 @@
+// 测试模块导入泛型 struct 的方法调用
+export struct Box[T] {
+    T value
+
+    func get1(): T {
+        return self.value
+    }
+
+    func double(): T {
+        return self.add(self.value)
+    }
+
+    func add(T v): T {
+        return self.value + v
+    }
+}

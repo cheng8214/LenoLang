@@ -1,0 +1,319 @@
+// LenoSDL3 — SDL3 绑定入口（用户只需导入此模块）
+import "sdl_core.leno" as core
+import "sdl_window.leno" as wnd
+import "sdl_renderer.leno" as r
+import "sdl_font.leno" as fnt
+import "sdl_event.leno" as evt
+import "sdl_timer.leno" as tm
+import "sdl_image.leno" as img
+import "sdl_button.leno" as btn
+import "sdl_label.leno" as lbl
+import "sdl_edit.leno" as edt
+import "sdl_checkbox.leno" as chk
+import "sdl_radio.leno" as rb
+import "sdl_toggle.leno" as tgl
+import "sdl_slider.leno" as sld
+import "sdl_progress.leno" as prg
+import "sdl_listbox.leno" as lb
+import "sdl_combobox.leno" as cbb
+import "sdl_panel.leno" as pnl
+import "sdl_tab.leno" as tab
+import "sdl_spinbox.leno" as spb
+import "sdl_table.leno" as tbl
+import "sdl_layout.leno" as lay
+import "sdl_menu.leno" as menu
+import "sdl_tooltip.leno" as tip
+import "sdl_scrollview.leno" as scv
+import "sdl_treeview.leno" as tv
+import "sdl_widget.leno" as wgt
+import "sdl_chart.leno" as cht
+import "sdl_tray.leno" as tray
+import "sdl_theme.leno" as thm
+import "sdl_imageview.leno" as iv
+import "sdl_separator.leno" as sep
+import "sdl_scrim.leno" as scr; use scr.Scrim
+import "sdl_linkbutton.leno" as lnk
+import "sdl_spinner.leno" as spn
+import "sdl_groupbox.leno" as gbx
+import "sdl_gridlayout.leno" as grd
+import "sdl_splitter.leno" as spl
+use spl.Splitter
+import "sdl_drag.leno" as drag
+use drag.DragHint
+import "sdl_titlebar.leno" as tbar
+use tbar.TitleBar
+import "sdl_canvas.leno" as cnv
+use cnv.Canvas
+
+
+// ==================== 重新导出类型 ====================
+// 用户可通过 use SDL3.xxx 导入
+// 注：必须导出至少一个返回该类型的函数，模块符号表才能识别
+
+use core.(SDL_FRect, SDL_Rect, SDL_FPoint, SDL_Point, SDL_Color, SDL_FColor, SDL_GlyphMetrics, SDL_Vertex)
+use core.(SDL_KeyboardEvent, SDL_MouseButtonEvent, SDL_MouseMotionEvent, SDL_MouseWheelEvent, SDL_TextInputEvent, SDL_WindowEvent, SDL_DropEvent)
+use core.sdl3
+
+use evt.Event
+use r.(Renderer, PixelBuffer)
+use wnd.(Window, EventHandler, RenderCallback, Shortcut)
+use fnt.(Font, TextTexture, sdl3_ttf, SDL_SurfaceInfo)
+use tm.(Timer, TimerCallback)
+use btn.Button
+use lbl.Label
+use edt.Edit
+use chk.CheckBox
+use rb.RadioButton
+use tgl.Toggle
+use sld.Slider
+use prg.ProgressBar
+use lb.ListBox
+use cbb.ComboBox
+use pnl.Panel
+use tab.TabControl
+use spb.SpinBox
+use tbl.Table
+use menu.MenuBar
+use scv.ScrollView
+use tv.(TreeView, TreeViewNode)
+use lay.(HBox, VBox, AnchorBox)
+use wgt.Widget
+use cht.(BarChart, LineChart, PieChart)
+use tray.(Tray, TrayMenu)
+use thm.Theme
+use iv.ImageView
+use sep.Separator
+use lnk.LinkButton
+use spn.Spinner
+use gbx.GroupBox
+use grd.GridLayout
+use spl.Splitter
+export func createCheckBox(Dict opts): CheckBox     { return chk.createCheckBox(opts) }
+export func createButton(Dict opts): Button          { return btn.createButton(opts) }
+export func createLabel(Dict opts): Label            { return lbl.createLabel(opts) }
+export func createEdit(Dict opts): Edit              { return edt.createEdit(opts) }
+export func createRadioButton(Dict opts): RadioButton { return rb.createRadioButton(opts) }
+export func createToggle(Dict opts): Toggle          { return tgl.createToggle(opts) }
+export func createSlider(Dict opts): Slider          { return sld.createSlider(opts) }
+export func createProgressBar(Dict opts): ProgressBar { return prg.createProgressBar(opts) }
+export func createListBox(Dict opts): ListBox     { return lb.createListBox(opts) }
+export func createComboBox(Dict opts): ComboBox  { return cbb.createComboBox(opts) }
+export func createPanel(Dict opts): Panel        { return pnl.createPanel(opts) }
+export func createTabControl(Dict opts): TabControl { return tab.createTabControl(opts) }
+export func createSpinBox(Dict opts): SpinBox { return spb.createSpinBox(opts) }
+export func createTable(Dict opts): Table      { return tbl.createTable(opts) }
+//    不导出 createMenuBar！MenuBar 有下拉弹层（renderPopup），必须通过 win.addMenuBar() 创建，
+//    才能同时注册到 _widgets（render/process）和 _menus（renderPopup 绘制下拉层）。
+//    若用 createMenuBar + win.add()，只注册到 _widgets，导致：标题栏正常显示、点击事件能响应，
+//    但下拉菜单永远不会弹出（因为 renderPopup 只遍历 _menus 列表）。
+//    此工厂函数保留供内部控件（TreeView/Table/Edit）创建私有右键菜单使用，不暴露给用户。
+export func createScrollView(Dict opts): ScrollView { return scv.createScrollView(opts) }
+export func createTreeView(Dict opts): TreeView { return tv.createTreeView(opts) }
+export func createBarChart(Dict opts): BarChart { return cht.createBarChart(opts) }
+export func createLineChart(Dict opts): LineChart { return cht.createLineChart(opts) }
+export func createPieChart(Dict opts): PieChart { return cht.createPieChart(opts) }
+export func createTray(Dict opts): Tray        { return tray.createTray(opts) }
+export func createImageView(Dict opts): ImageView  { return iv.createImageView(opts) }
+export func createSeparator(Dict opts): Separator  { return sep.createSeparator(opts) }
+export func createScrim(Dict opts): Scrim           { return scr.createScrim(opts) }
+export func createLinkButton(Dict opts): LinkButton { return lnk.createLinkButton(opts) }
+export func createSpinner(Dict opts): Spinner       { return spn.createSpinner(opts) }
+export func createGroupBox(Dict opts): GroupBox    { return gbx.createGroupBox(opts) }
+export func createGridLayout(Dict opts): GridLayout { return grd.createGridLayout(opts) }
+export func createSplitter(Dict opts): Splitter    { return spl.createSplitter(opts) }
+export func createDragHint(Dict opts): DragHint     { return drag.createDragHint(opts) }
+export func createTitleBar(Dict opts): TitleBar       { return tbar.createTitleBar(opts) }
+export func createCanvas(Dict opts): Canvas            { return cnv.createCanvas(opts) }
+export func isTrayEntryChecked(Ptr[u8] e): bool   { return tray.isEntryChecked(e) }
+export func isTrayEntryEnabled(Ptr[u8] e): bool   { return tray.isEntryEnabled(e) }
+export func setTrayEntryEnabled(Ptr[u8] e, bool v) { tray.setEntryEnabled(e, v) }
+export func setTrayEntryLabel(Ptr[u8] e, string l)  { tray.setEntryLabel(e, l) }
+export func setTrayEntryChecked(Ptr[u8] e, bool v)  { tray.setEntryChecked(e, v) }
+export func setTipDelay(int ms)                     { tip.setTipDelay(ms) }
+export func createHBox(Dict opts): HBox          { return lay.createHBox(opts) }
+export func createVBox(Dict opts): VBox          { return lay.createVBox(opts) }
+export func createAnchorBox(Dict opts): AnchorBox { return lay.createAnchorBox(opts) }
+import "sdl_dialog.leno" as dlg
+export func createDialogWindow(Dict style): Window { return dlg.createDialogWindow(style) }
+export func createModelessDialog(Dict style): Window { return dlg.createModelessDialog(style) }
+export func runModal(Window win, any onEvent, any onRender) { dlg.runModal(win, onEvent, onRender) }
+
+// ==================== 对话框布局辅助工具（转发 sdl_dialog） ====================
+export func dialogLabel(string text, float fontSize, Color color = 0, int align = 0): Label { return dlg.dialogLabel(text, fontSize, color, align) }
+export func dialogPropRow(string label, string value, float maxW): HBox { return dlg.dialogPropRow(label, value, maxW) }
+export func dialogButtonRow(Array[Button] buttons, float spacing = 8.0): HBox { return dlg.dialogButtonRow(buttons, spacing) }
+export func dialogSpacer(): Label { return dlg.dialogSpacer() }
+
+
+// ==================== 重新导出类型别名 ====================
+
+use core.(Color, FColor, Size, FSize, StringSize, GlyphInfo)
+
+// ==================== 重新导出枚举 ====================
+use core.(InitFlag, WindowFlag, EventType, Scancode, MouseButton, BlendMode, Flip, SystemCursor, TextureAccess, FlashOp, TrayEntryFlag)
+
+// Splitter 方向常量
+export const SPLIT_HORIZONTAL = spl.Splitter.HORIZONTAL
+export const SPLIT_VERTICAL   = spl.Splitter.VERTICAL
+
+export const PIXELFORMAT_RGBA8888 = core.PIXELFORMAT_RGBA8888
+export const PIXELFORMAT_ARGB8888 = core.PIXELFORMAT_ARGB8888
+export const PIXELFORMAT_BGRA8888 = core.PIXELFORMAT_BGRA8888
+export const SDL_FRect_SIZE  = core.SDL_FRect_SIZE
+export const SDL_Rect_SIZE   = core.SDL_Rect_SIZE
+export const SDL_FPoint_SIZE = core.SDL_FPoint_SIZE
+export const SDL_Point_SIZE  = core.SDL_Point_SIZE
+export const SDL_Color_SIZE  = core.SDL_Color_SIZE
+
+// ==================== 重新导出核心函数 ====================
+
+export func init(int flags = 32): bool   { return core.init(flags) }
+export func initVideo(): bool        { return core.initVideo() }
+export func quit()                   { core.quit(); fnt.ttfQuit() }
+export func getError(): string       { return core.getError() }
+export func delay(int ms)            { core.delay(ms) }
+export func getTicks(): int          { return core.getTicks() }
+
+export func startTextInput(Ptr[u8] w): bool  { return core.startTextInput(w) }
+export func stopTextInput(Ptr[u8] w): bool   { return core.stopTextInput(w) }
+export func setTextInputArea(Ptr[u8] w, Ptr[u8] rect, int cursor): bool {
+    return core.setTextInputArea(w, rect, cursor)
+}
+
+export func getMouseState(): int         { return core.getMouseState() }
+export func getGlobalMouseState(): int   { return core.getGlobalMouseState() }
+export func showCursor(): bool           { return core.showCursor() }
+export func hideCursor(): bool           { return core.hideCursor() }
+export func cursorVisible(): bool        { return core.cursorVisible() }
+export func warpMouse(Ptr[u8] w, float x, float y): bool { return core.warpMouse(w, x, y) }
+
+export func setSystemCursor(int kind): Ptr[u8] { return core.setSystemCursor(kind) }
+export func showMessageBox(string title, string msg, int flags = 0) { core.showMessageBox(title, msg, flags) }
+
+export func markFrameRedraw() { core.markFrameRedraw() }
+export func requestRedraw()   { core.requestRedraw() }
+
+
+export func getClipboardText(): string   { return core.getClipboardText() }
+export func setClipboardText(string t): bool { return core.setClipboardText(t) }
+
+export func getPerfCounter(): int    { return core.getPerfCounter() }
+export func getPerfFrequency(): int  { return core.getPerfFrequency() }
+export func getTicksNS(): int        { return core.getTicksNS() }
+export func hasClipboardText(): bool { return core.hasClipboardText() }
+
+
+
+// ==================== 重新导出工厂函数 ====================
+
+export func createWindow(Dict opts): Window    { return wnd.createWindow(opts) }
+export func setRoot(Window win, Widget root)   { win.setRoot(root) }
+export func setRootAt(Window win, Widget root, float ox, float oy) { win.setRootAt(root, ox, oy) }
+export func pushModal(int w)                   { wnd.pushModal(w) }
+export func popModalIfTop(int w)               { wnd.popModalIfTop(w) }
+export func setModalWid(int w)                 { wnd.setModalWid(w) }
+export func getModalWid(): int                 { return wnd.getModalWid() }
+export func createRenderer(Ptr[u8] w): Renderer     { return r.createRenderer(w) }
+
+// 批处理统计（转发自 sdl_renderer 模块级全局函数）
+export func getBatchFillSubmits(): int { return r.getBatchFillSubmits() }
+export func getBatchFillBatched(): int { return r.getBatchFillBatched() }
+export func getBatchOutSubmits(): int { return r.getBatchOutSubmits() }
+export func getBatchOutBatched(): int { return r.getBatchOutBatched() }
+export func getBatchLineSubmits(): int { return r.getBatchLineSubmits() }
+export func getBatchLineBatched(): int { return r.getBatchLineBatched() }
+
+// 调试：暴露行批处理缓冲（供坐标级回归测试读回 float 比对，验证后可删除）
+export func _dbgLinePtr(Renderer r): Ptr[f32] { return r._dbgLinePtr(r) }
+export func _dbgLineCount(Renderer r): int { return r._dbgLineCount(r) }
+export func createEvent(): Event                { return evt.createEvent() }
+export func createFont(string p, float s): Font { return fnt.createFont(p, s) }
+export func createFontAuto(float s): Font    { return fnt.createFontAuto(s) }
+// 引用计数版字体获取/释放：acquire 时 +1，release 时 -1，归零才真正关闭并从池摘除，
+// 避免共享字体被任一持有方直接 close 误关。控件内部统一使用此组 API。
+export func acquireFont(string p, float s): Font    { return fnt.acquireFont(p, s) }
+export func acquireFontAuto(float s): Font         { return fnt.acquireFontAuto(s) }
+export func releaseFont(Font f)                     { fnt.releaseFont(f) }
+
+export func createTextTexture(Ptr[u8] ren, Font f, string t, int r, int g, int b): TextTexture {
+    return fnt.createTextTexture(ren, f, t, r, g, b)
+}
+
+export func createTextTextureWrapped(Ptr[u8] ren, Font f, string t, int r, int g, int b, int wrapW): TextTexture {
+    return fnt.createTextTextureWrapped(ren, f, t, r, g, b, wrapW)
+}
+
+export func createGlyphTexture(Ptr[u8] ren, Font f, int glyph, int r, int g, int b): TextTexture {
+    return fnt.createGlyphTexture(ren, f, glyph, r, g, b)
+}
+
+export func createTextTextureSolid(Ptr[u8] ren, Font f, string t, int r, int g, int b): TextTexture {
+    return fnt.createTextTextureSolid(ren, f, t, r, g, b)
+}
+
+export func createTextTextureShaded(Ptr[u8] ren, Font f, string t, int fr, int fg, int fb, int br, int bg, int bb): TextTexture {
+    return fnt.createTextTextureShaded(ren, f, t, fr, fg, fb, br, bg, bb)
+}
+
+// ==================== TTF ====================
+
+export func ttfInit(): bool  { return fnt.ttfInit() }
+export func ttfQuit()        { fnt.ttfQuit() }
+export func ttfLib(): sdl3_ttf { return fnt.ttfLib() }
+
+export const STYLE_NORMAL        = fnt.STYLE_NORMAL
+export const STYLE_BOLD          = fnt.STYLE_BOLD
+export const STYLE_ITALIC        = fnt.STYLE_ITALIC
+export const STYLE_UNDERLINE     = fnt.STYLE_UNDERLINE
+export const STYLE_STRIKETHROUGH = fnt.STYLE_STRIKETHROUGH
+
+export const HINTING_NORMAL = fnt.HINTING_NORMAL
+export const HINTING_LIGHT  = fnt.HINTING_LIGHT
+export const HINTING_MONO   = fnt.HINTING_MONO
+export const HINTING_NONE   = fnt.HINTING_NONE
+
+export const WRAP_ALIGN_LEFT   = fnt.WRAP_ALIGN_LEFT
+export const WRAP_ALIGN_CENTER = fnt.WRAP_ALIGN_CENTER
+export const WRAP_ALIGN_RIGHT  = fnt.WRAP_ALIGN_RIGHT
+
+// ==================== Image ====================
+
+export func loadImage(string path): Ptr[u8]                  { return img.load(path)}
+export func loadImageTexture(Ptr[u8] ren, string path): Ptr[u8]  { return img.loadTexture(ren, path) }
+export func saveImagePNG(Ptr[u8] surface, string path): bool           { return img.savePNG(surface, path) }
+export func saveImageJPG(Ptr[u8] surface, string path, int q = 90): bool    { return img.saveJPG(surface, path, q) }
+export func saveImageBMP(Ptr[u8] surface, string path): bool           { return img.saveBMP(surface, path) }
+export func saveImageWEBP(Ptr[u8] surface, string path, float q = 80.0): bool { return img.saveWEBP(surface, path, q) }
+export func imageVersion(): int { return img.version() }
+
+// 从原始像素创建 surface（配合 LenoWin32 截屏使用）
+sdl3 _sdlLib = core.lib()
+
+export func createSurfaceFromRaw(int w, int h, int fmt, Ptr[u8] pixels, int pitch): Ptr[u8] {
+    return _sdlLib.SDL_CreateSurfaceFrom(w, h, fmt, pixels, pitch)
+}
+export func destroySurface(Ptr[u8] surface) { _sdlLib.SDL_DestroySurface(surface) }
+// 由 surface 创建纹理（配合逐像素直写渲染：自己写 pixels 缓冲 -> CreateSurfaceFrom -> 这里上传）
+export func createTextureFromSurface(Ptr[u8] renderer, Ptr[u8] surface): Ptr[u8] {
+    return _sdlLib.SDL_CreateTextureFromSurface(renderer, surface)
+}
+// 销毁纹理（配合逐像素直写渲染：createTextureFromSurface 用完即销毁）
+export func destroyTexture(Ptr[u8] texture) { _sdlLib.SDL_DestroyTexture(texture) }
+
+// ==================== 主题 ====================
+
+export func getTheme(): Theme           { return thm.getTheme() }
+export func setTheme(Theme t)           { thm.setTheme(t) }
+export func darkTheme(): Theme           { return thm.darkTheme() }
+export func lightTheme(): Theme          { return thm.lightTheme() }
+export func midnightTheme(): Theme       { return thm.midnightTheme() }
+
+// ==================== 颜色工具函数 ====================
+export func brighten(Color c, int delta): Color  { return thm.brighten(c, delta) }
+export func darken(Color c, int delta): Color    { return thm.darken(c, delta) }
+export func withAlpha(Color c, int a): Color     { return thm.withAlpha(c, a) }
+export func packColor(int r, int g, int b, int a = 255): Color { return thm.packColor(r, g, b, a) }
+export func colorR(Color c): int               { return thm.colorR(c) }
+export func colorG(Color c): int               { return thm.colorG(c) }
+export func colorB(Color c): int               { return thm.colorB(c) }
+export func colorA(Color c): int               { return thm.colorA(c) }

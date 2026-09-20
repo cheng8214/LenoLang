@@ -1,0 +1,156 @@
+// LenoWeb — Web 模块统一入口
+// 用户只需 import 此入口模块，即可使用 HTTP 客户端 + HTML 解析 + 爬虫框架
+// 仿 LenoSDL3 的入口组织方式：import 子模块 -> use 重新导出类型 -> export func 转发
+
+// ==================== 引入子模块 ====================
+import "web_curl_core.leno" as core
+import "web_net.leno" as net
+import "web_html.leno" as htmls
+import "web_crawler.leno" as crawler
+import "web_generic.leno" as generic
+
+// ==================== 重新导出 core 类型 ====================
+use core.(curl, Code, Opt, Info, Global, HttpVersion, SslVersion)
+use net.(Response, HttpClient, Session)
+use htmls.(HtmlNode)
+use crawler.(Url, Crawler, CrawlItem, Page)
+use generic.(Result, Ok, Err, map, filter, reduce, forEach, Stack, LinkedList, ListNode)
+
+// ==================== HTTP 客户端 ====================
+export func createClient(): HttpClient { return net.createClient() }
+
+// 下载到文件，成功返回字节数，失败返回 -1
+export func download(string url, string savePath): int { return net.download(url, savePath) }
+
+// 带重试的请求
+export func getWithRetry(string url, int retries, int delayMs): Response { return net.getWithRetry(url, retries, delayMs) }
+export func postWithRetry(string url, string body, int retries, int delayMs): Response { return net.postWithRetry(url, body, retries, delayMs) }
+
+// ==================== Session 会话（仿 requests.Session） ====================
+export func createSession(): Session { return net.createSession() }
+export func sessionGet(Session s, string url): Response { return net.sessionGet(s, url) }
+export func sessionPost(Session s, string url, string body): Response { return net.sessionPost(s, url, body) }
+export func sessionPostJson(Session s, string url, string json): Response { return net.sessionPostJson(s, url, json) }
+export func sessionPostJSON(Session s, string url, Dict data): Response { return net.sessionPostJSON(s, url, data) }
+export func sessionPut(Session s, string url, string body): Response { return net.sessionPut(s, url, body) }
+export func sessionDel(Session s, string url): Response { return net.sessionDel(s, url) }
+export func sessionPatch(Session s, string url, string body): Response { return net.sessionPatch(s, url, body) }
+export func sessionHead(Session s, string url): Response { return net.sessionHead(s, url) }
+export func sessionSetHeader(Session s, string name, string value) { net.sessionSetHeader(s, name, value) }
+export func sessionSetCookie(Session s, string cookie) { net.sessionSetCookie(s, cookie) }
+export func sessionSetCredentials(Session s, string user, string pass) { net.sessionSetCredentials(s, user, pass) }
+export func sessionSetTimeout(Session s, int ms) { net.sessionSetTimeout(s, ms) }
+export func sessionSetProxy(Session s, string proxy) { net.sessionSetProxy(s, proxy) }
+export func sessionClose(Session s) { net.sessionClose(s) }
+export func sessionLoadCookies(Session s, string cookieFile): int { return net.sessionLoadCookies(s, cookieFile) }
+export func sessionSaveCookies(Session s, string cookieFile): int { return net.sessionSaveCookies(s, cookieFile) }
+
+// 便捷 GET/POST/PUT/DELETE/PATCH
+export func get(string url): Response { return net.get(url) }
+export func post(string url, string body): Response { return net.post(url, body) }
+export func postJson(string url, string json): Response { return net.postJson(url, json) }
+export func postJSON(string url, Dict data): Response { return net.postJSON(url, data) }
+export func put(string url, string body): Response { return net.put(url, body) }
+export func patch(string url, string body): Response { return net.patch(url, body) }
+export func del(string url): Response { return net.del(url) }
+
+// 表单 / 查询 / URL 编解码
+export func formEncode(Dict data): string { return net.formEncode(data) }
+export func buildQuery(Dict params): string { return net.buildQuery(params) }
+export func getWithParams(string url, Dict params): Response { return net.getWithParams(url, params) }
+export func postForm(string url, Dict data): Response { return net.postForm(url, data) }
+export func urlEncode(string url): string { return net.urlEncode(url) }
+export func urlDecode(string url): string { return net.urlDecode(url) }
+
+// 版本 / 全局生命周期
+export func version(): string { return net.version() }
+export func globalInit(int flags = 3): int { return net.globalInit(flags) }
+export func globalCleanup() { net.globalCleanup() }
+
+// ==================== HTML 解析 ====================
+export func parse(string html): HtmlNode { return htmls.parse(html) }
+export func tag(HtmlNode node): string { return htmls.tag(node) }
+export func text(HtmlNode node): string { return htmls.text(node) }
+export func allText(HtmlNode node): string { return htmls.allText(node) }
+export func cleanText(string raw): string { return htmls.cleanText(raw) }
+export func extractTable(HtmlNode root): Array[Array[string]] { return htmls.extractTable(root) }
+export func getTitle(HtmlNode root): string { return htmls.getTitle(root) }
+export func getMeta(HtmlNode root, string name): string { return htmls.getMeta(root, name) }
+export func getMetas(HtmlNode root): Dict { return htmls.getMetas(root) }
+export func extractForm(HtmlNode root): Dict { return htmls.extractForm(root) }
+export func htmlToText(HtmlNode node): string { return htmls.htmlToText(node) }
+export func stripTags(string html): string { return htmls.stripTags(html) }
+export func textContent(HtmlNode node): string { return htmls.textContent(node) }
+export func removeElement(HtmlNode root, string selector): int { return htmls.removeElement(root, selector) }
+export func attr(HtmlNode node, string name): string { return htmls.attr(node, name) }
+export func children(HtmlNode node): Array[HtmlNode] { return htmls.children(node) }
+export func getLinks(string html): Array[string] { return htmls.getLinks(html) }
+export func select(HtmlNode root, string selector): Array[HtmlNode] { return htmls.select(root, selector) }
+export func selectOne(HtmlNode root, string selector): HtmlNode? { return htmls.selectOne(root, selector) }
+export func getElementById(HtmlNode root, string id): HtmlNode? { return htmls.getElementById(root, id) }
+export func getElementsByTag(HtmlNode root, string tagName): Array[HtmlNode] { return htmls.getElementsByTag(root, tagName) }
+export func getElementsByClass(HtmlNode root, string className): Array[HtmlNode] { return htmls.getElementsByClass(root, className) }
+export func findAll(HtmlNode root, string tagName, string className, string idName): Array[HtmlNode] { return htmls.findAll(root, tagName, className, idName) }
+
+// ==================== URL 工具 ====================
+export func parseUrl(string url): Url { return crawler.parseUrl(url) }
+export func buildUrl(Url u): string { return crawler.buildUrl(u) }
+export func buildUrlDict(Dict parts): string { return crawler.buildUrlDict(parts) }
+export func domain(string url): string { return crawler.domain(url) }
+export func baseUrl(string url): string { return crawler.baseUrl(url) }
+export func resolveUrl(string base, string ref): string { return crawler.resolveUrl(base, ref) }
+export func normalizeUrl(string url): string { return crawler.normalizeUrl(url) }
+export func getQueryParam(string url, string key): string { return crawler.getQueryParam(url, key) }
+export func stripQuery(string url): string { return crawler.stripQuery(url) }
+export func urlParse(string url): Url { return crawler.urlParse(url) }
+export func parseRobots(string text): Dict { return crawler.parseRobots(text) }
+export func isRobotsAllowed(string robotsText, string userAgent, string url): bool { return crawler.isRobotsAllowed(robotsText, userAgent, url) }
+export func parseSitemap(string xml): Array[string] { return crawler.parseSitemap(xml) }
+export func sitemapUrl(string baseUrl): string { return crawler.sitemapUrl(baseUrl) }
+export func fetchRobots(string siteUrl, string userAgent): string { return crawler.fetchRobots(siteUrl, userAgent) }
+export func fetchSitemapUrls(string siteUrl, string userAgent): Array[string] { return crawler.fetchSitemapUrls(siteUrl, userAgent) }
+
+// ==================== 爬虫框架 ====================
+export func createCrawler(Dict config): Crawler { return crawler.createCrawler(config) }
+export func setRobots(Crawler c, string robotsText) { c.setRobots(robotsText) }
+export func start(Crawler c) { c.start() }
+export func nextUrl(Crawler c): CrawlItem? { return c.nextUrl() }
+export func markVisited(Crawler c, string url) { c.markVisited(url) }
+export func enqueue(Crawler c, string url, int depth) { c.enqueue(url, depth) }
+export func shouldStop(Crawler c): bool { return c.shouldStop() }
+export func stop(Crawler c) { c.stop() }
+export func fetchPage(string url, string user_agent): Page? { return crawler.fetchPage(url, user_agent) }
+export func extractLinks(Page page): Array[string] { return crawler.extractLinks(page) }
+
+// ==================== 泛型工具 ====================
+// Result[T] 构造器转发
+export func Ok[T](T val): Result[T] { return generic.Ok(val) }
+export func Err[T](string msg): Result[T] { return generic.Err(msg) }
+
+// Result[T] 安全请求
+export func safeGet(string url): Result[Response] {
+    Response r = net.get(url)
+    if r.ok() { return Ok[Response](r) }
+    return Err[Response]("HTTP " + r.statusCode + ": " + r.error)
+}
+export func safePost(string url, string body): Result[Response] {
+    Response r = net.post(url, body)
+    if r.ok() { return Ok[Response](r) }
+    return Err[Response]("HTTP " + r.statusCode + ": " + r.error)
+}
+export func safePostJson(string url, string json): Result[Response] {
+    Response r = net.postJson(url, json)
+    if r.ok() { return Ok[Response](r) }
+    return Err[Response]("HTTP " + r.statusCode + ": " + r.error)
+}
+export func safeFetchPage(string url, string ua): Result[Page] {
+    Page? p = crawler.fetchPage(url, ua)
+    if p == null { return Err[Page]("fetch failed: " + url) }
+    return Ok[Page](p)
+}
+
+// 泛型函数式工具直接 re-export
+export func map[T, U](Array[T] arr, func(T):U fn): Array[U] { return generic.map(arr, fn) }
+export func filter[T](Array[T] arr, func(T):bool fn): Array[T] { return generic.filter(arr, fn) }
+export func reduce[T, U](Array[T] arr, U init, func(U, T):U fn): U { return generic.reduce(arr, init, fn) }
+export func forEach[T](Array[T] arr, func(T) fn) { generic.forEach(arr, fn) }

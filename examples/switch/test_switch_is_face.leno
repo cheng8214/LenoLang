@@ -1,0 +1,40 @@
+// 测试 switch case is Face（接口类型匹配）
+
+face Shape {
+    func area():float
+}
+
+struct Rect impl Shape {
+    int width = 0
+    int height = 0
+    func area() { return width * height }
+}
+
+struct Circle impl Shape {
+    float radius = 0.0
+    func area() { return 3.14159 * radius * radius }
+}
+
+func test_face_match() {
+    var s = new Rect(width=10, height=20)
+    switch s {
+        case is Shape {
+            print("是 Shape: area=" + _str(s.area()))
+        }
+        default {
+            print("不是 Shape")
+        }
+    }
+    
+    var c = new Circle(radius=5.0)
+    switch c {
+        case is Shape {
+            print("Circle 也是 Shape: area=" + _str(c.area()))
+        }
+        default {
+            print("不是 Shape")
+        }
+    }
+}
+
+test_face_match()

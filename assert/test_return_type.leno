@@ -1,0 +1,11 @@
+// 跨模块函数返回类型推断测试
+import "return_type_mod.leno" as m
+
+main() {
+    // 应该能识别 make_point 返回 Point 类型
+    var p = m.make_point(3, 4)
+    assert_eq(p.x, 3)
+    assert_eq(p.y, 4)
+
+    print("test_return_type passed")
+}
