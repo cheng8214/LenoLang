@@ -825,47 +825,60 @@ void gen_compound_assign(CodeGen* gen, Ast* ast) {
 // try-catch-finally
 // ============================================================================
 
+// try / catch / finally 布局（两条路径都汇入 finally，finally 必定执行）：
+//   TRY  (catch_ip → CATCH 块)
+//   try_body
+//   END_TRY                 ← 正常结束：注销 catch（后面不再需要）
+//   JMP FINALLY             ← 正常路径也要执行 finally
+// CATCH:
+//   CATCH A (R[A] = 异常)
+//   catch_body              ← 结束后自然落入 FINALLY
+// FINALLY:
+//   FINALLY (设置 finally_ip，供 return/异常收尾跳回)
+//   finally_body
+//   END_TRY
+// END:
 static void gen_try(CodeGen* gen, Ast* ast) {
-    // TRY: 设置 catch_ip
+    int has_finally = ast->u.try_.finally_body != NULL;
+
     int try_pos = gen->chunk->len;
-    // TRY iABx: Bx = catch 偏移（占位）
     reg_encode_iABx(gen->chunk, OP_TRY, 0, 0, ast->line);
     int catch_patch_pos = gen->chunk->len - 2;  // Bx 字段位置
 
     // try body
     gen_stmt(gen, ast->u.try_.try_body);
 
-    // END_TRY
-    int jmp_end = emit_jmp(gen, ast->line);
+    // 正常路径：先注销 catch 注册，再跳到 finally
     reg_encode_iABC(gen->chunk, OP_END_TRY, 0, 0, 0, ast->line);
+    int jmp_finally = emit_jmp(gen, ast->line);
 
-    // CATCH: patch catch_ip
+    // --- catch 块 ---
     int catch_pos = gen->chunk->len;
     gen->chunk->code[catch_patch_pos] = (uint8_t)(((catch_pos - try_pos) >> 8) & 0xFF);
     gen->chunk->code[catch_patch_pos + 1] = (uint8_t)((catch_pos - try_pos) & 0xFF);
 
-    if (ast->u.try_.catch_var) {
-        // 分配 catch 变量寄存器
-        Symbol* sym = scope_resolve(gen->sem->current, ast->u.try_.catch_var);
-        if (sym) {
-            // CATCH iABx: R[A] = exception
-            reg_encode_iABx(gen->chunk, OP_CATCH, sym->index, 0, ast->line);
+    // catch 变量：语义分析已把符号解析写进 catch_var_ref（别再 scope_resolve）
+    SymRef* cref = &ast->u.try_.catch_var_ref;
+    if (ast->u.try_.catch_var && cref->name) {
+        if (cref->index >= gen->next_reg) {
+            gen->next_reg = cref->index + 1;
+            if (gen->next_reg > gen->max_reg) gen->max_reg = gen->next_reg;
         }
+        // CATCH iABx: R[A] = 当前异常
+        reg_encode_iABx(gen->chunk, OP_CATCH, cref->index, 0, ast->line);
     }
 
     if (ast->u.try_.catch_body) {
         gen_stmt(gen, ast->u.try_.catch_body);
     }
 
-    patch_jmp(gen, jmp_end);
-
-    // FINALLY
-    if (ast->u.try_.finally_body) {
-        // FINALLY iABx: 设置 finally_ip
-        int fin_pos = gen->chunk->len;
+    // --- finally 块（catch 结束自然落入这里）---
+    int fin_pos = gen->chunk->len;
+    patch_jmp_to(gen, jmp_finally, fin_pos);
+    if (has_finally) {
         reg_encode_iABx(gen->chunk, OP_FINALLY, 0, 0, ast->line);
         gen_stmt(gen, ast->u.try_.finally_body);
-        // END_TRY 清除 finally
+        // 清除 finally 注册
         reg_encode_iABC(gen->chunk, OP_END_TRY, 0, 0, 0, ast->line);
     }
 }

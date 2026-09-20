@@ -655,6 +655,12 @@ void gen_module_call(CodeGen* gen, Ast* ast, int dst) {
     int nargs = ast->u.module_call.args.count;
     int base = reg_alloc_block(gen, nargs + 1);
 
+    // ★ 必须先求值实参，再发射 OP_MODULE_CALL —— 指令在执行期直接从
+    //   R[base+1..] 取参，若指令先发射、实参后写入，读到的是上一轮的旧值。
+    for (int i = 0; i < nargs; i++) {
+        gen_expr_to(gen, ast->u.module_call.args.items[i], base + 1 + i);
+    }
+
     const char* mod = ast->u.module_call.module_name ? ast->u.module_call.module_name : "";
     const char* meth = ast->u.module_call.method_name ? ast->u.module_call.method_name : "";
     int mlen = (int)strlen(mod);
@@ -678,9 +684,6 @@ void gen_module_call(CodeGen* gen, Ast* ast, int dst) {
         reg_encode_iABC(gen->chunk, OP_MODULE_CALL, base, cidx, nargs, ast->line);
     }
 
-    for (int i = 0; i < nargs; i++) {
-        gen_expr_to(gen, ast->u.module_call.args.items[i], base + 1 + i);
-    }
     if (base != dst) emit_mov(gen, dst, base, ast->line);
     reg_free_block(gen, base);
 }
