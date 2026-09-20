@@ -242,6 +242,11 @@ void gen_func(CodeGen* gen, Ast* ast) {
         emit_closure_upvals(gen, r, const_idx, ast);
         emit_defglobal(gen, r, ref->index, ast->line);
         reg_free(gen, r);
+    } else if (ref->kind == SYM_MODULE) {
+        // 模块内的函数：写进 module->globals[ref->index]
+        int r = reg_alloc(gen);
+        emit_closure_upvals(gen, r, const_idx, ast);
+        reg_encode_iABC(gen->chunk, OP_DEFINE_MODULE_FUNC, r, ref->index, 0, ast->line);
+        reg_free(gen, r);
     }
-    // 其他（模块函数等）后续阶段处理
 }

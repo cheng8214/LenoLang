@@ -1558,6 +1558,11 @@
                 R(a) = dict_get((ObjDict*)val_as_obj(obj), idx);
                 DISPATCH();
             }
+            // .leno 模块：成员在 exports 字典里
+            if (ot == OBJ_MODULE) {
+                R(a) = dict_get(((ObjModule*)val_as_obj(obj))->exports, idx);
+                DISPATCH();
+            }
         }
 
         if (!throw_runtime_error("下标访问: 对象不支持索引", line)) return -1;
@@ -2067,11 +2072,193 @@
         DISPATCH();
     }
     LABEL(OP_GET_MODULE_CONST): DISPATCH();
-    LABEL(OP_GET_MODULE_VAR): DISPATCH();
-    LABEL(OP_SET_MODULE_VAR): DISPATCH();
-    LABEL(OP_GET_MODULE_FUNC): DISPATCH();
-    LABEL(OP_DEFINE_MODULE_FUNC): DISPATCH();
-    LABEL(OP_INIT_LENOMODULE): DISPATCH();
+    // 模块变量 / 函数：以**当前帧所属模块**为上下文，索引到 module->globals[]
+    // OP_GET_MODULE_VAR A Bx: R[A] = 模块全局[Bx]
+    LABEL(OP_GET_MODULE_VAR): {
+        int a = READ_A();
+        int bx = READ_Bx();
+        int line = GET_CURRENT_LINE();
+        ObjModule* module = (ObjModule*)frame->module;
+        if (unlikely(!module)) {
+            if (!throw_runtime_error("模块变量访问: 不在模块上下文中", line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        if (unlikely(bx < 0 || bx >= module->global_count)) {
+            // 尚未写入过的槽位：视为 null（与全局变量未初始化一致）
+            R(a) = val_null();
+            DISPATCH();
+        }
+        R(a) = module->globals[bx];
+        DISPATCH();
+    }
+    // OP_SET_MODULE_VAR A Bx: 模块全局[Bx] = R[A]（必要时扩容，见 DEFINE_MODULE_FUNC）
+    LABEL(OP_SET_MODULE_VAR): {
+        int a = READ_A();
+        int bx = READ_Bx();
+        int line = GET_CURRENT_LINE();
+        ObjModule* module = (ObjModule*)frame->module;
+        if (unlikely(!module)) {
+            if (!throw_runtime_error("模块变量设置: 不在模块上下文中", line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        if (bx >= module->global_capacity) {
+            int new_capacity = module->global_capacity == 0 ? 8 : module->global_capacity * 2;
+            while (new_capacity <= bx) new_capacity *= 2;
+            Value* new_globals = (Value*)realloc(module->globals, sizeof(Value) * (size_t)new_capacity);
+            if (unlikely(!new_globals)) {
+                runtime_error("模块变量设置: 内存分配失败", line);
+                return -1;
+            }
+            for (int i = module->global_capacity; i < new_capacity; i++) {
+                new_globals[i] = val_null();
+            }
+            module->globals = new_globals;
+            module->global_capacity = new_capacity;
+        }
+        module->globals[bx] = R(a);
+        if (bx >= module->global_count) module->global_count = bx + 1;
+        gc_write_barrier((Object*)module, R(a));
+        DISPATCH();
+    }
+    // OP_GET_MODULE_FUNC A Bx: 同 GET_MODULE_VAR（模块函数与变量共用 globals 槽）
+    LABEL(OP_GET_MODULE_FUNC): {
+        int a = READ_A();
+        int bx = READ_Bx();
+        int line = GET_CURRENT_LINE();
+        ObjModule* module = (ObjModule*)frame->module;
+        if (unlikely(!module)) {
+            if (!throw_runtime_error("模块函数访问: 不在模块上下文中", line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        if (unlikely(bx < 0 || bx >= module->global_count)) {
+            if (!throw_runtime_error("模块函数索引越界", line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        R(a) = module->globals[bx];
+        DISPATCH();
+    }
+    // OP_DEFINE_MODULE_FUNC A Bx: 模块全局[Bx] = R[A]（必要时扩容）
+    LABEL(OP_DEFINE_MODULE_FUNC): {
+        int a = READ_A();
+        int bx = READ_Bx();
+        int line = GET_CURRENT_LINE();
+        ObjModule* module = (ObjModule*)frame->module;
+        if (unlikely(!module)) {
+            if (!throw_runtime_error("模块函数定义: 不在模块上下文中", line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        if (bx >= module->global_capacity) {
+            int new_capacity = module->global_capacity == 0 ? 8 : module->global_capacity * 2;
+            while (new_capacity <= bx) new_capacity *= 2;
+            Value* new_globals = (Value*)realloc(module->globals, sizeof(Value) * (size_t)new_capacity);
+            if (unlikely(!new_globals)) {
+                runtime_error("模块函数定义: 内存分配失败", line);
+                return -1;
+            }
+            for (int i = module->global_capacity; i < new_capacity; i++) {
+                new_globals[i] = val_null();
+            }
+            module->globals = new_globals;
+            module->global_capacity = new_capacity;
+        }
+        module->globals[bx] = R(a);
+        if (bx >= module->global_count) module->global_count = bx + 1;
+        gc_write_barrier((Object*)module, R(a));
+        DISPATCH();
+    }
+    // OP_INIT_LENOMODULE A: 若 R[A] 是未初始化的 .leno 模块，执行其 init_chunk
+    //   执行完毕 R[A] 仍是模块对象（供别名变量持有）
+    LABEL(OP_INIT_LENOMODULE): {
+        int a = READ_A();
+        int line = GET_CURRENT_LINE();
+        Value module_val = R(a);
+
+        if (unlikely(!val_is_obj(module_val) || val_as_obj(module_val)->type != OBJ_MODULE)) {
+            if (!throw_runtime_error("模块初始化: 目标不是模块对象", line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+
+        ObjModule* module = (ObjModule*)val_as_obj(module_val);
+
+        if (!module->initialized) {
+            module->initialized = 1;
+
+            // 模块依赖的原生模块
+            if (module->native_imports && module->native_import_count > 0) {
+                for (int i = 0; i < module->native_import_count; i++) {
+                    if (native_init_module(module->native_imports[i]) != 0) {
+                        char nmsg[256];
+                        snprintf(nmsg, sizeof(nmsg), "未知的原生模块: %s", module->native_imports[i]);
+                        if (!throw_runtime_error(nmsg, line)) return -1;
+                        frame = &vm.frames[vm.frame_cnt - 1];
+                        DISPATCH();
+                    }
+                }
+            }
+
+            if (module->init_chunk) {
+                int saved_sp = vm.sp;
+                ModuleFrame* mod_frame = module_frame_new(module);
+                module_frame_enter(mod_frame);
+                int result = vm_run_chunk(module->init_chunk);
+                module_frame_exit();
+                vm.sp = saved_sp;
+                // 递归执行后 vm.frames 可能已 realloc，frame 必须重新取
+                frame = &vm.frames[vm.frame_cnt - 1];
+                if (result < 0) return -1;
+            }
+
+            // 导出映射：把模块内全局变量/类型补进 exports
+            if (module->export_mappings && module->export_mapping_count > 0) {
+                for (int i = 0; i < module->export_mapping_count; i++) {
+                    ExportGlobalMapping* mapping = &module->export_mappings[i];
+                    ObjString* key = str_copy(mapping->name, (int)strlen(mapping->name));
+                    Value current_val = dict_get(module->exports, val_obj((Object*)key));
+                    if (val_is_null(current_val)) {
+                        if (mapping->global_index >= 0 && mapping->global_index < module->global_count) {
+                            Value actual_val = module->globals[mapping->global_index];
+                            if (!val_is_null(actual_val)) {
+                                dict_set(module->exports, val_obj((Object*)key), actual_val);
+                            }
+                        } else if (mapping->global_index == -2) {
+                            ObjStructDef* def = struct_def_find(mapping->name);
+                            if (def) {
+                                dict_set(module->exports, val_obj((Object*)key), val_obj((Object*)def));
+                            }
+                        }
+                    }
+                }
+            }
+
+            // use 再导出的类型
+            if (module->use_reexport_names && module->use_reexport_count > 0) {
+                for (int i = 0; i < module->use_reexport_count; i++) {
+                    const char* name = module->use_reexport_names[i];
+                    TypeKind kind = (TypeKind)module->use_reexport_kinds[i];
+                    ObjString* key = str_copy(name, (int)strlen(name));
+                    Value current_val = dict_get(module->exports, val_obj((Object*)key));
+                    if (val_is_null(current_val)) {
+                        if (kind == TYPE_ENUM) {
+                            ObjEnumDef* def = enum_def_find(name);
+                            if (def) dict_set(module->exports, val_obj((Object*)key), val_obj((Object*)def));
+                        } else if (kind == TYPE_STRUCT) {
+                            ObjStructDef* def = struct_def_find(name);
+                            if (def) dict_set(module->exports, val_obj((Object*)key), val_obj((Object*)def));
+                        }
+                    }
+                }
+            }
+        }
+
+        R(a) = module_val;
+        DISPATCH();
+    }
 
     // --- struct ---
     // OP_STRUCT_DEF A Bx: Bx = 结构体名常量索引；其余元数据紧随指令（布局与栈式一致）：
@@ -2604,6 +2791,20 @@
 
         if (rt == OBJ_DICT) {
             R(a) = dict_get((ObjDict*)val_as_obj(receiver), name_val);
+            DISPATCH();
+        }
+
+        // .leno 模块：成员（变量 / 函数 / 类型）都在 exports 字典里
+        if (rt == OBJ_MODULE) {
+            Value member = dict_get(((ObjModule*)val_as_obj(receiver))->exports, name_val);
+            if (unlikely(val_is_null(member))) {
+                char msg[256];
+                snprintf(msg, sizeof(msg), "模块中不存在成员 '%s'", name->chars);
+                if (!throw_runtime_error(msg, line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            R(a) = member;
             DISPATCH();
         }
 

@@ -640,6 +640,19 @@ static void gen_var_decl(CodeGen* gen, Ast* ast) {
         return;
     }
 
+    // 模块变量：值存 module->globals[ref->index]
+    if (ref->kind == SYM_MODULE) {
+        int r = reg_alloc(gen);
+        if (ast->u.var_decl.init) {
+            gen_expr_to(gen, ast->u.var_decl.init, r);
+        } else {
+            emit_loadnil_to(gen, r, ast->line);
+        }
+        reg_encode_iABC(gen->chunk, OP_SET_MODULE_VAR, r, ref->index, 0, ast->line);
+        reg_free(gen, r);
+        return;
+    }
+
     // 局部变量 / 参数：寄存器号 = ref->index（语义分析决定的固定槽位）
     int dst = ref->index;
     if (dst >= gen->next_reg) {
@@ -1147,7 +1160,62 @@ static void gen_import(CodeGen* gen, Ast* ast) {
         reg_free(gen, r);
         return;
     }
-    // .leno 模块：编译期已由 load_module_file 加载（后续阶段接入运行时初始化）
+
+    // --- .leno 源码模块 ---
+    // 编译期：加载并编译模块（产出 ObjModule + init_chunk）
+    // 运行期：OP_INIT_LENOMODULE 执行 init_chunk，再把模块对象绑到别名变量
+    const char* alias = ast->u.import.alias;
+    char* extracted = NULL;
+    if (!alias) {
+        const char* base = strrchr(mod, '/');
+        if (!base) base = strrchr(mod, '\\');
+        if (!base) base = mod; else base++;
+        const char* dot = strrchr(base, '.');
+        if (dot && dot > base) {
+            extracted = (char*)malloc((size_t)(dot - base) + 1);
+            memcpy(extracted, base, (size_t)(dot - base));
+            extracted[dot - base] = '\0';
+        } else {
+            extracted = strdup(base);
+        }
+        alias = extracted;
+    }
+
+    const char* current_file = error_get_filename();
+    ObjModule* module = load_module_file(mod, current_file, alias);
+
+    if (!module) {
+        if (!error_has_any()) {
+            char err_msg[BUFFER_MEDIUM];
+            snprintf(err_msg, sizeof(err_msg), "无法加载模块 '%s'", mod);
+            error_add_at(ERR_SEMANTIC, ast->line, ast->column, err_msg);
+        }
+        if (extracted) free(extracted);
+        return;
+    }
+
+    int r = reg_alloc(gen);
+    int cidx = make_constant(gen, val_obj((Object*)module));
+    emit_loadk_to(gen, r, cidx, ast->line);
+    reg_encode_iABC(gen->chunk, OP_INIT_LENOMODULE, r, 0, 0, ast->line);
+
+    // 模块对象绑定到别名（全局 / 模块变量 / 局部）
+    Symbol* sym = scope_resolve(gen->sem->root_scope, alias);
+    if (sym) {
+        if (sym->kind == SYM_GLOBAL) {
+            emit_defglobal(gen, r, sym->index, ast->line);
+        } else if (sym->kind == SYM_MODULE) {
+            reg_encode_iABC(gen->chunk, OP_SET_MODULE_VAR, r, sym->index, 0, ast->line);
+        } else if (sym->kind == SYM_LOCAL || sym->kind == SYM_PARAM) {
+            if (sym->index >= gen->next_reg) {
+                gen->next_reg = sym->index + 1;
+                if (gen->next_reg > gen->max_reg) gen->max_reg = gen->next_reg;
+            }
+            emit_mov(gen, sym->index, r, ast->line);
+        }
+    }
+    reg_free(gen, r);
+    if (extracted) free(extracted);
 }
 
 static void gen_export(CodeGen* gen, Ast* ast) {

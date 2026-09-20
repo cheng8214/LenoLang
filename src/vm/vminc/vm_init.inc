@@ -243,9 +243,6 @@ int vm_run_chunk(Chunk* chunk) {
     frame->ip = chunk->code;
     frame->stack_base = vm.sp;
     frame->slot_count = 0;
-    frame->locals = NULL;
-    frame->local_count = 0;
-    frame->locals_is_dynamic = 0;  // 明确初始化
     frame->catch_ip = NULL;
     frame->finally_ip = NULL;
     frame->prev_catch_ip = NULL;
@@ -258,10 +255,42 @@ int vm_run_chunk(Chunk* chunk) {
     // 临时帧默认没有捕获 upvalue
     frame->has_captures = 0;
 
+    // ★ 寄存器式：chunk 里的指令按 R[i] 访问帧局部，必须给帧分配 locals。
+    //   （栈式这里 locals 为 NULL 也能跑，因为栈式不通过 locals 取操作数。）
+    int lc = chunk->local_count > 0 ? chunk->local_count : 1;
+    Value* locals;
+    int dyn = 0;
+    if (lc <= INLINE_LOCALS_MAX) {
+        locals = frame->inline_locals;
+    } else {
+        locals = (Value*)malloc(sizeof(Value) * (size_t)lc);
+        if (!locals) {
+            vm.frame_cnt = prev_frame_cnt;
+            vm.chunk = prev_chunk;
+            vm.ip = prev_ip;
+            return -1;
+        }
+        dyn = 1;
+    }
+    for (int i = 0; i < lc; i++) locals[i] = val_null();
+    frame->locals = locals;
+    frame->local_count = lc;
+    frame->locals_is_dynamic = dyn;
+
+    // ★ 宿主返回语义 + 帧数下界：模块 chunk 的 RETURN 让帧数回落到 prev_frame_cnt
+    //   时，OP_RETURN 直接结束本次 vm_run，而不会继续跑调用方的字节码。
+    frame->ret_frame = -1;
+    frame->ret_reg = 0;
+    frame->ret_want = 1;
+    int prev_stop = vm.stop_frame_cnt;
+    vm.stop_frame_cnt = prev_frame_cnt;
+
     // 执行 chunk
     int result = vm_run();
 
     // 恢复状态
+    vm.stop_frame_cnt = prev_stop;
+    if (dyn) free(locals);
     vm.frame_cnt = prev_frame_cnt;
     vm.chunk = prev_chunk;
     vm.ip = prev_ip;

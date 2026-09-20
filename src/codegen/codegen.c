@@ -271,5 +271,14 @@ void codegen_module(CodeGen* gen, Ast* ast) {
         gen_stmt_module(gen, ast);
     }
 
+    // ★ 模块 chunk 末尾必须补 RETURN：模块由 vm_run_chunk 单独执行一段字节码，
+    //   没有 return 就会越过 chunk 末尾继续执行（表现为莫名其妙的崩溃/乱跑）。
+    {
+        int r = reg_alloc(gen);
+        emit_loadnil_to(gen, r, ast->line);
+        emit_return(gen, r, 1, ast->line);
+        reg_free(gen, r);
+    }
+
     gen->chunk->local_count = gen->max_reg;
 }

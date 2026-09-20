@@ -641,18 +641,133 @@ void gen_interp_string(CodeGen* gen, Ast* ast, int dst) {
 // 模块访问 / 模块调用
 // ============================================================================
 
+// 取「别名变量持有的模块对象」到 dst（mod.member 的 mod 部分）。
+//   语义分析把别名符号写在 ast->u.module_access.ref：
+//     SYM_GLOBAL  （主文件里的 import 别名 → 全局变量）
+//     SYM_MODULE  （模块内 import 别的模块 → 本模块的全局槽）
+//     SYM_LOCAL / SYM_UPVALUE
+static void emit_module_object(CodeGen* gen, Ast* ast, int dst) {
+    SymRef* ref = &ast->u.module_access.ref;
+
+    if (ref->name) {
+        switch (ref->kind) {
+            case SYM_LOCAL:
+            case SYM_PARAM:
+                if (ref->index != dst) emit_mov(gen, dst, ref->index, ast->line);
+                return;
+            case SYM_GLOBAL:
+                emit_getglobal_to(gen, dst, ref->index, ast->line);
+                return;
+            case SYM_UPVALUE:
+                emit_getupval_to(gen, dst, ref->index, ast->line);
+                return;
+            case SYM_MODULE:
+                reg_encode_iABx(gen->chunk, OP_GET_MODULE_VAR, dst, ref->index, ast->line);
+                return;
+            default:
+                break;
+        }
+    }
+
+    // 兜底：按别名在全局作用域查
+    const char* alias = ast->u.module_access.module_name;
+    Symbol* sym = alias ? scope_resolve(gen->sem->root_scope, alias) : NULL;
+    if (sym) {
+        if (sym->kind == SYM_GLOBAL) {
+            emit_getglobal_to(gen, dst, sym->index, ast->line);
+            return;
+        }
+        if (sym->kind == SYM_MODULE) {
+            reg_encode_iABx(gen->chunk, OP_GET_MODULE_VAR, dst, sym->index, ast->line);
+            return;
+        }
+        if (sym->kind == SYM_LOCAL || sym->kind == SYM_PARAM) {
+            if (sym->index != dst) emit_mov(gen, dst, sym->index, ast->line);
+            return;
+        }
+    }
+    emit_loadnil_to(gen, dst, ast->line);
+}
+
+// mod.member：取模块对象后按成员名查 exports。
+//   ⚠ AST_MODULE_ACCESS 表示的是**成员访问**（不是"模块对象表达式"）——
+//     只取模块对象会把整个模块对象当成结果（曾表现为 assert_eq(mod.value, 100)
+//     实际得到 [object]）。模块成员（变量/函数/类型）都统一放在 exports 字典里。
 void gen_module_access(CodeGen* gen, Ast* ast, int dst) {
-    // GET_MODULE_VAR: R[A] = module[B].var[C]
-    // 简化：用常量索引
-    int mod_idx = 0;  // TODO: 从语义分析获取模块索引
-    int var_idx = 0;  // TODO: 从语义分析获取变量索引
-    reg_encode_iABC(gen->chunk, OP_GET_MODULE_VAR, dst, mod_idx, var_idx, ast->line);
+    const char* member = ast->u.module_access.member_name;
+    if (!member || !member[0]) {
+        emit_module_object(gen, ast, dst);
+        return;
+    }
+
+    int mreg = reg_alloc(gen);
+    emit_module_object(gen, ast, mreg);
+
+    int ireg = reg_alloc(gen);
+    int cidx = make_constant(gen, val_obj((Object*)str_copy(member, (int)strlen(member))));
+    emit_loadk_to(gen, ireg, cidx, ast->line);
+
+    reg_encode_iABC(gen->chunk, OP_INDEX, dst, mreg, ireg, ast->line);
+
+    reg_free(gen, ireg);
+    reg_free(gen, mreg);
 }
 
 void gen_module_call(CodeGen* gen, Ast* ast, int dst) {
-    // MODULE_CALL: R[A] = 模块方法(R[A+1 .. A+C])
-    // 常量表里存 "模块名\0方法名" 组合串（含内嵌 NUL，len 记总长）
+    // 两类模块调用：
+    //   原生模块（io / jsons / strings ...）→ OP_MODULE_CALL（按名字查 native 方法表）
+    //   .leno 源码模块（别名）→ 取模块对象 → exports[方法名] → 普通 CALL
+    // 用「该名字能否被原生模块机制识别」区分；lib_ref 对 .leno 模块没有有效信息。
+    extern int native_init_module(const char* name);
+
     int nargs = ast->u.module_call.args.count;
+    const char* modname = ast->u.module_call.module_name ? ast->u.module_call.module_name : "";
+    const char* methname = ast->u.module_call.method_name ? ast->u.module_call.method_name : "";
+
+    if (native_init_module(modname) != 0) {
+        // --- .leno 模块成员调用 ---
+        int base = reg_alloc_block(gen, nargs + 1);
+
+        SymRef* lib = &ast->u.module_call.lib_ref;
+        if (lib->name && (lib->kind == SYM_LOCAL || lib->kind == SYM_PARAM)) {
+            emit_mov(gen, base, lib->index, ast->line);
+        } else if (lib->name && lib->kind == SYM_GLOBAL) {
+            emit_getglobal_to(gen, base, lib->index, ast->line);
+        } else if (lib->name && lib->kind == SYM_UPVALUE) {
+            emit_getupval_to(gen, base, lib->index, ast->line);
+        } else if (lib->name && lib->kind == SYM_MODULE) {
+            reg_encode_iABx(gen->chunk, OP_GET_MODULE_VAR, base, lib->index, ast->line);
+        } else {
+            // 兜底：按模块名（别名）在全局作用域查
+            Symbol* sym = scope_resolve(gen->sem->root_scope, modname);
+            if (sym && sym->kind == SYM_GLOBAL) {
+                emit_getglobal_to(gen, base, sym->index, ast->line);
+            } else if (sym && sym->kind == SYM_MODULE) {
+                reg_encode_iABx(gen->chunk, OP_GET_MODULE_VAR, base, sym->index, ast->line);
+            } else if (sym && (sym->kind == SYM_LOCAL || sym->kind == SYM_PARAM)) {
+                emit_mov(gen, base, sym->index, ast->line);
+            } else {
+                emit_loadnil_to(gen, base, ast->line);
+            }
+        }
+
+        // callee = 模块对象[方法名]
+        int ireg = reg_alloc(gen);
+        int cidx = make_constant(gen, val_obj((Object*)str_copy(methname, (int)strlen(methname))));
+        emit_loadk_to(gen, ireg, cidx, ast->line);
+        reg_encode_iABC(gen->chunk, OP_INDEX, base, base, ireg, ast->line);
+        reg_free(gen, ireg);
+
+        for (int i = 0; i < nargs; i++) {
+            gen_expr_to(gen, ast->u.module_call.args.items[i], base + 1 + i);
+        }
+        emit_call(gen, base, nargs, 1, ast->line);
+        if (base != dst) emit_mov(gen, dst, base, ast->line);
+        reg_free_block(gen, base);
+        return;
+    }
+
+    // --- 原生模块调用 ---
     int base = reg_alloc_block(gen, nargs + 1);
 
     // ★ 必须先求值实参，再发射 OP_MODULE_CALL —— 指令在执行期直接从
