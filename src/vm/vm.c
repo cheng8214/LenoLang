@@ -965,6 +965,9 @@ THREAD_LOCAL VM* current_exec_vm = NULL;
 #include "vminc/vm_exception.inc"
 #undef vm
 
+// 算术辅助宏（int48 溢出提升 bigint、安全加减乘等）
+#include "vminc/vm_helpers.inc"
+
 // 基础工具函数（依赖 exception）
 #define vm (*current_exec_vm)
 #include "vminc/vm_utils.inc"
@@ -987,6 +990,77 @@ THREAD_LOCAL VM* current_exec_vm = NULL;
 #define vm (*current_exec_vm)
 #include "vminc/vm_call.inc"
 #undef vm
+
+// ============================================================================
+// 比较语义（寄存器式 VM 的唯一来源，与栈式 op_compare.inc 保持一致）
+// ============================================================================
+
+// 相等比较（OP_EQ / OP_NEQ）：
+//   int/float/bigint 数值相等；string 比内容；array 逐元素；null/bool 按值；
+//   其余对象按引用；类型不同 → 不相等。
+static inline int value_eq_stdlib(Value a, Value b) {
+    if (val_is_int(a) && val_is_int(b)) return val_as_int(a) == val_as_int(b);
+    if (val_is_float(a) || val_is_float(b)) {
+        if (!(val_is_num(a) || val_is_bigint(a)) || !(val_is_num(b) || val_is_bigint(b))) return 0;
+        return val_as_num_ex(a) == val_as_num_ex(b);
+    }
+    if (val_is_bigint(a) || val_is_bigint(b)) {
+        return bigint_compare(promote_to_bigint(a), promote_to_bigint(b)) == 0;
+    }
+    if (val_is_null(a) && val_is_null(b)) return 1;
+    if (val_is_bool(a) && val_is_bool(b)) return val_as_bool(a) == val_as_bool(b);
+    if (val_is_obj(a) && val_is_obj(b)) {
+        Object* oa = val_as_obj(a);
+        Object* ob = val_as_obj(b);
+        if (oa->type != ob->type) return 0;
+        if (oa->type == OBJ_STRING) {
+            ObjString* sa = (ObjString*)oa;
+            ObjString* sb = (ObjString*)ob;
+            return sa->len == sb->len && memcmp(sa->chars, sb->chars, (size_t)sa->len) == 0;
+        }
+        if (oa->type == OBJ_ARRAY) {
+            ObjArray* aa = (ObjArray*)oa;
+            ObjArray* ab = (ObjArray*)ob;
+            if (aa->count != ab->count) return 0;
+            for (int i = 0; i < aa->count; i++) {
+                if (!value_eq_stdlib(aa->elements[i], ab->elements[i])) return 0;
+            }
+            return 1;
+        }
+        return oa == ob;
+    }
+    return 0;
+}
+
+// 三向比较（OP_LT / OP_GT / OP_LE / OP_GE）
+// 返回 1 = 可比（*out = -1/0/1）；0 = 不可比较（调用方报错）
+static inline int value_compare_stdlib(Value a, Value b, int* out) {
+    if (val_is_int(a) && val_is_int(b)) {
+        int64_t x = val_as_int(a), y = val_as_int(b);
+        *out = (x < y) ? -1 : (x > y ? 1 : 0);
+        return 1;
+    }
+    if ((val_is_num(a) || val_is_bigint(a)) && (val_is_num(b) || val_is_bigint(b))) {
+        if (val_is_float(a) || val_is_float(b)) {
+            double x = val_as_num_ex(a), y = val_as_num_ex(b);
+            *out = (x < y) ? -1 : (x > y ? 1 : 0);
+            return 1;
+        }
+        *out = bigint_compare(promote_to_bigint(a), promote_to_bigint(b));
+        return 1;
+    }
+    if (val_is_obj(a) && val_is_obj(b) &&
+        val_as_obj(a)->type == OBJ_STRING && val_as_obj(b)->type == OBJ_STRING) {
+        ObjString* sa = (ObjString*)val_as_obj(a);
+        ObjString* sb = (ObjString*)val_as_obj(b);
+        int min_len = sa->len < sb->len ? sa->len : sb->len;
+        int c = memcmp(sa->chars, sb->chars, (size_t)min_len);
+        if (c == 0) c = sa->len - sb->len;
+        *out = (c < 0) ? -1 : (c > 0 ? 1 : 0);
+        return 1;
+    }
+    return 0;
+}
 
 int vm_run(void) {
     // 主线程直接使用全局 vm，零开销

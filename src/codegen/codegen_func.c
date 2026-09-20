@@ -142,10 +142,15 @@ void gen_func_closure(CodeGen* gen, Ast* ast, ObjFunction* func) {
     ObjFunction* saved_func = gen->current_func;
     gen->current_func = func;
 
-    // 重置寄存器分配器：参数占用 R0..arity-1
-    gen->next_reg = func->arity;
-    gen->max_reg = func->arity;
+    // 重置寄存器分配器。
+    // 关键：局部变量（参数 + 声明变量）的槽位号由语义分析分配，可能远大于 arity；
+    // 临时寄存器必须从"所有槽位之上"开始，否则会覆盖变量（静默错值）。
+    int base_reg = func->arity;
+    if (func->local_count > base_reg) base_reg = func->local_count;
+    gen->next_reg = base_reg;
+    gen->max_reg = base_reg;
     gen->freetop = 0;
+    gen->scope_base = base_reg;
 
     // 生成函数体
     if (ast->u.func.body) {
@@ -170,6 +175,22 @@ void gen_func_closure(CodeGen* gen, Ast* ast, ObjFunction* func) {
 // 函数定义语句
 // ============================================================================
 
+// 发射 OP_CLOSURE 及其捕获描述（紧随指令的非指令数据，每条 3 字节）：
+//   [is_local:u8][index:u8][is_value_capture:u8] × upvalue_count
+static void emit_closure_upvals(CodeGen* gen, int dst, int const_idx, Ast* ast) {
+    reg_encode_iABx(gen->chunk, OP_CLOSURE, dst, const_idx, ast->line);
+    int n = ast->u.func.upvalue_count;
+    for (int i = 0; i < n; i++) {
+        int is_local = (ast->u.func.upvalue_is_local && ast->u.func.upvalue_is_local[i]) ? 1 : 0;
+        int index = (ast->u.func.upvalue_indices && ast->u.func.upvalue_indices[i] >= 0)
+                        ? ast->u.func.upvalue_indices[i] : 0;
+        int is_value_capture = (ast->u.func.upvalue_is_value_capture && ast->u.func.upvalue_is_value_capture[i]) ? 1 : 0;
+        chunk_write(gen->chunk, (uint8_t)(is_local & 0xFF), ast->line);
+        chunk_write(gen->chunk, (uint8_t)(index & 0xFF), ast->line);
+        chunk_write(gen->chunk, (uint8_t)(is_value_capture & 0xFF), ast->line);
+    }
+}
+
 void gen_func(CodeGen* gen, Ast* ast) {
     // 1. 生成函数原型
     ObjFunction* func = gen_func_proto(gen, ast);
@@ -177,15 +198,28 @@ void gen_func(CodeGen* gen, Ast* ast) {
     // 2. 生成函数体
     gen_func_closure(gen, ast, func);
 
-    // 3. 定义到全局函数表
-    Symbol* sym = scope_resolve(gen->sem->current, ast->u.func.name);
-    if (sym && sym->kind == SYM_GLOBAL_FUNC) {
-        // GETGLOBALFUNC → 定义
+    // 3. 绑定到符号槽位
+    SymRef* ref = &ast->u.func.ref;
+    int const_idx = make_constant(gen, val_obj((Object*)func));
+
+    if (ref->kind == SYM_GLOBAL_FUNC) {
         int r = reg_alloc(gen);
-        // 把函数对象存入常量表，然后 DEFINERLOBALFUNC
-        int const_idx = make_constant(gen, val_obj((Object*)func));
-        emit_loadk_to(gen, r, const_idx, ast->line);
-        emit_defglobalfunc(gen, r, sym->index, ast->line);
+        emit_closure_upvals(gen, r, const_idx, ast);
+        emit_defglobalfunc(gen, r, ref->index, ast->line);
+        reg_free(gen, r);
+    } else if (ref->kind == SYM_LOCAL || ref->kind == SYM_PARAM) {
+        // 局部（嵌套）函数：函数值写到该变量自己的寄存器
+        int dst = ref->index;
+        if (dst >= gen->next_reg) {
+            gen->next_reg = dst + 1;
+            if (gen->next_reg > gen->max_reg) gen->max_reg = gen->next_reg;
+        }
+        emit_closure_upvals(gen, dst, const_idx, ast);
+    } else if (ref->kind == SYM_GLOBAL) {
+        int r = reg_alloc(gen);
+        emit_closure_upvals(gen, r, const_idx, ast);
+        emit_defglobal(gen, r, ref->index, ast->line);
         reg_free(gen, r);
     }
+    // 其他（模块函数等）后续阶段处理
 }

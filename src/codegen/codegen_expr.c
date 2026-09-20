@@ -70,38 +70,47 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
             break;
 
         // --- 变量引用 ---
+        // 符号解析结果由语义分析阶段写入 AST（u.var.ref），codegen 直接使用。
+        // 不再用 scope_resolve(sem->current, name)：codegen 阶段 current 作用域
+        // 已不对应声明点，而且语义阶段早有精确结果。
         case AST_VAR:
         {
-            Symbol* sym = scope_resolve(gen->sem->current, ast->u.var.name);
-            if (!sym) {
-                // 不应发生（语义分析已检查）
+            SymRef* ref = &ast->u.var.ref;
+            if (!ref->name) {
                 emit_loadnil_to(gen, dst, ast->line);
                 break;
             }
-            switch (sym->kind) {
+            switch (ref->kind) {
                 case SYM_LOCAL:
                 case SYM_PARAM:
                     // 局部变量就是寄存器，直接 MOV
-                    if (sym->index != dst) {
-                        emit_mov(gen, dst, sym->index, ast->line);
+                    if (ref->index != dst) {
+                        emit_mov(gen, dst, ref->index, ast->line);
                     }
                     break;
                 case SYM_GLOBAL:
-                    emit_getglobal_to(gen, dst, sym->index, ast->line);
+                    emit_getglobal_to(gen, dst, ref->index, ast->line);
                     break;
                 case SYM_GLOBAL_FUNC:
-                    emit_getglobalfunc_to(gen, dst, sym->index, ast->line);
+                    emit_getglobalfunc_to(gen, dst, ref->index, ast->line);
+                    break;
+                case SYM_UPVALUE:
+                    emit_getupval_to(gen, dst, ref->index, ast->line);
+                    break;
+                case SYM_MODULE:
+                    // 模块变量：由 OP_GET_MODULE_VAR 处理（索引在 ref->index）
+                    reg_encode_iABC(gen->chunk, OP_GET_MODULE_VAR, dst, ref->index, 0, ast->line);
                     break;
                 case SYM_NATIVE:
-                {
-                    // native 函数引用：压入 null 占位（调用时用 CALL_NATIVE）
-                    emit_loadnil_to(gen, dst, ast->line);
-                    break;
-                }
-                case SYM_UPVALUE:
-                    emit_getupval_to(gen, dst, sym->index, ast->line);
-                    break;
+                case SYM_TYPE:
+                case SYM_STRUCT:
+                case SYM_CSTRUCT:
+                case SYM_CLIB:
+                case SYM_CFUNC:
+                case SYM_ENUM:
+                case SYM_FUNC_ALIAS:
                 default:
+                    // 函数引用 / 类型名等：作为值使用时是 null 占位
                     emit_loadnil_to(gen, dst, ast->line);
                     break;
             }
@@ -147,38 +156,52 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
         }
 
         // --- 数组字面量 ---
+        // 元素必须落在 R[dst+1 .. dst+n]（NEWARRAY 按 A+i 读取），
+        // 所以先把高水位抬到 dst+n+1，元素间才不会夹入临时寄存器。
         case AST_ARRAY:
         {
             int n = ast->u.array.count;
-            // 实参从 R[dst+1] 开始
+            if (dst + 1 + n > gen->next_reg) {
+                gen->next_reg = dst + 1 + n;
+                if (gen->next_reg > gen->max_reg) gen->max_reg = gen->next_reg;
+            }
             for (int i = 0; i < n; i++) {
-                int r = reg_alloc(gen);
-                gen_expr_to(gen, ast->u.array.items[i], r);
+                gen_expr_to(gen, ast->u.array.items[i], dst + 1 + i);
             }
             // NEWARRAY: R[A] = new array(R[A+1..A+C-1]), C = count
             reg_encode_iABC(gen->chunk, OP_NEWARRAY, dst, 0, n, ast->line);
-            // 释放临时寄存器
-            for (int i = 0; i < n; i++) {
-                gen->next_reg--;  // 回退
-            }
             break;
         }
 
         // --- 字典字面量 ---
+        // 键值对交替落在 R[dst+1 .. dst+2n]（同 NEWARRAY 的连号约定）
         case AST_DICT:
         {
             int n = ast->u.dict.count;
-            // 键值对从 R[dst+1] 开始交替
+            if (dst + 1 + n * 2 > gen->next_reg) {
+                gen->next_reg = dst + 1 + n * 2;
+                if (gen->next_reg > gen->max_reg) gen->max_reg = gen->next_reg;
+            }
             for (int i = 0; i < n; i++) {
-                int r = reg_alloc(gen);
-                gen_expr_to(gen, ast->u.dict.entries[i].key, r);
-                r = reg_alloc(gen);
-                gen_expr_to(gen, ast->u.dict.entries[i].value, r);
+                gen_expr_to(gen, ast->u.dict.entries[i].key, dst + 1 + i * 2);
+                gen_expr_to(gen, ast->u.dict.entries[i].value, dst + 2 + i * 2);
             }
             reg_encode_iABC(gen->chunk, OP_NEWDICT, dst, 0, n, ast->line);
-            for (int i = 0; i < n * 2; i++) {
-                gen->next_reg--;
-            }
+            break;
+        }
+
+        // --- 切片：arr[start:end] ---
+        // OP_SLICE 约定：A = 结果，B = 对象，start/end 固定在 R[A+1] / R[A+2]
+        case AST_SLICE: {
+            int base = reg_alloc_block(gen, 3);
+            gen_expr_to(gen, ast->u.slice.obj, base);
+            if (ast->u.slice.start) gen_expr_to(gen, ast->u.slice.start, base + 1);
+            else emit_loadnil_to(gen, base + 1, ast->line);
+            if (ast->u.slice.end) gen_expr_to(gen, ast->u.slice.end, base + 2);
+            else emit_loadnil_to(gen, base + 2, ast->line);
+            reg_encode_iABC(gen->chunk, OP_SLICE, base, base, 0, ast->line);
+            if (base != dst) emit_mov(gen, dst, base, ast->line);
+            reg_free_block(gen, base);
             break;
         }
 
@@ -270,6 +293,33 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
             gen_struct_init(gen, ast, dst);
             break;
 
+        // --- 赋值作为表达式（parser 会把赋值语句包成表达式语句）---
+        case AST_ASSIGN: {
+            gen_assign(gen, ast);
+            // 表达式结果 = 被赋的值
+            if (ast->u.assign.name_count >= 1 && ast->u.assign.targets) {
+                Ast* t = ast->u.assign.targets[0];
+                SymRef* ref = (ast->u.assign.refs && ast->u.assign.refs[0].name)
+                                  ? &ast->u.assign.refs[0] : &t->u.var.ref;
+                if (t->kind == AST_VAR) {
+                    if (ref->kind == SYM_LOCAL || ref->kind == SYM_PARAM) {
+                        if (ref->index != dst) emit_mov(gen, dst, ref->index, ast->line);
+                    } else if (ref->kind == SYM_GLOBAL) {
+                        emit_getglobal_to(gen, dst, ref->index, ast->line);
+                    } else if (ref->kind == SYM_UPVALUE) {
+                        emit_getupval_to(gen, dst, ref->index, ast->line);
+                    } else {
+                        emit_loadnil_to(gen, dst, ast->line);
+                    }
+                } else {
+                    emit_loadnil_to(gen, dst, ast->line);
+                }
+            } else {
+                emit_loadnil_to(gen, dst, ast->line);
+            }
+            break;
+        }
+
         default:
             emit_loadnil_to(gen, dst, ast->line);
             break;
@@ -352,14 +402,58 @@ void gen_binop(CodeGen* gen, Ast* ast, int dst) {
 
 void gen_unary(CodeGen* gen, Ast* ast, int dst) {
     LenoTokenType op = ast->u.unary.op;
-    int operand = gen_expr(gen, ast->u.unary.operand);
+    Ast* operand_ast = ast->u.unary.operand;
+
+    // ++ / -- 必须就地作用于变量的寄存器 —— 否则只改了副本，变量本身不变。
+    if (op == TOK_INC || op == TOK_DEC) {
+        if (operand_ast && operand_ast->kind == AST_VAR) {
+            SymRef* ref = &operand_ast->u.var.ref;
+            int is_local = (ref->kind == SYM_LOCAL || ref->kind == SYM_PARAM);
+            int slot;
+
+            if (is_local) {
+                slot = ref->index;
+            } else {
+                slot = reg_alloc(gen);
+                if (ref->kind == SYM_GLOBAL) {
+                    emit_getglobal_to(gen, slot, ref->index, ast->line);
+                } else if (ref->kind == SYM_UPVALUE) {
+                    emit_getupval_to(gen, slot, ref->index, ast->line);
+                } else {
+                    emit_loadnil_to(gen, slot, ast->line);
+                }
+            }
+
+            if (ast->u.unary.is_postfix) {
+                // 后缀：表达式取旧值，变量随后自增/自减
+                if (dst != slot) emit_mov(gen, dst, slot, ast->line);
+                if (op == TOK_INC) emit_inc(gen, slot, slot, ast->line);
+                else emit_dec(gen, slot, slot, ast->line);
+            } else {
+                // 前缀：先自增/自减，表达式取新值
+                if (op == TOK_INC) emit_inc(gen, slot, slot, ast->line);
+                else emit_dec(gen, slot, slot, ast->line);
+                if (dst != slot) emit_mov(gen, dst, slot, ast->line);
+            }
+
+            if (!is_local) {
+                if (ref->kind == SYM_GLOBAL) {
+                    emit_setglobal(gen, slot, ref->index, ast->line);
+                } else if (ref->kind == SYM_UPVALUE) {
+                    emit_setupval(gen, slot, ref->index, ast->line);
+                }
+                reg_free(gen, slot);
+            }
+            return;
+        }
+    }
+
+    int operand = gen_expr(gen, operand_ast);
 
     switch (op) {
         case TOK_MINUS:    emit_neg(gen, dst, operand, ast->line); break;
         case TOK_NOT:       emit_not(gen, dst, operand, ast->line); break;
         case TOK_BITNOT:    emit_bitnot(gen, dst, operand, ast->line); break;
-        case TOK_INC:       emit_inc(gen, dst, operand, ast->line); break;
-        case TOK_DEC:       emit_dec(gen, dst, operand, ast->line); break;
         default:            emit_mov(gen, dst, operand, ast->line); break;
     }
     reg_free(gen, operand);
@@ -369,61 +463,96 @@ void gen_unary(CodeGen* gen, Ast* ast, int dst) {
 // 函数调用
 // ============================================================================
 
+// 生成 obj.name(实参...) 的方法调用：
+//   R[base] = R[base].name    （OP_GET_METHOD，产出绑定方法 / native）
+//   R[base+1..] = 实参
+//   CALL R[base], nargs, 1
+static void gen_method_call(CodeGen* gen, Ast* obj_ast, const char* mname,
+                            AstList* args, int nargs, int dst, int line) {
+    int base = reg_alloc_block(gen, nargs + 1);
+    gen_expr_to(gen, obj_ast, base);
+
+    int mlen = (int)strlen(mname);
+    ObjString* nameStr = str_copy(mname, mlen);
+    int name_const = make_constant(gen, val_obj((Object*)nameStr));
+
+    // C 为 0 或超 8 位 → 紧随一条 EXTRAARG 携带 24 位常量索引
+    if (name_const == 0 || name_const > 255) {
+        reg_encode_iABC(gen->chunk, OP_GET_METHOD, base, base, 0, line);
+        reg_encode_iAx(gen->chunk, OP_EXTRAARG, name_const, line);
+    } else {
+        reg_encode_iABC(gen->chunk, OP_GET_METHOD, base, base, name_const, line);
+    }
+
+    for (int i = 0; i < nargs; i++) {
+        gen_expr_to(gen, args->items[i], base + 1 + i);
+    }
+    emit_call(gen, base, nargs, 1, line);
+    if (base != dst) emit_mov(gen, dst, base, line);
+    reg_free_block(gen, base);
+}
+
 void gen_call(CodeGen* gen, Ast* ast, int dst) {
-    // 检查原生函数调用
-    if (ast->u.call.callee->kind == AST_VAR) {
-        const char* func_name = ast->u.call.callee->u.var.name;
-        Symbol* sym = scope_resolve(gen->sem->current, func_name);
-
-        if (sym && sym->kind == SYM_NATIVE) {
-            // CALL_NATIVE: R[A] = native(name)(R[A+1..A+C-1])
-            ObjString* nameStr = str_copy(sym->name, (int)strlen(sym->name));
-            int name_const = make_constant(gen, val_obj((Object*)nameStr));
-            int nargs = ast->u.call.args.count;
-
-            // 实参放在 R[dst+1..dst+nargs]
-            for (int i = 0; i < nargs; i++) {
-                int r = reg_alloc(gen);
-                gen_expr_to(gen, ast->u.call.args.items[i], r);
-            }
-            emit_call_native(gen, dst, name_const, nargs, ast->line);
-
-            // 释放临时寄存器
-            for (int i = 0; i < nargs; i++) {
-                gen->next_reg--;
-            }
-            return;
-        }
-
-        if (sym && sym->kind == SYM_GLOBAL_FUNC) {
-            // GETGLOBALFUNC R[dst], slot
-            // 实参放在 R[dst+1..dst+nargs]
-            int nargs = ast->u.call.args.count;
-            emit_getglobalfunc_to(gen, dst, sym->index, ast->line);
-            for (int i = 0; i < nargs; i++) {
-                int r = reg_alloc(gen);
-                gen_expr_to(gen, ast->u.call.args.items[i], r);
-            }
-            // CALL: R[A] = callee, R[A+1..A+B-1] = args, B=nargs+1, C=nresults+1
-            emit_call(gen, dst, nargs, 1, ast->line);
-            for (int i = 0; i < nargs; i++) {
-                gen->next_reg--;
-            }
-            return;
-        }
-    }
-
-    // 通用调用：求值 callee → dst，参数 → dst+1..
+    Ast* callee = ast->u.call.callee;
     int nargs = ast->u.call.args.count;
-    gen_expr_to(gen, ast->u.call.callee, dst);
-    for (int i = 0; i < nargs; i++) {
-        int r = reg_alloc(gen);
-        gen_expr_to(gen, ast->u.call.args.items[i], r);
+
+    // --- 方法调用：obj.name(args) ---
+    //   语义分析对 `s.len()` 这类会给出 AST_FIELD_ACCESS 或 AST_INDEX("len")，
+    //   两种形态都走同一套：GET_METHOD 得到绑定方法后再 CALL。
+    if (callee && callee->kind == AST_FIELD_ACCESS) {
+        gen_method_call(gen, callee->u.field_access.obj, callee->u.field_access.field_name,
+                        &ast->u.call.args, nargs, dst, ast->line);
+        return;
     }
-    emit_call(gen, dst, nargs, 1, ast->line);
-    for (int i = 0; i < nargs; i++) {
-        gen->next_reg--;
+    if (callee && callee->kind == AST_INDEX && callee->u.index.index &&
+        callee->u.index.index->kind == AST_STRING) {
+        gen_method_call(gen, callee->u.index.obj, callee->u.index.index->u.string.value,
+                        &ast->u.call.args, nargs, dst, ast->line);
+        return;
     }
+
+    // 调用约定：R[base] = callee，R[base+1 .. base+nargs] = 实参。
+    // 必须整块连续分配，否则实参之间会被临时寄存器隔开（VM 按 A+i 取参）。
+    if (callee && callee->kind == AST_VAR) {
+        SymRef* ref = &callee->u.var.ref;
+
+        // --- native 直接调用（CALL_NATIVE）：省掉"取函数值 + CALL" ---
+        if (ref->kind == SYM_NATIVE) {
+            int base = reg_alloc_block(gen, nargs + 1);
+            for (int i = 0; i < nargs; i++) {
+                gen_expr_to(gen, ast->u.call.args.items[i], base + 1 + i);
+            }
+            ObjString* nameStr = str_copy(ref->name, (int)strlen(ref->name));
+            int name_const = make_constant(gen, val_obj((Object*)nameStr));
+            emit_call_native(gen, base, name_const, nargs, ast->line);
+            if (base != dst) emit_mov(gen, dst, base, ast->line);
+            reg_free_block(gen, base);
+            return;
+        }
+
+        // --- 全局函数直接调用 ---
+        if (ref->kind == SYM_GLOBAL_FUNC) {
+            int base = reg_alloc_block(gen, nargs + 1);
+            emit_getglobalfunc_to(gen, base, ref->index, ast->line);
+            for (int i = 0; i < nargs; i++) {
+                gen_expr_to(gen, ast->u.call.args.items[i], base + 1 + i);
+            }
+            emit_call(gen, base, nargs, 1, ast->line);
+            if (base != dst) emit_mov(gen, dst, base, ast->line);
+            reg_free_block(gen, base);
+            return;
+        }
+    }
+
+    // --- 通用调用 ---
+    int base = reg_alloc_block(gen, nargs + 1);
+    gen_expr_to(gen, callee, base);
+    for (int i = 0; i < nargs; i++) {
+        gen_expr_to(gen, ast->u.call.args.items[i], base + 1 + i);
+    }
+    emit_call(gen, base, nargs, 1, ast->line);
+    if (base != dst) emit_mov(gen, dst, base, ast->line);
+    reg_free_block(gen, base);
 }
 
 // ============================================================================
@@ -480,17 +609,39 @@ void gen_module_access(CodeGen* gen, Ast* ast, int dst) {
 }
 
 void gen_module_call(CodeGen* gen, Ast* ast, int dst) {
-    // MODULE_CALL: R[A] = module.method(R[A+1..])
+    // MODULE_CALL: R[A] = 模块方法(R[A+1 .. A+C])
+    // 常量表里存 "模块名\0方法名" 组合串（含内嵌 NUL，len 记总长）
     int nargs = ast->u.module_call.args.count;
-    for (int i = 0; i < nargs; i++) {
-        int r = reg_alloc(gen);
-        gen_expr_to(gen, ast->u.module_call.args.items[i], r);
+    int base = reg_alloc_block(gen, nargs + 1);
+
+    const char* mod = ast->u.module_call.module_name ? ast->u.module_call.module_name : "";
+    const char* meth = ast->u.module_call.method_name ? ast->u.module_call.method_name : "";
+    int mlen = (int)strlen(mod);
+    int flen = (int)strlen(meth);
+
+    ObjString* combo = str_alloc(mlen + 1 + flen);
+    if (combo) {
+        memcpy(combo->chars, mod, (size_t)mlen);
+        combo->chars[mlen] = '\0';
+        memcpy(combo->chars + mlen + 1, meth, (size_t)flen);
+        combo->chars[mlen + 1 + flen] = '\0';
+        combo->len = mlen + 1 + flen;
+        combo->hash = hash_string(combo->chars, combo->len);
     }
-    // 简化：mod_idx 和 method_idx 从语义分析获取
-    reg_encode_iABC(gen->chunk, OP_MODULE_CALL, dst, 0, nargs, ast->line);
-    for (int i = 0; i < nargs; i++) {
-        gen->next_reg--;
+    int cidx = make_constant(gen, val_obj((Object*)combo));
+
+    if (cidx == 0 || cidx > 255) {
+        reg_encode_iABC(gen->chunk, OP_MODULE_CALL, base, 0, nargs, ast->line);
+        reg_encode_iAx(gen->chunk, OP_EXTRAARG, cidx, ast->line);
+    } else {
+        reg_encode_iABC(gen->chunk, OP_MODULE_CALL, base, cidx, nargs, ast->line);
     }
+
+    for (int i = 0; i < nargs; i++) {
+        gen_expr_to(gen, ast->u.module_call.args.items[i], base + 1 + i);
+    }
+    if (base != dst) emit_mov(gen, dst, base, ast->line);
+    reg_free_block(gen, base);
 }
 
 // ============================================================================

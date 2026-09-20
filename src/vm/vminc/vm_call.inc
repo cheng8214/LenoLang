@@ -147,6 +147,11 @@ static inline int call(ObjClosure* closure, int arg_count, int line) {
     frame->module = func->module;
     frame->has_captures = (closure->upvalue_count > 0) ? 1 : 0;
 
+    // 宿主调用路径（vm_call_value / 协程）：结果压回 vm.stack[stack_base]
+    frame->ret_frame = -1;
+    frame->ret_reg = 0;
+    frame->ret_want = 1;
+
     return 1;
 }
 
@@ -214,6 +219,110 @@ static inline int call_no_type_check(ObjClosure* closure, int arg_count, int lin
     }
     frame->module = func->module;
     frame->has_captures = (closure->upvalue_count > 0) ? 1 : 0;
+
+    // 宿主调用路径：结果压回 vm.stack[stack_base]
+    frame->ret_frame = -1;
+    frame->ret_reg = 0;
+    frame->ret_want = 1;
+
+    return 1;
+}
+
+// ============================================================================
+// 寄存器式调用（call_reg）—— 参数直接来自调用方的寄存器文件
+//   调用方（vm_frame_cnt-1）的 R[arg_base .. arg_base+arg_count-1] 即实参；
+//   被调方结果按 ret_reg/ret_want 写回调用方 R[ret_reg ..]（见 OP_RETURN）。
+//   has_self/self：方法调用时写入被调方的 R0（receiver）。
+//
+//   ⚠ 安全性：参数来源用「帧索引 + 寄存器号」而非裸指针。
+//     call_reg 内部可能 realloc vm.frames，调用方帧若是 inline_locals，
+//     其地址会变（vm_grow_frames 会修正 frame->locals，但调用方早就抓走的
+//     裸指针不会跟着变）。所以这里每次都重新取 caller 再算 src。
+// ============================================================================
+static inline int call_reg(ObjClosure* closure, int has_self, Value self,
+                           int arg_base, int arg_count,
+                           int ret_reg, int ret_want, int line) {
+    ObjFunction* func = closure->function;
+
+    if (unlikely(vm.frame_cnt >= vm.frame_capacity)) {
+        if (!vm_grow_frames(current_exec_vm)) {
+            runtime_error("调用栈内存分配失败", line);
+            return 0;
+        }
+    }
+
+    // 扩容之后重新取调用方帧（frame 数组可能已被搬移）
+    int caller_idx = vm.frame_cnt - 1;
+    CallFrame* caller = &vm.frames[caller_idx];
+    Value* src = caller->locals + arg_base;
+
+    int need = arg_count + (has_self ? 1 : 0);
+    int local_count = func->local_count;
+    if (local_count < need) local_count = need;   // 防御：可变参数超出声明槽位
+    if (local_count <= 0) local_count = 1;
+
+    CallFrame* frame = &vm.frames[vm.frame_cnt];
+    Value* locals;
+    int locals_is_dynamic = 0;
+    if (likely(local_count <= INLINE_LOCALS_MAX)) {
+        locals = frame->inline_locals;
+    } else {
+        locals = (Value*)malloc(local_count * sizeof(Value));
+        if (!locals) {
+            runtime_error("局部变量内存分配失败", line);
+            return 0;
+        }
+        locals_is_dynamic = 1;
+    }
+
+    TypeKind* param_types = func->param_types;
+    int arity = func->arity;
+    int k = 0;
+    if (has_self) locals[k++] = self;
+    for (int i = 0; i < arg_count; i++) {
+        Value arg = src[i];
+        if (param_types && i < arity) {
+            TypeKind expected_type = param_types[i];
+            if (expected_type == TYPE_FLOAT && val_is_int(arg)) {
+                arg = val_float((double)val_as_int(arg));
+            } else if (expected_type == TYPE_FLOAT && val_is_bigint(arg)) {
+                arg = val_float(bigint_to_double(val_as_bigint(arg)));
+            } else if (expected_type == TYPE_INT && val_is_float(arg)) {
+                arg = val_int((int)val_as_num(arg));
+            }
+        }
+        locals[k + i] = arg;
+    }
+    for (int i = k + arg_count; i < local_count; i++) {
+        locals[i] = val_null();
+    }
+
+    vm.frame_cnt++;
+    frame->closure = closure;
+    frame->chunk = func->chunk;
+    frame->ip = func->chunk->code;
+    frame->stack_base = vm.sp;
+    frame->slot_count = local_count;
+    frame->locals = locals;
+    frame->local_count = local_count;
+    frame->locals_is_dynamic = locals_is_dynamic;
+    // 帧复用优化：无 try 的函数跳过 try 字段初始化（读取点用 FRAME_TRY_VALID 守护）
+    if (func->has_try) {
+        frame->catch_ip = NULL;
+        frame->finally_ip = NULL;
+        frame->prev_catch_ip = NULL;
+        frame->prev_finally_ip = NULL;
+        frame->in_finally = 0;
+        frame->try_return_value = val_null();
+        frame->has_try_return = 0;
+    }
+    frame->module = func->module;
+    frame->has_captures = (closure->upvalue_count > 0) ? 1 : 0;
+
+    // 结果回写目标（寄存器式调用约定）
+    frame->ret_frame = caller_idx;
+    frame->ret_reg = ret_reg;
+    frame->ret_want = ret_want;
 
     return 1;
 }

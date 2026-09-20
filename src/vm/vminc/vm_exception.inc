@@ -315,13 +315,15 @@ static Value wrap_string_exception(Value str_val, int line) {
 
 // 抛出运行时异常（用于 try-catch 捕获）
 // 设置异常状态并跳转到 catch/finally 块
-static inline void throw_runtime_error(const char* msg, int line) {
+// 返回：1 = 异常已被 catch/finally 接管（调用方重取 frame 后继续 DISPATCH）
+//       0 = 未捕获（调用方应停机返回 -1）
+static inline int throw_runtime_error(const char* msg, int line) {
     // 创建异常对象（使用字典表示，包含 msg、line、file、stack 属性）
     ObjDict* err_dict = dict_new(8);
     if (!err_dict) {
         // 内存分配失败，直接报错
         runtime_error(msg, line);
-        return;
+        return 0;
     }
 
     // 添加 msg 属性
@@ -329,7 +331,7 @@ static inline void throw_runtime_error(const char* msg, int line) {
     ObjString* msg_val = str_copy(msg, strlen(msg));
     if (!msg_key || !msg_val) {
         runtime_error(msg, line);
-        return;
+        return 0;
     }
     dict_set(err_dict, val_obj((Object*)msg_key), val_obj((Object*)msg_val));
 
@@ -337,7 +339,7 @@ static inline void throw_runtime_error(const char* msg, int line) {
     ObjString* line_key = str_copy("line", 4);
     if (!line_key) {
         runtime_error(msg, line);
-        return;
+        return 0;
     }
     dict_set(err_dict, val_obj((Object*)line_key), val_int(line));
 
@@ -391,10 +393,9 @@ static inline void throw_runtime_error(const char* msg, int line) {
 
             // 处理异常
             if (frame->catch_ip) {
-                // 跳转到 catch 块
+                // 跳转到 catch 块。
+                // 寄存器式：异常值不再压栈 —— OP_CATCH 直接从 vm.exception 读进目标寄存器。
                 frame->ip = frame->catch_ip;
-                // 将异常值压入栈，供 catch 使用
-                vm_stack_push(&vm, vm.exception);
                 // 注意：不清除 vm.has_exception，让调用者知道异常已处理
                 // OP_CATCH 会清除异常标志
             } else {
@@ -403,7 +404,7 @@ static inline void throw_runtime_error(const char* msg, int line) {
                 vm.pending_exception = 1;
                 frame->ip = frame->finally_ip;
             }
-            return;
+            return 1;
         }
     }
 
@@ -411,6 +412,7 @@ static inline void throw_runtime_error(const char* msg, int line) {
     print_unhandled_exception(vm.exception, line);
     runtime_error(msg, line);
     vm.has_exception = 1;
+    return 0;
 }
 
 // ============================================================================
@@ -542,7 +544,7 @@ static inline int append_stack_trace(char* buf, int pos, size_t buf_size) {
 }
 
 // 带两个操作数上下文的异常抛出
-static inline void throw_runtime_error_with_operands(
+static inline int throw_runtime_error_with_operands(
     const char* msg, const char* op_name,
     Value a_val, Value b_val, int line) {
 
@@ -572,11 +574,11 @@ static inline void throw_runtime_error_with_operands(
     // 添加调用栈回溯
     pos = append_stack_trace(err_buf, pos, sizeof(err_buf));
 
-    throw_runtime_error(err_buf, line);
+    return throw_runtime_error(err_buf, line);
 }
 
 // 带单个操作数上下文的异常抛出
-static inline void throw_runtime_error_with_operand(
+static inline int throw_runtime_error_with_operand(
     const char* msg, const char* op_name,
     Value a_val, int line) {
 
@@ -603,5 +605,5 @@ static inline void throw_runtime_error_with_operand(
     // 添加调用栈回溯
     pos = append_stack_trace(err_buf, pos, sizeof(err_buf));
 
-    throw_runtime_error(err_buf, line);
+    return throw_runtime_error(err_buf, line);
 }

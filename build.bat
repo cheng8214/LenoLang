@@ -26,7 +26,7 @@ for /f "usebackq delims=" %%f in ("sources_core.txt") do set SOURCES=!SOURCES! %
 for /f "usebackq delims=" %%f in ("sources_compiler.txt") do set SOURCES=!SOURCES! %%f
 REM platform-specific FFI (Windows)
 set SOURCES=!SOURCES! src\module\ffi\leno_ffi_win64.c
-gcc -o build\leno.exe !SOURCES! -Isrc -Wall -Wextra -std=c99 -O2 -lm -municode -lws2_32
+gcc -o build\lenoreg.exe !SOURCES! -Isrc -Wall -Wextra -std=c99 -O2 -lm -municode -lws2_32
 
 if %ERRORLEVEL% neq 0 (
     echo Build failed
@@ -36,5 +36,5 @@ if %ERRORLEVEL% neq 0 (
 
 echo Build successful
 echo.
-echo Usage: build\leno.exe ^<file.leno^>
-echo Tests:  build\leno.exe assert\run_tests.leno build\leno.exe assert
+echo Usage: build\lenoreg.exe ^<file.leno^>
+echo Tests:  build\lenoreg.exe assert\run_tests.leno build\lenoreg.exe assert

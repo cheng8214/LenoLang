@@ -82,9 +82,12 @@ void gen_func_closure(CodeGen* gen, Ast* ast, ObjFunction* func);
 // ============================================================================
 
 // 借一个临时寄存器
+// 注意：free 栈里可能出现 >= next_reg 的号（调用点整块回退 next_reg 后，
+// 块内被 free 的号就"悬空"了）——这类号必须丢弃，否则会与块内已占用的寄存器撞车。
 static inline int reg_alloc(CodeGen* gen) {
-    if (gen->freetop > 0) {
-        return gen->free_regs[--gen->freetop];
+    while (gen->freetop > 0) {
+        int r = gen->free_regs[--gen->freetop];
+        if (r < gen->next_reg) return r;
     }
     int r = gen->next_reg++;
     if (gen->next_reg > gen->max_reg) gen->max_reg = gen->next_reg;
@@ -93,8 +96,30 @@ static inline int reg_alloc(CodeGen* gen) {
 
 // 归还一个临时寄存器
 static inline void reg_free(CodeGen* gen, int r) {
-    if (r >= 0 && r < MAX_REG) {
+    if (r >= 0 && r < MAX_REG && r < gen->next_reg) {
         gen->free_regs[gen->freetop++] = r;
+    }
+}
+
+// 连续分配 n 个寄存器（调用点 / 多返回值等需要"实参紧随 callee"的场景）
+// 会把 free 栈清空：块内号码不能被复用，否则实参会被后续分配覆盖。
+static inline int reg_alloc_block(CodeGen* gen, int n) {
+    gen->freetop = 0;
+    int base = gen->next_reg;
+    gen->next_reg += n;
+    if (gen->next_reg > gen->max_reg) gen->max_reg = gen->next_reg;
+    return base;
+}
+
+// 整块归还：回退 next_reg 到 base
+static inline void reg_free_block(CodeGen* gen, int base) {
+    if (base >= 0 && base < gen->next_reg) {
+        gen->next_reg = base;
+        if (gen->freetop > 0) {
+            int keep = 0;
+            while (keep < gen->freetop && gen->free_regs[keep] < base) keep++;
+            gen->freetop = keep;
+        }
     }
 }
 

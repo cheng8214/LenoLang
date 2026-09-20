@@ -47,7 +47,8 @@ static inline int is_falsey(Value v) {
 // 通用 VM 类型错误函数：输出详细的调试信息
 // 包括操作数类型/值、调用栈等，便于排查栈损坏和类型错误
 // 用法：throw_vm_type_error("操作数必须是数字", "ADD (+)", a, b, line);
-static void throw_vm_type_error(const char* msg, const char* op_name, Value a_val, Value b_val, int line) {
+// 返回：同 throw_runtime_error（1 = 已接管，0 = 未捕获）
+static int throw_vm_type_error(const char* msg, const char* op_name, Value a_val, Value b_val, int line) {
     char err_buf[BUFFER_XXLARGE];
     char a_short[128], b_short[128];
     const char* fn_name = "<main>";
@@ -90,49 +91,50 @@ static void throw_vm_type_error(const char* msg, const char* op_name, Value a_va
     // 添加调用栈回溯
     pos = append_stack_trace(err_buf, pos, sizeof(err_buf));
 
-    throw_runtime_error(err_buf, line);
+    return throw_runtime_error(err_buf, line);
 }
 
-// 检查是否为 null，如果是则抛出运行时错误并返回 1
+// ---------------------------------------------------------------------------
+// 以下 check_* 统一返回：1 = 可以继续执行（无错误，或异常已被 catch/finally 接管，
+// 调用方重取 frame 后 DISPATCH）；0 = 未捕获的致命错误（调用方应停机 return -1）。
+// ---------------------------------------------------------------------------
+
+// 检查是否为 null，如果是则抛出运行时错误
 static inline int check_null(Value v, const char* context, int line) {
     if (val_is_null(v)) {
         char msg[BUFFER_LARGE];
         snprintf(msg, sizeof(msg), "%s: null 不能参与运算", context);
-        throw_runtime_error_with_operand(msg, context, v, line);
-        return 1;
+        return throw_runtime_error_with_operand(msg, context, v, line);
     }
-    return 0;
+    return 1;
 }
 
-// 检查两个值是否为 null，如果是则抛出运行时错误并返回 1
+// 检查两个值是否为 null，如果是则抛出运行时错误
 static inline int check_null_binary(Value a, Value b, const char* context, int line) {
     if (val_is_null(a) || val_is_null(b)) {
         char msg[BUFFER_LARGE];
         snprintf(msg, sizeof(msg), "%s: null 不能参与运算", context);
-        throw_runtime_error_with_operands(msg, context, a, b, line);
-        return 1;
+        return throw_runtime_error_with_operands(msg, context, a, b, line);
     }
-    return 0;
+    return 1;
 }
 
-// 检查除零，如果是则抛出运行时错误并返回 1
+// 检查除零，如果是则抛出运行时错误
 static inline int check_div_zero(int64_t divisor, int line) {
     if (divisor == 0) {
-        throw_runtime_error("除零错误：除数为 0，不能进行除法运算", line);
-        return 1;
+        return throw_runtime_error("除零错误：除数为 0，不能进行除法运算", line);
     }
-    return 0;
+    return 1;
 }
 
-// 检查是否为数字类型，如果不是则抛出运行时错误并返回 1
+// 检查是否为数字类型，如果不是则抛出运行时错误
 static inline int check_is_number(Value v, const char* context, int line) {
     if (!val_is_num(v)) {
         char msg[BUFFER_LARGE];
         snprintf(msg, sizeof(msg), "%s 的操作数必须是数字", context);
-        throw_runtime_error_with_operand(msg, context, v, line);
-        return 1;
+        return throw_runtime_error_with_operand(msg, context, v, line);
     }
-    return 0;
+    return 1;
 }
 
 // ============================================================================

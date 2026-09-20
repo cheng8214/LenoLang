@@ -1,3 +1,16 @@
+// 读取"扩展常量索引"：指令里的常量字段为 0 时，真实索引（24 位）由紧随其后的
+// 一条 EXTRAARG 携带（Lua 的 LOADKX 风格）；读完把它跳过。
+// 只有常量索引为 0 或 > 255 时编译器才走这条路径（机器码见 emit_call_native / gen_method_call）。
+static inline int read_ext_const(uint8_t** ip_ref) {
+    uint8_t* ip = *ip_ref;
+    if (ip[0] == (uint8_t)OP_EXTRAARG) {
+        int ax = ((int)ip[1] << 16) | ((int)ip[2] << 8) | (int)ip[3];
+        *ip_ref = ip + 4;
+        return ax;
+    }
+    return 0;
+}
+
 // int48 运算辅助宏（溢出时自动提升为 BigInt）
 
 // int48 回绕运算辅助宏（仅用于需要显式回绕语义的场景）

@@ -61,9 +61,9 @@ fi
 
 CC=${CC:-gcc}
 
-$CC $CFLAGS -o build/leno$EXE $SOURCES -Isrc -Wall -Wextra -std=c99 -O2 $LIBS
+$CC $CFLAGS -o build/lenoreg$EXE $SOURCES -Isrc -Wall -Wextra -std=c99 -O2 $LIBS
 
 echo "Build successful"
 echo ""
-echo "Usage: build/leno$EXE <file.leno>"
-echo "Tests:  build/leno$EXE assert/run_tests.leno build/leno$EXE assert"
+echo "Usage: build/lenoreg$EXE <file.leno>"
+echo "Tests:  build/lenoreg$EXE assert/run_tests.leno build/lenoreg$EXE assert"

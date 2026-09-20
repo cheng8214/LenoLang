@@ -203,6 +203,14 @@ typedef enum {
     // --- switch ---
     OP_SWITCH_LOOKUP,   // iABx  switch 查找
 
+    // --- for 数值循环（寄存器块：R[A]=start, R[A+1]=end, R[A+2]=step, R[A+3]=var）---
+    // 两条指令均为 iABC + 紧随 2 字节 sBx（与 CLOSURE 一样，是"指令 + 附加数据"）：
+    //   OP_FOR_PREP A B C : R[A+3] = R[A]；初始条件不满足则 ip += sBx（跳过循环体）
+    //   OP_FOR_LOOP A B C : R[A+3] += R[A+2]；仍满足条件则 ip += sBx（负值 = 回跳）
+    //   B = inclusive（1 = 包含结束值）
+    OP_FOR_PREP,
+    OP_FOR_LOOP,
+
     // --- 扩展指令（寄存器号 > 255 或常量索引 > 65535 时使用） ---
     OP_EXTRAARG,        // iAx   24 位无符号扩展值
     OP_EXTEND,          // iABC  前缀：扩展紧随指令的 A/B/C 高 8 位
@@ -369,6 +377,14 @@ typedef struct CallFrame {
     void* module;        // 所属模块（如果是模块函数）
     // 优化标志
     int has_captures;    // 1 = 该帧捕获了 upvalue，0 = 无捕获（优化 close_upvalues）
+    // --- 寄存器式返回目标（call_reg 设置；栈式 call() 走 ret_frame = -1）---
+    //  ret_frame >= 0：结果写回 vm.frames[ret_frame].locals[ret_reg ...]（寄存器式 OP_CALL）
+    //  ret_frame <  0：宿主调用（vm_call_value），结果压回 vm.stack[stack_base]
+    //  用「帧索引 + 寄存器号」而不是裸指针：调用期间 vm.frames 可能 realloc，
+    //  或调用方帧的 inline_locals 被搬移，裸指针会失效（写回时踩坏内存）。
+    int ret_frame;
+    int ret_reg;         // 结果起始寄存器号（调用方）
+    int ret_want;        // 期望结果个数；-1 = 1 个；0 = 丢弃
 } CallFrame;
 
 // ============================================================================

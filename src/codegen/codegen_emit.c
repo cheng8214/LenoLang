@@ -257,20 +257,41 @@ int emit_jmp_if_true(CodeGen* gen, int a, int line) {
 }
 
 // patch 跳转偏移：从 pos 位置的指令开始，计算跳转到当前 chunk->len
+// 按指令自身的编码形式写回：
+//   OP_JMP 是 iAsJ （24 位有符号偏移，占 byte1..3）
+//   OP_JMP_IF_FALSE / OP_JMP_IF_TRUE 是 iAsBx（16 位无符号 Bx，byte1 是寄存器 A）
+// 这里自动识别，调用方无需区分 —— 混用会写出完全错误的跳距。
+static void patch_common(CodeGen* gen, int pos, int offset) {
+    uint8_t op = gen->chunk->code[pos];
+    if (op == (uint8_t)OP_JMP) {
+        gen->chunk->code[pos + 1] = (uint8_t)(((uint32_t)offset >> 16) & 0xFF);
+        gen->chunk->code[pos + 2] = (uint8_t)(((uint32_t)offset >> 8) & 0xFF);
+        gen->chunk->code[pos + 3] = (uint8_t)((uint32_t)offset & 0xFF);
+    } else {
+        int bx = offset + 32768;
+        if (bx < 0) bx = 0;
+        if (bx > 0xFFFF) bx = 0xFFFF;
+        gen->chunk->code[pos + 2] = (uint8_t)((bx >> 8) & 0xFF);
+        gen->chunk->code[pos + 3] = (uint8_t)(bx & 0xFF);
+    }
+}
+
 void patch_jmp(CodeGen* gen, int pos) {
-    int offset = gen->chunk->len - pos - 4;  // 跳过当前指令的 4 字节
-    // 写入 sJ（24 位有符号）
-    gen->chunk->code[pos + 1] = (uint8_t)(((uint32_t)offset >> 16) & 0xFF);
-    gen->chunk->code[pos + 2] = (uint8_t)(((uint32_t)offset >> 8) & 0xFF);
-    gen->chunk->code[pos + 3] = (uint8_t)((uint32_t)offset & 0xFF);
+    patch_common(gen, pos, gen->chunk->len - pos - 4);  // 跳过当前指令的 4 字节
 }
 
 // patch 跳转到指定目标
 void patch_jmp_to(CodeGen* gen, int pos, int target) {
-    int offset = target - pos - 4;
-    gen->chunk->code[pos + 1] = (uint8_t)(((uint32_t)offset >> 16) & 0xFF);
-    gen->chunk->code[pos + 2] = (uint8_t)(((uint32_t)offset >> 8) & 0xFF);
-    gen->chunk->code[pos + 3] = (uint8_t)((uint32_t)offset & 0xFF);
+    patch_common(gen, pos, target - pos - 4);
+}
+
+// 写入 2 字节 sBx（OP_FOR_PREP / OP_FOR_LOOP 紧随指令的偏移数据，编码为 sbx+32768）
+void patch_sbx_at(CodeGen* gen, int pos, int sbx) {
+    int raw = sbx + 32768;
+    if (raw < 0) raw = 0;
+    if (raw > 0xFFFF) raw = 0xFFFF;
+    gen->chunk->code[pos] = (uint8_t)((raw >> 8) & 0xFF);
+    gen->chunk->code[pos + 1] = (uint8_t)(raw & 0xFF);
 }
 
 // 回跳（循环）：从 pos 回跳到 target
@@ -294,13 +315,13 @@ void emit_call(CodeGen* gen, int a, int nargs, int nresults, int line) {
     reg_encode_iABC(gen->chunk, OP_CALL, a, nargs + 1, nresults + 1, line);
 }
 
-// CALL_NATIVE: R[A] = result, B = name_const_idx (低8位，>255 用 EXTRAARG), C = nargs
+// CALL_NATIVE: R[A] = result, B = name_const_idx（0 或 >255 时改由**紧随**的 EXTRAARG
+// 携带 24 位索引；EXTRAARG 必须在指令**之后** —— VM 执行到 call 时 ip 正指向它），C = nargs
 // 实参在 R[A+1..A+C]
 void emit_call_native(CodeGen* gen, int dst, int name_const_idx, int nargs, int line) {
-    if (name_const_idx > 255) {
-        // 需要 EXTRAARG 扩展
-        reg_encode_iAx(gen->chunk, OP_EXTRAARG, name_const_idx, line);
+    if (name_const_idx == 0 || name_const_idx > 255) {
         reg_encode_iABC(gen->chunk, OP_CALL_NATIVE, dst, 0, nargs, line);
+        reg_encode_iAx(gen->chunk, OP_EXTRAARG, name_const_idx, line);
     } else {
         reg_encode_iABC(gen->chunk, OP_CALL_NATIVE, dst, name_const_idx, nargs, line);
     }

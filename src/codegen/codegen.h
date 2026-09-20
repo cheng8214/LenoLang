@@ -148,6 +148,8 @@ int emit_jmp_if_false(CodeGen* gen, int a, int line);
 int emit_jmp_if_true(CodeGen* gen, int a, int line);
 void patch_jmp(CodeGen* gen, int pos);
 void patch_jmp_to(CodeGen* gen, int pos, int target);
+// 写入 2 字节 sBx 数据（OP_FOR_PREP / OP_FOR_LOOP 紧随指令的跳转偏移）
+void patch_sbx_at(CodeGen* gen, int pos, int sbx);
 void emit_loop(CodeGen* gen, int target, int line);
 
 // 自增自减
