@@ -651,7 +651,7 @@ int lenolang_run(const char* source) {
             }
             // 反序列化失败，回退到原路径（需重新编译，因为编译器资源已释放）
             // 这种情况理论上不会发生，但做兜底保护
-            fprintf(stderr, "[警告] 内存反序列化失败，回退到直接运行\n");
+            fprintf(stderr, "[警告] 内存反序列化失败(%d)，回退到直接运行\n", (int)sr);
             return -1;
         }
         // 序列化失败，回退到原 vm_run 直跑路径

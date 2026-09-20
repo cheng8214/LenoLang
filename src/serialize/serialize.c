@@ -359,10 +359,15 @@ static int serialize_constant(WriteBuffer* wb, Value val) {
                 wb_write_u8(wb, (uint8_t)func->param_types[i]);
             }
             // 函数级泛型类型参数
+            // ★ 必须**始终**写出 type_param_count 个条目：读端是无条件按个数读取的。
+            //   此前多了一个 `&& func->type_param_names` 条件 —— 一旦 type_param_count>0
+            //   而 names 数组为空（泛型 struct 的方法就是这样），写端就少写 N 个字符串，
+            //   读端却照读，整个流从此错位 ⇒ 反序列化报 FORMAT 错，13 个测试直接失败。
             wb_write_u32(wb, (uint32_t)func->type_param_count);
-            for (int i = 0; i < func->type_param_count && func->type_param_names; i++) {
-                wb_write_string(wb, func->type_param_names[i],
-                    (uint32_t)strlen(func->type_param_names[i]));
+            for (int i = 0; i < func->type_param_count; i++) {
+                const char* tpname = (func->type_param_names && func->type_param_names[i])
+                                         ? func->type_param_names[i] : "";
+                wb_write_string(wb, tpname, (uint32_t)strlen(tpname));
             }
             // 参数级泛型类型参数名（运行时泛型推断用，如 Ok[T](T val) 的 val）
             // 长度固定为 arity，元素可为 NULL。此前未序列化，导致从 .lenb /
