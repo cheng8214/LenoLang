@@ -202,12 +202,60 @@ void gen_if_ex(CodeGen* gen, Ast* ast, int want_value) {
         dst = reg_alloc(gen);
     }
 
-    // 求值条件
-    int cond = gen_expr(gen, ast->u.if_.cond);
+    int need_bind = (ast->u.if_.guard_bind_var && ast->u.if_.guard_bind_index >= 0);
+    Ast* cond_ast = ast->u.if_.cond;
 
-    // if !cond then jump to else
-    int jmp_false = emit_jmp_if_false(gen, cond, ast->line);
-    reg_free(gen, cond);
+    // 绑定赋值（`if x is T => name`）：把被检查的表达式/变量写入绑定变量槽位
+    #define IF_DO_BIND()                                                          \
+        do {                                                                      \
+            if (need_bind) {                                                      \
+                int _slot = ast->u.if_.guard_bind_index;                          \
+                if (_slot >= gen->next_reg) {                                     \
+                    gen->next_reg = _slot + 1;                                    \
+                    if (gen->next_reg > gen->max_reg) gen->max_reg = gen->next_reg; \
+                }                                                                 \
+                if (ast->u.if_.guard_bind_expr) {                                 \
+                    int _br = gen_expr(gen, ast->u.if_.guard_bind_expr);          \
+                    if (_br != _slot) emit_mov(gen, _slot, _br, ast->line);       \
+                    reg_free(gen, _br);                                           \
+                } else if (ast->u.if_.guard_var_ref.name) {                       \
+                    SymRef* _vr = &ast->u.if_.guard_var_ref;                      \
+                    if (_vr->kind == SYM_LOCAL || _vr->kind == SYM_PARAM) {       \
+                        if (_vr->index != _slot) emit_mov(gen, _slot, _vr->index, ast->line); \
+                    } else if (_vr->kind == SYM_GLOBAL) {                         \
+                        emit_getglobal_to(gen, _slot, _vr->index, ast->line);     \
+                    } else if (_vr->kind == SYM_UPVALUE) {                        \
+                        emit_getupval_to(gen, _slot, _vr->index, ast->line);      \
+                    }                                                             \
+                }                                                                 \
+            }                                                                     \
+        } while (0)
+
+    int jmp_false = -1;
+    int jmp_false2 = -1;
+
+    // 条件求值。`x is T => a and a[0] is int` 这种链式守卫里，
+    // 绑定必须发生在**第一个条件成立之后、第二个条件求值之前** ——
+    // 否则右半边用到的绑定变量还是 null（实测报「下标访问: 对象不支持索引」）。
+    if (need_bind && cond_ast && cond_ast->kind == AST_BINOP &&
+        cond_ast->u.binop.op == TOK_AND) {
+        int c1 = gen_expr(gen, cond_ast->u.binop.l);
+        jmp_false = emit_jmp_if_false(gen, c1, ast->line);
+        reg_free(gen, c1);
+
+        IF_DO_BIND();
+
+        int c2 = gen_expr(gen, cond_ast->u.binop.r);
+        jmp_false2 = emit_jmp_if_false(gen, c2, ast->line);
+        reg_free(gen, c2);
+    } else {
+        int cond = gen_expr(gen, cond_ast);
+        jmp_false = emit_jmp_if_false(gen, cond, ast->line);
+        reg_free(gen, cond);
+
+        IF_DO_BIND();
+    }
+    #undef IF_DO_BIND
 
     // then 分支
     if (want_value && ast->u.if_.then) {
@@ -226,6 +274,7 @@ void gen_if_ex(CodeGen* gen, Ast* ast, int want_value) {
     if (ast->u.if_.else_) {
         int jmp_end = emit_jmp(gen, ast->line);
         patch_jmp(gen, jmp_false);
+        if (jmp_false2 >= 0) patch_jmp(gen, jmp_false2);
 
         // else 分支
         if (want_value && ast->u.if_.else_) {
@@ -242,6 +291,7 @@ void gen_if_ex(CodeGen* gen, Ast* ast, int want_value) {
         patch_jmp(gen, jmp_end);
     } else {
         patch_jmp(gen, jmp_false);
+        if (jmp_false2 >= 0) patch_jmp(gen, jmp_false2);
         if (want_value) {
             emit_loadnil_to(gen, dst, ast->line);
         }

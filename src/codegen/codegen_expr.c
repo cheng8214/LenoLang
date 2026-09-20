@@ -193,12 +193,31 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
         }
 
         // --- 字段访问 ---
+        // 两条完全不同的运行期语义，必须按**对象的静态类型**分流：
+        //   struct/cstruct 实例 → OP_GET_FIELD（按编译期确定的字段索引）
+        //   其它（Dict / any / 收窄后的容器）→ obj["字段名"] 通用索引
+        // 此前一律发 OP_GET_FIELD，字典字段访问（`d.field`）就会撞上
+        // 「字段访问需要结构体对象」而整类收窄/守卫测试失败。
         case AST_FIELD_ACCESS:
         {
             int obj_reg = gen_expr(gen, ast->u.field_access.obj);
+            TypeInfo* ot = infer_expr_type(gen->sem, ast->u.field_access.obj);
             int field_idx = ast->u.field_access.field_index;
-            // GET_FIELD: R[A] = R[B].field(C)
-            reg_encode_iABC(gen->chunk, OP_GET_FIELD, dst, obj_reg, field_idx, ast->line);
+            int use_field_op = (ot && (ot->kind == TYPE_STRUCT || ot->kind == TYPE_CSTRUCT)
+                                && field_idx >= 0);
+
+            if (use_field_op) {
+                // GET_FIELD: R[A] = R[B].field(C)
+                reg_encode_iABC(gen->chunk, OP_GET_FIELD, dst, obj_reg, field_idx, ast->line);
+            } else {
+                const char* fname = ast->u.field_access.field_name;
+                int ireg = reg_alloc(gen);
+                int c = make_constant(gen, val_obj((Object*)str_copy(
+                                          fname ? fname : "", fname ? (int)strlen(fname) : 0)));
+                emit_loadk_to(gen, ireg, c, ast->line);
+                reg_encode_iABC(gen->chunk, OP_INDEX, dst, obj_reg, ireg, ast->line);
+                reg_free(gen, ireg);
+            }
             reg_free(gen, obj_reg);
             break;
         }
