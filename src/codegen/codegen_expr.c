@@ -136,16 +136,27 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
                     // 模块变量：索引是 16 位 Bx（与 VM 的 READ_Bx 一致）
                     reg_encode_iABx(gen->chunk, OP_GET_MODULE_VAR, dst, ref->index, ast->line);
                     break;
-                case SYM_NATIVE:
                 case SYM_TYPE:
                 case SYM_STRUCT:
+                case SYM_ENUM:
+                {
+                    // 类型名作为值使用：加载类型名字符串常量。
+                    // 枚举成员访问 `Color.RED` 就是靠它 —— 语义分析把它编译成
+                    // obj["RED"]，obj 即这里的类型名字符串，运行期再查全局枚举表。
+                    // 此前一律发 nil，于是 `Color.RED` 变成 nil["RED"]，整类枚举
+                    // 测试失败。
+                    ObjString* tn = str_copy(ref->name, (int)strlen(ref->name));
+                    int c = make_constant(gen, val_obj((Object*)tn));
+                    emit_loadk_to(gen, dst, c, ast->line);
+                    break;
+                }
+                case SYM_NATIVE:
                 case SYM_CSTRUCT:
                 case SYM_CLIB:
                 case SYM_CFUNC:
-                case SYM_ENUM:
                 case SYM_FUNC_ALIAS:
                 default:
-                    // 函数引用 / 类型名等：作为值使用时是 null 占位
+                    // 其余（原生函数引用 / cstruct 定义等）：作为值使用时是 null 占位
                     emit_loadnil_to(gen, dst, ast->line);
                     break;
             }

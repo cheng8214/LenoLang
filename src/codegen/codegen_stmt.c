@@ -601,6 +601,41 @@ static void gen_switch(CodeGen* gen, Ast* ast) {
     for (int i = 0; i < n; i++) {
         int here = gen->chunk->len;
         patch_jmp_to(gen, pad_pos[i], here);
+
+        // `case is T => name`：匹配成功（正好跳到这里）后把 switch 表达式的值
+        // 绑定到新局部变量。switch 表达式的值一直保存在 tmp 里（函数末尾才回收），
+        // 所以这里直接 MOV 即可。
+        if (ast->u.switch_.cases[i].guard_bind_var &&
+            ast->u.switch_.cases[i].guard_bind_index >= 0) {
+            int slot = ast->u.switch_.cases[i].guard_bind_index;
+            if (slot >= gen->next_reg) {
+                gen->next_reg = slot + 1;
+                if (gen->next_reg > gen->max_reg) gen->max_reg = gen->next_reg;
+            }
+            if (slot != tmp) emit_mov(gen, slot, tmp, line);
+        }
+
+        // `case is Point(x, y)` 的解构：从匹配到的值里按字段名取出各分量
+        {
+            int dc = ast->u.switch_.cases[i].destructure_count;
+            int* dindices = ast->u.switch_.cases[i].destructure_indices;
+            char** dfields = ast->u.switch_.cases[i].destructure_field_names;
+            for (int k = 0; k < dc && dindices && dfields; k++) {
+                int slot = dindices[k];
+                const char* fname = dfields[k];
+                if (slot < 0 || !fname) continue;
+                if (slot >= gen->next_reg) {
+                    gen->next_reg = slot + 1;
+                    if (gen->next_reg > gen->max_reg) gen->max_reg = gen->next_reg;
+                }
+                int ireg = reg_alloc(gen);
+                int c = make_constant(gen, val_obj((Object*)str_copy(fname, (int)strlen(fname))));
+                emit_loadk_to(gen, ireg, c, line);
+                reg_encode_iABC(gen->chunk, OP_INDEX, slot, tmp, ireg, line);
+                reg_free(gen, ireg);
+            }
+        }
+
         if (ast->u.switch_.cases[i].body) gen_stmt(gen, ast->u.switch_.cases[i].body);
         body_end_jumps[i] = emit_jmp(gen, line);   // 不 fallthrough
     }

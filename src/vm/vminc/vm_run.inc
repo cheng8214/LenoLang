@@ -1537,6 +1537,30 @@
             if (ot == OBJ_STRING) {
                 ObjString* s = (ObjString*)val_as_obj(obj);
                 if (unlikely(!val_is_num(idx))) {
+                    // 非数字索引：可能是 `EnumType.Member` —— 类型名（字符串）+ 成员名，
+                    // 走全局枚举表查找。语义分析把 `Color.RED` 编译成 obj["RED"]，
+                    // 而 obj 是枚举类型名常量。
+                    if (val_is_string(idx)) {
+                        ObjEnumDef* ed = enum_def_find(s->chars);
+                        if (ed) {
+                            const char* mname = ((ObjString*)val_as_obj(idx))->chars;
+                            for (int mi = 0; mi < ed->member_count; mi++) {
+                                if (ed->members[mi].name &&
+                                    strcmp(ed->members[mi].name, mname) == 0) {
+                                    // val_int_safe：超出 int48 时自动装箱成 bigint
+                                    // （枚举里 1<<62 这类值很常见）
+                                    R(a) = val_int_safe(ed->members[mi].value);
+                                    DISPATCH();
+                                }
+                            }
+                            char emsg[256];
+                            snprintf(emsg, sizeof(emsg), "枚举 '%s' 不存在成员 '%s'",
+                                     s->chars, mname);
+                            if (!throw_runtime_error(emsg, line)) return -1;
+                            frame = &vm.frames[vm.frame_cnt - 1];
+                            DISPATCH();
+                        }
+                    }
                     if (!throw_runtime_error("字符串索引必须是数字", line)) return -1;
                     frame = &vm.frames[vm.frame_cnt - 1];
                     DISPATCH();
@@ -1560,8 +1584,40 @@
             }
             // .leno 模块：成员在 exports 字典里
             if (ot == OBJ_MODULE) {
-                R(a) = dict_get(((ObjModule*)val_as_obj(obj))->exports, idx);
+                Value member = dict_get(((ObjModule*)val_as_obj(obj))->exports, idx);
+                // 模块导出的枚举定义：`m.EnumName.Member` → 再按成员名索引
+                if (val_is_obj(member) && val_as_obj(member)->type == OBJ_ENUM_DEF &&
+                    val_is_string(idx)) {
+                    R(a) = member;
+                } else {
+                    R(a) = member;
+                }
                 DISPATCH();
+            }
+            // 枚举定义对象：按成员名取成员值（`EnumName.Member`，含模块限定形态）
+            if (ot == OBJ_ENUM_DEF) {
+                if (unlikely(!val_is_string(idx))) {
+                    if (!throw_runtime_error("枚举成员名必须是字符串", line)) return -1;
+                    frame = &vm.frames[vm.frame_cnt - 1];
+                    DISPATCH();
+                }
+                ObjEnumDef* ed = (ObjEnumDef*)val_as_obj(obj);
+                const char* mname = ((ObjString*)val_as_obj(idx))->chars;
+                for (int mi = 0; mi < ed->member_count; mi++) {
+                    if (ed->members[mi].name && strcmp(ed->members[mi].name, mname) == 0) {
+                        // val_int_safe：超出 int48 时自动装箱成 bigint
+                        R(a) = val_int_safe(ed->members[mi].value);
+                        DISPATCH();
+                    }
+                }
+                {
+                    char emsg[256];
+                    snprintf(emsg, sizeof(emsg), "枚举 '%s' 不存在成员 '%s'",
+                             ed->name ? ed->name : "?", mname);
+                    if (!throw_runtime_error(emsg, line)) return -1;
+                    frame = &vm.frames[vm.frame_cnt - 1];
+                    DISPATCH();
+                }
             }
             // struct 实例：按**字段名**索引。
             //   语义分析把 `s.field` 生成成 obj["field"]（通用索引），因此字段读
