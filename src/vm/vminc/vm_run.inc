@@ -1563,6 +1563,28 @@
                 R(a) = dict_get(((ObjModule*)val_as_obj(obj))->exports, idx);
                 DISPATCH();
             }
+            // struct 实例：按**字段名**索引。
+            //   语义分析把 `s.field` 生成成 obj["field"]（通用索引），因此字段读
+            //   最终走到这里；缺了这个分支就报「下标访问: 对象不支持索引」。
+            if (ot == OBJ_STRUCT) {
+                if (unlikely(!val_is_string(idx))) {
+                    if (!throw_runtime_error("struct 字段名必须是字符串", line)) return -1;
+                    frame = &vm.frames[vm.frame_cnt - 1];
+                    DISPATCH();
+                }
+                ObjStruct* so = (ObjStruct*)val_as_obj(obj);
+                int fi = struct_get_field_index(so->def, ((ObjString*)val_as_obj(idx))->chars);
+                if (unlikely(fi < 0)) {
+                    char msg[256];
+                    snprintf(msg, sizeof(msg), "struct 不存在字段 '%s'",
+                             ((ObjString*)val_as_obj(idx))->chars);
+                    if (!throw_runtime_error(msg, line)) return -1;
+                    frame = &vm.frames[vm.frame_cnt - 1];
+                    DISPATCH();
+                }
+                R(a) = struct_get_field(so, fi);
+                DISPATCH();
+            }
         }
 
         if (!throw_runtime_error("下标访问: 对象不支持索引", line)) return -1;
@@ -1594,6 +1616,34 @@
             }
             if (ot == OBJ_DICT) {
                 dict_set((ObjDict*)val_as_obj(obj), idx, R(a));
+                DISPATCH();
+            }
+            // struct 实例：按字段名赋值（`s.field = v` 的通用索引形态）
+            if (ot == OBJ_STRUCT) {
+                if (unlikely(!val_is_string(idx))) {
+                    if (!throw_runtime_error("struct 字段名必须是字符串", line)) return -1;
+                    frame = &vm.frames[vm.frame_cnt - 1];
+                    DISPATCH();
+                }
+                ObjStruct* so = (ObjStruct*)val_as_obj(obj);
+                int fi = struct_get_field_index(so->def, ((ObjString*)val_as_obj(idx))->chars);
+                if (unlikely(fi < 0)) {
+                    char msg[256];
+                    snprintf(msg, sizeof(msg), "struct 不存在字段 '%s'",
+                             ((ObjString*)val_as_obj(idx))->chars);
+                    if (!throw_runtime_error(msg, line)) return -1;
+                    frame = &vm.frames[vm.frame_cnt - 1];
+                    DISPATCH();
+                }
+                Value nv = R(a);
+                TypeKind et = so->def->fields[fi].type;
+                if (et == TYPE_FLOAT && val_is_int(nv)) {
+                    nv = val_float((double)val_as_int(nv));
+                } else if (et == TYPE_FLOAT && val_is_bigint(nv)) {
+                    nv = val_float(bigint_to_double(val_as_bigint(nv)));
+                }
+                struct_set_field(so, fi, nv);
+                gc_write_barrier((Object*)so, nv);
                 DISPATCH();
             }
         }
@@ -2799,6 +2849,21 @@
 
         if (rt == OBJ_DICT) {
             R(a) = dict_get((ObjDict*)val_as_obj(receiver), name_val);
+            DISPATCH();
+        }
+
+        // cstruct 定义对象：malloc / size / free 等方法来自 C 侧方法表
+        if (rt == OBJ_CSTRUCT_DEF) {
+            extern ObjNative* cstruct_find_method(const char* name);
+            ObjNative* native_method = cstruct_find_method(name->chars);
+            if (unlikely(!native_method)) {
+                char msg[256];
+                snprintf(msg, sizeof(msg), "cstruct 不存在方法 '%s'", name->chars);
+                if (!throw_runtime_error(msg, line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            R(a) = val_obj((Object*)native_method);
             DISPATCH();
         }
 
