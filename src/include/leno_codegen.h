@@ -97,6 +97,8 @@ static inline int reg_alloc(CodeGen* gen) {
 }
 
 // 归还一个临时寄存器
+// 只接受"确实是本函数临时区内的号"（r < next_reg），否则会把变量槽位（0/1 等）
+// 混进 free 栈，后续临时寄存器分配就会覆盖变量。
 static inline void reg_free(CodeGen* gen, int r) {
     if (r >= 0 && r < MAX_REG && r < gen->next_reg) {
         gen->free_regs[gen->freetop++] = r;

@@ -410,13 +410,13 @@
         closure->type_param_count = 0;
         closure->type_param_args = NULL;
 
-        // 紧随 OP_CLOSURE 的捕获描述（非指令数据）：
-        //   [is_local:u8][index:u8][is_value_capture:u8] × upvalue_count
+        // 紧随 OP_CLOSURE 的捕获描述（非指令数据，每条 4 字节保持网格对齐）：
+        //   [is_local:u8][index:u8][is_value_capture:u8][pad:u8] × upvalue_count
         for (int i = 0; i < function->upvalue_count; i++) {
             uint8_t is_local = frame->ip[0];
             uint8_t index = frame->ip[1];
             uint8_t is_value_capture = frame->ip[2];
-            frame->ip += 3;
+            frame->ip += 4;
             if (is_local) {
                 if (unlikely(index >= frame->local_count)) {
                     if (!throw_runtime_error("闭包捕获变量索引越界", GET_CURRENT_LINE())) return -1;

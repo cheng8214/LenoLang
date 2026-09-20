@@ -142,13 +142,18 @@ void gen_func_closure(CodeGen* gen, Ast* ast, ObjFunction* func) {
     ObjFunction* saved_func = gen->current_func;
     gen->current_func = func;
 
-    // ★ 必须保存/恢复寄存器分配器状态：函数体是独立寄存器空间，
-    //   若把内层的 next_reg（往往很小）留在 gen 上，外层后续的临时寄存器
-    //   会分配进变量槽位（表现为"嵌套函数定义后，外层变量被闭包覆盖"）。
+    // ★ 必须保存/恢复寄存器分配器状态：函数体是独立寄存器空间。
+    //   注意 free 栈要连**内容**一起保存 —— 只恢复 freetop 计数是不够的：
+    //   内层函数会把 free_regs[0..] 覆盖成自己的小号码，外层恢复计数后就会
+    //   拿到那些号码（常常正是 0/1 之类的变量槽位），把变量静默覆盖掉。
     int saved_next_reg = gen->next_reg;
     int saved_max_reg = gen->max_reg;
     int saved_freetop = gen->freetop;
     int saved_scope_base = gen->scope_base;
+    int saved_free_regs[MAX_REG];
+    if (saved_freetop > 0) {
+        memcpy(saved_free_regs, gen->free_regs, sizeof(int) * (size_t)saved_freetop);
+    }
 
     // 重置寄存器分配器。
     // 关键：局部变量（参数 + 声明变量）的槽位号由语义分析分配，可能远大于 arity；
@@ -174,21 +179,25 @@ void gen_func_closure(CodeGen* gen, Ast* ast, ObjFunction* func) {
     // 寄存器高水位写回 local_count
     func->local_count = gen->max_reg;
 
-    // 恢复（含寄存器分配器状态）
+    // 恢复（含寄存器分配器状态与 free 栈内容）
     gen->chunk = saved_chunk;
     gen->current_func = saved_func;
     gen->next_reg = saved_next_reg;
     gen->max_reg = saved_max_reg;
     gen->freetop = saved_freetop;
     gen->scope_base = saved_scope_base;
+    if (saved_freetop > 0) {
+        memcpy(gen->free_regs, saved_free_regs, sizeof(int) * (size_t)saved_freetop);
+    }
 }
 
 // ============================================================================
 // 函数定义语句
 // ============================================================================
 
-// 发射 OP_CLOSURE 及其捕获描述（紧随指令的非指令数据，每条 3 字节）：
-//   [is_local:u8][index:u8][is_value_capture:u8] × upvalue_count
+// 发射 OP_CLOSURE 及其捕获描述（紧随指令的非指令数据，每条 **4 字节**，保持
+// 4 字节指令网格不变形 —— 否则后续指令偏移全错，反汇编与跳转调试都会失真）：
+//   [is_local:u8][index:u8][is_value_capture:u8][pad:u8] × upvalue_count
 void emit_closure_upvals(CodeGen* gen, int dst, int const_idx, Ast* ast) {
     reg_encode_iABx(gen->chunk, OP_CLOSURE, dst, const_idx, ast->line);
     int n = ast->u.func.upvalue_count;
@@ -200,6 +209,7 @@ void emit_closure_upvals(CodeGen* gen, int dst, int const_idx, Ast* ast) {
         chunk_write(gen->chunk, (uint8_t)(is_local & 0xFF), ast->line);
         chunk_write(gen->chunk, (uint8_t)(index & 0xFF), ast->line);
         chunk_write(gen->chunk, (uint8_t)(is_value_capture & 0xFF), ast->line);
+        chunk_write(gen->chunk, 0, ast->line);
     }
 }
 
