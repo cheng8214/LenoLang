@@ -870,7 +870,13 @@ static void gen_try(CodeGen* gen, Ast* ast) {
     gen->chunk->code[catch_patch_pos] = (uint8_t)(((catch_pos - try_pos) >> 8) & 0xFF);
     gen->chunk->code[catch_patch_pos + 1] = (uint8_t)((catch_pos - try_pos) & 0xFF);
 
-    // catch 变量：语义分析已把符号解析写进 catch_var_ref（别再 scope_resolve）
+    // catch 块入口：先取异常值（OP_CATCH），再注销本层 try 注册（OP_END_TRY）。
+    //   - catch 体内若再次抛异常，必须向上传播，而不是被本层 catch_ip 再抓住
+    //     （否则 `catch { ... 越界 ... }` 会无限跳回 catch 自己 → 挂死）。
+    //     此前只有 OP_CATCH 顺带清 catch_ip，而 `} catch {`（无变量）根本不发
+    //     OP_CATCH，catch_ip 与 has_exception 都不会被清理 —— test_array_bounds
+    //     既卡死又把旧异常泄漏给后续调用。
+    //   - 顺序必须是 CATCH → END_TRY：END_TRY 会清 vm.exception/has_exception。
     SymRef* cref = &ast->u.try_.catch_var_ref;
     if (ast->u.try_.catch_var && cref->name) {
         if (cref->index >= gen->next_reg) {
@@ -880,6 +886,7 @@ static void gen_try(CodeGen* gen, Ast* ast) {
         // CATCH iABx: R[A] = 当前异常
         reg_encode_iABx(gen->chunk, OP_CATCH, cref->index, 0, ast->line);
     }
+    reg_encode_iABC(gen->chunk, OP_END_TRY, 0, 0, 0, ast->line);
 
     if (ast->u.try_.catch_body) {
         gen_stmt(gen, ast->u.try_.catch_body);

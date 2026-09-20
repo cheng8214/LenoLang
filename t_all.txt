@@ -1,0 +1,21 @@
+LenoC 自举测试运行器
+解释器: D:\CLeno\LenoReg\build\lenoreg.exe
+测试目录: assert
+========================================
+  [FAIL] test_address_of.leno
+         [错误] :9: 类型 object 上不存在方法 'malloc'
+         === 发现 1 个错误 ===
+         <stdin>:9: error: [运行时错误] 类型 object 上不存在方法 'malloc'
+  [PASS] test_alias.leno
+  [FAIL] test_alias_cross_module.leno
+         [错误] :10: 下标访问: 对象不支持索引
+         === 发现 1 个错误 ===
+         <stdin>:10: error: [运行时错误] 下标访问: 对象不支持索引
+  [PASS] test_alias_type_deps_struct_fields.leno
+  [FAIL] test_alias_use_generic.leno
+         [错误] :9: 下标访问: 对象不支持索引
+         === 发现 1 个错误 ===
+         <stdin>:9: error: [运行时错误] 下标访问: 对象不支持索引
+  [PASS] test_array.leno
+  [PASS] test_arrays_module.leno
+  [FAIL] test_array_bounds.leno - 超时（120000 ms，已被杀掉）

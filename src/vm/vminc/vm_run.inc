@@ -1905,6 +1905,14 @@
             }
         }
 
+        // 离开 try/catch/finally 范围：异常状态不再需要保留。
+        // 若不清理，has_exception 会一直挂着，后续 native 调用（OP_CALL/OP_CALL_NATIVE
+        // 里 "if (vm.has_exception) 转成 throw_runtime_error"）会把**早已处理过的旧异常**
+        // 重新抛出（表现为 `} catch { }` 之后 add() 报前面那次越界的错）。
+        vm.has_exception = 0;
+        vm.exception = val_null();
+        vm.exception_line = 0;
+
         // try 块中的 return 在此收尾（finally 已执行完）
         if (frame->has_try_return) {
             frame->has_try_return = 0;
