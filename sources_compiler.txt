@@ -24,7 +24,6 @@ src\codegen\codegen_stmt.c
 src\codegen\codegen_func.c
 src\codegen\codegen_import.c
 src\codegen\codegen_utils.c
-src\codegen\codegen_inline.c
 src\module_compiler.c
 src\package\package_platform.c
 src\package\package_toml.c

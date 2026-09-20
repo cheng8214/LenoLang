@@ -1,72 +1,55 @@
+// ============================================================================
+// 寄存器式 codegen：import / use 内联
+// ============================================================================
+
 #include "codegen.h"
 
 void gen_import_inline(CodeGen* gen, Ast* ast) {
-    // 原生模块（如 times, io 等）：生成 OP_LOAD_NATIVE_MODULE 操作码
-    if (!strstr(ast->u.import.module_name, ".leno")) {
-        // 生成字节码：OP_LOAD_NATIVE_MODULE <module_name_constant>
-        int constant = make_constant(gen, val_obj((Object*)str_new(ast->u.import.module_name, strlen(ast->u.import.module_name))));
-        emit_byte(gen, OP_LOAD_NATIVE_MODULE, ast->line);
-        emit_byte(gen, (constant >> 8) & 0xff, ast->line);
-        emit_byte(gen, constant & 0xff, ast->line);
-        return;
+    // import 语句在寄存器式下不生成字节码
+    // 模块加载在 lenolang_run / --compile 中处理
+}
+
+// ============================================================================
+// 工具函数
+// ============================================================================
+
+int bigint_str_fits_in_int32(const char* str) {
+    // 检查 bigint 字符串是否可以用 int32 表示
+    if (!str) return 0;
+    // 简化：如果以 '-' 开头且超过 10 位数字，或无 '-' 且超过 10 位，则不 fit
+    int len = (int)strlen(str);
+    if (len == 0) return 0;
+    if (str[0] == '-') {
+        if (len > 11) return 0;
+        if (len == 11 && strcmp(str, "-2147483648") > 0) return 0;
+    } else {
+        if (len > 10) return 0;
+        if (len == 10 && strcmp(str, "2147483647") > 0) return 0;
     }
+    return 1;
+}
 
-    const char* alias = ast->u.import.alias;
-    char* extracted_name = NULL;
-    if (!alias) {
-        const char* base = strrchr(ast->u.import.module_name, '/');
-        if (!base) base = strrchr(ast->u.import.module_name, '\\');
-        if (!base) base = ast->u.import.module_name;
-        else base++;
+int is_string_expr(Ast* ast) {
+    if (!ast) return 0;
+    return ast->kind == AST_STRING || ast->kind == AST_INTERP_STRING;
+}
 
-        const char* dot = strrchr(base, '.');
-        if (dot) {
-            extracted_name = (char*)malloc(dot - base + 1);
-            strncpy(extracted_name, base, dot - base);
-            extracted_name[dot - base] = '\0';
-        } else {
-            extracted_name = strdup(base);
-        }
-        alias = extracted_name;
-    }
+int is_array_expr(Ast* ast) {
+    if (!ast) return 0;
+    return ast->kind == AST_ARRAY;
+}
 
-    const char* current_file = error_get_filename();
-    ObjModule* module = load_module_file(ast->u.import.module_name, current_file, alias);
+int is_dict_expr(Ast* ast) {
+    if (!ast) return 0;
+    return ast->kind == AST_DICT;
+}
 
-    if (!module) {
-        // 模块加载失败时，检查是否已有前序语义错误
-        // 如果已有错误（如 face/impl 缺少方法），则不报"无法加载模块"级联错误
-        // 因为根因错误已经在模块自身的编译阶段报告过了，级联错误只会掩盖真正的问题
-        if (!error_has_any()) {
-            char err_msg[BUFFER_MEDIUM];
-            snprintf(err_msg, sizeof(err_msg), "无法加载模块 '%s'", ast->u.import.module_name);
-            error_add_at(ERR_SEMANTIC, ast->line, ast->column, err_msg);
-        }
-        if (extracted_name) {
-            free(extracted_name);
-        }
-        return;
-    }
+int is_var_expr(Ast* ast) {
+    if (!ast) return 0;
+    return ast->kind == AST_VAR;
+}
 
-    // 将模块对象作为常量
-    emit_constant(gen, val_obj((Object*)module), ast->line);
-
-    // 生成 OP_INIT_LENOMODULE：在运行时初始化 .leno 模块（执行 init_chunk）
-    emit_byte(gen, OP_INIT_LENOMODULE, ast->line);
-
-    // 定义变量存储模块
-    Symbol* sym = scope_resolve(gen->sem->root_scope, alias);
-    if (sym) {
-        if (sym->kind == SYM_GLOBAL) {
-            emit_define_global(gen, sym->index, ast->line);
-        } else if (sym->kind == SYM_MODULE) {
-            // 模块级别的变量，使用 OP_SET_MODULE_VAR
-            emit_bytes_2(gen, OP_SET_MODULE_VAR, sym->index, ast->line);
-            emit_byte(gen, OP_POP, ast->line);
-        }
-    }
-
-    if (extracted_name) {
-        free(extracted_name);
-    }
+int is_number_expr(Ast* ast) {
+    if (!ast) return 0;
+    return ast->kind == AST_NUM;
 }

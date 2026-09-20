@@ -1,33 +1,39 @@
+// ============================================================================
+// 寄存器式 codegen：语句生成
+// ============================================================================
+
 #include "codegen.h"
-#include <stdio.h>
-#include "include/leno_error.h"
 
-// 链式循环上下文操作（堆分配，无嵌套深度限制）
-static LoopContext* loop_push(CodeGen* gen) {
-    LoopContextNode* node = (LoopContextNode*)malloc(sizeof(LoopContextNode));
-    if (!node) return NULL;
-    node->ctx.break_count = 0;
-    node->ctx.continue_count = 0;
-    node->prev = gen->loop_head;
-    gen->loop_head = node;
-    gen->loop_count++;
-    return &node->ctx;
-}
+// 前向声明（与 codegen.h 中非 static 声明一致）
+void gen_stmt(CodeGen* gen, Ast* ast);
+static void gen_var_decl(CodeGen* gen, Ast* ast);
+static void gen_return(CodeGen* gen, Ast* ast);
+static void gen_return_multi(CodeGen* gen, Ast* ast);
+static void gen_while(CodeGen* gen, Ast* ast);
+static void gen_for(CodeGen* gen, Ast* ast);
+static void gen_switch(CodeGen* gen, Ast* ast);
+static void gen_try(CodeGen* gen, Ast* ast);
+static void gen_throw(CodeGen* gen, Ast* ast);
+static void gen_struct_def(CodeGen* gen, Ast* ast);
+static void gen_enum_def(CodeGen* gen, Ast* ast);
+static void gen_face_def(CodeGen* gen, Ast* ast);
+static void gen_cstruct_def(CodeGen* gen, Ast* ast);
+static void gen_clib_def(CodeGen* gen, Ast* ast);
+static void gen_cfunc_decl(CodeGen* gen, Ast* ast);
+static void gen_alias(CodeGen* gen, Ast* ast);
+static void gen_destruct_decl(CodeGen* gen, Ast* ast);
+static void gen_import(CodeGen* gen, Ast* ast);
+static void gen_export(CodeGen* gen, Ast* ast);
+static void gen_use(CodeGen* gen, Ast* ast);
 
-static void loop_pop(CodeGen* gen) {
-    if (!gen->loop_head) return;
-    LoopContextNode* node = gen->loop_head;
-    gen->loop_head = node->prev;
-    free(node);
-    gen->loop_count--;
-}
+// 表达式声明（codegen_expr.c）
+extern void gen_expr_to(CodeGen* gen, Ast* ast, int dst);
+extern int gen_expr(CodeGen* gen, Ast* ast);
 
-static LoopContext* loop_current(CodeGen* gen) {
-    return gen->loop_head ? &gen->loop_head->ctx : NULL;
-}
-
-Value ast_default_to_value(Ast* expr);
-
+// ============================================================================
+// ast_default_to_value：把 AST 常量表达式求值为 Value（编译期）
+// 寄存器式与栈式语义一致（直接照搬栈式基线实现，供全局变量默认值等场景使用）
+// ============================================================================
 Value ast_default_to_value(Ast* expr) {
     if (!expr) return val_null();
     switch (expr->kind) {
@@ -74,3428 +80,572 @@ Value ast_default_to_value(Ast* expr) {
     }
 }
 
-void gen_func(CodeGen* gen, Ast* ast);
-
-// 辅助函数：获取表达式的类型 kind
-static TypeKind get_expr_type_kind(Ast* ast) {
-    if (!ast || !ast->cached_type) return TYPE_ANY;
-    return ast->cached_type->kind;
-}
-
-// 编译期消除赋值/声明处的基本类型 CAST：
-// 仅限字面量（AST_NUM/AST_STRING/AST_BOOL/AST_NULL）且静态类型与目标声明完全一致——
-// 字面量的 cached_type 由词法/语义分析直接确定，codegen 发射的就是该类型常量，运行时类型有保证。
-// 其余节点（方法调用、字段访问、算术结果等）的 cached_type 只是推断结果，不保证运行时
-// 实际类型一致（如隐式 int→float、var/any 流入），必须保留 CAST 做运行时校验与规范化。
-// 【回归教训】曾放宽到"任意静态类型一致即消除"，导致 GUI 布局收到未规范的值、
-// 对话框尺寸算错只剩关闭按钮（file_manager 属性对话框）
-static int assign_cast_needed(TypeKind target_kind, Ast* value_ast) {
-    if (!value_ast) return 1;
-    switch (value_ast->kind) {
-        case AST_NUM:
-        case AST_STRING:
-        case AST_BOOL:
-        case AST_NULL:
-            return !value_ast->cached_type ||
-                   value_ast->cached_type->kind != target_kind;
-        default:
-            return 1;
-    }
-}
-
-// 顶层代码局部槽位记账：确保 chunk->local_count / max_local_slot 覆盖 slot
-static void track_toplevel_local_slot(CodeGen* gen, int slot);
-
-static void gen_var_decl(CodeGen* gen, Ast* ast);
-static void gen_destruct_decl(CodeGen* gen, Ast* ast);
-static void gen_return(CodeGen* gen, Ast* ast);
-static void gen_return_multi(CodeGen* gen, Ast* ast);
-static void gen_while(CodeGen* gen, Ast* ast);
-static void gen_for(CodeGen* gen, Ast* ast);
-static void gen_switch(CodeGen* gen, Ast* ast);
-static void gen_expr_stmt(CodeGen* gen, Ast* ast);
-
-static void gen_switch(CodeGen* gen, Ast* ast) {
-    gen_expr(gen, ast->u.switch_.expr);
-
-    int case_count = ast->u.switch_.case_count;
-    int has_default = ast->u.switch_.default_body ? 1 : 0;
-
-    if (case_count == 0 && !has_default) {
-        emit_byte(gen, OP_POP, ast->line);
-        return;
-    }
-
-    // ========================================================================
-    // 优化：case 二分查找 (OP_SWITCH_LOOKUP)
-    // 支持类型：int、float、string
-    // 当所有 case 都是同一类型的常量且数量 >= 4 时，生成二分查找
-    // ========================================================================
-    if (case_count >= 4) {
-        // 检测 case 类型：0=未定, 1=int, 2=float, 3=string
-        int case_type = 0;
-        int all_same_const = 1;
-        for (int i = 0; i < case_count; i++) {
-            if (ast->u.switch_.cases[i].is_type_match) {
-                all_same_const = 0;
-                break;
-            }
-            int vc = ast->u.switch_.cases[i].values.count;
-            if (vc != 1) {
-                all_same_const = 0;
-                break;
-            }
-            Ast* val_ast = ast->u.switch_.cases[i].values.items[0];
-            int this_type = 0;
-            if (val_ast->kind == AST_NUM && !val_ast->u.num.is_float) {
-                this_type = 1;  // int
-            } else if (val_ast->kind == AST_NUM && val_ast->u.num.is_float) {
-                this_type = 2;  // float
-            } else if (val_ast->kind == AST_STRING) {
-                this_type = 3;  // string
-            } else {
-                all_same_const = 0;
-                break;
-            }
-            if (case_type == 0) {
-                case_type = this_type;
-            } else if (case_type != this_type) {
-                all_same_const = 0;
-                break;
-            }
-        }
-
-        if (all_same_const && case_type > 0) {
-            // 收集 (case_value, case_index) 对
-            typedef struct { Value value; int orig_index; } CaseEntry;
-            CaseEntry* entries = malloc(sizeof(CaseEntry) * case_count);
-            for (int i = 0; i < case_count; i++) {
-                Ast* val_ast = ast->u.switch_.cases[i].values.items[0];
-                if (case_type == 1) {
-                    entries[i].value = val_num((int64_t)val_ast->u.num.value);
-                } else if (case_type == 2) {
-                    entries[i].value = val_float(val_ast->u.num.value);
-                } else {
-                    entries[i].value = val_obj((Object*)str_copy(val_ast->u.string.value, val_ast->u.string.len));
-                }
-                entries[i].orig_index = i;
-            }
-
-            // 排序：按值大小（int/float）或字典序（string）
-            for (int i = 1; i < case_count; i++) {
-                CaseEntry tmp = entries[i];
-                int j = i - 1;
-                if (case_type == 1) {
-                    // int
-                    while (j >= 0 && val_as_int(entries[j].value) > val_as_int(tmp.value)) {
-                        entries[j + 1] = entries[j];
-                        j--;
-                    }
-                } else if (case_type == 2) {
-                    // float
-                    double tmp_d = val_as_double(tmp.value);
-                    while (j >= 0) {
-                        double j_d = val_as_double(entries[j].value);
-                        if (j_d > tmp_d) {
-                            entries[j + 1] = entries[j];
-                            j--;
-                        } else {
-                            break;
-                        }
-                    }
-                } else {
-                    // string
-                    ObjString* tmp_s = (ObjString*)val_as_obj(tmp.value);
-                    while (j >= 0) {
-                        ObjString* j_s = (ObjString*)val_as_obj(entries[j].value);
-                        int min_len = j_s->len < tmp_s->len ? j_s->len : tmp_s->len;
-                        int cmp = memcmp(j_s->chars, tmp_s->chars, min_len);
-                        if (cmp > 0 || (cmp == 0 && j_s->len > tmp_s->len)) {
-                            entries[j + 1] = entries[j];
-                            j--;
-                        } else {
-                            break;
-                        }
-                    }
-                }
-                entries[j + 1] = tmp;
-            }
-
-            // 创建排序后的 Value 常量数组
-            ObjArray* case_arr = arr_new(case_count);
-            for (int i = 0; i < case_count; i++) {
-                arr_grow(case_arr);
-                case_arr->elements[i] = entries[i].value;
-                case_arr->count = i + 1;
-            }
-            int const_idx = make_constant(gen, val_obj((Object*)case_arr));
-
-            // 发射 OP_SWITCH_LOOKUP
-            emit_byte(gen, OP_SWITCH_LOOKUP, ast->line);
-            emit_byte(gen, (const_idx >> 8) & 0xff, ast->line);
-            emit_byte(gen, const_idx & 0xff, ast->line);
-            emit_byte(gen, (case_count >> 8) & 0xff, ast->line);
-            emit_byte(gen, case_count & 0xff, ast->line);
-
-            // default offset 占位（4 bytes）
-            int default_offset_pos = gen->chunk->len;
-            emit_byte(gen, 0xff, ast->line);
-            emit_byte(gen, 0xff, ast->line);
-            emit_byte(gen, 0xff, ast->line);
-            emit_byte(gen, 0xff, ast->line);
-
-            // 每个 case 的 body offset 占位（各 4 bytes）
-            int* body_offset_positions = malloc(sizeof(int) * case_count);
-            for (int i = 0; i < case_count; i++) {
-                body_offset_positions[i] = gen->chunk->len;
-                emit_byte(gen, 0xff, ast->line);
-                emit_byte(gen, 0xff, ast->line);
-                emit_byte(gen, 0xff, ast->line);
-                emit_byte(gen, 0xff, ast->line);
-            }
-            // ★ 注意：OP_SWITCH_LOOKUP 读取完 offset 表后 ip 指向此处
-            int after_table = gen->chunk->len;
-
-            // 生成 case body 和 end jumps
-            int* case_end_jumps = malloc(sizeof(int) * case_count);
-            int case_end_jump_count = 0;
-
-            for (int i = 0; i < case_count; i++) {
-                int orig_idx = entries[i].orig_index;
-                // patch body offset：从 offset 表位置到这里的距离
-                int offset_pos = body_offset_positions[i];
-                int body_offset = gen->chunk->len - after_table;
-                gen->chunk->code[offset_pos] = (body_offset >> 24) & 0xff;
-                gen->chunk->code[offset_pos + 1] = (body_offset >> 16) & 0xff;
-                gen->chunk->code[offset_pos + 2] = (body_offset >> 8) & 0xff;
-                gen->chunk->code[offset_pos + 3] = body_offset & 0xff;
-
-                // 解构字段提取（与原始 gen_switch 一致）
-                if (ast->u.switch_.cases[orig_idx].destructure_count > 0 &&
-                    ast->u.switch_.cases[orig_idx].match_type &&
-                    ast->u.switch_.cases[orig_idx].match_type->kind == TYPE_STRUCT &&
-                    ast->u.switch_.cases[orig_idx].match_type->struct_name &&
-                    ast->u.switch_.cases[orig_idx].destructure_indices &&
-                    ast->u.switch_.cases[orig_idx].destructure_field_names) {
-                    for (int di = 0; di < ast->u.switch_.cases[orig_idx].destructure_count; di++) {
-                        const char* var_name = ast->u.switch_.cases[orig_idx].destructure_vars[di];
-                        const char* field_name = ast->u.switch_.cases[orig_idx].destructure_field_names[di];
-                        if (strcmp(var_name, "_") == 0 || !field_name) continue;
-                        int local_idx = ast->u.switch_.cases[orig_idx].destructure_indices[di];
-                        if (local_idx < 0) continue;
-                        SymRef* gref = &ast->u.switch_.cases[orig_idx].guard_var_ref;
-                        if (gref->kind == SYM_UPVALUE) {
-                            emit_bytes_2(gen, OP_GET_UPVALUE, gref->index, ast->line);
-                        } else if (gref->kind == SYM_GLOBAL) {
-                            emit_byte(gen, OP_GET_GLOBAL, ast->line);
-                            int gname_const = make_constant(gen, val_obj((Object*)str_copy(gref->name, strlen(gref->name))));
-                            emit_byte(gen, (gname_const >> 8) & 0xff, ast->line);
-                            emit_byte(gen, gname_const & 0xff, ast->line);
-                        } else {
-                            emit_bytes_2(gen, OP_GET_LOCAL, gref->index, ast->line);
-                        }
-                        ObjString* fname_str = str_copy(field_name, strlen(field_name));
-                        int fname_const = make_constant(gen, val_obj((Object*)fname_str));
-                        emit_byte(gen, OP_CONST, ast->line);
-                        emit_byte(gen, (fname_const >> 8) & 0xff, ast->line);
-                        emit_byte(gen, fname_const & 0xff, ast->line);
-                        emit_byte(gen, OP_INDEX, ast->line);
-                        emit_bytes_2(gen, OP_SET_LOCAL_POP, local_idx, ast->line);
-                    }
-                }
-
-                // 生成 case body
-                // 注意：OP_SWITCH_LOOKUP 已经弹出了 switch 值
-                // 但原始 gen_switch 在每个 case body 前有 OP_POP（弹掉 DUP 的副本）
-                // 这里不需要 OP_POP，因为 OP_SWITCH_LOOKUP 已经处理了
-                if (ast->u.switch_.cases[orig_idx].body->kind == AST_BLOCK) {
-                    gen_block(gen, ast->u.switch_.cases[orig_idx].body);
-                } else {
-                    gen_stmt(gen, ast->u.switch_.cases[orig_idx].body);
-                }
-
-                case_end_jumps[case_end_jump_count++] = emit_jump(gen, OP_JUMP, ast->line);
-            }
-
-            // patch default offset
-            int default_body_start = gen->chunk->len;
-            if (has_default) {
-                if (ast->u.switch_.default_body->kind == AST_BLOCK) {
-                    gen_block(gen, ast->u.switch_.default_body);
-                } else {
-                    gen_stmt(gen, ast->u.switch_.default_body);
-                }
-            }
-
-            // patch default offset
-            int default_off = default_body_start - after_table;
-            gen->chunk->code[default_offset_pos] = (default_off >> 24) & 0xff;
-            gen->chunk->code[default_offset_pos + 1] = (default_off >> 16) & 0xff;
-            gen->chunk->code[default_offset_pos + 2] = (default_off >> 8) & 0xff;
-            gen->chunk->code[default_offset_pos + 3] = default_off & 0xff;
-
-            // patch end jumps
-            for (int i = 0; i < case_end_jump_count; i++) {
-                patch_jump(gen, case_end_jumps[i]);
-            }
-
-            // OP_POP 弹掉 switch 值（OP_SWITCH_LOOKUP 没弹出时的兜底）
-            // 注意：OP_SWITCH_LOOKUP 已经弹出了 switch 值，不需要再 POP
-            // 但如果没有匹配且没有 default，switch 值已被弹出，不需要再处理
-
-            free(entries);
-            free(body_offset_positions);
-            free(case_end_jumps);
-            return;
-        }
-    }
-
-    // ========================================================================
-    // 原始线性扫描路径（非整数 case 或 case 数量太少）
-    // ========================================================================
-
-    typedef struct {
-        int* match_jumps;
-        int match_jump_count;
-        int body_start;
-    } CaseJumpInfo;
-
-    CaseJumpInfo* case_infos = malloc(sizeof(CaseJumpInfo) * case_count);
-    int* case_end_jumps = malloc(sizeof(int) * case_count);
-    int case_end_jump_count = 0;
-
-    for (int i = 0; i < case_count; i++) {
-        int value_count = ast->u.switch_.cases[i].values.count;
-        int type_count = ast->u.switch_.cases[i].match_type_count;
-        // 分配足够容纳多类型检查的 match_jumps
-        int max_jumps = value_count > type_count ? value_count : type_count;
-        if (max_jumps < 1) max_jumps = 1;
-        case_infos[i].match_jumps = malloc(sizeof(int) * max_jumps);
-        case_infos[i].match_jump_count = 0;
-
-        if (ast->u.switch_.cases[i].is_type_match) {
-            // case is Type 模式：对每个匹配类型生成类型检查（逗号合并时多个类型跳转同一 body）
-            int mt_count = type_count > 0 ? type_count : 1;
-            TypeInfo** mt_arr = ast->u.switch_.cases[i].match_types;
-            if (!mt_arr) {
-                // 单类型回退（match_types 未设置时用 match_type）
-                mt_count = 1;
-                mt_arr = &ast->u.switch_.cases[i].match_type;
-            }
-            for (int mi = 0; mi < mt_count; mi++) {
-                TypeInfo* mt = mt_arr[mi];
-                emit_byte(gen, OP_DUP, ast->line);
-                emit_byte(gen, OP_TYPE_CHECK, ast->line);
-                if (mt && mt->kind == TYPE_FACE && mt->struct_name) {
-                    ObjString* face_name_str = str_copy(mt->struct_name,
-                                                         strlen(mt->struct_name));
-                    int face_name_const = make_constant(gen, val_obj((Object*)face_name_str));
-                    emit_byte(gen, (uint8_t)TYPE_FACE, ast->line);
-                    emit_byte(gen, (face_name_const >> 8) & 0xff, ast->line);
-                    emit_byte(gen, face_name_const & 0xff, ast->line);
-                } else if (mt && mt->kind == TYPE_STRUCT && mt->struct_name) {
-                    ObjString* struct_name_str = str_copy(mt->struct_name,
-                                                           strlen(mt->struct_name));
-                    int struct_name_const = make_constant(gen, val_obj((Object*)struct_name_str));
-                    emit_byte(gen, (uint8_t)TYPE_STRUCT, ast->line);
-                    emit_byte(gen, (struct_name_const >> 8) & 0xff, ast->line);
-                    emit_byte(gen, struct_name_const & 0xff, ast->line);
-                } else if (mt && mt->kind == TYPE_ENUM && mt->struct_name) {
-                    ObjString* enum_name_str = str_copy(mt->struct_name,
-                                                         strlen(mt->struct_name));
-                    int enum_name_const = make_constant(gen, val_obj((Object*)enum_name_str));
-                    emit_byte(gen, (uint8_t)TYPE_ENUM, ast->line);
-                    emit_byte(gen, (enum_name_const >> 8) & 0xff, ast->line);
-                    emit_byte(gen, enum_name_const & 0xff, ast->line);
-                } else {
-                    if (mt) {
-                        emit_byte(gen, (uint8_t)mt->kind, ast->line);
-                        if (mt->element_type) {
-                            emit_byte(gen, (uint8_t)mt->element_type->kind, ast->line);
-                        } else {
-                            emit_byte(gen, (uint8_t)TYPE_ANY, ast->line);
-                        }
-                    } else {
-                        emit_byte(gen, (uint8_t)TYPE_ANY, ast->line);
-                        emit_byte(gen, (uint8_t)TYPE_ANY, ast->line);
-                    }
-                }
-                case_infos[i].match_jumps[case_infos[i].match_jump_count++] =
-                    emit_jump(gen, OP_JUMP_IF_TRUE, ast->line);
-                emit_byte(gen, OP_POP, ast->line);
-            }
-        } else if (value_count > 0) {
-            for (int j = 0; j < value_count; j++) {
-                emit_byte(gen, OP_DUP, ast->line);
-
-                gen_expr(gen, ast->u.switch_.cases[i].values.items[j]);
-
-                emit_byte(gen, OP_EQ, ast->line);
-
-                case_infos[i].match_jumps[case_infos[i].match_jump_count++] =
-                    emit_jump(gen, OP_JUMP_IF_TRUE, ast->line);
-
-                emit_byte(gen, OP_POP, ast->line);
-            }
-        } else {
-            emit_byte(gen, OP_DUP, ast->line);
-            emit_byte(gen, OP_NULL, ast->line);
-            emit_byte(gen, OP_EQ, ast->line);
-            case_infos[i].match_jumps[case_infos[i].match_jump_count++] =
-                emit_jump(gen, OP_JUMP_IF_TRUE, ast->line);
-            emit_byte(gen, OP_POP, ast->line);
-        }
-    }
-
-    int default_jump = emit_jump(gen, OP_JUMP, ast->line);
-
-    for (int i = 0; i < case_count; i++) {
-        case_infos[i].body_start = gen->chunk->len;
-
-        for (int j = 0; j < case_infos[i].match_jump_count; j++) {
-            patch_jump(gen, case_infos[i].match_jumps[j]);
-        }
-
-        // OP_JUMP_IF_TRUE 不弹条件，栈顶是类型/值检查的布尔结果，下面是 switch 值
-        emit_byte(gen, OP_POP, ast->line);  // 弹掉布尔结果，栈顶回到 switch 值
-
-        // case is Type => var 绑定：将 switch 值存入绑定变量
-        // 用 OP_SET_LOCAL（不弹栈），switch 值留在栈上由 switch 结尾的 OP_POP 统一弹出
-        if (ast->u.switch_.cases[i].guard_bind_var &&
-            ast->u.switch_.cases[i].guard_bind_index >= 0) {
-            emit_bytes_2(gen, OP_SET_LOCAL,
-                ast->u.switch_.cases[i].guard_bind_index, ast->line);
-        }
-
-        // 解构字段提取：case is Point(x, y) → 从 guard_var 提取字段赋给 x, y
-        if (ast->u.switch_.cases[i].destructure_count > 0 &&
-            ast->u.switch_.cases[i].match_type &&
-            ast->u.switch_.cases[i].match_type->kind == TYPE_STRUCT &&
-            ast->u.switch_.cases[i].match_type->struct_name &&
-            ast->u.switch_.cases[i].destructure_indices &&
-            ast->u.switch_.cases[i].destructure_field_names) {
-            for (int di = 0; di < ast->u.switch_.cases[i].destructure_count; di++) {
-                const char* var_name = ast->u.switch_.cases[i].destructure_vars[di];
-                const char* field_name = ast->u.switch_.cases[i].destructure_field_names[di];
-                if (strcmp(var_name, "_") == 0 || !field_name) continue;
-                int local_idx = ast->u.switch_.cases[i].destructure_indices[di];
-                if (local_idx < 0) continue;
-                // 加载 guard_var
-                SymRef* gref = &ast->u.switch_.cases[i].guard_var_ref;
-                if (gref->kind == SYM_UPVALUE) {
-                    emit_bytes_2(gen, OP_GET_UPVALUE, gref->index, ast->line);
-                } else if (gref->kind == SYM_GLOBAL) {
-                    emit_byte(gen, OP_GET_GLOBAL, ast->line);
-                    int gname_const = make_constant(gen, val_obj((Object*)str_copy(gref->name, strlen(gref->name))));
-                    emit_byte(gen, (gname_const >> 8) & 0xff, ast->line);
-                    emit_byte(gen, gname_const & 0xff, ast->line);
-                } else {
-                    emit_bytes_2(gen, OP_GET_LOCAL, gref->index, ast->line);
-                }
-                // 通过字段名获取字段值：OP_CONST + OP_INDEX
-                ObjString* fname_str = str_copy(field_name, strlen(field_name));
-                int fname_const = make_constant(gen, val_obj((Object*)fname_str));
-                emit_byte(gen, OP_CONST, ast->line);
-                emit_byte(gen, (fname_const >> 8) & 0xff, ast->line);
-                emit_byte(gen, fname_const & 0xff, ast->line);
-                emit_byte(gen, OP_INDEX, ast->line);
-                // 存入解构变量
-                emit_bytes_2(gen, OP_SET_LOCAL_POP, local_idx, ast->line);
-            }
-        }
-
-        if (ast->u.switch_.cases[i].body->kind == AST_BLOCK) {
-            gen_block(gen, ast->u.switch_.cases[i].body);
-        } else {
-            gen_stmt(gen, ast->u.switch_.cases[i].body);
-        }
-
-        case_end_jumps[case_end_jump_count++] = emit_jump(gen, OP_JUMP, ast->line);
-    }
-
-    patch_jump(gen, default_jump);
-
-    if (has_default) {
-        if (ast->u.switch_.default_body->kind == AST_BLOCK) {
-            gen_block(gen, ast->u.switch_.default_body);
-        } else {
-            gen_stmt(gen, ast->u.switch_.default_body);
-        }
-    }
-
-    for (int i = 0; i < case_end_jump_count; i++) {
-        patch_jump(gen, case_end_jumps[i]);
-    }
-
-    emit_byte(gen, OP_POP, ast->line);
-
-    for (int i = 0; i < case_count; i++) {
-        free(case_infos[i].match_jumps);
-    }
-    free(case_infos);
-    free(case_end_jumps);
-}
-
 // ============================================================================
-// Peephole 优化：比较 + 条件跳转融合（方案 6）
-// 检测 if (local OP local/global) 模式，直接发射 OP_CMPJMP_* 指令
-// 成功时返回 1 并设置 out_jump_offset（用于后续 patch_jump）
-// 失败时返回 0（调用方应走原来的 gen_expr + JUMP_IF_FALSE + POP 路径）
+// 语句分发
 // ============================================================================
-// 取出整数字面量的立即数值（只接受能落进 int32 的普通整数字面量）。
-// float / bigint 字面量一律拒绝 —— 前者语义不同，后者超 int32 放不进立即数。
-static int int_literal_imm32(Ast* a, int* out) {
-    if (!a || a->kind != AST_NUM) return 0;
-    if (a->u.num.is_float || a->u.num.is_bigint) return 0;
-    double v = a->u.num.value;
-    if (v < -2147483648.0 || v > 2147483647.0) return 0;
-    if (v != (double)(int)v) return 0;
-    *out = (int)v;
-    return 1;
-}
-
-static int try_emit_cmpjmp(CodeGen* gen, Ast* cond, int* out_jump_offset) {
-    /* LENO_NO_CMPJMP：关掉「比较+条件跳转」融合（基准/诊断用；
-     * 同其它"关掉某个优化"的 LENO_NO_* 开关一个套路）。
-     * 存在的理由：跨时段测性能会被 CPU 频率/热漂移污染（实测同一二进制
-     * 同一负载能差 25%），只有**同一二进制内交错 A/B** 才能得到可信结论。 */
-    static int cmpjmp_disabled = -1;
-    if (cmpjmp_disabled < 0) cmpjmp_disabled = getenv("LENO_NO_CMPJMP") ? 1 : 0;
-    if (cmpjmp_disabled) return 0;
-
-    if (!cond || cond->kind != AST_BINOP) return 0;
-
-    // 映射 token 到 cmp_op 编码
-    int cmp_op;
-    switch (cond->u.binop.op) {
-        case TOK_EQEQ: cmp_op = 0; break;
-        case TOK_NEQ:  cmp_op = 1; break;
-        case TOK_LT:   cmp_op = 2; break;
-        case TOK_GT:   cmp_op = 3; break;
-        case TOK_LE:   cmp_op = 4; break;
-        case TOK_GE:   cmp_op = 5; break;
-        default: return 0;  // 非比较运算符
-    }
-
-    Ast* l = cond->u.binop.l;
-    Ast* r = cond->u.binop.r;
-    if (!l || !r) return 0;
-
-    // 模式 4: local OP 整数字面量（含反向 lit OP local）→ OP_CMPJMP_LI_INT
-    // 必须放在最前面：字面量不是 AST_VAR，下面几段会按 AST_VAR 解引用联合体。
-    // 立即数限 int32；超出（bigint 字面量）或 float 字面量一律退回非融合路径。
-    {
-        static const int rev[6] = {0, 1, 3, 2, 5, 4};  // EQ→EQ, NE→NE, LT→GT, GT→LT, LE→GE, GE→LE
-        int imm = 0;
-        if (l->kind == AST_VAR && int_literal_imm32(r, &imm) &&
-            (l->u.var.ref.kind == SYM_LOCAL || l->u.var.ref.kind == SYM_PARAM) &&
-            get_expr_type_kind(l) == TYPE_INT) {
-            *out_jump_offset = emit_cmpjmp_li_int(gen, cmp_op, l->u.var.ref.index, imm, cond->line);
-            return 1;
-        }
-        // 字面量在左侧：lit OP local ≡ local reverse(OP) lit
-        if (r->kind == AST_VAR && int_literal_imm32(l, &imm) &&
-            (r->u.var.ref.kind == SYM_LOCAL || r->u.var.ref.kind == SYM_PARAM) &&
-            get_expr_type_kind(r) == TYPE_INT) {
-            *out_jump_offset = emit_cmpjmp_li_int(gen, rev[cmp_op], r->u.var.ref.index, imm, cond->line);
-            return 1;
-        }
-    }
-
-    // 两个操作数都必须是 AST_VAR
-    if (l->kind != AST_VAR) return 0;
-    if (r->kind != AST_VAR) return 0;
-
-    // 两个操作数都必须是 int 类型
-    if (get_expr_type_kind(l) != TYPE_INT) return 0;
-    if (get_expr_type_kind(r) != TYPE_INT) return 0;
-
-    SymRef* lr = &l->u.var.ref;
-    SymRef* rr = &r->u.var.ref;
-
-    // 模式 1: local OP local → OP_CMPJMP_LL_INT
-    if ((lr->kind == SYM_LOCAL || lr->kind == SYM_PARAM) &&
-        (rr->kind == SYM_LOCAL || rr->kind == SYM_PARAM)) {
-        *out_jump_offset = emit_cmpjmp_ll_int(gen, cmp_op, lr->index, rr->index, cond->line);
-        return 1;
-    }
-
-    // 模式 2: local OP global → OP_CMPJMP_LG_INT
-    if ((lr->kind == SYM_LOCAL || lr->kind == SYM_PARAM) &&
-        rr->kind == SYM_GLOBAL) {
-        *out_jump_offset = emit_cmpjmp_lg_int(gen, cmp_op, lr->index, rr->index, cond->line);
-        return 1;
-    }
-
-    // 模式 3: global OP local → 反转比较 + OP_CMPJMP_LG_INT
-    // 例如 global >= local 等价于 local <= global (cmp_op: GE→LE)
-    static const int reverse_op[6] = {0, 1, 3, 2, 5, 4};  // EQ→EQ, NE→NE, LT→GT, GT→LT, LE→GE, GE→LE
-    if (lr->kind == SYM_GLOBAL &&
-        (rr->kind == SYM_LOCAL || rr->kind == SYM_PARAM)) {
-        *out_jump_offset = emit_cmpjmp_lg_int(gen, reverse_op[cmp_op], rr->index, lr->index, cond->line);
-        return 1;
-    }
-
-    return 0;
-}
-
-// 表达式分支的生成（**唯一实现** ✓）：块 ⇒ 语句；表达式 ⇒ 求值，再按上下文决定是否弹掉 ✓
-// ⚠ 两条都是实测踩出来的：
-//   ① **语句位置**的表达式 if 必须 POP 掉分支值 ✗ 否则值留在栈上 ⇒ 同一表达式/后续语句的
-//      栈配对错乱（`func f(): string { if c then a else b }` 会把调用方的字符串拼接打乱，
-//      输出 `yesnull>]` 这类结果 ✗，严重时直接报类型错 ✓）；
-//   ② **`eif` 链**的 else 是一个 **AST_IF 节点**（**不是块** ✗）⇒ 语句位置必须按**语句**生成 ✓
-//      （`gen_stmt` ⇒ `gen_if(..., 0)` ✓）；若误当"表达式"求值再 POP ⇒ 栈下溢 ✗
-//      （实测：`assert/test_destruct_sdl3_sim.leno` 的 `if k == "C" { sc = 6 } eif …` 栈下溢 ✓）。
-static void gen_if_branch(CodeGen* gen, Ast* branch, int want_value, int line) {
-    if (!want_value) {
-        // 语句位置：块 / `eif` 链（AST_IF）都按语句生成 ⇒ 不产生栈值 ✓
-        if (branch->kind == AST_BLOCK || branch->kind == AST_IF) {
-            gen_stmt(gen, branch);
-            return;
-        }
-        gen_expr(gen, branch);
-        emit_byte(gen, OP_POP, line);
-        return;
-    }
-    // 表达式位置：块（少见）按语句生成（与旧行为一致：它不产生值 ✓）；
-    // 其余（含嵌套 AST_IF：`else if` 写在值位置）按表达式生成 ⇒ 值留在栈上 ✓
-    if (branch->kind == AST_BLOCK) {
-        gen_stmt(gen, branch);
-        return;
-    }
-    gen_expr(gen, branch);
-}
-
-void gen_if(CodeGen* gen, Ast* ast) {
-    gen_if_ex(gen, ast, 0);          // 语句位置：值被丢弃 ✓
-}
-
-void gen_if_ex(CodeGen* gen, Ast* ast, int want_value) {
-    // => var 绑定模式：if expr is Type => var { ... }
-    // 代码生成流程：
-    //   <expr>                    // 求值表达式 → 栈: [val]
-    //   OP_DUP                    // 栈: [val, val]
-    //   OP_TYPE_CHECK             // 消费栈顶 val, 压入 bool → 栈: [val, bool]
-    //   OP_JUMP_IF_FALSE -> else  // 不消费栈顶，如跳转则栈: [val, bool]
-    //   OP_POP                    // 弹出 bool → 栈: [val]
-    //   OP_SET_LOCAL_POP <bind>   // 消费 val 赋给绑定变量 → 栈: []
-    //   <then body>
-    //   OP_JUMP -> end
-    //   else:
-    //   OP_POP                    // 弹出 bool → 栈: [val]
-    //   OP_POP                    // 弹出未匹配的 val → 栈: []
-    //   <else body>
-    //   end:
-    if (ast->u.if_.guard_bind_var != NULL && ast->u.if_.guard_bind_expr != NULL) {
-        // 1. 求值表达式（压入栈）
-        gen_expr(gen, ast->u.if_.guard_bind_expr);
-        // 2. 复制值（一份给 TYPE_CHECK，一份给绑定变量）
-        emit_byte(gen, OP_DUP, ast->line);
-        // 3. 生成类型检查字节码
-        // 从 AST_TYPE_CHECK 节点获取类型信息
-        TypeInfo* guard_type = NULL;
-        if (ast->u.if_.cond && ast->u.if_.cond->kind == AST_TYPE_CHECK) {
-            guard_type = ast->u.if_.cond->u.type_check.type;
-        }
-        if (guard_type && guard_type->kind == TYPE_FACE && guard_type->struct_name) {
-            ObjString* face_name_str = str_copy(guard_type->struct_name,
-                                                 strlen(guard_type->struct_name));
-            int face_name_const = make_constant(gen, val_obj((Object*)face_name_str));
-            emit_byte(gen, OP_TYPE_CHECK, ast->line);
-            emit_byte(gen, (uint8_t)TYPE_FACE, ast->line);
-            emit_byte(gen, (face_name_const >> 8) & 0xff, ast->line);
-            emit_byte(gen, face_name_const & 0xff, ast->line);
-        } else if (guard_type && guard_type->kind == TYPE_STRUCT && guard_type->struct_name) {
-            ObjString* struct_name_str = str_copy(guard_type->struct_name,
-                                                   strlen(guard_type->struct_name));
-            int struct_name_const = make_constant(gen, val_obj((Object*)struct_name_str));
-            emit_byte(gen, OP_TYPE_CHECK, ast->line);
-            emit_byte(gen, (uint8_t)TYPE_STRUCT, ast->line);
-            emit_byte(gen, (struct_name_const >> 8) & 0xff, ast->line);
-            emit_byte(gen, struct_name_const & 0xff, ast->line);
-        } else if (guard_type && guard_type->kind == TYPE_ENUM && guard_type->struct_name) {
-            ObjString* enum_name_str = str_copy(guard_type->struct_name,
-                                                 strlen(guard_type->struct_name));
-            int enum_name_const = make_constant(gen, val_obj((Object*)enum_name_str));
-            emit_byte(gen, OP_TYPE_CHECK, ast->line);
-            emit_byte(gen, (uint8_t)TYPE_ENUM, ast->line);
-            emit_byte(gen, (enum_name_const >> 8) & 0xff, ast->line);
-            emit_byte(gen, enum_name_const & 0xff, ast->line);
-        } else {
-            emit_byte(gen, OP_TYPE_CHECK, ast->line);
-            if (guard_type) {
-                emit_byte(gen, (uint8_t)guard_type->kind, ast->line);
-                if (guard_type->element_type) {
-                    emit_byte(gen, (uint8_t)guard_type->element_type->kind, ast->line);
-                } else {
-                    emit_byte(gen, (uint8_t)TYPE_ANY, ast->line);
-                }
-            } else {
-                emit_byte(gen, (uint8_t)TYPE_ANY, ast->line);
-                emit_byte(gen, (uint8_t)TYPE_ANY, ast->line);
-            }
-        }
-        // 4. 条件跳转
-        int then_jump = emit_jump(gen, OP_JUMP_IF_FALSE, ast->line);
-        // 5. JUMP_IF_FALSE 不消费栈顶，需要 POP 掉布尔结果
-        //    之后栈顶是 expr 的值（DUP 保留的），赋给绑定变量并弹出
-        emit_byte(gen, OP_POP, ast->line);
-        emit_bytes_2(gen, OP_SET_LOCAL_POP, ast->u.if_.guard_bind_index, ast->line);
-        // 5a. 如果 cond 是 AST_BINOP（=> 绑定 + and 链），
-        //     生成右侧条件求值（如 a[0] is float and a[1] is int）
-        int extra_cond_jump = -1;
-        if (ast->u.if_.cond && ast->u.if_.cond->kind == AST_BINOP) {
-            gen_expr(gen, ast->u.if_.cond->u.binop.r);
-            extra_cond_jump = emit_jump(gen, OP_JUMP_IF_FALSE, ast->line);
-            emit_byte(gen, OP_POP, ast->line);  // 弹掉右侧条件的 bool
-        }
-        // 6. then 分支
-        gen_if_branch(gen, ast->u.if_.then, want_value, ast->line);
-        // 7. 跳到 end
-        int else_jump = emit_jump(gen, OP_JUMP, ast->line);
-        // 8. else 分支
-        // 路径1: 类型检查失败（then_jump）——栈顶: [bool, val]
-        patch_jump(gen, then_jump);
-        emit_byte(gen, OP_POP, ast->line);  // 弹掉 bool
-        emit_byte(gen, OP_POP, ast->line);  // 弹掉未匹配的 val
-        // 路径2: 右侧 and 条件失败（extra_cond_jump）——栈顶: [bool]
-        //         需要从路径1跳转到 else body
-        if (extra_cond_jump >= 0) {
-            // 跳过路径2的栈清理（路径1已经清理完栈）
-            int to_else_body = emit_jump(gen, OP_JUMP, ast->line);
-            patch_jump(gen, extra_cond_jump);
-            emit_byte(gen, OP_POP, ast->line);  // 弹掉 bool
-            // 跳到 else body（跟路径1汇合）
-            patch_jump(gen, to_else_body);
-        }
-        if (ast->u.if_.else_) {
-            gen_if_branch(gen, ast->u.if_.else_, want_value, ast->line);
-        }
-        patch_jump(gen, else_jump);
-        return;
-    }
-
-    // 检查是否是类型守卫（if a is type）
-    // 或者是否是否定类型守卫（if a not is type）
-    int is_negated = 0;
-    if (ast->u.if_.guard_var != NULL && ast->u.if_.cond && ast->u.if_.cond->kind == AST_TYPE_CHECK) {
-        // 条件已经是 AST_TYPE_CHECK，直接通过 gen_expr 生成（避免与 guard_var 路径重复生成）
-        gen_expr(gen, ast->u.if_.cond);
-    } else if (ast->u.if_.guard_var != NULL && ast->u.if_.cond &&
-               (ast->u.if_.cond->kind == AST_UNARY ||
-                ast->u.if_.cond->kind == AST_TYPE_CHECK)) {
-        // 仅当条件是纯类型守卫（AST_TYPE_CHECK）或否定类型守卫（!type_check）时
-        // 才走快速通道。对于复合条件（如 x is int and x > 5），guard_var 可能
-        // 由语义分析重新设置，必须用 gen_expr 生成完整条件。
-        // 检查条件表达式是否是否定（not）
-        if (ast->u.if_.cond->kind == AST_UNARY && 
-            ast->u.if_.cond->u.unary.op == TOK_NOT) {
-            is_negated = 1;
-        }
-        
-        // 生成运行时类型检查
-        // 使用语义分析阶段保存的符号引用
-        SymRef* ref = &ast->u.if_.guard_var_ref;
-        // 生成获取变量的字节码
-        if (ref->kind == SYM_LOCAL || ref->kind == SYM_PARAM) {
-            emit_bytes_2(gen, OP_GET_LOCAL, ref->index, ast->line);
-        } else if (ref->kind == SYM_GLOBAL) {
-            emit_get_global(gen, ref->index, ast->line);
-        } else if (ref->kind == SYM_UPVALUE) {
-            emit_bytes_2(gen, OP_GET_UPVALUE, ref->index, ast->line);
-        }
-
-        // 生成类型检查字节码
-        if (ast->u.if_.guard_type && ast->u.if_.guard_type->kind == TYPE_FACE && ast->u.if_.guard_type->struct_name) {
-            ObjString* face_name_str = str_copy(ast->u.if_.guard_type->struct_name,
-                                                 strlen(ast->u.if_.guard_type->struct_name));
-            int face_name_const = make_constant(gen, val_obj((Object*)face_name_str));
-            emit_byte(gen, OP_TYPE_CHECK, ast->line);
-            emit_byte(gen, (uint8_t)TYPE_FACE, ast->line);
-            emit_byte(gen, (face_name_const >> 8) & 0xff, ast->line);
-            emit_byte(gen, face_name_const & 0xff, ast->line);
-        } else if (ast->u.if_.guard_type && ast->u.if_.guard_type->kind == TYPE_STRUCT && ast->u.if_.guard_type->struct_name) {
-            ObjString* struct_name_str = str_copy(ast->u.if_.guard_type->struct_name,
-                                                   strlen(ast->u.if_.guard_type->struct_name));
-            int struct_name_const = make_constant(gen, val_obj((Object*)struct_name_str));
-            emit_byte(gen, OP_TYPE_CHECK, ast->line);
-            emit_byte(gen, (uint8_t)TYPE_STRUCT, ast->line);
-            emit_byte(gen, (struct_name_const >> 8) & 0xff, ast->line);
-            emit_byte(gen, struct_name_const & 0xff, ast->line);
-        } else if (ast->u.if_.guard_type && ast->u.if_.guard_type->kind == TYPE_ENUM && ast->u.if_.guard_type->struct_name) {
-            ObjString* enum_name_str = str_copy(ast->u.if_.guard_type->struct_name,
-                                                 strlen(ast->u.if_.guard_type->struct_name));
-            int enum_name_const = make_constant(gen, val_obj((Object*)enum_name_str));
-            emit_byte(gen, OP_TYPE_CHECK, ast->line);
-            emit_byte(gen, (uint8_t)TYPE_ENUM, ast->line);
-            emit_byte(gen, (enum_name_const >> 8) & 0xff, ast->line);
-            emit_byte(gen, enum_name_const & 0xff, ast->line);
-        } else {
-            emit_byte(gen, OP_TYPE_CHECK, ast->line);
-            if (ast->u.if_.guard_type) {
-                emit_byte(gen, (uint8_t)ast->u.if_.guard_type->kind, ast->line);
-                if (ast->u.if_.guard_type->element_type) {
-                    emit_byte(gen, (uint8_t)ast->u.if_.guard_type->element_type->kind, ast->line);
-                } else {
-                    emit_byte(gen, (uint8_t)TYPE_ANY, ast->line);
-                }
-            } else {
-                emit_byte(gen, (uint8_t)TYPE_ANY, ast->line);
-                emit_byte(gen, (uint8_t)TYPE_ANY, ast->line);
-            }
-        }
-        
-        // 如果是否定类型守卫，添加 NOT 操作
-        if (is_negated) {
-            emit_byte(gen, OP_NOT, ast->line);
-        }
-    } else {
-        // 普通条件表达式
-        // 方案 6 peephole：尝试用 OP_CMPJMP 融合指令替代 gen_expr + JUMP_IF_FALSE + POP
-        int cmpjmp_offset = -1;
-        if (try_emit_cmpjmp(gen, ast->u.if_.cond, &cmpjmp_offset)) {
-            // 融合成功：cmpjmp_offset 是 4 字节跳转偏移量字段的位置
-            // 语义与 JUMP_IF_FALSE + POP 等价（false 时跳转到 else），且不碰栈
-            // 但仍需一个 JUMP 到 end（与原来 else_jump 逻辑一致）
-            // then body
-            gen_if_branch(gen, ast->u.if_.then, want_value, ast->line);
-            int else_jump = emit_jump(gen, OP_JUMP, ast->line);
-            // patch cmpjmp_offset → 跳到这里（else body 开始）
-            patch_jump(gen, cmpjmp_offset);
-            // 注意：融合指令不压栈，所以不需要 OP_POP
-            if (ast->u.if_.else_) {
-                gen_if_branch(gen, ast->u.if_.else_, want_value, ast->line);
-            }
-            patch_jump(gen, else_jump);
-            return;
-        }
-        gen_expr(gen, ast->u.if_.cond);
-    }
-
-    int then_jump = emit_jump(gen, OP_JUMP_IF_FALSE, ast->line);
-    emit_byte(gen, OP_POP, ast->line);
-    
-    // 区分语句 if 和表达式 if
-    // 表达式 if 的 then/else 不是 AST_BLOCK，而是普通表达式
-    gen_if_branch(gen, ast->u.if_.then, want_value, ast->line);
-
-    int else_jump = emit_jump(gen, OP_JUMP, ast->line);
-    patch_jump(gen, then_jump);
-    emit_byte(gen, OP_POP, ast->line);
-
-    if (ast->u.if_.else_) {
-        gen_if_branch(gen, ast->u.if_.else_, want_value, ast->line);
-    }
-    patch_jump(gen, else_jump);
-}
-
-static void gen_while(CodeGen* gen, Ast* ast) {
-    LoopContextNode* node = (LoopContextNode*)malloc(sizeof(LoopContextNode));
-    if (!node) return;
-    node->ctx.break_count = 0;
-    node->ctx.continue_count = 0;
-    node->prev = gen->loop_head;
-    gen->loop_head = node;
-    gen->loop_count++;
-    LoopContext* loop = &node->ctx;
-
-    int loop_start = gen->chunk->len;
-    loop->continue_target = gen->chunk->len;
-
-    // 优化: while true { } - 无需条件检查
-    if (ast->u.while_.cond->kind == AST_BOOL && ast->u.while_.cond->u.boolean == 1) {
-        // 无限循环，直接生成循环体
-        gen_stmt(gen, ast->u.while_.body);
-        emit_loop(gen, loop_start, ast->line);
-        // 无限循环没有退出跳转需要修补
-        for (int i = 0; i < loop->break_count; i++) {
-            patch_jump(gen, loop->break_jumps[i]);
-        }
-        // 回填 continue 跳转到循环体开始位置
-        for (int i = 0; i < loop->continue_count; i++) {
-            patch_jump_to(gen, loop->continue_jumps[i], loop_start);
-        }
-        loop_pop(gen);
-        return;
-    }
-
-    // 优化: while false { } - 永不执行的循环，直接跳过
-    if (ast->u.while_.cond->kind == AST_BOOL && ast->u.while_.cond->u.boolean == 0) {
-        // 循环体永不执行，直接跳过
-        loop_pop(gen);
-        return;
-    }
-
-    gen_expr(gen, ast->u.while_.cond);
-    int exit_jump = emit_jump(gen, OP_JUMP_IF_FALSE, ast->line);
-    emit_byte(gen, OP_POP, ast->line);
-
-    gen_stmt(gen, ast->u.while_.body);
-
-    emit_loop(gen, loop_start, ast->line);
-    patch_jump(gen, exit_jump);
-    emit_byte(gen, OP_POP, ast->line);
-
-    for (int i = 0; i < loop->break_count; i++) {
-        patch_jump(gen, loop->break_jumps[i]);
-    }
-
-    // 回填 continue 跳转到循环条件检查位置（loop_start）
-    for (int i = 0; i < loop->continue_count; i++) {
-        patch_jump_to(gen, loop->continue_jumps[i], loop_start);
-    }
-
-    loop_pop(gen);
-}
-
-static void gen_for_iter(CodeGen* gen, Ast* ast, int loop_var_slot) {
-    LoopContext* loop = loop_current(gen);
-
-    gen_expr(gen, ast->u.for_.end);
-
-    int obj_slot = ast->u.for_.end_index;
-    emit_bytes_2(gen, OP_SET_LOCAL, obj_slot, ast->line);
-    emit_byte(gen, OP_POP, ast->line);
-
-    emit_byte(gen, OP_ZERO, ast->line);
-    int idx_slot = ast->u.for_.counter_index;
-    emit_bytes_2(gen, OP_SET_LOCAL, idx_slot, ast->line);
-    emit_byte(gen, OP_POP, ast->line);
-
-    int loop_start = gen->chunk->len;
-
-    emit_bytes_2(gen, OP_GET_LOCAL, idx_slot, ast->line);
-    emit_bytes_2(gen, OP_GET_LOCAL, obj_slot, ast->line);
-    emit_byte(gen, OP_LENGTH, ast->line);
-    emit_byte(gen, OP_LT, ast->line);
-
-    int exit_jump = emit_jump(gen, OP_JUMP_IF_FALSE, ast->line);
-    emit_byte(gen, OP_POP, ast->line);
-
-    emit_bytes_2(gen, OP_GET_LOCAL, obj_slot, ast->line);
-    emit_bytes_2(gen, OP_GET_LOCAL, idx_slot, ast->line);
-    emit_byte(gen, OP_ITER_GET, ast->line);
-
-    emit_bytes_2(gen, OP_SET_LOCAL, loop_var_slot, ast->line);
-    emit_byte(gen, OP_POP, ast->line);
-    
-    // 如果存在索引变量，将当前索引赋值给它
-    if (ast->u.for_.index_var_name) {
-        // 检查是否是字典/struct遍历
-        int is_dict_iter = is_dict_expr(ast->u.for_.end);
-        if (!is_dict_iter && ast->u.for_.end->kind == AST_VAR) {
-            TypeKind var_type = ast->u.for_.end->u.var.ref.type_kind;
-            if (var_type == TYPE_DICT || var_type == TYPE_STRUCT) {
-                is_dict_iter = 1;
-            }
-        }
-        
-        if (is_dict_iter) {
-            // 字典遍历：获取值而不是索引
-            emit_bytes_2(gen, OP_GET_LOCAL, obj_slot, ast->line);
-            emit_bytes_2(gen, OP_GET_LOCAL, idx_slot, ast->line);
-            emit_byte(gen, OP_ITER_GET_VALUE, ast->line);
-            emit_bytes_2(gen, OP_SET_LOCAL, ast->u.for_.index_var_index, ast->line);
-            emit_byte(gen, OP_POP, ast->line);
-        } else {
-            // 数组/字符串遍历：获取索引
-            emit_bytes_2(gen, OP_GET_LOCAL, idx_slot, ast->line);
-            emit_bytes_2(gen, OP_SET_LOCAL, ast->u.for_.index_var_index, ast->line);
-            emit_byte(gen, OP_POP, ast->line);
-        }
-    }
-
-    gen_stmt(gen, ast->u.for_.body);
-
-    // continue 应该跳转到索引递增的位置
-    int continue_target = gen->chunk->len;
-    loop->continue_target = continue_target;
-
-    emit_bytes_2(gen, OP_GET_LOCAL, idx_slot, ast->line);
-    emit_byte(gen, OP_ONE, ast->line);
-    emit_byte(gen, OP_ADD, ast->line);
-    emit_bytes_2(gen, OP_SET_LOCAL, idx_slot, ast->line);
-    emit_byte(gen, OP_POP, ast->line);
-
-    emit_loop(gen, loop_start, ast->line);
-
-    patch_jump(gen, exit_jump);
-    emit_byte(gen, OP_POP, ast->line);
-
-    // 回填 continue 跳转到索引递增的位置
-    for (int i = 0; i < loop->continue_count; i++) {
-        patch_jump_to(gen, loop->continue_jumps[i], continue_target);
-    }
-}
-
-static void gen_for(CodeGen* gen, Ast* ast) {
-    LoopContext* loop = loop_push(gen);
-    if (!loop) return;
-
-    int loop_var_slot = ast->u.for_.loop_var_index;
-    int end_slot = ast->u.for_.end_index;
-    int step_slot = ast->u.for_.step_index;
-    int start_slot = ast->u.for_.start_index;
-    int counter_slot = ast->u.for_.counter_index;
-
-    // 更新 max_local_slot，防止内联函数的 OP_CLEAR_LOCAL_RANGE 覆盖循环变量
-    int for_max = loop_var_slot;
-    if (end_slot > for_max) for_max = end_slot;
-    if (step_slot > for_max) for_max = step_slot;
-    if (start_slot > for_max) for_max = start_slot;
-    if (counter_slot > for_max) for_max = counter_slot;
-    if (ast->u.for_.index_var_name) {
-        int idx = ast->u.for_.index_var_index;
-        if (idx > for_max) for_max = idx;
-    }
-    if (for_max > gen->max_local_slot) gen->max_local_slot = for_max;
-    if (for_max > gen->peak_local_slot) gen->peak_local_slot = for_max;
-    if (gen->current_func && for_max >= gen->current_func->local_count)
-        gen->current_func->local_count = for_max + 1;
-    // 顶层代码（非函数内）时 current_func 为 NULL，需更新 chunk->local_count
-    if (!gen->current_func) {
-        if (for_max + 1 > gen->chunk->local_count)
-            gen->chunk->local_count = for_max + 1;
-    }
-
-    Ast* end_expr = ast->u.for_.end;
-
-    if (!ast->u.for_.start && ast->u.for_.var_name) {
-        // 对字面量数组/字符串/字典，或变量使用迭代循环
-        // 注意：变量可能是数组/字符串/字典，需要运行时遍历
-        // 纯数字应该使用 start:end 范围语法
-        int is_iterable = is_string_expr(end_expr) || is_array_expr(end_expr) ||
-                          is_dict_expr(end_expr);
-        
-        // 如果是变量，检查其类型 - 如果是数字类型则使用数值循环
-        if (!is_iterable && is_var_expr(end_expr)) {
-            if (end_expr->kind == AST_VAR) {
-                // 获取变量类型
-                TypeKind var_type = end_expr->u.var.ref.type_kind;
-                // 如果是明确的数字类型，使用数值循环
-                if (var_type == TYPE_INT || var_type == TYPE_FLOAT) {
-                    is_iterable = 0;  // 是数字类型，继续执行数值循环代码
-                } else if (var_type == TYPE_ARRAY || var_type == TYPE_STRING || var_type == TYPE_DICT) {
-                    is_iterable = 1;  // 是容器类型，使用迭代循环
-                } else {
-                    // TYPE_INFER/TYPE_ANY/其他：保守处理，使用迭代循环
-                    is_iterable = 1;
-                }
-            } else {
-                // 复杂表达式（如属性访问、索引等），保守处理
-                is_iterable = 1;
-            }
-        }
-        
-        if (is_iterable) {
-            gen_for_iter(gen, ast, loop_var_slot);
-
-            for (int i = 0; i < loop->break_count; i++) {
-                patch_jump(gen, loop->break_jumps[i]);
-            }
-            loop_pop(gen);
-            return;
-        }
-    }
-
-    int has_loop_var = ast->u.for_.var_name != NULL;
-
-    // 初始化 start, end, step 到局部变量
-    if (ast->u.for_.start) {
-        gen_expr(gen, ast->u.for_.start);
-    } else {
-        emit_byte(gen, OP_ZERO, ast->line);
-    }
-    emit_bytes_2(gen, OP_SET_LOCAL_POP, start_slot, ast->line);
-
-    gen_expr(gen, ast->u.for_.end);
-    emit_bytes_2(gen, OP_SET_LOCAL_POP, end_slot, ast->line);
-
-    if (ast->u.for_.step) {
-        gen_expr(gen, ast->u.for_.step);
-        emit_bytes_2(gen, OP_SET_LOCAL_POP, step_slot, ast->line);
-    } else {
-        // 方案 B：无显式 step 时默认正向 step=+1（不再根据 start/end 自动倒序）。
-        // 倒序必须显式写 for A:B:-1。
-        // 编译期提示：字面量区间 start > end 且无步长时，该循环现在不会执行（空循环）。
-        if (ast->u.for_.start && ast->u.for_.start->kind == AST_NUM &&
-            ast->u.for_.end && ast->u.for_.end->kind == AST_NUM &&
-            ast->u.for_.start->u.num.value > ast->u.for_.end->u.num.value) {
-            char wbuf[BUFFER_MEDIUM];
-            snprintf(wbuf, sizeof(wbuf),
-                     "for 区间 %g:%g 无显式步长，按正向规则不会执行（如需倒序请写 for A:B:-1）",
-                     ast->u.for_.start->u.num.value,
-                     ast->u.for_.end->u.num.value);
-            warning_add_at(WARN_FOR_EMPTY_RANGE, ast->line, ast->column, wbuf);
-        }
-        emit_byte(gen, OP_ONE, ast->line);
-        emit_bytes_2(gen, OP_SET_LOCAL_POP, step_slot, ast->line);
-    }
-
-    // 所有数值循环使用专用字节码 OP_FOR_PREP 和 OP_FOR_LOOP
-    // OP_FOR_PREP 布局: opcode(1) + 4个操作数slot + 1个inclusive + 2字节jump_offset = 8字节
-    // OP_FOR_LOOP 布局: opcode(1) + 3个操作数slot + 1个inclusive + 2字节jump_offset = 7字节
-
-    if (!has_loop_var) {
-        // 无循环变量：使用 counter_slot 作为 loop_var
-        int prep_start = gen->chunk->len;
-
-        // OP_FOR_PREP: 初始化并检查条件
-        emit_byte(gen, OP_FOR_PREP, ast->line);
-        emit_byte(gen, start_slot, ast->line);
-        emit_byte(gen, end_slot, ast->line);
-        emit_byte(gen, step_slot, ast->line);
-        emit_byte(gen, counter_slot, ast->line);
-        emit_byte(gen, ast->u.for_.inclusive ? 1 : 0, ast->line);
-        emit_byte(gen, 0, ast->line); // jump_offset 占位高字节
-        emit_byte(gen, 0, ast->line); // jump_offset 占位低字节
-
-        // 循环体开始位置（OP_FOR_PREP之后）
-        int body_start = gen->chunk->len;
-
-        // 预留 OP_FOR_LOOP 的位置（在循环体之后）
-        // 先设置一个临时的 continue_target（循环体开始处）
-        // 等生成完循环体后再更新为实际的 OP_FOR_LOOP 位置
-        loop->continue_target = body_start;
-
-        gen_stmt(gen, ast->u.for_.body);
-
-        // 现在生成 OP_FOR_LOOP，并更新 continue_target
-        int loop_insn_start = gen->chunk->len;
-        emit_byte(gen, OP_FOR_LOOP, ast->line);
-        emit_byte(gen, counter_slot, ast->line);
-        emit_byte(gen, step_slot, ast->line);
-        emit_byte(gen, end_slot, ast->line);
-        emit_byte(gen, ast->u.for_.inclusive ? 1 : 0, ast->line);
-        // 计算跳转偏移：从 OP_FOR_LOOP 结束位置跳回 body_start
-        int after_loop_insn = gen->chunk->len + 2; // +2 是因为还要写入 2 字节偏移
-        int back_offset = after_loop_insn - body_start;
-        emit_byte(gen, (back_offset >> 8) & 0xFF, ast->line);
-        emit_byte(gen, back_offset & 0xFF, ast->line);
-
-        // 回填 continue 跳转到 OP_FOR_LOOP 的位置
-        for (int i = 0; i < loop->continue_count; i++) {
-            patch_jump_to(gen, loop->continue_jumps[i], loop_insn_start);
-        }
-
-        // 修补 OP_FOR_PREP 中的 forward jump_offset
-        // 如果条件不满足，跳过整个循环体（从 OP_FOR_PREP 之后到循环结束）
-        int after_loop = gen->chunk->len;
-        int skip_offset = after_loop - (prep_start + 8); // 8 = OP_FOR_PREP(1) + 7操作数
-        gen->chunk->code[prep_start + 6] = (skip_offset >> 8) & 0xFF;
-        gen->chunk->code[prep_start + 7] = skip_offset & 0xFF;
-    } else {
-        // 有循环变量：使用 loop_var_slot
-        int prep_start = gen->chunk->len;
-
-        emit_byte(gen, OP_FOR_PREP, ast->line);
-        emit_byte(gen, start_slot, ast->line);
-        emit_byte(gen, end_slot, ast->line);
-        emit_byte(gen, step_slot, ast->line);
-        emit_byte(gen, loop_var_slot, ast->line);
-        emit_byte(gen, ast->u.for_.inclusive ? 1 : 0, ast->line);
-        emit_byte(gen, 0, ast->line);
-        emit_byte(gen, 0, ast->line);
-
-        int body_start = gen->chunk->len;
-
-        gen_stmt(gen, ast->u.for_.body);
-
-        // 生成 OP_FOR_LOOP
-        int loop_insn_start = gen->chunk->len;
-        emit_byte(gen, OP_FOR_LOOP, ast->line);
-        emit_byte(gen, loop_var_slot, ast->line);
-        emit_byte(gen, step_slot, ast->line);
-        emit_byte(gen, end_slot, ast->line);
-        emit_byte(gen, ast->u.for_.inclusive ? 1 : 0, ast->line);
-        int after_loop_insn = gen->chunk->len + 2;
-        int back_offset = after_loop_insn - body_start;
-        emit_byte(gen, (back_offset >> 8) & 0xFF, ast->line);
-        emit_byte(gen, back_offset & 0xFF, ast->line);
-
-        // 回填 continue 跳转到 OP_FOR_LOOP 的位置
-        for (int i = 0; i < loop->continue_count; i++) {
-            patch_jump_to(gen, loop->continue_jumps[i], loop_insn_start);
-        }
-
-        int after_loop = gen->chunk->len;
-        int skip_offset = after_loop - (prep_start + 8); // 8 = OP_FOR_PREP(1) + 7操作数
-        gen->chunk->code[prep_start + 6] = (skip_offset >> 8) & 0xFF;
-        gen->chunk->code[prep_start + 7] = skip_offset & 0xFF;
-    }
-
-    for (int i = 0; i < loop->break_count; i++) {
-        patch_jump(gen, loop->break_jumps[i]);
-    }
-
-    loop_pop(gen);
-}
-
-static void gen_var_decl(CodeGen* gen, Ast* ast) {
-SymRef* ref = &ast->u.var_decl.ref;
-    if (!ref->name) {
-        error_add_at(ERR_SEMANTIC, ast->line, ast->column, "未解析的变量声明");
-        return;
-    }
-
-if (ast->u.var_decl.init) {
-// 多返回值函数调用：禁止 gen_expr 弹出多余值，由这里统一弹出
-    if (ast->u.var_decl.init->cached_type &&
-    ast->u.var_decl.init->cached_type->kind == TYPE_MULTI_RET) {
-    gen->suppress_multi_pop = 1;
-}
-
-// 融合优化：当 init 是纯常量、无类型转换、无特殊处理、且目标是 local 时
-// 直接用 OP_SET_LOCAL_CONST，跳过 gen_expr（不压栈），完全不碰栈
-Ast* init = ast->u.var_decl.init;
-int has_cast = (ast->u.var_decl.type != NULL && ast->u.var_decl.type->kind != TYPE_INFER && assign_cast_needed(ast->u.var_decl.type->kind, init));
-int has_special = (ast->u.var_decl.type != NULL &&(ast->u.var_decl.type->kind == TYPE_PTR_GENERIC ||ast->u.var_decl.type->kind == TYPE_FACE));
-int is_multi_ret = (init->cached_type &&init->cached_type->kind == TYPE_MULTI_RET);
-if (ref->kind == SYM_LOCAL && !has_cast && !has_special && !is_multi_ret &&(init->kind == AST_NUM || init->kind == AST_STRING ||
-    init->kind == AST_BOOL || init->kind == AST_NULL)) {
-    // 直接生成常量并写入 local slot，不调用 gen_expr
-    Value const_val;
-    if (init->kind == AST_NUM) {
-    if (init->u.num.is_bigint && init->u.num.bigint_str) {
-    if (bigint_str_fits_in_int32(init->u.num.bigint_str)) {
-    long long val = strtoll(init->u.num.bigint_str, NULL, 0);
-    const_val = val_int_safe(val);
-    } else {
-    const_val = val_bigint_from_string(init->u.num.bigint_str);
-    }
-    } else if (init->u.num.is_float) {
-    const_val = val_float(init->u.num.value);
-    } else {
-    const_val = val_int_safe((int64_t)init->u.num.value);
-    }
-    } else if (init->kind == AST_STRING) {
-    const_val = val_obj((Object*)str_copy(init->u.string.value, init->u.string.len));
-    } else if (init->kind == AST_BOOL) {
-                    const_val = val_bool(init->u.boolean);
-    } else {
-    const_val = val_null();
-    }
-    int const_idx = make_constant(gen, const_val);
-    emit_set_local_const(gen, const_idx, ref->index, ast->line);
-    track_toplevel_local_slot(gen, ref->index);
-    // 追踪需要析构的局部变量
-    if (init->kind == AST_STRUCT_INIT && init->u.struct_init.has_dtor) {
-    codegen_add_dtor_entry(gen, ref->index);
-    }
-    return; // 优化路径完成，跳过后续所有代码
-}
-
-gen_expr(gen, ast->u.var_decl.init);
-gen->suppress_multi_pop = 0;
-
-// 多返回值函数调用：只取第一个返回值，弹出多余的
-if (ast->u.var_decl.init->cached_type &&
-ast->u.var_decl.init->cached_type->kind == TYPE_MULTI_RET) {
-int ret_count = ast->u.var_decl.init->cached_type->param_count;
-// 保留栈顶（第一个返回值），弹出其余的
-// 栈布局: [ret0][ret1]...[retN-1]，retN-1 在栈顶
-// 需要把 ret0 移到栈顶位置
-// 先弹出 retN-1 到 ret1
-for (int i = 0; i < ret_count - 1; i++) {
-emit_byte(gen, OP_POP, ast->line);
-}
-// 现在 ret0 在栈顶
-}
-
-        if (ast->u.var_decl.type) {
-            TypeKind var_type = ast->u.var_decl.type->kind;
-            // 编译期消除：初始化表达式静态类型与声明类型一致时跳过 CAST
-            // （如 var float x = 1.0、var int n = fib()（int 返回值））
-            if (var_type == TYPE_FLOAT) {
-                if (assign_cast_needed(TYPE_FLOAT, ast->u.var_decl.init)) {
-                    emit_byte(gen, OP_CAST_FLOAT, ast->line);
-                }
-            }
-            else if (var_type == TYPE_INT) {
-                if (assign_cast_needed(TYPE_INT, ast->u.var_decl.init)) {
-                    emit_byte(gen, OP_CAST_INT, ast->line);
-                }
-            }
-            else if (var_type == TYPE_STRING) {
-                if (assign_cast_needed(TYPE_STRING, ast->u.var_decl.init)) {
-                    emit_byte(gen, OP_CAST_STRING, ast->line);
-                }
-            }
-        }
-    } else {
-        // 检查是否是数组类型，如果是则创建空数组
-        if (ast->u.var_decl.type && ast->u.var_decl.type->kind == TYPE_ARRAY) {
-            emit_byte(gen, OP_ARRAY, ast->line);
-            emit_byte(gen, 0, ast->line); // count 高字节
-            emit_byte(gen, 0, ast->line); // count 低字节
-        }
-        // 检查是否是字典类型，如果是则创建空字典
-        else if (ast->u.var_decl.type && ast->u.var_decl.type->kind == TYPE_DICT) {
-            emit_byte(gen, OP_DICT, ast->line);
-            emit_byte(gen, 0, ast->line); // count 高字节
-            emit_byte(gen, 0, ast->line); // count 低字节
-        } else {
-            emit_byte(gen, OP_NULL, ast->line);
-        }
-    }
-
-    // Ptr[T] 类型：在赋值前设置运行时 element_type（此时栈顶是值）
-    if (ast->u.var_decl.type && ast->u.var_decl.type->kind == TYPE_PTR_GENERIC &&
-        ast->u.var_decl.type->element_type) {
-        emit_byte(gen, OP_SET_PTR_ELEM_TYPE, ast->line);
-        emit_byte(gen, (uint8_t)ast->u.var_decl.type->element_type->kind, ast->line);
-    }
-
-    // face 类型：设置运行时 declared_face（此时栈顶是 struct 实例）
-    if (ast->u.var_decl.type && ast->u.var_decl.type->kind == TYPE_FACE &&
-        ast->u.var_decl.type->struct_name) {
-        ObjString* face_name_str = str_copy(ast->u.var_decl.type->struct_name,
-                                             strlen(ast->u.var_decl.type->struct_name));
-        int face_name_const = make_constant(gen, val_obj((Object*)face_name_str));
-        emit_byte(gen, OP_SET_DECLARED_FACE, ast->line);
-        emit_byte(gen, (face_name_const >> 8) & 0xff, ast->line);
-        emit_byte(gen, face_name_const & 0xff, ast->line);
-    }
-
-    if (ref->kind == SYM_GLOBAL) {
-        emit_define_global(gen, ref->index, ast->line);
-    } else if (ref->kind == SYM_LOCAL) {
-        emit_bytes_2(gen, OP_SET_LOCAL_POP, ref->index, ast->line);
-        // 顶层代码：语义分析分配的局部槽位不会自动反映到 chunk->local_count
-        // （仅 for 内部槽位/内联槽位会更新），这里补齐记账，防止主帧局部槽越界。
-        // 函数内无需处理：func->local_count 来自语义分析的 local_index，已覆盖全部声明
-        track_toplevel_local_slot(gen, ref->index);
-        // 追踪需要析构的局部变量（仅 var x = new StructWithDtor() 场景）
-        if (ast->u.var_decl.init &&
-            ast->u.var_decl.init->kind == AST_STRUCT_INIT &&
-            ast->u.var_decl.init->u.struct_init.has_dtor) {
-            codegen_add_dtor_entry(gen, ref->index);
-        }
-    } else if (ref->kind == SYM_MODULE) {
-        emit_bytes_2(gen, OP_SET_MODULE_VAR, ref->index, ast->line);
-        emit_byte(gen, OP_POP, ast->line);
-    }
-}
-
-// ============================================================================
-// 解构声明代码生成: var[T1,T2](a,b) = arr / var{"k":T}(a) = dict
-// 策略:
-//   1. 求值 init → 栈顶是数组/字典
-//   2. 对每个槽位:
-//      a. DUP → 栈顶复制一份
-//      b. 推入索引/键 → OP_INDEX → 栈顶是元素值
-//      c. 如果槽位类型是 int/float/string → OP_CAST_xxx
-//      d. OP_SET_LOCAL_POP → 存入变量并弹出
-//   3. 最后 OP_POP 弹掉原始数组/字典
-// ============================================================================
-// 顶层代码局部槽位记账：确保 chunk->local_count / max_local_slot 覆盖 slot。
-// 语义分析在顶层分配的局部槽位（如 for 循环体内声明的变量）不会自动反映到
-// chunk->local_count（仅 for 内部槽位/内联槽位会更新），不补齐会导致主帧越界。
-// 函数内无需处理：func->local_count 来自语义分析的 local_index，已覆盖全部声明
-static void track_toplevel_local_slot(CodeGen* gen, int slot) {
-    if (!gen->current_func) {
-        if (slot > gen->max_local_slot) gen->max_local_slot = slot;
-        if (slot + 1 > gen->chunk->local_count)
-            gen->chunk->local_count = slot + 1;
-    }
-}
-
-static void gen_destruct_decl(CodeGen* gen, Ast* ast) {
-    int slot_count = ast->u.destruct_decl.slot_count;
-    int is_dict = ast->u.destruct_decl.is_dict;
-
-    // 检测 init 是否是多返回值函数调用
-    TypeInfo* init_type = ast->u.destruct_decl.init ? ast->u.destruct_decl.init->cached_type : NULL;
-    if (init_type && init_type->kind == TYPE_MULTI_RET) {
-        // 多返回值解构：函数调用后栈上是 N 个返回值
-        int ret_count = init_type->param_count;
-
-        // 求值 init（函数调用后栈上留下 ret_count 个值）
-        // 设置标志，防止 gen_expr 中的 AST_CALL 弹出多余返回值
-        gen->suppress_multi_pop = 1;
-        gen_expr(gen, ast->u.destruct_decl.init);
-        gen->suppress_multi_pop = 0;
-
-        // 优化：返回值已在栈上，无需中转临时槽位
-        // 直接逆序"转换（如需）→ 存入最终槽位"，省掉
-        // 2×SET_LOCAL_POP(临时) + 2×GET_LOCAL + 类型匹配时的 2×CAST，
-        // 且不再推高函数 local_count（避免把被调函数推过 INLINE_LOCALS_MAX 阈值）
-        //
-        // 栈布局: [ret0][ret1]...[retN-1]（retN-1 在栈顶）
-
-        // 超出接收数量的返回值：从栈顶弹出（部分接收语义）
-        for (int i = ret_count - slot_count; i > 0; i--) {
-            emit_byte(gen, OP_POP, ast->line);
-        }
-
-        // 逆序处理接收槽位：栈顶值即当前槽位对应的返回值
-        int recv = slot_count < ret_count ? slot_count : ret_count;
-        for (int i = recv - 1; i >= 0; i--) {
-            // 类型转换：仅当槽位声明为基本类型、且返回类型与槽位类型不一致时发射。
-            // 类型一致（如 float 槽接 float 返回值）时 CAST 是纯开销，编译期消除
-            TypeInfo* slot_type = ast->u.destruct_decl.slot_types[i];
-            if (slot_type) {
-                TypeKind tk = slot_type->kind;
-                if (tk == TYPE_FLOAT || tk == TYPE_INT || tk == TYPE_STRING) {
-                    TypeInfo* ret_type = (init_type->param_types && i < init_type->param_count)
-                                             ? init_type->param_types[i] : NULL;
-                    if (!ret_type || ret_type->kind != tk) {
-                        if (tk == TYPE_FLOAT) {
-                            emit_byte(gen, OP_CAST_FLOAT, ast->line);
-                        } else if (tk == TYPE_INT) {
-                            emit_byte(gen, OP_CAST_INT, ast->line);
-                        } else if (tk == TYPE_STRING) {
-                            emit_byte(gen, OP_CAST_STRING, ast->line);
-                        }
-                    }
-                }
-            }
-
-            // 存入变量并弹出
-            SymRef* ref = &ast->u.destruct_decl.refs[i];
-            if (!ref->name) {
-                error_add_at(ERR_SEMANTIC, ast->line, ast->column, "解构声明变量未解析");
-                emit_byte(gen, OP_POP, ast->line);
-                continue;
-            }
-            if (ref->kind == SYM_LOCAL) {
-                emit_bytes_2(gen, OP_SET_LOCAL_POP, ref->index, ast->line);
-                track_toplevel_local_slot(gen, ref->index);
-            } else if (ref->kind == SYM_GLOBAL) {
-                emit_define_global(gen, ref->index, ast->line);
-            } else if (ref->kind == SYM_MODULE) {
-                emit_bytes_2(gen, OP_SET_MODULE_VAR, ref->index, ast->line);
-                emit_byte(gen, OP_POP, ast->line);
-            }
-        }
-
-        // 槽位多于返回值：尾部槽位补 null（保持与原实现一致的补值语义）
-        for (int i = recv; i < slot_count; i++) {
-            emit_byte(gen, OP_NULL, ast->line);
-
-            // 类型转换（如果槽位类型是基本类型）
-            TypeInfo* slot_type = ast->u.destruct_decl.slot_types[i];
-            if (slot_type) {
-                TypeKind tk = slot_type->kind;
-                if (tk == TYPE_FLOAT) {
-                    emit_byte(gen, OP_CAST_FLOAT, ast->line);
-                } else if (tk == TYPE_INT) {
-                    emit_byte(gen, OP_CAST_INT, ast->line);
-                } else if (tk == TYPE_STRING) {
-                    emit_byte(gen, OP_CAST_STRING, ast->line);
-                }
-            }
-
-            SymRef* ref = &ast->u.destruct_decl.refs[i];
-            if (!ref->name) {
-                error_add_at(ERR_SEMANTIC, ast->line, ast->column, "解构声明变量未解析");
-                emit_byte(gen, OP_POP, ast->line);
-                continue;
-            }
-            if (ref->kind == SYM_LOCAL) {
-                emit_bytes_2(gen, OP_SET_LOCAL_POP, ref->index, ast->line);
-                track_toplevel_local_slot(gen, ref->index);
-            } else if (ref->kind == SYM_GLOBAL) {
-                emit_define_global(gen, ref->index, ast->line);
-            } else if (ref->kind == SYM_MODULE) {
-                emit_bytes_2(gen, OP_SET_MODULE_VAR, ref->index, ast->line);
-                emit_byte(gen, OP_POP, ast->line);
-            }
-        }
-
-        return;
-    }
-
-    // 求值 init → 栈顶是数组/字典
-    gen_expr(gen, ast->u.destruct_decl.init);
-
-    for (int i = 0; i < slot_count; i++) {
-        // DUP: 复制数组/字典引用到栈顶（最后会被弹出）
-        emit_byte(gen, OP_DUP, ast->line);
-
-        // 推入索引或键
-        if (is_dict) {
-            // 字典解构: 使用字符串键
-            const char* key = ast->u.destruct_decl.slot_keys[i];
-            ObjString* key_str = str_copy(key, (int)strlen(key));
-            int key_const = make_constant(gen, val_obj((Object*)key_str));
-            emit_byte(gen, OP_CONST, ast->line);
-            emit_bytes(gen, (key_const >> 8) & 0xff, key_const & 0xff, ast->line);
-        } else {
-            // 数组解构: 使用整数索引
-            Value idx_val = val_int(i);
-            int idx_const = make_constant(gen, idx_val);
-            emit_byte(gen, OP_CONST, ast->line);
-            emit_bytes(gen, (idx_const >> 8) & 0xff, idx_const & 0xff, ast->line);
-        }
-
-        // OP_INDEX: 从数组/字典中取元素 → 栈顶是元素值
-        emit_byte(gen, OP_INDEX, ast->line);
-
-        // 类型转换（如果槽位类型是基本类型）
-        TypeInfo* slot_type = ast->u.destruct_decl.slot_types[i];
-        if (slot_type) {
-            TypeKind tk = slot_type->kind;
-            if (tk == TYPE_FLOAT) {
-                emit_byte(gen, OP_CAST_FLOAT, ast->line);
-            } else if (tk == TYPE_INT) {
-                emit_byte(gen, OP_CAST_INT, ast->line);
-            } else if (tk == TYPE_STRING) {
-                emit_byte(gen, OP_CAST_STRING, ast->line);
-            }
-        }
-
-        // 存入变量并弹出
-        SymRef* ref = &ast->u.destruct_decl.refs[i];
-        if (!ref->name) {
-            error_add_at(ERR_SEMANTIC, ast->line, ast->column, "解构声明变量未解析");
-            // 仍然需要弹出值以保持栈平衡
-            emit_byte(gen, OP_POP, ast->line);
-            continue;
-        }
-        if (ref->kind == SYM_LOCAL) {
-            emit_bytes_2(gen, OP_SET_LOCAL_POP, ref->index, ast->line);
-            track_toplevel_local_slot(gen, ref->index);
-        } else if (ref->kind == SYM_GLOBAL) {
-            emit_define_global(gen, ref->index, ast->line);
-        } else if (ref->kind == SYM_MODULE) {
-            emit_bytes_2(gen, OP_SET_MODULE_VAR, ref->index, ast->line);
-            emit_byte(gen, OP_POP, ast->line);
-        }
-    }
-
-    // 弹出原始数组/字典
-    emit_byte(gen, OP_POP, ast->line);
-}
-
-void gen_assign(CodeGen* gen, Ast* ast) {
-    int left_count = ast->u.assign.name_count;
-    
-    // 并行赋值：先求所有右值存到临时槽位，再逐个赋值
-    if (left_count > 1) {
-        int orig_max = gen->max_local_slot;
-        
-        // 临时槽位：从 orig_max+1 开始，每次 gen_assign 固定复用同一区域
-        // value_slots[0..left_count-1] 存右值
-        // aux_slot                    复用槽位（INDEX/FIELD_ACCESS 时临时保存 value）
-        int slot_base = orig_max + 1;
-        int aux_slot  = slot_base + left_count;
-        int needed    = aux_slot;  // 需要的最大槽位号
-        
-        if (needed > gen->max_local_slot) {
-            gen->max_local_slot = needed;
-        }
-        if (needed > gen->peak_local_slot) {
-            gen->peak_local_slot = needed;
-        }
-        // 并行赋值临时槽位不经 gen_var_decl，顶层需在此记账（同 track 说明）
-        track_toplevel_local_slot(gen, needed);
-
-        // 阶段1：求所有右值 → 写入临时槽位
-        Ast* arr = ast->u.assign.value;
-        int right_count = (arr && arr->kind == AST_ARRAY) ? arr->u.array.count : 0;
-        
-        for (int i = 0; i < left_count; i++) {
-            if (arr && arr->kind == AST_ARRAY && i < right_count) {
-                gen_expr(gen, arr->u.array.items[i]);
-            } else if (!(arr && arr->kind == AST_ARRAY) && i == 0) {
-                gen_expr(gen, ast->u.assign.value);
-            } else {
-                emit_byte(gen, OP_NULL, ast->line);
-            }
-            emit_bytes_2(gen, OP_SET_LOCAL, slot_base + i, ast->line);
-            emit_byte(gen, OP_POP, ast->line);
-        }
-        
-        // 阶段2：逐个加载右值 → 赋值给左目标
-        for (int i = 0; i < left_count; i++) {
-            Ast* target = ast->u.assign.targets[i];
-            SymRef* ref  = &ast->u.assign.refs[i];
-            int val_slot = slot_base + i;
-            
-            if (target->kind == AST_FIELD_ACCESS) {
-                // 保存 value → aux，生成 obj，重载 value，SET_FIELD
-                emit_bytes_2(gen, OP_GET_LOCAL, val_slot, ast->line);
-                emit_bytes_2(gen, OP_SET_LOCAL, aux_slot, ast->line);
-                emit_byte(gen, OP_POP, ast->line);
-                
-                gen_expr(gen, target->u.field_access.obj);
-                emit_bytes_2(gen, OP_GET_LOCAL, aux_slot, ast->line);
-                
-                int field_idx = target->u.field_access.field_index;
-                if (field_idx < 0) {
-                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, "无法确定字段索引，struct 类型可能未定义");
-                    field_idx = 0;
-                }
-                emit_byte(gen, OP_SET_FIELD, ast->line);
-                emit_byte(gen, (uint8_t)field_idx, ast->line);
-                // OP_SET_FIELD 已经 pop 了 obj 和 value，无需再 OP_POP
-                
-            } else if (target->kind == AST_INDEX) {
-                // 保存 value → aux，生成 obj+index，重载 value，INDEX_SET
-                emit_bytes_2(gen, OP_GET_LOCAL, val_slot, ast->line);
-                emit_bytes_2(gen, OP_SET_LOCAL, aux_slot, ast->line);
-                emit_byte(gen, OP_POP, ast->line);
-                
-                gen_expr(gen, target->u.index.obj);
-                gen_expr(gen, target->u.index.index);
-                emit_bytes_2(gen, OP_GET_LOCAL, aux_slot, ast->line);
-                
-                emit_byte(gen, OP_INDEX_SET, ast->line);
-                emit_byte(gen, OP_POP, ast->line);
-                
-            } else if (target->kind == AST_VAR) {
-                emit_bytes_2(gen, OP_GET_LOCAL, val_slot, ast->line);
-
-                if (!ref->name) {
-                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, "未解析的赋值目标");
-                    return;
-                }
-                // 类型转换：与变量声明（gen_var_decl）保持一致
-                // 编译期消除：右值静态类型与目标声明类型一致时跳过 CAST
-                // （并行赋值的右值已存临时槽位，此处表达式为 AST_VAR，类型不精确，仅在同类型时消除）
-                if (ref->type_kind == TYPE_FLOAT) {
-                    if (assign_cast_needed(TYPE_FLOAT, ast->u.assign.value)) {
-                        emit_byte(gen, OP_CAST_FLOAT, ast->line);
-                    }
-                }
-                else if (ref->type_kind == TYPE_INT) {
-                    if (assign_cast_needed(TYPE_INT, ast->u.assign.value)) {
-                        emit_byte(gen, OP_CAST_INT, ast->line);
-                    }
-                }
-                else if (ref->type_kind == TYPE_STRING) {
-                    if (assign_cast_needed(TYPE_STRING, ast->u.assign.value)) {
-                        emit_byte(gen, OP_CAST_STRING, ast->line);
-                    }
-                }
-                // Ptr[T] 类型：设置运行时 element_type
-                else if (ref->type_kind == TYPE_PTR_GENERIC &&
-                         ref->element_type_kind > TYPE_ANY) {
-                    emit_byte(gen, OP_SET_PTR_ELEM_TYPE, ast->line);
-                    emit_byte(gen, (uint8_t)ref->element_type_kind, ast->line);
-                }
-                // face 类型：设置运行时 declared_face
-                else if (ref->type_kind == TYPE_FACE && ref->struct_name) {
-                    ObjString* face_name_str = str_copy(ref->struct_name,
-                                                         strlen(ref->struct_name));
-                    int face_name_const = make_constant(gen, val_obj((Object*)face_name_str));
-                    emit_byte(gen, OP_SET_DECLARED_FACE, ast->line);
-                    emit_byte(gen, (face_name_const >> 8) & 0xff, ast->line);
-                    emit_byte(gen, face_name_const & 0xff, ast->line);
-                }
-                switch (ref->kind) {
-                    case SYM_LOCAL:
-                    case SYM_PARAM:
-                        emit_bytes_2(gen, OP_SET_LOCAL, ref->index, ast->line);
-                        break;
-                    case SYM_GLOBAL:
-                        emit_set_global(gen, ref->index, ast->line);
-                        break;
-                    case SYM_UPVALUE:
-                        emit_bytes_2(gen, OP_SET_UPVALUE, ref->index, ast->line);
-                        break;
-                    case SYM_MODULE:
-                        emit_bytes_2(gen, OP_SET_MODULE_VAR, ref->index, ast->line);
-                        break;
-                    case SYM_TYPE:
-                    case SYM_STRUCT:
-                    case SYM_CSTRUCT:
-                    case SYM_ENUM:
-                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, "类型定义不能赋值");
-                        return;
-                    default:
-                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, "未知的符号类型");
-                        return;
-                }
-                emit_byte(gen, OP_POP, ast->line);
-            } else {
-                error_add_at(ERR_SEMANTIC, ast->line, ast->column, "不支持的赋值目标类型");
-                return;
-            }
-        }
-        
-        // 最后一个值留在栈上作为赋值表达式的结果
-        if (left_count > 0) {
-            int last_val_slot = slot_base + left_count - 1;
-            Ast* last_target = ast->u.assign.targets[left_count - 1];
-            if (last_target->kind == AST_VAR) {
-                SymRef* last_ref = &ast->u.assign.refs[left_count - 1];
-                switch (last_ref->kind) {
-                    case SYM_LOCAL:
-                    case SYM_PARAM:
-                        emit_bytes_2(gen, OP_GET_LOCAL, last_ref->index, ast->line);
-                        break;
-                    case SYM_GLOBAL:
-                        emit_bytes_2(gen, OP_GET_GLOBAL, last_ref->index, ast->line);
-                        break;
-                    case SYM_UPVALUE:
-                        emit_bytes_2(gen, OP_GET_UPVALUE, last_ref->index, ast->line);
-                        break;
-                    case SYM_MODULE:
-                        emit_bytes_2(gen, OP_GET_MODULE_VAR, last_ref->index, ast->line);
-                        break;
-                    default:
-                        break;
-                }
-            } else if (last_target->kind == AST_INDEX || last_target->kind == AST_FIELD_ACCESS) {
-                // INDEX/FIELD_ACCESS 赋值后，从临时槽位取回值
-                emit_bytes_2(gen, OP_GET_LOCAL, last_val_slot, ast->line);
-            }
-        }
-        
-        // 恢复 max_local_slot，下次 gen_assign 从同一基底开始（槽位复用，不级联膨胀）
-        gen->max_local_slot = orig_max;
-    } else {
-        // 单个赋值
-        Ast* target = ast->u.assign.targets[0];
-        
-        if (target->kind == AST_FIELD_ACCESS) {
-            // struct 字段赋值: obj.field = value
-            // OP_SET_FIELD 期望栈: [obj, value] (value 在栈顶)
-            gen_expr(gen, target->u.field_access.obj);
-            gen_expr(gen, ast->u.assign.value);
-            
-            // 使用编译期确定的字段索引（优化：避免运行时线性搜索）
-            int field_idx = target->u.field_access.field_index;
-            
-            if (field_idx < 0) {
-                error_add_at(ERR_SEMANTIC, ast->line, ast->column, "无法确定字段索引，struct 类型可能未定义");
-                field_idx = 0; // 使用 0 作为默认值，避免生成无效字节码
-            }
-            
-            // 调用 OP_SET_FIELD
-            emit_byte(gen, OP_SET_FIELD, ast->line);
-            emit_byte(gen, (uint8_t)field_idx, ast->line);
-        } else if (target->kind == AST_INDEX) {
-            // 索引赋值: obj[index] = value
-            gen_expr(gen, target->u.index.obj);
-            gen_expr(gen, target->u.index.index);
-            gen_expr(gen, ast->u.assign.value);
-            emit_byte(gen, OP_INDEX_SET, ast->line);
-        } else if (target->kind == AST_VAR) {
-            SymRef* ref = &ast->u.assign.refs[0];
-            if (!ref->name) {
-                error_add_at(ERR_SEMANTIC, ast->line, ast->column, "未解析的赋值目标");
-                return;
-            }
-
-            // 优化: a = b (两个局部变量) → OP_MOVE_LOCAL
-            if (ast->u.assign.value->kind == AST_VAR &&
-                (ref->kind == SYM_LOCAL || ref->kind == SYM_PARAM)) {
-                SymRef* src_ref = &ast->u.assign.value->u.var.ref;
-                if (src_ref->name &&
-                    (src_ref->kind == SYM_LOCAL || src_ref->kind == SYM_PARAM)) {
-                    emit_byte(gen, OP_MOVE_LOCAL, ast->line);
-                    emit_byte(gen, (uint8_t)(src_ref->index >> 8), ast->line);
-                    emit_byte(gen, (uint8_t)(src_ref->index & 0xFF), ast->line);
-                    emit_byte(gen, (uint8_t)(ref->index >> 8), ast->line);
-                    emit_byte(gen, (uint8_t)(ref->index & 0xFF), ast->line);
-                    return;
-                }
-            }
-
-            // 普通变量赋值
-            gen_expr(gen, ast->u.assign.value);
-
-            // 类型转换：与变量声明（gen_var_decl）保持一致，
-            // 根据目标变量的声明类型插入 cast 指令。
-            // 这样可以在赋值时立即检测类型不匹配（如将数组赋给 int 变量），
-            // 而不是延迟到后续使用该变量时才报错，从而提供准确的错误行号。
-            // 编译期消除：表达式静态类型与目标声明类型一致时跳过 CAST
-            if (ref->type_kind == TYPE_FLOAT) {
-                if (assign_cast_needed(TYPE_FLOAT, ast->u.assign.value)) {
-                    emit_byte(gen, OP_CAST_FLOAT, ast->line);
-                }
-            }
-            else if (ref->type_kind == TYPE_INT) {
-                if (assign_cast_needed(TYPE_INT, ast->u.assign.value)) {
-                    emit_byte(gen, OP_CAST_INT, ast->line);
-                }
-            }
-            else if (ref->type_kind == TYPE_STRING) {
-                if (assign_cast_needed(TYPE_STRING, ast->u.assign.value)) {
-                    emit_byte(gen, OP_CAST_STRING, ast->line);
-                }
-            }
-            // Ptr[T] 类型：设置运行时 element_type
-            else if (ref->type_kind == TYPE_PTR_GENERIC &&
-                     ref->element_type_kind > TYPE_ANY) {
-                emit_byte(gen, OP_SET_PTR_ELEM_TYPE, ast->line);
-                emit_byte(gen, (uint8_t)ref->element_type_kind, ast->line);
-            }
-            // face 类型：设置运行时 declared_face
-            else if (ref->type_kind == TYPE_FACE && ref->struct_name) {
-                ObjString* face_name_str = str_copy(ref->struct_name,
-                                                     strlen(ref->struct_name));
-                int face_name_const = make_constant(gen, val_obj((Object*)face_name_str));
-                emit_byte(gen, OP_SET_DECLARED_FACE, ast->line);
-                emit_byte(gen, (face_name_const >> 8) & 0xff, ast->line);
-                emit_byte(gen, face_name_const & 0xff, ast->line);
-            }
-
-            switch (ref->kind) {
-                case SYM_LOCAL:
-                case SYM_PARAM:
-                    emit_bytes_2(gen, OP_SET_LOCAL, ref->index, ast->line);
-                    break;
-                case SYM_GLOBAL:
-                    emit_set_global(gen, ref->index, ast->line);
-                    break;
-                case SYM_UPVALUE:
-                    emit_bytes_2(gen, OP_SET_UPVALUE, ref->index, ast->line);
-                    break;
-                case SYM_MODULE:
-                    // 模块变量赋值
-                    emit_bytes_2(gen, OP_SET_MODULE_VAR, ref->index, ast->line);
-                    break;
-                case SYM_TYPE:
-                case SYM_STRUCT:
-                case SYM_CSTRUCT:
-                case SYM_ENUM:
-                    // 类型定义不能赋值
-                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, "类型定义不能赋值");
-                    return;
-                default:
-                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, "未知的符号类型");
-                    return;
-            }
-        } else {
-            error_add_at(ERR_SEMANTIC, ast->line, ast->column, "不支持的赋值目标类型");
-            return;
-        }
-    }
-}
-
-void gen_compound_assign(CodeGen* gen, Ast* ast) {
-    SymRef* ref = &ast->u.compound_assign.ref;
-    if (!ref->name) {
-        error_add_at(ERR_SEMANTIC, ast->line, ast->column, "未解析的复合赋值目标");
-        return;
-    }
-
-    LenoTokenType op = ast->u.compound_assign.op;
-
-    // 检查是否是 struct 字段（通过 __self_field__ 标记）
-    int is_self_field = (strcmp(ref->name, "__self_field__") == 0);
-
-    if (is_self_field) {
-        // struct 字段的复合赋值：self.field += value
-        // 1. 获取 self（局部变量 0）
-        emit_bytes_2(gen, OP_GET_LOCAL, 0, ast->line);
-        // 2. 复制一份用于后续设置
-        emit_byte(gen, OP_DUP, ast->line);
-        // 3. 使用编译期确定的字段索引（优化：避免运行时线性搜索）
-        int field_idx = ast->u.compound_assign.ref.index;
-        // 4. 获取字段值 (OP_GET_FIELD + 1字节字段索引)
-        emit_byte(gen, OP_GET_FIELD, ast->line);
-        emit_byte(gen, (uint8_t)field_idx, ast->line);
-    } else if ((ref->kind == SYM_LOCAL || ref->kind == SYM_PARAM) &&
-        ast->u.compound_assign.value->kind == AST_NUM &&
-        ast->u.compound_assign.value->u.num.value == 1.0) {
-
-        if (op == TOK_PLUSEQ) {
-            emit_bytes_2(gen, OP_INC_LOCAL, ref->index, ast->line);
-            return;
-        } else if (op == TOK_MINUSEQ) {
-            emit_bytes_2(gen, OP_DEC_LOCAL, ref->index, ast->line);
-            return;
-        }
-    }
-
-    // 检测 shift-imm 复合赋值：x <<= N / x >>= N / x >>>= N，N 为小正整数字面量
-    int shift_imm = 0;
-    uint8_t shift_val = 0;
-    if ((op == TOK_SHLEQ || op == TOK_SHREQ || op == TOK_USHREQ) &&
-        ast->u.compound_assign.value->kind == AST_NUM &&
-        !ast->u.compound_assign.value->u.num.is_float &&
-        !ast->u.compound_assign.value->u.num.is_bigint) {
-        double val = ast->u.compound_assign.value->u.num.value;
-        if (val >= 0 && val <= 127 && val == (double)(int)val) {
-            shift_imm = 1;
-            shift_val = (uint8_t)(int)val;
-        }
-    }
-
-    if (!is_self_field) {
-        if (ref->kind == SYM_LOCAL || ref->kind == SYM_PARAM) {
-            emit_bytes_2(gen, OP_GET_LOCAL, ref->index, ast->line);
-        } else if (ref->kind == SYM_GLOBAL) {
-            emit_get_global(gen, ref->index, ast->line);
-        } else if (ref->kind == SYM_UPVALUE) {
-            emit_bytes_2(gen, OP_GET_UPVALUE, ref->index, ast->line);
-        } else if (ref->kind == SYM_MODULE) {
-            emit_bytes_2(gen, OP_GET_MODULE_VAR, ref->index, ast->line);
-        } else {
-            error_add_at(ERR_SEMANTIC, ast->line, ast->column, "不支持的变量类型用于复合赋值");
-            return;
-        }
-    }
-
-    // shift-imm 优化：跳过 RHS 的 OP_CONST 生成
-    if (!shift_imm) {
-        gen_expr(gen, ast->u.compound_assign.value);
-    }
-
-    // 类型特化：检查变量类型和值类型
-    TypeKind var_type = ref->type_kind;
-    TypeKind value_type = get_expr_type_kind(ast->u.compound_assign.value);
-    int is_int_op = (var_type == TYPE_INT && value_type == TYPE_INT);
-    int is_float_op = (var_type == TYPE_FLOAT && value_type == TYPE_FLOAT);
-
-    switch (op) {
-        case TOK_PLUSEQ:
-            if (is_int_op) emit_byte(gen, OP_ADD_INT, ast->line);
-            else if (is_float_op) emit_byte(gen, OP_ADD_FLOAT, ast->line);
-            else emit_byte(gen, OP_ADD, ast->line);
-            break;
-        case TOK_MINUSEQ:
-            if (is_int_op) emit_byte(gen, OP_SUB_INT, ast->line);
-            else if (is_float_op) emit_byte(gen, OP_SUB_FLOAT, ast->line);
-            else emit_byte(gen, OP_SUB, ast->line);
-            break;
-        case TOK_STAREQ:
-            if (is_int_op) emit_byte(gen, OP_MUL_INT, ast->line);
-            else if (is_float_op) emit_byte(gen, OP_MUL_FLOAT, ast->line);
-            else emit_byte(gen, OP_MUL, ast->line);
-            break;
-        case TOK_SLASHEQ:
-            if (is_int_op) emit_byte(gen, OP_DIV_INT, ast->line);
-            else if (is_float_op) emit_byte(gen, OP_DIV_FLOAT, ast->line);
-            else emit_byte(gen, OP_DIV, ast->line);
-            break;
-        case TOK_MODEQ:
-            emit_byte(gen, is_int_op ? OP_MOD_INT : OP_MOD, ast->line);
-            break;
-        case TOK_BITANDEQ: emit_byte(gen, OP_BITAND, ast->line); break;
-        case TOK_BITOREQ:  emit_byte(gen, OP_BITOR, ast->line); break;
-        case TOK_BITXOREQ: emit_byte(gen, OP_BITXOR, ast->line); break;
-        case TOK_SHLEQ:
-            if (shift_imm) emit_byte_imm(gen, OP_SHL_IMM, shift_val, ast->line);
-            else           emit_byte(gen, OP_SHL, ast->line);
-            break;
-        case TOK_SHREQ:
-            if (shift_imm) emit_byte_imm(gen, OP_SHR_IMM, shift_val, ast->line);
-            else           emit_byte(gen, OP_SHR, ast->line);
-            break;
-        case TOK_USHREQ:
-            if (shift_imm) emit_byte_imm(gen, OP_USHR_IMM, shift_val, ast->line);
-            else           emit_byte(gen, OP_USHR, ast->line);
-            break;
-        default:
-            error_add_at(ERR_SEMANTIC, ast->line, ast->column, "未知的复合赋值运算符");
-            return;
-    }
-
-    if (is_self_field) {
-        // struct 字段的复合赋值：使用 OP_SET_FIELD
-        // 栈顶是计算后的值，下面是 self（被 OP_DUP 复制的那份）
-        // 使用编译期确定的字段索引（优化：避免运行时线性搜索）
-        int field_idx = ast->u.compound_assign.ref.index;
-        // OP_SET_FIELD + 1字节字段索引
-        emit_byte(gen, OP_SET_FIELD, ast->line);
-        emit_byte(gen, (uint8_t)field_idx, ast->line);
-    } else {
-        switch (ref->kind) {
-            case SYM_LOCAL:
-            case SYM_PARAM:
-                emit_bytes_2(gen, OP_SET_LOCAL, ref->index, ast->line);
-                break;
-            case SYM_GLOBAL:
-                emit_set_global(gen, ref->index, ast->line);
-                break;
-            case SYM_UPVALUE:
-                emit_bytes_2(gen, OP_SET_UPVALUE, ref->index, ast->line);
-                break;
-            case SYM_MODULE:
-                emit_bytes_2(gen, OP_SET_MODULE_VAR, ref->index, ast->line);
-                break;
-            case SYM_TYPE:
-            case SYM_STRUCT:
-            case SYM_CSTRUCT:
-            case SYM_ENUM:
-                // 类型定义不能赋值
-                error_add_at(ERR_SEMANTIC, ast->line, ast->column, "类型定义不能赋值");
-                return;
-            default:
-                error_add_at(ERR_SEMANTIC, ast->line, ast->column, "未知的符号类型");
-                return;
-        }
-    }
-}
-
-// 生成尾调用表达式（return func() 模式）
-static void gen_tail_call_expr(CodeGen* gen, Ast* ast) {
-    // 只处理简单函数调用，不处理方法调用 arr.method()
-    if (ast->kind != AST_CALL) {
-        return;
-    }
-    
-    // 检查是否是方法调用 arr.method() - 暂不优化
-    if (ast->u.call.callee->kind == AST_INDEX) {
-        return;
-    }
-    
-    // 生成参数（顺序：先arg1, arg2, ...，最后callee）
-    for (int i = 0; i < ast->u.call.args.count; i++) {
-        gen_expr(gen, ast->u.call.args.items[i]);
-    }
-    
-    // 检测原生函数尾调用，合并为 OP_TAIL_CALL_NATIVE
-    if (ast->u.call.callee->kind == AST_VAR) {
-        Symbol* callee_sym = scope_resolve(gen->sem->current, ast->u.call.callee->u.var.name);
-        if (callee_sym && callee_sym->kind == SYM_NATIVE) {
-            ObjString* nameStr = str_copy(callee_sym->name, (int)strlen(callee_sym->name));
-            int name_const = make_constant(gen, val_obj((Object*)nameStr));
-            int total_args = ast->u.call.args.count;
-            emit_tail_call_native(gen, name_const, total_args, ast->line);
-            ast->u.call.is_tail_call = 1;
-            return;
-        }
-    }
-    
-    // 生成被调用的函数
-    gen_expr(gen, ast->u.call.callee);
-    
-    // 使用尾调用指令
-    emit_tail_call(gen, ast->u.call.args.count, ast->line);
-    
-    // 标记已处理
-    ast->u.call.is_tail_call = 1;
-}
-
-// 检查表达式是否是可优化的尾调用
-static int is_tail_call(CodeGen* gen, Ast* ast) {
-    if (!ast || ast->kind != AST_CALL) return 0;
-    
-    // 暂不处理方法调用 arr.method()
-    if (ast->u.call.callee->kind == AST_INDEX) return 0;
-    
-    // async 函数不能使用尾调用优化
-    // 因为 async 函数需要 OP_ASYNC_CALL 创建独立协程，
-    // 而 OP_TAIL_CALL 会复用当前帧，导致协程帧追踪混乱
-    if (ast->u.call.callee_is_async) return 0;
-    // 也通过 func_table 检查（callee_is_async 可能在语义分析阶段未设置）
-    if (ast->u.call.callee->kind == AST_VAR) {
-        Ast* func_def = func_table_find(&gen->sem->func_table, ast->u.call.callee->u.var.name);
-        if (func_def && func_def->kind == AST_FUNC_DEF && func_def->u.func.is_async) {
-            return 0;
-        }
-    }
-    
-    return 1;
-}
-
-static void gen_return(CodeGen* gen, Ast* ast) {
-    // 函数内联上下文：return 变为 set_local + jump
-    if (gen->inline_depth > 0) {
-        if (ast->u.ret) {
-            gen_expr(gen, ast->u.ret);
-        } else {
-            emit_byte(gen, OP_NULL, ast->line);
-        }
-        emit_bytes_2(gen, OP_SET_LOCAL_POP, gen->inline_result_slot, ast->line);
-        // NRVO: 如果 return 直接返回局部变量, 跳过该变量的析构
-        int nrvo_skip = -1;
-        if (ast->u.ret && ast->u.ret->kind == AST_VAR) {
-            SymRef* ref = &ast->u.ret->u.var.ref;
-            if (ref->kind == SYM_LOCAL || ref->kind == SYM_PARAM) {
-                nrvo_skip = ref->index;
-            }
-        }
-        // 逆序调用本层内联期间新增的析构条目
-        for (int i = gen->dtor_count - 1; i >= gen->inline_dtor_base; i--) {
-            if (gen->dtor_entries[i].local_slot == nrvo_skip) continue;
-            emit_byte(gen, OP_DTOR_LOCAL, ast->line);
-            emit_byte(gen, (gen->dtor_entries[i].local_slot >> 8) & 0xff, ast->line);
-            emit_byte(gen, gen->dtor_entries[i].local_slot & 0xff, ast->line);
-            emit_byte(gen, OP_POP, ast->line);
-        }
-        // 记录跳转，稍后回填到内联块末尾
-        if (gen->inline_return_jump_count < 256) {
-            gen->inline_return_jumps[gen->inline_return_jump_count++] =
-                emit_jump(gen, OP_JUMP, ast->line);
-        } else {
-            error_add_at(ERR_RUNTIME, ast->line, ast->column,
-                "内联函数 return 跳转数量超过 256 上限");
-        }
-        return;
-    }
-
-    if (gen->dtor_count > 0) {
-        // 有需要析构的变量，禁用尾调用优化
-        if (ast->u.ret) {
-            gen_expr(gen, ast->u.ret);
-            // 保存返回值到临时槽位
-            if (gen->dtor_temp_slot < 0) {
-                gen->dtor_temp_slot = gen->current_func->local_count;
-                gen->current_func->local_count++;
-            }
-            emit_bytes_2(gen, OP_SET_LOCAL, gen->dtor_temp_slot, ast->line);
-        }
-        // NRVO: 如果 return 直接返回局部变量, 跳过该变量的析构
-        int nrvo_skip = -1;
-        if (ast->u.ret && ast->u.ret->kind == AST_VAR) {
-            SymRef* ref = &ast->u.ret->u.var.ref;
-            if (ref->kind == SYM_LOCAL || ref->kind == SYM_PARAM) {
-                nrvo_skip = ref->index;
-            }
-        }
-        // 逆序调用所有析构函数
-        for (int i = gen->dtor_count - 1; i >= 0; i--) {
-            if (gen->dtor_entries[i].local_slot == nrvo_skip) continue;
-            emit_byte(gen, OP_DTOR_LOCAL, ast->line);
-            emit_byte(gen, (gen->dtor_entries[i].local_slot >> 8) & 0xff, ast->line);
-            emit_byte(gen, gen->dtor_entries[i].local_slot & 0xff, ast->line);
-            emit_byte(gen, OP_POP, ast->line);
-        }
-        // 恢复返回值
-        if (ast->u.ret) {
-            emit_bytes_2(gen, OP_GET_LOCAL, gen->dtor_temp_slot, ast->line);
-        } else {
-            emit_byte(gen, OP_NULL, ast->line);
-        }
-        emit_byte(gen, OP_RETURN, ast->line);
-    } else {
-        // 原有逻辑（支持尾调用优化）
-        if (ast->u.ret) {
-            // 检测是否是尾调用：return func(...)
-            if (is_tail_call(gen, ast->u.ret)) {
-                // 使用尾调用优化
-                gen_tail_call_expr(gen, ast->u.ret);
-                // 尾调用会处理返回值，直接返回即可
-                emit_byte(gen, OP_RETURN, ast->line);
-            } else {
-                gen_expr(gen, ast->u.ret);
-                emit_byte(gen, OP_RETURN, ast->line);
-            }
-        } else {
-            emit_byte(gen, OP_NULL, ast->line);
-            emit_byte(gen, OP_RETURN, ast->line);
-        }
-    }
-}
-
-static void gen_return_multi(CodeGen* gen, Ast* ast) {
-    int count = ast->u.ret_multi.count;
-
-    // 函数内联上下文：不支持多返回值内联（多返回值函数不应被内联）
-    // 如果遇到内联上下文，退化为取第一个返回值
-    if (gen->inline_depth > 0) {
-        if (count > 0) {
-            gen_expr(gen, ast->u.ret_multi.exprs[0]);
-        } else {
-            emit_byte(gen, OP_NULL, ast->line);
-        }
-        emit_bytes_2(gen, OP_SET_LOCAL_POP, gen->inline_result_slot, ast->line);
-        // NRVO: 如果 return 直接返回局部变量, 跳过该变量的析构
-        int nrvo_skip = -1;
-        if (count > 0 && ast->u.ret_multi.exprs[0]->kind == AST_VAR) {
-            SymRef* ref = &ast->u.ret_multi.exprs[0]->u.var.ref;
-            if (ref->kind == SYM_LOCAL || ref->kind == SYM_PARAM) {
-                nrvo_skip = ref->index;
-            }
-        }
-        // 逆序调用本层内联期间新增的析构条目
-        for (int i = gen->dtor_count - 1; i >= gen->inline_dtor_base; i--) {
-            if (gen->dtor_entries[i].local_slot == nrvo_skip) continue;
-            emit_byte(gen, OP_DTOR_LOCAL, ast->line);
-            emit_byte(gen, (gen->dtor_entries[i].local_slot >> 8) & 0xff, ast->line);
-            emit_byte(gen, gen->dtor_entries[i].local_slot & 0xff, ast->line);
-            emit_byte(gen, OP_POP, ast->line);
-        }
-        if (gen->inline_return_jump_count < 256) {
-            gen->inline_return_jumps[gen->inline_return_jump_count++] =
-                emit_jump(gen, OP_JUMP, ast->line);
-        } else {
-            error_add_at(ERR_RUNTIME, ast->line, ast->column,
-                "内联函数 return 跳转数量超过 256 上限");
-        }
-        return;
-    }
-
-    // 有析构变量时：将所有返回值存入临时槽位，执行析构，再恢复
-    if (gen->dtor_count > 0) {
-        // 分配临时槽位存储返回值
-        int* temp_slots = (int*)malloc(sizeof(int) * count);
-        for (int i = 0; i < count; i++) {
-            temp_slots[i] = gen->current_func->local_count++;
-            gen_expr(gen, ast->u.ret_multi.exprs[i]);
-            emit_bytes_2(gen, OP_SET_LOCAL_POP, temp_slots[i], ast->line);
-        }
-        // NRVO: 收集所有直接返回的局部变量, 跳过它们的析构
-        int nrvo_slots[16];
-        int nrvo_count = 0;
-        for (int j = 0; j < count && j < 16; j++) {
-            Ast* expr = ast->u.ret_multi.exprs[j];
-            if (expr && expr->kind == AST_VAR) {
-                SymRef* ref = &expr->u.var.ref;
-                if (ref->kind == SYM_LOCAL || ref->kind == SYM_PARAM) {
-                    nrvo_slots[nrvo_count++] = ref->index;
-                }
-            }
-        }
-        // 逆序调用析构函数
-        for (int i = gen->dtor_count - 1; i >= 0; i--) {
-            int skip = 0;
-            for (int j = 0; j < nrvo_count; j++) {
-                if (gen->dtor_entries[i].local_slot == nrvo_slots[j]) { skip = 1; break; }
-            }
-            if (skip) continue;
-            emit_byte(gen, OP_DTOR_LOCAL, ast->line);
-            emit_byte(gen, (gen->dtor_entries[i].local_slot >> 8) & 0xff, ast->line);
-            emit_byte(gen, gen->dtor_entries[i].local_slot & 0xff, ast->line);
-            emit_byte(gen, OP_POP, ast->line);
-        }
-        // 恢复返回值到栈上
-        for (int i = 0; i < count; i++) {
-            emit_bytes_2(gen, OP_GET_LOCAL, temp_slots[i], ast->line);
-        }
-        free(temp_slots);
-        emit_byte(gen, OP_RETURN_MULTI, ast->line);
-        emit_byte(gen, (uint8_t)count, ast->line);
-    } else {
-        // 正常路径：依次求值所有返回值表达式，压入栈中
-        for (int i = 0; i < count; i++) {
-            gen_expr(gen, ast->u.ret_multi.exprs[i]);
-        }
-        emit_byte(gen, OP_RETURN_MULTI, ast->line);
-        emit_byte(gen, (uint8_t)count, ast->line);
-    }
-}
-
-static void gen_expr_stmt(CodeGen* gen, Ast* ast) {
-    Ast* expr = ast->u.expr_stmt.expr;
-
-    // 检测 arr.add(x) 模式：表达式语句直接用 OP_ARRAY_APPEND_NOPUSH 省掉 OP_POP
-    if (expr->kind == AST_CALL &&
-        expr->u.call.callee->kind == AST_INDEX &&
-        expr->u.call.callee->u.index.index->kind == AST_STRING &&
-        expr->u.call.args.count == 1 &&
-        strcmp(expr->u.call.callee->u.index.index->u.string.value, "add") == 0) {
-        TypeInfo* receiver_type = infer_expr_type(gen->sem, expr->u.call.callee->u.index.obj);
-        int is_array_type = (receiver_type && receiver_type->kind == TYPE_ARRAY);
-        if (receiver_type) type_free(receiver_type);
-        if (is_array_type) {
-            gen_array_add(gen, expr->u.call.callee->u.index.obj, expr->u.call.args.items[0], 0, ast->line);
-            return;
-        }
-    }
-
-    // 检测 arr.add(x) 模块调用形式：表达式语句用 OP_ARRAY_APPEND_NOPUSH 省掉 OP_POP
-    // 对应 parser 中 arr.add(x) 创建的 AST_MODULE_CALL（module_name 是数组变量名）
-    if (expr->kind == AST_MODULE_CALL &&
-        expr->u.module_call.args.count == 1 &&
-        strcmp(expr->u.module_call.method_name, "add") == 0) {
-        Symbol* var_sym = scope_resolve(gen->sem->root_scope, expr->u.module_call.module_name);
-        if (!var_sym) {
-            var_sym = scope_resolve(gen->sem->current, expr->u.module_call.module_name);
-        }
-        if (var_sym && var_sym->type && var_sym->type->kind == TYPE_ARRAY) {
-            gen_array_add_by_symbol(gen, var_sym, expr->u.module_call.args.items[0], 0, ast->line);
-            return;
-        }
-    }
-
-    // 优化：i++ / i-- 语句（后缀，局部变量）→ OP_INC_LOCAL_NOPUSH / OP_DEC_LOCAL_NOPUSH
-    if (expr->kind == AST_UNARY && expr->u.unary.is_postfix &&
-        (expr->u.unary.op == TOK_INC || expr->u.unary.op == TOK_DEC) &&
-        expr->u.unary.operand->kind == AST_VAR) {
-        SymRef* ref = &expr->u.unary.operand->u.var.ref;
-        if (ref->name && (ref->kind == SYM_LOCAL || ref->kind == SYM_PARAM)) {
-            emit_bytes_2(gen, expr->u.unary.op == TOK_INC ? OP_INC_LOCAL_NOPUSH : OP_DEC_LOCAL_NOPUSH,
-                         ref->index, ast->line);
-            return;
-        }
-    }
-
-    // 优化：赋值语句到局部变量 → OP_SET_LOCAL_POP（省掉 OP_POP 分发开销）
-    // 场景1: a = b（两个局部变量）→ OP_MOVE_LOCAL_POP（不压栈）
-    // 场景2: a = expr（a 是局部变量）→ gen_expr(expr) + OP_SET_LOCAL_POP
-    if (expr->kind == AST_ASSIGN && expr->u.assign.name_count == 1) {
-        Ast* target = expr->u.assign.targets[0];
-        if (target && target->kind == AST_VAR) {
-            SymRef* ref = &expr->u.assign.refs[0];
-            if (ref->name && (ref->kind == SYM_LOCAL || ref->kind == SYM_PARAM)) {
-                // a = b（两个局部变量）→ OP_MOVE_LOCAL_POP（不压栈）
-                if (expr->u.assign.value->kind == AST_VAR) {
-                    SymRef* src_ref = &expr->u.assign.value->u.var.ref;
-                    if (src_ref->name && (src_ref->kind == SYM_LOCAL || src_ref->kind == SYM_PARAM)) {
-                        emit_byte(gen, OP_MOVE_LOCAL_POP, ast->line);
-                        emit_byte(gen, (uint8_t)(src_ref->index >> 8), ast->line);
-                        emit_byte(gen, (uint8_t)(src_ref->index & 0xFF), ast->line);
-                        emit_byte(gen, (uint8_t)(ref->index >> 8), ast->line);
-                        emit_byte(gen, (uint8_t)(ref->index & 0xFF), ast->line);
-                        return;
-                    }
-                }
-                // a = expr → gen_expr(expr) + cast + OP_SET_LOCAL_POP（省一次分发）
-                gen_expr(gen, expr->u.assign.value);
-                // 类型转换：与变量声明（gen_var_decl）保持一致
-                // 编译期消除：表达式静态类型与目标声明类型一致时跳过 CAST
-                if (ref->type_kind == TYPE_FLOAT) {
-                    if (assign_cast_needed(TYPE_FLOAT, expr->u.assign.value)) {
-                        emit_byte(gen, OP_CAST_FLOAT, ast->line);
-                    }
-                }
-                else if (ref->type_kind == TYPE_INT) {
-                    if (assign_cast_needed(TYPE_INT, expr->u.assign.value)) {
-                        emit_byte(gen, OP_CAST_INT, ast->line);
-                    }
-                }
-                else if (ref->type_kind == TYPE_STRING) {
-                    if (assign_cast_needed(TYPE_STRING, expr->u.assign.value)) {
-                        emit_byte(gen, OP_CAST_STRING, ast->line);
-                    }
-                }
-                // Ptr[T] 类型：设置运行时 element_type
-                else if (ref->type_kind == TYPE_PTR_GENERIC &&
-                         ref->element_type_kind > TYPE_ANY) {
-                    emit_byte(gen, OP_SET_PTR_ELEM_TYPE, ast->line);
-                    emit_byte(gen, (uint8_t)ref->element_type_kind, ast->line);
-                }
-                // face 类型：设置运行时 declared_face
-                else if (ref->type_kind == TYPE_FACE && ref->struct_name) {
-                    ObjString* face_name_str = str_copy(ref->struct_name,
-                                                         strlen(ref->struct_name));
-                    int face_name_const = make_constant(gen, val_obj((Object*)face_name_str));
-                    emit_byte(gen, OP_SET_DECLARED_FACE, ast->line);
-                    emit_byte(gen, (face_name_const >> 8) & 0xff, ast->line);
-                    emit_byte(gen, face_name_const & 0xff, ast->line);
-                }
-                emit_bytes_2(gen, OP_SET_LOCAL_POP, ref->index, ast->line);
-                return;
-            }
-        }
-        // 索引赋值语句: obj[index] = value → 直接生成 OP_INDEX_SET_NOPUSH
-        if (target && target->kind == AST_INDEX) {
-            gen_expr(gen, target->u.index.obj);
-            gen_expr(gen, target->u.index.index);
-            gen_expr(gen, expr->u.assign.value);
-            emit_byte(gen, OP_INDEX_SET_NOPUSH, ast->line);
-            return;
-        }
-    }
-
-    if (expr->kind == AST_COMPOUND_ASSIGN) {
-        SymRef* ref = &expr->u.compound_assign.ref;
-        if (ref->name && (ref->kind == SYM_LOCAL || ref->kind == SYM_PARAM) &&
-            strcmp(ref->name, "__self_field__") != 0) {
-            gen_expr(gen, expr);
-            emit_byte(gen, OP_POP, ast->line);
-            return;
-        }
-    }
-
-    // 默认：生成表达式 + OP_POP
-    // 设置 discard 标志：内联 void 函数时可省掉 OP_NULL + OP_POP
-    gen->inline_discard_result = 1;
-    gen->inline_no_result = 0;
-    // 多返回值函数调用的表达式语句：禁止 gen_expr 弹出多余值，由这里统一弹出
-    if (expr->cached_type && expr->cached_type->kind == TYPE_MULTI_RET) {
-        gen->suppress_multi_pop = 1;
-    }
-    gen_expr(gen, expr);
-    gen->inline_discard_result = 0;
-    gen->suppress_multi_pop = 0;
-
-    // 内联 void 函数已跳过 OP_NULL，栈上无值，跳过 OP_POP
-    if (gen->inline_no_result) {
-        gen->inline_no_result = 0;
-        return;
-    }
-
-    // 多返回值函数调用的表达式语句：弹出所有返回值
-    if (expr->cached_type && expr->cached_type->kind == TYPE_MULTI_RET) {
-        int ret_count = expr->cached_type->param_count;
-        for (int i = 0; i < ret_count; i++) {
-            emit_byte(gen, OP_POP, ast->line);
-        }
-        return;
-    }
-
-    // 注意：OP_SET_FIELD 会 pop obj 和 value，然后 push 赋值结果值到栈上
-    // 因此表达式语句仍需要 OP_POP 来弹出这个结果值，否则会导致栈泄漏
-    emit_byte(gen, OP_POP, ast->line);
-}
-
-void gen_block(CodeGen* gen, Ast* ast) {
-    // 策略：先预生成所有局部函数，支持前向引用
-    // 然后再按顺序执行其他语句
-    // 注意：在循环体内定义的函数不预生成，而是在运行时每次迭代时创建
-
-    int dtor_count_at_entry = gen->dtor_count;  // 记录进入块时的析构条目数
-
-    typedef struct {
-        Ast* ast;
-        ObjFunction* proto;
-    } FuncProtoEntry;
-
-    FuncProtoEntry local_funcs[64];
-    int local_func_count = 0;
-
-    // 第一遍：预注册全局函数，并为局部函数预分配槽位
-    // 跳过在循环体内定义的函数（is_in_loop=1），让它们运行时创建
-    for (int i = 0; i < ast->u.block.count; i++) {
-        Ast* stmt = ast->u.block.items[i];
-        if (stmt->kind == AST_FUNC_DEF && stmt->u.func.ref.name) {
-            if (stmt->u.func.ref.kind == SYM_GLOBAL_FUNC) {
-                // 全局函数：直接生成
-                gen_func(gen, stmt);
-            } else if (stmt->u.func.ref.kind == SYM_LOCAL && !stmt->u.func.is_in_loop) {
-                // 局部函数（非循环体内）：预分配槽位（null），支持前向引用
-                emit_byte(gen, OP_NULL, stmt->line);
-                emit_bytes_2(gen, OP_SET_LOCAL, stmt->u.func.ref.index, stmt->line);
-                emit_byte(gen, OP_POP, stmt->line);
-                // 保存函数定义供后续使用
-                if (local_func_count < 64) {
-                    local_funcs[local_func_count].ast = stmt;
-                    local_funcs[local_func_count].proto = NULL; // 稍后生成
-                    local_func_count++;
-                }
-            }
-        }
-    }
-
-    // 第二遍：生成所有局部函数（在函数调用之前）
-    // 跳过在循环体内定义的函数（is_in_loop=1），让它们运行时创建
-    for (int i = 0; i < ast->u.block.count; i++) {
-        Ast* stmt = ast->u.block.items[i];
-        if (stmt->kind == AST_FUNC_DEF && stmt->u.func.ref.name) {
-            if (stmt->u.func.ref.kind == SYM_LOCAL && !stmt->u.func.is_in_loop) {
-                // 找到对应的函数条目
-                for (int j = 0; j < local_func_count; j++) {
-                    if (local_funcs[j].ast == stmt) {
-                        // 生成函数原型和闭包
-                        if (local_funcs[j].proto == NULL) {
-                            local_funcs[j].proto = gen_func_proto(gen, stmt);
-                        }
-                        gen_func_closure(gen, stmt, local_funcs[j].proto);
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    // 第三遍：按顺序执行其他语句
-    // 在循环体内定义的函数会在这里生成（运行时每次迭代时）
-
-    for (int i = 0; i < ast->u.block.count; i++) {
-        Ast* stmt = ast->u.block.items[i];
-        if (stmt->kind == AST_FUNC_DEF && stmt->u.func.is_in_loop) {
-            // 循环体内定义的函数：在运行时创建（每次迭代）
-            gen_func(gen, stmt);
-        } else if (stmt->kind != AST_FUNC_DEF) {
-            gen_stmt(gen, stmt);
-        }
-    }
-
-    // 块结束时，逆序生成新增 dtor 条目的析构调用
-    while (gen->dtor_count > dtor_count_at_entry) {
-        gen->dtor_count--;
-        emit_byte(gen, OP_DTOR_LOCAL, ast->line);
-        emit_byte(gen, (gen->dtor_entries[gen->dtor_count].local_slot >> 8) & 0xff, ast->line);
-        emit_byte(gen, gen->dtor_entries[gen->dtor_count].local_slot & 0xff, ast->line);
-        emit_byte(gen, OP_POP, ast->line);  // 弹出析构函数返回值(null)
-    }
-}
 
 void gen_stmt(CodeGen* gen, Ast* ast) {
     if (!ast) return;
 
     switch (ast->kind) {
-        case AST_BLOCK:
-            gen_block(gen, ast);
-            break;
-        case AST_IF:
-            gen_if(gen, ast);
-            break;
-        case AST_WHILE:
-            gen_while(gen, ast);
-            break;
-        case AST_FOR:
-            gen_for(gen, ast);
-            break;
-        case AST_SWITCH:
-            gen_switch(gen, ast);
-            break;
-        case AST_FUNC_DEF:
-            break;
-case AST_RETURN:
-gen_return(gen, ast);
-break;
-case AST_RETURN_MULTI:
-gen_return_multi(gen, ast);
-break;
+        case AST_BLOCK:       gen_block(gen, ast); break;
+        case AST_VAR_DECL:   gen_var_decl(gen, ast); break;
+        case AST_IF:          gen_if(gen, ast); break;
+        case AST_WHILE:       gen_while(gen, ast); break;
+        case AST_FOR:         gen_for(gen, ast); break;
+        case AST_SWITCH:      gen_switch(gen, ast); break;
+        case AST_RETURN:      gen_return(gen, ast); break;
+        case AST_RETURN_MULTI: gen_return_multi(gen, ast); break;
         case AST_BREAK: {
-            if (!gen->loop_head) {
-                error_add_at(ERR_SYNTAX, ast->line, ast->column, "break 只能在循环中使用");
-                return;
+            // break: 跳转到循环尾
+            if (gen->loop_head) {
+                int jmp = emit_jmp(gen, ast->line);
+                gen->loop_head->ctx.break_jumps[gen->loop_head->ctx.break_count++] = jmp;
             }
-            LoopContext* loop = &gen->loop_head->ctx;
-            if (loop->break_count >= MAX_BREAK_JUMPS) {
-                error_add_at(ERR_RUNTIME, ast->line, ast->column, "break 太多");
-                return;
-            }
-            loop->break_jumps[loop->break_count++] = emit_jump(gen, OP_JUMP, ast->line);
             break;
         }
         case AST_CONTINUE: {
-            if (!gen->loop_head) {
-                error_add_at(ERR_SYNTAX, ast->line, ast->column, "continue 只能在循环中使用");
-                return;
-            }
-            LoopContext* loop = &gen->loop_head->ctx;
-            // 对于需要回填的循环（如 for to），使用占位符
-            if (loop->continue_count >= MAX_CONTINUE_JUMPS) {
-                error_add_at(ERR_RUNTIME, ast->line, ast->column, "continue 太多");
-                return;
-            }
-            // 记录跳转位置，稍后回填
-            loop->continue_jumps[loop->continue_count++] = emit_jump(gen, OP_JUMP, ast->line);
-            break;
-        }
-        case AST_VAR_DECL:
-            gen_var_decl(gen, ast);
-            break;
-        case AST_DESTRUCT_DECL:
-            gen_destruct_decl(gen, ast);
-            break;
-        case AST_ASSIGN:
-            gen_assign(gen, ast);
-            break;
-        case AST_COMPOUND_ASSIGN:
-            gen_compound_assign(gen, ast);
-            break;
-        case AST_EXPR_STMT:
-            gen_expr_stmt(gen, ast);
-            break;
-        case AST_IMPORT:
-            gen_import_inline(gen, ast);
-            break;
-
-        case AST_EXPORT:
-            if (ast->u.export.decl) {
-                if (ast->u.export.decl->kind == AST_FUNC_DEF) {
-                    gen_func(gen, ast->u.export.decl);
-                } else {
-                    gen_stmt(gen, ast->u.export.decl);
-                }
-            }
-            break;
-
-        case AST_USE:
-            // use 语句是编译时指令，不需要生成字节码
-            // 符号已经在语义分析阶段注册到当前作用域
-            // 在 gen_stmt / gen_stmt_module 中都只是 break
-            break;
-
-        case AST_TRY: {
-            // 生成 try-catch-finally 的字节码
-            // 结构：
-            // OP_TRY <catch_offset> <finally_offset>
-            // ... try body ...
-            // OP_JUMP <finally_or_end>  (正常结束跳到 finally 或结束)
-            // OP_CATCH (if has catch)
-            // ... catch body ...
-            // OP_JUMP <finally_or_end>  (catch 结束跳到 finally 或结束)
-            // OP_FINALLY (if has finally)
-            // ... finally body ...
-            // OP_END_TRY
-            
-            int try_start = gen->chunk->len;
-            
-            // 预留 OP_TRY 指令空间
-            emit_byte(gen, OP_TRY, ast->line);
-            int catch_jump = gen->chunk->len;
-            emit_byte(gen, 0, ast->line); // catch 偏移量占位
-            emit_byte(gen, 0, ast->line);
-            int finally_jump = gen->chunk->len;
-            emit_byte(gen, 0, ast->line); // finally 偏移量占位
-            emit_byte(gen, 0, ast->line);
-            
-            // 生成 try 体
-            gen_stmt(gen, ast->u.try_.try_body);
-            
-            // 正常结束 try 块，跳到 finally 或结束
-            int try_to_finally_jump = emit_jump(gen, OP_JUMP, ast->line);
-            
-            int catch_start = gen->chunk->len;
-            
-            // 生成 catch 体（如果有）
-            if (ast->u.try_.catch_body) {
-                emit_byte(gen, OP_CATCH, ast->line);
-                
-                // 如果有 catch 变量，将异常值存入局部变量
-                if (ast->u.try_.catch_var && ast->u.try_.catch_var_ref.name) {
-                    int var_idx = ast->u.try_.catch_var_ref.index;
-                    // 将栈顶的异常值存入局部变量
-                    emit_bytes_2(gen, OP_SET_LOCAL_POP, var_idx, ast->line);
-                    // catch 变量槽位不经 gen_var_decl，顶层需在此记账（同 track 说明）
-                    track_toplevel_local_slot(gen, var_idx);
-                } else {
-                    // 没有 catch 变量，直接弹出异常值
-                    emit_byte(gen, OP_POP, ast->line);
-                }
-                
-                gen_stmt(gen, ast->u.try_.catch_body);
-            }
-            
-            // catch 结束，跳到 finally 或结束（只有有 catch 体时才需要）
-            int catch_to_finally_jump = -1;
-            if (ast->u.try_.catch_body) {
-                catch_to_finally_jump = emit_jump(gen, OP_JUMP, ast->line);
-            }
-            
-            int finally_start = gen->chunk->len;
-            
-            // 回填 try 结束后的跳转（跳到 finally）- 必须在生成 finally 之前回填
-            patch_jump(gen, try_to_finally_jump);
-            
-            // 回填 catch 结束后的跳转（跳到 finally）- 必须在生成 finally 之前回填
-            if (catch_to_finally_jump >= 0) {
-                patch_jump(gen, catch_to_finally_jump);
-            }
-            
-            // 生成 finally 体（如果有）
-            if (ast->u.try_.finally_body) {
-                emit_byte(gen, OP_FINALLY, ast->line);
-                gen_stmt(gen, ast->u.try_.finally_body);
-            }
-            
-            emit_byte(gen, OP_END_TRY, ast->line);
-            
-            // 回填 catch 跳转地址
-            if (ast->u.try_.catch_body) {
-                int catch_offset = catch_start - try_start;
-                gen->chunk->code[catch_jump] = (catch_offset >> 8) & 0xff;
-                gen->chunk->code[catch_jump + 1] = catch_offset & 0xff;
-            }
-            
-            // 回填 finally 跳转地址
-            if (ast->u.try_.finally_body) {
-                int finally_offset = finally_start - try_start;
-                gen->chunk->code[finally_jump] = (finally_offset >> 8) & 0xff;
-                gen->chunk->code[finally_jump + 1] = finally_offset & 0xff;
-            }
-            
-            break;
-        }
-        case AST_THROW:
-            if (ast->u.throw_.expr) {
-                gen_expr(gen, ast->u.throw_.expr);
-            } else {
-                emit_byte(gen, OP_NULL, ast->line);
-            }
-            emit_byte(gen, OP_THROW, ast->line);
-            break;
-        case AST_FACE_DEF: {
-            ObjString* face_name = str_copy(ast->u.face_def.name, strlen(ast->u.face_def.name));
-            int name_const = make_constant(gen, val_obj((Object*)face_name));
-            emit_byte(gen, OP_FACE_DEF, ast->line);
-            emit_byte(gen, (name_const >> 8) & 0xff, ast->line);
-            emit_byte(gen, name_const & 0xff, ast->line);
-            emit_byte(gen, ast->u.face_def.method_count, ast->line);
-            // 泛型类型参数
-            emit_byte(gen, ast->u.face_def.type_param_count, ast->line);
-            for (int tp = 0; tp < ast->u.face_def.type_param_count; tp++) {
-                ObjString* tp_name = str_copy(ast->u.face_def.type_params[tp],
-                    strlen(ast->u.face_def.type_params[tp]));
-                int tp_const = make_constant(gen, val_obj((Object*)tp_name));
-                emit_byte(gen, (tp_const >> 8) & 0xff, ast->line);
-                emit_byte(gen, tp_const & 0xff, ast->line);
-            }
-            for (int i = 0; i < ast->u.face_def.method_count; i++) {
-                ObjString* mname = str_copy(ast->u.face_def.method_names[i],
-                                            strlen(ast->u.face_def.method_names[i]));
-                int mname_const = make_constant(gen, val_obj((Object*)mname));
-                emit_byte(gen, (mname_const >> 8) & 0xff, ast->line);
-                emit_byte(gen, mname_const & 0xff, ast->line);
-                emit_byte(gen, ast->u.face_def.method_param_counts[i], ast->line);
-                TypeInfo* rt = ast->u.face_def.method_return_types[i];
-                emit_byte(gen, rt ? (uint8_t)rt->kind : (uint8_t)TYPE_INFER, ast->line);
-                for (int j = 0; j < ast->u.face_def.method_param_counts[i]; j++) {
-                    TypeInfo* pt = ast->u.face_def.method_param_types[i][j];
-                    emit_byte(gen, pt ? (uint8_t)pt->kind : (uint8_t)TYPE_INFER, ast->line);
-                }
+            // continue: 跳回循环头
+            if (gen->loop_head) {
+                int jmp = emit_jmp(gen, ast->line);
+                gen->loop_head->ctx.continue_jumps[gen->loop_head->ctx.continue_count++] = jmp;
             }
             break;
         }
-        case AST_STRUCT_DEF: {
-            // 预生成方法函数对象常量
-            int* method_name_consts = NULL;
-            int* method_func_consts = NULL;
-            int method_count = ast->u.struct_def.method_count;
-            if (method_count > 0) {
-                method_name_consts = (int*)malloc(sizeof(int) * method_count);
-                method_func_consts = (int*)malloc(sizeof(int) * method_count);
-                for (int i = 0; i < method_count; i++) {
-                    Ast* method_ast = ast->u.struct_def.methods[i];
-                    if (method_ast && method_ast->kind == AST_FUNC_DEF) {
-                        // 生成函数原型（函数对象）
-                        ObjFunction* func = gen_func_proto(gen, method_ast);
-                        // 方法名作为常量
-                        ObjString* method_name = str_copy(method_ast->u.func.name, strlen(method_ast->u.func.name));
-                        method_name_consts[i] = make_constant(gen, val_obj((Object*)method_name));
-                        if (func) {
-                            method_func_consts[i] = make_constant(gen, val_obj((Object*)func));
-                        } else {
-                            method_func_consts[i] = make_constant(gen, val_null());
-                        }
-                    } else {
-                        method_name_consts[i] = make_constant(gen, val_null());
-                        method_func_consts[i] = make_constant(gen, val_null());
-                    }
-                }
-            }
-
-            // 生成结构体定义指令
-            // 将结构体名称作为常量
-            ObjString* struct_name = str_copy(ast->u.struct_def.name, strlen(ast->u.struct_def.name));
-            int name_const = make_constant(gen, val_obj((Object*)struct_name));
-
-            emit_byte(gen, OP_STRUCT_DEF, ast->line);
-            emit_byte(gen, (name_const >> 8) & 0xff, ast->line);
-            emit_byte(gen, name_const & 0xff, ast->line);
-            emit_byte(gen, ast->u.struct_def.field_count, ast->line);
-            emit_byte(gen, method_count, ast->line);
-
-            // 编码 impl 声明的 face 名称
-            emit_byte(gen, ast->u.struct_def.impl_count, ast->line);
-            for (int i = 0; i < ast->u.struct_def.impl_count; i++) {
-                ObjString* impl_name = str_copy(ast->u.struct_def.impl_names[i],
-                                                strlen(ast->u.struct_def.impl_names[i]));
-                int impl_name_const = make_constant(gen, val_obj((Object*)impl_name));
-                emit_byte(gen, (impl_name_const >> 8) & 0xff, ast->line);
-                emit_byte(gen, impl_name_const & 0xff, ast->line);
-            }
-
-            // 编码泛型类型参数信息
-            emit_byte(gen, ast->u.struct_def.type_param_count, ast->line);
-            for (int i = 0; i < ast->u.struct_def.type_param_count && ast->u.struct_def.type_params; i++) {
-                ObjString* param_name = str_copy(ast->u.struct_def.type_params[i],
-                                                  strlen(ast->u.struct_def.type_params[i]));
-                int param_name_const = make_constant(gen, val_obj((Object*)param_name));
-                emit_byte(gen, (param_name_const >> 8) & 0xff, ast->line);
-                emit_byte(gen, param_name_const & 0xff, ast->line);
-            }
-
-            // 为每个字段生成信息
-            for (int i = 0; i < ast->u.struct_def.field_count; i++) {
-                // 字段名
-                ObjString* field_name = str_copy(ast->u.struct_def.field_names[i],
-                                                  strlen(ast->u.struct_def.field_names[i]));
-                int field_name_const = make_constant(gen, val_obj((Object*)field_name));
-                emit_byte(gen, (field_name_const >> 8) & 0xff, ast->line);
-                emit_byte(gen, field_name_const & 0xff, ast->line);
-
-                // 字段类型
-                TypeKind field_type = ast->u.struct_def.field_types[i]->kind;
-                emit_byte(gen, field_type, ast->line);
-
-                // nullable 标记
-                uint8_t is_nullable = ast->u.struct_def.field_types[i]->nullable ? 1 : 0;
-                emit_byte(gen, is_nullable, ast->line);
-
-                // 如果字段是 struct 类型，输出 struct 类型名
-                if (field_type == TYPE_STRUCT) {
-                    const char* struct_type_name = ast->u.struct_def.field_types[i]->struct_name;
-                    if (struct_type_name) {
-                        ObjString* type_name = str_copy(struct_type_name, strlen(struct_type_name));
-                        int type_name_const = make_constant(gen, val_obj((Object*)type_name));
-                        emit_byte(gen, 1, ast->line); // 有 struct 类型名
-                        emit_byte(gen, (type_name_const >> 8) & 0xff, ast->line);
-                        emit_byte(gen, type_name_const & 0xff, ast->line);
-                    } else {
-                        emit_byte(gen, 0, ast->line); // 没有 struct 类型名
-                    }
-                }
-
-                // 如果字段是 Ptr[T] 类型，输出元素类型
-                if (field_type == TYPE_PTR_GENERIC) {
-                    TypeInfo* ft = ast->u.struct_def.field_types[i];
-                    TypeKind elem_type = ft->element_type ? ft->element_type->kind : TYPE_PTR;
-                    emit_byte(gen, elem_type, ast->line);
-                }
-
-                // 是否有默认值
-                if (ast->u.struct_def.field_defaults[i]) {
-                    Ast* default_expr = ast->u.struct_def.field_defaults[i];
-                    Value default_val = ast_default_to_value(default_expr);
-                    // 非常量默认值（如 new Point(x=99)）无法在编译期求值
-                    if (val_is_null(default_val) && default_expr->kind != AST_NULL) {
-                        char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg),
-                            "struct 字段 '%s' 的默认值不是常量表达式（仅支持数字、字符串、bool、null、数组字面量、字典字面量），"
-                            "请使用构造器初始化",
-                            ast->u.struct_def.field_names[i]);
-                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
-                        emit_byte(gen, 0, ast->line); // 无默认值
-                    } else {
-                        emit_byte(gen, 1, ast->line);
-                        int default_const = make_constant(gen, default_val);
-                        emit_byte(gen, (default_const >> 8) & 0xff, ast->line);
-                        emit_byte(gen, default_const & 0xff, ast->line);
-                    }
-                } else {
-                    emit_byte(gen, 0, ast->line);
-                }
-            }
-
-            // 为每个方法生成信息
-            for (int i = 0; i < method_count; i++) {
-                emit_byte(gen, (method_name_consts[i] >> 8) & 0xff, ast->line);
-                emit_byte(gen, method_name_consts[i] & 0xff, ast->line);
-                emit_byte(gen, (method_func_consts[i] >> 8) & 0xff, ast->line);
-                emit_byte(gen, method_func_consts[i] & 0xff, ast->line);
-            }
-
-            // 构造/析构函数标志和索引
-            // 查找 ctor/dtor 索引
-            int ctor_idx = -1, dtor_idx = -1;
-            for (int i = 0; i < method_count; i++) {
-                Ast* method_ast = ast->u.struct_def.methods[i];
-                if (method_ast && method_ast->u.func.is_ctor) ctor_idx = i;
-                if (method_ast && method_ast->u.func.is_dtor) dtor_idx = i;
-            }
-            uint8_t ctor_dtor_flags = 0;
-            if (ctor_idx >= 0) ctor_dtor_flags |= 1;
-            if (dtor_idx >= 0) ctor_dtor_flags |= 2;
-            emit_byte(gen, ctor_dtor_flags, ast->line);
-            if (ctor_idx >= 0) emit_byte(gen, (uint8_t)ctor_idx, ast->line);
-            if (dtor_idx >= 0) emit_byte(gen, (uint8_t)dtor_idx, ast->line);
-
-            // 编码关联常量信息
-            emit_byte(gen, ast->u.struct_def.const_count, ast->line);
-            for (int i = 0; i < ast->u.struct_def.const_count; i++) {
-                // 常量名
-                ObjString* cname = str_copy(ast->u.struct_def.const_names[i],
-                                             strlen(ast->u.struct_def.const_names[i]));
-                int cname_const = make_constant(gen, val_obj((Object*)cname));
-                emit_byte(gen, (cname_const >> 8) & 0xff, ast->line);
-                emit_byte(gen, cname_const & 0xff, ast->line);
-                // 常量值
-                Ast* cexpr = ast->u.struct_def.const_values[i];
-                Value cval = ast_default_to_value(cexpr);
-                if (val_is_null(cval) && cexpr && cexpr->kind != AST_NULL) {
-                    // 非常量表达式，用 null 作为占位
-                    cval = val_null();
-                }
-                int cval_const = make_constant(gen, cval);
-                emit_byte(gen, (cval_const >> 8) & 0xff, ast->line);
-                emit_byte(gen, cval_const & 0xff, ast->line);
-            }
-
-            if (method_name_consts) free(method_name_consts);
-            if (method_func_consts) free(method_func_consts);
+        case AST_ASSIGN:      gen_assign(gen, ast); break;
+        case AST_COMPOUND_ASSIGN: gen_compound_assign(gen, ast); break;
+        case AST_EXPR_STMT: {
+            // 表达式语句：求值后丢弃结果
+            int r = gen_expr(gen, ast->u.expr_stmt.expr);
+            reg_free(gen, r);
             break;
         }
-        case AST_CSTRUCT_DEF: {
-            // 将 cstruct 名称作为常量
-            ObjString* cstruct_name = str_copy(ast->u.cstruct_def.name, strlen(ast->u.cstruct_def.name));
-            int name_const = make_constant(gen, val_obj((Object*)cstruct_name));
-
-            // 生成 CSTRUCT_DEF 指令
-            emit_byte(gen, OP_CSTRUCT_DEF, ast->line);
-            emit_byte(gen, (name_const >> 8) & 0xff, ast->line);
-            emit_byte(gen, name_const & 0xff, ast->line);
-            emit_byte(gen, ast->u.cstruct_def.field_count, ast->line);
-            emit_byte(gen, (ast->u.cstruct_def.total_size >> 8) & 0xff, ast->line);
-            emit_byte(gen, ast->u.cstruct_def.total_size & 0xff, ast->line);
-            emit_byte(gen, ast->u.cstruct_def.alignment, ast->line);
-            // packed / align(N) 属性
-            emit_byte(gen, ast->u.cstruct_def.is_packed ? 1 : 0, ast->line);
-            emit_byte(gen, (uint8_t)ast->u.cstruct_def.explicit_align, ast->line);
-
-            // 为每个字段生成信息
-            for (int i = 0; i < ast->u.cstruct_def.field_count; i++) {
-                // 字段名
-                ObjString* field_name = str_copy(ast->u.cstruct_def.field_names[i],
-                                                  strlen(ast->u.cstruct_def.field_names[i]));
-                int field_name_const = make_constant(gen, val_obj((Object*)field_name));
-                emit_byte(gen, (field_name_const >> 8) & 0xff, ast->line);
-                emit_byte(gen, field_name_const & 0xff, ast->line);
-
-                // 字段类型
-                TypeInfo* field_type = ast->u.cstruct_def.field_types[i];
-                emit_byte(gen, field_type->kind, ast->line);
-
-                // 字段偏移量
-                emit_byte(gen, (ast->u.cstruct_def.field_offsets[i] >> 8) & 0xff, ast->line);
-                emit_byte(gen, ast->u.cstruct_def.field_offsets[i] & 0xff, ast->line);
-
-                // 数组维度（0 表示非数组，>0 表示数组大小）
-                int array_dim = ast->u.cstruct_def.field_array_dims[i];
-                emit_byte(gen, (array_dim >> 8) & 0xff, ast->line);
-                emit_byte(gen, array_dim & 0xff, ast->line);
-
-                // 嵌套结构体类型名（仅当 type == TYPE_CSTRUCT 时有效）
-                if (field_type->kind == TYPE_CSTRUCT && field_type->struct_name) {
-                    ObjString* struct_name = str_copy(field_type->struct_name, strlen(field_type->struct_name));
-                    int struct_name_const = make_constant(gen, val_obj((Object*)struct_name));
-                    emit_byte(gen, (struct_name_const >> 8) & 0xff, ast->line);
-                    emit_byte(gen, struct_name_const & 0xff, ast->line);
-                } else {
-                    // 非嵌套结构体字段，输出 0xFFFF 表示无效
-                    emit_byte(gen, 0xff, ast->line);
-                    emit_byte(gen, 0xff, ast->line);
-                }
-
-                // 如果字段是 Ptr[T] 类型，输出元素类型
-                if (field_type->kind == TYPE_PTR_GENERIC) {
-                    TypeKind elem_type = field_type->element_type ? field_type->element_type->kind : TYPE_PTR;
-                    emit_byte(gen, elem_type, ast->line);
-                }
-            }
-
-            // 将 cstruct 定义存储到变量
-            if (ast->u.cstruct_def.ref.kind == SYM_GLOBAL) {
-                emit_bytes_2(gen, OP_SET_GLOBAL, ast->u.cstruct_def.ref.index, ast->line);
-            } else if (ast->u.cstruct_def.ref.kind == SYM_LOCAL) {
-                emit_bytes_2(gen, OP_SET_LOCAL, ast->u.cstruct_def.ref.index, ast->line);
-            } else if (ast->u.cstruct_def.ref.kind == SYM_MODULE) {
-                emit_bytes_2(gen, OP_SET_MODULE_VAR, ast->u.cstruct_def.ref.index, ast->line);
-                emit_byte(gen, OP_POP, ast->line);
-            } else {
-                emit_byte(gen, OP_POP, ast->line);
-            }
-            break;
-        }
-        case AST_CLIB_DEF:
-            // clib 定义是纯编译期语法糖，不生成运行时指令
-            // 所有函数签名信息已在语义分析阶段存入 Symbol
-            break;
-        case AST_CFUNC_DECL:
-            // cfunc 声明是纯编译期语法糖，不生成运行时指令
-            // 签名信息在语义分析阶段存入 Symbol，供 ffi.callback 调用时使用
-            break;
-        case AST_ALIAS:
-            if (ast->u.alias.expr) {
-                // 值别名：生成表达式求值 + 定义变量
-                gen_expr(gen, ast->u.alias.expr);
-                if (ast->u.alias.ref.kind == SYM_GLOBAL) {
-                    emit_define_global(gen, ast->u.alias.ref.index, ast->line);
-                } else if (ast->u.alias.ref.kind == SYM_MODULE) {
-                    emit_bytes_2(gen, OP_SET_MODULE_VAR, ast->u.alias.ref.index, ast->line);
-                    emit_byte(gen, OP_POP, ast->line);
-                }
-            }
-            // 类型别名是纯编译期语法糖，不生成运行时指令
-            break;
-        case AST_ENUM_DEF: {
-            // 生成 enum 定义指令
-            // 将 enum 名称作为常量
-            ObjString* enum_name = str_copy(ast->u.enum_def.name, strlen(ast->u.enum_def.name));
-            int name_const = make_constant(gen, val_obj((Object*)enum_name));
-
-            emit_byte(gen, OP_ENUM_DEF, ast->line);
-            emit_byte(gen, (name_const >> 8) & 0xff, ast->line);
-            emit_byte(gen, name_const & 0xff, ast->line);
-            emit_byte(gen, ast->u.enum_def.member_count, ast->line);
-
-            // 为每个成员生成信息
-            for (int i = 0; i < ast->u.enum_def.member_count; i++) {
-                // 成员名
-                ObjString* member_name = str_copy(ast->u.enum_def.member_names[i],
-                                                  strlen(ast->u.enum_def.member_names[i]));
-                int member_name_const = make_constant(gen, val_obj((Object*)member_name));
-                emit_byte(gen, (member_name_const >> 8) & 0xff, ast->line);
-                emit_byte(gen, member_name_const & 0xff, ast->line);
-
-                // 成员值（作为常量）- 使用val_int_safe支持大整数
-                Value member_val = val_int_safe(ast->u.enum_def.member_values[i]);
-                int member_val_const = make_constant(gen, member_val);
-                emit_byte(gen, (member_val_const >> 8) & 0xff, ast->line);
-                emit_byte(gen, member_val_const & 0xff, ast->line);
-            }
-
-            // 将 enum 定义存储到变量，以便后续访问
-            if (ast->u.enum_def.ref.kind == SYM_GLOBAL) {
-                emit_bytes_2(gen, OP_SET_GLOBAL, ast->u.enum_def.ref.index, ast->line);
-            } else if (ast->u.enum_def.ref.kind == SYM_LOCAL) {
-                emit_bytes_2(gen, OP_SET_LOCAL, ast->u.enum_def.ref.index, ast->line);
-            } else if (ast->u.enum_def.ref.kind == SYM_MODULE) {
-                emit_bytes_2(gen, OP_SET_MODULE_VAR, ast->u.enum_def.ref.index, ast->line);
-                emit_byte(gen, OP_POP, ast->line);
-            } else {
-                // 未知类型，弹出栈顶
-                emit_byte(gen, OP_POP, ast->line);
-            }
-            break;
-        }
+        case AST_FUNC_DEF:    gen_func(gen, ast); break;
+        case AST_IMPORT:      gen_import(gen, ast); break;
+        case AST_EXPORT:      gen_export(gen, ast); break;
+        case AST_USE:         gen_use(gen, ast); break;
+        case AST_TRY:         gen_try(gen, ast); break;
+        case AST_THROW:       gen_throw(gen, ast); break;
+        case AST_STRUCT_DEF:  gen_struct_def(gen, ast); break;
+        case AST_ENUM_DEF:    gen_enum_def(gen, ast); break;
+        case AST_FACE_DEF:    gen_face_def(gen, ast); break;
+        case AST_CSTRUCT_DEF: gen_cstruct_def(gen, ast); break;
+        case AST_CLIB_DEF:    gen_clib_def(gen, ast); break;
+        case AST_CFUNC_DECL:  gen_cfunc_decl(gen, ast); break;
+        case AST_ALIAS:       gen_alias(gen, ast); break;
+        case AST_DESTRUCT_DECL: gen_destruct_decl(gen, ast); break;
         default:
-            gen_expr(gen, ast);
-            emit_byte(gen, OP_POP, ast->line);
+            // 未知节点：忽略
             break;
     }
 }
 
 // ============================================================================
-// 模块代码生成
+// block
 // ============================================================================
 
-// 全局函数字典（用于模块代码生成）
-static ObjDict* g_func_dict = NULL;
-
-void codegen_set_func_dict(void* dict) {
-    g_func_dict = (ObjDict*)dict;
-}
-
-// 生成模块函数定义
-static void gen_func_module(CodeGen* gen, Ast* ast) {
-    if (!ast || ast->kind != AST_FUNC_DEF) return;
-
-    // 如果全局函数字典存在，从中获取函数对象
-    if (g_func_dict) {
-        ObjString* key = str_copy(ast->u.func.name, (int)strlen(ast->u.func.name));
-        Value func_val = dict_get(g_func_dict, val_obj((Object*)key));
-        if (!val_is_null(func_val)) {
-            int func_const = make_constant(gen, func_val);
-            emit_closure(gen, func_const, ast->line);
-            // 使用 OP_DEFINE_MODULE_FUNC 定义模块函数
-            emit_bytes_2(gen, OP_DEFINE_MODULE_FUNC, ast->u.func.ref.index, ast->line);
-            return;
-        }
-    }
-    
-    // 回退到原来的实现（使用 null 占位符）
-    int func_const = make_constant(gen, val_null());
-    emit_closure(gen, func_const, ast->line);
-    // 使用 OP_DEFINE_MODULE_FUNC 定义模块函数
-    emit_bytes_2(gen, OP_DEFINE_MODULE_FUNC, ast->u.func.ref.index, ast->line);
-}
-
-// 生成模块变量声明
-static void gen_var_decl_module(CodeGen* gen, Ast* ast) {
-    if (!ast || ast->kind != AST_VAR_DECL) return;
-
-    // 生成初始化表达式
-    if (ast->u.var_decl.init) {
-        gen_expr(gen, ast->u.var_decl.init);
-    } else {
-        // 检查是否是数组类型，如果是则创建空数组
-        if (ast->u.var_decl.type && ast->u.var_decl.type->kind == TYPE_ARRAY) {
-            emit_byte(gen, OP_ARRAY, ast->line);
-            emit_byte(gen, 0, ast->line); // count 高字节
-            emit_byte(gen, 0, ast->line); // count 低字节
-        }
-        // 检查是否是字典类型，如果是则创建空字典
-        else if (ast->u.var_decl.type && ast->u.var_decl.type->kind == TYPE_DICT) {
-            emit_byte(gen, OP_DICT, ast->line);
-            emit_byte(gen, 0, ast->line); // count 高字节
-            emit_byte(gen, 0, ast->line); // count 低字节
-        } else {
-            emit_byte(gen, OP_NULL, ast->line);
-        }
-    }
-
-    // 使用 OP_SET_MODULE_VAR 设置模块变量
-    emit_bytes_2(gen, OP_SET_MODULE_VAR, ast->u.var_decl.ref.index, ast->line);
-    emit_byte(gen, OP_POP, ast->line);
-}
-
-// 生成模块结构体定义
-static void gen_struct_module(CodeGen* gen, Ast* ast) {
-    if (!ast || ast->kind != AST_STRUCT_DEF) return;
-
-    // 预生成方法函数对象常量
-    int* method_name_consts = NULL;
-    int* method_func_consts = NULL;
-    int method_count = ast->u.struct_def.method_count;
-    if (method_count > 0) {
-        method_name_consts = (int*)malloc(sizeof(int) * method_count);
-        method_func_consts = (int*)malloc(sizeof(int) * method_count);
-        for (int i = 0; i < method_count; i++) {
-            Ast* method_ast = ast->u.struct_def.methods[i];
-            if (method_ast && method_ast->kind == AST_FUNC_DEF) {
-                // 方法名作为常量
-                ObjString* method_name = str_copy(method_ast->u.func.name, strlen(method_ast->u.func.name));
-                method_name_consts[i] = make_constant(gen, val_obj((Object*)method_name));
-                
-                // 如果全局函数字典存在，从中获取函数对象
-                // 注意：func_dict 中以 "StructName::methodName" 格式存储方法
-                if (g_func_dict) {
-                    char method_key[256];
-                    snprintf(method_key, sizeof(method_key), "%s::%s",
-                             ast->u.struct_def.name, method_ast->u.func.name);
-                    ObjString* dict_key = str_copy(method_key, (int)strlen(method_key));
-                    Value func_val = dict_get(g_func_dict, val_obj((Object*)dict_key));
-                    if (!val_is_null(func_val)) {
-                        method_func_consts[i] = make_constant(gen, func_val);
-                    } else {
-                        // 回退：生成函数原型
-                        ObjFunction* func = gen_func_proto(gen, method_ast);
-                        if (func) {
-                            method_func_consts[i] = make_constant(gen, val_obj((Object*)func));
-                        } else {
-                            method_func_consts[i] = make_constant(gen, val_null());
-                        }
-                    }
-                } else {
-                    // 生成函数原型（函数对象）
-                    ObjFunction* func = gen_func_proto(gen, method_ast);
-                    if (func) {
-                        method_func_consts[i] = make_constant(gen, val_obj((Object*)func));
-                    } else {
-                        method_func_consts[i] = make_constant(gen, val_null());
-                    }
-                }
-            } else {
-                method_name_consts[i] = make_constant(gen, val_null());
-                method_func_consts[i] = make_constant(gen, val_null());
-            }
-        }
-    }
-
-    // 生成结构体定义指令
-    // 将结构体名称作为常量
-    ObjString* struct_name = str_copy(ast->u.struct_def.name, strlen(ast->u.struct_def.name));
-    int name_const = make_constant(gen, val_obj((Object*)struct_name));
-
-    emit_byte(gen, OP_STRUCT_DEF, ast->line);
-    emit_byte(gen, (name_const >> 8) & 0xff, ast->line);
-    emit_byte(gen, name_const & 0xff, ast->line);
-    emit_byte(gen, ast->u.struct_def.field_count, ast->line);
-    emit_byte(gen, method_count, ast->line);
-
-    // 编码 impl 声明的 face 名称
-    emit_byte(gen, ast->u.struct_def.impl_count, ast->line);
-    for (int i = 0; i < ast->u.struct_def.impl_count; i++) {
-        ObjString* impl_name = str_copy(ast->u.struct_def.impl_names[i],
-                                        strlen(ast->u.struct_def.impl_names[i]));
-        int impl_name_const = make_constant(gen, val_obj((Object*)impl_name));
-        emit_byte(gen, (impl_name_const >> 8) & 0xff, ast->line);
-        emit_byte(gen, impl_name_const & 0xff, ast->line);
-    }
-
-    // 编码泛型类型参数信息
-    emit_byte(gen, ast->u.struct_def.type_param_count, ast->line);
-    for (int i = 0; i < ast->u.struct_def.type_param_count && ast->u.struct_def.type_params; i++) {
-        ObjString* param_name = str_copy(ast->u.struct_def.type_params[i],
-                                          strlen(ast->u.struct_def.type_params[i]));
-        int param_name_const = make_constant(gen, val_obj((Object*)param_name));
-        emit_byte(gen, (param_name_const >> 8) & 0xff, ast->line);
-        emit_byte(gen, param_name_const & 0xff, ast->line);
-    }
-
-    // 为每个字段生成信息
-    for (int i = 0; i < ast->u.struct_def.field_count; i++) {
-        // 字段名
-        ObjString* field_name = str_copy(ast->u.struct_def.field_names[i],
-                                          strlen(ast->u.struct_def.field_names[i]));
-        int field_name_const = make_constant(gen, val_obj((Object*)field_name));
-        emit_byte(gen, (field_name_const >> 8) & 0xff, ast->line);
-        emit_byte(gen, field_name_const & 0xff, ast->line);
-
-        // 字段类型
-        TypeKind field_type = ast->u.struct_def.field_types[i]->kind;
-        emit_byte(gen, field_type, ast->line);
-
-        // nullable 标记
-        uint8_t is_nullable2 = ast->u.struct_def.field_types[i]->nullable ? 1 : 0;
-        emit_byte(gen, is_nullable2, ast->line);
-
-        // 如果字段是 struct 类型，输出 struct 类型名
-        if (field_type == TYPE_STRUCT) {
-            const char* struct_type_name = ast->u.struct_def.field_types[i]->struct_name;
-            if (struct_type_name) {
-                ObjString* type_name = str_copy(struct_type_name, strlen(struct_type_name));
-                int type_name_const = make_constant(gen, val_obj((Object*)type_name));
-                emit_byte(gen, 1, ast->line); // 有 struct 类型名
-                emit_byte(gen, (type_name_const >> 8) & 0xff, ast->line);
-                emit_byte(gen, type_name_const & 0xff, ast->line);
-            } else {
-                emit_byte(gen, 0, ast->line); // 没有 struct 类型名
-            }
-        }
-
-        // 如果字段是 Ptr[T] 类型，输出元素类型
-        if (field_type == TYPE_PTR_GENERIC) {
-            TypeInfo* ft = ast->u.struct_def.field_types[i];
-            TypeKind elem_type = ft->element_type ? ft->element_type->kind : TYPE_PTR;
-            emit_byte(gen, elem_type, ast->line);
-        }
-
-        // 是否有默认值
-        if (ast->u.struct_def.field_defaults[i]) {
-            Ast* default_expr = ast->u.struct_def.field_defaults[i];
-            Value default_val = ast_default_to_value(default_expr);
-            // 非常量默认值（如 new Point(x=99)）无法在编译期求值
-            if (val_is_null(default_val) && default_expr->kind != AST_NULL) {
-                char msg[BUFFER_MEDIUM];
-                snprintf(msg, sizeof(msg),
-                    "struct 字段 '%s' 的默认值不是常量表达式（仅支持数字、字符串、bool、null、数组字面量、字典字面量），"
-                    "请使用构造器初始化",
-                    ast->u.struct_def.field_names[i]);
-                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
-                emit_byte(gen, 0, ast->line); // 无默认值
-            } else {
-                emit_byte(gen, 1, ast->line);
-                int default_const = make_constant(gen, default_val);
-                emit_byte(gen, (default_const >> 8) & 0xff, ast->line);
-                emit_byte(gen, default_const & 0xff, ast->line);
-            }
-        } else {
-            emit_byte(gen, 0, ast->line);
-        }
-    }
-
-    // 输出方法信息
-    for (int i = 0; i < method_count; i++) {
-        emit_byte(gen, (method_name_consts[i] >> 8) & 0xff, ast->line);
-        emit_byte(gen, method_name_consts[i] & 0xff, ast->line);
-        emit_byte(gen, (method_func_consts[i] >> 8) & 0xff, ast->line);
-        emit_byte(gen, method_func_consts[i] & 0xff, ast->line);
-    }
-
-    // 构造/析构函数标志和索引
-    int ctor_idx = -1, dtor_idx = -1;
-    for (int i = 0; i < method_count; i++) {
-        Ast* method_ast = ast->u.struct_def.methods[i];
-        if (method_ast && method_ast->u.func.is_ctor) ctor_idx = i;
-        if (method_ast && method_ast->u.func.is_dtor) dtor_idx = i;
-    }
-    uint8_t ctor_dtor_flags = 0;
-    if (ctor_idx >= 0) ctor_dtor_flags |= 1;
-    if (dtor_idx >= 0) ctor_dtor_flags |= 2;
-    emit_byte(gen, ctor_dtor_flags, ast->line);
-    if (ctor_idx >= 0) emit_byte(gen, (uint8_t)ctor_idx, ast->line);
-    if (dtor_idx >= 0) emit_byte(gen, (uint8_t)dtor_idx, ast->line);
-
-    // 编码关联常量信息
-    emit_byte(gen, ast->u.struct_def.const_count, ast->line);
-    for (int i = 0; i < ast->u.struct_def.const_count; i++) {
-        // 常量名
-        ObjString* cname = str_copy(ast->u.struct_def.const_names[i],
-                                     strlen(ast->u.struct_def.const_names[i]));
-        int cname_const = make_constant(gen, val_obj((Object*)cname));
-        emit_byte(gen, (cname_const >> 8) & 0xff, ast->line);
-        emit_byte(gen, cname_const & 0xff, ast->line);
-        // 常量值
-        Ast* cexpr = ast->u.struct_def.const_values[i];
-        Value cval = ast_default_to_value(cexpr);
-        if (val_is_null(cval) && cexpr && cexpr->kind != AST_NULL) {
-            cval = val_null();
-        }
-        int cval_const = make_constant(gen, cval);
-        emit_byte(gen, (cval_const >> 8) & 0xff, ast->line);
-        emit_byte(gen, cval_const & 0xff, ast->line);
-    }
-
-    if (method_name_consts) free(method_name_consts);
-    if (method_func_consts) free(method_func_consts);
-}
-
-// 生成模块中的 enum 定义（存储到模块变量）
-static void gen_enum_module(CodeGen* gen, Ast* ast) {
-    // 生成 enum 定义指令
-    // 将 enum 名称作为常量
-    ObjString* enum_name = str_copy(ast->u.enum_def.name, strlen(ast->u.enum_def.name));
-    int name_const = make_constant(gen, val_obj((Object*)enum_name));
-
-    emit_byte(gen, OP_ENUM_DEF, ast->line);
-    emit_byte(gen, (name_const >> 8) & 0xff, ast->line);
-    emit_byte(gen, name_const & 0xff, ast->line);
-    emit_byte(gen, ast->u.enum_def.member_count, ast->line);
-
-    // 为每个成员生成信息
-    for (int i = 0; i < ast->u.enum_def.member_count; i++) {
-        // 成员名
-        ObjString* member_name = str_copy(ast->u.enum_def.member_names[i],
-                                          strlen(ast->u.enum_def.member_names[i]));
-        int member_name_const = make_constant(gen, val_obj((Object*)member_name));
-        emit_byte(gen, (member_name_const >> 8) & 0xff, ast->line);
-        emit_byte(gen, member_name_const & 0xff, ast->line);
-
-        // 成员值（作为常量）- 使用val_int_safe支持大整数
-        Value member_val = val_int_safe(ast->u.enum_def.member_values[i]);
-        int member_val_const = make_constant(gen, member_val);
-        emit_byte(gen, (member_val_const >> 8) & 0xff, ast->line);
-        emit_byte(gen, member_val_const & 0xff, ast->line);
-    }
-
-    // 将 enum 定义存储到模块变量
-    emit_bytes_2(gen, OP_SET_MODULE_VAR, ast->u.enum_def.ref.index, ast->line);
-    emit_byte(gen, OP_POP, ast->line);
-}
-
-// 生成模块块
-void gen_block_module(CodeGen* gen, Ast* ast) {
-    // 第一遍：为所有函数定义预留位置（包括 export 的函数）
-    for (int i = 0; i < ast->u.block.count; i++) {
-        Ast* stmt = ast->u.block.items[i];
-        Ast* func_ast = NULL;
-        
-        if (stmt->kind == AST_FUNC_DEF) {
-            func_ast = stmt;
-        } else if (stmt->kind == AST_EXPORT && stmt->u.export.decl &&
-                   stmt->u.export.decl->kind == AST_FUNC_DEF) {
-            func_ast = stmt->u.export.decl;
-        }
-        
-        if (func_ast) {
-            // 压入 null 作为占位符
-            emit_byte(gen, OP_NULL, func_ast->line);
-            emit_bytes_2(gen, OP_SET_MODULE_VAR, func_ast->u.func.ref.index, func_ast->line);
-            emit_byte(gen, OP_POP, func_ast->line);
-        }
-    }
-
-    // 第二遍：生成函数定义（包括 export 的函数）
-    for (int i = 0; i < ast->u.block.count; i++) {
-        Ast* stmt = ast->u.block.items[i];
-        Ast* func_ast = NULL;
-        
-        if (stmt->kind == AST_FUNC_DEF) {
-            func_ast = stmt;
-        } else if (stmt->kind == AST_EXPORT && stmt->u.export.decl &&
-                   stmt->u.export.decl->kind == AST_FUNC_DEF) {
-            func_ast = stmt->u.export.decl;
-        }
-        
-        if (func_ast) {
-            gen_func_module(gen, func_ast);
-        }
-    }
-
-    // 第三遍：生成其他语句
-    for (int i = 0; i < ast->u.block.count; i++) {
-        Ast* stmt = ast->u.block.items[i];
-        int is_func = 0;
-        
-        if (stmt->kind == AST_FUNC_DEF) {
-            is_func = 1;
-        } else if (stmt->kind == AST_EXPORT && stmt->u.export.decl &&
-                   stmt->u.export.decl->kind == AST_FUNC_DEF) {
-            is_func = 1;
-        }
-        
-        if (!is_func) {
-            gen_stmt_module(gen, stmt);
-        }
-    }
-}
-
-// 生成模块语句
-void gen_stmt_module(CodeGen* gen, Ast* ast) {
+void gen_block(CodeGen* gen, Ast* ast) {
     if (!ast) return;
-
-    switch (ast->kind) {
-        case AST_BLOCK:
-            gen_block_module(gen, ast);
-            break;
-        case AST_IF:
-            gen_if(gen, ast);  // 复用普通 if 生成
-            break;
-        case AST_WHILE:
-            gen_while(gen, ast);  // 复用普通 while 生成
-            break;
-        case AST_FOR:
-            gen_for(gen, ast);  // 复用普通 for 生成
-            break;
-        case AST_SWITCH:
-            gen_switch(gen, ast);  // 复用普通 switch 生成
-            break;
-        case AST_FUNC_DEF:
-            // 函数定义在 gen_block_module 中处理
-            break;
-case AST_RETURN:
-gen_return(gen, ast);  // 复用普通 return 生成
-break;
-case AST_RETURN_MULTI:
-gen_return_multi(gen, ast);  // 复用多值 return 生成
-break;
-case AST_BREAK:
-        case AST_CONTINUE:
-            // 复用普通 break/continue 生成
-            gen_stmt(gen, ast);
-            break;
-        case AST_VAR_DECL:
-            gen_var_decl_module(gen, ast);
-            break;
-        case AST_DESTRUCT_DECL:
-            gen_destruct_decl(gen, ast);  // 解构声明复用普通生成逻辑
-            break;
-        case AST_ASSIGN:
-            gen_assign(gen, ast);  // 复用普通赋值生成
-            break;
-        case AST_COMPOUND_ASSIGN:
-            gen_compound_assign(gen, ast);  // 复用复合赋值生成
-            break;
-        case AST_EXPR_STMT:
-            gen_expr_stmt(gen, ast);
-            break;
-        case AST_IMPORT:
-            // 模块内可以 import 其他模块
-            gen_import_inline(gen, ast);
-            break;
-        case AST_EXPORT:
-            // 导出声明在编译时处理，运行时不需要生成代码
-            if (ast->u.export.decl) {
-                if (ast->u.export.decl->kind == AST_FUNC_DEF) {
-                    gen_func_module(gen, ast->u.export.decl);
-                } else if (ast->u.export.decl->kind == AST_VAR_DECL) {
-                    gen_var_decl_module(gen, ast->u.export.decl);
-                } else if (ast->u.export.decl->kind == AST_DESTRUCT_DECL) {
-                    gen_destruct_decl(gen, ast->u.export.decl);
-                } else if (ast->u.export.decl->kind == AST_STRUCT_DEF) {
-                    gen_struct_module(gen, ast->u.export.decl);
-                } else if (ast->u.export.decl->kind == AST_ENUM_DEF) {
-                    // enum 定义在模块中生成
-                    gen_enum_module(gen, ast->u.export.decl);
-                } else if (ast->u.export.decl->kind == AST_FACE_DEF) {
-                    gen_stmt(gen, ast->u.export.decl);
-                } else if (ast->u.export.decl->kind == AST_CSTRUCT_DEF) {
-                    gen_stmt(gen, ast->u.export.decl);
-                }
-            }
-            break;
-        case AST_TRY:
-            // 复用普通 try-catch-finally 生成
-            gen_stmt(gen, ast);
-            break;
-        case AST_THROW:
-            gen_stmt(gen, ast);
-            break;
-        case AST_STRUCT_DEF:
-            gen_struct_module(gen, ast);
-            break;
-        case AST_FACE_DEF:
-            gen_stmt(gen, ast);  // face 定义在 gen_stmt 中处理
-            break;
-        case AST_CSTRUCT_DEF:
-            gen_stmt(gen, ast);  // cstruct 定义在 gen_stmt 中处理
-            break;
-        case AST_CLIB_DEF:
-            // clib 定义是纯编译期语法糖，不生成运行时指令
-            break;
-        case AST_CFUNC_DECL:
-            // 纯编译期语法糖，不生成运行时指令
-            break;
-        case AST_ALIAS:
-            if (ast->u.alias.expr) {
-                // 值别名：生成表达式求值 + 定义模块变量
-                gen_expr(gen, ast->u.alias.expr);
-                if (ast->u.alias.ref.kind == SYM_GLOBAL) {
-                    emit_define_global(gen, ast->u.alias.ref.index, ast->line);
-                } else if (ast->u.alias.ref.kind == SYM_MODULE) {
-                    emit_bytes_2(gen, OP_SET_MODULE_VAR, ast->u.alias.ref.index, ast->line);
-                    emit_byte(gen, OP_POP, ast->line);
-                }
-            }
-            // 类型别名是纯编译期语法糖，不生成运行时指令
-            break;
-        case AST_USE:
-            // use 语句是编译时指令，不生成运行时指令
-            break;
-        case AST_ENUM_DEF:
-            gen_enum_module(gen, ast);
-            break;
-        default:
-            gen_expr(gen, ast);
-            emit_byte(gen, OP_POP, ast->line);
-            break;
+    int n = ast->u.block.count;
+    for (int i = 0; i < n; i++) {
+        gen_stmt(gen, ast->u.block.items[i]);
     }
+}
+
+// ============================================================================
+// if / if-else
+// ============================================================================
+
+void gen_if(CodeGen* gen, Ast* ast) {
+    gen_if_ex(gen, ast, 0);
+}
+
+void gen_if_ex(CodeGen* gen, Ast* ast, int want_value) {
+    int dst = -1;
+    if (want_value) {
+        dst = reg_alloc(gen);
+    }
+
+    // 求值条件
+    int cond = gen_expr(gen, ast->u.if_.cond);
+
+    // if !cond then jump to else
+    int jmp_false = emit_jmp_if_false(gen, cond, ast->line);
+    reg_free(gen, cond);
+
+    // then 分支
+    if (want_value && ast->u.if_.then) {
+        // then 的最后一条表达式写入 dst
+        if (ast->u.if_.then->kind == AST_EXPR_STMT) {
+            gen_expr_to(gen, ast->u.if_.then->u.expr_stmt.expr, dst);
+        } else {
+            gen_stmt(gen, ast->u.if_.then);
+            if (want_value) emit_loadnil_to(gen, dst, ast->line);
+        }
+    } else {
+        gen_stmt(gen, ast->u.if_.then);
+    }
+
+    // if 有 else 分支
+    if (ast->u.if_.else_) {
+        int jmp_end = emit_jmp(gen, ast->line);
+        patch_jmp(gen, jmp_false);
+
+        // else 分支
+        if (want_value && ast->u.if_.else_) {
+            if (ast->u.if_.else_->kind == AST_EXPR_STMT) {
+                gen_expr_to(gen, ast->u.if_.else_->u.expr_stmt.expr, dst);
+            } else {
+                gen_stmt(gen, ast->u.if_.else_);
+                if (want_value) emit_loadnil_to(gen, dst, ast->line);
+            }
+        } else {
+            gen_stmt(gen, ast->u.if_.else_);
+        }
+
+        patch_jmp(gen, jmp_end);
+    } else {
+        patch_jmp(gen, jmp_false);
+        if (want_value) {
+            emit_loadnil_to(gen, dst, ast->line);
+        }
+    }
+}
+
+// ============================================================================
+// while
+// ============================================================================
+
+static void gen_while(CodeGen* gen, Ast* ast) {
+    int loop_start = gen->chunk->len;
+
+    // 压入循环上下文
+    LoopContextNode* node = (LoopContextNode*)malloc(sizeof(LoopContextNode));
+    node->prev = gen->loop_head;
+    node->ctx.break_count = 0;
+    node->ctx.continue_count = 0;
+    node->ctx.continue_target = loop_start;
+    gen->loop_head = node;
+    gen->loop_count++;
+
+    // 求值条件
+    int cond = gen_expr(gen, ast->u.while_.cond);
+    int jmp_end = emit_jmp_if_false(gen, cond, ast->line);
+    reg_free(gen, cond);
+
+    // 循环体
+    gen_stmt(gen, ast->u.while_.body);
+
+    // 回跳
+    emit_loop(gen, loop_start, ast->line);
+
+    // patch break 跳转
+    int end_pos = gen->chunk->len;
+    patch_jmp(gen, jmp_end);
+    for (int i = 0; i < node->ctx.break_count; i++) {
+        patch_jmp(gen, node->ctx.break_jumps[i]);
+    }
+
+    // 弹出循环上下文
+    gen->loop_head = node->prev;
+    free(node);
+    gen->loop_count--;
+}
+
+// ============================================================================
+// for
+// ============================================================================
+
+static void gen_for(CodeGen* gen, Ast* ast) {
+    // for 循环：start; end; step; body
+    // 寄存器式：把 start/end/step 放在固定寄存器，循环体中使用
+
+    // TODO: 完整 for 循环实现
+    // 简化版：
+    int loop_start = gen->chunk->len;
+
+    LoopContextNode* node = (LoopContextNode*)malloc(sizeof(LoopContextNode));
+    node->prev = gen->loop_head;
+    node->ctx.break_count = 0;
+    node->ctx.continue_count = 0;
+    node->ctx.continue_target = loop_start;
+    gen->loop_head = node;
+    gen->loop_count++;
+
+    // 求值 start, end, step
+    // 简化：直接生成循环体
+    if (ast->u.for_.body) {
+        gen_stmt(gen, ast->u.for_.body);
+    }
+
+    emit_loop(gen, loop_start, ast->line);
+
+    int end_pos = gen->chunk->len;
+    for (int i = 0; i < node->ctx.break_count; i++) {
+        patch_jmp(gen, node->ctx.break_jumps[i]);
+    }
+
+    gen->loop_head = node->prev;
+    free(node);
+    gen->loop_count--;
+}
+
+// ============================================================================
+// switch
+// ============================================================================
+
+static void gen_switch(CodeGen* gen, Ast* ast) {
+    // TODO: 完整 switch 实现
+    // 简化：生成默认分支
+    if (ast->u.switch_.default_body) {
+        gen_stmt(gen, ast->u.switch_.default_body);
+    }
+}
+
+// ============================================================================
+// return
+// ============================================================================
+
+static void gen_return(CodeGen* gen, Ast* ast) {
+    if (ast->u.ret) {
+        int r = gen_expr(gen, ast->u.ret);
+        emit_return(gen, r, 1, ast->line);
+        reg_free(gen, r);
+    } else {
+        int r = reg_alloc(gen);
+        emit_loadnil_to(gen, r, ast->line);
+        emit_return(gen, r, 1, ast->line);
+        reg_free(gen, r);
+    }
+}
+
+static void gen_return_multi(CodeGen* gen, Ast* ast) {
+    // 多值返回：求值每个返回值到连续寄存器
+    int count = ast->u.ret_multi.count;
+    if (count == 0) {
+        int r = reg_alloc(gen);
+        emit_loadnil_to(gen, r, ast->line);
+        emit_return(gen, r, 1, ast->line);
+        reg_free(gen, r);
+        return;
+    }
+
+    // 求值第一个返回值
+    int base = gen_expr(gen, ast->u.ret_multi.exprs[0]);
+    // 其余返回值紧随
+    for (int i = 1; i < count; i++) {
+        int r = reg_alloc(gen);
+        gen_expr_to(gen, ast->u.ret_multi.exprs[i], r);
+    }
+
+    // RETURN_MULTI: A = base, B = count_reg
+    int count_reg = reg_alloc(gen);
+    emit_loadi_to(gen, count_reg, count, ast->line);
+    emit_return_multi(gen, base, count_reg, ast->line);
+}
+
+// ============================================================================
+// var_decl
+// ============================================================================
+
+static void gen_var_decl(CodeGen* gen, Ast* ast) {
+    // 声明变量 = 分配寄存器号（由语义分析决定 sym->index）
+    // 初始化表达式求值到该寄存器
+    Symbol* sym = scope_resolve(gen->sem->current, ast->u.var_decl.name);
+    if (!sym) return;
+
+    // 寄存器号 = sym->index（参数/局部变量的固定槽位）
+    int dst = sym->index;
+    if (dst >= gen->next_reg) {
+        gen->next_reg = dst + 1;
+        if (gen->next_reg > gen->max_reg) gen->max_reg = gen->next_reg;
+    }
+
+    if (ast->u.var_decl.init) {
+        gen_expr_to(gen, ast->u.var_decl.init, dst);
+    } else {
+        emit_loadnil_to(gen, dst, ast->line);
+    }
+
+    // 如果有析构函数，添加追踪
+    if (sym->type && sym->type->kind == TYPE_STRUCT && sym->type->struct_name) {
+        codegen_add_dtor_entry(gen, dst);
+    }
+}
+
+// ============================================================================
+// assign
+// ============================================================================
+
+void gen_assign(CodeGen* gen, Ast* ast) {
+    // 简单变量赋值：a = expr
+    if (ast->u.assign.name_count == 1 && ast->u.assign.targets[0]->kind == AST_VAR) {
+        Ast* target = ast->u.assign.targets[0];
+        Symbol* sym = scope_resolve(gen->sem->current, target->u.var.name);
+        if (!sym) return;
+
+        switch (sym->kind) {
+            case SYM_LOCAL:
+            case SYM_PARAM:
+                gen_expr_to(gen, ast->u.assign.value, sym->index);
+                break;
+            case SYM_GLOBAL:
+            {
+                int r = gen_expr(gen, ast->u.assign.value);
+                emit_setglobal(gen, r, sym->index, ast->line);
+                reg_free(gen, r);
+                break;
+            }
+            default:
+                break;
+        }
+        return;
+    }
+
+    // 索引赋值：arr[i] = val
+    if (ast->u.assign.targets[0]->kind == AST_INDEX_ASSIGN) {
+        Ast* ia = ast->u.assign.targets[0];
+        int obj_reg = gen_expr(gen, ia->u.index_assign.obj);
+        int idx_reg = gen_expr(gen, ia->u.index_assign.index);
+        int val_reg = gen_expr(gen, ast->u.assign.value);
+        // INDEX_SET: R[B][R[C]] = R[A]
+        reg_encode_iABC(gen->chunk, OP_INDEX_SET, val_reg, obj_reg, idx_reg, ast->line);
+        reg_free(gen, val_reg);
+        reg_free(gen, idx_reg);
+        reg_free(gen, obj_reg);
+        return;
+    }
+
+    // 字段赋值：obj.field = val
+    if (ast->u.assign.targets[0]->kind == AST_FIELD_ACCESS) {
+        Ast* fa = ast->u.assign.targets[0];
+        int obj_reg = gen_expr(gen, fa->u.field_access.obj);
+        int val_reg = gen_expr(gen, ast->u.assign.value);
+        // SET_FIELD: R[B].field(C) = R[A]
+        reg_encode_iABC(gen->chunk, OP_SET_FIELD, val_reg, obj_reg,
+                       fa->u.field_access.field_index, ast->line);
+        reg_free(gen, val_reg);
+        reg_free(gen, obj_reg);
+        return;
+    }
+
+    // 多目标赋值
+    // TODO: 完整多目标赋值实现
+}
+
+// ============================================================================
+// compound_assign
+// ============================================================================
+
+void gen_compound_assign(CodeGen* gen, Ast* ast) {
+    // a += expr → R[dst] = R[dst] + expr
+    Symbol* sym = scope_resolve(gen->sem->current, ast->u.compound_assign.name);
+    if (!sym) return;
+
+    int dst = sym->index;
+    int r = gen_expr(gen, ast->u.compound_assign.value);
+
+    LenoTokenType op = ast->u.compound_assign.op;
+    switch (op) {
+        case TOK_PLUSEQ:  emit_add(gen, dst, dst, r, ast->line); break;
+        case TOK_MINUSEQ:  emit_sub(gen, dst, dst, r, ast->line); break;
+        case TOK_STAREQ:   emit_mul(gen, dst, dst, r, ast->line); break;
+        case TOK_SLASHEQ:  emit_div(gen, dst, dst, r, ast->line); break;
+        case TOK_MODEQ:    emit_mod(gen, dst, dst, r, ast->line); break;
+        case TOK_BITANDEQ: emit_bitand(gen, dst, dst, r, ast->line); break;
+        case TOK_BITOREQ:  emit_bitor(gen, dst, dst, r, ast->line); break;
+        case TOK_BITXOREQ: emit_bitxor(gen, dst, dst, r, ast->line); break;
+        case TOK_SHLEQ:    emit_shl(gen, dst, dst, r, ast->line); break;
+        case TOK_SHREQ:   emit_shr(gen, dst, dst, r, ast->line); break;
+        case TOK_USHREQ:   emit_ushr(gen, dst, dst, r, ast->line); break;
+        default: break;
+    }
+    reg_free(gen, r);
+}
+
+// ============================================================================
+// try-catch-finally
+// ============================================================================
+
+static void gen_try(CodeGen* gen, Ast* ast) {
+    // TRY: 设置 catch_ip
+    int try_pos = gen->chunk->len;
+    // TRY iABx: Bx = catch 偏移（占位）
+    reg_encode_iABx(gen->chunk, OP_TRY, 0, 0, ast->line);
+    int catch_patch_pos = gen->chunk->len - 2;  // Bx 字段位置
+
+    // try body
+    gen_stmt(gen, ast->u.try_.try_body);
+
+    // END_TRY
+    int jmp_end = emit_jmp(gen, ast->line);
+    reg_encode_iABC(gen->chunk, OP_END_TRY, 0, 0, 0, ast->line);
+
+    // CATCH: patch catch_ip
+    int catch_pos = gen->chunk->len;
+    gen->chunk->code[catch_patch_pos] = (uint8_t)(((catch_pos - try_pos) >> 8) & 0xFF);
+    gen->chunk->code[catch_patch_pos + 1] = (uint8_t)((catch_pos - try_pos) & 0xFF);
+
+    if (ast->u.try_.catch_var) {
+        // 分配 catch 变量寄存器
+        Symbol* sym = scope_resolve(gen->sem->current, ast->u.try_.catch_var);
+        if (sym) {
+            // CATCH iABx: R[A] = exception
+            reg_encode_iABx(gen->chunk, OP_CATCH, sym->index, 0, ast->line);
+        }
+    }
+
+    if (ast->u.try_.catch_body) {
+        gen_stmt(gen, ast->u.try_.catch_body);
+    }
+
+    patch_jmp(gen, jmp_end);
+
+    // FINALLY
+    if (ast->u.try_.finally_body) {
+        // FINALLY iABx: 设置 finally_ip
+        int fin_pos = gen->chunk->len;
+        reg_encode_iABx(gen->chunk, OP_FINALLY, 0, 0, ast->line);
+        gen_stmt(gen, ast->u.try_.finally_body);
+        // END_TRY 清除 finally
+        reg_encode_iABC(gen->chunk, OP_END_TRY, 0, 0, 0, ast->line);
+    }
+}
+
+// ============================================================================
+// throw
+// ============================================================================
+
+static void gen_throw(CodeGen* gen, Ast* ast) {
+    int r = gen_expr(gen, ast->u.throw_.expr);
+    // THROW iABC: throw R[A]
+    reg_encode_iABC(gen->chunk, OP_THROW, r, 0, 0, ast->line);
+    reg_free(gen, r);
+}
+
+// ============================================================================
+// 类型定义语句（简化实现）
+// ============================================================================
+
+static void gen_struct_def(CodeGen* gen, Ast* ast) {
+    // STRUCT_DEF iABx: Bx = struct 定义常量索引
+    // 完整实现需要序列化 struct 元数据到常量表
+    reg_encode_iABx(gen->chunk, OP_STRUCT_DEF, 0, 0, ast->line);
+
+    // 生成方法函数
+    for (int i = 0; i < ast->u.struct_def.method_count; i++) {
+        gen_func(gen, ast->u.struct_def.methods[i]);
+    }
+}
+
+static void gen_enum_def(CodeGen* gen, Ast* ast) {
+    reg_encode_iABx(gen->chunk, OP_ENUM_DEF, 0, 0, ast->line);
+}
+
+static void gen_face_def(CodeGen* gen, Ast* ast) {
+    reg_encode_iABx(gen->chunk, OP_FACE_DEF, 0, 0, ast->line);
+}
+
+static void gen_cstruct_def(CodeGen* gen, Ast* ast) {
+    reg_encode_iABx(gen->chunk, OP_CSTRUCT_DEF, 0, 0, ast->line);
+}
+
+static void gen_clib_def(CodeGen* gen, Ast* ast) {
+    // 简化：clib 定义不生成字节码
+}
+
+static void gen_cfunc_decl(CodeGen* gen, Ast* ast) {
+    // 简化：cfunc 声明不生成字节码
+}
+
+static void gen_alias(CodeGen* gen, Ast* ast) {
+    // 简化：别名不生成字节码
+}
+
+// ============================================================================
+// 解构声明
+// ============================================================================
+
+static void gen_destruct_decl(CodeGen* gen, Ast* ast) {
+    // TODO: 完整解构实现
+    // 简化：求值 init 表达式，然后逐个赋值
+    if (ast->u.destruct_decl.init) {
+        int src = gen_expr(gen, ast->u.destruct_decl.init);
+        for (int i = 0; i < ast->u.destruct_decl.slot_count; i++) {
+            Symbol* sym = scope_resolve(gen->sem->current, ast->u.destruct_decl.names[i]);
+            if (sym) {
+                // 从 src 中取第 i 个元素
+                int idx_reg = reg_alloc(gen);
+                emit_loadi_to(gen, idx_reg, i, ast->line);
+                reg_encode_iABC(gen->chunk, OP_INDEX, sym->index, src, idx_reg, ast->line);
+                reg_free(gen, idx_reg);
+            }
+        }
+        reg_free(gen, src);
+    }
+}
+
+// ============================================================================
+// import / export / use
+// ============================================================================
+
+static void gen_import(CodeGen* gen, Ast* ast) {
+    // 简化：import 不生成字节码（模块加载在 lenolang_run 中处理）
+}
+
+static void gen_export(CodeGen* gen, Ast* ast) {
+    // 导出：生成声明的代码
+    if (ast->u.export.decl) {
+        gen_stmt(gen, ast->u.export.decl);
+    }
+}
+
+static void gen_use(CodeGen* gen, Ast* ast) {
+    // use 语句不生成字节码
+}
+
+// ============================================================================
+// 模块语句生成
+// ============================================================================
+
+void gen_stmt_module(CodeGen* gen, Ast* ast) {
+    // 简化：复用 gen_stmt
+    gen_stmt(gen, ast);
+}
+
+void gen_block_module(CodeGen* gen, Ast* ast) {
+    if (!ast) return;
+    int n = ast->u.block.count;
+    for (int i = 0; i < n; i++) {
+        gen_stmt_module(gen, ast->u.block.items[i]);
+    }
+}
+
+// ============================================================================
+// 默认值生成
+// ============================================================================
+
+void gen_default_value(CodeGen* gen, Ast* default_expr) {
+    // 简化：求值默认表达式
+    gen_expr(gen, default_expr);
+}
+
+// ============================================================================
+// 数组 append（公共函数）
+// ============================================================================
+
+void gen_array_add(CodeGen* gen, Ast* receiver_ast, Ast* arg_ast, int need_result, int line) {
+    int obj_reg = gen_expr(gen, receiver_ast);
+    int val_reg = gen_expr(gen, arg_ast);
+    // ARRAY_APPEND: append R[A] to R[B], R[A] = new len
+    reg_encode_iABC(gen->chunk, OP_ARRAY_APPEND, val_reg, obj_reg, need_result, line);
+    reg_free(gen, val_reg);
+    reg_free(gen, obj_reg);
+}
+
+void gen_array_add_by_symbol(CodeGen* gen, Symbol* var_sym, Ast* arg_ast, int need_result, int line) {
+    int val_reg = gen_expr(gen, arg_ast);
+    // ARRAY_APPEND: append R[A] to R[B]
+    reg_encode_iABC(gen->chunk, OP_ARRAY_APPEND, val_reg, var_sym->index, need_result, line);
+    reg_free(gen, val_reg);
 }

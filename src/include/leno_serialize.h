@@ -87,7 +87,8 @@
 //   ⇒ .lenb / entry_*.lenb 必须整体失效重编译。
 // v2.7.1（2026-09-16）：枚举成员求值语义修正 —— 扫描器补 `not`、除零/取模零改为与解析器同结论
 //   ⇒ 修正前编译出的 .lenb / entry_*.lenb 里可能烙着错的常量值，必须整体失效重编译。
-#define LENO_BIN_VERSION    0x00020703  // v2.7.0 - 序列化不再写出 ObjFFIPointer（原始地址跨进程无效，
+#define LENO_BIN_VERSION    0x00030000  // v3.0.0 - 寄存器式字节码：定长 4 字节指令，
+                                        //   OpCode 枚举完全重写，旧 .lenb 全部失效
                                         //   读回来即悬空；owned 的还会被下个进程 free ⇒ 堆破坏）；
                                         //   空 chunk 的表示由 5×u32(20B) 改为 4×u32+u8(17B)，与
                                         //   deserialize_chunk_data 的读取逐字节对齐。
@@ -105,7 +106,7 @@
 // 模块编译缓存格式（.lenomc）—— 跨运行的模块编译产物缓存
 // ⚠ 版本号登记表：docs/待办_单一事实来源与重复实现收敛.md 第七节（与 .lenb 同源改动要一起评估）
 #define LENO_MODCACHE_MAGIC    0x434D4E4C  // "LNMC" little-endian
-#define LENO_MODCACHE_VERSION  0x0000000A  // v10 - §8.112：header 末尾追加 bin_fp(8)（运行中 exe 的
+#define LENO_MODCACHE_VERSION  0x0000000B  // v11 - 寄存器式字节码，与 LENO_BIN_VERSION v3.0.0 同步
                                            //       指纹）。模块字节码里烙着 native 方法签名 /
                                            //       模块常量 / 实例方法表 / 求值语义等**没有源文件**
                                            //       的编译期输入，只看 src_hash+dep_hash 会漏整类

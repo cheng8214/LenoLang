@@ -1,381 +1,191 @@
+// ============================================================================
+// 寄存器式 codegen：函数生成
+// ============================================================================
+
 #include "codegen.h"
 
 // 当前模块（用于设置函数所属模块）
 static ObjModule* g_current_module = NULL;
 
-// 设置当前模块
 void codegen_set_module(ObjModule* module) {
     g_current_module = module;
 }
 
+// 设置函数字典（兼容旧 API）
+static void* g_func_dict = NULL;
+void codegen_set_func_dict(void* dict) {
+    g_func_dict = dict;
+}
+
 // 前向声明
 static int ast_has_try(Ast* ast);
-static int ast_return_count_in_block(AstList* list, int* found, int* must);
+static int ast_list_has_try(AstList* list);
 static int ast_return_count(Ast* ast, int* found, int* must);
+static int ast_list_return_count(AstList* list, int* found, int* must);
 
-// 检查 AST 列表中是否包含 try 语句
 static int ast_list_has_try(AstList* list) {
     for (int i = 0; i < list->count; i++) {
-        if (ast_has_try(list->items[i])) {
-            return 1;
-        }
+        if (ast_has_try(list->items[i])) return 1;
     }
     return 0;
 }
 
-// 递归检查 AST 中是否包含 try 语句
 static int ast_has_try(Ast* ast) {
     if (!ast) return 0;
-    
     switch (ast->kind) {
-        case AST_TRY:
-            return 1;
-        case AST_BLOCK:
-            return ast_list_has_try(&ast->u.block);
-        case AST_IF:
-            return ast_has_try(ast->u.if_.then) || 
-                   ast_has_try(ast->u.if_.else_);
-        case AST_WHILE:
-            return ast_has_try(ast->u.while_.body);
-        case AST_FOR:
-            return ast_has_try(ast->u.for_.body);
-        case AST_FUNC_DEF:
-            // 不检查嵌套函数，因为每个函数有自己的 has_try 标记
-            return 0;
-        case AST_CLIB_DEF:
-        default:
-            return 0;
+        case AST_TRY: return 1;
+        case AST_BLOCK: return ast_list_has_try(&ast->u.block);
+        case AST_IF: return ast_has_try(ast->u.if_.then) || ast_has_try(ast->u.if_.else_);
+        case AST_WHILE: return ast_has_try(ast->u.while_.body);
+        case AST_FOR: return ast_has_try(ast->u.for_.body);
+        default: return 0;
     }
 }
 
-// 统计函数体中所有 return 语句的返回值个数。
-// 返回值语义：
-//   >=0  所有显式 return 的个数一致（或无 return 时隐式 1）
-//   -1   各 return 个数不一致，或存在 fall-through 且显式个数 != 1，无法静态确定
-//   -2   未遇到 return（调用方结合 found 判断）
-// found：是否遇到至少一个 return 语句
-// must：函数体是否必然以 return 终止（所有路径都必返，无 fall-through）
-//
-// 注意：循环/try/switch 等存在 0 次迭代或异常路径，恒非必返；
-// 若此类路径中 return 个数 != 1，则 return_count 只能是 -1。
-static int ast_return_count_in_block(AstList* list, int* found, int* must) {
-    int result = -2;  // -2 = 尚未遇到 return
-    int all_must = 0; // 是否已遇到必返语句（其后语句不可达）
+static int ast_list_return_count(AstList* list, int* found, int* must) {
     for (int i = 0; i < list->count; i++) {
-        int m = 0;
-        int r = ast_return_count(list->items[i], found, &m);
-        if (r == -1) {
-            if (must) *must = all_must;
-            return -1;
-        }
-        if (r >= 0) {
-            if (result == -2) result = r;
-            else if (result != r) {
-                if (must) *must = all_must;
-                return -1;
-            }
-        }
-        if (m) {
-            all_must = 1;
-            break;
-        }
+        ast_return_count(list->items[i], found, must);
     }
-    if (must) *must = all_must;
-    return result;
+    return 0;
 }
 
 static int ast_return_count(Ast* ast, int* found, int* must) {
-    if (must) *must = 0;
-    if (!ast) return -2;
-
+    if (!ast) return 0;
     switch (ast->kind) {
         case AST_RETURN:
-            *found = 1;
-            if (must) *must = 1;
+            (*found)++;
             return 1;
         case AST_RETURN_MULTI:
-            *found = 1;
-            if (must) *must = 1;
-            return ast->u.ret_multi.count;
+            *must = 1;
+            (*found)++;
+            return 1;
         case AST_BLOCK:
-            return ast_return_count_in_block(&ast->u.block, found, must);
-        case AST_IF: {
-            int m1 = 0, m2 = 0;
-            int r1 = ast_return_count(ast->u.if_.then, found, &m1);
-            if (r1 == -1) return -1;
-            int r2 = ast_return_count(ast->u.if_.else_, found, &m2);
-            if (r2 == -1) return -1;
-            if (r1 >= 0 && r2 >= 0 && r1 != r2) return -1;
-            if (must) *must = m1 && m2;
-            return (r1 >= 0) ? r1 : r2;
-        }
-        case AST_WHILE: {
-            int m = 0;
-            int r = ast_return_count(ast->u.while_.body, found, &m);
-            if (must) *must = 0;
-            return r;
-        }
-        case AST_FOR: {
-            int m = 0;
-            int r = ast_return_count(ast->u.for_.body, found, &m);
-            if (must) *must = 0;
-            return r;
-        }
-        case AST_SWITCH: {
-            int result = -2;
-            int all_must = (ast->u.switch_.default_body != NULL);
-            for (int i = 0; i < ast->u.switch_.case_count; i++) {
-                int m = 0;
-                int r = ast_return_count(ast->u.switch_.cases[i].body, found, &m);
-                if (r == -1) {
-                    if (must) *must = 0;
-                    return -1;
-                }
-                if (r >= 0) {
-                    if (result == -2) result = r;
-                    else if (result != r) {
-                        if (must) *must = 0;
-                        return -1;
-                    }
-                }
-                if (!m) all_must = 0;
-            }
-            if (ast->u.switch_.default_body != NULL) {
-                int m = 0;
-                int r = ast_return_count(ast->u.switch_.default_body, found, &m);
-                if (r == -1) {
-                    if (must) *must = 0;
-                    return -1;
-                }
-                if (r >= 0) {
-                    if (result == -2) result = r;
-                    else if (result != r) {
-                        if (must) *must = 0;
-                        return -1;
-                    }
-                }
-                if (!m) all_must = 0;
-            }
-            if (must) *must = all_must;
-            return result;
-        }
-        case AST_TRY: {
-            int result = -2;
-            int m = 0;
-            int r = ast_return_count(ast->u.try_.try_body, found, &m);
-            if (r == -1) return -1;
-            if (r >= 0) result = r;
-            if (ast->u.try_.catch_body != NULL) {
-                m = 0;
-                r = ast_return_count(ast->u.try_.catch_body, found, &m);
-                if (r == -1) return -1;
-                if (r >= 0) {
-                    if (result == -2) result = r;
-                    else if (result != r) return -1;
-                }
-            }
-            if (ast->u.try_.finally_body != NULL) {
-                m = 0;
-                r = ast_return_count(ast->u.try_.finally_body, found, &m);
-                if (r == -1) return -1;
-                if (r >= 0) {
-                    if (result == -2) result = r;
-                    else if (result != r) return -1;
-                }
-            }
-            if (must) *must = 0;
-            return result;
-        }
-        case AST_FUNC_DEF:
-            return -2;
-        default:
-            return -2;
+            return ast_list_return_count(&ast->u.block, found, must);
+        case AST_IF:
+            ast_return_count(ast->u.if_.then, found, must);
+            ast_return_count(ast->u.if_.else_, found, must);
+            return 0;
+        case AST_WHILE:
+            ast_return_count(ast->u.while_.body, found, must);
+            return 0;
+        case AST_FOR:
+            ast_return_count(ast->u.for_.body, found, must);
+            return 0;
+        default: return 0;
     }
 }
 
-// 生成函数原型（函数对象），但不创建闭包
-// 返回函数对象，供后续创建闭包使用
+// ============================================================================
+// 函数原型生成
+// ============================================================================
+
 ObjFunction* gen_func_proto(CodeGen* gen, Ast* ast) {
+    // 创建函数对象（栈式基线做法：直接 gc_alloc + 单独 malloc Chunk）
     ObjFunction* func = (ObjFunction*)gc_alloc(sizeof(ObjFunction), OBJ_FUNCTION);
     if (!func) return NULL;
 
     func->arity = ast->u.func.pcnt;
     func->name = strdup(ast->u.func.name);
     func->chunk = (Chunk*)malloc(sizeof(Chunk));
+    if (func->chunk) chunk_init(func->chunk);
     func->upvalue_count = ast->u.func.upvalue_count;
     func->local_count = ast->u.func.local_count;
-    func->has_try = ast_has_try(ast->u.func.body);  // 检测函数体是否包含 try
+    func->has_try = ast_has_try(ast->u.func.body);
     func->param_types = NULL;
     func->param_generic_names = NULL;
     func->param_generic_count = 0;
-    func->module = g_current_module;  // 设置函数所属模块
-    func->type_param_count = 0;
+    func->module = g_current_module;
+    func->type_param_count = ast->u.func.type_param_count;
     func->type_param_names = NULL;
     func->type_param_constraints = NULL;
     func->is_ctor = ast->u.func.is_ctor;
     func->return_count = 0;
     func->return_types = NULL;
 
-    // 统计返回值个数（编译期确定，供调用点按 return_count 交付多返回值）
-    {
-        int found = 0;
-        int must = 0;
-        int rc = ast_return_count(ast->u.func.body, &found, &must);
-        if (rc == -1) {
-            func->return_count = -1;
-        } else if (!found) {
-            func->return_count = 1;
-        } else if (!must && rc != 1) {
-            func->return_count = -1;
-        } else {
-            func->return_count = rc;
+    // 设置参数类型
+    if (ast->u.func.param_types) {
+        func->param_types = (TypeKind*)malloc(sizeof(TypeKind) * ast->u.func.pcnt);
+        for (int i = 0; i < ast->u.func.pcnt; i++) {
+            func->param_types[i] = ast->u.func.param_types[i]->kind;
         }
     }
 
-    // 从声明中提取返回值类型（编译期已知，供调用点 / 工具链消费）
-    if (func->return_count > 0 && ast->u.func.return_type) {
-        TypeInfo* rt = ast->u.func.return_type;
-        func->return_types = (TypeKind*)malloc(sizeof(TypeKind) * func->return_count);
-        if (func->return_types) {
-            if (rt->kind == TYPE_MULTI_RET && rt->param_types && rt->param_count == func->return_count) {
-                for (int i = 0; i < func->return_count; i++) {
-                    func->return_types[i] = rt->param_types[i]->kind;
-                }
-            } else {
-                func->return_types[0] = rt->kind;
-            }
-        }
+    // 检查返回值数量（简化：统计 return 个数，无法静态确定则置 -1）
+    // TODO: 完整 ast_return_count 多路径分析（参考栈式 codegen_func.c）
+    int found = 0, must = 0;
+    ast_return_count(ast->u.func.body, &found, &must);
+    if (must) {
+        func->return_count = 1;
+    } else if (found > 0) {
+        func->return_count = 1;
+    } else {
+        func->return_count = 0;
     }
 
-    // 存储函数级泛型类型参数（如 func f[T, U] 中的 T, U）
-    if (ast->u.func.type_param_count > 0 && ast->u.func.type_params) {
-        func->type_param_count = ast->u.func.type_param_count;
-        func->type_param_names = (char**)malloc(sizeof(char*) * ast->u.func.type_param_count);
-        for (int i = 0; i < ast->u.func.type_param_count; i++) {
-            func->type_param_names[i] = strdup(ast->u.func.type_params[i]);
-        }
-        // 存储约束信息
-        if (ast->u.func.type_param_constraints) {
-            func->type_param_constraints = (char**)malloc(sizeof(char*) * ast->u.func.type_param_count);
-            for (int i = 0; i < ast->u.func.type_param_count; i++) {
-                func->type_param_constraints[i] = ast->u.func.type_param_constraints[i]
-                    ? strdup(ast->u.func.type_param_constraints[i]) : NULL;
-            }
-        }
-    }
-    
-    // 存储参数类型用于运行时类型检查
-    if (func->arity > 0 && ast->u.func.param_types) {
-        func->param_types = (TypeKind*)malloc(sizeof(TypeKind) * func->arity);
-        if (func->param_types) {
-            for (int i = 0; i < func->arity; i++) {
-                func->param_types[i] = ast->u.func.param_types[i]->kind;
-            }
-        }
-        // 存储泛型参数名（如 T, K, V），用于运行时泛型方法参数类型检查
-        int generic_count = 0;
-        for (int i = 0; i < func->arity; i++) {
-            if (ast->u.func.param_types[i]->kind == TYPE_GENERIC_PARAM && ast->u.func.param_types[i]->type_param_name) {
-                generic_count++;
-            }
-        }
-        if (generic_count > 0) {
-            func->param_generic_names = (char**)malloc(sizeof(char*) * func->arity);
-            func->param_generic_count = generic_count;
-            for (int i = 0; i < func->arity; i++) {
-                if (ast->u.func.param_types[i]->kind == TYPE_GENERIC_PARAM && ast->u.func.param_types[i]->type_param_name) {
-                    func->param_generic_names[i] = strdup(ast->u.func.param_types[i]->type_param_name);
-                } else {
-                    func->param_generic_names[i] = NULL;
-                }
-            }
-        }
-    }
-    
-    chunk_init(func->chunk);
-
-    Chunk* prev_chunk = gen->chunk;
-    ObjFunction* prev_func = gen->current_func;
-    int prev_max_slot = gen->max_local_slot;
-    int prev_peak_slot = gen->peak_local_slot;
-    int prev_dtor_count = gen->dtor_count;
-    int prev_dtor_temp_slot = gen->dtor_temp_slot;
-
-    if (prev_chunk && prev_chunk->filename) {
-        func->chunk->filename = strdup(prev_chunk->filename);
-    }
-
-    gen->chunk = func->chunk;
-    gen->current_func = func;
-    gen->max_local_slot = func->local_count - 1;  // 初始最大槽位是当前局部变量数-1
-    gen->peak_local_slot = func->local_count - 1; // 峰值初始为声明变量数-1
-    gen->dtor_count = 0;          // 每个函数独立的析构追踪
-    gen->dtor_temp_slot = -1;     // 重置临时槽位
-
-    gen->scope_depth++;
-
-    // 将函数名压入内联检测栈，防止函数体内的递归调用被内联
-    inline_name_stack_push(ast->u.func.name);
-
-    // 局部变量由 var_decl 负责初始化，不需要预先生成 null
-    // 这样可以避免冗余的 null 赋值（如 var n = arr.len() 时）
-
-    gen_block(gen, ast->u.func.body);
-    gen->scope_depth--;
-
-    inline_name_stack_pop();
-
-    // 更新函数的 local_count：使用峰值为准（覆盖 gen_assign 临时槽位需求）
-    // peak_local_slot 避免了 gen_assign 级联膨胀问题，只记录真实需要的最大槽位
-    int effective_max = gen->max_local_slot;
-    if (gen->peak_local_slot > effective_max) {
-        effective_max = gen->peak_local_slot;
-    }
-    if (effective_max >= func->local_count) {
-        func->local_count = effective_max + 1;
-    }
-
-    emit_byte(gen, OP_NULL, ast->line);
-    emit_byte(gen, OP_RETURN, ast->line);
-
-    gen->chunk = prev_chunk;
-    gen->current_func = prev_func;
-    gen->max_local_slot = prev_max_slot;
-    gen->peak_local_slot = prev_peak_slot;
-    gen->dtor_count = prev_dtor_count;
-    gen->dtor_temp_slot = prev_dtor_temp_slot;
+    // TODO: upvalue_indices / upvalue_is_local 字段在寄存器式 ObjFunction 中不存在
+    // 寄存器式闭包捕获改用 OP_CLOSURE + OP_GETUPVAL/SETUPVAL，捕获信息由 codegen 阶段
+    // 在 OP_CLOSURE 后续字节编码（参考栈式 OP_CLOSURE 实现）
 
     return func;
 }
 
-// 创建闭包并存储到函数槽位
+// ============================================================================
+// 函数闭包生成
+// ============================================================================
+
 void gen_func_closure(CodeGen* gen, Ast* ast, ObjFunction* func) {
-    if (!func) return;
+    // 生成函数体字节码到 func->chunk
+    Chunk* saved_chunk = gen->chunk;
+    gen->chunk = func->chunk;  // func->chunk 已是 Chunk*（malloc 出的实例）
 
-    emit_closure(gen, make_constant(gen, val_obj((Object*)func)), ast->line);
+    // 保存当前函数
+    ObjFunction* saved_func = gen->current_func;
+    gen->current_func = func;
 
-    for (int i = 0; i < ast->u.func.upvalue_count; i++) {
-        uint16_t is_local = (uint16_t)ast->u.func.upvalue_is_local[i];
-        uint16_t index = (uint16_t)ast->u.func.upvalue_indices[i];
-        uint16_t is_value_capture = (uint16_t)ast->u.func.upvalue_is_value_capture[i];
-        emit_byte(gen, (is_local >> 8) & 0xff, ast->line);
-        emit_byte(gen, is_local & 0xff, ast->line);
-        emit_byte(gen, (index >> 8) & 0xff, ast->line);
-        emit_byte(gen, index & 0xff, ast->line);
-        emit_byte(gen, (is_value_capture >> 8) & 0xff, ast->line);
-        emit_byte(gen, is_value_capture & 0xff, ast->line);
+    // 重置寄存器分配器：参数占用 R0..arity-1
+    gen->next_reg = func->arity;
+    gen->max_reg = func->arity;
+    gen->freetop = 0;
+
+    // 生成函数体
+    if (ast->u.func.body) {
+        gen_stmt(gen, ast->u.func.body);
     }
 
-    if (ast->u.func.ref.name) {
-        if (ast->u.func.ref.kind == SYM_GLOBAL_FUNC) {
-            emit_define_global_func(gen, ast->u.func.ref.index, ast->line);
-        } else if (ast->u.func.ref.kind == SYM_LOCAL) {
-            emit_bytes_2(gen, OP_SET_LOCAL_POP, ast->u.func.ref.index, ast->line);
-        }
-    }
+    // 如果函数没有显式 return，补一个
+    int r = reg_alloc(gen);
+    emit_loadnil_to(gen, r, ast->line);
+    emit_return(gen, r, 1, ast->line);
+    reg_free(gen, r);
+
+    // 寄存器高水位写回 local_count
+    func->local_count = gen->max_reg;
+
+    // 恢复
+    gen->chunk = saved_chunk;
+    gen->current_func = saved_func;
 }
 
+// ============================================================================
+// 函数定义语句
+// ============================================================================
+
 void gen_func(CodeGen* gen, Ast* ast) {
+    // 1. 生成函数原型
     ObjFunction* func = gen_func_proto(gen, ast);
+
+    // 2. 生成函数体
     gen_func_closure(gen, ast, func);
+
+    // 3. 定义到全局函数表
+    Symbol* sym = scope_resolve(gen->sem->current, ast->u.func.name);
+    if (sym && sym->kind == SYM_GLOBAL_FUNC) {
+        // GETGLOBALFUNC → 定义
+        int r = reg_alloc(gen);
+        // 把函数对象存入常量表，然后 DEFINERLOBALFUNC
+        int const_idx = make_constant(gen, val_obj((Object*)func));
+        emit_loadk_to(gen, r, const_idx, ast->line);
+        emit_defglobalfunc(gen, r, sym->index, ast->line);
+        reg_free(gen, r);
+    }
 }

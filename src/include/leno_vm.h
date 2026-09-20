@@ -7,216 +7,275 @@
 #include "platform_thread.h"
 
 // ============================================================================
-// 字节码操作码
+// 寄存器式字节码操作码（定长 4 字节，Lua 5.x 风格编码）
+// ============================================================================
+// 编码形态：
+//   iABC  : op8 A8 B8 C8        — 三寄存器运算，A = 目标寄存器
+//   iABx  : op8 A8 Bx16        — 寄存器 + 常量/全局/upvalue 索引
+//   iAsBx : op8 A8 sBx16       — 寄存器 + 有符号立即数
+//   iAsJ  : op8 + sJ24         — 跳转（24 位有符号偏移，以字节为单位）
+//
+// 寄存器文件 = CallFrame.locals：
+//   R0..arity-1 = 参数，声明变量紧随，临时寄存器往后
+//   不再使用 vm.stack 做表达式求值
 // ============================================================================
 
 typedef enum {
-    OP_CONST,
-    OP_NULL,
-    OP_TRUE,
-    OP_FALSE,
-    OP_ZERO,    // 压入 0
-    OP_ONE,     // 压入 1
-    OP_POP,
-    OP_DUP,
-    OP_GET_LOCAL,
-    OP_SET_LOCAL,
-    OP_SET_LOCAL_POP,   // 设置局部变量并弹出栈顶（合并 OP_SET_LOCAL + OP_POP）
-    OP_MOVE_LOCAL,      // 局部变量间直接复制：src→dst，并压栈（合并 OP_GET_LOCAL + OP_SET_LOCAL）
-    OP_GET_GLOBAL,
-    OP_SET_GLOBAL,
-    OP_GET_UPVALUE,
-    OP_SET_UPVALUE,
-    OP_CLOSE_UPVALUE,
-    OP_DEFINE_GLOBAL,
-    OP_GET_GLOBAL_FUNC,
-    OP_DEFINE_GLOBAL_FUNC,
-    OP_GET_NATIVE,
-    OP_ADD,
-    OP_SUB,
-    OP_MUL,
-    OP_DIV,
-    OP_MOD,     // 取模
-    OP_BITAND,  // 按位与
-    OP_BITOR,   // 按位或
-    OP_BITXOR,  // 按位异或
-    OP_BITNOT,  // 按位非
-    OP_SHL,     // 左移
-    OP_SHR,     // 右移（算术右移）
-    OP_USHR,    // 逻辑右移（无符号右移 >>>）
-    OP_NEG,
-    OP_NOT,
-    OP_CAST_FLOAT,  // 将 int 转换为 float
-    OP_CAST_INT,    // 将 float 转换为 int（截断）
-    OP_CAST_STRING, // 将值转换为 string（null 转为空字符串）
-    OP_SET_PTR_ELEM_TYPE, // 设置栈顶 FFI 指针的 element_type（Ptr[T] 声明时使用）
-    OP_SET_DECLARED_FACE, // 设置栈顶 struct 实例的 declared_face（face 类型变量声明时使用）
-    OP_INC,  // ++ (栈顶值)
-    OP_DEC,  // -- (栈顶值)
-    OP_INC_LOCAL,  // 局部变量++，返回旧值
-    OP_DEC_LOCAL,  // 局部变量--，返回旧值
-    OP_PRE_INC_LOCAL,  // 局部变量++，返回新值
-    OP_PRE_DEC_LOCAL,  // 局部变量--，返回新值
-    OP_EQ,
-    OP_NEQ,
-    OP_IS_NULL,        // 检查栈顶是否为 null：弹出值，压入 bool（修复 float 0.0 == null 的 VM bug）
-    OP_LT,
-    OP_GT,
-    OP_LE,
-    OP_GE,
-    OP_IN,             // in 操作符：检查成员是否存在
-    OP_RANGE,          // 范围对象：创建 Range
-    OP_JUMP,            // 4字节偏移跳转
-    OP_JUMP_IF_FALSE,   // 4字节偏移条件跳转
-    OP_JUMP_IF_TRUE,    // 4字节偏移条件跳转
-    OP_LOOP,            // 4字节偏移循环跳转
-    OP_CALL,
-    OP_TAIL_CALL,   // 尾调用优化：复用当前调用帧
-    OP_CLOSURE,
-    OP_RETURN,
-    OP_RETURN_MULTI,  // 多值返回: count(1)
-    OP_ARRAY,
-    OP_ARRAY_GET,
-    OP_ARRAY_SET,
-    OP_ARRAY_APPEND,        // 数组追加元素（压入新长度，表达式用）
-    OP_ARRAY_APPEND_NOPUSH, // 数组追加元素（不压栈，语句用）
-    OP_DICT,
-    OP_DICT_GET,
-    OP_DICT_SET,
-    OP_DICT_GET_KEY,   // 按索引获取字典键（用于for循环迭代）
-    OP_LOAD_NATIVE_MODULE, // 加载原生模块（import 时执行，运行时调用 native_init_module）
-    OP_MODULE_CALL,    // 模块方法调用
-    OP_GET_MODULE_CONST, // 获取原生模块常量
-    OP_STRING_ADD,     // 字符串拼接（自动转换类型）
-    OP_INDEX,          // 通用索引访问（数组或字典）
-    OP_INDEX_SET,      // 通用索引赋值（数组或字典）
-    OP_SLICE,          // 数组切片：arr[start:end]
-    OP_LENGTH,         // 获取长度（字符串、数组、字典）
-    OP_ITER_GET,       // 迭代获取元素（运行时检测类型：字符串/数组用索引，字典用键）
-    OP_ITER_GET_VALUE, // 迭代获取值（用于字典遍历时获取值）
-    OP_TRY,            // 开始 try 块
-    OP_CATCH,          // 开始 catch 块
-    OP_FINALLY,        // 开始 finally 块
-    OP_END_TRY,        // 结束 try-catch-finally
-    OP_THROW,          // 抛出异常
-    OP_GET_MODULE_VAR, // 获取模块变量
-    OP_SET_MODULE_VAR, // 设置模块变量
-    OP_GET_MODULE_FUNC,// 获取模块函数
-    OP_DEFINE_MODULE_FUNC,// 定义模块函数
-    OP_GET_PROPERTY,   // 获取属性或实例方法
-    OP_TYPE_CHECK,     // 类型守卫：检查栈顶值是否是指定类型，类型由操作数指定
-    OP_AS_CAST,        // 安全类型转换：匹配则保留原值，不匹配则返回 null
-    OP_FOR_PREP,       // For循环准备
-    OP_FOR_LOOP,       // For循环迭代
-    // 类型特化指令（用于编译器已知操作数类型时的优化，int运算溢出时自动提升为bigint）
-    OP_ADD_INT,        // int + int（快速路径，溢出时自动转为bigint）
-    OP_SUB_INT,        // int - int（快速路径，溢出时自动转为bigint）
-    OP_MUL_INT,        // int * int（快速路径，溢出时自动转为bigint）
-    OP_DIV_INT,        // int / int -> float（快速路径，无类型检查）
-    OP_MOD_INT,        // int % int（快速路径，无类型检查）
-    OP_ADD_FLOAT,      // float + float（快速路径，无类型检查）
-    OP_SUB_FLOAT,      // float - float（快速路径，无类型检查）
-    OP_MUL_FLOAT,      // float * float（快速路径，无类型检查）
-    OP_DIV_FLOAT,      // float / float（快速路径，无类型检查）
-    OP_NEG_INT,        // -int（快速路径，溢出时自动转为bigint）
-    OP_NEG_FLOAT,      // -float（快速路径，无类型检查）
-    OP_EQ_INT,         // int == int（快速路径，无类型检查）
-    OP_LT_INT,         // int < int（快速路径，无类型检查）
-    OP_GT_INT,         // int > int（快速路径，无类型检查）
-    OP_LE_INT,         // int <= int（快速路径，无类型检查）
-    OP_GE_INT,         // int >= int（快速路径，无类型检查）
-    OP_EQ_FLOAT,       // float == float（快速路径，无类型检查）
-    OP_LT_FLOAT,       // float < float（快速路径，无类型检查）
-    OP_GT_FLOAT,       // float > float（快速路径，无类型检查）
-    OP_LE_FLOAT,       // float <= float（快速路径，无类型检查）
-    OP_GE_FLOAT,       // float >= float（快速路径，无类型检查）
-    // 立即数操作码（避免加载小常量开销，立即数范围为 -128 到 127）
-    OP_ADD_INT_IMM,    // int + imm（立即数加法）
-    OP_SUB_INT_IMM,    // int - imm（立即数减法）
-    OP_MUL_INT_IMM,    // int * imm（立即数乘法）
-    OP_LT_INT_IMM,     // int < imm（立即数小于）
-    OP_GT_INT_IMM,     // int > imm（立即数大于）
-    OP_LE_INT_IMM,     // int <= imm（立即数小于等于）
-    OP_GE_INT_IMM,     // int >= imm（立即数大于等于）
-    OP_EQ_INT_IMM,     // int == imm（立即数等于）
-    OP_SHL_IMM,        // int << imm（立即数左移）
-    OP_SHR_IMM,        // int >> imm（立即数算术右移）
-    OP_USHR_IMM,       // int >>> imm（立即数逻辑右移）
-    // struct 相关指令
-    OP_STRUCT_DEF,     // 定义结构体
-    OP_STRUCT_INIT,    // 创建结构体实例
-    OP_GET_FIELD,      // 获取结构体字段
-    OP_SET_FIELD,      // 设置结构体字段
-    OP_GET_FIELD_ADDR, // 获取 cstruct 字段地址（返回 ObjFFIPointer）
-    OP_GET_METHOD,     // 获取结构体方法（从struct方法表）
-    // enum 相关指令
-    OP_ENUM_DEF,       // 定义枚举
-    OP_FACE_DEF,       // 定义接口
-    // cstruct 相关指令
-    OP_CSTRUCT_DEF,    // 定义 C 布局结构体
-    OP_GET_CSTRUCT_DEF,// 获取 C 布局结构体定义
-    // 协程相关指令
-    OP_AWAIT,          // 等待 Future 完成，暂停当前协程
-    OP_ASYNC_CALL,     // 调用 async 函数，创建新协程并返回 Future
-    // 模块初始化指令（运行时执行 .leno 模块的初始化字节码）
-    OP_INIT_LENOMODULE, // 初始化 .leno 模块（延迟执行 init_chunk）
-    // clib 调用指令（栈上: lib, func_name, args... -> 结果）
-    OP_CLIB_CALL,       // 调用 C 库函数（通过 FFI）
-    OP_CFUNC_CALLBACK,  // 创建 cfunc 回调（编译期签名，无需字符串）
-    // 原生函数调用合并指令（省掉 OP_GET_NATIVE + OP_CALL/TAIL_CALL 配对）
-    OP_CALL_NATIVE,      // 直接调用原生函数: name_const(2) arg_count(2)
-    OP_TAIL_CALL_NATIVE, // 尾调用原生函数: name_const(2) arg_count(2)
-    // C 布局类型转换指令
-    OP_U8_TO_F64,        // u8 → f64（0-255 无符号整数转双精度浮点）
-    // 泛型函数调用类型参数传递
-    OP_PUSH_TYPE_ARGS,   // 将泛型类型参数推入 VM 待处理区: count(1) [const(2)]...
-    // 析构函数调用
-    OP_DTOR_LOCAL,       // 对局部变量调用析构函数: slot(2)
-    // 全局函数调用合并指令（省掉 OP_GET_GLOBAL_FUNC + OP_CALL 配对）
-    OP_CALL_GLOBAL_FUNC, // 直接调用全局函数: func_slot(2) arg_count(2)
-    // 全局函数调用（类型已确认版）：编译期确认所有实参类型与形参精确匹配，
-    // 运行时跳过 call() 中的 param_types 类型转换循环
-    OP_CALL_GLOBAL_FUNC_TYPED, // 同 OP_CALL_GLOBAL_FUNC 格式，但调用 call_no_type_check()
-    // NOPUSH 变体（语句上下文，省掉 OP_POP 分发开销）
-    OP_INC_LOCAL_NOPUSH,   // 局部变量++，不压栈（i++ 语句用）
-    OP_DEC_LOCAL_NOPUSH,   // 局部变量--，不压栈（i-- 语句用）
-    OP_MOVE_LOCAL_POP,     // 局部变量间复制：src→dst，不压栈（a=b 语句用）
-    OP_INDEX_SET_NOPUSH,   // 通用索引赋值，不压栈（arr[i]=v 语句用）
-    OP_CLEAR_LOCAL_RANGE,  // 清零局部变量范围 [base, base+count)，用于内联清理
-    OP_SWITCH_LOOKUP,      // 整数 switch 二分查找：const_idx(2) count(2) default_off(4) [offset(4)]...
-    // 融合指令：常量直接写入局部变量（合并 OP_CONST + OP_SET_LOCAL_POP）
-    OP_SET_LOCAL_CONST,   // 从常量表取值直接写入 local: const_idx(2) local_slot(2)
-    // 融合指令：对象多字段累加（合并多个 GET_LOCAL + GET_FIELD + ADD_FLOAT）
-    OP_ACC_FIELDS,        // 弹出对象，读取 N 个字段累加，压入结果: count(1) field_idx_0(1)...field_idx_N-1(1)
-    // 融合指令：两个 local int 比较 + 条件跳转（合并 GET_LOCAL + GET_LOCAL + CMP + JUMP_IF_FALSE + POP）
-    // 操作数: cmp_op(1) slot_a(2) slot_b(2) offset(4)，比较结果为 false 时跳转，完全不碰栈
-    OP_CMPJMP_LL_INT,
-    // 融合指令：local int 与 global int 比较 + 条件跳转
-    // 操作数: cmp_op(1) slot(2) global_idx(2) offset(4)
-    OP_CMPJMP_LG_INT,
-    // 融合指令：从 local 变量读 struct 对象 + 直接取字段值压栈
-    // 合并 GET_LOCAL + GET_FIELD，跳过栈弹出/类型检查/冗余边界检查
-    // 操作数: local_slot(2) field_idx(1)
-    // 仅由 codegen 在编译期确认对象是 struct 且字段索引有效时发射
-    OP_GET_FIELD_FAST,
-    // struct 方法调用融合指令（省掉 receiver 二次求值 + OP_GET_METHOD 分发开销）。
-    // 带**编译期静态类型**：编码接收者的静态 struct 类型名常量索引，使「接收者类型」
-    // 在编译期即可确定：
-    //   操作数: name_const(2) arg_count(2) struct_type_name_const(2)  —— 共 7 字节
-    // 分工：类型名是**为将来做编译期去虚拟化 / 方法内联预留**的（不再依赖「方法名在
-    // 所有 def 中唯一」这种推断，因此 init/update/clone 这类同名方法也能内联）；
-    // **现在 VM 侧**仍按运行时实际类型分发 —— 语义参考实现保持唯一，类型名只读掉不使用。
-    // codegen 只在静态类型名可解析时发射本指令；解析不出来即编译期报错，
-    // 不存在任何「退回运行时分发」的形态。
-    OP_INVOKE_METHOD_TYPED,
-    // 融合指令：local int 与**立即数**比较 + 条件跳转（补上 LL/LG 缺的那一格）
-    // 合并 GET_LOCAL + CONST + CMP + JUMP_IF_FALSE + POP
-    // 操作数: cmp_op(1) slot(2) imm32(4) offset(4) —— 共 12 字节
-    // 比较结果为 false 时跳转（与 JUMP_IF_FALSE 一致），完全不碰栈。
-    // 立即数限制在 int32 内（超出则 codegen 退回非融合路径）。
-    // **追加在枚举末尾**：既有 opcode 的编号全部不变。
-    OP_CMPJMP_LI_INT,
+    // --- 空操作 / 杂项 ---
+    OP_NOP,             // iABC  空操作
+
+    // --- 装载 / 移动 ---
+    OP_LOADK,           // iABx  R[A] = K[Bx]            常量表
+    OP_LOADI,           // iAsBx R[A] = sBx              整数立即数
+    OP_LOADF,           // iAsBx R[A] = (double)sBx      浮点立即数
+    OP_LOADNIL,         // iABC  R[A] = null
+    OP_LOADTRUE,        // iABC  R[A] = true
+    OP_LOADFALSE,       // iABC  R[A] = false
+    OP_MOV,             // iABC  R[A] = R[B]
+
+    // --- 全局变量 ---
+    OP_GETGLOBAL,       // iABx  R[A] = globals[Bx]
+    OP_SETGLOBAL,       // iABx  globals[Bx] = R[A]
+    OP_DEFGLOBAL,       // iABx  globals[Bx] = R[A]（定义）
+    OP_GETGLOBALFUNC,   // iABx  R[A] = global_funcs[Bx]
+    OP_DEFGLOBALFUNC,   // iABx  global_funcs[Bx] = R[A]
+
+    // --- upvalue / 闭包 ---
+    OP_GETUPVAL,        // iABx  R[A] = upvalues[Bx]
+    OP_SETUPVAL,        // iABx  upvalues[Bx] = R[A]
+    OP_CLOSE,           // iABx  关闭 R[A..A+Bx-1] 的 upvalue
+    OP_CLOSURE,         // iABx  R[A] = closure(func_const[Bx])
+
+    // --- 算术运算（通用） ---
+    OP_ADD,             // iABC  R[A] = R[B] + R[C]
+    OP_SUB,             // iABC  R[A] = R[B] - R[C]
+    OP_MUL,             // iABC  R[A] = R[B] * R[C]
+    OP_DIV,             // iABC  R[A] = R[B] / R[C]
+    OP_MOD,             // iABC  R[A] = R[B] % R[C]
+    OP_NEG,             // iABC  R[A] = -R[B]            一元取负
+    OP_NOT,             // iABC  R[A] = !R[B]            逻辑取反
+
+    // --- 算术运算 int 特化（溢出自动提升 bigint） ---
+    OP_ADD_INT,         // iABC  R[A] = R[B] + R[C] (int 快速路径)
+    OP_SUB_INT,         // iABC
+    OP_MUL_INT,         // iABC
+    OP_NEG_INT,         // iABC  R[A] = -R[B] (int 快速路径)
+
+    // --- 算术运算 float 特化 ---
+    OP_ADD_F,           // iABC  float 快速路径
+    OP_SUB_F,           // iABC
+    OP_MUL_F,           // iABC
+    OP_DIV_F,           // iABC
+    OP_NEG_F,           // iABC
+
+    // --- 比较运算（结果为 bool） ---
+    OP_EQ,              // iABC  R[A] = (R[B] == R[C])
+    OP_LT,              // iABC  R[A] = (R[B] <  R[C])
+    OP_GT,              // iABC  R[A] = (R[B] >  R[C])
+    OP_LE,              // iABC  R[A] = (R[B] <= R[C])
+    OP_GE,              // iABC  R[A] = (R[B] >= R[C])
+    OP_NEQ,             // iABC  R[A] = (R[B] != R[C])
+
+    // --- 比较 int 特化 ---
+    OP_LT_INT,          // iABC
+    OP_GT_INT,          // iABC
+    OP_LE_INT,          // iABC
+    OP_GE_INT,          // iABC
+    OP_EQ_INT,          // iABC
+
+    // --- 位运算 ---
+    OP_BITAND,          // iABC  R[A] = R[B] & R[C]
+    OP_BITOR,           // iABC  R[A] = R[B] | R[C]
+    OP_BITXOR,          // iABC  R[A] = R[B] ^ R[C]
+    OP_BITNOT,          // iABC  R[A] = ~R[B]
+    OP_SHL,             // iABC  R[A] = R[B] << R[C]
+    OP_SHR,             // iABC  R[A] = R[B] >> R[C]（算术右移）
+    OP_USHR,            // iABC  R[A] = R[B] >>> R[C]（逻辑右移）
+
+    // --- 类型转换 ---
+    OP_CAST_FLOAT,      // iABC  R[A] = (float)R[B]
+    OP_CAST_INT,        // iABC  R[A] = (int)R[B]
+    OP_CAST_STRING,     // iABC  R[A] = (string)R[B]
+    OP_IS_NULL,         // iABC  R[A] = (R[B] == null)
+
+    // --- 字符串拼接 ---
+    OP_STRCAT,          // iABC  R[A] = str(R[B]) .. str(R[C])
+
+    // --- 跳转 ---
+    OP_JMP,             // iAsJ  pc += sJ
+    OP_JMP_IF_FALSE,    // iAsBx if !R[A] then pc += sBx
+    OP_JMP_IF_TRUE,     // iAsBx if R[A] then pc += sBx
+    OP_TEST,            // iABC  if !(R[B] op C) then pc++  (C=0:not, C=1:is)
+
+    // --- 自增自减 ---
+    OP_INC,             // iABC  R[A] = R[B] + 1
+    OP_DEC,             // iABC  R[A] = R[B] - 1
+
+    // --- 调用 / 返回 ---
+    // OP_CALL: R[A] = callee, R[A+1..A+B-1] = 实参, B = nargs+1, C = nresults+1
+    OP_CALL,            // iABC
+    // OP_CALL_NATIVE: R[A] = 结果, Bx = 常量表中函数名索引, C 通过 EXTRAARG 编码（或固定）
+    // 简化：CALL_NATIVE 用 iABC，A=结果寄存器，B=函数名常量索引(低8位)，C=nargs
+    OP_CALL_NATIVE,     // iABC  R[A] = native(K[B>>0])(R[A+1..A+C-1])
+    // OP_RETURN: 返回 R[A..A+B-2], B = nresults+1
+    OP_RETURN,          // iABC
+    OP_RETURN_MULTI,    // iABC  B = 存放个数的寄存器
+    OP_TAIL_CALL,       // iABC  尾调用：复用当前帧
+
+    // --- 数组 ---
+    OP_NEWARRAY,        // iABC  R[A] = new array(R[A+1..A+C-1]), C = count
+    OP_ARRAY_GET,       // iABC  R[A] = R[B][R[C]]
+    OP_ARRAY_SET,       // iABC  R[B][R[C]] = R[A]
+    OP_ARRAY_APPEND,    // iABC  append R[A] to R[B], R[A] = new len（表达式用）
+    OP_LEN,             // iABC  R[A] = len(R[B])
+
+    // --- 字典 ---
+    OP_NEWDICT,         // iABC  R[A] = new dict, C = 初始容量
+    OP_DICT_GET,        // iABC  R[A] = R[B][R[C]]
+    OP_DICT_SET,        // iABC  R[B][R[C]] = R[A]
+    OP_DICT_GET_KEY,    // iABC  R[A] = key(R[B], R[C])  for 迭代
+
+    // --- 通用索引 ---
+    OP_INDEX,           // iABC  R[A] = R[B][R[C]]（数组或字典）
+    OP_INDEX_SET,       // iABC  R[B][R[C]] = R[A]
+    OP_SLICE,           // iABC  R[A] = R[B][R[A+1]:R[A+2]]  切片
+
+    // --- 迭代 ---
+    OP_ITER_GET,        // iABC  R[A] = iterate(R[B], R[C])
+    OP_ITER_GET_VALUE,  // iABC  R[A] = iterate_value(R[B], R[C])
+
+    // --- 范围 ---
+    OP_RANGE,           // iABC  R[A] = Range(R[B], R[C])
+
+    // --- in 操作符 ---
+    OP_IN,              // iABC  R[A] = (R[B] in R[C])
+
+    // --- 异常处理 ---
+    OP_TRY,             // iABx  设置 catch_ip = chunk->code + Bx
+    OP_CATCH,           // iABx  清除 catch_ip，设置异常变量 R[A]
+    OP_FINALLY,         // iABx  设置 finally_ip
+    OP_END_TRY,         // iABC  清除 try 上下文
+    OP_THROW,           // iABC  throw R[A]
+
+    // --- 模块 ---
+    OP_LOAD_NATIVE_MODULE, // iABx  加载原生模块
+    OP_MODULE_CALL,     // iABC  R[A] = module.method(R[A+1..])
+    OP_GET_MODULE_CONST, // iABx  R[A] = module_const[Bx]
+    OP_GET_MODULE_VAR,  // iABC  R[A] = module[B].var[C]
+    OP_SET_MODULE_VAR,  // iABC  module[B].var[C] = R[A]
+    OP_GET_MODULE_FUNC, // iABC
+    OP_DEFINE_MODULE_FUNC, // iABC
+    OP_INIT_LENOMODULE, // iABx  初始化 .leno 模块
+
+    // --- struct ---
+    OP_STRUCT_DEF,      // iABx  定义结构体
+    OP_STRUCT_INIT,     // iABC  R[A] = new struct(R[A+1..A+C-1])
+    OP_GET_FIELD,       // iABC  R[A] = R[B].field(C)
+    OP_SET_FIELD,       // iABC  R[B].field(C) = R[A]
+    OP_GET_FIELD_ADDR,  // iABC  R[A] = &R[B].field(C)（cstruct）
+    OP_GET_METHOD,      // iABC  R[A] = R[B].method(C)
+    OP_SET_PTR_ELEM_TYPE, // iABC  设置 R[A] 的 element_type = K[B]
+    OP_SET_DECLARED_FACE, // iABC  设置 R[A] 的 declared_face = K[B]
+
+    // --- enum / face / cstruct ---
+    OP_ENUM_DEF,        // iABx
+    OP_FACE_DEF,        // iABx
+    OP_CSTRUCT_DEF,     // iABx
+    OP_GET_CSTRUCT_DEF, // iABx
+
+    // --- 类型检查 / 转换 ---
+    OP_TYPE_CHECK,      // iABx  R[A] = (R[A] is type(Bx))
+    OP_AS_CAST,         // iABx  R[A] = R[A] as type(Bx)
+
+    // --- 协程 ---
+    OP_AWAIT,           // iABC  R[A] = await R[B]
+    OP_ASYNC_CALL,      // iABC  R[A] = async call R[B]
+
+    // --- FFI ---
+    OP_CLIB_CALL,       // iABC  R[A] = clib(R[B], R[C]...)
+    OP_CFUNC_CALLBACK,  // iABx  R[A] = cfunc_callback(K[Bx])
+    OP_U8_TO_F64,       // iABC  R[A] = (double)(uint8)R[B]
+
+    // --- 泛型 / 析构 ---
+    OP_PUSH_TYPE_ARGS,  // iABx  推送类型参数
+    OP_DTOR_LOCAL,      // iABC  析构 R[A]..R[A+C-1]
+
+    // --- switch ---
+    OP_SWITCH_LOOKUP,   // iABx  switch 查找
+
+    // --- 扩展指令（寄存器号 > 255 或常量索引 > 65535 时使用） ---
+    OP_EXTRAARG,        // iAx   24 位无符号扩展值
+    OP_EXTEND,          // iABC  前缀：扩展紧随指令的 A/B/C 高 8 位
+
+    OP_OPCODE_COUNT,    // 用于跳转表大小
 } OpCode;
+
+// ============================================================================
+// 寄存器式 4 字节指令编码/解码宏
+// ============================================================================
+// 指令布局（大端，与旧 emit 一致）：
+//   字节0: opcode (8 位)
+//   字节1: A (8 位)
+//   字节2-3: B/C 或 Bx 或 sBx 或 sJ
+//
+// iABC :  op8 A8 B8 C8        B = byte2, C = byte3
+// iABx :  op8 A8 Bx16         Bx = (byte2<<8)|byte3
+// iAsBx:  op8 A8 sBx16        sBx = Bx - 32768 (偏移使 0 = -32768)
+// iAsJ :  op8 + sJ24          sJ = (byte1<<16)|(byte2<<8)|byte3, 符号扩展
+// iAx  :  op8 + Ax24          Ax = (byte1<<16)|(byte2<<8)|byte3
+
+// 前向声明：reg_encode_* 内联函数在 Chunk 完整定义之前就需要 Chunk* 与 chunk_write
+typedef struct Chunk Chunk;
+void chunk_write(Chunk* chunk, uint8_t byte, int line);
+
+// 编码：把 4 字节写入 chunk（大端）
+static inline void reg_encode_iABC(Chunk* chunk, OpCode op, int a, int b, int c, int line) {
+    chunk_write(chunk, (uint8_t)op, line);
+    chunk_write(chunk, (uint8_t)(a & 0xFF), line);
+    chunk_write(chunk, (uint8_t)(b & 0xFF), line);
+    chunk_write(chunk, (uint8_t)(c & 0xFF), line);
+}
+
+static inline void reg_encode_iABx(Chunk* chunk, OpCode op, int a, int bx, int line) {
+    chunk_write(chunk, (uint8_t)op, line);
+    chunk_write(chunk, (uint8_t)(a & 0xFF), line);
+    chunk_write(chunk, (uint8_t)((bx >> 8) & 0xFF), line);
+    chunk_write(chunk, (uint8_t)(bx & 0xFF), line);
+}
+
+static inline void reg_encode_iAsBx(Chunk* chunk, OpCode op, int a, int sbx, int line) {
+    int bx = sbx + 32768;  // 偏移使 0 表示 -32768
+    reg_encode_iABx(chunk, op, a, bx, line);
+}
+
+static inline void reg_encode_iAsJ(Chunk* chunk, OpCode op, int sj, int line) {
+    uint32_t j = (uint32_t)(sj & 0xFFFFFF);  // 24 位
+    chunk_write(chunk, (uint8_t)op, line);
+    chunk_write(chunk, (uint8_t)((j >> 16) & 0xFF), line);
+    chunk_write(chunk, (uint8_t)((j >> 8) & 0xFF), line);
+    chunk_write(chunk, (uint8_t)(j & 0xFF), line);
+}
+
+static inline void reg_encode_iAx(Chunk* chunk, OpCode op, int ax, int line) {
+    uint32_t v = (uint32_t)(ax & 0xFFFFFF);
+    chunk_write(chunk, (uint8_t)op, line);
+    chunk_write(chunk, (uint8_t)((v >> 16) & 0xFF), line);
+    chunk_write(chunk, (uint8_t)((v >> 8) & 0xFF), line);
+    chunk_write(chunk, (uint8_t)(v & 0xFF), line);
+}
+
+// 解码宏（VM 侧使用）
+#define REG_A(byte1)            (byte1)
+#define REG_B(byte2)            (byte2)
+#define REG_C(byte3)            (byte3)
+#define REG_Bx(byte2, byte3)    (((int)(byte2) << 8) | (int)(byte3))
+#define REG_sBx(byte2, byte3)   (REG_Bx(byte2, byte3) - 32768)
+static inline int REG_sJ(int byte1, int byte2, int byte3) {
+    uint32_t raw = ((uint32_t)(byte1 & 0xFF) << 16) | ((uint32_t)(byte2 & 0xFF) << 8) | (uint32_t)(byte3 & 0xFF);
+    if (raw & 0x800000) return (int)(raw | 0xFF000000);  // 符号扩展
+    return (int)raw;
+}
+#define REG_Ax(byte1, byte2, byte3) (((int)(byte1) << 16) | ((int)(byte2) << 8) | (int)(byte3))
 
 // ============================================================================
 // 字节码块

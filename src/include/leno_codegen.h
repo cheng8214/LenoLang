@@ -28,12 +28,20 @@ typedef struct LoopContextNode {
 // ============================================================================
 
 typedef struct {
-    int local_slot;    // 局部变量槽位索引
+    int local_slot;    // 局部变量槽位索引（= 寄存器号）
 } DtorEntry;
 
 // ============================================================================
-// 字节码生成器
+// 寄存器式字节码生成器
 // ============================================================================
+// 寄存器文件 = CallFrame.locals：
+//   R0..arity-1     = 函数参数
+//   R[arity..n-1]   = 声明的局部变量
+//   R[n..max-1]     = 临时寄存器（空闲栈管理）
+// local_count = 寄存器高水位（GC 依赖）
+// ============================================================================
+
+#define MAX_REG 256  // 单字节寄存器号上限（超过需 EXTEND 前缀）
 
 typedef struct {
     Chunk* chunk;
@@ -41,35 +49,68 @@ typedef struct {
     int scope_depth;
     LoopContextNode* loop_head;    // 链表头（当前最内层循环），使用链式堆分配避免栈溢出
     int loop_count;                 // 循环嵌套深度
-    ObjFunction* current_func; // 当前正在生成的函数（用于更新 local_count）
-    int max_local_slot;       // 最大使用的局部变量槽位（包括临时槽位）
-    int peak_local_slot;      // 真正的槽位峰值（不受 gen_assign 临时槽位级联影响）
-    DtorEntry* dtor_entries;  // 需要析构的局部变量数组
-    int dtor_count;           // 当前条目数
-    int dtor_capacity;        // 数组容量
-    int dtor_temp_slot;       // return 时保存返回值的临时槽位（-1=未分配）
-    // 函数内联状态
-    int inline_depth;                 // 当前内联嵌套深度（0=不在内联中）
-    int inline_result_slot;           // 内联函数返回值存放槽位
-    int inline_return_jumps[256];     // 内联函数中 return 语句的跳转位置
-    int inline_return_jump_count;     // 待回填的 return 跳转数量
-    int inline_discard_result;        // 1=当前调用结果将被丢弃（表达式语句）
-    int inline_no_result;             // 1=内联未在栈上留下值（void函数+discard）
-    int inline_dtor_base;             // 当前内联层的析构条目起始索引（gen_return 用）
-int suppress_multi_pop;            // 1=解构声明上下文，不弹出多返回值
-
+    ObjFunction* current_func;     // 当前正在生成的函数（用于更新 local_count）
+    // --- 寄存器分配器 ---
+    int next_reg;           // 下一个可分配的寄存器号（= 参数+声明变量数量）
+    int max_reg;            // 寄存器高水位（临时寄存器峰值，写回 local_count）
+    int free_regs[MAX_REG]; // 空闲寄存器栈
+    int freetop;            // 空闲栈顶
+    int scope_base;         // 当前作用域起始寄存器（作用域退出时回退到此）
+    // --- 析构追踪 ---
+    DtorEntry* dtor_entries;
+    int dtor_count;
+    int dtor_capacity;
+    int dtor_temp_slot;     // return 时保存返回值的临时寄存器（-1=未分配）
+    // --- 多返回值 / 解构 ---
+    int suppress_multi_pop;  // 解构声明上下文标记
 } CodeGen;
 
 void codegen_init(CodeGen* gen, Chunk* chunk, Semantic* sem);
-void codegen_cleanup(CodeGen* gen);  // 释放循环上下文链表
+void codegen_cleanup(CodeGen* gen);
 void codegen(CodeGen* gen, Ast* ast);
-void codegen_module(CodeGen* gen, Ast* ast);  // 模块代码生成
-void codegen_set_func_dict(void* dict);  // 设置全局函数字典
-void codegen_set_module(ObjModule* module);  // 设置当前模块
-void codegen_add_dtor_entry(CodeGen* gen, int local_slot);  // 添加析构追踪条目
+void codegen_module(CodeGen* gen, Ast* ast);
+void codegen_set_func_dict(void* dict);
+void codegen_set_module(ObjModule* module);
+void codegen_add_dtor_entry(CodeGen* gen, int local_slot);
 
 // 函数生成（供 codegen_stmt.c 使用）
 ObjFunction* gen_func_proto(CodeGen* gen, Ast* ast);
 void gen_func_closure(CodeGen* gen, Ast* ast, ObjFunction* func);
+
+// ============================================================================
+// 寄存器分配 API
+// ============================================================================
+
+// 借一个临时寄存器
+static inline int reg_alloc(CodeGen* gen) {
+    if (gen->freetop > 0) {
+        return gen->free_regs[--gen->freetop];
+    }
+    int r = gen->next_reg++;
+    if (gen->next_reg > gen->max_reg) gen->max_reg = gen->next_reg;
+    return r;
+}
+
+// 归还一个临时寄存器
+static inline void reg_free(CodeGen* gen, int r) {
+    if (r >= 0 && r < MAX_REG) {
+        gen->free_regs[gen->freetop++] = r;
+    }
+}
+
+// 进入作用域：记录当前 next_reg 为 scope_base
+static inline void reg_scope_enter(CodeGen* gen) {
+    // 保存当前 scope_base，push 到 next_reg 之前的位置
+    // 简化版：scope_base = next_reg，退出时 next_reg 回退到 scope_base
+    gen->scope_base = gen->next_reg;
+    gen->scope_depth++;
+}
+
+// 退出作用域：临时寄存器回退到 scope_base
+static inline void reg_scope_exit(CodeGen* gen) {
+    gen->next_reg = gen->scope_base;
+    gen->freetop = 0;  // 空闲栈清空（所有临时寄存器失效）
+    gen->scope_depth--;
+}
 
 #endif // LENO_CODEGEN_H

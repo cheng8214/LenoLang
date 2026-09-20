@@ -1,3 +1,7 @@
+// ============================================================================
+// 寄存器式 codegen：初始化 / 清理 / 顶层入口
+// ============================================================================
+
 #include "codegen.h"
 
 void codegen_init(CodeGen* gen, Chunk* chunk, Semantic* sem) {
@@ -7,21 +11,16 @@ void codegen_init(CodeGen* gen, Chunk* chunk, Semantic* sem) {
     gen->loop_head = NULL;
     gen->loop_count = 0;
     gen->current_func = NULL;
-    gen->max_local_slot = -1;
-    gen->peak_local_slot = -1;
+    // 寄存器分配器初始化
+    gen->next_reg = 0;
+    gen->max_reg = 0;
+    gen->freetop = 0;
+    gen->scope_base = 0;
     gen->dtor_entries = NULL;
     gen->dtor_count = 0;
     gen->dtor_capacity = 0;
     gen->dtor_temp_slot = -1;
-gen->inline_depth = 0;
-gen->inline_result_slot = -1;
-gen->inline_return_jump_count = 0;
-gen->inline_discard_result = 0;
-gen->inline_no_result = 0;
-gen->inline_dtor_base = 0;
-gen->suppress_multi_pop = 0;
-// 重置内联函数名栈，防止上次编译残留状态影响本次编译
-inline_name_stack_reset();
+    gen->suppress_multi_pop = 0;
 }
 
 void codegen_cleanup(CodeGen* gen) {
@@ -63,18 +62,33 @@ void codegen(CodeGen* gen, Ast* ast) {
         gen_stmt(gen, ast);
     }
 
+    // 顶层 main 函数调用
     MainFuncInfo main_info = find_main_function(gen->sem);
     if (main_info.has_main) {
-        emit_get_global_func(gen, main_info.main_index, ast->line);
-        emit_call(gen, 0, ast->line);
-        // main 的返回值作为进程退出码：用 OP_RETURN 结束顶层帧，
-        // 返回值会存入 vm.last_return_value，由 vm_get_exit_code() 读取
-        emit_byte(gen, OP_RETURN, ast->line);
+        // GETGLOBALFUNC R0, main_index
+        // CALL R0, 0 args, 1 result
+        // RETURN R0, 1 result
+        int r = reg_alloc(gen);
+        emit_getglobalfunc_to(gen, r, main_info.main_index, ast->line);
+        emit_call(gen, r, 0, 1, ast->line);
+        emit_return(gen, r, 1, ast->line);
+        reg_free(gen, r);
+    } else {
+        // 无 main：发 RETURN NIL
+        int r = reg_alloc(gen);
+        emit_loadnil_to(gen, r, ast->line);
+        emit_return(gen, r, 1, ast->line);
+        reg_free(gen, r);
     }
+
+    // 寄存器高水位写回 chunk->local_count（GC 依赖）
+    if (gen->current_func) {
+        gen->current_func->local_count = gen->max_reg;
+    }
+    gen->chunk->local_count = gen->max_reg;
 }
 
 // 模块代码生成
-// 模块代码使用模块操作码（OP_GET_MODULE_VAR, OP_SET_MODULE_VAR, OP_GET_MODULE_FUNC, OP_DEFINE_MODULE_FUNC）
 void codegen_module(CodeGen* gen, Ast* ast) {
     if (!ast) return;
 
@@ -83,10 +97,11 @@ void codegen_module(CodeGen* gen, Ast* ast) {
         gen->chunk->filename = strdup(current_file);
     }
 
-    // 生成模块代码
     if (ast->kind == AST_BLOCK) {
         gen_block_module(gen, ast);
     } else {
         gen_stmt_module(gen, ast);
     }
+
+    gen->chunk->local_count = gen->max_reg;
 }
