@@ -142,6 +142,14 @@ void gen_func_closure(CodeGen* gen, Ast* ast, ObjFunction* func) {
     ObjFunction* saved_func = gen->current_func;
     gen->current_func = func;
 
+    // ★ 必须保存/恢复寄存器分配器状态：函数体是独立寄存器空间，
+    //   若把内层的 next_reg（往往很小）留在 gen 上，外层后续的临时寄存器
+    //   会分配进变量槽位（表现为"嵌套函数定义后，外层变量被闭包覆盖"）。
+    int saved_next_reg = gen->next_reg;
+    int saved_max_reg = gen->max_reg;
+    int saved_freetop = gen->freetop;
+    int saved_scope_base = gen->scope_base;
+
     // 重置寄存器分配器。
     // 关键：局部变量（参数 + 声明变量）的槽位号由语义分析分配，可能远大于 arity；
     // 临时寄存器必须从"所有槽位之上"开始，否则会覆盖变量（静默错值）。
@@ -166,9 +174,13 @@ void gen_func_closure(CodeGen* gen, Ast* ast, ObjFunction* func) {
     // 寄存器高水位写回 local_count
     func->local_count = gen->max_reg;
 
-    // 恢复
+    // 恢复（含寄存器分配器状态）
     gen->chunk = saved_chunk;
     gen->current_func = saved_func;
+    gen->next_reg = saved_next_reg;
+    gen->max_reg = saved_max_reg;
+    gen->freetop = saved_freetop;
+    gen->scope_base = saved_scope_base;
 }
 
 // ============================================================================
@@ -177,7 +189,7 @@ void gen_func_closure(CodeGen* gen, Ast* ast, ObjFunction* func) {
 
 // 发射 OP_CLOSURE 及其捕获描述（紧随指令的非指令数据，每条 3 字节）：
 //   [is_local:u8][index:u8][is_value_capture:u8] × upvalue_count
-static void emit_closure_upvals(CodeGen* gen, int dst, int const_idx, Ast* ast) {
+void emit_closure_upvals(CodeGen* gen, int dst, int const_idx, Ast* ast) {
     reg_encode_iABx(gen->chunk, OP_CLOSURE, dst, const_idx, ast->line);
     int n = ast->u.func.upvalue_count;
     for (int i = 0; i < n; i++) {

@@ -48,6 +48,10 @@ void gen_compound_assign(CodeGen* gen, Ast* ast);
 // 导入
 void gen_import_inline(CodeGen* gen, Ast* ast);
 
+// 类型检查 / 安全转换（就地作用于 R[reg]，定义在 codegen_expr.c）
+void emit_type_check_to(CodeGen* gen, int reg, TypeInfo* t, int line);
+void emit_as_cast_to(CodeGen* gen, int reg, TypeInfo* t, int line);
+
 // --- 表达式内部函数（定义在 codegen_expr.c） ---
 void gen_binop(CodeGen* gen, Ast* ast, int dst);
 void gen_unary(CodeGen* gen, Ast* ast, int dst);

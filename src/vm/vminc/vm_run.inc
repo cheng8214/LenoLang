@@ -1067,10 +1067,22 @@
             }
 
             // --- 绑定方法 ---
+            // ⚠ receiver 去重：语义分析对 struct 方法调用会把 receiver 作为第 0 个
+            //   实参放进 args（栈式对应 OP_INVOKE_METHOD_TYPED），而内置类型方法不带。
+            //   若实参首项就是 receiver，则不重复插入，否则隐式补上。
             if (ct == OBJ_BOUND_METHOD) {
                 ObjBoundMethod* bound = (ObjBoundMethod*)val_as_obj(callee);
+                int self_in_args = 0;
+                if (nargs > 0) {
+                    Value a0 = R(a + 1);
+                    if (val_is_obj(a0) && val_is_obj(bound->receiver)) {
+                        self_in_args = (val_as_obj(a0) == val_as_obj(bound->receiver));
+                    } else if (!val_is_obj(a0) && !val_is_obj(bound->receiver)) {
+                        self_in_args = (a0 == bound->receiver);
+                    }
+                }
                 if (bound->closure) {
-                    if (call_reg(bound->closure, 1, bound->receiver,
+                    if (call_reg(bound->closure, self_in_args ? 0 : 1, bound->receiver,
                                  a + 1, nargs, a, nresults, line)) {
                         frame = &vm.frames[vm.frame_cnt - 1];
                         DISPATCH();
@@ -1086,9 +1098,16 @@
                     DISPATCH();
                 }
                 int base = vm.sp;
-                vm_stack_push(&vm, bound->receiver);
-                for (int i = 0; i < nargs; i++) vm_stack_push(&vm, R(a + 1 + i));
-                Value result = native->function(nargs + 1, vm.stack + base);
+                int pass_nargs;
+                if (self_in_args) {
+                    for (int i = 0; i < nargs; i++) vm_stack_push(&vm, R(a + 1 + i));
+                    pass_nargs = nargs;
+                } else {
+                    vm_stack_push(&vm, bound->receiver);
+                    for (int i = 0; i < nargs; i++) vm_stack_push(&vm, R(a + 1 + i));
+                    pass_nargs = nargs + 1;
+                }
+                Value result = native->function(pass_nargs, vm.stack + base);
                 vm.sp = base;
                 if (unlikely(vm.has_exception)) {
                     char* msg = NULL;
@@ -2055,8 +2074,442 @@
     LABEL(OP_INIT_LENOMODULE): DISPATCH();
 
     // --- struct ---
-    LABEL(OP_STRUCT_DEF): DISPATCH();
-    LABEL(OP_STRUCT_INIT): DISPATCH();
+    // OP_STRUCT_DEF A Bx: Bx = 结构体名常量索引；其余元数据紧随指令（布局与栈式一致）：
+    //   field_count(1) method_count(1)
+    //   impl_count(1) + impl_name_idx(2)×n
+    //   type_param_count(1) + param_name_idx(2)×n
+    //   每个字段: name_idx(2) type(1) nullable(1)
+    //             [type==STRUCT: has_name(1) [name_idx(2)]]
+    //             [type==PTR_GENERIC: elem_type(1)]
+    //             has_default(1) [default_idx(2)]
+    //   每个方法: method_name_idx(2) func_idx(2)
+    //   ctor_dtor_flags(1) [ctor_index(1)] [dtor_index(1)]
+    //   const_count(1) + (cname_idx(2) cval_idx(2))×n
+    LABEL(OP_STRUCT_DEF): {
+        int line = GET_CURRENT_LINE();
+        int name_idx = READ_Bx();
+        if (unlikely(name_idx < 0 || name_idx >= frame->chunk->const_cnt)) {
+            if (!throw_runtime_error("结构体名常量索引越界", line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        Value name_val = frame->chunk->constants[name_idx];
+        if (unlikely(!val_is_obj(name_val) || val_as_obj(name_val)->type != OBJ_STRING)) {
+            if (!throw_runtime_error("结构体名称必须是字符串", line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        ObjString* sname = (ObjString*)val_as_obj(name_val);
+
+        uint8_t* p = frame->ip;
+        uint8_t field_count = *p++;
+        uint8_t method_count = *p++;
+
+        ObjStructDef* def = struct_def_new(sname->chars, field_count, method_count);
+        if (unlikely(!def)) {
+            runtime_error("结构体定义内存分配失败", line);
+            return -1;
+        }
+        if (!def->owner) def->owner = module_frame_current_module();
+
+        uint8_t impl_count = *p++;
+        if (impl_count > 0) {
+            def->impl_names = (char**)calloc(impl_count, sizeof(char*));
+            def->impl_count = impl_count;
+            for (int i = 0; i < impl_count; i++) {
+                int idx = ((int)p[0] << 8) | (int)p[1];
+                p += 2;
+                Value v = frame->chunk->constants[idx];
+                if (val_is_obj(v) && val_as_obj(v)->type == OBJ_STRING) {
+                    def->impl_names[i] = strdup(((ObjString*)val_as_obj(v))->chars);
+                }
+            }
+        }
+
+        uint8_t type_param_count = *p++;
+        def->type_param_count = type_param_count;
+        if (type_param_count > 0) {
+            def->type_param_names = (char**)malloc(sizeof(char*) * type_param_count);
+            def->type_param_constraints = (char**)calloc(type_param_count, sizeof(char*));
+            for (int i = 0; i < type_param_count; i++) {
+                int idx = ((int)p[0] << 8) | (int)p[1];
+                p += 2;
+                Value v = frame->chunk->constants[idx];
+                if (val_is_obj(v) && val_as_obj(v)->type == OBJ_STRING) {
+                    def->type_param_names[i] = strdup(((ObjString*)val_as_obj(v))->chars);
+                } else {
+                    def->type_param_names[i] = strdup("T");
+                }
+            }
+        }
+
+        for (int i = 0; i < field_count; i++) {
+            int field_name_idx = ((int)p[0] << 8) | (int)p[1];
+            p += 2;
+            uint8_t field_type = *p++;
+            uint8_t is_nullable = *p++;
+
+            char* struct_type_name = NULL;
+            if (field_type == TYPE_STRUCT) {
+                uint8_t has_struct_type_name = *p++;
+                if (has_struct_type_name) {
+                    int tn_idx = ((int)p[0] << 8) | (int)p[1];
+                    p += 2;
+                    Value tv = frame->chunk->constants[tn_idx];
+                    if (val_is_obj(tv) && val_as_obj(tv)->type == OBJ_STRING) {
+                        struct_type_name = ((ObjString*)val_as_obj(tv))->chars;
+                    }
+                }
+            }
+
+            TypeKind element_type = TYPE_PTR;
+            if (field_type == TYPE_PTR_GENERIC) {
+                element_type = (TypeKind)(*p++);
+            }
+
+            uint8_t has_default = *p++;
+            Value field_name_val = frame->chunk->constants[field_name_idx];
+            if (unlikely(!val_is_obj(field_name_val) || val_as_obj(field_name_val)->type != OBJ_STRING)) {
+                if (!throw_runtime_error("结构体字段名必须是字符串", line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            ObjString* field_name = (ObjString*)val_as_obj(field_name_val);
+
+            Value default_value = val_null();
+            if (has_default) {
+                int d_idx = ((int)p[0] << 8) | (int)p[1];
+                p += 2;
+                default_value = frame->chunk->constants[d_idx];
+            }
+
+            struct_def_set_field(def, i, field_name->chars, (TypeKind)field_type,
+                                 struct_type_name, default_value, has_default, element_type, is_nullable);
+        }
+
+        for (int i = 0; i < method_count; i++) {
+            int mn_idx = ((int)p[0] << 8) | (int)p[1];
+            p += 2;
+            Value mn_val = frame->chunk->constants[mn_idx];
+            if (unlikely(!val_is_obj(mn_val) || val_as_obj(mn_val)->type != OBJ_STRING)) {
+                if (!throw_runtime_error("结构体方法名必须是字符串", line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            def->methods[i].name = strdup(((ObjString*)val_as_obj(mn_val))->chars);
+
+            int fn_idx = ((int)p[0] << 8) | (int)p[1];
+            p += 2;
+            Value fn_val = frame->chunk->constants[fn_idx];
+            if (unlikely(!val_is_obj(fn_val) || val_as_obj(fn_val)->type != OBJ_FUNCTION)) {
+                if (!throw_runtime_error("结构体方法必须是函数对象", line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            def->methods[i].func = (ObjFunction*)val_as_obj(fn_val);
+            ObjFunction* mfunc = def->methods[i].func;
+            if (mfunc->upvalue_count == 0) {
+                ObjClosure* cl = (ObjClosure*)gc_alloc(sizeof(ObjClosure), OBJ_CLOSURE);
+                if (unlikely(!cl)) {
+                    runtime_error("结构体方法闭包内存分配失败", line);
+                    return -1;
+                }
+                cl->function = mfunc;
+                cl->upvalue_count = 0;
+                cl->type_param_count = 0;
+                cl->type_param_args = NULL;
+                def->methods[i].closure = cl;
+            } else {
+                // 需要 upvalue 的方法：运行时动态创建闭包
+                def->methods[i].closure = NULL;
+            }
+        }
+
+        uint8_t ctor_dtor_flags = *p++;
+        def->has_ctor = (ctor_dtor_flags & 1) != 0;
+        def->has_dtor = (ctor_dtor_flags & 2) != 0;
+        if (def->has_ctor) def->ctor_index = *p++;
+        if (def->has_dtor) def->dtor_index = *p++;
+
+        uint8_t const_count = *p++;
+        def->const_count = const_count;
+        if (const_count > 0) {
+            def->const_names = (char**)malloc(sizeof(char*) * const_count);
+            def->const_values = (Value*)calloc(const_count, sizeof(Value));
+            for (int i = 0; i < const_count; i++) {
+                int cn_idx = ((int)p[0] << 8) | (int)p[1];
+                p += 2;
+                Value cn_val = frame->chunk->constants[cn_idx];
+                if (val_is_obj(cn_val) && val_as_obj(cn_val)->type == OBJ_STRING) {
+                    def->const_names[i] = strdup(((ObjString*)val_as_obj(cn_val))->chars);
+                } else {
+                    def->const_names[i] = strdup("");
+                }
+                int cv_idx = ((int)p[0] << 8) | (int)p[1];
+                p += 2;
+                def->const_values[i] = frame->chunk->constants[cv_idx];
+            }
+        }
+
+        frame->ip = p;
+        struct_def_register(def);
+        DISPATCH();
+    }
+    // OP_FACE_DEF A Bx: 定义接口（与栈式同一数据布局）
+    LABEL(OP_FACE_DEF): {
+        int line = GET_CURRENT_LINE();
+        int name_idx = READ_Bx();
+        if (unlikely(name_idx < 0 || name_idx >= frame->chunk->const_cnt)) {
+            if (!throw_runtime_error("接口名常量索引越界", line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        Value name_val = frame->chunk->constants[name_idx];
+        if (unlikely(!val_is_obj(name_val) || val_as_obj(name_val)->type != OBJ_STRING)) {
+            if (!throw_runtime_error("接口名称必须是字符串", line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        ObjString* fname = (ObjString*)val_as_obj(name_val);
+
+        uint8_t* p = frame->ip;
+        uint8_t method_count = *p++;
+        uint8_t type_param_count = *p++;
+
+        ObjFaceDef* def = face_def_new(fname->chars, method_count);
+        if (unlikely(!def)) {
+            runtime_error("接口定义内存分配失败", line);
+            return -1;
+        }
+        if (!def->owner) def->owner = module_frame_current_module();
+
+        if (type_param_count > 0) {
+            char** tp_names = (char**)malloc(sizeof(char*) * type_param_count);
+            for (int tp = 0; tp < type_param_count; tp++) {
+                int idx = ((int)p[0] << 8) | (int)p[1];
+                p += 2;
+                Value v = frame->chunk->constants[idx];
+                if (val_is_obj(v) && val_as_obj(v)->type == OBJ_STRING) {
+                    tp_names[tp] = strdup(((ObjString*)val_as_obj(v))->chars);
+                } else {
+                    tp_names[tp] = strdup("T");
+                }
+            }
+            face_def_set_type_params(def, type_param_count, tp_names, NULL);
+            for (int tp = 0; tp < type_param_count; tp++) free(tp_names[tp]);
+            free(tp_names);
+        }
+
+        for (int i = 0; i < method_count; i++) {
+            int mn_idx = ((int)p[0] << 8) | (int)p[1];
+            p += 2;
+            uint8_t param_count = *p++;
+            uint8_t return_type_kind = *p++;
+            Value mn_val = frame->chunk->constants[mn_idx];
+            if (unlikely(!val_is_obj(mn_val) || val_as_obj(mn_val)->type != OBJ_STRING)) {
+                if (!throw_runtime_error("接口方法名必须是字符串", line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            def->methods[i].name = strdup(((ObjString*)val_as_obj(mn_val))->chars);
+            def->methods[i].param_count = param_count;
+            def->methods[i].return_type = (return_type_kind != TYPE_INFER)
+                                              ? type_new((TypeKind)return_type_kind) : NULL;
+            def->methods[i].param_types = NULL;
+            if (param_count > 0) {
+                def->methods[i].param_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * param_count);
+                for (int j = 0; j < param_count; j++) {
+                    uint8_t ptk = *p++;
+                    def->methods[i].param_types[j] = (ptk != TYPE_INFER) ? type_new((TypeKind)ptk) : NULL;
+                }
+            }
+        }
+
+        frame->ip = p;
+        face_def_register(def);
+        DISPATCH();
+    }
+    // OP_ENUM_DEF A Bx: R[A] = enum 定义对象；数据区 member_count(1) + (名idx(2) 值idx(2))×n
+    LABEL(OP_ENUM_DEF): {
+        int a = READ_A();
+        int line = GET_CURRENT_LINE();
+        int name_idx = READ_Bx();
+        if (unlikely(name_idx < 0 || name_idx >= frame->chunk->const_cnt)) {
+            if (!throw_runtime_error("枚举名常量索引越界", line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        Value name_val = frame->chunk->constants[name_idx];
+        if (unlikely(!val_is_obj(name_val) || val_as_obj(name_val)->type != OBJ_STRING)) {
+            if (!throw_runtime_error("enum 名称必须是字符串", line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        ObjString* ename = (ObjString*)val_as_obj(name_val);
+
+        uint8_t* p = frame->ip;
+        uint8_t member_count = *p++;
+        ObjEnumDef* def = enum_def_new(ename->chars, member_count);
+        if (unlikely(!def)) {
+            runtime_error("枚举定义内存分配失败", line);
+            return -1;
+        }
+        if (!def->owner) def->owner = module_frame_current_module();
+
+        for (int i = 0; i < member_count; i++) {
+            int mn_idx = ((int)p[0] << 8) | (int)p[1];
+            p += 2;
+            int mv_idx = ((int)p[0] << 8) | (int)p[1];
+            p += 2;
+            Value mn_val = frame->chunk->constants[mn_idx];
+            if (unlikely(!val_is_obj(mn_val) || val_as_obj(mn_val)->type != OBJ_STRING)) {
+                if (!throw_runtime_error("enum 成员名必须是字符串", line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            Value mv_val = frame->chunk->constants[mv_idx];
+            int64_t member_value;
+            if (val_is_obj(mv_val) && val_as_obj(mv_val)->type == OBJ_BIGINT) {
+                member_value = bigint_to_int64((ObjBigInt*)val_as_obj(mv_val));
+            } else {
+                member_value = (int64_t)val_as_num(mv_val);
+            }
+            enum_def_set_member(def, i, ((ObjString*)val_as_obj(mn_val))->chars, member_value);
+        }
+
+        frame->ip = p;
+        enum_def_register(def);
+        R(a) = val_obj((Object*)def);
+        DISPATCH();
+    }
+    // OP_STRUCT_INIT A B C: R[A] = new Struct(...)（B = 实参个数）
+    //   数据区：name_idx(2) generic_count(1) [generic_name_idx(2)]×n
+    //           [field_name_idx(2)]×arg_count
+    //   构造实参在 R[A+1 .. A+B]
+    LABEL(OP_STRUCT_INIT): {
+        int a = READ_A();
+        int arg_count = READ_B();
+        int line = GET_CURRENT_LINE();
+
+        uint8_t* p = frame->ip;
+        int name_idx = ((int)p[0] << 8) | (int)p[1];
+        p += 2;
+        int generic_count = *p++;
+
+        char** generic_args = NULL;
+        if (generic_count > 0) {
+            generic_args = (char**)malloc(sizeof(char*) * generic_count);
+            for (int gi = 0; gi < generic_count; gi++) {
+                int idx = ((int)p[0] << 8) | (int)p[1];
+                p += 2;
+                Value v = frame->chunk->constants[idx];
+                if (val_is_obj(v) && val_as_obj(v)->type == OBJ_STRING) {
+                    generic_args[gi] = strdup(((ObjString*)val_as_obj(v))->chars);
+                } else {
+                    generic_args[gi] = strdup("unknown");
+                }
+            }
+        }
+
+        Value name_val = frame->chunk->constants[name_idx];
+        if (unlikely(!val_is_obj(name_val) || val_as_obj(name_val)->type != OBJ_STRING)) {
+            if (!throw_runtime_error("结构体名称必须是字符串", line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        ObjString* sname = (ObjString*)val_as_obj(name_val);
+
+        // 三级查找：模块内精查 → 带前缀 → 裸名（与栈式一致）
+        const char* bare = sname->chars;
+        const char* dotp = strchr(bare, '.');
+        if (dotp) bare = dotp + 1;
+        ObjModule* owner = module_frame_current_module();
+        ObjStructDef* def = NULL;
+        if (owner) def = struct_def_find_in_module(owner, bare);
+        if (!def) def = struct_def_find_qualified(sname->chars);
+        if (unlikely(!def)) {
+            char msg[256];
+            snprintf(msg, sizeof(msg), "未定义的结构体 '%s'", sname->chars);
+            if (generic_args) {
+                for (int gi = 0; gi < generic_count; gi++) free(generic_args[gi]);
+                free(generic_args);
+            }
+            if (!throw_runtime_error(msg, line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+
+        ObjStruct* obj = struct_instance_new(def);
+        if (unlikely(!obj)) {
+            runtime_error("结构体实例内存分配失败", line);
+            return -1;
+        }
+        if (generic_count > 0) {
+            obj->generic_type_args = generic_args;
+            obj->generic_type_arg_count = generic_count;
+        }
+
+        // 按字段名逐个赋值（编译期给名字，运行时查索引；fn_idx == 0 表示按位置）
+        for (int i = 0; i < arg_count; i++) {
+            int fn_idx = ((int)p[0] << 8) | (int)p[1];
+            p += 2;
+            int fidx;
+            if (fn_idx == 0) {
+                fidx = i;
+            } else {
+                Value fn_val = frame->chunk->constants[fn_idx];
+                if (unlikely(!val_is_obj(fn_val) || val_as_obj(fn_val)->type != OBJ_STRING)) {
+                    if (!throw_runtime_error("结构体字段名必须是字符串", line)) return -1;
+                    frame = &vm.frames[vm.frame_cnt - 1];
+                    DISPATCH();
+                }
+                fidx = struct_get_field_index(def, ((ObjString*)val_as_obj(fn_val))->chars);
+            }
+            if (unlikely(fidx < 0 || fidx >= def->field_count)) {
+                if (!throw_runtime_error("结构体字段不存在", line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            Value v = R(a + 1 + i);
+            TypeKind et = def->fields[fidx].type;
+            if (et == TYPE_FLOAT && val_is_int(v)) {
+                v = val_float((double)val_as_int(v));
+            } else if (et == TYPE_FLOAT && val_is_bigint(v)) {
+                v = val_float(bigint_to_double(val_as_bigint(v)));
+            }
+            struct_set_field(obj, fidx, v);
+        }
+        frame->ip = p;
+
+        // 结果先落到寄存器（GC 根），构造器可能在其内部触发分配
+        R(a) = val_obj((Object*)obj);
+
+        // 调用构造函数（如果有）：self = 实例，实参紧随其后
+        if (def->has_ctor && def->ctor_index >= 0 && def->ctor_index < def->method_count) {
+            StructMethodInfo* mi = &def->methods[def->ctor_index];
+            ObjClosure* cl = mi->closure;
+            if (!cl && mi->func) {
+                cl = (ObjClosure*)gc_alloc(sizeof(ObjClosure), OBJ_CLOSURE);
+                if (cl) {
+                    cl->function = mi->func;
+                    cl->upvalue_count = mi->func->upvalue_count;
+                    cl->type_param_count = 0;
+                    cl->type_param_args = NULL;
+                    for (int ui = 0; ui < mi->func->upvalue_count; ui++) cl->upvalues[ui] = NULL;
+                }
+            }
+            if (cl) {
+                if (call_reg(cl, 1, R(a), a + 1, arg_count, a, 1, line)) {
+                    frame = &vm.frames[vm.frame_cnt - 1];
+                    DISPATCH();
+                }
+                if (!vm.has_exception) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+        }
+        DISPATCH();
+    }
     // OP_GET_FIELD A B C: R[A] = R[B].field(C)（C = 字段索引）
     LABEL(OP_GET_FIELD): {
         int a = READ_A(), b = READ_B(), c = READ_C();
@@ -2166,15 +2619,44 @@
     LABEL(OP_SET_PTR_ELEM_TYPE): DISPATCH();
     LABEL(OP_SET_DECLARED_FACE): DISPATCH();
 
-    // --- enum / face / cstruct ---
-    LABEL(OP_ENUM_DEF): DISPATCH();
-    LABEL(OP_FACE_DEF): DISPATCH();
+    // --- cstruct ---
     LABEL(OP_CSTRUCT_DEF): DISPATCH();
     LABEL(OP_GET_CSTRUCT_DEF): DISPATCH();
 
     // --- 类型检查 / 转换 ---
-    LABEL(OP_TYPE_CHECK): DISPATCH();
-    LABEL(OP_AS_CAST): DISPATCH();
+    // OP_TYPE_CHECK A B C: R[A] = (R[A] is 类型B[元素C])
+    //   需要名字的类型（struct/face/enum）在指令后紧跟 2 字节名字常量索引
+    LABEL(OP_TYPE_CHECK): {
+        int a = READ_A(), b = READ_B(), c = READ_C();
+        TypeKind expected = (TypeKind)b;
+        TypeKind elem = (TypeKind)c;
+        Value name_val = val_null();
+        if (expected == TYPE_STRUCT || expected == TYPE_FACE || expected == TYPE_ENUM) {
+            int nidx = ((int)frame->ip[0] << 8) | (int)frame->ip[1];
+            frame->ip += 2;
+            if (nidx >= 0 && nidx < frame->chunk->const_cnt) {
+                name_val = frame->chunk->constants[nidx];
+            }
+        }
+        R(a) = val_bool(type_check_value(R(a), expected, elem, name_val));
+        DISPATCH();
+    }
+    // OP_AS_CAST A B C: R[A] = R[A] as 类型B[元素C]（不匹配 → null）
+    LABEL(OP_AS_CAST): {
+        int a = READ_A(), b = READ_B(), c = READ_C();
+        TypeKind expected = (TypeKind)b;
+        TypeKind elem = (TypeKind)c;
+        Value name_val = val_null();
+        if (expected == TYPE_STRUCT || expected == TYPE_FACE || expected == TYPE_CSTRUCT) {
+            int nidx = ((int)frame->ip[0] << 8) | (int)frame->ip[1];
+            frame->ip += 2;
+            if (nidx >= 0 && nidx < frame->chunk->const_cnt) {
+                name_val = frame->chunk->constants[nidx];
+            }
+        }
+        R(a) = vm_as_cast(R(a), expected, elem, name_val);
+        DISPATCH();
+    }
 
     // --- 协程 ---
     LABEL(OP_AWAIT): DISPATCH();

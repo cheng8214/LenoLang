@@ -10,6 +10,41 @@
 extern void gen_default_value(CodeGen* gen, Ast* default_expr);
 
 // ============================================================================
+// 类型检查 / 安全转换（就地作用于 R[reg]）
+//   需要名字的类别（struct/face/enum、struct/face/cstruct）在指令后附 2 字节名字常量
+// ============================================================================
+static void emit_type_op(CodeGen* gen, OpCode op, int reg, TypeInfo* t, int with_enum, int line) {
+    TypeKind kind = t ? t->kind : TYPE_ANY;
+    TypeKind elem = (t && t->element_type) ? t->element_type->kind : TYPE_ANY;
+
+    int need_name = 0;
+    if (op == OP_TYPE_CHECK) {
+        need_name = (kind == TYPE_STRUCT || kind == TYPE_FACE || kind == TYPE_ENUM);
+    } else {
+        need_name = (kind == TYPE_STRUCT || kind == TYPE_FACE || kind == TYPE_CSTRUCT);
+    }
+    (void)with_enum;
+
+    if (need_name) {
+        const char* nm = (t && t->struct_name) ? t->struct_name : "";
+        int nc = make_constant(gen, val_obj((Object*)str_copy(nm, (int)strlen(nm))));
+        reg_encode_iABC(gen->chunk, op, reg, kind, elem, line);
+        chunk_write(gen->chunk, (uint8_t)((nc >> 8) & 0xFF), line);
+        chunk_write(gen->chunk, (uint8_t)(nc & 0xFF), line);
+    } else {
+        reg_encode_iABC(gen->chunk, op, reg, kind, elem, line);
+    }
+}
+
+void emit_type_check_to(CodeGen* gen, int reg, TypeInfo* t, int line) {
+    emit_type_op(gen, OP_TYPE_CHECK, reg, t, 1, line);
+}
+
+void emit_as_cast_to(CodeGen* gen, int reg, TypeInfo* t, int line) {
+    emit_type_op(gen, OP_AS_CAST, reg, t, 0, line);
+}
+
+// ============================================================================
 // 表达式入口
 // ============================================================================
 
@@ -132,6 +167,19 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
             gen_call(gen, ast, dst);
             break;
 
+        // --- 匿名函数表达式（闭包工厂返回值等）：创建闭包写到 dst ---
+        case AST_FUNC_DEF: {
+            ObjFunction* fn = gen_func_proto(gen, ast);
+            if (fn) {
+                gen_func_closure(gen, ast, fn);
+                int cidx = make_constant(gen, val_obj((Object*)fn));
+                emit_closure_upvals(gen, dst, cidx, ast);
+            } else {
+                emit_loadnil_to(gen, dst, ast->line);
+            }
+            break;
+        }
+
         // --- 索引访问 ---
         case AST_INDEX:
         {
@@ -238,26 +286,19 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
             // if 表达式结果在 dst，由 gen_if_ex 内部写入
             break;
 
-        // --- 类型检查 ---
+        // --- 类型检查：x is T ---
         case AST_TYPE_CHECK:
         {
-            int src_reg = gen_expr(gen, ast->u.type_check.expr);
-            emit_mov(gen, dst, src_reg, ast->line);
-            // TYPE_CHECK: R[A] = (R[A] is type(Bx))
-            // 简化：Bx = type_info 索引（需从语义分析获取）
-            reg_encode_iABx(gen->chunk, OP_TYPE_CHECK, dst, 0, ast->line);
-            reg_free(gen, src_reg);
+            gen_expr_to(gen, ast->u.type_check.expr, dst);
+            emit_type_check_to(gen, dst, ast->u.type_check.type, ast->line);
             break;
         }
 
-        // --- 安全类型转换 ---
+        // --- 安全类型转换：x as T ---
         case AST_AS_CAST:
         {
-            int src_reg = gen_expr(gen, ast->u.type_check.expr);
-            // AS_CAST: R[A] = R[A] as type(Bx)
-            emit_mov(gen, dst, src_reg, ast->line);
-            reg_encode_iABx(gen->chunk, OP_AS_CAST, dst, 0, ast->line);
-            reg_free(gen, src_reg);
+            gen_expr_to(gen, ast->u.type_check.expr, dst);
+            emit_as_cast_to(gen, dst, ast->u.type_check.type, ast->line);
             break;
         }
 
@@ -648,18 +689,64 @@ void gen_module_call(CodeGen* gen, Ast* ast, int dst) {
 // struct 初始化
 // ============================================================================
 
+// TypeInfo → 泛型实参名（与栈式 value_to_generic_type_name 的口径一致）
+static const char* typeinfo_to_name(TypeInfo* t) {
+    if (!t) return "unknown";
+    switch (t->kind) {
+        case TYPE_INT:    return "int";
+        case TYPE_FLOAT:  return "float";
+        case TYPE_STRING: return "string";
+        case TYPE_BOOL:   return "bool";
+        case TYPE_ANY:    return "any";
+        case TYPE_STRUCT: return t->struct_name ? t->struct_name : "struct";
+        default:          return "unknown";
+    }
+}
+
 void gen_struct_init(CodeGen* gen, Ast* ast, int dst) {
     int n = ast->u.struct_init.field_count;
-    // 实参从 R[dst+1] 开始
+    int base = reg_alloc_block(gen, n + 1);
+
+    // 构造实参 → R[base+1 .. base+n]
     for (int i = 0; i < n; i++) {
-        int r = reg_alloc(gen);
-        gen_expr_to(gen, ast->u.struct_init.field_values[i], r);
+        gen_expr_to(gen, ast->u.struct_init.field_values[i], base + 1 + i);
     }
-    // STRUCT_INIT: R[A] = new struct(R[A+1..A+C-1])
-    reg_encode_iABC(gen->chunk, OP_STRUCT_INIT, dst, 0, n, ast->line);
+
+    ObjString* sname = str_copy(ast->u.struct_init.struct_name,
+                                (int)strlen(ast->u.struct_init.struct_name));
+    int name_const = make_constant(gen, val_obj((Object*)sname));
+
+    reg_encode_iABC(gen->chunk, OP_STRUCT_INIT, base, n, 0, ast->line);
+
+    // --- 紧随数据 ---
+    // 名字常量
+    chunk_write(gen->chunk, (uint8_t)((name_const >> 8) & 0xFF), ast->line);
+    chunk_write(gen->chunk, (uint8_t)(name_const & 0xFF), ast->line);
+
+    // 泛型实参
+    int gc = ast->u.struct_init.generic_type_count;
+    chunk_write(gen->chunk, (uint8_t)(gc & 0xFF), ast->line);
+    for (int i = 0; i < gc; i++) {
+        const char* tn = typeinfo_to_name(ast->u.struct_init.generic_type_args
+                                              ? ast->u.struct_init.generic_type_args[i] : NULL);
+        int tc = make_constant(gen, val_obj((Object*)str_copy(tn, (int)strlen(tn))));
+        chunk_write(gen->chunk, (uint8_t)((tc >> 8) & 0xFF), ast->line);
+        chunk_write(gen->chunk, (uint8_t)(tc & 0xFF), ast->line);
+    }
+
+    // 每个实参对应字段名（0 = 按位置 i 赋值）
     for (int i = 0; i < n; i++) {
-        gen->next_reg--;
+        const char* fname = ast->u.struct_init.field_names ? ast->u.struct_init.field_names[i] : NULL;
+        int fc = 0;
+        if (fname && fname[0]) {
+            fc = make_constant(gen, val_obj((Object*)str_copy(fname, (int)strlen(fname))));
+        }
+        chunk_write(gen->chunk, (uint8_t)((fc >> 8) & 0xFF), ast->line);
+        chunk_write(gen->chunk, (uint8_t)(fc & 0xFF), ast->line);
     }
+
+    if (base != dst) emit_mov(gen, dst, base, ast->line);
+    reg_free_block(gen, base);
 }
 
 // ============================================================================

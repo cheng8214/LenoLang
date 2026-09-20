@@ -76,6 +76,8 @@ void codegen_add_dtor_entry(CodeGen* gen, int local_slot);
 // 函数生成（供 codegen_stmt.c 使用）
 ObjFunction* gen_func_proto(CodeGen* gen, Ast* ast);
 void gen_func_closure(CodeGen* gen, Ast* ast, ObjFunction* func);
+// 发射 OP_CLOSURE + upvalue 捕获描述（定义在 codegen_func.c）
+void emit_closure_upvals(CodeGen* gen, int dst, int const_idx, Ast* ast);
 
 // ============================================================================
 // 寄存器分配 API

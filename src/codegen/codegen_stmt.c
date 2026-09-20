@@ -462,12 +462,119 @@ static void gen_for_iter(CodeGen* gen, Ast* ast) {
 // switch
 // ============================================================================
 
+// switch：展开为"比较链 + 跳板 + 各 case 体"。
+// 语义与栈式一致（常量 case 用相等比较，命中后执行对应 body 并跳出；
+// 无命中走 default；body 之间不 fallthrough）。
+// case is Type 模式匹配需要类型检查指令，见后续阶段。
 static void gen_switch(CodeGen* gen, Ast* ast) {
-    // TODO: 完整 switch 实现
-    // 简化：生成默认分支
-    if (ast->u.switch_.default_body) {
+    int n = ast->u.switch_.case_count;
+    int has_default = ast->u.switch_.default_body != NULL;
+    int line = ast->line;
+
+    int tmp = reg_alloc(gen);
+    gen_expr_to(gen, ast->u.switch_.expr, tmp);
+
+    // break 支持
+    LoopContextNode* node = (LoopContextNode*)malloc(sizeof(LoopContextNode));
+    node->prev = gen->loop_head;
+    node->ctx.break_count = 0;
+    node->ctx.continue_count = 0;
+    node->ctx.continue_target = 0;
+    gen->loop_head = node;
+    gen->loop_count++;
+
+    // --- 比较链：命中就跳到对应跳板 ---
+    int cap = 8, cnt = 0;
+    int* hit_pos = (int*)malloc(sizeof(int) * cap);
+    int* hit_case = (int*)malloc(sizeof(int) * cap);
+
+    for (int i = 0; i < n; i++) {
+        // case is Type [,...]：类型匹配（任一命中即进入该 case）
+        if (ast->u.switch_.cases[i].is_type_match) {
+            int tcount = ast->u.switch_.cases[i].match_type_count;
+            for (int k = 0; k < (tcount > 0 ? tcount : 1); k++) {
+                TypeInfo* mt = (tcount > 0 && ast->u.switch_.cases[i].match_types)
+                                   ? ast->u.switch_.cases[i].match_types[k]
+                                   : ast->u.switch_.cases[i].match_type;
+                // 就地检查会覆盖 tmp：先复制一份到临时寄存器
+                int tr = reg_alloc(gen);
+                emit_mov(gen, tr, tmp, line);
+                emit_type_check_to(gen, tr, mt, line);
+                int jp = emit_jmp_if_true(gen, tr, line);
+                if (cnt == cap) {
+                    cap *= 2;
+                    hit_pos = (int*)realloc(hit_pos, sizeof(int) * cap);
+                    hit_case = (int*)realloc(hit_case, sizeof(int) * cap);
+                }
+                hit_pos[cnt] = jp;
+                hit_case[cnt] = i;
+                cnt++;
+                reg_free(gen, tr);
+            }
+            continue;
+        }
+        AstList* vals = &ast->u.switch_.cases[i].values;
+        for (int k = 0; k < vals->count; k++) {
+            int vr = reg_alloc(gen);
+            gen_expr_to(gen, vals->items[k], vr);
+            int cr = reg_alloc(gen);
+            emit_eq(gen, cr, tmp, vr, line);
+            int jp = emit_jmp_if_true(gen, cr, line);
+            if (cnt == cap) {
+                cap *= 2;
+                hit_pos = (int*)realloc(hit_pos, sizeof(int) * cap);
+                hit_case = (int*)realloc(hit_case, sizeof(int) * cap);
+            }
+            hit_pos[cnt] = jp;
+            hit_case[cnt] = i;
+            cnt++;
+            reg_free(gen, cr);
+            reg_free(gen, vr);
+        }
+    }
+
+    // 全部未命中
+    int miss_jump = emit_jmp(gen, line);
+
+    // --- 跳板区（连续的无条件跳转）---
+    int* pad_pos = (int*)malloc(sizeof(int) * (n > 0 ? n : 1));
+    for (int i = 0; i < n; i++) {
+        pad_pos[i] = gen->chunk->len;
+        emit_jmp(gen, line);
+    }
+    for (int i = 0; i < cnt; i++) {
+        patch_jmp_to(gen, hit_pos[i], pad_pos[hit_case[i]]);
+    }
+
+    // --- 各 case 体 ---
+    int* body_end_jumps = (int*)malloc(sizeof(int) * (n > 0 ? n : 1));
+    for (int i = 0; i < n; i++) {
+        int here = gen->chunk->len;
+        patch_jmp_to(gen, pad_pos[i], here);
+        if (ast->u.switch_.cases[i].body) gen_stmt(gen, ast->u.switch_.cases[i].body);
+        body_end_jumps[i] = emit_jmp(gen, line);   // 不 fallthrough
+    }
+
+    // --- default ---
+    int default_pos = gen->chunk->len;
+    if (has_default) {
         gen_stmt(gen, ast->u.switch_.default_body);
     }
+
+    int end_pos = gen->chunk->len;
+    patch_jmp_to(gen, miss_jump, has_default ? default_pos : end_pos);
+    for (int i = 0; i < n; i++) patch_jmp(gen, body_end_jumps[i]);
+    for (int i = 0; i < node->ctx.break_count; i++) patch_jmp(gen, node->ctx.break_jumps[i]);
+
+    gen->loop_head = node->prev;
+    free(node);
+    gen->loop_count--;
+
+    reg_free(gen, tmp);
+    free(hit_pos);
+    free(hit_case);
+    free(pad_pos);
+    free(body_end_jumps);
 }
 
 // ============================================================================
@@ -778,23 +885,198 @@ static void gen_throw(CodeGen* gen, Ast* ast) {
 // 类型定义语句（简化实现）
 // ============================================================================
 
-static void gen_struct_def(CodeGen* gen, Ast* ast) {
-    // STRUCT_DEF iABx: Bx = struct 定义常量索引
-    // 完整实现需要序列化 struct 元数据到常量表
-    reg_encode_iABx(gen->chunk, OP_STRUCT_DEF, 0, 0, ast->line);
+// 写 2 字节大端常量索引
+static void cw_u16(CodeGen* gen, int v, int line) {
+    chunk_write(gen->chunk, (uint8_t)((v >> 8) & 0xFF), line);
+    chunk_write(gen->chunk, (uint8_t)(v & 0xFF), line);
+}
+static void cw_u8(CodeGen* gen, int v, int line) {
+    chunk_write(gen->chunk, (uint8_t)(v & 0xFF), line);
+}
 
-    // 生成方法函数
-    for (int i = 0; i < ast->u.struct_def.method_count; i++) {
-        gen_func(gen, ast->u.struct_def.methods[i]);
+// 结构体定义：指令头 iABx(op, A=0, Bx=名字常量) + 紧随元数据（布局与栈式一致）
+static void gen_struct_def(CodeGen* gen, Ast* ast) {
+    int method_count = ast->u.struct_def.method_count;
+
+    int* method_name_consts = NULL;
+    int* method_func_consts = NULL;
+    if (method_count > 0) {
+        method_name_consts = (int*)malloc(sizeof(int) * method_count);
+        method_func_consts = (int*)malloc(sizeof(int) * method_count);
+        for (int i = 0; i < method_count; i++) {
+            Ast* m = ast->u.struct_def.methods[i];
+            if (m && m->kind == AST_FUNC_DEF) {
+                ObjFunction* fn = gen_func_proto(gen, m);
+                if (fn) gen_func_closure(gen, m, fn);   // 生成方法体字节码
+                method_name_consts[i] = make_constant(
+                    gen, val_obj((Object*)str_copy(m->u.func.name, (int)strlen(m->u.func.name))));
+                method_func_consts[i] = fn ? make_constant(gen, val_obj((Object*)fn))
+                                           : make_constant(gen, val_null());
+            } else {
+                method_name_consts[i] = make_constant(gen, val_null());
+                method_func_consts[i] = make_constant(gen, val_null());
+            }
+        }
     }
+
+    ObjString* struct_name = str_copy(ast->u.struct_def.name, (int)strlen(ast->u.struct_def.name));
+    int name_const = make_constant(gen, val_obj((Object*)struct_name));
+
+    reg_encode_iABx(gen->chunk, OP_STRUCT_DEF, 0, name_const, ast->line);
+    cw_u8(gen, ast->u.struct_def.field_count, ast->line);
+    cw_u8(gen, method_count, ast->line);
+
+    // impl 声明的 face 名
+    cw_u8(gen, ast->u.struct_def.impl_count, ast->line);
+    for (int i = 0; i < ast->u.struct_def.impl_count; i++) {
+        ObjString* impl_name = str_copy(ast->u.struct_def.impl_names[i],
+                                        (int)strlen(ast->u.struct_def.impl_names[i]));
+        cw_u16(gen, make_constant(gen, val_obj((Object*)impl_name)), ast->line);
+    }
+
+    // 泛型类型参数名
+    cw_u8(gen, ast->u.struct_def.type_param_count, ast->line);
+    for (int i = 0; i < ast->u.struct_def.type_param_count && ast->u.struct_def.type_params; i++) {
+        ObjString* pn = str_copy(ast->u.struct_def.type_params[i],
+                                 (int)strlen(ast->u.struct_def.type_params[i]));
+        cw_u16(gen, make_constant(gen, val_obj((Object*)pn)), ast->line);
+    }
+
+    // 字段
+    for (int i = 0; i < ast->u.struct_def.field_count; i++) {
+        ObjString* fn = str_copy(ast->u.struct_def.field_names[i],
+                                 (int)strlen(ast->u.struct_def.field_names[i]));
+        cw_u16(gen, make_constant(gen, val_obj((Object*)fn)), ast->line);
+
+        TypeInfo* ft = ast->u.struct_def.field_types ? ast->u.struct_def.field_types[i] : NULL;
+        TypeKind field_type = ft ? ft->kind : TYPE_ANY;
+        cw_u8(gen, field_type, ast->line);
+        cw_u8(gen, (ft && ft->nullable) ? 1 : 0, ast->line);
+
+        if (field_type == TYPE_STRUCT) {
+            const char* stn = ft ? ft->struct_name : NULL;
+            if (stn) {
+                ObjString* tn = str_copy(stn, (int)strlen(stn));
+                cw_u8(gen, 1, ast->line);
+                cw_u16(gen, make_constant(gen, val_obj((Object*)tn)), ast->line);
+            } else {
+                cw_u8(gen, 0, ast->line);
+            }
+        }
+        if (field_type == TYPE_PTR_GENERIC) {
+            TypeKind elem = (ft && ft->element_type) ? ft->element_type->kind : TYPE_PTR;
+            cw_u8(gen, elem, ast->line);
+        }
+
+        Ast* def_expr = ast->u.struct_def.field_defaults ? ast->u.struct_def.field_defaults[i] : NULL;
+        if (def_expr) {
+            Value dv = ast_default_to_value(def_expr);
+            if (val_is_null(dv) && def_expr->kind != AST_NULL) {
+                char msg[BUFFER_MEDIUM];
+                snprintf(msg, sizeof(msg),
+                         "struct 字段 '%s' 的默认值不是常量表达式，请使用构造器初始化",
+                         ast->u.struct_def.field_names[i]);
+                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                cw_u8(gen, 0, ast->line);
+            } else {
+                cw_u8(gen, 1, ast->line);
+                cw_u16(gen, make_constant(gen, dv), ast->line);
+            }
+        } else {
+            cw_u8(gen, 0, ast->line);
+        }
+    }
+
+    // 方法
+    for (int i = 0; i < method_count; i++) {
+        cw_u16(gen, method_name_consts[i], ast->line);
+        cw_u16(gen, method_func_consts[i], ast->line);
+    }
+
+    // 构造 / 析构 标志与下标
+    int ctor_idx = -1, dtor_idx = -1;
+    for (int i = 0; i < method_count; i++) {
+        Ast* m = ast->u.struct_def.methods[i];
+        if (m && m->u.func.is_ctor) ctor_idx = i;
+        if (m && m->u.func.is_dtor) dtor_idx = i;
+    }
+    uint8_t flags = 0;
+    if (ctor_idx >= 0) flags |= 1;
+    if (dtor_idx >= 0) flags |= 2;
+    cw_u8(gen, flags, ast->line);
+    if (ctor_idx >= 0) cw_u8(gen, ctor_idx, ast->line);
+    if (dtor_idx >= 0) cw_u8(gen, dtor_idx, ast->line);
+
+    // 关联常量
+    cw_u8(gen, ast->u.struct_def.const_count, ast->line);
+    for (int i = 0; i < ast->u.struct_def.const_count; i++) {
+        ObjString* cn = str_copy(ast->u.struct_def.const_names[i],
+                                 (int)strlen(ast->u.struct_def.const_names[i]));
+        cw_u16(gen, make_constant(gen, val_obj((Object*)cn)), ast->line);
+        Ast* ce = ast->u.struct_def.const_values[i];
+        Value cv = ast_default_to_value(ce);
+        cw_u16(gen, make_constant(gen, cv), ast->line);
+    }
+
+    if (method_name_consts) free(method_name_consts);
+    if (method_func_consts) free(method_func_consts);
 }
 
 static void gen_enum_def(CodeGen* gen, Ast* ast) {
-    reg_encode_iABx(gen->chunk, OP_ENUM_DEF, 0, 0, ast->line);
+    int r = reg_alloc(gen);
+    ObjString* nm = str_copy(ast->u.enum_def.name, (int)strlen(ast->u.enum_def.name));
+    int name_const = make_constant(gen, val_obj((Object*)nm));
+
+    reg_encode_iABx(gen->chunk, OP_ENUM_DEF, r, name_const, ast->line);
+    cw_u8(gen, ast->u.enum_def.member_count, ast->line);
+    for (int i = 0; i < ast->u.enum_def.member_count; i++) {
+        ObjString* mn = str_copy(ast->u.enum_def.member_names[i],
+                                 (int)strlen(ast->u.enum_def.member_names[i]));
+        cw_u16(gen, make_constant(gen, val_obj((Object*)mn)), ast->line);
+        Value mv = val_int_safe(ast->u.enum_def.member_values[i]);
+        cw_u16(gen, make_constant(gen, mv), ast->line);
+    }
+
+    // 把 enum 定义对象绑定到它的符号槽位
+    SymRef* ref = &ast->u.enum_def.ref;
+    if (ref->kind == SYM_GLOBAL) {
+        emit_defglobal(gen, r, ref->index, ast->line);
+    } else if (ref->kind == SYM_LOCAL || ref->kind == SYM_PARAM) {
+        emit_mov(gen, ref->index, r, ast->line);
+    } else if (ref->kind == SYM_MODULE) {
+        reg_encode_iABC(gen->chunk, OP_SET_MODULE_VAR, r, ref->index, 0, ast->line);
+    }
+    reg_free(gen, r);
 }
 
 static void gen_face_def(CodeGen* gen, Ast* ast) {
-    reg_encode_iABx(gen->chunk, OP_FACE_DEF, 0, 0, ast->line);
+    ObjString* nm = str_copy(ast->u.face_def.name, (int)strlen(ast->u.face_def.name));
+    int name_const = make_constant(gen, val_obj((Object*)nm));
+
+    reg_encode_iABx(gen->chunk, OP_FACE_DEF, 0, name_const, ast->line);
+    cw_u8(gen, ast->u.face_def.method_count, ast->line);
+    cw_u8(gen, ast->u.face_def.type_param_count, ast->line);
+
+    for (int i = 0; i < ast->u.face_def.type_param_count && ast->u.face_def.type_params; i++) {
+        ObjString* pn = str_copy(ast->u.face_def.type_params[i],
+                                 (int)strlen(ast->u.face_def.type_params[i]));
+        cw_u16(gen, make_constant(gen, val_obj((Object*)pn)), ast->line);
+    }
+
+    for (int i = 0; i < ast->u.face_def.method_count; i++) {
+        ObjString* mn = str_copy(ast->u.face_def.method_names[i],
+                                 (int)strlen(ast->u.face_def.method_names[i]));
+        cw_u16(gen, make_constant(gen, val_obj((Object*)mn)), ast->line);
+        int pc = ast->u.face_def.method_param_counts ? ast->u.face_def.method_param_counts[i] : 0;
+        cw_u8(gen, pc, ast->line);
+        TypeInfo* rt = ast->u.face_def.method_return_types ? ast->u.face_def.method_return_types[i] : NULL;
+        cw_u8(gen, rt ? (uint8_t)rt->kind : (uint8_t)TYPE_INFER, ast->line);
+        for (int j = 0; j < pc; j++) {
+            TypeInfo* pt = ast->u.face_def.method_param_types
+                               ? ast->u.face_def.method_param_types[i][j] : NULL;
+            cw_u8(gen, pt ? (uint8_t)pt->kind : (uint8_t)TYPE_INFER, ast->line);
+        }
+    }
 }
 
 static void gen_cstruct_def(CodeGen* gen, Ast* ast) {
