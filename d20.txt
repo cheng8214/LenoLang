@@ -1,0 +1,268 @@
+===== 主程序 =====
+代码长度: 528 bytes
+常量数量: 28
+局部变量槽位数: 14
+
+Offset Line Instruction          Operand
+------ ---- -------------------- -------
+0000    4 OP_LOADK             A=0 Bx=0 (K[0]=[object])
+0004    4 OP_INIT_LENOMODULE   A=0 Bx=0
+0008    4 OP_DEFGLOBAL         A=0 Bx=1
+0012    7 OP_GETGLOBAL         A=1 Bx=1 (K[1]=get_user_info)
+0016    7 OP_LOADK             A=2 Bx=1 (K[1]=get_user_info)
+0020    7 OP_INDEX             A=1 B=1 C=2
+0024    7 OP_CALL              A=1 B=1 C=2
+0028    7 OP_MOV               A=0 B=1 C=0
+0032    7 OP_LOADI             A=1 sBx=0 (to 36)
+0036    7 OP_INDEX             A=2 B=0 C=1
+0040    7 OP_SETGLOBAL         A=2 Bx=2
+0044    7 OP_LOADI             A=1 sBx=1 (to 49)
+0048    7 OP_INDEX             A=2 B=0 C=1
+0052    7 OP_SETGLOBAL         A=2 Bx=3
+0056    7 OP_LOADI             A=1 sBx=2 (to 62)
+0060    7 OP_INDEX             A=2 B=0 C=1
+0064    7 OP_SETGLOBAL         A=2 Bx=4
+0068    8 OP_GETGLOBAL         A=4 Bx=2 (K[2]=assert_eq)
+0072    8 OP_LOADI             A=5 sBx=1 (to 77)
+0076    8 OP_CALL_NATIVE       A=3 B=2 C=2
+0080    8 OP_MOV               A=0 B=3 C=0
+0084    9 OP_GETGLOBAL         A=4 Bx=3 (K[3]=admin)
+0088    9 OP_LOADK             A=5 Bx=3 (K[3]=admin)
+0092    9 OP_CALL_NATIVE       A=3 B=4 C=2
+0096    9 OP_MOV               A=0 B=3 C=0
+0100   10 OP_GETGLOBAL         A=4 Bx=4 (K[4]=assert_eq)
+0104   10 OP_LOADK             A=5 Bx=5 (K[5]=99.900000000000006)
+0108   10 OP_CALL_NATIVE       A=3 B=6 C=2
+0112   10 OP_MOV               A=0 B=3 C=0
+0116   13 OP_GETGLOBAL         A=3 Bx=1 (K[1]=get_user_info)
+0120   13 OP_LOADK             A=4 Bx=7 (K[7]=get_coords)
+0124   13 OP_INDEX             A=3 B=3 C=4
+0128   13 OP_CALL              A=3 B=1 C=2
+0132   13 OP_MOV               A=0 B=3 C=0
+0136   13 OP_LOADI             A=3 sBx=0 (to 140)
+0140   13 OP_INDEX             A=4 B=0 C=3
+0144   13 OP_SETGLOBAL         A=4 Bx=5
+0148   13 OP_LOADI             A=3 sBx=1 (to 153)
+0152   13 OP_INDEX             A=4 B=0 C=3
+0156   13 OP_SETGLOBAL         A=4 Bx=6
+0160   14 OP_GETGLOBAL         A=6 Bx=5 (K[5]=99.900000000000006)
+0164   14 OP_LOADI             A=7 sBx=100 (to 268)
+0168   14 OP_CALL_NATIVE       A=5 B=8 C=2
+0172   14 OP_MOV               A=0 B=5 C=0
+0176   15 OP_GETGLOBAL         A=6 Bx=6 (K[6]=assert_eq)
+0180   15 OP_LOADI             A=7 sBx=200 (to 384)
+0184   15 OP_CALL_NATIVE       A=5 B=9 C=2
+0188   15 OP_MOV               A=0 B=5 C=0
+0192   18 OP_GETGLOBAL         A=5 Bx=1 (K[1]=get_user_info)
+0196   18 OP_LOADK             A=6 Bx=10 (K[10]=use_helper)
+0200   18 OP_INDEX             A=5 B=5 C=6
+0204   18 OP_CALL              A=5 B=1 C=2
+0208   18 OP_MOV               A=0 B=5 C=0
+0212   18 OP_LOADI             A=5 sBx=0 (to 216)
+0216   18 OP_INDEX             A=6 B=0 C=5
+0220   18 OP_SETGLOBAL         A=6 Bx=7
+0224   18 OP_LOADI             A=5 sBx=1 (to 229)
+0228   18 OP_INDEX             A=6 B=0 C=5
+0232   18 OP_SETGLOBAL         A=6 Bx=8
+0236   19 OP_GETGLOBAL         A=8 Bx=7 (K[7]=get_coords)
+0240   19 OP_LOADI             A=9 sBx=43 (to 287)
+0244   19 OP_CALL_NATIVE       A=7 B=11 C=2
+0248   19 OP_MOV               A=0 B=7 C=0
+0252   20 OP_GETGLOBAL         A=8 Bx=8 (K[8]=assert_eq)
+0256   20 OP_LOADK             A=9 Bx=12 (K[12]=ok!)
+0260   20 OP_CALL_NATIVE       A=7 B=13 C=2
+0264   20 OP_MOV               A=0 B=7 C=0
+0268   23 OP_GETGLOBAL         A=7 Bx=1 (K[1]=get_user_info)
+0272   23 OP_LOADK             A=8 Bx=14 (K[14]=get_config)
+0276   23 OP_INDEX             A=7 B=7 C=8
+0280   23 OP_CALL              A=7 B=1 C=2
+0284   23 OP_MOV               A=0 B=7 C=0
+0288   23 OP_LOADI             A=7 sBx=0 (to 292)
+0292   23 OP_INDEX             A=8 B=0 C=7
+0296   23 OP_SETGLOBAL         A=8 Bx=9
+0300   23 OP_LOADI             A=7 sBx=1 (to 305)
+0304   23 OP_INDEX             A=8 B=0 C=7
+0308   23 OP_SETGLOBAL         A=8 Bx=10
+0312   23 OP_LOADI             A=7 sBx=2 (to 318)
+0316   23 OP_INDEX             A=8 B=0 C=7
+0320   23 OP_SETGLOBAL         A=8 Bx=11
+0324   24 OP_GETGLOBAL         A=10 Bx=9 (K[9]=assert_eq)
+0328   24 OP_LOADK             A=11 Bx=15 (K[15]=localhost)
+0332   24 OP_CALL_NATIVE       A=9 B=16 C=2
+0336   24 OP_MOV               A=0 B=9 C=0
+0340   25 OP_GETGLOBAL         A=10 Bx=10 (K[10]=use_helper)
+0344   25 OP_LOADI             A=11 sBx=8080 (to 8428)
+0348   25 OP_CALL_NATIVE       A=9 B=17 C=2
+0352   25 OP_MOV               A=0 B=9 C=0
+0356   26 OP_GETGLOBAL         A=10 Bx=11 (K[11]=assert_eq)
+0360   26 OP_LOADTRUE          A=11 B=0 C=0
+0364   26 OP_CALL_NATIVE       A=9 B=18 C=2
+0368   26 OP_MOV               A=0 B=9 C=0
+0372   29 OP_GETGLOBAL         A=9 Bx=1 (K[1]=get_user_info)
+0376   29 OP_LOADK             A=10 Bx=19 (K[19]=get_cached)
+0380   29 OP_INDEX             A=9 B=9 C=10
+0384   29 OP_CALL              A=9 B=1 C=2
+0388   29 OP_MOV               A=0 B=9 C=0
+0392   29 OP_LOADI             A=9 sBx=0 (to 396)
+0396   29 OP_INDEX             A=10 B=0 C=9
+0400   29 OP_SETGLOBAL         A=10 Bx=12
+0404   29 OP_LOADI             A=9 sBx=1 (to 409)
+0408   29 OP_INDEX             A=10 B=0 C=9
+0412   29 OP_SETGLOBAL         A=10 Bx=13
+0416   30 OP_GETGLOBAL         A=12 Bx=12 (K[12]=ok!)
+0420   30 OP_LOADI             A=13 sBx=100 (to 524)
+0424   30 OP_CALL_NATIVE       A=11 B=20 C=2
+0428   30 OP_MOV               A=0 B=11 C=0
+0432   31 OP_GETGLOBAL         A=12 Bx=13 (K[13]=assert_eq)
+0436   31 OP_LOADK             A=13 Bx=21 (K[21]=module)
+0440   31 OP_CALL_NATIVE       A=11 B=22 C=2
+0444   31 OP_MOV               A=0 B=11 C=0
+0448   34 OP_GETGLOBAL         A=11 Bx=1 (K[1]=get_user_info)
+0452   34 OP_LOADK             A=12 Bx=23 (K[23]=get_user_info)
+0456   34 OP_INDEX             A=11 B=11 C=12
+0460   34 OP_CALL              A=11 B=1 C=2
+0464   34 OP_MOV               A=0 B=11 C=0
+0468   34 OP_DEFGLOBAL         A=0 Bx=0
+0472   35 OP_GETGLOBAL         A=12 Bx=0 (K[0]=[object])
+0476   35 OP_LOADI             A=13 sBx=1 (to 481)
+0480   35 OP_CALL_NATIVE       A=11 B=24 C=2
+0484   35 OP_MOV               A=0 B=11 C=0
+0488   38 OP_GETGLOBAL         A=11 Bx=1 (K[1]=get_user_info)
+0492   38 OP_LOADK             A=12 Bx=25 (K[25]=get_coords)
+0496   38 OP_INDEX             A=11 B=11 C=12
+0500   38 OP_CALL              A=11 B=1 C=2
+0504   38 OP_MOV               A=0 B=11 C=0
+0508   40 OP_LOADK             A=12 Bx=26 (K[26]==== 跨模块多返回值测试通过 ===)
+0512   40 OP_CALL_NATIVE       A=11 B=27 C=1
+0516   40 OP_MOV               A=0 B=11 C=0
+0520    4 OP_LOADNIL           A=0 B=0 C=0
+0524    4 OP_RETURN            A=0 B=2 C=0
+==================
+
+===== 模块: multi_ret_mod (D:\CLeno\LenoReg\assert\multi_ret_mod.leno) =====
+代码长度: 72 bytes
+常量数量: 7
+局部变量槽位数: 1
+
+Offset Line Instruction          Operand
+------ ---- -------------------- -------
+0000    6 OP_CLOSURE           A=0 Bx=0 (K[0]=[object])
+0004    6 OP_DEFINE_MODULE_FUNC A=0 B=0 C=0
+0008   11 OP_CLOSURE           A=0 Bx=1 (K[1]=[object])
+0012   11 OP_DEFINE_MODULE_FUNC A=0 B=0 C=1
+0016   16 OP_CLOSURE           A=0 Bx=2 (K[2]=[object])
+0020   16 OP_DEFINE_MODULE_FUNC A=0 B=0 C=2
+0024   20 OP_CLOSURE           A=0 Bx=3 (K[3]=[object])
+0028   20 OP_DEFINE_MODULE_FUNC A=0 B=0 C=3
+0032   26 OP_CLOSURE           A=0 Bx=4 (K[4]=[object])
+0036   26 OP_DEFINE_MODULE_FUNC A=0 B=0 C=4
+0040   31 OP_LOADI             A=0 sBx=100 (to 144)
+0044   31 OP_SET_MODULE_VAR    A=0 B=0 C=6
+0048   32 OP_LOADK             A=0 Bx=5 (K[5]=module)
+0052   32 OP_SET_MODULE_VAR    A=0 B=0 C=7
+0056   34 OP_CLOSURE           A=0 Bx=6 (K[6]=[object])
+0060   34 OP_DEFINE_MODULE_FUNC A=0 B=0 C=5
+0064    6 OP_LOADNIL           A=0 B=0 C=0
+0068    6 OP_RETURN            A=0 B=2 C=0
+==================
+
+  ===== 函数: get_user_info =====
+  代码长度: 28 bytes
+  常量数量: 2
+  局部变量槽位数: 5
+
+  Offset Line Instruction          Operand
+  ------ ---- -------------------- -------
+  0000    7 OP_LOADI             A=0 sBx=1 (to 5)
+  0004    7 OP_LOADK             A=1 Bx=0 (K[0]=admin)
+  0008    7 OP_LOADK             A=2 Bx=1 (K[1]=99.900000000000006)
+  0012    7 OP_LOADI             A=3 sBx=3 (to 19)
+  0016    7 OP_RETURN_MULTI      A=0 B=3 C=0
+  0020    6 OP_LOADNIL           A=4 B=0 C=0
+  0024    6 OP_RETURN            A=4 B=2 C=0
+  ==================
+
+  ===== 函数: get_coords =====
+  代码长度: 24 bytes
+  常量数量: 0
+  局部变量槽位数: 4
+
+  Offset Line Instruction          Operand
+  ------ ---- -------------------- -------
+  0000   12 OP_LOADI             A=0 sBx=100 (to 104)
+  0004   12 OP_LOADI             A=1 sBx=200 (to 208)
+  0008   12 OP_LOADI             A=2 sBx=2 (to 14)
+  0012   12 OP_RETURN_MULTI      A=0 B=2 C=0
+  0016   11 OP_LOADNIL           A=3 B=0 C=0
+  0020   11 OP_RETURN            A=3 B=2 C=0
+  ==================
+
+  ===== 函数: helper =====
+  代码长度: 24 bytes
+  常量数量: 1
+  局部变量槽位数: 4
+
+  Offset Line Instruction          Operand
+  ------ ---- -------------------- -------
+  0000   17 OP_LOADI             A=0 sBx=42 (to 46)
+  0004   17 OP_LOADK             A=1 Bx=0 (K[0]=ok)
+  0008   17 OP_LOADI             A=2 sBx=2 (to 14)
+  0012   17 OP_RETURN_MULTI      A=0 B=2 C=0
+  0016   16 OP_LOADNIL           A=3 B=0 C=0
+  0020   16 OP_RETURN            A=3 B=2 C=0
+  ==================
+
+  ===== 函数: use_helper =====
+  代码长度: 56 bytes
+  常量数量: 1
+  局部变量槽位数: 6
+
+  Offset Line Instruction          Operand
+  ------ ---- -------------------- -------
+  0000   21 OP_GET_MODULE_VAR    A=2 B=0 C=2
+  0004   21 OP_CALL              A=2 B=1 C=3
+  0008   21 OP_MOV               A=0 B=2 C=0
+  0012   21 OP_MOV               A=1 B=3 C=0
+  0016   22 OP_MOV               A=2 B=0 C=0
+  0020   22 OP_LOADI             A=3 sBx=1 (to 25)
+  0024   22 OP_ADD               A=2 B=2 C=3
+  0028   22 OP_MOV               A=3 B=1 C=0
+  0032   22 OP_LOADK             A=4 Bx=0 (K[0]=!)
+  0036   22 OP_ADD               A=3 B=3 C=4
+  0040   22 OP_LOADI             A=4 sBx=2 (to 46)
+  0044   22 OP_RETURN_MULTI      A=2 B=4 C=0
+  0048   20 OP_LOADNIL           A=5 B=0 C=0
+  0052   20 OP_RETURN            A=5 B=2 C=0
+  ==================
+
+  ===== 函数: get_config =====
+  代码长度: 28 bytes
+  常量数量: 1
+  局部变量槽位数: 5
+
+  Offset Line Instruction          Operand
+  ------ ---- -------------------- -------
+  0000   27 OP_LOADK             A=0 Bx=0 (K[0]=localhost)
+  0004   27 OP_LOADI             A=1 sBx=8080 (to 8088)
+  0008   27 OP_LOADTRUE          A=2 B=0 C=0
+  0012   27 OP_LOADI             A=3 sBx=3 (to 19)
+  0016   27 OP_RETURN_MULTI      A=0 B=3 C=0
+  0020   26 OP_LOADNIL           A=4 B=0 C=0
+  0024   26 OP_RETURN            A=4 B=2 C=0
+  ==================
+
+  ===== 函数: get_cached =====
+  代码长度: 24 bytes
+  常量数量: 0
+  局部变量槽位数: 4
+
+  Offset Line Instruction          Operand
+  ------ ---- -------------------- -------
+  0000   35 OP_GET_MODULE_VAR    A=0 B=0 C=6
+  0004   35 OP_GET_MODULE_VAR    A=1 B=0 C=7
+  0008   35 OP_LOADI             A=2 sBx=2 (to 14)
+  0012   35 OP_RETURN_MULTI      A=0 B=2 C=0
+  0016   34 OP_LOADNIL           A=3 B=0 C=0
+  0020   34 OP_RETURN            A=3 B=2 C=0
+  ==================
+

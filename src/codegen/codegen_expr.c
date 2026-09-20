@@ -734,6 +734,7 @@ void gen_module_call(CodeGen* gen, Ast* ast, int dst) {
         real_name = modname;
     }
 
+
     if (!is_native_mod) {
         // --- .leno 模块成员调用 ---
         int base = reg_alloc_block(gen, nargs + 1);

@@ -1132,23 +1132,133 @@ static void gen_alias(CodeGen* gen, Ast* ast) {
 // 解构声明
 // ============================================================================
 
+// 解构声明：把目标变量的值写到它的槽位。
+//   变量槽位来自语义分析写好的 refs（别再 scope_resolve —— codegen 阶段的作用域
+//   已不对应声明点）。
+// 两种形态：
+//   1) 多返回值调用：`var[int,string](a, b) = f()` → CALL 的 nresults = 槽位数，
+//      结果落在连续寄存器，再逐个搬到变量槽。
+//   2) 数组/字典解构：`var[int,int](a, b) = arr` / `var[...](x) = d["k"]`
+//      → 对源对象做 OP_INDEX（字典用键名，数组用序号）。
 static void gen_destruct_decl(CodeGen* gen, Ast* ast) {
-    // TODO: 完整解构实现
-    // 简化：求值 init 表达式，然后逐个赋值
-    if (ast->u.destruct_decl.init) {
-        int src = gen_expr(gen, ast->u.destruct_decl.init);
-        for (int i = 0; i < ast->u.destruct_decl.slot_count; i++) {
-            Symbol* sym = scope_resolve(gen->sem->current, ast->u.destruct_decl.names[i]);
-            if (sym) {
-                // 从 src 中取第 i 个元素
-                int idx_reg = reg_alloc(gen);
-                emit_loadi_to(gen, idx_reg, i, ast->line);
-                reg_encode_iABC(gen->chunk, OP_INDEX, sym->index, src, idx_reg, ast->line);
-                reg_free(gen, idx_reg);
+    int n = ast->u.destruct_decl.slot_count;
+    Ast* init = ast->u.destruct_decl.init;
+    if (n <= 0 || !init) return;
+
+    SymRef* refs = ast->u.destruct_decl.refs;
+    int line = ast->line;
+
+    // 把值 value_reg 写入第 i 个目标变量
+    #define DESTRUCT_STORE(_i, _val_reg)                                          \
+        do {                                                                      \
+            SymRef* _r = (refs && refs[(_i)].name) ? &refs[(_i)] : NULL;          \
+            if (_r) {                                                             \
+                if (_r->kind == SYM_LOCAL || _r->kind == SYM_PARAM) {             \
+                    if (_r->index != (_val_reg)) emit_mov(gen, _r->index, (_val_reg), line); \
+                } else if (_r->kind == SYM_GLOBAL) {                              \
+                    emit_setglobal(gen, (_val_reg), _r->index, line);             \
+                } else if (_r->kind == SYM_UPVALUE) {                             \
+                    emit_setupval(gen, (_val_reg), _r->index, line);              \
+                } else if (_r->kind == SYM_MODULE) {                              \
+                    reg_encode_iABx(gen->chunk, OP_SET_MODULE_VAR, (_val_reg), _r->index, line); \
+                }                                                                 \
+            }                                                                     \
+        } while (0)
+
+    // --- 情形 1：多返回值调用 ---
+    //   注意 `var{"code": int, "msg": string}(c, m) = f()` 也是这种形态：
+    //   花括号里的键名只是"带键名的多返回值类型"标注，并不是字典解构。
+    //   所以这里不看 is_dict，只看 init 是不是一次调用。
+    //   跨模块的 `mod.f()` 是 AST_MODULE_CALL，同样要按"结果区连续"处理。
+    if (init->kind == AST_MODULE_CALL && n > 1) {
+        int nargs = init->u.module_call.args.count;
+        const char* modname = init->u.module_call.module_name;
+        const char* methname = init->u.module_call.method_name ? init->u.module_call.method_name : "";
+        int base = reg_alloc_block(gen, nargs + 1);
+
+        // 取模块对象：lib_ref 优先，否则按别名在全局作用域找
+        SymRef* lib = &init->u.module_call.lib_ref;
+        if (lib->name && lib->kind == SYM_GLOBAL) {
+            emit_getglobal_to(gen, base, lib->index, line);
+        } else if (lib->name && (lib->kind == SYM_LOCAL || lib->kind == SYM_PARAM)) {
+            emit_mov(gen, base, lib->index, line);
+        } else {
+            Symbol* sym = modname ? scope_resolve(gen->sem->root_scope, modname) : NULL;
+            if (sym && sym->kind == SYM_GLOBAL) {
+                emit_getglobal_to(gen, base, sym->index, line);
+            } else if (sym && (sym->kind == SYM_LOCAL || sym->kind == SYM_PARAM)) {
+                emit_mov(gen, base, sym->index, line);
+            } else {
+                emit_loadnil_to(gen, base, line);
             }
         }
-        reg_free(gen, src);
+
+        // callee = 模块对象[方法名]
+        int ireg = reg_alloc(gen);
+        int cidx = make_constant(gen, val_obj((Object*)str_copy(methname, (int)strlen(methname))));
+        emit_loadk_to(gen, ireg, cidx, line);
+        reg_encode_iABC(gen->chunk, OP_INDEX, base, base, ireg, line);
+        reg_free(gen, ireg);
+
+        for (int i = 0; i < nargs; i++) {
+            gen_expr_to(gen, init->u.module_call.args.items[i], base + 1 + i);
+        }
+        emit_call(gen, base, nargs, n, line);
+        for (int i = 0; i < n; i++) {
+            DESTRUCT_STORE(i, base + i);
+        }
+        reg_free_block(gen, base);
+        return;
     }
+
+    if (init->kind == AST_CALL && n > 1) {
+        Ast* callee = init->u.call.callee;
+        int nargs = init->u.call.args.count;
+        int base = reg_alloc_block(gen, nargs + 1);
+        gen_expr_to(gen, callee, base);
+        for (int i = 0; i < nargs; i++) {
+            gen_expr_to(gen, init->u.call.args.items[i], base + 1 + i);
+        }
+        // nresults = 槽位数：被调方 RETURN_MULTI 会把 n 个结果写到 base..base+n-1
+        emit_call(gen, base, nargs, n, line);
+        for (int i = 0; i < n; i++) {
+            DESTRUCT_STORE(i, base + i);
+        }
+        reg_free_block(gen, base);
+        return;
+    }
+
+    // --- 情形 2：数组 / 字典解构 ---
+    int src = gen_expr(gen, init);
+    for (int i = 0; i < n; i++) {
+        SymRef* r = (refs && refs[i].name) ? &refs[i] : NULL;
+        if (!r || (!r->name)) continue;
+
+        int idx_reg = reg_alloc(gen);
+        if (ast->u.destruct_decl.is_dict) {
+            const char* key = (ast->u.destruct_decl.slot_keys && ast->u.destruct_decl.slot_keys[i])
+                                  ? ast->u.destruct_decl.slot_keys[i] : NULL;
+            if (!key) { reg_free(gen, idx_reg); continue; }
+            int c = make_constant(gen, val_obj((Object*)str_copy(key, (int)strlen(key))));
+            emit_loadk_to(gen, idx_reg, c, line);
+        } else {
+            emit_loadi_to(gen, idx_reg, i, line);
+        }
+
+        // 目标不是局部槽位时，先取到临时再写回（OP_INDEX 的目标不能跨到全局）
+        int is_local_slot = (r->kind == SYM_LOCAL || r->kind == SYM_PARAM);
+        if (is_local_slot && r->index != src) {
+            reg_encode_iABC(gen->chunk, OP_INDEX, r->index, src, idx_reg, line);
+        } else {
+            int tmp = reg_alloc(gen);
+            reg_encode_iABC(gen->chunk, OP_INDEX, tmp, src, idx_reg, line);
+            DESTRUCT_STORE(i, tmp);
+            reg_free(gen, tmp);
+        }
+        reg_free(gen, idx_reg);
+    }
+    reg_free(gen, src);
+    #undef DESTRUCT_STORE
 }
 
 // ============================================================================
@@ -1160,7 +1270,12 @@ static void gen_import(CodeGen* gen, Ast* ast) {
     if (!mod) return;
 
     // 原生模块（times / io / jsons ...）：运行时加载，确保方法表已注册
-    int is_native_mod = (strstr(mod, ".leno") == NULL);
+    // 是否原生模块：用原生注册表探测。
+    // 不能靠"名字里有没有 .leno"来判断 —— `import multi_ret_mod`（不带后缀）
+    // 同样是 .leno 源码模块，会被误当作原生模块加载（模块对象为 null，
+    // 后续 mod.func() 全部失败）。
+    extern int native_init_module(const char* name);
+    int is_native_mod = (native_init_module(mod) == 0);
 
     // 别名：显式 alias 优先，否则用模块名（去掉路径与后缀）
     const char* alias = ast->u.import.alias;
@@ -1201,8 +1316,16 @@ static void gen_import(CodeGen* gen, Ast* ast) {
     // 运行期：OP_INIT_LENOMODULE 执行 init_chunk，再把模块对象绑到别名变量
 
 
+    // .leno 模块文件：没写后缀就补 .leno（`import multi_ret_mod` 是合法写法）
+    char mod_path_buf[512];
+    const char* mod_path = mod;
+    if (!strstr(mod, ".leno") && strlen(mod) + 6 < sizeof(mod_path_buf)) {
+        snprintf(mod_path_buf, sizeof(mod_path_buf), "%s.leno", mod);
+        mod_path = mod_path_buf;
+    }
+
     const char* current_file = error_get_filename();
-    ObjModule* module = load_module_file(mod, current_file, alias);
+    ObjModule* module = load_module_file(mod_path, current_file, alias);
 
     if (!module) {
         if (!error_has_any()) {
