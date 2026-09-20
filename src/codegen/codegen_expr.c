@@ -724,7 +724,17 @@ void gen_module_call(CodeGen* gen, Ast* ast, int dst) {
     const char* modname = ast->u.module_call.module_name ? ast->u.module_call.module_name : "";
     const char* methname = ast->u.module_call.method_name ? ast->u.module_call.method_name : "";
 
-    if (native_init_module(modname) != 0) {
+    // 先查 import 登记表（编译期 gen_import 记下的"别名 → 真实名 + 是否原生"）；
+    // 没有登记（例如模块内 use 来的）再探测原生模块注册表。
+    int alias_found = 0;
+    const char* real_name = modname;
+    int is_native_mod = codegen_module_lookup(gen, modname, &real_name, &alias_found);
+    if (!alias_found) {
+        is_native_mod = (native_init_module(modname) == 0);
+        real_name = modname;
+    }
+
+    if (!is_native_mod) {
         // --- .leno 模块成员调用 ---
         int base = reg_alloc_block(gen, nargs + 1);
 
@@ -776,8 +786,9 @@ void gen_module_call(CodeGen* gen, Ast* ast, int dst) {
         gen_expr_to(gen, ast->u.module_call.args.items[i], base + 1 + i);
     }
 
-    const char* mod = ast->u.module_call.module_name ? ast->u.module_call.module_name : "";
-    const char* meth = ast->u.module_call.method_name ? ast->u.module_call.method_name : "";
+    // ★ 用**真实模块名**（别名可能被 as 改过，而 native 方法表按注册名查找）
+    const char* mod = real_name;
+    const char* meth = methname;
     int mlen = (int)strlen(mod);
     int flen = (int)strlen(meth);
 

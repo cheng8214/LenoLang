@@ -21,6 +21,7 @@ void codegen_init(CodeGen* gen, Chunk* chunk, Semantic* sem) {
     gen->dtor_capacity = 0;
     gen->dtor_temp_slot = -1;
     gen->suppress_multi_pop = 0;
+    gen->mod_alias_count = 0;
 }
 
 void codegen_cleanup(CodeGen* gen) {

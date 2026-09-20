@@ -1160,17 +1160,9 @@ static void gen_import(CodeGen* gen, Ast* ast) {
     if (!mod) return;
 
     // 原生模块（times / io / jsons ...）：运行时加载，确保方法表已注册
-    if (!strstr(mod, ".leno")) {
-        int r = reg_alloc(gen);
-        int cidx = make_constant(gen, val_obj((Object*)str_new(mod, (int)strlen(mod))));
-        reg_encode_iABx(gen->chunk, OP_LOAD_NATIVE_MODULE, r, cidx, ast->line);
-        reg_free(gen, r);
-        return;
-    }
+    int is_native_mod = (strstr(mod, ".leno") == NULL);
 
-    // --- .leno 源码模块 ---
-    // 编译期：加载并编译模块（产出 ObjModule + init_chunk）
-    // 运行期：OP_INIT_LENOMODULE 执行 init_chunk，再把模块对象绑到别名变量
+    // 别名：显式 alias 优先，否则用模块名（去掉路径与后缀）
     const char* alias = ast->u.import.alias;
     char* extracted = NULL;
     if (!alias) {
@@ -1187,6 +1179,27 @@ static void gen_import(CodeGen* gen, Ast* ast) {
         }
         alias = extracted;
     }
+
+    // ★ 登记别名 → 是否原生模块。
+    //   调用点（gen_module_call）必须据此选路径：原生模块走 OP_MODULE_CALL，
+    //   .leno 模块走「取模块对象 → exports[方法名] → CALL」。
+    //   两者的 AST_MODULE_CALL 字段完全一致（module_name 是别名、lib_ref 无信息），
+    //   只能在这里留下线索。
+    codegen_record_module_alias(gen, alias, mod, is_native_mod);
+
+    if (is_native_mod) {
+        int r = reg_alloc(gen);
+        int cidx = make_constant(gen, val_obj((Object*)str_new(mod, (int)strlen(mod))));
+        reg_encode_iABx(gen->chunk, OP_LOAD_NATIVE_MODULE, r, cidx, ast->line);
+        reg_free(gen, r);
+        if (extracted) free(extracted);
+        return;
+    }
+
+    // --- .leno 源码模块 ---
+    // 编译期：加载并编译模块（产出 ObjModule + init_chunk）
+    // 运行期：OP_INIT_LENOMODULE 执行 init_chunk，再把模块对象绑到别名变量
+
 
     const char* current_file = error_get_filename();
     ObjModule* module = load_module_file(mod, current_file, alias);

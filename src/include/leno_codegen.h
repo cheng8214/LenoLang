@@ -42,6 +42,7 @@ typedef struct {
 // ============================================================================
 
 #define MAX_REG 256  // 单字节寄存器号上限（超过需 EXTEND 前缀）
+#define MAX_MOD_ALIASES 64  // import 别名登记上限（区分原生模块与 .leno 模块）
 
 typedef struct {
     Chunk* chunk;
@@ -63,7 +64,53 @@ typedef struct {
     int dtor_temp_slot;     // return 时保存返回值的临时寄存器（-1=未分配）
     // --- 多返回值 / 解构 ---
     int suppress_multi_pop;  // 解构声明上下文标记
+    // --- import 别名表：区分「原生模块」与「.leno 源码模块」 ---
+    //   两者的 AST_MODULE_CALL 长得一模一样（module_name 是别名、lib_ref 无信息、
+    //   全局符号都是 SYM_GLOBAL），只能在 import 时登记，调用点回查。
+    char* mod_aliases[MAX_MOD_ALIASES];
+    char* mod_real_names[MAX_MOD_ALIASES];  // 真实模块名（native 方法表按它注册）
+    unsigned char mod_alias_native[MAX_MOD_ALIASES];
+    int mod_alias_count;
 } CodeGen;
+
+// 登记 import：别名 → 真实模块名 + 是否原生模块
+//   别名（如 `import times as ti` 的 ti）与真实模块名（times）都要记住：
+//   AST_MODULE_CALL 里只有别名，而 native 方法表是按真实名注册的。
+static inline void codegen_record_module_alias(CodeGen* gen, const char* alias,
+                                               const char* real_name, int is_native) {
+    if (!alias || !alias[0]) return;
+    for (int i = 0; i < gen->mod_alias_count; i++) {
+        if (gen->mod_aliases[i] && strcmp(gen->mod_aliases[i], alias) == 0) {
+            gen->mod_alias_native[i] = (unsigned char)(is_native ? 1 : 0);
+            if (real_name) {
+                free(gen->mod_real_names[i]);
+                gen->mod_real_names[i] = strdup(real_name);
+            }
+            return;
+        }
+    }
+    if (gen->mod_alias_count >= MAX_MOD_ALIASES) return;
+    int i = gen->mod_alias_count++;
+    gen->mod_aliases[i] = strdup(alias);
+    gen->mod_real_names[i] = strdup(real_name ? real_name : alias);
+    gen->mod_alias_native[i] = (unsigned char)(is_native ? 1 : 0);
+}
+
+// 查别名：返回是否原生模块，*real_name 回填真实模块名（未登记则回退为别名本身）
+static inline int codegen_module_lookup(CodeGen* gen, const char* alias,
+                                        const char** real_name, int* found) {
+    if (found) *found = 0;
+    if (real_name) *real_name = alias;
+    if (!alias) return 0;
+    for (int i = 0; i < gen->mod_alias_count; i++) {
+        if (gen->mod_aliases[i] && strcmp(gen->mod_aliases[i], alias) == 0) {
+            if (found) *found = 1;
+            if (real_name) *real_name = gen->mod_real_names[i];
+            return gen->mod_alias_native[i];
+        }
+    }
+    return 0;
+}
 
 void codegen_init(CodeGen* gen, Chunk* chunk, Semantic* sem);
 void codegen_cleanup(CodeGen* gen);
