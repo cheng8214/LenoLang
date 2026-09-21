@@ -153,7 +153,10 @@ static ObjArray* build_stack_trace(void) {
     ObjArray* stack_arr = arr_new(vm.frame_cnt);
     if (!stack_arr) return NULL;
 
-    for (int i = vm.frame_cnt - 1; i >= 0; i--) {
+    // 调用栈只到**协程边界**为止（协程的栈不该带出调用方的帧）
+    int st_floor = vm.current_coroutine ? vm.current_coroutine->saved_frame_cnt : 0;
+    if (st_floor < 0) st_floor = 0;
+    for (int i = vm.frame_cnt - 1; i >= st_floor; i--) {
         CallFrame* f = &vm.frames[i];
 
         // 获取函数名
@@ -367,7 +370,16 @@ static inline int throw_runtime_error(const char* msg, int line) {
     vm.exception_line = line;  // 保存异常发生时的行号
 
     // 从当前调用帧开始向上查找有 catch/finally 的帧
-    for (int i = vm.frame_cnt - 1; i >= 0; i--) {
+    // ★ 协程边界（**必须有**）：协程帧与调用方帧共用同一个 vm.frames，
+    //   如果一路扫到 0，协程里抛的异常会被**调用方**的 try-catch 接走 ——
+    //   实测：协程 `throw` 被 main 的 catch 接住（`caught: boom` 在协程执行期间就打印了），
+    //   随后帧计数与执行流全乱 ⇒ 程序跑过 main 末尾、进垃圾内存
+    //   （非确定性报错 / 访问违例，即 F1）。协程的首帧索引存在
+    //   `current_coroutine->saved_frame_cnt`（语义：协程第一个帧的下标），
+    //   搜索到此为止 —— 协程里没接住的异常按文档"路径3"交给 asyncs.run() 收集。
+    int frame_floor = vm.current_coroutine ? vm.current_coroutine->saved_frame_cnt : 0;
+    if (frame_floor < 0) frame_floor = 0;
+    for (int i = vm.frame_cnt - 1; i >= frame_floor; i--) {
         CallFrame* frame = &vm.frames[i];
         // 快速路径：如果函数确定没有 try，直接跳过
         // 注意：如果 closure 为 NULL（如顶层代码），不能跳过，需要检查 catch_ip
@@ -408,8 +420,13 @@ static inline int throw_runtime_error(const char* msg, int line) {
         }
     }
 
-    // 没有找到任何异常处理，打印完整调用栈并设置异常标志让 VM 停止
-    print_unhandled_exception(vm.exception, line);
+    // 没有找到任何异常处理
+    // ★ 在协程里**不打印**"未处理"：异常按设计交给 asyncs.run() 收集后
+    //   再抛回调用方（谁捕获谁报，没捕获才由最外层报）。这里照打会出现
+    //   "既说未处理、又被 run() 抛出来处理"的双重报告。
+    if (!vm.current_coroutine) {
+        print_unhandled_exception(vm.exception, line);
+    }
     runtime_error(msg, line);
     vm.has_exception = 1;
     return 0;

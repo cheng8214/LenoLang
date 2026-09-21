@@ -1,0 +1,54 @@
+// 协程异常边界测试（F1 回归）
+// ----------------------------------------------------------------------------
+// 语义：协程是**异常屏障** —— 协程里没被它自己 try-catch 接住的异常，
+//   **不能**被调用方的 try-catch 接走；它必须由 `asyncs.run()` 收集后再抛回调用方。
+//
+// 实测过的错误行为（修前）：协程 `throw` 时异常展开会一路扫到 0 号帧，把**调用方**
+// 的 catch 拿来当处理器 ⇒ `caught` 在协程还在执行时就打印了，随后帧计数/执行流全乱，
+// 程序跑过 main 末尾进垃圾内存 —— 表现为**非确定性**的
+// 「模块初始化: 目标不是模块对象」「结构体名常量索引越界」或直接访问违例（exit=0xC0000005）。
+// 因为是非确定性，普通"跑一次看输出"很容易漏掉，所以这里把它固化成断言。
+import io
+import asyncs
+
+// 协程里没接住 → 由 run() 收集后抛回调用方
+async func boom() {
+    await asyncs.sleep(2)
+    throw "boom"
+}
+
+// 协程自己 try-catch 接住 → 边界不能把它**自己**的处理器也挡住
+async func catch_inside(): string {
+    try {
+        await asyncs.sleep(2)
+        throw "inner"
+    } catch e {
+        return "self:" + e.msg
+    }
+    return "unreachable"
+}
+
+// 在普通函数里创建协程并在普通函数里接住 run() 抛回来的异常
+func run_barrier_case(): string {
+    boom()
+    try {
+        asyncs.run()
+        return "run-returned-normally"        // 不该走到这里
+    } catch e {
+        return "run-caught:" + e.msg          // 期望：异常在这里被接住
+    }
+}
+
+main() {
+    // ① 跨边界：协程的未捕获异常必须由 run() 抛回调用方
+    assert_eq(run_barrier_case(), "run-caught:boom")
+
+    // ② 协程内自己的 try-catch 仍然有效（边界只挡"跨出去"，不挡"就地处理"）
+    var f = catch_inside()
+    asyncs.run()
+    var r = asyncs.all([f])
+    assert_eq(r[0], "self:inner")
+
+    // ③ 程序能正常跑完（修前这里之后的代码会跑在垃圾帧上）
+    io.print("test_async_exception_barrier passed")
+}

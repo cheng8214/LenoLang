@@ -209,7 +209,7 @@
             if (_locals != NULL && _dyn) free(_locals); \
             return 0; \
         } \
-        if (vm.current_coroutine && vm.frame_cnt < vm.current_coroutine->saved_frame_cnt) { \
+        if (vm.current_coroutine && vm.frame_cnt <= vm.current_coroutine->saved_frame_cnt) { \
             vm.current_coroutine->result = _res; \
             gc_write_barrier((Object*)vm.current_coroutine, _res); \
             if (_locals != NULL && _dyn) free(_locals); \
@@ -1430,7 +1430,7 @@
 
         // 协程顶层函数返回
         if (vm.current_coroutine) {
-            if (vm.frame_cnt < vm.current_coroutine->saved_frame_cnt) {
+            if (vm.frame_cnt <= vm.current_coroutine->saved_frame_cnt) {
                 vm.current_coroutine->result = result;
                 gc_write_barrier((Object*)vm.current_coroutine, result);
                 if (locals != NULL && locals_is_dynamic) free(locals);
@@ -1522,7 +1522,7 @@
         }
 
         if (vm.current_coroutine) {
-            if (vm.frame_cnt < vm.current_coroutine->saved_frame_cnt) {
+            if (vm.frame_cnt <= vm.current_coroutine->saved_frame_cnt) {
                 vm.current_coroutine->result = results[0];
                 gc_write_barrier((Object*)vm.current_coroutine, results[0]);
                 if (locals != NULL && locals_is_dynamic) free(locals);
@@ -2499,7 +2499,13 @@
         }
 
         int handled = 0;
-        for (int i = vm.frame_cnt - 1; i >= 0; i--) {
+        // ★ 协程边界：协程帧与调用方帧共用同一个 vm.frames，扫到 0 就会拿**调用方**的
+        //   try-catch 来接管协程里的异常（实测主线里的 catch 会在协程执行期间打印），
+        //   随后帧计数/执行流全乱 ⇒ 跑过 main 末尾、进垃圾内存（F1）。
+        //   边界 = 当前协程的首帧索引（语义见 vm.c 里 saved_frame_cnt 的注释）。
+        int throw_floor = vm.current_coroutine ? vm.current_coroutine->saved_frame_cnt : 0;
+        if (throw_floor < 0) throw_floor = 0;
+        for (int i = vm.frame_cnt - 1; i >= throw_floor; i--) {
             CallFrame* tf = &vm.frames[i];
             if (tf->closure && tf->closure->function && !tf->closure->function->has_try) continue;
             uint8_t* tcatch = tf->catch_ip ? tf->catch_ip : tf->prev_catch_ip;
@@ -3923,7 +3929,10 @@
 
         // 保存本协程的所有帧（[co_start, frame_cnt)）：所有权转给 saved_frames，
         // vm.frames 里的帧被 frame_cnt 重置"放弃"
-        int co_start = current->saved_frame_cnt - 1;
+        // ★ co_start 就是"协程首帧索引"（saved_frame_cnt 的语义，见 vm.c 里的设置）——
+        //   不能再 -1：恢复后协程可能有多个帧（挂起时在嵌套调用里），
+        //   减一会漏存除顶层以外的帧，下次再挂起时那些帧被别的协程覆盖 ⇒ 数据错乱。
+        int co_start = current->saved_frame_cnt;
         if (co_start < 0) co_start = 0;
         int num_frames = vm.frame_cnt - co_start;
         if (current->saved_frames) {

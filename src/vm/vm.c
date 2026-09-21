@@ -1397,10 +1397,15 @@ int vm_run_coroutine_with_vm(ObjCoroutine* co, VM* vm_ptr) {
         frame->has_try_return = 0;
         frame->has_captures = (co->closure->upvalue_count > 0) ? 1 : 0;
         
-        // 保存创建此协程 frame 之前的 frame_cnt（其他协程/主程序的）
+        // 保存创建此协程 frame 之前的 frame_cnt（其他协程/主程序的）= 协程首帧索引
         int saved_frame_cnt = vm_ptr->frame_cnt - 1;  // 减去新创建的 frame
-        // 设置协程的初始 frame_cnt（新创建的 frame 属于此协程）
-        co->saved_frame_cnt = vm_ptr->frame_cnt;
+        // ★ saved_frame_cnt 的语义统一为"**协程首帧的下标**"（不是"帧数上界"）：
+        //   · OP_RETURN / REG_FINISH_RETURN 用它判"协程顶层函数返回"（frame_cnt <= 它）；
+        //   · OP_AWAIT 用它做 co_start（保存[首帧, frame_cnt)整段）；
+        //   · 异常展开用它做**协程边界**（不许跨到调用方去，见 vm_exception.inc）。
+        //   此前这里存的是"含本协程帧的 frame_cnt"、恢复路径存的是"装回后总数"，
+        //   两处语义不一致 ⇒ 嵌套挂起时会漏存帧、协程异常还会被调用方接走（F1）。
+        co->saved_frame_cnt = saved_frame_cnt;
         
         // 执行协程直到完成或挂起
         // 使用传入的 VM 执行（子线程使用自己的 VM）
@@ -1498,9 +1503,9 @@ int vm_run_coroutine_with_vm(ObjCoroutine* co, VM* vm_ptr) {
             co->saved_frame_count = 0;
         }
         
-        // 更新协程的 saved_frame_cnt，使 OP_RETURN 能正确判断协程顶层函数返回
-        // 恢复后的 frame_cnt 就是此协程当前拥有的帧数量上界
-        co->saved_frame_cnt = vm_ptr->frame_cnt;
+        // 更新协程的首帧索引（= 装回前的 frame_cnt，见上文语义说明），
+        // 使 OP_RETURN 能判断协程顶层函数返回、异常展开知道边界在哪
+        co->saved_frame_cnt = saved_frame_cnt;
         
         // 恢复栈指针到挂起时的位置，确保压入 Future 结果的位置正确
         vm_ptr->sp = co->saved_sp;
@@ -1513,7 +1518,8 @@ int vm_run_coroutine_with_vm(ObjCoroutine* co, VM* vm_ptr) {
                 vm_ptr->exception = co->waiting_for->error;
                 vm_ptr->has_exception = 1;
                 // 查找 catch/finally 并跳转
-                for (int i = vm_ptr->frame_cnt - 1; i >= 0; i--) {
+                // ★ 同样以**协程首帧**为边界：不许展开到调用方的帧去（F1）
+                for (int i = vm_ptr->frame_cnt - 1; i >= co->saved_frame_cnt; i--) {
                     CallFrame* frame = &vm_ptr->frames[i];
                     if (frame->closure && frame->closure->function && !frame->closure->function->has_try) {
                         continue;
