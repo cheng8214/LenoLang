@@ -79,6 +79,21 @@ async func has_local_same_name(): string {
     return shadowed_target()
 }
 
+// 测试9: async 函数**经一等值调用** —— 编译器静态判不出 async，必须由 VM 按
+//   函数对象上的 is_async 标记"调用即建协程、返回 Future"兜底。漏了这层兜底就会
+//   把函数体**同步执行**：返回值不是 Future（拿到裸值），体里有 await 时更会把当前
+//   协程的帧搞乱 ⇒ 整段**静默无输出**（exit=0、一行都不打）—— 这是本仓库修过的 C4。
+async func ind_work(int n): int {
+    await asyncs.sleep(5)
+    return n * 2
+}
+
+// 注：这里**不能**写 `: int` 返回类型 —— `await cb(7)` 的类型推断目前给的是
+// func()（C5，两边都有），标了会被类型检查挡下来。运行期行为是对的。
+async func ind_call(func cb) {
+    return await cb(7)
+}
+
 // 综合测试入口（async 函数中才能用 await）
 async func run_tests() {
     // === 测试1: 基本 async/await ===
@@ -135,6 +150,13 @@ async func run_tests() {
     assert_eq(await call_global_shadowed(), "global")
     assert_eq(await has_local_same_name(), "local")
     io.print("[PASS] 测试8: 同名局部函数不影响 async 判定")
+
+    // === 测试9: async 函数经一等值调用（经变量 / 当参数传）===
+    var af = ind_work
+    assert_eq(await af(3), 6)              // 6 而不是裸值或静默
+    assert_eq(type(af(9)), "object")       // 不 await 时拿到的也必须是 Future
+    assert_eq(await ind_call(ind_work), 14)
+    io.print("[PASS] 测试9: async 函数经一等值调用")
 }
 
 main() {

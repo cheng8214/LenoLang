@@ -1117,7 +1117,22 @@
 
             // --- 脚本闭包：压入新帧，解释器继续在新帧执行 ---
             if (ct == OBJ_CLOSURE) {
-                if (likely(call_reg((ObjClosure*)val_as_obj(callee), 0, val_null(),
+                // ★ async 闭包：**调用即建协程**、返回 Future —— 与调用写法无关。
+                //   编译器只在静态能确定 callee 是 async 时才发 OP_ASYNC_CALL，
+                //   `var f = some_async; f()` / 把 async 函数当参数传 这些写法判不出来，
+                //   必须在这里按运行期标记兜底；否则函数体被**同步执行**：返回值不是
+                //   Future（`var r = f(3)` 拿到裸值），体里的 await 还会把当前协程的帧
+                //   搞乱 ⇒ 整段**静默无输出**（C4）。
+                ObjClosure* cl = (ObjClosure*)val_as_obj(callee);
+                if (unlikely(cl->function && cl->function->is_async)) {
+                    if (unlikely(vm_start_async_call(&vm, cl, frame->locals, a, nargs, a,
+                                                     val_null(), 0, line) != 0)) {
+                        if (!vm.has_exception) return -1;
+                    }
+                    frame = &vm.frames[vm.frame_cnt - 1];
+                    DISPATCH();
+                }
+                if (likely(call_reg(cl, 0, val_null(),
                                     a + 1, nargs, a, nresults, line))) {
                     frame = &vm.frames[vm.frame_cnt - 1];
                     DISPATCH();
@@ -1137,6 +1152,15 @@
                 cl->type_param_count = 0;
                 cl->type_param_args = NULL;
                 for (int i = 0; i < MAX_UPVALUES; i++) cl->upvalues[i] = NULL;
+                // 同上：裸函数对象也要按 async 标记建协程（不是压帧同步调用）
+                if (unlikely(f->is_async)) {
+                    if (unlikely(vm_start_async_call(&vm, cl, frame->locals, a, nargs, a,
+                                                     val_null(), 0, line) != 0)) {
+                        if (!vm.has_exception) return -1;
+                    }
+                    frame = &vm.frames[vm.frame_cnt - 1];
+                    DISPATCH();
+                }
                 if (call_reg(cl, 0, val_null(), a + 1, nargs, a, nresults, line)) {
                     frame = &vm.frames[vm.frame_cnt - 1];
                     DISPATCH();
@@ -1202,6 +1226,15 @@
                     }
                 }
                 if (bound->closure) {
+                    // ★ async 方法经绑定对象调用（`var g = w.run; g()`）同样是"调用即建协程"
+                    if (unlikely(bound->closure->function && bound->closure->function->is_async)) {
+                        if (unlikely(vm_start_async_call(&vm, bound->closure, frame->locals, a, nargs, a,
+                                                         bound->receiver, !self_in_args, line) != 0)) {
+                            if (!vm.has_exception) return -1;
+                        }
+                        frame = &vm.frames[vm.frame_cnt - 1];
+                        DISPATCH();
+                    }
                     if (call_reg(bound->closure, self_in_args ? 0 : 1, bound->receiver,
                                  a + 1, nargs, a, nresults, line)) {
                         frame = &vm.frames[vm.frame_cnt - 1];
@@ -1532,7 +1565,17 @@
         Value callee = R(a);
         int line = GET_CURRENT_LINE();
         if (likely(val_is_obj(callee) && val_as_obj(callee)->type == OBJ_CLOSURE)) {
-            if (call_reg((ObjClosure*)val_as_obj(callee), 0, val_null(),
+            // 与 OP_CALL 同口径：async 闭包经尾调用也要建协程（返回值是 Future）
+            ObjClosure* tcl = (ObjClosure*)val_as_obj(callee);
+            if (unlikely(tcl->function && tcl->function->is_async)) {
+                if (unlikely(vm_start_async_call(&vm, tcl, frame->locals, a, nargs, a,
+                                                 val_null(), 0, line) != 0)) {
+                    if (!vm.has_exception) return -1;
+                }
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            if (call_reg(tcl, 0, val_null(),
                          a + 1, nargs, a, 1, line)) {
                 frame = &vm.frames[vm.frame_cnt - 1];
                 DISPATCH();
@@ -3833,31 +3876,12 @@
             frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH();
         }
-        ObjCoroutine* co = coroutine_new(closure);
-        if (unlikely(!co)) { runtime_error("内存不足，无法创建协程", line); return -1; }
-
-        // 实参从调用方寄存器复制进协程（被调方 locals[0..arity-1]）；
-        // 绑定方法且实参里没有 self 时，receiver 补到第 0 个（方法体里 self 就是 locals[0]）
-        int total_args = arg_count + (need_self ? 1 : 0);
-        if (total_args > 0) {
-            co->initial_args = (Value*)malloc((size_t)total_args * sizeof(Value));
-            if (unlikely(!co->initial_args)) { runtime_error("内存分配失败", line); return -1; }
-            int w = 0;
-            if (need_self) co->initial_args[w++] = self_val;
-            for (int i = 0; i < arg_count; i++) {
-                co->initial_args[w++] = R(a + 1 + i);
-            }
-            co->initial_arg_count = w;
+        // 建协程 + 拷实参 + 写回 Future —— 与 OP_CALL 的 async 兜底共用同一实现
+        if (unlikely(vm_start_async_call(&vm, closure, frame->locals, a, arg_count, a,
+                                         self_val, need_self, line) != 0)) {
+            if (!vm.has_exception) return -1;
         }
-
-        ObjFuture* task_future = future_new();
-        if (unlikely(!task_future)) { runtime_error("内存不足，无法创建 Future", line); return -1; }
-        co->task_future = task_future;
-
-        if (vm.event_loop) {
-            event_loop_add_ready(vm.event_loop, co);
-        }
-        R(a) = val_obj((Object*)task_future);
+        frame = &vm.frames[vm.frame_cnt - 1];
         DISPATCH();
     }
     // OP_AWAIT A B: R[A] = await R[B]（B 是 Future）

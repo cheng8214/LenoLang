@@ -241,6 +241,47 @@ static inline int call_no_type_check(ObjClosure* closure, int arg_count, int lin
 //     其地址会变（vm_grow_frames 会修正 frame->locals，但调用方早就抓走的
 //     裸指针不会跟着变）。所以这里每次都重新取 caller 再算 src。
 // ============================================================================
+// ============================================================================
+// async 调用：为 async 闭包**建协程**并把 Future 写回目标寄存器（唯一实现）
+// ----------------------------------------------------------------------------
+// 语义：async 函数**一旦被调用就返回 Future**，与调用写法无关。
+//   * 编译器静态知道 callee 是 async 时直接发 OP_ASYNC_CALL；
+//   * 静态不知道时（`var f = some_async; f()`、把 async 函数当参数传、经绑定方法调用）
+//     由 OP_CALL / OP_TAIL_CALL 在**运行期**按 closure->function->is_async 判定后走这里。
+// 漏掉运行期这一层的后果（实测）：函数体被**同步执行** ——
+//   ① 返回值不是 Future（`var r = f(3)` 拿到裸值 6）；
+//   ② 体里的 `await` 把当前协程的帧搞乱 ⇒ 整段**静默无输出**、exit=0（C4）。
+// 参数：regs/reg_base —— 实参在调用方帧里的位置（实参 = regs[reg_base+1 .. +arg_count]）；
+//   self_val/need_self —— 绑定方法把 receiver 补到第 0 个实参（被调方 locals[0] = self）；
+//   dst_reg —— Future 写回调用方的哪个寄存器。
+// 返回 0 成功；-1 失败（运行时错误已注册，调用方按异常路径处理）。
+// ============================================================================
+static inline int vm_start_async_call(VM* vm_ptr, ObjClosure* closure, Value* regs,
+                                      int reg_base, int arg_count, int dst_reg,
+                                      Value self_val, int need_self, int line) {
+    if (unlikely(!closure)) return -1;
+    ObjCoroutine* co = coroutine_new(closure);
+    if (unlikely(!co)) { runtime_error("内存不足，无法创建协程", line); return -1; }
+
+    int total = arg_count + (need_self ? 1 : 0);
+    if (total > 0) {
+        co->initial_args = (Value*)malloc((size_t)total * sizeof(Value));
+        if (unlikely(!co->initial_args)) { runtime_error("内存分配失败", line); return -1; }
+        int w = 0;
+        if (need_self) co->initial_args[w++] = self_val;
+        for (int i = 0; i < arg_count; i++) co->initial_args[w++] = regs[reg_base + 1 + i];
+        co->initial_arg_count = w;
+    }
+
+    ObjFuture* task_future = future_new();
+    if (unlikely(!task_future)) { runtime_error("内存不足，无法创建 Future", line); return -1; }
+    co->task_future = task_future;
+
+    if (vm_ptr->event_loop) event_loop_add_ready(vm_ptr->event_loop, co);
+    regs[dst_reg] = val_obj((Object*)task_future);
+    return 0;
+}
+
 static inline int call_reg(ObjClosure* closure, int has_self, Value self,
                            int arg_base, int arg_count,
                            int ret_reg, int ret_want, int line) {

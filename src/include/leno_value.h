@@ -354,6 +354,12 @@ typedef struct {
     char** type_param_names;     // 函数级泛型类型参数名称数组（如 ["T"] 或 ["K","V"]）
     char** type_param_constraints; // 函数级泛型类型参数约束 face 名数组（如 ["Comparable"]，NULL 表示无约束）
     int is_ctor;              // 是否是构造函数（用于 OP_RETURN 返回 self）
+    int is_async;             // 是否是 async 函数 —— **运行期**判定"调用即建协程"用。
+                              //   编译器只在静态能确定 callee 是 async 时发 OP_ASYNC_CALL，
+                              //   而 `var f = some_async; f()`、把 async 函数当参数传、
+                              //   绑定方法等写法静态判不出来 ⇒ 必须由虚拟机按本字段兜底，
+                              //   否则函数体会被**同步执行**（返回值不是 Future，体里的 await
+                              //   还会把当前协程的帧搞乱 ⇒ 静默无输出）。
     int return_count;         // 返回值个数（编译期统计；所有 return 个数一致时记录，
                                // 不一致或无法静态确定时为 -1。无 return 的函数为 0）
     TypeKind* return_types;    // 返回值类型数组（编译期从声明提取，长度=return_count；

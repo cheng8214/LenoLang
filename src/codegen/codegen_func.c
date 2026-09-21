@@ -99,6 +99,10 @@ ObjFunction* gen_func_proto(CodeGen* gen, Ast* ast) {
     func->type_param_names = NULL;
     func->type_param_constraints = NULL;
     func->is_ctor = ast->u.func.is_ctor;
+    // ★ async 标记必须落到**函数对象**上（运行期要用，见 ObjFunction.is_async 的注释）：
+    //   `var f = some_async; f()` / 把 async 函数当参数传 / 绑定方法 这些写法
+    //   静态判不出 async ⇒ 由 VM 在 OP_CALL 里按这个标记建协程。
+    func->is_async = ast->u.func.is_async;
     func->return_count = 0;
     func->return_types = NULL;
 

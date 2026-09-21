@@ -340,6 +340,7 @@ static int serialize_constant(WriteBuffer* wb, Value val) {
             wb_write_u32(wb, (uint32_t)func->local_count);
             wb_write_u8(wb, (uint8_t)func->has_try);
             wb_write_u8(wb, (uint8_t)func->is_ctor);
+            wb_write_u8(wb, (uint8_t)func->is_async);   // v13：async 标记（运行期判定用）
             wb_write_u32(wb, (uint32_t)func->return_count);
             // 返回值类型数组（编译期已知，供调用点 / 工具链消费）
             uint32_t ret_type_count = 0;
@@ -883,12 +884,13 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
         if (!name) return 0;
 
         uint32_t arity, upvalue_count, local_count, param_count, return_count, ret_type_count;
-        uint8_t has_try, is_ctor;
+        uint8_t has_try, is_ctor, is_async;
         if (!ctx_read_u32(ctx, &arity) ||
             !ctx_read_u32(ctx, &upvalue_count) ||
             !ctx_read_u32(ctx, &local_count) ||
             !ctx_read_u8(ctx, &has_try) ||
             !ctx_read_u8(ctx, &is_ctor) ||
+            !ctx_read_u8(ctx, &is_async) ||          // v13
             !ctx_read_u32(ctx, &return_count) ||
             !ctx_read_u32(ctx, &ret_type_count)) {
             free(name);
@@ -902,6 +904,7 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
         func->local_count = (int)local_count;
         func->has_try = has_try;
         func->is_ctor = is_ctor;
+        func->is_async = is_async;   // v13
         func->return_count = (int)return_count;
         func->module = NULL;
         func->return_types = NULL;
