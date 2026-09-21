@@ -39,6 +39,31 @@ func run_barrier_case(): string {
     }
 }
 
+// ★ 多个协程同时失败：run() 必须**汇总**抛回（文档 module_asyncs.md 承诺的
+//   「N 个协程失败: 错误1; 错误2」），而不是只抛第一个、让其余异常在别处冒出来。
+//   这条以前在寄存器式也是坏的（只抛 A，B 逃逸到 main 之外）；E15 的"协程异常屏障"
+//   修完后自动正确了 —— 因为异常不再被调用方的 catch 半路截走，两个失败都归 run() 收集。
+async func fail_a() {
+    await asyncs.sleep(2)
+    throw "A"
+}
+
+async func fail_b() {
+    await asyncs.sleep(2)
+    throw "B"
+}
+
+func run_multi_failure_case(): string {
+    fail_a()
+    fail_b()
+    try {
+        asyncs.run()
+        return "run-returned-normally"
+    } catch e {
+        return e.msg
+    }
+}
+
 main() {
     // ① 跨边界：协程的未捕获异常必须由 run() 抛回调用方
     assert_eq(run_barrier_case(), "run-caught:boom")
@@ -48,6 +73,9 @@ main() {
     asyncs.run()
     var r = asyncs.all([f])
     assert_eq(r[0], "self:inner")
+
+    // ④ 多个协程同时失败：run() 必须汇总抛回（不是只抛第一个）
+    assert_eq(run_multi_failure_case(), "2 个协程失败: A; B")
 
     // ③ 程序能正常跑完（修前这里之后的代码会跑在垃圾帧上）
     io.print("test_async_exception_barrier passed")
