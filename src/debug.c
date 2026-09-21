@@ -79,6 +79,7 @@ static const char* opCodeNames[] = {
     "OP_CMPJMP_LT", "OP_CMPJMP_LE", "OP_CMPJMP_GT", "OP_CMPJMP_GE",
     "OP_MUL_INT_IMM",
     "OP_LT_F", "OP_LE_F", "OP_GT_F", "OP_GE_F",
+    "OP_CALL_GLOBAL_FUNC_TYPED",
     "OP_OPCODE_COUNT",
 };
 

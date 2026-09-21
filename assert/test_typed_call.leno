@@ -1,0 +1,100 @@
+// 回归测试：类型已核实的全局函数直呼（T10-⑤，OP_CALL_GLOBAL_FUNC_TYPED）
+//
+// codegen 只在「每个实参的静态类型 == 形参声明类型，且都限定在 {int, float}」时才发 typed 版
+// —— 这正好是建帧时那套类型转换**唯一**会动的两种类型 ⇒ 跳过转换是安全的。
+// 这里要钉住的是**边界**：需要转换的调用必须仍然走非 typed 版并转换正确，
+// 不能被误判成 typed（否则 int→float 会静默不转换）。
+//
+// 对照实验：`LENO_NO_TYPED_CALL=1` 关闭 typed 版跑同一份断言（两者都必须过）。
+
+var bad = 0
+
+func fail(int tag):int {
+    print("FAIL case " + tag)
+    bad = bad + 1
+    return 0
+}
+
+// 同类型（int→int）⇒ 应该发 typed
+func take_int(int a): int {
+    return a + 1
+}
+
+// 同类型（float→float）⇒ 应该发 typed
+func take_float(float a): float {
+    return a + 0.5
+}
+
+// int 实参传进 float 形参 ⇒ **必须**转换（不能 typed）
+func take_float_from_int(float a): float {
+    return a + 0.25
+}
+
+// float 实参传进 int 形参 ⇒ **必须**截断转换（不能 typed）
+func take_int_from_float(int a): int {
+    return a + 1
+}
+
+// any 形参 ⇒ 不能 typed（运行时类型不定）
+func take_any(any a): any {
+    return a
+}
+
+// 默认参数 ⇒ 实参个数 != 形参个数，不能 typed
+func with_default(int a, int b = 10): int {
+    return a + b
+}
+
+// 多参数混合
+func mix(int a, float b, int c): float {
+    return (a + c) + b
+}
+
+main() {
+    // ---- 1) 同类型调用（typed 路径）----
+    if take_int(41) != 42 { print("take_int=" + take_int(41)); fail(1) }
+    if take_float(1.5) != 2.0 { print("take_float=" + take_float(1.5)); fail(1) }
+    if type(take_float(1.5)) != "float" { fail(1) }
+
+    // ---- 2) 需要转换的调用（必须仍走非 typed 且转换正确）----
+    var r2 = take_float_from_int(1)
+    if r2 != 1.25 { print("int->float r2=" + r2); fail(2) }
+    if type(r2) != "float" { print("type=" + type(r2)); fail(2) }
+
+    // ⚠ 实测发现：`take_int_from_float(2.9)`（浮点→int 形参）和 `any` 传进 int 形参
+    //   都被**语义层直接拦成编译期错误**（「参数类型不匹配」）⇒ call_reg 里那条
+    //   `TYPE_INT && val_is_float` 运行期转换分支在本语言里走不到（只有显式转换能造出来）。
+    //   这里改用显式 `_int()` 造出边界值，验证转换后的调用仍然正确。
+    var r3 = take_int_from_float(_int(2.9))
+    if r3 != 3 { print("cast->int r3=" + r3); fail(3) }
+    if type(r3) != "int" { print("type=" + type(r3)); fail(3) }
+
+    // ---- 3) any 形参（不能 typed，且值原样传出）----
+    var r4 = take_any(7)
+    if r4 != 7 { print("any r4=" + r4); fail(4) }
+    var r5 = take_any("s")
+    if r5 != "s" { print("any r5=" + r5); fail(5) }
+
+    // ---- 4) 默认参数（实参个数 != 形参个数）----
+    if with_default(5) != 15 { print("with_default=" + with_default(5)); fail(6) }
+    if with_default(5, 20) != 25 { fail(6) }
+
+    // ---- 5) 多参数混合类型 ----
+    var r6 = mix(1, 2.5, 3)
+    if r6 != 6.5 { print("mix=" + r6); fail(7) }
+    if type(r6) != "float" { print("type=" + type(r6)); fail(7) }
+
+    // ---- 6) 递归调用（typed 路径也要能正常递归）----
+    if fact(5) != 120 { print("fact=" + fact(5)); fail(8) }
+
+    if bad > 0 {
+        print("test_typed_call FAILED: " + bad + " 处")
+        _exit(1)
+    }
+    print("test_typed_call ok")
+}
+
+func fact(int n): int {
+    if n <= 1 { return 1 }
+    return n * fact(n - 1)
+}

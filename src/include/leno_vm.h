@@ -263,6 +263,14 @@ typedef enum {
     OP_GT_F,            // iABC   R[A] = R[B] >  R[C]
     OP_GE_F,            // iABC   R[A] = R[B] >= R[C]
 
+    // 类型已核实的全局函数直呼（T10-⑤，对齐栈式 OP_CALL_GLOBAL_FUNC_TYPED）：
+    //   与 OP_CALL_GLOBAL_FUNC 编码相同（A = 结果寄存器/基址，B = 实参个数，C = 槽位），
+    //   区别是 codegen **已核实每个实参的静态类型与形参声明类型一致** ⇒ 被调帧建立时
+    //   可以跳过"逐参数类型转换检查"（那段每个参数要 4–6 个判断/转换），只做复制。
+    //   ⚠ 只在实参/形参类型**都是具体类型且相同**（如 int→int、float→float）时才发；
+    //     实参是 any / null / 类型不同（int 传进 float 形参需要转换）时仍走非 typed 版。
+    OP_CALL_GLOBAL_FUNC_TYPED,
+
     OP_OPCODE_COUNT,    // 用于跳转表大小
 } OpCode;
 

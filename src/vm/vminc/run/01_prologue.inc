@@ -80,6 +80,7 @@
         [OP_LE_F] = &&LABEL(OP_LE_F),
         [OP_GT_F] = &&LABEL(OP_GT_F),
         [OP_GE_F] = &&LABEL(OP_GE_F),
+        [OP_CALL_GLOBAL_FUNC_TYPED] = &&LABEL(OP_CALL_GLOBAL_FUNC_TYPED),
         [OP_MUL_INT] = &&LABEL(OP_MUL_INT),
         [OP_NEG_INT] = &&LABEL(OP_NEG_INT),
         [OP_ADD_F] = &&LABEL(OP_ADD_F),

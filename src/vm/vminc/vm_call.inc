@@ -282,9 +282,30 @@ static inline int vm_start_async_call(VM* vm_ptr, ObjClosure* closure, Value* re
     return 0;
 }
 
+// no_convert：编译器已核实"每个实参的静态类型 == 形参声明类型"（见 OP_CALL_GLOBAL_FUNC_TYPED）
+//   ⇒ 跳过逐参数的类型转换检查，只做复制。
+static inline int call_reg_impl(ObjClosure* closure, int has_self, Value self,
+                                int arg_base, int arg_count,
+                                int ret_reg, int ret_want, int line, int no_convert);
+
+// 普通调用（含逐参数类型转换）
 static inline int call_reg(ObjClosure* closure, int has_self, Value self,
                            int arg_base, int arg_count,
                            int ret_reg, int ret_want, int line) {
+    return call_reg_impl(closure, has_self, self, arg_base, arg_count,
+                         ret_reg, ret_want, line, 0);
+}
+
+// 类型已核实的调用（跳过逐参数转换；T10-⑤）
+static inline int call_reg_typed(ObjClosure* closure, int arg_base, int arg_count,
+                                 int ret_reg, int ret_want, int line) {
+    return call_reg_impl(closure, 0, val_null(), arg_base, arg_count,
+                         ret_reg, ret_want, line, 1);
+}
+
+static inline int call_reg_impl(ObjClosure* closure, int has_self, Value self,
+                                int arg_base, int arg_count,
+                                int ret_reg, int ret_want, int line, int no_convert) {
     ObjFunction* func = closure->function;
 
     if (unlikely(vm.frame_cnt >= vm.frame_capacity)) {
@@ -322,6 +343,10 @@ static inline int call_reg(ObjClosure* closure, int has_self, Value self,
     int arity = func->arity;
     int k = 0;
     if (has_self) locals[k++] = self;
+    if (no_convert) {
+        // 类型已核实（codegen 只在"实参静态类型 == 形参声明类型"时发 typed 版）⇒ 直接复制
+        for (int i = 0; i < arg_count; i++) locals[k + i] = src[i];
+    } else {
     for (int i = 0; i < arg_count; i++) {
         Value arg = src[i];
         if (param_types && i < arity) {
@@ -335,6 +360,7 @@ static inline int call_reg(ObjClosure* closure, int has_self, Value self,
             }
         }
         locals[k + i] = arg;
+    }
     }
     for (int i = k + arg_count; i < local_count; i++) {
         locals[i] = val_null();

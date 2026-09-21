@@ -1296,11 +1296,34 @@ void gen_call(CodeGen* gen, Ast* ast, int dst) {
                 int need = base + expected + 1;
                 if (need > gen->next_reg) gen->next_reg = need;
                 if (need > gen->max_reg) gen->max_reg = need;
+                // ★ typed 版（T10-⑤）：实参静态类型与形参声明类型**逐个相同**且都限定在
+                //   {int, float} —— 这正好是建帧时那套转换**唯一**会动的两种类型 ⇒ 可以
+                //   跳过逐参数转换循环（每参数省 4–6 个判断/转换）。
+                //   保守条件（缺一不可）：形参类型表齐全、实参个数 == 形参个数（无默认值补齐）、
+                //   两侧 kind 相同。其余情况（any / null / int 传进 float 形参等）仍走非 typed 版。
+                // 诊断/基准开关：LENO_NO_TYPED_CALL=1 关闭 typed 直呼（同二进制 A/B，避免重建两次）
+                static int typed_call_disabled = -1;
+                if (typed_call_disabled < 0) typed_call_disabled = getenv("LENO_NO_TYPED_CALL") ? 1 : 0;
+                int typed_ok = (!typed_call_disabled &&
+                                fdef->u.func.param_types != NULL &&
+                                nargs == fdef->u.func.pcnt && nargs > 0);
+                for (int i = 0; typed_ok && i < nargs; i++) {
+                    TypeInfo* pt = fdef->u.func.param_types[i];
+                    TypeInfo* at = ast->u.call.args.items[i]->cached_type;
+                    if (!pt || !at || pt->kind != at->kind) { typed_ok = 0; break; }
+                    if (pt->kind != TYPE_INT && pt->kind != TYPE_FLOAT) { typed_ok = 0; break; }
+                }
+
                 for (int i = 0; i < nargs; i++) {
                     gen_expr_to(gen, ast->u.call.args.items[i], base + 1 + i);
                 }
                 expected = fill_default_args(gen, fdef, 0, nargs, base, ast->line);
-                emit_call_global(gen, base, expected, ref->index, ast->line);
+                if (typed_ok) {
+                    reg_encode_iABC(gen->chunk, OP_CALL_GLOBAL_FUNC_TYPED, base, expected,
+                                    ref->index, ast->line);
+                } else {
+                    emit_call_global(gen, base, expected, ref->index, ast->line);
+                }
                 if (base != dst) {
                     emit_mov(gen, dst, base, ast->line);
                     reg_free_block(gen, base);

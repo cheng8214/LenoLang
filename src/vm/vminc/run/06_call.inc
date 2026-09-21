@@ -269,8 +269,12 @@
     //   与 OP_CALL 的闭包分支同口径（含 async 兜底、错误经 call_reg 抛出）。
     //   动机：递归/全局函数调用原先要 GETGLOBALFUNC + CALL 两条，且结果往往还要
     //   一条 MOV 搬走；直呼把"取函数值"整条省掉，结果也可直接落在调用方要的寄存器。
-    LABEL(OP_CALL_GLOBAL_FUNC): {
+    LABEL(OP_CALL_GLOBAL_FUNC):
+    // typed 版（T10-⑤）：codegen 已核实每个实参的静态类型与形参声明类型一致 ⇒
+    // 建帧时跳过逐参数的类型转换检查（每参数省 4–6 个判断/转换）。
+    LABEL(OP_CALL_GLOBAL_FUNC_TYPED): {
         int a = READ_A(), nargs = READ_B(), slot = READ_C();
+        int is_typed = (frame->ip[-4] == (uint8_t)OP_CALL_GLOBAL_FUNC_TYPED);
         int line = GET_CURRENT_LINE();
         if (unlikely(slot >= vm.global_func_count)) {
             if (!throw_runtime_error("全局函数索引越界", line)) return -1;
@@ -307,7 +311,9 @@
             frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH();
         }
-        if (likely(call_reg(cl, 0, val_null(), a + 1, nargs, a, 1, line))) {
+        int call_ok = is_typed ? call_reg_typed(cl, a + 1, nargs, a, 1, line)
+                               : call_reg(cl, 0, val_null(), a + 1, nargs, a, 1, line);
+        if (likely(call_ok)) {
             frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH();
         }
