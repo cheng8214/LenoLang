@@ -1626,42 +1626,13 @@ static void gen_destruct_decl(CodeGen* gen, Ast* ast) {
     //   所以这里不看 is_dict，只看 init 是不是一次调用。
     //   跨模块的 `mod.f()` 是 AST_MODULE_CALL，同样要按"结果区连续"处理。
     if (init->kind == AST_MODULE_CALL && n > 1 && init_is_multi) {
-        int nargs = init->u.module_call.args.count;
-        const char* modname = init->u.module_call.module_name;
-        const char* methname = init->u.module_call.method_name ? init->u.module_call.method_name : "";
-        // 结果区 R[base .. base+n-1] 必须落在块内（n 个返回值）
-        int mblock = nargs + 1;
-        if (n > mblock) mblock = n;
-        int base = reg_alloc_block(gen, mblock);
-
-        // 取模块对象：lib_ref 优先，否则按别名在全局作用域找
-        SymRef* lib = &init->u.module_call.lib_ref;
-        if (lib->name && lib->kind == SYM_GLOBAL) {
-            emit_getglobal_to(gen, base, lib->index, line);
-        } else if (lib->name && (lib->kind == SYM_LOCAL || lib->kind == SYM_PARAM)) {
-            emit_mov(gen, base, lib->index, line);
-        } else {
-            Symbol* sym = modname ? scope_resolve(gen->sem->root_scope, modname) : NULL;
-            if (sym && sym->kind == SYM_GLOBAL) {
-                emit_getglobal_to(gen, base, sym->index, line);
-            } else if (sym && (sym->kind == SYM_LOCAL || sym->kind == SYM_PARAM)) {
-                emit_mov(gen, base, sym->index, line);
-            } else {
-                emit_loadnil_to(gen, base, line);
-            }
-        }
-
-        // callee = 模块对象[方法名]
-        int ireg = reg_alloc(gen);
-        int cidx = make_constant(gen, val_obj((Object*)str_copy(methname, (int)strlen(methname))));
-        emit_loadk_to(gen, ireg, cidx, line);
-        reg_encode_iABC(gen->chunk, OP_INDEX, base, base, ireg, line);
-        reg_free(gen, ireg);
-
-        for (int i = 0; i < nargs; i++) {
-            gen_expr_to(gen, init->u.module_call.args.items[i], base + 1 + i);
-        }
-        emit_call(gen, base, nargs, n, line);
+        // 与普通跨模块调用**共用**同一套准备（模块对象解析 / callee / 实参 / 默认参数）。
+        // ⚠ 此前这里自带一份简化实现：模块对象只认 lib_ref 与 root_scope 兜底，
+        //   于是"模块 A 的方法里调用模块 B 的多返回值函数"解析不到模块对象 ⇒ 发 nil
+        //   ⇒ `nil["f"]` 报「下标访问: 对象不支持索引」（LenoSDL3 sdl_titlebar.leno:331）。
+        int expected = 0;
+        int base = gen_module_call_prep(gen, init, n, &expected);
+        emit_call(gen, base, expected, n, line);
         for (int i = 0; i < n; i++) {
             DESTRUCT_STORE(i, base + i);
         }

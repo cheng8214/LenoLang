@@ -63,6 +63,9 @@ void gen_call(CodeGen* gen, Ast* ast, int dst);
 int gen_call_multi(CodeGen* gen, Ast* ast, int nresults, int line);
 void gen_interp_string(CodeGen* gen, Ast* ast, int dst);
 void gen_module_access(CodeGen* gen, Ast* ast, int dst);
+// 跨模块 .leno 调用的公共准备（模块对象 + callee + 实参 + 默认参数补齐）
+//   返回 base，*out_expected 回填实参个数；调用方自己 emit_call + reg_free_block
+int gen_module_call_prep(CodeGen* gen, Ast* mcall, int nresults, int* out_expected);
 void gen_module_call(CodeGen* gen, Ast* ast, int dst);
 void gen_struct_init(CodeGen* gen, Ast* ast, int dst);
 void gen_safe_access(CodeGen* gen, Ast* ast, int dst);

@@ -1247,6 +1247,102 @@ static void emit_module_object(CodeGen* gen, Ast* ast, int dst) {
 //   ⚠ AST_MODULE_ACCESS 表示的是**成员访问**（不是"模块对象表达式"）——
 //     只取模块对象会把整个模块对象当成结果（曾表现为 assert_eq(mod.value, 100)
 //     实际得到 [object]）。模块成员（变量/函数/类型）都统一放在 exports 字典里。
+// 模块对象 → R[dst]（跨模块 .leno 调用用）
+// ----------------------------------------------------------------------------
+// 模块别名在不同上下文里是不同的符号种类：局部/参数（函数参数传进来的模块）、
+// 全局（主程序 import 的）、upvalue（闭包捕获的）、模块级变量（**模块自己 import 的**，
+// 即"模块的模块"）。
+// ⚠ 别名解析必须按 **当前作用域 → 根作用域 → 整棵作用域树** 逐级兜底：
+//   模块里 import 的别名挂在**模块自己的作用域**，root_scope 里根本查不到 ——
+//   LenoSDL3 的 sdl_titlebar.leno 就是个模块，它 `import "sdl_core.leno" as core`，
+//   解析不到就发 nil，随后的 `nil["getWindowSize"]` 运行期报
+//   「下标访问: 对象不支持索引」（sdl_titlebar.leno:331）。
+void emit_module_object_to(CodeGen* gen, Ast* mcall, int dst, int line) {
+    SymRef* lib = &mcall->u.module_call.lib_ref;
+    if (lib->name && lib->name[0]) {
+        switch (lib->kind) {
+            case SYM_LOCAL:
+            case SYM_PARAM:   emit_mov(gen, dst, lib->index, line); return;
+            case SYM_GLOBAL:  emit_getglobal_to(gen, dst, lib->index, line); return;
+            case SYM_UPVALUE: emit_getupval_to(gen, dst, lib->index, line); return;
+            case SYM_MODULE:  reg_encode_iABx(gen->chunk, OP_GET_MODULE_VAR, dst, lib->index, line); return;
+            default: break;
+        }
+    }
+    const char* alias = mcall->u.module_call.module_name;
+    Symbol* sym = alias ? scope_resolve(gen->sem->current, alias) : NULL;
+    if (!sym && alias) sym = scope_resolve(gen->sem->root_scope, alias);
+    if (!sym && alias) sym = scope_resolve_tree_bfs(gen->sem->root_scope, alias);
+    if (sym) {
+        if (sym->kind == SYM_LOCAL || sym->kind == SYM_PARAM) {
+            emit_mov(gen, dst, sym->index, line); return;
+        }
+        if (sym->kind == SYM_GLOBAL) {
+            emit_getglobal_to(gen, dst, sym->index, line); return;
+        }
+        if (sym->kind == SYM_MODULE) {
+            reg_encode_iABx(gen->chunk, OP_GET_MODULE_VAR, dst, sym->index, line); return;
+        }
+        if (sym->kind == SYM_UPVALUE) {
+            emit_getupval_to(gen, dst, sym->index, line); return;
+        }
+    }
+    emit_loadnil_to(gen, dst, line);
+}
+
+// 跨模块 .leno 调用的公共准备（gen_module_call 与解构多返回值**共用**）：
+//   ① 模块对象 → R[base]（见 emit_module_object_to）
+//   ② callee = R[base] = R[base][方法名]
+//   ③ 用户实参 → R[base+1 .. base+nargs]
+//   ④ 补齐跨模块**默认参数**（被调函数 AST 在别的模块，只能读符号表里的
+//      param_count / param_default_texts，与栈式同一口径）
+//   返回 base（块大小 = max(expected+1, nresults)），*out_expected 回填实参个数。
+//   调用方随后自己发 emit_call(gen, base, expected, nresults, line) 并 reg_free_block。
+// ⚠ 这两条路径此前各写一份，解构那份漏了 ①②④ 的完整口径 ⇒ 见 emit_module_object_to 注释。
+int gen_module_call_prep(CodeGen* gen, Ast* mcall, int nresults, int* out_expected) {
+    const char* modname = mcall->u.module_call.module_name;
+    const char* methname = mcall->u.module_call.method_name ? mcall->u.module_call.method_name : "";
+    int nargs = mcall->u.module_call.args.count;
+    int line = mcall->line;
+
+    int expected = nargs;
+    ModuleFuncSymbol* mfs = NULL;
+    {
+        ImportedModuleInfo* mod_info = find_imported_module(gen->sem, modname);
+        if (mod_info && mod_info->sym_table && methname[0]) {
+            mfs = module_symbol_table_find_func(mod_info->sym_table, methname);
+            if (mfs && mfs->param_count > expected) expected = mfs->param_count;
+        }
+    }
+
+    // 块要同时容纳「模块对象 + 实参」与「nresults 个结果」：结果写在 R[base..]
+    int block = expected + 1;
+    if (nresults > block) block = nresults;
+    int base = reg_alloc_block(gen, block);
+
+    emit_module_object_to(gen, mcall, base, line);
+
+    int ireg = reg_alloc(gen);
+    int cidx = make_constant(gen, val_obj((Object*)str_copy(methname, (int)strlen(methname))));
+    emit_loadk_to(gen, ireg, cidx, line);
+    reg_encode_iABC(gen->chunk, OP_INDEX, base, base, ireg, line);
+    reg_free(gen, ireg);
+
+    for (int i = 0; i < nargs; i++) {
+        gen_expr_to(gen, mcall->u.module_call.args.items[i], base + 1 + i);
+    }
+    // 缺失的默认参数按符号表里的**文本**求值（跨模块只有文本，没有 AST）
+    if (expected > nargs && mfs) {
+        for (int i = nargs; i < expected; i++) {
+            const char* dtext = (mfs->param_default_texts && i < mfs->param_count)
+                                    ? mfs->param_default_texts[i] : NULL;
+            gen_default_value_from_text_to(gen, base + 1 + i, dtext, line);
+        }
+    }
+    if (out_expected) *out_expected = expected;
+    return base;
+}
+
 void gen_module_access(CodeGen* gen, Ast* ast, int dst) {
     const char* member = ast->u.module_access.member_name;
     if (!member || !member[0]) {
@@ -1355,63 +1451,8 @@ void gen_module_call(CodeGen* gen, Ast* ast, int dst) {
 
     if (!is_native_mod) {
         // --- .leno 模块成员调用 ---
-        // ★ 跨模块调用的**默认参数补齐**：被调函数的 AST 在另一个模块里，拿不到
-        //   param_defaults，只能查导入模块的符号表（它记着 param_count 与
-        //   param_default_texts，与栈式同一口径）。缺了这一步，省略的实参在运行期
-        //   就是 null（实测 examples/import/default_param_bug：`mod.test_int(5)`
-        //   得 5 而不是 15、`mod.test_any(5)` 直接报「加法运算: null 不能参与运算」）。
-        int expected = nargs;
-        ModuleFuncSymbol* mfs = NULL;
-        {
-            ImportedModuleInfo* mod_info = find_imported_module(gen->sem, modname);
-            if (mod_info && mod_info->sym_table && methname) {
-                mfs = module_symbol_table_find_func(mod_info->sym_table, methname);
-                if (mfs && mfs->param_count > expected) expected = mfs->param_count;
-            }
-        }
-        int base = reg_alloc_block(gen, expected + 1);
-
-        SymRef* lib = &ast->u.module_call.lib_ref;
-        if (lib->name && (lib->kind == SYM_LOCAL || lib->kind == SYM_PARAM)) {
-            emit_mov(gen, base, lib->index, ast->line);
-        } else if (lib->name && lib->kind == SYM_GLOBAL) {
-            emit_getglobal_to(gen, base, lib->index, ast->line);
-        } else if (lib->name && lib->kind == SYM_UPVALUE) {
-            emit_getupval_to(gen, base, lib->index, ast->line);
-        } else if (lib->name && lib->kind == SYM_MODULE) {
-            reg_encode_iABx(gen->chunk, OP_GET_MODULE_VAR, base, lib->index, ast->line);
-        } else {
-            // 兜底：按模块名（别名）在全局作用域查
-            Symbol* sym = scope_resolve(gen->sem->root_scope, modname);
-            if (sym && sym->kind == SYM_GLOBAL) {
-                emit_getglobal_to(gen, base, sym->index, ast->line);
-            } else if (sym && sym->kind == SYM_MODULE) {
-                reg_encode_iABx(gen->chunk, OP_GET_MODULE_VAR, base, sym->index, ast->line);
-            } else if (sym && (sym->kind == SYM_LOCAL || sym->kind == SYM_PARAM)) {
-                emit_mov(gen, base, sym->index, ast->line);
-            } else {
-                emit_loadnil_to(gen, base, ast->line);
-            }
-        }
-
-        // callee = 模块对象[方法名]
-        int ireg = reg_alloc(gen);
-        int cidx = make_constant(gen, val_obj((Object*)str_copy(methname, (int)strlen(methname))));
-        emit_loadk_to(gen, ireg, cidx, ast->line);
-        reg_encode_iABC(gen->chunk, OP_INDEX, base, base, ireg, ast->line);
-        reg_free(gen, ireg);
-
-        for (int i = 0; i < nargs; i++) {
-            gen_expr_to(gen, ast->u.module_call.args.items[i], base + 1 + i);
-        }
-        // 缺失的默认参数按符号表里的**文本**求值（跨模块只有文本，没有 AST）
-        if (expected > nargs && mfs) {
-            for (int i = nargs; i < expected; i++) {
-                const char* dtext = (mfs->param_default_texts && i < mfs->param_count)
-                                        ? mfs->param_default_texts[i] : NULL;
-                gen_default_value_from_text_to(gen, base + 1 + i, dtext, ast->line);
-            }
-        }
+        int expected = 0;
+        int base = gen_module_call_prep(gen, ast, 1, &expected);
         emit_call(gen, base, expected, 1, ast->line);
         if (base != dst) emit_mov(gen, dst, base, ast->line);
         reg_free_block(gen, base);
