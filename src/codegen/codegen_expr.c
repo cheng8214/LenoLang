@@ -8,6 +8,67 @@
 
 // 前向声明（语句相关，定义在 codegen_stmt.c）
 extern void gen_default_value(CodeGen* gen, Ast* default_expr);
+// 语义侧：按别名查导入模块信息（跨模块调用的默认参数补齐要用，见 gen_module_call）
+extern ImportedModuleInfo* find_imported_module(Semantic* s, const char* alias);
+
+// ============================================================================
+// 从"默认参数文本"求值到 R[dst]
+// ----------------------------------------------------------------------------
+// 跨模块调用专用：被调函数的 AST 在**另一个模块**里，本模块只有符号表里记的
+// `param_default_texts`（源码文本），所以只能按字面量解析（与栈式的
+// gen_default_value_from_text 同口径）：数字 / "字符串"（含转义）/ true / false / null。
+// 认不出的（常量表达式、别的模块的标识符…）退回 null —— 跨模块拿不到求值环境，
+// 栈式同样只认字面量；至少不会往实参寄存器里塞垃圾。
+// ============================================================================
+static void gen_default_value_from_text_to(CodeGen* gen, int dst, const char* text, int line) {
+    if (!text) { emit_loadnil_to(gen, dst, line); return; }
+    while (*text == ' ' || *text == '\t' || *text == '\n' || *text == '\r') text++;
+    if (!*text) { emit_loadnil_to(gen, dst, line); return; }
+
+    if (strcmp(text, "null") == 0)  { emit_loadnil_to(gen, dst, line); return; }
+    if (strcmp(text, "true") == 0)  { emit_loadtrue_to(gen, dst, line); return; }
+    if (strcmp(text, "false") == 0) { emit_loadfalse_to(gen, dst, line); return; }
+
+    // 字符串字面量（文本自带引号）
+    size_t tlen = strlen(text);
+    if (text[0] == '"' && tlen >= 2 && text[tlen - 1] == '"') {
+        char* buf = (char*)malloc(tlen);   // 反转义只会变短
+        if (!buf) { emit_loadnil_to(gen, dst, line); return; }
+        int bi = 0;
+        for (size_t i = 1; i + 1 < tlen; i++) {
+            char ch = text[i];
+            if (ch == '\\' && i + 2 < tlen) {
+                char nx = text[++i];
+                switch (nx) {
+                    case 'n':  buf[bi++] = '\n'; break;
+                    case 't':  buf[bi++] = '\t'; break;
+                    case 'r':  buf[bi++] = '\r'; break;
+                    case '"':  buf[bi++] = '"';  break;
+                    case '\\': buf[bi++] = '\\'; break;
+                    default:   buf[bi++] = nx;   break;
+                }
+            } else {
+                buf[bi++] = ch;
+            }
+        }
+        ObjString* s = str_copy(buf, bi);
+        free(buf);
+        emit_loadk_to(gen, dst, make_constant(gen, val_obj((Object*)s)), line);
+        return;
+    }
+
+    // 数字（带符号/小数/科学计数）
+    char* endp = NULL;
+    double d = strtod(text, &endp);
+    if (endp && endp != text) {
+        int is_float = (strchr(text, '.') != NULL || strchr(text, 'e') != NULL ||
+                        strchr(text, 'E') != NULL);
+        Value v = is_float ? val_float(d) : val_int((int64_t)d);
+        emit_loadk_to(gen, dst, make_constant(gen, v), line);
+        return;
+    }
+    emit_loadnil_to(gen, dst, line);
+}
 
 // ============================================================================
 // 类型检查 / 安全转换（就地作用于 R[reg]）
@@ -1164,7 +1225,21 @@ void gen_module_call(CodeGen* gen, Ast* ast, int dst) {
 
     if (!is_native_mod) {
         // --- .leno 模块成员调用 ---
-        int base = reg_alloc_block(gen, nargs + 1);
+        // ★ 跨模块调用的**默认参数补齐**：被调函数的 AST 在另一个模块里，拿不到
+        //   param_defaults，只能查导入模块的符号表（它记着 param_count 与
+        //   param_default_texts，与栈式同一口径）。缺了这一步，省略的实参在运行期
+        //   就是 null（实测 examples/import/default_param_bug：`mod.test_int(5)`
+        //   得 5 而不是 15、`mod.test_any(5)` 直接报「加法运算: null 不能参与运算」）。
+        int expected = nargs;
+        ModuleFuncSymbol* mfs = NULL;
+        {
+            ImportedModuleInfo* mod_info = find_imported_module(gen->sem, modname);
+            if (mod_info && mod_info->sym_table && methname) {
+                mfs = module_symbol_table_find_func(mod_info->sym_table, methname);
+                if (mfs && mfs->param_count > expected) expected = mfs->param_count;
+            }
+        }
+        int base = reg_alloc_block(gen, expected + 1);
 
         SymRef* lib = &ast->u.module_call.lib_ref;
         if (lib->name && (lib->kind == SYM_LOCAL || lib->kind == SYM_PARAM)) {
@@ -1199,7 +1274,15 @@ void gen_module_call(CodeGen* gen, Ast* ast, int dst) {
         for (int i = 0; i < nargs; i++) {
             gen_expr_to(gen, ast->u.module_call.args.items[i], base + 1 + i);
         }
-        emit_call(gen, base, nargs, 1, ast->line);
+        // 缺失的默认参数按符号表里的**文本**求值（跨模块只有文本，没有 AST）
+        if (expected > nargs && mfs) {
+            for (int i = nargs; i < expected; i++) {
+                const char* dtext = (mfs->param_default_texts && i < mfs->param_count)
+                                        ? mfs->param_default_texts[i] : NULL;
+                gen_default_value_from_text_to(gen, base + 1 + i, dtext, ast->line);
+            }
+        }
+        emit_call(gen, base, expected, 1, ast->line);
         if (base != dst) emit_mov(gen, dst, base, ast->line);
         reg_free_block(gen, base);
         return;

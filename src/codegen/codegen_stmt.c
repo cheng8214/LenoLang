@@ -177,7 +177,17 @@ void gen_stmt(CodeGen* gen, Ast* ast) {
         case AST_ALIAS:       gen_alias(gen, ast); break;
         case AST_DESTRUCT_DECL: gen_destruct_decl(gen, ast); break;
         default:
-            // 未知节点：忽略
+            // ★ 兜底：语句位置出现**裸表达式节点**时求值后丢弃（值不要了就 reg_free）。
+            //   必须与栈式 gen_stmt 的 default 同口径（那边是 gen_expr + OP_POP）——
+            //   优化器的 DCE 会把 `if true then X else Y` **原地替换**成 X
+            //   （optimize.c：memcpy(ast, then_branch, sizeof(Ast))），语句位置于是
+            //   可能出现 AST_CALL / AST_NUM 这类表达式节点；没有这一支就**静默丢语句**
+            //   （实测 examples/验证/repro_if_expr.leno 末行 `print(99)` 不执行，
+            //    整份输出少一行且零诊断）。
+            {
+                int r = gen_expr(gen, ast);
+                reg_free(gen, r);
+            }
             break;
     }
 }
@@ -195,11 +205,44 @@ static void emit_dtors_from(CodeGen* gen, int from, int line, int nrvo_skip) {
     }
 }
 
+// 可提升的局部函数：非循环体内定义的 SYM_LOCAL/SYM_PARAM 函数定义。
+//   循环体内的（is_in_loop）**不提升** —— 它们的语义是每轮迭代重新创建（值捕获），
+//   提到循环外生成会改掉捕获语义。
+static int is_hoistable_local_func(Ast* st) {
+    return st && st->kind == AST_FUNC_DEF && st->u.func.ref.name &&
+           (st->u.func.ref.kind == SYM_LOCAL || st->u.func.ref.kind == SYM_PARAM) &&
+           !st->u.func.is_in_loop;
+}
+
 void gen_block(CodeGen* gen, Ast* ast) {
     if (!ast) return;
     int dtor_at_entry = gen->dtor_count;
     int n = ast->u.block.count;
+
+    // ★ 局部函数**提升**（照栈式 gen_block 的两遍策略）：函数体内先调用、后声明
+    //   （`test(); func test() { ... }`）必须能跑通 —— 按语句顺序生成的话调用点在
+    //   槽位还是 null 时就执行了，运行期报「函数未定义」（examples/func/前向引用.leno、
+    //   func 闭包.leno 就是这条；栈式靠同样的两遍策略支持"前向引用"）。
+    //   ① 先把这些槽位预置 null（槽位存在、值为空，与栈式一致）；
+    //   ② 再在**其它语句之前**生成它们的闭包。
+    int has_hoist = 0;
     for (int i = 0; i < n; i++) {
+        if (is_hoistable_local_func(ast->u.block.items[i])) { has_hoist = 1; break; }
+    }
+    if (has_hoist) {
+        for (int i = 0; i < n; i++) {
+            Ast* st = ast->u.block.items[i];
+            if (is_hoistable_local_func(st)) emit_loadnil_to(gen, st->u.func.ref.index, st->line);
+        }
+        for (int i = 0; i < n; i++) {
+            Ast* st = ast->u.block.items[i];
+            if (is_hoistable_local_func(st)) gen_func(gen, st);
+        }
+    }
+
+    for (int i = 0; i < n; i++) {
+        Ast* st = ast->u.block.items[i];
+        if (has_hoist && is_hoistable_local_func(st)) continue;   // 已在上面生成
         // ★ 语句边界回收临时寄存器高水位（reg_scope_enter/exit 从未被调用过：
         //   next_reg 只升不降 ⇒ 函数越长顶得越高。SDL 的 Window.run / process 被顶到
         //   655 / 563，而指令里的寄存器号只有 8 位（MAX_REG=256）⇒ `OP_MOV A=70 B=320`
@@ -209,7 +252,7 @@ void gen_block(CodeGen* gen, Ast* ast) {
         //   所以退回 _nr_before 是安全的；被丢弃的空闲项由 reg_alloc 自行跳过。
         int _nr_before = gen->next_reg;
         int _ft_before = gen->freetop;
-        gen_stmt(gen, ast->u.block.items[i]);
+        gen_stmt(gen, st);
         if (gen->next_reg > _nr_before) {
             gen->next_reg = _nr_before;
             if (gen->freetop > _ft_before) gen->freetop = _ft_before;
