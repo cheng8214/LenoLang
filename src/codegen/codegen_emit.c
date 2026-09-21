@@ -74,6 +74,11 @@ void emit_defglobal(CodeGen* gen, int src, int slot, int line) {
     reg_encode_iABx(gen->chunk, OP_DEFGLOBAL, src, slot, line);
 }
 
+// 全局函数直呼：R[base] = 全局函数[slot](R[base+1..base+nargs])
+//   slot / nargs 都必须在 8 位内（调用方保证；否则不发这条指令）
+void emit_call_global(CodeGen* gen, int base, int nargs, int slot, int line) {
+    reg_encode_iABC(gen->chunk, OP_CALL_GLOBAL_FUNC, base, nargs, slot, line);
+}
 void emit_getglobalfunc_to(CodeGen* gen, int dst, int slot, int line) {
     reg_encode_iABx(gen->chunk, OP_GETGLOBALFUNC, dst, slot, line);
 }

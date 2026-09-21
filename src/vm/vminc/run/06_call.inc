@@ -265,6 +265,56 @@
         DISPATCH();
     }
 
+    // 全局函数直呼：R[A] = 全局函数[C](R[A+1..A+B])。
+    //   与 OP_CALL 的闭包分支同口径（含 async 兜底、错误经 call_reg 抛出）。
+    //   动机：递归/全局函数调用原先要 GETGLOBALFUNC + CALL 两条，且结果往往还要
+    //   一条 MOV 搬走；直呼把"取函数值"整条省掉，结果也可直接落在调用方要的寄存器。
+    LABEL(OP_CALL_GLOBAL_FUNC): {
+        int a = READ_A(), nargs = READ_B(), slot = READ_C();
+        int line = GET_CURRENT_LINE();
+        if (unlikely(slot >= vm.global_func_count)) {
+            if (!throw_runtime_error("全局函数索引越界", line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        Value callee = vm.global_funcs[slot];
+        ObjClosure* cl = NULL;
+        if (likely(val_is_obj(callee) && val_as_obj(callee)->type == OBJ_CLOSURE)) {
+            cl = (ObjClosure*)val_as_obj(callee);
+        } else if (val_is_obj(callee) && val_as_obj(callee)->type == OBJ_FUNCTION) {
+            // 裸函数对象：现场包成闭包（与 OP_CALL 的处理一致）
+            ObjFunction* f = (ObjFunction*)val_as_obj(callee);
+            cl = (ObjClosure*)gc_alloc(sizeof(ObjClosure), OBJ_CLOSURE);
+            if (unlikely(!cl)) { runtime_error("内存分配失败", line); return -1; }
+            cl->function = f;
+            cl->upvalue_count = 0;
+            cl->type_param_count = 0;
+            cl->type_param_args = NULL;
+            for (int i = 0; i < MAX_UPVALUES; i++) cl->upvalues[i] = NULL;
+        }
+        if (unlikely(!cl)) {
+            if (!throw_runtime_error("全局函数槽位不是函数", line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        // async 全局函数：调用即建协程、返回 Future（对 async 调用点 codegen 不发这条
+        // 指令，这里是运行期兜底）
+        if (unlikely(cl->function && cl->function->is_async)) {
+            if (unlikely(vm_start_async_call(&vm, cl, frame->locals, a, nargs, a,
+                                             val_null(), 0, line) != 0)) {
+                if (!vm.has_exception) return -1;
+            }
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        if (likely(call_reg(cl, 0, val_null(), a + 1, nargs, a, 1, line))) {
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        if (!vm.has_exception) return -1;
+        frame = &vm.frames[vm.frame_cnt - 1];
+        DISPATCH();
+    }
     // OP_RETURN A B: 返回 R[A .. A+B-2]（B-1 个值）
     LABEL(OP_RETURN): {
         int a = READ_A(), b = READ_B();

@@ -120,6 +120,7 @@ void emit_lt_int_imm(CodeGen* gen, int dst, int b, int imm, int line);
 void emit_gt_int_imm(CodeGen* gen, int dst, int b, int imm, int line);
 void emit_le_int_imm(CodeGen* gen, int dst, int b, int imm, int line);
 void emit_ge_int_imm(CodeGen* gen, int dst, int b, int imm, int line);
+void emit_call_global(CodeGen* gen, int base, int nargs, int slot, int line);
 void emit_mul_int(CodeGen* gen, int dst, int b, int c, int line);
 void emit_neg_int(CodeGen* gen, int dst, int b, int line);
 

@@ -226,6 +226,10 @@ typedef enum {
     OP_GT_INT_IMM,      // iABC   R[A] = R[B] >  (int8_t)C
     OP_LE_INT_IMM,      // iABC   R[A] = R[B] <= (int8_t)C
     OP_GE_INT_IMM,      // iABC   R[A] = R[B] >= (int8_t)C
+    // 全局函数直呼：省掉「GETGLOBALFUNC 取函数值 → CALL」两条里的取函数。
+    //   A = 结果寄存器（实参在 R[A+1 .. A+B]），B = 实参个数，C = 全局函数槽位（8 位）。
+    //   只支持槽位/实参数 ≤ 255 的调用点（codegen 不满足时不发这条指令，走老路径）。
+    OP_CALL_GLOBAL_FUNC,
 
     OP_OPCODE_COUNT,    // 用于跳转表大小
 } OpCode;

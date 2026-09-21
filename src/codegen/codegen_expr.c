@@ -1105,6 +1105,31 @@ void gen_call(CodeGen* gen, Ast* ast, int dst) {
             Ast* fdef = ref->name ? func_table_find(&gen->sem->func_table, ref->name) : NULL;
             int expected = (fdef && fdef->kind == AST_FUNC_DEF && fdef->u.func.pcnt > nargs)
                                ? fdef->u.func.pcnt : nargs;
+            // ★ 直呼优化（OP_CALL_GLOBAL_FUNC）：省掉「GETGLOBALFUNC 取函数值 → CALL」
+            //   里的取函数那条；且当 dst 正好是刚分配的临时寄存器（或已在临时区之上）时
+            //   直接以 dst 为基址放实参 ⇒ 结果天然落在 dst，连结果 MOV 也省掉。
+            //   保守条件：槽位/实参个数都能编进 8 位、不是 async（async 走协程路径）、
+            //   且 func_table 里能查到定义（拿得到 pcnt，保证默认参数补齐正确）。
+            if (fdef && fdef->kind == AST_FUNC_DEF && ref->index >= 0 && ref->index <= 255 &&
+                expected <= 255 && !is_async_callee(ast, fdef)) {
+                int dst_safe = (dst + 1 == gen->next_reg || dst >= gen->next_reg);
+                int base = dst_safe ? dst : reg_alloc_block(gen, expected + 1);
+                // 先把实参区（base+1 .. base+expected）抬进临时区，免得求值实参时
+                // 分配的临时寄存器把实参槽盖掉
+                int need = base + expected + 1;
+                if (need > gen->next_reg) gen->next_reg = need;
+                if (need > gen->max_reg) gen->max_reg = need;
+                for (int i = 0; i < nargs; i++) {
+                    gen_expr_to(gen, ast->u.call.args.items[i], base + 1 + i);
+                }
+                expected = fill_default_args(gen, fdef, 0, nargs, base, ast->line);
+                emit_call_global(gen, base, expected, ref->index, ast->line);
+                if (base != dst) {
+                    emit_mov(gen, dst, base, ast->line);
+                    reg_free_block(gen, base);
+                }
+                return;
+            }
             int base = reg_alloc_block(gen, expected + 1);
             emit_getglobalfunc_to(gen, base, ref->index, ast->line);
             for (int i = 0; i < nargs; i++) {

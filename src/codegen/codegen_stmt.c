@@ -47,6 +47,18 @@ static int assign_cast_needed(TypeKind target_kind, Ast* value_ast) {
         case AST_BOOL:
         case AST_NULL:
             return !value_ast->cached_type || value_ast->cached_type->kind != target_kind;
+        case AST_VAR: {
+            // 局部变量/参数的**声明类型**与目标一致时免 CAST：它的值在赋值/声明处
+            // 已经按声明类型规范化过（见 emit_cast_for_target），返回时不必再转。
+            // ⚠ `var x`（未声明类型 ⇒ 符号类型是 any）不在此列 —— 那正是 A4 要防的情形。
+            SymRef* vr = &value_ast->u.var.ref;
+            if ((vr->kind == SYM_LOCAL || vr->kind == SYM_PARAM) &&
+                (target_kind == TYPE_INT || target_kind == TYPE_FLOAT) &&
+                vr->type_kind == target_kind) {
+                return 0;
+            }
+            return 1;
+        }
         case AST_BINOP:
         case AST_UNARY:
             // 算术/一元运算的结果类型是**可靠**的：int 运算的结果只可能是 int，或者
@@ -808,6 +820,17 @@ static void emit_cast_for_return(CodeGen* gen, Ast* ret_ast, int reg, int line) 
     emit_cast_for_target(gen, rt->kind, ret_ast, reg, line);
 }
 
+// 本次 return 是否需要按声明类型插 CAST（判据与 emit_cast_for_return 完全一致）
+static int return_cast_needed(CodeGen* gen, Ast* ret_ast) {
+    if (!ret_ast) return 0;
+    Ast* fn = gen->current_func_ast;
+    if (!fn || fn->kind != AST_FUNC_DEF) return 0;
+    if (fn->u.func.is_ctor) return 0;
+    TypeInfo* rt = fn->u.func.return_type;
+    if (!rt) return 0;
+    return assign_cast_needed(rt->kind, ret_ast);
+}
+
 static void gen_return(CodeGen* gen, Ast* ast) {
     // 有带析构的局部变量：先把返回值存进临时寄存器 → 逆序析构 → 再 RETURN。
     //   （先析构会把返回值本身销毁 ✗）
@@ -831,10 +854,30 @@ static void gen_return(CodeGen* gen, Ast* ast) {
     }
 
     if (ast->u.ret) {
-        int r = gen_expr(gen, ast->u.ret);
+        // ★ `return <普通局部变量/参数>` 且**不需要 CAST** 时，直接返回变量所在寄存器
+        //   （RETURN 的 A 可以是任意寄存器），省掉一次"搬进临时寄存器"的 MOV ——
+        //   fib 基例 `return n` 就是这一条。
+        //   ⚠ 只有不需要 CAST 才能省：CAST 是**就地**转换，会顺手改掉变量槽
+        //     （return 之后若还要跑 finally 块就会读到被改过的值）。
+        //   ⚠ 变量寄存器不能 reg_free（它是活着的槽，释放掉会被分配器当临时寄存器复用）。
+        int r;
+        int r_is_temp = 1;
+        int direct = -1;
+        if (ast->u.ret->kind == AST_VAR) {
+            SymRef* vr = &ast->u.ret->u.var.ref;
+            if ((vr->kind == SYM_LOCAL || vr->kind == SYM_PARAM) && vr->index >= 0) {
+                direct = vr->index;
+            }
+        }
+        if (direct >= 0 && !return_cast_needed(gen, ast->u.ret)) {
+            r = direct;
+            r_is_temp = 0;
+        } else {
+            r = gen_expr(gen, ast->u.ret);
+        }
         emit_cast_for_return(gen, ast->u.ret, r, ast->line);   // C1：返回值按声明类型规范化
         emit_return(gen, r, 1, ast->line);
-        reg_free(gen, r);
+        if (r_is_temp) reg_free(gen, r);
     } else {
         int r = reg_alloc(gen);
         emit_loadnil_to(gen, r, ast->line);

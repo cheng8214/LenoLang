@@ -70,6 +70,7 @@
         [OP_GT_INT_IMM] = &&LABEL(OP_GT_INT_IMM),
         [OP_LE_INT_IMM] = &&LABEL(OP_LE_INT_IMM),
         [OP_GE_INT_IMM] = &&LABEL(OP_GE_INT_IMM),
+        [OP_CALL_GLOBAL_FUNC] = &&LABEL(OP_CALL_GLOBAL_FUNC),
         [OP_MUL_INT] = &&LABEL(OP_MUL_INT),
         [OP_NEG_INT] = &&LABEL(OP_NEG_INT),
         [OP_ADD_F] = &&LABEL(OP_ADD_F),
