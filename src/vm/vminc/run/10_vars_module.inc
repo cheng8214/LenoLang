@@ -27,6 +27,9 @@
     // OP_MODULE_CALL A B C: R[A] = 模块方法(R[A+1 .. A+C])
     //   B = 常量表中 "模块名\0方法名" 组合串的索引（0/>255 时紧随 EXTRAARG）
     LABEL(OP_MODULE_CALL): {
+        // 调用点标识（读操作数**之前**取，保证每个调用点一个稳定值）——
+        // 内联缓存的索引用它，见下面 native_find_module_method 那段的说明。
+        uint8_t* ip_before = frame->ip;
         int a = READ_A(), b = READ_B();
         int nargs = READ_C();
         int line = GET_CURRENT_LINE();
@@ -43,22 +46,48 @@
             DISPATCH();
         }
         ObjString* combo = (ObjString*)val_as_obj(nv);
-        const char* module_name = combo->chars;
-        int mlen = (int)strlen(module_name);
-        if (unlikely(mlen + 1 > combo->len)) {
-            if (!throw_runtime_error("模块方法名格式错误", line)) return -1;
-            frame = &vm.frames[vm.frame_cnt - 1];
-            DISPATCH();
-        }
-        const char* method_name = combo->chars + mlen + 1;
 
-        ModuleMethodMeta* meta = native_find_module_method(module_name, method_name);
-        if (unlikely(!meta)) {
-            char msg[512];
-            snprintf(msg, sizeof(msg), "未找到模块方法: %s.%s", module_name, method_name);
-            if (!throw_runtime_error(msg, line)) return -1;
-            frame = &vm.frames[vm.frame_cnt - 1];
-            DISPATCH();
+        // ★ 内联缓存：按**调用点**缓存 "module\0method" → ModuleMethodMeta*。
+        //   此前这里每次调用都直接 native_find_module_method()（哈希 + 两次 strcmp）——
+        //   实测 examples/性能测试/函数调用数学计算.leno（5000 万轮 × 3 次模块调用）
+        //   因此比栈式慢 **1.68x**（≈22ns/次；同一份样例里纯循环与浮点算术
+        //   寄存器式反而更快，差距全集中在这一处）。
+        //   字段与初始化（vm.ic_module_cache / IC_MODULE_CACHE_SIZE）早就随移植带过来了
+        //   （leno_vm.h 的注释就写着"避免每次调用都做哈希表查找"），
+        //   只是本 handler 从没读写过它 —— 一直是个**死字段**；
+        //   栈式的 op_module_call.inc 正是靠这份缓存。
+        //   安全性：`meta` 指向 native 方法表里**单独分配、永不释放**的 entry，
+        //   表扩容只是重新分桶、复用同一批 entry 对象 ⇒ 指针稳定（GC 也不管它）。
+        int cache_idx = (int)(((uintptr_t)ip_before >> 2) & (IC_MODULE_CACHE_SIZE - 1));
+        InlineModuleCallCacheEntry* cache = &vm.ic_module_cache[cache_idx];
+        uint32_t name_hash = combo->hash;   // 合并串的哈希同时覆盖模块名与方法名
+
+        ModuleMethodMeta* meta;
+        if (likely(cache->valid && cache->combined_hash == name_hash)) {
+            vm.ic_hits++;
+            meta = (ModuleMethodMeta*)cache->meta;
+        } else {
+            vm.ic_misses++;
+            // 未命中才解析名字：命中路径连 strlen / strcmp 都省掉
+            const char* module_name = combo->chars;
+            int mlen = (int)strlen(module_name);
+            if (unlikely(mlen + 1 > combo->len)) {
+                if (!throw_runtime_error("模块方法名格式错误", line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            const char* method_name = combo->chars + mlen + 1;
+            meta = native_find_module_method(module_name, method_name);
+            if (unlikely(!meta)) {
+                char msg[512];
+                snprintf(msg, sizeof(msg), "未找到模块方法: %s.%s", module_name, method_name);
+                if (!throw_runtime_error(msg, line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            cache->valid = 1;
+            cache->combined_hash = name_hash;
+            cache->meta = (void*)meta;
         }
 
         int base = vm.sp;
