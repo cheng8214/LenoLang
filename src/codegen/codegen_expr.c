@@ -529,6 +529,91 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
 // 二元运算
 // ============================================================================
 
+// dst 是否可能被 rhs 的求值读到（"别名风险"探测）
+// ----------------------------------------------------------------------------
+// 背景：gen_binop 的惯用写法是"**先把 lhs 写进 dst**，再求 rhs，最后把结果写回 dst"，
+//   而 dst 常常就是**赋值目标的变量槽位**（gen_assign → gen_expr_to(value, 目标槽位)）。
+//   于是 rhs 里若读到同一个变量，读到的就是刚写进去的 lhs：
+//     `b = a % b` → 5 % 5 = 0（应为 5）
+//     `k = j + k` → 5 + 5 = 10（应为 31）
+//     `n = m - n` → 10 - 10 = 0（应为 7）
+//   全是**静默错值**（栈式按压栈求值天然没有这个问题，所以差分对照才暴露出来）。
+//
+// 探测口径：表达式只会读**变量槽位**（自己的临时寄存器由 reg_alloc 保证不与人冲突），
+//   所以只需看 rhs 子树里有没有"索引等于 slot 的局部/参数引用"。
+//   认得的节点精确递归；认不得的节点一律返回 1（保守 → 走安全路径，只多占一个临时寄存器）。
+static int ast_may_read_slot(Ast* ast, int slot) {
+    if (!ast) return 0;
+    switch (ast->kind) {
+        case AST_NUM: case AST_STRING: case AST_BOOL: case AST_NULL:
+            return 0;                       // 常量叶子：不读变量
+        case AST_VAR: {
+            SymRef* r = &ast->u.var.ref;
+            return (r->kind == SYM_LOCAL || r->kind == SYM_PARAM) && r->index == slot;
+        }
+        case AST_BINOP:
+            return ast_may_read_slot(ast->u.binop.l, slot) ||
+                   ast_may_read_slot(ast->u.binop.r, slot);
+        case AST_UNARY:
+            return ast_may_read_slot(ast->u.unary.operand, slot);
+        case AST_INDEX:
+            return ast_may_read_slot(ast->u.index.obj, slot) ||
+                   ast_may_read_slot(ast->u.index.index, slot);
+        case AST_SLICE:
+            return ast_may_read_slot(ast->u.slice.obj, slot) ||
+                   ast_may_read_slot(ast->u.slice.start, slot) ||
+                   ast_may_read_slot(ast->u.slice.end, slot);
+        case AST_FIELD_ACCESS:
+            return ast_may_read_slot(ast->u.field_access.obj, slot);
+        case AST_TYPE_CHECK:
+            return ast_may_read_slot(ast->u.type_check.expr, slot);
+        case AST_ADDRESS_OF:
+            return ast_may_read_slot(ast->u.address_of.operand, slot);
+        case AST_EXPR_STMT:
+            return ast_may_read_slot(ast->u.expr_stmt.expr, slot);
+        case AST_CALL: {
+            if (ast_may_read_slot(ast->u.call.callee, slot)) return 1;
+            for (int i = 0; i < ast->u.call.args.count; i++) {
+                if (ast_may_read_slot(ast->u.call.args.items[i], slot)) return 1;
+            }
+            return 0;
+        }
+        case AST_MODULE_CALL: {
+            for (int i = 0; i < ast->u.module_call.args.count; i++) {
+                if (ast_may_read_slot(ast->u.module_call.args.items[i], slot)) return 1;
+            }
+            return 0;
+        }
+        case AST_ARRAY: {
+            for (int i = 0; i < ast->u.array.count; i++) {
+                if (ast_may_read_slot(ast->u.array.items[i], slot)) return 1;
+            }
+            return 0;
+        }
+        case AST_DICT: {
+            for (int i = 0; i < ast->u.dict.count; i++) {
+                if (ast_may_read_slot(ast->u.dict.entries[i].key, slot)) return 1;
+                if (ast_may_read_slot(ast->u.dict.entries[i].value, slot)) return 1;
+            }
+            return 0;
+        }
+        case AST_INTERP_STRING: {
+            for (int i = 0; i < ast->u.interp_string.count; i++) {
+                if (ast_may_read_slot(ast->u.interp_string.exprs[i], slot)) return 1;
+            }
+            return 0;
+        }
+        case AST_STRUCT_INIT: {
+            for (int i = 0; i < ast->u.struct_init.field_count; i++) {
+                if (ast_may_read_slot(ast->u.struct_init.field_values[i], slot)) return 1;
+            }
+            return 0;
+        }
+        default:
+            return 1;                       // 保守：认不出就当作"会读"
+    }
+}
+
 void gen_binop(CodeGen* gen, Ast* ast, int dst) {
     Ast* lhs = ast->u.binop.l;
     Ast* rhs = ast->u.binop.r;
@@ -537,6 +622,19 @@ void gen_binop(CodeGen* gen, Ast* ast, int dst) {
     // 短路运算
     if (op == TOK_AND) {
         // R[dst] = R[lhs] && R[rhs]
+        if (ast_may_read_slot(rhs, dst)) {
+            // 别名风险：lhs 先落临时寄存器 —— 否则"先写 dst"会把 rhs 要读的原值覆盖掉
+            // （`x = y && x` 会变成 y && y）
+            int rl = gen_expr(gen, lhs);
+            int jmp_false = emit_jmp_if_false(gen, rl, ast->line);
+            gen_expr_to(gen, rhs, dst);
+            int jmp_end = emit_jmp(gen, ast->line);
+            patch_jmp(gen, jmp_false);
+            emit_mov(gen, dst, rl, ast->line);
+            patch_jmp(gen, jmp_end);
+            reg_free(gen, rl);
+            return;
+        }
         gen_expr_to(gen, lhs, dst);
         int jmp_false = emit_jmp_if_false(gen, dst, ast->line);
         gen_expr_to(gen, rhs, dst);
@@ -544,6 +642,17 @@ void gen_binop(CodeGen* gen, Ast* ast, int dst) {
         return;
     }
     if (op == TOK_OR) {
+        if (ast_may_read_slot(rhs, dst)) {
+            int rl = gen_expr(gen, lhs);
+            int jmp_true = emit_jmp_if_true(gen, rl, ast->line);
+            gen_expr_to(gen, rhs, dst);
+            int jmp_end = emit_jmp(gen, ast->line);
+            patch_jmp(gen, jmp_true);
+            emit_mov(gen, dst, rl, ast->line);
+            patch_jmp(gen, jmp_end);
+            reg_free(gen, rl);
+            return;
+        }
         gen_expr_to(gen, lhs, dst);
         int jmp_true = emit_jmp_if_true(gen, dst, ast->line);
         gen_expr_to(gen, rhs, dst);
@@ -554,6 +663,20 @@ void gen_binop(CodeGen* gen, Ast* ast, int dst) {
     // 空合并 a ?? b：只有 a **是 null** 才求值 b（0 / false / "" 都要保留）
     // ⚠ 不能用 JMP_IF_TRUE（那是真值语义）—— 否则 `0 ?? 99` 会得 99 ✗
     if (op == TOK_NULL_COALESCE) {
+        if (ast_may_read_slot(rhs, dst)) {
+            int rl = gen_expr(gen, lhs);       // 同上：先落临时寄存器避开别名
+            int isnull = reg_alloc(gen);
+            emit_is_null(gen, isnull, rl, ast->line);
+            int jmp = emit_jmp_if_false(gen, isnull, ast->line);  // 非 null → 跳过右侧
+            reg_free(gen, isnull);
+            gen_expr_to(gen, rhs, dst);
+            int jmp_end = emit_jmp(gen, ast->line);
+            patch_jmp(gen, jmp);
+            emit_mov(gen, dst, rl, ast->line);
+            patch_jmp(gen, jmp_end);
+            reg_free(gen, rl);
+            return;
+        }
         gen_expr_to(gen, lhs, dst);
         int isnull = reg_alloc(gen);
         emit_is_null(gen, isnull, dst, ast->line);
@@ -564,8 +687,14 @@ void gen_binop(CodeGen* gen, Ast* ast, int dst) {
         return;
     }
 
-    // 普通二元运算：求 lhs → dst，求 rhs → 临时寄存器，运算写回 dst
-    gen_expr_to(gen, lhs, dst);
+    // 普通二元运算：求 lhs → dst（有别名风险时 → 临时寄存器），求 rhs → 临时寄存器，
+    //   运算把这两个寄存器合到 dst。求值顺序保持"先左后右"不变。
+    int rl = dst;
+    if (ast_may_read_slot(rhs, dst)) {
+        rl = gen_expr(gen, lhs);
+    } else {
+        gen_expr_to(gen, lhs, dst);
+    }
     int r = gen_expr(gen, rhs);
 
     // ★ 类型特化（与栈式 codegen_expr.c 口径一致）：两侧静态类型都是 int 时
@@ -579,61 +708,62 @@ void gen_binop(CodeGen* gen, Ast* ast, int dst) {
 
     switch (op) {
         case TOK_PLUS:
-            if (both_int) emit_add_int(gen, dst, dst, r, ast->line);
-            else emit_add(gen, dst, dst, r, ast->line);
+            if (both_int) emit_add_int(gen, dst, rl, r, ast->line);
+            else emit_add(gen, dst, rl, r, ast->line);
             break;
         case TOK_MINUS:
-            if (both_int) emit_sub_int(gen, dst, dst, r, ast->line);
-            else emit_sub(gen, dst, dst, r, ast->line);
+            if (both_int) emit_sub_int(gen, dst, rl, r, ast->line);
+            else emit_sub(gen, dst, rl, r, ast->line);
             break;
         case TOK_STAR:
-            if (both_int) emit_mul_int(gen, dst, dst, r, ast->line);
-            else emit_mul(gen, dst, dst, r, ast->line);
+            if (both_int) emit_mul_int(gen, dst, rl, r, ast->line);
+            else emit_mul(gen, dst, rl, r, ast->line);
             break;
-        case TOK_SLASH:    emit_div(gen, dst, dst, r, ast->line); break;
-        case TOK_MOD:      emit_mod(gen, dst, dst, r, ast->line); break;
-        case TOK_EQEQ:     emit_eq(gen, dst, dst, r, ast->line); break;
-        case TOK_NEQ:      emit_neq(gen, dst, dst, r, ast->line); break;
+        case TOK_SLASH:    emit_div(gen, dst, rl, r, ast->line); break;
+        case TOK_MOD:      emit_mod(gen, dst, rl, r, ast->line); break;
+        case TOK_EQEQ:     emit_eq(gen, dst, rl, r, ast->line); break;
+        case TOK_NEQ:      emit_neq(gen, dst, rl, r, ast->line); break;
         // 有序比较同样按静态类型特化（与栈式一致）：两侧都是 int 走 int 专用比较。
         //   ⚠ 与算术同理，这不只是性能 —— 泛型约束方法 `compareTo(T other)` 在
         //   T=OrdInt 时实参**是 struct**，通用比较会报「操作数类型不可比较」✗，
         //   而 int 专用比较按栈式口径直接比位模式（test_generic_face_impl）。
         case TOK_LT:
-            if (both_int) emit_lt_int(gen, dst, dst, r, ast->line);
-            else emit_lt(gen, dst, dst, r, ast->line);
+            if (both_int) emit_lt_int(gen, dst, rl, r, ast->line);
+            else emit_lt(gen, dst, rl, r, ast->line);
             break;
         case TOK_GT:
-            if (both_int) emit_gt_int(gen, dst, dst, r, ast->line);
-            else emit_gt(gen, dst, dst, r, ast->line);
+            if (both_int) emit_gt_int(gen, dst, rl, r, ast->line);
+            else emit_gt(gen, dst, rl, r, ast->line);
             break;
         case TOK_LE:
-            if (both_int) emit_le_int(gen, dst, dst, r, ast->line);
-            else emit_le(gen, dst, dst, r, ast->line);
+            if (both_int) emit_le_int(gen, dst, rl, r, ast->line);
+            else emit_le(gen, dst, rl, r, ast->line);
             break;
         case TOK_GE:
-            if (both_int) emit_ge_int(gen, dst, dst, r, ast->line);
-            else emit_ge(gen, dst, dst, r, ast->line);
+            if (both_int) emit_ge_int(gen, dst, rl, r, ast->line);
+            else emit_ge(gen, dst, rl, r, ast->line);
             break;
-        case TOK_BITAND:   emit_bitand(gen, dst, dst, r, ast->line); break;
-        case TOK_BITOR:    emit_bitor(gen, dst, dst, r, ast->line); break;
-        case TOK_BITXOR:   emit_bitxor(gen, dst, dst, r, ast->line); break;
-        case TOK_SHL:      emit_shl(gen, dst, dst, r, ast->line); break;
-        case TOK_SHR:      emit_shr(gen, dst, dst, r, ast->line); break;
-        case TOK_USHR:     emit_ushr(gen, dst, dst, r, ast->line); break;
-        case TOK_IN:       reg_encode_iABC(gen->chunk, OP_IN, dst, dst, r, ast->line); break;
+        case TOK_BITAND:   emit_bitand(gen, dst, rl, r, ast->line); break;
+        case TOK_BITOR:    emit_bitor(gen, dst, rl, r, ast->line); break;
+        case TOK_BITXOR:   emit_bitxor(gen, dst, rl, r, ast->line); break;
+        case TOK_SHL:      emit_shl(gen, dst, rl, r, ast->line); break;
+        case TOK_SHR:      emit_shr(gen, dst, rl, r, ast->line); break;
+        case TOK_USHR:     emit_ushr(gen, dst, rl, r, ast->line); break;
+        case TOK_IN:       reg_encode_iABC(gen->chunk, OP_IN, dst, rl, r, ast->line); break;
         // not in = in + not（此前完全没处理 ⇒ 结果直接是左操作数本身 ✗）
         case TOK_NOT_IN:
-            reg_encode_iABC(gen->chunk, OP_IN, dst, dst, r, ast->line);
+            reg_encode_iABC(gen->chunk, OP_IN, dst, rl, r, ast->line);
             emit_not(gen, dst, dst, ast->line);
             break;
         default:
             // 字符串拼接用 STRCAT
             if (op == TOK_PLUS) {
-                emit_strcat(gen, dst, dst, r, ast->line);
+                emit_strcat(gen, dst, rl, r, ast->line);
             }
             break;
     }
     reg_free(gen, r);
+    if (rl != dst) reg_free(gen, rl);   // 别名安全路径借的临时寄存器
 }
 
 // ============================================================================
