@@ -6,6 +6,9 @@ export float modFloat = 1
 export float modFloatExpr = 1 + 1
 export var modVar = 3
 export float modFloatFromVar = modVar
+export int modInt = 7
+export string modStr = "s"
+export bool modFlag = true
 
 export func half_of_mod_float(): float {
     return modFloat / 2

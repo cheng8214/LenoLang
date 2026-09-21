@@ -5,17 +5,27 @@ import "xmod_types.leno" as t
 
 main() {
     // ① 模块函数内部使用模块变量
-    //    ⚠ 修正：`float modFloat = 1` 的 CAST 只对"表达式初始化"生效 —
-    //    字面量初始化时栈式与寄存器式**都**把 `modFloat / 2` 算成 0（跨模块读模块变量时
-    //    静态类型取的是**推断值**，于是走了 int 除法）——这是两边共有的待修问题，
-    //    此处不断言，避免把错误行为固化进测试。
-    //    （`half_of_mod_float()` 返回 1/2.0 的浮点结果依赖模块内的静态类型，是对的）
+    assert_eq(t.half_of_mod_float(), 0.5)
     assert_eq(t.mod_var_half(), 1.5)
 
-    // ② 主程序直接读模块变量（表达式初始化的 float 变量：CAST 生效）
+    // ② 主程序直接读模块变量：**字面量初始化**的 float 也必须跨模块是浮点。
+    //    ⚠ 曾经错：编译期"预登记导出变量"直接按字面量建值（`export float modFloat = 1`
+    //    被登记成 int 1），而模块初始化末尾"从 globals 补填 exports"看到已有值就跳过 ⇒
+    //    跨模块读到 int，`t.modFloat / 2` 走 int 除法得 0（模块内部读到的是 float 1.0，
+    //    两端不一致）。栈式同一段代码也有这个问题，本仓库已修（module_compiler.c）。
+    assert_eq(type(t.modFloat), "float")
+    assert_eq(t.modFloat / 2, 0.5)
+    assert_eq(t.modFloatExpr / 2, 1.0)
+
+    // ③ 表达式/变量初始化的 float（一直是对的，防回归）
     assert_eq(t.modFloatFromVar / 2, 1.5)
     assert_eq(_float(t.modFloatFromVar) + 0.5, 3.5)
 
-    // ③ 模块 int 变量参与表达式
+    // ④ 反向：int / string / bool 不能被"顺手转成 float"
+    assert_eq(type(t.modInt), "int")
+    assert_eq(t.modInt / 2, 3)          // int 除法仍是 3
     assert_eq(t.modVar + 1, 4)
+    assert_eq(type(t.modStr), "string")
+    assert_eq(t.modStr + "!", "s!")
+    assert_eq(t.modFlag, true)
 }

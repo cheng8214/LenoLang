@@ -393,13 +393,23 @@ ObjModule* compile_module_new(const char* source, const char* module_name,
                         Ast* var_decl = stmt->u.export.decl;
                         if (strcmp(var_decl->u.var_decl.name, export_names[i]) == 0) {
                             Ast* init = var_decl->u.var_decl.init;
+                            // ★ 声明类型的种类：字面量建值时必须尊重它，否则
+                            //   `export float modFloat = 1` 会在 exports 里**预登记成 int 1** ——
+                            //   随后模块初始化末尾"从 globals 补填 exports"那一步看到
+                            //   `val_is_null(current_val)` 为假就**跳过**了，
+                            //   于是跨模块永远读到 int（本模块内部读自己的槽位是 float，
+                            //   两端不一致）⇒ `t.modFloat / 2` 走 int 除法得 0（应为 0.5）。
+                            //   ⚠ 栈式同一段代码同样如此（两边都错的共有问题）。
+                            TypeKind decl_kind = var_decl->u.var_decl.type
+                                                     ? var_decl->u.var_decl.type->kind : TYPE_UNKNOWN;
                             Value var_val = val_null();
                             if (init) {
                                 switch (init->kind) {
                                     case AST_NUM:
                                         if (init->u.num.is_bigint) {
                                             var_val = val_bigint_from_string(init->u.num.bigint_str);
-                                        } else if (init->u.num.is_float) {
+                                        } else if (init->u.num.is_float || decl_kind == TYPE_FLOAT) {
+                                            // 声明是 float ⇒ 整数字面量也按浮点存
                                             var_val = val_float(init->u.num.value);
                                         } else {
                                             var_val = val_int((int)init->u.num.value);
