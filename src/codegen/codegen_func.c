@@ -152,6 +152,10 @@ void gen_func_closure(CodeGen* gen, Ast* ast, ObjFunction* func) {
     // 保存当前函数
     ObjFunction* saved_func = gen->current_func;
     gen->current_func = func;
+    // ★ 还要记住当前函数的 **AST**：gen_return 靠它取声明返回类型做规范化（C1）。
+    //   嵌套函数（局部函数 / 方法）会层层覆盖，所以必须保存/恢复。
+    Ast* saved_func_ast = gen->current_func_ast;
+    gen->current_func_ast = ast;
 
     // ★ 必须保存/恢复寄存器分配器状态：函数体是独立寄存器空间。
     //   注意 free 栈要连**内容**一起保存 —— 只恢复 freetop 计数是不够的：
@@ -197,6 +201,7 @@ void gen_func_closure(CodeGen* gen, Ast* ast, ObjFunction* func) {
     // 恢复（含寄存器分配器状态与 free 栈内容）
     gen->chunk = saved_chunk;
     gen->current_func = saved_func;
+    gen->current_func_ast = saved_func_ast;
     gen->next_reg = saved_next_reg;
     gen->max_reg = saved_max_reg;
     gen->freetop = saved_freetop;

@@ -64,6 +64,11 @@ function Norm([string]$s) {
     $s = $s -replace 'ID\s*[:=]\s*\d+', 'ID: N'                     # 「当前进程ID: 1234」等
     $s = $s -replace '\d+\s*MB', 'N MB'                             # 内存波动
     $s = $s -replace '\d+\s*KB', 'N KB'
+    $s = $s -replace '<ptr [0-9A-Fa-f]+>', '<ptr P>'                # 指针（形如 <ptr 000001B8...>）
+    $s = $s -replace '\d+(\.\d+)?\s*n[sm]\b', 'T'                    # ns / us 级耗时
+    $s = $s -replace '\(\d+(\.\d+)?[^)]*\)', '(T)'                   # 「耗时=T (4.93s)」里的秒数
+    $s = $s -replace '\d+\.\d{6,}', 'F'                             # 高精度浮点（计时/时间戳类输出）
+    $s = $s -replace '[A-Za-z]:\\[^\s"]*\\leno(reg)?\.exe', 'leno.exe'  # 可执行文件全路径
     $s = $s -replace 'lenoreg\.exe', 'leno.exe'                     # 可执行名不同（分析对象本身）
     $s = $s -replace '(?m)^\s*$', ''                                # 空行
     return $s.Trim()

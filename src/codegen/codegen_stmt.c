@@ -781,6 +781,23 @@ static void gen_switch(CodeGen* gen, Ast* ast) {
 // return
 // ============================================================================
 
+// 返回值按**声明类型**规范化（C1）
+// ----------------------------------------------------------------------------
+// `func f(): float { return 1 }` 此前返回值完全不 CAST ⇒ 运行期拿到 int：
+//   `type(f())` = "int"、`f() / 2` 走 int 除法得 0（应为 0.5）；
+// 跨模块调用同样错（调用点只信声明类型，值本身是 int）。**栈式侧也这样**，是共有缺口。
+// 口径与变量声明 / 赋值完全一致（emit_cast_for_target）：只对 int/float/string 目标插 CAST；
+// 构造函数（func StructName() 返回 self）与多返回值不走这里。
+static void emit_cast_for_return(CodeGen* gen, Ast* ret_ast, int reg, int line) {
+    if (!ret_ast) return;
+    Ast* fn = gen->current_func_ast;
+    if (!fn || fn->kind != AST_FUNC_DEF) return;
+    if (fn->u.func.is_ctor) return;
+    TypeInfo* rt = fn->u.func.return_type;
+    if (!rt) return;
+    emit_cast_for_target(gen, rt->kind, ret_ast, reg, line);
+}
+
 static void gen_return(CodeGen* gen, Ast* ast) {
     // 有带析构的局部变量：先把返回值存进临时寄存器 → 逆序析构 → 再 RETURN。
     //   （先析构会把返回值本身销毁 ✗）
@@ -788,6 +805,7 @@ static void gen_return(CodeGen* gen, Ast* ast) {
         int r = reg_alloc(gen);
         if (ast->u.ret) {
             gen_expr_to(gen, ast->u.ret, r);
+            emit_cast_for_return(gen, ast->u.ret, r, ast->line);   // C1
         } else {
             emit_loadnil_to(gen, r, ast->line);
         }
@@ -804,6 +822,7 @@ static void gen_return(CodeGen* gen, Ast* ast) {
 
     if (ast->u.ret) {
         int r = gen_expr(gen, ast->u.ret);
+        emit_cast_for_return(gen, ast->u.ret, r, ast->line);   // C1：返回值按声明类型规范化
         emit_return(gen, r, 1, ast->line);
         reg_free(gen, r);
     } else {

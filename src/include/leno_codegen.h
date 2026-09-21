@@ -51,6 +51,9 @@ typedef struct {
     LoopContextNode* loop_head;    // 链表头（当前最内层循环），使用链式堆分配避免栈溢出
     int loop_count;                 // 循环嵌套深度
     ObjFunction* current_func;     // 当前正在生成的函数（用于更新 local_count）
+    Ast* current_func_ast;         // 当前函数的 **AST**（gen_return 要用它取声明的返回类型做
+                                   //   返回值规范化 —— ObjFunction 上的 return_types 在寄存器式
+                                   //   里从未被填过，不能依赖）
     // --- 寄存器分配器 ---
     int next_reg;           // 下一个可分配的寄存器号（= 参数+声明变量数量）
     int max_reg;            // 寄存器高水位（临时寄存器峰值，写回 local_count）

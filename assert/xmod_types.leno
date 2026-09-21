@@ -17,3 +17,25 @@ export func half_of_mod_float(): float {
 export func mod_var_half(): float {
     return modFloatFromVar / 2
 }
+
+// ★ C1：**函数返回值**同样要按声明类型规范化（此前返回值完全不 CAST）
+//   跨模块调用点只信声明类型，值本身是 int ⇒ `type(m.ret_float_lit())` = int、
+//   `/2` 走 int 除法得 0（应为 0.5）。栈式侧同样如此（共有缺口，寄存器式已修 → A4）。
+export func ret_float_lit(): float {
+    return 1
+}
+
+export func ret_float_var(): float {
+    int n = 5
+    return n
+}
+
+// 反向：int / string 返回值不能被顺手转成 float
+export func ret_int(): int {
+    return 7
+}
+
+export func ret_str(): string {
+    return "s"
+}
+

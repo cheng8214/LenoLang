@@ -1,0 +1,106 @@
+// 函数返回值按声明类型规范化（C1 回归）
+// ----------------------------------------------------------------------------
+// 修前（寄存器式与栈式**都错**）：`func f(): float { return 1 }` 的返回值完全不 CAST，
+// 运行期拿到 int ⇒ `type(f())` = "int"、`f() / 2` 走 int 除法得 0（应为 0.5）；
+// 跨模块调用同样错（调用点只信声明类型）。根因与 A1（导出变量的声明类型规范化）同源，
+// 只是发生在 **return** 而不是声明/赋值处：gen_return 从来没看过声明的返回类型。
+// 修法：CodeGen 记住当前函数的 AST，gen_return 按 u.func.return_type 插 CAST
+// （与变量声明/赋值共用 emit_cast_for_target；构造函数返回 self、多返回值不走这条）。
+// 反例也要锁死：int / string 目标不能被"顺手转成 float"。
+import io
+import asyncs
+import "xmod_types.leno" as m
+
+func local_float_lit(): float {
+    return 1
+}
+
+func local_float_var(): float {
+    int n = 5
+    return n
+}
+
+func local_float_expr(): float {
+    return 1 + 1
+}
+
+func local_float_ok(): float {
+    return 1.5
+}
+
+func local_int(): int {
+    return 7
+}
+
+func local_str(): string {
+    return "s"
+}
+
+struct C1Box {
+    int v = 3
+
+    func scale(): float {
+        return self.v
+    }
+
+    func label(): string {
+        return "box"
+    }
+}
+
+func ctor_ok(): int {
+    var b = new C1Box()
+    b.v = 9
+    return b.v
+}
+
+async func async_float(): float {
+    return 1
+}
+
+async func async_float_var(): float {
+    int n = 6
+    return n
+}
+
+async func run_checks() {
+    // async 返回值同样按声明类型规范化（await 拿到的是 float）
+    assert_eq(type(await async_float()), "float")
+    assert_eq(await async_float() / 2, 0.5)
+    assert_eq(await async_float_var() / 2, 3.0)
+
+    // 跨模块函数返回值
+    assert_eq(type(m.ret_float_lit()), "float")
+    assert_eq(m.ret_float_lit() / 2, 0.5)
+    assert_eq(m.ret_float_var() / 2, 2.5)
+    assert_eq(type(m.ret_int()), "int")
+    assert_eq(m.ret_int() / 2, 3)          // 反向：仍是 int 除法
+    assert_eq(m.ret_str() + "!", "s!")
+
+    io.print("[PASS] 函数返回值声明类型规范化（C1）")
+}
+
+main() {
+    // 字面量 / int 变量 / 表达式初始化
+    assert_eq(type(local_float_lit()), "float")
+    assert_eq(local_float_lit() / 2, 0.5)
+    assert_eq(local_float_var() / 2, 2.5)
+    assert_eq(local_float_expr() / 2, 1.0)
+    assert_eq(local_float_ok() / 2, 0.75)
+
+    // 反向：int / string 不被误转
+    assert_eq(type(local_int()), "int")
+    assert_eq(local_int() / 2, 3)
+    assert_eq(local_str() + "!", "s!")
+
+    // struct 方法返回值 + 构造函数（构造函数返回 self，不能被 CAST 掉）
+    var b = new C1Box()
+    assert_eq(type(b.scale()), "float")
+    assert_eq(b.scale() / 2, 1.5)
+    assert_eq(b.label(), "box")
+    assert_eq(ctor_ok(), 9)
+
+    run_checks()
+    asyncs.run()
+    io.print("test_return_type_cast passed")
+}
