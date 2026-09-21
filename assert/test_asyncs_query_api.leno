@@ -1,0 +1,71 @@
+// asyncs 的查询类 API（C9 回归）：current() / is_done() / get_result()
+// ----------------------------------------------------------------------------
+// docs/module_asyncs.md 一直把它们当**已可用**写（有签名、有示例、还有"必须先 await
+// 再 get_result"的注意事项），但两个引擎的 asyncs 模块都只注册了
+// sleep/run/yield/all/timeout ⇒ 照文档写必然报「模块 'asyncs' 中没有方法 'xxx'」。
+// 运行时数据其实早就齐了（Future 的 completed/result），只差协程 ID（本次加到
+// ObjCoroutine 上、由 VM 计数器递增分配；各线程 VM 都是 memset 出来的，线程安全）。
+// 本文件把文档承诺的行为锁死。
+import io
+import asyncs
+
+async func work(int n): int {
+    // 协程内能拿到自己的 ID（> 0）
+    assert_eq(asyncs.current() > 0, true)
+    await asyncs.sleep(5)
+    return n * 2
+}
+
+async func id_of(): int {
+    return asyncs.current()
+}
+
+// 注：`asyncs.is_done(123)` / `get_result("x")` 由**语义**直接拒绝
+// （「参数类型错误: 期望 'Future'，但传入 'int'」），属于编译期检查，
+// 无法在断言里表达（编写时验证过），这里不再重复。
+
+async func driver() {
+    // ① 协程内 current() 是有效 ID
+    assert_eq(asyncs.current() > 0, true)
+
+    var f = work(21)
+    var g = work(100)
+
+    // ② 未完成：is_done = false、get_result = null（文档约定）
+    assert_eq(type(asyncs.is_done(f)), "bool")
+    assert_eq(asyncs.is_done(f), false)
+    assert_eq(asyncs.get_result(f), null)
+
+    // ③ await 之后：is_done = true、get_result 拿到返回值
+    await f
+    assert_eq(asyncs.is_done(f), true)
+    assert_eq(asyncs.get_result(f), 42)
+
+    await g
+    assert_eq(asyncs.get_result(g), 200)
+
+    io.print("[PASS] asyncs.current / is_done / get_result")
+}
+
+main() {
+    // 不在协程里（main 是普通函数）⇒ current() 返回 -1
+    assert_eq(asyncs.current(), -1)
+
+    driver()
+
+    // ④ 每个协程一个 ID：两个协程互不相同
+    var f1 = id_of()
+    var f2 = id_of()
+    asyncs.run()
+
+    assert_eq(asyncs.is_done(f1), true)
+    assert_eq(asyncs.is_done(f2), true)
+    // get_result 的静态类型是 any（返回值本来就是任意类型）⇒ 比较前显式取整
+    var i1 = _int(asyncs.get_result(f1))
+    var i2 = _int(asyncs.get_result(f2))
+    assert_eq(i1 > 0, true)
+    assert_eq(i2 > 0, true)
+    assert_eq(i1 != i2, true)
+
+    io.print("test_asyncs_query_api passed")
+}

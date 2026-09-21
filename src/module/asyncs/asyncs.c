@@ -206,6 +206,46 @@ static Value native_async_timeout(int arg_count, Value* args) {
     return val_obj((Object*)target);
 }
 
+// ============================================================================
+// 查询类 API（文档 docs/module_asyncs.md 承诺过，但两侧引擎长期都没实现）
+// ----------------------------------------------------------------------------
+// 以前 `asyncs.current()` / `is_done()` / `get_result()` 在文档里有签名、有示例、
+// 甚至有"调用注意"，但注册表里只有 sleep/run/yield/all/timeout ⇒ 照文档写必然报
+// 「模块 'asyncs' 中没有方法 'xxx'」。运行时数据一直是齐的（协程 id 本次补上、
+// Future 的 completed/result 本来就有），所以这里直接把文档兑现。
+// ============================================================================
+
+// asyncs.current() - 当前正在运行的协程 ID；不在协程里（main / 普通函数）返回 -1
+static Value native_async_current(int arg_count, Value* args) {
+    (void)arg_count; (void)args;
+    VM* vm = get_current_vm();
+    if (!vm || !vm->current_coroutine) return val_int(-1);
+    return val_int(vm->current_coroutine->id);
+}
+
+// asyncs.is_done(future) - Future 是否已完成（成功、失败都算"完成"）
+static Value native_async_is_done(int arg_count, Value* args) {
+    if (arg_count < 1 || !val_is_obj(args[0]) || val_as_obj(args[0])->type != OBJ_FUTURE) {
+        native_throw_error("asyncs.is_done 需要一个 Future 参数");
+        return val_bool(0);
+    }
+    ObjFuture* future = (ObjFuture*)val_as_obj(args[0]);
+    return val_bool(future->completed ? 1 : 0);
+}
+
+// asyncs.get_result(future) - 已完成 Future 的结果；未完成返回 null
+//   （与文档同一约定；Future 失败时 result 为 null，错误在 error 里，
+//     要拿错误请用 `await` —— 它会重新抛出）
+static Value native_async_get_result(int arg_count, Value* args) {
+    if (arg_count < 1 || !val_is_obj(args[0]) || val_as_obj(args[0])->type != OBJ_FUTURE) {
+        native_throw_error("asyncs.get_result 需要一个 Future 参数");
+        return val_null();
+    }
+    ObjFuture* future = (ObjFuture*)val_as_obj(args[0]);
+    if (!future->completed) return val_null();
+    return future->result;
+}
+
 // 注册 asyncs 模块
 void asyncs_init_module(void) {
     TypeKind sleep_params[] = {TYPE_INT};
@@ -220,6 +260,13 @@ void asyncs_init_module(void) {
 
     TypeKind timeout_params[] = {TYPE_ANY, TYPE_INT};
     native_register_module_method("asyncs", "timeout", native_async_timeout, 2, -1, -1, TYPE_FUTURE, TYPE_UNKNOWN, timeout_params);
+
+    // 文档承诺的查询类 API（见上面的说明）
+    native_register_module_method("asyncs", "current", native_async_current, 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, NULL);
+    TypeKind is_done_params[] = {TYPE_FUTURE};
+    native_register_module_method("asyncs", "is_done", native_async_is_done, 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, is_done_params);
+    TypeKind get_result_params[] = {TYPE_FUTURE};
+    native_register_module_method("asyncs", "get_result", native_async_get_result, 1, -1, -1, TYPE_ANY, TYPE_UNKNOWN, get_result_params);
 }
 
 // 初始化 asyncs 模块全局变量和事件循环

@@ -151,6 +151,11 @@ main() {
 
 ---
 
+> **实现状态**：下面这三个查询 API（`current()` / `is_done()` / `get_result()`）
+> 此前**两个引擎都没实现**（`asyncs` 注册表里只有 `sleep / run / yield / all / timeout`）。
+> 寄存器式已按本文档补齐（含协程 ID）；栈式侧尚未，详见
+> `docs/寄存式与栈式的差异清单.md` 的 **A6**。
+
 ### `current()`
 
 获取当前正在运行的协程 ID。

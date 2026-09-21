@@ -681,6 +681,9 @@ typedef struct VM {
     EventLoop* event_loop;     // 事件循环
     ObjCoroutine* current_coroutine;
     ObjCoroutine* all_coroutines;
+    int next_coroutine_id;         // 协程 ID 计数器（coroutine_new 递增；asyncs.current() 读）
+                                   //   放 VM 上而不是文件级 static：各线程的 VM 都是
+                                   //   memset(&vm, 0, sizeof(VM)) 出来的，天然线程安全
     Value last_return_value;
     // 多返回值：vm_call_value（native 回调脚本函数）路径下，OP_RETURN_MULTI 的
     // 全部返回值保存在这里，last_return_count 记录个数（单返回值时恒为 1）。

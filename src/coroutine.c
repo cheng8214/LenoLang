@@ -88,6 +88,10 @@ void future_fail(ObjFuture* future, Value error) {
 // 创建协程对象
 ObjCoroutine* coroutine_new(ObjClosure* closure) {
     ObjCoroutine* co = (ObjCoroutine*)gc_alloc(sizeof(ObjCoroutine), OBJ_COROUTINE);
+    // 协程 ID：从**所属 VM** 的计数器递增分配（asyncs.current() 用它区分协程）
+    extern THREAD_LOCAL VM* current_exec_vm;
+    VM* owner_vm = current_exec_vm ? current_exec_vm : &vm;
+    co->id = ++owner_vm->next_coroutine_id;
     co->state = COROUTINE_NEW;
     co->saved_sp = 0;
     co->saved_frame_cnt = 0;  // 协程帧之前的基准 frame_cnt

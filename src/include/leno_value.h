@@ -647,6 +647,9 @@ typedef enum {
 struct CallFrame;  // 前向声明
 typedef struct ObjCoroutine {
     Object header;
+    // 协程 ID（`asyncs.current()` 用）：coroutine_new 时从所属 VM 的计数器递增分配。
+    // 之前没有这个字段 ⇒ 文档承诺的 asyncs.current() 根本无法实现（只能返回别的近似值）。
+    int id;
     CoroutineState state;
     int saved_sp;                      // 保存的栈指针（恢复时精确还原栈位置）
     int saved_frame_cnt;               // 协程的基准 frame_cnt（协程帧之前的 frame 数）
