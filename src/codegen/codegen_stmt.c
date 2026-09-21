@@ -862,6 +862,23 @@ static void gen_return_multi(CodeGen* gen, Ast* ast) {
 // var_decl
 // ============================================================================
 
+// "声明了但没初始化"时的**类型默认值**（照栈式 gen_var_decl / gen_var_decl_module）：
+//   Array[T] → 空数组、Dict → 空字典、其余 → null。
+//   ⚠ 不能一律 null：`Array[int] res` + `res.add(x)` 是极常见写法，null 上调用方法
+//   会直接抛「类型 object 上不存在方法 'add'」（实测 examples/type类型/
+//   处理 非数值的健壮函数.leno；栈式同一段代码正常返回 [10]）。
+static void emit_typed_default_to(CodeGen* gen, int dst, TypeInfo* t, int line) {
+    if (t && t->kind == TYPE_ARRAY) {
+        reg_encode_iABC(gen->chunk, OP_NEWARRAY, dst, 0, 0, line);   // A=dst C=元素个数(0)
+        return;
+    }
+    if (t && t->kind == TYPE_DICT) {
+        reg_encode_iABC(gen->chunk, OP_NEWDICT, dst, 0, 0, line);
+        return;
+    }
+    emit_loadnil_to(gen, dst, line);
+}
+
 static void gen_var_decl(CodeGen* gen, Ast* ast) {
     SymRef* ref = &ast->u.var_decl.ref;
     if (!ref->name) return;
@@ -878,7 +895,7 @@ static void gen_var_decl(CodeGen* gen, Ast* ast) {
             TypeInfo* gvt = ast->u.var_decl.type;
             if (gvt) emit_cast_for_target(gen, gvt->kind, ast->u.var_decl.init, r, ast->line);
         } else {
-            emit_loadnil_to(gen, r, ast->line);
+            emit_typed_default_to(gen, r, ast->u.var_decl.type, ast->line);
         }
         emit_defglobal(gen, r, ref->index, ast->line);
         reg_free(gen, r);
@@ -893,7 +910,7 @@ static void gen_var_decl(CodeGen* gen, Ast* ast) {
             TypeInfo* mvt = ast->u.var_decl.type;   // 同上：模块变量也要 CAST
             if (mvt) emit_cast_for_target(gen, mvt->kind, ast->u.var_decl.init, r, ast->line);
         } else {
-            emit_loadnil_to(gen, r, ast->line);
+            emit_typed_default_to(gen, r, ast->u.var_decl.type, ast->line);
         }
         reg_encode_iABx(gen->chunk, OP_SET_MODULE_VAR, r, ref->index, ast->line);
         reg_free(gen, r);
@@ -912,7 +929,7 @@ static void gen_var_decl(CodeGen* gen, Ast* ast) {
         TypeInfo* vt = ast->u.var_decl.type;
         if (vt) emit_cast_for_target(gen, vt->kind, ast->u.var_decl.init, dst, ast->line);
     } else {
-        emit_loadnil_to(gen, dst, ast->line);
+        emit_typed_default_to(gen, dst, ast->u.var_decl.type, ast->line);
     }
 
     // 追踪带析构的 struct 局部变量：作用域结束 / return 时发 OP_DTOR_LOCAL。
