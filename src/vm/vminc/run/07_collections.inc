@@ -63,6 +63,11 @@
         ObjArray* arr = (ObjArray*)val_as_obj(R(b));
         if (arr->count >= arr->capacity) { if (!arr_grow(arr)) { runtime_error("OP_ARRAY_APPEND: arr_grow 失败", GET_CURRENT_LINE()); return -1; } }
         arr->elements[arr->count++] = R(a);
+        // ★ 写屏障（补漏）：本 GC 是**分代 + 记住集**——老年代对象引用年轻代对象时
+        //   必须把老对象入集，否则年轻代回收漏扫该引用（见 leno_value.h 的 REMEMBERED 位
+        //   与 gc.c 开头的说明）。原生 arr_add 一直有这一句，这条融合指令此前漏了：
+        //   数组字面量场景恰好是 young→young 所以没暴露，但 `arr += x` 落在老数组上就有风险。
+        gc_write_barrier((Object*)arr, R(a));
         R(a) = val_int(arr->count);
         DISPATCH();
     }

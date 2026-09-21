@@ -991,6 +991,31 @@ static void gen_method_call(CodeGen* gen, Ast* obj_ast, const char* mname,
     // clib 库对象的方法调用（`lib.strerror(2)`）走 FFI 专用指令
     if (gen_clib_call(gen, obj_ast, mname, args, nargs, dst, line)) return;
 
+    // ★ 融合：`arr.add(x)` → OP_ARRAY_APPEND（一条指令，省掉方法派发）
+    // ----------------------------------------------------------------------------
+    // 通用路径要发 4 条指令：MOV(接收者) + MOV(实参) + GET_METHOD("add") + CALL，
+    // 走完整的方法查找/绑定/调用；而 add 是数组的**内建方法**，语义与 OP_ARRAY_APPEND
+    // 完全一致（都是"追加 + 返回新长度"，已实测两侧都是 3/1 ✓），所以直接发融合指令。
+    // 栈式 codegen 早就有这个融合（OP_ARRAY_APPEND_NOPUSH），我们一直没有 ⇒
+    // `arr.add(x)` 密集的代码（如"原始快速排序"）因此慢：30 万次 add 我们 4.91ms vs 栈式 3.99ms。
+    // 安全性：仅当接收者**静态类型是数组**时才融合（`.add` 也只有数组有）；
+    // 实参恰 1 个（数组内建方法不插隐式 self，与 struct 方法不同）。
+    if (nargs == 1 && mname && strcmp(mname, "add") == 0) {
+        TypeInfo* recv_type = infer_expr_type(gen->sem, obj_ast);
+        int is_array_recv = (recv_type && recv_type->kind == TYPE_ARRAY);
+        if (recv_type) type_free(recv_type);
+        if (is_array_recv) {
+            int obj_reg = gen_expr(gen, obj_ast);
+            int val_reg = gen_expr(gen, args->items[0]);
+            // ARRAY_APPEND: append R[val] to R[obj]；R[val] 被写成长度（need_result=1）
+            reg_encode_iABC(gen->chunk, OP_ARRAY_APPEND, val_reg, obj_reg, 1, line);
+            if (val_reg != dst) emit_mov(gen, dst, val_reg, line);
+            reg_free(gen, val_reg);
+            reg_free(gen, obj_reg);
+            return;
+        }
+    }
+
     // 查方法定义（语义分析按 "Struct::method" 注册），用于补齐默认参数
     Ast* mdef = NULL;
     TypeInfo* ot = infer_expr_type(gen->sem, obj_ast);

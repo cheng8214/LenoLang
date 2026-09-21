@@ -107,6 +107,23 @@ main() {
     }
     if f[299] != 299 { fail(7) }
 
+    // ---- 9) add 的返回值语义：必须是新长度（int）----
+    //    —— codegen 现在把 `arr.add(x)` **融合**成一条 OP_ARRAY_APPEND（不再走
+    //       GET_METHOD + CALL 的完整方法派发）。融合指令写回的新长度必须与原生
+    //       arr_add 完全一致（实测两侧都返回新长度）；语句上下文（结果丢弃）也要对。
+    var g = [10, 20]
+    var r1 = g.add(30)                     // 表达式上下文
+    if r1 != 3 { print("add 返回值=" + r1); fail(9) }
+    g.add(40)                              // 语句上下文
+    if arrays.len(g) != 4 { print("len=" + arrays.len(g)); fail(9) }
+    if g[3] != 40 { fail(9) }
+
+    // 追加对象元素（字符串）：走数组元素的写屏障路径，读回值必须完好
+    var objs = []
+    objs.add("s1")
+    objs.add("s2")
+    if objs[0] != "s1" or objs[1] != "s2" { print("对象元素读回错误"); fail(9) }
+
     // ---- 8) 非数组接收者仍走慢路径且语义正确（dict）----
     var h = {}
     i = 0
