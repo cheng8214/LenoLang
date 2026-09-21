@@ -44,6 +44,41 @@ async func pong(int count) {
     }
 }
 
+// 测试7: async struct 方法 —— 方法体内有 await ⇒ 调用必须**建协程**，不能同步执行
+//   （同步执行时方法体里 `vm.current_coroutine` 为 NULL，第一句 await 就报
+//    「async.sleep 只能在 async 函数中调用」，examples/async await/struct 方法 + async.leno 即此）
+struct AsyncWorker {
+    int base = 0
+
+    async func work(int add): int {
+        await asyncs.sleep(10)
+        return base + add
+    }
+}
+
+// 测试8: 同名局部函数不得污染**其它函数**里的 async 判定
+//   ★ 源码顺序是场景的一部分：call_global_shadowed 的函数体比下面那个同名局部函数
+//     先被语义分析（语义是单遍、按源码顺序），所以"捕获时点"看到的是顶层 async 定义；
+//     codegen 在整个语义遍之后才查 func_table，那时条目已被同名局部函数覆盖 ——
+//     只信 func_table 就会把这里的 await 编成**同步 CALL**（返回值串成内层的，
+//     实测 examples/async await/test_edge_async.leno：期望 triple_outer_inner_result，
+//     实得 triple_inner_result）。
+async func shadowed_target(): string {
+    await asyncs.sleep(5)
+    return "global"
+}
+
+async func call_global_shadowed(): string {
+    return await shadowed_target()
+}
+
+async func has_local_same_name(): string {
+    func shadowed_target(): string {
+        return "local"
+    }
+    return shadowed_target()
+}
+
 // 综合测试入口（async 函数中才能用 await）
 async func run_tests() {
     // === 测试1: 基本 async/await ===
@@ -88,6 +123,18 @@ async func run_tests() {
     var tr = await asyncs.timeout(slow(), 50)
     assert_eq(tr, null)
     io.print("[PASS] 测试5: timeout 超时返回 null")
+
+    // === 测试7: async struct 方法 ===
+    var w = new AsyncWorker()
+    w.base = 40
+    var wr = await w.work(2)
+    assert_eq(wr, 42)
+    io.print("[PASS] 测试7: async struct 方法")
+
+    // === 测试8: 同名局部函数不污染其它函数里的 async 判定 ===
+    assert_eq(await call_global_shadowed(), "global")
+    assert_eq(await has_local_same_name(), "local")
+    io.print("[PASS] 测试8: 同名局部函数不影响 async 判定")
 }
 
 main() {

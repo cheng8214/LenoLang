@@ -494,6 +494,10 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
     // 跳过 struct 方法的注册，因为它们已经在 semantic_visit_ast.c 中以 struct_name::method_name 格式注册
     // 全局函数和局部函数都注册到 func_table，以便代码生成器查找函数定义（默认参数填充等）
     // 局部函数会覆盖同名的全局函数定义（实现遮蔽语义，同时确保默认参数信息可用）
+    // ⚠ 注意 codegen **不能只靠 func_table 判 async**：本表是按名字的全局表、无作用域信息，
+    //   局部函数（别的作用域里的同名函数）会覆盖全局条目，而 codegen 在语义遍**之后**才
+    //   查它 ⇒ 会拿到被污染的定义。async 判定必须优先用语义遍**当场**捕获的
+    //   `ast->u.call.callee_is_async`（见 visitinc/visit_expr.inc），栈式正是这么做的。
     if (!is_struct_method) {
         func_table_add(&s->func_table, ast->u.func.name, ast);
     }

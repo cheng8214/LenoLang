@@ -3793,23 +3793,61 @@
         int line = GET_CURRENT_LINE();
         Value callee = R(a);
 
-        if (unlikely(!val_is_obj(callee) || val_as_obj(callee)->type != OBJ_CLOSURE)) {
+        // 被调对象：闭包，或**绑定方法**（`t.wait()` 这种 struct 的 async 方法 ——
+        // OP_GET_METHOD 产出的是"方法闭包 + receiver"的绑定对象）。
+        // ⚠ 只认 OBJ_CLOSURE 时，async 方法调用会直接报「async 调用只能调用 async 函数」
+        //   （examples/async await/struct 方法 + async.leno）。
+        ObjClosure* closure = NULL;
+        int need_self = 0;
+        Value self_val = val_null();
+
+        if (val_is_obj(callee) && val_as_obj(callee)->type == OBJ_CLOSURE) {
+            closure = (ObjClosure*)val_as_obj(callee);
+        } else if (val_is_obj(callee) && val_as_obj(callee)->type == OBJ_BOUND_METHOD) {
+            ObjBoundMethod* bound = (ObjBoundMethod*)val_as_obj(callee);
+            closure = bound->closure;      // native 绑定方法没有闭包 ⇒ 下面统一报错
+            if (closure) {
+                // receiver 是否已作为首实参传入（判据与 OP_CALL 的绑定方法分支一致：
+                // 首实参值等于 receiver ⇒ 调用方已经带了 self；再用形参个数佐证，
+                // 避免 `a.m(a)` 这类自引用被误判）。
+                int self_in_args = 0;
+                int expect_arity = closure->function ? closure->function->arity : 0;
+                if (arg_count > 0) {
+                    Value a0 = R(a + 1);
+                    if (val_is_obj(a0) && val_is_obj(bound->receiver)) {
+                        self_in_args = (val_as_obj(a0) == val_as_obj(bound->receiver));
+                    } else if (!val_is_obj(a0) && !val_is_obj(bound->receiver)) {
+                        self_in_args = (a0 == bound->receiver);
+                    }
+                    if (self_in_args && expect_arity > 0 && arg_count != expect_arity &&
+                        arg_count + 1 == expect_arity) {
+                        self_in_args = 0;
+                    }
+                }
+                need_self = !self_in_args;
+                self_val = bound->receiver;
+            }
+        }
+        if (unlikely(!closure)) {
             if (!throw_runtime_error("async 调用只能调用 async 函数", line)) return -1;
             frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH();
         }
-        ObjClosure* closure = (ObjClosure*)val_as_obj(callee);
         ObjCoroutine* co = coroutine_new(closure);
         if (unlikely(!co)) { runtime_error("内存不足，无法创建协程", line); return -1; }
 
-        // 实参从调用方寄存器复制进协程（被调方 locals[0..arity-1]）
-        if (arg_count > 0) {
-            co->initial_args = (Value*)malloc((size_t)arg_count * sizeof(Value));
+        // 实参从调用方寄存器复制进协程（被调方 locals[0..arity-1]）；
+        // 绑定方法且实参里没有 self 时，receiver 补到第 0 个（方法体里 self 就是 locals[0]）
+        int total_args = arg_count + (need_self ? 1 : 0);
+        if (total_args > 0) {
+            co->initial_args = (Value*)malloc((size_t)total_args * sizeof(Value));
             if (unlikely(!co->initial_args)) { runtime_error("内存分配失败", line); return -1; }
+            int w = 0;
+            if (need_self) co->initial_args[w++] = self_val;
             for (int i = 0; i < arg_count; i++) {
-                co->initial_args[i] = R(a + 1 + i);
+                co->initial_args[w++] = R(a + 1 + i);
             }
-            co->initial_arg_count = arg_count;
+            co->initial_arg_count = w;
         }
 
         ObjFuture* task_future = future_new();

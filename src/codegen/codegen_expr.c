@@ -968,9 +968,37 @@ static void gen_method_call(CodeGen* gen, Ast* obj_ast, const char* mname,
     }
     expected = fill_default_args(gen, mdef, 0, nargs, base, line);
 
-    emit_call(gen, base, expected, 1, line);
+    // ★ async 方法（`async func wait()`）必须和全局/局部 async 函数一样走
+    //   **协程创建**路径（OP_ASYNC_CALL），不能直接 CALL：
+    //   直接 CALL 会让方法体在**调用者帧**里同步执行、`vm.current_coroutine` 为 NULL，
+    //   方法体里第一句 `await asyncs.sleep(...)` 就报「async.sleep 只能在 async 函数中
+    //   调用」（examples/async await/struct 方法 + async.leno 整段不执行，
+    //   栈式正常输出两行 Timer 完成）。与栈式 codegen 同口径
+    //   （D:\CLeno\Leno 的 codegen_expr.c：method_def->u.func.is_async → OP_ASYNC_CALL）。
+    if (mdef && mdef->kind == AST_FUNC_DEF && mdef->u.func.is_async) {
+        reg_encode_iABC(gen->chunk, OP_ASYNC_CALL, base, expected, 0, line);
+    } else {
+        emit_call(gen, base, expected, 1, line);
+    }
     if (base != dst) emit_mov(gen, dst, base, line);
     reg_free_block(gen, base);
+}
+
+// 被调函数是不是 async？
+// ----------------------------------------------------------------------------
+// 两个来源取**或**（与栈式 codegen 同口径）：
+//   ① func_table 里的函数定义 —— 只是"表里这个名字没被同名局部函数覆盖"时才可靠；
+//   ② 语义遍**当场**捕获的 `ast->u.call.callee_is_async`。
+// 为什么必须看 ②：func_table 是**按名字**的全局表（无作用域信息），局部函数会覆盖
+// 同名全局条目，而 codegen 在整个语义遍**之后**才查表 ⇒ ① 可能拿到被污染的定义。
+// 实测（examples/async await/test_edge_async.leno）：closure_capture 里的局部
+// `func inner()` 覆盖了顶层 `async func inner()`，于是 outer 里的 `await inner()`
+// 被编成**同步 CALL**（那个 inner 不是 async），await 拿到张冠李戴的结果、
+// triple 的返回值变成 `triple_inner_result`（期望 `triple_outer_inner_result`）。
+// 语义遍是按源码顺序单遍走的：捕获时点早于后续同名局部函数的登记，所以 ② 是对的。
+static int is_async_callee(Ast* ast, Ast* fdef) {
+    if (fdef && fdef->kind == AST_FUNC_DEF && fdef->u.func.is_async) return 1;
+    return ast && ast->u.call.callee_is_async;
 }
 
 void gen_call(CodeGen* gen, Ast* ast, int dst) {
@@ -1026,7 +1054,7 @@ void gen_call(CodeGen* gen, Ast* ast, int dst) {
             }
             expected = fill_default_args(gen, fdef, 0, nargs, base, ast->line);
             // ★ async 函数：调用不直接执行函数体，而是建协程并立刻返回 Future
-            if (fdef && fdef->kind == AST_FUNC_DEF && fdef->u.func.is_async) {
+            if (is_async_callee(ast, fdef)) {
                 reg_encode_iABC(gen->chunk, OP_ASYNC_CALL, base, expected, 0, ast->line);
             } else {
                 emit_call(gen, base, expected, 1, ast->line);
@@ -1053,7 +1081,7 @@ void gen_call(CodeGen* gen, Ast* ast, int dst) {
     }
     expected = fill_default_args(gen, fdef, 0, nargs, base, ast->line);
     // async 函数（含局部 async 函数）：走协程创建路径，返回 Future
-    if (fdef && fdef->kind == AST_FUNC_DEF && fdef->u.func.is_async) {
+    if (is_async_callee(ast, fdef)) {
         reg_encode_iABC(gen->chunk, OP_ASYNC_CALL, base, expected, 0, ast->line);
     } else {
         emit_call(gen, base, expected, 1, ast->line);
