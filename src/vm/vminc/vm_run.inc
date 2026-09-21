@@ -1555,6 +1555,41 @@
             arr->elements[i] = R(a + 1 + i);
         }
         arr->count = c;
+
+        // ★ 设置运行时类型信息（照栈式 OP_ARRAY）：元素类型全一致时记 Array[T]，
+        //   空数组/混合类型留 NULL。`type()`、空数组的类型名、add 的类型检查都依赖它 ——
+        //   不设置的话 `arr.clear()` 之后 type(arr) 只剩 "Array"（元素类型信息丢失，
+        //   栈式仍报 Array[int]；examples/array/基本 clear.leno 的差异）。
+        //   用驻留缓存 type_get_array_cached，避免每个数组字面量都分配 TypeInfo。
+        if (c > 0) {
+            Value first = arr->elements[0];
+            int all_same = 1;
+            for (int i = 1; i < c; i++) {
+                if (val_get_type(arr->elements[i]) != val_get_type(first)) { all_same = 0; break; }
+            }
+            if (all_same) {
+                TypeKind elem_kind = TYPE_ANY;
+                switch (val_get_type(first)) {
+                    case VAL_NULL:  elem_kind = TYPE_NULL; break;
+                    case VAL_BOOL:  elem_kind = TYPE_BOOL; break;
+                    case VAL_INT:   elem_kind = TYPE_INT; break;
+                    case VAL_FLOAT: elem_kind = TYPE_FLOAT; break;
+                    case VAL_OBJ:
+                        switch (val_as_obj(first)->type) {
+                            case OBJ_STRING: elem_kind = TYPE_STRING; break;
+                            case OBJ_ARRAY:  elem_kind = TYPE_ARRAY; break;
+                            case OBJ_DICT:   elem_kind = TYPE_DICT; break;
+                            default: break;   // 其他对象类型不设类型信息
+                        }
+                        break;
+                    default: break;
+                }
+                if (elem_kind != TYPE_ANY) {
+                    arr->type_info = type_get_array_cached(elem_kind);
+                }
+            }
+        }
+
         R(a) = val_obj((Object*)arr);
         DISPATCH();
     }
