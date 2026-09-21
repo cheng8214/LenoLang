@@ -871,6 +871,12 @@ static void gen_var_decl(CodeGen* gen, Ast* ast) {
         int r = reg_alloc(gen);
         if (ast->u.var_decl.init) {
             gen_expr_to(gen, ast->u.var_decl.init, r);
+            // ★ 声明类型是 float/int/string 时同样要规范化（与下面的局部变量分支一致）。
+            //   漏掉会让 `float g = 1` 在全局里**存成 int**：print 出 `1` 而不是 `1.0`，
+            //   后续算术也走 int 语义 —— 静默错值（实测 examples/测试/export array or dict：
+            //   `float val = m.mixedArr[0]` 打印 1、栈式打印 1.0）。
+            TypeInfo* gvt = ast->u.var_decl.type;
+            if (gvt) emit_cast_for_target(gen, gvt->kind, ast->u.var_decl.init, r, ast->line);
         } else {
             emit_loadnil_to(gen, r, ast->line);
         }
@@ -884,6 +890,8 @@ static void gen_var_decl(CodeGen* gen, Ast* ast) {
         int r = reg_alloc(gen);
         if (ast->u.var_decl.init) {
             gen_expr_to(gen, ast->u.var_decl.init, r);
+            TypeInfo* mvt = ast->u.var_decl.type;   // 同上：模块变量也要 CAST
+            if (mvt) emit_cast_for_target(gen, mvt->kind, ast->u.var_decl.init, r, ast->line);
         } else {
             emit_loadnil_to(gen, r, ast->line);
         }
