@@ -841,12 +841,31 @@ void gen_binop(CodeGen* gen, Ast* ast, int dst) {
         gen_expr_to(gen, lhs, dst);
         rl = dst;
     }
-    // ⚠ 本函数收尾是**无条件** `reg_free(gen, r)`：立即数路径虽然不求右值、不发指令，
+    // ⚠ 收尾按 `r_is_temp` 决定要不要 free：立即数路径虽然不求右值、不发指令，
     //   也必须补一个占位临时寄存器，否则会去 free 寄存器 0 ⇒ 整个分配器错乱
     //   （表现：单跑测试都过，但 runner 里 351 个用例全挂）。
+    // ★ 右操作数是**普通局部变量/参数**时也不必搬进临时寄存器（与左操作数的 rl_direct 同理）：
+    //   原先 `a < b` 会多一条 `OP_MOV`（把 b 搬到临时寄存器）。安全性：
+    //   ① 变量无副作用，且取值发生在左值求值**之后**（与原来"先左后右"的求值顺序一致）；
+    //   ② 运算/比较指令都是"先读两个操作数、再写结果"，即使目标寄存器就是变量自己
+    //      （`x = y < x`）也安全；
+    //   ③ 该寄存器的生命周期在 next_reg 之下，分配器不会把它当临时寄存器复用
+    //      （与 rl_direct 同一论证）。
     int r = 0;
-    if (!rhs_imm) r = gen_expr(gen, rhs);
-    else r = reg_alloc(gen);
+    int r_is_temp = 1;
+    if (rhs_imm) {
+        r = reg_alloc(gen);          // 占位（收尾按 r_is_temp 释放）
+    } else if (rhs && rhs->kind == AST_VAR) {
+        SymRef* rref = &rhs->u.var.ref;
+        if ((rref->kind == SYM_LOCAL || rref->kind == SYM_PARAM) && rref->index >= 0) {
+            r = rref->index;
+            r_is_temp = 0;
+        } else {
+            r = gen_expr(gen, rhs);
+        }
+    } else {
+        r = gen_expr(gen, rhs);
+    }
 
     // ★ 类型特化（与栈式 codegen_expr.c 口径一致）：两侧静态类型都是 int 时
     //   走 int 专用指令。**这不只是性能差异**：int 专用指令把 null 视作 0
@@ -856,6 +875,11 @@ void gen_binop(CodeGen* gen, Ast* ast, int dst) {
     TypeKind lt = (lhs && lhs->cached_type) ? lhs->cached_type->kind : TYPE_UNKNOWN;
     TypeKind rt = (rhs && rhs->cached_type) ? rhs->cached_type->kind : TYPE_UNKNOWN;
     int both_int = (lt == TYPE_INT && rt == TYPE_INT);
+    // 两侧都是 float ⇒ 有序比较可以走浮点特化（T10-④，省掉 value_compare_stdlib 调用）
+    // 诊断/基准开关：`LENO_NO_FLOAT_CMP=1` 关掉它（**同一份二进制**做 A/B，避免重建两次）
+    static int float_cmp_disabled = -1;
+    if (float_cmp_disabled < 0) float_cmp_disabled = getenv("LENO_NO_FLOAT_CMP") ? 1 : 0;
+    int both_float = (!float_cmp_disabled && lt == TYPE_FLOAT && rt == TYPE_FLOAT);
 
     switch (op) {
         case TOK_PLUS:
@@ -884,21 +908,25 @@ void gen_binop(CodeGen* gen, Ast* ast, int dst) {
         case TOK_LT:
             if (both_int && rhs_imm) emit_lt_int_imm(gen, dst, rl, rhs_imm_val, ast->line);
             else if (both_int) emit_lt_int(gen, dst, rl, r, ast->line);
+            else if (both_float) emit_lt_f(gen, dst, rl, r, ast->line);
             else emit_lt(gen, dst, rl, r, ast->line);
             break;
         case TOK_GT:
             if (both_int && rhs_imm) emit_gt_int_imm(gen, dst, rl, rhs_imm_val, ast->line);
             else if (both_int) emit_gt_int(gen, dst, rl, r, ast->line);
+            else if (both_float) emit_gt_f(gen, dst, rl, r, ast->line);
             else emit_gt(gen, dst, rl, r, ast->line);
             break;
         case TOK_LE:
             if (both_int && rhs_imm) emit_le_int_imm(gen, dst, rl, rhs_imm_val, ast->line);
             else if (both_int) emit_le_int(gen, dst, rl, r, ast->line);
+            else if (both_float) emit_le_f(gen, dst, rl, r, ast->line);
             else emit_le(gen, dst, rl, r, ast->line);
             break;
         case TOK_GE:
             if (both_int && rhs_imm) emit_ge_int_imm(gen, dst, rl, rhs_imm_val, ast->line);
             else if (both_int) emit_ge_int(gen, dst, rl, r, ast->line);
+            else if (both_float) emit_ge_f(gen, dst, rl, r, ast->line);
             else emit_ge(gen, dst, rl, r, ast->line);
             break;
         case TOK_BITAND:   emit_bitand(gen, dst, rl, r, ast->line); break;
@@ -920,7 +948,7 @@ void gen_binop(CodeGen* gen, Ast* ast, int dst) {
             }
             break;
     }
-    reg_free(gen, r);
+    if (r_is_temp) reg_free(gen, r);
     // ⚠ 只释放**借来的**临时寄存器。原先写的是 `if (rl != dst) reg_free(gen, rl)` ——
     //   那在"左值是变量、rl 就是变量自己寄存器"的新路径上会把**活着的变量槽**释放掉，
     //   之后分配器把这个槽当临时寄存器复用 ⇒ 变量被就地覆盖。

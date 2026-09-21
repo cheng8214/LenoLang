@@ -1,0 +1,77 @@
+// 回归测试：浮点有序比较特化（T10-④）+ 右操作数直取变量寄存器（不再搬 MOV）
+//
+// ④ 两侧静态类型都是 float 时，`< <= > >=` 走 OP_LT_F/LE_F/GT_F/GE_F（直接双精度比较），
+//   不再调用 value_compare_stdlib。语义必须与通用 OP_LT/LE/GT/GE **完全一致**：
+//   数值比较（含负数、0.0）、以及"不做特化但要正确"的 int/float 混合比较。
+// 右值直取：`x = x + 1.0`（目标寄存器就是右操作数）这类别名情形必须正确 ——
+//   指令是"先读两个操作数、再写结果"。
+//
+// 对照实验：`LENO_NO_FLOAT_CMP=1` 可关掉 ④ 跑同一份断言（两者都必须过）。
+
+var bad = 0
+
+func fail(int tag):int {
+    print("FAIL case " + tag)
+    bad = bad + 1
+    return 0
+}
+
+main() {
+    // ---- 1) float vs float（走特化）：四种比较、真假两侧都要走到 ----
+    var a = 1.5
+    var b = 2.5
+    var h = 0
+    if a < b { h = h + 1 } else { h = h + 100 }
+    if a > b { h = h + 1000 }
+    if a <= b { h = h + 10000 } else { h = h + 100000 }
+    if b >= a { h = h + 1000000 }
+    if a >= b { h = h + 10000000 }
+    if h != 1010001 { print("h=" + h); fail(1) }
+
+    // ---- 2) 与浮点字面量比较 ----
+    var c = 2.5
+    var h2 = 0
+    if c < 3.5 { h2 = h2 + 1 }
+    if c <= 2.5 { h2 = h2 + 10 } else { h2 = h2 + 100 }
+    if c > 0.5 { h2 = h2 + 1000 }
+    if c >= 2.5 { h2 = h2 + 10000 }
+    if h2 != 11011 { print("h2=" + h2); fail(2) }
+
+    // ---- 3) 负数与 0.0 边界 ----
+    var n = -1.5
+    var z = 0.0
+    var h3 = 0
+    if n < z { h3 = h3 + 1 }
+    if z > n { h3 = h3 + 10 }
+    if n >= z { h3 = h3 + 1000 }
+    if h3 != 11 { print("h3=" + h3); fail(3) }
+
+    // ---- 4) int 与 float 混合：不走特化，但语义必须与通用版一致 ----
+    var i = 2
+    var f = 2.5
+    var h4 = 0
+    if i < f { h4 = h4 + 1 }
+    if f > i { h4 = h4 + 10 }
+    if i > f { h4 = h4 + 1000 }
+    if h4 != 11 { print("h4=" + h4); fail(4) }
+
+    // ---- 5) 比较结果参与表达式（结果仍是 bool）----
+    var p = 1.0
+    var q = 3.0
+    var r = q < p
+    if r != false { print("r=" + r); fail(5) }
+    if type(r) != "bool" { print("type(r)=" + type(r)); fail(5) }
+
+    // ---- 6) 别名：目标寄存器就是右操作数（右值直取的高风险情形）----
+    var x = 1.0
+    x = x + 1.0
+    if x != 2.0 { print("x=" + x); fail(6) }
+    x = x * 3.0
+    if x != 6.0 { print("x=" + x); fail(6) }
+
+    if bad > 0 {
+        print("test_float_cmp FAILED: " + bad + " 处")
+        _exit(1)
+    }
+    print("test_float_cmp ok")
+}

@@ -171,6 +171,11 @@ int try_emit_cmpjmp(CodeGen* gen, Ast* cond, int line);
 // 语句位置的 `arr.add(x)` ⇒ OP_ARRAY_APPEND(need_result=0)（T10-②）成功返回 1
 int try_emit_stmt_array_add(CodeGen* gen, Ast* e);
 void emit_mul_int_imm(CodeGen* gen, int dst, int b, int imm, int line);
+// 浮点有序比较特化（T10-④）
+void emit_lt_f(CodeGen* gen, int dst, int b, int c, int line);
+void emit_le_f(CodeGen* gen, int dst, int b, int c, int line);
+void emit_gt_f(CodeGen* gen, int dst, int b, int c, int line);
+void emit_ge_f(CodeGen* gen, int dst, int b, int c, int line);
 int emit_jmp_if_true(CodeGen* gen, int a, int line);
 void patch_jmp(CodeGen* gen, int pos);
 void patch_jmp_to(CodeGen* gen, int pos, int target);

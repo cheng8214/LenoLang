@@ -201,6 +201,19 @@ void emit_le(CodeGen* gen, int dst, int b, int c, int line) {
 void emit_ge(CodeGen* gen, int dst, int b, int c, int line) {
     reg_encode_iABC(gen->chunk, OP_GE, dst, b, c, line);
 }
+// 浮点有序比较特化（T10-④）：两侧静态类型都是 float 时用，省掉 value_compare_stdlib 调用
+void emit_lt_f(CodeGen* gen, int dst, int b, int c, int line) {
+    reg_encode_iABC(gen->chunk, OP_LT_F, dst, b, c, line);
+}
+void emit_le_f(CodeGen* gen, int dst, int b, int c, int line) {
+    reg_encode_iABC(gen->chunk, OP_LE_F, dst, b, c, line);
+}
+void emit_gt_f(CodeGen* gen, int dst, int b, int c, int line) {
+    reg_encode_iABC(gen->chunk, OP_GT_F, dst, b, c, line);
+}
+void emit_ge_f(CodeGen* gen, int dst, int b, int c, int line) {
+    reg_encode_iABC(gen->chunk, OP_GE_F, dst, b, c, line);
+}
 void emit_neq(CodeGen* gen, int dst, int b, int c, int line) {
     reg_encode_iABC(gen->chunk, OP_NEQ, dst, b, c, line);
 }

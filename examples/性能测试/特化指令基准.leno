@@ -1,0 +1,158 @@
+// T10 特化指令基准（优化前后对比用）
+//
+// 口径：所有段落在**同一进程内**依次计时（times.ms 的差值），避免跨时段 CPU 频率/热漂移
+// 污染相对比较；每段都是纯计算、结果用 checksum 打出来防止被"优化掉"。
+//
+// 段落与对应待办项：
+//   int 比较+跳转      T10-①（已融合：OP_CMPJMP_*）
+//   float 比较         T10-④ 目标（目前走通用 OP_LT + value_compare_stdlib 函数调用）
+//   float 比较字面量   T10-④ 目标（右值是浮点字面量，先 LOADF 再通用比较）
+//   字段访问           T10-⑤ 存疑（栈式有 OP_GET_FIELD_FAST）
+//   移位               T10-⑤ 存疑（栈式有 OP_SHL_IMM/SHR_IMM/USHR_IMM）
+//   函数调用           T10-⑤ 存疑（栈式有 OP_CALL_GLOBAL_FUNC_TYPED）
+//   语句 add           T10-② 已完成（OP_ARRAY_APPEND C=0）
+//   乘法立即数         T10-③ 已完成（OP_MUL_INT_IMM）
+import times
+
+struct P {
+    int x = 0
+    int y = 0
+}
+
+func add2(int a, int b): int {
+    return a + b
+}
+
+func bench_int_cmp(int n): int {
+    var c = 0
+    var i = 0
+    while i < n {
+        if i < n { c = c + 1 }
+        i = i + 1
+    }
+    return c
+}
+
+func bench_float_cmp(int n): int {
+    var a = 0.5
+    var b = 2.5
+    var c = 0
+    var i = 0
+    while i < n {
+        if a < b { c = c + 1 }
+        i = i + 1
+    }
+    return c
+}
+
+func bench_float_cmp_lit(int n): int {
+    var a = 0.5
+    var c = 0
+    var i = 0
+    while i < n {
+        if a < 2.5 { c = c + 1 }
+        i = i + 1
+    }
+    return c
+}
+
+func bench_field(int n): int {
+    var p = new P()
+    p.x = 3
+    p.y = 5
+    var s = 0
+    var i = 0
+    while i < n {
+        s = s + p.x + p.y
+        i = i + 1
+    }
+    return s
+}
+
+func bench_shl(int n): int {
+    var s = 0
+    var i = 0
+    while i < n {
+        s = s + (i << 3)
+        i = i + 1
+    }
+    return s
+}
+
+func bench_call(int n): int {
+    var s = 0
+    var i = 0
+    while i < n {
+        s = add2(s, i)
+        i = i + 1
+    }
+    return s
+}
+
+func bench_add_stmt(int n): int {
+    var a = []
+    var i = 0
+    while i < n {
+        a.add(i)
+        i = i + 1
+    }
+    return a.len()
+}
+
+func bench_mul_imm(int n): int {
+    var s = 0
+    var i = 0
+    while i < n {
+        s = s + i * 3
+        i = i + 1
+    }
+    return s
+}
+
+main() {
+    var n = 3000000
+    var t0 = 0.0
+
+    t0 = times.ms()
+    var r1 = bench_int_cmp(n)
+    var m_int_cmp = times.ms() - t0
+
+    t0 = times.ms()
+    var r2 = bench_float_cmp(n)
+    var m_float_cmp = times.ms() - t0
+
+    t0 = times.ms()
+    var r3 = bench_float_cmp_lit(n)
+    var m_float_cmp_lit = times.ms() - t0
+
+    t0 = times.ms()
+    var r4 = bench_field(n)
+    var m_field = times.ms() - t0
+
+    t0 = times.ms()
+    var r5 = bench_shl(n)
+    var m_shl = times.ms() - t0
+
+    t0 = times.ms()
+    var r6 = bench_call(n)
+    var m_call = times.ms() - t0
+
+    t0 = times.ms()
+    var r7 = bench_add_stmt(n)
+    var m_add = times.ms() - t0
+
+    t0 = times.ms()
+    var r8 = bench_mul_imm(n)
+    var m_mul = times.ms() - t0
+
+    print("段                         耗时(ms)")
+    print("int 比较+跳转  (①已做)  ", m_int_cmp)
+    print("float 比较     (④目标)  ", m_float_cmp)
+    print("float 比较字面量(④目标) ", m_float_cmp_lit)
+    print("字段访问       (⑤存疑)  ", m_field)
+    print("移位           (⑤存疑)  ", m_shl)
+    print("函数调用       (⑤存疑)  ", m_call)
+    print("语句 add       (②已做)  ", m_add)
+    print("乘法立即数     (③已做)  ", m_mul)
+    print("checksum=", r1 + r2 + r3 + r4 + r5 + r6 + r7 + r8)
+}

@@ -22,6 +22,44 @@
         frame = &vm.frames[vm.frame_cnt - 1];
         DISPATCH();
     }
+    // ============================================================================
+    // 浮点有序比较特化（T10-④）：两侧静态类型都是 float（编译器已知）⇒ 直接双精度比较，
+    // 不再走 `value_compare_stdlib()` 的跨 TU 函数调用与类型派发。
+    // 语义与通用 OP_LT/LE/GT/GE **完全一致**（这是正确性的硬要求）：
+    //   ① 任一操作数为 null ⇒ false（与通用版同一行代码）；
+    //   ② 两边都是数值且不是 bigint（int/float）⇒ 按数值比较；
+    //   ③ 其余（字符串 / bigint / 其它）⇒ **回退** value_compare_stdlib，
+    //      连报错文案都用通用版那一份（ops_name 相同），保证行为不变。
+    // ============================================================================
+#define FLOAT_CMP_IMPL(dbl_cmp, cmp_cmp, ops_name)                                 \
+    {                                                                              \
+        int a = READ_A(), b = READ_B(), c = READ_C();                              \
+        Value bv = R(b), cv = R(c);                                                \
+        if (unlikely(val_is_null(bv) || val_is_null(cv))) {                        \
+            R(a) = val_bool(0);                                                    \
+            DISPATCH();                                                            \
+        }                                                                          \
+        if (likely(val_is_num(bv) && val_is_num(cv) &&                             \
+                   !VM_IS_BIG(bv) && !VM_IS_BIG(cv))) {                            \
+            double x = value_to_double(bv), y = value_to_double(cv);                \
+            R(a) = val_bool(dbl_cmp);                                              \
+            DISPATCH();                                                            \
+        }                                                                          \
+        int cmp = 0;                                                               \
+        if (likely(value_compare_stdlib(bv, cv, &cmp))) {                          \
+            R(a) = val_bool(cmp_cmp);                                              \
+            DISPATCH();                                                            \
+        }                                                                          \
+        if (!throw_runtime_error_with_operands("比较运算: 操作数类型不可比较", ops_name, \
+                                               bv, cv, GET_CURRENT_LINE())) return -1; \
+        frame = &vm.frames[vm.frame_cnt - 1];                                      \
+        DISPATCH();                                                                \
+    }
+    LABEL(OP_LT_F): FLOAT_CMP_IMPL(x < y, cmp < 0, "LT (<)")
+    LABEL(OP_LE_F): FLOAT_CMP_IMPL(x <= y, cmp <= 0, "LE (<=)")
+    LABEL(OP_GT_F): FLOAT_CMP_IMPL(x > y, cmp > 0, "GT (>)")
+    LABEL(OP_GE_F): FLOAT_CMP_IMPL(x >= y, cmp >= 0, "GE (>=)")
+#undef FLOAT_CMP_IMPL
     LABEL(OP_GT): {
         int a = READ_A(), b = READ_B(), c = READ_C();
         Value bv = R(b), cv = R(c);

@@ -253,6 +253,16 @@ typedef enum {
     // 语义与 OP_MUL_INT 完全一致（含 bigint 与溢出提升）。
     OP_MUL_INT_IMM,     // iABC   R[A] = R[B] * (int8_t)C
 
+    // 浮点有序比较特化（T10-④）：两侧静态类型都是 float 时，替代通用 OP_LT/LE/GT/GE。
+    //   通用版每次都要走 `value_compare_stdlib()`（一次跨 TU 的函数调用 + 类型派发），
+    //   而编译器已经知道两边是 float ⇒ 直接取双精度比较。
+    //   语义与通用版保持一致：任一操作数为 null ⇒ false；两边都是数值 ⇒ 按数值比；
+    //   其余情况（字符串/bigint 等）**回退** value_compare_stdlib，保证不改变行为。
+    OP_LT_F,            // iABC   R[A] = R[B] <  R[C]
+    OP_LE_F,            // iABC   R[A] = R[B] <= R[C]
+    OP_GT_F,            // iABC   R[A] = R[B] >  R[C]
+    OP_GE_F,            // iABC   R[A] = R[B] >= R[C]
+
     OP_OPCODE_COUNT,    // 用于跳转表大小
 } OpCode;
 
