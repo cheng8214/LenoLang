@@ -1502,6 +1502,13 @@ void gen_module_call(CodeGen* gen, Ast* ast, int dst) {
 // ============================================================================
 
 // TypeInfo → 泛型实参名（与栈式 value_to_generic_type_name 的口径一致）
+//   ⚠ 聚合/嵌套类型必须走**唯一的渲染实现** type_to_string：
+//     手写 `TYPE_STRUCT → struct_name` 会把 `Box[int]` 打成 `Box`，
+//     `new Box[Box[int]]` 的外层实参于是丢掉内层 int（type(outer) 输出 Box[Box]，
+//     栈式是 Box[Box[int]] —— 泛型结构体 / 跨模块泛型两个样例都是这条）。
+//     Array/Dict/Ptr 同理，此前直接落到 default 变成 "unknown"。
+//   注：type_to_string 对**无泛型**的 struct 会渲染成 "struct Point"（带前缀），
+//   与实参名口径不一致，所以那种情况仍用 struct_name。
 static const char* typeinfo_to_name(TypeInfo* t) {
     if (!t) return "unknown";
     switch (t->kind) {
@@ -1510,7 +1517,13 @@ static const char* typeinfo_to_name(TypeInfo* t) {
         case TYPE_STRING: return "string";
         case TYPE_BOOL:   return "bool";
         case TYPE_ANY:    return "any";
-        case TYPE_STRUCT: return t->struct_name ? t->struct_name : "struct";
+        case TYPE_STRUCT:
+            if (t->generic_count > 0 && t->struct_name) return type_to_string(t);  // Box[int]
+            return t->struct_name ? t->struct_name : "struct";
+        case TYPE_ARRAY:      // Array[int]
+        case TYPE_DICT:       // Dict[string, int]
+        case TYPE_PTR_GENERIC: // Ptr[u32]
+            return type_to_string(t);
         default:          return "unknown";
     }
 }
