@@ -697,12 +697,13 @@ void gen_binop(CodeGen* gen, Ast* ast, int dst) {
     int rhs_imm = 0;
     int rhs_imm_val = 0;
     // ⚠ 触发条件必须与"真的会用立即数指令"完全一致，否则会**跳过右值求值却走通用路径**：
-    //   ① 只有加减有立即数形式（比较/乘除仍要按老路把右值求进寄存器 —— 否则 `n <= 1`
-    //      被编成 `OP_LE_INT A=1 B=1 C=0`＝`n <= n` 恒真，fib 直接返回 n ⇒ 30 而非 832040）；
+    //   ① 只有下面这些运算符有立即数形式（乘除/位运算等仍要按老路把右值求进寄存器 ——
+    //      否则 `n <= 1` 会被编成 `OP_LE_INT A=1 B=1 C=0`＝`n <= n` 恒真，fib 直接返回 n）；
     //   ② 左操作数也必须是 int（`big1 + 100` 里左是 bigint ⇒ 只有通用 ADD 能算，
-    //      若此时跳过右值求值，通用 ADD 会拿到一个空寄存器 ⇒ 实测 `+100` 静默失效，
-    //      test_bigint / test_int_div / test_rsp_drift 等 9 个用例失败）。
-    if ((op == TOK_PLUS || op == TOK_MINUS) && lhs && lhs->cached_type &&
+    //      若此时跳过右值求值，通用 ADD 会拿到一个空寄存器 ⇒ 实测 `+100` 静默失效）。
+    int imm_ok_op = (op == TOK_PLUS || op == TOK_MINUS || op == TOK_LT || op == TOK_GT ||
+                     op == TOK_LE || op == TOK_GE);
+    if (imm_ok_op && lhs && lhs->cached_type &&
         lhs->cached_type->kind == TYPE_INT && rhs && rhs->kind == AST_NUM &&
         !rhs->u.num.is_float && !rhs->u.num.is_bigint) {
         double dv = rhs->u.num.value;
@@ -758,19 +759,23 @@ void gen_binop(CodeGen* gen, Ast* ast, int dst) {
         //   T=OrdInt 时实参**是 struct**，通用比较会报「操作数类型不可比较」✗，
         //   而 int 专用比较按栈式口径直接比位模式（test_generic_face_impl）。
         case TOK_LT:
-            if (both_int) emit_lt_int(gen, dst, rl, r, ast->line);
+            if (both_int && rhs_imm) emit_lt_int_imm(gen, dst, rl, rhs_imm_val, ast->line);
+            else if (both_int) emit_lt_int(gen, dst, rl, r, ast->line);
             else emit_lt(gen, dst, rl, r, ast->line);
             break;
         case TOK_GT:
-            if (both_int) emit_gt_int(gen, dst, rl, r, ast->line);
+            if (both_int && rhs_imm) emit_gt_int_imm(gen, dst, rl, rhs_imm_val, ast->line);
+            else if (both_int) emit_gt_int(gen, dst, rl, r, ast->line);
             else emit_gt(gen, dst, rl, r, ast->line);
             break;
         case TOK_LE:
-            if (both_int) emit_le_int(gen, dst, rl, r, ast->line);
+            if (both_int && rhs_imm) emit_le_int_imm(gen, dst, rl, rhs_imm_val, ast->line);
+            else if (both_int) emit_le_int(gen, dst, rl, r, ast->line);
             else emit_le(gen, dst, rl, r, ast->line);
             break;
         case TOK_GE:
-            if (both_int) emit_ge_int(gen, dst, rl, r, ast->line);
+            if (both_int && rhs_imm) emit_ge_int_imm(gen, dst, rl, rhs_imm_val, ast->line);
+            else if (both_int) emit_ge_int(gen, dst, rl, r, ast->line);
             else emit_ge(gen, dst, rl, r, ast->line);
             break;
         case TOK_BITAND:   emit_bitand(gen, dst, rl, r, ast->line); break;

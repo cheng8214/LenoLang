@@ -220,6 +220,12 @@ typedef enum {
     // 立即数用 C 的 8 位**有符号**表示（-128..127），覆盖 `n-1` / `i+1` 这类最常见写法。
     OP_ADD_INT_IMM,     // iABC   R[A] = R[B] + (int8_t)C
     OP_SUB_INT_IMM,     // iABC   R[A] = R[B] - (int8_t)C
+    // 立即数比较（`n <= 1` 这类）：省掉「求右值 → LOADI」一条指令。
+    // 与 OP_*_INT 同口径：左值为 null ⇒ 结果 false（立即数本身不会为 null）。
+    OP_LT_INT_IMM,      // iABC   R[A] = R[B] <  (int8_t)C
+    OP_GT_INT_IMM,      // iABC   R[A] = R[B] >  (int8_t)C
+    OP_LE_INT_IMM,      // iABC   R[A] = R[B] <= (int8_t)C
+    OP_GE_INT_IMM,      // iABC   R[A] = R[B] >= (int8_t)C
 
     OP_OPCODE_COUNT,    // 用于跳转表大小
 } OpCode;

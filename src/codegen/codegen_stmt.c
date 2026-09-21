@@ -47,6 +47,16 @@ static int assign_cast_needed(TypeKind target_kind, Ast* value_ast) {
         case AST_BOOL:
         case AST_NULL:
             return !value_ast->cached_type || value_ast->cached_type->kind != target_kind;
+        case AST_BINOP:
+        case AST_UNARY:
+            // 算术/一元运算的结果类型是**可靠**的：int 运算的结果只可能是 int，或者
+            // 溢出提升出来的 BigInt —— 两者都是整数，按 `: int` 声明返回无需再 CAST；
+            // float 运算同理。省掉这类 CAST 是为了对齐栈式（fib 每次递归有 3 条
+            // 纯属白花的 CAST_INT，占 21 条指令的 1/7）。
+            // ⚠ 调用 / 索引 / 字段等节点**不能**这样省：它们的 cached_type 只是声明推断，
+            //   运行期可能不是该类型 —— 那正是 A4（`export float x = 1`）要防的事。
+            return !(value_ast->cached_type && value_ast->cached_type->kind == target_kind &&
+                     (target_kind == TYPE_INT || target_kind == TYPE_FLOAT));
         default:
             return 1;
     }

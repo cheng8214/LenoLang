@@ -145,6 +145,19 @@ void emit_add_int_imm(CodeGen* gen, int dst, int b, int imm, int line) {
 void emit_sub_int_imm(CodeGen* gen, int dst, int b, int imm, int line) {
     reg_encode_iABC(gen->chunk, OP_SUB_INT_IMM, dst, b, (int)((uint8_t)(int8_t)imm), line);
 }
+// 立即数比较：R[dst] = R[b] </>/<=/>= imm（imm ∈ [-128,127]）
+void emit_lt_int_imm(CodeGen* gen, int dst, int b, int imm, int line) {
+    reg_encode_iABC(gen->chunk, OP_LT_INT_IMM, dst, b, (int)((uint8_t)(int8_t)imm), line);
+}
+void emit_gt_int_imm(CodeGen* gen, int dst, int b, int imm, int line) {
+    reg_encode_iABC(gen->chunk, OP_GT_INT_IMM, dst, b, (int)((uint8_t)(int8_t)imm), line);
+}
+void emit_le_int_imm(CodeGen* gen, int dst, int b, int imm, int line) {
+    reg_encode_iABC(gen->chunk, OP_LE_INT_IMM, dst, b, (int)((uint8_t)(int8_t)imm), line);
+}
+void emit_ge_int_imm(CodeGen* gen, int dst, int b, int imm, int line) {
+    reg_encode_iABC(gen->chunk, OP_GE_INT_IMM, dst, b, (int)((uint8_t)(int8_t)imm), line);
+}
 
 // float 特化
 void emit_add_f(CodeGen* gen, int dst, int b, int c, int line) {

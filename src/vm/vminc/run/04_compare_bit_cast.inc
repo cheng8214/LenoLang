@@ -95,6 +95,38 @@
         R(a) = val_bool(VM_IO(R(b)) == VM_IO(R(c)));
         DISPATCH();
     }
+    // 立即数比较（右操作数是 -128..127 的整数字面量，编进 C 字段的 8 位有符号）。
+    // 语义与 OP_*_INT 完全一致：左值为 null ⇒ 结果 false（立即数本身不可能为 null）。
+    // 动机：`if n <= 1 {` 原先要 MOV + LOADI + LE_INT + JMP_IF_FALSE 四条，
+    // 有立即数比较后右值那条 LOADI 直接省掉。
+    LABEL(OP_LT_INT_IMM): {
+        int a = READ_A(), b = READ_B();
+        int imm = (int)(int8_t)READ_C();
+        Value bv = R(b);
+        R(a) = val_bool(!val_is_null(bv) && VM_IO(bv) < (int64_t)imm);
+        DISPATCH();
+    }
+    LABEL(OP_GT_INT_IMM): {
+        int a = READ_A(), b = READ_B();
+        int imm = (int)(int8_t)READ_C();
+        Value bv = R(b);
+        R(a) = val_bool(!val_is_null(bv) && VM_IO(bv) > (int64_t)imm);
+        DISPATCH();
+    }
+    LABEL(OP_LE_INT_IMM): {
+        int a = READ_A(), b = READ_B();
+        int imm = (int)(int8_t)READ_C();
+        Value bv = R(b);
+        R(a) = val_bool(!val_is_null(bv) && VM_IO(bv) <= (int64_t)imm);
+        DISPATCH();
+    }
+    LABEL(OP_GE_INT_IMM): {
+        int a = READ_A(), b = READ_B();
+        int imm = (int)(int8_t)READ_C();
+        Value bv = R(b);
+        R(a) = val_bool(!val_is_null(bv) && VM_IO(bv) >= (int64_t)imm);
+        DISPATCH();
+    }
 
     // --- 位运算 ---
     // 位运算：任一侧是 bigint（或移位/结果越界）⇒ 走 bigint 路径（无限精度补码语义）

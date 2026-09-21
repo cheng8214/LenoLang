@@ -48,5 +48,24 @@ main() {
     // ⑤ 递归形态（立即数减法 + 立即数比较同时出现）
     assert_eq(fib(20), 6765)
 
+    // ⑥ 立即数比较（OP_*_INT_IMM）：边界、负数、超出 8 位范围回退
+    var n = 10
+    assert_eq(n <= 10, true)
+    assert_eq(n <= 1, false)
+    assert_eq(n < 11, true)
+    assert_eq(n > 9, true)
+    assert_eq(n >= 10, true)
+    assert_eq(n >= 127, false)
+    assert_eq(n < 128, true)          // 128 超范围 ⇒ 走普通比较，结果照样对
+    assert_eq(n > -128, true)
+    assert_eq(n >= -129, true)        // -129 超范围 ⇒ 普通比较
+
+    // ⑦ 比较结果参与算术（bool 不能当 int 用，这里只验证比较值本身）
+    var cnt = 0
+    for 20 {
+        if cnt <= 5 { cnt += 1 }
+    }
+    assert_eq(cnt, 6)
+
     io.print("test_int_imm passed")
 }
