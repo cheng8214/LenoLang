@@ -109,6 +109,69 @@ void emit_as_cast_to(CodeGen* gen, int reg, TypeInfo* t, int line) {
 // 表达式入口
 // ============================================================================
 
+// ============================================================================
+// 「比较 + 条件跳转」融合（T10-①）
+// ----------------------------------------------------------------------------
+// `if x <= 1 {` / `while i < n {` 原先要两条指令：`*_INT[_IMM]` 比较 + `JMP_IF_FALSE`。
+// 这里在**条件位置**直接把比较合进跳转（与栈式 codegen 的 try_emit_cmpjmp 对齐）：
+// 省掉的是一条 OP_JMP_IF_FALSE 的**派发**（取指 + 行号写回 + 间接跳转），
+// 而且不占结果寄存器（原路径要先算进一个临时寄存器）。
+// 只处理**有序比较**（< <= > >=）且满足：
+//   ① 两侧静态类型都是 int —— 与 `*_INT / *_INT_IMM` 的发射条件完全一致，
+//      所以语义等价（int 快路径只排除 null、不做类型检查，见 VM 侧说明）；
+//   ② 左操作数是普通局部变量/参数（SYM_LOCAL / SYM_PARAM ⇒ 就是寄存器 R[index]；
+//      upvalue / 全局 / 模块需要真正的取值指令，不走这条）；
+//   ③ 右操作数是 int 字面量（∈[-128,127] ⇒ int8 立即数形式）或另一个局部变量/参数。
+// 成功返回跳转偏移的回填位置（供 patch_jmp 用），失败返回 -1（调用方走原路径）。
+int try_emit_cmpjmp(CodeGen* gen, Ast* cond, int line) {
+    // 诊断 / 基准开关：`LENO_NO_CMPJMP=1` 关掉融合 —— **同一份二进制**里就能做 A/B，
+    // 不必重新构建两次（跨构建比较会被机器频率漂移污染，实测被误导过一次）。
+    // 与栈式的 `LENO_NO_CMPJMP` 同名同义（见其 codegen_stmt.c 的 try_emit_cmpjmp）。
+    static int disabled = -1;
+    if (disabled < 0) disabled = getenv("LENO_NO_CMPJMP") ? 1 : 0;
+    if (disabled) return -1;
+
+    if (!cond || cond->kind != AST_BINOP) return -1;
+    Ast* l = cond->u.binop.l;
+    Ast* r = cond->u.binop.r;
+    if (!l || !r) return -1;
+    if (!l->cached_type || !r->cached_type) return -1;
+    if (l->cached_type->kind != TYPE_INT || r->cached_type->kind != TYPE_INT) return -1;
+
+    OpCode op;
+    switch (cond->u.binop.op) {
+        case TOK_LT: op = OP_CMPJMP_LT; break;
+        case TOK_LE: op = OP_CMPJMP_LE; break;
+        case TOK_GT: op = OP_CMPJMP_GT; break;
+        case TOK_GE: op = OP_CMPJMP_GE; break;
+        default: return -1;
+    }
+
+    // 左操作数：普通局部变量 / 参数
+    if (l->kind != AST_VAR) return -1;
+    SymRef* lref = &l->u.var.ref;
+    if ((lref->kind != SYM_LOCAL && lref->kind != SYM_PARAM) || lref->index < 0) return -1;
+    int a = lref->index;
+
+    // 右操作数：int 字面量（立即数形式）
+    if (r->kind == AST_NUM && !r->u.num.is_float && !r->u.num.is_bigint) {
+        double dv = r->u.num.value;
+        if (dv >= -128.0 && dv <= 127.0) {
+            return emit_cmpjmp(gen, op, a, (int)dv, 1, line);
+        }
+        return -1;      // 立即数超出 int8 ⇒ 交给原路径
+    }
+
+    // 右操作数：另一个局部变量 / 参数（寄存器形式）
+    if (r->kind == AST_VAR) {
+        SymRef* rref = &r->u.var.ref;
+        if ((rref->kind == SYM_LOCAL || rref->kind == SYM_PARAM) && rref->index >= 0) {
+            return emit_cmpjmp(gen, op, a, rref->index, 0, line);
+        }
+    }
+    return -1;
+}
+
 int gen_expr(CodeGen* gen, Ast* ast) {
     int r = reg_alloc(gen);
     gen_expr_to(gen, ast, r);

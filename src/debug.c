@@ -76,6 +76,7 @@ static const char* opCodeNames[] = {
     "OP_ADD_INT_IMM", "OP_SUB_INT_IMM",
     "OP_LT_INT_IMM", "OP_GT_INT_IMM", "OP_LE_INT_IMM", "OP_GE_INT_IMM",
     "OP_CALL_GLOBAL_FUNC",
+    "OP_CMPJMP_LT", "OP_CMPJMP_LE", "OP_CMPJMP_GT", "OP_CMPJMP_GE",
     "OP_OPCODE_COUNT",
 };
 
@@ -368,6 +369,27 @@ static int decode_trailing(Chunk* chunk, int offset, char* desc, size_t desc_siz
                                inclusive, sbx, offset + 8 + sbx);
             break;
         }
+        // 「比较 + 条件跳转」融合（T10-①）：紧随一个 4 字节字，前 2 字节是跳转偏移
+        //   （offset + 32768，与 iAsBx 同约定；后 2 字节是填充）。
+        case OP_CMPJMP_LT:
+        case OP_CMPJMP_LE:
+        case OP_CMPJMP_GT:
+        case OP_CMPJMP_GE: {
+            int bx = dbg_take_u16(chunk, base, &p, &over);
+            dbg_take_u16(chunk, base, &p, &over);   // 第二个字的另外 2 字节是填充
+            if (desc) {
+                int off = bx - 32768;
+                int lhs = (int)chunk->code[offset + 1];
+                if (c & 0x80) {
+                    snprintf(desc, desc_size, "为假则跳 %+d（比较 R[%d] 与立即数 %d）",
+                             off, lhs, (int)(int8_t)b);
+                } else {
+                    snprintf(desc, desc_size, "为假则跳 %+d（比较 R[%d] 与 R[%d]）",
+                             off, lhs, (int)b);
+                }
+            }
+            break;
+        }
         // 常量索引为 0 时紧随一条 EXTRAARG（iAx，24 位常量索引）
         case OP_CALL_NATIVE:
         case OP_MODULE_CALL: {
@@ -542,6 +564,11 @@ static void disasm_self_check(Chunk* chunk, const char* name) {
         } else if (op == OP_JMP_IF_FALSE || op == OP_JMP_IF_TRUE) {
             int bx = ((int)chunk->code[off + 2] << 8) | (int)chunk->code[off + 3];
             target = off + 4 + (bx - 32768);
+        } else if (op == OP_CMPJMP_LT || op == OP_CMPJMP_LE ||
+                   op == OP_CMPJMP_GT || op == OP_CMPJMP_GE) {
+            // 融合指令占 8 字节：偏移在第二个字的前 2 字节（相对"本指令之后"，即 off+8）
+            int bx = ((int)chunk->code[off + 4] << 8) | (int)chunk->code[off + 5];
+            target = off + 8 + (bx - 32768);
         } else if (op == OP_TRY || op == OP_CATCH) {
             // 这两条的 Bx 相对基准是**本指令起点**（见 gen_try 的 catch_pos - try_pos）
             int bx = ((int)chunk->code[off + 2] << 8) | (int)chunk->code[off + 3];

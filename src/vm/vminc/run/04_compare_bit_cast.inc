@@ -96,6 +96,41 @@
         DISPATCH();
     }
     // 立即数比较（右操作数是 -128..127 的整数字面量，编进 C 字段的 8 位有符号）。
+    // ============================================================================
+    // 「比较 + 条件跳转」融合（T10-①）：`*_INT[_IMM] + JMP_IF_FALSE` 合成一条
+    // ----------------------------------------------------------------------------
+    // 省掉的是一条 OP_JMP_IF_FALSE 的**派发**（取指 + 行号写回 + 间接跳转）——
+    // 条件判断在热循环里每轮都要付，fib 的递归路径因此 9 条 → 8 条。
+    // 编码：A = 左操作数寄存器；B = 右操作数（寄存器号，或 C 的 0x80 位置 1 时是 int8 立即数）；
+    //       紧随的**第二个 4 字节字** = 跳转偏移（offset + 32768，与 iAsBx 同约定）。
+    // 语义与 `OP_LT_INT[_IMM] + OP_JMP_IF_FALSE` **逐条等价**：
+    //   ① int 快路径只排除 null、不做类型检查（与 *_INT 系列同口径，stack 一致）；
+    //   ② 比较为假 ⇒ 跳转（与 JMP_IF_FALSE 同向）。
+    // ============================================================================
+#define CMPJMP_IMPL(int_cmp)                                                       \
+    {                                                                              \
+        int a = READ_A(), b = READ_B(), c = READ_C();                              \
+        int want_imm = (c & 0x80) != 0;                                            \
+        int bx = ((int)frame->ip[0] << 8) | (int)frame->ip[1];                     \
+        ADVANCE();                          /* 跳过携带偏移的第二个字 */           \
+        Value bv = R(a);                                                           \
+        int truthy;                                                                \
+        if (want_imm) {                                                            \
+            truthy = !val_is_null(bv) && (VM_IO(bv) int_cmp (int64_t)(int8_t)b);   \
+        } else {                                                                   \
+            Value cv = R(b);                                                       \
+            truthy = !val_is_null(bv) && !val_is_null(cv) &&                       \
+                     (VM_IO(bv) int_cmp VM_IO(cv));                                \
+        }                                                                          \
+        if (!truthy) frame->ip += (bx - 32768);                                    \
+        DISPATCH();                                                                \
+    }
+    LABEL(OP_CMPJMP_LT): CMPJMP_IMPL(<)
+    LABEL(OP_CMPJMP_LE): CMPJMP_IMPL(<=)
+    LABEL(OP_CMPJMP_GT): CMPJMP_IMPL(>)
+    LABEL(OP_CMPJMP_GE): CMPJMP_IMPL(>=)
+#undef CMPJMP_IMPL
+
     // 语义与 OP_*_INT 完全一致：左值为 null ⇒ 结果 false（立即数本身不可能为 null）。
     // 动机：`if n <= 1 {` 原先要 MOV + LOADI + LE_INT + JMP_IF_FALSE 四条，
     // 有立即数比较后右值那条 LOADI 直接省掉。

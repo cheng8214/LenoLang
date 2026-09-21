@@ -282,17 +282,46 @@ int emit_jmp_if_true(CodeGen* gen, int a, int line) {
     return pos;
 }
 
+// 「比较 + 条件跳转」融合（T10-①）：返回跳转偏移的写入位置（用 patch_jmp 回填）。
+//   语义 = 「比较为假则跳」，与 `emit_*_int[_imm] + emit_jmp_if_false` 逐条等价。
+//   is_imm=1 时 b 是 int8 立即数，否则 b 是右操作数寄存器号。
+//   ⚠ 这条指令占 **8 字节**（第二个 4 字节字携带偏移）；patch_jmp / patch_jmp_to
+//     会按 opcode 自动选对尺寸（见 instr_bytes_at）。
+int emit_cmpjmp(CodeGen* gen, OpCode op, int a, int b, int is_imm, int line) {
+    int pos = gen->chunk->len;
+    reg_encode_iABC(gen->chunk, op, a, b, is_imm ? 0x80 : 0, line);
+    chunk_write(gen->chunk, 0, line);   // 第二个字：16 位偏移占位
+    chunk_write(gen->chunk, 0, line);
+    chunk_write(gen->chunk, 0, line);
+    chunk_write(gen->chunk, 0, line);
+    return pos;
+}
+
 // patch 跳转偏移：从 pos 位置的指令开始，计算跳转到当前 chunk->len
 // 按指令自身的编码形式写回：
 //   OP_JMP 是 iAsJ （24 位有符号偏移，占 byte1..3）
 //   OP_JMP_IF_FALSE / OP_JMP_IF_TRUE 是 iAsBx（16 位无符号 Bx，byte1 是寄存器 A）
 // 这里自动识别，调用方无需区分 —— 混用会写出完全错误的跳距。
+// 指令占几个字节：`OP_CMPJMP_*`（比较+跳转融合）带一个 4 字节的偏移字 ⇒ 8 字节，其余 4 字节。
+// 跳转偏移的算法必须按**指令自身长度**扣（`len - pos - size`），用错尺寸会写出错误的跳距。
+static int instr_bytes_at(Chunk* chunk, int pos) {
+    uint8_t op = chunk->code[pos];
+    return (op >= (uint8_t)OP_CMPJMP_LT && op <= (uint8_t)OP_CMPJMP_GE) ? 8 : 4;
+}
+
 static void patch_common(CodeGen* gen, int pos, int offset) {
     uint8_t op = gen->chunk->code[pos];
     if (op == (uint8_t)OP_JMP) {
         gen->chunk->code[pos + 1] = (uint8_t)(((uint32_t)offset >> 16) & 0xFF);
         gen->chunk->code[pos + 2] = (uint8_t)(((uint32_t)offset >> 8) & 0xFF);
         gen->chunk->code[pos + 3] = (uint8_t)((uint32_t)offset & 0xFF);
+    } else if (op >= (uint8_t)OP_CMPJMP_LT && op <= (uint8_t)OP_CMPJMP_GE) {
+        // 偏移在**第二个字**里（byte0/1），与 iAsBx 同约定（offset + 32768）
+        int bx = offset + 32768;
+        if (bx < 0) bx = 0;
+        if (bx > 0xFFFF) bx = 0xFFFF;
+        gen->chunk->code[pos + 4] = (uint8_t)((bx >> 8) & 0xFF);
+        gen->chunk->code[pos + 5] = (uint8_t)(bx & 0xFF);
     } else {
         int bx = offset + 32768;
         if (bx < 0) bx = 0;
@@ -303,12 +332,12 @@ static void patch_common(CodeGen* gen, int pos, int offset) {
 }
 
 void patch_jmp(CodeGen* gen, int pos) {
-    patch_common(gen, pos, gen->chunk->len - pos - 4);  // 跳过当前指令的 4 字节
+    patch_common(gen, pos, gen->chunk->len - pos - instr_bytes_at(gen->chunk, pos));
 }
 
 // patch 跳转到指定目标
 void patch_jmp_to(CodeGen* gen, int pos, int target) {
-    patch_common(gen, pos, target - pos - 4);
+    patch_common(gen, pos, target - pos - instr_bytes_at(gen->chunk, pos));
 }
 
 // 写入 2 字节 sBx（OP_FOR_PREP / OP_FOR_LOOP 紧随指令的偏移数据，编码为 sbx+32768）

@@ -231,6 +231,22 @@ typedef enum {
     //   只支持槽位/实参数 ≤ 255 的调用点（codegen 不满足时不发这条指令，走老路径）。
     OP_CALL_GLOBAL_FUNC,
 
+    // 「比较 + 条件跳转」融合（T10-①，对齐栈式的 OP_CMPJMP_*）：
+    //   省掉一条 OP_JMP_IF_FALSE 的**派发**（条件判断在热循环里每次都要付）。
+    //   编码：byte1 = A = 左操作数寄存器
+    //         byte2 = B = 右操作数（寄存器号；C 的最高位为 1 时是 int8 立即数）
+    //         byte3 = C = 0x80 位表示"立即数形式"，其余位保留
+    //         紧随**第二个 4 字节字**：跳转偏移（16 位，存 offset + 32768，与 iAsBx 同约定）
+    //   语义与 `OP_LT_INT[_IMM] + OP_JMP_IF_FALSE` 逐条等价：**比较为假则跳转**，
+    //   且 int 快路径与 *_INT 系列完全一致（只排除 null，不做类型检查 —— 这是栈式口径，
+    //   test_generic_face_impl 依赖它）。
+    //   ⚠ codegen 只在"两侧静态类型都是 int、左操作数是普通局部变量/参数"时才发这条，
+    //     与 *_INT / *_INT_IMM 的发射条件一致；不满足时仍走原来的两条指令。
+    OP_CMPJMP_LT,       // (R[A] <  rhs) 为假 ⇒ 跳
+    OP_CMPJMP_LE,       // (R[A] <= rhs) 为假 ⇒ 跳
+    OP_CMPJMP_GT,       // (R[A] >  rhs) 为假 ⇒ 跳
+    OP_CMPJMP_GE,       // (R[A] >= rhs) 为假 ⇒ 跳
+
     OP_OPCODE_COUNT,    // 用于跳转表大小
 } OpCode;
 

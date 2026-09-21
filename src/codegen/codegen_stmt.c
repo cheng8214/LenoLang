@@ -375,9 +375,13 @@ void gen_if_ex(CodeGen* gen, Ast* ast, int want_value, int dst) {
         jmp_false2 = emit_jmp_if_false(gen, c2, ast->line);
         reg_free(gen, c2);
     } else {
-        int cond = gen_expr(gen, cond_ast);
-        jmp_false = emit_jmp_if_false(gen, cond, ast->line);
-        reg_free(gen, cond);
+        // 先试「比较 + 条件跳转」融合（T10-①）：成功则一条指令搞定，且不占结果寄存器
+        jmp_false = try_emit_cmpjmp(gen, cond_ast, ast->line);
+        if (jmp_false < 0) {
+            int cond = gen_expr(gen, cond_ast);
+            jmp_false = emit_jmp_if_false(gen, cond, ast->line);
+            reg_free(gen, cond);
+        }
 
         IF_DO_BIND();
     }
@@ -421,10 +425,13 @@ static void gen_while(CodeGen* gen, Ast* ast) {
     gen->loop_head = node;
     gen->loop_count++;
 
-    // 求值条件
-    int cond = gen_expr(gen, ast->u.while_.cond);
-    int jmp_end = emit_jmp_if_false(gen, cond, ast->line);
-    reg_free(gen, cond);
+    // 求值条件（先试「比较 + 条件跳转」融合，T10-①；不满足条件时走原两条指令路径）
+    int jmp_end = try_emit_cmpjmp(gen, ast->u.while_.cond, ast->line);
+    if (jmp_end < 0) {
+        int cond = gen_expr(gen, ast->u.while_.cond);
+        jmp_end = emit_jmp_if_false(gen, cond, ast->line);
+        reg_free(gen, cond);
+    }
 
     // 循环体
     gen_stmt(gen, ast->u.while_.body);

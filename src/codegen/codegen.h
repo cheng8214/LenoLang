@@ -165,6 +165,9 @@ void emit_strcat(CodeGen* gen, int dst, int b, int c, int line);
 // 跳转
 int emit_jmp(CodeGen* gen, int line);
 int emit_jmp_if_false(CodeGen* gen, int a, int line);
+// 「比较 + 条件跳转」融合（T10-①）：返回跳转偏移回填位置（失败返回 -1 ⇒ 走原路径）
+int emit_cmpjmp(CodeGen* gen, OpCode op, int a, int b, int is_imm, int line);
+int try_emit_cmpjmp(CodeGen* gen, Ast* cond, int line);
 int emit_jmp_if_true(CodeGen* gen, int a, int line);
 void patch_jmp(CodeGen* gen, int pos);
 void patch_jmp_to(CodeGen* gen, int pos, int target);

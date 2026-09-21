@@ -1,0 +1,98 @@
+// 回归测试：「比较 + 条件跳转」融合（T10-①）
+//
+// codegen 把 `if/while` 条件里的**有序比较**（两侧静态类型都是 int、左操作数是普通
+// 局部变量/参数）直接融合成一条 `OP_CMPJMP_*`（8 字节：第二个 4 字节字携带跳转偏移），
+// 语义必须与原来的「`*_INT[_IMM]` 比较 + `JMP_IF_FALSE`」**逐条一致**：
+//   ① 比较为假 ⇒ 跳转（与 JMP_IF_FALSE 同向）；
+//   ② int 快路径只排除 null、不做类型检查（与 *_INT 系列同口径）；
+//   ③ 立即数超出 int8（-128..127）/ 右操作数不是简单局部变量 / 两侧不是 int
+//      ⇒ 不融合，走原路径，行为不变。
+//
+// 覆盖：四种有序比较的真假两侧、立即数与局部变量两种形式、负立即数与 0 边界、
+//       while 循环条件（回跳目标必须是融合指令的起始字）、立即数越界回退、
+//       浮点比较（不融合）、以及分支"为假时不得进入"。
+//
+// 对照实验：`LENO_NO_CMPJMP=1` 可关掉融合跑同一份断言（两者都必须过）。
+
+var bad = 0
+
+func fail(int tag):int {
+    print("FAIL case " + tag)
+    bad = bad + 1
+    return 0
+}
+
+main() {
+    // ---- 1) 立即数形式：四种比较、真假两侧都要走到 ----
+    var n = 5
+    var hit = 0
+    if n <= 1 { hit = hit + 1 }
+    if n <= 5 { hit = hit + 10 } else { hit = hit + 100 }
+    if n < 5 { hit = hit + 1000 }
+    if n < 6 { hit = hit + 10000 }
+    if n >= 5 { hit = hit + 100000 } else { hit = hit + 1000000 }
+    if n >= 6 { hit = hit + 10000000 }
+    if n > 5 { hit = hit + 100000000 }
+    if n > 4 { hit = hit + 1000000000 }
+    if hit != 1000110010 { print("hit=" + hit); fail(1) }
+
+    // ---- 2) 0 与负立即数边界 ----
+    var z = 0
+    var h2 = 0
+    if z <= 0 { h2 = h2 + 1 } else { h2 = h2 + 100 }
+    if z < 0 { h2 = h2 + 1000 }
+    if z >= 0 { h2 = h2 + 10000 } else { h2 = h2 + 100000 }
+    if z > -1 { h2 = h2 + 1000000 }
+    if h2 != 1010001 { print("h2=" + h2); fail(2) }
+
+    // ---- 3) 局部变量 vs 局部变量（寄存器形式）----
+    var lo = 3
+    var hi = 7
+    var h3 = 0
+    if lo < hi { h3 = h3 + 1 } else { h3 = h3 + 100 }
+    if hi > lo { h3 = h3 + 10 }
+    if hi <= lo { h3 = h3 + 1000 }
+    if lo >= hi { h3 = h3 + 10000 }
+    if lo <= lo { h3 = h3 + 100000 }
+    if h3 != 100011 { print("h3=" + h3); fail(3) }
+
+    // ---- 4) while 循环条件（融合指令占 8 字节，回跳必须落在它的起始字上）----
+    var i = 0
+    var sum = 0
+    while i < 10 {
+        sum = sum + i
+        i = i + 1
+    }
+    if sum != 45 { print("sum=" + sum); fail(4) }
+
+    // ---- 5) 立即数超出 int8（±128）⇒ 回退原路径，语义不变 ----
+    var big = 300
+    var h5 = 0
+    if big < 301 { h5 = h5 + 1 } else { h5 = h5 + 100 }
+    if big > 299 { h5 = h5 + 10 }
+    if big <= 300 { h5 = h5 + 100 }
+    if h5 != 111 { print("h5=" + h5); fail(5) }
+
+    // ---- 6) 浮点比较：不融合（类型不是 int），但语义必须正确 ----
+    var f = 1.5
+    var h6 = 0
+    if f < 2.0 { h6 = h6 + 1 } else { h6 = h6 + 100 }
+    if f > 1.0 { h6 = h6 + 10 }
+    if h6 != 11 { print("h6=" + h6); fail(6) }
+
+    // ---- 7) 参数位置也要融合：函数参数也是"普通局部变量" ----
+    if cmp_param(3, 7) != 1 { fail(7) }
+    if cmp_param(7, 3) != 0 { fail(7) }
+
+    if bad > 0 {
+        print("test_cmpjmp FAILED: " + bad + " 处")
+        _exit(1)
+    }
+    print("test_cmpjmp ok")
+}
+
+// 参数是 SYM_PARAM，也应命中融合（与 SYM_LOCAL 同等对待）
+func cmp_param(int a, int b):int {
+    if a < b { return 1 }
+    return 0
+}
