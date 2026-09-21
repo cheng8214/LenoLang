@@ -1006,7 +1006,27 @@ static void gen_method_call(CodeGen* gen, Ast* obj_ast, const char* mname,
     int expected = (mdef && mdef->kind == AST_FUNC_DEF && mdef->u.func.pcnt > nargs)
                        ? mdef->u.func.pcnt : nargs;
 
-    int base = reg_alloc_block(gen, expected + 1);
+    // 基址寄存器：dst 恰好是"刚分配的临时寄存器"（或已在临时区之上）时直接用它，
+    //   这样结果天然落在 dst，省掉收尾的 MOV（与全局函数直呼 OP_CALL_GLOBAL_FUNC 同一手法）。
+    int dst_safe = (dst + 1 == gen->next_reg || dst >= gen->next_reg);
+    int base = dst_safe ? dst : reg_alloc_block(gen, expected + 1);
+    int need = base + expected + 1;
+    if (need > gen->next_reg) gen->next_reg = need;
+    if (need > gen->max_reg) gen->max_reg = need;
+
+    // ★ 求值顺序：**先实参（含默认值）后接收者**。
+    //   原先"先接收者、后实参"会让实参的取值指令夹在 OP_GET_METHOD 与 OP_CALL 之间，
+    //   而 OP_GET_METHOD 里那个"下一条是 CALL 就不分配绑定方法、直接调原生"的窥孔
+    //   要求两者**紧邻** —— 隔着一条 LOADK 就不生效，于是每次方法调用都要
+    //   bound_method_new() 分配一个绑定方法。实测 `d.has("key1")`（带实参）
+    //   因此比栈式慢 4 倍（100 万次 89ms vs 22ms），而 `.len()`（无实参）反而更快。
+    //   安全性：接收者只写到 base（不碰 base+1..base+expected），实参区已用
+    //   next_reg 预留（上面的 need），所以先后求值互不影响。
+    for (int i = 0; i < nargs; i++) {
+        gen_expr_to(gen, args->items[i], base + 1 + i);
+    }
+    expected = fill_default_args(gen, mdef, 0, nargs, base, line);
+
     gen_expr_to(gen, obj_ast, base);
 
     int mlen = (int)strlen(mname);
@@ -1021,11 +1041,6 @@ static void gen_method_call(CodeGen* gen, Ast* obj_ast, const char* mname,
         reg_encode_iABC(gen->chunk, OP_GET_METHOD, base, base, name_const, line);
     }
 
-    for (int i = 0; i < nargs; i++) {
-        gen_expr_to(gen, args->items[i], base + 1 + i);
-    }
-    expected = fill_default_args(gen, mdef, 0, nargs, base, line);
-
     // ★ async 方法（`async func wait()`）必须和全局/局部 async 函数一样走
     //   **协程创建**路径（OP_ASYNC_CALL），不能直接 CALL：
     //   直接 CALL 会让方法体在**调用者帧**里同步执行、`vm.current_coroutine` 为 NULL，
@@ -1038,9 +1053,13 @@ static void gen_method_call(CodeGen* gen, Ast* obj_ast, const char* mname,
     } else {
         emit_call(gen, base, expected, 1, line);
     }
-    if (base != dst) emit_mov(gen, dst, base, line);
-    reg_free_block(gen, base);
-}
+    // base == dst 时结果已就位、且**不能释放 dst**（那是调用方的目标寄存器，
+    // 释放掉会被分配器当临时寄存器复用 —— 与前面全局函数直呼同一处陷阱）
+    if (base != dst) {
+        emit_mov(gen, dst, base, line);
+        reg_free_block(gen, base);
+    }
+    }
 
 // 被调函数是不是 async？
 // ----------------------------------------------------------------------------
