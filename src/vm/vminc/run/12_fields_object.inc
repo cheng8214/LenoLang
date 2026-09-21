@@ -100,8 +100,65 @@
         ObjType rt = get_receiver_type(receiver);
 
         if (ic_type_supported(rt)) {
-            ObjNative* method = find_method_by_type(rt, name->chars);
+            // ★ 内联缓存：此前 vm.ic_cache 是**死字段** —— leno_vm.h 里定义了、
+            //   vm_init.inc 里初始化了、vm_ic.inc 里连 ic_cache_index() 都写好了，
+            //   但**全仓库没有一处读写它**。于是每次 `arr.len()` / `str.len()` /
+            //   `d.has(x)` 都要 find_method_by_type() 查一次方法表（哈希 + strcmp）。
+            //   键 =（调用点、receiver 类型、方法名哈希），值 = ObjNative*。
+            //   与栈式 op_property.inc 同口径（那边主线程分支也是按调用点缓存 method）。
+            //   安全性：方法表里的 ObjNative 由各自 *_mark_methods() 作为 GC 根标记，
+            //   且本 GC 非移动式 ⇒ 裸指针稳定。
+            InlineCacheEntry* ic = &vm.ic_cache[ic_cache_index(ip_before)];
+            uint32_t mhash = name->hash;
+            ObjNative* method;
+            if (likely(ic->valid && ic->receiver_type == (int)rt && ic->name_hash == mhash)) {
+                vm.ic_hits++;
+                method = ic->method;
+            } else {
+                vm.ic_misses++;
+                method = find_method_by_type(rt, name->chars);
+                if (method) {
+                    ic->valid = 1;
+                    ic->receiver_type = (int)rt;
+                    ic->name_hash = mhash;
+                    ic->method = method;
+                }
+            }
             if (method) {
+                // ★ 窥孔优化：若**下一条就是 OP_CALL、且调用的正是本寄存器**，
+                //   就不必构造 ObjBoundMethod（每次调用一次 GC 分配），
+                //   直接把 receiver 当第 0 个实参调原生函数，并就地吃掉那条 OP_CALL。
+                //   与栈式 op_property.inc 的窥孔同口径（那边同样检测 OP_CALL 后直接
+                //   `method->function(arg_count + 1, ...)`，不经过 bound method）。
+                //   实测 examples/性能测试/内联缓存 (Inline Caching) 性能对比测试.leno：
+                //   只接 ic_cache 时 671ms（栈式 92ms，7.3x），窥孔后见提交信息。
+                //   边界：只在无 EXTEND 前缀（a <= 255）、单返回值（C == 2，即
+                //   nresults == 1）时才走这条快路；其余形态原样退回分配 bound method。
+                if (likely(a <= 255 && *frame->ip == (uint8_t)OP_CALL &&
+                           frame->ip[1] == (uint8_t)a && frame->ip[3] == 2)) {
+                    int nargs = (int)frame->ip[2] - 1;
+                    frame->ip += 4;              // 吃掉 OP_CALL
+                    int base = vm.sp;
+                    vm_stack_push(&vm, receiver);
+                    for (int i = 0; i < nargs; i++) vm_stack_push(&vm, R(a + 1 + i));
+                    Value result = method->function(nargs + 1, vm.stack + base);
+                    vm.sp = base;
+                    if (unlikely(vm.has_exception)) {
+                        char* msg = NULL;
+                        if (val_is_obj(vm.exception) && val_as_obj(vm.exception)->type == OBJ_STRING) {
+                            msg = strdup(((ObjString*)val_as_obj(vm.exception))->chars);
+                        } else {
+                            msg = value_to_string(vm.exception);
+                        }
+                        error_clear();
+                        if (!throw_runtime_error(msg, line)) { free(msg); return -1; }
+                        free(msg);
+                        frame = &vm.frames[vm.frame_cnt - 1];
+                        DISPATCH();
+                    }
+                    R(a) = result;
+                    DISPATCH();
+                }
                 ObjBoundMethod* bound = bound_method_new(receiver, method);
                 if (unlikely(!bound)) { runtime_error("内存分配失败", line); return -1; }
                 R(a) = val_obj((Object*)bound);
