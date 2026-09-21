@@ -713,11 +713,29 @@ void gen_binop(CodeGen* gen, Ast* ast, int dst) {
         }
     }
 
-    int rl = dst;
-    if (ast_may_read_slot(rhs, dst)) {
+    // ★ 左操作数是**普通局部变量/参数**时不必把它搬进 dst：运算指令本来就能
+    //   "读 R[B]、写 R[A]"（下面所有 *_INT / *_INT_IMM / 立即数比较都是这个形状）。
+    //   原先一律 `gen_expr_to(lhs, dst)` 生成一条多余的 OP_MOV ——
+    //   实测 fib 每次递归有 3 次这种搬运（比较 `n <= 1`、两个实参表达式 `n-2`/`n-1`）。
+    //   安全性：变量无副作用，且它的寄存器在 next_reg 之下（分配器不会当临时寄存器复用）；
+    //   SYM_UPVALUE / SYM_GLOBAL / SYM_MODULE 仍走原路（它们需要真正的取值指令）。
+    int rl_direct = -1;
+    if (lhs && lhs->kind == AST_VAR) {
+        SymRef* lref = &lhs->u.var.ref;
+        if ((lref->kind == SYM_LOCAL || lref->kind == SYM_PARAM) && lref->index >= 0) {
+            rl_direct = lref->index;
+        }
+    }
+    int rl;
+    int rl_is_temp = 0;   // 只有"别名安全路径"借来的寄存器才归本函数释放
+    if (rl_direct >= 0) {
+        rl = rl_direct;               // 变量自己的寄存器：**绝不能** free
+    } else if (ast_may_read_slot(rhs, dst)) {
         rl = gen_expr(gen, lhs);
+        rl_is_temp = 1;
     } else {
         gen_expr_to(gen, lhs, dst);
+        rl = dst;
     }
     // ⚠ 本函数收尾是**无条件** `reg_free(gen, r)`：立即数路径虽然不求右值、不发指令，
     //   也必须补一个占位临时寄存器，否则会去 free 寄存器 0 ⇒ 整个分配器错乱
@@ -798,7 +816,12 @@ void gen_binop(CodeGen* gen, Ast* ast, int dst) {
             break;
     }
     reg_free(gen, r);
-    if (rl != dst) reg_free(gen, rl);   // 别名安全路径借的临时寄存器
+    // ⚠ 只释放**借来的**临时寄存器。原先写的是 `if (rl != dst) reg_free(gen, rl)` ——
+    //   那在"左值是变量、rl 就是变量自己寄存器"的新路径上会把**活着的变量槽**释放掉，
+    //   之后分配器把这个槽当临时寄存器复用 ⇒ 变量被就地覆盖。
+    //   实测后果：`args[idx]` 里 args 被搬进 idx 所在的 R0 ⇒ 索引变成数组
+    //   （「数组索引必须是数字」），连 assert/run_tests.leno 这个 runner 都跑不起来。
+    if (rl_is_temp && rl != dst) reg_free(gen, rl);
 }
 
 // ============================================================================
