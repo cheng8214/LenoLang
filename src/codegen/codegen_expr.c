@@ -384,12 +384,29 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
         // --- 索引访问 ---
         case AST_INDEX:
         {
-            int obj_reg = gen_expr(gen, ast->u.index.obj);
-            int idx_reg = gen_expr(gen, ast->u.index.index);
+            // ★ 对象/下标是**普通局部变量/参数**时不必搬进临时寄存器（与字段访问、右值直取同一手法：
+            //   实测光线追踪 Phase A 的 `spheres[si]` 每轮白搬一次下标）。安全性：OP_INDEX 是
+            //   "先读 R[B]、R[C]，再写 R[A]"，即使 dst 恰好是对象或下标自己（`x = a[x]`）也安全。
+            Ast* iobj = ast->u.index.obj;
+            Ast* iidx = ast->u.index.index;
+            int obj_reg, idx_reg;
+            int obj_is_temp = 1, idx_is_temp = 1;
+            if (iobj && iobj->kind == AST_VAR) {
+                SymRef* r0 = &iobj->u.var.ref;
+                if ((r0->kind == SYM_LOCAL || r0->kind == SYM_PARAM) && r0->index >= 0) {
+                    obj_reg = r0->index; obj_is_temp = 0;
+                } else { obj_reg = gen_expr(gen, iobj); }
+            } else { obj_reg = gen_expr(gen, iobj); }
+            if (iidx && iidx->kind == AST_VAR) {
+                SymRef* r1 = &iidx->u.var.ref;
+                if ((r1->kind == SYM_LOCAL || r1->kind == SYM_PARAM) && r1->index >= 0) {
+                    idx_reg = r1->index; idx_is_temp = 0;
+                } else { idx_reg = gen_expr(gen, iidx); }
+            } else { idx_reg = gen_expr(gen, iidx); }
             // INDEX: R[A] = R[B][R[C]]
             reg_encode_iABC(gen->chunk, OP_INDEX, dst, obj_reg, idx_reg, ast->line);
-            reg_free(gen, idx_reg);
-            reg_free(gen, obj_reg);
+            if (idx_is_temp) reg_free(gen, idx_reg);
+            if (obj_is_temp) reg_free(gen, obj_reg);
             break;
         }
 
@@ -401,7 +418,24 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
         // 「字段访问需要结构体对象」而整类收窄/守卫测试失败。
         case AST_FIELD_ACCESS:
         {
-            int obj_reg = gen_expr(gen, ast->u.field_access.obj);
+            // ★ 对象是**普通局部变量/参数**时不必搬进临时寄存器：原先每个字段访问都先来一条
+            //   `OP_MOV`（实测光线追踪 Phase A 的 `s.cx + s.cy + s.cz + s.r` 每轮白搬 4 次，
+            //   是我们比栈式慢 1.31x 的主因之一）。与 gen_binop 的 rl_direct / 右值直取同一手法：
+            //   对象表达式只读、无副作用，且该寄存器在 next_reg 之下（分配器不会当临时寄存器复用）。
+            Ast* obj_ast = ast->u.field_access.obj;
+            int obj_reg;
+            int obj_is_temp = 1;
+            if (obj_ast && obj_ast->kind == AST_VAR) {
+                SymRef* oref = &obj_ast->u.var.ref;
+                if ((oref->kind == SYM_LOCAL || oref->kind == SYM_PARAM) && oref->index >= 0) {
+                    obj_reg = oref->index;
+                    obj_is_temp = 0;
+                } else {
+                    obj_reg = gen_expr(gen, obj_ast);
+                }
+            } else {
+                obj_reg = gen_expr(gen, obj_ast);
+            }
             TypeInfo* ot = infer_expr_type(gen->sem, ast->u.field_access.obj);
             int field_idx = ast->u.field_access.field_index;
             int use_field_op = (ot && (ot->kind == TYPE_STRUCT || ot->kind == TYPE_CSTRUCT)
@@ -419,7 +453,7 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
                 reg_encode_iABC(gen->chunk, OP_INDEX, dst, obj_reg, ireg, ast->line);
                 reg_free(gen, ireg);
             }
-            reg_free(gen, obj_reg);
+            if (obj_is_temp) reg_free(gen, obj_reg);
             break;
         }
 
