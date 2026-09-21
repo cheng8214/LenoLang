@@ -389,22 +389,33 @@ static void gen_for(CodeGen* gen, Ast* ast) {
 
     // --- 判断是"容器迭代"还是"数值区间" ---
     // 无 start、有循环变量，且被遍历对象不是数字时按容器迭代处理。
-    // ★ 以**类型推断**为主：`for s.scores to x`（字典字段）这类非变量表达式，
-    //   旧的"只看字面量/变量符号"判断会误判成数值区间 ⇒ 循环体一次都不进 ✗
+    // ① 以**类型推断**为主（比栈式更准）：`var x = 10; for x to i` 推断出 INT ⇒ 数值区间，
+    //    栈式只看符号 type_kind（TYPE_INFER）会误判成迭代；
+    // ② 推断拿不准时按**变量类表达式 → 保守迭代**（与栈式 gen_for 的 is_var_expr 分支同口径，
+    //    见 D:\CLeno\Leno 的 codegen_utils.c 注释：属性/字段访问 `d.statements` 也算）。
+    //    ⚠ 判错的代价不对称：把**容器**当数值上界 ⇒ FOR_PREP 的 value_to_double(容器)=0
+    //    ⇒ 循环体一次都不进（**静默**错值，minilang 例子整段不执行就是这么来的）；
+    //    反过来数字被当容器，OP_LEN(数字)=0 同样直观。总之不能靠"猜"。
     int is_iter = 0;
     if (!ast->u.for_.start && ast->u.for_.var_name) {
         TypeInfo* et = infer_expr_type(gen->sem, end_expr);
         TypeKind ek = et ? et->kind : TYPE_UNKNOWN;
         if (et) type_free(et);
         if (ek == TYPE_STRING || ek == TYPE_ARRAY || ek == TYPE_DICT || ek == TYPE_STRUCT) {
-            is_iter = 1;
+            is_iter = 1;                       // 明确是容器 ⇒ 迭代
         } else if (ek == TYPE_INT || ek == TYPE_FLOAT) {
-            is_iter = 0;
+            is_iter = 0;                       // 明确是数字 ⇒ 数值区间
         } else if (is_string_expr(end_expr) || is_array_expr(end_expr) || is_dict_expr(end_expr)) {
-            is_iter = 1;
-        } else if (is_var_expr(end_expr) && end_expr->kind == AST_VAR) {
-            TypeKind vt = end_expr->u.var.ref.type_kind;
-            is_iter = !(vt == TYPE_INT || vt == TYPE_FLOAT);
+            is_iter = 1;                       // 字面量容器 ⇒ 迭代
+        } else if (is_var_expr(end_expr)) {
+            // 变量 / 属性访问 / 索引 / 模块成员：只有**能证明是数字**（符号 type_kind 明确为
+            // INT/FLOAT）才走数值区间，否则保守按迭代（栈式同此）。
+            if (end_expr->kind == AST_VAR) {
+                TypeKind vt = end_expr->u.var.ref.type_kind;
+                is_iter = !(vt == TYPE_INT || vt == TYPE_FLOAT);
+            } else {
+                is_iter = 1;
+            }
         }
         // 其余（数字字面量 / 调用 / 未知表达式）按数值区间循环处理：
         // `for 10 to i` 是 0..9，不能当容器遍历。

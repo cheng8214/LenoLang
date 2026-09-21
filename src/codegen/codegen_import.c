@@ -44,9 +44,16 @@ int is_dict_expr(Ast* ast) {
     return ast->kind == AST_DICT;
 }
 
+// "变量类"表达式：变量 / 属性访问（`d.statements`）/ 索引（`a[i]`）/ 模块成员（`m.X`）。
+// ⚠ 必须与栈式同口径（参考目录 D:\CLeno\Leno 的 codegen_utils.c，注释里就点了 d.statements）。
+//   移植到寄存器式时这里曾被窄化成"只认 AST_VAR"，于是 `for ast.statements to st`
+//   落进 gen_for 的**数值区间**分支：end 槽里放的是**数组**，FOR_PREP 拿
+//   value_to_double(数组)=0 当上界 ⇒ 循环体一次都不进（examples/minilang 的
+//   TinyLang 解释器整段静默不执行，寄存器版输出为空、栈式版正常）。
 int is_var_expr(Ast* ast) {
     if (!ast) return 0;
-    return ast->kind == AST_VAR;
+    return ast->kind == AST_VAR || ast->kind == AST_INDEX ||
+           ast->kind == AST_MODULE_ACCESS || ast->kind == AST_FIELD_ACCESS;
 }
 
 int is_number_expr(Ast* ast) {
