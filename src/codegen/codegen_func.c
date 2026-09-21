@@ -136,6 +136,13 @@ ObjFunction* gen_func_proto(CodeGen* gen, Ast* ast) {
 void gen_func_closure(CodeGen* gen, Ast* ast, ObjFunction* func) {
     // 生成函数体字节码到 func->chunk
     Chunk* saved_chunk = gen->chunk;
+    // ★ 函数 chunk 继承**所属文件**名（照栈式 gen_func 的实现）：
+    //   运行期异常 dict 的 `file`、调用栈里的 `func (file:line)` 都取
+    //   `frame->chunk->filename` —— 不继承的话每个函数 chunk 的 filename 都是 NULL，
+    //   报错与栈追溯只剩一个光秃秃的 `main (:16)`（examples/try catch/* 一整批差异）。
+    if (saved_chunk && saved_chunk->filename && !func->chunk->filename) {
+        func->chunk->filename = strdup(saved_chunk->filename);
+    }
     gen->chunk = func->chunk;  // func->chunk 已是 Chunk*（malloc 出的实例）
 
     // 保存当前函数
