@@ -200,7 +200,20 @@ void gen_block(CodeGen* gen, Ast* ast) {
     int dtor_at_entry = gen->dtor_count;
     int n = ast->u.block.count;
     for (int i = 0; i < n; i++) {
+        // ★ 语句边界回收临时寄存器高水位（reg_scope_enter/exit 从未被调用过：
+        //   next_reg 只升不降 ⇒ 函数越长顶得越高。SDL 的 Window.run / process 被顶到
+        //   655 / 563，而指令里的寄存器号只有 8 位（MAX_REG=256）⇒ `OP_MOV A=70 B=320`
+        //   里的 B 被 &0xFF 截断成 64，把 R64 的值当成了 `i`（恰好是 null ⇒
+        //   `_runEvts[i]` 报「数组索引必须是数字」）。
+        //   语句内的临时寄存器在本语句结束时全部失效（跨语句存活的值都在**变量槽位**里），
+        //   所以退回 _nr_before 是安全的；被丢弃的空闲项由 reg_alloc 自行跳过。
+        int _nr_before = gen->next_reg;
+        int _ft_before = gen->freetop;
         gen_stmt(gen, ast->u.block.items[i]);
+        if (gen->next_reg > _nr_before) {
+            gen->next_reg = _nr_before;
+            if (gen->freetop > _ft_before) gen->freetop = _ft_before;
+        }
     }
     // 块结束：逆序析构本层声明的带析构函数 struct 局部变量（栈式同一语义）
     emit_dtors_from(gen, dtor_at_entry, ast->line, -1);
@@ -1060,12 +1073,18 @@ void gen_compound_assign(CodeGen* gen, Ast* ast) {
     if (is_local) {
         dst = ref->index;
     } else {
-        // 全局 / upvalue：先读到临时寄存器，算完再写回
+        // 全局 / upvalue / **模块变量**：先读到临时寄存器，算完再写回
+        //   ⚠ SYM_MODULE 漏了会退化成"读成 null"（下面那个 else 分支发 LOADNIL）
+        //   ⇒ 模块级 `var _windowCount = 0` 的 `_windowCount -= 1` 变成 `null - 1`
+        //   （实测：SDL 的 Window.run 收尾报「减法: null 不能参与运算」）；
+        //   而且即便不报错也从不回写。gen_assign 有 SYM_MODULE 分支，这里必须对齐。
         dst = reg_alloc(gen);
         if (ref->kind == SYM_GLOBAL) {
             emit_getglobal_to(gen, dst, ref->index, ast->line);
         } else if (ref->kind == SYM_UPVALUE) {
             emit_getupval_to(gen, dst, ref->index, ast->line);
+        } else if (ref->kind == SYM_MODULE) {
+            reg_encode_iABx(gen->chunk, OP_GET_MODULE_VAR, dst, ref->index, ast->line);
         } else {
             emit_loadnil_to(gen, dst, ast->line);
         }
@@ -1081,6 +1100,8 @@ void gen_compound_assign(CodeGen* gen, Ast* ast) {
             emit_setglobal(gen, dst, ref->index, ast->line);
         } else if (ref->kind == SYM_UPVALUE) {
             emit_setupval(gen, dst, ref->index, ast->line);
+        } else if (ref->kind == SYM_MODULE) {
+            reg_encode_iABx(gen->chunk, OP_SET_MODULE_VAR, dst, ref->index, ast->line);
         }
         reg_free(gen, dst);
     }

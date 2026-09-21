@@ -54,11 +54,32 @@ int gen_expr(CodeGen* gen, Ast* ast) {
     return r;
 }
 
+// 大数组字面量的兜底生成：R[dst] = 空数组，再逐个 APPEND 元素。
+// ----------------------------------------------------------------------------
+// 什么时候需要它：连号块（R[base+1 .. base+n] + NEWARRAY count）有两个硬上限 ——
+//   ① count 只在 iABC 的 C 字段（8 位）：n ≥ 256 被截断成 n & 0xFF。
+//      实测 `Array[int] SBOX = [256 项]` 得到一个 **空数组**，AES 用例里
+//      `SBOX[t0]` 直接报「数组索引越界: 索引 207, 长度 0」；
+//   ② 寄存器号是 8 位（MAX_REG = 256）：base + n 越过 255 时，后面的元素会被
+//      截断写到**别的槽位**（静默踩变量，比报错更难查）。
+// 增量路径只需 1 个临时寄存器、指令数与元素数同阶，任意长度都成立；
+// 由于数组始终在 R[dst]（GC 可见的寄存器）里，也不必担心 GC 半成品。
+static void gen_array_literal_append(CodeGen* gen, Ast* ast, int n, int dst) {
+    reg_encode_iABC(gen->chunk, OP_NEWARRAY, dst, 0, 0, ast->line);
+    for (int i = 0; i < n; i++) {
+        int r = gen_expr(gen, ast->u.array.items[i]);
+        // ARRAY_APPEND: 把 R[A] 追加到 R[B]；R[A] 会被写成长度（用完即弃，随即释放）
+        reg_encode_iABC(gen->chunk, OP_ARRAY_APPEND, r, dst, 0, ast->line);
+        reg_free(gen, r);
+    }
+}
+
 void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
     if (!ast) {
         emit_loadnil_to(gen, dst, 0);
         return;
     }
+
 
     switch (ast->kind) {
         // --- 字面量 ---
@@ -246,11 +267,21 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
         //   而 base **绝不能直接取 dst** —— dst 常常是**变量槽**（`loopArr = [s]`），
         //   那样元素就会写进**相邻变量**的槽里 ✗（实测 `int acc` 紧邻 `loopArr` 时
         //   被 `loopArr = [s]` 踩成那个 struct）。一律在**临时块**里拼，再 MOV 回 dst。
+        //
+        // ★★ 连号块有两个硬上限，越界必须换路子（见 gen_array_literal_append）：
+        //   ① NEWARRAY 的 count 编在 iABC 的 C 字段（**8 位**）⇒ n ≥ 256 时被截断，
+        //      实测 256 元素的 `Array[int] SBOX = [..256 项..]` 直接变成**空数组**
+        //      （test_gc_safepoint 的 AES 表全废 ⇒ `SBOX[t0]` 报"索引越界: 索引 207, 长度 0"）；
+        //   ② 元素寄存器号是 8 位（MAX_REG=256）⇒ base+n ≥ 256 时后面的元素写到了别的槽位。
         case AST_ARRAY:
         {
             int n = ast->u.array.count;
             if (n == 0) {
                 reg_encode_iABC(gen->chunk, OP_NEWARRAY, dst, 0, 0, ast->line);
+                break;
+            }
+            if (n > 255 || gen->next_reg + n + 1 > MAX_REG) {
+                gen_array_literal_append(gen, ast, n, dst);
                 break;
             }
             int base = reg_alloc_block(gen, n + 1);
@@ -272,6 +303,19 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
             int n = ast->u.dict.count;
             if (n == 0) {
                 reg_encode_iABC(gen->chunk, OP_NEWDICT, dst, 0, 0, ast->line);
+                break;
+            }
+            // 同数组：count 只有 8 位、连号块越不过 256 号寄存器 ⇒ 超限走逐条 DICT_SET
+            if (n > 255 || gen->next_reg + n * 2 + 1 > MAX_REG) {
+                reg_encode_iABC(gen->chunk, OP_NEWDICT, dst, 0, 0, ast->line);
+                for (int i = 0; i < n; i++) {
+                    int kreg = gen_expr(gen, ast->u.dict.entries[i].key);
+                    int vreg = gen_expr(gen, ast->u.dict.entries[i].value);
+                    // DICT_SET: R[B][R[C]] = R[A]
+                    reg_encode_iABC(gen->chunk, OP_DICT_SET, vreg, dst, kreg, ast->line);
+                    reg_free(gen, vreg);
+                    reg_free(gen, kreg);
+                }
                 break;
             }
             int base = reg_alloc_block(gen, n * 2 + 1);
@@ -1298,6 +1342,43 @@ void gen_struct_init(CodeGen* gen, Ast* ast, int dst) {
         }
         chunk_write(gen->chunk, (uint8_t)((fc >> 8) & 0xFF), ast->line);
         chunk_write(gen->chunk, (uint8_t)(fc & 0xFF), ast->line);
+    }
+
+    // ---- 模块限定解析操作数（S2/2b-2，追加在字段名数据之后）：mod_space8 + mod_slot16 ----
+    // 运行期据它取出**导入模块对象**（不是名字！），再精确取回该模块声明的那份定义。
+    // 为什么不能发名字：别名与运行期 ObjModule.name 并不总相等 —— 模块按路径去重，
+    //   "首次加载用什么名字就一直是那个名字"（实测：p.leno 先被 `as first` 加载，
+    //   入口 `new p2.Point()` 就永远比不中 owner->name）⇒ 只能回退裸名、拿到先注册的那份。
+    //   空间：0 = 无；1 = vm.globals[]（入口程序的 import 别名是 SYM_GLOBAL）；
+    //        2 = frame->module->globals[]（模块文件里是 SYM_MODULE）。
+    // 符号来源与 codegen_import.c"把模块对象存进别名槽位"用的是同一个 ⇒ 槽位必然对得上。
+    {
+        uint8_t mod_space = 0;
+        int mod_slot = 0;
+        const char* sn = ast->u.struct_init.struct_name;
+        const char* sn_dot = sn ? strchr(sn, '.') : NULL;
+        if (sn_dot && sn_dot != sn) {
+            size_t alias_len = (size_t)(sn_dot - sn);
+            char alias[BUFFER_MEDIUM];
+            if (alias_len < sizeof(alias)) {
+                memcpy(alias, sn, alias_len);
+                alias[alias_len] = '\0';
+                Symbol* alias_sym = scope_resolve(gen->sem->root_scope, alias);
+                if (!alias_sym) alias_sym = scope_resolve(gen->sem->current, alias);
+                if (alias_sym) {
+                    if (alias_sym->kind == SYM_GLOBAL) {
+                        mod_space = 1;
+                        mod_slot = alias_sym->index;
+                    } else if (alias_sym->kind == SYM_MODULE) {
+                        mod_space = 2;
+                        mod_slot = alias_sym->index;
+                    }
+                }
+            }
+        }
+        chunk_write(gen->chunk, mod_space, ast->line);
+        chunk_write(gen->chunk, (uint8_t)((mod_slot >> 8) & 0xFF), ast->line);
+        chunk_write(gen->chunk, (uint8_t)(mod_slot & 0xFF), ast->line);
     }
 
     if (base != dst) emit_mov(gen, dst, base, ast->line);

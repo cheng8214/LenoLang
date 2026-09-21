@@ -236,8 +236,18 @@ typedef enum {
 typedef struct Chunk Chunk;
 void chunk_write(Chunk* chunk, uint8_t byte, int line);
 
+// 诊断：寄存器号超过 8 位上限（编码会静默截断 ⇒ 读到别的槽位）。
+// 定义在 debug.c。见 reg_encode_iABC 里的说明。
+void codegen_reg_overflow_warn(OpCode op, int a, int b, int c, int line);
+
 // 编码：把 4 字节写入 chunk（大端）
+//   ⚠ A/B/C 都是 8 位：任何寄存器号 ≥ 256 都会被 &0xFF 静默截断成别的槽位号
+//   ——"读出来是 null / 写坏了别人"这类怪现象的真凶。这里加一道编译期告警，
+//   免得再靠猜（函数寄存器高水位 = func->local_count，超过 256 就已经不可寻址）。
 static inline void reg_encode_iABC(Chunk* chunk, OpCode op, int a, int b, int c, int line) {
+    if (a > 255 || b > 255 || c > 255) {
+        codegen_reg_overflow_warn(op, a, b, c, line);
+    }
     chunk_write(chunk, (uint8_t)op, line);
     chunk_write(chunk, (uint8_t)(a & 0xFF), line);
     chunk_write(chunk, (uint8_t)(b & 0xFF), line);
@@ -245,6 +255,9 @@ static inline void reg_encode_iABC(Chunk* chunk, OpCode op, int a, int b, int c,
 }
 
 static inline void reg_encode_iABx(Chunk* chunk, OpCode op, int a, int bx, int line) {
+    if (a > 255) {
+        codegen_reg_overflow_warn(op, a, bx, -1, line);
+    }
     chunk_write(chunk, (uint8_t)op, line);
     chunk_write(chunk, (uint8_t)(a & 0xFF), line);
     chunk_write(chunk, (uint8_t)((bx >> 8) & 0xFF), line);

@@ -3072,6 +3072,7 @@
     // OP_STRUCT_INIT A B C: R[A] = new Struct(...)（B = 实参个数）
     //   数据区：name_idx(2) generic_count(1) [generic_name_idx(2)]×n
     //           [field_name_idx(2)]×arg_count
+    //           mod_space(1) + mod_slot(2)                     ← S2/2b-2，见下方"窥探"
     //   构造实参在 R[A+1 .. A+B]
     LABEL(OP_STRUCT_INIT): {
         int a = READ_A();
@@ -3223,13 +3224,55 @@
             }
         }
 
-        // 三级查找：模块内精查 → 带前缀 → 裸名（与栈式一致）
+        // ---- 模块限定操作数（S2/2b-2：mod_space8 + mod_slot16）----
+        // 位置在**字段名数据之后**（p 现在正指着字段名数据 ⇒ 偏移 2*arg_count），此处只
+        // "窥探"不消费：真正的越过得等字段循环跑完（下面的 `p += 3`）。
+        //   含义：0 = 无（模块内裸名 / 旧字节码）；1 = vm.globals[slot]（入口程序里
+        //   `import ... as a` 的别名是 SYM_GLOBAL）；2 = frame->module->globals[slot]
+        //   （模块文件里是 SYM_MODULE）。槽位里的对象是 import 存进去的**模块对象**。
+        // 为什么必须按身份而不是按名字：别名与运行期 ObjModule.name 并不总相等
+        //   （模块按路径去重、**首次加载定名**）—— 实测 test_cross_module_type_conflict
+        //   的 D 段：p.leno 先被 `as first` 加载过，入口 `new p2.Point()` 按前缀比名字
+        //   必然落空 ⇒ 回退裸名 ⇒ 拿到先注册的 r.Point（A=3，期望 A=1）。
+        // 旧字节码没有这 3 字节时读到的是后续指令的字节 ⇒ 靠 OBJ_MODULE 类型检查兜底
+        //   （取不到就退化为原有的名字查找，不会错值）。
+        ObjModule* mod_owner = NULL;
+        {
+            const uint8_t* mod_ops = p + (size_t)arg_count * 2;
+            uint8_t mod_space = mod_ops[0];
+            uint16_t mod_slot = (uint16_t)(((uint16_t)mod_ops[1] << 8) | mod_ops[2]);
+            if (mod_space == 1) {
+                if (mod_slot < vm.global_count) {
+                    Value mv = vm.globals[mod_slot];
+                    if (val_is_obj(mv) && val_as_obj(mv)->type == OBJ_MODULE) {
+                        mod_owner = (ObjModule*)val_as_obj(mv);
+                    }
+                }
+            } else if (mod_space == 2) {
+                ObjModule* self_mod = (ObjModule*)frame->module;
+                if (self_mod && mod_slot < self_mod->global_count) {
+                    Value mv = self_mod->globals[mod_slot];
+                    if (val_is_obj(mv) && val_as_obj(mv)->type == OBJ_MODULE) {
+                        mod_owner = (ObjModule*)val_as_obj(mv);
+                    }
+                }
+            }
+        }
+
+        // 四级查找（**不比旧行为更差**：逐级放宽，最后一级就是原来的裸名查找）：
+        //   ① 字节码带的导入模块槽位 → 该模块声明的那份（最精确，与名字无关）
+        //   ② 当前模块自己声明的那份（模块内 `new Point()`；不带前缀时靠它）
+        //   ③ 名字带前缀且某定义 owner->name == 前缀 → 那份
+        //   ④ 裸名（旧字节码 / 原生桥接 / 反射的既有行为，在 ③ 内部回退）
         const char* bare = sname->chars;
         const char* dotp = strchr(bare, '.');
         if (dotp) bare = dotp + 1;
-        ObjModule* owner = module_frame_current_module();
         ObjStructDef* def = NULL;
-        if (owner) def = struct_def_find_in_module(owner, bare);
+        if (mod_owner) def = struct_def_find_in_module(mod_owner, bare);
+        if (!def) {
+            ObjModule* owner = module_frame_current_module();
+            if (owner) def = struct_def_find_in_module(owner, bare);
+        }
         if (!def) def = struct_def_find_qualified(sname->chars);
         if (unlikely(!def)) {
             char msg[256];
@@ -3283,6 +3326,7 @@
             }
             struct_set_field(obj, fidx, v);
         }
+        p += 3;   // 跳过模块限定操作数（mod_space8 + mod_slot16，见上面的"窥探"）
         frame->ip = p;
 
         // 结果先落到寄存器（GC 根），构造器可能在其内部触发分配

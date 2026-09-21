@@ -81,6 +81,20 @@ const char* opcode_name(int op) {
     return opCodeNames[op];
 }
 
+// ============================================================================
+// 编译期诊断：寄存器号越过 8 位上限
+// ----------------------------------------------------------------------------
+// 指令里的 A/B/C 各 8 位 ⇒ 寄存器号 ≥ 256 会被 &0xFF **静默截断**，运行期表现为
+// "读到 null / 写坏别人的槽位"，很难从现象反推（实测：SDL 的 Window.run 寄存器
+// 高水位 655，循环变量 i 的读取被截断到另一个槽位、该槽位恰好是 null ⇒
+// `_runEvts[i]` 报「数组索引必须是数字」）。这里在编码处告警，直接给出
+// opcode / 操作数 / 行号。
+// ============================================================================
+void codegen_reg_overflow_warn(OpCode op, int a, int b, int c, int line) {
+    fprintf(stderr, "[寄存器号溢出] %s A=%d B=%d C=%d line=%d（>255 会被截断成另一个槽位）\n",
+            opcode_name((int)op), a, b, c, line);
+}
+
 // 反汇编单条指令
 // 寄存器式定长 4 字节：op8 A8 B8 C8（或 Bx/sBx/sJ 占 B/C 两字节）
 int disassembleInstruction(Chunk* chunk, int offset) {

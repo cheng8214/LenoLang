@@ -79,6 +79,12 @@
 //   并写明"为什么升 / 为什么不升"；改前先 git fetch（2026-09-16 撞过车：两个会话都用 v23
 //   但格式不同，数值相同、格式不同 ⇒ 靠版本号区分不开）。
 #define LENO_BIN_MAGIC      0x424E454C  // "LENB" little-endian
+// v3.0.1（2026-09-21）：S2/2b-2 的 `module_slot16` 操作数**重新落地到寄存器式**——
+//   移植时丢了 codegen 侧的发射与 VM 侧的窺探/跳过，于是 `OP_STRUCT_INIT` 的操作数布局
+//   与"带 3 字节"的口径不一致（旧寄存器构建产物少 3 字节，新 VM 的 `p += 3` 会多跳
+//   3 字节 ⇒ 后续指令全部错位）。布局变了就必须整体失效重编译：bump 本版本号 +
+//   LENO_MODCACHE_VERSION（.lenomc 里也含模块字节码）；.lenosymc 只存符号表、不含字节码
+//   ⇒ 不动；.lenb.deps 靠 exe 指纹 fail-closed ⇒ 不动。
 // v2.7.3（2026-09-16）：S2/2b-2 —— OP_STRUCT_INIT 追加 3 字节操作数（mod_space 1B + mod_slot 2B：
 //   导入模块在 globals 里的槽位）。**操作数布局变了**：旧构建按 5+2N+arg 推进、新字节码多 3 字节
 //   （反之新构建读旧字节码会多读 3 字节）⇒ 两侧都错位，必须整体失效重编译（.lenb / entry_*.lenb）。
@@ -87,7 +93,9 @@
 //   ⇒ .lenb / entry_*.lenb 必须整体失效重编译。
 // v2.7.1（2026-09-16）：枚举成员求值语义修正 —— 扫描器补 `not`、除零/取模零改为与解析器同结论
 //   ⇒ 修正前编译出的 .lenb / entry_*.lenb 里可能烙着错的常量值，必须整体失效重编译。
-#define LENO_BIN_VERSION    0x00030000  // v3.0.0 - 寄存器式字节码：定长 4 字节指令，
+#define LENO_BIN_VERSION    0x00030001  // v3.0.1 - OP_STRUCT_INIT 恢复 3 字节
+                                        //   module_slot16 操作数（见上面 v3.0.1 条目）
+                                        // v3.0.0 - 寄存器式字节码：定长 4 字节指令，
                                         //   OpCode 枚举完全重写，旧 .lenb 全部失效
                                         //   读回来即悬空；owned 的还会被下个进程 free ⇒ 堆破坏）；
                                         //   空 chunk 的表示由 5×u32(20B) 改为 4×u32+u8(17B)，与
@@ -106,7 +114,10 @@
 // 模块编译缓存格式（.lenomc）—— 跨运行的模块编译产物缓存
 // ⚠ 版本号登记表：docs/待办_单一事实来源与重复实现收敛.md 第七节（与 .lenb 同源改动要一起评估）
 #define LENO_MODCACHE_MAGIC    0x434D4E4C  // "LNMC" little-endian
-#define LENO_MODCACHE_VERSION  0x0000000B  // v11 - 寄存器式字节码，与 LENO_BIN_VERSION v3.0.0 同步
+#define LENO_MODCACHE_VERSION  0x0000000C  // v12 - 同 LENO_BIN_VERSION v3.0.1（OP_STRUCT_INIT
+                                           //       多 3 字节 module_slot16 操作数，模块字节码里
+                                           //       同样存在，旧构建按旧长度推进会错位）
+                                           // v11 - 寄存器式字节码，与 LENO_BIN_VERSION v3.0.0 同步
                                            //       指纹）。模块字节码里烙着 native 方法签名 /
                                            //       模块常量 / 实例方法表 / 求值语义等**没有源文件**
                                            //       的编译期输入，只看 src_hash+dep_hash 会漏整类
