@@ -690,24 +690,70 @@
     }
 
     // --- int 特化 ---
+    // ★ 三条必须一致（此前都错）：
+    //   ① bigint 值的**静态类型也是 int** ⇒ 任一侧是 bigint 时必须走 bigint 运算
+    //      （val_as_int(bigint) 取到的是对象指针位模式 ⇒ 静默算错 ✗）；
+    //   ② 结果超出 int48 / int64 溢出 ⇒ **提升为 bigint**（48 位截断会算错 ✗）；
+    //   ③ 位运算/移位是**无限精度补码**语义（与栈式 op_bitwise.inc 一致）：
+    //      `(1<<63) >> 63 == 1`、`0xffffffffffffffff` 是 2^64-1 而不是 -1。
+    #define VM_IO(_v) (val_is_bigint(_v) ? vm_bigint_as_i64(_v) : val_as_int(_v))
+    #define VM_INT_RESULT(_x) \
+        (((_x) >= INT48_MIN && (_x) <= INT48_MAX) ? val_int((int64_t)(_x)) \
+         : bigint_compact_to_int(val_obj((Object*)bigint_from_int64((int64_t)(_x)))))
+    #define VM_IS_BIG(_v) (unlikely(val_is_bigint(_v)))
     LABEL(OP_ADD_INT): {
         int a = READ_A(), b = READ_B(), c = READ_C();
-        R(a) = val_int(val_as_int(R(b)) + val_as_int(R(c)));
+        Value bv = R(b), cv = R(c);
+        if (VM_IS_BIG(bv) || VM_IS_BIG(cv)) {
+            R(a) = bigint_compact_to_int(bigint_add(promote_to_bigint(bv), promote_to_bigint(cv)));
+            DISPATCH();
+        }
+        int64_t x = val_as_int(bv), y = val_as_int(cv), s = 0;
+        if (likely(!__builtin_add_overflow(x, y, &s))) {
+            R(a) = VM_INT_RESULT(s);
+        } else {
+            R(a) = bigint_add(bigint_from_int64(x), bigint_from_int64(y));
+        }
         DISPATCH();
     }
     LABEL(OP_SUB_INT): {
         int a = READ_A(), b = READ_B(), c = READ_C();
-        R(a) = val_int(val_as_int(R(b)) - val_as_int(R(c)));
+        Value bv = R(b), cv = R(c);
+        if (VM_IS_BIG(bv) || VM_IS_BIG(cv)) {
+            R(a) = bigint_compact_to_int(bigint_sub(promote_to_bigint(bv), promote_to_bigint(cv)));
+            DISPATCH();
+        }
+        int64_t x = val_as_int(bv), y = val_as_int(cv), s = 0;
+        if (likely(!__builtin_sub_overflow(x, y, &s))) {
+            R(a) = VM_INT_RESULT(s);
+        } else {
+            R(a) = bigint_sub(bigint_from_int64(x), bigint_from_int64(y));
+        }
         DISPATCH();
     }
     LABEL(OP_MUL_INT): {
         int a = READ_A(), b = READ_B(), c = READ_C();
-        R(a) = val_int(val_as_int(R(b)) * val_as_int(R(c)));
+        Value bv = R(b), cv = R(c);
+        if (VM_IS_BIG(bv) || VM_IS_BIG(cv)) {
+            R(a) = bigint_compact_to_int(bigint_mul(promote_to_bigint(bv), promote_to_bigint(cv)));
+            DISPATCH();
+        }
+        int64_t x = val_as_int(bv), y = val_as_int(cv), s = 0;
+        if (likely(!__builtin_mul_overflow(x, y, &s))) {
+            R(a) = VM_INT_RESULT(s);
+        } else {
+            R(a) = bigint_mul(bigint_from_int64(x), bigint_from_int64(y));
+        }
         DISPATCH();
     }
     LABEL(OP_NEG_INT): {
         int a = READ_A(), b = READ_B();
-        R(a) = val_int(-val_as_int(R(b)));
+        Value bv = R(b);
+        if (VM_IS_BIG(bv)) {
+            R(a) = bigint_compact_to_int(bigint_neg(val_as_bigint(bv)));
+            DISPATCH();
+        }
+        R(a) = VM_INT_RESULT(-val_as_int(bv));
         DISPATCH();
     }
 
@@ -753,6 +799,8 @@
         int a = READ_A(), b = READ_B(), c = READ_C();
         Value bv = R(b), cv = R(c);
         int cmp = 0;
+        // null 参与的有序比较一律为 false（`notFound.id >= 0` 不能因 null 变成 true 或报错）
+        if (unlikely(val_is_null(bv) || val_is_null(cv))) { R(a) = val_bool(0); DISPATCH(); }
         if (likely(value_compare_stdlib(bv, cv, &cmp))) {
             R(a) = val_bool(cmp < 0);
             DISPATCH();
@@ -765,6 +813,7 @@
         int a = READ_A(), b = READ_B(), c = READ_C();
         Value bv = R(b), cv = R(c);
         int cmp = 0;
+        if (unlikely(val_is_null(bv) || val_is_null(cv))) { R(a) = val_bool(0); DISPATCH(); }
         if (likely(value_compare_stdlib(bv, cv, &cmp))) {
             R(a) = val_bool(cmp > 0);
             DISPATCH();
@@ -777,6 +826,7 @@
         int a = READ_A(), b = READ_B(), c = READ_C();
         Value bv = R(b), cv = R(c);
         int cmp = 0;
+        if (unlikely(val_is_null(bv) || val_is_null(cv))) { R(a) = val_bool(0); DISPATCH(); }
         if (likely(value_compare_stdlib(bv, cv, &cmp))) {
             R(a) = val_bool(cmp <= 0);
             DISPATCH();
@@ -789,6 +839,7 @@
         int a = READ_A(), b = READ_B(), c = READ_C();
         Value bv = R(b), cv = R(c);
         int cmp = 0;
+        if (unlikely(val_is_null(bv) || val_is_null(cv))) { R(a) = val_bool(0); DISPATCH(); }
         if (likely(value_compare_stdlib(bv, cv, &cmp))) {
             R(a) = val_bool(cmp >= 0);
             DISPATCH();
@@ -798,67 +849,120 @@
         DISPATCH();
     }
 
-    // --- int 比较 ---
+    // --- int 比较（操作数可能是 bigint ⇒ 同样要解引用）---
+    // ★ null 参与的有序比较一律 false（与通用 LT/GT/LE/GE 一致）：
+    //   int 专用路径若不判 null，`val_as_int(null) == 0` 会让 `notFound.id >= 0`
+    //   变成 true ✗（test_struct_edge 明确断言必须 false）
     LABEL(OP_LT_INT): {
         int a = READ_A(), b = READ_B(), c = READ_C();
-        R(a) = val_bool(val_as_int(R(b)) < val_as_int(R(c)));
+        Value bv = R(b), cv = R(c);
+        R(a) = val_bool(!val_is_null(bv) && !val_is_null(cv) && VM_IO(bv) < VM_IO(cv));
         DISPATCH();
     }
     LABEL(OP_GT_INT): {
         int a = READ_A(), b = READ_B(), c = READ_C();
-        R(a) = val_bool(val_as_int(R(b)) > val_as_int(R(c)));
+        Value bv = R(b), cv = R(c);
+        R(a) = val_bool(!val_is_null(bv) && !val_is_null(cv) && VM_IO(bv) > VM_IO(cv));
         DISPATCH();
     }
     LABEL(OP_LE_INT): {
         int a = READ_A(), b = READ_B(), c = READ_C();
-        R(a) = val_bool(val_as_int(R(b)) <= val_as_int(R(c)));
+        Value bv = R(b), cv = R(c);
+        R(a) = val_bool(!val_is_null(bv) && !val_is_null(cv) && VM_IO(bv) <= VM_IO(cv));
         DISPATCH();
     }
     LABEL(OP_GE_INT): {
         int a = READ_A(), b = READ_B(), c = READ_C();
-        R(a) = val_bool(val_as_int(R(b)) >= val_as_int(R(c)));
+        Value bv = R(b), cv = R(c);
+        R(a) = val_bool(!val_is_null(bv) && !val_is_null(cv) && VM_IO(bv) >= VM_IO(cv));
         DISPATCH();
     }
     LABEL(OP_EQ_INT): {
         int a = READ_A(), b = READ_B(), c = READ_C();
-        R(a) = val_bool(val_as_int(R(b)) == val_as_int(R(c)));
+        R(a) = val_bool(VM_IO(R(b)) == VM_IO(R(c)));
         DISPATCH();
     }
 
     // --- 位运算 ---
+    // 位运算：任一侧是 bigint（或移位/结果越界）⇒ 走 bigint 路径（无限精度补码语义）
     LABEL(OP_BITAND): {
         int a = READ_A(), b = READ_B(), c = READ_C();
-        R(a) = val_int(val_as_int(R(b)) & val_as_int(R(c)));
+        Value bv = R(b), cv = R(c);
+        if (VM_IS_BIG(bv) || VM_IS_BIG(cv)) {
+            R(a) = bigint_compact_to_int(bigint_and(promote_to_bigint(bv), promote_to_bigint(cv)));
+        } else {
+            R(a) = VM_INT_RESULT(val_as_int(bv) & val_as_int(cv));
+        }
         DISPATCH();
     }
     LABEL(OP_BITOR): {
         int a = READ_A(), b = READ_B(), c = READ_C();
-        R(a) = val_int(val_as_int(R(b)) | val_as_int(R(c)));
+        Value bv = R(b), cv = R(c);
+        if (VM_IS_BIG(bv) || VM_IS_BIG(cv)) {
+            R(a) = bigint_compact_to_int(bigint_or(promote_to_bigint(bv), promote_to_bigint(cv)));
+        } else {
+            R(a) = VM_INT_RESULT(val_as_int(bv) | val_as_int(cv));
+        }
         DISPATCH();
     }
     LABEL(OP_BITXOR): {
         int a = READ_A(), b = READ_B(), c = READ_C();
-        R(a) = val_int(val_as_int(R(b)) ^ val_as_int(R(c)));
+        Value bv = R(b), cv = R(c);
+        if (VM_IS_BIG(bv) || VM_IS_BIG(cv)) {
+            R(a) = bigint_compact_to_int(bigint_xor(promote_to_bigint(bv), promote_to_bigint(cv)));
+        } else {
+            R(a) = VM_INT_RESULT(val_as_int(bv) ^ val_as_int(cv));
+        }
         DISPATCH();
     }
     LABEL(OP_BITNOT): {
         int a = READ_A(), b = READ_B();
-        R(a) = val_int(~val_as_int(R(b)));
+        Value bv = R(b);
+        if (VM_IS_BIG(bv)) {
+            R(a) = bigint_compact_to_int(bigint_not(val_as_bigint(bv)));
+        } else {
+            R(a) = VM_INT_RESULT(~val_as_int(bv));
+        }
         DISPATCH();
     }
     LABEL(OP_SHL): {
         int a = READ_A(), b = READ_B(), c = READ_C();
-        R(a) = val_int(val_as_int(R(b)) << val_as_int(R(c)));
+        Value bv = R(b), cv = R(c);
+        int64_t sh = VM_IO(cv);
+        // bigint 操作数、移位量 >= 32（int48 结果必然越界）、或结果超 int48 ⇒ bigint 路径
+        if (VM_IS_BIG(bv) || VM_IS_BIG(cv) || sh < 0 || sh >= 32) {
+            R(a) = bigint_compact_to_int(bigint_shl(promote_to_bigint(bv), (int)(sh < 0 ? 0 : sh)));
+            DISPATCH();
+        }
+        R(a) = VM_INT_RESULT(val_as_int(bv) << sh);
         DISPATCH();
     }
     LABEL(OP_SHR): {
         int a = READ_A(), b = READ_B(), c = READ_C();
-        R(a) = val_int(val_as_int(R(b)) >> val_as_int(R(c)));
+        Value bv = R(b), cv = R(c);
+        int64_t sh = VM_IO(cv);
+        if (VM_IS_BIG(bv) || VM_IS_BIG(cv) || sh < 0 || sh > 47) {
+            R(a) = bigint_compact_to_int(bigint_shr(promote_to_bigint(bv), (int)(sh < 0 ? 0 : sh)));
+            DISPATCH();
+        }
+        R(a) = val_int(val_as_int(bv) >> sh);
         DISPATCH();
     }
     LABEL(OP_USHR): {
         int a = READ_A(), b = READ_B(), c = READ_C();
-        R(a) = val_int((int)((unsigned int)val_as_int(R(b)) >> val_as_int(R(c))));
+        Value vb = R(b), vc = R(c);
+        // LenoC 的 int 是 48 位有符号：逻辑右移先截断为 48 位无符号再右移。
+        // 之前用 `(unsigned int)`（32 位）截断 ⇒ `-1 >>> 8` 得 16777215 而非 1099511627775 ✗
+        if (VM_IS_BIG(vb) || VM_IS_BIG(vc)) {
+            int64_t sh = VM_IO(vc);
+            R(a) = bigint_compact_to_int(bigint_ushr(promote_to_bigint(vb), (int)(sh < 0 ? 0 : sh)));
+        } else if (likely(val_is_int(vb) && val_is_int(vc))) {
+            uint64_t uva = (uint64_t)val_as_int(vb) & PAYLOAD_MASK;
+            int64_t sh = val_as_int(vc);
+            R(a) = val_int_safe((int64_t)(uva >> sh));
+        } else {
+            R(a) = val_int(0);
+        }
         DISPATCH();
     }
 
@@ -1072,13 +1176,29 @@
             //   若实参首项就是 receiver，则不重复插入，否则隐式补上。
             if (ct == OBJ_BOUND_METHOD) {
                 ObjBoundMethod* bound = (ObjBoundMethod*)val_as_obj(callee);
+                // receiver 去重判定：
+                //   ① 首要仍是"首实参是否就是 receiver"（两处调用约定不同：MODULE_CALL
+                //      路径**不含** receiver，语义改写出的 AST_CALL 路径**含** receiver）；
+                //   ② 但值相等会被**自引用**骗到：`a.add(a)` 只传了 1 个实参却被当成
+                //      [receiver] ⇒ 元素变成寄存器残留值 ✗。故再用形参个数佐证：
+                //      实参个数 == arity ⇒ 含 receiver；实参个数 + 1 == arity ⇒ 不含。
                 int self_in_args = 0;
+                int expect_arity = 0;
+                if (bound->closure && bound->closure->function) {
+                    expect_arity = bound->closure->function->arity;
+                } else if (bound->method) {
+                    expect_arity = bound->method->arity;
+                }
                 if (nargs > 0) {
                     Value a0 = R(a + 1);
                     if (val_is_obj(a0) && val_is_obj(bound->receiver)) {
                         self_in_args = (val_as_obj(a0) == val_as_obj(bound->receiver));
                     } else if (!val_is_obj(a0) && !val_is_obj(bound->receiver)) {
                         self_in_args = (a0 == bound->receiver);
+                    }
+                    if (self_in_args && expect_arity > 0 && nargs != expect_arity &&
+                        nargs + 1 == expect_arity) {
+                        self_in_args = 0;   // 个数表明调用方没传 receiver ⇒ 自引用误判
                     }
                 }
                 if (bound->closure) {
@@ -1466,7 +1586,24 @@
         if (val_is_obj(v)) {
             if (val_as_obj(v)->type == OBJ_ARRAY) R(a) = val_int(((ObjArray*)val_as_obj(v))->count);
             else if (val_as_obj(v)->type == OBJ_STRING) R(a) = val_int(((ObjString*)val_as_obj(v))->len);
-            else if (val_as_obj(v)->type == OBJ_DICT) R(a) = val_int(((ObjDict*)val_as_obj(v))->count);
+            // ⚠ 字典的条目分两处存：**连续整数键**在数组部（acount），
+            //   其余键在哈希部（count）。只读 count 会让整数键字典的长度恒为 0
+            //   （实测 `{1:..,2:..,3:..}` 的 len 得 0，for 迭代一次都不进 ✗）
+            else if (val_as_obj(v)->type == OBJ_DICT) {
+                ObjDict* d = (ObjDict*)val_as_obj(v);
+                R(a) = val_int(d->acount + d->count);
+            }
+            // struct：字段数（`for p to k` 遍历字段名 / `p.len()`）
+            else if (val_as_obj(v)->type == OBJ_STRUCT) {
+                ObjStruct* so = (ObjStruct*)val_as_obj(v);
+                R(a) = val_int(so->def ? so->def->field_count : 0);
+            }
+            // enum：成员数（`for EV to v` 遍历成员值；OP_ITER_GET 的 enum 分支配套）
+            //   ⚠ 缺这一支时 len 恒为 0 ⇒ 循环体一次都不进（实测 sum_all() 得 0 ✗）
+            else if (val_as_obj(v)->type == OBJ_ENUM_DEF) {
+                ObjEnumDef* ed = (ObjEnumDef*)val_as_obj(v);
+                R(a) = val_int(ed->member_count);
+            }
             else R(a) = val_int(0);
         } else {
             R(a) = val_int(0);
@@ -1585,13 +1722,25 @@
             // .leno 模块：成员在 exports 字典里
             if (ot == OBJ_MODULE) {
                 Value member = dict_get(((ObjModule*)val_as_obj(obj))->exports, idx);
-                // 模块导出的枚举定义：`m.EnumName.Member` → 再按成员名索引
-                if (val_is_obj(member) && val_as_obj(member)->type == OBJ_ENUM_DEF &&
-                    val_is_string(idx)) {
-                    R(a) = member;
-                } else {
-                    R(a) = member;
+                // ★ 兜底：exports 里没登记的类型名（cstruct / struct / enum）按名字查全局类型表。
+                //   跨模块写 `a.Vec.malloc()` 时既没 use 类型名、exports 也没这条 ⇒
+                //   此前拿到 null，报「类型 object 上不存在方法 'malloc'」✗
+                if (val_is_null(member) && val_is_string(idx)) {
+                    const char* nm = ((ObjString*)val_as_obj(idx))->chars;
+                    ObjCStructDef* cdef = cstruct_def_find(nm);
+                    if (cdef) {
+                        member = val_obj((Object*)cdef);
+                    } else {
+                        ObjStructDef* sdef = struct_def_find(nm);
+                        if (sdef) {
+                            member = val_obj((Object*)sdef);
+                        } else {
+                            ObjEnumDef* edef = enum_def_find(nm);
+                            if (edef) member = val_obj((Object*)edef);
+                        }
+                    }
                 }
+                R(a) = member;
                 DISPATCH();
             }
             // 枚举定义对象：按成员名取成员值（`EnumName.Member`，含模块限定形态）
@@ -1631,6 +1780,27 @@
                 ObjStruct* so = (ObjStruct*)val_as_obj(obj);
                 int fi = struct_get_field_index(so->def, ((ObjString*)val_as_obj(idx))->chars);
                 if (unlikely(fi < 0)) {
+                    // ★ 不是字段 → 再试**方法名**：泛型函数里 `a.compareTo(b)`（a 的静态类型
+                    //   只是受 face 约束的 T）编译成 obj["compareTo"] 访问，field_index 无从确定。
+                    //   这里返回绑定方法（含 receiver），随后 CALL 即可正确调用。
+                    ObjClosure* pre = NULL;
+                    ObjFunction* mfn = NULL;
+                    if (so->def && struct_method_lookup(so->def, (ObjString*)val_as_obj(idx), &pre, &mfn)) {
+                        ObjClosure* cl = pre;
+                        if (!cl) {
+                            cl = (ObjClosure*)gc_alloc(sizeof(ObjClosure), OBJ_CLOSURE);
+                            if (unlikely(!cl)) { runtime_error("内存分配失败", line); return -1; }
+                            cl->function = mfn;
+                            cl->upvalue_count = mfn->upvalue_count;
+                            cl->type_param_count = 0;
+                            cl->type_param_args = NULL;
+                            for (int ui = 0; ui < mfn->upvalue_count; ui++) cl->upvalues[ui] = NULL;
+                        }
+                        ObjBoundMethod* bound = bound_closure_method_new(obj, cl);
+                        if (unlikely(!bound)) { runtime_error("内存分配失败", line); return -1; }
+                        R(a) = val_obj((Object*)bound);
+                        DISPATCH();
+                    }
                     char msg[256];
                     snprintf(msg, sizeof(msg), "struct 不存在字段 '%s'",
                              ((ObjString*)val_as_obj(idx))->chars);
@@ -1639,6 +1809,89 @@
                     DISPATCH();
                 }
                 R(a) = struct_get_field(so, fi);
+                DISPATCH();
+            }
+            // cstruct（C 布局）实例：同样按字段名索引（`v["x"]`）
+            if (ot == OBJ_CSTRUCT) {
+                if (unlikely(!val_is_string(idx))) {
+                    if (!throw_runtime_error("cstruct 字段名必须是字符串", line)) return -1;
+                    frame = &vm.frames[vm.frame_cnt - 1];
+                    DISPATCH();
+                }
+                ObjCStruct* co = (ObjCStruct*)val_as_obj(obj);
+                int fi = cstruct_get_field_index(co->def, ((ObjString*)val_as_obj(idx))->chars);
+                if (unlikely(fi < 0)) {
+                    char msg[256];
+                    snprintf(msg, sizeof(msg), "cstruct 不存在字段 '%s'",
+                             ((ObjString*)val_as_obj(idx))->chars);
+                    if (!throw_runtime_error(msg, line)) return -1;
+                    frame = &vm.frames[vm.frame_cnt - 1];
+                    DISPATCH();
+                }
+                R(a) = vm_cstruct_field_read(co, fi);
+                DISPATCH();
+            }
+            // cstruct 数组（malloc_array）：按整数索引取元素视图
+            if (ot == OBJ_CSTRUCT_ARRAY) {
+                if (unlikely(!val_is_num(idx))) {
+                    if (!throw_runtime_error("cstruct 数组索引必须是数字", line)) return -1;
+                    frame = &vm.frames[vm.frame_cnt - 1];
+                    DISPATCH();
+                }
+                ObjCStructArray* ca = (ObjCStructArray*)val_as_obj(obj);
+                int ci = (int)value_to_double(idx);
+                if (unlikely(ci < 0 || ci >= ca->count)) {
+                    char msg[128];
+                    snprintf(msg, sizeof(msg), "cstruct 数组索引越界: 索引 %d, 长度 %d", ci, ca->count);
+                    if (!throw_runtime_error(msg, line)) return -1;
+                    frame = &vm.frames[vm.frame_cnt - 1];
+                    DISPATCH();
+                }
+                ObjCStruct* elem = cstruct_array_get(ca, ci);
+                if (unlikely(!elem)) {
+                    if (!throw_runtime_error("cstruct 数组元素获取失败", line)) return -1;
+                    frame = &vm.frames[vm.frame_cnt - 1];
+                    DISPATCH();
+                }
+                R(a) = val_obj((Object*)elem);
+                DISPATCH();
+            }
+            // cstruct 数组字段视图：按整数索引取元素视图
+            if (ot == OBJ_CSTRUCT_ARRAY_VIEW) {
+                if (unlikely(!val_is_num(idx))) {
+                    if (!throw_runtime_error("cstruct 数组索引必须是数字", line)) return -1;
+                    frame = &vm.frames[vm.frame_cnt - 1];
+                    DISPATCH();
+                }
+                ObjCStructArrayView* view = (ObjCStructArrayView*)val_as_obj(obj);
+                int ci = (int)value_to_double(idx);
+                if (unlikely(ci < 0 || ci >= view->array_dim)) {
+                    char msg[128];
+                    snprintf(msg, sizeof(msg), "cstruct 数组索引越界: 索引 %d, 长度 %d", ci, view->array_dim);
+                    if (!throw_runtime_error(msg, line)) return -1;
+                    frame = &vm.frames[vm.frame_cnt - 1];
+                    DISPATCH();
+                }
+                ObjCStruct* parent = view->cstruct;
+                CStructFieldInfo* vf = &parent->def->fields[view->field_index];
+                uint8_t* elem_addr = parent->data + vf->offset + (ci * view->element_size);
+                // 元素本身是嵌套 cstruct ⇒ 非拥有视图；否则按元素类型取值
+                if (view->element_type == TYPE_CSTRUCT) {
+                    ObjCStructDef* edef = vf->struct_name ? cstruct_def_find(vf->struct_name) : NULL;
+                    if (unlikely(!edef)) {
+                        if (!throw_runtime_error("找不到 cstruct 数组元素类型定义", line)) return -1;
+                        frame = &vm.frames[vm.frame_cnt - 1];
+                        DISPATCH();
+                    }
+                    ObjCStruct* elem = (ObjCStruct*)gc_alloc(sizeof(ObjCStruct), OBJ_CSTRUCT);
+                    if (unlikely(!elem)) { runtime_error("内存不足", line); return -1; }
+                    elem->def = edef;
+                    elem->data = elem_addr;
+                    elem->owns_memory = 0;
+                    R(a) = val_obj((Object*)elem);
+                } else {
+                    R(a) = vm_c_layout_read_scalar(elem_addr, view->element_type);
+                }
                 DISPATCH();
             }
         }
@@ -1700,6 +1953,52 @@
                 }
                 struct_set_field(so, fi, nv);
                 gc_write_barrier((Object*)so, nv);
+                DISPATCH();
+            }
+            // cstruct（C 布局）实例：按字段名赋值（`v["x"] = 1`）
+            if (ot == OBJ_CSTRUCT) {
+                if (unlikely(!val_is_string(idx))) {
+                    if (!throw_runtime_error("cstruct 字段名必须是字符串", line)) return -1;
+                    frame = &vm.frames[vm.frame_cnt - 1];
+                    DISPATCH();
+                }
+                ObjCStruct* co = (ObjCStruct*)val_as_obj(obj);
+                int fi = cstruct_get_field_index(co->def, ((ObjString*)val_as_obj(idx))->chars);
+                if (unlikely(fi < 0)) {
+                    char msg[256];
+                    snprintf(msg, sizeof(msg), "cstruct 不存在字段 '%s'",
+                             ((ObjString*)val_as_obj(idx))->chars);
+                    if (!throw_runtime_error(msg, line)) return -1;
+                    frame = &vm.frames[vm.frame_cnt - 1];
+                    DISPATCH();
+                }
+                Value nv = R(a);
+                TypeKind ft = co->def->fields[fi].type;
+                if (val_is_int(nv) && (ft == TYPE_F32 || ft == TYPE_F64)) {
+                    nv = val_float((double)val_as_int(nv));
+                } else if (val_is_bigint(nv) && (ft == TYPE_F32 || ft == TYPE_F64)) {
+                    nv = val_float(bigint_to_double(val_as_bigint(nv)));
+                } else if (val_is_float(nv) && (ft >= TYPE_I8 && ft <= TYPE_U64)) {
+                    nv = val_num(val_as_num(nv));
+                }
+                cstruct_set_field_value(co, fi, nv);
+                DISPATCH();
+            }
+            // cstruct 数组字段视图：按整数索引写元素（`v.arr[0] = 1`）
+            if (ot == OBJ_CSTRUCT_ARRAY_VIEW) {
+                ObjCStructArrayView* view = (ObjCStructArrayView*)val_as_obj(obj);
+                int ci = val_is_num(idx) ? (int)value_to_double(idx) : -1;
+                if (unlikely(ci < 0 || ci >= view->array_dim)) {
+                    char msg[128];
+                    snprintf(msg, sizeof(msg), "cstruct 数组索引越界: 索引 %d, 长度 %d", ci, view->array_dim);
+                    if (!throw_runtime_error(msg, line)) return -1;
+                    frame = &vm.frames[vm.frame_cnt - 1];
+                    DISPATCH();
+                }
+                ObjCStruct* parent = view->cstruct;
+                CStructFieldInfo* vf = &parent->def->fields[view->field_index];
+                uint8_t* elem_addr = parent->data + vf->offset + (ci * view->element_size);
+                vm_c_layout_write_scalar(elem_addr, view->element_type, R(a));
                 DISPATCH();
             }
         }
@@ -1935,18 +2234,78 @@
     }
 
     // --- 范围 ---
+    // OP_RANGE A B C: R[A] = Range(R[B], R[C])（左闭右闭：parser 只产出 inclusive=1）
     LABEL(OP_RANGE): {
         int a = READ_A(), b = READ_B(), c = READ_C();
-        // TODO: Range 对象
-        R(a) = val_null();
+        Value start = R(b), end = R(c);
+        int64_t start_val = 0, end_val = 0;
+        if (val_is_int(start)) start_val = val_as_int(start);
+        else if (val_is_float(start)) start_val = (int64_t)value_to_double(start);
+        if (val_is_int(end)) end_val = val_as_int(end);
+        else if (val_is_float(end)) end_val = (int64_t)value_to_double(end);
+        ObjRange* range = range_new(start_val, end_val, 1);
+        if (unlikely(!range)) {
+            if (!throw_runtime_error("range 创建失败", GET_CURRENT_LINE())) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        R(a) = val_obj((Object*)range);
         DISPATCH();
     }
 
     // --- in ---
+    // OP_IN A B C: R[A] = (R[B] in R[C])
     LABEL(OP_IN): {
         int a = READ_A(), b = READ_B(), c = READ_C();
-        // TODO: in 操作
-        R(a) = val_bool(0);
+        Value item = R(b);
+        Value collection = R(c);
+        int found = 0;
+
+        if (val_is_obj(collection)) {
+            switch (val_as_obj(collection)->type) {
+                case OBJ_ARRAY: {
+                    ObjArray* arr = (ObjArray*)val_as_obj(collection);
+                    for (int i = 0; i < arr->count; i++) {
+                        Value elem = arr->elements[i];
+                        if (val_get_type(item) != val_get_type(elem)) continue;
+                        if (val_is_num(item) && val_is_num(elem)) {
+                            if (value_to_double(item) == value_to_double(elem)) { found = 1; break; }
+                        } else if (val_is_bool(item) && val_as_bool(item) == val_as_bool(elem)) {
+                            found = 1; break;
+                        } else if (val_is_string(item) && val_is_string(elem)) {
+                            ObjString* istr = (ObjString*)val_as_obj(item);
+                            ObjString* estr = (ObjString*)val_as_obj(elem);
+                            if (istr->len == estr->len && strcmp(istr->chars, estr->chars) == 0) { found = 1; break; }
+                        } else if (val_is_obj(item) && val_as_obj(item) == val_as_obj(elem)) {
+                            found = 1; break;
+                        } else if (val_is_null(item)) {
+                            found = 1; break;
+                        }
+                    }
+                    break;
+                }
+                case OBJ_DICT:
+                    found = dict_has((ObjDict*)val_as_obj(collection), item);
+                    break;
+                case OBJ_STRING: {
+                    ObjString* str = (ObjString*)val_as_obj(collection);
+                    if (val_is_obj(item) && val_as_obj(item)->type == OBJ_STRING) {
+                        ObjString* substr = (ObjString*)val_as_obj(item);
+                        found = (strstr(str->chars, substr->chars) != NULL);
+                    }
+                    break;
+                }
+                case OBJ_RANGE: {
+                    ObjRange* range = (ObjRange*)val_as_obj(collection);
+                    if (val_is_num(item)) found = range_contains(range, (int64_t)value_to_double(item));
+                    break;
+                }
+                default:
+                    break;
+            }
+        }
+
+        R(a) = val_bool(found);
         DISPATCH();
     }
 
@@ -1961,13 +2320,19 @@
         frame->finally_ip = NULL;
         DISPATCH();
     }
-    // OP_CATCH A: R[A] = 当前异常；清除 catch 状态（寄存器式不再走栈传异常）
+    // OP_CATCH A Bx: R[A] = 当前异常；清除 catch 状态（寄存器式不再走栈传异常）
+    //   Bx != 0：本层 finally 块相对本指令的偏移 —— 在这里就**预备**好 finally_ip，
+    //   使 catch 体内再次 throw 时先执行本层 finally、再向外传播
+    //   （`try { throw "first" } catch e { throw "second" } finally { ... }`）。
     LABEL(OP_CATCH): {
         int a = READ_A();
+        int bx = READ_Bx();
         R(a) = vm.exception;
         vm.exception = val_null();
         vm.has_exception = 0;
         frame->catch_ip = NULL;
+        // 预备本层 finally：catch 体内再次 throw 时要先跑它（见 catch_finally_ip 说明）
+        frame->catch_finally_ip = bx ? ((frame->ip - 4) + bx) : NULL;
         DISPATCH();
     }
     // OP_FINALLY Bx: Bx = finally 块相对本指令起始的字节偏移
@@ -1982,9 +2347,19 @@
         DISPATCH();
     }
     LABEL(OP_END_TRY): {
-        frame->catch_ip = frame->prev_catch_ip;
+        int a = READ_A();
+        // A=1：**catch 块入口**那次 END_TRY。
+        //   catch 体期间必须保持 catch_ip = NULL 且 prev_catch_ip = 外层 catch：
+        //     · catch 体内 throw ⇒ catch_finally_ip 分支先跑本层 finally，
+        //       再由 finally 末尾的 END_TRY 用 prev_catch_ip 继续向外传播 ✓
+        //     · catch 体内普通 throw（本层无 finally）⇒ 走 prev_catch_ip 兜底 ✓
+        //   （A=0：正常收尾，把 prev_* 还原回 catch_ip/finally_ip 并清空 prev_*）
+        if (!a) {
+            frame->catch_ip = frame->prev_catch_ip;
+            frame->prev_catch_ip = NULL;
+            frame->catch_finally_ip = NULL;
+        }
         frame->finally_ip = frame->prev_finally_ip;
-        frame->prev_catch_ip = NULL;
         frame->prev_finally_ip = NULL;
         frame->in_finally = 0;
 
@@ -2063,7 +2438,13 @@
             vm.frame_cnt = i + 1;
             vm.sp = tf->stack_base;
 
-            if (tf->finally_ip && !tf->in_finally && !tf->catch_ip) {
+            if (tf->catch_finally_ip && !tf->in_finally) {
+                // catch 体内再次 throw：先执行**本层** finally，再向外传播
+                vm.pending_exception = 1;
+                tf->ip = tf->catch_finally_ip;
+                tf->catch_finally_ip = NULL;
+                vm.has_exception = 0;
+            } else if (tf->finally_ip && !tf->in_finally && !tf->catch_ip) {
                 vm.pending_exception = 1;
                 tf->ip = tf->finally_ip;
                 vm.has_exception = 0;
@@ -2082,6 +2463,11 @@
         }
 
         if (!handled) {
+            // ★ 协程内未捕获的异常：**不要**在这里打印/报错 —— 直接返回 -1，
+            //   由 vm_run_coroutine 检查 vm.has_exception 把错误写进协程的 task_future
+            //   （await 侧再抛出 / asyncs.all 收集）。否则 `risky(-1)` 这类
+            //   "协程里抛、调用方 await 捕获"的用例会在最后多出一条未处理错误 ✗
+            if (vm.current_coroutine) return -1;
             print_unhandled_exception(exception, line);
             char* msg = NULL;
             if (val_is_obj(exception) && val_as_obj(exception)->type == OBJ_DICT) {
@@ -2720,6 +3106,123 @@
         }
         ObjString* sname = (ObjString*)val_as_obj(name_val);
 
+        // ★ 泛型实参替换（`new Holder[K](...)` 里的 K 要换成具体类型名）：
+        //   ① 先看调用栈里的 self 实例（方法内 new 泛型 struct）；
+        //   ② 再看闭包的 type_param_args（泛型函数调用时传入的精准实参）；
+        //   ③ 最后按函数参数运行时值反推（T val ⇒ int/string/...）。
+        //   缺失此步会让 `type(h)` 得到 "Holder[K]" 而不是 "Holder[string]" ✗
+        if (generic_count > 0 && generic_args) {
+            int resolved = 0;
+            for (int fi = vm.frame_cnt - 1; fi >= 1 && !resolved; fi--) {
+                CallFrame* cf = &vm.frames[fi];
+                if (!cf->locals || cf->local_count <= 0) continue;
+                Value self_val = cf->locals[0];
+                if (val_is_obj(self_val) && val_as_obj(self_val)->type == OBJ_STRUCT) {
+                    ObjStruct* self_obj = (ObjStruct*)val_as_obj(self_val);
+                    ObjStructDef* self_def = self_obj->def;
+                    if (self_def && self_def->type_param_count > 0 && self_def->type_param_names &&
+                        self_obj->generic_type_arg_count > 0 && self_obj->generic_type_args) {
+                        int any = 0;
+                        for (int gi = 0; gi < generic_count; gi++) {
+                            const char* arg_name = generic_args[gi];
+                            const char* pure = (strncmp(arg_name, "struct ", 7) == 0)
+                                                   ? arg_name + 7 : arg_name;
+                            for (int pi = 0; pi < self_def->type_param_count &&
+                                            pi < self_obj->generic_type_arg_count; pi++) {
+                                if (self_def->type_param_names[pi] && pure &&
+                                    strcmp(self_def->type_param_names[pi], pure) == 0) {
+                                    free(generic_args[gi]);
+                                    generic_args[gi] = strdup(self_obj->generic_type_args[pi]);
+                                    any = 1;
+                                    break;
+                                }
+                            }
+                        }
+                        if (any) resolved = 1;
+                    }
+                }
+            }
+
+            if (!resolved) {
+                for (int fi = vm.frame_cnt - 1; fi >= 1 && !resolved; fi--) {
+                    CallFrame* cf = &vm.frames[fi];
+                    if (!cf->closure || !cf->closure->function) continue;
+                    ObjFunction* func = cf->closure->function;
+                    ObjClosure* clo = cf->closure;
+
+                    // ② 闭包携带的精准类型实参
+                    if (clo->type_param_count > 0 && clo->type_param_args &&
+                        func->type_param_count > 0 && func->type_param_names) {
+                        int any = 0;
+                        for (int gi = 0; gi < generic_count; gi++) {
+                            const char* arg_name = generic_args[gi];
+                            const char* pure = (strncmp(arg_name, "struct ", 7) == 0)
+                                                   ? arg_name + 7 : arg_name;
+                            for (int pi = 0; pi < func->type_param_count &&
+                                            pi < clo->type_param_count; pi++) {
+                                if (func->type_param_names[pi] && pure &&
+                                    strcmp(func->type_param_names[pi], pure) == 0) {
+                                    free(generic_args[gi]);
+                                    generic_args[gi] = strdup(clo->type_param_args[pi]);
+                                    any = 1;
+                                    break;
+                                }
+                            }
+                        }
+                        if (any) resolved = 1;
+                    }
+
+                    // ③ 按函数参数的运行时值反推
+                    if (!resolved && func->type_param_count > 0 && func->type_param_names &&
+                        cf->locals && cf->local_count > 0) {
+                        int any = 0;
+                        for (int gi = 0; gi < generic_count; gi++) {
+                            const char* arg_name = generic_args[gi];
+                            const char* pure = (strncmp(arg_name, "struct ", 7) == 0)
+                                                   ? arg_name + 7 : arg_name;
+                            int matched = -1;
+                            for (int pi = 0; pi < func->type_param_count; pi++) {
+                                if (func->type_param_names[pi] && pure &&
+                                    strcmp(func->type_param_names[pi], pure) == 0) {
+                                    matched = pi;
+                                    break;
+                                }
+                            }
+                            if (matched < 0) continue;
+                            for (int ai = 0; ai < func->arity && ai < cf->local_count; ai++) {
+                                Value arg_val = cf->locals[ai];
+                                if (val_is_null(arg_val)) continue;
+                                if (func->param_generic_names && func->param_generic_names[ai] &&
+                                    pure && strcmp(func->param_generic_names[ai], pure) == 0) {
+                                    const char* inferred = vm_value_to_generic_type_name(arg_val);
+                                    if (inferred) {
+                                        free(generic_args[gi]);
+                                        generic_args[gi] = strdup(inferred);
+                                        any = 1;
+                                        break;
+                                    }
+                                }
+                                if (val_is_obj(arg_val) && val_as_obj(arg_val)->type == OBJ_ARRAY) {
+                                    ObjArray* arr = (ObjArray*)val_as_obj(arg_val);
+                                    if (arr->type_info && arr->type_info->element_type) {
+                                        const char* inferred =
+                                            vm_typeinfo_to_generic_type_name(arr->type_info->element_type);
+                                        if (inferred) {
+                                            free(generic_args[gi]);
+                                            generic_args[gi] = strdup(inferred);
+                                            any = 1;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if (any) resolved = 1;
+                    }
+                }
+            }
+        }
+
         // 三级查找：模块内精查 → 带前缀 → 裸名（与栈式一致）
         const char* bare = sname->chars;
         const char* dotp = strchr(bare, '.');
@@ -2816,7 +3319,23 @@
         int a = READ_A(), b = READ_B(), c = READ_C();
         Value obj = R(b);
         int line = GET_CURRENT_LINE();
-        if (unlikely(!val_is_obj(obj) || val_as_obj(obj)->type != OBJ_STRUCT)) {
+        if (unlikely(!val_is_obj(obj))) {
+            if (!throw_runtime_error("字段访问需要结构体对象", line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        // cstruct（C 布局）字段读：数组/嵌套字段返回视图（见 vm_cstruct_field_read）
+        if (val_as_obj(obj)->type == OBJ_CSTRUCT) {
+            ObjCStruct* co = (ObjCStruct*)val_as_obj(obj);
+            if (unlikely(c < 0 || c >= co->def->field_count)) {
+                if (!throw_runtime_error("cstruct 字段索引越界", line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            R(a) = vm_cstruct_field_read(co, c);
+            DISPATCH();
+        }
+        if (unlikely(val_as_obj(obj)->type != OBJ_STRUCT)) {
             if (!throw_runtime_error("字段访问需要结构体对象", line)) return -1;
             frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH();
@@ -2835,7 +3354,32 @@
         int a = READ_A(), b = READ_B(), c = READ_C();
         Value obj = R(b);
         int line = GET_CURRENT_LINE();
-        if (unlikely(!val_is_obj(obj) || val_as_obj(obj)->type != OBJ_STRUCT)) {
+        if (unlikely(!val_is_obj(obj))) {
+            if (!throw_runtime_error("字段赋值需要结构体对象", line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        // cstruct（C 布局）字段写：数值类型自动提升
+        if (val_as_obj(obj)->type == OBJ_CSTRUCT) {
+            ObjCStruct* co = (ObjCStruct*)val_as_obj(obj);
+            if (unlikely(c < 0 || c >= co->def->field_count)) {
+                if (!throw_runtime_error("cstruct 字段索引越界", line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            Value nv = R(a);
+            TypeKind ft = co->def->fields[c].type;
+            if (val_is_int(nv) && (ft == TYPE_F32 || ft == TYPE_F64)) {
+                nv = val_float((double)val_as_int(nv));
+            } else if (val_is_bigint(nv) && (ft == TYPE_F32 || ft == TYPE_F64)) {
+                nv = val_float(bigint_to_double(val_as_bigint(nv)));
+            } else if (val_is_float(nv) && (ft >= TYPE_I8 && ft <= TYPE_U64)) {
+                nv = val_num(val_as_num(nv));
+            }
+            cstruct_set_field_value(co, c, nv);
+            DISPATCH();
+        }
+        if (unlikely(val_as_obj(obj)->type != OBJ_STRUCT)) {
             if (!throw_runtime_error("字段赋值需要结构体对象", line)) return -1;
             frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH();
@@ -2901,6 +3445,16 @@
                 R(a) = val_obj((Object*)bound);
                 DISPATCH();
             }
+            // ★ 没有同名方法：退化为"取同名字段"—— 支持 `func():int cb` 这种**函数类型字段**
+            //   的 `obj.cb()` 调用（字段里就是一等函数值，CALL 直接调它）。
+            //   否则 `self.on_click()` 会误报「类型 object 上不存在方法 'on_click'」✗
+            if (def) {
+                int fi = struct_get_field_index(def, name->chars);
+                if (fi >= 0) {
+                    R(a) = struct_get_field(so, fi);
+                    DISPATCH();
+                }
+            }
         }
 
         if (rt == OBJ_DICT) {
@@ -2908,8 +3462,10 @@
             DISPATCH();
         }
 
-        // cstruct 定义对象：malloc / size / free 等方法来自 C 侧方法表
-        if (rt == OBJ_CSTRUCT_DEF) {
+        // cstruct 定义 / 实例 / 实例数组：malloc / size / free 等方法来自 C 侧方法表
+        //   （`v.free()` 里 v 是 malloc_array 得到的 ObjCStructArray，也要能取到方法）
+        if (rt == OBJ_CSTRUCT_DEF || rt == OBJ_CSTRUCT || rt == OBJ_CSTRUCT_ARRAY ||
+            rt == OBJ_CSTRUCT_ARRAY_VIEW) {
             extern ObjNative* cstruct_find_method(const char* name);
             ObjNative* native_method = cstruct_find_method(name->chars);
             if (unlikely(!native_method)) {
@@ -2917,6 +3473,17 @@
                 snprintf(msg, sizeof(msg), "cstruct 不存在方法 '%s'", name->chars);
                 if (!throw_runtime_error(msg, line)) return -1;
                 frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            // 实例方法需要绑定 receiver（native 调用约定：args[0] = receiver）
+            ObjType receiver_type = val_as_obj(receiver)->type;
+            if (receiver_type != OBJ_CSTRUCT_DEF) {
+                ObjBoundMethod* bound = (ObjBoundMethod*)gc_alloc(sizeof(ObjBoundMethod), OBJ_BOUND_METHOD);
+                if (unlikely(!bound)) { runtime_error("内存分配失败", line); return -1; }
+                bound->receiver = receiver;
+                bound->method = native_method;
+                bound->closure = NULL;
+                R(a) = val_obj((Object*)bound);
                 DISPATCH();
             }
             R(a) = val_obj((Object*)native_method);
@@ -2945,13 +3512,137 @@
             DISPATCH();
         }
     }
-    LABEL(OP_GET_FIELD_ADDR): DISPATCH();
+    // OP_GET_FIELD_ADDR A B C: R[A] = &R[B].field(C)（仅 cstruct 字段）
+    LABEL(OP_GET_FIELD_ADDR): {
+        int a = READ_A(), b = READ_B(), c = READ_C();
+        int line = GET_CURRENT_LINE();
+        Value obj = R(b);
+        if (unlikely(!val_is_obj(obj) || val_as_obj(obj)->type != OBJ_CSTRUCT)) {
+            if (!throw_runtime_error("& 取地址仅支持 cstruct 字段", line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        ObjCStruct* co = (ObjCStruct*)val_as_obj(obj);
+        if (unlikely(c < 0 || c >= co->def->field_count)) {
+            if (!throw_runtime_error("cstruct 字段索引越界", line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        ObjFFIPointer* ptr = cstruct_field_addr_new(co, c);
+        if (unlikely(!ptr)) {
+            runtime_error("内存不足", line);
+            return -1;
+        }
+        R(a) = val_obj((Object*)ptr);
+        DISPATCH();
+    }
     LABEL(OP_SET_PTR_ELEM_TYPE): DISPATCH();
     LABEL(OP_SET_DECLARED_FACE): DISPATCH();
 
     // --- cstruct ---
-    LABEL(OP_CSTRUCT_DEF): DISPATCH();
-    LABEL(OP_GET_CSTRUCT_DEF): DISPATCH();
+    // OP_CSTRUCT_DEF A Bx: R[A] = C 布局结构体定义；Bx = 名字常量索引
+    //   紧随元数据（与 codegen 的 gen_cstruct_def 严格同序）：
+    //   field_count(1) total_size(2) alignment(1) is_packed(1) explicit_align(1)
+    //   fields: name_const(2) type(1) offset(2) array_dim(2) struct_name_const(2)
+    //           + PTR_GENERIC 时 elem_type(1)
+    LABEL(OP_CSTRUCT_DEF): {
+        int a = READ_A();
+        int name_idx = READ_Bx();
+        uint8_t* ip = frame->ip;
+        int field_count = ip[0]; ip += 1;
+        int total_size = (ip[0] << 8) | ip[1]; ip += 2;
+        int alignment = ip[0]; ip += 1;
+        int is_packed = ip[0]; ip += 1;
+        int explicit_align = ip[0]; ip += 1;
+
+        if (unlikely(name_idx < 0 || name_idx >= frame->chunk->const_cnt)) {
+            if (!throw_runtime_error("cstruct 名字常量越界", GET_CURRENT_LINE())) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        Value name_val = frame->chunk->constants[name_idx];
+        if (unlikely(!val_is_obj(name_val) || val_as_obj(name_val)->type != OBJ_STRING)) {
+            if (!throw_runtime_error("cstruct 名称必须是字符串", GET_CURRENT_LINE())) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        ObjString* cname = (ObjString*)val_as_obj(name_val);
+
+        ObjCStructDef* def = cstruct_def_new(cname->chars, field_count, total_size, alignment);
+        if (unlikely(!def)) {
+            runtime_error("cstruct 定义分配失败", GET_CURRENT_LINE());
+            return -1;
+        }
+        if (!def->owner) def->owner = module_frame_current_module();
+        def->is_packed = (is_packed != 0);
+        def->explicit_align = explicit_align;
+
+        for (int i = 0; i < field_count; i++) {
+            int fname_idx = (ip[0] << 8) | ip[1]; ip += 2;
+            TypeKind ftype = (TypeKind)ip[0]; ip += 1;
+            int foffset = (ip[0] << 8) | ip[1]; ip += 2;
+            int fdim = (ip[0] << 8) | ip[1]; ip += 2;
+            int sname_idx = (ip[0] << 8) | ip[1]; ip += 2;
+
+            const char* fname = "";
+            if (fname_idx >= 0 && fname_idx < frame->chunk->const_cnt) {
+                Value fnv = frame->chunk->constants[fname_idx];
+                if (val_is_obj(fnv) && val_as_obj(fnv)->type == OBJ_STRING) {
+                    fname = ((ObjString*)val_as_obj(fnv))->chars;
+                }
+            }
+            const char* sname = NULL;
+            if (ftype == TYPE_CSTRUCT && sname_idx != 0xFFFF &&
+                sname_idx >= 0 && sname_idx < frame->chunk->const_cnt) {
+                Value snv = frame->chunk->constants[sname_idx];
+                if (val_is_obj(snv) && val_as_obj(snv)->type == OBJ_STRING) {
+                    sname = ((ObjString*)val_as_obj(snv))->chars;
+                }
+            }
+            int fsize = c_layout_type_size(ftype);
+            if (ftype == TYPE_CSTRUCT && sname) {
+                ObjCStructDef* nested = cstruct_def_find(sname);
+                if (nested) fsize = nested->total_size;
+            }
+            TypeKind elem = TYPE_PTR;
+            if (ftype == TYPE_PTR_GENERIC) { elem = (TypeKind)ip[0]; ip += 1; }
+
+            cstruct_def_set_field(def, i, fname, ftype, foffset, fsize, fdim, sname, elem);
+        }
+        // 元数据是变长的，ip 必须由我们自己推进
+        frame->ip = ip;
+
+        cstruct_def_register(def);
+        R(a) = val_obj((Object*)def);
+        DISPATCH();
+    }
+    // OP_GET_CSTRUCT_DEF A Bx: R[A] = cstruct_def_find(K[Bx])
+    LABEL(OP_GET_CSTRUCT_DEF): {
+        int a = READ_A();
+        int name_idx = READ_Bx();
+        if (unlikely(name_idx < 0 || name_idx >= frame->chunk->const_cnt)) {
+            if (!throw_runtime_error("cstruct 名字常量越界", GET_CURRENT_LINE())) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        Value name_val = frame->chunk->constants[name_idx];
+        if (unlikely(!val_is_obj(name_val) || val_as_obj(name_val)->type != OBJ_STRING)) {
+            if (!throw_runtime_error("cstruct 名称必须是字符串", GET_CURRENT_LINE())) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        ObjCStructDef* def = cstruct_def_find(((ObjString*)val_as_obj(name_val))->chars);
+        if (unlikely(!def)) {
+            char msg[256];
+            snprintf(msg, sizeof(msg), "找不到 cstruct 定义 '%s'",
+                     ((ObjString*)val_as_obj(name_val))->chars);
+            if (!throw_runtime_error(msg, GET_CURRENT_LINE())) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        R(a) = val_obj((Object*)def);
+        DISPATCH();
+    }
 
     // --- 类型检查 / 转换 ---
     // OP_TYPE_CHECK A B C: R[A] = (R[A] is 类型B[元素C])
@@ -2989,17 +3680,243 @@
     }
 
     // --- 协程 ---
-    LABEL(OP_AWAIT): DISPATCH();
-    LABEL(OP_ASYNC_CALL): DISPATCH();
+    // OP_ASYNC_CALL A B: 调用 async 函数 —— R[A] = 闭包，R[A+1..A+B] = 实参，
+    //   结果写回 R[A]（本次调用的 Future）。协程加入事件循环就绪队列。
+    LABEL(OP_ASYNC_CALL): {
+        int a = READ_A(), b = READ_B();
+        int arg_count = b;
+        int line = GET_CURRENT_LINE();
+        Value callee = R(a);
+
+        if (unlikely(!val_is_obj(callee) || val_as_obj(callee)->type != OBJ_CLOSURE)) {
+            if (!throw_runtime_error("async 调用只能调用 async 函数", line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        ObjClosure* closure = (ObjClosure*)val_as_obj(callee);
+        ObjCoroutine* co = coroutine_new(closure);
+        if (unlikely(!co)) { runtime_error("内存不足，无法创建协程", line); return -1; }
+
+        // 实参从调用方寄存器复制进协程（被调方 locals[0..arity-1]）
+        if (arg_count > 0) {
+            co->initial_args = (Value*)malloc((size_t)arg_count * sizeof(Value));
+            if (unlikely(!co->initial_args)) { runtime_error("内存分配失败", line); return -1; }
+            for (int i = 0; i < arg_count; i++) {
+                co->initial_args[i] = R(a + 1 + i);
+            }
+            co->initial_arg_count = arg_count;
+        }
+
+        ObjFuture* task_future = future_new();
+        if (unlikely(!task_future)) { runtime_error("内存不足，无法创建 Future", line); return -1; }
+        co->task_future = task_future;
+
+        if (vm.event_loop) {
+            event_loop_add_ready(vm.event_loop, co);
+        }
+        R(a) = val_obj((Object*)task_future);
+        DISPATCH();
+    }
+    // OP_AWAIT A B: R[A] = await R[B]（B 是 Future）
+    //   已完成 → 直接取值；未完成 → 保存本协程的所有帧并挂起，
+    //   恢复时由 vm_run_coroutine 把结果写回顶层帧的 R[await_dst_reg]
+    LABEL(OP_AWAIT): {
+        int a = READ_A(), b = READ_B();
+        int line = GET_CURRENT_LINE();
+        Value future_val = R(b);
+
+        if (unlikely(!val_is_obj(future_val) || val_as_obj(future_val)->type != OBJ_FUTURE)) {
+            if (!throw_runtime_error("await 只能等待 Future 对象", line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        ObjFuture* future = (ObjFuture*)val_as_obj(future_val);
+
+        if (future->completed) {
+            if (!val_is_null(future->error)) {
+                // Future 失败：按异常抛出（交给统一的异常处理路径）
+                if (!throw_runtime_error_with_operand("await: 异步任务失败", "AWAIT", future->error, line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            R(a) = future->result;
+            DISPATCH();
+        }
+
+        ObjCoroutine* current = vm.current_coroutine;
+        if (unlikely(!current)) {
+            if (!throw_runtime_error("await 只能在 async 函数中使用", line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+
+        current->state = COROUTINE_SUSPENDED;
+        current->saved_sp = vm.sp;
+        current->await_dst_reg = a;
+
+        // 保存本协程的所有帧（[co_start, frame_cnt)）：所有权转给 saved_frames，
+        // vm.frames 里的帧被 frame_cnt 重置"放弃"
+        int co_start = current->saved_frame_cnt - 1;
+        if (co_start < 0) co_start = 0;
+        int num_frames = vm.frame_cnt - co_start;
+        if (current->saved_frames) {
+            for (int i = 0; i < current->saved_frame_count; i++) {
+                CallFrame* sf = &current->saved_frames[i];
+                if (sf->locals_is_dynamic && sf->locals) free(sf->locals);
+            }
+            free(current->saved_frames);
+            current->saved_frames = NULL;
+        }
+        if (num_frames > 0) {
+            current->saved_frames = (CallFrame*)malloc((size_t)num_frames * sizeof(CallFrame));
+            if (unlikely(!current->saved_frames)) { runtime_error("协程帧保存失败", line); return -1; }
+            for (int i = 0; i < num_frames; i++) {
+                CallFrame* src = &vm.frames[co_start + i];
+                CallFrame* dst = &current->saved_frames[i];
+                memcpy(dst, src, sizeof(CallFrame));
+                if (!src->locals_is_dynamic && src->local_count > 0) {
+                    dst->locals = dst->inline_locals;
+                }
+            }
+            current->saved_frame_count = num_frames;
+        }
+
+        current->waiting_for = future;
+        future->waiter = current;
+        gc_write_barrier((Object*)current, future_val);
+        gc_write_barrier((Object*)future, val_obj((Object*)current));
+        gc_remember_object((Object*)current);
+
+        // 返回 0 让控制权交回事件循环（帧保留在 saved_frames，恢复时再装回）
+        return 0;
+    }
 
     // --- FFI ---
-    LABEL(OP_CLIB_CALL): DISPATCH();
-    LABEL(OP_CFUNC_CALLBACK): DISPATCH();
+    // OP_CLIB_CALL A B C: C = 用户实参个数
+    //   R[A] = clib 库对象，R[A+1] = 函数名，R[A+2..A+1+C] = 实参
+    //   紧随指令的变长操作数：ret_type_kind(1) + arg_types[C](1 each)
+    //   结果写回 R[A]（类型按 ret_type_kind 自动展开：str8 → string 等）
+    LABEL(OP_CLIB_CALL): {
+        int a = READ_A();
+        int user_arg_count = READ_C();
+        int line = GET_CURRENT_LINE();
+
+        if (unlikely(user_arg_count < 0 || user_arg_count > FFI_MAX_ARGS)) {
+            if (!throw_runtime_error("clib 调用参数过多", line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        int ret_type_kind = (int)frame->ip[0];
+        int arg_types[FFI_MAX_ARGS];
+        for (int i = 0; i < user_arg_count; i++) {
+            arg_types[i] = (int)frame->ip[1 + i];
+        }
+        frame->ip += 1 + user_arg_count;
+
+        int argc = 2 + user_arg_count;
+        // 寄存器区 R[A..A+argc-1] 在 frame->locals 中连续，可直接当 FFI 的 Value* 用
+        Value result = ffi_clib_call(argc, &R(a), ret_type_kind, arg_types);
+
+        // ★ ffi_clib_call 内部可能回调进 VM（grow_frames 会 realloc vm.frames），
+        //   frame 必须重新取，否则 DISPATCH 读到悬空指针
+        frame = &vm.frames[vm.frame_cnt - 1];
+
+        if (unlikely(vm.has_exception)) {
+            char* msg = NULL;
+            if (val_is_obj(vm.exception) && val_as_obj(vm.exception)->type == OBJ_STRING) {
+                msg = strdup(((ObjString*)val_as_obj(vm.exception))->chars);
+            } else {
+                msg = value_to_string(vm.exception);
+            }
+            error_clear();
+            if (!throw_runtime_error(msg, line)) { free(msg); return -1; }
+            free(msg);
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+
+        R(a) = result;
+        DISPATCH();
+    }
+    // OP_CFUNC_CALLBACK A: R[A] = FFI 回调（由 cfunc 声明式签名创建）
+    //   紧随指令的变长操作数：ret_type(1) param_count(1) param_types[param_count](1 each)
+    //   R[A] 传入的是 Leno 侧函数值（闭包 / 函数对象）
+    LABEL(OP_CFUNC_CALLBACK): {
+        int a = READ_A();
+        int ret_type = (int)frame->ip[0];
+        int param_count = (int)frame->ip[1];
+        if (unlikely(param_count < 0 || param_count > 12)) {
+            if (!throw_runtime_error("cfunc 回调参数过多", GET_CURRENT_LINE())) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        uint8_t param_types[12];
+        for (int i = 0; i < param_count; i++) param_types[i] = frame->ip[2 + i];
+        frame->ip += 2 + param_count;
+
+        Value result = ffi_callback_create_with_sig(R(a), ret_type, param_count, param_types);
+
+        // ffi_callback_create_with_sig 可能回调进 VM（frames 会被 realloc）
+        frame = &vm.frames[vm.frame_cnt - 1];
+        if (unlikely(vm.has_exception)) {
+            char* msg = NULL;
+            if (val_is_obj(vm.exception) && val_as_obj(vm.exception)->type == OBJ_STRING) {
+                msg = strdup(((ObjString*)val_as_obj(vm.exception))->chars);
+            } else {
+                msg = value_to_string(vm.exception);
+            }
+            int line = GET_CURRENT_LINE();
+            error_clear();
+            if (!throw_runtime_error(msg, line)) { free(msg); return -1; }
+            free(msg);
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        R(a) = result;
+        DISPATCH();
+    }
     LABEL(OP_U8_TO_F64): DISPATCH();
 
     // --- 泛型 / 析构 ---
     LABEL(OP_PUSH_TYPE_ARGS): DISPATCH();
-    LABEL(OP_DTOR_LOCAL): DISPATCH();
+    // OP_DTOR_LOCAL A: 对 R[A] 持有的 struct 实例调用其析构函数（无析构则为空操作）
+    LABEL(OP_DTOR_LOCAL): {
+        int a = READ_A();
+        Value val = R(a);
+        if (val_is_obj(val) && val_as_obj(val)->type == OBJ_STRUCT) {
+            ObjStruct* so = (ObjStruct*)val_as_obj(val);
+            ObjStructDef* def = so->def;
+            if (def && def->has_dtor && def->dtor_index >= 0 &&
+                def->dtor_index < def->method_count) {
+                StructMethodInfo* mi = &def->methods[def->dtor_index];
+                ObjClosure* dcl = mi->closure;
+                if (!dcl && mi->func) {
+                    dcl = (ObjClosure*)gc_alloc(sizeof(ObjClosure), OBJ_CLOSURE);
+                    if (unlikely(!dcl)) {
+                        runtime_error("内存不足，无法创建析构函数闭包", GET_CURRENT_LINE());
+                        return -1;
+                    }
+                    dcl->function = mi->func;
+                    dcl->upvalue_count = mi->func->upvalue_count;
+                    dcl->type_param_count = 0;
+                    dcl->type_param_args = NULL;
+                    for (int u = 0; u < mi->func->upvalue_count; u++) dcl->upvalues[u] = NULL;
+                    mi->closure = dcl;
+                }
+                if (dcl) {
+                    // 析构调用：self 直接给 receiver，无实参、结果丢弃（ret_want=0）
+                    if (call_reg(dcl, 1, val, a + 1, 0, a, 0, GET_CURRENT_LINE())) {
+                        frame = &vm.frames[vm.frame_cnt - 1];
+                        DISPATCH();
+                    }
+                    if (!vm.has_exception) return -1;
+                    frame = &vm.frames[vm.frame_cnt - 1];
+                    DISPATCH();
+                }
+            }
+        }
+        DISPATCH();
+    }
 
     // --- switch ---
     LABEL(OP_SWITCH_LOOKUP): DISPATCH();

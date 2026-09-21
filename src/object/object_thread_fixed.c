@@ -102,6 +102,7 @@ static void* thread_entry_point_fixed(void* arg) {
     frame->locals_is_dynamic = 0;
     frame->catch_ip = NULL;
     frame->finally_ip = NULL;
+    frame->catch_finally_ip = NULL;
     frame->prev_catch_ip = NULL;
     frame->prev_finally_ip = NULL;
     frame->in_finally = 0;

@@ -6,6 +6,7 @@
 
 // 前向声明（与 codegen.h 中非 static 声明一致）
 void gen_stmt(CodeGen* gen, Ast* ast);
+void gen_index_assign(CodeGen* gen, Ast* ast, int dst);
 static void gen_var_decl(CodeGen* gen, Ast* ast);
 static void gen_return(CodeGen* gen, Ast* ast);
 static void gen_return_multi(CodeGen* gen, Ast* ast);
@@ -145,10 +146,15 @@ void gen_stmt(CodeGen* gen, Ast* ast) {
         }
         case AST_ASSIGN:      gen_assign(gen, ast); break;
         case AST_COMPOUND_ASSIGN: gen_compound_assign(gen, ast); break;
+        // 独立索引赋值：parser 对 `c.count += 5`（AST_MODULE_ACCESS + 复合赋值）与
+        // 语义阶段把方法内 `count = v` 的 AST_ASSIGN 就地改写成 AST_INDEX_ASSIGN，
+        // 这两类节点都是**裸**的（不挂在 AST_ASSIGN.targets 下）⇒ 此前无人生成 ✗
+        case AST_INDEX_ASSIGN: gen_index_assign(gen, ast, -1); break;
         case AST_EXPR_STMT: {
             // 赋值语句会被解析器包在表达式语句里，直接走赋值生成（少一次搬运）
             Ast* e = ast->u.expr_stmt.expr;
-            if (e && (e->kind == AST_ASSIGN || e->kind == AST_COMPOUND_ASSIGN)) {
+            if (e && (e->kind == AST_ASSIGN || e->kind == AST_COMPOUND_ASSIGN ||
+                      e->kind == AST_INDEX_ASSIGN)) {
                 gen_stmt(gen, e);
                 break;
             }
@@ -180,12 +186,25 @@ void gen_stmt(CodeGen* gen, Ast* ast) {
 // block
 // ============================================================================
 
+// 逆序对 [from, gen->dtor_count) 区间内的条目发射 OP_DTOR_LOCAL
+static void emit_dtors_from(CodeGen* gen, int from, int line, int nrvo_skip) {
+    for (int i = gen->dtor_count - 1; i >= from; i--) {
+        int slot = gen->dtor_entries[i].local_slot;
+        if (slot == nrvo_skip) continue;   // NRVO：直接返回该局部变量时不析构
+        reg_encode_iABC(gen->chunk, OP_DTOR_LOCAL, slot, 0, 0, line);
+    }
+}
+
 void gen_block(CodeGen* gen, Ast* ast) {
     if (!ast) return;
+    int dtor_at_entry = gen->dtor_count;
     int n = ast->u.block.count;
     for (int i = 0; i < n; i++) {
         gen_stmt(gen, ast->u.block.items[i]);
     }
+    // 块结束：逆序析构本层声明的带析构函数 struct 局部变量（栈式同一语义）
+    emit_dtors_from(gen, dtor_at_entry, ast->line, -1);
+    if (gen->dtor_count > dtor_at_entry) gen->dtor_count = dtor_at_entry;
 }
 
 // ============================================================================
@@ -193,15 +212,44 @@ void gen_block(CodeGen* gen, Ast* ast) {
 // ============================================================================
 
 void gen_if(CodeGen* gen, Ast* ast) {
-    gen_if_ex(gen, ast, 0);
+    gen_if_ex(gen, ast, 0, -1);
 }
 
-void gen_if_ex(CodeGen* gen, Ast* ast, int want_value) {
-    int dst = -1;
-    if (want_value) {
-        dst = reg_alloc(gen);
+// 分支生成（唯一实现）：
+//   语句位置：块 / `eif` 链（AST_IF）按语句生成；普通表达式求值后丢弃。
+//   表达式位置：块按语句生成（值补 null）；AST_IF（三元链的 else if）按表达式
+//   递归生成，值写入 dst；其余表达式直接写入 dst。
+// ⚠ 此前表达式位置只认 AST_EXPR_STMT，三元 `if c then a else b` 的 then/else
+//   是普通表达式（AST_VAR 等），走 gen_stmt 被静默忽略 ⇒ 结果永远是 null ✗
+static void gen_if_branch_to(CodeGen* gen, Ast* branch, int want_value, int dst, int line) {
+    if (!branch) {
+        if (want_value) emit_loadnil_to(gen, dst, line);
+        return;
     }
+    if (branch->kind == AST_BLOCK) {
+        gen_stmt(gen, branch);
+        if (want_value) emit_loadnil_to(gen, dst, line);
+        return;
+    }
+    if (!want_value) {
+        // 语句位置：AST_IF（eif 链）与表达式语句都按语句生成
+        if (branch->kind == AST_IF || branch->kind == AST_EXPR_STMT) {
+            gen_stmt(gen, branch);
+            return;
+        }
+        int r = gen_expr(gen, branch);
+        reg_free(gen, r);
+        return;
+    }
+    // 表达式位置
+    if (branch->kind == AST_EXPR_STMT) {
+        gen_expr_to(gen, branch->u.expr_stmt.expr, dst);
+        return;
+    }
+    gen_expr_to(gen, branch, dst);
+}
 
+void gen_if_ex(CodeGen* gen, Ast* ast, int want_value, int dst) {
     int need_bind = (ast->u.if_.guard_bind_var && ast->u.if_.guard_bind_index >= 0);
     Ast* cond_ast = ast->u.if_.cond;
 
@@ -258,17 +306,7 @@ void gen_if_ex(CodeGen* gen, Ast* ast, int want_value) {
     #undef IF_DO_BIND
 
     // then 分支
-    if (want_value && ast->u.if_.then) {
-        // then 的最后一条表达式写入 dst
-        if (ast->u.if_.then->kind == AST_EXPR_STMT) {
-            gen_expr_to(gen, ast->u.if_.then->u.expr_stmt.expr, dst);
-        } else {
-            gen_stmt(gen, ast->u.if_.then);
-            if (want_value) emit_loadnil_to(gen, dst, ast->line);
-        }
-    } else {
-        gen_stmt(gen, ast->u.if_.then);
-    }
+    gen_if_branch_to(gen, ast->u.if_.then, want_value, dst, ast->line);
 
     // if 有 else 分支
     if (ast->u.if_.else_) {
@@ -277,16 +315,7 @@ void gen_if_ex(CodeGen* gen, Ast* ast, int want_value) {
         if (jmp_false2 >= 0) patch_jmp(gen, jmp_false2);
 
         // else 分支
-        if (want_value && ast->u.if_.else_) {
-            if (ast->u.if_.else_->kind == AST_EXPR_STMT) {
-                gen_expr_to(gen, ast->u.if_.else_->u.expr_stmt.expr, dst);
-            } else {
-                gen_stmt(gen, ast->u.if_.else_);
-                if (want_value) emit_loadnil_to(gen, dst, ast->line);
-            }
-        } else {
-            gen_stmt(gen, ast->u.if_.else_);
-        }
+        gen_if_branch_to(gen, ast->u.if_.else_, want_value, dst, ast->line);
 
         patch_jmp(gen, jmp_end);
     } else {
@@ -347,9 +376,18 @@ static void gen_for(CodeGen* gen, Ast* ast) {
 
     // --- 判断是"容器迭代"还是"数值区间" ---
     // 无 start、有循环变量，且被遍历对象不是数字时按容器迭代处理。
+    // ★ 以**类型推断**为主：`for s.scores to x`（字典字段）这类非变量表达式，
+    //   旧的"只看字面量/变量符号"判断会误判成数值区间 ⇒ 循环体一次都不进 ✗
     int is_iter = 0;
     if (!ast->u.for_.start && ast->u.for_.var_name) {
-        if (is_string_expr(end_expr) || is_array_expr(end_expr) || is_dict_expr(end_expr)) {
+        TypeInfo* et = infer_expr_type(gen->sem, end_expr);
+        TypeKind ek = et ? et->kind : TYPE_UNKNOWN;
+        if (et) type_free(et);
+        if (ek == TYPE_STRING || ek == TYPE_ARRAY || ek == TYPE_DICT || ek == TYPE_STRUCT) {
+            is_iter = 1;
+        } else if (ek == TYPE_INT || ek == TYPE_FLOAT) {
+            is_iter = 0;
+        } else if (is_string_expr(end_expr) || is_array_expr(end_expr) || is_dict_expr(end_expr)) {
             is_iter = 1;
         } else if (is_var_expr(end_expr) && end_expr->kind == AST_VAR) {
             TypeKind vt = end_expr->u.var.ref.type_kind;
@@ -480,11 +518,21 @@ static void gen_for_iter(CodeGen* gen, Ast* ast) {
     reg_free(gen, len_reg);
 
     // 元素 / 键 → 循环变量
+    //   第一个循环变量：数组/字符串 → 元素；dict/struct → 键（字段名）
+    //   第二个循环变量：数组/字符串 → 下标；dict/struct → **值**（OP_ITER_GET_VALUE）
+    //   （此前第二个变量一律当下标 ⇒ `for d to k, v` 的 v 拿到的是序号 ✗）
     if (ast->u.for_.var_name) {
         reg_encode_iABC(gen->chunk, OP_ITER_GET, lv, obj_slot, idx_slot, ast->line);
     }
     if (has_idx_var) {
-        emit_mov(gen, iv, idx_slot, ast->line);
+        TypeInfo* ot = infer_expr_type(gen->sem, ast->u.for_.end);
+        int is_kv_container = (ot && (ot->kind == TYPE_DICT || ot->kind == TYPE_STRUCT));
+        if (ot) type_free(ot);
+        if (is_kv_container) {
+            reg_encode_iABC(gen->chunk, OP_ITER_GET_VALUE, iv, obj_slot, idx_slot, ast->line);
+        } else {
+            emit_mov(gen, iv, idx_slot, ast->line);
+        }
     }
 
     if (ast->u.for_.body) gen_stmt(gen, ast->u.for_.body);
@@ -667,6 +715,26 @@ static void gen_switch(CodeGen* gen, Ast* ast) {
 // ============================================================================
 
 static void gen_return(CodeGen* gen, Ast* ast) {
+    // 有带析构的局部变量：先把返回值存进临时寄存器 → 逆序析构 → 再 RETURN。
+    //   （先析构会把返回值本身销毁 ✗）
+    if (gen->dtor_count > 0) {
+        int r = reg_alloc(gen);
+        if (ast->u.ret) {
+            gen_expr_to(gen, ast->u.ret, r);
+        } else {
+            emit_loadnil_to(gen, r, ast->line);
+        }
+        int nrvo_skip = -1;
+        if (ast->u.ret && ast->u.ret->kind == AST_VAR) {
+            SymRef* rref = &ast->u.ret->u.var.ref;
+            if (rref->kind == SYM_LOCAL || rref->kind == SYM_PARAM) nrvo_skip = rref->index;
+        }
+        emit_dtors_from(gen, 0, ast->line, nrvo_skip);
+        emit_return(gen, r, 1, ast->line);
+        reg_free(gen, r);
+        return;
+    }
+
     if (ast->u.ret) {
         int r = gen_expr(gen, ast->u.ret);
         emit_return(gen, r, 1, ast->line);
@@ -690,18 +758,37 @@ static void gen_return_multi(CodeGen* gen, Ast* ast) {
         return;
     }
 
-    // 求值第一个返回值
-    int base = gen_expr(gen, ast->u.ret_multi.exprs[0]);
-    // 其余返回值紧随
-    for (int i = 1; i < count; i++) {
-        int r = reg_alloc(gen);
-        gen_expr_to(gen, ast->u.ret_multi.exprs[i], r);
+    // 结果区必须连号：整块分配 base .. base+count-1，count 寄存器紧随其后
+    int base = reg_alloc_block(gen, count + 1);
+    for (int i = 0; i < count; i++) {
+        gen_expr_to(gen, ast->u.ret_multi.exprs[i], base + i);
     }
 
     // RETURN_MULTI: A = base, B = count_reg
-    int count_reg = reg_alloc(gen);
+    int count_reg = base + count;
     emit_loadi_to(gen, count_reg, count, ast->line);
+
+    if (gen->dtor_count > 0) {
+        int nrvo_skip[16];
+        int nrvo_count = 0;
+        for (int j = 0; j < count && j < 16; j++) {
+            Ast* e = ast->u.ret_multi.exprs[j];
+            if (e && e->kind == AST_VAR) {
+                SymRef* rref = &e->u.var.ref;
+                if (rref->kind == SYM_LOCAL || rref->kind == SYM_PARAM) nrvo_skip[nrvo_count++] = rref->index;
+            }
+        }
+        for (int i = gen->dtor_count - 1; i >= 0; i--) {
+            int slot = gen->dtor_entries[i].local_slot;
+            int skip = 0;
+            for (int j = 0; j < nrvo_count; j++) if (slot == nrvo_skip[j]) { skip = 1; break; }
+            if (skip) continue;
+            reg_encode_iABC(gen->chunk, OP_DTOR_LOCAL, slot, 0, 0, ast->line);
+        }
+    }
+
     emit_return_multi(gen, base, count_reg, ast->line);
+    reg_free_block(gen, base);
 }
 
 // ============================================================================
@@ -753,9 +840,17 @@ static void gen_var_decl(CodeGen* gen, Ast* ast) {
         emit_loadnil_to(gen, dst, ast->line);
     }
 
-    // 如果有析构函数，添加追踪
+    // 追踪带析构的 struct 局部变量：作用域结束 / return 时发 OP_DTOR_LOCAL。
+    // ⚠ `var r = new Resource()` 的声明类型是 `var`（u.var_decl.type 不是 TYPE_STRUCT），
+    //   必须回退到**初始化表达式的推断类型**，否则析构整类不触发 ✗
     TypeInfo* t = ast->u.var_decl.type;
-    if (t && t->kind == TYPE_STRUCT && t->struct_name) {
+    int is_struct_local = (t && t->kind == TYPE_STRUCT && t->struct_name);
+    if (!is_struct_local && ast->u.var_decl.init) {
+        TypeInfo* it = infer_expr_type(gen->sem, ast->u.var_decl.init);
+        if (it && it->kind == TYPE_STRUCT && it->struct_name) is_struct_local = 1;
+        if (it) type_free(it);
+    }
+    if (is_struct_local) {
         codegen_add_dtor_entry(gen, dst);
     }
 }
@@ -773,19 +868,64 @@ static SymRef* assign_target_ref(Ast* ast, int i) {
     return &target->u.var.ref;
 }
 
+// 索引赋值（裸 AST_INDEX_ASSIGN）：R[obj][R[idx]] = R[val]
+//   dst >= 0 时把被赋的值也写入 dst（表达式位置）；dst < 0 表示语句位置（丢弃结果）
+void gen_index_assign(CodeGen* gen, Ast* ast, int dst) {
+    Ast* obj_ast = ast->u.index_assign.obj;
+    Ast* idx_ast = ast->u.index_assign.index;
+    Ast* val_ast = ast->u.index_assign.value;
+    int obj_reg = obj_ast ? gen_expr(gen, obj_ast) : -1;
+    int idx_reg = idx_ast ? gen_expr(gen, idx_ast) : -1;
+    int val_reg = val_ast ? gen_expr(gen, val_ast) : -1;
+    if (val_reg < 0) {
+        val_reg = reg_alloc(gen);
+        emit_loadnil_to(gen, val_reg, ast->line);
+    }
+    // INDEX_SET: R[B][R[C]] = R[A]
+    reg_encode_iABC(gen->chunk, OP_INDEX_SET, val_reg, obj_reg, idx_reg, ast->line);
+    if (dst >= 0 && dst != val_reg) emit_mov(gen, dst, val_reg, ast->line);
+    reg_free(gen, val_reg);
+    if (idx_reg >= 0) reg_free(gen, idx_reg);
+    if (obj_reg >= 0) reg_free(gen, obj_reg);
+}
+
+// 第 i 个右侧值：多目标时 parser 把 RHS 包成 AST_ARRAY（`a, b = b, a`）
+static Ast* assign_rhs_value(Ast* ast, int i) {
+    Ast* value = ast->u.assign.value;
+    if (ast->u.assign.name_count > 1 && value && value->kind == AST_ARRAY &&
+        i < value->u.array.count) {
+        return value->u.array.items[i];
+    }
+    return value;
+}
+
 void gen_assign(CodeGen* gen, Ast* ast) {
     int n = ast->u.assign.name_count;
     if (n <= 0 || !ast->u.assign.targets) return;
+
+    // ★ 并行赋值（`a, b = b, a`）必须**先把所有右侧值求到临时寄存器**，再逐个写回。
+    //   求一个写一个时，第一次写回就污染了第二次还要读的变量 ——
+    //   实测 `a, b = b, a` 得到 b 的新值（两个都变成 b）✗
+    int* pre = NULL;
+    if (n > 1 && ast->u.assign.value) {
+        pre = (int*)malloc(sizeof(int) * (size_t)n);
+        if (pre) {
+            for (int i = 0; i < n; i++) {
+                pre[i] = gen_expr(gen, assign_rhs_value(ast, i));
+            }
+        }
+    }
 
     for (int i = 0; i < n; i++) {
         Ast* target = ast->u.assign.targets[i];
         if (!target) continue;
 
-        // 右侧值：单目标直接取 value；多目标时 value 通常是数组字面量，取第 i 项
-        Ast* value = ast->u.assign.value;
-        if (n > 1 && value && value->kind == AST_ARRAY && i < value->u.array.count) {
-            value = value->u.array.items[i];
-        }
+        Ast* value = assign_rhs_value(ast, i);
+        int pre_reg = pre ? pre[i] : -1;
+
+        // 取值到 val_reg：并行赋值时直接用已求值的临时寄存器
+        #define ASSIGN_VAL() (pre_reg >= 0 ? pre_reg : gen_expr(gen, value))
+        #define ASSIGN_FREE_VAL(_r) do { if (pre_reg < 0) reg_free(gen, (_r)); } while (0)
 
         switch (target->kind) {
             case AST_VAR: {
@@ -793,28 +933,33 @@ void gen_assign(CodeGen* gen, Ast* ast) {
                 switch (ref->kind) {
                     case SYM_LOCAL:
                     case SYM_PARAM:
-                        gen_expr_to(gen, value, ref->index);
-                        emit_cast_for_target(gen, ref->type_kind, value, ref->index, ast->line);
+                        if (pre_reg >= 0) {
+                            emit_cast_for_target(gen, ref->type_kind, value, pre_reg, ast->line);
+                            if (ref->index != pre_reg) emit_mov(gen, ref->index, pre_reg, ast->line);
+                        } else {
+                            gen_expr_to(gen, value, ref->index);
+                            emit_cast_for_target(gen, ref->type_kind, value, ref->index, ast->line);
+                        }
                         break;
                     case SYM_GLOBAL: {
-                        int r = gen_expr(gen, value);
+                        int r = ASSIGN_VAL();
                         emit_cast_for_target(gen, ref->type_kind, value, r, ast->line);
                         emit_setglobal(gen, r, ref->index, ast->line);
-                        reg_free(gen, r);
+                        ASSIGN_FREE_VAL(r);
                         break;
                     }
                     case SYM_UPVALUE: {
-                        int r = gen_expr(gen, value);
+                        int r = ASSIGN_VAL();
                         emit_cast_for_target(gen, ref->type_kind, value, r, ast->line);
                         emit_setupval(gen, r, ref->index, ast->line);
-                        reg_free(gen, r);
+                        ASSIGN_FREE_VAL(r);
                         break;
                     }
                     case SYM_MODULE: {
-                        int r = gen_expr(gen, value);
+                        int r = ASSIGN_VAL();
                         emit_cast_for_target(gen, ref->type_kind, value, r, ast->line);
                         reg_encode_iABx(gen->chunk, OP_SET_MODULE_VAR, r, ref->index, ast->line);
-                        reg_free(gen, r);
+                        ASSIGN_FREE_VAL(r);
                         break;
                     }
                     default:
@@ -824,24 +969,18 @@ void gen_assign(CodeGen* gen, Ast* ast) {
             }
 
             // 索引赋值：arr[i] = val / dict["k"] = val
-            case AST_INDEX: {
-                int obj_reg = gen_expr(gen, target->u.index.obj);
-                int idx_reg = gen_expr(gen, target->u.index.index);
-                int val_reg = gen_expr(gen, value);
+            case AST_INDEX:
+            case AST_INDEX_ASSIGN: {
+                Ast* obj_ast = (target->kind == AST_INDEX) ? target->u.index.obj
+                                                           : target->u.index_assign.obj;
+                Ast* idx_ast = (target->kind == AST_INDEX) ? target->u.index.index
+                                                           : target->u.index_assign.index;
+                int obj_reg = gen_expr(gen, obj_ast);
+                int idx_reg = gen_expr(gen, idx_ast);
+                int val_reg = ASSIGN_VAL();
                 // INDEX_SET: R[B][R[C]] = R[A]
                 reg_encode_iABC(gen->chunk, OP_INDEX_SET, val_reg, obj_reg, idx_reg, ast->line);
-                reg_free(gen, val_reg);
-                reg_free(gen, idx_reg);
-                reg_free(gen, obj_reg);
-                break;
-            }
-
-            case AST_INDEX_ASSIGN: {
-                int obj_reg = gen_expr(gen, target->u.index_assign.obj);
-                int idx_reg = gen_expr(gen, target->u.index_assign.index);
-                int val_reg = gen_expr(gen, value);
-                reg_encode_iABC(gen->chunk, OP_INDEX_SET, val_reg, obj_reg, idx_reg, ast->line);
-                reg_free(gen, val_reg);
+                ASSIGN_FREE_VAL(val_reg);
                 reg_free(gen, idx_reg);
                 reg_free(gen, obj_reg);
                 break;
@@ -850,11 +989,11 @@ void gen_assign(CodeGen* gen, Ast* ast) {
             // 字段赋值：obj.field = val
             case AST_FIELD_ACCESS: {
                 int obj_reg = gen_expr(gen, target->u.field_access.obj);
-                int val_reg = gen_expr(gen, value);
+                int val_reg = ASSIGN_VAL();
                 // SET_FIELD: R[B].field(C) = R[A]
                 reg_encode_iABC(gen->chunk, OP_SET_FIELD, val_reg, obj_reg,
                                 target->u.field_access.field_index, ast->line);
-                reg_free(gen, val_reg);
+                ASSIGN_FREE_VAL(val_reg);
                 reg_free(gen, obj_reg);
                 break;
             }
@@ -862,6 +1001,13 @@ void gen_assign(CodeGen* gen, Ast* ast) {
             default:
                 break;
         }
+        #undef ASSIGN_VAL
+        #undef ASSIGN_FREE_VAL
+    }
+
+    if (pre) {
+        for (int i = 0; i < n; i++) reg_free(gen, pre[i]);
+        free(pre);
     }
 }
 
@@ -869,10 +1015,45 @@ void gen_assign(CodeGen* gen, Ast* ast) {
 // compound_assign
 // ============================================================================
 
+// 复合赋值的运算部分：R[dst] op= R[r]
+static void emit_compound_op(CodeGen* gen, LenoTokenType op, int dst, int r, int line) {
+    switch (op) {
+        case TOK_PLUSEQ:  emit_add(gen, dst, dst, r, line); break;
+        case TOK_MINUSEQ:  emit_sub(gen, dst, dst, r, line); break;
+        case TOK_STAREQ:   emit_mul(gen, dst, dst, r, line); break;
+        case TOK_SLASHEQ:  emit_div(gen, dst, dst, r, line); break;
+        case TOK_MODEQ:    emit_mod(gen, dst, dst, r, line); break;
+        case TOK_BITANDEQ: emit_bitand(gen, dst, dst, r, line); break;
+        case TOK_BITOREQ:  emit_bitor(gen, dst, dst, r, line); break;
+        case TOK_BITXOREQ: emit_bitxor(gen, dst, dst, r, line); break;
+        case TOK_SHLEQ:    emit_shl(gen, dst, dst, r, line); break;
+        case TOK_SHREQ:    emit_shr(gen, dst, dst, r, line); break;
+        case TOK_USHREQ:   emit_ushr(gen, dst, dst, r, line); break;
+        default: break;
+    }
+}
+
 void gen_compound_assign(CodeGen* gen, Ast* ast) {
     // a += expr → R[dst] = R[dst] + expr
     SymRef* ref = &ast->u.compound_assign.ref;
     if (!ref->name) return;
+
+    // ★ struct 方法体内的字段复合赋值（`count += n`）：语义阶段把目标改写成
+    //   ref.name = "__self_field__"、ref.index = 字段索引（self 固定在 R0）。
+    //   此前这种标记被当成普通变量槽位用（读到 R0/R<字段索引> 的垃圾）⇒ null 参与运算 ✗
+    if (strcmp(ref->name, "__self_field__") == 0) {
+        int field_idx = ref->index;
+        int slot = reg_alloc(gen);
+        // GET_FIELD: R[slot] = R[0].field(field_idx)
+        reg_encode_iABC(gen->chunk, OP_GET_FIELD, slot, 0, field_idx, ast->line);
+        int r = gen_expr(gen, ast->u.compound_assign.value);
+        emit_compound_op(gen, ast->u.compound_assign.op, slot, r, ast->line);
+        reg_free(gen, r);
+        // SET_FIELD: R[0].field(field_idx) = R[slot]
+        reg_encode_iABC(gen->chunk, OP_SET_FIELD, slot, 0, field_idx, ast->line);
+        reg_free(gen, slot);
+        return;
+    }
 
     int dst;
     int is_local = (ref->kind == SYM_LOCAL || ref->kind == SYM_PARAM);
@@ -892,21 +1073,7 @@ void gen_compound_assign(CodeGen* gen, Ast* ast) {
 
     int r = gen_expr(gen, ast->u.compound_assign.value);
 
-    LenoTokenType op = ast->u.compound_assign.op;
-    switch (op) {
-        case TOK_PLUSEQ:  emit_add(gen, dst, dst, r, ast->line); break;
-        case TOK_MINUSEQ:  emit_sub(gen, dst, dst, r, ast->line); break;
-        case TOK_STAREQ:   emit_mul(gen, dst, dst, r, ast->line); break;
-        case TOK_SLASHEQ:  emit_div(gen, dst, dst, r, ast->line); break;
-        case TOK_MODEQ:    emit_mod(gen, dst, dst, r, ast->line); break;
-        case TOK_BITANDEQ: emit_bitand(gen, dst, dst, r, ast->line); break;
-        case TOK_BITOREQ:  emit_bitor(gen, dst, dst, r, ast->line); break;
-        case TOK_BITXOREQ: emit_bitxor(gen, dst, dst, r, ast->line); break;
-        case TOK_SHLEQ:    emit_shl(gen, dst, dst, r, ast->line); break;
-        case TOK_SHREQ:   emit_shr(gen, dst, dst, r, ast->line); break;
-        case TOK_USHREQ:   emit_ushr(gen, dst, dst, r, ast->line); break;
-        default: break;
-    }
+    emit_compound_op(gen, ast->u.compound_assign.op, dst, r, ast->line);
     reg_free(gen, r);
 
     if (!is_local) {
@@ -963,15 +1130,18 @@ static void gen_try(CodeGen* gen, Ast* ast) {
     //     既卡死又把旧异常泄漏给后续调用。
     //   - 顺序必须是 CATCH → END_TRY：END_TRY 会清 vm.exception/has_exception。
     SymRef* cref = &ast->u.try_.catch_var_ref;
+    int catch_fin_patch = -1;
     if (ast->u.try_.catch_var && cref->name) {
         if (cref->index >= gen->next_reg) {
             gen->next_reg = cref->index + 1;
             if (gen->next_reg > gen->max_reg) gen->max_reg = gen->next_reg;
         }
-        // CATCH iABx: R[A] = 当前异常
+        // CATCH iABx: R[A] = 当前异常；Bx = finally 块相对本指令的偏移（0 = 无 finally）
         reg_encode_iABx(gen->chunk, OP_CATCH, cref->index, 0, ast->line);
+        catch_fin_patch = gen->chunk->len - 2;   // Bx 字段位置
     }
-    reg_encode_iABC(gen->chunk, OP_END_TRY, 0, 0, 0, ast->line);
+    // A=1 表示"catch 块入口"这次 END_TRY：保留 catch_finally_ip（catch 体期间有效）
+    reg_encode_iABC(gen->chunk, OP_END_TRY, 1, 0, 0, ast->line);
 
     if (ast->u.try_.catch_body) {
         gen_stmt(gen, ast->u.try_.catch_body);
@@ -980,6 +1150,13 @@ static void gen_try(CodeGen* gen, Ast* ast) {
     // --- finally 块（catch 结束自然落入这里）---
     int fin_pos = gen->chunk->len;
     patch_jmp_to(gen, jmp_finally, fin_pos);
+    // 回填 CATCH 的 Bx：catch 体内再次 throw 时，仍要先执行本层 finally 再向外传播
+    //   （`try { throw "first" } catch e { throw "second" } finally { ... }`）
+    if (catch_fin_patch >= 0) {
+        int rel = has_finally ? (fin_pos - catch_pos) : 0;
+        gen->chunk->code[catch_fin_patch] = (uint8_t)((rel >> 8) & 0xFF);
+        gen->chunk->code[catch_fin_patch + 1] = (uint8_t)(rel & 0xFF);
+    }
     if (has_finally) {
         reg_encode_iABx(gen->chunk, OP_FINALLY, 0, 0, ast->line);
         gen_stmt(gen, ast->u.try_.finally_body);
@@ -1197,8 +1374,57 @@ static void gen_face_def(CodeGen* gen, Ast* ast) {
     }
 }
 
+// cstruct 定义：iABx(op, A=目标寄存器, Bx=名字常量) + 紧随元数据
+//   field_count(1) total_size(2) alignment(1) is_packed(1) explicit_align(1)
+//   每字段：name_const(2) type(1) offset(2) array_dim(2) struct_name_const(2, 0xFFFF=无)
+//           + TYPE_PTR_GENERIC 时再 1 字节元素类型
+// VM 侧 OP_CSTRUCT_DEF 按同样顺序读（与栈式 op_cstruct.inc 的布局一致）
 static void gen_cstruct_def(CodeGen* gen, Ast* ast) {
-    reg_encode_iABx(gen->chunk, OP_CSTRUCT_DEF, 0, 0, ast->line);
+    int r = reg_alloc(gen);
+    ObjString* cstruct_name = str_copy(ast->u.cstruct_def.name,
+                                       (int)strlen(ast->u.cstruct_def.name));
+    int name_const = make_constant(gen, val_obj((Object*)cstruct_name));
+
+    reg_encode_iABx(gen->chunk, OP_CSTRUCT_DEF, r, name_const, ast->line);
+    cw_u8(gen, ast->u.cstruct_def.field_count, ast->line);
+    cw_u16(gen, ast->u.cstruct_def.total_size, ast->line);
+    cw_u8(gen, ast->u.cstruct_def.alignment, ast->line);
+    cw_u8(gen, ast->u.cstruct_def.is_packed ? 1 : 0, ast->line);
+    cw_u8(gen, (uint8_t)ast->u.cstruct_def.explicit_align, ast->line);
+
+    for (int i = 0; i < ast->u.cstruct_def.field_count; i++) {
+        ObjString* fn = str_copy(ast->u.cstruct_def.field_names[i],
+                                 (int)strlen(ast->u.cstruct_def.field_names[i]));
+        cw_u16(gen, make_constant(gen, val_obj((Object*)fn)), ast->line);
+
+        TypeInfo* ft = ast->u.cstruct_def.field_types ? ast->u.cstruct_def.field_types[i] : NULL;
+        TypeKind fk = ft ? ft->kind : TYPE_ANY;
+        cw_u8(gen, fk, ast->line);
+        cw_u16(gen, ast->u.cstruct_def.field_offsets ? ast->u.cstruct_def.field_offsets[i] : 0, ast->line);
+        cw_u16(gen, ast->u.cstruct_def.field_array_dims ? ast->u.cstruct_def.field_array_dims[i] : 0, ast->line);
+
+        if (fk == TYPE_CSTRUCT && ft && ft->struct_name) {
+            cw_u16(gen, make_constant(gen, val_obj((Object*)str_copy(
+                          ft->struct_name, (int)strlen(ft->struct_name)))), ast->line);
+        } else {
+            cw_u16(gen, 0xFFFF, ast->line);
+        }
+        if (fk == TYPE_PTR_GENERIC) {
+            TypeKind elem = (ft && ft->element_type) ? ft->element_type->kind : TYPE_PTR;
+            cw_u8(gen, elem, ast->line);
+        }
+    }
+
+    // 定义对象绑定到符号槽位（与 enum/struct 定义一致）
+    SymRef* ref = &ast->u.cstruct_def.ref;
+    if (ref->kind == SYM_GLOBAL) {
+        emit_defglobal(gen, r, ref->index, ast->line);
+    } else if (ref->kind == SYM_LOCAL || ref->kind == SYM_PARAM) {
+        emit_mov(gen, ref->index, r, ast->line);
+    } else if (ref->kind == SYM_MODULE) {
+        reg_encode_iABx(gen->chunk, OP_SET_MODULE_VAR, r, ref->index, ast->line);
+    }
+    reg_free(gen, r);
 }
 
 static void gen_clib_def(CodeGen* gen, Ast* ast) {
@@ -1210,7 +1436,25 @@ static void gen_cfunc_decl(CodeGen* gen, Ast* ast) {
 }
 
 static void gen_alias(CodeGen* gen, Ast* ast) {
-    // 简化：别名不生成字节码
+    // 纯类型别名（`alias Handler = func(Event):bool`）：编译期语法糖，不发指令
+    if (!ast->u.alias.expr) return;
+
+    // 值别名（`alias Disabled = Enum.Member`）：必须求值并绑定到符号，
+    // 否则别名在使用处是 null（枚举值别名整类失效 ✗）
+    int r = gen_expr(gen, ast->u.alias.expr);
+    SymRef* ref = &ast->u.alias.ref;
+    if (ref->kind == SYM_GLOBAL) {
+        emit_defglobal(gen, r, ref->index, ast->line);
+    } else if (ref->kind == SYM_MODULE) {
+        reg_encode_iABx(gen->chunk, OP_SET_MODULE_VAR, r, ref->index, ast->line);
+    } else if (ref->kind == SYM_LOCAL || ref->kind == SYM_PARAM) {
+        if (ref->index >= gen->next_reg) {
+            gen->next_reg = ref->index + 1;
+            if (gen->next_reg > gen->max_reg) gen->max_reg = gen->next_reg;
+        }
+        emit_mov(gen, ref->index, r, ast->line);
+    }
+    reg_free(gen, r);
 }
 
 // ============================================================================
@@ -1250,16 +1494,24 @@ static void gen_destruct_decl(CodeGen* gen, Ast* ast) {
             }                                                                     \
         } while (0)
 
+    // ★ 只有**确实返回多个值**的调用才能按"结果区连续"处理：
+    //   `make_array()` 返回 Array[int]（一个值），若也按多返回值收发就会把数组本身
+    //   当成第 1 个返回值、其余槽位读到垃圾 ✗（实测 test_destruct 得 [object]）
+    int init_is_multi = (init->cached_type && init->cached_type->kind == TYPE_MULTI_RET);
+
     // --- 情形 1：多返回值调用 ---
     //   注意 `var{"code": int, "msg": string}(c, m) = f()` 也是这种形态：
     //   花括号里的键名只是"带键名的多返回值类型"标注，并不是字典解构。
     //   所以这里不看 is_dict，只看 init 是不是一次调用。
     //   跨模块的 `mod.f()` 是 AST_MODULE_CALL，同样要按"结果区连续"处理。
-    if (init->kind == AST_MODULE_CALL && n > 1) {
+    if (init->kind == AST_MODULE_CALL && n > 1 && init_is_multi) {
         int nargs = init->u.module_call.args.count;
         const char* modname = init->u.module_call.module_name;
         const char* methname = init->u.module_call.method_name ? init->u.module_call.method_name : "";
-        int base = reg_alloc_block(gen, nargs + 1);
+        // 结果区 R[base .. base+n-1] 必须落在块内（n 个返回值）
+        int mblock = nargs + 1;
+        if (n > mblock) mblock = n;
+        int base = reg_alloc_block(gen, mblock);
 
         // 取模块对象：lib_ref 优先，否则按别名在全局作用域找
         SymRef* lib = &init->u.module_call.lib_ref;
@@ -1296,16 +1548,9 @@ static void gen_destruct_decl(CodeGen* gen, Ast* ast) {
         return;
     }
 
-    if (init->kind == AST_CALL && n > 1) {
-        Ast* callee = init->u.call.callee;
-        int nargs = init->u.call.args.count;
-        int base = reg_alloc_block(gen, nargs + 1);
-        gen_expr_to(gen, callee, base);
-        for (int i = 0; i < nargs; i++) {
-            gen_expr_to(gen, init->u.call.args.items[i], base + 1 + i);
-        }
-        // nresults = 槽位数：被调方 RETURN_MULTI 会把 n 个结果写到 base..base+n-1
-        emit_call(gen, base, nargs, n, line);
+    if (init->kind == AST_CALL && n > 1 && init_is_multi) {
+        // 走公共的多返回值调用生成：方法调用（GET_METHOD）、默认参数补齐都一致
+        int base = gen_call_multi(gen, init, n, line);
         for (int i = 0; i < n; i++) {
             DESTRUCT_STORE(i, base + i);
         }

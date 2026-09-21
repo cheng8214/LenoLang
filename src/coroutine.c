@@ -96,6 +96,7 @@ ObjCoroutine* coroutine_new(ObjClosure* closure) {
     co->result = val_null();
     co->closure = closure;
     co->await_count = 0;
+    co->await_dst_reg = -1;
     co->waiting_for = NULL;
     co->task_future = NULL;  // task 返回的 Future，由 OP_ASYNC_CALL 设置
     co->error_propagated = 0;  // 初始未传播

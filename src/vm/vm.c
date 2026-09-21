@@ -1062,6 +1062,171 @@ static inline int value_compare_stdlib(Value a, Value b, int* out) {
     return 0;
 }
 
+// ============================================================================
+// cstruct 字段读取（唯一实现，供 OP_GET_FIELD / OP_INDEX / OP_GET_METHOD 复用）
+//   数值字段 → 直接取值；
+//   数组字段 → ObjCStructArrayView（后续按整数索引读写元素）；
+//   嵌套 cstruct → 指向父内存的**非拥有**视图（`r.top_left.x = 1` 要能写回去）；
+//   str16 数组 → 交给 cstruct_get_field_value 做 UTF-16 → UTF-8 转换。
+// 之前三个地方各自只调 cstruct_get_field_value ⇒ 数组/嵌套字段一律得 null ✗
+// ============================================================================
+static inline Value vm_cstruct_field_read(ObjCStruct* co, int field_idx) {
+    if (!co || !co->def || field_idx < 0 || field_idx >= co->def->field_count) return val_null();
+    CStructFieldInfo* f = &co->def->fields[field_idx];
+
+    if (f->type == TYPE_STR16 && f->array_dim > 0) {
+        return cstruct_get_field_value(co, field_idx);
+    }
+    if (f->array_dim > 0) {
+        ObjCStructArrayView* view = (ObjCStructArrayView*)gc_alloc(
+            sizeof(ObjCStructArrayView), OBJ_CSTRUCT_ARRAY_VIEW);
+        if (!view) return val_null();
+        view->cstruct = co;
+        view->field_index = field_idx;
+        view->element_type = f->type;
+        view->element_size = f->size;
+        view->array_dim = f->array_dim;
+        return val_obj((Object*)view);
+    }
+    if (f->type == TYPE_CSTRUCT) {
+        const char* nested_name = f->struct_name ? f->struct_name : f->name;
+        ObjCStructDef* nested_def = nested_name ? cstruct_def_find(nested_name) : NULL;
+        if (!nested_def) return val_null();
+        ObjCStruct* child = (ObjCStruct*)gc_alloc(sizeof(ObjCStruct), OBJ_CSTRUCT);
+        if (!child) return val_null();
+        child->def = nested_def;
+        child->data = co->data + f->offset;
+        child->owns_memory = 0;
+        return val_obj((Object*)child);
+    }
+    return cstruct_get_field_value(co, field_idx);
+}
+
+// ============================================================================
+// 按 C 布局类型从**裸地址**读一个标量值（cstruct 数组字段视图的元素读取用）
+// ============================================================================
+static inline Value vm_c_layout_read_scalar(const uint8_t* addr, TypeKind t) {
+    if (!addr) return val_null();
+    switch (t) {
+        case TYPE_I8:   return val_num((double)(*(const int8_t*)addr));
+        case TYPE_U8:   return val_num((double)(*(const uint8_t*)addr));
+        case TYPE_I16:  return val_num((double)(*(const int16_t*)addr));
+        case TYPE_U16:  return val_num((double)(*(const uint16_t*)addr));
+        case TYPE_I32:  return val_num((double)(*(const int32_t*)addr));
+        case TYPE_U32:  return val_num((double)(*(const uint32_t*)addr));
+        case TYPE_I64:  return val_int_safe(*(const int64_t*)addr);
+        case TYPE_U64:  return val_int_safe((int64_t)(*(const uint64_t*)addr));
+        case TYPE_F32:  return val_num((double)(*(const float*)addr));
+        case TYPE_F64:  return val_num(*(const double*)addr);
+        case TYPE_BOOL: return val_bool(*(const uint8_t*)addr);
+        case TYPE_PTR:
+        case TYPE_PTR_GENERIC:
+        case TYPE_STR8: {
+            void* p = *(void* const*)addr;
+            return p ? val_int_safe((int64_t)(intptr_t)p) : val_null();
+        }
+        default: return val_null();
+    }
+}
+
+// ============================================================================
+// 按 C 布局类型往**裸地址**写一个标量值
+// ============================================================================
+static inline void vm_c_layout_write_scalar(uint8_t* addr, TypeKind t, Value v) {
+    if (!addr) return;
+    double d = val_is_int(v) ? (double)val_as_int(v)
+             : (val_is_float(v) ? val_as_double(v)
+             : (val_is_bigint(v) ? bigint_to_double(val_as_bigint(v)) : 0.0));
+    switch (t) {
+        case TYPE_I8: case TYPE_U8:     *(uint8_t*)addr  = (uint8_t)(int64_t)(val_is_int(v) ? val_as_int(v) : d); break;
+        case TYPE_I16: case TYPE_U16:   *(uint16_t*)addr = (uint16_t)(int64_t)(val_is_int(v) ? val_as_int(v) : d); break;
+        case TYPE_I32: case TYPE_U32:   *(uint32_t*)addr = (uint32_t)(int64_t)(val_is_int(v) ? val_as_int(v) : d); break;
+        case TYPE_I64: case TYPE_U64:   *(uint64_t*)addr = (uint64_t)(val_is_int(v) ? val_as_int(v) : (int64_t)d); break;
+        case TYPE_F32:                  *(float*)addr    = (float)d; break;
+        case TYPE_F64:                  *(double*)addr   = d; break;
+        case TYPE_BOOL:                 *(uint8_t*)addr  = val_is_truthy(v) ? 1 : 0; break;
+        case TYPE_PTR: case TYPE_PTR_GENERIC: case TYPE_STR8: {
+            void* p = NULL;
+            if (val_is_int(v)) p = (void*)(intptr_t)val_as_int(v);
+            *(void**)addr = p;
+            break;
+        }
+        default: break;
+    }
+}
+
+// ============================================================================
+// bigint → int64：**64 位回绕**语义（不是饱和）
+// ----------------------------------------------------------------------------
+// `bigint_to_int64` 对超范围值做**饱和**（2^63 → INT64_MAX、0xFFFFFFFFFFFFFFFF → INT64_MAX），
+// 而 Leno 里"静态 int"就是把 64 位字当整数用（`hex64(int v)` 的 `v >> 60`、掩码
+// 常量 `0xffffffffffffffff`）—— 这些场合需要 2^63 → INT64_MIN、全 1 → -1。
+// 位运算 / int 特化算术统一走这个取值口。
+// ============================================================================
+static inline int64_t vm_bigint_as_i64(Value v) {
+    ObjBigInt* b = val_as_bigint(v);
+    if (!b) return val_as_int(v);
+    if (b->limb_count > 2) return bigint_to_int64(b);   // 超出 64 位：交给原实现（饱和）
+    uint64_t x = 0;
+    for (int i = b->limb_count - 1; i >= 0; i--) {
+        x = (x << 32) | (uint64_t)b->limbs[i];          // BASE_BITS = 32
+    }
+    if (b->is_negative) x = (uint64_t)0 - x;
+    return (int64_t)x;
+}
+
+// ============================================================================
+// 泛型类型名推断（与栈式 vm_call.inc 的两支口径一致）
+//   用于 instanceof 泛型替换：`new Holder[K](...)` 里 K 的实际类型
+//   要靠**运行时值**反推（int / float / string / bool / struct X）
+// ============================================================================
+static inline const char* vm_value_to_generic_type_name(Value value) {
+#ifdef _MSC_VER
+    static __declspec(thread) char buf[64];
+#else
+    static __thread char buf[64];
+#endif
+    if (val_is_int(value) || val_is_bigint(value)) return "int";
+    if (val_is_float(value)) return "float";
+    if (val_is_bool(value)) return "bool";
+    if (val_is_obj(value)) {
+        ObjType ot = val_as_obj(value)->type;
+        if (ot == OBJ_STRING) return "string";
+        if (ot == OBJ_STRUCT) {
+            ObjStruct* arg_s = (ObjStruct*)val_as_obj(value);
+            if (arg_s->def && arg_s->def->name) {
+                snprintf(buf, sizeof(buf), "struct %s", arg_s->def->name);
+                return buf;
+            }
+            return "struct";
+        }
+        if (ot == OBJ_ARRAY) return "array";
+    }
+    return NULL;
+}
+
+static inline const char* vm_typeinfo_to_generic_type_name(TypeInfo* type) {
+#ifdef _MSC_VER
+    static __declspec(thread) char buf[64];
+#else
+    static __thread char buf[64];
+#endif
+    if (!type) return NULL;
+    switch (type->kind) {
+        case TYPE_INT:    return "int";
+        case TYPE_FLOAT:  return "float";
+        case TYPE_STRING: return "string";
+        case TYPE_BOOL:   return "bool";
+        case TYPE_STRUCT:
+            if (type->struct_name) {
+                snprintf(buf, sizeof(buf), "struct %s", type->struct_name);
+                return buf;
+            }
+            return "struct";
+        default: return NULL;
+    }
+}
+
 int vm_run(void) {
     // 主线程直接使用全局 vm，零开销
     current_exec_vm = &vm;
@@ -1224,6 +1389,7 @@ int vm_run_coroutine_with_vm(ObjCoroutine* co, VM* vm_ptr) {
         frame->local_count = local_count;
         frame->catch_ip = NULL;
         frame->finally_ip = NULL;
+        frame->catch_finally_ip = NULL;
         frame->prev_catch_ip = NULL;
         frame->prev_finally_ip = NULL;
         frame->in_finally = 0;
@@ -1392,16 +1558,17 @@ int vm_run_coroutine_with_vm(ObjCoroutine* co, VM* vm_ptr) {
                     error_add_at(ERR_RUNTIME, 0, 0, "未捕获的异步异常");
                 }
             } else {
-                // 手动压入结果到栈（sp 已恢复到挂起时的位置）
-                if (vm_ptr->sp >= vm_ptr->stack_capacity) {
-                    int new_capacity = vm_ptr->stack_capacity < 8 ? 8 : vm_ptr->stack_capacity * 2;
-                    Value* new_stack = (Value*)realloc(vm_ptr->stack, new_capacity * sizeof(Value));
-                    if (new_stack) {
-                        vm_ptr->stack = new_stack;
-                        vm_ptr->stack_capacity = new_capacity;
+                // ★ 寄存器式：把 Future 结果写回挂起时记录的**目标寄存器**。
+                //   OP_AWAIT 已在顶层帧保存了 await_dst_reg，恢复后顶层帧就是
+                //   发起 await 的那一帧（帧已按原样装回）。栈式在这里是压栈。
+                if (co->await_dst_reg >= 0 && vm_ptr->frame_cnt > 0) {
+                    CallFrame* af = &vm_ptr->frames[vm_ptr->frame_cnt - 1];
+                    if (af->locals && co->await_dst_reg < af->local_count) {
+                        af->locals[co->await_dst_reg] = co->waiting_for->result;
+                        gc_write_barrier((Object*)af->closure, co->waiting_for->result);
                     }
                 }
-                vm_ptr->stack[vm_ptr->sp++] = co->waiting_for->result;
+                co->await_dst_reg = -1;
             }
             co->waiting_for = NULL;
         }

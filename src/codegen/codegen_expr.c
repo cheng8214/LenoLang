@@ -150,13 +150,21 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
                     emit_loadk_to(gen, dst, c, ast->line);
                     break;
                 }
-                case SYM_NATIVE:
                 case SYM_CSTRUCT:
+                {
+                    // cstruct 类型名 → 运行期 cstruct 定义对象（malloc/size/... 由它分发）
+                    // 之前落进 default 发 nil，`TestColor.malloc()` 就变成 nil 上取方法 ✗
+                    ObjString* tn = str_copy(ref->name, (int)strlen(ref->name));
+                    int c = make_constant(gen, val_obj((Object*)tn));
+                    reg_encode_iABx(gen->chunk, OP_GET_CSTRUCT_DEF, dst, c, ast->line);
+                    break;
+                }
+                case SYM_NATIVE:
                 case SYM_CLIB:
                 case SYM_CFUNC:
                 case SYM_FUNC_ALIAS:
                 default:
-                    // 其余（原生函数引用 / cstruct 定义等）：作为值使用时是 null 占位
+                    // 其余（原生函数引用等）：作为值使用时是 null 占位
                     emit_loadnil_to(gen, dst, ast->line);
                     break;
             }
@@ -234,37 +242,46 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
         }
 
         // --- 数组字面量 ---
-        // 元素必须落在 R[dst+1 .. dst+n]（NEWARRAY 按 A+i 读取），
-        // 所以先把高水位抬到 dst+n+1，元素间才不会夹入临时寄存器。
+        // ★ 元素必须落在 R[base+1 .. base+n]（NEWARRAY 按 A+i 读取），
+        //   而 base **绝不能直接取 dst** —— dst 常常是**变量槽**（`loopArr = [s]`），
+        //   那样元素就会写进**相邻变量**的槽里 ✗（实测 `int acc` 紧邻 `loopArr` 时
+        //   被 `loopArr = [s]` 踩成那个 struct）。一律在**临时块**里拼，再 MOV 回 dst。
         case AST_ARRAY:
         {
             int n = ast->u.array.count;
-            if (dst + 1 + n > gen->next_reg) {
-                gen->next_reg = dst + 1 + n;
-                if (gen->next_reg > gen->max_reg) gen->max_reg = gen->next_reg;
+            if (n == 0) {
+                reg_encode_iABC(gen->chunk, OP_NEWARRAY, dst, 0, 0, ast->line);
+                break;
             }
+            int base = reg_alloc_block(gen, n + 1);
             for (int i = 0; i < n; i++) {
-                gen_expr_to(gen, ast->u.array.items[i], dst + 1 + i);
+                gen_expr_to(gen, ast->u.array.items[i], base + 1 + i);
             }
             // NEWARRAY: R[A] = new array(R[A+1..A+C-1]), C = count
-            reg_encode_iABC(gen->chunk, OP_NEWARRAY, dst, 0, n, ast->line);
+            reg_encode_iABC(gen->chunk, OP_NEWARRAY, base, 0, n, ast->line);
+            if (base != dst) emit_mov(gen, dst, base, ast->line);
+            reg_free_block(gen, base);
             break;
         }
 
         // --- 字典字面量 ---
-        // 键值对交替落在 R[dst+1 .. dst+2n]（同 NEWARRAY 的连号约定）
+        // 键值对交替落在 R[base+1 .. base+2n]（同 NEWARRAY 的连号约定）；
+        // 同样必须用临时块，不能拿 dst 当 base（理由见上）
         case AST_DICT:
         {
             int n = ast->u.dict.count;
-            if (dst + 1 + n * 2 > gen->next_reg) {
-                gen->next_reg = dst + 1 + n * 2;
-                if (gen->next_reg > gen->max_reg) gen->max_reg = gen->next_reg;
+            if (n == 0) {
+                reg_encode_iABC(gen->chunk, OP_NEWDICT, dst, 0, 0, ast->line);
+                break;
             }
+            int base = reg_alloc_block(gen, n * 2 + 1);
             for (int i = 0; i < n; i++) {
-                gen_expr_to(gen, ast->u.dict.entries[i].key, dst + 1 + i * 2);
-                gen_expr_to(gen, ast->u.dict.entries[i].value, dst + 2 + i * 2);
+                gen_expr_to(gen, ast->u.dict.entries[i].key, base + 1 + i * 2);
+                gen_expr_to(gen, ast->u.dict.entries[i].value, base + 2 + i * 2);
             }
-            reg_encode_iABC(gen->chunk, OP_NEWDICT, dst, 0, n, ast->line);
+            reg_encode_iABC(gen->chunk, OP_NEWDICT, base, 0, n, ast->line);
+            if (base != dst) emit_mov(gen, dst, base, ast->line);
+            reg_free_block(gen, base);
             break;
         }
 
@@ -310,10 +327,11 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
             gen_module_call(gen, ast, dst);
             break;
 
-        // --- if 表达式 ---
+        // --- if 表达式（三元 / 表达式位置的 if）---
+        // 结果必须写在调用方给的 dst 上；gen_if_ex 内部自分配 dst 时，
+        // 三元表达式的结果会凭空落在别的寄存器里 ⇒ 变量拿到 null ✗
         case AST_IF:
-            gen_if_ex(gen, ast, 1);
-            // if 表达式结果在 dst，由 gen_if_ex 内部写入
+            gen_if_ex(gen, ast, 1, dst);
             break;
 
         // --- 类型检查：x is T ---
@@ -362,6 +380,11 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
         // --- struct 初始化 ---
         case AST_STRUCT_INIT:
             gen_struct_init(gen, ast, dst);
+            break;
+
+        // --- 索引赋值作为表达式（`c["k"] = v` / 复合赋值脱糖）---
+        case AST_INDEX_ASSIGN:
+            gen_index_assign(gen, ast, dst);
             break;
 
         // --- 赋值作为表达式（parser 会把赋值语句包成表达式语句）---
@@ -423,12 +446,14 @@ void gen_binop(CodeGen* gen, Ast* ast, int dst) {
         return;
     }
 
-    // 空合并
+    // 空合并 a ?? b：只有 a **是 null** 才求值 b（0 / false / "" 都要保留）
+    // ⚠ 不能用 JMP_IF_TRUE（那是真值语义）—— 否则 `0 ?? 99` 会得 99 ✗
     if (op == TOK_NULL_COALESCE) {
         gen_expr_to(gen, lhs, dst);
-        // 如果 dst != null 则跳过
-        int jmp = emit_jmp_if_true_ex(gen, dst, ast->line);  // 非 null 跳过
-        // TODO: IS_NULL + JMP_IF_FALSE
+        int isnull = reg_alloc(gen);
+        emit_is_null(gen, isnull, dst, ast->line);
+        int jmp = emit_jmp_if_false(gen, isnull, ast->line);  // 非 null → 跳过右侧
+        reg_free(gen, isnull);
         gen_expr_to(gen, rhs, dst);
         patch_jmp(gen, jmp);
         return;
@@ -438,18 +463,52 @@ void gen_binop(CodeGen* gen, Ast* ast, int dst) {
     gen_expr_to(gen, lhs, dst);
     int r = gen_expr(gen, rhs);
 
+    // ★ 类型特化（与栈式 codegen_expr.c 口径一致）：两侧静态类型都是 int 时
+    //   走 int 专用指令。**这不只是性能差异**：int 专用指令把 null 视作 0
+    //   （`val_as_int(NULL_VAL) == 0`，TAG_NULL = 0），而通用 ADD 会报
+    //   「null 不能参与运算」—— 实测 `merge(o){ return x + o.x }` 里未赋值的
+    //   int 字段 x 在栈式得 3、寄存式报错 ✗（test_cross_module_method_args ⑥）。
+    TypeKind lt = (lhs && lhs->cached_type) ? lhs->cached_type->kind : TYPE_UNKNOWN;
+    TypeKind rt = (rhs && rhs->cached_type) ? rhs->cached_type->kind : TYPE_UNKNOWN;
+    int both_int = (lt == TYPE_INT && rt == TYPE_INT);
+
     switch (op) {
-        case TOK_PLUS:     emit_add(gen, dst, dst, r, ast->line); break;
-        case TOK_MINUS:    emit_sub(gen, dst, dst, r, ast->line); break;
-        case TOK_STAR:     emit_mul(gen, dst, dst, r, ast->line); break;
+        case TOK_PLUS:
+            if (both_int) emit_add_int(gen, dst, dst, r, ast->line);
+            else emit_add(gen, dst, dst, r, ast->line);
+            break;
+        case TOK_MINUS:
+            if (both_int) emit_sub_int(gen, dst, dst, r, ast->line);
+            else emit_sub(gen, dst, dst, r, ast->line);
+            break;
+        case TOK_STAR:
+            if (both_int) emit_mul_int(gen, dst, dst, r, ast->line);
+            else emit_mul(gen, dst, dst, r, ast->line);
+            break;
         case TOK_SLASH:    emit_div(gen, dst, dst, r, ast->line); break;
         case TOK_MOD:      emit_mod(gen, dst, dst, r, ast->line); break;
         case TOK_EQEQ:     emit_eq(gen, dst, dst, r, ast->line); break;
         case TOK_NEQ:      emit_neq(gen, dst, dst, r, ast->line); break;
-        case TOK_LT:       emit_lt(gen, dst, dst, r, ast->line); break;
-        case TOK_GT:       emit_gt(gen, dst, dst, r, ast->line); break;
-        case TOK_LE:       emit_le(gen, dst, dst, r, ast->line); break;
-        case TOK_GE:       emit_ge(gen, dst, dst, r, ast->line); break;
+        // 有序比较同样按静态类型特化（与栈式一致）：两侧都是 int 走 int 专用比较。
+        //   ⚠ 与算术同理，这不只是性能 —— 泛型约束方法 `compareTo(T other)` 在
+        //   T=OrdInt 时实参**是 struct**，通用比较会报「操作数类型不可比较」✗，
+        //   而 int 专用比较按栈式口径直接比位模式（test_generic_face_impl）。
+        case TOK_LT:
+            if (both_int) emit_lt_int(gen, dst, dst, r, ast->line);
+            else emit_lt(gen, dst, dst, r, ast->line);
+            break;
+        case TOK_GT:
+            if (both_int) emit_gt_int(gen, dst, dst, r, ast->line);
+            else emit_gt(gen, dst, dst, r, ast->line);
+            break;
+        case TOK_LE:
+            if (both_int) emit_le_int(gen, dst, dst, r, ast->line);
+            else emit_le(gen, dst, dst, r, ast->line);
+            break;
+        case TOK_GE:
+            if (both_int) emit_ge_int(gen, dst, dst, r, ast->line);
+            else emit_ge(gen, dst, dst, r, ast->line);
+            break;
         case TOK_BITAND:   emit_bitand(gen, dst, dst, r, ast->line); break;
         case TOK_BITOR:    emit_bitor(gen, dst, dst, r, ast->line); break;
         case TOK_BITXOR:   emit_bitxor(gen, dst, dst, r, ast->line); break;
@@ -457,6 +516,11 @@ void gen_binop(CodeGen* gen, Ast* ast, int dst) {
         case TOK_SHR:      emit_shr(gen, dst, dst, r, ast->line); break;
         case TOK_USHR:     emit_ushr(gen, dst, dst, r, ast->line); break;
         case TOK_IN:       reg_encode_iABC(gen->chunk, OP_IN, dst, dst, r, ast->line); break;
+        // not in = in + not（此前完全没处理 ⇒ 结果直接是左操作数本身 ✗）
+        case TOK_NOT_IN:
+            reg_encode_iABC(gen->chunk, OP_IN, dst, dst, r, ast->line);
+            emit_not(gen, dst, dst, ast->line);
+            break;
         default:
             // 字符串拼接用 STRCAT
             if (op == TOK_PLUS) {
@@ -477,7 +541,13 @@ void gen_unary(CodeGen* gen, Ast* ast, int dst) {
 
     // ++ / -- 必须就地作用于变量的寄存器 —— 否则只改了副本，变量本身不变。
     if (op == TOK_INC || op == TOK_DEC) {
-        if (operand_ast && operand_ast->kind == AST_VAR) {
+        if (!operand_ast || operand_ast->kind != AST_VAR) {
+            // 字段/索引等非变量目标：设计上不支持（且静默不动会让 `pa.x++` 变成空操作 ✗）
+            error_add_at(ERR_SEMANTIC, ast->line, ast->column, "++ 和 -- 只能用于变量");
+            emit_loadnil_to(gen, dst, ast->line);
+            return;
+        }
+        {
             SymRef* ref = &operand_ast->u.var.ref;
             int is_local = (ref->kind == SYM_LOCAL || ref->kind == SYM_PARAM);
             int slot;
@@ -534,13 +604,116 @@ void gen_unary(CodeGen* gen, Ast* ast, int dst) {
 // 函数调用
 // ============================================================================
 
+// 调用点补齐默认参数（与栈式实现同一口径）。
+//   fdef：被调函数的 AST_FUNC_DEF（可为 NULL）
+//   self_offset：params[0] 是否是隐式 self（方法 1，普通函数 0）
+//   缺失的默认值依次求值写入 R[base+1+provided ..]；返回实际应传的参数个数。
+static int fill_default_args(CodeGen* gen, Ast* fdef, int self_offset,
+                             int nargs, int base, int line) {
+    if (!fdef || fdef->kind != AST_FUNC_DEF) return nargs;
+    int pcnt = fdef->u.func.pcnt;
+    int expected = pcnt - self_offset;
+    if (expected <= nargs) return nargs;
+    for (int i = nargs; i < expected; i++) {
+        int pi = i + self_offset;
+        Ast* d = (fdef->u.func.param_defaults && pi < pcnt) ? fdef->u.func.param_defaults[pi] : NULL;
+        if (d) {
+            gen_expr_to(gen, d, base + 1 + i);
+        } else {
+            emit_loadnil_to(gen, base + 1 + i, line);
+        }
+    }
+    return expected;
+}
+
+// clib 方法调用 → OP_CLIB_CALL（成功返回 1）。
+//   寄存器布局（VM 直接把 &R[A] 当 Value* 传给 FFI）：
+//     R[A]   = clib 库对象
+//     R[A+1] = 函数名字符串
+//     R[A+2..A+1+nargs] = 实参
+//   指令后紧跟：ret_type_kind(1) + arg_types[nargs](1 each)
+//   —— 与栈式 op_clib_call.inc 的语义一致（类型用于 str8/str16 自动转换与参数窄化）
+#define CLIB_CALL_MAX_ARGS 12   // 与 FFI_MAX_ARGS 口径一致（Win64/AAPCS64 上限）
+
+static int gen_clib_call(CodeGen* gen, Ast* obj_ast, const char* fname,
+                         AstList* args, int nargs, int dst, int line) {
+    TypeInfo* ot = infer_expr_type(gen->sem, obj_ast);
+    if (!ot || ot->kind != TYPE_CLIB || !ot->struct_name) {
+        if (ot) type_free(ot);
+        return 0;
+    }
+    char sname[BUFFER_SMALL];
+    snprintf(sname, sizeof(sname), "%s", ot->struct_name);
+    type_free(ot);
+
+    Symbol* clib_sym = scope_resolve(gen->sem->root_scope, sname);
+    if (!clib_sym) clib_sym = scope_resolve(gen->sem->current, sname);
+    if (!clib_sym) return 0;
+
+    // 查函数签名（导入的 clib 也已由语义阶段填好签名；查不到才退化为 I32）
+    int ret_kind = TYPE_I32;
+    int arg_kinds[CLIB_CALL_MAX_ARGS];
+    int lim = nargs < CLIB_CALL_MAX_ARGS ? nargs : CLIB_CALL_MAX_ARGS;
+    for (int i = 0; i < CLIB_CALL_MAX_ARGS; i++) arg_kinds[i] = TYPE_I32;
+    for (int i = 0; i < clib_sym->clib_func_count; i++) {
+        if (clib_sym->clib_func_names[i] && strcmp(clib_sym->clib_func_names[i], fname) == 0) {
+            TypeInfo* rt = clib_sym->clib_func_return_types
+                               ? clib_sym->clib_func_return_types[i] : NULL;
+            ret_kind = rt ? (int)rt->kind : (int)TYPE_I32;
+            if (clib_sym->clib_func_param_types && clib_sym->clib_func_param_types[i]) {
+                for (int j = 0; j < lim; j++) {
+                    TypeInfo* pt = clib_sym->clib_func_param_types[i][j];
+                    if (pt) arg_kinds[j] = (int)pt->kind;
+                }
+            }
+            break;
+        }
+    }
+
+    int base = reg_alloc_block(gen, 2 + nargs);
+    gen_expr_to(gen, obj_ast, base);                       // 库对象
+    int nc = make_constant(gen, val_obj((Object*)str_copy(fname, (int)strlen(fname))));
+    emit_loadk_to(gen, base + 1, nc, line);                // 函数名
+    for (int i = 0; i < nargs; i++) {
+        gen_expr_to(gen, args->items[i], base + 2 + i);
+    }
+
+    reg_encode_iABC(gen->chunk, OP_CLIB_CALL, base, 0, nargs, line);
+    chunk_write(gen->chunk, (uint8_t)(ret_kind & 0xFF), line);
+    for (int i = 0; i < lim; i++) {
+        chunk_write(gen->chunk, (uint8_t)(arg_kinds[i] & 0xFF), line);
+    }
+
+    if (base != dst) emit_mov(gen, dst, base, line);
+    reg_free_block(gen, base);
+    return 1;
+}
+
 // 生成 obj.name(实参...) 的方法调用：
 //   R[base] = R[base].name    （OP_GET_METHOD，产出绑定方法 / native）
-//   R[base+1..] = 实参
+//   R[base+1..] = 实参（不足的按默认参数补齐）
 //   CALL R[base], nargs, 1
 static void gen_method_call(CodeGen* gen, Ast* obj_ast, const char* mname,
                             AstList* args, int nargs, int dst, int line) {
-    int base = reg_alloc_block(gen, nargs + 1);
+    // clib 库对象的方法调用（`lib.strerror(2)`）走 FFI 专用指令
+    if (gen_clib_call(gen, obj_ast, mname, args, nargs, dst, line)) return;
+
+    // 查方法定义（语义分析按 "Struct::method" 注册），用于补齐默认参数
+    Ast* mdef = NULL;
+    TypeInfo* ot = infer_expr_type(gen->sem, obj_ast);
+    if (ot && ot->kind == TYPE_STRUCT && ot->struct_name && mname) {
+        char key[BUFFER_SMALL];
+        snprintf(key, sizeof(key), "%s::%s", ot->struct_name, mname);
+        mdef = func_table_find(&gen->sem->func_table, key);
+    }
+    if (ot) type_free(ot);
+
+    // ⚠ 方法调用的实参列表**已含隐式 self**（语义分析插入，args[0] = self），
+    //   所以这里按 self_offset=0 补齐：缺失的默认值对应 params[i]（i = nargs..pcnt-1）
+    int expected = (mdef && mdef->kind == AST_FUNC_DEF && mdef->u.func.pcnt > nargs)
+                       ? mdef->u.func.pcnt : nargs;
+
+    int base = reg_alloc_block(gen, expected + 1);
     gen_expr_to(gen, obj_ast, base);
 
     int mlen = (int)strlen(mname);
@@ -558,7 +731,9 @@ static void gen_method_call(CodeGen* gen, Ast* obj_ast, const char* mname,
     for (int i = 0; i < nargs; i++) {
         gen_expr_to(gen, args->items[i], base + 1 + i);
     }
-    emit_call(gen, base, nargs, 1, line);
+    expected = fill_default_args(gen, mdef, 0, nargs, base, line);
+
+    emit_call(gen, base, expected, 1, line);
     if (base != dst) emit_mov(gen, dst, base, line);
     reg_free_block(gen, base);
 }
@@ -570,6 +745,9 @@ void gen_call(CodeGen* gen, Ast* ast, int dst) {
     // --- 方法调用：obj.name(args) ---
     //   语义分析对 `s.len()` 这类会给出 AST_FIELD_ACCESS 或 AST_INDEX("len")，
     //   两种形态都走同一套：GET_METHOD 得到绑定方法后再 CALL。
+    // 注：`t.cb()`（func 类型字段）与 `self.on_click()` 也走 gen_method_call ——
+    //   运行期 OP_GET_METHOD 找不到同名方法时会退化为"取同名字段"，
+    //   字段里就是一等函数值，随后的 CALL 直接调它（见 vm_run.inc 的 OP_GET_METHOD）。
     if (callee && callee->kind == AST_FIELD_ACCESS) {
         gen_method_call(gen, callee->u.field_access.obj, callee->u.field_access.field_name,
                         &ast->u.call.args, nargs, dst, ast->line);
@@ -601,29 +779,130 @@ void gen_call(CodeGen* gen, Ast* ast, int dst) {
             return;
         }
 
-        // --- 全局函数直接调用 ---
+        // --- 全局函数直接调用（含默认参数补齐）---
         if (ref->kind == SYM_GLOBAL_FUNC) {
-            int base = reg_alloc_block(gen, nargs + 1);
+            Ast* fdef = ref->name ? func_table_find(&gen->sem->func_table, ref->name) : NULL;
+            int expected = (fdef && fdef->kind == AST_FUNC_DEF && fdef->u.func.pcnt > nargs)
+                               ? fdef->u.func.pcnt : nargs;
+            int base = reg_alloc_block(gen, expected + 1);
             emit_getglobalfunc_to(gen, base, ref->index, ast->line);
             for (int i = 0; i < nargs; i++) {
                 gen_expr_to(gen, ast->u.call.args.items[i], base + 1 + i);
             }
-            emit_call(gen, base, nargs, 1, ast->line);
+            expected = fill_default_args(gen, fdef, 0, nargs, base, ast->line);
+            // ★ async 函数：调用不直接执行函数体，而是建协程并立刻返回 Future
+            if (fdef && fdef->kind == AST_FUNC_DEF && fdef->u.func.is_async) {
+                reg_encode_iABC(gen->chunk, OP_ASYNC_CALL, base, expected, 0, ast->line);
+            } else {
+                emit_call(gen, base, expected, 1, ast->line);
+            }
             if (base != dst) emit_mov(gen, dst, base, ast->line);
             reg_free_block(gen, base);
             return;
         }
     }
 
-    // --- 通用调用 ---
-    int base = reg_alloc_block(gen, nargs + 1);
+    // --- 通用调用（局部函数 / 闭包 / 一等函数值）---
+    // 具名局部函数同样要补默认参数：func_table 里局部函数会覆盖同名全局定义
+    Ast* fdef = NULL;
+    if (callee && callee->kind == AST_VAR && callee->u.var.ref.name) {
+        fdef = func_table_find(&gen->sem->func_table, callee->u.var.ref.name);
+    }
+    int expected = (fdef && fdef->kind == AST_FUNC_DEF && fdef->u.func.pcnt > nargs)
+                       ? fdef->u.func.pcnt : nargs;
+
+    int base = reg_alloc_block(gen, expected + 1);
     gen_expr_to(gen, callee, base);
     for (int i = 0; i < nargs; i++) {
         gen_expr_to(gen, ast->u.call.args.items[i], base + 1 + i);
     }
-    emit_call(gen, base, nargs, 1, ast->line);
+    expected = fill_default_args(gen, fdef, 0, nargs, base, ast->line);
+    // async 函数（含局部 async 函数）：走协程创建路径，返回 Future
+    if (fdef && fdef->kind == AST_FUNC_DEF && fdef->u.func.is_async) {
+        reg_encode_iABC(gen->chunk, OP_ASYNC_CALL, base, expected, 0, ast->line);
+    } else {
+        emit_call(gen, base, expected, 1, ast->line);
+    }
     if (base != dst) emit_mov(gen, dst, base, ast->line);
     reg_free_block(gen, base);
+}
+
+// ============================================================================
+// 多返回值调用（解构声明 `var[...](a, b) = f()` 用）
+// ----------------------------------------------------------------------------
+// 与 gen_call 的唯一区别：CALL 的 nresults = 调用方要的槽位数，结果落在
+// R[base .. base+n-1]；返回 base（调用方用 reg_free_block(base) 释放）。
+// ⚠ 必须复用同一套「方法调用走 GET_METHOD」「默认参数补齐」逻辑：
+//   之前解构路径把 `mrp.two(i)` 的 callee 当普通表达式求值 ⇒ 对 struct 退化成
+//   obj["two"] ⇒ 报「struct 不存在字段 'two'」；少参调用也不补默认值 ⇒ 得 null ✗
+// ============================================================================
+int gen_call_multi(CodeGen* gen, Ast* ast, int nresults, int line) {
+    Ast* callee = ast->u.call.callee;
+    int nargs = ast->u.call.args.count;
+
+    // --- 方法调用：obj.name(args)（callee 可能是 FIELD_ACCESS 或 INDEX("name")）---
+    Ast* obj_ast = NULL;
+    const char* mname = NULL;
+    if (callee && callee->kind == AST_FIELD_ACCESS) {
+        obj_ast = callee->u.field_access.obj;
+        mname = callee->u.field_access.field_name;
+    } else if (callee && callee->kind == AST_INDEX && callee->u.index.index &&
+               callee->u.index.index->kind == AST_STRING) {
+        obj_ast = callee->u.index.obj;
+        mname = callee->u.index.index->u.string.value;
+    }
+
+    if (obj_ast && mname) {
+        Ast* mdef = NULL;
+        TypeInfo* ot = infer_expr_type(gen->sem, obj_ast);
+        if (ot && ot->kind == TYPE_STRUCT && ot->struct_name && mname) {
+            char key[BUFFER_SMALL];
+            snprintf(key, sizeof(key), "%s::%s", ot->struct_name, mname);
+            mdef = func_table_find(&gen->sem->func_table, key);
+        }
+        if (ot) type_free(ot);
+
+        int expected = (mdef && mdef->kind == AST_FUNC_DEF && mdef->u.func.pcnt > nargs)
+                           ? mdef->u.func.pcnt : nargs;
+        // ⚠ 块必须同时容纳「callee + 实参」与「nresults 个结果」：
+        //   结果写在 R[base .. base+nresults-1]，只按 expected+1 分配会让结果越界
+        //   写到块外（8 返回值实测直接把 VM 的 locals 数组写爆 → 退出时堆损坏 ✗）
+        int block = expected + 1;
+        if (nresults > block) block = nresults;
+        int base = reg_alloc_block(gen, block);
+        gen_expr_to(gen, obj_ast, base);
+        int nc = make_constant(gen, val_obj((Object*)str_copy(mname, (int)strlen(mname))));
+        if (nc == 0 || nc > 255) {
+            reg_encode_iABC(gen->chunk, OP_GET_METHOD, base, base, 0, line);
+            reg_encode_iAx(gen->chunk, OP_EXTRAARG, nc, line);
+        } else {
+            reg_encode_iABC(gen->chunk, OP_GET_METHOD, base, base, nc, line);
+        }
+        for (int i = 0; i < nargs; i++) {
+            gen_expr_to(gen, ast->u.call.args.items[i], base + 1 + i);
+        }
+        expected = fill_default_args(gen, mdef, 0, nargs, base, line);
+        emit_call(gen, base, expected, nresults, line);
+        return base;
+    }
+
+    // --- 普通函数 / 全局函数 / 局部函数 ---
+    Ast* fdef = NULL;
+    if (callee && callee->kind == AST_VAR && callee->u.var.ref.name) {
+        fdef = func_table_find(&gen->sem->func_table, callee->u.var.ref.name);
+    }
+    int expected = (fdef && fdef->kind == AST_FUNC_DEF && fdef->u.func.pcnt > nargs)
+                       ? fdef->u.func.pcnt : nargs;
+    int block = expected + 1;
+    if (nresults > block) block = nresults;   // 同上：结果区必须落在块内
+    int base = reg_alloc_block(gen, block);
+    gen_expr_to(gen, callee, base);
+    for (int i = 0; i < nargs; i++) {
+        gen_expr_to(gen, ast->u.call.args.items[i], base + 1 + i);
+    }
+    expected = fill_default_args(gen, fdef, 0, nargs, base, line);
+    emit_call(gen, base, expected, nresults, line);
+    return base;
 }
 
 // ============================================================================
@@ -633,9 +912,11 @@ void gen_call(CodeGen* gen, Ast* ast, int dst) {
 void gen_interp_string(CodeGen* gen, Ast* ast, int dst) {
     int count = ast->u.interp_string.count;
     // 交替：字符串片段 + 表达式
-    // 先求第一个片段到 dst，然后逐个 STRCAT
+    // ★ 必须先在**临时寄存器**里拼，最后才 MOV 到 dst：
+    //   dst 常常就是被插值表达式读的那个变量槽（`acc = $"{acc}ab"`），
+    //   直接往 dst 写第一个片段会先把变量清空 ⇒ 读到的永远是空串 ✗
     int first = 1;
-    int cur = dst;
+    int cur = reg_alloc(gen);
 
     for (int i = 0; i < count; i++) {
         // 字符串片段
@@ -665,6 +946,14 @@ void gen_interp_string(CodeGen* gen, Ast* ast, int dst) {
             }
         }
     }
+
+    if (first) {
+        // 全空插值串（理论上不该出现）：给一个空串，避免 cur 是未初始化寄存器
+        int e = make_constant(gen, val_obj((Object*)str_new("", 0)));
+        emit_loadk_to(gen, cur, e, ast->line);
+    }
+    if (cur != dst) emit_mov(gen, dst, cur, ast->line);
+    reg_free(gen, cur);
 }
 
 // ============================================================================
@@ -754,6 +1043,70 @@ void gen_module_call(CodeGen* gen, Ast* ast, int dst) {
     const char* modname = ast->u.module_call.module_name ? ast->u.module_call.module_name : "";
     const char* methname = ast->u.module_call.method_name ? ast->u.module_call.method_name : "";
 
+    // ★ clib 库变量的成员调用（`lib.strerror(2)`）：
+    //   parser 对 `标识符.方法(...)` 一律产出 AST_MODULE_CALL，语义阶段识别出这是
+    //   clib 调用时会打上 cached_type = TYPE_CLIB（struct_name = clib 类型名）并
+    //   记录 lib_ref / clib_return_type。必须走 FFI 专用指令，
+    //   否则会被当成 "模块对象[方法名]" → OP_INDEX → 「下标访问: 对象不支持索引」✗
+    //   判别：语义阶段只在**真的**是 clib 调用时填 lib_ref.name（lib 变量的符号）。
+    //   `base.loadCore()` 这类 .leno 模块调用虽然返回 clib，但 lib_ref.name 为空 ⇒ 走普通路径。
+    if (ast->cached_type && ast->cached_type->kind == TYPE_CLIB && ast->cached_type->struct_name &&
+        ast->u.module_call.lib_ref.name) {
+        const char* clib_name = ast->cached_type->struct_name;
+        Symbol* clib_sym = scope_resolve(gen->sem->root_scope, clib_name);
+        if (!clib_sym) clib_sym = scope_resolve(gen->sem->current, clib_name);
+
+        int ret_kind = TYPE_I32;
+        int arg_kinds[CLIB_CALL_MAX_ARGS];
+        int lim = nargs < CLIB_CALL_MAX_ARGS ? nargs : CLIB_CALL_MAX_ARGS;
+        for (int i = 0; i < CLIB_CALL_MAX_ARGS; i++) arg_kinds[i] = TYPE_I32;
+        if (clib_sym) {
+            for (int i = 0; i < clib_sym->clib_func_count; i++) {
+                if (clib_sym->clib_func_names[i] &&
+                    strcmp(clib_sym->clib_func_names[i], methname) == 0) {
+                    TypeInfo* rt = clib_sym->clib_func_return_types
+                                       ? clib_sym->clib_func_return_types[i] : NULL;
+                    ret_kind = rt ? (int)rt->kind : (int)TYPE_I32;
+                    if (clib_sym->clib_func_param_types && clib_sym->clib_func_param_types[i]) {
+                        for (int j = 0; j < lim; j++) {
+                            TypeInfo* pt = clib_sym->clib_func_param_types[i][j];
+                            if (pt) arg_kinds[j] = (int)pt->kind;
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+
+        int base = reg_alloc_block(gen, 2 + nargs);
+        SymRef* lib = &ast->u.module_call.lib_ref;
+        if (lib->name && (lib->kind == SYM_LOCAL || lib->kind == SYM_PARAM)) {
+            emit_mov(gen, base, lib->index, ast->line);
+        } else if (lib->name && lib->kind == SYM_GLOBAL) {
+            emit_getglobal_to(gen, base, lib->index, ast->line);
+        } else if (lib->name && lib->kind == SYM_UPVALUE) {
+            emit_getupval_to(gen, base, lib->index, ast->line);
+        } else if (lib->name && lib->kind == SYM_MODULE) {
+            reg_encode_iABx(gen->chunk, OP_GET_MODULE_VAR, base, lib->index, ast->line);
+        } else {
+            emit_loadnil_to(gen, base, ast->line);
+        }
+        int nc = make_constant(gen, val_obj((Object*)str_copy(methname, (int)strlen(methname))));
+        emit_loadk_to(gen, base + 1, nc, ast->line);
+        for (int i = 0; i < nargs; i++) {
+            gen_expr_to(gen, ast->u.module_call.args.items[i], base + 2 + i);
+        }
+
+        reg_encode_iABC(gen->chunk, OP_CLIB_CALL, base, 0, nargs, ast->line);
+        chunk_write(gen->chunk, (uint8_t)(ret_kind & 0xFF), ast->line);
+        for (int i = 0; i < lim; i++) {
+            chunk_write(gen->chunk, (uint8_t)(arg_kinds[i] & 0xFF), ast->line);
+        }
+        if (base != dst) emit_mov(gen, dst, base, ast->line);
+        reg_free_block(gen, base);
+        return;
+    }
+
     // 先查 import 登记表（编译期 gen_import 记下的"别名 → 真实名 + 是否原生"）；
     // 没有登记（例如模块内 use 来的）再探测原生模块注册表。
     int alias_found = 0;
@@ -806,6 +1159,48 @@ void gen_module_call(CodeGen* gen, Ast* ast, int dst) {
         if (base != dst) emit_mov(gen, dst, base, ast->line);
         reg_free_block(gen, base);
         return;
+    }
+
+    // --- ffi.callback(func, CfuncName)：用 cfunc 声明式签名创建 FFI 回调 ---
+    //   第二个实参是**类型名**（cfunc 声明），不是值 ⇒ 不能当普通实参求值。
+    if (strcmp(real_name, "ffi") == 0 && strcmp(methname, "callback") == 0 && nargs == 2) {
+        Ast* second = ast->u.module_call.args.items[1];
+        Symbol* cfunc_sym = NULL;
+        if (second && second->kind == AST_VAR && second->u.var.name) {
+            cfunc_sym = scope_resolve(gen->sem->current, second->u.var.name);
+            if (!cfunc_sym) cfunc_sym = scope_resolve(gen->sem->root_scope, second->u.var.name);
+        }
+        if (cfunc_sym && cfunc_sym->type && cfunc_sym->type->kind == TYPE_CFUNC) {
+            // FFIType 编码（与栈式 op_cfunc_callback.inc / ffi 模块口径一致）
+            #define CFUNC_FFI_TYPE(_t) \
+                ((_t)->kind == TYPE_NULL ? 0 : \
+                 (_t)->kind == TYPE_F32 ? 10 : \
+                 ((_t)->kind == TYPE_F64 || (_t)->kind == TYPE_FLOAT) ? 2 : \
+                 ((_t)->kind == TYPE_PTR || (_t)->kind == TYPE_PTR_GENERIC || \
+                  (_t)->kind == TYPE_STR8 || (_t)->kind == TYPE_STR16) ? 3 : \
+                 (_t)->kind == TYPE_BOOL ? 11 : \
+                 (_t)->kind == TYPE_I8 ? 5 : (_t)->kind == TYPE_U8 ? 4 : \
+                 (_t)->kind == TYPE_I16 ? 7 : (_t)->kind == TYPE_U16 ? 6 : \
+                 (_t)->kind == TYPE_I32 ? 9 : (_t)->kind == TYPE_U32 ? 8 : 1)
+            int ffi_ret_type = cfunc_sym->cfunc_return_type
+                                   ? CFUNC_FFI_TYPE(cfunc_sym->cfunc_return_type) : 0;
+            int pcnt = cfunc_sym->cfunc_param_count;
+            if (pcnt > 12) pcnt = 12;
+
+            int base = reg_alloc(gen);
+            gen_expr_to(gen, ast->u.module_call.args.items[0], base);
+            reg_encode_iABC(gen->chunk, OP_CFUNC_CALLBACK, base, 0, 0, ast->line);
+            chunk_write(gen->chunk, (uint8_t)ffi_ret_type, ast->line);
+            chunk_write(gen->chunk, (uint8_t)pcnt, ast->line);
+            for (int i = 0; i < pcnt; i++) {
+                TypeInfo* pt = cfunc_sym->cfunc_param_types ? cfunc_sym->cfunc_param_types[i] : NULL;
+                chunk_write(gen->chunk, (uint8_t)(pt ? CFUNC_FFI_TYPE(pt) : 1), ast->line);
+            }
+            if (base != dst) emit_mov(gen, dst, base, ast->line);
+            reg_free(gen, base);
+            #undef CFUNC_FFI_TYPE
+            return;
+        }
     }
 
     // --- 原生模块调用 ---
@@ -914,9 +1309,69 @@ void gen_struct_init(CodeGen* gen, Ast* ast, int dst) {
 // ============================================================================
 
 void gen_safe_access(CodeGen* gen, Ast* ast, int dst) {
-    // 简化：先求 obj，检查 null，null 则 dst=null，否则正常访问
-    // TODO: 完整实现
-    emit_loadnil_to(gen, dst, ast->line);
+    // obj?.field / obj?.method(args)
+    //   R[obj]    = 求值对象
+    //   R[isnull] = IS_NULL R[obj]
+    //   JMP_IF_TRUE R[isnull] → null 路径
+    //   非 null 路径：GET_FIELD（或 GET_METHOD + 实参 + CALL）→ R[dst]
+    //   JMP → end
+    //   null 路径：R[dst] = null
+    //   end:
+    int line = ast->line;
+    int obj_reg = gen_expr(gen, ast->u.safe_access.obj);
+
+    int isnull = reg_alloc(gen);
+    emit_is_null(gen, isnull, obj_reg, line);
+    int jmp_null = emit_jmp_if_true(gen, isnull, line);
+    reg_free(gen, isnull);
+
+    // --- 非 null 路径 ---
+    if (!ast->u.safe_access.is_call) {
+        int field_idx = ast->u.safe_access.field_index;
+        TypeInfo* ot = infer_expr_type(gen->sem, ast->u.safe_access.obj);
+        int use_field_op = (ot && (ot->kind == TYPE_STRUCT || ot->kind == TYPE_CSTRUCT)
+                            && field_idx >= 0);
+        if (use_field_op) {
+            reg_encode_iABC(gen->chunk, OP_GET_FIELD, dst, obj_reg, field_idx, line);
+        } else {
+            const char* fname = ast->u.safe_access.name;
+            int ireg = reg_alloc(gen);
+            int c = make_constant(gen, val_obj((Object*)str_copy(
+                                      fname ? fname : "", fname ? (int)strlen(fname) : 0)));
+            emit_loadk_to(gen, ireg, c, line);
+            reg_encode_iABC(gen->chunk, OP_INDEX, dst, obj_reg, ireg, line);
+            reg_free(gen, ireg);
+        }
+    } else {
+        int nargs = ast->u.safe_access.args.count;
+        const char* mname = ast->u.safe_access.name ? ast->u.safe_access.name : "";
+        // callee + 实参必须连号（VM 按 A+i 取参），整块分配后把对象搬进来
+        int base = reg_alloc_block(gen, nargs + 1);
+        if (base != obj_reg) emit_mov(gen, base, obj_reg, line);
+
+        int name_const = make_constant(gen, val_obj((Object*)str_copy(mname, (int)strlen(mname))));
+        if (name_const == 0 || name_const > 255) {
+            reg_encode_iABC(gen->chunk, OP_GET_METHOD, base, base, 0, line);
+            reg_encode_iAx(gen->chunk, OP_EXTRAARG, name_const, line);
+        } else {
+            reg_encode_iABC(gen->chunk, OP_GET_METHOD, base, base, name_const, line);
+        }
+        for (int i = 0; i < nargs; i++) {
+            gen_expr_to(gen, ast->u.safe_access.args.items[i], base + 1 + i);
+        }
+        emit_call(gen, base, nargs, 1, line);
+        if (base != dst) emit_mov(gen, dst, base, line);
+        reg_free_block(gen, base);
+    }
+
+    int jmp_end = emit_jmp(gen, line);
+
+    // --- null 路径 ---
+    patch_jmp(gen, jmp_null);
+    emit_loadnil_to(gen, dst, line);
+
+    patch_jmp(gen, jmp_end);
+    reg_free(gen, obj_reg);
 }
 
 // ============================================================================

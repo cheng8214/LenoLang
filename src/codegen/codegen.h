@@ -32,7 +32,8 @@ int gen_expr(CodeGen* gen, Ast* ast);
 void gen_stmt(CodeGen* gen, Ast* ast);
 void gen_block(CodeGen* gen, Ast* ast);
 void gen_if(CodeGen* gen, Ast* ast);
-void gen_if_ex(CodeGen* gen, Ast* ast, int want_value);
+// want_value=1（表达式位置）时结果写入 dst；want_value=0 时 dst 被忽略（传 -1）
+void gen_if_ex(CodeGen* gen, Ast* ast, int want_value, int dst);
 
 // 函数生成
 void gen_func(CodeGen* gen, Ast* ast);
@@ -44,6 +45,8 @@ void gen_block_module(CodeGen* gen, Ast* ast);
 // 赋值相关
 void gen_assign(CodeGen* gen, Ast* ast);
 void gen_compound_assign(CodeGen* gen, Ast* ast);
+// 裸索引赋值（AST_INDEX_ASSIGN）：dst >= 0 时结果写入 dst，dst < 0 表示丢弃
+void gen_index_assign(CodeGen* gen, Ast* ast, int dst);
 
 // 导入
 void gen_import_inline(CodeGen* gen, Ast* ast);
@@ -56,6 +59,8 @@ void emit_as_cast_to(CodeGen* gen, int reg, TypeInfo* t, int line);
 void gen_binop(CodeGen* gen, Ast* ast, int dst);
 void gen_unary(CodeGen* gen, Ast* ast, int dst);
 void gen_call(CodeGen* gen, Ast* ast, int dst);
+// 多返回值调用：结果连续落在 R[返回的 base] .. +nresults-1（调用方负责 reg_free_block）
+int gen_call_multi(CodeGen* gen, Ast* ast, int nresults, int line);
 void gen_interp_string(CodeGen* gen, Ast* ast, int dst);
 void gen_module_access(CodeGen* gen, Ast* ast, int dst);
 void gen_module_call(CodeGen* gen, Ast* ast, int dst);

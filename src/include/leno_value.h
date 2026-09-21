@@ -649,6 +649,9 @@ typedef struct ObjCoroutine {
     Value result;                      // 返回值 / Future 结果
     ObjClosure* closure;               // 关联的闭包
     int await_count;                   // await 次数
+    // ★ 寄存器式恢复点：挂起时记录 `await` 的目标寄存器号（-1 = 未挂起）。
+    //   恢复时把 Future 结果写回**顶层帧**的该寄存器（栈式是把结果压栈）。
+    int await_dst_reg;
     struct ObjFuture* waiting_for;     // 正在等待的 Future
     struct ObjFuture* task_future;     // task 返回给调用者的 Future（协程完成时需要触发）
     int error_propagated;             // 错误是否已通过 Future 传播给等待者

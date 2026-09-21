@@ -370,6 +370,10 @@ typedef struct CallFrame {
     uint8_t* finally_ip; // finally 块的指令指针
     uint8_t* prev_catch_ip;   // 保存之前的 catch_ip（用于嵌套 try-catch）
     uint8_t* prev_finally_ip; // 保存之前的 finally_ip（用于嵌套 try-catch）
+    // ★ catch 体所属 try 的 finally 块入口（OP_CATCH 预备，最后由 OP_END_TRY 清除）：
+    //   `try{...}catch e{ throw ... }finally{...}` 里 catch 体内再次 throw 时，
+    //   必须先执行**本层** finally 再向外传播（finally_ip 此刻已被 END_TRY 还原成外层）
+    uint8_t* catch_finally_ip;
     int in_finally;      // 标记是否在 finally 块中（防止无限循环）
     Value try_return_value;  // 保存 try 块中的 return 值
     int has_try_return;      // 标记是否有 try return 值需要处理

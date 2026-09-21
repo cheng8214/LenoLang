@@ -21,13 +21,23 @@
                     Symbol* sym = scope_define(s->current, ast->u.try_.catch_var, SYM_LOCAL);
                     if (sym) {
                         sym->index = allocate_local_index(s);
-                        // catch 变量类型为 string（错误信息）
-                        sym->type = type_new(TYPE_STRING);
+                        // ★ catch 变量的静态类型是 Dict[string, string]，**不能是 string**：
+                        //   运行时它绑定的是异常对象 —— 字符串异常会被 OP_THROW 包成
+                        //   Dict{msg,line,file,stack}（见 wrap_string_exception）。
+                        //   标成 string 会让 `var x = null; try{...}catch e { x = e }`
+                        //   把 x **锁成 string**（见 visit_var.inc「第一次赋非 null 值时
+                        //   锁定类型」）⇒ 赋值处插入 OP_CAST_STRING，把异常 Dict 变成
+                        //   字符串 "[object]" ✗（实测 test_try_catch_edge：
+                        //   `e_info.msg.find("除零")` 报「字符串索引必须是数字」）。
+                        //   用 Dict[string, string] 后成员访问的推断结果与原来的 string
+                        //   口径完全一致（`.msg/.file/.stack` 都是 string），而赋值侧
+                        //   目标类型是 Dict ⇒ 不会插入错误的字符串 CAST ✓。
+                        sym->type = type_dict(type_new(TYPE_STRING), type_new(TYPE_STRING));
                         // 保存 catch 变量的引用信息
                         ast->u.try_.catch_var_ref.kind = sym->kind;
                         ast->u.try_.catch_var_ref.index = sym->index;
                         ast->u.try_.catch_var_ref.name = strdup(sym->name);
-                        ast->u.try_.catch_var_ref.type_kind = TYPE_STRING;
+                        ast->u.try_.catch_var_ref.type_kind = TYPE_DICT;
                     }
                 }
                 

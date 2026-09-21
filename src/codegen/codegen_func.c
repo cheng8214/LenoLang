@@ -150,6 +150,10 @@ void gen_func_closure(CodeGen* gen, Ast* ast, ObjFunction* func) {
     int saved_max_reg = gen->max_reg;
     int saved_freetop = gen->freetop;
     int saved_scope_base = gen->scope_base;
+    // 析构条目也是**每函数独立**的：外层函数的条目不能泄漏进本函数
+    // （否则 return 时会对外层变量发析构指令，槽位号还会撞车）
+    int saved_dtor_count = gen->dtor_count;
+    gen->dtor_count = 0;
     int saved_free_regs[MAX_REG];
     if (saved_freetop > 0) {
         memcpy(saved_free_regs, gen->free_regs, sizeof(int) * (size_t)saved_freetop);
@@ -186,6 +190,7 @@ void gen_func_closure(CodeGen* gen, Ast* ast, ObjFunction* func) {
     gen->max_reg = saved_max_reg;
     gen->freetop = saved_freetop;
     gen->scope_base = saved_scope_base;
+    gen->dtor_count = saved_dtor_count;
     if (saved_freetop > 0) {
         memcpy(gen->free_regs, saved_free_regs, sizeof(int) * (size_t)saved_freetop);
     }
