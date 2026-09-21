@@ -137,6 +137,14 @@ void emit_mul_int(CodeGen* gen, int dst, int b, int c, int line) {
 void emit_neg_int(CodeGen* gen, int dst, int b, int line) {
     reg_encode_iABC(gen->chunk, OP_NEG_INT, dst, b, 0, line);
 }
+// 立即数版加减（imm ∈ [-128,127]，编进 C 字段的 8 位有符号）：
+//   R[dst] = R[b] + imm / R[b] - imm —— 省掉「求右值 → LOADI → *_INT」两条指令
+void emit_add_int_imm(CodeGen* gen, int dst, int b, int imm, int line) {
+    reg_encode_iABC(gen->chunk, OP_ADD_INT_IMM, dst, b, (int)((uint8_t)(int8_t)imm), line);
+}
+void emit_sub_int_imm(CodeGen* gen, int dst, int b, int imm, int line) {
+    reg_encode_iABC(gen->chunk, OP_SUB_INT_IMM, dst, b, (int)((uint8_t)(int8_t)imm), line);
+}
 
 // float 特化
 void emit_add_f(CodeGen* gen, int dst, int b, int c, int line) {

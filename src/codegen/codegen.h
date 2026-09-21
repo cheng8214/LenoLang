@@ -113,6 +113,9 @@ void emit_not(CodeGen* gen, int dst, int b, int line);
 // int 特化
 void emit_add_int(CodeGen* gen, int dst, int b, int c, int line);
 void emit_sub_int(CodeGen* gen, int dst, int b, int c, int line);
+// 立即数版加减（imm ∈ [-128,127]）：R[dst] = R[b] ± imm
+void emit_add_int_imm(CodeGen* gen, int dst, int b, int imm, int line);
+void emit_sub_int_imm(CodeGen* gen, int dst, int b, int imm, int line);
 void emit_mul_int(CodeGen* gen, int dst, int b, int c, int line);
 void emit_neg_int(CodeGen* gen, int dst, int b, int line);
 

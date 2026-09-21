@@ -72,6 +72,8 @@ static const char* opCodeNames[] = {
     "OP_FOR_PREP", "OP_FOR_LOOP",
     // --- 扩展指令 ---
     "OP_EXTRAARG", "OP_EXTEND",
+    // --- 立即数快速路径（与 leno_vm.h 末尾新增的两个 opcode 同序）---
+    "OP_ADD_INT_IMM", "OP_SUB_INT_IMM",
     "OP_OPCODE_COUNT",
 };
 

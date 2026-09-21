@@ -278,6 +278,44 @@
         }
         DISPATCH();
     }
+    // 立即数版加减：右操作数是 -128..127 的小整数字面量（编进指令的 C 字段，8 位有符号）。
+    // 语义与 *_INT 完全一致（含 int48 提升 bigint），只是省掉了「LOADI + *_INT」两条指令。
+    // 动机：examples/性能测试/经典斐波那契数列测试_int.leno 里 `n - 2` / `n - 1` 各占 3 条指令，
+    // 而栈式的 SUB_INT_IMM 只要 1 条 ⇒ 递归基准上指令数差一大截。
+    LABEL(OP_ADD_INT_IMM): {
+        int a = READ_A(), b = READ_B();
+        int imm = (int)(int8_t)READ_C();
+        Value bv = R(b);
+        if (VM_IS_BIG(bv)) {
+            R(a) = bigint_compact_to_int(
+                bigint_add(promote_to_bigint(bv), bigint_from_int64((int64_t)imm)));
+            DISPATCH();
+        }
+        int64_t x = val_as_int(bv), s = 0;
+        if (likely(!__builtin_add_overflow(x, (int64_t)imm, &s))) {
+            R(a) = VM_INT_RESULT(s);
+        } else {
+            R(a) = bigint_add(bigint_from_int64(x), bigint_from_int64((int64_t)imm));
+        }
+        DISPATCH();
+    }
+    LABEL(OP_SUB_INT_IMM): {
+        int a = READ_A(), b = READ_B();
+        int imm = (int)(int8_t)READ_C();
+        Value bv = R(b);
+        if (VM_IS_BIG(bv)) {
+            R(a) = bigint_compact_to_int(
+                bigint_sub(promote_to_bigint(bv), bigint_from_int64((int64_t)imm)));
+            DISPATCH();
+        }
+        int64_t x = val_as_int(bv), s = 0;
+        if (likely(!__builtin_sub_overflow(x, (int64_t)imm, &s))) {
+            R(a) = VM_INT_RESULT(s);
+        } else {
+            R(a) = bigint_sub(bigint_from_int64(x), bigint_from_int64((int64_t)imm));
+        }
+        DISPATCH();
+    }
     LABEL(OP_MUL_INT): {
         int a = READ_A(), b = READ_B(), c = READ_C();
         Value bv = R(b), cv = R(c);

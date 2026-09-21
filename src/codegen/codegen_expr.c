@@ -689,13 +689,41 @@ void gen_binop(CodeGen* gen, Ast* ast, int dst) {
 
     // 普通二元运算：求 lhs → dst（有别名风险时 → 临时寄存器），求 rhs → 临时寄存器，
     //   运算把这两个寄存器合到 dst。求值顺序保持"先左后右"不变。
+    // ★ 立即数快速路径（与栈式的 SUB_INT_IMM / ADD_INT_IMM 同思路）：
+    //   右操作数是 -128..127 的**整数字面量**时，不必先把它求值到寄存器，
+    //   直接编成一条立即数指令 —— 省掉「求右值 → LOADI → *_INT」两条指令。
+    //   实测 examples/性能测试/经典斐波那契数列测试_int.leno：`n-2` / `n-1` 各 3 条指令，
+    //   栈式只要 1 条，这一段是递归基准上指令数差距的一部分。
+    int rhs_imm = 0;
+    int rhs_imm_val = 0;
+    // ⚠ 触发条件必须与"真的会用立即数指令"完全一致，否则会**跳过右值求值却走通用路径**：
+    //   ① 只有加减有立即数形式（比较/乘除仍要按老路把右值求进寄存器 —— 否则 `n <= 1`
+    //      被编成 `OP_LE_INT A=1 B=1 C=0`＝`n <= n` 恒真，fib 直接返回 n ⇒ 30 而非 832040）；
+    //   ② 左操作数也必须是 int（`big1 + 100` 里左是 bigint ⇒ 只有通用 ADD 能算，
+    //      若此时跳过右值求值，通用 ADD 会拿到一个空寄存器 ⇒ 实测 `+100` 静默失效，
+    //      test_bigint / test_int_div / test_rsp_drift 等 9 个用例失败）。
+    if ((op == TOK_PLUS || op == TOK_MINUS) && lhs && lhs->cached_type &&
+        lhs->cached_type->kind == TYPE_INT && rhs && rhs->kind == AST_NUM &&
+        !rhs->u.num.is_float && !rhs->u.num.is_bigint) {
+        double dv = rhs->u.num.value;
+        if (dv >= -128.0 && dv <= 127.0) {
+            rhs_imm_val = (int)dv;
+            rhs_imm = 1;
+        }
+    }
+
     int rl = dst;
     if (ast_may_read_slot(rhs, dst)) {
         rl = gen_expr(gen, lhs);
     } else {
         gen_expr_to(gen, lhs, dst);
     }
-    int r = gen_expr(gen, rhs);
+    // ⚠ 本函数收尾是**无条件** `reg_free(gen, r)`：立即数路径虽然不求右值、不发指令，
+    //   也必须补一个占位临时寄存器，否则会去 free 寄存器 0 ⇒ 整个分配器错乱
+    //   （表现：单跑测试都过，但 runner 里 351 个用例全挂）。
+    int r = 0;
+    if (!rhs_imm) r = gen_expr(gen, rhs);
+    else r = reg_alloc(gen);
 
     // ★ 类型特化（与栈式 codegen_expr.c 口径一致）：两侧静态类型都是 int 时
     //   走 int 专用指令。**这不只是性能差异**：int 专用指令把 null 视作 0
@@ -708,11 +736,13 @@ void gen_binop(CodeGen* gen, Ast* ast, int dst) {
 
     switch (op) {
         case TOK_PLUS:
-            if (both_int) emit_add_int(gen, dst, rl, r, ast->line);
+            if (both_int && rhs_imm) emit_add_int_imm(gen, dst, rl, rhs_imm_val, ast->line);
+            else if (both_int) emit_add_int(gen, dst, rl, r, ast->line);
             else emit_add(gen, dst, rl, r, ast->line);
             break;
         case TOK_MINUS:
-            if (both_int) emit_sub_int(gen, dst, rl, r, ast->line);
+            if (both_int && rhs_imm) emit_sub_int_imm(gen, dst, rl, rhs_imm_val, ast->line);
+            else if (both_int) emit_sub_int(gen, dst, rl, r, ast->line);
             else emit_sub(gen, dst, rl, r, ast->line);
             break;
         case TOK_STAR:

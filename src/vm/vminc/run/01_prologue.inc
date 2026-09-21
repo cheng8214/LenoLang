@@ -64,6 +64,8 @@
         [OP_NOT] = &&LABEL(OP_NOT),
         [OP_ADD_INT] = &&LABEL(OP_ADD_INT),
         [OP_SUB_INT] = &&LABEL(OP_SUB_INT),
+        [OP_ADD_INT_IMM] = &&LABEL(OP_ADD_INT_IMM),
+        [OP_SUB_INT_IMM] = &&LABEL(OP_SUB_INT_IMM),
         [OP_MUL_INT] = &&LABEL(OP_MUL_INT),
         [OP_NEG_INT] = &&LABEL(OP_NEG_INT),
         [OP_ADD_F] = &&LABEL(OP_ADD_F),

@@ -215,6 +215,12 @@ typedef enum {
     OP_EXTRAARG,        // iAx   24 位无符号扩展值
     OP_EXTEND,          // iABC  前缀：扩展紧随指令的 A/B/C 高 8 位
 
+    // --- 立即数快速路径（追加在末尾，避免改动既有 opcode 编号）-------------
+    // 右操作数是小整数字面量时，省掉「求右值 → LOADI → *_INT」两条指令。
+    // 立即数用 C 的 8 位**有符号**表示（-128..127），覆盖 `n-1` / `i+1` 这类最常见写法。
+    OP_ADD_INT_IMM,     // iABC   R[A] = R[B] + (int8_t)C
+    OP_SUB_INT_IMM,     // iABC   R[A] = R[B] - (int8_t)C
+
     OP_OPCODE_COUNT,    // 用于跳转表大小
 } OpCode;
 
