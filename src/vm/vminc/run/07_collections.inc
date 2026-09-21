@@ -68,7 +68,9 @@
         //   与 gc.c 开头的说明）。原生 arr_add 一直有这一句，这条融合指令此前漏了：
         //   数组字面量场景恰好是 young→young 所以没暴露，但 `arr += x` 落在老数组上就有风险。
         gc_write_barrier((Object*)arr, R(a));
-        R(a) = val_int(arr->count);
+        // C = "要不要结果"标志（codegen 的 need_result）：语句位置没人要这个新长度
+        // ⇒ 跳过写回（T10-②，等价于栈式的 OP_ARRAY_APPEND_NOPUSH，省一条写）。
+        if (READ_C()) R(a) = val_int(arr->count);
         DISPATCH();
     }
     LABEL(OP_LEN): {

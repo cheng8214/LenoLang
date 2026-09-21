@@ -180,6 +180,10 @@ void gen_stmt(CodeGen* gen, Ast* ast) {
                 gen_stmt(gen, e);
                 break;
             }
+            // ★ 语句位置的 `arr.add(x)`：结果没人要 ⇒ 不写回长度、不搬寄存器（T10-②）。
+            //   与栈式的 OP_ARRAY_APPEND_NOPUSH 同一目的，这里复用 OP_ARRAY_APPEND 的 C 位。
+            if (try_emit_stmt_array_add(gen, e)) break;
+
             int r = gen_expr(gen, ast->u.expr_stmt.expr);
             reg_free(gen, r);
             break;

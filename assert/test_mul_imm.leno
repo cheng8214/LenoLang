@@ -1,0 +1,60 @@
+// 回归测试：整数乘法立即数版（T10-③）+ 语句位置 `arr.add(x)` 不写回结果（T10-②）
+//
+// ③ `x * 3` 现在编成**一条** OP_MUL_INT_IMM（右值 int8 立即数编进指令），语义必须与
+//    「LOADI 3 + OP_MUL_INT」完全一致；立即数超出 int8、左值不是 int、浮点乘法
+//    都必须回退通用路径且结果不变。
+// ② 语句位置的 `a.add(x)` 走 need_result=0（不写回新长度、不占结果寄存器），
+//    但**追加必须照旧发生**；表达式位置（`var r = a.add(x)`）仍要返回新长度。
+
+var bad = 0
+
+func fail(int tag):int {
+    print("FAIL case " + tag)
+    bad = bad + 1
+    return 0
+}
+
+main() {
+    // ---- 1) 立即数乘法：正数 / 1 / 0 ----
+    var x = 7
+    if x * 3 != 21 { print("x*3=" + (x * 3)); fail(1) }
+    if x * 1 != 7 { fail(1) }
+    if x * 0 != 0 { fail(1) }
+    if x * 2 != 14 { fail(1) }
+
+    // ---- 2) 立即数超出 int8（-128..127）⇒ 回退原路径，结果不变 ----
+    var b = 5
+    if b * 200 != 1000 { print("b*200=" + (b * 200)); fail(2) }
+    if b * 128 != 640 { fail(2) }
+    if b * -200 != -1000 { fail(2) }
+
+    // ---- 3) 浮点乘法：不是 int ⇒ 通用路径，结果仍是浮点 ----
+    var f = 1.5
+    if f * 2 != 3.0 { print("f*2=" + (f * 2)); fail(3) }
+    if type(f * 2) != "float" { print("type=" + type(f * 2)); fail(3) }
+
+    // ---- 4) 语句位置的 add：追加照旧发生 ----
+    var a = [1, 2]
+    a.add(3)
+    a.add(4)
+    if a.len() != 4 { print("len=" + a.len()); fail(4) }
+    if a[3] != 4 { fail(4) }
+
+    // ---- 5) 表达式位置的 add 仍返回新长度（另一条路径，别被 ② 改坏）----
+    var a2 = [1]
+    var r2 = a2.add(2)
+    if r2 != 2 { print("r2=" + r2); fail(5) }
+    if a2.len() != 2 { fail(5) }
+
+    // ---- 6) 字符串元素也能追加（走写屏障那条路径）----
+    var s = []
+    s.add("a")
+    s.add("b")
+    if s[0] != "a" or s[1] != "b" { fail(6) }
+
+    if bad > 0 {
+        print("test_mul_imm FAILED: " + bad + " 处")
+        _exit(1)
+    }
+    print("test_mul_imm ok")
+}

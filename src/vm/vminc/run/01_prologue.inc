@@ -75,6 +75,7 @@
         [OP_CMPJMP_LE] = &&LABEL(OP_CMPJMP_LE),
         [OP_CMPJMP_GT] = &&LABEL(OP_CMPJMP_GT),
         [OP_CMPJMP_GE] = &&LABEL(OP_CMPJMP_GE),
+        [OP_MUL_INT_IMM] = &&LABEL(OP_MUL_INT_IMM),
         [OP_MUL_INT] = &&LABEL(OP_MUL_INT),
         [OP_NEG_INT] = &&LABEL(OP_NEG_INT),
         [OP_ADD_F] = &&LABEL(OP_ADD_F),

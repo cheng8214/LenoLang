@@ -247,6 +247,12 @@ typedef enum {
     OP_CMPJMP_GT,       // (R[A] >  rhs) 为假 ⇒ 跳
     OP_CMPJMP_GE,       // (R[A] >= rhs) 为假 ⇒ 跳
 
+    // 乘法立即数版（T10-③）：`x * 5` 原先要 `LOADI r=5 + MUL_INT`，
+    // 立即数编进 C 字段后省掉那条 LOADI（与 ADD/SUB/LT/LE/GT/GE_INT_IMM 同族）。
+    //   A = 结果寄存器，B = 左操作数，C = int8 立即数。
+    // 语义与 OP_MUL_INT 完全一致（含 bigint 与溢出提升）。
+    OP_MUL_INT_IMM,     // iABC   R[A] = R[B] * (int8_t)C
+
     OP_OPCODE_COUNT,    // 用于跳转表大小
 } OpCode;
 

@@ -168,6 +168,9 @@ int emit_jmp_if_false(CodeGen* gen, int a, int line);
 // 「比较 + 条件跳转」融合（T10-①）：返回跳转偏移回填位置（失败返回 -1 ⇒ 走原路径）
 int emit_cmpjmp(CodeGen* gen, OpCode op, int a, int b, int is_imm, int line);
 int try_emit_cmpjmp(CodeGen* gen, Ast* cond, int line);
+// 语句位置的 `arr.add(x)` ⇒ OP_ARRAY_APPEND(need_result=0)（T10-②）成功返回 1
+int try_emit_stmt_array_add(CodeGen* gen, Ast* e);
+void emit_mul_int_imm(CodeGen* gen, int dst, int b, int imm, int line);
 int emit_jmp_if_true(CodeGen* gen, int a, int line);
 void patch_jmp(CodeGen* gen, int pos);
 void patch_jmp_to(CodeGen* gen, int pos, int target);

@@ -331,6 +331,25 @@
         }
         DISPATCH();
     }
+    // 乘法立即数版（T10-③）：与 OP_MUL_INT 完全同语义（含 bigint 与溢出提升），
+    // 只是右值是 int8 立即数 —— 省掉把字面量装进寄存器的那条 LOADI。
+    LABEL(OP_MUL_INT_IMM): {
+        int a = READ_A(), b = READ_B();
+        int imm = (int)(int8_t)READ_C();
+        Value bv = R(b);
+        if (VM_IS_BIG(bv)) {
+            R(a) = bigint_compact_to_int(
+                bigint_mul(promote_to_bigint(bv), bigint_from_int64((int64_t)imm)));
+            DISPATCH();
+        }
+        int64_t x = val_as_int(bv), s = 0;
+        if (likely(!__builtin_mul_overflow(x, (int64_t)imm, &s))) {
+            R(a) = VM_INT_RESULT(s);
+        } else {
+            R(a) = bigint_mul(bigint_from_int64(x), bigint_from_int64((int64_t)imm));
+        }
+        DISPATCH();
+    }
     LABEL(OP_NEG_INT): {
         int a = READ_A(), b = READ_B();
         Value bv = R(b);

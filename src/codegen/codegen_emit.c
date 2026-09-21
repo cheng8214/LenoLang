@@ -150,6 +150,10 @@ void emit_add_int_imm(CodeGen* gen, int dst, int b, int imm, int line) {
 void emit_sub_int_imm(CodeGen* gen, int dst, int b, int imm, int line) {
     reg_encode_iABC(gen->chunk, OP_SUB_INT_IMM, dst, b, (int)((uint8_t)(int8_t)imm), line);
 }
+// 立即数乘法（T10-③）：R[dst] = R[b] * imm —— 省掉「求右值 → LOADI → MUL_INT」里的 LOADI
+void emit_mul_int_imm(CodeGen* gen, int dst, int b, int imm, int line) {
+    reg_encode_iABC(gen->chunk, OP_MUL_INT_IMM, dst, b, (int)((uint8_t)(int8_t)imm), line);
+}
 // 立即数比较：R[dst] = R[b] </>/<=/>= imm（imm ∈ [-128,127]）
 void emit_lt_int_imm(CodeGen* gen, int dst, int b, int imm, int line) {
     reg_encode_iABC(gen->chunk, OP_LT_INT_IMM, dst, b, (int)((uint8_t)(int8_t)imm), line);

@@ -172,6 +172,43 @@ int try_emit_cmpjmp(CodeGen* gen, Ast* cond, int line) {
     return -1;
 }
 
+// ============================================================================
+// 语句位置的 `arr.add(x)`（T10-②）
+// ----------------------------------------------------------------------------
+// 作为**独立语句**时结果没人要：通用路径要 `MOV 接收者 + GET_METHOD + CALL`，
+// 表达式位置的融合还要多一次"把新长度搬回 dst"的 MOV。这里直接发
+// `OP_ARRAY_APPEND(..., need_result=0)` —— 既不写回长度也不搬寄存器（VM 侧按 C 位跳过
+// 写回），等价于栈式的 `OP_ARRAY_APPEND_NOPUSH`，而且不必新增 opcode。
+// 只处理本引擎 `a.add(x)` 的两种 AST 形态（与 gen_method_call 的两个调用点同源）：
+//   AST_CALL + callee = AST_FIELD_ACCESS（字段名 "add"）
+//   AST_CALL + callee = AST_INDEX（字符串下标 "add"）
+// 且接收者静态类型必须是数组、实参恰 1 个；否则返回 0，交回原路径（语义不变）。
+int try_emit_stmt_array_add(CodeGen* gen, Ast* e) {
+    if (!e || e->kind != AST_CALL) return 0;
+    Ast* callee = e->u.call.callee;
+    if (!callee || e->u.call.args.count != 1) return 0;
+    Ast* obj = NULL;
+    if (callee->kind == AST_FIELD_ACCESS) {
+        const char* nm = callee->u.field_access.field_name;
+        if (!nm || strcmp(nm, "add") != 0) return 0;
+        obj = callee->u.field_access.obj;
+    } else if (callee->kind == AST_INDEX && callee->u.index.index &&
+               callee->u.index.index->kind == AST_STRING) {
+        const char* nm = callee->u.index.index->u.string.value;
+        if (!nm || strcmp(nm, "add") != 0) return 0;
+        obj = callee->u.index.obj;
+    } else {
+        return 0;
+    }
+    if (!obj) return 0;
+    TypeInfo* rt = infer_expr_type(gen->sem, obj);
+    int is_arr = (rt && rt->kind == TYPE_ARRAY);
+    if (rt) type_free(rt);
+    if (!is_arr) return 0;
+    gen_array_add(gen, obj, e->u.call.args.items[0], 0, e->line);
+    return 1;
+}
+
 int gen_expr(CodeGen* gen, Ast* ast) {
     int r = reg_alloc(gen);
     gen_expr_to(gen, ast, r);
@@ -764,8 +801,12 @@ void gen_binop(CodeGen* gen, Ast* ast, int dst) {
     //      否则 `n <= 1` 会被编成 `OP_LE_INT A=1 B=1 C=0`＝`n <= n` 恒真，fib 直接返回 n）；
     //   ② 左操作数也必须是 int（`big1 + 100` 里左是 bigint ⇒ 只有通用 ADD 能算，
     //      若此时跳过右值求值，通用 ADD 会拿到一个空寄存器 ⇒ 实测 `+100` 静默失效）。
-    int imm_ok_op = (op == TOK_PLUS || op == TOK_MINUS || op == TOK_LT || op == TOK_GT ||
-                     op == TOK_LE || op == TOK_GE);
+    // ★ TOK_STAR 也走立即数路径（T10-③）：`x * 2` 这类下标/偏移计算很常见，
+    //   有 OP_MUL_INT_IMM 后能省掉把字面量装进寄存器的那条 LOADI。
+    //   ⚠ 前提仍是"左操作数是 int"（与其它立即数运算同一条件，见上面 ② 的说明：
+    //   `big1 * 100` 这类左值是 bigint 的必须走通用 MUL，否则通用路径会读到空寄存器）。
+    int imm_ok_op = (op == TOK_PLUS || op == TOK_MINUS || op == TOK_STAR ||
+                     op == TOK_LT || op == TOK_GT || op == TOK_LE || op == TOK_GE);
     if (imm_ok_op && lhs && lhs->cached_type &&
         lhs->cached_type->kind == TYPE_INT && rhs && rhs->kind == AST_NUM &&
         !rhs->u.num.is_float && !rhs->u.num.is_bigint) {
@@ -828,7 +869,8 @@ void gen_binop(CodeGen* gen, Ast* ast, int dst) {
             else emit_sub(gen, dst, rl, r, ast->line);
             break;
         case TOK_STAR:
-            if (both_int) emit_mul_int(gen, dst, rl, r, ast->line);
+            if (both_int && rhs_imm) emit_mul_int_imm(gen, dst, rl, rhs_imm_val, ast->line);
+            else if (both_int) emit_mul_int(gen, dst, rl, r, ast->line);
             else emit_mul(gen, dst, rl, r, ast->line);
             break;
         case TOK_SLASH:    emit_div(gen, dst, rl, r, ast->line); break;
