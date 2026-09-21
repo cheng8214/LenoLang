@@ -3615,8 +3615,34 @@
         R(a) = val_obj((Object*)ptr);
         DISPATCH();
     }
-    LABEL(OP_SET_PTR_ELEM_TYPE): DISPATCH();
-    LABEL(OP_SET_DECLARED_FACE): DISPATCH();
+    // OP_SET_PTR_ELEM_TYPE A B: R[A] 若是 FFI 指针，设置其 element_type = (TypeKind)B
+    //   由 `Ptr[u32] p = ffi.malloc(...)` 这类**声明**发射（gen_var_decl）。ffi.read_at /
+    //   write_at 靠 element_type 算元素宽度，读不到就报「需要 Ptr[T] 类型指针」
+    //   （examples/clib/test_read_write_at.leno、test_cfunc_qsort.leno 整份跑不出来）。
+    LABEL(OP_SET_PTR_ELEM_TYPE): {
+        int a = READ_A(), b = READ_B();
+        Value v = R(a);
+        if (val_is_obj(v) && val_as_obj(v)->type == OBJ_FFI_POINTER) {
+            ObjFFIPointer* p = (ObjFFIPointer*)val_as_obj(v);
+            if (!p->freed) p->element_type = (TypeKind)b;
+        }
+        DISPATCH();
+    }
+    // OP_SET_DECLARED_FACE A Bx: R[A] 若是 struct 实例，设置 declared_face = K[Bx]
+    //   face 声明的变量（`Speaker s = ...`）：type()/数组元素类型推断会把实例当 face 看
+    //   （types.c 读 obj->declared_face）。
+    LABEL(OP_SET_DECLARED_FACE): {
+        int a = READ_A(), bx = READ_Bx();
+        Value v = R(a);
+        if (val_is_obj(v) && val_as_obj(v)->type == OBJ_STRUCT &&
+            bx >= 0 && bx < frame->chunk->const_cnt) {
+            Value nv = frame->chunk->constants[bx];
+            if (val_is_obj(nv) && val_as_obj(nv)->type == OBJ_STRING) {
+                ((ObjStruct*)val_as_obj(v))->declared_face = (ObjString*)val_as_obj(nv);
+            }
+        }
+        DISPATCH();
+    }
 
     // --- cstruct ---
     // OP_CSTRUCT_DEF A Bx: R[A] = C 布局结构体定义；Bx = 名字常量索引

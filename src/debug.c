@@ -454,6 +454,7 @@ int disassembleInstruction(Chunk* chunk, int offset) {
             case OP_FACE_DEF:
             case OP_CSTRUCT_DEF:
             case OP_GET_CSTRUCT_DEF:
+            case OP_SET_DECLARED_FACE:
             case OP_TYPE_CHECK:
             case OP_AS_CAST:
             case OP_CFUNC_CALLBACK:

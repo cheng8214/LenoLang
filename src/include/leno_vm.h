@@ -174,8 +174,8 @@ typedef enum {
     OP_SET_FIELD,       // iABC  R[B].field(C) = R[A]
     OP_GET_FIELD_ADDR,  // iABC  R[A] = &R[B].field(C)（cstruct）
     OP_GET_METHOD,      // iABC  R[A] = R[B].method(C)
-    OP_SET_PTR_ELEM_TYPE, // iABC  设置 R[A] 的 element_type = K[B]
-    OP_SET_DECLARED_FACE, // iABC  设置 R[A] 的 declared_face = K[B]
+    OP_SET_PTR_ELEM_TYPE, // iABC  R[A] 是 FFI 指针时设置 element_type = (TypeKind)B
+    OP_SET_DECLARED_FACE, // iABx  R[A] 是 struct 实例时设置 declared_face = K[Bx]
 
     // --- enum / face / cstruct ---
     OP_ENUM_DEF,        // iABx

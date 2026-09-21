@@ -862,6 +862,23 @@ static void gen_return_multi(CodeGen* gen, Ast* ast) {
 // var_decl
 // ============================================================================
 
+// 声明类型要求"运行时类型标注"时，在值已写进 R[reg] 之后补发设置指令：
+//   Ptr[u32] / Ptr[u8] …  → OP_SET_PTR_ELEM_TYPE（ffi.read_at/write_at 靠它算元素宽度）
+//   face 类型（Speaker 等）→ OP_SET_DECLARED_FACE（type()/数组类型推断把实例当 face 看）
+// ⚠ 照栈式 gen_var_decl 的做法（它在赋值前后各发一次）。寄存器式的这两条此前是**空实现**
+//   且从未发射 ⇒ `Ptr[u32] p = ffi.malloc(20); ffi.write_at(p, 0, 10)` 直接抛
+//   「write_at 需要 Ptr[T] 类型指针（如 Ptr[u32]），不支持无类型 Ptr」。
+static void emit_decl_runtime_type(CodeGen* gen, int reg, TypeInfo* t, int line) {
+    if (!t) return;
+    if (t->kind == TYPE_PTR_GENERIC && t->element_type) {
+        reg_encode_iABC(gen->chunk, OP_SET_PTR_ELEM_TYPE, reg, (int)t->element_type->kind, 0, line);
+    } else if (t->kind == TYPE_FACE && t->struct_name) {
+        ObjString* face_name = str_copy(t->struct_name, (int)strlen(t->struct_name));
+        int name_const = make_constant(gen, val_obj((Object*)face_name));
+        reg_encode_iABx(gen->chunk, OP_SET_DECLARED_FACE, reg, name_const, line);
+    }
+}
+
 // "声明了但没初始化"时的**类型默认值**（照栈式 gen_var_decl / gen_var_decl_module）：
 //   Array[T] → 空数组、Dict → 空字典、其余 → null。
 //   ⚠ 不能一律 null：`Array[int] res` + `res.add(x)` 是极常见写法，null 上调用方法
@@ -897,6 +914,7 @@ static void gen_var_decl(CodeGen* gen, Ast* ast) {
         } else {
             emit_typed_default_to(gen, r, ast->u.var_decl.type, ast->line);
         }
+        emit_decl_runtime_type(gen, r, ast->u.var_decl.type, ast->line);
         emit_defglobal(gen, r, ref->index, ast->line);
         reg_free(gen, r);
         return;
@@ -912,6 +930,7 @@ static void gen_var_decl(CodeGen* gen, Ast* ast) {
         } else {
             emit_typed_default_to(gen, r, ast->u.var_decl.type, ast->line);
         }
+        emit_decl_runtime_type(gen, r, ast->u.var_decl.type, ast->line);
         reg_encode_iABx(gen->chunk, OP_SET_MODULE_VAR, r, ref->index, ast->line);
         reg_free(gen, r);
         return;
@@ -931,6 +950,8 @@ static void gen_var_decl(CodeGen* gen, Ast* ast) {
     } else {
         emit_typed_default_to(gen, dst, ast->u.var_decl.type, ast->line);
     }
+    // Ptr[T] / face 的运行时类型标注（局部变量同样需要：ffi.read_at 等要靠它）
+    emit_decl_runtime_type(gen, dst, ast->u.var_decl.type, ast->line);
 
     // 追踪带析构的 struct 局部变量：作用域结束 / return 时发 OP_DTOR_LOCAL。
     // ⚠ `var r = new Resource()` 的声明类型是 `var`（u.var_decl.type 不是 TYPE_STRUCT），
