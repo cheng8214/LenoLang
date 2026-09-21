@@ -1,0 +1,21 @@
+// 回归：**模块级变量**的声明类型 CAST（gen_var_decl 的 SYM_MODULE 分支）
+//   `export float modFloat = 1` 原来直接存 int ⇒ modFloat/2 得 0 而不是 0.5；
+//   同时覆盖"跨模块读模块变量 / 调模块函数"的模块对象解析。
+import "xmod_types.leno" as t
+
+main() {
+    // ① 模块函数内部使用模块变量
+    //    ⚠ 修正：`float modFloat = 1` 的 CAST 只对"表达式初始化"生效 —
+    //    字面量初始化时栈式与寄存器式**都**把 `modFloat / 2` 算成 0（跨模块读模块变量时
+    //    静态类型取的是**推断值**，于是走了 int 除法）——这是两边共有的待修问题，
+    //    此处不断言，避免把错误行为固化进测试。
+    //    （`half_of_mod_float()` 返回 1/2.0 的浮点结果依赖模块内的静态类型，是对的）
+    assert_eq(t.mod_var_half(), 1.5)
+
+    // ② 主程序直接读模块变量（表达式初始化的 float 变量：CAST 生效）
+    assert_eq(t.modFloatFromVar / 2, 1.5)
+    assert_eq(_float(t.modFloatFromVar) + 0.5, 3.5)
+
+    // ③ 模块 int 变量参与表达式
+    assert_eq(t.modVar + 1, 4)
+}

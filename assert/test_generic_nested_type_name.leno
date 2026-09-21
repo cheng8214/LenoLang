@@ -1,0 +1,46 @@
+// 回归：泛型实参名必须能渲染**嵌套泛型**
+//   typeinfo_to_name 原来手写 switch（只认标量 + `TYPE_STRUCT → struct_name`），
+//   `new Box[Box[int]]` 的实参被打成 "Box" ⇒ type(outer) 输出 Box[Box]、丢掉内层 int
+//   （examples/泛型系统/泛型结构体、跨模块泛型 两个样例）。
+//   修法：聚合/嵌套类型走唯一的渲染实现 type_to_string。
+
+struct Box[T] {
+    T value = null
+
+    func get(): T {
+        return value
+    }
+
+    func set(T v): void {
+        value = v
+    }
+}
+
+struct Pair[K, V] {
+    K key = null
+    V val = null
+}
+
+main() {
+    var inner = new Box[int](value=42)
+    assert_eq(type(inner), "Box[int]")
+
+    // ① 嵌套泛型：外层实参是 Box[int]
+    var outer = new Box[Box[int]](value=inner)
+    assert_eq(type(outer), "Box[Box[int]]")
+
+    // ② 通过 as 转型后取值仍正确
+    var ib = outer.get() as Box[int]
+    assert_eq(ib.get(), 42)
+
+    // ③ 容器类型作实参
+    var withArr = new Box[Array[int]](value=[1, 2, 3])
+    assert_eq(type(withArr), "Box[Array[int]]")
+
+    var withStr = new Box[string](value="s")
+    assert_eq(type(withStr), "Box[string]")
+
+    // ④ 多参数泛型
+    var p = new Pair[string, int](key="k", val=1)
+    assert_eq(type(p), "Pair[string, int]")
+}

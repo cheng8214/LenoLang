@@ -1,0 +1,16 @@
+// 辅助模块：**模块级变量**的声明类型 CAST + 跨模块成员访问
+//   （覆盖 gen_var_decl 的 SYM_MODULE 分支：`export float modFloat = 1`
+//     内部必须是浮点，否则 modFloat/2 走 int 语义得 0）
+
+export float modFloat = 1
+export float modFloatExpr = 1 + 1
+export var modVar = 3
+export float modFloatFromVar = modVar
+
+export func half_of_mod_float(): float {
+    return modFloat / 2
+}
+
+export func mod_var_half(): float {
+    return modFloatFromVar / 2
+}

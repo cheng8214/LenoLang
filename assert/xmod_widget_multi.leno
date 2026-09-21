@@ -1,0 +1,32 @@
+// 辅助模块 A：一个 import 了模块 B 的 struct —— 方法体里调用 B 的多返回值函数
+//   并读 B 的模块级变量。
+//
+//   回归背景（用户报的 GUI 崩溃）：解构声明的多返回值路径原来自带一份"取模块对象"的
+//   简化实现，只认 lib_ref 与 root_scope —— 模块里 import 的别名挂在**模块自己的作用域**，
+//   于是解析到 nil ⇒ `nil["pair"]` 运行期报「下标访问: 对象不支持索引」
+//   （LenoSDL3 的 sdl_titlebar.leno:331 就这么炸的，file_manager 起不来）。
+import "xmod_multi_ret.leno" as core
+
+export struct Widget {
+    int v = 0
+
+    // 多返回值解构（本次缺陷的原始形状）
+    func process(): int {
+        var[int, int](a, b) = core.pair(3)
+        v = a + b
+        return v
+    }
+
+    // 模块级变量 + 多返回值混合
+    func process_with_base(): int {
+        var[int, string, bool](n, s, ok) = core.triple()
+        if not ok { return -1 }
+        return core.base + n + _str(s).len()
+    }
+
+    // 普通跨模块函数调用（对照组）
+    func plain(): int {
+        var[int, int](a, b) = core.pair(core.base)
+        return a + b
+    }
+}

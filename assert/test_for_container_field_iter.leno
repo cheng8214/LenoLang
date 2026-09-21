@@ -1,0 +1,49 @@
+// 回归：`for <容器字段> to x` / `for <参数> to x` 的迭代判定
+//   曾被误判成数值区间 ⇒ 循环体一次都不进（静默错值，没有诊断）。
+//   判据必须是"类型推断 → 字面量容器 → 变量类表达式保守迭代"，
+//   只有能证明是数字（INT/FLOAT）才走数值区间。
+import "for_field_iter_mod.leno" as m
+
+func sum_local_array(Array[int] arr): int {
+    int s = 0
+    for arr to var v {
+        s = s + v
+    }
+    return s
+}
+
+func count_range(int n): int {
+    int c = 0
+    for n to var i {        // 声明类型是 int ⇒ 数值区间（0..n-1）
+        c = c + 1
+    }
+    return c
+}
+
+main() {
+    // ① 字典字段（any 类型，推断不出容器）——本次缺陷的原始形状
+    Dict d = {items: [10, 20, 30]}
+    assert_eq(m.sum_items(d), 60)
+    assert_eq(m.join_items(d), "102030")
+
+    // ② 跨模块的容器字段变量
+    assert_eq(m.sum_items(m.sharedDict), 10)
+
+    // ③ 局部数组 / 参数数组（本来就正常，防回归）
+    var arr = [1, 2, 3]
+    int s2 = 0
+    for arr to var v { s2 = s2 + v }
+    assert_eq(s2, 6)
+    assert_eq(sum_local_array([4, 5]), 9)
+
+    // ④ 数值区间不能被误当成迭代（`for 5 to i` 是 0..4）
+    assert_eq(count_range(5), 5)
+
+    // ⑤ 迭代数组字段并做累加（形状同 minilang 解释器）
+    Dict ast = {type: "PROGRAM", statements: [1, 2, 3]}
+    int total = 0
+    for ast.statements to var st {
+        total = total + _int(st)
+    }
+    assert_eq(total, 6)
+}

@@ -1,0 +1,31 @@
+// 回归：**跨模块调用的默认参数**必须补齐
+//   被调函数的 AST 在另一个模块里，调用点拿不到 param_defaults ⇒ 必须查导入模块的
+//   符号表（param_count + param_default_texts，文本形式求值）。
+//   原来省略的实参在运行期就是 null（`mod.test_int(5)` 得 5 而非 15、
+//   `mod.test_any(5)` 直接报「加法运算: null 不能参与运算」）。
+import "xmod_defaults.leno" as m
+
+main() {
+    // ① 单个 int 默认参数
+    assert_eq(m.add10(5), 15)
+    assert_eq(m.add10(5, 20), 25)
+
+    // ② float 默认参数（文本 "2.0" 要解析成浮点）
+    assert_eq(m.scale(3.0), 6.0)
+    assert_eq(m.scale(3.0, 4.0), 12.0)
+
+    // ③ 多个默认参数，逐个补齐
+    assert_eq(m.multi(1), "a=1 b=20 c=hi")
+    assert_eq(m.multi(1, 2), "a=1 b=2 c=hi")
+    assert_eq(m.multi(1, 2, "x"), "a=1 b=2 c=x")
+
+    // ④ 对照组：没有默认参数的函数
+    assert_eq(m.no_default(3, 4), 7)
+
+    // ⑤ bool 默认参数（文本 "true"）
+    assert_eq(m.typed_default(), true)
+    assert_eq(m.typed_default(false), false)
+
+    // ⑥ 默认值参与表达式
+    assert_eq(m.add10(1) + m.add10(2, 3), 11 + 5)
+}

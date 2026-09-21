@@ -1,0 +1,42 @@
+// 回归：**语句位置的 if 表达式**必须执行（副作用不能丢）
+//   优化器的死代码消除会把 `if true then X else Y` **原地替换**成 X
+//   （optimize.c: memcpy(ast, then_branch, sizeof(Ast))），语句位置于是出现
+//   裸的 AST_CALL / AST_NUM 等表达式节点 —— gen_stmt 必须有兜底分支求值后丢弃，
+//   否则整条语句静默消失（实测 repro_if_expr 末行 `print(99)` 不执行）。
+
+int g = 0
+
+func bump(): void {
+    g = g + 1
+}
+
+func bump10(): void {
+    g = g + 10
+}
+
+func choose(int x): int {
+    return if x > 0 then x else -x
+}
+
+main() {
+    // ① 常量条件（会被 DCE 替换成 then/else 分支本身）
+    g = 0
+    if true then bump() else bump10()
+    assert_eq(g, 1)
+    if false then bump() else bump10()
+    assert_eq(g, 11)
+
+    // ② 运行时条件（本来就正常，防回归）
+    if g > 5 then bump() else bump10()
+    assert_eq(g, 12)
+
+    // ③ 表达式位置：常量条件折叠
+    int x = if true then 7 else 8
+    assert_eq(x, 7)
+    assert_eq(if false then 1 else 2, 2)
+
+    // ④ 三元结果参与运算
+    assert_eq(choose(5), 5)
+    assert_eq(choose(-3), 3)
+    assert_eq(if true then 1 else 0 + 100, 1)
+}

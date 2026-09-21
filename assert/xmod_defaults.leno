@@ -1,0 +1,22 @@
+// 辅助模块：跨模块**默认参数**（被调函数 AST 在另一个模块里，
+//   调用点只能从模块符号表读 param_count / param_default_texts 来补默认值）。
+
+export func add10(int a, int b = 10): int {
+    return a + b
+}
+
+export func scale(float a, float k = 2.0): float {
+    return a * k
+}
+
+export func multi(int a, int b = 20, string c = "hi"): string {
+    return $"a={a} b={b} c={c}"
+}
+
+export func no_default(int a, int b): int {
+    return a + b
+}
+
+export func typed_default(bool flag = true): bool {
+    return flag
+}

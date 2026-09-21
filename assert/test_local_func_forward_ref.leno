@@ -1,0 +1,63 @@
+// 回归：局部函数的**前向引用**（先调用、后声明）
+//   gen_block 原来只按语句顺序生成 ⇒ 调用点执行时槽位还是 null，运行期报「函数未定义」。
+//   栈式的两遍策略（先预置槽位 → 再生成所有局部函数闭包）必须保持。
+//   注意：循环体内定义的函数**不提升**（语义是每轮重新创建、值捕获）。
+
+int g = 0
+
+func bump(): void {
+    g = g + 1
+}
+
+main() {
+    // ① 先调用后声明
+    g = 0
+    forward()
+    assert_eq(g, 1)
+    forward()
+    assert_eq(g, 2)
+
+    func forward() {
+        g = g + 1
+    }
+
+    // ② 嵌套：内层函数同样支持前向引用，并捕获外层局部变量
+    var outer_seen = 0
+    call_outer()
+    assert_eq(outer_seen, 110)
+
+    func call_outer() {
+        var a = 100
+        inner()
+        assert_eq(a, 100)
+
+        func inner() {
+            outer_seen = a + 10
+        }
+    }
+
+    // ③ 两个局部函数互相调用（互相前向引用）
+    ping(3)
+    assert_eq(g, 4)
+
+    func ping(int n): void {
+        if n > 0 {
+            pong(n - 1)
+        }
+    }
+
+    func pong(int n): void {
+        g = g + 1
+        if n > 0 {
+            ping(n - 1)
+        }
+    }
+
+    // ④ 全局函数定义在 main 之后也能调用（顶层前向引用）
+    later_global()
+    assert_eq(g, 5)
+}
+
+func later_global(): void {
+    g = g + 1
+}

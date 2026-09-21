@@ -1,0 +1,60 @@
+// 回归：运行期异常与调用栈必须带**文件名**
+//   异常 dict 的 `file`、栈帧里的 `func (file:line)` 都取 `frame->chunk->filename`；
+//   gen_func_closure 原来不继承外层文件名 ⇒ 每个函数 chunk 的 filename 是 NULL，
+//   报错与栈追溯只剩 `main (:16)`（examples/try catch/* 一整批差异）。
+import strings
+
+func level3(): void {
+    var a = [1, 2, 3]
+    print(a[10])            // 故意越界
+}
+
+func level2(): void {
+    level3()
+}
+
+func level1(): void {
+    level2()
+}
+
+main() {
+    try {
+        level1()
+        assert_true(false)      // 不该走到这里
+    } catch e {
+        // ① 消息与行号
+        assert_true(e.msg != null)
+        assert_true(_str(e.msg) != "")
+        assert_true(_int(e.line) > 0)
+
+        // ② 文件名（本次修复点：以前是空串）
+        assert_true(e.file != null)
+        assert_true(_str(e.file) != "")
+        assert_true(strings.has(_str(e.file), ".leno"))
+
+        // ③ 调用栈里每一帧都应带 "文件:行号"
+        var frames = e.stack
+        assert_true(frames.len() >= 3)
+        var f0 = _str(frames[0])
+        assert_true(strings.has(f0, ".leno"))
+        assert_true(strings.has(f0, ":"))
+
+        // ④ 栈深（level3 → level2 → level1 → main）
+        var joined = ""
+        for frames to fr {
+            joined = joined + _str(fr) + "|"
+        }
+        assert_true(strings.has(joined, "level3"))
+        assert_true(strings.has(joined, "level2"))
+        assert_true(strings.has(joined, "level1"))
+    }
+
+    // ⑤ 除零错误同样带文件与行号
+    try {
+        int z = 0
+        print(10 / z)
+    } catch e2 {
+        assert_true(_str(e2.file) != "")
+        assert_true(_int(e2.line) > 0)
+    }
+}

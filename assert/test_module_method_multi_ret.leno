@@ -1,0 +1,25 @@
+// 回归：**模块 A 的 struct 方法**里解构调用**模块 B 的多返回值函数**
+//   模块 alias 在模块自己的作用域里（不是 root_scope）⇒ 解析模块对象必须按
+//   "lib_ref → 当前作用域 → 根作用域 → 整棵作用域树" 逐级兜底，且解构的多返回值路径
+//   要与普通跨模块调用**共用**同一套准备逻辑（否则两条路又会分叉）。
+import "xmod_widget_multi.leno" as w
+import "xmod_multi_ret.leno" as core2
+use w.Widget
+
+main() {
+    Widget x = new Widget()
+
+    // ① 解构多返回值：pair(3) = (3, 4)
+    assert_eq(x.process(), 7)
+
+    // ② 模块级变量 + 三返回值解构：base(100) + 7 + len("x")=1 → 108
+    assert_eq(x.process_with_base(), 108)
+
+    // ③ pair(base) = (100, 101) → 201
+    assert_eq(x.plain(), 201)
+
+    // ④ 主程序直接调用同一模块 B（对照组）
+    var[int, int](p, q) = core2.pair(1)
+    assert_eq(p, 1)
+    assert_eq(q, 2)
+}

@@ -1,0 +1,12 @@
+// 辅助模块 B：多返回值函数 + 模块级变量
+//   （供 xmod_widget_multi.leno —— "模块 A 的方法调用模块 B" —— 使用）
+
+export var base = 100
+
+export func pair(int a): [int, int] {
+    return a, a + 1
+}
+
+export func triple(): [int, string, bool] {
+    return 7, "x", true
+}

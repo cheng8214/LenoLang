@@ -1,0 +1,42 @@
+// 回归：数组字面量要设置**运行时 type_info**（元素类型全一致时记 Array[T]）
+//   栈式的 OP_ARRAY 会设 `arr->type_info = type_get_array_cached(elem_kind)`，
+//   寄存器版的 OP_NEWARRAY 原来完全没设 ⇒ clear() 之后 count==0，type() 只剩 "Array"，
+//   元素类型信息丢失（examples/array/基本 clear.leno）。
+import arrays
+
+main() {
+    // ① 有元素时按元素推断
+    var arr = [1, 2, 3]
+    assert_eq(type(arr), "Array[int]")
+    // ② clear 之后仍保留元素类型
+    arr.clear()
+    assert_eq(type(arr), "Array[int]")
+    assert_eq(arr.len(), 0)
+
+    // ③ 显式类型的数组字面量
+    Array[string] sa = ["x"]
+    assert_eq(type(sa), "Array[string]")
+    sa.clear()
+    assert_eq(type(sa), "Array[string]")
+
+    // ④ 嵌套数组
+    var nested = [[1, 2], [3, 4]]
+    nested.clear()
+    assert_eq(type(nested), "Array[Array]")
+
+    // ⑤ 空字面量是裸 Array；混合类型按元素推断成 Array[any]
+    //    （与栈式一致：type_info 只在元素类型全一致时才设）
+    var empty = []
+    assert_eq(type(empty), "Array")
+    var mixed = [1, "a"]
+    assert_eq(type(mixed), "Array[any]")
+
+    // ⑥ 模块函数式 clear
+    var via_mod = ["a", "b"]
+    arrays.clear(via_mod)
+    assert_eq(type(via_mod), "Array[string]")
+
+    // ⑦ float 数组
+    var fa = [1.5, 2.5]
+    assert_eq(type(fa), "Array[float]")
+}

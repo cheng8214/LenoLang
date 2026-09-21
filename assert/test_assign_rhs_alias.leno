@@ -1,0 +1,77 @@
+// 回归：`x = ... x`（**赋值目标同时出现在右操作数**）算错 —— 静默错值
+//   gen_binop 原来"先把 lhs 写进 dst 再求 rhs"，而 dst 常是赋值目标的变量槽位，
+//   于是 rhs 里读到的就是刚写进去的 lhs：
+//     b = a % b → 5%5=0（应 5）、k = j + k → 5+5=10（应 31）、n = m - n → 0（应 7）
+//   修法：用别名探测决定 lhs 是否先落临时寄存器（求值顺序仍是先左后右）。
+//   影响面：examples/crypto/caesar.leno 的 gcd（`b = a % b`）算错 ⇒ 仿射密码整段失败。
+
+main() {
+    // ① 目标在**右**操作数
+    int a = 5
+    int b = 26
+    b = a % b
+    assert_eq(b, 5)
+
+    int j = 5
+    int k = 26
+    k = j + k
+    assert_eq(k, 31)
+
+    int m = 10
+    int n = 3
+    n = m - n
+    assert_eq(n, 7)
+
+    int p = 8
+    int q = 2
+    q = p * q
+    assert_eq(q, 16)
+
+    // ② 目标在**左**操作数（常见写法，必须保持正确且不退化）
+    int sum = 0
+    for 5 to var i {
+        sum = sum + i
+    }
+    assert_eq(sum, 10)
+
+    int prod = 1
+    prod = prod * 7
+    assert_eq(prod, 7)
+
+    // ③ 目标两侧都出现
+    int both = 3
+    both = both + both
+    assert_eq(both, 6)
+
+    // ④ 字符串拼接别名
+    string s = "b"
+    s = "a" + s
+    assert_eq(s, "ab")
+    s = s + "c"
+    assert_eq(s, "abc")
+
+    // ⑤ 短路运算 / 空合并的别名
+    bool c1 = false
+    bool c2 = true
+    c1 = c2 and c1
+    assert_eq(c1, false)
+    bool c3 = false
+    bool c4 = true
+    c4 = c3 or c4
+    assert_eq(c4, true)
+
+    var v1 = null
+    var v2 = 7
+    v1 = v2 ?? v1
+    assert_eq(v1, 7)
+
+    // ⑥ 分步做 gcd（caesar.leno 的形状）
+    int x1 = 5
+    int x2 = 26
+    while x2 != 0 {
+        int t = x2
+        x2 = x1 % x2
+        x1 = t
+    }
+    assert_eq(x1, 1)
+}

@@ -1,0 +1,23 @@
+// 辅助模块（不是 test_ 前缀，运行器不会单独跑它）：
+//   提供"容器字段迭代"的跨模块场景。
+//   回归背景：`for <字典字段> to x` 曾被误判成**数值区间** —— end 槽里放的是数组，
+//   FOR_PREP 拿 value_to_double(数组)=0 当上界，循环体一次都不进（静默错值，
+//   表现就是 examples/minilang 的解释器整段不执行）。
+
+export func sum_items(Dict d): int {
+    int s = 0
+    for d.items to var v {
+        s = s + _int(v)
+    }
+    return s
+}
+
+export func join_items(Dict d): string {
+    string s = ""
+    for d.items to var v {
+        s = s + _str(v)
+    }
+    return s
+}
+
+export var sharedDict = {items: [1, 2, 3, 4]}

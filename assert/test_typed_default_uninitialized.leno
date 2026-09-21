@@ -1,0 +1,50 @@
+// 回归：**声明了但没初始化**的变量要按声明类型给默认值
+//   Array[T] → 空数组、Dict → 空字典、其余 → null。
+//   原来三个分支一律发 LOADNIL ⇒ `Array[int] res; res.add(x)` 直接抛
+//   「类型 object 上不存在方法 'add'」（examples/type类型/处理 非数值的健壮函数.leno）。
+import arrays
+
+func build(): Array[int] {
+    Array[int] res
+    res.add(10)
+    res.add(20)
+    return res
+}
+
+func build_dict(): Dict {
+    Dict d
+    d["k"] = 1
+    return d
+}
+
+main() {
+    // ① 局部：Array / Dict 的默认值是可用容器（不再报错）
+    Array[int] a
+    assert_eq(a.len(), 0)
+    a.add(5)
+    assert_eq(a.len(), 1)
+    assert_eq(a[0], 5)
+
+    Dict d
+    d["k"] = 9          // 默认值是可用字典（不是 null，否则这里直接抛异常）
+    assert_eq(d["k"], 9)
+
+    // ② 通过函数返回
+    assert_eq(build(), [10, 20])
+    assert_eq(build_dict()["k"], 1)
+
+    // ③ 其余类型仍是 null
+    string s
+    assert_null(s)
+    int n
+    assert_null(n)
+
+    // ④ 模块函数风格：声明 → 逐个 add → 返回
+    assert_eq(arrays.len(build()), 2)
+
+    // ⑤ 嵌套容器
+    Array[Array[int]] nested
+    assert_eq(nested.len(), 0)
+    nested.add([1, 2])
+    assert_eq(nested[0][1], 2)
+}

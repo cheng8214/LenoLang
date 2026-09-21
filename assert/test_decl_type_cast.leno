@@ -1,0 +1,34 @@
+// 回归：声明类型的 CAST 不能在**非局部**分支里漏掉
+//   gen_var_decl 的全局/模块分支原来直接存值、没按声明类型做 CAST ⇒
+//   `float g = 1` 全局存成 **int**（后续算术走 int 语义：g/2 得 0 而不是 0.5）。
+//   局部分支一直是对的，所以只在全局/模块变量上暴露；用"除以 2"这种
+//   能区分 int/float 语义的方式断言，不依赖打印格式。
+
+float gf_lit = 1
+float gf_expr = 1 + 1
+var gv = 2
+float gf_from_var = gv
+
+int gi_from_float = _int(3.7)
+
+main() {
+    // 全局 float 变量内部必须是浮点：1/2 = 0.5（若存成 int 会得 0）
+    float h1 = gf_lit / 2
+    assert_eq(h1, 0.5)
+
+    float h2 = gf_expr / 2
+    assert_eq(h2, 1.0)
+
+    float h3 = gf_from_var / 2
+    assert_eq(h3, 1.0)
+
+    // 全局 int 变量的 CAST 方向（3.7 → 3）
+    assert_eq(gi_from_float, 3)
+
+    // 局部变量（对照组，本来就对）
+    float lf = 1
+    assert_eq(lf / 2, 0.5)
+
+    // 模块级变量同理（覆盖在 test_cross_module_types.leno）
+    assert_eq(_float(gf_lit) + 0.25, 1.25)
+}
