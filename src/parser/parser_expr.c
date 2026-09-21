@@ -306,8 +306,16 @@ Ast* parse_interp_string(Parser* p) {
         // 如果最后一个表达式后没有字符串片段，添加空字符串
         if (!has_content) {
             if (idx >= capacity) {
+                int old_cap = capacity;
                 capacity *= 2;
                 ast->u.interp_string.parts = (char**)realloc(ast->u.interp_string.parts, sizeof(char*) * capacity);
+                // ⚠ parts / exprs 是**平行**数组（上面两处扩容都是成对的），这里也必须一起扩：
+                //   只扩 parts 会让 `count = idx + 1` 超过 exprs 的容量 ⇒ 任何按 `i < count`
+                //   读 exprs[i] 的消费端都堆越界（见 codegen gen_interp_string 的注释）。
+                ast->u.interp_string.exprs = (Ast**)realloc(ast->u.interp_string.exprs, sizeof(Ast*) * capacity);
+                for (int i = old_cap; i < capacity; i++) {
+                    ast->u.interp_string.exprs[i] = NULL;
+                }
             }
             ast->u.interp_string.parts[idx] = strdup("");
         }

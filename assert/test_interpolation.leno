@@ -16,6 +16,19 @@ main() {
     var name = "Leno"
     var s3 = $"Hello, {name}!"
     assert_eq(s3, "Hello, Leno!")
-    
+
+    // ★ 4 段以上插值（回归）：解析器收尾那段曾经只扩容 parts、不扩容 exprs
+    //   （两个数组不再平行），而 codegen 按 `i < count` 读 exprs[count-1] ⇒ 堆越界，
+    //   **编译期段错误**（`$"{a}{b}{c}{d}"` 必崩，3 段及以下不触发）。
+    //   栈式消费端按约定只读 exprs[0..count-2]，所以同样的解析器缺陷在栈式不崩。
+    var c = 30
+    var d = 40
+    var s4 = $"{a}|{b}|{c}|{d}"
+    assert_eq(s4, "10|20|30|40")
+
+    var e = 50
+    var s5 = $"{a}{b}{c}{d}{e}"
+    assert_eq(s5, "1020304050")
+
     print("test_interpolation passed")
 }

@@ -1198,7 +1198,12 @@ void gen_interp_string(CodeGen* gen, Ast* ast, int dst) {
             }
         }
         // 表达式
-        if (i < ast->u.interp_string.count && ast->u.interp_string.exprs[i]) {
+        // ⚠ 上界必须是 count-1：约定是 `count = 表达式个数 + 1`，最后一格（parts[count-1]）
+        //   只有尾随文本、没有对应表达式。写 `i < count` 会读 exprs[count-1] ——
+        //   解析器收尾那段曾经只扩容 parts、不扩容 exprs，于是 exprs 只有 count-1 个槽，
+        //   这一读就是**堆越界**：4 段以上插值（`$"{a}{b}{c}{d}"`）编译期直接段错误
+        //   （exit=0xC0000005，--debug 一行都打不出来）。栈式消费端同此边界。
+        if (i < count - 1 && ast->u.interp_string.exprs[i]) {
             if (first) {
                 gen_expr_to(gen, ast->u.interp_string.exprs[i], cur);
                 first = 0;
