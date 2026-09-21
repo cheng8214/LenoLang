@@ -79,6 +79,8 @@
     // OP_GET_METHOD A B C: R[A] = R[B].方法名(K[C]) —— 内置类型 → 绑定原生方法；
     //   struct → 绑定脚本方法闭包；dict → 退化为按键取属性。
     LABEL(OP_GET_METHOD): {
+        // 调用点标识（读操作数之前取）—— 内联缓存的索引用它
+        uint8_t* ip_before = frame->ip;
         int a = READ_A(), b = READ_B();
         int cidx = READ_CONST_IDX(READ_C());
         int line = GET_CURRENT_LINE();
@@ -112,7 +114,42 @@
             ObjStructDef* def = so->def;
             ObjClosure* pre = NULL;
             ObjFunction* fn = NULL;
+
+            // ★ 内联缓存：此前 vm.ic_method_cache 是**死字段**（leno_vm.h 里定义了、
+            //   vm_init.inc 里初始化了，本 handler 从没读写过）⇒ 每次方法调用都要
+            //   struct_method_lookup() **线性 strcmp 遍历方法表**。
+            //   键 =（调用点、def 指针、方法名哈希、struct 定义表代数）；
+            //   值 = **预创建方法闭包**。与栈式 op_struct.inc 同口径
+            //   （它同样按调用点索引 + 比 struct_def_generation()）。
+            //   只缓存预创建闭包（无 upvalue 的方法）；带 upvalue 的方法每次都要新建
+            //   闭包，不缓存 —— 与 leno_vm.h 里该结构体的注释一致。
+            //   安全性：ObjStructDef 是 GC 根（struct_def_mark_all），
+            //   def->methods[i].closure 经 def 可达，且本 GC 非移动式 ⇒ 裸指针稳定。
+            InlineMethodCacheEntry* mc = NULL;
+            uint32_t mgen = 0;
+            if (def) {
+                mgen = struct_def_generation();
+                int cache_idx = (int)(((uintptr_t)ip_before >> 2) & (IC_METHOD_CACHE_SIZE - 1));
+                mc = &vm.ic_method_cache[cache_idx];
+                if (likely(mc->valid && mc->def == def && mc->name_hash == name->hash &&
+                           mc->gen == mgen)) {
+                    vm.ic_hits++;
+                    ObjBoundMethod* bound = bound_closure_method_new(receiver, mc->closure);
+                    if (unlikely(!bound)) { runtime_error("内存分配失败", line); return -1; }
+                    R(a) = val_obj((Object*)bound);
+                    DISPATCH();
+                }
+                vm.ic_misses++;
+            }
+
             if (def && struct_method_lookup(def, name, &pre, &fn)) {
+                if (pre && mc) {   // 只缓存预创建闭包（upvalue 方法不缓存）
+                    mc->valid = 1;
+                    mc->def = def;
+                    mc->name_hash = name->hash;
+                    mc->gen = mgen;
+                    mc->closure = pre;
+                }
                 ObjClosure* cl = pre;
                 if (!cl) {
                     cl = (ObjClosure*)gc_alloc(sizeof(ObjClosure), OBJ_CLOSURE);

@@ -301,6 +301,8 @@
     //           mod_space(1) + mod_slot(2)                     ← S2/2b-2，见下方"窥探"
     //   构造实参在 R[A+1 .. A+B]
     LABEL(OP_STRUCT_INIT): {
+        // 调用点标识（读操作数之前取）—— 内联缓存的索引用它
+        uint8_t* ip_before = frame->ip;
         int a = READ_A();
         int arg_count = READ_B();
         int line = GET_CURRENT_LINE();
@@ -490,16 +492,39 @@
         //   ② 当前模块自己声明的那份（模块内 `new Point()`；不带前缀时靠它）
         //   ③ 名字带前缀且某定义 owner->name == 前缀 → 那份
         //   ④ 裸名（旧字节码 / 原生桥接 / 反射的既有行为，在 ③ 内部回退）
-        const char* bare = sname->chars;
-        const char* dotp = strchr(bare, '.');
-        if (dotp) bare = dotp + 1;
+        // ★ 内联缓存：此前 vm.ic_structdef_cache 也是**死字段**（定义了、初始化了，
+        //   handler 从没读写）⇒ 每次 `new X()` 都要走最多三级的按名字查找
+        //   （strchr + 逐级 struct_def_find*，全是字符串比较）。
+        //   键 =（调用点、名字哈希、struct 定义表代数、mod_owner）；
+        //   **owner 一起比** 是为了让"同名不同 owner"的调用点各自命中自己那份、不互相污染
+        //   （与栈式 op_struct.inc 同口径：它同样存 mod_owner 并比 struct_def_generation()）。
+        //   安全性：ObjStructDef 由 struct_def_mark_all() 作为 GC 根标记，裸指针不会悬空。
+        int cache_idx = (int)(((uintptr_t)ip_before >> 2) & (IC_STRUCTDEF_CACHE_SIZE - 1));
+        InlineStructDefCacheEntry* sd_cache = &vm.ic_structdef_cache[cache_idx];
         ObjStructDef* def = NULL;
-        if (mod_owner) def = struct_def_find_in_module(mod_owner, bare);
-        if (!def) {
-            ObjModule* owner = module_frame_current_module();
-            if (owner) def = struct_def_find_in_module(owner, bare);
+        if (likely(sd_cache->valid && sd_cache->name_hash == sname->hash &&
+                   sd_cache->gen == struct_def_generation() && sd_cache->owner == mod_owner)) {
+            vm.ic_hits++;
+            def = sd_cache->def;
+        } else {
+            vm.ic_misses++;
+            const char* bare = sname->chars;
+            const char* dotp = strchr(bare, '.');
+            if (dotp) bare = dotp + 1;
+            if (mod_owner) def = struct_def_find_in_module(mod_owner, bare);
+            if (!def) {
+                ObjModule* owner = module_frame_current_module();
+                if (owner) def = struct_def_find_in_module(owner, bare);
+            }
+            if (!def) def = struct_def_find_qualified(sname->chars);
+            if (def) {
+                sd_cache->valid = 1;
+                sd_cache->name_hash = sname->hash;
+                sd_cache->gen = struct_def_generation();
+                sd_cache->owner = mod_owner;
+                sd_cache->def = def;
+            }
         }
-        if (!def) def = struct_def_find_qualified(sname->chars);
         if (unlikely(!def)) {
             char msg[256];
             snprintf(msg, sizeof(msg), "未定义的结构体 '%s'", sname->chars);
