@@ -1,5 +1,5 @@
 // 添加函数符号
-void module_symbol_table_add_func(ModuleSymbolTable* table, const char* name, TypeKind return_type, const char* return_struct_name, int type_param_count, TypeInfo* return_type_info, const char* param_text, int param_count, int default_count, char** param_default_texts) {
+void module_symbol_table_add_func(ModuleSymbolTable* table, const char* name, TypeKind return_type, const char* return_struct_name, int type_param_count, TypeInfo* return_type_info, const char* param_text, int param_count, int default_count, char** param_default_texts, int is_async) {
     if (!table || !name) return;
 
     // 扩容
@@ -22,6 +22,7 @@ void module_symbol_table_add_func(ModuleSymbolTable* table, const char* name, Ty
     func->default_count = default_count;
     func->param_default_texts = NULL;
     func->line = 0;  // 默认值，由 scan_func.inc 设置
+    func->is_async = is_async;   // ★ 必须显式赋值（同下面的注释：扩容槽位是垃圾值）
     // ⑱ 转正：参数类型（由 scan_func.inc 在 add 之后填；这里**必须**显式置空 ——
     // table->funcs 是 realloc 扩容的，新槽位里是垃圾值，不初始化会读到野指针）
     func->param_types = NULL;
@@ -86,9 +87,16 @@ void module_symbol_table_add_struct(ModuleSymbolTable* table, const char* name, 
     }
 
     if (method_count > 0 && methods) {
-        st->methods = (ModuleStructMethod*)malloc(sizeof(ModuleStructMethod) * method_count);
+        // ★ 必须 calloc：这是**逐字段手工深拷贝**，新增字段极易漏拷 ⇒ 漏掉的那个字段
+        //   在目标里就是**未初始化垃圾**（malloc 不置零）。实测踩过：C2 给
+        //   ModuleStructMethod 加了 is_async 后忘了在这里拷 ⇒ 跨模块方法的 is_async
+        //   是垃圾值、偶尔为 1 ⇒ 普通方法被当成 async（返回 Future、打印成 [object]），
+        //   失败点还随内存布局漂移（test_use_return_edge / test_inline_module_var 等 6 个）。
+        //   calloc 至少让"漏拷的字段"退化成 0（安全默认），而不是随机行为。
+        st->methods = (ModuleStructMethod*)calloc(method_count, sizeof(ModuleStructMethod));
         for (int i = 0; i < method_count; i++) {
             st->methods[i].name = strdup(methods[i].name);
+            st->methods[i].is_async = methods[i].is_async;   // C2：漏掉它就是上面那个坑
             st->methods[i].return_type = methods[i].return_type;
             st->methods[i].return_type_info = methods[i].return_type_info ? type_copy(methods[i].return_type_info) : NULL;
             st->methods[i].return_struct_name = methods[i].return_struct_name ? strdup(methods[i].return_struct_name) : NULL;

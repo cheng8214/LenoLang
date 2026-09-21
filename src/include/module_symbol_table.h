@@ -23,6 +23,8 @@ typedef struct {
                                  // （无名的槽位为 NULL）
 
     int line;                   // 函数定义所在行号（1-based，0 表示未知）
+    int is_async;               // 是否 `async func`（C2：扫描器要认 async，消费者侧据它
+                                // 判"调用返回 Future"/发 OP_ASYNC_CALL；随 .lenosymc 往返）
 } ModuleFuncSymbol;
 
 // 模块 struct 字段
@@ -56,6 +58,7 @@ typedef struct {
                                 //    补上它，跨模块方法实参检查才能覆盖聚合参数（⑯）。
     char** param_generic_names; // 参数泛型类型参数名（如 "T", "K"），用于泛型方法参数类型检查
     int line;                   // 方法定义所在行号（1-based，0 表示未知）
+    int is_async;               // 是否 `async func` 方法（C2，同 ModuleFuncSymbol.is_async）
 } ModuleStructMethod;
 
 // 模块 struct 符号
@@ -217,7 +220,7 @@ ModuleFuncSymbol* module_symbol_table_find_func(ModuleSymbolTable* table, const 
 ModuleStructSymbol* module_symbol_table_find_struct(ModuleSymbolTable* table, const char* struct_name);
 
 // 添加函数符号
-void module_symbol_table_add_func(ModuleSymbolTable* table, const char* name, TypeKind return_type, const char* return_struct_name, int type_param_count, TypeInfo* return_type_info, const char* param_text, int param_count, int default_count, char** param_default_texts);
+void module_symbol_table_add_func(ModuleSymbolTable* table, const char* name, TypeKind return_type, const char* return_struct_name, int type_param_count, TypeInfo* return_type_info, const char* param_text, int param_count, int default_count, char** param_default_texts, int is_async);
 
 // 添加 struct 符号
 void module_symbol_table_add_struct(ModuleSymbolTable* table, const char* name, int field_count, ModuleStructField* fields, int method_count, ModuleStructMethod* methods, int is_cstruct, int type_param_count, char** type_param_names);

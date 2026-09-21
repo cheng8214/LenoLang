@@ -218,7 +218,8 @@
                         module_symbol_table_add_func(table, func_name,
                             return_type,
                             return_struct_name[0] ? return_struct_name : NULL,
-                            0, return_type_info, param_text, param_count, 0, NULL);
+                            0, return_type_info, param_text, param_count, 0, NULL,
+                            scan_preceded_by_async(source, func_pos));   // `async func` 的顶层预扫描也要带上标记
                         if (return_type_info) type_free(return_type_info);
                     }
                 }

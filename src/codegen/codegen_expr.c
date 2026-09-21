@@ -1332,6 +1332,23 @@ void emit_module_object_to(CodeGen* gen, Ast* mcall, int dst, int line) {
 //   返回 base（块大小 = max(expected+1, nresults)），*out_expected 回填实参个数。
 //   调用方随后自己发 emit_call(gen, base, expected, nresults, line) 并 reg_free_block。
 // ⚠ 这两条路径此前各写一份，解构那份漏了 ①②④ 的完整口径 ⇒ 见 emit_module_object_to 注释。
+// 跨模块被调函数是不是 async？
+// ----------------------------------------------------------------------------
+// 与本地路径同口径：`export async func work()` / `export struct` 的 async 方法 →
+// 扫描器把标记记进模块符号表（ModuleFuncSymbol.is_async / ModuleStructMethod.is_async），
+// 这里据此发 OP_ASYNC_CALL（调用即建协程、返回 Future）。
+// 注：即便这一步漏了，VM 在 OP_CALL 里也有运行期兜底（按 ObjFunction.is_async），
+//   但**静态**发出 ASYNC_CALL 更明确、也少一次运行期判断。
+int module_call_is_async(CodeGen* gen, Ast* mcall) {
+    if (!gen || !mcall || mcall->kind != AST_MODULE_CALL) return 0;
+    const char* methname = mcall->u.module_call.method_name;
+    if (!methname || !methname[0]) return 0;
+    ImportedModuleInfo* mi = find_imported_module(gen->sem, mcall->u.module_call.module_name);
+    if (!mi || !mi->sym_table) return 0;
+    ModuleFuncSymbol* mfs = module_symbol_table_find_func(mi->sym_table, methname);
+    return (mfs && mfs->is_async) ? 1 : 0;
+}
+
 int gen_module_call_prep(CodeGen* gen, Ast* mcall, int nresults, int* out_expected) {
     const char* modname = mcall->u.module_call.module_name;
     const char* methname = mcall->u.module_call.method_name ? mcall->u.module_call.method_name : "";
@@ -1486,7 +1503,12 @@ void gen_module_call(CodeGen* gen, Ast* ast, int dst) {
         // --- .leno 模块成员调用 ---
         int expected = 0;
         int base = gen_module_call_prep(gen, ast, 1, &expected);
-        emit_call(gen, base, expected, 1, ast->line);
+        // ★ 跨模块的 async 函数：同样"调用即建协程、返回 Future"（C2）
+        if (module_call_is_async(gen, ast)) {
+            reg_encode_iABC(gen->chunk, OP_ASYNC_CALL, base, expected, 0, ast->line);
+        } else {
+            emit_call(gen, base, expected, 1, ast->line);
+        }
         if (base != dst) emit_mov(gen, dst, base, ast->line);
         reg_free_block(gen, base);
         return;

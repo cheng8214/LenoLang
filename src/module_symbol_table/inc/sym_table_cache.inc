@@ -264,6 +264,10 @@ for (uint32_t k = 0; k < pc; k++) {
 sym_cache_write_string(f, table->funcs[i].param_struct_names[k]);
 }
 }
+// v14: async 标记（C2）—— 少了它，缓存命中时 `export async func` 会被当成普通函数，
+// 跨模块调用退回同步执行（返回值不是 Future）
+uint8_t fa = (uint8_t)table->funcs[i].is_async;
+fwrite(&fa, 1, 1, f);
 }
 
     // structs
@@ -330,6 +334,9 @@ sym_cache_write_string(f, table->funcs[i].param_struct_names[k]);
             // v15: 序列化方法行号
             uint32_t ml = (uint32_t)sm->line;
             fwrite(&ml, 4, 1, f);
+            // v14: async 方法标记（C2）
+            uint8_t ma = (uint8_t)sm->is_async;
+            fwrite(&ma, 1, 1, f);
         }
         uint8_t is_cs = (uint8_t)ss->is_cstruct;
         fwrite(&is_cs, 1, 1, f);
@@ -683,6 +690,9 @@ for (uint32_t k = 0; k < pc2; k++) {
 table->funcs[i].param_struct_names[k] = sym_cache_read_string(f);
 }
 }
+// v14: async 标记（C2）
+uint8_t fa2; if (fread(&fa2, 1, 1, f) != 1) goto fail;
+table->funcs[i].is_async = fa2;
 table->func_count++;
     }
 
@@ -754,6 +764,9 @@ table->func_count++;
             // v15: 反序列化方法行号
             uint32_t ml; if (fread(&ml, 4, 1, f) != 1) goto fail;
             sm->line = (int)ml;
+            // v14: async 方法标记（C2）
+            uint8_t ma; if (fread(&ma, 1, 1, f) != 1) goto fail;
+            sm->is_async = ma;
         }
         uint8_t is_cs; if (fread(&is_cs, 1, 1, f) != 1) goto fail;
         ss->is_cstruct = is_cs;

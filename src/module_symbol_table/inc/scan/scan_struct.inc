@@ -233,9 +233,14 @@
                                 continue;
                             }
 
-                            // 检查是否是方法定义 (func 关键字)
-                            if (strncmp(after_struct, "func", 4) == 0 && (after_struct[4] == ' ' || after_struct[4] == '\t')) {
-                                char* after_func = after_struct + 4;
+                            // 检查是否是方法定义（func 关键字，允许 `async func` —— C2：
+                            // 此前不认 async ⇒ async 方法会落到**字段**解析，伪造出
+                            // func/asyncs/self 三个字段、方法数 0 ⇒
+                            // 「内部错误: struct 'X' 方法收集不完整…请报告编译器 bug」）
+                            int method_is_async = 0;
+                            const char* method_kw = scan_skip_async(after_struct, &method_is_async);
+                            if (strncmp(method_kw, "func", 4) == 0 && (method_kw[4] == ' ' || method_kw[4] == '\t')) {
+                                char* after_func = (char*)method_kw + 4;
                                 while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
 
                                 // 读取方法名
@@ -593,6 +598,7 @@
                                             memcpy(methods[method_count].name, method_key, method_key_len);
                                             methods[method_count].name[method_key_len] = '\0';
                                             methods[method_count].line = method_def_line;
+                                            methods[method_count].is_async = method_is_async;   // C2：async 方法标记
                                             methods[method_count].return_type = method_return_type;
                                             methods[method_count].return_type_info = method_return_type_info ? type_copy(method_return_type_info) : NULL;
                                             // 释放临时 method_return_type_info（已复制到 methods 数组）

@@ -397,7 +397,10 @@ Ast* parse_export_stmt(Parser* p) {
         Ast* ast = ast_new(AST_EXPORT, line);
         ast->u.export.decl = decl;
         return ast;
-    } else if (p->lex.current.type == TOK_FUNC) {
+    } else if (p->lex.current.type == TOK_FUNC || p->lex.current.type == TOK_ASYNC) {
+        // ★ `export async func`：TOK_ASYNC 也走这里 —— parse_func_stmt 自己会吃掉
+        //   `async` 并给 AST_FUNC_DEF 置 is_async（C2：此前这里只认 TOK_FUNC，
+        //   `export async func work()` 直接报「export 后面期望 var、const、func…」）
         Ast* decl = parse_func_stmt(p);
         if (!decl) return NULL;
 
@@ -466,7 +469,7 @@ Ast* parse_export_stmt(Parser* p) {
             ast->u.export.decl = decl;
             return ast;
         }
-        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "export 后面期望 var、const、func、struct、cstruct、packed、align、clib、enum 或 alias");
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "export 后面期望 var、const、func、async func、struct、cstruct、packed、align、clib、enum 或 alias");
         return NULL;
     }
 }

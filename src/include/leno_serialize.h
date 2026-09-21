@@ -114,10 +114,13 @@
 // 模块编译缓存格式（.lenomc）—— 跨运行的模块编译产物缓存
 // ⚠ 版本号登记表：docs/待办_单一事实来源与重复实现收敛.md 第七节（与 .lenb 同源改动要一起评估）
 #define LENO_MODCACHE_MAGIC    0x434D4E4C  // "LNMC" little-endian
+// v14：模块符号表记录 `async` 标记（ModuleFuncSymbol.is_async / ModuleStructMethod.is_async）。
+//      旧缓存没有这两位 ⇒ 跨模块 async 会被当成普通函数（同步调用、返回值不是 Future），
+//      所以必须**作废旧缓存**。
 // v13：ObjFunction 增加 is_async（运行期判定"调用即建协程"用）。旧缓存里的函数对象缺这个
 //      字段 ⇒ async 函数的**间接调用**（`var f = w; f()`、当参数传、绑定方法）会退回同步执行、
 //      静默错值，所以必须**作废旧缓存**。
-#define LENO_MODCACHE_VERSION  0x0000000D  // 上一版 v12 - 同 LENO_BIN_VERSION v3.0.1（OP_STRUCT_INIT
+#define LENO_MODCACHE_VERSION  0x0000000E  // 上一版 v13 / v12 - 同 LENO_BIN_VERSION v3.0.1（OP_STRUCT_INIT
                                            //       多 3 字节 module_slot16 操作数，模块字节码里
                                            //       同样存在，旧构建按旧长度推进会错位）
                                            // v11 - 寄存器式字节码，与 LENO_BIN_VERSION v3.0.0 同步

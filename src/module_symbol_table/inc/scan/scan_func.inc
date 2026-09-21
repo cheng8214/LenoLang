@@ -296,7 +296,8 @@
                             module_symbol_table_add_func(table, func_name, return_type,
                                 return_struct_name[0] ? return_struct_name : NULL, func_type_param_count, return_type_info,
                                 param_text[0] ? param_text : NULL,
-                                parsed_param_count, parsed_default_count, parsed_default_texts);
+                                parsed_param_count, parsed_default_count, parsed_default_texts,
+                                is_async_decl);   // `export async func` ⇒ 记进符号表（C2）
                             ModuleFuncSymbol* added_func = module_symbol_table_find_func(table, func_name);
                             if (added_func) {
                                 added_func->line = func_def_line;

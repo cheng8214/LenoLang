@@ -1,3 +1,44 @@
+// ============================================================================
+// 跳过声明前的可选 `async` 前缀（模块扫描器识别 `async func` 用）
+// ----------------------------------------------------------------------------
+// ⚠ 扫描器此前**完全不认 async**（`grep async src/module_symbol_table` = 0 命中）：
+//   · `export async func work()` 落到 scan_var 分支被当成"类型在前"的**变量**声明
+//     （"async" 当类型、"func" 当变量名）⇒ 模块里既没有 work、还多出垃圾符号，
+//     消费者侧报「模块 'm' 中没有方法 'work'」；
+//   · struct 里的 `async func run()` 落到**字段**解析 ⇒ 伪造出 func/asyncs/self
+//     三个"字段"（带 3 条"声明类型无法解析"警告），方法数 0 ⇒
+//     「内部错误: struct 'Worker' 方法收集不完整…请报告编译器 bug」。
+//   这就是 C2（跨模块 async 完全不支持）。
+// 返回跳过后的位置；*out_is_async 置 1 表示确实有 async 前缀（可为 NULL）。
+static const char* scan_skip_async(const char* p, int* out_is_async) {
+    if (out_is_async) *out_is_async = 0;
+    if (!p) return p;
+    if (strncmp(p, "async", 5) == 0 &&
+        (p[5] == ' ' || p[5] == '\t' || p[5] == '\n' || p[5] == '\r')) {
+        if (out_is_async) *out_is_async = 1;
+        p += 5;
+        while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) p++;
+    }
+    return p;
+}
+
+// 反查：位置 p（通常是 `func` 关键字）之前是否紧跟着单独的 `async` 关键字。
+// 用于 pass2 的顶层预扫描（那边是在整份源码里找 `func` 标记，没有"前缀剥离"的时机）。
+// source 是缓冲区起点，用于边界判断（指针比较必须落在同一数组内）。
+static int scan_preceded_by_async(const char* source, const char* p) {
+    if (!source || !p || p <= source) return 0;
+    const char* q = p;
+    while (q > source && (q[-1] == ' ' || q[-1] == '\t')) q--;
+    if (q - source < 5) return 0;
+    if (strncmp(q - 5, "async", 5) != 0) return 0;
+    // 前面不能再是标识符字符（避免匹配到 `xxasync`）
+    if (q - source >= 6) {
+        char prev = *(q - 6);
+        if (isalnum((unsigned char)prev) || prev == '_') return 0;
+    }
+    return 1;
+}
+
 static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* current_file, int depth) {
     if (depth > MODULE_SCAN_MAX_DEPTH) return -1;
     if (!table || !table->module_path) return -1;
@@ -31,6 +72,12 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                     break;
                 }
             }
+
+            // ★ 吃掉可选的 `async` 前缀（`export async func ...`）：后续各个 scan_*.inc
+            //   只看得到 `func ...`，scan_var 也因此不会把 `async func` 误判成变量声明。
+            //   is_async_decl 供 scan_func.inc 记录到模块符号表（消费者侧判 async 用）。
+            int is_async_decl = 0;
+            after_export = (char*)scan_skip_async(after_export, &is_async_decl);
 
             #include "scan/scan_struct.inc"
             #include "scan/scan_cstruct.inc"

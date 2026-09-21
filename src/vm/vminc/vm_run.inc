@@ -3852,6 +3852,20 @@
 
         if (val_is_obj(callee) && val_as_obj(callee)->type == OBJ_CLOSURE) {
             closure = (ObjClosure*)val_as_obj(callee);
+        } else if (val_is_obj(callee) && val_as_obj(callee)->type == OBJ_FUNCTION) {
+            // ★ 裸函数对象：跨模块调用（`m.work()`）从模块 exports 里取到的就是它
+            //   （模块导出的是 ObjFunction 本身，不是闭包）—— 与 OP_CALL 的 OBJ_FUNCTION
+            //   分支同口径：现场包一层闭包再建协程。不认它就会报
+            //   「async 调用只能调用 async 函数」（C2：`await m.work()` 走的就是这条路）。
+            ObjFunction* raw = (ObjFunction*)val_as_obj(callee);
+            ObjClosure* wrap = (ObjClosure*)gc_alloc(sizeof(ObjClosure), OBJ_CLOSURE);
+            if (unlikely(!wrap)) { runtime_error("内存分配失败", line); return -1; }
+            wrap->function = raw;
+            wrap->upvalue_count = 0;
+            wrap->type_param_count = 0;
+            wrap->type_param_args = NULL;
+            for (int i = 0; i < MAX_UPVALUES; i++) wrap->upvalues[i] = NULL;
+            closure = wrap;
         } else if (val_is_obj(callee) && val_as_obj(callee)->type == OBJ_BOUND_METHOD) {
             ObjBoundMethod* bound = (ObjBoundMethod*)val_as_obj(callee);
             closure = bound->closure;      // native 绑定方法没有闭包 ⇒ 下面统一报错

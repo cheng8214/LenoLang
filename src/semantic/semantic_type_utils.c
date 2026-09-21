@@ -212,6 +212,10 @@ void semantic_register_struct_from_module(Semantic* s, const ModuleStructSymbol*
             }
         }
         placeholder->u.func.default_count = 0;
+        // ★ C2：把扫描器记下的 async 标记带到占位 AST 上 —— gen_method_call 就是靠
+        //   `mdef->u.func.is_async` 决定发 OP_ASYNC_CALL 的（跨模块 struct 的 async 方法
+        //   否则会退化成同步 CALL；虽然有运行期兜底，静态发出更明确）。
+        placeholder->u.func.is_async = ssym->methods[mi].is_async;
         func_table_add(&s->func_table, full_method_name, placeholder);
     }
 }

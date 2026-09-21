@@ -244,6 +244,13 @@ static void extract_exports(const char* source, ExportList* list) {
             p += 6;
             while (*p && (*p == ' ' || *p == '\t')) p++;
 
+            // ★ 跳过可选的 `async` 前缀（`export async func work()`）：
+            //   少了这一步，导出名会被登记成 "async"（或 "func"），消费者侧
+            //   `m.work()` 直接报「模块 'm' 中没有方法 'work'」—— C2 的第三处。
+            if (strncmp(p, "async", 5) == 0 && !isalnum((unsigned char)p[5]) && p[5] != '_') {
+                p += 5;
+                while (*p && (*p == ' ' || *p == '\t')) p++;
+            }
             // 跳过可能的 "func"、"var"、"const"、"struct"、"cstruct"、"enum" 关键字
             if (strncmp(p, "func", 4) == 0 && !isalnum((unsigned char)p[4]) && p[4] != '_') {
                 p += 4;

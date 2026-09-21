@@ -58,6 +58,13 @@ function Norm([string]$s) {
     $s = $s -replace '0x[0-9a-fA-F]+', '0xPTR'                      # 指针地址
     $s = $s -replace '[0-9]+\s*ms', 'T'                             # 毫秒
     $s = $s -replace '\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?', 'TS'  # 时间戳
+    # ⚠ 本文件必须**保持 ASCII**：PowerShell 读脚本走 GBK，脚本里的中文字面量会被读坏，
+    #   正则就永远匹配不上（第一版就是这么写的，PID/内存行仍然逐个报差异）。
+    $s = $s -replace 'PID\s*[:=]\s*\d+', 'PID=N'                    # 进程号（每次运行都不同）
+    $s = $s -replace 'ID\s*[:=]\s*\d+', 'ID: N'                     # 「当前进程ID: 1234」等
+    $s = $s -replace '\d+\s*MB', 'N MB'                             # 内存波动
+    $s = $s -replace '\d+\s*KB', 'N KB'
+    $s = $s -replace 'lenoreg\.exe', 'leno.exe'                     # 可执行名不同（分析对象本身）
     $s = $s -replace '(?m)^\s*$', ''                                # 空行
     return $s.Trim()
 }

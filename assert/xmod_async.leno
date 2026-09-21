@@ -1,0 +1,25 @@
+// 跨模块 async 测试用的辅助模块（文件名不以 test_ 开头 ⇒ 不被 run_tests 当测试跑）
+import asyncs
+
+// `export async func`：扫描器此前完全不认 async ⇒ 落到"变量声明"分支，
+// 消费者侧报「模块 'm' 中没有方法 'work'」（C2）
+export async func work(): int {
+    await asyncs.sleep(1)
+    return 7
+}
+
+// 对照：普通导出函数必须**不受影响**（仍然直接返回值，不是 Future）
+export func plain(): int {
+    return 5
+}
+
+// `export struct` 里的 async 方法：扫描器此前把它当**字段**解析
+// （伪造 func/asyncs/self 三个字段 + 「方法收集不完整」内部错误）
+export struct Worker {
+    int n = 0
+
+    async func run(): int {
+        await asyncs.sleep(1)
+        return self.n + 1
+    }
+}

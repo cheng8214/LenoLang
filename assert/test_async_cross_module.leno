@@ -1,0 +1,42 @@
+// 跨模块 async 测试（C2 回归）
+// ----------------------------------------------------------------------------
+// 修前两侧都不支持（栈式至今也不支持）：
+//   · `export async func work()` ⇒ 模块符号扫描器完全不认 async ⇒ 落到"变量声明"
+//     分支 ⇒ `m.work()` 报「模块 'm' 中没有方法 'work'」；
+//   · `export struct { async func run() }` ⇒ 扫描器把方法体**当字段**解析 ⇒
+//     伪造出 func/asyncs/self 三个字段（3 条"声明类型无法解析"警告）+ 方法数 0 ⇒
+//     「内部错误: struct 'Worker' 方法收集不完整…请报告编译器 bug」。
+// 修法：解析器认 `export async func`、扫描器认 `async func`（函数 + struct 方法）、
+//   loader 的导出名单跳过 async 前缀、符号表带上 is_async（随缓存往返）。
+// 注：`is_async` 新增字段时踩过一个坑 —— `module_symbol_table_add_struct` 的
+//   逐字段手工拷贝漏拷它 ⇒ 垃圾值让普通方法被当成 async（返回 Future、打印 [object]），
+//   已改成 calloc + 显式拷贝；本文件第 ③ 条就是防这个回归。
+import io
+import asyncs
+import "xmod_async.leno" as m
+use m.Worker
+
+async func driver() {
+    // ① export async func：调用返回 Future，await 取到值
+    var f = m.work()
+    assert_eq(type(f), "object")
+    assert_eq(await f, 7)
+
+    // ② 跨模块 struct 的 async 方法
+    var w = new Worker()
+    w.n = 41
+    assert_eq(await w.run(), 42)
+
+    // ③ 对照：普通导出函数/方法不受影响（不是 Future、值也不串）
+    assert_eq(m.plain(), 5)
+    assert_eq(type(m.plain()), "int")
+    assert_eq(w.n, 41)
+
+    io.print("[PASS] 跨模块 async（export async func + struct async 方法）")
+}
+
+main() {
+    driver()
+    asyncs.run()
+    io.print("test_async_cross_module passed")
+}
