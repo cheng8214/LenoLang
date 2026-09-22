@@ -674,16 +674,11 @@ static void gen_for_iter(CodeGen* gen, Ast* ast) {
     gen->loop_head = node;
     gen->loop_count++;
 
-    int loop_start = gen->chunk->len;
-
-    // 条件：idx < len(obj)
-    int len_reg = reg_alloc(gen);
-    reg_encode_iABC(gen->chunk, OP_LEN, len_reg, obj_slot, 0, ast->line);
-    int cond = reg_alloc(gen);
-    emit_lt(gen, cond, idx_slot, len_reg, ast->line);
-    int exit_jump = emit_jmp_if_false(gen, cond, ast->line);
-    reg_free(gen, cond);
-    reg_free(gen, len_reg);
+    // 入口测试：`idx < len(容器)` 为假则跳出 —— 融合成一条 OP_CMPJMP_ITER（T13）
+    //   （原先 LEN + LT + JMP_IF_FALSE 三条；融合指令内部**每次测试都重读长度**，
+    //     所以"迭代中增删容器"的语义不变，见该指令在 07_collections.inc 的说明）
+    int exit_pos = emit_iter_cmpjmp(gen, idx_slot, obj_slot, /*pre_inc*/0, /*want_true*/0, ast->line);
+    int body_start = gen->chunk->len;
 
     // 元素 / 键 → 循环变量
     //   第一个循环变量：数组/字符串 → 元素；dict/struct → 键（字段名）
@@ -705,15 +700,32 @@ static void gen_for_iter(CodeGen* gen, Ast* ast) {
 
     if (ast->u.for_.body) gen_stmt(gen, ast->u.for_.body);
 
-    // continue 目标 = 索引自增处
-    int inc_pos = gen->chunk->len;
-    emit_inc(gen, idx_slot, idx_slot, ast->line);
-    emit_loop(gen, loop_start, ast->line);
+    // 回边：先自增索引、再测 `idx < len(容器)`，成立则跳回体首（T13）。
+    //   长度仍在**这一轮**读取 ⇒ `for a to x { a.add(..) }` 的行为不变。
+    int back_pos = gen->chunk->len;                  // continue 的回填目标
+    // ⚠ 尺寸闸门：融合指令的偏移是 16 位带偏置（±32767），超大循环体要回退，
+    //   否则 patch_common 会报 T12 的编译期错误（宁可报错也不静默跳错）。
+    if ((body_start - back_pos - 8) >= -32768) {
+        emit_iter_cmpjmp(gen, idx_slot, obj_slot, /*pre_inc*/1, /*want_true*/1, ast->line);
+        patch_jmp_to(gen, back_pos, body_start);
+    } else {
+        // 超大循环体（>32KB 字节码）：回退成"自增 + 比较 + 16 位条件跳过 + 24 位回跳"
+        int len_reg = reg_alloc(gen);
+        reg_encode_iABC(gen->chunk, OP_LEN, len_reg, obj_slot, 0, ast->line);
+        int cond = reg_alloc(gen);
+        emit_inc(gen, idx_slot, idx_slot, ast->line);
+        emit_lt(gen, cond, idx_slot, len_reg, ast->line);
+        int jf = emit_jmp_if_false(gen, cond, ast->line);
+        emit_loop(gen, body_start, ast->line);       // 24 位，安全
+        patch_jmp(gen, jf);
+        reg_free(gen, cond);
+        reg_free(gen, len_reg);
+    }
 
-    patch_jmp(gen, exit_jump);
+    patch_jmp(gen, exit_pos);
 
     for (int i = 0; i < node->ctx.continue_count; i++) {
-        patch_jmp_to(gen, node->ctx.continue_jumps[i], inc_pos);
+        patch_jmp_to(gen, node->ctx.continue_jumps[i], back_pos);
     }
     for (int i = 0; i < node->ctx.break_count; i++) {
         patch_jmp(gen, node->ctx.break_jumps[i]);

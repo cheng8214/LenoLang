@@ -27,6 +27,30 @@ static inline int dict_ic_key_match(Value a, Value b) {
            memcmp(sa->chars, sb->chars, (size_t)sa->len) == 0;
 }
 
+// 容器长度 —— **单一事实来源**（`OP_LEN` 与 `OP_CMPJMP_ITER` 共用）。
+//   非容器一律 0（与 `OP_LEN` 原实现一致：`len(数字)` 得 0 而不是报错）。
+//   ⚠ 字典的条目分两处存：**连续整数键**在数组部（`acount`）、其余键在哈希部（`count`）。
+//     只读 `count` 会让整数键字典的长度恒为 0（实测 `{1:..,2:..,3:..}` 的 len 得 0，
+//     for 迭代一次都不进 ✗）。
+//   ⚠ struct / enum 两支同理缺不得：缺 struct ⇒ `for p to k` 一次都不进；
+//     缺 enum ⇒ 遍历枚举成员得 0（实测 `sum_all()` 得 0 ✗）。
+static inline int64_t vm_container_len(Value v) {
+    if (!val_is_obj(v)) return 0;
+    ObjType t = val_as_obj(v)->type;
+    if (t == OBJ_ARRAY)  return (int64_t)((ObjArray*)val_as_obj(v))->count;
+    if (t == OBJ_STRING) return (int64_t)((ObjString*)val_as_obj(v))->len;
+    if (t == OBJ_DICT) {
+        ObjDict* d = (ObjDict*)val_as_obj(v);
+        return (int64_t)d->acount + (int64_t)d->count;
+    }
+    if (t == OBJ_STRUCT) {
+        ObjStruct* so = (ObjStruct*)val_as_obj(v);
+        return so->def ? (int64_t)so->def->field_count : 0;
+    }
+    if (t == OBJ_ENUM_DEF) return (int64_t)((ObjEnumDef*)val_as_obj(v))->member_count;
+    return 0;
+}
+
 // int48 运算辅助宏（溢出时自动提升为 BigInt）
 
 // int48 回绕运算辅助宏（仅用于需要显式回绕语义的场景）

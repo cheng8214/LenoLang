@@ -170,6 +170,8 @@ int emit_jmp_if_false(CodeGen* gen, int a, int line);
 //   want_true = 1：比较为**真**则跳（while 回边用 —— 这样回边不必再跟一条独立 OP_JMP）
 int emit_cmpjmp(CodeGen* gen, OpCode op, int a, int b, int is_imm, int want_true, int line);
 int try_emit_cmpjmp(CodeGen* gen, Ast* cond, int want_true, int line);
+// for 容器迭代的条件融合（T13）：`idx < len(容器)` + 条件跳转（pre_inc ⇒ 先自增索引）
+int emit_iter_cmpjmp(CodeGen* gen, int idx_reg, int obj_reg, int pre_inc, int want_true, int line);
 // 语句位置的 `arr.add(x)` ⇒ OP_ARRAY_APPEND(need_result=0)（T10-②）成功返回 1
 int try_emit_stmt_array_add(CodeGen* gen, Ast* e);
 // 语句位置的 `i++`/`++i`/`i--`（局部量/参数）⇒ 只发 OP_INC/OP_DEC（省掉搬旧值的 MOV）

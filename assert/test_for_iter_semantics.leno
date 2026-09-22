@@ -1,0 +1,99 @@
+// 回归测试：`for 容器 to v [, idx]` 的迭代语义（T13 把循环条件融合成一条 OP_CMPJMP_ITER）
+//
+// 融合的**前提**是"长度仍在每次测试时读取" —— 这一条必须被用例钉住：
+//   若哪天有人图快把长度提到循环外（看起来是白赚的一条指令），
+//   `for a to x { a.add(..) }` 会从"6 轮"静默变成"2 轮"，且没有任何报错。
+//   这就是本文件第 ① 组判据存在的意义。
+//
+// 同时覆盖：空容器不进体、break/continue 绑定、带索引变量、字典/结构体/枚举迭代、
+//   嵌套（内层 continue 不得跳到外层）。
+
+enum Color { RED, GREEN, BLUE }
+
+// ① 迭代中追加：长度每轮重算 ⇒ 循环被"撑长"
+//    idx=0..5（每轮 n<5 时追加一个）：n=1 时 len 2→3、n=2 时 3→4、n=3 时 4→5、
+//    n=4 时 5→6、n=5 时 len=6 结束 ⇒ 轮数 6、最终 len 6
+var grow = [1, 2]
+var rounds = 0
+for grow to x {
+    rounds = rounds + 1
+    if rounds < 5 {
+        grow.add(9)
+    }
+}
+assert_eq(rounds, 6)
+assert_eq(grow.len(), 6)
+
+// ② 空容器：一次都不进（入口那条"为假则跳"）
+var empty = []
+var entered = 0
+for empty to x {
+    entered = entered + 1
+}
+assert_eq(entered, 0)
+
+// ③ break / continue：continue 走"先自增再测"，break 到退出
+var b = [1, 2, 3, 4, 5]
+var s = 0
+for b to v {
+    if v == 2 {
+        continue
+    }
+    if v == 5 {
+        break
+    }
+    s = s + v
+}
+assert_eq(s, 8)
+
+// ④ 带索引变量
+var idx_sum = 0
+var idx_str = ""
+for b to v, i {
+    idx_sum = idx_sum + i
+    idx_str = idx_str + i
+}
+assert_eq(idx_sum, 10)
+assert_eq(idx_str, "01234")
+
+// ⑤ 字典：键/值两路（值是 OP_ITER_GET_VALUE，不是序号）
+var d = {"a": 1, "b": 2}
+var keys = ""
+var vals = 0
+for d to k, val {
+    keys = keys + k
+    vals = vals + val
+}
+assert_eq(vals, 3)
+assert_eq(keys.len(), 2)
+
+// ⑥ 枚举：成员遍历（长度支缺了会让循环一次都不进）
+var n = 0
+for Color to c {
+    n = n + 1
+}
+assert_eq(n, 3)
+
+// ⑦ 嵌套：内层 continue 必须只作用于内层（若跳错到外层，k 会多算成 5）
+var outer_sum = 0
+for b to ov {
+    var k = 0
+    for b to inner {
+        if inner == 2 {
+            continue
+        }
+        k = k + 1
+    }
+    outer_sum = outer_sum + k
+}
+assert_eq(outer_sum, 20)
+
+// ⑧ 循环变量在体内被重新赋值不影响下一轮取值（每轮由 ITER_GET 重取）
+var sum2 = 0
+for b to v2 {
+    sum2 = sum2 + v2
+    v2 = 1000
+}
+assert_eq(sum2, 15)
+
+print("test_for_iter_semantics passed")

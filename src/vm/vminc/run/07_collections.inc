@@ -75,32 +75,37 @@
     }
     LABEL(OP_LEN): {
         int a = READ_A(), b = READ_B();
-        Value v = R(b);
-        if (val_is_obj(v)) {
-            if (val_as_obj(v)->type == OBJ_ARRAY) R(a) = val_int(((ObjArray*)val_as_obj(v))->count);
-            else if (val_as_obj(v)->type == OBJ_STRING) R(a) = val_int(((ObjString*)val_as_obj(v))->len);
-            // ⚠ 字典的条目分两处存：**连续整数键**在数组部（acount），
-            //   其余键在哈希部（count）。只读 count 会让整数键字典的长度恒为 0
-            //   （实测 `{1:..,2:..,3:..}` 的 len 得 0，for 迭代一次都不进 ✗）
-            else if (val_as_obj(v)->type == OBJ_DICT) {
-                ObjDict* d = (ObjDict*)val_as_obj(v);
-                R(a) = val_int(d->acount + d->count);
-            }
-            // struct：字段数（`for p to k` 遍历字段名 / `p.len()`）
-            else if (val_as_obj(v)->type == OBJ_STRUCT) {
-                ObjStruct* so = (ObjStruct*)val_as_obj(v);
-                R(a) = val_int(so->def ? so->def->field_count : 0);
-            }
-            // enum：成员数（`for EV to v` 遍历成员值；OP_ITER_GET 的 enum 分支配套）
-            //   ⚠ 缺这一支时 len 恒为 0 ⇒ 循环体一次都不进（实测 sum_all() 得 0 ✗）
-            else if (val_as_obj(v)->type == OBJ_ENUM_DEF) {
-                ObjEnumDef* ed = (ObjEnumDef*)val_as_obj(v);
-                R(a) = val_int(ed->member_count);
-            }
-            else R(a) = val_int(0);
-        } else {
-            R(a) = val_int(0);
+        // 长度规则见 vm_helpers.inc 的 vm_container_len（单一事实来源；本处原先是它的内联副本）
+        R(a) = val_int(vm_container_len(R(b)));
+        DISPATCH();
+    }
+
+    // OP_CMPJMP_ITER A B C —— for 容器迭代的条件融合（T13）
+    // ----------------------------------------------------------------------------
+    // 等价于 codegen 原先发的 `OP_LEN + OP_LT + OP_JMP_IF_FALSE`
+    // （回边另有独立的 `OP_INC + OP_JMP`）—— 合并后每轮固定开销由 6 条降到 2 条：
+    //     原先每轮: LEN, LT, JMP_IF_FALSE, ITER_GET, [体], INC, JMP
+    //     现在每轮: ITER_GET, [体], CMPJMP_ITER(先自增 + 比较 + 真则跳回)
+    // 操作数：A = 索引寄存器；B = 容器寄存器；
+    //         C 只当标志：bit6 = 真则跳（回边用），bit5 = 先自增索引再测试（回边用）；
+    //         紧随 4 字节字的低 16 位 = 跳转偏移（offset + 32768，与 CMPJMP 同约定）。
+    // ★ 语义关键：长度仍在**每次测试时**读取（`vm_container_len`，与 OP_LEN 逐支同口径）
+    //   ⇒ `for a to x { a.add(..) }` 这类"迭代中增删容器"的行为一字不变
+    //   （实测：2 元素起跑、每轮追加一个 ⇒ 6 轮结束、最终 len=6）。
+    //   把长度提到循环外才是语义改动（那会变成 2 轮），不做。
+    // ★ 索引寄存器的值由本指令自己维护：codegen 用 `LOADI idx,0` 初始化，此后**只有**
+    //   这条指令会写它（用户可见的索引变量是另一个槽）⇒ 恒为 int，无需类型检查。
+    LABEL(OP_CMPJMP_ITER): {
+        int a = READ_A(), b = READ_B(), c = READ_C();
+        int bx = ((int)frame->ip[0] << 8) | (int)frame->ip[1];
+        ADVANCE();                          /* 跳过携带偏移的第二个字 */
+        int64_t idx = val_as_int(R(a));
+        if (c & 0x20) {                     /* 回边：先自增（位置与原先那条 OP_INC 一致） */
+            idx++;
+            R(a) = VM_INT_RESULT(idx);      /* 与 OP_INC 同口径（超 int48 提升 bigint） */
         }
+        int truthy = (idx < vm_container_len(R(b)));
+        if (truthy == ((c & 0x40) != 0)) frame->ip += (bx - 32768);
         DISPATCH();
     }
 

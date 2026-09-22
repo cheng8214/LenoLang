@@ -84,6 +84,7 @@ static const char* opCodeNames[] = {
     "OP_ACC_FIELDS",
     "OP_INVOKE_METHOD_TYPED",
     "OP_INDEX_ARRAY_IMM",
+    "OP_CMPJMP_ITER",
     "OP_OPCODE_COUNT",
 };
 
@@ -402,6 +403,21 @@ static int decode_trailing(Chunk* chunk, int offset, char* desc, size_t desc_siz
             }
             break;
         }
+        // for 容器迭代的条件融合（T13）：同样是 8 字节，第二个字前 2 字节是跳转偏移。
+        //   A = 索引寄存器；B = 容器寄存器；C 的 bit6 = 真则跳、bit5 = 先自增索引。
+        case OP_CMPJMP_ITER: {
+            int bx = dbg_take_u16(chunk, base, &p, &over);
+            dbg_take_u16(chunk, base, &p, &over);   // 第二个字的另外 2 字节是填充
+            if (desc) {
+                int off = bx - 32768;
+                int idx_reg = (int)chunk->code[offset + 1];
+                snprintf(desc, desc_size, "%s%s %+d（R[%d] < len(R[%d])）",
+                         (c & 0x20) ? "先自增再测：" : "",
+                         (c & 0x40) ? "为真则跳" : "为假则跳",
+                         off, idx_reg, (int)b);
+            }
+            break;
+        }
         // 常量索引为 0 时紧随一条 EXTRAARG（iAx，24 位常量索引）
         case OP_CALL_NATIVE:
         case OP_MODULE_CALL: {
@@ -608,7 +624,7 @@ static void disasm_self_check(Chunk* chunk, const char* name) {
             int bx = ((int)chunk->code[off + 2] << 8) | (int)chunk->code[off + 3];
             target = off + 4 + (bx - 32768);
         } else if (op == OP_CMPJMP_LT || op == OP_CMPJMP_LE ||
-                   op == OP_CMPJMP_GT || op == OP_CMPJMP_GE) {
+                   op == OP_CMPJMP_GT || op == OP_CMPJMP_GE || op == OP_CMPJMP_ITER) {
             // 融合指令占 8 字节：偏移在第二个字的前 2 字节（相对"本指令之后"，即 off+8）
             int bx = ((int)chunk->code[off + 4] << 8) | (int)chunk->code[off + 5];
             target = off + 8 + (bx - 32768);

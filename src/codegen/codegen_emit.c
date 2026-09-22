@@ -319,6 +319,22 @@ int emit_cmpjmp(CodeGen* gen, OpCode op, int a, int b, int is_imm, int want_true
     return pos;
 }
 
+// for 容器迭代的条件融合（T13）：`idx < len(容器)` + 条件跳转（可选"先自增索引"）。
+//   与 emit_cmpjmp 同样是 8 字节（第二个字携带 16 位偏移），但操作数含义不同：
+//   A = 索引寄存器，B = 容器寄存器，C 的标志位含义见 07_collections.inc 的 OP_CMPJMP_ITER。
+//   pre_inc = 1 用于**回边**（先自增再测试，与原先那条 OP_INC 的位置一致）；
+//   want_true = 1 用于回边（条件成立则跳回循环体）。
+int emit_iter_cmpjmp(CodeGen* gen, int idx_reg, int obj_reg, int pre_inc, int want_true, int line) {
+    int pos = gen->chunk->len;
+    int flags = (pre_inc ? 0x20 : 0) | (want_true ? 0x40 : 0);
+    reg_encode_iABC(gen->chunk, OP_CMPJMP_ITER, idx_reg, obj_reg, flags, line);
+    chunk_write(gen->chunk, 0, line);   // 第二个字：16 位偏移占位
+    chunk_write(gen->chunk, 0, line);
+    chunk_write(gen->chunk, 0, line);
+    chunk_write(gen->chunk, 0, line);
+    return pos;
+}
+
 // patch 跳转偏移：从 pos 位置的指令开始，计算跳转到当前 chunk->len
 // 按指令自身的编码形式写回：
 //   OP_JMP 是 iAsJ （24 位有符号偏移，占 byte1..3）
@@ -329,6 +345,7 @@ int emit_cmpjmp(CodeGen* gen, OpCode op, int a, int b, int is_imm, int want_true
 static int instr_bytes_at(Chunk* chunk, int pos) {
     uint8_t op = chunk->code[pos];
     if (op >= (uint8_t)OP_CMPJMP_LT && op <= (uint8_t)OP_CMPJMP_GE) return 8;
+    if (op == (uint8_t)OP_CMPJMP_ITER) return 8;           // 第二个字 = 16 位跳转偏移
     if (op == (uint8_t)OP_INVOKE_METHOD_TYPED) return 8;   // 第二个字 = 方法名/类型名常量
     return 4;
 }
@@ -367,7 +384,8 @@ static void patch_common(CodeGen* gen, int pos, int offset) {
         gen->chunk->code[pos + 1] = (uint8_t)(((uint32_t)offset >> 16) & 0xFF);
         gen->chunk->code[pos + 2] = (uint8_t)(((uint32_t)offset >> 8) & 0xFF);
         gen->chunk->code[pos + 3] = (uint8_t)((uint32_t)offset & 0xFF);
-    } else if (op >= (uint8_t)OP_CMPJMP_LT && op <= (uint8_t)OP_CMPJMP_GE) {
+    } else if ((op >= (uint8_t)OP_CMPJMP_LT && op <= (uint8_t)OP_CMPJMP_GE) ||
+               op == (uint8_t)OP_CMPJMP_ITER) {
         // 偏移在**第二个字**里（byte0/1），与 iAsBx 同约定（offset + 32768）
         if (offset < -32768 || offset > 32767) {
             report_jump_overflow(gen, pos, offset, 32767);
