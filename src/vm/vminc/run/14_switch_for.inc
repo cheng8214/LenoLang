@@ -106,7 +106,12 @@
         if (likely(val_is_int(end_or_count))) {
             int64_t count = val_as_int(end_or_count);
             if (count > 0) {
-                frame->locals[end_slot] = val_int(count - 1);
+                /* ★ 计数器**直接在原始 64 位值上减一**（Lua 的 chgivalue 同口径）：
+                   end 槽本来就是 canonical 的 int48 Value `T | count`
+                   （T = QNAN|SIGN_BIT|TAG_INT，载荷只占 bit 0..47），而这里 count ∈ [1, 2^47-1]
+                   ⇒ 减 1 **不会借位到标签位**，结果恰好等于 `T | (count-1)` == val_int(count-1)。
+                   省掉「拆箱（含符号扩展分支）→ 减 → 装箱」三步 —— 回边是循环里最热的路径。 */
+                frame->locals[end_slot] = end_or_count - 1;
                 Value lv = frame->locals[var_slot];
                 Value sv = frame->locals[step_slot];
                 if (likely(val_is_int(lv) && val_is_int(sv))) {
