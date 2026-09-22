@@ -1098,6 +1098,32 @@ void gen_binop(CodeGen* gen, Ast* ast, int dst) {
 // 一元运算
 // ============================================================================
 
+// ============================================================================
+// 语句位置的 `i++` / `++i` / `i--`（T10 后续，对齐栈式的 OP_INC_LOCAL_NOPUSH）
+// ----------------------------------------------------------------------------
+// 作为**独立语句**时结果没人要，而通用路径（gen_unary）会先把**旧值**搬进 dst 再自增：
+//     `i++` ⇒ [MOV dst, slot] + [INC slot, slot]
+// 那条 MOV 纯属浪费 —— 实测 `examples/性能测试/空调用与自增隔离微基准.leno` 的
+// `i++` 循环每轮就是这 2 条指令，而栈式语句位置只发 1 条 OP_INC_LOCAL_NOPUSH。
+// 省掉后 `i++` 的指令数与 `i = i + 1` 持平（此前 `i++` 反而更慢 13%）。
+// 边界：只处理**变量**操作数、且必须是局部量/参数（全局/upvalue 的通用路径要
+// get→自增→set 三条配对，不在本快路径内）；其余形态返回 0，原样交回 gen_expr。
+// 语义等价：被省掉的那条 MOV 的目标是临时寄存器，随后立刻被丢弃（语句位置无消费者）。
+// ============================================================================
+int try_emit_stmt_incdec(CodeGen* gen, Ast* e) {
+    if (!e || e->kind != AST_UNARY) return 0;
+    LenoTokenType op = e->u.unary.op;
+    if (op != TOK_INC && op != TOK_DEC) return 0;
+    Ast* operand = e->u.unary.operand;
+    if (!operand || operand->kind != AST_VAR) return 0;   // 非变量：交回 gen_unary（会报语义错）
+    SymRef* ref = &operand->u.var.ref;
+    if (!((ref->kind == SYM_LOCAL || ref->kind == SYM_PARAM) && ref->index >= 0)) return 0;
+    int slot = ref->index;
+    if (op == TOK_INC) emit_inc(gen, slot, slot, e->line);
+    else emit_dec(gen, slot, slot, e->line);
+    return 1;
+}
+
 void gen_unary(CodeGen* gen, Ast* ast, int dst) {
     LenoTokenType op = ast->u.unary.op;
     Ast* operand_ast = ast->u.unary.operand;

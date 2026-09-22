@@ -184,6 +184,12 @@ void gen_stmt(CodeGen* gen, Ast* ast) {
             //   与栈式的 OP_ARRAY_APPEND_NOPUSH 同一目的，这里复用 OP_ARRAY_APPEND 的 C 位。
             if (try_emit_stmt_array_add(gen, e)) break;
 
+            // ★ 语句位置的 `i++` / `++i` / `i--`（局部/参数）：结果没人要 ⇒ 只发
+            //   OP_INC/OP_DEC，省掉通用路径那条"把旧值搬进 dst"的 MOV
+            //   （与栈式语句位置的 OP_INC_LOCAL_NOPUSH 同一目的；此前 `i++` 每轮 2 条
+            //   指令、反而比 `i = i + 1` 慢 13%）。
+            if (try_emit_stmt_incdec(gen, e)) break;
+
             int r = gen_expr(gen, ast->u.expr_stmt.expr);
             reg_free(gen, r);
             break;
