@@ -42,6 +42,13 @@ static inline int cache_index(const char* str, int len) {
 // ============================================================================
 
 void intern_table_init(void) {
+    // ★ 幂等：表已就绪就直接返回。
+    //   本函数现在会被调两次 —— ① `str_new()` 的懒初始化兜底（编译的 parse/codegen/
+    //   反序列化阶段就在造字面量，那时 `vm_init` 还没跑，见路线图 ⑤-m）；② `vm_init()`。
+    //   若第二次在这里重建表，先前已内化的字面量就被从表里**孤立**出去 ⇒ 同一内容两个对象 ✗
+    //   （正是 ⑤-l 里读侧 IC 永不命中的那种情形）。
+    if (string_table.entries && string_table.capacity > 0) return;
+
     string_table.capacity = INTERN_MIN_TABLE_SIZE;
     string_table.count = 0;
     string_table.entries = (InternEntry**)malloc(

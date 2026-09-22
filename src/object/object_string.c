@@ -111,6 +111,14 @@ ObjString* str_new_nointern(const char* chars, int len) {
 
 // 创建字符串（所有字符串由 GC 管理）
 ObjString* str_new(const char* chars, int len) {
+    // ★ 懒初始化内化表（见路线图 ⑤-m）：编译的 parse / codegen / `.lenb` 反序列化都发生在
+    //   `vm_init()` **之前**（那时表还没建），不在入口兜底的话源码字面量全都进不了表
+    //   ⇒ 同一字面量出现两次是两个**不同对象**、与运行时字符串比较退化成 memcmp ✗
+    //   （⑤-l 读侧 IC 永不命中就是被它坑的）。`intern_table_init()` 已幂等 ⇒ 之后再调无副作用。
+    if (!string_table.entries || string_table.capacity == 0) {
+        intern_table_init();
+    }
+
     // 先尝试在字符串表中查找已有的等价字符串（去重）
     if (string_table.entries && string_table.capacity > 0) {
         ObjString* existing = intern_find(chars, len);
