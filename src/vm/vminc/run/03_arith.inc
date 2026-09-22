@@ -364,27 +364,75 @@
     // --- float 特化 ---
     LABEL(OP_ADD_F): {
         int a = READ_A(), b = READ_B(), c = READ_C();
-        R(a) = val_float(val_as_double(R(b)) + val_as_double(R(c)));
+        Value bv = R(b), cv = R(c);
+        // 快路径：两侧确实 float（codegen 静态判 float 触发）
+        if (likely(val_is_float(bv) && val_is_float(cv))) {
+            R(a) = val_float(val_as_double(bv) + val_as_double(cv));
+            DISPATCH();
+        }
+        // 兜底：静态判 float、运行期却是 int（如 float 字段被赋 int、dict.get 默认 int）
+        // ⇒ 用 val_as_num_ex 提升后相加，避免把 int 位当 double 读成次正规数/NaN。
+        // 快路径之外仅此一段，数值型全覆盖（string/bigint 静态不判 float，到不了这）。
+        R(a) = val_float(val_as_num_ex(bv) + val_as_num_ex(cv));
         DISPATCH();
     }
     LABEL(OP_SUB_F): {
         int a = READ_A(), b = READ_B(), c = READ_C();
-        R(a) = val_float(val_as_double(R(b)) - val_as_double(R(c)));
+        Value bv = R(b), cv = R(c);
+        if (likely(val_is_float(bv) && val_is_float(cv))) {
+            R(a) = val_float(val_as_double(bv) - val_as_double(cv));
+            DISPATCH();
+        }
+        // 兜底：静态 float、运行期 int（float 字段/ dict.get 默认 int）→ 提升后相减
+        R(a) = val_float(val_as_num_ex(bv) - val_as_num_ex(cv));
         DISPATCH();
     }
     LABEL(OP_MUL_F): {
         int a = READ_A(), b = READ_B(), c = READ_C();
-        R(a) = val_float(val_as_double(R(b)) * val_as_double(R(c)));
+        Value bv = R(b), cv = R(c);
+        if (likely(val_is_float(bv) && val_is_float(cv))) {
+            R(a) = val_float(val_as_double(bv) * val_as_double(cv));
+            DISPATCH();
+        }
+        R(a) = val_float(val_as_num_ex(bv) * val_as_num_ex(cv));
         DISPATCH();
     }
     LABEL(OP_DIV_F): {
         int a = READ_A(), b = READ_B(), c = READ_C();
-        R(a) = val_float(val_as_double(R(b)) / val_as_double(R(c)));
-        DISPATCH();
+        Value bv = R(b), cv = R(c);
+        int line = GET_CURRENT_LINE();
+        // 快路径：两侧确实 float
+        if (likely(val_is_float(bv) && val_is_float(cv))) {
+            double dv = val_as_double(cv);
+            // 保留除零语义（C 的 /0.0 给 inf，而语言要求抛「除零错误」，见通用 OP_DIV）
+            if (unlikely(dv == 0.0)) {
+                if (!throw_runtime_error_with_operands("除零错误：除数为 0", "DIV (/)", bv, cv, line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            R(a) = val_float(val_as_double(bv) / dv);
+            DISPATCH();
+        }
+        // 兜底：一侧 int → 提升；除数 0 同样抛错
+        {
+            double dv = val_as_num_ex(cv);
+            if (unlikely(dv == 0.0)) {
+                if (!throw_runtime_error_with_operands("除零错误：除数为 0", "DIV (/)", bv, cv, line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            R(a) = val_float(val_as_num_ex(bv) / dv);
+            DISPATCH();
+        }
     }
     LABEL(OP_NEG_F): {
         int a = READ_A(), b = READ_B();
-        R(a) = val_float(-val_as_double(R(b)));
+        Value bv = R(b);
+        if (likely(val_is_float(bv))) {
+            R(a) = val_float(-val_as_double(bv));
+            DISPATCH();
+        }
+        R(a) = val_float(-val_as_num_ex(bv));
         DISPATCH();
     }
 

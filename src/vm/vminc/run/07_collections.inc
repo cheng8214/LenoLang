@@ -393,6 +393,45 @@
         frame = &vm.frames[vm.frame_cnt - 1];
         DISPATCH();
     }
+    // —— 静态类型特化：Array[int] 索引 ——
+    // 信任 codegen 守卫：R[B] 恒为 OBJ_ARRAY、R[C] 恒为 int48（codegen 只在能确认这两个
+    // 条件时才发此指令）。故跳过 obj 判型 / 下标数字判型，直接 bounds-check + 取元素，
+    // 比 OP_INDEX 的热路径少 2~3 次判型。仅越界时走错误兜底。
+    LABEL(OP_INDEX_ARRAY_INT): {
+        int a = READ_A(), b = READ_B(), c = READ_C();
+        ObjArray* arr = (ObjArray*)val_as_obj(R(b));
+        int i2 = (int)val_as_int(R(c));
+        if (likely((uint64_t)i2 < (uint64_t)arr->count)) {
+            R(a) = arr->elements[i2];
+            DISPATCH();
+        }
+        {
+            int line = GET_CURRENT_LINE();
+            char msg[128];
+            snprintf(msg, sizeof(msg), "数组索引越界: 索引 %d, 长度 %d", i2, arr->count);
+            if (!throw_runtime_error(msg, line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+    }
+    // —— 静态类型特化：Array[float] 索引 —— 语义同上
+    LABEL(OP_INDEX_ARRAY_FLOAT): {
+        int a = READ_A(), b = READ_B(), c = READ_C();
+        ObjArray* arr = (ObjArray*)val_as_obj(R(b));
+        int i2 = (int)val_as_int(R(c));
+        if (likely((uint64_t)i2 < (uint64_t)arr->count)) {
+            R(a) = arr->elements[i2];
+            DISPATCH();
+        }
+        {
+            int line = GET_CURRENT_LINE();
+            char msg[128];
+            snprintf(msg, sizeof(msg), "数组索引越界: 索引 %d, 长度 %d", i2, arr->count);
+            if (!throw_runtime_error(msg, line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+    }
     // OP_INDEX_SET A B C: R[B][R[C]] = R[A]
     LABEL(OP_INDEX_SET): {
         int a = READ_A(), b = READ_B(), c = READ_C();

@@ -40,7 +40,7 @@ static const char* opCodeNames[] = {
     // --- 字典 ---
     "OP_NEWDICT", "OP_DICT_GET", "OP_DICT_SET", "OP_DICT_GET_KEY",
     // --- 通用索引 ---
-    "OP_INDEX", "OP_INDEX_SET", "OP_SLICE",
+    "OP_INDEX", "OP_INDEX_ARRAY_INT", "OP_INDEX_ARRAY_FLOAT", "OP_INDEX_SET", "OP_SLICE",
     // --- 迭代 ---
     "OP_ITER_GET", "OP_ITER_GET_VALUE",
     // --- 范围 ---

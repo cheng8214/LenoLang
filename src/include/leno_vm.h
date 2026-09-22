@@ -137,6 +137,10 @@ typedef enum {
 
     // --- 通用索引 ---
     OP_INDEX,           // iABC  R[A] = R[B][R[C]]（数组或字典）
+    // 静态类型特化索引（codegen 已确认 R[B] 为 Array[int]/Array[float]、R[C] 为 int48）：
+    // 信任静态类型，跳过 obj 判型与下标数字判型，直接取元素（少 2~3 次检查）。
+    OP_INDEX_ARRAY_INT,
+    OP_INDEX_ARRAY_FLOAT,
     OP_INDEX_SET,       // iABC  R[B][R[C]] = R[A]
     OP_SLICE,           // iABC  R[A] = R[B][R[A+1]:R[A+2]]  切片
 

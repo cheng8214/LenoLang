@@ -404,6 +404,22 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
                 } else { idx_reg = gen_expr(gen, iidx); }
             } else { idx_reg = gen_expr(gen, iidx); }
             // INDEX: R[A] = R[B][R[C]]
+            // ★ 静态类型特化：R[B] 是 Array[int]/Array[float] 且 R[C] 是 int48 时，
+            //   直接发 OP_INDEX_ARRAY_INT/FLOAT（信任静态类型，跳过运行期 obj/下标判型）。
+            //   数组被 ROTASET 改结构、或静态类型推断不到 → 回落通用 OP_INDEX 兜底。
+            {
+                TypeInfo* ot = infer_expr_type(gen->sem, iobj);
+                TypeInfo* it = infer_expr_type(gen->sem, iidx);
+                if (ot && ot->kind == TYPE_ARRAY && ot->element_type &&
+                    (ot->element_type->kind == TYPE_INT || ot->element_type->kind == TYPE_FLOAT) &&
+                    it && it->kind == TYPE_INT) {
+                    int op = (ot->element_type->kind == TYPE_INT) ? OP_INDEX_ARRAY_INT : OP_INDEX_ARRAY_FLOAT;
+                    reg_encode_iABC(gen->chunk, op, dst, obj_reg, idx_reg, ast->line);
+                    if (idx_is_temp) reg_free(gen, idx_reg);
+                    if (obj_is_temp) reg_free(gen, obj_reg);
+                    break;
+                }
+            }
             reg_encode_iABC(gen->chunk, OP_INDEX, dst, obj_reg, idx_reg, ast->line);
             if (idx_is_temp) reg_free(gen, idx_reg);
             if (obj_is_temp) reg_free(gen, obj_reg);
@@ -919,19 +935,25 @@ void gen_binop(CodeGen* gen, Ast* ast, int dst) {
         case TOK_PLUS:
             if (both_int && rhs_imm) emit_add_int_imm(gen, dst, rl, rhs_imm_val, ast->line);
             else if (both_int) emit_add_int(gen, dst, rl, r, ast->line);
+            else if (both_float) emit_add_f(gen, dst, rl, r, ast->line);
             else emit_add(gen, dst, rl, r, ast->line);
             break;
         case TOK_MINUS:
             if (both_int && rhs_imm) emit_sub_int_imm(gen, dst, rl, rhs_imm_val, ast->line);
             else if (both_int) emit_sub_int(gen, dst, rl, r, ast->line);
+            else if (both_float) emit_sub_f(gen, dst, rl, r, ast->line);
             else emit_sub(gen, dst, rl, r, ast->line);
             break;
         case TOK_STAR:
             if (both_int && rhs_imm) emit_mul_int_imm(gen, dst, rl, rhs_imm_val, ast->line);
             else if (both_int) emit_mul_int(gen, dst, rl, r, ast->line);
+            else if (both_float) emit_mul_f(gen, dst, rl, r, ast->line);
             else emit_mul(gen, dst, rl, r, ast->line);
             break;
-        case TOK_SLASH:    emit_div(gen, dst, rl, r, ast->line); break;
+        case TOK_SLASH:
+            if (both_float) emit_div_f(gen, dst, rl, r, ast->line);
+            else emit_div(gen, dst, rl, r, ast->line);
+            break;
         case TOK_MOD:      emit_mod(gen, dst, rl, r, ast->line); break;
         case TOK_EQEQ:     emit_eq(gen, dst, rl, r, ast->line); break;
         case TOK_NEQ:      emit_neq(gen, dst, rl, r, ast->line); break;
