@@ -1072,6 +1072,35 @@ void gen_binop(CodeGen* gen, Ast* ast, int dst) {
         }
     }
 
+    // ★ 位运算/移位的**常量化**（T14）：右操作数是整数字面量时把常量编进指令的 C 字段
+    //   （`inp & 7` / `inp >> 8`），省掉原先"LOADI 装常量 + 通用位运算"里的那条 LOADI。
+    //   与上面的 rhs_imm 有两点不同：
+    //     ① **不限幅度**（走常量表，`x & 1135` 这种超 int8 的照样吃得到）；
+    //     ② **不要求左值是 int** —— K 版 handler 与寄存器版**同体**（同一个宏实例化两个 opcode），
+    //        唯一差异是右操作数取自常量表 ⇒ 左值是 bigint/null/任何类型时行为一字不差。
+    //        （因此也不存在 rhs_imm 注释 ② 那个"通用路径读到空寄存器"的风险：K 版不读右值寄存器。）
+    //   可交换的位运算（AND/OR/XOR）额外支持**字面量在左边**（`1125 ^ inp`）：
+    //   把常量放 C、变量放 B（交换律保证等价）。被换的只有"字面量那一侧"，
+    //   字面量无副作用、另一侧又限定为普通局部变量 ⇒ 求值顺序不可观测。
+    int rhs_bit_k = 0, rhs_bit_k_cidx = -1;
+    int lhs_bit_k = 0, lhs_bit_k_cidx = -1;
+    int bitop_commutative = (op == TOK_BITAND || op == TOK_BITOR || op == TOK_BITXOR);
+    int bitop_any = bitop_commutative || op == TOK_SHL || op == TOK_SHR || op == TOK_USHR;
+    if (bitop_any && rhs && rhs->kind == AST_NUM &&
+        !rhs->u.num.is_float && !rhs->u.num.is_bigint) {
+        rhs_bit_k_cidx = make_constant(gen, val_int((int64_t)rhs->u.num.value));
+        rhs_bit_k = 1;
+    } else if (bitop_commutative && lhs && lhs->kind == AST_NUM &&
+               !lhs->u.num.is_float && !lhs->u.num.is_bigint &&
+               rhs && rhs->kind == AST_VAR) {
+        // 另一侧必须是普通局部量/参数：保证下面的 r 直接取它自己的寄存器（不额外搬运一条 MOV）
+        SymRef* rref = &rhs->u.var.ref;
+        if ((rref->kind == SYM_LOCAL || rref->kind == SYM_PARAM) && rref->index >= 0) {
+            lhs_bit_k_cidx = make_constant(gen, val_int((int64_t)lhs->u.num.value));
+            lhs_bit_k = 1;
+        }
+    }
+
     // ★ 左操作数是**普通局部变量/参数**时不必把它搬进 dst：运算指令本来就能
     //   "读 R[B]、写 R[A]"（下面所有 *_INT / *_INT_IMM / 立即数比较都是这个形状）。
     //   原先一律 `gen_expr_to(lhs, dst)` 生成一条多余的 OP_MOV ——
@@ -1087,7 +1116,13 @@ void gen_binop(CodeGen* gen, Ast* ast, int dst) {
     }
     int rl;
     int rl_is_temp = 0;   // 只有"别名安全路径"借来的寄存器才归本函数释放
-    if (rl_direct >= 0) {
+    if (lhs_bit_k) {
+        // 字面量在左边、走常量化位运算：左值**不物化**（常量直接编进指令 C 字段）。
+        // 与下面的 rhs_imm 同理，仍要补一个占位临时寄存器 —— 否则收尾会去 free 寄存器 0
+        // ⇒ 整个分配器错乱（本轮改动前那个坑的记录见下）。
+        rl = reg_alloc(gen);
+        rl_is_temp = 1;
+    } else if (rl_direct >= 0) {
         rl = rl_direct;               // 变量自己的寄存器：**绝不能** free
     } else if (ast_may_read_slot(rhs, dst)) {
         rl = gen_expr(gen, lhs);
@@ -1108,7 +1143,7 @@ void gen_binop(CodeGen* gen, Ast* ast, int dst) {
     //      （与 rl_direct 同一论证）。
     int r = 0;
     int r_is_temp = 1;
-    if (rhs_imm) {
+    if (rhs_imm || rhs_bit_k) {
         r = reg_alloc(gen);          // 占位（收尾按 r_is_temp 释放）
     } else if (rhs && rhs->kind == AST_VAR) {
         SymRef* rref = &rhs->u.var.ref;
@@ -1190,12 +1225,36 @@ void gen_binop(CodeGen* gen, Ast* ast, int dst) {
             else if (both_float) emit_ge_f(gen, dst, rl, r, ast->line);
             else emit_ge(gen, dst, rl, r, ast->line);
             break;
-        case TOK_BITAND:   emit_bitand(gen, dst, rl, r, ast->line); break;
-        case TOK_BITOR:    emit_bitor(gen, dst, rl, r, ast->line); break;
-        case TOK_BITXOR:   emit_bitxor(gen, dst, rl, r, ast->line); break;
-        case TOK_SHL:      emit_shl(gen, dst, rl, r, ast->line); break;
-        case TOK_SHR:      emit_shr(gen, dst, rl, r, ast->line); break;
-        case TOK_USHR:     emit_ushr(gen, dst, rl, r, ast->line); break;
+        // 位运算 / 移位：右操作数是整数字面量 ⇒ 走**常量化**形式（T14，省掉"装常量"那条 LOADI）。
+        //   AND/OR/XOR 可交换，字面量在左边时把右值寄存器放 B、常量放 C（见上面的 lhs_bit_k）。
+        //   位移类不可交换 ⇒ 只处理右操作数是字面量（移位量）的情形。
+        case TOK_BITAND:
+            if (rhs_bit_k)      emit_bitop_k(gen, OP_BITAND_K, dst, rl, rhs_bit_k_cidx, ast->line);
+            else if (lhs_bit_k) emit_bitop_k(gen, OP_BITAND_K, dst, r,  lhs_bit_k_cidx, ast->line);
+            else                emit_bitand(gen, dst, rl, r, ast->line);
+            break;
+        case TOK_BITOR:
+            if (rhs_bit_k)      emit_bitop_k(gen, OP_BITOR_K, dst, rl, rhs_bit_k_cidx, ast->line);
+            else if (lhs_bit_k) emit_bitop_k(gen, OP_BITOR_K, dst, r,  lhs_bit_k_cidx, ast->line);
+            else                emit_bitor(gen, dst, rl, r, ast->line);
+            break;
+        case TOK_BITXOR:
+            if (rhs_bit_k)      emit_bitop_k(gen, OP_BITXOR_K, dst, rl, rhs_bit_k_cidx, ast->line);
+            else if (lhs_bit_k) emit_bitop_k(gen, OP_BITXOR_K, dst, r,  lhs_bit_k_cidx, ast->line);
+            else                emit_bitxor(gen, dst, rl, r, ast->line);
+            break;
+        case TOK_SHL:
+            if (rhs_bit_k)      emit_bitop_k(gen, OP_SHL_K, dst, rl, rhs_bit_k_cidx, ast->line);
+            else                emit_shl(gen, dst, rl, r, ast->line);
+            break;
+        case TOK_SHR:
+            if (rhs_bit_k)      emit_bitop_k(gen, OP_SHR_K, dst, rl, rhs_bit_k_cidx, ast->line);
+            else                emit_shr(gen, dst, rl, r, ast->line);
+            break;
+        case TOK_USHR:
+            if (rhs_bit_k)      emit_bitop_k(gen, OP_USHR_K, dst, rl, rhs_bit_k_cidx, ast->line);
+            else                emit_ushr(gen, dst, rl, r, ast->line);
+            break;
         case TOK_IN:       reg_encode_iABC(gen->chunk, OP_IN, dst, rl, r, ast->line); break;
         // not in = in + not（此前完全没处理 ⇒ 结果直接是左操作数本身 ✗）
         case TOK_NOT_IN:

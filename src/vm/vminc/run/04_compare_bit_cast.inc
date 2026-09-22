@@ -208,61 +208,86 @@
 
     // --- 位运算 ---
     // 位运算：任一侧是 bigint（或移位/结果越界）⇒ 走 bigint 路径（无限精度补码语义）
-    LABEL(OP_BITAND): {
-        int a = READ_A(), b = READ_B(), c = READ_C();
-        Value bv = R(b), cv = R(c);
-        if (VM_IS_BIG(bv) || VM_IS_BIG(cv)) {
-            // ★ 免装箱快路径（与栈式 op_bitwise.inc 的 §8.133 同口径）：一侧 bigint、另一侧
-            //   int48 ⇒ 走 `bigint_*_i64`（内部用栈上 view，**不为 int 操作数装箱**）。
-            //   为什么不能直接对 int64 做位运算：bigint 的 int64 表示可能是"负号扩展"的
-            //   位模式（如 2^64-1 ⇒ -1），而语言语义是**无限精度补码** ⇒ 结果会算错
-            //   （实测 test_bigint_arith 立刻挂）。库函数自己按符号/幅值处理 ⇒ 语义精确。
-            //   实测重灾区：SHA-256 的 right_rotate = `(ux >> c) | (ux << (32-c))`，
-            //   左移结果超 int48 ⇒ 每次旋转都要为 OR 的 int 操作数装箱（每调用数百次）。
-            if (VM_IS_BIG(bv) && !VM_IS_BIG(cv)) {
-                R(a) = bigint_compact_to_int(bigint_and_i64(val_as_bigint(bv), VM_IO(cv)));
-            } else if (!VM_IS_BIG(bv) && VM_IS_BIG(cv)) {
-                R(a) = bigint_compact_to_int(bigint_and_i64(val_as_bigint(cv), VM_IO(bv)));
-            } else {
-                R(a) = bigint_compact_to_int(bigint_and(promote_to_bigint(bv), promote_to_bigint(cv)));
-            }
-        } else {
-            R(a) = val_int(val_as_int(bv) & val_as_int(cv));
-        }
-        DISPATCH();
+    //
+    // ★ T14：下面每个 op 的**函数体抽成宏**，寄存器版与常量化版（`*_K`）各实例化一次 ——
+    //   "语义逐字同体"由编译期强制成立（唯一差异是右操作数取 `R[C]` 还是 `constants[C]`）。
+    //   仓库有专门的《单一事实来源与重复实现收敛》待办 ⇒ 新指令不再抄一份 handler。
+    //   常量版解决的是：`inp & 7` / `inp >> 8` 原先必须 `LOADI r,7 + OP_BITAND`（两条，
+    //   而且**每轮重装同一个常量**）；常量编进 C 字段后省掉那条 LOADI。
+    //   实测 `examples/性能测试/bench_bitwise_loop.leno`：每轮 10 条 → 6 条。
+    //   右侧操作数取法：寄存器版 `R(READ_C())`；常量版 `constants[READ_CONST_IDX(READ_C())]`
+    //   （后者在 C 为 0 时顺手跳过紧随的 EXTRAARG，见 01_prologue.inc 的 READ_CONST_IDX）。
+    //
+    // ★ 免装箱快路径（原 OP_BITAND 里的注释，现在整族共用；与栈式 op_bitwise.inc 的 §8.133 同口径）：
+    //   一侧 bigint、另一侧 int48 ⇒ 走 `bigint_*_i64`（内部用栈上 view，**不为 int 操作数装箱**）。
+    //   为什么不能直接对 int64 做位运算：bigint 的 int64 表示可能是"负号扩展"的
+    //   位模式（如 2^64-1 ⇒ -1），而语言语义是**无限精度补码** ⇒ 结果会算错
+    //   （实测 test_bigint_arith 立刻挂）。库函数自己按符号/幅值处理 ⇒ 语义精确。
+    //   实测重灾区：SHA-256 的 right_rotate = `(ux >> c) | (ux << (32-c))`，
+    //   左移结果超 int48 ⇒ 每次旋转都要为 OR 的 int 操作数装箱（每调用数百次）。
+#define VM_BIT_CV_REG()   R(READ_C())
+#define VM_BIT_CV_K()     (frame->chunk->constants[READ_CONST_IDX(READ_C())])
+
+#define BITAND_BODY(CV)                                                                \
+    {                                                                                  \
+        int a = READ_A(), b = READ_B();                                                \
+        Value bv = R(b), cv = (CV);                                                    \
+        if (VM_IS_BIG(bv) || VM_IS_BIG(cv)) {                                          \
+            if (VM_IS_BIG(bv) && !VM_IS_BIG(cv)) {                                     \
+                R(a) = bigint_compact_to_int(bigint_and_i64(val_as_bigint(bv), VM_IO(cv))); \
+            } else if (!VM_IS_BIG(bv) && VM_IS_BIG(cv)) {                              \
+                R(a) = bigint_compact_to_int(bigint_and_i64(val_as_bigint(cv), VM_IO(bv))); \
+            } else {                                                                   \
+                R(a) = bigint_compact_to_int(bigint_and(promote_to_bigint(bv), promote_to_bigint(cv))); \
+            }                                                                          \
+        } else {                                                                       \
+            R(a) = val_int(val_as_int(bv) & val_as_int(cv));                           \
+        }                                                                              \
+        DISPATCH();                                                                    \
     }
-    LABEL(OP_BITOR): {
-        int a = READ_A(), b = READ_B(), c = READ_C();
-        Value bv = R(b), cv = R(c);
-        if (VM_IS_BIG(bv) || VM_IS_BIG(cv)) {
-            if (VM_IS_BIG(bv) && !VM_IS_BIG(cv)) {      // 见 OP_BITAND 的说明（免装箱快路径）
-                R(a) = bigint_compact_to_int(bigint_or_i64(val_as_bigint(bv), VM_IO(cv)));
-            } else if (!VM_IS_BIG(bv) && VM_IS_BIG(cv)) {
-                R(a) = bigint_compact_to_int(bigint_or_i64(val_as_bigint(cv), VM_IO(bv)));
-            } else {
-                R(a) = bigint_compact_to_int(bigint_or(promote_to_bigint(bv), promote_to_bigint(cv)));
-            }
-        } else {
-            R(a) = val_int(val_as_int(bv) | val_as_int(cv));
-        }
-        DISPATCH();
+    LABEL(OP_BITAND):   BITAND_BODY(VM_BIT_CV_REG())
+    LABEL(OP_BITAND_K): BITAND_BODY(VM_BIT_CV_K())
+
+#define BITOR_BODY(CV)                                                                 \
+    {                                                                                  \
+        int a = READ_A(), b = READ_B();                                                \
+        Value bv = R(b), cv = (CV);                                                    \
+        if (VM_IS_BIG(bv) || VM_IS_BIG(cv)) {                                          \
+            if (VM_IS_BIG(bv) && !VM_IS_BIG(cv)) {                                     \
+                R(a) = bigint_compact_to_int(bigint_or_i64(val_as_bigint(bv), VM_IO(cv))); \
+            } else if (!VM_IS_BIG(bv) && VM_IS_BIG(cv)) {                              \
+                R(a) = bigint_compact_to_int(bigint_or_i64(val_as_bigint(cv), VM_IO(bv))); \
+            } else {                                                                   \
+                R(a) = bigint_compact_to_int(bigint_or(promote_to_bigint(bv), promote_to_bigint(cv))); \
+            }                                                                          \
+        } else {                                                                       \
+            R(a) = val_int(val_as_int(bv) | val_as_int(cv));                           \
+        }                                                                              \
+        DISPATCH();                                                                    \
     }
-    LABEL(OP_BITXOR): {
-        int a = READ_A(), b = READ_B(), c = READ_C();
-        Value bv = R(b), cv = R(c);
-        if (VM_IS_BIG(bv) || VM_IS_BIG(cv)) {
-            if (VM_IS_BIG(bv) && !VM_IS_BIG(cv)) {      // 见 OP_BITAND 的说明（免装箱快路径）
-                R(a) = bigint_compact_to_int(bigint_xor_i64(val_as_bigint(bv), VM_IO(cv)));
-            } else if (!VM_IS_BIG(bv) && VM_IS_BIG(cv)) {
-                R(a) = bigint_compact_to_int(bigint_xor_i64(val_as_bigint(cv), VM_IO(bv)));
-            } else {
-                R(a) = bigint_compact_to_int(bigint_xor(promote_to_bigint(bv), promote_to_bigint(cv)));
-            }
-        } else {
-            R(a) = val_int(val_as_int(bv) ^ val_as_int(cv));
-        }
-        DISPATCH();
+    LABEL(OP_BITOR):   BITOR_BODY(VM_BIT_CV_REG())
+    LABEL(OP_BITOR_K): BITOR_BODY(VM_BIT_CV_K())
+
+#define BITXOR_BODY(CV)                                                                \
+    {                                                                                  \
+        int a = READ_A(), b = READ_B();                                                \
+        Value bv = R(b), cv = (CV);                                                    \
+        if (VM_IS_BIG(bv) || VM_IS_BIG(cv)) {                                          \
+            if (VM_IS_BIG(bv) && !VM_IS_BIG(cv)) {                                     \
+                R(a) = bigint_compact_to_int(bigint_xor_i64(val_as_bigint(bv), VM_IO(cv))); \
+            } else if (!VM_IS_BIG(bv) && VM_IS_BIG(cv)) {                              \
+                R(a) = bigint_compact_to_int(bigint_xor_i64(val_as_bigint(cv), VM_IO(bv))); \
+            } else {                                                                   \
+                R(a) = bigint_compact_to_int(bigint_xor(promote_to_bigint(bv), promote_to_bigint(cv))); \
+            }                                                                          \
+        } else {                                                                       \
+            R(a) = val_int(val_as_int(bv) ^ val_as_int(cv));                           \
+        }                                                                              \
+        DISPATCH();                                                                    \
     }
+    LABEL(OP_BITXOR):   BITXOR_BODY(VM_BIT_CV_REG())
+    LABEL(OP_BITXOR_K): BITXOR_BODY(VM_BIT_CV_K())
+
     LABEL(OP_BITNOT): {
         int a = READ_A(), b = READ_B();
         Value bv = R(b);
@@ -273,46 +298,66 @@
         }
         DISPATCH();
     }
-    LABEL(OP_SHL): {
-        int a = READ_A(), b = READ_B(), c = READ_C();
-        Value bv = R(b), cv = R(c);
-        int64_t sh = VM_IO(cv);
-        // bigint 操作数、移位量 >= 32（int48 结果必然越界）、或结果超 int48 ⇒ bigint 路径
-        if (VM_IS_BIG(bv) || VM_IS_BIG(cv) || sh < 0 || sh >= 32) {
-            R(a) = bigint_compact_to_int(bigint_shl(promote_to_bigint(bv), (int)(sh < 0 ? 0 : sh)));
-            DISPATCH();
-        }
-        R(a) = val_int(val_as_int(bv) << sh);
-        DISPATCH();
+#define SHL_BODY(CV)                                                                   \
+    {                                                                                  \
+        int a = READ_A(), b = READ_B();                                                \
+        Value bv = R(b), cv = (CV);                                                    \
+        int64_t sh = VM_IO(cv);                                                        \
+        /* bigint 操作数、移位量 >= 32（int48 结果必然越界）、或结果超 int48 ⇒ bigint 路径 */ \
+        if (VM_IS_BIG(bv) || VM_IS_BIG(cv) || sh < 0 || sh >= 32) {                     \
+            R(a) = bigint_compact_to_int(bigint_shl(promote_to_bigint(bv), (int)(sh < 0 ? 0 : sh))); \
+            DISPATCH();                                                                \
+        }                                                                              \
+        R(a) = val_int(val_as_int(bv) << sh);                                          \
+        DISPATCH();                                                                    \
     }
-    LABEL(OP_SHR): {
-        int a = READ_A(), b = READ_B(), c = READ_C();
-        Value bv = R(b), cv = R(c);
-        int64_t sh = VM_IO(cv);
-        if (VM_IS_BIG(bv) || VM_IS_BIG(cv) || sh < 0 || sh > 47) {
-            R(a) = bigint_compact_to_int(bigint_shr(promote_to_bigint(bv), (int)(sh < 0 ? 0 : sh)));
-            DISPATCH();
-        }
-        R(a) = val_int(val_as_int(bv) >> sh);
-        DISPATCH();
+    LABEL(OP_SHL):   SHL_BODY(VM_BIT_CV_REG())
+    LABEL(OP_SHL_K): SHL_BODY(VM_BIT_CV_K())
+
+#define SHR_BODY(CV)                                                                   \
+    {                                                                                  \
+        int a = READ_A(), b = READ_B();                                                \
+        Value bv = R(b), cv = (CV);                                                    \
+        int64_t sh = VM_IO(cv);                                                        \
+        if (VM_IS_BIG(bv) || VM_IS_BIG(cv) || sh < 0 || sh > 47) {                      \
+            R(a) = bigint_compact_to_int(bigint_shr(promote_to_bigint(bv), (int)(sh < 0 ? 0 : sh))); \
+            DISPATCH();                                                                \
+        }                                                                              \
+        R(a) = val_int(val_as_int(bv) >> sh);                                          \
+        DISPATCH();                                                                    \
     }
-    LABEL(OP_USHR): {
-        int a = READ_A(), b = READ_B(), c = READ_C();
-        Value vb = R(b), vc = R(c);
-        // LenoC 的 int 是 48 位有符号：逻辑右移先截断为 48 位无符号再右移。
-        // 之前用 `(unsigned int)`（32 位）截断 ⇒ `-1 >>> 8` 得 16777215 而非 1099511627775 ✗
-        if (VM_IS_BIG(vb) || VM_IS_BIG(vc)) {
-            int64_t sh = VM_IO(vc);
-            R(a) = bigint_compact_to_int(bigint_ushr(promote_to_bigint(vb), (int)(sh < 0 ? 0 : sh)));
-        } else if (likely(val_is_int(vb) && val_is_int(vc))) {
-            uint64_t uva = (uint64_t)val_as_int(vb) & PAYLOAD_MASK;
-            int64_t sh = val_as_int(vc);
-            R(a) = val_int_safe((int64_t)(uva >> sh));
-        } else {
-            R(a) = val_int(0);
-        }
-        DISPATCH();
+    LABEL(OP_SHR):   SHR_BODY(VM_BIT_CV_REG())
+    LABEL(OP_SHR_K): SHR_BODY(VM_BIT_CV_K())
+
+#define USHR_BODY(CV)                                                                  \
+    {                                                                                  \
+        int a = READ_A(), b = READ_B();                                                \
+        Value vb = R(b), vc = (CV);                                                    \
+        /* LenoC 的 int 是 48 位有符号：逻辑右移先截断为 48 位无符号再右移。 */          \
+        /* 之前用 `(unsigned int)`（32 位）截断 ⇒ `-1 >>> 8` 得 16777215 而非 1099511627775 ✗ */ \
+        if (VM_IS_BIG(vb) || VM_IS_BIG(vc)) {                                          \
+            int64_t sh = VM_IO(vc);                                                    \
+            R(a) = bigint_compact_to_int(bigint_ushr(promote_to_bigint(vb), (int)(sh < 0 ? 0 : sh))); \
+        } else if (likely(val_is_int(vb) && val_is_int(vc))) {                          \
+            uint64_t uva = (uint64_t)val_as_int(vb) & PAYLOAD_MASK;                     \
+            int64_t sh = val_as_int(vc);                                                \
+            R(a) = val_int_safe((int64_t)(uva >> sh));                                  \
+        } else {                                                                       \
+            R(a) = val_int(0);                                                          \
+        }                                                                              \
+        DISPATCH();                                                                    \
     }
+    LABEL(OP_USHR):   USHR_BODY(VM_BIT_CV_REG())
+    LABEL(OP_USHR_K): USHR_BODY(VM_BIT_CV_K())
+
+#undef BITAND_BODY
+#undef BITOR_BODY
+#undef BITXOR_BODY
+#undef SHL_BODY
+#undef SHR_BODY
+#undef USHR_BODY
+#undef VM_BIT_CV_REG
+#undef VM_BIT_CV_K
 
     // --- 类型转换（语义同栈式 op_unary.inc）---
     LABEL(OP_CAST_FLOAT): {

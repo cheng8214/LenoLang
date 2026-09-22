@@ -6,7 +6,10 @@ import times
 main() {
     // Java 版是从 args 传入，这里为方便直接给固定初始值
     var inp = 12345
-    var iterations = 2000000000  // 20亿次
+    // 2 亿次（原先 20 亿）：与 bench_bitwise_loop.lua 严格同口径对表 ——
+    //   `for 0 : N to i` 的 `:` 是**闭区间**，所以实际是 N+1 轮，
+    //   而 Lua 的 `for i = 0, N` 同样是闭区间 ⇒ 两边轮数一致。
+    var iterations = 200000000  // 2亿次
 
     var start = times.ms()  // 开始计时
 

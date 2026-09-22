@@ -454,6 +454,22 @@ void emit_call(CodeGen* gen, int a, int nargs, int nresults, int line) {
     reg_encode_iABC(gen->chunk, OP_CALL, a, nargs + 1, nresults + 1, line);
 }
 
+// 位运算 / 移位的**常量化**形式（T14）
+// ----------------------------------------------------------------------------
+// `inp & 7` / `inp >> 8` 原先要 `LOADI r,K + OP_BITAND/…` 两条，而且**每轮重装同一个常量**；
+// 常量编进 C 字段后省掉那条 LOADI（实测 `examples/性能测试/bench_bitwise_loop.leno`
+// 每轮 10 条 → 6 条）。右侧操作数的幅度**不受限**（走常量表，不是 int8 立即数）
+// —— `x & 1135` 这种照样吃得到（本例的 1125/1135 就在 int8 之外）。
+// C 为 0 或 > 255 时紧随一条 EXTRAARG 携带 24 位索引（与 emit_call_native 同一惯例）。
+void emit_bitop_k(CodeGen* gen, OpCode op, int dst, int lhs, int const_idx, int line) {
+    if (const_idx == 0 || const_idx > 255) {
+        reg_encode_iABC(gen->chunk, op, dst, lhs, 0, line);
+        reg_encode_iAx(gen->chunk, OP_EXTRAARG, const_idx, line);
+    } else {
+        reg_encode_iABC(gen->chunk, op, dst, lhs, const_idx, line);
+    }
+}
+
 // CALL_NATIVE: R[A] = result, B = name_const_idx（0 或 >255 时改由**紧随**的 EXTRAARG
 // 携带 24 位索引；EXTRAARG 必须在指令**之后** —— VM 执行到 call 时 ip 正指向它），C = nargs
 // 实参在 R[A+1..A+C]

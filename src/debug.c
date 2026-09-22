@@ -85,6 +85,7 @@ static const char* opCodeNames[] = {
     "OP_INVOKE_METHOD_TYPED",
     "OP_INDEX_ARRAY_IMM",
     "OP_CMPJMP_ITER",
+    "OP_BITAND_K", "OP_BITOR_K", "OP_BITXOR_K", "OP_SHL_K", "OP_SHR_K", "OP_USHR_K",
     "OP_OPCODE_COUNT",
 };
 
@@ -415,6 +416,29 @@ static int decode_trailing(Chunk* chunk, int offset, char* desc, size_t desc_siz
                          (c & 0x20) ? "先自增再测：" : "",
                          (c & 0x40) ? "为真则跳" : "为假则跳",
                          off, idx_reg, (int)b);
+            }
+            break;
+        }
+        // 位运算 / 移位的常量化形式（T14）：C 是常量索引（C 为 0 ⇒ 紧随 EXTRAARG 携带 24 位索引）。
+        //   ⚠ 这里必须把那个 EXTRAARG 也吃掉（p += 4），否则反汇编会把它的 4 个字节
+        //     当成下一条指令 —— 与 OP_CALL_NATIVE / OP_GET_METHOD 同一注意事项。
+        case OP_BITAND_K:
+        case OP_BITOR_K:
+        case OP_BITXOR_K:
+        case OP_SHL_K:
+        case OP_SHR_K:
+        case OP_USHR_K: {
+            int cidx = (int)c;
+            if (cidx == 0 && base + 4 <= chunk->len && chunk->code[base] == OP_EXTRAARG) {
+                cidx = ((int)chunk->code[base + 1] << 16) | ((int)chunk->code[base + 2] << 8) |
+                       (int)chunk->code[base + 3];
+                p += 4;
+            }
+            if (desc) {
+                char kv[128];
+                dbg_const_str(chunk, cidx, kv, (int)sizeof(kv));
+                snprintf(desc, desc_size, "R[%d] = R[%d] <op> K[%d]=%s%s",
+                         (int)chunk->code[offset + 1], (int)b, cidx, kv, over ? " [截断]" : "");
             }
             break;
         }

@@ -332,6 +332,24 @@ typedef enum {
     //   追加在末尾 ⇒ 既有 opcode 编号不动，旧 .lenb 仍可执行。
     OP_CMPJMP_ITER,
 
+    // 位运算 / 移位的**常量化**形式（T14）：`inp & 7`、`inp >> 8` 原先要
+    //   `LOADI r,K + OP_BITAND/…`（两条，且**每轮重装同一个常量**），
+    //   常量编进 C 字段后省掉那条 LOADI（实测位运算基准每轮 10 条 → 6 条）。
+    //   编码：A = 结果寄存器，B = 左操作数寄存器，C = 常量索引
+    //        （C 为 0 或 > 255 时紧随一条 EXTRAARG 携带 24 位索引，与 OP_CALL_NATIVE 同惯例）。
+    //   语义与对应的寄存器版**逐字同体**（唯一差异：右操作数取 `constants[C]` 而非 `R[C]`）
+    //   ⇒ 左值是 bigint / null / 任何类型时行为完全一致（handler 由同一个宏实例化，
+    //     见 04_compare_bit_cast.inc 的 BITAND_BODY 等）。
+    //   为什么走常量表而不是 int8 立即数：`x & 0xFFFF`、`x & 1135` 这类超 8 位常量同样常见
+    //   （本例的 1125/1135 就在 int8 之外），常量表没有幅度限制。
+    //   追加在末尾 ⇒ 既有 opcode 编号不动，旧 .lenb 仍可执行。
+    OP_BITAND_K,
+    OP_BITOR_K,
+    OP_BITXOR_K,
+    OP_SHL_K,
+    OP_SHR_K,
+    OP_USHR_K,
+
     OP_OPCODE_COUNT,    // 用于跳转表大小
 } OpCode;
 
