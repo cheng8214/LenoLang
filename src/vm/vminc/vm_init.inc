@@ -299,7 +299,24 @@ int vm_run_chunk(Chunk* chunk) {
 
     // 恢复状态
     vm.stop_frame_cnt = prev_stop;
-    if (dyn) free(locals);
+    // ★ 释放本帧的动态 locals —— **只在这个帧还挂在栈上时**（错误/异常退出）：
+    //   正常 RETURN 时 `REG_FINISH_RETURN` 的三个分支**各自已经 free 过** `_dyn` 的 locals
+    //   （01_prologue.inc 的 236/246/265 行），这里再 free 就是**双重释放** ⇒ 堆损坏
+    //   （退出码 0xC0000374 STATUS_HEAP_CORRUPTION，崩点正落在这一行）。
+    //   实测触发条件 = 「模块 chunk 的槽位 > INLINE_LOCALS_MAX 且模块正常 return」：
+    //     模块 chunk 槽位 ≤ 64 ⇒ 内联帧 `dyn=0` ⇒ 两条路径都不 free（不崩）；
+    //     槽位 ≥ 65 ⇒ malloc 帧 ⇒ RETURN 已 free，这里又 free（必崩）；
+    //     普通函数帧不崩 —— 它走 265 行那一支，只 free 一次。
+    //   判据用「帧索引仍在栈上 + locals 指针仍是本帧的」：`vm_run()` 期间 `vm.frames`
+    //   可能被 realloc，所以按索引**重新取**帧，不能沿用上面那个可能已失效的 `frame` 指针。
+    if (dyn && vm.frame_cnt > prev_frame_cnt) {
+        CallFrame* own = &vm.frames[prev_frame_cnt];
+        if (own->locals == locals) {
+            free(locals);
+            own->locals = NULL;
+            own->locals_is_dynamic = 0;
+        }
+    }
     vm.frame_cnt = prev_frame_cnt;
     vm.chunk = prev_chunk;
     vm.ip = prev_ip;

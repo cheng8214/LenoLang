@@ -1,0 +1,33 @@
+// 回归测试：模块 init chunk 使用**动态 locals**（槽位 > INLINE_LOCALS_MAX）时，
+//   正常 return 不得双重释放（T15）
+//
+// 背景（实测崩溃现象：退出码 -1073740940 = 0xC0000374 STATUS_HEAP_CORRUPTION、零输出）：
+//   `REG_FINISH_RETURN`（src/vm/vminc/run/01_prologue.inc）的三个分支**各自都 free 了**
+//   动态 locals，而 `vm_run_chunk`（src/vm/vminc/vm_init.inc，模块初始化帧的收尾）
+//   返回后又 `if (dyn) free(locals);` ⇒ **双重释放**。
+//
+//   为什么长期没被发现：只有「模块 chunk 的槽位 > INLINE_LOCALS_MAX」才走 malloc 的动态路径。
+//     槽位 ≤ 64 ⇒ 内联帧（locals_is_dynamic = 0）⇒ 两条路径都不 free ⇒ 不崩；
+//     普通函数帧 ⇒ 走 REG_FINISH_RETURN 的"普通返回"分支，只 free 一次 ⇒ 不崩。
+//   真实触发者：leno_gui/应用/Trae签到/trae_gui.leno（它 import 的 trae_crypto.leno
+//     模块级有两个 64 元素数组 ⇒ 模块 chunk 66 槽 ⇒ 必崩）。
+//
+// 这个用例的判别力：helper 模块的 init chunk ≈ 202 槽 ⇒ 必须走动态 locals 路径。
+//   ⚠ 修复前它**必定崩溃**（用改动前的 exe 验证过：退出码 -1073740940），修复后应正常。
+//   ⚠ 故意用 200 个元素而不是"刚过 64"：将来 INLINE_LOCALS_MAX 调大也不会绕过这条路径。
+
+import "helpers/big_chunk_module.leno" as big
+
+// ① 模块初始化正常完成：大数组字面量建好了
+assert_eq(big.table_len(), 200)
+
+// ② 元素值与下标一致（数组字面量的元素没有写串位）
+assert_eq(big.table_at(0), 0)
+assert_eq(big.table_at(63), 63)
+assert_eq(big.table_at(64), 64)
+assert_eq(big.table_at(199), 199)
+
+// ③ 该模块里的普通函数照常可调用（顺带覆盖"动态 locals 帧"的正常调用路径）
+assert_eq(big.table_sum(), 19900)
+
+print("test_module_dyn_locals passed")
