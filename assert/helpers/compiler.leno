@@ -33,12 +33,26 @@ export func cmd_for(string script_path):string {
     return _executable() + " \"" + script_path + "\""
 }
 
+// ⚠ 子进程**必须带上限**（30000ms）：`_exec` 不传第二个参数时是**无限等待**，
+//   一旦被测程序挂住（等输入、死循环…），整个套件就在这一条上卡死。
+//   实测教训：本 helper 原先用 1 参形式，新加的用例里有一支子进程挂住 ⇒
+//   整个用例文件**永不返回**，表现为「跑了几分钟没有任何输出」。
+//   套件（run_tests.leno）虽有 120s 兜底，但那条兜底是**整条用例**级的，
+//   真出问题时只会看到「超时（已被杀掉）」而不知道是**哪一支**——
+//   带上限后，报错文案里的 tag 直接点名是哪一支。
+var EXEC_TIMEOUT_MS = 30000
+
+// 超时退出码（GNU 惯例，见 docs/module_sys.md 的 `_exec(cmd[, timeout_ms])`）
+var EXEC_TIMEOUT_CODE = 124
+
 // 期望编译并运行成功（exit == 0）；expect_out 非空时还要求输出包含它。返回输出。
 export func expect_ok(string script_path, string tag, string expect_out):string {
-    var r = _exec(cmd_for(script_path))
+    var r = _exec(cmd_for(script_path), EXEC_TIMEOUT_MS)
     assert_ne(r, null, tag + "：_exec 返回 null（子进程起不来？）")
 
     var out = _str(r[0])
+    assert_ne(r[1], EXEC_TIMEOUT_CODE,
+        tag + "：子进程超时（" + EXEC_TIMEOUT_MS + "ms 未返回）—— 挂住不能算通过；输出=" + out)
     assert_eq(r[1], 0, tag + "：应编译运行成功，实际 exit=" + r[1] + "；输出=" + out)
 
     if expect_out != "" {
@@ -50,12 +64,17 @@ export func expect_ok(string script_path, string tag, string expect_out):string 
 
 // 期望编译失败（exit != 0），且输出包含 expect_text；
 // expect_line > 0 时还要求输出里有 "<line>,"（报错落在该行；只验行、不验列）。返回输出。
+// ⚠⚠ 这里有个**能把挂住伪装成通过**的坑（务必保留这一条判断）：
+//   本函数的判据是「exit != 0 就算编译失败」，而**超时码也是非 0**（124）⇒
+//   如果不单独把 124 拎出来判红，子进程挂住/超时会被当成「编译失败 ✓」**判绿**。
 export func expect_error(string script_path, string tag, string expect_text, int expect_line):string {
-    var r = _exec(cmd_for(script_path))
+    var r = _exec(cmd_for(script_path), EXEC_TIMEOUT_MS)
     assert_ne(r, null, tag + "：_exec 返回 null（子进程起不来？）")
 
     var out = _str(r[0])
     var code = r[1]
+    assert_ne(code, EXEC_TIMEOUT_CODE,
+        tag + "：子进程超时（" + EXEC_TIMEOUT_MS + "ms 未返回）—— 超时**不是**编译失败，别让它冒充通过；输出=" + out)
     assert_true(code != 0, tag + "：应当编译失败，实际 exit=0；输出=" + out)
 
     assert_true(strings.has(out, expect_text),

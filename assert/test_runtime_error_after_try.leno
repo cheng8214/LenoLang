@@ -1,0 +1,90 @@
+// test_runtime_error_after_try.leno —— 异常派发回归（**挂死级** bug）
+//
+// 修复前（实测）：`try { .. } catch { c = c + 1 }` **之后**的运行期错误，会被那个 catch
+//   **反复接住** ⇒ 控制流一次次回到 catch 段 ⇒ 死循环：
+//       A / B c=1 / B c=2 / B c=3 … 永不退出
+//   根因是两处异常派发**分叉**（`vm_exception.inc` 的运行期错误派发 vs
+//   `run/09_exception.inc` 的 OP_THROW 派发）：
+//     · 前者只看 `catch_ip`/`finally_ip`，不认 `prev_*` 兜底；
+//     · 前者跳进 catch 时**不注销 handler** —— 而 `} catch {`（**无变量**）根本不发 OP_CATCH
+//       （见 codegen_stmt.c 的注释）⇒ `catch_ip` 永远挂着；
+//     · 前者缺 `in_finally` 守卫与 `catch_finally_ip` 分支。
+//
+// 判据（都是"可终止性"约束，正是这个 bug 破坏的东西）：
+//   ① try 之后的运行期错误 ⇒ 必须**报错退出**（修复前死循环；挂住会以超时码 124 被 ce 判红）
+//   ② catch 体内抛出的运行期错误 ⇒ 要**向外层 catch** 传播（`prev_catch_ip` 兜底）
+//   ③ finally 体内抛错 ⇒ 不得绕回自己，且能正常向外传播
+//
+// ⚠ 本用例依赖 assert/helpers/compiler.leno 的**子进程超时**（30s + 124 单独判红）：
+//   没有那道上界，"挂住"会拖死整个套件；没有 124 判断，挂住会被 exit!=0 当成"编译失败"**判绿**。
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_runtime_error_after_try")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ① try 之后的运行期错误：必须报错退出（修复前死循环）
+    var f1 = dirs.join(work, "after_try.leno")
+    files.write(f1,
+        "main() {\n"
+        + "    var z = 0\n"
+        + "    var c = 0\n"
+        + "    print(\"A\")\n"
+        + "    try { var v = 1 / z } catch { c = c + 1 }\n"
+        + "    print(\"B c=\" + c)\n"
+        + "    var boom = 1 / z\n"
+        + "    print(\"C（不该到达）\")\n"
+        + "}\n")
+    // 运行期错误的行号格式是 `file:line:`（不是编译期的 `(line,col)`）⇒ 落点行传 0 不校验
+    ce.expect_error(f1, "try 之后的运行期错误必须报错退出（不得被残留 handler 接住而挂住）", "除零错误", 0)
+
+    // ② 嵌套 try：内层 catch 体内的运行期错误要传给外层 catch
+    var f2 = dirs.join(work, "nested.leno")
+    files.write(f2,
+        "func div0(): int {\n"
+        + "    var z = 0\n"
+        + "    return 1 / z\n"
+        + "}\n"
+        + "main() {\n"
+        + "    var log = \"\"\n"
+        + "    try {\n"
+        + "        try {\n"
+        + "            var a = div0()\n"
+        + "        } catch {\n"
+        + "            log = log + \"inner\"\n"
+        + "            var b = div0()\n"
+        + "        }\n"
+        + "    } catch {\n"
+        + "        log = log + \"+outer\"\n"
+        + "    }\n"
+        + "    print(\"log=\" + log)\n"
+        + "}\n")
+    ce.expect_ok(f2, "内层 catch 体内抛错必须向外层 catch 传播", "log=inner+outer")
+
+    // ③ finally 体内抛错：不得绕回自己，且能正常向外报错退出
+    var f3 = dirs.join(work, "finally_throw.leno")
+    files.write(f3,
+        "main() {\n"
+        + "    var c = 0\n"
+        + "    try {\n"
+        + "        var d = 1\n"
+        + "    } finally {\n"
+        + "        if c == 0 {\n"
+        + "            c = c + 1\n"
+        + "            var z = 0\n"
+        + "            var e = 1 / z\n"
+        + "        }\n"
+        + "    }\n"
+        + "    print(\"不该到达\")\n"
+        + "}\n")
+    // ⚠ 文案用"file(9)"而不是"除零错误"：finally 内抛错走的是 pending_exception 路径，
+    //   最外层报的是「未捕获的异常」+ 落点行；校验落点行更硬（既证明终止、又证明归因正确）。
+    ce.expect_error(f3, "finally 体内抛错不得绕回自己（不得挂住）", "finally_throw.leno(9)", 0)
+
+    dirs.delete(work)
+    print("test_runtime_error_after_try passed")
+}
