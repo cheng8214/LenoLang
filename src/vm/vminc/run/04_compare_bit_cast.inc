@@ -241,6 +241,24 @@
 //   ⚠ 冷路径也要**尽量小**：位运算指令是全 VM 最短的（快路径就一条 AND/OR/XOR），
 //     实测每多一份内联报错代码，位运算基准就掉一档（2273 → 2540ms）。
 //     ⇒ 两个错误（null / 非整数）**合并成一个报错点**，只在真正非法时才拼文案。
+//
+// ★★ 快路径**不做拆箱/装箱**（NaN 装箱下的裸位运算）—— 本族目前最大的一笔优化。
+//   两个 int48 的 Value 是 `T | p`：T = QNAN|SIGN_BIT|TAG_INT 是**两侧相同**的标签位，
+//   p 是 48 位补码载荷、只占 bit 0..47。于是
+//       bv & cv == T | (p1 & p2) == val_int(p1 & p2)    ← 标签位两边都是 1，与出来还是 1
+//       bv | cv == T | (p1 | p2) == val_int(p1 | p2)    ← 同上
+//       bv ^ cv ==     (p1 ^ p2)                        ← 标签位异或成 0 ⇒ 必须补回 T
+//   即 AND/OR/XOR **直接在原始 64 位上做就是精确的**：载荷恒 < 2^48，不会溢出到标签位；
+//   负数只是 48 位补码，照样成立。而原先的 `val_int(val_as_int(bv) & val_as_int(cv))`
+//   要两次拆箱（其中符号扩展带**分支**）+ 一次装箱 —— 实测占本族开销的大头。
+//   实测 `examples/性能测试/bench_bitwise_loop.leno`（2 亿轮 × 6 条指令）：
+//     2588ms → 1941ms（−25%）；Lua 参考实现 1442ms ⇒ 差距 1.80x → 1.35x。
+//   ⚠ 慢路径（bigint / null / 非整数）**逐字不动**：上面的等价性只对「两侧都是 int48」
+//     成立，而守卫恰好保证了走到快路径时就是这个前提。
+//   ⚠ 剩下的差距不在类型检查（实测把 K 版那次 `val_is_int(cv)` 省掉**零收益**），
+//     而在**冷代码占位**：消融实验里把整段冷代码拿掉（`if (0)`）基准立刻到 1700ms。
+//     ⇒ 下一个杠杆是路线图的 T9（把冷路径抽成 static 函数，别让 bigint 分支与报错
+//       文案挤占热路径的 I-cache），不是继续抠那两次 tag 比较。
 #define BITAND_BODY(CV)                                                                \
     {                                                                                  \
         int a = READ_A(), b = READ_B();                                                \
@@ -263,7 +281,7 @@
             frame = &vm.frames[vm.frame_cnt - 1];                                      \
             DISPATCH();                                                                \
         }                                                                              \
-        R(a) = val_int(val_as_int(bv) & val_as_int(cv));                               \
+        R(a) = bv & cv;                               /* 裸位运算，见上方 ★★ 说明 */     \
         DISPATCH();                                                                    \
     }
     LABEL(OP_BITAND):   BITAND_BODY(VM_BIT_CV_REG())
@@ -291,7 +309,7 @@
             frame = &vm.frames[vm.frame_cnt - 1];                                      \
             DISPATCH();                                                                \
         }                                                                              \
-        R(a) = val_int(val_as_int(bv) | val_as_int(cv));                               \
+        R(a) = bv | cv;                               /* 裸位运算，见上方 ★★ 说明 */     \
         DISPATCH();                                                                    \
     }
     LABEL(OP_BITOR):   BITOR_BODY(VM_BIT_CV_REG())
@@ -319,7 +337,7 @@
             frame = &vm.frames[vm.frame_cnt - 1];                                      \
             DISPATCH();                                                                \
         }                                                                              \
-        R(a) = val_int(val_as_int(bv) ^ val_as_int(cv));                               \
+        R(a) = (bv ^ cv) | (QNAN | SIGN_BIT | TAG_INT);   /* 异或会清掉标签位，须补回；见上方 ★★ */ \
         DISPATCH();                                                                    \
     }
     LABEL(OP_BITXOR):   BITXOR_BODY(VM_BIT_CV_REG())
