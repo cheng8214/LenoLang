@@ -112,6 +112,7 @@ static void* thread_entry_point_fixed(void* arg) {
     frame->has_captures = (closure->upvalue_count > 0) ? 1 : 0;
     if (frame->local_count <= INLINE_LOCALS_MAX) {
         frame->locals = frame->inline_locals;
+        frame->locals_capacity = INLINE_LOCALS_MAX;
         for (int i = 0; i < frame->local_count; i++) {
             frame->locals[i] = val_null();
         }
@@ -121,6 +122,7 @@ static void* thread_entry_point_fixed(void* arg) {
             frame->locals[i] = val_null();
         }
         frame->locals_is_dynamic = 1;
+        frame->locals_capacity = frame->local_count;
     }
     frame->locals[0] = val_obj((Object*)closure);
 

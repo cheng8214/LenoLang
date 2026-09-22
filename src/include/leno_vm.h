@@ -527,6 +527,13 @@ typedef struct CallFrame {
     // 内联 locals 数组 - 小函数直接使用，避免内存分配
     Value inline_locals[INLINE_LOCALS_MAX];
     int locals_is_dynamic;  // 1 = 使用 malloc 分配，0 = 使用 inline_locals
+    // locals 数组的**真实可用容量**（从 frame->locals 起算、还能安全写到第几个槽）：
+    //   自有 inline_locals → INLINE_LOCALS_MAX；malloc → local_count；
+    //   零拷贝原地帧（locals 指向调用方实参区）→ 调用方容量 减去 别名的起始偏移。
+    //   与 local_count 的区别：local_count 是**寄存器高水位/GC 扫描范围**，本字段是
+    //   **物理容量**。零拷贝原地帧的建帧判定必须用物理容量（用高水位会白白漏掉一大片
+    //   可安全别名的空间 —— 数组明明有 64 格却没被用满）。
+    int locals_capacity;
     // 异常处理
     uint8_t* catch_ip;   // catch 块的指令指针
     uint8_t* finally_ip; // finally 块的指令指针

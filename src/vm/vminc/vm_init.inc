@@ -181,9 +181,11 @@ void vm_load(Chunk* c) {
     // 根据大小选择内联或动态分配
     Value* locals;
     int locals_is_dynamic;
+    int locals_capacity;
     if (local_count <= INLINE_LOCALS_MAX) {
         locals = frame->inline_locals;
         locals_is_dynamic = 0;
+        locals_capacity = INLINE_LOCALS_MAX;
     } else {
         locals = (Value*)malloc(local_count * sizeof(Value));
         if (!locals) {
@@ -191,6 +193,7 @@ void vm_load(Chunk* c) {
             return;
         }
         locals_is_dynamic = 1;
+        locals_capacity = local_count;
     }
     
     for (int i = 0; i < local_count; i++) {
@@ -205,6 +208,7 @@ void vm_load(Chunk* c) {
     frame->locals = locals;  // 主帧也有独立的locals，支持闭包捕获
     frame->local_count = local_count;
     frame->locals_is_dynamic = locals_is_dynamic;
+    frame->locals_capacity = locals_capacity;
     frame->catch_ip = NULL;
     frame->finally_ip = NULL;
     frame->catch_finally_ip = NULL;
@@ -269,8 +273,10 @@ int vm_run_chunk(Chunk* chunk) {
     int lc = chunk->local_count > 0 ? chunk->local_count : 1;
     Value* locals;
     int dyn = 0;
+    int cap;
     if (lc <= INLINE_LOCALS_MAX) {
         locals = frame->inline_locals;
+        cap = INLINE_LOCALS_MAX;
     } else {
         locals = (Value*)malloc(sizeof(Value) * (size_t)lc);
         if (!locals) {
@@ -280,11 +286,13 @@ int vm_run_chunk(Chunk* chunk) {
             return -1;
         }
         dyn = 1;
+        cap = lc;
     }
     for (int i = 0; i < lc; i++) locals[i] = val_null();
     frame->locals = locals;
     frame->local_count = lc;
     frame->locals_is_dynamic = dyn;
+    frame->locals_capacity = cap;
 
     // ★ 宿主返回语义 + 帧数下界：模块 chunk 的 RETURN 让帧数回落到 prev_frame_cnt
     //   时，OP_RETURN 直接结束本次 vm_run，而不会继续跑调用方的字节码。

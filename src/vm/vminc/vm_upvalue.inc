@@ -22,6 +22,7 @@
 // 返回 1=成功, 0=失败（内存不足）
 static int vm_grow_frames(VM* vm_ptr) {
     int new_capacity = vm_grow_capacity(vm_ptr->frame_capacity);
+    int old_capacity = vm_ptr->frame_capacity;   // 扩容前容量（初始化新槽时要用）
 
     // === Phase 1: realloc 前记录旧帧块地址范围（仅作整数比较，之后不解引用旧指针） ===
     uintptr_t old_base = (uintptr_t)vm_ptr->frames;
@@ -34,21 +35,42 @@ static int vm_grow_frames(VM* vm_ptr) {
     vm_ptr->frames = new_frames;
     vm_ptr->frame_capacity = new_capacity;
 
-    // === Phase 3: 更新 inline locals 指针 ===
+    // === Phase 3: 重定位 locals 指针 ===
+    // 非动态分配（locals_is_dynamic == 0）的帧，其 locals 一定指向**旧帧块内部**：
+    //   · 自己的 inline_locals（它是 CallFrame 的成员，就在帧块里）；
+    //   · 或零拷贝原地帧 —— 指向**调用方帧**的 inline_locals（调用方实参区那一段）。
+    //   两者都是「旧块地址 + 同一偏移 = 新块地址」，故统一按 delta 平移即可，
+    //   不必区分（原先无条件写成自己的 inline_locals，会把零拷贝原地帧的指针改错）。
+    // 动态分配（malloc）的 locals 不在旧块范围内，下面的范围判断天然跳过。
+    uintptr_t new_base = (uintptr_t)new_frames;
+    uintptr_t delta = new_base - old_base;
     for (int i = 0; i < vm_ptr->frame_cnt; i++) {
         CallFrame* f = &new_frames[i];
-        if (!f->locals_is_dynamic && f->local_count > 0) {
-            f->locals = f->inline_locals;
+        if (f->locals_is_dynamic || f->locals == NULL) continue;
+        uintptr_t loc = (uintptr_t)f->locals;
+        if (loc >= old_base && loc < old_end) {
+            f->locals = (Value*)(loc + delta);
         }
     }
 
+    // === Phase 3.5: 初始化**新增帧槽**的整个 inline_locals 为 null ===
+    // 为什么必须做：零拷贝原地帧的建帧判定用的是 locals_capacity（物理容量，见
+    // CallFrame.locals_capacity），允许被调方写到调用方高水位**之上**、直到容量上限。
+    // 那片区域若从未被写过，GC 按 val_is_obj 判读随机字节就会把垃圾当对象指针 → 崩。
+    // 每个帧槽只需初始化这一次：此后帧槽里永远只存合法 Value（写入的都是 Value）。
+    for (int i = old_capacity; i < new_capacity; i++) {
+        for (int j = 0; j < INLINE_LOCALS_MAX; j++) {
+            new_frames[i].inline_locals[j] = val_null();
+        }
+        new_frames[i].locals_capacity = INLINE_LOCALS_MAX;
+    }
+
     // === Phase 4: 范围重映射所有指向旧帧块的 open upvalue locations ===
-    uintptr_t new_base = (uintptr_t)new_frames;
-    if (new_base != old_base) {
+    if (delta != 0) {
         for (Upvalue* uv = vm_ptr->open_upvalues; uv != NULL; uv = uv->next) {
             uintptr_t loc = (uintptr_t)uv->location;
             if (loc >= old_base && loc < old_end) {
-                uv->location = (Value*)(loc + (new_base - old_base));
+                uv->location = (Value*)(loc + delta);
             }
         }
     }

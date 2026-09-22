@@ -1362,9 +1362,11 @@ int vm_run_coroutine_with_vm(ObjCoroutine* co, VM* vm_ptr) {
         if (local_count <= INLINE_LOCALS_MAX) {
             frame->locals = frame->inline_locals;
             frame->locals_is_dynamic = 0;
+            frame->locals_capacity = INLINE_LOCALS_MAX;
         } else {
             frame->locals = (Value*)malloc(local_count * sizeof(Value));
             frame->locals_is_dynamic = 1;
+            frame->locals_capacity = local_count;
         }
         
         // 初始化所有 locals 为 null

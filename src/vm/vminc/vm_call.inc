@@ -83,11 +83,13 @@ static inline int call(ObjClosure* closure, int arg_count, int line) {
     int local_count = func->local_count;
     Value* locals;
     int locals_is_dynamic = 0;
+    int locals_capacity = 0;
     
     // 优化：小函数使用内联数组，避免 malloc/free 开销
     CallFrame* frame = &vm.frames[vm.frame_cnt];
     if (likely(local_count <= INLINE_LOCALS_MAX)) {
         locals = frame->inline_locals;
+        locals_capacity = INLINE_LOCALS_MAX;
     } else {
         locals = (Value*)malloc(local_count * sizeof(Value));
         if (!locals) {
@@ -95,6 +97,7 @@ static inline int call(ObjClosure* closure, int arg_count, int line) {
             return 0;
         }
         locals_is_dynamic = 1;
+        locals_capacity = local_count;
     }
     
     // 初始化locals数组
@@ -133,6 +136,7 @@ static inline int call(ObjClosure* closure, int arg_count, int line) {
     frame->locals = locals;
     frame->local_count = local_count;
     frame->locals_is_dynamic = locals_is_dynamic;
+    frame->locals_capacity = locals_capacity;
     // 帧复用优化：无 try 的函数跳过 7 个 try 字段初始化（~50B/次），
     // 读取点必须用 FRAME_TRY_VALID 守护（脏值会导致异常误捕获/误跳 finally）
     if (func->has_try) {
@@ -172,10 +176,12 @@ static inline int call_no_type_check(ObjClosure* closure, int arg_count, int lin
     int local_count = func->local_count;
     Value* locals;
     int locals_is_dynamic = 0;
+    int locals_capacity = 0;
 
     CallFrame* frame = &vm.frames[vm.frame_cnt];
     if (likely(local_count <= INLINE_LOCALS_MAX)) {
         locals = frame->inline_locals;
+        locals_capacity = INLINE_LOCALS_MAX;
     } else {
         locals = (Value*)malloc(local_count * sizeof(Value));
         if (!locals) {
@@ -183,6 +189,7 @@ static inline int call_no_type_check(ObjClosure* closure, int arg_count, int lin
             return 0;
         }
         locals_is_dynamic = 1;
+        locals_capacity = local_count;
     }
 
     // 快速路径：跳过类型转换，直接拷贝参数到 locals
@@ -209,6 +216,7 @@ static inline int call_no_type_check(ObjClosure* closure, int arg_count, int lin
     frame->locals = locals;
     frame->local_count = local_count;
     frame->locals_is_dynamic = locals_is_dynamic;
+    frame->locals_capacity = locals_capacity;
     if (func->has_try) {
         frame->catch_ip = NULL;
         frame->finally_ip = NULL;
@@ -328,8 +336,35 @@ static inline int call_reg_impl(ObjClosure* closure, int has_self, Value self,
     CallFrame* frame = &vm.frames[vm.frame_cnt];
     Value* locals;
     int locals_is_dynamic = 0;
-    if (likely(local_count <= INLINE_LOCALS_MAX)) {
+    int locals_capacity = 0;   // 见 CallFrame.locals_capacity
+
+    // ★ 零拷贝原地帧（照 Lua 参考实现的做法）：被调方的 R0.. 直接就是调用方的
+    //   实参区 R[arg_base..] —— 实参一个都不搬、非参数槽位也不 nil 填充、更不占新内存。
+    //   Lua 的 luaD_precall / prepCallInfo 正是这么做的：新帧的寄存器区原地复用调用方
+    //   栈上那一块。改动前每次调用都要「另取一块 locals 数组 + 逐个复制实参 +
+    //   把其余槽位全填 null」，对「小叶子函数 × 海量调用」正是最大的一笔固定开销。
+    //   条件（缺一不可）：
+    //     ① 无隐式 self —— 有 self 时被调方 R0 = self、实参整体右移一位，与调用方
+    //        实参区错开，不能直接别名（绑定方法调用退回下面的复制路径）；
+    //     ② 不在协程里 —— 协程 yield 会把整帧 memcpy 出去保存、resume 再拷回来
+    //        （13_async_ffi.inc / vm.c），裸的 locals 指针会指到已失效的位置；
+    //     ③ 调用方 locals 非空、且**物理容量**装得下被调方的整帧。判定用 locals_capacity
+    //        而不是 caller->local_count：后者是**寄存器高水位/GC 扫描范围**（往往只有
+    //        一二十），而自有 inline_locals 的物理容量是 INLINE_LOCALS_MAX —— 用高水位
+    //        判定会白白漏掉一大片本来可以安全别名的空间（数组明明有 64 格却没被用满）。
+    //        安全前提：整个 inline_locals 已由 vm_grow_frames 一次性填 null，且此后帧槽里
+    //        永远只存合法 Value，所以容量内的任何格子被 GC 扫到都不会误判成对象指针。
+    //   别名时 src == locals（都等于 caller->locals + arg_base）且 k == 0，
+    //   所以下面「逐参数类型转换」那段循环原地读写，无需改动。
+    int locals_is_alias = (!has_self && vm.current_coroutine == NULL &&
+                           caller->locals != NULL &&
+                           arg_base + local_count <= caller->locals_capacity);
+    if (likely(locals_is_alias)) {
+        locals = caller->locals + arg_base;
+        locals_capacity = caller->locals_capacity - arg_base;
+    } else if (likely(local_count <= INLINE_LOCALS_MAX)) {
         locals = frame->inline_locals;
+        locals_capacity = INLINE_LOCALS_MAX;
     } else {
         locals = (Value*)malloc(local_count * sizeof(Value));
         if (!locals) {
@@ -337,6 +372,7 @@ static inline int call_reg_impl(ObjClosure* closure, int has_self, Value self,
             return 0;
         }
         locals_is_dynamic = 1;
+        locals_capacity = local_count;
     }
 
     TypeKind* param_types = func->param_types;
@@ -345,7 +381,10 @@ static inline int call_reg_impl(ObjClosure* closure, int has_self, Value self,
     if (has_self) locals[k++] = self;
     if (no_convert) {
         // 类型已核实（codegen 只在"实参静态类型 == 形参声明类型"时发 typed 版）⇒ 直接复制
-        for (int i = 0; i < arg_count; i++) locals[k + i] = src[i];
+        // （原地帧：实参本来就在被调方的槽位里，无需复制）
+        if (!locals_is_alias) {
+            for (int i = 0; i < arg_count; i++) locals[k + i] = src[i];
+        }
     } else {
     for (int i = 0; i < arg_count; i++) {
         Value arg = src[i];
@@ -362,8 +401,13 @@ static inline int call_reg_impl(ObjClosure* closure, int has_self, Value self,
         locals[k + i] = arg;
     }
     }
-    for (int i = k + arg_count; i < local_count; i++) {
-        locals[i] = val_null();
+    // 原地帧的非参数槽位不填 null：它们本来就是调用方的寄存器，里面一定是合法 Value
+    //   （调用方建帧时整块数组已初始化过），GC 扫描安全；而被调方的局部变量在声明处
+    //   必被赋值（gen_var_decl 总会发初始化/默认值）。
+    if (!locals_is_alias) {
+        for (int i = k + arg_count; i < local_count; i++) {
+            locals[i] = val_null();
+        }
     }
 
     vm.frame_cnt++;
@@ -375,6 +419,7 @@ static inline int call_reg_impl(ObjClosure* closure, int has_self, Value self,
     frame->locals = locals;
     frame->local_count = local_count;
     frame->locals_is_dynamic = locals_is_dynamic;
+    frame->locals_capacity = locals_capacity;
     // 帧复用优化：无 try 的函数跳过 try 字段初始化（读取点用 FRAME_TRY_VALID 守护）
     if (func->has_try) {
         frame->catch_ip = NULL;
