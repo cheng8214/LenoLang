@@ -207,7 +207,20 @@
         int a = READ_A(), b = READ_B(), c = READ_C();
         Value bv = R(b), cv = R(c);
         if (VM_IS_BIG(bv) || VM_IS_BIG(cv)) {
-            R(a) = bigint_compact_to_int(bigint_and(promote_to_bigint(bv), promote_to_bigint(cv)));
+            // ★ 免装箱快路径（与栈式 op_bitwise.inc 的 §8.133 同口径）：一侧 bigint、另一侧
+            //   int48 ⇒ 走 `bigint_*_i64`（内部用栈上 view，**不为 int 操作数装箱**）。
+            //   为什么不能直接对 int64 做位运算：bigint 的 int64 表示可能是"负号扩展"的
+            //   位模式（如 2^64-1 ⇒ -1），而语言语义是**无限精度补码** ⇒ 结果会算错
+            //   （实测 test_bigint_arith 立刻挂）。库函数自己按符号/幅值处理 ⇒ 语义精确。
+            //   实测重灾区：SHA-256 的 right_rotate = `(ux >> c) | (ux << (32-c))`，
+            //   左移结果超 int48 ⇒ 每次旋转都要为 OR 的 int 操作数装箱（每调用数百次）。
+            if (VM_IS_BIG(bv) && !VM_IS_BIG(cv)) {
+                R(a) = bigint_compact_to_int(bigint_and_i64(val_as_bigint(bv), VM_IO(cv)));
+            } else if (!VM_IS_BIG(bv) && VM_IS_BIG(cv)) {
+                R(a) = bigint_compact_to_int(bigint_and_i64(val_as_bigint(cv), VM_IO(bv)));
+            } else {
+                R(a) = bigint_compact_to_int(bigint_and(promote_to_bigint(bv), promote_to_bigint(cv)));
+            }
         } else {
             R(a) = VM_INT_RESULT(val_as_int(bv) & val_as_int(cv));
         }
@@ -217,7 +230,13 @@
         int a = READ_A(), b = READ_B(), c = READ_C();
         Value bv = R(b), cv = R(c);
         if (VM_IS_BIG(bv) || VM_IS_BIG(cv)) {
-            R(a) = bigint_compact_to_int(bigint_or(promote_to_bigint(bv), promote_to_bigint(cv)));
+            if (VM_IS_BIG(bv) && !VM_IS_BIG(cv)) {      // 见 OP_BITAND 的说明（免装箱快路径）
+                R(a) = bigint_compact_to_int(bigint_or_i64(val_as_bigint(bv), VM_IO(cv)));
+            } else if (!VM_IS_BIG(bv) && VM_IS_BIG(cv)) {
+                R(a) = bigint_compact_to_int(bigint_or_i64(val_as_bigint(cv), VM_IO(bv)));
+            } else {
+                R(a) = bigint_compact_to_int(bigint_or(promote_to_bigint(bv), promote_to_bigint(cv)));
+            }
         } else {
             R(a) = VM_INT_RESULT(val_as_int(bv) | val_as_int(cv));
         }
@@ -227,7 +246,13 @@
         int a = READ_A(), b = READ_B(), c = READ_C();
         Value bv = R(b), cv = R(c);
         if (VM_IS_BIG(bv) || VM_IS_BIG(cv)) {
-            R(a) = bigint_compact_to_int(bigint_xor(promote_to_bigint(bv), promote_to_bigint(cv)));
+            if (VM_IS_BIG(bv) && !VM_IS_BIG(cv)) {      // 见 OP_BITAND 的说明（免装箱快路径）
+                R(a) = bigint_compact_to_int(bigint_xor_i64(val_as_bigint(bv), VM_IO(cv)));
+            } else if (!VM_IS_BIG(bv) && VM_IS_BIG(cv)) {
+                R(a) = bigint_compact_to_int(bigint_xor_i64(val_as_bigint(cv), VM_IO(bv)));
+            } else {
+                R(a) = bigint_compact_to_int(bigint_xor(promote_to_bigint(bv), promote_to_bigint(cv)));
+            }
         } else {
             R(a) = VM_INT_RESULT(val_as_int(bv) ^ val_as_int(cv));
         }

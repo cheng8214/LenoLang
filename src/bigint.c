@@ -42,10 +42,17 @@ ObjBigInt* bigint_new(const uint32_t* limbs, int limb_count, int is_negative) {
     if (!bigint) return NULL;
 
     size_t limbs_size = limb_count * sizeof(uint32_t);
-    bigint->limbs = (uint32_t*)malloc(limbs_size);
-    if (!bigint->limbs) {
-        free(bigint);
-        return NULL;
+    // ★ 小 bigint（≤ BIGINT_INLINE_LIMBS 个 limb，覆盖整个 int64 范围）用对象内联缓冲：
+    //   省掉每次提升的一次 malloc（以及 GC 时的一次 free）。这是"值刚超 int48"的
+    //   中间结果（位运算/移位/加减）的绝对多数形态 —— 实测 SHA-256 每次调用约 420 次提升。
+    if (limb_count <= BIGINT_INLINE_LIMBS) {
+        bigint->limbs = bigint->inline_limbs;
+    } else {
+        bigint->limbs = (uint32_t*)malloc(limbs_size);
+        if (!bigint->limbs) {
+            free(bigint);
+            return NULL;
+        }
     }
 
     memcpy(bigint->limbs, limbs, limbs_size);
@@ -372,6 +379,13 @@ Value bigint_xor_i64(ObjBigInt* a, int64_t v) {
     ObjBigInt bv;
     bigint_view_from_int64(v, &bv, stash);
     return bigint_xor(a, &bv);
+}
+
+Value bigint_or_i64(ObjBigInt* a, int64_t v) {
+    uint32_t stash[2];
+    ObjBigInt bv;
+    bigint_view_from_int64(v, &bv, stash);
+    return bigint_or(a, &bv);
 }
 
 Value bigint_mul(ObjBigInt* a, ObjBigInt* b) {

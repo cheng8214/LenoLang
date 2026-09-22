@@ -1426,9 +1426,15 @@ static void free_object_resources(Object* obj) {
             break;
         }
         // 大整数：释放 limbs 数组
+        // ★ 只释放**堆上**的 limb：小 bigint 的 limbs 指向对象内的 inline_limbs
+        //   （见 leno_value.h 的 BIGINT_INLINE_LIMBS），free 它属于未定义行为；
+        //   另外 bigint_view_from_int64 造的临时视图用**栈上** stash 当 limbs（非 GC 对象，
+        //   到不了这里），所以"指针比较"这一个判断就够。
         case OBJ_BIGINT: {
             ObjBigInt* bigint = (ObjBigInt*)obj;
-            free(bigint->limbs);
+            if (bigint->limbs && bigint->limbs != bigint->inline_limbs) {
+                free(bigint->limbs);
+            }
             break;
         }
         // 模块：释放名称和全局变量数组

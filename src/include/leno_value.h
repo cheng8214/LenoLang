@@ -397,11 +397,23 @@ typedef struct ObjClosure {
 
 // BigInt 对象（大整数）- 使用 base-1e9 存储，支持任意精度
 // 每个 limb 存储 9 位十进制数 (0-999999999)，大幅减少内存占用
+//
+// ★ 小 bigint 的 limb **内联**在对象里（BIGINT_INLINE_LIMBS = 2，覆盖整个 int64 范围）：
+//   原先每个 bigint 都是 gc_alloc(对象) + malloc(limb 数组) 两次分配，GC 时还要 free(limbs)。
+//   而"值刚超过 int48"的 bigint（位运算/移位/加法的中间结果，crypto/hash/PRNG 里成千上万次）
+//   正好只需要 2 个 limb ⇒ 每次分配都白搭一次 malloc/free。
+//   实测（examples/crypto/pbkdf2.leno 的 SHA-256 主轮，每次调用约 420 次提升）：
+//     `ux << 30` 这类移位结果超 int48 ⇒ 每次提升一次 malloc+free
+//     ⇒ 寄存式比栈式慢 2.5x（栈式的 OP_SHL 直接 48 位截断、根本不提升）。
+//   内联后 limbs 不再单独分配；limbs 仍可能指向**对象外**（bigint_view_from_int64 用栈上
+//   stash 当 limbs），所以判断"是否要 free"只能比指针（见 gc.c 的 OBJ_BIGINT 释放）。
+#define BIGINT_INLINE_LIMBS 2
 typedef struct {
     Object header;
     uint32_t* limbs;   // 数字数组（小端序，limbs[0] 是最低位）
     int limb_count;    // limb 数量
     int is_negative;   // 是否为负数
+    uint32_t inline_limbs[BIGINT_INLINE_LIMBS];  // limb_count <= 2 时 limbs 指向这里
 } ObjBigInt;
 
 // 导出名 -> 全局变量索引映射（用于运行时更新导出值）
@@ -980,6 +992,7 @@ Value bigint_add(ObjBigInt* a, ObjBigInt* b);
 Value bigint_add_i64(ObjBigInt* a, int64_t v);
 Value bigint_and_i64(ObjBigInt* a, int64_t v);
 Value bigint_xor_i64(ObjBigInt* a, int64_t v);
+Value bigint_or_i64(ObjBigInt* a, int64_t v);
 Value bigint_sub(ObjBigInt* a, ObjBigInt* b);
 Value bigint_mul(ObjBigInt* a, ObjBigInt* b);
 Value bigint_div(ObjBigInt* a, ObjBigInt* b);
