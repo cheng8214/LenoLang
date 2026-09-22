@@ -119,6 +119,9 @@
         R(a) = val_obj((Object*)dict);
         DISPATCH();
     }
+    // 字典读写：这两条 opcode 目前 codegen 不发（实测 dump 里 `d[k]` / `d[k]=v` 走的是
+    //   OP_INDEX / OP_INDEX_SET 的字典分支）⇒ 内联缓存接在那边（见 OP_INDEX_SET）。
+    //   这里保持最简实现，不做额外探测。
     LABEL(OP_DICT_GET): {
         int a = READ_A(), b = READ_B(), c = READ_C();
         ObjDict* dict = (ObjDict*)val_as_obj(R(b));
@@ -209,6 +212,9 @@
                 DISPATCH();
             }
             if (ot == OBJ_DICT) {
+                // ⚠ 这里暂时**不接**内联缓存：实测读取路径接上后反而慢 52%
+                //   （命中不了却白付一次 dict_slot_for 探测，见路线图 ⑤-k 的待查）。
+                //   写路径（OP_INDEX_SET）已接且实测 -26%，保持。
                 R(a) = dict_get((ObjDict*)val_as_obj(obj), idx);
                 DISPATCH();
             }
@@ -434,6 +440,7 @@
     }
     // OP_INDEX_SET A B C: R[B][R[C]] = R[A]
     LABEL(OP_INDEX_SET): {
+        uint8_t* ip_before = frame->ip;   // 调用点标识（字典内联缓存的索引）
         int a = READ_A(), b = READ_B(), c = READ_C();
         Value obj = R(b);
         Value idx = R(c);
@@ -456,7 +463,40 @@
                 DISPATCH();
             }
             if (ot == OBJ_DICT) {
-                dict_set((ObjDict*)val_as_obj(obj), idx, R(a));
+                // ★ 调用点内联缓存（见 leno_vm.h 的 InlineDictCacheEntry）：
+                //   `d[k]=v` 原先每次都要走 dict_set 那 5~8 层跨 TU 调用。
+                ObjDict* dd = (ObjDict*)val_as_obj(obj);
+                Value nv2 = R(a);
+                InlineDictCacheEntry* dic =
+                    &vm.ic_dict_cache[ic_cache_index(ip_before) & (IC_DICT_CACHE_SIZE - 1)];
+                if (likely(!dic->dead && dic->dict == dd && dic->key == idx && dic->slot >= 0 &&
+                           dic->cap == (uint32_t)dd->capacity && dic->slot < dd->capacity &&
+                           dd->entries[dic->slot].key == idx)) {
+                    vm.ic_hits++;
+                    dic->miss_streak = 0;
+                    dd->entries[dic->slot].value = nv2;
+                    gc_write_barrier((Object*)dd, nv2);
+                    DISPATCH();
+                }
+                vm.ic_misses++;
+                dict_set(dd, idx, nv2);
+                if (!dic->dead && dic->miss_streak < IC_DICT_MISS_LIMIT) {
+                    int dslot = dict_slot_for(dd, idx);
+                    if (dslot >= 0) {
+                        dic->dict = dd;
+                        dic->key = idx;
+                        dic->cap = (uint32_t)dd->capacity;
+                        dic->slot = dslot;
+                        dic->miss_streak++;
+                    } else {
+                        dic->dict = NULL;
+                    }
+                } else if (!dic->dead) {
+                    // 连续多次未命中 ⇒ 该调用点的键在轮换，永久放弃（dead 不可逆，
+                    // 否则"每 N 次命中一次"会把计数清零、导致一直反复回填）
+                    dic->dead = 1;
+                    dic->dict = NULL;
+                }
                 DISPATCH();
             }
             // struct 实例：按字段名赋值（`s.field = v` 的通用索引形态）

@@ -176,6 +176,15 @@ static int key_to_array_index(Value key) {
     return -1;
 }
 
+// 供 VM 的字典读写内联缓存用（见 leno_vm.h 的 InlineDictCacheEntry）：
+// 返回该键在**哈希部分**的槽位号；找不到、或该键走数组部分 ⇒ -1（不缓存）。
+// 只认哈希部分：整数键走数组部分时槽位语义完全不同，拿去当 entries 下标会写坏字典。
+int dict_slot_for(ObjDict* dict, Value key) {
+    if (!dict || dict->capacity == 0) return -1;
+    if (key_to_array_index(key) >= 0) return -1;
+    return dict_find_entry(dict, key);
+}
+
 // 数组部分扩容
 static int dict_array_resize(ObjDict* dict, int new_size) {
     if (new_size <= dict->asize) return 1;

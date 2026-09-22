@@ -726,6 +726,34 @@ typedef struct {
 #define IC_STRUCTDEF_CACHE_SIZE 1024  // 必须是 2 的幂（分配点远少于方法调用点）
 
 // ============================================================================
+// 内联缓存：字典读写 (OP_DICT_GET / OP_DICT_SET)
+// 缓存 (dict 指针, key, capacity) → entries 槽位号：`d[k]=v` / `d[k]` 原先都要走
+// dict_get/dict_set 那 5~8 层跨 TU 调用（实测 `d[k]=v` 51.7ns/次），命中后只剩
+// 几次比较 + 一次取/存。
+// 安全性：命中前校验 `dict->entries[slot].key == key`，且 dict/key 都来自**当前帧寄存器**
+//   ⇒ 字典一定活着；槽位内容也当场核对 ⇒ 不依赖 GC 保活、也不怕"字典被回收后地址被复用"
+//   （那种情况下 capacity/槽位内容核对必然挡住）。写路径**必须保留 GC 写屏障**
+//   （与 dict_set 的"更新现有键"分支逐字一致）。
+// ============================================================================
+typedef struct {
+    ObjDict* dict;   // NULL = 空槽（未缓存）
+    Value key;       // 键（字符串已内化 ⇒ 通常直接指针相等）
+    uint32_t cap;    // 写入缓存时的 dict->capacity（扩容/rehash 后自动失效）
+    int slot;        // entries 下标；**只缓存哈希部分**（数组部分的键不缓存）
+    // 连续未命中计数：命中即清零；连续 >= IC_DICT_MISS_LIMIT 次未命中就把 dead 置 1
+    //   （键在多个值之间轮换的调用点永远不会命中，若每次未命中都回填，就会白付一次
+    //    dict_slot_for 探测 —— 实测那种写法反而慢 13%）。
+    // ⚠ dead 必须**不可逆**：轮换键每 N 次会"命中一次"从而把 miss_streak 清零，
+    //   只看 streak 的话会一直反复回填 ✗（第一版就是这么踩的）。
+    uint8_t miss_streak;
+    uint8_t dead;        // 1 = 该调用点已放弃缓存，之后只多一次 load+compare
+} InlineDictCacheEntry;
+
+#define IC_DICT_MISS_LIMIT 3
+
+#define IC_DICT_CACHE_SIZE 2048  // 必须是 2 的幂（≤ IC_CACHE_SIZE，便于掩码取索引）
+
+// ============================================================================
 // 虚拟机
 // ============================================================================
 
@@ -766,6 +794,7 @@ typedef struct VM {
     InlineModuleCallCacheEntry ic_module_cache[IC_MODULE_CACHE_SIZE]; // 模块方法缓存 (OP_MODULE_CALL)
     InlineMethodCacheEntry ic_method_cache[IC_METHOD_CACHE_SIZE];   // struct 方法缓存 (OP_GET_METHOD)
     InlineStructDefCacheEntry ic_structdef_cache[IC_STRUCTDEF_CACHE_SIZE]; // struct 定义缓存 (OP_STRUCT_INIT)
+    InlineDictCacheEntry ic_dict_cache[IC_DICT_CACHE_SIZE];   // 字典读写缓存 (OP_DICT_GET/SET)
     int ic_hits;               // 缓存命中次数（统计用）
     int ic_misses;             // 缓存未命中次数（统计用）
     // 协程系统
