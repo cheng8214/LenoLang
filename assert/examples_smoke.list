@@ -5,11 +5,11 @@
 #   「不能在 any 类型上直接访问字段」）却长期没人发现 —— 它们不在任何门禁里
 #   （套件只自动发现 `assert/test_*.leno`）。见 docs/待办_易用性痛点（TraeSign 移植实录）.md 的 P7。
 examples/jsons/json_any.leno
-examples/min_multi.leno
-examples/multi_ret_closure_test.leno
-examples/nested_expr_test.leno
-examples/nested_expr_test2.leno
-examples/test_type_check.leno
+examples/多返回值/min_multi.leno
+examples/多返回值/multi_ret_closure_test.leno
+examples/多返回值/nested_expr_test.leno
+examples/多返回值/nested_expr_test2.leno
+examples/多返回值/test_type_check.leno
 examples/array/比较.leno
 examples/array/比较2.leno
 examples/array/多层嵌套.leno
