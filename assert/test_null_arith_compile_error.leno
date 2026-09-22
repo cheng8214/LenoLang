@@ -13,6 +13,9 @@
 // ⚠⚠ 用例的后半段是**误报守卫**（本改动最大的风险面）：只要变量被写过（`a = v` / `a += v` /
 //   闭包内赋值 / 循环里赋值），或本来就不确定（参数、字段、全局），就**必须编译通过** ——
 //   误报会让本来能跑的程序编译不过，比漏报严重得多。
+//
+// 生成源码用**原始字符串**（`@"..."`，内部引号写 `""`）：比拼接读写，缩进即真实缩进 ——
+//   ⚠ 生成内容**逐行一字不变**是硬约束（②③④ 的断言都点名了落点行）。
 
 import "helpers/compiler.leno" as ce
 import dirs
@@ -21,56 +24,74 @@ import files
 // ① 字面量：编译错误（既有行为，守卫）
 func case_literal(string work): string {
     var f = dirs.join(work, "lit.leno")
-    files.write(f, "main() {\n    print(null + 1)\n}\n")
+    files.write(f, @"main() {
+    print(null + 1)
+}
+")
     return ce.expect_error(f, "字面量 null 参与算术必须编译报错", "null 类型不能参与算术运算", 2)
 }
 
 // ② `int? a = null` 后未赋值 ⇒ 编译错误（本次新增）
 func case_nullable(string work): string {
     var f = dirs.join(work, "nullable.leno")
-    files.write(f, "main() {\n    int? a = null\n    print(a + 1)\n}\n")
+    files.write(f, @"main() {
+    int? a = null
+    print(a + 1)
+}
+")
     return ce.expect_error(f, "int? a = null 后参与算术必须编译报错", "值确定为 null", 3)
 }
 
 // ③ `var a = null` 后未赋值 ⇒ 编译错误（本次新增）
 func case_inferred(string work): string {
     var f = dirs.join(work, "inferred.leno")
-    files.write(f, "main() {\n    var a = null\n    print(a + 1)\n}\n")
+    files.write(f, @"main() {
+    var a = null
+    print(a + 1)
+}
+")
     return ce.expect_error(f, "var a = null 后参与算术必须编译报错", "值确定为 null", 3)
 }
 
 // ④ 复合赋值 / 一元取负 / 位运算 同口径
 func case_other_forms(string work): string {
     var f = dirs.join(work, "forms.leno")
-    files.write(f, "main() {\n    int? a = null\n    a += 1\n    print(a)\n    print(-a)\n    print(a & 1)\n}\n")
+    files.write(f, @"main() {
+    int? a = null
+    a += 1
+    print(a)
+    print(-a)
+    print(a & 1)
+}
+")
     return ce.expect_error(f, "复合赋值/取负/位运算都要编译报错", "值确定为 null", 3)
 }
 
 // ⑤ **误报守卫**：赋过值之后照常运算 ⇒ 必须编译通过并跑对
 func case_no_false_positive(string work): string {
     var f = dirs.join(work, "fp.leno")
-    files.write(f,
-        "main() {\n"
-        + "    int? a = null\n"
-        + "    a = 7\n"
-        + "    print(\"A=\" + (a + 1))\n"
-        + "    var b = null\n"
-        + "    var c = false\n"
-        + "    if c { b = 5 }\n"
-        + "    print(\"B=\" + (b == null))\n"
-        + "    int? d = null\n"
-        + "    d = 0\n"
-        + "    d += 3\n"
-        + "    print(\"D=\" + (d * 2))\n"
-        + "    int? e = null\n"
-        + "    var setter = func() { e = 9 }\n"
-        + "    setter()\n"
-        + "    print(\"E=\" + (e + 1))\n"
-        + "    int? g = null\n"
-        + "    for 0 : 2 to g {\n"
-        + "        print(\"G=\" + g)\n"
-        + "    }\n"
-        + "}\n")
+    files.write(f, @"main() {
+    int? a = null
+    a = 7
+    print(""A="" + (a + 1))
+    var b = null
+    var c = false
+    if c { b = 5 }
+    print(""B="" + (b == null))
+    int? d = null
+    d = 0
+    d += 3
+    print(""D="" + (d * 2))
+    int? e = null
+    var setter = func() { e = 9 }
+    setter()
+    print(""E="" + (e + 1))
+    int? g = null
+    for 0 : 2 to g {
+        print(""G="" + g)
+    }
+}
+")
     // 逐项都在输出里核对（A=8 / B=true / D=6 / E=10 / G=0,1,2）
     ce.expect_ok(f, "赋过值/被遮蔽的变量不得误报（A=8）", "A=8")
     ce.expect_ok(f, "声明后仅条件赋值的不得误报（B=true）", "B=true")
