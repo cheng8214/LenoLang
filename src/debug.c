@@ -82,6 +82,7 @@ static const char* opCodeNames[] = {
     "OP_CALL_GLOBAL_FUNC_TYPED",
     "OP_GET_FIELD_FAST",
     "OP_ACC_FIELDS",
+    "OP_INVOKE_METHOD_TYPED",
     "OP_OPCODE_COUNT",
 };
 
@@ -420,6 +421,19 @@ static int decode_trailing(Chunk* chunk, int offset, char* desc, size_t desc_siz
                 char nm[128];
                 dbg_const_str(chunk, ax, nm, (int)sizeof(nm));
                 snprintf(desc, desc_size, "EXTRAARG K[%d]=%s", ax, nm);
+            }
+            break;
+        }
+        // struct 方法调用融合：紧随 4 字节 = 方法名常量(16) + 静态类型名常量(16)。
+        case OP_INVOKE_METHOD_TYPED: {
+            int name_idx = dbg_take_u16(chunk, base, &p, &over);
+            int type_idx = dbg_take_u16(chunk, base, &p, &over);
+            if (desc) {
+                char nm[128], tn[128];
+                dbg_const_str(chunk, name_idx, nm, (int)sizeof(nm));
+                dbg_const_str(chunk, type_idx, tn, (int)sizeof(tn));
+                snprintf(desc, desc_size, "方法=%s 静态类型=%s 实参个数=%d（同 OP_CALL 口径）%s",
+                         nm, over ? "?" : tn, (int)b, over ? " [截断]" : "");
             }
             break;
         }

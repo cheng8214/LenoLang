@@ -340,6 +340,121 @@
             DISPATCH();
         }
     }
+    // OP_INVOKE_METHOD_TYPED A B C —— struct 方法「取方法 + 调用」融合
+    //   （对齐栈式同名指令）。等价于「OP_GET_METHOD + OP_CALL」，但省掉：
+    //     ① 一次指令派发；
+    //     ② 每次调用一次 ObjBoundMethod 分配（老路径 bound_closure_method_new）；
+    //     ③ OP_CALL 里"receiver 是否已在实参首位"的去重判断。
+    //   操作数：A = 基址（R[A] = receiver，实参在 R[A+1 .. A+B]），
+    //           B = 实参个数（与 OP_CALL 的 B 同口径），C = 保留；
+    //           紧随 4 字节：方法名常量(16) + 静态类型名常量(16)。
+    //   VM 侧仍按**运行时实际类型**分发 —— 类型名常量只读掉、不参与查找（与栈式一致），
+    //   语义与老路径一致；它留着给将来的编译期去虚拟化。
+    //   ⚠ codegen 只在「接收者静态类型是 struct、该方法是脚本方法且非 async」时发本指令。
+    LABEL(OP_INVOKE_METHOD_TYPED): {
+        uint8_t* ip_before = frame->ip;      // 调用点标识（IC 索引用，指向本指令的 op 字节）
+        int a = READ_A(), argc = READ_B();
+        int cidx = ((int)frame->ip[0] << 8) | (int)frame->ip[1];
+        frame->ip += 4;                      // 走完"方法名 + 类型名"两个字
+        int line = GET_CURRENT_LINE();
+        if (unlikely(cidx < 0 || cidx >= frame->chunk->const_cnt)) {
+            if (!throw_runtime_error("方法名常量索引越界", line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        Value name_val = frame->chunk->constants[cidx];
+        if (unlikely(!val_is_obj(name_val) || val_as_obj(name_val)->type != OBJ_STRING)) {
+            if (!throw_runtime_error("方法名必须是字符串", line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        ObjString* name = (ObjString*)val_as_obj(name_val);
+        Value receiver = R(a);
+        ObjType rt = get_receiver_type(receiver);
+        // 静态类型已由 codegen 核实是 struct；运行期不是 struct 时报错口径与老路径一致
+        // （老路径走 OP_GET_METHOD 的兜底分支，报的就是这句话）。
+        if (unlikely(rt != OBJ_STRUCT)) {
+            char msg[256];
+            snprintf(msg, sizeof(msg), "类型 %s 上不存在方法 '%s'", obj_type_to_name(rt), name->chars);
+            if (!throw_runtime_error(msg, line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        ObjStruct* so = (ObjStruct*)val_as_obj(receiver);
+        ObjStructDef* def = so->def;
+        ObjClosure* cl = NULL;
+
+        // 与 OP_GET_METHOD 共用同一张 ic_method_cache（键含 def 指针 + 方法名哈希 + 定义表代数）
+        uint32_t mgen = struct_def_generation();
+        int cache_idx = (int)(((uintptr_t)ip_before >> 2) & (IC_METHOD_CACHE_SIZE - 1));
+        InlineMethodCacheEntry* mc = &vm.ic_method_cache[cache_idx];
+        if (likely(def && mc->valid && mc->def == def && mc->name_hash == name->hash &&
+                   mc->gen == mgen)) {
+            vm.ic_hits++;
+            cl = mc->closure;
+        } else {
+            vm.ic_misses++;
+            ObjClosure* pre = NULL;
+            ObjFunction* fn = NULL;
+            if (unlikely(!def || !struct_method_lookup(def, name, &pre, &fn))) {
+                char msg[256];
+                snprintf(msg, sizeof(msg), "类型 '%s' 没有方法 '%s'",
+                         (def && def->name) ? def->name : "?", name->chars);
+                if (!throw_runtime_error(msg, line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            if (pre) {
+                // 只缓存预创建闭包（带 upvalue 的方法每次新建，与 OP_GET_METHOD 同口径）
+                mc->valid = 1;
+                mc->def = def;
+                mc->name_hash = name->hash;
+                mc->gen = mgen;
+                mc->closure = pre;
+                cl = pre;
+            } else {
+                cl = (ObjClosure*)gc_alloc(sizeof(ObjClosure), OBJ_CLOSURE);
+                if (unlikely(!cl)) { runtime_error("内存分配失败", line); return -1; }
+                cl->function = fn;
+                cl->upvalue_count = fn->upvalue_count;
+                cl->type_param_count = 0;
+                cl->type_param_args = NULL;
+                for (int ui = 0; ui < fn->upvalue_count; ui++) cl->upvalues[ui] = NULL;
+            }
+        }
+
+        // ★ 实参取法与 OP_CALL 的绑定方法分支**逐字同口径**（见 06_call.inc）：
+        //   语义分析对 struct 方法调用**并不统一**地把 receiver 放进实参首位
+        //   （MODULE_CALL 改写的调用不含、AST_CALL 形态含），而且"值相等"会被自引用骗到
+        //   （`a.add(a)` 只传 1 个实参却被当成 [receiver]）⇒ 光靠"首实参 == receiver"
+        //   不够，还要用形参个数佐证。
+        //   ⚠ 这里绝不能按"R[a+1] 就是 self 副本"的假设直接跳过 —— 实测那样会让被调方
+        //     实参整体错位（光线追踪 Phase B/C 的 hits 从 900000/585500 变成 0）。
+        int nargs = argc;
+        int self_in_args = 0;
+        int expect_arity = cl->function ? cl->function->arity : 0;
+        if (nargs > 0) {
+            Value a0 = R(a + 1);
+            if (val_is_obj(a0) && val_is_obj(receiver)) {
+                self_in_args = (val_as_obj(a0) == val_as_obj(receiver));
+            } else if (!val_is_obj(a0) && !val_is_obj(receiver)) {
+                self_in_args = (a0 == receiver);
+            }
+            if (self_in_args && expect_arity > 0 && nargs != expect_arity &&
+                nargs + 1 == expect_arity) {
+                self_in_args = 0;   // 个数表明调用方没传 receiver ⇒ 自引用误判
+            }
+        }
+        // （codegen 不为 async 方法发本指令，故这里没有协程分支；nresults 固定 1。）
+        int call_ok = call_reg(cl, self_in_args ? 0 : 1, receiver, a + 1, nargs, a, 1, line);
+        if (likely(call_ok)) {
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        if (!vm.has_exception) return -1;
+        frame = &vm.frames[vm.frame_cnt - 1];
+        DISPATCH();
+    }
     // OP_GET_FIELD_ADDR A B C: R[A] = &R[B].field(C)（仅 cstruct 字段）
     LABEL(OP_GET_FIELD_ADDR): {
         int a = READ_A(), b = READ_B(), c = READ_C();

@@ -323,7 +323,9 @@ int emit_cmpjmp(CodeGen* gen, OpCode op, int a, int b, int is_imm, int line) {
 // 跳转偏移的算法必须按**指令自身长度**扣（`len - pos - size`），用错尺寸会写出错误的跳距。
 static int instr_bytes_at(Chunk* chunk, int pos) {
     uint8_t op = chunk->code[pos];
-    return (op >= (uint8_t)OP_CMPJMP_LT && op <= (uint8_t)OP_CMPJMP_GE) ? 8 : 4;
+    if (op >= (uint8_t)OP_CMPJMP_LT && op <= (uint8_t)OP_CMPJMP_GE) return 8;
+    if (op == (uint8_t)OP_INVOKE_METHOD_TYPED) return 8;   // 第二个字 = 方法名/类型名常量
+    return 4;
 }
 
 static void patch_common(CodeGen* gen, int pos, int offset) {

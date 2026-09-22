@@ -292,6 +292,20 @@ typedef enum {
     //     其它形态（含 int 字段、混入其它项）一律走原路径。
     OP_ACC_FIELDS,      // iABC + C 字节字段索引
 
+    // struct 方法「取方法 + 调用」融合（对齐栈式 OP_INVOKE_METHOD_TYPED）。
+    //   `obj.method(a, b)` 原先是 OP_GET_METHOD（查表 + 每次分配一个 ObjBoundMethod）
+    //   + OP_CALL（还要判"receiver 是否已在实参首位"做去重）两条派发，合成一条。
+    //   操作数：A = 基址（R[A] = receiver，实参在 R[A+1 .. A+B]），
+    //           B = 实参个数（**与 OP_CALL 的 B 同口径**：含不含 receiver 由调用形态决定，
+    //               VM 侧沿用 OP_CALL 那段"receiver 去重 + 形参个数佐证"的判定），C = 保留。
+    //           紧随**第二个 4 字节字**：方法名常量(16) + 静态类型名常量(16)。合计 8 字节
+    //           （与 OP_CMPJMP_* 一样是"指令 + 附加数据"，见 instr_bytes_at）。
+    //   VM 侧仍按**运行时实际类型**分发（静态类型名常量只读掉、不参与查找）⇒ 语义与
+    //   「OP_GET_METHOD + OP_CALL」等价；类型名常量保留给将来的编译期去虚拟化。
+    //   ⚠ codegen 只在「接收者静态类型是 struct、该 struct 的该方法是脚本方法且非 async、
+    //     实参个数 ≤ 255」时才发；其它形态（含 `t.cb()` 这种函数类型字段调用）走老路径。
+    OP_INVOKE_METHOD_TYPED,  // iABC + 4 字节（name_const16, type_name_const16）
+
     OP_OPCODE_COUNT,    // 用于跳转表大小
 } OpCode;
 

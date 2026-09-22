@@ -1288,8 +1288,12 @@ static void gen_method_call(CodeGen* gen, Ast* obj_ast, const char* mname,
 
     // 查方法定义（语义分析按 "Struct::method" 注册），用于补齐默认参数
     Ast* mdef = NULL;
+    // 接收者的静态 struct 名（ot 下一行就被释放，先拷出来给后面的融合指令用）
+    char recv_struct_name[BUFFER_SMALL];
+    recv_struct_name[0] = '\0';
     TypeInfo* ot = infer_expr_type(gen->sem, obj_ast);
     if (ot && ot->kind == TYPE_STRUCT && ot->struct_name && mname) {
+        snprintf(recv_struct_name, sizeof(recv_struct_name), "%s", ot->struct_name);
         char key[BUFFER_SMALL];
         snprintf(key, sizeof(key), "%s::%s", ot->struct_name, mname);
         mdef = func_table_find(&gen->sem->func_table, key);
@@ -1329,8 +1333,27 @@ static void gen_method_call(CodeGen* gen, Ast* obj_ast, const char* mname,
     ObjString* nameStr = str_copy(mname, mlen);
     int name_const = make_constant(gen, val_obj((Object*)nameStr));
 
+    // ★ struct 方法调用融合（对齐栈式 OP_INVOKE_METHOD_TYPED）：
+    //   「取方法 + 调用」合成一条 ⇒ 省 1 次指令派发 + 每次调用一次 ObjBoundMethod 分配
+    //   + OP_CALL 里"receiver 是否在实参首位"的去重判断。
+    //   只在编译期**已确证**「接收者静态类型是 struct，且该 struct 有这个方法」时发：
+    //   mdef 来自 func_table 的 "<Struct>::<method>" 键（即脚本方法）、且非 async。
+    //   运行期仍按**实际类型**分发 ⇒ 语义与老路径一致；`t.cb()` 这类**函数类型字段**
+    //   调用因为没有 mdef，照旧走 OP_GET_METHOD 的"退化为取字段"分支，不受影响。
+    int can_fuse = (recv_struct_name[0] != '\0' && mdef && mdef->kind == AST_FUNC_DEF &&
+                    !mdef->u.func.is_async && expected >= 0 && expected <= 255);
+    if (can_fuse) {
+        int type_const = make_constant(gen, val_obj((Object*)str_copy(
+                                                  recv_struct_name,
+                                                  (int)strlen(recv_struct_name))));
+        reg_encode_iABC(gen->chunk, OP_INVOKE_METHOD_TYPED, base, expected, 0, line);
+        chunk_write(gen->chunk, (uint8_t)((name_const >> 8) & 0xFF), line);
+        chunk_write(gen->chunk, (uint8_t)(name_const & 0xFF), line);
+        chunk_write(gen->chunk, (uint8_t)((type_const >> 8) & 0xFF), line);
+        chunk_write(gen->chunk, (uint8_t)(type_const & 0xFF), line);
+    }
     // C 为 0 或超 8 位 → 紧随一条 EXTRAARG 携带 24 位常量索引
-    if (name_const == 0 || name_const > 255) {
+    else if (name_const == 0 || name_const > 255) {
         reg_encode_iABC(gen->chunk, OP_GET_METHOD, base, base, 0, line);
         reg_encode_iAx(gen->chunk, OP_EXTRAARG, name_const, line);
     } else {
@@ -1344,7 +1367,11 @@ static void gen_method_call(CodeGen* gen, Ast* obj_ast, const char* mname,
     //   调用」（examples/async await/struct 方法 + async.leno 整段不执行，
     //   栈式正常输出两行 Timer 完成）。与栈式 codegen 同口径
     //   （D:\CLeno\Leno 的 codegen_expr.c：method_def->u.func.is_async → OP_ASYNC_CALL）。
-    if (mdef && mdef->kind == AST_FUNC_DEF && mdef->u.func.is_async) {
+    if (can_fuse) {
+        // 调用已由上面的 OP_INVOKE_METHOD_TYPED 完成 —— **不再发** OP_CALL。
+        // （B 操作数用的就是这里的 expected，与实参布局一致：R[base]=receiver、
+        //   R[base+1]=self 副本、R[base+2..base+expected]=实参。）
+    } else if (mdef && mdef->kind == AST_FUNC_DEF && mdef->u.func.is_async) {
         reg_encode_iABC(gen->chunk, OP_ASYNC_CALL, base, expected, 0, line);
     } else {
         emit_call(gen, base, expected, 1, line);
