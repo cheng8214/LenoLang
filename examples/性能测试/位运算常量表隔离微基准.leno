@@ -1,0 +1,85 @@
+import times
+
+// ============================================================================
+// T14 位运算常量化：K 版 vs 寄存器版 vs LOADI 的**同指令数隔离**微基准
+// ----------------------------------------------------------------------------
+// 目的：把 ⑤-t「反直觉的账」里的缺口（反推 ~1800ms vs 实测 ~2270/2565ms）拆开归因。
+//   每轮位运算指令数：`x & 1135`（字面量）⇒ 1 条 OP_BITAND_K；
+//                      `x & y`  （局部变量）⇒ 1 条 OP_BITAND。
+//   两者是**同一宏体**实例化（唯一差异 = 右操作数取 K[idx] 还是 R[i]）⇒ 差值 = 常量表访问净代价。
+//   另加 `x = 7`（1 条 OP_LOADI）与空循环，用来量「被删掉的那条 LOADI 的边际成本」——
+//   反推之所以偏乐观，正是因为它按**平均指令成本**折算 LOADI，而 LOADI 是最便宜的指令之一。
+//
+// 口径：同一进程内**顺序交替**（偶数轮正序 / 奇数轮逆序）+ 各侧取最小值，
+//       既抑制冷启动，也消掉"固定顺序"的偏置（⑤-t 的方法论教训）。
+// ============================================================================
+
+func loop_empty(int n):float {
+    var t = times.ms()
+    for 0 : n to i { }
+    return times.ms() - t
+}
+
+func loop_loadi(int n):float {
+    var x = 0
+    var t = times.ms()
+    for 0 : n to i { x = 7 }
+    return times.ms() - t
+}
+
+func loop_k(int n):float {
+    var x = 12345
+    var t = times.ms()
+    for 0 : n to i { x = x & 1135 }
+    return times.ms() - t
+}
+
+func loop_reg(int n, int y):float {
+    var x = 12345
+    var t = times.ms()
+    for 0 : n to i { x = x & y }
+    return times.ms() - t
+}
+
+main() {
+    int N = 200000000
+    var y = 1135
+
+    var m_empty = 0.0
+    var m_loadi = 0.0
+    var m_k = 0.0
+    var m_reg = 0.0
+
+    var e = 0.0
+    var l = 0.0
+    var k = 0.0
+    var g = 0.0
+
+    for 0 : 3 to rnd {
+        if (rnd % 2 == 0) {
+            e = loop_empty(N)
+            l = loop_loadi(N)
+            k = loop_k(N)
+            g = loop_reg(N, y)
+        } else {
+            g = loop_reg(N, y)
+            k = loop_k(N)
+            l = loop_loadi(N)
+            e = loop_empty(N)
+        }
+        print("轮" + rnd + ": empty=" + e + " loadi=" + l + " K=" + k + " REG=" + g)
+        if (m_empty == 0.0 or e < m_empty) { m_empty = e }
+        if (m_loadi == 0.0 or l < m_loadi) { m_loadi = l }
+        if (m_k == 0.0 or k < m_k) { m_k = k }
+        if (m_reg == 0.0 or g < m_reg) { m_reg = g }
+    }
+
+    var per = 1000000.0 / 200000000.0   // ms/轮 -> ns/条
+    print("----")
+    print("min empty = " + m_empty + " ms  (循环开销)")
+    print("min loadi = " + m_loadi + " ms  ⇒ LOADI 边际 " + ((m_loadi - m_empty) * per) + " ns/条")
+    print("min K     = " + m_k + " ms  ⇒ K 版位运算 " + ((m_k - m_empty) * per) + " ns/条")
+    print("min REG   = " + m_reg + " ms  ⇒ 寄存器版位运算 " + ((m_reg - m_empty) * per) + " ns/条")
+    print("常量表净代价 = " + ((m_k - m_reg) * per) + " ns/条")
+    print("净省一条 LOADI(含K附加) = " + ((m_loadi - m_k) * per) + " ns/条")
+}
