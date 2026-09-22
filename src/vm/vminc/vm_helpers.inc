@@ -11,6 +11,22 @@ static inline int read_ext_const(uint8_t** ip_ref) {
     return 0;
 }
 
+// 字典内联缓存的键判据（OP_INDEX / OP_INDEX_SET 的 `d[k]` / `d[k]=v` 快路径用）：
+//   命中前要把"本次的键"和"槽位里存的键"比**内容** —— 不能用 `==` 逐位比较 ✗：
+//   编译期字面量**不在内化表里**（`intern_table_init()` 只在 `vm_init` 调用，而编译发生在
+//   VM 启动之前）⇒ 源码里两处 `"k"` 是**两个不同对象**，逐位比较永不命中（读侧第一版就是
+//   因此慢 52%，见路线图 ⑤-k/⑤-l）。
+//   只在**两侧都是字符串**时比内容，其它键类型一律返回 0（保守不命中、交回 dict_get/dict_set）。
+//   不直接用 value_shallow_equal：那会把一大坨类型分支内联进最热的 OP_INDEX（代码密度）。
+static inline int dict_ic_key_match(Value a, Value b) {
+    if (a == b) return 1;                              // 已内化（含运行时造串）：指针相等快路
+    if (!val_is_string(a) || !val_is_string(b)) return 0;
+    ObjString* sa = (ObjString*)val_as_obj(a);
+    ObjString* sb = (ObjString*)val_as_obj(b);
+    return sa->len == sb->len && sa->hash == sb->hash &&
+           memcmp(sa->chars, sb->chars, (size_t)sa->len) == 0;
+}
+
 // int48 运算辅助宏（溢出时自动提升为 BigInt）
 
 // int48 回绕运算辅助宏（仅用于需要显式回绕语义的场景）

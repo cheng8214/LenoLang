@@ -142,6 +142,7 @@
     // --- 通用索引 ---
     // OP_INDEX A B C: R[A] = R[B][R[C]]（数组 / 字符串 / 字典）
     LABEL(OP_INDEX): {
+        uint8_t* ip_before = frame->ip;   // 调用点标识（字典内联缓存的索引）
         int a = READ_A(), b = READ_B(), c = READ_C();
         Value obj = R(b);
         Value idx = R(c);
@@ -212,10 +213,42 @@
                 DISPATCH();
             }
             if (ot == OBJ_DICT) {
-                // ⚠ 这里暂时**不接**内联缓存：实测读取路径接上后反而慢 52%
-                //   （命中不了却白付一次 dict_slot_for 探测，见路线图 ⑤-k 的待查）。
-                //   写路径（OP_INDEX_SET）已接且实测 -26%，保持。
-                R(a) = dict_get((ObjDict*)val_as_obj(obj), idx);
+                // ★ 调用点内联缓存（见 leno_vm.h 的 InlineDictCacheEntry）：
+                //   `d[k]` 原先每次都要走 dict_get 那 5~8 层跨 TU 调用。
+                //   校验用**内容相等**（value_shallow_equal，与 dict_find_entry 同一判据）——
+                //   编译期字面量不在内化表里、两处 `"k"` 是两个对象，用 == 会永不命中 ✗。
+                ObjDict* dd = (ObjDict*)val_as_obj(obj);
+                InlineDictCacheEntry* dic =
+                    &vm.ic_dict_cache[ic_cache_index(ip_before) & (IC_DICT_CACHE_SIZE - 1)];
+                if (likely(!dic->dead && dic->dict == dd && dic->slot >= 0 &&
+                           dic->cap == (uint32_t)dd->capacity && dic->slot < dd->capacity &&
+                           dict_ic_key_match(dd->entries[dic->slot].key, idx))) {
+                    vm.ic_hits++;
+                    dic->miss_streak = 0;
+                    Value dv = dd->entries[dic->slot].value;
+                    // 与 dict_get 的 is_valid_obj_value 同口径（值对象类型越界 ⇒ 视为不存在）
+                    R(a) = (!val_is_obj(dv) ||
+                            (val_as_obj(dv)->type >= OBJ_STRING && val_as_obj(dv)->type < OBJ_NONE))
+                               ? dv
+                               : val_null();
+                    DISPATCH();
+                }
+                vm.ic_misses++;
+                R(a) = dict_get(dd, idx);
+                if (!dic->dead && dic->miss_streak < IC_DICT_MISS_LIMIT) {
+                    int dslot = dict_slot_for(dd, idx);
+                    if (dslot >= 0) {
+                        dic->dict = dd;
+                        dic->cap = (uint32_t)dd->capacity;
+                        dic->slot = dslot;
+                        dic->miss_streak++;
+                    } else {
+                        dic->dict = NULL;   // 数组部分的键 / 键不存在 ⇒ 不缓存
+                    }
+                } else if (!dic->dead) {
+                    dic->dead = 1;   // 键在轮换 ⇒ 永久放弃（理由见 OP_INDEX_SET 处的注释）
+                    dic->dict = NULL;
+                }
                 DISPATCH();
             }
             // .leno 模块：成员在 exports 字典里
@@ -469,9 +502,9 @@
                 Value nv2 = R(a);
                 InlineDictCacheEntry* dic =
                     &vm.ic_dict_cache[ic_cache_index(ip_before) & (IC_DICT_CACHE_SIZE - 1)];
-                if (likely(!dic->dead && dic->dict == dd && dic->key == idx && dic->slot >= 0 &&
+                if (likely(!dic->dead && dic->dict == dd && dic->slot >= 0 &&
                            dic->cap == (uint32_t)dd->capacity && dic->slot < dd->capacity &&
-                           dd->entries[dic->slot].key == idx)) {
+                           dict_ic_key_match(dd->entries[dic->slot].key, idx))) {
                     vm.ic_hits++;
                     dic->miss_streak = 0;
                     dd->entries[dic->slot].value = nv2;
@@ -484,7 +517,6 @@
                     int dslot = dict_slot_for(dd, idx);
                     if (dslot >= 0) {
                         dic->dict = dd;
-                        dic->key = idx;
                         dic->cap = (uint32_t)dd->capacity;
                         dic->slot = dslot;
                         dic->miss_streak++;

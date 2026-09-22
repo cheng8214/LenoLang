@@ -61,7 +61,6 @@ void vm_init_with_scope(Scope* global_scope) {
     }
     for (int i = 0; i < IC_DICT_CACHE_SIZE; i++) {
         vm.ic_dict_cache[i].dict = NULL;
-        vm.ic_dict_cache[i].key = val_null();
         vm.ic_dict_cache[i].cap = 0;
         vm.ic_dict_cache[i].slot = -1;
         vm.ic_dict_cache[i].miss_streak = 0;
