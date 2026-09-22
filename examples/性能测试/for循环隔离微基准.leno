@@ -1,0 +1,70 @@
+import times
+
+// ============================================================================
+// 隔离微基准：只量数值 for 循环的各种形态（各 1 千万次）
+// ----------------------------------------------------------------------------
+// 用途：验证「计数制 for 循环」（借鉴 Lua 5.5 的 forprep，见 docs/待办与路线图.md ⑤-i）。
+//   - 空体 / 带数组添加 / 带自增 / 步长2 / 嵌套 / 含上界（inclusive）/ 负步长倒序
+//   - 含上界与倒序专门用来钉住"排他式折成含上界"的边界换算（写错会多跑/少跑一轮，
+//     这一版第一稿就踩过：count 必须按 Lua 口径算"首轮之外的额外次数"）
+// 对照基线（同机同轮 min）：空体 for 我们 105.6ms / 栈式 113.9ms / Lua 38ms
+// ============================================================================
+
+main() {
+    int N = 10000000
+
+    var t1 = times.ms()
+    for N { }
+    var t2 = times.ms()
+    print($"空体for(exclusive): " + (t2 - t1) + "ms")
+
+    var t1b = times.ms()
+    for 1:N { }
+    var t2b = times.ms()
+    print($"空体for(inclusive): " + (t2b - t1b) + "ms")
+
+    var arr = []
+    t1 = times.ms()
+    for N {
+        arr.add(1)
+    }
+    t2 = times.ms()
+    print($"for+arr.add: " + (t2 - t1) + "ms 长度:" + arr.len())
+
+    var s = 0
+    t1 = times.ms()
+    for N {
+        s++
+    }
+    t2 = times.ms()
+    print($"for+i++: " + (t2 - t1) + "ms 结果:" + s)
+
+    var k = 0
+    t1 = times.ms()
+    for 0:N:2 {
+        k++
+    }
+    t2 = times.ms()
+    print($"for步长2: " + (t2 - t1) + "ms 结果:" + k)
+
+    var c = 0
+    t1 = times.ms()
+    for 1000 {
+        for 1000 {
+            c++
+        }
+    }
+    t2 = times.ms()
+    print($"嵌套for: " + (t2 - t1) + "ms count:" + c)
+
+    // 倒序（下行）—— 验证计数制在 step<0 下也对
+    var d = 0
+    t1 = times.ms()
+    for N:0:-1 {
+        d++
+    }
+    t2 = times.ms()
+    print($"倒序for: " + (t2 - t1) + "ms 结果:" + d)
+
+    return 0
+}
