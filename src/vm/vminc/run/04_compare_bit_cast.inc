@@ -222,7 +222,7 @@
                 R(a) = bigint_compact_to_int(bigint_and(promote_to_bigint(bv), promote_to_bigint(cv)));
             }
         } else {
-            R(a) = VM_INT_RESULT(val_as_int(bv) & val_as_int(cv));
+            R(a) = val_int(val_as_int(bv) & val_as_int(cv));
         }
         DISPATCH();
     }
@@ -238,7 +238,7 @@
                 R(a) = bigint_compact_to_int(bigint_or(promote_to_bigint(bv), promote_to_bigint(cv)));
             }
         } else {
-            R(a) = VM_INT_RESULT(val_as_int(bv) | val_as_int(cv));
+            R(a) = val_int(val_as_int(bv) | val_as_int(cv));
         }
         DISPATCH();
     }
@@ -254,7 +254,7 @@
                 R(a) = bigint_compact_to_int(bigint_xor(promote_to_bigint(bv), promote_to_bigint(cv)));
             }
         } else {
-            R(a) = VM_INT_RESULT(val_as_int(bv) ^ val_as_int(cv));
+            R(a) = val_int(val_as_int(bv) ^ val_as_int(cv));
         }
         DISPATCH();
     }
@@ -264,7 +264,7 @@
         if (VM_IS_BIG(bv)) {
             R(a) = bigint_compact_to_int(bigint_not(val_as_bigint(bv)));
         } else {
-            R(a) = VM_INT_RESULT(~val_as_int(bv));
+            R(a) = val_int(~val_as_int(bv));
         }
         DISPATCH();
     }
@@ -277,7 +277,7 @@
             R(a) = bigint_compact_to_int(bigint_shl(promote_to_bigint(bv), (int)(sh < 0 ? 0 : sh)));
             DISPATCH();
         }
-        R(a) = VM_INT_RESULT(val_as_int(bv) << sh);
+        R(a) = val_int(val_as_int(bv) << sh);
         DISPATCH();
     }
     LABEL(OP_SHR): {

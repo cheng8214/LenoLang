@@ -54,12 +54,108 @@ static void replace_with_string(Ast* ast, char* value, int len) {
     ast->u.string.len = len;
 }
 
+/* ★ 整数常量折叠的**精确出口**（超 int48 时落成 bigint 字面量）
+ * ----------------------------------------------------------------------------
+ * 为什么必须有它：运行期整数是 **48 位截断**语义（`val_int()` 掩码，见
+ * vm/vminc/run/04_compare_bit_cast.inc 的位移/位运算与 03_arith.inc 的算术），
+ * 而下面的 double 折叠路径只能精确到 2^53 ⇒ 原先"超 2^53 就不折"的做法**不再等价于
+ * 语义不变**：不折就要走运行期指令，而运行期是截断 ⇒ 同一个表达式在"字面量位置"与
+ * "运行期位置"结果分裂 ✗（实测 test_bigint_arith 的 `hex64(0x123456789ab << 16)`
+ * 期望精确的 0123456789ab0000，不折就变成截断值 0000456789ab0000 ✗）。
+ * 所以：能精确表示的整数一律**折成精确常量**；超出 int48 的落成 bigint 字面量
+ * （`u.num.is_bigint = 1` + `bigint_str`，codegen 见 codegen_expr.c 的 AST_NUM 分支会
+ * `bigint_from_string` 建真 bigint 常量 ✓）。 */
+static void replace_with_i64(Ast* ast, int64_t v) {
+    if (v >= INT48_MIN && v <= INT48_MAX) {
+        replace_with_num(ast, (double)v, 0);
+        return;
+    }
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%lld", (long long)v);
+    if (ast->cached_type) type_free(ast->cached_type);
+    ast->cached_type = type_new(TYPE_INT);
+    ast->kind = AST_NUM;
+    ast->u.num.value = (double)v;
+    ast->u.num.is_float = 0;
+    ast->u.num.is_bigint = 1;
+    ast->u.num.bigint_str = strdup(buf);   // 与 parser 的 copy_string 同为 malloc 系（ast_free 用 free 释放）
+}
+
+/* 整数二元折叠（精确）：能精确算出来就折、写回 ast 并返回 1；算不了/会溢出 int64 返回 0
+ * （返回 0 时交给后面的 double 路径或干脆不折 —— 不折是安全的：算术越界运行期会提升
+ * bigint ✓、移位 ≥ 32 运行期走 bigint 移位 ✓，两条路径本来就精确 ✓，例如 `1 << 63`）。 */
+static int fold_binary_i64(Ast* ast, Ast* l, Ast* r, LenoTokenType op) {
+    if (!is_const_int(l) || !is_const_int(r)) return 0;
+    double dl = l->u.num.value, dr = r->u.num.value;
+    if (dl < -9.007199254740992e15 || dl > 9.007199254740992e15 ||
+        dr < -9.007199254740992e15 || dr > 9.007199254740992e15) {
+        return 0;   // 字面量本身已超 double 精确范围：不折（交给运行期）
+    }
+    int64_t lv = (int64_t)dl, rv = (int64_t)dr;
+    int64_t out = 0;
+
+    switch (op) {
+        case TOK_PLUS:  if (__builtin_add_overflow(lv, rv, &out)) return 0; break;
+        case TOK_MINUS: if (__builtin_sub_overflow(lv, rv, &out)) return 0; break;
+        case TOK_STAR:  if (__builtin_mul_overflow(lv, rv, &out)) return 0; break;
+        case TOK_BITAND: out = lv & rv; break;
+        case TOK_BITOR:  out = lv | rv; break;
+        case TOK_BITXOR: out = lv ^ rv; break;
+        case TOK_SLASH:
+            if (rv == 0) return 0;
+            if (lv == INT64_MIN && rv == -1) return 0;
+            out = lv / rv;
+            break;
+        case TOK_MOD:
+            if (rv == 0) return 0;
+            if (lv == INT64_MIN && rv == -1) return 0;
+            out = lv % rv;
+            break;
+        case TOK_SHL: {
+            if (rv < 0 || rv > 63) return 0;
+            // 用无符号算：`1 << 63` 这样"精确但超出 int64 有符号范围"的值不折
+            // （运行期走 bigint 移位，结果同样精确 ✓）
+            uint64_t u = ((uint64_t)lv << rv);
+            if (rv > 0 && (u >> rv) != (uint64_t)lv) return 0;
+            if (u > (uint64_t)INT64_MAX) return 0;
+            out = (int64_t)u;
+            break;
+        }
+        case TOK_SHR:
+            if (rv < 0 || rv > 63) return 0;
+            out = lv >> rv;
+            break;
+        case TOK_USHR: {
+            if (rv < 0 || rv > 63) return 0;
+            uint64_t u = ((uint64_t)lv & PAYLOAD_MASK) >> rv;   // 48 位逻辑右移（与 VM 同口径）
+            out = (int64_t)u;
+            break;
+        }
+        case TOK_EQEQ: ast_free(l); ast_free(r); replace_with_bool(ast, lv == rv); return 1;
+        case TOK_NEQ:  ast_free(l); ast_free(r); replace_with_bool(ast, lv != rv); return 1;
+        case TOK_LT:   ast_free(l); ast_free(r); replace_with_bool(ast, lv <  rv); return 1;
+        case TOK_GT:   ast_free(l); ast_free(r); replace_with_bool(ast, lv >  rv); return 1;
+        case TOK_LE:   ast_free(l); ast_free(r); replace_with_bool(ast, lv <= rv); return 1;
+        case TOK_GE:   ast_free(l); ast_free(r); replace_with_bool(ast, lv >= rv); return 1;
+        default: return 0;
+    }
+
+    ast_free(l);
+    ast_free(r);
+    replace_with_i64(ast, out);
+    return 1;
+}
+
 static void fold_binary(Ast* ast) {
     Ast* l = ast->u.binop.l;
     Ast* r = ast->u.binop.r;
     LenoTokenType op = ast->u.binop.op;
 
     if (op == TOK_AND || op == TOK_OR || op == TOK_NULL_COALESCE) return;
+
+    // ★ 整数精确折叠优先（见 fold_binary_i64 的说明）：`0x123456789ab << 16` 这类
+    //   超 2^53 但仍在 int64 内的整数表达式必须折成精确常量，否则会走运行期的 48 位截断 ✗
+    if (fold_binary_i64(ast, l, r, op)) return;
 
     if (is_const_num(l) && is_const_num(r)) {
         int l_float = l->u.num.is_float;
@@ -240,6 +336,14 @@ static void fold_unary(Ast* ast) {
 
     if (is_const_num(operand)) {
         double val = operand->u.num.value;
+        // ★ 取反同样按整数精确路径（原先 `~(int)val` 是 32 位、会在 32 位处截断 ✗）
+        if (op == TOK_BITNOT && !operand->u.num.is_float &&
+            val >= -9.007199254740992e15 && val <= 9.007199254740992e15) {
+            int64_t iv = (int64_t)val;
+            ast_free(operand);
+            replace_with_i64(ast, ~iv);
+            return;
+        }
         int is_float = operand->u.num.is_float;
         double result = 0;
 
