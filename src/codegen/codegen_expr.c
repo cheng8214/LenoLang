@@ -800,6 +800,104 @@ static int ast_may_read_slot(Ast* ast, int slot) {
 }
 
 // ============================================================================
+// 「这个表达式会不会**改写**槽位 slot」—— `ast_may_read_slot` 的写侧对偶
+// ----------------------------------------------------------------------------
+// 用途：写路径（`arr[i] = v` / `obj.f = v`）想把 obj / 下标 / 接收者**直取其变量寄存器**
+//   而不搬进临时寄存器（省 1~2 条 MOV）。但 rhs 的求值发生在派发 INDEX_SET/SET_FIELD
+//   **之前** —— 若 rhs 会改写那个变量，直取就会读到**新值**：
+//       `arr[i] = f()`，而 f 内部把 i 改了 ⇒ 直取版写到 arr[新 i]，快照版写到 arr[旧 i]。
+//   故必须先在编译期排除这种可能。
+// 口径与读侧一致：认得的节点精确递归；**认不出的、含调用/赋值的一律返回 1**
+//   （保守 → 回退到"先搬进临时寄存器"的老路径，只是多占一个寄存器，语义不变）。
+//   ⚠ 调用一律返回 1：闭包可以**捕获**这个局部量当 upvalue 并在被调函数里改写它，
+//     编译期看不出来 ⇒ 宁可放弃优化。
+// ============================================================================
+int ast_may_write_slot(Ast* ast, int slot) {
+    if (!ast) return 0;
+    switch (ast->kind) {
+        case AST_NUM: case AST_STRING: case AST_BOOL: case AST_NULL:
+            return 0;                       // 常量叶子：不写变量
+        case AST_VAR:
+            return 0;                       // 只读，不改写
+        case AST_BINOP:
+            return ast_may_write_slot(ast->u.binop.l, slot) ||
+                   ast_may_write_slot(ast->u.binop.r, slot);
+        case AST_UNARY: {
+            // `i++` / `--i` 是**就地改写**（codegen 的 gen_unary 直接写变量自己的槽位）
+            if (ast->u.unary.op == TOK_INC || ast->u.unary.op == TOK_DEC) {
+                Ast* op = ast->u.unary.operand;
+                if (op && op->kind == AST_VAR) {
+                    SymRef* r = &op->u.var.ref;
+                    if ((r->kind == SYM_LOCAL || r->kind == SYM_PARAM) && r->index == slot) return 1;
+                }
+                return 1;                   // 目标不是普通变量（如 pa.x++）：保守
+            }
+            return ast_may_write_slot(ast->u.unary.operand, slot);
+        }
+        case AST_INDEX:
+            return ast_may_write_slot(ast->u.index.obj, slot) ||
+                   ast_may_write_slot(ast->u.index.index, slot);
+        case AST_SLICE:
+            return ast_may_write_slot(ast->u.slice.obj, slot) ||
+                   ast_may_write_slot(ast->u.slice.start, slot) ||
+                   ast_may_write_slot(ast->u.slice.end, slot);
+        case AST_FIELD_ACCESS:
+            return ast_may_write_slot(ast->u.field_access.obj, slot);
+        case AST_TYPE_CHECK:
+            return ast_may_write_slot(ast->u.type_check.expr, slot);
+        case AST_AS_CAST:
+            return ast_may_write_slot(ast->u.type_check.expr, slot);  // 与 TYPE_CHECK 共用 union 成员
+        case AST_ADDRESS_OF:
+            return ast_may_write_slot(ast->u.address_of.operand, slot);
+        case AST_EXPR_STMT:
+            return ast_may_write_slot(ast->u.expr_stmt.expr, slot);
+        case AST_CALL:                          // 闭包可能改写捕获的局部量 ⇒ 一律保守
+        case AST_MODULE_CALL:
+        case AST_AWAIT:
+        case AST_ASSIGN:                        // 任何赋值：目标可能就是这个槽位
+        case AST_COMPOUND_ASSIGN:
+        case AST_INDEX_ASSIGN:
+            return 1;
+        case AST_ARRAY: {
+            for (int i = 0; i < ast->u.array.count; i++) {
+                if (ast_may_write_slot(ast->u.array.items[i], slot)) return 1;
+            }
+            return 0;
+        }
+        case AST_DICT: {
+            for (int i = 0; i < ast->u.dict.count; i++) {
+                if (ast_may_write_slot(ast->u.dict.entries[i].key, slot)) return 1;
+                if (ast_may_write_slot(ast->u.dict.entries[i].value, slot)) return 1;
+            }
+            return 0;
+        }
+        case AST_INTERP_STRING: {
+            for (int i = 0; i < ast->u.interp_string.count; i++) {
+                if (ast_may_write_slot(ast->u.interp_string.exprs[i], slot)) return 1;
+            }
+            return 0;
+        }
+        case AST_STRUCT_INIT: {
+            for (int i = 0; i < ast->u.struct_init.field_count; i++) {
+                if (ast_may_write_slot(ast->u.struct_init.field_values[i], slot)) return 1;
+            }
+            return 0;
+        }
+        default:
+            return 1;                       // 保守：认不出就当作"会写"
+    }
+}
+
+// 普通局部变量/参数 → 它**自己的**寄存器号（可直取，无需搬进临时寄存器）；否则 -1
+int direct_local_reg(Ast* e) {
+    if (e && e->kind == AST_VAR) {
+        SymRef* r = &e->u.var.ref;
+        if ((r->kind == SYM_LOCAL || r->kind == SYM_PARAM) && r->index >= 0) return r->index;
+    }
+    return -1;
+}
+
+// ============================================================================
 // 多字段累加融合（对齐栈式 OP_ACC_FIELDS）
 // ----------------------------------------------------------------------------
 // `s.cx + s.cy + s.cz + s.r` 原路径是 GET_FIELD×4 + ADD_F×3 = 7 条派发

@@ -1093,19 +1093,46 @@ void gen_index_assign(CodeGen* gen, Ast* ast, int dst) {
     Ast* obj_ast = ast->u.index_assign.obj;
     Ast* idx_ast = ast->u.index_assign.index;
     Ast* val_ast = ast->u.index_assign.value;
-    int obj_reg = obj_ast ? gen_expr(gen, obj_ast) : -1;
-    int idx_reg = idx_ast ? gen_expr(gen, idx_ast) : -1;
-    int val_reg = val_ast ? gen_expr(gen, val_ast) : -1;
-    if (val_reg < 0) {
-        val_reg = reg_alloc(gen);
-        emit_loadnil_to(gen, val_reg, ast->line);
+    // ★ 接收者 / 下标 / 值**直取变量自己的寄存器**（与读路径 AST_INDEX 同一手法）：
+    //   原路径对三者各发一条 `gen_expr` ⇒ 各多一条 `OP_MOV`。而 `INDEX_SET A B C` 的
+    //   A/B/C 本来就是任意寄存器 ⇒ 是可省的整条指令（实测排序基准的
+    //   `arr[i] = arr[j]` 由 4 条降到 2 条、`arr[j] = temp` 由 4 条降到 1 条）。
+    //   ⚠ 安全性（写路径比读路径多一条约束）：
+    //     ① 读路径的论证照旧：OP_INDEX_SET 是"先读 R[A]/R[B]/R[C]，再写数组元素"，
+    //        即使三者是同一个寄存器也安全（写的是数组内部，不是寄存器）；
+    //     ② **新增约束**：值的求值发生在派发 INDEX_SET 之前 ⇒ 若右值会改写 obj/下标
+    //        所绑的局部量，直取就会读到**新值**（`arr[i] = f()`，f 内改了 i）⇒
+    //        必须先用 ast_may_write_slot 在编译期排除（见该函数说明）；
+    //     ③ 值那一侧只对**裸变量**（AST_VAR）直取 —— 裸变量无副作用，天然满足 ②。
+    int val_slot = direct_local_reg(val_ast);
+    int obj_slot = direct_local_reg(obj_ast);
+    int idx_slot = direct_local_reg(idx_ast);
+    // 右值会改写 obj/下标 ⇒ 两者都必须先快照（退化为原路径），值那一侧同样处理
+    int snap_needed = 0;
+    if (obj_slot >= 0 && ast_may_write_slot(val_ast, obj_slot)) snap_needed = 1;
+    if (idx_slot >= 0 && ast_may_write_slot(val_ast, idx_slot)) snap_needed = 1;
+    if (snap_needed) { val_slot = -1; }
+
+    int obj_reg, idx_reg, val_reg, val_is_temp, idx_is_temp = 0, obj_is_temp = 0;
+    if (obj_slot >= 0) { obj_reg = obj_slot; }
+    else { obj_reg = obj_ast ? gen_expr(gen, obj_ast) : -1; obj_is_temp = (obj_reg >= 0); }
+    if (idx_slot >= 0) { idx_reg = idx_slot; }
+    else { idx_reg = idx_ast ? gen_expr(gen, idx_ast) : -1; idx_is_temp = (idx_reg >= 0); }
+    if (val_slot >= 0) { val_reg = val_slot; val_is_temp = 0; }
+    else {
+        val_reg = val_ast ? gen_expr(gen, val_ast) : -1;
+        val_is_temp = 1;
+        if (val_reg < 0) {
+            val_reg = reg_alloc(gen);
+            emit_loadnil_to(gen, val_reg, ast->line);
+        }
     }
     // INDEX_SET: R[B][R[C]] = R[A]
     reg_encode_iABC(gen->chunk, OP_INDEX_SET, val_reg, obj_reg, idx_reg, ast->line);
     if (dst >= 0 && dst != val_reg) emit_mov(gen, dst, val_reg, ast->line);
-    reg_free(gen, val_reg);
-    if (idx_reg >= 0) reg_free(gen, idx_reg);
-    if (obj_reg >= 0) reg_free(gen, obj_reg);
+    if (val_is_temp) reg_free(gen, val_reg);
+    if (idx_is_temp) reg_free(gen, idx_reg);
+    if (obj_is_temp) reg_free(gen, obj_reg);
 }
 
 // 第 i 个右侧值：多目标时 parser 把 RHS 包成 AST_ARRAY（`a, b = b, a`）
@@ -1194,26 +1221,49 @@ void gen_assign(CodeGen* gen, Ast* ast) {
                                                            : target->u.index_assign.obj;
                 Ast* idx_ast = (target->kind == AST_INDEX) ? target->u.index.index
                                                            : target->u.index_assign.index;
-                int obj_reg = gen_expr(gen, obj_ast);
-                int idx_reg = gen_expr(gen, idx_ast);
-                int val_reg = ASSIGN_VAL();
+                // ★ 直取变量自己的寄存器（省 2~3 条 OP_MOV）—— 判据与 gen_index_assign 同源
+                int obj_slot = direct_local_reg(obj_ast);
+                int idx_slot = direct_local_reg(idx_ast);
+                int val_slot = (pre_reg < 0) ? direct_local_reg(value) : -1;
+                int snap_needed = 0;
+                if (obj_slot >= 0 && ast_may_write_slot(value, obj_slot)) snap_needed = 1;
+                if (idx_slot >= 0 && ast_may_write_slot(value, idx_slot)) snap_needed = 1;
+                if (snap_needed) { obj_slot = -1; idx_slot = -1; val_slot = -1; }
+
+                int obj_reg, idx_reg, val_reg;
+                int obj_is_temp = 0, idx_is_temp = 0, val_is_temp = 0;
+                if (obj_slot >= 0) { obj_reg = obj_slot; }
+                else { obj_reg = gen_expr(gen, obj_ast); obj_is_temp = 1; }
+                if (idx_slot >= 0) { idx_reg = idx_slot; }
+                else { idx_reg = gen_expr(gen, idx_ast); idx_is_temp = 1; }
+                if (val_slot >= 0) { val_reg = val_slot; }
+                else { val_reg = ASSIGN_VAL(); val_is_temp = 1; }
                 // INDEX_SET: R[B][R[C]] = R[A]
                 reg_encode_iABC(gen->chunk, OP_INDEX_SET, val_reg, obj_reg, idx_reg, ast->line);
-                ASSIGN_FREE_VAL(val_reg);
-                reg_free(gen, idx_reg);
-                reg_free(gen, obj_reg);
+                if (val_is_temp) ASSIGN_FREE_VAL(val_reg);
+                if (idx_is_temp) reg_free(gen, idx_reg);
+                if (obj_is_temp) reg_free(gen, obj_reg);
                 break;
             }
 
             // 字段赋值：obj.field = val
             case AST_FIELD_ACCESS: {
-                int obj_reg = gen_expr(gen, target->u.field_access.obj);
-                int val_reg = ASSIGN_VAL();
+                // ★ 接收者也直取（与索引赋值同一手法；判据同源，见 gen_index_assign）
+                Ast* fo = target->u.field_access.obj;
+                int obj_slot = direct_local_reg(fo);
+                int val_slot = (pre_reg < 0) ? direct_local_reg(value) : -1;
+                if (obj_slot >= 0 && ast_may_write_slot(value, obj_slot)) { obj_slot = -1; val_slot = -1; }
+                int obj_reg, val_reg;
+                int obj_is_temp = 0, val_is_temp = 0;
+                if (obj_slot >= 0) { obj_reg = obj_slot; }
+                else { obj_reg = gen_expr(gen, fo); obj_is_temp = 1; }
+                if (val_slot >= 0) { val_reg = val_slot; }
+                else { val_reg = ASSIGN_VAL(); val_is_temp = 1; }
                 // SET_FIELD: R[B].field(C) = R[A]
                 reg_encode_iABC(gen->chunk, OP_SET_FIELD, val_reg, obj_reg,
                                 target->u.field_access.field_index, ast->line);
-                ASSIGN_FREE_VAL(val_reg);
-                reg_free(gen, obj_reg);
+                if (val_is_temp) ASSIGN_FREE_VAL(val_reg);
+                if (obj_is_temp) reg_free(gen, obj_reg);
                 break;
             }
 

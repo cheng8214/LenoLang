@@ -1,0 +1,124 @@
+// 回归测试：写路径「直取变量寄存器」的语义边界（⑤-p）
+//
+// 背景：codegen 现在对 `arr[i] = v` / `obj.f = v` 的**接收者 / 下标 / 值**直取它们自己的
+//   寄存器（省掉 2~3 条 OP_MOV，排序基准的原地快排实测 −12~15%）。代价是引入了
+//   读路径没有的一条约束：**值的求值发生在派发 INDEX_SET/SET_FIELD 之前** ⇒
+//   若右值会改写「下标 / 接收者」所绑的局部量，直取就会读到**新值**：
+//       `arr[i] = f()`，而 f 内部把 i 改了 ⇒ 直取版写 arr[新 i]，快照版写 arr[旧 i]。
+//   codegen 用 ast_may_write_slot() 在编译期排除（含调用/赋值一律保守回退到快照）。
+//   本用例就是钉住这条 guard：**右值有副作用时必须回退快照**，其余形态必须仍然正确。
+//
+// 判据：下面每一条都被"直取版"与"快照版"分别走过一遍（能直取的走直取、含副作用的走快照），
+//   任一处值与预期不符即 fail。
+
+var bad = 0
+
+struct Box {
+    int v = 0
+    int w = 0
+}
+
+func fail(int tag):int {
+    print("FAIL case " + tag)
+    bad = bad + 1
+    return 0
+}
+
+// 参数当接收者 / 下标（SYM_PARAM，同样走直取分支）
+func swap_in(Array[int] arr, int p, int q) {
+    var t = arr[p]
+    arr[p] = arr[q]
+    arr[q] = t
+}
+
+main() {
+    // ---- 1) 原地快排的交换形态：值里有 arr[i] 的旧值 ----
+    var a = [5, 1, 4, 2, 3]
+    var i = 0
+    var j = 4
+    var t = a[i]
+    a[i] = a[j]                       // 接收者/下标都是局部量 → 直取
+    a[j] = t
+    if a[0] != 3 { print("a[0]=" + a[0]); fail(1) }
+    if a[4] != 5 { print("a[4]=" + a[4]); fail(1) }
+
+    // ---- 2) 下标与接收者相同、且 i == j（自赋值不能坏）----
+    var b = [7, 8, 9]
+    var k = 1
+    b[k] = b[k]
+    if b[1] != 8 { print("b[1]=" + b[1]); fail(2) }
+    b[k] = k                          // 值就是下标本身
+    if b[1] != 1 { print("b[1]=" + b[1]); fail(2) }
+
+    // ---- 3) 值就是接收者本身：dict["self"] = dict（引用类型元素才允许）----
+    var c = {}
+    c["self"] = c
+    if c["self"] is Dict {
+    } else {
+        print("c[self] 不是字典")
+        fail(3)
+    }
+
+    // ---- 4) 右值含调用、且**改写下标** ⇒ guard 必须回退到快照 ----
+    //    正确结果：写到 a[旧 i]（下标在右值求值**之前**读取）
+    var d = [0, 0, 0, 0]
+    var di = 1
+    func bump_i(): int {
+        di = di + 1
+        return 100
+    }
+    d[di] = bump_i()                  // 直取版会写 d[2] ⇒ 错
+    if d[1] != 100 { print("d[1]=" + d[1]); fail(4) }
+    if d[2] != 0 { print("d[2]=" + d[2]); fail(4) }
+    if di != 2 { fail(4) }
+
+    // ---- 5) 右值含调用、且**改写接收者** ⇒ 也必须快照（写进旧数组）----
+    var e1 = [1, 1, 1]
+    var e2 = [0, 0, 0]
+    var ec = e1
+    func replace_recv(): int {
+        ec = e2
+        return 42
+    }
+    ec[0] = replace_recv()            // 必须写进调用前的 ec（即 e1）
+    if e1[0] != 42 { print("e1[0]=" + e1[0]); fail(5) }
+    if e2[0] != 0 { print("e2[0]=" + e2[0]); fail(5) }
+
+    // ---- 6) 参数形态（SYM_PARAM）走直取分支 ----
+    var f = [10, 20, 30]
+    swap_in(f, 0, 2)
+    if f[0] != 30 or f[2] != 10 { print("swap_in 失败"); fail(6) }
+
+    // ---- 7) 字段写：基本正确性 + 接收者直取 ----
+    var p = new Box()
+    p.v = 3
+    p.w = p.v + 1                     // 接收者/值都走直取
+    if p.v != 3 or p.w != 4 { print("p.v=" + p.v + " p.w=" + p.w); fail(7) }
+
+    // ---- 8) 字段写：右值含调用且改写接收者 ⇒ 快照（写进旧对象）----
+    var r1 = new Box()
+    var r2 = new Box()
+    var rc = r1
+    func replace_box(): int {
+        rc = r2
+        return 55
+    }
+    rc.v = replace_box()
+    if r1.v != 55 { print("r1.v=" + r1.v); fail(8) }
+    if r2.v != 0 { print("r2.v=" + r2.v); fail(8) }
+
+    // ---- 9) 字典写（与数组写同一分支）----
+    var g = {}
+    var key = "k"
+    var val = 1
+    g[key] = val
+    if g["k"] != 1 { print("g[k]=" + g["k"]); fail(9) }
+    g["k"] = g["k"] + 1
+    if g["k"] != 2 { print("g[k]=" + g["k"]); fail(9) }
+
+    if bad > 0 {
+        print("test_write_path_direct_reg FAILED: " + bad + " 处")
+        _exit(1)
+    }
+    print("test_write_path_direct_reg ok")
+}

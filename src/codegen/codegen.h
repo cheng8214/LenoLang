@@ -174,6 +174,12 @@ int try_emit_stmt_array_add(CodeGen* gen, Ast* e);
 int try_emit_stmt_incdec(CodeGen* gen, Ast* e);
 // 多字段累加融合：`s.cx + s.cy + ...`（同一对象的 float 字段）⇒ OP_ACC_FIELDS，成功返回 1
 int try_emit_acc_fields(CodeGen* gen, Ast* ast, int dst);
+// 写路径「直取变量寄存器」的配套判据（定义在 codegen_expr.c，供 codegen_stmt.c 的
+// `arr[i] = v` / `obj.f = v` 复用）：
+//   direct_local_reg —— 是普通局部变量/参数则返回它自己的寄存器号，否则 -1
+//   ast_may_write_slot —— 该表达式是否会**改写**槽位 slot（保守：含调用/赋值一律返回 1）
+int direct_local_reg(Ast* e);
+int ast_may_write_slot(Ast* ast, int slot);
 void emit_mul_int_imm(CodeGen* gen, int dst, int b, int imm, int line);
 // 浮点有序比较特化（T10-④）
 void emit_lt_f(CodeGen* gen, int dst, int b, int c, int line);
