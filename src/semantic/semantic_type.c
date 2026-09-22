@@ -459,6 +459,50 @@ static void check_nullable_arith(TypeInfo* left, TypeInfo* right, int line, int 
 // 类型推断
 // ============================================================================
 
+// ★ T11：「确定是 null」的操作数 ⇒ **编译错误**（教程明写「null 不能参与算术运算」）
+// ----------------------------------------------------------------------------
+// `null + 1`（字面量）一直是编译错误 —— 操作数类型就是 TYPE_NULL。但另两种写法在
+// **编译期同样能确定**是 null，此前只能等运行期才报错：
+//   ① `var a = null`     —— 未锁定类型的变量，初值是 null 字面量
+//   ② `int? a = null`    —— 可空值类型变量，初值是 null 字面量
+// 只要该变量**此后没被写过**（任何写操作都会清掉 Symbol.is_null_value），
+// 用到它时值就确定为 null ⇒ 直接报错，不必等到运行期（那里报的是同一句话的运行时版本）。
+// 教程对 `int? a = null; a + 1` 的承诺原本只是"编译警告 + 运行时报错"，这里把它提到编译期。
+//
+// ⚠ 判据是「**宁漏勿误报**」：误报会让本来能跑的程序编译不过，比漏报严重得多。
+//   ⇒ 只在**能确定**时置位（见 visit_var.inc 的置位点，以及每个写变量的清位点）；
+//     拿不准（被别处赋过值、字段、全局、参数…）一律不报，
+//     由 VM 的运行期检查兜底（src/vm/vminc/run/03_arith.inc 的 OP_ADD_INT 等）。
+void report_known_null_name(Semantic* s, const char* name, int line, int column) {
+    if (!name) return;
+    char msg[BUFFER_MEDIUM];
+    snprintf(msg, sizeof(msg),
+             "变量 '%s' 的值确定为 null（声明为 null 之后未重新赋值），不能参与算术运算"
+             " —— 请先赋初值，或在 `if %s != null` 分支内使用",
+             name, name);
+    error_add_at(ERR_TYPE_MISMATCH, line, column, msg);
+}
+
+// 表达式形态的入口：只有**普通变量**才可能带这个标志（见 Symbol.is_null_value 的说明）
+static void report_known_null_operand(Semantic* s, Ast* operand, Ast* report_at) {
+    if (!operand || operand->kind != AST_VAR || !operand->u.var.name) return;
+    Symbol* sym = scope_resolve(s->current, operand->u.var.name);
+    if (!sym || !sym->is_null_value) return;
+    report_known_null_name(s, operand->u.var.name, report_at->line, report_at->column);
+}
+
+// 与下面各分支里 `TYPE_NULL ⇒ 报错` 的那组运算符**严格同集**（多/少一个都会跟既有口径打架）
+static int is_arith_or_bitop_for_null_check(LenoTokenType op) {
+    switch (op) {
+        case TOK_PLUS: case TOK_MINUS: case TOK_STAR: case TOK_SLASH: case TOK_MOD:
+        case TOK_BITAND: case TOK_BITOR: case TOK_BITXOR:
+        case TOK_SHL: case TOK_SHR: case TOK_USHR:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
 TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
     if (!ast) return type_new(TYPE_ANY);
     
@@ -842,6 +886,13 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
             TypeInfo* right = infer_expr_type(s, ast->u.binop.r);
             TypeInfo* result = NULL;
 
+            // ★ T11：**确定是 null** 的操作数 ⇒ 编译错误
+            //   （`var a = null; a + 1` / `int? a = null; a + 1`；不确定的走下面的警告 + VM 运行期检查）
+            if (is_arith_or_bitop_for_null_check(ast->u.binop.op)) {
+                report_known_null_operand(s, ast->u.binop.l, ast);
+                report_known_null_operand(s, ast->u.binop.r, ast);
+            }
+
             switch (ast->u.binop.op) {
                 case TOK_PLUS: {
                     // 字符串拼接：任一操作数是 string 时结果为 string
@@ -1172,6 +1223,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                 type_free(operand);
                 result = type_new(TYPE_BOOL);
             } else if (ast->u.unary.op == TOK_MINUS) {
+                report_known_null_operand(s, ast->u.unary.operand, ast);   // ★ T11：同口径
                 // 负号：bool 参与 -> 编译错误
                 if (operand && operand->kind == TYPE_BOOL) {
                     error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, "bool 类型不能参与算术运算");
@@ -2356,6 +2408,10 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
             SymRef ref;
             memset(&ref, 0, sizeof(ref));
             Symbol* sym = resolve_variable_with_upvalue(s, ast->u.compound_assign.name, &ref);
+            // ★ T11：**确定是 null** 的变量做复合赋值（`int? a = null; a += 1`）⇒ 同一口径的编译错误
+            if (sym && sym->is_null_value) {
+                report_known_null_name(s, ast->u.compound_assign.name, ast->line, ast->column);
+            }
             if (sym && sym->type) {
                 result = type_new(sym->type->kind);
             } else {

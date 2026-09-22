@@ -31,7 +31,7 @@ main() {
 
     files.write(dirs.join(work, "lib/p.leno"),
         "export struct Pair {\n"
-        + "    int x\n\n"
+        + "    int x = 0\n\n"
         + "    func set(int v): int {\n"
         + "        x = v\n"
         + "        return x\n"

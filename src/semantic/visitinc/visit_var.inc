@@ -77,6 +77,14 @@
                 visit(s, ast->u.var_decl.init);
                 // 标记变量已初始化
                 if (sym) sym->is_initialized = 1;
+                // ★ 记「确定为 null」（编译期专用，见 Symbol.is_null_value 的说明）：
+                //   声明时初始化为 `null` 字面量 ⇒ 只要此后再没有写操作，用到它时值就确定为 null
+                //   （`var a = null; a + 1` / `int? a = null; a + 1` ⇒ 编译错误）。
+                //   只对局部量置位：全局/模块级变量的写入可能发生在别的函数里。
+                if (sym) {
+                    sym->is_null_value = (sym->kind == SYM_LOCAL &&
+                                          ast->u.var_decl.init->kind == AST_NULL) ? 1 : 0;
+                }
                 // 恢复原始 type（后续类型推断会重新设置正确的类型）
                 if (sym && ast->u.var_decl.type && ast->u.var_decl.type->kind != TYPE_INFER) {
                     type_free(sym->type);
@@ -445,6 +453,12 @@
                             snprintf(msg, sizeof(msg), "不能对 const 变量 '%s' 重新赋值", ast->u.assign.names[i]);
                             error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                         }
+                        // ★ 清「确定为 null」标志（T11）：这个变量被写过了 ⇒ 之后不能再断定它是 null。
+                        //   ⚠ 所有写变量的地方都要清（`a = v` / `a += v` / for 的迭代变量…）——
+                        //     漏一处就会把"本来能跑的程序"判成编译错误（误报比漏报严重得多）。
+                        //     目前写点：本处、AST_COMPOUND_ASSIGN（本文件）、
+                        //     `var` 声明（新符号，天然为 0）、for 迭代变量（作用域内新符号，天然为 0）。
+                        sym->is_null_value = 0;
                         ast->u.assign.refs[i].type_kind = sym->type ? sym->type->kind : TYPE_ANY;
                     }
                 }
@@ -594,6 +608,13 @@
                     snprintf(msg, sizeof(msg), "不能对 const 变量 '%s' 重新赋值", ast->u.compound_assign.name);
                     error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                 }
+                // ★ 清「确定为 null」标志（T11，写点见普通赋值那处的说明）。
+                //   这一处同时**报错**：`int? a = null; a += 1` 编译期就能确定是 null
+                //   （报错口径与 `a + 1` 一致，见 semantic_type.c 的 report_known_null_name）。
+                if (sym->is_null_value) {
+                    report_known_null_name(s, ast->u.compound_assign.name, ast->line, ast->column);
+                }
+                sym->is_null_value = 0;
                 ast->u.compound_assign.ref.type_kind = sym->type ? sym->type->kind : TYPE_ANY;
             }
             visit(s, ast->u.compound_assign.value);

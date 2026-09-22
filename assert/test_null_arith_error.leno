@@ -1,0 +1,79 @@
+// test_null_arith_error.leno —— T11：null 不能参与运算（**运行期**那一半）
+//
+// 规则来源：`docs/Leno入门教程.md` 的运算符类型规则明写「bool 和 null 不能参与算术运算」，
+// 且「值类型字段必须指定默认值」一节写明：不写默认值的值类型字段初值是 **null**，
+// 参与算术会「编译警告或运行时报错」。
+//
+// 本例只覆盖**编译期判不出来**的那一类（⇒ 必须由 VM 的运行期检查兜住）：
+//   结构体**未赋默认值**的值类型字段 —— 它的静态类型就是 int/float（非可空），
+//   运行期值却是 null，静态分析无从判断（这正是"值类型字段必须指定默认值"要提醒的写法）。
+// 编译期能确定的那些（`int? a = null` / `var a = null` 之后未赋值）见
+//   assert/test_null_arith_compile_error.leno。
+//
+// ⚠ 修复前这些形态**静默算 0**（`NULL_VAL` 的载荷是 0）：`s.x + 1` 得 1、`s.x & 3` 得 0，
+//   `s.x >>> 1` 那一支更是**直接 return 0**。改动前列此文件即为红。
+//
+// ⚠ 分组各打一行进度：万一将来某一支在 VM 侧挂住，**最后一行输出就点名是哪一组**
+//   （整组一起挂住时，报错位置比"用例超时"这句结论有用得多）。
+
+struct NoDefault {
+    int x          // 故意不写默认值 ⇒ 初值是 null
+    float f
+}
+
+main() {
+    var caught = 0
+    var s = new NoDefault()
+
+    // ① int 特化：加减乘（含立即数版）与一元取负
+    try { var v1 = s.x + 1 } catch { caught = caught + 1 }
+    try { var v2 = s.x - 1 } catch { caught = caught + 1 }
+    try { var v3 = s.x * 2 } catch { caught = caught + 1 }
+    try { var v4 = -s.x } catch { caught = caught + 1 }
+    print("① int 特化 caught=" + caught)
+
+    // ② 复合赋值（走同一条特化指令）
+    try { s.x += 1 } catch { caught = caught + 1 }
+    print("② 复合赋值 caught=" + caught)
+
+    // ③ float 特化
+    try { var v5 = s.f + 1.0 } catch { caught = caught + 1 }
+    try { var v6 = s.f * 2.0 } catch { caught = caught + 1 }
+    try { var v7 = -s.f } catch { caught = caught + 1 }
+    print("③ float 特化 caught=" + caught)
+
+    // ④ 位运算 / 移位（`>>>` 那一支原先**静默返回 0**）
+    try { var v8 = s.x & 3 } catch { caught = caught + 1 }
+    try { var v9 = s.x | 4 } catch { caught = caught + 1 }
+    try { var v10 = s.x ^ 5 } catch { caught = caught + 1 }
+    print("④-a 位与/或/异或 caught=" + caught)
+    try { var v11 = ~s.x } catch { caught = caught + 1 }
+    try { var v12 = s.x >> 1 } catch { caught = caught + 1 }
+    try { var v13 = s.x << 1 } catch { caught = caught + 1 }
+    try { var v14 = s.x >>> 1 } catch { caught = caught + 1 }
+    print("④-b 取反/移位 caught=" + caught)
+
+    // ⑤ 对照组：**赋过值**的字段照常参与运算（别把正常路径一起拦掉）
+    var t = new NoDefault()
+    t.x = 5
+    t.f = 1.5
+    assert_eq(t.x + 1, 6)
+    assert_eq(t.x * 2, 10)
+    assert_eq(t.x & 7, 5)
+    assert_eq(t.x >> 1, 2)
+    assert_eq(t.f + 1.0, 2.5)
+    t.x += 3
+    assert_eq(t.x, 8)
+    print("⑤ 对照组 ok")
+
+    // ⑥ 对照组：非 null 的位运算/移位不受影响
+    int m = 1023
+    assert_eq(m >> 1, 511)
+    assert_eq(m & 7, 7)
+    assert_eq(m | 4096, 5119)
+    print("⑥ 位运算对照 ok")
+
+    // ①4 + ②1 + ③3 + ④-a3 + ④-b4 = 15（逐组核对：② 是复合赋值那一条）
+    assert_eq(caught, 15)
+    print("test_null_arith_error passed")
+}

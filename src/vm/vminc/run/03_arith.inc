@@ -248,12 +248,28 @@
         (((_x) >= INT48_MIN && (_x) <= INT48_MAX) ? val_int((int64_t)(_x)) \
          : bigint_compact_to_int(val_obj((Object*)bigint_from_int64((int64_t)(_x)))))
     #define VM_IS_BIG(_v) (unlikely(val_is_bigint(_v)))
+    // ★ T11：**null 不能参与运算** —— 特化指令此前把 null 读成 0（静默错值）。
+    //   守卫从「非 bigint」改成「**两侧都是 int48**」：两者都是**两次 tag 比较**，
+    //   快路径代价不变（与 VM_IS_BIG 的判断合并成同一个分支）；但 null / 其它类型会被
+    //   挤进这个慢分支 ⇒ null 报错、bigint 走原路、其余类型保持改动前行为。
+    //   此前静默算错的形态（实测都返回 1，而通用路径会报「null 不能参与运算」）：
+    //     `int? a = null; a + 1`（编译期只给警告，运行期本该报错）、
+    //     `struct S{int x}; new S().x + 1`（值类型字段未赋值 ⇒ 运行期 null）、
+    //     `s.x += 1`（复合赋值走同一条特化指令）。
     LABEL(OP_ADD_INT): {
         int a = READ_A(), b = READ_B(), c = READ_C();
         Value bv = R(b), cv = R(c);
-        if (VM_IS_BIG(bv) || VM_IS_BIG(cv)) {
-            R(a) = bigint_compact_to_int(bigint_add(promote_to_bigint(bv), promote_to_bigint(cv)));
-            DISPATCH();
+        if (unlikely(!val_is_int(bv) || !val_is_int(cv))) {
+            if (val_is_null(bv) || val_is_null(cv)) {
+                if (!throw_runtime_error_with_operands("加法运算: null 不能参与运算", "ADD (+)", bv, cv, GET_CURRENT_LINE())) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            if (VM_IS_BIG(bv) || VM_IS_BIG(cv)) {
+                R(a) = bigint_compact_to_int(bigint_add(promote_to_bigint(bv), promote_to_bigint(cv)));
+                DISPATCH();
+            }
+            // 其余类型：保持改动前行为（落到下面的 int 算术）
         }
         int64_t x = val_as_int(bv), y = val_as_int(cv), s = 0;
         if (likely(!__builtin_add_overflow(x, y, &s))) {
@@ -266,9 +282,16 @@
     LABEL(OP_SUB_INT): {
         int a = READ_A(), b = READ_B(), c = READ_C();
         Value bv = R(b), cv = R(c);
-        if (VM_IS_BIG(bv) || VM_IS_BIG(cv)) {
-            R(a) = bigint_compact_to_int(bigint_sub(promote_to_bigint(bv), promote_to_bigint(cv)));
-            DISPATCH();
+        if (unlikely(!val_is_int(bv) || !val_is_int(cv))) {   // 守卫理由见 OP_ADD_INT
+            if (val_is_null(bv) || val_is_null(cv)) {
+                if (!throw_runtime_error_with_operands("减法: null 不能参与运算", "SUB (-)", bv, cv, GET_CURRENT_LINE())) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            if (VM_IS_BIG(bv) || VM_IS_BIG(cv)) {
+                R(a) = bigint_compact_to_int(bigint_sub(promote_to_bigint(bv), promote_to_bigint(cv)));
+                DISPATCH();
+            }
         }
         int64_t x = val_as_int(bv), y = val_as_int(cv), s = 0;
         if (likely(!__builtin_sub_overflow(x, y, &s))) {
@@ -286,10 +309,17 @@
         int a = READ_A(), b = READ_B();
         int imm = (int)(int8_t)READ_C();
         Value bv = R(b);
-        if (VM_IS_BIG(bv)) {
-            R(a) = bigint_compact_to_int(
-                bigint_add(promote_to_bigint(bv), bigint_from_int64((int64_t)imm)));
-            DISPATCH();
+        if (unlikely(!val_is_int(bv))) {                      // 守卫理由见 OP_ADD_INT
+            if (val_is_null(bv)) {
+                if (!throw_runtime_error_with_operand("加法运算: null 不能参与运算", "ADD (+)", bv, GET_CURRENT_LINE())) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            if (VM_IS_BIG(bv)) {
+                R(a) = bigint_compact_to_int(
+                    bigint_add(promote_to_bigint(bv), bigint_from_int64((int64_t)imm)));
+                DISPATCH();
+            }
         }
         int64_t x = val_as_int(bv), s = 0;
         if (likely(!__builtin_add_overflow(x, (int64_t)imm, &s))) {
@@ -303,10 +333,17 @@
         int a = READ_A(), b = READ_B();
         int imm = (int)(int8_t)READ_C();
         Value bv = R(b);
-        if (VM_IS_BIG(bv)) {
-            R(a) = bigint_compact_to_int(
-                bigint_sub(promote_to_bigint(bv), bigint_from_int64((int64_t)imm)));
-            DISPATCH();
+        if (unlikely(!val_is_int(bv))) {                      // 守卫理由见 OP_ADD_INT
+            if (val_is_null(bv)) {
+                if (!throw_runtime_error_with_operand("减法: null 不能参与运算", "SUB (-)", bv, GET_CURRENT_LINE())) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            if (VM_IS_BIG(bv)) {
+                R(a) = bigint_compact_to_int(
+                    bigint_sub(promote_to_bigint(bv), bigint_from_int64((int64_t)imm)));
+                DISPATCH();
+            }
         }
         int64_t x = val_as_int(bv), s = 0;
         if (likely(!__builtin_sub_overflow(x, (int64_t)imm, &s))) {
@@ -319,9 +356,16 @@
     LABEL(OP_MUL_INT): {
         int a = READ_A(), b = READ_B(), c = READ_C();
         Value bv = R(b), cv = R(c);
-        if (VM_IS_BIG(bv) || VM_IS_BIG(cv)) {
-            R(a) = bigint_compact_to_int(bigint_mul(promote_to_bigint(bv), promote_to_bigint(cv)));
-            DISPATCH();
+        if (unlikely(!val_is_int(bv) || !val_is_int(cv))) {   // 守卫理由见 OP_ADD_INT
+            if (val_is_null(bv) || val_is_null(cv)) {
+                if (!throw_runtime_error_with_operands("乘法: null 不能参与运算", "MUL (*)", bv, cv, GET_CURRENT_LINE())) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            if (VM_IS_BIG(bv) || VM_IS_BIG(cv)) {
+                R(a) = bigint_compact_to_int(bigint_mul(promote_to_bigint(bv), promote_to_bigint(cv)));
+                DISPATCH();
+            }
         }
         int64_t x = val_as_int(bv), y = val_as_int(cv), s = 0;
         if (likely(!__builtin_mul_overflow(x, y, &s))) {
@@ -337,10 +381,17 @@
         int a = READ_A(), b = READ_B();
         int imm = (int)(int8_t)READ_C();
         Value bv = R(b);
-        if (VM_IS_BIG(bv)) {
-            R(a) = bigint_compact_to_int(
-                bigint_mul(promote_to_bigint(bv), bigint_from_int64((int64_t)imm)));
-            DISPATCH();
+        if (unlikely(!val_is_int(bv))) {                      // 守卫理由见 OP_ADD_INT
+            if (val_is_null(bv)) {
+                if (!throw_runtime_error_with_operand("乘法: null 不能参与运算", "MUL (*)", bv, GET_CURRENT_LINE())) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            if (VM_IS_BIG(bv)) {
+                R(a) = bigint_compact_to_int(
+                    bigint_mul(promote_to_bigint(bv), bigint_from_int64((int64_t)imm)));
+                DISPATCH();
+            }
         }
         int64_t x = val_as_int(bv), s = 0;
         if (likely(!__builtin_mul_overflow(x, (int64_t)imm, &s))) {
@@ -353,21 +404,36 @@
     LABEL(OP_NEG_INT): {
         int a = READ_A(), b = READ_B();
         Value bv = R(b);
-        if (VM_IS_BIG(bv)) {
-            R(a) = bigint_compact_to_int(bigint_neg(val_as_bigint(bv)));
-            DISPATCH();
+        if (unlikely(!val_is_int(bv))) {                      // 守卫理由见 OP_ADD_INT
+            if (VM_IS_BIG(bv)) {
+                R(a) = bigint_compact_to_int(bigint_neg(val_as_bigint(bv)));
+                DISPATCH();
+            }
+            // null（与其它非法类型）：与通用 OP_NEG 同口径报错 —— 通用一元取负本来就这一句
+            if (val_is_null(bv)) {
+                if (!throw_runtime_error_with_operand("取负 (-): 操作数必须是数字", "NEG (-)", bv, GET_CURRENT_LINE())) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
         }
         R(a) = VM_INT_RESULT(-val_as_int(bv));
         DISPATCH();
     }
 
     // --- float 特化 ---
+    // ★ T11：null 检查一律放在**兜底路径**里 —— 快路径（两侧确实 float）零额外代价。
+    //   文案与对应的通用指令逐字一致（见文件开头的通用 OP_ADD/SUB/...）。
     LABEL(OP_ADD_F): {
         int a = READ_A(), b = READ_B(), c = READ_C();
         Value bv = R(b), cv = R(c);
         // 快路径：两侧确实 float（codegen 静态判 float 触发）
         if (likely(val_is_float(bv) && val_is_float(cv))) {
             R(a) = val_float(val_as_double(bv) + val_as_double(cv));
+            DISPATCH();
+        }
+        if (unlikely(val_is_null(bv) || val_is_null(cv))) {
+            if (!throw_runtime_error_with_operands("加法运算: null 不能参与运算", "ADD (+)", bv, cv, GET_CURRENT_LINE())) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH();
         }
         // 兜底：静态判 float、运行期却是 int（如 float 字段被赋 int、dict.get 默认 int）
@@ -383,6 +449,11 @@
             R(a) = val_float(val_as_double(bv) - val_as_double(cv));
             DISPATCH();
         }
+        if (unlikely(val_is_null(bv) || val_is_null(cv))) {   // 说明见 OP_ADD_F
+            if (!throw_runtime_error_with_operands("减法: null 不能参与运算", "SUB (-)", bv, cv, GET_CURRENT_LINE())) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
         // 兜底：静态 float、运行期 int（float 字段/ dict.get 默认 int）→ 提升后相减
         R(a) = val_float(val_as_num_ex(bv) - val_as_num_ex(cv));
         DISPATCH();
@@ -392,6 +463,11 @@
         Value bv = R(b), cv = R(c);
         if (likely(val_is_float(bv) && val_is_float(cv))) {
             R(a) = val_float(val_as_double(bv) * val_as_double(cv));
+            DISPATCH();
+        }
+        if (unlikely(val_is_null(bv) || val_is_null(cv))) {   // 说明见 OP_ADD_F
+            if (!throw_runtime_error_with_operands("乘法: null 不能参与运算", "MUL (*)", bv, cv, GET_CURRENT_LINE())) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH();
         }
         R(a) = val_float(val_as_num_ex(bv) * val_as_num_ex(cv));
@@ -415,6 +491,11 @@
         }
         // 兜底：一侧 int → 提升；除数 0 同样抛错
         {
+            if (unlikely(val_is_null(bv) || val_is_null(cv))) {   // 说明见 OP_ADD_F
+                if (!throw_runtime_error_with_operands("除法: null 不能参与运算", "DIV (/)", bv, cv, line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
             double dv = val_as_num_ex(cv);
             if (unlikely(dv == 0.0)) {
                 if (!throw_runtime_error_with_operands("除零错误：除数为 0", "DIV (/)", bv, cv, line)) return -1;
@@ -430,6 +511,11 @@
         Value bv = R(b);
         if (likely(val_is_float(bv))) {
             R(a) = val_float(-val_as_double(bv));
+            DISPATCH();
+        }
+        if (unlikely(val_is_null(bv))) {                      // 说明见 OP_ADD_F
+            if (!throw_runtime_error_with_operand("取负 (-): 操作数必须是数字", "NEG (-)", bv, GET_CURRENT_LINE())) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH();
         }
         R(a) = val_float(-val_as_num_ex(bv));

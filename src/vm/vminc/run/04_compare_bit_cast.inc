@@ -228,21 +228,42 @@
 #define VM_BIT_CV_REG()   R(READ_C())
 #define VM_BIT_CV_K()     (frame->chunk->constants[READ_CONST_IDX(READ_C())])
 
+// ★ T11：**null 不能参与运算**（栈式 op_bitwise.inc 一直如此，寄存器式漏了 ⇒ 静默算 0）。
+//   守卫写成「两侧都是 int48」（原来是「非 bigint」）—— 两者都是**两次 tag 比较**，
+//   快路径代价不变；null / float / string 被挤进慢路径 ⇒ null 报错、其余类型也**报错**
+//   （与栈式同一句"操作数必须是整数"，此前这里会把 float 位当 int 算成垃圾）。
+//   文案逐字取自栈式 op_bitwise.inc，勿另起炉灶。
+//
+//   ⚠⚠ **守卫必须写成否定式**（`if (unlikely(!...)) { 慢路径 }`，快路径自然落空）：
+//     实测把快路径放进 `if (likely(...)) { 算; DISPATCH(); }` 会让位运算基准
+//     掉 **+11%**（2273ms → 2522ms，4 轮无重叠）—— 每条指令多一次 taken 跳转。
+//     算术特化家族一开始就是这个形态，所以那边是中性 ✓。
+//   ⚠ 冷路径也要**尽量小**：位运算指令是全 VM 最短的（快路径就一条 AND/OR/XOR），
+//     实测每多一份内联报错代码，位运算基准就掉一档（2273 → 2540ms）。
+//     ⇒ 两个错误（null / 非整数）**合并成一个报错点**，只在真正非法时才拼文案。
 #define BITAND_BODY(CV)                                                                \
     {                                                                                  \
         int a = READ_A(), b = READ_B();                                                \
         Value bv = R(b), cv = (CV);                                                    \
-        if (VM_IS_BIG(bv) || VM_IS_BIG(cv)) {                                          \
-            if (VM_IS_BIG(bv) && !VM_IS_BIG(cv)) {                                     \
-                R(a) = bigint_compact_to_int(bigint_and_i64(val_as_bigint(bv), VM_IO(cv))); \
-            } else if (!VM_IS_BIG(bv) && VM_IS_BIG(cv)) {                              \
-                R(a) = bigint_compact_to_int(bigint_and_i64(val_as_bigint(cv), VM_IO(bv))); \
-            } else {                                                                   \
-                R(a) = bigint_compact_to_int(bigint_and(promote_to_bigint(bv), promote_to_bigint(cv))); \
+        if (unlikely(!val_is_int(bv) || !val_is_int(cv))) {                            \
+            if (VM_IS_BIG(bv) || VM_IS_BIG(cv)) {                                      \
+                if (VM_IS_BIG(bv) && !VM_IS_BIG(cv)) {                                 \
+                    R(a) = bigint_compact_to_int(bigint_and_i64(val_as_bigint(bv), VM_IO(cv))); \
+                } else if (!VM_IS_BIG(bv) && VM_IS_BIG(cv)) {                          \
+                    R(a) = bigint_compact_to_int(bigint_and_i64(val_as_bigint(cv), VM_IO(bv))); \
+                } else {                                                               \
+                    R(a) = bigint_compact_to_int(bigint_and(promote_to_bigint(bv), promote_to_bigint(cv))); \
+                }                                                                      \
+                DISPATCH();                                                            \
             }                                                                          \
-        } else {                                                                       \
-            R(a) = val_int(val_as_int(bv) & val_as_int(cv));                           \
+            if (!throw_runtime_error_with_operands(                                    \
+                    (val_is_null(bv) || val_is_null(cv)) ? "位与运算: null 不能参与运算" \
+                                                         : "位与运算: 操作数必须是整数",  \
+                    "BITAND (&)", bv, cv, GET_CURRENT_LINE())) return -1;              \
+            frame = &vm.frames[vm.frame_cnt - 1];                                      \
+            DISPATCH();                                                                \
         }                                                                              \
+        R(a) = val_int(val_as_int(bv) & val_as_int(cv));                               \
         DISPATCH();                                                                    \
     }
     LABEL(OP_BITAND):   BITAND_BODY(VM_BIT_CV_REG())
@@ -252,17 +273,25 @@
     {                                                                                  \
         int a = READ_A(), b = READ_B();                                                \
         Value bv = R(b), cv = (CV);                                                    \
-        if (VM_IS_BIG(bv) || VM_IS_BIG(cv)) {                                          \
-            if (VM_IS_BIG(bv) && !VM_IS_BIG(cv)) {                                     \
-                R(a) = bigint_compact_to_int(bigint_or_i64(val_as_bigint(bv), VM_IO(cv))); \
-            } else if (!VM_IS_BIG(bv) && VM_IS_BIG(cv)) {                              \
-                R(a) = bigint_compact_to_int(bigint_or_i64(val_as_bigint(cv), VM_IO(bv))); \
-            } else {                                                                   \
-                R(a) = bigint_compact_to_int(bigint_or(promote_to_bigint(bv), promote_to_bigint(cv))); \
+        if (unlikely(!val_is_int(bv) || !val_is_int(cv))) {   /* 见 BITAND_BODY 说明 */  \
+            if (VM_IS_BIG(bv) || VM_IS_BIG(cv)) {                                      \
+                if (VM_IS_BIG(bv) && !VM_IS_BIG(cv)) {                                 \
+                    R(a) = bigint_compact_to_int(bigint_or_i64(val_as_bigint(bv), VM_IO(cv))); \
+                } else if (!VM_IS_BIG(bv) && VM_IS_BIG(cv)) {                          \
+                    R(a) = bigint_compact_to_int(bigint_or_i64(val_as_bigint(cv), VM_IO(bv))); \
+                } else {                                                               \
+                    R(a) = bigint_compact_to_int(bigint_or(promote_to_bigint(bv), promote_to_bigint(cv))); \
+                }                                                                      \
+                DISPATCH();                                                            \
             }                                                                          \
-        } else {                                                                       \
-            R(a) = val_int(val_as_int(bv) | val_as_int(cv));                           \
+            if (!throw_runtime_error_with_operands(                                    \
+                    (val_is_null(bv) || val_is_null(cv)) ? "位或运算: null 不能参与运算" \
+                                                         : "位或运算: 操作数必须是整数",  \
+                    "BITOR (|)", bv, cv, GET_CURRENT_LINE())) return -1;               \
+            frame = &vm.frames[vm.frame_cnt - 1];                                      \
+            DISPATCH();                                                                \
         }                                                                              \
+        R(a) = val_int(val_as_int(bv) | val_as_int(cv));                               \
         DISPATCH();                                                                    \
     }
     LABEL(OP_BITOR):   BITOR_BODY(VM_BIT_CV_REG())
@@ -272,17 +301,25 @@
     {                                                                                  \
         int a = READ_A(), b = READ_B();                                                \
         Value bv = R(b), cv = (CV);                                                    \
-        if (VM_IS_BIG(bv) || VM_IS_BIG(cv)) {                                          \
-            if (VM_IS_BIG(bv) && !VM_IS_BIG(cv)) {                                     \
-                R(a) = bigint_compact_to_int(bigint_xor_i64(val_as_bigint(bv), VM_IO(cv))); \
-            } else if (!VM_IS_BIG(bv) && VM_IS_BIG(cv)) {                              \
-                R(a) = bigint_compact_to_int(bigint_xor_i64(val_as_bigint(cv), VM_IO(bv))); \
-            } else {                                                                   \
-                R(a) = bigint_compact_to_int(bigint_xor(promote_to_bigint(bv), promote_to_bigint(cv))); \
+        if (unlikely(!val_is_int(bv) || !val_is_int(cv))) {   /* 见 BITAND_BODY 说明 */  \
+            if (VM_IS_BIG(bv) || VM_IS_BIG(cv)) {                                      \
+                if (VM_IS_BIG(bv) && !VM_IS_BIG(cv)) {                                 \
+                    R(a) = bigint_compact_to_int(bigint_xor_i64(val_as_bigint(bv), VM_IO(cv))); \
+                } else if (!VM_IS_BIG(bv) && VM_IS_BIG(cv)) {                          \
+                    R(a) = bigint_compact_to_int(bigint_xor_i64(val_as_bigint(cv), VM_IO(bv))); \
+                } else {                                                               \
+                    R(a) = bigint_compact_to_int(bigint_xor(promote_to_bigint(bv), promote_to_bigint(cv))); \
+                }                                                                      \
+                DISPATCH();                                                            \
             }                                                                          \
-        } else {                                                                       \
-            R(a) = val_int(val_as_int(bv) ^ val_as_int(cv));                           \
+            if (!throw_runtime_error_with_operands(                                    \
+                    (val_is_null(bv) || val_is_null(cv)) ? "位异或运算: null 不能参与运算" \
+                                                         : "位异或运算: 操作数必须是整数", \
+                    "BITXOR (^)", bv, cv, GET_CURRENT_LINE())) return -1;              \
+            frame = &vm.frames[vm.frame_cnt - 1];                                      \
+            DISPATCH();                                                                \
         }                                                                              \
+        R(a) = val_int(val_as_int(bv) ^ val_as_int(cv));                               \
         DISPATCH();                                                                    \
     }
     LABEL(OP_BITXOR):   BITXOR_BODY(VM_BIT_CV_REG())
@@ -291,24 +328,40 @@
     LABEL(OP_BITNOT): {
         int a = READ_A(), b = READ_B();
         Value bv = R(b);
-        if (VM_IS_BIG(bv)) {
-            R(a) = bigint_compact_to_int(bigint_not(val_as_bigint(bv)));
-        } else {
-            R(a) = val_int(~val_as_int(bv));
+        // 守卫形态见 BITAND_BODY 的 ⚠⚠（否定式：快路径必须能落空）
+        if (unlikely(!val_is_int(bv))) {
+            if (VM_IS_BIG(bv)) {
+                R(a) = bigint_compact_to_int(bigint_not(val_as_bigint(bv)));
+                DISPATCH();
+            }
+            // null 与其它非法类型：与栈式 op_bitwise.inc 的 BITNOT 同一句
+            if (!throw_runtime_error_with_operand("位非运算: 操作数必须是整数", "BITNOT (~)", bv, GET_CURRENT_LINE())) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
         }
+        R(a) = val_int(~val_as_int(bv));
         DISPATCH();
     }
 #define SHL_BODY(CV)                                                                   \
     {                                                                                  \
         int a = READ_A(), b = READ_B();                                                \
         Value bv = R(b), cv = (CV);                                                    \
-        int64_t sh = VM_IO(cv);                                                        \
-        /* bigint 操作数、移位量 >= 32（int48 结果必然越界）、或结果超 int48 ⇒ bigint 路径 */ \
-        if (VM_IS_BIG(bv) || VM_IS_BIG(cv) || sh < 0 || sh >= 32) {                     \
-            R(a) = bigint_compact_to_int(bigint_shl(promote_to_bigint(bv), (int)(sh < 0 ? 0 : sh))); \
+        int64_t shi = val_as_int(cv);   /* 先取（非 int48 时无意义，下面守卫会挡住）*/   \
+        if (unlikely(!val_is_int(bv) || !val_is_int(cv) || shi < 0 || shi >= 32)) {     \
+            if (val_is_null(bv) || val_is_null(cv)) {                                  \
+                if (!throw_runtime_error_with_operands("左移运算: null 不能参与运算",    \
+                        "SHL (<<)", bv, cv, GET_CURRENT_LINE())) return -1;            \
+                frame = &vm.frames[vm.frame_cnt - 1];                                  \
+                DISPATCH();                                                            \
+            }                                                                          \
+            /* bigint 操作数、或移位量 >= 32（int48 结果必然越界）⇒ bigint 路径（与改动前同口径）*/ \
+            {                                                                          \
+                int64_t sh = VM_IO(cv);                                                \
+                R(a) = bigint_compact_to_int(bigint_shl(promote_to_bigint(bv), (int)(sh < 0 ? 0 : sh))); \
+            }                                                                          \
             DISPATCH();                                                                \
         }                                                                              \
-        R(a) = val_int(val_as_int(bv) << sh);                                          \
+        R(a) = val_int(val_as_int(bv) << shi);                                         \
         DISPATCH();                                                                    \
     }
     LABEL(OP_SHL):   SHL_BODY(VM_BIT_CV_REG())
@@ -318,12 +371,21 @@
     {                                                                                  \
         int a = READ_A(), b = READ_B();                                                \
         Value bv = R(b), cv = (CV);                                                    \
-        int64_t sh = VM_IO(cv);                                                        \
-        if (VM_IS_BIG(bv) || VM_IS_BIG(cv) || sh < 0 || sh > 47) {                      \
-            R(a) = bigint_compact_to_int(bigint_shr(promote_to_bigint(bv), (int)(sh < 0 ? 0 : sh))); \
+        int64_t shi = val_as_int(cv);   /* 见 SHL_BODY */                               \
+        if (unlikely(!val_is_int(bv) || !val_is_int(cv) || shi < 0 || shi > 47)) {      \
+            if (val_is_null(bv) || val_is_null(cv)) {                                  \
+                if (!throw_runtime_error_with_operands("右移运算: null 不能参与运算",    \
+                        "SHR (>>)", bv, cv, GET_CURRENT_LINE())) return -1;            \
+                frame = &vm.frames[vm.frame_cnt - 1];                                  \
+                DISPATCH();                                                            \
+            }                                                                          \
+            {                                                                          \
+                int64_t sh = VM_IO(cv);                                                \
+                R(a) = bigint_compact_to_int(bigint_shr(promote_to_bigint(bv), (int)(sh < 0 ? 0 : sh))); \
+            }                                                                          \
             DISPATCH();                                                                \
         }                                                                              \
-        R(a) = val_int(val_as_int(bv) >> sh);                                          \
+        R(a) = val_int(val_as_int(bv) >> shi);                                         \
         DISPATCH();                                                                    \
     }
     LABEL(OP_SHR):   SHR_BODY(VM_BIT_CV_REG())
@@ -335,15 +397,28 @@
         Value vb = R(b), vc = (CV);                                                    \
         /* LenoC 的 int 是 48 位有符号：逻辑右移先截断为 48 位无符号再右移。 */          \
         /* 之前用 `(unsigned int)`（32 位）截断 ⇒ `-1 >>> 8` 得 16777215 而非 1099511627775 ✗ */ \
-        if (VM_IS_BIG(vb) || VM_IS_BIG(vc)) {                                          \
-            int64_t sh = VM_IO(vc);                                                    \
-            R(a) = bigint_compact_to_int(bigint_ushr(promote_to_bigint(vb), (int)(sh < 0 ? 0 : sh))); \
-        } else if (likely(val_is_int(vb) && val_is_int(vc))) {                          \
+        if (unlikely(!val_is_int(vb) || !val_is_int(vc))) {   /* 见 BITAND_BODY */      \
+            if (val_is_null(vb) || val_is_null(vc)) {                                  \
+                if (!throw_runtime_error_with_operands("逻辑右移运算: null 不能参与运算", \
+                        "USHR (>>>)", vb, vc, GET_CURRENT_LINE())) return -1;          \
+                frame = &vm.frames[vm.frame_cnt - 1];                                  \
+                DISPATCH();                                                            \
+            }                                                                          \
+            if (VM_IS_BIG(vb) || VM_IS_BIG(vc)) {                                      \
+                int64_t sh = VM_IO(vc);                                                \
+                R(a) = bigint_compact_to_int(bigint_ushr(promote_to_bigint(vb), (int)(sh < 0 ? 0 : sh))); \
+                DISPATCH();                                                            \
+            }                                                                          \
+            /* 其它非法类型：与栈式同句报错（改动前这里**静默返回 0** ✗）*/              \
+            if (!throw_runtime_error_with_operands("逻辑右移运算: 操作数必须是整数",     \
+                    "USHR (>>>)", vb, vc, GET_CURRENT_LINE())) return -1;              \
+            frame = &vm.frames[vm.frame_cnt - 1];                                      \
+            DISPATCH();                                                                \
+        }                                                                              \
+        {                                                                              \
             uint64_t uva = (uint64_t)val_as_int(vb) & PAYLOAD_MASK;                     \
             int64_t sh = val_as_int(vc);                                                \
             R(a) = val_int_safe((int64_t)(uva >> sh));                                  \
-        } else {                                                                       \
-            R(a) = val_int(0);                                                          \
         }                                                                              \
         DISPATCH();                                                                    \
     }

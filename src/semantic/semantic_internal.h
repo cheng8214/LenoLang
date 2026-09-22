@@ -56,6 +56,11 @@ ImportedModuleInfo* find_imported_module(Semantic* s, const char* alias);
 int add_upvalue(Ast* func_ast, const char* name, int index, int is_local, int is_value_capture);
 Symbol* resolve_variable_with_upvalue(Semantic* s, const char* name, SymRef* ref);
 
+// T11：「该变量的值**确定为 null**」⇒ 编译错误（教程：null 不能参与算术运算）。
+//   判据是 Symbol.is_null_value —— 声明即 null 且此后没被写过（见 visit_var.inc 的置位/清位点，
+//   与 semantic_type.c 的 report_known_null_name 实现）。
+void report_known_null_name(Semantic* s, const char* name, int line, int column);
+
 // ============================================================================
 // 前置声明 - AST 访问
 // ============================================================================

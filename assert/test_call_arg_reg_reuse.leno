@@ -37,7 +37,10 @@ struct Sun {
 
 struct Plant {
     int row
-    float aframe
+    float aframe = 0.0    // ★ 必须有默认值（T11）：`p.aframe = stepFrame(1, p.aframe)`
+                          //   里 `f + 1.0` 会读到它；不写默认值则初值是 null ⇒
+                          //   现在按规则报「null 不能参与运算」（此前静默当 0 —— 正是
+                          //   文档「值类型字段必须指定默认值」警告的那种写法）
     float x
     float y
     int timer

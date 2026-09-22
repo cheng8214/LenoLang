@@ -1157,11 +1157,14 @@ void gen_binop(CodeGen* gen, Ast* ast, int dst) {
         r = gen_expr(gen, rhs);
     }
 
-    // ★ 类型特化（与栈式 codegen_expr.c 口径一致）：两侧静态类型都是 int 时
-    //   走 int 专用指令。**这不只是性能差异**：int 专用指令把 null 视作 0
-    //   （`val_as_int(NULL_VAL) == 0`，TAG_NULL = 0），而通用 ADD 会报
-    //   「null 不能参与运算」—— 实测 `merge(o){ return x + o.x }` 里未赋值的
-    //   int 字段 x 在栈式得 3、寄存式报错 ✗（test_cross_module_method_args ⑥）。
+    // ★ 类型特化（与栈式 codegen_expr.c 口径一致）：两侧静态类型都是 int 时走 int 专用指令。
+    //   这**只是性能差异**，语义与通用指令完全一致 —— 包括 null 的处理：
+    //   特化指令的运行期守卫同样是「两侧都是 int48」才走快路径，null 一律报
+    //   「null 不能参与运算」（T11，见 src/vm/vminc/run/03_arith.inc 的 OP_ADD_INT）。
+    //   ⚠ 历史：此前特化指令把 null 静默读成 0（`val_as_int(NULL_VAL) == 0`，TAG_NULL = 0），
+    //     于是 `merge(o){ return x + o.x }` 里未赋值的 int 字段 x 会静默算 0 —— 与教程
+    //     「null 不能参与算术运算」冲突，2026-09-22 按作者决定统一改成报错：
+    //     值类型字段因此**必须写默认值**（文档本来就这么要求）。
     TypeKind lt = (lhs && lhs->cached_type) ? lhs->cached_type->kind : TYPE_UNKNOWN;
     TypeKind rt = (rhs && rhs->cached_type) ? rhs->cached_type->kind : TYPE_UNKNOWN;
     int both_int = (lt == TYPE_INT && rt == TYPE_INT);

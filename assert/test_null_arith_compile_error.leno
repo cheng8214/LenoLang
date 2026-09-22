@@ -1,0 +1,95 @@
+// test_null_arith_compile_error.leno —— T11：null 不能参与运算（**编译期**那一半）
+//
+// 教程承诺：`null + 1` 是**编译错误**、`int? a = null; a + 1` 是「编译警告 + 运行时报错」。
+// 本次按作者决定把**编译期就能确定**的情形全部提到编译期报错：
+//   ① `null + 1`（字面量）—— 一直是编译错误（操作数类型就是 TYPE_NULL），此处做守卫
+//   ② `var a = null` 之后未重新赋值 → 用到时值**确定为 null** ⇒ 编译错误（新增）
+//   ③ `int? a = null` 之后未重新赋值 → 同理 ⇒ 编译错误（新增）
+//   ④ 上面两种形态的**复合赋值**（`a += 1`）与**一元取负**（`-a`）、**位运算**（`a & 1`）同口径
+//
+// ⚠ 另一半（编译期判不出的：**未赋默认值的值类型字段**）见 assert/test_null_arith_error.leno ——
+//   那类由 VM 的运行期检查兜底。
+//
+// ⚠⚠ 用例的后半段是**误报守卫**（本改动最大的风险面）：只要变量被写过（`a = v` / `a += v` /
+//   闭包内赋值 / 循环里赋值），或本来就不确定（参数、字段、全局），就**必须编译通过** ——
+//   误报会让本来能跑的程序编译不过，比漏报严重得多。
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+
+// ① 字面量：编译错误（既有行为，守卫）
+func case_literal(string work): string {
+    var f = dirs.join(work, "lit.leno")
+    files.write(f, "main() {\n    print(null + 1)\n}\n")
+    return ce.expect_error(f, "字面量 null 参与算术必须编译报错", "null 类型不能参与算术运算", 2)
+}
+
+// ② `int? a = null` 后未赋值 ⇒ 编译错误（本次新增）
+func case_nullable(string work): string {
+    var f = dirs.join(work, "nullable.leno")
+    files.write(f, "main() {\n    int? a = null\n    print(a + 1)\n}\n")
+    return ce.expect_error(f, "int? a = null 后参与算术必须编译报错", "值确定为 null", 3)
+}
+
+// ③ `var a = null` 后未赋值 ⇒ 编译错误（本次新增）
+func case_inferred(string work): string {
+    var f = dirs.join(work, "inferred.leno")
+    files.write(f, "main() {\n    var a = null\n    print(a + 1)\n}\n")
+    return ce.expect_error(f, "var a = null 后参与算术必须编译报错", "值确定为 null", 3)
+}
+
+// ④ 复合赋值 / 一元取负 / 位运算 同口径
+func case_other_forms(string work): string {
+    var f = dirs.join(work, "forms.leno")
+    files.write(f, "main() {\n    int? a = null\n    a += 1\n    print(a)\n    print(-a)\n    print(a & 1)\n}\n")
+    return ce.expect_error(f, "复合赋值/取负/位运算都要编译报错", "值确定为 null", 3)
+}
+
+// ⑤ **误报守卫**：赋过值之后照常运算 ⇒ 必须编译通过并跑对
+func case_no_false_positive(string work): string {
+    var f = dirs.join(work, "fp.leno")
+    files.write(f,
+        "main() {\n"
+        + "    int? a = null\n"
+        + "    a = 7\n"
+        + "    print(\"A=\" + (a + 1))\n"
+        + "    var b = null\n"
+        + "    var c = false\n"
+        + "    if c { b = 5 }\n"
+        + "    print(\"B=\" + (b == null))\n"
+        + "    int? d = null\n"
+        + "    d = 0\n"
+        + "    d += 3\n"
+        + "    print(\"D=\" + (d * 2))\n"
+        + "    int? e = null\n"
+        + "    var setter = func() { e = 9 }\n"
+        + "    setter()\n"
+        + "    print(\"E=\" + (e + 1))\n"
+        + "    int? g = null\n"
+        + "    for 0 : 2 to g {\n"
+        + "        print(\"G=\" + g)\n"
+        + "    }\n"
+        + "}\n")
+    // 逐项都在输出里核对（A=8 / B=true / D=6 / E=10 / G=0,1,2）
+    ce.expect_ok(f, "赋过值/被遮蔽的变量不得误报（A=8）", "A=8")
+    ce.expect_ok(f, "声明后仅条件赋值的不得误报（B=true）", "B=true")
+    ce.expect_ok(f, "复合赋值清标志后不得误报（D=6）", "D=6")
+    ce.expect_ok(f, "闭包内赋值后不得误报（E=10）", "E=10")
+    return ce.expect_ok(f, "for 迭代变量同名遮蔽不得误报（G=2）", "G=2")
+}
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_null_arith_ce")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    case_literal(work)
+    case_nullable(work)
+    case_inferred(work)
+    case_other_forms(work)
+    case_no_false_positive(work)
+
+    dirs.delete(work)
+    print("test_null_arith_compile_error passed")
+}
