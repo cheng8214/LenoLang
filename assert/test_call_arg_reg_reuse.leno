@@ -1,0 +1,136 @@
+// test_call_arg_reg_reuse.leno
+// ============================================================================
+// 回归断言：**语句位置的调用，实参槽不能被后续临时寄存器覆盖**
+// ----------------------------------------------------------------------------
+// 真实崩溃（本断言就是它压出来的）：
+//   leno_gui/游戏/植物大战僵尸/pvz.leno 的 updatePlants 里
+//       p.timer = 0
+//       p.fuse = 1
+//       spawnSunAt(g, p.x - 6.0, p.y - 60.0, false, p.y - 8.0)
+//   生成的字节码是：实参0 `g` 落在 R20，随后求 `p.x - 6.0` 的 float 常量也拿到 R20
+//   ⇒ R20 变成 6.0 ⇒ 被调方 spawnSunAt 的局部 0（参数 g）是 float
+//   ⇒ 第 343 行 `g.suns` 报「字段访问需要结构体对象」，游戏渲染直接退出。
+//
+// 根因（codegen 的空闲寄存器栈）：
+//   ① 逐语句回退 next_reg（gen_block）时，空闲栈只按"深度"截断、不按"值"修剪
+//      ⇒ 栈里会留下 ≥ next_reg 的"陈旧槽位"（此刻悬空）；
+//   ② 调用点预留实参块有一条 `base = dst` 的快路径（省一条结果 MOV），它只抬高
+//      next_reg、**不清/不修剪空闲栈** ⇒ ①里的陈旧槽位被重新"合法化"；
+//   ③ 变量声明改 next_reg 时同样不把该槽位从空闲栈摘掉。
+//   三者叠加：陈旧槽位若落在实参区（base+1..base+nargs），求值实参时的 reg_alloc
+//   就会把它发出去，把**已经放好的实参**盖掉（静默错值，只有被调方用到才发现）。
+//
+// 修复：src/include/leno_codegen.h 的 reg_prune_free_from / reg_reserve_call_block
+//   （预留调用块、变量声明两处都丢掉落在保留区间里的空闲槽位）。
+//
+// 复现要素（缺一不可，改动时别丢）：
+//   · 调用在**语句位置**（dst 来自 reg_alloc ⇒ 可能正好是那个陈旧槽位）；
+//   · 调用前有"两次字段赋值 + 一次调用赋值 + 一个 var 声明 + 一层嵌套 if"，
+//     它们把空闲栈/高水位推到那个状态（`p.aframe = stepFrame(...)` 那次调用是关键）；
+//   · 实参里必须有**需要临时寄存器**的表达式（float 字段运算 `p.x - 6.0`）；
+//   · 首参是一个**普通变量**（旧代码下它就是被踩的那个槽位）。
+// ============================================================================
+
+struct Sun {
+    float x
+}
+
+struct Plant {
+    int row
+    float aframe
+    float x
+    float y
+    int timer
+    int fuse
+    bool alive
+}
+
+struct Game {
+    int state
+    int frameCount
+    int sun
+    int wave
+    int killed
+    int waveState
+    int waveTimer
+    int skyTimer
+    Array[Plant] plants
+    Array[Sun] suns
+    int pCount
+}
+
+var called = 0
+var bad = 0
+
+// tag 固定传 7；槽位被 float 临时寄存器踩到时会是 6.0 / 60.0 / 8.0 之类
+func spawnSunAt(int tag, float x, float y, bool falling, float ty) {
+    called = called + 1
+    if tag != 7 {
+        print("FAIL: 实参 tag 被覆盖，实际 = " + tag)
+        bad = bad + 1
+    }
+    if x < 93.0 or x > 95.0 {            // p.x(100.0) - 6.0
+        print("FAIL: 实参 x 错，实际 = " + x)
+        bad = bad + 1
+    }
+    if y < 139.0 or y > 141.0 {          // p.y(200.0) - 60.0
+        print("FAIL: 实参 y 错，实际 = " + y)
+        bad = bad + 1
+    }
+    if falling != false {
+        print("FAIL: 实参 falling 错")
+        bad = bad + 1
+    }
+}
+
+func stepFrame(int n, float f): float {
+    return f + 1.0
+}
+
+func updatePlants(Game g) {
+    Array[Plant] live = []
+    for g.plants to p {
+        if not p.alive { continue }
+        p.timer = p.timer + 1
+        p.aframe = stepFrame(1, p.aframe)
+        var need = 100
+        if p.fuse == 0 { need = 3 }
+        if p.timer >= need {
+            p.timer = 0
+            p.fuse = 1
+            spawnSunAt(7, p.x - 6.0, p.y - 60.0, false, p.y - 8.0)
+        }
+        live.add(p)
+        continue
+    }
+    g.plants = live
+}
+
+main() {
+    var g = new Game()
+    g.wave = 7
+    var p = new Plant()
+    p.alive = true
+    p.timer = 9
+    p.fuse = 0
+    p.x = 100.0
+    p.y = 200.0
+    g.plants.add(p)
+
+    var i = 0
+    for 0 : 5 to i {
+        updatePlants(g)
+    }
+
+    // 调用必须**真的发生过**：否则实参检查全都不执行，断言会变成空转
+    if called != 1 {
+        print("FAIL: spawnSunAt 调用次数应为 1，实际 = " + called)
+        bad = bad + 1
+    }
+
+    if bad > 0 {
+        print("test_call_arg_reg_reuse FAILED: " + bad + " 处")
+        _exit(1)
+    }
+    print("test_call_arg_reg_reuse ok")
+}

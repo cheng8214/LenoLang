@@ -177,6 +177,38 @@ static inline void reg_free_block(CodeGen* gen, int base) {
     }
 }
 
+// 丢掉空闲栈里 >= base 的条目（保留 base 以下的，它们仍然可安全复用）
+// ----------------------------------------------------------------------------
+// 为什么必须有这一步：`reg_alloc_block` 会 `freetop = 0`，但**调用点取 dst 为基址**
+// 的那条路径（`base = dst`，为省一条结果 MOV）**不经过**它。于是"更早的语句/变量声明"
+// 留在空闲栈里的陈旧槽位会一直有效，只要它落在**新预留的实参区**（base+1..）里，
+// 求值实参时的 reg_alloc 就会把它当临时寄存器发出去，把实参盖掉。
+// 实测（pvz.leno 植物大战僵尸 render 路径崩溃的真凶）：
+//     updatePlants 里 `spawnSunAt(g, p.x - 6.0, p.y - 60.0, false, p.y - 8.0)`
+//     ⇒ 实参0 `g` 落在 R20，随后 `p.x - 6.0` 的 float 常量临时寄存器也拿到 R20
+//       （`reg_alloc` 弹到了那个陈旧槽位）⇒ R20 变成 6.0
+//     ⇒ 被调方 spawnSunAt 的局部 0（参数 g）是 float ⇒ 343 行 `g.suns` 报
+//        「字段访问需要结构体对象」，游戏直接退出。
+// 同一论证也适用于"新局部变量的槽位"：那个槽位从此属于变量，绝不能当临时寄存器发出去。
+static inline void reg_prune_free_from(CodeGen* gen, int base) {
+    if (gen->freetop > 0 && gen->free_regs) {
+        int keep = 0;
+        for (int i = 0; i < gen->freetop; i++) {
+            if (gen->free_regs[i] < base) gen->free_regs[keep++] = gen->free_regs[i];
+        }
+        gen->freetop = keep;
+    }
+}
+
+// 预留调用块 [base, base+n)：抬高寄存器高水位 + 丢掉落在块内的空闲槽位。
+// 收尾用 reg_free_block(gen, base)（已含同样的修剪）。
+static inline void reg_reserve_call_block(CodeGen* gen, int base, int n) {
+    int need = base + n;
+    if (need > gen->next_reg) gen->next_reg = need;
+    if (need > gen->max_reg) gen->max_reg = need;
+    reg_prune_free_from(gen, base);
+}
+
 // 进入作用域：记录当前 next_reg 为 scope_base
 static inline void reg_scope_enter(CodeGen* gen) {
     // 保存当前 scope_base，push 到 next_reg 之前的位置

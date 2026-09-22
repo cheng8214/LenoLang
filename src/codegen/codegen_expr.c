@@ -1224,9 +1224,10 @@ static void gen_method_call(CodeGen* gen, Ast* obj_ast, const char* mname,
     //   这样结果天然落在 dst，省掉收尾的 MOV（与全局函数直呼 OP_CALL_GLOBAL_FUNC 同一手法）。
     int dst_safe = (dst + 1 == gen->next_reg || dst >= gen->next_reg);
     int base = dst_safe ? dst : reg_alloc_block(gen, expected + 1);
-    int need = base + expected + 1;
-    if (need > gen->next_reg) gen->next_reg = need;
-    if (need > gen->max_reg) gen->max_reg = need;
+    // ★ 抬高寄存器高水位**并**丢掉落在 [base, base+expected] 里的陈旧空闲槽位：
+    //   dst_safe 分支不经过 reg_alloc_block（不会清空闲栈），陈旧槽位若落在实参区
+    //   就会被求值实参时的 reg_alloc 发出去、把实参盖掉（见 reg_reserve_call_block）。
+    reg_reserve_call_block(gen, base, expected + 1);
 
     // ★ 求值顺序：**先实参（含默认值）后接收者**。
     //   原先"先接收者、后实参"会让实参的取值指令夹在 OP_GET_METHOD 与 OP_CALL 之间，
@@ -1348,10 +1349,10 @@ void gen_call(CodeGen* gen, Ast* ast, int dst) {
                 int dst_safe = (dst + 1 == gen->next_reg || dst >= gen->next_reg);
                 int base = dst_safe ? dst : reg_alloc_block(gen, expected + 1);
                 // 先把实参区（base+1 .. base+expected）抬进临时区，免得求值实参时
-                // 分配的临时寄存器把实参槽盖掉
-                int need = base + expected + 1;
-                if (need > gen->next_reg) gen->next_reg = need;
-                if (need > gen->max_reg) gen->max_reg = need;
+                // 分配的临时寄存器把实参槽盖掉。
+                // ★ 只抬 next_reg 还不够：空闲栈里的**陈旧槽位**同样会被 reg_alloc 发出，
+                //   所以要把落在实参区里的空闲槽位一并丢掉（见 reg_reserve_call_block）。
+                reg_reserve_call_block(gen, base, expected + 1);
                 // ★ typed 版（T10-⑤）：实参静态类型与形参声明类型**逐个相同**且都限定在
                 //   {int, float} —— 这正好是建帧时那套转换**唯一**会动的两种类型 ⇒ 可以
                 //   跳过逐参数转换循环（每参数省 4–6 个判断/转换）。

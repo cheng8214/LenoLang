@@ -282,6 +282,17 @@ void gen_block(CodeGen* gen, Ast* ast) {
         if (gen->next_reg > _nr_before) {
             gen->next_reg = _nr_before;
             if (gen->freetop > _ft_before) gen->freetop = _ft_before;
+            // ★ 回退高水位后还必须**按值**修剪空闲栈：栈里保留下来的号可能 ≥ next_reg
+            //   （本语句之前压进去的），此刻它们只是"悬空"（reg_alloc 弹出时才丢弃），
+            //   但一旦后续某个调用点把 next_reg 抬高（预留实参块），它们就**重新合法**，
+            //   而那个槽位很可能正落在实参区里 ⇒ 求值实参时的临时寄存器把实参盖掉。
+            //   实测（植物大战僵尸 渲染崩溃的真凶）：updatePlants 里
+            //     `p.timer = 0` / `p.fuse = 1`（临时 R19/R20，语句结束回退高水位到 20）
+            //     → `spawnSunAt(g, p.x - 6.0, ...)`：dst=R19、base=R19、
+            //     实参0 g 落在 R20，而空闲栈里那个悬空的 20 被抬高水位重新合法化、
+            //     被 `p.x - 6.0` 的 float 常量临时寄存器拿去 ⇒ g 变成 6.0
+            //     ⇒ 被调方报「字段访问需要结构体对象」。
+            reg_prune_free_from(gen, gen->next_reg);
         }
     }
     // 块结束：逆序析构本层声明的带析构函数 struct 局部变量（栈式同一语义）
@@ -1025,6 +1036,11 @@ static void gen_var_decl(CodeGen* gen, Ast* ast) {
         gen->next_reg = dst + 1;
         if (gen->next_reg > gen->max_reg) gen->max_reg = gen->next_reg;
     }
+    // ★ 这个槽位从此属于**变量**，绝不能再当临时寄存器发出去：空闲栈里若恰好留着
+    //   同一个号（它曾经是临时寄存器），必须丢掉 —— 否则后续 reg_alloc 会把它发出去，
+    //   把刚声明的变量就地覆盖（静默错值，比报错更难查）。
+    //   （语义阶段的槽位计数器与 codegen 的 next_reg 各算各的，两者并不总是同步。）
+    reg_prune_free_from(gen, dst);
 
     if (ast->u.var_decl.init) {
         gen_expr_to(gen, ast->u.var_decl.init, dst);
