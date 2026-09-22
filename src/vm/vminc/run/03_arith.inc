@@ -130,7 +130,13 @@
                 frame = &vm.frames[vm.frame_cnt - 1];
                 DISPATCH();
             }
-            R(a) = val_int(val_as_int(bv) / dv);
+            // ★ 用 val_int_safe：int48 除法**只有一个**越界组合 ——
+            //   INT48_MIN / -1 == +2^47 == INT48_MAX + 1，越出 int48 上界。
+            //   原先直接 val_int(...) 会把它**静默回绕**成 -140737488355328（负号都没了），
+            //   而本语言对 int48 越界的一贯约定是**提升 bigint**（见 OP_NEG / OP_SHL /
+            //   VM_INT_RESULT）⇒ 这里必须同口径。其余任何 (bv, dv) 组合结果都在
+            //   [-2^47, 2^47-1] 内，走不到提升分支，热路径代价只是一次范围比较。
+            R(a) = val_int_safe(val_as_int(bv) / dv);
             DISPATCH();
         }
         if (val_is_float(bv) || val_is_float(cv)) {

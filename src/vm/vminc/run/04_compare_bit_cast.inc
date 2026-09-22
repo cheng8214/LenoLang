@@ -379,7 +379,22 @@
             }                                                                          \
             DISPATCH();                                                                \
         }                                                                              \
-        R(a) = val_int(val_as_int(bv) << shi);                                         \
+        /* ★ 左移越界必须提升 bigint（与栈式同口径）。上面那道守卫只看**移位量**（shi < 32）， \
+           看不到**左值大小** ⇒ 左值本身在 int48 内、移位量也合法，结果照样能越界： \
+           `123456789012345 << 3` 曾算出 -138245594743864（栈式 987654312098760）—— \
+           val_int() 会把越界位**静默截断**成 48 位。 \
+           ⚠ 判据必须**先比阈值、再移位**：左值有 48 位有效位、shi 最大 31 ⇒ 结果可达 79 位， \
+             先移位会撞上 int64 左移溢出（UB），回绕后的值还会被误判成"在范围内" \
+             （实测 `hi << 1`（hi = 2^47-1）就是这么算成 -2 的）。 \
+           阈值取 INT48_MAX >> shi / INT48_MIN >> shi（算术右移，负数侧得 -2^(47-shi)）。 */ \
+        {                                                                              \
+            int64_t x = val_as_int(bv);                                                \
+            if (likely(x <= (INT48_MAX >> shi) && x >= (INT48_MIN >> shi))) {          \
+                R(a) = val_int(x << shi);                                              \
+            } else {                                                                   \
+                R(a) = bigint_compact_to_int(bigint_shl(promote_to_bigint(bv), (int)shi)); \
+            }                                                                          \
+        }                                                                              \
         DISPATCH();                                                                    \
     }
     LABEL(OP_SHL):   SHL_BODY(VM_BIT_CV_REG())
