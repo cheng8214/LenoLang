@@ -184,11 +184,15 @@
         [OP_INVOKE_METHOD_TYPED] = &&LABEL(OP_INVOKE_METHOD_TYPED),
     };
 
+    // ★ 行号**不再每条指令写回**：`vm.current_line` 在本仓库**没有 VM 内读者** ——
+    //   原生函数取当前行走 native_get_current_line()（native.c:1504），它自己从
+    //   frame->ip / chunk->lines **重算**，只在"拿不到帧"时才回退到该字段。
+    //   原先每条指令都要 2 次依赖加载（chunk → lines）+ 1 次写；路线图 ⑤-c 的消融值是 7–13%。
+    //   （字段仍保留：宿主/回调等"帧不可用"的场景由它兜底，初值 0 见本文件开头。）
     #define DISPATCH() \
         do { \
             uint8_t op = frame->ip[0]; \
             ADVANCE(); \
-            vm.current_line = GET_CURRENT_LINE(); \
             goto *jump_table[op]; \
         } while (0)
 
@@ -268,7 +272,7 @@
             {
                 uint8_t op = frame->ip[0];
                 ADVANCE();
-                vm.current_line = GET_CURRENT_LINE();
+                // 行号不再每条指令写回（理由见上面 DISPATCH 宏处的注释）
                 switch (op) {
     #endif
 
