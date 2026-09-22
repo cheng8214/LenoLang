@@ -387,12 +387,17 @@ static int decode_trailing(Chunk* chunk, int offset, char* desc, size_t desc_siz
             if (desc) {
                 int off = bx - 32768;
                 int lhs = (int)chunk->code[offset + 1];
+                // C 的 bit6 是**极性**（0 = 比较为假则跳 / 1 = 比较为真则跳）——
+                //   必须照实打印：`while` 的回边就是用 bit6 融合出来的，
+                //   都印成"为假则跳"会让人按着反汇编反推错语义（文档里记过
+                //   "调试时按名字查错指令、白折腾"的教训）。
+                const char* pol = (c & 0x40) ? "为真则跳" : "为假则跳";
                 if (c & 0x80) {
-                    snprintf(desc, desc_size, "为假则跳 %+d（比较 R[%d] 与立即数 %d）",
-                             off, lhs, (int)(int8_t)b);
+                    snprintf(desc, desc_size, "%s %+d（比较 R[%d] 与立即数 %d）",
+                             pol, off, lhs, (int)(int8_t)b);
                 } else {
-                    snprintf(desc, desc_size, "为假则跳 %+d（比较 R[%d] 与 R[%d]）",
-                             off, lhs, (int)b);
+                    snprintf(desc, desc_size, "%s %+d（比较 R[%d] 与 R[%d]）",
+                             pol, off, lhs, (int)b);
                 }
             }
             break;

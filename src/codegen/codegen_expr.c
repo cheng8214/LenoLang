@@ -123,7 +123,7 @@ void emit_as_cast_to(CodeGen* gen, int reg, TypeInfo* t, int line) {
 //      upvalue / 全局 / 模块需要真正的取值指令，不走这条）；
 //   ③ 右操作数是 int 字面量（∈[-128,127] ⇒ int8 立即数形式）或另一个局部变量/参数。
 // 成功返回跳转偏移的回填位置（供 patch_jmp 用），失败返回 -1（调用方走原路径）。
-int try_emit_cmpjmp(CodeGen* gen, Ast* cond, int line) {
+int try_emit_cmpjmp(CodeGen* gen, Ast* cond, int want_true, int line) {
     // 诊断 / 基准开关：`LENO_NO_CMPJMP=1` 关掉融合 —— **同一份二进制**里就能做 A/B，
     // 不必重新构建两次（跨构建比较会被机器频率漂移污染，实测被误导过一次）。
     // 与栈式的 `LENO_NO_CMPJMP` 同名同义（见其 codegen_stmt.c 的 try_emit_cmpjmp）。
@@ -157,7 +157,7 @@ int try_emit_cmpjmp(CodeGen* gen, Ast* cond, int line) {
     if (r->kind == AST_NUM && !r->u.num.is_float && !r->u.num.is_bigint) {
         double dv = r->u.num.value;
         if (dv >= -128.0 && dv <= 127.0) {
-            return emit_cmpjmp(gen, op, a, (int)dv, 1, line);
+            return emit_cmpjmp(gen, op, a, (int)dv, 1, want_true, line);
         }
         return -1;      // 立即数超出 int8 ⇒ 交给原路径
     }
@@ -166,7 +166,7 @@ int try_emit_cmpjmp(CodeGen* gen, Ast* cond, int line) {
     if (r->kind == AST_VAR) {
         SymRef* rref = &r->u.var.ref;
         if ((rref->kind == SYM_LOCAL || rref->kind == SYM_PARAM) && rref->index >= 0) {
-            return emit_cmpjmp(gen, op, a, rref->index, 0, line);
+            return emit_cmpjmp(gen, op, a, rref->index, 0, want_true, line);
         }
     }
     return -1;

@@ -166,8 +166,10 @@ void emit_strcat(CodeGen* gen, int dst, int b, int c, int line);
 int emit_jmp(CodeGen* gen, int line);
 int emit_jmp_if_false(CodeGen* gen, int a, int line);
 // 「比较 + 条件跳转」融合（T10-①）：返回跳转偏移回填位置（失败返回 -1 ⇒ 走原路径）
-int emit_cmpjmp(CodeGen* gen, OpCode op, int a, int b, int is_imm, int line);
-int try_emit_cmpjmp(CodeGen* gen, Ast* cond, int line);
+//   want_true = 0：比较为**假**则跳（if / while 入口用，与 JMP_IF_FALSE 同向）
+//   want_true = 1：比较为**真**则跳（while 回边用 —— 这样回边不必再跟一条独立 OP_JMP）
+int emit_cmpjmp(CodeGen* gen, OpCode op, int a, int b, int is_imm, int want_true, int line);
+int try_emit_cmpjmp(CodeGen* gen, Ast* cond, int want_true, int line);
 // 语句位置的 `arr.add(x)` ⇒ OP_ARRAY_APPEND(need_result=0)（T10-②）成功返回 1
 int try_emit_stmt_array_add(CodeGen* gen, Ast* e);
 // 语句位置的 `i++`/`++i`/`i--`（局部量/参数）⇒ 只发 OP_INC/OP_DEC（省掉搬旧值的 MOV）

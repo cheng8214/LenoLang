@@ -300,13 +300,18 @@ int emit_jmp_if_true(CodeGen* gen, int a, int line) {
 }
 
 // 「比较 + 条件跳转」融合（T10-①）：返回跳转偏移的写入位置（用 patch_jmp 回填）。
-//   语义 = 「比较为假则跳」，与 `emit_*_int[_imm] + emit_jmp_if_false` 逐条等价。
+//   语义 = 「比较为假则跳」（want_true=0）或「比较为真则跳」（want_true=1）；
+//   want_true=0 时与 `emit_*_int[_imm] + emit_jmp_if_false` 逐条等价。
 //   is_imm=1 时 b 是 int8 立即数，否则 b 是右操作数寄存器号。
 //   ⚠ 这条指令占 **8 字节**（第二个 4 字节字携带偏移）；patch_jmp / patch_jmp_to
 //     会按 opcode 自动选对尺寸（见 instr_bytes_at）。
-int emit_cmpjmp(CodeGen* gen, OpCode op, int a, int b, int is_imm, int line) {
+int emit_cmpjmp(CodeGen* gen, OpCode op, int a, int b, int is_imm, int want_true, int line) {
     int pos = gen->chunk->len;
-    reg_encode_iABC(gen->chunk, op, a, b, is_imm ? 0x80 : 0, line);
+    // C 字段只当标志用（两个操作数在 A/B）：bit7 = 立即数标志，bit6 = 「真则跳」极性。
+    // bit6 在**两种模式下**都是空闲位（原先寄存器模式恒 0、立即数模式只用 bit7）
+    // ⇒ 加极性不需要新 opcode、也不动既有编码。
+    int flags = (is_imm ? 0x80 : 0) | (want_true ? 0x40 : 0);
+    reg_encode_iABC(gen->chunk, op, a, b, flags, line);
     chunk_write(gen->chunk, 0, line);   // 第二个字：16 位偏移占位
     chunk_write(gen->chunk, 0, line);
     chunk_write(gen->chunk, 0, line);

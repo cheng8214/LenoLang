@@ -397,7 +397,7 @@ void gen_if_ex(CodeGen* gen, Ast* ast, int want_value, int dst) {
         reg_free(gen, c2);
     } else {
         // 先试「比较 + 条件跳转」融合（T10-①）：成功则一条指令搞定，且不占结果寄存器
-        jmp_false = try_emit_cmpjmp(gen, cond_ast, ast->line);
+        jmp_false = try_emit_cmpjmp(gen, cond_ast, 0, ast->line);
         if (jmp_false < 0) {
             int cond = gen_expr(gen, cond_ast);
             jmp_false = emit_jmp_if_false(gen, cond, ast->line);
@@ -434,20 +434,36 @@ void gen_if_ex(CodeGen* gen, Ast* ast, int want_value, int dst) {
 // while
 // ============================================================================
 
+// while —— **回边融合**（把条件的重测放在循环体之后，复用「比较 + 条件跳转」指令）
+// ----------------------------------------------------------------------------
+// 原形态（每轮 2 条控制指令）：
+//     head:  CMPJMP_false(cond) → exit
+//            <body>
+//            JMP head                    ← 独立的回边，白付一次派发
+//     exit:
+// 现形态（每轮 1 条控制指令）：
+//     entry: CMPJMP_false(cond) → exit  ; 入口测一次（与原来完全一样）
+//     body:  <body>
+//            CMPJMP_true(cond) → body   ; 回边：比较与跳转融合，省掉那条 JMP
+//     exit:  （fall through 即为退出）
+// 语义等价性：
+//   · 条件求值次数不变（入口 1 次 + 每轮结束 1 次 = N+1，与原形态相同）；
+//   · `break` → exit（不变）；`continue` → **回边那一次条件重测**，语义与
+//     "跳回循环头重测"完全相同（只是少走一条 JMP）；
+//   · 融合不成立时（复合条件、非 int 比较…）回退成 `cond + JMP_IF_TRUE body`，
+//     仍是每轮 2 条控制指令 —— 与原形态的 `cond + JMP_IF_FALSE + JMP` 比还省一条。
 static void gen_while(CodeGen* gen, Ast* ast) {
-    int loop_start = gen->chunk->len;
-
     // 压入循环上下文
     LoopContextNode* node = (LoopContextNode*)malloc(sizeof(LoopContextNode));
     node->prev = gen->loop_head;
     node->ctx.break_count = 0;
     node->ctx.continue_count = 0;
-    node->ctx.continue_target = loop_start;
+    node->ctx.continue_target = 0;      // 本形态不用（continue 统一在下面回填）
     gen->loop_head = node;
     gen->loop_count++;
 
-    // 求值条件（先试「比较 + 条件跳转」融合，T10-①；不满足条件时走原两条指令路径）
-    int jmp_end = try_emit_cmpjmp(gen, ast->u.while_.cond, ast->line);
+    // 入口：条件为假则跳出（先试融合，T10-①；不满足时走原两条指令路径）
+    int jmp_end = try_emit_cmpjmp(gen, ast->u.while_.cond, 0, ast->line);
     if (jmp_end < 0) {
         int cond = gen_expr(gen, ast->u.while_.cond);
         jmp_end = emit_jmp_if_false(gen, cond, ast->line);
@@ -455,13 +471,48 @@ static void gen_while(CodeGen* gen, Ast* ast) {
     }
 
     // 循环体
+    int body_start = gen->chunk->len;
     gen_stmt(gen, ast->u.while_.body);
 
-    // 回跳
-    emit_loop(gen, loop_start, ast->line);
+    // 回边：条件为真则跳回循环体
+    int back_pos = gen->chunk->len;                  // continue 的回填目标
+    // ⚠ 尺寸闸门：CMPJMP / JMP_IF_TRUE 的偏移是 **16 位带偏置**（-32768..32767），
+    //   而 `patch_common` 对超范围是**截断到边界**而不是报错 ⇒ 超长循环体会**静默跳错**。
+    //   （原形态的回边是 `emit_loop` 的 OP_JMP，24 位、8MB 内都安全；换成融合回边后
+    //     必须自己挡这一下，否则是"改动引入了静默错值"。）
+    //   偏移 = body_start - back_pos - 8（融合指令 8 字节）；够用才走融合。
+    int back_fits = (body_start - back_pos - 8) >= -32768;
+    if (back_fits) {
+        int back = try_emit_cmpjmp(gen, ast->u.while_.cond, 1, ast->line);
+        if (back >= 0) {
+            patch_jmp_to(gen, back, body_start);     // 向后跳（patch_common 支持负偏移）
+        } else {
+            int cond = gen_expr(gen, ast->u.while_.cond);
+            int jt = emit_jmp_if_true(gen, cond, ast->line);
+            reg_free(gen, cond);
+            patch_jmp_to(gen, jt, body_start);
+        }
+    } else {
+        // 超大循环体（>32KB 字节码）：回退到 24 位的无条件回跳，
+        //   `cond; JMP_IF_FALSE → 跳过; JMP body` —— 宁可多一条也不静默跳错。
+        int cond = gen_expr(gen, ast->u.while_.cond);
+        int jf = emit_jmp_if_false(gen, cond, ast->line);
+        reg_free(gen, cond);
+        emit_loop(gen, body_start, ast->line);
+        patch_jmp(gen, jf);
+    }
+
+    // patch continue 跳转 —— ⚠ 这里曾经**漏了**，导致 `while` 里的 `continue`
+    //   退化成空操作（OP_JMP 偏移停在 0 ⇒ 不跳，而是继续执行循环体剩下的语句）。
+    //   是**静默错值**：`while i < 10 { i++; if i == 5 { continue }; s += i }`
+    //   实测 s=55（应为 50），而套件当时 359 项全绿 —— 因为 `continue` 的用例
+    //   （test_control_flow / test_for）全都在 `for` 里，没有一例在 `while` 里。
+    //   回填目标 = 回边那次条件重测（语义等价于"跳回循环头重测"）。
+    for (int i = 0; i < node->ctx.continue_count; i++) {
+        patch_jmp_to(gen, node->ctx.continue_jumps[i], back_pos);
+    }
 
     // patch break 跳转
-    int end_pos = gen->chunk->len;
     patch_jmp(gen, jmp_end);
     for (int i = 0; i < node->ctx.break_count; i++) {
         patch_jmp(gen, node->ctx.break_jumps[i]);

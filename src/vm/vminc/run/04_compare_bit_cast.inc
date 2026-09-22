@@ -140,15 +140,20 @@
     // 省掉的是一条 OP_JMP_IF_FALSE 的**派发**（取指 + 行号写回 + 间接跳转）——
     // 条件判断在热循环里每轮都要付，fib 的递归路径因此 9 条 → 8 条。
     // 编码：A = 左操作数寄存器；B = 右操作数（寄存器号，或 C 的 0x80 位置 1 时是 int8 立即数）；
+    //       C 只当标志用：bit7 = 立即数，bit6 = **极性**（0 = 比较为假则跳 / 1 = 比较为真则跳）；
     //       紧随的**第二个 4 字节字** = 跳转偏移（offset + 32768，与 iAsBx 同约定）。
-    // 语义与 `OP_LT_INT[_IMM] + OP_JMP_IF_FALSE` **逐条等价**：
+    // 语义与 `OP_LT_INT[_IMM] + OP_JMP_IF_FALSE` **逐条等价**（极性为 0 时）：
     //   ① int 快路径只排除 null、不做类型检查（与 *_INT 系列同口径，stack 一致）；
     //   ② 比较为假 ⇒ 跳转（与 JMP_IF_FALSE 同向）。
+    // 极性位（bit6）是后来加的，用来把 `while` 的**回边**也融合成一条：回边要的是
+    // 「条件为真则往回跳」，有了它就不必再跟一条独立 `OP_JMP`（每轮省一次派发）。
+    // bit6 在寄存器/立即数两种模式下原本都没人用 ⇒ 纯扩展，既有字节码语义不变。
     // ============================================================================
 #define CMPJMP_IMPL(int_cmp)                                                       \
     {                                                                              \
         int a = READ_A(), b = READ_B(), c = READ_C();                              \
         int want_imm = (c & 0x80) != 0;                                            \
+        int want_true = (c & 0x40) != 0;   /* bit6：比较为真则跳（while 回边用）*/  \
         int bx = ((int)frame->ip[0] << 8) | (int)frame->ip[1];                     \
         ADVANCE();                          /* 跳过携带偏移的第二个字 */           \
         Value bv = R(a);                                                           \
@@ -160,7 +165,7 @@
             truthy = !val_is_null(bv) && !val_is_null(cv) &&                       \
                      (VM_IO(bv) int_cmp VM_IO(cv));                                \
         }                                                                          \
-        if (!truthy) frame->ip += (bx - 32768);                                    \
+        if (truthy == want_true) frame->ip += (bx - 32768);                        \
         DISPATCH();                                                                \
     }
     LABEL(OP_CMPJMP_LT): CMPJMP_IMPL(<)

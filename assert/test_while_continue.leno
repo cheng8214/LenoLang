@@ -1,0 +1,87 @@
+// 回归测试：`while` 里的 continue / break 绑定（此前 continue 在 while 里**整块失效**）
+//
+// 背景：`gen_while` 收集了 `ctx.continue_jumps` 却从不 `patch_jmp_to` 回填 ⇒ 那条 `OP_JMP`
+//   的偏移停在 0，`frame->ip += 0` 等于**不跳**，于是 continue 之后的语句照样执行。
+//   实测 `while i < 10 { i++; if i == 5 { continue }; s += i }` 得 s=55（应为 50）。
+//   是**静默错值**，而当时套件 359 项全绿 —— 因为 continue 的用例全在 `for` 里
+//   （test_control_flow / test_for 的 continue 都在 for），`while` 这一格没有覆盖。
+//
+// 覆盖：① 单条件 while（走「比较+跳转」融合路径）；② 复合条件 while（走 cond+JMP_IF_FALSE
+//   回退路径，两条路径的 continue 目标都要对）；③ 嵌套循环里 continue 只作用于内层；
+//   ④ break 与 continue 混用；⑤ continue 作为循环体最后一条语句。
+
+var i = 0
+var s = 0
+while i < 10 {
+    i++
+    if i == 5 {
+        continue
+    }
+    s = s + i
+}
+// 1+2+3+4+6+7+8+9+10 = 50
+assert_eq(s, 50)
+
+// ② 复合条件（and）—— 融合路径不适用，走回退路径
+var a = 0
+var b = 0
+var t = 0
+while a < 10 and b < 100 {
+    a++
+    b = b + 10
+    if a == 3 {
+        continue
+    }
+    t = t + a
+}
+// a: 1..10，跳过 3 ⇒ 1+2+4+...+10 = 55-3 = 52
+assert_eq(t, 52)
+assert_eq(b, 100)
+
+// ③ 嵌套：内层 continue 不能跳到外层
+var outer = 0
+var inner_sum = 0
+while outer < 3 {
+    outer++
+    var k = 0
+    while k < 4 {
+        k++
+        if k == 2 {
+            continue
+        }
+        inner_sum = inner_sum + k
+    }
+}
+// 外层 3 轮 × 内层 (1+3+4=8) = 24
+assert_eq(inner_sum, 24)
+
+// ④ break 与 continue 混用
+var m = 0
+var u = 0
+while m < 20 {
+    m++
+    if m == 3 {
+        continue
+    }
+    if m == 7 {
+        break
+    }
+    u = u + m
+}
+// 1+2+4+5+6 = 18
+assert_eq(u, 18)
+assert_eq(m, 7)
+
+// ⑤ continue 是循环体最后一条语句（其后没有语句可跳过的退化形态）
+var z = 0
+var skipped = 0
+while z < 5 {
+    z++
+    if z == 2 {
+        continue
+    }
+    skipped = skipped + 1
+}
+assert_eq(skipped, 4)
+
+print("test_while_continue passed")
