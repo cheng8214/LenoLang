@@ -1251,10 +1251,59 @@ static void emit_compound_op(CodeGen* gen, LenoTokenType op, int dst, int r, int
     }
 }
 
+// 复合赋值的「运算部分」：能走立即数版就走立即数版，否则按老路求右值再算。
+// ----------------------------------------------------------------------------
+// 原先一律 `gen_expr(右值)` + `emit_compound_op`（通用 OP_ADD/SUB/MUL）⇒
+// `a += 1` 是 `LOADI tmp,1` + 通用 `OP_ADD`（3 条指令，且通用算术要逐级派发
+// int→string→float→bigint→null）。立即数版把它压成**一条** `OP_ADD_INT_IMM`，
+// 与 `a = a + 1`（gen_binary 的 rhs_imm 路径）走到的指令对齐。
+// 栈式对应物：`gen_compound_assign` 里对 `x += 1` 有专门分支发 OP_INC_LOCAL；
+// 这里直接用现成的 OP_ADD_INT_IMM/SUB_INT_IMM/MUL_INT_IMM，覆盖面更大（-128..127）。
+// ⚠ 触发条件必须与"真的会用立即数指令"完全一致（与 gen_binary 的 rhs_imm 同口径）：
+//   ① 只有 ADD/SUB/MUL 有立即数形式（DIV/MOD/位运算没有）；
+//   ② 目标静态类型必须是 int —— 立即数指令用 val_as_int 取左值，float 会被读成
+//      位模式垃圾，字符串/布尔更没有立即数语义；
+//   ③ 右值必须是**字面量**（无副作用）才允许跳过求值。
+// null 语义：int 专用指令把 null 视作 0，通用 OP_ADD 会报「null 不能参与运算」。
+//   但 `a = a + 1`（两侧都 int）本来就走 int 专用指令 ⇒ 本次改动是让 `+=` 与
+//   它等价的展开式对齐，不是新引入的不一致。
+static void emit_compound_value(CodeGen* gen, Ast* ast, int dst, int imm_fast, int imm_val) {
+    if (imm_fast) {
+        switch (ast->u.compound_assign.op) {
+            case TOK_PLUSEQ:  emit_add_int_imm(gen, dst, dst, imm_val, ast->line); break;
+            case TOK_MINUSEQ: emit_sub_int_imm(gen, dst, dst, imm_val, ast->line); break;
+            default:          emit_mul_int_imm(gen, dst, dst, imm_val, ast->line); break;
+        }
+        return;
+    }
+    int r = gen_expr(gen, ast->u.compound_assign.value);
+    emit_compound_op(gen, ast->u.compound_assign.op, dst, r, ast->line);
+    reg_free(gen, r);
+}
+
 void gen_compound_assign(CodeGen* gen, Ast* ast) {
     // a += expr → R[dst] = R[dst] + expr
     SymRef* ref = &ast->u.compound_assign.ref;
     if (!ref->name) return;
+
+    // ★ 立即数融合的判定（条件说明见 emit_compound_value 的注释）。
+    //   `__self_field__` 排除在外：那个标记是语义阶段就地改写出来的，ref 的
+    //   kind/type_kind 不再代表"一个 int 变量"，不能拿它当特化依据。
+    int imm_fast = 0;
+    int imm_val = 0;
+    if (ref->type_kind == TYPE_INT && strcmp(ref->name, "__self_field__") != 0 &&
+        (ast->u.compound_assign.op == TOK_PLUSEQ ||
+         ast->u.compound_assign.op == TOK_MINUSEQ ||
+         ast->u.compound_assign.op == TOK_STAREQ)) {
+        Ast* v = ast->u.compound_assign.value;
+        if (v && v->kind == AST_NUM && !v->u.num.is_float && !v->u.num.is_bigint) {
+            double dv = v->u.num.value;
+            if (dv >= -128.0 && dv <= 127.0 && dv == (double)(int)dv) {
+                imm_fast = 1;
+                imm_val = (int)dv;
+            }
+        }
+    }
 
     // ★ struct 方法体内的字段复合赋值（`count += n`）：语义阶段把目标改写成
     //   ref.name = "__self_field__"、ref.index = 字段索引（self 固定在 R0）。
@@ -1264,9 +1313,7 @@ void gen_compound_assign(CodeGen* gen, Ast* ast) {
         int slot = reg_alloc(gen);
         // GET_FIELD: R[slot] = R[0].field(field_idx)
         reg_encode_iABC(gen->chunk, OP_GET_FIELD, slot, 0, field_idx, ast->line);
-        int r = gen_expr(gen, ast->u.compound_assign.value);
-        emit_compound_op(gen, ast->u.compound_assign.op, slot, r, ast->line);
-        reg_free(gen, r);
+        emit_compound_value(gen, ast, slot, imm_fast, imm_val);
         // SET_FIELD: R[0].field(field_idx) = R[slot]
         reg_encode_iABC(gen->chunk, OP_SET_FIELD, slot, 0, field_idx, ast->line);
         reg_free(gen, slot);
@@ -1295,10 +1342,7 @@ void gen_compound_assign(CodeGen* gen, Ast* ast) {
         }
     }
 
-    int r = gen_expr(gen, ast->u.compound_assign.value);
-
-    emit_compound_op(gen, ast->u.compound_assign.op, dst, r, ast->line);
-    reg_free(gen, r);
+    emit_compound_value(gen, ast, dst, imm_fast, imm_val);
 
     if (!is_local) {
         if (ref->kind == SYM_GLOBAL) {
