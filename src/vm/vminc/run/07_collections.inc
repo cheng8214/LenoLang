@@ -473,12 +473,17 @@
     }
     // —— 静态类型特化 + **立即数**下标：Array[int]/Array[float] 的字面量下标读 ——
     //   与上面 OP_INDEX_ARRAY_INT/_FLOAT 逐条等价（那两条本来就只有带不带类型名之分），
-    //   唯一区别是 C 字段是 int8 立即数 ⇒ 少一条"把常量装进寄存器"的 LOADI。
-    //   语义一致性：负下标/越界的处理与寄存器版**完全一致**（同一个无符号比较，
-    //   `(uint64_t)(-1)` 远大于 count ⇒ 走同一个越界报错）。
+    //   唯一区别是 C 字段是**无符号** 0..255 的字面量下标 ⇒ 少一条"把常量装进寄存器"的 LOADI。
+    //   ★ 为什么是无符号而不是 int8：口径对齐 Lua 5.5 的 `OP_GETI`
+    //   （`lcode.c` 的 `isCint()` 用 `l_castS2U` 比 `MAXARG_C` = 255 ⇒ **负字面量下标
+    //   直接落回寄存器路径**，`GETI` 压根不表示负数）。对 Leno 而言负半边更是浪费：
+    //   `arr[-1]` 在本语言里**必然越界**（下面的无符号比较恒假）⇒ 用立即数只是把
+    //   注定报错的路径省一条指令，却把 128..255 这段**真会用到的**（查找表 / 定长数组）
+    //   挤回两条指令。故取 [0,255] 与 Lua 同口径。
+    //   越界处理与寄存器版**完全一致**（同一个无符号比较 + 同一句报错文案）。
     LABEL(OP_INDEX_ARRAY_IMM): {
         int a = READ_A(), b = READ_B();
-        int i2 = (int)(int8_t)READ_C();
+        int i2 = (int)READ_C();   // 无符号 0..255
         ObjArray* arr = (ObjArray*)val_as_obj(R(b));
         if (likely((uint64_t)i2 < (uint64_t)arr->count)) {
             R(a) = arr->elements[i2];

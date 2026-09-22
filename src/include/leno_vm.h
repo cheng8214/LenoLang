@@ -306,15 +306,18 @@ typedef enum {
     //     实参个数 ≤ 255」时才发；其它形态（含 `t.cb()` 这种函数类型字段调用）走老路径。
     OP_INVOKE_METHOD_TYPED,  // iABC + 4 字节（name_const16, type_name_const16）
 
-    // 立即数下标读（对齐 Lua 的 GETI：小下标直接编在指令里）：
+    // 立即数下标读（对齐 Lua 5.5 的 `OP_GETI`：小下标直接编在指令里）：
     //   `arr[0]` 原先是「LOADI tmp,0 + OP_INDEX_ARRAY_INT」两条派发，下标那个临时寄存器
-    //   纯属为了凑一条寄存器操作数 —— 现在 C 字段就是 int8 立即数，一条搞定。
+    //   纯属为了凑一条寄存器操作数 —— 现在 C 字段就是字面量下标，一条搞定。
     //   与 OP_INDEX_ARRAY_INT/_FLOAT 是**同一份逻辑**（那两个 handler 本来就逐字相同），
     //   所以一条指令同时服务 Array[int] 与 Array[float]。
-    //   ⚠ codegen 只在「数组静态类型是 Array[int]/Array[float]、下标是 [-128,127] 整数字面量」
-    //     时才发；变量下标、超出 int8 的字面量仍走寄存器版。
+    //   ★ C 是**无符号 0..255**，与 Lua 同口径（`lcode.c:isCint()` 用 `l_castS2U` 比
+    //     `MAXARG_C` = 255 ⇒ 负字面量下标两侧都不走立即数）。Leno 的负下标本就必然越界，
+    //     取无符号反而把 128..255（查找表 / 定长数组）这段纳进来。
+    //   ⚠ codegen 只在「数组静态类型是 Array[int]/Array[float]、下标是 [0,255] 整数字面量」
+    //     时才发；变量下标、超出 255 的字面量（`arr[300]`）仍走 LOADI + 寄存器版，行为不变。
     //   ⚠ 4 字节定长（无附加数据），追加在末尾 ⇒ 既有 opcode 编号不动，旧 .lenb 仍可执行。
-    OP_INDEX_ARRAY_IMM,  // iABC   R[A] = R[B][(int8_t)C]
+    OP_INDEX_ARRAY_IMM,  // iABC   R[A] = R[B][C]，C ∈ [0,255]
 
     OP_OPCODE_COUNT,    // 用于跳转表大小
 } OpCode;

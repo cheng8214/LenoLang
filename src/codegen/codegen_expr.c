@@ -407,15 +407,18 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
                             (ot->element_type->kind == TYPE_INT ||
                              ot->element_type->kind == TYPE_FLOAT) &&
                             it && it->kind == TYPE_INT);
-            // ★ 立即数下标：数组已特化 + 下标是 [-128,127] 整数字面量 ⇒ **不必求值下标**，
+            // ★ 立即数下标：数组已特化 + 下标是 **[0,255] 整数字面量** ⇒ **不必求值下标**，
             //   也不必为它分配/装载一个寄存器（Lua 的 GETI 就是把这个小下标编在指令里）。
             //   动机：`arr[0]` 原是「LOADI tmp,0 + INDEX_ARRAY_INT」两条派发，现为一条。
-            //   触发条件与 OP_INDEX_ARRAY_IMM 的语义严格对齐（见 leno_vm.h 该 opcode 的说明）。
+            //   ★ 口径对齐 Lua 5.5：`lcode.c:isCint()` 同样是**无符号** 0..255
+            //   （`l_castS2U(ival) <= MAXARG_C`）—— 负字面量下标两侧都不走立即数。
+            //   对 Leno 而言负下标本就必然越界（见 VM 侧该 handler 的说明），不支持零损失。
+            //   超出 [0,255] 的字面量（如 `arr[300]`）照旧回退到 LOADI + 寄存器版，行为不变。
             int idx_imm = 0, idx_imm_val = 0;
             if (arr_spec && iidx && iidx->kind == AST_NUM && !iidx->u.num.is_float &&
                 !iidx->u.num.is_bigint) {
                 double dv = iidx->u.num.value;
-                if (dv >= -128.0 && dv <= 127.0 && dv == (double)(int)dv) {
+                if (dv >= 0.0 && dv <= 255.0 && dv == (double)(int)dv) {
                     idx_imm = 1;
                     idx_imm_val = (int)dv;
                 }
@@ -434,7 +437,7 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
             if (arr_spec) {
                 if (idx_imm) {
                     reg_encode_iABC(gen->chunk, OP_INDEX_ARRAY_IMM, dst, obj_reg,
-                                    (int)((uint8_t)(int8_t)idx_imm_val), ast->line);
+                                    (int)(uint8_t)idx_imm_val, ast->line);
                 } else {
                     int op = (ot->element_type->kind == TYPE_INT) ? OP_INDEX_ARRAY_INT : OP_INDEX_ARRAY_FLOAT;
                     reg_encode_iABC(gen->chunk, op, dst, obj_reg, idx_reg, ast->line);
