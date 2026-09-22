@@ -333,23 +333,58 @@ static int instr_bytes_at(Chunk* chunk, int pos) {
     return 4;
 }
 
+// 跳转偏移溢出 —— **报编译期错误**，不再静默截断（T12）。
+// ----------------------------------------------------------------------------
+// 原先三种编码对超范围的处理都是**静默截断**（16 位编码把 `bx` 夹到 [0,0xFFFF]；
+// `OP_JMP` 连夹都没有，直接按掩码写低 24 位）⇒ 生成一条"跳到别处"的指令，
+// 运行期行为错乱、**没有任何提示**。按本文档一贯的判准，静默错值比报错严重得多
+// （"能跑但结果不对"是最难查的一类），所以这里宁可把编译打断。
+//
+// 触发条件是"**单个**分支/循环体的字节码 ≥32KB"（16 位编码上限 ±32767；
+// `OP_JMP` 是 24 位、±8MB 基本到不了）。正常手写代码到不了这个量级，
+// 但生成代码 / 巨型字面量堆出来的函数会撞上 —— 撞上时给一句能照着改的提示，
+// 比事后对着一堆莫名其妙的运行期行为猜要好。
+static void report_jump_overflow(CodeGen* gen, int pos, int offset, int limit) {
+    int line = (pos >= 0 && pos < gen->chunk->len && gen->chunk->lines)
+                   ? gen->chunk->lines[pos] : 0;
+    char msg[BUFFER_MEDIUM];
+    snprintf(msg, sizeof(msg),
+             "跳转距离超出指令可达范围：需要 %+d 字节，该指令上限 ±%d 字节"
+             "（单个分支或循环体的字节码过大，请拆成独立函数）",
+             offset, limit);
+    error_add(ERR_SEMANTIC, line, msg);
+}
+
 static void patch_common(CodeGen* gen, int pos, int offset) {
     uint8_t op = gen->chunk->code[pos];
     if (op == (uint8_t)OP_JMP) {
+        // iAsJ：24 位有符号
+        if (offset < -8388608 || offset > 8388607) {
+            report_jump_overflow(gen, pos, offset, 8388607);
+            if (offset < -8388608) offset = -8388608;
+            if (offset > 8388607) offset = 8388607;
+        }
         gen->chunk->code[pos + 1] = (uint8_t)(((uint32_t)offset >> 16) & 0xFF);
         gen->chunk->code[pos + 2] = (uint8_t)(((uint32_t)offset >> 8) & 0xFF);
         gen->chunk->code[pos + 3] = (uint8_t)((uint32_t)offset & 0xFF);
     } else if (op >= (uint8_t)OP_CMPJMP_LT && op <= (uint8_t)OP_CMPJMP_GE) {
         // 偏移在**第二个字**里（byte0/1），与 iAsBx 同约定（offset + 32768）
+        if (offset < -32768 || offset > 32767) {
+            report_jump_overflow(gen, pos, offset, 32767);
+            if (offset < -32768) offset = -32768;
+            if (offset > 32767) offset = 32767;
+        }
         int bx = offset + 32768;
-        if (bx < 0) bx = 0;
-        if (bx > 0xFFFF) bx = 0xFFFF;
         gen->chunk->code[pos + 4] = (uint8_t)((bx >> 8) & 0xFF);
         gen->chunk->code[pos + 5] = (uint8_t)(bx & 0xFF);
     } else {
+        // iAsBx：16 位带偏置
+        if (offset < -32768 || offset > 32767) {
+            report_jump_overflow(gen, pos, offset, 32767);
+            if (offset < -32768) offset = -32768;
+            if (offset > 32767) offset = 32767;
+        }
         int bx = offset + 32768;
-        if (bx < 0) bx = 0;
-        if (bx > 0xFFFF) bx = 0xFFFF;
         gen->chunk->code[pos + 2] = (uint8_t)((bx >> 8) & 0xFF);
         gen->chunk->code[pos + 3] = (uint8_t)(bx & 0xFF);
     }
@@ -365,10 +400,17 @@ void patch_jmp_to(CodeGen* gen, int pos, int target) {
 }
 
 // 写入 2 字节 sBx（OP_FOR_PREP / OP_FOR_LOOP 紧随指令的偏移数据，编码为 sbx+32768）
+//   同样是 16 位 ⇒ 超范围**报编译期错误**（T12）：`for` 的循环体 ≥32KB 时，
+//   FOR_PREP 的前跳 / FOR_LOOP 的回跳会静默跳错。
 void patch_sbx_at(CodeGen* gen, int pos, int sbx) {
+    if (sbx < -32768 || sbx > 32767) {
+        // pos 指向的是**紧随指令之后**的偏移数据，指令本体在 pos - 2/6 处；
+        // 取行号时用指令所在字节（FOR_PREP 的 op 在 pos-6，FOR_LOOP 在 pos-6 的 op 处）
+        report_jump_overflow(gen, pos >= 6 ? pos - 6 : 0, sbx, 32767);
+        if (sbx < -32768) sbx = -32768;
+        if (sbx > 32767) sbx = 32767;
+    }
     int raw = sbx + 32768;
-    if (raw < 0) raw = 0;
-    if (raw > 0xFFFF) raw = 0xFFFF;
     gen->chunk->code[pos] = (uint8_t)((raw >> 8) & 0xFF);
     gen->chunk->code[pos + 1] = (uint8_t)(raw & 0xFF);
 }
