@@ -190,9 +190,15 @@ void gen_func_closure(CodeGen* gen, Ast* ast, ObjFunction* func) {
     }
 
     // 如果函数没有显式 return，补一个
+    //   ★ 不再发 LOADNIL：OP_RETURN 在 nresults == 0（B 字段 = 1）时就返回 null，
+    //     与原「LOADNIL + RETURN(nresults=1)」**结果完全相同**（两者都让调用方拿到 null），
+    //     但空体函数从 2 条指令降到 1 条 —— 空函数调用基准里 callee 体就是这一条。
+    //   ⚠ 仍保留 reg_alloc/reg_free：max_reg（→ local_count → locals 数组大小、GC 扫描范围）
+    //     的记账必须与改动前逐位一致，不能顺手把槽位也省掉。
+    //   ⚠ A 字段此时指向一个**未初始化**的寄存器，但 nresults==0 ⇒ VM 根本不读它
+    //     （OP_RETURN: `Value result = (nresults >= 1) ? R(a) : val_null();`）。
     int r = reg_alloc(gen);
-    emit_loadnil_to(gen, r, ast->line);
-    emit_return(gen, r, 1, ast->line);
+    emit_return(gen, r, 0, ast->line);
     reg_free(gen, r);
 
     // 寄存器高水位写回 local_count

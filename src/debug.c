@@ -83,6 +83,7 @@ static const char* opCodeNames[] = {
     "OP_GET_FIELD_FAST",
     "OP_ACC_FIELDS",
     "OP_INVOKE_METHOD_TYPED",
+    "OP_INDEX_ARRAY_IMM",
     "OP_OPCODE_COUNT",
 };
 

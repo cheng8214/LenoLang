@@ -397,28 +397,51 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
                     obj_reg = r0->index; obj_is_temp = 0;
                 } else { obj_reg = gen_expr(gen, iobj); }
             } else { obj_reg = gen_expr(gen, iobj); }
-            if (iidx && iidx->kind == AST_VAR) {
+            // INDEX: R[A] = R[B][R[C]]
+            // ★ 静态类型特化：R[B] 是 Array[int]/Array[float] 且 R[C] 是 int48 时，
+            //   直接发 OP_INDEX_ARRAY_INT/FLOAT（信任静态类型，跳过运行期 obj/下标判型）。
+            //   数组被 ROTASET 改结构、或静态类型推断不到 → 回落通用 OP_INDEX 兜底。
+            TypeInfo* ot = infer_expr_type(gen->sem, iobj);
+            TypeInfo* it = infer_expr_type(gen->sem, iidx);
+            int arr_spec = (ot && ot->kind == TYPE_ARRAY && ot->element_type &&
+                            (ot->element_type->kind == TYPE_INT ||
+                             ot->element_type->kind == TYPE_FLOAT) &&
+                            it && it->kind == TYPE_INT);
+            // ★ 立即数下标：数组已特化 + 下标是 [-128,127] 整数字面量 ⇒ **不必求值下标**，
+            //   也不必为它分配/装载一个寄存器（Lua 的 GETI 就是把这个小下标编在指令里）。
+            //   动机：`arr[0]` 原是「LOADI tmp,0 + INDEX_ARRAY_INT」两条派发，现为一条。
+            //   触发条件与 OP_INDEX_ARRAY_IMM 的语义严格对齐（见 leno_vm.h 该 opcode 的说明）。
+            int idx_imm = 0, idx_imm_val = 0;
+            if (arr_spec && iidx && iidx->kind == AST_NUM && !iidx->u.num.is_float &&
+                !iidx->u.num.is_bigint) {
+                double dv = iidx->u.num.value;
+                if (dv >= -128.0 && dv <= 127.0 && dv == (double)(int)dv) {
+                    idx_imm = 1;
+                    idx_imm_val = (int)dv;
+                }
+            }
+            if (idx_imm) {
+                // 没求值 ⇒ 没分配 ⇒ 下面**不能** reg_free（沿用 gen_binary 立即数路径的约定：
+                // 跳过求值就必须跳过释放，否则会去 free 一个不属于本表达式的寄存器）
+                idx_reg = 0;
+                idx_is_temp = 0;
+            } else if (iidx && iidx->kind == AST_VAR) {
                 SymRef* r1 = &iidx->u.var.ref;
                 if ((r1->kind == SYM_LOCAL || r1->kind == SYM_PARAM) && r1->index >= 0) {
                     idx_reg = r1->index; idx_is_temp = 0;
                 } else { idx_reg = gen_expr(gen, iidx); }
             } else { idx_reg = gen_expr(gen, iidx); }
-            // INDEX: R[A] = R[B][R[C]]
-            // ★ 静态类型特化：R[B] 是 Array[int]/Array[float] 且 R[C] 是 int48 时，
-            //   直接发 OP_INDEX_ARRAY_INT/FLOAT（信任静态类型，跳过运行期 obj/下标判型）。
-            //   数组被 ROTASET 改结构、或静态类型推断不到 → 回落通用 OP_INDEX 兜底。
-            {
-                TypeInfo* ot = infer_expr_type(gen->sem, iobj);
-                TypeInfo* it = infer_expr_type(gen->sem, iidx);
-                if (ot && ot->kind == TYPE_ARRAY && ot->element_type &&
-                    (ot->element_type->kind == TYPE_INT || ot->element_type->kind == TYPE_FLOAT) &&
-                    it && it->kind == TYPE_INT) {
+            if (arr_spec) {
+                if (idx_imm) {
+                    reg_encode_iABC(gen->chunk, OP_INDEX_ARRAY_IMM, dst, obj_reg,
+                                    (int)((uint8_t)(int8_t)idx_imm_val), ast->line);
+                } else {
                     int op = (ot->element_type->kind == TYPE_INT) ? OP_INDEX_ARRAY_INT : OP_INDEX_ARRAY_FLOAT;
                     reg_encode_iABC(gen->chunk, op, dst, obj_reg, idx_reg, ast->line);
-                    if (idx_is_temp) reg_free(gen, idx_reg);
-                    if (obj_is_temp) reg_free(gen, obj_reg);
-                    break;
                 }
+                if (idx_is_temp) reg_free(gen, idx_reg);
+                if (obj_is_temp) reg_free(gen, obj_reg);
+                break;
             }
             reg_encode_iABC(gen->chunk, OP_INDEX, dst, obj_reg, idx_reg, ast->line);
             if (idx_is_temp) reg_free(gen, idx_reg);

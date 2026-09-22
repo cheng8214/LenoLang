@@ -907,9 +907,10 @@ static void gen_return(CodeGen* gen, Ast* ast) {
         emit_return(gen, r, 1, ast->line);
         if (r_is_temp) reg_free(gen, r);
     } else {
+        // 裸 `return`（无返回值）：与「LOADNIL + RETURN(1)」同结果（nresults==0 时
+        // OP_RETURN 直接返回 null），省掉一条指令。reg_alloc 保留以维持 max_reg 记账。
         int r = reg_alloc(gen);
-        emit_loadnil_to(gen, r, ast->line);
-        emit_return(gen, r, 1, ast->line);
+        emit_return(gen, r, 0, ast->line);
         reg_free(gen, r);
     }
 }

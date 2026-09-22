@@ -471,6 +471,28 @@
             DISPATCH();
         }
     }
+    // —— 静态类型特化 + **立即数**下标：Array[int]/Array[float] 的字面量下标读 ——
+    //   与上面 OP_INDEX_ARRAY_INT/_FLOAT 逐条等价（那两条本来就只有带不带类型名之分），
+    //   唯一区别是 C 字段是 int8 立即数 ⇒ 少一条"把常量装进寄存器"的 LOADI。
+    //   语义一致性：负下标/越界的处理与寄存器版**完全一致**（同一个无符号比较，
+    //   `(uint64_t)(-1)` 远大于 count ⇒ 走同一个越界报错）。
+    LABEL(OP_INDEX_ARRAY_IMM): {
+        int a = READ_A(), b = READ_B();
+        int i2 = (int)(int8_t)READ_C();
+        ObjArray* arr = (ObjArray*)val_as_obj(R(b));
+        if (likely((uint64_t)i2 < (uint64_t)arr->count)) {
+            R(a) = arr->elements[i2];
+            DISPATCH();
+        }
+        {
+            int line = GET_CURRENT_LINE();
+            char msg[128];
+            snprintf(msg, sizeof(msg), "数组索引越界: 索引 %d, 长度 %d", i2, arr->count);
+            if (!throw_runtime_error(msg, line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+    }
     // OP_INDEX_SET A B C: R[B][R[C]] = R[A]
     LABEL(OP_INDEX_SET): {
         uint8_t* ip_before = frame->ip;   // 调用点标识（字典内联缓存的索引）
