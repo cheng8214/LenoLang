@@ -80,6 +80,8 @@ static const char* opCodeNames[] = {
     "OP_MUL_INT_IMM",
     "OP_LT_F", "OP_LE_F", "OP_GT_F", "OP_GE_F",
     "OP_CALL_GLOBAL_FUNC_TYPED",
+    "OP_GET_FIELD_FAST",
+    "OP_ACC_FIELDS",
     "OP_OPCODE_COUNT",
 };
 
@@ -419,6 +421,24 @@ static int decode_trailing(Chunk* chunk, int offset, char* desc, size_t desc_siz
                 dbg_const_str(chunk, ax, nm, (int)sizeof(nm));
                 snprintf(desc, desc_size, "EXTRAARG K[%d]=%s", ax, nm);
             }
+            break;
+        }
+        // 多字段累加融合：紧随 C 个字节的字段索引（C = 字段个数）。
+        // 长度必须是 4 + C，否则后面整段反汇编错位。
+        case OP_ACC_FIELDS: {
+            int cnt = c;
+            char idx_list[128];
+            int w = 0;
+            idx_list[0] = '\0';
+            for (int i = 0; i < cnt; i++) {
+                int fi = dbg_take_u8(chunk, base, &p, &over);
+                if (w < (int)sizeof(idx_list) - 8)
+                    w += snprintf(idx_list + w, sizeof(idx_list) - (size_t)w,
+                                  "%s%d", i ? "," : "", fi);
+            }
+            if (desc)
+                snprintf(desc, desc_size, "字段个数=%d 索引=[%s]%s",
+                         cnt, idx_list, over ? " [截断]" : "");
             break;
         }
         default:

@@ -275,6 +275,23 @@ typedef enum {
     //     实参是 any / null / 类型不同（int 传进 float 形参需要转换）时仍走非 typed 版。
     OP_CALL_GLOBAL_FUNC_TYPED,
 
+    // 静态类型特化字段读（对齐栈式 OP_GET_FIELD_FAST）：
+    //   codegen 已核实 R[B] 的静态类型是 struct（**不是** cstruct）且 C 是合法字段索引
+    //   ⇒ 省掉 cstruct 分流与 struct_get_field() 调用（一次跨 TU 函数调用 + 内部重复越界检查）。
+    //   仍保留 tag/类型/越界三项轻检查 ⇒ 错误语义与 OP_GET_FIELD **完全一致**
+    //   （「字段访问需要结构体对象」/「字段索引越界」照旧能报出来）。
+    OP_GET_FIELD_FAST,  // iABC   R[A] = R[B].field(C)
+
+    // 多字段累加融合（对齐栈式 OP_ACC_FIELDS）：
+    //   `s.cx + s.cy + s.cz + s.r` 原先是 GET_FIELD×4 + ADD_F×3 = 7 条派发，合成 1 条
+    //   （对象只读一次；字段索引紧随指令）。
+    //   A = 结果寄存器，B = 对象寄存器，C = 字段个数（紧随 C 个字节的字段索引）。
+    //   语义与「逐字段 OP_ADD_F 连加」**逐位等价**：按 double 左到右累加、结果 val_float
+    //   （与 OP_ADD_F 的兜底 val_as_num_ex + val_float 同一口径）。
+    //   ⚠ codegen 只在「整棵 `+` 子树都是同一对象的字段访问、且字段静态类型全是 float」时发，
+    //     其它形态（含 int 字段、混入其它项）一律走原路径。
+    OP_ACC_FIELDS,      // iABC + C 字节字段索引
+
     OP_OPCODE_COUNT,    // 用于跳转表大小
 } OpCode;
 

@@ -458,8 +458,17 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
                                 && field_idx >= 0);
 
             if (use_field_op) {
-                // GET_FIELD: R[A] = R[B].field(C)
-                reg_encode_iABC(gen->chunk, OP_GET_FIELD, dst, obj_reg, field_idx, ast->line);
+                if (ot->kind == TYPE_STRUCT) {
+                    // GET_FIELD_FAST: R[A] = R[B].field(C)
+                    // ★ 静态类型已是 struct（**非** cstruct）⇒ 走特化版：省掉 cstruct 分流
+                    //   与 struct_get_field() 的跨 TU 调用（其内部还重复一次越界检查）。
+                    //   ⚠ 只在静态类型确定是 struct 时发；cstruct 必须走通用版（数组/嵌套字段
+                    //   要返回视图），静态类型存疑（any/face/收窄后）也一律走通用版。
+                    reg_encode_iABC(gen->chunk, OP_GET_FIELD_FAST, dst, obj_reg, field_idx, ast->line);
+                } else {
+                    // GET_FIELD: R[A] = R[B].field(C)
+                    reg_encode_iABC(gen->chunk, OP_GET_FIELD, dst, obj_reg, field_idx, ast->line);
+                }
             } else {
                 const char* fname = ast->u.field_access.field_name;
                 int ireg = reg_alloc(gen);
@@ -764,6 +773,74 @@ static int ast_may_read_slot(Ast* ast, int slot) {
     }
 }
 
+// ============================================================================
+// 多字段累加融合（对齐栈式 OP_ACC_FIELDS）
+// ----------------------------------------------------------------------------
+// `s.cx + s.cy + s.cz + s.r` 原路径是 GET_FIELD×4 + ADD_F×3 = 7 条派发
+// （实测 examples/性能测试/光线追踪对象版.leno 的 Phase A 内层循环一共只有 12 条指令，
+//  其中 7 条都是它），栈式一条 OP_ACC_FIELDS 就够。
+//
+// 判据（全部编译期可判定，任一不满足就走原路径）：
+//   ① 整棵子树是一串 `+`，叶子**全部**是字段访问（不含 `sum` 这类其它项）；
+//   ② 所有字段访问的对象是**同一个**局部变量/参数槽位；
+//   ③ 每个字段的静态类型都是 float ⇒ 原路径必然是 ADD_F 连加 ⇒ 融合版用
+//      「double 左到右累加 + val_float」与之**逐位等价**（见 VM 的 OP_ACC_FIELDS）；
+//   ④ 字段数 2..MAX_ACC_FIELDS、字段索引 0..255。
+//   ⚠ int 字段/混合类型**绝不能**融合：原路径走 ADD_INT（结果是 int），
+//     而融合版结果恒为 float ⇒ 会改变语义。
+// ============================================================================
+#define MAX_ACC_FIELDS 32
+
+// 把 `+` 链摊平成叶子列表（左叶子在前＝保持原有的左结合求值顺序）；
+// 遇到非 `+` 节点即当作叶子。返回 0 表示超出容量（放弃融合）。
+static int flatten_plus_chain(Ast* ast, Ast** leaves, int* n, int max) {
+    if (!ast) return 0;
+    if (ast->kind == AST_BINOP && ast->u.binop.op == TOK_PLUS) {
+        if (!flatten_plus_chain(ast->u.binop.l, leaves, n, max)) return 0;
+        return flatten_plus_chain(ast->u.binop.r, leaves, n, max);
+    }
+    if (*n >= max) return 0;
+    leaves[(*n)++] = ast;
+    return 1;
+}
+
+// 成功（已发射 OP_ACC_FIELDS）返回 1；不满足判据返回 0，调用方继续走原路径。
+int try_emit_acc_fields(CodeGen* gen, Ast* ast, int dst) {
+    if (!ast || ast->kind != AST_BINOP || ast->u.binop.op != TOK_PLUS) return 0;
+
+    Ast* leaves[MAX_ACC_FIELDS];
+    int n = 0;
+    if (!flatten_plus_chain(ast, leaves, &n, MAX_ACC_FIELDS)) return 0;
+    if (n < 2) return 0;            // 单字段融合反而更贵（原路径就是一条 GET_FIELD）
+
+    int obj_index = -1, obj_kind = -1;
+    uint8_t idx[MAX_ACC_FIELDS];
+    for (int i = 0; i < n; i++) {
+        Ast* f = leaves[i];
+        if (!f || f->kind != AST_FIELD_ACCESS) return 0;
+        int fi = f->u.field_access.field_index;
+        if (fi < 0 || fi > 255) return 0;
+        Ast* o = f->u.field_access.obj;
+        if (!o || o->kind != AST_VAR) return 0;    // 只处理"对象是变量"（与栈式同口径）
+        SymRef* r = &o->u.var.ref;
+        if (!((r->kind == SYM_LOCAL || r->kind == SYM_PARAM) && r->index >= 0)) return 0;
+        if (i == 0) {
+            obj_index = r->index;
+            obj_kind = (int)r->kind;
+        } else if (r->index != obj_index || (int)r->kind != obj_kind) {
+            return 0;
+        }
+        TypeInfo* ft = infer_expr_type(gen->sem, f);
+        if (!ft || ft->kind != TYPE_FLOAT) return 0;
+        idx[i] = (uint8_t)fi;
+    }
+
+    // `dst` 与对象槽位相同也安全：ACC_FIELDS 是"先把字段全读出来、再写 dst"。
+    reg_encode_iABC(gen->chunk, OP_ACC_FIELDS, dst, obj_index, n, ast->line);
+    for (int i = 0; i < n; i++) chunk_write(gen->chunk, idx[i], ast->line);
+    return 1;
+}
+
 void gen_binop(CodeGen* gen, Ast* ast, int dst) {
     Ast* lhs = ast->u.binop.l;
     Ast* rhs = ast->u.binop.r;
@@ -836,6 +913,10 @@ void gen_binop(CodeGen* gen, Ast* ast, int dst) {
         patch_jmp(gen, jmp);
         return;
     }
+
+    // ★ 多字段累加融合：整棵 `+` 子树都是「同一对象的 float 字段访问」时合成一条
+    //   OP_ACC_FIELDS（对齐栈式；实测光线追踪 Phase A 内层 7 条派发 → 1 条）。
+    if (op == TOK_PLUS && try_emit_acc_fields(gen, ast, dst)) return;
 
     // 普通二元运算：求 lhs → dst（有别名风险时 → 临时寄存器），求 rhs → 临时寄存器，
     //   运算把这两个寄存器合到 dst。求值顺序保持"先左后右"不变。

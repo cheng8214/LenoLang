@@ -179,6 +179,8 @@
         [OP_FOR_LOOP] = &&LABEL(OP_FOR_LOOP),
         [OP_EXTRAARG] = &&LABEL(OP_EXTRAARG),
         [OP_EXTEND] = &&LABEL(OP_EXTEND),
+        [OP_GET_FIELD_FAST] = &&LABEL(OP_GET_FIELD_FAST),
+        [OP_ACC_FIELDS] = &&LABEL(OP_ACC_FIELDS),
     };
 
     #define DISPATCH() \

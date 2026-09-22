@@ -32,6 +32,57 @@
         R(a) = struct_get_field(so, c);
         DISPATCH();
     }
+    // OP_GET_FIELD_FAST A B C: R[A] = R[B].field(C)
+    //   —— 静态类型特化的字段读（对齐栈式 OP_GET_FIELD_FAST）：codegen 已核实 R[B] 的静态
+    //   类型是 struct（非 cstruct）且 C 合法 ⇒ 省掉 cstruct 分流与 struct_get_field() 调用，
+    //   直接读 field_values。仍保留 tag/类型/越界三项轻检查 ⇒ 报错口径与 OP_GET_FIELD 一致。
+    LABEL(OP_GET_FIELD_FAST): {
+        int a = READ_A(), b = READ_B(), c = READ_C();
+        Value obj = R(b);
+        int line = GET_CURRENT_LINE();
+        if (unlikely(!val_is_obj(obj) || val_as_obj(obj)->type != OBJ_STRUCT)) {
+            if (!throw_runtime_error("字段访问需要结构体对象", line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        ObjStruct* so = (ObjStruct*)val_as_obj(obj);
+        if (unlikely(c < 0 || c >= so->def->field_count)) {
+            if (!throw_runtime_error("字段索引越界", line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        R(a) = so->field_values[c];
+        DISPATCH();
+    }
+    // OP_ACC_FIELDS A B C: R[A] = R[B].field(idx[0]) + ... + R[B].field(idx[C-1])
+    //   —— 多字段累加融合（对齐栈式 OP_ACC_FIELDS）：紧随指令 C 个字节的字段索引。
+    //   语义与「逐字段 OP_ADD_F 连加」逐位等价：double 左到右累加 + val_float。
+    //   ⚠ 尾随字节必须在**任何分支之前**走完（否则错误路径会把索引当指令执行）。
+    LABEL(OP_ACC_FIELDS): {
+        int a = READ_A(), b = READ_B(), c = READ_C();
+        Value obj = R(b);
+        int line = GET_CURRENT_LINE();
+        frame->ip += c;                       // 跳过尾随的字段索引字节
+        const uint8_t* idx = frame->ip - c;
+        if (unlikely(!val_is_obj(obj) || val_as_obj(obj)->type != OBJ_STRUCT)) {
+            if (!throw_runtime_error("字段访问需要结构体对象", line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        ObjStruct* so = (ObjStruct*)val_as_obj(obj);
+        double sum = 0.0;
+        for (int i = 0; i < c; i++) {
+            int fi = (int)idx[i];
+            if (unlikely(fi >= so->def->field_count)) {
+                if (!throw_runtime_error("字段索引越界", line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            sum += val_as_num_ex(so->field_values[fi]);
+        }
+        R(a) = val_float(sum);
+        DISPATCH();
+    }
     // OP_SET_FIELD A B C: R[B].field(C) = R[A]
     LABEL(OP_SET_FIELD): {
         int a = READ_A(), b = READ_B(), c = READ_C();

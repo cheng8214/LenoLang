@@ -170,6 +170,8 @@ int emit_cmpjmp(CodeGen* gen, OpCode op, int a, int b, int is_imm, int line);
 int try_emit_cmpjmp(CodeGen* gen, Ast* cond, int line);
 // 语句位置的 `arr.add(x)` ⇒ OP_ARRAY_APPEND(need_result=0)（T10-②）成功返回 1
 int try_emit_stmt_array_add(CodeGen* gen, Ast* e);
+// 多字段累加融合：`s.cx + s.cy + ...`（同一对象的 float 字段）⇒ OP_ACC_FIELDS，成功返回 1
+int try_emit_acc_fields(CodeGen* gen, Ast* ast, int dst);
 void emit_mul_int_imm(CodeGen* gen, int dst, int b, int imm, int line);
 // 浮点有序比较特化（T10-④）
 void emit_lt_f(CodeGen* gen, int dst, int b, int c, int line);
