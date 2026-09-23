@@ -235,6 +235,7 @@
             //   def->methods[i].closure 经 def 可达，且本 GC 非移动式 ⇒ 裸指针稳定。
             InlineMethodCacheEntry* mc = NULL;
             uint32_t mgen = 0;
+            ObjClosure* cl = NULL;   // ★ 取到的方法闭包（IC 命中 / 查表结果），收尾时统一用
             if (def) {
                 mgen = struct_def_generation();
                 int cache_idx = (int)(((uintptr_t)ip_before >> 2) & (IC_METHOD_CACHE_SIZE - 1));
@@ -242,15 +243,13 @@
                 if (likely(mc->valid && mc->def == def && mc->name_hash == name->hash &&
                            mc->gen == mgen)) {
                     vm.ic_hits++;
-                    ObjBoundMethod* bound = bound_closure_method_new(receiver, mc->closure);
-                    if (unlikely(!bound)) { runtime_error("内存分配失败", line); return -1; }
-                    R(a) = val_obj((Object*)bound);
-                    DISPATCH();
+                    cl = mc->closure;
+                } else {
+                    vm.ic_misses++;
                 }
-                vm.ic_misses++;
             }
 
-            if (def && struct_method_lookup(def, name, &pre, &fn)) {
+            if (!cl && def && struct_method_lookup(def, name, &pre, &fn)) {
                 if (pre && mc) {   // 只缓存预创建闭包（upvalue 方法不缓存）
                     mc->valid = 1;
                     mc->def = def;
@@ -258,7 +257,7 @@
                     mc->gen = mgen;
                     mc->closure = pre;
                 }
-                ObjClosure* cl = pre;
+                cl = pre;
                 if (!cl) {
                     cl = (ObjClosure*)gc_alloc(sizeof(ObjClosure), OBJ_CLOSURE);
                     if (unlikely(!cl)) { runtime_error("内存分配失败", line); return -1; }
@@ -268,6 +267,51 @@
                     cl->type_param_args = NULL;
                     for (int ui = 0; ui < fn->upvalue_count; ui++) cl->upvalues[ui] = NULL;
                 }
+            }
+
+            if (cl) {
+                // ★ struct 方法调用的**窥孔**（⑤-ab）—— 与上文"内置类型方法"那条窥孔
+                //   同口径（条件逐字一致：a <= 255 即无 EXTEND 前缀、下一条就是 OP_CALL、
+                //   同一基址 a、C == 2 即单返回值）：
+                //   紧邻的 OP_CALL 一定会消费 R[a] ⇒ 无需把方法值"物化"成绑定对象，
+                //   直接按 OP_INVOKE_METHOD_TYPED 那套做（receiver 去重 + call_reg）。
+                //   为什么值得：face / 静态类型未知的接收者走的就是 GET_METHOD + CALL 这条
+                //   两指令形状（codegen 不为它们发融合指令），实测 **95.7ns/次**，而每轮那次
+                //   ObjBoundMethod 分配（64B + GC 压力）是主要开销；融合路径只要 38.2ns。
+                //   ⚠ async 方法**不走窥孔**：它要"调用即建协程"，退回下面分配绑定对象，
+                //     由 OP_CALL 的绑定分支走 vm_start_async_call（见 06_call.inc）。
+                if (likely(a <= 255 && !(cl->function && cl->function->is_async) &&
+                           *frame->ip == (uint8_t)OP_CALL && frame->ip[1] == (uint8_t)a &&
+                           frame->ip[3] == 2)) {
+                    int nargs = (int)frame->ip[2] - 1;
+                    frame->ip += 4;              // 吃掉那条 OP_CALL
+                    // 实参取法与 OP_INVOKE_METHOD_TYPED / OP_CALL 绑定分支**逐字同口径**：
+                    //   语义分析对 struct 方法调用会把 receiver 放进实参首位，而"值相等"
+                    //   会被自引用骗到（`a.add(a)`）⇒ 再用形参个数佐证。
+                    int self_in_args = 0;
+                    int expect_arity = cl->function ? cl->function->arity : 0;
+                    if (nargs > 0) {
+                        Value a0 = R(a + 1);
+                        if (val_is_obj(a0) && val_is_obj(receiver)) {
+                            self_in_args = (val_as_obj(a0) == val_as_obj(receiver));
+                        } else if (!val_is_obj(a0) && !val_is_obj(receiver)) {
+                            self_in_args = (a0 == receiver);
+                        }
+                        if (self_in_args && expect_arity > 0 && nargs != expect_arity &&
+                            nargs + 1 == expect_arity) {
+                            self_in_args = 0;   // 个数表明调用方没传 receiver ⇒ 自引用误判
+                        }
+                    }
+                    // 窥孔条件已保证 nresults == 1（C == 2）⇒ 结果直接写回 R[a]
+                    if (likely(call_reg(cl, self_in_args ? 0 : 1, receiver, a + 1, nargs, a, 1, line))) {
+                        frame = &vm.frames[vm.frame_cnt - 1];
+                        DISPATCH();
+                    }
+                    if (!vm.has_exception) return -1;
+                    frame = &vm.frames[vm.frame_cnt - 1];
+                    DISPATCH();
+                }
+                // 窥孔不适用（多返回值 / 跨 255 寄存器 / async）⇒ 照旧物化绑定对象
                 ObjBoundMethod* bound = bound_closure_method_new(receiver, cl);
                 if (unlikely(!bound)) { runtime_error("内存分配失败", line); return -1; }
                 R(a) = val_obj((Object*)bound);
