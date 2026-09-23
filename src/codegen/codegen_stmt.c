@@ -366,6 +366,14 @@ static void gen_if_branch_to(CodeGen* gen, Ast* branch, int want_value, int dst,
     gen_expr_to(gen, branch, dst);
 }
 
+// ⑤-ae：「and 链逐侧融合」各侧跳转的统一回填 —— 目标就是**当前**代码位置
+// （`if`/`while 入口` ⇒ 假标签；`while 回边`的非末侧 ⇒ 循环出口）。
+static void patch_chain_jumps(CodeGen* gen, int* pos, int n) {
+    for (int i = 0; i < n; i++) {
+        if (pos[i] >= 0) patch_jmp(gen, pos[i]);
+    }
+}
+
 void gen_if_ex(CodeGen* gen, Ast* ast, int want_value, int dst) {
     int need_bind = (ast->u.if_.guard_bind_var && ast->u.if_.guard_bind_index >= 0);
     Ast* cond_ast = ast->u.if_.cond;
@@ -398,6 +406,10 @@ void gen_if_ex(CodeGen* gen, Ast* ast, int want_value, int dst) {
 
     int jmp_false = -1;
     int jmp_false2 = -1;
+    // ⑤-ae：`and` 链逐侧融合的跳转位置（成功时 jmp_false 保持 -1 —— 链尾那条 JMP 已被省掉，
+    // 所有回填都走 chain_jmp）。见 gen_and_cond_jumps 的说明。
+    int chain_jmp[MAX_COND_JUMPS];
+    int chain_n = 0;
 
     // 条件求值。`x is T => a and a[0] is int` 这种链式守卫里，
     // 绑定必须发生在**第一个条件成立之后、第二个条件求值之前** ——
@@ -414,12 +426,20 @@ void gen_if_ex(CodeGen* gen, Ast* ast, int want_value, int dst) {
         jmp_false2 = emit_jmp_if_false(gen, c2, ast->line);
         reg_free(gen, c2);
     } else {
-        // 先试「比较 + 条件跳转」融合（T10-①）：成功则一条指令搞定，且不占结果寄存器
-        jmp_false = try_emit_cmpjmp(gen, cond_ast, 0, ast->line);
-        if (jmp_false < 0) {
-            int cond = gen_expr(gen, cond_ast);
-            jmp_false = emit_jmp_if_false(gen, cond, ast->line);
-            reg_free(gen, cond);
+        // 先试「and 链逐侧融合」（⑤-ae）：每个侧条件一条 CMPJMP。
+        //   ⚠ 有 `=> name` 绑定时不用它 —— 绑定必须插在"第一侧成立之后、第二侧求值之前"，
+        //     那种形态由上面的分支单独处理（need_bind 时 chain_n 保持 0）。
+        if (!need_bind) {
+            chain_n = gen_and_cond_jumps(gen, cond_ast, 0, chain_jmp, ast->line);
+        }
+        // 再试「比较 + 条件跳转」融合（T10-①）：成功则一条指令搞定，且不占结果寄存器
+        if (chain_n == 0) {
+            jmp_false = try_emit_cmpjmp(gen, cond_ast, 0, ast->line);
+            if (jmp_false < 0) {
+                int cond = gen_expr(gen, cond_ast);
+                jmp_false = emit_jmp_if_false(gen, cond, ast->line);
+                reg_free(gen, cond);
+            }
         }
 
         IF_DO_BIND();
@@ -432,16 +452,18 @@ void gen_if_ex(CodeGen* gen, Ast* ast, int want_value, int dst) {
     // if 有 else 分支
     if (ast->u.if_.else_) {
         int jmp_end = emit_jmp(gen, ast->line);
-        patch_jmp(gen, jmp_false);
+        if (jmp_false >= 0) patch_jmp(gen, jmp_false);
         if (jmp_false2 >= 0) patch_jmp(gen, jmp_false2);
+        patch_chain_jumps(gen, chain_jmp, chain_n);      // ⑤-ae：各侧的"假则跳"都指向 else
 
         // else 分支
         gen_if_branch_to(gen, ast->u.if_.else_, want_value, dst, ast->line);
 
         patch_jmp(gen, jmp_end);
     } else {
-        patch_jmp(gen, jmp_false);
+        if (jmp_false >= 0) patch_jmp(gen, jmp_false);
         if (jmp_false2 >= 0) patch_jmp(gen, jmp_false2);
+        patch_chain_jumps(gen, chain_jmp, chain_n);      // ⑤-ae：各侧的"假则跳"都指向 if 之后
         if (want_value) {
             emit_loadnil_to(gen, dst, ast->line);
         }
@@ -480,12 +502,18 @@ static void gen_while(CodeGen* gen, Ast* ast) {
     gen->loop_head = node;
     gen->loop_count++;
 
-    // 入口：条件为假则跳出（先试融合，T10-①；不满足时走原两条指令路径）
-    int jmp_end = try_emit_cmpjmp(gen, ast->u.while_.cond, 0, ast->line);
-    if (jmp_end < 0) {
-        int cond = gen_expr(gen, ast->u.while_.cond);
-        jmp_end = emit_jmp_if_false(gen, cond, ast->line);
-        reg_free(gen, cond);
+    // 入口：条件为假则跳出（先试「and 链逐侧融合」⑤-ae，再试「比较 + 条件跳转」融合 T10-①；
+    // 都不满足时走原两条指令路径）
+    int chain_end[MAX_COND_JUMPS];
+    int chain_end_n = gen_and_cond_jumps(gen, ast->u.while_.cond, 0, chain_end, ast->line);
+    int jmp_end = -1;
+    if (chain_end_n == 0) {
+        jmp_end = try_emit_cmpjmp(gen, ast->u.while_.cond, 0, ast->line);
+        if (jmp_end < 0) {
+            int cond = gen_expr(gen, ast->u.while_.cond);
+            jmp_end = emit_jmp_if_false(gen, cond, ast->line);
+            reg_free(gen, cond);
+        }
     }
 
     // 循环体
@@ -501,14 +529,26 @@ static void gen_while(CodeGen* gen, Ast* ast) {
     //   偏移 = body_start - back_pos - 8（融合指令 8 字节）；够用才走融合。
     int back_fits = (body_start - back_pos - 8) >= -32768;
     if (back_fits) {
-        int back = try_emit_cmpjmp(gen, ast->u.while_.cond, 1, ast->line);
-        if (back >= 0) {
-            patch_jmp_to(gen, back, body_start);     // 向后跳（patch_common 支持负偏移）
+        // ⑤-ae：and 链在回边的形态 —— 非末侧"假则跳出"（回填到循环出口），
+        //   末侧"真则跳回循环体"。两者都是融合跳转，每轮省下每侧那条 JMP。
+        int chain_back[MAX_COND_JUMPS];
+        int chain_back_n = gen_and_cond_jumps(gen, ast->u.while_.cond, 1, chain_back, ast->line);
+        if (chain_back_n > 0) {
+            // 非末侧的"假则跳"：目标 = 回边代码之后（= 循环出口，此刻 chunk->len 不再增长）
+            for (int i = 0; i + 1 < chain_back_n; i++) {
+                if (chain_back[i] >= 0) patch_jmp(gen, chain_back[i]);
+            }
+            patch_jmp_to(gen, chain_back[chain_back_n - 1], body_start);   // 末侧：真则跳回
         } else {
-            int cond = gen_expr(gen, ast->u.while_.cond);
-            int jt = emit_jmp_if_true(gen, cond, ast->line);
-            reg_free(gen, cond);
-            patch_jmp_to(gen, jt, body_start);
+            int back = try_emit_cmpjmp(gen, ast->u.while_.cond, 1, ast->line);
+            if (back >= 0) {
+                patch_jmp_to(gen, back, body_start);     // 向后跳（patch_common 支持负偏移）
+            } else {
+                int cond = gen_expr(gen, ast->u.while_.cond);
+                int jt = emit_jmp_if_true(gen, cond, ast->line);
+                reg_free(gen, cond);
+                patch_jmp_to(gen, jt, body_start);
+            }
         }
     } else {
         // 超大循环体（>32KB 字节码）：回退到 24 位的无条件回跳，
@@ -531,7 +571,8 @@ static void gen_while(CodeGen* gen, Ast* ast) {
     }
 
     // patch break 跳转
-    patch_jmp(gen, jmp_end);
+    if (jmp_end >= 0) patch_jmp(gen, jmp_end);
+    patch_chain_jumps(gen, chain_end, chain_end_n);   // ⑤-ae：入口各侧的"假则跳出"
     for (int i = 0; i < node->ctx.break_count; i++) {
         patch_jmp(gen, node->ctx.break_jumps[i]);
     }

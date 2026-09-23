@@ -170,6 +170,15 @@ int emit_jmp_if_false(CodeGen* gen, int a, int line);
 //   want_true = 1：比较为**真**则跳（while 回边用 —— 这样回边不必再跟一条独立 OP_JMP）
 int emit_cmpjmp(CodeGen* gen, OpCode op, int a, int b, int is_imm, int want_true, int line);
 int try_emit_cmpjmp(CodeGen* gen, Ast* cond, int want_true, int line);
+// 「and 链」条件的**逐侧**融合（⑤-ae）：`a and b [and c …]` 的每个侧条件各自融成一条
+// CMPJMP —— 每侧省掉它自己的那条 JMP_IF_FALSE，链尾也不再需要"整条链求值 + 一条 JMP"。
+// 成功时把各侧的跳转回填位置写进 pos[] 并返回**侧数**（≥2）；不处理（不是 and 链 /
+// 侧数超过 MAX_COND_JUMPS —— 此时**一条指令都还没发**）返回 0，调用方走原路径。
+//   want_true = 0（`if` / `while` 入口）：pos[0..n-1] 全是"假则跳" ⇒ 统一回填到**假标签**
+//   want_true = 1（`while` 回边）：pos[0..n-2] 是"假则跳"（回填到循环出口），
+//     pos[n-1] 是"真则跳" ⇒ 回填到循环体（短路语义与原形态逐条一致）
+#define MAX_COND_JUMPS 8
+int gen_and_cond_jumps(CodeGen* gen, Ast* cond, int want_true, int* pos, int line);
 // for 容器迭代的条件融合（T13）：`idx < len(容器)` + 条件跳转（pre_inc ⇒ 先自增索引）
 int emit_iter_cmpjmp(CodeGen* gen, int idx_reg, int obj_reg, int pre_inc, int want_true, int line);
 // 位运算 / 移位的常量化形式（T14）：右操作数是常量表里的 K[const_idx]

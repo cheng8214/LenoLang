@@ -15,12 +15,18 @@
 //       while 循环条件（回跳目标必须是融合指令的起始字）、立即数越界回退、
 //       浮点比较（不融合）、以及分支"为假时不得进入"、
 //       ⑤-ad 的非变量操作数（下标 vs 变量 / 下标 vs 下标 / 下标 vs 超 int8 立即数 /
-//       算术子表达式 / 全局，以及"回边重测下标"的 while）。
+//       算术子表达式 / 全局，以及"回边重测下标"的 while）、
+//       ⑤-ae 的 `and` 链逐侧融合（第一侧为假时后续侧**不求值**、三侧链、回边、
+//       可融合/不可融合混合、以及"第二侧下标不得越界求值"）。
 //
 // 对照实验：`LENO_NO_CMPJMP=1` 可关掉融合跑同一份断言（两者都必须过）。
 
 var bad = 0
 var g_lim = 3    // 第 8 组用：模块级变量读进来是 SYM_GLOBAL（非变量形态的"取值指令"路径）
+var g_side2 = 0  // 第 9 组用：`and` 链第二侧的调用计数（验短路：第一侧为假时不得执行）
+func chain_false():bool { return false }
+func chain_true():bool { return true }
+func chain_bump():bool { g_side2 = g_side2 + 1; return true }
 
 func fail(int tag):int {
     print("FAIL case " + tag)
@@ -109,6 +115,35 @@ main() {
     while a[j] < lim { j = j + 1 }
     if j != 2 { print("j=" + j); fail(8) }
     if h8 != 1100120001 { print("h8=" + h8); fail(8) }
+
+    // ---- 9) ⑤-ae：`and` 链条件**逐侧**融合 —— 语义必须与原来的短路求值逐条一致 ----
+    //   这是最容易出"静默错值"的地方：融合把"每侧自己的 JMP + 链尾的 JMP"换成了
+    //   每侧一条"假则跳"，**求值次数与求值顺序都不能变**。
+    var h9 = 0
+    // 9a) 第一侧为假 ⇒ 第二侧（有副作用）**不得执行**
+    if chain_false() and chain_bump() { h9 = h9 + 1000 }
+    if g_side2 != 0 { print("g_side2=" + g_side2); fail(9) }
+    // 9b) 两侧都真 ⇒ 第二侧执行
+    if chain_true() and chain_bump() { h9 = h9 + 1 }
+    if g_side2 != 1 { print("g_side2=" + g_side2); fail(9) }
+    // 9c) 三侧链，假在**中段**（第二侧之后不得再求值第三侧）
+    if 1 < 2 and chain_false() and chain_bump() { h9 = h9 + 10000 }
+    if g_side2 != 1 { print("g_side2=" + g_side2); fail(9) }
+    // 9d) while 链（回边也是逐侧融合）：第二侧每轮求值一次，共 3 次（入口 + 2 次回边）
+    var n9 = 0
+    while n9 < 3 and chain_bump() { n9 = n9 + 1 }
+    if n9 != 3 or g_side2 != 4 { print("n9=" + n9 + " g_side2=" + g_side2); fail(9) }
+    // 9e) 混合：一侧可融合（下标比较）、一侧不可融合（bool 真值）⇒ 都要走对分支
+    Array[int] c9 = [7, 8, 9]
+    var ok9 = true
+    if c9[1] > 1 and ok9 { h9 = h9 + 100000 }
+    if c9[0] > 100 and ok9 { h9 = h9 + 1000000 }          // 第一侧假 ⇒ 不进体
+    if h9 != 100001 { print("h9=" + h9); fail(9) }
+    // 9f) ★关键：第一侧为假时，第二侧的**下标求值**必须被跳过
+    //   （否则 c9[3] 越界 ⇒ 直接报运行期错误；这正是插入排序内层的形状）
+    var i9 = 3
+    while i9 < 3 and c9[i9] > 0 { i9 = i9 + 1 }
+    if i9 != 3 { print("i9=" + i9); fail(9) }
 
     if bad > 0 {
         print("test_cmpjmp FAILED: " + bad + " 处")

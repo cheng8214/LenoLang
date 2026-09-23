@@ -209,6 +209,65 @@ int try_emit_cmpjmp(CodeGen* gen, Ast* cond, int want_true, int line) {
 }
 
 // ============================================================================
+// 「and 链」条件的逐侧融合（⑤-ae）
+// ----------------------------------------------------------------------------
+// `while j >= left and arr[j] > key {` 这类条件原先被当作**值表达式**求值：gen_binop 的
+// 短路生成把整条链算进一个 bool 临时寄存器（每侧一条自己的 `比较 + JMP_IF_FALSE`），
+// 链尾再跟一条 `JMP_IF_FALSE` 决定分支 —— 2 侧的链一共 3 条跳转，其中 2 条是白付的。
+// 这里改成**逐侧**发"假则跳"：每侧的比较直接融进它自己的跳转（复用 ⑤-ad 放宽后的
+// try_emit_cmpjmp ⇒ 下标/算术操作数也能融合），假标签就是链尾那条跳转的目标，
+// 于是每侧那条 JMP 与链尾那条 JMP 一起消失（整条指令削减，唯一被证明有效的杠杆）。
+// 语义与原短路形态**逐条等价**：
+//   · 任一侧为假 ⇒ 后面各侧**不再求值**（跳转跨过它们），与 `&&` 短路完全一致；
+//   · 求值顺序仍是"先左后右"（摊平后按求值顺序发指令）；
+//   · 侧条件不是"两侧静态 int 的有序比较"（如 `p and q` 这种真值判断、`or` 子链）时，
+//     该侧退回 `gen_expr + JMP_IF_FALSE`，指令数与原来相同（不亏）。
+// 只在条件位置用（if / while 入口 / while 回边），跳转回填由 codegen_stmt.c 负责。
+// ============================================================================
+
+// 把 and 链摊平成**求值顺序**的侧列表（`(a and b) and c` 与 `a and (b and c)` 都给 a,b,c）。
+// 纯 AST 遍历、不发任何指令；成功返回侧数，结构异常或超过 max 返回 0。
+static int flatten_and_sides(Ast* cond, Ast** sides, int max) {
+    if (max < 1) return 0;
+    if (!cond || cond->kind != AST_BINOP || cond->u.binop.op != TOK_AND) {
+        sides[0] = cond;
+        return 1;
+    }
+    Ast* l = cond->u.binop.l;
+    Ast* r = cond->u.binop.r;
+    if (!l || !r) return 0;
+    int n = flatten_and_sides(l, sides, max);
+    if (n == 0 || n >= max) return 0;
+    int m = flatten_and_sides(r, sides + n, max - n);
+    if (m == 0) return 0;
+    return n + m;
+}
+
+int gen_and_cond_jumps(CodeGen* gen, Ast* cond, int want_true, int* pos, int line) {
+    // 不是 and 链 ⇒ 不处理（单侧条件由 try_emit_cmpjmp 那条路管）
+    if (!cond || cond->kind != AST_BINOP || cond->u.binop.op != TOK_AND) return 0;
+    // ⚠ 先摊平、后发指令：侧数超上限在这里就返回 0，**不会**留下半截字节码
+    //   （否则调用方回退到原路径时会重复发出整条链）
+    Ast* sides[MAX_COND_JUMPS];
+    int n = flatten_and_sides(cond, sides, MAX_COND_JUMPS);
+    if (n < 2) return 0;
+
+    for (int i = 0; i < n; i++) {
+        // want_true = 1（while 回边）：只让**最后一侧**"真则跳回循环体"，其余各侧"假则跳出"；
+        // want_true = 0（if / while 入口）：全部"假则跳假标签"。
+        int want = (want_true && i == n - 1) ? 1 : 0;
+        int p = try_emit_cmpjmp(gen, sides[i], want, line);
+        if (p < 0) {
+            int r = gen_expr(gen, sides[i]);
+            p = want ? emit_jmp_if_true(gen, r, line) : emit_jmp_if_false(gen, r, line);
+            reg_free(gen, r);
+        }
+        pos[i] = p;
+    }
+    return n;
+}
+
+// ============================================================================
 // 语句位置的 `arr.add(x)`（T10-②）
 // ----------------------------------------------------------------------------
 // 作为**独立语句**时结果没人要：通用路径要 `MOV 接收者 + GET_METHOD + CALL`，
