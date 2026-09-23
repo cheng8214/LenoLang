@@ -1,0 +1,45 @@
+// T16 回归：被调方的寄存器窗口（零拷贝原地帧）不得踩到调用方的活寄存器
+// ---------------------------------------------------------------------------
+// 病根：`base = dst` 的调用点判据原先只校验"实参区整段空闲"，而 0 参调用时那个区间
+// 是空的（恒真）⇒ base 落在活变量槽上；被调方窗口 [base+1, base+1+local_count) 比
+// 实参区长，会踩掉调用方在更高号上的活寄存器 —— 典型的受害者就是 `for` 的
+// 计数/步长/循环变量槽（OP_FOR_LOOP 每轮回边都要读）。
+// 被踩成 0 就是"少跑几轮"（静默错值），被踩成别的值就可能是"永不终止"。
+
+func inner_empty():int { for 1 {} return 7 }        // 体内空体 for：踩成 1 ⇒ 死循环
+
+func inner_body():int {                             // 体内非空 for：只踩成错值
+    var q = 0
+    for 1 { q = q + 1 }
+    return q
+}
+
+main() {
+    int N = 3
+
+    // ① 空体 for 的被调方 + 循环前一个活局部量（原本会死循环的那个形状）
+    var s = 0
+    var t1 = 7
+    var cnt = 0
+    for N {
+        s = inner_empty()
+        cnt = cnt + 1
+    }
+    assert(s == 7)
+    assert(cnt == N)     // 迭代次数不能被踩坏
+    assert(t1 == 7)      // 循环前的活局部量不能被踩坏
+
+    // ② 非空体 for 的被调方（原本只踩成错值，不挂）
+    var s2 = 0
+    var t2 = 7
+    var cnt2 = 0
+    for N {
+        s2 = inner_body()
+        cnt2 = cnt2 + 1
+    }
+    assert(s2 == 1)
+    assert(cnt2 == N)
+    assert(t2 == 7)
+
+    print("test_for_call_alias: ALL PASSED")
+}

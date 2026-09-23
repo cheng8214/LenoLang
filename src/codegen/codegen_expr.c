@@ -1678,8 +1678,24 @@ void gen_call(CodeGen* gen, Ast* ast, int dst) {
                 // 实测 pbkdf2：这类命中让主耗时 9.10ms → 8.74ms（min，5 轮 4 胜）。
                 // ⚠ 对「dst 是变量槽」的形态依然判不中（槽位既不在空闲栈、号又 <
                 //   next_reg），那需要变量活跃性分析才能证明"该槽此刻已死"。
+                // ★ T16 修正：上面那条"实参区整段空闲"只能证明**实参槽**可用，不足以证明
+                //   dst 之上没有活寄存器 —— 而 base = dst 时，被调方的寄存器窗口是
+                //   [dst+1, dst+1 + 被调方 local_count)，**比实参区长**，会伸到实参区之上；
+                //   0 参调用时那个区间更是**空的**（regs_available 空区间恒真）⇒ base 直接
+                //   落在活变量槽上。实测最小复现：`s = f0()`（0 参）+ 被调方体内有空体
+                //   `for 1 {}` + 循环前一个活着的局部量 ⇒ 被调方的窗口踩掉调用方 `for` 的
+                //   计数槽（`OP_FOR_LOOP` 每轮回边都要读它）⇒ 调用方循环**永不终止**；
+                //   被调方循环体非空时则"只踩成错值"（那个局部量打印成 1，应为 7）。
+                //   改判「dst 之上没有活寄存器」，两条**健全**的形态：
+                //     ① dst 就在高水位之下一个（dst+1 == next_reg）或之上 ⇒ dst+1 起全是死槽；
+                //     ② 实参区**一直顶到高水位**（dst+1+expected >= next_reg）—— 此时
+                //        [dst+1, next_reg) 整段都在实参区里（调用方自己会写实参把它盖掉），
+                //        next_reg 之上的槽未分配 ⇒ 被调方窗口覆盖不到任何活值。
+                //        （实参区仍要 regs_available 校验：否则求值实参时会盖掉活槽。）
+                //   regs_available 对不在空闲栈里的槽位一律当占用（保守方向）⇒ 健全。
                 int dst_safe = (dst + 1 == gen->next_reg || dst >= gen->next_reg ||
-                                regs_available(gen, dst + 1, dst + 1 + expected));
+                                (dst + 1 + expected >= gen->next_reg &&
+                                 regs_available(gen, dst + 1, dst + 1 + expected)));
                 int base = dst_safe ? dst : reg_alloc_block(gen, expected + 1);
                 // 先把实参区（base+1 .. base+expected）抬进临时区，免得求值实参时
                 // 分配的临时寄存器把实参槽盖掉。
