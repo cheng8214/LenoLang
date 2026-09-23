@@ -1642,15 +1642,21 @@ void gen_call(CodeGen* gen, Ast* ast, int dst) {
 
         // --- native 直接调用（CALL_NATIVE）：省掉"取函数值 + CALL" ---
         if (ref->kind == SYM_NATIVE) {
-            int base = reg_alloc_block(gen, nargs + 1);
+            int dst_safe = (dst >= 0) &&
+                           ((dst >= gen->next_reg) ||
+                            regs_available(gen, dst + 1, dst + 1 + nargs));
+            int base = dst_safe ? dst : reg_alloc_block(gen, nargs + 1);
+            reg_reserve_call_block(gen, base, nargs + 1);
             for (int i = 0; i < nargs; i++) {
                 gen_expr_to(gen, ast->u.call.args.items[i], base + 1 + i);
             }
             ObjString* nameStr = str_copy(ref->name, (int)strlen(ref->name));
             int name_const = make_constant(gen, val_obj((Object*)nameStr));
             emit_call_native(gen, base, name_const, nargs, ast->line);
-            if (base != dst) emit_mov(gen, dst, base, ast->line);
-            reg_free_block(gen, base);
+            if (base != dst) {
+                emit_mov(gen, dst, base, ast->line);
+                reg_free_block(gen, base);
+            }
             return;
         }
 
@@ -1666,7 +1672,14 @@ void gen_call(CodeGen* gen, Ast* ast, int dst) {
             //   且 func_table 里能查到定义（拿得到 pcnt，保证默认参数补齐正确）。
             if (fdef && fdef->kind == AST_FUNC_DEF && ref->index >= 0 && ref->index <= 255 &&
                 expected <= 255 && !is_async_callee(ast, fdef)) {
-                int dst_safe = (dst + 1 == gen->next_reg || dst >= gen->next_reg);
+                // 判据见 regs_available：原式只看「dst 是不是最后一个分配的」，
+                // 漏掉了另一种也能省 MOV 的情形 —— 它之后的实参区**整段都空闲**
+                // （例如刚从空闲栈复用的 dst，其后若干号同样空闲）。
+                // 实测 pbkdf2：这类命中让主耗时 9.10ms → 8.74ms（min，5 轮 4 胜）。
+                // ⚠ 对「dst 是变量槽」的形态依然判不中（槽位既不在空闲栈、号又 <
+                //   next_reg），那需要变量活跃性分析才能证明"该槽此刻已死"。
+                int dst_safe = (dst + 1 == gen->next_reg || dst >= gen->next_reg ||
+                                regs_available(gen, dst + 1, dst + 1 + expected));
                 int base = dst_safe ? dst : reg_alloc_block(gen, expected + 1);
                 // 先把实参区（base+1 .. base+expected）抬进临时区，免得求值实参时
                 // 分配的临时寄存器把实参槽盖掉。

@@ -177,6 +177,30 @@ static inline void reg_free_block(CodeGen* gen, int base) {
     }
 }
 
+// [from, to) 里的寄存器是否**全部**可当临时寄存器用
+// ----------------------------------------------------------------------------
+// 判据与 reg_alloc 完全一致：号 >= next_reg（还没分配过）或**当前在空闲栈里**（已归还）。
+// 用途：调用点判定「能否直接以 dst 为基址」—— 成立时结果天然落在 dst，
+//   可省掉结尾那条"结果 MOV"。
+// 实测（pbkdf2）：本判据让主耗时 9.10ms → 8.74ms（min，交替 5 轮 4 胜）。
+// ⚠ 但**对"dst 是变量槽"的形态判不中** —— 诊断（`R55/R56 不可用, freetop=0`）显示：
+//   槽位既不在空闲栈、号又 < next_reg ⇒ 一律判"已分配未归还"。
+//   而 SHA-256 轮体里那 4 条结果 MOV 恰好全是这种（`T1/T2/e/a` 变量槽）。
+//   要救它们必须引入**变量活跃性分析**（证明"该槽此刻已死"），那是另一个量级的工程。
+//   ⚠ 另注：`reg_alloc_block` 开头会清空空闲栈 ⇒ freetop 常年为 0，
+//     "在空闲栈里"这条不常成立；真正让本判据生效的是**号 >= next_reg**的情形。
+static inline int regs_available(CodeGen* gen, int from, int to) {
+    for (int r = from; r < to; r++) {
+        if (r >= gen->next_reg) continue;          // 尚未分配 ⇒ 可用
+        int found = 0;
+        for (int i = 0; i < gen->freetop; i++) {
+            if (gen->free_regs[i] == r) { found = 1; break; }
+        }
+        if (!found) return 0;                      // 已分配且未归还 ⇒ 不可用
+    }
+    return 1;
+}
+
 // 丢掉空闲栈里 >= base 的条目（保留 base 以下的，它们仍然可安全复用）
 // ----------------------------------------------------------------------------
 // 为什么必须有这一步：`reg_alloc_block` 会 `freetop = 0`，但**调用点取 dst 为基址**
