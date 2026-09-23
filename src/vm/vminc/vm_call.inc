@@ -150,7 +150,7 @@ static inline int call(ObjClosure* closure, int arg_count, int line) {
         frame->has_try_return = 0;
     }
     frame->module = func->module;
-    frame->has_captures = (closure->upvalue_count > 0) ? 1 : 0;
+    frame->has_captures = 0;   // 由 OP_CLOSURE 在**真建了指向本帧窗口的 upvalue** 时置 1（见 02_loads.inc）
 
     // 宿主调用路径（vm_call_value / 协程）：结果压回 vm.stack[stack_base]
     frame->ret_frame = -1;
@@ -228,7 +228,7 @@ static inline int call_no_type_check(ObjClosure* closure, int arg_count, int lin
         frame->has_try_return = 0;
     }
     frame->module = func->module;
-    frame->has_captures = (closure->upvalue_count > 0) ? 1 : 0;
+    frame->has_captures = 0;   // 由 OP_CLOSURE 在**真建了指向本帧窗口的 upvalue** 时置 1（见 02_loads.inc）
 
     // 宿主调用路径：结果压回 vm.stack[stack_base]
     frame->ret_frame = -1;
@@ -432,7 +432,7 @@ static inline int call_reg_impl(ObjClosure* closure, int has_self, Value self,
         frame->has_try_return = 0;
     }
     frame->module = func->module;
-    frame->has_captures = (closure->upvalue_count > 0) ? 1 : 0;
+    frame->has_captures = 0;   // 由 OP_CLOSURE 在**真建了指向本帧窗口的 upvalue** 时置 1（见 02_loads.inc）
 
     // 结果回写目标（寄存器式调用约定）
     frame->ret_frame = caller_idx;

@@ -118,6 +118,8 @@ typedef enum {
     // 简化：CALL_NATIVE 用 iABC，A=结果寄存器，B=函数名常量索引(低8位)，C=nargs
     OP_CALL_NATIVE,     // iABC  R[A] = native(K[B>>0])(R[A+1..A+C-1])
     // OP_RETURN: 返回 R[A..A+B-2], B = nresults+1
+    //   C = 专精标记（1 = codegen 已证明本函数「无 try、非构造」⇒ 跳过 is_ctor/finally
+    //   两组检查；见 emit_return 与 06_call.inc 的 handler）
     OP_RETURN,          // iABC
     OP_RETURN_MULTI,    // iABC  B = 存放个数的寄存器
     OP_TAIL_CALL,       // iABC  尾调用：复用当前帧
@@ -549,7 +551,7 @@ typedef struct CallFrame {
     // 模块信息
     void* module;        // 所属模块（如果是模块函数）
     // 优化标志
-    int has_captures;    // 1 = 该帧捕获了 upvalue，0 = 无捕获（优化 close_upvalues）
+    int has_captures;    // 1 = 本帧有**被捕获的局部量**（挂着指向本帧窗口的 open upvalue）
     // --- 寄存器式返回目标（call_reg 设置；栈式 call() 走 ret_frame = -1）---
     //  ret_frame >= 0：结果写回 vm.frames[ret_frame].locals[ret_reg ...]（寄存器式 OP_CALL）
     //  ret_frame <  0：宿主调用（vm_call_value），结果压回 vm.stack[stack_base]

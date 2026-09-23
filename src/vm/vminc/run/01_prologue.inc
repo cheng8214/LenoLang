@@ -229,7 +229,7 @@
         Value* _locals = frame->locals; \
         int _lc = frame->local_count; \
         int _dyn = frame->locals_is_dynamic; \
-        if (_locals != NULL && _lc > 0 && vm.open_upvalues != NULL) { \
+        if (frame->has_captures && _locals != NULL && vm.open_upvalues != NULL) { \
             close_upvalues(_locals, _lc, 1); \
         } \
         vm.frame_cnt--; \
@@ -249,18 +249,21 @@
             if (_locals != NULL && _dyn) free(_locals); \
             return 0; \
         } \
-        vm.last_return_value = _res; \
-        vm.last_return_count = 1; \
-        vm.last_return_values[0] = _res; \
         if (_ret_frame >= 0 && _ret_frame < vm.frame_cnt) { \
             if (_ret_want > 0) { \
                 Value* _t = &vm.frames[_ret_frame].locals[_ret_reg]; \
                 _t[0] = _res; \
                 for (int _i = 1; _i < _ret_want; _i++) _t[_i] = val_null(); \
             } \
-        } else if (_ret_frame < 0 && vm.frame_cnt > 0) { \
-            vm.sp = _stack_base; \
-            vm_stack_push(&vm, _res); \
+        } else if (_ret_frame < 0) { \
+            /* ★ 与 OP_RETURN 同口径：last_return_* 只在宿主路径写，且不受 frame_cnt > 0 限制 */ \
+            vm.last_return_value = _res; \
+            vm.last_return_count = 1; \
+            vm.last_return_values[0] = _res; \
+            if (vm.frame_cnt > 0) { \
+                vm.sp = _stack_base; \
+                vm_stack_push(&vm, _res); \
+            } \
         } \
         if (_locals != NULL && _dyn) free(_locals); \
         if (vm.frame_cnt == 0) goto vm_exit; \

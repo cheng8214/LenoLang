@@ -1397,7 +1397,7 @@ int vm_run_coroutine_with_vm(ObjCoroutine* co, VM* vm_ptr) {
         frame->in_finally = 0;
         frame->try_return_value = val_null();
         frame->has_try_return = 0;
-        frame->has_captures = (co->closure->upvalue_count > 0) ? 1 : 0;
+        frame->has_captures = 0;   // 由 OP_CLOSURE 在真建了指向本帧窗口的 upvalue 时置 1
         
         // 保存创建此协程 frame 之前的 frame_cnt（其他协程/主程序的）= 协程首帧索引
         int saved_frame_cnt = vm_ptr->frame_cnt - 1;  // 减去新创建的 frame

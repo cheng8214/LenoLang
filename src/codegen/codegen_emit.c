@@ -483,8 +483,15 @@ void emit_call_native(CodeGen* gen, int dst, int name_const_idx, int nargs, int 
 }
 
 // RETURN: 返回 R[A..A+B-2], B = nresults+1
+//   C 字段 = **专精标记**（原来恒为 0）：当前函数「无 try 且非构造」时置 1 ——
+//   这两条是编译期可证的（ObjFunction.has_try / is_ctor 早就算好了），VM 据此在
+//   返回路径上跳过 `closure->function->is_ctor` 的三次依赖加载与 `FRAME_TRY_VALID`
+//   的两次加载（照 Lua 5.5 的 OP_RETURN0/1 用字节码位承载编译期信息，见 docs ⑤-x 后一节）。
+//   current_func 为 NULL（顶层脚本等）时不敢断言，置 0 走通用路径。
 void emit_return(CodeGen* gen, int a, int nresults, int line) {
-    reg_encode_iABC(gen->chunk, OP_RETURN, a, nresults + 1, 0, line);
+    int specialized = (gen->current_func && !gen->current_func->has_try &&
+                       !gen->current_func->is_ctor) ? 1 : 0;
+    reg_encode_iABC(gen->chunk, OP_RETURN, a, nresults + 1, specialized, line);
 }
 
 // RETURN_MULTI: B = 存放个数的寄存器

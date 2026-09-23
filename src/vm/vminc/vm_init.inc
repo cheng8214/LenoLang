@@ -218,6 +218,14 @@ void vm_load(Chunk* c) {
     frame->try_return_value = val_null();
     frame->has_try_return = 0;
     frame->module = NULL;  // 主帧没有模块
+    // ★ 主帧是"宿主帧"：显式置 ret_frame = -1。**原来这里没初始化** —— 帧槽里的
+    //   ret_frame 是脏值/0，只是过去 OP_RETURN 无条件写 last_return_value 才没暴露。
+    //   现在那三个字段只在 `ret_frame < 0` 的宿主分支里写（见 06_call.inc OP_RETURN），
+    //   而**进程退出码正是从 last_return_value 读的**（本文件末尾）⇒ 这个初值是必需的，
+    //   不再是"风格问题"。
+    frame->ret_frame = -1;
+    frame->ret_reg = 0;
+    frame->ret_want = 0;
     // 主帧默认没有捕获 upvalue
     frame->has_captures = 0;
 }

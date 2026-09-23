@@ -181,6 +181,14 @@
                     Upvalue* uv = capture_upvalue(&frame->locals[index]);
                     if (unlikely(!uv)) { runtime_error("OP_CLOSURE: 内存分配失败", GET_CURRENT_LINE()); return -1; }
                     closure->upvalues[i] = uv;
+                    // ★ 本帧从此挂着一个**指向自己窗口**的 open upvalue ⇒ 返回时必须 close。
+                    //   这是 CallFrame.has_captures 的正确语义（"本帧有被捕获的局部量"），
+                    //   而不是"本闭包捕获了父函数的 upvalue"—— 后者会让返回路径漏关 upvalue
+                    //   （test_closure / test_closure_upvalue_rw / test_function_closure 当场失败；
+                    //   栈式那边同样的坑见 D:\CLeno\Leno\src\vm\vminc\op_call.inc:671 的注释）。
+                    //   只有**非值捕获**（is_value_capture == 0）才在 locals 里留指针，
+                    //   值捕获当场就拷进 uv->closed，不需要这个标记。
+                    frame->has_captures = 1;
                 }
             } else {
                 // 从当前闭包中继承（多层嵌套捕获）

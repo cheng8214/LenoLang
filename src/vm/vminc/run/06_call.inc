@@ -324,6 +324,7 @@
     // OP_RETURN A B: 返回 R[A .. A+B-2]（B-1 个值）
     LABEL(OP_RETURN): {
         int a = READ_A(), b = READ_B();
+        int specialized = READ_C();
         int nresults = b - 1;
 
         // 返回是天然 GC 安全点（与栈式一致：每 256 次 return 检查延迟 GC）
@@ -338,6 +339,11 @@
         }
 
         Value result = (nresults >= 1) ? R(a) : val_null();
+        // C == 1（专精）：codegen 已证明本函数「无 try、非构造」⇒ 下面两组检查整段跳过。
+        //   照 Lua 5.5 的做法（OP_RETURN0/1 / 返回指令的 k 位）把编译期信息塞进字节码，
+        //   运行期不为"不可能发生的事"付代价：省掉 is_ctor 的 3 次依赖加载（closure →
+        //   function → is_ctor）与 FRAME_TRY_VALID 的 2 次加载 + 分支。
+        if (unlikely(!specialized)) {
         // 构造函数：返回 self（R0）
         if (frame->closure && frame->closure->function && frame->closure->function->is_ctor) {
             result = frame->locals[0];
@@ -350,6 +356,7 @@
             frame->ip = frame->finally_ip;
             DISPATCH();
         }
+        }
 
         int ret_frame = frame->ret_frame;
         int ret_reg = frame->ret_reg;
@@ -360,7 +367,9 @@
         int locals_is_dynamic = frame->locals_is_dynamic;
 
         // 关闭指向本帧局部变量的所有 upvalue
-        if (locals != NULL && local_count > 0 && vm.open_upvalues != NULL) {
+        // ★ 用帧上的 has_captures 短路（建帧时算好）：本帧没有捕获就不可能挂着指向它的
+        //   open upvalue ⇒ 省掉 vm.open_upvalues 的全局加载，只留一个热字段的读。
+        if (frame->has_captures && locals != NULL && vm.open_upvalues != NULL) {
             close_upvalues(locals, local_count, 1);
         }
 
@@ -388,10 +397,6 @@
             }
         }
 
-        vm.last_return_value = result;
-        vm.last_return_count = 1;
-        vm.last_return_values[0] = result;
-
         // 结果写回调用方
         if (ret_frame >= 0 && ret_frame < vm.frame_cnt) {
             if (ret_want > 0) {
@@ -399,10 +404,21 @@
                 target[0] = result;
                 for (int i = 1; i < ret_want; i++) target[i] = val_null();
             }
-        } else if (ret_frame < 0 && vm.frame_cnt > 0) {
+        } else if (ret_frame < 0) {
             // 宿主调用（栈式接口）：结果压回栈
-            vm.sp = stack_base;
-            vm_stack_push(&vm, result);
+            // ★ last_return_* 三连写**只在这里**（宿主约定"成功 ⇒ last_return_value 有效"，
+            //   读点全在 vm_call_value 之后：ffi.c / arrays.c / 退出码）：寄存器式调用
+            //   的结果由调用方直接从自己的寄存器读走，写这三个字段纯属白发。
+            //   ⚠ 三连写**不能用 `frame_cnt > 0` 兜**：主帧（ret_frame = -1）返回时
+            //   frame_cnt 已经归零，而**进程退出码就是从 last_return_value 读的**
+            //   （vm_init.inc 末尾）—— 少了它主帧的返回值就丢了（断言套件当场抓到）。
+            vm.last_return_value = result;
+            vm.last_return_count = 1;
+            vm.last_return_values[0] = result;
+            if (vm.frame_cnt > 0) {
+                vm.sp = stack_base;
+                vm_stack_push(&vm, result);
+            }
         }
 
         if (locals != NULL && locals_is_dynamic) free(locals);
@@ -454,7 +470,8 @@
         int local_count = frame->local_count;
         int locals_is_dynamic = frame->locals_is_dynamic;
 
-        if (locals != NULL && local_count > 0 && vm.open_upvalues != NULL) {
+        // 关闭指向本帧局部变量的所有 upvalue（与 OP_RETURN 同口径：用 has_captures 短路）
+        if (frame->has_captures && locals != NULL && vm.open_upvalues != NULL) {
             close_upvalues(locals, local_count, 1);
         }
 
@@ -480,10 +497,6 @@
             }
         }
 
-        vm.last_return_value = results[0];
-        vm.last_return_count = count;
-        for (int i = 0; i < count && i < VM_MAX_RETURNS; i++) vm.last_return_values[i] = results[i];
-
         if (ret_frame >= 0 && ret_frame < vm.frame_cnt) {
             if (ret_want > 0) {
                 Value* target = &vm.frames[ret_frame].locals[ret_reg];
@@ -491,9 +504,15 @@
                     target[i] = (i < count) ? results[i] : val_null();
                 }
             }
-        } else if (ret_frame < 0 && vm.frame_cnt > 0) {
-            vm.sp = stack_base;
-            for (int i = 0; i < count; i++) vm_stack_push(&vm, results[i]);
+        } else if (ret_frame < 0) {
+            // ★ 与 OP_RETURN 同口径：last_return_* 只在宿主路径写，且**不受 frame_cnt > 0 限制**
+            vm.last_return_value = results[0];
+            vm.last_return_count = count;
+            for (int i = 0; i < count && i < VM_MAX_RETURNS; i++) vm.last_return_values[i] = results[i];
+            if (vm.frame_cnt > 0) {
+                vm.sp = stack_base;
+                for (int i = 0; i < count; i++) vm_stack_push(&vm, results[i]);
+            }
         }
 
         if (locals != NULL && locals_is_dynamic) free(locals);

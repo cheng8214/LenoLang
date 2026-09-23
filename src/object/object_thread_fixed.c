@@ -109,7 +109,7 @@ static void* thread_entry_point_fixed(void* arg) {
     frame->try_return_value = val_null();
     frame->has_try_return = 0;
     frame->module = func->module;
-    frame->has_captures = (closure->upvalue_count > 0) ? 1 : 0;
+    frame->has_captures = 0;   // 由 OP_CLOSURE 在真建了指向本帧窗口的 upvalue 时置 1
     if (frame->local_count <= INLINE_LOCALS_MAX) {
         frame->locals = frame->inline_locals;
         frame->locals_capacity = INLINE_LOCALS_MAX;
