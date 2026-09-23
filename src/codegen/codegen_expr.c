@@ -1459,7 +1459,26 @@ void gen_unary(CodeGen* gen, Ast* ast, int dst) {
         }
     }
 
-    int operand = gen_expr(gen, operand_ast);
+    // ★ 操作数是**普通局部变量/参数**时不必先搬进临时寄存器（与 gen_binop 的 rl_direct 同一手法）：
+    //   一元指令都是 iABC「A = 目标、B = 源」，**B 可以直接是变量自己的寄存器**（dst≠src 是允许的，
+    //   handler 也是"先读 R[B] 再写 R[A]"）⇒ 省掉原先那条多余的 OP_MOV。
+    //   实测（⑤-ag，光线追踪）：`var t = -b - sq` 原编成 `MOV r15,b + NEG r14,r15 + SUB_F` 三条，
+    //   现在是 `NEG r14,b + SUB_F` 两条 —— 与 Lua 的 `UNM + SUB` 条数持平；
+    //   `hit`/`hitSingle` 各有 2 处（两个函数是全样例最热的），每次调用省 2 条派发。
+    //   安全性：变量无副作用；dst 恰好是变量自己（`x = -x`）也安全（先读后写）。
+    //   非普通局部量（全局/upvalue）仍走 gen_expr —— 它们需要真正的取值指令。
+    int operand = -1;
+    int operand_is_temp = 0;
+    if (operand_ast && operand_ast->kind == AST_VAR) {
+        SymRef* oref = &operand_ast->u.var.ref;
+        if ((oref->kind == SYM_LOCAL || oref->kind == SYM_PARAM) && oref->index >= 0) {
+            operand = oref->index;
+        }
+    }
+    if (operand < 0) {
+        operand = gen_expr(gen, operand_ast);
+        operand_is_temp = 1;
+    }
 
     switch (op) {
         case TOK_MINUS:    emit_neg(gen, dst, operand, ast->line); break;
@@ -1467,7 +1486,8 @@ void gen_unary(CodeGen* gen, Ast* ast, int dst) {
         case TOK_BITNOT:    emit_bitnot(gen, dst, operand, ast->line); break;
         default:            emit_mov(gen, dst, operand, ast->line); break;
     }
-    reg_free(gen, operand);
+    // 只有"借来的临时寄存器"才归还（变量自己的槽位绝不能 free，见 reg_free 的说明）
+    if (operand_is_temp) reg_free(gen, operand);
 }
 
 // ============================================================================
