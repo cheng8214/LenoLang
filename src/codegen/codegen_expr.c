@@ -119,9 +119,11 @@ void emit_as_cast_to(CodeGen* gen, int reg, TypeInfo* t, int line) {
 // 只处理**有序比较**（< <= > >=）且满足：
 //   ① 两侧静态类型都是 int —— 与 `*_INT / *_INT_IMM` 的发射条件完全一致，
 //      所以语义等价（int 快路径只排除 null、不做类型检查，见 VM 侧说明）；
-//   ② 左操作数是普通局部变量/参数（SYM_LOCAL / SYM_PARAM ⇒ 就是寄存器 R[index]；
-//      upvalue / 全局 / 模块需要真正的取值指令，不走这条）；
-//   ③ 右操作数是 int 字面量（∈[-128,127] ⇒ int8 立即数形式）或另一个局部变量/参数。
+//   ② 两侧操作数都"能落进一个寄存器"：普通局部变量/参数直接用它自己的寄存器
+//      （SYM_LOCAL / SYM_PARAM ⇒ 就是寄存器 R[index]；upvalue / 全局 / 模块、
+//      以及下标 `arr[j]`、字段、算术子表达式这类**非变量形态**由 gen_expr 求值到
+//      临时寄存器后再让融合指令读它 —— ⑤-ad 放宽，见下面的实现说明）；
+//   ③ 右操作数是 int 字面量（∈[-128,127] ⇒ int8 立即数形式，省掉装寄存器那条 LOADI）。
 // 成功返回跳转偏移的回填位置（供 patch_jmp 用），失败返回 -1（调用方走原路径）。
 int try_emit_cmpjmp(CodeGen* gen, Ast* cond, int want_true, int line) {
     // 诊断 / 基准开关：`LENO_NO_CMPJMP=1` 关掉融合 —— **同一份二进制**里就能做 A/B，
@@ -147,29 +149,63 @@ int try_emit_cmpjmp(CodeGen* gen, Ast* cond, int want_true, int line) {
         default: return -1;
     }
 
-    // 左操作数：普通局部变量 / 参数
-    if (l->kind != AST_VAR) return -1;
-    SymRef* lref = &l->u.var.ref;
-    if ((lref->kind != SYM_LOCAL && lref->kind != SYM_PARAM) || lref->index < 0) return -1;
-    int a = lref->index;
+    // 左操作数：普通局部变量 / 参数 ⇒ 直接用它的寄存器（既有快路，一个寄存器都不分配）。
+    //   ★ ⑤-ad 放宽：其余形态（下标 `arr[j]`、字段访问、`right-left` 这类算术子表达式、
+    //     upvalue / 全局…）**按原路径求值到一个临时寄存器**，再让融合指令读它 ——
+    //     该有的求值指令一条不少，省掉的正是"比较结果写回寄存器 + OP_JMP_IF_FALSE"。
+    //   放宽的合法性来自判据 ①：两侧静态类型都是 int ⇒ 原路径一定会发 `*_INT[_IMM]`，
+    //   而 `OP_CMPJMP_*` 与它的运行期语义逐条等价（都只排除 null、都不做类型检查）。
+    //   实测（⑤-ad）：分区内层 `while a[i] < pivot` 由 4 条/轮降到 3 条/轮。
+    //   注意求值顺序仍是"先左后右"，与 gen_binop 的通用路径一致（下标求值有越界检查，
+    //   顺序不能换）。
+    int a = -1;
+    int a_is_temp = 0;
+    if (l->kind == AST_VAR) {
+        SymRef* lref = &l->u.var.ref;
+        if ((lref->kind == SYM_LOCAL || lref->kind == SYM_PARAM) && lref->index >= 0) {
+            a = lref->index;
+        }
+    }
+    if (a < 0) {
+        a = gen_expr(gen, l);
+        a_is_temp = 1;
+    }
 
-    // 右操作数：int 字面量（立即数形式）
+    // 右操作数：int 字面量（立即数形式，省掉把常量装进寄存器的那条 LOADI）；
+    //   超出 int8 的整数字面量**不再回退**，落到下面按普通表达式装进临时寄存器
+    //   （与原来的"LOADI + *_INT"相比少一条 JMP_IF_FALSE，语义不变）。
+    int b = 0;
+    int b_is_temp = 0;
+    int b_is_imm = 0;
+    int b_ready = 0;
     if (r->kind == AST_NUM && !r->u.num.is_float && !r->u.num.is_bigint) {
         double dv = r->u.num.value;
         if (dv >= -128.0 && dv <= 127.0) {
-            return emit_cmpjmp(gen, op, a, (int)dv, 1, want_true, line);
+            b = (int)dv;
+            b_is_imm = 1;
+            b_ready = 1;
         }
-        return -1;      // 立即数超出 int8 ⇒ 交给原路径
     }
 
     // 右操作数：另一个局部变量 / 参数（寄存器形式）
-    if (r->kind == AST_VAR) {
+    if (!b_ready && r->kind == AST_VAR) {
         SymRef* rref = &r->u.var.ref;
         if ((rref->kind == SYM_LOCAL || rref->kind == SYM_PARAM) && rref->index >= 0) {
-            return emit_cmpjmp(gen, op, a, rref->index, 0, want_true, line);
+            b = rref->index;
+            b_ready = 1;
         }
     }
-    return -1;
+    // 其余形态（含 upvalue/全局、下标、字段…）：同左操作数，求值到临时寄存器
+    if (!b_ready) {
+        b = gen_expr(gen, r);
+        b_is_temp = 1;
+    }
+
+    int pos = emit_cmpjmp(gen, op, a, b, b_is_imm, want_true, line);
+    // 求值用的临时寄存器用完即还（融合指令已发出，运行期先于任何复用者读到它们）
+    if (b_is_temp) reg_free(gen, b);
+    if (a_is_temp) reg_free(gen, a);
+    return pos;
 }
 
 // ============================================================================
