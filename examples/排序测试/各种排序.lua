@@ -6,12 +6,17 @@
 --     优化快速排序（小数组 < 20 走插入排序 + 三数取中）
 --   * 同样 5 个规模：2000 / 5000 / 20000 / 100000 / 400000
 --   * 同样的跳过规则：冒泡只在 ≤5000、原始快排只在 ≤20000 跑
---   * 同样的计时口径：**同一进程内**依次测（避免跨时段 CPU 频率/热漂移），单位微秒
---     Leno 用 times.us()；Lua 用 os.clock()（CPU 时间）×1e6
+--   * 计时口径（**近似对齐**，2026-09-24 更正）：都在**同一进程内**依次测（避免跨时段 CPU
+--     频率/热漂移）、单位微秒；但两者**时钟源不同** —— Leno 用 times.us()（单调**挂钟**，
+--     Windows QPC），Lua 用 os.clock()（**进程 CPU 时间**，Windows 上粒度约 1ms）。
+--     单线程 CPU 密集时两者接近，但不要当成严格同口径。
 --   * 同样的正确性校验（verify_sorted）
---   * 数据：Leno 是 rands.int_array(0, size)（size 个 [0,size) 的随机整数），
---     这里用固定种子的 math.random(0, size-1) —— 分布相同、规模相同；
---     具体取值不同（Lua 与 Leno 的 RNG 不同），比较型排序的工作量对随机数据是统计等价的。
+--   * 数据（2026-09-24 更正）：Leno 的 rands.int_array(0, size) 是 **0..size 的无重复随机排列**
+--     （元素个数 = size+1、全部互不相同），**不是** size 个可重复随机数。
+--     这里改成同口径：`int_array(size)`（Fisher-Yates）洗出 0..size 的排列 —— 同样 size+1 个、
+--     同样全不重复，固定种子 42。
+--     具体取值不同（Lua 与 Leno 的 RNG 不同），但"均匀随机排列"这个分布在比较型排序下等价：
+--     比较/交换次数只取决于元素的**相对大小关系**，与具体数值无关。
 --   * **算法工作量等价**：比较/交换次数、递归结构、阈值、枢轴选择方式都一致；
 --     只做 1-based 下标等语言层面的适配，不改变算法本身。
 -- ============================================================================
@@ -187,6 +192,18 @@ end
 -- ============================================================================
 -- 测试驱动（与 .leno 版同一结构、同一输出格式）
 -- ============================================================================
+-- 生成 0..max 的随机排列（Fisher-Yates）——与 Leno 的 rands.int_array(0, size) 同口径：
+-- 元素个数 = max+1、全部互不相同。
+local function int_array(max)
+    local a = {}
+    for i = 0, max do a[i + 1] = i end
+    for i = #a, 2, -1 do
+        local j = math.random(1, i)
+        a[i], a[j] = a[j], a[i]
+    end
+    return a
+end
+
 local test_cases = {
     { size = 2000,   name = "小规模" },
     { size = 5000,   name = "中规模" },
@@ -206,9 +223,8 @@ for _, test_case in ipairs(test_cases) do
     local name = test_case.name
     print(string.format("\n=== %s测试 (数组大小: %d) ===", name, size))
 
-    -- 生成测试数据（size 个 [0, size-1] 随机整数；分布与 .leno 版一致）
-    local original = {}
-    for i = 1, size do original[i] = math.random(0, size - 1) end
+    -- 生成测试数据（0..size 的随机排列：元素个数 size+1、全部互不相同 —— 与 .leno 版同口径）
+    local original = int_array(size)
 
     if size <= 5000 then
         local arr1 = copy_array(original)
