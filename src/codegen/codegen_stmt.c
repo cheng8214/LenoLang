@@ -69,6 +69,24 @@ static int assign_cast_needed(TypeKind target_kind, Ast* value_ast) {
             //   运行期可能不是该类型 —— 那正是 A4（`export float x = 1`）要防的事。
             return !(value_ast->cached_type && value_ast->cached_type->kind == target_kind &&
                      (target_kind == TYPE_INT || target_kind == TYPE_FLOAT));
+        case AST_CALL: {
+            // ★ 例外：native 的**定点截断函数**（`_int32` / `_uint32`）可以免 CAST ——
+            //   它们的返回类型是**运行期保证**的：实现里每个分支（int / bigint / float /
+            //   bool / null / 非法类型）都收敛到 `return val_int(...)`，绝不会逃逸成
+            //   bigint 或别的类型。这与上面 ⚠ 说的"普通调用只有声明推断"是完全不同的事。
+            //   ⚠ **必须是白名单**，不能图省事写成"所有 native"：native 注册表里登记的
+            //     返回类型只是给语义分析用的标注，不少 native 运行期会返回 null
+            //     （如 io.read 读不到时）⇒ 一概免 CAST 会破坏 A4 那类防护。
+            //   实测收益：pbkdf2 的 SHA-256 压缩轮体共 40 条指令/轮，其中 4 处
+            //   `int T1 = _int32(...)` 每轮白花 4 条 CAST_INT、4 条结果 MOV 尾随其后。
+            Ast* callee = value_ast->u.call.callee;
+            if (callee && callee->kind == AST_VAR && callee->u.var.ref.name &&
+                callee->u.var.ref.kind == SYM_NATIVE && target_kind == TYPE_INT) {
+                const char* n = callee->u.var.ref.name;
+                if (strcmp(n, "_int32") == 0 || strcmp(n, "_uint32") == 0) return 0;
+            }
+            return 1;
+        }
         default:
             return 1;
     }
