@@ -151,7 +151,7 @@ func insertion_sort_range(Array[int] arr, int left, int right):Array[int] {
     return arr;
 }
 // 辅助函数：验证数组是否已排序
-func verify_sorted(Array[int] arr) {
+func verify_sorted(Array[int] arr):bool {
     for arr.len() - 1 to var i {
         if arr[i] > arr[i + 1]{
             return false;
@@ -179,38 +179,72 @@ main() {
         var original = rands.int_array(0, size);
         // 计时用微秒：Windows 上 ti.ms() 走 GetTickCount64，粒度约 15.6ms，
         // 小规模会被量化成 0 / 16 / 31 这类值，看不出真实差异。
+        // ★ 2026-09-24：小规模再按 **R 次重复取平均** —— 即便用微秒，两侧的时钟粒度
+        //   仍会吃掉小规模（Lua 侧 os.clock 粒度约 1ms，实测 2000 档报出 "0微秒"）。
+        //   R 表两侧**完全一致**（见 .lua 同位置），复制数据的开销放在计时区之外。
+        int reps = 1
+        if size <= 2000 {
+            reps = 20
+        } else if size <= 5000 {
+            reps = 8
+        } else if size <= 20000 {
+            reps = 2
+        }
+        if reps > 1 {
+            print($"注：本规模每个算法重复 {reps} 次取平均（抵消时钟粒度）");
+        }
         // 测试1：冒泡排序（O(n²)，只测试中小规模）
         if size <= 5000 {
-            var arr1 = original.copy();
-            var s1 = ti.us();
-            var result1 = bubble_sort(arr1);
-            var s2 = ti.us();
-            var us1 = _int(s2 - s1);
-            print($"冒泡排序: {us1}微秒 (正确性: {verify_sorted(result1)})");
+            var total1 = 0.0;
+            var ok1 = true;
+            for reps {
+                var arr1 = original.copy();
+                var s1 = ti.us();
+                var result1 = bubble_sort(arr1);
+                var s2 = ti.us();
+                total1 = total1 + (s2 - s1);
+                ok1 = verify_sorted(result1);
+            }
+            print($"冒泡排序: {_int(total1 / reps)}微秒 (正确性: {ok1})");
         }
         // 测试2：原始快速排序（递归 + 频繁分配数组，只测试中小规模）
         if size <= 20000 {
-            var arr2 = original.copy();
-            var s3 = ti.us();
-            var result2 = quick_sort_original(arr2);
-            var s4 = ti.us();
-            var us2 = _int(s4 - s3);
-            print($"原始快速排序: {us2}微秒 (正确性: {verify_sorted(result2)})");
+            var total2 = 0.0;
+            var ok2 = true;
+            for reps {
+                var arr2 = original.copy();
+                var s3 = ti.us();
+                var result2 = quick_sort_original(arr2);
+                var s4 = ti.us();
+                total2 = total2 + (s4 - s3);
+                ok2 = verify_sorted(result2);
+            }
+            print($"原始快速排序: {_int(total2 / reps)}微秒 (正确性: {ok2})");
         }
         // 测试3：优化的原地快速排序
-        var arr3 = original.copy()
-        var s5 = ti.us();
-        var result3 = quick_sort(arr3);
-        var s6 = ti.us();
-        var us3 = _int(s6 - s5);
-        print($"原地快速排序: {us3}微秒 (正确性: {verify_sorted(result3)})");
+        var total3 = 0.0;
+        var ok3 = true;
+        for reps {
+            var arr3 = original.copy()
+            var s5 = ti.us();
+            var result3 = quick_sort(arr3);
+            var s6 = ti.us();
+            total3 = total3 + (s6 - s5);
+            ok3 = verify_sorted(result3);
+        }
+        print($"原地快速排序: {_int(total3 / reps)}微秒 (正确性: {ok3})");
         // 测试4：进一步优化的快速排序
-        var arr4 = original.copy()
-        var s7 = ti.us();
-        var result4 = quick_sort_optimized(arr4);
-        var s8 = ti.us();
-        var us4 = _int(s8 - s7);
-        print($"优化快速排序: {us4}微秒 (正确性: {verify_sorted(result4)})");
+        var total4 = 0.0;
+        var ok4 = true;
+        for reps {
+            var arr4 = original.copy()
+            var s7 = ti.us();
+            var result4 = quick_sort_optimized(arr4);
+            var s8 = ti.us();
+            total4 = total4 + (s8 - s7);
+            ok4 = verify_sorted(result4);
+        }
+        print($"优化快速排序: {_int(total4 / reps)}微秒 (正确性: {ok4})");
         // 说明本规模下被跳过的算法
         if size > 5000 {
             print("注：冒泡排序 O(n²) 在此规模下过慢，已跳过测试");

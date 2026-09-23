@@ -10,6 +10,11 @@
 --     频率/热漂移）、单位微秒；但两者**时钟源不同** —— Leno 用 times.us()（单调**挂钟**，
 --     Windows QPC），Lua 用 os.clock()（**进程 CPU 时间**，Windows 上粒度约 1ms）。
 --     单线程 CPU 密集时两者接近，但不要当成严格同口径。
+--   * 小规模取平均（2026-09-24 加）：每个算法按 **R 次重复取平均**，R 表两侧完全一致
+--     （≤2000 → 20、≤5000 → 8、≤20000 → 2、其余 1）；复制数据的开销放在计时区之外。
+--     不加这一层时 Lua 侧 2000 档会因 1ms 粒度报出 "0微秒"。
+--     为了压掉粒度误差，小规模（≤2000 / ≤5000 / ≤20000）**两侧用同一张 R 表重复取平均**
+--     （R = 20 / 8 / 2；复制数据的开销放在计时区之外），大规模 R = 1。
 --   * 同样的正确性校验（verify_sorted）
 --   * 数据（2026-09-24 更正）：Leno 的 rands.int_array(0, size) 是 **0..size 的无重复随机排列**
 --     （元素个数 = size+1、全部互不相同），**不是** size 个可重复随机数。
@@ -226,37 +231,68 @@ for _, test_case in ipairs(test_cases) do
     -- 生成测试数据（0..size 的随机排列：元素个数 size+1、全部互不相同 —— 与 .leno 版同口径）
     local original = int_array(size)
 
+    -- ★ 2026-09-24：小规模按 **R 次重复取平均** —— os.clock() 在本机粒度约 1ms，
+    --   小规模的单次耗时会被量化（实测 2000 档原地快排报出 "0微秒"）。
+    --   R 表与 .leno 版**完全一致**；复制数据的开销放在计时区之外（每次单独计时再求和）。
+    local reps = 1
+    if size <= 2000 then
+        reps = 20
+    elseif size <= 5000 then
+        reps = 8
+    elseif size <= 20000 then
+        reps = 2
+    end
+    if reps > 1 then
+        print(string.format("注：本规模每个算法重复 %d 次取平均（抵消时钟粒度）", reps))
+    end
+
     if size <= 5000 then
-        local arr1 = copy_array(original)
-        local s1 = now_us()
-        local result1 = bubble_sort(arr1)
-        local s2 = now_us()
-        local us1 = math.floor(s2 - s1)
-        print(string.format("冒泡排序: %d微秒 (正确性: %s)", us1, tostring(verify_sorted(result1))))
+        local total1, ok1 = 0.0, true
+        for _ = 1, reps do
+            local arr1 = copy_array(original)
+            local s1 = now_us()
+            local result1 = bubble_sort(arr1)
+            local s2 = now_us()
+            total1 = total1 + (s2 - s1)
+            ok1 = verify_sorted(result1)
+        end
+        print(string.format("冒泡排序: %d微秒 (正确性: %s)", math.floor(total1 / reps), tostring(ok1)))
     end
 
     if size <= 20000 then
-        local arr2 = copy_array(original)
-        local s3 = now_us()
-        local result2 = quick_sort_original(arr2)
-        local s4 = now_us()
-        local us2 = math.floor(s4 - s3)
-        print(string.format("原始快速排序: %d微秒 (正确性: %s)", us2, tostring(verify_sorted(result2))))
+        local total2, ok2 = 0.0, true
+        for _ = 1, reps do
+            local arr2 = copy_array(original)
+            local s3 = now_us()
+            local result2 = quick_sort_original(arr2)
+            local s4 = now_us()
+            total2 = total2 + (s4 - s3)
+            ok2 = verify_sorted(result2)
+        end
+        print(string.format("原始快速排序: %d微秒 (正确性: %s)", math.floor(total2 / reps), tostring(ok2)))
     end
 
-    local arr3 = copy_array(original)
-    local s5 = now_us()
-    local result3 = quick_sort(arr3)
-    local s6 = now_us()
-    local us3 = math.floor(s6 - s5)
-    print(string.format("原地快速排序: %d微秒 (正确性: %s)", us3, tostring(verify_sorted(result3))))
+    local total3, ok3 = 0.0, true
+    for _ = 1, reps do
+        local arr3 = copy_array(original)
+        local s5 = now_us()
+        local result3 = quick_sort(arr3)
+        local s6 = now_us()
+        total3 = total3 + (s6 - s5)
+        ok3 = verify_sorted(result3)
+    end
+    print(string.format("原地快速排序: %d微秒 (正确性: %s)", math.floor(total3 / reps), tostring(ok3)))
 
-    local arr4 = copy_array(original)
-    local s7 = now_us()
-    local result4 = quick_sort_optimized(arr4)
-    local s8 = now_us()
-    local us4 = math.floor(s8 - s7)
-    print(string.format("优化快速排序: %d微秒 (正确性: %s)", us4, tostring(verify_sorted(result4))))
+    local total4, ok4 = 0.0, true
+    for _ = 1, reps do
+        local arr4 = copy_array(original)
+        local s7 = now_us()
+        local result4 = quick_sort_optimized(arr4)
+        local s8 = now_us()
+        total4 = total4 + (s8 - s7)
+        ok4 = verify_sorted(result4)
+    end
+    print(string.format("优化快速排序: %d微秒 (正确性: %s)", math.floor(total4 / reps), tostring(ok4)))
 
     if size > 5000 then
         print("注：冒泡排序 O(n²) 在此规模下过慢，已跳过测试")
