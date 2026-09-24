@@ -252,7 +252,21 @@
             ImportedModuleInfo* module_info = find_imported_module(s, module_name);
             if (!module_info) {
                 char msg[BUFFER_MEDIUM];
-                snprintf(msg, sizeof(msg), "use 语句错误：模块 '%s' 未导入", module_name);
+                // E2: 模块名拼错提示——在已导入模块的别名里找相似（use md.Point，别名是 m）
+                const char* alias_names[64];
+                int alias_count = 0;
+                for (int i = 0; i < s->imported_module_count && alias_count < 64; i++) {
+                    if (s->imported_modules[i].alias) {
+                        alias_names[alias_count++] = s->imported_modules[i].alias;
+                    }
+                }
+                const char* hint = get_similar_in_names(alias_names, alias_count, module_name);
+                if (!hint[0]) hint = native_builtin_module_hint(module_name);
+                if (hint[0]) {
+                    snprintf(msg, sizeof(msg), "use 语句错误：模块 '%s' 未导入%s", module_name, hint);
+                } else {
+                    snprintf(msg, sizeof(msg), "use 语句错误：模块 '%s' 未导入", module_name);
+                }
                 error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                 break;
             }
@@ -551,7 +565,15 @@
 
             // 没有找到 struct、clib、cfunc、face、alias 或函数
             char msg[BUFFER_MEDIUM];
-            snprintf(msg, sizeof(msg), "use 语句错误：模块 '%s' 中没有类型或函数 '%s'", module_name, symbol_name);
+            // E1: 符号名拼错提示——在模块符号表所有名字桶里找最相似的候选
+            const char* hint = module_symbol_table_hint(module_info->sym_table, symbol_name);
+            if (hint[0]) {
+                snprintf(msg, sizeof(msg), "use 语句错误：模块 '%s' 中没有类型或函数 '%s'%s",
+                         module_name, symbol_name, hint);
+            } else {
+                snprintf(msg, sizeof(msg), "use 语句错误：模块 '%s' 中没有类型或函数 '%s'",
+                         module_name, symbol_name);
+            }
             error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
             break;
         }

@@ -274,6 +274,10 @@ void module_symbol_table_add_cfunc(ModuleSymbolTable* table, const char* name,
 // cfunc 符号数量
 int module_symbol_table_cfunc_count(ModuleSymbolTable* table);
 
+// E1：use 符号名拼错时的相似名提示——遍历所有符号名字桶找编辑距离最小的候选。
+// 返回"提示串"（\n  提示: 是否想用 'xxx'？），找不到返回空串（非 NULL）。
+const char* module_symbol_table_hint(ModuleSymbolTable* table, const char* name);
+
 // 从字符串解析完整类型（支持 int/float/string/bool 及 Array[T]/Dict[K,V]）
 TypeInfo* parse_type_from_string(const char* type_str);
 

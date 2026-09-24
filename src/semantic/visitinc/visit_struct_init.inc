@@ -51,7 +51,14 @@
 
                 if (!sym) {
                     char msg[BUFFER_MEDIUM];
-                    snprintf(msg, sizeof(msg), "未定义的 struct 类型 '%s'", ast->u.struct_init.struct_name);
+                    // E5: 漏 use 提示——未定义的 struct 若是已导入模块的导出类型，指出 use 写法
+                    const char* use_hint = get_module_with_struct_hint(s, ast->u.struct_init.struct_name);
+                    if (use_hint[0]) {
+                        snprintf(msg, sizeof(msg), "未定义的 struct 类型 '%s'%s",
+                                 ast->u.struct_init.struct_name, use_hint);
+                    } else {
+                        snprintf(msg, sizeof(msg), "未定义的 struct 类型 '%s'", ast->u.struct_init.struct_name);
+                    }
                     error_add_at(ERR_UNDEFINED_VAR, ast->line, ast->column, msg);
                 } else if (sym->type->kind == TYPE_FACE) {
                     char msg[BUFFER_MEDIUM];

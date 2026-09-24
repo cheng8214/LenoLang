@@ -117,6 +117,8 @@ const char* semantic_method_hint(TypeInfo* type, const char* method_name);
 const char* get_similar_in_names(const char** names, int count, const char* name);
 // C1：用户 struct 方法相似名提示（扫函数表 "Struct::method" 占位符）
 const char* get_similar_struct_method_hint(Semantic* s, const char* struct_name, const char* method_name);
+// E5：未定义的 struct 类型若是已导入模块的导出类型，提示先 use 导入
+const char* get_module_with_struct_hint(Semantic* s, const char* struct_name);
 
 // 生成详细的类型错误信息（包含转换建议）
 void format_detailed_type_error(char* buf, size_t buf_size,

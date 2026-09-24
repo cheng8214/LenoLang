@@ -157,6 +157,42 @@ main() {
 ")
     ce.expect_error(f6, "冒号类型标注报写法指引", "不支持 'var 名字: 类型' 标注写法", 2)
 
+    // ---- E1/E2/E5：跨模块 use 诊断 ----
+    // E1: use 符号名拼错 → 在模块符号表所有名字桶里找相似
+    var f7 = dirs.join(work, "use_symbol_typo.leno")
+    files.write(f7, @"export struct Point {
+    int x = 0
+}
+")
+    var f8 = dirs.join(work, "use_symbol_typo_host.leno")
+    files.write(f8, @"import ""use_symbol_typo.leno"" as m
+use m.Ponit
+main() {
+    print(""ok"")
+}
+")
+    ce.expect_error(f8, "use 符号名拼错给建议", "是否想用 'Point'？", 0)
+
+    // E2: use 的模块别名拼错 → 在已导入别名里找相似
+    var f9 = dirs.join(work, "use_module_typo_host.leno")
+    files.write(f9, @"import ""use_symbol_typo.leno"" as m
+use md.Point
+main() {
+    print(""ok"")
+}
+")
+    ce.expect_error(f9, "use 模块别名拼错给建议", "是否想用 'm'？", 0)
+
+    // E5: 漏 use 裸用模块导出类型 → 提示 use 写法
+    var f10 = dirs.join(work, "missing_use_host.leno")
+    files.write(f10, @"import ""use_symbol_typo.leno"" as m
+main() {
+    var p = new Point()
+    print(p)
+}
+")
+    ce.expect_error(f10, "漏 use 裸用导出类型给 use 指引", "请先 'use m.Point' 导入后裸名使用", 0)
+
     // ---- 正向：in 成员测试表达式照常工作（D3 不得误伤）----
     var ok3 = dirs.join(work, "in_operator_ok.leno")
     files.write(ok3, @"main() {

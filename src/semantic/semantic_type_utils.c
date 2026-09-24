@@ -986,6 +986,25 @@ const char* semantic_method_hint(TypeInfo* type, const char* method_name) {
     return native_instance_method_hint(tn, method_name);
 }
 
+// E5：未定义的 struct 类型若是某**已导入模块**的导出类型，提示先 use 导入
+// （漏 use 是最高频的跨模块手误：模块里有 Point，宿主直接 new Point()）
+const char* get_module_with_struct_hint(Semantic* s, const char* struct_name) {
+    static char hint[192];
+    hint[0] = '\0';
+    if (!s || !struct_name || !struct_name[0]) return hint;
+    for (int i = 0; i < s->imported_module_count; i++) {
+        ImportedModuleInfo* mi = &s->imported_modules[i];
+        if (!mi->alias || !mi->sym_table) continue;
+        if (module_symbol_table_find_struct(mi->sym_table, struct_name)) {
+            snprintf(hint, sizeof(hint),
+                     "\n  提示: 模块 '%s' 中存在类型 '%s'，请先 'use %s.%s' 导入后裸名使用",
+                     mi->alias, struct_name, mi->alias, struct_name);
+            return hint;
+        }
+    }
+    return hint;
+}
+
 const char* get_type_conversion_hint(TypeKind expected, TypeKind actual) {
     // any 转具体类型
     if (actual == TYPE_ANY) {
