@@ -215,7 +215,7 @@ static inline int regs_available(CodeGen* gen, int from, int to) {
 //        「字段访问需要结构体对象」，游戏直接退出。
 // 同一论证也适用于"新局部变量的槽位"：那个槽位从此属于变量，绝不能当临时寄存器发出去。
 static inline void reg_prune_free_from(CodeGen* gen, int base) {
-    if (gen->freetop > 0 && gen->free_regs) {
+    if (gen->freetop > 0) {
         int keep = 0;
         for (int i = 0; i < gen->freetop; i++) {
             if (gen->free_regs[i] < base) gen->free_regs[keep++] = gen->free_regs[i];

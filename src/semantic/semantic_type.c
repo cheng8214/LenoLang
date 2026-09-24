@@ -474,6 +474,7 @@ static void check_nullable_arith(TypeInfo* left, TypeInfo* right, int line, int 
 //     拿不准（被别处赋过值、字段、全局、参数…）一律不报，
 //     由 VM 的运行期检查兜底（src/vm/vminc/run/03_arith.inc 的 OP_ADD_INT 等）。
 void report_known_null_name(Semantic* s, const char* name, int line, int column) {
+    (void)s; // 避免未使用警告
     if (!name) return;
     char msg[BUFFER_MEDIUM];
     snprintf(msg, sizeof(msg),
