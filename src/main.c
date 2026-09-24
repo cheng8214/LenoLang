@@ -17,9 +17,11 @@
 #include <string.h>
 #include <stdarg.h>
 #include <time.h>
+#include <errno.h>
 
 #ifdef _WIN32
 #include <windows.h>
+#include <direct.h>
 #include <sys/stat.h>
 #else
 #include <sys/stat.h>
@@ -37,6 +39,7 @@ static int packMode = 0;
 static int initMode = 0;
 static int installMode = 0;
 static char* debugOutFile = NULL;  // --debug-out 指定的输出文件路径
+static char* packOutDir = NULL;    // -o/--pack-dir 指定的打包输出目录（NULL ⇒ <源码目录>/dist）
 int g_use_gui_vm = 0;  // 语义分析阶段检测到 _console(false) 时置为 1
 
 // 字节码输出重定向辅助（Windows 用 _dup/_dup2 保存/恢复 stdout 句柄）
@@ -138,6 +141,9 @@ static void printHelp(const char* program) {
     printf("  --debug-out <file> 字节码输出到指定文件（自动启用 --debug）\n");
     printf("  -c, --compile     编译为二进制文件（.lenb），不执行\n");
     printf("  -p, --pack        编译并打包为独立可执行文件（嵌入 leno_vm）\n");
+    printf("  -o, --pack-dir <目录>  指定打包输出目录（默认 <源码目录>/dist）\n");
+    printf("                    输出的 exe 与依赖的原生库（leno.toml 的 [native-libs]）\n");
+    printf("                    会被复制到同一目录，可直接整体分发\n");
     printf("  --init [路径]     在当前目录创建新 Leno 包项目\n");
     printf("  --install         安装包或依赖到全局缓存\n");
     printf("  --                终止解释器选项解析：其后的参数都按位置参数处理\n");
@@ -151,6 +157,7 @@ static void printHelp(const char* program) {
     printf("  %s script.lenb       运行编译后的二进制\n", program);
     printf("  %s -c test.leno      编译为二进制\n", program);
     printf("  %s -p test.leno      打包为独立可执行文件\n", program);
+    printf("  %s -p test.leno -o release  打包到 release/（exe + 依赖库）\n", program);
     printf("  %s --debug test.leno 调试模式运行\n", program);
     printf("  %s --init my-package 创建新包\n", program);
     printf("  %s --install         安装当前项目依赖\n", program);
@@ -847,6 +854,47 @@ compile_fail:
     return -1;
 }
 
+// ============================================================================
+// 打包：递归创建输出目录
+// -o 可能给多级路径（如 build/release/v1），逐级创建；已存在视为成功。
+// Windows 走 _wmkdir（UTF-8/中文路径安全）。
+// ============================================================================
+static int pack_ensure_dir(const char* dir) {
+    if (!dir || !dir[0]) return -1;
+    char tmp[MAX_PATH_LEN];
+    strncpy(tmp, dir, sizeof(tmp) - 1);
+    tmp[sizeof(tmp) - 1] = '\0';
+    size_t len = strlen(tmp);
+    while (len > 1 && (tmp[len - 1] == '\\' || tmp[len - 1] == '/')) tmp[--len] = '\0';
+
+#ifdef _WIN32
+    for (char* p = tmp + 1; *p; p++) {
+        if (*p == '\\' || *p == '/') {
+            char save = *p;
+            *p = '\0';
+            wchar_t* w = utf8_to_utf16(tmp);
+            if (w) { _wmkdir(w); free(w); }
+            *p = save;
+        }
+    }
+    wchar_t* wfull = utf8_to_utf16(tmp);
+    if (!wfull) return -1;
+    int rc = (_wmkdir(wfull) == 0 || errno == EEXIST) ? 0 : -1;
+    free(wfull);
+    return rc;
+#else
+    for (char* p = tmp + 1; *p; p++) {
+        if (*p == '/') {
+            char save = *p;
+            *p = '\0';
+            mkdir(tmp, 0755);
+            *p = save;
+        }
+    }
+    return (mkdir(tmp, 0755) == 0 || errno == EEXIST) ? 0 : -1;
+#endif
+}
+
 // 从文件运行
 int lenolang_run_file(const char* path) {
     // 检查是否是 .lenb 二进制文件
@@ -1075,17 +1123,107 @@ int lenolang_run_file(const char* path) {
         }
 #endif
 
-        // 生成输出路径：与源文件同目录
-        char out_exe[MAX_PATH_LEN];
-        strncpy(out_exe, path, MAX_PATH_LEN - 1);
-        out_exe[MAX_PATH_LEN - 1] = '\0';
-        char* dot = strrchr(out_exe, '.');
-        if (dot) {
-            *dot = '\0';
-        }
+        // 收集要随 exe 分发的原生库（各实际 import 包 [native-libs] 的当前平台条目）。
+        // 必须在编译**之后**：import 是编译期解析的，此刻模块清单才完整；
+        // 取路径用 loaded_modules_get_path（不是 GC 对象，gc_free_all 之后仍可读）。
+        PackLib* pack_libs = NULL;
+        int pack_lib_count = 0;
+        {
+            const char* entry_abs = error_get_filename();
+            if (package_collect_pack_libs(entry_abs ? entry_abs : path,
+                                          &pack_libs, &pack_lib_count) != 0) {
+                fprintf(stderr, "[pack] 原生库收集失败，已中止打包\n");
 #ifdef _WIN32
-        strcat(out_exe, ".exe");
+                { wchar_t wp[MAX_PATH_LEN]; MultiByteToWideChar(CP_UTF8, 0, bin_path, -1, wp, MAX_PATH_LEN); _wremove(wp); }
+#else
+                remove(bin_path);
 #endif
+                free(bin_path);
+                return -1;
+            }
+        }
+
+        #ifdef _WIN32
+        const char* PSEP = "\\";
+#else
+        const char* PSEP = "/";
+#endif
+
+        // 生成输出目录：-o 指定则原样用（相对当前工作目录），否则 <源码目录>/dist
+        char out_dir[MAX_PATH_LEN];
+        if (packOutDir) {
+            strncpy(out_dir, packOutDir, MAX_PATH_LEN - 1);
+            out_dir[MAX_PATH_LEN - 1] = '\0';
+        } else {
+            strncpy(out_dir, path, MAX_PATH_LEN - 1);
+            out_dir[MAX_PATH_LEN - 1] = '\0';
+            char* s1 = strrchr(out_dir, '\\');
+            char* s2 = strrchr(out_dir, '/');
+            if (s2 && (!s1 || s2 > s1)) s1 = s2;
+            if (s1) *(s1 + 1) = '\0';   // 保留源码目录（含分隔符）
+            else out_dir[0] = '\0';
+            strncat(out_dir, "dist", sizeof(out_dir) - strlen(out_dir) - 1);
+        }
+        if (pack_ensure_dir(out_dir) != 0) {
+            fprintf(stderr, "[pack] 错误: 无法创建输出目录: %s\n", out_dir);
+            package_pack_libs_free(pack_libs, pack_lib_count);
+            free(bin_path);
+            return -1;
+        }
+
+        // 产物路径 = <输出目录>/<源码名>.exe
+        // 缓冲区放大到 4×MAX_PATH_LEN：下面是把两个 MAX_PATH_LEN 量级的串拼一起
+        char out_exe[MAX_PATH_LEN * 4];
+        {
+            const char* base = path;
+            const char* b1 = strrchr(path, '\\');
+            const char* b2 = strrchr(path, '/');
+            if (b1 || b2) {
+                const char* bsep = b1;
+                if (b2 && (!b1 || b2 > b1)) bsep = b2;
+                base = bsep + 1;
+            }
+            char stem[MAX_PATH_LEN];
+            strncpy(stem, base, sizeof(stem) - 1);
+            stem[sizeof(stem) - 1] = '\0';
+            char* stem_dot = strrchr(stem, '.');
+            if (stem_dot) *stem_dot = '\0';
+            size_t dlen = strlen(out_dir);
+            const char* dsep = (dlen > 0 && out_dir[dlen - 1] != '\\' &&
+                                out_dir[dlen - 1] != '/') ? PSEP : "";
+            snprintf(out_exe, sizeof(out_exe), "%s%s%s%s", out_dir, dsep, stem,
+#ifdef _WIN32
+                     ".exe"
+#else
+                     ""
+#endif
+            );
+        }
+        printf("[pack] 输出目录: %s\n", out_dir);
+
+        // 依赖的原生库直接复制到 exe 旁（不能放子目录：Windows 解析 DLL 自身依赖时
+        // 只搜主 exe 目录/系统目录/PATH，不看 DLL 自己所在的目录 ⇒ SDL3_image→SDL3 会断）
+        if (pack_lib_count > 0) {
+            printf("[pack] 复制原生库 %d 个:\n", pack_lib_count);
+            for (int i = 0; i < pack_lib_count; i++) {
+                size_t dlen = strlen(out_dir);
+                const char* dsep = (dlen > 0 && out_dir[dlen - 1] != '\\' &&
+                                    out_dir[dlen - 1] != '/') ? PSEP : "";
+                char dst[MAX_PATH_LEN * 4];
+                snprintf(dst, sizeof(dst), "%s%s%s", out_dir, dsep, pack_libs[i].file_name);
+                if (package_copy_file(pack_libs[i].src_path, dst) != 0) {
+                    fprintf(stderr, "[pack] 错误: 复制原生库失败: %s -> %s\n",
+                            pack_libs[i].src_path, dst);
+                    package_pack_libs_free(pack_libs, pack_lib_count);
+                    free(bin_path);
+                    return -1;
+                }
+                printf("        %s  ← %s\n", pack_libs[i].file_name, pack_libs[i].from_pkg);
+            }
+        } else {
+            printf("[pack] 无需复制原生库（依赖里没有原生库声明）\n");
+        }
+        package_pack_libs_free(pack_libs, pack_lib_count);
 
         // 查找 leno_vm：先在与 leno 同目录下找
         // g_use_gui_vm=1 时用无控制台版 leno_vm_gui.exe（脚本调用了 _console(false)）
@@ -1403,6 +1541,16 @@ static int main_logic(int argc, char** argv) {
         } else if (strcmp(argv[i], "--pack") == 0 || strcmp(argv[i], "-p") == 0) {
             packMode = 1;
             continue;
+        } else if (strcmp(argv[i], "--pack-dir") == 0 || strcmp(argv[i], "-o") == 0) {
+            // 打包输出目录（相对当前工作目录；默认 <源码目录>/dist）
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                packOutDir = argv[i + 1];
+                i++;  // 消费目录参数
+            } else {
+                fprintf(stderr, "错误: -o/--pack-dir 需要指定输出目录\n");
+                return 1;
+            }
+            continue;
         } else if (strcmp(argv[i], "--no-cache") == 0) {
             module_loader_set_cache_enabled(0);
             continue;
@@ -1465,6 +1613,7 @@ static int main_logic(int argc, char** argv) {
             if (strcmp(argv[i], "--pause") == 0 || strcmp(argv[i], "--debug") == 0 ||
                 strcmp(argv[i], "--compile") == 0 || strcmp(argv[i], "-c") == 0 ||
                 strcmp(argv[i], "--pack") == 0 || strcmp(argv[i], "-p") == 0 ||
+                strcmp(argv[i], "--pack-dir") == 0 || strcmp(argv[i], "-o") == 0 ||
                 strcmp(argv[i], "--no-cache") == 0 ||
                 strcmp(argv[i], "--init") == 0 || strcmp(argv[i], "--install") == 0 ||
                 strcmp(argv[i], "--version") == 0 || strcmp(argv[i], "-v") == 0 ||
@@ -1515,6 +1664,7 @@ static int main_logic(int argc, char** argv) {
                 if (strcmp(argv[i], "--pause") == 0 || strcmp(argv[i], "--debug") == 0 ||
                     strcmp(argv[i], "--compile") == 0 || strcmp(argv[i], "-c") == 0 ||
                     strcmp(argv[i], "--pack") == 0 || strcmp(argv[i], "-p") == 0 ||
+                    strcmp(argv[i], "--pack-dir") == 0 || strcmp(argv[i], "-o") == 0 ||
                     strcmp(argv[i], "--no-cache") == 0 ||
                     strcmp(argv[i], "--init") == 0 || strcmp(argv[i], "--install") == 0 ||
                     strcmp(argv[i], "--version") == 0 || strcmp(argv[i], "-v") == 0 ||

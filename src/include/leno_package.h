@@ -305,4 +305,42 @@ int package_install_from_git(const char* git_url);
 int package_parse_git_source(const char* source, char* out_url, int out_len,
                              char* out_subdir, int subdir_len);
 
+/* ============================================================================
+ * 打包（-p）：原生库收集与复制
+ * ============================================================================
+ * leno.toml 的 [native-libs.<名>]（win/linux/mac 三键）在打包侧的**唯一消费者**。
+ * 清单来自"本次编译**实际加载过**的模块所属包"，不是让应用手抄一遍：
+ * 原生库是包的属性（LenoSDL3 带 SDL3.dll/SDL3_image.dll/SDL3_ttf.dll），
+ * 手抄必漏。应用自己的 leno.toml 同样在枚举范围内，可用来声明零散第三方库。
+ */
+
+/* 收集结果里的一条原生库 */
+typedef struct {
+    char* src_path;   /* 源文件绝对路径 */
+    char* file_name;  /* 落到输出目录里的文件名 */
+    char* from_pkg;   /* 声明方（包名；应用自身声明的记为 "<应用>"） */
+} PackLib;
+
+/**
+ * 按当前平台收集需要随 exe 分发的原生库。
+ * 平台键：Windows→win、Linux→linux、macOS→mac；某包未声明该平台则跳过。
+ * 同目标文件名的库只保留第一个（同名视为同一个库）。
+ * 声明的精确路径不存在、或通配匹配不到任何文件 ⇒ 视为打包错误，返回 -1。
+ *
+ * @param entry_file  入口 .leno 的**绝对路径**（用于定位应用自身的包根）
+ * @param out         成功时写回收集结果数组（需用 package_pack_libs_free 释放）
+ * @param out_count   结果条数
+ * @return 0 成功；-1 有声明落空（错误已打印到 stderr）
+ */
+int package_collect_pack_libs(const char* entry_file, PackLib** out, int* out_count);
+
+/** 释放 package_collect_pack_libs 返回的结果 */
+void package_pack_libs_free(PackLib* libs, int count);
+
+/**
+ * 复制单个文件（Windows 走 CopyFileW，UTF-8/中文路径安全）。目标已存在则覆盖。
+ * @return 0 成功，-1 失败
+ */
+int package_copy_file(const char* src, const char* dst);
+
 #endif /* LENO_PACKAGE_H */

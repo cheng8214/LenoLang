@@ -8,7 +8,7 @@ license = "MIT"
 [modules]
 root = "lib"
 
+# 原生库：只声明**随包实际分发**的文件（打包时按当前平台键复制到 exe 同目录）。
+# 声明了而文件不存在 ⇒ 打包直接报错，故本包未随附的平台不列键。
 [native-libs.curl]
 win   = "lib/libcurl-x64.dll"
-linux = "lib/libcurl.so.4"
-mac   = "lib/libcurl.4.dylib"

@@ -13,6 +13,8 @@
  */
 
 #include "../include/leno_package.h"
+#include "../include/module_loader.h"
+#include "../include/platform.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -26,6 +28,7 @@
 #define PATH_SEP '\\'
 #else
 #include <unistd.h>
+#include <dirent.h>
 #define MKDIR(p) mkdir(p, 0755)
 #define PATH_SEP '/'
 #endif
@@ -286,24 +289,326 @@ static int copy_dir(const char* src, const char* dst) {
 #endif
 }
 
-/* 简单文件复制（当前未使用，保留用于未来扩展） */
-#if 0
-static int copy_file(const char* src, const char* dst) {
-    FILE* fsrc = fopen(src, "rb");
-    if (!fsrc) return -1;
-    FILE* fdst = fopen(dst, "wb");
-    if (!fdst) { fclose(fsrc); return -1; }
+/* ============================================================================
+ * 文件复制
+ * ============================================================================ */
 
-    char buf[4096];
+/* 复制单个文件（Windows 走 CopyFileW 以支持 UTF-8/中文路径）。
+ * 返回 0 成功，-1 失败（源不存在 / 目标不可写）。目标已存在则覆盖。 */
+int package_copy_file(const char* src, const char* dst) {
+    if (!src || !dst) return -1;
+#ifdef _WIN32
+    wchar_t* wsrc = utf8_to_utf16(src);
+    if (!wsrc) return -1;
+    wchar_t* wdst = utf8_to_utf16(dst);
+    if (!wdst) { free(wsrc); return -1; }
+    BOOL ok = CopyFileW(wsrc, wdst, FALSE);   /* FALSE = 允许覆盖 */
+    free(wsrc);
+    free(wdst);
+    return ok ? 0 : -1;
+#else
+    FILE* in = fopen(src, "rb");
+    if (!in) return -1;
+    FILE* out = fopen(dst, "wb");
+    if (!out) { fclose(in); return -1; }
+    char buf[65536];
     size_t n;
-    while ((n = fread(buf, 1, sizeof(buf), fsrc)) > 0) {
-        fwrite(buf, 1, n, fdst);
+    int rc = 0;
+    while ((n = fread(buf, 1, sizeof(buf), in)) > 0) {
+        if (fwrite(buf, 1, n, out) != n) { rc = -1; break; }
     }
-    fclose(fsrc);
-    fclose(fdst);
+    if (ferror(in)) rc = -1;
+    fclose(in);
+    if (fclose(out) != 0) rc = -1;
+    if (rc != 0) remove(dst);
+    return rc;
+#endif
+}
+
+/* ============================================================================
+ * 打包（-p）：原生库收集
+ * ----------------------------------------------------------------------------
+ * leno.toml 的 [native-libs.<名>] + win/linux/mac 三键（见 package_toml.c）从
+ * 2026-06 起就在 schema 里、各模块也都填了，但一直**没有消费者** —— 解析出来
+ * 存在 cfg->native_libs 里，全仓库只有 parse 和 free。这里补上打包侧唯一的消费者。
+ *
+ * 清单来源是"**实际 import 的模块**"，不是应用自己手抄一遍：
+ *   每个已加载模块的源路径向上找最近的 leno.toml（复用 package_find_project_root）
+ *   ⇒ 那就是它所属的包 ⇒ 取该包的 [native-libs] ⇒ 展开 ⇒ 去重。
+ * 为什么必须按包推导：原生库是**包**的属性，且一个包可以需要多个库 —— LenoSDL3
+ * 的 toml 原先只写了 SDL3.dll，但 sdl_image.leno / sdl_font.leno 还各自
+ * ffi.load("SDL3_image.dll"/"SDL3_ttf.dll")，手抄必漏。
+ * 应用自己的 leno.toml 也在枚举范围内（应用根就是它自己所属的"包"），
+ * 所以"零散第三方 DLL 挂在应用根声明"这条路径天然可用，无需额外逻辑。
+ * ============================================================================ */
+
+#define MAX_PACK_ROOTS 64
+
+/* 当前平台在 [native-libs] 里对应的键名；未知平台返回 NULL */
+static const char* pack_platform_key(PlatformType p) {
+    switch (p) {
+        case PLATFORM_WINDOWS_X64:
+        case PLATFORM_WINDOWS_X86:   return "win";
+        case PLATFORM_LINUX_X64:
+        case PLATFORM_LINUX_ARM64:   return "linux";
+        case PLATFORM_MACOS_X64:
+        case PLATFORM_MACOS_ARM64:   return "mac";
+        default:                     return NULL;
+    }
+}
+
+/* 取该平台声明的库路径；未声明返回 NULL */
+static const char* native_lib_path_for(const NativeLib* nl, const char* key) {
+    if (strcmp(key, "win") == 0) return nl->win_path;
+    if (strcmp(key, "linux") == 0) return nl->linux_path;
+    return nl->mac_path;
+}
+
+static const char* path_basename(const char* path) {
+    const char* a = strrchr(path, '/');
+    const char* b = strrchr(path, '\\');
+    const char* sep = a;
+    if (b && (!a || b > a)) sep = b;
+    return sep ? sep + 1 : path;
+}
+
+/* 目录 + 相对路径 拼接（目录缺结尾分隔符时自动补） */
+static void path_join(char* out, size_t out_size, const char* dir, const char* rel) {
+    size_t dlen = strlen(dir);
+    int need_sep = (dlen > 0 && dir[dlen - 1] != '/' && dir[dlen - 1] != '\\');
+    if (need_sep) snprintf(out, out_size, "%s%c%s", dir, PATH_SEP, rel);
+    else          snprintf(out, out_size, "%s%s", dir, rel);
+}
+
+/* UTF-8 路径安全的"是文件吗"检查（stat 在 Windows 上对中文路径会失败） */
+static int pack_file_exists(const char* path) {
+#ifdef _WIN32
+    wchar_t* wp = utf8_to_utf16(path);
+    if (!wp) return 0;
+    DWORD attr = GetFileAttributesW(wp);
+    free(wp);
+    return (attr != INVALID_FILE_ATTRIBUTES) && !(attr & FILE_ATTRIBUTE_DIRECTORY);
+#else
+    struct stat st;
+    return stat(path, &st) == 0 && S_ISREG(st.st_mode);
+#endif
+}
+
+#ifndef _WIN32
+/* 通配匹配（支持 * 与 ?；POSIX 侧展开用。Windows 交给 FindFirstFileW 自己匹配）*/
+static int wildcard_match(const char* pat, const char* str) {
+    while (*pat) {
+        if (*pat == '*') {
+            pat++;
+            if (!*pat) return 1;
+            for (; *str; str++) {
+                if (wildcard_match(pat, str)) return 1;
+            }
+            return 0;
+        }
+        if (*pat == '?') {
+            if (!*str) return 0;
+            pat++; str++;
+            continue;
+        }
+        if (*pat != *str) return 0;
+        pat++; str++;
+    }
+    return *str == '\0';
+}
+#endif /* !_WIN32 */
+
+typedef struct {
+    PackLib* items;
+    int count;
+    int cap;
+    char roots[MAX_PACK_ROOTS][MAX_PATH_LEN];
+    int root_count;
+} PackCollector;
+
+/* 收一条库（按**目标文件名**去重：同名视为同一个库，后到者忽略） */
+static void collector_add(PackCollector* c, const char* src, const char* from_pkg) {
+    const char* name = path_basename(src);
+    for (int i = 0; i < c->count; i++) {
+        if (strcmp(c->items[i].file_name, name) == 0) return;
+    }
+    if (c->count == c->cap) {
+        int nc = c->cap ? c->cap * 2 : 8;
+        PackLib* ni = (PackLib*)realloc(c->items, sizeof(PackLib) * (size_t)nc);
+        if (!ni) return;
+        c->items = ni;
+        c->cap = nc;
+    }
+    c->items[c->count].src_path = strdup(src);
+    c->items[c->count].file_name = strdup(name);
+    c->items[c->count].from_pkg = strdup(from_pkg ? from_pkg : "<应用>");
+    if (!c->items[c->count].src_path || !c->items[c->count].file_name ||
+        !c->items[c->count].from_pkg) {
+        free(c->items[c->count].src_path);
+        free(c->items[c->count].file_name);
+        free(c->items[c->count].from_pkg);
+        return;
+    }
+    c->count++;
+}
+
+/* 由"某个源文件"登记其所属包根（去重） */
+static void collector_add_root(PackCollector* c, const char* source_file) {
+    if (!source_file || !source_file[0]) return;
+    char* root = package_find_project_root(source_file);
+    if (!root) return;
+    for (int i = 0; i < c->root_count; i++) {
+        if (strcmp(c->roots[i], root) == 0) { free(root); return; }
+    }
+    if (c->root_count < MAX_PACK_ROOTS) {
+        strncpy(c->roots[c->root_count], root, MAX_PATH_LEN - 1);
+        c->roots[c->root_count][MAX_PATH_LEN - 1] = '\0';
+        c->root_count++;
+    }
+    free(root);
+}
+
+/* 展开一个含通配的条目：abs_dir 为绝对目录，pattern 为最后一段（含 * 或 ?）。
+ * 返回匹配到并收录的个数；-1 表示目录打不开。 */
+static int collector_expand_pattern(PackCollector* c, const char* abs_dir,
+                                    const char* pattern, const char* from_pkg) {
+    int matched = 0;
+#ifdef _WIN32
+    /* Windows 用系统自带通配（FindFirstFileW 直接接受 *.dll 这类模式） */
+    char spec[MAX_PATH_LEN];
+    path_join(spec, sizeof(spec), abs_dir, pattern);
+    wchar_t* wspec = utf8_to_utf16(spec);
+    if (!wspec) return -1;
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW(wspec, &fd);
+    free(wspec);
+    if (h == INVALID_HANDLE_VALUE) return 0;
+    do {
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        char name[MAX_PATH_LEN];
+        if (WideCharToMultiByte(CP_UTF8, 0, fd.cFileName, -1, name, sizeof(name), NULL, NULL) <= 0)
+            continue;
+        char full[MAX_PATH_LEN];
+        path_join(full, sizeof(full), abs_dir, name);
+        collector_add(c, full, from_pkg);
+        matched++;
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
+#else
+    DIR* d = opendir(abs_dir);
+    if (!d) return -1;
+    struct dirent* ent;
+    while ((ent = readdir(d)) != NULL) {
+        if (ent->d_name[0] == '.' && ent->d_name[1] == '\0') continue;
+        if (!wildcard_match(pattern, ent->d_name)) continue;
+        char full[MAX_PATH_LEN];
+        path_join(full, sizeof(full), abs_dir, ent->d_name);
+        if (!pack_file_exists(full)) continue;   /* 只收文件，跳过同名目录 */
+        collector_add(c, full, from_pkg);
+        matched++;
+    }
+    closedir(d);
+#endif
+    return matched;
+}
+
+int package_collect_pack_libs(const char* entry_file, PackLib** out, int* out_count) {
+    if (!out || !out_count) return -1;
+    *out = NULL;
+    *out_count = 0;
+
+    const char* key = pack_platform_key(package_get_platform());
+    if (!key) {
+        /* 未知平台：不拦打包，只是收集不到（打包本身是当前平台自举的） */
+        fprintf(stderr, "[pack] 提示: 未识别的平台，跳过原生库收集\n");
+        return 0;
+    }
+
+    PackCollector c;
+    memset(&c, 0, sizeof(c));
+
+    /* 1) 入口文件所属"包" + 所有实际加载过的模块所属"包" */
+    collector_add_root(&c, entry_file);
+    int mod_count = loaded_modules_get_count();
+    for (int i = 0; i < mod_count; i++) {
+        collector_add_root(&c, loaded_modules_get_path(i));
+    }
+
+    /* 2) 逐包读 [native-libs]，取当前平台条目 */
+    int rc = 0;
+    for (int r = 0; r < c.root_count; r++) {
+        char toml_path[MAX_PATH_LEN];
+        path_join(toml_path, sizeof(toml_path), c.roots[r], "leno.toml");
+        PackageConfig* cfg = package_config_parse(toml_path);
+        if (!cfg) continue;
+        const char* pkg = cfg->name ? cfg->name : c.roots[r];
+
+        for (int k = 0; k < cfg->native_count; k++) {
+            const char* rel = native_lib_path_for(&cfg->native_libs[k], key);
+            if (!rel || !rel[0]) continue;   /* 该平台未声明这条 */
+
+            /* 拆成 目录 + 末段（末段可能含通配） */
+            char rel_buf[MAX_PATH_LEN];
+            strncpy(rel_buf, rel, MAX_PATH_LEN - 1);
+            rel_buf[MAX_PATH_LEN - 1] = '\0';
+            char* slash = strrchr(rel_buf, '/');
+            char* bslash = strrchr(rel_buf, '\\');
+            if (bslash && (!slash || bslash > slash)) slash = bslash;
+
+            char dir_abs[MAX_PATH_LEN];
+            const char* last = rel_buf;
+            if (slash) {
+                *slash = '\0';
+                path_join(dir_abs, sizeof(dir_abs), c.roots[r], rel_buf);
+                last = slash + 1;
+            } else {
+                strncpy(dir_abs, c.roots[r], sizeof(dir_abs) - 1);
+                dir_abs[sizeof(dir_abs) - 1] = '\0';
+            }
+            if (!last[0]) continue;
+
+            if (strpbrk(last, "*?") == NULL) {
+                /* 精确路径 */
+                char full[MAX_PATH_LEN];
+                path_join(full, sizeof(full), dir_abs, last);
+                if (!pack_file_exists(full)) {
+                    fprintf(stderr, "[pack] 错误: 包 '%s' 声明的原生库不存在: %s\n", pkg, full);
+                    rc = -1;
+                    continue;
+                }
+                collector_add(&c, full, pkg);
+            } else {
+                /* 通配：匹配不到也算声明落空 */
+                int n = collector_expand_pattern(&c, dir_abs, last, pkg);
+                if (n <= 0) {
+                    fprintf(stderr, "[pack] 错误: 包 '%s' 的通配 '%s' 未匹配到任何文件（目录: %s）\n",
+                            pkg, last, dir_abs);
+                    rc = -1;
+                }
+            }
+        }
+        package_config_free(cfg);
+    }
+
+    if (rc != 0) {
+        package_pack_libs_free(c.items, c.count);
+        return -1;
+    }
+
+    *out = c.items;
+    *out_count = c.count;
     return 0;
 }
-#endif
+
+void package_pack_libs_free(PackLib* libs, int count) {
+    if (!libs) return;
+    for (int i = 0; i < count; i++) {
+        free(libs[i].src_path);
+        free(libs[i].file_name);
+        free(libs[i].from_pkg);
+    }
+    free(libs);
+}
 
 /* ============================================================================
  * Git 源 URL 解析
