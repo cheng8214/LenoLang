@@ -394,8 +394,8 @@ static int pack_file_exists(const char* path) {
 #endif
 }
 
-#ifndef _WIN32
-/* 通配匹配（支持 * 与 ?；POSIX 侧展开用。Windows 交给 FindFirstFileW 自己匹配）*/
+/* 通配匹配（* / ?，段内用；Windows 的 [native-libs] 展开交给 FindFirstFileW，
+ * 内嵌资源的段级匹配则在两个平台都用它 —— 保证行为一致）*/
 static int wildcard_match(const char* pat, const char* str) {
     while (*pat) {
         if (*pat == '*') {
@@ -416,7 +416,6 @@ static int wildcard_match(const char* pat, const char* str) {
     }
     return *str == '\0';
 }
-#endif /* !_WIN32 */
 
 typedef struct {
     PackLib* items;
@@ -608,6 +607,288 @@ void package_pack_libs_free(PackLib* libs, int count) {
         free(libs[i].from_pkg);
     }
     free(libs);
+}
+
+/* ============================================================================
+ * 单文件打包（-p --onefile）：内嵌资源收集
+ * ----------------------------------------------------------------------------
+ * 资源没有"包"这个天然归属，所以由应用在包根的 resource.toml 里显式声明通配
+ * （相对包根；resource.toml 独立于 leno.toml，没有 leno.toml 也能用）：
+ *     [pack]
+ *     onefile   = true
+ *     resources = 一组带引号的通配模式：images 目录递归全部写 images 加两个星号；
+ *                 字体目录下的 ttf 写 fonts 加单星号加 .ttf（段内星号/问号）
+ * 声明什么就嵌什么 —— 不做"自动把目录下所有文件塞进去"（会把 .leno 源码、缓存、
+ * 无关大文件一起带上）。rel_path 保留目录结构 ⇒ 解包后 dirs.script_dir() 拼出的
+ * 绝对路径（GUI 应用定位资源的主流写法，见 file_manager.leno）依然成立。
+ * ============================================================================ */
+
+#define MAX_SEGS 32
+#define RES_WALK_MAX_DEPTH 16
+
+/* 把相对路径按 '/' 或 '\\' 切成段（原地写 '\0'）。返回段数。 */
+static int split_segs(char* s, char** segs, int max) {
+    int n = 0;
+    char* p = s;
+    while (*p && n < max) {
+        while (*p == '/' || *p == '\\') p++;
+        if (!*p) break;
+        segs[n++] = p;
+        while (*p && *p != '/' && *p != '\\') p++;
+        if (*p) *p++ = '\0';
+    }
+    return n;
+}
+
+/* 段级路径匹配：pat[pi..pn) 对 rel[ri..rn)，`**` 可吃掉任意多层 */
+static int path_seg_match(char** pat, int pn, int pi, char** rel, int rn, int ri) {
+    while (pi < pn) {
+        if (strcmp(pat[pi], "**") == 0) {
+            if (pi + 1 == pn) return 1;   /* ** 在末尾：吃掉剩余全部 */
+            for (int k = ri; k <= rn; k++) {
+                if (path_seg_match(pat, pn, pi + 1, rel, rn, k)) return 1;
+            }
+            return 0;
+        }
+        if (ri >= rn) return 0;
+        if (!wildcard_match(pat[pi], rel[ri])) return 0;
+        pi++;
+        ri++;
+    }
+    return ri == rn;
+}
+
+typedef struct {
+    PackRes* items;
+    int count;
+    int cap;
+} ResCollector;
+
+static void res_add(ResCollector* c, const char* src_abs, const char* rel) {
+    for (int i = 0; i < c->count; i++) {
+        if (strcmp(c->items[i].rel_path, rel) == 0) return;   /* 同一目标路径只收一次 */
+    }
+    if (c->count == c->cap) {
+        int nc = c->cap ? c->cap * 2 : 16;
+        PackRes* ni = (PackRes*)realloc(c->items, sizeof(PackRes) * (size_t)nc);
+        if (!ni) return;
+        c->items = ni;
+        c->cap = nc;
+    }
+    c->items[c->count].src_path = strdup(src_abs);
+    c->items[c->count].rel_path = strdup(rel);
+    if (!c->items[c->count].src_path || !c->items[c->count].rel_path) {
+        free(c->items[c->count].src_path);
+        free(c->items[c->count].rel_path);
+        return;
+    }
+    c->count++;
+}
+
+/* 遍历目录条目（跨平台，回调式；is_dir != 0 表示目录） */
+typedef void (*DirEachFn)(void* ctx, const char* name, int is_dir);
+
+static void list_dir_each(const char* dir_abs, DirEachFn fn, void* ctx) {
+#ifdef _WIN32
+    char spec[MAX_PATH_LEN];
+    path_join(spec, sizeof(spec), dir_abs, "*");
+    wchar_t* wspec = utf8_to_utf16(spec);
+    if (!wspec) return;
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW(wspec, &fd);
+    free(wspec);
+    if (h == INVALID_HANDLE_VALUE) return;
+    do {
+        if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
+        char name[MAX_PATH_LEN];
+        if (WideCharToMultiByte(CP_UTF8, 0, fd.cFileName, -1, name, sizeof(name), NULL, NULL) <= 0)
+            continue;
+        fn(ctx, name, (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ? 1 : 0);
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
+#else
+    DIR* d = opendir(dir_abs);
+    if (!d) return;
+    struct dirent* ent;
+    while ((ent = readdir(d)) != NULL) {
+        if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) continue;
+        int is_dir = 0;
+        if (ent->d_type == DT_DIR) is_dir = 1;
+        else if (ent->d_type == DT_UNKNOWN) {
+            char full[MAX_PATH_LEN];
+            path_join(full, sizeof(full), dir_abs, ent->d_name);
+            struct stat st;
+            is_dir = (stat(full, &st) == 0 && S_ISDIR(st.st_mode));
+        }
+        fn(ctx, ent->d_name, is_dir);
+    }
+    closedir(d);
+#endif
+}
+
+/* 递归遍历用上下文内的路径缓冲区统一留出余量：
+ * 拼 "%s/%s" 这类两段串时，源串最长 MAX_PATH_LEN-1，目标必须再宽一点，
+ * 否则 -Wformat-truncation 会（正确地）报警 */
+#define RES_PATH_MAX (MAX_PATH_LEN + 8)
+
+/* 递归遍历用的上下文 */
+typedef struct {
+    ResCollector* col;
+    char** pat;
+    int pat_n;
+} ResWalk;
+
+/* 该目录名是否要跳过（产物/缓存/隐藏，避免把自己打进去） */
+static int res_skip_dir(const char* name) {
+    if (name[0] == '.') return 1;                 /* .git / .lenocache / 隐藏目录 */
+    if (strcmp(name, "dist") == 0) return 1;      /* 打包输出目录 */
+    return 0;
+}
+
+static void res_walk_ctx(void* ctx, const char* name, int is_dir);
+
+/* 遍历一格的回调上下文（每层一份，生命周期覆盖该层的 list_dir_each 调用） */
+typedef struct {
+    ResWalk* w;
+    const char* dir_abs;
+    const char* rel_prefix;
+    int depth;
+} ResWalkFrame;
+
+/* 进入 dir_abs（其相对包根的路径为 rel_prefix，形如 "images/"）继续遍历 */
+static void res_walk_dir(ResWalk* w, const char* dir_abs, const char* rel_prefix, int depth) {
+    if (depth > RES_WALK_MAX_DEPTH) return;
+    ResWalkFrame frame;
+    frame.w = w;
+    frame.dir_abs = dir_abs;
+    frame.rel_prefix = rel_prefix;
+    frame.depth = depth;
+    list_dir_each(dir_abs, res_walk_ctx, &frame);
+}
+
+static void res_walk_ctx(void* ctx, const char* name, int is_dir) {
+    ResWalkFrame* f = (ResWalkFrame*)ctx;
+    ResWalk* w = f->w;
+
+    char rel[RES_PATH_MAX];
+    snprintf(rel, sizeof(rel), "%s%s", f->rel_prefix, name);
+
+    if (is_dir) {
+        if (res_skip_dir(name)) return;
+        char child[RES_PATH_MAX];
+        path_join(child, sizeof(child), f->dir_abs, name);
+        char child_rel[RES_PATH_MAX + 4];   // rel + "/" + NUL
+        snprintf(child_rel, sizeof(child_rel), "%s/", rel);
+        res_walk_dir(w, child, child_rel, f->depth + 1);
+        return;
+    }
+
+    /* 文件：整条相对路径做段级匹配 */
+    char rel_copy[RES_PATH_MAX];
+    strncpy(rel_copy, rel, sizeof(rel_copy) - 1);
+    rel_copy[sizeof(rel_copy) - 1] = '\0';
+    char* rsegs[MAX_SEGS];
+    int rn = split_segs(rel_copy, rsegs, MAX_SEGS);
+    if (rn == 0) return;
+    if (!path_seg_match(w->pat, w->pat_n, 0, rsegs, rn, 0)) return;
+
+    char src_abs[RES_PATH_MAX];
+    path_join(src_abs, sizeof(src_abs), f->dir_abs, name);
+    res_add(w->col, src_abs, rel);
+}
+
+/* 展开单个模式（相对包根），返回收录条数 */
+static int res_expand_pattern(ResCollector* col, const char* root_with_sep,
+                              const char* pattern) {
+    char pat_buf[MAX_PATH_LEN];
+    strncpy(pat_buf, pattern, sizeof(pat_buf) - 1);
+    pat_buf[sizeof(pat_buf) - 1] = '\0';
+    char* segs[MAX_SEGS];
+    int pn = split_segs(pat_buf, segs, MAX_SEGS);
+    if (pn == 0) return 0;
+
+    /* 字面前缀直接下降，避免从包根全树遍历（images 目录就只走它自己） */
+    char start_abs[RES_PATH_MAX];
+    strncpy(start_abs, root_with_sep, sizeof(start_abs) - 1);
+    start_abs[sizeof(start_abs) - 1] = '\0';
+    char rel_prefix[RES_PATH_MAX];
+    rel_prefix[0] = '\0';
+    int i = 0;
+    while (i < pn - 1 && strpbrk(segs[i], "*?") == NULL) {
+        size_t alen = strlen(start_abs);
+        if (alen + strlen(segs[i]) + 2 >= sizeof(start_abs)) break;
+        path_join(start_abs, sizeof(start_abs), start_abs, segs[i]);
+        strncat(rel_prefix, segs[i], sizeof(rel_prefix) - strlen(rel_prefix) - 1);
+        strncat(rel_prefix, "/", sizeof(rel_prefix) - strlen(rel_prefix) - 1);
+        i++;
+    }
+
+    int before = col->count;
+    ResWalk w;
+    memset(&w, 0, sizeof(w));
+    w.col = col;
+    w.pat = segs;
+    w.pat_n = pn;
+    res_walk_dir(&w, start_abs, rel_prefix, 0);
+    return col->count - before;
+}
+
+int package_collect_pack_resources(const char* entry_file, PackRes** out, int* out_count) {
+    if (!out || !out_count) return -1;
+    *out = NULL;
+    *out_count = 0;
+    if (!entry_file) return 0;
+
+    /* 包根：有 leno.toml 用它，没有就退回入口文件所在目录 */
+    char* proj = package_find_project_root(entry_file);
+    char root[RES_PATH_MAX];
+    if (proj) {
+        strncpy(root, proj, sizeof(root) - 1);
+        root[sizeof(root) - 1] = '\0';
+        free(proj);
+    } else {
+        strncpy(root, entry_file, sizeof(root) - 1);
+        root[sizeof(root) - 1] = '\0';
+        char* a = strrchr(root, '/');
+        char* b = strrchr(root, '\\');
+        char* sep = a;
+        if (b && (!a || b > a)) sep = b;
+        if (sep) *(sep + 1) = '\0';
+        else root[0] = '\0';
+    }
+    if (!root[0]) return 0;
+
+    char toml_path[RES_PATH_MAX];
+    path_join(toml_path, sizeof(toml_path), root, "resource.toml");
+    PackConfig* cfg = package_pack_config_parse(toml_path);
+    if (!cfg) return 0;   /* 没有 resource.toml ⇒ 没有资源声明 */
+
+    ResCollector col;
+    memset(&col, 0, sizeof(col));
+    for (int i = 0; i < cfg->resource_count; i++) {
+        const char* pat = cfg->resources[i];
+        if (!pat || !pat[0]) continue;
+        int n = res_expand_pattern(&col, root, pat);
+        if (n <= 0) {
+            fprintf(stderr, "[pack] 警告: [pack] resources 模式 '%s' 在 %s 下没有匹配到文件\n",
+                    pat, root);
+        }
+    }
+    printf("[pack] 内嵌资源: %d 个文件（来自 resource.toml [pack] resources）\n", col.count);
+
+    package_pack_config_free(cfg);
+    *out = col.items;
+    *out_count = col.count;
+    return 0;
+}
+
+void package_pack_res_free(PackRes* res, int count) {
+    if (!res) return;
+    for (int i = 0; i < count; i++) {
+        free(res[i].src_path);
+        free(res[i].rel_path);
+    }
+    free(res);
 }
 
 /* ============================================================================

@@ -1,14 +1,17 @@
 #include "include/leno_vm_runtime.h"
 #include "include/leno_serialize.h"
 #include "include/native.h"
+#include "include/platform.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #ifdef _WIN32
 #include <windows.h>
+#include <direct.h>
 #else
 #include <unistd.h>
+#include <sys/stat.h>
 #endif
 
 // VM 独立运行时 - 不依赖编译器
@@ -26,6 +29,190 @@ char** g_argv = NULL;
 
 // lenb 文件魔数
 #define LENB_MAGIC 0x424E454C
+// 内嵌资源段魔数（"LENR"，小端）
+#define RES_MAGIC  0x524E454C
+
+// ============================================================================
+// 内嵌资源段（单文件打包 -p --onefile）
+// ----------------------------------------------------------------------------
+// 尾部布局: [vm][资源段][资源段大小:u32][RES_MAGIC][lenb][lenb大小:u32][LENB_MAGIC]
+// 资源段放在 lenb **之前** ⇒ 末尾 8 字节仍是 LENB_MAGIC，旧 VM 读新 exe 依然正常。
+// 资源段内部格式（索引在前、内容在后，便于"先比哈希再决定落盘"）：
+//   "LENOPACK"(8) | entry_count:u32
+//   entry_count × [ rel_len:u16 | size:u64 | hash:u32 | rel_path(rel_len) ]
+//   各文件内容按索引顺序紧随其后
+// 解包目标 = **exe 所在目录**，理由：
+//   ① dirs.script_dir() 在打包 exe 上就是 exe 目录，GUI 应用用它拼资源绝对路径
+//      （file_manager.leno 的 imgDir = script_dir()/images）⇒ 还原到这儿语义不变，
+//      书签、初始浏览目录这类"exe 旁数据"的行为也一字不改；
+//   ② DLL 落回 exe 旁 ⇒ Windows 的 DLL 搜索顺序第一项就是 exe 目录，SDL3_image→SDL3
+//      这类兄弟依赖天然成立，无需 SetDllDirectory。
+// 幂等：磁盘上已存在且内容哈希一致的文件不重写 ⇒ 二次启动零写入。
+// ============================================================================
+#define RES_BLOB_HEADER "LENOPACK"
+
+// 下面解包要用（定义在后面，保持"读文件"工具与原顺序）
+static unsigned char* read_file_binary(const char* path, size_t* out_size);
+
+static uint32_t res_fnv1a32(const unsigned char* data, size_t len) {
+    uint32_t h = 2166136261u;
+    for (size_t i = 0; i < len; i++) {
+        h ^= data[i];
+        h *= 16777619u;
+    }
+    return h;
+}
+
+// 取文件内容的 FNV-1a（不命中返回 0），用于判断磁盘上的文件是否已是同一版本
+static uint32_t res_hash_existing(const char* path) {
+    size_t size = 0;
+    unsigned char* data = read_file_binary(path, &size);
+    if (!data) return 0;
+    uint32_t h = res_fnv1a32(data, size);
+    free(data);
+    return h ? h : 1;   // 0 保留给"读不到"
+}
+
+// 递归创建目录（UTF-8 路径安全）
+static void res_mkpath(const char* dir) {
+    if (!dir || !dir[0]) return;
+    char tmp[MAX_PATH_LEN];
+    strncpy(tmp, dir, sizeof(tmp) - 1);
+    tmp[sizeof(tmp) - 1] = '\0';
+    size_t len = strlen(tmp);
+    while (len > 1 && (tmp[len - 1] == '\\' || tmp[len - 1] == '/')) tmp[--len] = '\0';
+    for (char* p = tmp + 1; *p; p++) {
+        if (*p == '\\' || *p == '/') {
+            char save = *p;
+            *p = '\0';
+#ifdef _WIN32
+            wchar_t* w = utf8_to_utf16(tmp);
+            if (w) { _wmkdir(w); free(w); }
+#else
+            mkdir(tmp, 0755);
+#endif
+            *p = save;
+        }
+    }
+#ifdef _WIN32
+    { wchar_t* w = utf8_to_utf16(tmp); if (w) { _wmkdir(w); free(w); } }
+#else
+    mkdir(tmp, 0755);
+#endif
+}
+
+static int res_write_file(const char* path, const unsigned char* data, size_t len) {
+#ifdef _WIN32
+    wchar_t* wp = utf8_to_utf16(path);
+    if (!wp) return -1;
+    FILE* f = _wfopen(wp, L"wb");
+    free(wp);
+#else
+    FILE* f = fopen(path, "wb");
+#endif
+    if (!f) return -1;
+    int ok = (len == 0) || (fwrite(data, 1, len, f) == len);
+    if (fclose(f) != 0) ok = 0;
+    return ok ? 0 : -1;
+}
+
+// 解包资源段到 exe 目录；返回写入的文件数（-1 表示格式错误）
+static int extract_embedded_resources(const char* exe_path,
+                                      const unsigned char* blob, size_t blob_len) {
+    if (blob_len < 12 || memcmp(blob, RES_BLOB_HEADER, 8) != 0) return -1;
+
+    uint32_t count = 0;
+    memcpy(&count, blob + 8, 4);
+    if (count == 0 || count > 100000) return -1;
+
+    // exe 所在目录（含结尾分隔符）
+    char exe_dir[MAX_PATH_LEN];
+    strncpy(exe_dir, exe_path, sizeof(exe_dir) - 1);
+    exe_dir[sizeof(exe_dir) - 1] = '\0';
+    char* s1 = strrchr(exe_dir, '\\');
+    char* s2 = strrchr(exe_dir, '/');
+    if (s2 && (!s1 || s2 > s1)) s1 = s2;
+    if (!s1) return -1;
+    *(s1 + 1) = '\0';
+
+    // 第一遍：读索引，算内容区起点
+    const unsigned char* idx = blob + 12;
+    const unsigned char* blob_end = blob + blob_len;
+    size_t content_off = 12;
+    for (uint32_t i = 0; i < count; i++) {
+        if (idx + 2 + 8 + 4 > blob_end) return -1;
+        uint16_t rlen = 0;
+        memcpy(&rlen, idx, 2);
+        uint64_t fsize = 0;
+        memcpy(&fsize, idx + 2, 8);
+        content_off += 2 + 8 + 4 + rlen;
+        (void)fsize;
+        idx += 2 + 8 + 4 + rlen;
+    }
+    if (content_off > blob_len) return -1;
+
+    // 第二遍：逐个落盘（哈希一致的跳过）
+    idx = blob + 12;
+    const unsigned char* content = blob + content_off;
+    const unsigned char* content_end = blob + blob_len;
+    int written = 0, skipped = 0, failed = 0;
+
+    for (uint32_t i = 0; i < count; i++) {
+        uint16_t rlen = 0;
+        memcpy(&rlen, idx, 2);
+        uint64_t fsize = 0;
+        memcpy(&fsize, idx + 2, 8);
+        uint32_t want_hash = 0;
+        memcpy(&want_hash, idx + 10, 4);
+        const char* rel = (const char*)(idx + 14);
+
+        if (rlen == 0 || rel[0] == '\0' || fsize > (uint64_t)(content_end - content) ||
+            memchr(rel, '\0', rlen) != NULL) {
+            return -1;   // 索引损坏：直接报错，不写半个目录
+        }
+        char rel_buf[MAX_PATH_LEN];
+        size_t copy_len = (rlen < sizeof(rel_buf) - 1) ? rlen : sizeof(rel_buf) - 1;
+        memcpy(rel_buf, rel, copy_len);
+        rel_buf[copy_len] = '\0';
+
+        char dst[MAX_PATH_LEN * 2];
+        snprintf(dst, sizeof(dst), "%s%s", exe_dir, rel_buf);
+        // 统一分隔符（内嵌路径一律用 '/'，Windows 下换成盘符风格更好读）
+#ifdef _WIN32
+        for (char* p = dst + strlen(exe_dir); *p; p++) {
+            if (*p == '/') *p = '\\';
+        }
+#endif
+
+        if (res_hash_existing(dst) == want_hash) {
+            skipped++;
+        } else {
+            // 建父目录
+            char parent[MAX_PATH_LEN * 2];
+            strncpy(parent, dst, sizeof(parent) - 1);
+            parent[sizeof(parent) - 1] = '\0';
+            char* q1 = strrchr(parent, '\\');
+            char* q2 = strrchr(parent, '/');
+            if (q2 && (!q1 || q2 > q1)) q1 = q2;
+            if (q1) { *q1 = '\0'; res_mkpath(parent); }
+
+            if (res_write_file(dst, content, (size_t)fsize) == 0) written++;
+            else {
+                failed++;
+                fprintf(stderr, "[pack] 解包失败: %s\n", dst);
+            }
+        }
+
+        content += (size_t)fsize;
+        idx += 2 + 8 + 4 + rlen;
+    }
+
+    if (written > 0 || failed > 0) {
+        fprintf(stderr, "[pack] 解包内嵌资源: 新写入 %d 个，已存在 %d 个%s\n",
+                written, skipped, failed ? "（有失败）" : "");
+    }
+    return written;
+}
 
 // 从文件读取全部内容到缓冲区
 static unsigned char* read_file_binary(const char* path, size_t* out_size) {
@@ -58,10 +245,16 @@ static unsigned char* read_file_binary(const char* path, size_t* out_size) {
     return buf;
 }
 
-// 检测 exe 尾部是否嵌入了 lenb 数据
+// 检测 exe 尾部是否嵌入了 lenb 数据（以及可选的资源段）
 // 返回: 1=有嵌入数据, 0=无嵌入数据
-// 如果有嵌入数据，通过 out_data/out_size 返回提取的 lenb 数据
-static int check_embedded_lenb(const char* exe_path, unsigned char** out_data, size_t* out_size) {
+// 尾部布局: [vm][资源段][资源段大小][RES_MAGIC][lenb][lenb大小][LENB_MAGIC]
+static int check_embedded_lenb(const char* exe_path, unsigned char** out_data, size_t* out_size,
+                               unsigned char** out_res, size_t* out_res_size) {
+    *out_data = NULL;
+    *out_size = 0;
+    *out_res = NULL;
+    *out_res_size = 0;
+
     size_t file_size = 0;
     unsigned char* data = read_file_binary(exe_path, &file_size);
     if (!data || file_size < 8) {
@@ -91,7 +284,24 @@ static int check_embedded_lenb(const char* exe_path, unsigned char** out_data, s
         return 0;
     }
 
-    memcpy(lenb_data, data + file_size - 8 - lenb_size, lenb_size);
+    size_t lenb_start = file_size - 8 - lenb_size;
+    memcpy(lenb_data, data + lenb_start, lenb_size);
+
+    // lenb 之前若还有 [资源段大小][RES_MAGIC]，就是单文件打包的资源段
+    if (lenb_start >= 8) {
+        uint32_t res_size = 0, res_magic = 0;
+        memcpy(&res_size, data + lenb_start - 8, 4);
+        memcpy(&res_magic, data + lenb_start - 4, 4);
+        if (res_magic == RES_MAGIC && res_size > 0 && res_size <= lenb_start - 8) {
+            unsigned char* res_data = (unsigned char*)malloc(res_size);
+            if (res_data) {
+                memcpy(res_data, data + lenb_start - 8 - res_size, res_size);
+                *out_res = res_data;
+                *out_res_size = res_size;
+            }
+        }
+    }
+
     *out_data = lenb_data;
     *out_size = lenb_size;
     free(data);
@@ -188,7 +398,15 @@ static int vm_run_main(int argc, char** argv) {
 
     unsigned char* embedded_data = NULL;
     size_t embedded_size = 0;
-    if (check_embedded_lenb(exe_path, &embedded_data, &embedded_size)) {
+    unsigned char* embedded_res = NULL;
+    size_t embedded_res_size = 0;
+    if (check_embedded_lenb(exe_path, &embedded_data, &embedded_size,
+                            &embedded_res, &embedded_res_size)) {
+        // 有内嵌资源段：先解包到 exe 目录（幂等），再执行
+        if (embedded_res) {
+            extract_embedded_resources(exe_path, embedded_res, embedded_res_size);
+            free(embedded_res);
+        }
         // 有嵌入数据，直接执行
         int ret = run_lenb_from_memory(embedded_data, embedded_size);
         free(embedded_data);
