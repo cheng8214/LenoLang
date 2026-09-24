@@ -30,6 +30,7 @@ const char* error_get_filename(void);
 void error_add(ErrorType type, int line, const char* msg);
 void error_add_at(ErrorType type, int line, int column, const char* msg);
 int error_has_any(void);
+int error_count(void);
 void error_clear(void);
 void error_print_all(void);
 

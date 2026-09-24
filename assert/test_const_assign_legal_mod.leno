@@ -1,0 +1,5 @@
+// test_const_assign_legal_mod.leno — 模块桩：跨模块关联常量 + struct
+export struct Cfg {
+    const MAX = 10
+    int level = 0
+}

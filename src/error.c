@@ -112,6 +112,10 @@ int error_has_any(void) {
     return errors.count > 0;
 }
 
+int error_count(void) {
+    return errors.count;
+}
+
 void error_clear(void) {
     errors.count = 0;
 }

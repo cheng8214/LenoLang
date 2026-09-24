@@ -1,0 +1,48 @@
+// test_const_assign_legal.leno — B1/B2 修复的合法路径回归
+// 修复后以下合法用法必须照常编译运行（防误伤）：
+//   [1] struct 关联常量读取（Module 前缀 / 类型名前缀 / 经实例? 均不折叠破坏）
+//   [2] const 数组变量只读使用
+//   [3] 非 const struct 字段照常赋值（折叠检查不拦普通字段写入）
+//   [4] 泛型实参为合法用户类型（不误报"未定义的类型"）
+//   [5] 泛型实参为内置类型
+
+import "test_const_assign_legal_mod.leno" as m
+use m.Cfg
+
+struct LocalCfg {
+    const NAME = "local"
+    int level = 0
+}
+
+// [4] 用户泛型 struct 作容器：字段 Array[T] 的元素方法调用照常工作
+struct LaterBox[T] {
+    Array[T] items
+}
+
+main() {
+    // [1] 关联常量读取
+    assert_eq(Cfg.MAX, 10)
+    assert_eq(m.Cfg.MAX, 10)
+    assert_eq(LocalCfg.NAME, "local")
+
+    // [2] const 数组只读
+    const arr = [1, 2, 3]
+    assert_eq(arr.len(), 3)
+    assert_eq(arr[2], 3)
+
+    // [3] 非 const 字段照常赋值
+    Cfg c = new Cfg()
+    c.level = 7
+    assert_eq(c.level, 7)
+
+    // [4] 用户泛型 struct + 实例字段赋值
+    LaterBox[int] box = new LaterBox[int]()
+    box.items.add(42)
+    assert_eq(box.items[0], 42)
+
+    // [5] 内置类型泛型实参
+    Array[Array[string]] nested = [["a"], ["b"]]
+    assert_eq(nested[1][0], "b")
+
+    print("=== test_const_assign_legal ALL passed ===")
+}

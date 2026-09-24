@@ -289,6 +289,18 @@
             visit(s, ast->u.index_assign.index);
             visit(s, ast->u.index_assign.value);
 
+            // ★ const 检查（B1 修复）：obj 若是 struct 关联常量/枚举成员，visit 中会被
+            //   折叠成字面量（AST_NUM 等）⇒ `Cfg.MAX[0] = 1` 这类写入会被静默丢弃，报错拦截。
+            if (ast->u.index_assign.obj->kind == AST_NUM || ast->u.index_assign.obj->kind == AST_STRING ||
+                ast->u.index_assign.obj->kind == AST_BOOL || ast->u.index_assign.obj->kind == AST_NULL) {
+                char msg[BUFFER_MEDIUM];
+                snprintf(msg, sizeof(msg), "不能对常量的元素赋值（'%s' 是常量值）",
+                         ast->u.index_assign.obj->kind == AST_NUM ? "数值" :
+                         ast->u.index_assign.obj->kind == AST_STRING ? "字符串" :
+                         ast->u.index_assign.obj->kind == AST_BOOL ? "布尔" : "null");
+                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+            }
+
             // 获取被赋值对象的类型（支持嵌套字段访问如 r.position.x）
             TypeInfo* obj_type = infer_expr_type(s, ast->u.index_assign.obj);
 

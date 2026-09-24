@@ -82,6 +82,9 @@ void transform_method_body(Ast* ast, char** field_names, int field_count, char**
 // 类型工具函数
 // ============================================================================
 int resolve_alias_in_type(Semantic* s, TypeInfo** type_ptr, int line);
+// 递归检查泛型实参/子类型中是否存在未定义类型（不查顶层）——B2 修复用。
+// 返回 1 = 报过"未定义"错（调用方应置 declared_type_undefined 跳过级联检查）
+int semantic_check_undefined_subtypes(Semantic* s, TypeInfo* type, int line, int column);
 int type_utils_is_array_element_mutator(const char* method_name);
 int type_utils_get_array_element_param_index(const char* method_name, int is_module_call);
 int type_utils_try_update_array_element_type(Symbol* arr_sym, TypeInfo* elem_type);

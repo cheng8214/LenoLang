@@ -178,6 +178,17 @@
                     }
                 }
 
+                // ★ 递归检查泛型实参/子类型中的未定义类型（B2 修复）：
+                //   上面的检查只看顶层类型名（`Array[intt]` 顶层是 Array，合法），
+                //   `intt` 藏在 generic_args 里原先无人查 ⇒ 拖到类型不匹配时才报出
+                //   误导性的"期望 Array[struct intt]"。这里补上 ⇒ 直接报"未定义的类型"。
+                if (!declared_type_undefined && ast->u.var_decl.type &&
+                    ast->u.var_decl.type->kind != TYPE_INFER) {
+                    if (semantic_check_undefined_subtypes(s, ast->u.var_decl.type, ast->line, ast->column)) {
+                        declared_type_undefined = 1;   // 跳过后续级联类型不匹配检查
+                    }
+                }
+
                 TypeInfo* init_type = infer_expr_type(s, ast->u.var_decl.init);
                 if (init_type) {
                     if (ast->u.var_decl.type && ast->u.var_decl.type->kind != TYPE_INFER && !infer_as_param) {
@@ -432,11 +443,32 @@
                     }
                 } else if (target->kind == AST_FIELD_ACCESS) {
                     // 字段访问：访问字段访问节点进行语义分析
+                    // ★ const 检查（B1 修复）：struct 关联常量在 visit 中会被折叠成字面量
+                    //   （AST_NUM 等）——折叠后赋值目标不再是 lvalue，codegen 会静默丢弃
+                    //   写入（实测 `Cfg.MAX = 20` 无报错且读回仍为旧值）⇒ 报错拦截。
                     visit(s, target);
+                    if (target->kind == AST_NUM || target->kind == AST_STRING ||
+                        target->kind == AST_BOOL || target->kind == AST_NULL) {
+                        char msg[BUFFER_MEDIUM];
+                        snprintf(msg, sizeof(msg), "不能对常量重新赋值");
+                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                    }
                 } else if (target->kind == AST_MODULE_ACCESS) {
                     // 模块访问（可能是 struct/cstruct 字段访问）：访问节点进行语义分析
                     // 这会触发转换为 AST_FIELD_ACCESS 或 AST_INDEX
+                    // ★ const 检查（B1 修复）：同上——`Cfg.MAX = 20` 这类目标在 visit 中
+                    //   被折叠成字面量 ⇒ 非法赋值，visit 后检测并报错（保留原名提示）。
+                    char orig_buf[BUFFER_SMALL];
+                    snprintf(orig_buf, sizeof(orig_buf), "%s.%s",
+                             target->u.module_access.module_name,
+                             target->u.module_access.member_name);
                     visit(s, target);
+                    if (target->kind == AST_NUM || target->kind == AST_STRING ||
+                        target->kind == AST_BOOL || target->kind == AST_NULL) {
+                        char msg[BUFFER_MEDIUM];
+                        snprintf(msg, sizeof(msg), "不能对常量 '%s' 重新赋值", orig_buf);
+                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                    }
                 } else if (target->kind == AST_VAR && ast->u.assign.names[i]) {
                     // 简单变量：解析符号
                     Symbol* sym = resolve_variable_with_upvalue(s, ast->u.assign.names[i], &ast->u.assign.refs[i]);
