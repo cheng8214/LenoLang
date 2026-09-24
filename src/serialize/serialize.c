@@ -148,13 +148,6 @@ static void wb_write_u8(WriteBuffer* wb, uint8_t val) {
     wb_write(wb, &val, 1);
 }
 
-static void wb_write_u16(WriteBuffer* wb, uint16_t val) {
-    uint8_t buf[2];
-    buf[0] = (val >> 8) & 0xFF;
-    buf[1] = val & 0xFF;
-    wb_write(wb, buf, 2);
-}
-
 static void wb_write_u32(WriteBuffer* wb, uint32_t val) {
     uint8_t buf[4];
     buf[0] = (val >> 24) & 0xFF;
@@ -175,6 +168,16 @@ static void wb_write_u64(WriteBuffer* wb, uint64_t val) {
         val >>= 8;
     }
     wb_write(wb, buf, 8);
+}
+
+// varint（LEB128 风格：低 7 位/字节，最高位 = 续位）—— 行号表 RLE 的两个字段用它
+// （见 serialize_chunk 的行号表编码）。行号与段长都是小整数，实测比定长 u16 小得多。
+static void wb_write_varint(WriteBuffer* wb, uint32_t val) {
+    while (val >= 0x80) {
+        wb_write_u8(wb, (uint8_t)((val & 0x7F) | 0x80));
+        val >>= 7;
+    }
+    wb_write_u8(wb, (uint8_t)val);
 }
 
 static void wb_write_double(WriteBuffer* wb, double val) {
@@ -221,13 +224,6 @@ static int ctx_read_u8(DeserializeCtx* ctx, uint8_t* out) {
     return ctx_read(ctx, out, 1);
 }
 
-static int ctx_read_u16(DeserializeCtx* ctx, uint16_t* out) {
-    uint8_t buf[2];
-    if (!ctx_read(ctx, buf, 2)) return 0;
-    *out = ((uint16_t)buf[0] << 8) | buf[1];
-    return 1;
-}
-
 static int ctx_read_u32(DeserializeCtx* ctx, uint32_t* out) {
     uint8_t buf[4];
     if (!ctx_read(ctx, buf, 4)) return 0;
@@ -251,6 +247,21 @@ static int ctx_read_u64(DeserializeCtx* ctx, uint64_t* out) {
         *out = (*out << 8) | buf[i];
     }
     return 1;
+}
+
+// varint 读取（与 wb_write_varint 对称）。最多 5 字节；第 5 字节仍在续位 ⇒ 判损坏（返回 0）。
+static int ctx_read_varint(DeserializeCtx* ctx, uint32_t* out) {
+    uint32_t val = 0;
+    for (int shift = 0; shift < 35; shift += 7) {
+        uint8_t b;
+        if (!ctx_read_u8(ctx, &b)) return 0;
+        val |= (uint32_t)(b & 0x7F) << shift;
+        if ((b & 0x80) == 0) {
+            *out = val;
+            return 1;
+        }
+    }
+    return 0;
 }
 
 static int ctx_read_double(DeserializeCtx* ctx, double* out) {
@@ -713,8 +724,19 @@ static int serialize_chunk(WriteBuffer* wb, Chunk* chunk) {
 
     if (chunk->len > 0 && chunk->lines) {
         wb_write_u8(wb, 1);
-        for (int i = 0; i < chunk->len; i++) {
-            wb_write_u16(wb, (uint16_t)(chunk->lines[i] & 0xFFFF));
+        // 行号表：行程编码（RLE）+ varint —— 连续相同行号合并成"段长 + 行号"。
+        // 编码器给一条指令的 4 个字节写的是同一个 line ⇒ 段长普遍 ≥ 4：
+        //   v3.0.2 之前是定长 u16[code_len]（每字节码字节 2 字节行号，占 .lenb 的
+        //   大头）；现在按"段"计，同一条语句越长省得越多（实测 ~1 字节/指令）。
+        // 读取端按 code_len 展开，**不记录段数**（解满即止，见 deserialize_chunk_data）。
+        int i = 0;
+        while (i < chunk->len) {
+            uint16_t line = (uint16_t)(chunk->lines[i] & 0xFFFF);
+            int end = i + 1;
+            while (end < chunk->len && (uint16_t)(chunk->lines[end] & 0xFFFF) == line) end++;
+            wb_write_varint(wb, (uint32_t)(end - i));
+            wb_write_varint(wb, (uint32_t)line);
+            i = end;
         }
     } else {
         wb_write_u8(wb, 0);
@@ -1605,10 +1627,17 @@ static int deserialize_chunk_data(DeserializeCtx* ctx, Chunk* chunk) {
     if (!ctx_read_u8(ctx, &has_lines)) return 0;
     if (has_lines && chunk->len > 0) {
         chunk->lines = (int*)malloc(sizeof(int) * chunk->code_capacity);
-        for (int i = 0; i < chunk->len; i++) {
-            uint16_t line;
-            if (!ctx_read_u16(ctx, &line)) return 0;
-            chunk->lines[i] = (int)line;
+        // RLE 展开（与 serialize_chunk 的编码对称）：读"段长 + 行号"直到铺满 code_len。
+        // 段长为 0 或越界 = 文件损坏 ⇒ 直接判错（不截断、不补零，否则行号表会静默错位）。
+        int filled = 0;
+        while (filled < chunk->len) {
+            uint32_t run_len, line;
+            if (!ctx_read_varint(ctx, &run_len) || !ctx_read_varint(ctx, &line)) return 0;
+            if (run_len == 0 || run_len > (uint32_t)(chunk->len - filled)) return 0;
+            for (uint32_t k = 0; k < run_len; k++) {
+                chunk->lines[filled + (int)k] = (int)line;
+            }
+            filled += (int)run_len;
         }
     }
 

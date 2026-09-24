@@ -29,7 +29,8 @@
 //     constants[]:   ConstantEntry[]
 //     code_len:      uint32
 //     code:          uint8[]
-//     lines[]:       uint16[] (行号表，与 code 等长)
+//     lines[]:       行号表 RLE+varint ——（段长 varint + 行号 varint）× N，
+//                    展开后与 code 等长；不记录段数（解满 code_len 即止）
 //
 // ConstantEntry:
 //   type_tag (1 byte) + payload
@@ -79,6 +80,11 @@
 //   并写明"为什么升 / 为什么不升"；改前先 git fetch（2026-09-16 撞过车：两个会话都用 v23
 //   但格式不同，数值相同、格式不同 ⇒ 靠版本号区分不开）。
 #define LENO_BIN_MAGIC      0x424E454C  // "LENB" little-endian
+// v3.0.2（2026-09-24）：行号表由定长 `u16[code_len]` 改为 **RLE + varint**（段长 + 行号，见
+//   上面的文件布局）。**字节布局变了**：旧文件会被按新布局读（把 code 之后的字节当段长/行号），
+//   行号表整段错位 ⇒ 必须整体失效重编译：bump 本版本号 + LENO_MODCACHE_VERSION（函数/模块
+//   字节码里同样带行号表）。.lenosymc 只存符号表、不含字节码 ⇒ 不动；.lenb.deps 靠 exe 指纹
+//   fail-closed ⇒ 不动。动机：定长 u16 时代行号表占 .lenb 体积约 2/3（每字节码字节 2 字节）。
 // v3.0.1（2026-09-21）：S2/2b-2 的 `module_slot16` 操作数**重新落地到寄存器式**——
 //   移植时丢了 codegen 侧的发射与 VM 侧的窺探/跳过，于是 `OP_STRUCT_INIT` 的操作数布局
 //   与"带 3 字节"的口径不一致（旧寄存器构建产物少 3 字节，新 VM 的 `p += 3` 会多跳
@@ -93,8 +99,7 @@
 //   ⇒ .lenb / entry_*.lenb 必须整体失效重编译。
 // v2.7.1（2026-09-16）：枚举成员求值语义修正 —— 扫描器补 `not`、除零/取模零改为与解析器同结论
 //   ⇒ 修正前编译出的 .lenb / entry_*.lenb 里可能烙着错的常量值，必须整体失效重编译。
-#define LENO_BIN_VERSION    0x00030001  // v3.0.1 - OP_STRUCT_INIT 恢复 3 字节
-                                        //   module_slot16 操作数（见上面 v3.0.1 条目）
+#define LENO_BIN_VERSION    0x00030002  // v3.0.2 - 行号表改 RLE+varint（见上面 v3.0.2 条目）
                                         // v3.0.0 - 寄存器式字节码：定长 4 字节指令，
                                         //   OpCode 枚举完全重写，旧 .lenb 全部失效
                                         //   读回来即悬空；owned 的还会被下个进程 free ⇒ 堆破坏）；
@@ -120,7 +125,10 @@
 // v13：ObjFunction 增加 is_async（运行期判定"调用即建协程"用）。旧缓存里的函数对象缺这个
 //      字段 ⇒ async 函数的**间接调用**（`var f = w; f()`、当参数传、绑定方法）会退回同步执行、
 //      静默错值，所以必须**作废旧缓存**。
-#define LENO_MODCACHE_VERSION  0x0000000E  // 上一版 v13 / v12 - 同 LENO_BIN_VERSION v3.0.1（OP_STRUCT_INIT
+#define LENO_MODCACHE_VERSION  0x0000000F  // v15 - 同 LENO_BIN_VERSION v3.0.2（行号表改 RLE+varint：
+                                           //       函数/模块字节码里同样带行号表，旧缓存按
+                                           //       旧布局读 ⇒ 行号表整段错位）
+                                           // 上一版 v14 - 同 LENO_BIN_VERSION v3.0.1（OP_STRUCT_INIT
                                            //       多 3 字节 module_slot16 操作数，模块字节码里
                                            //       同样存在，旧构建按旧长度推进会错位）
                                            // v11 - 寄存器式字节码，与 LENO_BIN_VERSION v3.0.0 同步
