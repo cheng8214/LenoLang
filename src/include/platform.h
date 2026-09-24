@@ -14,6 +14,16 @@
 #endif
 
 #include <stdint.h>
+#include <stddef.h>
+
+#ifndef _WIN32
+// 取当前进程可执行文件的**绝对路径**（UTF-8）。成功返回 1 并写入 out；失败返回 0（out 置空串）。
+//   · Linux: /proc/self/exe     · macOS: _NSGetExecutablePath + realpath
+//   · Windows: 本函数**不提供实现** —— 调用点继续直接用 GetModuleFileNameW
+//     （那是已验证工作的代码，不因"新增 macOS 支持"而改动）；请只在 #ifndef _WIN32 分支里调用。
+// 实现见 src/platform/platform_path.c（原先 5 处各自为政的 readlink 已收敛到这里）。
+int platform_self_exe_path(char* out, size_t n);
+#endif
 
 // 获取当前时间（毫秒）
 static inline uint64_t platform_current_time_ms(void) {

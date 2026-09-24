@@ -43,6 +43,14 @@ static char* packOutDir = NULL;    // -o/--pack-dir 指定的打包输出目录�
 static int onefileMode = 0;        // --onefile：把原生库与 resource.toml 声明的资源一起内嵌进 exe
 int g_use_gui_vm = 0;  // 语义分析阶段检测到 _console(false) 时置为 1
 
+// -p 打包时选哪个 VM 基底（PE 子系统由 prepend 进去的 vm 数据决定，打包后改不了）。
+// 优先级：显式开关 > 脚本里的 _console(false) 自动检测 > 默认控制台。
+// 只有 Windows 有两个变体（leno_vm.exe / leno_vm_gui.exe），其它平台只有 leno_vm。
+#define PACK_CONSOLE_AUTO  0   // 未指定：沿用 g_use_gui_vm（即 _console(false) 自动检测）
+#define PACK_CONSOLE_FORCE 1   // --console：强制控制台版
+#define PACK_CONSOLE_NONE  2   // --no-console：强制无控制台版（-mwindows）
+static int packConsoleMode = PACK_CONSOLE_AUTO;
+
 // 字节码输出重定向辅助（Windows 用 _dup/_dup2 保存/恢复 stdout 句柄）
 #ifdef _WIN32
 #include <io.h>
@@ -148,6 +156,10 @@ static void printHelp(const char* program) {
     printf("  --onefile         单文件打包：把原生库与 resource.toml [pack] resources 声明的\n");
     printf("                    资源内嵌进 exe，只需分发一个文件\n");
     printf("                    （首次运行自动解包到用户缓存目录，按内容哈希分目录）\n");
+    printf("  --console         打包时强制用控制台版 leno_vm（默认；覆盖脚本里的\n");
+    printf("                    _console(false) 自动检测）\n");
+    printf("  --no-console      打包时强制用无控制台版 leno_vm_gui（Windows；双击不弹黑框）\n");
+    printf("                    （二者互斥；非 Windows 平台无此变体，会提示并忽略）\n");
     printf("  --init [路径]     在当前目录创建新 Leno 包项目\n");
     printf("  --install         安装包或依赖到全局缓存\n");
     printf("  --                终止解释器选项解析：其后的参数都按位置参数处理\n");
@@ -1310,10 +1322,36 @@ int lenolang_run_file(const char* path) {
         }
         clock_t pack_compile_end = clock();
 
-        // 编译完成后 g_use_gui_vm 已确定，选择对应的 VM 运行时
+        // 编译完成后 g_use_gui_vm 已确定，选择对应的 VM 运行时。
+        // 优先级：显式开关（--console / --no-console）> 脚本里的 _console(false) 自动检测
+        //         > 默认控制台。
+        // 为什么要有开关：自动检测是"用运行期调用去猜链接期需求"的静态启发式 ——
+        //   · 只认字面量 false/0（`var v = false; _console(v)` 检测不到）；
+        //   · 写在永远不执行的分支里也会误判；
+        //   · 而 PE 子系统由 prepend 进去的 vm 数据决定，**打包后改不了** ⇒ 猜错就没救。
 #ifdef _WIN32
-        if (g_use_gui_vm) {
-            printf("[pack] 检测到 _console(false)，使用无控制台版 leno_vm_gui.exe\n");
+        int use_gui_vm = g_use_gui_vm;
+        switch (packConsoleMode) {
+            case PACK_CONSOLE_FORCE:
+                use_gui_vm = 0;
+                printf("[pack] --console: 使用控制台版 leno_vm.exe（已忽略 _console 自动检测）\n");
+                break;
+            case PACK_CONSOLE_NONE:
+                use_gui_vm = 1;
+                printf("[pack] --no-console: 使用无控制台版 leno_vm_gui.exe\n");
+                break;
+            default:
+                if (use_gui_vm) {
+                    printf("[pack] 检测到 _console(false)，使用无控制台版 leno_vm_gui.exe\n");
+                }
+                break;
+        }
+#else
+        // 非 Windows 只构建了 leno_vm 一个变体（build_vm.sh 的 -mwindows 版是 Windows 专属），
+        // 开关在这里没有对应物 ⇒ 提示一句并忽略，不让跨平台构建脚本因为多了个开关就失败。
+        if (packConsoleMode != PACK_CONSOLE_AUTO) {
+            printf("[pack] 提示: 本平台只有 leno_vm 一个变体，%s 已忽略\n",
+                   packConsoleMode == PACK_CONSOLE_NONE ? "--no-console" : "--console");
         }
 #endif
 
@@ -1503,7 +1541,8 @@ int lenolang_run_file(const char* path) {
         package_pack_res_free(pack_res, pack_res_count);
 
         // 查找 leno_vm：先在与 leno 同目录下找
-        // g_use_gui_vm=1 时用无控制台版 leno_vm_gui.exe（脚本调用了 _console(false)）
+        // use_gui_vm=1 时用无控制台版 leno_vm_gui.exe
+        // （来自 --no-console 开关，或脚本调用了 _console(false) 的自动检测；见上面选择逻辑）
         char vm_exe[MAX_PATH_LEN];
 #ifdef _WIN32
         // 获取当前 exe 所在目录
@@ -1511,7 +1550,7 @@ int lenolang_run_file(const char* path) {
         GetModuleFileNameA(NULL, exe_dir, MAX_PATH_LEN);
         exe_dir[MAX_PATH_LEN - 1] = '\0';
         char* last_sep = strrchr(exe_dir, '\\');
-        const char* vm_name = g_use_gui_vm ? "leno_vm_gui.exe" : "leno_vm.exe";
+        const char* vm_name = use_gui_vm ? "leno_vm_gui.exe" : "leno_vm.exe";
         if (last_sep) {
             *(last_sep + 1) = '\0';
             size_t dir_len = strlen(exe_dir);
@@ -1527,10 +1566,9 @@ int lenolang_run_file(const char* path) {
         }
 #else
         // Linux/macOS：获取当前可执行文件所在目录
+        // （自身路径统一走 platform_self_exe_path；实现见 src/platform/platform_path.c）
         char exe_dir[MAX_PATH_LEN];
-        ssize_t len = readlink("/proc/self/exe", exe_dir, sizeof(exe_dir) - 1);
-        if (len > 0) {
-            exe_dir[len] = '\0';
+        if (platform_self_exe_path(exe_dir, sizeof(exe_dir))) {
             char* last_sep = strrchr(exe_dir, '/');
             if (last_sep) {
                 *(last_sep + 1) = '\0';
@@ -1851,6 +1889,22 @@ static int main_logic(int argc, char** argv) {
             // extract_embedded_resources）。**不是** exe 旁 —— 那样会污染桌面/下载目录。
             onefileMode = 1;
             continue;
+        } else if (strcmp(argv[i], "--console") == 0) {
+            // 打包时强制用控制台版 leno_vm.exe（覆盖脚本里的 _console(false) 自动检测）
+            if (packConsoleMode == PACK_CONSOLE_NONE) {
+                fprintf(stderr, "错误: --console 与 --no-console 互斥\n");
+                return 1;
+            }
+            packConsoleMode = PACK_CONSOLE_FORCE;
+            continue;
+        } else if (strcmp(argv[i], "--no-console") == 0) {
+            // 打包时强制用无控制台版 leno_vm_gui.exe（-mwindows；Windows 才有此变体）
+            if (packConsoleMode == PACK_CONSOLE_FORCE) {
+                fprintf(stderr, "错误: --console 与 --no-console 互斥\n");
+                return 1;
+            }
+            packConsoleMode = PACK_CONSOLE_NONE;
+            continue;
         } else if (strcmp(argv[i], "--no-cache") == 0) {
             module_loader_set_cache_enabled(0);
             continue;
@@ -1915,6 +1969,7 @@ static int main_logic(int argc, char** argv) {
                 strcmp(argv[i], "--pack") == 0 || strcmp(argv[i], "-p") == 0 ||
                 strcmp(argv[i], "--pack-dir") == 0 || strcmp(argv[i], "-o") == 0 ||
                 strcmp(argv[i], "--onefile") == 0 ||
+                strcmp(argv[i], "--console") == 0 || strcmp(argv[i], "--no-console") == 0 ||
                 strcmp(argv[i], "--no-cache") == 0 ||
                 strcmp(argv[i], "--init") == 0 || strcmp(argv[i], "--install") == 0 ||
                 strcmp(argv[i], "--version") == 0 || strcmp(argv[i], "-v") == 0 ||
@@ -1967,6 +2022,7 @@ static int main_logic(int argc, char** argv) {
                     strcmp(argv[i], "--pack") == 0 || strcmp(argv[i], "-p") == 0 ||
                     strcmp(argv[i], "--pack-dir") == 0 || strcmp(argv[i], "-o") == 0 ||
                     strcmp(argv[i], "--onefile") == 0 ||
+                    strcmp(argv[i], "--console") == 0 || strcmp(argv[i], "--no-console") == 0 ||
                     strcmp(argv[i], "--no-cache") == 0 ||
                     strcmp(argv[i], "--init") == 0 || strcmp(argv[i], "--install") == 0 ||
                     strcmp(argv[i], "--version") == 0 || strcmp(argv[i], "-v") == 0 ||

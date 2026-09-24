@@ -2266,11 +2266,10 @@ uint64_t cache_runtime_binary_fingerprint(void) {
     if (wn == 0 || wn >= 4096) return 0;
     if (WideCharToMultiByte(CP_UTF8, 0, wpath, -1, path, 4096, NULL, NULL) <= 0) return 0;
 #else
-    // Linux: /proc/self/exe。其它 POSIX（如 macOS）取不到 ⇒ 返回 0 ⇒ 调用方判缓存失效
+    // Linux/macOS 自身路径统一走 platform_self_exe_path（实现见 src/platform/platform_path.c）。
+    // 取不到 ⇒ 返回 0 ⇒ 调用方判缓存失效
     // （fail-closed：宁可重编译，也不要拿"不知道是不是自己"的 exe 去认旧字节码）。
-    ssize_t rl = readlink("/proc/self/exe", path, sizeof(path) - 1);
-    if (rl <= 0) return 0;
-    path[rl] = '\0';
+    if (!platform_self_exe_path(path, sizeof(path))) return 0;
 #endif
     struct stat st;
     if (leno_stat(path, &st) != 0) return 0;

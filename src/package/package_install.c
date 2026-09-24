@@ -196,10 +196,10 @@ void package_builtin_add_to_search_paths(void) {
     if (!last_sep) last_sep = strrchr(exe_dir, '/');
     if (last_sep) *(last_sep + 1) = '\0'; else exe_dir[0] = '\0';
 #else
+    /* 自身路径统一走 platform_self_exe_path（实现见 src/platform/platform_path.c）。
+     * 取不到 ⇒ 直接返回：没有 exe 目录就拼不出内置模块搜索路径。 */
     char exe_dir[MAX_PATH_LEN];
-    ssize_t len = readlink("/proc/self/exe", exe_dir, sizeof(exe_dir) - 1);
-    if (len <= 0) return;
-    exe_dir[len] = '\0';
+    if (!platform_self_exe_path(exe_dir, sizeof(exe_dir))) return;
     char* last_sep = strrchr(exe_dir, '/');
     if (last_sep) *(last_sep + 1) = '\0'; else exe_dir[0] = '\0';
 #endif
