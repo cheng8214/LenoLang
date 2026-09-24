@@ -221,31 +221,46 @@ ObjModule* compile_module_new(const char* source, const char* module_name,
     }
     
     // 5. 将导出的项添加到模块导出表
+    // ---------------------------------------------------------------------------
+    // ⚠ 2026-09-24（.lenb 体积优化）：这里**只登记名字占位（null）**，不再写入
+    //   第 4 步 func_dict 里那份函数对象。
+    //   原因：顶层函数被编译了两遍（第 4 步一份 → 写进 globals[]/exports{}；
+    //   第 6 步 init_chunk 里还有一份完整体）。globals[] 里那份 76525 B + exports{}
+    //   里对它的重复引用 64595 B = 141 KB（hello_window 实测），全是 init_chunk 那份
+    //   的冗余拷贝 ⇒ 不再写入即省下这 141 KB（pvz 实测省 164 KB）。
+    //   运行期怎么拿到函数值：init_chunk 执行时 OP_DEFINE_MODULE_FUNC 会把那份唯一的
+    //   函数写进 module->globals[slot]，随后 OP_INIT_LENOMODULE 的"导出补填"再把它
+    //   填进 exports（上面 val_is_null 判空 ⇒ 占位为 null 时正好补上）。
+    //   补填依赖第 9 步 export_mappings 里新增的 **FUNC_DEF** 条目（原来只有
+    //   VAR/DESTRUCT/ENUM/STRUCT/CSTRUCT）——两处 if 链都要同步加。
+    //   ⚠ 已知行为差异：模块顶层若在函数定义**之前**就引用该函数值
+    //     （如顶层 `var f = laterFunc`，laterFunc 在文件后面定义），补填发生在
+    //     init_chunk 跑完之后 ⇒ 那一刻读到的是 null（以前是第 4 步那份预填值）。
+    //     全仓（含 SDL3 lib 44 文件）扫过，没有这种写法；真要支持得把函数定义提到
+    //     顶层语句之前（hoisting），那属于另一个改动。
+    // ---------------------------------------------------------------------------
     for (int i = 0; i < export_count; i++) {
         ObjString* key = str_copy(export_names[i], (int)strlen(export_names[i]));
-        Value func_val = dict_get(func_dict, val_obj((Object*)key));
-        if (!val_is_null(func_val)) {
-            dict_set(module->exports, val_obj((Object*)key), func_val);
-        } else {
-            dict_set(module->exports, val_obj((Object*)key), val_null());
-        }
+        dict_set(module->exports, val_obj((Object*)key), val_null());
     }
 
     // 5.1 将 struct 方法也添加到模块导出表（key 为 StructName::methodName）
     // 这样 VM 在 OP_GET_METHOD 中可以通过模块 exports 查找方法
-    {
-        for (int ei = 0; ei < func_dict->capacity; ei++) {
-            ObjDictEntry* entry = &func_dict->entries[ei];
-            if (entry && !val_is_null(entry->key) && val_is_obj(entry->key) &&
-                val_as_obj(entry->key)->type == OBJ_STRING) {
-                ObjString* key = (ObjString*)val_as_obj(entry->key);
-                // 只添加包含 :: 的 key（即 struct 方法）
-                if (key && key->chars && strstr(key->chars, "::")) {
-                    dict_set(module->exports, entry->key, entry->value);
-                }
-            }
-        }
-    }
+    // ---------------------------------------------------------------------------
+    // ⚠ 本段已于 2026-09-24 移除（.lenb 体积优化，实测 minilang 与 SDL3 游戏同受益）：
+    //   写进 exports 的 Value 是**第 4 步 func_dict 里那个"只有原型、chunk 为空"的
+    //   方法对象**（方法体在 init_chunk 里另有一份），1434 个方法 × ≈73 B ≈ 105 KB，
+    //   全部进 .lenb 却**运行期从不被读取**：
+    //     · struct 方法分派走实例的 struct def 方法表 —— vm.c 的 struct_method_lookup
+    //       是**规则唯一来源**（op_struct.inc 的 OP_GET_METHOD struct 分支同口径）；
+    //     · VM 里没有任何地方按 "类型::方法" 这个键查 exports（全仓 grep `"::"` 只
+    //       出现在编译器侧：semantic / module_compiler / codegen 的 func_table）。
+    //   上面两行原注释描述的"通过模块 exports 查找方法"与现行 VM 实现不符（历史遗留）；
+    //   保留原文备查，但不要再据此恢复本段。
+    //   ⚠ 步骤 4 仍要为方法建原型对象：第 6 步要靠 func_dict 的 "Struct::method" 键
+    //     把孩子写进 module->globals 的槽位（未导出方法也要占槽）。
+    //     （被删掉的代码见 git 历史：5.1 的 for 循环 + dict_set(module->exports, ...)）
+    // ---------------------------------------------------------------------------
 
     // 5.5 预分配模块全局变量表空间
     if (sem.root_scope && sem.root_scope->global_var_index > 0) {
@@ -273,47 +288,17 @@ ObjModule* compile_module_new(const char* source, const char* module_name,
     codegen_init(&gen, &chunk, &sem);
     
     // 先将所有函数和 struct 方法添加到模块全局变量表
+    // ---------------------------------------------------------------------------
+    // ⚠ 2026-09-24（.lenb 体积优化）：**顶层函数不再预填 globals[]**。
+    //   原来这里把第 4 步那份函数对象写进 module->globals[slot]，与 init_chunk 里
+    //   那份完整体（OP_DEFINE_MODULE_FUNC 运行期写入同一槽位）重复 ⇒ 白占体积。
+    //   现在只保留 struct 方法那半段（方法体在 init_chunk 里，globals 槽位里的
+    //   空壳原型是运行期 OP_GET_MODULE_VAR 取方法槽时的兜底值，量小、先不动）。
+    //   函数槽位空间由 5.5 按 sem.root_scope->global_var_index 预分配，运行期
+    //   init_chunk 自己会把函数写进去；exports 的补填见第 5 步与第 9 步的说明。
+    // ---------------------------------------------------------------------------
     for (int j = 0; j < parser.root->u.block.count; j++) {
         Ast* stmt = parser.root->u.block.items[j];
-        Ast* func_ast = NULL;
-        const char* func_name = NULL;
-        
-        if (stmt->kind == AST_FUNC_DEF) {
-            func_ast = stmt;
-            func_name = stmt->u.func.name;
-        } else if (stmt->kind == AST_EXPORT && stmt->u.export.decl &&
-                   stmt->u.export.decl->kind == AST_FUNC_DEF) {
-            func_ast = stmt->u.export.decl;
-            func_name = stmt->u.export.decl->u.func.name;
-        }
-        
-        if (func_ast && func_name) {
-            ObjString* key = str_copy(func_name, (int)strlen(func_name));
-            Value func_val = dict_get(func_dict, val_obj((Object*)key));
-            if (!val_is_null(func_val)) {
-                int index = func_ast->u.func.ref.index;
-                if (index >= 0 && index < 256) {
-                    if (module->global_count <= index) {
-                        int new_count = index + 1;
-                        Value* new_globals = realloc(module->globals, new_count * sizeof(Value));
-                        if (new_globals) {
-                            for (int k = module->global_count; k < new_count; k++) {
-                                new_globals[k] = val_null();
-                            }
-                            module->globals = new_globals;
-                            module->global_count = new_count;
-                            if (new_count > module->global_capacity) {
-                                module->global_capacity = new_count;
-                            }
-                        }
-                    }
-                    if (module->globals) {
-                        module->globals[index] = func_val;
-                        gc_write_barrier((Object*)module, func_val);
-                    }
-                }
-            }
-        }
         
         // 处理 struct 定义中的方法
         Ast* struct_def_ast = NULL;
@@ -483,6 +468,12 @@ ObjModule* compile_module_new(const char* source, const char* module_name,
                     int global_index = -1;
                     if (decl->kind == AST_VAR_DECL && strcmp(decl->u.var_decl.name, export_names[i]) == 0) {
                         global_index = decl->u.var_decl.ref.index;
+                    } else if (decl->kind == AST_FUNC_DEF && strcmp(decl->u.func.name, export_names[i]) == 0) {
+                        // ★ 导出函数：第 5 步只写了 null 占位 ⇒ 靠这里在 init_chunk 跑完
+                        //   之后用 globals[slot]（OP_DEFINE_MODULE_FUNC 写入的唯一函数体）
+                        //   补填 exports。槽位就是模块全局槽 ref.index（与
+                        //   OP_DEFINE_MODULE_FUNC 编码的 Bx 同源）。
+                        global_index = decl->u.func.ref.index;
                     } else if (decl->kind == AST_DESTRUCT_DECL) {
                         // 解构声明: 检查所有槽位变量名
                         for (int k = 0; k < decl->u.destruct_decl.slot_count; k++) {
@@ -514,6 +505,9 @@ ObjModule* compile_module_new(const char* source, const char* module_name,
                         int global_index = -1;
                         if (decl->kind == AST_VAR_DECL && strcmp(decl->u.var_decl.name, export_names[i]) == 0) {
                             global_index = decl->u.var_decl.ref.index;
+                        } else if (decl->kind == AST_FUNC_DEF && strcmp(decl->u.func.name, export_names[i]) == 0) {
+                            // ★ 与上面计数循环同源：导出函数靠 globals[slot] 补填 exports
+                            global_index = decl->u.func.ref.index;
                         } else if (decl->kind == AST_DESTRUCT_DECL) {
                             // 解构声明: 检查所有槽位变量名
                             for (int k = 0; k < decl->u.destruct_decl.slot_count; k++) {
