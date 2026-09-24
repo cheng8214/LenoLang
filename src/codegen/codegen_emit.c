@@ -23,6 +23,7 @@ void emit_reg_iAsBx(CodeGen* gen, OpCode op, int a, int sbx, int line) {
 // --- 装载指令 ---
 
 int emit_loadk(CodeGen* gen, int const_idx, int line) {
+    (void)gen; (void)line;
     // 返回分配的寄存器号（由调用方管理）
     // LOADK iABx: R[A] = K[Bx]
     // 这里只写指令，A 由调用方传入
@@ -542,7 +543,7 @@ void patch_jump_to(CodeGen* gen, int offset, int target) {
 }
 
 void emit_constant(CodeGen* gen, Value value, int line) {
-    (void)value; (void)line;
+    (void)gen; (void)value; (void)line;
     // 寄存器式由调用方分配寄存器后调 emit_loadk_to
 }
 

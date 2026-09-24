@@ -63,6 +63,17 @@ void native_register_all_module_metas(void);
 // 根据名称查找 native 函数对象（运行时使用）
 ObjNative* native_find_function(const char* name);
 
+// 供语义层"未定义函数"相似名提示遍历（C2）
+int native_get_name_count(void);
+const char* native_get_name(int index);
+
+// C1：编译期实例方法表中的相似方法名提示（语义分析阶段方法运行表未建，
+// 用 native_register_all_instance_method_metas 注册的元信息表遍历）
+const char* native_instance_method_hint(const char* type_name, const char* method_name);
+
+// D1：内置模块名相似提示（"未定义的模块或变量"报错时给"是否想用"候选）
+const char* native_builtin_module_hint(const char* name);
+
 // 标记所有 native 函数对象（供 GC 使用）
 void native_mark_all_functions(void);
 

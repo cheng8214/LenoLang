@@ -62,6 +62,12 @@ ObjModule* loaded_modules_get(int index) {
     return loaded_modules.modules[index];
 }
 
+// 获取指定索引的模块源文件路径（GC 释放后仍可读，见头文件说明）
+const char* loaded_modules_get_path(int index) {
+    if (index < 0 || index >= loaded_modules.count) return NULL;
+    return loaded_modules.paths[index];
+}
+
 // 启用/禁用模块编译缓存
 void module_loader_set_cache_enabled(int enabled) {
     g_cache_enabled = enabled;

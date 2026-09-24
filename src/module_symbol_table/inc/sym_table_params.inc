@@ -134,11 +134,11 @@ static int mod_scan_params(const char* param_text,
                 cstruct_names, cstruct_count, struct_names, struct_count,
                 type_param_names, type_param_count);
             if (out_struct_names && agg_tmp[0]) {
-                strncpy(out_struct_names[idx], agg_tmp, MOD_MAX_NAMES - 1);
+                memcpy(out_struct_names[idx], agg_tmp, MOD_MAX_NAMES - 1);
                 out_struct_names[idx][MOD_MAX_NAMES - 1] = '\0';
             }
             if (out_generic_names && gen_tmp[0]) {
-                strncpy(out_generic_names[idx], gen_tmp, MOD_MAX_NAMES - 1);
+                memcpy(out_generic_names[idx], gen_tmp, MOD_MAX_NAMES - 1);
                 out_generic_names[idx][MOD_MAX_NAMES - 1] = '\0';
             }
         }

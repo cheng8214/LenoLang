@@ -58,6 +58,7 @@ typedef struct {
  * ============================================================================ */
 #define MAX_DEPENDENCIES 64
 #define MAX_NATIVE_LIBS  32
+#define MAX_PACK_RESOURCES 32
 
 typedef struct {
     /* [package] */
@@ -98,6 +99,19 @@ typedef struct {
 } PackageConfig;
 
 /* ============================================================================
+ * 打包资源配置（对应 resource.toml，与 leno.toml 同在包根）
+ * ============================================================================ */
+typedef struct {
+    /* [pack] */
+    int onefile;                          /* onefile = true → -p 默认单文件模式 */
+    int resource_count;
+    char* resources[MAX_PACK_RESOURCES];  /* 资源通配模式，语法见 package_install.c */
+
+    /* 元数据 */
+    char* file_path;      /* resource.toml 的完整路径 */
+} PackConfig;
+
+/* ============================================================================
  * 平台检测
  * ============================================================================ */
 
@@ -119,6 +133,17 @@ PackageConfig* package_config_parse(const char* file_path);
 
 /** 释放包配置 */
 void package_config_free(PackageConfig* config);
+
+/**
+ * 解析打包资源配置文件 resource.toml（与 leno.toml 同在包根，可选）。
+ * 目前识别 [pack] 段（onefile / resources）；后续打包相关的配置
+ * （如图标 icon 等）也放这个文件。
+ * 文件不存在 ⇒ 返回 NULL（不算错误，单文件打包全靠 --onefile 也能用）。
+ */
+PackConfig* package_pack_config_parse(const char* file_path);
+
+/** 释放打包资源配置 */
+void package_pack_config_free(PackConfig* config);
 
 /** 解析语义化版本字符串 */
 int semver_parse(const char* str, SemVer* out);
@@ -304,5 +329,69 @@ int package_install_from_git(const char* git_url);
  */
 int package_parse_git_source(const char* source, char* out_url, int out_len,
                              char* out_subdir, int subdir_len);
+
+/* ============================================================================
+ * 打包（-p）：原生库收集与复制
+ * ============================================================================
+ * leno.toml 的 [native-libs.<名>]（win/linux/mac 三键）在打包侧的**唯一消费者**。
+ * 清单来自"本次编译**实际加载过**的模块所属包"，不是让应用手抄一遍：
+ * 原生库是包的属性（LenoSDL3 带 SDL3.dll/SDL3_image.dll/SDL3_ttf.dll），
+ * 手抄必漏。应用自己的 leno.toml 同样在枚举范围内，可用来声明零散第三方库。
+ */
+
+/* 收集结果里的一条原生库 */
+typedef struct {
+    char* src_path;   /* 源文件绝对路径 */
+    char* file_name;  /* 落到输出目录里的文件名 */
+    char* from_pkg;   /* 声明方（包名；应用自身声明的记为 "<应用>"） */
+} PackLib;
+
+/**
+ * 按当前平台收集需要随 exe 分发的原生库。
+ * 平台键：Windows→win、Linux→linux、macOS→mac；某包未声明该平台则跳过。
+ * 同目标文件名的库只保留第一个（同名视为同一个库）。
+ * 声明的精确路径不存在、或通配匹配不到任何文件 ⇒ 视为打包错误，返回 -1。
+ *
+ * @param entry_file  入口 .leno 的**绝对路径**（用于定位应用自身的包根）
+ * @param out         成功时写回收集结果数组（需用 package_pack_libs_free 释放）
+ * @param out_count   结果条数
+ * @return 0 成功；-1 有声明落空（错误已打印到 stderr）
+ */
+int package_collect_pack_libs(const char* entry_file, PackLib** out, int* out_count);
+
+/** 释放 package_collect_pack_libs 返回的结果 */
+void package_pack_libs_free(PackLib* libs, int count);
+
+/* --- 单文件打包（-p --onefile）：内嵌资源收集 --- */
+
+/* 内嵌资源的一条：rel_path 决定解包到 exe 目录时还原成什么路径 */
+typedef struct {
+    char* src_path;   /* 源文件绝对路径 */
+    char* rel_path;   /* 相对包根的路径（'/' 分隔，保持目录结构） */
+} PackRes;
+
+/**
+ * 按 resource.toml [pack] resources 的通配模式（相对包根）收集要内嵌的资源文件。
+ * 模式语法：段内 `*` = 任意长、`?` = 单字符；单独一段写两个星号 = 跨任意层目录。
+ * 例："images" 目录递归全部（images 加两个星号）、"fonts" 目录下的 ttf（fonts
+ * 加单星号加 .ttf）。
+ * 自动跳过 .lenocache/ dist/ 等产物与隐藏目录。
+ * 模式匹配不到任何文件 ⇒ 打印警告并跳过该模式（资源缺失不该拦住打包）。
+ *
+ * @param entry_file  入口 .leno 的绝对路径（用于定位包根；无 leno.toml 时退回其所在目录）
+ * @param out         成功时写回收集结果（用 package_pack_res_free 释放）
+ * @param out_count   结果条数
+ * @return 0 成功；-1 参数错误
+ */
+int package_collect_pack_resources(const char* entry_file, PackRes** out, int* out_count);
+
+/** 释放 package_collect_pack_resources 返回的结果 */
+void package_pack_res_free(PackRes* res, int count);
+
+/**
+ * 复制单个文件（Windows 走 CopyFileW，UTF-8/中文路径安全）。目标已存在则覆盖。
+ * @return 0 成功，-1 失败
+ */
+int package_copy_file(const char* src, const char* dst);
 
 #endif /* LENO_PACKAGE_H */

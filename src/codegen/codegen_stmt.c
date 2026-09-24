@@ -1871,10 +1871,12 @@ static void gen_cstruct_def(CodeGen* gen, Ast* ast) {
 }
 
 static void gen_clib_def(CodeGen* gen, Ast* ast) {
+    (void)gen; (void)ast;
     // 简化：clib 定义不生成字节码
 }
 
 static void gen_cfunc_decl(CodeGen* gen, Ast* ast) {
+    (void)gen; (void)ast;
     // 简化：cfunc 声明不生成字节码
 }
 
@@ -2113,6 +2115,7 @@ static void gen_export(CodeGen* gen, Ast* ast) {
 }
 
 static void gen_use(CodeGen* gen, Ast* ast) {
+    (void)gen; (void)ast;
     // use 语句不生成字节码
 }
 

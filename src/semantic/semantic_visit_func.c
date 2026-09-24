@@ -47,6 +47,30 @@ static void check_undefined_type(Semantic* s, TypeInfo* type, int line, int colu
     }
 }
 
+// 递归检查 TypeInfo 的**泛型实参/子类型**中是否存在未定义类型（不查顶层——
+// 调用方通常已自行检查顶层类型名）。
+//   B2 修复：变量声明路径原先只查顶层（`Array[intt]` 的 `intt` 藏在 generic_args
+//   里无人检查），直到类型不匹配时才报出误导性的"期望 Array[struct intt]"。
+//   现在在声明检查后调用本函数 ⇒ 直接报"未定义的类型: intt"。
+//   返回 1 = 报过"未定义"错（调用方应置 declared_type_undefined 跳过后续级联检查）。
+int semantic_check_undefined_subtypes(Semantic* s, TypeInfo* type, int line, int column) {
+    if (!type) return 0;
+    int reported = 0;
+    if (type->generic_args) {
+        for (int i = 0; i < type->generic_count; i++) {
+            int before = error_count();
+            check_undefined_type(s, type->generic_args[i], line, column);
+            if (error_count() > before) reported = 1;
+        }
+    }
+    int before = error_count();
+    check_undefined_type(s, type->element_type, line, column);
+    check_undefined_type(s, type->key_type, line, column);
+    check_undefined_type(s, type->value_type, line, column);
+    if (error_count() > before) reported = 1;
+    return reported;
+}
+
 // 递归解析 TypeInfo 中的 alias 类型（在 resolve_generic_in_type 之后调用）
 // 返回 1 表示有修改，0 表示无修改
 int resolve_alias_in_type(Semantic* s, TypeInfo** type_ptr, int line) {
@@ -598,6 +622,16 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
 
     // 定义参数
     for (int i = 0; i < ast->u.func.pcnt; i++) {
+        // B4：重复参数名检查——此前 scope_define 静默覆盖，后者遮蔽前者
+        for (int j = 0; j < i; j++) {
+            if (ast->u.func.params[i] && ast->u.func.params[j] &&
+                strcmp(ast->u.func.params[i], ast->u.func.params[j]) == 0) {
+                char msg[BUFFER_SMALL];
+                snprintf(msg, sizeof(msg), "重复的参数名 '%s'（参数 %d 与参数 %d 重名）",
+                         ast->u.func.params[i], j + 1, i + 1);
+                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+            }
+        }
         Symbol* sym = scope_define(s->current, ast->u.func.params[i], SYM_PARAM);
         if (sym) {
             sym->index = i;

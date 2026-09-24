@@ -441,8 +441,15 @@ static Token read_number(Lexer* lex) {
         advance(lex); // 跳过 '0'
         advance(lex); // 跳过 'x' 或 'X'
         // 读取十六进制数字
+        int hex_digits = 0;
         while (isxdigit(peek(lex))) {
             advance(lex);
+            hex_digits++;
+        }
+        // F4: 0x 后无数字此前静默按 0 解析（strtoull 停在前缀上）——与 0b 同样响亮报错
+        if (hex_digits == 0) {
+            error_add_at(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1,
+                         "十六进制字面量需要 0x 后跟至少一位十六进制数字");
         }
     } else if (peek(lex) == '0' && (peek_next(lex) == 'b' || peek_next(lex) == 'B')) {
         is_bin = 1;

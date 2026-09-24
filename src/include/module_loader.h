@@ -62,4 +62,9 @@ int loaded_modules_get_count(void);
 // 获取指定索引的已加载模块
 ObjModule* loaded_modules_get(int index);
 
+// 获取指定索引的模块**源文件路径**（返回内部指针，不需要 free；越界返回 NULL）。
+// 与 loaded_modules_get 的区别：路径存在独立的定长数组里，不是 GC 对象 ⇒
+// gc_free_all() 之后依然可读。打包收集原生库时要在编译清理完才能枚举，故需要它。
+const char* loaded_modules_get_path(int index);
+
 #endif // MODULE_LOADER_H

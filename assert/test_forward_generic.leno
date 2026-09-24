@@ -1,0 +1,45 @@
+// test_forward_generic.leno — 前向定义（struct 在使用点之后）回归
+// 修复前：字段类型里泛型形参（TYPE_STRUCT "T" 占位）不被替换 → 元素方法调用/字段赋值
+// 误报"期望类型: struct"；前向 struct 方法报"没有方法"（func_table 占位符未注册且无 AST 兜底）
+main() {
+    // 前向泛型 struct + Array[T] 字段
+    Box[int] b = new Box[int]()
+    b.items.add(42)
+    assert_eq(b.items[0], 42)
+
+    // 嵌套泛型实参 + 字段赋值
+    Nest[Array[int]] n = new Nest[Array[int]]()
+    n.data = [[1, 2], [3]]
+    n.data[1].add(4)
+    assert_eq(n.data[1][1], 4)
+
+    // 前向泛型 struct 的方法（参数/返回值都是 T）
+    SelfBox[int] sb = new SelfBox[int]()
+    sb.put(99)
+    assert_eq(sb.take(), 99)
+
+    // 非泛型前向 struct 方法
+    Plain p = new Plain()
+    assert_eq(p.twice(21), 42)
+
+    print("=== test_forward_generic ALL passed ===")
+}
+
+struct Box[T] {
+    Array[T] items
+}
+
+struct Nest[T] {
+    Array[T] data
+}
+
+struct SelfBox[T] {
+    Array[T] slot
+    func put(T v) { self.slot.clear(); self.slot.add(v) }
+    func take():T { return self.slot[0] }
+}
+
+struct Plain {
+    int v = 0
+    func twice(int x):int { return x * 2 }
+}

@@ -473,3 +473,52 @@ void module_symbol_table_add_cfunc(ModuleSymbolTable* table, const char* name,
 int module_symbol_table_cfunc_count(ModuleSymbolTable* table) {
     return table ? table->cfunc_count : 0;
 }
+
+// ---- E1：use 符号名拼错时的相似名提示 ----
+// 遍历符号表所有名字桶（struct/func/enum/face/var/alias/clib/cfunc），
+// 找编辑距离最小的候选。返回"提示串"（\n  提示: 是否想用 'xxx'？），找不到返回空串。
+static int sym_hint_levenshtein(const char* a, const char* b) {
+    int la = strlen(a), lb = strlen(b);
+    if (la >= 256 || lb >= 256) return 3;  // 过长直接放弃提示
+    static int prev[256], cur[256];
+    for (int j = 0; j <= lb; j++) prev[j] = j;
+    for (int i = 1; i <= la; i++) {
+        cur[0] = i;
+        for (int j = 1; j <= lb; j++) {
+            int cost = (a[i-1] == b[j-1]) ? 0 : 1;
+            int m = prev[j] + 1;
+            if (cur[j-1] + 1 < m) m = cur[j-1] + 1;
+            if (prev[j-1] + cost < m) m = prev[j-1] + cost;
+            cur[j] = m;
+        }
+        memcpy(prev, cur, sizeof(int) * (lb + 1));
+    }
+    return prev[lb];
+}
+
+const char* module_symbol_table_hint(ModuleSymbolTable* table, const char* name) {
+    static char hint[128];
+    hint[0] = '\0';
+    if (!table || !name || !name[0]) return hint;
+    const char* best = NULL;
+    int best_dist = 3;  // 最多允许 2 次编辑距离
+#define SYM_HINT_CHECK(nm) do { \
+        if (nm && (nm)[0]) { \
+            int d = sym_hint_levenshtein(name, (nm)); \
+            if (d < best_dist) { best_dist = d; best = (nm); } \
+        } \
+    } while (0)
+    for (int i = 0; i < table->struct_count; i++) SYM_HINT_CHECK(table->structs[i].name);
+    for (int i = 0; i < table->func_count; i++)   SYM_HINT_CHECK(table->funcs[i].name);
+    for (int i = 0; i < table->enum_count; i++)   SYM_HINT_CHECK(table->enums[i].name);
+    for (int i = 0; i < table->face_count; i++)   SYM_HINT_CHECK(table->faces[i].name);
+    for (int i = 0; i < table->var_count; i++)    SYM_HINT_CHECK(table->vars[i].name);
+    for (int i = 0; i < table->alias_count; i++)  SYM_HINT_CHECK(table->aliases[i].name);
+    for (int i = 0; i < table->clib_count; i++)   SYM_HINT_CHECK(table->clibs[i].name);
+    for (int i = 0; i < table->cfunc_count; i++)  SYM_HINT_CHECK(table->cfuncs[i].name);
+#undef SYM_HINT_CHECK
+    if (best && strcmp(best, name) != 0) {
+        snprintf(hint, sizeof(hint), "\n  提示: 是否想用 '%s'？", best);
+    }
+    return hint;
+}

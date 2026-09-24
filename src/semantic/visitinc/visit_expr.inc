@@ -289,6 +289,18 @@
             visit(s, ast->u.index_assign.index);
             visit(s, ast->u.index_assign.value);
 
+            // ★ const 检查（B1 修复）：obj 若是 struct 关联常量/枚举成员，visit 中会被
+            //   折叠成字面量（AST_NUM 等）⇒ `Cfg.MAX[0] = 1` 这类写入会被静默丢弃，报错拦截。
+            if (ast->u.index_assign.obj->kind == AST_NUM || ast->u.index_assign.obj->kind == AST_STRING ||
+                ast->u.index_assign.obj->kind == AST_BOOL || ast->u.index_assign.obj->kind == AST_NULL) {
+                char msg[BUFFER_MEDIUM];
+                snprintf(msg, sizeof(msg), "不能对常量的元素赋值（'%s' 是常量值）",
+                         ast->u.index_assign.obj->kind == AST_NUM ? "数值" :
+                         ast->u.index_assign.obj->kind == AST_STRING ? "字符串" :
+                         ast->u.index_assign.obj->kind == AST_BOOL ? "布尔" : "null");
+                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+            }
+
             // 获取被赋值对象的类型（支持嵌套字段访问如 r.position.x）
             TypeInfo* obj_type = infer_expr_type(s, ast->u.index_assign.obj);
 
@@ -744,7 +756,14 @@
                                             strcmp(method_ast->u.func.name, method_name) == 0) {
                                             method_found = 1;
                                             // 用 AST 中的方法信息更新 expected_arity
-                                            expected_arity = method_ast->u.func.pcnt - 1; // 减去 self
+                                            // ★ 前向定义时方法 AST 还没被真实访问变换（self 参数
+                                            //   在 visit_type_def 阶段才前置）⇒ 按 params[0] 是否为
+                                            //   "self" 判断，避免 arity 差一
+                                            int has_self = method_ast->u.func.pcnt > 0 &&
+                                                method_ast->u.func.params &&
+                                                method_ast->u.func.params[0] &&
+                                                strcmp(method_ast->u.func.params[0], "self") == 0;
+                                            expected_arity = method_ast->u.func.pcnt - (has_self ? 1 : 0);
                                             fallback_default_count = method_ast->u.func.default_count;
                                             break;
                                         }
@@ -753,9 +772,17 @@
                                     if (!method_found) {
                                         char msg[BUFFER_MEDIUM];
                                         const char* type_str = type_to_string(receiver_type);
-                                        snprintf(msg, sizeof(msg),
-                                            "类型 '%s' 没有方法 '%s'",
-                                            type_str, method_name);
+                                        // C1：在 struct 方法列表里找相似名给出提示
+                                        const char* mnames[64];
+                                        int mcount = struct_def_ast->u.struct_def.method_count;
+                                        if (mcount > 64) mcount = 64;
+                                        for (int q = 0; q < mcount; q++) {
+                                            Ast* m = struct_def_ast->u.struct_def.methods[q];
+                                            mnames[q] = (m && m->kind == AST_FUNC_DEF) ? m->u.func.name : NULL;
+                                        }
+                                        snprintf(msg, sizeof(msg), "类型 '%s' 没有方法 '%s'%s",
+                                                 type_str, method_name,
+                                                 get_similar_in_names(mnames, mcount, method_name));
                                         error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                     }
                                 }
@@ -1090,28 +1117,35 @@
                                 }
                             }
                             if (struct_def_ast) {
-                                // 查找方法定义
-                                for (int mi = 0; mi < struct_def_ast->u.struct_def.method_count; mi++) {
-                                    Ast* method_ast = struct_def_ast->u.struct_def.methods[mi];
-                                    if (method_ast && method_ast->kind == AST_FUNC_DEF &&
-                                        strcmp(method_ast->u.func.name, method_name) == 0) {
-                                        // 找到方法，检查参数类型
-                                        int actual_arity = ast->u.call.args.count;
-                                        // 方法参数从第1个开始（第0个是 self）
-                                        int method_param_count = method_ast->u.func.pcnt - 1;
-                                        int default_cnt = method_ast->u.func.default_count;
-                                        int required_cnt = method_param_count - default_cnt;
-                                        if (actual_arity < required_cnt || actual_arity > method_param_count) {
-                                            char msg[BUFFER_MEDIUM];
-                                            if (actual_arity < required_cnt) {
-                                                snprintf(msg, sizeof(msg), "方法 '%s' 参数不足: 至少需要 %d 个, 实际 %d",
-                                                         method_name, required_cnt, actual_arity);
-                                            } else {
-                                                snprintf(msg, sizeof(msg), "方法 '%s' 参数过多: 最多 %d 个, 实际 %d",
-                                                         method_name, method_param_count, actual_arity);
-                                            }
-                                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
-                                        } else {
+                                        // 查找方法定义
+                                        for (int mi = 0; mi < struct_def_ast->u.struct_def.method_count; mi++) {
+                                            Ast* method_ast = struct_def_ast->u.struct_def.methods[mi];
+                                            if (method_ast && method_ast->kind == AST_FUNC_DEF &&
+                                                strcmp(method_ast->u.func.name, method_name) == 0) {
+                                                // 找到方法，检查参数类型
+                                                int actual_arity = ast->u.call.args.count;
+                                                // ★ 前向定义时方法 AST 未变换（self 未前置）⇒
+                                                //   参数个数与实参下标都要按 has_self 调整
+                                                int has_self = method_ast->u.func.pcnt > 0 &&
+                                                    method_ast->u.func.params &&
+                                                    method_ast->u.func.params[0] &&
+                                                    strcmp(method_ast->u.func.params[0], "self") == 0;
+                                                int self_off = has_self ? 1 : 0;
+                                                // 方法参数从第1个开始（第0个是 self）
+                                                int method_param_count = method_ast->u.func.pcnt - self_off;
+                                                int default_cnt = method_ast->u.func.default_count;
+                                                int required_cnt = method_param_count - default_cnt;
+                                                if (actual_arity < required_cnt || actual_arity > method_param_count) {
+                                                    char msg[BUFFER_MEDIUM];
+                                                    if (actual_arity < required_cnt) {
+                                                        snprintf(msg, sizeof(msg), "方法 '%s' 参数不足: 至少需要 %d 个, 实际 %d",
+                                                                 method_name, required_cnt, actual_arity);
+                                                    } else {
+                                                        snprintf(msg, sizeof(msg), "方法 '%s' 参数过多: 最多 %d 个, 实际 %d",
+                                                                 method_name, method_param_count, actual_arity);
+                                                    }
+                                                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                                                } else {
                                             // 构建泛型参数替换表
                                             char** gp_names = NULL;
                                             TypeInfo** gp_types = NULL;
@@ -1130,7 +1164,8 @@
                                             }
 
                                             for (int i = 0; i < actual_arity; i++) {
-                                                TypeInfo* expected_type = method_ast->u.func.param_types[i + 1]; // +1 跳过 self
+                                                // +1 跳过 self（前向定义时 self 还没前置，偏移为 0）
+                                                TypeInfo* expected_type = method_ast->u.func.param_types[i + self_off];
                                                 if (!expected_type) continue;
 
                                                 // 替换泛型参数
@@ -1359,7 +1394,8 @@
                         error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     } else {
                         char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg), "未定义的函数: %s", func_name);
+                        snprintf(msg, sizeof(msg), "未定义的函数: %s%s", func_name,
+                                 get_undefined_func_hint(s, func_name));
                         error_add_at(ERR_UNDEFINED_FUNC, ast->line, ast->column, msg);
                     }
                 } else {

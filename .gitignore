@@ -4,6 +4,10 @@
 *.o
 *.obj
 
+# 打包输出（leno -p）：目录内是 exe + 依赖原生库（leno.toml [native-libs]）的副本，
+# 纯产物不入库。不写前导斜杠 —— 打包输出落在 <源码目录>/dist，不在仓库根。
+dist/
+
 # IDE
 .vscode/
 .idea/

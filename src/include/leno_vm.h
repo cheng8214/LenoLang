@@ -518,6 +518,11 @@ void chunk_write(Chunk* chunk, uint8_t byte, int line);
 //   100 层也就 38KB→64KB，可忽略；只有**被触到的**帧才影响缓存。
 #define INLINE_LOCALS_MAX 64
 
+// 调用帧硬上限：防止无限递归把 realloc 一路撑到内存耗尽才失败——那样只能报
+// "调用栈内存分配失败"，掩盖了"栈溢出/可能无限递归"这个真正的原因。
+// 1,000,000 帧 × CallFrame 640B ≈ 640MB，正常程序递归远到不了这个深度。
+#define VM_MAX_FRAMES 1000000
+
 typedef struct CallFrame {
     Chunk* chunk;
     uint8_t* ip;

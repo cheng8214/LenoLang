@@ -1,0 +1,105 @@
+// test_nested_2d_mod.leno — 模块：二维/嵌套数组跨模块 + 泛型容器测试桩
+//
+// 覆盖点：
+//   [A] export struct 泛型容器：字段直接声明 Array[T]（泛型参数做元素类型）
+//   [B] export struct 二维字段 + 函数收发二维数组
+//   [C] export 泛型函数（map2d/filter2d 辅助）
+//   [D] 导出二维数组常量/变量
+
+// [A] 泛型容器：元素类型是泛型参数 T 的数组字段
+export struct Box[T] {
+    Array[T] items
+    int size = 0
+
+    func init() {
+        self.items = []
+        self.size = 0
+    }
+
+    func push(T val) {
+        self.items.add(val)
+        self.size = self.size + 1
+    }
+
+    func pop(): T {
+        if self.size == 0 { return null }
+        self.size = self.size - 1
+        return self.items[self.size]
+    }
+
+    func get(int i): T {
+        return self.items[i]
+    }
+}
+
+// [A2] 嵌套泛型容器：T 本身是二维的（Array[Array[T]] 字段）
+export struct Grid2D[T] {
+    Array[Array[T]] rows
+    int w = 0
+    int h = 0
+
+    func make(int width, int height, T fill) {
+        self.w = width
+        self.h = height
+        self.rows = []
+        for 0 : height - 1 to r {
+            Array[T] row = []
+            for 0 : width - 1 to c {
+                row.add(fill)
+            }
+            self.rows.add(row)
+        }
+    }
+
+    func get(int r, int c): T {
+        return self.rows[r][c]
+    }
+
+    func set(int r, int c, T val) {
+        self.rows[r][c] = val
+    }
+}
+
+// [B] 二维字段 struct + 二维数组跨函数收发
+export struct Board {
+    Array[Array[int]] cells
+
+    func init() {
+        self.cells = [[0, 0], [0, 0]]
+    }
+}
+
+// 入参/返回值都是二维数组
+export func boardSum(Array[Array[int]] b): int {
+    int s = 0
+    for b to row {
+        for row to v {
+            s = s + v
+        }
+    }
+    return s
+}
+
+export func makeBoard(int n): Array[Array[int]] {
+    Array[Array[int]] out = []
+    for 0 : n - 1 to r {
+        Array[int] row = []
+        for 0 : n - 1 to c {
+            row.add(r * 10 + c)
+        }
+        out.add(row)
+    }
+    return out
+}
+
+// [C] 导出泛型函数：对二维数组逐元素映射
+export func gridFill(Array[Array[int]] g, int val) {
+    for g.len() to r {
+        for g[r].len() to c {
+            g[r][c] = val
+        }
+    }
+}
+
+// [D] 导出二维常量
+export const W2D = [[1, 2, 3], [4, 5, 6]]

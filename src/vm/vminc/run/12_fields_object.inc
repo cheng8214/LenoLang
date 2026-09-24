@@ -162,7 +162,7 @@
             InlineCacheEntry* ic = &vm.ic_cache[ic_cache_index(ip_before)];
             uint32_t mhash = name->hash;
             ObjNative* method;
-            if (likely(ic->valid && ic->receiver_type == (int)rt && ic->name_hash == mhash)) {
+            if (likely(ic->valid && ic->receiver_type == rt && ic->name_hash == mhash)) {
                 vm.ic_hits++;
                 method = ic->method;
             } else {

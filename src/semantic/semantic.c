@@ -179,8 +179,31 @@ void semantic_analyze(Semantic* s, Ast* ast) {
                     sym->struct_field_names = (char**)malloc(sizeof(char*) * stmt->u.struct_def.field_count);
                     sym->struct_field_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * stmt->u.struct_def.field_count);
                     for (int j = 0; j < stmt->u.struct_def.field_count; j++) {
+                        // B5：重复字段名检查——此前静默取前者，后者被丢弃
+                        for (int k = 0; k < j; k++) {
+                            if (stmt->u.struct_def.field_names[j] && stmt->u.struct_def.field_names[k] &&
+                                strcmp(stmt->u.struct_def.field_names[j], stmt->u.struct_def.field_names[k]) == 0) {
+                                char msg[BUFFER_SMALL];
+                                snprintf(msg, sizeof(msg), "struct '%s' 存在重复字段 '%s'（字段 %d 与字段 %d 重名）",
+                                         stmt->u.struct_def.name ? stmt->u.struct_def.name : "?",
+                                         stmt->u.struct_def.field_names[j], k + 1, j + 1);
+                                error_add_at(ERR_SEMANTIC, stmt->line, stmt->column, msg);
+                            }
+                        }
                         sym->struct_field_names[j] = strdup(stmt->u.struct_def.field_names[j]);
                         sym->struct_field_types[j] = type_copy(stmt->u.struct_def.field_types[j]);
+                    }
+                    // 泛型形参名也要预注册：前向定义的泛型 struct（定义在使用点之后）
+                    // 在函数体检查时，符号还是这份预注册的残缺版；infer_field_type
+                    // 靠 sym->struct_type_params + 实例泛型实参做字段类型替换
+                    // （如 Array[T] items → Array[int] items），缺了它元素方法调用
+                    // 会误报"期望类型: struct"
+                    if (stmt->u.struct_def.type_param_count > 0 && stmt->u.struct_def.type_params) {
+                        sym->struct_type_param_count = stmt->u.struct_def.type_param_count;
+                        sym->struct_type_params = (char**)malloc(sizeof(char*) * stmt->u.struct_def.type_param_count);
+                        for (int j = 0; j < stmt->u.struct_def.type_param_count; j++) {
+                            sym->struct_type_params[j] = strdup(stmt->u.struct_def.type_params[j]);
+                        }
                     }
                 }
                 // 同时注册到全局 struct 定义表，确保 type_is_compatible 能找到
@@ -271,6 +294,18 @@ void semantic_analyze(Semantic* s, Ast* ast) {
                         sym->struct_field_names = (char**)malloc(sizeof(char*) * decl->u.struct_def.field_count);
                         sym->struct_field_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * decl->u.struct_def.field_count);
                         for (int j = 0; j < decl->u.struct_def.field_count; j++) {
+                            // B5：重复字段名检查（export 路径，与根预注册一致；
+                            // 定位用 decl 自身行列，预注册与主阶段重复报错时会被去重合并）
+                            for (int k = 0; k < j; k++) {
+                                if (decl->u.struct_def.field_names[j] && decl->u.struct_def.field_names[k] &&
+                                    strcmp(decl->u.struct_def.field_names[j], decl->u.struct_def.field_names[k]) == 0) {
+                                    char msg[BUFFER_SMALL];
+                                    snprintf(msg, sizeof(msg), "struct '%s' 存在重复字段 '%s'（字段 %d 与字段 %d 重名）",
+                                             decl->u.struct_def.name ? decl->u.struct_def.name : "?",
+                                             decl->u.struct_def.field_names[j], k + 1, j + 1);
+                                    error_add_at(ERR_SEMANTIC, decl->line, decl->column, msg);
+                                }
+                            }
                             sym->struct_field_names[j] = strdup(decl->u.struct_def.field_names[j]);
                             sym->struct_field_types[j] = type_copy(decl->u.struct_def.field_types[j]);
                         }
@@ -555,6 +590,18 @@ void semantic_analyze_module(Semantic* s, Ast* ast) {
                         sym->struct_field_names = (char**)malloc(sizeof(char*) * decl->u.struct_def.field_count);
                         sym->struct_field_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * decl->u.struct_def.field_count);
                         for (int j = 0; j < decl->u.struct_def.field_count; j++) {
+                            // B5：重复字段名检查（export 路径，与根预注册一致；
+                            // 定位用 decl 自身行列，预注册与主阶段重复报错时会被去重合并）
+                            for (int k = 0; k < j; k++) {
+                                if (decl->u.struct_def.field_names[j] && decl->u.struct_def.field_names[k] &&
+                                    strcmp(decl->u.struct_def.field_names[j], decl->u.struct_def.field_names[k]) == 0) {
+                                    char msg[BUFFER_SMALL];
+                                    snprintf(msg, sizeof(msg), "struct '%s' 存在重复字段 '%s'（字段 %d 与字段 %d 重名）",
+                                             decl->u.struct_def.name ? decl->u.struct_def.name : "?",
+                                             decl->u.struct_def.field_names[j], k + 1, j + 1);
+                                    error_add_at(ERR_SEMANTIC, decl->line, decl->column, msg);
+                                }
+                            }
                             sym->struct_field_names[j] = strdup(decl->u.struct_def.field_names[j]);
                             sym->struct_field_types[j] = type_copy(decl->u.struct_def.field_types[j]);
                         }

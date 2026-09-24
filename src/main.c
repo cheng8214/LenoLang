@@ -17,9 +17,11 @@
 #include <string.h>
 #include <stdarg.h>
 #include <time.h>
+#include <errno.h>
 
 #ifdef _WIN32
 #include <windows.h>
+#include <direct.h>
 #include <sys/stat.h>
 #else
 #include <sys/stat.h>
@@ -37,6 +39,8 @@ static int packMode = 0;
 static int initMode = 0;
 static int installMode = 0;
 static char* debugOutFile = NULL;  // --debug-out 指定的输出文件路径
+static char* packOutDir = NULL;    // -o/--pack-dir 指定的打包输出目录（NULL ⇒ <源码目录>/dist）
+static int onefileMode = 0;        // --onefile：把原生库与 resource.toml 声明的资源一起内嵌进 exe
 int g_use_gui_vm = 0;  // 语义分析阶段检测到 _console(false) 时置为 1
 
 // 字节码输出重定向辅助（Windows 用 _dup/_dup2 保存/恢复 stdout 句柄）
@@ -138,6 +142,12 @@ static void printHelp(const char* program) {
     printf("  --debug-out <file> 字节码输出到指定文件（自动启用 --debug）\n");
     printf("  -c, --compile     编译为二进制文件（.lenb），不执行\n");
     printf("  -p, --pack        编译并打包为独立可执行文件（嵌入 leno_vm）\n");
+    printf("  -o, --pack-dir <目录>  指定打包输出目录（默认 <源码目录>/dist）\n");
+    printf("                    输出的 exe 与依赖的原生库（leno.toml 的 [native-libs]）\n");
+    printf("                    会被复制到同一目录，可直接整体分发\n");
+    printf("  --onefile         单文件打包：把原生库与 resource.toml [pack] resources 声明的\n");
+    printf("                    资源内嵌进 exe，只需分发一个文件\n");
+    printf("                    （首次运行自动解包到 exe 所在目录）\n");
     printf("  --init [路径]     在当前目录创建新 Leno 包项目\n");
     printf("  --install         安装包或依赖到全局缓存\n");
     printf("  --                终止解释器选项解析：其后的参数都按位置参数处理\n");
@@ -151,6 +161,7 @@ static void printHelp(const char* program) {
     printf("  %s script.lenb       运行编译后的二进制\n", program);
     printf("  %s -c test.leno      编译为二进制\n", program);
     printf("  %s -p test.leno      打包为独立可执行文件\n", program);
+    printf("  %s -p test.leno -o release  打包到 release/（exe + 依赖库）\n", program);
     printf("  %s --debug test.leno 调试模式运行\n", program);
     printf("  %s --init my-package 创建新包\n", program);
     printf("  %s --install         安装当前项目依赖\n", program);
@@ -847,6 +858,210 @@ compile_fail:
     return -1;
 }
 
+// ============================================================================
+// 单文件打包：组装内嵌资源段
+// ----------------------------------------------------------------------------
+// 格式（**必须与 vm_main.c 的 extract_embedded_resources 严格同构**，改一处要改两处）：
+//   "LENOPACK"(8) | entry_count:u32
+//   entry_count × [ rel_len:u16 | size:u64 | hash:u32 | rel_path(rel_len) ]
+//   各文件内容按索引顺序紧随其后
+// rel_path 用 '/' 分隔；原生库用纯文件名（平板放到 exe 旁），资源保留目录结构。
+// ============================================================================
+#define PACK_BLOB_HEADER "LENOPACK"
+
+static uint32_t pack_fnv1a32(const unsigned char* data, size_t len) {
+    uint32_t h = 2166136261u;
+    for (size_t i = 0; i < len; i++) {
+        h ^= data[i];
+        h *= 16777619u;
+    }
+    return h;
+}
+
+// 读文件全部内容（UTF-8 路径安全；返回 malloc 缓冲，调用方 free）
+static unsigned char* pack_read_all(const char* path, size_t* out_size) {
+#ifdef _WIN32
+    wchar_t* wp = utf8_to_utf16(path);
+    if (!wp) return NULL;
+    FILE* f = _wfopen(wp, L"rb");
+    free(wp);
+#else
+    FILE* f = fopen(path, "rb");
+#endif
+    if (!f) return NULL;
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (size < 0) { fclose(f); return NULL; }
+    unsigned char* buf = (unsigned char*)malloc((size_t)size + 1);
+    if (!buf) { fclose(f); return NULL; }
+    size_t rd = fread(buf, 1, (size_t)size, f);
+    fclose(f);
+    if (rd != (size_t)size) { free(buf); return NULL; }
+    *out_size = (size_t)size;
+    return buf;
+}
+
+// 把 libs（原生库）与 res（[pack] resources）打成内嵌资源段
+static int pack_build_res_blob(PackLib* libs, int lib_n, PackRes* res, int res_n,
+                               unsigned char** out_blob, size_t* out_size) {
+    int total = lib_n + res_n;
+    *out_blob = NULL;
+    *out_size = 0;
+    if (total <= 0) return 0;   /* 没东西要嵌：不写资源段 */
+
+    /* 1) 索引区大小 + 内容区大小 */
+    size_t idx_size = 0;
+    size_t content_size = 0;
+    for (int i = 0; i < lib_n; i++) {
+        size_t rl = strlen(libs[i].file_name);
+        idx_size += 14 + rl;
+    }
+    for (int i = 0; i < res_n; i++) {
+        size_t rl = strlen(res[i].rel_path);
+        idx_size += 14 + rl;
+    }
+    for (int i = 0; i < lib_n; i++) {
+        size_t sz = 0;
+        unsigned char* d = pack_read_all(libs[i].src_path, &sz);
+        if (!d) {
+            fprintf(stderr, "[pack] 错误: 无法读取原生库: %s\n", libs[i].src_path);
+            return -1;
+        }
+        free(d);
+        content_size += sz;
+    }
+    for (int i = 0; i < res_n; i++) {
+        size_t sz = 0;
+        unsigned char* d = pack_read_all(res[i].src_path, &sz);
+        if (!d) {
+            fprintf(stderr, "[pack] 错误: 无法读取资源: %s\n", res[i].src_path);
+            return -1;
+        }
+        free(d);
+        content_size += sz;
+    }
+
+    size_t blob_size = 12 + idx_size + content_size;
+    unsigned char* blob = (unsigned char*)malloc(blob_size);
+    if (!blob) return -1;
+
+    /* 2) 头 + 索引 */
+    memcpy(blob, PACK_BLOB_HEADER, 8);
+    uint32_t count = (uint32_t)total;
+    memcpy(blob + 8, &count, 4);
+
+    unsigned char* ip = blob + 12;
+    for (int i = 0; i < lib_n; i++) {
+        const char* rel = libs[i].file_name;
+        uint16_t rl = (uint16_t)strlen(rel);
+        size_t sz = 0;
+        unsigned char* d = pack_read_all(libs[i].src_path, &sz);
+        if (!d) { free(blob); return -1; }
+        uint64_t fsz = (uint64_t)sz;
+        uint32_t h = pack_fnv1a32(d, sz);
+        free(d);
+        memcpy(ip, &rl, 2);
+        memcpy(ip + 2, &fsz, 8);
+        memcpy(ip + 10, &h, 4);
+        memcpy(ip + 14, rel, rl);
+        ip += 14 + rl;
+    }
+    for (int i = 0; i < res_n; i++) {
+        const char* rel = res[i].rel_path;
+        uint16_t rl = (uint16_t)strlen(rel);
+        size_t sz = 0;
+        unsigned char* d = pack_read_all(res[i].src_path, &sz);
+        if (!d) { free(blob); return -1; }
+        uint64_t fsz = (uint64_t)sz;
+        uint32_t h = pack_fnv1a32(d, sz);
+        free(d);
+        memcpy(ip, &rl, 2);
+        memcpy(ip + 2, &fsz, 8);
+        memcpy(ip + 10, &h, 4);
+        memcpy(ip + 14, rel, rl);
+        ip += 14 + rl;
+    }
+
+    /* 3) 内容区 */
+    unsigned char* cp = blob + 12 + idx_size;
+    for (int i = 0; i < lib_n; i++) {
+        size_t sz = 0;
+        unsigned char* d = pack_read_all(libs[i].src_path, &sz);
+        if (!d) { free(blob); return -1; }
+        memcpy(cp, d, sz);
+        cp += sz;
+        free(d);
+    }
+    for (int i = 0; i < res_n; i++) {
+        size_t sz = 0;
+        unsigned char* d = pack_read_all(res[i].src_path, &sz);
+        if (!d) { free(blob); return -1; }
+        memcpy(cp, d, sz);
+        cp += sz;
+        free(d);
+    }
+
+    *out_blob = blob;
+    *out_size = blob_size;
+    return 0;
+}
+
+// 该路径是不是已存在的文件（UTF-8 路径安全）
+static int pack_file_exists_utf8(const char* path) {
+#ifdef _WIN32
+    wchar_t* wp = utf8_to_utf16(path);
+    if (!wp) return 0;
+    DWORD attr = GetFileAttributesW(wp);
+    free(wp);
+    return (attr != INVALID_FILE_ATTRIBUTES) && !(attr & FILE_ATTRIBUTE_DIRECTORY);
+#else
+    struct stat st;
+    return stat(path, &st) == 0 && S_ISREG(st.st_mode);
+#endif
+}
+
+// ============================================================================
+// 打包：递归创建输出目录
+// -o 可能给多级路径（如 build/release/v1），逐级创建；已存在视为成功。
+// Windows 走 _wmkdir（UTF-8/中文路径安全）。
+// ============================================================================
+static int pack_ensure_dir(const char* dir) {
+    if (!dir || !dir[0]) return -1;
+    char tmp[MAX_PATH_LEN];
+    strncpy(tmp, dir, sizeof(tmp) - 1);
+    tmp[sizeof(tmp) - 1] = '\0';
+    size_t len = strlen(tmp);
+    while (len > 1 && (tmp[len - 1] == '\\' || tmp[len - 1] == '/')) tmp[--len] = '\0';
+
+#ifdef _WIN32
+    for (char* p = tmp + 1; *p; p++) {
+        if (*p == '\\' || *p == '/') {
+            char save = *p;
+            *p = '\0';
+            wchar_t* w = utf8_to_utf16(tmp);
+            if (w) { _wmkdir(w); free(w); }
+            *p = save;
+        }
+    }
+    wchar_t* wfull = utf8_to_utf16(tmp);
+    if (!wfull) return -1;
+    int rc = (_wmkdir(wfull) == 0 || errno == EEXIST) ? 0 : -1;
+    free(wfull);
+    return rc;
+#else
+    for (char* p = tmp + 1; *p; p++) {
+        if (*p == '/') {
+            char save = *p;
+            *p = '\0';
+            mkdir(tmp, 0755);
+            *p = save;
+        }
+    }
+    return (mkdir(tmp, 0755) == 0 || errno == EEXIST) ? 0 : -1;
+#endif
+}
+
 // 从文件运行
 int lenolang_run_file(const char* path) {
     // 检查是否是 .lenb 二进制文件
@@ -1075,17 +1290,190 @@ int lenolang_run_file(const char* path) {
         }
 #endif
 
-        // 生成输出路径：与源文件同目录
-        char out_exe[MAX_PATH_LEN];
-        strncpy(out_exe, path, MAX_PATH_LEN - 1);
-        out_exe[MAX_PATH_LEN - 1] = '\0';
-        char* dot = strrchr(out_exe, '.');
-        if (dot) {
-            *dot = '\0';
-        }
+        // 收集要随 exe 分发的原生库（各实际 import 包 [native-libs] 的当前平台条目）。
+        // 必须在编译**之后**：import 是编译期解析的，此刻模块清单才完整；
+        // 取路径用 loaded_modules_get_path（不是 GC 对象，gc_free_all 之后仍可读）。
+        PackLib* pack_libs = NULL;
+        int pack_lib_count = 0;
+        {
+            const char* entry_abs = error_get_filename();
+            if (package_collect_pack_libs(entry_abs ? entry_abs : path,
+                                          &pack_libs, &pack_lib_count) != 0) {
+                fprintf(stderr, "[pack] 原生库收集失败，已中止打包\n");
 #ifdef _WIN32
-        strcat(out_exe, ".exe");
+                { wchar_t wp[MAX_PATH_LEN]; MultiByteToWideChar(CP_UTF8, 0, bin_path, -1, wp, MAX_PATH_LEN); _wremove(wp); }
+#else
+                remove(bin_path);
 #endif
+                free(bin_path);
+                return -1;
+            }
+        }
+
+        #ifdef _WIN32
+        const char* PSEP = "\\";
+#else
+        const char* PSEP = "/";
+#endif
+
+        // 是否单文件模式：--onefile 或 resource.toml [pack] onefile = true
+        // 包根找不到 leno.toml 时退回入口文件所在目录 —— resource.toml 独立存在，
+        // 纯应用目录（无 leno.toml）也能用它声明单文件打包
+        int onefile = onefileMode;
+        PackRes* pack_res = NULL;
+        int pack_res_count = 0;
+        unsigned char* res_blob = NULL;
+        size_t res_blob_size = 0;
+        {
+            const char* entry_abs2 = error_get_filename();
+            char* proj = entry_abs2 ? package_find_project_root(entry_abs2) : NULL;
+            char root[MAX_PATH_LEN];
+            if (proj) {
+                strncpy(root, proj, sizeof(root) - 1);
+                root[sizeof(root) - 1] = '\0';
+                free(proj);
+            } else if (entry_abs2) {
+                strncpy(root, entry_abs2, sizeof(root) - 1);
+                root[sizeof(root) - 1] = '\0';
+                char* a = strrchr(root, '\\');
+                char* b = strrchr(root, '/');
+                char* sep = a;
+                if (b && (!a || b > a)) sep = b;
+                if (sep) *(sep + 1) = '\0';
+                else root[0] = '\0';
+            } else {
+                root[0] = '\0';
+            }
+            if (root[0]) {
+                char toml_path[MAX_PATH_LEN + 16];   /* root 最多 MAX_PATH_LEN，再拼 "resource.toml" */
+                snprintf(toml_path, sizeof(toml_path), "%sresource.toml", root);
+                PackConfig* res_cfg = package_pack_config_parse(toml_path);
+                if (res_cfg) {
+                    if (res_cfg->onefile) onefile = 1;
+                    // 目录模式下声明了资源却没开单文件：给个明确提示（否则会以为没生效）
+                    if (!onefile && res_cfg->resource_count > 0) {
+                        printf("[pack] 提示: resource.toml 声明了 %d 个资源模式，但当前不是单文件模式，\n"
+                               "       dist/ 不会带上这些资源（需要单文件请加 --onefile 或 [pack] onefile = true）\n",
+                               res_cfg->resource_count);
+                    }
+                    package_pack_config_free(res_cfg);
+                }
+            }
+        }
+
+        if (onefile) {
+            const char* entry_abs2 = error_get_filename();
+            package_collect_pack_resources(entry_abs2 ? entry_abs2 : path,
+                                           &pack_res, &pack_res_count);
+            if (pack_build_res_blob(pack_libs, pack_lib_count, pack_res, pack_res_count,
+                                    &res_blob, &res_blob_size) != 0) {
+                fprintf(stderr, "[pack] 内嵌资源段组装失败，已中止打包\n");
+                package_pack_res_free(pack_res, pack_res_count);
+                package_pack_libs_free(pack_libs, pack_lib_count);
+                free(bin_path);
+                return -1;
+            }
+            printf("[pack] 单文件模式: 内嵌 %d 个原生库 + %d 个资源文件（%.1f MB）\n",
+                   pack_lib_count, pack_res_count, res_blob_size / 1048576.0);
+        }
+
+        // 生成输出目录：-o 指定则原样用（相对当前工作目录），否则 <源码目录>/dist
+        char out_dir[MAX_PATH_LEN];
+        if (packOutDir) {
+            strncpy(out_dir, packOutDir, MAX_PATH_LEN - 1);
+            out_dir[MAX_PATH_LEN - 1] = '\0';
+        } else {
+            strncpy(out_dir, path, MAX_PATH_LEN - 1);
+            out_dir[MAX_PATH_LEN - 1] = '\0';
+            char* s1 = strrchr(out_dir, '\\');
+            char* s2 = strrchr(out_dir, '/');
+            if (s2 && (!s1 || s2 > s1)) s1 = s2;
+            if (s1) *(s1 + 1) = '\0';   // 保留源码目录（含分隔符）
+            else out_dir[0] = '\0';
+            strncat(out_dir, "dist", sizeof(out_dir) - strlen(out_dir) - 1);
+        }
+        if (pack_ensure_dir(out_dir) != 0) {
+            fprintf(stderr, "[pack] 错误: 无法创建输出目录: %s\n", out_dir);
+            package_pack_libs_free(pack_libs, pack_lib_count);
+            free(bin_path);
+            return -1;
+        }
+
+        // 产物路径 = <输出目录>/<源码名>.exe
+        // 缓冲区放大到 4×MAX_PATH_LEN：下面是把两个 MAX_PATH_LEN 量级的串拼一起
+        char out_exe[MAX_PATH_LEN * 4];
+        {
+            const char* base = path;
+            const char* b1 = strrchr(path, '\\');
+            const char* b2 = strrchr(path, '/');
+            if (b1 || b2) {
+                const char* bsep = b1;
+                if (b2 && (!b1 || b2 > b1)) bsep = b2;
+                base = bsep + 1;
+            }
+            char stem[MAX_PATH_LEN];
+            strncpy(stem, base, sizeof(stem) - 1);
+            stem[sizeof(stem) - 1] = '\0';
+            char* stem_dot = strrchr(stem, '.');
+            if (stem_dot) *stem_dot = '\0';
+            size_t dlen = strlen(out_dir);
+            const char* dsep = (dlen > 0 && out_dir[dlen - 1] != '\\' &&
+                                out_dir[dlen - 1] != '/') ? PSEP : "";
+            snprintf(out_exe, sizeof(out_exe), "%s%s%s%s", out_dir, dsep, stem,
+#ifdef _WIN32
+                     ".exe"
+#else
+                     ""
+#endif
+            );
+        }
+        printf("[pack] 输出目录: %s\n", out_dir);
+
+        // 依赖的原生库直接复制到 exe 旁（不能放子目录：Windows 解析 DLL 自身依赖时
+        // 只搜主 exe 目录/系统目录/PATH，不看 DLL 自己所在的目录 ⇒ SDL3_image→SDL3 会断）
+        if (onefile) {
+            printf("[pack] 单文件: dist 内只产出 exe；库与资源在首次运行时解包到 exe 所在目录\n");
+            // 切换过模式的话，dist 里可能还留着上次目录模式拷进去的同名文件 —— 只提示不删
+            // （输出目录是用户的，误删代价远大于留个提示）
+            int stale = 0;
+            for (int i = 0; i < pack_lib_count; i++) {
+                size_t dlen = strlen(out_dir);
+                const char* dsep = (dlen > 0 && out_dir[dlen - 1] != '\\' &&
+                                    out_dir[dlen - 1] != '/') ? PSEP : "";
+                char p[MAX_PATH_LEN * 4];
+                snprintf(p, sizeof(p), "%s%s%s", out_dir, dsep, pack_libs[i].file_name);
+                if (!pack_file_exists_utf8(p)) continue;
+                if (stale == 0) {
+                    printf("[pack] 注意: dist 内仍有上次遗留的同名文件（单文件分发只需 exe，可自行删除）:\n");
+                }
+                printf("        %s\n", pack_libs[i].file_name);
+                stale++;
+            }
+        } else if (pack_lib_count > 0) {
+            printf("[pack] 复制原生库 %d 个:\n", pack_lib_count);
+            for (int i = 0; i < pack_lib_count; i++) {
+                size_t dlen = strlen(out_dir);
+                const char* dsep = (dlen > 0 && out_dir[dlen - 1] != '\\' &&
+                                    out_dir[dlen - 1] != '/') ? PSEP : "";
+                char dst[MAX_PATH_LEN * 4];
+                snprintf(dst, sizeof(dst), "%s%s%s", out_dir, dsep, pack_libs[i].file_name);
+                if (package_copy_file(pack_libs[i].src_path, dst) != 0) {
+                    fprintf(stderr, "[pack] 错误: 复制原生库失败: %s -> %s\n",
+                            pack_libs[i].src_path, dst);
+                    package_pack_libs_free(pack_libs, pack_lib_count);
+                    package_pack_res_free(pack_res, pack_res_count);
+                    free(res_blob);
+                    free(bin_path);
+                    return -1;
+                }
+                printf("        %s  ← %s\n", pack_libs[i].file_name, pack_libs[i].from_pkg);
+            }
+        } else {
+            printf("[pack] 无需复制原生库（依赖里没有原生库声明）\n");
+        }
+        package_pack_libs_free(pack_libs, pack_lib_count);
+        // 资源清单的内容已拷进 res_blob，这里即可释放（blob 到写盘后再释放）
+        package_pack_res_free(pack_res, pack_res_count);
 
         // 查找 leno_vm：先在与 leno 同目录下找
         // g_use_gui_vm=1 时用无控制台版 leno_vm_gui.exe（脚本调用了 _console(false)）
@@ -1222,7 +1610,11 @@ int lenolang_run_file(const char* path) {
         remove(bin_path);
 #endif
 
-        // 写入输出文件: [vm 数据] [lenb 数据] [4字节 lenb_size] [4字节 LENB_MAGIC]
+        // 写入输出文件。
+        //   目录模式:  [vm 数据] [lenb 数据] [4B lenb_size] [4B LENB_MAGIC]
+        //   单文件模式: [vm 数据] [资源段] [4B 资源段大小] [4B RES_MAGIC]
+        //                       [lenb 数据] [4B lenb_size] [4B LENB_MAGIC]
+        //   资源段放在 lenb **之前** ⇒ 末尾 8 字节仍是 LENB_MAGIC，旧 VM 读新 exe 不受影响。
 #ifdef _WIN32
         wchar_t wout_exe[MAX_PATH_LEN];
         MultiByteToWideChar(CP_UTF8, 0, out_exe, -1, wout_exe, MAX_PATH_LEN);
@@ -1232,12 +1624,20 @@ int lenolang_run_file(const char* path) {
 #endif
         if (!out_fp) {
             fprintf(stderr, "[错误] 无法创建输出文件: %s\n", out_exe);
+            free(res_blob);
             free(lenb_data);
             free(vm_data);
             free(bin_path);
             return -1;
         }
         fwrite(vm_data, 1, vm_size, out_fp);
+        if (onefile) {
+            fwrite(res_blob, 1, res_blob_size, out_fp);
+            uint32_t res_size_le = (uint32_t)res_blob_size;
+            fwrite(&res_size_le, 4, 1, out_fp);
+            uint32_t res_magic = 0x524E454C; // "LENR"
+            fwrite(&res_magic, 4, 1, out_fp);
+        }
         fwrite(lenb_data, 1, lenb_size, out_fp);
         uint32_t lenb_size_le = (uint32_t)lenb_size;
         fwrite(&lenb_size_le, 4, 1, out_fp);
@@ -1252,14 +1652,19 @@ int lenolang_run_file(const char* path) {
 
         free(vm_data);
         free(lenb_data);
+        free(res_blob);
         free(bin_path);
 
         {
             clock_t pack_end = clock();
             double embed_ms = (double)(pack_end - pack_compile_end) / CLOCKS_PER_SEC * 1000.0;
             double total_ms = (double)(pack_end - pack_t0) / CLOCKS_PER_SEC * 1000.0;
-            printf("打包成功: %s -> %s (%.1f KB)\n", path, out_exe,
-                   (vm_size + lenb_size + 8) / 1024.0);
+            printf("打包成功: %s -> %s (%.1f KB)%s\n", path, out_exe,
+                   (vm_size + lenb_size + 8 + (onefile ? (double)res_blob_size + 8 : 0)) / 1024.0,
+                   onefile ? " [单文件]" : "");
+            if (onefile) {
+                printf("单文件分发：只需拷贝这一个 exe；首次运行时依赖会自动解包到它所在目录\n");
+            }
             printf("打包嵌入耗时: %.1f ms\n", embed_ms);
             printf("总耗时: %.1f ms\n", total_ms);
         }
@@ -1403,6 +1808,21 @@ static int main_logic(int argc, char** argv) {
         } else if (strcmp(argv[i], "--pack") == 0 || strcmp(argv[i], "-p") == 0) {
             packMode = 1;
             continue;
+        } else if (strcmp(argv[i], "--pack-dir") == 0 || strcmp(argv[i], "-o") == 0) {
+            // 打包输出目录（相对当前工作目录；默认 <源码目录>/dist）
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                packOutDir = argv[i + 1];
+                i++;  // 消费目录参数
+            } else {
+                fprintf(stderr, "错误: -o/--pack-dir 需要指定输出目录\n");
+                return 1;
+            }
+            continue;
+        } else if (strcmp(argv[i], "--onefile") == 0) {
+            // 单文件打包：把 [native-libs] 的库与 [pack] resources 内嵌进 exe，
+            // 首次运行解包到 exe 所在目录（详见 vm_main.c 的 extract_embedded_resources）
+            onefileMode = 1;
+            continue;
         } else if (strcmp(argv[i], "--no-cache") == 0) {
             module_loader_set_cache_enabled(0);
             continue;
@@ -1465,6 +1885,8 @@ static int main_logic(int argc, char** argv) {
             if (strcmp(argv[i], "--pause") == 0 || strcmp(argv[i], "--debug") == 0 ||
                 strcmp(argv[i], "--compile") == 0 || strcmp(argv[i], "-c") == 0 ||
                 strcmp(argv[i], "--pack") == 0 || strcmp(argv[i], "-p") == 0 ||
+                strcmp(argv[i], "--pack-dir") == 0 || strcmp(argv[i], "-o") == 0 ||
+                strcmp(argv[i], "--onefile") == 0 ||
                 strcmp(argv[i], "--no-cache") == 0 ||
                 strcmp(argv[i], "--init") == 0 || strcmp(argv[i], "--install") == 0 ||
                 strcmp(argv[i], "--version") == 0 || strcmp(argv[i], "-v") == 0 ||
@@ -1515,6 +1937,8 @@ static int main_logic(int argc, char** argv) {
                 if (strcmp(argv[i], "--pause") == 0 || strcmp(argv[i], "--debug") == 0 ||
                     strcmp(argv[i], "--compile") == 0 || strcmp(argv[i], "-c") == 0 ||
                     strcmp(argv[i], "--pack") == 0 || strcmp(argv[i], "-p") == 0 ||
+                    strcmp(argv[i], "--pack-dir") == 0 || strcmp(argv[i], "-o") == 0 ||
+                    strcmp(argv[i], "--onefile") == 0 ||
                     strcmp(argv[i], "--no-cache") == 0 ||
                     strcmp(argv[i], "--init") == 0 || strcmp(argv[i], "--install") == 0 ||
                     strcmp(argv[i], "--version") == 0 || strcmp(argv[i], "-v") == 0 ||

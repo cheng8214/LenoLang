@@ -71,6 +71,14 @@ static inline int call(ObjClosure* closure, int arg_count, int line) {
 
     // 需要扩容（罕见路径）
     if (unlikely(vm.frame_cnt >= vm.frame_capacity)) {
+        // S1：硬上限——无限递归时逐倍扩容直到内存耗尽只会报"分配失败"，掩盖真实原因
+        if (vm.frame_cnt >= VM_MAX_FRAMES) {
+            char depth_buf[96];
+            snprintf(depth_buf, sizeof(depth_buf),
+                     "调用栈溢出：递归深度已达 %d（可能是无限递归）", vm.frame_cnt);
+            runtime_error(depth_buf, line);
+            return 0;
+        }
         if (!vm_grow_frames(current_exec_vm)) {
             runtime_error("调用栈内存分配失败", line);
             return 0;
@@ -167,6 +175,14 @@ static inline int call_no_type_check(ObjClosure* closure, int arg_count, int lin
     ObjFunction* func = closure->function;
 
     if (unlikely(vm.frame_cnt >= vm.frame_capacity)) {
+        // S1：硬上限——无限递归时逐倍扩容直到内存耗尽只会报"分配失败"，掩盖真实原因
+        if (vm.frame_cnt >= VM_MAX_FRAMES) {
+            char depth_buf[96];
+            snprintf(depth_buf, sizeof(depth_buf),
+                     "调用栈溢出：递归深度已达 %d（可能是无限递归）", vm.frame_cnt);
+            runtime_error(depth_buf, line);
+            return 0;
+        }
         if (!vm_grow_frames(current_exec_vm)) {
             runtime_error("调用栈内存分配失败", line);
             return 0;
@@ -317,6 +333,14 @@ static inline int call_reg_impl(ObjClosure* closure, int has_self, Value self,
     ObjFunction* func = closure->function;
 
     if (unlikely(vm.frame_cnt >= vm.frame_capacity)) {
+        // S1：硬上限——无限递归时逐倍扩容直到内存耗尽只会报"分配失败"，掩盖真实原因
+        if (vm.frame_cnt >= VM_MAX_FRAMES) {
+            char depth_buf[96];
+            snprintf(depth_buf, sizeof(depth_buf),
+                     "调用栈溢出：递归深度已达 %d（可能是无限递归）", vm.frame_cnt);
+            runtime_error(depth_buf, line);
+            return 0;
+        }
         if (!vm_grow_frames(current_exec_vm)) {
             runtime_error("调用栈内存分配失败", line);
             return 0;

@@ -4,6 +4,32 @@
 #include <string.h>
 #include <ctype.h>
 
+#ifdef _WIN32
+#include <windows.h>
+/* UTF-8 路径安全打开：Windows 的 fopen 按 ANSI 代码页解释路径字节，
+ * 中文目录下的 UTF-8 路径会打不开，必须转宽字符走 _wfopen */
+static FILE* pack_toml_fopen(const char* path, const char* mode) {
+    int wn = MultiByteToWideChar(CP_UTF8, 0, path, -1, NULL, 0);
+    int mn = MultiByteToWideChar(CP_UTF8, 0, mode, -1, NULL, 0);
+    if (wn <= 0 || mn <= 0) return NULL;
+    wchar_t* wpath = (wchar_t*)malloc(wn * sizeof(wchar_t));
+    wchar_t* wmode = (wchar_t*)malloc(mn * sizeof(wchar_t));
+    if (!wpath || !wmode) {
+        free(wpath);
+        free(wmode);
+        return NULL;
+    }
+    MultiByteToWideChar(CP_UTF8, 0, path, -1, wpath, wn);
+    MultiByteToWideChar(CP_UTF8, 0, mode, -1, wmode, mn);
+    FILE* fp = _wfopen(wpath, wmode);
+    free(wpath);
+    free(wmode);
+    return fp;
+}
+#else
+#define pack_toml_fopen(path, mode) fopen(path, mode)
+#endif
+
 /* ================================================================
  * 内部工具：字符串操作
  * ================================================================ */
@@ -306,6 +332,45 @@ static int toml_parse_kv(const char* line, char** out_key, char** out_val) {
     return 0;
 }
 
+/* 解析字符串数组字面量：`["a", 'b', c]` → 逐项去掉引号后写回 out[]。
+ * 只认单行、逗号分隔的形式（解析器本身逐行读取，不支持跨行数组）。 */
+static void toml_parse_string_array(const char* val, char** out, int max, int* out_count) {
+    *out_count = 0;
+    if (!val) return;
+    const char* p = val;
+    while (isspace((unsigned char)*p)) p++;
+    if (*p != '[') return;   /* 不是数组字面量：忽略 */
+    p++;
+
+    while (*p && *out_count < max) {
+        while (isspace((unsigned char)*p) || *p == ',') p++;
+        if (*p == ']' || *p == '\0') break;
+
+        char quote = 0;
+        if (*p == '"' || *p == '\'') {
+            quote = *p;
+            p++;
+        }
+        const char* start = p;
+        if (quote) {
+            while (*p && *p != quote) p++;
+        } else {
+            while (*p && *p != ',' && *p != ']') p++;   /* 裸值：到逗号/右括号为止 */
+        }
+        size_t len = (size_t)(p - start);
+        while (len > 0 && isspace((unsigned char)start[len - 1])) len--;   /* 裸值去尾空白 */
+
+        if (len > 0) {
+            char* item = (char*)malloc(len + 1);
+            if (!item) break;
+            memcpy(item, start, len);
+            item[len] = '\0';
+            out[(*out_count)++] = item;
+        }
+        if (*p == quote && quote != 0) p++;   /* 跳过收尾引号 */
+    }
+}
+
 /* ================================================================
  * 公开 API：解析 leno.toml
  * ================================================================ */
@@ -461,6 +526,77 @@ void package_config_free(PackageConfig* cfg) {
         free(cfg->native_libs[i].mac_path);
     }
 
+    free(cfg);
+}
+
+/* ================================================================
+ * 打包资源配置：解析 resource.toml（与 leno.toml 同在包根，可选）
+ * ----------------------------------------------------------------
+ * 目前识别 [pack] 段：
+ *   onefile   = true
+ *   resources = 通配模式数组（images 目录递归全部、fonts 目录下的 ttf 等）
+ * 之后打包相关的配置（如图标 icon）也放这个文件。
+ * ================================================================ */
+
+PackConfig* package_pack_config_parse(const char* file_path) {
+    FILE* fp = pack_toml_fopen(file_path, "rb");
+    if (!fp) return NULL;   /* 文件不存在：可选配置，不算错误 */
+
+    PackConfig* cfg = (PackConfig*)calloc(1, sizeof(PackConfig));
+    if (!cfg) {
+        fclose(fp);
+        return NULL;
+    }
+
+    cfg->file_path = str_dup(file_path);
+
+    TomlParser tp;
+    toml_parser_init(&tp);
+
+    char buf[MAX_LINE];
+    while (fgets(buf, sizeof(buf), fp)) {
+        size_t blen = strlen(buf);
+        while (blen > 0 && (buf[blen - 1] == '\n' || buf[blen - 1] == '\r')) {
+            buf[--blen] = '\0';
+        }
+
+        char* line = str_trim(buf);
+        if (line[0] == '\0' || line[0] == '#') continue;
+
+        if (line[0] == '[' && line[1] != '[') {
+            toml_parse_section_header(line, &tp);
+            continue;
+        }
+
+        char* key = NULL;
+        char* val = NULL;
+        if (toml_parse_kv(line, &key, &val) != 0) continue;
+
+        if (strcmp(tp.name, "pack") == 0 && tp.table_depth == 1) {
+            if (strcmp(key, "onefile") == 0) {
+                cfg->onefile = (strcmp(val, "true") == 0 || strcmp(val, "1") == 0);
+            } else if (strcmp(key, "resources") == 0) {
+                toml_parse_string_array(val, cfg->resources, MAX_PACK_RESOURCES,
+                                        &cfg->resource_count);
+            }
+        }
+        /* 未知段/未知键：静默忽略（为将来 icon 等配置留余地） */
+
+        free(key);
+        free(val);
+    }
+
+    fclose(fp);
+    return cfg;
+}
+
+void package_pack_config_free(PackConfig* cfg) {
+    if (!cfg) return;
+
+    for (int i = 0; i < cfg->resource_count; i++) {
+        free(cfg->resources[i]);
+    }
+    free(cfg->file_path);
     free(cfg);
 }
 

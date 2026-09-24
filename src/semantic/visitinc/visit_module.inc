@@ -252,7 +252,21 @@
             ImportedModuleInfo* module_info = find_imported_module(s, module_name);
             if (!module_info) {
                 char msg[BUFFER_MEDIUM];
-                snprintf(msg, sizeof(msg), "use 语句错误：模块 '%s' 未导入", module_name);
+                // E2: 模块名拼错提示——在已导入模块的别名里找相似（use md.Point，别名是 m）
+                const char* alias_names[64];
+                int alias_count = 0;
+                for (int i = 0; i < s->imported_module_count && alias_count < 64; i++) {
+                    if (s->imported_modules[i].alias) {
+                        alias_names[alias_count++] = s->imported_modules[i].alias;
+                    }
+                }
+                const char* hint = get_similar_in_names(alias_names, alias_count, module_name);
+                if (!hint[0]) hint = native_builtin_module_hint(module_name);
+                if (hint[0]) {
+                    snprintf(msg, sizeof(msg), "use 语句错误：模块 '%s' 未导入%s", module_name, hint);
+                } else {
+                    snprintf(msg, sizeof(msg), "use 语句错误：模块 '%s' 未导入", module_name);
+                }
                 error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                 break;
             }
@@ -551,7 +565,15 @@
 
             // 没有找到 struct、clib、cfunc、face、alias 或函数
             char msg[BUFFER_MEDIUM];
-            snprintf(msg, sizeof(msg), "use 语句错误：模块 '%s' 中没有类型或函数 '%s'", module_name, symbol_name);
+            // E1: 符号名拼错提示——在模块符号表所有名字桶里找最相似的候选
+            const char* hint = module_symbol_table_hint(module_info->sym_table, symbol_name);
+            if (hint[0]) {
+                snprintf(msg, sizeof(msg), "use 语句错误：模块 '%s' 中没有类型或函数 '%s'%s",
+                         module_name, symbol_name, hint);
+            } else {
+                snprintf(msg, sizeof(msg), "use 语句错误：模块 '%s' 中没有类型或函数 '%s'",
+                         module_name, symbol_name);
+            }
             error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
             break;
         }
@@ -1148,6 +1170,35 @@
                                 is_struct_method = 1;
                             }
 
+                            // ★ 前向定义的 struct（定义在使用点之后）方法：func_table 占位符
+                            //   要到真实访问 struct 定义时才注册 ⇒ 这里补 root AST 兜底
+                            //   （对齐 visit_expr.inc 的同名回退），否则前向方法调用误报"没有方法"
+                            if (!is_struct_method && obj_type->kind == TYPE_STRUCT) {
+                                for (int si = 0; si < s->root->u.block.count && !is_struct_method; si++) {
+                                    Ast* stmt = s->root->u.block.items[si];
+                                    Ast* sdef = NULL;
+                                    if (stmt->kind == AST_STRUCT_DEF && stmt->u.struct_def.name &&
+                                        strcmp(stmt->u.struct_def.name, obj_type->struct_name) == 0) {
+                                        sdef = stmt;
+                                    } else if (stmt->kind == AST_EXPORT && stmt->u.export.decl &&
+                                               stmt->u.export.decl->kind == AST_STRUCT_DEF &&
+                                               stmt->u.export.decl->u.struct_def.name &&
+                                               strcmp(stmt->u.export.decl->u.struct_def.name, obj_type->struct_name) == 0) {
+                                        sdef = stmt->u.export.decl;
+                                    }
+                                    if (sdef) {
+                                        for (int mi = 0; mi < sdef->u.struct_def.method_count; mi++) {
+                                            Ast* m = sdef->u.struct_def.methods[mi];
+                                            if (m && m->kind == AST_FUNC_DEF &&
+                                                strcmp(m->u.func.name, method_name) == 0) {
+                                                is_struct_method = 1;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
                             if (!is_struct_method) {
                                 int face_param_count = 0;
                                 TypeKind face_return_type = TYPE_ANY;
@@ -1238,7 +1289,14 @@
                                     if (method_ast && method_ast->kind == AST_FUNC_DEF &&
                                         strcmp(method_ast->u.func.name, method_name) == 0) {
                                         int actual_arity = ast->u.module_call.args.count;
-                                        int method_param_count = method_ast->u.func.pcnt - 1;
+                                        // ★ 前向定义时方法 AST 未变换（self 未在 visit_type_def
+                                        //   阶段前置）⇒ 按 params[0] 是否为 "self" 调整个数与下标
+                                        int has_self = method_ast->u.func.pcnt > 0 &&
+                                            method_ast->u.func.params &&
+                                            method_ast->u.func.params[0] &&
+                                            strcmp(method_ast->u.func.params[0], "self") == 0;
+                                        int self_off = has_self ? 1 : 0;
+                                        int method_param_count = method_ast->u.func.pcnt - self_off;
                                         int default_cnt = method_ast->u.func.default_count;
                                         int required_cnt = method_param_count - default_cnt;
                                         if (actual_arity < required_cnt || actual_arity > method_param_count) {
@@ -1294,22 +1352,38 @@
                                             }
 
                                             for (int i = 0; i < actual_arity; i++) {
-                                                TypeInfo* expected_type = method_ast->u.func.param_types[i + 1];
+                                                // +1 跳过 self（前向定义时 self 还没前置，偏移为 0）
+                                                TypeInfo* expected_type = method_ast->u.func.param_types[i + self_off];
                                                 if (!expected_type) continue;
 
                                                 TypeInfo* check_type = expected_type;
                                                 if (gp_count > 0) {
                                                     for (int gi = 0; gi < gp_count; gi++) {
-                                                        TypeInfo* sub = type_substitute(check_type, gp_names[gi], gp_types[gi]);
-                                                        if (sub != check_type) {
-                                                            check_type = sub;
-                                                        }
+                                                        // ★ 用双形态替换（TYPE_GENERIC_PARAM + TYPE_STRUCT
+                                                        //   占位形参都认）：前向定义时方法参数里的 T 是
+                                                        //   "struct T" 占位，type_substitute 不认 ⇒ 残留
+                                                        //   占位会把 int 实参误判为不匹配
+                                                        TypeInfo* sub = semantic_substitute_generic_param(check_type, gp_names[gi], gp_types[gi]);
+                                                        // 首轮的 check_type 是 AST 拥有的 param_types[i]，
+                                                        // 不能释放；之后的中间副本由这里释放
+                                                        if (check_type != expected_type) type_free(check_type);
+                                                        check_type = sub;
                                                     }
                                                 }
 
                                                 TypeInfo* arg_type = infer_expr_type(s, ast->u.module_call.args.items[i]);
                                                 if (arg_type && arg_type->kind != TYPE_ANY && check_type->kind != TYPE_ANY) {
-                                                    if (!type_is_compatible(check_type, arg_type)) {
+                                                    // 替换后仍是"struct 形参名"占位 ⇒ 泛型参数，不比较
+                                                    int is_generic = 0;
+                                                    if (check_type->kind == TYPE_STRUCT && check_type->struct_name &&
+                                                        struct_def_ast->u.struct_def.type_params) {
+                                                        for (int tp = 0; tp < struct_def_ast->u.struct_def.type_param_count; tp++) {
+                                                            if (strcmp(check_type->struct_name, struct_def_ast->u.struct_def.type_params[tp]) == 0) {
+                                                                is_generic = 1; break;
+                                                            }
+                                                        }
+                                                    }
+                                                    if (!is_generic && !type_is_compatible(check_type, arg_type)) {
                                                         char msg[BUFFER_MEDIUM];
                                                         char idx_str[16];
                                                         snprintf(idx_str, sizeof(idx_str), "%d", i + 1);
@@ -1711,12 +1785,14 @@
                                 snprintf(msg, sizeof(msg), "类型 '%s' 没有方法 '%s'（类型 '%s' 未定义，请检查是否已通过 use 语句导入该类型，如 use module.%s）",
                                          type_to_string(obj_sym->type), method_name, tn, tn);
                             } else {
-                                snprintf(msg, sizeof(msg), "类型 '%s' 没有方法 '%s'",
-                                         type_to_string(obj_sym->type), method_name);
+                                snprintf(msg, sizeof(msg), "类型 '%s' 没有方法 '%s'%s",
+                                         type_to_string(obj_sym->type), method_name,
+                                         get_similar_struct_method_hint(s, tn, method_name));
                             }
                         } else {
-                            snprintf(msg, sizeof(msg), "类型 '%s' 没有方法 '%s'",
-                                     type_to_string(obj_sym->type), method_name);
+                            snprintf(msg, sizeof(msg), "类型 '%s' 没有方法 '%s'%s",
+                                     type_to_string(obj_sym->type), method_name,
+                                     semantic_method_hint(obj_sym->type, method_name));
                         }
                         error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     }
@@ -1756,7 +1832,24 @@
             } else {
                 // 模块和变量都未定义
                 char msg[BUFFER_MEDIUM];
-                snprintf(msg, sizeof(msg), "未定义的模块或变量: %s", ast->u.module_call.module_name);
+                // D1: 模块名拼错提示——先在已导入模块的别名里找相似，再在内置模块名里找。
+                // 两个 hint 函数都返回"提示串"（\n  提示: ...），找不到返回空串。
+                const char* alias_names[64];
+                int alias_count = 0;
+                for (int i = 0; i < s->imported_module_count && alias_count < 64; i++) {
+                    if (s->imported_modules[i].alias) {
+                        alias_names[alias_count++] = s->imported_modules[i].alias;
+                    }
+                }
+                const char* hint = get_similar_in_names(alias_names, alias_count,
+                                                        ast->u.module_call.module_name);
+                if (!hint[0]) hint = native_builtin_module_hint(ast->u.module_call.module_name);
+                if (hint[0]) {
+                    snprintf(msg, sizeof(msg), "未定义的模块或变量: %s%s",
+                             ast->u.module_call.module_name, hint);
+                } else {
+                    snprintf(msg, sizeof(msg), "未定义的模块或变量: %s", ast->u.module_call.module_name);
+                }
                 error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
             }
             }
@@ -1904,8 +1997,19 @@
                         }
                     } else {
                         char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg), "枚举 '%s' 中没有成员 '%s'",
-                                 ast->u.module_access.module_name, mname);
+                        // G1: 枚举成员拼错提示——在成员名列表里找最相似的候选
+                        const char* hint = "";
+                        if (var_sym->enum_value_names) {
+                            hint = get_similar_in_names((const char**)var_sym->enum_value_names,
+                                                        var_sym->enum_value_count, mname);
+                        }
+                        if (hint[0]) {
+                            snprintf(msg, sizeof(msg), "枚举 '%s' 中没有成员 '%s'%s",
+                                     ast->u.module_access.module_name, mname, hint);
+                        } else {
+                            snprintf(msg, sizeof(msg), "枚举 '%s' 中没有成员 '%s'",
+                                     ast->u.module_access.module_name, mname);
+                        }
                         error_add_at(ERR_UNDEFINED_VAR, ast->line, ast->column, msg);
                     }
                 } else if (is_struct_type) {

@@ -123,6 +123,13 @@ int arr_try_recycle(ObjArray* arr) {
 int arr_grow(ObjArray* arr) {
     if (!arr) return 0;
 
+    // 硬上限：元素数触顶视为无限增长（最常见：for 遍历中不断 add），
+    // 报可定位的错误而非让 realloc 撑到内存耗尽
+    if (arr->count >= OBJ_ARRAY_MAX_CAPACITY) {
+        native_throw_error("数组元素数已达上限（数组可能无限增长，检查是否在遍历中不断 add）");
+        return 0;
+    }
+
     int new_capacity = arr->capacity < 8 ? 8 : arr->capacity * 2;
 
     size_t old_size = (size_t)arr->capacity * sizeof(Value);

@@ -8,5 +8,15 @@ root = "lib"
 
 [native-libs.sdl3]
 win   = "lib/SDL3.dll"
-linux = "lib/libSDL3.so.0"
-mac   = "lib/libSDL3.0.dylib"
+linux = "lib/SDL3.so"
+mac   = "lib/SDL3.so"
+
+[native-libs.sdl3_image]
+win   = "lib/SDL3_image.dll"
+linux = "lib/SDL3_image.so"
+mac   = "lib/SDL3_image.so"
+
+[native-libs.sdl3_ttf]
+win   = "lib/SDL3_ttf.dll"
+linux = "lib/SDL3_ttf.so"
+mac   = "lib/SDL3_ttf.so"

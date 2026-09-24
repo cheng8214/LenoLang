@@ -85,6 +85,7 @@ void error_add(ErrorType type, int line, const char* msg) {
     err->line = line;
     err->column = current_column;
     err->repeat_count = 1;
+    err->printed = 0;
     strncpy(err->msg, msg, sizeof(err->msg) - 1);
     err->msg[sizeof(err->msg) - 1] = '\0';
     
@@ -112,27 +113,40 @@ int error_has_any(void) {
     return errors.count > 0;
 }
 
+int error_count(void) {
+    return errors.count;
+}
+
 void error_clear(void) {
     errors.count = 0;
 }
 
 void error_print_all(void) {
     if (errors.count == 0) return;
-    
-    // 计算实际错误总数（含重复）
+
+    // 计算实际错误总数（含重复）；已即时打印过的运行期错误不重复展示（S2）
     int total = 0;
     for (int i = 0; i < errors.count; i++) {
-        total += errors.list[i].repeat_count;
+        if (!errors.list[i].printed) {
+            total += errors.list[i].repeat_count;
+        }
     }
-    
+    if (total == 0) return;
+
+    int shown_kinds = 0;
+    for (int i = 0; i < errors.count; i++) {
+        if (!errors.list[i].printed) shown_kinds++;
+    }
+
     fprintf(stderr, "\n=== 发现 %d 个错误", total);
-    if (total > errors.count) {
-        fprintf(stderr, "（%d 种，已合并重复）", errors.count);
+    if (total > shown_kinds) {
+        fprintf(stderr, "（%d 种，已合并重复）", shown_kinds);
     }
     fprintf(stderr, " ===\n");
-    
+
     for (int i = 0; i < errors.count; i++) {
         Error* err = &errors.list[i];
+        if (err->printed) continue;
         const char* type_str = "未知";
         
         switch (err->type) {
@@ -254,6 +268,7 @@ void warning_print_all(void) {
             case WARN_UNUSED_VAR:      type_str = "未使用变量"; break;
             case WARN_SHADOW_VAR:      type_str = "变量遮蔽"; break;
             case WARN_DEPRECATED:      type_str = "弃用"; break;
+            case WARN_BAD_ESCAPE:      type_str = "无效转义"; break;
             case WARN_IMPLICIT_TRUNC:  type_str = "隐式截断"; break;
             case WARN_UNREACHABLE:     type_str = "不可达代码"; break;
             case WARN_NULL_FIELD_CHAIN: type_str = "空值链式访问"; break;
@@ -262,6 +277,9 @@ void warning_print_all(void) {
             case WARN_GENERIC_NO_CONSTRAINT: type_str = "泛型无约束"; break;
             case WARN_NULLABLE_ARITH:  type_str = "可空类型运算"; break;
             case WARN_EMPTY_SOURCE:    type_str = "空源文件"; break;
+            case WARN_ASSIGN_IN_COND:  type_str = "条件中的赋值"; break;
+            case WARN_FOR_IN_COND:     type_str = "for头成员测试"; break;
+            case WARN_PARTIAL_DECL_INIT: type_str = "部分初值声明"; break;
             default: break;
         }
 

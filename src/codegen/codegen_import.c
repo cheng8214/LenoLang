@@ -5,6 +5,7 @@
 #include "codegen.h"
 
 void gen_import_inline(CodeGen* gen, Ast* ast) {
+    (void)gen; (void)ast;
     // import 语句在寄存器式下不生成字节码
     // 模块加载在 lenolang_run / --compile 中处理
 }

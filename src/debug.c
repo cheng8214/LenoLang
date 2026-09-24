@@ -599,8 +599,8 @@ int disassembleInstruction(Chunk* chunk, int offset) {
                 break;
         }
 
-        // 尾随数据摘要
-        char desc[256];
+        // 尾随数据摘要（384 ≥ decode_trailing 各分支最坏输出 326 字节，见 OP_INVOKE_METHOD_TYPED）
+        char desc[384];
         int total = decode_trailing(chunk, offset, desc, sizeof(desc));
         if (desc[0]) printf("  | %s", desc);
         return offset + total;

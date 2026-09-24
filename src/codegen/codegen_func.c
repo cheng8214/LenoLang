@@ -80,6 +80,7 @@ static int ast_return_count(Ast* ast, int* found, int* must) {
 // ============================================================================
 
 ObjFunction* gen_func_proto(CodeGen* gen, Ast* ast) {
+    (void)gen; // 模块归属取全局 g_current_module，此处不用 gen
     // 创建函数对象（栈式基线做法：直接 gc_alloc + 单独 malloc Chunk）
     ObjFunction* func = (ObjFunction*)gc_alloc(sizeof(ObjFunction), OBJ_FUNCTION);
     if (!func) return NULL;

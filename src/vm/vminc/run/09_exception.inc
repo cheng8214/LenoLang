@@ -170,6 +170,10 @@
             }
             if (!msg) msg = value_to_string(exception);
             runtime_error(msg, line);
+            // S2：上面已带调用栈即时打印过，标记后退出时 error_print_all 不再重复
+            if (errors.count > 0) {
+                errors.list[errors.count - 1].printed = 1;
+            }
             free(msg);
             return -1;
         }

@@ -1,0 +1,12 @@
+# resource.toml — 打包资源配置（独立于 leno.toml，没有 leno.toml 也能用）
+#
+# [pack] 控制 -p 打包：
+#   onefile   = true  → 单文件模式：库与资源内嵌进 exe，首次运行解包到 exe 所在目录
+#                       （不加此项时也可用命令行 --onefile 临时开启）
+#   resources = 通配模式数组（相对本文件所在目录，声明什么就嵌什么）：
+#                 段内 * = 任意长、? = 单字符；单独一段写两个星号 = 跨任意层目录
+#                 "images" 段 + 两个星号 ⇒ images 目录递归全部
+
+[pack]
+onefile   = true
+resources = ["anim/**", "font/**", "image/**", "sound/**"]

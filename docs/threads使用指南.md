@@ -723,8 +723,8 @@ asyncs.run()
 `type()` 返回的是**运行时值的类型**，而非变量的声明类型：
 
 ```leno
-var a: int = null
-print(type(a))  // "null"（不是 "int"）
+int? a = null
+print(type(a))  // "null"（不是 "int?"）
 
 var b = 42
 print(type(b))  // "int"

@@ -85,6 +85,7 @@ typedef enum {
     WARN_UNUSED_VAR,       // 变量定义未使用
     WARN_SHADOW_VAR,       // 变量遮蔽
     WARN_DEPRECATED,       // 弃用语法/API
+    WARN_BAD_ESCAPE,       // 无效转义序列（如 \q，按原样保留）
     WARN_IMPLICIT_TRUNC,   // 浮点隐式截断为整数
     WARN_UNREACHABLE,      // 不可达代码
     WARN_NULL_FIELD_CHAIN, // null 字段链式访问
@@ -93,6 +94,9 @@ typedef enum {
     WARN_GENERIC_NO_CONSTRAINT, // 泛型参数参与运算但无约束
     WARN_NULLABLE_ARITH,    // nullable 值类型参与算术运算（可能为 null）
     WARN_EMPTY_SOURCE,     // 源文件为空（或只有空白）：会"编译成功"却不做任何事
+    WARN_ASSIGN_IN_COND,   // if/while 条件位置出现赋值（可能漏写 ==）
+    WARN_FOR_IN_COND,      // for 头写 'x in arr'（in 是成员测试，遍历应写 'for x to arr'）
+    WARN_PARTIAL_DECL_INIT, // var 声明列表只有部分变量带初值（Python 多重赋值习惯）
 } WarnType;
 
 // ============================================================================

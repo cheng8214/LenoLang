@@ -82,6 +82,12 @@ void transform_method_body(Ast* ast, char** field_names, int field_count, char**
 // 类型工具函数
 // ============================================================================
 int resolve_alias_in_type(Semantic* s, TypeInfo** type_ptr, int line);
+// 递归检查泛型实参/子类型中是否存在未定义类型（不查顶层）——B2 修复用。
+// 返回 1 = 报过"未定义"错（调用方应置 declared_type_undefined 跳过级联检查）
+int semantic_check_undefined_subtypes(Semantic* s, TypeInfo* type, int line, int column);
+// 泛型形参替换：与 type_substitute 相同语义，但额外识别"TYPE_STRUCT 占位形参"
+// （struct_name=形参名，如字段类型 Array[T] 里的 T）。返回新类型（调用方 free 旧值）。
+TypeInfo* semantic_substitute_generic_param(TypeInfo* type, const char* param_name, TypeInfo* concrete);
 int type_utils_is_array_element_mutator(const char* method_name);
 int type_utils_get_array_element_param_index(const char* method_name, int is_module_call);
 int type_utils_try_update_array_element_type(Symbol* arr_sym, TypeInfo* elem_type);
@@ -103,6 +109,16 @@ void format_type_error(char* buf, size_t buf_size, const char* fmt,
 // 获取类型转换建议
 const char* get_type_conversion_hint(TypeKind expected, TypeKind actual);
 const char* get_similar_name_hint(Scope* scope, const char* name);
+// C2：未定义函数相似名提示（函数表 + 内置 native + 作用域变量）
+const char* get_undefined_func_hint(Semantic* s, const char* name);
+// C1：内置类型方法相似名提示（委托 method_table_similar_hint）
+const char* semantic_method_hint(TypeInfo* type, const char* method_name);
+// C1：在给定名字集合中找最相似的（struct 方法提示用）
+const char* get_similar_in_names(const char** names, int count, const char* name);
+// C1：用户 struct 方法相似名提示（扫函数表 "Struct::method" 占位符）
+const char* get_similar_struct_method_hint(Semantic* s, const char* struct_name, const char* method_name);
+// E5：未定义的 struct 类型若是已导入模块的导出类型，提示先 use 导入
+const char* get_module_with_struct_hint(Semantic* s, const char* struct_name);
 
 // 生成详细的类型错误信息（包含转换建议）
 void format_detailed_type_error(char* buf, size_t buf_size,

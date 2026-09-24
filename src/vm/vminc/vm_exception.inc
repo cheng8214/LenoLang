@@ -450,6 +450,11 @@ static inline int throw_runtime_error(const char* msg, int line) {
         print_unhandled_exception(vm.exception, line);
     }
     runtime_error(msg, line);
+    // S2：上面已带调用栈即时打印过（协程内不打印，交给 asyncs.run 报），
+    // 标记后退出时 error_print_all 不再重复展示
+    if (!vm.current_coroutine && errors.count > 0) {
+        errors.list[errors.count - 1].printed = 1;
+    }
     vm.has_exception = 1;
     return 0;
 }

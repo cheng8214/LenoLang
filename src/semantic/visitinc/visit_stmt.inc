@@ -131,3 +131,22 @@
                 }
             }
             break;
+
+        case AST_BREAK:
+        case AST_CONTINUE: {
+            // B3：循环外使用 break/continue——此前静默通过（编译不报错、运行期什么都不做）
+            // 沿作用域链向上找循环作用域；先碰到函数边界（闭包体）即视为不在循环内
+            int in_loop = 0;
+            for (Scope* sc = s->current; sc; sc = sc->parent) {
+                if (sc->is_loop) { in_loop = 1; break; }
+                if (sc->is_func) break;
+            }
+            if (!in_loop) {
+                char msg[BUFFER_SMALL];
+                snprintf(msg, sizeof(msg),
+                         "'%s' 不能用在循环外（只能出现在 for/while 循环体内）",
+                         ast->kind == AST_BREAK ? "break" : "continue");
+                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+            }
+            break;
+        }

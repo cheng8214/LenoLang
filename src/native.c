@@ -525,12 +525,22 @@ TypeKind vm_get_native_return_type(const char* name) {
 // 根据名称查找 native 函数对象（运行时使用）
 ObjNative* native_find_function(const char* name) {
     for (int i = 0; i < nativeFunctionObjectCount; i++) {
-        if (nativeFunctionObjects[i] && 
+        if (nativeFunctionObjects[i] &&
             strcmp(nativeFunctionObjects[i]->name, name) == 0) {
             return nativeFunctionObjects[i];
         }
     }
     return NULL;
+}
+
+// 供语义层"未定义函数"相似名提示遍历（C2）
+int native_get_name_count(void) {
+    return nativeFunctionObjectCount;
+}
+
+const char* native_get_name(int index) {
+    if (index < 0 || index >= nativeFunctionObjectCount) return NULL;
+    return nativeFunctionObjects[index] ? nativeFunctionObjects[index]->name : NULL;
 }
 
 // 注册所有全局模块的 native 函数元信息（编译时调用）
@@ -1480,6 +1490,78 @@ void native_register_all_instance_method_metas(void) {
     cstructs_init_methods();
     threads_init_instance_methods();
     sockets_init_instance_methods();
+}
+
+// 紧凑 Levenshtein 编辑距离（C1 相似名提示用）
+static int native_levenshtein(const char* a, const char* b) {
+    int la = (int)strlen(a), lb = (int)strlen(b);
+    if (la == 0) return lb;
+    if (lb == 0) return la;
+    static int d_prev[256], d_cur[256];
+    if (lb >= 256) return 3;
+    for (int j = 0; j <= lb; j++) d_prev[j] = j;
+    for (int i = 1; i <= la; i++) {
+        d_cur[0] = i;
+        for (int j = 1; j <= lb; j++) {
+            int cost = (a[i-1] == b[j-1]) ? 0 : 1;
+            int m = d_prev[j-1] + cost;
+            if (d_prev[j] + 1 < m) m = d_prev[j] + 1;
+            if (d_cur[j-1] + 1 < m) m = d_cur[j-1] + 1;
+            d_cur[j] = m;
+        }
+        for (int j = 0; j <= lb; j++) d_prev[j] = d_cur[j];
+    }
+    return d_prev[lb];
+}
+
+// C1：在编译期实例方法表中找与 method_name 最相似的同类方法，
+// 返回提示串（静态缓冲区；无相似名时为空串）。语义分析阶段方法运行表还没建，
+// 但 native_register_all_instance_method_metas 已把元信息注册进 instanceMethodTable。
+const char* native_instance_method_hint(const char* type_name, const char* method_name) {
+    static char hint[128];
+    hint[0] = '\0';
+    if (!type_name || !method_name || !method_name[0] || !instanceMethodTable.entries) return hint;
+    const char* best = NULL;
+    int best_dist = 3;  // 最多允许 2 次编辑距离
+    for (int i = 0; i < instanceMethodTable.capacity; i++) {
+        for (InstanceMethodEntry* e = instanceMethodTable.entries[i]; e; e = e->next) {
+            // method_name 是定长数组（地址恒非 NULL），无需判空
+            if (strcmp(e->type_name, type_name) != 0) continue;
+            int dist = native_levenshtein(method_name, e->method_name);
+            if (dist < best_dist) {
+                best_dist = dist;
+                best = e->method_name;
+                if (dist == 0) break;
+            }
+        }
+        if (best_dist == 0) break;
+    }
+    if (best && strcmp(best, method_name) != 0) {
+        snprintf(hint, sizeof(hint), "\n  提示: 是否想用 '%s'？", best);
+    }
+    return hint;
+}
+
+// D1：内置模块名相似提示。模块访问（如 stringd.trim）报"未定义的模块或变量"时，
+// 在内置模块名里找编辑距离最近的候选，拼出"是否想用"提示。无相似名返回空串。
+const char* native_builtin_module_hint(const char* name) {
+    static char hint[128];
+    hint[0] = '\0';
+    if (!name || !name[0]) return hint;
+    const char* best = NULL;
+    int best_dist = 3;  // 最多允许 2 次编辑距离
+    for (int i = 0; builtin_module_names[i] != NULL; i++) {
+        int dist = native_levenshtein(name, builtin_module_names[i]);
+        if (dist < best_dist) {
+            best_dist = dist;
+            best = builtin_module_names[i];
+            if (dist == 0) break;
+        }
+    }
+    if (best && strcmp(best, name) != 0) {
+        snprintf(hint, sizeof(hint), "\n  提示: 是否想用 '%s'？", best);
+    }
+    return hint;
 }
 
 // 根据 TypeKind 获取类型名称（编译时调用）
