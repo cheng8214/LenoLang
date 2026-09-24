@@ -94,6 +94,8 @@ typedef enum {
     WARN_GENERIC_NO_CONSTRAINT, // 泛型参数参与运算但无约束
     WARN_NULLABLE_ARITH,    // nullable 值类型参与算术运算（可能为 null）
     WARN_EMPTY_SOURCE,     // 源文件为空（或只有空白）：会"编译成功"却不做任何事
+    WARN_ASSIGN_IN_COND,   // if/while 条件位置出现赋值（可能漏写 ==）
+    WARN_FOR_IN_COND,      // for 头写 'x in arr'（in 是成员测试，遍历应写 'for x to arr'）
 } WarnType;
 
 // ============================================================================

@@ -1525,7 +1525,8 @@ const char* native_instance_method_hint(const char* type_name, const char* metho
     int best_dist = 3;  // 最多允许 2 次编辑距离
     for (int i = 0; i < instanceMethodTable.capacity; i++) {
         for (InstanceMethodEntry* e = instanceMethodTable.entries[i]; e; e = e->next) {
-            if (!e->method_name || strcmp(e->type_name, type_name) != 0) continue;
+            // method_name 是定长数组（地址恒非 NULL），无需判空
+            if (strcmp(e->type_name, type_name) != 0) continue;
             int dist = native_levenshtein(method_name, e->method_name);
             if (dist < best_dist) {
                 best_dist = dist;
@@ -1536,6 +1537,28 @@ const char* native_instance_method_hint(const char* type_name, const char* metho
         if (best_dist == 0) break;
     }
     if (best && strcmp(best, method_name) != 0) {
+        snprintf(hint, sizeof(hint), "\n  提示: 是否想用 '%s'？", best);
+    }
+    return hint;
+}
+
+// D1：内置模块名相似提示。模块访问（如 stringd.trim）报"未定义的模块或变量"时，
+// 在内置模块名里找编辑距离最近的候选，拼出"是否想用"提示。无相似名返回空串。
+const char* native_builtin_module_hint(const char* name) {
+    static char hint[128];
+    hint[0] = '\0';
+    if (!name || !name[0]) return hint;
+    const char* best = NULL;
+    int best_dist = 3;  // 最多允许 2 次编辑距离
+    for (int i = 0; builtin_module_names[i] != NULL; i++) {
+        int dist = native_levenshtein(name, builtin_module_names[i]);
+        if (dist < best_dist) {
+            best_dist = dist;
+            best = builtin_module_names[i];
+            if (dist == 0) break;
+        }
+    }
+    if (best && strcmp(best, name) != 0) {
         snprintf(hint, sizeof(hint), "\n  提示: 是否想用 '%s'？", best);
     }
     return hint;

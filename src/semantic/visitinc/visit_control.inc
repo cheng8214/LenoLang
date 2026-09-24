@@ -1,4 +1,12 @@
         case AST_IF: {
+            // D2: 条件位置出现赋值（`if x = 5`）几乎总是漏写 '='（想写 ==）。
+            // 赋值表达式会把值写入变量并以该值作为条件——静默通过是 C 语言经典坑。
+            if (ast->u.if_.cond && (ast->u.if_.cond->kind == AST_ASSIGN ||
+                                    ast->u.if_.cond->kind == AST_COMPOUND_ASSIGN)) {
+                warning_add_at(WARN_ASSIGN_IN_COND, ast->u.if_.cond->line, ast->u.if_.cond->column,
+                    "if 条件中是赋值表达式（会把值写入变量并以该值作为条件）；若想做相等比较请写 '=='");
+            }
+
             // 如果是 => 绑定 + and/or 链（如 if x is Array => a and a[0] is int），
             // 需要在 visit(cond) 之前定义绑定变量，否则 cond 中的 a[0] 会报未定义
             // 创建临时子作用域，在其中定义绑定变量供 visit(cond) 使用
@@ -575,6 +583,13 @@
         }
             
         case AST_WHILE: {
+            // D2: 条件位置出现赋值（`while x = next()`）——while 有读行惯用法属合法，
+            // 但仍提示，避免漏写 '=' 被静默吞掉。
+            if (ast->u.while_.cond && (ast->u.while_.cond->kind == AST_ASSIGN ||
+                                       ast->u.while_.cond->kind == AST_COMPOUND_ASSIGN)) {
+                warning_add_at(WARN_ASSIGN_IN_COND, ast->u.while_.cond->line, ast->u.while_.cond->column,
+                    "while 条件中是赋值表达式（会把值写入变量并以该值作为条件）；若想做相等比较请写 '=='");
+            }
             visit(s, ast->u.while_.cond);
 
             if (ast->u.while_.body) {
@@ -596,6 +611,16 @@
         }
 
         case AST_FOR: {
+            // D3: for 头的 'x in arr'（Python 遍历习惯）语法上是条件循环——in 是成员测试
+            // 运算符，x 需是已定义的外部变量。人类几乎总想写遍历，给出写法指引。
+            Ast* for_cond = ast->u.for_.end ? ast->u.for_.end : ast->u.for_.start;
+            if (for_cond && for_cond->kind == AST_BINOP &&
+                (for_cond->u.binop.op == TOK_IN || for_cond->u.binop.op == TOK_NOT_IN) &&
+                for_cond->u.binop.l && for_cond->u.binop.l->kind == AST_VAR) {
+                warning_add_at(WARN_FOR_IN_COND, for_cond->line, for_cond->column,
+                    "for 头的 'x in arr' 是条件循环（in 为成员测试运算符，x 需是已定义的外部变量）；若想遍历集合请写 'for x to arr'");
+            }
+
             if (ast->u.for_.start) visit(s, ast->u.for_.start);
             if (ast->u.for_.end) visit(s, ast->u.for_.end);
             if (ast->u.for_.step) visit(s, ast->u.for_.step);

@@ -71,6 +71,9 @@ const char* native_get_name(int index);
 // 用 native_register_all_instance_method_metas 注册的元信息表遍历）
 const char* native_instance_method_hint(const char* type_name, const char* method_name);
 
+// D1：内置模块名相似提示（"未定义的模块或变量"报错时给"是否想用"候选）
+const char* native_builtin_module_hint(const char* name);
+
 // 标记所有 native 函数对象（供 GC 使用）
 void native_mark_all_functions(void);
 

@@ -1,14 +1,20 @@
-// test_diag_static_errors.leno —— 诊断补全回归（B3/B4/B5/C1/C2）
+// test_diag_static_errors.leno —— 诊断补全回归（B3/B4/B5/C1/C2/D1/D2/D3/D6）
 //
-// 此前这五类手误全部**静默通过**或**无提示**，修复后应编译期报错/给出相似名建议：
+// 此前这九类手误全部**静默通过**或**无提示**，修复后应编译期报错/警告/给出相似名建议：
 //   B3  break/continue 在循环外 → 静默通过（编译不报错、运行期什么都不做）
 //   B4  重复参数名 func f(int a, int a) → scope_define 静默覆盖，后者遮蔽前者
 //   B5  struct 重复字段 → 静默取前者，后者被丢弃
 //   C1  方法名拼错（内置类型/用户 struct）→ 只报"没有方法"，无相似名建议
 //   C2  函数名拼错 → 只报"未定义函数"，无相似名建议（变量拼错早有提示，不一致）
+//   D1  模块名拼错 → 只报"未定义的模块或变量"，无相似名建议（内置模块 + 已导入别名）
+//   D2  if/while 条件中赋值（if x = 5，C 经典坑）→ 静默通过，赋值永真且改写变量 → 警告
+//   D3  for x in arr（Python 遍历习惯）→ 被当条件循环（in 是成员测试），报误导的
+//       "未定义变量 x" → 补 [for头成员测试] 警告给出遍历写法 'for x to arr'
+//   D6  var x: 类型（TS/Kotlin 标注习惯）→ 报离谱的"声明语句后"级联 → 改报明确写法指引
 //
-// 另含两条**不得误伤**的正向用例：循环内的 break/continue 合法；
-// 无效转义 \q 保持"按原样保留"的宽松行为（只警告，不报错、不改输出）。
+// 另含四条**不得误伤**的正向用例：循环内的 break/continue 合法；
+// 无效转义 \q 保持"按原样保留"的宽松行为；in 成员测试表达式照常工作；
+// 前置类型声明 int? a = null 不受 D6 拦截影响。
 
 import "helpers/compiler.leno" as ce
 import dirs
@@ -98,6 +104,79 @@ main() {
 }
 ")
     ce.expect_error(f1, "函数名拼错给建议（print 为内置）", "是否想输入 'print'？", 0)
+
+    // ---- D1：模块名拼错给相似名建议（内置模块名）----
+    var f2 = dirs.join(work, "module_typo_builtin.leno")
+    files.write(f2, @"main() {
+    print(stringd.trim(""  a  ""))
+}
+")
+    ce.expect_error(f2, "内置模块名拼错给建议", "是否想用 'strings'？", 0)
+
+    // D1 已导入别名路径：拼错已导入的模块名也要有建议
+    var f3 = dirs.join(work, "module_typo_alias.leno")
+    files.write(f3, @"import strings
+main() {
+    print(stringsd.trim(""  a  ""))
+}
+")
+    ce.expect_error(f3, "已导入模块名拼错给建议", "是否想用 'strings'？", 0)
+
+    // ---- D2：if 条件中赋值 → 警告（程序照常运行，不阻断）----
+    var f4 = dirs.join(work, "assign_in_if.leno")
+    files.write(f4, @"main() {
+    var x = 0
+    if x = 5 {
+        print(""five"")
+    }
+    print(x)
+}
+")
+    // 行为保持：赋值表达式以写入的值作为条件 → 打印 five 和 5；新增警告指明疑似漏写 ==
+    ce.expect_ok(f4, "if 条件中赋值出警告不阻断", "[条件中的赋值]")
+
+    // ---- D3：for 头的 'x in arr' → 警告给出遍历写法 ----
+    var f5 = dirs.join(work, "for_in_cond.leno")
+    files.write(f5, @"main() {
+    var x = 0
+    // 0 不在 [1,2,3] 中 → 条件循环体不执行（合法但几乎必是误用）
+    for x in [1, 2, 3] {
+        print(""body"")
+    }
+    print(""OK"")
+}
+")
+    ce.expect_ok(f5, "for 头成员测试出警告不阻断", "[for头成员测试]")
+
+    // ---- D6：'var x: 类型' 标注 → 明确写法指引（不再报"声明语句后"级联）----
+    var f6 = dirs.join(work, "colon_annotation.leno")
+    files.write(f6, @"main() {
+    var x: int = 5
+    print(x)
+}
+")
+    ce.expect_error(f6, "冒号类型标注报写法指引", "不支持 'var 名字: 类型' 标注写法", 2)
+
+    // ---- 正向：in 成员测试表达式照常工作（D3 不得误伤）----
+    var ok3 = dirs.join(work, "in_operator_ok.leno")
+    files.write(ok3, @"main() {
+    var a = [1, 2, 3]
+    assert_eq(2 in a, true)
+    assert_eq(9 in a, false)
+    print(""OK"")
+}
+")
+    ce.expect_ok(ok3, "in 成员测试正常工作", "OK")
+
+    // ---- 正向：前置类型声明不受 D6 影响 ----
+    var ok4 = dirs.join(work, "prefix_type_ok.leno")
+    files.write(ok4, @"main() {
+    int a = 5
+    int? b = null
+    print(type(b))
+}
+")
+    ce.expect_ok(ok4, "前置类型声明正常工作", "null")
 
     // ---- 正向：循环内的 break/continue 合法 ----
     var ok1 = dirs.join(work, "break_inside.leno")

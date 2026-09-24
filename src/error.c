@@ -277,6 +277,8 @@ void warning_print_all(void) {
             case WARN_GENERIC_NO_CONSTRAINT: type_str = "泛型无约束"; break;
             case WARN_NULLABLE_ARITH:  type_str = "可空类型运算"; break;
             case WARN_EMPTY_SOURCE:    type_str = "空源文件"; break;
+            case WARN_ASSIGN_IN_COND:  type_str = "条件中的赋值"; break;
+            case WARN_FOR_IN_COND:     type_str = "for头成员测试"; break;
             default: break;
         }
 

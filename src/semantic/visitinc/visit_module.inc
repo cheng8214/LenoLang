@@ -1810,7 +1810,24 @@
             } else {
                 // 模块和变量都未定义
                 char msg[BUFFER_MEDIUM];
-                snprintf(msg, sizeof(msg), "未定义的模块或变量: %s", ast->u.module_call.module_name);
+                // D1: 模块名拼错提示——先在已导入模块的别名里找相似，再在内置模块名里找。
+                // 两个 hint 函数都返回"提示串"（\n  提示: ...），找不到返回空串。
+                const char* alias_names[64];
+                int alias_count = 0;
+                for (int i = 0; i < s->imported_module_count && alias_count < 64; i++) {
+                    if (s->imported_modules[i].alias) {
+                        alias_names[alias_count++] = s->imported_modules[i].alias;
+                    }
+                }
+                const char* hint = get_similar_in_names(alias_names, alias_count,
+                                                        ast->u.module_call.module_name);
+                if (!hint[0]) hint = native_builtin_module_hint(ast->u.module_call.module_name);
+                if (hint[0]) {
+                    snprintf(msg, sizeof(msg), "未定义的模块或变量: %s%s",
+                             ast->u.module_call.module_name, hint);
+                } else {
+                    snprintf(msg, sizeof(msg), "未定义的模块或变量: %s", ast->u.module_call.module_name);
+                }
                 error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
             }
             }

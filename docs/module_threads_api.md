@@ -365,5 +365,5 @@ main() {
 
 8. **type() 返回运行时值的类型**
    - `type()` 反映运行时实际值的类型，而非变量声明类型
-   - `var a: int = null` 时 `type(a)` 返回 `"null"`，不是 `"int"`
+   - `int? a = null` 时 `type(a)` 返回 `"null"`，不是 `"int?"`
    - BigInt 和普通 int 的 `type()` 都返回 `"int"`

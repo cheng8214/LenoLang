@@ -1076,7 +1076,18 @@ Ast* parse_var_decl_internal(Parser* p) {
         
         // 解析可选的初始值
         Ast* init = NULL;
-        if (match(p, TOK_EQ)) {
+        if (p->lex.current.type == TOK_COLON) {
+            // D6: 'var x: 类型' 是 TS/Kotlin 风格标注——Leno 用前置类型或推断，
+            // 拦截并给出写法指引，同时吞掉标注段避免"声明语句后"级联噪音。
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                "不支持 'var 名字: 类型' 标注写法：显式类型请前置（如 'int x = 5'），"
+                "或省略类型由初值推断（'var x = 5'）");
+            lexer_next(&p->lex);  // 消费 ':'
+            lexer_next(&p->lex);  // 消费类型名（标识符形态；Array[...]/Dict[...] 只吃首 token）
+            if (match(p, TOK_EQ)) {
+                init = parse_expression(p);
+            }
+        } else if (match(p, TOK_EQ)) {
             init = parse_expression(p);
         }
         
