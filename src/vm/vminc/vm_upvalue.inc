@@ -24,6 +24,13 @@ static int vm_grow_frames(VM* vm_ptr) {
     int new_capacity = vm_grow_capacity(vm_ptr->frame_capacity);
     int old_capacity = vm_ptr->frame_capacity;   // 扩容前容量（初始化新槽时要用）
 
+    // 硬上限：最后一次扩容**钳制**到 VM_MAX_FRAMES（倍增会越过上限，直接拒绝会让
+    // 可用帧数停在半路，永远触发不了调用方的"调用栈溢出"报错）；到顶后拒绝
+    if (new_capacity > VM_MAX_FRAMES) {
+        if (old_capacity >= VM_MAX_FRAMES) return 0;
+        new_capacity = VM_MAX_FRAMES;
+    }
+
     // === Phase 1: realloc 前记录旧帧块地址范围（仅作整数比较，之后不解引用旧指针） ===
     uintptr_t old_base = (uintptr_t)vm_ptr->frames;
     uintptr_t old_end = old_base + (uintptr_t)vm_ptr->frame_capacity * sizeof(CallFrame);

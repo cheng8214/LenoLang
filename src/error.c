@@ -85,6 +85,7 @@ void error_add(ErrorType type, int line, const char* msg) {
     err->line = line;
     err->column = current_column;
     err->repeat_count = 1;
+    err->printed = 0;
     strncpy(err->msg, msg, sizeof(err->msg) - 1);
     err->msg[sizeof(err->msg) - 1] = '\0';
     
@@ -122,21 +123,30 @@ void error_clear(void) {
 
 void error_print_all(void) {
     if (errors.count == 0) return;
-    
-    // 计算实际错误总数（含重复）
+
+    // 计算实际错误总数（含重复）；已即时打印过的运行期错误不重复展示（S2）
     int total = 0;
     for (int i = 0; i < errors.count; i++) {
-        total += errors.list[i].repeat_count;
+        if (!errors.list[i].printed) {
+            total += errors.list[i].repeat_count;
+        }
     }
-    
+    if (total == 0) return;
+
+    int shown_kinds = 0;
+    for (int i = 0; i < errors.count; i++) {
+        if (!errors.list[i].printed) shown_kinds++;
+    }
+
     fprintf(stderr, "\n=== 发现 %d 个错误", total);
-    if (total > errors.count) {
-        fprintf(stderr, "（%d 种，已合并重复）", errors.count);
+    if (total > shown_kinds) {
+        fprintf(stderr, "（%d 种，已合并重复）", shown_kinds);
     }
     fprintf(stderr, " ===\n");
-    
+
     for (int i = 0; i < errors.count; i++) {
         Error* err = &errors.list[i];
+        if (err->printed) continue;
         const char* type_str = "未知";
         
         switch (err->type) {

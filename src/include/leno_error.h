@@ -14,6 +14,7 @@ typedef struct {
     char filename[BUFFER_SMALL];  // 文件名
     char msg[BUFFER_XXLARGE];  // 扩大缓冲区以支持详细报错信息
     int repeat_count;             // 重复次数（相同错误合并）
+    int printed;                  // 1 = 已随调用栈即时打印（运行期错误），退出时不再重复
 } Error;
 
 typedef struct {

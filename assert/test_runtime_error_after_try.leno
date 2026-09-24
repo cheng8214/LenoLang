@@ -86,9 +86,10 @@ main() {
     print(""不该到达"")
 }
 ")
-    // ⚠ 文案用"file(9)"而不是"除零错误"：finally 内抛错走的是 pending_exception 路径，
+    // ⚠ 文案用"file:9"而不是"除零错误"：finally 内抛错走的是 pending_exception 路径，
     //   最外层报的是「未捕获的异常」+ 落点行；校验落点行更硬（既证明终止、又证明归因正确）。
-    ce.expect_error(f3, "finally 体内抛错不得绕回自己（不得挂住）", "finally_throw.leno(9)", 0)
+    //   运行期错误已带调用栈即时打印（格式 file:line:），退出时不再重复 error_print_all 块。
+    ce.expect_error(f3, "finally 体内抛错不得绕回自己（不得挂住）", "finally_throw.leno:9", 0)
 
     dirs.delete(work)
     print("test_runtime_error_after_try passed")
