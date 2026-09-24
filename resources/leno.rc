@@ -1,0 +1,31 @@
+/* ---------------------------------------------------------------------------
+ * Windows icon resource for the Leno toolchain (compiled by windres).
+ *
+ *   leno_icon.ico -- the icon. Searched in this order (build scripts pass
+ *                    "-I resources -I build"):
+ *                      1. resources\leno_icon.ico   (source asset - preferred)
+ *                      2. build\leno_icon.ico       (next to the exe)
+ *                    Whichever is found, commit it: it is not gitignored, and
+ *                    an untracked .ico means every other clone builds iconless.
+ *   ID 1          -- Windows uses the icon group with the LOWEST id as the
+ *                    application icon, so keep this at 1
+ *
+ * Linked into:
+ *   build\lenoreg.exe      (build.bat; build.sh too on MINGW / MSYS / CYGWIN)
+ *   build\leno_vm.exe      (build_vm.bat)
+ *   build\leno_vm_gui.exe  (build_vm.bat)
+ *
+ * Why this one file is enough for packed apps: a -p packed exe is
+ * [VM binary][resource blob][lenb] -- the icon lives in the PE resource section
+ * at the very START of the file, i.e. inside the prepended VM binary, so every
+ * packed exe inherits it. See docs/ for the single-file packaging guide.
+ *
+ * Icon format notes (Windows rules, not ours):
+ *   - Windows only accepts .ico (a container of one or more images).
+ *   - Put several sizes in it: 16 / 24 / 32 / 48 / 256. A single size works,
+ *     but Windows scales it and small views (list, title bar) look blurry.
+ *   - 32bpp BGRA with alpha is the most compatible; 256x256 is usually stored
+ *     as a PNG-compressed entry (Vista+).
+ * ------------------------------------------------------------------------ */
+#define IDI_LENO 1
+IDI_LENO ICON "leno_icon.ico"

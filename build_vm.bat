@@ -30,10 +30,33 @@ for /f "usebackq delims=" %%f in ("sources_vm.txt") do set SOURCES=!SOURCES! %%f
 REM platform-specific FFI (Windows)
 set SOURCES=!SOURCES! src\module\ffi\leno_ffi_win64.c
 
+REM ---------------------------------------------------------------------------
+REM Application icon: leno_icon.ico via resources\leno.rc (windres).
+REM Search order: resources\leno_icon.ico, then build\leno_icon.ico.
+REM Both VM binaries carry it, so every -p packed exe (they prepend one of these)
+REM inherits the same icon. A missing .ico is NOT an error: we print a line and
+REM build without an icon.
+REM ---------------------------------------------------------------------------
+set ICON_ICO=
+if exist resources\leno_icon.ico set ICON_ICO=resources\leno_icon.ico
+if not defined ICON_ICO if exist build\leno_icon.ico set ICON_ICO=build\leno_icon.ico
+set ICON_OBJ=
+if defined ICON_ICO (
+    windres resources\leno.rc -O coff -I resources -I build -o build\leno_icon.o
+    if !ERRORLEVEL! neq 0 (
+        echo Icon resource build failed
+        exit /b 1
+    )
+    set ICON_OBJ=build\leno_icon.o
+    echo Icon: !ICON_ICO!
+) else (
+    echo Icon: leno_icon.ico not found - building without an icon
+)
+
 REM 1. Console build (leno_vm.exe, for command-line debugging)
 REM    -s: strip the symbol table and debug info so function / variable / type
 REM    names are not exposed. Drop -s here if you need to debug the VM itself.
-gcc -o build\leno_vm.exe !SOURCES! -Isrc -Wall -Wextra -std=c99 -O2 -s -DLENO_VM_ONLY -lm -municode -lws2_32
+gcc -o build\leno_vm.exe !SOURCES! !ICON_OBJ! -Isrc -Wall -Wextra -std=c99 -O2 -s -DLENO_VM_ONLY -lm -municode -lws2_32
 
 if %ERRORLEVEL% neq 0 (
     echo VM build failed
@@ -42,7 +65,7 @@ if %ERRORLEVEL% neq 0 (
 
 REM 2. Windowed build (leno_vm_gui.exe, for packaging GUI apps: no console window
 REM    on startup; scripts can still get one via _console(true) / AllocConsole)
-gcc -o build\leno_vm_gui.exe !SOURCES! -Isrc -Wall -Wextra -std=c99 -O2 -s -DLENO_VM_ONLY -lm -municode -lws2_32 -mwindows
+gcc -o build\leno_vm_gui.exe !SOURCES! !ICON_OBJ! -Isrc -Wall -Wextra -std=c99 -O2 -s -DLENO_VM_ONLY -lm -municode -lws2_32 -mwindows
 
 if %ERRORLEVEL% neq 0 (
     echo VM GUI build failed

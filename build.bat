@@ -26,7 +26,31 @@ for /f "usebackq delims=" %%f in ("sources_core.txt") do set SOURCES=!SOURCES! %
 for /f "usebackq delims=" %%f in ("sources_compiler.txt") do set SOURCES=!SOURCES! %%f
 REM platform-specific FFI (Windows)
 set SOURCES=!SOURCES! src\module\ffi\leno_ffi_win64.c
-gcc -o build\lenoreg.exe !SOURCES! -Isrc -Wall -Wextra -std=c99 -O2 -lm -municode -lws2_32
+
+REM ---------------------------------------------------------------------------
+REM Application icon: leno_icon.ico via resources\leno.rc (windres).
+REM Search order: resources\leno_icon.ico, then build\leno_icon.ico.
+REM The icon lands in the PE resource section, and every -p packed exe prepends
+REM this binary, so one .ico covers all outputs. A missing .ico is NOT an error:
+REM we print a line and build without an icon.
+REM ---------------------------------------------------------------------------
+set ICON_ICO=
+if exist resources\leno_icon.ico set ICON_ICO=resources\leno_icon.ico
+if not defined ICON_ICO if exist build\leno_icon.ico set ICON_ICO=build\leno_icon.ico
+set ICON_OBJ=
+if defined ICON_ICO (
+    windres resources\leno.rc -O coff -I resources -I build -o build\leno_icon.o
+    if !ERRORLEVEL! neq 0 (
+        echo Icon resource build failed
+        exit /b 1
+    )
+    set ICON_OBJ=build\leno_icon.o
+    echo Icon: !ICON_ICO!
+) else (
+    echo Icon: leno_icon.ico not found - building without an icon
+)
+
+gcc -o build\lenoreg.exe !SOURCES! !ICON_OBJ! -Isrc -Wall -Wextra -std=c99 -O2 -lm -municode -lws2_32
 
 if %ERRORLEVEL% neq 0 (
     echo Build failed

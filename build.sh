@@ -61,7 +61,30 @@ fi
 
 CC=${CC:-gcc}
 
-$CC $CFLAGS -o build/lenoreg$EXE $SOURCES -Isrc -Wall -Wextra -std=c99 -O2 $LIBS
+# ---------------------------------------------------------------------------
+# Windows 专属：把 leno_icon.ico（经 resources/leno.rc）编进 exe。
+# 查找顺序：resources/leno_icon.ico → build/leno_icon.ico（与 .bat 保持一致）。
+# 图标落在 PE 资源段里，而 -p 打包产物是"prepend 这个二进制 + 追加尾部数据"
+# ⇒ 同一个 ico 自动覆盖所有打包产物。缺 .ico 不算错误（打印一行、照常构建）。
+# Linux/macOS 不做：那边图标不是 PE 资源（macOS 用 .icns、Linux 靠 .desktop）。
+# ---------------------------------------------------------------------------
+ICON_ICO=""
+if [ -f resources/leno_icon.ico ]; then
+  ICON_ICO="resources/leno_icon.ico"
+elif [ -f build/leno_icon.ico ]; then
+  ICON_ICO="build/leno_icon.ico"
+fi
+ICON_OBJ=""
+if [ "$PLATFORM" = "windows" ] && [ -n "$ICON_ICO" ]; then
+  if ! windres resources/leno.rc -O coff -I resources -I build -o build/leno_icon.o; then
+    echo "Icon resource build failed"
+    exit 1
+  fi
+  ICON_OBJ="build/leno_icon.o"
+  echo "Icon: $ICON_ICO"
+fi
+
+$CC $CFLAGS -o build/lenoreg$EXE $SOURCES $ICON_OBJ -Isrc -Wall -Wextra -std=c99 -O2 $LIBS
 
 echo "Build successful"
 echo ""
