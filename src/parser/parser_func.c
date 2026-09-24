@@ -1065,7 +1065,9 @@ Ast* parse_var_decl_internal(Parser* p) {
     int decl_count = 0;
     int decl_capacity = 4;
     decls = (Ast**)malloc(sizeof(Ast*) * decl_capacity);
-    
+    // F1: 部分初值检测（var a, b = 1 是 Python 多重赋值习惯——实际只给 b 赋值）
+    int init_count = 0;
+
     do {
         // 解析变量名
         char* name = copy_string(p->lex.current.text, p->lex.current.len);
@@ -1090,6 +1092,7 @@ Ast* parse_var_decl_internal(Parser* p) {
         } else if (match(p, TOK_EQ)) {
             init = parse_expression(p);
         }
+        if (init) init_count++;
         
         // const 声明必须有初始值
         if (is_const && !init) {
@@ -1118,8 +1121,16 @@ Ast* parse_var_decl_internal(Parser* p) {
         decls[decl_count++] = ast;
         
     } while (match(p, TOK_COMMA)); // 如果有逗号，继续解析下一个变量
-    
+
     type_free(shared_type);
+
+    // F1: 部分初值警告——`var a, b = 1` 是 Python 多重赋值习惯，实际只给 b 赋值、
+    // a 为 null。全无初值（var a, b）与全有初值（var a = 1, b = 2）都合法不警告。
+    if (decl_count > 1 && init_count > 0 && init_count < decl_count) {
+        warning_add_at(WARN_PARTIAL_DECL_INIT, line, decl_column,
+            "声明列表中只有部分变量带初始值（前面的变量会是 null）；"
+            "Leno 不支持 'var a, b = 1, 2' 多重赋值，请逐行声明并各自赋初值");
+    }
 
     // 检查声明语句边界（检测同一行缺少分隔符的情况）
     check_var_decl_boundary(p, line);

@@ -19,6 +19,7 @@
 import "helpers/compiler.leno" as ce
 import dirs
 import files
+import strings
 
 main() {
     var work = dirs.join(_tmpdir(), "leno_diag_static_errors")
@@ -192,6 +193,48 @@ main() {
 }
 ")
     ce.expect_error(f10, "漏 use 裸用导出类型给 use 指引", "请先 'use m.Point' 导入后裸名使用", 0)
+
+    // ---- F1：var 声明列表部分初值 → 警告（Python 多重赋值习惯，静默产出 null）----
+    var f11 = dirs.join(work, "partial_init.leno")
+    files.write(f11, @"main() {
+    var a, b = 1, 2
+    print(""a="" + _str(a))
+    print(""b="" + _str(b))
+}
+")
+    // 行为保持（a=null, b=1）但新增警告指明多重赋值不支持
+    var out11 = ce.expect_ok(f11, "部分初值声明出警告不阻断", "[部分初值声明]")
+    assert_eq(strings.has(out11, "a=null"), true, "部分初值警告不应改变运行行为（a 仍为 null）")
+
+    // 正向：全无初值 / 全有初值都合法，不得误伤
+    var ok5 = dirs.join(work, "decl_all_no_init.leno")
+    files.write(ok5, @"main() {
+    var a, b
+    a = 1
+    b = 2
+    print(a + b)
+}
+")
+    var out5 = ce.expect_ok(ok5, "全无初值多声明合法", "3")
+    assert_eq(strings.has(out5, "[部分初值声明]"), false, "全无初值不应出部分初值警告")
+
+    var ok6 = dirs.join(work, "decl_all_init.leno")
+    files.write(ok6, @"main() {
+    var a = 1, b = 2
+    print(a + b)
+}
+")
+    var out6 = ce.expect_ok(ok6, "全有初值多声明合法", "3")
+    assert_eq(strings.has(out6, "[部分初值声明]"), false, "全有初值不应出部分初值警告")
+
+    // ---- F4：0x 后无数字此前静默按 0 解析 → 响亮报错（与 0b 对称）----
+    var f12 = dirs.join(work, "hex_empty.leno")
+    files.write(f12, @"main() {
+    var x = 0x
+    print(x)
+}
+")
+    ce.expect_error(f12, "0x 空数字报错不静默", "十六进制字面量需要 0x 后跟至少一位十六进制数字", 2)
 
     // ---- 正向：in 成员测试表达式照常工作（D3 不得误伤）----
     var ok3 = dirs.join(work, "in_operator_ok.leno")
