@@ -627,7 +627,8 @@ main() {
     g.winH = MENU_H
 
     // 初始化音效：用脚本目录拼接绝对路径（现已支持中文路径）
-    string sdir = dirs.script_dir()
+    // 用 res_dir()：未打包时就是脚本目录；单文件打包时指向内嵌资源的释放目录
+    string sdir = dirs.res_dir()
     g.audioOk  = false
     g.sfxClick = audio.createSfx(sdir + "/music/anxia.mp3", 6, 0.5)
     g.sfxBoom  = audio.createSfx(sdir + "/music/baozha.mp3", 6, 0.6)

@@ -786,7 +786,8 @@ main() {
     g.font = font
 
     // 初始化音效：用脚本目录拼接绝对路径（现已支持中文路径）
-    string sdir = dirs.script_dir()
+    // 用 res_dir()：未打包时就是脚本目录；单文件打包时指向内嵌资源的释放目录
+    string sdir = dirs.res_dir()
     g.sfxWarn = audio.createSound(sdir + "/music/jinggao.mp3")
     if g.sfxWarn.ok { g.sfxWarn.setVolume(0.7) }
     g.sfxRotate = new Sfx()

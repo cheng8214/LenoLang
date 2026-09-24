@@ -1,5 +1,7 @@
 #include "include/lenolang.h"
 #include "include/native.h"
+// dirs.res_dir() 需要读打包模式下的资源释放目录（定义在 core 的 vm.c）
+#include "include/leno_vm_runtime.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -443,6 +445,30 @@ static Value native_dirs_script_dir(int argCount, Value* args) {
     ObjString* result = str_copy(abs_path, len);
     if (target_heap) free(target_heap);
     return val_obj((Object*)result);
+}
+
+// dirs.res_dir() - 获取**随包资源**所在目录（双模式）
+//   · 单文件打包（-p --onefile）运行：内嵌资源段释放到的缓存目录（按内容哈希分目录）；
+//   · 未打包（脚本 / exe / .lenb）：与 script_dir() 完全一致（资源就在脚本/exe 旁边）。
+// 为什么必须和 script_dir() 分开（只增不改，语义各自独立）：
+//   · 读随包资源（图片/音频/字体/DLL…）→ 用 res_dir()；
+//   · 写用户数据（存档、书签、配置）→ 必须用 script_dir()。
+//   资源目录是按内容哈希分目录的，**每次重新打包 hash 一变目录就变**，
+//   把用户数据写进去等于"升级即丢"，而且不会有任何报错。
+static Value native_dirs_res_dir(int argCount, Value* args) {
+    // 打包模式：VM 运行时解包完成后会写入释放目录（vm_res_dir() 未打包时为空串）
+    const char* packed = vm_res_dir();
+    if (packed && packed[0]) {
+        int len = (int)strlen(packed);
+        // 去掉结尾分隔符，与 script_dir() 的返回形式保持一致，
+        // 这样 dirs.join(res_dir(), "a.png") 和 res_dir() + "/a.png" 都不会出岔子
+        while (len > 1 && (packed[len - 1] == '/' || packed[len - 1] == '\\')) {
+            len--;
+        }
+        return val_obj((Object*)str_copy(packed, len));
+    }
+    // 未打包：与 script_dir() 同源，直接复用（避免两份逻辑日后走偏）
+    return native_dirs_script_dir(argCount, args);
 }
 
 // ==================== 目录操作 ====================
@@ -1137,6 +1163,8 @@ void dirs_init_module(void) {
     native_register_module_method("dirs", "join", native_dirs_join, -1, 0, -1, TYPE_STRING, TYPE_UNKNOWN, string_params);
     native_register_module_method("dirs", "sep", native_dirs_sep, 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, no_params);
     native_register_module_method("dirs", "script_dir", native_dirs_script_dir, 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, no_params);
+    // 随包资源目录：未打包时 == script_dir()，打包时 == 资源释放目录（见函数头注释）
+    native_register_module_method("dirs", "res_dir", native_dirs_res_dir, 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, no_params);
 
     // 检查操作
     native_register_module_method("dirs", "exists", native_dirs_exists, 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, string_params);

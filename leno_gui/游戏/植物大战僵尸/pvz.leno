@@ -266,7 +266,8 @@ func loadResources(Game g, Renderer r) {
     art.setOrigin(g.anSnowShoot, sx, sy)
 
     // 音频
-    var sd = dirs.script_dir() + "/sound/"
+    // 音效是随包资源 ⇒ res_dir()（未打包 == script_dir()，打包后 = 内嵌资源释放目录）
+    var sd = dirs.res_dir() + "/sound/"
     g.bgm     = audio.createSound(sd + "ZombiesOnYourLawn.ogg")
     g.winMus  = audio.createSound(sd + "winmusic.ogg")
     g.loseMus = audio.createSound(sd + "losemusic.ogg")
@@ -1501,7 +1502,7 @@ main() {
     }
 
     SDL3.ttfInit()
-    var fontPath = dirs.script_dir() + "/font/SmileySans-Oblique.ttf"
+    var fontPath = dirs.res_dir() + "/font/SmileySans-Oblique.ttf"
     var font = SDL3.createFont(fontPath, 15.0)
     if not font.ok { font = SDL3.createFontAuto(15.0) }
     var fontBig = SDL3.createFont(fontPath, 30.0)

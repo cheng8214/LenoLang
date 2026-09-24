@@ -1257,7 +1257,8 @@ _dragTargetNode = -1
         if not win.ok { SDL3.ttfQuit(); return }
         win.setMinSize(640, 400)
 
-        imgDir = dirs.join(dirs.script_dir(), "images")
+        // 图标是只读随包资源 ⇒ res_dir()；注意书签(bookmarks.json)等**用户数据**必须留在 script_dir()
+        imgDir = dirs.join(dirs.res_dir(), "images")
 
         // 创建自绘标题栏组件（win.add 后自动去掉系统标题栏边框）
         titleBar = SDL3.createTitleBar({title:"LenoSDL3 文件管理器", height:32, font_size:14})

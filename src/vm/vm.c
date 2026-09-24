@@ -39,6 +39,26 @@
 VM vm = {0};
 int vm_initialized = 0;
 
+// ============================================================================
+// 单文件打包（-p --onefile）释放出的**资源目录**（含结尾分隔符；未解包时为空串）
+// ----------------------------------------------------------------------------
+// ⚠ 存储**必须定义在 core**（`sources_core.txt`）里，理由：
+//   · 读它的是 `src\module\dirs\dirs.c`（`dirs.res_dir()`，也在 core）；
+//   · 写它的是 `src\vm_main.c`（解包后调用 `vm_set_res_dir()`），
+//     而 vm_main.c **只属于 VM-only 构建**（`sources_vm.txt`，见 build_vm.bat）。
+//   ⇒ 若把它定义在 vm_main.c，带编译器的 `lenoreg.exe`（core + compiler，不含 vm_main.c）
+//     一旦让 dirs.c 引用它就会 **undefined reference 链接失败**。
+// ============================================================================
+static char g_res_dir[MAX_PATH_LEN] = {0};
+
+const char* vm_res_dir(void) { return g_res_dir; }
+
+// 供 VM 运行时（vm_main.c）在解包完成后写入；传 NULL / 空串表示"本次未解包"。
+void vm_set_res_dir(const char* dir) {
+    if (!dir || !dir[0]) { g_res_dir[0] = '\0'; return; }
+    snprintf(g_res_dir, sizeof(g_res_dir), "%s", dir);
+}
+
 // 主程序 VM 全局变量（效率第一）
 // 子线程使用独立的局部 VM，不共享此全局变量
 

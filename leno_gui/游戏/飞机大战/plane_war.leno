@@ -248,7 +248,8 @@ func newGame(): Game {
 
 func loadResources(Game g, Ptr[u8] renderer) {
     // 确定资源目录（脚本所在目录）
-    string base = dirs.script_dir()
+    // 改用 res_dir()：未打包时与 script_dir() 完全一致，单文件打包时指向内嵌资源的释放目录
+    string base = dirs.res_dir()
 
     // 加载纹理
     g.texPlayer = SDL3.loadImageTexture(renderer, base + "/image/f1.png")

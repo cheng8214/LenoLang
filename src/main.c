@@ -147,7 +147,7 @@ static void printHelp(const char* program) {
     printf("                    会被复制到同一目录，可直接整体分发\n");
     printf("  --onefile         单文件打包：把原生库与 resource.toml [pack] resources 声明的\n");
     printf("                    资源内嵌进 exe，只需分发一个文件\n");
-    printf("                    （首次运行自动解包到 exe 所在目录）\n");
+    printf("                    （首次运行自动解包到用户缓存目录，按内容哈希分目录）\n");
     printf("  --init [路径]     在当前目录创建新 Leno 包项目\n");
     printf("  --install         安装包或依赖到全局缓存\n");
     printf("  --                终止解释器选项解析：其后的参数都按位置参数处理\n");
@@ -861,19 +861,35 @@ compile_fail:
 // ============================================================================
 // 单文件打包：组装内嵌资源段
 // ----------------------------------------------------------------------------
-// 格式（**必须与 vm_main.c 的 extract_embedded_resources 严格同构**，改一处要改两处）：
-//   "LENOPACK"(8) | entry_count:u32
+// 格式 v2（**必须与 vm_main.c 的 extract_embedded_resources 严格同构**，改一处要改两处）：
+//   "LENOPACK"(8) | version:u32(=2) | payload_hash:u64 | entry_count:u32
 //   entry_count × [ rel_len:u16 | size:u64 | hash:u32 | rel_path(rel_len) ]
 //   各文件内容按索引顺序紧随其后
-// rel_path 用 '/' 分隔；原生库用纯文件名（平板放到 exe 旁），资源保留目录结构。
+// payload_hash = FNV-1a 64 over [entry_count .. 末尾]（本函数最后算）—— 运行期拿它当
+//   **释放目录的键**（不同构建 ⇒ 不同目录，互不覆盖；同构建 ⇒ 同目录，可复用）。
+// rel_path 用 '/' 分隔；原生库用纯文件名，资源保留目录结构。
 // ============================================================================
 #define PACK_BLOB_HEADER "LENOPACK"
+#define PACK_BLOB_VERSION 2u
+// v2 头长：8(魔数) + 4(version) + 8(payload_hash) + 4(count)
+#define PACK_BLOB_HDR 24
 
 static uint32_t pack_fnv1a32(const unsigned char* data, size_t len) {
     uint32_t h = 2166136261u;
     for (size_t i = 0; i < len; i++) {
         h ^= data[i];
         h *= 16777619u;
+    }
+    return h;
+}
+
+// FNV-1a 64 —— 必须与运行侧 vm_main.c 的 res_fnv1a64 逐位一致
+// （算法不一致 ⇒ 每次启动都重新释放，且不同构建可能撞进同一目录）
+static uint64_t pack_fnv1a64(const unsigned char* data, size_t len) {
+    uint64_t h = 1469598103934665603ULL;   // FNV-1a 64 offset basis
+    for (size_t i = 0; i < len; i++) {
+        h ^= (uint64_t)data[i];
+        h *= 1099511628211ULL;             // FNV-1a 64 prime
     }
     return h;
 }
@@ -942,16 +958,20 @@ static int pack_build_res_blob(PackLib* libs, int lib_n, PackRes* res, int res_n
         content_size += sz;
     }
 
-    size_t blob_size = 12 + idx_size + content_size;
+    size_t blob_size = PACK_BLOB_HDR + idx_size + content_size;
     unsigned char* blob = (unsigned char*)malloc(blob_size);
     if (!blob) return -1;
 
     /* 2) 头 + 索引 */
     memcpy(blob, PACK_BLOB_HEADER, 8);
+    uint32_t version = PACK_BLOB_VERSION;
+    memcpy(blob + 8, &version, 4);
+    uint64_t hash_placeholder = 0;          /* 内容区写完后回填（见末尾） */
+    memcpy(blob + 12, &hash_placeholder, 8);
     uint32_t count = (uint32_t)total;
-    memcpy(blob + 8, &count, 4);
+    memcpy(blob + 20, &count, 4);
 
-    unsigned char* ip = blob + 12;
+    unsigned char* ip = blob + PACK_BLOB_HDR;
     for (int i = 0; i < lib_n; i++) {
         const char* rel = libs[i].file_name;
         uint16_t rl = (uint16_t)strlen(rel);
@@ -984,7 +1004,7 @@ static int pack_build_res_blob(PackLib* libs, int lib_n, PackRes* res, int res_n
     }
 
     /* 3) 内容区 */
-    unsigned char* cp = blob + 12 + idx_size;
+    unsigned char* cp = blob + PACK_BLOB_HDR + idx_size;
     for (int i = 0; i < lib_n; i++) {
         size_t sz = 0;
         unsigned char* d = pack_read_all(libs[i].src_path, &sz);
@@ -1000,6 +1020,13 @@ static int pack_build_res_blob(PackLib* libs, int lib_n, PackRes* res, int res_n
         memcpy(cp, d, sz);
         cp += sz;
         free(d);
+    }
+
+    /* 4) 回填 payload_hash：FNV-1a 64 over [entry_count .. 末尾]。
+     *    运行侧拿它当释放目录的键（vm_main.c 的 res_fnv1a64 必须同算法）。 */
+    {
+        uint64_t ph = pack_fnv1a64(blob + 20, blob_size - 20);
+        memcpy(blob + 12, &ph, 8);
     }
 
     *out_blob = blob;
@@ -1432,7 +1459,7 @@ int lenolang_run_file(const char* path) {
         // 依赖的原生库直接复制到 exe 旁（不能放子目录：Windows 解析 DLL 自身依赖时
         // 只搜主 exe 目录/系统目录/PATH，不看 DLL 自己所在的目录 ⇒ SDL3_image→SDL3 会断）
         if (onefile) {
-            printf("[pack] 单文件: dist 内只产出 exe；库与资源在首次运行时解包到 exe 所在目录\n");
+            printf("[pack] 单文件: dist 内只产出 exe；库与资源在首次运行时解包到用户缓存目录\n");
             // 切换过模式的话，dist 里可能还留着上次目录模式拷进去的同名文件 —— 只提示不删
             // （输出目录是用户的，误删代价远大于留个提示）
             int stale = 0;
@@ -1663,7 +1690,7 @@ int lenolang_run_file(const char* path) {
                    (vm_size + lenb_size + 8 + (onefile ? (double)res_blob_size + 8 : 0)) / 1024.0,
                    onefile ? " [单文件]" : "");
             if (onefile) {
-                printf("单文件分发：只需拷贝这一个 exe；首次运行时依赖会自动解包到它所在目录\n");
+                printf("单文件分发：只需拷贝这一个 exe；首次运行时依赖会自动解包到用户缓存目录\n");
             }
             printf("打包嵌入耗时: %.1f ms\n", embed_ms);
             printf("总耗时: %.1f ms\n", total_ms);
@@ -1820,7 +1847,8 @@ static int main_logic(int argc, char** argv) {
             continue;
         } else if (strcmp(argv[i], "--onefile") == 0) {
             // 单文件打包：把 [native-libs] 的库与 [pack] resources 内嵌进 exe，
-            // 首次运行解包到 exe 所在目录（详见 vm_main.c 的 extract_embedded_resources）
+            // 首次运行解包到**用户缓存目录**（按内容哈希分目录；详见 vm_main.c 的
+            // extract_embedded_resources）。**不是** exe 旁 —— 那样会污染桌面/下载目录。
             onefileMode = 1;
             continue;
         } else if (strcmp(argv[i], "--no-cache") == 0) {

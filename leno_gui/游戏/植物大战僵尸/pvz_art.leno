@@ -18,11 +18,12 @@ use SDL3.Flip
 use types.Anim
 
 func imgPath(string file): string {
-    return dirs.script_dir() + "/image/" + file
+    // 只读随包资源 ⇒ res_dir()（未打包 == script_dir()，打包后 = 内嵌资源释放目录）
+    return dirs.res_dir() + "/image/" + file
 }
 
 func animPath(string file): string {
-    return dirs.script_dir() + "/anim/" + file
+    return dirs.res_dir() + "/anim/" + file
 }
 
 export func loadTex(Renderer r, string file): Ptr[u8] {

@@ -60,6 +60,8 @@
 #include "include/leno_value.h"
 #include "include/platform.h"
 #include "include/platform_thread.h"
+// 单文件打包（-p --onefile）下，动态库解包到用户缓存目录 ⇒ 搜索链要能找到那里
+#include "include/leno_vm_runtime.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -338,6 +340,34 @@ static void get_exe_dir(char* dir, int dir_size) {
 #endif
 }
 
+/* 单文件打包（-p --onefile）：把资源释放目录挂进 Windows 的 DLL 搜索路径。
+ *
+ * 为什么必须做：库（如 SDL3_image.dll）和它的**兄弟依赖**（SDL3.dll）一起被解包到
+ * 同一个缓存目录，而 Windows 解析"某个 DLL 自身的导入表"时**不会去看那个 DLL 所在的目录**
+ * （只搜主 exe 目录 / SetDllDirectory 指定的目录 / 系统目录 / PATH）
+ * ⇒ 不加这一句，SDL3_image→SDL3 这条链就断。
+ *
+ * 只在打包模式（vm_res_dir() 非空）下设置一次；未打包时该函数等于空操作，
+ * 因此不会改变原有（非打包）行为。
+ * Linux/macOS：dlopen 给绝对路径即可；兄弟依赖由系统加载器按 soname 解析
+ * （libSDL3.so 一般已装在系统里），此处不需要额外处理。 */
+static void ensure_res_dll_dir(void) {
+#ifdef _WIN32
+    static int done = 0;
+    if (done) return;
+    const char* rdir = vm_res_dir();
+    if (!rdir || !rdir[0]) return;   /* 未打包：保持原样，什么都不做 */
+    wchar_t* w = utf8_to_utf16(rdir);
+    if (w) {
+        SetDllDirectoryW(w);
+        free(w);
+    }
+    done = 1;
+#else
+    (void)0;
+#endif
+}
+
 /* 辅助函数：获取当前模块目录（含末尾分隔符） */
 static void get_current_module_dir(char* dir, int dir_size) {
     dir[0] = '\0';
@@ -355,8 +385,9 @@ static void get_current_module_dir(char* dir, int dir_size) {
  *   2) 当前模块目录/bin/<文件名>
  *   3) 当前模块目录/<文件名>
  *   4) 所有已加载模块目录/<文件名>（DLL 与 .leno 同目录，包自包含）
- *   5) exe 所在目录/<文件名>
- *   6) 系统PATH（交给系统加载器处理）
+ *   5) 单文件打包的资源释放目录/<文件名>（-p --onefile：库与资源都解包到这里）
+ *   6) exe 所在目录/<文件名>
+ *   7) 系统PATH（交给系统加载器处理）
  * Windows 使用 LoadLibraryW 支持中文路径
  */
 static Value ffi_load_func(int argc, Value* args) {
@@ -364,6 +395,9 @@ static Value ffi_load_func(int argc, Value* args) {
     ObjString* path_str = (ObjString*)val_as_obj(args[0]);
     const char* path = path_str->chars;
     char* resolved_path = NULL;  /* 自动搜索时分配，需在最后释放 */
+
+    /* 打包模式：先把资源释放目录挂进 DLL 搜索路径（否则兄弟依赖 SDL3_image→SDL3 会断） */
+    ensure_res_dll_dir();
 
     /* 1) 直接尝试加载给定路径 */
     void* handle = load_library_utf8(path);
@@ -425,7 +459,19 @@ static Value ffi_load_func(int argc, Value* args) {
             }
         }
 
-        /* 2d) exe 所在目录/<文件名> */
+        /* 2d) 单文件打包的资源释放目录/<文件名>（vm_res_dir() 未打包时为空串 ⇒ 自动跳过） */
+        if (!handle) {
+            const char* res_dir = vm_res_dir();
+            if (res_dir && res_dir[0] != '\0') {
+                snprintf(search_path, sizeof(search_path), "%s%s", res_dir, filename);
+                if (file_exists_utf8(search_path)) {
+                    handle = load_library_utf8(search_path);
+                    if (handle) resolved_path = strdup(search_path);
+                }
+            }
+        }
+
+        /* 2e) exe 所在目录/<文件名> */
         if (!handle) {
             char exe_dir[MAX_PATH_LEN];
             get_exe_dir(exe_dir, sizeof(exe_dir));
@@ -438,7 +484,7 @@ static Value ffi_load_func(int argc, Value* args) {
             }
         }
 
-        /* 2e) 系统PATH（交给系统加载器处理，传入纯文件名） */
+        /* 2f) 系统PATH（交给系统加载器处理，传入纯文件名） */
         if (!handle) {
             handle = load_library_utf8(filename);
             if (handle) resolved_path = strdup(filename);
@@ -450,12 +496,12 @@ static Value ffi_load_func(int argc, Value* args) {
         char msg[512];
 #ifdef _WIN32
         DWORD error = GetLastError();
-        snprintf(msg, sizeof(msg), "加载库 '%s' 失败，错误码: %lu（已搜索: 模块目录/bin、模块目录、已导入模块目录、exe目录、系统PATH）",
-                 path_str->chars, error);
+        snprintf(msg, sizeof(msg), "加载库 '%s' 失败，错误码: %lu（已搜索: 模块目录/bin、模块目录、已导入模块目录、资源目录、exe目录、系统PATH）",
+                     path_str->chars, error);
 #else
         const char* dl_err = dlerror();
-        snprintf(msg, sizeof(msg), "加载库 '%s' 失败: %s（已搜索: 模块目录/bin、模块目录、已导入模块目录、exe目录、系统PATH）",
-                 path_str->chars, dl_err ? dl_err : "未知错误");
+        snprintf(msg, sizeof(msg), "加载库 '%s' 失败: %s（已搜索: 模块目录/bin、模块目录、已导入模块目录、资源目录、exe目录、系统PATH）",
+                     path_str->chars, dl_err ? dl_err : "未知错误");
 #endif
         native_throw_error(msg);
         return val_null();

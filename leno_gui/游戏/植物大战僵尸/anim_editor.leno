@@ -1537,8 +1537,9 @@ struct AnimEditor {
     // ==================== UI 构建 ====================
 
     func setupUI() {
-        animDir = dirs.script_dir() + "/anim/"
-        imgDir  = dirs.script_dir() + "/image/"
+        // 只读随包资源 ⇒ res_dir()（未打包 == script_dir()，打包后 = 内嵌资源释放目录）
+        animDir = dirs.res_dir() + "/anim/"
+        imgDir  = dirs.res_dir() + "/image/"
         font = SDL3.createFontAuto(14.0)
 
         // 标题栏

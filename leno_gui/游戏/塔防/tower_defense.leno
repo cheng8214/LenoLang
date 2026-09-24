@@ -400,7 +400,8 @@ func buildMap(Game g) {
 // ==================== 资源加载 ====================
 
 func loadResources(Game g, Renderer r) {
-    var base = dirs.script_dir()
+    // 只读随包资源 ⇒ res_dir()（未打包 == script_dir()，打包后指向内嵌资源的释放目录）
+    var base = dirs.res_dir()
     g.texGrass = assets.loadSprite(r, base, "tile_grass")
     g.texPath  = assets.loadSprite(r, base, "tile_path")
     g.texStart = assets.loadSprite(r, base, "tile_start")
@@ -2531,7 +2532,7 @@ main() {
 
     SDL3.ttfInit()
     // 游戏字体：得意黑 Smiley Sans（OFL 开源协议，免费商用）；加载失败自动回退系统字体
-    var fontPath = dirs.script_dir() + "/font/SmileySans-Oblique.ttf"
+    var fontPath = dirs.res_dir() + "/font/SmileySans-Oblique.ttf"
     var font = SDL3.createFont(fontPath, 13.0)
     if not font.ok { font = SDL3.createFontAuto(13.0) }
     var fontBig = SDL3.createFont(fontPath, 20.0)
