@@ -622,6 +622,16 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
 
     // 定义参数
     for (int i = 0; i < ast->u.func.pcnt; i++) {
+        // B4：重复参数名检查——此前 scope_define 静默覆盖，后者遮蔽前者
+        for (int j = 0; j < i; j++) {
+            if (ast->u.func.params[i] && ast->u.func.params[j] &&
+                strcmp(ast->u.func.params[i], ast->u.func.params[j]) == 0) {
+                char msg[BUFFER_SMALL];
+                snprintf(msg, sizeof(msg), "重复的参数名 '%s'（参数 %d 与参数 %d 重名）",
+                         ast->u.func.params[i], j + 1, i + 1);
+                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+            }
+        }
         Symbol* sym = scope_define(s->current, ast->u.func.params[i], SYM_PARAM);
         if (sym) {
             sym->index = i;

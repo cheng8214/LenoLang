@@ -1763,12 +1763,14 @@
                                 snprintf(msg, sizeof(msg), "类型 '%s' 没有方法 '%s'（类型 '%s' 未定义，请检查是否已通过 use 语句导入该类型，如 use module.%s）",
                                          type_to_string(obj_sym->type), method_name, tn, tn);
                             } else {
-                                snprintf(msg, sizeof(msg), "类型 '%s' 没有方法 '%s'",
-                                         type_to_string(obj_sym->type), method_name);
+                                snprintf(msg, sizeof(msg), "类型 '%s' 没有方法 '%s'%s",
+                                         type_to_string(obj_sym->type), method_name,
+                                         get_similar_struct_method_hint(s, tn, method_name));
                             }
                         } else {
-                            snprintf(msg, sizeof(msg), "类型 '%s' 没有方法 '%s'",
-                                     type_to_string(obj_sym->type), method_name);
+                            snprintf(msg, sizeof(msg), "类型 '%s' 没有方法 '%s'%s",
+                                     type_to_string(obj_sym->type), method_name,
+                                     semantic_method_hint(obj_sym->type, method_name));
                         }
                         error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     }

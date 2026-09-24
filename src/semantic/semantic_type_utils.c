@@ -858,6 +858,134 @@ const char* get_similar_name_hint(Scope* scope, const char* name) {
     return hint;
 }
 
+// 在给定名字集合中找最相似的（C1 struct 方法提示用），返回提示串（静态缓冲区）
+const char* get_similar_in_names(const char** names, int count, const char* name) {
+    static char hint[160];
+    hint[0] = '\0';
+    if (!names || count <= 0 || !name || !name[0]) return hint;
+    const char* best = NULL;
+    int best_dist = 3;
+    for (int i = 0; i < count; i++) {
+        if (!names[i]) continue;
+        int dist = levenshtein(name, names[i]);
+        if (dist < best_dist) {
+            best_dist = dist;
+            best = names[i];
+            if (dist == 0) break;
+        }
+    }
+    if (best && strcmp(best, name) != 0) {
+        snprintf(hint, sizeof(hint), "\n  提示: 是否想用 '%s'？", best);
+    }
+    return hint;
+}
+
+// C2：未定义函数的相似名提示——依次在 函数表（用户函数）/ 内置 native 函数 /
+// 作用域变量 中找最相似的名字（变量兜底覆盖"把变量当函数调用"的手误）
+const char* get_undefined_func_hint(Semantic* s, const char* name) {
+    static char hint[192];
+    hint[0] = '\0';
+    if (!s || !name || !name[0]) return hint;
+
+    const char* best = NULL;
+    int best_dist = 3;  // 最多允许 2 次编辑距离
+
+    // 1. 用户函数表
+    if (s->func_table.entries) {
+        for (int i = 0; i < s->func_table.capacity; i++) {
+            for (FuncEntry* e = s->func_table.entries[i]; e; e = e->next) {
+                if (!e->name) continue;
+                int dist = levenshtein(name, e->name);
+                if (dist < best_dist) {
+                    best_dist = dist;
+                    best = e->name;
+                    if (dist == 0) break;
+                }
+            }
+            if (best_dist == 0) break;
+        }
+    }
+
+    // 2. 内置 native 函数（print/len/str 等）
+    if (best_dist > 0) {
+        int nc = native_get_name_count();
+        for (int i = 0; i < nc; i++) {
+            const char* nn = native_get_name(i);
+            if (!nn) continue;
+            int dist = levenshtein(name, nn);
+            if (dist < best_dist) {
+                best_dist = dist;
+                best = nn;
+                if (dist == 0) break;
+            }
+        }
+    }
+
+    // 3. 作用域变量（把变量当函数调用的手误）
+    if (best_dist > 0) {
+        for (Scope* sc = s->current; sc; sc = sc->parent) {
+            for (int i = 0; i < sc->sym_cnt; i++) {
+                Symbol* sym = sc->syms[i];
+                if (!sym || !sym->name) continue;
+                int dist = levenshtein(name, sym->name);
+                if (dist < best_dist) {
+                    best_dist = dist;
+                    best = sym->name;
+                    if (dist == 0) break;
+                }
+            }
+            if (best_dist == 0) break;
+        }
+    }
+
+    if (best && strcmp(best, name) != 0) {
+        snprintf(hint, sizeof(hint), "\n  提示: 是否想输入 '%s'？", best);
+    }
+    return hint;
+}
+
+// C1：用户 struct 方法的相似名提示——扫函数表里 "Struct::method" 方法占位符。
+// 前向定义的 struct（定义在使用点之后）占位符尚未注册，返回空串（优雅降级）
+const char* get_similar_struct_method_hint(Semantic* s, const char* struct_name, const char* method_name) {
+    static char hint[160];
+    hint[0] = '\0';
+    if (!s || !struct_name || !struct_name[0] || !method_name || !method_name[0]) return hint;
+    char prefix[128];
+    snprintf(prefix, sizeof(prefix), "%s::", struct_name);
+    int plen = (int)strlen(prefix);
+    const char* best = NULL;
+    int best_dist = 3;
+    if (s->func_table.entries) {
+        for (int i = 0; i < s->func_table.capacity; i++) {
+            for (FuncEntry* e = s->func_table.entries[i]; e; e = e->next) {
+                if (!e->name || strncmp(e->name, prefix, plen) != 0) continue;
+                const char* mname = e->name + plen;
+                int dist = levenshtein(method_name, mname);
+                if (dist < best_dist) {
+                    best_dist = dist;
+                    best = mname;
+                    if (dist == 0) break;
+                }
+            }
+            if (best_dist == 0) break;
+        }
+    }
+    if (best && strcmp(best, method_name) != 0) {
+        snprintf(hint, sizeof(hint), "\n  提示: 是否想用 '%s'？", best);
+    }
+    return hint;
+}
+
+// C1：内置类型方法调用的相似名提示——TypeKind 映射为注册表类型名（native_get_type_name
+// 即注册时使用的名字），委托编译期实例方法元信息表
+const char* semantic_method_hint(TypeInfo* type, const char* method_name) {
+    if (!type || !method_name) return "";
+    const char* tn = native_get_type_name(type->kind);
+    if (!tn && type->kind == TYPE_BIGINT) tn = "number";
+    if (!tn) return "";
+    return native_instance_method_hint(tn, method_name);
+}
+
 const char* get_type_conversion_hint(TypeKind expected, TypeKind actual) {
     // any 转具体类型
     if (actual == TYPE_ANY) {

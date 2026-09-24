@@ -85,6 +85,7 @@ typedef enum {
     WARN_UNUSED_VAR,       // 变量定义未使用
     WARN_SHADOW_VAR,       // 变量遮蔽
     WARN_DEPRECATED,       // 弃用语法/API
+    WARN_BAD_ESCAPE,       // 无效转义序列（如 \q，按原样保留）
     WARN_IMPLICIT_TRUNC,   // 浮点隐式截断为整数
     WARN_UNREACHABLE,      // 不可达代码
     WARN_NULL_FIELD_CHAIN, // null 字段链式访问

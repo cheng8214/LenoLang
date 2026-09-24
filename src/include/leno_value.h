@@ -864,6 +864,10 @@ void gc_pop_root(void);
 
 // 数组操作
 ObjArray* arr_new(int capacity);
+// 数组元素数硬上限（50M × 16B ≈ 800MB）：触顶报"可能无限增长"而非撑到 realloc 耗尽，
+// 最常见根因是 for 遍历中不断 add（遍历与增长互相追赶，永不终止）
+#define OBJ_ARRAY_MAX_CAPACITY 50000000
+
 int arr_grow(ObjArray* arr);  // 数组扩容，成功返回1，失败返回0
 
 // 数组读写（static inline 供编译器内联优化）

@@ -56,7 +56,7 @@ extern ParseRule* get_rule(LenoTokenType type);
 // 辅助函数
 int match(Parser* p, LenoTokenType type);
 int consume(Parser* p, LenoTokenType type, const char* msg);
-char* process_escape_sequences(const char* text, int len, int* out_len);
+char* process_escape_sequences(const char* text, int len, int* out_len, int line, int column);
 char* copy_string(const char* text, int len);
 char* process_raw_string(const char* text, int len, int* out_len);
 int is_type_keyword(LenoTokenType type);

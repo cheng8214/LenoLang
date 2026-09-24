@@ -1,0 +1,130 @@
+// test_diag_static_errors.leno —— 诊断补全回归（B3/B4/B5/C1/C2）
+//
+// 此前这五类手误全部**静默通过**或**无提示**，修复后应编译期报错/给出相似名建议：
+//   B3  break/continue 在循环外 → 静默通过（编译不报错、运行期什么都不做）
+//   B4  重复参数名 func f(int a, int a) → scope_define 静默覆盖，后者遮蔽前者
+//   B5  struct 重复字段 → 静默取前者，后者被丢弃
+//   C1  方法名拼错（内置类型/用户 struct）→ 只报"没有方法"，无相似名建议
+//   C2  函数名拼错 → 只报"未定义函数"，无相似名建议（变量拼错早有提示，不一致）
+//
+// 另含两条**不得误伤**的正向用例：循环内的 break/continue 合法；
+// 无效转义 \q 保持"按原样保留"的宽松行为（只警告，不报错、不改输出）。
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_diag_static_errors")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ---- B3：break / continue 在循环外 ----
+    var b1 = dirs.join(work, "break_outside.leno")
+    files.write(b1, @"main() {
+    break
+}
+")
+    ce.expect_error(b1, "break 在循环外要报错", "'break' 不能用在循环外", 2)
+
+    var b2 = dirs.join(work, "continue_outside.leno")
+    files.write(b2, @"func f():int {
+    continue
+    return 1
+}
+")
+    ce.expect_error(b2, "continue 在循环外要报错", "'continue' 不能用在循环外", 2)
+
+    // B3 反向：闭包体内的 break 不得借用外层循环（函数边界隔离）
+    var b3 = dirs.join(work, "break_in_closure.leno")
+    files.write(b3, @"main() {
+    var f = func():int {
+        break
+        return 0
+    }
+    f()
+}
+")
+    ce.expect_error(b3, "闭包体内的 break 不属于外层循环", "'break' 不能用在循环外", 3)
+
+    // ---- B4：重复参数名 ----
+    var d1 = dirs.join(work, "dup_param.leno")
+    files.write(d1, @"func f(int a, int a):int { return a }
+main() {
+    print(f(1, 2))
+}
+")
+    ce.expect_error(d1, "重复参数名要报错", "重复的参数名 'a'（参数 1 与参数 2 重名）", 1)
+
+    // ---- B5：struct 重复字段 ----
+    var d2 = dirs.join(work, "dup_field.leno")
+    files.write(d2, @"struct P {
+    int x = 0
+    int x = 1
+}
+main() {
+    var p = new P()
+    print(p.x)
+}
+")
+    // 落点在 struct 声明行（预注册阶段无逐字段行号）
+    ce.expect_error(d2, "重复字段名要报错", "struct 'P' 存在重复字段 'x'", 1)
+
+    // ---- C1：方法名拼错给相似名建议 ----
+    var m1 = dirs.join(work, "method_typo_builtin.leno")
+    files.write(m1, @"main() {
+    var s = ""abc""
+    print(s.to_uppr())
+}
+")
+    ce.expect_error(m1, "内置类型方法拼错给建议", "是否想用 'to_upper'？", 0)
+
+    var m2 = dirs.join(work, "method_typo_struct.leno")
+    files.write(m2, @"struct Box {
+    int v = 0
+    func sttore(int x) { self.v = x }
+}
+main() {
+    var b = new Box()
+    b.stor(1)
+}
+")
+    ce.expect_error(m2, "用户 struct 方法拼错给建议", "是否想用 'sttore'？", 0)
+
+    // ---- C2：函数名拼错给相似名建议 ----
+    var f1 = dirs.join(work, "func_typo.leno")
+    files.write(f1, @"main() {
+    prnt(""hello"")
+}
+")
+    ce.expect_error(f1, "函数名拼错给建议（print 为内置）", "是否想输入 'print'？", 0)
+
+    // ---- 正向：循环内的 break/continue 合法 ----
+    var ok1 = dirs.join(work, "break_inside.leno")
+    files.write(ok1, @"main() {
+    var sum = 0
+    for 1:10 to i {
+        if i == 5 { break }
+        if i == 2 { continue }
+        sum = sum + i
+    }
+    // 1 + 3 + 4 = 8（i==2 跳过，i==5 退出）
+    assert_eq(sum, 8)
+    print(""OK "" + sum)
+}
+")
+    ce.expect_ok(ok1, "循环内 break/continue 合法", "OK 8")
+
+    // ---- 正向：无效转义 \q 宽松保留（警告不阻断）----
+    var ok2 = dirs.join(work, "bad_escape_kept.leno")
+    files.write(ok2, @"main() {
+    var s = ""a\qz""
+    // \q 非法但按原样保留：a + 反斜杠 + q + z，共 4 字符
+    assert_eq(s.len(), 4)
+    print(""OK"")
+}
+")
+    ce.expect_ok(ok2, "无效转义按原样保留", "OK")
+
+    print("=== test_diag_static_errors ALL passed ===")
+}

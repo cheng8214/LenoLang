@@ -109,6 +109,14 @@ void format_type_error(char* buf, size_t buf_size, const char* fmt,
 // 获取类型转换建议
 const char* get_type_conversion_hint(TypeKind expected, TypeKind actual);
 const char* get_similar_name_hint(Scope* scope, const char* name);
+// C2：未定义函数相似名提示（函数表 + 内置 native + 作用域变量）
+const char* get_undefined_func_hint(Semantic* s, const char* name);
+// C1：内置类型方法相似名提示（委托 method_table_similar_hint）
+const char* semantic_method_hint(TypeInfo* type, const char* method_name);
+// C1：在给定名字集合中找最相似的（struct 方法提示用）
+const char* get_similar_in_names(const char** names, int count, const char* name);
+// C1：用户 struct 方法相似名提示（扫函数表 "Struct::method" 占位符）
+const char* get_similar_struct_method_hint(Semantic* s, const char* struct_name, const char* method_name);
 
 // 生成详细的类型错误信息（包含转换建议）
 void format_detailed_type_error(char* buf, size_t buf_size,

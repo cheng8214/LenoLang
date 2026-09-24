@@ -30,7 +30,8 @@ int consume(Parser* p, LenoTokenType type, const char* msg) {
 // ============================================================================
 
 // 处理字符串转义字符（如 \n, \t, \xHH, \uHHHH 等）
-char* process_escape_sequences(const char* text, int len, int* out_len) {
+// line/column 用于无效转义序列的警告定位
+char* process_escape_sequences(const char* text, int len, int* out_len, int line, int column) {
     // \uHHHH 最多产生 4 字节 UTF-8（实际上 BMP 范围最多 3 字节），预分配足够空间
     char* str = (char*)malloc(len * 4 + 1);
     if (!str) return NULL;
@@ -56,7 +57,10 @@ char* process_escape_sequences(const char* text, int len, int* out_len) {
                         str[j++] = (char)strtol(hex, NULL, 16);
                         i += 3; // 跳过 x 和两位十六进制
                     } else {
-                        // \x 后不是两位hex，保留反斜杠原样
+                        // \x 后不是两位hex，保留反斜杠原样，并给出警告
+                        char wmsg[BUFFER_SMALL];
+                        snprintf(wmsg, sizeof(wmsg), "无效的转义序列 '\\x'（后跟非两位十六进制），已按原样保留");
+                        warning_add_at(WARN_BAD_ESCAPE, line, column, wmsg);
                         str[j++] = text[i];
                     }
                     break;
@@ -85,10 +89,14 @@ char* process_escape_sequences(const char* text, int len, int* out_len) {
                     }
                     break;
                 }
-                default:
-                    // 未知的转义序列，保留反斜杠
+                default: {
+                    // 未知的转义序列，保留反斜杠，并给出警告
+                    char wmsg[BUFFER_SMALL];
+                    snprintf(wmsg, sizeof(wmsg), "无效的转义序列 '\\%c'，已按原样保留", next);
+                    warning_add_at(WARN_BAD_ESCAPE, line, column, wmsg);
                     str[j++] = text[i];
                     break;
+                }
             }
         } else {
             str[j++] = text[i];

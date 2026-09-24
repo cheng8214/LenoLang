@@ -184,7 +184,8 @@ Ast* parse_number(Parser* p) {
 Ast* parse_string(Parser* p) {
     Ast* ast = ast_new(AST_STRING, p->lex.current.line);
     int processed_len;
-    ast->u.string.value = process_escape_sequences(p->lex.current.text, p->lex.current.len, &processed_len);
+    ast->u.string.value = process_escape_sequences(p->lex.current.text, p->lex.current.len, &processed_len,
+                                                    p->lex.current.line, p->lex.current.column);
     ast->u.string.len = processed_len;
     lexer_next(&p->lex);
     return ast;
@@ -230,7 +231,8 @@ Ast* parse_interp_string(Parser* p) {
         // 读取字符串片段
         if (p->lex.current.type == TOK_INTERP_PART) {
             int processed_len;
-            char* text = process_escape_sequences(p->lex.current.text, p->lex.current.len, &processed_len);
+            char* text = process_escape_sequences(p->lex.current.text, p->lex.current.len, &processed_len,
+                                                   p->lex.current.line, p->lex.current.column);
 
             if (processed_len > 0) {
                 // 扩展数组
@@ -417,7 +419,8 @@ Ast* parse_dict(Parser* p) {
         Ast* key_ast = NULL;
         if (p->lex.current.type == TOK_STRING) {
             int key_len;
-            char* key_str = process_escape_sequences(p->lex.current.text, p->lex.current.len, &key_len);
+            char* key_str = process_escape_sequences(p->lex.current.text, p->lex.current.len, &key_len,
+                                                      p->lex.current.line, p->lex.current.column);
             key_ast = ast_new(AST_STRING, line);
             key_ast->u.string.value = key_str;
             key_ast->u.string.len = key_len;

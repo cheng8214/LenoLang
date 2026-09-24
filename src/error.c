@@ -268,6 +268,7 @@ void warning_print_all(void) {
             case WARN_UNUSED_VAR:      type_str = "未使用变量"; break;
             case WARN_SHADOW_VAR:      type_str = "变量遮蔽"; break;
             case WARN_DEPRECATED:      type_str = "弃用"; break;
+            case WARN_BAD_ESCAPE:      type_str = "无效转义"; break;
             case WARN_IMPLICIT_TRUNC:  type_str = "隐式截断"; break;
             case WARN_UNREACHABLE:     type_str = "不可达代码"; break;
             case WARN_NULL_FIELD_CHAIN: type_str = "空值链式访问"; break;

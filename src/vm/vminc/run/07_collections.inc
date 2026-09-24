@@ -61,7 +61,7 @@
     LABEL(OP_ARRAY_APPEND): {
         int a = READ_A(), b = READ_B();
         ObjArray* arr = (ObjArray*)val_as_obj(R(b));
-        if (arr->count >= arr->capacity) { if (!arr_grow(arr)) { runtime_error("OP_ARRAY_APPEND: arr_grow 失败", GET_CURRENT_LINE()); return -1; } }
+        if (arr->count >= arr->capacity) { if (!arr_grow(arr)) { runtime_error("数组扩容失败：内存不足或元素数达上限（若在 for 遍历中不断 add，数组会无限增长）", GET_CURRENT_LINE()); return -1; } }
         arr->elements[arr->count++] = R(a);
         // ★ 写屏障（补漏）：本 GC 是**分代 + 记住集**——老年代对象引用年轻代对象时
         //   必须把老对象入集，否则年轻代回收漏扫该引用（见 leno_value.h 的 REMEMBERED 位

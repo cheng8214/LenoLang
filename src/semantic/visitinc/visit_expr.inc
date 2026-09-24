@@ -772,9 +772,17 @@
                                     if (!method_found) {
                                         char msg[BUFFER_MEDIUM];
                                         const char* type_str = type_to_string(receiver_type);
-                                        snprintf(msg, sizeof(msg),
-                                            "类型 '%s' 没有方法 '%s'",
-                                            type_str, method_name);
+                                        // C1：在 struct 方法列表里找相似名给出提示
+                                        const char* mnames[64];
+                                        int mcount = struct_def_ast->u.struct_def.method_count;
+                                        if (mcount > 64) mcount = 64;
+                                        for (int q = 0; q < mcount; q++) {
+                                            Ast* m = struct_def_ast->u.struct_def.methods[q];
+                                            mnames[q] = (m && m->kind == AST_FUNC_DEF) ? m->u.func.name : NULL;
+                                        }
+                                        snprintf(msg, sizeof(msg), "类型 '%s' 没有方法 '%s'%s",
+                                                 type_str, method_name,
+                                                 get_similar_in_names(mnames, mcount, method_name));
                                         error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                     }
                                 }
@@ -1386,7 +1394,8 @@
                         error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     } else {
                         char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg), "未定义的函数: %s", func_name);
+                        snprintf(msg, sizeof(msg), "未定义的函数: %s%s", func_name,
+                                 get_undefined_func_hint(s, func_name));
                         error_add_at(ERR_UNDEFINED_FUNC, ast->line, ast->column, msg);
                     }
                 } else {
