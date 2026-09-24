@@ -6,6 +6,7 @@
 #include "include/leno_codegen.h"
 #include "include/leno_optimize.h"
 #include "include/leno_serialize.h"
+#include "include/leno_dce.h"
 #include "include/native.h"
 #include "include/module_compiler.h"
 #include "include/module_loader.h"
@@ -1350,7 +1351,22 @@ int lenolang_run_file(const char* path) {
             free(source);
             return -1;
         }
+        // ★ DCE 需要**完整**的引用图：图是靠 codegen 边生成边收集的，而命中 .lenomc
+        //   的模块压根不走 codegen ⇒ 图缺一半 ⇒ 该模块的函数会被误判成"不可达"剪掉
+        //   （调用处静默返回 null）。所以在分发产物（-c / -p）里一律**不读模块缓存**。
+        //   代价可接受：实测读缓存并不更快（hello_window 热缓存 775 ms vs 全量重编译
+        //   560 ms —— 反序列化模块对象 + 符号表比重编译还贵），而产物大小会随缓存状态
+        //   漂移（863795 vs 862048 B），DCE 会把这个差放大到 25% ⇒ 必须让分发产物只由
+        //   源码决定。LENO_NO_DCE=1 时不需要这个保证，照旧允许用缓存。
+        int saved_cache_enabled = module_loader_is_cache_enabled();
+        if (dce_enabled()) module_loader_set_cache_enabled(0);
+
+        // 引用图开一轮新的（同一次进程里可能编译多次：-p 打包 = 编译 + 内嵌校验）
+        dce_reset();
+
         int result = lenolang_compile(source, bin_path);
+
+        module_loader_set_cache_enabled(saved_cache_enabled);
         free(source);
         free(bin_path);
 
@@ -1371,8 +1387,16 @@ int lenolang_run_file(const char* path) {
         }
         clock_t pack_t0 = clock();
 
+        // ★ 与 -c 同理：打包产物也是分发的 .lenb ⇒ DCE 需要完整引用图 ⇒ 不读模块缓存，
+        //   并为本轮编译开一份新的引用图（见上面 compileMode 分支的说明）。
+        int saved_cache_enabled = module_loader_is_cache_enabled();
+        if (dce_enabled()) module_loader_set_cache_enabled(0);
+        dce_reset();
+
         // 先编译：语义分析阶段会自动检测 _console(false) 并设置 g_use_gui_vm
         int result = lenolang_compile(source, bin_path);
+
+        module_loader_set_cache_enabled(saved_cache_enabled);
         free(source);
         if (result != 0) {
             free(bin_path);

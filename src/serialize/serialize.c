@@ -2,6 +2,7 @@
 #include "include/lenolang.h"
 #include "include/module_loader.h"
 #include "include/platform.h"
+#include "include/leno_dce.h"
 #include <string.h>
 #include <errno.h>
 #include <sys/types.h>
@@ -344,6 +345,16 @@ static int serialize_constant(WriteBuffer* wb, Value val) {
         }
         case OBJ_FUNCTION: {
             ObjFunction* func = (ObjFunction*)obj;
+            // DCE（方法级死代码消除）：写**入口 .lenb** 时，引用图证明不可达的函数只写
+            // 1 字节标签，函数体（含嵌套函数/参数表/名字）全不写 —— 这是本改动体积收益的
+            // 唯一来源。只在 dce_active()（= 入口 .lenb）时生效：模块缓存 .lenomc 必须写
+            // 完整体（它写在模块编译期间，那时引用图还不完整，且会被反复复用）。
+            // 读侧对称：CONST_TAG_DEAD_FUNCTION ⇒ 就地合成"只含一条 OP_RETURN 的最小函数"
+            // （真被调到时返回 null，不崩 —— 见 deserialize_constant 里那段的说明）。
+            if (dce_active() && !dce_func_is_live(func)) {
+                wb_write_u8(wb, CONST_TAG_DEAD_FUNCTION);
+                return 1;
+            }
             wb_write_u8(wb, CONST_TAG_FUNCTION);
             wb_write_string(wb, func->name, (uint32_t)strlen(func->name));
             wb_write_u32(wb, (uint32_t)func->arity);
@@ -898,6 +909,44 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
         ObjString* obj = str_new(str, (int)len);
         free(str);
         *out_val = val_obj((Object*)obj);
+        return 1;
+    }
+    case CONST_TAG_DEAD_FUNCTION: {
+        // DCE 剪掉的函数（写端只有 1 字节标签，无载荷）⇒ 就地合成一个**最小可用**的
+        // 函数对象：空常量池 + **一条 OP_RETURN**。
+        // 为什么必须能被安全调用：裁剪结论是按引用图推出来的，万一是"图不完整/规则漏了"
+        // 导致误剪，调用点拿到的最坏结果是 null（可被断言/对拍发现），而不是崩溃 ——
+        // VM 会真的去读 code[ip]，空 chunk（code == NULL）不是可执行状态，所以这一条
+        // RETURN 是必需的、不能省。
+        // 名字固定成 "<dce-cut>"（写端不写名字是为了省字节：2462 个桩 × 名字 ≈ 48 KB）。
+        ObjFunction* func = (ObjFunction*)gc_alloc(sizeof(ObjFunction), OBJ_FUNCTION);
+        if (!func) return 0;
+        func->arity = 0;
+        func->name = strdup("<dce-cut>");
+        func->upvalue_count = 0;
+        func->local_count = 0;
+        func->chunk = (Chunk*)malloc(sizeof(Chunk));
+        if (!func->chunk) return 0;
+        chunk_init(func->chunk);
+        // 编码与 emit_return(gen, r, 0, line) **逐字段一致**：B = nresults + 1
+        // （VM 侧是 `nresults = b - 1`，B=1 ⇒ nresults=0 ⇒ `result = val_null()`）。
+        // C 特意留 0（非专精）：让 VM 走完整检查路径（is_ctor / try-finally），
+        // 万一这个桩确实是构造器（理论上不会 —— ctor/dtor 在 DCE 里无条件保活），
+        // 也不会因为"编译期假设"而跳过它该做的事。
+        reg_encode_iABC(func->chunk, OP_RETURN, 0, 1, 0, 0);
+        func->module = NULL;
+        func->has_try = 0;
+        func->param_types = NULL;
+        func->param_generic_names = NULL;
+        func->param_generic_count = 0;
+        func->type_param_count = 0;
+        func->type_param_names = NULL;
+        func->type_param_constraints = NULL;
+        func->is_ctor = 0;
+        func->is_async = 0;
+        func->return_count = 0;
+        func->return_types = NULL;
+        *out_val = val_obj((Object*)func);
         return 1;
     }
     case CONST_TAG_FUNCTION: {
@@ -1769,6 +1818,11 @@ static Scope* deserialize_scope_data(DeserializeCtx* ctx) {
 // ============================================================================
 
 SerializeResult chunk_serialize(const char* path, Chunk* chunk, Scope* global_scope) {
+    // DCE：**只有这里**（入口 .lenb = 随源码分发的产物）开裁剪。其余写出路径
+    // （.lenomc 模块缓存、entry_*.lenb 入口缓存走的 chunk_serialize_to_memory）
+    // 一律写完整函数体 —— 前者写在模块编译期间（引用图不完整）且会被反复复用，
+    // 后者是运行期缓存（裁剪与否不影响分发体积，少一层风险）。
+    dce_set_active(dce_enabled());
     clear_serialized_modules();
     WriteBuffer wb;
     wb_init(&wb);
@@ -1806,14 +1860,17 @@ SerializeResult chunk_serialize(const char* path, Chunk* chunk, Scope* global_sc
     wb_write_u64(&wb, src_hash);
 
     if (!serialize_scope_data(&wb, global_scope)) {
+        dce_set_active(0);
         wb_free(&wb);
         return SERIALIZE_ERR_FORMAT;
     }
 
     if (!serialize_chunk(&wb, chunk)) {
+        dce_set_active(0);
         wb_free(&wb);
         return SERIALIZE_ERR_FORMAT;
     }
+    dce_set_active(0);   // 入口产物写完 ⇒ 立刻关掉裁剪（后续任何写出都是完整体）
 
 #ifdef _WIN32
     int wideLen = MultiByteToWideChar(CP_UTF8, 0, path, -1, NULL, 0);

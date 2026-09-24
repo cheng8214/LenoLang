@@ -3,6 +3,7 @@
 // ============================================================================
 
 #include "codegen.h"
+#include "include/leno_dce.h"
 
 // 前向声明（与 codegen.h 中非 static 声明一致）
 void gen_stmt(CodeGen* gen, Ast* ast);
@@ -1641,6 +1642,9 @@ static void gen_struct_def(CodeGen* gen, Ast* ast) {
     if (method_count > 0) {
         method_name_consts = (int*)malloc(sizeof(int) * method_count);
         method_func_consts = (int*)malloc(sizeof(int) * method_count);
+        // DCE：接下来这段循环里生成的函数都**属于这个 struct** ⇒ 注册时要带上所属类型名
+        //   （名字通配的方法靠"所属类型是否被引用"过滤，没有它就是无主方法）。
+        dce_set_method_owner(ast->u.struct_def.name);
         for (int i = 0; i < method_count; i++) {
             Ast* m = ast->u.struct_def.methods[i];
             if (m && m->kind == AST_FUNC_DEF) {
@@ -1655,6 +1659,7 @@ static void gen_struct_def(CodeGen* gen, Ast* ast) {
                 method_func_consts[i] = make_constant(gen, val_null());
             }
         }
+        dce_set_method_owner(NULL);   // 方法段结束，恢复"无主"
     }
 
     ObjString* struct_name = str_copy(ast->u.struct_def.name, (int)strlen(ast->u.struct_def.name));

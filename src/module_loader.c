@@ -1,6 +1,7 @@
 #include "include/leno_vm_runtime.h"
 #include "include/module_dispatch.h"
 #include "include/leno_serialize.h"
+#include "include/leno_dce.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -814,6 +815,11 @@ ObjModule* load_module_file(const char* file_path, const char* current_file, con
             ObjModule* cached = module_cache_deserialize(cache_path, full_path);
             free(cache_path);
             if (cached) {
+                // DCE 兜底：命中缓存的模块**没走 codegen** ⇒ 引用图缺它这一块 ⇒ 整张图不完整，
+                // 本轮一律不剪（否则该模块里"其实被调用"的函数会被误判不可达、静默返回 null）。
+                // 正常路径不该走到这里：-c / -p 在编译前就把模块缓存关了（见 main.c），
+                // 这条只是防御（例如将来多出别的写出入口时，行为仍安全）。
+                dce_note_module_cached();
                 return cached;
             }
         }

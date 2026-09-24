@@ -3,12 +3,17 @@
 // ============================================================================
 
 #include "codegen.h"
+#include "include/leno_dce.h"
 
 // 当前模块（用于设置函数所属模块）
 static ObjModule* g_current_module = NULL;
 
 void codegen_set_module(ObjModule* module) {
     g_current_module = module;
+    // DCE 引用图：编译单元栈与模块归属同步（NULL = 回到入口程序单元）。
+    // 单元决定"槽位引用"解析到哪个模块的函数表 ⇒ 必须与 g_current_module 同源。
+    if (module) dce_enter_unit(module);
+    else dce_exit_unit();
 }
 
 // （原 `codegen_set_func_dict` / `g_func_dict`：模块编译第 4 步的 func_dict 用过的接口。
@@ -151,6 +156,9 @@ void gen_func_closure(CodeGen* gen, Ast* ast, ObjFunction* func) {
     // 保存当前函数
     ObjFunction* saved_func = gen->current_func;
     gen->current_func = func;
+    // DCE：本函数成为"引用归属"（函数体内发出的引用记在它名下；嵌套函数记成它的局部函数）。
+    // ctor/dtor 标记必须带上 —— VM 按 ctor_index/dtor_index 隐式调用它们，静态没有引用点。
+    dce_enter_func(func, ast->u.func.is_ctor, ast->u.func.is_dtor);
     // ★ 还要记住当前函数的 **AST**：gen_return 靠它取声明返回类型做规范化（C1）。
     //   嵌套函数（局部函数 / 方法）会层层覆盖，所以必须保存/恢复。
     Ast* saved_func_ast = gen->current_func_ast;
@@ -204,6 +212,7 @@ void gen_func_closure(CodeGen* gen, Ast* ast, ObjFunction* func) {
     func->local_count = gen->max_reg;
 
     // 恢复（含寄存器分配器状态与 free 栈内容）
+    dce_exit_func();   // 与上面的 dce_enter_func 配对
     gen->chunk = saved_chunk;
     gen->current_func = saved_func;
     gen->current_func_ast = saved_func_ast;
@@ -249,6 +258,18 @@ void gen_func(CodeGen* gen, Ast* ast) {
     // 3. 绑定到符号槽位
     SymRef* ref = &ast->u.func.ref;
     int const_idx = make_constant(gen, val_obj((Object*)func));
+
+    // DCE def 点：登记"槽位 ← 函数"。槽位引用（OP_GETGLOBALFUNC / OP_CALL_GLOBAL_FUNC /
+    // OP_GET_MODULE_VAR / OP_DEFINE_MODULE_FUNC）都靠它解析到具体的函数对象。
+    // 局部/参数（嵌套函数）没有槽位，靠"跟随外层父函数"覆盖，不登记。
+    if (ref->kind == SYM_GLOBAL_FUNC || ref->kind == SYM_MODULE) {
+        dce_note_func_def(ref->index, func);
+    } else {
+        // 局部/参数位置（含匿名闭包落到某个槽位的形态）：没有槽位可解析 ⇒
+        // 直接记一条"函数值引用"。注意**不能**对上面两种也这么干 —— 那样"只被定义、
+        // 从未被调用"的顶层函数会因自己的定义而永远判活（整个 DCE 就失效了）。
+        dce_note_func_value(func);
+    }
 
     if (ref->kind == SYM_GLOBAL_FUNC) {
         int r = reg_alloc(gen);

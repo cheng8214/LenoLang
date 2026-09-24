@@ -5,6 +5,7 @@
 // ============================================================================
 
 #include "codegen.h"
+#include "include/leno_dce.h"
 
 // 前向声明（语句相关，定义在 codegen_stmt.c）
 extern void gen_default_value(CodeGen* gen, Ast* default_expr);
@@ -411,6 +412,9 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
                     break;
                 case SYM_MODULE:
                     // 模块变量：索引是 16 位 Bx（与 VM 的 READ_Bx 一致）
+                    // DCE：模块槽位里放的是**函数**时（模块函数当值用）就是一次函数引用；
+                    //   是普通变量时槽位表里没有 def ⇒ 自然什么都不命中（安全）
+                    dce_note_slot_ref(ref->index);
                     reg_encode_iABx(gen->chunk, OP_GET_MODULE_VAR, dst, ref->index, ast->line);
                     break;
                 case SYM_TYPE:
@@ -422,6 +426,8 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
                     // obj["RED"]，obj 即这里的类型名字符串，运行期再查全局枚举表。
                     // 此前一律发 nil，于是 `Color.RED` 变成 nil["RED"]，整类枚举
                     // 测试失败。
+                    // DCE：类型名当值使用 = 一次类型引用（名字通配的方法靠它过滤）
+                    dce_note_type_ref(ref->name);
                     ObjString* tn = str_copy(ref->name, (int)strlen(ref->name));
                     int c = make_constant(gen, val_obj((Object*)tn));
                     emit_loadk_to(gen, dst, c, ast->line);
@@ -468,6 +474,10 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
             ObjFunction* fn = gen_func_proto(gen, ast);
             if (fn) {
                 gen_func_closure(gen, ast, fn);
+                // DCE：**匿名闭包的创建点就是它唯一的一次引用**（没有槽位、没有名字 ——
+                //   赋值给变量/字段后再调用，静态追不到那个变量）。漏了这里 ⇒ 闭包被剪 ⇒
+                //   调用处静默返回 null（实测 test_func_type_field / test_use_alias_dep）。
+                dce_note_func_value(fn);
                 int cidx = make_constant(gen, val_obj((Object*)fn));
                 emit_closure_upvals(gen, dst, cidx, ast);
             } else {
@@ -540,6 +550,17 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
                 if (idx_is_temp) reg_free(gen, idx_reg);
                 if (obj_is_temp) reg_free(gen, obj_reg);
                 break;
+            }
+            // DCE：通用 `obj["名字"]` 在 struct 实例上运行期会**按方法名兜底分发**
+            //   （vm 的 OP_INDEX struct 分支 → struct_method_lookup，泛型函数里
+            //   `a.compareTo(b)` 就是这条路径）——静态类型看不出来 ⇒ 只要接收者不是
+            //   已知容器、下标又是字符串字面量，一律记成**方法名通配引用**。
+            //   漏了它 = 活方法被当死代码剪掉（调用处静默返回 null）。
+            if (iidx && iidx->kind == AST_STRING && iidx->u.string.value &&
+                iidx->u.string.value[0] &&
+                !(ot && (ot->kind == TYPE_ARRAY || ot->kind == TYPE_DICT ||
+                         ot->kind == TYPE_STRING))) {
+                dce_note_method_ref(NULL, iidx->u.string.value);
             }
             reg_encode_iABC(gen->chunk, OP_INDEX, dst, obj_reg, idx_reg, ast->line);
             if (idx_is_temp) reg_free(gen, idx_reg);
@@ -1627,6 +1648,10 @@ static void gen_method_call(CodeGen* gen, Ast* obj_ast, const char* mname,
     }
     if (ot) type_free(ot);
 
+    // DCE：方法引用 —— 接收者静态类型已知 ⇒ (类型,名) 精确命中；未知（face / 泛型 / any）
+    //   或不是 struct ⇒ 名字通配（再由"所属类型是否被引用"过滤，见 leno_dce.h）
+    dce_note_method_ref(recv_struct_name[0] ? recv_struct_name : NULL, mname);
+
     // ⚠ 方法调用的实参列表**已含隐式 self**（语义分析插入，args[0] = self），
     //   所以这里按 self_offset=0 补齐：缺失的默认值对应 params[i]（i = nargs..pcnt-1）
     int expected = (mdef && mdef->kind == AST_FUNC_DEF && mdef->u.func.pcnt > nargs)
@@ -1840,6 +1865,7 @@ void gen_call(CodeGen* gen, Ast* ast, int dst) {
                 }
                 expected = fill_default_args(gen, fdef, 0, nargs, base, ast->line);
                 if (typed_ok) {
+                    dce_note_slot_ref(ref->index);   // DCE：typed 直呼同样是对槽位的引用
                     reg_encode_iABC(gen->chunk, OP_CALL_GLOBAL_FUNC_TYPED, base, expected,
                                     ref->index, ast->line);
                 } else {
@@ -1926,6 +1952,15 @@ int gen_call_multi(CodeGen* gen, Ast* ast, int nresults, int line) {
             char key[BUFFER_SMALL];
             snprintf(key, sizeof(key), "%s::%s", ot->struct_name, mname);
             mdef = func_table_find(&gen->sem->func_table, key);
+        }
+        // DCE：与 gen_method_call 同口径（多返回值调用也是方法调用的一处发射点）
+        {
+            char rsn[BUFFER_SMALL];
+            rsn[0] = '\0';
+            if (ot && ot->kind == TYPE_STRUCT && ot->struct_name) {
+                snprintf(rsn, sizeof(rsn), "%s", ot->struct_name);
+            }
+            dce_note_method_ref(rsn[0] ? rsn : NULL, mname);
         }
         if (ot) type_free(ot);
 
@@ -2157,6 +2192,10 @@ int gen_module_call_prep(CodeGen* gen, Ast* mcall, int nresults, int* out_expect
     const char* modname = mcall->u.module_call.module_name;
     const char* methname = mcall->u.module_call.method_name ? mcall->u.module_call.method_name : "";
     int nargs = mcall->u.module_call.args.count;
+    // DCE：跨模块调用在运行期是 `模块对象["方法名"]` ⇒ 静态只有**名字**。
+    //   口径取最保守的一档：该名字命中的**顶层函数全部保活**（模块身份不可靠 ——
+    //   ObjModule.name 是"首次加载时的别名"，与调用点的别名并不总相等）。
+    dce_note_name_ref(methname);
     int line = mcall->line;
 
     int expected = nargs;
@@ -2203,6 +2242,8 @@ void gen_module_access(CodeGen* gen, Ast* ast, int dst) {
         emit_module_object(gen, ast, dst);
         return;
     }
+    // DCE：`mod.member` 取值同样走 exports 按名字查（函数/变量都可能）⇒ 记名字引用
+    dce_note_name_ref(member);
 
     int mreg = reg_alloc(gen);
     emit_module_object(gen, ast, mreg);
@@ -2437,6 +2478,8 @@ void gen_struct_init(CodeGen* gen, Ast* ast, int dst) {
         gen_expr_to(gen, ast->u.struct_init.field_values[i], base + 1 + i);
     }
 
+    // DCE：`new T(...)` = 一次类型引用（也是 ctor 唯一被隐式调用的入口）
+    dce_note_type_ref(ast->u.struct_init.struct_name);
     ObjString* sname = str_copy(ast->u.struct_init.struct_name,
                                 (int)strlen(ast->u.struct_init.struct_name));
     int name_const = make_constant(gen, val_obj((Object*)sname));
@@ -2552,6 +2595,12 @@ void gen_safe_access(CodeGen* gen, Ast* ast, int dst) {
     } else {
         int nargs = ast->u.safe_access.args.count;
         const char* mname = ast->u.safe_access.name ? ast->u.safe_access.name : "";
+        // DCE：`obj?.m(...)` 也是 OP_GET_METHOD 的一处发射点（同样要记方法引用）
+        {
+            TypeInfo* sot = infer_expr_type(gen->sem, ast->u.safe_access.obj);
+            dce_note_method_ref((sot && sot->kind == TYPE_STRUCT) ? sot->struct_name : NULL, mname);
+            if (sot) type_free(sot);
+        }
         // callee + 实参必须连号（VM 按 A+i 取参），整块分配后把对象搬进来
         int base = reg_alloc_block(gen, nargs + 1);
         if (base != obj_reg) emit_mov(gen, base, obj_reg, line);

@@ -5,6 +5,7 @@
 // ============================================================================
 
 #include "codegen.h"
+#include "include/leno_dce.h"
 
 // --- 基础：写 4 字节指令的封装 ---
 
@@ -78,9 +79,11 @@ void emit_defglobal(CodeGen* gen, int src, int slot, int line) {
 // 全局函数直呼：R[base] = 全局函数[slot](R[base+1..base+nargs])
 //   slot / nargs 都必须在 8 位内（调用方保证；否则不发这条指令）
 void emit_call_global(CodeGen* gen, int base, int nargs, int slot, int line) {
+    dce_note_slot_ref(slot);   // DCE：直呼全局函数 = 对槽位的一次引用
     reg_encode_iABC(gen->chunk, OP_CALL_GLOBAL_FUNC, base, nargs, slot, line);
 }
 void emit_getglobalfunc_to(CodeGen* gen, int dst, int slot, int line) {
+    dce_note_slot_ref(slot);   // DCE：取函数值（含 codegen.c 里对 main 的那次）
     reg_encode_iABx(gen->chunk, OP_GETGLOBALFUNC, dst, slot, line);
 }
 
