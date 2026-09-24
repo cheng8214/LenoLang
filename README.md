@@ -304,8 +304,11 @@ leno -c hello.leno
 # 运行字节码
 leno_vm hello.lenb
 
-# 打包为独立 exe
+# 打包为独立 exe（exe + 依赖的原生库 → dist/）
 leno -p hello.leno
+
+# 单文件打包：库与资源全内嵌，只分发一个 exe
+leno -p --onefile hello.leno
 ```
 
 ## 打包与包管理
@@ -416,7 +419,9 @@ build/leno assert/run_tests.leno build/leno assert
 | `leno --debug-out <file> <file.leno>` | 字节码输出到指定文件 |
 | `leno --no-cache <file.leno>` | 禁用模块编译缓存 |
 | `leno -c <file.leno>` | 编译为 `.lenb` 字节码 |
-| `leno -p <file.leno>` | 打包为独立 exe |
+| `leno -p <file.leno>` | 打包为独立 exe（exe + 原生库副本） |
+| `leno -p --onefile <file.leno>` | 单文件打包（库与资源内嵌，只需分发一个 exe） |
+| `leno -p -o <目录> <file.leno>` | 指定打包输出目录（默认 `<源码目录>/dist`） |
 | `leno --init [name]` | 创建包项目 |
 | `leno --install [path]` | 安装包到全局缓存 |
 | `leno --install` | 安装当前项目所有依赖 |
@@ -490,6 +495,7 @@ LenoC/
 - [FFI 使用指南](docs/FFI使用指南.md) — 外部函数接口
 - [Threads 使用指南](docs/threads使用指南.md) — 多线程
 - [包管理与安装使用指南](docs/包管理与安装使用指南.md) — 包管理详解
+- [单文件打包使用指南](docs/单文件打包使用指南.md) — `-p --onefile` 与 `dirs.res_dir()`
 - [加密算法示例指南](docs/加密算法示例指南.md) — Base64 / AES / RSA / SHA 等纯 LenoC 实现
 - [性能优化记录](docs/性能优化记录.md) — 性能优化历史
 
