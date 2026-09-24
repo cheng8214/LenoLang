@@ -765,8 +765,43 @@ int lenolang_run_lenb(const char* filename) {
     return ret;
 }
 
+// --check-bin <file>：只校验「本 VM 能不能读出这个 .lenb」（不注册定义、不初始化 VM、不执行）
+// ----------------------------------------------------------------------------
+// 打包器（main.c 的 pack_vm_check_lenb）用它做**打包前握手**：编译器侧改过序列化
+// 格式 / LENO_BIN_VERSION 而 VM 二进制没重建时，产物会被内嵌进 exe 却读不出来
+// （双击即「内存反序列化失败: 5」= SERIALIZE_ERR_VERSION 闪退）⇒ 打包必须先失败。
+// 退出码：0 = 可读；2 = 不可读（报错文本与运行期同源）；其它由调用方按"非 0 即失败"处理。
+static int check_lenb_only(const char* filename) {
+    if (!serialize_is_binary_file(filename)) {
+        fprintf(stderr, "[错误] 不是有效的 .lenb 文件: %s\n", filename);
+        return 2;
+    }
+
+    Chunk chunk;
+    chunk_init(&chunk);
+    Scope* scope = NULL;
+
+    SerializeResult result = chunk_deserialize(filename, &chunk, &scope);
+    if (result != SERIALIZE_OK) {
+        fprintf(stderr, "[错误] 反序列化失败: %d\n", result);
+        chunk_free(&chunk);
+        return 2;
+    }
+
+    // 只校验：不 register_defs_from_chunk / 不 gc_init / 不 vm_run_chunk。
+    // 反序列化出的对象由进程退出交给 OS 回收（一次性短命进程，不做 gc_free_all）。
+    chunk_free(&chunk);
+    return 0;
+}
+
 // VM 主逻辑（平台无关）
 static int vm_run_main(int argc, char** argv) {
+    // --check-bin <file>：只校验不执行 —— 必须排在"自检内嵌数据"之前，
+    //   否则带内嵌数据的 VM 会先走自运行分支，命令行参数就被丢掉了。
+    if (argc >= 3 && argv[1] && strcmp(argv[1], "--check-bin") == 0) {
+        return check_lenb_only(argv[2]);
+    }
+
     // 自动检测 exe 尾部是否嵌入了 lenb 数据
     char exe_path[MAX_PATH_LEN];
     exe_path[0] = '\0';
@@ -802,6 +837,7 @@ static int vm_run_main(int argc, char** argv) {
     if (argc < 2) {
         printf("LenoLang VM - 独立运行时\n");
         printf("用法: leno_vm <file.lenb>\n");
+        printf("      leno_vm --check-bin <file.lenb>   只校验能否读出，不执行（打包前握手用）\n");
         return 0;
     }
 
@@ -816,13 +852,19 @@ int wmain(int argc, wchar_t* argv[]) {
     setvbuf(stdout, NULL, _IONBF, 0);
 
     // 设置全局参数
+    //   ⚠ 必须走 WideCharToMultiByte(CP_UTF8)：原来的 wcstombs 按 C locale 转换，
+    //   中文/Unicode 路径会被吞成 '?'（`leno_vm <中文路径>.lenb` 打不开；打包前的
+    //   --check-bin 握手也靠它）。编译器侧 main.c 的 wmain 是同一口径。
     g_argc = argc;
     g_argv = (char**)malloc(argc * sizeof(char*));
     if (g_argv) {
         for (int i = 0; i < argc; i++) {
-            size_t len = wcstombs(NULL, argv[i], 0);
-            g_argv[i] = (char*)malloc(len + 1);
-            wcstombs(g_argv[i], argv[i], len + 1);
+            int len = WideCharToMultiByte(CP_UTF8, 0, argv[i], -1, NULL, 0, NULL, NULL);
+            if (len <= 0) { g_argv[i] = NULL; continue; }
+            g_argv[i] = (char*)malloc(len);
+            if (g_argv[i]) {
+                WideCharToMultiByte(CP_UTF8, 0, argv[i], -1, g_argv[i], len, NULL, NULL);
+            }
         }
     }
     return vm_run_main(argc, g_argv);

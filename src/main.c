@@ -25,6 +25,7 @@
 #include <sys/stat.h>
 #else
 #include <sys/stat.h>
+#include <sys/wait.h>   // WIFEXITED/WEXITSTATUS（pack_vm_check_lenb 解 system() 的返回值）
 #include <dirent.h>
 #endif
 
@@ -1101,6 +1102,63 @@ static int pack_ensure_dir(const char* dir) {
 #endif
 }
 
+// ============================================================================
+// 打包前握手：让**即将内嵌的那个 VM** 校验本次产物能不能被它读出来（只校验、不执行）
+// ----------------------------------------------------------------------------
+// 为什么必须有（2026-09-25 实测事故）：VM 二进制与编译器各自带着 LENO_BIN_VERSION
+// 和各自的序列化读写实现。编译器侧一改（如"行号表 RLE"那次把版本升到 v3.0.2），
+// `build.bat` 只重建编译器，打包仍会内嵌**旧的** leno_vm*.exe ⇒ 产物进 exe 后一启动
+// 就「内存反序列化失败: 5」（5 = SERIALIZE_ERR_VERSION）闪退，而打包却报"成功" ✗。
+// 现在：握手不过 ⇒ 打包**失败**（不写 exe 文件），并提示先跑 build_vm。
+// 实现：Windows 用 CreateProcessW（UTF-16 ⇒ 中文路径可用；子进程继承本进程控制台
+//   ⇒ VM 的报错原样打在这里，便于定位）；POSIX 走 system()（路径用单引号包住）。
+// 子进程模式：`<vm> --check-bin <file>`（见 vm_main.c 的 check_lenb_only）。
+// 返回：子进程退出码（0 = 可读）；进程起不来返回 -1。
+// ============================================================================
+static int pack_vm_check_lenb(const char* vm_exe, const char* lenb_path) {
+#ifdef _WIN32
+    wchar_t* wvm = utf8_to_utf16(vm_exe);
+    wchar_t* wbin = utf8_to_utf16(lenb_path);
+    if (!wvm || !wbin) { free(wvm); free(wbin); return -1; }
+    size_t need = wcslen(wvm) + wcslen(wbin) + 32;
+    wchar_t* cmdline = (wchar_t*)malloc(need * sizeof(wchar_t));
+    if (!cmdline) { free(wvm); free(wbin); return -1; }
+    swprintf(cmdline, need, L"\"%s\" --check-bin \"%s\"", wvm, wbin);
+
+    STARTUPINFOW si;
+    PROCESS_INFORMATION pi;
+    memset(&si, 0, sizeof(si));
+    memset(&pi, 0, sizeof(pi));
+    si.cb = sizeof(si);
+    int rc = -1;
+    if (CreateProcessW(wvm, cmdline, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+        DWORD waited = WaitForSingleObject(pi.hProcess, 60000);
+        DWORD code = 1;
+        if (waited == WAIT_TIMEOUT) {
+            TerminateProcess(pi.hProcess, 124);
+            WaitForSingleObject(pi.hProcess, 5000);
+            code = 124;
+        } else if (!GetExitCodeProcess(pi.hProcess, &code)) {
+            code = 1;
+        }
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+        rc = (int)code;
+    }
+    free(cmdline);
+    free(wvm);
+    free(wbin);
+    return rc;
+#else
+    char cmd[MAX_PATH_LEN * 2 + 32];
+    snprintf(cmd, sizeof(cmd), "'%s' --check-bin '%s'", vm_exe, lenb_path);
+    int rc = system(cmd);
+    if (rc == -1) return -1;
+    if (WIFEXITED(rc)) return WEXITSTATUS(rc);
+    return 126;
+#endif
+}
+
 // 从文件运行
 int lenolang_run_file(const char* path) {
     // 检查是否是 .lenb 二进制文件
@@ -1636,6 +1694,27 @@ int lenolang_run_file(const char* path) {
             return -1;
         }
         fclose(vm_fp);
+
+        // ---- 打包前握手（2026-09-25）----
+        // 让即将内嵌的这个 VM 校验本次产物：读不出来 ⇒ 打包失败，**不产出坏 exe**。
+        // （以前会"打包成功"、双击时才以「内存反序列化失败: 5」闪退；见上面
+        //   pack_vm_check_lenb 的说明。）
+        {
+            int check_rc = pack_vm_check_lenb(vm_exe, bin_path);
+            if (check_rc != 0) {
+                fprintf(stderr, "[pack] 错误: 即将内嵌的 VM 读不了本次编译产物（VM 退出码 %d）\n",
+                        check_rc);
+                fprintf(stderr, "       VM: %s\n", vm_exe);
+                fprintf(stderr, "       常见原因: 编译器侧改过（序列化格式 / LENO_BIN_VERSION）"
+                                "而 VM 还是旧的\n");
+                fprintf(stderr, "       处理: 先运行 build_vm.bat 重建 leno_vm / leno_vm_gui，"
+                                "再重新打包\n");
+                fprintf(stderr, "       （本次未产出 exe；编译出的 .lenb 已保留: %s）\n", bin_path);
+                free(vm_data);
+                free(bin_path);
+                return -1;
+            }
+        }
 
         // resource.toml [pack] icon：把 **VM 副本**的应用图标换掉。
         // ⚠ 必须在这一步做（prepend 之前）：图标在 PE 资源段里，也就是文件最开头那段；
