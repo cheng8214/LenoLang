@@ -2,6 +2,7 @@
 #define LENO_PACKAGE_H
 
 #include <stdint.h>
+#include <stddef.h>   /* size_t */
 
 /* ============================================================================
  * 平台标识
@@ -106,6 +107,8 @@ typedef struct {
     int onefile;                          /* onefile = true → -p 默认单文件模式 */
     int resource_count;
     char* resources[MAX_PACK_RESOURCES];  /* 资源通配模式，语法见 package_install.c */
+    char* icon;                           /* icon = "app.ico" → 打包产物换成这个图标
+                                           * （相对包根；绝对路径也认）。NULL = 用 VM 自带图标。 */
 
     /* 元数据 */
     char* file_path;      /* resource.toml 的完整路径 */
@@ -387,6 +390,28 @@ int package_collect_pack_resources(const char* entry_file, PackRes** out, int* o
 
 /** 释放 package_collect_pack_resources 返回的结果 */
 void package_pack_res_free(PackRes* res, int count);
+
+/* --- 打包：把产物的应用图标换成应用指定的 .ico（resource.toml [pack] icon） --- */
+
+/**
+ * 把 exe_img（一个**完整的 PE 映像**）里的应用图标换成 ico_path 指定的图标。
+ *
+ * ⚠ 传的是"完整 PE 映像"，不是最终产物路径：最终 exe 尾部还挂着资源段与 lenb，
+ *   而 EndUpdateResource 会按 PE 结构重写整个文件 ⇒ 会丢掉尾部数据。调用方必须在
+ *   **prepend 之前**、拿干净的 VM 映像来调本函数。
+ *
+ * @param exe_img   完整 PE 映像字节
+ * @param exe_size  字节数
+ * @param ico_path  .ico 路径（UTF-8，中文路径安全）；相对路径由调用方先解析成绝对
+ * @param out       成功时写回**新分配**的映像（调用方 free；失败时保持 NULL）
+ * @param out_size  新映像字节数
+ * @param err       失败原因（可传 NULL）
+ * @return 0 成功；-1 失败；-2 本平台不支持（非 Windows，调用方提示后忽略）
+ */
+int package_icon_replace(const unsigned char* exe_img, size_t exe_size,
+                         const char* ico_path,
+                         unsigned char** out, size_t* out_size,
+                         char* err, size_t err_size);
 
 /**
  * 复制单个文件（Windows 走 CopyFileW，UTF-8/中文路径安全）。目标已存在则覆盖。

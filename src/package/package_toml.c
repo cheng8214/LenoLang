@@ -535,7 +535,7 @@ void package_config_free(PackageConfig* cfg) {
  * 目前识别 [pack] 段：
  *   onefile   = true
  *   resources = 通配模式数组（images 目录递归全部、fonts 目录下的 ttf 等）
- * 之后打包相关的配置（如图标 icon）也放这个文件。
+ *   icon      = "app.ico"  单文件/目录模式打包产物要换成的图标（相对包根）
  * ================================================================ */
 
 PackConfig* package_pack_config_parse(const char* file_path) {
@@ -578,9 +578,13 @@ PackConfig* package_pack_config_parse(const char* file_path) {
             } else if (strcmp(key, "resources") == 0) {
                 toml_parse_string_array(val, cfg->resources, MAX_PACK_RESOURCES,
                                         &cfg->resource_count);
+            } else if (strcmp(key, "icon") == 0) {
+                /* 单个字符串（toml_parse_kv 已去引号）；重复出现时后者覆盖前者 */
+                free(cfg->icon);
+                cfg->icon = (val[0] != '\0') ? str_dup(val) : NULL;
             }
         }
-        /* 未知段/未知键：静默忽略（为将来 icon 等配置留余地） */
+        /* 未知段/未知键：静默忽略（其它打包相关配置以后也放这里） */
 
         free(key);
         free(val);
@@ -596,6 +600,7 @@ void package_pack_config_free(PackConfig* cfg) {
     for (int i = 0; i < cfg->resource_count; i++) {
         free(cfg->resources[i]);
     }
+    free(cfg->icon);
     free(cfg->file_path);
     free(cfg);
 }

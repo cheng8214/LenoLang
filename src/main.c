@@ -1389,6 +1389,9 @@ int lenolang_run_file(const char* path) {
         int pack_res_count = 0;
         unsigned char* res_blob = NULL;
         size_t res_blob_size = 0;
+        // resource.toml [pack] icon 解析出来的**绝对路径**（空串 = 没声明）。
+        // 两种模式都用它：图标是 prepend 进产物的 VM 基底上的，与是否单文件无关。
+        char pack_icon[MAX_PATH_LEN] = {0};
         {
             const char* entry_abs2 = error_get_filename();
             char* proj = entry_abs2 ? package_find_project_root(entry_abs2) : NULL;
@@ -1420,6 +1423,15 @@ int lenolang_run_file(const char* path) {
                         printf("[pack] 提示: resource.toml 声明了 %d 个资源模式，但当前不是单文件模式，\n"
                                "       dist/ 不会带上这些资源（需要单文件请加 --onefile 或 [pack] onefile = true）\n",
                                res_cfg->resource_count);
+                    }
+                    // [pack] icon：相对包根（root 已带结尾分隔符）；写绝对路径的也认
+                    if (res_cfg->icon && res_cfg->icon[0]) {
+                        const char* ic = res_cfg->icon;
+                        int abs_icon = (ic[0] == '/' || ic[0] == '\\' ||
+                                        (((ic[0] >= 'A' && ic[0] <= 'Z') ||
+                                          (ic[0] >= 'a' && ic[0] <= 'z')) && ic[1] == ':'));
+                        if (abs_icon) snprintf(pack_icon, sizeof(pack_icon), "%s", ic);
+                        else snprintf(pack_icon, sizeof(pack_icon), "%s%s", root, ic);
                     }
                     package_pack_config_free(res_cfg);
                 }
@@ -1624,6 +1636,35 @@ int lenolang_run_file(const char* path) {
             return -1;
         }
         fclose(vm_fp);
+
+        // resource.toml [pack] icon：把 **VM 副本**的应用图标换掉。
+        // ⚠ 必须在这一步做（prepend 之前）：图标在 PE 资源段里，也就是文件最开头那段；
+        //   而 EndUpdateResource 会按 PE 结构重写整个文件 —— 对**最终 exe**（尾部还挂着
+        //   资源段 + lenb）调用会把它们一起丢掉。详见 src/package/package_icon.c。
+        if (pack_icon[0]) {
+#ifdef _WIN32
+            unsigned char* vm_patched = NULL;
+            size_t vm_patched_size = 0;
+            char icon_err[256];
+            int icon_rc = package_icon_replace(vm_data, (size_t)vm_size, pack_icon,
+                                               &vm_patched, &vm_patched_size,
+                                               icon_err, sizeof(icon_err));
+            if (icon_rc == 0) {
+                free(vm_data);
+                vm_data = vm_patched;
+                vm_size = (long)vm_patched_size;
+                printf("[pack] 图标: %s\n", pack_icon);
+            } else {
+                // 用户明确指定了图标 ⇒ 失败就响亮中止，别静默给一个没图标的产物
+                fprintf(stderr, "[pack] 错误: 替换图标失败: %s\n", icon_err);
+                free(vm_data);
+                free(bin_path);
+                return -1;
+            }
+#else
+            printf("[pack] 提示: 本平台不支持替换 PE 图标，[pack] icon 已忽略\n");
+#endif
+        }
 
         // 读取编译好的 .lenb 文件
 #ifdef _WIN32

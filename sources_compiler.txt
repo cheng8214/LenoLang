@@ -30,3 +30,4 @@ src\package\package_toml.c
 src\package\package_init.c
 src\package\package_resolve.c
 src\package\package_install.c
+src\package\package_icon.c
