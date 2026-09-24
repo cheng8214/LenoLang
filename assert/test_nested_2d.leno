@@ -1,0 +1,228 @@
+// test_nested_2d.leno — 二维/嵌套数组全链路 + 泛型嵌套回归测试
+//
+// 覆盖矩阵：
+//   [1] 泛型容器 Box[T]：字段 Array[T]（泛型参数作元素类型）跨模块 use
+//   [2] Box[Array[int]]：泛型实参本身是数组类型（泛型嵌套实例化）
+//   [3] Grid2D[T]：字段 Array[Array[T]] 三层嵌套（模块导出）
+//   [4] 二维数组作为函数入参/返回值跨模块传递
+//   [5] 模块导出二维常量 W2D 的下标链访问
+//   [6] 本地二维数组：字面量、双下标读写、add 嵌套行、len 链
+//   [7] 泛型容器 Stack 内部 Array[T]（对齐 web_generic.Stack 的真实写法）
+
+import "test_nested_2d_mod.leno" as m
+use m.(Box, Grid2D, Board, boardSum, makeBoard, gridFill)
+
+// ---------- [6] 本地二维数组 ----------
+func test_local_2d() {
+    Array[Array[int]] g = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+    assert_eq(g.len(), 3)
+    assert_eq(g[0].len(), 3)
+    assert_eq(g[1][1], 5)
+    assert_eq(g[2][0], 7)
+
+    // 双下标写回
+    g[1][1] = 50
+    assert_eq(g[1][1], 50)
+
+    // add 一整行
+    Array[int] extra = [10, 11, 12]
+    g.add(extra)
+    assert_eq(g.len(), 4)
+    assert_eq(g[3][2], 12)
+
+    // 行内 add + 读回
+    g[0].add(99)
+    assert_eq(g[0].len(), 4)
+    assert_eq(g[0][3], 99)
+
+    // float 二维
+    Array[Array[float]] f = [[1.5, 2.5], [3.5, 4.5]]
+    assert_eq(f[1][0], 3.5)
+    f[0][1] = 20.5
+    assert_eq(f[0][1], 20.5)
+
+    // string 二维
+    Array[Array[string]] s = [["a", "b"], ["c", "d"]]
+    assert_eq(s[1][0], "c")
+    s[0][0] = "z"
+    assert_eq(s[0][0], "z")
+
+    print("test_nested_2d [6] local_2d passed")
+}
+
+// ---------- [1] Box[T]：字段 Array[T] ----------
+func test_box_generic_field() {
+    Box[int] b = new Box[int]()
+    b.init()
+    b.push(10)
+    b.push(20)
+    b.push(30)
+    assert_eq(b.size, 3)
+    assert_eq(b.get(0), 10)
+    assert_eq(b.get(2), 30)
+    assert_eq(b.pop(), 30)
+    assert_eq(b.size, 2)
+
+    Box[string] sb = new Box[string]()
+    sb.init()
+    sb.push("hello")
+    assert_eq(sb.get(0), "hello")
+
+    print("test_nested_2d [1] box_generic_field passed")
+}
+
+// ---------- [2] Box[Array[int]]：泛型实参是数组 ----------
+func test_box_of_array() {
+    // 泛型嵌套实例化：T = Array[int]
+    Box[Array[int]] b = new Box[Array[int]]()
+    b.init()
+    Array[int] row1 = [1, 2, 3]
+    Array[int] row2 = [4, 5]
+    b.push(row1)
+    b.push(row2)
+    assert_eq(b.size, 2)
+
+    // get(i) 返回 T = Array[int]，下标链继续访问
+    Array[int] first = b.get(0)
+    assert_eq(first.len(), 3)
+    assert_eq(first[1], 2)
+
+    // 直接双下标：b.get(1)[0]
+    assert_eq(b.get(1)[0], 4)
+
+    // 经 pop 取回
+    Array[int] back = b.pop()
+    assert_eq(back.len(), 2)
+    assert_eq(back[1], 5)
+
+    print("test_nested_2d [2] box_of_array passed")
+}
+
+// ---------- [3] Grid2D[T]：Array[Array[T]] 字段 ----------
+func test_grid2d() {
+    Grid2D[int] g = new Grid2D[int]()
+    g.make(3, 2, 0)
+    assert_eq(g.w, 3)
+    assert_eq(g.h, 2)
+    assert_eq(g.get(0, 0), 0)
+    assert_eq(g.get(1, 2), 0)
+
+    g.set(0, 1, 42)
+    g.set(1, 2, 77)
+    assert_eq(g.get(0, 1), 42)
+    assert_eq(g.get(1, 2), 77)
+
+    // 泛型实参为 string
+    Grid2D[string] gs = new Grid2D[string]()
+    gs.make(2, 2, "x")
+    assert_eq(gs.get(1, 1), "x")
+    gs.set(0, 0, "o")
+    assert_eq(gs.get(0, 0), "o")
+
+    // 直接摸 rows 字段（Array[Array[T]] 跨模块字段访问）
+    assert_eq(gs.rows.len(), 2)
+    assert_eq(gs.rows[1][0], "x")
+
+    print("test_nested_2d [3] grid2d passed")
+}
+
+// ---------- [4] 二维数组跨模块函数收发 ----------
+func test_cross_module_2d() {
+    // 入参：本地二维数组 → 模块函数求和
+    Array[Array[int]] b = [[1, 2], [3, 4]]
+    assert_eq(boardSum(b), 10)
+
+    // 返回值：模块函数 → 本地二维数组
+    Array[Array[int]] made = makeBoard(3)
+    assert_eq(made.len(), 3)
+    assert_eq(made[2].len(), 3)
+    assert_eq(made[2][1], 21)   // r*10+c = 2*10+1
+
+    // 引用语义：gridFill 原地改，本地可见
+    gridFill(made, 9)
+    assert_eq(made[0][0], 9)
+    assert_eq(made[2][2], 9)
+    assert_eq(boardSum(made), 81)
+
+    // Board struct：init 里字面量初始化二维字段
+    Board bd = new Board()
+    bd.init()
+    assert_eq(bd.cells.len(), 2)
+    assert_eq(bd.cells[1][1], 0)
+    bd.cells[0][0] = 5
+    assert_eq(bd.cells[0][0], 5)
+    assert_eq(boardSum(bd.cells), 5)
+
+    print("test_nested_2d [4] cross_module_2d passed")
+}
+
+// ---------- [5] 模块导出二维常量 ----------
+func test_exported_2d_const() {
+    assert_eq(m.W2D.len(), 2)
+    assert_eq(m.W2D[0].len(), 3)
+    assert_eq(m.W2D[0][0], 1)
+    assert_eq(m.W2D[1][2], 6)
+
+    // 类型标注收窄后链式下标
+    Array[Array[int]] w = m.W2D
+    assert_eq(w[1][0], 4)
+
+    print("test_nested_2d [5] exported_2d_const passed")
+}
+
+// ---------- [7] Stack 惯用法（web_generic.Stack 的等价最小复现）----------
+struct Stack[T] {
+    Array[T] items
+    int size = 0
+
+    func init() {
+        self.items = []
+        self.size = 0
+    }
+    func push(T val) {
+        self.items.add(val)
+        self.size = self.size + 1
+    }
+    func pop(): T {
+        if self.size == 0 { return null }
+        self.size = self.size - 1
+        return self.items[self.size]
+    }
+    func peek(): T {
+        if self.size == 0 { return null }
+        return self.items[self.size - 1]
+    }
+}
+
+func test_local_stack() {
+    Stack[int] st = new Stack[int]()
+    st.init()
+    st.push(1)
+    st.push(2)
+    assert_eq(st.peek(), 2)
+    assert_eq(st.pop(), 2)
+    assert_eq(st.pop(), 1)
+    assert_eq(st.pop(), null)   // 空栈返回 null
+
+    // Stack[Array[int]]：本文件最核心的泛型嵌套用例
+    Stack[Array[int]] st2 = new Stack[Array[int]]()
+    st2.init()
+    Array[int] a = [7, 8]
+    st2.push(a)
+    assert_eq(st2.peek()[0], 7)
+    Array[int] out = st2.pop()
+    assert_eq(out[1], 8)
+
+    print("test_nested_2d [7] local_stack passed")
+}
+
+main() {
+    test_local_2d()
+    test_box_generic_field()
+    test_box_of_array()
+    test_grid2d()
+    test_cross_module_2d()
+    test_exported_2d_const()
+    test_local_stack()
+    print("=== test_nested_2d ALL passed ===")
+}
