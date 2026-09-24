@@ -1148,6 +1148,35 @@
                                 is_struct_method = 1;
                             }
 
+                            // ★ 前向定义的 struct（定义在使用点之后）方法：func_table 占位符
+                            //   要到真实访问 struct 定义时才注册 ⇒ 这里补 root AST 兜底
+                            //   （对齐 visit_expr.inc 的同名回退），否则前向方法调用误报"没有方法"
+                            if (!is_struct_method && obj_type->kind == TYPE_STRUCT) {
+                                for (int si = 0; si < s->root->u.block.count && !is_struct_method; si++) {
+                                    Ast* stmt = s->root->u.block.items[si];
+                                    Ast* sdef = NULL;
+                                    if (stmt->kind == AST_STRUCT_DEF && stmt->u.struct_def.name &&
+                                        strcmp(stmt->u.struct_def.name, obj_type->struct_name) == 0) {
+                                        sdef = stmt;
+                                    } else if (stmt->kind == AST_EXPORT && stmt->u.export.decl &&
+                                               stmt->u.export.decl->kind == AST_STRUCT_DEF &&
+                                               stmt->u.export.decl->u.struct_def.name &&
+                                               strcmp(stmt->u.export.decl->u.struct_def.name, obj_type->struct_name) == 0) {
+                                        sdef = stmt->u.export.decl;
+                                    }
+                                    if (sdef) {
+                                        for (int mi = 0; mi < sdef->u.struct_def.method_count; mi++) {
+                                            Ast* m = sdef->u.struct_def.methods[mi];
+                                            if (m && m->kind == AST_FUNC_DEF &&
+                                                strcmp(m->u.func.name, method_name) == 0) {
+                                                is_struct_method = 1;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
                             if (!is_struct_method) {
                                 int face_param_count = 0;
                                 TypeKind face_return_type = TYPE_ANY;
@@ -1238,7 +1267,14 @@
                                     if (method_ast && method_ast->kind == AST_FUNC_DEF &&
                                         strcmp(method_ast->u.func.name, method_name) == 0) {
                                         int actual_arity = ast->u.module_call.args.count;
-                                        int method_param_count = method_ast->u.func.pcnt - 1;
+                                        // ★ 前向定义时方法 AST 未变换（self 未在 visit_type_def
+                                        //   阶段前置）⇒ 按 params[0] 是否为 "self" 调整个数与下标
+                                        int has_self = method_ast->u.func.pcnt > 0 &&
+                                            method_ast->u.func.params &&
+                                            method_ast->u.func.params[0] &&
+                                            strcmp(method_ast->u.func.params[0], "self") == 0;
+                                        int self_off = has_self ? 1 : 0;
+                                        int method_param_count = method_ast->u.func.pcnt - self_off;
                                         int default_cnt = method_ast->u.func.default_count;
                                         int required_cnt = method_param_count - default_cnt;
                                         if (actual_arity < required_cnt || actual_arity > method_param_count) {
@@ -1294,22 +1330,38 @@
                                             }
 
                                             for (int i = 0; i < actual_arity; i++) {
-                                                TypeInfo* expected_type = method_ast->u.func.param_types[i + 1];
+                                                // +1 跳过 self（前向定义时 self 还没前置，偏移为 0）
+                                                TypeInfo* expected_type = method_ast->u.func.param_types[i + self_off];
                                                 if (!expected_type) continue;
 
                                                 TypeInfo* check_type = expected_type;
                                                 if (gp_count > 0) {
                                                     for (int gi = 0; gi < gp_count; gi++) {
-                                                        TypeInfo* sub = type_substitute(check_type, gp_names[gi], gp_types[gi]);
-                                                        if (sub != check_type) {
-                                                            check_type = sub;
-                                                        }
+                                                        // ★ 用双形态替换（TYPE_GENERIC_PARAM + TYPE_STRUCT
+                                                        //   占位形参都认）：前向定义时方法参数里的 T 是
+                                                        //   "struct T" 占位，type_substitute 不认 ⇒ 残留
+                                                        //   占位会把 int 实参误判为不匹配
+                                                        TypeInfo* sub = semantic_substitute_generic_param(check_type, gp_names[gi], gp_types[gi]);
+                                                        // 首轮的 check_type 是 AST 拥有的 param_types[i]，
+                                                        // 不能释放；之后的中间副本由这里释放
+                                                        if (check_type != expected_type) type_free(check_type);
+                                                        check_type = sub;
                                                     }
                                                 }
 
                                                 TypeInfo* arg_type = infer_expr_type(s, ast->u.module_call.args.items[i]);
                                                 if (arg_type && arg_type->kind != TYPE_ANY && check_type->kind != TYPE_ANY) {
-                                                    if (!type_is_compatible(check_type, arg_type)) {
+                                                    // 替换后仍是"struct 形参名"占位 ⇒ 泛型参数，不比较
+                                                    int is_generic = 0;
+                                                    if (check_type->kind == TYPE_STRUCT && check_type->struct_name &&
+                                                        struct_def_ast->u.struct_def.type_params) {
+                                                        for (int tp = 0; tp < struct_def_ast->u.struct_def.type_param_count; tp++) {
+                                                            if (strcmp(check_type->struct_name, struct_def_ast->u.struct_def.type_params[tp]) == 0) {
+                                                                is_generic = 1; break;
+                                                            }
+                                                        }
+                                                    }
+                                                    if (!is_generic && !type_is_compatible(check_type, arg_type)) {
                                                         char msg[BUFFER_MEDIUM];
                                                         char idx_str[16];
                                                         snprintf(idx_str, sizeof(idx_str), "%d", i + 1);

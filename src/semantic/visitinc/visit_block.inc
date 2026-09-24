@@ -41,6 +41,18 @@
                                 sym->struct_field_names[j] = strdup(stmt->u.struct_def.field_names[j]);
                                 sym->struct_field_types[j] = type_copy(stmt->u.struct_def.field_types[j]);
                             }
+                            // 泛型形参名也要预注册：前向定义的泛型 struct（定义在 main 之后）
+                            // 在 main 体内被检查时，符号还是这份预扫描注册的残缺版；
+                            // infer_field_type 靠 sym->struct_type_params + 实例泛型实参
+                            // 做字段类型替换（如 Array[T] items → Array[int] items），缺了它
+                            // 元素方法调用会误报"期望类型: struct"
+                            if (stmt->u.struct_def.type_param_count > 0 && stmt->u.struct_def.type_params) {
+                                sym->struct_type_param_count = stmt->u.struct_def.type_param_count;
+                                sym->struct_type_params = (char**)malloc(sizeof(char*) * stmt->u.struct_def.type_param_count);
+                                for (int j = 0; j < stmt->u.struct_def.type_param_count; j++) {
+                                    sym->struct_type_params[j] = strdup(stmt->u.struct_def.type_params[j]);
+                                }
+                            }
                         }
                     }
                 } else if (stmt->kind == AST_FACE_DEF) {

@@ -578,13 +578,30 @@
                             for (int fi = 0; fi < struct_sym->struct_field_count; fi++) {
                                 if (strcmp(struct_sym->struct_field_names[fi], field_name) == 0) {
                                     TypeInfo* field_type = struct_sym->struct_field_types[fi];
-                                    if (field_type && !type_is_compatible(field_type, value_type)) {
+                                    // 泛型 struct 实例：字段类型里的形参（Array[T] 的 T）
+                                    // 要用实例的泛型实参替换后再比较，否则前向定义的
+                                    // 泛型 struct（字段类型还是"struct T"占位）会误报
+                                    TypeInfo* check_type = field_type;
+                                    int check_owned = 0;
+                                    if (obj_type->generic_count > 0 && obj_type->generic_args &&
+                                        struct_sym->struct_type_param_count > 0 && struct_sym->struct_type_params) {
+                                        check_type = type_copy(field_type);
+                                        for (int gi = 0; gi < struct_sym->struct_type_param_count && gi < obj_type->generic_count; gi++) {
+                                            TypeInfo* substituted = semantic_substitute_generic_param(check_type,
+                                                struct_sym->struct_type_params[gi], obj_type->generic_args[gi]);
+                                            type_free(check_type);
+                                            check_type = substituted;
+                                        }
+                                        check_owned = 1;
+                                    }
+                                    if (check_type && !type_is_compatible(check_type, value_type)) {
                                         char msg[BUFFER_MEDIUM];
                                         format_detailed_type_error_ex(msg, sizeof(msg),
-                                            field_type, value_type,
+                                            check_type, value_type,
                                             "字段赋值类型不匹配", field_name);
                                         error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                                     }
+                                    if (check_owned) type_free(check_type);
                                     break;
                                 }
                             }

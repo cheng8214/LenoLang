@@ -182,6 +182,18 @@ void semantic_analyze(Semantic* s, Ast* ast) {
                         sym->struct_field_names[j] = strdup(stmt->u.struct_def.field_names[j]);
                         sym->struct_field_types[j] = type_copy(stmt->u.struct_def.field_types[j]);
                     }
+                    // 泛型形参名也要预注册：前向定义的泛型 struct（定义在使用点之后）
+                    // 在函数体检查时，符号还是这份预注册的残缺版；infer_field_type
+                    // 靠 sym->struct_type_params + 实例泛型实参做字段类型替换
+                    // （如 Array[T] items → Array[int] items），缺了它元素方法调用
+                    // 会误报"期望类型: struct"
+                    if (stmt->u.struct_def.type_param_count > 0 && stmt->u.struct_def.type_params) {
+                        sym->struct_type_param_count = stmt->u.struct_def.type_param_count;
+                        sym->struct_type_params = (char**)malloc(sizeof(char*) * stmt->u.struct_def.type_param_count);
+                        for (int j = 0; j < stmt->u.struct_def.type_param_count; j++) {
+                            sym->struct_type_params[j] = strdup(stmt->u.struct_def.type_params[j]);
+                        }
+                    }
                 }
                 // 同时注册到全局 struct 定义表，确保 type_is_compatible 能找到
                 if (stmt->u.struct_def.name && !struct_def_find(stmt->u.struct_def.name)) {

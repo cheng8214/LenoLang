@@ -268,6 +268,33 @@ TypeInfo* infer_method_return_type(Semantic* s, TypeInfo* obj_type, const char* 
     return NULL;
 }
 
+// 泛型形参在字段类型里常被解析成 TYPE_STRUCT 占位（struct_name=形参名，如 "T"），
+// type_substitute 只认 TYPE_GENERIC_PARAM ⇒ 对这类占位补替换（对齐 visit_expr.inc
+// 自定义方法检查里的 is_generic 特判）。语义与 type_substitute 完全一致：
+// **不释放输入**（输入可能是方法 AST 拥有的 param_types[]），返回新类型由调用方释放。
+TypeInfo* semantic_substitute_generic_param(TypeInfo* type, const char* param_name, TypeInfo* concrete) {
+    if (!type) return type;
+    if (type->kind == TYPE_GENERIC_PARAM && type->type_param_name &&
+        strcmp(type->type_param_name, param_name) == 0) {
+        return type_copy(concrete);
+    }
+    if (type->kind == TYPE_STRUCT && type->struct_name &&
+        strcmp(type->struct_name, param_name) == 0) {
+        return type_copy(concrete);
+    }
+    TypeInfo* result = type_copy(type);
+    if (result->element_type) {
+        result->element_type = semantic_substitute_generic_param(result->element_type, param_name, concrete);
+    }
+    if (result->key_type) {
+        result->key_type = semantic_substitute_generic_param(result->key_type, param_name, concrete);
+    }
+    if (result->value_type) {
+        result->value_type = semantic_substitute_generic_param(result->value_type, param_name, concrete);
+    }
+    return result;
+}
+
 // 推断 struct/cstruct/clib/dict 对象访问 field_name 的字段类型
 // 包含泛型替换、cstruct 特殊处理（c_layout_type_to_leno）、变量符号回退、全局 cstruct 表查找
 // out_field_index: 输出字段索引（可为 NULL 表示不需要）
@@ -291,7 +318,7 @@ TypeInfo* infer_field_type(Semantic* s, TypeInfo* obj_type, const char* field_na
                         if (obj_type->generic_count > 0 && obj_type->generic_args &&
                             struct_def_sym->struct_type_param_count > 0 && struct_def_sym->struct_type_params) {
                             for (int j = 0; j < struct_def_sym->struct_type_param_count && j < obj_type->generic_count; j++) {
-                                TypeInfo* substituted = type_substitute(result,
+                                TypeInfo* substituted = semantic_substitute_generic_param(result,
                                     struct_def_sym->struct_type_params[j], obj_type->generic_args[j]);
                                 type_free(result);
                                 result = substituted;
