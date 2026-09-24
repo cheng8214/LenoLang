@@ -15,6 +15,9 @@
 #include <sys/stat.h>
 #include <dirent.h>
 #endif
+#ifdef __APPLE__
+#include <mach-o/dyld.h>   /* _NSGetExecutablePath：macOS 没有 /proc/self/exe */
+#endif
 
 // VM 独立运行时 - 不依赖编译器
 // 启动时自动检测 exe 尾部是否嵌入了 lenb 数据：
@@ -769,12 +772,39 @@ int lenolang_run_lenb(const char* filename) {
 static int vm_run_main(int argc, char** argv) {
     // 自动检测 exe 尾部是否嵌入了 lenb 数据
     char exe_path[MAX_PATH_LEN];
+    exe_path[0] = '\0';
 #ifdef _WIN32
     wchar_t wexe_path[MAX_PATH_LEN];
     GetModuleFileNameW(NULL, wexe_path, MAX_PATH_LEN);
     WideCharToMultiByte(CP_UTF8, 0, wexe_path, -1, exe_path, MAX_PATH_LEN, NULL, NULL);
+#elif defined(__APPLE__)
+    /* macOS 没有 /proc/self/exe：改用 dyld 的 _NSGetExecutablePath。
+     * 它可能返回相对路径、或含符号链接的路径 ⇒ 用 realpath 规范化
+     * （realpath 失败就用原值）。 */
+    {
+        char raw[MAX_PATH_LEN];
+        uint32_t sz = (uint32_t)sizeof(raw);
+        if (_NSGetExecutablePath(raw, &sz) == 0) {
+            char resolved[MAX_PATH_LEN];
+            if (realpath(raw, resolved)) {
+                snprintf(exe_path, sizeof(exe_path), "%s", resolved);
+            } else {
+                snprintf(exe_path, sizeof(exe_path), "%s", raw);
+            }
+        }
+    }
 #else
-    { ssize_t _r = readlink("/proc/self/exe", exe_path, sizeof(exe_path)); (void)_r; }
+    /* Linux: /proc/self/exe。
+     * ⚠ readlink **不写结束符**，而 exe_path 是未初始化的栈缓冲 ⇒ 若不补 '\0'，
+     *   缓冲区尾部的垃圾会被当成路径的一部分，后续 fopen 必然失败
+     *   （表现为"检测不到内嵌数据"，单文件 exe 直接退化成命令行工具）。
+     *   所以这里必须：用 sizeof-1 限制长度 + 自己补 '\0' + 判失败。
+     * 取不到就留空串 ⇒ 走"无嵌入数据"分支（fail-closed，与 serialize.c 一致）。 */
+    {
+        ssize_t rl = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+        if (rl > 0) exe_path[rl] = '\0';
+        else exe_path[0] = '\0';
+    }
 #endif
 
     unsigned char* embedded_data = NULL;

@@ -113,6 +113,9 @@ static void free_executable_memory(void* ptr, size_t size);
 #else
 #include <dlfcn.h>
 #endif
+#ifdef __APPLE__
+#include <mach-o/dyld.h>   /* _NSGetExecutablePath：macOS 没有 /proc/self/exe */
+#endif
 
 /* ===== FFI 库对象类型 ===== */
 /* ObjType 枚举值在 leno_value.h 中定义: OBJ_FFI_LIBRARY, OBJ_FFI_POINTER */
@@ -330,9 +333,29 @@ static void get_exe_dir(char* dir, int dir_size) {
     }
 #else
     char exe_path[MAX_PATH_LEN];
+    exe_path[0] = '\0';
+#ifdef __APPLE__
+    /* macOS 没有 /proc/self/exe：改用 dyld 的 _NSGetExecutablePath。
+     * 它可能返回相对路径、或含符号链接的路径 ⇒ 用 realpath 规范化
+     * （realpath 失败就用原值，总比取不到强）。 */
+    {
+        char raw[MAX_PATH_LEN];
+        uint32_t sz = (uint32_t)sizeof(raw);
+        if (_NSGetExecutablePath(raw, &sz) == 0) {
+            char resolved[MAX_PATH_LEN];
+            if (realpath(raw, resolved)) {
+                snprintf(exe_path, sizeof(exe_path), "%s", resolved);
+            } else {
+                snprintf(exe_path, sizeof(exe_path), "%s", raw);
+            }
+        }
+    }
+#else
+    /* Linux: /proc/self/exe（readlink 不写结束符 ⇒ 必须自己补 '\0'） */
     ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
-    if (len > 0) {
-        exe_path[len] = '\0';
+    if (len > 0) exe_path[len] = '\0';
+#endif
+    if (exe_path[0] != '\0') {
         extract_dir(exe_path, dir, dir_size);
     } else {
         dir[0] = '\0';
