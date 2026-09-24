@@ -236,6 +236,40 @@ main() {
 ")
     ce.expect_error(f12, "0x 空数字报错不静默", "十六进制字面量需要 0x 后跟至少一位十六进制数字", 2)
 
+    // ---- G1：枚举成员拼错 → 在成员名列表找相似 ----
+    var f13 = dirs.join(work, "enum_member_typo.leno")
+    files.write(f13, @"enum Color {
+    RED = 1
+    GREEN = 2
+}
+main() {
+    var c = Color.REDD
+    print(c)
+}
+")
+    ce.expect_error(f13, "枚举成员拼错给建议", "是否想用 'RED'？", 0)
+
+    // ---- G2：Python 大写首字面量（True）→ 提示小写写法 ----
+    var f14 = dirs.join(work, "capital_true.leno")
+    files.write(f14, @"main() {
+    while True {
+        print(""loop"")
+        break
+    }
+}
+")
+    ce.expect_error(f14, "大写 True 提示小写字面量", "字面量写法是小写 'true'", 0)
+
+    // 正向：小写 true 合法（G2 不得误伤）
+    var ok7 = dirs.join(work, "lowercase_true.leno")
+    files.write(ok7, @"main() {
+    var f = true
+    while f { break }
+    print(""ok"")
+}
+")
+    ce.expect_ok(ok7, "小写 true 合法不误伤", "ok")
+
     // ---- 正向：in 成员测试表达式照常工作（D3 不得误伤）----
     var ok3 = dirs.join(work, "in_operator_ok.leno")
     files.write(ok3, @"main() {

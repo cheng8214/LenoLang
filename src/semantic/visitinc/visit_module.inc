@@ -1997,8 +1997,19 @@
                         }
                     } else {
                         char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg), "枚举 '%s' 中没有成员 '%s'",
-                                 ast->u.module_access.module_name, mname);
+                        // G1: 枚举成员拼错提示——在成员名列表里找最相似的候选
+                        const char* hint = "";
+                        if (var_sym->enum_value_names) {
+                            hint = get_similar_in_names((const char**)var_sym->enum_value_names,
+                                                        var_sym->enum_value_count, mname);
+                        }
+                        if (hint[0]) {
+                            snprintf(msg, sizeof(msg), "枚举 '%s' 中没有成员 '%s'%s",
+                                     ast->u.module_access.module_name, mname, hint);
+                        } else {
+                            snprintf(msg, sizeof(msg), "枚举 '%s' 中没有成员 '%s'",
+                                     ast->u.module_access.module_name, mname);
+                        }
                         error_add_at(ERR_UNDEFINED_VAR, ast->line, ast->column, msg);
                     }
                 } else if (is_struct_type) {

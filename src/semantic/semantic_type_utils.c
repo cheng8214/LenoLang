@@ -829,11 +829,35 @@ static int levenshtein(const char* a, const char* b) {
     return d[la][lb];
 }
 
+// G2: Python 习惯的大写首字面量（True/False/Null）——true/false/null 是关键字
+// 不在任何符号表，符号表扫描给不出候选；大小写不敏感比对直接给出写法提示。
+// 命中且大小写不一致时返回提示串，否则返回空串。
+static const char* literal_case_hint(const char* name) {
+    static char hint[128];
+    hint[0] = '\0';
+    if (!name || !name[0]) return hint;
+    static const char* literal_keywords[] = {"true", "false", "null"};
+    for (int i = 0; i < 3; i++) {
+        if (_stricmp(name, literal_keywords[i]) == 0 && strcmp(name, literal_keywords[i]) != 0) {
+            snprintf(hint, sizeof(hint),
+                     "\n  提示: 字面量写法是小写 '%s'（Leno 大小写敏感）", literal_keywords[i]);
+            return hint;
+        }
+    }
+    return hint;
+}
+
 // 在当前作用域查找最相似的变量名，返回提示字符串（静态缓冲区）
 const char* get_similar_name_hint(Scope* scope, const char* name) {
     static char hint[256];
     hint[0] = '\0';
     if (!scope || !name || !name[0]) return hint;
+
+    // G2: 大写首字面量优先提示（True/False/Null → true/false/null）
+    {
+        const char* kw = literal_case_hint(name);
+        if (kw[0]) return kw;
+    }
 
     const char* best = NULL;
     int best_dist = 3;  // 最多允许 3 个编辑距离
@@ -886,6 +910,12 @@ const char* get_undefined_func_hint(Semantic* s, const char* name) {
     static char hint[192];
     hint[0] = '\0';
     if (!s || !name || !name[0]) return hint;
+
+    // G2: Python 习惯的大写首字面量（True/False/Null）优先提示
+    {
+        const char* kw = literal_case_hint(name);
+        if (kw[0]) return kw;
+    }
 
     const char* best = NULL;
     int best_dist = 3;  // 最多允许 2 次编辑距离
