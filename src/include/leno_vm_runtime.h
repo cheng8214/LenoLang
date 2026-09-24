@@ -24,7 +24,7 @@ int lenolang_run_lenb(const char* filename);
 //   每次重新打包就会换目录，往里写数据等于"升级即丢"。
 // ⚠ 存储定义在 `src/vm/vm.c`（**core**，两个构建都链），**不是** vm_main.c：
 //   后者只属于 VM-only 构建（sources_vm.txt），而读它的 `dirs.c` 在 core
-//   ⇒ 放错位置会让带编译器的 `lenoreg.exe` 链接失败。
+//   ⇒ 放错位置会让带编译器的 `leno.exe` 链接失败。
 const char* vm_res_dir(void);
 // 由 VM 运行时（vm_main.c）在解包完成后写入；NULL / 空串 = 本次未解包。
 void vm_set_res_dir(const char* dir);

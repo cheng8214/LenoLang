@@ -11,7 +11,7 @@
  *                    application icon, so keep this at 1
  *
  * Linked into:
- *   build\lenoreg.exe      (build.bat; build.sh too on MINGW / MSYS / CYGWIN)
+ *   build\leno.exe      (build.bat; build.sh too on MINGW / MSYS / CYGWIN)
  *   build\leno_vm.exe      (build_vm.bat)
  *   build\leno_vm_gui.exe  (build_vm.bat)
  *

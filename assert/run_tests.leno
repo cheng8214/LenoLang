@@ -1,5 +1,5 @@
 // Leno 自举测试运行器
-// 用法：build\lenoreg.exe assert\run_tests.leno [解释器] [测试目录]
+// 用法：build\leno.exe assert\run_tests.leno [解释器] [测试目录]
 
 import dirs
 import strings
@@ -13,12 +13,12 @@ func get_arg(int idx, string fallback):string {
 }
 
 main() {
-    var leno_exe = get_arg(0, "build\\lenoreg.exe")
+    var leno_exe = get_arg(0, "build\\leno.exe")
     var test_dir = get_arg(1, "assert")
 
     // 将解释器转为绝对路径：Windows 下 _exec 用 cmd /c 执行，
-    // cmd 无法解析 POSIX 风格的正斜杠相对路径（如 ./build/lenoreg.exe），
-    // 绝对路径（如 D:\...\build\lenoreg.exe）才能被 cmd 正确执行。
+    // cmd 无法解析 POSIX 风格的正斜杠相对路径（如 ./build/leno.exe），
+    // 绝对路径（如 D:\...\build\leno.exe）才能被 cmd 正确执行。
     var leno_abs = dirs.abspath(leno_exe)
     if leno_abs != null {
         leno_exe = leno_abs

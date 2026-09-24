@@ -84,9 +84,9 @@ if [ "$PLATFORM" = "windows" ] && [ -n "$ICON_ICO" ]; then
   echo "Icon: $ICON_ICO"
 fi
 
-$CC $CFLAGS -o build/lenoreg$EXE $SOURCES $ICON_OBJ -Isrc -Wall -Wextra -std=c99 -O2 $LIBS
+$CC $CFLAGS -o build/leno$EXE $SOURCES $ICON_OBJ -Isrc -Wall -Wextra -std=c99 -O2 $LIBS
 
 echo "Build successful"
 echo ""
-echo "Usage: build/lenoreg$EXE <file.leno>"
-echo "Tests:  build/lenoreg$EXE assert/run_tests.leno build/lenoreg$EXE assert"
+echo "Usage: build/leno$EXE <file.leno>"
+echo "Tests:  build/leno$EXE assert/run_tests.leno build/leno$EXE assert"

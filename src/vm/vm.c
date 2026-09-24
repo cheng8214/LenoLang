@@ -46,7 +46,7 @@ int vm_initialized = 0;
 //   · 读它的是 `src\module\dirs\dirs.c`（`dirs.res_dir()`，也在 core）；
 //   · 写它的是 `src\vm_main.c`（解包后调用 `vm_set_res_dir()`），
 //     而 vm_main.c **只属于 VM-only 构建**（`sources_vm.txt`，见 build_vm.bat）。
-//   ⇒ 若把它定义在 vm_main.c，带编译器的 `lenoreg.exe`（core + compiler，不含 vm_main.c）
+//   ⇒ 若把它定义在 vm_main.c，带编译器的 `leno.exe`（core + compiler，不含 vm_main.c）
 //     一旦让 dirs.c 引用它就会 **undefined reference 链接失败**。
 // ============================================================================
 static char g_res_dir[MAX_PATH_LEN] = {0};

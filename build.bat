@@ -50,7 +50,7 @@ if defined ICON_ICO (
     echo Icon: leno_icon.ico not found - building without an icon
 )
 
-gcc -o build\lenoreg.exe !SOURCES! !ICON_OBJ! -Isrc -Wall -Wextra -std=c99 -O2 -lm -municode -lws2_32
+gcc -o build\leno.exe !SOURCES! !ICON_OBJ! -Isrc -Wall -Wextra -std=c99 -O2 -lm -municode -lws2_32
 
 if %ERRORLEVEL% neq 0 (
     echo Build failed
@@ -60,5 +60,5 @@ if %ERRORLEVEL% neq 0 (
 
 echo Build successful
 echo.
-echo Usage: build\lenoreg.exe ^<file.leno^>
-echo Tests:  build\lenoreg.exe assert\run_tests.leno build\lenoreg.exe assert
+echo Usage: build\leno.exe ^<file.leno^>
+echo Tests:  build\leno.exe assert\run_tests.leno build\leno.exe assert

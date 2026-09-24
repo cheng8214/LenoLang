@@ -17,7 +17,7 @@ func toHex2(int v): string {
     return HEX_CHARS[(v>>4)&0xF] + HEX_CHARS[v&0xF]
 }
 
-// 用法：lenoreg debug_lenb.leno <打包后的 .exe 路径>
+// 用法：leno debug_lenb.leno <打包后的 .exe 路径>
 //   默认路径指向 LenoSDL3 的基础示例；该 exe **不在仓库里**（要自己用 --pack 生成），
 //   所以先查存在性并给出提示，避免为了跑一遍自检而抛「无法打开文件」。
 const DEFAULT_EXE = "leno_module/LenoSDL3/examples/基础示例/hello_window.exe"
@@ -29,7 +29,7 @@ main() {
 
     if not files.exists(exe_path) {
         print("找不到待分析的 exe: " + exe_path)
-        print("用法: lenoreg debug_lenb.leno <打包后的 .exe 路径>（默认路径需要先用 --pack 生成）")
+        print("用法: leno debug_lenb.leno <打包后的 .exe 路径>（默认路径需要先用 --pack 生成）")
         return
     }
 

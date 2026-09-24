@@ -30,7 +30,7 @@ func tail_lines(string s, int n):string {
 main() {
     int frames = 120
     // 用 `_executable()`（= 当前解释器自身的绝对路径）而不是写死 "build\leno.exe"：
-    // 本仓库的解释器产物叫 lenoreg.exe（build.bat）/ leno_vm.exe（build_vm.bat），
+    // 本仓库的解释器产物叫 leno.exe（build.bat）/ leno_vm.exe（build_vm.bat），
     // 写死成品名会让用例"还没跑就注定失败"（实测 exit=1、输出为空）。
     // 这也是 assert/helpers/compiler.leno 的既有口径（它同样用 `_executable()`）。
     var leno = _executable()
