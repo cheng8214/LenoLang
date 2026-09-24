@@ -128,106 +128,30 @@ ObjModule* compile_module_new(const char* source, const char* module_name,
     }
 
     // 4. 首先，为模块中的所有函数（包括内部函数和 struct 方法）创建函数对象
-    ObjDict* func_dict = dict_new(16);
-    
-    if (parser.root && parser.root->kind == AST_BLOCK) {
-        for (int j = 0; j < parser.root->u.block.count; j++) {
-            Ast* stmt = parser.root->u.block.items[j];
-            Ast* func_ast = NULL;
-            const char* func_name = NULL;
-            
-            if (stmt->kind == AST_FUNC_DEF) {
-                func_ast = stmt;
-                func_name = stmt->u.func.name;
-            } else if (stmt->kind == AST_EXPORT && stmt->u.export.decl &&
-                       stmt->u.export.decl->kind == AST_FUNC_DEF) {
-                func_ast = stmt->u.export.decl;
-                func_name = stmt->u.export.decl->u.func.name;
-            }
-            
-            if (func_ast && func_name) {
-                Chunk func_chunk;
-                chunk_init(&func_chunk);
-                // 设置函数 chunk 的文件名为当前模块文件名
-                const char* current_file = error_get_filename();
-                if (current_file) {
-                    func_chunk.filename = strdup(current_file);
-                }
-                
-                CodeGen func_gen;
-                codegen_init(&func_gen, &func_chunk, &sem);
-                
-                gen_func(&func_gen, func_ast);
-                
-                if (!error_has_any() && func_chunk.const_cnt > 0) {
-                    Value func_val = func_chunk.constants[0];
-                    if (val_is_obj(func_val) && val_as_obj(func_val)->type == OBJ_FUNCTION) {
-                        ObjFunction* func = (ObjFunction*)val_as_obj(func_val);
-                        func->module = module;
-                        
-                        ObjString* key = str_copy(func_name, (int)strlen(func_name));
-                        dict_set(func_dict, val_obj((Object*)key), func_val);
-                    }
-                }
-                
-                codegen_cleanup(&func_gen);
-                chunk_free(&func_chunk);
-            }
-            
-            // 处理 struct 定义中的方法
-            Ast* struct_def_ast = NULL;
-            if (stmt->kind == AST_STRUCT_DEF) {
-                struct_def_ast = stmt;
-            } else if (stmt->kind == AST_EXPORT && stmt->u.export.decl &&
-                       stmt->u.export.decl->kind == AST_STRUCT_DEF) {
-                struct_def_ast = stmt->u.export.decl;
-            }
-            
-            if (struct_def_ast && struct_def_ast->u.struct_def.method_count > 0) {
-                const char* struct_name = struct_def_ast->u.struct_def.name;
-                for (int m = 0; m < struct_def_ast->u.struct_def.method_count; m++) {
-                    Ast* method_ast = struct_def_ast->u.struct_def.methods[m];
-                    if (method_ast && method_ast->kind == AST_FUNC_DEF) {
-                        char method_key[256];
-                        snprintf(method_key, sizeof(method_key), "%s::%s", struct_name, method_ast->u.func.name);
-                        
-                        Chunk method_chunk;
-                        chunk_init(&method_chunk);
-                        // 设置方法 chunk 的文件名为当前模块文件名
-                        const char* current_file = error_get_filename();
-                        if (current_file) {
-                            method_chunk.filename = strdup(current_file);
-                        }
-                        
-                        CodeGen method_gen;
-                        codegen_init(&method_gen, &method_chunk, &sem);
-                        
-                        ObjFunction* func = gen_func_proto(&method_gen, method_ast);
-                        
-                        if (!error_has_any() && func) {
-                            func->module = module;
-                            
-                            Value method_val = val_obj((Object*)func);
-                            ObjString* key = str_copy(method_key, (int)strlen(method_key));
-                            dict_set(func_dict, val_obj((Object*)key), method_val);
-                        }
-                        
-                        codegen_cleanup(&method_gen);
-                        chunk_free(&method_chunk);
-                    }
-                }
-            }
-        }
-    }
-    
+    // ---------------------------------------------------------------------------
+    // ⚠ 本段已于 2026-09-25 **整段移除**（编译时间优化；体积侧在此之前已被"结构去重"吃干净）。
+    //   它原来把每个顶层函数**完整编译一遍**（gen_func，含函数体）存进 func_dict，
+    //   而那个字典只有三个去处，现在全都不需要了：
+    //     ① 第 5 步用它把函数值写进 exports —— 2026-09-24 起 exports 只留 null 占位，
+    //        真身由运行期 init_chunk 跑完后从 globals[slot] 补填（见第 5 步说明）；
+    //     ② 第 6 步用它把函数值写进 module->globals[slot] —— 同期已移除
+    //        （唯一那份函数体由 init_chunk 的 OP_DEFINE_MODULE_FUNC 在运行期写入）；
+    //     ③ 为 struct 方法建**空壳原型**（只有 gen_func_proto、chunk 为空）存进 func_dict，
+    //        供第 6 步写进方法槽位 —— 那批槽位实测只有 8 个、577 B，本次一并不要
+    //        （读方法槽从"空壳函数"变成 null；两种都不可用，null 报错更响亮）。
+    //   ⇒ 模块函数体现在**只被第 6 步的 codegen_module 编译一次**（原来两遍）。
+    //   配套删除：func_dict 变量、codegen_set_func_dict（**dead API**，没有任何读取点）。
+    //   被删掉的代码见 git 历史。
+    // ---------------------------------------------------------------------------
+
     // 5. 将导出的项添加到模块导出表
     // ---------------------------------------------------------------------------
-    // ⚠ 2026-09-24（.lenb 体积优化）：这里**只登记名字占位（null）**，不再写入
-    //   第 4 步 func_dict 里那份函数对象。
-    //   原因：顶层函数被编译了两遍（第 4 步一份 → 写进 globals[]/exports{}；
+    // ⚠ 2026-09-24（.lenb 体积优化）：这里**只登记名字占位（null）**。
+    //   原因：当初顶层函数被编译了两遍（第 4 步一份 → 写进 globals[]/exports{}；
     //   第 6 步 init_chunk 里还有一份完整体）。globals[] 里那份 76525 B + exports{}
     //   里对它的重复引用 64595 B = 141 KB（hello_window 实测），全是 init_chunk 那份
     //   的冗余拷贝 ⇒ 不再写入即省下这 141 KB（pvz 实测省 164 KB）。
+    //   （第 4 步那遍编译本身后来也整段删除 —— 见上面的说明，现在模块函数体全局只有一份。）
     //   运行期怎么拿到函数值：init_chunk 执行时 OP_DEFINE_MODULE_FUNC 会把那份唯一的
     //   函数写进 module->globals[slot]，随后 OP_INIT_LENOMODULE 的"导出补填"再把它
     //   填进 exports（上面 val_is_null 判空 ⇒ 占位为 null 时正好补上）。
@@ -257,8 +181,8 @@ ObjModule* compile_module_new(const char* source, const char* module_name,
     //       出现在编译器侧：semantic / module_compiler / codegen 的 func_table）。
     //   上面两行原注释描述的"通过模块 exports 查找方法"与现行 VM 实现不符（历史遗留）；
     //   保留原文备查，但不要再据此恢复本段。
-    //   ⚠ 步骤 4 仍要为方法建原型对象：第 6 步要靠 func_dict 的 "Struct::method" 键
-    //     把孩子写进 module->globals 的槽位（未导出方法也要占槽）。
+    //   ⚠ 步骤 4 当初还顺带为方法建了原型对象、由第 6 步写进 module->globals 的方法槽位
+    //     （未导出方法也要占槽）—— 那半段与第 4 步一起删除（2026-09-25，见上面第 4 步说明）。
     //     （被删掉的代码见 git 历史：5.1 的 for 循环 + dict_set(module->exports, ...)）
     // ---------------------------------------------------------------------------
 
@@ -289,69 +213,18 @@ ObjModule* compile_module_new(const char* source, const char* module_name,
     
     // 先将所有函数和 struct 方法添加到模块全局变量表
     // ---------------------------------------------------------------------------
-    // ⚠ 2026-09-24（.lenb 体积优化）：**顶层函数不再预填 globals[]**。
-    //   原来这里把第 4 步那份函数对象写进 module->globals[slot]，与 init_chunk 里
-    //   那份完整体（OP_DEFINE_MODULE_FUNC 运行期写入同一槽位）重复 ⇒ 白占体积。
-    //   现在只保留 struct 方法那半段（方法体在 init_chunk 里，globals 槽位里的
-    //   空壳原型是运行期 OP_GET_MODULE_VAR 取方法槽时的兜底值，量小、先不动）。
-    //   函数槽位空间由 5.5 按 sem.root_scope->global_var_index 预分配，运行期
-    //   init_chunk 自己会把函数写进去；exports 的补填见第 5 步与第 9 步的说明。
+    // ⚠ 2026-09-25：本段已整段删除（原来是"顶层函数 + struct 方法"两半，都靠第 4 步的
+    //   func_dict 取值写进 module->globals[]）：
+    //     · 顶层函数那半段 2026-09-24 已移除（与 init_chunk 里那份完整体重复，白占体积）；
+    //     · 方法那半段随第 4 步一起删除（那批槽位实测只有 8 个、577 B，且槽位里放的
+    //       只是 chunk 为空的空壳原型）。
+    //   函数/方法槽位空间由 5.5 按 sem.root_scope->global_var_index 预分配；函数体的
+    //   唯一那份由 init_chunk 的 OP_DEFINE_MODULE_FUNC 在运行期写进对应槽位。
     // ---------------------------------------------------------------------------
-    for (int j = 0; j < parser.root->u.block.count; j++) {
-        Ast* stmt = parser.root->u.block.items[j];
-        
-        // 处理 struct 定义中的方法
-        Ast* struct_def_ast = NULL;
-        if (stmt->kind == AST_STRUCT_DEF) {
-            struct_def_ast = stmt;
-        } else if (stmt->kind == AST_EXPORT && stmt->u.export.decl &&
-                   stmt->u.export.decl->kind == AST_STRUCT_DEF) {
-            struct_def_ast = stmt->u.export.decl;
-        }
-        
-        if (struct_def_ast && struct_def_ast->u.struct_def.method_count > 0) {
-            const char* struct_name = struct_def_ast->u.struct_def.name;
-            for (int m = 0; m < struct_def_ast->u.struct_def.method_count; m++) {
-                Ast* method_ast = struct_def_ast->u.struct_def.methods[m];
-                if (method_ast && method_ast->kind == AST_FUNC_DEF) {
-                    char method_key[256];
-                    snprintf(method_key, sizeof(method_key), "%s::%s", struct_name, method_ast->u.func.name);
-                    
-                    ObjString* key = str_copy(method_key, (int)strlen(method_key));
-                    Value method_val = dict_get(func_dict, val_obj((Object*)key));
-                    if (!val_is_null(method_val)) {
-                        int index = method_ast->u.func.ref.index;
-                        if (index >= 0 && index < 256) {
-                            if (module->global_count <= index) {
-                                int new_count = index + 1;
-                                Value* new_globals = realloc(module->globals, new_count * sizeof(Value));
-                                if (new_globals) {
-                                    for (int k = module->global_count; k < new_count; k++) {
-                                        new_globals[k] = val_null();
-                                    }
-                                    module->globals = new_globals;
-                                    module->global_count = new_count;
-                                    if (new_count > module->global_capacity) {
-                                        module->global_capacity = new_count;
-                                    }
-                                }
-                            }
-                            if (module->globals) {
-                                module->globals[index] = method_val;
-                                gc_write_barrier((Object*)module, method_val);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
 
-    codegen_set_func_dict(func_dict);
     codegen_set_module(module);
     int errors_before_codegen = errors.count;
     codegen_module(&gen, parser.root);
-    codegen_set_func_dict(NULL);
     codegen_set_module(NULL);
     
     // 调试模式：字节码统一输出由 main.c 在编译完成后处理

@@ -119,7 +119,7 @@ void codegen_init(CodeGen* gen, Chunk* chunk, Semantic* sem);
 void codegen_cleanup(CodeGen* gen);
 void codegen(CodeGen* gen, Ast* ast);
 void codegen_module(CodeGen* gen, Ast* ast);
-void codegen_set_func_dict(void* dict);
+// （原 codegen_set_func_dict：dead API，2026-09-25 随模块编译第 4 步一并删除）
 void codegen_set_module(ObjModule* module);
 void codegen_add_dtor_entry(CodeGen* gen, int local_slot);
 

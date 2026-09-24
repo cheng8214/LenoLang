@@ -11,11 +11,9 @@ void codegen_set_module(ObjModule* module) {
     g_current_module = module;
 }
 
-// 设置函数字典（兼容旧 API）
-static void* g_func_dict = NULL;
-void codegen_set_func_dict(void* dict) {
-    g_func_dict = dict;
-}
+// （原 `codegen_set_func_dict` / `g_func_dict`：模块编译第 4 步的 func_dict 用过的接口。
+//   那个字典**没有任何读取点**（"兼容旧 API"的遗留），2026-09-25 与第 4 步一并删除，
+//   说明见 module_compiler.c 第 4 步的注释。）
 
 // 前向声明
 static int ast_has_try(Ast* ast);
