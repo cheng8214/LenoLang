@@ -958,7 +958,8 @@ static void gen_switch(CodeGen* gen, Ast* ast) {
 // ----------------------------------------------------------------------------
 // `func f(): float { return 1 }` 此前返回值完全不 CAST ⇒ 运行期拿到 int：
 //   `type(f())` = "int"、`f() / 2` 走 int 除法得 0（应为 0.5）；
-// 跨模块调用同样错（调用点只信声明类型，值本身是 int）。**栈式侧也这样**，是共有缺口。
+// 跨模块调用同样错（调用点只信声明类型，值本身是 int）。（历史：栈式侧同样如此，
+// 属当时的共有缺口 —— 栈式已弃用，本处已是唯一实现，改这里即可 ✓）
 // 口径与变量声明 / 赋值完全一致（emit_cast_for_target）：只对 int/float/string 目标插 CAST；
 // 构造函数（func StructName() 返回 self）与多返回值不走这里。
 static void emit_cast_for_return(CodeGen* gen, Ast* ret_ast, int reg, int line) {

@@ -7,10 +7,10 @@
         }
         arr->count = c;
 
-        // ★ 设置运行时类型信息（照栈式 OP_ARRAY）：元素类型全一致时记 Array[T]，
-        //   空数组/混合类型留 NULL。`type()`、空数组的类型名、add 的类型检查都依赖它 ——
-        //   不设置的话 `arr.clear()` 之后 type(arr) 只剩 "Array"（元素类型信息丢失，
-        //   栈式仍报 Array[int]；examples/array/基本 clear.leno 的差异）。
+        // ★ 设置运行时类型信息（照原栈式 OP_ARRAY —— 栈式已弃用，只作来源注记）：
+        //   元素类型全一致时记 Array[T]，空数组/混合类型留 NULL。`type()`、空数组的类型名、
+        //   add 的类型检查都依赖它 —— 不设置的话 `arr.clear()` 之后 type(arr) 只剩 "Array"
+        //   （元素类型信息丢失；本仓库这里要报 Array[int] ✓）。
         //   用驻留缓存 type_get_array_cached，避免每个数组字面量都分配 TypeInfo。
         if (c > 0) {
             Value first = arr->elements[0];

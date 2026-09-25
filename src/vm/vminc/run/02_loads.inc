@@ -185,7 +185,8 @@
                     //   这是 CallFrame.has_captures 的正确语义（"本帧有被捕获的局部量"），
                     //   而不是"本闭包捕获了父函数的 upvalue"—— 后者会让返回路径漏关 upvalue
                     //   （test_closure / test_closure_upvalue_rw / test_function_closure 当场失败；
-                    //   栈式那边同样的坑见 D:\CLeno\Leno\src\vm\vminc\op_call.inc:671 的注释）。
+                    //   栈式（已弃用）当年在它的 op_call.inc 里踩过同一个坑 —— 那个文件
+                    //   已不在本仓库，**别按老路径找** ✗（本处注释就是结论 ✓）。
                     //   只有**非值捕获**（is_value_capture == 0）才在 locals 里留指针，
                     //   值捕获当场就拷进 uv->closed，不需要这个标记。
                     frame->has_captures = 1;

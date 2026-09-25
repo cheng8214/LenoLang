@@ -257,7 +257,7 @@ ObjModule* compile_module_new(const char* source, const char* module_name,
                             //   `val_is_null(current_val)` 为假就**跳过**了，
                             //   于是跨模块永远读到 int（本模块内部读自己的槽位是 float，
                             //   两端不一致）⇒ `t.modFloat / 2` 走 int 除法得 0（应为 0.5）。
-                            //   ⚠ 栈式同一段代码同样如此（两边都错的共有问题）。
+                            //   （历史：栈式实现当年同样如此 —— 栈式已弃用，此处仅作来源注记 ✓）
                             TypeKind decl_kind = var_decl->u.var_decl.type
                                                      ? var_decl->u.var_decl.type->kind : TYPE_UNKNOWN;
                             Value var_val = val_null();

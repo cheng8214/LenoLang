@@ -16,10 +16,11 @@ extern ImportedModuleInfo* find_imported_module(Semantic* s, const char* alias);
 // 从"默认参数文本"求值到 R[dst]
 // ----------------------------------------------------------------------------
 // 跨模块调用专用：被调函数的 AST 在**另一个模块**里，本模块只有符号表里记的
-// `param_default_texts`（源码文本），所以只能按字面量解析（与栈式的
-// gen_default_value_from_text 同口径）：数字 / "字符串"（含转义）/ true / false / null。
-// 认不出的（常量表达式、别的模块的标识符…）退回 null —— 跨模块拿不到求值环境，
-// 栈式同样只认字面量；至少不会往实参寄存器里塞垃圾。
+// `param_default_texts`（源码文本），所以只能按字面量解析（口径沿用原栈式的
+// gen_default_value_from_text —— 栈式已弃用，此处只作来源注记）：数字 / "字符串"
+//（含转义）/ true / false / null。
+// 认不出的（常量表达式、别的模块的标识符…）退回 null —— 跨模块拿不到求值环境；
+// 至少不会往实参寄存器里塞垃圾。
 // ============================================================================
 static void gen_default_value_from_text_to(CodeGen* gen, int dst, const char* text, int line) {
     if (!text) { emit_loadnil_to(gen, dst, line); return; }
