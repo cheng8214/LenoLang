@@ -87,20 +87,31 @@ jobs:
             done
           } >> "$GITHUB_STEP_SUMMARY"
 
-          # ② 机读：关键错误行单独发成 ::error 注解。
-          #    原因：日志归档 /actions/jobs/{id}/logs 需要鉴权；job summary 虽然人读方便，
-          #    但实测它**不会**出现在 check-runs API 的 output.summary 里（长度为 0）；
-          #    而 workflow command 产生的注解能从 /check-runs/{id}/annotations 免鉴权读到。
-          #    这样即使手边没有 token / gh CLI，也能直接看到失败原因 ✓
+          # ② 机读：关键错误发成 ::error 注解，从 /check-runs/{id}/annotations 免鉴权读取。
+          #    （日志归档 /actions/jobs/{id}/logs 需要鉴权；job summary 实测不会出现在
+          #      check-runs API 的 output.summary 里，长度为 0。）
+          #    ⚠ 教训：第一版只 grep 'error' —— 而链接错误的关键行是 clang 的
+          #      「Undefined symbols for architecture arm64:」后面跟若干符号名，
+          #      整段不含 error 字样，于是漏掉了真正的信息。所以这里改成结构化提取：
+          #      ① 链接错误块（Undefined symbols / ld: 等）整段多行发一条
+          #      ② 含 error: 的编译错误行
+          #      ③ 日志末尾若干行（链接失败时总结通常在末尾）
           n=0
+          annotate() {
+            n=$((n + 1))
+            if [ "$n" -gt 9 ]; then return 1; fi
+            esc=$(printf '%s' "$1" | sed 's/%/%25/g; s/\r//g' | awk '{printf "%s%%0A", $0}' | cut -c1-900)
+            echo "::error title=$2::${esc}"
+          }
           for f in ci_build_sh.log ci_build_vm.log; do
             if [ -f "$f" ]; then
+              # 注意 || true：没匹配时 grep 返回 1，配上 bash -e 会让这个诊断步骤自己中断
+              blk=$(grep -A 8 -iE 'Undefined symbols|undefined reference|^ld: |library not found' "$f" | head -n 12 || true)
+              if [ -n "$blk" ]; then annotate "$blk" "$f（链接错误详情）" || break; fi
               while IFS= read -r line; do
-                n=$((n + 1))
-                if [ "$n" -gt 10 ]; then break 2; fi
-                esc=$(printf '%s' "$line" | sed 's/%/%25/g; s/\r//g' | cut -c1-400)
-                echo "::error title=$f::${esc}"
-              done < <(grep -iE 'error|undefined reference|no such file|cannot find' "$f" | tail -n 10)
+                annotate "$line" "$f" || break 2
+              done < <(grep -E 'error:' "$f" | head -n 3)
+              tail -n 4 "$f" | while IFS= read -r line; do annotate "$line" "$f（末尾）" || break; done
             fi
           done
 
