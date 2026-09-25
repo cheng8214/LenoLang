@@ -60,7 +60,7 @@ func _bind(Ptr[u8] entry, any cb) {
 
 export struct TrayMenu {
 	    Ptr[u8]? _ptr
-	    bool    _isSub
+	    bool    _isSub = false
 
     func _insert(string label, int flags, int pos): Ptr[u8] {
         if _ptr == null { return null }
@@ -115,7 +115,7 @@ export struct TrayMenu {
 export struct Tray {
 	    Ptr[u8]?   _ptr
 	    TrayMenu?  _rootMenu
-	    bool      _destroyed
+	    bool      _destroyed = false
 
     func getMenu(): TrayMenu {
         if _rootMenu == null {

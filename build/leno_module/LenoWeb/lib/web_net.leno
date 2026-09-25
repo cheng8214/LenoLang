@@ -21,17 +21,18 @@ Response? _currentResp = null
 // ==================== Response 响应结构 ====================
 // 封装 HTTP 响应数据
 export struct Response {
-    int statusCode          // HTTP 状态码（200, 404, 500 等）
-    string body            // 响应体
-    string headers         // 响应头（原始文本）
-    string effectiveUrl     // 最终 URL（可能经重定向后变化）
-    int totalSize           // 下载数据总大小
-    float totalTime         // 总耗时（秒）
-    float connectTime       // 连接耗时（秒）
-    float downloadSpeed     // 下载速度（字节/秒）
-    string contentType      // 内容类型
-    string error            // 错误信息（如果有）
-    int curlCode            // libcurl 结果码
+    // 初值与本结构 reset() 里的赋值保持一致（消 [字段未初始化] 警告，语义不变）
+    int statusCode = 0             // HTTP 状态码（200, 404, 500 等）
+    string body = ""               // 响应体
+    string headers = ""            // 响应头（原始文本）
+    string effectiveUrl = ""       // 最终 URL（可能经重定向后变化）
+    int totalSize = 0              // 下载数据总大小
+    float totalTime = 0.0          // 总耗时（秒）
+    float connectTime = 0.0        // 连接耗时（秒）
+    float downloadSpeed = 0.0      // 下载速度（字节/秒）
+    string contentType = ""        // 内容类型
+    string error = ""              // 错误信息（如果有）
+    int curlCode = 0               // libcurl 结果码
 
     // 重置响应
     func reset() {
@@ -112,8 +113,8 @@ export struct Response {
 // 封装 libcurl easy handle，支持 GET/POST/PUT/DELETE 等
 export struct HttpClient {
     Ptr[u8] handle          // curl_easy handle
-    bool ok                 // 是否初始化成功
-    string _lastError       // 最近错误信息
+    bool ok = false         // 是否初始化成功（显式初值，消 [字段未初始化] 警告）
+    string _lastError = ""  // 最近错误信息
     Ptr[u8] _writeCb        // 写回调
     Ptr[u8] _headerCb       // header 回调
 

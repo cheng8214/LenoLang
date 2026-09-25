@@ -34,9 +34,9 @@ export func _dbgLineCount(Renderer r): int { return r._bxLineN }
 // 用途：烟花/粒子/分形/画板等需要海量逐点绘制的场景，性能远超逐点 SDL_RenderPoint。
 export struct PixelBuffer {
     Ptr[u8] pixels   // 像素内存（ffi.malloc，w*h*4 字节）
-    int w; int h     // 尺寸
-    int pitch        // 每行字节数 = w*4
-    bool ok
+    int w = 0; int h = 0     // 尺寸
+    int pitch = 0        // 每行字节数 = w*4
+    bool ok = false
 
     // 创建像素缓冲（w,h 为宽高），失败返回 ok=false
     func init(int w_, int h_): bool {
@@ -91,11 +91,11 @@ const BX_STROKE = 2   // 批处理描边矩形
 const BX_LINE   = 3   // 批处理线段
 const BX_TEX    = 4   // 批处理文字纹理
 
-    Ptr[u8] handle; bool ok
+    Ptr[u8] handle; bool ok = false
     // 超采样抗锯齿（SSAA）：整帧渲染到 scale 倍离屏纹理，再以 1x 缩放贴回窗口得到平滑边缘
-    Ptr[u8] _ssaaTex; float _ssaaScale; int _ssaaWinW; int _ssaaWinH; bool _ssaa
+    Ptr[u8] _ssaaTex; float _ssaaScale = 0.0; int _ssaaWinW = 0; int _ssaaWinH = 0; bool _ssaa = false
     // PixelBuffer 复用纹理（懒创建）：blitBuffer 上传用，尺寸匹配时复用
-    Ptr[u8] _pixTex; int _pixTexW; int _pixTexH
+    Ptr[u8] _pixTex; int _pixTexW = 0; int _pixTexH = 0
     // ── 圆角矩形抗锯齿：CPU 预生成「覆盖率蒙版」纹理，GPU 只采样 ✓ ──
     //   见 _rrMask 注释：平滑由**像素数据**提供，不依赖 SDL 光栅器（它不做图元 AA ✗）
     Array[Ptr[u8]] _rrTex    // 蒙版纹理（白 + alpha=覆盖率 ✓）
@@ -106,26 +106,30 @@ const BX_TEX    = 4   // 批处理文字纹理
     Ptr[u8] _lnTex
 
     // ---- 批处理缓冲：透明自动合并连续同材质 fillRect/drawRect/drawLine ----
-    Ptr[f32] _bxFill; int _bxFillN, _bxFillCap
-    Ptr[f32] _bxOut;  int _bxOutN, _bxOutCap
-    Ptr[f32] _bxLine; int _bxLineN, _bxLineCap
-    int _bxCur            // 批处理状态（BX_EMPTY/FILL/STROKE/LINE/TEX，切换即 flush 保序）
+    Ptr[f32] _bxFill; int _bxFillN = 0, _bxFillCap = 0
+    Ptr[f32] _bxOut;  int _bxOutN = 0, _bxOutCap = 0
+    Ptr[f32] _bxLine; int _bxLineN = 0, _bxLineCap = 0
+    int _bxCur = 0        // 批处理状态（BX_EMPTY/FILL/STROKE/LINE/TEX，切换即 flush 保序）
     // ---- 文字纹理批处理缓冲：同纹理连续 drawText 合并为一次 SDL_RenderGeometry ----
     // 每条目 6 floats：dstX, dstY, dstW, dstH, alphaMod, texHandle(低32位)
     // texHandle 高位丢弃（纹理指针通常 < 4GB），用于同纹理分组
-    Ptr[f32] _bxTexCoords; int _bxTexN, _bxTexCap   // 坐标+alpha 缓冲
+    Ptr[f32] _bxTexCoords; int _bxTexN = 0, _bxTexCap = 0   // 坐标+alpha 缓冲
     Array[Ptr[u8]] _bxTexPtrs   // 与 _bxTexN 并行的纹理指针数组（用于提交时取真实指针）
-    int _bxR, _bxG, _bxB, _bxA
-    bool _bxIsFloat
-    float _bxFr, _bxFg, _bxFb, _bxFa
-    int _bxBlend
+    int _bxR = 0, _bxG = 0, _bxB = 0, _bxA = 0
+    bool _bxIsFloat = false
+    float _bxFr = 0.0, _bxFg = 0.0, _bxFb = 0.0, _bxFa = 0.0
+    int _bxBlend = 0
     Ptr[u8] _bxClipPtr 
-    bool _bxClip, _bxClipOwned  // _bxClipOwned：_bxClipPtr 是否由我们 alloc（需 free）
+    bool _bxClip = false, _bxClipOwned = false  // _bxClipOwned：_bxClipPtr 是否由我们 alloc（需 free）
     // 裁剪栈：每个入口存储 {ptr: Ptr[u8], owned: bool}
     Array[Ptr[u8]] _clipStack
     Array[bool]    _clipStackOwned
     Ptr[u8] _bxTarget
-    float _bxSx, _bxSy, _bxCScale
+    // 注意默认值是 1.0（不是 0.0）：与 initDefault 里的赋值一致。
+    // 若默认成 0.0，未走 initDefault 的渲染器会让 _rrUsable() 的
+    // `_bxSx <= 0.0` 判真 ⇒ 圆角矩形/圆从「抗锯齿蒙版」回退到硬边几何路径 ✗
+    // （实测：数据看板 p0 有一处圆弧边缘的灰阶由平滑变成台阶）
+    float _bxSx = 1.0, _bxSy = 1.0, _bxCScale = 1.0
 
     // 创建默认渲染器（关联到窗口）
     func initDefault(Ptr[u8] window): bool {

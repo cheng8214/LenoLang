@@ -115,9 +115,9 @@ export alias RenderCallback = func(Renderer)
 // setShortcutGuard 设置守卫回调：返回 true 时阻止快捷键（如 Edit/Table 编辑中）。
 
 export struct Shortcut {
-    string display    // 显示文本: "Ctrl+C", "F5", "Backspace"
-    int scancode      // 解析后的 scancode
-    int modFlags      // bit 0=Ctrl, 1=Shift, 2=Alt, 3=GUI
+    string display = ""   // 显示文本: "Ctrl+C", "F5", "Backspace"（显式初值，消 [字段未初始化] 警告）
+    int scancode = 0      // 解析后的 scancode
+    int modFlags = 0      // bit 0=Ctrl, 1=Shift, 2=Alt, 3=GUI
     func():void callback
     bool enabled = true
 }
@@ -293,8 +293,8 @@ export func registerRun(Ptr[u8] hdl, int wid, Renderer ren, any onEvent, any onR
 
 export struct Window {
     Ptr[u8] handle    // SDL_Window 指针
-    bool ok       // 窗口是否创建成功
-    int _w; int _h; float _aaScale
+    bool ok = false       // 窗口是否创建成功（显式初值，消 [字段未初始化] 警告）
+    int _w = 0; int _h = 0; float _aaScale = 0.0
     // 最大渲染帧率（0 = 不限制）。2026-09-25 由 **30 调到 60**：
     //   实测（dummy 驱动、每帧主动请求重绘 ⇒ 完全由上限决定）：
     //     · 上限 30 时只跑到 ~20.5 fps ✗ —— 节流"多等"了约 15ms/帧（waitTimeout 毫秒精度 + 5ms 兜底 ✓）

@@ -14,7 +14,7 @@ sdl3 _lib = core.lib()
 
 export struct Event {
     Ptr[u8] raw     // SDL_Event 原始内存（128 字节）
-    bool has    // 上次 poll 是否有事件
+    bool has = false    // 上次 poll 是否有事件（显式初值，消 [字段未初始化] 警告）
 
     // 分配事件内存
     func init(): bool {

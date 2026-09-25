@@ -47,8 +47,8 @@ export func nextTimerMs(): int {
 export struct Timer {
     float   _ms = 0.0     // 定时间隔（毫秒）
     float   _next = 0.0    // 下次触发时间（getTicks 毫秒）
-    bool    running       // 是否运行中
-    bool    once          // true=一次性
+    bool    running = false   // 是否运行中（显式初值，消 [字段未初始化] 警告）
+    bool    once = false      // true=一次性
     Array   _cb           // 回调存 [0]
 
     // 设置并启动（循环），ms=毫秒，=0 只存回调不启动

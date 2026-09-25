@@ -87,20 +87,20 @@ export var _ttfInited = false
 
 // 文字纹理缓存条目（ring buffer 固定容量，避免每帧重建 2x 栅格化纹理）
 export struct CachedTex {
-    string key
+    string key = ""              // 显式初值（消 [字段未初始化] 警告；标量默认是 null 而非 0）
     Ptr[u8] texture
-    int w; int h; bool ok
+    int w = 0; int h = 0; bool ok = false
     Ptr[u8] ren   // 创建该纹理的渲染器；渲染器销毁时据此精准失效，避免跨渲染器复用指针导致命中失效纹理
 }
 
 // 字符串尺寸缓存条目（measureString 高频调用，缓存避免重复 TTF_SetFontSize + 测量）
 export struct CachedMeas {
-    string key
-    float w; float h
+    string key = ""
+    float w = 0.0; float h = 0.0
 }
 
 export struct Font {
-    Ptr[u8] handle; bool ok; int height; int ascent; int descent; float _pt
+    Ptr[u8] handle; bool ok = false; int height = 0; int ascent = 0; int descent = 0; float _pt = 0.0
     int _refCount = 0           // 引用计数：acquireFont/acquireFontAuto 获取时 +1，releaseFont 归零才真正 close 并从池摘除
     string _fontPath = ""       // 缓存池查询用
     float _aaScale = 0.0   // SSAA 倍数：>0 时 measureString 按「2x 测量再除 scale」计算，
@@ -391,7 +391,7 @@ export struct Font {
 // ==================== TextTexture ====================
 
 export struct TextTexture {
-    Ptr[u8] texture; bool ok; int width; int height
+    Ptr[u8] texture; bool ok = false; int width = 0; int height = 0
 
     func createFromSurface(Ptr[u8] renderer, Ptr[u8] surface): bool {
         if surface == null { return false }

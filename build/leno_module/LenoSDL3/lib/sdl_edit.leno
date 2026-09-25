@@ -13,7 +13,9 @@ import "sdl_menu.leno" as menu; use menu.MenuBar
 import "sdl_timer.leno" as tmr; use tmr.Timer
 
 export struct Edit impl Widget, Themeable {
-    string text
+    // 显式初值：空串（不是 null）—— 消 [字段未初始化] 警告，且与「未输入的编辑框」
+    // 语义一致（读取 text 得到 "" 而不是 null）
+    string text = ""
     float x = 0.0, y = 0.0, w = 200.0, h = 30.0
     float _radius = 4.0             // 圆角半径
 bool _drawBorder = true          // 是否绘制边框（嵌入 ComboBox 时设为 false）
