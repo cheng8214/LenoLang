@@ -829,6 +829,29 @@ static int levenshtein(const char* a, const char* b) {
     return d[la][lb];
 }
 
+// ============================================================================
+// 大小写不敏感比较的跨平台封装
+// ----------------------------------------------------------------------------
+// `_stricmp` 是 MSVC / MinGW 专有的：MinGW 里有，所以 Windows 本地构建一直正常；
+// glibc 与 macOS 的 libSystem 都不提供它（POSIX 对应物是 `strcasecmp`，声明在
+// <strings.h>）。后果是同一份源码在 CI 上：Linux 链接报
+//   undefined reference to `_stricmp'
+// macOS 编译报
+//   error: call to undeclared function '_stricmp'
+// 差异收在这一处，调用点保持可读。
+// ============================================================================
+#ifndef _WIN32
+#include <strings.h>   // strcasecmp
+#endif
+
+static int leno_stricmp(const char* a, const char* b) {
+#ifdef _WIN32
+    return _stricmp(a, b);
+#else
+    return strcasecmp(a, b);
+#endif
+}
+
 // G2: Python 习惯的大写首字面量（True/False/Null）——true/false/null 是关键字
 // 不在任何符号表，符号表扫描给不出候选；大小写不敏感比对直接给出写法提示。
 // 命中且大小写不一致时返回提示串，否则返回空串。
@@ -838,7 +861,7 @@ static const char* literal_case_hint(const char* name) {
     if (!name || !name[0]) return hint;
     static const char* literal_keywords[] = {"true", "false", "null"};
     for (int i = 0; i < 3; i++) {
-        if (_stricmp(name, literal_keywords[i]) == 0 && strcmp(name, literal_keywords[i]) != 0) {
+        if (leno_stricmp(name, literal_keywords[i]) == 0 && strcmp(name, literal_keywords[i]) != 0) {
             snprintf(hint, sizeof(hint),
                      "\n  提示: 字面量写法是小写 '%s'（Leno 大小写敏感）", literal_keywords[i]);
             return hint;
