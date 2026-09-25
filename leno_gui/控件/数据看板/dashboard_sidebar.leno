@@ -119,6 +119,9 @@ var C_WARN_BG = #FFF8E1FF  // 警示条底
 var C_WARN_BR = #F5C77EFF  // 警示条描边
 var C_WARN_T  = #B54708FF  // 警示条文字
 var C_DANGER  = #DC3C3CFF  // 危险文字（「重置软件」那种红字 ✓）
+// 主色按钮的描边（比 C_BLUE 略深 ✓）：无描边的纯色块在浅底上"读不出圆角" ✗，
+//   补一条同色系描边后与次级按钮的圆角观感一致 ✓（用户实测反馈 ✓）
+var C_BLUE_BR = #1D4ED8FF
 
 // ==================== 布局常量 ====================
 var WIN_W = 1080.0
@@ -192,7 +195,7 @@ func fps_tick() {
         FPS_VALUE = _float(_int(_float(FPS_FRAMES) * 10000.0 / _float(el))) / 10.0
         float pk = _float(_int(FPS_PEAK_MS * 10.0)) / 10.0
         FPS_TXT = _str(FPS_VALUE) + " fps / " + _str(pk) + "ms"
-        print("[dash] HUD " + FPS_TXT + "\n")     // 无头跑时也能从日志读到 ✓
+     //   print("[dash] HUD " + FPS_TXT + "\n")     // 无头跑时也能从日志读到 ✓
         FPS_FRAMES = 0
         FPS_PEAK_MS = 0.0
         FPS_T0 = now
@@ -410,7 +413,7 @@ func page_head(VBox box, string title, string sub): AnchorBox {
 func head_button(AnchorBox ca, float right, float w, string text, bool primary) {
     if primary {
         ca.add(SDL3.createButton({x:0, y:0, w:w, h:38, text:text, font_size:14, radius:8,
-                                  bg_color:C_BLUE, text_color:#FFFFFFFF, border:false, shadow:false}), {right:right, top:22})
+                                  bg_color:C_BLUE, text_color:#FFFFFFFF, border_color:C_BLUE_BR, shadow:false}), {right:right, top:22})
     } else {
         ca.add(SDL3.createButton({x:0, y:0, w:w, h:38, text:text, font_size:14, radius:8,
                                   bg_color:C_CARD, text_color:C_BTN_T, border_color:C_BTN_BR, shadow:false}), {right:right, top:22})
@@ -540,7 +543,7 @@ func page_accounts() {
     var c2 = mk_card_h(row, 520.0, 448.0, "账号列表", "0 个账号")
     // 空列表 ⇒ 底部三个操作按钮 ✓（bottom 锚点 = 贴卡片底部 ✓）
     c2.add(SDL3.createButton({x:0, y:0, w:148.0, h:36.0, text:"切换至此", font_size:14, radius:8,
-                              bg_color:C_BLUE, text_color:#FFFFFFFF, border:false, shadow:false}),
+                              bg_color:C_BLUE, text_color:#FFFFFFFF, border_color:C_BLUE_BR, shadow:false}),
            {left:18.0, bottom:18.0})
     c2.add(SDL3.createButton({x:0, y:0, w:90.0, h:36.0, text:"校验", font_size:14, radius:8,
                               bg_color:C_CARD, text_color:C_BTN_T, border_color:C_BTN_BR, shadow:false}),
@@ -633,7 +636,7 @@ func page_cloud() {
     a1.add(SDL3.createLabel({x:0, y:0, text:"把签到托管到云端：授权 GitHub 后自动 Fork 仓库、写入 Secret、启用定时任务。", font_size:13, text_color:C_TXT2}), {left:18.0, top:56.0})
     a1.add(SDL3.createLabel({x:0, y:0, text:"部署完成后本机不必开机，签到结果可通过飞书推送查看。", font_size:11, text_color:C_TXT3}), {left:18.0, top:78.0})
     a1.add(SDL3.createButton({x:0, y:0, w:150.0, h:38.0, text:"一键部署到云端", font_size:14, radius:8,
-                              bg_color:C_BLUE, text_color:#FFFFFFFF, border:false, shadow:false}), {right:18.0, top:37.0})
+                              bg_color:C_BLUE, text_color:#FFFFFFFF, border_color:C_BLUE_BR, shadow:false}), {right:18.0, top:37.0})
 
     // 卡 2：部署流程（横向 3 步）
     var a2 = mk_card(box, 172.0, "部署流程", "")
@@ -723,7 +726,7 @@ func page_settings() {
                                 bg_color:C_CARD, text_color:C_BTN_T, border_color:C_BTN_BR, shadow:false}),
              {right:124.0, top:16.0})
     cAcc.add(SDL3.createButton({x:0, y:0, w:88.0, h:32.0, text:"＋ 添加", font_size:12, radius:6,
-                                bg_color:C_BLUE, text_color:#FFFFFFFF, border:false, shadow:false}),
+                                bg_color:C_BLUE, text_color:#FFFFFFFF, border_color:C_BLUE_BR, shadow:false}),
              {right:18.0, top:16.0})
 
     // ---- 关于 ----
@@ -752,10 +755,12 @@ func page_dashboard() {
     // 页头：标题 + 日期 + 右上两个按钮（都在页内 ⇒ 切页时整页一起换 ✓）
     add_p(0, SDL3.createLabel({x:214, y:50, text:"仪表盘", font_size:26, text_color:C_TXT}), 214, 50)
     add_p(0, SDL3.createLabel({x:214, y:90, text:"2026-09-25 周五", font_size:13, text_color:C_TXT3}), 214, 90)
-    add_p(0, SDL3.createButton({x:862, y:68, w:86, h:34, text:"刷新状态", font_size:13, radius:8,
-                                bg_color:C_CARD, text_color:C_BTN_T, border_color:C_BTN_BR, shadow:false}), 862, 68)
-    add_p(0, SDL3.createButton({x:958, y:66, w:96, h:36, text:"立即签到", font_size:13, radius:8,
-                                bg_color:C_BLUE, text_color:#FFFFFFFF, border:false, shadow:false}), 958, 66)
+    // ⚠ 两个按钮**同高、同一 y**（原先 86×34/68 与 96×36/66 ✗ ⇒ 蓝色那颗高 2px 且偏高 2px ⇒ 视觉上
+    //   "外观不一致" ✗）。宽度保持原版 86/96（主按钮略宽 ✓），统一 h=36、y=66 ⇒ 中心线对齐 ✓
+    add_p(0, SDL3.createButton({x:862, y:66, w:86, h:36, text:"刷新状态", font_size:13, radius:8,
+                                bg_color:C_CARD, text_color:C_BTN_T, border_color:C_BTN_BR, shadow:false}), 862, 66)
+    add_p(0, SDL3.createButton({x:958, y:66, w:86, h:36, text:"立即签到", font_size:13, radius:8,
+                                bg_color:C_BLUE, text_color:#FFFFFFFF, border_color:C_BLUE_BR, shadow:false}), 958, 66)
 
     // 三张统计卡
     stat_card(0, 214, 135, 263, 90, "剩余积分", "0", "分", C_TXT, 28.0)
