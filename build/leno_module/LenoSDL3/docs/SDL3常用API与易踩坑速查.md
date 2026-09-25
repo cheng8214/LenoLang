@@ -133,7 +133,7 @@ build\leno.exe --no-cache build\leno_module\LenoSDL3\examples\图形绘制\test_
 | 用例 | 覆盖什么 |
 | --- | --- |
 | `图形绘制/test_antialias.leno` | 圆角矩形 + 1px 描边环 + 正圆（纯黑白 ⇒ 覆盖率 = (255−R)/255 ✓，边缘有几档灰阶一目了然 ✓） |
-| `图形绘制/test_aa_clock.leno` | 大圆 + 斜线指针/刻度（`show_time` 的静态复刻） |
+| `图形绘制/test_aa_clock.leno` | 大圆 + 斜线指针/刻度（`leno_gui/应用/模拟时钟/clock.leno` 的静态复刻） |
 | `图形绘制/test_aa_radii.leno` | `r=10/20/40/80` 圆环 —— 回归「环墨迹压在蒙版纹理末列 ⇒ 整列丢失」那个坑 ✗ |
 | `其他测试/test_draw_order.leno` | 实测三个绘制层先后（见第一节 ✓） |
 | `其他测试/test_dump_layout.leno` | `dumpLayout` 输出示例（含"有剩余空间但无人 grow"的场景 ✓） |

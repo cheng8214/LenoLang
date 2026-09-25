@@ -1,4 +1,5 @@
-// clock_probe.leno —— 静态复刻 show_time.leno 的画面（固定时刻），便于逐像素量锯齿 ✓
+// test_aa_clock.leno —— 静态复刻「模拟时钟」应用的画面（固定时刻），便于逐像素量锯齿 ✓
+//   原应用已移到 leno_gui/应用/模拟时钟/clock.leno ✓（本文件是它的静态回归探针 ✓）
 //   只画几何：表盘(fillCircle) + 双外圈(drawCircle) + 12 刻度(drawLine) + 三指针(drawLine) + 中心轴
 //   （刻度数字是字体纹理，与本次改动无关 ⇒ 略 ✓）
 import "SDL3" as SDL3

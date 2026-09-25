@@ -1,4 +1,7 @@
-// show_time.leno — 模拟时钟（时针 / 分针 / 秒针）
+// clock.leno — 模拟时钟（时针 / 分针 / 秒针）
+// 原在 LenoSDL3/examples/基础示例/show_time.leno —— 它是**成品应用**不是示例片段 ⇒
+//   2026-09-26 移到 leno_gui/应用/模拟时钟/（同目录其它应用同一套约定 ✓），git 保留历史 ✓
+// 跑：build\leno.exe --no-cache leno_gui\应用\模拟时钟\clock.leno
 // 用 maths 计算指针角度，SDL 绘制表盘与指针；手动循环逐帧刷新。
 import "SDL3" as SDL3
 import maths
