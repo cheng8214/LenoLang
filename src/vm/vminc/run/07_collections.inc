@@ -643,4 +643,28 @@
         frame = &vm.frames[vm.frame_cnt - 1];
         DISPATCH();
     }
+    // OP_INDEX_SET_ARRAY_INT A B C: R[B][R[C]] = R[A]
+    //   静态类型特化版（对齐读路径的 OP_INDEX_ARRAY_INT）：codegen 已核实 R[B] 是
+    //   Array[int]、R[C] 是 int48 ⇒ 跳过 obj 判型（val_is_obj + `->type` 分流）与下标
+    //   数字判型，下标直接 val_as_int 解码 —— 通用版那句 `(int)value_to_double(idx)`
+    //   对 int48 是「符号扩展 → cvtsi2sd → cvttsd2si」两次浮点往返，这里一次都不用。
+    //   ★ 越界检查与 GC 写屏障与通用版**逐条一致**：下标为负时经 (uint64_t) 转型必然
+    //     ≥ count ⇒ 落到同一个「数组索引越界」分支（报错文本、行号来源都相同）。
+    //     口径对齐读路径的 OP_INDEX_ARRAY_INT（也是 (uint64_t) 无符号比较）。
+    LABEL(OP_INDEX_SET_ARRAY_INT): {
+        int a = READ_A(), b = READ_B(), c = READ_C();
+        ObjArray* arr = (ObjArray*)val_as_obj(R(b));
+        int i2 = (int)val_as_int(R(c));
+        if (unlikely((uint64_t)i2 >= (uint64_t)arr->count)) {
+            int line = GET_CURRENT_LINE();
+            char msg[128];
+            snprintf(msg, sizeof(msg), "数组索引越界: 索引 %d, 长度 %d", i2, arr->count);
+            if (!throw_runtime_error(msg, line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        arr->elements[i2] = R(a);
+        gc_write_barrier((Object*)arr, R(a));
+        DISPATCH();
+    }
     // OP_SLICE A B C: R[A] = R[B][R[A+1] : R[A+2]]（结束索引**包含**；null 表示省略）

@@ -1210,6 +1210,23 @@ static SymRef* assign_target_ref(Ast* ast, int i) {
     return &target->u.var.ref;
 }
 
+// 索引写该发哪条指令：静态类型已知 ⇒ 特化版 OP_INDEX_SET_ARRAY_INT，否则通用 OP_INDEX_SET。
+//   判据与**读路径同源**（codegen_expr.c 里 arr_spec 的那三行）：接收者静态类型 Array[int]、
+//   下标静态类型 int。读路径靠这个判据跳过 obj/下标判型已有先例，这里照搬。
+//   ⚠ 与读路径同一个前提："信任静态类型"（数组若被 ROTASET 改结构，两侧口径一致）；
+//     Array[float] / 字典 / 推断不出类型 ⇒ 通用版，行为不变。
+//   infer_expr_type 返回**新分配的副本**，调用方负责释放（本文件既有用法同此）。
+static OpCode index_set_op_for(CodeGen* gen, Ast* obj_ast, Ast* idx_ast) {
+    TypeInfo* ot = obj_ast ? infer_expr_type(gen->sem, obj_ast) : NULL;
+    TypeInfo* it = idx_ast ? infer_expr_type(gen->sem, idx_ast) : NULL;
+    int spec = (ot && ot->kind == TYPE_ARRAY && ot->element_type &&
+                ot->element_type->kind == TYPE_INT &&
+                it && it->kind == TYPE_INT);
+    if (ot) type_free(ot);
+    if (it) type_free(it);
+    return spec ? OP_INDEX_SET_ARRAY_INT : OP_INDEX_SET;
+}
+
 // 索引赋值（裸 AST_INDEX_ASSIGN）：R[obj][R[idx]] = R[val]
 //   dst >= 0 时把被赋的值也写入 dst（表达式位置）；dst < 0 表示语句位置（丢弃结果）
 void gen_index_assign(CodeGen* gen, Ast* ast, int dst) {
@@ -1250,8 +1267,9 @@ void gen_index_assign(CodeGen* gen, Ast* ast, int dst) {
             emit_loadnil_to(gen, val_reg, ast->line);
         }
     }
-    // INDEX_SET: R[B][R[C]] = R[A]
-    reg_encode_iABC(gen->chunk, OP_INDEX_SET, val_reg, obj_reg, idx_reg, ast->line);
+    // INDEX_SET: R[B][R[C]] = R[A]（静态类型已知 ⇒ 发特化版，见 index_set_op_for）
+    reg_encode_iABC(gen->chunk, index_set_op_for(gen, obj_ast, idx_ast),
+                    val_reg, obj_reg, idx_reg, ast->line);
     if (dst >= 0 && dst != val_reg) emit_mov(gen, dst, val_reg, ast->line);
     if (val_is_temp) reg_free(gen, val_reg);
     if (idx_is_temp) reg_free(gen, idx_reg);
@@ -1361,8 +1379,9 @@ void gen_assign(CodeGen* gen, Ast* ast) {
                 else { idx_reg = gen_expr(gen, idx_ast); idx_is_temp = 1; }
                 if (val_slot >= 0) { val_reg = val_slot; }
                 else { val_reg = ASSIGN_VAL(); val_is_temp = 1; }
-                // INDEX_SET: R[B][R[C]] = R[A]
-                reg_encode_iABC(gen->chunk, OP_INDEX_SET, val_reg, obj_reg, idx_reg, ast->line);
+                // INDEX_SET: R[B][R[C]] = R[A]（静态类型已知 ⇒ 发特化版，见 index_set_op_for）
+                reg_encode_iABC(gen->chunk, index_set_op_for(gen, obj_ast, idx_ast),
+                                val_reg, obj_reg, idx_reg, ast->line);
                 if (val_is_temp) ASSIGN_FREE_VAL(val_reg);
                 if (idx_is_temp) reg_free(gen, idx_reg);
                 if (obj_is_temp) reg_free(gen, obj_reg);

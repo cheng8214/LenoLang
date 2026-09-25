@@ -85,6 +85,15 @@
 //   并写明"为什么升 / 为什么不升"；改前先 git fetch（2026-09-16 撞过车：两个会话都用 v23
 //   但格式不同，数值相同、格式不同 ⇒ 靠版本号区分不开）。
 #define LENO_BIN_MAGIC      0x424E454C  // "LENB" little-endian
+// v3.2.0（2026-09-25）：新增 opcode **OP_INDEX_SET_ARRAY_INT** —— 索引写的静态类型特化
+//   （`arr[i] = v` 在接收者静态类型 Array[int]、下标 int 时省掉 obj 判型与下标的
+//   int→double→int 往返；发射条件见 codegen_stmt.c 的 index_set_op_for）。
+//   **opcode 集合变了**：虽然按惯例**追加在枚举末尾**（既有 opcode 编号全部不变 ⇒
+//   旧 .lenb 在新 VM 上照旧可跑），但**仍必须 bump** —— 新字节码含旧构建不认识的 opcode，
+//   而旧构建会按 magic+version 校验通过、直接加载并跳转发散（0xC0000005）。
+//   判据与先例：v2.6.0（新增 OP_CMPJMP_LI_INT，同样是追加在末尾仍 bump）、
+//   v3.1.0（常量标签集合变化）。
+//   ⇒ LENO_MODCACHE_VERSION 同步升（模块字节码里同样含 opcode）。
 // v3.1.0（2026-09-25）：新增常量标签 **CONST_TAG_DEAD_FUNCTION(0x14)** —— 方法级死代码消除
 //   （DCE）把引用图证明不可达的函数在入口 .lenb 里只写 1 字节标签（省略名字/参数表/函数体）。
 //   **标签集合变了**：新产物含旧构建不认识的 0x14 ⇒ 旧构建读到它会落进 default 分支
@@ -112,7 +121,8 @@
 //   ⇒ .lenb / entry_*.lenb 必须整体失效重编译。
 // v2.7.1（2026-09-16）：枚举成员求值语义修正 —— 扫描器补 `not`、除零/取模零改为与解析器同结论
 //   ⇒ 修正前编译出的 .lenb / entry_*.lenb 里可能烙着错的常量值，必须整体失效重编译。
-#define LENO_BIN_VERSION    0x00030100  // v3.1.0 - 新增 CONST_TAG_DEAD_FUNCTION（DCE 裁剪，见上）
+#define LENO_BIN_VERSION    0x00030200  // v3.2.0 - 新增 opcode OP_INDEX_SET_ARRAY_INT（见上）
+                                        // v3.1.0 - 新增 CONST_TAG_DEAD_FUNCTION（DCE 裁剪，见上）
                                         // v3.0.2 - 行号表改 RLE+varint（见上面 v3.0.2 条目）
                                         // v3.0.0 - 寄存器式字节码：定长 4 字节指令，
                                         //   OpCode 枚举完全重写，旧 .lenb 全部失效
@@ -139,7 +149,10 @@
 // v13：ObjFunction 增加 is_async（运行期判定"调用即建协程"用）。旧缓存里的函数对象缺这个
 //      字段 ⇒ async 函数的**间接调用**（`var f = w; f()`、当参数传、绑定方法）会退回同步执行、
 //      静默错值，所以必须**作废旧缓存**。
-#define LENO_MODCACHE_VERSION  0x00000010  // v16 - 同 LENO_BIN_VERSION v3.1.0（新增
+#define LENO_MODCACHE_VERSION  0x00000011  // v17 - 同 LENO_BIN_VERSION v3.2.0（新增 opcode
+                                           //       OP_INDEX_SET_ARRAY_INT：模块字节码里同样
+                                           //       含 opcode，旧构建读到即跳转发散）
+                                           // v16 - 同 LENO_BIN_VERSION v3.1.0（新增
                                            //       CONST_TAG_DEAD_FUNCTION 常量标签：模块字节码
                                            //       里同样用这份常量序列化实现）
                                            // v15 - 同 LENO_BIN_VERSION v3.0.2（行号表改 RLE+varint：

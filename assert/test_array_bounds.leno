@@ -131,6 +131,57 @@ main() {
         i = i + 1 }
     if h["k"] != 299 { fail(8) }
 
+    // ---- 10) 下标**写**的越界：必须抛可捕获的「数组索引越界」（正/负下标都测）----
+    //    —— 特化写指令 OP_INDEX_SET_ARRAY_INT（Array[int] + int 下标时发射）与通用
+    //       OP_INDEX_SET 的越界分支是**两段独立代码**，报错文本与"可捕获"必须一致。
+    //       此前本文件只覆盖了越界**读**：套件全绿也不代表这条新分支被走到。
+    var w = [1, 2, 3]
+    var w_pos = 0
+    var w_neg = 0
+    i = 0
+    while i < 300 {
+        var ix2 = 1
+        if i > 60 { ix2 = 9 }
+        try {
+            w[ix2] = 7
+        } catch e {
+            w_pos = w_pos + 1
+            if e.msg.find("数组索引越界") < 0 { print("写越界文本=" + e.msg); fail(10) }
+        }
+        i = i + 1
+    }
+    if w_pos != 239 { print("写越界捕获=" + w_pos); fail(10) }
+    if w[0] != 1 or w[1] != 7 or w[2] != 3 { print("写越界破坏了数组"); fail(10) }
+
+    i = 0
+    while i < 300 {
+        var ix3 = 0
+        if i > 60 { ix3 = -1 }
+        try {
+            w[ix3] = 8
+        } catch {
+            w_neg = w_neg + 1
+        }
+        i = i + 1
+    }
+    if w_neg != 239 { print("负下标写捕获=" + w_neg); fail(10) }
+
+    // 两条路径（特化 / 通用）的越界报错文本必须逐字一致：
+    //   `wany` 元素类型不是 int ⇒ 不满足发射条件 ⇒ 仍走通用 OP_INDEX_SET。
+    //   ⚠ 长度必须与 `w` 相同（报错文本里带"长度 N"），否则比的是两件不同的事。
+    var wany = []
+    wany.add(1)
+    wany.add(2)
+    wany.add(3)
+    var msg_any = ""
+    var msg_spec = ""
+    try { wany[9] = 3 } catch e { msg_any = e.msg }
+    try { w[9] = 3 } catch e { msg_spec = e.msg }
+    if msg_any != msg_spec {
+        print("两侧越界文本不一致: [" + msg_any + "] vs [" + msg_spec + "]")
+        fail(10)
+    }
+
     if bad > 0 {
         print("test_array_bounds FAILED: " + bad + " 处")
         _exit(1)

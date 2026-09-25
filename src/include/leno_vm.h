@@ -352,6 +352,19 @@ typedef enum {
     OP_SHR_K,
     OP_USHR_K,
 
+    // 静态类型特化索引写（对齐读路径的 OP_INDEX_ARRAY_INT）：
+    //   codegen 已核实 R[B] 的静态类型是 Array[int]、R[C] 是 int48 ⇒ 跳过 obj 判型
+    //   与下标数字判型，且下标**直接 val_as_int 解码**。
+    //   通用 OP_INDEX_SET 的下标是 `val_is_num(idx) ? (int)value_to_double(idx) : -1`，
+    //   对 int48 来说是「int→double→int」两次浮点往返（读路径的特化版早就省掉了，
+    //   写路径一直漏着）——这是本指令要消掉的那部分。
+    //   越界检查与 GC 写屏障与通用版**逐条一致**（越界同样报「数组索引越界: …」）。
+    //   ⚠ 发射条件与读路径同源（codegen_expr.c 的 arr_spec）：接收者静态类型 Array[int]
+    //     **且**下标静态类型 int；Array[float] / 字典 / 推断不出类型 ⇒ 仍走通用
+    //     OP_INDEX_SET，行为不变。
+    //   追加在末尾 ⇒ 既有 opcode 编号不动，旧 .lenb 仍可执行。
+    OP_INDEX_SET_ARRAY_INT,  // iABC  R[B][R[C]] = R[A]（Array[int] 特化）
+
     OP_OPCODE_COUNT,    // 用于跳转表大小
 } OpCode;
 

@@ -86,6 +86,7 @@ static const char* opCodeNames[] = {
     "OP_INDEX_ARRAY_IMM",
     "OP_CMPJMP_ITER",
     "OP_BITAND_K", "OP_BITOR_K", "OP_BITXOR_K", "OP_SHL_K", "OP_SHR_K", "OP_USHR_K",
+    "OP_INDEX_SET_ARRAY_INT",
     "OP_OPCODE_COUNT",
 };
 
