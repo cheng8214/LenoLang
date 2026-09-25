@@ -17,6 +17,10 @@ extern ObjModule* load_module_file(const char* file_path, const char* current_fi
 
 // 前向声明 - 类型推断（用于 struct 方法调用）
 TypeInfo* infer_expr_type(Semantic* s, Ast* ast);
+// 字段名 → 字段索引（semantic 的**唯一实现**，三级解析：作用域 → 全局定义表 → 导入模块符号表）。
+// 只在名字确实是该 struct 的**字段**时把 *out_field_index 填成 ≥0（方法名不会命中）
+// ⇒ 正是"发特化字段指令"需要的那个前提（见 codegen_expr.c 的 struct 字段读分支）。
+TypeInfo* infer_field_type(Semantic* s, TypeInfo* obj_type, const char* field_name, int* out_field_index);
 
 // ============================================================================
 // 寄存器式 codegen 核心接口

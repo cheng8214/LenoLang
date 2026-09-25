@@ -508,6 +508,30 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
             //   数组被 ROTASET 改结构、或静态类型推断不到 → 回落通用 OP_INDEX 兜底。
             TypeInfo* ot = infer_expr_type(gen->sem, iobj);
             TypeInfo* it = infer_expr_type(gen->sem, iidx);
+            // ★★ struct 字段读（第五例"同一件事两处深度不一致"）：
+            //   解析器把**非变量接收者**的 `.name` 编成 `["name"]`（实测 `ps[i].x` 的 AST 是
+            //   AST_INDEX + AST_STRING 下标，obj 静态类型已明确是 struct），于是它走的是这条
+            //   索引分支，而这里原先**只看数组/dict** ⇒ 落到通用 OP_INDEX：运行期要
+            //   `val_is_string` + `struct_get_field_index`（**逐字段 strcmp 线性扫**，无 IC）。
+            //   而字段名是**字面量**、接收者类型**已知是 struct** ⇒ 字段索引完全可以在编译期
+            //   定死，直接发 OP_GET_FIELD_FAST（一条指令、直取 field_values[idx]）。
+            //   ⚠ 安全前提：只在 `infer_field_type` 真的解析出**字段**索引（≥0）时才走 ——
+            //     这同时守住了通用路径的**方法名兜底**（泛型 face 的 `a.compareTo(b)` 靠它，
+            //     那种情况解析不出字段索引 ⇒ 仍走通用 OP_INDEX，语义一字不变）。
+            //   ⚠ DCE：仍按原口径记一次"方法名通配引用"（见本分支末尾那段的理由），
+            //     不做节省 —— 宁可多留方法，也不冒剪错的风险。
+            if (ot && ot->kind == TYPE_STRUCT && iidx && iidx->kind == AST_STRING &&
+                iidx->u.string.value && iidx->u.string.value[0]) {
+                int fi = -1;
+                TypeInfo* ft = infer_field_type(gen->sem, ot, iidx->u.string.value, &fi);
+                if (ft) type_free(ft);
+                if (fi >= 0) {
+                    dce_note_method_ref(NULL, iidx->u.string.value);
+                    reg_encode_iABC(gen->chunk, OP_GET_FIELD_FAST, dst, obj_reg, fi, ast->line);
+                    if (obj_is_temp) reg_free(gen, obj_reg);
+                    break;
+                }
+            }
             int arr_spec = (ot && ot->kind == TYPE_ARRAY && ot->element_type &&
                             it && it->kind == TYPE_INT);
             // ★ 立即数下标：数组已特化 + 下标是 **[0,255] 整数字面量** ⇒ **不必求值下标**，

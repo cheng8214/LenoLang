@@ -1210,21 +1210,40 @@ static SymRef* assign_target_ref(Ast* ast, int i) {
     return &target->u.var.ref;
 }
 
-// 索引写该发哪条指令：静态类型已知 ⇒ 特化版 OP_INDEX_SET_ARRAY_INT，否则通用 OP_INDEX_SET。
-//   判据与**读路径同源**（codegen_expr.c 里 arr_spec 的那三行）：接收者静态类型是 Array、
-//   下标静态类型是 int —— **不限元素类型**（见 leno_vm.h：特化指令只依赖"接收者是数组 +
-//   下标是 int"，与元素是什么无关；原先只覆盖 int 元素是漏做，⑤-ah/⑤-ai）。
-//   ⚠ 与读路径同一个前提："信任静态类型"（数组若被 ROTASET 改结构，两侧口径一致）；
-//     字典 / 推断不出类型 ⇒ 通用版，行为不变。
-//   infer_expr_type 返回**新分配的副本**，调用方负责释放（本文件既有用法同此）。
-static OpCode index_set_op_for(CodeGen* gen, Ast* obj_ast, Ast* idx_ast) {
+// 索引写该发哪条指令 + 立即数字段索引（out_field_idx，仅 OP_SET_FIELD 时有效）。
+//   ① 接收者静态类型是 struct + 下标是**字符串字面量**且确实是该 struct 的字段 ⇒
+//      OP_SET_FIELD（字段索引编译期定死）。理由与读路径**同源**（见 codegen_expr.c 的
+//      struct 字段读分支）：`ps[i].y = 9` 这类非变量接收者的 `.name` 被解析器编成
+//      `["name"]`，原先落通用 OP_INDEX_SET ⇒ 运行期逐字段 strcmp 线性扫。
+//      ⚠ 只在 infer_field_type 解析出字段索引（≥0）时才走 ⇒ 方法名兜底路径不受影响。
+//   ② 否则：接收者静态类型是 Array + 下标静态 int ⇒ 特化版 OP_INDEX_SET_ARRAY_INT
+//      （**不限元素类型** —— 特化指令只依赖"接收者是数组 + 下标是 int"）。
+//   ③ 其余（字典 / 推断不出类型）⇒ 通用 OP_INDEX_SET，行为不变。
+//   infer_expr_type / infer_field_type 返回**新分配的副本**，调用方负责释放。
+static OpCode index_set_op_for(CodeGen* gen, Ast* obj_ast, Ast* idx_ast, int* out_field_idx) {
+    *out_field_idx = -1;
     TypeInfo* ot = obj_ast ? infer_expr_type(gen->sem, obj_ast) : NULL;
     TypeInfo* it = idx_ast ? infer_expr_type(gen->sem, idx_ast) : NULL;
-    int spec = (ot && ot->kind == TYPE_ARRAY && ot->element_type &&
-                it && it->kind == TYPE_INT);
+    OpCode op = OP_INDEX_SET;
+    if (ot && ot->kind == TYPE_STRUCT && idx_ast && idx_ast->kind == AST_STRING &&
+        idx_ast->u.string.value && idx_ast->u.string.value[0]) {
+        int fi = -1;
+        TypeInfo* ft = infer_field_type(gen->sem, ot, idx_ast->u.string.value, &fi);
+        if (ft) type_free(ft);
+        if (fi >= 0) {
+            dce_note_method_ref(NULL, idx_ast->u.string.value);   // 与读路径同口径，不省
+            *out_field_idx = fi;
+            op = OP_SET_FIELD;
+        }
+    }
+    if (op == OP_INDEX_SET) {
+        int spec = (ot && ot->kind == TYPE_ARRAY && ot->element_type &&
+                    it && it->kind == TYPE_INT);
+        if (spec) op = OP_INDEX_SET_ARRAY_INT;
+    }
     if (ot) type_free(ot);
     if (it) type_free(it);
-    return spec ? OP_INDEX_SET_ARRAY_INT : OP_INDEX_SET;
+    return op;
 }
 
 // 索引赋值（裸 AST_INDEX_ASSIGN）：R[obj][R[idx]] = R[val]
@@ -1253,10 +1272,16 @@ void gen_index_assign(CodeGen* gen, Ast* ast, int dst) {
     if (idx_slot >= 0 && ast_may_write_slot(val_ast, idx_slot)) snap_needed = 1;
     if (snap_needed) { val_slot = -1; }
 
-    int obj_reg, idx_reg, val_reg, val_is_temp, idx_is_temp = 0, obj_is_temp = 0;
+    int obj_reg, idx_reg = 0, val_reg, val_is_temp, idx_is_temp = 0, obj_is_temp = 0;
+    // 先定"发哪条指令"：struct 字段写（`ps[i].y = 9`）时**下标不必求值**（字段索引编译期已知），
+    // 与读路径的立即数下标同一手法（跳过求值就必须跳过释放）。
+    int field_idx = -1;
+    OpCode set_op = index_set_op_for(gen, obj_ast, idx_ast, &field_idx);
+    int idx_skip = (set_op == OP_SET_FIELD);
     if (obj_slot >= 0) { obj_reg = obj_slot; }
     else { obj_reg = obj_ast ? gen_expr(gen, obj_ast) : -1; obj_is_temp = (obj_reg >= 0); }
-    if (idx_slot >= 0) { idx_reg = idx_slot; }
+    if (idx_skip) { /* 字段索引已定死，不发 LOADK */ }
+    else if (idx_slot >= 0) { idx_reg = idx_slot; }
     else { idx_reg = idx_ast ? gen_expr(gen, idx_ast) : -1; idx_is_temp = (idx_reg >= 0); }
     if (val_slot >= 0) { val_reg = val_slot; val_is_temp = 0; }
     else {
@@ -1267,9 +1292,12 @@ void gen_index_assign(CodeGen* gen, Ast* ast, int dst) {
             emit_loadnil_to(gen, val_reg, ast->line);
         }
     }
-    // INDEX_SET: R[B][R[C]] = R[A]（静态类型已知 ⇒ 发特化版，见 index_set_op_for）
-    reg_encode_iABC(gen->chunk, index_set_op_for(gen, obj_ast, idx_ast),
-                    val_reg, obj_reg, idx_reg, ast->line);
+    // INDEX_SET / SET_FIELD: R[B][R[C]] = R[A]（静态类型已知 ⇒ 发特化版，见 index_set_op_for）
+    if (set_op == OP_SET_FIELD) {
+        reg_encode_iABC(gen->chunk, OP_SET_FIELD, val_reg, obj_reg, field_idx, ast->line);
+    } else {
+        reg_encode_iABC(gen->chunk, set_op, val_reg, obj_reg, idx_reg, ast->line);
+    }
     if (dst >= 0 && dst != val_reg) emit_mov(gen, dst, val_reg, ast->line);
     if (val_is_temp) reg_free(gen, val_reg);
     if (idx_is_temp) reg_free(gen, idx_reg);
@@ -1379,9 +1407,14 @@ void gen_assign(CodeGen* gen, Ast* ast) {
                 else { idx_reg = gen_expr(gen, idx_ast); idx_is_temp = 1; }
                 if (val_slot >= 0) { val_reg = val_slot; }
                 else { val_reg = ASSIGN_VAL(); val_is_temp = 1; }
-                // INDEX_SET: R[B][R[C]] = R[A]（静态类型已知 ⇒ 发特化版，见 index_set_op_for）
-                reg_encode_iABC(gen->chunk, index_set_op_for(gen, obj_ast, idx_ast),
-                                val_reg, obj_reg, idx_reg, ast->line);
+                // INDEX_SET / SET_FIELD: R[B][R[C]] = R[A]（静态类型已知 ⇒ 发特化版，见 index_set_op_for）
+                int mf_idx = -1;
+                OpCode mf_op = index_set_op_for(gen, obj_ast, idx_ast, &mf_idx);
+                if (mf_op == OP_SET_FIELD) {
+                    reg_encode_iABC(gen->chunk, OP_SET_FIELD, val_reg, obj_reg, mf_idx, ast->line);
+                } else {
+                    reg_encode_iABC(gen->chunk, mf_op, val_reg, obj_reg, idx_reg, ast->line);
+                }
                 if (val_is_temp) ASSIGN_FREE_VAL(val_reg);
                 if (idx_is_temp) reg_free(gen, idx_reg);
                 if (obj_is_temp) reg_free(gen, obj_reg);
