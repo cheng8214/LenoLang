@@ -122,7 +122,8 @@ LENO_SOURCES="$LENO_SOURCES ../src/package/package_install.c"
 # Linux 保持原样（glibc 的 libdl）。⚠ 这一处 CI 未覆盖（build.yml 只构建编译器与 VM），
 # 所以只改 Darwin 分支、Linux 分支一字不动，避免引入未验证的影响。
 case "$(uname -s 2>/dev/null)" in
-  Darwin*) LIBS="-lm -lpthread" ;;
+  # Darwin：无 libdl（不能 -ldl），且 iconv 需显式链接（-liconv）
+  Darwin*) LIBS="-lm -lpthread -liconv" ;;
   *)       LIBS="-lm -lpthread -ldl" ;;
 esac
 

@@ -46,10 +46,14 @@ elif [ "$PLATFORM" = "macos" ]; then
   else
     SOURCES="$SOURCES src/module/ffi/leno_ffi_linux.c"
   fi
-  # macOS 不提供 libdl 这个库（dlopen/dlsym 属于 libSystem），带上 -ldl 会直接链接失败：
-  #   ld: library not found for -ldl
-  # Linux 需要它、macOS 不需要 —— CI 上 macOS 任务正是倒在这一步（编译已过去，链接失败）。
-  LIBS="$LIBS -lpthread"
+  # macOS 与 Linux 在链接库上有两点不同（CI 上 macOS 任务就是逐个撞出来的）：
+  #   ① 没有 libdl（dlopen/dlsym 属于 libSystem）⇒ 不能带 -ldl
+  #      否则：ld: library not found for -ldl
+  #   ② iconv / iconv_close 属**独立的 libiconv** ⇒ 必须带 -liconv
+  #      否则（object_cstruct.c 的 utf16<->utf8 会引用它们）：
+  #        Undefined symbols for architecture arm64: "_iconv", "_iconv_close"
+  # glibc 把 iconv 内置在 libc 里，所以 Linux 侧这两条都不需要。
+  LIBS="$LIBS -lpthread -liconv"
 else
   # Linux: 检测架构
   ARCH="$(uname -m 2>/dev/null || echo x86_64)"
