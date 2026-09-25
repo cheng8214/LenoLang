@@ -26,6 +26,7 @@ bool _drawBorder = true          // 是否绘制边框（嵌入 ComboBox 时设�
     Color _bgColor = #232332FF             // 背景色（默认深色主题）
     Color _txtColor = #DCDCF0FF           // 文字色（默认浅色）
     Color _focusColor = #64B4FFFF          // 聚焦边框色
+    Color _bdrColor = 0                    // 边框色（**0 = 自动**：按背景提亮 ✓ ⇒ 默认行为不变）
     Color _sbColor = #787D8CFF             // 滚动条颜色
 
     // 单行模式
@@ -264,6 +265,7 @@ _drawBorder = opts.get("border", true)
         if opts.get("bg_color") is Color => t { _bgColor = t }
         if opts.get("text_color") is Color => t { _txtColor = t }
         if opts.get("focus_color") is Color => t { _focusColor = t }
+        if opts.get("border_color") is Color => t { _bdrColor = t }
 
         _placeholder = opts.get("placeholder", "")
         _tip = opts.get("tip", "")
@@ -336,6 +338,7 @@ _drawBorder = opts.get("border", true)
     func get_h(): float                 { return h }
     func set_bg_color(Color color)         { _bgColor = color }
     func set_text_color(Color color)       { _txtColor = color }
+    func set_border_color(Color color)     { _bdrColor = color }
     func set_font_size(float s) {
         _fontSize = s
         if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
@@ -1515,9 +1518,12 @@ _drawBorder = opts.get("border", true)
         }
 
         // 边框（由 border 选项控制是否绘制）
+        // `border_color` 显式给定则用它（默认 0 = 走老行为：按背景提亮 X）—— 老行为在**浅色底**上
+        // 会算成"更白" ⇒ 白底输入框的边框等于看不见 ✗（浅色界面必须有可指定的描边 ✓）
         if _drawBorder {
-            if _focused { r.setColor(_focusColor) }
-            else         { r.setColor(theme.brighten(_bgColor, 40)) }
+            if _focused and _bdrColor == 0 { r.setColor(_focusColor) }
+            else if _bdrColor != 0 { r.setColor(_bdrColor) }
+            else { r.setColor(theme.brighten(_bgColor, 40)) }
             r.drawRoundedRect(x, y, w, h, _radius)
         }
 

@@ -28,6 +28,9 @@ use theme.Color
 export struct TabControl impl Widget, Themeable {
     float x = 0.0, y = 0.0, w = 400.0, h = 300.0
     float _tabH = 32.0         // 标签栏高度
+    bool _showHeader = true    // 是否绘制标签栏：false = 只当「纯页面容器」用，靠外部按钮 set_active 切页 ✓
+    bool _drawBorder = true    // 是否画内容区边框（默认 true = 老行为 ✓）
+    bool _clipContent = true   // 是否把页面内容裁剪到内容区（`clip:false` 关闭；默认 true = 老行为 ✓）
     Array[string] _tabs = []     // 各页标题
     Array[Array[Widget]] _pages = []  // 每页的子控件集合（仅当前页被处理/绘制）
     Array[VBox] _pageLayouts = []    // 每页的布局容器
@@ -82,6 +85,15 @@ export struct TabControl impl Widget, Themeable {
         w    = opts.get("w", 400)
         h    = opts.get("h", 300)
         _tabH = opts.get("tab_h", 32)
+        // 隐藏标签栏（默认 false 之外都是老行为 ✓）。用途：像侧栏导航那样用**外部按钮**切页时，
+        // 标签栏是多余的；注意**不能**用 `tab_h:0` 代替 ✗ —— render 里标签文字画在 `y - 文字高/2`、
+        // 下划线画在 `y - 3`，只是靠"Tab 恰好在窗口最上沿被裁掉"才看不见，一旦 Tab 不在最上沿
+        // 就会画到 Tab 外面去 ✗（`show_header:false` 是整条不画 ✓）。
+        // ⚠ `tabs` 仍然要照常传：`set_active` 会按 `_tabs.len()` 校验下标 ✓
+        _showHeader = opts.get("show_header", true)
+        _drawBorder = opts.get("border", true)
+        // 关掉内容区裁剪：页面内容（如整页 ScrollView）自己有裁剪时这层是冗余的 ✓
+        _clipContent = opts.get("clip", true)
 
         var ts = opts.get("tabs", [])
         if ts is Array[string] { _tabs = ts as Array[string] } else { _tabs = [] }
@@ -128,9 +140,15 @@ export struct TabControl impl Widget, Themeable {
     func get_y(): float { return y }
 
     // ==================== 设置方法 ====================
-    // 添加子控件到指定页（page 从 0 起）
+    // 表头实际占用的高度：`show_header:false` 时内容区就从 (x, y) 开始 ⇒
+    // 所有「内容区原点/高度」的计算都走这里，隐藏表头才不会有 32px 的空白 ✗
+    func _hdrH(): float {
+        if _showHeader { return _tabH }
+        return 0.0
+    }
+
     // 添加子控件到指定页（page 从 0 起）。dx, dy 为「内容区左上角」相对坐标，
-    // TabControl 每帧以内容区原点 (x, y+tab_h) + (dx, dy) 重排，故移动/缩放 Tab 时内部整体跟随。
+    // TabControl 每帧以内容区原点 (x, y+表头高) + (dx, dy) 重排，故移动/缩放 Tab 时内部整体跟随。
     func addToPage(int page, Widget c, float dx, float dy): Widget {
         if page < 0 or page >= _pages.len() { return c }
         _pages[page].add(c)
@@ -147,9 +165,9 @@ export struct TabControl impl Widget, Themeable {
         if page < 0 or page >= _pages.len() { return }
         _pageLayouts[page] = layout
         _hasLayout[page] = true
-        // 初始位置和大小：内容区 = (x, y+tabH, w, h-tabH)
-        layout.set_pos(x, y + _tabH)
-        layout.set_size(w, h - _tabH)
+        // 初始位置和大小：内容区 = (x, y+表头高, w, h-表头高)
+        layout.set_pos(x, y + _hdrH())
+        layout.set_size(w, h - _hdrH())
         if _hwnd != null { _tab_pass_window(layout as Widget, _hwnd) }
     }
 
@@ -223,15 +241,15 @@ export struct TabControl impl Widget, Themeable {
         if _hasLayout[page] {
             // 布局页：更新布局容器位置和大小，触发内部重排
             var layout = _pageLayouts[page]
-            layout.set_pos(x, y + _tabH)
-            layout.set_size(w, h - _tabH)
+            layout.set_pos(x, y + _hdrH())
+            layout.set_size(w, h - _hdrH())
             return
         }
         // 普通页：逐个更新子控件相对偏移
         var pg = _pages[page]
         var of = _rel[page]
         float ox = x
-        float oy = y + _tabH
+        float oy = y + _hdrH()
         for pg.len() to i {
             var c = pg[i]
             var r = of[i]
@@ -263,12 +281,13 @@ export struct TabControl impl Widget, Themeable {
         float total = 0.0
         for _tabW.len() to i { total = total + _tabW[i] }
         float tx = x
+        // 表头高 = 0（show_header:false）⇒ 标签矩形高度为 0 ⇒ 命中测试天然失效 ✓
         if total > w {
             // 放不下则等宽分配
             float ew = w / n
-            for n to i { out.add([tx, y, ew, _tabH]); tx = tx + ew }
+            for n to i { out.add([tx, y, ew, _hdrH()]); tx = tx + ew }
         } else {
-            for n to i { out.add([tx, y, _tabW[i], _tabH]); tx = tx + _tabW[i] }
+            for n to i { out.add([tx, y, _tabW[i], _hdrH()]); tx = tx + _tabW[i] }
         }
         return out
     }
@@ -280,29 +299,32 @@ export struct TabControl impl Widget, Themeable {
         var[float, float](mx, my) = ev.mousePos()
 
 
-        var rs = _tabRects()
-        int hitTab = -1
-        for rs.len() to i {
-            var r = rs[i]
-            if mx >= r[0] and mx <= r[0] + r[2] and my >= r[1] and my <= r[1] + r[3] { hitTab = i }
-        }
-
-        if ev.isMouseMotion() {
-            int prevHover = _hover
-            _hover = hitTab
-            if _cursor >= 0 and _hover >= 0 { core.requestCursor(_cursor) }
-            if _hover != prevHover { core.markFrameRedraw() } else { core.markFrameMotion() }
-        }
-
-        // 点击标签栏：切换页。若光标落在某打开的弹层（下拉/菜单）范围内则不切换，避免误触；
-        // 同时关闭所有打开的下拉框，确保切页后弹层不残留/错位。
-        if ev.isMouseButtonDown() and hitTab >= 0 {
-            if not core.inPopupCapture(mx, my) {
-                set_active(hitTab)   // 内部会关闭所有已展开的下拉框
-            } else {
-                _closePopups()
+        // 标签栏交互（`show_header:false` 时整块跳过 ⇒ 不会误吞内容区的点击 ✓）
+        if _showHeader {
+            var rs = _tabRects()
+            int hitTab = -1
+            for rs.len() to i {
+                var r = rs[i]
+                if mx >= r[0] and mx <= r[0] + r[2] and my >= r[1] and my <= r[1] + r[3] { hitTab = i }
             }
-            return
+
+            if ev.isMouseMotion() {
+                int prevHover = _hover
+                _hover = hitTab
+                if _cursor >= 0 and _hover >= 0 { core.requestCursor(_cursor) }
+                if _hover != prevHover { core.markFrameRedraw() } else { core.markFrameMotion() }
+            }
+
+            // 点击标签栏：切换页。若光标落在某打开的弹层（下拉/菜单）范围内则不切换，避免误触；
+            // 同时关闭所有打开的下拉框，确保切页后弹层不残留/错位。
+            if ev.isMouseButtonDown() and hitTab >= 0 {
+                if not core.inPopupCapture(mx, my) {
+                    set_active(hitTab)   // 内部会关闭所有已展开的下拉框
+                } else {
+                    _closePopups()
+                }
+                return
+            }
         }
 
         // 转发事件给当前页子控件（隐藏页不参与，避免误触）。
@@ -338,9 +360,9 @@ export struct TabControl impl Widget, Themeable {
         if not _loaded or not enabled or not visible { return }
         _ensure_font()
 
-        // 标签栏背景
+        // 标签栏背景（`show_header:false` ⇒ 高度 0 ⇒ 等于不画 ✓）
         r.setColor(_barColor)
-        r.fillRect(x, y, w, _tabH)
+        r.fillRect(x, y, w, _hdrH())
 
         // 各标签
         var rs = _tabRects()
@@ -353,36 +375,44 @@ export struct TabControl impl Widget, Themeable {
             r.setColor(bC)
             r.fillRect(rr[0], rr[1], rr[2], rr[3])
 
-            // 标签文字（居中裁剪）
-            if _font != null and _font.ok and _tabs[i] != "" {
+            // 标签文字（居中裁剪）—— `show_header:false` 时**必须跳过** ✗
+            // （否则文字会画到 `rr[1] + (0 - th)/2` = 标签栏上方；`tab_h:0` 那种"假隐藏"就是这么漏的）
+            if _showHeader and _font != null and _font.ok and _tabs[i] != "" {
                 var[float, float](tw, th) = _font.measureString(_tabs[i])
                 float tx = rr[0] + (rr[2] - tw) / 2.0
                 float ty = rr[1] + (rr[3] - th) / 2.0
                 r.drawText(_font, _tabs[i], r.snapX(tx), r.snapY(ty), tC)
             }
 
-            // 激活标签下划线
-            if i == _active {
+            // 激活标签下划线（隐藏表头时同样不画 ✓）
+            if _showHeader and i == _active {
                 r.setColor(_accColor)
                 r.fillRect(rr[0], rr[1] + rr[3] - 3.0, rr[2], 3.0)
             }
         }
 
-        // 标签栏底边
-        r.setColor(_brdColor)
-        r.drawLine(x, y + _tabH, x + w, y + _tabH)
+        // 标签栏底边（隐藏表头时这条线会横在内容区顶上 ⇒ 跳过 ✓）
+        if _showHeader {
+            r.setColor(_brdColor)
+            r.drawLine(x, y + _tabH, x + w, y + _tabH)
+        }
 
-        // 内容区
-        float cx = x, cy = y + _tabH, cw = w, ch = h - _tabH
+        // 内容区（表头隐藏时内容区就从 (x, y) 开始 ⇒ 没有 32px 空白 ✓）
+        float cx = x, cy = y + _hdrH(), cw = w, ch = h - _hdrH()
         if cw < 0 { cw = 0 }
         if ch < 0 { ch = 0 }
         r.setColor(_bgColor)
         r.fillRect(cx, cy, cw, ch)
 
-        // 裁剪到内容区，绘制当前页子控件
-        SDL_Rect clip = SDL_Rect.malloc()
-        clip.x = _int(cx); clip.y = _int(cy); clip.w = _int(cw) + 1; clip.h = _int(ch) + 1   // +1 防止浮点坐标截断丢失亚像素，避免子控件边缘闪烁
-        r.pushClipRect(clip.to_ptr())
+        // 裁剪到内容区，绘制当前页子控件（`clip:false` 可关：页面内容自己会被 ScrollView 之类的
+        // 容器裁掉时，这一层是**冗余**的 ⇒ 少一层裁剪就少一次 flush/malloc，是"闪烁"的常见来源 ✗）
+        SDL_Rect? clip = null
+        if _clipContent {
+            var cl = SDL_Rect.malloc()
+            cl.x = _int(cx); cl.y = _int(cy); cl.w = _int(cw) + 1; cl.h = _int(ch) + 1   // +1 防止浮点坐标截断丢失亚像素，避免子控件边缘闪烁
+            r.pushClipRect(cl.to_ptr())
+            clip = cl
+        }
 
         _applyOffsets(_active)
         // 如果该页有布局容器，渲染布局容器（它内部会渲染子控件并调用 _relayout）
@@ -393,12 +423,16 @@ export struct TabControl impl Widget, Themeable {
             for page to c { c.render(r) }
         }
 
-        r.popClipRect()
-        clip.free()
+        if _clipContent {
+            r.popClipRect()
+            clip?.free()
+        }
 
-        // 内容区边框
-        r.setColor(_brdColor)
-        r.drawRect(cx, cy, cw, ch)
+        // 内容区边框（`border:false` 可关：纯页面容器场景不想要自己的框 ✓）
+        if _drawBorder {
+            r.setColor(_brdColor)
+            r.drawRect(cx, cy, cw, ch)
+        }
     }
 
     func dispose() {

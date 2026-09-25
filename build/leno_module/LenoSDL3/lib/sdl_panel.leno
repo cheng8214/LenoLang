@@ -118,11 +118,15 @@ export struct Panel impl Widget, Themeable {
         r.setColor(_bgColor)
         r.fillRoundedRect(x, y, w, h, _radius)
 
-        SDL_Rect cr = SDL_Rect.malloc()
+        // ⚠ 只有真要裁剪时才分配 rect：面板**每帧**都会 render ⇒ 无条件 malloc/free 是纯浪费 ✗
+        //   （`clip:false` 的面板尤其不该付这笔钱；裁剪栈里每次 push 还可能再分配一个交集 rect ✓）
+        SDL_Rect? cr = null
         if _clip {
-            cr.x = _int(x); cr.y = _int(y)
-            cr.w = _int(w) + 1; cr.h = _int(h) + 1   // +1 防止浮点坐标截断丢失亚像素，避免子控件边缘闪烁
-            r.pushClipRect(cr.to_ptr())
+            var c2 = SDL_Rect.malloc()
+            c2.x = _int(x); c2.y = _int(y)
+            c2.w = _int(w) + 1; c2.h = _int(h) + 1   // +1 防止浮点坐标截断丢失亚像素，避免子控件边缘闪烁
+            r.pushClipRect(c2.to_ptr())
+            cr = c2
         }
 
         // 同步并渲染布局子控件
@@ -132,8 +136,10 @@ export struct Panel impl Widget, Themeable {
 
         for children to c { c.render(r) }
 
-        if _clip { r.popClipRect() }
-        cr.free()
+        if _clip {
+            r.popClipRect()
+            cr?.free()
+        }
 
         if _drawBorder {
             r.setColor(theme.withAlpha(_bdrColor, _brdA))

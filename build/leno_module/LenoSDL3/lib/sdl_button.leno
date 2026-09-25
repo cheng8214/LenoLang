@@ -22,6 +22,13 @@ export struct Button impl Widget, Themeable {
     const IMG_STRETCH      = 1   // 内容模式：拉伸填满
     const IMG_ASPECT_FILL  = 2   // 内容模式：覆盖填满（裁剪）
 
+    // 文字水平对齐（常量与 sdl_label.leno 同名同值 ✓）
+    // 为什么加：导航项/列表行这类「图标 + 左对齐文字」的按钮此前文字**只能居中** ✗
+    //（见 leno_gui/控件/数据看板/dashboard_sidebar.leno 的侧栏）
+    const ALIGN_LEFT   = 0
+    const ALIGN_CENTER = 1
+    const ALIGN_RIGHT  = 2
+
     string text = "Button"
     float x = 0.0, y = 0.0, w = 100.0, h = 40.0
     float _radius = 6.0      // 圆角半径
@@ -35,6 +42,9 @@ export struct Button impl Widget, Themeable {
     string _cachedTextKey = "\x01"
     Color _bgColor = #3C8CDCFF   // 背景色（默认 primary）
     Color _txtColor = #FFFFFFFF  // 文字色
+    int _align = ALIGN_CENTER    // 文字水平对齐（**默认居中 = 历史行为**，零破坏 ✓）
+    Color _bdrColor = 0          // 边框色（0 = 自动：按背景提亮 ✓，见 dashboard 的浅灰/浅蓝描边）
+    float _padding = 0.0         // 文字左右内边距（**默认 0 = 历史行为**，零破坏 ✓；见 align:"left"）
     Color _hovColor = 0          // 悬停背景色（为 0 时自动计算）
     Color _prColor = 0           // 按下背景色（为 0 时自动变暗）
     int _cursor = SystemCursor.POINTER   // 悬停鼠标样式（默认手型）
@@ -148,6 +158,20 @@ export struct Button impl Widget, Themeable {
         // 颜色：opts 未传则保持主题色（_bgColor 等已在上面从 Theme 赋值）
         if opts.get("bg_color") is Color => t { _bgColor = t }
         if opts.get("text_color") is Color => t { _txtColor = t }
+        if opts.get("border_color") is Color => t { _bdrColor = t }
+        // 文字水平对齐（默认**居中** = 历史行为 ✓；支持 "left"/"center"/"right" 或 int 常量）
+        var av = opts.get("align", ALIGN_CENTER)
+        if av is string {
+            string avs = av
+            if avs == "left" { _align = ALIGN_LEFT }
+            else if avs == "right" { _align = ALIGN_RIGHT }
+            else { _align = ALIGN_CENTER }
+        } else {
+            _align = _int(av)
+        }
+        // 文字左右内边距（opt-in；默认 0 ⇒ 与历史绘制完全一致 ✓）—— 配合 align:"left" 用，
+        // 否则左对齐文字会贴到按钮左边缘（导航项/列表行那种"图标 + 文字"必须留白 ✓）
+        _padding = _float(opts.get("padding", 0.0))
         if opts.get("hover_color") is Color => t { _hovColor = t }
         if opts.get("pressed_color") is Color => t { _prColor = t }
 
@@ -224,6 +248,21 @@ export struct Button impl Widget, Themeable {
         if _font.ok { _font.setStyle(style) }
     }
     func set_radius(float r)   { _radius = r }
+    func set_align(int a)      { _align = a }
+    func set_border_color(Color c) { _bdrColor = c }
+    func set_padding(float p)  { _padding = p }
+
+    // 在 [tx, tx+tw] 内按 _align 绘制文字（默认居中 ⇒ 与历史绘制逐像素一致 ✓）
+    func _draw_text_aligned(Renderer r, float tx, float tw, float ty, Color col) {
+        if _align == ALIGN_LEFT {
+            r.drawText(_font, text, tx, ty, col)
+        } else if _align == ALIGN_RIGHT {
+            var[float, float](mw, mh) = _font.measureString(text)
+            r.drawText(_font, text, tx + tw - mw, ty, col)
+        } else {
+            r.drawTextCentered(_font, text, tx, tw, ty, col)
+        }
+    }
     func set_enabled(bool e)   { enabled = e }
     func set_visible(bool v)    { visible = v }
     func is_visible(): bool     { return visible }
@@ -404,6 +443,7 @@ export struct Button impl Widget, Themeable {
             if _showBorder {
                 if _pressed and enabled { r.setColor(#00000096) }
                 else if hover { r.setColor(#FFFFFFC8) }
+                else if _bdrColor != 0 { r.setColor(_bdrColor) }   // ★ 显式边框色（opt-in，默认仍是自动 ✓）
                 else {
                     r.setColor(theme.withAlpha(theme.brighten(bgC, 30), 180))
                 }
@@ -418,7 +458,7 @@ export struct Button impl Widget, Themeable {
         _btnClip.w = _int(w) + 1; _btnClip.h = _int(h) + 1   // +1 覆盖浮点截断的亚像素
         r.pushClipRect(_btnClip.to_ptr())
 
-        float pad = 6.0
+        float pad = 6.0 + _padding   // 图标布局的留白；`_padding` 默认 0 ⇒ 仍是 6.0 ✓
         // 提前测量文字，供图标尺寸自适应（防止图标挤占文字 / 内容溢出按钮）
         // ★ 缓存：text 不变时直接复用，避免每帧 measureString
         float textW = 0.0; float textH = 0.0
@@ -514,9 +554,9 @@ export struct Button impl Widget, Themeable {
                 float iy = y + (h - isize) / 2.0
                 r.drawTextureAt(itex, ix + (isize - dw) / 2.0, iy + (isize - dh) / 2.0, dw, dh)
             } else if itex == null {
-                // 纯文字：整按钮居中
+                // 纯文字：按 _align 绘制（默认居中 = 历史行为 ✓；内边距 opt-in ✓）
                 float cy = y + (h - textH) / 2.0
-                r.drawTextCentered(_font, text, x, w, cy, txtC)
+                _draw_text_aligned(r, x + _padding, w - 2.0 * _padding, cy, txtC)
             } else if _imgPos == IMG_LEFT {
                 // 图标在左（对齐 Material iconGravity=start / WinForms ImageBeforeText）
                 float ix = x + pad
@@ -525,7 +565,7 @@ export struct Button impl Widget, Themeable {
                 float tx = ix + isize + _imgGap
                 float tw = (x + w) - tx - pad
                 float ty = y + (h - textH) / 2.0
-                r.drawTextCentered(_font, text, tx, tw, ty, txtC)
+                _draw_text_aligned(r, tx, tw, ty, txtC)
             } else if _imgPos == IMG_RIGHT {
                 // 图标在右（Material iconGravity=end / WinForms TextBeforeImage）
                 float ix = x + w - pad - isize
@@ -534,7 +574,7 @@ export struct Button impl Widget, Themeable {
                 float tx = x + pad
                 float tw = ix - _imgGap - tx
                 float ty = y + (h - textH) / 2.0
-                r.drawTextCentered(_font, text, tx, tw, ty, txtC)
+                _draw_text_aligned(r, tx, tw, ty, txtC)
             } else if _imgPos == IMG_TOP {
                 // 图标在上（Material iconGravity=top / WinForms ImageAboveText）
                 float ix = x + (w - isize) / 2.0
@@ -543,7 +583,7 @@ export struct Button impl Widget, Themeable {
                 float ty = iy + isize + _imgGap
                 float th = (y + h) - ty - pad
                 float cy = ty + (th - textH) / 2.0
-                r.drawTextCentered(_font, text, x, w, cy, txtC)
+                _draw_text_aligned(r, x + _padding, w - 2.0 * _padding, cy, txtC)
             } else {
                 // 图标在下（WinForms TextAboveImage）
                 float ix = x + (w - isize) / 2.0
@@ -552,7 +592,7 @@ export struct Button impl Widget, Themeable {
                 float ty = y + pad
                 float th = iy - _imgGap - ty
                 float cy = ty + (th - textH) / 2.0
-                r.drawTextCentered(_font, text, x, w, cy, txtC)
+                _draw_text_aligned(r, x + _padding, w - 2.0 * _padding, cy, txtC)
             }
         } else if itex != null {
             // 仅图标、无文字：居中绘制

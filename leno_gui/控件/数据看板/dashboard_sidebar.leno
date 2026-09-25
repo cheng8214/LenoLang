@@ -1,0 +1,922 @@
+// dashboard_sidebar.leno — LenoSDL3「侧栏仪表盘」复刻（纯界面，无业务逻辑 ✓）
+//
+// 复刻对象：TraeTools（Avalonia/C#）主界面 —— 左侧 190px 深色导航栏 + 右侧浅色内容区。
+// 6 个页面（对着它的界面截图做；**纯界面、无业务逻辑**，数据都是静态写死的 ✓）：
+//   页 0 仪表盘   页面标题 + 日期 / 右上「刷新状态 + 立即签到」/ 三张统计卡 /
+//                「近 14 天积分趋势」折线图卡 / 「账号概览」卡（截图里是空的 ✓）
+//   页 1 用量统计 四张统计卡（会话 / 积分 / Token / 缓存命中）+ 逐会话用量 + 模型分布（空卡）
+//   页 2 每日签到 **占位页**（没拿到它的截图 ⇒ 留空，只用来演示切页 ✓）
+//   页 3 账号切换 路径/指纹卡（只读路径框 + 选择文件 + 重新探测）+ 账号列表（空）+
+//                切换守护（5 步流程 + 日志）
+//   页 4 云端签到 一键部署 + 部署流程（横向 3 步 + 连接线）+ 部署状态（4 字段 + 橙色警示条）+
+//                部署日志
+//   页 5 设置     自动签到（开关/输入框 5 行）+ 登录状态 + 飞书推送 + 账号管理 + 关于 TraeTools
+//
+// ★ 切页：内容区用 **TabControl 当页面容器**、把**标签栏隐藏**（`show_header:false`），
+//   改由左侧导航按钮 `set_active(idx)` 切页 —— 与 PE 分析器 / 设置面板**同一套 API**：
+//   `tab.addToPage(page, 控件, dx, dy)`（dx,dy = 相对内容区左上角），每页还能
+//   `setPageLayout(page, VBox)` 用布局容器自动排布 ✓。切页唯一回调是 `tab.on_change`，
+//   导航选中态在那里统一同步 ⇒ 程序切页和用户操作**不会漂移** ✓。
+//   ✗ 不用 `tab_h:0` 代替 `show_header`：那样标签文字照样画，只是画在 `y - 文字高/2`
+//     （Tab 上方），恰好 Tab 贴着窗口最上沿才看不出来，换个位置就露馅。
+//   ✗ 也没自己用「Panel + set_visible」堆页面：每页都要手算绝对坐标，且拿不到 on_change。
+//
+// ★ 长页面（设置 / 云端签到）：**ScrollView → VBox（页内容）→ Panel 卡片（内部 AnchorBox）**
+//   ⚠ 不能塞绝对坐标子树：ScrollView 滚动时只 `_content.set_pos()` 移动**内容根控件**，
+//     子孙必须由布局容器每帧重排才跟着滚（绝对坐标的"孙子"会原地不动 ✗）。
+//     卡片内部用 AnchorBox（left/top/right/bottom）定位 ⇒ `Panel.setLayout` 每帧同步 ⇒ 跟着滚 ✓。
+//
+// 与截图的**有意偏差**（便于对照时知道差在哪）：
+//   ① 折线图喂了 14 个静态数据点 —— 截图里未登录所以图是空的，那样看不出图表控件画得对不对；
+//   ② 截图里折成两行的说明文字这里写成**一行** —— Label 不支持换行（只有单行 drawText ✗）；
+//   ③ 对话式长路径用「省略号截断」而不是可横向滚动的输入框（见 path_box 的注释 ✓）；
+//   ④ 页 4 顶部那张卡在截图里被滚到上方只露一角 ⇒ 内容按同级页面**推断**（已在注释标明 ✓）。
+//
+// 自检（无头也能跑）：
+//   set SDL_VIDEODRIVER=dummy
+//   set DSHOT=%TEMP%\dash.png   # 存 PNG 后退出（就是靠它核对界面的 ✓）
+//   set DSHOT_AT=30             # 第 30 帧再截图（默认 2；配合 DCYCLE 能截到"切过页之后" ✓）
+//   set DPAGE=3                 # 启动就切到第 4 页（验证 set_active → on_change → 导航同步 ✓）
+//   set DCYCLE=8                # 每 8 帧自动切下一页（走的是导航按钮的同一个 set_page ✓）
+//   set DSCROLL=167             # 第 2 帧把当前页滚到 y=167（验证滚动 + 卡片内 AnchorBox 跟随 ✓）
+//   set DAUTO=60                # 只跑 60 帧就退出（冒烟）
+//
+// 本示例顺手发现并补掉了模块的这些不足（**全部 opt-in，默认行为逐像素不变** ✓）：
+//   sdl_button.leno     ① `align:"left"/"right"`（原来文字只能居中）
+//                       ② `border_color`（原来按钮描边只能自动提亮算，做不出浅灰/浅蓝细描边）
+//                       ③ `padding`（原来左对齐文字贴边，只能拿前导空格凑）
+//   sdl_tab.leno        ④ `show_header:false`（隐藏标签栏，当纯页面容器用）
+//                       ⑤ `border:false`（不画内容区边框）
+//   sdl_edit.leno       ⑥ `border_color`（原来边框 = `brighten(背景,40)` ⇒ **白底上等于看不见** ✗）
+//   sdl_scrollview.leno ⑦ `bar_color`（原来滚动条取深色主题色，压浅色页面上很突兀 ✗）
+//                       ⑧ 修两个"提前"错误：`set_content` 时**别急着量**内容尺寸（子控件还没 add
+//                          进去 ⇒ 量到 0 ⇒ 立刻把滚动位置钳成 0 且回不去 ✗）、`_clampScroll` 在
+//                          尺寸没量出来前别按它钳位 ✓
+//
+// 另外记几个**踩过的坑**（都不是 bug，但会白折腾）：
+//   · Panel 必须 `wt.add(...)` / 挂进页才会渲染 —— 孤立 Panel **静默不画、不报错** ✗
+//     （第一次漏了这步，整个内容区只剩背景）；
+//   · 截图 / 自动退出要放 `setOverlay`，**不能**放 `onRender` 回调 —— 控件是在回调**之后**
+//     绘制的，在回调里 `readPixelsAt` 只会拿到"只有底色"的空白帧 ✗；
+//   · 字体没有的符号会渲染成豆腐块 □：实测可用 ■ ● ◆ ▲ ○ ◎ ※ √ × ∑ ☆ ★ → ← § ✓；
+//     ▦ ✓ ⇄ ✗ ⇒ ⚠ 等扩展区符号**全是豆腐块** ✗（**连正文文案里都不能用** ✗）；
+//   · **裁剪（clip）要省着用** ⇒ 这也是「页面会闪烁」的根因 ✓：
+//     `pushClipRect`/`popClipRect` 每次都先 `_flushBatches()`（见 sdl_renderer.leno 的裁剪栈实现），
+//     嵌套/多余的裁剪 = 每帧多出若干次 flush ＋ 交集矩形按 `_int()` 截断（模块里那个 `+1` 就是
+//     为亚像素截断打的补丁）⇒ 内容边缘一帧有一帧无 = **闪烁** ✗。
+//     模块自己定的标准见 `sdl_table.leno`：「裁剪深度…仍为 2 层（Tab + body）…不引入额外 flush，
+//     避免 D3D 闪烁」✓。本示例 19 个 Panel **全部 `clip:false`**（子控件按构造不会溢出），
+//     Tab 也 `clip:false` ⇒ **每页最多只剩 1 层裁剪**（ScrollView 自己那层）✓。
+//     ★ 完整排查记录（机制/证据/自查清单/怎么量）：`docs/LenoSDL3_裁剪过多导致闪烁排查记录.md` ✓
+//   · `for A : B to v` 是**闭区间**（含 B）⇒ `for 0 : 3 to ci` 是 0/1/2/3 **四次** ✓（不是三次 ✗）
+//     （曾误判成"左闭右开"，把渲染器的圆角循环改成 `0 : 4` ⇒ ci=4 不匹配任何 case ⇒ `null` 崩 ✗）；
+//   · 一屏能放下的页面**别留半截**：内容高要 ≤ 735（本页曾 786 ⇒ 卡片底部/日志框被**窗口底边**切掉 ✗，
+//     看起来就像"溢出了" ✓ —— 要么排到刚好放得下，要么明确让它能滚 ✓）；
+//   · Leno 闭包捕获是**按值** ✓（探针实测：循环里 3 个闭包分别输出 0/1/2）⇒ 导航项可以放心写
+//     `on_click(func():void { set_page(idx) })` ✓；
+//   · VBox 里的子控件要撑满宽度必须 `{align:3}` **或** `grow>0`（默认 align:0 = 只占自然宽 ✗）；
+//   · VBox/HBox/AnchorBox 的 `add(child, {...})` **没有 `h` 键**（固定高用 `basis:<像素>` ✓，
+//   · `VBox.measure_h` 会把 `basis` 计入 ✓（实测：页 4 内容高 948、可滚 213 完全对得上 ✓）。
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer, Scancode, Window, Color, Panel, Label, Button, LineChart, TabControl, Widget)
+use SDL3.(VBox, HBox, AnchorBox, ScrollView, Toggle, Edit, LinkButton, Separator)
+
+// ==================== 调色板（照截图取色）====================
+var C_SIDE   = #1D2633FF   // 侧栏深底
+var C_DIV    = #2A3543FF   // 侧栏分隔线
+var C_SIDE_T = #C2CBD8FF   // 侧栏常规文字
+var C_SIDE_D = #8A94A6FF   // 侧栏副标题
+var C_SIDE_V = #5F6B7CFF   // 版本号
+var C_BLUE   = #2B6BE4FF   // 主色（选中胶囊 / 主按钮 / 折线）
+var C_BLUE_L = #BFD3F5FF   // 主色浅（圆点按钮描边）
+var C_BG     = #F0F1F4FF   // 内容区底
+var C_CARD   = #FFFFFFFF   // 卡片底
+var C_LINE   = #E6E8ECFF   // 卡片描边
+var C_TXT    = #111827FF   // 大数字
+var C_TXT2   = #4B5563FF   // 卡片标题
+var C_TXT3   = #6B7280FF   // 次要文字
+var C_GREEN  = #12B76AFF   // 成功（今日签到：未登录）
+var C_ORANGE = #F79009FF   // 警告（连续签到）
+var C_BTN_BR = #D0D5DDFF   // 次要按钮描边
+var C_BTN_T  = #344054FF   // 次要按钮文字
+var C_HINT   = #9CA3AFFF   // 更浅的提示文字
+var C_INPUT_B = #D0D5DDFF  // 输入框/只读框描边（Edit 的 border_color ✓ 否则白底上算成不可见 ✗）
+var C_FIELD_BG = #F9FAFBFF // 只读路径框底
+var C_LOGBG  = #0F172AFF   // 日志框深底
+var C_LOGOK  = #22C55EFF   // 日志绿色行
+var C_LOGT   = #CBD5E1FF   // 日志正文
+var C_PILL_BG = #EFF6FFFF  // 胶囊底
+var C_PILL_BR = #BFDBFEFF  // 胶囊描边
+var C_PILL_T  = #2563EBFF  // 胶囊文字
+var C_STEP_BG = #F1F5F9FF  // 步骤圆圈底（未启用）
+var C_STEP_BR = #E2E8F0FF  // 步骤圆圈描边
+var C_STEP_T  = #94A3B8FF  // 步骤圆圈数字
+var C_WARN_BG = #FFF8E1FF  // 警示条底
+var C_WARN_BR = #F5C77EFF  // 警示条描边
+var C_WARN_T  = #B54708FF  // 警示条文字
+var C_DANGER  = #DC3C3CFF  // 危险文字（「重置软件」那种红字 ✓）
+
+// ==================== 布局常量 ====================
+var WIN_W = 1080.0
+var WIN_H = 735.0
+var SIDE_W = 190.0                 // 侧栏宽（通高）
+var TAB_X = SIDE_W                 // 内容区 = TabControl 的位置
+var TAB_Y = 0.0
+var TAB_W = WIN_W - SIDE_W
+var TAB_H = WIN_H
+
+// ==================== 静态假数据（近 14 天）====================
+Array[string] XS = ["09-12", "09-13", "09-14", "09-15", "09-16", "09-17", "09-18",
+                    "09-19", "09-20", "09-21", "09-22", "09-23", "09-24", "09-25"]
+Array[float]  YS = [150.0, 150.0, 200.0, 150.0, 150.0, 0.0, 150.0,
+                    150.0, 150.0, 150.0, 150.0, 0.0, 300.0, 200.0]
+
+// ==================== 运行时状态 ====================
+// ⚠ Leno 的 struct 是"立即分配"的值类型（`== null` 会告警）⇒ 这里只当普通全局用：
+//   在 `build_ui` 里赋值，且**从不判空**（所有调用都发生在 build 之后 ✓）
+TabControl TAB = null
+Array[Button] NAVS = []            // 导航按钮（切页时统一改选中态 ✓）
+int CUR_PAGE = 0
+
+// 各滚动页的 ScrollView（页码 → 控件；`DSCROLL` 自检用 ✓）
+Array[int] SV_PAGES = []
+Array[ScrollView] SV_LIST = []
+
+// 自检开关
+var SHOT = ""
+var AUTO = 0
+var FRAMES = 0
+int SHOT_AT = 2
+int SHOT_N = 1                // 自检：连续截几张（>1 = 多帧对比，用来量"闪烁" ✓）
+int CYCLE = 0
+int CYCLE_TICK = 0
+var PENDING_SCROLL = -1.0     // 自检：待执行的滚动位置（第一帧量完尺寸后再滚 ✓）
+var PENDING_SMOOTH = 0.0      // 自检：待执行的"滚轮语义"滚动量（走平滑动画 ✓）
+bool SMOOTH_TRACE = false     // 自检：逐帧打印滚动位置（看缓动 ✓）
+var FLIP = 0.0                // 自检：每 2 帧反向滚一次（模拟"快速上下滚"⇒ 看是否抽搐 ✓）
+int FLIP_TICK = 0
+bool FLIP_POS = true
+
+// ==================== 页面容器助手 ====================
+// `addToPage` 收的是「内容区左上角」相对偏移 ⇒ 把窗口绝对坐标换算过去 ✓
+// （控件本身仍按**绝对坐标**创建，与其它示例一致；Tab 每帧会把它重排到「原点 + 偏移」✓）
+func add_p(int page, Widget w, float ax, float ay): Widget {
+    return TAB.addToPage(page, w, ax - TAB_X, ay - TAB_Y)
+}
+
+// 切页：**唯一入口**。导航按钮点击 → set_page → tab.set_active → tab.on_change → sync_nav ✓
+// （越界下标 / 切到当前页会被 TabControl 自己忽略 ✓）
+func set_page(int i) {
+    TAB.set_active(i)
+}
+
+// 导航选中态跟随当前页（由 `TAB.on_change` 调用 ⇒ 用户操作与程序切页都走这里 ✓）
+func sync_nav() {
+    int j = 0
+    for NAVS to b {
+        style_nav(b, j == CUR_PAGE)
+        j = j + 1
+    }
+}
+
+// ==================== 布局助手（只摆位置，不含逻辑 ✓）====================
+
+// 卡片：圆角白底 + 细描边 + 左上角标题（建好即挂到指定页 ✓；页内子控件用绝对坐标 ✓）
+func card(int page, float ax, float ay, float w, float h, string title): Panel {
+    var p = SDL3.createPanel({clip:false, x:ax, y:ay, w:w, h:h, bg_color:C_CARD, radius:10, border_color:C_LINE})
+    add_p(page, p, ax, ay)
+    if title != "" {
+        p.add(SDL3.createLabel({x:ax + 16, y:ay + 14, text:title, font_size:14, text_color:C_TXT2}))
+    }
+    return p
+}
+
+// 统计卡：小标签（次色）+ 大号数字（彩色）+ 单位（紧贴数字右侧，按实测宽度定位 ✓）
+// `num_size`：数字字号 —— 数字类用 28（截图那样的大号），**文本类状态**（如「未登录」）用小一号
+//   并对齐到同一个视觉基线上（截图里「未登录」明显比「0」小 ✓）
+func stat_card(int page, float ax, float ay, float w, float h, string label, string num, string unit, Color numColor, float num_size) {
+    var p = SDL3.createPanel({clip:false, x:ax, y:ay, w:w, h:h, bg_color:C_CARD, radius:10, border_color:C_LINE})
+    add_p(page, p, ax, ay)
+    p.add(SDL3.createLabel({x:ax + 16, y:ay + 12, text:label, font_size:13, text_color:C_TXT3}))
+    // 数字基准：28px 时落在 ay+38；小字号往下挪半个差值 ⇒ 视觉底线对齐 ✓
+    float ny = ay + 38 + (28.0 - num_size) / 2.0
+    p.add(SDL3.createLabel({x:ax + 16, y:ny, text:num, font_size:num_size, text_color:numColor}))
+    if unit != "" {
+        var nf = SDL3.createFontAuto(num_size)
+        var[float, float](nw, nh) = nf.measureString(num)
+        p.add(SDL3.createLabel({x:ax + 20 + nw, y:ay + 53, text:unit, font_size:13, text_color:C_TXT3}))
+    }
+}
+
+// 导航项：选中 = 蓝色圆角胶囊 + 白字；未选中 = 透明底 + 浅灰字
+// 左对齐 + 内边距：`align:"left"` + `padding:14`（这两个选项都是本示例顺手补进 sdl_button.leno 的 ✓）
+func nav_item(Panel side, float y, string text, int idx) {
+    var b = SDL3.createButton({x:12, y:y, w:166, h:34, text:text, font_size:13, align:"left", padding:14.0})
+    NAVS.add(b)
+    style_nav(b, idx == CUR_PAGE)
+    // `idx` 是**按值**捕获的 ✓（探针实测）⇒ 每个导航项的闭包各记各的下标，不会互相串 ✓
+    b.on_click(func():void { set_page(idx) })
+    side.add(b)
+}
+
+// 导航项样式（选中/未选中）—— 初始化与切页都走这里，只有一处定义 ✓
+// 用到的 setter 都是运行时改样式：set_background / set_bg_color / set_text_color / set_border / set_shadow ✓
+func style_nav(Button b, bool active) {
+    if active {
+        b.set_background(true)
+        b.set_bg_color(C_BLUE)
+        b.set_border(false)
+        b.set_shadow(false)
+        b.set_text_color(#FFFFFFFF)
+    } else {
+        b.set_background(false)
+        b.set_border(false)
+        b.set_shadow(false)
+        b.set_text_color(C_SIDE_T)
+    }
+}
+
+// ==================== 滚动页 / 卡片 / 行 助手 ====================
+// ⚠ 滚动页**不能**用绝对坐标子树：ScrollView 只 `_content.set_pos(x - scrollX, y - scrollY)`，
+//   移动的只有**内容根控件** ⇒ 子孙必须由布局容器每帧重排才会跟着滚（绝对坐标的子孙会原地不动 ✗）。
+//   所以滚动页统一「ScrollView → VBox（页内容）→ Panel 卡片（内部 AnchorBox）」✓
+//   （`Panel.setLayout` 每帧把布局容器同步到面板内 ⇒ 卡片内部的 AnchorBox 也跟着卡片滚 ✓）
+// 坐标层级：VBox padX=24 ⇒ 卡片左边缘落在内容区 x=214（与仪表盘页同一左边距 ✓）；
+//   卡片内部用 AnchorBox 的 left/top（相对**卡片**）定位 ✓
+
+// 建一个滚动页，返回内容 VBox（页头 / 卡片都往里加 ✓）
+func scroll_page(int page): VBox {
+    // `smooth:true`：滚轮不瞬间跳一格，而是逐帧逼近目标（每帧约 40% 收敛 ⇒ ~150ms 到位 ✓）
+    //   原来是"瞬间跳 24px + 帧节流"⇒ 观感一顿一顿 ✗；`step` 可调每格步长 ✓
+    var sv = SDL3.createScrollView({x:TAB_X, y:TAB_Y, w:TAB_W, h:TAB_H, bg_color:C_BG,
+                                    border:false, content_w:TAB_W - 12.0, bar_color:#C8CDD4FF,
+                                    smooth:true})
+    add_p(page, sv, TAB_X, TAB_Y)
+    SV_PAGES.add(page)
+    SV_LIST.add(sv)
+    var box = SDL3.createVBox({padX:24, padY:24, spacing:16})
+    sv.set_content(box)
+    return box
+}
+
+// 自检：以"滚轮语义"滚动一段（走 `smooth` 路径 ⇒ 可观察逐帧缓动 ✓）
+func apply_scroll_by(int page, float dy) {
+    int i = 0
+    for SV_PAGES to p {
+        if p == page {
+            SV_LIST[i].scroll_by(0.0, dy)
+            print("[dash] 滚动页 " + _str(page) + "：scroll_by(0," + _str(dy) + ") → y="
+                  + _str(SV_LIST[i].get_scroll_y()) + "（之后逐帧逼近目标 ✓）\n")
+        }
+        i = i + 1
+    }
+}
+
+// 自检：逐帧打印当前页滚动位置（看缓动曲线 ✓）
+func trace_scroll(int page) {
+    int i = 0
+    for SV_PAGES to p {
+        if p == page {
+            print("[dash]   y=" + _str(SV_LIST[i].get_scroll_y())
+                  + " / 上限 " + _str(SV_LIST[i].get_max_scroll_y()) + "\n")
+        }
+        i = i + 1
+    }
+}
+
+// 自检：把指定页的滚动视图滚到某个 y（验证"滚动时卡片内部 AnchorBox 也跟着走" ✓）
+func apply_scroll(int page, float y) {
+    int i = 0
+    for SV_PAGES to p {
+        if p == page {
+            SV_LIST[i].set_scroll(0.0, y)
+            print("[dash] 滚动页 " + _str(page) + "：请求 y=" + _str(y)
+                  + " → 实际 y=" + _str(SV_LIST[i].get_scroll_y())
+                  + "（上限 " + _str(SV_LIST[i].get_max_scroll_y()) + "）\n")
+        }
+        i = i + 1
+    }
+}
+
+// 右对齐标签：Label 的 x 是**左边缘**锚点（align 默认 0）⇒ 贴右必须知道实测文字宽度 ✓
+func label_right(AnchorBox ca, float right, float top, string text, float size, Color col) {
+    var f = SDL3.createFontAuto(size)
+    var[float, float](tw, th) = f.measureString(text)
+    ca.add(SDL3.createLabel({x:0, y:0, text:text, font_size:size, text_color:col}), {right:right, top:top, w:tw})
+}
+
+// 以 (cx, cy) 为中心放一个标签（步骤圆圈里的数字用它 ✓）
+func label_at_center(AnchorBox ca, float cx, float cy, string text, float size, Color col) {
+    var f = SDL3.createFontAuto(size)
+    var[float, float](tw, th) = f.measureString(text)
+    ca.add(SDL3.createLabel({x:0, y:0, text:text, font_size:size, text_color:col}), {left:cx - tw / 2.0, top:cy - th / 2.0})
+}
+
+// 卡片（VBox 里）：返回卡片内部的 AnchorBox；子控件用 left/top 相对卡片定位 ✓
+// ⚠ `align:3` = 交叉轴拉伸，VBox 里必须给，否则卡片宽只有内容的自然宽（撑不满 ✗）
+func mk_card(VBox box, float h, string title, string title_right): AnchorBox {
+    var ca = SDL3.createAnchorBox({})
+    var cp = SDL3.createPanel({clip:false, x:0, y:0, w:200.0, h:h, bg_color:C_CARD, radius:12, border_color:C_LINE})
+    cp.setLayout(ca)
+    box.add(cp, {align:3})
+    if title != "" {
+        ca.add(SDL3.createLabel({x:0, y:0, text:title, font_size:16, font_style:1, text_color:C_TXT}), {left:18, top:18})
+    }
+    if title_right != "" { label_right(ca, 18.0, 22.0, title_right, 12.0, C_TXT3) }
+    return ca
+}
+
+// 卡片（HBox 行里）：宽度用 `basis` 定 ✓
+func mk_card_h(HBox row, float w, float h, string title, string title_right): AnchorBox {
+    var ca = SDL3.createAnchorBox({})
+    var cp = SDL3.createPanel({clip:false, x:0, y:0, w:w, h:h, bg_color:C_CARD, radius:12, border_color:C_LINE})
+    cp.setLayout(ca)
+    row.add(cp, {basis:w})
+    if title != "" {
+        ca.add(SDL3.createLabel({x:0, y:0, text:title, font_size:16, font_style:1, text_color:C_TXT}), {left:18, top:18})
+    }
+    if title_right != "" { label_right(ca, 18.0, 22.0, title_right, 12.0, C_TXT3) }
+    return ca
+}
+
+// 页头骨架（大标题 + 副标题）⇒ 返回 AnchorBox，右上按钮/提示由调用方加 ✓
+func page_head(VBox box, string title, string sub): AnchorBox {
+    var ca = SDL3.createAnchorBox({})
+    box.add(ca, {basis:84.0, align:3})
+    ca.add(SDL3.createLabel({x:0, y:0, text:title, font_size:26, text_color:C_TXT}), {left:2, top:0})
+    if sub != "" {
+        ca.add(SDL3.createLabel({x:0, y:0, text:sub, font_size:13, text_color:C_TXT3}), {left:2, top:40})
+    }
+    return ca
+}
+
+// 页头右上按钮（`right` 从右边缘算 ⇒ 多按钮从右往左依次排 ✓）
+func head_button(AnchorBox ca, float right, float w, string text, bool primary) {
+    if primary {
+        ca.add(SDL3.createButton({x:0, y:0, w:w, h:38, text:text, font_size:14, radius:8,
+                                  bg_color:C_BLUE, text_color:#FFFFFFFF, border:false, shadow:false}), {right:right, top:22})
+    } else {
+        ca.add(SDL3.createButton({x:0, y:0, w:w, h:38, text:text, font_size:14, radius:8,
+                                  bg_color:C_CARD, text_color:C_BTN_T, border_color:C_BTN_BR, shadow:false}), {right:right, top:22})
+    }
+}
+
+// 页头右侧提示文字
+func head_hint(AnchorBox ca, float right, string text) { label_right(ca, right, 36.0, text, 12.0, C_HINT) }
+
+// 信息字段：小标签（上）+ 值（下；`trunc_w>0` 时按宽度省略号截断 ✓）
+func field(AnchorBox ca, float left, float top, float trunc_w, string label, string value) {
+    ca.add(SDL3.createLabel({x:0, y:0, text:label, font_size:12, text_color:C_TXT3}), {left:left, top:top})
+    if value == "" { return }
+    if trunc_w > 0.0 {
+        ca.add(SDL3.createLabel({x:0, y:0, text:value, font_size:13, text_color:C_TXT2, max_w:trunc_w, truncate:1}),
+               {left:left, top:top + 20.0, w:trunc_w})
+    } else {
+        ca.add(SDL3.createLabel({x:0, y:0, text:value, font_size:13, text_color:C_TXT2}), {left:left, top:top + 20.0})
+    }
+}
+
+// 只读路径框：浅底 + 浅描边 + 省略号截断
+// ⚠ **不要**用 `Edit` + `readonly` 来显示长路径：Edit 会把文本滚到**末尾**（看到的是尾段 ✗），
+//   而这里要的是"从开头显示 + 尾部省略" ⇒ 用 Panel + 截断 Label ✓
+func path_box(AnchorBox ca, float left, float top, float w, float h, string text) {
+    var pa = SDL3.createAnchorBox({})
+    var pp = SDL3.createPanel({clip:false, x:0, y:0, w:w, h:h, bg_color:C_FIELD_BG, radius:6, border_color:C_INPUT_B})
+    pp.setLayout(pa)
+    ca.add(pp, {left:left, top:top, w:w, h:h})
+    pa.add(SDL3.createLabel({x:0, y:0, text:text, font_size:12, text_color:C_TXT2, max_w:w - 16.0, truncate:1}),
+           {left:8.0, top:6.0, w:w - 16.0})
+}
+
+// 小统计卡（HBox 里 grow 平分宽度 ✓）
+func stat_small(HBox row, string label, string num, string unit, Color numColor) {
+    var ca = SDL3.createAnchorBox({})
+    var cp = SDL3.createPanel({clip:false, x:0, y:0, w:180.0, h:112.0, bg_color:C_CARD, radius:12, border_color:C_LINE})
+    cp.setLayout(ca)
+    row.add(cp, {grow:1.0})
+    ca.add(SDL3.createLabel({x:0, y:0, text:label, font_size:13, text_color:C_TXT3}), {left:16, top:14})
+    ca.add(SDL3.createLabel({x:0, y:0, text:num, font_size:26, text_color:numColor}), {left:16, top:44})
+    if unit != "" {
+        var f = SDL3.createFontAuto(26.0)
+        var[float, float](nw, nh) = f.measureString(num)
+        ca.add(SDL3.createLabel({x:0, y:0, text:unit, font_size:12, text_color:C_TXT3}), {left:20 + nw, top:60})
+    }
+}
+
+// 右上角胶囊徽标
+// ⚠ 别用 `align:1` + `centerX:true` 这条组合：AnchorBox 先按子项自然宽居中一次、Label 又按
+//   "文字中心"画一次 ⇒ **居中了两次** ⇒ 文字整体偏左约半个字宽 ✗（这就是"胶囊里字没居中"的原因）。
+//   用 `label_at_center`：先量出文字宽高，再按**左上角**摆到 (w/2, h/2) ⇒ 只居中一次 ✓
+func pill_right(AnchorBox ca, float right, float top, float w, float h, string text) {
+    var pa = SDL3.createAnchorBox({})
+    var pp = SDL3.createPanel({clip:false, x:0, y:0, w:w, h:h, bg_color:C_PILL_BG, radius:h / 2.0, border_color:C_PILL_BR})
+    pp.setLayout(pa)
+    ca.add(pp, {right:right, top:top, w:w, h:h})
+    label_at_center(pa, w / 2.0, h / 2.0, text, 11.0, C_PILL_T)
+}
+
+// 深色日志框（贴卡片底部：left/right/bottom + 固定高 ✓）
+func log_box(AnchorBox ca, float h, string l1, Color c1, string l2, Color c2, string l3, Color c3) {
+    var la = SDL3.createAnchorBox({})
+    var lp = SDL3.createPanel({clip:false, x:0, y:0, w:200.0, h:h, bg_color:C_LOGBG, radius:8, border:false})
+    lp.setLayout(la)
+    ca.add(lp, {left:18.0, right:18.0, bottom:18.0, h:h})
+    float y = 12.0
+    // 字号 11：日志框宽只有 ~270（窄卡），12px 会把长句画到卡片外被裁掉 ✗
+    if l1 != "" { la.add(SDL3.createLabel({x:0, y:0, text:l1, font_size:11, text_color:c1}), {left:12.0, top:y}); y = y + 20.0 }
+    if l2 != "" { la.add(SDL3.createLabel({x:0, y:0, text:l2, font_size:11, text_color:c2}), {left:12.0, top:y}); y = y + 20.0 }
+    if l3 != "" { la.add(SDL3.createLabel({x:0, y:0, text:l3, font_size:11, text_color:c3}), {left:12.0, top:y}) }
+}
+
+// 步骤行：圆圈序号 + 标题 + 说明（`top` 相对卡片 ✓；`done` = 蓝色已完成态 ✓）
+func step_row(AnchorBox ca, float top, int n, string title, string desc, bool done) {
+    Color bg = C_STEP_BG
+    Color br = C_STEP_BR
+    Color nt = C_STEP_T
+    if done { bg = C_BLUE; br = C_BLUE; nt = #FFFFFFFF }
+    ca.add(SDL3.createPanel({clip:false, x:0, y:0, w:26.0, h:26.0, bg_color:bg, radius:13.0, border_color:br}), {left:18.0, top:top})
+    label_at_center(ca, 31.0, top + 13.0, _str(n), 12.0, nt)
+    ca.add(SDL3.createLabel({x:0, y:0, text:title, font_size:14, text_color:C_TXT}), {left:56.0, top:top + 1.0})
+    if desc != "" {
+        ca.add(SDL3.createLabel({x:0, y:0, text:desc, font_size:11, text_color:C_TXT3}), {left:56.0, top:top + 19.0})
+    }
+}
+
+// 页 1：用量统计
+func page_usage() {
+    var box = scroll_page(1)
+    var head = page_head(box, "用量统计", "未添加账号 · 暂无本地记录")
+    head_hint(head, 120.0, "未添加账号或服务未初始化")
+    head_button(head, 0.0, 104.0, "拉取用量", true)
+
+    // 四张统计卡一行
+    var row = SDL3.createHBox({padX:0.0, padY:0.0, spacing:16})
+    box.add(row, {basis:112.0, align:3})
+    stat_small(row, "记录会话", "0", "次", C_TXT)
+    stat_small(row, "积分消耗", "0", "分", C_ORANGE)
+    stat_small(row, "Token（入/出）", "0", "tokens", C_BLUE)
+    stat_small(row, "缓存命中", "0", "%", C_GREEN)
+
+    // 逐会话用量（左，宽） + 模型分布（右，窄）—— 两张空卡
+    var row2 = SDL3.createHBox({padX:0.0, padY:0.0, spacing:16})
+    box.add(row2, {basis:452.0, align:3})
+    mk_card_h(row2, 520.0, 452.0, "逐会话用量", "最多展示 500 条，汇总按全部")
+    mk_card_h(row2, 306.0, 452.0, "模型分布", "")
+}
+
+// 页 3：账号切换
+func page_accounts() {
+    var box = scroll_page(3)
+    var head = page_head(box, "账号切换", "守护式切换 · 零中断 · 多账号隔离")
+    head_button(head, 116.0, 76.0, "刷新", false)
+    head_button(head, 0.0, 88.0, "建档", true)
+
+    // 卡 1：路径 / 指纹信息
+    var c1 = mk_card(box, 122.0, "", "")
+    field(c1, 18.0, 22.0, 210.0, "用户目录", "C:\\Users\\Administrator\\AppData\\Roaming\\Trae")
+    field(c1, 250.0, 22.0, 0.0, "客户端路径", "")
+    // 只读路径框（Panel + 截断 Label ✓）+ 选择文件 + 重新探测（链接）
+    path_box(c1, 250.0, 42.0, 190.0, 28.0, "C:\\Program Files (x86)\\TRAE SOLO CN\\Trae.exe")
+    c1.add(SDL3.createButton({x:0, y:0, w:70.0, h:28.0, text:"选择文件", font_size:12, radius:6,
+                              bg_color:C_CARD, text_color:C_BTN_T, border_color:C_BTN_BR, shadow:false}),
+           {left:448.0, top:42.0})
+    c1.add(SDL3.createLinkButton({x:0, y:0, text:"重新探测", font_size:12, color:C_BLUE, hover_color:C_BLUE,
+                                  underline:false}), {left:528.0, top:48.0})
+    // 说明：Label **不支持换行**（只能单行）⇒ 截图里折成两行的提示这里写成一行 ✓
+    c1.add(SDL3.createLabel({x:0, y:0, text:"自动探测失败或想指定其他版本时，可手动选择客户端程序或重新探测",
+                             font_size:11, text_color:C_HINT}), {left:250.0, top:80.0})
+    field(c1, 640.0, 22.0, 0.0, "载体指纹数", "3")
+    field(c1, 730.0, 22.0, 96.0, "vault 路径", "C:\\Users\\Administrator\\AppData\\Roaming\\TraeTools")
+
+    // 卡 2/3 一行：账号列表（左） + 切换守护（右）
+    // ⚠ 高度取 448 而不是 500：页 3 内容高 = 24+84+16+122+16+448+24 = **734 < 735** ⇒ 整页刚好放得下 ✓
+    //   （500 时内容 786 > 735 ⇒ 默认位置下卡片底部/日志框会被**窗口底边切掉** ✗
+    //     —— 这就是"这里溢出了"的观感来源；能一屏放下的页面就别留半截 ✗）
+    var row = SDL3.createHBox({padX:0.0, padY:0.0, spacing:16})
+    box.add(row, {basis:448.0, align:3})
+
+    var c2 = mk_card_h(row, 520.0, 448.0, "账号列表", "0 个账号")
+    // 空列表 ⇒ 底部三个操作按钮 ✓（bottom 锚点 = 贴卡片底部 ✓）
+    c2.add(SDL3.createButton({x:0, y:0, w:148.0, h:36.0, text:"切换至此", font_size:14, radius:8,
+                              bg_color:C_BLUE, text_color:#FFFFFFFF, border:false, shadow:false}),
+           {left:18.0, bottom:18.0})
+    c2.add(SDL3.createButton({x:0, y:0, w:90.0, h:36.0, text:"校验", font_size:14, radius:8,
+                              bg_color:C_CARD, text_color:C_BTN_T, border_color:C_BTN_BR, shadow:false}),
+           {left:174.0, bottom:18.0})
+    c2.add(SDL3.createButton({x:0, y:0, w:90.0, h:36.0, text:"删除", font_size:14, radius:8,
+                              bg_color:C_CARD, text_color:C_BTN_T, border_color:C_BTN_BR, shadow:false}),
+           {left:272.0, bottom:18.0})
+
+    // 切换守护：步骤条 + 日志
+    var c3 = mk_card_h(row, 306.0, 448.0, "切换守护", "")
+    pill_right(c3, 22.0, 20.0, 76.0, 22.0, "5 步流程")
+    step_row(c3, 58.0, 1, "结束客户端", "关闭 Trae 客户端进程", false)
+    step_row(c3, 102.0, 2, "快照回滚区", "备份当前账号状态", false)
+    step_row(c3, 146.0, 3, "写回 vault", "写入目标账号载体", false)
+    step_row(c3, 190.0, 4, "拉起客户端", "启动 Trae 客户端", false)
+    step_row(c3, 234.0, 5, "判定结果", "校验登录态", false)
+    log_box(c3, 112.0, "[16:01:58] 尚未建档任何账号", C_LOGOK,
+            "请先在 TraeSwitch 或本页「建档」备份登录态", C_LOGOK, "", C_LOGT)
+}
+
+// 设置行：左标题 + 说明，右侧开关（贴右 ✓）
+func set_row_toggle(AnchorBox ca, float top, string title, string desc, bool on) {
+    ca.add(SDL3.createLabel({x:0, y:0, text:title, font_size:14, text_color:C_TXT}), {left:18.0, top:top})
+    ca.add(SDL3.createLabel({x:0, y:0, text:desc, font_size:11, text_color:C_TXT3}), {left:18.0, top:top + 21.0})
+    ca.add(SDL3.createToggle({x:0, y:0, w:44.0, h:24.0, on:on, on_color:C_BLUE, off_color:#C8CDD4FF, anim:true}),
+           {right:18.0, top:top + 2.0})
+}
+
+// 设置行：右一个定宽输入框（08:00 / 5 这种 ✓）
+func set_row_input(AnchorBox ca, float top, string title, string desc, string value, float iw) {
+    ca.add(SDL3.createLabel({x:0, y:0, text:title, font_size:14, text_color:C_TXT}), {left:18.0, top:top})
+    ca.add(SDL3.createLabel({x:0, y:0, text:desc, font_size:11, text_color:C_TXT3}), {left:18.0, top:top + 21.0})
+    ca.add(SDL3.createEdit({x:0, y:0, w:iw, h:32.0, text:value, font_size:13, radius:6,
+                            bg_color:#FFFFFFFF, text_color:C_TXT, border_color:C_INPUT_B}),
+           {right:18.0, top:top})
+}
+
+// 横向步骤（云端部署 3 步 ✓）
+func step_h(AnchorBox ca, float left, float top, int n, string title, string state, bool done) {
+    Color bg = C_STEP_BG
+    Color br = C_STEP_BR
+    Color nt = C_STEP_T
+    if done { bg = C_BLUE; br = C_BLUE; nt = #FFFFFFFF }
+    ca.add(SDL3.createPanel({clip:false, x:0, y:0, w:26.0, h:26.0, bg_color:bg, radius:13.0, border_color:br}), {left:left, top:top})
+    label_at_center(ca, left + 13.0, top + 13.0, _str(n), 12.0, nt)
+    ca.add(SDL3.createLabel({x:0, y:0, text:title, font_size:14, text_color:C_TXT}), {left:left + 36.0, top:top + 1.0})
+    ca.add(SDL3.createLabel({x:0, y:0, text:state, font_size:11, text_color:C_TXT3}), {left:left + 36.0, top:top + 21.0})
+}
+
+// 警示条：橙框 + ▲ 图标 + 单行文字（Label 不支持换行 ⇒ 只写一行 ✓）
+func warn_box(AnchorBox ca, float left, float right, float top, float h, string text) {
+    var wa = SDL3.createAnchorBox({})
+    var wp = SDL3.createPanel({clip:false, x:0, y:0, w:200.0, h:h, bg_color:C_WARN_BG, radius:8, border_color:C_WARN_BR})
+    wp.setLayout(wa)
+    ca.add(wp, {left:left, right:right, top:top, h:h})
+    wa.add(SDL3.createLabel({x:0, y:0, text:"▲", font_size:12, text_color:C_WARN_T}), {left:14.0, top:h / 2.0 - 9.0})
+    wa.add(SDL3.createLabel({x:0, y:0, text:text, font_size:11, text_color:C_WARN_T}), {left:38.0, top:h / 2.0 - 9.0})
+}
+
+// 两列卡片行：返回 [左列 VBox, 右列 VBox]（卡片用 mk_card 加进去 ✓）
+func two_cols(VBox box, float h): Array[VBox] {
+    var row = SDL3.createHBox({padX:0.0, padY:0.0, spacing:16})
+    box.add(row, {basis:h, align:3})
+    var c1 = SDL3.createVBox({padX:0.0, padY:0.0, spacing:0})
+    var c2 = SDL3.createVBox({padX:0.0, padY:0.0, spacing:0})
+    row.add(c1, {grow:1.0})
+    row.add(c2, {grow:1.0})
+    Array[VBox] out = [c1, c2]
+    return out
+}
+
+// 页 4：云端签到
+func page_cloud() {
+    var box = scroll_page(4)
+    var head = page_head(box, "云端签到", "托管到 GitHub Actions 定时签到 · 本机可关机")
+    head_hint(head, 150.0, "凭证约 14 天有效")
+    head_button(head, 0.0, 132.0, "一键部署到云端", true)
+
+    // 卡 1：一键部署（截图里这卡被滚到上方只露一角 ⇒ 内容按同级页面推断 ✓）
+    var a1 = mk_card(box, 112.0, "一键部署", "")
+    a1.add(SDL3.createLabel({x:0, y:0, text:"把签到托管到云端：授权 GitHub 后自动 Fork 仓库、写入 Secret、启用定时任务。", font_size:13, text_color:C_TXT2}), {left:18.0, top:56.0})
+    a1.add(SDL3.createLabel({x:0, y:0, text:"部署完成后本机不必开机，签到结果可通过飞书推送查看。", font_size:11, text_color:C_TXT3}), {left:18.0, top:78.0})
+    a1.add(SDL3.createButton({x:0, y:0, w:150.0, h:38.0, text:"一键部署到云端", font_size:14, radius:8,
+                              bg_color:C_BLUE, text_color:#FFFFFFFF, border:false, shadow:false}), {right:18.0, top:37.0})
+
+    // 卡 2：部署流程（横向 3 步）
+    var a2 = mk_card(box, 172.0, "部署流程", "")
+    label_right(a2, 18.0, 22.0, "一键部署自动完成 · 仅状态展示", 12.0, C_HINT)
+    // 步骤之间的连接线（浅灰 1px ✓）
+    a2.add(SDL3.createPanel({clip:false, x:0, y:0, w:170.0, h:1.0, bg_color:#E5E7EBFF, radius:0.0, border:false}), {left:120.0, top:88.0})
+    a2.add(SDL3.createPanel({clip:false, x:0, y:0, w:170.0, h:1.0, bg_color:#E5E7EBFF, radius:0.0, border:false}), {left:380.0, top:88.0})
+    step_h(a2, 80.0, 74.0, 1, "GitHub 授权", "待启用", false)
+    step_h(a2, 340.0, 74.0, 2, "写入 Secret", "待启用", false)
+    step_h(a2, 600.0, 74.0, 3, "启用定时任务", "待启用", false)
+
+    // 卡 3：部署状态
+    var a3 = mk_card(box, 268.0, "部署状态", "")
+    a3.add(SDL3.createLinkButton({x:0, y:0, text:"打开 Actions", font_size:12, color:C_BLUE,
+                                  hover_color:C_BLUE, underline:false}), {right:18.0, top:22.0})
+    field(a3, 18.0, 58.0, 0.0, "GitHub 用户", "—")
+    field(a3, 210.0, 58.0, 0.0, "Fork 仓库", "TraeTools")
+    field(a3, 400.0, 58.0, 0.0, "cron 表达式", "0 0 * * *")
+    field(a3, 600.0, 58.0, 0.0, "凭证有效期", "—")
+    field(a3, 18.0, 128.0, 0.0, "上次运行", "—")
+    warn_box(a3, 18.0, 18.0, 186.0, 58.0,
+             "云端签到使用 TRAE_SESSION 作为凭证（约 14 天有效）；过期后请重新登录 Trae 并重新部署。")
+
+    // 卡 4：部署日志
+    var a4 = mk_card(box, 200.0, "部署日志", "")
+    a4.add(SDL3.createLinkButton({x:0, y:0, text:"操作明细", font_size:12, color:C_BLUE,
+                                  hover_color:C_BLUE, underline:false}), {right:18.0, top:22.0})
+    // 日志框：这里贴 top 而不是 bottom（卡片内还有其它内容时更直观 ✓）
+    var la = SDL3.createAnchorBox({})
+    var lp = SDL3.createPanel({clip:false, x:0, y:0, w:200.0, h:120.0, bg_color:C_LOGBG, radius:8, border:false})
+    lp.setLayout(la)
+    a4.add(lp, {left:18.0, right:18.0, top:56.0, h:120.0})
+    la.add(SDL3.createLabel({x:0, y:0, text:"[云端部署] 已就绪", font_size:11, text_color:C_LOGOK}), {left:12.0, top:12.0})
+    la.add(SDL3.createLabel({x:0, y:0, text:"点击「授权 / 部署」开始发布签到任务到 GitHub Actions", font_size:11, text_color:C_BLUE}), {left:12.0, top:32.0})
+}
+
+// 页 5：设置
+func page_settings() {
+    var box = scroll_page(5)
+    var head = page_head(box, "设置", "自动签到 · 登录状态 · 通知 · 账号")
+    head_hint(head, 116.0, "改动即时保存")
+    head_button(head, 0.0, 88.0, "保存", true)
+
+    // ---- 第一行：自动签到（左） + 登录状态（右）----
+    var cols = two_cols(box, 334.0)
+    var cSign = mk_card(cols[0], 334.0, "自动签到", "")
+    set_row_toggle(cSign, 60.0, "每日自动签到", "到达指定时间自动执行", true)
+    set_row_input(cSign, 114.0, "签到时间", "建议非高峰时段", "08:00", 104.0)
+    set_row_input(cSign, 168.0, "签到间隔（秒）", "多账号签到间隔，防止触发风控", "5", 104.0)
+    set_row_toggle(cSign, 222.0, "开机自启", "系统启动时自动运行", false)
+    set_row_toggle(cSign, 276.0, "最小化到托盘", "关闭窗口时驻留托盘", true)
+
+    var cLogin = mk_card(cols[1], 334.0, "登录状态", "")
+    cLogin.add(SDL3.createLinkButton({x:0, y:0, text:"复制", font_size:12, color:C_BLUE,
+                                      hover_color:C_BLUE, underline:false}), {right:18.0, top:22.0})
+    var la = SDL3.createAnchorBox({})
+    var lp = SDL3.createPanel({clip:false, x:0, y:0, w:200.0, h:120.0, bg_color:C_LOGBG, radius:8, border:false})
+    lp.setLayout(la)
+    cLogin.add(lp, {left:18.0, right:18.0, top:56.0, h:120.0})
+    la.add(SDL3.createLabel({x:0, y:0, text:"(未登录)", font_size:13, text_color:C_BLUE}), {left:14.0, top:12.0})
+    field(cLogin, 18.0, 190.0, 0.0, "更新时间", "—")
+    field(cLogin, 18.0, 222.0, 0.0, "设备号", "—")
+    cLogin.add(SDL3.createButton({x:0, y:0, w:64.0, h:30.0, text:"更换", font_size:12, radius:6,
+                                  bg_color:C_CARD, text_color:C_BTN_T, border_color:C_BTN_BR, shadow:false}),
+               {right:18.0, top:222.0})
+    // 单行（Label 不支持换行 ⇒ 截图里折两行的提示压成一行 ✓）
+    cLogin.add(SDL3.createLabel({x:0, y:0, text:"设备号被风控标记（签到 9074）时可更换；云端签到需重新部署同步。",
+                                 font_size:11, text_color:C_HINT}), {left:18.0, top:276.0})
+
+    // ---- 第二行：飞书推送（左） + 账号管理（右）----
+    var cols2 = two_cols(box, 244.0)
+    var cFei = mk_card(cols2[0], 244.0, "飞书推送", "")
+    cFei.add(SDL3.createLabel({x:0, y:0, text:"Webhook 地址", font_size:12, text_color:C_TXT3}), {left:18.0, top:58.0})
+    cFei.add(SDL3.createEdit({x:0, y:0, w:300.0, h:34.0, placeholder:"请输入飞书机器人 Webhook 地址", font_size:12,
+                              radius:6, bg_color:#FFFFFFFF, text_color:C_TXT, border_color:C_INPUT_B}),
+             {left:18.0, right:18.0, top:78.0})
+    cFei.add(SDL3.createLabel({x:0, y:0, text:"推送状态", font_size:14, text_color:C_TXT}), {left:18.0, top:130.0})
+    cFei.add(SDL3.createLabel({x:0, y:0, text:"启用后每日签到结果会推送到飞书", font_size:11, text_color:C_TXT3}), {left:18.0, top:151.0})
+    cFei.add(SDL3.createToggle({x:0, y:0, w:44.0, h:24.0, on:true, on_color:C_BLUE, off_color:#C8CDD4FF, anim:true}),
+             {right:18.0, top:132.0})
+    cFei.add(SDL3.createButton({x:0, y:0, w:96.0, h:36.0, text:"测试推送", font_size:13, radius:8,
+                                bg_color:C_CARD, text_color:C_BTN_T, border_color:C_BTN_BR, shadow:false}),
+             {left:18.0, top:188.0})
+
+    var cAcc = mk_card(cols2[1], 244.0, "账号管理", "")
+    cAcc.add(SDL3.createButton({x:0, y:0, w:96.0, h:32.0, text:"删除选中", font_size:12, radius:6,
+                                bg_color:C_CARD, text_color:C_BTN_T, border_color:C_BTN_BR, shadow:false}),
+             {right:124.0, top:16.0})
+    cAcc.add(SDL3.createButton({x:0, y:0, w:88.0, h:32.0, text:"＋ 添加", font_size:12, radius:6,
+                                bg_color:C_BLUE, text_color:#FFFFFFFF, border:false, shadow:false}),
+             {right:18.0, top:16.0})
+
+    // ---- 关于 ----
+    var about = SDL3.createAnchorBox({})
+    box.add(about, {basis:36.0, align:3})
+    about.add(SDL3.createLabel({x:0, y:0, text:"关于 TraeTools", font_size:18, font_style:1, text_color:C_TXT}),
+              {left:2.0, top:6.0})
+    var cAbout = mk_card(box, 92.0, "", "")
+    cAbout.add(SDL3.createPanel({clip:false, x:0, y:0, w:44.0, h:44.0, bg_color:C_BLUE, radius:10.0, border:false}), {left:18.0, top:24.0})
+    cAbout.add(SDL3.createLabel({x:0, y:0, text:"TraeTools", font_size:16, font_style:1, text_color:C_TXT}), {left:78.0, top:36.0})
+    cAbout.add(SDL3.createButton({x:0, y:0, w:88.0, h:34.0, text:"检查更新", font_size:12, radius:6,
+                                  bg_color:C_CARD, text_color:C_BTN_T, border_color:C_BTN_BR, shadow:false}),
+               {right:18.0, top:29.0})
+    cAbout.add(SDL3.createButton({x:0, y:0, w:88.0, h:34.0, text:"重置软件", font_size:12, radius:6,
+                                  bg_color:C_CARD, text_color:C_DANGER, border_color:C_BTN_BR, shadow:false}),
+               {right:114.0, top:29.0})
+    cAbout.add(SDL3.createButton({x:0, y:0, w:88.0, h:34.0, text:"重置协议", font_size:12, radius:6,
+                                  bg_color:C_CARD, text_color:C_BTN_T, border_color:C_BTN_BR, shadow:false}),
+               {right:210.0, top:29.0})
+}
+
+// ==================== 页面 ====================
+
+// 页 0：仪表盘（对着截图做的那页）
+func page_dashboard() {
+    // 页头：标题 + 日期 + 右上两个按钮（都在页内 ⇒ 切页时整页一起换 ✓）
+    add_p(0, SDL3.createLabel({x:214, y:50, text:"仪表盘", font_size:26, text_color:C_TXT}), 214, 50)
+    add_p(0, SDL3.createLabel({x:214, y:90, text:"2026-09-25 周五", font_size:13, text_color:C_TXT3}), 214, 90)
+    add_p(0, SDL3.createButton({x:862, y:68, w:86, h:34, text:"刷新状态", font_size:13, radius:8,
+                                bg_color:C_CARD, text_color:C_BTN_T, border_color:C_BTN_BR, shadow:false}), 862, 68)
+    add_p(0, SDL3.createButton({x:958, y:66, w:96, h:36, text:"立即签到", font_size:13, radius:8,
+                                bg_color:C_BLUE, text_color:#FFFFFFFF, border:false, shadow:false}), 958, 66)
+
+    // 三张统计卡
+    stat_card(0, 214, 135, 263, 90, "剩余积分", "0", "分", C_TXT, 28.0)
+    stat_card(0, 505, 135, 263, 90, "今日签到", "未登录", "", C_GREEN, 18.0)
+    stat_card(0, 796, 135, 263, 90, "连续签到", "0", "天", C_ORANGE, 28.0)
+
+    // 折线图卡 + 账号概览卡
+    var trend = card(0, 214, 258, 503, 277, "近 14 天积分趋势")
+    trend.add(SDL3.createButton({x:677, y:270, w:26, h:26, text:"…", font_size:13, radius:13,
+                                 bg_color:C_CARD, text_color:C_BLUE, border_color:C_BLUE_L, shadow:false}))
+    var lc = SDL3.createLineChart({x:230, y:302, w:471, h:213, title:"", font_size:11,
+                                   show_grid:true, show_points:true})
+    trend.add(lc)
+    lc.set_data(XS, [YS], [""])
+
+    card(0, 742, 258, 314, 277, "账号概览")       // 截图里这里是空的 ⇒ 保持空 ✓
+}
+
+// 页 1..5：占位页（截图里没有它们的设计 ⇒ 只用来演示切页）
+// ⚠ 文案里**不要**用 ✓ ✗ ⇒ □ 这类符号：这个字体没有它们的字形，会渲染成豆腐块 □ ✗
+//   （能用的只实测出 ■ ● ◆ ▲ ○ ◎ ※ √ × ∑ ☆ ★ → ← § 这几个 —— 正文用汉字标点最稳 ✓）
+func page_placeholder(int page, string title) {
+    add_p(page, SDL3.createLabel({x:214, y:50, text:title, font_size:26, text_color:C_TXT}), 214, 50)
+    add_p(page, SDL3.createLabel({x:214, y:90, text:"占位页 P" + _str(page) + " —— 切页已生效", font_size:13, text_color:C_TXT3}), 214, 90)
+
+    var p = card(page, 214, 135, 896, 360, title)
+    p.add(SDL3.createLabel({x:230, y:186, text:"本示例只复刻「仪表盘」页（对着 TraeTools 截图做）；", font_size:15, text_color:C_TXT2}))
+    p.add(SDL3.createLabel({x:230, y:214, text:"其余 5 页是占位页，专门用来演示切页：点左侧导航即可切换。", font_size:15, text_color:C_TXT2}))
+    p.add(SDL3.createLabel({x:230, y:254, text:"切页机制：TabControl（show_header:false 隐藏标签栏）+ 导航按钮 set_active(idx)。", font_size:13, text_color:C_TXT3}))
+    p.add(SDL3.createLabel({x:230, y:278, text:"页内控件照旧用 tab.addToPage(page, 控件, dx, dy) 添加 —— 与 PE 分析器同一套 API。", font_size:13, text_color:C_TXT3}))
+    p.add(SDL3.createLabel({x:230, y:302, text:"切页唯一回调是 tab.on_change：导航选中态在那里统一同步，不会漂移。", font_size:13, text_color:C_TXT3}))
+}
+
+// ==================== 界面 ====================
+func build_ui(Window wt) {
+    // ---- 左侧深色导航栏（0..190，通高；它是普通 Panel，与内容区 Tab 无关 ✓）----
+    var side = SDL3.createPanel({clip:false, x:0, y:0, w:SIDE_W, h:WIN_H, bg_color:C_SIDE, radius:0, border:false})
+    wt.add(side)
+
+    side.add(SDL3.createPanel({clip:false, x:16, y:66, w:14, h:14, bg_color:C_BLUE, radius:3, border:false}))
+    side.add(SDL3.createLabel({x:36, y:60, text:"TraeTools", font_size:19, text_color:#FFFFFFFF}))
+    side.add(SDL3.createLabel({x:16, y:89, text:"签到 · 账号切换 · 用量统计", font_size:11, text_color:C_SIDE_D}))
+    side.add(SDL3.createPanel({clip:false, x:0, y:112, w:SIDE_W, h:1, bg_color:C_DIV, radius:0, border:false}))
+
+    // 图标用**实测能渲染**的符号（探针逐个验过 ✓）：
+    //   ■ ● ◆ ▲ ○ ◎ ※ √ × ∑ ☆ ★ → ← § 可用 ✓；▦ ✓ ⇄ ☁ ⚙ 等扩展区符号全是豆腐块 □ ✗
+    // 想要真图标：用 examples/UI组件/按钮/gen_icons.leno 生成 PNG + 按钮的 image_path ✓
+    nav_item(side, 128, "■  仪表盘", 0)
+    nav_item(side, 170, "∑  用量统计", 1)
+    nav_item(side, 212, "√  每日签到", 2)
+    nav_item(side, 254, "→  账号切换", 3)
+    nav_item(side, 296, "◎  云端签到", 4)
+    nav_item(side, 338, "◆  设置", 5)
+
+    // 提示放在**侧栏空白区**：之前挂在窗口层、固定在 y=656，会压在新加的卡片上面 ✗
+    // （仪表盘页卡片到 y=535 时看不出来，用量统计/云端签到这些卡片铺到窗口底就露馅了 ✓）
+    side.add(SDL3.createLabel({x:16, y:606, text:"左键点导航切页 · Esc 退出", font_size:10, text_color:C_SIDE_D}))
+    side.add(SDL3.createLabel({x:16, y:622, text:"数据目录", font_size:10, text_color:C_SIDE_V}))
+    side.add(SDL3.createLabel({x:16, y:636, text:"%APPDATA%\\TraeSignLeno\\", font_size:10, text_color:C_SIDE_V}))
+    side.add(SDL3.createLabel({x:16, y:710, text:"v1.3.3", font_size:11, text_color:C_SIDE_V}))
+
+    // ---- 内容区：TabControl 当页面容器，**标签栏隐藏** ⇒ 界面上只看得到当前页 ✓ ----
+    // `clip:false`：页面内容自己就有裁剪（滚动页是整页 ScrollView ✓），Tab 这层是**冗余**的 ⇒
+    // 少一层裁剪 = 少一次 flush/malloc（"过多裁剪会闪烁" ✗）⇒ 每个页面最多只剩 1 层裁剪 ✓
+    TAB = wt.addTabControl({x:TAB_X, y:TAB_Y, w:TAB_W, h:TAB_H,
+                            tabs:["仪表盘", "用量统计", "每日签到", "账号切换", "云端签到", "设置"],
+                            active:0, show_header:false, border:false, clip:false, bg_color:C_BG})
+    // ⚠ `tabs` 仍要照常传：`set_active` 按下标校验（`idx < _tabs.len()`）✓；标题本身不显示 ✓
+    // ⚠ `bg_color` 要显式给内容区底色：Tab 的内容区会用自己的 `_bgColor` 打底（默认取主题色，
+    //   这里比 C_BG 更白 ✗ —— 漏了它内容区就不是截图那种浅灰了 ✓）
+    TAB.on_change(func(int idx) {
+        CUR_PAGE = idx
+        sync_nav()
+    })
+
+    page_dashboard()
+    page_usage()                       // 页 1：用量统计
+    page_placeholder(2, "每日签到")     // 页 2：截图未给 ⇒ 保持占位
+    page_accounts()                    // 页 3：账号切换
+    page_cloud()                       // 页 4：云端签到
+    page_settings()                    // 页 5：设置
+
+
+}
+
+main() {
+    var sh = _env("DSHOT")
+    if sh != null { SHOT = _str(sh) }
+    var au = _env("DAUTO")
+    if au != null { AUTO = _int(_str(au)) }
+    var sa = _env("DSHOT_AT")
+    if sa != null { SHOT_AT = _int(_str(sa)) }
+    var sn = _env("DSHOT_N")
+    if sn != null { SHOT_N = _int(_str(sn)) }
+    var cy = _env("DCYCLE")
+    if cy != null { CYCLE = _int(_str(cy)) }
+
+    var wt = SDL3.createWindow({title:"TraeTools —— LenoSDL3 复刻（切页：TabControl + 隐藏标签栏）",
+                                w:WIN_W, h:WIN_H, resizable:false})
+    if not wt.ok {
+        print("创建窗口失败: " + SDL3.getError() + "\n")
+        return
+    }
+    build_ui(wt)
+
+    // 启动页（自检用）：`set_active` 会回调 on_change ⇒ 导航选中态一起同步 ✓
+    var dp = _env("DPAGE")
+    if dp != null {
+        int dpi = _int(_str(dp))
+        if dpi > 0 { set_page(dpi) }
+    }
+    // 自检：DSCROLL=n ⇒ **第 2 帧**再把当前页滚到 y=n（验证滚动 + 卡片内 AnchorBox 跟随 ✓）
+    // ⚠ 不能在 build 之后立刻滚：那一刻内容尺寸还没测量（`_contentH = -1`），
+    //   `get_max_scroll_y()` 是 0 ⇒ 会被当成"没有可滚空间"钳成 0 ✗（这条踩过，见 README ✓）
+    var dsc = _env("DSCROLL")
+    if dsc != null {
+        PENDING_SCROLL = _float(_str(dsc))
+        if SHOT_AT < 4 { SHOT_AT = 4 }      // 截图要晚于"滚动生效的那一帧" ✓
+    }
+    // 自检：DSCROLL_SMOOTH=n ⇒ 用"滚轮语义"朝目标滚 n 像素（平滑动画；配 DSCROLL_TRACE=1 看缓动曲线 ✓）
+    var dss = _env("DSCROLL_SMOOTH")
+    if dss != null {
+        PENDING_SMOOTH = _float(_str(dss))
+        if SHOT_AT < 4 { SHOT_AT = 4 }
+    }
+    var dst = _env("DSCROLL_TRACE")
+    if dst != null { if _int(_str(dst)) != 0 { SMOOTH_TRACE = true } }
+    var dfl = _env("DSCROLL_FLIP")
+    if dfl != null { FLIP = _float(_str(dfl)) }
+
+    // 定时器**只在自检模式下**挂：`win.run` 是事件驱动重绘，无头（dummy）下没有事件就永不重绘 ✗
+    // 但交互运行时它没用了 —— 加了等于每秒 20 次**无谓的全量重绘**（每次带一批 flush ✗，
+    // 是"闪烁感/卡顿感"的常见来源）⇒ 只有开了自检开关才加 ✓
+    if SHOT != "" or AUTO > 0 or CYCLE > 0 {
+        wt.addTimer(50, func():void { })
+    }
+
+    // ★ 截图 / 自动退出必须放在**叠加层**（setOverlay）：
+    //   它在所有控件/弹层/Tooltip **之后**、present 之前调用 ⇒ 此刻帧才是完整的 ✓
+    //   ⚠ 放在 onRender 回调里读会得到「只有底色」的空白图 ✗（控件在回调**之后**才绘制）
+    wt.setOverlay(func(Renderer r) {
+        FRAMES = FRAMES + 1
+        if FRAMES == 1 {
+            print("[dash] 首帧完成（控件已绘制）" + (WIN_W as string) + "x" + (WIN_H as string) + "  当前页=" + _str(CUR_PAGE) + "\n")
+            int k = 0
+            for SV_LIST to s {
+                print("[dash]   滚动页 " + _str(SV_PAGES[k]) + "：maxScrollY=" + _str(s.get_max_scroll_y()) + "\n")
+                k = k + 1
+            }
+        }
+        // 自检：内容尺寸已量完（第 2 帧）⇒ 这时滚动才作数 ✓
+        if FRAMES == 2 and PENDING_SCROLL >= 0.0 {
+            apply_scroll(CUR_PAGE, PENDING_SCROLL)
+            PENDING_SCROLL = -1.0
+            SDL3.markFrameRedraw()
+        }
+        // 自检：平滑滚动（走滚轮同一条路径）⇒ 之后逐帧逼近，可打印缓动曲线 ✓
+        if FRAMES == 2 and PENDING_SMOOTH != 0.0 {
+            apply_scroll_by(CUR_PAGE, PENDING_SMOOTH)
+            PENDING_SMOOTH = 0.0
+        }
+        // 自检：快速来回滚（每 2 帧反向）—— 模拟"快速上下滚动滑轮" ✓
+        if FLIP > 0.0 {
+            FLIP_TICK = FLIP_TICK + 1
+            if FLIP_TICK >= 2 {
+                FLIP_TICK = 0
+                if FLIP_POS { apply_scroll_by(CUR_PAGE, FLIP) } else { apply_scroll_by(CUR_PAGE, 0.0 - FLIP) }
+                FLIP_POS = not FLIP_POS
+            }
+        }
+        if SMOOTH_TRACE { trace_scroll(CUR_PAGE) }
+        // 自检：每 CYCLE 帧自动切下一页（走的是导航按钮的**同一个** set_page ✓）
+        //   打印出来的 `当前页` 是从 `on_change` 回填的 ⇒ 顺带验证了"切页 → 导航同步"整条链 ✓
+        if CYCLE > 0 {
+            CYCLE_TICK = CYCLE_TICK + 1
+            if CYCLE_TICK >= CYCLE {
+                CYCLE_TICK = 0
+                int nx = CUR_PAGE + 1
+                if nx >= NAVS.len() { nx = 0 }
+                set_page(nx)
+                print("[dash] 自动切页 → 请求 " + _str(nx) + " / 当前页 " + _str(CUR_PAGE) + "\n")
+            }
+        }
+        if SHOT != "" and SHOT_N > 0 and FRAMES >= SHOT_AT {
+            // 连拍：`DSHOT_N` 张连续帧（第 0 张 = 原 `DSHOT` 名字，其余加 `_1`、`_2`…）
+            // 用途：逐像素比对连续帧 ⇒ 把"闪烁"变成可复现的数字 ✓
+            var idx = FRAMES - SHOT_AT
+            var path = SHOT
+            if idx > 0 { path = SHOT.byte_slice(0, SHOT.len() - 4) + "_" + _str(idx) + ".png" }
+            var s = r.readPixelsAt(0, 0, _int(WIN_W), _int(WIN_H))
+            if s == null {
+                print("[dash] 读像素失败: " + SDL3.getError() + "\n")
+            } else {
+                bool ok = SDL3.saveImagePNG(s, path)
+                print("[dash] 截图 " + path + " ok=" + _str(ok) + "  当前页=" + _str(CUR_PAGE) + "\n")
+            }
+            if idx >= SHOT_N - 1 { _exit(0) }
+        }
+        if AUTO > 0 and FRAMES >= AUTO {
+            print("[dash] frames=" + _str(FRAMES) + "\n")
+            _exit(0)
+        }
+    })
+
+    wt.run(
+        func(Event ev): bool {
+            if ev.isQuit() or ev.isWindowClose() { return false }
+            if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(C_BG)               // 内容区浅底（侧栏/卡片各自盖在上面 ✓）
+        }
+    )
+}

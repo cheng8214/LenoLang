@@ -1089,6 +1089,10 @@ export struct Window {
             // 基准模式：每轮都请求重绘 ⇒ "帧数"与"渲染次数"一一对应（负载可重复）
             if _benchFrames > 0 { _needRedraw = true }
             bool _hadEvent = false
+            // ★ 本帧是否有"输入类"非 motion 事件（滚轮 / 点击 / 键盘 / resize）。
+            //   这类事件**不受帧率节流**：否则滚动/点击的响应最多被拖 1/30 秒，且连续滚动时
+            //   多个滚轮增量会被攒进同一帧 ⇒ 画面一顿一顿、像"跳一下" ✗（"滚动不利索"的根因 ✓）
+            bool _inputEvent = false
             // 动态计算等待时长：有重绘请求时节流至目标 FPS，空闲时按定时器触发时刻
             int timeoutMs = 500
             if _needRedraw {
@@ -1132,7 +1136,7 @@ export struct Window {
                 // markFrameRedraw() 请求重绘；否则每次移动都触发全窗清屏+全控件重绘，
                 // 偶发呈现异常会让控件（如表）整块露出背景而“闪一下”。
                 // 滚轮/点击/resize/键盘等非 motion 事件仍强制重绘。
-                if not ev.isMouseMotion() { _hadEvent = true }
+                if not ev.isMouseMotion() { _hadEvent = true; _inputEvent = true }
                 if ev.isQuit() {
                     for _runWids.len() to i {
                         // 根销毁：退出前先释放所有控件资源（字体等），沿父子树递归清理
@@ -1334,7 +1338,10 @@ export struct Window {
             if tip.tipRemainingMs() == 0 { _needRedraw = true }
             if _needRedraw {
                 int now = core.getTicks()
-                if now - _lastRenderTicks >= _throttleMs {   // 节流：距上次渲染不足节流间隔则跳过
+                // ★ 输入类事件（滚轮/点击/键盘/resize）**不等节流**，立刻出一帧：
+                //   节流本来是为了压制动画/motion 的 CPU 占用，但把它套在用户输入上，
+                //   就会让滚动/点击"攒着一起动"✗ ⇒ 输入路径放行，其余照旧 ✓
+                if _inputEvent or now - _lastRenderTicks >= _throttleMs {   // 节流：距上次渲染不足节流间隔则跳过
                     _lastRenderTicks = now
                     _needRedraw = false   // 清除标记；动画控件在 render 时可调用 requestRedraw() 请求下一帧
                     // ★ 安全网尺寸同步：SDL_SyncWindow 已在 registerOnly 中阻塞等待 OS 完成最大化，

@@ -1004,6 +1004,8 @@ const BX_TEX    = 4   // 批处理文字纹理
         var verts = SDL_Vertex.malloc_array(vcnt)
 
         // 一次性生成四个角的三角扇顶点
+        // ⚠ `for A : B to v` 是**闭区间**（含 B）⇒ `0 : 3` 就是 ci = 0/1/2/3 四个角 ✓
+        //   （曾误以为是"左闭右开"而改成 `0 : 4` ⇒ ci=4 不匹配任何 case ⇒ cx/cy 为 null 直接崩 ✗）
         for 0 : 3 to ci {
             float cx, cy, sa
             switch ci {
@@ -1047,7 +1049,7 @@ const BX_TEX    = 4   // 批处理文字纹理
         Ptr[f32] buf = ffi.malloc(total * 8)
         if buf == null { return false }
 
-        // 一次性写入 4 个圆角弧的连续顶点
+        // 一次性写入 4 个圆角弧的连续顶点（同上：`0 : 3` 闭区间 = 四个角 ✓）
         for 0 : 3 to ci {
             float cx, cy, sa
             switch ci {

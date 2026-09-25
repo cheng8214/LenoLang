@@ -138,19 +138,23 @@ export struct GroupBox impl Widget, Themeable {
         r.setColor(_bgColor)
         r.fillRoundedRect(x, y, w, h, _radius)
 
-        // 裁剪子控件
-        SDL_Rect cr = SDL_Rect.malloc()
+        // 裁剪子控件（只在真要裁剪时分配 rect ✓ 同 Panel：每帧 render ⇒ 不该无条件 malloc ✗）
+        SDL_Rect? cr = null
         if _clip {
-            cr.x = _int(x); cr.y = _int(y)
-            cr.w = _int(w) + 1; cr.h = _int(h) + 1
-            r.pushClipRect(cr.to_ptr())
+            var c2 = SDL_Rect.malloc()
+            c2.x = _int(x); c2.y = _int(y)
+            c2.w = _int(w) + 1; c2.h = _int(h) + 1
+            r.pushClipRect(c2.to_ptr())
+            cr = c2
         }
         _syncLayoutChild()
         var lc = _layoutChild
         lc?.render(r)
         for children to c { c.render(r) }
-        if _clip { r.popClipRect() }
-        cr.free()
+        if _clip {
+            r.popClipRect()
+            cr?.free()
+        }
 
         // 边框
         r.setColor(theme.withAlpha(_bdrColor, _brdA))
