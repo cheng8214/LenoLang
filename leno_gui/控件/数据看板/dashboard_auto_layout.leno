@@ -943,8 +943,10 @@ func page_checkin() {
     int td = dt[2] as int
     // ⚠ 星期不要用 `times.format(now, "%w")`：实测它返回字面量 "%w" ⇒ `as int` 会**静默变 0** ✗
     //   （页头因此把"星期六"显示成"星期日" ✗）⇒ 改用模块控件的蔡勒公式 ✓
+    //   名字表由页面给（通用控件不预设语言 ✓）
+    Array[string] WK_FULL = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"]
     var head = page_head(box, "每日签到",
-                         times.format(times.now(), "%Y-%m-%d") + " · " + SDL3.weekdayName(ty, tm, td))
+                         times.format(times.now(), "%Y-%m-%d") + " · " + SDL3.weekdayName(ty, tm, td, WK_FULL))
     head_button(head, 0.0, 88.0, "一键签到", true)
 
     // ---- 账号选择条：整行浅底 + 描边（纯界面 ⇒ Panel + Label 复刻外观 ✓）----
@@ -976,7 +978,15 @@ func page_checkin() {
     var row = SDL3.createHBox({padX:0.0, padY:0.0, spacing:16.0})
     box.add(row, {grow:1.0, shrink:1.0, align:3})
     var calCard = mk_card_h(row, 520.0, 452.0, "本月签到日历", "")
-    var cal = SDL3.createCalendar({year:ty, month:tm, today:td, pad:16.0, rows:6})
+    // 通用控件不认识"签到"✗ ⇒ 文案、状态色、图例全部由这里传进去 ✓
+    // （不传就是中性外观：无图例、未标记的日子没有底色 ✓）
+    var cal = SDL3.createCalendar({year:ty, month:tm, today:td, pad:16.0, rows:6,
+                                   month_fmt:"%d 年 %d 月", arrow_left:"←", arrow_right:"→",
+                                   plain_bg:#F1F5F9FF, plain_fg:#6B7280FF,
+                                   filled_bg:#2B6BE4FF, filled_fg:#FFFFFFFF,
+                                   alert_bg:#FEE4E2FF, alert_fg:#D92D20FF,
+                                   today_bg:#FFFFFFFF, today_fg:#2B6BE4FF, today_border:#2B6BE4FF})
+    cal.set_legend([1, SDL3.Calendar.LEG_TODAY, 2, 0], ["已签", "今日", "漏签", "未签"])
     calCard.add(cal, {left:16.0, right:16.0, top:8.0, bottom:14.0})
     mk_card_h(row, 306.0, 452.0, "签到记录", "")
 }

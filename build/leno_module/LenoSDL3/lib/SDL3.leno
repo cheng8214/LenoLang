@@ -34,7 +34,7 @@ import "sdl_separator.leno" as sep
 import "sdl_badge.leno" as bdg; use bdg.Badge     // 胶囊徽标（不可点状态标签 ✓）
 import "sdl_calendar.leno" as cal; use cal.Calendar   // 签到日历（月历网格 + 每天状态色 + 可选点选/切月）
 export func createCalendar(Dict opts): Calendar   { return cal.createCalendar(opts) }
-export func weekdayName(int y, int m, int d): string { return cal.weekdayName(y, m, d) }   // 中文星期名（页头用 ✓）
+export func weekdayName(int y, int m, int d, Array[string] names): string { return cal.weekdayName(y, m, d, names) }   // 星期名（名字表由调用方给 ⇒ 控件不预设语言 ✓）
 import "sdl_alert.leno" as alt; use alt.Alert     // 提示条 info/warn/danger/success ✓
 import "sdl_steps.leno" as stp; use stp.Steps     // 步骤条（竖向流程 / 横向概览 ✓）
 import "sdl_scrim.leno" as scr; use scr.Scrim
