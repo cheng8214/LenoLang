@@ -1,0 +1,44 @@
+// dump_probe.leno —— 验证 dumpLayout 的输出（含"没铺开"的典型场景 ✓）
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer)
+
+var FR = 0
+
+main() {
+    var win = SDL3.createWindow({title:"dump probe", w:800.0, h:400.0, bg_color:#F0F1F4FF})
+    if not win.ok { print("窗口创建失败\n"); return }
+    // 根 VBox：整窗
+    var root = SDL3.createVBox({padX:16.0, padY:16.0, spacing:12.0})
+    win.setRoot(root)
+    // 一行：两张卡按 520:306 平分（正确写法 ✓）
+    var rowA = SDL3.createHBox({padX:0.0, padY:0.0, spacing:12.0})
+    root.add(rowA, {basis:120.0, grow:1.0, align:3})
+    rowA.add(SDL3.createPanel({x:0, y:0, w:200.0, h:100.0}), {basis:520.0, grow:520.0, align:3})
+    rowA.add(SDL3.createPanel({x:0, y:0, w:200.0, h:100.0}), {basis:306.0, grow:306.0, align:3})
+    // 一行：只给 basis、没有 grow（= 曾经把"没铺开"写出来的那种 ✗）
+    var rowB = SDL3.createHBox({padX:0.0, padY:0.0, spacing:12.0})
+    root.add(rowB, {basis:120.0, align:3})
+    rowB.add(SDL3.createPanel({x:0, y:0, w:200.0, h:100.0}), {basis:300.0, align:3})
+    rowB.add(SDL3.createPanel({x:0, y:0, w:200.0, h:100.0}), {basis:200.0, align:3})
+    // 一个 AnchorBox（卡片内子控件用相对锚点 ✓）
+    var ab = SDL3.createAnchorBox({})
+    root.add(ab, {basis:80.0, align:3})
+    ab.add(SDL3.createLabel({x:0, y:0, text:"锚点里的标签", font_size:12}), {left:12.0, top:10.0})
+    ab.add(SDL3.createLabel({x:0, y:0, text:"贴右边", font_size:12}), {right:12.0, top:10.0})
+    win.setOverlay(func(Renderer r) {
+        FR = FR + 1
+        if FR >= 2 {
+            win.dumpLayout()
+            _exit(0)
+        }
+    })
+    win.run(
+        func(Event ev): bool {
+            if ev.isQuit() or ev.isWindowClose() { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(#F0F1F4FF)
+        }
+    )
+}

@@ -1,0 +1,48 @@
+// aa_probe.leno —— 「圆角抗锯齿」前后对照探针 ✓
+//   ⚠ 场景刻意只用**纯黑 #000000 画在纯白 #FFFFFF 上**：
+//     覆盖率 = (255 − R) / 255 ✓ ⇒ 用 pxcov.ps1 能把每个像素"覆盖了几成"直接读成数字 ✓
+//   旧实现（几何三角扇，无 AA ✗）⇒ 边缘只有 0 / 9 两档 ✗（硬台阶 ✓）
+//   新实现（CPU 覆盖率蒙版纹理 + GPU 采样 ✓）⇒ 应出现连续中间档（1..8 ✓）
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer)
+
+var FR = 0
+var SHOT = ""
+
+main() {
+    var sp = _env("BSHOT")
+    if sp != null { SHOT = _str(sp) }
+    var win = SDL3.createWindow({title:"aa probe", w:420.0, h:460.0, bg_color:#FFFFFFFF})
+    if not win.ok { print("窗口创建失败\n"); return }
+    win.addTimer(50, func():void { })
+    win.setOverlay(func(Renderer r) {
+        FR = FR + 1
+        r.setColor(#000000FF)
+        // ── 实心圆角矩形（fill ✓）──
+        r.fillRoundedRect(40.0, 40.0, 120.0, 60.0, 10.0)     // A: r=10
+        r.fillRoundedRect(220.0, 40.0, 120.0, 60.0, 6.0)     // B: r=6
+        r.fillRoundedRect(40.0, 140.0, 120.0, 60.0, 20.0)    // C: r=20
+        r.fillRoundedRect(220.0, 140.0, 60.0, 60.0, 30.0)    // D: 正圆（r = 半宽 ✓）
+        // ── 描边（1px ✓）──
+        r.drawRoundedRect(40.0, 240.0, 120.0, 60.0, 10.0)    // E
+        r.drawRoundedRect(220.0, 240.0, 120.0, 60.0, 6.0)    // F
+        r.drawRoundedRect(40.0, 340.0, 120.0, 60.0, 20.0)    // G
+        // ── 描边 + 实心（卡片写法 ✓）──
+        r.fillRoundedRect(220.0, 340.0, 120.0, 60.0, 12.0)
+        r.drawRoundedRect(220.0, 340.0, 120.0, 60.0, 12.0)
+        if FR >= 3 and SHOT != "" {
+            var s = r.readPixelsAt(0, 0, 420, 460)
+            if s != null { SDL3.saveImagePNG(s, SHOT) }
+            _exit(0)
+        }
+    })
+    win.run(
+        func(Event ev): bool {
+            if ev.isQuit() or ev.isWindowClose() { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(#FFFFFFFF)
+        }
+    )
+}

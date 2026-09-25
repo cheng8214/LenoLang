@@ -1,0 +1,42 @@
+// order_probe.leno —— 实测三个绘制入口的先后：控件树 / onRender / setOverlay ✓
+//   三个黄 Panel（控件层）；onRender 画绿、overlay 画蓝，看谁盖谁 ✓
+//   期望读点：(100,30) 若绿 ⇒ onRender 盖控件 ✓；(100,90) 若蓝 ⇒ overlay 盖控件 ✓；
+//             (100,150) 若蓝 ⇒ overlay 盖 onRender ✓
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer)
+
+var FR = 0
+var SHOT = ""
+
+main() {
+    var sp = _env("BSHOT")
+    if sp != null { SHOT = _str(sp) }
+    var win = SDL3.createWindow({title:"order probe", w:200.0, h:220.0, bg_color:#E0E0E0FF})
+    if not win.ok { print("窗口创建失败\n"); return }
+    win.addPanel({x:20, y:10, w:160, h:40, bg_color:#FFFF00FF, border:false})
+    win.addPanel({x:20, y:70, w:160, h:40, bg_color:#FFFF00FF, border:false})
+    win.addPanel({x:20, y:130, w:160, h:40, bg_color:#FFFF00FF, border:false})
+    win.setOverlay(func(Renderer r) {
+        FR = FR + 1
+        r.setColor(#0000FFFF)                       // overlay：蓝
+        r.fillRect(20.0, 70.0, 160.0, 40.0)
+        r.fillRect(20.0, 130.0, 160.0, 40.0)
+        if FR >= 3 and SHOT != "" {
+            var s = r.readPixelsAt(0, 0, 200, 220)
+            if s != null { SDL3.saveImagePNG(s, SHOT) }
+            _exit(0)
+        }
+    })
+    win.run(
+        func(Event ev): bool {
+            if ev.isQuit() or ev.isWindowClose() { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(#E0E0E0FF)
+            r.setColor(#00FF00FF)                   // onRender：绿
+            r.fillRect(20.0, 10.0, 160.0, 40.0)
+            r.fillRect(20.0, 130.0, 160.0, 40.0)
+        }
+    )
+}

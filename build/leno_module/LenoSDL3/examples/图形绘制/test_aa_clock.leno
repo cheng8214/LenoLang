@@ -1,0 +1,66 @@
+// clock_probe.leno —— 静态复刻 show_time.leno 的画面（固定时刻），便于逐像素量锯齿 ✓
+//   只画几何：表盘(fillCircle) + 双外圈(drawCircle) + 12 刻度(drawLine) + 三指针(drawLine) + 中心轴
+//   （刻度数字是字体纹理，与本次改动无关 ⇒ 略 ✓）
+import "SDL3" as SDL3
+import maths
+use SDL3.(Event, Renderer, WindowFlag)
+
+var FR = 0
+var SHOT = ""
+
+func _tipX(float cx, float L, float theta): float { return cx + L * maths.sin(theta) }
+func _tipY(float cy, float L, float theta): float { return cy - L * maths.cos(theta) }
+
+main() {
+    var sp = _env("BSHOT")
+    if sp != null { SHOT = _str(sp) }
+    var win = SDL3.createWindow({title:"clock probe", w:400.0, h:460.0, bg_color:#181A22FF,
+                                 flags: WindowFlag.HIGH_PIXEL_DENSITY})
+    if not win.ok { print("窗口创建失败\n"); return }
+    float cx = 200.0; float cy = 200.0; float R = 160.0
+    float twoPi = maths.pi() * 2.0
+    // 固定时刻（10:08:22，与用户截图接近 ✓）
+    float th = (((10 % 12) + 8.0 / 60.0) / 12.0) * twoPi
+    float tm = ((8.0 + 22.0 / 60.0) / 60.0) * twoPi
+    float ts = (22.0 / 60.0) * twoPi
+
+    win.addTimer(50, func():void { })
+    win.setOverlay(func(Renderer r) {
+        FR = FR + 1
+        r.setColor(#F5F5F0FF); r.fillCircle(cx, cy, R)
+        r.setColor(#282832FF)
+        r.drawCircle(cx, cy, R)
+        r.drawCircle(cx, cy, R - 6.0)
+        for 1 : 12 to i {
+            float ang = (i / 12.0) * twoPi
+            bool major = (i % 3 == 0)
+            float rO = R - 6.0
+            float rI = if major then R - 26.0 else R - 16.0
+            r.setColor(#3C3C46FF)
+            r.drawLine(_tipX(cx, rI, ang), _tipY(cy, rI, ang),
+                       _tipX(cx, rO, ang), _tipY(cy, rO, ang))
+        }
+        r.setColor(#1E1E28FF)
+        r.drawLine(cx, cy, _tipX(cx, R - 80.0, th), _tipY(cy, R - 80.0, th))
+        r.drawLine(cx, cy, _tipX(cx, R - 48.0, tm), _tipY(cy, R - 48.0, tm))
+        r.setColor(#DC3C3CFF)
+        r.drawLine(_tipX(cx, -18.0, ts), _tipY(cy, -18.0, ts),
+                   _tipX(cx, R - 24.0, ts), _tipY(cy, R - 24.0, ts))
+        r.setColor(#1E1E28FF); r.fillCircle(cx, cy, 6.0)
+        r.setColor(#DC3C3CFF); r.fillCircle(cx, cy, 3.0)
+        if FR >= 3 and SHOT != "" {
+            var s = r.readPixelsAt(0, 0, 400, 460)
+            if s != null { SDL3.saveImagePNG(s, SHOT) }
+            _exit(0)
+        }
+    })
+    win.run(
+        func(Event ev): bool {
+            if ev.isQuit() or ev.isWindowClose() { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(#181A22FF)
+        }
+    )
+}

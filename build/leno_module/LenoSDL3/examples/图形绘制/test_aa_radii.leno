@@ -1,0 +1,37 @@
+// ring2_probe.leno —— 多半径描边环：定位"右边把最后像素丢掉"出现在哪个半径 ✗
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer)
+
+var FR = 0
+var SHOT = ""
+
+main() {
+    var sp = _env("BSHOT")
+    if sp != null { SHOT = _str(sp) }
+    var win = SDL3.createWindow({title:"ring2 probe", w:760.0, h:200.0, bg_color:#FFFFFFFF})
+    if not win.ok { return }
+    win.addTimer(50, func():void { })
+    win.setOverlay(func(Renderer r) {
+        FR = FR + 1
+        r.setColor(#000000FF)
+        // 五个独立环：r=10/20/40/80，圆心 y=100，x 分别 40/160/320/560
+        r.drawCircle(40.0, 100.0, 10.0)
+        r.drawCircle(160.0, 100.0, 20.0)
+        r.drawCircle(320.0, 100.0, 40.0)
+        r.drawCircle(560.0, 100.0, 80.0)
+        if FR >= 3 and SHOT != "" {
+            var s = r.readPixelsAt(0, 0, 760, 200)
+            if s != null { SDL3.saveImagePNG(s, SHOT) }
+            _exit(0)
+        }
+    })
+    win.run(
+        func(Event ev): bool {
+            if ev.isQuit() or ev.isWindowClose() { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(#FFFFFFFF)
+        }
+    )
+}
