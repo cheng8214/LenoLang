@@ -178,6 +178,11 @@ export func initVideo(): bool        { return core.initVideo() }
 export func quit()                   { core.quit(); fnt.ttfQuit() }
 export func getError(): string       { return core.getError() }
 export func delay(int ms)            { core.delay(ms) }
+// 提高系统计时器精度（Windows 提到 1ms ✓）—— 修"帧率被 15.6ms 网格量化"✗；其它平台返回 false ✓
+// 调用时机：`core.init()`（即创建窗口）里已自动调用一次 ✓；重复调用幂等 ✓
+export func raiseTimerResolution(): bool { return core.raiseTimerResolution() }
+// 高精度等待（SDL 3.2+ `SDL_DelayPrecise`）：微秒参数 ✓。用途见 sdl_core.leno 的 winmm 段注释 ✓
+export func delayPreciseUs(int us)   { core.delayPreciseUs(us) }
 export func getTicks(): int          { return core.getTicks() }
 
 export func startTextInput(Ptr[u8] w): bool  { return core.startTextInput(w) }

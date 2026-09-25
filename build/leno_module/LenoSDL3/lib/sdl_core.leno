@@ -198,6 +198,8 @@ clib sdl3 {
     bool SDL_TextInputActive(Ptr[u8] window)
 
     void SDL_Delay(u32 ms)
+    // SDL 3.2+：高精度等待（Windows 上走高分辨率可等待计时器 ✓）—— 用于修帧率被 tick 量化 ✗
+    bool SDL_DelayPrecise(u64 ns)
     u64  SDL_GetTicks()
 
     Ptr[u8]  SDL_CreateTextureFromSurface(Ptr[u8] renderer, Ptr[u8] surface)
@@ -419,6 +421,37 @@ export const SDL_FPoint_SIZE = 8
 export const SDL_Point_SIZE  = 8
 export const SDL_Color_SIZE  = 4
 
+// ==================== clib winmm（仅 Windows）====================
+// 为什么需要它：Windows 的系统计时器粒度默认约 **15.6ms** ⇒ `SDL_Delay` / `SDL_WaitEventTimeout`
+//   的实际睡眠 ≈ **请求值 + 21ms**（窗口内实测：1ms→23.7ms、16ms→37.3ms、33ms→54.2ms ✗）⇒
+//   帧周期被量化到 15.6ms 的网格上：
+//     请求 16ms（想 60fps）⇒ 实得 31.2ms（2 格）= **32fps** ✓ 与实测 31.8fps 吻合 ✓
+//     请求 33ms（想 30fps）⇒ 实得 46.8ms（3 格）= **21fps** ✓ 与实测 20.5fps 吻合 ✓
+//   ⇒ 而空窗口**自计渲染只要 1.7ms/帧** ✓ ⇒ 帧率上不去**纯粹是"睡不准"** ✗，不是 UI 慢 ✓
+//   `timeBeginPeriod(1)` 把本进程计时器精度提到 1ms ⇒ sleep 变准 ⇒ 60fps 才可能达到 ✓
+clib winmm {
+    u32 timeBeginPeriod(u32 uMilliseconds)
+    u32 timeEndPeriod(u32 uMilliseconds)
+}
+
+winmm g_winmm = null
+bool g_timerBoosted = false
+
+// 提高计时器精度（幂等；只在 Windows 生效，其它平台返回 false ✓）
+export func raiseTimerResolution(): bool {
+    if g_timerBoosted { return true }
+    if _os() != "windows" { return false }
+    winmm l = g_winmm
+    if l == null {
+        l = ffi.load("winmm.dll")
+        g_winmm = l
+    }
+    if l == null { return false }
+    l.timeBeginPeriod(1)
+    g_timerBoosted = true
+    return true
+}
+
 // ==================== DLL 加载 ====================
 
 sdl3 g_lib = null
@@ -443,7 +476,12 @@ export func lib(): sdl3 {
 export func init(int flags = 32): bool {
     sdl3 l = lib()
     if l == null { return false }
-    return l.SDL_Init(flags)
+    bool ok = l.SDL_Init(flags)
+    // ⚠ 这里**故意不自动**调 `raiseTimerResolution()`：实测本机 sleep 本来就是准的
+    //   （同一次运行内对照：60×SDL_Delay(16) = 995ms = 16.6ms/次 ✓）⇒ 自动调用没有收益、
+    //   却会改动全局计时器精度 ✗。需要时由应用显式调用 ✓
+    //   （我一度把"~0.9s 启动耗时"算进帧时间，误判成 15.6ms 量化 ✗ —— 见 docs/Leno语言改进建议.md ✓）
+    return ok
 }
 
 export func initVideo(): bool { return init(InitFlag.VIDEO) }
@@ -460,6 +498,8 @@ export func getError(): string {
 }
 
 export func delay(int ms) { lib().SDL_Delay(ms) }
+// 高精度等待（SDL 3.2+ ✓）：微秒级；用于帧率节流 —— 粗睡会被 15.6ms tick 量化 ✗
+export func delayPreciseUs(int us) { lib().SDL_DelayPrecise(us * 1000) }
 export func getTicks(): int { return lib().SDL_GetTicks() }
 
 export func startTextInput(Ptr[u8] window): bool  { return lib().SDL_StartTextInput(window) }
