@@ -1,0 +1,442 @@
+// sdl_calendar.leno — 签到日历 / 月历网格（显示型 + 可选点选与切月）
+// win.addCalendar({...}) 或 SDL3.createCalendar({...})
+//
+// ★ 为什么要做成控件：这个"月历 + 每天状态色 + 今天高亮"的格子，
+//   在 Trae 应用与数据看板里各手写了一份 ✗ —— 与本模块把 `pill_right`/`step_row`
+//   收成 `Badge`/`Steps` 是同一条理由（每个界面各写一遍必然漂移 ✓）。
+//
+// ★ 零依赖：不算星期几就调不动（`times` 只给"现在"，给不了任意日期 ✓）⇒
+//   内部用**蔡勒公式**自己算星期 ✓（纯整数运算，实测 2026-09-01 = 周二、2026-09-26 = 周六 ✓）。
+//   也不依赖主题模块：配色全部可传，默认值面向**浅色**界面 ✓（与 Badge 同一策略 ✓）
+//
+// ★ 布局：格子数固定 7 列 × `rows` 行（默认 6 ⇒ 用不满的行自动留空 ✓）。
+//   切月只改**已有格子**的文字与颜色 ⇒ 不重建控件树 ✓（Label.set_text 是现成的 ✓）
+//
+// 用法：
+//   var cal = SDL3.createCalendar({x:230, y:330, w:600, h:420,
+//                                  year:2026, month:9, today:26,
+//                                  marks:{26: 1}})              // {日: 状态}
+//   cal.on_pick(func(int day) { print(day) })                   // 点某天（可选 ✓）
+//   cal.set_month(2026, 10)                                     // 切月（可选 ✓）
+//   cal.set_mark(26, Calendar.ST_OK)                            // 单独标一天
+//
+// 状态色编码（marks 的值 / ST_* 常量）：
+//   0 = 未签（浅灰底）  1 = 已签（主色底 + 白字）  2 = 漏签（浅红底 + 红字）
+import "sdl_renderer.leno" as ren; use ren.Renderer
+import "sdl_event.leno" as evt; use evt.Event
+import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_label.leno" as lbl; use lbl.Label
+import "sdl_theme.leno" as theme; use theme.Color   // Color 类型在 sdl_theme 里 ✓（不引它字段类型无法解析 ✓）
+import "sdl_core.leno" as core
+
+export struct Calendar impl Widget {
+    // 每天的状态
+    const ST_NONE = 0     // 未签
+    const ST_OK   = 1     // 已签
+    const ST_MISS = 2     // 漏签
+
+    const COLS = 7
+
+    // ---- 位置与尺寸（布局容器通过 set_pos/set_size 驱动 ✓）----
+    float x = 0.0, y = 0.0
+    float _w = 620.0, _h = 400.0
+    bool _natW = false, _natH = false      // 调用方没显式给尺寸 ⇒ 用自然尺寸 ✓
+
+    // ---- 数据 ----
+    int _year = 2026
+    int _month = 1
+    int _today = 0                         // 0 = 不标"今天"
+    Dict _marks = {}                       // {日: 状态}
+    int _rows = 6
+
+    // ---- 外观 ----
+    float _pad = 16.0
+    float _headH = 26.0                    // 顶部「2026 年 9 月」+ 左右箭头
+    float _weekH = 22.0                    // 星期头
+    float _legendH = 22.0                  // 图例
+    float _gap = 10.0                      // 格子间距
+    float _cellMax = 40.0                  // 格子边长上限
+    float _cellMin = 22.0
+    float _fsWeek = 12.0
+    float _fsDay = 13.0
+    bool _showHead = true
+    bool _showLegend = true
+
+    Color _cOkBg    = #2B6BE4FF            // 已签：主色底
+    Color _cOkTxt   = #FFFFFFFF
+    Color _cNoBg    = #F1F5F9FF            // 未签：浅灰底
+    Color _cNoTxt   = #6B7280FF
+    Color _cMissBg  = #FEE4E2FF            // 漏签：浅红底
+    Color _cMissTxt = #D92D20FF
+    Color _cTodayBg = #FFFFFFFF            // 今天：白底 + 主色描边
+    Color _cTodayTxt = #2B6BE4FF
+    Color _cTodayBd = #2B6BE4FF
+    Color _cTxt     = #111827FF            // 标题「2026 年 9 月」
+    Color _cWeekTxt = #9CA3AFFF            // 星期头 / 图例文字
+    Color _cArrow   = #6B7280FF            // 左右箭头
+
+    // ---- 子控件（构造时一次性建好 ✓ 切月只改字 ✓）----
+    Array[Label] _weekLbl = []
+    Array[Label] _dayLbl = []
+    Array[int]   _dayNum = []              // 该格是几号；0 = 本月没有这一天（留空 ✓）
+    Label? _monthLbl = null
+    Label? _arrowL = null
+    Label? _arrowR = null
+    Array[Label] _lgTxt = []               // 图例文字（4 个）
+    bool _loaded = false
+    bool visible = true
+
+    // ---- 回调（不注册就纯显示 ✓）----
+    func(int):void _onPick = null
+    func(int, int):void _onMonthChange = null
+
+    // ==================== 构造 ====================
+    func set(Dict opts) {
+        x = opts.get("x", 0.0)
+        y = opts.get("y", 0.0)
+        float wOpt = opts.get("w", 0.0)
+        float hOpt = opts.get("h", 0.0)
+        _natW = wOpt <= 0.0
+        _natH = hOpt <= 0.0
+        _w = wOpt
+        _h = hOpt
+        _year = opts.get("year", 2026)
+        _month = opts.get("month", 1)
+        _today = opts.get("today", 0)
+        _rows = opts.get("rows", 6)
+        _pad = opts.get("pad", 16.0)
+        _headH = opts.get("head_h", 26.0)
+        _weekH = opts.get("week_h", 22.0)
+        _legendH = opts.get("legend_h", 22.0)
+        _gap = opts.get("gap", 10.0)
+        _cellMax = opts.get("cell_max", 40.0)
+        _fsWeek = opts.get("font_size_week", 12.0)
+        _fsDay = opts.get("font_size_day", 13.0)
+        _showHead = opts.get("show_head", true)
+        _showLegend = opts.get("show_legend", true)
+        visible = opts.get("visible", true)
+        if opts.get("ok_bg") is Color => t { _cOkBg = t }
+        if opts.get("ok_text_color") is Color => t { _cOkTxt = t }
+        if opts.get("none_bg") is Color => t { _cNoBg = t }
+        if opts.get("none_text_color") is Color => t { _cNoTxt = t }
+        if opts.get("miss_bg") is Color => t { _cMissBg = t }
+        if opts.get("miss_text_color") is Color => t { _cMissTxt = t }
+        if opts.get("today_bg") is Color => t { _cTodayBg = t }
+        if opts.get("today_text_color") is Color => t { _cTodayTxt = t }
+        if opts.get("today_border_color") is Color => t { _cTodayBd = t }
+        if opts.get("title_color") is Color => t { _cTxt = t }
+        if opts.get("week_text_color") is Color => t { _cWeekTxt = t }
+        if opts.get("arrow_color") is Color => t { _cArrow = t }
+        if opts.get("marks") is Dict => m { _marks = m }
+
+        // 星期头（日 一 二 三 四 五 六 ✓）
+        Array[string] wk = ["日", "一", "二", "三", "四", "五", "六"]
+        for 0 : COLS - 1 to i {
+            _weekLbl.add(lbl.createLabel({x:0, y:0, text:wk[i], font_size:_fsWeek, text_color:_cWeekTxt}))
+        }
+        // 日期格：7 × rows，一次性建满 ⇒ 切月只改文字 ✓
+        int total = COLS * _rows
+        for 0 : total - 1 to i {
+            _dayLbl.add(lbl.createLabel({x:0, y:0, text:"", font_size:_fsDay, text_color:_cNoTxt}))
+            _dayNum.add(0)
+        }
+        if _showHead {
+            _monthLbl = lbl.createLabel({x:0, y:0, text:"", font_size:12.0, text_color:_cTxt})
+            _arrowL = lbl.createLabel({x:0, y:0, text:"←", font_size:14.0, text_color:_cArrow})
+            _arrowR = lbl.createLabel({x:0, y:0, text:"→", font_size:14.0, text_color:_cArrow})
+        }
+        if _showLegend {
+            Array[string] lg = ["已签", "今日", "漏签", "未签"]
+            for 0 : lg.len() - 1 to i {
+                _lgTxt.add(lbl.createLabel({x:0, y:0, text:lg[i], font_size:11.0, text_color:_cWeekTxt}))
+            }
+        }
+        _relabel()
+        _loaded = true
+    }
+
+    // ==================== 数据 ====================
+    // 蔡勒公式的实现放在**模块级** `dow()`（见文件末尾 ✓）—— 页面也要用同一个算法 ✓
+    //   这里只做委托，避免两份实现漂移 ✗
+    func _dow(int y, int m, int d): int { return dow(y, m, d) }
+
+    func _daysInMonth(): int {
+        if _month == 2 {
+            // 闰年：4 整除且不是 100 的倍数，或 400 的倍数 ✓
+            if (_year % 4 == 0 and _year % 100 != 0) or _year % 400 == 0 { return 29 }
+            return 28
+        }
+        if _month == 4 or _month == 6 or _month == 9 or _month == 11 { return 30 }
+        return 31
+    }
+
+    // 把当前年月填进已有格子（只改文字/颜色 ⇒ 不重建控件 ✓）
+    func _relabel() {
+        if not _loaded and _dayLbl.len() == 0 { return }
+        int first = _dow(_year, _month, 1)      // 1 号是周几 ⇒ 前面留几个空格 ✓
+        int dim = _daysInMonth()
+        for 0 : _dayNum.len() - 1 to i {
+            int d = i - first + 1
+            if d < 1 or d > dim {
+                _dayNum[i] = 0
+                _dayLbl[i].set_text("")
+            } else {
+                _dayNum[i] = d
+                _dayLbl[i].set_text(d as string)
+            }
+        }
+        if _monthLbl != null { _monthLbl.set_text(_year as string + " 年 " + (_month as string) + " 月") }
+        core.markFrameRedraw()
+    }
+
+    // 切月（delta = -1 上一月 / +1 下一月 ✓）；会触发 on_month_change（若已注册）
+    func _shift_month(int delta) {
+        int m = _month + delta
+        int y = _year
+        if m < 1 { m = 12; y = y - 1 }
+        if m > 12 { m = 1; y = y + 1 }
+        _month = m; _year = y
+        // 切月后"今天"通常不再属于本月 ⇒ 由调用方按需 set_today(0) ✓
+        _relabel()
+        if _onMonthChange != null { _onMonthChange(_year, _month) }
+    }
+
+    func set_month(int y, int m) { _year = y; _month = m; _relabel() }
+    func get_year(): int  { return _year }
+    func get_month(): int { return _month }
+    func set_today(int d) { _today = d; core.markFrameRedraw() }
+    func get_today(): int { return _today }
+    func set_mark(int day, int state) { _marks[day] = state; core.markFrameRedraw() }
+    func set_marks(Dict m) { _marks = m; core.markFrameRedraw() }
+    func get_mark(int day): int {
+        // Dict 取值是 any ⇒ 必须显式转 ✓（否则返回类型不匹配 ✗）
+        if _marks.has(day) { return _marks[day] as int }
+        return ST_NONE
+    }
+    func on_pick(func(int):void cb) { _onPick = cb }
+    func on_month_change(func(int, int):void cb) { _onMonthChange = cb }
+    func set_visible(bool v) { visible = v; core.markFrameRedraw() }
+    func is_visible(): bool { return visible }
+    func set_enabled(bool e) {}
+
+    // ==================== 几何 ====================
+    // 格子边长：按可用宽度与高度取较小者，再夹到 [cellMin, cellMax] ✓
+    func _cell(): float {
+        float availW = _w - 2.0 * _pad - _gap * _float(COLS - 1)
+        float cw = availW / _float(COLS)
+        float headH = 0.0
+        if _showHead { headH = _headH }
+        float legH = 0.0
+        if _showLegend { legH = _legendH }
+        float availH = _h - 2.0 * _pad - headH - _weekH - legH - _gap * _float(_rows - 1)
+        float chh = availH / _float(_rows)
+        float c = cw
+        if chh < c { c = chh }
+        if c > _cellMax { c = _cellMax }
+        if c < _cellMin { c = _cellMin }
+        return c
+    }
+    // 第 row 行、第 col 列的格子左上角（含整块网格在可用区里居中 ✓）
+    func _cellX(float c, float gridW, int col): float {
+        float ox = x + _pad
+        if _w - 2.0 * _pad > gridW { ox = x + (_w - gridW) / 2.0 }
+        return ox + _float(col) * (c + _gap)
+    }
+    func _cellY(float c, float gridH): float {
+        float headH = 0.0
+        if _showHead { headH = _headH }
+        float legH = 0.0
+        if _showLegend { legH = _legendH }
+        float oy = y + _pad + headH + _weekH
+        float avail = _h - 2.0 * _pad - headH - _weekH - legH
+        if avail > gridH { oy = y + _pad + headH + _weekH + (avail - gridH) / 2.0 }
+        return oy
+    }
+
+    // ==================== 查询（布局用 ✓）====================
+    func get_x(): float { return x }
+    func get_y(): float { return y }
+    func get_w(): float {
+        if _natW { return _cellMax * _float(COLS) + _gap * _float(COLS - 1) + 2.0 * _pad }
+        return _w
+    }
+    func get_h(): float {
+        if _natH {
+            float headH = 0.0
+            if _showHead { headH = _headH }
+            float legH = 0.0
+            if _showLegend { legH = _legendH }
+            return 2.0 * _pad + headH + _weekH + _float(_rows) * _cellMax + _gap * _float(_rows - 1) + legH
+        }
+        return _h
+    }
+    func set_pos(float px, float py) { x = px; y = py }
+    func set_size(float sw, float sh) {
+        if sw > 0.0 { _w = sw; _natW = false }
+        if sh > 0.0 { _h = sh; _natH = false }
+    }
+
+    // ==================== 事件 ====================
+    func process(Event ev) {
+        if not _loaded or not visible { return }
+        var[float, float](mx, my) = ev.mousePos()
+        if core.inPopupCapture(mx, my) { return }        // 弹层展开时不穿透 ✓（与 Canvas 同一守卫 ✓）
+        if mx < x or mx > x + _w or my < y or my > y + _h { return }
+        if ev.isMouseMotion() { core.markFrameMotion(); return }
+        if not ev.isMouseButtonDown() { return }
+        if ev.mouseButton() != 1 { return }              // 只认左键 ✓
+
+        float c = _cell()
+        float gridW = c * _float(COLS) + _gap * _float(COLS - 1)
+        float gridH = c * _float(_rows) + _gap * _float(_rows - 1)
+        float oy = _cellY(c, gridH)
+
+        // 顶部：左右箭头（←/→ 各占 _headH 高的右侧两格 ✓）
+        if _showHead and my < oy {
+            if mx >= x + _w - _pad - 44.0 and mx < x + _w - _pad - 22.0 { _shift_month(-1); return }
+            if mx >= x + _w - _pad - 22.0 and mx <= x + _w - _pad { _shift_month(1); return }
+            return
+        }
+        // 日期格：反算行列 ✓
+        if my < oy or my > oy + gridH { return }
+        int col = -1
+        int row = -1
+        for 0 : COLS - 1 to ci {
+            float cx = _cellX(c, gridW, ci)
+            if mx >= cx and mx <= cx + c { col = ci }
+        }
+        for 0 : _rows - 1 to ri {
+            float cy = oy + _float(ri) * (c + _gap)
+            if my >= cy and my <= cy + c { row = ri }
+        }
+        if col < 0 or row < 0 { return }
+        int idx = row * COLS + col
+        if idx < 0 or idx >= _dayNum.len() { return }
+        int day = _dayNum[idx]
+        if day <= 0 { return }                            // 空格不响应 ✓
+        if _onPick != null { _onPick(day) }
+        core.markFrameRedraw()
+    }
+
+    // ==================== 渲染 ====================
+    func render(Renderer r) {
+        if not _loaded or not visible { return }
+        float c = _cell()
+        float gridW = c * _float(COLS) + _gap * _float(COLS - 1)
+        float gridH = c * _float(_rows) + _gap * _float(_rows - 1)
+        float oy = _cellY(c, gridH)
+        float rad = c * 0.24
+
+        // ---- 顶部：右对齐「2026 年 9 月」+ 左右箭头（左箭头贴最右、文字在它左边 ✓）----
+        if _showHead and _monthLbl != null {
+            float myY = y + _pad + (_headH - _monthLbl.get_h()) / 2.0
+            if _arrowR != null { _arrowR.set_pos(x + _w - _pad - _arrowR.get_w(), myY) }
+            if _arrowL != null { _arrowL.set_pos(x + _w - _pad - 22.0 - _arrowL.get_w(), myY) }
+            float mLeft = x + _w - _pad - 44.0 - 8.0 - _monthLbl.get_w()
+            _monthLbl.set_pos(mLeft, myY)
+            _monthLbl.render(r)
+            if _arrowL != null { _arrowL.render(r) }
+            if _arrowR != null { _arrowR.render(r) }
+        }
+
+        // ---- 星期头（每列在该列上方居中 ✓）----
+        float wy = y + _pad + _headH
+        for 0 : COLS - 1 to i {
+            float cx = _cellX(c, gridW, i) + (c - _weekLbl[i].get_w()) / 2.0
+            _weekLbl[i].set_pos(cx, wy + (_weekH - _weekLbl[i].get_h()) / 2.0)
+            _weekLbl[i].render(r)
+        }
+
+        // ---- 日期格 ----
+        for 0 : _dayNum.len() - 1 to i {
+            int day = _dayNum[i]
+            if day <= 0 { continue }                      // 本月没有这一天 ⇒ 留空 ✓
+            int row = i / COLS
+            int col = i % COLS
+            float cx = _cellX(c, gridW, col)
+            float cy = oy + _float(row) * (c + _gap)
+            bool isToday = _today > 0 and day == _today
+            int st = get_mark(day)
+            Color bg = _cNoBg
+            Color tc = _cNoTxt
+            if st == ST_OK { bg = _cOkBg; tc = _cOkTxt }
+            else if st == ST_MISS { bg = _cMissBg; tc = _cMissTxt }
+            if isToday { bg = _cTodayBg; tc = _cTodayTxt }
+
+            r.setColor(bg)
+            r.fillRoundedRect(cx, cy, c, c, rad)
+            if isToday {
+                // 今天画 2px 主色描边：外圈 + 内缩 1px 一圈 ⇒ 视觉上是粗描边 ✓
+                r.setColor(_cTodayBd)
+                r.drawRoundedRect(cx, cy, c, c, rad)
+                r.drawRoundedRect(cx + 1.0, cy + 1.0, c - 2.0, c - 2.0, rad - 1.0)
+            }
+            Label d = _dayLbl[i]
+            d.set_text_color(tc)
+            d.set_pos(cx + (c - d.get_w()) / 2.0, cy + (c - d.get_h()) / 2.0)
+            d.render(r)
+        }
+
+        // ---- 图例：色块 + 文字（已签 / 今日 / 漏签 / 未签 ✓）----
+        if _showLegend and _lgTxt.len() == 4 {
+            // 图例贴着网格下沿（不是贴卡片底 ✗ —— 那样中间会空一截 ✓）
+            float ly = oy + gridH + 6.0
+            float lx = x + _pad
+            for 0 : 3 to i {
+                float sw = 10.0
+                float sy = ly + 2.0
+                if i == 0 { r.setColor(_cOkBg); r.fillRoundedRect(lx, sy, sw, sw, 3.0) }
+                else if i == 1 {
+                    r.setColor(#FFFFFFFF)
+                    r.fillRoundedRect(lx, sy, sw, sw, 3.0)
+                    r.setColor(_cTodayBd)
+                    r.drawRoundedRect(lx, sy, sw, sw, 3.0)
+                }
+                else if i == 2 { r.setColor(_cMissBg); r.fillRoundedRect(lx, sy, sw, sw, 3.0) }
+                else { r.setColor(_cNoBg); r.fillRoundedRect(lx, sy, sw, sw, 3.0) }
+                _lgTxt[i].set_pos(lx + sw + 6.0, sy - 1.0)
+                _lgTxt[i].render(r)
+                lx = lx + sw + 6.0 + _lgTxt[i].get_w() + 18.0
+            }
+        }
+    }
+
+    func dispose() {
+        for _weekLbl to l { l.dispose() }
+        for _dayLbl to l { l.dispose() }
+        for _lgTxt to l { l.dispose() }
+        if _monthLbl != null { _monthLbl.dispose(); _monthLbl = null }
+        if _arrowL != null { _arrowL.dispose(); _arrowL = null }
+        if _arrowR != null { _arrowR.dispose(); _arrowR = null }
+        _weekLbl = []; _dayLbl = []; _lgTxt = []; _dayNum = []
+    }
+}
+
+// ==================== 模块级工具（页面也能直接用 ✓）====================
+
+// 蔡勒公式（Zeller）：返回 0 = 周日 … 6 = 周六
+//   1、2 月按上一年的 13、14 月算 ✓；蔡勒原式给的是 h=0 为周六 ⇒ +6 再取模转成"周日为 0" ✓
+//   实测：2026-09-01 → 2（周二 ✓）、2026-09-26 → 6（周六 ✓）
+func dow(int y, int m, int d): int {
+    int yy = y
+    int mm = m
+    if mm < 3 { mm = mm + 12; yy = yy - 1 }
+    int c = yy / 100
+    int yb = yy % 100
+    int h = (d + (13 * (mm + 1)) / 5 + yb + yb / 4 + c / 4 - 2 * c) % 7
+    if h < 0 { h = h + 7 }
+    return (h + 6) % 7
+}
+
+// 中文星期名：0 → 星期日 … 6 → 星期六
+//   ⚠ 别用 `times.format(now, "%w")`：实测它返回**字面量 "%w"** ⇒ `as int` 静默变 0 ✗
+//     （页头因此把"星期六"显示成"星期日" ✗ —— 这类静默转换只能靠对照截图发现 ✓）
+export func weekdayName(int y, int m, int d): string {
+    Array[string] wk = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"]
+    return wk[dow(y, m, d)]
+}
+
+// 工厂
+export func createCalendar(Dict opts): Calendar {
+    Calendar c = new Calendar(); c.set(opts); return c
+}

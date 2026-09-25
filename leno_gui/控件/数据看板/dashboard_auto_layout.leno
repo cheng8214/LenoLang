@@ -14,7 +14,8 @@
 //   页 0 仪表盘   页面标题 + 日期 / 右上「刷新状态 + 立即签到」/ 三张统计卡 /
 //                「近 14 天积分趋势」折线图卡 / 「账号概览」卡（截图里是空的 ✓）
 //   页 1 用量统计 四张统计卡（会话 / 积分 / Token / 缓存命中）+ 逐会话用量 + 模型分布（空卡）
-//   页 2 每日签到 **占位页**（没拿到它的截图 ⇒ 留空，只用来演示切页 ✓）
+//   页 2 每日签到 页头（日期取系统当天 ✓）+ 账号选择条 + 今日奖励卡（含 Canvas 自绘的连续天数圆环 ✓）
+//                + 本月签到日历（模块控件 `Calendar` ✓，见 sdl_calendar.leno）+ 签到记录（空 ✓）
 //   页 3 账号切换 路径/指纹卡（只读路径框 + 选择文件 + 重新探测）+ 账号列表（空）+
 //                切换守护（5 步流程 + 日志）
 //   页 4 云端签到 一键部署 + 部署流程（横向 3 步 + 连接线）+ 部署状态（4 字段 + 橙色警示条）+
@@ -90,6 +91,8 @@
 //   · VBox/HBox/AnchorBox 的 `add(child, {...})` **没有 `h` 键**（固定高用 `basis:<像素>` ✓，
 //   · `VBox.measure_h` 会把 `basis` 计入 ✓（实测：页 4 内容高 948、可滚 213 完全对得上 ✓）。
 import "SDL3" as SDL3
+import maths                       // 页 2 连续天数圆环要算 cos/sin ✓
+import times                       // 页 2 的日期取系统当天（不再写死 ✗）
 use SDL3.(Event, Renderer, Scancode, Window, Color, Panel, Label, Button, LineChart, TabControl, Widget)
 use SDL3.(VBox, HBox, AnchorBox, ScrollView, Toggle, Edit, LinkButton, Separator)
 use SDL3.(Font)                       // FPS HUD 需要一个常驻字体（懒创建 ⇒ 可空类型要显式导入 ✓）
@@ -881,28 +884,101 @@ func page_dashboard() {
     card_l(row2, {basis:314.0, shrink:0, align:3}, "账号概览")   // 截图里这里是空的 ⇒ 保持空 ✓
 }
 
-// 页 2：占位页（TraeTools 截图里没有这一页的设计 ⇒ 只用来演示切页 ✓）
-// ★ 自适应：页头 + 一张**吃满剩余高度**的卡片（写死 360 时窗口一变高，底部就只剩空白 ✗）
-// ⚠ 文案里**不要**用 ✓ ✗ ⇒ □ 这类符号：这个字体没有它们的字形，会渲染成豆腐块 □ ✗
-//   （能用的只实测出 ■ ● ◆ ▲ ○ ◎ ※ √ × ∑ ☆ ★ → ← § 这几个 —— 正文用汉字标点最稳 ✓）
-func page_placeholder(int page, string title) {
-    var pv = SDL3.createVBox({padX:0.0, padY:0.0, spacing:0.0})
-    TAB.setPageLayout(page, pv)
-    var box = SDL3.createVBox({padX:24.0, padY:24.0, spacing:16.0})
-    pv.add(box, {grow:1.0, shrink:1.0, align:3})
+// ==================== 页 2 的两个小助手 ====================
 
-    page_head(box, title, "占位页 P" + _str(page) + " —— 切页已生效")
-    // 卡片吃满剩余高度 ✓
-    var ca = SDL3.createAnchorBox({})
-    var cp = SDL3.createPanel({clip:false, x:0, y:0, w:200.0, h:360.0, bg_color:C_CARD, radius:12, border_color:C_LINE})
-    cp.setLayout(ca)
-    box.add(cp, {grow:1.0, shrink:1.0, align:3})
-    // 卡片内子控件用**相对卡片**的 left/top（对比原版绝对坐标 (230,186)… 减去卡片原点 (214,135) ✓）
-    ca.add(SDL3.createLabel({x:0, y:0, text:"本页是占位页（TraeTools 截图里没有这一页的设计）；", font_size:15, text_color:C_TXT2}), {left:16.0, top:51.0})
-    ca.add(SDL3.createLabel({x:0, y:0, text:"其余 5 页都已按截图实现：仪表盘 / 用量统计 / 账号切换 / 云端签到 / 设置。", font_size:15, text_color:C_TXT2}), {left:16.0, top:79.0})
-    ca.add(SDL3.createLabel({x:0, y:0, text:"切页机制：TabControl（show_header:false 隐藏标签栏）+ 导航按钮 set_active(idx)。", font_size:13, text_color:C_TXT3}), {left:16.0, top:119.0})
-    ca.add(SDL3.createLabel({x:0, y:0, text:"页面用 tab.setPageLayout(page, VBox) 交给布局容器 ⇒ 随窗口自适应。", font_size:13, text_color:C_TXT3}), {left:16.0, top:143.0})
-    ca.add(SDL3.createLabel({x:0, y:0, text:"切页唯一回调是 tab.on_change：导航选中态在那里统一同步，不会漂移。", font_size:13, text_color:C_TXT3}), {left:16.0, top:167.0})
+// 在「距右边缘 centerRight」处**居中**放一个标签
+//   Label 的 x 是左边缘锚点 ⇒ 量出文字宽反推（与 label_right 同一套路 ✓）
+func label_center(AnchorBox ca, float centerRight, float top, string text, float size, Color col) {
+    var f = SDL3.createFontAuto(size)
+    var[float, float](tw, th) = f.measureString(text)
+    ca.add(SDL3.createLabel({x:0, y:0, text:text, font_size:size, text_color:col}),
+           {right:centerRight - tw * 0.5, top:top})
+}
+
+// 连续天数圆环（Canvas 自绘 ✓）
+//   为什么不用现成控件：模块没有环形图 ✗，PieChart 也不支持挖空 ✓
+//   怎么画：轨道用 3 圈同心圆叠出约 3px 的带（渲染器**没有线宽参数** ✓）；
+//          进度 arc 用 180 条**沿半径方向的短线**填满环带 —— 数量够多 ⇒ 视觉连续 ✓，
+//          且线段走抗锯齿路径 ⇒ 边缘平滑 ✓（与斜线 AA 是同一套 ✓）
+//   progress = 0 时仍给一小段"起点帽"，否则空环看着像坏了 ✗
+func draw_streak_ring(Renderer r, float ox, float oy, float cw, float ch, float progress) {
+    float cx = ox + cw * 0.5
+    float cy = oy + ch * 0.5
+    float rad = cw * 0.5 - 4.0
+    // 轨道（浅灰）
+    r.setColor(#CBD5E1FF)
+    r.drawCircle(cx, cy, rad - 1.1)
+    r.drawCircle(cx, cy, rad)
+    r.drawCircle(cx, cy, rad + 1.1)
+    // 进度弧（白）
+    float p = progress
+    if p < 0.06 { p = 0.06 }
+    if p > 1.0 { p = 1.0 }
+    r.setColor(#FFFFFFFF)
+    float twoPi = maths.pi() * 2.0
+    float start = -1.5707963            // -90° ⇒ 从 12 点开始、顺时针 ✓
+    int segs = 180
+    for 0 : segs to i {
+        float t = _float(i) / _float(segs)
+        if t > p { break }
+        float a = start + twoPi * t
+        float ca2 = maths.cos(a)
+        float sa2 = maths.sin(a)
+        r.drawLine(cx + (rad - 1.1) * ca2, cy + (rad - 1.1) * sa2,
+                   cx + (rad + 1.1) * ca2, cy + (rad + 1.1) * sa2)
+    }
+}
+
+// 页 2：每日签到（照 TraeTools 截图做的 ✓第 6 页）
+// ★ 日期取**系统当天**，不再写死：截图那天正好是 2026-09-26、星期六 ✓；
+//   写死的话明天这一页就过期了 ✗（页 0 的 "2026-09-25 周五" 就是这个问题 ✓）
+// ★ 日历本体是模块控件 `SDL3.createCalendar` ✓ —— 原先这一页是"没拿到截图 ⇒ 留空"的占位页 ✓；
+//   现在做成控件而不是写在本文件里：Trae 应用里也手写过一份简化版 ⇒ 两处必然漂移 ✗
+func page_checkin() {
+    var box = scroll_page(2)
+
+    var dt = times.datetime()               // [年, 月, 日, 时, 分, 秒] ✓
+    int ty = dt[0] as int
+    int tm = dt[1] as int
+    int td = dt[2] as int
+    // ⚠ 星期不要用 `times.format(now, "%w")`：实测它返回字面量 "%w" ⇒ `as int` 会**静默变 0** ✗
+    //   （页头因此把"星期六"显示成"星期日" ✗）⇒ 改用模块控件的蔡勒公式 ✓
+    var head = page_head(box, "每日签到",
+                         times.format(times.now(), "%Y-%m-%d") + " · " + SDL3.weekdayName(ty, tm, td))
+    head_button(head, 0.0, 88.0, "一键签到", true)
+
+    // ---- 账号选择条：整行浅底 + 描边（纯界面 ⇒ Panel + Label 复刻外观 ✓）----
+    var sa = SDL3.createAnchorBox({})
+    var sp = SDL3.createPanel({clip:false, x:0, y:0, w:200.0, h:44.0, bg_color:C_CARD, radius:8, border_color:C_LINE})
+    sp.setLayout(sa)
+    box.add(sp, {basis:44.0, shrink:0, align:3})
+    sa.add(SDL3.createLabel({x:0, y:0, text:"选择签到账号（自动签到与此一致）", font_size:13, text_color:C_TXT2}),
+           {left:16.0, top:14.0})
+
+    // ---- 今日奖励卡：深底 + 右侧连续天数圆环 ----
+    var ra = SDL3.createAnchorBox({})
+    var rp = SDL3.createPanel({clip:false, x:0, y:0, w:200.0, h:132.0, bg_color:C_LOGBG, radius:12, border:false})
+    rp.setLayout(ra)
+    box.add(rp, {basis:132.0, shrink:0, align:3})
+    ra.add(SDL3.createLabel({x:0, y:0, text:"今日奖励", font_size:13, text_color:#9AA6B8FF}), {left:24.0, top:34.0})
+    ra.add(SDL3.createLabel({x:0, y:0, text:"-- 积分", font_size:22, text_color:#E8EDF5FF}), {left:24.0, top:62.0})
+    // 圆环：Canvas 的绘制原点是**内容区**（窗口绝对坐标 ✓）⇒ 回调里用 ox/oy 当圆心基准 ✓
+    var ring = SDL3.createCanvas({x:0, y:0, w:88.0, h:88.0, bg_color:#00000000, border:false})
+    ra.add(ring, {right:20.0, top:22.0, w:88.0, h:88.0})
+    ring.on_draw(func(Renderer rr, float ox, float oy, float rw, float rh) {
+        draw_streak_ring(rr, ox, oy, rw, rh, 0.0)
+    })
+    // 环内文字：圆环中心距卡片右边缘 = 20 + 88/2 = 64 ✓ ⇒ 按此居中 ✓
+    label_center(ra, 64.0, 40.0, "0", 24.0, #FFFFFFFF)
+    label_center(ra, 64.0, 70.0, "连续天数", 10.0, #9AA6B8FF)
+
+    // ---- 底部一行：日历卡（吃满剩余宽 + 吸收多余高）+ 签到记录卡（固定 306 ✓）----
+    var row = SDL3.createHBox({padX:0.0, padY:0.0, spacing:16.0})
+    box.add(row, {grow:1.0, shrink:1.0, align:3})
+    var calCard = mk_card_h(row, 520.0, 452.0, "本月签到日历", "")
+    var cal = SDL3.createCalendar({year:ty, month:tm, today:td, pad:16.0, rows:6})
+    calCard.add(cal, {left:16.0, right:16.0, top:8.0, bottom:14.0})
+    mk_card_h(row, 306.0, 452.0, "签到记录", "")
 }
 
 // ==================== 界面 ====================
@@ -963,7 +1039,7 @@ func build_ui(Window wt) {
 
     page_dashboard()
     page_usage()                       // 页 1：用量统计
-    page_placeholder(2, "每日签到")     // 页 2：截图未给 ⇒ 保持占位
+    page_checkin()                      // 页 2：每日签到（照截图实现 ✓ 日历用模块控件 Calendar ✓）
     page_accounts()                    // 页 3：账号切换
     page_cloud()                       // 页 4：云端签到
     page_settings()                    // 页 5：设置
