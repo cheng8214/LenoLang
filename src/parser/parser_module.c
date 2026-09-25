@@ -130,6 +130,9 @@ Ast* parse_import_stmt(Parser* p) {
             // 同时更新 AST 中的 module_name
             ast->u.import.module_name = module_name;
         }
+        // 注：含 ".leno" 的**裸文件名**（如 SDL3.leno）也归上面这一句管 ——
+        //     兜底规则收在 package_resolve_import_spec 里（解析器/扫描器共用一份 ✓），
+        //     这里不再另写一遍，避免两处口径不一致（S9 那类静默降级就是这么来的 ✗）
     }
 
     // 如果是文件模块（包含 .leno），保存文件路径

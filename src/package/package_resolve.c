@@ -153,8 +153,12 @@ int package_resolve_module_file(const char* module_name, char* out_path, int out
         size_t plen = strlen(search_paths[i]);
         size_t mlen = strlen(module_name);
         if (plen + mlen + 6 >= (size_t)MAX_PATH_LEN) continue;
-        snprintf(candidate, sizeof(candidate), "%.*s%.*s.leno",
-                 (int)plen, search_paths[i], (int)mlen, module_name);
+        // 写法里已经带 .leno 时**不再追加**（否则 "SDL3.leno" 会被找成 "SDL3.leno.leno" ✗）。
+        // 这是给「裸文件名 + .leno」兜底用的：import "SDL3.leno" 也应能在模块目录里找到 ✓
+        const char* suffix = ".leno";
+        if (mlen >= 5 && strcmp(module_name + mlen - 5, ".leno") == 0) suffix = "";
+        snprintf(candidate, sizeof(candidate), "%.*s%.*s%s",
+                 (int)plen, search_paths[i], (int)mlen, module_name, suffix);
 
         if (file_exists_internal(candidate)) {
             strncpy(out_path, candidate, out_len - 1);
@@ -180,6 +184,18 @@ int package_resolve_module_file(const char* module_name, char* out_path, int out
  * ============================================================================ */
 int package_resolve_import_spec(const char* spec, char* out_path, int out_len) {
     if (!spec || !out_path || out_len <= 0) return -1;
-    if (strstr(spec, ".leno") != NULL) return -1;   /* 文件路径写法，不是包名 */
+    if (strstr(spec, ".leno") != NULL) {
+        /* 含 ".leno" 的写法按「文件路径」处理 ⇒ 带路径的一律交回调用方（相对/绝对解析）。
+         * 但**裸文件名**（不含路径分隔符）要再搜一遍模块搜索路径 ✓：
+         *   import "SDL3.leno" 与 import "SDL3" 指向同一份文件，此前前者被判成
+         *   <当前文件目录>/SDL3.leno ⇒ 找不到 ⇒ 报「找不到模块文件」，
+         *   而后者（裸名走搜索路径）却正常 ⇒ 同一文件两种写法语义不同、互不兜底 ✗
+         *   ⚠ 这一点必须收在这里：解析器（parser_module.c）与扫描器
+         *     （module_symbol_table 的 resolve_module_full_path）**共用这一处**，
+         *     否则又会出现"同一 import 在不同阶段解析到不同文件"（S9 那类静默降级 ✗）
+         * 带路径的写法（../lib/x.leno、绝对路径）行为完全不变 ✓ */
+        if (strchr(spec, '/') != NULL || strchr(spec, '\\') != NULL) return -1;
+        return package_resolve_module_file(spec, out_path, out_len);
+    }
     return package_resolve_module_file(spec, out_path, out_len);
 }

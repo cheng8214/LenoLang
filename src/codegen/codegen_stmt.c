@@ -1775,9 +1775,21 @@ static void gen_struct_def(CodeGen* gen, Ast* ast) {
             Value dv = ast_default_to_value(def_expr);
             if (val_is_null(dv) && def_expr->kind != AST_NULL) {
                 char msg[BUFFER_MEDIUM];
-                snprintf(msg, sizeof(msg),
-                         "struct 字段 '%s' 的默认值不是常量表达式，请使用构造器初始化",
-                         ast->u.struct_def.field_names[i]);
+                // 只说"不许"不够 —— 最常踩的是「控件/对象类型字段想给个初值」（如 Label _l = new Label()），
+                // 报错应当直接给出可操作的写法：可空字段 + null 默认 + 用前判空创建。
+                // 字段类型名可得时（struct 字段）就写进提示里，能直接照抄 ✓
+                const char* tn = (ft && ft->struct_name) ? ft->struct_name : NULL;
+                if (tn) {
+                    snprintf(msg, sizeof(msg),
+                             "struct 字段 '%s' 的默认值必须是常量（数字/字符串/bool/null/数组/字典字面量）；"
+                             "需要 '%s' 这类对象实例时，请改成可空字段并判空创建：'%s? %s = null'",
+                             ast->u.struct_def.field_names[i], tn, tn, ast->u.struct_def.field_names[i]);
+                } else {
+                    snprintf(msg, sizeof(msg),
+                             "struct 字段 '%s' 的默认值必须是常量（数字/字符串/bool/null/数组/字典字面量）；"
+                             "需要对象实例时请改成可空字段（类型后加 '?'、默认 null），在使用前判空创建，或在 init/构造器里赋值",
+                             ast->u.struct_def.field_names[i]);
+                }
                 error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                 cw_u8(gen, 0, ast->line);
             } else {
