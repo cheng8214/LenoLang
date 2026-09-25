@@ -49,18 +49,41 @@ jobs:
           uname -s -m
           gcc --version | head -1
 
+      # 这里刻意用 `./build.sh` 直接执行（而不是 `bash build.sh`）：
+      # 顺带守住脚本的**可执行位** —— 从 Windows 提交的 .sh 很容易变成 100644，
+      # 那样在 Linux/macOS 上就是 exit 126，而 Windows 本地完全看不出问题。
       - name: 构建编译器 + VM（Unix）
         if: runner.os != 'Windows'
         run: |
-          ./build.sh
-          ./build_vm.sh
+          set -o pipefail
+          ./build.sh 2>&1 | tee ci_build_sh.log
+          ./build_vm.sh 2>&1 | tee ci_build_vm.log
 
       - name: 构建编译器 + VM（Windows / MSYS2）
         if: runner.os == 'Windows'
         shell: msys2 {0}
         run: |
-          ./build.sh
-          ./build_vm.sh
+          set -o pipefail
+          ./build.sh 2>&1 | tee ci_build_sh.log
+          ./build_vm.sh 2>&1 | tee ci_build_vm.log
+
+      # 失败时把构建输出写进 job summary：日志归档（/actions/jobs/{id}/logs）需要鉴权，
+      # 而 job summary 能通过 check-runs API 免鉴权读到，便于在无 token 的环境里定位问题。
+      - name: 失败时输出构建日志
+        if: failure()
+        shell: bash
+        run: |
+          {
+            echo '## 构建失败日志（末尾 120 行）'
+            for f in ci_build_sh.log ci_build_vm.log; do
+              if [ -f "$f" ]; then
+                echo "### $f"
+                echo '```'
+                tail -n 120 "$f"
+                echo '```'
+              fi
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # 真正的验收：产物能编译并运行一段脚本，而不是只看编译过程有没有报错
       - name: 冒烟测试
