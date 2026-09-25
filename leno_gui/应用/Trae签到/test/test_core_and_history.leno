@@ -5,11 +5,17 @@
 //   1) 日历算法（weekday_of / days_in_month / prev_month / next_month）—— 用**已知日期**锚定：
 //      1970-01-01 是周四 ✓、2024-02-29 是周四 ✓、**2026-09-18 是周五** ✓（本机当前日期）；
 //   2) `history.json` 读 / 写 / 删 round-trip（用 `__selftest__` 品牌，测完**删除** ✓ 不留垃圾）；
-//   3) 真实登录态只读扫描（不打印 token，只打印长度 ✓）。
+//   3) 真实登录态只读扫描（不打印 token，只打印长度 ✓）；
+//   4) do_claim 结果数组的访问器（含追加的 slot 6 `already` ✓）；
+//   5) **9074 换设备号重试**的纯逻辑部分（设备号格式 / 重试判据 / 追加的设备号 slot ✓）
+//      —— 其中"真的会换号重试"这条**端到端**链路在 `tools/test_9074_retry.js`（本地 stub，不碰真接口 ✓）；
+//   6) ⑧ **设备号按账号独立**（`devices.json` round-trip：首个账号沿用 Aha 号 / 其余发独立新号 /
+//      幂等 / 手动换号落盘 / 全局不重复 ✓）。
 //
 // 失败计数：累计后统一 _exit(1) ⇒ 一次跑完能看到**所有**失败项，不是第一个就停 ✓
 import "../trae_core.leno" as core
 import "../trae_history.leno" as hist
+import "../trae_devices.leno" as dev
 
 var fails = 0
 
@@ -94,6 +100,104 @@ main() {
     var fake_fail = ["false", "9095", "", "", "", "本设备今日已有账号签到", "false"]
     eq("cl_ok(fail)=false", _str(core.cl_ok(fake_fail)), "false")
     eq("cl_code=9095", core.cl_code(fake_fail), "9095")
+
+    print("=== 5) ③b 风控 9074 换设备号重试（纯逻辑部分；端到端见 tools/test_9074_retry.js）===\n")
+    // 设备号格式：**16 位纯数字、首位非 0**（GUID/UUID 形式会被直接判风控 ⇒ 必然 9074 ✗）
+    var d1 = core.random_device_id()
+    var d2 = core.random_device_id()
+    eq("random_device_id 长度=16", _str(d1.len()), "16")
+    // ⚠ 校验**不能**用 `_int(d1)`：本机 `_int` 对超过 INT32_MAX 的数字串会**饱和**成 2147483647 ✗
+    //   （探针实测 `_int("9999999999999999")` = 2147483647）⇒ 改用 `_float`（16 位 ≪ 2^53 ✓ 精确）
+    eq("random_device_id 合法（16 位纯数字、首位非 0）", _str(core.is_valid_device_id(d1)), "true")
+    // 边界两例：**不能**用 `_float` 比范围 —— double 在 1e16 附近间距是 2 ⇒ 9999999999999999 会被
+    // 舍入成 1e16 撞上上界（这条正是本测试第 6 节踩到的 ✗）⇒ 已改成逐字符校验 ✓
+    eq("上界 9999999999999999 ⇒ 合法", _str(core.is_valid_device_id("9999999999999999")), "true")
+    eq("下界 1000000000000000 ⇒ 合法", _str(core.is_valid_device_id("1000000000000000")), "true")
+    eq("中间夹字母 ⇒ 非法", _str(core.is_valid_device_id("12345678901234a5")), "false")
+    eq("15 位 ⇒ 非法", _str(core.is_valid_device_id("123456789012345")), "false")
+    eq("首位 0 ⇒ 非法", _str(core.is_valid_device_id("0123456789012345")), "false")
+    eq("GUID 形式 ⇒ 非法（服务端会判风控 ✗）",
+       _str(core.is_valid_device_id("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")), "false")
+    eq("空串 ⇒ 非法", _str(core.is_valid_device_id("")), "false")
+    eq("两次随机不同（10^15 空间，碰撞概率可忽略）", _str(d1 != d2), "true")
+    // 重试判据：只有 9074 重试，且不超过 max_try ✓
+    eq("9074 第1次/共5次 ⇒ 重试", _str(core.need_retry_9074("9074", 1, 5)), "true")
+    eq("9074 第4次/共5次 ⇒ 重试", _str(core.need_retry_9074("9074", 4, 5)), "true")
+    eq("9074 第5次/共5次 ⇒ 停（总共 5 次）", _str(core.need_retry_9074("9074", 5, 5)), "false")
+    eq("9095 不重试（换号解决不了）", _str(core.need_retry_9074("9095", 1, 5)), "false")
+    eq("1001 不重试（token 失效）", _str(core.need_retry_9074("1001", 1, 5)), "false")
+    eq("0 不重试", _str(core.need_retry_9074("0", 1, 5)), "false")
+    eq("MAX_TRY_9074 = 5", _str(core.MAX_TRY_9074), "5")
+    // 状态结果里"业务层 9074"的识别（slot 3 在业务错误分支装业务 code；HTTP 层错误时 slot 1 非空 ✓）
+    var st_9074 = ["false", "", "", "9074", "{\"code\":9074}", "", "", "false", "命中风控 9074"]
+    eq("st_risk_9074(业务 9074)=true", _str(core.st_risk_9074(st_9074)), "true")
+    eq("st_need_retry(9074 第1次)=true", _str(core.st_need_retry_9074(st_9074, 1, 5)), "true")
+    eq("st_need_retry(9074 第5次)=false", _str(core.st_need_retry_9074(st_9074, 5, 5)), "false")
+    var st_http = ["false", "502", "", "502", "", "", "", "false", "HTTP 502"]
+    eq("st_risk_9074(HTTP 层错误)=false", _str(core.st_risk_9074(st_http)), "false")
+    var st_1001 = ["false", "", "", "1001", "{}", "", "", "false", "账号状态异常"]
+    eq("st_risk_9074(code=1001)=false", _str(core.st_risk_9074(st_1001)), "false")
+    // 追加在末尾的"实际用的设备号"slot（旧消费者按下标 0..N 读不受影响 ✓）
+    var cl_with_dc = ["true", "0", "", "150", "50", "签到成功", "false", "1234567890123456"]
+    eq("cl_device = slot 7", core.cl_device(cl_with_dc), "1234567890123456")
+    var st_with_dc = ["true", "", "", "0", "{}", "150", "50", "false", "", "1234567890123456"]
+    eq("st_device = slot 9", core.st_device(st_with_dc), "1234567890123456")
+    // 接口基址（默认值；`TRAE_API_BASE` 只用于离线端到端测试 ✓）
+    if _env("TRAE_API_BASE") == null {
+        eq("status_url 默认基址", core.status_url(), "https://api.trae.cn/trae/api/v2/ug/checkin_credits/status")
+        eq("claim_url 默认基址", core.claim_url(), "https://api.trae.cn/trae/api/v2/ug/checkin_credits/claim")
+    } else {
+        print("  （TRAE_API_BASE 已设置 ⇒ 跳过默认基址断言）\n")
+    }
+
+    print("=== 6) ⑧ 设备号按账号独立（devices.json round-trip）===\n")
+    // 全部用 `__selftest__` 品牌 + u1..u4，测完**删除** ✓（真实账号的记录不受影响 ✓）
+    var sb = "__selftest__"
+    Array[string] su = ["u1", "u2", "u3", "u4"]
+    for su to u {
+        if dev.get(sb, u) != "" { dev.remove(sb, u) }
+    }
+    eq("初始未分配", dev.get(sb, "u1"), "")
+    // ① 首个来分配的账号：沿用**合法且未被占用**的 Aha 号（对齐参考件的"优先复用真实 Aha 号"✓）
+    var took = dev.ensure(sb, "u1", "9999999999999999")
+    eq("首个账号沿用 Aha 号", took[0], "9999999999999999")
+    eq("source=aha", took[1], "aha")
+    eq("已落盘（读回一致）", dev.get(sb, "u1"), "9999999999999999")
+    // ② 第二个账号拿**独立**新号 —— 这正是"同机两个账号都能签到"的关键 ✓（共用会拿 9095 ✗）
+    var took2 = dev.ensure(sb, "u2", "9999999999999999")
+    eq("第二个账号不复用同一个 Aha 号", _str(took2[0] != "9999999999999999"), "true")
+    eq("第二个账号 source=new", took2[1], "new")
+    eq("两个账号的号互不相同", _str(took2[0] != took[0]), "true")
+    eq("新号合法（16 位数字、首位非 0）", _str(core.is_valid_device_id(took2[0])), "true")
+    // ③ 幂等：已有记录 ⇒ 直接取回（source=stored）✓
+    var again = dev.ensure(sb, "u1", "9999999999999999")
+    eq("再取一次仍是同一个号（幂等）", again[0], "9999999999999999")
+    eq("source=stored", again[1], "stored")
+    // ④ Aha 号**不合法/为空** ⇒ 也发新号（不硬塞坏号 ✗）
+    var r3 = dev.ensure(sb, "u3", "")
+    eq("空 Aha 号 ⇒ source=new", r3[1], "new")
+    eq("空 Aha 号的新号合法", _str(core.is_valid_device_id(r3[0])), "true")
+    var r4 = dev.ensure(sb, "u4", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    eq("GUID 形式 Aha 号 ⇒ source=new（会触发 9074 的号不能沿用 ✗）", r4[1], "new")
+    // ⑤ 手动换号（GUI「更换设备号」/ 被 9074 标记时用）⇒ **立刻落盘** ✓
+    var nd = dev.regenerate(sb, "u1")
+    eq("换号后与旧号不同", _str(nd != "9999999999999999"), "true")
+    eq("换号已落盘", dev.get(sb, "u1"), nd)
+    eq("换号后仍合法", _str(core.is_valid_device_id(nd)), "true")
+    // ⑥ 换出来的号在**全表**里只出现一次（含真实账号那两个 ✓）
+    var used = dev.used_ids()
+    int hit = 0
+    for used to v {
+        if v == nd { hit = hit + 1 }
+    }
+    eq("换号后全局不重复（出现 1 次）", _str(hit), "1")
+    print("  devices 路径 = " + dev.devices_path() + "  已记录账号数 = " + _str(used.len()) + "\n")
+    // 清理
+    eq("remove(u1)", _str(dev.remove(sb, "u1")), "true")
+    eq("remove(u2)", _str(dev.remove(sb, "u2")), "true")
+    eq("remove(u3)", _str(dev.remove(sb, "u3")), "true")
+    eq("remove(u4)", _str(dev.remove(sb, "u4")), "true")
+    eq("清理后未分配", dev.get(sb, "u1"), "")
 
     if fails > 0 {
         print("\nFAILED: " + _str(fails) + " 项\n")

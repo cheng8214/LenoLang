@@ -4,8 +4,9 @@
 // 这里同样**自绘日历**（`SDL3.createCanvas` + `Renderer`，见 `examples/UI组件/画布/` ✓）
 //
 // 数据流（单一事实来源，不重复实现）：
-//   `trae_core.leno`    ← ② 登录态读取 / ③ 签到接口 / 日期助手
-//   `trae_history.leno` ← ⑥ `history.json`（按账号独立）
+//   `trae_core.leno`    ← ② 登录态读取 / ③ 签到接口 / ③b 9074 换设备号重试 / 日期助手
+//   `trae_history.leno` ← ⑦ `history.json`（按账号独立）
+//   `trae_devices.leno` ← ⑧ `devices.json`（设备号**按账号独立** ⇒ 同机多账号才能各自签到 ✓）
 //   本文件只做两件事：**把数据画出来** + **把点击接回数据层** ✓
 //
 // 安全：点"签到/刷新"时才去读登录态并解密（token 不进模块级状态、不打印 ✓）
@@ -23,6 +24,7 @@ use SDL3.Canvas
 use SDL3.Button
 import "trae_core.leno" as core
 import "trae_history.leno" as hist
+import "trae_devices.leno" as dev
 
 // ==================== 状态（模块级 = 界面的单一数据源） ====================
 Array[Array[string]] BRANDS_AVAIL = []
@@ -141,14 +143,26 @@ func rpc_status() {
         STATUS_TEXT = "读不到登录态（请在 Trae 客户端登录 " + SEL_BRAND + "）"
         return
     }
-    var c = core.authed_client(acc[2], acc[4], acc[3])
-    var st = core.fetch_status(c)
+    // 设备号按**账号**独立（详见 trae_devices.leno）：登录态里的 Aha 号是机器级的 ⇒ 多账号共用会让
+    // 第二个账号签到拿 9095 ✗（本机实测 ✓）。首次分配会落盘，之后取回同一个号 ✓
+    var picked = dev.ensure(SEL_BRAND, SEL_USER, acc[4])
+    var dc_id = picked[0]
+    // 9074（参与用户太多）⇒ 自动换设备号重试（最多 core.MAX_TRY_9074 次 ✓）
+    // ⚠ 目前是**同步阻塞**调用 ⇒ 重试会多等几秒（每个间隔 0.8~1.5s ✓，见 README 已知限制）
+    var st = core.fetch_status_retry(acc[2], dc_id, acc[3], core.MAX_TRY_9074)
+    if core.st_device(st) != dc_id {
+        // 9074 换出来的号**落盘**（否则下次运行又用回被风控的旧号 ✗）
+        dev.set(SEL_BRAND, SEL_USER, core.st_device(st))
+    }
     if not core.st_ok(st) {
         BADGE_TEXT = "× 查询失败"
         BADGE_KEY = "err"
         SCORE_TEXT = "今日积分 —"
         STATUS_TEXT = core.st_msg(st)
         if core.st_http_err(st) != "" { STATUS_TEXT = STATUS_TEXT + "（HTTP " + core.st_http_err(st) + "）" }
+        if core.st_risk_9074(st) {
+            STATUS_TEXT = STATUS_TEXT + "（已自动换设备号重试 " + (core.MAX_TRY_9074 as string) + " 次仍被拒）"
+        }
         return
     }
     if core.st_checked(st) {
@@ -160,6 +174,12 @@ func rpc_status() {
     }
     SCORE_TEXT = "今日积分 " + core.st_base(st) + "（基础 " + core.st_base(st) + " + 额外 " + core.st_extra(st) + "）"
     STATUS_TEXT = "状态已刷新"
+    // 首次给这个账号分配设备号时说明一下（否则用户不明白"设备号"是哪来的 ✓）
+    if picked[1] == "new" {
+        STATUS_TEXT = STATUS_TEXT + "（已分配本账号**独立**设备号 " + dc_id + " 并落盘 ✓）"
+    } else if picked[1] == "aha" {
+        STATUS_TEXT = STATUS_TEXT + "（沿用登录态里的 Aha 设备号 " + dc_id + " ✓）"
+    }
     var td = core.today_str()
     // 文案消歧（用户反馈"我没签到时上面也显示已签到"）：把"服务端的已签到"与"本应用今天签没签"
     // **分开说清** ✓ —— 服务端 `checked_in` 是**按账号**的，本应用今天可能压根没签过 ✓。
@@ -193,8 +213,14 @@ func rpc_claim() {
         STATUS_TEXT = "读不到登录态（请在 Trae 客户端登录 " + SEL_BRAND + "）"
         return
     }
-    var c = core.authed_client(acc[2], acc[4], acc[3])
-    var r = core.do_claim(c)
+    // 设备号按**账号**独立（同理，见 rpc_status 的注释 ✓）
+    var picked = dev.ensure(SEL_BRAND, SEL_USER, acc[4])
+    var dc_id = picked[0]
+    // 9074（参与用户太多）⇒ 自动换设备号重试（最多 core.MAX_TRY_9074 次 ✓，间隔 0.8~1.5s）
+    var r = core.do_claim_retry(acc[2], dc_id, acc[3], core.MAX_TRY_9074)
+    if core.cl_device(r) != dc_id {
+        dev.set(SEL_BRAND, SEL_USER, core.cl_device(r))     // 换出来的号**落盘**（下次运行沿用 ✓）
+    }
     var td = core.today_str()
     if core.cl_ok(r) {
         BADGE_TEXT = "● 账号今日已签到"
@@ -218,14 +244,33 @@ func rpc_claim() {
             STATUS_TEXT = "签到成功   积分 " + core.cl_base(r) + "+" + core.cl_extra(r)
             hist.mark(SEL_BRAND, SEL_USER, td, true, core.cl_base(r), core.cl_extra(r), "0")
         }
+        // 换过设备号 ⇒ 说清楚是怎么回事（否则用户只会看到"签到成功"，不知道刚才被风控挡过 ✓）
+        if core.cl_device(r) != dc_id {
+            STATUS_TEXT = STATUS_TEXT + "（风控 9074：已换设备号重试）"
+        }
     } else {
         BADGE_TEXT = "× 签到失败"
         BADGE_KEY = "err"
         STATUS_TEXT = "签到失败：code=" + core.cl_code(r) + "  " + core.cl_msg(r)
-        // 失败也记（ok=0）：日历上画"暖色"，⑤ 的失败重试因此有据可查 ✓
+        if core.cl_device(r) != dc_id {
+            STATUS_TEXT = STATUS_TEXT + "（已自动换设备号重试 " + (core.MAX_TRY_9074 as string) + " 次仍被拒）"
+        }
+        // 失败也记（ok=0）：日历上画"暖色"，⑥ 的失败重试因此有据可查 ✓
         hist.mark(SEL_BRAND, SEL_USER, td, false, "", "", core.cl_code(r))
     }
     refresh_days()
+}
+
+// 手动更换本账号的设备号（对齐参考件 TraeTools 设置页的「更换设备号」✓）
+// 什么时候用：这个号被 9074 标记过、或想给账号换个新身份时 ✓（本账号独立、立刻落盘 ✓）
+// 注意：换号**不会**改变"服务端今天签没签"（签到是**按账号**算的 ✓）⇒ 界面上的已签到状态仍然有效 ✓
+func rpc_regen_device() {
+    if SEL_BRAND == "" {
+        STATUS_TEXT = "未选择账号"
+        return
+    }
+    var nd = dev.regenerate(SEL_BRAND, SEL_USER)
+    STATUS_TEXT = "已更换设备号：" + nd + "（本账号独立、已落盘 ✓；点「刷新状态」重新查询）"
 }
 
 // ==================== 视图同步（每帧调用；只在变化时写控件 ✓） ====================
@@ -311,6 +356,8 @@ main() {
     var btnClaim = win.addButton({x:24, y:184, w:150, h:38, text:"立即签到", type:"primary", tip:"调 claim 接口并做二次确认"})
     var btnStatus = win.addButton({x:186, y:184, w:130, h:38, text:"刷新状态", tip:"只查 status，不签到"})
     var btnToday = win.addButton({x:328, y:184, w:90, h:38, text:"回到今天", tip:"日历跳回本月"})
+    // 设备号按账号独立存储（`devices.json`）；被 9074 标记时换一个即可 ✓
+    var btnRegen = win.addButton({x:430, y:184, w:160, h:38, text:"更换设备号", tip:"给当前账号换一个全新设备号（本账号独立、落盘 ✓；被 9074 风控时可换）"})
 
     // ---- 卡片 B：签到日历 ----
     var cardB = win.addPanel({x:24, y:238, w:572, h:372, bg_color:#1C1E26FF, radius:10, border_color:#505564FF})
@@ -327,7 +374,7 @@ main() {
     // ---- 底部：状态栏 + 提示 ----
     var statusLbl = SDL3.createLabel({x:24, y:626, text:STATUS_TEXT, font_size:14, text_color:#C8D2E6FF})
     win.add(statusLbl)
-    win.add(SDL3.createLabel({x:24, y:656, text:"左键点日历格子看当天记录 · Esc 退出 · 历史文件 %APPDATA%\\TraeSignLeno\\history.json", font_size:12, text_color:#787D87FF}))
+    win.add(SDL3.createLabel({x:24, y:656, text:"左键点日历格子看当天记录 · Esc 退出 · 数据目录 %APPDATA%\\TraeSignLeno\\（history.json / devices.json）", font_size:12, text_color:#787D87FF}))
 
     // ==================== 日历绘制（局部坐标：画布左上角 = (0,0) ✓ 见画布示例） ====================
     cv.on_draw(func(Renderer r, float ox, float oy, float cw, float ch) {
@@ -456,6 +503,7 @@ main() {
     })
     btnStatus.on_click(func():void { rpc_status() })
     btnClaim.on_click(func():void { rpc_claim() })
+    btnRegen.on_click(func():void { rpc_regen_device() })
 
     // ---- 启动时查一次状态（`TRAE_GUI_NO_NET=1` 时跳过，便于离线/无头验证 ✓）----
     if NO_NET {

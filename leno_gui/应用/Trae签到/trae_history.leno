@@ -112,7 +112,7 @@ export func mark(string brand, string username, string day, bool ok, string base
     return false
 }
 
-// 删除一天记录（自测清理 / ⑤ 重试用）⇒ true 表示删掉了
+// 删除一天记录（自测清理 / ⑥ 重试用）⇒ true 表示删掉了
 export func remove_day(string brand, string username, string day): bool {
     var p = history_path()
     if p == "" { return false }

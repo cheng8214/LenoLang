@@ -9,15 +9,28 @@ import jsons
 import strings
 import files
 import times
+import rands
 import "web_net" as net
 use net.(HttpClient, Response)
 import "trae_crypto.leno" as crypt
 
 var BRANDS = ["TRAE SOLO CN", "Trae CN", "TraeWork"]
-var STATUS_URL = "https://api.trae.cn/trae/api/v2/ug/checkin_credits/status"
-var CLAIM_URL = "https://api.trae.cn/trae/api/v2/ug/checkin_credits/claim"
+var DEFAULT_API_BASE = "https://api.trae.cn"
 var DC_PREFIX = "iCubeAuthInfo://icube-dc:"
 var CLOUD_PREFIX = "iCubeAuthInfo://icube.cloudide"
+
+// 接口地址做成**函数**（而不是常量）的唯一原因：让 ③b 的"9074 换设备号重试"能**离线端到端**验证 ✓
+// —— `TRAE_API_BASE` 指向 `tools/test_9074_retry.js` 起的本地 stub 服务，就能在完全不碰真接口的
+// 前提下验证"第一次 9074 → 换设备号 → 第二次成功"这条链路 ✓（不设该环境变量 ⇒ 与以前完全一致 ✓）
+export func api_base(): string {
+    var b = _env("TRAE_API_BASE")
+    if b == null { return DEFAULT_API_BASE }        // 注意：`_env` 返回 any ⇒ 先判 null 再 _str ✓
+    var s = _str(b)                                 // （`_str(null)` 会得到字符串 "null" ✗）
+    if s == "" { return DEFAULT_API_BASE }
+    return s
+}
+export func status_url(): string { return api_base() + "/trae/api/v2/ug/checkin_credits/status" }
+export func claim_url(): string { return api_base() + "/trae/api/v2/ug/checkin_credits/claim" }
 
 // ==================== ① JSON 取值助手 ====================
 // 为什么要这一层：`jsons.decode/read_file` 返回 `any` ✗，语言不允许把 any 直接当 Dict 用
@@ -173,7 +186,7 @@ export func jval(any d, string key): string {
 
 // 查状态 → [ok, httpErr, err, code, raw, base, extra, checkedIn, msg]
 export func fetch_status(HttpClient c): Array[string] {
-    var st = api_post(c, STATUS_URL, "{}")
+    var st = api_post(c, status_url(), "{}")
     var he = jval(st, "_http_error")
     if he != "" {
         return ["false", he, jval(st, "_error"), jval(st, "_status"), jval(st, "_raw"),
@@ -185,6 +198,10 @@ export func fetch_status(HttpClient c): Array[string] {
     var code = jval(st, "code")
     var raw = jval(st, "_raw")
     if base == "" and extra == "" {
+        // 9074 单独给文案：它**不是**"token 过期"（重登没用、换设备号才有用 ✓）⇒ 别误导用户 ✗
+        if code == "9074" {
+            return ["false", "", "", code, raw, "", "", checked, "命中风控 9074（参与用户太多）"]
+        }
         return ["false", "", "", code, raw, "", "", checked,
                 "账号状态异常（token 可能已过期），请重新登录该软件"]
     }
@@ -207,13 +224,13 @@ export func do_claim(HttpClient c): Array[string] {
         return ["true", "0", "", st_base(pre), st_extra(pre),
                 "服务端显示今日已签到（本次未重复提交）", "true"]
     }
-    var cl = api_post(c, CLAIM_URL, "{\"req_source\":1}")
+    var cl = api_post(c, claim_url(), "{\"req_source\":1}")
     var he = jval(cl, "_http_error")
     if he != "" { return ["false", "", he, "", "", "HTTP " + he, "false"] }
     var code = jval(cl, "code")
     var cchecked = jval(cl, "checked_in")
     if code == "0" or cchecked == "true" {
-        var cf = api_post(c, STATUS_URL, "{}")
+        var cf = api_post(c, status_url(), "{}")
         if jval(cf, "checked_in") == "true" {
             return ["true", "0", "", jval(cf, "credits"), jval(cf, "extra_credits"), "签到成功", "false"]
         }
@@ -254,6 +271,111 @@ export func cl_extra(Array[string] r): string       { return r[4] }
 export func cl_msg(Array[string] r): string         { return r[5] }
 // slot 6（新增）：服务端本来就已签到 ⇒ 本次并没有真的签到（调用方别记成新成功 ✓）
 export func cl_already(Array[string] r): bool       { return r[6] == "true" }
+
+// ==================== ③b 风控 9074：换设备号重试（③ 的失败重试） ====================
+// 9074 =「参与用户太多」的风控拒绝。被拒的是**设备号**、不是 token ⇒ 换一个全新设备号即可继续，
+// **不需要**重新登录 ✓（对标参考实现 `TraeTools/Services/Checkin` 的 checkin.py L145-154：
+// 随机设备号 + 最多 5 次 + 每次间隔 0.8~1.5s ✓）。
+//
+// 两条硬约束（都来自参考件，别想当然 ✗）：
+//   ① 设备号必须是**16 位数字**（首位非 0）：GUID/UUID 之类会**直接**被判风控 ⇒ 必然 9074 ✗
+//      （参考件注释：「x-device-id 必须是 16 位数字；使用 GUID/UUID 会触发 9074」）；
+//   ② 换了号要**重做整套流程**（查状态 → claim → 二次确认），不能只重发 claim：
+//      本项目口径是"状态说已签就不重复提交"，若状态那一步被 9074 挡掉，单发 claim 就变成在
+//      "不知道服务端是否已签"的情况下盲提交 ⇒ 结果无法解释 ✗（见 do_claim 的注释）
+//      ⇒ 下面两个 wrapper 都是"换号后从查状态重做" ✓。
+//
+// 为什么必须换而不是重试同一个号：风控是**按设备号**标记的（本机登录态里的 `dcId` 就是客户端
+// 给的号），同一个号重发多少次都还是 9074 ✗。
+export const int MAX_TRY_9074 = 5
+
+// 16 位数字风控设备号（首位 1~9 ⇒ 恰好 16 位；对齐 checkin.py 的 random.randint(10^15, 10^16-1) ✓）
+export func random_device_id(): string {
+    return rands.ints(1000000000000000, 9999999999999999) as string
+}
+
+// 是否是合法的 16 位数字设备号（首位非 0）：用来校验 `TRAE_DEVICE_ID` 覆盖值与登录态里的 dcId ✓
+// ⚠ 这里**逐字符**校验，两个"看起来能用"的写法都有坑 ✗：
+//   ① `_int(s)`：本机对超过 INT32_MAX 的数字串会**饱和**成 2147483647（探针实测
+//      `_int("9999999999999999")` = 2147483647）⇒ 根本区分不出来 ✗；
+//   ② `_float(s)` 比范围：**double 在 1e16 附近间距是 2** ⇒ `9999999999999999` 会被舍入成 `1e16`
+//      正好撞上上界（探针实测），`f < 1e16` 就会把合法号判成非法 ✗（本测试第 6 节踩到过）。
+//   ⇒ 干脆只做"长度 + 首位 + 每个字符都是 0~9"这三件事，精确且与数值范围无关 ✓
+export func is_valid_device_id(string s): bool {
+    if s.len() != 16 { return false }
+    if s.byte_slice(0, 1) == "0" { return false }
+    var digits = "0123456789"
+    int i = 0
+    while i < 16 {
+        if not strings.has(digits, s.byte_slice(i, i + 1)) { return false }
+        i = i + 1
+    }
+    return true
+}
+
+// 是否该"换设备号重试"（纯逻辑 ⇒ 可离线自测 ✓）：只有 9074 会重试，且总次数不超过 max_try ✓
+// 9095（本设备今日已有账号签到）/ 1001（未鉴权）/ 0 都**不**重试 ✓（换号解决不了 ✗）
+export func need_retry_9074(string code, int attempt, int max_try): bool {
+    return code == "9074" and attempt < max_try
+}
+
+// 换号间隔：0.8~1.5s 随机（对齐 checkin.py 的 random.uniform(0.8, 1.5) ✓），降低再次被风控的概率
+// 用**全局** `sleep(ms)`（注意：它是全局原生函数，**不在** `times` 模块里 ⇒ `times.sleep` 会报
+// "未找到模块方法" ✗，直接写 `sleep(ms)` 就行 ✓；探针实测 sleep(300) ≈ 305ms ✓）
+// 返回值 = 实际睡了多少毫秒（调用方一般不关心；留着便于诊断 ✓）
+export func risk_sleep(): int {
+    var ms = rands.ints(800, 1500)
+    sleep(ms)
+    return ms
+}
+
+// ---- 结果数组里"本次实际用的设备号"（**追加在末尾** ⇒ 旧消费者按下标 0..N 读不受影响 ✓，
+//      与 do_claim 新增 slot 6 `already` 是同一个加法约定 ✓）----
+export func st_device(Array[string] r): string { return r[9] }
+export func cl_device(Array[string] r): string { return r[7] }
+
+// fetch_status 的结果是否"业务层 9074"：
+// ⚠ fetch_status 的 slot 3 在**业务错误**分支里装的是**业务 code**（只有 HTTP 层错误才是 HTTP 码，
+//   那种情况 slot 1 非空）⇒ 这里用"slot 1 为空"把两种情况分开 ✓
+export func st_risk_9074(Array[string] r): bool {
+    if r[1] != "" { return false }
+    return r[3] == "9074"
+}
+export func st_need_retry_9074(Array[string] r, int attempt, int max_try): bool {
+    return st_risk_9074(r) and attempt < max_try
+}
+
+// 查状态 + 9074 换设备号重试 → fetch_status 的 9 个 slot ＋ 追加 slot 9 = 实际用的设备号 ✓
+// 注意每次都**重建 client**：设备号在请求头里，而 `setHeaders` 是替换语义 ⇒ 改号必须重建 ✓
+export func fetch_status_retry(string token, string dc_id, string region, int max_try): Array[string] {
+    var dc = dc_id
+    int attempt = 1
+    var st = fetch_status(authed_client(token, dc, region))
+    while st_need_retry_9074(st, attempt, max_try) {
+        risk_sleep()
+        dc = random_device_id()
+        attempt = attempt + 1
+        st = fetch_status(authed_client(token, dc, region))
+    }
+    st.add(dc)
+    return st
+}
+
+// 签到（含二次确认）+ 9074 换设备号重试 → do_claim 的 7 个 slot ＋ 追加 slot 7 = 实际用的设备号 ✓
+// 每次重试都是**整跑一遍 do_claim**（查状态 → claim → 二次确认）⇒ 口径与单次流程完全一致 ✓
+export func do_claim_retry(string token, string dc_id, string region, int max_try): Array[string] {
+    var dc = dc_id
+    int attempt = 1
+    var r = do_claim(authed_client(token, dc, region))
+    while need_retry_9074(cl_code(r), attempt, max_try) {
+        risk_sleep()
+        dc = random_device_id()
+        attempt = attempt + 1
+        r = do_claim(authed_client(token, dc, region))
+    }
+    r.add(dc)
+    return r
+}
 
 // ==================== ④ 日期助手（日历用；纯整数算法） ====================
 // Howard Hinnant 的 days_from_civil：1970-01-01 = 0

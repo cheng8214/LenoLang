@@ -16,13 +16,28 @@
 //
 // 注：逻辑与 GUI（`trae_gui.leno`）**共用** `trae_core.leno` ✓ —— 单一事实来源，
 //     避免两套实现漂移（见 `docs/待办_单一事实来源与重复实现收敛.md` ✓）。
+//
+// 设备号：⑧ `trae_devices.leno` 给每个账号分配**独立**设备号并落盘（`%APPDATA%\TraeSignLeno\devices.json`）
+//   —— 登录态里的 Aha 号是**机器级**的，多账号共用会让第二个账号签到拿 `9095` ✗（本机实测 ✓）。
 import "trae_core.leno" as core
+import "trae_devices.leno" as dev
 
 var JSON_MODE = false
 
 func say(string s) {
     // JSON 模式下诊断信息不上 stdout（保持 stdout 只有一行 JSON）✓
     if not JSON_MODE { print(s) }
+}
+
+// 9074 换出来的号要**落盘**（否则下次运行又用回被风控的旧号 ✗）
+// `dc_src == "env"`（TRAE_DEVICE_ID 覆盖）是测试模式 ⇒ **不写**（免得把测试号写进真实配置 ✗）
+func persist_dc(string src, string brand, string user, string dc): bool {
+    if src == "env" { return false }
+    if dev.set(brand, user, dc) {
+        say("  设备号已更新到 devices.json（下次运行沿用 ✓）\n")
+        return true
+    }
+    return false
 }
 
 func emit_json(string brand, string username, string ok, string code, string checked, string base, string extra, string msg) {
@@ -95,7 +110,9 @@ main() {
     var username = acc[1]
     var token = acc[2]
     var region = acc[3]
-    var dc_id = acc[4]
+    // 登录态里的 Aha 设备号（**机器级**：两个品牌读出来是同一个号 ✗）—— 只作为"首个账号沿用"的候选，
+    // 本次实际用的号由 ⑧ `trae_devices.leno` 按**账号**分配（见 diag 之后那一段 ✓）
+    var aha_id = acc[4]
     if token == "" {
         if JSON_MODE { emit_json(acct_brand, username, "false", "-2", "false", "null", "null", "登录态无 token") }
         else { print("ERROR: 登录态里没有 token，请在 Trae 客户端重新登录。\n") }
@@ -103,17 +120,53 @@ main() {
     }
     // ---- diag：与参考实现交叉验证用（只打印可公开的元信息，**不打印 token**）----
     if mode == "diag" {
+        // 同时给出**登录态里的 Aha 号**与**本应用给这个账号分配的号**（只读 ⇒ 不分配、不落盘 ✓）
+        var eff = dev.get(acct_brand, username)
+        if eff == "" { eff = "（未分配：首次签到/刷新时才分配 ✓）" }
         print("[leno] 品牌=" + acct_brand + " 账号=" + username
             + " token长度=" + (token.len() as string)
-            + " 设备ID=" + dc_id + " region=" + region + "\n")
+            + " region=" + region
+            + " 设备ID(Aha)=" + aha_id
+            + " 本应用设备号=" + eff + "\n")
         return
     }
 
+    // ---- 设备号：**按账号独立**（详见 trae_devices.leno 的头注释）----
+    // 为什么不直接用 Aha 号：它是机器级的 ⇒ 两个品牌同一个号 ⇒ 服务端认为"同机两个账号"
+    // ⇒ **第二个账号签到拿 9095** ✗（本机 2026-09-23 实测：cheng8214 签成功、另一个 9095 ✓）
+    var dc_id = aha_id
+    var dc_src = ""
+    var dc_env = _env("TRAE_DEVICE_ID")
+    var dc_s = ""
+    if dc_env != null { dc_s = _str(dc_env) }        // `_env` 返回 any ⇒ 显式转换
+    if dc_s != "" {
+        dc_id = dc_s
+        dc_src = "env"                               // 测试钩子：强制指定，且**不落盘**（免得污染真实配置 ✓）
+        // 只**警告**不拒绝：故意传 GUID 形式正是用来触发 9074 做端到端验证的 ✓
+        if not core.is_valid_device_id(dc_id) {
+            say("警告：TRAE_DEVICE_ID 不是 16 位数字（" + dc_id + "）⇒ 大概率会被判风控 9074\n")
+        }
+    } else {
+        var picked = dev.ensure(acct_brand, username, aha_id)
+        dc_id = picked[0]
+        dc_src = picked[1]
+        if dc_src == "aha" {
+            say("  设备号：沿用登录态里的 Aha 号 " + dc_id + "（已记入 devices.json ✓）\n")
+        } else if dc_src == "new" {
+            say("  设备号：本账号**独立**新号 " + dc_id + "（已记入 devices.json；多账号才不会互相挤成 9095 ✓）\n")
+        }
+    }
+
     // ---- HTTP（所有头必须一次设完 ✓ 见 trae_core.authed_client 的注释）----
-    var c = core.authed_client(token, dc_id, region)
     say("品牌: " + acct_brand + "  账号: " + username + "  设备ID: " + dc_id + "\n")
 
-    var st = core.fetch_status(c)
+    // 查状态：命中风控 9074 会**自动换设备号重试**（最多 core.MAX_TRY_9074 次 ✓）
+    // ⇒ 这里不再手工建 client：换号必须重建 client（设备号在头里、`setHeaders` 是替换语义 ✓）
+    var st = core.fetch_status_retry(token, dc_id, region, core.MAX_TRY_9074)
+    if core.st_device(st) != dc_id {
+        say("  风控 9074：设备号已换新 " + core.st_device(st) + "\n")
+        persist_dc(dc_src, acct_brand, username, core.st_device(st))
+    }
     if core.st_http_err(st) != "" {
         if JSON_MODE { emit_json(acct_brand, username, "false", "-3", "false", "null", "null", "HTTP " + core.st_http_err(st)) }
         else { print("ERROR: 查询状态失败 HTTP " + core.st_http_err(st) + " " + core.st_err(st) + "\n") }
@@ -128,6 +181,10 @@ main() {
             print("[debug] HTTP=" + core.st_http_code(st) + " 响应=" + core.st_raw(st) + "\n")
         }
         var msg = core.st_msg(st)
+        // 9074 且**换过号**仍失败 ⇒ 说明这轮重试已经跑满，把这件事说清楚（否则用户会以为是 token 问题 ✗）
+        if core.st_risk_9074(st) {
+            msg = msg + "（已自动换设备号重试 " + (core.MAX_TRY_9074 as string) + " 次仍被拒）"
+        }
         if JSON_MODE { emit_json(acct_brand, username, "false", "-6", "false", "null", "null", msg) }
         else { print("ERROR: " + msg + "\n") }
         _exit(1)
@@ -146,7 +203,12 @@ main() {
     }
 
     // ---- 签到 ----
-    var r = core.do_claim(c)
+    // 起始设备号用**状态那步实际用的号**：状态刚换过号就别再用回被风控的旧号 ✓
+    var r = core.do_claim_retry(token, core.st_device(st), region, core.MAX_TRY_9074)
+    if core.cl_device(r) != core.st_device(st) {
+        say("  风控 9074：设备号已换新 " + core.cl_device(r) + "\n")
+        persist_dc(dc_src, acct_brand, username, core.cl_device(r))
+    }
     if core.cl_http_err(r) != "" {
         if JSON_MODE { emit_json(acct_brand, username, "false", "-3", "false", base, extra, "HTTP " + core.cl_http_err(r)) }
         else { print("ERROR: 签到请求失败 HTTP " + core.cl_http_err(r) + "\n") }
@@ -180,6 +242,9 @@ main() {
     }
     var mf = core.cl_msg(r)
     if mf == "" { mf = "签到失败" }
+    if core.cl_code(r) == "9074" {
+        mf = mf + "（已自动换设备号重试 " + (core.MAX_TRY_9074 as string) + " 次仍被拒）"
+    }
     if JSON_MODE { emit_json(acct_brand, username, "false", core.cl_code(r), "false", base, extra, mf) }
     else { print("签到失败：code=" + core.cl_code(r) + " " + mf + "\n") }
     _exit(1)
