@@ -46,7 +46,10 @@ elif [ "$PLATFORM" = "macos" ]; then
   else
     SOURCES="$SOURCES src/module/ffi/leno_ffi_linux.c"
   fi
-  LIBS="$LIBS -lpthread -ldl"
+  # macOS 不提供 libdl 这个库（dlopen/dlsym 属于 libSystem），带上 -ldl 会直接链接失败：
+  #   ld: library not found for -ldl
+  # Linux 需要它、macOS 不需要 —— CI 上 macOS 任务正是倒在这一步（编译已过去，链接失败）。
+  LIBS="$LIBS -lpthread"
 else
   # Linux: 检测架构
   ARCH="$(uname -m 2>/dev/null || echo x86_64)"

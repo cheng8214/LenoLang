@@ -117,7 +117,14 @@ LENO_SOURCES="$LENO_SOURCES ../src/package/package_resolve.c"
 LENO_SOURCES="$LENO_SOURCES ../src/package/package_install.c"
 
 # Platform-specific libraries and FFI implementation
-LIBS="-lm -lpthread -ldl"
+# macOS 不提供 libdl（dlopen/dlsym 在 libSystem 里），带 -ldl 会链接失败：
+#   ld: library not found for -ldl
+# Linux 保持原样（glibc 的 libdl）。⚠ 这一处 CI 未覆盖（build.yml 只构建编译器与 VM），
+# 所以只改 Darwin 分支、Linux 分支一字不动，避免引入未验证的影响。
+case "$(uname -s 2>/dev/null)" in
+  Darwin*) LIBS="-lm -lpthread" ;;
+  *)       LIBS="-lm -lpthread -ldl" ;;
+esac
 
 # 检测平台和架构，选择对应的 FFI 实现文件
 OS="$(uname -s 2>/dev/null || echo unknown)"

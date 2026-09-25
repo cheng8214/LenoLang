@@ -50,7 +50,8 @@ elif [ "$PLATFORM" = "macos" ]; then
   else
     SOURCES="$SOURCES src/module/ffi/leno_ffi_linux.c"
   fi
-  LIBS="$LIBS -lpthread -ldl"
+  # 同 build.sh：macOS 没有 libdl（dlopen 在 libSystem 里），-ldl 会让链接失败。
+  LIBS="$LIBS -lpthread"
 else
   # Linux: 检测架构
   ARCH="$(uname -m 2>/dev/null || echo x86_64)"
