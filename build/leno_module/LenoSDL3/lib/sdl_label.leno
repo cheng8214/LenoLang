@@ -47,6 +47,12 @@ export struct Label impl Widget, Themeable {
     string _cachedTruncText = ""    // _truncatedText 结果缓存
     string _cachedTruncKey = "\x01" // _truncatedText 对应的 text 键
     float _cachedTruncW = -1.0
+    // ── 多行 / 自动换行 ──
+    // 两者都**默认关** ⇒ `_lines` 保持空 ⇒ 渲染走的还是原来的单行路径，老界面逐像素不变 ✓
+    bool _wrap = false             // 按宽度自动折行（宽度取 `wrap_w`，未给则取 `max_w`）
+    float _wrapW = 0.0             // 折行宽度（0 = 用 `max_w`）
+    Array[string] _lines = []      // 排版后的行（**仅在多行/换行启用时非空** ⇒ 空即老路径 ✓）
+    float _lineH = 0.0             // 行高（= "Ag" 自然高，与单行的垂直居中口径一致 ✓）
 
     func _ensure_font() {
         if _font == null or not _font.ok {
@@ -90,9 +96,64 @@ export struct Label impl Widget, Themeable {
         _scrollOffset = 0.0
         _scrollDir = 1
         _scrollLastTick = 0
+        // ── 多行 / 自动换行（都默认关 ⇒ `_lines` 为空 ⇒ 渲染仍走原单行路径 ✓）──
+        _wrap = opts.get("wrap", false)
+        _wrapW = opts.get("wrap_w", 0.0)
+        _relayout_lines()
         visible = opts.get("visible", true)
         enabled = opts.get("enabled", true)
         _loaded = true
+    }
+
+    // ==================== 多行排版 ====================
+    // 该函数是「多行/自动换行」的唯一实现点，三个要点：
+    //   ① 触发条件：显式 `wrap:true`，**或**文本里自带 `\n`；两者都不满足 ⇒ `_lines` 清空、
+    //      走原来的单行绘制 ⇒ 老界面逐像素不变 ✓（所以它不会在任何老用法上产生副作用 ✓）
+    //   ② 折行宽度：`wrap_w` > 0 用它，否则退回 `max_w`（都不给就没法折行 ⇒ 只按 `\n` 分行 ✓）
+    //   ③ 排版结果写回 `_w/_h`（自然尺寸），这样布局容器/`_h` 垂直居中都能直接用 ✓
+    func _relayout_lines() {
+        if _font == null or not _font.ok { _lines = []; _lineH = 0.0; return }
+        // ⚠ `split()` 返回的元素是 `any` ⇒ 必须显式标注为 `Array[string]`（否则 `raw[i]` 拿到 any 会报类型不匹配 ✗；
+        //   与 `sdl_edit.leno` 的 `_lines = text...split("\n")` 同款写法 ✓）
+        Array[string] raw = text.replace("\r", "").split("\n")
+        float bw = _wrapW
+        if bw <= 0.0 { bw = max_w }
+        bool wantWrap = _wrap and bw > 0.0
+        if raw.len() <= 1 and not wantWrap { _lines = []; _lineH = 0.0; return }
+        var[float, float](agw, agh) = _font.measureString("Ag")
+        _lineH = agh
+        Array[string] out = []
+        for raw.len() to i {
+            string ln = raw[i]
+            if not wantWrap {
+                out.add(ln)
+                continue
+            }
+            // 贪心折行：逐字符累加宽度，超宽就断行（不切词 —— 中文逐字断行、西文按字符断，
+            // 对界面文案足够；真要按词断行是另一个量级的复杂度，此处不做 ✓）
+            string cur = ""
+            float curW = 0.0
+            int n = ln.len()
+            for n to k {
+                string ch = ln.slice(k, k + 1)
+                var[float, float](cw, chh) = _font.measureString(ch)
+                if cur != "" and curW + cw > bw {
+                    out.add(cur)
+                    cur = ch; curW = cw
+                } else {
+                    cur = cur + ch; curW = curW + cw
+                }
+            }
+            out.add(cur)
+        }
+        _lines = out
+        float mx = 0.0
+        for out.len() to i {
+            var[float, float](lw, lh) = _font.measureString(out[i])
+            if lw > mx { mx = lw }
+        }
+        _w = mx
+        _h = _lineH * _float(out.len())
     }
 
     // ==================== 设置方法 ====================
@@ -107,20 +168,27 @@ export struct Label impl Widget, Themeable {
             _w = _textWidth()
             var[float, float](_agw, _agh) = _font.measureString("Ag"); _h = _agh
         }
+        _relayout_lines()         // 多行/换行启用时按新文本重排 ✓（未启用则只是清空 `_lines` ✓）
     }
     func set_text_color(Color color) { _txtColor = color }
     func set_font_size(float s) {
         _fontSize = s
         if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
+        // 字号变了 ⇒ 行宽/行高全变 ⇒ 必须重排（`_ensure_font` 先补回字体，否则 `_relayout_lines` 会空转 ✓）
+        _ensure_font()
+        _relayout_lines()
     }
     func set_font_path(string p) {
         _fontPath = p
         if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
+        _ensure_font()
+        _relayout_lines()
     }
     func set_font_style(int style) {
         _fontStyle = style
         _ensure_font()
         if _font.ok { _font.setStyle(style) }
+        _relayout_lines()         // 加粗会改字宽 ⇒ 重排 ✓
     }
     func set_align(int a) { _align = a }
     func set_tip(string t) { _tip = t }
@@ -128,8 +196,14 @@ export struct Label impl Widget, Themeable {
     func is_visible(): bool { return visible }
     func set_enabled(bool e) { enabled = e }
     func is_enabled(): bool { return enabled }
-    func set_max_w(float w) { max_w = w; _cachedTruncKey = "\x01" }
+    func set_max_w(float w) { max_w = w; _cachedTruncKey = "\x01"; _relayout_lines() }
     func set_truncate(int mode) { _truncate = mode; _scrollOffset = 0.0; _scrollLastTick = 0; _cachedTruncKey = "\x01" }
+    // 多行/换行开关（运行时可改 ✓）
+    func set_wrap(bool v) { _wrap = v; _relayout_lines() }
+    func set_wrap_w(float w) { _wrapW = w; _relayout_lines() }
+    // 供上层查询是否处于多行模式（如按钮内嵌 Label 想按内容自适应高度 ✓）
+    func is_multiline(): bool { return _lines.len() > 1 }
+    func get_lines(): int { return _lines.len() }
 
     // ★ 获取文字宽度（带缓存，text 不变时直接复用）
     func _textWidth(): float {
@@ -216,6 +290,30 @@ export struct Label impl Widget, Themeable {
         _ensure_font()
         if _font == null or not _font.ok { return }
         if text == "" { return }
+
+        // ── 多行 / 自动换行 ──
+        // 只在 `_lines` 有 2 行以上时接管；单行 ⇒ 继续走下面的原路径（逐像素不变 ✓）。
+        // 与截断/滚动互斥：那两个模式有自己的单行语义（省略号/横向滚动）✓
+        if _truncate == TRUNCATE_NONE and _lines.len() > 1 {
+            float lh = _lineH
+            if lh <= 0.0 {
+                var[float, float](_aw, _ah) = _font.measureString("Ag")
+                lh = _ah
+            }
+            float totalH = lh * _float(_lines.len())
+            float y0 = y
+            // 与单行同一口径：控件高 `_h` 超过文字总高时整体垂直居中 ✓
+            if _h > totalH { y0 = y + (_h - totalH) / 2.0 }
+            for _lines.len() to i {
+                string ln = _lines[i]
+                var[float, float](lw, _lh2) = _font.measureString(ln)
+                float dx = x                     // `align` 语义与单行一致：x 是锚点 ✓
+                if _align == ALIGN_CENTER { dx = x - lw / 2.0 }
+                if _align == ALIGN_RIGHT { dx = x - lw }
+                r.drawText(_font, ln, dx, y0 + lh * _float(i), _txtColor)
+            }
+            return
+        }
 
         // ── 截断模式 ──
         if _truncate == TRUNCATE_ELLIPSIS and max_w > 0.0 {

@@ -28,7 +28,10 @@
 //
 // 与截图的**有意偏差**（便于对照时知道差在哪）：
 //   ① 折线图喂了 14 个静态数据点 —— 截图里未登录所以图是空的，那样看不出图表控件画得对不对；
-//   ② 截图里折成两行的说明文字这里写成**一行** —— Label 不支持换行（只有单行 drawText ✗）；
+//   ②（**已消除**）截图里折成两行的说明文字 —— Label 原本只有单行 drawText ✗，本次给它补了多行：
+//      `\n` 硬换行 + `wrap:true, wrap_w:N` 自动折行（默认两者都关 ⇒ 老界面逐像素不变 ✓），
+//      于是照截图还原成两行 ✓（探针 `wrap_probe.leno` 实测：显式换行 lines=2/高=38 ✓，
+//      wrap=180 时 lines=4/最宽行 168 ≤ 180 ✓，不给 wrap 时 lines=0/宽=588 = 老行为 ✓）；
 //   ③ 对话式长路径用「省略号截断」而不是可横向滚动的输入框（见 path_box 的注释 ✓）；
 //   ④ 页 4 顶部那张卡在截图里被滚到上方只露一角 ⇒ 内容按同级页面**推断**（已在注释标明 ✓）。
 //
@@ -482,8 +485,9 @@ func page_accounts() {
            {left:448.0, top:42.0})
     c1.add(SDL3.createLinkButton({x:0, y:0, text:"重新探测", font_size:12, color:C_BLUE, hover_color:C_BLUE,
                                   underline:false}), {left:528.0, top:48.0})
-    // 说明：Label **不支持换行**（只能单行）⇒ 截图里折成两行的提示这里写成一行 ✓
-    c1.add(SDL3.createLabel({x:0, y:0, text:"自动探测失败或想指定其他版本时，可手动选择客户端程序或重新探测",
+    // 说明：截图里这句是**折成两行**的 ✓ —— 以前 Label 只有单行 drawText，这里被迫写成一行 ✗，
+    // 本次给 Label 补了多行支持，于是照截图用 `\n` 还原 ✓（也可用 `wrap:true, wrap_w:200` 自动折行 ✓）
+    c1.add(SDL3.createLabel({x:0, y:0, text:"自动探测失败或想指定其他版本时，\n可手动选择客户端程序或重新探测",
                              font_size:11, text_color:C_HINT}), {left:250.0, top:80.0})
     field(c1, 640.0, 22.0, 0.0, "载体指纹数", "3")
     field(c1, 730.0, 22.0, 96.0, "vault 路径", "C:\\Users\\Administrator\\AppData\\Roaming\\TraeTools")
