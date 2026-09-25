@@ -280,6 +280,7 @@ void warning_print_all(void) {
             case WARN_ASSIGN_IN_COND:  type_str = "条件中的赋值"; break;
             case WARN_FOR_IN_COND:     type_str = "for头成员测试"; break;
             case WARN_PARTIAL_DECL_INIT: type_str = "部分初值声明"; break;
+            case WARN_FIELD_NO_INIT:   type_str = "字段未初始化"; break;
             default: break;
         }
 

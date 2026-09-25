@@ -135,6 +135,26 @@
                         } else {
                             sym->struct_field_null_default[i] = 0;
                         }
+
+                        // ★ 标量字段未显式初始化 ⇒ 运行时是 **null**（不是 0 ✗）
+                        //   实测：`struct S { int k }` 里 k + 1 直接报「null 不能参与运算」✗。
+                        //   Array 字段自动成空数组 ✓、Ptr 自动 null ✓（都安全 ✓），只有标量最坑 ✗
+                        //   ⇒ 给一条编译期警告 ✓（可空标量字段 `int? k` 是显式选择 null，跳过 ✓）
+                        {
+                            TypeInfo* ftt = ast->u.struct_def.field_types[i];
+                            int is_scalar = ftt && (ftt->kind == TYPE_INT || ftt->kind == TYPE_FLOAT ||
+                                                    ftt->kind == TYPE_BOOL || ftt->kind == TYPE_STRING);
+                            if (is_scalar && !ftt->nullable && !ast->u.struct_def.field_defaults[i]) {
+                                char wmsg[BUFFER_MEDIUM];
+                                snprintf(wmsg, sizeof(wmsg),
+                                         "struct '%s' 的字段 '%s' 未显式初始化 —— 标量字段默认是 null（不是 0），"
+                                         "参与运算会直接报错；请写明初值（如 '%s %s = 0'）或改用可空类型 '%s? %s'",
+                                         ast->u.struct_def.name, ast->u.struct_def.field_names[i],
+                                         type_kind_to_string(ftt->kind), ast->u.struct_def.field_names[i],
+                                         type_kind_to_string(ftt->kind), ast->u.struct_def.field_names[i]);
+                                warning_add_at(WARN_FIELD_NO_INIT, ast->line, ast->column, wmsg);
+                            }
+                        }
                     }
 
                     // 存储泛型类型参数信息

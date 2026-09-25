@@ -97,6 +97,7 @@ typedef enum {
     WARN_ASSIGN_IN_COND,   // if/while 条件位置出现赋值（可能漏写 ==）
     WARN_FOR_IN_COND,      // for 头写 'x in arr'（in 是成员测试，遍历应写 'for x to arr'）
     WARN_PARTIAL_DECL_INIT, // var 声明列表只有部分变量带初值（Python 多重赋值习惯）
+    WARN_FIELD_NO_INIT,     // struct 标量字段未显式初始化（默认是 null 而不是 0，参与运算会报错）
 } WarnType;
 
 // ============================================================================
