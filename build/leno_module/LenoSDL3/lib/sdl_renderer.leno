@@ -96,6 +96,14 @@ const BX_TEX    = 4   // 批处理文字纹理
     Ptr[u8] _ssaaTex; float _ssaaScale; int _ssaaWinW; int _ssaaWinH; bool _ssaa
     // PixelBuffer 复用纹理（懒创建）：blitBuffer 上传用，尺寸匹配时复用
     Ptr[u8] _pixTex; int _pixTexW; int _pixTexH
+    // ── 圆角矩形抗锯齿：CPU 预生成「覆盖率蒙版」纹理，GPU 只采样 ✓ ──
+    //   见 _rrMask 注释：平滑由**像素数据**提供，不依赖 SDL 光栅器（它不做图元 AA ✗）
+    Array[Ptr[u8]] _rrTex    // 蒙版纹理（白 + alpha=覆盖率 ✓）
+    Array[int] _rrM          // 对应半径（物理像素 ✓）
+    Array[int] _rrLW         // 对应环宽（0 = 实心 ✓）
+    float _rrScale = 0.0     // 生成时的渲染缩放；变了整体重建（SSAA 会把它设成 2 ✓）
+    // 抗锯齿线段的 1D 剖面纹理（跨线方向 = 三角覆盖率 ✓）—— 与半径无关，全局一张 ✓
+    Ptr[u8] _lnTex
 
     // ---- 批处理缓冲：透明自动合并连续同材质 fillRect/drawRect/drawLine ----
     Ptr[f32] _bxFill; int _bxFillN, _bxFillCap
@@ -141,6 +149,7 @@ const BX_TEX    = 4   // 批处理文字纹理
             _clipStack = []; _clipStackOwned = []
             _bxSx = 1.0; _bxSy = 1.0; _bxCScale = 1.0; _bxCur = BX_EMPTY
             _pixTex = null; _pixTexW = 0; _pixTexH = 0
+            _lnTex = null; _rrScale = 0.0
             _gFillSubmits = 0; _gFillBatched = 0
             _gOutSubmits = 0;  _gOutBatched = 0
             _gLineSubmits = 0; _gLineBatched = 0
@@ -174,6 +183,8 @@ const BX_TEX    = 4   // 批处理文字纹理
             _bxTexPtrs = []
             if _ssaaTex != null { _lib.SDL_DestroyTexture(_ssaaTex); _ssaaTex = null }
             if _pixTex != null { _lib.SDL_DestroyTexture(_pixTex); _pixTex = null }
+            _rrClear()   // 释放圆角 AA 蒙版纹理 ✓
+            if _lnTex != null { _lib.SDL_DestroyTexture(_lnTex); _lnTex = null }
             // 渲染器销毁前：先使字体库中由本渲染器创建的纹理缓存失效。
             // 否则销毁后这些纹理悬空，SDL 复用同一指针再建渲染器时会命中失效纹理 → 字体不显示。
             font.invalidateRendererTextures(handle)
@@ -402,37 +413,19 @@ const BX_TEX    = 4   // 批处理文字纹理
         return _lib.SDL_SetRenderVSync(handle, mode)
     }
 
-    // 绘制圆形边框（cx, cy 圆心，radius 半径，64 段逼近）
+    // 绘制圆形边框（cx, cy 圆心，radius 半径）—— **抗锯齿** ✓
+    //   正圆 = 「半径取半宽的圆角矩形」⇒ 直接复用蒙版路径 ✓（老实现是 64 段硬折线 ✗，
+    //   钟表/仪表盘的明显锯齿就来自这里 ✓）；条件不满足时 fillRoundedRect 内部自动回退几何路径 ✓
     func drawCircle(float cx, float cy, float radius): bool {
-        _flushBatches()
-        var segs = 64
-        var pts  = segs + 1
-        Ptr[f32] buf  = ffi.malloc(pts * 8)
-        if buf == null { return false }
-        var two_pi = 6.283185307
-        for 0 : segs to i {
-            var a = two_pi * i / _float(segs)
-            ffi.write_float(buf, i * 8,     cx + radius * maths.cos(a))
-            ffi.write_float(buf, i * 8 + 4, cy + radius * maths.sin(a))
-        }
-        var ok = _lib.SDL_RenderLines(handle, buf, pts)
-        ffi.free(buf); return ok
+        if radius <= 0.0 { return true }
+        return drawRoundedRect(cx - radius, cy - radius, radius * 2.0, radius * 2.0, radius)
     }
 
-    // 填充实心圆形（逐行画线近似，保留小数半径并覆盖完整上下行）
+    // 填充实心圆形（**抗锯齿** ✓）—— 同上，走圆角矩形蒙版 ✓
+    //   （老实现是逐扫描线画 line ✗ ⇒ 边缘是台阶 ✓ 且半径被 _int 截断 ✗）
     func fillCircle(float cx, float cy, float radius): bool {
-        _flushBatches()
         if radius <= 0.0 { return true }
-        var r = _int(radius)
-        var ok = true
-        for 0 : (2 * r) to i {
-            var dy = i - r
-            var inside = radius * radius - dy * dy
-            if inside <= 0.0 { continue }
-            var half = maths.sqrt(inside)
-            if not _emitLine(cx - half, cy + dy, cx + half, cy + dy) { ok = false }
-        }
-        return ok
+        return fillRoundedRect(cx - radius, cy - radius, radius * 2.0, radius * 2.0, radius)
     }
 
     // 填充扇形（饼图/环形图）：圆心(cx,cy)，半径 r，起止角度 a0→a1（单位：度，0=正右，顺时针为正）
@@ -751,15 +744,47 @@ const BX_TEX    = 4   // 批处理文字纹理
         if _bxLine != null and _bxLineN > 0 {
             // 注意：SDL_RenderLines 绘制的是「连续折线」（p0->p1->p2->…），
             // 若把多条独立线段塞进同一数组，相邻线段端点会被斜线相连 -> 出现多余斜线。
-            // 因此逐条用 SDL_RenderLine 提交：既保留缓冲收集（减少调用方每帧提交次数），
-            // 又保证每条线段彼此独立、不相连。
-            for 0 : _bxLineN - 1 to i {
-                int off = i * 16
-                float lx1 = ffi.read_float(_bxLine, off)
-                float ly1 = ffi.read_float(_bxLine, off + 4)
-                float lx2 = ffi.read_float(_bxLine, off + 8)
-                float ly2 = ffi.read_float(_bxLine, off + 12)
-                if not _emitLine(lx1, ly1, lx2, ly2) { ok = false }
+            // 因此逐条提交：既保留缓冲收集（减少调用方每帧提交次数），又保证线段彼此独立 ✓。
+            // ★ 抗锯齿：斜线 / 半像素位置的线段走「1D 剖面纹理 + 四边形几何」✓（见 _lineTex 注释）；
+            //   轴对齐且整数落点的线段仍走 SDL_RenderLine ⇒ 既有发丝线零位移零模糊 ✓。
+            //   两类可能在同一批里交替 ⇒ 按**连续同类段**分组提交，严格保住绘制顺序 ✓
+            Ptr[u8] ltex = null
+            int i = 0
+            while i < _bxLineN {
+                int o1 = i * 16
+                float l1x = ffi.read_float(_bxLine, o1)
+                float l1y = ffi.read_float(_bxLine, o1 + 4)
+                float l2x = ffi.read_float(_bxLine, o1 + 8)
+                float l2y = ffi.read_float(_bxLine, o1 + 12)
+                if not _lineAA(l1x, l1y, l2x, l2y) {
+                    if not _emitLine(l1x, l1y, l2x, l2y) { ok = false }
+                    i = i + 1
+                    continue
+                }
+                if ltex == null { ltex = _lineTex() }
+                if ltex == null {   // 剖面纹理建不出来 ⇒ 回退硬线（不影响功能 ✓）
+                    if not _emitLine(l1x, l1y, l2x, l2y) { ok = false }
+                    i = i + 1
+                    continue
+                }
+                // 收集**连续**的抗锯齿线段 ⇒ 合并成一次 RenderGeometry ✓
+                var av = SDL_Vertex.malloc_array((_bxLineN - i) * 6)
+                int avn = 0
+                var[float, float, float, float](acr, acg, acb, aca) = getColorFloat()
+                while i < _bxLineN {
+                    int o2 = i * 16
+                    float ax1 = ffi.read_float(_bxLine, o2)
+                    float ay1 = ffi.read_float(_bxLine, o2 + 4)
+                    float ax2 = ffi.read_float(_bxLine, o2 + 8)
+                    float ay2 = ffi.read_float(_bxLine, o2 + 12)
+                    if not _lineAA(ax1, ay1, ax2, ay2) { break }
+                    avn = _pushAALine(av.to_ptr(), avn, ax1, ay1, ax2, ay2, acr, acg, acb, aca)
+                    i = i + 1
+                }
+                if avn > 0 {
+                    if not _lib.SDL_RenderGeometry(handle, ltex, av.to_ptr(), avn, null, 0) { ok = false }
+                }
+                av.free()
             }
             _gLineSubmits = _gLineSubmits + 1
             _gLineBatched = _gLineBatched + _bxLineN
@@ -974,8 +999,310 @@ const BX_TEX    = 4   // 批处理文字纹理
         verts.free(); return ok
     }
 
-    // 填充圆角矩形（使用当前绘制颜色）→ 单次 alloc + 单次 Geometry 提交
+    // ==================== 线段抗锯齿（预生成 1D 三角剖面纹理） ====================
+    // 为什么线也要 AA：SDL 的 1px 线是**硬边**（像素中心采样 ✗）⇒ 只要是斜线/半像素位置就
+    //   必然是阶梯 ✗（钟表指针、刻度、图表趋势线全是这种 ✓）。做法与圆角同理：
+    //   把「跨线方向的覆盖率剖面」预生成到纹理里 ✓，线段画成 2px 宽的四边形 ✓，
+    //   由 GPU 采样剖面 ⇒ 斜线平滑 ✓，而**轴对齐且整数落点**的线仍然走 SDL_RenderLine
+    //   （发丝线保持零位移、零模糊 ✓ —— 这条对既有界面很关键 ✓ 见 _lineAA）。
+    //
+    // 剖面：1px 线在某像素（中心距线 d）的正确覆盖率 = ∫ 重叠 = clamp(1−|d|, 0, 1) ✓
+    //   （注意这是**三角**而非方波：因为像素本身要积分一次 ✓ —— 用方波会重新变回硬边 ✗）
+    func _lineTex(): Ptr[u8] {
+        if _lnTex != null { return _lnTex }
+        int W = 16
+        int H = 2                      // 两行内容相同：沿长度方向取样不会碰到纹理边缘 ✗
+        PixelBuffer b = new PixelBuffer()
+        if not b.init(W, H) { return null }
+        for 0 : H - 1 to yy {
+            for 0 : W - 1 to xx {
+                float d = ((_float(xx) + 0.5) / _float(W) - 0.5) * 2.0   // u ∈(0,1) → d ∈(−1,1)
+                if d < 0.0 { d = -d }
+                float cov = 1.0 - d
+                if cov < 0.0 { cov = 0.0 }
+                b.setPixel(xx, yy, 255, 255, 255, _int(cov * 255.0 + 0.5))
+            }
+        }
+        Ptr[u8] tex = createTexture(core.PIXELFORMAT_RGBA8888, 0, W, H)
+        if tex == null { b.free(); return null }
+        _lib.SDL_SetTextureScaleMode(tex, core.ScaleMode.LINEAR)
+        _lib.SDL_SetTextureBlendMode(tex, core.BlendMode.BLEND)
+        if not updateTexture(tex, null, b.pixels, b.pitch) {
+            _lib.SDL_DestroyTexture(tex); b.free(); return null
+        }
+        b.free()
+        _lnTex = tex
+        return tex
+    }
+
+    // 追加一条抗锯齿线段（6 顶点 ✓）：四边形宽 2px（跨线 ±1px ✓），u 跨线 0→1 走剖面 ✓
+    //   顶点：p1+n / p2+n / p2−n 与 p1+n / p2−n / p1−n（两个三角形 ✓）
+    //   返回新的顶点数；长度 ≈ 0 的退化线段原样返回（不产生顶点 ✓）
+    //   ⚠ 顶点写内存用 ffi（SDL_Vertex = 8 个 f32 = 32 字节 ✓），避免依赖 Ptr 泛型索引 ✓
+    func _pushAALine(Ptr[u8] buf, int vn, float x1, float y1, float x2, float y2,
+                     float cr, float cg, float cb, float ca): int {
+        float dx = x2 - x1
+        float dy = y2 - y1
+        float len = maths.sqrt(dx * dx + dy * dy)
+        if len <= 0.0001 { return vn }
+        float nx = -dy / len            // 单位法线 ✓
+        float ny = dx / len
+        for 0 : 5 to k {
+            float px = 0.0
+            float py = 0.0
+            float uu = 0.0
+            if k == 0 { px = x1 + nx; py = y1 + ny; uu = 0.0 }
+            if k == 1 { px = x2 + nx; py = y2 + ny; uu = 0.0 }
+            if k == 2 { px = x2 - nx; py = y2 - ny; uu = 1.0 }
+            if k == 3 { px = x1 + nx; py = y1 + ny; uu = 0.0 }
+            if k == 4 { px = x2 - nx; py = y2 - ny; uu = 1.0 }
+            if k == 5 { px = x1 - nx; py = y1 - ny; uu = 1.0 }
+            int off = (vn + k) * 32
+            ffi.write_float(buf, off,      px)
+            ffi.write_float(buf, off + 4,  py)
+            ffi.write_float(buf, off + 8,  cr)
+            ffi.write_float(buf, off + 12, cg)
+            ffi.write_float(buf, off + 16, cb)
+            ffi.write_float(buf, off + 20, ca)
+            ffi.write_float(buf, off + 24, uu)
+            ffi.write_float(buf, off + 28, 0.25)   // 落在剖面纹理第 1 行内 ✓
+        }
+        return vn + 6
+    }
+
+    // 这条线要不要做 AA：**只有真正的斜线才做** ✓
+    //   轴对齐（横/竖）一律保持 SDL_RenderLine 原样 —— 无论落在整数还是半像素：
+    //     · 整数落点：本来就是发丝线 ✓，套 AA 只会让它变糊 ✗
+    //     · 半像素落点：老路径给的是「清晰的 1px，只是位置偏半格」✓；改成 AA 会变成
+    //       2px 虚边 ✗ —— UI 里**清晰**比"亚像素精确"重要 ✓（网格线/分隔线全属这类 ✓）
+    //   斜线才是真正有锯齿的地方 ✗ ⇒ 只有它们走剖面几何 ✓
+    //   ⚠ 容差必须有：钟表 3/6/9/12 点刻度是 cos(π/2) 算出来的 ≈1e-15 偏差 ✗
+    //     ⇒ 严格相等判断会把它们误判成"斜线"，把清晰刻度变成虚边 ✗✗
+    func _lineAA(float x1, float y1, float x2, float y2): bool {
+        float ex = 0.01
+        if (y2 - y1) < ex and (y1 - y2) < ex { return false }   // 横线 ✓
+        if (x2 - x1) < ex and (x1 - x2) < ex { return false }   // 竖线 ✓
+        return true
+    }
+
+    // ==================== 圆角矩形抗锯齿（预生成覆盖率蒙版纹理） ====================
+    // 与前几次失败方案的本质区别（重要 ✓）：
+    //   「顶点 1px 羽化」「SSAA」「SDL_HINT_RENDER_LINE_METHOD」都是在**要求 SDL 的光栅器**
+    //   吐出软边 ✗ —— 它的 2D 图元管线按像素中心采样，根本不产生 AA ✗（见 initDefault 注释）。
+    //   这里不再要求光栅器做任何抗锯齿 ✓：覆盖率由 **CPU** 按 SDF 算好、写成一张纹理 ✓，
+    //   GPU 只做「采样 + 着色」✓ ⇒ 平滑来自**像素内容**，不受光栅算法限制 ✓。
+    //
+    // 蒙版几何：尺寸 N = 2M+2（M = 半径的物理像素数 ✓）；形状半宽 M+1、圆角半径 M
+    //   ⇒ 直边处恒留 1px 截面 ⇒ **九宫格切片（M / 2 / M）可拉伸**成任意 w×h，
+    //     且中段是均匀截面（拉伸不引入误差 ✓）。
+    // `lw` > 0 时生成「描边环」：外半径 M、内半径 M−lw（同心 ✓），内外两沿各自带 AA ✓
+    //   ⇒ 边框不再是一根硬折线 ✗（这正是"卡片边缘仍不圆滑"的另一半原因 ✓）
+    func _rrMask(int M, int lw): Ptr[u8] {
+        // ★ 描边环额外留 1px 内边距（pad=1 ✓）：让环的墨迹离纹理边缘 ≥1px ✓
+        //   原因（实测 ✓）：环的墨迹若正好落在纹理**最后一列/行**上，某些半径下那一条会被整条丢掉 ✗
+        //   —— 例：r=20 的环（M=20 ⇒ 墨迹在第 41 列 = 末列）右边整条直边消失 ✗；
+        //   r=10/40/80 的墨迹列分别落在中间位置 ⇒ 看不出问题 ✓（所以这是个隐蔽的边界坑 ✗）
+        //   ⇒ 加 1px 边距后，墨迹落在第 1 列 / 倒数第 2 列，远离边缘 ✓
+        int pad = if lw > 0 then 1 else 0
+        int N = 2 * M + 2 + 2 * pad
+        PixelBuffer b = new PixelBuffer()
+        if not b.init(N, N) { return null }
+        float c = _float(M + 1 + pad)        // 圆心（蒙版坐标 ✓）
+        float fM = _float(M)
+        float fLw = _float(lw)
+        for 0 : N - 1 to py {
+            for 0 : N - 1 to px {
+                float dx = _float(px) + 0.5 - c
+                if dx < 0.0 { dx = -dx }
+                float dy = _float(py) + 0.5 - c
+                if dy < 0.0 { dy = -dy }
+                // 圆角盒 SDF：内缩量恒为 1（半宽 − 半径 = (M+1) − M ✓）
+                float qx = dx - 1.0; if qx < 0.0 { qx = 0.0 }
+                float qy = dy - 1.0; if qy < 0.0 { qy = 0.0 }
+                float dd = maths.sqrt(qx * qx + qy * qy)
+                float cov = 0.5 - (dd - fM)   // 1px 线性覆盖率斜坡（解析式 AA ✓ 无锯齿 ✓）
+                if cov < 0.0 { cov = 0.0 }
+                if cov > 1.0 { cov = 1.0 }
+                if lw > 0 {
+                    // 内孔外侧覆盖率：内半径 = M − lw ✓（两档相乘 ⇒ 内外沿各自平滑 ✓）
+                    float ci = 0.5 + (dd - (fM - fLw))
+                    if ci < 0.0 { ci = 0.0 }
+                    if ci > 1.0 { ci = 1.0 }
+                    cov = cov * ci
+                }
+                b.setPixel(px, py, 255, 255, 255, _int(cov * 255.0 + 0.5))
+            }
+        }
+        Ptr[u8] tex = createTexture(core.PIXELFORMAT_RGBA8888, 0, N, N)   // 0 = STATIC ✓
+        if tex == null { b.free(); return null }
+        // ★ 三件套缺一不可：
+        //   ① LINEAR：拉伸中段时用双线性（否则出现块状 ✗）
+        //   ② BLEND ：几何绘制时「顶点色 × 蒙版 alpha」才生效 ✓
+        //   ③ 非预乘 RGBA8888：预乘会让顶点色调制算错 ✗
+        _lib.SDL_SetTextureScaleMode(tex, core.ScaleMode.LINEAR)
+        _lib.SDL_SetTextureBlendMode(tex, core.BlendMode.BLEND)
+        if not updateTexture(tex, null, b.pixels, b.pitch) {
+            _lib.SDL_DestroyTexture(tex); b.free(); return null
+        }
+        b.free()
+        return tex
+    }
+
+    // 取（或懒生成）蒙版 ✓；渲染缩放变了整体重建（蒙版按**物理像素**生成 ⇒ SSAA 下依然 1:1 不糊 ✓）
+    func _rrGet(int M, int lw): Ptr[u8] {
+        if _rrScale != _bxSx {
+            _rrClear()
+            _rrScale = _bxSx
+        }
+        for _rrTex.len() to i {
+            if _rrM[i] == M and _rrLW[i] == lw { return _rrTex[i] }
+        }
+        Ptr[u8] tex = _rrMask(M, lw)
+        if tex == null { return null }
+        if _rrTex.len() >= 16 {
+            // 实际半径种类通常 < 6 ✓；真超限就先 flush 再清（避免纹理仍被命令队列引用 ✗）
+            flush()
+            _rrClear()
+            _rrScale = _bxSx
+        }
+        _rrTex.add(tex); _rrM.add(M); _rrLW.add(lw)
+        return tex
+    }
+    func _rrClear() {
+        for _rrTex.len() to i {
+            if _rrTex[i] != null { _lib.SDL_DestroyTexture(_rrTex[i]) }
+        }
+        _rrTex = []; _rrM = []; _rrLW = []
+    }
+
+    // 把蒙版按**九宫格**拉伸到目标矩形：一次 RenderGeometry 提交 ✓（顶点色 = 当前绘制颜色 ✓）
+    //   `M`：蒙版半径（像素）；`r`：目标圆角半径（逻辑）；`corner`：角块在目标里的边长（逻辑）
+    //   ⇒ corner/M 即源→目标缩放；描边环用它把「外沿外扩半个线宽」也精确还原 ✓
+    func _emitMask9(Ptr[u8] tex, int M, float x, float y, float w, float h,
+                    float r, float corner): bool {
+        int N = 2 * M + 2
+        float inv = 1.0 / _float(N)
+        var[float, float, float, float](cr, cg, cb, ca) = getColorFloat()
+        float ox = x + r - corner          // 蒙版原点在目标里的位置 ✓
+        float oy = y + r - corner
+        float midW = w - 2.0 * r
+        float midH = h - 2.0 * r
+        var verts = SDL_Vertex.malloc_array(54)     // 9 块 × 2 三角形 × 3 顶点 ✓
+        int vn = 0
+        // ⚠ `for A : B to v` 是**闭区间**（含 B ✓）
+        for 0 : 2 to cc {
+            // 源列切片：左 M / 中 2 / 右 M ✓
+            float sx = 0.0
+            float sw2 = _float(M)
+            if cc == 1 { sx = _float(M); sw2 = 2.0 }
+            if cc == 2 { sx = _float(M + 2) }
+            // 目标列切片：左 corner / 中 w−2r / 右 corner ✓
+            float dx = ox
+            float dw2 = corner
+            if cc == 1 { dx = x + r; dw2 = midW }
+            if cc == 2 { dx = x + w - r }
+            for 0 : 2 to rr {
+                float sy = 0.0
+                float sh2 = _float(M)
+                if rr == 1 { sy = _float(M); sh2 = 2.0 }
+                if rr == 2 { sy = _float(M + 2) }
+                float dy = oy
+                float dh2 = corner
+                if rr == 1 { dy = y + r; dh2 = midH }
+                if rr == 2 { dy = y + h - r }
+                // 目标尺寸 ≤ 0 ⇒ 该块不存在（例：正圆时中段 = 0 ✓）
+                if dw2 <= 0.0 or dh2 <= 0.0 { continue }
+                float u0 = sx * inv
+                float u1 = (sx + sw2) * inv
+                float v0 = sy * inv
+                float v1 = (sy + sh2) * inv
+                // 两个三角形 = 6 顶点（不用索引缓冲 ✓）
+                verts[vn].x = dx;         verts[vn].y = dy
+                verts[vn].u = u0;         verts[vn].v = v0
+                verts[vn + 1].x = dx + dw2; verts[vn + 1].y = dy
+                verts[vn + 1].u = u1;       verts[vn + 1].v = v0
+                verts[vn + 2].x = dx + dw2; verts[vn + 2].y = dy + dh2
+                verts[vn + 2].u = u1;       verts[vn + 2].v = v1
+                verts[vn + 3].x = dx;       verts[vn + 3].y = dy
+                verts[vn + 3].u = u0;       verts[vn + 3].v = v0
+                verts[vn + 4].x = dx + dw2; verts[vn + 4].y = dy + dh2
+                verts[vn + 4].u = u1;       verts[vn + 4].v = v1
+                verts[vn + 5].x = dx;       verts[vn + 5].y = dy + dh2
+                verts[vn + 5].u = u0;       verts[vn + 5].v = v1
+                for 0 : 5 to k {
+                    verts[vn + k].r = cr; verts[vn + k].g = cg
+                    verts[vn + k].b = cb; verts[vn + k].a = ca
+                }
+                vn = vn + 6
+            }
+        }
+        if vn == 0 { verts.free(); return true }
+        var ok = _lib.SDL_RenderGeometry(handle, tex, verts.to_ptr(), vn, null, 0)
+        verts.free()
+        return ok
+    }
+
+    // 能否走蒙版路径（半径/尺寸/混合模式都合适 ✓ —— 不合适一律回退老实现，绝不改变语义 ✓）
+    //   上限 256：蒙版 N = 2M+2 ⇒ M=256 时纹理 514² ≈ 1MB（锚点够用 ✓，如钟表 R=160 ✓）；
+    //   再大就回退几何路径（大图元的硬边不显眼 ✓，且很少见 ✓）
+    func _rrUsable(float r): bool {
+        if r < 1.0 or r > 256.0 { return false }
+        if _bxSx <= 0.0 { return false }
+        // ADD/MUL 等另类混合模式的着色语义与「纹理×顶点色」不同 ⇒ 回退（罕见 ✓）
+        if _bxBlend != core.BlendMode.BLEND { return false }
+        return true
+    }
+
+    // 填充圆角矩形（**抗锯齿** ✓；条件不满足时回退几何实现 ✓）
     func fillRoundedRect(float x, float y, float w, float h, float r): bool {
+        if r > 0.0 and w >= 2.0 and h >= 2.0 and _rrUsable(r) {
+            float xr = r
+            if xr > w * 0.5 { xr = w * 0.5 }
+            if xr > h * 0.5 { xr = h * 0.5 }
+            int M = _int(xr * _bxSx + 0.5)
+            if M < 1 { M = 1 }
+            Ptr[u8] tex = _rrGet(M, 0)
+            if tex != null {
+                _flushBatches()
+                // ★ 角块取 M/S（而不是 xr）：让「蒙版像素 : 目标像素」**严格 1:1** ✓
+                //   若用 xr（如 160.5 / M=161 ⇒ 缩放 0.9969 ≠ 1）⇒ 采样相位沿图元漂移 ✗，
+                //   且角块外沿落在半像素上 ⇒ 光栅器 top-left 规则下「左/上算包含、右/下算排除」
+                //   ⇒ 左半像素画得出、右半像素被丢掉 ✗✗（钟表 9/3 点不对称就是这么来的 ✓）
+                float corner = _float(M) / _bxSx
+                return _emitMask9(tex, M, x, y, w, h, corner, corner)
+            }
+        }
+        return _fillRoundedGeom(x, y, w, h, r)
+    }
+
+    // 绘制圆角矩形边框（**抗锯齿** ✓；条件不满足时回退 1px 折线实现 ✓）
+    //   线宽固定 1 逻辑像素（与老行为一致 ✓）；线**居中于路径** ⇒ 外沿 = 边界 − 0.5 ✓
+    func drawRoundedRect(float x, float y, float w, float h, float r): bool {
+        if r > 0.0 and w >= 2.0 and h >= 2.0 and _rrUsable(r) {
+            float xr = r
+            if xr > w * 0.5 { xr = w * 0.5 }
+            if xr > h * 0.5 { xr = h * 0.5 }
+            float S = _bxSx
+            int lw = _int(S + 0.5); if lw < 1 { lw = 1 }      // 线的物理宽 = 1 逻辑像素 ✓
+            int M = _int(xr * S + 0.5)                        // 环的半径（物理像素 ✓）
+            if M < 2 { M = 2 }
+            int Ms = M + 1                                     // 蒙版角块边长（环蒙版含 1px 内边距 ✓）
+            // ★ 角块 = Ms/S ⇒ **缩放恰为 1** ✓（原因同 fillRoundedRect：非 1 的缩放会漂移相位 ✗）
+            //   ⇒ 边框正好落在「路径内侧的那一圈像素」上：清晰 ✓ 左右对称 ✓
+            //   （旧写法 corner = r + 半线宽 ⇒ 外沿落在半像素 ⇒ 左有右无 ✗✗，见 fillRoundedRect 注释）
+            float corner = _float(Ms) / S
+            Ptr[u8] tex = _rrGet(M, lw)
+            if tex != null {
+                _flushBatches()
+                // r 传 M/S（环的中心线半径 ✓ ⇒ 决定中段位置）；corner 传 Ms/S（角块边长 ✓）
+                return _emitMask9(tex, Ms, x, y, w, h, _float(M) / S, corner)
+            }
+        }
+        return _drawRoundedGeom(x, y, w, h, r)
+    }
+
+    // 老几何实现（三角扇，**无 AA** ✗）—— 保留作回退：半径过小/过大、或混合模式非 BLEND 时用 ✓
+    func _fillRoundedGeom(float x, float y, float w, float h, float r): bool {
         _flushBatches()
         if r <= 0.0 { return _emitFill(x, y, w, h) }
         if r > w * 0.5 { r = w * 0.5 }
@@ -1033,16 +1360,18 @@ const BX_TEX    = 4   // 批处理文字纹理
         verts.free(); return ok
     }
 
-    // 绘制圆角矩形边框（使用当前绘制颜色）
-    func drawRoundedRect(float x, float y, float w, float h, float r): bool {
+    // 老几何实现（1px 折线，**无 AA** ✗）—— 保留作回退 ✓
+    func _drawRoundedGeom(float x, float y, float w, float h, float r): bool {
         _flushBatches()
         if r <= 0.0 { return _emitRect(x, y, w, h) }
         if r > w * 0.5 { r = w * 0.5 }
         if r > h * 0.5 { r = h * 0.5 }
 
-        // 动态分段
+        // 动态分段（补齐大半径档：drawCircle 现在会转到这里做回退，
+        //   老 drawCircle 固定 64 段 ⇒ 回退路径不能比它差 ✗）
         var segs = 16
         if r > 32.0 { segs = 32 }
+        if r > 64.0 { segs = 64 }
 
         var pts = segs + 1; var half_pi = 1.57079633
         var total = 4 * pts + 1  // 4 圆弧 + 闭合左直边
