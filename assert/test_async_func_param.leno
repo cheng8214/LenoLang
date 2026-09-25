@@ -1,0 +1,31 @@
+// test_async_func_param.leno —— C5 现状用例：`func` 形参里 `await cb(x)`
+//
+// 背景（差异清单 C5）：`async func call_it(func cb): int { return await cb(7) }` 里
+// `await cb(7)` 推不出结果类型 ⇒ **标了返回类型注解**就编译错
+// 「返回类型不匹配：期望 int，实际 func()」✗（2026-09-25 复核：仍复现，归 T3）。
+// 当初的绕过写法是**不写返回类型注解** —— 本用例钉住的就是这条：它是现在唯一可用的写法，
+// T3 修好之后也必须继续可用 ✓（**不要**在这里补"标注解"的用例：那会红，等 T3 一起加 ✓）。
+//
+// ⚠ 复核时踩过的一个坑（记下来免得再被骗）：把形参名起成与某个**全局函数同名**
+//   （例：形参 `cb` + 全局 `async func cb(int x): int`）时，类型推断会按那个全局函数推
+//   ⇒ 看起来"标注解也能编译" ✗ —— 那是**假象**（名字解析在推断里不带作用域）。
+//   写这类用例时形参名要与全局函数名错开 ✓（本文件用 `fn`）。
+import asyncs
+import io
+
+async func double_it(int x): int {
+    return x * 2
+}
+
+// 不标注解（当前唯一可用写法）
+async func call_it_bare(func fn) {
+    return await fn(9)
+}
+
+main() {
+    var f = call_it_bare(double_it)
+    asyncs.run()
+    var r = asyncs.all([f])
+    assert_eq(r[0], 18)
+    io.print("[PASS] async 函数作 func 形参 + await（C5 现状：不标注解可用）")
+}
