@@ -1,0 +1,13 @@
+// 回归测试模块：模块级**大字面量**导出（供 test_int_range_convert.leno 用）
+//
+// 历史 bug（2026-09-25 修）：模块级 `export var` 的预登记走
+//   `val_int((int)init->u.num.value)` ⇒ 字面量只要超过 int32 就被截断/成 INT32_MIN
+//   ⇒ `m.BIG` 跨模块读到 -2147483648 ✗。现为 `val_int_safe((int64_t)…)` ✓
+//
+// ⚠ 这坑很隐蔽：`HUGE` 那个（3000000000000000）因为**被判成 bigint 字面量**走的是另一条
+//   分支，本来就没问题 ✓ —— 只有"是 int 字面量、但值 > int32"这一小段区间中招 ✗
+
+export var BIG     = 3000000000            // 刚过 int32 上界（原来 = -2147483648 ✗）
+export var BIG_NEG = -3000000000           // 刚过 int32 下界
+export const BIG_CONST = 3000000000        // const 走编译期常量求值，交叉钉一下 ✓
+export var HUGE    = 3000000000000000      // 大到一个数量级 ⇒ 本来就是 bigint 分支 ✓
