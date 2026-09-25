@@ -1399,17 +1399,23 @@ void gen_assign(CodeGen* gen, Ast* ast) {
                 if (idx_slot >= 0 && ast_may_write_slot(value, idx_slot)) snap_needed = 1;
                 if (snap_needed) { obj_slot = -1; idx_slot = -1; val_slot = -1; }
 
-                int obj_reg, idx_reg, val_reg;
+                int obj_reg, idx_reg = 0, val_reg;
                 int obj_is_temp = 0, idx_is_temp = 0, val_is_temp = 0;
+                // ★ 先定"发哪条指令"：struct 字段写（`o.inner.v = 5` / `ps[i].y = 9`）走
+                //   OP_SET_FIELD 时**下标不必求值** —— 原先这条分支无条件 gen_expr(idx)，
+                //   于是每次字段写都白发一条 `LOADK "字段名"`（dump 实证，死寄存器）。
+                //   判据/手法与 gen_index_assign 完全一致（跳过求值就必须跳过释放）。
+                int mf_idx = -1;
+                OpCode mf_op = index_set_op_for(gen, obj_ast, idx_ast, &mf_idx);
+                int mf_idx_skip = (mf_op == OP_SET_FIELD);
                 if (obj_slot >= 0) { obj_reg = obj_slot; }
                 else { obj_reg = gen_expr(gen, obj_ast); obj_is_temp = 1; }
-                if (idx_slot >= 0) { idx_reg = idx_slot; }
+                if (mf_idx_skip) { /* 字段索引已定死，不发 LOADK */ }
+                else if (idx_slot >= 0) { idx_reg = idx_slot; }
                 else { idx_reg = gen_expr(gen, idx_ast); idx_is_temp = 1; }
                 if (val_slot >= 0) { val_reg = val_slot; }
                 else { val_reg = ASSIGN_VAL(); val_is_temp = 1; }
                 // INDEX_SET / SET_FIELD: R[B][R[C]] = R[A]（静态类型已知 ⇒ 发特化版，见 index_set_op_for）
-                int mf_idx = -1;
-                OpCode mf_op = index_set_op_for(gen, obj_ast, idx_ast, &mf_idx);
                 if (mf_op == OP_SET_FIELD) {
                     reg_encode_iABC(gen->chunk, OP_SET_FIELD, val_reg, obj_reg, mf_idx, ast->line);
                 } else {
