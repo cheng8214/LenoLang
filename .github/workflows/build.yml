@@ -16,6 +16,9 @@ jobs:
   build:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    # 上一轮 Windows 任务跑了 25 分钟仍未结束（MSYS2 安装偏慢），
+    # 给个上限免得某个任务卡住让整轮 run 永远不结束。
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -67,12 +70,11 @@ jobs:
           ./build.sh 2>&1 | tee ci_build_sh.log
           ./build_vm.sh 2>&1 | tee ci_build_vm.log
 
-      # 失败时把构建输出写进 job summary：日志归档（/actions/jobs/{id}/logs）需要鉴权，
-      # 而 job summary 能通过 check-runs API 免鉴权读到，便于在无 token 的环境里定位问题。
       - name: 失败时输出构建日志
         if: failure()
         shell: bash
         run: |
+          # ① 人读：整段日志进 job summary（在运行页面上直接能看到）
           {
             echo '## 构建失败日志（末尾 120 行）'
             for f in ci_build_sh.log ci_build_vm.log; do
@@ -84,6 +86,23 @@ jobs:
               fi
             done
           } >> "$GITHUB_STEP_SUMMARY"
+
+          # ② 机读：关键错误行单独发成 ::error 注解。
+          #    原因：日志归档 /actions/jobs/{id}/logs 需要鉴权；job summary 虽然人读方便，
+          #    但实测它**不会**出现在 check-runs API 的 output.summary 里（长度为 0）；
+          #    而 workflow command 产生的注解能从 /check-runs/{id}/annotations 免鉴权读到。
+          #    这样即使手边没有 token / gh CLI，也能直接看到失败原因 ✓
+          n=0
+          for f in ci_build_sh.log ci_build_vm.log; do
+            if [ -f "$f" ]; then
+              while IFS= read -r line; do
+                n=$((n + 1))
+                if [ "$n" -gt 10 ]; then break 2; fi
+                esc=$(printf '%s' "$line" | sed 's/%/%25/g; s/\r//g' | cut -c1-400)
+                echo "::error title=$f::${esc}"
+              done < <(grep -iE 'error|undefined reference|no such file|cannot find' "$f" | tail -n 10)
+            fi
+          done
 
       # 真正的验收：产物能编译并运行一段脚本，而不是只看编译过程有没有报错
       - name: 冒烟测试
