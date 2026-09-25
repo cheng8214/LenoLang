@@ -14,6 +14,7 @@
 // 环境变量（调试 / 无头冒烟）：
 //   TRAE_GUI_NO_NET=1   启动不做网络查询（离线只看日历与界面 ✓）
 //   TRAE_GUI_AUTO=90    跑满 N 帧后自动退出（配合 SDL_VIDEODRIVER=dummy 做无头验证 ✓）
+//   TRAE_GUI_ACCOUNT=2  启动就选中第 2 个账号（1 起；设备号是**按账号**的 ⇒ 无头也好验证第二个 ✓）
 import "SDL3" as SDL3
 use SDL3.Event
 use SDL3.Renderer
@@ -41,6 +42,7 @@ Array[string] HAS_DAYS = []        // 当前账号当前月"有记录（含失�
 var BADGE_TEXT = "… 查询中"
 var BADGE_KEY = ""                 // 变更检测键（Label 只在键变化时才 set_text ✓ 避免每帧重建纹理）
 var SCORE_TEXT = "今日积分 —"
+var DEV_TEXT = "设备号 —"           // 当前账号的设备号（每账号独立，见 ⑧ trae_devices.leno）
 var MONTH_TEXT = ""
 var STATUS_TEXT = "就绪"
 var NO_NET = false                  // `TRAE_GUI_NO_NET=1` ⇒ 不做网络查询（离线/无头验证 ✓）
@@ -62,6 +64,7 @@ var _c_badge_key = ""
 var _c_score = ""
 var _c_month = ""
 var _c_status = ""
+var _c_dev = ""
 
 // 自动驱动
 var FRAMES = 0
@@ -117,10 +120,30 @@ func invalidate_status() {
     SCORE_TEXT = "今日积分 —"
 }
 
+// 账号行右侧显示的"设备号"（⑧ 每账号独立 ⇒ 切号必须跟着换 ✓）
+// 只**读** devices.json（不会顺手分配 ✓）；没分配就照实说"未分配"，等点签到/刷新时才分配 ✓
+// 标"本机"= 就是登录态里那个机器级 Aha 号；标"独立"= 本工具给这个账号算出来的新号 ✓
+func refresh_device_text() {
+    if SEL_BRAND == "" {
+        DEV_TEXT = "设备号 —"
+        return
+    }
+    var dc = dev.get(SEL_BRAND, SEL_USER)
+    if dc == "" {
+        DEV_TEXT = "设备号 未分配"
+        return
+    }
+    var a = core.pick_auth(SEL_BRAND)               // [enc, 本机 Aha 号]（只读，不解密 token ✓）
+    var tag = "独立"
+    if a.len() > 1 and a[1] == dc { tag = "本机" }
+    DEV_TEXT = "设备号 " + dc + "（" + tag + "）"
+}
+
 func select_account(string brand, string user) {
     SEL_BRAND = brand
     SEL_USER = user
     refresh_days()
+    refresh_device_text()
 }
 
 // 查状态（网络）；顺带**背填**历史：接口说今天已签到但本地没记录 ⇒ 补一条（日历才准 ✓）
@@ -147,12 +170,14 @@ func rpc_status() {
     // 第二个账号签到拿 9095 ✗（本机实测 ✓）。首次分配会落盘，之后取回同一个号 ✓
     var picked = dev.ensure(SEL_BRAND, SEL_USER, acc[4])
     var dc_id = picked[0]
+    refresh_device_text()          // 首次分配也要立刻显示到界面上（后面几条失败分支会 return ✓）
     // 9074（参与用户太多）⇒ 自动换设备号重试（最多 core.MAX_TRY_9074 次 ✓）
     // ⚠ 目前是**同步阻塞**调用 ⇒ 重试会多等几秒（每个间隔 0.8~1.5s ✓，见 README 已知限制）
     var st = core.fetch_status_retry(acc[2], dc_id, acc[3], core.MAX_TRY_9074)
     if core.st_device(st) != dc_id {
         // 9074 换出来的号**落盘**（否则下次运行又用回被风控的旧号 ✗）
         dev.set(SEL_BRAND, SEL_USER, core.st_device(st))
+        refresh_device_text()      // 换过号 ⇒ 标签跟着更新 ✓
     }
     if not core.st_ok(st) {
         BADGE_TEXT = "× 查询失败"
@@ -216,10 +241,12 @@ func rpc_claim() {
     // 设备号按**账号**独立（同理，见 rpc_status 的注释 ✓）
     var picked = dev.ensure(SEL_BRAND, SEL_USER, acc[4])
     var dc_id = picked[0]
+    refresh_device_text()          // 首次分配也要立刻显示到界面上 ✓
     // 9074（参与用户太多）⇒ 自动换设备号重试（最多 core.MAX_TRY_9074 次 ✓，间隔 0.8~1.5s）
     var r = core.do_claim_retry(acc[2], dc_id, acc[3], core.MAX_TRY_9074)
     if core.cl_device(r) != dc_id {
         dev.set(SEL_BRAND, SEL_USER, core.cl_device(r))     // 换出来的号**落盘**（下次运行沿用 ✓）
+        refresh_device_text()                              // 换过号 ⇒ 标签跟着更新 ✓
     }
     var td = core.today_str()
     if core.cl_ok(r) {
@@ -270,11 +297,12 @@ func rpc_regen_device() {
         return
     }
     var nd = dev.regenerate(SEL_BRAND, SEL_USER)
+    refresh_device_text()          // 标签立刻显示新号 ✓
     STATUS_TEXT = "已更换设备号：" + nd + "（本账号独立、已落盘 ✓；点「刷新状态」重新查询）"
 }
 
 // ==================== 视图同步（每帧调用；只在变化时写控件 ✓） ====================
-func apply_view(Label badge, Label score, Label status, Label month) {
+func apply_view(Label badge, Label score, Label status, Label month, Label devl) {
     if _c_badge != BADGE_TEXT {
         badge.set_text(BADGE_TEXT)
         _c_badge = BADGE_TEXT
@@ -303,6 +331,10 @@ func apply_view(Label badge, Label score, Label status, Label month) {
         status.set_text(STATUS_TEXT)
         _c_status = STATUS_TEXT
     }
+    if _c_dev != DEV_TEXT {
+        devl.set_text(DEV_TEXT)
+        _c_dev = DEV_TEXT
+    }
 }
 
 main() {
@@ -319,11 +351,19 @@ main() {
         items.add(a[0] + " / " + a[1])
         i = i + 1
     }
+    int pick_idx = 0
     if items.len() == 0 {
         items.add("（未找到登录态）")
     } else {
-        SEL_BRAND = BRANDS_AVAIL[0][0]
-        SEL_USER = BRANDS_AVAIL[0][1]
+        // 调试/无头冒烟：`TRAE_GUI_ACCOUNT=<n>`（从 1 起）指定启动时选中的账号，默认第 1 个 ✓
+        // 为什么要它：设备号是**按账号**的（⑧）⇒ 要验证"第二个账号显示的是独立号"就得能切过去看 ✓
+        var idx_env = _env("TRAE_GUI_ACCOUNT")
+        if idx_env != null {
+            var n = _int(_str(idx_env))
+            if n >= 1 and n <= BRANDS_AVAIL.len() { pick_idx = n - 1 }
+        }
+        SEL_BRAND = BRANDS_AVAIL[pick_idx][0]
+        SEL_USER = BRANDS_AVAIL[pick_idx][1]
     }
 
     // ---- 日历定位到今天 ----
@@ -332,6 +372,7 @@ main() {
     CAL_M = tp[1]
     MONTH_TEXT = (CAL_Y as string) + " 年 " + (CAL_M as string) + " 月"
     refresh_days()
+    refresh_device_text()            // 账号行右侧的设备号（只读 devices.json，不分配 ✓）
 
     var win = SDL3.createWindow({title:"Trae 签到助手", w:620, h:720, resizable:false})
     if not win.ok { return }
@@ -346,8 +387,11 @@ main() {
     // ---- 卡片 A：账号 + 今日积分 ----
     var cardA = win.addPanel({x:24, y:56, w:572, h:112, bg_color:#1C1E26FF, radius:10, border_color:#505564FF})
     cardA.add(SDL3.createLabel({x:44, y:74, text:"账号", font_size:14, text_color:#B4C8FFFF}))
-    var cbAcc = SDL3.createComboBox({x:100, y:70, w:330, items:items, selected:0, tip:"选择要签到 / 查看的账号"})
+    // 下拉框收窄到 250：右侧腾出位置显示**这个账号当前的设备号**（⑧ 每账号独立 ⇒ 切号要能看出来 ✓）
+    var cbAcc = SDL3.createComboBox({x:100, y:70, w:250, items:items, selected:pick_idx, tip:"选择要签到 / 查看的账号"})
     cardA.add(cbAcc)
+    var devLbl = SDL3.createLabel({x:358, y:75, text:DEV_TEXT, font_size:12, text_color:#8A93A8FF})
+    cardA.add(devLbl)
     var scoreLbl = SDL3.createLabel({x:44, y:122, text:SCORE_TEXT, font_size:14, text_color:#AAC8AAFF})
     cardA.add(scoreLbl)
     cardA.add(SDL3.createLabel({x:400, y:124, text:"只读登录态 · 不打印 token", font_size:12, text_color:#787D87FF}))
@@ -533,7 +577,7 @@ main() {
         },
         func(Renderer r) {
             r.clearColor(#12141AFF)
-            apply_view(badgeLbl, scoreLbl, statusLbl, monthLbl)
+            apply_view(badgeLbl, scoreLbl, statusLbl, monthLbl, devLbl)
             FRAMES = FRAMES + 1
             if FRAMES == 1 {
                 print("[gui] 首帧渲染 ok  日历=" + (CAL_W as string) + "x" + (CAL_H as string)
@@ -544,6 +588,7 @@ main() {
                     + "  accounts=" + (BRANDS_AVAIL.len() as string)
                     + "  month=" + MONTH_TEXT
                     + "  已签到日=" + (OK_DAYS.len() as string)
+                    + "  " + DEV_TEXT
                     + "  状态=" + STATUS_TEXT + "\n")
                 _exit(0)
             }
