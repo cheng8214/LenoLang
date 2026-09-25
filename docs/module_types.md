@@ -102,7 +102,13 @@ print(type(nested))     // "Dict[string, Dict[string, Dict[string, int]]]"
 | bool | `_int(true)` | `1` |
 | bool | `_int(false)` | `0` |
 | string | `_int("123")` | `123` |
-| 大整数 | `_int(超大整数值)` | 转换为 int（可能溢出，对外显示为 int） |
+| 大整数 | `_int("9999999999999999")` | `9999999999999999`（int48 内仍是 `int` ✓；超出 int48 自动升级为 `BigInt` ✓）|
+
+> **范围（2026-09-25 修复）**：字符串分支走 `strtoll` + `val_int_safe`，浮点分支先夹到 int64 边界再
+> `val_int_safe` —— 都不会再溢出 ✗。历史写法是 `strtol` + `(int)`：Windows 上 `long` 只有 32 位
+> ⇒ `_int("9999999999999999")` 被**饱和**成 `2147483647`；而在 `long` 是 64 位的平台上 `(int)` 又
+> 变成**截断**（同一份代码跨平台两种错法 ✓）。超过 int64 的数字串（如 `"18446744073709551616"`）
+> 交给 `val_bigint_from_string` 解析 ✓。
 
 ```leno
 // 基本转换

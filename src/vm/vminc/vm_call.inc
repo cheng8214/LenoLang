@@ -121,7 +121,9 @@ static inline int call(ObjClosure* closure, int arg_count, int line) {
             } else if (expected_type == TYPE_FLOAT && val_is_bigint(arg)) {
                 arg = val_float(bigint_to_double(val_as_bigint(arg)));
             } else if (expected_type == TYPE_INT && val_is_float(arg)) {
-                arg = val_int((int)val_as_num(arg));
+                // ⚠ 同类 32 位截断坑：形参声明是 int、实参是 float 时，`(int)` 对超过 int32 的值会
+                //   溢出/成 INT32_MIN（如 `f(3000000000.0)`）⇒ 走 int64 + `val_int_safe` ✓
+                arg = val_int_safe((int64_t)val_as_num(arg));
             }
         }
         locals[i] = arg;
@@ -419,7 +421,9 @@ static inline int call_reg_impl(ObjClosure* closure, int has_self, Value self,
             } else if (expected_type == TYPE_FLOAT && val_is_bigint(arg)) {
                 arg = val_float(bigint_to_double(val_as_bigint(arg)));
             } else if (expected_type == TYPE_INT && val_is_float(arg)) {
-                arg = val_int((int)val_as_num(arg));
+                // ⚠ 同类 32 位截断坑：形参声明是 int、实参是 float 时，`(int)` 对超过 int32 的值会
+                //   溢出/成 INT32_MIN（如 `f(3000000000.0)`）⇒ 走 int64 + `val_int_safe` ✓
+                arg = val_int_safe((int64_t)val_as_num(arg));
             }
         }
         locals[k + i] = arg;

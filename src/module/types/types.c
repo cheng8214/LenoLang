@@ -5,6 +5,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <limits.h>
+#include <errno.h>   // `_int` 字符串分支要看 ERANGE（超出 int64 ⇒ 交 bigint ✓）
 
 // 辅助函数：获取值的基础类型
 static TypeKind get_value_type(Value value) {
@@ -591,8 +592,14 @@ static Value native_to_int(int argCount, Value* args) {
     switch (val_get_type(value)) {
         case VAL_INT:
             return value;
-        case VAL_FLOAT:
-            return val_int((int)val_as_num(value));
+        case VAL_FLOAT: {
+            // ⚠ 同款 32 位坑：`val_int((int)d)` 对超过 int32 的浮点数（如 `_int(1e12)`）是溢出 ✗
+            //   ⇒ 先夹到 int64 边界，再走 `val_int_safe`（超出 int48 ⇒ BigInt ✓）
+            double d = val_as_num(value);
+            if (d >= 9.223372036854775e18) return val_bigint_from_int64(INT64_MAX);
+            if (d <= -9.223372036854775e18) return val_bigint_from_int64(INT64_MIN);
+            return val_int_safe((int64_t)d);
+        }
         case VAL_BOOL:
             return val_int(val_as_bool(value) ? 1 : 0);
         case VAL_NULL:
@@ -600,10 +607,21 @@ static Value native_to_int(int argCount, Value* args) {
         case VAL_OBJ:
             if (val_as_obj(value)->type == OBJ_STRING) {
                 ObjString* str = (ObjString*)val_as_obj(value);
+                // ⚠ 这里**不能**写 `long num = strtol(...); val_int((int)num)`：
+                //   Windows 的 `long` 是 **32 位** ⇒ 16 位数字串会被**饱和**成 LONG_MAX=2147483647
+                //   （实测 `_int("9999999999999999")` = 2147483647 ✗）；而在 `long` 是 64 位的平台上
+                //   `(int)` 又变成**截断**（同一份代码跨平台两种错法 ✗）。
+                //   正解：`strtoll` 取 int64，再交给 `val_int_safe`（int48 内 ⇒ int，超出 ⇒ BigInt ✓，
+                //   与 native_to_uint64 的约定一致 ✓）。
                 char* end;
-                long num = strtol(str->chars, &end, 10);
+                errno = 0;
+                long long num = strtoll(str->chars, &end, 10);
                 if (*end == '\0') {
-                    return val_int((int)num);
+                    if (errno == ERANGE) {
+                        // 超出 int64 ⇒ 交给 bigint（与 `_int(bigint)` 分支返回 BigInt 的口径一致 ✓）
+                        return val_bigint_from_string(str->chars);
+                    }
+                    return val_int_safe(num);
                 }
                 native_throw_error("无法将字符串转换为整数");
                 return val_int(0);

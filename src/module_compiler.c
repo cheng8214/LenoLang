@@ -270,7 +270,15 @@ ObjModule* compile_module_new(const char* source, const char* module_name,
                                             // 声明是 float ⇒ 整数字面量也按浮点存
                                             var_val = val_float(init->u.num.value);
                                         } else {
-                                            var_val = val_int((int)init->u.num.value);
+                                            // ⚠ 别写 `val_int((int)init->u.num.value)`：int 字面量只要
+                                            //   超过 int32（但仍 ≤ int48 下界内，比如 3000000000）就会被
+                                            //   截断/成 INT32_MIN ⇒ 跨模块读到的是 -2147483648 ✗
+                                            //   （实测：`export var BIG = 3000000000` 导出成 -2147483648；
+                                            //    而 3000000000000000 因为被判成 bigint 反而没事，所以这坑很隐蔽 ✓）。
+                                            //   ⇒ 走 `val_int_safe`（与 vm.c 里 bigint→int 的处理同一约定 ✓，
+                                            //     该处也是"只在 int32 内才压成 int" —— 这里语义不同：本处要的是
+                                            //     字面量**原值**，所以直接按 int64 建值，超出 int48 自动成 bigint ✓）
+                                            var_val = val_int_safe((int64_t)init->u.num.value);
                                         }
                                         break;
                                     case AST_STRING:
