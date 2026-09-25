@@ -1558,6 +1558,151 @@ export struct Window {
             }
         }
     }
+
+    // 布局调试：打印本窗口的布局树（根布局 + 注册的控件），见文件末尾 _dWalk 的说明 ✓
+    func dumpLayout() {
+        print("[layout] ===== dump =====  窗口 " + _str(_w) + "x" + _str(_h)
+              + "  控件数=" + _str(_widgets.len()) + "\n")
+        if _root != null { _dWalk(_root, 0, "", -1.0, -1.0) }
+        for _widgets.len() to i { _dWalk(_widgets[i], 0, "", -1.0, -1.0) }
+        print("[layout] ================\n")
+    }
+}
+
+// ==================== 布局调试：dumpLayout ====================
+// 为什么需要它 ✓：布局"没铺开 / 位置不对"时，此前只能**截图扫像素反推** ✗（排障主力，慢且绕 ✗）。
+//   dump 直接给出每个容器的计算尺寸 + 每个子项的 flex 参数 + 剩余空间 ✓ ⇒ 一眼看出根因 ✓：
+//     · `free > 0` 但子项 `grow = 0` ⇒ 它不会跟着变大 ✗（最常见的一种"没铺开" ✓）
+//     · `basis` 被显式写死 ⇒ 窗口变宽它也不动 ✗（`mk_card_h` 曾经就是这样 ✗）
+//     · 容器尺寸与父容器给的不匹配 ⇒ 是上层没给够空间 ✓
+//   ⚠ 纯只读：不改任何布局行为 ✓；也不给 face Widget 加方法（它只有 get_w/get_h/set_pos/set_size ✓）
+//      ⇒ 位置信息用「容器自身 @(x,y) + 子项 w×h + flex 参数」表达，子项坐标可由此推出 ✓
+//   用法：`win.dumpLayout()`（窗口树）或 `SDL3.dumpLayout(某个容器)`（任意子树 ✓）
+func _dInd(int depth): string {
+    string s = ""
+    for 0 : depth - 1 to i { s = s + "  " }
+    return s
+}
+func _dNum(float v): string { return _str(_int(v)) }
+
+// 控件类型名（本模块 import 了全部控件类型，因此能给出准确名字 ✓）
+func _dName(Widget c): string {
+    switch c {
+        case is HBox { return "HBox" }
+        case is VBox { return "VBox" }
+        case is AnchorBox { return "AnchorBox" }
+        case is ScrollView { return "ScrollView" }
+        case is Panel { return "Panel" }
+        case is TabControl { return "TabControl" }
+        case is GroupBox { return "GroupBox" }
+        case is Splitter { return "Splitter" }
+        case is SpinBox { return "SpinBox" }
+        case is Button { return "Button" }
+        case is Label { return "Label" }
+        case is Edit { return "Edit" }
+        case is Table { return "Table" }
+        case is TreeView { return "TreeView" }
+    }
+    return "Widget"
+}
+
+// 只打印「会显著影响布局」的选项，避免刷屏 ✓
+func _dOpts(Dict o): string {
+    string s = ""
+    float g = o.get("grow", 0.0)
+    if o.get("expand", false) and g <= 0.0 { g = 1.0 }
+    if g != 0.0 { s = s + " grow=" + _dNum(g) }
+    float b = o.get("basis", -1.0)
+    if b >= 0.0 { s = s + " basis=" + _dNum(b) }
+    float sh = o.get("shrink", 1.0)
+    if sh != 1.0 { s = s + " shrink=" + _dNum(sh) }
+    int al = o.get("align", 0)
+    if al != 0 { s = s + " align=" + _str(al) }
+    float l = o.get("left", -1.0); if l >= 0.0 { s = s + " left=" + _dNum(l) }
+    float t = o.get("top", -1.0); if t >= 0.0 { s = s + " top=" + _dNum(t) }
+    float r = o.get("right", -1.0); if r >= 0.0 { s = s + " right=" + _dNum(r) }
+    float bt = o.get("bottom", -1.0); if bt >= 0.0 { s = s + " bottom=" + _dNum(bt) }
+    return s
+}
+
+// 打印一行子项（HBox/VBox 的主轴可以是横或竖 ✓），并给出该容器的剩余空间诊断 ✓
+func _dRow(Array[Widget] cs, Array[Dict] opts, Array[float] natW, Array[float] natH,
+           float inner, float spacing, bool horiz, int depth) {
+    int n = cs.len()
+    if n == 0 { print(_dInd(depth + 1) + "(空容器)\n"); return }
+    float totalBasis = 0.0
+    float sumGrow = 0.0
+    for n to i {
+        Dict o = opts[i]
+        float g = o.get("grow", 0.0)
+        if o.get("expand", false) and g <= 0.0 { g = 1.0 }
+        float basis = natH[i]
+        if horiz { basis = natW[i] }
+        float b = o.get("basis", -1.0)
+        if b >= 0.0 { basis = b }
+        totalBasis = totalBasis + basis
+        sumGrow = sumGrow + g
+    }
+    float free = inner - totalBasis - spacing * (n - 1)
+    string hint = ""
+    if free > 0.5 and sumGrow == 0.0 {
+        hint = "   <== 有剩余空间但无人 grow ⇒ 全靠起始边堆着 ✗（写 grow 或 justify ✓）"
+    }
+    print(_dInd(depth + 1) + "inner=" + _dNum(inner) + "  basis合计=" + _dNum(totalBasis)
+          + "  free=" + _dNum(free) + "  sumGrow=" + _str(_int(sumGrow)) + hint + "\n")
+    for n to i {
+        Dict o = opts[i]
+        float g = o.get("grow", 0.0)
+        if o.get("expand", false) and g <= 0.0 { g = 1.0 }
+        string warn = ""
+        if free > 0.5 and g <= 0.0 { warn = "   <== free 未被吸收（grow=0 ⇒ 不随空间变化 ✗）" }
+        _dWalk(cs[i], depth + 2, _dOpts(o) + warn, natW[i], natH[i])
+    }
+}
+
+// 递归打印一个控件；`optStr` 为父容器记录给它的 flex 选项（根为空 ✓）
+func _dWalk(Widget c, int depth, string optStr, float natW, float natH) {
+    string natS = ""
+    if natW >= 0.0 { natS = "  nat=" + _dNum(natW) + "x" + _dNum(natH) }
+    print(_dInd(depth) + _dName(c) + "  " + _dNum(c.get_w()) + "x" + _dNum(c.get_h()) + natS + optStr + "\n")
+    switch c {
+        case is HBox {
+            print(_dInd(depth + 1) + "@(" + _dNum(c.x) + "," + _dNum(c.y) + ")  pad="
+                  + _dNum(c.padX) + "," + _dNum(c.padY) + "  spacing=" + _dNum(c.spacing) + "\n")
+            _dRow(c._c, c._opt, c._natW, c._natH, c.w - 2.0 * c.padX, c.spacing, true, depth)
+        }
+        case is VBox {
+            print(_dInd(depth + 1) + "@(" + _dNum(c.x) + "," + _dNum(c.y) + ")  pad="
+                  + _dNum(c.padX) + "," + _dNum(c.padY) + "  spacing=" + _dNum(c.spacing) + "\n")
+            _dRow(c._c, c._opt, c._natW, c._natH, c.h - 2.0 * c.padY, c.spacing, false, depth)
+        }
+        case is AnchorBox {
+            print(_dInd(depth + 1) + "@(" + _dNum(c.x) + "," + _dNum(c.y) + ")  anchor\n")
+            for c._c.len() to i {
+                _dWalk(c._c[i], depth + 2, _dOpts(c._opt[i]), c._natW[i], c._natH[i])
+            }
+        }
+        case is ScrollView {
+            print(_dInd(depth + 1) + "@(" + _dNum(c.x) + "," + _dNum(c.y) + ")  内容="
+                  + _dNum(c._contentW) + "x" + _dNum(c._contentH) + "\n")
+            if c._content != null { _dWalk(c._content, depth + 1, "", -1.0, -1.0) }
+        }
+        case is TabControl {
+            print(_dInd(depth + 1) + "@(" + _dNum(c.x) + "," + _dNum(c.y) + ")  页="
+                  + _str(c._active) + "/" + _str(c._tabs.len()) + "\n")
+            if c._active >= 0 and c._active < c._pageLayouts.len() {
+                if c._hasLayout[c._active] {
+                    _dWalk(c._pageLayouts[c._active] as Widget, depth + 1, "", -1.0, -1.0)
+                }
+            }
+        }
+    }
+}
+
+export func dumpLayout(Widget c) {
+    print("[layout] ===== dump =====\n")
+    _dWalk(c, 0, "", -1.0, -1.0)
+    print("[layout] ================\n")
 }
 
 // 创建窗口实例，opts: {title, w, h, flags}

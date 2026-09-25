@@ -220,6 +220,8 @@ export func setRoot(Window win, Widget root)   { win.setRoot(root) }
 export func setRootAt(Window win, Widget root, float ox, float oy) { win.setRootAt(root, ox, oy) }
 export func pushModal(int w)                   { wnd.pushModal(w) }
 export func popModalIfTop(int w)               { wnd.popModalIfTop(w) }
+// 布局调试：打印任意控件子树的布局（尺寸 + flex 参数 + 剩余空间诊断 ✓）；窗口用 win.dumpLayout() ✓
+export func dumpLayout(Widget c)               { wnd.dumpLayout(c) }
 export func setModalWid(int w)                 { wnd.setModalWid(w) }
 export func getModalWid(): int                 { return wnd.getModalWid() }
 export func createRenderer(Ptr[u8] w): Renderer     { return r.createRenderer(w) }
