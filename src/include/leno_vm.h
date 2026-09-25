@@ -139,8 +139,12 @@ typedef enum {
 
     // --- 通用索引 ---
     OP_INDEX,           // iABC  R[A] = R[B][R[C]]（数组或字典）
-    // 静态类型特化索引（codegen 已确认 R[B] 为 Array[int]/Array[float]、R[C] 为 int48）：
+    // 静态类型特化索引（codegen 已确认 R[B] 是 **Array**、R[C] 为 int48）：
     // 信任静态类型，跳过 obj 判型与下标数字判型，直接取元素（少 2~3 次检查）。
+    // ⚠ `_INT` / `_FLOAT` 后缀说的是**下标是 int48**，**与元素类型无关**（两个 handler
+    //   逐字相同，只是历史上分了两个编号；保留编号是为了不动既有字节码）。
+    //   ⑤-ai（2026-09-25）：原先 codegen 只对元素类型是 int/float 的数组发这两条，
+    //   元素是 struct/string/嵌套数组时白走通用 OP_INDEX ⇒ 已放宽为"是 Array 且下标 int 即可"。
     OP_INDEX_ARRAY_INT,
     OP_INDEX_ARRAY_FLOAT,
     OP_INDEX_SET,       // iABC  R[B][R[C]] = R[A]
@@ -359,11 +363,11 @@ typedef enum {
     //   对 int48 来说是「int→double→int」两次浮点往返（读路径的特化版早就省掉了，
     //   写路径一直漏着）——这是本指令要消掉的那部分。
     //   越界检查与 GC 写屏障与通用版**逐条一致**（越界同样报「数组索引越界: …」）。
-    //   ⚠ 发射条件与读路径同源（codegen_expr.c 的 arr_spec）：接收者静态类型 Array[int]
-    //     **且**下标静态类型 int；Array[float] / 字典 / 推断不出类型 ⇒ 仍走通用
-    //     OP_INDEX_SET，行为不变。
+    //   ⚠ 发射条件与读路径同源（codegen_stmt.c 的 index_set_op_for）：接收者静态类型是
+    //     **Array**（元素类型不限）+ 下标静态类型 int；字典 / 推断不出类型 ⇒ 仍走通用
+    //     OP_INDEX_SET，行为不变。`_INT` 后缀同样指"下标是 int"。
     //   追加在末尾 ⇒ 既有 opcode 编号不动，旧 .lenb 仍可执行。
-    OP_INDEX_SET_ARRAY_INT,  // iABC  R[B][R[C]] = R[A]（Array[int] 特化）
+    OP_INDEX_SET_ARRAY_INT,  // iABC  R[B][R[C]] = R[A]（Array 特化，下标 int）
 
     OP_OPCODE_COUNT,    // 用于跳转表大小
 } OpCode;

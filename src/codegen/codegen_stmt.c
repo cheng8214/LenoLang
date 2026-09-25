@@ -1211,16 +1211,16 @@ static SymRef* assign_target_ref(Ast* ast, int i) {
 }
 
 // 索引写该发哪条指令：静态类型已知 ⇒ 特化版 OP_INDEX_SET_ARRAY_INT，否则通用 OP_INDEX_SET。
-//   判据与**读路径同源**（codegen_expr.c 里 arr_spec 的那三行）：接收者静态类型 Array[int]、
-//   下标静态类型 int。读路径靠这个判据跳过 obj/下标判型已有先例，这里照搬。
+//   判据与**读路径同源**（codegen_expr.c 里 arr_spec 的那三行）：接收者静态类型是 Array、
+//   下标静态类型是 int —— **不限元素类型**（见 leno_vm.h：特化指令只依赖"接收者是数组 +
+//   下标是 int"，与元素是什么无关；原先只覆盖 int 元素是漏做，⑤-ah/⑤-ai）。
 //   ⚠ 与读路径同一个前提："信任静态类型"（数组若被 ROTASET 改结构，两侧口径一致）；
-//     Array[float] / 字典 / 推断不出类型 ⇒ 通用版，行为不变。
+//     字典 / 推断不出类型 ⇒ 通用版，行为不变。
 //   infer_expr_type 返回**新分配的副本**，调用方负责释放（本文件既有用法同此）。
 static OpCode index_set_op_for(CodeGen* gen, Ast* obj_ast, Ast* idx_ast) {
     TypeInfo* ot = obj_ast ? infer_expr_type(gen->sem, obj_ast) : NULL;
     TypeInfo* it = idx_ast ? infer_expr_type(gen->sem, idx_ast) : NULL;
     int spec = (ot && ot->kind == TYPE_ARRAY && ot->element_type &&
-                ot->element_type->kind == TYPE_INT &&
                 it && it->kind == TYPE_INT);
     if (ot) type_free(ot);
     if (it) type_free(it);

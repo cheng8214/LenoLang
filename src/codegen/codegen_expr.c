@@ -509,8 +509,6 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
             TypeInfo* ot = infer_expr_type(gen->sem, iobj);
             TypeInfo* it = infer_expr_type(gen->sem, iidx);
             int arr_spec = (ot && ot->kind == TYPE_ARRAY && ot->element_type &&
-                            (ot->element_type->kind == TYPE_INT ||
-                             ot->element_type->kind == TYPE_FLOAT) &&
                             it && it->kind == TYPE_INT);
             // ★ 立即数下标：数组已特化 + 下标是 **[0,255] 整数字面量** ⇒ **不必求值下标**，
             //   也不必为它分配/装载一个寄存器（Lua 的 GETI 就是把这个小下标编在指令里）。
@@ -544,7 +542,7 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
                     reg_encode_iABC(gen->chunk, OP_INDEX_ARRAY_IMM, dst, obj_reg,
                                     (int)(uint8_t)idx_imm_val, ast->line);
                 } else {
-                    int op = (ot->element_type->kind == TYPE_INT) ? OP_INDEX_ARRAY_INT : OP_INDEX_ARRAY_FLOAT;
+                    int op = (ot->element_type->kind == TYPE_FLOAT) ? OP_INDEX_ARRAY_FLOAT : OP_INDEX_ARRAY_INT;
                     reg_encode_iABC(gen->chunk, op, dst, obj_reg, idx_reg, ast->line);
                 }
                 if (idx_is_temp) reg_free(gen, idx_reg);
