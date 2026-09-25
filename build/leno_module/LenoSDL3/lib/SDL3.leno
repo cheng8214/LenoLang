@@ -198,6 +198,9 @@ export func showMessageBox(string title, string msg, int flags = 0) { core.showM
 
 export func markFrameRedraw() { core.markFrameRedraw() }
 export func requestRedraw()   { core.requestRedraw() }
+// 取出并清除"待重绘"标志（自检/诊断用：可断言"这一帧跑完后是否还欠一帧" ✓）
+// 场景：动画控件必须在"动画未结束时"每帧再请求一帧，否则事件循环会挂起 ✗（见 sdl_scrollview.leno ✓）
+export func consumeRedrawRequest(): bool { return core.consumeRedrawRequest() }
 
 
 export func getClipboardText(): string   { return core.getClipboardText() }

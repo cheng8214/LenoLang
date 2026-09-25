@@ -236,6 +236,14 @@ export struct ScrollView impl Widget {
     func _sync() {
         int cur = core.frameId()
         bool firstThisFrame = (_frameSynced != cur)
+        // ★ 平滑动画进行中：**每次 `_sync` 都补一次"下一帧"请求**（含下面提前 return 的那条路径 ✓）
+        //   为什么必须放在去重之前：滚轮事件那一帧的顺序是「process → render」——
+        //   process 里的 `_sync` 是"本帧首次"⇒ 推进一步 + 请求一帧 ✓；但同一帧的**渲染阶段**
+        //   再调 `_sync` 时 `firstThisFrame` 已是 false ✗ ⇒ 动画块被跳过 ⇒
+        //   **这一帧渲染完就再没人请求下一帧** ✗ ⇒ 事件循环随即挂起（500ms 空闲超时）✗✗
+        //   ⇒ 表现："滚轮滚了画面不动、鼠标一动才跟着动"（用户实测抓到 ✓）
+        //   ⇒ 只要动画没结束，就每帧再要一帧（与 Label 横向滚动的每帧请求同一手法 ✓）
+        if _smoothAnim { core.requestRedraw() }
         // ⚠ 去重**不能只看帧号**：同一帧内可能来多个滚轮事件（快速滚 ✗），位置变了就必须重做，
         //   否则渲染用的还是"第一个事件"留下的旧位置 ⇒ 视觉滞后/一顿一顿 ✗（"抽搐"的第二个成因）
         if not firstThisFrame and _scrollX == _syncedX and _scrollY == _syncedY { return }
