@@ -1,4 +1,20 @@
-// dashboard_auto_layout.leno — 「侧栏仪表盘」的**自适应布局版**（从 dashboard_sidebar.leno 复制 ✓）
+// dashboard.leno — 「侧栏仪表盘」应用（自适应布局版）
+// 原在 leno_gui/控件/数据看板/dashboard_auto_layout.leno —— 它是**多个特性的组合样板**，
+//   不是单个控件的示范 ⇒ 2026-09-26 移到 leno_gui/应用/数据看板/（git 保留历史 ✓）。
+//   控件目录里仍留着两代原型：dashboard.leno（最初版）与 dashboard_sidebar.leno（固定坐标版 ✓）。
+//
+// ★ 为什么值得当参考：这一份把下列特性**跑在同一页面上**，想学"怎么组合"时直接看这里 ✓
+//   · 布局驱动整页：HBox(侧栏 + TabControl) → TabControl.setPageLayout(page, VBox) → 卡片 AnchorBox
+//     （页内不再有任何写死的绝对坐标 ✗；窗口缩放/内容滚动都由布局重排 ✓）
+//   · 侧栏导航与切页：唯一入口 set_page → tab.set_active → on_change → sync_nav（选中态不会漂移 ✓）
+//   · 滚动页约定：ScrollView(fit_w/fit_h + smooth) → VBox → Panel 卡片（内部 AnchorBox ✓）
+//   · 控件组合：表格 / 折线图 / 编辑框 / 开关 / 徽标 / 提示条 / 步骤条 / **Calendar**（页 2 ✓）
+//   · Canvas 自绘：页 2「连续天数圆环」（模块没有环形图控件 ⇒ 这里演示怎么用 Canvas 补 ✓）
+//   · 自适应：页头按钮锚右、卡片按 basis+grow 按比例铺开、末行 grow 吸收多余高 ✓
+//   · 无头自检钩子（环境变量，方便脚本/CI 核对界面 ✓）：
+//       DPAGE=2 启动即切到第 3 页 · DSHOT=<png> 截图后退出 · DSHOT_AT=6 第 6 帧截
+//       DAUTO=6 每 6 帧自动切页 · DCYCLE=n 切页周期 · DWIN=1080x735 窗口尺寸 · DFPS=0 关掉 FPS HUD
+// 跑：build\leno.exe --no-cache leno_gui\应用\数据看板\dashboard.leno
 // ★ 目标：① 窗口可拖拽缩放（`resizable:true` ✓）② 内容随窗口尺寸**自动重排**（不再靠写死的坐标 ✓）
 //   骨架（本文件已完成）：`HBox( 侧栏[basis 190 + 拉伸] + TabControl[grow 1 + 拉伸] )` + `wt.setRoot(root)`
 //   ⇒ 模块会把根控件同步为窗口实际尺寸并**驱动内部布局重排**（见 sdl_window.setRoot 的注释 ✓）

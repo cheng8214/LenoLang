@@ -155,7 +155,7 @@ build/leno hello.leno
 
 ```bash
 # 从仓库根目录
-build\leno.exe leno_gui\控件\数据看板\dashboard_auto_layout.leno
+build\leno.exe leno_gui\应用\数据看板\dashboard.leno          # 多特性组合样板（布局/控件/Canvas 自绘 ✓）
 build\leno.exe leno_gui\游戏\俄罗斯方块\tetris.leno
 ```
 
@@ -269,8 +269,8 @@ main() {
 
 | 目录 | 内容 |
 | --- | --- |
-| `控件/` | 14 类控件演示：按钮 / 编辑框 / 标签 / 表格 / 布局 / 复合控件 / 画布 / 数值控件 / 图表 / 选择控件 / 总览 / **数据看板** / **设置面板** / 系统 |
-| `应用/` | 7 个完整应用：数据看板类界面、文件管理器、文件搜索、缓存清理工具、桌宠、IDE 布局、PE 分析器、Trae 签到 |
+| `控件/` | 14 类控件演示：按钮 / 编辑框 / 标签 / 表格 / 布局 / 复合控件 / 画布 / 数值控件 / 图表 / 选择控件 / 总览 / **设置面板** / 系统（数据看板的两代旧版原型也在该目录 ✓） |
+| `应用/` | 9 个完整应用：**数据看板**（布局 / 控件 / Canvas 自绘的组合样板 ✓）、模拟时钟、文件管理器、文件搜索、缓存清理工具、桌宠、IDE 布局、PE 分析器、Trae 签到 |
 | `游戏/` | 6 个游戏：俄罗斯方块 / 飞机大战 / 扫雷 / 塔防 / 五子棋 / 植物大战僵尸 |
 | `特效/` | 烟花、代码雨、水波涟漪（含 Python 基准对照） |
 | `系统/` | 截图工具 + 全局热键 |
@@ -365,7 +365,7 @@ Leno/
 │       ├── LenoSDL3/           #   跨平台 GUI（46 个 sdl_*.leno + docs/ + examples/）
 │       ├── LenoWeb/  LenoSqlite/  LenoWin32/
 │       └── LenoMusic/  LenoCrypto/  LenoHack/
-├── leno_gui/                   # GUI 演示与应用（控件 14 类 / 应用 7 个 / 游戏 6 个 / 特效）
+├── leno_gui/                   # GUI 演示与应用（控件 14 类 / 应用 9 个 / 游戏 6 个 / 特效）
 ├── leno_lsp/                   # LSP 语言服务器（C 实现 + .vsix 插件）
 ├── assert/                     # 断言测试（469 个文件，入口 run_tests.leno）
 ├── examples/                   # 示例代码（1016 个文件）
