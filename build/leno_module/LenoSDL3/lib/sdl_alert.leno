@@ -1,9 +1,13 @@
 // sdl_alert.leno — 提示条（Info / Warning / Danger / Success）
 // win.addAlert({...}) 或 SDL3.createAlert({...})
 //
-// 结构：自绘的圆角底 + 描边 + 左侧色条，文字交给内部的 Label ✓
+// 结构：自绘的圆角底 + 描边 + 左侧色条 + **可选前置图标**，文字交给内部的 Label ✓
 //   ⇒ **多行/自动折行直接可用**（Label 已支持 `\n` 与 `wrap`），不必在这里再写一套排版 ✗
 //   ⇒ 高度默认按文字实际行数自适应（给了 h 则固定 ✓）
+//
+// `icon`：前置图标字符（如 "▲"、"●"、"◎" ✓ —— 只实测出 ■ ● ◆ ▲ ○ ◎ ※ √ × ∑ ☆ ★ → ← § 有字形，
+//   其它符号会渲染成豆腐块 □ ✗）。图标会占用文字左侧的位置，折行宽度自动扣掉它 ✓
+//   ⚠ 不传 icon ⇒ 与老版本逐像素一致（零影响 ✓）
 //
 // `kind` 预设四套浅色配色（默认 WARN）：
 //   info 蓝 / warn 黄 / danger 红 / success 绿；任一项都能用 bg_color/border_color/text_color 覆盖 ✓
@@ -12,6 +16,7 @@ import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_theme.leno" as theme; use theme.Color
+import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_label.leno" as lbl; use lbl.Label
 import "sdl_core.leno" as core
 
@@ -30,7 +35,9 @@ export struct Alert impl Widget {
     bool _accent = true        // 左侧色条 ✓
     bool _autoH = true         // 高度按行数自适应（opts 给了 h ⇒ false ✓）
     float _accentW = 4.0
-    float _lx = 0.0            // 文字相对本控件左上角的 x 偏移（含色条 + 间距 ✓）
+    float _lx = 0.0            // 文字相对本控件左上角的 x 偏移（含色条 + 图标 + 间距 ✓）
+    string _icon = ""          // 前置图标字符（默认无 ⇒ 老行为 ✓）
+    Font? _fI = null           // 图标字体（与正文同字号 ✓）
     Color _bg = #FFF8E1FF
     Color _bd = #F5C77EFF
     Color _ac = #B54708FF
@@ -52,17 +59,22 @@ export struct Alert impl Widget {
             _bg = #ECFDF3FF; _bd = #A6F4C5FF; _ac = #027A48FF
         }
     }
-    // 文字左偏移 = 内边距 +（有色条时）色条宽 + 间距 ✓
-    func _calc_lx() {
-        float off = 0.0
-        if _accent { off = _accentW + 6.0 }
-        _lx = _padX + off
+    // 左侧色条占用的横向宽度（含与文字的间距 ✓）
+    func _accent_off(): float {
+        if _accent { return _accentW + 6.0 }
+        return 0.0
     }
-    func _wrap_w(): float {
-        float off = 0.0
-        if _accent { off = _accentW + 6.0 }
-        return _w - 2.0 * _padX - off
+    // 图标占用的横向宽度（图标实测宽 + 间距；无图标 ⇒ 0 ✓）
+    //   ⚠ 用**实测宽**而不是固定值：▲ / ● / → 这类符号宽度并不相同 ✓
+    func _icon_off(): float {
+        if _icon == "" { return 0.0 }
+        if _fI == null or not _fI.ok { return 0.0 }
+        var[float, float](iw, ih) = _fI.measureString(_icon)
+        return iw + 6.0
     }
+    // 文字左偏移 = 内边距 +（有色条时）色条宽 +（有图标时）图标宽 + 间距 ✓
+    func _calc_lx() { _lx = _padX + _accent_off() + _icon_off() }
+    func _wrap_w(): float { return _w - 2.0 * _padX - _accent_off() - _icon_off() }
 
     func set(Dict opts) {
         _applyKind(opts.get("kind", Alert.KIND_WARN))
@@ -83,6 +95,9 @@ export struct Alert impl Widget {
         Color tc = _ac
         if opts.get("text_color") is Color => t { tc = t }
         float fs = opts.get("font_size", 12.0)
+        // 前置图标（可选）：**先取字体再算左偏移** —— `_icon_off()` 依赖字体实测宽 ✓
+        _icon = opts.get("icon", "")
+        if _icon != "" { _fI = fnt.acquireFontAuto(fs) }
         _calc_lx()
         // 折行宽度：显式 `wrap_w` > 0 用它，否则按"内容区宽 - 两侧内边距 - 色条"✓
         float bw = opts.get("wrap_w", 0.0)
@@ -161,11 +176,17 @@ export struct Alert impl Widget {
             r.setColor(_ac)
             r.fillRoundedRect(x, y, _accentW, _h, _radius)
         }
+        // 前置图标：排在色条右侧、与首行文字顶边对齐 ✓（`_lx` 已把它的宽度算进去 ✓）
+        if _icon != "" and _fI != null and _fI.ok {
+            r.drawText(_fI, _icon, x + _padX + _accent_off(), y + _padY, _ac)
+        }
         _lbl.set_pos(x + _lx, y + _padY)
         _lbl.render(r)
     }
 
     func dispose() {
+        if _fI != null and _fI.ok { fnt.releaseFont(_fI) }
+        _fI = null
         if _lbl == null { return }
         _lbl.dispose()
         _lbl = null

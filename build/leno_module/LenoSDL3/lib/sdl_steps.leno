@@ -4,6 +4,8 @@
 // 两种方向：
 //   dir:0（默认，竖向）—— 圆圈 + 序号 + 标题 + 说明，右侧竖排（"切换守护"那种 5 步流程 ✓）
 //   dir:1（横向）——  圆圈 + 序号 + 横线 + 下方标题/状态（"部署流程"那种概览 ✓）
+//                     可选 `text_side:true` ⇒ 文字改放圆圈**右侧**（同心圆 + 右标题版式 ✓）
+//                     可选 `line_w`（连线粗细，默认 2 ✓）/ `line_color` ✓
 //
 // 状态：`set_active(idx)` 一把设定"idx 之前=已完成 / idx=当前 / 之后=未开始"，
 //   也可用 `set_state(i, STATE_*)` 单独设某一步 ✓
@@ -33,6 +35,14 @@ export struct Steps impl Widget {
     float _gap = 14.0        // 圆圈到文字的横向间距 ✓
     float _titleSize = 14.0
     float _descSize = 11.0
+    float _lineW = 2.0        // 横向连线粗细（默认 2 ✓；`line_w:1` 可与手写 1px 细线一致 ✓）
+    // 横向时文字放哪边：
+    //   false（默认）= **居中在圆圈正下方**（标准 stepper 版式 ✓）
+    //   true         = **放在圆圈右侧**（同心圆+右标题的版式，与示例里手写的 `step_h` 一致 ✓）
+    bool _textSide = false
+    // `text_side` 模式下"最宽的一段文字"宽度（标题/说明取大者 ✓）
+    //   ⚠ 必须用它给**最后一步右侧的文字**留位置，否则圆圈等分到边缘时标题会被卡片切掉 ✗
+    float _textW = 0.0
     int _active = -1         // < active 已完成、== active 当前步、> active 未开始（-1 = 全部未开始 ✓）
     // 配色（默认面向浅色界面 ✓）
     Color _doneBg    = #2B6BE4FF
@@ -60,6 +70,8 @@ export struct Steps impl Widget {
         _gap = opts.get("gap", 14.0)
         _titleSize = opts.get("font_size", 14.0)
         _descSize = opts.get("desc_size", 11.0)
+        _lineW = opts.get("line_w", 2.0)
+        _textSide = opts.get("text_side", false)
         if opts.get("done_color") is Color => t { _doneBg = t; _lineDone = t }
         if opts.get("pending_bg") is Color => t { _pendBg = t }
         if opts.get("pending_border") is Color => t { _pendBd = t }
@@ -115,6 +127,21 @@ export struct Steps impl Widget {
         float dh = _descSize
         if _fT != null and _fT.ok { var[float, float](twx, thx) = _fT.measureString("Ag"); th = thx }
         if _fD != null and _fD.ok { var[float, float](dwx, dhx) = _fD.measureString("Ag"); dh = dhx }
+        if _textSide {
+            // 文字在圆圈右侧 ⇒ 与圆圈并排 ⇒ 高度取"文字块"与圆圈的大者 ✓
+            float th2 = th + 2.0 + dh
+            _h = if _circle > th2 then _circle else th2
+            // 量出最宽的一段文字 ⇒ 横向排布时给它留位置（否则最后一步的标题溢出卡片 ✗）
+            _textW = 0.0
+            for _titles.len() to i {
+                var[float, float](wt, _h1) = _fT.measureString(_titles[i])
+                var[float, float](wd, _h2) = _fD.measureString(_descs[i])
+                if wt > _textW { _textW = wt }
+                if wd > _textW { _textW = wd }
+            }
+            return
+        }
+        _textW = 0.0
         _h = _circle + 8.0 + th + 2.0 + dh + 2.0
     }
     func set_title_size(float s) {
@@ -195,16 +222,28 @@ export struct Steps impl Widget {
             return
         }
 
-        // 横向：圆圈等分排开 + 连线 + 下方居中标题/状态 ✓
+        // 横向：圆圈等分排开 + 连线；文字按 `_textSide` 决定在圆圈右侧 / 下方居中 ✓
         float span = _w - _circle
-        if n > 1 { span = (_w - _circle) / _float(n - 1) }
+        if n > 1 {
+            if _textSide {
+                // ⚠ 文字在右侧 ⇒ 必须**先扣掉最宽文字的宽度**再等分，否则最后一步的标题会越过卡片
+                //   右边缘被切掉 ✗（用户实测抓到："启用定时任务"超出卡片 ✓）
+                //   推导：末步文字右端 = span×(n−1) + 圆圈直径 + gap + 文字宽 ≤ _w
+                //     ⇒ span ≤ (_w − 圆圈 − gap − 文字宽) / (n−1) ✓
+                span = (_w - _circle - _gap - _textW) / _float(n - 1)
+                if span < 0.0 { span = 0.0 }
+            } else {
+                span = (_w - _circle) / _float(n - 1)
+            }
+        }
         float ccy = y + rad
         for n to i {
             float cx = x + rad + span * _float(i)
             int st = _state(i)
             if i < n - 1 {
                 if st == Steps.STATE_DONE { r.setColor(_lineDone) } else { r.setColor(_linePend) }
-                r.fillRect(cx + rad, ccy - 1.0, span - _circle, 2.0)
+                // 连线**居中于圆心高度**、粗细可配（`line_w:1` ⇒ 与手写 1px 细线一致 ✓）
+                r.fillRect(cx + rad, ccy - _lineW / 2.0, span - _circle, _lineW)
             }
         }
         var[float, float](_aw, th) = _fT.measureString("Ag")
@@ -226,15 +265,27 @@ export struct Steps impl Widget {
             Color nc = #FFFFFFFF
             if not _lit(st) { nc = _pendTx }
             r.drawText(_fT, num, cx - nw / 2.0, ccy - nh / 2.0, nc)
-            // 标题（居中于圆心 ✓）
             string tt = _titles[i]
             var[float, float](tw, _th2) = _fT.measureString(tt)
-            float ty = ccy + rad + 8.0
-            r.drawText(_fT, tt, cx - tw / 2.0, ty, _titleC)
             string dd = _descs[i]
-            if dd != "" {
-                var[float, float](dw, _dh2) = _fD.measureString(dd)
-                r.drawText(_fD, dd, cx - dw / 2.0, ty + th + 2.0, _descC)
+            if _textSide {
+                // 文字在圆圈**右侧**：标题与圆圈顶边对齐 +1，说明固定在标题下方 +21 处
+                //   ⇒ 与手写 `step_h` 的 (left+36, top+1) / (left+36, top+21) 完全一致 ✓
+                //   （`gap` 要按原样给 23 ⇒ 圆圈左边缘到文字 = 圆圈直径 26 + 23 - 13 = 36 ✓）
+                float tx = cx + rad + _gap
+                r.drawText(_fT, tt, tx, ccy - rad + 1.0, _titleC)
+                if dd != "" {
+                    var[float, float](dw, _dh2) = _fD.measureString(dd)
+                    r.drawText(_fD, dd, tx, ccy - rad + 21.0, _descC)
+                }
+            } else {
+                // 默认：标题/说明**居中在圆圈正下方** ✓
+                float ty = ccy + rad + 8.0
+                r.drawText(_fT, tt, cx - tw / 2.0, ty, _titleC)
+                if dd != "" {
+                    var[float, float](dw, _dh2) = _fD.measureString(dd)
+                    r.drawText(_fD, dd, cx - dw / 2.0, ty + th + 2.0, _descC)
+                }
             }
         }
     }

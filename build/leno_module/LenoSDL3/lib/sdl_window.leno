@@ -353,6 +353,11 @@ export struct Window {
         int w        = opts.get("w", 800)
         int h        = opts.get("h", 600)
         int flags    = opts.get("flags", 0)
+        // ★ `resizable:true` ⇒ 补上 SDL_WINDOW_RESIZABLE（0x20）—— 窗口可拖边缘缩放/最大化 ✓
+        //   为什么以前不行：`flags` 默认 0，而 **init 从来没读过 `resizable` 选项** ✗ ⇒
+        //   示例里写的 `resizable:false` / `resizable:true` 一直是**被忽略的选项** ✗（实测踩到 ✓）
+        //   默认仍是"不可缩放"= 历史行为不变 ✓；要缩放就显式 `resizable:true` ✓
+        if opts.get("resizable", false) { flags = flags | 0x20 }
         _w = w; _h = h
         // 检测透明窗口标志
         _transparent = (flags & 0x0000000040000000) != 0

@@ -54,9 +54,18 @@ export struct ScrollView impl Widget {
     float _hThumbX = 0.0, _hThumbW = 0.0      // 水平滚动条拇指几何
 
     bool _autoW = false, _autoH = false      // 自动内容尺寸标志（content_w/h < 0 时启用）
+    // ── 内容尺寸「跟随视图」（自适应布局用 ✓）──
+    //   `fit_w`：内容宽 = 视图宽 − 滚动条宽（= 旧写法 `content_w: w - 12` ✓，但会**跟着窗口变**）
+    //   `fit_h`：内容高 = max(实测高, 视图高) ⇒ 内容不满一屏时也撑满 ⇒ 内容里的 `grow` 子项
+    //     才有"多余空间"可分配（没有它，VBox 的自然高=各子项之和 ⇒ grow 拿不到空间 ✗）
+    //   与 `content_w/h < 0` 的自动测量互斥：`fit_w` 优先（此时 `_autoW` 不再启用 ✓）
+    bool _fitW = false, _fitH = false
     bool _loaded = false, enabled = true, visible = true
     Ptr[u8]? _hwnd
     int _frameSynced = -1   // _sync() 帧内去重：记录已同步的帧号，-1 表示从未同步
+    // 上一次"已同步过"的自身尺寸：窗口缩放时滚动位置没变，但**内容尺寸必须按新视图尺寸重算** ✗
+    //   （只比滚动位置的去重会让内容停在旧宽度 ⇒ 画面"还原后没变"，用户实测 ✓）
+    float _syncedW = -1.0, _syncedH = -1.0
 
     func set(Dict opts) {
         Theme th = theme.getTheme()
@@ -77,6 +86,9 @@ export struct ScrollView impl Widget {
         _drawBorder = opts.get("border", true)
         _contentW = opts.get("content_w", -1.0)
         _contentH = opts.get("content_h", -1.0)
+        _fitW = opts.get("fit_w", false)
+        _fitH = opts.get("fit_h", false)
+        if _fitW { _contentW = w - _barW }       // 立即可用（不必等首帧 _sync ✓）
         _step = opts.get("step", 48.0)          // 每格滚轮步长（默认 48 ≈ 平台惯例 ✓）
         _smooth = opts.get("smooth", false)    // 平滑滚动（默认关 = 老行为 ✓）
         _scrollX = 0.0; _scrollY = 0.0
@@ -246,11 +258,20 @@ export struct ScrollView impl Widget {
         if _smoothAnim { core.requestRedraw() }
         // ⚠ 去重**不能只看帧号**：同一帧内可能来多个滚轮事件（快速滚 ✗），位置变了就必须重做，
         //   否则渲染用的还是"第一个事件"留下的旧位置 ⇒ 视觉滞后/一顿一顿 ✗（"抽搐"的第二个成因）
-        if not firstThisFrame and _scrollX == _syncedX and _scrollY == _syncedY { return }
+        // ⚠ 去重**必须连自身尺寸一起比**：窗口缩放（最大化/还原）时滚动位置没变，但 `fit_w/fit_h`
+        //   要按新尺寸重算 `_contentW/_contentH` 并下发 `_content.set_size(...)`；只按"滚动位置没变"
+        //   就 return，会让**内容仍按旧宽度排版** ⇒ 画面停在旧样子（而外层的 `w` 已经变了 ⇒
+        //   看起来就是"还原后布局没变、要动一下鼠标才恢复" ✗ —— 用户实测抓到 ✓）
+        if not firstThisFrame and _scrollX == _syncedX and _scrollY == _syncedY and w == _syncedW and h == _syncedH { return }
         _frameSynced = cur
         _syncedX = _scrollX; _syncedY = _scrollY
+        _syncedW = w; _syncedH = h
+        if _fitW { _contentW = w - _barW }
         if _autoW and _content != null { _contentW = _measure_w(_content) }
         if _autoH and _content != null { _contentH = _measure_h(_content) }
+        // `fit_h`：内容不满一屏也撑满视图高 ⇒ 内容里的 `grow` 子项才有空间可分 ✓
+        //   ⚠ 必须放在**测量之后**：先拿真实自然高，再决定要不要顶到视图高 ✓
+        if _fitH and _contentH < h { _contentH = h }
         _clampScroll()
         // ★ 平滑滚动（`smooth:true`）：每帧向目标插值一步，到位即停 ✓
         //   `firstThisFrame` 保证"每帧只推进一步"（同一帧内多次 _sync 不会重复推进 ✗）
@@ -304,7 +325,12 @@ export struct ScrollView impl Widget {
     func get_w(): float { return w }
     func get_h(): float { return h }
     func set_pos(float px, float py) { x = px; y = py }
-    func set_size(float sw, float sh) { w = sw; h = sh; _clampScroll() }
+    func set_size(float sw, float sh) {
+        w = sw; h = sh
+        // 视图尺寸变了 ⇒ `fit_w` 的内容宽立刻跟着变（不必等下一帧 `_sync` ✓）
+        if _fitW { _contentW = w - _barW }
+        _clampScroll()
+    }
     func set_enabled(bool e) { enabled = e }
     func set_visible(bool v) { visible = v }
     func is_visible(): bool { return visible }
