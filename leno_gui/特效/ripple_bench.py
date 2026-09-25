@@ -6,6 +6,7 @@
 
 import sys
 import math
+import os
 import random
 import ctypes
 
@@ -19,9 +20,28 @@ ENABLE_AUTO_RIPPLE    = True   # 是否自动产生波纹
 ENABLE_MEMCPY         = True   # render_ripple 开头是否 memcpy
 
 # ==================== SDL 常量 ====================
-SDL3_DLL = r"d:\CLeno\Leno\leno_module\LenoSDL3\lib\SDL3.dll"
-SDL3_IMAGE_DLL = r"d:\CLeno\Leno\leno_module\LenoSDL3\lib\SDL3_image.dll"
+#   ⚠ 原写死的 `d:\CLeno\Leno\leno_module\LenoSDL3\lib\` 已不存在 —— 模块由包管理器装到
+#     `build\leno_module\LenoSDL3\lib`。与 ripple_image.py 同一处修正：按脚本位置解析。
+def _find_native_lib(name):
+    here = os.path.dirname(os.path.abspath(__file__))
+    repo = os.path.dirname(os.path.dirname(here))       # leno_gui\特效 → 仓库根
+    cands = [
+        os.path.join(repo, "build", "leno_module", "LenoSDL3", "lib", name),
+        os.path.join(repo, "leno_module", "LenoSDL3", "lib", name),
+    ]
+    for c in cands:
+        if os.path.exists(c):
+            return c
+    raise FileNotFoundError("找不到 " + name + "，试过：\n  " + "\n  ".join(cands))
+
+SDL3_DLL = _find_native_lib("SDL3.dll")
+SDL3_IMAGE_DLL = _find_native_lib("SDL3_image.dll")
 SDL_PIXELFORMAT_RGBA8888 = 373694468
+
+# Python 3.8+ 不再用 PATH 解析 DLL 依赖 ⇒ 显式加入搜索目录（SDL3_image 依赖 SDL3）
+for _d in {os.path.dirname(SDL3_DLL), os.path.dirname(SDL3_IMAGE_DLL)}:
+    if hasattr(os, "add_dll_directory"):
+        os.add_dll_directory(_d)
 
 sdl = ctypes.CDLL(SDL3_DLL)
 sdl_img = ctypes.CDLL(SDL3_IMAGE_DLL)

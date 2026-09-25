@@ -8,12 +8,35 @@
 
 import sys
 import math
+import os
 import random
 import ctypes
 
 # SDL3 路径（与 Leno 版共用同一个 DLL）
-SDL3_DLL = r"d:\CLeno\Leno\leno_module\LenoSDL3\lib\SDL3.dll"
-SDL3_IMAGE_DLL = r"d:\CLeno\Leno\leno_module\LenoSDL3\lib\SDL3_image.dll"
+#   ⚠ 原先写死的 `d:\CLeno\Leno\leno_module\LenoSDL3\lib\` 已不存在 —— 模块由包管理器
+#     装到仓库的 `build\leno_module\LenoSDL3\lib`（Leno 侧 leno.toml 里写的是相对路径
+#     `lib/SDL3.dll`）。这里改成**按脚本位置**往上找仓库根，逐个候选试，不再写死绝对路径
+#     （仓库换盘/换目录就整片失效，正是这次的错法）。
+def _find_native_lib(name):
+    here = os.path.dirname(os.path.abspath(__file__))
+    repo = os.path.dirname(os.path.dirname(here))       # leno_gui\特效 → 仓库根
+    cands = [
+        os.path.join(repo, "build", "leno_module", "LenoSDL3", "lib", name),
+        os.path.join(repo, "leno_module", "LenoSDL3", "lib", name),
+    ]
+    for c in cands:
+        if os.path.exists(c):
+            return c
+    raise FileNotFoundError("找不到 " + name + "，试过：\n  " + "\n  ".join(cands))
+
+SDL3_DLL = _find_native_lib("SDL3.dll")
+SDL3_IMAGE_DLL = _find_native_lib("SDL3_image.dll")
+
+# Python 3.8+ 在 Windows 上不再用 PATH 解析 DLL 依赖 ⇒ 显式把 lib 目录加入搜索路径
+#   （SDL3_image.dll 依赖 SDL3.dll；缺这步时报的正是 "or one of its dependencies"）
+for _d in {os.path.dirname(SDL3_DLL), os.path.dirname(SDL3_IMAGE_DLL)}:
+    if hasattr(os, "add_dll_directory"):
+        os.add_dll_directory(_d)
 
 # ==================== SDL 常量 ====================
 SDL_PIXELFORMAT_RGBA8888 = 373694468  # 和 Leno 版一致
@@ -81,6 +104,13 @@ sdl.SDL_GetTicks.argtypes = []
 sdl.SDL_Delay.restype = None
 sdl.SDL_Delay.argtypes = [ctypes.c_uint32]
 
+# SDL_DelayPrecise（SDL3 专有）：纳秒级精确延迟，末段走忙等。
+#   限帧必须用它而不是 SDL_Delay —— Windows 上 SDL_Delay 走 Sleep()，粒度 1~15.6ms，
+#   要睡 6ms 可能睡掉 15ms（实测：整轮被拉到 24ms、FPS 只有 41.7，而真实工作量
+#   19.7ms/帧 ⇒ 差额全是补睡过冲）。
+sdl.SDL_DelayPrecise.restype = ctypes.c_bool
+sdl.SDL_DelayPrecise.argtypes = [ctypes.c_uint64]
+
 # SDL_GetError
 sdl.SDL_GetError.restype = ctypes.c_char_p
 sdl.SDL_GetError.argtypes = []
@@ -126,6 +156,11 @@ class SDL_FRect(ctypes.Structure):
 MAX_RIPPLES = 6
 BAND_WIDTH = 16.0
 MAX_RIP_W = 384
+# 限帧：TARGET_FPS = 60（1000/60 ≈ 16.67，取整数 16ms —— 与 Leno 版 ripple_image.leno
+# 里那行 `if elapsed < 16 { SDL3.delay(16 - elapsed) }` 同一个常数）。
+# ★ 设 0 ⇒ 不限帧（基准模式，跑满上限）—— 想拿"真实上限 FPS"做对比时改这里即可。
+TARGET_FPS = 60
+FRAME_MS = (1000 // TARGET_FPS) if TARGET_FPS > 0 else 0
 
 # ==================== Ripple ====================
 class Ripple:
@@ -353,7 +388,7 @@ def main():
         return
     
     ren = sdl.SDL_CreateRenderer(win, None)
-    sdl.SDL_SetRenderVSync(ren, 0)  # 关闭 VSync 测上限
+    sdl.SDL_SetRenderVSync(ren, 0)  # 关闭 VSync 测上限（限帧改由循环内的 60 帧节流负责，见 FRAME_MS）
     
     tex = sdl.SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA8888, 1, buf_w, buf_h)
     if not tex:
@@ -462,7 +497,12 @@ def main():
         total_ms += elapsed
         if elapsed < min_frame_ms: min_frame_ms = elapsed
         if elapsed > max_frame_ms: max_frame_ms = elapsed
-        # 无帧延迟，跑满上限
+        # 限帧：本帧工作量不足 FRAME_MS 就补睡到 FRAME_MS（TARGET_FPS=0 ⇒ 不限帧）。
+        # ⚠ 放在统计之后 ⇒ 报告里的"每帧耗时"仍是**工作量**，限帧不会把数字糊成 16ms。
+        # ⚠ 用 SDL_DelayPrecise（纳秒）而不是 SDL_Delay：后者在 Windows 上粒度可达 ~15ms，
+        #    补睡会把整轮拉长（实测 FPS 41.7 而工作量只有 19.7ms/帧）。
+        if FRAME_MS > 0 and elapsed < FRAME_MS:
+            sdl.SDL_DelayPrecise((FRAME_MS - elapsed) * 1000000)
         total_frames += 1
     
     # ===== 性能报告 =====
@@ -480,6 +520,8 @@ def main():
     print(f"最高帧耗时: {max_frame_ms} ms")
     print(f"分辨率: {buf_w}x{buf_h} (原图 547x464)")
     print(f"波纹上限: {MAX_RIPPLES}  带宽: {BAND_WIDTH}")
+    print(f"限帧: {TARGET_FPS} FPS（每帧 {FRAME_MS}ms）" if TARGET_FPS > 0
+          else "限帧: 关闭（基准模式，跑满上限）")
     print("======================================")
     
     sdl.SDL_DestroyTexture(tex)
