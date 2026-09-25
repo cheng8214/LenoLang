@@ -295,7 +295,13 @@ export struct Window {
     Ptr[u8] handle    // SDL_Window 指针
     bool ok       // 窗口是否创建成功
     int _w; int _h; float _aaScale
-    int _maxFPS = 30        // 最大渲染帧率（0=不限制）
+    // 最大渲染帧率（0 = 不限制）。2026-09-25 由 **30 调到 60**：
+    //   实测（dummy 驱动、每帧主动请求重绘 ⇒ 完全由上限决定）：
+    //     · 上限 30 时只跑到 ~20.5 fps ✗ —— 节流"多等"了约 15ms/帧（waitTimeout 毫秒精度 + 5ms 兜底 ✓）
+    //     · 空窗口裸帧成本 ~17.7ms ⇒ 60 的节流间隔(16ms)与它同量级 ⇒ 轻界面能吃到全部收益 ✓
+    //     · 重界面裸成本 ~28ms/帧（示例页 5）⇒ 天花板 ~35fps，改 60 只多拿几点 ⚠
+    //   ⚠ 代价是 CPU：重界面上几乎恒定占满 ⇒ 省电/弱机场景仍可 `setMaxFPS(30)` 兜底 ✓
+    int _maxFPS = 60
     Array[Widget] _widgets = []
     Array[float]  _widgetZ = []   // 各控件的 z 值（与 _widgets 并行），渲染时按 z 升序排列
     Array[MenuBar]  _menus  = []   // 菜单栏集合，第二遍画下拉层（盖在最上层）
