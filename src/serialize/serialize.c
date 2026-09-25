@@ -2341,9 +2341,20 @@ int module_source_snapshot_matches(const char* src_path, uint64_t size, uint64_t
 }
 
 // ④ 运行中可执行文件的指纹（见 leno_serialize.h 的说明 / §8.112）
-//    口径：size + mtime + 内容 FNV-1a(64)。一次全文件读（leno.exe ≈ 1.8MB，约 1ms），
-//    只在入口缓存校验时调用一次。返回 0 表示「取不到」——调用方按 fail-closed 处理。
+//    口径：size + mtime + 内容 FNV-1a(64)。返回 0 表示「取不到」——调用方按 fail-closed 处理。
+//
+// ★ 记忆化（2026-09-25）：结果算一次就够 —— **运行中的 exe 在本进程生命周期内不可能变**
+//   （同一个文件、同一份内容；进程不会替换自己脚下的二进制）。而本函数要**读入整个 exe**
+//   做逐字节 FNV（leno.exe ≈ 1.4 MB ≈ 1 ms），调用点却远超"一次"：
+//   每个模块的 `.lenomc` / `.lenosymc` 缓存的**读与写**各调一次 ⇒ 43~52 个模块就是上百次。
+//   实测代价（hello_window，`-c`，5 轮交替取 min）：读模块缓存 763 ms vs 不读 536 ms，
+//   那 227 ms 的"负收益"几乎全在这里（同一份指纹被反复重算）。**注意**：本函数原先的注释
+//   写"只在入口缓存校验时调用一次"，那早已不成立（模块缓存 / 符号表缓存也要它）。
+//   只记忆**成功**结果：0 是"取不到"的哨兵，可能是文件被瞬时占用，下次调用仍应重试。
 uint64_t cache_runtime_binary_fingerprint(void) {
+    static uint64_t s_cached_fp = 0;
+    if (s_cached_fp != 0) return s_cached_fp;
+
     char path[4096];
     path[0] = '\0';
 #ifdef _WIN32
@@ -2381,6 +2392,7 @@ uint64_t cache_runtime_binary_fingerprint(void) {
     fp ^= (uint64_t)st.st_size * 1099511628211ULL;
     fp ^= (uint64_t)st.st_mtime * 0x9E3779B97F4A7C15ULL;
     if (fp == 0) fp = 1;                       // 0 是"取不到"的哨兵，不能与真指纹撞
+    s_cached_fp = fp;                          // 记忆化：见函数头的说明（成功结果只算一次）
     return fp;
 }
 
