@@ -80,6 +80,24 @@ static void emit_type_op(CodeGen* gen, OpCode op, int reg, TypeInfo* t, int with
     TypeKind kind = t ? t->kind : TYPE_ANY;
     TypeKind elem = (t && t->element_type) ? t->element_type->kind : TYPE_ANY;
 
+    // Dict[K, V]：K/V 至少一侧是**具体类型** ⇒ 发 OP_TYPE_CHECK_DICT / OP_AS_CAST_DICT
+    //   （K/V 直接编在 B/C 里，见 leno_vm.h 的说明）。裸 `Dict` / `Dict[any, any]` /
+    //   推断不出的类型仍走原 opcode —— 那三者的语义就是"只校验顶层是 Dict"，行为不变。
+    //   ⚠ TYPE_UNKNOWN / TYPE_INFER 当作"不校验"：它们表示"还没解析出类型"，
+    //     若当成具体种类下发会白扫一遍字典（value_matches_kind 的 default 本就放行）。
+    if (kind == TYPE_DICT && t && op != OP_TYPE_CHECK_DICT && op != OP_AS_CAST_DICT) {
+        TypeKind k = t->key_type ? t->key_type->kind : TYPE_ANY;
+        TypeKind v = t->value_type ? t->value_type->kind : TYPE_ANY;
+        int k_spec = (k != TYPE_ANY && k != TYPE_UNKNOWN && k != TYPE_INFER);
+        int v_spec = (v != TYPE_ANY && v != TYPE_UNKNOWN && v != TYPE_INFER);
+        if (k_spec || v_spec) {
+            reg_encode_iABC(gen->chunk,
+                            (op == OP_TYPE_CHECK) ? OP_TYPE_CHECK_DICT : OP_AS_CAST_DICT,
+                            reg, k, v, line);
+            return;
+        }
+    }
+
     int need_name = 0;
     if (op == OP_TYPE_CHECK) {
         need_name = (kind == TYPE_STRUCT || kind == TYPE_FACE || kind == TYPE_ENUM);

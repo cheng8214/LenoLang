@@ -29,6 +29,20 @@
         R(a) = vm_as_cast(R(a), expected, elem, name_val);
         DISPATCH();
     }
+    // OP_TYPE_CHECK_DICT A B C: R[A] = (R[A] is Dict[B, C])（B/C = TypeKind，TYPE_ANY = 该侧不校验）
+    //   与 OP_TYPE_CHECK 的区别只有一处：**逐键值**校验（口径见 vm.c 的 dict_matches_kv）。
+    //   为什么单开 opcode：K/V 两个 TypeKind 塞不进 4 字节头的 B/C（B 已被顶层类型占用）。
+    LABEL(OP_TYPE_CHECK_DICT): {
+        int a = READ_A(), b = READ_B(), c = READ_C();
+        R(a) = val_bool(dict_type_check(R(a), (TypeKind)b, (TypeKind)c));
+        DISPATCH();
+    }
+    // OP_AS_CAST_DICT A B C: R[A] = R[A] as Dict[B, C]（不匹配 → null）
+    LABEL(OP_AS_CAST_DICT): {
+        int a = READ_A(), b = READ_B(), c = READ_C();
+        R(a) = dict_as_cast(R(a), (TypeKind)b, (TypeKind)c);
+        DISPATCH();
+    }
 
     // --- 协程 ---
     // OP_ASYNC_CALL A B: 调用 async 函数 —— R[A] = 闭包，R[A+1..A+B] = 实参，

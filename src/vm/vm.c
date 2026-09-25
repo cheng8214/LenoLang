@@ -331,6 +331,90 @@ Value string_add(Value a, Value b) {
 }
 
 // ============================================================================
+// 泛型容器逐项校验的**唯一口径**（Array[T] 的逐元素 / Dict[K,V] 的逐键值共用）
+// ----------------------------------------------------------------------------
+// 为什么要有它：Array[T] 与 Dict[K,V] 原先各写一份 switch，且都把"容器种类"
+//   落进 default ⇒ 恒真 —— 表现是 `Dict[string,string]` 只校验"顶层是 Dict"，
+//   元素/键值里塞 int、null、嵌套对象都算通过（实测：`{"a":1} is Dict[string,string]`
+//   返回 true）。这里把口径收成一处，两条路径不可能再漂移。
+// 口径（与既有 Array[T] 逐元素检查一致，只补上容器种类）：
+//   int     ← int / bigint（bigint 参与算术后仍是数值）
+//   float   ← float（int 不算：`[1] is Array[float]` 旧行为即为 false，保持不变）
+//   string  ← ObjString；bool ← bool；null ← null
+//   array/dict/struct/face ← 对应对象类型（**只看顶层**，不递归内层参数）
+//   其余种类（ANY/UNKNOWN/自定义…）⇒ 放行 —— 单个 TypeKind 表达不了内层参数，
+//   递归校验需要类型描述符，不在本次修复范围内（与 `Array[Array[int]]` 不检查
+//   内层元素同一口径，见 leno_vm.h 的 OP_TYPE_CHECK_DICT 说明）。
+// ============================================================================
+static int value_matches_kind(Value v, TypeKind kind) {
+    switch (kind) {
+        case TYPE_ANY:
+            return 1;
+        case TYPE_INT:
+            return val_is_int(v) || val_is_bigint(v);
+        case TYPE_FLOAT:
+            return val_is_float(v);
+        case TYPE_STRING:
+            return val_is_obj(v) && val_as_obj(v)->type == OBJ_STRING;
+        case TYPE_BOOL:
+            return val_is_bool(v);
+        case TYPE_NULL:
+            return val_is_null(v);
+        case TYPE_ARRAY:
+            return val_is_obj(v) && val_as_obj(v)->type == OBJ_ARRAY;
+        case TYPE_DICT:
+            return val_is_obj(v) && val_as_obj(v)->type == OBJ_DICT;
+        case TYPE_STRUCT:
+        case TYPE_FACE:
+            // face 在运行期就是 struct 实例（与 type_check_value 的 TYPE_FACE 分支同口径）
+            return val_is_obj(v) && val_as_obj(v)->type == OBJ_STRUCT;
+        default:
+            return 1;
+    }
+}
+
+// Dict[K,V] 的逐键值校验。
+//   ⚠ 按**存储结构**扫（数组部分 + 哈希部分），不走 ObjDict->order：
+//      order 只是"输出顺序"的记账，判定不该依赖它是否与两部分同步（缺一条就会
+//      误判为"不匹配" ⇒ 类型收窄进不去 else 分支，比漏检更难查）。
+//   · 数组部分：连续非负整数键 0..asize-1，值为 null 的槽 = 空槽（与 dict_set
+//     的 `is_new = val_is_null(...)` 同口径），跳过；
+//   · 哈希部分：key == NULL_VAL 是空槽、key == DICT_TOMBSTONE_VAL 是已删除，跳过。
+static int dict_matches_kv(Value value, TypeKind key_kind, TypeKind value_kind) {
+    if (!val_is_obj(value) || val_as_obj(value)->type != OBJ_DICT) return 0;
+    if (key_kind == TYPE_ANY && value_kind == TYPE_ANY) return 1;
+
+    ObjDict* dict = (ObjDict*)val_as_obj(value);
+
+    for (int i = 0; i < dict->asize; i++) {
+        Value v = dict->array[i];
+        if (val_is_null(v)) continue;
+        if (!value_matches_kind(val_int(i), key_kind)) return 0;
+        if (!value_matches_kind(v, value_kind)) return 0;
+    }
+
+    for (int i = 0; i < dict->capacity; i++) {
+        Value k = dict->entries[i].key;
+        if (k == DICT_TOMBSTONE_VAL || val_is_null(k)) continue;
+        if (!value_matches_kind(k, key_kind)) return 0;
+        if (!value_matches_kind(dict->entries[i].value, value_kind)) return 0;
+    }
+
+    return 1;
+}
+
+// OP_TYPE_CHECK_DICT / OP_AS_CAST_DICT（定义见 leno_vm.h）—— 语义唯一来源，
+// 与 type_check_value / vm_as_cast 同层，供解释器的两条新 opcode 共用。
+int dict_type_check(Value value, TypeKind key_kind, TypeKind value_kind) {
+    return dict_matches_kv(value, key_kind, value_kind);
+}
+
+Value dict_as_cast(Value value, TypeKind key_kind, TypeKind value_kind) {
+    // 与 vm_as_cast 的 TYPE_DICT 分支同口径：不匹配 ⇒ null（不做任何转换）
+    return dict_matches_kv(value, key_kind, value_kind) ? value : val_null();
+}
+
+// ============================================================================
 // OP_AS_CAST 的安全类型转换 —— **语义唯一来源**（§8.83）
 //   从 vm/vminc/op_as_cast.inc 整段抽出（解释器那一坨 TypeKind switch）。
 //   与 type_check_value 同一做法：操作数不再用 READ_BYTE/READ_SHORT 就地消费，
@@ -410,35 +494,15 @@ Value vm_as_cast(Value value, TypeKind expected_type, TypeKind elem_type, Value 
             break;
 
         case TYPE_ARRAY: {
-            TypeKind expected_elem_type = elem_type;
             if (!val_is_obj(value) || val_as_obj(value)->type != OBJ_ARRAY) {
                 matches = 0;
                 break;
             }
-            if (expected_elem_type != TYPE_ANY) {
+            if (elem_type != TYPE_ANY) {
                 ObjArray* arr = (ObjArray*)val_as_obj(value);
                 matches = 1;
                 for (int i = 0; i < arr->count; i++) {
-                    Value elem = arr->elements[i];
-                    int elem_matches = 0;
-                    switch (expected_elem_type) {
-                        case TYPE_INT:
-                            elem_matches = val_is_int(elem) || val_is_bigint(elem);
-                            break;
-                        case TYPE_FLOAT:
-                            elem_matches = val_is_float(elem);
-                            break;
-                        case TYPE_STRING:
-                            elem_matches = (val_is_obj(elem) && val_as_obj(elem)->type == OBJ_STRING);
-                            break;
-                        case TYPE_BOOL:
-                            elem_matches = val_is_bool(elem);
-                            break;
-                        default:
-                            elem_matches = 1;
-                            break;
-                    }
-                    if (!elem_matches) {
+                    if (!value_matches_kind(arr->elements[i], elem_type)) {
                         matches = 0;
                         break;
                     }
@@ -450,7 +514,8 @@ Value vm_as_cast(Value value, TypeKind expected_type, TypeKind elem_type, Value 
         }
 
         case TYPE_DICT:
-            matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_DICT);
+            // 与 OP_AS_CAST_DICT 共用口径：K/V 为 TYPE_ANY 时退化成"只校验顶层是 Dict"
+            matches = dict_matches_kv(value, TYPE_ANY, TYPE_ANY);
             break;
         case TYPE_STRUCT: {
             if (!val_is_obj(name_val) || val_as_obj(name_val)->type != OBJ_STRING) {
@@ -810,26 +875,7 @@ int type_check_value(Value value, TypeKind expected_type, TypeKind elem_type, Va
                 ObjArray* arr = (ObjArray*)val_as_obj(value);
                 matches = 1;
                 for (int i = 0; i < arr->count; i++) {
-                    Value elem = arr->elements[i];
-                    int elem_matches = 0;
-                    switch (elem_type) {
-                        case TYPE_INT:
-                            elem_matches = val_is_int(elem) || val_is_bigint(elem);
-                            break;
-                        case TYPE_FLOAT:
-                            elem_matches = val_is_float(elem);
-                            break;
-                        case TYPE_STRING:
-                            elem_matches = (val_is_obj(elem) && val_as_obj(elem)->type == OBJ_STRING);
-                            break;
-                        case TYPE_BOOL:
-                            elem_matches = val_is_bool(elem);
-                            break;
-                        default:
-                            elem_matches = 1;
-                            break;
-                    }
-                    if (!elem_matches) {
+                    if (!value_matches_kind(arr->elements[i], elem_type)) {
                         matches = 0;
                         break;
                     }
@@ -840,9 +886,10 @@ int type_check_value(Value value, TypeKind expected_type, TypeKind elem_type, Va
             break;
         }
 
-        // --- 字典/文件/指针/空值/任意: 仅检查值类型 ---
+        // --- 文件/指针/空值/任意: 仅检查值类型 ---
+        //   Dict 的**逐键值**校验走 dict_matches_kv（与 OP_TYPE_CHECK_DICT 共用口径）。
         case TYPE_DICT:
-            matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_DICT);
+            matches = dict_matches_kv(value, TYPE_ANY, TYPE_ANY);
             break;
 
         case TYPE_STRUCT: {

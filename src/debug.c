@@ -87,6 +87,7 @@ static const char* opCodeNames[] = {
     "OP_CMPJMP_ITER",
     "OP_BITAND_K", "OP_BITOR_K", "OP_BITXOR_K", "OP_SHL_K", "OP_SHR_K", "OP_USHR_K",
     "OP_INDEX_SET_ARRAY_INT",
+    "OP_TYPE_CHECK_DICT", "OP_AS_CAST_DICT",
     "OP_OPCODE_COUNT",
 };
 
@@ -346,6 +347,16 @@ static int decode_trailing(Chunk* chunk, int offset, char* desc, size_t desc_siz
             int pcnt = dbg_take_u8(chunk, base, &p, &over);
             for (int i = 0; i < pcnt; i++) dbg_take_u8(chunk, base, &p, &over);
             if (desc) snprintf(desc, desc_size, "返回类型=%d 参数个数=%d%s", ret, pcnt, over ? " [截断]" : "");
+            break;
+        }
+        // Dict[K,V] 的逐键值校验：K/V 直接在 B/C 里（无尾随数据，定长 4 字节）
+        case OP_TYPE_CHECK_DICT:
+        case OP_AS_CAST_DICT: {
+            if (desc) {
+                snprintf(desc, desc_size, "%s[K=%s, V=%s]（逐键值校验）",
+                         (op == OP_TYPE_CHECK_DICT) ? "Dict" : "as Dict",
+                         type_kind_to_string((TypeKind)b), type_kind_to_string((TypeKind)c));
+            }
             break;
         }
         case OP_TYPE_CHECK:

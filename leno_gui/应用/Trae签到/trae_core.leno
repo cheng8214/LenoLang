@@ -37,26 +37,19 @@ export func claim_url(): string { return api_base() + "/trae/api/v2/ug/checkin_c
 // （也不能赋给 Dict 变量），必须**显式类型收窄**（`if x is Dict { ... }`）。
 // 收窄都收在这一层里，业务代码就只跟 string / Array[string] 打交道 ✓。
 export func json_get(any obj, string key): string {
-    if obj is Dict {
-        Dict d = obj
-        if d.has(key) {
-            var v = d[key]
-            if v != null { return _str(v) }
-        }
+    if obj is Dict => d and d.has(key) {
+        var v = d[key]
+        if v != null { return _str(v) }
     }
     return ""
 }
 export func json_obj(any obj, string key): any {
-    if obj is Dict {
-        Dict d = obj
-        if d.has(key) { return d[key] }
-    }
+    if obj is Dict => d and d.has(key) { return d[key] }
     return null
 }
 export func json_keys(any obj): Array[string] {
     var out = []
-    if obj is Dict {
-        Dict d = obj
+    if obj is Dict => d {
         var ks = d.keys()
         for ks to k {
             out.add(_str(k))
@@ -172,8 +165,7 @@ export func api_post(HttpClient c, string url, string body): any {
         return {"_http_error": _str(r.statusCode), "_error": _str(r.error), "_raw": r.body}
     }
     var d = jsons.decode(r.body)
-    if d is Dict {
-        Dict dd = d
+    if d is Dict => dd {
         dd["_status"] = _str(r.statusCode)
         dd["_raw"] = r.body
     }

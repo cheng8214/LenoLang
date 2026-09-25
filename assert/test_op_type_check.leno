@@ -11,6 +11,9 @@
 //   3. switch case is（真实程序里的高频形态）
 //   4. 无类型值（dict）上的基本类型判定（+ 反例）
 //   5. enum 判定 —— TYPE_ENUM 也读 2 字节名字常量，顺带守住刚修的 opcode_size
+//   6. Dict[K,V] 的**逐键值**校验（OP_TYPE_CHECK_DICT / OP_AS_CAST_DICT，v3.2.1）——
+//      修复前 K/V 完全不校验（`{"a":1} is Dict[string,string]` 返回 true）
+//   7. Array[T] 的容器种类收紧（与 Dict 共用 value_matches_kind 口径）
 
 struct Point { int x = 0; int y = 0 }
 
@@ -72,6 +75,56 @@ main() {
         m = m + 1
     }
     assert_eq(h5, 3000)
+
+    // ---- 5) Dict[K,V] 逐键值校验（修复：此前 K/V 完全不校验）----
+    var d_ss = {"a": "1", "b": "2"}
+    assert(d_ss is Dict[string, string], "值全是 string ⇒ 匹配 Dict[string,string]")
+    var d_si = {"a": 1}
+    assert(not (d_si is Dict[string, string]), "值是 int ⇒ 不得匹配 Dict[string,string]")
+    assert(d_si is Dict[string, int], "值是 int ⇒ 匹配 Dict[string,int]")
+    var d_null = {"a": null}
+    assert(not (d_null is Dict[string, string]), "值是 null ⇒ 不得匹配 Dict[string,string]")
+    var d_obj = {"a": {"b": 1}}
+    assert(not (d_obj is Dict[string, string]), "值是嵌套对象 ⇒ 不得匹配 Dict[string,string]")
+    var d_empty = {}
+    assert(d_empty is Dict[string, string], "空字典 ⇒ 恒匹配（无元素可违反）")
+    // V = any ⇒ 该侧不校验（旧行为必须保持）
+    assert(d_si is Dict[string, any], "Dict[string,any] 的 V 不校验 ⇒ 仍匹配")
+    assert(d_null is Dict[string, any], "Dict[string,any] 的 V 不校验 ⇒ null 值也匹配")
+    // 键侧同样校验
+    Dict[int, string] d_is = {1: "a", 2: "b"}
+    assert(not (d_is is Dict[string, string]), "键是 int ⇒ 不得匹配 Dict[string,string]")
+    assert(d_is is Dict[int, string], "键=int/值=string ⇒ 匹配 Dict[int,string]")
+    // 非字典值
+    assert(not ([1, 2] is Dict[string, string]), "数组不是字典")
+    assert(not ("hi" is Dict[string, string]), "字符串不是字典")
+
+    // ---- 6) as Dict[K,V]：不匹配 ⇒ null（与 is 同口径）----
+    var c_ok = d_ss as Dict[string, string]
+    assert(c_ok != null, "匹配 ⇒ 返回原字典")
+    var c_bad = d_si as Dict[string, string]
+    assert(c_bad == null, "不匹配 ⇒ null")
+    var c_any = d_si as Dict[string, any]
+    assert(c_any != null, "V = any ⇒ 仍匹配")
+
+    // ---- 7) => 收窄绑定按真实键值类型分流 ----
+    int got = 0
+    if d_si is Dict[string, string] => x {
+        got = 1
+    } else {
+        got = 2
+    }
+    assert_eq(got, 2)
+    if d_ss is Dict[string, string] => y {
+        got = y.keys().len()
+    }
+    assert_eq(got, 2)
+
+    // ---- 8) Array[T] 的容器种类同样收紧（共用 value_matches_kind）----
+    var aa = [[1, 2], [3]]
+    assert(aa is Array[Array[int]], "元素都是数组 ⇒ 匹配 Array[Array[int]]")
+    var ab = [[1, 2], 5]
+    assert(not (ab is Array[Array[int]]), "混入非数组元素 ⇒ 不得匹配（修复前放行）")
 
     print("test_op_type_check: OK")
 }

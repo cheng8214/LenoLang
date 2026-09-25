@@ -26,12 +26,15 @@ export func history_path(): string {
     return d + "\\history.json"
 }
 
-// 全部历史（`any`；读取用 core.json_keys / core.json_get）
-export func load_all(): any {
+// 全部历史 —— 同 devices：**扁平** `string → string` ⇒ 读取处一次收窄定型，
+// 之后全链路 `Dict[string, string]`，调用点不再手写 `is Dict` ✓
+// 同 devices：`is Dict[string, string]` 逐键值校验（v3.2.1 起）⇒ 取值仍走 `_str()` 兜底的 json_get ✓
+export func load_all(): Dict[string, string] {
     var p = history_path()
-    if p == "" { return null }
-    if not files.exists(p) { return null }
-    return jsons.read_file(p)
+    if p == "" { return {} }
+    if not files.exists(p) { return {} }
+    if jsons.read_file(p) is Dict[string, string] => db { return db }
+    return {}
 }
 
 export func key_of(string brand, string username, string day): string {
@@ -96,33 +99,23 @@ export func mark(string brand, string username, string day, bool ok, string base
     if p == "" { return false }
     var d = history_dir()
     if not dirs.is_dir(d) { dirs.mkdir_p(d) }
-    // 起始对象：**必须**用 `jsons.decode("{}")` 或读回旧文件（都是 `any` + 收窄 ✓）
     // ⚠ 踩过的坑：不能写 `jsons.write_file(p, "{}")` ✗ —— `write_file` 会把参数**再 JSON 编码**
     // 一次 ⇒ 落盘是带引号的 `"{}"`（字符串），读回来是 `string` 而不是对象 ⇒ 后续 mark 全部失败。
-    var cur = jsons.decode("{}")
-    var old = load_all()
-    if old is Dict { cur = old }
-    if cur is Dict {
-        Dict db = cur
-        var flag = "0"
-        if ok { flag = "1" }
-        db[key_of(brand, username, day)] = flag + "|" + base + "|" + extra + "|" + code
-        return jsons.write_file(p, db)
-    }
-    return false
+    // ⇒ 空表一律用 `load_all()` 的 `{}`（已是 `Dict[string, string]` ✓）
+    var db = load_all()
+    var flag = "0"
+    if ok { flag = "1" }
+    db[key_of(brand, username, day)] = flag + "|" + base + "|" + extra + "|" + code
+    return jsons.write_file(p, db)
 }
 
 // 删除一天记录（自测清理 / ⑥ 重试用）⇒ true 表示删掉了
 export func remove_day(string brand, string username, string day): bool {
     var p = history_path()
     if p == "" { return false }
-    var all = load_all()
-    if all is Dict {
-        Dict db = all
-        var k = key_of(brand, username, day)
-        if not db.has(k) { return false }
-        db.remove(k)
-        return jsons.write_file(p, db)
-    }
-    return false
+    var db = load_all()
+    var k = key_of(brand, username, day)
+    if not db.has(k) { return false }
+    db.remove(k)
+    return jsons.write_file(p, db)
 }

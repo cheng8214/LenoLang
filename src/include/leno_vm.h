@@ -377,6 +377,21 @@ typedef enum {
     //   追加在末尾 ⇒ 既有 opcode 编号不动，旧 .lenb 仍可执行。
     OP_INDEX_SET_ARRAY_INT,  // iABC  R[B][R[C]] = R[A]（Array 特化，下标 int）
 
+    // Dict[K, V] 的**逐键值**类型判定 / 转换（修复 `is Dict[K,V]` 只校验顶层的漏洞）。
+    //   为什么另立 opcode、而不是给 OP_TYPE_CHECK 加尾随字节：K/V 是**两个** TypeKind，
+    //   而 4 字节头里 A/B/C 已占满（B = 顶层类型，C = 元素类型 / 名字常量标记），塞不下；
+    //   加尾随字节会把 OP_TYPE_CHECK 变成变长（反汇编长度表、JIT 扫描、EXTRAARG 对账都要跟着改）。
+    //   编码：A = 寄存器，B = 键类型 K，C = 值类型 V（TYPE_ANY = 不校验该侧）。
+    //   逐项校验口径与 Array[T] 共用（vm.c 的 value_matches_kind）：
+    //     基本类型（int/float/string/bool/null）与容器（array/dict/struct/face）比**顶层**，
+    //     其余种类一律放行 ⇒ `Dict[string, Array[int]]` 只保证"值是数组"，不递归到内层元素
+    //     （与 `Array[Array[int]]` 不检查内层元素同一口径）。
+    //   ⚠ codegen 只在「`is/as Dict[K,V]` 且 K/V **至少一侧具体**」时才发这两条；
+    //     裸 `Dict` / `Dict[any,any]` 仍走 OP_TYPE_CHECK / OP_AS_CAST（行为与旧版逐字节一致）。
+    //   追加在末尾 ⇒ 既有 opcode 编号不动。
+    OP_TYPE_CHECK_DICT,  // iABC  R[A] = (R[A] is Dict[K=B, V=C])
+    OP_AS_CAST_DICT,     // iABC  R[A] = R[A] as Dict[K=B, V=C]（不匹配 → null）
+
     OP_OPCODE_COUNT,    // 用于跳转表大小
 } OpCode;
 
@@ -481,6 +496,16 @@ Value string_add(Value a, Value b);
 //   name_val     : TYPE_STRUCT / TYPE_FACE / TYPE_ENUM 的名字字符串常量（其余类型忽略）
 // 返回 1 = 匹配。纯判定：不分配、不报错。
 int type_check_value(Value value, TypeKind expected_type, TypeKind elem_type, Value name_val);
+
+// OP_TYPE_CHECK_DICT / OP_AS_CAST_DICT 的语义唯一来源（定义在 vm.c）。
+//   K/V 是写进指令的**具体类型种类**（TYPE_ANY = 该侧不校验），语义与
+//   `type_check_value(v, TYPE_DICT, ...)` 的顶层判定一致，多一层逐键值校验：
+//     · 数组部分（连续非负整数键）与哈希部分都要看 ⇒ 不依赖 ObjDict->order 是否同步；
+//     · 键与值各自按 value_matches_kind 比（见 vm.c）；
+//     · 空字典恒匹配；对象不是 Dict ⇒ 不匹配。
+// dict_type_check: 纯判定，返回 1/0；dict_as_cast: 匹配则原值、否则 null（不做转换）。
+int dict_type_check(Value value, TypeKind key_kind, TypeKind value_kind);
+Value dict_as_cast(Value value, TypeKind key_kind, TypeKind value_kind);
 
 // OP_AS_CAST 的安全类型转换（定义在 vm.c）—— **语义唯一来源**（§8.83）。
 // 解释器（vm/vminc/op_as_cast.inc）与原生模块都调它：
