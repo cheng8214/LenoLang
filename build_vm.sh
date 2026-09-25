@@ -5,60 +5,28 @@ echo "Building LenoLang VM Runtime (no compiler)..."
 
 mkdir -p build
 
-# 通用源文件清单：以 build_vm.bat（Windows 权威、可工作清单）为准。
-# 注意：不包含各平台专属的 ffi 实现文件（win64/linux），在下方按平台追加。
-# 历史上 build_vm.sh 曾引用过 src/object/object_{draw,window,event,image,font}.c 与
-# src/module/guis/guis_*.c，但这些文件/目录已不存在，故不再列出。
+# ---------------------------------------------------------------------------
+# 源清单与 build.sh / build_vm.bat **共用同一份**（单一事实来源）：
+#   sources_core.txt  —— 核心运行时（VM 与编译器共用）
+#   sources_vm.txt    —— VM 专属入口（vm_main.c；与 src/main.c 互斥）
+# 注意：不包含各平台专属的 ffi 实现文件（win64/linux/arm64），在下方按平台追加。
+# ⚠ 不要再往本文件里逐个加源文件：改清单文件，否则各构建路径必然漂移 ——
+#   本文件此前抄的是一份**过期的手写清单**，漏了 src/dce.c，导致 VM-only 构建
+#   链接失败（undefined reference to `dce_active` / `dce_enabled` /
+#   `dce_set_active` / `dce_func_is_live` / `dce_note_module_cached` —— 引用方是
+#   module_loader.c 与 serialize.c）；另外还漏了 src/debug.c 与
+#   src/platform/platform_path.c。改用共享清单后与 build_vm.bat 完全一致 ✓。
+#   （历史上还曾引用过 src/object/object_{draw,window,event,image,font}.c 与
+#     src/module/guis/guis_*.c，这些文件/目录已不存在。）
+# ---------------------------------------------------------------------------
+read_list() {
+  tr -d '\r' < "$1" | grep -v '^[[:space:]]*$' | tr '\\' '/'
+}
+
 SOURCES=""
-SOURCES="$SOURCES src/vm_main.c"
-SOURCES="$SOURCES src/error.c"
-SOURCES="$SOURCES src/scope.c"
-SOURCES="$SOURCES src/gc.c"
-SOURCES="$SOURCES src/value.c"
-SOURCES="$SOURCES src/string_table.c"
-SOURCES="$SOURCES src/object/method_table.c"
-SOURCES="$SOURCES src/object/object_string.c"
-SOURCES="$SOURCES src/object/object_array.c"
-SOURCES="$SOURCES src/object/object_dict.c"
-SOURCES="$SOURCES src/object/object_number.c"
-SOURCES="$SOURCES src/object/object_file.c"
-SOURCES="$SOURCES src/object/object_socket.c"
-SOURCES="$SOURCES src/object/object_struct.c"
-SOURCES="$SOURCES src/object/object_face.c"
-SOURCES="$SOURCES src/object/object_cstruct.c"
-SOURCES="$SOURCES src/object/object_thread.c"
-SOURCES="$SOURCES src/bound_method.c"
-SOURCES="$SOURCES src/coroutine.c"
-SOURCES="$SOURCES src/vm/vm.c"
-SOURCES="$SOURCES src/type.c"
-SOURCES="$SOURCES src/native.c"
-SOURCES="$SOURCES src/bigint.c"
-SOURCES="$SOURCES src/module_loader.c"
-SOURCES="$SOURCES src/module_dispatch.c"
-SOURCES="$SOURCES src/module_symbol_table/module_symbol_table.c"
-SOURCES="$SOURCES src/module.c"
-SOURCES="$SOURCES src/module/io/io.c"
-SOURCES="$SOURCES src/module/types/types.c"
-SOURCES="$SOURCES src/module/times/times.c"
-SOURCES="$SOURCES src/module/arrays/arrays.c"
-SOURCES="$SOURCES src/module/strings/strings.c"
-SOURCES="$SOURCES src/module/maths/maths.c"
-SOURCES="$SOURCES src/module/dicts/dicts.c"
-SOURCES="$SOURCES src/module/structs/structs.c"
-SOURCES="$SOURCES src/module/cstructs/cstructs.c"
-SOURCES="$SOURCES src/module/rands/rands.c"
-SOURCES="$SOURCES src/module/files/files.c"
-SOURCES="$SOURCES src/module/asyncs/asyncs.c"
-SOURCES="$SOURCES src/module/dirs/dirs.c"
-SOURCES="$SOURCES src/module/jsons/jsons.c"
-SOURCES="$SOURCES src/module/sockets/sockets.c"
-SOURCES="$SOURCES src/module/ffi/ffi.c"
-SOURCES="$SOURCES src/module/threads/threads.c"
-SOURCES="$SOURCES src/module/assert/assert.c"
-SOURCES="$SOURCES src/module/sys/sys.c"
-SOURCES="$SOURCES src/module/regexs/regexs.c"
-SOURCES="$SOURCES src/platform/platform_thread.c"
-SOURCES="$SOURCES src/serialize/serialize.c"
+for f in $(read_list sources_core.txt) $(read_list sources_vm.txt); do
+  SOURCES="$SOURCES $f"
+done
 
 # 平台检测
 OS="$(uname -s 2>/dev/null || echo unknown)"

@@ -1,0 +1,88 @@
+name: build
+
+# 三平台构建验证。触发：推送到 main、PR、以及手动触发。
+#
+# 设计取舍：三个平台**都调用同一个 build.sh**（它自己带 OS/arch 检测与
+# 各平台 FFI 源文件选择），Windows 走 MSYS2 MINGW64 而不是 build.bat ——
+# 目的是让 .bat / .sh 两条构建路径不至于漂移（历史上正是这种漂移导致
+# VM-only 构建链不过）。
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,  name: "Linux x86_64 (gcc)" }
+          - { os: windows-latest, name: "Windows x86_64 (MSYS2 MinGW64)" }
+          - { os: macos-latest,   name: "macOS arm64" }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Windows：与 build.bat 同一套 MinGW 工具链（-municode / -lws2_32 / windres）
+      - name: 准备 MSYS2 MINGW64
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: mingw-w64-x86_64-gcc
+
+      - name: 工具链（Unix）
+        if: runner.os != 'Windows'
+        run: |
+          uname -s -m
+          gcc --version | head -1
+
+      - name: 工具链（Windows / MSYS2）
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          uname -s -m
+          gcc --version | head -1
+
+      - name: 构建编译器 + VM（Unix）
+        if: runner.os != 'Windows'
+        run: |
+          ./build.sh
+          ./build_vm.sh
+
+      - name: 构建编译器 + VM（Windows / MSYS2）
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          ./build.sh
+          ./build_vm.sh
+
+      # 真正的验收：产物能编译并运行一段脚本，而不是只看编译过程有没有报错
+      - name: 冒烟测试
+        shell: bash
+        run: |
+          set -e
+          BIN=build/leno
+          if [ -f build/leno.exe ]; then BIN=build/leno.exe; fi
+          printf 'main() {\n    print("Hello, Leno!")\n}\n' > hello_ci.leno
+          OUT=$("$BIN" hello_ci.leno)
+          echo "脚本输出: $OUT"
+          echo "$OUT" | grep -q "Hello, Leno!"
+          "$BIN" --version
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: leno-${{ runner.os }}
+          if-no-files-found: ignore
+          path: |
+            build/leno
+            build/leno.exe
+            build/leno_vm
+            build/leno_vm.exe
+            build/leno_vm_gui.exe
