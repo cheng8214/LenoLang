@@ -83,6 +83,7 @@
 import "SDL3" as SDL3
 use SDL3.(Event, Renderer, Scancode, Window, Color, Panel, Label, Button, LineChart, TabControl, Widget)
 use SDL3.(VBox, HBox, AnchorBox, ScrollView, Toggle, Edit, LinkButton, Separator)
+use SDL3.(Font)                       // FPS HUD 需要一个常驻字体（懒创建 ⇒ 可空类型要显式导入 ✓）
 
 // ==================== 调色板（照截图取色）====================
 var C_SIDE   = #1D2633FF   // 侧栏深底
@@ -159,6 +160,58 @@ bool SMOOTH_TRACE = false     // 自检：逐帧打印滚动位置（看缓动 �
 var FLIP = 0.0                // 自检：每 2 帧反向滚一次（模拟"快速上下滚"⇒ 看是否抽搐 ✓）
 int FLIP_TICK = 0
 bool FLIP_POS = true
+
+// ==================== 窗口内 FPS HUD ====================
+// 目的：**直接看到界面实际多少帧** ✓，并给出"卡不卡"的关键指标 —— 本窗口内**最差一帧**的耗时 ✓
+//   （平均帧率漂亮但峰值 40ms ⇒ 体感就是卡一下 ✗；只看平均值会漏掉它 ✓）
+// ★ 口径：按**墙钟时间**每 500ms 统计一次（`帧数 × 1000 / 实际耗时` ✓），不是"帧数 ÷ 帧数" ✗
+//   —— 这也是量帧率的唯一可靠口径：不能把进程启动耗时算进帧时间 ✗（踩过一次，见 docs ✓）
+// `DFPS=0` 可关掉：做**逐像素截图比对**时要关 ✓（HUD 会画在画面上，进截图 ✓）
+var FPS_ON = true
+int FPS_FRAMES = 0             // 本统计窗口内已渲染帧数
+int FPS_T0 = 0                 // 统计窗口起点（SDL ticks，ms ✓）
+int FPS_LAST = 0               // 上一帧时刻（算峰值 ✓）
+float FPS_VALUE = 0.0          // 最近一次算出的帧率
+float FPS_PEAK_MS = 0.0        // 本窗口内最差一帧的耗时（ms ✓）
+string FPS_TXT = "-- fps"
+Font? FPS_FONT = null          // 懒创建：不开 HUD 就不花字体资源 ✓
+
+// 每帧调用一次：累计帧数、记录峰值、每 500ms 重算一次帧率 ✓
+func fps_tick() {
+    if not FPS_ON { return }
+    int now = SDL3.getTicks()
+    // 首帧：先把起点压住，否则第一帧会把"启动耗时"算进统计窗口 ✗
+    if FPS_T0 == 0 { FPS_T0 = now; FPS_LAST = now }
+    FPS_FRAMES = FPS_FRAMES + 1
+    float gap = _float(now - FPS_LAST)
+    if gap > FPS_PEAK_MS { FPS_PEAK_MS = gap }
+    FPS_LAST = now
+    int el = now - FPS_T0
+    if el >= 500 {
+        // 保留一位小数：不依赖 format ✓（`_int` 截断后再除 ✓）
+        FPS_VALUE = _float(_int(_float(FPS_FRAMES) * 10000.0 / _float(el))) / 10.0
+        float pk = _float(_int(FPS_PEAK_MS * 10.0)) / 10.0
+        FPS_TXT = _str(FPS_VALUE) + " fps / " + _str(pk) + "ms"
+        print("[dash] HUD " + FPS_TXT + "\n")     // 无头跑时也能从日志读到 ✓
+        FPS_FRAMES = 0
+        FPS_PEAK_MS = 0.0
+        FPS_T0 = now
+    }
+}
+
+// 画在右下角（叠加层里调用 ⇒ 在所有控件之上 ✓）
+func fps_draw(Renderer r) {
+    if not FPS_ON { return }
+    if FPS_FONT == null { FPS_FONT = SDL3.createFontAuto(12.0) }
+    if FPS_FONT == null or not FPS_FONT.ok { return }
+    float w = 152.0
+    float h = 24.0
+    float bx = WIN_W - w - 10.0
+    float by = WIN_H - h - 10.0
+    r.setColor(C_SIDE)                        // 与侧栏同色，不透明（避免依赖 alpha 字面量 ✓）
+    r.fillRoundedRect(bx, by, w, h, 6.0)
+    r.drawText(FPS_FONT, FPS_TXT, bx + 10.0, by + 4.0, #E8EDF5FF)
+}
 
 // ==================== 页面容器助手 ====================
 // `addToPage` 收的是「内容区左上角」相对偏移 ⇒ 把窗口绝对坐标换算过去 ✓
@@ -832,6 +885,9 @@ main() {
     if dst != null { if _int(_str(dst)) != 0 { SMOOTH_TRACE = true } }
     var dfl = _env("DSCROLL_FLIP")
     if dfl != null { FLIP = _float(_str(dfl)) }
+    // 自检：DFPS=0 ⇒ 关掉窗口内 FPS HUD（**逐像素截图比对时必须关** ✓ —— HUD 会进画面 ✓）
+    var dfp = _env("DFPS")
+    if dfp != null { if _int(_str(dfp)) == 0 { FPS_ON = false } }
 
     // 定时器**只在自检模式下**挂：`win.run` 是事件驱动重绘，无头（dummy）下没有事件就永不重绘 ✗
     // 但交互运行时它没用了 —— 加了等于每秒 20 次**无谓的全量重绘**（每次带一批 flush ✗，
@@ -886,6 +942,11 @@ main() {
                 print("[dash] 自动切页 → 请求 " + _str(nx) + " / 当前页 " + _str(CUR_PAGE) + "\n")
             }
         }
+        // 窗口内 FPS HUD：每帧更新 + 画在最上层（叠加层在控件之后 ✓）
+        // ⚠ 它会被截进 PNG（因为截图读的是整窗像素 ✓）⇒ 做逐像素比对时请带 `DFPS=0` ✓
+        fps_tick()
+        fps_draw(r)
+
         if SHOT != "" and SHOT_N > 0 and FRAMES >= SHOT_AT {
             // 连拍：`DSHOT_N` 张连续帧（第 0 张 = 原 `DSHOT` 名字，其余加 `_1`、`_2`…）
             // 用途：逐像素比对连续帧 ⇒ 把"闪烁"变成可复现的数字 ✓
