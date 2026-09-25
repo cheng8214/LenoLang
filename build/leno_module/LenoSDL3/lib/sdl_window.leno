@@ -1062,6 +1062,26 @@ export struct Window {
     // 运行主循环（回调模式，支持多窗口）
     // 单窗口：直接调用 run() 注册并启动循环
     // 多窗口：各窗口先 registerOnly()，最后一个 run() 启动循环
+    //
+    // ★ 两个回调**都要给** ✓ —— 漏一个只会报「只能调用函数（不是对象类型）」，
+    //   看不出缺的是哪个参数 ✗（本人踩过 ✓）：
+    //     onEvent  (Event) -> bool —— 返回 false 结束主循环，true 继续
+    //     onRender (Renderer)      —— 每帧绘制（清屏 / 背景 / 网格），**在最底层** ✓
+    //   例：
+    //     win.run(
+    //         func(Event ev): bool { if ev.isQuit() or ev.isWindowClose() { return false } return true },
+    //         func(Renderer r) { r.clearColor(#F0F1F4FF) }
+    //     )
+    //
+    // ★ 三个绘制层的先后（**实测确认** ✓，不是推测）：
+    //     ① onRender（run 的第二个回调）—— 最底层，**在控件之下**
+    //     ② 控件树（_root 根布局 + addXxx 注册的控件）
+    //     ③ setOverlay 回调 —— 最上层，盖住一切（HUD / 调试标记 / 截图钩子都放这里 ✓）
+    //   ⇒ 想让自绘"盖在控件之上"就必须放 setOverlay；
+    //     放在 onRender 里会被控件盖掉 ✗（本人曾以为 onRender 在上层 ✗，实测打脸 ✓）
+    //
+    // ★ 不需要 addTimer 空转来"保持窗口不退出"：主循环本来就一直跑，
+    //   退出只由 onEvent 返回 false（或调用 _exit）决定 ✓
     func run(EventHandler onEvent, RenderCallback onRender) {
         registerOnly(onEvent, onRender)
         if _runLoopActive { return }
