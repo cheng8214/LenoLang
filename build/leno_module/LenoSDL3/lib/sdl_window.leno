@@ -71,6 +71,12 @@ import "sdl_imageview.leno" as ivw
 use ivw.ImageView
 import "sdl_separator.leno" as seplib
 use seplib.Separator
+import "sdl_badge.leno" as bdglib
+use bdglib.Badge
+import "sdl_alert.leno" as altlib
+use altlib.Alert
+import "sdl_steps.leno" as stplib
+use stplib.Steps
 import "sdl_scrim.leno" as scrlib
 use scrlib.Scrim
 import "sdl_linkbutton.leno" as lnklib
@@ -871,6 +877,34 @@ export struct Window {
     // dir: 0=水平(默认) 1=垂直；布局容器中常用作视觉分隔
     func addSeparator(Dict opts): Separator {
         Separator s = seplib.createSeparator(opts)
+        _widgets.add(s as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
+        return s
+    }
+
+    // 添加胶囊徽标（**不可点**的状态标签；要可点请用 Button ✓）
+    // opts: {x, y, text, w?, h?, font_size?, pad_x?, pad_y?, radius?, align?,
+    //        bg_color?, border_color?, text_color?}  不给 w ⇒ 按文字 + 2×pad_x 自适应 ✓
+    func addBadge(Dict opts): Badge {
+        Badge b = bdglib.createBadge(opts)
+        _widgets.add(b as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
+        return b
+    }
+
+    // 添加提示条：kind 0=info 1=warn(默认) 2=danger 3=safe；高度按文字行数自适应 ✓
+    // opts: {x, y, w, text, kind?, h?, font_size?, wrap?, wrap_w?, accent?, bg_color?, ...}
+    func addAlert(Dict opts): Alert {
+        Alert a = altlib.createAlert(opts)
+        _widgets.add(a as Widget)
+        _widgetZ.add(opts.get("z", 0.0))
+        return a
+    }
+
+    // 添加步骤条；步骤用返回值的 `add_step(标题, 说明)` 追加、`set_active(i)` 一键推进 ✓
+    // opts: {x, y, w, dir?(0 竖 1 横), item_h?, circle?, gap?, font_size?, desc_size?, done_color?, ...}
+    func addSteps(Dict opts): Steps {
+        Steps s = stplib.createSteps(opts)
         _widgets.add(s as Widget)
         _widgetZ.add(opts.get("z", 0.0))
         return s

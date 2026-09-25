@@ -1,0 +1,149 @@
+// sdl_badge.leno — 胶囊徽标 / 状态标签（Badge / Pill / Tag）
+// win.addBadge({...}) 或 SDL3.createBadge({...})
+//
+// ★ 为什么不用 Button 代替：徽标是**不可点**的状态展示 ⇒ Button 会带 hover/按下反馈、
+//   还会吃掉点击 ✗ —— 看着像能点、点了却没反应，比"文字没居中"更像 bug ✓
+//   所以本控件 `process()` 是空实现：永不拦截事件、永不请求重绘 ✓
+// ★ 文字为什么能真居中：内部一个 Label，位置由 (w - 文字宽)/2 显式算好 ⇒ **只居中一次** ✓
+//   ✗ 别在外部用 `align:1` + AnchorBox 的 `centerX:true`：那是"居中了两次"，
+//     实测偏左 20.5px（≈ 半个字宽）—— 这个坑我踩过，见 dashboard_sidebar.leno 的注释 ✓
+//
+// 用法：
+//   SDL3.createBadge({x:946, y:282, text:"5 步流程"})                    // 自适应宽 ✓
+//   SDL3.createBadge({x:946, y:282, w:76, text:"5 步流程", align:1})     // 定宽 76 + 居中 ✓
+//   SDL3.createBadge({..., bg_color:.., border_color:.., text_color:..}) // 自定义配色 ✓
+import "sdl_renderer.leno" as ren; use ren.Renderer
+import "sdl_event.leno" as evt; use evt.Event
+import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_theme.leno" as theme; use theme.Color
+import "sdl_label.leno" as lbl; use lbl.Label
+import "sdl_core.leno" as core
+
+export struct Badge impl Widget {
+    const ALIGN_LEFT   = 0
+    const ALIGN_CENTER = 1
+    const ALIGN_RIGHT  = 2
+
+    float x = 0.0, y = 0.0
+    float _w = 0.0, _h = 0.0
+    float _padX = 12.0
+    float _padY = 5.0
+    float _radius = -1.0        // < 0 ⇒ 自动取 高/2（胶囊形 ✓）
+    bool _fixedW = false        // 显式给了 w ⇒ 不按文字自适应 ✓
+    int _align = ALIGN_CENTER
+    Color _bg = #EFF6FFFF       // 默认面向**浅色界面**（深色主题请显式传三色 ✓）
+    Color _bd = #BFDBFEFF
+    // ⚠ 文字色**必须独立给默认值**，不能拿描边色顶替 ✗ —— 浅色配色的描边本身就浅，
+    //   实测用 #BFDBFE 当文字画在 #EFF6FF 底上几乎看不见（亮度 214，肉眼是"空胶囊"✗）
+    Color _txtC = #2563EBFF
+    bool _drawBorder = true
+    // ⚠ struct 字段不能用 `= new Label()` 当默认值（编译报"默认值不是常量表达式"✗）
+    //   ⇒ 可空字段 + 每次使用前判空（与 Label 的 `Font? _font`、ComboBox 的 `_edit` 同一套路 ✓）
+    Label? _lbl = null
+    bool _loaded = false, visible = true
+
+    func set(Dict opts) {
+        x = opts.get("x", 0.0)
+        y = opts.get("y", 0.0)
+        _padX = opts.get("pad_x", 12.0)
+        _padY = opts.get("pad_y", 5.0)
+        _radius = opts.get("radius", -1.0)
+        _align = opts.get("align", Badge.ALIGN_CENTER)
+        if opts.get("bg_color") is Color => t { _bg = t }
+        if opts.get("border_color") is Color => t { _bd = t }
+        _drawBorder = opts.get("border", true)
+        visible = opts.get("visible", true)
+        // 文字色：默认 `_txtC`（独立默认值 ✓），`text_color` 可覆盖 ✓
+        Color tc = _txtC
+        if opts.get("text_color") is Color => t { tc = t }
+        _txtC = tc
+        float fs = opts.get("font_size", 11.0)
+        _lbl = lbl.createLabel({x:x, y:y, text:opts.get("text", ""), font_size:fs, text_color:tc})
+        float wOpt = opts.get("w", 0.0)
+        _fixedW = wOpt > 0.0
+        _w = wOpt
+        _h = opts.get("h", 0.0)
+        _layout()
+        _loaded = true
+    }
+
+    // ==================== 设置方法 ====================
+    // 按当前文字重算尺寸：定宽时宽用给定值、高仍按文字自适应 ✓（每帧绘制前也会兜一次 ✓）
+    func _layout() {
+        if _lbl == null { return }
+        if not _fixedW { _w = _lbl.get_w() + 2.0 * _padX }
+        if _h <= 0.0 { _h = _lbl.get_h() + 2.0 * _padY }
+    }
+    func _radius_eff(): float {
+        if _radius < 0.0 { return _h / 2.0 }
+        return _radius
+    }
+    func set_text(string t) {
+        if _lbl == null { return }
+        _lbl.set_text(t)
+        _layout()
+        core.markFrameRedraw()
+    }
+    func set_bg_color(Color c)     { _bg = c }
+    func set_border_color(Color c) { _bd = c }
+    func set_text_color(Color c) {
+        if _lbl == null { return }
+        _lbl.set_text_color(c)
+    }
+    func set_visible(bool v) { visible = v }
+    func is_visible(): bool { return visible }
+    func set_enabled(bool e) {}
+
+    // ==================== 查询方法 ====================
+    func get_x(): float { return x }
+    func get_y(): float { return y }
+    func get_w(): float { return _w }
+    func get_h(): float { return _h }
+    func get_text(): string {
+        if _lbl == null { return "" }
+        return _lbl.get_text()
+    }
+    func set_pos(float px, float py) { x = px; y = py }
+    func set_size(float sw, float sh) {
+        // 给了才用：宽被定住 ⇒ 不再按文字自适应；高没给 ⇒ 保持"文字高 + 2×pad_y" ✓
+        if sw > 0.0 { _w = sw; _fixedW = true }
+        if sh > 0.0 { _h = sh }
+    }
+
+    // 不可点 ⇒ 完全不处理事件（也不因此请求重绘 ✓）
+    func process(Event ev) {}
+
+    // ==================== 渲染 ====================
+    func render(Renderer r) {
+        if not _loaded or not visible { return }
+        if _lbl == null { return }
+        _layout()   // 文字可能被外部改过 ⇒ 每帧兜一次尺寸 ✓（幂等，不贵 ✓）
+        float rad = _radius_eff()
+        r.setColor(_bg)
+        r.fillRoundedRect(x, y, _w, _h, rad)
+        if _drawBorder and _bd != 0 {
+            r.setColor(_bd)
+            r.drawRoundedRect(x, y, _w, _h, rad)
+        }
+        // 文字位置：三个对齐都按**实测**文字宽高算 ⇒ 只居中一次 ✓
+        // （`set_pos` 不改 Label 的自然尺寸 ⇒ 每帧重复调用是幂等的 ✓）
+        float tw = _lbl.get_w()
+        float th = _lbl.get_h()
+        float tx = x + _padX
+        if _align == Badge.ALIGN_CENTER { tx = x + (_w - tw) / 2.0 }
+        else if _align == Badge.ALIGN_RIGHT { tx = x + _w - _padX - tw }
+        _lbl.set_pos(tx, y + (_h - th) / 2.0)
+        _lbl.render(r)
+    }
+
+    func dispose() {
+        if _lbl == null { return }
+        _lbl.dispose()
+        _lbl = null
+    }
+}
+
+// 工厂
+export func createBadge(Dict opts): Badge {
+    Badge b = new Badge(); b.set(opts); return b
+}

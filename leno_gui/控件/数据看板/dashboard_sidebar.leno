@@ -406,17 +406,11 @@ func stat_small(HBox row, string label, string num, string unit, Color numColor)
     }
 }
 
-// 右上角胶囊徽标
-// ⚠ 别用 `align:1` + `centerX:true` 这条组合：AnchorBox 先按子项自然宽居中一次、Label 又按
-//   "文字中心"画一次 ⇒ **居中了两次** ⇒ 文字整体偏左约半个字宽 ✗（这就是"胶囊里字没居中"的原因）。
-//   用 `label_at_center`：先量出文字宽高，再按**左上角**摆到 (w/2, h/2) ⇒ 只居中一次 ✓
-func pill_right(AnchorBox ca, float right, float top, float w, float h, string text) {
-    var pa = SDL3.createAnchorBox({})
-    var pp = SDL3.createPanel({clip:false, x:0, y:0, w:w, h:h, bg_color:C_PILL_BG, radius:h / 2.0, border_color:C_PILL_BR})
-    pp.setLayout(pa)
-    ca.add(pp, {right:right, top:top, w:w, h:h})
-    label_at_center(pa, w / 2.0, h / 2.0, text, 11.0, C_PILL_T)
-}
+// 胶囊徽标 / 步骤行：**已改用模块控件** `SDL3.createBadge(...)` 与 `SDL3.createSteps(...)` ✓
+//   —— 原先这两个 helper（`pill_right` / `step_row`）每个界面都要重写一遍，现已删除 ✓
+//   · 徽标不用 Button 代替：徽标**不可点** ⇒ Button 会带 hover/按下反馈、还会吃掉点击 ✗
+//   ⚠ 也别用 `align:1` + `centerX:true` 组合：AnchorBox 先按自然宽居中一次、Label 又按
+//     "文字中心"画一次 ⇒ **居中了两次**，实测偏左 20.5px（≈ 半个字宽）✗（详见 sdl_badge.leno ✓）
 
 // 深色日志框（贴卡片底部：left/right/bottom + 固定高 ✓）
 func log_box(AnchorBox ca, float h, string l1, Color c1, string l2, Color c2, string l3, Color c3) {
@@ -431,19 +425,10 @@ func log_box(AnchorBox ca, float h, string l1, Color c1, string l2, Color c2, st
     if l3 != "" { la.add(SDL3.createLabel({x:0, y:0, text:l3, font_size:11, text_color:c3}), {left:12.0, top:y}) }
 }
 
-// 步骤行：圆圈序号 + 标题 + 说明（`top` 相对卡片 ✓；`done` = 蓝色已完成态 ✓）
-func step_row(AnchorBox ca, float top, int n, string title, string desc, bool done) {
-    Color bg = C_STEP_BG
-    Color br = C_STEP_BR
-    Color nt = C_STEP_T
-    if done { bg = C_BLUE; br = C_BLUE; nt = #FFFFFFFF }
-    ca.add(SDL3.createPanel({clip:false, x:0, y:0, w:26.0, h:26.0, bg_color:bg, radius:13.0, border_color:br}), {left:18.0, top:top})
-    label_at_center(ca, 31.0, top + 13.0, _str(n), 12.0, nt)
-    ca.add(SDL3.createLabel({x:0, y:0, text:title, font_size:14, text_color:C_TXT}), {left:56.0, top:top + 1.0})
-    if desc != "" {
-        ca.add(SDL3.createLabel({x:0, y:0, text:desc, font_size:11, text_color:C_TXT3}), {left:56.0, top:top + 19.0})
-    }
-}
+// 步骤行（`step_row`）与胶囊徽标（`pill_right`）已经删掉 —— 两者都改成模块控件：
+//   `SDL3.createSteps(...)` 的 `add_step(标题, 说明)` 一行一步 ✓
+//   `SDL3.createBadge({...})` 自带"按实测文字宽居中"✓
+// 说明：`label_at_center` 保留 —— 下面的横向步骤 helper 还在用它 ✓
 
 // 页 1：用量统计
 func page_usage() {
@@ -513,12 +498,21 @@ func page_accounts() {
 
     // 切换守护：步骤条 + 日志
     var c3 = mk_card_h(row, 306.0, 448.0, "切换守护", "")
-    pill_right(c3, 22.0, 20.0, 76.0, 22.0, "5 步流程")
-    step_row(c3, 58.0, 1, "结束客户端", "关闭 Trae 客户端进程", false)
-    step_row(c3, 102.0, 2, "快照回滚区", "备份当前账号状态", false)
-    step_row(c3, 146.0, 3, "写回 vault", "写入目标账号载体", false)
-    step_row(c3, 190.0, 4, "拉起客户端", "启动 Trae 客户端", false)
-    step_row(c3, 234.0, 5, "判定结果", "校验登录态", false)
+    // 徽标：换成**模块控件 `Badge`** ✓（本文件原先手搓的 `pill_right` 已删 —— 这三个新控件就是从
+    // 这个示例里反复重写的 helper 长出来的 ✓）
+    c3.add(SDL3.createBadge({x:0, y:0, w:76.0, h:22.0, text:"5 步流程", radius:11.0}), {right:22.0, top:20.0})
+    // 5 步流程：换成**模块控件 `Steps`** ✓（原先 5 行 `step_row(...)` 手摆坐标 ⇒ 现在一行一步 ✓）
+    // ⚠ 顺序要紧：先 `add_step(...)` 再 `c3.add(...)` —— AnchorBox 是在 **add 那一刻**取自然尺寸的 ✓
+    // item_h/gap/圆圈大小都取示例原来的值（44/12/26）⇒ 与截图里的位置逐像素一致 ✓
+    var st5 = SDL3.createSteps({x:0, y:0, w:260.0, item_h:44.0, circle:26.0, gap:12.0,
+                                font_size:14.0, desc_size:11.0})
+    st5.add_step("结束客户端", "关闭 Trae 客户端进程")
+    st5.add_step("快照回滚区", "备份当前账号状态")
+    st5.add_step("写回 vault", "写入目标账号载体")
+    st5.add_step("拉起客户端", "启动 Trae 客户端")
+    st5.add_step("判定结果", "校验登录态")
+    // 截图里 5 步全是灰的 ⇒ 不推进（默认 set_active 之前就是全部"未开始" ✓）
+    c3.add(st5, {left:18.0, top:58.0})
     log_box(c3, 112.0, "[16:01:58] 尚未建档任何账号", C_LOGOK,
             "请先在 TraeSwitch 或本页「建档」备份登录态", C_LOGOK, "", C_LOGT)
 }
