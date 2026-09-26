@@ -491,6 +491,10 @@ var path = "folder" + _sep() + "subfolder" + _sep() + "file.txt"
 > }
 > ```
 >
+> ✅ **命令自己拉起的后台进程会活下来**（只有"超时"才收整棵树）：`_exec("cmd /c start \"\" \"a.txt\"")`
+> 这种**异步**打开是正当用法 —— `cmd` 立刻退出、被拉起的应用继续跑 ✓。
+> 超时给得及时，则连同孙子一起收（`TerminateJobObject`），不会留下握着临时文件的孤儿。
+>
 > 实现：Windows 走 `CreateProcessW` + `WaitForSingleObject` + `TerminateProcess`；POSIX 用 coreutils
 > 的 `timeout` 包一层（系统没有该命令时会以 `127` **响亮**失败，不会静默忽略超时）。
 

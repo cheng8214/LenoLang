@@ -8,13 +8,21 @@
 //   ① 超时：跑一个约 5 s 的命令、超时给 1 s ⇒ 退出码必须是 124，且**实际耗时**明显小于命令时长
 //      （< 4 s ⇒ 证明真杀了，而不是等它跑完）；
 //   ② 守卫：正常命令 + timeout 参数照常成功（exit 0 + 输出正确）；
-//   ③ 守卫：**不传** timeout_ms 时行为不变（旧的阻塞语义）。
+//   ③ 守卫：**不传** timeout_ms 时行为不变（旧的阻塞语义）；
+//   ④ 守卫（仅 Windows）：命令**自己拉起的后台进程**不许被连带杀掉 —— 见下。
 //
 // ★ 这个用例的**判据顺序**本身就是一条守卫：先跑"被超时杀掉的子进程"、再跑普通 `_exec` ✓。
 //   第一版实现有两处坑，正是被它抓住的（随后整套件 241/330 挂 ✗）：
 //     · 临时文件名按 pid 复用 ⇒ 上一次残留的子进程握着它 ⇒ 之后**所有** _exec 败在
 //       「being used by another process」；
 //     · 只 TerminateProcess 杀 `cmd`、孙子（ping）活下来继续握文件 ⇒ 已改用 Job Object 收整棵树。
+//
+// ④ 的由来（2026-09-27）：上面那个 Job Object 当初带上了 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`
+//   ⇒ **句柄一关就杀掉 job 里所有还活着的进程**。而 `cmd /c start "" "文件"` 这类**异步**拉起
+//   是正当用法：cmd 立刻退出、应用还在跑 ⇒ 被当场杀掉 ✗
+//   实测症状：文件管理器「双击 / 右键菜单打开文件」**没反应**（应用起来又立刻被杀）。
+//   修法：job 只留着超时时 `TerminateJobObject` 收树用，去掉那个标志。
+//   ⚠ 只测 Windows：POSIX 侧 `_exec` 是 `popen`，本来就不杀子进程 ⇒ 该失效模式不存在 ✓
 
 import strings
 import times
@@ -44,6 +52,26 @@ main() {
     assert_ne(r3, null, "③_exec 返回 null")
     assert_eq(r3[1], 0, "③不传 timeout 也应成功；输出=" + _str(r3[0]))
     assert_true(strings.has(_str(r3[0]), "leno_p6_noarg"), "③输出应含标记")
+
+    // ④ 守卫（仅 Windows）：命令自己拉起的**后台进程**必须活过 _exec（见头部说明）
+    //   用 `start "" /min ping …` 这个形状 —— 与 file_manager 的 openFile 同款
+    //   （`cmd /c start "" "文件"`：cmd 立刻退出、被拉起的应用继续跑）✓
+    //   归因方式：先确认"当前没有 ping 在跑"，再拉起，再看它是否出现 ⇒ 出现在表里只可能是我们拉起的 ✓
+    if is_win {
+        var probe = "tasklist /fi \"imagename eq ping.exe\""
+        var pre = _exec(probe, 15000)
+        assert_ne(pre, null, "④tasklist 起不来")
+        assert_eq(strings.has(_str(pre[0]), "PING.EXE"), false,
+            "④前置条件不成立：本机已有 ping 在跑，结论无法归因（重跑一次即可）；输出=" + _str(pre[0]))
+
+        var r4 = _exec("cmd /c start \"\" /min ping -n 5 127.0.0.1", 15000)
+        assert_ne(r4, null, "④拉起后台进程失败")
+
+        var post = _exec(probe, 15000)
+        assert_ne(post, null, "④tasklist 起不来（后置）")
+        assert_true(strings.has(_str(post[0]), "PING.EXE"),
+            "④命令拉起的后台进程应活过 _exec —— 被 job 连带杀掉就会红；tasklist 输出=" + _str(post[0]))
+    }
 
     print("test_exec_timeout passed")
 }

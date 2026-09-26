@@ -357,16 +357,14 @@ static Value native_exec(int argCount, Value* args) {
     }
     int rc = 0;
     {
+        // Job Object：**只**为了超时时把 cmd + 它的孙子一起收掉（下面 TerminateJobObject）✓
+        // ⚠ 绝不能再设 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE：该标志在**句柄关闭**时杀掉 job 内
+        //   所有还活着的进程 —— 而 `cmd /c start "" "文件"` 这类**异步**拉起是正当用法：
+        //   cmd 立刻退出、被拉起的应用还在跑，句柄一关就把它**当场杀掉** ✗
+        //   实测（2026-09-27）：`_exec("cmd /c start …ping…")` 返回后 tasklist 里已看不到 ping.exe；
+        //   文件管理器"双击/右键打开文件"因此表现为**没反应**（应用起来又立刻被杀）✗
+        //   超时路径不受影响：TerminateJobObject 本身就是收整棵树的手段 ✓
         HANDLE job = CreateJobObjectW(NULL, NULL);
-        if (job) {
-            JOBOBJECT_EXTENDED_LIMIT_INFORMATION jeli;
-            memset(&jeli, 0, sizeof(jeli));
-            jeli.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-            if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, &jeli, sizeof(jeli))) {
-                CloseHandle(job);
-                job = NULL;
-            }
-        }
         STARTUPINFOW si;
         PROCESS_INFORMATION pi;
         memset(&si, 0, sizeof(si));
@@ -395,7 +393,7 @@ static Value native_exec(int argCount, Value* args) {
         }
         CloseHandle(pi.hThread);
         CloseHandle(pi.hProcess);
-        if (job) CloseHandle(job);                     // KILL_ON_JOB_CLOSE ⇒ 连带收掉残留的孙子
+        if (job) CloseHandle(job);                     // 只关句柄、**不杀**：命令自己拉起的后台进程该活着 ✓
     }
     free(wfull);
     free(wcmd);
