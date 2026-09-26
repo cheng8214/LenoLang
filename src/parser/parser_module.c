@@ -123,6 +123,9 @@ Ast* parse_import_stmt(Parser* p) {
     // 字符串形式已是空操作、只对标识符形式有效 ⇒ 同一规则两份实现，已删前一份（S9 收敛）。
     {
         char resolved[MAX_PATH_LEN] = {0};
+        /* T19 选项 2：告诉包层"当前导入方是谁" —— 裸名 import 会先查它自己的目录。
+         * 此刻 error_get_filename() 就是导入方（module_loader 加载模块时存/还原了文件名）。 */
+        package_set_importer_dir(error_get_filename());
         if (package_resolve_import_spec(module_name, resolved, sizeof(resolved)) == 1) {
             // 找到了，将 module_name 替换为完整路径
             free(module_name);

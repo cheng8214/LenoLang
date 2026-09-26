@@ -70,6 +70,10 @@ static void resolve_module_full_path(char* full_path, int max_len,
     char pkg_resolved[MAX_PATH_LEN];
     {
         extern int package_resolve_import_spec(const char* spec, char* out_path, int out_len);
+        extern void package_set_importer_dir(const char* file_path);
+        /* T19 选项 2：扫描器知道 current_file ⇒ 先声明"导入方是谁"，
+         * 好让裸名 import 先取同目录 sibling（与解析器同款，见 package_resolve.c）。 */
+        package_set_importer_dir(current_file);
         if (package_resolve_import_spec(module_path, pkg_resolved, MAX_PATH_LEN) == 1) {
             module_path = pkg_resolved;
         }

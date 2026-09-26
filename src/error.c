@@ -419,3 +419,32 @@ void warning_print_all(void) {
 
     fprintf(stderr, "=====================\n\n");
 }
+
+// ============================================================================
+// T19：把包层扫出来的"模块名歧义"报成编译期警告
+// ----------------------------------------------------------------------------
+// 实现放在这里而不是各调用方：编译器（main.c）与 LSP（leno_lsp/leno_compiler_lib.c）
+// 都要用，而这两处不共享同一个源文件 —— 只有 error.c 两边都链。
+// 位置挂在**实际生效**（搜索路径靠前）那份文件上：终端里可 ctrl+点击直接跳过去，
+// 比原来那句"模块 'x' 中没有方法 y"好定位得多。
+// ⚠ 调用方必须把它放在 error_clear() / warning_clear() **之后**（否则警告当场被清掉）。
+// ============================================================================
+void error_report_shadowed_module(void* ctx, const char* name, const char* winner, const char* shadowed) {
+    (void)ctx;
+    (void)name;
+    char msg[BUFFER_MEDIUM];
+    snprintf(msg, sizeof(msg),
+             "被同名模块遮蔽：%s（内容不同）；消解：改用包入口名或 ./ 相对路径，别用裸文件名",
+             shadowed);
+    /* error_get_filename() 返回的是内部缓冲区 ⇒ 先拷出来再改，否则会被覆盖 */
+    char saved[BUFFER_LARGE];
+    saved[0] = '\0';
+    const char* cur = error_get_filename();
+    if (cur) {
+        strncpy(saved, cur, sizeof(saved) - 1);
+        saved[sizeof(saved) - 1] = '\0';
+    }
+    error_set_filename(winner);
+    warning_add_at(WARN_AMBIGUOUS_MODULE, 1, 1, msg);
+    error_set_filename(saved[0] ? saved : NULL);
+}

@@ -735,7 +735,8 @@ static int shadow_probe_file(const char* dir, const char* name, char* out, int o
     char candidate[MAX_PATH_LEN];
     size_t dlen = strlen(dir), nlen = strlen(name);
     if (dlen + nlen + 6 >= (size_t)MAX_PATH_LEN) return 0;
-    snprintf(candidate, sizeof(candidate), "%s%s.leno", dir, name);
+    snprintf(candidate, sizeof(candidate), "%.*s%.*s%s",
+             (int)dlen, dir, (int)nlen, name, ".leno");
     FILE* f = fopen(candidate, "rb");
     if (!f) return 0;
     fclose(f);

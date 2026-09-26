@@ -31,6 +31,33 @@
 static char search_paths[MAX_SEARCH_PATHS][MAX_PATH_LEN];
 static int search_path_count = 0;
 
+/* T19 选项 2：**当前导入方所在目录**（含结尾分隔符）。裸文件名 import **先**查这里。
+ * 为什么需要：搜索路径按包名字母序枚举 ⇒ 包 A 内部的 import "x.leno" 会被字母序靠前的
+ * 包 B 的同名文件顶掉（LenoHack 顶掉 LenoWin32 那次，连后者自己的 import 都被顶）。
+ * "包内 import 先拿自己的 sibling"才是对的 —— 与 C 的 #include "..." 同款语义。 */
+static char importer_dir[MAX_PATH_LEN] = "";
+
+void package_set_importer_dir(const char* file_path) {
+    importer_dir[0] = '\0';
+    if (!file_path || !file_path[0]) return;
+
+    size_t len = strlen(file_path);
+    if (len >= (size_t)MAX_PATH_LEN) return;
+    memcpy(importer_dir, file_path, len + 1);
+
+    /* 统一分隔符（与 package_search_path_add 同款），再截到最后一个分隔符（保留它） */
+#ifdef _WIN32
+    for (size_t i = 0; importer_dir[i]; i++) {
+        if (importer_dir[i] == '/') importer_dir[i] = '\\';
+    }
+    char* last = strrchr(importer_dir, '\\');
+#else
+    char* last = strrchr(importer_dir, '/');
+#endif
+    if (last) *(last + 1) = '\0';
+    else importer_dir[0] = '\0';   /* 纯文件名（没有目录部分）⇒ 无"所在目录"可言 */
+}
+
 int package_search_path_add(const char* path) {
     if (search_path_count >= MAX_SEARCH_PATHS || !path) return -1;
 
@@ -54,6 +81,7 @@ int package_search_path_add(const char* path) {
 
 void package_search_path_clear(void) {
     search_path_count = 0;
+    importer_dir[0] = '\0';   /* 新的一轮编译：别把上一轮的导入方留下来 */
 }
 
 int package_search_path_count(void) {
@@ -149,8 +177,12 @@ int package_resolve_module_file(const char* module_name, char* out_path, int out
 
     char candidate[MAX_PATH_LEN];
 
-    for (int i = 0; i < search_path_count; i++) {
-        size_t plen = strlen(search_paths[i]);
+    /* i = -1 是"虚拟第 0 条"：**导入方自己的目录**（T19 选项 2）。它不占搜索路径名额、
+     * 也不进撞名扫描的路径列表 —— 语义只是"包内 import 先看自己的 sibling"。 */
+    for (int i = -1; i < search_path_count; i++) {
+        const char* dir = (i < 0) ? importer_dir : search_paths[i];
+        if (!dir || !dir[0]) continue;
+        size_t plen = strlen(dir);
         size_t mlen = strlen(module_name);
         if (plen + mlen + 6 >= (size_t)MAX_PATH_LEN) continue;
         // 写法里已经带 .leno 时**不再追加**（否则 "SDL3.leno" 会被找成 "SDL3.leno.leno" ✗）。
@@ -158,7 +190,7 @@ int package_resolve_module_file(const char* module_name, char* out_path, int out
         const char* suffix = ".leno";
         if (mlen >= 5 && strcmp(module_name + mlen - 5, ".leno") == 0) suffix = "";
         snprintf(candidate, sizeof(candidate), "%.*s%.*s%s",
-                 (int)plen, search_paths[i], (int)mlen, module_name, suffix);
+                 (int)plen, dir, (int)mlen, module_name, suffix);
 
         if (file_exists_internal(candidate)) {
             strncpy(out_path, candidate, out_len - 1);

@@ -6,6 +6,7 @@
 #include "leno_compiler_lib.h"
 #include "../src/include/lenolang.h"
 #include "../src/include/native.h"
+#include "../src/include/leno_package.h"   // T19：package_scan_shadowed_modules（撞名扫描）
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -103,6 +104,12 @@ bool compiler_analyze_with_filename(CompilerContext* ctx, const char* source, co
     if (filename) {
         error_set_filename(filename);
     }
+
+    // T19：裸文件名 import 的撞名扫描（**必须**在上面 error_clear/warning_clear 之后）。
+    // 每次 analyze 跑一遍：目录枚举 + 只在真有同名时比内容，开销远小于紧随其后的
+    // lexer+parser+semantic；结果落在全局 warnings 数组里，lsp_diagnostic.c 直接转 diagnostics，
+    // 无需额外推送。警告位置挂在"实际生效"那份文件上。
+    package_scan_shadowed_modules(error_report_shadowed_module, NULL);
 
     // LSP 分析时抑制 stderr（防止 "错误收集器已满" 洪水导致 CPU 飙升）
     lsp_suppress_stderr();

@@ -213,6 +213,14 @@ char* package_find_project_root(const char* source_file);
  */
 int package_search_path_add(const char* path);
 
+/* T19 选项 2：声明"当前导入方文件" —— 裸文件名 import 会**先**在它的所在目录里找，命中即用
+ * （包内互相 import 天然取同目录 sibling，不再被字母序靠前的同名副本顶掉，见 package_resolve.c）。
+ * 传 NULL 或从不调用 ⇒ 维持旧行为（只按搜索路径顺序）。
+ * 两个调用点：parser_module.c（解析器）、sym_table_entry.inc（扫描器/符号表），
+ * 都在"解析 import"那一刻传当前文件 —— 此时错误系统的"当前文件名"就是导入方
+ * （module_loader 加载模块时存/还原文件名，已确证）。 */
+void package_set_importer_dir(const char* file_path);
+
 /** 清空所有搜索路径 */
 void package_search_path_clear(void);
 

@@ -533,33 +533,12 @@ static int entry_deps_valid(const char* deps_path) {
 // 覆盖范围是 CLI 入口（run / -c / -p）；被 import 的模块为空不算 —— 一个不导出任何东西的
 // 模块是合法形态，不该报警。
 // ============================================================================
-/* T19：把"模块名歧义"报成编译期警告 —— 包层用回调把"怎么报"交给调用方。
- * 位置挂在**实际生效**那份文件上（终端里可 ctrl+点击直接跳过去看，比"模块里没有方法"好定位）。 */
-static void report_ambiguous_module(void* ctx, const char* name, const char* winner, const char* shadowed) {
-    (void)ctx;
-    (void)name;
-    char msg[BUFFER_MEDIUM];
-    snprintf(msg, sizeof(msg),
-             "被同名模块遮蔽：%s（内容不同）；消解：改用包入口名或 ./ 相对路径，别用裸文件名",
-             shadowed);
-    /* error_get_filename() 返回的是内部缓冲区 ⇒ 先拷出来再改，否则被覆盖 */
-    char saved[MAX_PATH_LEN];
-    saved[0] = '\0';
-    const char* cur = error_get_filename();
-    if (cur) {
-        strncpy(saved, cur, sizeof(saved) - 1);
-        saved[sizeof(saved) - 1] = '\0';
-    }
-    error_set_filename(winner);
-    warning_add_at(WARN_AMBIGUOUS_MODULE, 1, 1, msg);
-    error_set_filename(saved[0] ? saved : NULL);
-}
-
 /* T19：撞名扫描的调用点包装 —— **必须**在 error_clear()/warning_clear() 之后调用，
  * 否则刚加进去的警告会被那两句清掉（首版就踩了这个坑：调用点放在路径设置末尾，
- * 而 clear 在 lenolang_run / lenolang_compile 的开头 ⇒ 警告一条都打不出来）。 */
+ * 而 clear 在 lenolang_run / lenolang_compile 的开头 ⇒ 警告一条都打不出来）。
+ * 上报实现收在 error.c 的 error_report_shadowed_module()（LSP 侧共用同一份 ⇒ 不重复实现）。 */
 static void check_ambiguous_modules(void) {
-    package_scan_shadowed_modules(report_ambiguous_module, NULL);
+    package_scan_shadowed_modules(error_report_shadowed_module, NULL);
 }
 
 static void warn_if_source_empty(const char* source) {

@@ -71,4 +71,9 @@ int warning_has_any(void);
 void warning_clear(void);
 void warning_print_all(void);
 
+/* T19：包层扫出的"模块名歧义" → 编译期警告（实现见 error.c；main.c 与 LSP 共用同一份）。
+ * 签名与 package_resolve.h 里的 PackageShadowFn 一致 ⇒ 可直接当回调传进去。
+ * ⚠ 调用方须在 error_clear()/warning_clear() 之后调用。 */
+void error_report_shadowed_module(void* ctx, const char* name, const char* winner, const char* shadowed);
+
 #endif // LENO_ERROR_H
