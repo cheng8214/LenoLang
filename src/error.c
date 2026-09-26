@@ -302,6 +302,14 @@ void warning_clear(void) {
     warnings.count = 0;
 }
 
+/* 警告版的同"类"判定（与 error_same_kind 同款；警告没有 printed 边界，全部参与归并） */
+static int warning_same_kind(const Warning* a, const Warning* b) {
+    return a->type == b->type
+        && a->filename[0] != '\0'
+        && strcmp(a->filename, b->filename) == 0
+        && strcmp(a->msg, b->msg) == 0;
+}
+
 void warning_print_all(void) {
     if (warnings.count == 0) return;
 
@@ -310,14 +318,32 @@ void warning_print_all(void) {
         total += warnings.list[i].repeat_count;
     }
 
+    // 展示条数 = 归并后的"类"数（同 error_print_all：同一根因跨行的复现算一类）
+    int shown_kinds = 0;
+    for (int i = 0; i < warnings.count; i++) {
+        int is_head = 1;
+        for (int j = 0; j < i; j++) {
+            if (warning_same_kind(&warnings.list[j], &warnings.list[i])) { is_head = 0; break; }
+        }
+        if (is_head) shown_kinds++;
+    }
+
     fprintf(stderr, "\n=== 发现 %d 个警告", total);
-    if (total > warnings.count) {
-        fprintf(stderr, "（%d 种，已合并重复）", warnings.count);
+    if (total > shown_kinds) {
+        fprintf(stderr, "（%d 种，已合并重复）", shown_kinds);
     }
     fprintf(stderr, " ===\n");
 
     for (int i = 0; i < warnings.count; i++) {
         Warning* w = &warnings.list[i];
+
+        /* 同 error_print_all：同一根因只在**首次出现处**打完整信息，其余位置收进「同类另有 N 处」 */
+        int is_head = 1;
+        for (int j = 0; j < i; j++) {
+            if (warning_same_kind(&warnings.list[j], w)) { is_head = 0; break; }
+        }
+        if (!is_head) continue;
+
         const char* type_str = "警告";
 
         switch (w->type) {
@@ -360,6 +386,34 @@ void warning_print_all(void) {
             fprintf(stderr, " (重复 %d 次)", w->repeat_count);
         }
         fprintf(stderr, "\n");
+
+        /* 同类其余位置并成一行（每行最多 12 个，超了续行）—— 与 error_print_all 同款 */
+        int others = 0;
+        for (int j = i + 1; j < warnings.count; j++) {
+            if (warning_same_kind(w, &warnings.list[j])) others++;
+        }
+        if (others > 0) {
+            int col = 0;
+            int sep = 0;
+            fprintf(stderr, "    同类另有 %d 处：", others);
+            for (int j = i + 1; j < warnings.count; j++) {
+                const Warning* other = &warnings.list[j];
+                if (!warning_same_kind(w, other)) continue;
+                if (col == 12) {
+                    fprintf(stderr, "\n        ");
+                    col = 0;
+                    sep = 0;
+                }
+                if (other->repeat_count > 1) {
+                    fprintf(stderr, "%s行 %d×%d", sep ? "、" : "", other->line, other->repeat_count);
+                } else {
+                    fprintf(stderr, "%s行 %d", sep ? "、" : "", other->line);
+                }
+                sep = 1;
+                col++;
+            }
+            fprintf(stderr, "\n");
+        }
     }
 
     fprintf(stderr, "=====================\n\n");
