@@ -6,6 +6,7 @@
 #include <ctype.h>
 #include <stdbool.h>
 #include <inttypes.h>
+#include <errno.h>
 
 // 前向声明
 extern ObjString* dict_key_to_string(Value key);
@@ -739,6 +740,225 @@ static Value jsons_write_file_func(int argc, Value* args) {
     return val_bool(true);
 }
 
+/* ============================================================================
+ * T21：类型化取值助手 —— 把 "any 收窄" 收进标准库
+ * ----------------------------------------------------------------------------
+ * 背景：`jsons.decode/read_file` 的返回类型**只能是 any**（JSON 顶层可能是对象/数组/
+ * 标量，硬改成 Dict 是错语义）⇒ 此前每个消费点都要手写 `if x is Dict => d and d.has(k)`，
+ * 于是每个项目都自造一层 json_get/json_obj/json_keys（TraeSign 的 `trae_core.leno` 就是）。
+ * 这里把这一层做成标准库：**收窄只发生在这几个函数体里，调用点零样板** ✓。
+ *
+ * 语义约定（全部**不抛异常**：坏输入 ⇒ 默认值/空；唯一"失败"是 write_text 落盘失败返 false）：
+ *   · get_str/get_int/get_float/get_bool(obj, key, default)
+ *       - obj 不是字典 / 缺键 / 值转不过去 ⇒ default（default 本身也走一遍转换 ✓）
+ *       - 标量之间**互相可转**：字符串数字也能取成 int（**整串**都得是数字才认 ✓）；
+ *         数字/布尔也能取成字符串（复用 value_to_string 的打印口径 ✓）
+ *       - 字典/数组这类容器**不**参与转换（要它们请用 get_obj ✓）
+ *   · get_obj(obj, key)：拿原始值继续往下钻（非字典/缺键 ⇒ null）
+ *   · keys(obj)：字典的键列表（插入序；非字符串键转文本 ✓）；非字典 ⇒ 空数组
+ *   · write_text(path, s)：**原样**写文本、不做 JSON 编码 —— 想写"已经编码好的 JSON 文本"
+ *     必须用它：`write_file` 会把入参**再编码一次**，传 "{}" 会落盘成带引号的 `"{}"` ✗
+ * ============================================================================ */
+
+// 取 obj[key]；obj 不是字典 / key 不是字符串 / 缺键 ⇒ null
+static Value json_pick(Value obj, Value key) {
+    if (!val_is_obj(obj) || val_as_obj(obj)->type != OBJ_DICT) return val_null();
+    if (!val_is_obj(key) || val_as_obj(key)->type != OBJ_STRING) return val_null();
+    ObjDict* d = (ObjDict*)val_as_obj(obj);
+    if (!dict_has(d, key)) return val_null();
+    return dict_get(d, key);
+}
+
+// 标量 → 文本（字符串/整数/浮点/布尔/BigInt）；容器与 null ⇒ NULL
+static ObjString* json_scalar_text(Value v) {
+    if (val_is_obj(v)) {
+        ObjType t = val_as_obj(v)->type;
+        if (t == OBJ_STRING) return (ObjString*)val_as_obj(v);
+        if (t != OBJ_BIGINT) return NULL;   // 字典/数组等容器不给文本形态（要它们请用 get_obj）
+    } else if (!val_is_int(v) && !val_is_float(v) && !val_is_bool(v)) {
+        return NULL;                        // null / 其它 ⇒ 无文本形态
+    }
+    char* s = value_to_string(v);           // 复用统一打印口径（bigint 也覆盖 ✓）
+    if (!s) return NULL;
+    ObjString* out = str_new(s, (int)strlen(s));
+    free(s);
+    return out;
+}
+
+// 标量 → int64（不抛异常）：字符串要**整串**都是数字才认；溢出/容器 ⇒ 0（调用方回退默认值）
+static int json_scalar_int(Value v, int64_t* out) {
+    switch (val_get_type(v)) {
+        case VAL_INT:
+            *out = val_as_int(v);
+            return 1;
+        case VAL_FLOAT: {
+            double d = val_as_num(v);
+            // 同 native_to_int 的边界处理：超出 int64 的浮点先挡掉（别做 UB 转换 ✗）
+            if (d >= 9.223372036854775e18 || d <= -9.223372036854775e18) return 0;
+            *out = (int64_t)d;
+            return 1;
+        }
+        case VAL_BOOL:
+            *out = val_as_bool(v) ? 1 : 0;
+            return 1;
+        case VAL_OBJ:
+            if (val_as_obj(v)->type == OBJ_STRING) {
+                ObjString* s = (ObjString*)val_as_obj(v);
+                char* end;
+                errno = 0;
+                long long n = strtoll(s->chars, &end, 10);
+                // `end == s->chars` 挡掉空串；整串都得是数字；ERANGE ⇒ 溢出 int64（回退默认值 ✓）
+                if (end == s->chars || *end != '\0' || errno == ERANGE) return 0;
+                *out = (int64_t)n;
+                return 1;
+            }
+            return 0;
+        default:
+            return 0;
+    }
+}
+
+// 标量 → double（同款约定）
+static int json_scalar_float(Value v, double* out) {
+    switch (val_get_type(v)) {
+        case VAL_INT:   *out = (double)val_as_int(v);      return 1;
+        case VAL_FLOAT: *out = val_as_num(v);              return 1;
+        case VAL_BOOL:  *out = val_as_bool(v) ? 1.0 : 0.0; return 1;
+        case VAL_OBJ:
+            if (val_as_obj(v)->type == OBJ_STRING) {
+                ObjString* s = (ObjString*)val_as_obj(v);
+                char* end;
+                errno = 0;
+                double d = strtod(s->chars, &end);
+                if (end == s->chars || *end != '\0' || errno == ERANGE) return 0;
+                *out = d;
+                return 1;
+            }
+            return 0;
+        default:
+            return 0;
+    }
+}
+
+// 标量 → bool（同款约定）：字符串只认 "true"/"false"/"1"/"0"（与 TraeSign 的 _flag 同口径 ✓）
+static int json_scalar_bool(Value v, int* out) {
+    switch (val_get_type(v)) {
+        case VAL_BOOL:  *out = val_as_bool(v);       return 1;
+        case VAL_INT:   *out = val_as_int(v) != 0;   return 1;
+        case VAL_FLOAT: *out = val_as_num(v) != 0.0; return 1;
+        case VAL_OBJ:
+            if (val_as_obj(v)->type == OBJ_STRING) {
+                ObjString* s = (ObjString*)val_as_obj(v);
+                if (s->len == 4 && strncmp(s->chars, "true", 4) == 0)  { *out = 1; return 1; }
+                if (s->len == 5 && strncmp(s->chars, "false", 5) == 0) { *out = 0; return 1; }
+                if (s->len == 1 && s->chars[0] == '1') { *out = 1; return 1; }
+                if (s->len == 1 && s->chars[0] == '0') { *out = 0; return 1; }
+            }
+            return 0;
+        default:
+            return 0;
+    }
+}
+
+// jsons.get_str(obj, key, default)
+static Value jsons_get_str_func(int argc, Value* args) {
+    Value def = val_obj((Object*)str_new("", 0));
+    if (argc >= 3) {
+        ObjString* t = json_scalar_text(args[2]);
+        if (t) def = val_obj((Object*)t);
+    }
+    Value v = json_pick(args[0], args[1]);
+    if (!val_is_null(v)) {
+        ObjString* t = json_scalar_text(v);
+        if (t) return val_obj((Object*)t);
+    }
+    return def;
+}
+
+// jsons.get_int(obj, key, default)
+static Value jsons_get_int_func(int argc, Value* args) {
+    Value def = val_int(0);
+    if (argc >= 3) {
+        int64_t d;
+        if (json_scalar_int(args[2], &d)) def = val_int_safe(d);
+    }
+    int64_t n;
+    Value v = json_pick(args[0], args[1]);
+    if (!val_is_null(v) && json_scalar_int(v, &n)) return val_int_safe(n);
+    return def;
+}
+
+// jsons.get_float(obj, key, default)
+static Value jsons_get_float_func(int argc, Value* args) {
+    Value def = val_float(0.0);
+    if (argc >= 3) {
+        double d;
+        if (json_scalar_float(args[2], &d)) def = val_float(d);
+    }
+    double f;
+    Value v = json_pick(args[0], args[1]);
+    if (!val_is_null(v) && json_scalar_float(v, &f)) return val_float(f);
+    return def;
+}
+
+// jsons.get_bool(obj, key, default)
+static Value jsons_get_bool_func(int argc, Value* args) {
+    Value def = val_bool(0);
+    if (argc >= 3) {
+        int d;
+        if (json_scalar_bool(args[2], &d)) def = val_bool(d);
+    }
+    int b;
+    Value v = json_pick(args[0], args[1]);
+    if (!val_is_null(v) && json_scalar_bool(v, &b)) return val_bool(b);
+    return def;
+}
+
+// jsons.get_obj(obj, key)：原始值（继续往下钻用）；非字典/缺键 ⇒ null
+static Value jsons_get_obj_func(int argc, Value* args) {
+    (void)argc;
+    return json_pick(args[0], args[1]);
+}
+
+// jsons.keys(obj)：字典键列表（插入序；非字符串键转文本 ✓）；非字典 ⇒ 空数组
+static Value jsons_keys_func(int argc, Value* args) {
+    (void)argc;
+    ObjArray* arr = arr_new(8);
+    if (!arr) return val_null();
+    Value o = args[0];
+    if (val_is_obj(o) && val_as_obj(o)->type == OBJ_DICT) {
+        ObjDict* d = (ObjDict*)val_as_obj(o);
+        int n = 0;
+        for (int i = 0; i < d->order_count; i++) {
+            Value k = d->order[i];
+            if (val_is_null(k)) continue;
+            ObjString* ks = dict_key_to_string(k);
+            if (!ks) continue;
+            while (n >= arr->capacity) {
+                if (!arr_grow(arr)) { arr->count = n; return val_obj((Object*)arr); }
+            }
+            arr_write(arr, n, val_obj((Object*)ks));
+            n++;
+        }
+        arr->count = n;
+    }
+    return val_obj((Object*)arr);
+}
+
+// jsons.write_text(path, s)：**原样**写文本（不 JSON 编码 ✓）；失败 ⇒ false
+static Value jsons_write_text_func(int argc, Value* args) {
+    (void)argc;
+    if (!val_is_obj(args[0]) || val_as_obj(args[0])->type != OBJ_STRING) return val_bool(false);
+    if (!val_is_obj(args[1]) || val_as_obj(args[1])->type != OBJ_STRING) return val_bool(false);
+    ObjString* path = (ObjString*)val_as_obj(args[0]);
+    ObjString* text = (ObjString*)val_as_obj(args[1]);
+    FILE* file = fopen_utf8(path->chars, "wb");
+    if (!file) return val_bool(false);
+    size_t written = text->len > 0 ? fwrite(text->chars, 1, (size_t)text->len, file) : 0;
+    fclose(file);
+    return val_bool(written == (size_t)text->len);
+}
+
 // Module initialization
 void jsons_init_module(void) {
     TypeKind decode_params[] = {TYPE_STRING};
@@ -753,4 +973,26 @@ void jsons_init_module(void) {
 
     TypeKind write_file_params[] = {TYPE_STRING, TYPE_ANY};
     native_register_module_method("jsons", "write_file", jsons_write_file_func, 2, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, write_file_params);
+
+    // ---- T21：类型化取值助手（收窄收在标准库里 ⇒ 调用点零样板 ✓）----
+    TypeKind get_str_params[] = {TYPE_ANY, TYPE_STRING, TYPE_STRING};
+    native_register_module_method("jsons", "get_str", jsons_get_str_func, 3, -1, -1, TYPE_STRING, TYPE_UNKNOWN, get_str_params);
+
+    TypeKind get_int_params[] = {TYPE_ANY, TYPE_STRING, TYPE_INT};
+    native_register_module_method("jsons", "get_int", jsons_get_int_func, 3, -1, -1, TYPE_INT, TYPE_UNKNOWN, get_int_params);
+
+    TypeKind get_float_params[] = {TYPE_ANY, TYPE_STRING, TYPE_FLOAT};
+    native_register_module_method("jsons", "get_float", jsons_get_float_func, 3, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, get_float_params);
+
+    TypeKind get_bool_params[] = {TYPE_ANY, TYPE_STRING, TYPE_BOOL};
+    native_register_module_method("jsons", "get_bool", jsons_get_bool_func, 3, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, get_bool_params);
+
+    TypeKind get_obj_params[] = {TYPE_ANY, TYPE_STRING};
+    native_register_module_method("jsons", "get_obj", jsons_get_obj_func, 2, -1, -1, TYPE_ANY, TYPE_UNKNOWN, get_obj_params);
+
+    TypeKind keys_params[] = {TYPE_ANY};
+    native_register_module_method("jsons", "keys", jsons_keys_func, 1, -1, -1, TYPE_ARRAY, TYPE_STRING, keys_params);
+
+    TypeKind write_text_params[] = {TYPE_STRING, TYPE_STRING};
+    native_register_module_method("jsons", "write_text", jsons_write_text_func, 2, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, write_text_params);
 }

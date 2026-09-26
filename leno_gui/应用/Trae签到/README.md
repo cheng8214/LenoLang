@@ -19,7 +19,7 @@
 | ⑦ 历史记录 `history.json`（日历按账号独立）| ✅ 完成（`trae_history.leno`；键 = `brand+username+日期` ⇒ **天然按账号独立** ✓）|
 | ⑧ **设备号按账号独立**（`devices.json`）⇒ 同机多账号才能**各自**签到 | ✅ 完成（`trae_devices.leno`；对标参考件「每账号独立设备号 + 可手动更换」✓）|
 
-### CLI 用法（位置子命令：解释器会先吃掉自己的 `--xxx` 旗标 ⇒ 用位置词）
+### CLI 用法（位置子命令；解释器层面 `--flag` 已不再被吞 —— 见文末「语言侧注意点」）
 
 ```
 build\leno.exe trae_sign.leno              # 签到（默认；今天已签到会提示无需重复）
@@ -223,14 +223,23 @@ status → 今日未签到。积分 base=150 extra=50
 
 - `jsons.decode/read_file` 返回 `any`：**不能直接当 Dict 用**（也不能赋给 `Dict` 变量），
   必须 `if x is Dict { ... }` 收窄 ⇒ 本工具把收窄集中在一层（`json_get/json_obj/json_keys`）✓；
+  **2026-09-26 起这一层已做进标准库** ⇒ 新代码直接用 `jsons.get_str/get_int/get_float/get_bool/
+  get_obj/keys`（调用点零收窄 ✓，见 `docs/module_jsons.md` 的「取值助手」）；本工具的
+  `json_get/json_obj/json_keys` 保留（等价、向后兼容），要写"已编码好的 JSON 文本"用
+  `jsons.write_text`（`write_file` 会**再编码一次** ✗）；
 - 空数组字面量 `var a = []` 的元素类型是 `any` ⇒ 需要 `Array[string] a = []` 这类**显式标注** ✓；
-- 解释器会先解析自己的旗标 ⇒ 脚本参数别用 `--xxx`（会被当成它的选项并打印帮助 ✗）✓。
+- ~~解释器会先解析自己的旗标 ⇒ 脚本参数别用 `--xxx`（会被当成它的选项并打印帮助 ✗）~~
+  ⇒ **已修**（P2 2026-09-18 + 2026-09-26 彻底化）：**脚本路径之后的一切旗标都原样交给脚本**
+  （含 `-v`/`--no-cache` 这类内置同名者 ✓）⇒ 解释器不再吞掉脚本的 `--xxx`（**本工具自身**仍只认
+  位置词与 `-s/-l/-j/-a`，见 `trae_sign.leno` 顶注）；唯一规矩 = 解释器自己的旗标
+  （`-c`/`--no-cache`/`-p`…）写在脚本路径**之前** ✓（位置子命令保留，向后兼容 ✓）。
 
 ### ④⑦ 这轮新踩到的（都改成"用之前先看一眼实现"了）
 
 - `jsons.write_file(path, v)` 会把 `v` **再 JSON 编码**一次 ⇒ 想写"空对象"**不能**传字符串 `"{}"`
   （落盘成带引号的 `"{}"`，读回来是 `string` 而不是对象 ✗）；而 `{}` 字面量的类型是 `any` ✗ 又不能
   直接赋给 `Dict` ⇒ 正解：`var cur = jsons.decode("{}")` ＋ `if old is Dict { cur = old }` ＋ 收窄 ✓；
+  **要写"已经编码好的 JSON 文本"** ⇒ 2026-09-26 起用 `jsons.write_text(path, text)`（原样落盘 ✓）；
 - `var X: T = v` 这种**类型后置**写法不支持 ✗ ⇒ 写 `T X = v`（空数组更要这样标注，否则元素类型是 `any` ✓）；
 - `Font.measureString(s)` 是**多返回值** ⇒ 必须 `var[float, float](w, h) = f.measureString(s)` ✓
   （写成 `var m = ...` 只会拿到第一个 float，之后 `m[0]` 报"索引操作需要对象类型" ✗）；

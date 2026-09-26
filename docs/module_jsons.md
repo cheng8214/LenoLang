@@ -6,6 +6,7 @@
 
 - [使用方式](#使用方式)
 - [JSON 解码](#json-解码)
+- [取值助手（T21）](#取值助手t21)
 - [JSON 编码](#json-编码)
 - [文件操作](#文件操作)
 - [数据类型映射](#数据类型映射)
@@ -70,6 +71,8 @@ main() {
 > 注意：**收窄到裸 `Dict` 是没有用的** —— 取出的元素仍是 `any`（见
 > `docs/类型收窄与绑定语法改进.md`）。多层自由取值建议包一层小工具
 > （如 `json_get` / `json_obj`，实物见 `leno_gui/应用/Trae签到/trae_core.leno`）。
+> **2026-09-26 起：那层小工具已做进标准库** ⇒ 直接用下一节的
+> `jsons.get_str/get_int/get_float/get_bool/get_obj/keys`（调用点零收窄 ✓）。
 
 ```leno
 // 解析对象
@@ -93,6 +96,56 @@ var num = jsons.decode('42')               // 42
 var flt = jsons.decode('3.14')             // 3.14
 var bool = jsons.decode('true')            // true
 var nil = jsons.decode('null')             // null
+```
+
+---
+
+## 取值助手（T21）
+
+> **为什么有这一节**：`decode` / `read_file` 的静态返回类型**只能是 `any`**（JSON 顶层可能是
+> 对象/数组/标量，硬改成 `Dict` 是错语义）⇒ 每个消费点都要手写收窄
+> （`if x is Dict => d and d.has(k)`），于是每个项目都自造一层 `json_get/json_obj/json_keys`
+> （实物见 `leno_gui/应用/Trae签到/trae_core.leno`）。这组助手把那一层**做进标准库**：
+> 收窄只发生在实现里，**调用点零样板** ✓（2026-09-26 新增；实现见 `src/module/jsons/jsons.c`）。
+
+### `get_str(obj, key, default)` / `get_int` / `get_float` / `get_bool`
+
+从（可能来自 `decode` 的）`any` 里按 key 取一个**标量**；取不到或转不过去 ⇒ `default`。
+
+| 情况 | 结果 |
+|------|------|
+| `obj` 不是字典 / 没有该键 / 值是 `null` | `default` |
+| 标量之间互转 | 字符串数字也能取成 `int`（**整串**都得是数字才认 ✓）；数字/布尔也能取成字符串 |
+| 值是字典/数组（容器） | `default`（要容器本身请用 `get_obj` ✓） |
+| 字符串转 bool | 只认 `"true"` / `"false"` / `"1"` / `"0"`，其它 ⇒ `default` |
+
+**不抛异常**；`default` 本身也会走一遍转换（所以 `get_int(obj, "h", "21")` 也成立 ✓）。
+
+```leno
+var acc = jsons.decode(text)                 // any —— **不需要**先收窄 ✓
+var token   = jsons.get_str(acc, "token", "")
+var credits = jsons.get_int(acc, "credits", 0)
+var ratio   = jsons.get_float(acc, "ratio", 0.0)
+var ok      = jsons.get_bool(acc, "ok", false)
+```
+
+### `get_obj(obj, key)`
+
+取**原始值**（`any`）继续往下钻；非字典/缺键 ⇒ `null`。
+
+```leno
+var user = jsons.get_obj(acc, "user")        // 嵌套对象（any）
+var name = jsons.get_str(user, "name", "")   // 再取一层，仍是零收窄 ✓
+```
+
+### `keys(obj)`
+
+字典的键列表（**插入序**）；非字符串键转成文本；非字典 ⇒ 空数组。
+
+```leno
+for jsons.keys(acc) to k {
+    print(k + " = " + jsons.get_str(acc, k, ""))
+}
 ```
 
 ---
@@ -206,6 +259,27 @@ if jsons.write_file("config.json", config) {
 } else {
     io.print("保存失败")
 }
+```
+
+---
+
+### `write_text(path, text)`
+
+**原样**写文本，**不做** JSON 编码 —— 想写"已经编码好的 JSON 文本"就用它 ✓。
+
+**参数**:
+- `path` (string): 目标文件路径
+- `text` (string): 要原样写入的文本
+
+**返回**: `bool` - 是否写入成功
+
+> ⚠ `write_file(path, "{}")` 会把入参**再编码一次** ⇒ 落盘成带引号的 `"{}"`（读回来是
+> `string` 而不是对象 ✗；2026-09-18 实测踩过）。「我已经有 JSON 文本了，只想落盘」
+> 一律用 `write_text` ✓（2026-09-26 新增）。
+
+```leno
+var text = jsons.encode_pretty(data)   // 已经有文本
+jsons.write_text("out.json", text)     // 原样落盘 ✓
 ```
 
 ---
@@ -540,9 +614,16 @@ main() {
 | `encode(val)` | 任意值 | JSON 字符串 | 紧凑编码 |
 | `encode_pretty(val)` | 任意值 | JSON 字符串 | 美化编码 |
 | `read_file(path)` | 文件路径 | 解析后的值 | 读取并解析 |
-| `write_file(path, val)` | 路径, 值 | bool | 写入文件 |
+| `write_file(path, val)` | 路径, 值 | bool | 写入文件（**会再编码一次**）|
+| `write_text(path, text)` | 路径, 文本 | bool | **原样**写文本（不编码）|
+| `get_str(obj, key, def)` | 任意, 键, 默认 | string | 取字符串（数字也能取成串）|
+| `get_int(obj, key, def)` | 任意, 键, 默认 | int | 取整数（字符串数字也认）|
+| `get_float(obj, key, def)` | 任意, 键, 默认 | float | 取浮点 |
+| `get_bool(obj, key, def)` | 任意, 键, 默认 | bool | 取布尔（认 "1"/"0"/"true"/"false"）|
+| `get_obj(obj, key)` | 任意, 键 | 任意 | 取原始值往下钻（缺 ⇒ null）|
+| `keys(obj)` | 任意 | Array[string] | 字典键列表（非字典 ⇒ 空数组）|
 
 ---
 
-*文档版本: 1.0*  
-*最后更新: 2026-05-07*
+*文档版本: 1.1*  
+*最后更新: 2026-09-26（新增 T21 取值助手 + write_text）*

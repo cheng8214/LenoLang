@@ -1,6 +1,7 @@
 // JSON 模块测试
 
 import jsons
+import files
 
 main()
 {
@@ -72,6 +73,35 @@ main()
     {
     assert_eq(empty_arr.len(), 0)
     }
+
+    // 测试7: T21 类型化取值助手（any 收窄收进标准库 ⇒ 调用点零样板 ✓）
+    var acc = jsons.decode("{\"token\": \"abc\", \"credits\": 150, \"ratio\": 0.5, \"ok\": true, \"nested\": {\"user\": \"张三\"}, \"list\": [1, 2]}")
+    assert_eq(jsons.get_str(acc, "token", ""), "abc")
+    assert_eq(jsons.get_str(acc, "missing", "缺省"), "缺省")            // 缺键 ⇒ 默认值
+    assert_eq(jsons.get_str(acc, "credits", ""), "150")                 // 数字也能取成字符串（打印口径 ✓）
+    assert_eq(jsons.get_int(acc, "credits", -1), 150)
+    assert_eq(jsons.get_int(acc, "token", -1), -1)                      // 字符串不是数字 ⇒ 默认值
+    assert_eq(jsons.get_int(acc, "missing", -1), -1)
+    assert_eq(jsons.get_float(acc, "ratio", 0.0), 0.5)
+    assert_eq(jsons.get_float(acc, "credits", 0.0), 150.0)              // int ⇒ float ✓
+    assert_eq(jsons.get_bool(acc, "ok", false), true)
+    assert_eq(jsons.get_bool(acc, "missing", false), false)
+    assert_eq(jsons.get_str(jsons.get_obj(acc, "nested"), "user", ""), "张三")  // 嵌套：get_obj 钻下去
+    assert_eq(jsons.get_str(acc, "list", "不是标量"), "不是标量")        // 容器不参与转换 ⇒ 默认值
+    assert_eq(jsons.get_obj(acc, "missing"), null)                      // 非字典/缺键 ⇒ null
+    var ks = jsons.keys(acc)
+    assert_eq(ks.len(), 6)                                              // 插入序 ✓
+    assert_eq(ks[0], "token")
+    assert_eq(jsons.keys("不是字典").len(), 0)                           // 非字典 ⇒ 空数组
+    assert_eq(jsons.get_str("不是字典", "k", "d"), "d")                   // 非字典 ⇒ 默认值
+
+    // 测试8: write_text 原样写（write_file 会把入参再编码一次 ⇒ 写"已编码文本"必须用它 ✓）
+    var tmp = _tmpdir() + "leno_jsons_t21_test.json"
+    assert_eq(jsons.write_text(tmp, "{}"), true)
+    var back = jsons.read_file(tmp)
+    assert_eq(type(back), "Dict")                                       // 原样写 "{}" ⇒ 读回就是对象（不是带引号的串 ✗）
+    if back is Dict { assert_eq(jsons.keys(back).len(), 0) }
+    files.delete(tmp)
 
     print("test_json passed")
 }
