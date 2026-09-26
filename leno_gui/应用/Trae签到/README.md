@@ -54,6 +54,28 @@ set TRAE_AUTO_SELFTEST=1                   # ⑥b 调度器自检（12 组；注
 set TRAE_SETTINGS_SELFTEST=1               # ⑥b 设置自检（读写/兜底/清理；临时文件名 ⇒ 不碰真实设置 ✓）
 ```
 
+### 打包（单文件 exe）
+
+```
+build\leno.exe -p --onefile --no-console "leno_gui\应用\Trae签到\trae_gui.leno"
+→ dist\trae_gui.exe（约 10 MB；单文件 ⇒ 只拷这一个文件即可分发 ✓）
+```
+
+- 资源由本目录的 `resource.toml` 声明（`onefile = true` + `resources = ["images/**"]`）⇒ 8 张托盘/菜单
+  图标随包内嵌；没设 `icon` ⇒ 产物用 VM 默认图标（要换再往 `resource.toml` 加 `icon = "xxx.ico"`，只认 `.ico` ✓）。
+- **`--no-console` 必加**：脚本里没有 `_console(false)`，不加就打成控制台版（双击弹黑框 ✗）；PE 子系统
+  打包后定型、改不了 ⇒ 只能重打（想省掉这个开关，就把 `_console(false)` 写进 `main()`，与 pvz 等应用同款 ✓）。
+- 运行期：首次运行解包到 `%LOCALAPPDATA%\trae_gui\pack\<hash16>\`（`dirs.res_dir()` 指这里；`script_dir()`
+  仍 = exe 所在目录 ⇒ 用户数据全在 `%APPDATA%\TraeSignLeno\` 不动 ✓）；之后启动走**哨兵快路径**
+  （stderr 无输出 = 零写盘 ✓）；hash 只由**资源段**算 ⇒ 只改脚本重打包不会让解包缓存失效 ✓。
+- 打包前 VM 必须新：改过编译器 / `LENO_BIN_VERSION` 先 `build_vm.bat`，否则打包**报错不产出** ✓。
+
+实测（2026-09-26）：`dist\trae_gui.exe` 10,369,870 字节、PE Subsystem = 2（无控制台 ✓）；解包 4 个 DLL
+（`SDL3/SDL3_image/SDL3_ttf/libcurl-x64`）+ 8 个 PNG + 哨兵 ✓、`dist` 只留 exe ✓；无头冒烟
+（`SDL_VIDEODRIVER=dummy` + `TRAE_GUI_NO_NET=1` + `TRAE_GUI_AUTO=15`）托盘就绪、界面渲染、设备号/历史
+从 `%APPDATA%` 正常读出 ✓；把缓存里的 `images` 临时改名 ⇒ 打印「图标加载失败：<缓存目录>/images/tray_icon.png」
+（证明打包态 `res_dir()` 就是解包目录 ✓），还原后该行消失 ⇒ 图标确实从解包目录加载 ✓。
+
 界面构成：顶部**状态徽标**（`● 今日已签到` / `○ 今日未签到` / `× 失败`，颜色随之变）＋
 **账号下拉**（多品牌登录态；右侧**显示该账号当前的设备号** —— `（本机）` = 登录态里那个机器级
 Aha 号、`（独立）` = 本工具给它的新号，切号即跟着换 ✓）＋ **今日积分** ＋
@@ -324,6 +346,7 @@ build\leno.exe trae_crypto.leno → trae_crypto fixture test passed   （exit=0 
 | `trae_history.leno` | ⑦ `history.json` 读写（扁平键 = `brand+username+日期`，值 = `ok+base+extra+code` ⇒ 按账号独立 ✓）|
 | `trae_devices.leno` | ⑧ `devices.json` 设备号存储（扁平键 = `brand+username`；`ensure/regenerate/remove` ⇒ **每账号独立** ✓）|
 | `trae_gui.leno` | ④ GUI（`LenoSDL3`：窗口 / 徽标 / 账号下拉 / 积分 / 按钮 ＋ `Canvas` **自绘签到日历**）✓ |
+| `resource.toml` | 打包配置（`onefile = true` + `resources = ["images/**"]` ⇒ 图标随包内嵌；打包命令见上面「打包（单文件 exe）」✓）|
 | `test/test_core_and_history.leno` | 数据层自测（日历算法用**已知日期**锚定 ✓ ＋ 历史 round-trip ✓，无 SDL、无网络 ⇒ 快）|
 | `test/test_trae_decrypt_fixture.leno` | 金标 fixture 回归（绝对期望值 ✓）|
 | `tools/gen_fixture.js` | 金标 fixture 生成器（node，无依赖）✓ |

@@ -119,6 +119,9 @@ export func traeTrayInit(Window win, func():void onClaim, func():void onSettings
 
     // 托盘：图标 = 本应用 images/tray_icon.png（图片资源，与菜单图标同一套约定 ✓）
     Ptr[u8] surf = SDL3.loadImage(_ip("tray_icon.png"))
+    // 图标加载失败必须报出来：`createTray(null)` 依然会成功（实测 2026-09-26，SDL 不校验 icon）
+    //   ⇒ 不打印的话，资源缺失只会表现为"系统托盘里没图标"，查不到原因 ✗
+    if surf == null { print("[tray] 图标加载失败：" + _ip("tray_icon.png") + "（资源缺失? 打包态应指向 res_dir() 解包目录 ✓）\n") }
     Tray? t = SDL3.createTray({icon: surf, tooltip: _tip})
     if surf != null { SDL3.destroySurface(surf) }              // 创建时已转成平台图标 ⇒ 可释放 ✓
     if t == null { print("[tray] 托盘创建失败 ⇒ 无托盘模式\n"); _inited = false; return false }
