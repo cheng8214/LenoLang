@@ -1606,3 +1606,13 @@ void strings_init_instance_methods(void) {
     // 17. 新增：右侧填充（实例方法）
     string_register_method_with_params("pad_end", make_native(str_pad_end, -1, "pad_end"), 2, 2, 3, TYPE_STRING, TYPE_UNKNOWN, int_str_params);
 }
+
+// 为什么 18/19 两位（fmt_size / hex）**只有模块形态**、没进数字实例方法表：
+//   它们收的是**数字**（不是字符串），所以实例形态只能挂到**数字方法表**上 ——
+//   而那张表（maths 拥有）目前 28 个成员**全部返回 float**，是一张纯"数值计算"表；
+//   数字 → 字符串在本语言的既有约定是**自由函数**（`_str()`、`format()`）⇒ 这俩属于那一族 ✓
+//   代价也不划算：数字表的拥有者 maths 第一步 number_init_methods() 会 free + 重建整张表
+//   （见 method_table_init_methods），而初始化顺序里 strings 在 maths 之前 ⇒
+//   要挂上去就得让 maths 末尾反过来调 strings，凭空多一条**隐性的初始化顺序约束** ✗
+//   （实测过那版：放错位置会表现为"编译照过、运行时才炸"，得靠额外守卫断言兜着）
+//   ⇒ 撤掉，只留 `strings.fmt_size(...)` / `strings.hex(...)`（2026-09-26 决定）
