@@ -1,5 +1,7 @@
 #include "include/lenolang.h"
 #include "include/native.h"
+#include "include/platform.h"    // utf16_to_utf8（Win）/ platform_self_exe_path（Linux/macOS）
+#include "include/leno_types.h"  // MAX_PATH_LEN
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -71,15 +73,36 @@ static Value native_script(int argCount, Value* args) {
     return val_null();
 }
 
-// _executable() - 返回可执行文件路径
+// _executable() - 返回**当前进程自身**可执行文件的绝对路径（跨平台 ✓）
+//   · 未打包（`leno.exe app.leno`）⇒ 宿主解释器自己的路径（**不是脚本**！脚本用 `_script()` ✓）
+//   · 单文件打包 ⇒ 应用 exe 自己的路径（注册表自启 / 快捷方式要的就是它 ✓）
+// ⚠ 不返回 g_argv[0]：那只是"启动方写在命令行的第一个 token"—— 实测（2026-09-26）用相对写法
+//   `build\leno.exe x.leno` 起子进程时它就是相对路径（cmd / 批处理 / 快捷方式都可能这么写）
+//   ⇒ 拿它写 Run 键，登录时按登录进程的 CWD 解析必然错 ✗。平台真值：
+//     Windows      = GetModuleFileNameW（**W 版** + utf16_to_utf8 ⇒ 中文路径不乱码 ✓）
+//     Linux/macOS  = platform_self_exe_path（/proc/self/exe、_NSGetExecutablePath ✓）
+//   取不到给 null（调用方自行降级 ✓；旧行为是把不可信的 argv[0] 原样给出，更糟 ✗）
 static Value native_executable(int argCount, Value* args) {
     (void)argCount;
     (void)args;
 
-    if (g_argc > 0 && g_argv[0]) {
-        return val_obj((Object*)str_copy(g_argv[0], (int)strlen(g_argv[0])));
-    }
-    return val_null();
+    char path[MAX_PATH_LEN];
+    path[0] = '\0';
+
+#ifdef _WIN32
+    wchar_t wexe[4096];                             // 缓冲口径与 dirs.c 的 script_dir() 一致 ✓
+    DWORD n = GetModuleFileNameW(NULL, wexe, 4096);
+    if (n == 0 || n >= 4096) { return val_null(); }  // 取不到 / 被截断（截断的值不可信 ⇒ 当失败 ✓）
+    char* u8 = utf16_to_utf8(wexe);
+    if (!u8) { return val_null(); }
+    snprintf(path, sizeof(path), "%s", u8);
+    free(u8);
+#else
+    if (!platform_self_exe_path(path, sizeof(path))) { return val_null(); }
+#endif
+
+    if (path[0] == '\0') { return val_null(); }
+    return val_obj((Object*)str_copy(path, (int)strlen(path)));
 }
 
 // _gc(enabled) - 控制GC开关

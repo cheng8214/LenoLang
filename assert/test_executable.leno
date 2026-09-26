@@ -1,0 +1,53 @@
+// 全局 _executable() —— 回归测试（2026-09-26）
+//
+// 背景：旧实现把 g_argv[0] **原样**返回 —— 那只是"启动方写在命令行的第一个 token"；
+//   实测（2026-09-26，临时探针）用相对写法 `build\leno.exe x.leno` 起子进程时，
+//   子进程里 `_executable()` 就是相对路径 `build\leno.exe`
+//   ⇒ 拿它写 HKCU Run 自启键，登录时按登录进程的 CWD 解析必然错 ✗（TraeSign 打包时踩到）。
+//   新实现 = **平台真值**：Windows 用 GetModuleFileNameW（W 版 + utf16_to_utf8 ⇒ 中文路径不乱码 ✓）；
+//   Linux/macOS 用 platform_self_exe_path（/proc/self/exe、_NSGetExecutablePath ✓）。
+//
+// 判据：
+//   ① 取得到 ⇒ 非空（注册返回类型已是 TYPE_STRING ⇒ 直接调 `.len()`，不判 null）；
+//   ② 是**绝对路径**（Windows: 盘符在 1 号位且有 `:\`；POSIX: 以 `/` 开头）—— 本次修复的核心 ✓；
+//   ③ 指向**真实存在**的文件（dirs.exists）；
+//   ④ basename 以 `leno` 开头（本断言体系的宿主是 leno.exe / leno_vm.exe）；Windows 上还须 `.exe` 结尾；
+//   ⑤ `_executable()` ≠ `_script()`：前者是**宿主 exe**、后者是当前脚本路径 ⇒ 两者必须不同
+//      （防止将来有人把两个语义合并时改错其中一个 ✗）。
+
+import dirs
+import strings
+
+main() {
+    var exe = _executable()
+
+    // ① 取得到且非空
+    assert_true(exe.len() > 0)
+
+    // ② 绝对路径（按平台分支）
+    var os = _os()
+    if os == "windows" {
+        // 盘符形态 `X:\...`：`:\` 必须恰好出现在 1 号位（0 号位是盘符字母）
+        assert_true(strings.find(exe, ":\\", 0, true) == 1, "② 应为盘符绝对路径，实际=" + exe)
+    } else {
+        assert_true(strings.starts_with(exe, "/"), "② 应为 POSIX 绝对路径，实际=" + exe)
+    }
+
+    // ③ 真实存在
+    assert_true(dirs.exists(exe), "③ exe 路径应真实存在，实际=" + exe)
+
+    // ④ basename 以 leno 开头；Windows 上还须 .exe 结尾
+    var base = strings.to_lower(dirs.basename(exe))
+    assert_true(strings.starts_with(base, "leno"), "④ basename 应以 leno 开头，实际=" + base)
+    if os == "windows" {
+        assert_true(strings.ends_with(base, ".exe"), "④ Windows 上应以 .exe 结尾，实际=" + base)
+    }
+
+    // ⑤ 与 `_script()` 语义不同：运行方式 `leno.exe <测试文件>` ⇒ exe ≠ 脚本路径
+    var script = _script()
+    if script != null {
+        assert_true(script != exe, "⑤ exe 不应等于脚本路径，两者=" + exe)
+    }
+
+    print("test_executable passed")
+}

@@ -25,7 +25,7 @@ Sys 模块提供与运行时环境、命令行参数和系统信息相关的全�
 |------|------|--------|
 | `_args()` | 获取脚本命令行参数数组 | `Array` |
 | `_script()` | 获取当前脚本路径 | `String` / `null` |
-| `_executable()` | 获取可执行文件路径 | `String` / `null` |
+| `_executable()` | 获取自身可执行文件的绝对路径 | `String` / `null` |
 | `_gc(enabled)` | 控制 GC 开关 | `Bool` |
 | `_os()` | 获取操作系统名称 | `String` |
 | `_arch()` | 获取 CPU 架构 | `String` |
@@ -118,14 +118,19 @@ main() {
 
 ### `_executable()`
 
-获取 Leno 可执行文件的完整路径。
+获取**当前进程自身**可执行文件的绝对路径（跨平台）。
+
+- 未打包运行（`leno.exe app.leno`）⇒ 宿主解释器自己的路径（`leno.exe` / `leno_vm.exe`；**不是脚本**，脚本路径用 `_script()`）
+- 单文件打包（`--onefile`）⇒ 打包产物 exe 自身的路径（注册表自启 / 快捷方式要的就是它）
+- 与启动方的写法无关：即便以相对写法调用（`build\leno.exe x.leno`），返回的也是绝对路径
+  （平台真值：Windows `GetModuleFileNameW` / Linux `/proc/self/exe` / macOS `_NSGetExecutablePath`）
 
 **参数**: 无  
-**返回**: `String` / `null` - 可执行文件路径
+**返回**: `String` / `null` - 可执行文件绝对路径（取不到时为 `null`）
 
 ```leno
 main() {
-    print("可执行文件:", _executable())
+    print("可执行文件:", _executable())   // 如 D:\CLeno\Leno\build\leno.exe
 }
 ```
 
@@ -687,7 +692,7 @@ main() {
 - 不包含脚本路径（用 `_script()` 获取）
 
 运行 `leno.exe --flag script.leno arg1 arg2` 时：
-- `_executable()` = `"leno.exe"`
+- `_executable()` = 解释器的**绝对路径**（如 `D:\CLeno\Leno\build\leno.exe`）
 - `_script()` = `"script.leno"`
 - `_args()` = `["arg1", "arg2"]`
 
