@@ -10,12 +10,31 @@ clib kernel32 {
     i32 TerminateProcess(Ptr hProcess, i32 exitCode)
     i32 GetExitCodeProcess(Ptr hProcess, Ptr exitCode)
     i32 GetCurrentProcessId()
+
+    // 自身 exe 路径（UTF-16 出；转 UTF-8 走 ffi.utf16_to_utf8，见 exePath() ✓）
+    i32 GetModuleFileNameW(Ptr hModule, Ptr buf, i32 nSize)
 }
 
 kernel32 _krnl = null
 func _krnlLib(): kernel32 {
     if _krnl == null { _krnl = ffi.load("kernel32.dll") }
     return _krnl
+}
+
+// 自己（当前进程）exe 的完整路径，UTF-8 出 ✓
+// 用途：开机自启（注册表 Run 键里要写命令行 ✓）、"以管理员重启自己"等
+// 取不到时给空串（调用方自己降级 ✓）
+// 注意：用 W 版 + ffi.utf16_to_utf8 —— …FileNameA 给的是系统 ANSI（GBK）
+//       ⇒ 按 UTF-8 读会乱码（路径里有中文时 ✗）
+export func exePath(): string {
+    Ptr[u16] w = ffi.malloc(2048)                 // UTF-16 缓冲（1024 wchar ✓）
+    try {
+        int n = _krnlLib().GetModuleFileNameW(null, w, 1024)
+        if n <= 0 { return "" }
+        return ffi.utf16_to_utf8(w)
+    } finally {
+        ffi.free(w)
+    }
 }
 
 // ==================== PSAPI ====================

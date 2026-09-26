@@ -1,6 +1,11 @@
 // Win32.leno — LenoWin32 统一入口模块
 // Windows 系统 API 封装：桌面截屏、全局热键、进程管理、注册表操作等
 // 非 Windows 平台无法使用
+// ★ 下面这些 `w32_*.leno` 是**裸文件名**导入 ⇒ 走全局搜索路径（`leno_module/<包>/lib/` 按包名
+//   逐个加入）**先到先得**：别的包 lib/ 里有同名文件就会把本包的文件顶掉 ✗
+//   （2026-09-26 实测踩过：LenoHack/lib 下有三个一字不差的陈旧副本 w32_process / w32_hotkey /
+//     w32_message，字母序在前 ⇒ 连**本文件**的 import 都拿到陈旧那份，新加的 exePath() 看不见 ——
+//     已删副本 ✓。这里再添同名文件前，先确认全局唯一；否则改用 `./w32_xxx.leno` 相对路径钉死 sibling ✓）
 import "w32_capture.leno" as cap
 import "w32_process.leno" as proc
 import "w32_reg.leno" as reg
@@ -97,6 +102,13 @@ export func copyToClipboard(Ptr[u8] pixels, int w, int h): bool {
 export func getCurrentPid():int {
     if not _is_supported() { return 0 }
     return proc.getCurrentPid()
+}
+
+// 当前进程 exe 的完整路径（UTF-8 ✓，中文路径不乱码）
+// 常用于"开机自启"（注册表 Run 键里要写命令行 ✓）与"重启自己" ✓
+export func exePath(): string {
+    if not _is_supported() { return "" }
+    return proc.exePath()
 }
 
 // 获取进程列表
