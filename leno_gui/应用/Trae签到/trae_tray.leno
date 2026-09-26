@@ -1,0 +1,281 @@
+// trae_tray.leno — 托盘 + 自绘菜单 + 开机自启动（Trae 签到助手的"系统集成"层 ✓）
+//
+// 为什么单独一个文件：托盘 / 菜单 / 注册表与界面无关（trae_gui.leno 只管画界面 ✓）；
+// 这条链在 leno_gui/应用/模拟时钟 已跑通（拦托盘点击 + 自绘菜单 ✓）⇒ 这里只留本应用的差异 ✓
+//
+// 用法（见 trae_gui.leno 的 main）：
+//   traeTrayInit(win, func() { rpc_claim() })   // 建托盘 + 自绘菜单（失败静默降级 ✓）
+//   主循环 tick 里：traeTrayTick()               // 轮询托盘点击 / 菜单收起 / 动作落地
+//   退出时（run 之后）：traeTrayShutdown()
+//
+// 菜单：显示/隐藏窗口 · 立即签到 · 开机自启动(✓) · 关于 · 退出
+// 交互：**右键**点托盘图标 = 弹菜单；**左键** = 直接显示/隐藏窗口 ✓（与模拟时钟同一套 ✓）
+//
+// ★ 开机自启动 = 往 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 写一个值，
+//   值内容 = **当前进程命令行** + ` --tray`（exe 路径用 GetModuleFileNameW 取 ⇒ 打包/未打包都对 ✓）
+//   ⇒ trae_gui 见到 `--tray` 就**启动即隐藏到托盘** ✓
+//   （本文件不需要 SDL 窗口 API 之外的东西；非 Windows 上注册表调用失败 ⇒ 静默降级 ✓）
+// ★ 无头自检：TRAE_TRAY_SELFTEST=1 ⇒ 逐项点菜单 + 自启开关（用**临时值名**，不污染真实自启 ✓）✓
+import "SDL3" as SDL3
+import "w32_reg.leno" as reg
+import "Win32" as Win32                  // 取 exe 路径（Win32.exePath() ✓）
+// ★ 这里必须写**包入口名** `Win32`，不能写 `import "w32_process.leno"`：
+//   `leno_module/<包>/lib/` 是按包**逐个**加进搜索路径的，重名文件先到先得 ——
+//   `LenoHack/lib/w32_process.leno` 也在这个目录下（字母序在前）⇒ 会把 LenoWin32 的同名
+//   文件顶掉，于是 `proc.exePath()` 报「模块 'proc' 中没有方法 'exePath'」✗
+//   （入口名 `Win32` / `SDL3` 全局唯一 ⇒ 不会撞 ✓）
+import dirs
+use SDL3.(Tray, PopMenu, Window)
+use reg.(KeyAccess, OpenKeyResult, ReadStringResult)   // HKEY_CURRENT_USER 是 export var ⇒ 用 reg.xxx 取 ✓
+
+const _RUN_KEY  = "Software\\Microsoft\\Windows\\CurrentVersion\\Run"
+const _VAL_NAME = "TraeSignLeno"            // Run 键里的值名（唯一 ✓）；自检时换临时名 ✓
+
+// 菜单条目序号（在 traeTrayInit 里按同一顺序建立 ✓）
+const _MI_TOGGLE = 0
+const _MI_CLAIM  = 1
+const _MI_AUTO   = 3                        // 2 是分隔线
+const _MI_ABOUT  = 5                        // 4 是分隔线
+const _MI_QUIT   = 6
+
+// ===== 状态 =====
+Window  _win  = null
+PopMenu _pm   = null
+Tray    _tray = null
+bool    _hasTray = false
+bool    _hasMenu = false
+bool    _visible = true
+bool    _inited  = false
+string  _imgDir  = ""
+string  _entryName = "trae_gui.leno"        // 自启命令行里的入口脚本名（未打包时用 ✓）
+string  _tip = "Trae 签到助手"
+func():void _onClaim = null
+string  _valName = _VAL_NAME
+
+// 动作标记：回调只置位，主循环 tick 里统一落地 ✓（同模拟时钟的约定 ✓）
+bool _actToggle = false
+bool _actClaim  = false
+bool _actAuto   = false
+bool _actAbout  = false
+bool _actQuit   = false
+
+// 自检状态
+bool _selfTest = false
+int  _sfStep = 0
+int  _sfDeadline = 0
+int  _sfFail = 0
+
+func _ip(string n): string { return _imgDir + "/" + n }
+
+// ===== 进程路径（自启项要写命令行 ⇒ exe 路径来自 LenoWin32 ✓）=====
+// 实现已下沉到模块：`LenoWin32/lib/w32_process.leno` 的 exePath()（取不到给空串 ✓）
+//   ⇒ 本应用不用再自己 clib kernel32（UTF-16→UTF-8 也在模块里做掉 ✓）
+
+// 自启要写的命令：打包运行只写 exe；未打包 = exe + 入口脚本 ✓（都带 --tray ✓）
+func _launchCmd(): string {
+    string exe = Win32.exePath()
+    if dirs.res_dir() != dirs.script_dir() {
+        return "\"" + exe + "\" --tray"
+    }
+    return "\"" + exe + "\" \"" + dirs.join(dirs.script_dir(), _entryName) + "\" --tray"
+}
+
+// ===== 开机自启动（HKCU\...\Run ✓）=====
+export func trayAutoStartOn(): bool {
+    OpenKeyResult r = reg.openKey(reg.HKEY_CURRENT_USER, _RUN_KEY, KeyAccess.ALL_ACCESS)
+    if r.errorCode != 0 { return false }
+    bool has = reg.valueExists(r.handle, _valName)
+    reg.closeKey(r.handle)
+    return has
+}
+
+// 开/关自启：写值（命令行 + --tray）/ 删值 ✓；返回是否成功
+export func traySetAutoStart(bool on): bool {
+    OpenKeyResult r = reg.openKey(reg.HKEY_CURRENT_USER, _RUN_KEY, KeyAccess.ALL_ACCESS)
+    if r.errorCode != 0 { return false }
+    bool ok = true
+    if on {
+        ok = reg.writeString(r.handle, _valName, _launchCmd()) == 0
+    } else if reg.valueExists(r.handle, _valName) {
+        ok = reg.deleteValue(r.handle, _valName) == 0
+    }
+    reg.closeKey(r.handle)
+    return ok
+}
+
+// ===== 初始化 / tick / 收尾 =====
+// onClaim：点菜单/托盘上的「立即签到」时调（传应用自己的 rpc_claim ✓）
+export func traeTrayInit(Window win, func():void onClaim): bool {
+    _win = win
+    _onClaim = onClaim
+    _imgDir = dirs.join(dirs.res_dir(), "images")
+    _selfTest = _env("TRAE_TRAY_SELFTEST") != null
+    if _selfTest { _valName = _VAL_NAME + "_selftest" }        // 自检用临时值名 ⇒ 不污染真实自启 ✓
+
+    // 托盘：图标 = 本应用 images/tray_icon.png（图片资源，与菜单图标同一套约定 ✓）
+    Ptr[u8] surf = SDL3.loadImage(_ip("tray_icon.png"))
+    Tray? t = SDL3.createTray({icon: surf, tooltip: _tip})
+    if surf != null { SDL3.destroySurface(surf) }              // 创建时已转成平台图标 ⇒ 可释放 ✓
+    if t == null { print("[tray] 托盘创建失败 ⇒ 无托盘模式\n"); _inited = false; return false }
+    _tray = t
+    _hasTray = true
+    // 拦下"托盘图标被点"（Windows 子类化 SDL_TRAY 窗口 ✓）；失败 ⇒ 只剩图标与提示 ✓
+    if not SDL3.interceptTrayClick() { print("[tray] 托盘点击拦截不可用（非 Windows?）\n") }
+
+    // 自绘菜单（非模态 ⇒ 菜单开着时界面照常 ✓）
+    _pm = SDL3.createPopMenu({fontSize: 14.0})
+    if not _pm.ok() { print("[tray] 自绘菜单创建失败\n"); _inited = false; return false }
+    _hasMenu = true
+    _pm.addItem("隐藏窗口", _ip("eye_off.png"), func() { _actToggle = true })            // _MI_TOGGLE
+    _pm.addItem("立即签到", _ip("check.png"),   func() { _actClaim = true })             // _MI_CLAIM
+    _pm.addSeparator()                                                                    // 2
+    _pm.addCheck("开机自启动", _ip("startup.png"), trayAutoStartOn(), func() { _actAuto = true })  // _MI_AUTO
+    _pm.addSeparator()                                                                    // 4
+    _pm.addItem("关于", _ip("about.png"), func() { _actAbout = true })                    // _MI_ABOUT
+    _pm.addItem("退出", _ip("exit.png"),  func() { _actQuit = true })                     // _MI_QUIT
+    _inited = true
+    print("[tray] 就绪：右键托盘图标 = 菜单，左键 = 显示/隐藏窗口"
+          + (if trayAutoStartOn() then "（开机自启动已开 ✓）" else "") + "\n")
+    return true
+}
+
+// 显示/隐藏窗口（菜单动作 / 应用自己切都用它 ✓）
+export func traeTrayShow(bool v) {
+    _visible = v
+    if v { _win.show(); _win.raise() }
+    else { _win.hide(); _pm.hide() }
+}
+
+export func traeTrayIsVisible(): bool { return _visible }
+
+// 悬停提示（应用在状态变化时同步 ✓，如 "已签 N 天"）
+export func traeTraySetTip(string t) {
+    _tip = "Trae 签到助手 · " + t
+    if _hasTray { _tray.setTooltip(_tip) }
+}
+
+// 弹出菜单：勾选态/文字以应用与注册表**真状态**为准（菜单不反查 ✓）
+func _openMenu(int x, int y) {
+    _pm.setText(_MI_TOGGLE, if _visible then "隐藏窗口" else "显示窗口")
+    _pm.setIcon(_MI_TOGGLE, _ip(if _visible then "eye_off.png" else "eye.png"))
+    _pm.setChecked(_MI_AUTO, trayAutoStartOn())
+    _pm.showAt(x, y)
+}
+
+// 主循环每拍调一次（trae_gui.leno 的 tick ✓）
+export func traeTrayTick() {
+    if not _inited { return }
+    var tp = SDL3.pollTrayClick()
+    if tp.len() >= 3 {
+        if _int(tp[2]) == 2 { _openMenu(_int(tp[0]), _int(tp[1])) }   // 右键 ⇒ 弹菜单 ✓
+        else { _actToggle = true }                                    // 左键 ⇒ 直接切显隐 ✓
+    }
+    _pm.poll()                                                        // 点菜单外 ⇒ 自动收起 ✓
+
+    if _actToggle { _actToggle = false; traeTrayShow(not _visible) }
+    if _actClaim {
+        _actClaim = false
+        var cb = _onClaim
+        if cb != null { cb() }                                        // 应用的 rpc_claim（同步 ✓ 与按钮同一条路）
+    }
+    if _actAuto {
+        _actAuto = false
+        bool on = not trayAutoStartOn()
+        bool ok = traySetAutoStart(on)
+        if ok { print("[tray] 开机自启动已" + (if on then "开启" else "关闭") + " ✓\n") }
+        else { print("[tray] 开机自启动设置失败（注册表不可写?）\n") }
+    }
+    if _actAbout {
+        _actAbout = false
+        SDL3.showMessageBox("关于 · Trae 签到助手",
+            "托盘：右键 = 菜单，左键 = 显示/隐藏窗口\n"
+            + "菜单：显示/隐藏窗口 · 立即签到 · 开机自启动 · 关于 · 退出\n"
+            + "数据目录 %APPDATA%\\TraeSignLeno\\（history.json / devices.json）", 0)
+    }
+    if _actQuit { _actQuit = false; SDL3.requestExit() }
+
+    if _selfTest { _sfRun() }
+}
+
+export func traeTrayShutdown() {
+    if _hasTray { _tray.destroy() }             // 内部先恢复原 WndProc 再销毁托盘 ✓
+    if _hasMenu { _pm.destroy() }
+    _hasTray = false; _hasMenu = false
+    _inited = false
+}
+
+// ===== 无头自检（TRAE_TRAY_SELFTEST=1 ✓）=====
+// 逐项点菜单 → 等状态真变（≤3s）→ 断言 ✓；自启用**临时值名**（跑完删掉 ⇒ 不污染真实自启 ✓）
+func _sfCk(bool c, string what) {
+    if c { print("[自检] OK   " + what + "\n") }
+    else { _sfFail = _sfFail + 1; print("[自检] FAIL " + what + "\n") }
+}
+
+func _sfDue(): bool {
+    if SDL3.getTicks() > _sfDeadline { _sfFail = _sfFail + 1; print("[自检] FAIL 超时（等状态变化等不到）\n"); return true }
+    return false
+}
+
+func _sfRun() {
+    if _sfStep == 0 {
+        _sfDeadline = SDL3.getTicks() + 3000
+        _sfCk(SDL3.interceptTrayClick(), "托盘点击拦截（子类化 SDL_TRAY 窗口 ✓）")
+        _sfCk(not _pm.isOpen(), "自绘菜单已建（初始收起 ✓）")
+        _pm.showAt(200, 300)
+        _sfStep = 1
+        return
+    }
+    if _sfStep == 1 {
+        if _pm.isOpen() {
+            _sfCk(true, "菜单可弹出（非模态窗口 ✓）")
+            _pm.clickItem(_MI_TOGGLE)
+            _sfStep = 2; _sfDeadline = SDL3.getTicks() + 3000
+        } else if _sfDue() { _pm.clickItem(_MI_TOGGLE); _sfStep = 2 }
+        return
+    }
+    if _sfStep == 2 {
+        if not _visible {
+            _sfCk(true, "菜单「隐藏窗口」⇒ 窗口隐藏")
+            _sfCk(not _pm.isOpen(), "点条目后菜单自动收起 ✓")
+            _openMenu(200, 300)                       // 再弹一次（顺带同步"显示窗口"文字 ✓）
+            _pm.clickItem(_MI_TOGGLE)
+            _sfStep = 3; _sfDeadline = SDL3.getTicks() + 3000
+        } else if _sfDue() { _openMenu(200, 300); _pm.clickItem(_MI_TOGGLE); _sfStep = 3 }
+        return
+    }
+    if _sfStep == 3 {
+        if _visible {
+            _sfCk(true, "菜单「显示窗口」⇒ 窗口恢复")
+            _pm.clickItem(_MI_AUTO)                   // 开自启（临时值名 ✓）
+            _sfStep = 4; _sfDeadline = SDL3.getTicks() + 3000
+        } else { _sfDue() }
+        return
+    }
+    if _sfStep == 4 {
+        if trayAutoStartOn() {
+            // 读回刚写入的值 ⇒ 核对命令行（exe 路径是否正确、有没有 `--tray` ✓）
+            OpenKeyResult r = reg.openKey(reg.HKEY_CURRENT_USER, _RUN_KEY, KeyAccess.ALL_ACCESS)
+            string written = ""
+            if r.errorCode == 0 {
+                ReadStringResult rv = reg.readString(r.handle, _valName)
+                if rv.errorCode == 0 { written = rv.value }
+                reg.closeKey(r.handle)
+            }
+            print("[自检] 写入的 Run 值 = " + written + "\n")
+            _sfCk(written == _launchCmd(), "写入值 == 预期命令行（exe + 入口 + --tray ✓）")
+            _pm.clickItem(_MI_AUTO)                   // 再点一次 ⇒ 关掉
+            _sfStep = 5; _sfDeadline = SDL3.getTicks() + 3000
+        } else { _sfDue() }
+        return
+    }
+    if _sfStep == 5 {
+        if not trayAutoStartOn() {
+            _sfCk(true, "再点「开机自启动」⇒ 已删除（不留痕 ✓）")
+            _sfCk(_onClaim != null, "「立即签到」回调已接上（不真调 ⇒ 不联网 ✓）")
+            print("[自检] 结果：" + (if _sfFail > 0 then ("失败 " + (_sfFail as string) + " 项") else "全部通过") + "\n")
+            traeTrayShutdown()
+            _exit(if _sfFail > 0 then 1 else 0)
+        } else { _sfDue() }
+        return
+    }
+}

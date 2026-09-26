@@ -242,6 +242,29 @@ pm.poll()                                                     // 点在菜单外
   任何消息 ✗（实测）⇒ 自检要么直接调自己的分发函数，要么驱动菜单窗口本身（`showAt/clickItem` ✓），
   拦截链得真机跑（`SDL3.clickTrayIcon(1|2)` 可合成左右键 ✓）
 
+### 开机自启动（注册表 Run 键 + `--tray` 约定）
+
+托盘常驻类应用都要"开机自启"；本仓库的做法（`Trae签到/trae_tray.leno` ✓）：
+
+```leno
+// 1) 往 HKCU\...\Run 写值（用 LenoWin32 的 w32_reg ✓）
+OpenKeyResult r = reg.openKey(reg.HKEY_CURRENT_USER,
+    "Software\\Microsoft\\Windows\\CurrentVersion\\Run", KeyAccess.ALL_ACCESS)
+reg.writeString(r.handle, "MyAppName", cmd)      // cmd = 要开机执行的命令行 ✓
+reg.closeKey(r.handle)                            // 关 = deleteValue(r.handle, "MyAppName") ✓
+// （HKEY_CURRENT_USER 是 export var ⇒ 不能 use，直接 reg.HKEY_CURRENT_USER ✓）
+```
+
+- **命令行怎么拼**：`"<exe>" "<脚本>" --tray` —— exe 路径取 **LenoWin32 的 `Win32.exePath()`**
+  （模块内 `GetModuleFileNameW` + `ffi.utf16_to_utf8` ✓，UTF-8 出、中文路径不乱码 ✓，
+  取不到给空串）；打包运行（`dirs.res_dir() != dirs.script_dir()` ✓）时只写 exe ✓
+  ⚠ 应用侧要 `import "Win32"`（包**入口名**）—— 裸文件名 `import "w32_process.leno"` 会走全局
+  搜索路径"先到先得"，别的包 lib/ 下有同名文件就被顶掉（实测踩过，见 `Win32.leno` 顶部注 ✓）
+- **约定**：命令尾部带 `--tray` ⇒ 应用**启动即隐藏到托盘**（自己解析 `_args()` ✓）
+  —— 否则开机时窗口会自己蹦出来 ✗
+- **自检怎么写**：注册表是**真实系统状态** ⇒ 自检要用**临时值名**（如 `MyAppName_selftest` ✓），
+  跑完立刻删掉 ⇒ 不污染用户真实自启 ✓（并读回值核对命令行 ✓）
+
 ### ⚠ 多返回值只能**解构**，不能下标（本模块真崩过一次 ✗）
 
 `getGlobalMouse()` / `measureString()` 这类返回 `[int, int]` 的函数是**多返回值**：
@@ -289,6 +312,15 @@ build\leno.exe --no-cache build\leno_module\LenoSDL3\examples\图形绘制\test_
 $env:SDL_VIDEODRIVER='dummy'
 $env:CLOCK_SELFTEST='1'
 build\leno.exe --no-cache leno_gui\应用\模拟时钟\clock.leno   # 17 项：左右键分发·子菜单下一级·菜单图标/勾选·显隐·关窗收托盘·置顶·退出 ✓
+```
+
+Trae签到 托盘 / 自绘菜单 / 开机自启（**无头可跑 ✓**，用临时注册表值名 ⇒ 不留痕 ✓）：
+
+```
+$env:SDL_VIDEODRIVER='dummy'
+$env:TRAE_GUI_NO_NET='1'
+$env:TRAE_TRAY_SELFTEST='1'
+build\leno.exe --no-cache leno_gui\应用\Trae签到\trae_gui.leno   # 9 项 ✓ exit 0（含读回 Run 值核对命令行 ✓）
 ```
 
 ⚠ 「托盘图标被点 ⇒ 拦截 ⇒ 弹菜单」这条链**要真机跑**（dummy 下没有 Win32 消息泵 ✗，见 §六）。

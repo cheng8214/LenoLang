@@ -15,6 +15,8 @@
 //   TRAE_GUI_NO_NET=1   启动不做网络查询（离线只看日历与界面 ✓）
 //   TRAE_GUI_AUTO=90    跑满 N 帧后自动退出（配合 SDL_VIDEODRIVER=dummy 做无头验证 ✓）
 //   TRAE_GUI_ACCOUNT=2  启动就选中第 2 个账号（1 起；设备号是**按账号**的 ⇒ 无头也好验证第二个 ✓）
+//   TRAE_TRAY_SELFTEST=1 托盘/菜单/开机自启的无头自检（见 trae_tray.leno ✓）
+// 命令行：`--tray` ⇒ **启动即隐藏到托盘**（开机自启动用的就是它，见 trae_tray.leno ✓）
 import "SDL3" as SDL3
 use SDL3.Event
 use SDL3.Renderer
@@ -26,6 +28,7 @@ use SDL3.Button
 import "trae_core.leno" as core
 import "trae_history.leno" as hist
 import "trae_devices.leno" as dev
+import "trae_tray.leno" as tray          // 托盘 + 自绘菜单 + 开机自启动（单独一层 ✓）
 
 // ==================== 状态（模块级 = 界面的单一数据源） ====================
 Array[Array[string]] BRANDS_AVAIL = []
@@ -341,6 +344,14 @@ main() {
     var auto = _env("TRAE_GUI_AUTO")
     if auto != null { AUTO_FRAMES = _int(auto) }
     NO_NET = _env("TRAE_GUI_NO_NET") != null
+    // `--tray`（开机自启写的命令行带的 ✓）⇒ 启动即隐藏到托盘，只留托盘图标 ✓
+    bool startHidden = false
+    var argv = _args()
+    int ai = 0
+    while ai < argv.len() {
+        if _str(argv[ai]) == "--tray" { startHidden = true }
+        ai = ai + 1
+    }
 
     // ---- 账号扫描（只读、不解密 token 用于展示）----
     BRANDS_AVAIL = core.scan_accounts()
@@ -558,6 +569,14 @@ main() {
         BOOT_QUERIED = true              // 启动这次查完 ⇒ 之后切号才有必要重查 ✓
     }
 
+    // ==================== 托盘 / 菜单 / 开机自启（trae_tray.leno ✓）====================
+    // 托盘失败（创建不出来）⇒ 全部退化为原行为（关闭即退出 ✓）
+    bool trayOk = tray.traeTrayInit(win, func():void { rpc_claim() })
+    if startHidden and trayOk {
+        tray.traeTrayShow(false)                 // --tray ⇒ 启动即只留托盘 ✓（开机自启走这条）
+        print("[gui] --tray：启动即隐藏到托盘（右键托盘图标 = 菜单 ✓）\n")
+    }
+
     // ==================== 主循环 ====================
     // ⚠ 踩过的坑（GUI 卡死）：`win.run` 是**事件驱动重绘**（空闲时 `delay(5)` 挂起、**没有事件
     // 就不重绘** ✗）⇒ 无头（`SDL_VIDEODRIVER=dummy`）下"在 onEvent 里数帧"永远不前进 ⇒ 卡死 ✗。
@@ -565,13 +584,32 @@ main() {
     // 与自动重绘" ✓）；② 在**渲染回调**里数帧；③ 到点直接 `_exit(0)` —— 窗口库**没有**
     // "请求关闭"的 API（只有 SDL_QUIT 事件或 onEvent 返回 false ✗），对自动冒烟而言 `_exit`
     // 是最确定的做法 ✓（交互模式不受影响 ✓）。
+    if trayOk {
+        // 托盘轮询拍子（图标被点 / 菜单点外面 / 动作落地）—— 界面很轻，150ms 足够 ✓
+        string tipCache = ""
+        win.addTimer(150, func():void {
+            tray.traeTrayTick()
+            if tipCache != STATUS_TEXT {                 // 悬停提示跟随状态（变了才写 ✓）
+                tipCache = STATUS_TEXT
+                tray.traeTraySetTip(STATUS_TEXT)
+            }
+        })
+    }
     if AUTO_FRAMES > 0 {
         win.addTimer(50, func():void { })
     }
 
     win.run(
         func(Event ev): bool {
-            if ev.isQuit() or ev.isWindowClose() { return false }
+            if ev.isQuit() { return false }
+            if ev.isWindowClose() {
+                if trayOk {                              // 托盘模式：关闭 = 收进托盘（不退出 ✓）
+                    tray.traeTrayShow(false)
+                    win.cancelClose()                    // 拦下"销毁窗口"⇒ 程序继续跑 ✓
+                    return true
+                }
+                return false                             // 无托盘 ⇒ 关闭即退出（原行为 ✓）
+            }
             if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
             return true
         },
@@ -596,6 +634,7 @@ main() {
     )
 
     print("[gui] 主循环退出  frames=" + (FRAMES as string) + "  状态=" + STATUS_TEXT + "\n")
+    tray.traeTrayShutdown()                  // 托盘（内部先恢复原 WndProc ✓）+ 菜单窗口 ✓
     if font.ok { font.close() }
     SDL3.ttfQuit()
 }
