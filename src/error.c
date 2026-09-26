@@ -121,6 +121,17 @@ void error_clear(void) {
     errors.count = 0;
 }
 
+/* T20：同"类"判定 —— 类型 + 文件名 + 消息全同 ⇒ 同一根因在不同行的复现。
+ * 与 error_add 的即时合并（error.c:64-75）相比只少了"同行号"这一条：
+ * 行号一换就不再算重复，所以级联时报出的条数 ≈ 根因数 × 行数。
+ * 归并只发生在**打印层**（收集器语义、error_count() 契约都不动）。 */
+static int error_same_kind(const Error* a, const Error* b) {
+    return a->type == b->type
+        && a->filename[0] != '\0'
+        && strcmp(a->filename, b->filename) == 0
+        && strcmp(a->msg, b->msg) == 0;
+}
+
 void error_print_all(void) {
     if (errors.count == 0) return;
 
@@ -133,9 +144,16 @@ void error_print_all(void) {
     }
     if (total == 0) return;
 
+    // 展示条数 = 归并后的"类"数（T20：同一根因跨行的复现算一类）
     int shown_kinds = 0;
     for (int i = 0; i < errors.count; i++) {
-        if (!errors.list[i].printed) shown_kinds++;
+        if (errors.list[i].printed) continue;
+        int is_head = 1;
+        for (int j = 0; j < i; j++) {
+            if (errors.list[j].printed) continue;
+            if (error_same_kind(&errors.list[j], &errors.list[i])) { is_head = 0; break; }
+        }
+        if (is_head) shown_kinds++;
     }
 
     fprintf(stderr, "\n=== 发现 %d 个错误", total);
@@ -147,6 +165,16 @@ void error_print_all(void) {
     for (int i = 0; i < errors.count; i++) {
         Error* err = &errors.list[i];
         if (err->printed) continue;
+
+        /* T20：同一根因只在**首次出现处**打完整信息，其余位置收进下面那行「同类另有 N 处」。
+         * 只看未打印的条目 —— S2 已即时打印过的运行期错误不参与归并。 */
+        int is_head = 1;
+        for (int j = 0; j < i; j++) {
+            if (errors.list[j].printed) continue;
+            if (error_same_kind(&errors.list[j], err)) { is_head = 0; break; }
+        }
+        if (!is_head) continue;
+
         const char* type_str = "未知";
         
         switch (err->type) {
@@ -182,6 +210,35 @@ void error_print_all(void) {
             fprintf(stderr, " (重复 %d 次)", err->repeat_count);
         }
         fprintf(stderr, "\n");
+
+        /* T20：同类其余位置并成一行（每行最多 12 个，超了续行）——
+         * 级联从"根因数 × 行数"条压到 2 行，且位置一个不丢。 */
+        int others = 0;
+        for (int j = i + 1; j < errors.count; j++) {
+            if (!errors.list[j].printed && error_same_kind(err, &errors.list[j])) others++;
+        }
+        if (others > 0) {
+            int col = 0;
+            int sep = 0;
+            fprintf(stderr, "    同类另有 %d 处：", others);
+            for (int j = i + 1; j < errors.count; j++) {
+                const Error* other = &errors.list[j];
+                if (other->printed || !error_same_kind(err, other)) continue;
+                if (col == 12) {
+                    fprintf(stderr, "\n        ");
+                    col = 0;
+                    sep = 0;
+                }
+                if (other->repeat_count > 1) {
+                    fprintf(stderr, "%s行 %d×%d", sep ? "、" : "", other->line, other->repeat_count);
+                } else {
+                    fprintf(stderr, "%s行 %d", sep ? "、" : "", other->line);
+                }
+                sep = 1;
+                col++;
+            }
+            fprintf(stderr, "\n");
+        }
     }
     
     fprintf(stderr, "===================\n\n");
