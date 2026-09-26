@@ -33,88 +33,21 @@ set LSP_SOURCES=!LSP_SOURCES! comp_keywords.c
 set LSP_SOURCES=!LSP_SOURCES! comp_symbols.c
 
 rem === LenoC source files ===
+rem Source lists are SHARED with build.bat / build_vm.bat / build.sh (single source
+rem of truth). Do NOT add a source file here: edit the list files, or the builds
+rem drift apart -- which is exactly how this script broke: it still listed the
+rem deleted src\codegen\codegen_inline.c, and was missing src\dce.c,
+rem src\optimize\optimize.c, src\platform\platform_path.c and
+rem src\package\package_icon.c.
+rem   ..\sources_core.txt      - core runtime
+rem   ..\sources_compiler.txt  - compiler-only (lexer/parser/semantic/codegen/...)
+rem src\main.c is EXCLUDED: the LSP entry point is main() in lsp_server.c.
 set LENO_SOURCES=
-set LENO_SOURCES=!LENO_SOURCES! ../src/error.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/lexer.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/ast.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/scope.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/type.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/parser/parser.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/parser/parser_utils.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/parser/parser_expr.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/parser/parser_stmt_control.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/parser/parser_stmt_other.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/parser/parser_func.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/parser/parser_module.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/semantic/semantic.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/semantic/semantic_upvalue.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/semantic/semantic_type.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/semantic/semantic_visit.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/semantic/semantic_visit_method.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/semantic/semantic_visit_ast.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/semantic/semantic_visit_func.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/semantic/semantic_type_utils.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/gc.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/value.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/string_table.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/object/method_table.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_string.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_array.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_dict.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_number.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_file.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_struct.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_cstruct.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_face.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_socket.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/object/object_thread.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/bound_method.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/coroutine.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/vm/vm.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/codegen/codegen.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/codegen/codegen_emit.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/codegen/codegen_expr.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/codegen/codegen_stmt.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/codegen/codegen_func.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/codegen/codegen_import.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/codegen/codegen_utils.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/codegen/codegen_inline.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/debug.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/native.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/bigint.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/module_loader.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/module_symbol_table/module_symbol_table.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/module.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/module_dispatch.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/module_compiler.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/module/io/io.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/module/types/types.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/module/times/times.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/module/arrays/arrays.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/module/strings/strings.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/module/maths/maths.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/module/dicts/dicts.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/module/structs/structs.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/module/rands/rands.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/module/files/files.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/module/asyncs/asyncs.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/module/dirs/dirs.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/module/jsons/jsons.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/module/sockets/sockets.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/module/ffi/ffi.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/module/ffi/leno_ffi_win64.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/module/cstructs/cstructs.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/module/threads/threads.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/module/assert/assert.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/module/sys/sys.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/module/regexs/regexs.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/platform/platform_thread.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/serialize/serialize.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/package/package_platform.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/package/package_toml.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/package/package_init.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/package/package_resolve.c
-set LENO_SOURCES=!LENO_SOURCES! ../src/package/package_install.c
+for /f "usebackq delims=" %%f in ("..\sources_core.txt") do set LENO_SOURCES=!LENO_SOURCES! ..\%%f
+for /f "usebackq delims=" %%f in ("..\sources_compiler.txt") do if /i not "%%f"=="src\main.c" set LENO_SOURCES=!LENO_SOURCES! ..\%%f
+
+rem Platform-specific FFI (Windows)
+set LENO_SOURCES=!LENO_SOURCES! ..\src\module\ffi\leno_ffi_win64.c
 
 rem Build to temp file first, then rename (handles file lock from running LSP)
 if exist build\leno_lsp_new.exe del /F build\leno_lsp_new.exe 2>nul
