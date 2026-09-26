@@ -29,12 +29,13 @@ export func history_path(): string {
 // 全部历史 —— 同 devices：**扁平** `string → string` ⇒ 读取处一次收窄定型，
 // 之后全链路 `Dict[string, string]`，调用点不再手写 `is Dict` ✓
 // 同 devices：`is Dict[string, string]` 逐键值校验（v3.2.2 起）⇒ 取值仍走 `_str()` 兜底的 json_get ✓
-export func load_all(): Dict[string, string] {
+// 返回**可空**：`null` = 不存在**或**结构不符（可空标记不做编译期空检查 ⇒ 写路径显式 `?? {}`）
+export func load_all(): Dict[string, string]? {
     var p = history_path()
-    if p == "" { return {} }
-    if not files.exists(p) { return {} }
+    if p == "" { return null }
+    if not files.exists(p) { return null }
     if jsons.read_file(p) is Dict[string, string] => db { return db }
-    return {}
+    return null
 }
 
 export func key_of(string brand, string username, string day): string {
@@ -101,8 +102,8 @@ export func mark(string brand, string username, string day, bool ok, string base
     if not dirs.is_dir(d) { dirs.mkdir_p(d) }
     // ⚠ 踩过的坑：不能写 `jsons.write_file(p, "{}")` ✗ —— `write_file` 会把参数**再 JSON 编码**
     // 一次 ⇒ 落盘是带引号的 `"{}"`（字符串），读回来是 `string` 而不是对象 ⇒ 后续 mark 全部失败。
-    // ⇒ 空表一律用 `load_all()` 的 `{}`（已是 `Dict[string, string]` ✓）
-    var db = load_all()
+    // ⇒ 空表用 `?? {}` 兜底（load_all 可空：null = 不存在 / 读不出来）
+    var db = load_all() ?? {}
     var flag = "0"
     if ok { flag = "1" }
     db[key_of(brand, username, day)] = flag + "|" + base + "|" + extra + "|" + code
@@ -113,7 +114,7 @@ export func mark(string brand, string username, string day, bool ok, string base
 export func remove_day(string brand, string username, string day): bool {
     var p = history_path()
     if p == "" { return false }
-    var db = load_all()
+    var db = load_all() ?? {}
     var k = key_of(brand, username, day)
     if not db.has(k) { return false }
     db.remove(k)

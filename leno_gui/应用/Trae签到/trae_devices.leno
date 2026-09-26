@@ -38,13 +38,17 @@ export func devices_path(): string {
 // 之后全链路都是 `Dict[string, string]`，调用点再也不用手写 `is Dict` ✓
 // `is Dict[string, string]` 是**逐键值**校验（v3.2.2 起走递归类型规格，见 leno_vm.h 的 OP_TYPE_CHECK_SPEC）：
 //   值是 int/null/嵌套对象 ⇒ 不收窄。本文件只由本工具写（值恒为 string）⇒ 恒成立 ✓
-//   ⚠ 取值仍一律走 core.json_get / core.json_keys（`_str()` 兜底）：手改过的文件不会崩
-export func load_all(): Dict[string, string] {
+// 返回**可空**：`null` = 文件不存在**或**结构不符（读不出来）。签名如实反映"可能没有"，
+//   于是"损坏"与"空表"在写路径上**可以**区分（只读路径经 core.json_get/json_keys 两者同解 ✓）。
+// ⚠ 实测：可空标记**不做编译期空检查** —— 对 null 直接 `db[k] = v` / `db.has(k)` 是**运行期**抛错
+//   （「下标赋值: 对象不支持索引」/「类型 object 上不存在方法 'has'」）⇒ 写路径必须显式兜底。
+// ⚠ 取值仍一律走 core.json_get / core.json_keys（`_str()` 兜底）：手改过的文件不会崩
+export func load_all(): Dict[string, string]? {
     var p = devices_path()
-    if p == "" { return {} }
-    if not files.exists(p) { return {} }
+    if p == "" { return null }
+    if not files.exists(p) { return null }
     if jsons.read_file(p) is Dict[string, string] => db { return db }
-    return {}
+    return null
 }
 
 export func key_of(string brand, string user): string {
@@ -83,7 +87,8 @@ export func set(string brand, string user, string dc): bool {
     if p == "" { return false }
     var d = devices_dir()
     if not dirs.is_dir(d) { dirs.mkdir_p(d) }
-    var db = load_all()
+    // `?? {}`：文件不存在 / 读不出来 ⇒ 从空表起步（与旧行为一致；要"损坏就拒绝写"见 README 的说明）
+    var db = load_all() ?? {}
     db[key_of(brand, user)] = dc
     return jsons.write_file(p, db)
 }
@@ -92,7 +97,7 @@ export func set(string brand, string user, string dc): bool {
 export func remove(string brand, string user): bool {
     var p = devices_path()
     if p == "" { return false }
-    var db = load_all()
+    var db = load_all() ?? {}
     var k = key_of(brand, user)
     if not db.has(k) { return false }
     db.remove(k)
