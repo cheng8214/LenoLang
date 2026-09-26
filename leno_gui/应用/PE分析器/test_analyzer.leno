@@ -21,22 +21,9 @@ func readU32(string data, int off): int {
     return val
 }
 
-const HEX_CHARS = "0123456789ABCDEF"
-
-func toHex8(int v): string {
-    string s = ""
-    for 7:0:-1 to i {
-        int nibble = (v >> (i * 4)) & 0xF
-        s = s + HEX_CHARS[nibble]
-    }
-    return s
-}
-
-func toHex2(int v): string {
-    int hi = (v >> 4) & 0xF
-    int lo = v & 0xF
-    return HEX_CHARS[hi] + HEX_CHARS[lo]
-}
+// 收编到标准库（2026-09-26）：调用点保留短名，函数体一行转发 ⇒ 逻辑单源 ✓
+func toHex8(int v): string { return strings.hex(v, 8) }
+func toHex2(int v): string { return strings.hex(v, 2) }
 
 main() {
     // 夹具：取**第一个存在**的候选（原来只写死一个相对路径 ⇒ 换环境就跑不了 ✗）

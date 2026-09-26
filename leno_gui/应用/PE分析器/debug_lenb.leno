@@ -1,5 +1,6 @@
 // debug_lenb.leno — 调试 LENB 头部解析
 import files
+import strings
 
 func readU32(string data, int off): int {
     int val = 0
@@ -7,15 +8,9 @@ func readU32(string data, int off): int {
     return val
 }
 
-const HEX_CHARS = "0123456789ABCDEF"
-func toHex8(int v): string {
-    string s = ""
-    for 7:0:-1 to i { s = s + HEX_CHARS[(v >> (i*4)) & 0xF] }
-    return s
-}
-func toHex2(int v): string {
-    return HEX_CHARS[(v>>4)&0xF] + HEX_CHARS[v&0xF]
-}
+// 收编到标准库（2026-09-26）：调用点保留短名，函数体一行转发 ⇒ 逻辑单源 ✓
+func toHex8(int v): string { return strings.hex(v, 8) }
+func toHex2(int v): string { return strings.hex(v, 2) }
 
 // 用法：leno debug_lenb.leno <打包后的 .exe 路径>
 //   默认路径指向 LenoSDL3 的基础示例；该 exe **不在仓库里**（要自己用 --pack 生成），

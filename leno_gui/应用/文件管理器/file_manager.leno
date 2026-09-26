@@ -4,7 +4,7 @@
 //   struct FileManager
 //     ├── 状态字段（按职责分组）
 //     ├── 样式工厂：imgPath / iconBtn / navBtn / ctxItem / ctxSep
-//     ├── 工具方法：iconForRow / fmtSize / driveLabel / subFolders
+//     ├── 工具方法：iconForRow / driveLabel / subFolders（fmtSize 已收编到 strings.fmt_size ✓）
 //     ├── 树管理：buildNavRoots / loadPcDrives / onTreeToggle / onTreeChange / regDicts …
 //     ├── 导航历史：pushHistory / updateNavButtons / goBack / goForward / goUp
 //     ├── 目录操作：openDir / openDirNoHistory / openSelected / openFile
@@ -42,6 +42,7 @@ import "props_dialog.leno" as props
 import dirs
 import files
 import jsons
+import strings
 use SDL3.(Event, Renderer, Window, TitleBar, MenuBar, VBox, HBox, Splitter, Panel, TreeView, Table, Label, Edit, ComboBox, Button)
 use SDL3.StringSize
 use SDL3.Font
@@ -208,20 +209,8 @@ Array[int]    _dragSelRows = []    // 鼠标按下时捕获的多选行（拖拽
         return out
     }
 
-    // 人类可读大小（GB 级别保留 1 位小数）
-    func fmtSize(int b): string {
-        if b < 1024 { return b + " B" }
-        float kb = _float(b) / 1024.0
-        if kb < 1024.0 { return _int(kb) + " KB" }
-        float mb = kb / 1024.0
-        if mb < 1024.0 { return _int(mb) + " MB" }
-        float gb = mb / 1024.0
-        // GB 保留 1 位小数：如 1.9 GB 而非 "1 GB"
-        int gbInt = _int(gb)
-        int tenths = _int((gb - _float(gbInt)) * 10.0)
-        if tenths == 0 { return gbInt + " GB" }
-        return gbInt + "." + tenths + " GB"
-    }
+    // 人类可读大小 ⇒ 已收编到标准库 strings.fmt_size()（2026-09-26，本地那份是逐字复制的
+    //   4 份之一）⇒ 定义删除，调用点直调标准库 ✓
 
     func driveLabel(string p): string {
         string s = p
@@ -417,7 +406,7 @@ int nid = tree.add_child(id, node)
                 string ext = dirs.extname(nm)
                 string tp = "文件"
                 if ext != "" and ext != "." { tp = "文件 " + ext }
-                fileRows.add([nm, fmtSize(szb), tp, fp, "0"])
+                fileRows.add([nm, strings.fmt_size(szb), tp, fp, "0"])
             }
         }
         for folders.len() to i { rows.add(folders[i]) }
