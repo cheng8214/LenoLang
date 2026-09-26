@@ -166,7 +166,8 @@ static void printHelp(const char* program) {
     printf("  --install         安装包或依赖到全局缓存\n");
     printf("  --                终止解释器选项解析：其后的参数都按位置参数处理\n");
     printf("\n");
-    printf("说明: <文件> 之后的参数**原样传给脚本**（含 '-' 开头的，脚本内用 _args() 取）\n");
+    printf("说明: 内置选项写在 <文件> **之前**（P2 彻底化：脚本路径之后解释器不再吃任何旗标）；\n");
+    printf("      <文件> 之后的参数**原样传给脚本**（含 '-' 开头的，脚本内用 _args() 取）\n");
     printf("\n");
     printf("示例:\n");
     printf("  %s script.leno       运行脚本\n", program);
@@ -175,7 +176,7 @@ static void printHelp(const char* program) {
     printf("  %s script.lenb       运行编译后的二进制\n", program);
     printf("  %s -c test.leno      编译为二进制\n", program);
     printf("  %s -p test.leno      打包为独立可执行文件\n", program);
-    printf("  %s -p test.leno -o release  打包到 release/（exe + 依赖库）\n", program);
+    printf("  %s -p -o release test.leno  打包到 release/（exe + 依赖库；-o 属内置选项 ⇒ 写在文件之前）\n", program);
     printf("  %s --debug test.leno 调试模式运行\n", program);
     printf("  %s --init my-package 创建新包\n", program);
     printf("  %s --install         安装当前项目依赖\n", program);
@@ -2000,13 +2001,31 @@ static int main_logic(int argc, char** argv) {
     char* joined_path = NULL;  // 动态分配，用于拼接含空格的路径（需在返回前释放）
     
     // 解析参数
-    // Leno 内置选项（--pause, --debug 等）在任何位置都生效
-    // 第一个非选项参数作为脚本路径，之后的非选项参数传给脚本
+    // Leno 内置选项（--pause, --debug 等）**只在脚本路径之前**生效（P2 彻底化，2026-09-26）
+    // 第一个非选项参数作为脚本路径，之后的参数**原样**传给脚本（含 '-' 开头的，与帮助文案一致）
     // 支持含空格的路径：如果首个非选项参数不是有效文件，尝试拼接后续参数
     int file_arg_start = -1;  // 第一个非选项参数的索引
     int options_terminated = 0;  // 是否已遇到 '--'（终止解释器自己的选项解析；P2）
     for (int i = 1; i < argc; i++) {
-        // 先检查是否是 Leno 内置选项（在任何位置都处理）
+        // ★ P2 彻底化（2026-09-26）：**脚本路径之后（或 '--' 之后）的参数
+        //   一律属于脚本 / 位置参数**，解释器的内置旗标不再生效。
+        //   P2 当时只处理了"未知选项"这一面 —— `leno.exe trae_sign.leno --list` 会打印解释器帮助、
+        //   **脚本根本不跑** ✗（移植 TraeSign 时几乎静默地卡住；参考件的 CLI 全是 --status/--json/--list，
+        //   照抄必踩）；但与内置名**撞名**的参数（-h/--help/-v/--version/-c/-p/-o/--debug/--pause/
+        //   --no-cache …）仍被吃掉：`leno x.leno -v` 打印版本、脚本永不执行 ✗；`leno x.leno --no-cache`
+        //   则是"双重生效"（脚本收到 + 解释器也照做）✗ —— 与帮助里那句"<文件> 之后的参数**原样**
+        //   传给脚本"自相矛盾。⇒ 判据统一为：**内置旗标写在脚本路径之前**（仓库内既有用法
+        //   `build\leno.exe --no-cache -c examples\x.leno` 全是这个形态 ✓）。
+        //   这条与 `_args()` 的取法一致：它把"脚本路径之后"的参数**原样**返回。
+        if (options_terminated || file_arg_start >= 0) {
+            if (file_arg_start < 0) {
+                // '--' 之后的第一个参数就是脚本路径，哪怕它以 '-' 开头
+                file_arg_start = i;
+            }
+            continue;
+        }
+
+        // 先检查是否是 Leno 内置选项（只在脚本路径之前、且未遇到 '--' 时才会走到这里）
         if (strcmp(argv[i], "--pause") == 0) {
             pauseMode = 1;
             continue;
@@ -2091,18 +2110,6 @@ static int main_logic(int argc, char** argv) {
         // 脚本路径之后的 '--' 与其它参数一样原样交给脚本（与 _args() 的取法保持一致）。
         if (file_arg_start < 0 && strcmp(argv[i], "--") == 0) {
             options_terminated = 1;
-            continue;
-        }
-
-        // ★ P2 修复（2026-09-18）：脚本路径**之后**的 '-' 开头参数，一律属于脚本 / 位置参数。
-        //   此前它走下面的"未知选项"分支 ⇒ `leno.exe trae_sign.leno --list` 会打印解释器帮助、
-        //   **脚本根本不跑** ✗（移植 TraeSign 时几乎静默地卡住；参考件的 CLI 全是 --status/--json/--list，
-        //   照抄必踩）。这条与 `_args()` 的取法一致：它把"脚本路径之后"的参数**原样**返回。
-        if (options_terminated || file_arg_start >= 0) {
-            if (file_arg_start < 0) {
-                // '--' 之后的第一个参数就是脚本路径，哪怕它以 '-' 开头
-                file_arg_start = i;
-            }
             continue;
         }
 

@@ -80,6 +80,18 @@ main() {
 > | `leno.exe app.leno --list status` | `["--list", "status"]` |
 > | `leno.exe -- app.leno -x` | `["-x"]` |
 > | `leno.exe --nope app.leno` | （报错：未知选项 `--nope`，退出码 64）|
+>
+> ⚠ **2026-09-26 彻底化（口径 = 内置旗标必须写在脚本路径之前）**：此前与**内置名撞名**的参数
+> （`-v/--version/-h/--help/-c/--compile/-p/--pack/-o/--pack-dir/--debug/--pause/--no-cache/
+> --onefile/--console/--no-console/--init/--install/--debug-out`）**在任何位置都生效** ⇒
+> `leno.exe app.leno -v` 会打印版本、**脚本根本不跑** ✗；`app.leno --no-cache` 则"双重生效"
+> （脚本收到 + 解释器也照做）✗。现在**见到脚本路径（或 `--`）之后，解释器不再识别任何内置旗标**：
+>
+> | 命令行 | 现在的行为 |
+> | --- | --- |
+> | `leno.exe app.leno -v --no-cache` | `_args()` = `["-v", "--no-cache"]`，脚本照跑 ✓ |
+> | `leno.exe -v` | 打印解释器版本（内置旗标**前置**才生效 ✓）|
+> | `leno.exe -c app.leno` | 编译为 `.lenb`（同上，前置 ✓）|
 
 ---
 

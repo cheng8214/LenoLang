@@ -13,7 +13,10 @@
 //   ① 脚本路径之后的旗标必须原样进 `_args()`（修前脚本根本不跑）；
 //   ② `--` 终止符之后的参数同样进 `_args()`；
 //   ③ 守卫：脚本**之前**的未知旗标仍必须报错（退出码非 0 + 文案含「未知选项」）；
-//   ④ 守卫：无参数时照常跑（`_args()` 为空）。
+//   ④ 守卫：无参数时照常跑（`_args()` 为空）；
+//   ⑤ 与**内置名撞名**的旗标写在脚本之后也归脚本（P2 彻底化，2026-09-26；修前 `-v` 会打印版本、
+//      脚本不跑 ✗）；
+//   ⑥ 守卫：内置旗标写在脚本**之前**仍归解释器（`-v` 照旧打印版本）—— 口径 = 内置旗标前置。
 
 import dirs
 import files
@@ -67,6 +70,25 @@ main() {
     var o4 = _str(r4[0])
     assert_eq(r4[1], 0, "④无参数应照常运行；输出=" + o4)
     assert_true(strings.has(o4, "N=0"), "④无参数时 _args() 应为空；输出=" + o4)
+
+    // ⑤ 与**内置名撞名**的旗标写在脚本路径之后 ⇒ 同样原样进 _args()（P2 彻底化，2026-09-26）
+    //    修前：`… echoargs.leno -v` 会打印解释器版本、**脚本根本不跑** ✗（同类还有 -h/--help/
+    //    -c/-p/-o/--debug/--pause/--no-cache…：要么脚本不执行，要么"双重生效"✗）
+    var r5 = _exec(exe + " \"" + echo + "\" -v --no-cache")
+    assert_ne(r5, null, "⑤_exec 返回 null")
+    var o5 = _str(r5[0])
+    assert_eq(r5[1], 0, "⑤脚本后的内置同名旗标必须照常运行；输出=" + o5)
+    assert_true(strings.has(o5, "N=2"), "⑤_args() 应有 2 个参数；输出=" + o5)
+    assert_true(strings.has(o5, "A=-v"), "⑤_args() 应含 -v（不再被解释器吃掉）；输出=" + o5)
+    assert_true(strings.has(o5, "A=--no-cache"), "⑤_args() 应含 --no-cache；输出=" + o5)
+    assert_true(not strings.has(o5, "LenoLang Compiler"), "⑤不应打印解释器版本（没被当成内置旗标）；输出=" + o5)
+
+    // ⑥ 守卫：内置旗标写在脚本**之前**仍归解释器（口径：内置旗标前置 ✓）
+    var r6 = _exec(exe + " -v")
+    assert_ne(r6, null, "⑥_exec 返回 null")
+    var o6 = _str(r6[0])
+    assert_eq(r6[1], 0, "⑥前置 -v 应正常退出；输出=" + o6)
+    assert_true(strings.has(o6, "LenoLang Compiler"), "⑥前置 -v 仍必须打印版本；输出=" + o6)
 
     dirs.delete(work)
     print("test_cli_script_args passed")
