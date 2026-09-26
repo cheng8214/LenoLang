@@ -230,6 +230,21 @@ const char* package_search_path_get(int index);
  * @param out_len      输出缓冲区大小
  * @return 1 找到，-1 未找到
  */
+/* ============================================================================
+ * T19：裸文件名 import 的"撞名"扫描（歧义诊断）
+ * ----------------------------------------------------------------------------
+ * `import "x.leno"`（裸文件名）由 package_resolve_module_file 顺序扫搜索路径、**首个命中即返回**；
+ * 两个包各提供一份同名文件时**静默选错**，而且报错点离病因很远（表现为"模块 'x' 中没有方法 y"）。
+ * 本函数在编译/分析开始前扫一遍全部搜索路径：同一个裸名在**多处**命中、且内容**不相同**
+ * ⇒ 通过回调逐条上报。**只报"内容不同"**：内容一致的陈旧副本本身无害，一旦有人只更新其中
+ * 一份就会漂移 —— 那正是要拦住的时刻（LenoHack/LenoWin32 那次就是给后者加了 export、前者还是旧的）。
+ * 回调：ctx 透传；name 是裸名（不含 .leno）；winner 是**实际生效**那份（搜索路径靠前者）；
+ * shadowed 是被遮蔽那份。返回上报条数（0 = 无歧义）。
+ * **包层不依赖诊断系统** ⇒ 用回调把"怎么报"交给调用方（编译器报 warning、LSP 报 diagnostic）。
+ * ============================================================================ */
+typedef void (*PackageShadowFn)(void* ctx, const char* name, const char* winner, const char* shadowed);
+int package_scan_shadowed_modules(PackageShadowFn fn, void* ctx);
+
 int package_resolve_module_file(const char* module_name, char* out_path, int out_len);
 
 /**

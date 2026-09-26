@@ -364,6 +364,7 @@ void warning_print_all(void) {
             case WARN_FOR_IN_COND:     type_str = "for头成员测试"; break;
             case WARN_PARTIAL_DECL_INIT: type_str = "部分初值声明"; break;
             case WARN_FIELD_NO_INIT:   type_str = "字段未初始化"; break;
+            case WARN_AMBIGUOUS_MODULE: type_str = "模块名歧义"; break;
             default: break;
         }
 

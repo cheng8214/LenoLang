@@ -98,6 +98,7 @@ typedef enum {
     WARN_FOR_IN_COND,      // for 头写 'x in arr'（in 是成员测试，遍历应写 'for x to arr'）
     WARN_PARTIAL_DECL_INIT, // var 声明列表只有部分变量带初值（Python 多重赋值习惯）
     WARN_FIELD_NO_INIT,     // struct 标量字段未显式初始化（默认是 null 而不是 0，参与运算会报错）
+    WARN_AMBIGUOUS_MODULE,  // 裸文件名 import 撞名：多个包目录都有同名 .leno 且内容不同（静默选错文件）
 } WarnType;
 
 // ============================================================================

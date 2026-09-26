@@ -726,6 +726,100 @@ static void list_dir_each(const char* dir_abs, DirEachFn fn, void* ctx) {
 #endif
 }
 
+/* ---- T19：裸文件名 import 的"撞名"扫描 ----------------------------------------
+ * 见 leno_package.h 的 package_scan_shadowed_modules 说明。这里只做"扫 + 比内容"，
+ * 不碰诊断系统（包层不依赖 error.h）——"怎么报"交给调用方的回调。 */
+
+/* <dir><name>.leno 是否存在；存在就把完整路径写进 out（拼接方式与 package_resolve_module_file 一致） */
+static int shadow_probe_file(const char* dir, const char* name, char* out, int out_len) {
+    char candidate[MAX_PATH_LEN];
+    size_t dlen = strlen(dir), nlen = strlen(name);
+    if (dlen + nlen + 6 >= (size_t)MAX_PATH_LEN) return 0;
+    snprintf(candidate, sizeof(candidate), "%s%s.leno", dir, name);
+    FILE* f = fopen(candidate, "rb");
+    if (!f) return 0;
+    fclose(f);
+    if (out && out_len > 0) {
+        strncpy(out, candidate, out_len - 1);
+        out[out_len - 1] = '\0';
+    }
+    return 1;
+}
+
+/* 两份文件内容是否不同（分块比较；任一打不开按"不同"处理 ⇒ 宁可报出来） */
+static int shadow_files_differ(const char* a, const char* b) {
+    FILE* fa = fopen(a, "rb");
+    FILE* fb = fopen(b, "rb");
+    if (!fa || !fb) {
+        if (fa) fclose(fa);
+        if (fb) fclose(fb);
+        return 1;
+    }
+    int differ = 0;
+    unsigned char ba[4096], bb[4096];
+    for (;;) {
+        size_t na = fread(ba, 1, sizeof(ba), fa);
+        size_t nb = fread(bb, 1, sizeof(bb), fb);
+        if (na != nb || (na > 0 && memcmp(ba, bb, na) != 0)) { differ = 1; break; }
+        if (na == 0) break;
+    }
+    fclose(fa);
+    fclose(fb);
+    return differ;
+}
+
+typedef struct { PackageShadowFn fn; void* ctx; int reported; } ShadowScan;
+typedef struct { const char* dir; int index; ShadowScan* scan; } ShadowDir;
+
+/* list_dir_each 的回调：只看 *.leno 普通文件，看它是否被**更早**的搜索路径遮蔽 */
+static void shadow_dir_entry(void* ctx, const char* name, int is_dir) {
+    ShadowDir* sd = (ShadowDir*)ctx;
+    if (is_dir) return;
+    size_t nlen = strlen(name);
+    if (nlen < 6 || strcmp(name + nlen - 5, ".leno") != 0) return;
+
+    char bare[MAX_PATH_LEN];
+    if (nlen - 5 >= sizeof(bare)) return;
+    memcpy(bare, name, nlen - 5);
+    bare[nlen - 5] = '\0';
+
+    /* 更早的搜索路径里有没有同名 —— 第一个命中的就是"实际生效"那份 */
+    for (int j = 0; j < sd->index; j++) {
+        const char* earlier = package_search_path_get(j);
+        if (!earlier) continue;
+        char winner[MAX_PATH_LEN];
+        if (!shadow_probe_file(earlier, bare, winner, sizeof(winner))) continue;
+        char shadowed[MAX_PATH_LEN];
+        if (!shadow_probe_file(sd->dir, bare, shadowed, sizeof(shadowed))) return;
+        if (shadow_files_differ(winner, shadowed)) {
+            sd->scan->reported++;
+            sd->scan->fn(sd->scan->ctx, bare, winner, shadowed);
+        }
+        return;  /* 同一裸名只报"生效者 vs 本目录这份"，不逐条路径重复刷 */
+    }
+}
+
+int package_scan_shadowed_modules(PackageShadowFn fn, void* ctx) {
+    if (!fn) return 0;
+    ShadowScan scan;
+    scan.fn = fn;
+    scan.ctx = ctx;
+    scan.reported = 0;
+
+    /* 从 1 开始：第 0 条路径前面没有更早的，它遮蔽别人时由**被遮蔽者**那一趟报出来 */
+    int count = package_search_path_count();
+    for (int i = 1; i < count; i++) {
+        const char* dir = package_search_path_get(i);
+        if (!dir) continue;
+        ShadowDir sd;
+        sd.dir = dir;
+        sd.index = i;
+        sd.scan = &scan;
+        list_dir_each(dir, shadow_dir_entry, &sd);
+    }
+    return scan.reported;
+}
+
 /* 递归遍历用上下文内的路径缓冲区统一留出余量：
  * 拼 "%s/%s" 这类两段串时，源串最长 MAX_PATH_LEN-1，目标必须再宽一点，
  * 否则 -Wformat-truncation 会（正确地）报警 */
