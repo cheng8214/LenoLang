@@ -1,0 +1,235 @@
+// sdl_popmenu.leno — 自绘弹出菜单（无边框 / 置顶 / **非模态** ⇒ 主循环照常转，不冻结 ✓）
+//
+// 为什么要有它：
+//   SDL 在 Windows 上开托盘菜单用的是 TrackPopupMenu（**模态**消息循环 ⇒ 主循环被按住、
+//   画面冻住 ✗，见 docs/SDL3常用API与易踩坑速查.md §六）。改用"自绘菜单 + 拦截托盘点击"
+//   （sdl_tray.interceptTrayClick）后**没有模态循环** —— 菜单只是我们自己的一个普通窗口 ✓
+//
+// 用法：
+//   PopMenu pm = SDL3.createPopMenu({})              // 建一次（窗口创建为隐藏 ✓）
+//   pm.addItem("隐藏窗口", func() { ... })
+//   pm.addCheck("窗口置顶", false, func() { ... })
+//   pm.addSeparator()
+//   pm.addItem("退出", func() { ... })
+//   // 主循环（定时器）里：
+//   pm.poll()                                        // 点外部自动关（不依赖焦点 ✓）
+//   var p = SDL3.pollTrayClick()
+//   if p.len() >= 2 { pm.showAt(p[0], p[1]) }         // 托盘被点 ⇒ 在光标处弹 ✓
+//
+// 关闭时机（都会自动 hide，窗口不销毁 ⇒ 下次直接 show ✓）：
+//   点条目 / 点菜单外 / 窗口失焦 / ESC
+// 状态：条目勾选态与文字由调用方用 setChecked/setText 维护（菜单不反查 ✓）
+import "sdl_core.leno" as core
+import "sdl_window.leno" as wnd
+import "sdl_renderer.leno" as rnd
+import "sdl_font.leno" as fnt
+import "sdl_theme.leno" as thm
+import "sdl_event.leno" as evt
+use core.(SDL_Rect, sdl3, Scancode, WindowFlag)
+use wnd.Window
+use rnd.Renderer
+use evt.Event
+use fnt.Font
+use thm.Theme
+
+sdl3 _lib = core.lib()
+
+// 版式（都在这里调 ✓）
+const _ROW_H  = 30.0    // 普通/勾选行高
+const _SEP_H  = 9.0     // 分隔行高
+const _PAD_X  = 12.0    // 左右内边距
+const _CHK_W  = 18.0    // 勾选标记列宽
+const _PAD_Y  = 5.0     // 上下留白
+const _RADIUS = 8.0     // 圆角半径
+
+export struct PopMenu {
+    Window win
+    bool   _made = false
+    Font   _font
+    Array[string] _texts = []
+    Array[int]    _kind  = []          // 0=普通条目 1=勾选条目 2=分隔
+    Array[bool]   _on    = []
+    Array[func():void] _cb = []
+    bool _open = false
+    int  _hover = -1
+    int  _w = 0
+    int  _h = 0
+    int  _x = 0                        // 窗口在屏幕上的位置（点外部判定用 ✓）
+    int  _y = 0
+    bool _armed = false                // 先见到"鼠标全松开"才武装 ⇒ 防开菜单那一下把自己关掉 ✗
+
+    // ===== 条目 =====
+    func addItem(string t, func():void cb) {
+        _texts.add(t); _kind.add(0); _on.add(false); _cb.add(cb)
+    }
+    func addCheck(string t, bool on, func():void cb) {
+        _texts.add(t); _kind.add(1); _on.add(on); _cb.add(cb)
+    }
+    func addSeparator() {
+        _texts.add(""); _kind.add(2); _on.add(false); _cb.add(func() { })   // 空回调（Array[func] 不收 null ✗）
+    }
+    func setChecked(int idx, bool on) {
+        if idx >= 0 and idx < _on.len() { _on[idx] = on }
+    }
+    func setText(int idx, string t) {
+        if idx >= 0 and idx < _texts.len() { _texts[idx] = t }
+    }
+    func isOpen(): bool { return _open }
+    func ok(): bool { return _made }          // 窗口建成功没（失败 ⇒ showAt 是空操作 ✓）
+
+    // 程序化"点第 idx 项"（等价于用户点了它：先关菜单再跑回调 ✓）—— 无头自测用 ✓
+    func clickItem(int idx) {
+        if idx < 0 or idx >= _kind.len() or _kind[idx] == 2 { return }
+        var cb = _cb[idx]
+        hide()
+        if cb != null { cb() }
+    }
+
+    // 释放（字体/窗口由 run 循环收尾销毁；这里只关字体 ✓）
+    func destroy() {
+        if _font.ok { _font.close() }
+    }
+
+    // ===== 弹出 / 收起 =====
+    // 在屏幕坐标 (x, y) 弹出：菜单**底边**贴光标（系统菜单就这么摆 ✓），并夹进屏幕可用区 ✓
+    func showAt(int x, int y) {
+        if not _made { return }
+        _relayout()
+        // 屏幕可用区（已扣掉任务栏 ✓）
+        SDL_Rect rc = SDL_Rect.malloc()
+        _lib.SDL_GetDisplayUsableBounds(_lib.SDL_GetPrimaryDisplay(), &rc.x)
+        int sx = rc.x; int sy = rc.y; int sw = rc.w; int sh = rc.h
+        rc.free()
+        int px = x
+        int py = y - _h
+        if py < sy { py = y }                                  // 上方放不下 ⇒ 改向下展开 ✓
+        if px + _w > sx + sw { px = sx + sw - _w }
+        if px < sx { px = sx }
+        if py + _h > sy + sh { py = sy + sh - _h }
+        win.setSize(_w, _h)
+        win.setPosition(px, py)
+        win.show()
+        win.raise()
+        _x = px; _y = py
+        _open = true
+        _hover = -1
+        _armed = false
+        core.requestRedraw()
+    }
+
+    func hide() {
+        if not _made or not _open { return }
+        win.hide()
+        _open = false
+        _hover = -1
+    }
+
+    // 主循环每拍调一次：点在菜单外 ⇒ 关（不依赖焦点 ✓；先等"全松开"一次防自关 ✗）
+    func poll() {
+        if not _open { return }
+        int st = core.getGlobalMouseState()
+        if st == 0 { _armed = true; return }
+        if not _armed { return }
+        var gm = core.getGlobalMouse()
+        int gx = _int(gm[0]); int gy = _int(gm[1])
+        if gx < _x or gx >= _x + _w or gy < _y or gy >= _y + _h { hide() }
+    }
+
+    // ===== 内部：排版 / 命中 / 绘制 / 事件（run 循环自动驱动 ✓）=====
+    func _relayout() {
+        float wMax = 0.0
+        for _texts.len() to i {
+            if _kind[i] == 2 { continue }
+            var[float, float](tw, th) = _font.measureString(_texts[i])
+            if tw > wMax { wMax = tw }
+        }
+        _w = _int(wMax + _PAD_X * 2.0 + _CHK_W)
+        float h = _PAD_Y * 2.0
+        for _kind.len() to i {
+            h = if _kind[i] == 2 then h + _SEP_H else h + _ROW_H
+        }
+        _h = _int(h)
+    }
+
+    func _hit(float mx, float my): int {
+        float yy = _PAD_Y
+        for _kind.len() to i {
+            if _kind[i] == 2 { yy = yy + _SEP_H; continue }
+            if my >= yy and my < yy + _ROW_H and mx >= 4.0 and mx <= _float(_w) - 4.0 { return i }
+            yy = yy + _ROW_H
+        }
+        return -1
+    }
+
+    func _render(Renderer ren) {
+        if not _open { return }
+        Theme th = thm.getTheme()
+        ren.setColor(th.bgAlt)
+        ren.fillRoundedRect(0.0, 0.0, _float(_w), _float(_h), _RADIUS)
+        ren.setColor(th.bg)
+        ren.drawRoundedRect(0.0, 0.0, _float(_w), _float(_h), _RADIUS)
+        float yy = _PAD_Y
+        for _kind.len() to i {
+            if _kind[i] == 2 {
+                ren.setColor(th.bgHover)
+                ren.fillRect(_PAD_X, yy + _SEP_H / 2.0, _float(_w) - _PAD_X * 2.0, 1.0)
+                yy = yy + _SEP_H
+                continue
+            }
+            bool hov = (i == _hover)
+            if hov {
+                ren.setColor(th.bgHover)
+                ren.fillRoundedRect(4.0, yy, _float(_w) - 8.0, _ROW_H, 5.0)
+            }
+            if _kind[i] == 1 and _on[i] {
+                ren.setColor(th.accent)
+                ren.fillCircle(_PAD_X + 6.0, yy + _ROW_H / 2.0, 3.5)
+            }
+            Color tc = if hov then th.txt else th.txtInput
+            ren.drawText(_font, _texts[i], _PAD_X + _CHK_W, yy + 6.0, tc)
+            yy = yy + _ROW_H
+        }
+    }
+
+    func _process(Event ev): bool {
+        if not _open { return true }
+        if ev.isWindowClose() { hide(); return true }
+        if ev.isWindowFocusLost() { hide(); return true }        // 失焦即关（点别处/Alt+Tab ✓）
+        if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { hide(); return true }
+        if ev.isMouseMotion() {
+            var[float, float](mx, my) = ev.mousePos()
+            int hit = _hit(mx, my)
+            if hit != _hover { _hover = hit; core.markFrameRedraw() }   // 悬停变化才请求重绘 ✓
+            return true
+        }
+        if ev.isMouseButtonDown() and ev.mouseButton() == 1 {
+            var[float, float](mx, my) = ev.mousePos()
+            int hit = _hit(mx, my)
+            if hit >= 0 and _kind[hit] != 2 {
+                var cb = _cb[hit]
+                hide()                                            // 先关再跑动作（动作里可能又要弹窗 ✓）
+                if cb != null { cb() }
+            }
+            return true
+        }
+        return true
+    }
+}
+
+// 工厂：建窗（隐藏）+ 字体 + 注册进 run 循环 ✓
+// opts 预留（暂支持 {fontSize: float} ✓）
+export func createPopMenu(Dict opts): PopMenu {
+    PopMenu pm = new PopMenu()
+    fnt.ttfInit()                                     // 幂等（调用方可能没 init 过字体 ✓）
+    float fs = opts.get("fontSize", 15.0)
+    pm._font = fnt.createFontAuto(fs)
+    int flags = WindowFlag.BORDERLESS | WindowFlag.ALWAYS_ON_TOP | WindowFlag.UTILITY | WindowFlag.HIDDEN
+    Window w = wnd.createWindow({title: "popmenu", w: 200, h: 120, flags: flags})
+    pm.win = w
+    pm._made = w.ok
+    if w.ok {
+        w.registerOnly(func(Event e): bool { return pm._process(e) },
+                       func(Renderer r) { pm._render(r) })
+    }
+    return pm
+}

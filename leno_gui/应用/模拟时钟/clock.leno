@@ -1,13 +1,170 @@
-// clock.leno — 模拟时钟（时针 / 分针 / 秒针）
+// clock.leno — 模拟时钟（时针 / 分针 / 秒针）＋ 系统托盘
 // 原在 LenoSDL3/examples/基础示例/show_time.leno —— 它是**成品应用**不是示例片段 ⇒
 //   2026-09-26 移到 leno_gui/应用/模拟时钟/（同目录其它应用同一套约定 ✓），git 保留历史 ✓
 // 跑：build\leno.exe --no-cache leno_gui\应用\模拟时钟\clock.leno
-// 用 maths 计算指针角度，SDL 绘制表盘与指针；手动循环逐帧刷新。
+//
+// 2026-09-26 加系统托盘（自绘菜单版 ✓）：
+//   · 托盘：只有图标 + 悬停提示（跟随时间，分钟变化才写一次）；**不建 SDL 的原生菜单** ✓
+//   · 「托盘图标被点」由 sdl_tray.interceptTrayClick() 拦（Windows 子类化 SDL_TRAY 窗口 ✓）
+//   · 菜单 = SDL3.createPopMenu 的**自绘弹出菜单**（无边框置顶小窗，条目见 _MI_* 常量）：
+//     显示/隐藏窗口 · 窗口置顶 · 12 小时制 · 关于 · 退出（勾选态与文字由本应用维护 ✓）
+//   · 关闭按钮 ⇒ 收进托盘继续走（win.cancelClose()）；ESC ⇒ 退出 ✓
+//
+// ★ 为什么不用 SDL 的原生托盘菜单（TrackPopupMenu）——两条**实测**结论：
+//   ① 原生菜单是**模态**消息循环：菜单开着期间主循环被按住、时钟画面冻住 ✗
+//      （源码：SDL 的 windows 后端在托盘 WndProc 里直接调 TrackPopupMenu ✓）
+//   ② SDL **不暴露**"托盘图标被点击"（3.4.10 只有条目回调，没有 SDL_EVENT_TRAY_* ✓）
+//   ⇒ 要"自绘菜单 + 点托盘图标弹它"，就必须拦下托盘窗口的 WndProc（本仓库已在
+//      sdl_tray.leno 里做好，失败时静默降级为"托盘只显示图标" ✓）
+//   ⇒ 自绘菜单是普通窗口 ⇒ **没有模态循环** ⇒ 菜单展开时秒针照走 ✓
+//
+// ★ 无头自检（CLOCK_SELFTEST=1 + SDL_VIDEODRIVER=dummy）测不到"托盘图标被点"那条链：
+//   dummy 视频驱动下 SDL **不跑 Win32 消息泵**，托盘窗口收不到任何消息 ✗（实测）
+//   ⇒ 自检改为直接驱动菜单窗口（showAt/clickItem ✓），拦截链由真机跑 ✓
 import "SDL3" as SDL3
 import maths
 import times
-use SDL3.Scancode
+import ffi
+use SDL3.(Tray, PopMenu, Event, Renderer, Font, Scancode, Timer, Window)
 use SDL3.WindowFlag
+
+// ===== 托盘动作标记（回调只置位；主循环统一执行 ⇒ 见头部约定 ①）=====
+bool _actToggle = false    // 显示 / 隐藏窗口
+bool _actTop    = false    // 窗口置顶
+bool _actFmt    = false    // 12 / 24 小时制
+bool _actAbout  = false    // 关于
+bool _actQuit   = false    // 退出程序
+
+// ===== 应用状态（同时是托盘勾选态的**唯一真相** ⇒ 不反查 SDL ✓）=====
+bool _visible = true       // 窗口是否可见（隐藏后靠托盘菜单恢复）
+bool _topMost = false      // 置顶
+bool _hour12  = false      // 12 小时制
+string _tipHM = ""         // 已写入提示的 "HH:MM"（分钟没变就不重写 ✓）
+
+// 自绘菜单条目序号（在 main 里按同一顺序建立 ⇒ 同步标签/勾选与自检都用这套常量 ✓）
+const _MI_TOGGLE = 0
+const _MI_TOP    = 1
+const _MI_FMT    = 3     // 2 是分隔行
+const _MI_ABOUT  = 5     // 4 是分隔行
+const _MI_QUIT   = 6
+PopMenu _pm = null       // 自绘弹出菜单（main 里建；自检要用 ⇒ 模块级 ✓）
+
+// ===== 无头自检（CLOCK_SELFTEST=1）=====
+// 托盘菜单平时**只能靠人手点** ⇒ 自检用 SDL_ClickTrayEntry 把各项"点"一遍，
+// 验「回调置标记 → 主循环落地」整条链（隐藏/显示、置顶、12 小时制、退出）✓
+// ⚠ 断言**不能用绝对时刻**：首帧预热（渲染器/字体/首帧 present）有几百 ms 抖动，
+//   80ms 的点击可能 260ms 才到 ✗（实测踩过）⇒ 这里用"状态机 + 等它真发生" ✓
+bool _selfCheck = false    // 本次是否自检跑（决定结尾的汇总/退出码 ✓）
+int  _sfFail = 0           // 自检失败计数
+int  _sfStep = 0           // 当前步骤（0 = 未开始；每 tick 末尾推进一格 ✓）
+int  _sfDeadline = 0       // 当前步骤的超时时刻（getTicks 语义）
+Window _sfWin = null       // 自检要"程序化关窗"（win.requestClose）⇒ 留一个句柄 ✓
+
+func _sfCheck(bool okv, string what) {
+    if okv { print("[自检] OK   " + what) }
+    else   { _sfFail = _sfFail + 1; print("[自检] FAIL " + what) }
+}
+
+// 超时判定：真的没生效才记 FAIL（记一次 + 续期 ⇒ 不刷屏 ✓）
+func _sfDue(string what): bool {
+    if SDL3.getTicks() <= _sfDeadline { return false }
+    _sfCheck(false, what + "（超时）")
+    _sfDeadline = SDL3.getTicks() + 3000
+    return true
+}
+
+// 自检状态机（每个 tick 末尾跑一次）：点一项 → 等状态真变（≤3s）→ 记 OK → 点下一项 ✓
+// 覆盖：自绘菜单弹出/收起 · 隐藏/显示 · **关闭按钮收进托盘** · 置顶 · 12 小时制 · 退出
+// ⚠ 不点「关于」：真会弹模态框，无头会挂住 ✗
+// ⚠ 「托盘图标被点 ⇒ 拦截」这条链**无头测不了**：dummy 视频驱动下 SDL 不跑 Win32 消息泵，
+//   托盘窗口收不到消息 ✗（实测）⇒ 那条链由真机跑（子类化 WndProc 已实测 ✓，见 docs §六）
+func _sfStepRun() {
+    if _sfStep == 0 {
+        _sfDeadline = SDL3.getTicks() + 3000
+        _sfCheck(SDL3.interceptTrayClick(), "托盘点击拦截（子类化 SDL_TRAY 窗口 ✓）")
+        _pm.showAt(200, 300)                       // 自绘菜单弹出（模拟"托盘被点"后的动作 ✓）
+        _sfStep = 1
+        return
+    }
+    if _sfStep == 1 {
+        if _pm.isOpen() {
+            _sfCheck(true, "自绘菜单弹出（非模态窗口 ✓）")
+            _sfCheck(_tipHM != "", "悬停提示已写入当前时间")
+            _pm.clickItem(_MI_TOGGLE)              // 点「隐藏窗口」
+            _sfStep = 2; _sfDeadline = SDL3.getTicks() + 3000
+        } else if _sfDue("自绘菜单弹出") {
+            _pm.clickItem(_MI_TOGGLE); _sfStep = 2
+        }
+        return
+    }
+    if _sfStep == 2 {
+        if not _visible {
+            _sfCheck(true, "菜单「隐藏窗口」⇒ 窗口隐藏（菜单也已收起 ✓：菜单开着时不关 ✗）")
+            _pm.setText(_MI_TOGGLE, "显示窗口")
+            _sfCheck(not _pm.isOpen(), "点条目后菜单自动收起")
+            _pm.clickItem(_MI_TOGGLE)              // 点「显示窗口」⇒ 恢复
+            _sfStep = 3; _sfDeadline = SDL3.getTicks() + 3000
+        } else if _sfDue("菜单「隐藏窗口」⇒ 窗口隐藏") {
+            _pm.clickItem(_MI_TOGGLE); _sfStep = 3
+        }
+        return
+    }
+    if _sfStep == 3 {
+        if _visible {
+            _sfCheck(true, "菜单「显示窗口」⇒ 窗口恢复")
+            // ★ 程序化"请求关闭"：与点 X 同一条路径（onEvent 里应拦截 ⇒ 收进托盘、不退出 ✓）
+            _sfCheck(_sfWin.requestClose(), "程序化关闭请求已投递（SDL_PushEvent ✓）")
+            _sfStep = 4; _sfDeadline = SDL3.getTicks() + 3000
+        } else { _sfDue("菜单「显示窗口」⇒ 窗口恢复") }
+        return
+    }
+    if _sfStep == 4 {
+        if not _visible {
+            _sfCheck(true, "关闭按钮 ⇒ 收进托盘（窗口未销毁、程序仍在跑 ✓）")
+            _pm.showAt(200, 300)                   // 从托盘恢复 ⇒ 验证"还能显示"（真的没销毁 ✓）
+            _sfStep = 5; _sfDeadline = SDL3.getTicks() + 3000
+        } else { _sfDue("关闭按钮 ⇒ 收进托盘") }
+        return
+    }
+    if _sfStep == 5 {
+        if _pm.isOpen() {
+            _sfCheck(true, "收进托盘后仍可弹出菜单")
+            _pm.clickItem(_MI_TOGGLE)              // 显示窗口
+            _sfStep = 6; _sfDeadline = SDL3.getTicks() + 3000
+        } else { _sfDue("收进托盘后仍可弹出菜单") }
+        return
+    }
+    if _sfStep == 6 {
+        if _visible {
+            _sfCheck(true, "收进托盘后仍可恢复窗口")
+            _pm.clickItem(_MI_TOP)
+            _sfStep = 7; _sfDeadline = SDL3.getTicks() + 3000
+        } else { _sfDue("收进托盘后仍可恢复窗口") }
+        return
+    }
+    if _sfStep == 7 {
+        if _topMost {
+            _sfCheck(true, "菜单「窗口置顶」⇒ 置顶生效")
+            _pm.clickItem(_MI_FMT)
+            _sfStep = 8; _sfDeadline = SDL3.getTicks() + 3000
+        } else { _sfDue("菜单「窗口置顶」⇒ 置顶生效") }
+        return
+    }
+    if _sfStep == 8 {
+        if _hour12 {
+            _sfCheck(true, "菜单「12 小时制」⇒ 制式生效")
+            _pm.clickItem(_MI_QUIT)                // ⇒ requestExit ⇒ run() 收尾（后面没步骤 ✓）
+            _sfStep = 9
+            _sfDeadline = SDL3.getTicks() + 1500
+        } else { _sfDue("菜单「12 小时制」⇒ 制式生效") }
+        return
+    }
+    if _sfStep == 9 {
+        // ⚠ 点「退出」的**本 tick** 仍会走到这里（requestExit 由主循环下一轮收尾，不是立即返回）
+        //   ⇒ 不能一到这就算失败；只有"过了 1.5s 还在"才是真没退（自检不能挂住 ⇒ 硬退 ✓）
+        if _sfDue("菜单「退出」⇒ 主循环收尾") { _exit(1) }
+    }
+}
 
 // 角度约定：12 点方向为正上方，顺时针为正。
 // 指针末端（角度 θ 弧度，自 12 点顺时针）：
@@ -15,94 +172,305 @@ use SDL3.WindowFlag
 func _tipX(float cx, float L, float theta): float { return cx + L * maths.sin(theta) }
 func _tipY(float cy, float L, float theta): float { return cy - L * maths.cos(theta) }
 
+// 点到线段距离（图标光栅化用；t 夹到 [0,1] ⇒ 端点外退化为"到端点距离" ✓）
+func _distSeg(float px, float py, float ax, float ay, float bx, float by): float {
+    float dx = bx - ax; float dy = by - ay
+    float l2 = dx * dx + dy * dy
+    float t = 0.0
+    if l2 > 0.0 { t = ((px - ax) * dx + (py - ay) * dy) / l2 }
+    if t < 0.0 { t = 0.0 }
+    if t > 1.0 { t = 1.0 }
+    float ex = px - (ax + t * dx)
+    float ey = py - (ay + t * dy)
+    return maths.sqrt(ex * ex + ey * ey)
+}
+
+// 两位补零（数字时间用；原版直接拼出 "9:5:3" ✗ 不像时钟 ✓）
+func _pad2(int v): string {
+    if v < 10 { return "0" + v }
+    return _str(v)
+}
+
+// 12 小时制的小时数（1~12 ✓）—— 表盘数字时间与托盘悬停提示**共用**（免得两处算法走偏 ✗）
+func _hour12Of(int h): int { return ((h + 11) % 12) + 1 }
+
+// ===== 托盘图标：32×32 RGBA 表盘（3×3 超采样软件光栅化）=====
+// 造型：米白圆盘 + 深色外圈 + 时针/分针（10:10 经典造型）+ 透明圆角外缘
+// 像素内存序 = R,G,B,A（SDL_PIXELFORMAT_RGBA8888 在小端机器上的字节序 ✓）
+// 颜色按"不透明样本的平均"合成（sa 做分母）⇒ 边缘不会把颜色拉向黑 ✗✓
+func _paintClockIcon(Ptr[u8] buf, int S) {
+    int SS = 3
+    float c  = _float(S) / 2.0            // 圆心
+    float R  = c - 1.2                    // 圆盘半径（留 ~1px 边距：缩到 16px 也不贴边 ✓）
+    float Rw = R * 0.115                  // 外圈宽
+    float aH = maths.pi() * 2.0 * ((10.0 + 10.0 / 60.0) / 12.0)   // 时针角（10:10）
+    float aM = maths.pi() * 2.0 * (10.0 / 60.0)                   // 分针角（10 分）
+    float hx = _tipX(c, R * 0.50, aH); float hy = _tipY(c, R * 0.50, aH)
+    float mx = _tipX(c, R * 0.74, aM); float my = _tipY(c, R * 0.74, aM)
+    float hw = R * 0.105                  // 时针半宽
+    float mw = R * 0.082                  // 分针半宽
+    float n  = _float(SS * SS)
+    for S to iy {
+        for S to ix {
+            float sr = 0.0; float sg = 0.0; float sb = 0.0; float sa = 0.0
+            for SS to sy {
+                for SS to sx {
+                    float fx = _float(ix) + (_float(sx) + 0.5) / _float(SS)
+                    float fy = _float(iy) + (_float(sy) + 0.5) / _float(SS)
+                    float ddx = fx - c; float ddy = fy - c
+                    float d = maths.sqrt(ddx * ddx + ddy * ddy)
+                    if d <= R {
+                        bool dark = d > R - Rw                       // 外圈
+                        if not dark and _distSeg(fx, fy, c, c, hx, hy) <= hw { dark = true }
+                        if not dark and _distSeg(fx, fy, c, c, mx, my) <= mw { dark = true }
+                        if dark { sr += 40.0; sg += 40.0; sb += 52.0 }
+                        else    { sr += 245.0; sg += 245.0; sb += 240.0 }
+                        sa += 1.0
+                    }
+                }
+            }
+            int off = (iy * S + ix) * 4
+            if sa <= 0.0 {
+                ffi.write_byte(buf, off + 0, 0)
+                ffi.write_byte(buf, off + 1, 0)
+                ffi.write_byte(buf, off + 2, 0)
+                ffi.write_byte(buf, off + 3, 0)
+            } else {
+                ffi.write_byte(buf, off + 0, _int(sr / sa + 0.5))
+                ffi.write_byte(buf, off + 1, _int(sg / sa + 0.5))
+                ffi.write_byte(buf, off + 2, _int(sb / sa + 0.5))
+                ffi.write_byte(buf, off + 3, _int(sa / n * 255.0 + 0.5))
+            }
+        }
+    }
+}
+
+// ===== 表盘绘制（run() 的渲染回调；最底层 ⇒ 直接铺满窗口 ✓）=====
+func _drawClock(Renderer ren, Font font, Font fontSmall, bool hour12) {
+    ren.clearColor(#181A22FF)
+
+    float cx = 200.0; float cy = 200.0; float R = 160.0
+
+    // [年,月,日,时,分,秒]
+    var dt = times.datetime()
+    int h = dt[3],m = dt[4],s = dt[5]
+
+    // 各指针弧度（含秒的小数，使分针/时针平滑走动）
+    float twoPi = maths.pi() * 2.0
+    float th = (((h % 12) + m / 60.0) / 12.0) * twoPi
+    float tm = ((m + s / 60.0) / 60.0) * twoPi
+    float ts = (s / 60.0) * twoPi
+
+    // ===== 表盘 =====
+    ren.setColor(#F5F5F0FF); ren.fillCircle(cx, cy, R)
+    ren.setColor(#282832FF)
+    ren.drawCircle(cx, cy, R)
+    ren.drawCircle(cx, cy, R - 6.0)
+
+    // ===== 刻度（整点更长）+ 数字 =====
+    for 1 : 12 to i {
+        float ang = (i / 12.0) * twoPi
+        bool major = (i % 3 == 0)
+        float rO = R - 6.0
+        float rI = if major then R - 26.0 else R - 16.0
+        ren.setColor(#3C3C46FF)
+        ren.drawLine(_tipX(cx, rI, ang), _tipY(cy, rI, ang),
+                     _tipX(cx, rO, ang), _tipY(cy, rO, ang))
+        if major {
+            float rn = R - 46.0
+            float nx = _tipX(cx, rn, ang)
+            float ny = _tipY(cy, rn, ang)
+            ren.setColor(#282832FF)
+            ren.drawTextCentered(font, i as string, nx - 20.0, 40.0,
+                                 ny - font.height / 2.0, #282832FF)
+        }
+    }
+
+    // ===== 时针 / 分针（深色） =====
+    ren.setColor(#1E1E28FF)
+    ren.drawLine(cx, cy, _tipX(cx, R - 80.0, th), _tipY(cy, R - 80.0, th))
+    ren.drawLine(cx, cy, _tipX(cx, R - 48.0, tm), _tipY(cy, R - 48.0, tm))
+
+    // ===== 秒针（红色，带反向配重） =====
+    ren.setColor(#DC3C3CFF)
+    ren.drawLine(_tipX(cx, -18.0, ts), _tipY(cy, -18.0, ts),
+                 _tipX(cx, R - 24.0, ts), _tipY(cy, R - 24.0, ts))
+
+    // ===== 中心轴 =====
+    ren.setColor(#1E1E28FF); ren.fillCircle(cx, cy, 6.0)
+    ren.setColor(#DC3C3CFF); ren.fillCircle(cx, cy, 3.0)
+
+    // ===== 底部数字时间（12 小时制 = 01~12 + AM/PM ✓）=====
+    string timeStr = _pad2(h) + ":" + _pad2(m) + ":" + _pad2(s)
+    if hour12 {
+        string ampm = if h < 12 then " AM" else " PM"
+        timeStr = _pad2(_hour12Of(h)) + ":" + _pad2(m) + ":" + _pad2(s) + ampm
+    }
+    ren.drawTextCentered(font, timeStr, 0, 400.0, 400.0, #DCDCE6FF)
+    ren.drawTextCentered(fontSmall, "ESC 退出 · 关闭窗口收进托盘", 0, 400.0, 432.0, #6E6E78FF)
+}
+
 main() {
     var win = SDL3.createWindow({title: "模拟时钟 - LenoSDL3", w: 400, h: 460, flags: WindowFlag.HIGH_PIXEL_DENSITY})
     if not win.ok { print("创建窗口失败"); return }
 
     SDL3.ttfInit()
 
-    var font     = SDL3.createFontAuto(26.0)   // 数字 / 数字时间
+    var font      = SDL3.createFontAuto(26.0)   // 数字 / 数字时间
     var fontSmall = SDL3.createFontAuto(18.0)   // 提示文字
+    if not font.ok or not fontSmall.ok { print("[警告] 字体创建失败（文字可能不显示）") }
 
-    var ev  = SDL3.createEvent()
-    var ren = SDL3.createRenderer(win.handle)
-    if not ren.ok { font.close(); win.destroy(); return }
-    ren.setVSync(1)
+    // ===== 托盘 =====
+    // 图标：先光栅化到 malloc 缓冲再包成 surface（surface 不持有像素 ⇒ 两者都要
+    // 活到托盘销毁之后，退出时一起释放 ✓）
+    int IS = 32
+    Ptr[u8] iconPix = ffi.malloc(IS * IS * 4)
+    _paintClockIcon(iconPix, IS)
+    Ptr[u8] iconSurf = SDL3.createSurfaceFromRaw(IS, IS, SDL3.PIXELFORMAT_RGBA8888, iconPix, IS * 4)
 
-    float cx = 200.0; float cy = 200.0; float R = 160.0
-
-    var running = true
-    while running {
-        while ev.poll() {
-            if ev.isQuit() or ev.isWindowClose() { running = false }
-            if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { running = false }
-        }
-
-        // [年,月,日,时,分,秒]
-        var dt = times.datetime()
-        int h = dt[3],m = dt[4],s = dt[5]
-
-        // 各指针弧度（含秒的小数，使分针/时针平滑走动）
-        float twoPi = maths.pi() * 2.0
-        float th = (((h % 12) + m / 60.0) / 12.0) * twoPi
-        float tm = ((m + s / 60.0) / 60.0) * twoPi
-        float ts = (s / 60.0) * twoPi
-
-        ren.clearColor(#181A22FF)
-
-        // ===== 表盘 =====
-        ren.setColor(#F5F5F0FF); ren.fillCircle(cx, cy, R)
-        ren.setColor(#282832FF)
-        ren.drawCircle(cx, cy, R)
-        ren.drawCircle(cx, cy, R - 6.0)
-
-        // ===== 刻度（整点更长）+ 数字 =====
-        for 1 : 12 to i {
-            float ang = (i / 12.0) * twoPi
-            bool major = (i % 3 == 0)
-            float rO = R - 6.0
-            float rI = if major then R - 26.0 else R - 16.0
-            ren.setColor(#3C3C46FF)
-            ren.drawLine(_tipX(cx, rI, ang), _tipY(cy, rI, ang),
-                         _tipX(cx, rO, ang), _tipY(cy, rO, ang))
-            if major {
-                float rn = R - 46.0
-                float nx = _tipX(cx, rn, ang)
-                float ny = _tipY(cy, rn, ang)
-                ren.setColor(#282832FF)
-                ren.drawTextCentered(font, i as string, nx - 20.0, 40.0,
-                                     ny - font.height / 2.0, #282832FF)
-            }
-        }
-
-        // ===== 时针 / 分针（深色） =====
-        ren.setColor(#1E1E28FF)
-        ren.drawLine(cx, cy, _tipX(cx, R - 80.0, th), _tipY(cy, R - 80.0, th))
-        ren.drawLine(cx, cy, _tipX(cx, R - 48.0, tm), _tipY(cy, R - 48.0, tm))
-
-        // ===== 秒针（红色，带反向配重） =====
-        ren.setColor(#DC3C3CFF)
-        ren.drawLine(_tipX(cx, -18.0, ts), _tipY(cy, -18.0, ts),
-                     _tipX(cx, R - 24.0, ts), _tipY(cy, R - 24.0, ts))
-
-        // ===== 中心轴 =====
-        ren.setColor(#1E1E28FF); ren.fillCircle(cx, cy, 6.0)
-        ren.setColor(#DC3C3CFF); ren.fillCircle(cx, cy, 3.0)
-
-        // ===== 底部数字时间 =====
-        var timeStr = dt[3] + ":" + dt[4] + ":" + dt[5]
-        ren.drawTextCentered(font, timeStr, 0, 400.0, 400.0, #DCDCE6FF)
-        ren.drawTextCentered(fontSmall, "按 ESC 退出", 0, 400.0, 432.0, #6E6E78FF)
-
-        ren.present()
-        SDL3.delay(16)
+    // 用 Tray? 接住（创建失败返回 null；Type? 与 null 比较不会触发 struct-null 警告 ✓）
+    // ★ 只做图标 + tooltip，**不调 getMenu()**：不建原生菜单 ⇒ SDL 永不开它的模态菜单（不会冻结 ✓）
+    Tray? tray = SDL3.createTray({icon: iconSurf, tooltip: "模拟时钟"})
+    bool hooked = false
+    if tray == null {
+        print("[警告] 系统托盘创建失败 ⇒ 退化为仅窗口模式（关闭按钮 = 退出）")
+    } else {
+        // 拦下"托盘图标被点"（Windows 子类化 SDL 的托盘窗口 ✓）；失败则只是没有菜单可弹 ✓
+        hooked = SDL3.interceptTrayClick()
+        if hooked { print("系统托盘已就绪（自绘菜单）：点击托盘图标打开菜单") }
+        else       { print("[警告] 托盘点击拦截不可用（非 Windows?）⇒ 托盘只显示图标与提示") }
     }
 
-    ren.destroy()
+    // ===== 自绘弹出菜单（非模态 ⇒ 展开时时钟照走，不冻结 ✓）=====
+    // 条目顺序见 _MI_* 常量（自检与同步标签都用它 ✓）
+    _pm = SDL3.createPopMenu({fontSize: 15.0})
+    if _pm.ok() {
+        _pm.addItem("隐藏窗口", func() { _actToggle = true })          // _MI_TOGGLE
+        _pm.addCheck("窗口置顶", false, func() { _actTop = true })      // _MI_TOP
+        _pm.addSeparator()
+        _pm.addCheck("12 小时制", false, func() { _actFmt = true })     // _MI_FMT
+        _pm.addSeparator()
+        _pm.addItem("关于", func() { _actAbout = true })               // _MI_ABOUT
+        _pm.addItem("退出", func() { _actQuit = true })                // _MI_QUIT
+    } else {
+        print("[警告] 自绘菜单窗口创建失败 ⇒ 托盘点击将无菜单可弹")
+    }
+
+    // ===== 主节拍：16ms ≈60fps（秒针走得顺）；隐藏时降到 200ms（几乎不占 CPU ✓）=====
+    // 托盘动作在这里统一落地（见头部约定 ①）
+    // ★ tick 先声明（显式类型）再赋值：回调里要改节拍（tick.reset）⇒ 自引用必须带类型 ✓
+    Timer tick = null
+    tick = win.addTimer(16, func() {
+        // 托盘被点 ⇒ 弹自绘菜单：先把"文字 / 勾选态"同步到当前应用状态（菜单不反查 ✓）
+        var tp = SDL3.pollTrayClick()
+        if tp.len() >= 2 {
+            _pm.setText(_MI_TOGGLE, if _visible then "隐藏窗口" else "显示窗口")
+            _pm.setChecked(_MI_TOP, _topMost)
+            _pm.setChecked(_MI_FMT, _hour12)
+            _pm.showAt(tp[0], tp[1])
+        }
+        _pm.poll()          // 点在菜单外 ⇒ 自动收起（不依赖焦点 ✓）
+
+        if _actToggle {
+            _actToggle = false
+            _visible = not _visible
+            if _visible {
+                win.show(); win.raise()
+                tick.reset(16)
+            } else {
+                win.hide()
+                tick.reset(200)
+            }
+        }
+        if _actTop {
+            _actTop = false
+            _topMost = not _topMost
+            win.setAlwaysOnTop(_topMost)
+        }
+        if _actFmt {
+            _actFmt = false
+            _hour12 = not _hour12
+        }
+        if _actAbout {
+            _actAbout = false
+            SDL3.showMessageBox("关于 · 模拟时钟",
+                "模拟时钟（LenoSDL3：自绘表盘 + 自绘托盘菜单）\n\n"
+                + "托盘菜单：显示/隐藏窗口 · 窗口置顶 · 12 小时制 · 关于 · 退出\n"
+                + "关闭按钮 = 收进托盘继续走；ESC = 退出程序",
+                0)
+        }
+        if _actQuit {
+            _actQuit = false
+            tray?.destroy()
+            SDL3.requestExit()        // 非 onEvent 上下文 ⇒ 走 requestExit（见 sdl_window.leno ✓）
+        }
+        // 悬停提示跟随时间（分钟变化才写一次；12 小时制跟着应用状态走 ✓）
+        var dt = times.datetime()
+        string hm = _pad2(dt[3]) + ":" + _pad2(dt[4])
+        if _hour12 {
+            string ap = if dt[3] < 12 then "AM " else "PM "
+            hm = ap + _pad2(_hour12Of(dt[3])) + ":" + _pad2(dt[4])
+        }
+        if hm != _tipHM {
+            _tipHM = hm
+            tray?.setTooltip("模拟时钟 · " + hm)
+        }
+        // 自检（若有）在**动作已落地之后**推进 ⇒ 看到的都是当前真状态 ✓
+        if _selfCheck { _sfStepRun() }
+    })
+
+    // ===== 无头自检开关：CLOCK_SELFTEST=1（配 SDL_VIDEODRIVER=dummy 可完全无窗口跑 ✓）=====
+    // 具体步骤见 _sfStepRun()（由 tick 末尾驱动，等状态真变再断言 ✓）
+    var sf = _env("CLOCK_SELFTEST")
+    if sf != null and _str(sf) != "" and _str(sf) != "0" {
+        if tray == null {
+            print("[自检] SKIP 托盘不可用（创建失败）⇒ 无法走菜单自检")
+        } else {
+            _selfCheck = true
+            _sfWin = win
+        }
+    }
+
+    win.run(
+        func(Event ev): bool {
+            if ev.isQuit() { return false }
+            if ev.isWindowClose() {
+                // 没有托盘 ⇒ 关闭即退出（否则窗口收起来就没入口恢复了 ✗）
+                if tray == null { return false }
+                // 关闭按钮 ⇒ 收进托盘：先 hide，再 cancelClose() 拦下"销毁窗口"（不自动退出 ✓）
+                win.hide()
+                _visible = false
+                _pm.hide()                       // 顺手收起可能开着的菜单 ✓
+                tick.reset(200)
+                win.cancelClose()
+                return true
+            }
+            if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer ren) {
+            if _visible { _drawClock(ren, font, fontSmall, _hour12) }   // 隐藏时不画（省 CPU ✓）
+        }
+    )
+
+    // ===== 收尾 =====
+    // 窗口/渲染器已由 run() 主循环收尾销毁（再 win.destroy() 是重复销毁 ⇒ 跳过 ✓）
+    // 顺序：托盘（会先恢复原 WndProc ✓）/自绘菜单/图标 → 字体 → SDL
+    tray?.destroy()
+    _pm.destroy()                        // 关菜单字体（窗口由主循环收尾 ✓）
+    if iconSurf != null { SDL3.destroySurface(iconSurf) }
+    ffi.free(iconPix)
     if font.ok { font.close() }
     if fontSmall.ok { fontSmall.close() }
-    ev.uninit()
-    win.destroy()
-    SDL3.ttfQuit()
+    SDL3.quit()
     print("程序结束")
+
+    // 自检退出码：失败 ⇒ 1（方便脚本/CI 判定 ✓）
+    if _selfCheck {
+        // 主循环提前退出（如"收进托盘"被误判成销毁窗口）⇒ 自检没跑完也是失败 ✓
+        if _sfStep < 9 { _sfFail = _sfFail + 1; print("[自检] FAIL 自检未跑完（主循环提前退出 ⇒ 窗口被销毁?）") }
+        if _sfFail > 0 { print("[自检] 结果：失败 " + _str(_sfFail) + " 项"); _exit(1) }
+        print("[自检] 结果：全部通过")
+        _exit(0)
+    }
 }

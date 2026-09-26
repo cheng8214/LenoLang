@@ -39,6 +39,36 @@ win.run(
 
 主循环本来就一直跑 ✓，退出只由 `onEvent` 返回 `false`（或调用 `_exit`）决定 ✓。
 
+### 从"非 onEvent 上下文"退出 / 关闭：两个新入口 ✓
+
+托盘菜单回调、定时器、渲染回调里**没法 `return false`** ⇒ 用这两个：
+
+```leno
+SDL3.requestExit()      // 请求主循环收尾（销毁所有窗口并返回，与 SDL_QUIT 同一条清理路径 ✓）
+win.requestClose()      // 投递一条 WINDOW_CLOSE_REQUESTED ⇒ 和用户点 X 走**同一条** onEvent 路径 ✓
+```
+
+- `requestExit()` 不是立即返回 ✓：动作在**主循环下一轮**生效（不打断当前事件/渲染处理）✓
+- `requestClose()` 返回"投递是否成功" ✓；窗口关不关由 `onEvent` 决定（含下面的 `cancelClose` ✓）
+
+### 「关闭到托盘」：`win.cancelClose()` ✓（实测）
+
+```leno
+win.run(func(Event ev): bool {
+    if ev.isWindowClose() {                 // 关闭按钮（或 requestClose ✓）
+        win.hide()                          // 先收进托盘
+        win.cancelClose()                   // ★ 拦下"销毁窗口" ⇒ 主循环不退出 ✓
+        return true
+    }
+    return true
+}, ...)
+```
+
+- **实测**（`leno_gui/应用/模拟时钟` 的 `CLOCK_SELFTEST=1` ✓）：拦下后窗口**未销毁**、程序继续跑、
+  再从托盘 `win.show()` 可以正常恢复 ✓；不调用 `cancelClose()` 时点 X = 老行为（销毁窗口 ⇒ 退出）✓
+- 只对**这一次**关闭请求有效 ✓（标记每次进处理器前清零 ⇒ 不会跨事件残留 ✗）
+- ⚠ 没托盘时别拦：窗口收起来就**没入口恢复**了 ✗（模拟时钟里 `if tray == null { return false }` ✓）
+
 ---
 
 ## 二、控件创建：`SDL3.createXxx` 与 `win.addXxx` 的区别 ✓
@@ -120,7 +150,80 @@ SDL3.dumpLayout(某个容器)      // 任意子树
 
 ---
 
-## 六、回归用例怎么跑
+## 六、系统托盘（`SDL3.createTray`）✓
+
+### 最小用法（完整示例见 `examples/基础示例/窗口管理/test_tray.leno` ✓）
+
+```leno
+Tray? trayOpt = SDL3.createTray({icon: surface 或 null, tooltip: "我的应用"})
+if trayOpt == null { return }                // Type? 判空 —— 非可空 struct 判空会触发 [struct与null比较] 警告 ✗
+Tray tray = trayOpt                          // 剥离可空 ✓
+TrayMenu menu = tray.getMenu()
+menu.addButton("显示", func() { ... })
+menu.addCheckbox("置顶", false, func() { ... })
+menu.addSeparator()
+menu.addButton("退出", func() { ... })
+```
+
+- **必须用 `win.run()` 驱动** ✓：托盘回调靠消息循环冒出来，事件循环不 drain 队列 ⇒ 回调不执行 ✗（见 `docs/BUG_TRAY_COMPILER.md` ✓）
+- **线程/上下文有官方依据** ✓（3.4.10 的 `SDL_tray.h`）：`SDL_CreateTray` 只能**主线程**调；其余托盘 API
+  "should be called on the thread that created the tray" ⇒ 回调就在主线程 ✓。即便如此仍建议
+  **回调里只写标记**、真正的窗口/托盘操作放主循环 —— 因为回调里**没法 `return false`** 退出主循环 ✓
+- **勾选态**：SDL 在回调**之前**就已切换 ✓，但别去反查它 —— 用应用状态当唯一真相，回调后
+  `SDL3.setTrayEntryChecked(entry, 应用状态)` 强制同步 ✓（幂等 ✓）
+- `setTrayEntryLabel/Checked(...)` 对 **null 条目是安全空操作** ✓（托盘创建失败时菜单句柄全为 null，不用到处判空 ✓）
+- **图标**：`createTray({icon: surface})` 的 surface 在创建时就转成平台图标 ✓（SDL 3.4 windows 后端
+  `WIN_CreateIconFromSurface`）⇒ 之后释放 surface 是安全的 ✓；没图标时用系统默认图标 ✓
+- **无头自测**：`SDL3.clickTrayEntry(entry)` 模拟点条目（**同步**执行其回调 ✓）
+  （勾选态不会被它切换 ⇒ 测试里自行 `setTrayEntryChecked` 保持一致 ✓）
+
+### ⛔ 原生菜单在 Windows 上会**冻结画面**（实测 ✓）—— 所以要自绘
+
+两条实测结论（都有一手依据，不是推测）：
+
+1. **菜单开着 = 主循环被按住** ✓：SDL 的 windows 后端在托盘窗口的 WndProc 里**同步**调
+   `TrackPopupMenu`（模态消息循环，源码 `src/tray/windows/SDL_tray.c`），而那个 WndProc 是在我们
+   `ev.poll()`（`SDL_PollEvent`）里被调进去的 ⇒ 期间定时器不 tick、`onRender` 不跑、画面**冻住** ✗
+   （实测：模拟时钟挂原生菜单时秒针停；见 `leno_gui/应用/模拟时钟` 的注释 ✓）
+2. **SDL 不暴露"托盘图标被点"** ✓：3.4.10 的 `SDL_tray.h` 只有条目回调，没有 `SDL_EVENT_TRAY_*`
+   ⇒ 想"点托盘图标弹自绘菜单"，必须**拦下托盘窗口的 WndProc** ✓
+
+⇒ 本仓库的做法（**自绘菜单 + 拦截托盘点击**，模拟时钟用的就是这套 ✓）：
+
+```leno
+Tray tray = SDL3.createTray({icon: surf, tooltip: "..."})   // ★ **不要调 getMenu()**：不建原生菜单
+bool hooked = SDL3.interceptTrayClick()                     // 拦下图标被点（Windows 子类化 SDL_TRAY 窗口 ✓）
+
+PopMenu pm = SDL3.createPopMenu({})                          // 自绘菜单：无边框/置顶/**非模态** ✓
+pm.addItem("隐藏窗口", func() { ... })
+pm.addCheck("窗口置顶", false, func() { ... })
+pm.addSeparator()
+pm.addItem("退出", func() { ... })
+
+// 主循环（定时器）里：
+var p = SDL3.pollTrayClick()                                 // [] = 没点；[x, y] = 被点的屏幕坐标 ✓
+if p.len() >= 2 { pm.showAt(p[0], p[1]) }                     // 弹出（底边贴光标 + 夹进屏幕可用区 ✓）
+pm.poll()                                                     // 点在菜单外自动收起（不依赖焦点 ✓）
+```
+
+- `interceptTrayClick()` 返回 false（非 Windows / 找不到窗口）⇒ 静默降级：托盘只剩图标与提示 ✓
+- 拦截实现 = `FindWindowA("SDL_TRAY")` + `SetWindowLongPtrW(GWLP_WNDPROC)` 换掉 WndProc，
+  只截 `WM_TRAYICON` 且通知码为 `WM_CONTEXTMENU/WM_LBUTTONUP/WM_RBUTTONUP`（**返回 0、不链回 SDL**），
+  其余消息 `CallWindowProcW` 原样交还 SDL ✓（已实测：`msg=1025` 命中、主循环照转 ✓）
+- ★ **顺序**：`Tray.destroy()` 内部**先恢复原 WndProc 再**销毁托盘 ✓（反了会打到已释放的托盘数据 ✗）
+- 自绘菜单的关闭时机：点条目 / 点菜单外 / 失焦 / ESC ✓；`clickItem(idx)` 可程序化点（无头自测 ✓）
+- ⚠ **无头测不了拦截链**：`SDL_VIDEODRIVER=dummy` 下 SDL **不跑 Win32 消息泵** ⇒ 托盘窗口收不到
+  任何消息 ✗（实测）⇒ 自检要驱动菜单窗口本身（`showAt/clickItem`），拦截链得真机跑 ✓
+
+### 自检断言别用绝对时刻 ⚠⇒✗（实测踩过）
+
+首帧预热（渲染器/字体/首帧 present）在本机可到 **几百 ms** ⇒ 80ms 的定时器可能 260ms 才到 ✗。
+断言要写成"**等它真发生**"（状态机逐拍推进），不要写"第 X 毫秒时它应该已经变了" ✗
+（模拟时钟的自检就是这么写的 ✓）。
+
+---
+
+## 七、回归用例怎么跑
 
 目录：`build/leno_module/LenoSDL3/examples/`
 
@@ -137,3 +240,14 @@ build\leno.exe --no-cache build\leno_module\LenoSDL3\examples\图形绘制\test_
 | `图形绘制/test_aa_radii.leno` | `r=10/20/40/80` 圆环 —— 回归「环墨迹压在蒙版纹理末列 ⇒ 整列丢失」那个坑 ✗ |
 | `其他测试/test_draw_order.leno` | 实测三个绘制层先后（见第一节 ✓） |
 | `其他测试/test_dump_layout.leno` | `dumpLayout` 输出示例（含"有剩余空间但无人 grow"的场景 ✓） |
+
+托盘 / 自绘菜单 / 关闭到托盘（**无头可跑 ✓**，退出码 0 = 全过）：
+
+```
+$env:SDL_VIDEODRIVER='dummy'
+$env:CLOCK_SELFTEST='1'
+build\leno.exe --no-cache leno_gui\应用\模拟时钟\clock.leno   # 12 项：拦截·菜单弹出/收起·显隐·关窗收托盘·置顶·12小时制·退出 ✓
+```
+
+⚠ 「托盘图标被点 ⇒ 拦截 ⇒ 弹菜单」这条链**要真机跑**（dummy 下没有 Win32 消息泵 ✗，见 §六）。
+真机快速验证：`set LENO_SDL_FRAMES=40` 后直接跑模拟时钟，点托盘图标看菜单是否在光标处弹出、秒针是否照走 ✓

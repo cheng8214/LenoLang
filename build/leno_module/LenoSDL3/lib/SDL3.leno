@@ -50,6 +50,8 @@ import "sdl_titlebar.leno" as tbar
 use tbar.TitleBar
 import "sdl_canvas.leno" as cnv
 use cnv.Canvas
+import "sdl_popmenu.leno" as pmenu; use pmenu.PopMenu    // 自绘弹出菜单（非模态 ⇒ 不冻结 ✓）
+export func createPopMenu(Dict opts): PopMenu { return pmenu.createPopMenu(opts) }
 
 
 // ==================== 重新导出类型 ====================
@@ -137,7 +139,17 @@ export func isTrayEntryChecked(Ptr[u8] e): bool   { return tray.isEntryChecked(e
 export func isTrayEntryEnabled(Ptr[u8] e): bool   { return tray.isEntryEnabled(e) }
 export func setTrayEntryEnabled(Ptr[u8] e, bool v) { tray.setEntryEnabled(e, v) }
 export func setTrayEntryLabel(Ptr[u8] e, string l)  { tray.setEntryLabel(e, l) }
-export func setTrayEntryChecked(Ptr[u8] e, bool v)  { tray.setEntryChecked(e, v) }
+export func setTrayEntryChecked(Ptr[u8] e, bool v) { tray.setEntryChecked(e, v) }
+// 模拟点击托盘条目（同步执行其回调）—— 托盘应用的无头自测入口 ✓
+export func clickTrayEntry(Ptr[u8] e)               { tray.clickEntry(e) }
+
+// ==================== 托盘图标点击拦截（自绘菜单用 ✓）====================
+// 先 createTray，再调本函数开拦截；**不要调 tray.getMenu()**（不建菜单 ⇒ SDL 永不开它的
+// 模态菜单 ⇒ 画面不冻结 ✓）。之后在主循环里 pollTrayClick() 取"图标被点 + 光标位置" ✓
+export func interceptTrayClick(): bool        { return tray.interceptTrayClick() }
+export func releaseTrayClick()               { tray.releaseTrayClick() }
+export func pollTrayClick(): Array           { return tray.pollTrayClick() }
+export func clickTrayIcon(): bool            { return tray.clickTrayIcon() }   // 自测用：模拟点图标 ✓
 export func setTipDelay(int ms)                     { tip.setTipDelay(ms) }
 export func createHBox(Dict opts): HBox          { return lay.createHBox(opts) }
 export func createVBox(Dict opts): VBox          { return lay.createVBox(opts) }
@@ -204,6 +216,9 @@ export func requestRedraw()   { core.requestRedraw() }
 // 取出并清除"待重绘"标志（自检/诊断用：可断言"这一帧跑完后是否还欠一帧" ✓）
 // 场景：动画控件必须在"动画未结束时"每帧再请求一帧，否则事件循环会挂起 ✗（见 sdl_scrollview.leno ✓）
 export func consumeRedrawRequest(): bool { return core.consumeRedrawRequest() }
+
+// 请求主循环退出（销毁所有窗口并返回；托盘回调/定时器等非 onEvent 上下文用 ✓）
+export func requestExit() { wnd.requestExit() }
 
 
 export func getClipboardText(): string   { return core.getClipboardText() }

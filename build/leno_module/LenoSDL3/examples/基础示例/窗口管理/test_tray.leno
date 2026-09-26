@@ -1,5 +1,7 @@
 // test_tray.leno — 系统托盘功能测试
 // 托盘回调依赖 SDL 事件循环，必须通过 win.run() 驱动
+// ★ 无头自测托盘应用：用 SDL3.clickTrayEntry(entry) 模拟点条目（回调是同步的 ✓），
+//   这样菜单回调不靠人手点也能测 —— 见 leno_gui/应用/模拟时钟（CLOCK_SELFTEST=1 ✓）
 import "SDL3" as SDL3
 use SDL3.(Tray, TrayMenu, Event, Renderer, Scancode)
 
@@ -7,9 +9,11 @@ main() {
     var win = SDL3.createWindow({title: "SystemTray 测试", w: 400, h: 300})
     if not win.ok { return }
 
-    Tray tray = SDL3.createTray({ tooltip: "Leno Tray Test" })
-    print("托盘创建: " + (tray != null))
-    if tray == null { return }
+    // ★ 用 Type? 接住创建结果：非可空 struct 与 null 比较会触发 [struct与null比较] 警告 ✗
+    Tray? trayOpt = SDL3.createTray({ tooltip: "Leno Tray Test" })
+    print("托盘创建: " + (trayOpt != null))
+    if trayOpt == null { return }
+    Tray tray = trayOpt                  // 已确认非空 ⇒ 剥离可空 ✓
 
     TrayMenu menu = tray.getMenu()
     bool _exitFlag = false
@@ -27,8 +31,9 @@ main() {
     menu.addSeparator()
     print("分隔线 OK")
 
-    var sub = menu.addSubmenu("更多")
-    if sub != null {
+    TrayMenu? subOpt = menu.addSubmenu("更多")
+    if subOpt != null {
+        TrayMenu sub = subOpt            // 同上：剥离可空 ✓
         sub.addButton("关于", func() {
             SDL3.showMessageBox("托盘测试", "Leno Tray Demo v0.1", 0)
         })
@@ -36,7 +41,7 @@ main() {
             _exitFlag = true
         })
     }
-    print("子菜单: " + (sub != null))
+    print("子菜单: " + (subOpt != null))
     print("右键托盘图标 -> 展开菜单测试 (Esc 或 '更多→退出')")
 
     win.run(

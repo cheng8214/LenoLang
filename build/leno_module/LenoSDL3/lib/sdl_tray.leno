@@ -18,6 +18,119 @@ import "sdl_core.leno" as core
 use core.(sdl3, TrayEntryFlag)
 sdl3 _lib = core.lib()
 
+// ============ 托盘图标点击拦截（Windows；子类化 SDL 的托盘窗口 ✓）============
+// 为什么需要它：
+//   · SDL 的 windows 后端在托盘窗口的 WndProc 里**直接开自己的菜单**（TrackPopupMenu 是
+//     **模态**消息循环）⇒ 菜单开着期间主循环被按住、画面冻结 ✗（见 docs 速查表 §六）
+//   · SDL **不暴露**"托盘图标被点击"：3.4.10 的 SDL_tray.h 只有条目回调（SDL_TrayCallback），
+//     没有 SDL_EVENT_TRAY_* ⇒ 想改用**自绘菜单**，只能把那个隐藏窗口的 WndProc 换掉 ✓
+//
+// ★ 关键前提：**不要调 tray.getMenu()** —— SDL 只在 `tray->menu` 非空时才开菜单
+//   （源码：`if (tray->menu) { TrackPopupMenu(...) }`）⇒ 不建菜单 ⇒ 永远不会进模态循环 ✓
+//
+// 用法（见 leno_gui/应用/模拟时钟）：
+//   Tray tray = SDL3.createTray(...)         // 只做图标 + tooltip，不建菜单 ✓
+//   bool hooked = SDL3.interceptTrayClick()   // 失败（非 Windows/找不到窗口）⇒ 调用方自行决定退路 ✓
+//   // 主循环（定时器）里：
+//   var p = SDL3.pollTrayClick()              // [] = 没点；[x, y] = 该在 (x,y) 弹**自绘菜单** ✓
+// 退出：Tray.destroy() 内部会先恢复原 WndProc（顺序不能反 ✗ 见其注释 ✓）
+
+clib user32 {
+    Ptr[u8] FindWindowA(str8 cls, str8 title)
+    Ptr[u8] SetWindowLongPtrW(Ptr[u8] hwnd, i32 index, Ptr[u8] val)   // 返回旧值（原 WndProc ✓）
+    i64     CallWindowProcW(Ptr[u8] proc, Ptr[u8] hwnd, u32 msg, u64 wp, i64 lp)
+    bool    PostMessageW(Ptr[u8] hwnd, u32 msg, u64 wp, i64 lp)
+    bool    GetCursorPos(Ptr[u8] pt)
+}
+cfunc _TrayWndProc(Ptr[u8] hwnd, u32 msg, u64 wp, i64 lp):i64
+
+const WM_TRAYICON      = 0x0401   // WM_USER + 1（SDL 托盘窗口的回调消息 ✓）
+const WM_CONTEXTMENU   = 0x007B   // 右击（NOTIFYICON_VERSION_4 ✓）
+const WM_LBUTTONUP     = 0x0202   // 左键抬起（SDL 也用它开菜单 ✓）
+const WM_RBUTTONUP     = 0x0205
+const GWLP_WNDPROC_IDX = -4
+
+user32 _u32lib = null
+var _newProc = null               // 子类化用的 WndProc（ffi.callback，保持存活 ✓）
+Ptr[u8] _trayHwnd = null
+Ptr[u8] _oldProc  = null
+bool _hooked = false
+bool _pending = false             // 有"托盘被点"待取（主循环轮询 ✓）
+int  _clickX = 0
+int  _clickY = 0
+
+func _u32(): user32 {
+    if _u32lib == null { _u32lib = ffi.load("user32.dll") }
+    return _u32lib
+}
+
+// 开启拦截（幂等）。返回 false = 非 Windows / 找不到 SDL 的托盘窗口 ⇒ 调用方应回退 ✓
+export func interceptTrayClick(): bool {
+    if _hooked { return true }
+    try {
+        Ptr[u8] h = _u32().FindWindowA("SDL_TRAY", null as string)
+        if h == null { return false }
+        if _newProc == null { _newProc = ffi.callback(_trayWndProc, _TrayWndProc) }
+        Ptr[u8] old = _u32().SetWindowLongPtrW(h, GWLP_WNDPROC_IDX, _newProc)
+        if old == null { return false }
+        _oldProc = old
+        _trayHwnd = h
+        _hooked = true
+        return true
+    } catch e {
+        return false                  // 非 Windows / user32 不可用 ⇒ 静默降级 ✓
+    }
+}
+
+// 恢复原 WndProc（Tray.destroy() 会先调它 ✓）
+export func releaseTrayClick() {
+    if not _hooked or _trayHwnd == null { return }
+    if _oldProc != null { _u32().SetWindowLongPtrW(_trayHwnd, GWLP_WNDPROC_IDX, _oldProc) }
+    _hooked = false
+    _trayHwnd = null
+    _oldProc = null
+    _pending = false
+}
+
+// 取"托盘被点"：无 ⇒ 空数组；有 ⇒ [屏幕 x, 屏幕 y] ✓
+export func pollTrayClick(): Array {
+    if not _pending { return [] }
+    _pending = false
+    Array r = []
+    r.add(_clickX); r.add(_clickY)
+    return r
+}
+
+// 模拟"点托盘图标"（投递 WM_TRAYICON/WM_CONTEXTMENU）—— 无头自测用 ✓
+// 走真实消息路径 ⇒ 验证的是完整链路（含我们子类化的 WndProc ✓）
+export func clickTrayIcon(): bool {
+    if _trayHwnd == null { return false }
+    return _u32().PostMessageW(_trayHwnd, WM_TRAYICON, 0, WM_CONTEXTMENU)
+}
+
+// 我们的 WndProc：只拦"图标被点"，其余消息原样交还 SDL ✓
+// 注：Leno 侧的形参用 int（cfunc 那头才是 u32/u64/i64 的 C 布局 ✓）
+func _trayWndProc(Ptr[u8] hwnd, int msg, int wp, int lp): int {
+    if msg == WM_TRAYICON {
+        int note = lp & 0xFFFF            // V4：通知码在 lParam 低 16 位 ✓
+        if note == WM_CONTEXTMENU or note == WM_LBUTTONUP or note == WM_RBUTTONUP {
+            _grabCursor()
+            _pending = true
+            return 0                       // ★ 不链回 SDL ⇒ 它不会弹原生菜单（也就不会冻结）✓
+        }
+    }
+    return _int(_u32().CallWindowProcW(_oldProc, hwnd, msg, wp, lp))
+}
+
+func _grabCursor() {
+    Ptr[u8] pt = ffi.malloc(8)
+    ffi.write_int(pt, 0, 0); ffi.write_int(pt, 4, 0)
+    _u32().GetCursorPos(pt)
+    _clickX = ffi.read_int(pt, 0)
+    _clickY = ffi.read_int(pt, 4)
+    ffi.free(pt)
+}
+
 // ============ 回调 ============
 cfunc _TrayCb(Ptr[u8] userdata, Ptr[u8] entry):void
 
@@ -145,6 +258,9 @@ export struct Tray {
     func destroy() {
         if _destroyed or _ptr == null { return }
         _destroyed = true
+        // ★ 顺序不能反：先恢复原 WndProc，再销毁托盘 ——
+        //   否则托盘已释放，WM_TRAYICON 还会派到我们的 WndProc（里面还会用 SDL 的窗口数据 ✗）
+        releaseTrayClick()
         _lib.SDL_DestroyTray(_ptr)
         _ptr = null
         _rootMenu = null
@@ -186,3 +302,11 @@ export func isEntryEnabled(Ptr[u8] entry): bool    { return _lib.SDL_GetTrayEntr
 export func setEntryEnabled(Ptr[u8] entry, bool e) { _lib.SDL_SetTrayEntryEnabled(entry, e) }
 export func setEntryLabel(Ptr[u8] entry, string l)  { _lib.SDL_SetTrayEntryLabel(entry, l) }
 export func setEntryChecked(Ptr[u8] entry, bool c)  { _lib.SDL_SetTrayEntryChecked(entry, c) }
+
+// 模拟点击一个条目（SDL_ClickTrayEntry）：**同步**执行该条目的回调，等价于用户点了它。
+// 用途：托盘应用的无头自测 —— 菜单回调平时只能靠人手点，自动化测试没法触发 ✓
+// ⚠ 只是"回调被调了"的等价物，不经过真实的菜单/消息循环（勾选态等由 SDL 的 WM_COMMAND
+//   分支切换，本函数不会替它切）⇒ 测试里请自行 setEntryChecked 保持状态一致 ✓
+export func clickEntry(Ptr[u8] entry) {
+    if entry != null { _lib.SDL_ClickTrayEntry(entry) }
+}

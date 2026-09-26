@@ -155,6 +155,8 @@ clib sdl3 {
     void SDL_DestroyWindow(Ptr[u8] window)
     u32  SDL_GetWindowID(Ptr[u8] window)
     u32  SDL_GetWindowFlags(Ptr[u8] window)
+    u32  SDL_GetPrimaryDisplay()
+    bool SDL_GetDisplayUsableBounds(u32 displayID, Ptr[u8] rect)   // 扣掉任务栏的可用区（弹菜单夹紧用 ✓）
     bool SDL_SetWindowResizable(Ptr[u8] window, bool resizable)
     bool SDL_SetWindowBordered(Ptr[u8] window, bool bordered)
     bool SDL_GetWindowSize(Ptr[u8] window, Ptr[i32] w, Ptr[i32] h)
@@ -193,6 +195,7 @@ clib sdl3 {
     u16  SDL_GetModState()
     bool SDL_PollEvent(Ptr[u8] event)
     bool SDL_WaitEventTimeout(Ptr[u8] event, i32 timeoutMS)
+    bool SDL_PushEvent(Ptr[u8] event)   // 投递事件（如程序化"请求关闭窗口"）
     bool SDL_StartTextInput(Ptr[u8] window)
     bool SDL_StopTextInput(Ptr[u8] window)
     bool SDL_TextInputActive(Ptr[u8] window)
@@ -293,6 +296,7 @@ clib sdl3 {
     str8    SDL_GetTrayEntryLabel(Ptr[u8] entry)
     Ptr[u8] SDL_GetTrayMenu(Ptr[u8] tray)
     Ptr[u8] SDL_GetTraySubmenu(Ptr[u8] entry)
+    void    SDL_ClickTrayEntry(Ptr[u8] entry)   // 模拟点击条目（同步回调；托盘无头自测用）
 }
 
 // ==================== 枚举常量 ====================

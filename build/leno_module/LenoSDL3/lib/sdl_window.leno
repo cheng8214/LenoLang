@@ -11,7 +11,7 @@
 //    while running { while ev.poll() { ... } ren.clear(); ...; ren.present() }
 import ffi
 import "sdl_core.leno" as core
-use core.(sdl3, SDL_Point, Size)
+use core.(sdl3, SDL_Point, Size, SDL_WindowEvent)
 
 sdl3 _lib = core.lib()
 
@@ -188,6 +188,8 @@ Array[Array[Shortcut]]  _runShortcuts = []    // 各窗口快捷键列表
 Array[func():bool]       _runShortcutGuards = [] // 各窗口快捷键守卫回调
 var _runLoopActive = false    // 主循环是否已在运行
 Array[int] _modalStack = []   // 模态窗口栈（支持嵌套）
+var _exitRequested = false    // 程序化退出请求（requestExit ⇒ 主循环下一轮收尾返回）
+var _closeCanceled = false    // 本次关闭请求被拦截（Window.cancelClose ⇒ 不销毁窗口）
 
 // ★ 安全网：每帧向根控件下发窗口句柄，确保所有子控件（含动态添加的）都能拿到 _hwnd。
 //   与 Window._passWindowHandle 逻辑一致，但作为模块级函数供事件循环调用（可处理多窗口）。
@@ -273,6 +275,12 @@ export func raiseWindow(int wid) {
     }
 }
 
+// ★ 请求主循环退出（销毁所有已注册窗口并返回，与 SDL_QUIT 事件同一套清理流程）。
+//   给"非 onEvent 上下文"开的门：托盘菜单回调 / 定时器 / 渲染回调里想结束程序时调用 ✓
+//   onEvent 返回 false 仍是首选；但在托盘回调里没法 return false（回调签名是 func():void）
+//   ⇒ 先调用本函数，主循环下一轮统一收尾 ✓（不是立即返回：不打断当前事件/渲染处理）
+export func requestExit() { _exitRequested = true }
+
 // 兼容旧 API（已废弃，仅 test_modal_dialog.leno 等旧示例使用）
 export func setModalWid(int w) {
     if w < 0 { _modalStack = [] }
@@ -318,6 +326,34 @@ export struct Window {
     // 设置叠加层渲染回调（在所有控件和弹层渲染之后、present 之前调用）
     // 用途：拖拽浮动框、自定义全局浮层等需要绘制在所有控件之上的场景
     func setOverlay(RenderCallback cb) { _overlay = cb }
+
+    // ★ 「关闭到托盘」：拦截本次窗口关闭请求 ⇒ 主循环**不**销毁窗口（不再自动退出）。
+    //   只对**本次** WINDOW_CLOSE_REQUESTED 有效，且必须在 onEvent 里收到 ev.isWindowClose()
+    //   时调用（标记在每次调用处理器前清零 ⇒ 不会跨事件残留 ✓）。典型用法：
+    //     win.run(func(Event ev): bool {
+    //         if ev.isWindowClose() { win.hide(); win.cancelClose(); return true }   // 收进托盘继续跑
+    //         if ev.isQuit() { return false }                                        // 真退出
+    //         ...
+    //     }, ...)
+    //   ⚠ 与 SDL 的 SDL_HINT_QUIT_ON_LAST_WINDOW_CLOSE 无关：本函数只影响 run() 主循环的
+    //     窗口销毁判断；窗口随后仍可用 win.show() 恢复 ✓
+    func cancelClose() { _closeCanceled = true }
+
+    // ★ 程序化"请求关闭"该窗口：向事件队列投递一条 WINDOW_CLOSE_REQUESTED
+    //   （与用户点 X 走**同一条**路径 ⇒ onEvent 里"关闭到托盘/关闭前询问"的逻辑照样生效 ✓）
+    //   用途：① 自测/脚本触发关闭流程（人手点 X 没法自动化 ✓）
+    //        ② 应用自己的"关闭"按钮走同一套收尾，而不是各写一套
+    //   返回：投递是否成功（事件被禁用的环境下 SDL_PushEvent 返回 false ⇒ 调用方要能知道 ✓）
+    func requestClose(): bool {
+        Ptr[u8] e = ffi.malloc(128)                     // SDL_Event 缓冲
+        for 128 to i { ffi.write_byte(e, i, 0) }        // 先清零（未用字段别带垃圾 ✓）
+        SDL_WindowEvent we = SDL_WindowEvent.from_ptr(e)
+        we.type = core.EventType.WINDOW_CLOSE_REQUESTED // 偏移 0（cstruct 已标注布局 ✓）
+        we.windowID = getID()                           // 偏移 16
+        bool r = _lib.SDL_PushEvent(e)
+        ffi.free(e)
+        return r
+    }
 
     // ==================== 快捷键注册 ====================
     // 注册快捷键，key 格式: "F5", "Backspace", "Ctrl+C", "Ctrl+Shift+S"
@@ -1258,7 +1294,12 @@ export struct Window {
                         //   守卫回调返回 true 时阻止快捷键（如 Edit/Table 编辑中）
                         bool _shortcutHandled = false
                         if ev.isKeyDown() { _shortcutHandled = _tryShortcut(i, ev) }
-                        if not _shortcutHandled and (not _runEvts[i](ev) or ev.isWindowClose()) {
+                        // ★ 关闭拦截：处理器可在 ev.isWindowClose() 里调用 win.cancelClose() ⇒ 不销毁窗口
+                        //   （"关闭到托盘"✓）。标记每次处理前清零 ⇒ 只对本次事件有效、无跨事件残留 ✓
+                        _closeCanceled = false
+                        bool _keepOpen = false
+                        if not _shortcutHandled { _keepOpen = _runEvts[i](ev) }
+                        if not _shortcutHandled and (not _keepOpen or (ev.isWindowClose() and not _closeCanceled)) {
                             // 模态窗口关闭：弹出栈并恢复焦点到父窗口
                             int _restoreWid = -1
                             if _isModal() and _runWids[i] == _modalTop() {
@@ -1392,6 +1433,28 @@ export struct Window {
             }
             // 驱动所有定时器（在事件轮询外，确保 idle 期间也能触发定时器与自动重绘）
             timer.tickAllTimers()
+            // ★ 程序化退出请求（requestExit()：托盘菜单/定时器等非 onEvent 上下文发起）：
+            //   与 SDL_QUIT 事件同款收尾（控件 dispose → 渲染器/窗口销毁 → 事件反初始化）
+            if _exitRequested {
+                _exitRequested = false
+                for _runWids.len() to _qi {
+                    var _qws = _runWidgets[_qi]
+                    if _qws != null { for _qws to _qw { _qw.dispose() } }
+                    _runRens[_qi].destroy()
+                    _lib.SDL_DestroyWindow(_runHnds[_qi])
+                    _windowCount -= 1
+                }
+                // 清空注册表：窗口都已销毁 ⇒ 不能留下失效句柄（run() 返回后应用可能再次 run() ✓）
+                _runWids = []; _runHnds = []; _runRens = []; _runEvts = []; _runRends = []
+                _runWidgets = []; _runWidgetZ = []; _runMenus = []; _runCtxBar = []; _runCtxIdx = []
+                _runRoots = []; _runRootX = []; _runRootY = []; _runW = []; _runH = []
+                _runDialogHidden = []; _runTransparent = []; _runOverlays = []
+                _runShortcuts = []; _runShortcutGuards = []
+                ev.uninit()
+                if _windowCount <= 0 { core.quit() }
+                _runLoopActive = false
+                return
+            }
             // 事件驱动重绘：非 motion 事件/动画请求/tooltip就绪时才渲染，空闲时跳过以降低 CPU 占用。
             // 注意：纯鼠标移动(motion)不再触发整窗重绘——其光标为 OS 级、hover 变化由控件
             // markFrameRedraw() 单独请求；否则每次移动都整窗清屏+重绘会偶发“闪一下”。
