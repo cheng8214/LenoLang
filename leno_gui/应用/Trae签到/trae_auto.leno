@@ -20,11 +20,22 @@ import times
 import "SDL3" as SDL3
 import "trae_core.leno" as core
 import "trae_settings.leno" as cfg
+import files
+import rands
 use SDL3.Window
 
-Array[int] BACKOFF = [5, 15, 30, 60, 120]       // 分钟（档位封顶到最后一档 ✓）
+// 退避表（分钟；档位封顶到最后一档 ✓）
+// ⚠ 首档 5 ⇒ **1**（2026-09-27，本应用**有意偏离**参考件的 {5,15,30,60,120}）：
+//   默认触发点 00:05 是所有脚本的共同发射时刻 ⇒ 实测撞上服务端风控（"参与用户太多"，code 9074）
+//   ⇒ 自动那次失败、几分钟后手动才成功。首档缩到 1 分钟 = "撞一下马上再试"（风控是瞬时的 ✓）；
+//   其余四档照旧对标 ✓
+Array[int] BACKOFF = [1, 15, 30, 60, 120]
 const int GIVE_UP_HOUR = 23                      // 对标参考件 :890 ✓
 const int TICK_MS = 30000                        // 对标参考件 :829（30s；触发精度到"分钟"足够 ✓）
+
+// 触发抖动（秒，0..JITTER_MAX）：同一天内**固定**（不改变"到点就签"的语义 ✓，只把
+//   "全体脚本在同一秒发射"错开）；跨天重抽。自检用 `autoSetJitter(0)` 把它钉成确定值 ✓
+const int JITTER_MAX = 90
 
 // ==================== 状态 ====================
 var _enabled = true                              // 总开关（设置里的 auto_enabled ✓）
@@ -37,6 +48,8 @@ var _retry_at = -1                               // 下一次重试的**当天�
 var _retry_idx = 0                               // 0..4（BACKOFF 档位 ✓）
 var _phase = "idle"                              // idle / done / manual / failed / given_up / skipped
 var _fired = 0                                   // 已触发次数（自检断言用 ✓）
+var _jitter = 0                                  // 当天触发偏移（秒；跨天/重置时重抽 ✓）
+var _jitter_fixed = -1                           // >= 0 ⇒ 用这个固定值（自检要确定性 ✓）
 
 func():Array[string] _onAttempt = null           // 由 GUI 注入（= rpc_claim 那条路 ✓）
 func():void _onChanged = null                    // 状态变化 ⇒ 刷新界面/托盘提示 ✓
@@ -55,6 +68,14 @@ func _notify() {
     var cb = _onChanged
     if cb != null { cb() }
 }
+
+// 当天触发抖动（秒）：自检固定住 0 ⇒ 断言可确定性；真跑随机 0..JITTER_MAX ✓
+func _draw_jitter(): int {
+    if _jitter_fixed >= 0 { return _jitter_fixed }
+    return rands.ints(0, JITTER_MAX)
+}
+export func autoSetJitter(int s) { _jitter_fixed = s; _jitter = s }
+export func autoJitter(): int { return _jitter }
 
 // ==================== 配置 / 初始化 ====================
 // 参数直给（自检用 ⇒ 不依赖真实 settings.json ✓）
@@ -112,6 +133,7 @@ export func autoEnabled(): bool   { return _enabled }
 export func autoStatusText(): string {
     if not _enabled { return "自动签到 已关闭" }
     var t = "自动签到 已开 " + core.pad2(_hour) + ":" + core.pad2(_min)
+    if _jitter > 0 { t = t + "(+" + (_jitter as string) + "s)" }   // 当天抖动：真实触发点是这个（避免"为什么 00:06 才签"的困惑 ✓）
     if _phase == "done" { return t + " · 今日已完成" }
     if _phase == "manual" { return t + " · 今日已手动签到（不再自动重试）" }
     if _phase == "failed" { return t + " · 已关闭重试，今日不再尝试" }
@@ -124,7 +146,7 @@ export func autoStatusText(): string {
 // ==================== 状态机 ====================
 func _due(int sec): bool {
     if _retry_at >= 0 { return sec >= _retry_at }              // 有排期 ⇒ 到点即触发 ✓
-    return sec >= _hour * 3600 + _min * 60                    // 首次 ⇒ 过了触发时刻就补一次 ✓
+    return sec >= _hour * 3600 + _min * 60 + _jitter           // 首次 ⇒ 过触发时刻（含当天抖动）就补一次 ✓
 }
 
 // 主循环每拍调一次（30s 定时器 / 启动首拍 / 自检直接调 ✓）；返回"这次真的触发了一次签到"
@@ -139,6 +161,7 @@ export func autoTick(): bool {
         _retry_at = -1
         _retry_idx = 0
         _phase = "idle"
+        _jitter = _draw_jitter()          // 当天抖动只抽一次（同一天内固定 ✓）
     }
     if _phase != "idle" { return false }  // 今天已结束（done / manual / failed / given_up / skipped ✓）
 
@@ -204,6 +227,45 @@ export func autoNotifyResult(Array[string] r, bool manual) {
     _notify()
 }
 
+// ==================== 诊断日志（auto.log） ====================
+// 为什么要有它（2026-09-27 实测踩到）：自动签到失败**只**体现为主窗口那行瞬时文案 + 一条
+//   history（ok=0）—— 而后者会被随后的手动成功**覆盖**（见 rpc_claim 的 already 分支）
+//   ⇒ 事后完全查不到失败原因 ✗。现在每次"**真发起过**"的结果都追加一行 ⇒ 下次出问题直接看文件 ✓
+// 路径：`%APPDATA%\TraeSignLeno\auto.log`；`TRAE_AUTO_LOG` 环境变量可覆盖
+//   （自检 / 无头冒烟用它指到临时路径 ⇒ 不污染真文件 ✓）
+var _log_override = ""
+var _last_log = ""                               // 去重：同一行不重复写（onChanged 可能多拍调用 ✓）
+
+func _log_path(): string {
+    if _log_override != "" { return _log_override }
+    var ov = _env_or("TRAE_AUTO_LOG", "")
+    if ov != "" { return ov }
+    var d = cfg.settings_dir()
+    if d == "" { return "" }
+    return d + "\\auto.log"
+}
+export func autoSetLogPathOverride(string p) { _log_override = p }
+
+// `who` = 账号展示串（GUI 传 `SEL_BRAND|SEL_USER` —— 调度器不持有账号信息 ✓）
+// 只在"真发起过"时记（r 非空）⇒ 启动首拍、离线跳过、未选账号都不会刷屏 ✓
+export func autoLogResult(string who, Array[string] r) {
+    if r.len() == 0 { return }
+    var p = _log_path()
+    if p == "" { return }
+    var t = _nowParts()
+    var kind = if _phase == "manual" then "手动" else "自动"
+    var line = core.date_str(t[0], t[1], t[2]) + " " + core.pad2(t[3]) + ":" + core.pad2(t[4]) + ":" + core.pad2(t[5])
+        + " | " + kind + " | " + who
+        + " | code=" + core.cl_code(r) + " | " + core.cl_msg(r)
+        + " | phase=" + _phase
+    if line == _last_log { return }
+    _last_log = line
+    var f = files.open(p, "a")
+    if f == null { return }
+    f.writeln(line)
+    f.close()
+}
+
 // ==================== 无头自检（`TRAE_AUTO_SELFTEST=1` ✓）====================
 // **纯逻辑**：注入时钟 + 假回调（不联网、不碰真实设置、不建窗口 ⇒ dummy 下也能跑 ✓）
 int _sfFail = 0
@@ -247,35 +309,36 @@ export func autoSelftest(): int {
     _sfFail = 0
     autoSetClock(func():Array[int] { return _sfClock })
     autoSetParams(true, 0, 5, true)
+    autoSetJitter(0)                                       // 小时钟钉住抖动 ⇒ 触发点就是整分 ✓
     autoInit(null, _fakeAttempt, func():void { })          // 纯逻辑（不建窗口 ✓）
 
     // ① 未到点
     _sfPrep(2026, 9, 26, 0, 4, 0)
     _ck(not autoTick(), "① 00:04 不到触发点 ⇒ 不触发")
 
-    // ② 00:05 触发；失败 ⇒ 下次 +5 分钟
+    // ② 00:05 触发；失败 ⇒ 下次 +1 分钟（首档，见 BACKOFF 注释 ✓）
     _sfSetResponse(_failR())
     _sfSetClock(0, 5, 0)
     _ck(autoTick(), "② 00:05 触发一次（自动签到 ✓）")
     _ck(autoRetryIdx() == 1, "② 失败 ⇒ 档位 0→1 ✓")
-    _ck(autoNextRetrySec() == 10 * 60, "② 下次重试 = 00:10（+5 分钟 ✓）")
+    _ck(autoNextRetrySec() == 6 * 60, "② 下次重试 = 00:06（首档 +1 分钟 ✓）")
 
     // ③ 未到重试点不触发；到点触发 ⇒ +15 分钟
-    _sfSetClock(0, 9, 0)
-    _ck(not autoTick(), "③ 00:09 未到重试点 ⇒ 不触发")
-    _sfSetClock(0, 10, 0)
-    _ck(autoTick(), "③ 00:10 触发（第 2 次 ✓）")
-    _ck(autoNextRetrySec() == 25 * 60, "③ 下次 = 00:25（+15 分钟 ✓）")
+    _sfSetClock(0, 5, 30)
+    _ck(not autoTick(), "③ 00:05:30 未到重试点 ⇒ 不触发")
+    _sfSetClock(0, 6, 0)
+    _ck(autoTick(), "③ 00:06 触发（第 2 次 ✓）")
+    _ck(autoNextRetrySec() == 21 * 60, "③ 下次 = 00:21（+15 分钟 ✓）")
 
     // ④ 递增 30 / 60 / 120，第 5 档起恒 120（封顶）
-    _sfSetClock(0, 25, 0); autoTick()
-    _ck(autoNextRetrySec() == 55 * 60, "④ 00:25 ⇒ 00:55（+30 ✓）")
-    _sfSetClock(0, 55, 0); autoTick()
-    _ck(autoNextRetrySec() == 115 * 60, "④ 00:55 ⇒ 01:55（+60 ✓）")
-    _sfSetClock(1, 55, 0); autoTick()
-    _ck(autoNextRetrySec() == 235 * 60, "④ 01:55 ⇒ 03:55（+120 ✓）")
-    _sfSetClock(3, 55, 0); autoTick()
-    _ck(autoNextRetrySec() == 355 * 60, "④ 03:55 ⇒ 05:55（仍 +120 ⇒ 档位封顶 ✓）")
+    _sfSetClock(0, 21, 0); autoTick()
+    _ck(autoNextRetrySec() == 51 * 60, "④ 00:21 ⇒ 00:51（+30 ✓）")
+    _sfSetClock(0, 51, 0); autoTick()
+    _ck(autoNextRetrySec() == 111 * 60, "④ 00:51 ⇒ 01:51（+60 ✓）")
+    _sfSetClock(1, 51, 0); autoTick()
+    _ck(autoNextRetrySec() == 231 * 60, "④ 01:51 ⇒ 03:51（+120 ✓）")
+    _sfSetClock(3, 51, 0); autoTick()
+    _ck(autoNextRetrySec() == 351 * 60, "④ 03:51 ⇒ 05:51（仍 +120 ⇒ 档位封顶 ✓）")
 
     // ⑤ 23:00 后放弃
     _sfSetClock(23, 0, 0)
@@ -330,11 +393,23 @@ export func autoSelftest(): int {
     _ck(autoPhase() == "failed" and autoNextRetrySec() == -1, "⑪ 关掉重试 ⇒ 失败后不再排期 ✓")
 
     // ⑫ 下次重试越过 23:00 ⇒ 判放弃（不跨天排期 ✓）
-    _sfPrep(2026, 10, 4, 22, 58, 0)
+    _sfPrep(2026, 10, 4, 22, 59, 0)
     autoSetParams(true, 22, 50, true)
     _sfSetResponse(_failR())
-    _ck(autoTick(), "⑫ 22:58 触发（触发时刻 22:50 ✓）")
-    _ck(autoPhase() == "given_up" and autoNextRetrySec() == -1, "⑫ 下次 23:03 越过 23:00 ⇒ 放弃 ✓")
+    _ck(autoTick(), "⑫ 22:59 触发（触发时刻 22:50 ✓）")
+    _ck(autoPhase() == "given_up" and autoNextRetrySec() == -1, "⑫ 下次 23:00 已到 23:00 ⇒ 放弃 ✓")
+
+    // ⑬ 触发抖动：同一天内固定，触发点整体后移（避开"全体脚本同时发射"✓ 2026-09-27 新增）
+    autoSetParams(true, 0, 5, true)
+    autoSetJitter(90)                                     // 钉成 90 秒 ⇒ 触发点 = 00:06:30
+    _sfPrep(2026, 10, 5, 0, 5, 30)
+    _sfSetResponse(_okR())
+    _ck(not autoTick(), "⑬ 00:05:30 未到（触发点含 90 秒抖动）⇒ 不触发")
+    _sfSetClock(0, 6, 29)
+    _ck(not autoTick(), "⑬ 00:06:29 仍差 1 秒 ⇒ 不触发")
+    _sfSetClock(0, 6, 30)
+    _ck(autoTick(), "⑬ 00:06:30 到点 ⇒ 触发 ✓")
+    autoSetJitter(0)                                      // 还原（免得影响后续 ✓）
 
     autoSetClock(null)
     print("[自检] 结果：" + (if _sfFail > 0 then ("失败 " + (_sfFail as string) + " 项") else "全部通过") + "\n")

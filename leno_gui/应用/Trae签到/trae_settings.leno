@@ -7,7 +7,7 @@
 //     "auto_enabled": "1",     // 定时自动签到总开关
 //     "auto_hour": "0",        // 触发时间（时 0-23）
 //     "auto_min": "5",         // 触发时间（分 0-59）
-//     "auto_retry": "1",       // 失败后按 5/15/30/60/120 分钟递增重试
+//     "auto_retry": "1",       // 失败后按 1/15/30/60/120 分钟递增重试
 //     "close_to_tray": "1"     // 关闭窗口时收进托盘（有托盘时）
 //   }
 // 约定：缺键 / 非法值 ⇒ **回默认**（不静默钳位 —— 这样无头自检能确定性断言 ✓）
@@ -173,7 +173,7 @@ func settingsDialogMount(Window dlg, Dict[string, string] d, func():void onSaved
     root.add(row, {grow:0, shrink:0, align:3})
 
     HBox rowRetry = _row()
-    rowRetry.add(SDL3.dialogLabel("失败后按 5/15/30/60/120 分钟重试", 13), {grow:0, shrink:0, basis:300, align:0})
+    rowRetry.add(SDL3.dialogLabel("失败后按 1/15/30/60/120 分钟重试", 13), {grow:0, shrink:0, basis:300, align:0})
     Toggle tgRetry = SDL3.createToggle({x:0, y:0, w:52, h:24, text:"", on:(d[KEY_RETRY] == "1"), anim:true})
     rowRetry.add(tgRetry, {grow:0, shrink:0, basis:52, align:0})
     root.add(rowRetry, {grow:0, shrink:0, align:3})

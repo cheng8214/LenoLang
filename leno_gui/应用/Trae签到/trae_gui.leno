@@ -635,7 +635,10 @@ main() {
 
     // ==================== ⑥b 定时自动签到（trae_auto.leno ✓）====================
     // 30s 定时器（对标参考件 ✓）；状态变化 ⇒ 刷新底部那一行 ✓
-    auto.autoInit(win, claim_attempt, func():void { AUTO_TEXT = auto.autoStatusText() })
+    auto.autoInit(win, claim_attempt, func():void {
+        AUTO_TEXT = auto.autoStatusText()
+        auto.autoLogResult(SEL_BRAND + "|" + SEL_USER, LAST_CLAIM)   // 结果落盘 ⇒ 失败可事后追查 ✓
+    })
     var tp0 = core.today_parts()
     if SEL_BRAND != "" and hist.ok_day(SEL_BRAND, SEL_USER, core.date_str(tp0[0], tp0[1], tp0[2])) {
         auto.autoMarkDoneToday()                 // 本地记录说"今天已签成功" ⇒ 不必再自动补一次 ✓
