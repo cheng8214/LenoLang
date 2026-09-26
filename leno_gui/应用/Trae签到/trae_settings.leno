@@ -1,0 +1,287 @@
+// trae_settings.leno — ⑥b 设置项 + 落盘（`settings.json`）+ **设置对话框**
+//
+// 为什么单独一个文件：设置 = "一份数据 + 一张脸"（读写 + 对话框），与主界面/托盘都无关 ✓
+//
+// 落盘：`%APPDATA%\TraeSignLeno\settings.json`（与 history / devices 同目录、**同为扁平结构** ✓）
+//   {
+//     "auto_enabled": "1",     // 定时自动签到总开关
+//     "auto_hour": "0",        // 触发时间（时 0-23）
+//     "auto_min": "5",         // 触发时间（分 0-59）
+//     "auto_retry": "1",       // 失败后按 5/15/30/60/120 分钟递增重试
+//     "close_to_tray": "1"     // 关闭窗口时收进托盘（有托盘时）
+//   }
+// 约定：缺键 / 非法值 ⇒ **回默认**（不静默钳位 —— 这样无头自检能确定性断言 ✓）
+// 默认照参考件：开着、每天 00:05、重试开 ✓
+//
+// 对话框：照抄 `文件管理器/props_dialog.leno` 的模态套路（`createDialogWindow` + VBox + `runModal`）；
+//   模态只屏蔽下层输入，主循环/定时器照跑 ⇒ **不会冻住界面** ✓（与原生托盘菜单那种冻结不同 ✓）
+//   ⚠ 装配抽成 `settingsDialogMount`：无头自检只**建窗 + 断言初值**，绝不 `runModal`（dummy 下会挂 ✗）
+import SDL3
+import jsons
+import files
+import dirs
+import "trae_core.leno" as core
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.Window
+use SDL3.VBox
+use SDL3.HBox
+use SDL3.Label
+use SDL3.Button
+use SDL3.Widget
+use SDL3.Toggle
+use SDL3.SpinBox
+
+const KEY_ENABLED = "auto_enabled"
+const KEY_HOUR    = "auto_hour"
+const KEY_MIN     = "auto_min"
+const KEY_RETRY   = "auto_retry"
+const KEY_TRAY    = "close_to_tray"
+
+const DEF_ENABLED = true
+const DEF_HOUR    = 0
+const DEF_MIN     = 5
+const DEF_RETRY   = true
+const DEF_TRAY    = true
+
+var _pathOverride = ""          // 自检用：只改**文件**路径 ⇒ 不碰真实 settings.json ✓
+var _shouldClose = false        // 对话框里"该关了"（按钮/取消置位，onEvent 里消费 ✓ 同 props_dialog）
+var _saved = false
+
+// ==================== 路径 / 读写 ====================
+export func settings_dir(): string {
+    var appdata = _env("APPDATA")
+    if appdata == null { return "" }
+    return appdata + "\\TraeSignLeno"
+}
+
+export func settingsPath(): string {
+    if _pathOverride != "" { return _pathOverride }
+    var d = settings_dir()
+    if d == "" { return "" }
+    return d + "\\settings.json"
+}
+
+export func settingsSetPathOverride(string p) { _pathOverride = p }
+
+func _raw(): Dict[string, string]? {
+    var p = settingsPath()
+    if p == "" { return null }
+    if not files.exists(p) { return null }
+    if jsons.read_file(p) is Dict[string, string] => db { return db }
+    return null
+}
+
+// 只认**规范十进制**写法（含 2 位补零）⇒ 不依赖 `_int` 对脏串的行为 ✓；不匹配 ⇒ 默认值 ✓
+func _digits_in(string s, int lo, int hi, int def): int {
+    int i = lo
+    while i <= hi {
+        if s == (i as string) { return i }
+        if i < 10 and s == ("0" + (i as string)) { return i }
+        i = i + 1
+    }
+    return def
+}
+
+// 布尔键：只认 "0"/"1"（兼容 "true"/"false"）⇒ 其它一律默认 ✓
+func _flag(string s, bool def): bool {
+    if s == "1" or s == "true" { return true }
+    if s == "0" or s == "false" { return false }
+    return def
+}
+
+// 设置值（**已填默认** ⇒ 调用方不用再判空/判缺键 ✓）
+export func settingsLoad(): Dict[string, string] {
+    var db = _raw() ?? {}
+    Dict[string, string] out = {}
+    out[KEY_ENABLED] = if _flag(core.json_get(db, KEY_ENABLED), DEF_ENABLED) then "1" else "0"
+    out[KEY_HOUR] = (_digits_in(core.json_get(db, KEY_HOUR), 0, 23, DEF_HOUR)) as string
+    out[KEY_MIN] = (_digits_in(core.json_get(db, KEY_MIN), 0, 59, DEF_MIN)) as string
+    out[KEY_RETRY] = if _flag(core.json_get(db, KEY_RETRY), DEF_RETRY) then "1" else "0"
+    out[KEY_TRAY] = if _flag(core.json_get(db, KEY_TRAY), DEF_TRAY) then "1" else "0"
+    return out
+}
+
+export func settingsEnabled(): bool        { return settingsLoad()[KEY_ENABLED] == "1" }
+export func settingsHour(): int            { return _int(settingsLoad()[KEY_HOUR]) }
+export func settingsMinute(): int          { return _int(settingsLoad()[KEY_MIN]) }
+export func settingsRetry(): bool          { return settingsLoad()[KEY_RETRY] == "1" }
+export func settingsCloseToTray(): bool    { return settingsLoad()[KEY_TRAY] == "1" }
+
+// "00:05"（状态栏 / 托盘提示用 ✓）
+export func settingsTimeText(): string {
+    return core.pad2(settingsHour()) + ":" + core.pad2(settingsMinute())
+}
+
+func _norm(int v, int lo, int hi, int def): int {
+    if v >= lo and v <= hi { return v }
+    return def
+}
+
+// 保存（**唯一写路径**：对话框与自检都走它 ✓）；返回是否成功
+// 越界值在这里**回默认**（保存成功但值被规范化 ⇒ 读回与写入可能不同，自检 B⑤ 断言的就是这条 ✓）
+export func settingsSaveFrom(bool en, int hour, int mn, bool retry, bool tray): bool {
+    var p = settingsPath()
+    if p == "" { return false }
+    var d = settings_dir()
+    if not dirs.is_dir(d) { dirs.mkdir_p(d) }
+    // ⚠ 同 history：`jsons.write_file` 会把入参**再编码一次** ⇒ 只能传 Dict（空表用 `load` 兜底 ✓）
+    var db = settingsLoad()
+    db[KEY_ENABLED] = if en then "1" else "0"
+    db[KEY_HOUR] = (_norm(hour, 0, 23, DEF_HOUR)) as string
+    db[KEY_MIN] = (_norm(mn, 0, 59, DEF_MIN)) as string
+    db[KEY_RETRY] = if retry then "1" else "0"
+    db[KEY_TRAY] = if tray then "1" else "0"
+    return jsons.write_file(p, db)
+}
+
+// ==================== 设置对话框 ====================
+// 为什么不把控件句柄返回给调用方：SDL3 控件的类型（Toggle/SpinBox/…）作 **struct 字段**时跨模块
+// 会退化成 `any`（编译器实测警告 ⇒ 调用点还得收窄 ✗）⇒ 干脆**装配即接线**，句柄只在本模块内用 ✓
+// 自检需要观察"控件初值是否按文件来" ⇒ 装配时把初值记到 `_obs*` 观测点上（纯只写，不参与运行逻辑 ✓）
+bool _obsEnabled = false
+int  _obsHour = -1
+int  _obsMin = -1
+bool _obsRetry = false
+bool _obsTray = false
+
+// 装配对话框内容 + 接线（抽出来 ⇒ 自检能只建窗 + 看观测点，不跑模态 ✓）
+// 行序：标题 / 自动签到开关 / 触发时间(时:分) / 失败重试 / 关窗收托盘 / 说明 / 弹性间隔 / 按钮行
+// ⚠ 开关一律"**标签 + 纯开关**"两段式（`text:""`）：`Toggle` 的文字画在**开关右侧**、且控件宽度
+//   不被布局改（`set_size` 是空实现）⇒ 文字一长就被窗口右缘裁掉 ✗（实测截图踩过，
+//   与 `控件/设置面板/settings.leno` 的写法一致 ✓）
+func _row(): HBox { return SDL3.createHBox({x:0, y:0, w:1, h:30, padX:0, padY:0, spacing:8}) }
+
+func settingsDialogMount(Window dlg, Dict[string, string] d, func():void onSaved) {
+    float dlgW = 460.0
+    float dlgH = 320.0
+    VBox root = SDL3.createVBox({x:0, y:0, w:dlgW, h:dlgH, padX:30, padY:16, spacing:8})
+    dlg.setRoot(root)
+
+    root.add(SDL3.dialogLabel("设置 · 定时自动签到", 16), {grow:0, shrink:0, align:1})
+
+    HBox rowEn = _row()
+    rowEn.add(SDL3.dialogLabel("启用定时自动签到", 13), {grow:0, shrink:0, basis:280, align:0})
+    Toggle tgEn = SDL3.createToggle({x:0, y:0, w:52, h:24, text:"", on:(d[KEY_ENABLED] == "1"), anim:true})
+    rowEn.add(tgEn, {grow:0, shrink:0, basis:52, align:0})
+    root.add(rowEn, {grow:0, shrink:0, align:3})
+
+    HBox row = _row()
+    row.add(SDL3.dialogLabel("触发时间", 13), {grow:0, shrink:0, basis:70, align:0})
+    SpinBox spH = SDL3.createSpinBox({x:0, y:0, w:70, h:26, min:0, max:23, value:_int(d[KEY_HOUR]), step:1, int_mode:true})
+    row.add(spH, {grow:0, shrink:0, basis:70, align:0})
+    row.add(SDL3.dialogLabel("时", 13), {grow:0, shrink:0, basis:22, align:0})
+    SpinBox spM = SDL3.createSpinBox({x:0, y:0, w:70, h:26, min:0, max:59, value:_int(d[KEY_MIN]), step:1, int_mode:true})
+    row.add(spM, {grow:0, shrink:0, basis:70, align:0})
+    row.add(SDL3.dialogLabel("分", 13), {grow:0, shrink:0, basis:22, align:0})
+    root.add(row, {grow:0, shrink:0, align:3})
+
+    HBox rowRetry = _row()
+    rowRetry.add(SDL3.dialogLabel("失败后按 5/15/30/60/120 分钟重试", 13), {grow:0, shrink:0, basis:300, align:0})
+    Toggle tgRetry = SDL3.createToggle({x:0, y:0, w:52, h:24, text:"", on:(d[KEY_RETRY] == "1"), anim:true})
+    rowRetry.add(tgRetry, {grow:0, shrink:0, basis:52, align:0})
+    root.add(rowRetry, {grow:0, shrink:0, align:3})
+
+    HBox rowTray = _row()
+    rowTray.add(SDL3.dialogLabel("关闭窗口时收进托盘", 13), {grow:0, shrink:0, basis:280, align:0})
+    Toggle tgTray = SDL3.createToggle({x:0, y:0, w:52, h:24, text:"", on:(d[KEY_TRAY] == "1"), anim:true})
+    rowTray.add(tgTray, {grow:0, shrink:0, basis:52, align:0})
+    root.add(rowTray, {grow:0, shrink:0, align:3})
+
+    Label lblNote = SDL3.dialogLabel("23:00 后当天放弃 · 成功/已签到/9095 即停 · 手动签到后当天不再自动重试", 12)
+    root.add(lblNote, {grow:0, shrink:0, align:0})
+
+    root.add(SDL3.dialogSpacer(), {grow:1, shrink:1, align:0})
+
+    Button ok = SDL3.createButton({x:0, y:0, w:100, h:34, text:"保存", type:"primary"})
+    Button no = SDL3.createButton({x:0, y:0, w:100, h:34, text:"取消"})
+    root.add(SDL3.dialogButtonRow([ok, no], 8), {grow:0, shrink:0, align:3})
+
+    // 自检观测点（记录控件初值 ✓）
+    _obsEnabled = tgEn.is_on()
+    _obsHour = _int(spH.get_value())
+    _obsMin = _int(spM.get_value())
+    _obsRetry = tgRetry.is_on()
+    _obsTray = tgTray.is_on()
+
+    no.on_click(func():void { _saved = false; _shouldClose = true })     // 取消 ⇒ 不写盘 ✓
+    ok.on_click(func():void {
+        bool ok2 = settingsSaveFrom(tgEn.is_on(), _int(spH.get_value()), _int(spM.get_value()),
+                                    tgRetry.is_on(), tgTray.is_on())
+        if ok2 {
+            _saved = true
+            onSaved()
+            _shouldClose = true
+        } else {
+            // 写不进去就**别关**：把原因写在说明行上（用户看得见 ✓，不静默失败 ✗）
+            lblNote.set_text("保存失败：配置目录不可写（%APPDATA%\\TraeSignLeno）")
+        }
+    })
+}
+
+// 弹出设置对话框（模态 ✓）：保存**成功**才调 onSaved()（调用方把设置立刻推给调度器 ✓）
+// 打开时**重读真状态**（每次打开都读盘 ⇒ 与托盘菜单同一条约定，不做内存缓存 ✓）
+export func showSettings(Window parent, func():void onSaved) {
+    _shouldClose = false
+    _saved = false
+    var d = settingsLoad()
+    var dlg = SDL3.createDialogWindow({title:"设置 - 定时自动签到", w:460, h:320})
+    settingsDialogMount(dlg, d, onSaved)
+
+    SDL3.runModal(dlg,
+        func(Event ev): bool {
+            if ev.isQuit() or ev.isWindowClose() { return false }
+            if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
+            if _shouldClose { return false }
+            return true
+        },
+        func(Renderer r) { r.clearColor(#12141AFF) }
+    )
+}
+
+// 对话框是否保存过（调用方/自检可查 ✓）
+export func settingsWasSaved(): bool { return _saved }
+
+// ==================== 无头自检（`TRAE_SETTINGS_SELFTEST=1` ✓）====================
+int _sfFail = 0
+func _ck(bool c, string what) {
+    if c { print("[自检] OK   " + what + "\n") }
+    else { _sfFail = _sfFail + 1; print("[自检] FAIL " + what + "\n") }
+}
+
+// ① 写→读回 ② 对话框建起来 + 控件初值来自文件 ③ 只打开不写盘（取消语义）④ 非法值兜底 ⑤ 清理不留痕
+// ⚠ 不跑 runModal（dummy 驱动下没有事件 ⇒ 会挂 ✗）；临时文件跑完删掉 ⇒ 不碰真实设置 ✓
+export func settingsSelftest(): int {
+    _sfFail = 0
+    var tmp = settings_dir() + "\\settings_selftest.json"
+    settingsSetPathOverride(tmp)
+    if files.exists(tmp) { files.delete(tmp) }
+
+    _ck(settingsSaveFrom(true, 21, 30, false, true), "① 保存成功（真落盘 ✓）")
+    var d = settingsLoad()
+    _ck(d[KEY_HOUR] == "21" and d[KEY_MIN] == "30", "① 读回 21:30 == 写入 ✓")
+    _ck(d[KEY_ENABLED] == "1" and d[KEY_RETRY] == "0" and d[KEY_TRAY] == "1", "① 读回三个开关 == 写入（开/不重试/收托盘 ✓）")
+
+    var dlg = SDL3.createDialogWindow({title:"设置 - 定时自动签到", w:460, h:320})
+    settingsDialogMount(dlg, d, func():void { })              // 接线（自检不点按钮 ⇒ 不写盘 ✓）
+    _ck(_obsEnabled, "② 开关初值 = 开（来自 settings.json ✓）")
+    _ck(_obsHour == 21 and _obsMin == 30, "② 时间初值 = 21:30 ✓")
+    _ck(not _obsRetry and _obsTray, "② 重试=关 / 收托盘=开 ✓")
+
+    // ③ 「取消」= 不写盘：装配本身不许写文件（读回仍是刚才那份 ✓）
+    var d2 = settingsLoad()
+    _ck(d2[KEY_HOUR] == "21" and d2[KEY_MIN] == "30", "③ 只打开对话框不写盘（取消语义 ✓）")
+
+    _ck(settingsSaveFrom(true, 25, 99, true, false), "④ 越界值也能保存（内部回默认 ✓）")
+    var d3 = settingsLoad()
+    _ck(d3[KEY_HOUR] == "0" and d3[KEY_MIN] == "5", "④ 非法 25 时 / 99 分 ⇒ 回默认 00:05 ✓")
+    _ck(d3[KEY_RETRY] == "1" and d3[KEY_TRAY] == "0", "④ 开关不受越界影响 ✓")
+
+    settingsSetPathOverride("")
+    bool del = files.delete(tmp)
+    _ck(del and not files.exists(tmp), "⑤ 临时文件已删除（不碰真实设置、不留痕 ✓）")
+
+    print("[自检] 结果：" + (if _sfFail > 0 then ("失败 " + (_sfFail as string) + " 项") else "全部通过") + "\n")
+    return _sfFail
+}

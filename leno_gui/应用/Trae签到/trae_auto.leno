@@ -1,0 +1,342 @@
+// trae_auto.leno — ⑥b 定时自动签到（调度状态机 + 失败重试「时间层」）
+//
+// 对标参考件 `D:\Leno工程\TraeSign-main\TraeCheckinApp.cs`（行号已核对 ✓）：
+//   · 触发时刻 Target=00:05（:807）—— 本应用**可在设置里改** ✓
+//   · 退避表 {5,15,30,60,120} 分钟、档位封顶（:808、:856-857）
+//   · 停止今天 = Success || CheckedIn || 9095（:842-845）
+//   · 23:00 后放弃（:890）· 30s 定时器（:829）· 启动时"今天没试过" ⇒ 过了点就补一次（:819）
+//
+// 本应用比参考件**多两条**约定（都写进了设置对话框的说明行）：
+//   · 回调给**空数组**（未选择账号 / 离线）⇒ 今天**跳过**：不消耗档位、不写历史
+//   · 用户**手动**签到过（无论成败）⇒ 今天不再自动重试（手动 = 用户自己做主）
+//
+// 时间模型：重试排期只用**当天秒数**（`H*3600+M*60+S`），**不跨天排期** ——
+//   下一次若越过 23:00 就直接判「放弃今天」⇒ 「23 点放弃 / 跨天重置」在无头自检里可秒级断言 ✓
+// 时钟可注入（`autoSetClock`）：返回 [年,月,日,时,分,秒]；默认走 `times.datetime()` ✓
+//
+// 同步执行（用户已拍板）：`_onAttempt()` 就是 GUI 的 `rpc_claim` 那条路（内含 ⑤ 的 9074 重试 ✓）
+//   ⇒ 触发那一瞬界面可能僵 1~2 秒（撞上 9074 换号重试会更久）；托盘隐藏时无感 ✓
+import times
+import "SDL3" as SDL3
+import "trae_core.leno" as core
+import "trae_settings.leno" as cfg
+use SDL3.Window
+
+Array[int] BACKOFF = [5, 15, 30, 60, 120]       // 分钟（档位封顶到最后一档 ✓）
+const int GIVE_UP_HOUR = 23                      // 对标参考件 :890 ✓
+const int TICK_MS = 30000                        // 对标参考件 :829（30s；触发精度到"分钟"足够 ✓）
+
+// ==================== 状态 ====================
+var _enabled = true                              // 总开关（设置里的 auto_enabled ✓）
+var _hour = 0                                    // 触发时刻（时）
+var _min = 5                                     // 触发时刻（分）
+var _retry_on = true                             // 失败后是否递增重试（设置里的 auto_retry ✓）
+
+var _day = ""                                    // 正在评估的日子（跨天 ⇒ 重置档位 ✓）
+var _retry_at = -1                               // 下一次重试的**当天秒数**（-1 = 等首次触发时刻 ✓）
+var _retry_idx = 0                               // 0..4（BACKOFF 档位 ✓）
+var _phase = "idle"                              // idle / done / manual / failed / given_up / skipped
+var _fired = 0                                   // 已触发次数（自检断言用 ✓）
+
+func():Array[string] _onAttempt = null           // 由 GUI 注入（= rpc_claim 那条路 ✓）
+func():void _onChanged = null                    // 状态变化 ⇒ 刷新界面/托盘提示 ✓
+func():Array[int] _clock = null                  // 注入时钟（自检用；null ⇒ 真时钟 ✓）
+
+// ==================== 时钟 / 工具 ====================
+func _nowParts(): Array[int] {
+    var clk = _clock
+    if clk != null { return clk() }
+    var dt = times.datetime()                    // [年,月,日,时,分,秒] ✓
+    return [_int(dt[0]), _int(dt[1]), _int(dt[2]), _int(dt[3]), _int(dt[4]), _int(dt[5])]
+}
+func _today(int y, int m, int d): string { return core.date_str(y, m, d) }
+func _sec_text(int sec): string { return core.pad2(sec / 3600) + ":" + core.pad2((sec % 3600) / 60) }
+func _notify() {
+    var cb = _onChanged
+    if cb != null { cb() }
+}
+
+// ==================== 配置 / 初始化 ====================
+// 参数直给（自检用 ⇒ 不依赖真实 settings.json ✓）
+export func autoSetParams(bool en, int hh, int mm, bool retry) {
+    _enabled = en
+    _hour = hh
+    _min = mm
+    _retry_on = retry
+}
+
+// 从设置读参数（设置对话框保存后由 GUI 调 ⇒ **立刻生效** ✓）
+export func autoApplySettings() {
+    autoSetParams(cfg.settingsEnabled(), cfg.settingsHour(), cfg.settingsMinute(), cfg.settingsRetry())
+}
+
+// 重置当天状态（启动 / 切账号 / 自检 ✓）：今天**从头评估** ⇒ 过了触发点就补一次（对标 :819 ✓）
+export func autoResetAll() {
+    _day = ""
+    _retry_at = -1
+    _retry_idx = 0
+    _phase = "idle"
+    _fired = 0
+}
+
+// GUI 启动时：本地历史说"今天已经签成功了" ⇒ 直接算完成，不用等自动触发 ✓（对标 :842-845 ✓）
+export func autoMarkDoneToday() {
+    var p = _nowParts()
+    _day = _today(p[0], p[1], p[2])
+    _retry_at = -1
+    _retry_idx = 0
+    _phase = "done"
+}
+
+// `win != null` ⇒ 挂 30s 定时器（对标参考件 ✓）；`null` ⇒ 纯逻辑（自检用 ✓）
+export func autoInit(Window? win, func():Array[string] onAttempt, func():void onChanged) {
+    _onAttempt = onAttempt
+    _onChanged = onChanged
+    autoApplySettings()
+    autoResetAll()
+    if win != null {
+        win.addTimer(TICK_MS, func():void { autoTick() })
+    }
+}
+
+export func autoSetClock(func():Array[int] clk) { _clock = clk }
+
+// 供界面/自检读取的只读状态 ✓
+export func autoPhase(): string   { return _phase }
+export func autoRetryIdx(): int   { return _retry_idx }
+export func autoNextRetrySec(): int { return _retry_at }
+export func autoFired(): int      { return _fired }
+export func autoEnabled(): bool   { return _enabled }
+
+// 状态栏 / 托盘提示用的一行文字 ✓（用**调度器当前参数**，不是文件 ⇒ 与真实行为一致 ✓）
+export func autoStatusText(): string {
+    if not _enabled { return "自动签到 已关闭" }
+    var t = "自动签到 已开 " + core.pad2(_hour) + ":" + core.pad2(_min)
+    if _phase == "done" { return t + " · 今日已完成" }
+    if _phase == "manual" { return t + " · 今日已手动签到（不再自动重试）" }
+    if _phase == "failed" { return t + " · 已关闭重试，今日不再尝试" }
+    if _phase == "given_up" { return t + " · 今日已放弃（23:00 后）" }
+    if _phase == "skipped" { return t + " · 未选择账号/离线，已跳过今日" }
+    if _retry_at >= 0 { return t + " · 下次重试 " + _sec_text(_retry_at) }
+    return t + " · 到点自动签到"
+}
+
+// ==================== 状态机 ====================
+func _due(int sec): bool {
+    if _retry_at >= 0 { return sec >= _retry_at }              // 有排期 ⇒ 到点即触发 ✓
+    return sec >= _hour * 3600 + _min * 60                    // 首次 ⇒ 过了触发时刻就补一次 ✓
+}
+
+// 主循环每拍调一次（30s 定时器 / 启动首拍 / 自检直接调 ✓）；返回"这次真的触发了一次签到"
+export func autoTick(): bool {
+    if not _enabled { return false }
+    var p = _nowParts()
+    var today = _today(p[0], p[1], p[2])
+    var sec = p[3] * 3600 + p[4] * 60 + p[5]
+
+    if today != _day {                    // 跨天 ⇒ 重置档位与排期（参考件跨天不清档位，是它的潜在缺陷 ✓）
+        _day = today
+        _retry_at = -1
+        _retry_idx = 0
+        _phase = "idle"
+    }
+    if _phase != "idle" { return false }  // 今天已结束（done / manual / failed / given_up / skipped ✓）
+
+    if p[3] >= GIVE_UP_HOUR {             // 23:00 后放弃（先于触发判定 ✓ 对标 :890）
+        _phase = "given_up"
+        _notify()
+        return false
+    }
+    if not _due(sec) { return false }
+
+    var attempt = _onAttempt
+    Array[string] r = []
+    if attempt != null { r = attempt() }  // 同步阻塞（与「立即签到」同一条路 ✓）
+    _fired = _fired + 1
+    autoNotifyResult(r, false)
+    return true
+}
+
+// 结果落地（自动与手动**共用** ✓）；manual=true ⇒ 手动路径（无论成败今天都不再自动重试 ✓）
+export func autoNotifyResult(Array[string] r, bool manual) {
+    var p = _nowParts()
+    var today = _today(p[0], p[1], p[2])
+    var sec = p[3] * 3600 + p[4] * 60 + p[5]
+    _day = today
+
+    if r.len() == 0 {                     // 未选择账号 / 离线 ⇒ 跳过：不消耗档位、不写历史 ✓
+        _retry_at = -1
+        _phase = "skipped"
+        _notify()
+        return
+    }
+    var code = core.cl_code(r)
+    if core.cl_ok(r) or code == "9095" {  // 停：成功 / 已签到 / 9095 ✓（历史由 rpc_claim 内既有逻辑写掉 ✓）
+        _retry_at = -1
+        _retry_idx = 0
+        _phase = "done"
+        _notify()
+        return
+    }
+    if manual {                           // 手动签到过 ⇒ 今天不再自动重试 ✓
+        _retry_at = -1
+        _retry_idx = 0
+        _phase = "manual"
+        _notify()
+        return
+    }
+    if not _retry_on {                    // 设置里关掉了重试 ⇒ 今天就此结束 ✓
+        _retry_at = -1
+        _phase = "failed"
+        _notify()
+        return
+    }
+    var idx = if _retry_idx > 4 then 4 else _retry_idx
+    var next = sec + BACKOFF[idx] * 60
+    if _retry_idx < 4 { _retry_idx = _retry_idx + 1 }        // 第 5 档起恒 120 分钟 ✓（对标 :856-857）
+    if next >= GIVE_UP_HOUR * 3600 {                         // 下次已越过 23:00 ⇒ 不跨天排期，判放弃 ✓
+        _retry_at = -1
+        _phase = "given_up"
+    } else {
+        _retry_at = next
+        _phase = "idle"
+    }
+    _notify()
+}
+
+// ==================== 无头自检（`TRAE_AUTO_SELFTEST=1` ✓）====================
+// **纯逻辑**：注入时钟 + 假回调（不联网、不碰真实设置、不建窗口 ⇒ dummy 下也能跑 ✓）
+int _sfFail = 0
+Array[int] _sfClock = [2026, 9, 26, 0, 4, 0]
+Array[Array[string]] _sfAnswers = []
+var _sfIdx = 0
+
+func _ck(bool c, string what) {
+    if c { print("[自检] OK   " + what + "\n") }
+    else { _sfFail = _sfFail + 1; print("[自检] FAIL " + what + "\n") }
+}
+func _sfSetClock(int hh, int mm, int ss) {
+    _sfClock = [_sfClock[0], _sfClock[1], _sfClock[2], hh, mm, ss]
+}
+func _sfSetResponse(Array[string] r) {
+    Array[Array[string]] lst = []
+    lst.add(r)
+    _sfAnswers = lst
+    _sfIdx = 0
+}
+func _sfPrep(int y, int m, int d, int hh, int mm, int ss) {
+    _sfClock = [y, m, d, hh, mm, ss]
+    autoResetAll()
+    _sfAnswers = []
+    _sfIdx = 0
+}
+// 假回调：按序返回预设结果（用完重复最后一个 ✓）
+func _fakeAttempt(): Array[string] {
+    if _sfAnswers.len() == 0 { return [] }
+    var i = _sfIdx
+    if i >= _sfAnswers.len() { i = _sfAnswers.len() - 1 }
+    _sfIdx = i + 1
+    return _sfAnswers[i]
+}
+// 假结果（**8 元素**，与 trae_core 的 cl_* 取值器下标对齐 ✓）
+func _failR(): Array[string]   { return ["false", "-3", "", "", "", "网络异常", "false", ""] }
+func _okR(): Array[string]     { return ["true", "0", "", "150", "50", "签到成功", "false", "2029015639819002"] }
+func _r9095(): Array[string]   { return ["false", "9095", "", "", "", "本机已有账号签到", "false", "2029015639819002"] }
+
+export func autoSelftest(): int {
+    _sfFail = 0
+    autoSetClock(func():Array[int] { return _sfClock })
+    autoSetParams(true, 0, 5, true)
+    autoInit(null, _fakeAttempt, func():void { })          // 纯逻辑（不建窗口 ✓）
+
+    // ① 未到点
+    _sfPrep(2026, 9, 26, 0, 4, 0)
+    _ck(not autoTick(), "① 00:04 不到触发点 ⇒ 不触发")
+
+    // ② 00:05 触发；失败 ⇒ 下次 +5 分钟
+    _sfSetResponse(_failR())
+    _sfSetClock(0, 5, 0)
+    _ck(autoTick(), "② 00:05 触发一次（自动签到 ✓）")
+    _ck(autoRetryIdx() == 1, "② 失败 ⇒ 档位 0→1 ✓")
+    _ck(autoNextRetrySec() == 10 * 60, "② 下次重试 = 00:10（+5 分钟 ✓）")
+
+    // ③ 未到重试点不触发；到点触发 ⇒ +15 分钟
+    _sfSetClock(0, 9, 0)
+    _ck(not autoTick(), "③ 00:09 未到重试点 ⇒ 不触发")
+    _sfSetClock(0, 10, 0)
+    _ck(autoTick(), "③ 00:10 触发（第 2 次 ✓）")
+    _ck(autoNextRetrySec() == 25 * 60, "③ 下次 = 00:25（+15 分钟 ✓）")
+
+    // ④ 递增 30 / 60 / 120，第 5 档起恒 120（封顶）
+    _sfSetClock(0, 25, 0); autoTick()
+    _ck(autoNextRetrySec() == 55 * 60, "④ 00:25 ⇒ 00:55（+30 ✓）")
+    _sfSetClock(0, 55, 0); autoTick()
+    _ck(autoNextRetrySec() == 115 * 60, "④ 00:55 ⇒ 01:55（+60 ✓）")
+    _sfSetClock(1, 55, 0); autoTick()
+    _ck(autoNextRetrySec() == 235 * 60, "④ 01:55 ⇒ 03:55（+120 ✓）")
+    _sfSetClock(3, 55, 0); autoTick()
+    _ck(autoNextRetrySec() == 355 * 60, "④ 03:55 ⇒ 05:55（仍 +120 ⇒ 档位封顶 ✓）")
+
+    // ⑤ 23:00 后放弃
+    _sfSetClock(23, 0, 0)
+    _ck(not autoTick(), "⑤ 23:00 后不再触发 ✓")
+    _ck(autoPhase() == "given_up", "⑤ 状态 = 今日已放弃 ✓")
+
+    // ⑥ 跨天重置 + 成功即停
+    _sfPrep(2026, 9, 27, 0, 5, 0)
+    _sfSetResponse(_okR())
+    _ck(autoTick(), "⑥ 次日 00:05 照常触发（跨天已重置 ✓）")
+    _ck(autoPhase() == "done" and autoRetryIdx() == 0, "⑥ 成功 ⇒ 停，档位归 0 ✓")
+    _sfSetClock(0, 6, 0)
+    _ck(not autoTick(), "⑥ 成功后再到点也不触发（今日已完成 ✓）")
+
+    // ⑦ 9095（本机已有账号签到）同样即停
+    _sfPrep(2026, 9, 28, 0, 5, 0)
+    _sfSetResponse(_r9095())
+    _ck(autoTick(), "⑦ 9095 触发一次 ✓")
+    _ck(autoPhase() == "done", "⑦ 9095 ⇒ 停（不再重试 ✓）")
+
+    // ⑧ 启动已过触发点 ⇒ 立刻补一次；本地历史已签到 ⇒ 不补
+    _sfPrep(2026, 9, 29, 10, 0, 0)
+    _sfSetResponse(_okR())
+    _ck(autoTick(), "⑧ 10:00 启动 ⇒ 首拍立即补签一次 ✓")
+    _sfPrep(2026, 9, 30, 10, 0, 0)
+    autoMarkDoneToday()                                   // GUI 启动时查到"今天已签到"就是这么标的 ✓
+    _ck(not autoTick(), "⑧ 本地已有今日成功记录 ⇒ 不自动补 ✓")
+
+    // ⑨ 关掉开关 ⇒ 任意时刻都不触发
+    _sfPrep(2026, 10, 1, 0, 5, 0)
+    autoSetParams(false, 0, 5, true)
+    _ck(not autoTick(), "⑨ 开关关 ⇒ 不触发 ✓")
+    autoSetParams(true, 0, 5, true)
+
+    // ⑩ 空结果（无账号/离线）⇒ 跳过今天、不消耗档位
+    _sfPrep(2026, 10, 2, 0, 5, 0)
+    Array[string] empty_r = []
+    Array[Array[string]] lst = []
+    lst.add(empty_r)
+    _sfAnswers = lst
+    _sfIdx = 0
+    _ck(autoTick(), "⑩ 空结果也算一次触发（回调被调过 ✓）")
+    _ck(autoPhase() == "skipped" and autoRetryIdx() == 0, "⑩ 跳过今天且不消耗档位 ✓")
+    _sfSetClock(1, 0, 0)
+    _ck(not autoTick(), "⑩ 跳过后当天不再触发 ✓")
+
+    // ⑪ 关掉重试开关 ⇒ 失败后当天收工（不排期 ✓）
+    _sfPrep(2026, 10, 3, 0, 5, 0)
+    autoSetParams(true, 0, 5, false)
+    _sfSetResponse(_failR())
+    autoTick()
+    _ck(autoPhase() == "failed" and autoNextRetrySec() == -1, "⑪ 关掉重试 ⇒ 失败后不再排期 ✓")
+
+    // ⑫ 下次重试越过 23:00 ⇒ 判放弃（不跨天排期 ✓）
+    _sfPrep(2026, 10, 4, 22, 58, 0)
+    autoSetParams(true, 22, 50, true)
+    _sfSetResponse(_failR())
+    _ck(autoTick(), "⑫ 22:58 触发（触发时刻 22:50 ✓）")
+    _ck(autoPhase() == "given_up" and autoNextRetrySec() == -1, "⑫ 下次 23:03 越过 23:00 ⇒ 放弃 ✓")
+
+    autoSetClock(null)
+    print("[自检] 结果：" + (if _sfFail > 0 then ("失败 " + (_sfFail as string) + " 项") else "全部通过") + "\n")
+    return _sfFail
+}

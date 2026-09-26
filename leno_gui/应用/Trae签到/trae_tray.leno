@@ -8,7 +8,7 @@
 //   主循环 tick 里：traeTrayTick()               // 轮询托盘点击 / 菜单收起 / 动作落地
 //   退出时（run 之后）：traeTrayShutdown()
 //
-// 菜单：显示/隐藏窗口 · 立即签到 · 开机自启动(✓) · 关于 · 退出
+// 菜单：显示/隐藏窗口 · 立即签到 · 开机自启动(✓) · 设置… · 关于 · 退出
 // 交互：**右键**点托盘图标 = 弹菜单；**左键** = 直接显示/隐藏窗口 ✓（与模拟时钟同一套 ✓）
 //
 // ★ 开机自启动 = 往 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 写一个值，
@@ -32,11 +32,13 @@ const _RUN_KEY  = "Software\\Microsoft\\Windows\\CurrentVersion\\Run"
 const _VAL_NAME = "TraeSignLeno"            // Run 键里的值名（唯一 ✓）；自检时换临时名 ✓
 
 // 菜单条目序号（在 traeTrayInit 里按同一顺序建立 ✓）
-const _MI_TOGGLE = 0
-const _MI_CLAIM  = 1
-const _MI_AUTO   = 3                        // 2 是分隔线
-const _MI_ABOUT  = 5                        // 4 是分隔线
-const _MI_QUIT   = 6
+// ⚠ 插项后**必须同步**这两处：下面的常量 + 「关于」文案（`_sfRun` 只引用 _MI_AUTO=3，恰好不受影响 ✓）
+const _MI_TOGGLE   = 0
+const _MI_CLAIM    = 1
+const _MI_AUTO     = 3                        // 2 是分隔线
+const _MI_SETTINGS = 5                        // 4 是分隔线
+const _MI_ABOUT    = 7                        // 6 是分隔线
+const _MI_QUIT     = 8
 
 // ===== 状态 =====
 Window  _win  = null
@@ -50,12 +52,14 @@ string  _imgDir  = ""
 string  _entryName = "trae_gui.leno"        // 自启命令行里的入口脚本名（未打包时用 ✓）
 string  _tip = "Trae 签到助手"
 func():void _onClaim = null
+func():void _onSettings = null              // 打开设置对话框（由 trae_gui 注入 ⇒ 托盘层不认识设置模块 ✓）
 string  _valName = _VAL_NAME
 
 // 动作标记：回调只置位，主循环 tick 里统一落地 ✓（同模拟时钟的约定 ✓）
 bool _actToggle = false
 bool _actClaim  = false
 bool _actAuto   = false
+bool _actSettings = false
 bool _actAbout  = false
 bool _actQuit   = false
 
@@ -105,9 +109,10 @@ export func traySetAutoStart(bool on): bool {
 
 // ===== 初始化 / tick / 收尾 =====
 // onClaim：点菜单/托盘上的「立即签到」时调（传应用自己的 rpc_claim ✓）
-export func traeTrayInit(Window win, func():void onClaim): bool {
+export func traeTrayInit(Window win, func():void onClaim, func():void onSettings): bool {
     _win = win
     _onClaim = onClaim
+    _onSettings = onSettings
     _imgDir = dirs.join(dirs.res_dir(), "images")
     _selfTest = _env("TRAE_TRAY_SELFTEST") != null
     if _selfTest { _valName = _VAL_NAME + "_selftest" }        // 自检用临时值名 ⇒ 不污染真实自启 ✓
@@ -131,6 +136,8 @@ export func traeTrayInit(Window win, func():void onClaim): bool {
     _pm.addSeparator()                                                                    // 2
     _pm.addCheck("开机自启动", _ip("startup.png"), trayAutoStartOn(), func() { _actAuto = true })  // _MI_AUTO
     _pm.addSeparator()                                                                    // 4
+    _pm.addItem("设置…", _ip("settings.png"),  func() { _actSettings = true })             // _MI_SETTINGS
+    _pm.addSeparator()                                                                    // 6
     _pm.addItem("关于", _ip("about.png"), func() { _actAbout = true })                    // _MI_ABOUT
     _pm.addItem("退出", _ip("exit.png"),  func() { _actQuit = true })                     // _MI_QUIT
     _inited = true
@@ -185,12 +192,17 @@ export func traeTrayTick() {
         if ok { print("[tray] 开机自启动已" + (if on then "开启" else "关闭") + " ✓\n") }
         else { print("[tray] 开机自启动设置失败（注册表不可写?）\n") }
     }
+    if _actSettings {
+        _actSettings = false
+        var cbf = _onSettings
+        if cbf != null { cbf() }                                      // trae_gui 的"弹设置对话框"（模态 ⇒ 在这里进 ✓）
+    }
     if _actAbout {
         _actAbout = false
         SDL3.showMessageBox("关于 · Trae 签到助手",
             "托盘：右键 = 菜单，左键 = 显示/隐藏窗口\n"
-            + "菜单：显示/隐藏窗口 · 立即签到 · 开机自启动 · 关于 · 退出\n"
-            + "数据目录 %APPDATA%\\TraeSignLeno\\（history.json / devices.json）", 0)
+            + "菜单：显示/隐藏窗口 · 立即签到 · 开机自启动 · 设置… · 关于 · 退出\n"
+            + "数据目录 %APPDATA%\\TraeSignLeno\\（history.json / devices.json / settings.json）", 0)
     }
     if _actQuit { _actQuit = false; SDL3.requestExit() }
 
@@ -272,6 +284,7 @@ func _sfRun() {
         if not trayAutoStartOn() {
             _sfCk(true, "再点「开机自启动」⇒ 已删除（不留痕 ✓）")
             _sfCk(_onClaim != null, "「立即签到」回调已接上（不真调 ⇒ 不联网 ✓）")
+            _sfCk(_onSettings != null, "「设置…」回调已接上（不真弹 ⇒ 不建对话框 ✓）")
             print("[自检] 结果：" + (if _sfFail > 0 then ("失败 " + (_sfFail as string) + " 项") else "全部通过") + "\n")
             traeTrayShutdown()
             _exit(if _sfFail > 0 then 1 else 0)

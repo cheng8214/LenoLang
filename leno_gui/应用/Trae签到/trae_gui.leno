@@ -16,6 +16,8 @@
 //   TRAE_GUI_AUTO=90    跑满 N 帧后自动退出（配合 SDL_VIDEODRIVER=dummy 做无头验证 ✓）
 //   TRAE_GUI_ACCOUNT=2  启动就选中第 2 个账号（1 起；设备号是**按账号**的 ⇒ 无头也好验证第二个 ✓）
 //   TRAE_TRAY_SELFTEST=1 托盘/菜单/开机自启的无头自检（见 trae_tray.leno ✓）
+//   TRAE_AUTO_SELFTEST=1 定时自动签到调度器的无头自检（纯逻辑、注入时钟、不联网 ✓ 见 trae_auto.leno）
+//   TRAE_SETTINGS_SELFTEST=1 设置读写/对话框装配的无头自检（用临时文件名 ⇒ 不碰真实设置 ✓）
 // 命令行：`--tray` ⇒ **启动即隐藏到托盘**（开机自启动用的就是它，见 trae_tray.leno ✓）
 import "SDL3" as SDL3
 use SDL3.Event
@@ -23,12 +25,15 @@ use SDL3.Renderer
 use SDL3.Scancode
 use SDL3.Label
 use SDL3.Font
+use SDL3.Window
 use SDL3.Canvas
 use SDL3.Button
 import "trae_core.leno" as core
 import "trae_history.leno" as hist
 import "trae_devices.leno" as dev
 import "trae_tray.leno" as tray          // 托盘 + 自绘菜单 + 开机自启动（单独一层 ✓）
+import "trae_settings.leno" as cfg       // ⑥b 设置（settings.json + 设置对话框 ✓）
+import "trae_auto.leno" as auto          // ⑥b 定时自动签到调度器（对标参考件 ✓）
 
 // ==================== 状态（模块级 = 界面的单一数据源） ====================
 Array[Array[string]] BRANDS_AVAIL = []
@@ -48,6 +53,9 @@ var SCORE_TEXT = "今日积分 —"
 var DEV_TEXT = "设备号 —"           // 当前账号的设备号（每账号独立，见 ⑧ trae_devices.leno）
 var MONTH_TEXT = ""
 var STATUS_TEXT = "就绪"
+var AUTO_TEXT = "自动签到 —"        // ⑥b 调度器状态（底部单独一行 ⇒ 一眼看到"下次几点 / 今天什么状态"✓）
+Array[string] LAST_CLAIM = []       // `rpc_claim` 的结果（8 槽，与 `core.cl_*` 下标对齐 ✓）
+                                    // 为什么要带出来：⑥b 调度器要按返回码决定"停 / 递增重试" ✓
 var NO_NET = false                  // `TRAE_GUI_NO_NET=1` ⇒ 不做网络查询（离线/无头验证 ✓）
                                     // 模块级（**不是** main 的局部）：切号回调里也要用它 ✓
 var BOOT_QUERIED = false            // 启动那次查询是否已完成：
@@ -68,6 +76,7 @@ var _c_score = ""
 var _c_month = ""
 var _c_status = ""
 var _c_dev = ""
+var _c_auto = ""
 
 // 自动驱动
 var FRAMES = 0
@@ -229,6 +238,7 @@ func rpc_status() {
 func rpc_claim() {
     if SEL_BRAND == "" {
         STATUS_TEXT = "未选择账号"
+        LAST_CLAIM = _no_claim_r()
         return
     }
     STATUS_TEXT = "签到中…"
@@ -239,6 +249,7 @@ func rpc_claim() {
         BADGE_TEXT = "× 无登录态"
         BADGE_KEY = "err"
         STATUS_TEXT = "读不到登录态（请在 Trae 客户端登录 " + SEL_BRAND + "）"
+        LAST_CLAIM = _no_claim_r()
         return
     }
     // 设备号按**账号**独立（同理，见 rpc_status 的注释 ✓）
@@ -247,6 +258,7 @@ func rpc_claim() {
     refresh_device_text()          // 首次分配也要立刻显示到界面上 ✓
     // 9074（参与用户太多）⇒ 自动换设备号重试（最多 core.MAX_TRY_9074 次 ✓，间隔 0.8~1.5s）
     var r = core.do_claim_retry(acc[2], dc_id, acc[3], core.MAX_TRY_9074)
+    LAST_CLAIM = r                                    // ⑥b：结果要带给调度器判"停 / 重试" ✓
     if core.cl_device(r) != dc_id {
         dev.set(SEL_BRAND, SEL_USER, core.cl_device(r))     // 换出来的号**落盘**（下次运行沿用 ✓）
         refresh_device_text()                              // 换过号 ⇒ 标签跟着更新 ✓
@@ -291,6 +303,36 @@ func rpc_claim() {
     refresh_days()
 }
 
+// ==================== ⑥b 接线（结果带出 / 手动 / 设置） ====================
+// `rpc_claim` 的"没能尝试"合成结果（**8 槽**：ok/code/httpErr/base/extra/msg/already/device ✓
+// 与 core.cl_* 下标对齐 —— 少一个槽就会读到越界 ✗）
+func _no_claim_r(): Array[string] {
+    return ["false", "-7", "", "", "", "未选择账号 / 无登录态", "false", ""]
+}
+
+// 调度器要的是**结果** ⇒ 把 rpc_claim 的结果带出来（同一条路，不重复实现 ✓）
+// 离线（NO_NET）⇒ 空结果 ⇒ 调度器"跳过今天"（无头/离线绝不会自己联网 ✓）
+func claim_attempt(): Array[string] {
+    if NO_NET { return [] }
+    rpc_claim()
+    return LAST_CLAIM
+}
+
+// 手动签到（按钮 / 托盘的「立即签到」都走它）：成败都告诉调度器"今天手动过了" ⇒ 当天不再自动重试 ✓
+func manual_claim() {
+    rpc_claim()
+    auto.autoNotifyResult(LAST_CLAIM, true)
+}
+
+// 打开设置对话框（主窗口按钮 / 托盘「设置…」共用 ✓）；保存成功 ⇒ 调度器**立刻**按新参数走 ✓
+func open_settings(Window win) {
+    cfg.showSettings(win, func():void {
+        auto.autoApplySettings()
+        AUTO_TEXT = auto.autoStatusText()
+        STATUS_TEXT = "设置已保存（定时自动签到 " + cfg.settingsTimeText() + " ✓）"
+    })
+}
+
 // 手动更换本账号的设备号（对齐参考件 TraeTools 设置页的「更换设备号」✓）
 // 什么时候用：这个号被 9074 标记过、或想给账号换个新身份时 ✓（本账号独立、立刻落盘 ✓）
 // 注意：换号**不会**改变"服务端今天签没签"（签到是**按账号**算的 ✓）⇒ 界面上的已签到状态仍然有效 ✓
@@ -305,7 +347,7 @@ func rpc_regen_device() {
 }
 
 // ==================== 视图同步（每帧调用；只在变化时写控件 ✓） ====================
-func apply_view(Label badge, Label score, Label status, Label month, Label devl) {
+func apply_view(Label badge, Label score, Label status, Label month, Label devl, Label autol) {
     if _c_badge != BADGE_TEXT {
         badge.set_text(BADGE_TEXT)
         _c_badge = BADGE_TEXT
@@ -338,12 +380,21 @@ func apply_view(Label badge, Label score, Label status, Label month, Label devl)
         devl.set_text(DEV_TEXT)
         _c_dev = DEV_TEXT
     }
+    if _c_auto != AUTO_TEXT {                       // ⑥b 自动签到状态行（同样是"变了才写" ✓）
+        autol.set_text(AUTO_TEXT)
+        _c_auto = AUTO_TEXT
+    }
 }
 
 main() {
-    var auto = _env("TRAE_GUI_AUTO")
-    if auto != null { AUTO_FRAMES = _int(auto) }
+    var autoFrames = _env("TRAE_GUI_AUTO")
+    if autoFrames != null { AUTO_FRAMES = _int(autoFrames) }
     NO_NET = _env("TRAE_GUI_NO_NET") != null
+    // ⑥b 调度器自检：**纯逻辑**（注入时钟 + 假回调）⇒ 起步就能跑完并退出（不建窗口、不联网 ✓）
+    if _env("TRAE_AUTO_SELFTEST") != null {
+        var af = auto.autoSelftest()
+        _exit(if af > 0 then 1 else 0)
+    }
     // `--tray`（开机自启写的命令行带的 ✓）⇒ 启动即隐藏到托盘，只留托盘图标 ✓
     bool startHidden = false
     var argv = _args()
@@ -407,12 +458,13 @@ main() {
     cardA.add(scoreLbl)
     cardA.add(SDL3.createLabel({x:400, y:124, text:"只读登录态 · 不打印 token", font_size:12, text_color:#787D87FF}))
 
-    // ---- 动作按钮 ----
-    var btnClaim = win.addButton({x:24, y:184, w:150, h:38, text:"立即签到", type:"primary", tip:"调 claim 接口并做二次确认"})
-    var btnStatus = win.addButton({x:186, y:184, w:130, h:38, text:"刷新状态", tip:"只查 status，不签到"})
-    var btnToday = win.addButton({x:328, y:184, w:90, h:38, text:"回到今天", tip:"日历跳回本月"})
+    // ---- 动作按钮（5 个：④ 四个 + ⑥b「设置」✓ 右界 590 对齐卡片 A/B ✓）----
+    var btnClaim = win.addButton({x:24, y:184, w:130, h:38, text:"立即签到", type:"primary", tip:"调 claim 接口并做二次确认"})
+    var btnStatus = win.addButton({x:162, y:184, w:104, h:38, text:"刷新状态", tip:"只查 status，不签到"})
+    var btnToday = win.addButton({x:274, y:184, w:92, h:38, text:"回到今天", tip:"日历跳回本月"})
     // 设备号按账号独立存储（`devices.json`）；被 9074 标记时换一个即可 ✓
-    var btnRegen = win.addButton({x:430, y:184, w:160, h:38, text:"更换设备号", tip:"给当前账号换一个全新设备号（本账号独立、落盘 ✓；被 9074 风控时可换）"})
+    var btnRegen = win.addButton({x:374, y:184, w:140, h:38, text:"更换设备号", tip:"给当前账号换一个全新设备号（本账号独立、落盘 ✓；被 9074 风控时可换）"})
+    var btnSettings = win.addButton({x:522, y:184, w:68, h:38, text:"设置", tip:"定时自动签到（每天几点 / 失败重试）· 关窗收托盘 ✓"})
 
     // ---- 卡片 B：签到日历 ----
     var cardB = win.addPanel({x:24, y:238, w:572, h:372, bg_color:#1C1E26FF, radius:10, border_color:#505564FF})
@@ -426,10 +478,13 @@ main() {
     var cv = SDL3.createCanvas({x:40, y:290, w:540, h:300, bg_color:#14171EFF, border_color:#4A5166FF})
     cardB.add(cv)
 
-    // ---- 底部：状态栏 + 提示 ----
-    var statusLbl = SDL3.createLabel({x:24, y:626, text:STATUS_TEXT, font_size:14, text_color:#C8D2E6FF})
+    // ---- 底部：状态栏（动作结果）+ ⑥b 自动签到状态行 + 提示 ----
+    var statusLbl = SDL3.createLabel({x:24, y:620, text:STATUS_TEXT, font_size:14, text_color:#C8D2E6FF})
     win.add(statusLbl)
-    win.add(SDL3.createLabel({x:24, y:656, text:"左键点日历格子看当天记录 · Esc 退出 · 数据目录 %APPDATA%\\TraeSignLeno\\（history.json / devices.json）", font_size:12, text_color:#787D87FF}))
+    // ⑥b：定时自动签到的当前状态（"已开 00:05 · 下次重试 00:35 / 今日已完成 / 今日已放弃" ✓）
+    var autoLbl = SDL3.createLabel({x:24, y:644, text:AUTO_TEXT, font_size:12, text_color:#8A93A8FF})
+    win.add(autoLbl)
+    win.add(SDL3.createLabel({x:24, y:666, text:"左键点日历格子看当天记录 · Esc 退出 · 数据目录 %APPDATA%\\TraeSignLeno\\（history.json / devices.json / settings.json）", font_size:12, text_color:#787D87FF}))
 
     // ==================== 日历绘制（局部坐标：画布左上角 = (0,0) ✓ 见画布示例） ====================
     cv.on_draw(func(Renderer r, float ox, float oy, float cw, float ch) {
@@ -557,8 +612,9 @@ main() {
         STATUS_TEXT = "已回到本月"
     })
     btnStatus.on_click(func():void { rpc_status() })
-    btnClaim.on_click(func():void { rpc_claim() })
+    btnClaim.on_click(func():void { manual_claim() })          // 手动路径 ⇒ 顺带告知调度器"今天手动过了" ✓
     btnRegen.on_click(func():void { rpc_regen_device() })
+    btnSettings.on_click(func():void { open_settings(win) })
 
     // ---- 启动时查一次状态（`TRAE_GUI_NO_NET=1` 时跳过，便于离线/无头验证 ✓）----
     if NO_NET {
@@ -571,10 +627,28 @@ main() {
 
     // ==================== 托盘 / 菜单 / 开机自启（trae_tray.leno ✓）====================
     // 托盘失败（创建不出来）⇒ 全部退化为原行为（关闭即退出 ✓）
-    bool trayOk = tray.traeTrayInit(win, func():void { rpc_claim() })
+    bool trayOk = tray.traeTrayInit(win, func():void { manual_claim() }, func():void { open_settings(win) })
     if startHidden and trayOk {
         tray.traeTrayShow(false)                 // --tray ⇒ 启动即只留托盘 ✓（开机自启走这条）
         print("[gui] --tray：启动即隐藏到托盘（右键托盘图标 = 菜单 ✓）\n")
+    }
+
+    // ==================== ⑥b 定时自动签到（trae_auto.leno ✓）====================
+    // 30s 定时器（对标参考件 ✓）；状态变化 ⇒ 刷新底部那一行 ✓
+    auto.autoInit(win, claim_attempt, func():void { AUTO_TEXT = auto.autoStatusText() })
+    var tp0 = core.today_parts()
+    if SEL_BRAND != "" and hist.ok_day(SEL_BRAND, SEL_USER, core.date_str(tp0[0], tp0[1], tp0[2])) {
+        auto.autoMarkDoneToday()                 // 本地记录说"今天已签成功" ⇒ 不必再自动补一次 ✓
+    }
+    auto.autoTick()                              // 首拍：启动时已过触发点 ⇒ 立刻补一次（对标参考件 :819 ✓）
+    AUTO_TEXT = auto.autoStatusText()
+
+    // 设置自检（要建窗口 ⇒ 等首帧后再跑；跑完直接退 ✓ 不碰真实 settings.json ✓）
+    if _env("TRAE_SETTINGS_SELFTEST") != null {
+        win.addTimerOnce(30, func():void {
+            var sf = cfg.settingsSelftest()
+            _exit(if sf > 0 then 1 else 0)
+        })
     }
 
     // ==================== 主循环 ====================
@@ -603,19 +677,20 @@ main() {
         func(Event ev): bool {
             if ev.isQuit() { return false }
             if ev.isWindowClose() {
-                if trayOk {                              // 托盘模式：关闭 = 收进托盘（不退出 ✓）
+                // 托盘模式 + 设置里"关窗收进托盘"= 开 ⇒ 关闭 = 收进托盘（不退出 ✓）；否则关闭即退出 ✓
+                if trayOk and cfg.settingsCloseToTray() {
                     tray.traeTrayShow(false)
                     win.cancelClose()                    // 拦下"销毁窗口"⇒ 程序继续跑 ✓
                     return true
                 }
-                return false                             // 无托盘 ⇒ 关闭即退出（原行为 ✓）
+                return false
             }
             if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
             return true
         },
         func(Renderer r) {
             r.clearColor(#12141AFF)
-            apply_view(badgeLbl, scoreLbl, statusLbl, monthLbl, devLbl)
+            apply_view(badgeLbl, scoreLbl, statusLbl, monthLbl, devLbl, autoLbl)
             FRAMES = FRAMES + 1
             if FRAMES == 1 {
                 print("[gui] 首帧渲染 ok  日历=" + (CAL_W as string) + "x" + (CAL_H as string)
@@ -627,7 +702,8 @@ main() {
                     + "  month=" + MONTH_TEXT
                     + "  已签到日=" + (OK_DAYS.len() as string)
                     + "  " + DEV_TEXT
-                    + "  状态=" + STATUS_TEXT + "\n")
+                    + "  状态=" + STATUS_TEXT
+                    + "  " + AUTO_TEXT + "\n")
                 _exit(0)
             }
         }

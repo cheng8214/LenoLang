@@ -320,8 +320,24 @@ Trae签到 托盘 / 自绘菜单 / 开机自启（**无头可跑 ✓**，用临�
 $env:SDL_VIDEODRIVER='dummy'
 $env:TRAE_GUI_NO_NET='1'
 $env:TRAE_TRAY_SELFTEST='1'
-build\leno.exe --no-cache leno_gui\应用\Trae签到\trae_gui.leno   # 9 项 ✓ exit 0（含读回 Run 值核对命令行 ✓）
+build\leno.exe --no-cache leno_gui\应用\Trae签到\trae_gui.leno   # 10 项 ✓ exit 0（含读回 Run 值核对命令行 ✓）
 ```
+
+Trae签到 ⑥b 定时自动签到 / 设置对话框（**无头可跑 ✓**，都不联网、都不碰真实设置 ✓）：
+
+```
+$env:SDL_VIDEODRIVER='dummy'                 # 自检用**注入时钟**（[y,m,d,H,M,S]）⇒ 跨天/23 点可秒级断言 ✓
+$env:TRAE_AUTO_SELFTEST='1'                  # 12 组：到点触发·5/15/30/60/120 递增封顶·23:00 放弃·跨天重置·成功即停·
+build\leno.exe --no-cache leno_gui\应用\Trae签到\trae_gui.leno   #        9095 即停·启动补签·空结果跳过·关掉重试/开关 ✓
+$env:TRAE_SETTINGS_SELFTEST='1'              # 设置读写/越界兜底/临时文件清理（用 settings_selftest.json ✓）
+build\leno.exe --no-cache leno_gui\应用\Trae签到\trae_gui.leno
+```
+
+> 定时任务的**可测性**要点：把"现在几点"做成**可注入的时钟**（`autoSetClock(func():Array[int])`），
+> 并把重试排期限制在**同一天内**（用"当天秒数"不用绝对时间戳）⇒ 否则"跨天 / 23:00 放弃"这类
+> 分支只能靠等真实时间，自检写不动 ✗（本次就是这么做的 ✓）
+> ⚠ 另一条：自检里**不能 `runModal`**（dummy 下没有事件 ⇒ 模态循环会永久挂起 ✗，见 §一）——
+> 只建窗 + 断言控件初值即可 ✓
 
 ⚠ 「托盘图标被点 ⇒ 拦截 ⇒ 弹菜单」这条链**要真机跑**（dummy 下没有 Win32 消息泵 ✗，见 §六）。
 真机快速验证：`set LENO_SDL_FRAMES=40` 后直接跑模拟时钟 —— 右键托盘图标应在光标处弹出菜单、
