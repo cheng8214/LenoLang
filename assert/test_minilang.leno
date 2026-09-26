@@ -1,0 +1,72 @@
+// minilang（TinyLang 解释器）行为回归 —— 把"没人管的示例"升级成断言
+//
+// 背景：`examples/minilang/minilang.leno` 是一个**用 Leno 写的 TinyLang 解释器**
+//   （571 行：分词 → 解析 → 执行，含 for/while/if/var/表达式求值/词法报错）。
+//   它不在任何门禁里 ⇒ 坏了没人知道 —— 同 `examples/jsons/` 当年三个示例**全部编译不过**
+//   却长期没被发现是同一类漏洞（见 assert/examples_smoke.list 的说明与 P7）。
+//
+// ⚠ 为什么用「**子进程跑 + 断言 stdout**」而不是 import 进来直接调函数：
+//   它的函数都没标 `export`（`func tinylang_main(...)` 等）⇒ 模块导入拿不到；
+//   且它自带 `main()` 会跑两段样例程序 ⇒ 断言它的**外部行为**（退出码 + 打印结果）
+//   既不需要改动示例本身，又正好把"解释器算得对不对"钉住 ✓
+//   （这也让它**不必**再重复进 examples_smoke_run.list：本用例已包含编译 + 运行 + 结果校验）
+//
+// 判据（数值依据：x=90, y=20 ⇒ sum=x-y=70；b=sum-100 ⇒ **-30**；sum>125 为假 ⇒ 走 else）：
+//   ① 编译 + 运行 exit=0；
+//   ② 两段样例都真跑到了（两个标题各出现 2 次）；
+//   ③ 词法错误被正确报出：`for5` 不是合法标识符 ⇒ 有 [错误] 行且提到 for5；
+//   ④ 表达式求值对：算出 -30、打印 100；
+//   ⑤ 分支走对：出现 "Sum is small"、**不**出现 "Sum is big"；
+//   ⑥ 循环次数对：`for(5)` ⇒ "Loop iteration" **正好 5 次**；
+//   ⑦ `while(i<5)` ⇒ 在 100 之后**逐行**出现 0、1、2、3、4（按行精确比对，避免 "0" 误命中别的数字）。
+
+import strings
+
+main() {
+    var exe = _executable()
+    var script = "examples\\minilang\\minilang.leno"
+
+    var r = _exec(exe + " \"" + script + "\"", 60000)
+    assert_true(r != null, "没能起子进程跑 " + script)
+
+    var out = _str(r[0])
+    var code = _int(r[1])
+
+    // ① 编译 + 运行成功
+    assert_eq(code, 0, "minilang 运行应 exit=0；实际 exit=" + code + "；输出=" + out)
+
+    // ② 两段样例都跑到了
+    assert_eq(strings.count(out, "=== TinyLang 解释器 ==="), 2, "两段样例应各起一次解释器；输出=" + out)
+    assert_eq(strings.count(out, "=== 执行完成 ==="), 2, "两段样例应各完成一次；输出=" + out)
+
+    // ③ 词法错误被正确报出（第一段样例：for5 后面缺分隔符）
+    assert_true(strings.has(out, "[错误]"), "第一段样例应报出词法错误；输出=" + out)
+    assert_true(strings.has(out, "for5"), "错误信息里应提到 for5；输出=" + out)
+
+    // ④ 表达式求值：b = (90 - 20) - 100 = -30；a = 100
+    assert_true(strings.has(out, "-30"), "应算出 b = -30；输出=" + out)
+    assert_true(strings.has(out, "100"), "应打印 a = 100；输出=" + out)
+
+    // ⑤ 分支：sum = 70 ⇒ 70 > 125 为假 ⇒ 走 else
+    assert_true(strings.has(out, "Sum is small"), "sum=70 应走 else（Sum is small）；输出=" + out)
+    assert_eq(strings.has(out, "Sum is big"), false, "sum=70 不该走 if（Sum is big）；输出=" + out)
+
+    // ⑥ for(5) ⇒ 正好 5 次（多一次少一次都要红）
+    assert_eq(strings.count(out, "Loop iteration"), 5, "for(5) 应打 5 次；输出=" + out)
+
+    // ⑦ while(i<5) ⇒ 打印 0..4；按行精确比对（不与前面那些数字混淆）
+    var lines = strings.split(out, "\n")
+    int at100 = -1
+    for lines.len() to i {
+        if strings.trim(lines[i]) == "100" and at100 < 0 { at100 = i }
+    }
+    assert_true(at100 >= 0, "应打印 a = 100（作为 while 段的起点标记）；输出=" + out)
+    for 5 to k {
+        var idx = at100 + 1 + k
+        assert_true(idx < lines.len(), "输出行数不足，缺 while 的第 " + k + " 个值；输出=" + out)
+        assert_eq(strings.trim(lines[idx]), _str(k),
+            "while 第 " + k + " 次应打印 " + k + "；实际=「" + strings.trim(lines[idx]) + "」")
+    }
+
+    print("test_minilang passed")
+}
