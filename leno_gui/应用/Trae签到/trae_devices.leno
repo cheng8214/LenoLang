@@ -24,8 +24,8 @@ import dirs
 import "trae_core.leno" as core
 
 export func devices_dir(): string {
-    var appdata = _env("APPDATA")
-    if appdata == null { return "" }
+    var appdata = _env_or("APPDATA", "")
+    if appdata == "" { return "" }              // 取不到 ⇒ 空路径（调用方据此跳过读/写盘 ✓）
     return appdata + "\\TraeSignLeno"
 }
 export func devices_path(): string {
@@ -39,10 +39,10 @@ export func devices_path(): string {
 // `is Dict[string, string]` 是**逐键值**校验（v3.2.2 起走递归类型规格，见 leno_vm.h 的 OP_TYPE_CHECK_SPEC）：
 //   值是 int/null/嵌套对象 ⇒ 不收窄。本文件只由本工具写（值恒为 string）⇒ 恒成立 ✓
 // 返回**可空**：`null` = 文件不存在**或**结构不符（读不出来）。签名如实反映"可能没有"，
-//   于是"损坏"与"空表"在写路径上**可以**区分（只读路径经 core.json_get/json_keys 两者同解 ✓）。
+//   于是"损坏"与"空表"在写路径上**可以**区分（只读路径经 jsons.get_str/keys 两者同解 ✓）。
 // ⚠ 实测：可空标记**不做编译期空检查** —— 对 null 直接 `db[k] = v` / `db.has(k)` 是**运行期**抛错
 //   （「下标赋值: 对象不支持索引」/「类型 object 上不存在方法 'has'」）⇒ 写路径必须显式兜底。
-// ⚠ 取值仍一律走 core.json_get / core.json_keys（`_str()` 兜底）：手改过的文件不会崩
+// ⚠ 取值仍一律走 jsons.get_str / jsons.keys（坏值 ⇒ 默认、不抛）：手改过的文件不会崩
 export func load_all(): Dict[string, string]? {
     var p = devices_path()
     if p == "" { return null }
@@ -57,16 +57,16 @@ export func key_of(string brand, string user): string {
 
 // 某账号已分配的设备号；没有 ⇒ ""
 export func get(string brand, string user): string {
-    return core.json_get(load_all(), key_of(brand, user))
+    return jsons.get_str(load_all(), key_of(brand, user), "")
 }
 
 // 已分配的**全部**设备号（"新号不许与别人重复"要靠它 ✓）
 export func used_ids(): Array[string] {
     Array[string] out = []
     var all = load_all()
-    var ks = core.json_keys(all)
+    var ks = jsons.keys(all)
     for ks to k {
-        var v = core.json_get(all, k)
+        var v = jsons.get_str(all, k, "")
         if v != "" { out.add(v) }
     }
     return out

@@ -19,15 +19,15 @@
 | ⑦ 历史记录 `history.json`（日历按账号独立）| ✅ 完成（`trae_history.leno`；键 = `brand+username+日期` ⇒ **天然按账号独立** ✓）|
 | ⑧ **设备号按账号独立**（`devices.json`）⇒ 同机多账号才能**各自**签到 | ✅ 完成（`trae_devices.leno`；对标参考件「每账号独立设备号 + 可手动更换」✓）|
 
-### CLI 用法（位置子命令；解释器层面 `--flag` 已不再被吞 —— 见文末「语言侧注意点」）
+### CLI 用法（位置子命令；`--xxx` 双横线别名同样可用 —— 见文末「语言侧注意点」）
 
 ```
 build\leno.exe trae_sign.leno              # 签到（默认；今天已签到会提示无需重复）
-build\leno.exe trae_sign.leno status       # 只查状态
-build\leno.exe trae_sign.leno list         # 列出各品牌登录态账号（不打印 token）
-build\leno.exe trae_sign.leno diag         # 打印账号/token 长度/Aha 设备号/本应用设备号（交叉验证用，不打印 token）
-build\leno.exe trae_sign.leno json         # 结果输出一行 JSON（便于脚本调用）
-build\leno.exe trae_sign.leno app "Trae CN"
+build\leno.exe trae_sign.leno status       # 只查状态（= `-s` = `--status`）
+build\leno.exe trae_sign.leno list         # 列出各品牌登录态账号（不打印 token；= `-l` = `--list`）
+build\leno.exe trae_sign.leno diag         # 打印账号/token 长度/Aha 设备号/本应用设备号（交叉验证用，不打印 token；= `-d` = `--diag`）
+build\leno.exe trae_sign.leno json         # 结果输出一行 JSON（便于脚本调用；= `-j` = `--json`）
+build\leno.exe trae_sign.leno app "Trae CN"   # = `-a` = `--app`
 set TRAE_CHECKIN_DEBUG=1                   # 打印 HTTP 码与原始响应（诊断 1001/9074/9095 等）
 set TRAE_DEVICE_ID=1111111111111111        # 调试/测试：强制指定设备号（可**确定性**触发 9074 ✓）
 set TRAE_API_BASE=http://127.0.0.1:8080    # 调试/测试：把接口指到本地 stub（见 tools/test_9074_retry.js ✓）
@@ -222,17 +222,17 @@ status → 今日未签到。积分 base=150 extra=50
 ## 语言侧注意点（踩过的）
 
 - `jsons.decode/read_file` 返回 `any`：**不能直接当 Dict 用**（也不能赋给 `Dict` 变量），
-  必须 `if x is Dict { ... }` 收窄 ⇒ 本工具把收窄集中在一层（`json_get/json_obj/json_keys`）✓；
-  **2026-09-26 起这一层已做进标准库** ⇒ 新代码直接用 `jsons.get_str/get_int/get_float/get_bool/
-  get_obj/keys`（调用点零收窄 ✓，见 `docs/module_jsons.md` 的「取值助手」）；本工具的
-  `json_get/json_obj/json_keys` 保留（等价、向后兼容），要写"已编码好的 JSON 文本"用
-  `jsons.write_text`（`write_file` 会**再编码一次** ✗）；
+  必须 `if x is Dict { ... }` 收窄 ⇒ 本工具原把收窄集中在一层（`json_get/json_obj/json_keys`）；
+  **2026-09-26 起这一层已做进标准库**（`jsons.get_str/get_int/get_float/get_bool/get_obj/keys`，
+  调用点零收窄 ✓，见 `docs/module_jsons.md` 的「取值助手」）⇒ **本工具的助手层已删**，全部调用点
+  改用标准库（顺带做了真实使用验证：数据层自测 + 三个无头自检 + 9074 离线端到端 ✓）；
+  要写"已编码好的 JSON 文本"用 `jsons.write_text`（`write_file` 会**再编码一次** ✗）；
 - 空数组字面量 `var a = []` 的元素类型是 `any` ⇒ 需要 `Array[string] a = []` 这类**显式标注** ✓；
 - ~~解释器会先解析自己的旗标 ⇒ 脚本参数别用 `--xxx`（会被当成它的选项并打印帮助 ✗）~~
   ⇒ **已修**（P2 2026-09-18 + 2026-09-26 彻底化）：**脚本路径之后的一切旗标都原样交给脚本**
-  （含 `-v`/`--no-cache` 这类内置同名者 ✓）⇒ 解释器不再吞掉脚本的 `--xxx`（**本工具自身**仍只认
-  位置词与 `-s/-l/-j/-a`，见 `trae_sign.leno` 顶注）；唯一规矩 = 解释器自己的旗标
-  （`-c`/`--no-cache`/`-p`…）写在脚本路径**之前** ✓（位置子命令保留，向后兼容 ✓）。
+  （含 `-v`/`--no-cache` 这类内置同名者 ✓）⇒ 解释器不再吞掉脚本的 `--xxx`（**本工具自身**也已补
+  `--status/--list/--diag/--json/--app` 双横线别名 ⇒ 与上面的用法示例一致 ✓）；唯一规矩 = 解释器
+  自己的旗标（`-c`/`--no-cache`/`-p`…）写在脚本路径**之前** ✓（位置子命令保留，向后兼容 ✓）。
 
 ### ④⑦ 这轮新踩到的（都改成"用之前先看一眼实现"了）
 
@@ -268,8 +268,10 @@ status → 今日未签到。积分 base=150 extra=50
   （`src/module/sys/sys.c`）一次函数有**三种**返回 —— 参数不对 ⇒ `null`、**2 参形态是"设置"**⇒ 返回
   `bool`、取不到 ⇒ `null`、取到 ⇒ `string` ⇒ 注册成 `TYPE_ANY` 才是对的 ✓。硬改会让 `if x == null`
   这类判空在类型上失效、运行时却仍是 `null` ⇒ 后续 `null + "\\User\\..."` **静默**拼出坏路径 ✗
-  （比现在"编译期逼你写 `_str()`"更糟）。要"总是 string"的入口只能**加法**：新增
-  `_env_or(name[, default])` 之类的函数（本次决定先不做 ✓）；
+  （比现在"编译期逼你写 `_str()`"更糟）。要"总是 string"的入口只能是**加法** —— **已做**
+  （2026-09-26）：标准库新增 `_env_or(name, default)`（**取不到或空串** ⇒ `default`；注册类型就是
+  `TYPE_STRING` ⇒ 调用点零样板 ✓）⇒ 本应用 8 处"读样板"已换成它；**设置**变量、**判存在**
+  （`!= null`）仍用 `_env` ✓；
 - `rands.ints(min, max)` 收、发都是 int64 ✓（`10^15 ~ 10^16-1` 没问题 ✓），配合 `as string` 就是
   16 位数字设备号 ✓（不要用 `range`/`str` 手搓，`rands.str(len, "0123456789")` 会产生前导 0 ✗）。
 
@@ -318,7 +320,7 @@ build\leno.exe trae_crypto.leno → trae_crypto fixture test passed   （exit=0 
 | 路径 | 用途 |
 | --- | --- |
 | `trae_crypto.leno` | ① 派生解密（**40 行**；通用加密已抽到标准库 `leno_module/LenoCrypto` ✓，之前这里是 829 行机械拼接 ✗）|
-| `trae_core.leno` | ②③ **共享核心**（登录态读取 / 签到接口 / JSON 收窄 / 日期助手）＋ **③b 9074 换设备号重试** —— CLI 与 GUI **共用同一份** ✓ |
+| `trae_core.leno` | ②③ **共享核心**（登录态读取 / 签到接口 / 日期助手）＋ **③b 9074 换设备号重试** —— CLI 与 GUI **共用同一份** ✓（JSON 取值直接用标准库 `jsons.get_str/get_obj/keys` ✓）|
 | `trae_history.leno` | ⑦ `history.json` 读写（扁平键 = `brand+username+日期`，值 = `ok+base+extra+code` ⇒ 按账号独立 ✓）|
 | `trae_devices.leno` | ⑧ `devices.json` 设备号存储（扁平键 = `brand+username`；`ensure/regenerate/remove` ⇒ **每账号独立** ✓）|
 | `trae_gui.leno` | ④ GUI（`LenoSDL3`：窗口 / 徽标 / 账号下拉 / 积分 / 按钮 ＋ `Canvas` **自绘签到日历**）✓ |

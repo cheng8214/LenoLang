@@ -387,8 +387,8 @@ func apply_view(Label badge, Label score, Label status, Label month, Label devl,
 }
 
 main() {
-    var autoFrames = _env("TRAE_GUI_AUTO")
-    if autoFrames != null { AUTO_FRAMES = _int(autoFrames) }
+    var autoFrames = _env_or("TRAE_GUI_AUTO", "")
+    if autoFrames != "" { AUTO_FRAMES = _int(autoFrames) }
     NO_NET = _env("TRAE_GUI_NO_NET") != null
     // ⑥b 调度器自检：**纯逻辑**（注入时钟 + 假回调）⇒ 起步就能跑完并退出（不建窗口、不联网 ✓）
     if _env("TRAE_AUTO_SELFTEST") != null {
@@ -419,9 +419,9 @@ main() {
     } else {
         // 调试/无头冒烟：`TRAE_GUI_ACCOUNT=<n>`（从 1 起）指定启动时选中的账号，默认第 1 个 ✓
         // 为什么要它：设备号是**按账号**的（⑧）⇒ 要验证"第二个账号显示的是独立号"就得能切过去看 ✓
-        var idx_env = _env("TRAE_GUI_ACCOUNT")
-        if idx_env != null {
-            var n = _int(_str(idx_env))
+        var idx_env = _env_or("TRAE_GUI_ACCOUNT", "")
+        if idx_env != "" {
+            var n = _int(idx_env)
             if n >= 1 and n <= BRANDS_AVAIL.len() { pick_idx = n - 1 }
         }
         SEL_BRAND = BRANDS_AVAIL[pick_idx][0]

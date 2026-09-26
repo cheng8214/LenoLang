@@ -16,8 +16,8 @@ import dirs
 import "trae_core.leno" as core
 
 export func history_dir(): string {
-    var appdata = _env("APPDATA")
-    if appdata == null { return "" }
+    var appdata = _env_or("APPDATA", "")
+    if appdata == "" { return "" }              // 取不到 ⇒ 空路径（调用方据此跳过读/写盘 ✓）
     return appdata + "\\TraeSignLeno"
 }
 export func history_path(): string {
@@ -28,7 +28,7 @@ export func history_path(): string {
 
 // 全部历史 —— 同 devices：**扁平** `string → string` ⇒ 读取处一次收窄定型，
 // 之后全链路 `Dict[string, string]`，调用点不再手写 `is Dict` ✓
-// 同 devices：`is Dict[string, string]` 逐键值校验（v3.2.2 起）⇒ 取值仍走 `_str()` 兜底的 json_get ✓
+// 同 devices：`is Dict[string, string]` 逐键值校验（v3.2.2 起）⇒ 取值仍走 `jsons.get_str`（坏值 ⇒ 默认 "" ✓）
 // 返回**可空**：`null` = 不存在**或**结构不符（可空标记不做编译期空检查 ⇒ 写路径显式 `?? {}`）
 export func load_all(): Dict[string, string]? {
     var p = history_path()
@@ -44,7 +44,7 @@ export func key_of(string brand, string username, string day): string {
 
 // 某账号某天的记录串（`ok|base|extra|code`）；没有 ⇒ ""
 export func get_day(string brand, string username, string day): string {
-    return core.json_get(load_all(), key_of(brand, username, day))
+    return jsons.get_str(load_all(), key_of(brand, username, day), "")
 }
 export func has_day(string brand, string username, string day): bool {
     return get_day(brand, username, day) != ""
@@ -66,7 +66,7 @@ export func field(string rec, int idx): string {
 export func ok_days_in_month(string brand, string username, int y, int m): Array[string] {
     var out = []
     var pre = brand + "|" + username + "|" + core.month_prefix(y, m)
-    var ks = core.json_keys(load_all())
+    var ks = jsons.keys(load_all())
     for ks to k {
         if not strings.starts_with(k, pre) { continue }
         var day = k.byte_slice(pre.byte_len(), k.byte_len())
@@ -83,12 +83,12 @@ export func month_days(string brand, string username, int y, int m): Array[Array
     var has = []
     var pre = brand + "|" + username + "|" + core.month_prefix(y, m)
     var all = load_all()
-    var ks = core.json_keys(all)
+    var ks = jsons.keys(all)
     for ks to k {
         if not strings.starts_with(k, pre) { continue }
         var day = k.byte_slice(pre.byte_len(), k.byte_len())
         has.add(day)
-        if strings.starts_with(core.json_get(all, k), "1|") { ok.add(day) }
+        if strings.starts_with(jsons.get_str(all, k, ""), "1|") { ok.add(day) }
     }
     return [ok, has]
 }

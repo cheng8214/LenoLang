@@ -51,8 +51,8 @@ var _saved = false
 
 // ==================== 路径 / 读写 ====================
 export func settings_dir(): string {
-    var appdata = _env("APPDATA")
-    if appdata == null { return "" }
+    var appdata = _env_or("APPDATA", "")
+    if appdata == "" { return "" }              // 取不到 ⇒ 空路径（调用方据此跳过读/写盘 ✓）
     return appdata + "\\TraeSignLeno"
 }
 
@@ -84,22 +84,17 @@ func _digits_in(string s, int lo, int hi, int def): int {
     return def
 }
 
-// 布尔键：只认 "0"/"1"（兼容 "true"/"false"）⇒ 其它一律默认 ✓
-func _flag(string s, bool def): bool {
-    if s == "1" or s == "true" { return true }
-    if s == "0" or s == "false" { return false }
-    return def
-}
-
 // 设置值（**已填默认** ⇒ 调用方不用再判空/判缺键 ✓）
+// 布尔键改走 `jsons.get_bool`（只认 "0"/"1"/"true"/"false"、其它 ⇒ 默认 —— 与旧本地 `_flag` **同口径**，
+// 故 `_flag` 已删 ✓）；时间键仍走 `_digits_in`（只认**规范十进制**，别换成 `get_int` ✗）
 export func settingsLoad(): Dict[string, string] {
     var db = _raw() ?? {}
     Dict[string, string] out = {}
-    out[KEY_ENABLED] = if _flag(core.json_get(db, KEY_ENABLED), DEF_ENABLED) then "1" else "0"
-    out[KEY_HOUR] = (_digits_in(core.json_get(db, KEY_HOUR), 0, 23, DEF_HOUR)) as string
-    out[KEY_MIN] = (_digits_in(core.json_get(db, KEY_MIN), 0, 59, DEF_MIN)) as string
-    out[KEY_RETRY] = if _flag(core.json_get(db, KEY_RETRY), DEF_RETRY) then "1" else "0"
-    out[KEY_TRAY] = if _flag(core.json_get(db, KEY_TRAY), DEF_TRAY) then "1" else "0"
+    out[KEY_ENABLED] = if jsons.get_bool(db, KEY_ENABLED, DEF_ENABLED) then "1" else "0"
+    out[KEY_HOUR] = (_digits_in(jsons.get_str(db, KEY_HOUR, ""), 0, 23, DEF_HOUR)) as string
+    out[KEY_MIN] = (_digits_in(jsons.get_str(db, KEY_MIN, ""), 0, 59, DEF_MIN)) as string
+    out[KEY_RETRY] = if jsons.get_bool(db, KEY_RETRY, DEF_RETRY) then "1" else "0"
+    out[KEY_TRAY] = if jsons.get_bool(db, KEY_TRAY, DEF_TRAY) then "1" else "0"
     return out
 }
 

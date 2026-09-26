@@ -23,46 +23,24 @@ var CLOUD_PREFIX = "iCubeAuthInfo://icube.cloudide"
 // —— `TRAE_API_BASE` 指向 `tools/test_9074_retry.js` 起的本地 stub 服务，就能在完全不碰真接口的
 // 前提下验证"第一次 9074 → 换设备号 → 第二次成功"这条链路 ✓（不设该环境变量 ⇒ 与以前完全一致 ✓）
 export func api_base(): string {
-    var b = _env("TRAE_API_BASE")
-    if b == null { return DEFAULT_API_BASE }        // 注意：`_env` 返回 any ⇒ 先判 null 再 _str ✓
-    var s = _str(b)                                 // （`_str(null)` 会得到字符串 "null" ✗）
-    if s == "" { return DEFAULT_API_BASE }
-    return s
+    // 取不到 / 空串都回默认：`_env_or` 是"总是 string"的读入口 ⇒ 免掉原先 `if b == null` + `_str(b)` 两步 ✓
+    return _env_or("TRAE_API_BASE", DEFAULT_API_BASE)
 }
 export func status_url(): string { return api_base() + "/trae/api/v2/ug/checkin_credits/status" }
 export func claim_url(): string { return api_base() + "/trae/api/v2/ug/checkin_credits/claim" }
 
-// ==================== ① JSON 取值助手 ====================
-// 为什么要这一层：`jsons.decode/read_file` 返回 `any` ✗，语言不允许把 any 直接当 Dict 用
-// （也不能赋给 Dict 变量），必须**显式类型收窄**（`if x is Dict { ... }`）。
-// 收窄都收在这一层里，业务代码就只跟 string / Array[string] 打交道 ✓。
-export func json_get(any obj, string key): string {
-    if obj is Dict => d and d.has(key) {
-        var v = d[key]
-        if v != null { return _str(v) }
-    }
-    return ""
-}
-export func json_obj(any obj, string key): any {
-    if obj is Dict => d and d.has(key) { return d[key] }
-    return null
-}
-export func json_keys(any obj): Array[string] {
-    var out = []
-    if obj is Dict => d {
-        var ks = d.keys()
-        for ks to k {
-            out.add(_str(k))
-        }
-    }
-    return out
-}
+// ==================== ① JSON 取值助手 ⇒ 已并入标准库（2026-09-26） ====================
+// 原先这里自造了一层 `json_get/json_obj/json_keys`（理由：`jsons.decode/read_file` 返回 `any` ✗，
+// 不能直接当 Dict 用，必须**显式类型收窄** `if x is Dict { ... }`）—— 该层**已删**：
+// 标准库 `jsons` 现已提供等价且更全的 `get_str / get_int / get_float / get_bool / get_obj / keys`
+// （收窄收在标准库实现里 ⇒ 调用点零样板 ✓，语义见 `docs/module_jsons.md` 的「取值助手」）。
+// 业务代码直接写 `jsons.get_str(obj, key, "")` / `jsons.get_obj(obj, key)` 即可 ✓。
 
 // ==================== ② 读登录态（只读） ====================
 
 export func storage_path(string brand): string {
-    var appdata = _env("APPDATA")
-    if appdata == null { return "" }
+    var appdata = _env_or("APPDATA", "")
+    if appdata == "" { return "" }              // 取不到 ⇒ 空路径（调用方据此判"没登录态" ✓）
     return appdata + "\\" + brand + "\\User\\globalStorage\\storage.json"
 }
 
@@ -72,20 +50,20 @@ export func pick_auth(string brand): Array[string] {
     if p == "" { return [] }
     if not files.exists(p) { return [] }
     var s = jsons.read_file(p)
-    var keys = json_keys(s)
+    var keys = jsons.keys(s)
     var enc = ""
     var dc = ""
     for keys to k {
         if strings.starts_with(k, DC_PREFIX) {
             dc = k.byte_slice(DC_PREFIX.byte_len(), k.byte_len())
         } else if strings.starts_with(k, CLOUD_PREFIX) {
-            enc = json_get(s, k)
+            enc = jsons.get_str(s, k, "")
         }
     }
     if enc == "" { return [] }
     if dc == "" {
-        dc = json_get(s, "telemetry.devDeviceId")
-        if dc == "" { dc = json_get(s, "telemetry.machineId") }
+        dc = jsons.get_str(s, "telemetry.devDeviceId", "")
+        if dc == "" { dc = jsons.get_str(s, "telemetry.machineId", "") }
     }
     return [enc, dc]
 }
@@ -97,9 +75,9 @@ export func load_account(string brand): Array[string] {
     var json = crypt.trae_decrypt_auth(a[0])
     if json == "" { return [] }
     var ad = jsons.decode(json)
-    var token = json_get(ad, "token")
-    var username = json_get(json_obj(ad, "account"), "username")
-    var region = json_get(json_obj(ad, "userRegion"), "region")
+    var token = jsons.get_str(ad, "token", "")
+    var username = jsons.get_str(jsons.get_obj(ad, "account"), "username", "")
+    var region = jsons.get_str(jsons.get_obj(ad, "userRegion"), "region", "")
     return [brand, username, token, region, a[1]]
 }
 
@@ -114,8 +92,8 @@ export func scan_accounts(): Array[Array[string]] {
         var has_token = "false"
         if json != "" {
             var ad = jsons.decode(json)
-            if json_get(ad, "token") != "" { has_token = "true" }
-            username = json_get(json_obj(ad, "account"), "username")
+            if jsons.get_str(ad, "token", "") != "" { has_token = "true" }
+            username = jsons.get_str(jsons.get_obj(ad, "account"), "username", "")
         }
         out.add([brand, username, has_token])
     }
@@ -173,7 +151,7 @@ export func api_post(HttpClient c, string url, string body): any {
 }
 
 export func jval(any d, string key): string {
-    return json_get(d, key)
+    return jsons.get_str(d, key, "")
 }
 
 // 查状态 → [ok, httpErr, err, code, raw, base, extra, checkedIn, msg]

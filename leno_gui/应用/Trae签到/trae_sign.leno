@@ -3,13 +3,13 @@
 // 对标参考件 D:\Leno工程\TraeSign-main\trae-checkin.js —— 算法与流程以它为准：
 //   读本机 Trae 登录态 → 派生解密拿 token/dcId → 调 checkin_credits/status|claim → 打印结果
 //
-// 用法（**位置子命令**；另带 `-s/-l/-j/-a` 单横线别名）：
+// 用法（**位置子命令**；`-s/-l/-d/-j/-a` 单横线别名；`--status/--list/--diag/--json/--app` 双横线别名）：
 //   ⚠ 历史注（**现已不必需**，保留位置词只为向后兼容 ✓）：原先**必须**用位置词 —— 解释器会把脚本
 //   路径之后的 `--xxx` 当成自己的旗标（`--list` ⇒ 打印帮助、**脚本根本不跑** ✗）。该坑已修：
 //   P2（2026-09-18）放行未知旗标 + 2026-09-26 彻底化（**脚本路径之后的一切旗标都原样交给脚本**，
-//   含 `-v`/`--no-cache` 这类内置同名者 ✓）⇒ 解释器不再吞掉脚本的 `--xxx`。
-//   ⚠ 但**本脚本自身**仍只认位置词与 `-s/-l/-j/-a`（解析见下面的 while）⇒ 想支持 `--list` 写法
-//   得在那里再加一条别名（本次没加：位置词够用，且要兼容两代解释器时位置词最稳 ✓）。
+//   含 `-v`/`--no-cache` 这类内置同名者 ✓）⇒ 解释器不再吞掉脚本的 `--xxx`；
+//   2026-09-26 本脚本自身也补上 `--xxx` 别名 —— 此前只认位置词与单横线别名 ⇒ 与帮助文案里写的
+//   `--list` 不自洽 ✗，现在两套写法等价 ✓（位置词仍保留，兼容两代解释器时最稳 ✓）。
 //   唯一规矩：解释器自己的旗标（`-c`/`--no-cache`/`-p`…）写在脚本路径**之前** ✓
 //
 //   leno trae_sign.leno                      # 签到（默认；今天已签到会提示无需重复）
@@ -65,11 +65,11 @@ main() {
     int i = 0
     while i < args.len() {
         var a = args[i]
-        if a == "status" or a == "-s" { mode = "status" }
-        else if a == "list" or a == "-l" { mode = "list" }
-        else if a == "diag" or a == "-d" { mode = "diag" }
-        else if a == "json" or a == "-j" { mode = "json" }
-        else if a == "app" or a == "-a" {
+        if a == "status" or a == "-s" or a == "--status" { mode = "status" }
+        else if a == "list" or a == "-l" or a == "--list" { mode = "list" }
+        else if a == "diag" or a == "-d" or a == "--diag" { mode = "diag" }
+        else if a == "json" or a == "-j" or a == "--json" { mode = "json" }
+        else if a == "app" or a == "-a" or a == "--app" {
             if i + 1 < args.len() { brand = args[i + 1]; i = i + 1 }
         }
         i = i + 1
@@ -143,9 +143,7 @@ main() {
     // ⇒ **第二个账号签到拿 9095** ✗（本机 2026-09-23 实测：cheng8214 签成功、另一个 9095 ✓）
     var dc_id = aha_id
     var dc_src = ""
-    var dc_env = _env("TRAE_DEVICE_ID")
-    var dc_s = ""
-    if dc_env != null { dc_s = _str(dc_env) }        // `_env` 返回 any ⇒ 显式转换
+    var dc_s = _env_or("TRAE_DEVICE_ID", "")         // 取不到 / 空串 ⇒ ""（免掉判 null + `_str` 两步 ✓）
     if dc_s != "" {
         dc_id = dc_s
         dc_src = "env"                               // 测试钩子：强制指定，且**不落盘**（免得污染真实配置 ✓）
