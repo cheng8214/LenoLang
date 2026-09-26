@@ -1333,6 +1333,95 @@ static Value str_pad_end(int argc, Value* args) {
     return val_obj((Object*)result);
 }
 
+// 18. 新增：字节数 → 人类可读大小
+
+// fmt_size(bytes) - 把字节数格式化成人类可读的大小（1024 进制：B / KB / MB / GB）
+//   收编自应用层**四份逐字复制**的实现（文件管理器 file_manager/props_dialog、PE分析器、
+//   缓存清理工具）⇒ 一处修正全仓受益 ✓
+//   · 口径与其中 3 份「GB 带 1 位小数」版一致（另 1 份 props_dialog 是整数 GB 版，
+//     切换消费方时那一处显示会从 "1 GB" 变 "1.9 GB" —— 更精确，非回归 ✓）
+//   · KB/MB 取整（不保留小数）、GB 保留 1 位小数且为 0 时不显示 ⇒ 替换后界面显示不变 ✓
+static Value str_fmt_size(int argc, Value* args) {
+    (void)argc;
+
+    // 接受 int（也容错接受 float：应用里常见 _int(...) 已转好，但别因此崩 ✗）
+    double b = 0.0;
+    if (val_is_int(args[0])) {
+        b = (double)val_as_int(args[0]);
+    } else if (val_is_float(args[0])) {
+        b = val_as_double(args[0]);
+    } else {
+        return val_null();
+    }
+
+    char buf[64];
+    if (b < 1024.0) {
+        snprintf(buf, sizeof(buf), "%lld B", (long long)b);
+    } else if (b < 1048576.0) {
+        snprintf(buf, sizeof(buf), "%lld KB", (long long)(b / 1024.0));
+    } else if (b < 1073741824.0) {
+        snprintf(buf, sizeof(buf), "%lld MB", (long long)(b / 1048576.0));
+    } else {
+        double gb = b / 1073741824.0;
+        long long gb_int = (long long)gb;
+        int tenths = (int)((gb - (double)gb_int) * 10.0);
+        if (tenths == 0) {
+            snprintf(buf, sizeof(buf), "%lld GB", gb_int);
+        } else {
+            snprintf(buf, sizeof(buf), "%lld.%d GB", gb_int, tenths);
+        }
+    }
+
+    return val_obj((Object*)str_copy(buf, (int)strlen(buf)));
+}
+
+// 19. 新增：16 进制字符串
+
+// hex(value[, width]) - 大写 16 进制字符串
+//   收编自应用层**三份逐字复制**的 toHex8 / toHex4 / toHex2（PE分析器 3 个文件）✓
+//   · 省略 width ⇒ 最少位数、不补零：hex(0x1F) == "1F" ✓（原来要另写一个函数才行 ✗）
+//   · 给出 width ⇒ 恰好 width 位：不足补前导 0，超出按**补码低位**截断：
+//       hex(0x10, 1) == "0"（只留低 4 位）· hex(-1, 8) == "FFFFFFFF" ✓
+//   · width 夹到 1..64（64 位 = 16 进制 16 位；再宽也只是补前导 0，不报错 ✓）
+static Value str_hex(int argc, Value* args) {
+    // 值：int 为准，容错接受 float
+    int64_t v = 0;
+    if (val_is_int(args[0])) {
+        v = val_as_int(args[0]);
+    } else if (val_is_float(args[0])) {
+        v = (int64_t)val_as_double(args[0]);
+    } else {
+        return val_null();
+    }
+
+    // 最少位数（>=1）：本语言的 int 是 48 位有符号，val_as_int 已符号扩展成
+    //   64 位补码 ⇒ 这里按 64 位算位数，负数在无 width 时给满 16 位（FFFFFFFFFFFFFFFF ✓）
+    int min_digits = 1;
+    while (min_digits < 16 && (((uint64_t)v) >> (min_digits * 4)) != 0) {
+        min_digits++;
+    }
+
+    int width = min_digits;
+    if (argc >= 2 && val_is_int(args[1])) {
+        width = (int)val_as_int(args[1]);
+        if (width < 1) width = 1;
+        if (width > 64) width = 64;
+    }
+
+    char out[65];
+    for (int i = 0; i < width; i++) {
+        int idx = width - 1 - i;                       // 高位在前
+        int nibble = 0;
+        if (idx < 16) {                                // 超出 64 位的高位一律补 0
+            nibble = (int)((((uint64_t)v) >> (idx * 4)) & 0xF);
+        }
+        out[i] = "0123456789ABCDEF"[nibble];
+    }
+    out[width] = '\0';
+
+    return val_obj((Object*)str_copy(out, width));
+}
+
 // ==================== 全局函数适配器层 ====================
 
 // format(fmt, ...) - 全局格式化函数
@@ -1432,6 +1521,14 @@ void strings_init_module(void) {
 
     // 17. 新增：右侧填充
     native_register_module_method("strings", "pad_end", str_pad_end, -1, 2, 3, TYPE_STRING, TYPE_UNKNOWN, pad_params);
+
+    // 18. 新增：字节数 → 人类可读大小（收编应用层 4 份复制实现）
+    TypeKind fmt_size_params[] = {TYPE_INT};
+    native_register_module_method("strings", "fmt_size", str_fmt_size, 1, -1, -1, TYPE_STRING, TYPE_UNKNOWN, fmt_size_params);
+
+    // 19. 新增：16 进制字符串（收编应用层 toHex8/toHex4/toHex2；width 可省略 ⇒ 不补零）
+    TypeKind hex_params[] = {TYPE_INT, TYPE_INT};
+    native_register_module_method("strings", "hex", str_hex, -1, 1, 2, TYPE_STRING, TYPE_UNKNOWN, hex_params);
 }
 
 // 初始化全局函数（程序启动时调用）

@@ -1,0 +1,68 @@
+// strings.fmt_size / strings.hex —— 收编应用层复制实现的回归测试（2026-09-26）
+//
+// 背景：这两个函数在 leno_gui/应用 里被**逐字复制**了多次 ——
+//   `fmtSize` 4 份（文件管理器 file_manager/props_dialog、PE分析器、缓存清理工具），
+//   `toHex8`/`toHex4`/`toHex2` 各 3 份（PE分析器 3 个文件）。
+//   它们本属"一处补齐、全仓受益"的标准库活（同 `_env_or` 那次）⇒ 收进 strings 模块。
+//
+// 判据：
+//   【fmt_size】① <1024 ⇒ 原样 B；② 边界 1024 进 KB；③ KB/MB 取整（不保留小数）；
+//              ④ GB 保留 1 位小数、小数位为 0 时不显示（与既有 3 份实现**逐字同口径**）。
+//   【hex】     ⑤ 省略 width ⇒ 最少位数不补零；⑥ 给出 width ⇒ 恰好补齐（低位在前）；
+//              ⑦ 超出 width ⇒ 按补码低位截断；⑧ 负数按补码（-1 ⇒ 全 F）；
+//              ⑨ 0 至少给一位；⑩ width 夹取（<=0 ⇒ 1）。
+
+import strings
+
+main() {
+    // ① B 档：小于 1024 原样，单位 B
+    assert_eq(strings.fmt_size(0), "0 B")
+    assert_eq(strings.fmt_size(1023), "1023 B")
+
+    // ② 边界：1024 恰好进 KB（1023 还是 B ⇒ 边界判别不差一）
+    assert_eq(strings.fmt_size(1024), "1 KB")
+
+    // ③ KB/MB 取整：1536 B = 1.5 KB ⇒ "1 KB"（截断，不四舍五入）
+    assert_eq(strings.fmt_size(1536), "1 KB")
+    assert_eq(strings.fmt_size(1048575), "1023 KB")   // 1024^2 - 1
+    assert_eq(strings.fmt_size(1048576), "1 MB")
+    assert_eq(strings.fmt_size(1572864), "1 MB")      // 1.5 MB ⇒ 截断
+
+    // ④ GB 档：整 GB 不带小数点；有零头才显示 1 位小数
+    assert_eq(strings.fmt_size(1073741824), "1 GB")           // 1024^3
+    assert_eq(strings.fmt_size(1610612736), "1.5 GB")         // 1.5 * 1024^3
+    assert_eq(strings.fmt_size(2040109465), "1.8 GB")         // 1.899... ⇒ 截断到 1 位
+
+    // ⑤ 省略 width ⇒ 最少位数、不补零
+    assert_eq(strings.hex(0), "0")
+    assert_eq(strings.hex(255), "FF")
+    assert_eq(strings.hex(0x1F), "1F")
+    assert_eq(strings.hex(0xDEADBEEF), "DEADBEEF")
+
+    // ⑥ 给出 width ⇒ 恰好补齐（不足补前导 0）
+    assert_eq(strings.hex(0, 8), "00000000")
+    assert_eq(strings.hex(0x1F, 8), "0000001F")
+    assert_eq(strings.hex(0xDEADBEEF, 8), "DEADBEEF")
+    assert_eq(strings.hex(0xB, 4), "000B")            // 等效旧 toHex4
+    assert_eq(strings.hex(0xB, 2), "0B")              // 等效旧 toHex2
+
+    // ⑦ 超出 width ⇒ 按补码低位截断（只留低 width*4 位）
+    assert_eq(strings.hex(0x10, 1), "0")
+    assert_eq(strings.hex(0x1234, 2), "34")
+
+    // ⑧ 负数按补码：低 width 位原样
+    assert_eq(strings.hex(-1, 8), "FFFFFFFF")
+    assert_eq(strings.hex(-1, 2), "FF")
+
+    // ⑨ 0 至少给一位（min_digits 从 1 起，不是空串）
+    assert_eq(strings.hex(0, 1), "0")
+
+    // ⑩ width 夹取：<= 0 当 1 位（不崩、不返回空串）
+    assert_eq(strings.hex(5, 0), "5")
+    assert_eq(strings.hex(5, -3), "5")
+
+    // ⑪ 与旧实现等价性抽查：toHex8(0x12345678) 的旧循环 = 高位在前逐 nibble 取
+    assert_eq(strings.hex(0x12345678, 8), "12345678")
+
+    print("test_strings_fmt passed")
+}

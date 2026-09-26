@@ -15,6 +15,7 @@
   - [字符串变换](#字符串变换)
   - [统计与填充](#统计与填充)
   - [分割与连接](#分割与连接)
+  - [单位与进制](#单位与进制)
   - [格式化](#格式化)
   - [字符编码](#字符编码)
 
@@ -473,6 +474,55 @@ strings.join(["a", "b", "c"], ",")        // "a,b,c"
 strings.join(["Hello", "World"], " ")     // "Hello World"
 strings.join(["path", "to", "file"], "/") // "path/to/file"
 ```
+
+---
+
+### 单位与进制
+
+#### `fmt_size(bytes)`
+
+把字节数格式化成人类可读的大小（**1024 进制**：B / KB / MB / GB）。
+
+**参数**:
+
+- `bytes` (int): 字节数
+
+**返回**: `string` - 人类可读的大小
+
+```leno
+strings.fmt_size(0)           // "0 B"
+strings.fmt_size(1023)        // "1023 B"
+strings.fmt_size(1024)        // "1 KB"
+strings.fmt_size(1536)        // "1 KB"      （KB/MB 取整，不保留小数）
+strings.fmt_size(1048576)     // "1 MB"
+strings.fmt_size(1073741824)  // "1 GB"      （整 GB 不显示小数点）
+strings.fmt_size(1610612736)  // "1.5 GB"    （GB 保留 1 位小数）
+```
+
+> 这是从应用层**四份逐字复制**的实现收编来的标准库函数（文件管理器、PE 分析器、缓存清理工具），
+> 口径与其中「GB 带 1 位小数」版一致。
+
+#### `hex(value[, width])`
+
+把整数格式化成**大写 16 进制**字符串。
+
+**参数**:
+
+- `value` (int): 整数
+- `width` (int, 可选): 输出位数。省略 ⇒ 最少位数、**不补零**；给出 ⇒ 恰好补到 `width` 位
+
+**返回**: `string` - 16 进制字符串（无 `0x` 前缀）
+
+```leno
+strings.hex(255)              // "FF"
+strings.hex(0x1F, 8)          // "0000001F"
+strings.hex(0xDEADBEEF, 8)    // "DEADBEEF"
+strings.hex(0x10, 1)          // "0"          （超出 width ⇒ 按补码只留低位）
+strings.hex(-1, 8)            // "FFFFFFFF"   （负数按补码）
+```
+
+> 这是从应用层 `toHex8` / `toHex4` / `toHex2` 三份复制实现收编来的标准库函数（PE 分析器）。
+> `width` 会被夹到 `1..64`；超出 64 位的高位一律补 `0`。
 
 ---
 
