@@ -212,6 +212,29 @@ static Value native_env(int argCount, Value* args) {
     return val_obj((Object*)str_copy(val, (int)strlen(val)));
 }
 
+// _env_or(name, default) - 取环境变量；**取不到或为空串** ⇒ `default`（返回 string）
+// 为什么需要它：`_env` 一次函数有**三种**返回 —— 参数不对 ⇒ null、2 参形态是"设置"⇒ bool、
+// 取不到 ⇒ null、取到 ⇒ string ⇒ 想安全地读一个字符串变量，必须写 `if x == null` 再 `_str(x)`；
+// 而 `_str(null)` 得到的是字符串 `"null"`（不是空串 ✗，TraeSign 里实测踩过）。
+// 这里给一个"**总是 string**"的入口，省掉那两步 ✓（与 `_env` 并存，不是替换：设置/判存在仍用 `_env`）。
+// 空串也回 default：Windows 的 `cmd` 里 `set VAR=` 本身就是**删除**该变量 ⇒ 平台上基本不可达 ✓；
+// 想"特意设成空"请继续用 `_env` ✓。
+static Value native_env_or(int argCount, Value* args) {
+    ObjString* def = NULL;
+    if (argCount >= 2 && val_is_string(args[1])) {
+        def = (ObjString*)val_as_obj(args[1]);
+    }
+    if (argCount < 1 || !val_is_string(args[0])) {
+        return def ? val_obj((Object*)def) : val_obj((Object*)str_copy("", 0));
+    }
+
+    const char* val = getenv(((ObjString*)val_as_obj(args[0]))->chars);
+    if (val == NULL || val[0] == '\0') {
+        return def ? val_obj((Object*)def) : val_obj((Object*)str_copy("", 0));
+    }
+    return val_obj((Object*)str_copy(val, (int)strlen(val)));
+}
+
 // _exit(code) - 以指定退出码终止程序
 static Value native_exit(int argCount, Value* args) {
     int code = 0;
@@ -543,8 +566,12 @@ void sys_init_globals(void) {
     // 注册全局 _console 函数（控制台显示控制，0 或 1 个参数）
     vm_register_native("_console", native_console, -1, 0, 1, TYPE_BOOL, TYPE_UNKNOWN, NULL);
 
-    // 注册全局 _env 函数（环境变量，1 或 2 个参数）
+    // 注册全局 _env 函数（环境变量：读 1 个参数 / 写 2 个参数；见 native_env 的三种返回）
     vm_register_native("_env", native_env, -1, 1, 2, TYPE_ANY, TYPE_UNKNOWN, NULL);
+
+    // 注册全局 _env_or(name, default)：总是 string 的读入口（取不到/空串 ⇒ default ✓）
+    TypeKind env_or_params[] = {TYPE_STRING, TYPE_STRING};
+    vm_register_native("_env_or", native_env_or, 2, -1, -1, TYPE_STRING, TYPE_UNKNOWN, env_or_params);
 
     // 注册全局 _exit 函数（退出程序，0 或 1 个参数）
     vm_register_native("_exit", native_exit, -1, 0, 1, TYPE_NULL, TYPE_UNKNOWN, NULL);

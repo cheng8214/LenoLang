@@ -1,0 +1,39 @@
+// 全局 _env_or(name, default) —— 回归测试（2026-09-26）
+//
+// 背景：`_env` 一次函数有**三种**返回 —— 参数不对 ⇒ null、2 参形态是"设置" ⇒ bool、
+//   取不到 ⇒ null、取到 ⇒ string ⇒ 想安全地读一个字符串变量，必须写 `if x == null` 再
+//   `_str(x)`；而 `_str(null)` 得到的是字符串 "null"（不是空串 ✗，TraeSign 里实测踩过）。
+//   `_env_or` 给一个"**总是 string**"的读入口（注册返回类型就是 TYPE_STRING ⇒ 不必再 `_str` ✓）。
+//
+// 判据：
+//   ① 取到 ⇒ 原值（同时验证 ⑤：`_env(name, value)` 写、`_env_or` 读，两者并存 ✓）；
+//   ② 从未设置过 ⇒ default；
+//   ③ 值为空串 ⇒ default（CRT 把 `_env(k, "")` 当"设为空"还是"删除"都回 default ✓，见下）；
+//   ④ 返回值**总是 string**（可直接调 `.len()`，若是 null 这里会报错 ✗）；
+//   ⑤ 见 ①；
+//   ⑥ 守卫：`_env` 本体行为不变（从未设置仍返回 null ✓）。
+
+main() {
+    var key = "LENO_ENV_OR_TEST"
+    var never = "LENO_ENV_OR_NEVER_SET_9b2f"
+
+    // ① + ⑤ `_env` 写、`_env_or` 读
+    _env(key, "hello")
+    assert_eq(_env_or(key, "d"), "hello")
+
+    // ④ 总是 string：直接调字符串方法
+    assert_eq(_env_or(key, "d").len(), 5)
+
+    // ③ 值为空串 ⇒ default（两种平台语义下都成立：`set VAR=` 在 cmd 里就是"删除"⇒ 同样回 default ✓）
+    _env(key, "")
+    assert_eq(_env_or(key, "d"), "d")
+
+    // ② 从未设置过 ⇒ default（缺省值本身是空串时也一样）
+    assert_eq(_env_or(never, "d"), "d")
+    assert_eq(_env_or(never, ""), "")
+
+    // ⑥ `_env` 本体不变：从未设置 ⇒ null（不是 "null" 字符串 ✗）
+    assert_eq(_env(never), null)
+
+    print("test_env_or passed")
+}

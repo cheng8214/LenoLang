@@ -32,6 +32,7 @@ Sys 模块提供与运行时环境、命令行参数和系统信息相关的全�
 | `_pid()` | 获取当前进程 ID | `Int` |
 | `_env(name)` | 获取环境变量 | `String` / `null` |
 | `_env(name, value)` | 设置环境变量 | `Bool` |
+| `_env_or(name, default)` | 获取环境变量（取不到或空串返回 default） | `String` |
 | `_exit(code)` | 以指定退出码终止程序 | 无 |
 | `_exec(cmd[, timeout_ms])` | 执行系统命令并返回 [输出,退出码]（可带超时；超时码 124）| `[String, Int]` / `null` |
 | `_username()` | 获取当前登录用户名 | `String` / `null` |
@@ -383,6 +384,30 @@ _env("MY_VAR", "")
 
 **注意**: 设置的环境变量仅在当前进程及其子进程中有效，不会影响父进程或系统级环境变量。
 
+### `_env_or(name, default)`
+
+获取指定环境变量的值；**取不到**或**为空串**时返回 `default`。
+
+**参数**:
+- `name` (String): 环境变量名
+- `default` (String): 缺省值（**必填**）
+
+**返回**: `String` - 环境变量值，**总是字符串**（不必再判 `null` / `_str()`）
+
+```leno
+// 读一个"可能没设置"的变量：省掉 `if x == null` + `_str(x)` 样板
+// （`_str(null)` 得到的是字符串 "null" ✗，所以以前必须先判空再转）
+var base = _env_or("TRAE_API_BASE", "https://api.trae.cn")
+print("接口:", base)
+
+// 判"是否存在"、以及"设置变量"仍用 `_env`
+if _env("TRAE_CHECKIN_DEBUG") != null { print("调试模式已开") }
+```
+
+**注意**: `_env_or` 与 `_env` 并存、**不是替换** —— 设置变量、判存在（`!= null`）继续用 `_env` ✓。
+"没设置"与"值为空串"都回默认（Windows 的 `cmd` 里 `set VAR=` 本身就是**删除**该变量；
+想"特意设成空串"请用 `_env` ✓）。
+
 ---
 
 ## 路径工具
@@ -624,6 +649,9 @@ main() {
     // 清除自定义变量
     _env("APP_MODE", "")
     _env("APP_PORT", "")
+
+    // 读取"可能未设置"的变量：取不到 / 空串 ⇒ 默认值（**总是字符串** ✓）
+    print("APP_MODE(已清除):", _env_or("APP_MODE", "development"))
 }
 ```
 
