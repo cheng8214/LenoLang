@@ -4,6 +4,8 @@
 // file_manager 里 ×16 的来源，事件分发全是 case is）。
 // 判定一律走 VM 的 type_check_value（语义唯一来源）：
 //   编译期解出 type_kind / elem_type / name_const → 运行时判定 → 压 bool。
+// v3.2.2 起**泛型实参带约束**的形态改走 OP_TYPE_CHECK_SPEC / OP_AS_CAST_SPEC：
+//   指令尾随一棵**递归类型规格**，判定走 vm.c 的 type_spec_match（与紧凑路径共用叶子口径）。
 //
 // 覆盖：
 //   1. struct 名字判定（含**反例**，确认不是恒真）
@@ -11,9 +13,12 @@
 //   3. switch case is（真实程序里的高频形态）
 //   4. 无类型值（dict）上的基本类型判定（+ 反例）
 //   5. enum 判定 —— TYPE_ENUM 也读 2 字节名字常量，顺带守住刚修的 opcode_size
-//   6. Dict[K,V] 的**逐键值**校验（OP_TYPE_CHECK_DICT / OP_AS_CAST_DICT，v3.2.1）——
-//      修复前 K/V 完全不校验（`{"a":1} is Dict[string,string]` 返回 true）
-//   7. Array[T] 的容器种类收紧（与 Dict 共用 value_matches_kind 口径）
+//   6. Dict[K,V] 的**逐键值**校验 —— 修复前 K/V 完全不校验（`{"a":1} is Dict[string,string]` 为 true）
+//   7. `as` 与 `is` 同口径（不匹配 ⇒ null）
+//   8. `=>` 收窄绑定按真实键值类型分流
+//   9. Array/Dict 的**递归**规格（`Array[Array[Array[int]]]`、`Dict[string,Array[int]]`）
+//  10. 嵌套位置的**名字**校验（`Array[Point]` / `Array[Shape]` / `Dict[string,Point]` / `Array[Color]`）
+//  11. 防无限递归（自引用容器）+ 嵌套深度上限 + Ptr[T]
 
 struct Point { int x = 0; int y = 0 }
 
@@ -125,6 +130,50 @@ main() {
     assert(aa is Array[Array[int]], "元素都是数组 ⇒ 匹配 Array[Array[int]]")
     var ab = [[1, 2], 5]
     assert(not (ab is Array[Array[int]]), "混入非数组元素 ⇒ 不得匹配（修复前放行）")
+
+    // ---- 9) 递归规格：Array/Dict 的实参递归到底（v3.2.2）----
+    var a3 = [[[1]]]
+    assert(a3 is Array[Array[Array[int]]], "三层嵌套且全是 int ⇒ 匹配")
+    var a3b = [[["x"]]]
+    assert(not (a3b is Array[Array[Array[int]]]), "最内层是 string ⇒ 不得匹配")
+    var mv1 = {"a": [1, 2]}
+    assert(mv1 is Dict[string, Array[int]], "值是真数组 ⇒ 匹配 Dict[string,Array[int]]")
+    var mv2 = {"a": [1, "x"]}
+    assert(not (mv2 is Dict[string, Array[int]]), "值数组里混入 string ⇒ 不得匹配")
+    var mv3 = {"a": 5}
+    assert(not (mv3 is Dict[string, Array[int]]), "值根本不是数组 ⇒ 不得匹配")
+
+    // ---- 10) 嵌套位置的**名字**校验（struct / face / enum）----
+    var points = [new Point(x = 1, y = 2)]
+    assert(points is Array[Point], "元素都是 Point ⇒ 匹配 Array[Point]")
+    var mixed = [new Point(x = 1, y = 2), 5]
+    assert(not (mixed is Array[Point]), "混入非 struct ⇒ 不得匹配")
+    var rects = [new Rect(w = 2.0, h = 3.0)]
+    assert(rects is Array[Shape], "Rect impl Shape ⇒ 匹配 Array[Shape]")
+    assert(not (rects is Array[Point]), "Rect 不是 Point ⇒ 不得匹配")
+    var pdict = {"p": new Point(x = 1, y = 2)}
+    assert(pdict is Dict[string, Point], "值是 Point ⇒ 匹配 Dict[string,Point]")
+    var pdict2 = {"p": 3}
+    assert(not (pdict2 is Dict[string, Point]), "值不是 struct ⇒ 不得匹配")
+    // 枚举成员在运行期就是 int ⇒ Array[Color] 只要求"是 int"（语言本身不区分是哪个 enum）
+    var colors = [0, 1, 2]
+    assert(colors is Array[Color], "枚举成员是 int ⇒ 放行")
+
+    // ---- 11) 防无限递归 / 深度上限 / Ptr ----
+    var self_arr = []
+    self_arr.add(self_arr)
+    assert(not (self_arr is Array[Array[int]]), "自引用容器 ⇒ fail-closed（且不得崩）")
+    assert(self_arr is Array, "顶层判定不受影响")
+    var deep = []
+    var di = 0
+    while di < 40 {
+        deep = [deep]
+        di = di + 1
+    }
+    assert(not (deep is Array[Array[int]]), "40 层 > 深度上限 ⇒ fail-closed")
+    assert(deep is Array, "顶层判定不受影响")
+    assert(not (null is Ptr[u8]), "null 不是 FFI 指针")
+    assert(not (d_ss is Ptr[u8]), "Dict 不是 FFI 指针")
 
     print("test_op_type_check: OK")
 }

@@ -87,7 +87,7 @@ static const char* opCodeNames[] = {
     "OP_CMPJMP_ITER",
     "OP_BITAND_K", "OP_BITOR_K", "OP_BITXOR_K", "OP_SHL_K", "OP_SHR_K", "OP_USHR_K",
     "OP_INDEX_SET_ARRAY_INT",
-    "OP_TYPE_CHECK_DICT", "OP_AS_CAST_DICT",
+    "OP_TYPE_CHECK_SPEC", "OP_AS_CAST_SPEC",
     "OP_OPCODE_COUNT",
 };
 
@@ -349,13 +349,26 @@ static int decode_trailing(Chunk* chunk, int offset, char* desc, size_t desc_siz
             if (desc) snprintf(desc, desc_size, "返回类型=%d 参数个数=%d%s", ret, pcnt, over ? " [截断]" : "");
             break;
         }
-        // Dict[K,V] 的逐键值校验：K/V 直接在 B/C 里（无尾随数据，定长 4 字节）
-        case OP_TYPE_CHECK_DICT:
-        case OP_AS_CAST_DICT: {
-            if (desc) {
-                snprintf(desc, desc_size, "%s[K=%s, V=%s]（逐键值校验）",
-                         (op == OP_TYPE_CHECK_DICT) ? "Dict" : "as Dict",
-                         type_kind_to_string((TypeKind)b), type_kind_to_string((TypeKind)c));
+        // 泛型实参的**递归类型规格**（**变长**：长度由 vm.c 的 type_spec_size_bounded 算 ——
+        // 与发射端 / 判定端共用同一份格式认知，不会再出现"各写一份长度表"的漂移；
+        // 渲染也直接调 vm.c 的 type_spec_render，避免调试端再实现一遍规格解析）。
+        case OP_TYPE_CHECK_SPEC:
+        case OP_AS_CAST_SPEC: {
+            const uint8_t* spec = (base < chunk->len) ? &chunk->code[base] : NULL;
+            int spec_len = spec ? type_spec_size_bounded(spec, chunk->code + chunk->len) : 0;
+            if (spec && base + spec_len <= chunk->len) {
+                p += spec_len;   // 返回值 = 4 + p ⇒ 必须把规格长度记进去
+                if (desc) {
+                    char ts[256];
+                    type_spec_render(chunk, spec, ts, (int)sizeof(ts));
+                    snprintf(desc, desc_size, "%s %s（递归规格校验）",
+                             (op == OP_TYPE_CHECK_SPEC) ? "is" : "as", ts);
+                }
+            } else {
+                // 截断/损坏：推进到 chunk 末尾，既不越界读也不死循环
+                over = 1;
+                p = (chunk->len > base) ? (chunk->len - base) : 0;
+                if (desc) snprintf(desc, desc_size, "类型规格被截断");
             }
             break;
         }

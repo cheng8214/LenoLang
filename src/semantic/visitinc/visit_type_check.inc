@@ -2,50 +2,14 @@
             if (ast->u.type_check.expr) {
                 visit(s, ast->u.type_check.expr);
             }
-            if (ast->u.type_check.type && ast->u.type_check.type->kind == TYPE_STRUCT && ast->u.type_check.type->struct_name) {
-                Symbol* sym = scope_resolve(s->current, ast->u.type_check.type->struct_name);
-                if (sym && sym->type && sym->type->kind == TYPE_FACE) {
-                    ast->u.type_check.type->kind = TYPE_FACE;
-                } else if (sym && sym->type && sym->type->kind == TYPE_ENUM) {
-                    ast->u.type_check.type->kind = TYPE_ENUM;
-                } else {
-                    // 当前作用域未找到，尝试在导入模块的符号表中查找 face
-                    for (int mi = 0; mi < s->imported_module_count; mi++) {
-                        if (s->imported_modules[mi].sym_table) {
-                            ModuleFaceSymbol* fsym = module_symbol_table_find_face(
-                                s->imported_modules[mi].sym_table, ast->u.type_check.type->struct_name);
-                            if (fsym) {
-                                ast->u.type_check.type->kind = TYPE_FACE;
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
+            // 递归纠正类型名（face/enum 被 parser 记成 struct）+ 修 Array/Dict/Ptr 的实参：
+            //   v3.2.2 起嵌套实参的名字会被带进运行期做名字校验 ⇒ 漏修就会误判不匹配
+            resolve_type_names(s, ast->u.type_check.type);
             break;
 
         case AST_AS_CAST:
             if (ast->u.type_check.expr) {
                 visit(s, ast->u.type_check.expr);
             }
-            if (ast->u.type_check.type && ast->u.type_check.type->kind == TYPE_STRUCT && ast->u.type_check.type->struct_name) {
-                Symbol* sym = scope_resolve(s->current, ast->u.type_check.type->struct_name);
-                if (sym && sym->type && sym->type->kind == TYPE_FACE) {
-                    ast->u.type_check.type->kind = TYPE_FACE;
-                } else if (sym && sym->type && sym->type->kind == TYPE_ENUM) {
-                    ast->u.type_check.type->kind = TYPE_ENUM;
-                } else {
-                    // 当前作用域未找到，尝试在导入模块的符号表中查找 face
-                    for (int mi = 0; mi < s->imported_module_count; mi++) {
-                        if (s->imported_modules[mi].sym_table) {
-                            ModuleFaceSymbol* fsym = module_symbol_table_find_face(
-                                s->imported_modules[mi].sym_table, ast->u.type_check.type->struct_name);
-                            if (fsym) {
-                                ast->u.type_check.type->kind = TYPE_FACE;
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
+            resolve_type_names(s, ast->u.type_check.type);
             break;

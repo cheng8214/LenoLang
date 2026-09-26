@@ -85,7 +85,20 @@
 //   并写明"为什么升 / 为什么不升"；改前先 git fetch（2026-09-16 撞过车：两个会话都用 v23
 //   但格式不同，数值相同、格式不同 ⇒ 靠版本号区分不开）。
 #define LENO_BIN_MAGIC      0x424E454C  // "LENB" little-endian
+// v3.2.2（2026-09-26）：把类型检查的"泛型实参"从**单个 TypeKind** 升级为**递归类型规格** ——
+//   新增 opcode **OP_TYPE_CHECK_SPEC / OP_AS_CAST_SPEC**（4 字节头 + 变长规格字节），
+//   取代 v3.2.1 里那两条只管 Dict K/V 的过渡 opcode（已删）。这一版覆盖：
+//     · Dict[K,V] 的键/值校验（含嵌套：`Dict[string, Array[int]]`）；
+//     · Array[T] 的**递归**逐元素校验（`Array[Array[int]]` 以前只看一层）；
+//     · 元素/键值的 struct·face·enum **名字**校验（`Array[Rect]` 以前丢掉名字）；
+//     · Ptr[T] 参与 `is`/`as`（此前 TYPE_PTR_GENERIC 在 type_check_value 里落 default ⇒ 恒 false）；
+//     · 嵌套深度上限（防自引用容器无限递归）⇒ 超限 fail-closed。
+//   **opcode 集合变了**（且字节布局多了变长尾随字节）⇒ 必须 bump：
+//   按惯例追加在枚举末尾，但旧构建读到未知 opcode 会跳转发散（0xC0000005），而旧字节码
+//   在新 VM 上会把规格字节当指令读 ⇒ 两侧都必须整体失效重编译。判据同 v2.6.0 / v3.2.0。
+//   ⇒ LENO_MODCACHE_VERSION 同步升（模块字节码里同样含 opcode）。
 // v3.2.1（2026-09-26）：新增 opcode **OP_TYPE_CHECK_DICT / OP_AS_CAST_DICT** ——
+//   ⚠ 已被 v3.2.2 取代（那两条 opcode 已删除，改用通用的规格版）。保留本条仅作历史记录。
 //   `is Dict[K,V]` / `as Dict[K,V]` 的**逐键值**校验（修复：此前 K/V 完全不校验，
 //   `{"a":1} is Dict[string,string]` 返回 true，只看了顶层是 Dict）。
 //   **opcode 集合变了**：按惯例追加在枚举末尾（既有编号全部不变 ⇒ 旧 .lenb 在新 VM 上
@@ -131,8 +144,10 @@
 //   ⇒ .lenb / entry_*.lenb 必须整体失效重编译。
 // v2.7.1（2026-09-16）：枚举成员求值语义修正 —— 扫描器补 `not`、除零/取模零改为与解析器同结论
 //   ⇒ 修正前编译出的 .lenb / entry_*.lenb 里可能烙着错的常量值，必须整体失效重编译。
-#define LENO_BIN_VERSION    0x00030201  // v3.2.1 - 新增 opcode OP_TYPE_CHECK_DICT /
-                                        //   OP_AS_CAST_DICT（Dict[K,V] 逐键值校验，见上）
+#define LENO_BIN_VERSION    0x00030202  // v3.2.2 - 新增 opcode OP_TYPE_CHECK_SPEC /
+                                        //   OP_AS_CAST_SPEC（递归类型规格，见上）
+                                        // v3.2.1 - 过渡版：OP_TYPE_CHECK_DICT / OP_AS_CAST_DICT
+                                        //   （已被 v3.2.2 取代并删除，见上）
                                         // v3.2.0 - 新增 opcode OP_INDEX_SET_ARRAY_INT（见上）
                                         // v3.1.0 - 新增 CONST_TAG_DEAD_FUNCTION（DCE 裁剪，见上）
                                         // v3.0.2 - 行号表改 RLE+varint（见上面 v3.0.2 条目）
@@ -161,10 +176,13 @@
 // v13：ObjFunction 增加 is_async（运行期判定"调用即建协程"用）。旧缓存里的函数对象缺这个
 //      字段 ⇒ async 函数的**间接调用**（`var f = w; f()`、当参数传、绑定方法）会退回同步执行、
 //      静默错值，所以必须**作废旧缓存**。
-#define LENO_MODCACHE_VERSION  0x00000012  // v18 - 同 LENO_BIN_VERSION v3.2.1（新增 opcode
-                                           //       OP_TYPE_CHECK_DICT / OP_AS_CAST_DICT +
-                                           //       Array[T] 容器种类的逐元素校验收紧：
+#define LENO_MODCACHE_VERSION  0x00000013  // v19 - 同 LENO_BIN_VERSION v3.2.2（类型检查改走
+                                           //       递归类型规格：新增 OP_TYPE_CHECK_SPEC /
+                                           //       OP_AS_CAST_SPEC 且带变长尾随字节，
                                            //       模块字节码里同样含 opcode 与判定语义）
+                                           // v18 - 同 LENO_BIN_VERSION v3.2.1（新增 opcode
+                                           //       OP_TYPE_CHECK_DICT / OP_AS_CAST_DICT +
+                                           //       Array[T] 容器种类的逐元素校验收紧）
                                            // v17 - 同 LENO_BIN_VERSION v3.2.0（新增 opcode
                                            //       OP_INDEX_SET_ARRAY_INT：模块字节码里同样
                                            //       含 opcode，旧构建读到即跳转发散）

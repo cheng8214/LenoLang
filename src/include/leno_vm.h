@@ -377,20 +377,31 @@ typedef enum {
     //   追加在末尾 ⇒ 既有 opcode 编号不动，旧 .lenb 仍可执行。
     OP_INDEX_SET_ARRAY_INT,  // iABC  R[B][R[C]] = R[A]（Array 特化，下标 int）
 
-    // Dict[K, V] 的**逐键值**类型判定 / 转换（修复 `is Dict[K,V]` 只校验顶层的漏洞）。
-    //   为什么另立 opcode、而不是给 OP_TYPE_CHECK 加尾随字节：K/V 是**两个** TypeKind，
-    //   而 4 字节头里 A/B/C 已占满（B = 顶层类型，C = 元素类型 / 名字常量标记），塞不下；
-    //   加尾随字节会把 OP_TYPE_CHECK 变成变长（反汇编长度表、JIT 扫描、EXTRAARG 对账都要跟着改）。
-    //   编码：A = 寄存器，B = 键类型 K，C = 值类型 V（TYPE_ANY = 不校验该侧）。
-    //   逐项校验口径与 Array[T] 共用（vm.c 的 value_matches_kind）：
-    //     基本类型（int/float/string/bool/null）与容器（array/dict/struct/face）比**顶层**，
-    //     其余种类一律放行 ⇒ `Dict[string, Array[int]]` 只保证"值是数组"，不递归到内层元素
-    //     （与 `Array[Array[int]]` 不检查内层元素同一口径）。
-    //   ⚠ codegen 只在「`is/as Dict[K,V]` 且 K/V **至少一侧具体**」时才发这两条；
-    //     裸 `Dict` / `Dict[any,any]` 仍走 OP_TYPE_CHECK / OP_AS_CAST（行为与旧版逐字节一致）。
+    // 泛型实参的**递归类型规格**版类型判定 / 转换。
+    //   背景：紧凑版 OP_TYPE_CHECK / OP_AS_CAST 只带得动**一个** TypeKind（那一个字节是
+    //   "元素类型"），于是 Dict[K,V] 的 K/V 没通道、Array[Array[int]] 只能看一层、
+    //   Array[Rect] 丢掉 struct 名字 —— 栈式时代就有这个盲区，移植时照抄了下来。
+    //   这两条把完整类型树写进指令尾随字节，判定递归到底：
+    //     [4 字节头] A = 寄存器，B/C 保留（0）  +  紧随 **类型规格**（长度由 type_spec_size 算）
+    //   类型规格（前缀、自定界，不需要长度前缀）：
+    //     spec := kind(1)
+    //             [TYPE_STRUCT|TYPE_FACE|TYPE_ENUM]  name_const(2, 大端；chunk->constants 下标)
+    //             [TYPE_ARRAY]       spec(元素)
+    //             [TYPE_DICT]        spec(键) spec(值)
+    //             [TYPE_PTR_GENERIC] spec(元素)
+    //     其余 kind 无附加字节；发射端把 TYPE_UNKNOWN / TYPE_INFER 归一为 TYPE_ANY（无约束）。
+    //   判定口径（vm.c 的 value_matches_kind + type_spec_match，**唯一来源**）：
+    //     · 叶子（int/float/string/bool/null/…）与容器（array/dict/struct/face/enum/…）比类型；
+    //     · Array 的**每个元素**、Dict 的**每个键与值**递归过子规格；
+    //     · Ptr[T] 只校验顶层（FFI 指针里没有"元素值"可递归；`as` 会把叶子元素类型回填）；
+    //     · 嵌套深度上限 TYPE_SPEC_MAX_DEPTH（防自引用容器无限递归）⇒ 超限 fail-closed。
+    //   ⚠ codegen 只在「泛型实参**带约束**」时才发这两条（见 codegen_expr.c 的 type_needs_spec）：
+    //     `Array[int]` / `Dict[string,string]` / `Array[Array[int]]` / `Array[Rect]` / `Ptr[u8]` …
+    //     裸 `Array` / `Dict` / `Ptr` / 带名字的 struct·face·enum 顶层仍走紧凑版 ——
+    //     热路径（`case is Rect` 等）与旧版**逐字节一致**，零额外开销。
     //   追加在末尾 ⇒ 既有 opcode 编号不动。
-    OP_TYPE_CHECK_DICT,  // iABC  R[A] = (R[A] is Dict[K=B, V=C])
-    OP_AS_CAST_DICT,     // iABC  R[A] = R[A] as Dict[K=B, V=C]（不匹配 → null）
+    OP_TYPE_CHECK_SPEC,  // iABC + 类型规格  R[A] = (R[A] is <spec>)
+    OP_AS_CAST_SPEC,     // iABC + 类型规格  R[A] = R[A] as <spec>（不匹配 → null）
 
     OP_OPCODE_COUNT,    // 用于跳转表大小
 } OpCode;
@@ -497,15 +508,27 @@ Value string_add(Value a, Value b);
 // 返回 1 = 匹配。纯判定：不分配、不报错。
 int type_check_value(Value value, TypeKind expected_type, TypeKind elem_type, Value name_val);
 
-// OP_TYPE_CHECK_DICT / OP_AS_CAST_DICT 的语义唯一来源（定义在 vm.c）。
-//   K/V 是写进指令的**具体类型种类**（TYPE_ANY = 该侧不校验），语义与
-//   `type_check_value(v, TYPE_DICT, ...)` 的顶层判定一致，多一层逐键值校验：
-//     · 数组部分（连续非负整数键）与哈希部分都要看 ⇒ 不依赖 ObjDict->order 是否同步；
-//     · 键与值各自按 value_matches_kind 比（见 vm.c）；
-//     · 空字典恒匹配；对象不是 Dict ⇒ 不匹配。
-// dict_type_check: 纯判定，返回 1/0；dict_as_cast: 匹配则原值、否则 null（不做转换）。
-int dict_type_check(Value value, TypeKind key_kind, TypeKind value_kind);
-Value dict_as_cast(Value value, TypeKind key_kind, TypeKind value_kind);
+// OP_TYPE_CHECK_SPEC / OP_AS_CAST_SPEC 的语义唯一来源（定义在 vm.c）。
+//   spec   = 指令尾随的**递归类型规格**（格式见 OpCode 枚举处 OP_TYPE_CHECK_SPEC 的说明）
+//   chunk  = 用于解析规格里 STRUCT/FACE/ENUM 的名字常量（其余 kind 用不到）
+//   out_bytes（可空）= 回填该规格占用的字节数 ⇒ 解释器按它推进 ip，不必自己算长度
+//   判定递归到底（Array 逐元素 / Dict 逐键值），口径与紧凑路径共用同一个叶子函数；
+//   深度上限 TYPE_SPEC_MAX_DEPTH，超限 fail-closed。
+// type_spec_check: 纯判定，返回 1/0；type_spec_cast: 匹配则原值（含 Ptr[T] 的元素类型回填）、
+//   否则 null；两者都不报错、不因不匹配而分配（Ptr 回填不分配）。
+int type_spec_check(Value value, Chunk* chunk, const uint8_t* spec, int* out_bytes);
+Value type_spec_cast(Value value, Chunk* chunk, const uint8_t* spec, int* out_bytes);
+
+// 类型规格的字节长度（递归、自定界）。**发射端 / 判定端 / 反汇编端唯一的格式认知**：
+//   debug.c 的反汇编长度表也调它 ⇒ 三者不可能各自算错（历史上一旦长度表漂移，
+//   dump 后半段就全变成 OP_NOP 垃圾）。
+//   _bounded 版本：解析不越过 end（反汇编读被截断/损坏的 chunk 时防越界），其余相同。
+int type_spec_size(const uint8_t* spec);
+int type_spec_size_bounded(const uint8_t* spec, const uint8_t* end);
+
+// 把类型规格渲染成可读文本（如 "Dict[string, Array[int]]"），供反汇编摘要用。
+//   与解析同源写在 vm.c ⇒ 调试端不再自己解析一遍规格（避免第三份格式认知）。
+void type_spec_render(Chunk* chunk, const uint8_t* spec, char* out, int out_size);
 
 // OP_AS_CAST 的安全类型转换（定义在 vm.c）—— **语义唯一来源**（§8.83）。
 // 解释器（vm/vminc/op_as_cast.inc）与原生模块都调它：

@@ -29,18 +29,23 @@
         R(a) = vm_as_cast(R(a), expected, elem, name_val);
         DISPATCH();
     }
-    // OP_TYPE_CHECK_DICT A B C: R[A] = (R[A] is Dict[B, C])（B/C = TypeKind，TYPE_ANY = 该侧不校验）
-    //   与 OP_TYPE_CHECK 的区别只有一处：**逐键值**校验（口径见 vm.c 的 dict_matches_kv）。
-    //   为什么单开 opcode：K/V 两个 TypeKind 塞不进 4 字节头的 B/C（B 已被顶层类型占用）。
-    LABEL(OP_TYPE_CHECK_DICT): {
-        int a = READ_A(), b = READ_B(), c = READ_C();
-        R(a) = val_bool(dict_type_check(R(a), (TypeKind)b, (TypeKind)c));
+    // OP_TYPE_CHECK_SPEC A B C: R[A] = (R[A] is <类型规格>)（规格紧随 4 字节头，格式见 leno_vm.h）
+    //   ⚠ 规格是**变长**的：按 type_spec_size 算出的字节数推进 ip（判定函数自己回填 consumed）。
+    //     深度上限与"自引用容器"的处理都在 vm.c 的 type_spec_match 里（超限 fail-closed）。
+    LABEL(OP_TYPE_CHECK_SPEC): {
+        int a = READ_A();
+        int consumed = 0;
+        int ok = type_spec_check(R(a), frame->chunk, frame->ip, &consumed);
+        frame->ip += consumed;
+        R(a) = val_bool(ok);
         DISPATCH();
     }
-    // OP_AS_CAST_DICT A B C: R[A] = R[A] as Dict[B, C]（不匹配 → null）
-    LABEL(OP_AS_CAST_DICT): {
-        int a = READ_A(), b = READ_B(), c = READ_C();
-        R(a) = dict_as_cast(R(a), (TypeKind)b, (TypeKind)c);
+    // OP_AS_CAST_SPEC A B C: R[A] = R[A] as <类型规格>（不匹配 → null）
+    LABEL(OP_AS_CAST_SPEC): {
+        int a = READ_A();
+        int consumed = 0;
+        R(a) = type_spec_cast(R(a), frame->chunk, frame->ip, &consumed);
+        frame->ip += consumed;
         DISPATCH();
     }
 

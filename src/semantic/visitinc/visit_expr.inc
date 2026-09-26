@@ -106,20 +106,10 @@
                 }
 
                 if (temp_guards.count > 0) {
-                    // 修正数组元素类型中的 face/enum（如 Array[Speaker] 中 Speaker 被解析为 struct）
+                    // 递归修正 guard_type 的类型名（最外层 + Array/Dict/Ptr 实参）
                     for (int gi = 0; gi < temp_guards.count; gi++) {
                         TypeGuardCond* gc = &temp_guards.items[gi];
-                        if (gc->guard_type && gc->guard_type->kind == TYPE_ARRAY &&
-                            gc->guard_type->element_type &&
-                            gc->guard_type->element_type->kind == TYPE_STRUCT &&
-                            gc->guard_type->element_type->struct_name) {
-                            Symbol* sym = scope_resolve(s->current, gc->guard_type->element_type->struct_name);
-                            if (sym && sym->type && sym->type->kind == TYPE_FACE) {
-                                gc->guard_type->element_type->kind = TYPE_FACE;
-                            } else if (sym && sym->type && sym->type->kind == TYPE_ENUM) {
-                                gc->guard_type->element_type->kind = TYPE_ENUM;
-                            }
-                        }
+                        resolve_type_names(s, gc->guard_type);
                     }
 
                     // 创建子作用域，应用类型收窄

@@ -73,6 +73,73 @@ static void gen_default_value_from_text_to(CodeGen* gen, int dst, const char* te
 }
 
 // ============================================================================
+// 泛型实参 → **递归类型规格**（type spec）
+// ----------------------------------------------------------------------------
+// 背景：紧凑指令只带得动**一个** TypeKind（"元素类型"那一字节）⇒ `Dict[K,V]` 的 K/V
+//   没有通道、`Array[Array[int]]` 只能看一层、`Array[Rect]` 丢掉 struct 名字。
+//   带实参的类型改走 OP_TYPE_CHECK_SPEC / OP_AS_CAST_SPEC：把整棵类型树写进指令尾随
+//   字节（格式见 leno_vm.h 的 OP_TYPE_CHECK_SPEC 说明；长度由 vm.c 的 type_spec_size 算）。
+// 判据（type_needs_spec）：只有**泛型实参带约束**时才走规格版 ——
+//   `Array[int]` / `Dict[string,string]` / `Array[Array[int]]` / `Array[Rect]` / `Ptr[u8]`
+//   走规格版；裸 `Array` / `Dict` / `Ptr` 与带名字的 struct·face·enum **顶层**仍走紧凑版
+//   ⇒ 热路径（`case is Rect` 之类）与旧版**逐字节一致**，零额外开销。
+//   `Array[any]` / `Dict[any,any]` 的实参没有约束 ⇒ 同样走紧凑版（语义等价且更省）。
+// ⚠ 三个地方必须同构：这里的 emit_type_spec、vm.c 的 type_spec_match / type_spec_size。
+//   （反汇编端不自己解析，直接调 type_spec_size 算长度 ⇒ 不会再出现长度表漂移。）
+// ============================================================================
+
+// 该类型作为**嵌套成员**时是否带来约束（ANY/UNKNOWN/INFER = "没有要求"）
+static int type_is_constraining(TypeInfo* t) {
+    if (!t) return 0;
+    if (t->kind == TYPE_ANY || t->kind == TYPE_UNKNOWN || t->kind == TYPE_INFER) return 0;
+    return 1;
+}
+
+// 顶层类型是否需要"规格版"指令（即：泛型实参是否带约束）
+static int type_needs_spec(TypeInfo* t) {
+    if (!t) return 0;
+    switch (t->kind) {
+        case TYPE_ARRAY:
+            return type_is_constraining(t->element_type);
+        case TYPE_DICT:
+            return type_is_constraining(t->key_type) || type_is_constraining(t->value_type);
+        case TYPE_PTR_GENERIC:
+            return type_is_constraining(t->element_type);
+        default:
+            return 0;
+    }
+}
+
+// 写出一棵类型规格（递归）
+static void emit_type_spec(CodeGen* gen, TypeInfo* t, int line) {
+    TypeKind kind = t ? t->kind : TYPE_ANY;
+    // UNKNOWN / INFER 归一为 ANY（"无约束"，与 VM 侧 value_matches_kind 的放行口径一致）
+    if (kind == TYPE_UNKNOWN || kind == TYPE_INFER) kind = TYPE_ANY;
+
+    chunk_write(gen->chunk, (uint8_t)kind, line);
+
+    if (kind == TYPE_STRUCT || kind == TYPE_FACE || kind == TYPE_ENUM) {
+        const char* nm = (t && t->struct_name) ? t->struct_name : "";
+        int nc = make_constant(gen, val_obj((Object*)str_copy(nm, (int)strlen(nm))));
+        chunk_write(gen->chunk, (uint8_t)((nc >> 8) & 0xFF), line);
+        chunk_write(gen->chunk, (uint8_t)(nc & 0xFF), line);
+    } else if (kind == TYPE_ARRAY) {
+        emit_type_spec(gen, t ? t->element_type : NULL, line);
+    } else if (kind == TYPE_DICT) {
+        emit_type_spec(gen, t ? t->key_type : NULL, line);     // K
+        emit_type_spec(gen, t ? t->value_type : NULL, line);   // V（紧跟 K）
+    } else if (kind == TYPE_PTR_GENERIC) {
+        emit_type_spec(gen, t ? t->element_type : NULL, line);
+    }
+}
+
+// 发射"规格版"指令：4 字节头（B/C 保留 0）+ 类型规格
+static void emit_type_spec_op(CodeGen* gen, OpCode op, int reg, TypeInfo* t, int line) {
+    reg_encode_iABC(gen->chunk, op, reg, 0, 0, line);
+    emit_type_spec(gen, t, line);
+}
+
+// ============================================================================
 // 类型检查 / 安全转换（就地作用于 R[reg]）
 //   需要名字的类别（struct/face/enum、struct/face/cstruct）在指令后附 2 字节名字常量
 // ============================================================================
@@ -80,22 +147,10 @@ static void emit_type_op(CodeGen* gen, OpCode op, int reg, TypeInfo* t, int with
     TypeKind kind = t ? t->kind : TYPE_ANY;
     TypeKind elem = (t && t->element_type) ? t->element_type->kind : TYPE_ANY;
 
-    // Dict[K, V]：K/V 至少一侧是**具体类型** ⇒ 发 OP_TYPE_CHECK_DICT / OP_AS_CAST_DICT
-    //   （K/V 直接编在 B/C 里，见 leno_vm.h 的说明）。裸 `Dict` / `Dict[any, any]` /
-    //   推断不出的类型仍走原 opcode —— 那三者的语义就是"只校验顶层是 Dict"，行为不变。
-    //   ⚠ TYPE_UNKNOWN / TYPE_INFER 当作"不校验"：它们表示"还没解析出类型"，
-    //     若当成具体种类下发会白扫一遍字典（value_matches_kind 的 default 本就放行）。
-    if (kind == TYPE_DICT && t && op != OP_TYPE_CHECK_DICT && op != OP_AS_CAST_DICT) {
-        TypeKind k = t->key_type ? t->key_type->kind : TYPE_ANY;
-        TypeKind v = t->value_type ? t->value_type->kind : TYPE_ANY;
-        int k_spec = (k != TYPE_ANY && k != TYPE_UNKNOWN && k != TYPE_INFER);
-        int v_spec = (v != TYPE_ANY && v != TYPE_UNKNOWN && v != TYPE_INFER);
-        if (k_spec || v_spec) {
-            reg_encode_iABC(gen->chunk,
-                            (op == OP_TYPE_CHECK) ? OP_TYPE_CHECK_DICT : OP_AS_CAST_DICT,
-                            reg, k, v, line);
-            return;
-        }
+    if (type_needs_spec(t)) {
+        emit_type_spec_op(gen, (op == OP_TYPE_CHECK) ? OP_TYPE_CHECK_SPEC : OP_AS_CAST_SPEC,
+                          reg, t, line);
+        return;
     }
 
     int need_name = 0;

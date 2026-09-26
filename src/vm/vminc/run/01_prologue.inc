@@ -191,8 +191,8 @@
         [OP_GET_FIELD_FAST] = &&LABEL(OP_GET_FIELD_FAST),
         [OP_ACC_FIELDS] = &&LABEL(OP_ACC_FIELDS),
         [OP_INVOKE_METHOD_TYPED] = &&LABEL(OP_INVOKE_METHOD_TYPED),
-        [OP_TYPE_CHECK_DICT] = &&LABEL(OP_TYPE_CHECK_DICT),
-        [OP_AS_CAST_DICT] = &&LABEL(OP_AS_CAST_DICT),
+        [OP_TYPE_CHECK_SPEC] = &&LABEL(OP_TYPE_CHECK_SPEC),
+        [OP_AS_CAST_SPEC] = &&LABEL(OP_AS_CAST_SPEC),
     };
 
     // ★ 行号**不再每条指令写回**：`vm.current_line` 在本仓库**没有 VM 内读者** ——

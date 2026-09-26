@@ -28,7 +28,7 @@ export func history_path(): string {
 
 // 全部历史 —— 同 devices：**扁平** `string → string` ⇒ 读取处一次收窄定型，
 // 之后全链路 `Dict[string, string]`，调用点不再手写 `is Dict` ✓
-// 同 devices：`is Dict[string, string]` 逐键值校验（v3.2.1 起）⇒ 取值仍走 `_str()` 兜底的 json_get ✓
+// 同 devices：`is Dict[string, string]` 逐键值校验（v3.2.2 起）⇒ 取值仍走 `_str()` 兜底的 json_get ✓
 export func load_all(): Dict[string, string] {
     var p = history_path()
     if p == "" { return {} }

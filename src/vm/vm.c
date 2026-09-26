@@ -331,27 +331,31 @@ Value string_add(Value a, Value b) {
 }
 
 // ============================================================================
-// 泛型容器逐项校验的**唯一口径**（Array[T] 的逐元素 / Dict[K,V] 的逐键值共用）
+// 类型判定 / 转换的**叶子口径** + **递归类型规格**（type spec）
 // ----------------------------------------------------------------------------
-// 为什么要有它：Array[T] 与 Dict[K,V] 原先各写一份 switch，且都把"容器种类"
-//   落进 default ⇒ 恒真 —— 表现是 `Dict[string,string]` 只校验"顶层是 Dict"，
-//   元素/键值里塞 int、null、嵌套对象都算通过（实测：`{"a":1} is Dict[string,string]`
-//   返回 true）。这里把口径收成一处，两条路径不可能再漂移。
-// 口径（与既有 Array[T] 逐元素检查一致，只补上容器种类）：
-//   int     ← int / bigint（bigint 参与算术后仍是数值）
-//   float   ← float（int 不算：`[1] is Array[float]` 旧行为即为 false，保持不变）
-//   string  ← ObjString；bool ← bool；null ← null
-//   array/dict/struct/face ← 对应对象类型（**只看顶层**，不递归内层参数）
-//   其余种类（ANY/UNKNOWN/自定义…）⇒ 放行 —— 单个 TypeKind 表达不了内层参数，
-//   递归校验需要类型描述符，不在本次修复范围内（与 `Array[Array[int]]` 不检查
-//   内层元素同一口径，见 leno_vm.h 的 OP_TYPE_CHECK_DICT 说明）。
+// 历史问题（栈式时代就有、移植后照抄）：指令里只带得动**一个**泛型实参（TypeKind 字节），
+//   于是 `Dict[K,V]` 的 K/V 没有通道、`Array[Array[int]]` 只能看一层、
+//   `Array[Rect]` 丢掉 struct 名字 ⇒ 一律退化成"顶层是不是容器"。
+// 现在分两条路（发射端怎么选见 codegen_expr.c 的 type_needs_spec）：
+//   ① 叶子类型（int/string/… 、裸 Array/Dict、带名字的 struct/face/enum）⇒
+//      紧凑指令 OP_TYPE_CHECK / OP_AS_CAST（1 个 TypeKind + 可选名字常量），
+//      与旧版**逐字节一致**，热路径（`case is Rect` 之类）零开销变化；
+//   ② 泛型实参带约束（`Array[int]`、`Dict[string,string]`、`Array[Array[int]]`、
+//      `Array[Rect]`、`Ptr[u8]` …）⇒ OP_TYPE_CHECK_SPEC / OP_AS_CAST_SPEC，
+//      指令后跟**递归类型规格**（格式见 leno_vm.h），判定递归到底。
+// 叶子口径只此一份（value_matches_kind），两条路共用 ⇒ 不会漂移。
 // ============================================================================
 static int value_matches_kind(Value v, TypeKind kind) {
     switch (kind) {
+        // 无约束：发射端会把 UNKNOWN/INFER 归一成 ANY，这里一并放行
         case TYPE_ANY:
+        case TYPE_UNKNOWN:
+        case TYPE_INFER:
             return 1;
         case TYPE_INT:
             return val_is_int(v) || val_is_bigint(v);
+        case TYPE_BIGINT:
+            return val_is_bigint(v);
         case TYPE_FLOAT:
             return val_is_float(v);
         case TYPE_STRING:
@@ -366,52 +370,247 @@ static int value_matches_kind(Value v, TypeKind kind) {
             return val_is_obj(v) && val_as_obj(v)->type == OBJ_DICT;
         case TYPE_STRUCT:
         case TYPE_FACE:
-            // face 在运行期就是 struct 实例（与 type_check_value 的 TYPE_FACE 分支同口径）
+            // face 在运行期就是 struct 实例（具体是谁要比名字，见 kind_name_matches）
             return val_is_obj(v) && val_as_obj(v)->type == OBJ_STRUCT;
+        case TYPE_ENUM:
+            // 枚举成员在运行期就是 int；`Color` 这种"枚举定义对象"也存在（见 type_check_value）
+            return val_is_int(v) || val_is_bigint(v) ||
+                   (val_is_obj(v) && val_as_obj(v)->type == OBJ_ENUM_DEF);
+        case TYPE_FILE:
+            return val_is_obj(v) && val_as_obj(v)->type == OBJ_FILE;
+        case TYPE_SOCKET:
+            return val_is_obj(v) && val_as_obj(v)->type == OBJ_SOCKET;
+        case TYPE_CHANNEL:
+            return val_is_obj(v) && val_as_obj(v)->type == OBJ_CHANNEL;
+        case TYPE_THREAD:
+            return val_is_obj(v) && val_as_obj(v)->type == OBJ_THREAD;
+        case TYPE_FUNCTION:
+            return val_is_obj(v) &&
+                   (val_as_obj(v)->type == OBJ_CLOSURE ||
+                    val_as_obj(v)->type == OBJ_NATIVE ||
+                    val_as_obj(v)->type == OBJ_FFI_CALLBACK);
+        case TYPE_PTR:
+        case TYPE_PTR_GENERIC:
+            return val_is_obj(v) &&
+                   (val_as_obj(v)->type == OBJ_FFI_POINTER ||
+                    val_as_obj(v)->type == OBJ_FFI_LIBRARY ||
+                    val_as_obj(v)->type == OBJ_FFI_CALLBACK);
         default:
-            return 1;
+            // 其余（FFI 数值窄类型等）**fail-closed**：判不出来就说不匹配
+            // —— 与 type_check_value 的 default 同口径（收窄进不去，好过拿脏值去用）
+            return 0;
     }
 }
 
-// Dict[K,V] 的逐键值校验。
-//   ⚠ 按**存储结构**扫（数组部分 + 哈希部分），不走 ObjDict->order：
-//      order 只是"输出顺序"的记账，判定不该依赖它是否与两部分同步（缺一条就会
-//      误判为"不匹配" ⇒ 类型收窄进不去 else 分支，比漏检更难查）。
-//   · 数组部分：连续非负整数键 0..asize-1，值为 null 的槽 = 空槽（与 dict_set
-//     的 `is_new = val_is_null(...)` 同口径），跳过；
-//   · 哈希部分：key == NULL_VAL 是空槽、key == DICT_TOMBSTONE_VAL 是已删除，跳过。
-static int dict_matches_kv(Value value, TypeKind key_kind, TypeKind value_kind) {
-    if (!val_is_obj(value) || val_as_obj(value)->type != OBJ_DICT) return 0;
-    if (key_kind == TYPE_ANY && value_kind == TYPE_ANY) return 1;
+// 带名字的三种（struct / face / enum）的**名字判定**—— 紧凑指令与类型规格共用，避免漂移。
+static int kind_name_matches(Value value, TypeKind kind, const char* name) {
+    if (!name) return 0;
 
-    ObjDict* dict = (ObjDict*)val_as_obj(value);
-
-    for (int i = 0; i < dict->asize; i++) {
-        Value v = dict->array[i];
-        if (val_is_null(v)) continue;
-        if (!value_matches_kind(val_int(i), key_kind)) return 0;
-        if (!value_matches_kind(v, value_kind)) return 0;
+    if (kind == TYPE_STRUCT) {
+        return val_is_obj(value) && val_as_obj(value)->type == OBJ_STRUCT &&
+               ((ObjStruct*)val_as_obj(value))->def &&
+               ((ObjStruct*)val_as_obj(value))->def->name &&
+               strcmp(((ObjStruct*)val_as_obj(value))->def->name, name) == 0;
     }
-
-    for (int i = 0; i < dict->capacity; i++) {
-        Value k = dict->entries[i].key;
-        if (k == DICT_TOMBSTONE_VAL || val_is_null(k)) continue;
-        if (!value_matches_kind(k, key_kind)) return 0;
-        if (!value_matches_kind(dict->entries[i].value, value_kind)) return 0;
+    if (kind == TYPE_FACE) {
+        if (!val_is_obj(value) || val_as_obj(value)->type != OBJ_STRUCT) return 0;
+        ObjStruct* obj = (ObjStruct*)val_as_obj(value);
+        if (!obj->def) return 0;
+        ObjFaceDef* fdef = face_def_find(name);
+        return fdef ? struct_implements_face(obj->def, fdef) : 0;
     }
-
-    return 1;
+    if (kind == TYPE_ENUM) {
+        // 枚举成员是 int ⇒ 从"值"无从校验它属于哪个 enum（语言本身也不区分），放行；
+        // 传的是 enum 定义对象（`c is Color` 里 c == Color）时才比名字
+        if (val_is_int(value) || val_is_bigint(value)) return 1;
+        if (val_is_obj(value) && val_as_obj(value)->type == OBJ_ENUM_DEF) {
+            ObjEnumDef* edef = (ObjEnumDef*)val_as_obj(value);
+            return edef->name && strcmp(edef->name, name) == 0;
+        }
+        return 0;
+    }
+    return 0;
 }
 
-// OP_TYPE_CHECK_DICT / OP_AS_CAST_DICT（定义见 leno_vm.h）—— 语义唯一来源，
-// 与 type_check_value / vm_as_cast 同层，供解释器的两条新 opcode 共用。
-int dict_type_check(Value value, TypeKind key_kind, TypeKind value_kind) {
-    return dict_matches_kv(value, key_kind, value_kind);
+// 嵌套深度上限：自引用容器（`a.add(a)`）会让递归判定无限下行 ⇒ 到顶即 fail-closed。
+#define TYPE_SPEC_MAX_DEPTH 32
+
+// 类型规格的**字节长度**（递归、自定界，不需要长度前缀）—— 只算长度、不判定。
+//   反汇编（debug.c）也调它算指令总长 ⇒ 发射端/判定端/反汇编端对格式的认知只有这一份。
+//   end 非空时按"不得越过 end"解析（反汇编遇到被截断/损坏的 chunk 时用，防越界读）。
+static int type_spec_size_impl(const uint8_t* spec, const uint8_t* end, int depth) {
+    if (!spec || depth > 64) return 0;
+    TypeKind k = (TypeKind)spec[0];
+    int n = 1;
+    if (k == TYPE_STRUCT || k == TYPE_FACE || k == TYPE_ENUM) {
+        if (end && spec + 3 > end) return n;   // 名字常量索引（大端 16 位）被截断
+        n += 2;
+    } else if (k == TYPE_ARRAY) {
+        n += type_spec_size_impl(spec + n, end, depth + 1);
+    } else if (k == TYPE_DICT) {
+        n += type_spec_size_impl(spec + n, end, depth + 1);   // K
+        n += type_spec_size_impl(spec + n, end, depth + 1);   // V
+    } else if (k == TYPE_PTR_GENERIC) {
+        n += type_spec_size_impl(spec + n, end, depth + 1);
+    }
+    return n;
 }
 
-Value dict_as_cast(Value value, TypeKind key_kind, TypeKind value_kind) {
-    // 与 vm_as_cast 的 TYPE_DICT 分支同口径：不匹配 ⇒ null（不做任何转换）
-    return dict_matches_kv(value, key_kind, value_kind) ? value : val_null();
+int type_spec_size(const uint8_t* spec) {
+    return type_spec_size_impl(spec, NULL, 0);
+}
+
+// 带上界版本（debug.c 的反汇编用）：解析不越过 end，避免损坏的 chunk 把越界读带进来。
+int type_spec_size_bounded(const uint8_t* spec, const uint8_t* end) {
+    return type_spec_size_impl(spec, end, 0);
+}
+
+// 把类型规格渲染成可读文本（反汇编摘要用）。**与解析同源**地写在这里：
+//   调试端再也不自己解析一遍规格（历史上"反汇编长度表与发射端各写一份"就漂移过）。
+typedef struct {
+    Chunk* chunk;
+    char* buf;
+    size_t size;   // 含结尾 '\0'
+    size_t used;
+} SpecRender;
+
+static void sr_append(SpecRender* r, const char* s) {
+    if (!r->buf || r->size == 0) return;
+    while (*s && r->used + 1 < r->size) r->buf[r->used++] = *s++;
+    r->buf[r->used] = '\0';
+}
+
+static void sr_render(SpecRender* r, const uint8_t* spec, int depth) {
+    if (!spec || depth > 64) return;
+    TypeKind k = (TypeKind)spec[0];
+    const uint8_t* p = spec + 1;
+
+    if (k == TYPE_STRUCT || k == TYPE_FACE || k == TYPE_ENUM) {
+        const char* nm = NULL;
+        int nidx = ((int)p[0] << 8) | (int)p[1];
+        if (r->chunk && nidx >= 0 && nidx < r->chunk->const_cnt) {
+            Value nv = r->chunk->constants[nidx];
+            if (val_is_obj(nv) && val_as_obj(nv)->type == OBJ_STRING) {
+                nm = ((ObjString*)val_as_obj(nv))->chars;
+            }
+        }
+        sr_append(r, nm ? nm : "<名字?>");
+        return;
+    }
+    if (k == TYPE_ARRAY) {
+        sr_append(r, "Array[");
+        sr_render(r, p, depth + 1);
+        sr_append(r, "]");
+        return;
+    }
+    if (k == TYPE_DICT) {
+        const uint8_t* vspec = p + type_spec_size(p);
+        sr_append(r, "Dict[");
+        sr_render(r, p, depth + 1);
+        sr_append(r, ", ");
+        sr_render(r, vspec, depth + 1);
+        sr_append(r, "]");
+        return;
+    }
+    if (k == TYPE_PTR_GENERIC) {
+        sr_append(r, "Ptr[");
+        sr_render(r, p, depth + 1);
+        sr_append(r, "]");
+        return;
+    }
+    sr_append(r, type_kind_to_string(k));
+}
+
+void type_spec_render(Chunk* chunk, const uint8_t* spec, char* out, int out_size) {
+    if (!out || out_size <= 0) return;
+    out[0] = '\0';
+    if (!spec) return;
+
+    SpecRender r;
+    r.chunk = chunk;
+    r.buf = out;
+    r.size = (size_t)out_size;
+    r.used = 0;
+    sr_render(&r, spec, 0);
+}
+
+// 判定 value 是否符合 spec（**递归**：Array 的每个元素、Dict 的每个键/值都要过子规格）。
+static int type_spec_match(Value value, const uint8_t* spec, Chunk* chunk, int depth) {
+    if (!spec || depth > TYPE_SPEC_MAX_DEPTH) return 0;
+    TypeKind kind = (TypeKind)spec[0];
+    const uint8_t* p = spec + 1;
+
+    if (kind == TYPE_STRUCT || kind == TYPE_FACE || kind == TYPE_ENUM) {
+        int nidx = ((int)p[0] << 8) | (int)p[1];
+        if (!chunk || nidx < 0 || nidx >= chunk->const_cnt) return 0;
+        Value name_val = chunk->constants[nidx];
+        if (!val_is_obj(name_val) || val_as_obj(name_val)->type != OBJ_STRING) return 0;
+        return kind_name_matches(value, kind, ((ObjString*)val_as_obj(name_val))->chars);
+    }
+
+    if (kind == TYPE_ARRAY) {
+        if (!value_matches_kind(value, TYPE_ARRAY)) return 0;
+        ObjArray* arr = (ObjArray*)val_as_obj(value);
+        for (int i = 0; i < arr->count; i++) {
+            if (!type_spec_match(arr->elements[i], p, chunk, depth + 1)) return 0;
+        }
+        return 1;
+    }
+
+    if (kind == TYPE_DICT) {
+        if (!value_matches_kind(value, TYPE_DICT)) return 0;
+        ObjDict* dict = (ObjDict*)val_as_obj(value);
+        const uint8_t* vspec = p + type_spec_size(p);
+        // 数组部分（连续非负整数键）+ 哈希部分都要扫：不走 ObjDict->order，
+        // 因为它只是"输出顺序"的记账，判定不该依赖它与两部分是否同步。
+        for (int i = 0; i < dict->asize; i++) {
+            Value v = dict->array[i];
+            if (val_is_null(v)) continue;   // 空槽（与 dict_set 的 is_new 同口径）
+            if (!type_spec_match(val_int(i), p, chunk, depth + 1)) return 0;
+            if (!type_spec_match(v, vspec, chunk, depth + 1)) return 0;
+        }
+        for (int i = 0; i < dict->capacity; i++) {
+            Value k = dict->entries[i].key;
+            if (k == DICT_TOMBSTONE_VAL || val_is_null(k)) continue;
+            if (!type_spec_match(k, p, chunk, depth + 1)) return 0;
+            if (!type_spec_match(dict->entries[i].value, vspec, chunk, depth + 1)) return 0;
+        }
+        return 1;
+    }
+
+    // Ptr[T]：FFI 指针里没有"元素值"可递归 ⇒ 只校验顶层（元素类型在 as 里回填，见下）
+    return value_matches_kind(value, kind);
+}
+
+// Ptr[T] 的 `as` 语义：匹配后把元素类型记进 FFI 指针对象（与 vm_as_cast 原行为一致）。
+//   ObjFFIPointer 存的是**单个 TypeKind** ⇒ 只有叶子元素类型能记，嵌套的跳过。
+static void ptr_annotate_elem(Value value, const uint8_t* elem_spec) {
+    if (!elem_spec || !val_is_obj(value) || val_as_obj(value)->type != OBJ_FFI_POINTER) return;
+    TypeKind ek = (TypeKind)elem_spec[0];
+    if (ek == TYPE_ARRAY || ek == TYPE_DICT || ek == TYPE_PTR_GENERIC ||
+        ek == TYPE_STRUCT || ek == TYPE_FACE || ek == TYPE_ENUM) {
+        return;
+    }
+    ObjFFIPointer* ffi_ptr = (ObjFFIPointer*)val_as_obj(value);
+    if (ffi_ptr->element_type == TYPE_ANY || ffi_ptr->element_type == TYPE_PTR) {
+        ffi_ptr->element_type = ek;
+    }
+}
+
+// OP_TYPE_CHECK_SPEC（定义见 leno_vm.h）—— 语义唯一来源，供解释器的规格版 opcode 调用。
+//   out_bytes 回填规格占用的字节数（解释器按它推进 ip）⇒ 调用方不必自己算长度。
+int type_spec_check(Value value, Chunk* chunk, const uint8_t* spec, int* out_bytes) {
+    if (out_bytes) *out_bytes = type_spec_size(spec);
+    return type_spec_match(value, spec, chunk, 0);
+}
+
+// OP_AS_CAST_SPEC —— 匹配则返回原值（**不做元素转换**，与 vm_as_cast 的容器分支一致），
+// 否则 null；Ptr[T] 匹配后回填元素类型。
+Value type_spec_cast(Value value, Chunk* chunk, const uint8_t* spec, int* out_bytes) {
+    if (out_bytes) *out_bytes = type_spec_size(spec);
+    if (!type_spec_match(value, spec, chunk, 0)) return val_null();
+    if (spec && (TypeKind)spec[0] == TYPE_PTR_GENERIC) ptr_annotate_elem(value, spec + 1);
+    return value;
 }
 
 // ============================================================================
@@ -514,47 +713,19 @@ Value vm_as_cast(Value value, TypeKind expected_type, TypeKind elem_type, Value 
         }
 
         case TYPE_DICT:
-            // 与 OP_AS_CAST_DICT 共用口径：K/V 为 TYPE_ANY 时退化成"只校验顶层是 Dict"
-            matches = dict_matches_kv(value, TYPE_ANY, TYPE_ANY);
+            // 裸 `Dict`（无 K/V 通道）⇒ 只校验顶层。带实参的走 OP_AS_CAST_SPEC（递归规格）
+            matches = value_matches_kind(value, TYPE_DICT);
             break;
-        case TYPE_STRUCT: {
-            if (!val_is_obj(name_val) || val_as_obj(name_val)->type != OBJ_STRING) {
-                matches = 0;
-                break;
-            }
-            const char* struct_name = ((ObjString*)val_as_obj(name_val))->chars;
-            if (val_is_obj(value) && val_as_obj(value)->type == OBJ_STRUCT) {
-                ObjStruct* obj = (ObjStruct*)val_as_obj(value);
-                if (obj->def && obj->def->name) {
-                    matches = (strcmp(obj->def->name, struct_name) == 0);
-                } else {
-                    matches = 0;
-                }
-            } else {
-                matches = 0;
-            }
-            break;
-        }
-
+        // STRUCT / FACE 的名字判定与规格路径共用 kind_name_matches（口径一处）
+        //   ⚠ 这里**不合并 ENUM**：`as Color` 旧行为是"不在 switch 里 ⇒ 不匹配"（§8.83 注释里
+        //     明确要求保持），而规格路径对枚举成员的放行只用于嵌套位置。
+        case TYPE_STRUCT:
         case TYPE_FACE: {
             if (!val_is_obj(name_val) || val_as_obj(name_val)->type != OBJ_STRING) {
                 matches = 0;
                 break;
             }
-            const char* face_name = ((ObjString*)val_as_obj(name_val))->chars;
-            if (val_is_obj(value) && val_as_obj(value)->type == OBJ_STRUCT) {
-                ObjStruct* obj = (ObjStruct*)val_as_obj(value);
-                if (!obj->def) {
-                    matches = 0;
-                    break;
-                }
-                ObjFaceDef* fdef = face_def_find(face_name);
-                if (fdef) {
-                    matches = struct_implements_face(obj->def, fdef);
-                } else {
-                    matches = 0;
-                }
-            }
+            matches = kind_name_matches(value, expected_type, ((ObjString*)val_as_obj(name_val))->chars);
             break;
         }
 
@@ -887,52 +1058,25 @@ int type_check_value(Value value, TypeKind expected_type, TypeKind elem_type, Va
         }
 
         // --- 文件/指针/空值/任意: 仅检查值类型 ---
-        //   Dict 的**逐键值**校验走 dict_matches_kv（与 OP_TYPE_CHECK_DICT 共用口径）。
+        //   Dict：裸 `Dict` 只校验顶层；带 K/V 实参的走 OP_TYPE_CHECK_SPEC（递归规格）。
         case TYPE_DICT:
-            matches = dict_matches_kv(value, TYPE_ANY, TYPE_ANY);
+            matches = value_matches_kind(value, TYPE_DICT);
             break;
 
-        case TYPE_STRUCT: {
-            if (!val_is_obj(name_val) || val_as_obj(name_val)->type != OBJ_STRING) {
-                matches = 0;
-                break;
-            }
-            const char* struct_name = ((ObjString*)val_as_obj(name_val))->chars;
-            if (val_is_obj(value) && val_as_obj(value)->type == OBJ_STRUCT) {
-                ObjStruct* obj = (ObjStruct*)val_as_obj(value);
-                if (obj->def && obj->def->name) {
-                    matches = (strcmp(obj->def->name, struct_name) == 0);
-                } else {
-                    matches = 0;
-                }
-            } else {
-                matches = 0;
-            }
-            break;
-        }
-
+        // STRUCT / FACE：名字判定与规格路径共用 kind_name_matches（口径一处）
+        case TYPE_STRUCT:
         case TYPE_FACE: {
             if (!val_is_obj(name_val) || val_as_obj(name_val)->type != OBJ_STRING) {
                 matches = 0;
                 break;
             }
-            const char* face_name = ((ObjString*)val_as_obj(name_val))->chars;
-            if (val_is_obj(value) && val_as_obj(value)->type == OBJ_STRUCT) {
-                ObjStruct* obj = (ObjStruct*)val_as_obj(value);
-                if (!obj->def) {
-                    matches = 0;
-                    break;
-                }
-                ObjFaceDef* fdef = face_def_find(face_name);
-                if (fdef) {
-                    matches = struct_implements_face(obj->def, fdef);
-                } else {
-                    matches = 0;
-                }
-            }
+            matches = kind_name_matches(value, expected_type, ((ObjString*)val_as_obj(name_val))->chars);
             break;
         }
 
+        // ENUM：**保持既有行为**（只认枚举定义对象 + 名字）。
+        //   枚举成员在运行期就是 int ⇒ 从值无从校验它属于哪个 enum；顶层 `x is Color`
+        //   维持旧结论（int ⇒ 不匹配），嵌套位置（`Array[Color]` 的元素）由规格路径放行。
         case TYPE_ENUM: {
             if (!val_is_obj(name_val) || val_as_obj(name_val)->type != OBJ_STRING) {
                 matches = 0;
@@ -964,11 +1108,10 @@ int type_check_value(Value value, TypeKind expected_type, TypeKind elem_type, Va
         case TYPE_THREAD:
             matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_THREAD);
             break;
+        // PTR / PTR_GENERIC：顶层判定共用叶子口径（Ptr[T] 带实参时走规格路径）
         case TYPE_PTR:
-            matches = (val_is_obj(value) &&
-                      (val_as_obj(value)->type == OBJ_FFI_POINTER ||
-                       val_as_obj(value)->type == OBJ_FFI_LIBRARY ||
-                       val_as_obj(value)->type == OBJ_FFI_CALLBACK));
+        case TYPE_PTR_GENERIC:
+            matches = value_matches_kind(value, TYPE_PTR);
             break;
         case TYPE_NULL:
             matches = val_is_null(value);

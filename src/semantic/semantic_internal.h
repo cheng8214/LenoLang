@@ -18,6 +18,11 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast);
 TypeInfo* infer_method_return_type(Semantic* s, TypeInfo* obj_type, const char* method_name);
 TypeInfo* infer_field_type(Semantic* s, TypeInfo* obj_type, const char* field_name, int* out_field_index);
 
+// 递归把类型树里的"名字其实是 face/enum 的 TYPE_STRUCT"纠正过来（含 Array/Dict/Ptr 的实参）。
+// **唯一实现**：`is`/`as`、守卫类型、switch case 的匹配类型都调它 —— 因为 v3.2.2 起
+// 嵌套实参的名字会被带进运行期做名字校验，漏修就是"拿 struct 名字比 face 实例"⇒ 误判。
+void resolve_type_names(Semantic* s, TypeInfo* type);
+
 // 把模块符号表里的一条 struct/cstruct 符号，按完整精度搬进当前作用域的符号
 // （字段类型 + 泛型参数）。这是"怎么把模块里的 struct 字段搬进当前作用域"的**唯一实现**：
 // 此前 AST_USE 与 import_type_deps 各写一遍，后者丢嵌套泛型（详见 semantic_type_utils.c）。

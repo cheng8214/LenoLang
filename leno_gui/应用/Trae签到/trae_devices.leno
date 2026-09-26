@@ -36,7 +36,7 @@ export func devices_path(): string {
 
 // 全部记录 —— 本文件是**扁平** `string → string` 表（只由本工具写 ✓）⇒ 读取处一次收窄定型，
 // 之后全链路都是 `Dict[string, string]`，调用点再也不用手写 `is Dict` ✓
-// `is Dict[string, string]` 是**逐键值**校验（v3.2.1 起，见 leno_vm.h 的 OP_TYPE_CHECK_DICT）：
+// `is Dict[string, string]` 是**逐键值**校验（v3.2.2 起走递归类型规格，见 leno_vm.h 的 OP_TYPE_CHECK_SPEC）：
 //   值是 int/null/嵌套对象 ⇒ 不收窄。本文件只由本工具写（值恒为 string）⇒ 恒成立 ✓
 //   ⚠ 取值仍一律走 core.json_get / core.json_keys（`_str()` 兜底）：手改过的文件不会崩
 export func load_all(): Dict[string, string] {

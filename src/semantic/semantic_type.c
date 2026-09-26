@@ -1,6 +1,58 @@
 #include "semantic_internal.h"
 #include "include/module_symbol_table.h"
 
+// ============================================================================
+// 递归修正类型名：`Shape`（face）/ `Color`（enum）被 parser 记成 TYPE_STRUCT + 名字，
+//   这里按"当前作用域 → 导入模块符号表"把**整棵类型树**里的名字纠正过来。
+// ----------------------------------------------------------------------------
+// 为什么要递归：v3.2.2 起 `is/as` 的泛型实参会带进运行期做**名字校验**（类型规格）。
+//   只修最外层的话，`Array[Shape]` 的元素仍带着 TYPE_STRUCT + "Shape"，运行期就不知道
+//   那是 face ⇒ 拿 struct 名字去比 "Rect" ⇒ 误判为不匹配（实测踩到过）。
+//   历史上这段逻辑在 visit_type_check / visit_control（守卫、case）/ visit_expr 里
+//   各写了一份，且只修"最外层"或"数组元素"—— 这里收成唯一实现。
+// 注意：不处理 TYPE_FUNCTION 的签名（那里的名字由其它路径解析），只处理
+//   Array/Dict/Ptr 三种实参位置 + 最外层。
+// ============================================================================
+void resolve_type_names(Semantic* s, TypeInfo* type) {
+    if (!type) return;
+
+    if (type->kind == TYPE_STRUCT && type->struct_name) {
+        Symbol* sym = scope_resolve(s->current, type->struct_name);
+        if (sym && sym->type && sym->type->kind == TYPE_FACE) {
+            type->kind = TYPE_FACE;
+        } else if (sym && sym->type && sym->type->kind == TYPE_ENUM) {
+            type->kind = TYPE_ENUM;
+        } else if (face_def_find(type->struct_name)) {
+            // 兜底：编译期已注册的运行期 face 注册表（既有 fix_struct_to_face 同一判据）
+            type->kind = TYPE_FACE;
+        } else {
+            // 当前作用域没有 ⇒ 查导入模块的符号表（face / enum）
+            for (int mi = 0; mi < s->imported_module_count; mi++) {
+                ImportedModuleInfo* m = &s->imported_modules[mi];
+                if (!m || !m->sym_table) continue;
+                if (module_symbol_table_find_face(m->sym_table, type->struct_name)) {
+                    type->kind = TYPE_FACE;
+                    break;
+                }
+                if (module_symbol_table_find_enum(m->sym_table, type->struct_name)) {
+                    type->kind = TYPE_ENUM;
+                    break;
+                }
+            }
+        }
+    }
+
+    // 泛型实参递归（三种带实参的类型）
+    if (type->kind == TYPE_ARRAY) {
+        resolve_type_names(s, type->element_type);
+    } else if (type->kind == TYPE_DICT) {
+        resolve_type_names(s, type->key_type);
+        resolve_type_names(s, type->value_type);
+    } else if (type->kind == TYPE_PTR_GENERIC) {
+        resolve_type_names(s, type->element_type);
+    }
+}
+
 // 修正 TypeInfo：如果类型是 TYPE_STRUCT 但名称实际是 face 定义，改为 TYPE_FACE
 // 这是因为 parser 解析字段类型时，face 可能尚未注册到全局表，导致被误判为 struct
 static void fix_struct_to_face(TypeInfo* type) {
