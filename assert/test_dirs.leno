@@ -78,5 +78,36 @@ main()
     assert_eq(info["exists"], true)
     assert_eq(info["is_dir"], true)
 
+    // 测试11: dirs.size() —— stat 缺的那个类型化取值入口（2026-09-26 新增）
+    //   背景：`dirs.stat()` 返回无类型 Dict ⇒ 取 size 要 `if st is Dict` + `if s is int` 手动收窄；
+    //   而 stat 的另三个键 exists/is_file/is_dir 早就有专用函数（dirs.exists/is_file/is_dir）
+    //   ⇒ 补上 size 这一格。返回类型是 TYPE_INT（不是 any）⇒ 可直接做 int 运算 ✓
+    var self = "assert\\test_dirs.leno"          // 用一个**确定存在**的文件
+    assert_eq(dirs.exists(self), true)
+
+    // ① 与 stat 的 size 字段一致（同口径）
+    assert_eq(dirs.size(self), info_size(self))
+
+    // ② 类型自证：能直接做 int 整除（any 类型过不了这道）
+    assert_eq(dirs.size(self) > 0, true)
+    assert_eq(dirs.size(self) / 1024 >= 0, true)
+
+    // ③ 不存在 ⇒ 0（与 stat 的默认值同口径；要区分"空文件"与"不存在"先 dirs.exists()）
+    assert_eq(dirs.size("assert\\不存在的文件_9b2f.leno"), 0)
+    assert_eq(dirs.size("assert\\不存在的文件_9b2f.leno"), dirs.stat("assert\\不存在的文件_9b2f.leno")["size"])
+
+    // ④ 目录 ⇒ 与 stat 一致（给的是目录条目自身的大小，不是递归总大小）
+    assert_eq(dirs.size("assert"), dirs.stat("assert")["size"])
+
     print("test_dirs passed")
+}
+
+// 取 stat 的 size 字段（**故意保留手动收窄** ⇒ 用它当上面 ① 的对照基准）
+func info_size(string path): int {
+    var st = dirs.stat(path)
+    if st is Dict {
+        var s = st.get("size", 0)
+        if s is int { return s }
+    }
+    return 0
 }

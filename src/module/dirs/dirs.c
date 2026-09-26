@@ -1071,10 +1071,13 @@ static Value native_dirs_stat(int argCount, Value* args) {
         dict_set(dict, val_obj((Object*)str_copy("exists", 6)), val_bool(1));
         
         // size
+        // ⚠ 原来是 val_int((int)size.QuadPart) —— (int) 是 **32 位**，≥2GB 的文件会被截断 ✗
+        //   实测（2026-09-26）：2GB+1KB 的文件读出 **-2147482624**（负数！）⇒ fmt_size 也跟着
+        //   打出 "-2147482624 B"；5GB 则读成 0x40000000 = 1GB。本语言的 int 是 48 位 ⇒ 传 int64 ✓
         LARGE_INTEGER size;
         size.LowPart = attrData.nFileSizeLow;
         size.HighPart = attrData.nFileSizeHigh;
-        dict_set(dict, val_obj((Object*)str_copy("size", 4)), val_int((int)size.QuadPart));
+        dict_set(dict, val_obj((Object*)str_copy("size", 4)), val_int((int64_t)size.QuadPart));
         
         // is_file, is_dir
         int is_dir = attrData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY;
@@ -1091,8 +1094,8 @@ static Value native_dirs_stat(int argCount, Value* args) {
         // 文件存在，更新信息
         dict_set(dict, val_obj((Object*)str_copy("exists", 6)), val_bool(1));
         
-        // size
-        dict_set(dict, val_obj((Object*)str_copy("size", 4)), val_int((int)st.st_size));
+        // size（同上：不能 (int) 截断，见 Windows 分支的注释 ✓）
+        dict_set(dict, val_obj((Object*)str_copy("size", 4)), val_int((int64_t)st.st_size));
         
         // is_file, is_dir
         dict_set(dict, val_obj((Object*)str_copy("is_file", 7)), val_bool(S_ISREG(st.st_mode)));
@@ -1104,6 +1107,44 @@ static Value native_dirs_stat(int argCount, Value* args) {
 #endif
     
     return val_obj((Object*)dict);
+}
+
+// dirs.size(path) - 取文件字节数（**类型化**入口，返回值就是 int）
+// 为什么需要它：`dirs.stat()` 返回无类型 Dict ⇒ 消费方每次都要 `if st is Dict` 再
+//   `if s is int` 手动收窄；而 stat 的另外三个键 exists/is_file/is_dir **早就各有专用函数**
+//   （dirs.exists / dirs.is_file / dirs.is_dir）⇒ 只差 size 这一格没补 ✓
+//   （leno_gui 三处消费方——文件管理器 / 属性对话框 / 缓存清理工具——恰好都卡在这个键上）
+//   同 T21 给 jsons 加类型化取值助手是同一类活：把收窄收进标准库 ✓
+// 口径与 `dirs.stat()["size"]` **同**（参数不对或不存在的路径 ⇒ 0，与 stat 的默认值一致）；
+//   要区分「空文件」与「不存在」请先 `dirs.exists()` 判 ✓
+// ⚠ 目录给的是**目录条目自身**的大小（Windows 下 GetFileAttributesExW 报 0，POSIX 报 st_size），
+//   **不是**递归总大小 ⇒ 要递归自己 walk 累加 ✓
+static Value native_dirs_size(int argCount, Value* args) {
+    (void)argCount;
+
+    const char* path = get_string(args[0]);
+    if (!path) { return val_int(0); }   // 与 stat 同口径：参数不对也不抛，给 0
+
+    int64_t size = 0;
+
+#ifdef _WIN32
+    wchar_t* wpath = utf8_to_utf16(path);
+    WIN32_FILE_ATTRIBUTE_DATA attrData;
+    if (wpath && GetFileAttributesExW(wpath, GetFileExInfoStandard, &attrData)) {
+        LARGE_INTEGER sz;
+        sz.LowPart = attrData.nFileSizeLow;
+        sz.HighPart = attrData.nFileSizeHigh;
+        size = (int64_t)sz.QuadPart;
+    }
+    if (wpath) { free(wpath); }
+#else
+    struct stat st;
+    if (stat(path, &st) == 0) {
+        size = (int64_t)st.st_size;
+    }
+#endif
+
+    return val_int(size);
 }
 
 // dirs.list_drives() - 返回盘符列表
@@ -1185,4 +1226,6 @@ native_register_module_method("dirs", "is_symlink", native_dirs_is_symlink, 1, -
 
     // 文件信息
     native_register_module_method("dirs", "stat", native_dirs_stat, 1, -1, -1, TYPE_DICT, TYPE_UNKNOWN, string_params);
+    // size：stat 里"缺一个类型化取值入口"的那个键（另三个键已有 exists/is_file/is_dir ✓）
+    native_register_module_method("dirs", "size", native_dirs_size, 1, -1, -1, TYPE_INT, TYPE_UNKNOWN, string_params);
 }

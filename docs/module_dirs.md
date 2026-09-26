@@ -369,10 +369,15 @@ for entries to entry {
 - `path` (string): 文件或目录路径
 
 **返回**: `dict` - 包含以下字段的字典：
+- `exists` (bool): 是否存在
 - `size` (int): 文件大小（字节）
 - `is_file` (bool): 是否是文件
 - `is_dir` (bool): 是否是目录
 - `mtime` (int): 最后修改时间（Unix 时间戳）
+
+> ⚠ `mtime` 在 Windows 上恒为 `0`（已知限制，见 `src/module/dirs/dirs.c` 的"简化版"注释）。
+> ⚠ `size` 在 2026-09-26 前是 `(int)` 强转 ⇒ **≥2GB 的文件会读出负数**（实测 2GB+1KB ⇒ `-2147482624`）；
+> 现已改为 48 位 `int`，大文件读数正确。
 
 ```leno
 var info = dirs.stat("build.bat")
@@ -387,6 +392,31 @@ io.print("大小: " + info.size + " 字节")
 io.print("是文件: " + info.is_file)
 io.print("是目录: " + info.is_dir)
 ```
+
+### `size(path)`
+
+取文件字节数 —— **类型化入口**（返回类型就是 `int`，无需手动收窄）。
+
+**参数**:
+- `path` (string): 文件或目录路径
+
+**返回**: `int` - 文件字节数；路径不存在（或参数不是字符串）⇒ `0`
+
+```leno
+var n = dirs.size("build.bat")      // 2917，可直接做 int 运算 ✓
+var total = dirs.size("a.txt") + dirs.size("b.txt")
+```
+
+**为什么要它**：`dirs.stat()` 返回的是无类型 `dict` ⇒ 取 `size` 要写
+`if st is Dict` 再 `if s is int` 手动收窄；而 `stat` 的另外三个键
+`exists` / `is_file` / `is_dir` **早就各有专用函数**（`dirs.exists` / `dirs.is_file` /
+`dirs.is_dir`）⇒ 只差 `size` 这一格，本函数补上。
+
+**注意**：
+- 不存在的路径返回 `0`（与 `dirs.stat()` 的默认值同口径）⇒ 要区分「空文件」与「不存在」，
+  先用 `dirs.exists()` 判断。
+- 目录返回的是**目录条目自身**的大小（Windows 报 `0`，POSIX 报 `st_size`），
+  **不是**递归总大小 ⇒ 需要递归总大小请自己用 `dirs.walk()` 累加。
 
 ---
 
