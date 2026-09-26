@@ -195,25 +195,67 @@ Tray tray = SDL3.createTray({icon: surf, tooltip: "..."})   // ★ **不要调 g
 bool hooked = SDL3.interceptTrayClick()                     // 拦下图标被点（Windows 子类化 SDL_TRAY 窗口 ✓）
 
 PopMenu pm = SDL3.createPopMenu({})                          // 自绘菜单：无边框/置顶/**非模态** ✓
-pm.addItem("隐藏窗口", func() { ... })
-pm.addCheck("窗口置顶", false, func() { ... })
+pm.addItem("隐藏窗口", imgPath("eye_off.png"), func() { ... })   // 图标 = **图片路径**（与 MenuBar 的 image: 同义 ✓）
+pm.addCheck("窗口置顶", imgPath("pin.png"), false, func() { ... })  // 勾选项：右侧强调色圆点 ✓
 pm.addSeparator()
-pm.addItem("退出", func() { ... })
+pm.beginSubmenu("显示设置")                                   // **下一级**（飞出列 ✓ 可嵌套）
+pm.addCheck("12 小时制", imgPath("clock.png"), false, func() { ... })
+pm.endSubmenu()
+pm.addItem("退出", imgPath("exit.png"), func() { ... })
 
 // 主循环（定时器）里：
-var p = SDL3.pollTrayClick()                                 // [] = 没点；[x, y] = 被点的屏幕坐标 ✓
-if p.len() >= 2 { pm.showAt(p[0], p[1]) }                     // 弹出（底边贴光标 + 夹进屏幕可用区 ✓）
+var p = SDL3.pollTrayClick()                                 // [] = 没点；[x, y, 键]（键 1=左 2=右 ✓）
+if p.len() >= 3 {
+    if _int(p[2]) == 2 { pm.showAt(p[0], p[1]) }              // 右键 ⇒ 弹菜单（底边贴光标 + 夹进屏幕可用区 ✓）
+    else               { /* 左键 ⇒ 直接切显示/隐藏，应用自己定 ✓ */ }
+}
 pm.poll()                                                     // 点在菜单外自动收起（不依赖焦点 ✓）
 ```
 
 - `interceptTrayClick()` 返回 false（非 Windows / 找不到窗口）⇒ 静默降级：托盘只剩图标与提示 ✓
 - 拦截实现 = `FindWindowA("SDL_TRAY")` + `SetWindowLongPtrW(GWLP_WNDPROC)` 换掉 WndProc，
-  只截 `WM_TRAYICON` 且通知码为 `WM_CONTEXTMENU/WM_LBUTTONUP/WM_RBUTTONUP`（**返回 0、不链回 SDL**），
-  其余消息 `CallWindowProcW` 原样交还 SDL ✓（已实测：`msg=1025` 命中、主循环照转 ✓）
+  只截 `WM_TRAYICON` 且通知码为 `WM_CONTEXTMENU/WM_RBUTTONUP`（= 右键）或 `WM_LBUTTONUP`（= 左键），
+  **返回 0、不链回 SDL**；其余消息 `CallWindowProcW` 原样交还 SDL ✓（已实测：`msg=1025` 命中、主循环照转 ✓）
 - ★ **顺序**：`Tray.destroy()` 内部**先恢复原 WndProc 再**销毁托盘 ✓（反了会打到已释放的托盘数据 ✗）
-- 自绘菜单的关闭时机：点条目 / 点菜单外 / 失焦 / ESC ✓；`clickItem(idx)` 可程序化点（无头自测 ✓）
+- 自绘菜单的关闭时机：点条目 / 点菜单外 / 失焦 / ESC ✓；**点父项 = 展开/收起下一级** ✓
+- 图标 = **图片路径**（与 MenuBar / TreeView 的 `image:` **同一套约定** ✓）：按 path 载纹理 + **缓存**
+  （MRU 快路径，同 `sdl_menu.leno` 的 `_get_tex` ✓），`aspectFit` 居中到 16px 槽位 ✓
+  → 图标资源放**各应用自己的 `images/`**：`_imgDir = dirs.join(dirs.res_dir(), "images")` ✓（读资源用
+  `res_dir`，别用 `script_dir` ✗ —— 打包后只有 `res_dir` 指向释放出来的资源 ✓ 见 `dirs` 模块注释 ✓）
+  → 换图标 = `setIcon(idx, 路径)` ✓（模拟时钟就是用它把"隐藏窗口/显示窗口"两个图标来回切 ✓）
+- 勾选态/文字/图标由调用方维护（`setChecked/setText/setIcon`，菜单**不反查** ✓）；
+  展开态可程序化（`setExpanded/isExpanded`）✓；`clickItem(idx)` 等价于用户点了它（无头自测 ✓）
+- 子菜单指示是 `drawTriangle` 实心三角（与 MenuBar 一致 ✓）：收起朝右、展开朝下 ✓
+- ★ **子菜单 = 另一块独立面板**（不是同一块里分列 ✗）：菜单窗口是 **TRANSPARENT** 的，
+  每级各画一块圆角面板、彼此**紧贴**（`_GAP = 0` ✓ —— 别留缝 ✗：透明窗口里缝会直接透出桌面，
+  看着像断开），交界处再补一条 2px 的**底色"桥"**盖掉两边描边与抗锯齿缝 ⇒ 连成一体 ✓
+  （`_render` 开头必须 `clearColor(#00000000)` 清透明，否则上一帧残留 ✗ —— 透明窗口时主循环**不填背景** ✓）
+- ★ **位置规则（实测断言过 ✓）**：主列位置**只由自己决定**（底边贴光标 + 按自身尺寸夹紧）；
+  子列右边放得下就贴父列右侧，放不下就**翻到父列左边** —— 两种情况下主菜单都**纹丝不动** ✓
+  （之前的写法是把整个窗口夹回屏幕内 ⇒ 子菜单一展开就把主菜单挤走 ✗，已改 ✓）
+  验证方式：`_pm._x + _pm._colX[l]` 即第 l 级的**屏幕 x** ⇒ 断言"展开前后主列屏幕 x 不变" ✓
+  以及"贴屏幕右边缘时子列屏幕 x < 主列屏幕 x"（翻边 ✓）✓
+- ⚠ 子菜单展开时**窗口矩形变大**（覆盖主面板 + 子面板的并集 ✓；窗口本身是透明的 ⇒ 间隙透桌面 ✓），
+  但**主面板的屏幕位置不变** ✓（排版按弹出时的光标锚点重算 ✓）
+  （鼠标悬停父项也会展开 —— 这条只能真机验 ✓）
 - ⚠ **无头测不了拦截链**：`SDL_VIDEODRIVER=dummy` 下 SDL **不跑 Win32 消息泵** ⇒ 托盘窗口收不到
-  任何消息 ✗（实测）⇒ 自检要驱动菜单窗口本身（`showAt/clickItem`），拦截链得真机跑 ✓
+  任何消息 ✗（实测）⇒ 自检要么直接调自己的分发函数，要么驱动菜单窗口本身（`showAt/clickItem` ✓），
+  拦截链得真机跑（`SDL3.clickTrayIcon(1|2)` 可合成左右键 ✓）
+
+### ⚠ 多返回值只能**解构**，不能下标（本模块真崩过一次 ✗）
+
+`getGlobalMouse()` / `measureString()` 这类返回 `[int, int]` 的函数是**多返回值**：
+
+```leno
+var[int, int](gx, gy) = core.getGlobalMouse()   // ✓ 正确（仓库里其它地方都这么写，见 sdl_titlebar.leno）
+var gm = core.getGlobalMouse(); gm[0]           // ✗ 运行时抛「下标访问: 对象不支持索引」
+```
+
+- 这种写法**编译期不报错**（下标记在 any 上能过 ⚠）⇒ 只有真跑到那一行才炸 ✗
+- 更隐蔽：那行前面有"没鼠标按下就 return"的守卫 ⇒ **无头自检/探针都碰不到** ✗，
+  是用户手点才暴露的 ⇒ 这类分支要**单独造条件**验（本次用 PowerShell 注入一次真实按下 ✓）
+- 顺带：判"点在菜单里"那段已抽成纯函数 `_insidePanels(lx, ly)` ⇒ 自检能直接断言 ✓
+  （面板内 / 子面板内 / 外面 三种都进了自检 ✓）
 
 ### 自检断言别用绝对时刻 ⚠⇒✗（实测踩过）
 
@@ -246,8 +288,13 @@ build\leno.exe --no-cache build\leno_module\LenoSDL3\examples\图形绘制\test_
 ```
 $env:SDL_VIDEODRIVER='dummy'
 $env:CLOCK_SELFTEST='1'
-build\leno.exe --no-cache leno_gui\应用\模拟时钟\clock.leno   # 12 项：拦截·菜单弹出/收起·显隐·关窗收托盘·置顶·12小时制·退出 ✓
+build\leno.exe --no-cache leno_gui\应用\模拟时钟\clock.leno   # 17 项：左右键分发·子菜单下一级·菜单图标/勾选·显隐·关窗收托盘·置顶·退出 ✓
 ```
 
 ⚠ 「托盘图标被点 ⇒ 拦截 ⇒ 弹菜单」这条链**要真机跑**（dummy 下没有 Win32 消息泵 ✗，见 §六）。
-真机快速验证：`set LENO_SDL_FRAMES=40` 后直接跑模拟时钟，点托盘图标看菜单是否在光标处弹出、秒针是否照走 ✓
+真机快速验证：`set LENO_SDL_FRAMES=40` 后直接跑模拟时钟 —— 右键托盘图标应在光标处弹出菜单、
+左键应直接切显隐、秒针在菜单开着时照走 ✓
+（想连子菜单一起看：把菜单画进主窗再截图 —— `win.setOverlay` 里调 `pm._render(r)` +
+`r.readPixelsAt(...)` + `SDL3.saveImagePNG` ✓，本次就是这么做布局核对的 ✓
+⚠ 但**图标**在这种探针里可能不出现：图片 DLL / 相对路径是按**脚本所在目录**找的 ✗
+⇒ 看图标请直接跑应用本身 ✓）

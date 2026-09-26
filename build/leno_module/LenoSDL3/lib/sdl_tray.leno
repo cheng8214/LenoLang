@@ -58,6 +58,7 @@ bool _hooked = false
 bool _pending = false             // 有"托盘被点"待取（主循环轮询 ✓）
 int  _clickX = 0
 int  _clickY = 0
+int  _clickKind = 2               // 1 = 左键，2 = 右键（默认右键 ⇒ 弹菜单 ✓）
 
 func _u32(): user32 {
     if _u32lib == null { _u32lib = ffi.load("user32.dll") }
@@ -92,20 +93,23 @@ export func releaseTrayClick() {
     _pending = false
 }
 
-// 取"托盘被点"：无 ⇒ 空数组；有 ⇒ [屏幕 x, 屏幕 y] ✓
+// 取"托盘被点"：无 ⇒ 空数组；有 ⇒ [屏幕 x, 屏幕 y, 键(1=左键 2=右键)] ✓
+// 常见用法：右键 ⇒ 弹自绘菜单；左键 ⇒ 直接切显示/隐藏（应用自己定 ✓）
 export func pollTrayClick(): Array {
     if not _pending { return [] }
     _pending = false
     Array r = []
-    r.add(_clickX); r.add(_clickY)
+    r.add(_clickX); r.add(_clickY); r.add(_clickKind)
     return r
 }
 
-// 模拟"点托盘图标"（投递 WM_TRAYICON/WM_CONTEXTMENU）—— 无头自测用 ✓
+// 模拟"点托盘图标"（投递 WM_TRAYICON）—— 无头自测用 ✓
 // 走真实消息路径 ⇒ 验证的是完整链路（含我们子类化的 WndProc ✓）
-export func clickTrayIcon(): bool {
+// kind：2 = 右键（WM_CONTEXTMENU ✓，默认）；1 = 左键（WM_LBUTTONUP ✓）
+export func clickTrayIcon(int kind = 2): bool {
     if _trayHwnd == null { return false }
-    return _u32().PostMessageW(_trayHwnd, WM_TRAYICON, 0, WM_CONTEXTMENU)
+    int note = if kind == 1 then WM_LBUTTONUP else WM_CONTEXTMENU
+    return _u32().PostMessageW(_trayHwnd, WM_TRAYICON, 0, note)
 }
 
 // 我们的 WndProc：只拦"图标被点"，其余消息原样交还 SDL ✓
@@ -113,10 +117,13 @@ export func clickTrayIcon(): bool {
 func _trayWndProc(Ptr[u8] hwnd, int msg, int wp, int lp): int {
     if msg == WM_TRAYICON {
         int note = lp & 0xFFFF            // V4：通知码在 lParam 低 16 位 ✓
-        if note == WM_CONTEXTMENU or note == WM_LBUTTONUP or note == WM_RBUTTONUP {
-            _grabCursor()
-            _pending = true
+        if note == WM_CONTEXTMENU or note == WM_RBUTTONUP {
+            _grabCursor(); _clickKind = 2; _pending = true
             return 0                       // ★ 不链回 SDL ⇒ 它不会弹原生菜单（也就不会冻结）✓
+        }
+        if note == WM_LBUTTONUP {
+            _grabCursor(); _clickKind = 1; _pending = true
+            return 0
         }
     }
     return _int(_u32().CallWindowProcW(_oldProc, hwnd, msg, wp, lp))

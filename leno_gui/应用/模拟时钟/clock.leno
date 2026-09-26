@@ -7,7 +7,10 @@
 //   · 托盘：只有图标 + 悬停提示（跟随时间，分钟变化才写一次）；**不建 SDL 的原生菜单** ✓
 //   · 「托盘图标被点」由 sdl_tray.interceptTrayClick() 拦（Windows 子类化 SDL_TRAY 窗口 ✓）
 //   · 菜单 = SDL3.createPopMenu 的**自绘弹出菜单**（无边框置顶小窗，条目见 _MI_* 常量）：
-//     显示/隐藏窗口 · 窗口置顶 · 12 小时制 · 关于 · 退出（勾选态与文字由本应用维护 ✓）
+//     显示/隐藏窗口 · 窗口置顶 · 显示设置▸（12 小时制 / 显示日期）· 关于 · 退出
+//     图标 = 本应用 images/ 下的 PNG（**图片路径**，与 MenuBar 的 image: 同一套约定 ✓）
+//     勾选态与文字由本应用维护（菜单不反查 ✓）
+//   · 左键点托盘图标 = 直接显示/隐藏窗口；右键 = 弹菜单（区分左右键 ✓）
 //   · 关闭按钮 ⇒ 收进托盘继续走（win.cancelClose()）；ESC ⇒ 退出 ✓
 //
 // ★ 为什么不用 SDL 的原生托盘菜单（TrackPopupMenu）——两条**实测**结论：
@@ -24,30 +27,57 @@
 import "SDL3" as SDL3
 import maths
 import times
+import dirs
 import ffi
 use SDL3.(Tray, PopMenu, Event, Renderer, Font, Scancode, Timer, Window)
 use SDL3.WindowFlag
 
 // ===== 托盘动作标记（回调只置位；主循环统一执行 ⇒ 见头部约定 ①）=====
-bool _actToggle = false    // 显示 / 隐藏窗口
+bool _actToggle = false    // 显示 / 隐藏窗口（左键点托盘图标也走它 ✓）
 bool _actTop    = false    // 窗口置顶
-bool _actFmt    = false    // 12 / 24 小时制
-bool _actAbout  = false    // 关于
+bool _actFmt    = false    // 12 小时制开关
+bool _actDate   = false    // 显示日期开关
+bool _actAbout  = false    // 关于对话框
 bool _actQuit   = false    // 退出程序
+
+// 托盘被点 ⇒ 按左右键分发（**独立函数**：无头自检能直接调它验分发逻辑 ✓）
+//   右键(2) ⇒ 弹自绘菜单；左键(1) ⇒ 直接显示/隐藏窗口（区分左右键 ✓）
+func _onTrayClick(int x, int y, int kind) {
+    if kind == 2 {
+        // 先把"文字 / 图标 / 勾选态"同步到当前应用状态（菜单不反查 ✓）
+        _pm.setText(_MI_TOGGLE, if _visible then "隐藏窗口" else "显示窗口")
+        _pm.setIcon(_MI_TOGGLE, _imgPath(if _visible then "eye_off.png" else "eye.png"))
+        _pm.setChecked(_MI_TOP, _topMost)
+        _pm.setChecked(_MI_FMT, _hour12)
+        _pm.setChecked(_MI_DATE, _showDate)
+        _pm.showAt(x, y)
+    } else {
+        _actToggle = true
+    }
+}
 
 // ===== 应用状态（同时是托盘勾选态的**唯一真相** ⇒ 不反查 SDL ✓）=====
 bool _visible = true       // 窗口是否可见（隐藏后靠托盘菜单恢复）
 bool _topMost = false      // 置顶
 bool _hour12  = false      // 12 小时制
+bool _showDate = false     // 显示日期（「显示设置」子菜单里的第二个开关 ✓）
 string _tipHM = ""         // 已写入提示的 "HH:MM"（分钟没变就不重写 ✓）
 
 // 自绘菜单条目序号（在 main 里按同一顺序建立 ⇒ 同步标签/勾选与自检都用这套常量 ✓）
+// 层级：0/1 顶级；3 是「显示设置」子菜单父项，4/5 是它的下一级 ✓
 const _MI_TOGGLE = 0
-const _MI_TOP    = 1
-const _MI_FMT    = 3     // 2 是分隔行
-const _MI_ABOUT  = 5     // 4 是分隔行
-const _MI_QUIT   = 6
+const _MI_TOP    = 1     // 2 是分隔行
+const _MI_SET    = 3     // 子菜单父项「显示设置」
+const _MI_FMT    = 4     //   └ 12 小时制
+const _MI_DATE   = 5     //   └ 显示日期
+const _MI_ABOUT  = 7     // 6 是分隔行
+const _MI_QUIT   = 8
 PopMenu _pm = null       // 自绘弹出菜单（main 里建；自检要用 ⇒ 模块级 ✓）
+
+// ===== 菜单图标（图片资源，与 MenuBar/文件管理器同一套约定 ✓）=====
+// 放本应用自己的 images/（随包资源目录 = dirs.res_dir() ✓ 见 docs：读资源用 res_dir ✓）
+string _imgDir = ""
+func _imgPath(string icon): string { return _imgDir + "/" + icon }
 
 // ===== 无头自检（CLOCK_SELFTEST=1）=====
 // 托盘菜单平时**只能靠人手点** ⇒ 自检用 SDL_ClickTrayEntry 把各项"点"一遍，
@@ -73,93 +103,126 @@ func _sfDue(string what): bool {
     return true
 }
 
-// 自检状态机（每个 tick 末尾跑一次）：点一项 → 等状态真变（≤3s）→ 记 OK → 点下一项 ✓
-// 覆盖：自绘菜单弹出/收起 · 隐藏/显示 · **关闭按钮收进托盘** · 置顶 · 12 小时制 · 退出
+// 自检状态机（每个 tick 末尾跑一次）：触发 → 等状态真变（≤3s）→ 记 OK → 下一步 ✓
+// 覆盖：左右键分发 · 菜单弹出/收起/图标/勾选 · **子菜单下一级** · 隐藏/显示 · 关窗收托盘 · 置顶 · 退出
 // ⚠ 不点「关于」：真会弹模态框，无头会挂住 ✗
 // ⚠ 「托盘图标被点 ⇒ 拦截」这条链**无头测不了**：dummy 视频驱动下 SDL 不跑 Win32 消息泵，
-//   托盘窗口收不到消息 ✗（实测）⇒ 那条链由真机跑（子类化 WndProc 已实测 ✓，见 docs §六）
+//   托盘窗口收不到消息 ✗（实测）⇒ 这里直接调分发函数 _onTrayClick（等价于收到那个点击 ✓），
+//   拦截链本身由真机跑（子类化 WndProc 已实测 ✓，见 docs §六）
 func _sfStepRun() {
     if _sfStep == 0 {
         _sfDeadline = SDL3.getTicks() + 3000
         _sfCheck(SDL3.interceptTrayClick(), "托盘点击拦截（子类化 SDL_TRAY 窗口 ✓）")
-        _pm.showAt(200, 300)                       // 自绘菜单弹出（模拟"托盘被点"后的动作 ✓）
+        _onTrayClick(200, 300, 1)                  // ★ 左键 ⇒ 应切显隐（区分左右键 ✓）
         _sfStep = 1
         return
     }
     if _sfStep == 1 {
-        if _pm.isOpen() {
-            _sfCheck(true, "自绘菜单弹出（非模态窗口 ✓）")
-            _sfCheck(_tipHM != "", "悬停提示已写入当前时间")
-            _pm.clickItem(_MI_TOGGLE)              // 点「隐藏窗口」
+        if not _visible {
+            _sfCheck(true, "左键点托盘图标 ⇒ 直接隐藏窗口（左键 ≠ 弹菜单 ✓）")
+            _onTrayClick(200, 300, 2)              // 右键 ⇒ 应弹菜单 ✓
             _sfStep = 2; _sfDeadline = SDL3.getTicks() + 3000
-        } else if _sfDue("自绘菜单弹出") {
-            _pm.clickItem(_MI_TOGGLE); _sfStep = 2
-        }
+        } else { _sfDue("左键点托盘图标 ⇒ 直接隐藏窗口") }
         return
     }
     if _sfStep == 2 {
-        if not _visible {
-            _sfCheck(true, "菜单「隐藏窗口」⇒ 窗口隐藏（菜单也已收起 ✓：菜单开着时不关 ✗）")
-            _pm.setText(_MI_TOGGLE, "显示窗口")
-            _sfCheck(not _pm.isOpen(), "点条目后菜单自动收起")
-            _pm.clickItem(_MI_TOGGLE)              // 点「显示窗口」⇒ 恢复
+        if _pm.isOpen() {
+            _sfCheck(true, "右键点托盘图标 ⇒ 自绘菜单弹出（非模态窗口 ✓）")
+            _sfCheck(_tipHM != "", "悬停提示已写入当前时间")
+            _pm.clickItem(_MI_TOGGLE)              // 点「显示窗口」
             _sfStep = 3; _sfDeadline = SDL3.getTicks() + 3000
-        } else if _sfDue("菜单「隐藏窗口」⇒ 窗口隐藏") {
-            _pm.clickItem(_MI_TOGGLE); _sfStep = 3
-        }
+        } else { _sfDue("右键点托盘图标 ⇒ 自绘菜单弹出") }
         return
     }
     if _sfStep == 3 {
         if _visible {
             _sfCheck(true, "菜单「显示窗口」⇒ 窗口恢复")
-            // ★ 程序化"请求关闭"：与点 X 同一条路径（onEvent 里应拦截 ⇒ 收进托盘、不退出 ✓）
-            _sfCheck(_sfWin.requestClose(), "程序化关闭请求已投递（SDL_PushEvent ✓）")
+            _sfCheck(not _pm.isOpen(), "点条目后菜单自动收起")
+            _onTrayClick(200, 300, 2)              // 再弹一次（点条目已经把它收起了 ✓）
             _sfStep = 4; _sfDeadline = SDL3.getTicks() + 3000
         } else { _sfDue("菜单「显示窗口」⇒ 窗口恢复") }
         return
     }
     if _sfStep == 4 {
-        if not _visible {
-            _sfCheck(true, "关闭按钮 ⇒ 收进托盘（窗口未销毁、程序仍在跑 ✓）")
-            _pm.showAt(200, 300)                   // 从托盘恢复 ⇒ 验证"还能显示"（真的没销毁 ✓）
+        if _pm.isOpen() {
+            _sfCheck(true, "菜单可再次弹出")
+            _pm.clickItem(_MI_SET)                 // 子菜单父项 ⇒ 展开下一级 ✓
             _sfStep = 5; _sfDeadline = SDL3.getTicks() + 3000
-        } else { _sfDue("关闭按钮 ⇒ 收进托盘") }
+        } else { _sfDue("菜单可再次弹出") }
         return
     }
     if _sfStep == 5 {
-        if _pm.isOpen() {
-            _sfCheck(true, "收进托盘后仍可弹出菜单")
-            _pm.clickItem(_MI_TOGGLE)              // 显示窗口
+        if _pm.isExpanded(_MI_SET) {
+            _sfCheck(true, "子菜单「显示设置」展开下一级（飞出列 ✓）")
+            _sfCheck(_pm.isOpen(), "展开子菜单不会收起菜单 ✓")
+            // 命中判定（纯函数 ✓）：主面板内 / 子面板内 / 全在外面 —— 覆盖"点外面才收起"的几何 ✓
+            _sfCheck(_pm._insidePanels(10.0, 10.0), "命中判定：主面板内 = 里 ✓")
+            _sfCheck(_pm._insidePanels(_pm._colX[1] + 10.0, _pm._colTop[1] + 10.0), "命中判定：子面板内 = 里 ✓")
+            _sfCheck(not _pm._insidePanels(_float(_pm._w) + 50.0, 10.0), "命中判定：窗口外 = 外 ⇒ 会收起 ✓")
+            _pm.clickItem(_MI_FMT)                 // 下一级「12 小时制」
             _sfStep = 6; _sfDeadline = SDL3.getTicks() + 3000
-        } else { _sfDue("收进托盘后仍可弹出菜单") }
+        } else { _sfDue("子菜单「显示设置」展开下一级") }
         return
     }
     if _sfStep == 6 {
-        if _visible {
-            _sfCheck(true, "收进托盘后仍可恢复窗口")
-            _pm.clickItem(_MI_TOP)
+        if _hour12 {
+            _sfCheck(true, "子菜单项「12 小时制」⇒ 制式生效")
+            _pm.clickItem(_MI_DATE)
             _sfStep = 7; _sfDeadline = SDL3.getTicks() + 3000
-        } else { _sfDue("收进托盘后仍可恢复窗口") }
+        } else { _sfDue("子菜单项「12 小时制」⇒ 制式生效") }
         return
     }
     if _sfStep == 7 {
-        if _topMost {
-            _sfCheck(true, "菜单「窗口置顶」⇒ 置顶生效")
-            _pm.clickItem(_MI_FMT)
+        if _showDate {
+            _sfCheck(true, "子菜单项「显示日期」⇒ 日期生效")
+            _onTrayClick(200, 300, 2)              // 重新弹出 ⇒ 展开态应复位 ✓
             _sfStep = 8; _sfDeadline = SDL3.getTicks() + 3000
-        } else { _sfDue("菜单「窗口置顶」⇒ 置顶生效") }
+        } else { _sfDue("子菜单项「显示日期」⇒ 日期生效") }
         return
     }
     if _sfStep == 8 {
-        if _hour12 {
-            _sfCheck(true, "菜单「12 小时制」⇒ 制式生效")
-            _pm.clickItem(_MI_QUIT)                // ⇒ requestExit ⇒ run() 收尾（后面没步骤 ✓）
-            _sfStep = 9
-            _sfDeadline = SDL3.getTicks() + 1500
-        } else { _sfDue("菜单「12 小时制」⇒ 制式生效") }
+        if _pm.isOpen() {
+            _sfCheck(not _pm.isExpanded(_MI_SET), "重新弹出 ⇒ 子菜单展开态复位 ✓")
+            _sfCheck(_sfWin.requestClose(), "程序化关闭请求已投递（SDL_PushEvent ✓）")
+            _pm.hide()
+            _sfStep = 9; _sfDeadline = SDL3.getTicks() + 3000
+        } else { _sfDue("重新弹出 ⇒ 子菜单展开态复位") }
         return
     }
     if _sfStep == 9 {
+        if not _visible {
+            _sfCheck(true, "关闭按钮 ⇒ 收进托盘（窗口未销毁、程序仍在跑 ✓）")
+            _onTrayClick(200, 300, 2)
+            _sfStep = 10; _sfDeadline = SDL3.getTicks() + 3000
+        } else { _sfDue("关闭按钮 ⇒ 收进托盘") }
+        return
+    }
+    if _sfStep == 10 {
+        if _pm.isOpen() {
+            _sfCheck(true, "收进托盘后仍可弹出菜单")
+            _pm.clickItem(_MI_TOGGLE)              // 显示窗口
+            _sfStep = 11; _sfDeadline = SDL3.getTicks() + 3000
+        } else { _sfDue("收进托盘后仍可弹出菜单") }
+        return
+    }
+    if _sfStep == 11 {
+        if _visible {
+            _sfCheck(true, "收进托盘后仍可恢复窗口")
+            _pm.clickItem(_MI_TOP)
+            _sfStep = 12; _sfDeadline = SDL3.getTicks() + 3000
+        } else { _sfDue("收进托盘后仍可恢复窗口") }
+        return
+    }
+    if _sfStep == 12 {
+        if _topMost {
+            _sfCheck(true, "菜单「窗口置顶」⇒ 置顶生效")
+            _pm.clickItem(_MI_QUIT)                // ⇒ requestExit ⇒ run() 收尾（后面没步骤 ✓）
+            _sfStep = 13
+            _sfDeadline = SDL3.getTicks() + 1500
+        } else { _sfDue("菜单「窗口置顶」⇒ 置顶生效") }
+        return
+    }
+    if _sfStep == 13 {
         // ⚠ 点「退出」的**本 tick** 仍会走到这里（requestExit 由主循环下一轮收尾，不是立即返回）
         //   ⇒ 不能一到这就算失败；只有"过了 1.5s 还在"才是真没退（自检不能挂住 ⇒ 硬退 ✓）
         if _sfDue("菜单「退出」⇒ 主循环收尾") { _exit(1) }
@@ -246,7 +309,7 @@ func _paintClockIcon(Ptr[u8] buf, int S) {
 }
 
 // ===== 表盘绘制（run() 的渲染回调；最底层 ⇒ 直接铺满窗口 ✓）=====
-func _drawClock(Renderer ren, Font font, Font fontSmall, bool hour12) {
+func _drawClock(Renderer ren, Font font, Font fontSmall, bool hour12, bool showDate) {
     ren.clearColor(#181A22FF)
 
     float cx = 200.0; float cy = 200.0; float R = 160.0
@@ -306,6 +369,11 @@ func _drawClock(Renderer ren, Font font, Font fontSmall, bool hour12) {
         string ampm = if h < 12 then " AM" else " PM"
         timeStr = _pad2(_hour12Of(h)) + ":" + _pad2(m) + ":" + _pad2(s) + ampm
     }
+    // 日期（菜单「显示设置 ▸ 显示日期」开时画在表盘下沿与数字时间之间 ✓）
+    if showDate {
+        ren.drawTextCentered(fontSmall, _pad2(dt[0]) + "-" + _pad2(dt[1]) + "-" + _pad2(dt[2]),
+                             0, 400.0, 368.0, #8A8A96FF)
+    }
     ren.drawTextCentered(font, timeStr, 0, 400.0, 400.0, #DCDCE6FF)
     ren.drawTextCentered(fontSmall, "ESC 退出 · 关闭窗口收进托盘", 0, 400.0, 432.0, #6E6E78FF)
 }
@@ -341,17 +409,22 @@ main() {
         else       { print("[警告] 托盘点击拦截不可用（非 Windows?）⇒ 托盘只显示图标与提示") }
     }
 
-    // ===== 自绘弹出菜单（非模态 ⇒ 展开时时钟照走，不冻结 ✓）=====
-    // 条目顺序见 _MI_* 常量（自检与同步标签都用它 ✓）
+    // ===== 自绘弹出菜单（非模态 ⇒ 展开时时钟照走，不冻结 ✓；图标用图片 + 带下一级 ✓）=====
+    // 图标目录：随包资源目录下的 images/（与文件管理器同一套 ✓；未打包时 = 脚本旁边 ✓）
+    _imgDir = dirs.join(dirs.res_dir(), "images")
+    // 条目顺序见 _MI_* 常量（自检与同步标签都用它 ✓）；图标 = 本应用 images/ 下的 PNG ✓
     _pm = SDL3.createPopMenu({fontSize: 15.0})
     if _pm.ok() {
-        _pm.addItem("隐藏窗口", func() { _actToggle = true })          // _MI_TOGGLE
-        _pm.addCheck("窗口置顶", false, func() { _actTop = true })      // _MI_TOP
-        _pm.addSeparator()
-        _pm.addCheck("12 小时制", false, func() { _actFmt = true })     // _MI_FMT
-        _pm.addSeparator()
-        _pm.addItem("关于", func() { _actAbout = true })               // _MI_ABOUT
-        _pm.addItem("退出", func() { _actQuit = true })                // _MI_QUIT
+        _pm.addItem("隐藏窗口", _imgPath("eye_off.png"), func() { _actToggle = true })    // _MI_TOGGLE
+        _pm.addCheck("窗口置顶", _imgPath("pin.png"), false, func() { _actTop = true })    // _MI_TOP
+        _pm.addSeparator()                                                                // 2
+        _pm.beginSubmenu("显示设置")                                                       // _MI_SET
+        _pm.addCheck("12 小时制", _imgPath("clock.png"), false, func() { _actFmt = true })  //  _MI_FMT
+        _pm.addCheck("显示日期", _imgPath("date.png"), false, func() { _actDate = true })   //  _MI_DATE
+        _pm.endSubmenu()
+        _pm.addSeparator()                                                                // 6
+        _pm.addItem("关于", _imgPath("about.png"), func() { _actAbout = true })            // _MI_ABOUT
+        _pm.addItem("退出", _imgPath("exit.png"), func() { _actQuit = true })              // _MI_QUIT
     } else {
         print("[警告] 自绘菜单窗口创建失败 ⇒ 托盘点击将无菜单可弹")
     }
@@ -361,14 +434,9 @@ main() {
     // ★ tick 先声明（显式类型）再赋值：回调里要改节拍（tick.reset）⇒ 自引用必须带类型 ✓
     Timer tick = null
     tick = win.addTimer(16, func() {
-        // 托盘被点 ⇒ 弹自绘菜单：先把"文字 / 勾选态"同步到当前应用状态（菜单不反查 ✓）
+        // 托盘被点 ⇒ 按左右键分发（右键弹菜单 / 左键切显隐 ✓）
         var tp = SDL3.pollTrayClick()
-        if tp.len() >= 2 {
-            _pm.setText(_MI_TOGGLE, if _visible then "隐藏窗口" else "显示窗口")
-            _pm.setChecked(_MI_TOP, _topMost)
-            _pm.setChecked(_MI_FMT, _hour12)
-            _pm.showAt(tp[0], tp[1])
-        }
+        if tp.len() >= 3 { _onTrayClick(_int(tp[0]), _int(tp[1]), _int(tp[2])) }
         _pm.poll()          // 点在菜单外 ⇒ 自动收起（不依赖焦点 ✓）
 
         if _actToggle {
@@ -391,11 +459,16 @@ main() {
             _actFmt = false
             _hour12 = not _hour12
         }
+        if _actDate {
+            _actDate = false
+            _showDate = not _showDate
+        }
         if _actAbout {
             _actAbout = false
             SDL3.showMessageBox("关于 · 模拟时钟",
                 "模拟时钟（LenoSDL3：自绘表盘 + 自绘托盘菜单）\n\n"
-                + "托盘菜单：显示/隐藏窗口 · 窗口置顶 · 12 小时制 · 关于 · 退出\n"
+                + "托盘：右键 = 菜单（显示/隐藏窗口 · 窗口置顶 · 显示设置▸ · 关于 · 退出）"
+                + "，左键 = 显示/隐藏窗口\n"
                 + "关闭按钮 = 收进托盘继续走；ESC = 退出程序",
                 0)
         }
@@ -449,7 +522,7 @@ main() {
             return true
         },
         func(Renderer ren) {
-            if _visible { _drawClock(ren, font, fontSmall, _hour12) }   // 隐藏时不画（省 CPU ✓）
+            if _visible { _drawClock(ren, font, fontSmall, _hour12, _showDate) }   // 隐藏时不画（省 CPU ✓）
         }
     )
 
@@ -468,7 +541,7 @@ main() {
     // 自检退出码：失败 ⇒ 1（方便脚本/CI 判定 ✓）
     if _selfCheck {
         // 主循环提前退出（如"收进托盘"被误判成销毁窗口）⇒ 自检没跑完也是失败 ✓
-        if _sfStep < 9 { _sfFail = _sfFail + 1; print("[自检] FAIL 自检未跑完（主循环提前退出 ⇒ 窗口被销毁?）") }
+        if _sfStep < 13 { _sfFail = _sfFail + 1; print("[自检] FAIL 自检未跑完（主循环提前退出 ⇒ 窗口被销毁?）") }
         if _sfFail > 0 { print("[自检] 结果：失败 " + _str(_sfFail) + " 项"); _exit(1) }
         print("[自检] 结果：全部通过")
         _exit(0)

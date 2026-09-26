@@ -50,7 +50,7 @@ import "sdl_titlebar.leno" as tbar
 use tbar.TitleBar
 import "sdl_canvas.leno" as cnv
 use cnv.Canvas
-import "sdl_popmenu.leno" as pmenu; use pmenu.PopMenu    // 自绘弹出菜单（非模态 ⇒ 不冻结 ✓）
+import "sdl_popmenu.leno" as pmenu; use pmenu.PopMenu    // 自绘弹出菜单（图标传图片路径，同 MenuBar ✓）
 export func createPopMenu(Dict opts): PopMenu { return pmenu.createPopMenu(opts) }
 
 
@@ -148,8 +148,8 @@ export func clickTrayEntry(Ptr[u8] e)               { tray.clickEntry(e) }
 // 模态菜单 ⇒ 画面不冻结 ✓）。之后在主循环里 pollTrayClick() 取"图标被点 + 光标位置" ✓
 export func interceptTrayClick(): bool        { return tray.interceptTrayClick() }
 export func releaseTrayClick()               { tray.releaseTrayClick() }
-export func pollTrayClick(): Array           { return tray.pollTrayClick() }
-export func clickTrayIcon(): bool            { return tray.clickTrayIcon() }   // 自测用：模拟点图标 ✓
+export func pollTrayClick(): Array           { return tray.pollTrayClick() }   // [x, y, 键(1左/2右)] ✓
+export func clickTrayIcon(int kind = 2): bool { return tray.clickTrayIcon(kind) }   // 自测用：模拟点图标 ✓
 export func setTipDelay(int ms)                     { tip.setTipDelay(ms) }
 export func createHBox(Dict opts): HBox          { return lay.createHBox(opts) }
 export func createVBox(Dict opts): VBox          { return lay.createVBox(opts) }
