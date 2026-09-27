@@ -6,7 +6,9 @@ use ty.Rectangle
 use ty.Point
 
 // 计算圆形面积
-export func circle_area(int radius): int
+// ⚠ 2026-09-28 修示例：`geo.circle_area` 是 **float**（π r² 本来就该是浮点），
+//   这里原来声明成 int ⇒ "返回类型不匹配：期望 int，实际 float"（报错是对的）。
+export func circle_area(int radius): float
 {
     return geo.circle_area(radius)
 }
@@ -36,7 +38,8 @@ export func create_colored_rect(int x, int y, int w, int h, any color): Rectangl
 }
 
 // 复杂计算：圆形 + 矩形
-export func mixed_shape_area(int radius, Rectangle rect): int
+// ⚠ 同上：圆面积是 float ⇒ 和号也是 float（int + float ⇒ float）
+export func mixed_shape_area(int radius, Rectangle rect): float
 {
     var circle = geo.circle_area(radius)
     var rectangle = ty.rect_area(rect)

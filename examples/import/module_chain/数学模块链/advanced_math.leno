@@ -3,21 +3,23 @@
 import "math_utils.leno" as math
 import "geometry.leno" as geo
 
-export func cylinder_volume(any radius, any height)
+export func cylinder_volume(any radius, any height): float
 {
     // 调用 geometry 模块的函数，而 geometry 内部又调用了 math_utils
-    var base_area = geo.circle_area(radius)
-    return math.multiply(base_area, height)
+    // ⚠ 2026-09-28 修示例：本模块的形参是 any，而 helper 是具体类型 ⇒ 显式转换
+    //   （`_int` / `_float`）。这里也顺带演示了 any 与具体类型交界处的写法。
+    var base_area = geo.circle_area(_int(radius))
+    return math.multiply_f(base_area, _float(height))
 }
 
-export func cylinder_surface_area(any radius, any height)
+export func cylinder_surface_area(any radius, any height): float
 {
-    var base_area = geo.circle_area(radius)
-    var two_bases = math.multiply(2, base_area)
-    
+    var base_area = geo.circle_area(_int(radius))
+    var two_bases = math.multiply_f(2.0, base_area)
+
     // 圆周长 = 2 * PI * radius
-    var circumference = math.multiply(math.multiply(2, math.PI), radius)
-    var side_area = math.multiply(circumference, height)
-    
-    return math.add(two_bases, side_area)
+    var circumference = math.multiply_f(math.multiply_f(2.0, math.PI), _float(radius))
+    var side_area = math.multiply_f(circumference, _float(height))
+
+    return math.add_f(two_bases, side_area)
 }

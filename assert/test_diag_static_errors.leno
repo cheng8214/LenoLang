@@ -523,5 +523,73 @@ main() {
 ")
     ce.expect_ok(vp3, "多码值 strings.char 照常通过", "ABC")
 
+    // ---- struct 构造 / 命名的四条诊断（2026-09-28；实例二十九）----
+    //   来源：`examples/import/module_chain/混合测试/` 那批**手搓草稿**（文件名 main/main2/main4/…，
+    //   main.leno 开头还写着"新建文件: Untitled.leno"）。它们"编译不过"恰恰是因为**语言正确拒绝了**
+    //   这些写法；而断言里对这四条**零覆盖** ⇒ 先把覆盖点收进来，再删掉那批草稿（免得永远没人跑、还误导扫描）。
+    var ec1 = dirs.join(work, "struct_as_call.leno")
+    files.write(ec1, @"struct Info {
+    int x
+}
+
+main() {
+    var i = new Info(x = 1)
+    print(i())
+}
+")
+    //   ⚠ 文案里的建议用的是**变量名**（`new i()`），而正确的类型名是 `Info` —— 已登记为待修的小缺陷
+    //   （断言只钉「需要使用 new 关键字实例化」这半句，等修好文案再收紧）
+    ce.expect_error(ec1, "struct 实例当函数调用要报错", "需要使用 new 关键字实例化", 7)
+
+    var ec2 = dirs.join(work, "struct_positional.leno")
+    files.write(ec2, @"struct P {
+    int x
+    int y
+}
+
+main() {
+    var p = new P(10, 20)
+}
+")
+    ce.expect_error(ec2, "struct 初始化必须用字段名（位置参数被拒）", "期望字段名", 7)
+
+    var ec3 = dirs.join(work, "struct_unknown_field.leno")
+    files.write(ec3, @"struct P {
+    int x
+}
+
+main() {
+    var p = new P(x = 1, z = 2)
+}
+")
+    ce.expect_error(ec3, "命名参数里的未知字段要报错", "没有字段 'z'", 6)
+
+    var ec4 = dirs.join(work, "untyped_param.leno")
+    files.write(ec4, @"func f(a, b): int {
+    return 1
+}
+
+main() {
+    print(f(1, 2))
+}
+")
+    ce.expect_error(ec4, "函数形参必须写类型", "期望参数名", 1)
+
+    // 正向（不得误伤）：命名参数支持**无序**（草稿里 main3/main5 的正面用例）
+    var ec5 = dirs.join(work, "named_args_ok.leno")
+    files.write(ec5, @"struct Point3 {
+    int x
+    int y
+    int z
+}
+
+main() {
+    var p1 = new Point3(x = 10, y = 20, z = 30)
+    var p2 = new Point3(z = 100, x = 50, y = 75)
+    print(_str(p1.x + p1.y + p1.z) + ""/"" + _str(p2.x + p2.y + p2.z))
+}
+")
+    ce.expect_ok(ec5, "命名参数无序照常通过", "60/225")
+
     print("=== test_diag_static_errors ALL passed ===")
 }

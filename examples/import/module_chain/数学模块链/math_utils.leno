@@ -1,3 +1,4 @@
+
 // 基础数学工具模块
 
 export var PI = 3.14159265359
@@ -15,4 +16,19 @@ export func multiply(int a, int b): int
 export func square(int x): int
 {
     return x * x
+}
+
+// ---- 浮点版（2026-09-28 修示例）----
+// 为什么需要：`PI` 是 float，而上面的 multiply/add 只收 int ⇒ 原示例里
+// `multiply(math.PI, square(radius))` **编译不过**（"期望 int, 实际 float"）。
+// 报错本身是对的 —— 是示例陈旧了（当年检查没这么严）。圆面积/圆柱体积这些本来就要浮点，
+// 所以补浮点版助手，而不是把 PI 改成 int（那会让示例丢掉"跨模块 float 变量"这个演示点）。
+export func add_f(float a, float b): float
+{
+    return a + b
+}
+
+export func multiply_f(float a, float b): float
+{
+    return a * b
 }

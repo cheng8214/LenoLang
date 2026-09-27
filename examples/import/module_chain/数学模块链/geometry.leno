@@ -1,11 +1,14 @@
+
 // 几何计算模块 - 依赖 math_utils 模块
 
 import "math_utils.leno" as math
 
-export func circle_area(int radius): int
+export func circle_area(int radius): float
 {
     // 使用导入模块的变量和函数
-    return math.multiply(math.PI, math.square(radius))
+    // ⚠ 2026-09-28 修示例：`PI` 是 float ⇒ 必须走浮点版乘法
+    //   （原写 `math.multiply(math.PI, ...)` 报"期望 int, 实际 float"，报错是对的）
+    return math.multiply_f(math.PI, math.square(radius))
 }
 
 export func rectangle_area(int width, int height): int
