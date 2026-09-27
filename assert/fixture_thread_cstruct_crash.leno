@@ -1,0 +1,50 @@
+// fixture_thread_cstruct_crash.leno —— **已知崩溃的稳定复现**（⚠ 不要当 test_ 用例跑：它会崩）
+//
+// 现象（2026-09-28 发现）：进程**收尾时**报 0xC0000374（堆损坏），偶发但命中率很高
+//   （本文件 6/6；更小的单线程版本 1/12）。**程序输出一切正常**，是退出阶段堆检查抓到的。
+// 触发形态：**子线程里创建 cstruct（`T.malloc()`）+ 把它的字段读进一个 dict + 该 dict 经通道发给主线程**。
+//
+// 二分结论（cs2.leno 上做的，都是 6 次采样）：
+//   · 去掉 `from_ptr` 那个测试 ⇒ 仍崩（5/6）⇒ **不是** from_ptr
+//   · 把 ffi.load/malloc/free 那段换成纯 cstruct ⇒ 仍崩（6/6）⇒ **不是** ffi 句柄/内存
+//   · 去掉子线程里的 `s.free()` ⇒ 仍崩（4/6）⇒ **不是** 显式 free
+//   · 跨线程只传 int（0/12）、只传 dict（0/8）、只传 cstruct 的 int 字段（0/12）、
+//     大分配触发 GC + dict（0/10）⇒ **都需要 cstruct 与 dict 同时出现**
+// 怀疑方向：**跨线程对象所有权**（`object_thread.c` 注释说明子线程退出前会主动跑一次 GC，
+//   channel buffer 靠 `child_vm.globals → channel → buffer` 标记存活；`value_clone_for_channel`
+//   负责跨线程取值）⇒ 子线程退出 GC / clone / channel 三者交界处漏了某条存活路径。
+// 下一步：在 `channel.send` 与子线程退出 GC 上加打印/断言，确认到底哪块内存在两个堆里都被释放。
+//
+// 用法（复现用，**不要**进 run_tests）：build\leno.exe assert\fixture_thread_cstruct_crash.leno
+
+import threads
+
+cstruct T {
+    u32 a
+    u32 b
+}
+
+func worker(any ch)
+{
+    var s = T.malloc()
+    s.a = 1
+    s.b = 2
+    if ch is Channel {
+        ch.send({k: "ok", a: s.a, b: s.b})
+    }
+    s.free()
+}
+
+main()
+{
+    var ch = threads.channel(8)
+    for 0 : 2 to var i {
+        var t = threads.start(worker, ch)
+        if ch is Channel {
+            var m = ch.receive()
+            print("收到: " + type(m))
+        }
+        t.join()
+    }
+    print("done")
+}

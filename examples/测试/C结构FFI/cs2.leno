@@ -1,4 +1,10 @@
 // 简化版线程测试
+//
+// ⚠ 2026-09-28 已知运行期 bug（**不是本文件的写法问题**）：本文件 6/6 **稳定**触发
+//   进程收尾堆损坏 0xC0000374（输出一切正常，退出阶段堆检查抓到）。
+//   二分已排除：from_ptr / ffi.load+malloc+free / 子线程里的 s.free()；
+//   触发形态是「子线程里创建 cstruct + 其字段进 dict + dict 经通道发」。
+//   详见 docs 实例三十四，稳定复现见 assert/fixture_thread_cstruct_crash.leno。
 import ffi
 import threads
 
