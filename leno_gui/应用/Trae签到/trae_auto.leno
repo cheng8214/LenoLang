@@ -77,6 +77,18 @@ func _draw_jitter(): int {
 export func autoSetJitter(int s) { _jitter_fixed = s; _jitter = s }
 export func autoJitter(): int { return _jitter }
 
+// **确立当天**的唯一入口：跨天（或当天还没确立过）⇒ 换日 + 抽当天抖动 ✓
+// 为什么必须收在这一处：确立当天的路径不止 `autoTick` 一条 —— `autoMarkDoneToday`（启动时
+//   本地已签到）与 `autoNotifyResult`（手动签到）也会确立 ⇒ 只在 tick 里抽的话，这两条路上
+//   状态栏就看不到真实触发点（缺 `(+Ns)`）✗（2026-09-27）
+// 档位 / `_phase` 仍由各调用方自己定（语义不同 ⇒ 不放进这里 ✓）
+func _ensure_day(string today) {
+    if today != _day {
+        _day = today
+        _jitter = _draw_jitter()
+    }
+}
+
 // ==================== 配置 / 初始化 ====================
 // 参数直给（自检用 ⇒ 不依赖真实 settings.json ✓）
 export func autoSetParams(bool en, int hh, int mm, bool retry) {
@@ -98,12 +110,13 @@ export func autoResetAll() {
     _retry_idx = 0
     _phase = "idle"
     _fired = 0
+    _jitter = 0                       // 当天还没确立 ⇒ 状态栏别显示上一天残留的 `(+Ns)` ✓
 }
 
 // GUI 启动时：本地历史说"今天已经签成功了" ⇒ 直接算完成，不用等自动触发 ✓（对标 :842-845 ✓）
 export func autoMarkDoneToday() {
     var p = _nowParts()
-    _day = _today(p[0], p[1], p[2])
+    _ensure_day(_today(p[0], p[1], p[2]))     // 走统一入口 ⇒ 当天抖动照样抽（状态栏能显示真实触发点 ✓）
     _retry_at = -1
     _retry_idx = 0
     _phase = "done"
@@ -157,11 +170,10 @@ export func autoTick(): bool {
     var sec = p[3] * 3600 + p[4] * 60 + p[5]
 
     if today != _day {                    // 跨天 ⇒ 重置档位与排期（参考件跨天不清档位，是它的潜在缺陷 ✓）
-        _day = today
+        _ensure_day(today)                // 换日 + 抽当天抖动（同一天内固定 ✓）
         _retry_at = -1
         _retry_idx = 0
         _phase = "idle"
-        _jitter = _draw_jitter()          // 当天抖动只抽一次（同一天内固定 ✓）
     }
     if _phase != "idle" { return false }  // 今天已结束（done / manual / failed / given_up / skipped ✓）
 
@@ -185,7 +197,7 @@ export func autoNotifyResult(Array[string] r, bool manual) {
     var p = _nowParts()
     var today = _today(p[0], p[1], p[2])
     var sec = p[3] * 3600 + p[4] * 60 + p[5]
-    _day = today
+    _ensure_day(today)                    // 手动签到也会确立当天 ⇒ 同样抽抖动（状态栏一致 ✓）
 
     if r.len() == 0 {                     // 未选择账号 / 离线 ⇒ 跳过：不消耗档位、不写历史 ✓
         _retry_at = -1
@@ -409,6 +421,14 @@ export func autoSelftest(): int {
     _ck(not autoTick(), "⑬ 00:06:29 仍差 1 秒 ⇒ 不触发")
     _sfSetClock(0, 6, 30)
     _ck(autoTick(), "⑬ 00:06:30 到点 ⇒ 触发 ✓")
+
+    // 已签到路径（`autoMarkDoneToday`）也必须**确立当天** ⇒ "今日已完成"时状态栏照样显示真实触发点 ✓
+    // （不走统一入口就会漏抽 ⇒ 状态栏缺 `(+Ns)`；这条断言就是钉住那个回归 ✓ 2026-09-27）
+    _sfPrep(2026, 10, 6, 10, 0, 0)
+    autoMarkDoneToday()
+    _ck(autoStatusText() == "自动签到 已开 00:05(+90s) · 今日已完成",
+        "⑬ 已签到路径也抽了当天抖动 ⇒ 状态栏显示 (+90s) ✓")
+
     autoSetJitter(0)                                      // 还原（免得影响后续 ✓）
 
     autoSetClock(null)
