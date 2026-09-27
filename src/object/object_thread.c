@@ -106,19 +106,34 @@ Value value_clone_for_channel(Value val) {
                     ObjDict* dict = (ObjDict*)obj;
                     ObjDict* copy = dict_new(dict->capacity > 0 ? dict->capacity : 8);
                     if (!copy) return val_null();
-                    // 拷贝数组部分
+                    // 拷贝数组部分（整数键 0..asize-1）
+                    // ⚠⚠ v3.2.8 修（实例三十五）：**必须走 `dict_set`**，不能直写 `copy->array[i]`。
+                    //   原来的写法有两个错：
+                    //   ① 上界用了 `copy->capacity`（**哈希槽数** ≥ 8），而 `dict_new()` 只给数组部分
+                    //      **4** 个槽（`dict_array_resize(dict, 4)`）⇒ 源 `asize > 4` 时**越界写**堆内存
+                    //      （实测 0xC0000374 偶发堆损坏）；
+                    //   ② 直写还把 `asize++ / acount++` 当成"槽数"累加，而 `acount` 是**非空**元素数
+                    //      ⇒ 字典状态错乱 ⇒ 收下侧 `len()` 直接错（实测传 `{k,a,b}` 收到后 `len=11`，
+                    //      应为 3 —— 这条**确定性**症状比偶发崩溃更好当回归判据）。
+                    //   走 `dict_set` 则由字典自己负责扩容/计数/写屏障 ✓。
                     if (dict->array && dict->asize > 0) {
-                        for (int i = 0; i < dict->asize && i < copy->capacity; i++) {
-                            copy->array[i] = value_clone_for_channel(dict->array[i]);
-                            copy->asize++;
-                            copy->acount++;
+                        for (int i = 0; i < dict->asize; i++) {
+                            Value elem = dict->array[i];
+                            if (val_is_null(elem)) continue;
+                            dict_set(copy, val_int(i), value_clone_for_channel(elem));
                         }
                     }
                     // 拷贝哈希表部分
                     for (int i = 0; i < dict->capacity; i++) {
                         Value entry_key = dict->entries[i].key;
                         if (!val_is_null(entry_key) && entry_key != DICT_TOMBSTONE_VAL) {
-                            dict_set(copy, entry_key,
+                            // ⚠⚠ v3.2.8 修（实例三十五）：**键也必须克隆**。
+                            //   原代码把发送线程堆上的 key 直接塞进接收线程的 dict ⇒ **跨堆引用**：
+                            //   接收方后续的写屏障会把"别的堆的对象"记进自己的记忆集/灰栈，
+                            //   进程收尾时同一块内存被两个堆各释放一次 ⇒ **0xC0000374 堆损坏**。
+                            //   实测对照（8 次采样）：跳过接收侧克隆 0/8、保留克隆 6/8；
+                            //   消息换成**字符串**（无键）0/8 ⇒ 正是"dict 的键"这一条特有路径。
+                            dict_set(copy, value_clone_for_channel(entry_key),
                                     value_clone_for_channel(dict->entries[i].value));
                         }
                     }

@@ -44,6 +44,26 @@ func fib_local(int n): int {
 }
 
 // 子线程里同时用 dict / array / 递归（原 test_comprehensive 的独有覆盖点，抽一条代表性的）
+// 跨线程 dict 克隆的回归 worker（实例三十五）：字典型 + 整数键型（后者走数组部分）
+func send_dict_worker(any ch) {
+    if ch is Channel {
+        ch.send({k: "ok", a: 1, b: 2})
+    }
+}
+
+func send_int_dict_worker(any ch) {
+    if ch is Channel {
+        var d = {}
+        d.set(0, "a")
+        d.set(1, "b")
+        d.set(2, "c")
+        d.set(3, "d")
+        d.set(4, "e")
+        d.set(5, "f")
+        ch.send(d)
+    }
+}
+
 func lang_worker(any n) {
     var d = {"a": 1, "b": 2}
     var arr = [1, 2, 3]
@@ -159,6 +179,41 @@ main()
     var lw = threads.start(lang_worker, 10)
     assert_eq(lw.join(), 63)
     assert_eq(fib_local(10), 55)      // 对照：主线程同函数同结果（隔离性）
+
+    // ---- 跨线程传 dict 的**克隆正确性**（2026-09-28；实例三十五）----
+    //   背景：`value_clone_for_channel` 的 dict 分支有两处错（数组部分**越界直写** + 把 `acount`
+    //   当槽数累加）⇒ ①偶发 0xC0000374 堆损坏（fix 前 fixture 6/8、cs2.leno 6/6；
+    //   见 assert/fixture_thread_cstruct_crash.leno）②**确定性**地把收下侧 dict 的 len() 写坏。
+    //   这里用两条**确定性**判据把它钉住：字典型（11 → 3）与**整数键**型（走数组部分那条越界路径）。
+    var dch = threads.channel(4)
+    var dt = threads.start(send_dict_worker, dch)
+    if dch is Channel {
+        var got = dch.receive()
+        if got is Dict {                        // 守卫要在**同一个块里**才收窄（断言不能代替守卫）
+            assert_eq(got.len(), 3)             // 修复前是 11（acount 被写坏）
+            assert_eq(_str(got["k"]), "ok")     // 裸 Dict 收窄后元素仍是 any ⇒ 用 _str/_int 转换
+            assert_eq(_int(got["a"]), 1)
+            assert_eq(_int(got["b"]), 2)
+        } else {
+            assert_true(false, "跨线程收到的应当是 dict")
+        }
+    }
+    dt.join()
+
+    // 整数键 0..5 ⇒ 源字典**数组部分**长到 ≥8 槽 ⇒ 正是原来越界写的那条路径
+    var ich = threads.channel(4)
+    var it = threads.start(send_int_dict_worker, ich)
+    if ich is Channel {
+        var got2 = ich.receive()
+        if got2 is Dict {
+            assert_eq(got2.len(), 6)
+            assert_eq(_str(got2[0]), "a")
+            assert_eq(_str(got2[5]), "f")
+        } else {
+            assert_true(false, "跨线程收到的应当是 dict（整数键）")
+        }
+    }
+    it.join()
 
     print("test_threads passed")
 }
