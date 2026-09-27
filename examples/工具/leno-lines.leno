@@ -1,0 +1,59 @@
+// leno-lines — 自统计行数：按扩展名分组（.c / .h / .leno）
+// 用法: leno leno-lines.leno [目录]     （默认当前目录）
+//   输出：逐文件行数 + 每组汇总（文件数/总行/空行/代码行）+ 总计
+import files
+import strings
+import dirs
+
+string sep = if _os() == "windows" then "\\" else "/"
+
+// 分组计数：0=.c  1=.h  2=.leno（数组元素赋值 ✓ —— leno_gui 真实代码大量在用 ✓）
+Array[int] g_cnt = [0, 0, 0]
+Array[int] g_tot = [0, 0, 0]
+Array[int] g_blk = [0, 0, 0]
+
+func count_file(string path, int gi) {
+    var content = files.read(path)
+    if content == null { print($"  (读不了) {path}"); return }
+    var lines = strings.split(content, "\n")
+    int n = lines.len()
+    if n > 0 and lines[n - 1] == "" { n -= 1 }    // 结尾换行不算一行 ✓
+    print($"  {strings.format("%6d", n) }  {path}")
+    int b = 0
+    for 0 : n - 1 to i {
+        if strings.trim(lines[i]) == "" { b += 1 }
+    }
+    g_cnt[gi] = g_cnt[gi] + 1
+    g_tot[gi] = g_tot[gi] + n
+    g_blk[gi] = g_blk[gi] + b
+}
+
+// 一遍 walk 扫一种扩展名 ⇒ 输出自然按组分好 ✓
+func scan(string root, string ext, int gi) {
+    var walks = dirs.walk(root)
+    for walks to w {
+        var fnames = w[2]
+        for fnames to f {
+            if strings.ends_with(f, ext) { count_file(w[0] + sep + f, gi) }
+        }
+    }
+}
+
+main() {
+    var args = _args()
+    string root = if args.len() >= 1 then args[0] else "."
+    print($"== 行数统计: {root} ==")
+
+    print("\n== .c ==");    scan(root, ".c", 0)
+    print("\n== .h ==");    scan(root, ".h", 1)
+    print("\n== .leno =="); scan(root, ".leno", 2)
+
+    print("\n== 汇总 ==")
+    Array[string] names = [".c    ", ".h    ", ".leno "]
+    int tc = 0; int tt = 0
+    for 0 : 2 to k {
+        print($"{names[k]}: {g_cnt[k]} 文件, {g_tot[k]} 行 (空 {g_blk[k]}, 代码 {g_tot[k] - g_blk[k]})")
+        tc = tc + g_cnt[k]; tt = tt + g_tot[k]
+    }
+    print($"总计  : {tc} 文件, {tt} 行")
+}

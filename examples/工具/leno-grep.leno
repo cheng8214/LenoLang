@@ -16,7 +16,9 @@ string sep       = if _os() == "windows" then "\\" else "/"
 func is_match(string line, string pattern):bool {
     var l = if opt_icase then strings.to_lower(line)   else line
     var p = if opt_icase then strings.to_lower(pattern) else pattern
-    return if opt_regex then regexs.match(l, p) else strings.has(l, p)
+    // ⚠ regexs.match 是**行首锚定**（只从位置 0 试一次，不是"包含"⇒ 老代码 regex 模式永远 0 命中 ✗）
+    //   要搜索必须用 regexs.find（0 基位置，-1 = 没找到 ✓）
+    return if opt_regex then regexs.find(l, p) >= 0 else strings.has(l, p)
 }
 
 // 检查文件大小（不读取内容）
