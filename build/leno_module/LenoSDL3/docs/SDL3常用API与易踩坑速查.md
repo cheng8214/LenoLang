@@ -327,7 +327,7 @@ Trae签到 ⑥b 定时自动签到 / 设置对话框（**无头可跑 ✓**，�
 
 ```
 $env:SDL_VIDEODRIVER='dummy'                 # 自检用**注入时钟**（[y,m,d,H,M,S]）⇒ 跨天/23 点可秒级断言 ✓
-$env:TRAE_AUTO_SELFTEST='1'                  # 12 组：到点触发·5/15/30/60/120 递增封顶·23:00 放弃·跨天重置·成功即停·
+$env:TRAE_AUTO_SELFTEST='1'                  # 13 组：到点触发·1/15/30/60/120 递增封顶·触发抖动·23:00 放弃·跨天重置·成功即停·
 build\leno.exe --no-cache leno_gui\应用\Trae签到\trae_gui.leno   #        9095 即停·启动补签·空结果跳过·关掉重试/开关 ✓
 $env:TRAE_SETTINGS_SELFTEST='1'              # 设置读写/越界兜底/临时文件清理（用 settings_selftest.json ✓）
 build\leno.exe --no-cache leno_gui\应用\Trae签到\trae_gui.leno
@@ -338,6 +338,8 @@ build\leno.exe --no-cache leno_gui\应用\Trae签到\trae_gui.leno
 > 分支只能靠等真实时间，自检写不动 ✗（本次就是这么做的 ✓）
 > ⚠ 另一条：自检里**不能 `runModal`**（dummy 下没有事件 ⇒ 模态循环会永久挂起 ✗，见 §一）——
 > 只建窗 + 断言控件初值即可 ✓
+> ⚠ 后来又加了**触发抖动**（0~90s，避开"全体脚本在 00:05 同一秒发射"）⇒ 自检必须先把它钉死
+> （`autoSetJitter(0)`），否则同一条断言今天过、明天不过 ✗（随机量进生产逻辑，就必须留一个"关掉随机"的口子 ✓）
 
 ⚠ 「托盘图标被点 ⇒ 拦截 ⇒ 弹菜单」这条链**要真机跑**（dummy 下没有 Win32 消息泵 ✗，见 §六）。
 真机快速验证：`set LENO_SDL_FRAMES=40` 后直接跑模拟时钟 —— 右键托盘图标应在光标处弹出菜单、
