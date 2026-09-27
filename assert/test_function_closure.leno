@@ -39,4 +39,21 @@ var add5 = make_adder(5)
 assert_eq(add5(3), 8)
 assert_eq(add5(10), 15)
 
+// ---- dict 里存函数 ⇒ "取出的值当函数调用"（2026-09-28；实例三十六）----
+//   背景：`ops["double"](5)` 这类写法原来被当成"dict 的方法"而报
+//   「类型 'Dict[string, func(any):any]' 没有方法 'double'」（提示还误导成"数组切片"）。
+//   dict **没有自定义方法** ⇒ 非内置方法名应当按"key 取出来的值"调用 ✓。
+var ops = {"double": func(any x) { return x * 2 }, "inc": func(any x) { return x + 1 }}
+assert_eq(ops["double"](5), 10)
+assert_eq(ops["inc"](5), 6)
+
+// 值类型是 `any` 的字典同样按"调用值"处理（闭包工厂返回的"方法字典"就是这一形态）
+// ⚠ 键名**不要叫内置 Dict 方法名**（如 get/len/has/keys…）—— 那样会被当方法查，
+//   于是走 arity 检查而不是"调用值"（实测 `m["get"]()` ⇒ 调用方法 'get' 时参数过少）。
+var m = {}
+m.set("fetch", func() { return 42 })
+assert_eq(m["fetch"](), 42)
+
+// ⚠ 反向：**与内置方法相似**的名字仍当拼错报错（`d.leng()` ⇒ 提示 len）——
+//   该判据在 test_diag_static_errors.leno 里守着（这里只留说明，避免把负例混进本文件）。
 print("test_function_closure passed")

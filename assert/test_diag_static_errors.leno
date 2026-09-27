@@ -730,5 +730,17 @@ main() {
 ")
     ce.expect_ok(up2, "外部值经字段传入照常通过", "105")
 
+    // ---- dict 上的"方法名拼错"仍要报（2026-09-28；实例三十六）----
+    //   背景：为了支持"dict 里存函数 ⇒ `d["k"](args)` 当调用值"（见 test_function_closure 的正向用例），
+    //   语义侧对 **dict** 上找不到的方法名放宽了。但**拼错内置方法名**必须继续报错，否则会静默
+    //   变成运行期的"不是函数"错误。判据：与真·Dict 方法相似（semantic_method_hint 非空）⇒ 报错。
+    var dd1 = dirs.join(work, "dict_method_typo.leno")
+    files.write(dd1, @"main() {
+    var d = {a: 1}
+    print(_str(d.leng()))
+}
+")
+    ce.expect_error(dd1, "dict 上拼错内置方法名仍要报错（并给出相似名提示）", "没有方法 'leng'", 3)
+
     print("=== test_diag_static_errors ALL passed ===")
 }

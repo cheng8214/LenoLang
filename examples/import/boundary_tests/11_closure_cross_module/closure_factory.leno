@@ -25,15 +25,18 @@ export func make_multiplier(any factor) {
 }
 
 // 返回多个闭包共享同一个 upvalue
-export func make_bank_account(any initial) {
+export func make_bank_account(int initial) {
+    // ⚠ 2026-09-28 修示例：`initial` 与下面闭包的 `amount` 都要写具体类型 ——
+    //   否则 `balance` 是 any，`amount > balance` / `int + any` 都会被拒。
     var balance = initial
 
-    func deposit_func(any amount) {
+    func deposit_func(int amount) {
         balance = balance + amount
         return balance
     }
 
-    func withdraw_func(any amount) {
+    // ⚠ 2026-09-28 修示例：形参写具体类型 —— `any` 不能参与大小比较（`amount > balance`）
+    func withdraw_func(int amount) {
         if amount > balance {
             throw "Insufficient funds"
         }

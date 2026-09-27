@@ -840,7 +840,29 @@
                             }
 
                             // face 类型在第521行已做完整检查并 break，到不了这里
-                            if (!method_found && receiver_type->kind != TYPE_CSTRUCT) {
+                            // ★ v3.2.8：receiver 是 **dict** 且方法名在 dict 的**内置方法**里找不到
+                            //   ⇒ 它不是"dict 的方法"，而是**取出的值**（写成 `d["k"](args)` ＝"调用值"）。
+                            //   dict 没有自定义方法 ⇒ 这个判据本身是自洽的。
+                            //   原来这条会报「类型 'Dict[string, func(any):any]' 没有方法 'double'」，
+                            //   提示还是"如果是数组切片请用 arr[start:end]" ⇒ **完全误导**；
+                            //   实测来源：examples 里 5 个用例（匿名函数存字典 / 闭包工厂返回"方法字典" /
+                            //   struct 闭包 / closure_cross_module / first_class_func）。
+                            //   ⚠ 为保住"方法名拼错"的诊断：**与真·Dict 方法相似**时仍当错误报
+                            //     （`d.leng()` 仍会提示 `len`）；只有完全不像内置方法的名字才放行为"调用值"。
+                            int is_dict_value_call = 0;
+                            if (receiver_type->kind == TYPE_DICT) {
+                                // ① 值类型**就是函数** ⇒ 一定是"调用值"，无条件放行
+                                //   （否则短名字会被相似度误判：实测 `greetings["en"]()` 的 "en" 与
+                                //    内置方法 "len" 编辑距离 1 ⇒ 被当成拼错而报错 ✗）
+                                int value_is_func = (receiver_type->value_type &&
+                                                     receiver_type->value_type->kind == TYPE_FUNCTION);
+                                // ② 值类型是 any/未知时，只有**不像**内置方法名（即不像拼错）才放行
+                                const char* dict_hint = semantic_method_hint(receiver_type, method_name);
+                                int looks_like_typo = (dict_hint != NULL && dict_hint[0] != '\0');
+                                is_dict_value_call = value_is_func || !looks_like_typo;
+                            }
+                            if (!method_found && !is_dict_value_call &&
+                                receiver_type->kind != TYPE_CSTRUCT) {
                                 // 方法不存在，编译时报错
                                 char msg[BUFFER_MEDIUM];
                                 const char* type_str = type_to_string(receiver_type);
