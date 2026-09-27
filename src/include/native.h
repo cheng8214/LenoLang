@@ -12,6 +12,10 @@ typedef struct {
     TypeKind return_type;
     TypeKind return_element_type; // 返回数组时的元素类型（TYPE_UNKNOWN 表示未指定）
     TypeKind param_types[MAX_METHOD_PARAMS];  // 参数类型数组
+    // 完整返回类型规格（v3.2.8，可空）：非 NULL 时**优先于**上面的 Kind 槽 —— 内置函数通道此前
+    //   只有 Kind，表达不了 `ExecResult{...}` 这类带名字/带字段的返回类型（`_exec` 的 `[output, code]`
+    //   就只能是 `Array[any]`）。语义与 `native_register_module_method_spec` 的 return_spec 对齐。
+    const NativeTypeSpec* return_spec;
 } NativeFunctionMeta;
 
 // 模块方法元信息
@@ -46,6 +50,13 @@ void native_register_meta(const char* name, int arity, int min_arity, int max_ar
 
 // 获取所有注册的 native 函数元信息（编译时使用）
 const NativeFunctionMeta* native_get_all_functions(int* count);
+
+// 给**全局内置函数**声明完整返回类型规格（v3.2.8）：见 NativeFunctionMeta::return_spec 的说明。
+// ⚠ 必须在 `vm_register_native()` 之后调用（那是"查找并更新"；条目不存在时会以最小信息新建）。
+void native_register_meta_spec(const char* name, const NativeTypeSpec* return_spec);
+
+// 取内置函数的返回规格（没有则 NULL）
+const NativeTypeSpec* native_get_return_spec(const char* name);
 
 // 根据函数名获取返回类型
 TypeKind native_get_return_type(const char* name);

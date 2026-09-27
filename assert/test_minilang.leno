@@ -29,8 +29,8 @@ main() {
     var r = _exec(exe + " \"" + script + "\"", 60000)
     assert_true(r != null, "没能起子进程跑 " + script)
 
-    var out = _str(r[0])
-    var code = _int(r[1])
+    var out = _str(r.output)
+    var code = _int(r.code)
 
     // ① 编译 + 运行成功
     assert_eq(code, 0, "minilang 运行应 exit=0；实际 exit=" + code + "；输出=" + out)

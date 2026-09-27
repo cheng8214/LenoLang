@@ -71,8 +71,8 @@ main() {
                 print("  [FAIL] " + entry + " - 执行失败")
                 failed = failed + 1
             } else {
-                var output = result[0]
-                var code = result[1]
+                var output = result.output
+                var code = result.code
 
                 if code != 0 {
                     if code == 124 {

@@ -12,16 +12,16 @@ main() {
     // 2. 编译为 .lenb
     var cr = _exec("leno.exe -c " + tmp_leno)
     assert_ne(cr, null)
-    assert_eq(cr[1], 0)
+    assert_eq(cr.code, 0)
 
     // 3. 执行 .lenb
     var tmp_lenb = "test_serialize_tmp.lenb"
     var rr = _exec("leno.exe " + tmp_lenb)
     assert_ne(rr, null)
-    assert_eq(rr[1], 0)
+    assert_eq(rr.code, 0)
 
     // 4. 验证输出
-    var output = rr[0]
+    var output = rr.output
     assert_true(strings.has(_str(output), "hello_from_lenb"))
     assert_true(strings.has(_str(output), "7"))
 

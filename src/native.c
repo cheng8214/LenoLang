@@ -409,6 +409,7 @@ void native_register_meta(const char* name, int arity, int min_arity, int max_ar
     meta->max_arity = max_arity;
     meta->return_type = return_type;
     meta->return_element_type = return_element_type;
+    meta->return_spec = NULL;   // 规格通道（v3.2.8）另用 native_register_meta_spec() 声明
 
     // 复制参数类型
     if (param_types && arity > 0) {
@@ -430,6 +431,43 @@ void native_register_meta(const char* name, int arity, int min_arity, int max_ar
 const NativeFunctionMeta* native_get_all_functions(int* count) {
     *count = functionCount;
     return functionRegistry;
+}
+
+// 给全局内置函数声明完整返回类型规格（v3.2.8）：内置通道此前只有 Kind 槽，
+//   `_exec` 的 `[output, code]` 只能表达成 `Array[any]` ⇒ 补这条规格通道。
+// 语义与模块方法那条一致：规格非 NULL 时优先于 Kind 槽（见 semantic_type.c 的取用点）。
+// ⚠ 必须在 `vm_register_native()` **之后**调用：native_register_meta 对同名是"直接 return"的，
+//   所以这里做成**查找并更新**（条目不存在时才以最小信息新建，避免与已注册的撞名/漏注册）。
+void native_register_meta_spec(const char* name, const NativeTypeSpec* return_spec) {
+    for (int i = 0; i < functionCount; i++) {
+        if (strcmp(functionRegistry[i].name, name) == 0) {
+            functionRegistry[i].return_spec = return_spec;
+            return;
+        }
+    }
+
+    if (functionCount >= MAX_NATIVE_FUNCTIONS) return;
+    NativeFunctionMeta* meta = &functionRegistry[functionCount++];
+    meta->name = name;
+    meta->arity = -1;
+    meta->min_arity = 0;
+    meta->max_arity = -1;
+    meta->return_type = TYPE_ANY;
+    meta->return_element_type = TYPE_UNKNOWN;
+    for (int i = 0; i < MAX_METHOD_PARAMS; i++) {
+        meta->param_types[i] = TYPE_ANY;
+    }
+    meta->return_spec = return_spec;
+}
+
+// 取内置函数的返回规格（无则 NULL）
+const NativeTypeSpec* native_get_return_spec(const char* name) {
+    for (int i = 0; i < functionCount; i++) {
+        if (strcmp(functionRegistry[i].name, name) == 0) {
+            return functionRegistry[i].return_spec;
+        }
+    }
+    return NULL;
 }
 
 // 根据函数名获取返回类型

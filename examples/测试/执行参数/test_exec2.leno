@@ -1,5 +1,5 @@
 main() {
     var r = _exec("\"" + _executable() + "\" \"" + _script() + "\"")
-    print("code: " + r[1])
-    print("out: " + r[0])
+    print("code: " + r.code)
+    print("out: " + r.output)
 }

@@ -144,7 +144,17 @@
 //   ⇒ .lenb / entry_*.lenb 必须整体失效重编译。
 // v2.7.1（2026-09-16）：枚举成员求值语义修正 —— 扫描器补 `not`、除零/取模零改为与解析器同结论
 //   ⇒ 修正前编译出的 .lenb / entry_*.lenb 里可能烙着错的常量值，必须整体失效重编译。
-#define LENO_BIN_VERSION    0x00030207  // v3.2.7 - `regexs.find_all` 的返回形态由 `Array[Dict]`
+#define LENO_BIN_VERSION    0x00030208  // v3.2.8 - **内置函数** `_exec` 的返回形态由 `[output, code]`
+                                        //   二元数组（`Array[any]`）改为 `ExecResult{ string output,
+                                        //   int code }` 结构体（字段类型编译期已知）。
+                                        //   **为什么升**：同实例十二/十三/二十二 —— native 方法的
+                                        //   返回形态变了（这次是**内置**通道）⇒ 旧 `.lenb` 里
+                                        //   `r[0]` / `r[1]` 的位置取值语义失效、同源码取值指令也不同
+                                        //   ⇒ 旧产物必须整体失效重编译。
+                                        //   顺带：内置通道新增了**返回规格**（`native_register_meta_spec`）
+                                        //   —— 此前它只有 Kind 槽，连 `ExecResult` 这种带字段的类型
+                                        //   都表达不了。
+                                        // v3.2.7 - `regexs.find_all` 的返回形态由 `Array[Dict]`
                                         //   （裸 Dict：键 start/end 是 int、text 是 string，
                                         //   类型不齐 ⇒ 取值只能拿到 any）改为 `Array[RegexMatch]`
                                         //   结构体（字段类型编译期已知）。**为什么升**：与实例十三
@@ -210,7 +220,10 @@
 // v13：ObjFunction 增加 is_async（运行期判定"调用即建协程"用）。旧缓存里的函数对象缺这个
 //      字段 ⇒ async 函数的**间接调用**（`var f = w; f()`、当参数传、绑定方法）会退回同步执行、
 //      静默错值，所以必须**作废旧缓存**。
-#define LENO_MODCACHE_VERSION  0x00000018  // v24 - 同 LENO_BIN_VERSION v3.2.7（`regexs.find_all`
+#define LENO_MODCACHE_VERSION  0x00000019  // v25 - 同 LENO_BIN_VERSION v3.2.8（`_exec` 改返回
+                                           //       `ExecResult`：模块字节码里同样含"按返回类型
+                                           //       推断发射的取值指令"）
+                                           // v24 - 同 LENO_BIN_VERSION v3.2.7（`regexs.find_all`
                                            //       改返回 `Array[RegexMatch]`：模块字节码里同样含
                                            //       "按返回类型推断发射的取值指令"）
                                            // v23 - 同 LENO_BIN_VERSION v3.2.6（walk / delete 的

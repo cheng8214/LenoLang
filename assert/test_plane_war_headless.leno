@@ -53,8 +53,8 @@ main() {
         assert_eq("_exec 返回 null", "期望 [输出, 退出码]")
         return
     }
-    var out = r[0]
-    var code = r[1]
+    var out = r.output
+    var code = r.code
     if out == null { out = "" }
 
     // 失败时把尾部输出打出来，便于定位（成功时不打印，保持套件安静）

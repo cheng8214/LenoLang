@@ -44,8 +44,8 @@ main() {
     // ① 脚本路径之后的旗标 ⇒ 进 _args()
     var r1 = _exec(exe + " \"" + echo + "\" --list status")
     assert_ne(r1, null, "①_exec 返回 null（子进程起不来？）")
-    var o1 = _str(r1[0])
-    assert_eq(r1[1], 0, "①脚本后带旗标必须照常运行（修前脚本不跑）；输出=" + o1)
+    var o1 = _str(r1.output)
+    assert_eq(r1.code, 0, "①脚本后带旗标必须照常运行（修前脚本不跑）；输出=" + o1)
     assert_true(strings.has(o1, "N=2"), "①_args() 应有 2 个参数；输出=" + o1)
     assert_true(strings.has(o1, "A=--list"), "①_args() 应含 --list（原样透传）；输出=" + o1)
     assert_true(strings.has(o1, "A=status"), "①_args() 应含 status；输出=" + o1)
@@ -53,22 +53,22 @@ main() {
     // ② '--' 终止解释器选项解析
     var r2 = _exec(exe + " -- \"" + echo + "\" -x")
     assert_ne(r2, null, "②_exec 返回 null")
-    var o2 = _str(r2[0])
-    assert_eq(r2[1], 0, "②'--' 之后必须照常运行；输出=" + o2)
+    var o2 = _str(r2.output)
+    assert_eq(r2.code, 0, "②'--' 之后必须照常运行；输出=" + o2)
     assert_true(strings.has(o2, "A=-x"), "②'--' 之后的 -x 应进 _args()；输出=" + o2)
 
     // ③ 守卫：脚本之前的未知旗标仍要报错（提示别弄丢）
     var r3 = _exec(exe + " --nope \"" + echo + "\"")
     assert_ne(r3, null, "③_exec 返回 null")
-    var o3 = _str(r3[0])
-    assert_true(r3[1] != 0, "③脚本前的未知旗标必须报错（exit != 0）；输出=" + o3)
+    var o3 = _str(r3.output)
+    assert_true(r3.code != 0, "③脚本前的未知旗标必须报错（exit != 0）；输出=" + o3)
     assert_true(strings.has(o3, "未知选项"), "③应提示「未知选项」；输出=" + o3)
 
     // ④ 守卫：无参数时照常跑，_args() 为空
     var r4 = _exec(exe + " \"" + echo + "\"")
     assert_ne(r4, null, "④_exec 返回 null")
-    var o4 = _str(r4[0])
-    assert_eq(r4[1], 0, "④无参数应照常运行；输出=" + o4)
+    var o4 = _str(r4.output)
+    assert_eq(r4.code, 0, "④无参数应照常运行；输出=" + o4)
     assert_true(strings.has(o4, "N=0"), "④无参数时 _args() 应为空；输出=" + o4)
 
     // ⑤ 与**内置名撞名**的旗标写在脚本路径之后 ⇒ 同样原样进 _args()（P2 彻底化，2026-09-26）
@@ -76,8 +76,8 @@ main() {
     //    -c/-p/-o/--debug/--pause/--no-cache…：要么脚本不执行，要么"双重生效"✗）
     var r5 = _exec(exe + " \"" + echo + "\" -v --no-cache")
     assert_ne(r5, null, "⑤_exec 返回 null")
-    var o5 = _str(r5[0])
-    assert_eq(r5[1], 0, "⑤脚本后的内置同名旗标必须照常运行；输出=" + o5)
+    var o5 = _str(r5.output)
+    assert_eq(r5.code, 0, "⑤脚本后的内置同名旗标必须照常运行；输出=" + o5)
     assert_true(strings.has(o5, "N=2"), "⑤_args() 应有 2 个参数；输出=" + o5)
     assert_true(strings.has(o5, "A=-v"), "⑤_args() 应含 -v（不再被解释器吃掉）；输出=" + o5)
     assert_true(strings.has(o5, "A=--no-cache"), "⑤_args() 应含 --no-cache；输出=" + o5)
@@ -86,8 +86,8 @@ main() {
     // ⑥ 守卫：内置旗标写在脚本**之前**仍归解释器（口径：内置旗标前置 ✓）
     var r6 = _exec(exe + " -v")
     assert_ne(r6, null, "⑥_exec 返回 null")
-    var o6 = _str(r6[0])
-    assert_eq(r6[1], 0, "⑥前置 -v 应正常退出；输出=" + o6)
+    var o6 = _str(r6.output)
+    assert_eq(r6.code, 0, "⑥前置 -v 应正常退出；输出=" + o6)
     assert_true(strings.has(o6, "LenoLang Compiler"), "⑥前置 -v 仍必须打印版本；输出=" + o6)
 
     dirs.delete(work)

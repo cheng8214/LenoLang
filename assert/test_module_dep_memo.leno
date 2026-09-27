@@ -73,8 +73,8 @@ main() {
     var cmd = "set LENO_NO_CACHE=1 && " + ce.cmd_for(top_path)
     var r = _exec(cmd)
     assert_ne(r, null, "关缓存编译：_exec 返回 null")
-    var out = r[0]
-    assert_eq(r[1], 0, "关缓存编译应成功（若挂起说明记忆化失效），exit=" + r[1] + "；输出=" + out)
+    var out = r.output
+    assert_eq(r.code, 0, "关缓存编译应成功（若挂起说明记忆化失效），exit=" + r.code + "；输出=" + out)
     assert_true(strings.has(_str(out), "memo_total=32"),
         "三条路径到达同一依赖，符号解析结果应一致（期望 7+7+8+3+7=32）；实际输出=" + out)
 
@@ -82,9 +82,9 @@ main() {
     var cmd2 = ce.cmd_for(top_path)
     var r2 = _exec(cmd2)
     assert_ne(r2, null, "开缓存编译：_exec 返回 null")
-    assert_eq(r2[1], 0, "开缓存编译应成功，exit=" + r2[1] + "；输出=" + r2[0])
-    assert_true(strings.has(_str(r2[0]), "memo_total=32"),
-        "开缓存与关缓存结果应一致（期望 32）；实际输出=" + r2[0])
+    assert_eq(r2.code, 0, "开缓存编译应成功，exit=" + r2.code + "；输出=" + r2.output)
+    assert_true(strings.has(_str(r2.output), "memo_total=32"),
+        "开缓存与关缓存结果应一致（期望 32）；实际输出=" + r2.output)
 
     dirs.delete(work)
     print("test_module_dep_memo passed")

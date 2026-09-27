@@ -320,7 +320,7 @@ main()
     } else {
         mk = _exec("ln -s " + dirs.abspath(tg) + " " + dirs.abspath(lk))
     }
-    assert_eq(mk[1], 0, "建链接失败（Windows: mklink /J；POSIX: ln -s）：" + _str(mk[0]))
+    assert_eq(mk.code, 0, "建链接失败（Windows: mklink /J；POSIX: ln -s）：" + _str(mk.output))
 
     // ① is_symlink：正例 + 反例
     assert_eq(dirs.is_symlink(lk), true)

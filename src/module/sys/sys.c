@@ -19,6 +19,25 @@
 extern int g_argc;
 extern char** g_argv;
 
+// ==================== ExecResult 的类型规格（`_exec` 的返回，v3.2.8） ====================
+// `_exec(cmd[, timeout_ms])` 此前返回 `[output, code]` **二元数组** —— 两个元素**类型不齐**
+//   （output 是 string、code 是 int）⇒ 同质的 `Array[T]` 表达不了，只能注册成 `Array[any]`，
+//   调用点只好用 `r[0]` / `r[1]` **位置取值**、拿到的是 any（不可读，且顺序一改就静默错位）。
+// 改结构体后字段类型**编译期已知**、零收窄 —— 与 `DirEntry`（dirs.walk）/ `DirInfo`（dirs.stat）/
+//   `RegexMatch`（regexs.find_all）同一套做法（编译期字段表 + 运行期 ObjStructDef **同源**）。
+// 字段：`output`（stdout+stderr 合并文本）、`code`（退出码；超时是 **124**，见 P6）。
+// ⚠ 它属于**全局内置函数**（`_exec` 无模块前缀）⇒ 走的是内置返回规格通道
+//   `native_register_meta_spec()`（v3.2.8 新开，此前内置通道只有 Kind 槽）。
+static const NativeTypeSpec S_EXEC_STR = { NTYPE_STRING, NULL, NULL, NULL };
+static const NativeTypeSpec S_EXEC_INT = { NTYPE_INT,    NULL, NULL, NULL };
+static const NativeTypeSpec S_EXECRESULT_SPEC = { NTYPE_STRUCT, "ExecResult", NULL, NULL };
+
+static const char* EXECRESULT_FIELD_NAMES[] = { "output", "code" };
+static const NativeTypeSpec* EXECRESULT_FIELD_TYPES[] = { &S_EXEC_STR, &S_EXEC_INT };
+static const NativeStructSpec EXECRESULT_STRUCT_SPEC = {
+    "sys", "ExecResult", 2, EXECRESULT_FIELD_NAMES, EXECRESULT_FIELD_TYPES
+};
+
 // _args() - 返回脚本命令行参数数组（不包含解释器路径和脚本路径）
 static Value native_args(int argCount, Value* args) {
     (void)argCount;
@@ -411,12 +430,16 @@ static Value native_exec(int argCount, Value* args) {
     fclose(f);
     DeleteFileW(wtmp_path);
 
-    ObjArray* result = arr_new(2);
-    arr_write(result, 0, val_obj((Object*)str_copy(output, (int)flen)));
-    arr_write(result, 1, val_int(rc));
-    result->count = 2;
+    // 返回 `ExecResult{ output, code }`（v3.2.8；见文件顶部的规格说明）
+    ObjStruct* result = native_struct_new("ExecResult");
+    if (!result) { free(output); return val_null(); }
+    Value result_val = val_obj((Object*)result);
+    gc_push_root(&result_val);   // 填字段期间它还没交出去 ⇒ 自己护住（str_copy 会分配）
+    native_struct_set(result, "output", val_obj((Object*)str_copy(output, (int)flen)));
+    native_struct_set(result, "code", val_int(rc));
+    gc_pop_root();
     free(output);
-    return val_obj((Object*)result);
+    return result_val;
 #else
     // ★ P6：POSIX 侧用 coreutils 的 `timeout` 包一层（超时同样得到退出码 124）。
     //   若系统没有 timeout（如部分 macOS 默认不带），命令会以 127 失败 —— 那是**响亮**的失败 ✓。
@@ -458,13 +481,17 @@ static Value native_exec(int argCount, Value* args) {
     int status = pclose(fp);
     int rc = WIFEXITED(status) ? WEXITSTATUS(status) : 1;
 
-    ObjArray* result = arr_new(2);
-    arr_write(result, 0, val_obj((Object*)str_copy(output, (int)len)));
-    arr_write(result, 1, val_int(rc));
-    result->count = 2;
+    // 返回 `ExecResult{ output, code }`（v3.2.8；见文件顶部的规格说明）
+    ObjStruct* result = native_struct_new("ExecResult");
+    if (!result) { free(output); free(run_buf); return val_null(); }
+    Value result_val = val_obj((Object*)result);
+    gc_push_root(&result_val);
+    native_struct_set(result, "output", val_obj((Object*)str_copy(output, (int)len)));
+    native_struct_set(result, "code", val_int(rc));
+    gc_pop_root();
     free(output);
     free(run_buf);
-    return val_obj((Object*)result);
+    return result_val;
 #endif
 }
 
@@ -608,6 +635,10 @@ void sys_init_globals(void) {
     //   arity/min/max：arity 写死成 1 时，`_exec(cmd, ms)` 会被判「参数数量不匹配: 期望 1」✗
     //   （实测踩过：新用例与 run_tests.leno 一起编译不过）。对照 `_gc` 的 (-1, 0, 1) 写法。
     vm_register_native("_exec", native_exec, -1, 1, 2, TYPE_ARRAY, TYPE_ANY, NULL);
+    // `_exec` 的真实返回是 `ExecResult{ string output, int code }`（v3.2.8）——
+    //   内置通道的规格版声明（必须在 vm_register_native **之后**：那是"查找并更新"）
+    native_register_struct_spec(&EXECRESULT_STRUCT_SPEC);
+    native_register_meta_spec("_exec", &S_EXECRESULT_SPEC);
 
     // 注册全局 _username 函数（用户名，0 个参数）
     vm_register_native("_username", native_username, 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, NULL);

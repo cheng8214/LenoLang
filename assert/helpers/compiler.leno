@@ -50,10 +50,10 @@ export func expect_ok(string script_path, string tag, string expect_out):string 
     var r = _exec(cmd_for(script_path), EXEC_TIMEOUT_MS)
     assert_ne(r, null, tag + "：_exec 返回 null（子进程起不来？）")
 
-    var out = _str(r[0])
-    assert_ne(r[1], EXEC_TIMEOUT_CODE,
+    var out = _str(r.output)
+    assert_ne(r.code, EXEC_TIMEOUT_CODE,
         tag + "：子进程超时（" + EXEC_TIMEOUT_MS + "ms 未返回）—— 挂住不能算通过；输出=" + out)
-    assert_eq(r[1], 0, tag + "：应编译运行成功，实际 exit=" + r[1] + "；输出=" + out)
+    assert_eq(r.code, 0, tag + "：应编译运行成功，实际 exit=" + r.code + "；输出=" + out)
 
     if expect_out != "" {
         assert_true(strings.has(out, expect_out),
@@ -71,8 +71,8 @@ export func expect_error(string script_path, string tag, string expect_text, int
     var r = _exec(cmd_for(script_path), EXEC_TIMEOUT_MS)
     assert_ne(r, null, tag + "：_exec 返回 null（子进程起不来？）")
 
-    var out = _str(r[0])
-    var code = r[1]
+    var out = _str(r.output)
+    var code = r.code
     assert_ne(code, EXEC_TIMEOUT_CODE,
         tag + "：子进程超时（" + EXEC_TIMEOUT_MS + "ms 未返回）—— 超时**不是**编译失败，别让它冒充通过；输出=" + out)
     assert_true(code != 0, tag + "：应当编译失败，实际 exit=0；输出=" + out)

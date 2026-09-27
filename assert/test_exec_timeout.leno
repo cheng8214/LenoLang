@@ -36,22 +36,22 @@ main() {
     var r1 = _exec(slow, 1000)
     var elapsed = times.ms() - t0
     assert_ne(r1, null, "①_exec 返回 null（子进程起不来？）")
-    assert_eq(r1[1], 124, "①超时的退出码应为 124；实际=" + r1[1])
+    assert_eq(r1.code, 124, "①超时的退出码应为 124；实际=" + r1.code)
     assert_true(elapsed < 4000,
         "①应在 ~1 s 内返回（证明子进程被杀），实际 " + elapsed + " ms")
 
     // ② 守卫：正常命令 + timeout 参数
     var r2 = _exec("echo leno_p6_ok", 10000)
     assert_ne(r2, null, "②_exec 返回 null")
-    var o2 = _str(r2[0])
-    assert_eq(r2[1], 0, "②正常命令应成功（exit 0）；输出=" + o2)
+    var o2 = _str(r2.output)
+    assert_eq(r2.code, 0, "②正常命令应成功（exit 0）；输出=" + o2)
     assert_true(strings.has(o2, "leno_p6_ok"), "②输出应含 leno_p6_ok；实际=" + o2)
 
     // ③ 守卫：不传 timeout_ms（旧行为不变）
     var r3 = _exec("echo leno_p6_noarg")
     assert_ne(r3, null, "③_exec 返回 null")
-    assert_eq(r3[1], 0, "③不传 timeout 也应成功；输出=" + _str(r3[0]))
-    assert_true(strings.has(_str(r3[0]), "leno_p6_noarg"), "③输出应含标记")
+    assert_eq(r3.code, 0, "③不传 timeout 也应成功；输出=" + _str(r3.output))
+    assert_true(strings.has(_str(r3.output), "leno_p6_noarg"), "③输出应含标记")
 
     // ④ 守卫（仅 Windows）：命令自己拉起的**后台进程**必须活过 _exec（见头部说明）
     //   用 `start "" /min ping …` 这个形状 —— 与 file_manager 的 openFile 同款
@@ -61,16 +61,16 @@ main() {
         var probe = "tasklist /fi \"imagename eq ping.exe\""
         var pre = _exec(probe, 15000)
         assert_ne(pre, null, "④tasklist 起不来")
-        assert_eq(strings.has(_str(pre[0]), "PING.EXE"), false,
-            "④前置条件不成立：本机已有 ping 在跑，结论无法归因（重跑一次即可）；输出=" + _str(pre[0]))
+        assert_eq(strings.has(_str(pre.output), "PING.EXE"), false,
+            "④前置条件不成立：本机已有 ping 在跑，结论无法归因（重跑一次即可）；输出=" + _str(pre.output))
 
         var r4 = _exec("cmd /c start \"\" /min ping -n 5 127.0.0.1", 15000)
         assert_ne(r4, null, "④拉起后台进程失败")
 
         var post = _exec(probe, 15000)
         assert_ne(post, null, "④tasklist 起不来（后置）")
-        assert_true(strings.has(_str(post[0]), "PING.EXE"),
-            "④命令拉起的后台进程应活过 _exec —— 被 job 连带杀掉就会红；tasklist 输出=" + _str(post[0]))
+        assert_true(strings.has(_str(post.output), "PING.EXE"),
+            "④命令拉起的后台进程应活过 _exec —— 被 job 连带杀掉就会红；tasklist 输出=" + _str(post.output))
     }
 
     print("test_exec_timeout passed")

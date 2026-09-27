@@ -1450,6 +1450,21 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     return type_copy(ast->cached_type);
                 }
 
+                // ① 完整规格优先（v3.2.8）：内置函数通道此前只有 Kind 槽，表达不了
+                //    `ExecResult{...}` 这类**带名字/带字段**的返回类型（`_exec` 的
+                //    `[output, code]` 只能表达成 `Array[any]`）⇒ 有规格就用规格
+                //    （与模块方法的 return_spec 同一优先级规则）。
+                {
+                    const NativeTypeSpec* fn_spec = native_get_return_spec(func_name);
+                    if (fn_spec) {
+                        TypeInfo* spec_ret = native_type_spec_to_info(fn_spec);
+                        if (spec_ret) {
+                            ast->cached_type = type_copy(spec_ret);
+                            return spec_ret;
+                        }
+                    }
+                }
+
                 TypeKind return_type = native_get_return_type(func_name);
                 TypeInfo* ret_type = type_new(return_type);
                 // 如果是数组类型，补充元素类型信息

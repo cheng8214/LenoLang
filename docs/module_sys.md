@@ -34,7 +34,7 @@ Sys 模块提供与运行时环境、命令行参数和系统信息相关的全�
 | `_env(name, value)` | 设置环境变量 | `Bool` |
 | `_env_or(name, default)` | 获取环境变量（取不到或空串返回 default） | `String` |
 | `_exit(code)` | 以指定退出码终止程序 | 无 |
-| `_exec(cmd[, timeout_ms])` | 执行系统命令并返回 [输出,退出码]（可带超时；超时码 124）| `[String, Int]` / `null` |
+| `_exec(cmd[, timeout_ms])` | 执行系统命令并返回 `ExecResult{ output, code }`（可带超时；超时码 124）| `ExecResult` / `null` |
 | `_username()` | 获取当前登录用户名 | `String` / `null` |
 | `_homedir()` | 获取用户主目录路径 | `String` / `null` |
 | `_tmpdir()` | 获取系统临时目录路径 | `String` / `null` |
@@ -472,21 +472,31 @@ var path = "folder" + _sep() + "subfolder" + _sep() + "file.txt"
 
 ### `_exec(cmd[, timeout_ms])`
 
-执行系统命令并返回 `[标准输出, 退出码]` 数组。
+执行系统命令并返回结构体 `ExecResult{ string output, int code }`（**字段类型编译期已知**，v3.2.8 起）。
 
 **参数**:
 - `cmd` (String): 要执行的命令
 - `timeout_ms` (Int, 可选): **超时毫秒数**。> 0 时超时即**杀掉**子进程，退出码返回 **`124`**
   （GNU `timeout` 的惯例）；不传 / 传 `0` = 不限制（旧行为）
 
-**返回**: `[String, Int]` / `null` - 索引 0 是标准输出内容，索引 1 是退出码；执行失败返回 `null`
+**返回**: `ExecResult` / `null` - 执行失败返回 `null`
+
+| 字段 | 类型 | 含义 |
+| --- | --- | --- |
+| `output` | `string` | 命令输出（stdout 与 stderr 合并的文本） |
+| `code` | `int` | 退出码；**超时是 124** |
+
+> ⚠ **v3.2.8 起返回结构体、不再是 `[output, code]` 数组**：旧写法 `r[0]` / `r[1]` 要改成
+> `r.output` / `r.code`（数组下标会落到"struct 字段名必须是字符串"的运行期错误）。
+> 为什么要改：两个元素**类型不齐**（string + int）⇒ 同质的 `Array[T]` 表达不了，只能注册成
+> `Array[any]`，调用点位置取值拿到的是 any（与 `dirs.stat` 改 `DirInfo` 同一判断）。
 
 > ⚠ **建议总是给个 `timeout_ms`**（工具 / 测试尤其）：不限制时子进程一挂住，会把父进程一起拖死 ✗
-> （写 GUI 测试时只能从外部 `Start-Process` + `WaitForExit` 兜）。超时判定就是 `r[1] == 124`：
+> （写 GUI 测试时只能从外部 `Start-Process` + `WaitForExit` 兜）。超时判定就是 `r.code == 124`：
 >
 > ```leno
 > var r = _exec("some_maybe_hanging_tool", 30000)   // 30 s
-> if r[1] == 124 {
+> if r.code == 124 {
 >     print("超时了（子进程已被杀掉）")
 > }
 > ```
@@ -499,23 +509,23 @@ var path = "folder" + _sep() + "subfolder" + _sep() + "file.txt"
 > 的 `timeout` 包一层（系统没有该命令时会以 `127` **响亮**失败，不会静默忽略超时）。
 
 ```leno
-// 执行命令并获取输出和退出码
+// 执行命令并获取输出和退出码（v3.2.8 起是字段取值）
 var r = _exec("echo hello")
-print("输出:", r[0])
-print("退出码:", r[1])
+print("输出:", r.output)
+print("退出码:", r.code)
 
 // 检查命令是否成功
 var result = _exec("leno.exe test.leno")
-if result[1] == 0 {
+if result.code == 0 {
     print("测试通过")
 } else {
-    print("测试失败: " + result[0])
+    print("测试失败: " + result.output)
 }
 ```
 
 **注意**:
 - `_exec()` 会等待命令执行完毕后返回
-- 返回值是 `[stdout_string, exit_code]` 数组，可同时获取输出和退出码
+- 返回值是 `ExecResult{ output, code }` 结构体，可同时获取输出和退出码（v3.2.8 起；此前是数组）
 - 如需获取 stderr，在命令中加 `2>&1` 重定向：`_exec("mycmd 2>&1")`
 - **Windows `_popen` 路径问题**：如果命令路径中包含引号 `"`，`_popen` 可能返回错误。建议不使用引号包裹路径，直接拼接：`_exec(leno + " " + test_file)` 而非 `_exec("\"" + leno + "\" \"" + test_file + "\"")`
 
@@ -671,9 +681,9 @@ main() {
     // 获取当前目录
     var cwd = ""
     if _os() == "windows" {
-        cwd = _exec("cd")
+        cwd = _exec("cd").output
     } else {
-        cwd = _exec("pwd")
+        cwd = _exec("pwd").output
     }
     print("当前目录:", cwd)
 
@@ -746,4 +756,5 @@ _gc(true)
 
 *文档版本: 1.3*  
 *最后更新: 2026-06-19*
-*变更: `_exec()` 返回 `[stdout, exit_code]` 数组；`_args()` 只返回脚本参数*
+*变更: **v3.2.8 起 `_exec()` 返回 `ExecResult{ output, code }` 结构体**（此前是 `[stdout, exit_code]` 数组；
+`r[0]`/`r[1]` ⇒ `r.output`/`r.code`）；`_args()` 只返回脚本参数*

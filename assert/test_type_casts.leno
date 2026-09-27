@@ -70,8 +70,8 @@ main() {
         + "}\n")
     var ce = _exec(_executable() + " -c \"" + src + "\"", 30000)
     assert_ne(ce, null, "⑥子进程没起来")
-    assert_true(_int(ce[1]) != 0, "⑥缺 as 的 any → Dict[string, any] 赋值必须仍报错")
-    var out6 = _str(ce[0])
+    assert_true(_int(ce.code) != 0, "⑥缺 as 的 any → Dict[string, any] 赋值必须仍报错")
+    var out6 = _str(ce.output)
     assert_true(strings.has(out6, "不匹配"), "⑥报错文案应含「不匹配」；实际=" + out6)
     assert_true(strings.has(out6, "as Dict[string, any]"),
         "⑥提示必须点名 `as Dict[string, any]`（P1 的要点：把人引到既有的安全转换）；实际=" + out6)

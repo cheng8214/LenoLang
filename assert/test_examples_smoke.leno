@@ -50,13 +50,13 @@ func check_list(string exe, string list_path, int must_run): Array[int] {
         if r == null {
             code = -1
         } else {
-            code = _int(r[1])
+            code = _int(r.code)
         }
         if code != 0 {
             out[1] = out[1] + 1
             print("  [FAIL] " + line + " 编译失败 exit=" + code)
             if r != null {
-                var e = first_error_line(_str(r[0]))
+                var e = first_error_line(_str(r.output))
                 if e != "" { print("         " + e) }
             }
             continue
@@ -69,13 +69,13 @@ func check_list(string exe, string list_path, int must_run): Array[int] {
             if rr == null {
                 code2 = -1
             } else {
-                code2 = _int(rr[1])
+                code2 = _int(rr.code)
             }
             if code2 != 0 {
                 out[1] = out[1] + 1
                 print("  [FAIL] " + line + " 运行失败 exit=" + code2)
                 if rr != null {
-                    var e2 = first_error_line(_str(rr[0]))
+                    var e2 = first_error_line(_str(rr.output))
                     if e2 != "" { print("         " + e2) }
                 }
                 continue
