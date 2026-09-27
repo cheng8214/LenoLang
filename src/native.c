@@ -781,7 +781,7 @@ const NativeStructSpec* native_find_struct_spec(const char* name) {
     return NULL;
 }
 
-// 按 (模块名, 类型名) 查（v3.2.6）—— `use <module>.<Type>` 通道的唯一来源。
+// 按 (模块名, 类型名) 查（2026-09-27）—— `use <module>.<Type>` 通道的唯一来源。
 //   为什么不能只按名字查：`use` 要回答的是"**这个模块**导出了哪些类型"，
 //   只按名字查就退化成"全局有没有这个名字"，与 `use` 的语义不符（也就没法做"可用类型"诊断）。
 const NativeStructSpec* native_find_module_struct_spec(const char* module_name, const char* type_name) {

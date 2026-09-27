@@ -144,7 +144,14 @@
 //   ⇒ .lenb / entry_*.lenb 必须整体失效重编译。
 // v2.7.1（2026-09-16）：枚举成员求值语义修正 —— 扫描器补 `not`、除零/取模零改为与解析器同结论
 //   ⇒ 修正前编译出的 .lenb / entry_*.lenb 里可能烙着错的常量值，必须整体失效重编译。
-#define LENO_BIN_VERSION    0x00030205  // v3.2.5 - **删除 native 方法 `dirs.size()`**（入口收敛到
+#define LENO_BIN_VERSION    0x00030206  // v3.2.6 - 链接（junction / symlink）口径 + `stat.mtime`：
+                                        //   `walk` **不再递归进链接**（只列，口径同 find）、
+                                        //   `delete(链接)` **只摘链接**（原先会透过链接删掉 target
+                                        //   里的内容 = 数据丢失）、`stat.mtime` 在 Windows 由恒 0
+                                        //   改为真实 Unix 秒。**为什么升**：同一份源码的**求值结果
+                                        //   变了**（walk 的条目集合 / mtime 的值 / delete 的语义）
+                                        //   ⇒ 旧 `.lenb` 跑在新 VM 上结果不同（实例十二/十三 同判据）
+                                        // v3.2.5 - **删除 native 方法 `dirs.size()`**（入口收敛到
                                         //   `dirs.stat(p).size`）+ 允许 native struct 名当类型标注。
                                         //   **为什么升**：前者是**移除一个 native 方法** —— 旧
                                         //   `.lenb` 里那句 `dirs.size(...)` 在新 VM 上会因"模块里
@@ -194,7 +201,10 @@
 // v13：ObjFunction 增加 is_async（运行期判定"调用即建协程"用）。旧缓存里的函数对象缺这个
 //      字段 ⇒ async 函数的**间接调用**（`var f = w; f()`、当参数传、绑定方法）会退回同步执行、
 //      静默错值，所以必须**作废旧缓存**。
-#define LENO_MODCACHE_VERSION  0x00000016  // v22 - 同 LENO_BIN_VERSION v3.2.5（删除
+#define LENO_MODCACHE_VERSION  0x00000017  // v23 - 同 LENO_BIN_VERSION v3.2.6（walk / delete 的
+                                           //       链接口径 + stat.mtime：模块字节码里同样有那几次
+                                           //       模块方法调用）
+                                           // v22 - 同 LENO_BIN_VERSION v3.2.5（删除
                                            //       `dirs.size()`：模块字节码里同样可能有那次
                                            //       模块方法调用）
                                            // v21 - 同 LENO_BIN_VERSION v3.2.4（`dirs.stat` 改返

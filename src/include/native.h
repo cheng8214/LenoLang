@@ -133,7 +133,7 @@ extern const NativeTypeSpec NATIVE_T_DICT;         // 裸 Dict（K/V 未指定�
 // 注册一个 native 结构体规格（**编译期字段表 + 运行期 ObjStructDef 同一来源**）。
 // 可在任意 *_init_module() 里反复调用（同名只登记一次）；表满（64）静默忽略。
 // ⚠ 规格里的 module_name 必须是**拥有该类型的模块名**（`use <module>.<Type>` 的左侧，
-//   见 NativeStructSpec 的说明）；它是 v3.2.6 新增的字段。
+//   见 NativeStructSpec 的说明）；它是 2026-09-27 新增的字段。
 void native_register_struct_spec(const NativeStructSpec* spec);
 
 // 按名查 native 结构体规格（编译期字段解析兜底用；未注册 ⇒ NULL）

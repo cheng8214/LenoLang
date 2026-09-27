@@ -91,7 +91,7 @@ void semantic_attach_struct_fields(Symbol* sym, const ModuleStructSymbol* ssym) 
 //     经 `use m.F`（alias）⇒ **什么都不报**、exit 0
 // ============================================================================
 // ============================================================================
-// 把 native 类型规格导入当前作用域 —— 语义上的 `use <module>.<Type>`（v3.2.6）
+// 把 native 类型规格导入当前作用域 —— 语义上的 `use <module>.<Type>`（2026-09-27）
 // ----------------------------------------------------------------------------
 // 与 semantic_attach_struct_fields 的分工：那个搬的是**源码模块**（.lenomc 符号表）里的条目；
 //   这个搬的是 native 注册表里的 NativeStructSpec —— native 模块**没有 sym_table**

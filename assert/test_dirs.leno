@@ -292,6 +292,66 @@ main()
     assert_eq(u_info is DirInfo, true)
     assert(not (u_walk[0] is Dict))
 
+    // 测试18: 链接类路径（junction / symlink）—— walk / delete / is_symlink 的统一口径（2026-09-27 补）
+    //   ① 正例怎么造：Windows 用 `mklink /J`（目录联接，**不需要管理员权限**）；POSIX 用 `ln -s`。
+    //      此前 is_symlink 只有反例断言（"普通目录 ⇒ false"），因为误以为建链接要管理员权限。
+    //   ② 口径：**看得见、但绝不跟随**。跟随会走出原目录树 —— 指回祖先的链接让 walk 一路拼出
+    //      `a\b\loop\b\loop\…`（实测：一条自指 junction 产出 66 条垃圾条目，直到路径超长才停）；
+    //      更糟的是 `delete(链接)` 会**透过链接删掉 target 里的内容**（数据丢失，见 ③）。
+    string lbase = "test_dirs_link_base"
+    string lk = dirs.join(lbase, "link")
+    string tg = dirs.join(lbase, "target")
+
+    // 上次跑挂掉可能留下链接 ⇒ 先摘链接（Windows rmdir / POSIX delete，都只摘链接不动 target）
+    if dirs.exists(lk) {
+        if dirs.sep() == "\\" { dirs.rmdir(lk) } else { dirs.delete(lk) }
+    }
+    if dirs.exists(dirs.join(tg, "x.txt")) { dirs.delete(dirs.join(tg, "x.txt")) }
+    if dirs.exists(dirs.join(tg, "keep.txt")) { dirs.delete(dirs.join(tg, "keep.txt")) }
+    if dirs.exists(tg) { dirs.rmdir(tg) }
+    if dirs.exists(lbase) { dirs.rmdir(lbase) }
+
+    dirs.mkdir_p(tg)
+    files.write(dirs.join(tg, "x.txt"), "x")
+
+    var mk = null
+    if dirs.sep() == "\\" {
+        mk = _exec("cmd /c mklink /J " + dirs.abspath(lk) + " " + dirs.abspath(tg))
+    } else {
+        mk = _exec("ln -s " + dirs.abspath(tg) + " " + dirs.abspath(lk))
+    }
+    assert_eq(mk[1], 0, "建链接失败（Windows: mklink /J；POSIX: ln -s）：" + _str(mk[0]))
+
+    // ① is_symlink：正例 + 反例
+    assert_eq(dirs.is_symlink(lk), true)
+    assert_eq(dirs.is_symlink(tg), false)
+    assert_eq(dirs.is_dir(lk), true)              // 指向目录 ⇒ 仍按"目录"归类
+
+    // ② walk：链接**列在 dirs 里**，但不为它产生条目 ⇒ 恰好 2 条（lbase 与 lbase\target）
+    var lw = dirs.walk(lbase)
+    assert_eq(lw.len(), 2)
+    assert_eq(lw[0].dirs.has("link"), true)
+    assert_eq(lw[0].dirs.has("target"), true)
+
+    // ③ delete(链接) **只摘链接**：target 与它里面的文件必须原封不动（数据安全回归 ——
+    //    修之前这里会把 target 的内容删光）
+    files.write(dirs.join(tg, "keep.txt"), "keep")
+    assert_eq(dirs.delete(lk), true)
+    assert_eq(dirs.exists(lk), false)
+    assert_eq(dirs.exists(tg), true)
+    assert_eq(dirs.exists(dirs.join(tg, "keep.txt")), true)
+
+    // ④ mtime：Windows 上不再恒 0，且**单位是秒**（若误当 100ns ticks，值会是 ~1.3e17）
+    int self_mt = dirs.stat(self).mtime
+    assert_eq(self_mt > 0, true)
+    assert_eq(self_mt < 4102444800, true)         // 上限 2100-01-01
+
+    // 清理
+    dirs.delete(dirs.join(tg, "x.txt"))
+    dirs.delete(dirs.join(tg, "keep.txt"))
+    assert_eq(dirs.rmdir(tg), true)
+    assert_eq(dirs.rmdir(lbase), true)
+
     print("test_dirs passed")
 }
 

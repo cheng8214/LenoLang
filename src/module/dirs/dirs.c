@@ -714,6 +714,13 @@ static int dirs_recursive_delete_w(const wchar_t* wpath) {
         return 0;
     }
     if (attr & FILE_ATTRIBUTE_DIRECTORY) {
+        // ⚠ reparse point（junction / symlink / mount point）**只摘链接、绝不递归进去**：
+        //   `FindFirstFileW(L"link\\*")` 会**透过**链接列出 **target 的内容** ⇒ 原实现先把
+        //   目标目录里的东西全删掉、再摘链接（删一个链接 = 删掉目标目录的内容，数据丢失 ✗）。
+        //   `RemoveDirectoryW` 对 reparse point 就是摘链接本身、不动 target ✓
+        if (attr & FILE_ATTRIBUTE_REPARSE_POINT) {
+            return RemoveDirectoryW(wpath) ? 1 : 0;
+        }
         wchar_t wsearch[4096];
         swprintf(wsearch, sizeof(wsearch) / sizeof(wchar_t), L"%ls\\*", wpath);
         WIN32_FIND_DATAW fd;
@@ -735,9 +742,15 @@ static int dirs_recursive_delete_w(const wchar_t* wpath) {
 }
 #else
 static int dirs_recursive_delete_u(const char* path) {
+    // 用 **lstat** 拿链接自身属性（原实现用 stat ⇒ 跟随链接）：符号链接**只删链接本身**
+    //   （`remove` 即 unlink）。否则 `opendir(link)` 会进 target 删光内容，而最后那句
+    //   `rmdir(link)` 在 POSIX 上必然失败（ENOTDIR）⇒ **内容没了却报失败**，最坏的那种组合 ✗
     struct stat st;
-    if (stat(path, &st) != 0) {
+    if (lstat(path, &st) != 0) {
         return 0;
+    }
+    if (S_ISLNK(st.st_mode)) {
+        return remove(path) == 0 ? 1 : 0;
     }
     if (S_ISDIR(st.st_mode)) {
         DIR* d = opendir(path);
@@ -760,6 +773,8 @@ static int dirs_recursive_delete_u(const char* path) {
 #endif
 
 // dirs.delete(path) - 删除文件或目录（目录递归删除）
+//   ⚠ **不跟随链接**：链接（junction / symlink / mount point）只删链接本身，绝不动 target ——
+//     否则 `delete(link)` 会透过链接把**目标目录的内容**删光（原实现就是这样，属数据丢失）。
 static Value native_dirs_delete(int argCount, Value* args) {
     if (argCount < 1) {
         native_throw_error("delete 需要路径参数");
@@ -945,10 +960,16 @@ static void walk_scan_dir(const char* path, ObjArray* result) {
             ObjString* name = str_copy(utf8_name, (int)strlen(utf8_name));
             if (findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
                 arr_push(dir_names, val_obj((Object*)name));
-                // 构建子目录完整路径
-                char full_path[4096];
-                snprintf(full_path, sizeof(full_path), "%s\\%s", path, utf8_name);
-                arr_push(subdirs, val_obj((Object*)str_copy(full_path, (int)strlen(full_path))));
+                // ⚠ reparse point（junction / symlink / mount point）**只列、不递归**：
+                //   跟随它会走出原目录树 —— 指回祖先的 junction 会一路拼出
+                //   `a\b\loop\b\loop\…` 直到路径超长（实测：一条自指 junction 产出 66 条垃圾条目），
+                //   指向大目录的链接更会成倍放大。口径同 `find`（默认不跟随链接）✓
+                //   要跟随：业务层先 `dirs.is_symlink(p)` 判一下，再自己 walk 那个目标。
+                if (!(findData.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) {
+                    char full_path[4096];
+                    snprintf(full_path, sizeof(full_path), "%s\\%s", path, utf8_name);
+                    arr_push(subdirs, val_obj((Object*)str_copy(full_path, (int)strlen(full_path))));
+                }
             } else {
                 arr_push(file_names, val_obj((Object*)name));
             }
@@ -969,8 +990,19 @@ static void walk_scan_dir(const char* path, ObjArray* result) {
 
             char full_path[4096];
             snprintf(full_path, sizeof(full_path), "%s/%s", path, entry->d_name);
-            struct stat st;
-            if (stat(full_path, &st) == 0 && S_ISDIR(st.st_mode)) {
+            // lstat 拿**链接自身**的属性：符号链接**只列、不递归**（口径同 Windows 的 reparse point）。
+            // 指向目录的链接仍按"目录"归类（stat 跟随一次判一下），只是不进 subdirs ✓
+            struct stat lst;
+            if (lstat(full_path, &lst) != 0) {
+                arr_push(file_names, val_obj((Object*)name));
+            } else if (S_ISLNK(lst.st_mode)) {
+                struct stat tst;
+                if (stat(full_path, &tst) == 0 && S_ISDIR(tst.st_mode)) {
+                    arr_push(dir_names, val_obj((Object*)name));   // 目录链接：列出，不递归
+                } else {
+                    arr_push(file_names, val_obj((Object*)name));  // 文件链接：当文件
+                }
+            } else if (S_ISDIR(lst.st_mode)) {
                 arr_push(dir_names, val_obj((Object*)name));
                 arr_push(subdirs, val_obj((Object*)str_copy(full_path, (int)strlen(full_path))));
             } else {
@@ -1019,6 +1051,10 @@ static void walk_scan_dir(const char* path, ObjArray* result) {
 //   **字段类型**的 struct（native 类型规格，见 `NativeTypeSpec`）⇒ 字段名与类型编译期已知，
 //   调用点零收窄。扫描仍是同一份口径（`walk_scan_dir`）单遍直接装结构体 ⇒ 不存在"两套 API 不许漂"
 //   的对账负担。
+// ⚠ **不跟随链接**（junction / symlink / mount point）：这类目录会出现在 `dirs` 里（看得见），
+//   但**不会递归进去** —— 跟随它会走出原目录树，遇到指回祖先的链接就一路拼出
+//   `a\b\loop\b\loop\…`（实测一条自指 junction 产出 66 条垃圾条目，直到路径超长才停）。
+//   口径与 `find`（默认不跟随）一致；要跟随请自己 `dirs.is_symlink(p)` 判一下再 walk 目标。
 static Value native_dirs_walk(int argCount, Value* args) {
     if (argCount < 1) {
         native_throw_error("walk 需要路径参数");
@@ -1089,7 +1125,8 @@ static const NativeStructSpec DIRINFO_STRUCT_SPEC = {
 // 字段：exists(bool) / size(int) / is_file(bool) / is_dir(bool) / mtime(int)
 //   · 路径不存在（或没权限）⇒ exists=false、其余保持默认值 0（与旧 Dict 形态逐字同口径）
 //   · size 是**该条目自身**的大小（目录在 Windows 报 0、POSIX 报 st_size），不是递归总大小
-//   · mtime 在 Windows 上恒 0（已知限制，见下方注释）
+//   · mtime 是 **Unix 秒（UTC）**：Windows 由 FILETIME 换算、POSIX 取 st_mtime（均为 int64，
+//     不走 int32 截断）；拿不到时间 ⇒ 0（2026-09-27 前 Windows 恒 0，属已知限制，现已实现）
 // ⚠ 与旧形态（无类型 `Dict`）**逐字段同义**：键名一字未改 ⇒ `st.size` / `st.exists` 这类调用点
 //   不用动；但 `st["size"]` 下标式与 `if st is Dict` 收窄不再适用。
 // 📌 取单个字段就写 `dirs.stat(p).size` —— 2026-09-27 起**删掉了并行的 `dirs.size()`**：
@@ -1144,8 +1181,20 @@ static Value native_dirs_stat(int argCount, Value* args) {
         native_struct_set(info, "is_file", val_bool(!is_dir));
         native_struct_set(info, "is_dir", val_bool(is_dir));
         
-        // mtime (简化版，返回 0)
-        native_struct_set(info, "mtime", val_int(0));
+        // mtime：FILETIME（1601-01-01 起、100ns 单位）→ Unix 秒（1970-01-01 起）
+        //   ⚠ 原先是**恒 0** 的"简化版" ⇒ `DirInfo.mtime` 声明了却永远没值（Windows 上）
+        //      docs 里那条"mtime 在 Windows 恒为 0"的已知限制就是它 —— 现已实现。
+        //   换算：ticks / 10^7 得秒，再减 1601→1970 的 11644473600 秒。FILETIME 本身是 UTC
+        //   ⇒ 不涉及时区。ftLastWriteTime 为 0（无时间）时保持默认值 0，不写出负数。
+        {
+            ULARGE_INTEGER ft;
+            ft.LowPart = attrData.ftLastWriteTime.dwLowDateTime;
+            ft.HighPart = attrData.ftLastWriteTime.dwHighDateTime;
+            if (ft.QuadPart > 0) {
+                int64_t unix_sec = (int64_t)(ft.QuadPart / 10000000ULL) - 11644473600LL;
+                native_struct_set(info, "mtime", val_int(unix_sec));
+            }
+        }
     }
     if (wpath) { free(wpath); }
 #else
@@ -1161,8 +1210,8 @@ static Value native_dirs_stat(int argCount, Value* args) {
         native_struct_set(info, "is_file", val_bool(S_ISREG(st.st_mode)));
         native_struct_set(info, "is_dir", val_bool(S_ISDIR(st.st_mode)));
         
-        // mtime
-        native_struct_set(info, "mtime", val_int((int)st.st_mtime));
+        // mtime（⚠ 用 int64：原先 (int) 是 32 位截断，2038 之后会溢出成负数）
+        native_struct_set(info, "mtime", val_int((int64_t)st.st_mtime));
     }
 #endif
     

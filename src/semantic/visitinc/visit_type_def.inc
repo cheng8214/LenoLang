@@ -6,7 +6,7 @@
                 TypeInfo* struct_type = type_new(TYPE_STRUCT);
                 struct_type->struct_name = strdup(ast->u.struct_def.name);
 
-                // ★ 与 native 类型**同名**的编译期诊断（v3.2.6）：
+                // ★ 与 native 类型**同名**的编译期诊断（2026-09-27）：
                 //   类型名两边共用同一个全局名字空间，而字段解析是"先查符号表" ⇒ 脚本定义会
                 //   **静默遮蔽** native 规格：同一个名字下，字段按脚本定义解析、native 值却按
                 //   native 规格解释 ⇒ 形状不一致时只有**运行期**才报错（native_struct_def_for 的

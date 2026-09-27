@@ -235,6 +235,45 @@ dirs.is_dir("not_exist")        // false
 
 ---
 
+### `is_symlink(path)`
+
+检查路径是否是**符号链接 / junction / 挂载点**（Windows 侧是 reparse point，POSIX 侧是 symlink）。
+
+**参数**:
+- `path` (string): 路径
+
+**返回**: `bool`
+
+```leno
+dirs.is_symlink("D:\\some\\junction")   // true
+dirs.is_symlink("src")                  // false（普通目录）
+```
+
+**口径说明（重要）**：`dirs` 的**递归类操作一律不跟随链接**（与 `find` 的默认行为一致）：
+
+| 操作 | 对链接的行为 |
+| --- | --- |
+| `walk()` | 链接**出现在 `e.dirs` 里**（看得见），但**不会递归进去** |
+| `delete()` | **只摘链接本身**，绝不动 target 里的内容 |
+| `rmdir()` | 只摘链接（要求它是空的，而链接天然是空的） |
+
+要跟随链接时，自己判一下再走：
+
+```leno
+for dirs.walk(root) to e {
+    for e.dirs to d {
+        var p = dirs.join(e.root, d)
+        if dirs.is_symlink(p) { continue }    // 或自行决定要不要 walk 那个目标
+    }
+}
+```
+
+> ⚠ 为什么**必须**不跟随：指回祖先的链接会让递归走出原目录树 —— 实测一条自指 junction 让
+> `walk` 产出 **66 条**垃圾条目（`a\b\loop\b\loop\…` 一路拼到路径超长才停）；而 `delete(链接)`
+> 在过去会**透过链接删光 target 里的内容**（数据丢失，2026-09-27 修复）。
+
+---
+
 ## 目录操作
 
 ### `mkdir(path)`
@@ -293,6 +332,8 @@ dirs.rmdir("non_empty")         // false (目录非空)
 
 - **文件**：直接删除。
 - **目录**：递归删除整个目录树（先删除其所有子文件和子目录，再删除自身），因此**非空目录也能删除**。
+- **链接**（junction / symlink）：**只摘链接本身**，绝不动 target 里的内容 —— 见 `is_symlink` 的口径表
+  （2026-09-27 前会透过链接删光 target，属数据丢失）。
 - 全程使用 UTF-16 处理路径，支持中文等非 ASCII 路径。
 - 路径不存在时返回 `false`。
 
@@ -395,6 +436,10 @@ for es to e {
 
 递归深度 = 目录树深度，每层一条（先父后子）。
 
+> ⚠ **不跟随链接**：junction / symlink **会出现在 `e.dirs` 里**（看得见），但**不会递归进去** ——
+> 口径同 `find`（默认不跟随）。指回祖先的链接会让跟随式遍历走出原目录树（实测 66 条垃圾条目）；
+> 要跟随请先 `dirs.is_symlink()` 判一下，见 `is_symlink` 的口径表。
+
 **为什么返回结构体、而不是 `[root, dirs, files]` 三元组**：三元组的静态类型是 `Array[Array]` ⇒ 元素是 `any`，只能靠 `e[0] / e[1] / e[2]` 位置索引取值，既不可读、顺序一改还会静默错位。现在用 native 的**类型规格**（`NativeTypeSpec`，见 `docs/待办_单一事实来源与重复实现收敛.md`）声明返回 `Array[DirEntry]`：编译期字段表与运行期 `ObjStructDef` 是**同一份声明** ⇒ 字段名 / 类型 / 顺序同源，编译期即知字段类型 ⇒ 调用点零收窄 ✓
 
 > ⚠ **v3.2.3 起返回形态变了**：`walk` 由 `Array[Array]` 三元组改为 `Array[DirEntry]`（同一版本里过渡性的 `walk_entries` 已删除、能力并入 `walk`）⇒ 旧代码的 `entry[0]/entry[1]/entry[2]` 要改成 `entry.root/entry.dirs/entry.files`；返回类型变了 ⇒ 旧 `.lenb` 需重编译。
@@ -422,7 +467,8 @@ for es to e {
 | `is_dir` | `bool` | 是否是目录 |
 | `mtime` | `int` | 最后修改时间（Unix 时间戳） |
 
-> ⚠ `mtime` 在 Windows 上恒为 `0`（已知限制，见 `src/module/dirs/dirs.c` 的"简化版"注释）。
+> ✅ `mtime` 是 **Unix 秒（UTC）**：Windows 由 `FILETIME` 换算、POSIX 取 `st_mtime`（均 64 位，
+> 不走 32 位截断）；拿不到时间 ⇒ `0`。（2026-09-27 前 Windows 上恒为 `0`，是已知限制，现已实现。）
 > ⚠ `size` 在 2026-09-26 前是 `(int)` 强转 ⇒ **≥2GB 的文件会读出负数**（实测 2GB+1KB ⇒ `-2147482624`）；
 > 现已改为 48 位 `int`，大文件读数正确。
 

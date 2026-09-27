@@ -273,7 +273,7 @@ struct TypeInfo {
 // ⚠ 被引用的 struct 规格**必须也注册**（native_register_struct_spec），否则编译期字段解析
 //   会找不到字段表（运行期同样造不出定义）。
 // ⚠ native struct 与脚本 struct 共用**同一个全局名字空间**（按名字索引）⇒ 取名请避免与
-//   用户类型撞（如 `DirEntry` 这种模块专属名）。v3.2.6 起两条兜底：
+//   用户类型撞（如 `DirEntry` 这种模块专属名）。2026-09-27 起两条兜底：
 //   ① `use <module>.<Type>` 可显式导入（显式、作用域内、可发现 —— 见 semantic 的 AST_USE）；
 //   ② 脚本 struct 与已注册的 native 类型**同名**时给编译期警告（WARN_NATIVE_TYPE_NAME_CLASH），
 //      提示"字段解析会优先用脚本定义、而 native 值按 native 规格解释"。
@@ -309,7 +309,7 @@ typedef struct NativeTypeSpec {
 
 typedef struct NativeStructSpec {
     // **拥有 / 导出**这个类型的 native 模块名（`use <module>.<Type>` 的左侧）。
-    //   v3.2.6 起必须有：`use dirs.DirEntry` 通道与"脚本 struct 撞名"的诊断都靠它定位来源。
+    //   2026-09-27 起必须有：`use dirs.DirEntry` 通道与"脚本 struct 撞名"的诊断都靠它定位来源。
     //   （只做纯名字查表的老接口 native_find_struct_spec 不受影响。）
     const char* module_name;
     const char* name;                          // 类型名（Leno 侧写这个）
