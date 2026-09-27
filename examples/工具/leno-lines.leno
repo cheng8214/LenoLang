@@ -32,9 +32,9 @@ func count_file(string path, int gi) {
 func scan(string root, string ext, int gi) {
     var walks = dirs.walk(root)
     for walks to w {
-        var fnames = w[2]
+        var fnames = w.files
         for fnames to f {
-            if strings.ends_with(f, ext) { count_file(w[0] + sep + f, gi) }
+            if strings.ends_with(f, ext) { count_file(w.root + sep + f, gi) }
         }
     }
 }

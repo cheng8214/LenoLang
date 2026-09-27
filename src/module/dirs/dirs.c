@@ -902,8 +902,8 @@ static Value native_dirs_listdir(int argCount, Value* args) {
     return val_obj((Object*)arr);
 }
 
-// walk 的内部实现：扫描单个目录，将子目录和文件分类
-// 返回 [dirs_array, files_array]，dirs_array 中存放子目录的完整路径
+// walk 的内部实现：扫描单个目录，把分类结果装进一个 `DirEntry` 追加到 result，再递归子目录。
+//   dir_names 是**子目录名**（不含路径，与 files 同形）、subdirs 是子目录**完整路径**（只用于递归）
 static void walk_scan_dir(const char* path, ObjArray* result) {
     ObjArray* dir_names = arr_new_with_capacity(8);
     ObjArray* file_names = arr_new_with_capacity(8);
@@ -981,13 +981,18 @@ static void walk_scan_dir(const char* path, ObjArray* result) {
     }
 #endif
 
-    // 创建 [root, dirs, files] 条目
-    ObjArray* entry = arr_new_with_capacity(3);
+    // 创建 `DirEntry{ root, dirs, files }` 条目
+    //   字段顺序 = DIRENTRY_STRUCT_SPEC 的声明顺序（root, dirs, files）—— 那份 spec 同时是
+    //   编译期字段表与运行期 ObjStructDef 的来源 ⇒ 编译期索引与运行期槽位不可能漂 ✓
+    ObjStruct* entry = native_struct_new("DirEntry");
     if (entry) {
-        arr_push(entry, val_obj((Object*)str_copy(path, (int)strlen(path))));
-        arr_push(entry, val_obj((Object*)dir_names));
-        arr_push(entry, val_obj((Object*)file_names));
-        arr_push(result, val_obj((Object*)entry));
+        Value entry_val = val_obj((Object*)entry);
+        gc_push_root(&entry_val);   // 填字段期间它还没进 result ⇒ 必须自己护住
+        native_struct_set(entry, "root", val_obj((Object*)str_copy(path, (int)strlen(path))));
+        native_struct_set(entry, "dirs", val_obj((Object*)dir_names));
+        native_struct_set(entry, "files", val_obj((Object*)file_names));
+        arr_push(result, entry_val);
+        gc_pop_root();
     }
 
     // 递归处理子目录
@@ -1004,7 +1009,16 @@ static void walk_scan_dir(const char* path, ObjArray* result) {
 }
 
 // dirs.walk(path) - 递归遍历目录树
-// 返回 [[root, dirs, files], ...]
+// 返回 `Array[DirEntry]`：每项是 `DirEntry{ string root, Array[string] dirs, Array[string] files }`
+//   · `root`  = 本次扫到的目录路径；
+//   · `dirs`  = 它的直接**子目录名**；`files` = 直接**文件名**（都不含路径 ⇒ 要完整路径用
+//               `dirs.join(e.root, name)`）；
+//   · 递归深度 = 目录树深度，每层一条（先父后子）。
+// ⚠ 返回形态历史（v3.2.3 起）：旧形态是 `Array[Array]` 的 `[root, dirs, files]` 三元组 ⇒ 元素是
+//   `any`，只能靠 `e[0] / e[1] / e[2]` 位置索引取值（不可读，且顺序一改就静默错位）。现在改为带
+//   **字段类型**的 struct（native 类型规格，见 `NativeTypeSpec`）⇒ 字段名与类型编译期已知，
+//   调用点零收窄。扫描仍是同一份口径（`walk_scan_dir`）单遍直接装结构体 ⇒ 不存在"两套 API 不许漂"
+//   的对账负担。
 static Value native_dirs_walk(int argCount, Value* args) {
     if (argCount < 1) {
         native_throw_error("walk 需要路径参数");
@@ -1033,14 +1047,14 @@ static Value native_dirs_walk(int argCount, Value* args) {
     return val_obj((Object*)result);
 }
 
-// ==================== walk_entries：带**字段类型**的遍历（v3.2.3） ====================
-// 为什么另开一个函数、而不是改 dirs.walk 的返回类型：
-//   ① `walk` 的 `Array[Array]` 形态已有 5+ 处调用点（leno-grep / leno-lines / run_tests …）
-//      ⇒ 改它就是破坏性变更；
-//   ② 真正的病根是"native 元数据只有一个 TypeKind 槽"，表达不了 `Array[DirEntry]`
-//      ⇒ 现在用 NativeTypeSpec 声明（编译期字段表 + 运行期 ObjStructDef **同一来源**，
-//        字段顺序同源 ⇒ 编译期索引与运行期槽位不可能漂）。
-// 扫描口径与 walk **完全一致**（同一个 walk_scan_dir，逐条一一对应）✓
+// ==================== DirEntry 的类型规格（walk 的返回元素，v3.2.3） ====================
+// 病根曾是"native 元数据只有一个 TypeKind 槽"，表达不了 `Array[DirEntry]` ⇒ 现在用
+//   NativeTypeSpec 声明（**编译期字段表 + 运行期 ObjStructDef 同一来源**，字段顺序同源 ⇒
+//   编译期索引与运行期槽位不可能漂）。
+// 历史：v3.2.3 一开始是**并行**加了 `walk_entries`（另开函数、保留 `walk` 的 `Array[Array]`
+//   形态以免破坏既有调用点）；随后确认"两套 API"本身才是负担 —— 位置索引既不可读、类型也表达
+//   不出来，于是合并回**单个 `walk`**（返回 `Array[DirEntry]`）、删掉 `walk_entries`，全部调用点
+//   同步改成字段取值。现在只有一条扫描路径、一种返回形态 ✓
 static const NativeTypeSpec S_STR_SPEC          = { NTYPE_STRING, NULL, NULL, NULL };
 static const NativeTypeSpec S_STRARR_SPEC       = { NTYPE_ARRAY, NULL, &S_STR_SPEC, NULL };
 static const NativeTypeSpec S_DIRENTRY_SPEC     = { NTYPE_STRUCT, "DirEntry", NULL, NULL };
@@ -1051,56 +1065,6 @@ static const NativeTypeSpec* DIRENTRY_FIELD_TYPES[] = { &S_STR_SPEC, &S_STRARR_S
 static const NativeStructSpec DIRENTRY_STRUCT_SPEC = {
     "DirEntry", 3, DIRENTRY_FIELD_NAMES, DIRENTRY_FIELD_TYPES
 };
-
-// dirs.walk_entries(path) - 同 walk，但每条目是 `DirEntry{ root, dirs, files }`
-static Value native_dirs_walk_entries(int argCount, Value* args) {
-    if (argCount < 1) {
-        native_throw_error("walk_entries 需要路径参数");
-        return val_null();
-    }
-
-    const char* path = get_string(args[0]);
-    if (!path) {
-        native_throw_error("walk_entries 参数必须是字符串");
-        return val_null();
-    }
-
-    // 第一遍：复用 walk 的扫描（得到 [root, dirs, files] 三元组）
-    ObjArray* raw = arr_new_with_capacity(16);
-    if (!raw) return val_null();
-    Value raw_val = val_obj((Object*)raw);
-    gc_push_root(&raw_val);
-    walk_scan_dir(path, raw);
-
-    // 第二遍：转成 DirEntry 结构体
-    ObjArray* out = arr_new_with_capacity(raw->count > 0 ? raw->count : 4);
-    if (!out) {
-        gc_pop_root();
-        return val_null();
-    }
-    Value out_val = val_obj((Object*)out);
-    gc_push_root(&out_val);
-
-    for (int i = 0; i < raw->count; i++) {
-        Value e = raw->elements[i];
-        if (!val_is_obj(e) || val_as_obj(e)->type != OBJ_ARRAY) continue;
-        ObjArray* ea = (ObjArray*)val_as_obj(e);
-
-        ObjStruct* de = native_struct_new("DirEntry");
-        if (!de) break;
-        Value de_val = val_obj((Object*)de);
-        gc_push_root(&de_val);   // 填字段期间它还没进 out ⇒ 必须自己护住
-        if (ea->count > 0) native_struct_set(de, "root", ea->elements[0]);
-        if (ea->count > 1) native_struct_set(de, "dirs", ea->elements[1]);
-        if (ea->count > 2) native_struct_set(de, "files", ea->elements[2]);
-        arr_push(out, de_val);
-        gc_pop_root();
-    }
-
-    gc_pop_root();   // out
-    gc_pop_root();   // raw
-    return val_obj((Object*)out);
-}
 
 // ==================== 文件信息 ====================
 
@@ -1291,11 +1255,12 @@ void dirs_init_module(void) {
 
     // 遍历操作
     native_register_module_method_spec("dirs", "listdir", native_dirs_listdir, 1, -1, -1, &NATIVE_T_ARR_STRING, string_params);
-    native_register_module_method_spec("dirs", "walk", native_dirs_walk, 1, -1, -1, &NATIVE_T_ARR_ARR, string_params);
-    // walk_entries：带**完整返回类型规格** `Array[DirEntry]`（v3.2.3）—— 编译器因此认识
-    //   条目字段类型（`e.root` 是 string、`e.files` 是 Array[string]）⇒ 调用点零收窄 ✓
+    // walk：带**完整返回类型规格** `Array[DirEntry]`（v3.2.3）—— 编译器因此认识条目字段类型
+    //   （`e.root` 是 string、`e.files` 是 Array[string]）⇒ 调用点零收窄 ✓
+    //   （`walk_entries` 已删除：它只是过渡期的并行 API，现与 walk 合并为同一条路径 —— 见上方
+    //    `native_dirs_walk` 的历史注释。）
     native_register_struct_spec(&DIRENTRY_STRUCT_SPEC);
-    native_register_module_method_spec("dirs", "walk_entries", native_dirs_walk_entries,
+    native_register_module_method_spec("dirs", "walk", native_dirs_walk,
                                        1, -1, -1, &S_DIRENTRY_ARR_SPEC, string_params);
 
     // 文件信息

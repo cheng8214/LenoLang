@@ -144,7 +144,14 @@
 //   ⇒ .lenb / entry_*.lenb 必须整体失效重编译。
 // v2.7.1（2026-09-16）：枚举成员求值语义修正 —— 扫描器补 `not`、除零/取模零改为与解析器同结论
 //   ⇒ 修正前编译出的 .lenb / entry_*.lenb 里可能烙着错的常量值，必须整体失效重编译。
-#define LENO_BIN_VERSION    0x00030202  // v3.2.2 - 新增 opcode OP_TYPE_CHECK_SPEC /
+#define LENO_BIN_VERSION    0x00030203  // v3.2.3 - native 返回类型规格 + `dirs.walk` 返回形态改
+                                        //   为 `Array[DirEntry]`（见上）。**opcode 集合与字节布局
+                                        //   都没变**，但**求值语义 + 编译期推断都变了**：同一份
+                                        //   `.leno` 源码现在会推出不同的类型 ⇒ 发射的指令不同
+                                        //   （索引用 `OP_INDEX_*` vs 字段访问）；旧 `.lenb` 里那句
+                                        //   `walk` 的返回值也从"三元组数组"变成"结构体数组"
+                                        //   ⇒ 旧产物必须整体失效重编译（同 实例九③ 判据）
+                                        // v3.2.2 - 新增 opcode OP_TYPE_CHECK_SPEC /
                                         //   OP_AS_CAST_SPEC（递归类型规格，见上）
                                         // v3.2.1 - 过渡版：OP_TYPE_CHECK_DICT / OP_AS_CAST_DICT
                                         //   （已被 v3.2.2 取代并删除，见上）
@@ -176,7 +183,11 @@
 // v13：ObjFunction 增加 is_async（运行期判定"调用即建协程"用）。旧缓存里的函数对象缺这个
 //      字段 ⇒ async 函数的**间接调用**（`var f = w; f()`、当参数传、绑定方法）会退回同步执行、
 //      静默错值，所以必须**作废旧缓存**。
-#define LENO_MODCACHE_VERSION  0x00000013  // v19 - 同 LENO_BIN_VERSION v3.2.2（类型检查改走
+#define LENO_MODCACHE_VERSION  0x00000014  // v20 - 同 LENO_BIN_VERSION v3.2.3（native 返回类型
+                                           //       规格 + `dirs.walk` 返回 `Array[DirEntry]`：
+                                           //       模块字节码里同样含"按推断类型发射的指令"与那句
+                                           //       walk 调用，旧缓存里烙的是旧推断）
+                                           // v19 - 同 LENO_BIN_VERSION v3.2.2（类型检查改走
                                            //       递归类型规格：新增 OP_TYPE_CHECK_SPEC /
                                            //       OP_AS_CAST_SPEC 且带变长尾随字节，
                                            //       模块字节码里同样含 opcode 与判定语义）

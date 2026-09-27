@@ -335,33 +335,7 @@ var drives = dirs.list_drives()   // Windows: ["C:\\", "D:\\"]
 
 ### `walk(path)`
 
-遍历目录树，返回目录结构信息。
-
-**参数**:
-- `path` (string): 目录路径
-
-**返回**: `array` - 包含 [[root, dirs, files], ...] 的数组
-
-```leno
-var entries = dirs.walk("src/module")
-// entries = [["src/module", ["io", "times", ...], ["dirs"]], ...]
-
-for entries to entry {
-    var root = entry[0]     // 当前目录路径
-    var dirs = entry[1]     // 子目录数组
-    var files = entry[2]    // 文件数组
-    
-    io.print("目录: " + root)
-    io.print("  子目录: " + dirs)
-    io.print("  文件: " + files)
-}
-```
-
----
-
-### `walk_entries(path)` —— 带字段类型的遍历（v3.2.3）
-
-与 `walk` **同一份扫描**（逐条一一对应），但每条目是结构体 `DirEntry{ string root, Array[string] dirs, Array[string] files }`：
+递归遍历目录树，返回 `Array[DirEntry]` —— 每项是结构体 `DirEntry{ string root, Array[string] dirs, Array[string] files }`。
 
 **参数**:
 - `path` (string): 目录路径
@@ -369,19 +343,29 @@ for entries to entry {
 **返回**: `Array[DirEntry]`（类型串按既有的 `type_to_string` 风格渲染为 `Array[struct DirEntry]`）
 
 ```leno
-var es = dirs.walk_entries("src/module")
+var es = dirs.walk("src/module")
 for es to e {
     string root = e.root            // 编译期就知道是 string（无需 as / 收窄）
-    Array[string] fs = e.files      // 元素类型也是 string
+    Array[string] ds = e.dirs       // 子目录名
+    Array[string] fs = e.files      // 文件名；元素类型是 string ⇒ 能直接进 Array[string] 的方法
     io.print(root + " → " + _str(fs.len()) + " 个文件")
     for fs to f { io.print("  " + f) }
 }
 ```
 
-**为什么要有它**：`walk` 的元素是 `[root, dirs, files]` 三元组，静态类型是 `Array[Array]` ⇒ 取出来的每个位置都是 `any`，调用点得手写收窄。`walk_entries` 用 native 的**类型规格**（`NativeTypeSpec`，见 `docs/待办_单一事实来源与重复实现收敛.md`）声明返回 `Array[DirEntry]`，编译期与运行期共用同一份字段表 ⇒ 字段名/类型都已知。
+**字段含义**（`dirs` / `files` 都只给**名字**、不含路径 ⇒ 完整路径用 `dirs.join(e.root, name)`）:
 
-**两者怎么选**：已经有 `entry[0]/entry[2]` 这种位置式取值的代码继续用 `walk`（零改动）；新代码、或需要字段名与类型可读性时用 `walk_entries`。两者扫描口径**不许漂**（`test_dirs` 里有一条断言逐条对齐）。
+| 字段 | 类型 | 含义 |
+| --- | --- | --- |
+| `root` | `string` | 本次扫到的目录路径 |
+| `dirs` | `Array[string]` | 它的直接子目录名 |
+| `files` | `Array[string]` | 它的直接文件名 |
 
+递归深度 = 目录树深度，每层一条（先父后子）。
+
+**为什么返回结构体、而不是 `[root, dirs, files]` 三元组**：三元组的静态类型是 `Array[Array]` ⇒ 元素是 `any`，只能靠 `e[0] / e[1] / e[2]` 位置索引取值，既不可读、顺序一改还会静默错位。现在用 native 的**类型规格**（`NativeTypeSpec`，见 `docs/待办_单一事实来源与重复实现收敛.md`）声明返回 `Array[DirEntry]`：编译期字段表与运行期 `ObjStructDef` 是**同一份声明** ⇒ 字段名 / 类型 / 顺序同源，编译期即知字段类型 ⇒ 调用点零收窄 ✓
+
+> ⚠ **v3.2.3 起返回形态变了**：`walk` 由 `Array[Array]` 三元组改为 `Array[DirEntry]`（同一版本里过渡性的 `walk_entries` 已删除、能力并入 `walk`）⇒ 旧代码的 `entry[0]/entry[1]/entry[2]` 要改成 `entry.root/entry.dirs/entry.files`；返回类型变了 ⇒ 旧 `.lenb` 需重编译。
 > ⚠ 别把局部变量命名成 `files`：那是 native 模块名，会被优先当模块解析（用 `fs` 之类）。
 > ⚠ `DirEntry` 与脚本自定义的 struct **共享同一个全局名字空间**；若你自己也定义了同名 struct 且形状不同，运行期会**报错**（而不是静默按错序号读字段）。
 
@@ -489,8 +473,8 @@ func find_leno_files(var path) -> array {
     var entries = dirs.walk(path)
     
     for entries to entry {
-        var root = entry[0]
-        var files = entry[2]
+        var root = entry.root
+        var files = entry.files
         
         for files to f {
             if dirs.extname(f) == ".leno" {
@@ -564,8 +548,8 @@ func calc_dir_size(var path) -> int {
     var entries = dirs.walk(path)
     
     for entries to entry {
-        var root = entry[0]
-        var files = entry[2]
+        var root = entry.root
+        var files = entry.files
         
         for files to f {
             var full_path = dirs.join(root, f)

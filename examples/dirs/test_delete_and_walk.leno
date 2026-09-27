@@ -26,10 +26,11 @@ files.write(dirs.join(base, "sub2", "c.txt"), "c")
 var result = dirs.walk(base)
 print("遍历层数:", result.len())
 
+// v3.2.3 起 walk 返回 Array[DirEntry] ⇒ 用字段取值（旧写法是 entry[0]/entry[1]/entry[2]）
 for result to var entry {
-    var root = entry[0]
-    var d = entry[1]
-    var f = entry[2]
+    var root = entry.root
+    var d = entry.dirs
+    var f = entry.files
     print("目录:", root)
     if d.len() > 0 {
         print("  子目录:", d)

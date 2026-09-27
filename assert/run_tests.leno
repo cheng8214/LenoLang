@@ -33,8 +33,8 @@ main() {
     // _exec("cmd /c for /r \"" + test_dir + "\" %d in (.lenocache) do @if exist \"%d\" rmdir /s /q \"%d\" 2>nul")
     var caches = dirs.walk(test_dir)
     for caches to cw {
-        var croot = cw[0]
-        var cdirs = cw[1]
+        var croot = cw.root
+        var cdirs = cw.dirs
         for cdirs to cd {
             if cd == ".lenocache" {
                 dirs.delete(croot + "\\" + cd)
@@ -53,11 +53,11 @@ main() {
         test_timeout_ms = _int(tt_env)
     }
 
-    // walk 递归遍历子目录，每个 entry 是 [root, [dirs], [files]]
+    // walk 递归遍历子目录，每个 entry 是 DirEntry{ root, dirs, files }（v3.2.3 起）
     var walks = dirs.walk(test_dir)
     for walks to w {
-        var root = w[0]
-        var files = w[2]
+        var root = w.root
+        var files = w.files
         for files to entry {
             if strings.starts_with(entry, "test_") and strings.ends_with(entry, ".leno") {
                 var full = dirs.abspath(root + "\\" + entry)
