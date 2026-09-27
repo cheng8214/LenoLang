@@ -2,6 +2,8 @@
 
 import dirs
 import files
+use dirs.DirEntry      // native 类型可显式 use（v3.2.6）；不写也能用（裸名兜底，v3.2.5）
+use dirs.DirInfo
 
 main()
 {
@@ -182,6 +184,13 @@ main()
     assert_eq(t_w_root == "src/module/arrays" and t_w_dirs.len() == 0 and t_w_files.len() > 0, true)
     assert_eq(t_st_exists and t_st_size > 0 and t_st_is_file and not t_st_is_dir and t_st_mtime >= 0, true)
 
+    // script_dir / res_dir 的**行为**断言（2026-09-27 从 examples/dirs/test_script_dir.leno 收进来 ——
+    //   那份示例目录已删除：它是唯一演示过这个语义的地方，行为验证不能跟着文件一起消失）
+    //   ① script_dir() == **脚本自身所在目录**：用"拼回本用例文件能存在"来证（比打字符串硬）
+    assert_eq(dirs.exists(dirs.join(dirs.script_dir(), "test_dirs.leno")), true)
+    //   ② **未打包**时 res_dir() 与 script_dir() 同源（打包后指向资源释放目录，见 module_dirs.md）
+    assert_eq(dirs.res_dir(), dirs.script_dir())
+
     // 测试15: 写操作（mkdir / mkdir_p / rename / delete / is_symlink）—— 临时目录里建-改-删往返，跑完自清
     string tmp = "test_dirs_tmp"
     // 上一次跑中途挂掉可能留下**非空**的 tmp ⇒ 先自底向上清干净（`rmdir` 只吃空目录）；
@@ -264,6 +273,24 @@ main()
 
     var ann_any = dirs.stat(self)
     assert_eq(ann_any is DirInfo, true)                 // ⑥ `is` 判定也认这个名字
+
+    // 测试17: `use <module>.<Type>` 通道（v3.2.6）
+    //   背景：native 模块**没有 sym_table**（字段表在 native 类型规格注册表里）⇒ `use dirs.DirEntry`
+    //   过去只会得到"模块 'dirs' 没有符号表"。现在走独立通道：把规格按 SYM_STRUCT 导进当前作用域、
+    //   字段类型由规格转出 ⇒ 之后字段解析走**普通符号路径**（不再依赖裸名兜底）。
+    //   本文件开头已 use 两个类型；这里验证"经 use 进来的名字"在标注 / 字段 / 判定上都能用。
+    //   ① 标注：与测试16 的裸名写法等价 —— 两条路（显式 use / 裸名兜底）都要能用
+    DirInfo u_info = dirs.stat(self)
+    Array[DirEntry] u_walk = dirs.walk("src/module/arrays")
+    assert_eq(u_info.exists, true)
+    assert_eq(u_walk[0].root, "src/module/arrays")
+    //   ② use 导入的字段类型同样精确（规格里的 Array[string] 没在导入时丢层）
+    Array[string] u_files = u_walk[0].files
+    assert_eq(u_files.has("arrays.c"), true)
+    assert_eq(dirs.extname(u_files[0]), ".c")
+    //   ③ 判定仍按名字匹配（运行期 ObjStructDef 与规格同源 ⇒ 一定对得上）
+    assert_eq(u_info is DirInfo, true)
+    assert(not (u_walk[0] is Dict))
 
     print("test_dirs passed")
 }

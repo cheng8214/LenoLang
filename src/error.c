@@ -365,6 +365,7 @@ void warning_print_all(void) {
             case WARN_PARTIAL_DECL_INIT: type_str = "部分初值声明"; break;
             case WARN_FIELD_NO_INIT:   type_str = "字段未初始化"; break;
             case WARN_AMBIGUOUS_MODULE: type_str = "模块名歧义"; break;
+            case WARN_NATIVE_TYPE_NAME_CLASH: type_str = "与native类型同名"; break;
             default: break;
         }
 

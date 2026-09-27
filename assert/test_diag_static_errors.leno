@@ -318,5 +318,44 @@ main() {
 ")
     ce.expect_ok(ok2, "无效转义按原样保留", "OK")
 
+    // ---- v3.2.6：native 类型通道（use 通道 + 同名诊断）----
+    //   背景：native 模块**没有 sym_table**（字段表在 native 类型规格注册表里）⇒ `use dirs.DirEntry`
+    //   过去只会得到"模块 'dirs' 没有符号表"。现在走独立通道，且名字写错要**列出可用类型**；
+    //   没 import 就 use 则与源码模块同规矩（否则又出一种"不 import 也能 use"的怪状态）。
+    var n1 = dirs.join(work, "use_native_typo.leno")
+    files.write(n1, @"import dirs
+use dirs.Nope
+
+main() {
+    print(1)
+}
+")
+    ce.expect_error(n1, "use 写错 native 类型名要列出可用类型", "可用类型: DirEntry / DirInfo", 2)
+
+    var n2 = dirs.join(work, "use_native_noimport.leno")
+    files.write(n2, @"use dirs.DirInfo
+
+main() {
+    print(1)
+}
+")
+    ce.expect_error(n2, "use native 类型前必须先 import", "模块 'dirs' 未导入", 1)
+
+    //   脚本 struct 与 native 类型同名 ⇒ **编译期警告**（不是错误：形状一致时是合法用法，
+    //   运行期会复用同一份 ObjStructDef）
+    var n3 = dirs.join(work, "native_name_clash.leno")
+    files.write(n3, @"import dirs
+
+struct DirInfo {
+    int x = 0
+}
+
+main() {
+    var m = new DirInfo(x=1)
+    print(m.x)
+}
+")
+    ce.expect_ok(n3, "脚本 struct 与 native 类型同名要给警告", "与native类型同名")
+
     print("=== test_diag_static_errors ALL passed ===")
 }

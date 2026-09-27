@@ -99,6 +99,7 @@ typedef enum {
     WARN_PARTIAL_DECL_INIT, // var 声明列表只有部分变量带初值（Python 多重赋值习惯）
     WARN_FIELD_NO_INIT,     // struct 标量字段未显式初始化（默认是 null 而不是 0，参与运算会报错）
     WARN_AMBIGUOUS_MODULE,  // 裸文件名 import 撞名：多个包目录都有同名 .leno 且内容不同（静默选错文件）
+    WARN_NATIVE_TYPE_NAME_CLASH, // 脚本 struct 与已注册的 native 类型同名（字段解析会优先用脚本定义）
 } WarnType;
 
 // ============================================================================
@@ -264,7 +265,7 @@ struct TypeInfo {
 //     static const NativeTypeSpec S_STRARR[] = { {NTYPE_ARRAY, NULL, &S_STRING, NULL} };  // 元素
 //     static const char* DIRENTRY_FIELDS[] = {"root", "dirs", "files"};
 //     static const NativeTypeSpec* DIRENTRY_TYPES[] = { &S_STRING, &S_STRARR[0], &S_STRARR[0] };
-//     static const NativeStructSpec DIRENTRY = { "DirEntry", 3, DIRENTRY_FIELDS, DIRENTRY_TYPES };
+//     static const NativeStructSpec DIRENTRY = { "dirs", "DirEntry", 3, DIRENTRY_FIELDS, DIRENTRY_TYPES };
 //     static const NativeTypeSpec S_DIRENTRY  = { NTYPE_STRUCT, "DirEntry", NULL, NULL };
 //     static const NativeTypeSpec S_DIRENTRY_ARR[] = { {NTYPE_ARRAY, NULL, &S_DIRENTRY, NULL} };
 //     native_register_struct_spec(&DIRENTRY);
@@ -272,7 +273,10 @@ struct TypeInfo {
 // ⚠ 被引用的 struct 规格**必须也注册**（native_register_struct_spec），否则编译期字段解析
 //   会找不到字段表（运行期同样造不出定义）。
 // ⚠ native struct 与脚本 struct 共用**同一个全局名字空间**（按名字索引）⇒ 取名请避免与
-//   用户类型撞（如 `DirEntry` 这种模块专属名），撞了会按"后注册覆盖"处理。
+//   用户类型撞（如 `DirEntry` 这种模块专属名）。v3.2.6 起两条兜底：
+//   ① `use <module>.<Type>` 可显式导入（显式、作用域内、可发现 —— 见 semantic 的 AST_USE）；
+//   ② 脚本 struct 与已注册的 native 类型**同名**时给编译期警告（WARN_NATIVE_TYPE_NAME_CLASH），
+//      提示"字段解析会优先用脚本定义、而 native 值按 native 规格解释"。
 // ============================================================================
 typedef enum {
     NTYPE_ANY = 0,      // 无约束（等价 TypeInfo 的 TYPE_ANY）
@@ -304,6 +308,10 @@ typedef struct NativeTypeSpec {
 } NativeTypeSpec;
 
 typedef struct NativeStructSpec {
+    // **拥有 / 导出**这个类型的 native 模块名（`use <module>.<Type>` 的左侧）。
+    //   v3.2.6 起必须有：`use dirs.DirEntry` 通道与"脚本 struct 撞名"的诊断都靠它定位来源。
+    //   （只做纯名字查表的老接口 native_find_struct_spec 不受影响。）
+    const char* module_name;
     const char* name;                          // 类型名（Leno 侧写这个）
     int field_count;
     const char* const* field_names;            // 与 field_types **同序** ⇒ 下标即字段号

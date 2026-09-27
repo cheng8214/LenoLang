@@ -32,6 +32,38 @@ main() {
 }
 ```
 
+### 类型：`DirEntry` / `DirInfo`
+
+`dirs` 导出两个**类型**（native 类型规格声明，见 `docs/待办_单一事实来源与重复实现收敛.md`）：
+
+| 类型 | 出现在 | 字段 |
+| --- | --- | --- |
+| `DirEntry` | `walk()` 的元素 | `root`(string) / `dirs`(Array[string]) / `files`(Array[string]) |
+| `DirInfo` | `stat()` 的返回 | `exists`(bool) / `size`(int) / `is_file`(bool) / `is_dir`(bool) / `mtime`(int) |
+
+**推荐写法：显式 `use`**（与其它跨模块类型同一规矩；`use` 之前先 `import`）：
+
+```leno
+import dirs
+import io
+use dirs.DirEntry
+use dirs.DirInfo
+
+main() {
+    DirInfo info = dirs.stat("build.bat")     // 字段类型编译期已知
+    Array[DirEntry] es = dirs.walk("src")     // 元素类型编译期已知
+    io.print(info.size)
+}
+```
+
+两个名字**也可以不写 `use` 直接用**（编译器按 native 类型规格兜底解析）；两种写法等价，
+写 `use` 的好处是：出处明确、名字冲突时有正式出口、工具能列出该模块导出的类型。
+
+> ⚠ **别用同名的脚本 `struct`**：类型名两边共用**全局名字空间**，脚本定义会遮蔽 native 规格
+> （字段按脚本定义解析、而 native 值按 native 规格解释）⇒ 形状不一致时只有**运行期**才报错。
+> 编译器会对这种情况给 `[与native类型同名]` 警告，改名即可。
+> ⚠ `use` 把类型名写错时，报错会**列出可用类型**（如 `可用类型: DirEntry / DirInfo`）。
+
 ---
 
 ## 路径操作
@@ -343,7 +375,7 @@ var drives = dirs.list_drives()   // Windows: ["C:\\", "D:\\"]
 **返回**: `Array[DirEntry]`（类型串按既有的 `type_to_string` 风格渲染为 `Array[struct DirEntry]`）
 
 ```leno
-Array[DirEntry] es = dirs.walk("src/module")   // 元素类型可以直接标出来（v3.2.5 起）
+Array[DirEntry] es = dirs.walk("src/module")   // 元素类型可以直接标出来（v3.2.5 起；或先 `use dirs.DirEntry`）
 for es to e {
     string root = e.root            // 编译期就知道是 string（无需 as / 收窄）
     Array[string] ds = e.dirs       // 子目录名
@@ -395,7 +427,7 @@ for es to e {
 > 现已改为 48 位 `int`，大文件读数正确。
 
 ```leno
-DirInfo info = dirs.stat("build.bat")     // 类型可以直接标出来（v3.2.5 起；此前只能 var）
+DirInfo info = dirs.stat("build.bat")     // 类型可以直接标出来（v3.2.5 起；或先 `use dirs.DirInfo`）
 // info = DirInfo{ exists: true, size: 2917, is_file: true, is_dir: false, mtime: 0 }
 
 io.print("大小: " + info.size + " 字节")     // info.size 直接是 int ⇒ 能直接参与运算

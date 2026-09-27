@@ -173,8 +173,10 @@ build\leno.exe leno_gui\游戏\俄罗斯方块\tetris.leno
 - **`=>` 绑定语法** —— `if expr is Type => var` 一次求值、绑定、收窄；可 `and` 链组合
 - **安全转换 `as`** —— 不匹配返回 `null` 而非崩溃
 - **可空类型 `Type?`**
-- **native 类型可标注** —— native 模块用类型规格声明的 struct（`DirInfo` / `DirEntry` …）可当类型标注：
-  `DirInfo d = dirs.stat(p)`、`Array[DirEntry] w = dirs.walk(p)`，也能用在函数参数/返回、脚本 struct 字段上
+- **native 类型可标注 / 可 `use`** —— native 模块用类型规格声明的 struct（`DirInfo` / `DirEntry` …）
+  可当类型标注：`DirInfo d = dirs.stat(p)`、`Array[DirEntry] w = dirs.walk(p)`，也能用在函数参数/返回、
+  脚本 struct 字段上；还可 `use dirs.DirInfo` 显式导入（与脚本模块类型同一规矩），
+  脚本 struct 与 native 类型同名时会给出编译期警告
 
 **结构体与面向对象**
 - **`struct`** —— 字段、方法、嵌套、自引用

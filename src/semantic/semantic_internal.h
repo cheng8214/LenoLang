@@ -38,6 +38,12 @@ int semantic_native_struct_known(const char* name);
 // 此前 AST_USE 与 import_type_deps 各写一遍，后者丢嵌套泛型（详见 semantic_type_utils.c）。
 void semantic_attach_struct_fields(Symbol* sym, const ModuleStructSymbol* ssym);
 
+// 把一条 **native 类型规格**导入当前作用域 —— 语义上的 `use <module>.<Type>`（v3.2.6）。
+// native 模块没有 sym_table（字段表在 native 类型规格注册表里）⇒ 与 semantic_attach_struct_fields
+// 是**两条通道**、但目标一致：当前作用域里出现一个可用的 struct 符号。
+// 返回 1 = 已导入（含"同名同类型 ⇒ 静默跳过"）；0 = 同名冲突（文案由调用方决定）。
+int semantic_import_native_type(Semantic* s, const NativeStructSpec* spec);
+
 // 把模块符号表里的一条 struct/cstruct 符号**完整注册**进当前编译：
 // 全局 struct_def（含泛型参数/方法名/impl）+ 方法占位符注册到 func_table
 // （带 param_types / type_params / 返回泛型实参 —— 泛型替换靠它）。

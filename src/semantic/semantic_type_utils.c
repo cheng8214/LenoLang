@@ -90,6 +90,53 @@ void semantic_attach_struct_fields(Symbol* sym, const ModuleStructSymbol* ssym) 
 //     直接 `use m.Box`   ⇒ 正确报「返回类型不匹配：期望 string，实际 int」
 //     经 `use m.F`（alias）⇒ **什么都不报**、exit 0
 // ============================================================================
+// ============================================================================
+// 把 native 类型规格导入当前作用域 —— 语义上的 `use <module>.<Type>`（v3.2.6）
+// ----------------------------------------------------------------------------
+// 与 semantic_attach_struct_fields 的分工：那个搬的是**源码模块**（.lenomc 符号表）里的条目；
+//   这个搬的是 native 注册表里的 NativeStructSpec —— native 模块**没有 sym_table**
+//   （它就是 `use dirs.DirEntry` 过去只会得到"模块 'dirs' 没有符号表"的原因）。
+// 做三件事：① 定义 SYM_STRUCT 符号；② sym->type = TYPE_STRUCT + 规格名（与运行期
+//   ObjStructDef 同名 ⇒ 一定对得上）；③ 字段表按规格逐条 native_type_spec_to_info() 转 TypeInfo
+//   ⇒ 之后字段解析走**普通符号路径**，不再依赖 semantic_native_struct_known 的兜底。
+// 不做：全局 struct_def 注册 / 方法占位符注册 —— native 结构体没有脚本方法，运行期定义由
+//   native_struct_def_for() 按**同一份规格**造（见 native.c）。注册一份同名脚本 struct_def
+//   反而可能把"同形才复用"的检查搅乱。
+// 返回 1 = 已导入（含"同名同类型 ⇒ 静默跳过"）；0 = 同名冲突（文案由调用方决定，两处不同）。
+// ============================================================================
+int semantic_import_native_type(Semantic* s, const NativeStructSpec* spec) {
+    if (!s || !spec || !spec->name) return 0;
+
+    Symbol* existing = scope_resolve_local(s->current, spec->name);
+    if (existing) {
+        // 同一个 native 类型重复 use ⇒ 静默跳过（与源码模块那条的既有口径一致）
+        if (existing->type && existing->type->kind == TYPE_STRUCT &&
+            existing->type->struct_name && strcmp(existing->type->struct_name, spec->name) == 0) {
+            return 1;
+        }
+        return 0;   // 同名但不同物（脚本 struct / 别的模块的类型）⇒ 冲突
+    }
+
+    Symbol* sym = scope_define(s->current, spec->name, SYM_STRUCT);
+    if (!sym) return 0;
+
+    sym->type = type_new(TYPE_STRUCT);
+    sym->type->struct_name = strdup(spec->name);
+
+    int n = spec->field_count > 0 ? spec->field_count : 0;
+    sym->struct_field_count = n;
+    if (n > 0) {
+        sym->struct_field_names = (char**)malloc(sizeof(char*) * n);
+        sym->struct_field_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * n);
+        for (int i = 0; i < n; i++) {
+            sym->struct_field_names[i] = strdup(spec->field_names[i] ? spec->field_names[i] : "");
+            TypeInfo* ft = native_type_spec_to_info(spec->field_types[i]);
+            sym->struct_field_types[i] = ft ? ft : type_new(TYPE_ANY);
+        }
+    }
+    return 1;
+}
+
 void semantic_register_struct_from_module(Semantic* s, const ModuleStructSymbol* ssym) {
     if (!s || !ssym || !ssym->name) return;
     const char* symbol_name = ssym->name;

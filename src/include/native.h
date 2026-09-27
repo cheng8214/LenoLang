@@ -132,10 +132,20 @@ extern const NativeTypeSpec NATIVE_T_DICT;         // 裸 Dict（K/V 未指定�
 
 // 注册一个 native 结构体规格（**编译期字段表 + 运行期 ObjStructDef 同一来源**）。
 // 可在任意 *_init_module() 里反复调用（同名只登记一次）；表满（64）静默忽略。
+// ⚠ 规格里的 module_name 必须是**拥有该类型的模块名**（`use <module>.<Type>` 的左侧，
+//   见 NativeStructSpec 的说明）；它是 v3.2.6 新增的字段。
 void native_register_struct_spec(const NativeStructSpec* spec);
 
 // 按名查 native 结构体规格（编译期字段解析兜底用；未注册 ⇒ NULL）
 const NativeStructSpec* native_find_struct_spec(const char* name);
+
+// 按 **(模块名, 类型名)** 查 native 结构体规格 —— `use <module>.<Type>` 通道的唯一来源。
+//   module_name 必须已解析过别名（调用方用 native_resolve_module_alias）；未注册 ⇒ NULL。
+const NativeStructSpec* native_find_module_struct_spec(const char* module_name, const char* type_name);
+
+// 列出某模块导出的 native 类型名（写进 out_names，最多 max 个），返回写入个数。
+//   用途：`use dirs.写错的名字` 的"可用类型"诊断（照 native_builtin_module_hint 的风格）。
+int native_list_module_struct_specs(const char* module_name, const char** out_names, int max);
 
 // 取模块方法的返回类型规格（编译期；未声明规格 ⇒ NULL）
 const NativeTypeSpec* native_get_module_method_return_spec(const char* module_name, const char* method_name);

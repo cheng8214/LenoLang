@@ -781,6 +781,33 @@ const NativeStructSpec* native_find_struct_spec(const char* name) {
     return NULL;
 }
 
+// 按 (模块名, 类型名) 查（v3.2.6）—— `use <module>.<Type>` 通道的唯一来源。
+//   为什么不能只按名字查：`use` 要回答的是"**这个模块**导出了哪些类型"，
+//   只按名字查就退化成"全局有没有这个名字"，与 `use` 的语义不符（也就没法做"可用类型"诊断）。
+const NativeStructSpec* native_find_module_struct_spec(const char* module_name, const char* type_name) {
+    if (!module_name || !type_name) return NULL;
+    for (int i = 0; i < nativeStructSpecCount; i++) {
+        const NativeStructSpec* s = nativeStructSpecs[i];
+        if (s->module_name && strcmp(s->module_name, module_name) == 0 &&
+            strcmp(s->name, type_name) == 0) {
+            return s;
+        }
+    }
+    return NULL;
+}
+
+int native_list_module_struct_specs(const char* module_name, const char** out_names, int max) {
+    if (!module_name || !out_names || max <= 0) return 0;
+    int n = 0;
+    for (int i = 0; i < nativeStructSpecCount && n < max; i++) {
+        const NativeStructSpec* s = nativeStructSpecs[i];
+        if (s->module_name && strcmp(s->module_name, module_name) == 0) {
+            out_names[n++] = s->name;
+        }
+    }
+    return n;
+}
+
 // 规格 → TypeKind（只取顶层；NTYPE_STRUCT 的**名字**由调用方另行处理）
 static TypeKind native_spec_kind(const NativeTypeSpec* spec) {
     if (!spec) return TYPE_ANY;

@@ -1063,7 +1063,7 @@ static const NativeTypeSpec S_DIRENTRY_ARR_SPEC = { NTYPE_ARRAY, NULL, &S_DIRENT
 static const char* DIRENTRY_FIELD_NAMES[] = { "root", "dirs", "files" };
 static const NativeTypeSpec* DIRENTRY_FIELD_TYPES[] = { &S_STR_SPEC, &S_STRARR_SPEC, &S_STRARR_SPEC };
 static const NativeStructSpec DIRENTRY_STRUCT_SPEC = {
-    "DirEntry", 3, DIRENTRY_FIELD_NAMES, DIRENTRY_FIELD_TYPES
+    "dirs", "DirEntry", 3, DIRENTRY_FIELD_NAMES, DIRENTRY_FIELD_TYPES
 };
 
 // ==================== DirInfo 的类型规格（stat 的返回，v3.2.4） ====================
@@ -1080,7 +1080,7 @@ static const NativeTypeSpec* DIRINFO_FIELD_TYPES[] = {
     &S_BOOL_SPEC, &S_INT_SPEC, &S_BOOL_SPEC, &S_BOOL_SPEC, &S_INT_SPEC
 };
 static const NativeStructSpec DIRINFO_STRUCT_SPEC = {
-    "DirInfo", 5, DIRINFO_FIELD_NAMES, DIRINFO_FIELD_TYPES
+    "dirs", "DirInfo", 5, DIRINFO_FIELD_NAMES, DIRINFO_FIELD_TYPES
 };
 
 // ==================== 文件信息 ====================

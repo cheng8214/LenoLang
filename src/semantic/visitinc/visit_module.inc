@@ -271,6 +271,54 @@
                 break;
             }
 
+            // ★ native 模块的类型（v3.2.6）—— 走**独立通道**，且必须在下面的"没有符号表"检查之前：
+            //   native 模块的字段表在 native 类型规格注册表里，`sym_table` 恒为 NULL
+            //   ⇒ 过去 `use dirs.DirEntry` 只会得到"模块 'dirs' 没有符号表"这句废话。
+            //   位置放在"模块已导入"检查之后 ⇒ 与源码模块**同一规矩**：use 之前先 import ✓
+            {
+                const char* actual_module = native_resolve_module_alias(module_name);
+                if (native_is_module(actual_module)) {
+                    const NativeStructSpec* nss =
+                        native_find_module_struct_spec(actual_module, symbol_name);
+                    if (!nss) {
+                        // 模块是 native，但没这个类型 ⇒ 把**可用类型**列出来（照 builtin 模块提示的风格）
+                        char msg[BUFFER_MEDIUM];
+                        const char* names[16];
+                        int n = native_list_module_struct_specs(actual_module, names, 16);
+                        if (n > 0) {
+                            char list[192];
+                            int off = 0;
+                            list[0] = '\0';
+                            for (int i = 0; i < n; i++) {
+                                int w = snprintf(list + off, sizeof(list) - (size_t)off,
+                                                 "%s%s", i == 0 ? "" : " / ", names[i]);
+                                if (w <= 0) break;
+                                off += (w < (int)sizeof(list) - off) ? w : (int)sizeof(list) - off - 1;
+                                if (off >= (int)sizeof(list) - 1) break;
+                            }
+                            snprintf(msg, sizeof(msg),
+                                     "use 语句错误：native 模块 '%s' 没有类型 '%s'（可用类型: %s）",
+                                     module_name, symbol_name, list);
+                        } else {
+                            snprintf(msg, sizeof(msg),
+                                     "use 语句错误：native 模块 '%s' 没有导出任何类型",
+                                     module_name);
+                        }
+                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                        break;
+                    }
+                    if (!semantic_import_native_type(s, nss)) {
+                        char msg[BUFFER_MEDIUM];
+                        snprintf(msg, sizeof(msg),
+                                 "use 错误：'%s' 已在当前作用域中定义（与 native 类型同名）"
+                                 "—— 请改用别的名字，或直接用该 native 类型",
+                                 symbol_name);
+                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                    }
+                    break;
+                }
+            }
+
             if (!module_info->sym_table) {
                 char msg[BUFFER_MEDIUM];
                 snprintf(msg, sizeof(msg), "use 语句错误：模块 '%s' 没有符号表", module_name);

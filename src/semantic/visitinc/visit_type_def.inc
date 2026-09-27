@@ -6,6 +6,27 @@
                 TypeInfo* struct_type = type_new(TYPE_STRUCT);
                 struct_type->struct_name = strdup(ast->u.struct_def.name);
 
+                // ★ 与 native 类型**同名**的编译期诊断（v3.2.6）：
+                //   类型名两边共用同一个全局名字空间，而字段解析是"先查符号表" ⇒ 脚本定义会
+                //   **静默遮蔽** native 规格：同一个名字下，字段按脚本定义解析、native 值却按
+                //   native 规格解释 ⇒ 形状不一致时只有**运行期**才报错（native_struct_def_for 的
+                //   "同形才复用"）。这里提前到编译期讲清楚。
+                //   用**警告**而非错误：形状完全一致时是合法用法（运行期复用同一份定义）。
+                {
+                    const NativeStructSpec* ns = native_find_struct_spec(ast->u.struct_def.name);
+                    if (ns) {
+                        char msg[BUFFER_MEDIUM];
+                        const char* owner = (ns->module_name && ns->module_name[0]) ? ns->module_name : "?";
+                        snprintf(msg, sizeof(msg),
+                                 "struct '%s' 与 native 类型同名（来自 '%s'）：字段解析会优先用你这个"
+                                 "脚本定义，而 native 值按 native 规格解释 —— 形状不一致时运行期会"
+                                 "直接报错。建议改名（如 'My%s'），或 `use %s.%s` 直接用 native 类型",
+                                 ast->u.struct_def.name, owner,
+                                 ast->u.struct_def.name, owner, ast->u.struct_def.name);
+                        warning_add_at(WARN_NATIVE_TYPE_NAME_CLASH, ast->line, ast->column, msg);
+                    }
+                }
+
                 // 泛型 struct：将字段类型中的泛型参数标记为 TYPE_GENERIC_PARAM
                 if (ast->u.struct_def.type_param_count > 0 && ast->u.struct_def.type_params) {
                     for (int i = 0; i < ast->u.struct_def.field_count; i++) {
