@@ -987,29 +987,115 @@ const BX_TEX    = 4   // 批处理文字纹理
         return _lib.SDL_RenderGeometry(handle, null, vertices, count, indices, idxCount)
     }
 
+    // ==================== 三角形：填实 + 三条边补 AA（与 fillPie 同一套手法 ✓） ====================
+    //   手法（2026-09-27）：主体与**边带都画在内缩 0.5px 的三角形**上 ✓
+    //     · fillPie 验证过的关键点：边带中心必须与主体边界**重合**（都走内缩边）⇒
+    //       合成覆盖率 = 「以真实边为中心、1px 线性斜坡」= 理想 AA ✓
+    //       （首版把边带画在真实边上 ⇒ 边带比主体边界外移 0.5px，剖面成了 239/75 的
+    //         「帐篷形」、整体胖 ~0.7px ✗ —— 探针实测抓出来的 ✓）
+    //     · 三角形内缩 = 绕内心等比缩放：内心到三边等距 ⇒ 缩放后距离恰好各减 0.5px ✓ 精确 ✓
+    //     · 渐变色：三条边按段拆开、端点色线性插值 ⇒ 分段常量色（误差 = 段长 × 色差 ✓ 可忽略）
+    //   ⚠ 小三角形**不做 AA**（内切圆半径 ≤ 4px，即 size ≲ 6.5 —— 例如 combobox / menu / treeview
+    //     的 size=5 下拉箭头，rin ≈ 3.1 ✓）：1px 斜坡占这种图形太大 ⇒ UI 里"清晰的锯齿"比
+    //     "2px 虚边"好看 ✓ —— 小箭头（10px 宽）套 AA 反而像糊了 ✗
+    //     —— 这条守卫同时保证了那些控件**渲染字节级不变** ✓（soft=false ⇒ k=1、不补边 ⇒
+    //        顶点与老实现逐一相同 ✓）
+    func _triFillAA(float x0, float y0, float x1, float y1, float x2, float y2,
+                    float r0, float g0, float b0, float a0,
+                    float r1, float g1, float b1, float a1,
+                    float r2, float g2, float b2, float a2, bool grad): bool {
+        _flushBatches()
+        // 内心 = (a·A + b·B + c·C)/(a+b+c)（a/b/c 是对边长度 ✓）；内切圆半径 = 2·面积 / 周长 ✓
+        float la = maths.sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1))
+        float lb = maths.sqrt((x0 - x2) * (x0 - x2) + (y0 - y2) * (y0 - y2))
+        float lc = maths.sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0))
+        float per = la + lb + lc
+        if per <= 0.0 { return true }
+        float ix = (la * x0 + lb * x1 + lc * x2) / per
+        float iy = (la * y0 + lb * y1 + lc * y2) / per
+        float rin = maths.abs((x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0)) / per
+        bool soft = _bxBlend == core.BlendMode.BLEND and rin > 4.0
+        float k = 1.0
+        if soft { k = (rin - 0.5) / rin }
+        // 内缩后的三顶点（主体与边带共用 ✓ —— 边带中心必须落在主体边界上，见函数头注释 ✓）
+        float sx0 = ix + (x0 - ix) * k; float sy0 = iy + (y0 - iy) * k
+        float sx1 = ix + (x1 - ix) * k; float sy1 = iy + (y1 - iy) * k
+        float sx2 = ix + (x2 - ix) * k; float sy2 = iy + (y2 - iy) * k
+        var verts = SDL_Vertex.malloc_array(3)
+        verts[0].x = sx0; verts[0].y = sy0
+        verts[0].r = r0; verts[0].g = g0; verts[0].b = b0; verts[0].a = a0
+        verts[1].x = sx1; verts[1].y = sy1
+        verts[1].r = r1; verts[1].g = g1; verts[1].b = b1; verts[1].a = a1
+        verts[2].x = sx2; verts[2].y = sy2
+        verts[2].r = r2; verts[2].g = g2; verts[2].b = b2; verts[2].a = a2
+        var ok = _lib.SDL_RenderGeometry(handle, null, verts.to_ptr(), 3, null, 0)
+        verts.free()
+        if not soft { return ok }
+        Ptr[u8] ltex = _lineTex()
+        if ltex == null { return ok }                   // 剖面纹理建不出来 ⇒ 保持老观感 ✓
+        // 三条**内缩边**（与 fillPie 的 rf 同理 ✓）；渐变时按段拆（段长 ~6px，色差误差 = 色差/段数 ✓）
+        int segPer = 1
+        if grad {
+            float longest = la
+            if lb > longest { longest = lb }
+            if lc > longest { longest = lc }
+            segPer = _int(longest / 6.0)
+            if segPer < 4 { segPer = 4 }
+            if segPer > 24 { segPer = 24 }
+        }
+        var rim = SDL_Vertex.malloc_array((segPer * 3) * 6)
+        int vn = 0
+        vn = _edgeAA(rim.to_ptr(), vn, sx0, sy0, sx1, sy1, r0, g0, b0, a0, r1, g1, b1, a1, segPer)
+        vn = _edgeAA(rim.to_ptr(), vn, sx1, sy1, sx2, sy2, r1, g1, b1, a1, r2, g2, b2, a2, segPer)
+        vn = _edgeAA(rim.to_ptr(), vn, sx2, sy2, sx0, sy0, r2, g2, b2, a2, r0, g0, b0, a0, segPer)
+        var ok2 = true
+        if vn > 0 { ok2 = _lib.SDL_RenderGeometry(handle, ltex, rim.to_ptr(), vn, null, 0) }
+        rim.free()
+        return ok and ok2
+    }
+
+    // 一条边的 AA 线（可拆 segs 段、端点色线性插值 ✓）：返回新的顶点数
+    func _edgeAA(Ptr[u8] buf, int vn, float x1, float y1, float x2, float y2,
+                 float r1, float g1, float b1, float a1,
+                 float r2, float g2, float b2, float a2, int segs): int {
+        float dx = (x2 - x1) / _float(segs)
+        float dy = (y2 - y1) / _float(segs)
+        float dr = (r2 - r1) / _float(segs)
+        float dg = (g2 - g1) / _float(segs)
+        float db = (b2 - b1) / _float(segs)
+        float da = (a2 - a1) / _float(segs)
+        for 0 : segs - 1 to i {
+            float t0 = _float(i)
+            float t1 = _float(i + 1)
+            // 段中色（分段常量 ⇒ 误差 = 色差 / 段数 ✓ 可忽略 ✓）
+            float mr = r1 + dr * (t0 + t1) * 0.5
+            float mg = g1 + dg * (t0 + t1) * 0.5
+            float mb = b1 + db * (t0 + t1) * 0.5
+            float ma = a1 + da * (t0 + t1) * 0.5
+            vn = _pushAALine(buf, vn, x1 + dx * t0, y1 + dy * t0, x1 + dx * t1, y1 + dy * t1,
+                             mr, mg, mb, ma)
+        }
+        return vn
+    }
+
+    // 填充任意三角形（三顶点自由，**带 AA** ✓；颜色用 0~255 整数，与 fillPie 一致 ✓）
+    func fillTri(float x0, float y0, float x1, float y1, float x2, float y2,
+                 int cr, int cg, int cb, int ca = 255): bool {
+        float fr = cr / 255.0, fg = cg / 255.0, fb = cb / 255.0, fa = ca / 255.0
+        return _triFillAA(x0, y0, x1, y1, x2, y2, fr, fg, fb, fa, fr, fg, fb, fa, fr, fg, fb, fa, false)
+    }
+
     // 绘制三角形（单色填充，支持旋转和缩放，a 默认完全不透明）→ 每顶点独立颜色见 drawTriangleGradient
     func drawTriangle(float cx, float cy, float size, float angle, float r, float g, float b, float a = 1.0): bool {
-        _flushBatches()
         float rad = angle * 3.14159265 / 180.0
         float c = maths.cos(rad); float s = maths.sin(rad)
-
         float p0x = c * 0.0  - s * (-size) + cx
         float p0y = s * 0.0  + c * (-size) + cy
         float p1x = c * size - s * size   + cx
         float p1y = s * size + c * size   + cy
         float p2x = c * (-size) - s * size + cx
         float p2y = s * (-size) + c * size + cy
-
-        var verts = SDL_Vertex.malloc_array(3)
-        verts[0].x = p0x; verts[0].y = p0y
-        verts[0].r = r; verts[0].g = g; verts[0].b = b; verts[0].a = a
-        verts[1].x = p1x; verts[1].y = p1y
-        verts[1].r = r; verts[1].g = g; verts[1].b = b; verts[1].a = a
-        verts[2].x = p2x; verts[2].y = p2y
-        verts[2].r = r; verts[2].g = g; verts[2].b = b; verts[2].a = a
-
-        var ok = _lib.SDL_RenderGeometry(handle, null, verts.to_ptr(), 3, null, 0)
-        verts.free(); return ok
+        return _triFillAA(p0x, p0y, p1x, p1y, p2x, p2y, r, g, b, a, r, g, b, a, r, g, b, a, false)
     }
 
     // 绘制渐变三角形（每个顶点可独立设色）
@@ -1017,27 +1103,16 @@ const BX_TEX    = 4   // 批处理文字纹理
                                float r0, float g0, float b0, float a0,
                                float r1, float g1, float b1, float a1,
                                float r2, float g2, float b2, float a2): bool {
-        _flushBatches()
         float rad = angle * 3.14159265 / 180.0
         float c = maths.cos(rad); float s = maths.sin(rad)
-
         float p0x = c * 0.0  - s * (-size) + cx
         float p0y = s * 0.0  + c * (-size) + cy
         float p1x = c * size - s * size   + cx
         float p1y = s * size + c * size   + cy
         float p2x = c * (-size) - s * size + cx
         float p2y = s * (-size) + c * size + cy
-
-        var verts = SDL_Vertex.malloc_array(3)
-        verts[0].x = p0x; verts[0].y = p0y
-        verts[0].r = r0; verts[0].g = g0; verts[0].b = b0; verts[0].a = a0
-        verts[1].x = p1x; verts[1].y = p1y
-        verts[1].r = r1; verts[1].g = g1; verts[1].b = b1; verts[1].a = a1
-        verts[2].x = p2x; verts[2].y = p2y
-        verts[2].r = r2; verts[2].g = g2; verts[2].b = b2; verts[2].a = a2
-
-        var ok = _lib.SDL_RenderGeometry(handle, null, verts.to_ptr(), 3, null, 0)
-        verts.free(); return ok
+        return _triFillAA(p0x, p0y, p1x, p1y, p2x, p2y,
+                          r0, g0, b0, a0, r1, g1, b1, a1, r2, g2, b2, a2, true)
     }
 
     // ==================== 线段抗锯齿（预生成 1D 三角剖面纹理） ====================

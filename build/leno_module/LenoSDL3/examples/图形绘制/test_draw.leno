@@ -65,14 +65,9 @@ main() {
             r.setColor(#00000050)
             r.drawLine(tx, ty + 40, tx + 60, ty); r.drawLine(tx + 60, ty, tx + 120, ty + 40); r.drawLine(tx + 120, ty + 40, tx, ty + 40)
 
-            // 三角形填充（用多条线逼近）
-            r.setColor(#FFC850FF)
-            for 0 : 40 to yi {
-                float ratio = _float(yi) / 40.0
-                float lx = tx + 5 + ratio * 60.0
-                float rx = tx + 5 + (1.0 - ratio) * 60.0 + 60.0
-                r.drawLine(lx, ty + 40 - ratio * 40 - 5, rx, ty + 40 - ratio * 40 - 5)
-            }
+            // 三角形填充：直接用 fillTri（**带 AA** ✓）
+            //   老写法是叠 40 条横线去逼近 ⇒ 两条斜边全是台阶 ✗（现在那套没必要了 ✓）
+            r.fillTri(tx, ty + 40, tx + 60, ty, tx + 120, ty + 40, 255, 200, 80, 255)
             // 三角边框
             r.setColor(#FFFFFFFF)
             r.drawLine(tx, ty + 40, tx + 60, ty)
@@ -143,7 +138,7 @@ main() {
                 var py = 470.0 + _float((i * 97 + angle as int) % 100)
                 r.drawPoint(px, py)
             }
-
+            SDL3.requestRedraw()
             // ESC 提示
             r.drawText(font, "ESC 退出", 700, 580, #646464FF)
         }

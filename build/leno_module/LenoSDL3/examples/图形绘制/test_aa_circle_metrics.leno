@@ -6,7 +6,7 @@
 //   跑法：set AASHOT=<路径.png> && leno <本文件>     ← AASHOT 可选，给了就同时存 PNG 供人眼复核 ✓
 //   结论留档：docs\待办与路线图.md ⑤-an（阶梯）、⑤-an-2（预热）；同族脚本 test_aa_radii / test_aa_clock ✓
 import "SDL3" as SDL3
-use SDL3.(Event, Renderer, SDL_SurfaceInfo)
+use SDL3.(Event, Renderer, SDL_SurfaceInfo, SDL_Vertex)
 import ffi
 import maths
 
@@ -38,6 +38,36 @@ func drawPies(Renderer r, float y) {
 }
 func fillPieOne(Renderer r, float cx, float cy, float rad) {
     r.fillPie(cx, cy, rad, 90.0, 270.0, 0, 0, 0, 255)
+}
+
+// 三角形（直角，斜边 45° ⇒ 水平切线在 y=cy 处正好过 (cx,cy) ✓ 便于剖面比对）
+//   左边那个用 drawGeometry 画**硬边**（= 改造前的老路径 ✓），右边用 fillTri（带 AA ✓）
+//   ⇒ 两个剖面并排打印，"中间值有没有出现"一眼可判 ✓
+func hardTri(Renderer r, float cx, float cy) {
+    var v = SDL_Vertex.malloc_array(3)
+    v[0].x = cx - 40.0; v[0].y = cy - 40.0
+    v[1].x = cx - 40.0; v[1].y = cy + 40.0
+    v[2].x = cx + 40.0; v[2].y = cy + 40.0
+    for 0 : 2 to i {
+        v[i].r = 0.0; v[i].g = 0.0; v[i].b = 0.0; v[i].a = 1.0
+    }
+    r.drawGeometry(v.to_ptr(), 3, null, 0)
+    v.free()
+}
+func aaTri(Renderer r, float cx, float cy) {
+    r.fillTri(cx - 40.0, cy - 40.0, cx - 40.0, cy + 40.0, cx + 40.0, cy + 40.0, 0, 0, 0, 255)
+}
+
+// 任意位置的左边缘剖面（7 像素，覆盖率 0~255）、7px 墨量
+func profAt(Ptr[u8] px, int pitch, int x0, int row, int roff): string {
+    int mass = 0
+    string prof = ""
+    for x0 : x0 + 6 to x {
+        int cov = 255 - ffi.read_byte(px, row * pitch + x * 4 + roff)
+        prof = prof + " " + cov
+        mass = mass + cov
+    }
+    return prof + "  | 7px 墨量=" + (_float(mass) / 255.0) + "px"
 }
 
 // 左边缘水平切线的统计：剖面（7 像素，覆盖率 0~255）/ 墨量（px）/ 重心（相对 cx−rad−3 的 px）
@@ -83,7 +113,7 @@ func arcStats(Ptr[u8] px, int pitch, int cx, int cy, int rad, int roff): string 
 main() {
     var sp = _env("AASHOT")
     if sp != null { SHOT = _str(sp) }
-    var win = SDL3.createWindow({title:"AA case", w:820.0, h:520.0, bg_color:#FFFFFFFF})
+    var win = SDL3.createWindow({title:"AA case", w:820.0, h:720.0, bg_color:#FFFFFFFF})
     if not win.ok { return }
     win.addTimer(50, func():void { })
     win.setOverlay(func(Renderer r) {
@@ -92,8 +122,10 @@ main() {
         drawCases(r, 110.0, false)
         drawCases(r, 300.0, true)
         drawPies(r, 500.0)
+        hardTri(r, 220.0, 640.0)          // 硬边参照（= 改造前路径）
+        aaTri(r, 620.0, 640.0)            // 带 AA（fillTri）
         if FR >= 3 {
-            Ptr[u8] surf = r.readPixelsAt(0, 0, 820, 520)
+            Ptr[u8] surf = r.readPixelsAt(0, 0, 820, 720)
             if surf != null {
                 SDL_SurfaceInfo info = SDL_SurfaceInfo.from_ptr(surf)
                 int pitch = ffi.read_int(surf, 16)
@@ -130,6 +162,9 @@ main() {
                 print("饼 r=48  " + arcStats(px, pitch, 600, 500, 48, roff))
                 print("饼 r=76  " + arcStats(px, pitch, 740, 500, 76, roff))
                 print("饼 r=47 中心行 " + edgeStats(px, pitch, 480, 500, 47, roff))
+                print("── 三角形斜边（45°；左边硬边参照、右边 fillTri ⇒ 中间值有无一眼可判 ✓）")
+                print("硬边三角 " + profAt(px, pitch, 217, 640, roff))
+                print("AA 三角  " + profAt(px, pitch, 617, 640, roff))
                 if SHOT != "" { SDL3.saveImagePNG(surf, SHOT) }
             }
             _exit(0)
