@@ -298,6 +298,18 @@ typedef enum {
     NTYPE_CHANNEL,
     NTYPE_THREAD,
     NTYPE_FUTURE,
+    // ---- "引用第 0 个实参"的**关系型**标签（2026-09-27）----
+    //   为什么需要：容器方法常返回"入参里那个容器的元素/键/值" —— `arrays.copy(xs)` 真实类型是
+    //   `Array[T]`、`d.keys()` 是 `Array[K]`。写成 `Array[any]` 会把元素类型丢掉；写成具体类型
+    //   （如 `Array[int]`）更是错的（会拒绝 `Array[DirEntry]`）。这里把"关系"表达出来，由语义侧
+    //   在**调用点**用实参的实际类型替换（见 native_type_spec_to_info_with_args）。
+    //   ⚠ 只支持"第 0 个实参"（模块形式的首个实参 / 实例形式的**接收者**）—— 现有两个真实用户
+    //     （arrays / dicts）都只需它；将来要"第 N 个实参"再补 index 字段（YAGNI）。
+    //   ⚠ 实参缺失或类型不明（裸 `Array` / 裸 `Dict`）⇒ 解析成 TYPE_ANY（自然退化到旧行为）。
+    //   ⚠ 只影响**编译期推断**：规格不进字节码 ⇒ 不需要升 LENO_BIN_VERSION。
+    NTYPE_ARG0_ELEM,    // 第 0 个实参的元素类型（Array[T] 的 T）
+    NTYPE_ARG0_KEY,     // 第 0 个实参的键类型（Dict[K,V] 的 K）
+    NTYPE_ARG0_VALUE,   // 第 0 个实参的值类型（Dict[K,V] 的 V）
 } NativeTypeTag;
 
 typedef struct NativeTypeSpec {

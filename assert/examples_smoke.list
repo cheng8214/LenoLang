@@ -10,9 +10,12 @@ examples/多返回值/multi_ret_closure_test.leno
 examples/多返回值/nested_expr_test.leno
 examples/多返回值/nested_expr_test2.leno
 examples/多返回值/test_type_check.leno
-examples/array/比较.leno
-examples/array/比较2.leno
-examples/array/多层嵌套.leno
-examples/array/基本 clear.leno
-examples/array/交换.leno
-examples/array/深拷贝功能.leno
+# ⚠ `examples/array/*` 的 6 个（比较 / 比较2 / 多层嵌套 / 基本 clear / 交换 / 深拷贝功能）
+#   已于 2026-09-27 随目录一起删除：
+#   · 它们是"纯 print、零断言"的手工演示，覆盖已被 assert/test_arrays_module / test_array_methods /
+#     test_array_ref / test_array_bounds 等用例全面超过；
+#   · 其中一个（深拷贝功能）**是坏的**：`original.copy()` 在运行期报"类型 object 上不存在方法
+#     'copy'"（脚本 struct 没有 copy 方法）⇒ 它演示的"深拷贝语义"根本不存在；
+#   · 目录里另有 2 个编译不过的示例（方法调用测试 / 测试 map + 匿名函数）与 8 个 .lenb +
+#     .lenocache + leno_lsp.log 等构建垃圾（见 P7 的登记）。
+#   唯一值得抢救的"嵌套容器类型不变性"已收进 assert/test_diag_static_errors.leno 的两条断言。

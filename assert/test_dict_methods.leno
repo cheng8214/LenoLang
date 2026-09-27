@@ -49,5 +49,25 @@ main()
         assert_eq(user2["name"], "张三")
     }
 
+    // 测试：keys/values 的**元素类型跟接收者走**（2026-09-27 起）
+    //   `d.keys()` → `Array[K]`、`d.values()` → `Array[V]`（`NTYPE_ARG0_KEY` / `NTYPE_ARG0_VALUE`）。
+    //   此前注册成 `TYPE_ARRAY + TYPE_UNKNOWN` ⇒ 拿到裸 `Array`、元素是 any ⇒ 每次都要手动收窄 ✗
+    //   ⚠ 下面每行都是**不做收窄**的强类型赋值 ⇒ 规格一漂这里就编译失败。
+    Dict[string, int] kv = {"a": 1, "b": 2, "c": 3}
+    Array[string] ks = kv.keys()
+    Array[int]    vs = kv.values()
+    assert_eq(ks.len(), 3)
+    assert_eq(vs.len(), 3)
+    assert_eq(ks.has("a"), true)              // 元素类型是 string ⇒ 能直接进 Array[string] 的方法
+    int vs_sum = vs[0] + vs[1] + vs[2]        // 元素类型是 int ⇒ 能直接做运算（any 过不了）
+    assert_eq(vs_sum, 6)
+
+    //   ⚠ `get` **故意不标**：它的类型由**默认值实参**推出来（`get("x", 0)` → int、
+    //     `get("y", 0.0)` → float，见 assert/test_dict_get_infer.leno），是另一条更精确的规则；
+    //     标成 `Array` 的值类型会把它盖掉（实测会让 4 个用例退化成 any）。
+    Dict[string, int] gi = {"n": 42}
+    int gi_default = gi.get("n", 0)
+    assert_eq(gi_default, 42)
+
     print("test_dict_methods passed")
 }

@@ -357,5 +357,24 @@ main() {
 ")
     ce.expect_ok(n3, "脚本 struct 与 native 类型同名要给警告", "与native类型同名")
 
+    // ---- 嵌套容器的**类型不变性**检查（2026-09-27 从 examples/dict/类型的嵌套字典.leno 收进来 ——
+    //   那份示例目录已删除，而这是它唯一在守的真实保证：外层容器的写入要递归检查内层类型）----
+    var nv1 = dirs.join(work, "nested_dict_invariance.leno")
+    files.write(nv1, @"main() {
+    Dict[string, Dict[string, int]] nested = {a: {x: 1}}
+    nested.set(""b"", {y: ""wrong""})
+}
+")
+    ce.expect_error(nv1, "嵌套字典写入要检查内层值类型", "参数 2 期望 'Dict[string, int]'", 3)
+
+    var nv2 = dirs.join(work, "array_of_dict_invariance.leno")
+    files.write(nv2, @"main() {
+    var arr = [{x: 1}, {y: 2}]
+    arr.add({z: 3})
+    arr.add({w: ""wrong""})
+}
+")
+    ce.expect_error(nv2, "字典数组 add 要检查元素类型", "参数 1 期望 'Dict[string, int]'", 4)
+
     print("=== test_diag_static_errors ALL passed ===")
 }

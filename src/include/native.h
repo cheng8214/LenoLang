@@ -154,6 +154,18 @@ const NativeTypeSpec* native_get_module_method_return_spec(const char* module_na
 // TypeInfo->struct_name ⇒ 字段访问能顺着 infer_field_type 的 native 分支解析）。
 TypeInfo* native_type_spec_to_info(const NativeTypeSpec* spec);
 
+// 规格 → TypeInfo，并**用实参类型解析关系型标签**（NTYPE_ARG0_*，2026-09-27）：
+//   arg0_type = 第 0 个实参的类型（模块形式 = 首个实参；实例形式 = **接收者**）。
+//   ⚠ 解析不出时（实参缺失 / 实参是"元素未指定"的裸 Array / 裸 Dict）⇒ 该处返回 **NULL**
+//     （"未指定"），**不是** `any` —— 两者兼容性不同（"未指定"能匹配 `Array[int]`，`any` 不能）。
+//     整个规格都解析不出 ⇒ 本函数返回 NULL，调用方回落到原来的 Kind 路径（旧行为逐字不变）。
+//   native_type_spec_to_info() 等价于本函数传 NULL。
+TypeInfo* native_type_spec_to_info_with_args(const NativeTypeSpec* spec, TypeInfo* arg0_type);
+
+// 规格里是否含 NTYPE_ARG0_*（递归）。调用方据此决定"要不要去推实参类型"——
+//   本仓有 230+ 个 native 方法，绝大多数规格与实参无关，不该为它们白推一遍实参。
+int native_type_spec_has_arg_ref(const NativeTypeSpec* spec);
+
 // 规格 → 可读类型串（LSP / 诊断）。总是以 '\0' 收尾。
 // 风格与 type.c 的 type_to_string **一致**：struct 写成 `struct Name` ⇒ 同一个类型在报错
 // 信息与 LSP hover 里是同一种写法（如 `Array[struct DirEntry]`、`Dict[string, string]`）。
@@ -263,6 +275,10 @@ typedef struct {
     TypeKind return_type;   // 返回类型
     TypeKind return_element_type; // 返回数组时的元素类型（TYPE_UNKNOWN 表示未指定）
     TypeKind param_types[MAX_METHOD_PARAMS]; // 参数类型数组
+    // 返回类型的**完整规格**（可空）。非空时优先于上面的两个 Kind，并支持 `NTYPE_ARG0_*`
+    //   这类关系型标签（实例形式下"第 0 个实参"= **接收者**）。
+    //   用 native_register_instance_method_return_spec() 在同名注册**之后**补上。
+    const NativeTypeSpec* return_spec;
 } InstanceMethodMeta;
 
 // 注册实例方法元信息（编译时调用）
@@ -274,6 +290,16 @@ void native_register_instance_method_meta(const char* type_name, const char* met
 // min_arity/max_arity: 当 arity == -1（可变参数）时，指定最小/最大允许参数个数；其他情况传 -1
 // return_element_type: 返回数组时的元素类型，非数组返回类型时传 TYPE_UNKNOWN
 void native_register_instance_method_meta_with_params(const char* type_name, const char* method_name, int arity, int min_arity, int max_arity, TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
+
+// 给**已注册**的实例方法补一条"返回类型规格"（2026-09-27）。
+//   ⚠ 必须在同名的 native_register_instance_method_meta_with_params /
+//     <type>_register_method_with_params **之后**调用（它只改已存在的条目，不创建新条目）。
+//   规格里可用 NTYPE_ARG0_*：实例形式下"第 0 个实参"就是**接收者**。
+void native_register_instance_method_return_spec(const char* type_name, const char* method_name,
+                                                 const NativeTypeSpec* spec);
+
+// 取实例方法的返回类型规格（未声明 ⇒ NULL）
+const NativeTypeSpec* native_get_instance_method_return_spec(const char* type_name, const char* method_name);
 
 // 获取实例方法的参数数量（编译时调用）
 int native_get_instance_method_arity(const char* type_name, const char* method_name);

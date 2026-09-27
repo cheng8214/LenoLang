@@ -30,6 +30,25 @@ Dicts 模块是 Leno 语言中用于字典（键值对存储）操作的核心�
 
 ---
 
+## 返回类型（跟接收者一致）
+
+`keys()` 返回 `Array[K]`、`values()` 返回 `Array[V]`，其中 **K / V = 接收者 `Dict[K, V]` 的类型参数**
+（声明式规格 `NTYPE_ARG0_KEY` / `NTYPE_ARG0_VALUE`，编译器在调用点用接收者的实际类型解析
+⇒ 调用点零收窄）：
+
+```leno
+Dict[string, int] m = {"a": 1, "b": 2}
+Array[string] ks = m.keys()      // 元素类型就是 string
+Array[int]    vs = m.values()    // 元素类型就是 int（可直接参与运算）
+```
+
+> ⚠ `get(k[, default])` **故意不在此列**：它的类型由**默认值实参**推出来 —— `get("x", 0)` → `int`、
+> `get("y", 0.0)` → `float`、`get("z", false)` → `bool`（见 `assert/test_dict_get_infer.leno`）。
+> 那是另一条**更精确**的规则；把 `get` 标成"返回 V"会盖掉它（实测会让 4 个用例退化成 `any`）。
+> 无默认值时（`get(k)`）返回 `any`。
+
+---
+
 ## 使用方式
 
 ```leno

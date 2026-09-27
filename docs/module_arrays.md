@@ -33,6 +33,28 @@ Arrays 模块是 Leno 语言中用于数组操作的核心模块，提供了丰�
 
 ---
 
+## 返回类型（跟入参 / 接收者一致）
+
+`copy` / `clear` / `reverse` / `sort` / `filter` 返回 `Array[T]`、`pop` / `remove` 返回 `T`，
+其中 **T = 入参的元素类型**（实例形式下入参就是接收者）。这条关系是**声明式**的
+（native 类型规格里的 `NTYPE_ARG0_ELEM` 标签），编译器在调用点用**实参的实际类型**解析
+⇒ **两种语法都精确，调用点零收窄**：
+
+```leno
+Array[int] xs = [3, 1, 2]
+Array[int] a = arrays.copy(xs)     // 模块形式：元素类型 = xs 的元素类型
+Array[int] b = xs.copy()           // 实例形式：元素类型 = 接收者的元素类型
+int last    = arrays.pop(xs)       // 元素本身（不是 Array）
+int removed = xs.remove(0)
+```
+
+> ⚠ `map` / `reduce` **不在此列**：它们的类型取决于**回调的返回类型**（另一族规则）——
+> `map` 走泛型推断得到 `Array[U]`，`reduce` 的返回类型暂为 `any`。
+> ⚠ 入参元素**未指定**时（如 `var empty = []`），结果仍是"未指定"，**不会**被硬塞成 `Array[any]`
+> —— 后者会拒绝 `Array[int]` 赋值（`assert/test_arrays_module.leno` 有这条回归）。
+
+---
+
 ## 使用方式
 
 ```leno

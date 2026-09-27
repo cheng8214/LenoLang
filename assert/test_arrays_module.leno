@@ -31,5 +31,60 @@ main()
     var joined = arrays.join(arr5, ",")
     assert_eq(joined, "a,b,c")
 
+    // 测试：**返回类型跟第 0 个实参走**（2026-09-27 起）
+    //   这 7 个方法的返回值类型由入参元素决定（`NTYPE_ARG0_ELEM` 关系型规格）：
+    //     copy/clear/reverse/sort/filter → `Array[T]`；pop/remove → `T`（T = 入参元素类型）
+    //   ⚠ 下面每一行都是**不做收窄/转换**的强类型赋值 ⇒ 规格一漂（退回 `Array[any]` / `any`）
+    //     这里立刻编译失败。此前模块形式全是 `Array[any]`，只能靠手写收窄。
+    Array[int] src = [3, 1, 2]
+
+    // ① 模块形式
+    Array[int] m_copy    = arrays.copy(src)
+    Array[int] m_clear   = arrays.clear([1, 2, 3])
+    Array[int] m_reverse = arrays.reverse(src)
+    Array[int] m_sort    = arrays.sort(src)
+    assert_eq(m_copy.len(), 3)
+    assert_eq(m_clear.len(), 0)
+    assert_eq(m_reverse.len(), 3)
+    assert_eq(m_sort.len(), 3)
+
+    // ② 实例形式（接收者就是"第 0 个实参"）
+    Array[int] i_copy    = src.copy()
+    Array[int] i_reverse = src.reverse()
+    Array[int] i_sort    = src.sort()
+    assert_eq(i_copy.len(), 3)
+    assert_eq(i_reverse.len(), 3)
+    assert_eq(i_sort.len(), 3)
+
+    // ③ 元素类型真的可用于强类型运算/比较（any 过不了这几道）
+    int elem_from_sort = arrays.sort([5, 2, 9])[0]
+    assert_eq(elem_from_sort + 1, 3)          // 2 + 1
+    int elem_from_pop = arrays.pop([7, 8])
+    assert_eq(elem_from_pop + 1, 9)           // 8 + 1
+    Array[int] filtered = arrays.filter([1, 2, 3, 4], func(int x): bool { return x > 2 })
+    assert_eq(filtered.len(), 2)
+    int elem_from_filter = filtered[0]
+    assert_eq(elem_from_filter, 3)
+
+    // ④ 元素"未指定"时保持未指定（不被硬塞成 `Array[any]` —— 后者会拒绝 `Array[int]` 赋值）
+    var empty = []
+    Array[int] e_copy = empty.copy()
+    Array[int] e_mod  = arrays.copy(empty)
+    assert_eq(e_copy.len(), 0)
+    assert_eq(e_mod.len(), 0)
+
+    // ⑤ 运行时**类型名**在 clear()/copy() 后保持（2026-09-27 复测）
+    //   背景：`docs/寄存式与栈式的差异清单.md` 的 E7 记过一条"数组字面量没设运行时 type_info ⇒
+    //   clear() 后元素类型名 `Array[int]` → `Array`"的退化（当时两套实现一致）。现已不复现
+    //   —— 这里把它锁住，防回潮。（那条记录的证据文件 `examples/array/基本 clear.leno` 已随目录删除）
+    Array[int] tinfo = [1, 2, 3]
+    string before_clear = type(tinfo)
+    tinfo.clear()
+    string after_clear = type(tinfo)
+    Array[int] after_copy = tinfo.copy()
+    assert_eq(before_clear, "Array[int]")
+    assert_eq(after_clear, "Array[int]")      // 曾退化成 "Array"
+    assert_eq(type(after_copy), "Array[int]")
+
     print("test_arrays_module passed")
 }

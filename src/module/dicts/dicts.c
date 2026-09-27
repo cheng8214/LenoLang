@@ -132,6 +132,16 @@ static Value dict_method_clear(int argc, Value* args) {
 
 void dicts_init_instance_methods(void) {
     dict_init_methods();
+
+    // ---- "类型跟接收者走"的返回规格（2026-09-27）----
+    //   keys() 返回 `Array[K]`、values() 返回 `Array[V]`、get(k[,default]) 返回 `V`
+    //   （K/V = 接收者 `Dict[K,V]` 的键/值类型）。此前 keys/values 注册成 `TYPE_ARRAY + TYPE_UNKNOWN`
+    //   ⇒ 拿到裸 `Array`、元素是 any；get 注册成 TYPE_ANY。用关系型标签声明后，调用点零收窄 ✓
+    //   ⚠ set()/remove()/clear() **不**在此列：它们实现上返回 `null`（不是"值"），标成 V 会骗人。
+    static const NativeTypeSpec S_ARG0_KEY    = { NTYPE_ARG0_KEY,   NULL, NULL, NULL };
+    static const NativeTypeSpec S_ARG0_VALUE  = { NTYPE_ARG0_VALUE, NULL, NULL, NULL };
+    static const NativeTypeSpec S_ARR_ARG0_K  = { NTYPE_ARRAY, NULL, &S_ARG0_KEY,   NULL };
+    static const NativeTypeSpec S_ARR_ARG0_V  = { NTYPE_ARRAY, NULL, &S_ARG0_VALUE, NULL };
     
     TypeKind len_params[] = {};
     dict_register_method_with_params("len", make_native(dict_method_len, 1, "len"), 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, len_params);
@@ -141,6 +151,10 @@ void dicts_init_instance_methods(void) {
 
     TypeKind get_params[] = {TYPE_ANY, TYPE_ANY};
     dict_register_method_with_params("get", make_native(dict_method_get, 3, "get"), -1, 1, 2, TYPE_ANY, TYPE_UNKNOWN, get_params);
+    // ⚠ get **不能**标 `ARG0_VALUE`：它的类型是由**默认值实参**推出来的（`get("y", 0.0)` → float，
+    //   见 assert/test_dict_get_infer.leno），语义侧已有更精确的特例。标成 V 会把它盖掉
+    //   （实测：混合类型 dict 的值类型是 any ⇒ `d.get(k, 0.0)` 退化成 any，5 个用例回归）。
+    //   那是"按默认值实参推返回类型"的另一族标签，需要时再设计（YAGNI）。
 
     TypeKind set_params[] = {TYPE_ANY, TYPE_ANY};
     dict_register_method_with_params("set", make_native(dict_method_set, 3, "set"), 2, -1, -1, TYPE_ANY, TYPE_UNKNOWN, set_params);
@@ -153,7 +167,9 @@ void dicts_init_instance_methods(void) {
 
     TypeKind keys_params[] = {};
     dict_register_method_with_params("keys", make_native(dict_method_keys, 1, "keys"), 0, -1, -1, TYPE_ARRAY, TYPE_UNKNOWN, keys_params);
+    native_register_instance_method_return_spec("Dict", "keys", &S_ARR_ARG0_K);
 
     TypeKind values_params[] = {};
     dict_register_method_with_params("values", make_native(dict_method_values, 1, "values"), 0, -1, -1, TYPE_ARRAY, TYPE_UNKNOWN, values_params);
+    native_register_instance_method_return_spec("Dict", "values", &S_ARR_ARG0_V);
 }

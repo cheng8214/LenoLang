@@ -831,21 +831,64 @@ static TypeKind native_spec_kind(const NativeTypeSpec* spec) {
     }
 }
 
-// 规格 → TypeInfo（**新分配，调用方 type_free**）
-TypeInfo* native_type_spec_to_info(const NativeTypeSpec* spec) {
+// 关系型标签（NTYPE_ARG0_*）→ 实参类型里的对应部分；解析不出 ⇒ NULL（调用方退化成 any）
+static TypeInfo* native_arg0_part_to_info(TypeInfo* arg0, NativeTypeTag tag) {
+    if (!arg0) return NULL;
+    if (tag == NTYPE_ARG0_ELEM && arg0->kind == TYPE_ARRAY && arg0->element_type) {
+        return type_copy(arg0->element_type);
+    }
+    if (tag == NTYPE_ARG0_KEY && arg0->kind == TYPE_DICT && arg0->key_type) {
+        return type_copy(arg0->key_type);
+    }
+    if (tag == NTYPE_ARG0_VALUE && arg0->kind == TYPE_DICT && arg0->value_type) {
+        return type_copy(arg0->value_type);
+    }
+    return NULL;
+}
+
+// 规格里是否含"引用实参"的标签（递归）
+int native_type_spec_has_arg_ref(const NativeTypeSpec* spec) {
+    if (!spec) return 0;
+    if (spec->tag == NTYPE_ARG0_ELEM || spec->tag == NTYPE_ARG0_KEY ||
+        spec->tag == NTYPE_ARG0_VALUE) {
+        return 1;
+    }
+    return native_type_spec_has_arg_ref(spec->sub) || native_type_spec_has_arg_ref(spec->sub2);
+}
+
+// 规格 → TypeInfo（**新分配，调用方 type_free**），关系型标签用 arg0_type 解析。
+TypeInfo* native_type_spec_to_info_with_args(const NativeTypeSpec* spec, TypeInfo* arg0_type) {
     if (!spec) return NULL;
+
+    // 关系型标签：`NTYPE_ARG0_ELEM` 等 ⇒ 取实参里对应的那个类型。
+    //   ⚠ 取不到（实参缺失 / 实参是**裸 Array / 裸 Dict** —— 元素类型"未指定"）⇒ 返回 **NULL**，
+    //     **不是** `Array[any]`。区别是实打实的：`var empty = []` 的元素是"未指定"，它
+    //     `empty.copy()` 出来必须仍是"未指定"（能匹配 `Array[int]`），而不是显式的 `Array[any]`
+    //     （后者会**拒绝**赋给 `Array[int]` —— 实测 3 个排序用例因此回归）。
+    //     顶层返回 NULL ⇒ 调用方自然回落到原来的 Kind 路径（与旧行为逐字一致）。
+    if (spec->tag == NTYPE_ARG0_ELEM || spec->tag == NTYPE_ARG0_KEY ||
+        spec->tag == NTYPE_ARG0_VALUE) {
+        return native_arg0_part_to_info(arg0_type, spec->tag);
+    }
+
     TypeInfo* t = type_new(native_spec_kind(spec));
     if (!t) return NULL;
 
     if (spec->tag == NTYPE_STRUCT && spec->name) {
         t->struct_name = strdup(spec->name);
     } else if (spec->tag == NTYPE_ARRAY || spec->tag == NTYPE_PTR_GENERIC) {
-        t->element_type = native_type_spec_to_info(spec->sub);
+        t->element_type = native_type_spec_to_info_with_args(spec->sub, arg0_type);
     } else if (spec->tag == NTYPE_DICT) {
-        t->key_type = native_type_spec_to_info(spec->sub);
-        t->value_type = native_type_spec_to_info(spec->sub2);
+        t->key_type = native_type_spec_to_info_with_args(spec->sub, arg0_type);
+        t->value_type = native_type_spec_to_info_with_args(spec->sub2, arg0_type);
     }
     return t;
+}
+
+// 不带实参的版本（等价于 arg0_type == NULL）：关系型标签会退化成 any。
+//   老调用点（返回类型与实参无关的那 230+ 个方法）行为逐字不变 ✓
+TypeInfo* native_type_spec_to_info(const NativeTypeSpec* spec) {
+    return native_type_spec_to_info_with_args(spec, NULL);
 }
 
 // 规格 → 可读类型串（LSP / 诊断）
@@ -901,6 +944,10 @@ void native_type_spec_to_string(const NativeTypeSpec* spec, char* out, int out_s
             p = out + strlen(out); remain = out_size - (int)strlen(out);
             NSPEC_APPEND("]");
             break;
+        // 关系型标签：渲染成"引用实参"的写法（诊断/LSP hover 里能一眼看出它依赖入参）
+        case NTYPE_ARG0_ELEM:  NSPEC_APPEND("arg0.elem");  break;
+        case NTYPE_ARG0_KEY:   NSPEC_APPEND("arg0.key");   break;
+        case NTYPE_ARG0_VALUE: NSPEC_APPEND("arg0.value"); break;
         default: NSPEC_APPEND("any"); break;
     }
     #undef NSPEC_APPEND
@@ -1512,6 +1559,7 @@ void native_register_instance_method_meta_with_params(const char* type_name, con
     new_entry->meta.max_arity = max_arity;
     new_entry->meta.return_type = return_type;
     new_entry->meta.return_element_type = return_element_type;
+    new_entry->meta.return_spec = NULL;   // 由 native_register_instance_method_return_spec() 按需补
 
     if (param_types && arity > 0) {
         int count = arity < MAX_METHOD_PARAMS ? arity : MAX_METHOD_PARAMS;
@@ -1530,6 +1578,34 @@ void native_register_instance_method_meta_with_params(const char* type_name, con
     new_entry->next = instanceMethodTable.entries[index];
     instanceMethodTable.entries[index] = new_entry;
     instanceMethodTable.count++;
+}
+
+// 给**已注册**的实例方法补一条返回类型规格（见 native.h 的说明）
+void native_register_instance_method_return_spec(const char* type_name, const char* method_name,
+                                                 const NativeTypeSpec* spec) {
+    if (!instanceMethodTable.entries || !type_name || !method_name) return;
+
+    uint32_t hash = hash_instance_method(type_name, method_name);
+    int index = hash & (instanceMethodTable.capacity - 1);
+
+    InstanceMethodEntry* entry = instanceMethodTable.entries[index];
+    while (entry) {
+        if (strcmp(entry->type_name, type_name) == 0 &&
+            strcmp(entry->method_name, method_name) == 0) {
+            entry->meta.return_spec = spec;
+            return;
+        }
+        entry = entry->next;
+    }
+    // 找不到 ⇒ 调用点写在了注册之前（或方法名拼错）⇒ 静默忽略。
+    //   ⚠ 这不是"可以接受的静默"：spec 失效会让返回类型退化成 any，而断言里那些**不做收窄的
+    //     强类型赋值**会立刻编译失败（test_arrays_module / test_dict_methods 都钉了），
+    //     所以它不会长期潜伏（同 repo 的"错误要在最早能发现它的地方响亮地报"）。
+}
+
+const NativeTypeSpec* native_get_instance_method_return_spec(const char* type_name, const char* method_name) {
+    const InstanceMethodMeta* meta = native_find_instance_method(type_name, method_name);
+    return meta ? meta->return_spec : NULL;
 }
 
 // 获取实例方法的参数数量（编译时调用）

@@ -1584,6 +1584,25 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                         }
                         
                         if (type_name) {
+                            // ① 规格优先（2026-09-27）：规格里可以含**关系型标签**，实例形式下
+                            //    "第 0 个实参"就是**接收者** —— `Array[ARG0_ELEM]` = 元素类型跟接收者
+                            //    走（copy/clear/reverse/sort/filter）、裸 `ARG0_ELEM` = pop/remove、
+                            //    Dict 的 `Array[ARG0_KEY]` / `Array[ARG0_VALUE]` = keys/values。
+                            //    规格是**声明式**的唯一来源 ⇒ 优先于下面按 Kind 猜的老规则。
+                            {
+                                const NativeTypeSpec* inst_spec =
+                                    native_get_instance_method_return_spec(type_name, method_name);
+                                if (inst_spec) {
+                                    TypeInfo* spec_ret =
+                                        native_type_spec_to_info_with_args(inst_spec, obj_type);
+                                    if (spec_ret) {
+                                        ast->cached_type = type_copy(spec_ret);
+                                        type_free(obj_type);
+                                        return spec_ret;
+                                    }
+                                }
+                            }
+
                             // 获取实例方法的返回类型
                             int arity;
                             TypeKind return_type = native_get_instance_method_return_type(type_name, method_name, &arity);
@@ -1841,13 +1860,21 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
             if (is_native_module) {
                 const char* method_name = ast->u.module_call.method_name;
 
-                // ① 优先用**完整返回类型规格**（v3.2.3）：它才能表达 `Array[DirEntry]` /
-                //    `Dict[string,string]` 这类参数化、带名字的类型（Kind 槽表达不了，
-                //    见 leno_types.h 的 NativeTypeSpec）。返回的 TypeInfo 归调用方释放 ✓
+                // ① 优先用**完整返回类型规格**：它才能表达 `Array[DirEntry]` / `Dict[string,string]`
+                //    这类参数化、带名字的类型（Kind 槽表达不了，见 leno_types.h 的 NativeTypeSpec）。
+                //    ⚠ 规格里可能有**关系型标签**（`NTYPE_ARG0_ELEM` 等）—— 例如 `arrays.copy(xs)`
+                //    的真实类型是 `Array[T]`（T = xs 的元素类型）⇒ 这类规格必须拿**第 0 个实参的
+                //    实际类型**来解析。只为"带实参引用"的规格去推实参：另外 230+ 个方法的规格与
+                //    实参无关，不该为它们白推一遍。返回的 TypeInfo 归调用方释放 ✓
                 const NativeTypeSpec* ret_spec =
                     native_get_module_method_return_spec(actual_module, method_name);
                 if (ret_spec) {
-                    TypeInfo* spec_type = native_type_spec_to_info(ret_spec);
+                    TypeInfo* arg0_type = NULL;
+                    if (native_type_spec_has_arg_ref(ret_spec) && ast->u.module_call.args.count > 0) {
+                        arg0_type = infer_expr_type(s, ast->u.module_call.args.items[0]);
+                    }
+                    TypeInfo* spec_type = native_type_spec_to_info_with_args(ret_spec, arg0_type);
+                    if (arg0_type) type_free(arg0_type);
                     if (spec_type) return spec_type;
                 }
 
