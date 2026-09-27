@@ -34,7 +34,10 @@ export func claim_url(): string { return api_base() + "/trae/api/v2/ug/checkin_c
 // 不能直接当 Dict 用，必须**显式类型收窄** `if x is Dict { ... }`）—— 该层**已删**：
 // 标准库 `jsons` 现已提供等价且更全的 `get_str / get_int / get_float / get_bool / get_obj / keys`
 // （收窄收在标准库实现里 ⇒ 调用点零样板 ✓，语义见 `docs/module_jsons.md` 的「取值助手」）。
-// 业务代码直接写 `jsons.get_str(obj, key, "")` / `jsons.get_obj(obj, key)` 即可 ✓。
+// 2026-09-27 补充：连 `jval(d, k)` 这个"只转发给 `jsons.get_str`"的别名也删了 ⇒ 本文件内
+// 取值一律直接写 `jsons.get_str(obj, key, "")`，**不再有任何自造的 JSON 层** ✓。
+// 唯一的例外是 ② 的 `settingsLoad` / `load_all`: 那是"路径 + 存在性 + 一次收窄定型"的
+// **业务加载器**（返回 `Dict[string, string]?`），不是 JSON 取值助手，仍然保留 ✓。
 
 // ==================== ② 读登录态（只读） ====================
 
@@ -150,23 +153,19 @@ export func api_post(HttpClient c, string url, string body): any {
     return d
 }
 
-export func jval(any d, string key): string {
-    return jsons.get_str(d, key, "")
-}
-
 // 查状态 → [ok, httpErr, err, code, raw, base, extra, checkedIn, msg]
 export func fetch_status(HttpClient c): Array[string] {
     var st = api_post(c, status_url(), "{}")
-    var he = jval(st, "_http_error")
+    var he = jsons.get_str(st, "_http_error", "")
     if he != "" {
-        return ["false", he, jval(st, "_error"), jval(st, "_status"), jval(st, "_raw"),
-                "", "", "false", "HTTP " + he]
+        return ["false", he, jsons.get_str(st, "_error", ""), jsons.get_str(st, "_status", ""),
+                jsons.get_str(st, "_raw", ""), "", "", "false", "HTTP " + he]
     }
-    var base = jval(st, "credits")
-    var extra = jval(st, "extra_credits")
-    var checked = jval(st, "checked_in")
-    var code = jval(st, "code")
-    var raw = jval(st, "_raw")
+    var base = jsons.get_str(st, "credits", "")
+    var extra = jsons.get_str(st, "extra_credits", "")
+    var checked = jsons.get_str(st, "checked_in", "")
+    var code = jsons.get_str(st, "code", "")
+    var raw = jsons.get_str(st, "_raw", "")
     if base == "" and extra == "" {
         // 9074 单独给文案：它**不是**"token 过期"（重登没用、换设备号才有用 ✓）⇒ 别误导用户 ✗
         if code == "9074" {
@@ -195,14 +194,15 @@ export func do_claim(HttpClient c): Array[string] {
                 "服务端显示今日已签到（本次未重复提交）", "true"]
     }
     var cl = api_post(c, claim_url(), "{\"req_source\":1}")
-    var he = jval(cl, "_http_error")
+    var he = jsons.get_str(cl, "_http_error", "")
     if he != "" { return ["false", "", he, "", "", "HTTP " + he, "false"] }
-    var code = jval(cl, "code")
-    var cchecked = jval(cl, "checked_in")
+    var code = jsons.get_str(cl, "code", "")
+    var cchecked = jsons.get_str(cl, "checked_in", "")
     if code == "0" or cchecked == "true" {
         var cf = api_post(c, status_url(), "{}")
-        if jval(cf, "checked_in") == "true" {
-            return ["true", "0", "", jval(cf, "credits"), jval(cf, "extra_credits"), "签到成功", "false"]
+        if jsons.get_str(cf, "checked_in", "") == "true" {
+            return ["true", "0", "", jsons.get_str(cf, "credits", ""),
+                    jsons.get_str(cf, "extra_credits", ""), "签到成功", "false"]
         }
         // 错误码 -6 与参考件/旧 CLI **逐字一致** ✓（"假成功"分支）
         return ["false", "-6", "", "", "", "签到结果异常（token 可能已过期），请重新登录该软件", "false"]
@@ -210,7 +210,7 @@ export func do_claim(HttpClient c): Array[string] {
     if code == "9095" {
         return ["false", "9095", "", "", "", "本设备今日已有账号签到（同机每天只允许一个账号）", "false"]
     }
-    var mf = jval(cl, "message")
+    var mf = jsons.get_str(cl, "message", "")
     if mf == "" { mf = "签到失败" }
     return ["false", code, "", "", "", mf, "false"]
 }
