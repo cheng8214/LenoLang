@@ -419,5 +419,57 @@ main() {
 ")
     ce.expect_error(nv2, "字典数组 add 要检查元素类型", "参数 1 期望 'Dict[string, int]'", 4)
 
+    // ---- struct 上的**整数下标**要在编译期拦下（2026-09-28；实例二十六）----
+    //   背景：`s.field` 在语义层被转成 `s["field"]`（见 VM 07_collections.inc 的注释），
+    //   所以 struct 的**唯一**合法索引形态是字符串字段名。此前只有"数组索引必须整数"的反向检查，
+    //   struct 侧漏了 ⇒ `r[0]` **编译通过**、运行期才抛「结构体字段名必须是字符串」。
+    //   为什么值得单独钉：这正是"类型变更（`Array[any]` → `ExecResult` 这类结构体化）"迁移时
+    //   最想在**编译期**看到的东西 —— 缺口在时，错误要等跑起来才暴露。
+    var si1 = dirs.join(work, "struct_int_index.leno")
+    files.write(si1, @"struct R {
+    string output
+    int code
+}
+
+main() {
+    var r = new R(output = ""x"", code = 0)
+    print(r[0])
+}
+")
+    ce.expect_error(si1, "struct 上用整数下标要编译期拦下", "struct 只能用字符串字段名索引", 8)
+
+    // 赋值形态同样漏检过（`r[1] = 5`）⇒ 同一处检查在 AST_INDEX_ASSIGN 分支也补了
+    var si2 = dirs.join(work, "struct_int_index_assign.leno")
+    files.write(si2, @"struct R {
+    string output
+    int code
+}
+
+main() {
+    var r = new R(output = ""x"", code = 0)
+    r[1] = 5
+}
+")
+    ce.expect_error(si2, "struct 上整数下标**赋值**也要拦下", "struct 只能用字符串字段名索引", 8)
+
+    // 正向（不得误伤）：字符串字段名照常 —— `r[""output""]` 正是语义层 `r.output` 的落地形态
+    var si3 = dirs.join(work, "struct_str_index_ok.leno")
+    files.write(si3, @"struct R {
+    string output
+    int code
+}
+
+main() {
+    var r = new R(output = ""x"", code = 0)
+    print(r[""output""])
+    print(r.output)
+}
+")
+    ce.expect_ok(si3, "字符串字段名索引照常通过", "x")
+
+    // ⚠ cstruct **不在此列**（有意豁免）：`Cv.malloc_array(n)` 的静态类型仍是那个 cstruct，
+    //   但它是"cstruct 数组"⇒ `v[0].x = 1.0` 是合法写法。加检查时它误报过，
+    //   现由 assert/cstruct_export_b.leno（核心测试 `cstruct.malloc_array()[i].x = xxx`）守着。
+
     print("=== test_diag_static_errors ALL passed ===")
 }

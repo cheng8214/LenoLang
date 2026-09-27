@@ -316,6 +316,20 @@
                 }
             }
 
+            // 检查：**struct** 的索引必须是字符串字段名（v3.2.8；与 AST_INDEX 分支同一处，cstruct 豁免）
+            //   赋值形态同样漏检 ⇒ `r[0] = 1` 此前也是"编译通过、运行期才报"。
+            if (obj_type && obj_type->kind == TYPE_STRUCT) {
+                TypeInfo* idx_type = infer_expr_type(s, ast->u.index_assign.index);
+                if (idx_type && idx_type->kind != TYPE_STRING && idx_type->kind != TYPE_ANY) {
+                    char msg[BUFFER_MEDIUM];
+                    snprintf(msg, sizeof(msg),
+                        "struct 只能用字符串字段名索引（如 x[\"field\"] = v），实际索引类型是 %s",
+                        type_kind_to_string(idx_type->kind));
+                    error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
+                }
+                if (idx_type) type_free(idx_type);
+            }
+
             if (obj_type && obj_type->kind == TYPE_STRUCT) {
                 if (ast->u.index_assign.index->kind == AST_STRING) {
                     char* field_name = ast->u.index_assign.index->u.string.value;
@@ -1826,6 +1840,27 @@
                     error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                 }
                 if (index_type) type_free(index_type);
+            }
+
+            // 检查：**struct** 的索引必须是字符串字段名（v3.2.8）
+            //   背景：`s.field` 在语义层被转成 `s["field"]`（见 VM 07_collections.inc 的注释），
+            //   所以 struct 的**唯一**合法索引形态就是字符串字段名。此前这里只有"数组索引必须整数"
+            //   的反向检查（上面那段），struct 侧漏了 ⇒ `r[0]`（r 是 struct）**编译通过**、
+            //   运行期才抛「结构体字段名必须是字符串」⇒ 类型变更（如 `Array[any]` → `ExecResult`）
+            //   的错误暴露得太晚（要跑起来才知道）。
+            //   ⚠ **cstruct 必须豁免**：`Cv.malloc_array(n)` 的静态类型仍是那个 cstruct，
+            //     但它是"cstruct 数组"⇒ `v[0].x = 1.0` 是**合法**写法（assert/cstruct_export_b.leno
+            //     就是专门钉这条的，加检查时会误报 ⇒ 实测撞出来，故只查 TYPE_STRUCT）。
+            if (obj_type && obj_type->kind == TYPE_STRUCT) {
+                TypeInfo* idx_type = infer_expr_type(s, ast->u.index.index);
+                if (idx_type && idx_type->kind != TYPE_STRING && idx_type->kind != TYPE_ANY) {
+                    char msg[BUFFER_MEDIUM];
+                    snprintf(msg, sizeof(msg),
+                        "struct 只能用字符串字段名索引（如 x[\"field\"]），实际索引类型是 %s",
+                        type_kind_to_string(idx_type->kind));
+                    error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
+                }
+                if (idx_type) type_free(idx_type);
             }
 
             // 检查嵌套字段访问中的 null 默认值（如 self["head"]["next"] 或 self["items"][0]）
