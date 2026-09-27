@@ -202,6 +202,25 @@ Symbol* resolve_variable_with_upvalue(Semantic* s, const char* name, SymRef* ref
     // 从 start_level+1 开始，因为 start_level 是变量定义的函数，不需要 upvalue
     for (int i = start_level + 1; i < s->func_stack_depth; i++) {
         Ast* func = s->func_stack[i];
+        // ⚠ **struct 方法不是闭包 ⇒ 不能拥有 upvalue**（v3.2.8；修 0xC0000005）
+        //   机理：方法调用走 `self["method"](self, args)` 绑定的方法对象，**没有闭包环境**；
+        //   可本函数会照常把它需要的东西挂成 upvalue ⇒ 方法体内 `OP_GET_UPVALUE`
+        //   去读一个并不存在的 upvalue 数组项 ⇒ **访问违例崩溃**（实测 exit=0xC0000005）。
+        //   判据（方法 = 首参是 self）只认"链上被挂 upvalue 的那一层"，不误伤：
+        //   · 文件级 struct 的方法读**全局** ⇒ 上面早就按 SYM_GLOBAL 返回了，走不到这里；
+        //   · 方法读**自己的**参数/局部 ⇒ 不是 upvalue，也走不到这里；
+        //   · 普通函数/闭包捕获外层 ⇒ func_stack 上那一层不是方法 ⇒ 不受影响（套件守着）。
+        //   取舍：**响亮报错 > 静默崩溃**（与 S2、实例二十三/二十六 同一哲学）。
+        //   若将来真要支持"方法捕获"，得让 `new` 时把外层帧的局部绑进方法闭包（另一条路，见 docs 实例三十二）。
+        if (func && func->kind == AST_FUNC_DEF && func->u.func.pcnt > 0 && func->u.func.params &&
+            func->u.func.params[0] && strcmp(func->u.func.params[0], "self") == 0) {
+            char msg[BUFFER_MEDIUM];
+            snprintf(msg, sizeof(msg),
+                "struct 方法不能捕获外层局部变量 '%s'（方法不是闭包、没有捕获能力）—— "
+                "请改用参数传入，或用字段在 new 时承接该值", name);
+            error_add_at(ERR_SEMANTIC, func->line, func->column, msg);
+            return target_sym;   // 不再建立 upvalue（编译已失败，避免继续发射崩溃代码）
+        }
         int idx = add_upvalue(func, name, upvalue_index, is_local, is_value_capture);
         if (idx < 0) return NULL;
         

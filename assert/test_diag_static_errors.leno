@@ -676,5 +676,59 @@ main() {
 ")
     ce.expect_error(fa2, "face 变量不能访问非 face 字段（提示用 as 转型）", "没有字段或方法 'name'", 16)
 
+    // ---- struct 方法捕获外层局部（2026-09-28；实例三十二）**崩溃回归** ----
+    //   ⚠ 修好之前：这个写法**能编译**，运行期 0xC0000005（实测；机理是方法不是闭包、
+    //     却照常被挂 upvalue ⇒ 读野指针）。现在在**解析点**就报错 ⇒ 崩溃变清晰报错。
+    //   这条用例的价值：它钉的是"**不许退化成崩溃**"，而不只是文案。
+    var up1 = dirs.join(work, "method_capture_upvalue.leno")
+    files.write(up1, @"func makeLocal(): int {
+    var local_var = 100
+
+    struct L {
+        int data
+
+        func get(): int {
+            return local_var + data
+        }
+    }
+
+    var o = new L(data = 5)
+    return o.get()
+}
+
+main() {
+    print(_str(makeLocal()))
+}
+")
+    //   ⚠ 落点是**方法声明行**（`func get(): int {`）而不是使用行 —— 报错发生在
+    //     `resolve_variable_with_upvalue()` 里，那一层拿不到 AST 节点（只有函数栈）。
+    //     想精确到使用行得给该解析函数加 AST 参数（~20 个调用点），列为后续小改进。
+    ce.expect_error(up1, "struct 方法不能捕获外层局部变量（原崩溃点）",
+        "struct 方法不能捕获外层局部变量 'local_var'", 7)
+
+    // 正向对照：把外部值作为**字段**在 new 时传入 ⇒ 照常通过（当前唯一稳妥写法）
+    var up2 = dirs.join(work, "method_field_ok.leno")
+    files.write(up2, @"func makeLocal(): int {
+    var local_var = 100
+
+    struct L {
+        int data
+        int base
+
+        func get(): int {
+            return base + data
+        }
+    }
+
+    var o = new L(data = 5, base = local_var)
+    return o.get()
+}
+
+main() {
+    print(_str(makeLocal()))
+}
+")
+    ce.expect_ok(up2, "外部值经字段传入照常通过", "105")
+
     print("=== test_diag_static_errors ALL passed ===")
 }
