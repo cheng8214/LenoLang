@@ -26,6 +26,20 @@ func drawOne(Renderer r, float cx, float cy, float rad, bool filled) {
     if filled { r.fillCircle(cx, cy, rad) } else { r.drawCircle(cx, cy, rad) }
 }
 
+// 饼图切片（fillPie）：取 90°→270°（屏幕坐标 y 向下 ⇒ 正好盖住左半圆 ✓）
+//   ⇒ 左边缘的中心行与「弧中段」两处切线都落在切片内 ⇒ 与实心圆用**同一套剖面测量** ✓
+func drawPies(Renderer r, float y) {
+    fillPieOne(r, 90.0, y, 8.0)
+    fillPieOne(r, 220.0, y, 11.0)
+    fillPieOne(r, 350.0, y, 40.0)
+    fillPieOne(r, 480.0, y, 47.0)
+    fillPieOne(r, 600.0, y, 48.0)
+    fillPieOne(r, 740.0, y, 76.0)
+}
+func fillPieOne(Renderer r, float cx, float cy, float rad) {
+    r.fillPie(cx, cy, rad, 90.0, 270.0, 0, 0, 0, 255)
+}
+
 // 左边缘水平切线的统计：剖面（7 像素，覆盖率 0~255）/ 墨量（px）/ 重心（相对 cx−rad−3 的 px）
 func edgeStats(Ptr[u8] px, int pitch, int cx, int cy, int rad, int roff): string {
     int x0 = cx - rad - 3
@@ -69,7 +83,7 @@ func arcStats(Ptr[u8] px, int pitch, int cx, int cy, int rad, int roff): string 
 main() {
     var sp = _env("AASHOT")
     if sp != null { SHOT = _str(sp) }
-    var win = SDL3.createWindow({title:"AA case", w:820.0, h:400.0, bg_color:#FFFFFFFF})
+    var win = SDL3.createWindow({title:"AA case", w:820.0, h:520.0, bg_color:#FFFFFFFF})
     if not win.ok { return }
     win.addTimer(50, func():void { })
     win.setOverlay(func(Renderer r) {
@@ -77,8 +91,9 @@ main() {
         r.setColor(#000000FF)
         drawCases(r, 110.0, false)
         drawCases(r, 300.0, true)
+        drawPies(r, 500.0)
         if FR >= 3 {
-            Ptr[u8] surf = r.readPixelsAt(0, 0, 820, 400)
+            Ptr[u8] surf = r.readPixelsAt(0, 0, 820, 520)
             if surf != null {
                 SDL_SurfaceInfo info = SDL_SurfaceInfo.from_ptr(surf)
                 int pitch = ffi.read_int(surf, 16)
@@ -109,6 +124,12 @@ main() {
                 print("盘 r=47  " + arcStats(px, pitch, 480, 300, 47, roff))
                 print("盘 r=48  " + arcStats(px, pitch, 600, 300, 48, roff))
                 print("盘 r=76  " + arcStats(px, pitch, 740, 300, 76, roff))
+                print("── 饼图切片（fillPie 90°→270°；与上面「盘」同半径 ⇒ 数值应接近 ✓）")
+                print("饼 r=40  " + arcStats(px, pitch, 350, 500, 40, roff))
+                print("饼 r=47  " + arcStats(px, pitch, 480, 500, 47, roff))
+                print("饼 r=48  " + arcStats(px, pitch, 600, 500, 48, roff))
+                print("饼 r=76  " + arcStats(px, pitch, 740, 500, 76, roff))
+                print("饼 r=47 中心行 " + edgeStats(px, pitch, 480, 500, 47, roff))
                 if SHOT != "" { SDL3.saveImagePNG(surf, SHOT) }
             }
             _exit(0)

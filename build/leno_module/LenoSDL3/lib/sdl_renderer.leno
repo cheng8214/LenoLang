@@ -438,7 +438,16 @@ const BX_TEX    = 4   // 批处理文字纹理
     }
 
     // 填充扇形（饼图/环形图）：圆心(cx,cy)，半径 r，起止角度 a0→a1（单位：度，0=正右，顺时针为正）
-    // 用三角扇（每小段一个三角形）批量提交几何，并把 0~255 整数色归一化为 SDL_Vertex 所需浮点色
+    //   ★ 抗锯齿（2026-09-27）✓：**内缩 0.5px 的三角扇** + **沿弧与起始半径的 AA 线段** ✓
+    //     为什么不能套圆角矩形那套蒙版：蒙版按「半径」缓存、只认正圆/圆角矩形 ✗，
+    //       而扇形是**任意角度**的图元 ⇒ 换成"按角度的蒙版"会在饼图入场动画里每帧重生成 3 张 ✗；
+    //       但**弧本身可以拆成折线**，于是直接复用现成的线段剖面几何（`_pushAALine` ✓，
+    //       与 spinner 的 `_draw_arc` 同款 ✓）——扇体只管"填实"，软过渡交给 AA 线段 ✓
+    //     为什么扇体要内缩 0.5px：线段剖面是「以路径为中心、±1px 的三角覆盖率」✓
+    //       ⇒ 扇体画到 r−0.5、弧线走在 r−0.5 时，合成覆盖率正好是「以 r 为中心、1px 线性斜坡」
+    //       = 理想 AA ✓（不内缩会整体胖半个像素 ✗）
+    //     边界规则：每片只画**起始半径**一条边 ⇒ 相邻两片共享的那条边界只叠一次 ✓（不叠深 ✗）
+    //     非 BLEND（顶点 alpha 无效）或半径过小时退回老的无 AA 三角扇 ⇒ 语义不变 ✓
     func fillPie(float cx, float cy, float r, float a0, float a1, int cr, int cg, int cb, int ca): bool {
         _flushBatches()
         if r <= 0.0 { return true }
@@ -447,6 +456,8 @@ const BX_TEX    = 4   // 批处理文字纹理
         if span <= 0.0 { return true }
         float fr = cr / 255.0, fg = cg / 255.0
         float fb = cb / 255.0, fa = ca / 255.0
+        bool soft = _bxBlend == core.BlendMode.BLEND and r > 2.0
+        float rf = if soft then r - 0.5 else r          // 扇体半径（AA 时内缩半像素 ✓）
         int segs = _int(span / 6.0)
         if segs < 6 { segs = 6 }
         if segs > 120 { segs = 120 }
@@ -454,20 +465,41 @@ const BX_TEX    = 4   // 批处理文字纹理
         var verts = SDL_Vertex.malloc_array(vcnt)
         float d2r = 3.14159265 / 180.0
         for 0 : segs - 1 to i {
-            float aa = a0 + span * i / _float(segs)
-            float ab = a0 + span * (i + 1) / _float(segs)
+            float p1 = a0 + span * i / _float(segs)
+            float p2 = a0 + span * (i + 1) / _float(segs)
             int vi = i * 3
             verts[vi].x = cx; verts[vi].y = cy
             verts[vi].r = fr; verts[vi].g = fg; verts[vi].b = fb; verts[vi].a = fa
-            verts[vi+1].x = cx + r * maths.cos(aa * d2r)
-            verts[vi+1].y = cy + r * maths.sin(aa * d2r)
+            verts[vi+1].x = cx + rf * maths.cos(p1 * d2r)
+            verts[vi+1].y = cy + rf * maths.sin(p1 * d2r)
             verts[vi+1].r = fr; verts[vi+1].g = fg; verts[vi+1].b = fb; verts[vi+1].a = fa
-            verts[vi+2].x = cx + r * maths.cos(ab * d2r)
-            verts[vi+2].y = cy + r * maths.sin(ab * d2r)
+            verts[vi+2].x = cx + rf * maths.cos(p2 * d2r)
+            verts[vi+2].y = cy + rf * maths.sin(p2 * d2r)
             verts[vi+2].r = fr; verts[vi+2].g = fg; verts[vi+2].b = fb; verts[vi+2].a = fa
         }
         var ok = _lib.SDL_RenderGeometry(handle, null, verts.to_ptr(), vcnt, null, 0)
-        verts.free(); return ok
+        verts.free()
+        if not soft { return ok }
+        // ---- 边缘补 AA：弧（segs 段折线）+ 起始半径（1 段），一次 RenderGeometry 提交 ✓ ----
+        Ptr[u8] ltex = _lineTex()
+        if ltex == null { return ok }                   // 剖面纹理建不出来 ⇒ 保持老观感 ✓
+        int segAll = segs + 1
+        var rim = SDL_Vertex.malloc_array(segAll * 6)
+        int vn = 0
+        for 0 : segs - 1 to i {
+            float p1 = a0 + span * i / _float(segs)
+            float p2 = a0 + span * (i + 1) / _float(segs)
+            vn = _pushAALine(rim.to_ptr(), vn,
+                cx + rf * maths.cos(p1 * d2r), cy + rf * maths.sin(p1 * d2r),
+                cx + rf * maths.cos(p2 * d2r), cy + rf * maths.sin(p2 * d2r),
+                fr, fg, fb, fa)
+        }
+        vn = _pushAALine(rim.to_ptr(), vn, cx, cy,
+            cx + rf * maths.cos(a0 * d2r), cy + rf * maths.sin(a0 * d2r), fr, fg, fb, fa)
+        var ok2 = true
+        if vn > 0 { ok2 = _lib.SDL_RenderGeometry(handle, ltex, rim.to_ptr(), vn, null, 0) }
+        rim.free()
+        return ok and ok2
     }
 
     // 批量绘制线段（pts 为 float 对数组，count 为点数）
