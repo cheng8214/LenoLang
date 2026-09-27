@@ -1,7 +1,8 @@
 // ===============================
 // 1. miniLang 解释器主函数
 // ===============================
-func tinylang_main(any code) {
+// ⚠ 2026-09-28 修示例：形参写具体类型 `string` —— `code.len()` 在 any 上不允许
+func tinylang_main(string code) {
     print("=== TinyLang 解释器 ===")
     
     try {
@@ -20,7 +21,7 @@ func tinylang_main(any code) {
 // ===============================
 // 2. 词法分析：分词器
 // ===============================
-func tinylang_tokenize(any code) {
+func tinylang_tokenize(string code): Array {
     // 集中定义关键字列表
     var keywords = ["print", "if", "else", "for", "while", "var"]
     
@@ -112,7 +113,9 @@ func tinylang_tokenize(any code) {
 // ===============================
 // 3. 语法分析：生成 AST
 // ===============================
-func tinylang_parse(any tokens) {
+// ⚠ 2026-09-28 修示例：形参/返回类型写具体类型 —— `tokens.len()` / `tokens[i]` 在 any 上不允许，
+//   而且**函数名调用点不吃函数体推断**（不写返回类型标注，调用方看到的是 any）。
+func tinylang_parse(Array tokens) {
     var ast = {type: "PROGRAM", statements: []};
     var token_index = 0;
     var len = tokens.len();

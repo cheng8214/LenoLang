@@ -28,7 +28,11 @@ main() {
     print("\n2. 切片测试 - values[2:5]:")
     var slice1 = obj.values[2:5]
     print("   结果: " + slice1)
-    print("   长度: " + slice1.len())
+    // ⚠ 2026-09-28 修示例：切片结果的静态类型是 any（cstruct 数组字段的元素类型推不出来）
+    //   ⇒ any 上不能直接调方法 ⇒ 先 `is Array` 守卫（断言里钉过这条：裸 as 不行、带参守卫恒假）
+    if slice1 is Array {
+        print("   长度: " + _str(slice1.len()))
+    }
     
     // 测试切片 - 从开始
     print("\n3. 切片测试 - values[:3]:")
@@ -57,7 +61,10 @@ main() {
     // 验证切片是独立的副本
     print("\n8. 验证切片是独立副本:")
     var original_val = obj.values[2]
-    slice1[0] = 999
+    // ⚠ 同上：any 上不能索引赋值 ⇒ 也要放进守卫里
+    if slice1 is Array {
+        slice1[0] = 999
+    }
     print("   修改切片后，原数组 obj.values[2] = " + obj.values[2])
     print("   (应该仍然是 " + original_val + ")")
     

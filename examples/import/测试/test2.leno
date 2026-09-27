@@ -12,7 +12,8 @@ export func add(any a, any b)
 
 export var PI = 3.14156
 
-export func fib(any n) {
+// ⚠ 2026-09-28 修示例：形参/返回类型写具体类型 —— `any` 不能参与大小比较
+export func fib(int n): int {
 
     if n <= 1 {
         return n
