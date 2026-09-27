@@ -1465,7 +1465,13 @@
                                 if (expected_param_type != TYPE_ANY) {
                                     Ast* arg = ast->u.call.args.items[j];
                                     TypeInfo* arg_type = infer_expr_type(s, arg);
-                                    if (arg_type && arg_type->kind != TYPE_ANY) {
+                                    // ⚠ v3.2.8：**删掉 `arg_type->kind != TYPE_ANY` 豁免** ——
+                                    //   这是**全局内置函数**这条通道（第三条 native 通道；
+                                    //   模块方法 / 实例方法两条已在 v3.2.7 收口）。
+                                    //   同一条理由：静态 any 的值到运行期可能是 null/int/...，
+                                    //   而 native 侧普遍无校验强转 ⇒ 实测 `sleep(_env("X"))`
+                                    //   此前编译期直接放行。
+                                    if (arg_type) {
                                         if (arg_type->kind != expected_param_type) {
                                             // 允许 int -> float, bigint -> int, bigint -> float, bool -> int/float/bigint 的隐式转换
                                             bool type_compatible = false;
