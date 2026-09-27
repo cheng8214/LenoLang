@@ -1,0 +1,54 @@
+// probe_aa_warmup.leno —— 「首波预热」专项探针（圆 / 圆角蒙版）
+//   做法：把半径 1..256 各画一遍 ⇒ 命中**全部阶梯档位**（每档首次生成一次 ✓）+ 32 个精确小尺寸
+//        ⇒ 首遍总耗时 = 预热成本（即"刚启动卡一下"的全部来源 ✓）；第二遍全命中缓存 ⇒ 对照 ✓
+//   跑法：leno <本文件>（约 3s，无需窗口交互）
+//   A/B 口径（照 §五 第 6 条）：同机同轮、同一 exe，只换模块库——
+//     上一版用 `git checkout -- build/leno_module/LenoSDL3/lib/sdl_renderer.leno` 取回，
+//     跑完 `Copy-Item` 还原；两次都要跑一遍，且**对调顺序**再下结论 ✓
+//   实测留档：docs\待办与路线图.md ⑤-an-2（描边环 1062.6 → 149.3ms；实心圆 945.9 → 153.6ms）
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer)
+
+var FR = 0
+
+func msOf(int a, int b): float { return _float(b - a) / 1000000.0 }
+
+func warmRun(Renderer r, bool filled) {
+    int t0 = SDL3.getTicksNS()
+    for 1 : 256 to rad {
+        r.setColor(#FFFFFFFF)
+        if filled { r.fillCircle(300.0, 300.0, _float(rad)) } else { r.drawCircle(300.0, 300.0, _float(rad)) }
+    }
+    int t1 = SDL3.getTicksNS()                       // 首次：逐档生成蒙版 ✓
+    for 1 : 256 to rad {
+        r.setColor(#FFFFFFFF)
+        if filled { r.fillCircle(300.0, 300.0, _float(rad)) } else { r.drawCircle(300.0, 300.0, _float(rad)) }
+    }
+    int t2 = SDL3.getTicksNS()                       // 第二遍：全部命中缓存 ✓
+    string tag = if filled then "实心圆（盘）" else "描边环"
+    print("[预热] " + tag + " r=1..256：首次生成 " + msOf(t0, t1) + " ms   第二遍(全命中) " + msOf(t1, t2) + " ms")
+}
+
+main() {
+    var win = SDL3.createWindow({title:"warm probe", w:600.0, h:600.0, bg_color:#202020FF})
+    if not win.ok { return }
+    win.addTimer(50, func():void { })
+    win.setOverlay(func(Renderer r) {
+        FR = FR + 1
+        if FR == 2 {
+            print("== 预热探针（同机同轮 A/B：只换库 ✓）==")
+            warmRun(r, false)
+            warmRun(r, true)
+            _exit(0)
+        }
+    })
+    win.run(
+        func(Event ev): bool {
+            if ev.isQuit() or ev.isWindowClose() { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(#202020FF)
+        }
+    )
+}

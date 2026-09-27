@@ -1,0 +1,126 @@
+// test_aa_circle_metrics.leno —— 圆 / 圆角矩形的 **AA 保真度量化**用例（描边环 + 实心圆）
+//   为什么要有它：AA 的平滑度完全由「覆盖率蒙版」的像素数据提供，改蒙版生成很容易在肉眼上
+//   "看不出差别"却把斜坡改软/改硬 ✗ ⇒ 这里把「左边缘覆盖率剖面 + 墨量 + 重心」打成数字，
+//   改造前后**逐行比对**即可判定观感是否回归 ✓（本项目两次蒙版优化都是这样验的 ✓）
+//   覆盖两类半径：「正好落在阶梯档位上」（拉伸比 1.0）与「档位中点」（拉伸比最大 ✓）
+//   跑法：set AASHOT=<路径.png> && leno <本文件>     ← AASHOT 可选，给了就同时存 PNG 供人眼复核 ✓
+//   结论留档：docs\待办与路线图.md ⑤-an（阶梯）、⑤-an-2（预热）；同族脚本 test_aa_radii / test_aa_clock ✓
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer, SDL_SurfaceInfo)
+import ffi
+import maths
+
+var FR = 0
+var SHOT = ""
+
+// 用例表（行 A y=110 描边环；行 B y=300 实心圆）：r=8/11/40/47/48/76
+func drawCases(Renderer r, float y, bool filled) {
+    drawOne(r, 90.0, y, 8.0, filled)
+    drawOne(r, 220.0, y, 11.0, filled)
+    drawOne(r, 350.0, y, 40.0, filled)
+    drawOne(r, 480.0, y, 47.0, filled)
+    drawOne(r, 600.0, y, 48.0, filled)
+    drawOne(r, 740.0, y, 76.0, filled)
+}
+func drawOne(Renderer r, float cx, float cy, float rad, bool filled) {
+    if filled { r.fillCircle(cx, cy, rad) } else { r.drawCircle(cx, cy, rad) }
+}
+
+// 左边缘水平切线的统计：剖面（7 像素，覆盖率 0~255）/ 墨量（px）/ 重心（相对 cx−rad−3 的 px）
+func edgeStats(Ptr[u8] px, int pitch, int cx, int cy, int rad, int roff): string {
+    int x0 = cx - rad - 3
+    int x1 = cx - rad + 3
+    int mass = 0
+    float wsum = 0.0
+    string prof = ""
+    for x0 : x1 to x {
+        int cov = 255 - ffi.read_byte(px, cy * pitch + x * 4 + roff)
+        prof = prof + " " + cov
+        mass = mass + cov
+        wsum = wsum + _float(cov) * _float(x - x0)
+    }
+    float cen = 0.0
+    if mass > 0 { cen = wsum / _float(mass) }
+    return prof + "  | 墨量=" + (_float(mass) / 255.0) + "px 重心=" + cen
+}
+
+// 半圆弧中部（y = cy − r/2）的左边缘切线：这里是**斜向**边缘 ⇒ 覆盖率剖面的真面目（AA 平滑度 ✓）
+//   12/3/6/9 极值点的边按设计是「整像素对齐的硬边」（切线正交 ⇒ 无锯齿 ✓），所以 AA 只能在这里看 ✓
+func arcStats(Ptr[u8] px, int pitch, int cx, int cy, int rad, int roff): string {
+    int rdy = rad / 2
+    float half = _float(rdy)
+    float dx = maths.sqrt(_float(rad * rad) - half * half)
+    int x0 = _int(_float(cx) - dx) - 3
+    int x1 = x0 + 6
+    int mass = 0
+    float wsum = 0.0
+    string prof = ""
+    for x0 : x1 to x {
+        int cov = 255 - ffi.read_byte(px, (cy - rdy) * pitch + x * 4 + roff)
+        prof = prof + " " + cov
+        mass = mass + cov
+        wsum = wsum + _float(cov) * _float(x - x0)
+    }
+    float cen = 0.0
+    if mass > 0 { cen = wsum / _float(mass) }
+    return prof + "  | 墨量=" + (_float(mass) / 255.0) + "px 重心=" + cen
+}
+
+main() {
+    var sp = _env("AASHOT")
+    if sp != null { SHOT = _str(sp) }
+    var win = SDL3.createWindow({title:"AA case", w:820.0, h:400.0, bg_color:#FFFFFFFF})
+    if not win.ok { return }
+    win.addTimer(50, func():void { })
+    win.setOverlay(func(Renderer r) {
+        FR = FR + 1
+        r.setColor(#000000FF)
+        drawCases(r, 110.0, false)
+        drawCases(r, 300.0, true)
+        if FR >= 3 {
+            Ptr[u8] surf = r.readPixelsAt(0, 0, 820, 400)
+            if surf != null {
+                SDL_SurfaceInfo info = SDL_SurfaceInfo.from_ptr(surf)
+                int pitch = ffi.read_int(surf, 16)
+                Ptr[u8] px = ffi.read_ptr(surf, 24)
+                int roff = 2                      // ARGB8888/RGB888：R 在 +2 ✓
+                if info.format == 373694468 { roff = 3 }   // RGBA8888：R 在 +3 ✓
+                print("== AA case  format=" + info.format + " pitch=" + pitch + " roff=" + roff + " ==")
+                print("环 r=8   " + edgeStats(px, pitch, 90, 110, 8, roff))
+                print("环 r=11  " + edgeStats(px, pitch, 220, 110, 11, roff))
+                print("环 r=40  " + edgeStats(px, pitch, 350, 110, 40, roff))
+                print("环 r=47  " + edgeStats(px, pitch, 480, 110, 47, roff))
+                print("环 r=48  " + edgeStats(px, pitch, 600, 110, 48, roff))
+                print("环 r=76  " + edgeStats(px, pitch, 740, 110, 76, roff))
+                print("盘 r=8   " + edgeStats(px, pitch, 90, 300, 8, roff))
+                print("盘 r=11  " + edgeStats(px, pitch, 220, 300, 11, roff))
+                print("盘 r=40  " + edgeStats(px, pitch, 350, 300, 40, roff))
+                print("盘 r=47  " + edgeStats(px, pitch, 480, 300, 47, roff))
+                print("盘 r=48  " + edgeStats(px, pitch, 600, 300, 48, roff))
+                print("盘 r=76  " + edgeStats(px, pitch, 740, 300, 76, roff))
+                print("── 弧中段（斜向边缘 ⇒ AA 剖面 / 线宽 / 半径 ✓）")
+                print("环 r=8   " + arcStats(px, pitch, 90, 110, 8, roff))
+                print("环 r=11  " + arcStats(px, pitch, 220, 110, 11, roff))
+                print("环 r=40  " + arcStats(px, pitch, 350, 110, 40, roff))
+                print("环 r=47  " + arcStats(px, pitch, 480, 110, 47, roff))
+                print("环 r=48  " + arcStats(px, pitch, 600, 110, 48, roff))
+                print("环 r=76  " + arcStats(px, pitch, 740, 110, 76, roff))
+                print("盘 r=40  " + arcStats(px, pitch, 350, 300, 40, roff))
+                print("盘 r=47  " + arcStats(px, pitch, 480, 300, 47, roff))
+                print("盘 r=48  " + arcStats(px, pitch, 600, 300, 48, roff))
+                print("盘 r=76  " + arcStats(px, pitch, 740, 300, 76, roff))
+                if SHOT != "" { SDL3.saveImagePNG(surf, SHOT) }
+            }
+            _exit(0)
+        }
+    })
+    win.run(
+        func(Event ev): bool {
+            if ev.isQuit() or ev.isWindowClose() { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(#FFFFFFFF)
+        }
+    )
+}

@@ -1,0 +1,436 @@
+// bench_rr_mask.leno —— 圆角/圆「覆盖率蒙版」生成的**变体微基准 + 逐字节等价扫描**
+//   A = **冻结的参考实现**（改造前的 _rrMask 原样：全 N²、每像素 sqrt + setPixel ✓）
+//   B = A + 四向镜像（循环 ÷4，一次算完写 4 个镜像像素 ✓ 逐字节等价 ✓）
+//   C = A + 清零分类（透明像素不写 ✗ 坑：透明 texel 变黑 ⇒ 双线性混色把 AA 斜坡二次衰减）
+//   D = B + C（快但同样踩坑 ✗）；E = 预填常量 + B + C（逐字节等价 ✓，但预填是 VM 逐像素写的 ✗）
+//   G = E 的预填换成**常量模板按行 memcpy** ⇒ 最终落地的方案 ✓（环 M=249：164 → 7.8ms，21×）
+//   两条判据：① 与 A 逐字节等价（本脚本的 16 组尺寸×lw 扫描直接给结论 ✓）
+//             ② 单档耗时（A/B/C/D/E/G 并排 ✓）—— 两个杠杆必须分开量，否则说不清是谁的功劳 ✓
+//   跑法：leno <本文件>（约 10s，无需窗口）
+//   结论留档：docs\待办与路线图.md ⑤-an-2（含变体选型表与"跳透明"那个坑 ✗）
+import "SDL3" as SDL3
+use SDL3.(PixelBuffer)
+import ffi
+import maths
+
+// ==================== A：现行实现（照抄 sdl_renderer.leno 的 _rrMask ✓） ====================
+func maskA(PixelBuffer b, int M, int lw) {
+    int pad = if lw > 0 then 1 else 0
+    int N = 2 * M + 2 + 2 * pad
+    float c = _float(M + 1 + pad)
+    float fM = _float(M)
+    float fLw = _float(lw)
+    for 0 : N - 1 to py {
+        for 0 : N - 1 to px {
+            float dx = _float(px) + 0.5 - c
+            if dx < 0.0 { dx = -dx }
+            float dy = _float(py) + 0.5 - c
+            if dy < 0.0 { dy = -dy }
+            float qx = dx - 1.0; if qx < 0.0 { qx = 0.0 }
+            float qy = dy - 1.0; if qy < 0.0 { qy = 0.0 }
+            float dd = maths.sqrt(qx * qx + qy * qy)
+            float cov = 0.5 - (dd - fM)
+            if cov < 0.0 { cov = 0.0 }
+            if cov > 1.0 { cov = 1.0 }
+            if lw > 0 {
+                float ci = 0.5 + (dd - (fM - fLw))
+                if ci < 0.0 { ci = 0.0 }
+                if ci > 1.0 { ci = 1.0 }
+                cov = cov * ci
+            }
+            b.setPixel(px, py, 255, 255, 255, _int(cov * 255.0 + 0.5))
+        }
+    }
+}
+
+// ==================== B：四向镜像（N 偶数 ⇒ dx 镜像严格相等 ✓ 逐字节等价 ✓） ====================
+func maskB(PixelBuffer b, int M, int lw) {
+    int pad = if lw > 0 then 1 else 0
+    int N = 2 * M + 2 + 2 * pad
+    int half = N / 2
+    float c = _float(M + 1 + pad)
+    float fM = _float(M)
+    float fLw = _float(lw)
+    for 0 : half - 1 to py {
+        for 0 : half - 1 to px {
+            float dx = _float(px) + 0.5 - c
+            if dx < 0.0 { dx = -dx }
+            float dy = _float(py) + 0.5 - c
+            if dy < 0.0 { dy = -dy }
+            float qx = dx - 1.0; if qx < 0.0 { qx = 0.0 }
+            float qy = dy - 1.0; if qy < 0.0 { qy = 0.0 }
+            float dd = maths.sqrt(qx * qx + qy * qy)
+            float cov = 0.5 - (dd - fM)
+            if cov < 0.0 { cov = 0.0 }
+            if cov > 1.0 { cov = 1.0 }
+            if lw > 0 {
+                float ci = 0.5 + (dd - (fM - fLw))
+                if ci < 0.0 { ci = 0.0 }
+                if ci > 1.0 { ci = 1.0 }
+                cov = cov * ci
+            }
+            int a = _int(cov * 255.0 + 0.5)
+            int mx = N - 1 - px
+            int my = N - 1 - py
+            b.setPixel(px, py, 255, 255, 255, a)
+            b.setPixel(mx, py, 255, 255, 255, a)
+            b.setPixel(px, my, 255, 255, 255, a)
+            b.setPixel(mx, my, 255, 255, 255, a)
+        }
+    }
+}
+
+// ==================== C：清零 + 距离平方分类（透明不写、斜坡才开方 ✓ 结果逐字节一致 ✓） ====================
+//   分类依据（全部用**距离平方**比较，省掉开方 ✓）：
+//     d² ≥ (M+0.5)²        ⇒ 圆外     ⇒ cov=0 ⇒ 不写（已清零 ✓）
+//     d² ≤ (M−0.5)²        ⇒ 外沿已满 ⇒ cov=1
+//     d² ≥ (M−lw+0.5)²     ⇒ 内孔     ⇒ ci=0  ⇒ 不写 ✓
+//     d² ≤ (M−lw−0.5)²     ⇒ 内沿已满 ⇒ ci=1
+//   只有「既不满也不透明」的那 1~2px 斜坡才需要 sqrt + 覆盖率 ✓
+func maskC(PixelBuffer b, int M, int lw) {
+    int pad = if lw > 0 then 1 else 0
+    int N = 2 * M + 2 + 2 * pad
+    b.clear()
+    float c = _float(M + 1 + pad)
+    float fM = _float(M)
+    float fLw = _float(lw)
+    float o2 = (fM + 0.5) * (fM + 0.5)
+    float i2 = (fM - 0.5) * (fM - 0.5)
+    float ho2 = (fM - fLw + 0.5) * (fM - fLw + 0.5)
+    float hi2 = (fM - fLw - 0.5) * (fM - fLw - 0.5)
+    for 0 : N - 1 to py {
+        float dy = _float(py) + 0.5 - c
+        if dy < 0.0 { dy = -dy }
+        float qy = dy - 1.0; if qy < 0.0 { qy = 0.0 }
+        float qy2 = qy * qy
+        int rowOff = py * b.pitch
+        for 0 : N - 1 to px {
+            float dx = _float(px) + 0.5 - c
+            if dx < 0.0 { dx = -dx }
+            float qx = dx - 1.0; if qx < 0.0 { qx = 0.0 }
+            float d2 = qx * qx + qy2
+            if d2 >= o2 { continue }
+            bool full = d2 <= i2
+            if lw > 0 {
+                if d2 <= hi2 { continue }              // 内孔（ci=0）⇒ 透明（C/D 此处是黑的 ✗ 见 G 注释）
+                if d2 < ho2 { full = false }
+            }
+            int a = 255
+            if not full {
+                float dd = maths.sqrt(d2)
+                float cov = 0.5 - (dd - fM)
+                if cov < 0.0 { cov = 0.0 }
+                if cov > 1.0 { cov = 1.0 }
+                if lw > 0 {
+                    float ci = 0.5 + (dd - (fM - fLw))
+                    if ci < 0.0 { ci = 0.0 }
+                    if ci > 1.0 { ci = 1.0 }
+                    cov = cov * ci
+                }
+                a = _int(cov * 255.0 + 0.5)
+            }
+            ffi.write_int(b.pixels, rowOff + px * 4, (255 << 24) | (255 << 16) | (255 << 8) | a)
+        }
+    }
+}
+
+// ==================== D：镜像 + 分类（两个杠杆叠加 ✓） ====================
+func maskD(PixelBuffer b, int M, int lw) {
+    int pad = if lw > 0 then 1 else 0
+    int N = 2 * M + 2 + 2 * pad
+    int half = N / 2
+    b.clear()
+    float c = _float(M + 1 + pad)
+    float fM = _float(M)
+    float fLw = _float(lw)
+    float o2 = (fM + 0.5) * (fM + 0.5)
+    float i2 = (fM - 0.5) * (fM - 0.5)
+    float ho2 = (fM - fLw + 0.5) * (fM - fLw + 0.5)
+    float hi2 = (fM - fLw - 0.5) * (fM - fLw - 0.5)
+    int pitch = b.pitch
+    for 0 : half - 1 to py {
+        float dy = _float(py) + 0.5 - c
+        if dy < 0.0 { dy = -dy }
+        float qy = dy - 1.0; if qy < 0.0 { qy = 0.0 }
+        float qy2 = qy * qy
+        int my = N - 1 - py
+        int rowOff = py * pitch
+        int rowOffM = my * pitch
+        for 0 : half - 1 to px {
+            float dx = _float(px) + 0.5 - c
+            if dx < 0.0 { dx = -dx }
+            float qx = dx - 1.0; if qx < 0.0 { qx = 0.0 }
+            float d2 = qx * qx + qy2
+            if d2 >= o2 { continue }
+            bool full = d2 <= i2
+            if lw > 0 {
+                if d2 <= hi2 { continue }              // 内孔（ci=0）⇒ 透明（C/D 此处是黑的 ✗ 见 G 注释）
+                if d2 < ho2 { full = false }
+            }
+            int a = 255
+            if not full {
+                float dd = maths.sqrt(d2)
+                float cov = 0.5 - (dd - fM)
+                if cov < 0.0 { cov = 0.0 }
+                if cov > 1.0 { cov = 1.0 }
+                if lw > 0 {
+                    float ci = 0.5 + (dd - (fM - fLw))
+                    if ci < 0.0 { ci = 0.0 }
+                    if ci > 1.0 { ci = 1.0 }
+                    cov = cov * ci
+                }
+                a = _int(cov * 255.0 + 0.5)
+            }
+            int col = (255 << 24) | (255 << 16) | (255 << 8) | a
+            int mx = N - 1 - px
+            ffi.write_int(b.pixels, rowOff + px * 4, col)
+            ffi.write_int(b.pixels, rowOff + mx * 4, col)
+            ffi.write_int(b.pixels, rowOffM + px * 4, col)
+            ffi.write_int(b.pixels, rowOffM + mx * 4, col)
+        }
+    }
+}
+
+// ==================== E：预填常量 + 镜像 + 分类（**正确的快版本** ✓） ====================
+//   为什么 C/D 不对：跳过的透明像素是 (0,0,0,0) 而不是 (255,255,255,0) ⇒ 双线性采样时
+//   边缘会把「白墨水 texel」与「黑透明 texel」混色 ⇒ 覆盖率被二次衰减 ⇒ 斜坡变暗变硬 ✗
+//   （非预乘 BLEND 下 out = rgb·a，混色让 rgb 也带上 a 的因子 ✓ 必须保持 RGB 恒白 ✓）
+//   ⇒ 透明区必须预填成「白 + alpha=0」常量 0xFFFFFF00（一次紧循环 fill，不含 SDF 数学 ✓）
+func maskE(PixelBuffer b, int M, int lw) {
+    int pad = if lw > 0 then 1 else 0
+    int N = 2 * M + 2 + 2 * pad
+    int half = N / 2
+    b.fill(255, 255, 255, 0)          // 常量预填（透明 = 白 + a0 ✓ 与 A 逐字节一致 ✓）
+    float c = _float(M + 1 + pad)
+    float fM = _float(M)
+    float fLw = _float(lw)
+    float o2 = (fM + 0.5) * (fM + 0.5)
+    float i2 = (fM - 0.5) * (fM - 0.5)
+    float ho2 = (fM - fLw + 0.5) * (fM - fLw + 0.5)
+    float hi2 = (fM - fLw - 0.5) * (fM - fLw - 0.5)
+    int pitch = b.pitch
+    for 0 : half - 1 to py {
+        float dy = _float(py) + 0.5 - c
+        if dy < 0.0 { dy = -dy }
+        float qy = dy - 1.0; if qy < 0.0 { qy = 0.0 }
+        float qy2 = qy * qy
+        int my = N - 1 - py
+        int rowOff = py * pitch
+        int rowOffM = my * pitch
+        for 0 : half - 1 to px {
+            float dx = _float(px) + 0.5 - c
+            if dx < 0.0 { dx = -dx }
+            float qx = dx - 1.0; if qx < 0.0 { qx = 0.0 }
+            float d2 = qx * qx + qy2
+            if d2 >= o2 { continue }                       // 圆外 ⇒ 透明（已是常量 ✓ 不写）
+            bool full = d2 <= i2
+            if lw > 0 {
+                if d2 <= hi2 { continue }                  // 内孔（ci=0）⇒ 透明 ✓
+                if d2 < ho2 { full = false }               // 内沿斜坡（ci<1）⇒ 要算 ✓
+            }
+            int a = 255
+            if not full {
+                float dd = maths.sqrt(d2)
+                float cov = 0.5 - (dd - fM)
+                if cov < 0.0 { cov = 0.0 }
+                if cov > 1.0 { cov = 1.0 }
+                if lw > 0 {
+                    float ci = 0.5 + (dd - (fM - fLw))
+                    if ci < 0.0 { ci = 0.0 }
+                    if ci > 1.0 { ci = 1.0 }
+                    cov = cov * ci
+                }
+                a = _int(cov * 255.0 + 0.5)
+            }
+            int col = (255 << 24) | (255 << 16) | (255 << 8) | a
+            int mx = N - 1 - px
+            ffi.write_int(b.pixels, rowOff + px * 4, col)
+            ffi.write_int(b.pixels, rowOff + mx * 4, col)
+            ffi.write_int(b.pixels, rowOffM + px * 4, col)
+            ffi.write_int(b.pixels, rowOffM + mx * 4, col)
+        }
+    }
+}
+
+// ==================== G：E + 常量模板按行 memcpy（**候选终版** ✓） ====================
+//   E 的残项是「逐像素填常量」:250k 次 ffi.write_int ≈ 10~16ms ⇒ 成了新下限 ✗
+//   G 把常量放进一张**模板缓冲**，每行一次 ffi.memcpy（C 速度 ✓ 516 行 ≈ 30~60us ✓）
+//   ⇒ 每张蒙版的开销只剩「墨迹带里的覆盖率计算」✓ 结果与 A **逐字节一致** ✓
+Ptr[u8] TMPL = null
+int TMPLN = 0
+
+func tmplGet(int N): bool {
+    if TMPL != null and TMPLN >= N { return true }
+    if TMPL != null { ffi.free(TMPL); TMPL = null }
+    TMPL = ffi.malloc(N * N * 4)
+    if TMPL == null { TMPLN = 0; return false }
+    TMPLN = N
+    int col = (255 << 24) | (255 << 16) | (255 << 8) | 0
+    for 0 : N * N - 1 to i { ffi.write_int(TMPL, i * 4, col) }
+    return true
+}
+
+func maskG(PixelBuffer b, int M, int lw) {
+    int pad = if lw > 0 then 1 else 0
+    int N = 2 * M + 2 + 2 * pad
+    if not tmplGet(N) { return }
+    for 0 : N - 1 to py { ffi.memcpy(ffi.offset(b.pixels, py * b.pitch), TMPL, N * 4) }
+    int half = N / 2
+    float c = _float(M + 1 + pad)
+    float fM = _float(M)
+    float fLw = _float(lw)
+    float o2 = (fM + 0.5) * (fM + 0.5)
+    float i2 = (fM - 0.5) * (fM - 0.5)
+    float hFull = (fM - fLw + 0.5) * (fM - fLw + 0.5)
+    float hOut = (fM - fLw - 0.5) * (fM - fLw - 0.5)
+    int pitch = b.pitch
+    for 0 : half - 1 to py {
+        float dy = _float(py) + 0.5 - c
+        if dy < 0.0 { dy = -dy }
+        float qy = dy - 1.0; if qy < 0.0 { qy = 0.0 }
+        float qy2 = qy * qy
+        int my = N - 1 - py
+        int rowOff = py * pitch
+        int rowOffM = my * pitch
+        for 0 : half - 1 to px {
+            float dx = _float(px) + 0.5 - c
+            if dx < 0.0 { dx = -dx }
+            float qx = dx - 1.0; if qx < 0.0 { qx = 0.0 }
+            float d2 = qx * qx + qy2
+            if d2 >= o2 { continue }
+            bool full = d2 <= i2
+            if lw > 0 {
+                if d2 <= hOut { continue }
+                if d2 < hFull { full = false }
+            }
+            int a = 255
+            if not full {
+                float dd = maths.sqrt(d2)
+                float cov = 0.5 - (dd - fM)
+                if cov < 0.0 { cov = 0.0 }
+                if cov > 1.0 { cov = 1.0 }
+                if lw > 0 {
+                    float ci = 0.5 + (dd - (fM - fLw))
+                    if ci < 0.0 { ci = 0.0 }
+                    if ci > 1.0 { ci = 1.0 }
+                    cov = cov * ci
+                }
+                a = _int(cov * 255.0 + 0.5)
+            }
+            int col = (255 << 24) | (255 << 16) | (255 << 8) | a
+            int mx = N - 1 - px
+            ffi.write_int(b.pixels, rowOff + px * 4, col)
+            ffi.write_int(b.pixels, rowOff + mx * 4, col)
+            ffi.write_int(b.pixels, rowOffM + px * 4, col)
+            ffi.write_int(b.pixels, rowOffM + mx * 4, col)
+        }
+    }
+}
+
+// 只量「常量预填」自身的成本（判断 fill 会不会成为新的下限 ✓）
+func fillOnly(PixelBuffer b, int M, int lw) {
+    b.fill(255, 255, 255, 0)
+}
+
+// 逐字节比对（返回不同的字节数；0 = 完全等价 ✓）
+func diffBytes(PixelBuffer x, PixelBuffer y): int {
+    int n = x.w * x.h * 4
+    int d = 0
+    for 0 : n - 1 to i {
+        if ffi.read_byte(x.pixels, i) != ffi.read_byte(y.pixels, i) { d = d + 1 }
+    }
+    return d
+}
+
+func bench(string tag, int M, int lw, int reps) {
+    int N = 2 * M + 2 + 2 * (if lw > 0 then 1 else 0)
+    PixelBuffer b = new PixelBuffer()
+    if not b.init(N, N) { print("init 失败"); return }
+    string line = tag + " M=" + M + " lw=" + lw + " N=" + N + " ×" + reps + "："
+    int t0 = SDL3.getTicksNS(); for 0 : reps - 1 to i { maskA(b, M, lw) }; int t1 = SDL3.getTicksNS()
+    line = line + " A=" + (_float(t1 - t0) / 1000000.0 / _float(reps)) + "ms"
+    t0 = SDL3.getTicksNS(); for 0 : reps - 1 to i { maskB(b, M, lw) }; t1 = SDL3.getTicksNS()
+    line = line + "  B=" + (_float(t1 - t0) / 1000000.0 / _float(reps)) + "ms"
+    t0 = SDL3.getTicksNS(); for 0 : reps - 1 to i { maskC(b, M, lw) }; t1 = SDL3.getTicksNS()
+    line = line + "  C=" + (_float(t1 - t0) / 1000000.0 / _float(reps)) + "ms"
+    t0 = SDL3.getTicksNS(); for 0 : reps - 1 to i { maskD(b, M, lw) }; t1 = SDL3.getTicksNS()
+    line = line + "  D=" + (_float(t1 - t0) / 1000000.0 / _float(reps)) + "ms"
+    t0 = SDL3.getTicksNS(); for 0 : reps - 1 to i { maskE(b, M, lw) }; t1 = SDL3.getTicksNS()
+    line = line + "  E=" + (_float(t1 - t0) / 1000000.0 / _float(reps)) + "ms"
+    t0 = SDL3.getTicksNS(); for 0 : reps - 1 to i { maskG(b, M, lw) }; t1 = SDL3.getTicksNS()
+    line = line + "  **G=" + (_float(t1 - t0) / 1000000.0 / _float(reps)) + "ms**"
+    t0 = SDL3.getTicksNS(); for 0 : reps - 1 to i { fillOnly(b, M, lw) }; t1 = SDL3.getTicksNS()
+    print(line + "  (仅预填=" + (_float(t1 - t0) / 1000000.0 / _float(reps)) + "ms)")
+    b.free()
+}
+
+// 差异定位：打印前若干处不一样像素的坐标与两侧 u32（用来判断差在 alpha 还是 RGB ✓）
+func diffDetail(PixelBuffer x, PixelBuffer y, int maxShow) {
+    int n = x.w * x.h
+    int shown = 0
+    int amax = 0
+    for 0 : n - 1 to i {
+        int vx = ffi.read_int(x.pixels, i * 4)
+        int vy = ffi.read_int(y.pixels, i * 4)
+        if vx != vy {
+            int ax = (vx >> 0) & 255
+            int ay = (vy >> 0) & 255
+            int d = ax - ay; if d < 0 { d = -d }
+            if d > amax { amax = d }
+            if shown < maxShow {
+                print("  差异 @(" + (i % x.w) + "," + (i / x.w) + ")  A=" + vx + "  E=" + vy
+                    + "  (alpha " + ax + " vs " + ay + ")")
+                shown = shown + 1
+            }
+        }
+    }
+    print("  ⇒ 共不同像素 ≈ 见上；alpha 最大差 = " + amax)
+}
+
+int SumE = 0; int SumG = 0; int Pairs = 0      // 扫描累计（避免多返回值解构的语法噪音 ✓）
+
+// 等价性：候选（B/E/G）必须与 A **逐字节相同**（否则 AA 观感会变 ✗）；差异累加进 SumE/SumG ✓
+func verify2(int M, int lw) {
+    int N = 2 * M + 2 + 2 * (if lw > 0 then 1 else 0)
+    PixelBuffer a = new PixelBuffer(); a.init(N, N)
+    PixelBuffer x = new PixelBuffer(); x.init(N, N)
+    maskA(a, M, lw)
+    maskB(x, M, lw); int dB = diffBytes(a, x)
+    maskE(x, M, lw); int dE = diffBytes(a, x)
+    maskG(x, M, lw); int dG = diffBytes(a, x)
+    if dB != 0 or dE != 0 or dG != 0 {
+        print("⚠ 不一致 M=" + M + " lw=" + lw + "：B 差 " + dB + " / E 差 " + dE + " / G 差 " + dG)
+        if dG > 0 { diffDetail(a, x, 4) }
+    }
+    a.free(); x.free()
+    SumE = SumE + dE; SumG = SumG + dG; Pairs = Pairs + 1
+}
+
+main() {
+    print("== 蒙版生成微基准（每档位一次生成的耗时 ✓）==")
+    // 尺寸扫描：阶梯全部档位 + 边界 + 奇数（覆盖浮点边界 ✓）；E/G 必须与 A 逐字节一致 ✓
+    verify2(1, 0)
+    verify2(2, 1)
+    verify2(7, 1)
+    verify2(8, 0)
+    verify2(17, 1)
+    verify2(32, 0)
+    verify2(33, 1)
+    verify2(63, 1)
+    verify2(64, 0)
+    verify2(126, 1)
+    verify2(127, 2)
+    verify2(139, 1)
+    verify2(200, 0)
+    verify2(249, 1)
+    verify2(256, 1)
+    verify2(256, 0)
+    print("等价扫描（" + Pairs + " 组尺寸×lw）：E 共差 " + SumE + " 字节，**G 共差 " + SumG
+        + " 字节**（0 = 与现行 A 逐字节等价 ✓ 上面若有 ⚠ 行就是它 ✗）")
+    bench("环", 249, 1, 3)
+    bench("环", 126, 1, 3)
+    bench("环", 63, 1, 3)
+    bench("环", 32, 1, 5)
+    bench("盘", 249, 0, 3)
+    bench("盘", 63, 0, 5)
+}
