@@ -130,6 +130,57 @@ static TypeInfo* infer_return_type_from_body(Semantic* s, Ast* body) {
 }
 
 // ============================================================================
+// 回调返回类型推断（**唯一实现**：map / reduce 的实例形态与模块形态共用）
+// ============================================================================
+// 为什么需要这个助手（v3.2.8）：`map` / `reduce` 的返回类型都取决于**回调的返回类型**，
+//   而这件事有**四种写法**：`arr.map(fn)` / `arr.reduce(fn, init)`（实例形态）与
+//   `arrays.map(arr, fn)` / `arrays.reduce(arr, fn, init)`（模块形态）。
+//   此前实例形态有一条"类型守卫"实现、模块形态**没有** ⇒ 同一操作两种写法精度不一致
+//   （实测：`Array[int] m = arrays.map(xs, fn)` 报 `Array[any]`，而 `xs.map(fn)` 是 `Array[int]`）。
+//   各自修一份就等于把守卫逻辑抄两遍（参数符号的保存/恢复最容易抄漏）⇒ 收敛到这一个函数。
+//
+// 做法：临时把回调的**参数符号**类型设成实际类型（数组元素 / 累加器），推完函数体返回类型再恢复。
+//   · acc_type == NULL（map 语义）：只守第 0 个参数 = 元素类型，其余参数保持原样；
+//   · acc_type != NULL（reduce 语义）：第 0 个 = 累加器（拿不到就用元素类型兜底）、第 1 个 = 元素类型。
+//   ⚠ 守卫只改写**符号类型**：回调若把形参写成 `any`，函数体表达式的类型可能已被更早的遍历
+//     缓存（`ast->cached_type`）⇒ 拿不到结果（返回 any / NULL）。实用建议：回调把形参类型写出来。
+//
+// 参数：elem_type 数组元素类型（只读，内部复制）；acc_type 可为 NULL；cb 回调 AST。
+// 返回：回调返回类型的**新副本**（调用方 type_free）；推不出返回 NULL。
+static TypeInfo* infer_callback_ret_type(Semantic* s, TypeInfo* elem_type,
+                                         TypeInfo* acc_type, Ast* cb) {
+    if (!s || !elem_type || !elem_type->element_type) return NULL;
+    if (!cb || cb->kind != AST_FUNC_DEF || cb->u.func.pcnt < 1) return NULL;
+
+    TypeInfo* guard_type = type_copy(elem_type->element_type);
+    TypeInfo* orig_types[8] = {NULL};   // 保存原始类型（恢复时用）
+    int guard_count = cb->u.func.pcnt < 8 ? cb->u.func.pcnt : 8;
+    for (int gi = 0; gi < guard_count; gi++) {
+        Symbol* param_sym = scope_resolve(s->current, cb->u.func.params[gi]);
+        if (!param_sym) continue;
+        orig_types[gi] = param_sym->type;
+        if (gi == 0) {
+            param_sym->type = (acc_type && acc_type->kind != TYPE_ANY)
+                ? type_copy(acc_type) : type_copy(guard_type);
+        } else if (gi == 1 && acc_type) {
+            param_sym->type = type_copy(guard_type);
+        } else {
+            param_sym->type = type_copy(orig_types[gi]);
+        }
+    }
+    TypeInfo* inferred = infer_return_type_from_body(s, cb->u.func.body);
+    for (int gi = 0; gi < guard_count; gi++) {
+        Symbol* param_sym = scope_resolve(s->current, cb->u.func.params[gi]);
+        if (param_sym && orig_types[gi]) {
+            type_free(param_sym->type);
+            param_sym->type = orig_types[gi];
+        }
+    }
+    type_free(guard_type);
+    return inferred;
+}
+
+// ============================================================================
 // 类型推断辅助函数
 // ============================================================================
 
@@ -1645,93 +1696,41 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                             }
 
                             // Array.map 泛型推断：根据 callback 返回类型推断 Array[U]
-                            // 利用类型守卫：临时将 callback 参数符号类型设为接收者元素类型
-                            // 这样函数体内 _str(x)、x > 3 等就能正确推断返回类型
+                            //   守卫逻辑已收敛到 infer_callback_ret_type（模块形态 arrays.map 共用同一实现，
+                            //   此前两处各一份 ⇒ 同一操作两种写法精度不一致）
                             if (obj_type->kind == TYPE_ARRAY && strcmp(method_name, "map") == 0 &&
                                 ast->u.call.args.count >= 1 && obj_type->element_type &&
                                 obj_type->element_type->kind != TYPE_ANY) {
-                                Ast* callback_ast = ast->u.call.args.items[0];
-                                if (callback_ast && callback_ast->kind == AST_FUNC_DEF &&
-                                    callback_ast->u.func.pcnt >= 1) {
-                                    // 类型守卫：临时修改 callback 参数在作用域中的符号类型
-                                    TypeInfo* guard_type = type_copy(obj_type->element_type);
-                                    TypeInfo* orig_types[8] = {NULL};  // 保存原始类型
-                                    int guard_count = callback_ast->u.func.pcnt < 8 ? callback_ast->u.func.pcnt : 8;
-                                    for (int gi = 0; gi < guard_count; gi++) {
-                                        Symbol* param_sym = scope_resolve(s->current, callback_ast->u.func.params[gi]);
-                                        if (param_sym) {
-                                            orig_types[gi] = param_sym->type;
-                                            param_sym->type = (gi == 0) ? type_copy(guard_type) : type_copy(orig_types[gi]);
-                                        }
-                                    }
-                                    // 推断函数体返回类型
-                                    TypeInfo* inferred = infer_return_type_from_body(s, callback_ast->u.func.body);
-                                    // 恢复原始参数符号类型
-                                    for (int gi = 0; gi < guard_count; gi++) {
-                                        Symbol* param_sym = scope_resolve(s->current, callback_ast->u.func.params[gi]);
-                                        if (param_sym && orig_types[gi]) {
-                                            type_free(param_sym->type);
-                                            param_sym->type = orig_types[gi];
-                                        }
-                                    }
-                                    type_free(guard_type);
-                                    if (inferred && inferred->kind != TYPE_ANY) {
-                                        type_free(obj_type);
-                                        TypeInfo* arr_type = type_new(TYPE_ARRAY);
-                                        arr_type->element_type = inferred;
-                                        return arr_type;
-                                    }
-                                    if (inferred) type_free(inferred);
+                                TypeInfo* inferred = infer_callback_ret_type(s, obj_type, NULL,
+                                                                            ast->u.call.args.items[0]);
+                                if (inferred && inferred->kind != TYPE_ANY) {
+                                    type_free(obj_type);
+                                    TypeInfo* arr_type = type_new(TYPE_ARRAY);
+                                    arr_type->element_type = inferred;
+                                    return arr_type;
                                 }
+                                if (inferred) type_free(inferred);
                             }
 
                             // Array.reduce 泛型推断（v3.2.8）：结果类型 = **回调的返回类型**
-                            //   与 map 同一套"类型守卫"：把回调的两个参数符号临时设成
-                            //   (累加器 = 第 2 个实参 init 的类型, 元素 = 接收者元素类型)，再推函数体返回类型。
+                            //   （守卫逻辑同样收敛到 infer_callback_ret_type：acc_type 非空即 reduce 语义）
                             //   此前 reduce 落到注册表的 `any` ⇒
                             //   `int s = arr.reduce(func(int a,int b):int { return a+b }, 0)` **编译不过**
                             //   （实测：变量声明类型与初始化值类型不匹配，实际类型 any）。
                             if (obj_type->kind == TYPE_ARRAY && strcmp(method_name, "reduce") == 0 &&
                                 ast->u.call.args.count >= 1 && obj_type->element_type &&
                                 obj_type->element_type->kind != TYPE_ANY) {
-                                Ast* red_cb = ast->u.call.args.items[0];
-                                if (red_cb && red_cb->kind == AST_FUNC_DEF && red_cb->u.func.pcnt >= 1) {
-                                    TypeInfo* red_elem = type_copy(obj_type->element_type);
-                                    TypeInfo* red_acc = (ast->u.call.args.count >= 2)
-                                        ? infer_expr_type(s, ast->u.call.args.items[1]) : NULL;
-                                    TypeInfo* red_origs[8] = {NULL};
-                                    int red_n = red_cb->u.func.pcnt < 8 ? red_cb->u.func.pcnt : 8;
-                                    for (int gi = 0; gi < red_n; gi++) {
-                                        Symbol* psym = scope_resolve(s->current, red_cb->u.func.params[gi]);
-                                        if (psym) {
-                                            red_origs[gi] = psym->type;
-                                            if (gi == 0) {
-                                                psym->type = (red_acc && red_acc->kind != TYPE_ANY)
-                                                    ? type_copy(red_acc) : type_copy(red_elem);
-                                            } else if (gi == 1) {
-                                                psym->type = type_copy(red_elem);
-                                            } else {
-                                                psym->type = type_copy(red_origs[gi]);
-                                            }
-                                        }
-                                    }
-                                    TypeInfo* inferred = infer_return_type_from_body(s, red_cb->u.func.body);
-                                    for (int gi = 0; gi < red_n; gi++) {
-                                        Symbol* psym = scope_resolve(s->current, red_cb->u.func.params[gi]);
-                                        if (psym && red_origs[gi]) {
-                                            type_free(psym->type);
-                                            psym->type = red_origs[gi];
-                                        }
-                                    }
-                                    type_free(red_elem);
-                                    if (red_acc) type_free(red_acc);
-                                    if (inferred && inferred->kind != TYPE_ANY) {
-                                        type_free(obj_type);
-                                        ast->cached_type = type_copy(inferred);
-                                        return inferred;
-                                    }
-                                    if (inferred) type_free(inferred);
+                                TypeInfo* red_acc = (ast->u.call.args.count >= 2)
+                                    ? infer_expr_type(s, ast->u.call.args.items[1]) : NULL;
+                                TypeInfo* inferred = infer_callback_ret_type(s, obj_type, red_acc,
+                                                                            ast->u.call.args.items[0]);
+                                if (red_acc) type_free(red_acc);
+                                if (inferred && inferred->kind != TYPE_ANY) {
+                                    type_free(obj_type);
+                                    ast->cached_type = type_copy(inferred);
+                                    return inferred;
                                 }
+                                if (inferred) type_free(inferred);
                             }
 
                             // Dict.get 默认值类型推断：根据第二个参数（默认值）推断返回类型
@@ -1938,6 +1937,41 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
 
             if (is_native_module) {
                 const char* method_name = ast->u.module_call.method_name;
+
+                // ⓪ 回调返回类型族（`arrays.map` / `arrays.reduce`，v3.2.8）：
+                //   注册规格只能写 `Array[any]` / `any` —— 真实类型取决于**回调的返回类型**
+                //   （模块形态的数组是**第 0 个实参**，不是接收者）。实例形态（`xs.map(fn)`）早有这条守卫，
+                //   模块形态此前没有 ⇒ 同一操作两种写法精度不一致
+                //   （实测：`Array[int] m = arrays.map(xs, fn)` 报 Array[any]，`xs.map(fn)` 却是 Array[int]）。
+                //   两者共用 infer_callback_ret_type（单一事实来源）。
+                //   ⚠ 必须放在**规格查询之前**：规格给的是 `Array[any]`，得让它有机会被更精确的结果覆盖。
+                if (strcmp(actual_module, "arrays") == 0 && ast->u.module_call.args.count >= 2 &&
+                    (strcmp(method_name, "map") == 0 || strcmp(method_name, "reduce") == 0)) {
+                    TypeInfo* arr_type = infer_expr_type(s, ast->u.module_call.args.items[0]);
+                    if (arr_type && arr_type->kind == TYPE_ARRAY && arr_type->element_type &&
+                        arr_type->element_type->kind != TYPE_ANY) {
+                        TypeInfo* acc_type = NULL;
+                        if (strcmp(method_name, "reduce") == 0 && ast->u.module_call.args.count >= 3) {
+                            acc_type = infer_expr_type(s, ast->u.module_call.args.items[2]);
+                        }
+                        TypeInfo* inferred = infer_callback_ret_type(s, arr_type, acc_type,
+                                                                    ast->u.module_call.args.items[1]);
+                        if (acc_type) type_free(acc_type);
+                        if (inferred && inferred->kind != TYPE_ANY) {
+                            type_free(arr_type);
+                            if (strcmp(method_name, "map") == 0) {
+                                TypeInfo* out = type_new(TYPE_ARRAY);
+                                out->element_type = inferred;
+                                ast->cached_type = type_copy(out);
+                                return out;
+                            }
+                            ast->cached_type = type_copy(inferred);
+                            return inferred;
+                        }
+                        if (inferred) type_free(inferred);
+                    }
+                    if (arr_type) type_free(arr_type);
+                }
 
                 // ① 优先用**完整返回类型规格**：它才能表达 `Array[DirEntry]` / `Dict[string,string]`
                 //    这类参数化、带名字的类型（Kind 槽表达不了，见 leno_types.h 的 NativeTypeSpec）。

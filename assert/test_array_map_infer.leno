@@ -1,5 +1,7 @@
 // 测试 Array.map 泛型推断：类型守卫注入 callback 参数类型
 
+import arrays
+
 main() {
     Array[int] nums = [1, 2, 3, 4, 5]
 
@@ -55,6 +57,26 @@ main() {
     Array[string] words = ["a", "b", "c"]
     string joined = words.reduce(func(string a, string b) { return a + b }, "")
     assert_eq(joined, "abc")
+
+    // === **模块形态**的 map / reduce（v3.2.8：与实例形态共用同一套推断）===
+    //   为什么要单独钉"两种写法精度一致"：此前实例形态有守卫、模块形态**没有** ⇒ 实测
+    //   `Array[int] m = arrays.map(nums, fn)` 报 `Array[any]`，而 `nums.map(fn)` 却是 `Array[int]`
+    //   —— 同一件事换个拼法就丢类型，用户没法预期。现在两条路都走
+    //   `infer_callback_ret_type`（**唯一实现**，见 semantic_type.c）。
+    Array[int] m_mod = arrays.map(nums, func(int x, int i) { return x * 2 })
+    assert_eq(m_mod.len(), 5)
+    assert_eq(m_mod[4], 10)
+
+    int r_mod = arrays.reduce(nums, func(int a, int b) { return a + b }, 0)
+    assert_eq(r_mod, 15)
+
+    Array[string] s_mod = arrays.map(words, func(string w, int i) { return w + "!" })
+    assert_eq(s_mod[0], "a!")
+    assert_eq(s_mod[2], "c!")
+
+    // 对照：filter 的模块形态本来就精确（规格 `Array[ARG0_ELEM]`，与回调无关）
+    Array[string] f_mod = arrays.filter(words, func(string w, int i) { return w != "b" })
+    assert_eq(f_mod.len(), 2)
 
     print("test_array_map_infer passed")
 }
