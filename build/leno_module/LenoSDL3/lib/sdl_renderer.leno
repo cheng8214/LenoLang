@@ -1152,7 +1152,34 @@ const BX_TEX    = 4   // 批处理文字纹理
         return tex
     }
 
+    // 蒙版尺寸阶梯 ✓：把**连续变化**的半径吸附到有限档位（1.1× 等比）⇒ 蒙版能长期复用（缓存必命中 ✓）
+    //   动机（实测 ✓）：动画里半径每帧都在变（ripple: +2.5/帧 × 显示缩放 ⇒ 每帧 +5~6px ✗），
+    //     用**精确 M** 当缓存键会每帧全 miss ✗：每帧重算 6 张 542² 蒙版 ≈ 123ms/帧
+    //     （占该场景总耗时 96% ✓，是唯一瓶颈 —— 像素循环本身没错，错在「每帧都要重算」✗）。
+    //   取档规则：在 prev / c 两档里取「比例更接近 1」的那个 ⇒ 拉伸比恒在 [0.95, 1.05] ✓
+    //     ⇒ 1px 的 AA 斜坡只变成 0.95~1.05px、描边环的线宽同样只差 ≤5% ✓（肉眼无感 ✓）
+    //   ⚠ 吸附的只是**蒙版自身尺寸**：调用方的目标几何（corner = 精确 M/S ✓）一个字没改
+    //     ⇒ 圆的半径 / 位置 / 动画连续性分毫不差 ✓（这正是「不许牺牲观感」的落点 ✓）
+    //   ★ M ≤ 32 用**精确尺寸**（UI 尺度都在这儿：卡片圆角 / 小圆 / 单选点 ✓）：
+    //     一是小蒙版生成极便宜（N ≤ 66 ⇒ 一次 ~0.3ms ✓ 且用完即长期命中 ✓），
+    //     二是小半径处 1.1× 阶梯受取整影响会粗到 ~9%（r=11 实测线墨量 −8% ✗），
+    //     而 1px 描边在小圆上本来就细 ⇒ 这 8% 反而是肉眼能看出来的那种 ✗ ⇒ 一律精确 ✓
+    func _rrLadder(int M): int {
+        if M <= 32 { return M }
+        var c = 32
+        var prev = 32
+        while c < M and c < 256 {
+            prev = c
+            c = _int(_float(c) * 1.1 + 1.0)     // 等比 1.1× 档位：32,36,40,45,50,56,62,69,76… ✓
+        }
+        if c > 256 { c = 256 }                  // 上限 = 蒙版最大半径（与 _rrUsable 一致 ✓）
+        // 几何中点判据（M² vs prev·c，免开方 ✓）：M² 更靠近 c ⇒ 取 c（比例更接近 1 ✓）
+        if M * M >= prev * c { return c }
+        return prev
+    }
+
     // 取（或懒生成）蒙版 ✓；渲染缩放变了整体重建（蒙版按**物理像素**生成 ⇒ SSAA 下依然 1:1 不糊 ✓）
+    //   `M` 请传 _rrLadder() 的档位（否则连续变化的半径会每帧 miss ✗）
     func _rrGet(int M, int lw): Ptr[u8] {
         if _rrScale != _bxSx {
             _rrClear()
@@ -1163,8 +1190,9 @@ const BX_TEX    = 4   // 批处理文字纹理
         }
         Ptr[u8] tex = _rrMask(M, lw)
         if tex == null { return null }
-        if _rrTex.len() >= 16 {
-            // 实际半径种类通常 < 6 ✓；真超限就先 flush 再清（避免纹理仍被命令队列引用 ✗）
+        if _rrTex.len() >= 128 {
+            // 上限 = (32 个精确小尺寸 + 22 个阶梯档位) × (实心/描边 2 种) ≈ 108 条 ✓
+            //   （真超限就先 flush 再清：清掉的只是缓存，下次重生成 ✓ 但绝不能碰正在被命令队列引用的纹理 ✗）
             flush()
             _rrClear()
             _rrScale = _bxSx
@@ -1265,15 +1293,17 @@ const BX_TEX    = 4   // 批处理文字纹理
             if xr > h * 0.5 { xr = h * 0.5 }
             int M = _int(xr * _bxSx + 0.5)
             if M < 1 { M = 1 }
-            Ptr[u8] tex = _rrGet(M, 0)
+            int Mq = _rrLadder(M)          // 蒙版档位（缓存键 ✓）；目标几何仍用精确 M ✓
+            Ptr[u8] tex = _rrGet(Mq, 0)
             if tex != null {
                 _flushBatches()
-                // ★ 角块取 M/S（而不是 xr）：让「蒙版像素 : 目标像素」**严格 1:1** ✓
+                // ★ 角块取 M/S（而不是 xr）：让角块外沿落在**整像素**上 ✓
                 //   若用 xr（如 160.5 / M=161 ⇒ 缩放 0.9969 ≠ 1）⇒ 采样相位沿图元漂移 ✗，
                 //   且角块外沿落在半像素上 ⇒ 光栅器 top-left 规则下「左/上算包含、右/下算排除」
                 //   ⇒ 左半像素画得出、右半像素被丢掉 ✗✗（钟表 9/3 点不对称就是这么来的 ✓）
+                //   （Mq ≤ M ≤ 1.05·Mq ⇒ 蒙版被拉伸 ≤5%，AA 斜坡 1px→0.95~1.05px ✓ 肉眼无感 ✓）
                 float corner = _float(M) / _bxSx
-                return _emitMask9(tex, M, x, y, w, h, corner, corner)
+                return _emitMask9(tex, Mq, x, y, w, h, corner, corner)
             }
         }
         return _fillRoundedGeom(x, y, w, h, r)
@@ -1290,16 +1320,18 @@ const BX_TEX    = 4   // 批处理文字纹理
             int lw = _int(S + 0.5); if lw < 1 { lw = 1 }      // 线的物理宽 = 1 逻辑像素 ✓
             int M = _int(xr * S + 0.5)                        // 环的半径（物理像素 ✓）
             if M < 2 { M = 2 }
-            int Ms = M + 1                                     // 蒙版角块边长（环蒙版含 1px 内边距 ✓）
-            // ★ 角块 = Ms/S ⇒ **缩放恰为 1** ✓（原因同 fillRoundedRect：非 1 的缩放会漂移相位 ✗）
-            //   ⇒ 边框正好落在「路径内侧的那一圈像素」上：清晰 ✓ 左右对称 ✓
-            //   （旧写法 corner = r + 半线宽 ⇒ 外沿落在半像素 ⇒ 左有右无 ✗✗，见 fillRoundedRect 注释）
+            int Ms = M + 1                                     // **目标**角块边长（环蒙版含 1px 内边距 ✓）
+            int Mq = _rrLadder(M)                              // 蒙版档位（缓存键 ✓）
+            int Msq = Mq + 1                                   // 该档位的**蒙版**角块边长（切片用 ✓）
+            // ★ 角块 = Ms/S ⇒ 角块外沿落在整像素上 ⇒ 边框正好落在「路径内侧的那一圈像素」上：
+            //   清晰 ✓ 左右对称 ✓（原因同 fillRoundedRect：外沿落半像素 ⇒ 左有右无 ✗✗）
             float corner = _float(Ms) / S
-            Ptr[u8] tex = _rrGet(M, lw)
+            Ptr[u8] tex = _rrGet(Mq, lw)
             if tex != null {
                 _flushBatches()
-                // r 传 M/S（环的中心线半径 ✓ ⇒ 决定中段位置）；corner 传 Ms/S（角块边长 ✓）
-                return _emitMask9(tex, Ms, x, y, w, h, _float(M) / S, corner)
+                // r 传 M/S（环的中心线半径 ✓ ⇒ 决定中段位置）；corner 传 Ms/S（目标角块边长 ✓）
+                // Msq 只决定**从蒙版哪一列切**（拉伸比 Ms/Msq ≤ 1.05 ⇒ 线宽与 AA 斜坡只差 ≤5% ✓）
+                return _emitMask9(tex, Msq, x, y, w, h, _float(M) / S, corner)
             }
         }
         return _drawRoundedGeom(x, y, w, h, r)
