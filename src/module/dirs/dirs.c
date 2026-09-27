@@ -1066,9 +1066,32 @@ static const NativeStructSpec DIRENTRY_STRUCT_SPEC = {
     "DirEntry", 3, DIRENTRY_FIELD_NAMES, DIRENTRY_FIELD_TYPES
 };
 
+// ==================== DirInfo 的类型规格（stat 的返回，v3.2.4） ====================
+// 为什么不是 `Dict[K, V]`：stat 的五个键**类型不齐** —— exists / is_file / is_dir 是 bool，
+//   size / mtime 是 int ⇒ 同质的 Dict 表达不了"这个键是 bool、那个键是 int"。
+// 字段名与旧的 Dict 键**逐字相同** ⇒ `st.size` / `st.exists` 这类调用点不用改；
+//   要改的是 `st["size"]` 下标式与 `if st is Dict` 收窄（编译期即被挡住）。
+static const NativeTypeSpec S_BOOL_SPEC = { NTYPE_BOOL, NULL, NULL, NULL };
+static const NativeTypeSpec S_INT_SPEC  = { NTYPE_INT,  NULL, NULL, NULL };
+static const NativeTypeSpec S_DIRINFO_SPEC = { NTYPE_STRUCT, "DirInfo", NULL, NULL };
+
+static const char* DIRINFO_FIELD_NAMES[] = { "exists", "size", "is_file", "is_dir", "mtime" };
+static const NativeTypeSpec* DIRINFO_FIELD_TYPES[] = {
+    &S_BOOL_SPEC, &S_INT_SPEC, &S_BOOL_SPEC, &S_BOOL_SPEC, &S_INT_SPEC
+};
+static const NativeStructSpec DIRINFO_STRUCT_SPEC = {
+    "DirInfo", 5, DIRINFO_FIELD_NAMES, DIRINFO_FIELD_TYPES
+};
+
 // ==================== 文件信息 ====================
 
-// dirs.stat(path) - 获取文件信息
+// dirs.stat(path) - 获取文件信息（返回 `DirInfo`，**字段类型编译期已知** —— v3.2.4）
+// 字段：exists(bool) / size(int) / is_file(bool) / is_dir(bool) / mtime(int)
+//   · 路径不存在（或没权限）⇒ exists=false、其余保持默认值 0（与旧 Dict 形态逐字同口径）
+//   · size 是**该条目自身**的大小（目录在 Windows 报 0、POSIX 报 st_size），不是递归总大小
+//   · mtime 在 Windows 上恒 0（已知限制，见下方注释）
+// ⚠ 与旧形态（无类型 `Dict`）**逐字段同义**：键名一字未改 ⇒ `st.size` / `st.exists` 这类调用点
+//   不用动；但 `st["size"]` 下标式与 `if st is Dict` 收窄不再适用。
 static Value native_dirs_stat(int argCount, Value* args) {
     if (argCount < 1) {
         native_throw_error("stat 需要路径参数");
@@ -1081,27 +1104,26 @@ static Value native_dirs_stat(int argCount, Value* args) {
         return val_null();
     }
     
-    ObjDict* dict = dict_new(8);
-    if (!dict) {
+    ObjStruct* info = native_struct_new("DirInfo");
+    if (!info) {
         return val_null();
     }
-    
-    // 前向声明 dict_set
-    extern void dict_set(ObjDict* dict, Value key, Value value);
-    
-    // 初始化默认值
-    dict_set(dict, val_obj((Object*)str_copy("exists", 6)), val_bool(0));
-    dict_set(dict, val_obj((Object*)str_copy("size", 4)), val_int(0));
-    dict_set(dict, val_obj((Object*)str_copy("is_file", 7)), val_bool(0));
-    dict_set(dict, val_obj((Object*)str_copy("is_dir", 6)), val_bool(0));
-    dict_set(dict, val_obj((Object*)str_copy("mtime", 5)), val_int(0));
+    Value info_val = val_obj((Object*)info);
+    gc_push_root(&info_val);   // 填字段期间它还没进任何数组/局部根 ⇒ 自己护住
+
+    // 默认值（与旧 Dict 形态逐字相同）
+    native_struct_set(info, "exists",  val_bool(0));
+    native_struct_set(info, "size",    val_int(0));
+    native_struct_set(info, "is_file", val_bool(0));
+    native_struct_set(info, "is_dir",  val_bool(0));
+    native_struct_set(info, "mtime",   val_int(0));
     
 #ifdef _WIN32
     wchar_t* wpath = utf8_to_utf16(path);
     WIN32_FILE_ATTRIBUTE_DATA attrData;
     if (wpath && GetFileAttributesExW(wpath, GetFileExInfoStandard, &attrData)) {
         // 文件存在，更新信息
-        dict_set(dict, val_obj((Object*)str_copy("exists", 6)), val_bool(1));
+        native_struct_set(info, "exists", val_bool(1));
         
         // size
         // ⚠ 原来是 val_int((int)size.QuadPart) —— (int) 是 **32 位**，≥2GB 的文件会被截断 ✗
@@ -1110,36 +1132,37 @@ static Value native_dirs_stat(int argCount, Value* args) {
         LARGE_INTEGER size;
         size.LowPart = attrData.nFileSizeLow;
         size.HighPart = attrData.nFileSizeHigh;
-        dict_set(dict, val_obj((Object*)str_copy("size", 4)), val_int((int64_t)size.QuadPart));
+        native_struct_set(info, "size", val_int((int64_t)size.QuadPart));
         
         // is_file, is_dir
         int is_dir = attrData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY;
-        dict_set(dict, val_obj((Object*)str_copy("is_file", 7)), val_bool(!is_dir));
-        dict_set(dict, val_obj((Object*)str_copy("is_dir", 6)), val_bool(is_dir));
+        native_struct_set(info, "is_file", val_bool(!is_dir));
+        native_struct_set(info, "is_dir", val_bool(is_dir));
         
         // mtime (简化版，返回 0)
-        dict_set(dict, val_obj((Object*)str_copy("mtime", 5)), val_int(0));
+        native_struct_set(info, "mtime", val_int(0));
     }
     if (wpath) { free(wpath); }
 #else
     struct stat st;
     if (stat(path, &st) == 0) {
         // 文件存在，更新信息
-        dict_set(dict, val_obj((Object*)str_copy("exists", 6)), val_bool(1));
+        native_struct_set(info, "exists", val_bool(1));
         
         // size（同上：不能 (int) 截断，见 Windows 分支的注释 ✓）
-        dict_set(dict, val_obj((Object*)str_copy("size", 4)), val_int((int64_t)st.st_size));
+        native_struct_set(info, "size", val_int((int64_t)st.st_size));
         
         // is_file, is_dir
-        dict_set(dict, val_obj((Object*)str_copy("is_file", 7)), val_bool(S_ISREG(st.st_mode)));
-        dict_set(dict, val_obj((Object*)str_copy("is_dir", 6)), val_bool(S_ISDIR(st.st_mode)));
+        native_struct_set(info, "is_file", val_bool(S_ISREG(st.st_mode)));
+        native_struct_set(info, "is_dir", val_bool(S_ISDIR(st.st_mode)));
         
         // mtime
-        dict_set(dict, val_obj((Object*)str_copy("mtime", 5)), val_int((int)st.st_mtime));
+        native_struct_set(info, "mtime", val_int((int)st.st_mtime));
     }
 #endif
     
-    return val_obj((Object*)dict);
+    gc_pop_root();
+    return info_val;
 }
 
 // dirs.size(path) - 取文件字节数（**类型化**入口，返回值就是 int）
@@ -1264,7 +1287,13 @@ void dirs_init_module(void) {
                                        1, -1, -1, &S_DIRENTRY_ARR_SPEC, string_params);
 
     // 文件信息
-    native_register_module_method_spec("dirs", "stat", native_dirs_stat, 1, -1, -1, &NATIVE_T_DICT, string_params);
-    // size：stat 里"缺一个类型化取值入口"的那个键（另三个键已有 exists/is_file/is_dir ✓）
+    // stat：返回 `DirInfo`（**字段类型编译期已知**，v3.2.4）—— 五个键类型不齐（bool 与 int 混）
+    //   ⇒ 同质的 Dict 表达不了；改结构体后 `st.size` 直接是 int，不再需要 `_int(st.get("size", 0))`
+    //   那层手动转换 ✓
+    native_register_struct_spec(&DIRINFO_STRUCT_SPEC);
+    native_register_module_method_spec("dirs", "stat", native_dirs_stat, 1, -1, -1, &S_DIRINFO_SPEC, string_params);
+    // size：`stat` 改为返回结构体后 `stat(p).size` 本身就是 int ⇒ 这个单键入口**不再是必需**，
+    //   但保留：① 只想取大小时不必构造整个 DirInfo；② 已有三处 leno_gui 消费方在用
+    //   （文件管理器 / 属性对话框 / 缓存清理工具）。语义与 `stat(p).size` 等价 ✓
     native_register_module_method_spec("dirs", "size", native_dirs_size, 1, -1, -1, &NATIVE_T_INT, string_params);
 }

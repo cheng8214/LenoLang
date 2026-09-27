@@ -144,7 +144,12 @@
 //   ⇒ .lenb / entry_*.lenb 必须整体失效重编译。
 // v2.7.1（2026-09-16）：枚举成员求值语义修正 —— 扫描器补 `not`、除零/取模零改为与解析器同结论
 //   ⇒ 修正前编译出的 .lenb / entry_*.lenb 里可能烙着错的常量值，必须整体失效重编译。
-#define LENO_BIN_VERSION    0x00030203  // v3.2.3 - native 返回类型规格 + `dirs.walk` 返回形态改
+#define LENO_BIN_VERSION    0x00030204  // v3.2.4 - `dirs.stat` 返回形态由无类型 `Dict` 改为
+                                        //   `DirInfo` 结构体（字段类型编译期已知）。同 v3.2.3 的
+                                        //   判据：opcode 集合 / 字节布局都没变，变的是**求值语义
+                                        //   + 编译期推断**（旧 `.lenb` 里 `st["size"]` 语义失效、
+                                        //   同源码的取值指令不同）⇒ 旧产物整体失效重编译
+                                        // v3.2.3 - native 返回类型规格 + `dirs.walk` 返回形态改
                                         //   为 `Array[DirEntry]`（见上）。**opcode 集合与字节布局
                                         //   都没变**，但**求值语义 + 编译期推断都变了**：同一份
                                         //   `.leno` 源码现在会推出不同的类型 ⇒ 发射的指令不同
@@ -183,7 +188,10 @@
 // v13：ObjFunction 增加 is_async（运行期判定"调用即建协程"用）。旧缓存里的函数对象缺这个
 //      字段 ⇒ async 函数的**间接调用**（`var f = w; f()`、当参数传、绑定方法）会退回同步执行、
 //      静默错值，所以必须**作废旧缓存**。
-#define LENO_MODCACHE_VERSION  0x00000014  // v20 - 同 LENO_BIN_VERSION v3.2.3（native 返回类型
+#define LENO_MODCACHE_VERSION  0x00000015  // v21 - 同 LENO_BIN_VERSION v3.2.4（`dirs.stat` 改返
+                                           //       回 `DirInfo` 结构体：模块字节码里同样含"按返回
+                                           //       类型推断发射的取值指令"）
+                                           // v20 - 同 LENO_BIN_VERSION v3.2.3（native 返回类型
                                            //       规格 + `dirs.walk` 返回 `Array[DirEntry]`：
                                            //       模块字节码里同样含"按推断类型发射的指令"与那句
                                            //       walk 调用，旧缓存里烙的是旧推断）

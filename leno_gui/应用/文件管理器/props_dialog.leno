@@ -39,10 +39,10 @@ export func show(string path, bool isDir) {
         kind = if e != "" then ("文件 " + e) else "文件"
     }
 
-    int mt = _int(st.get("mtime", 0))
+    int mt = st.mtime            // DirInfo 字段：类型化取值，不必再 _int(st.get("mtime", 0)) ✓（v3.2.4）
     string mtStr = if mt > 0 then (mt as string) else "N/A"
 
-    bool exists = _bool(st.get("exists", false))
+    bool exists = st.exists      // 同上：bool 直接取（原来要 _bool(st.get("exists", false))）
     string existStr = if exists then "是" else "否"
     string accessStr = if exists then "可访问" else "无法访问（可能已被移动或删除）"
 

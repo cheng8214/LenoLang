@@ -8673,11 +8673,12 @@ main() {
     print(dirs.is_file("data.txt"))     // true/false
     print(dirs.is_dir("/tmp"))          // true/false
     
-    // 获取文件信息
+    // 获取文件信息（返回结构体 DirInfo，字段类型编译期已知 ⇒ 直接用字段 ✓）
     var info = dirs.stat("data.txt")
-    print(info["size"])         // 文件大小
-    print(info["mtime"])        // 修改时间
-    print(info["is_dir"])       // 是否是目录
+    print(info.size)            // 文件大小（int）
+    print(info.mtime)           // 修改时间（int）
+    print(info.is_dir)          // 是否是目录（bool）
+    print(info.exists)          // 是否存在（bool）
     
     // 创建和删除目录
     dirs.mkdir("new_folder")

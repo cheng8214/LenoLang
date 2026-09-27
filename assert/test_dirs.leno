@@ -1,6 +1,7 @@
 // dirs 模块测试
 
 import dirs
+import files
 
 main()
 {
@@ -72,21 +73,31 @@ main()
     print("当前目录条目数: " + entries.len())
     assert_eq(entries.len() > 0, true)
 
-    // 测试10: stat 获取文件信息
+    // 测试10: stat 获取文件信息 —— 返回 `DirInfo`（**字段类型编译期已知**，v3.2.4）
+    //   旧形态是无类型 `Dict` ⇒ `info["size"]` 是 any，取 size 得 `if st is Dict` + `if s is int`；
+    //   现在 `info.size` 直接是 int、`info.exists` 直接是 bool ✓
     var info = dirs.stat(cwd)
-    print("目录信息: exists=" + info["exists"] + ", is_dir=" + info["is_dir"])
-    assert_eq(info["exists"], true)
-    assert_eq(info["is_dir"], true)
+    print("目录信息: exists=" + info.exists + ", is_dir=" + info.is_dir)
+    assert_eq(info.exists, true)
+    assert_eq(info.is_dir, true)
+    assert_eq(info.is_file, false)
+    assert(not (info is Dict))          // 守住"不再是 Dict"（字段类型已知；旧的收窄路径已作废）
 
-    // 测试11: dirs.size() —— stat 缺的那个类型化取值入口（2026-09-26 新增）
-    //   背景：`dirs.stat()` 返回无类型 Dict ⇒ 取 size 要 `if st is Dict` + `if s is int` 手动收窄；
-    //   而 stat 的另三个键 exists/is_file/is_dir 早就有专用函数（dirs.exists/is_file/is_dir）
-    //   ⇒ 补上 size 这一格。返回类型是 TYPE_INT（不是 any）⇒ 可直接做 int 运算 ✓
+    // 类型契约：下面两行**不做任何收窄/转换** ⇒ 编译期就把字段类型钉住了
+    //   （若字段是 any，`int x = info.size` / `bool b = info.exists` 都会编译失败）
+    int info_bytes = info.size
+    bool info_ok = info.exists
+    assert_eq(info_bytes >= 0, true)
+    assert_eq(info_ok, true)
+
+    // 测试11: dirs.size() —— 单键入口（语义与 `stat(p).size` 等价）
+    //   它当初是为"stat 返回无类型 Dict"补的类型化入口；stat 改结构体后不再是唯一入口，但保留：
+    //   只想取大小时不必构造整个 DirInfo，且已有三处 leno_gui 消费方在用 ✓
     var self = "assert\\test_dirs.leno"          // 用一个**确定存在**的文件
     assert_eq(dirs.exists(self), true)
 
     // ① 与 stat 的 size 字段一致（同口径）
-    assert_eq(dirs.size(self), info_size(self))
+    assert_eq(dirs.size(self), dirs.stat(self).size)
 
     // ② 类型自证：能直接做 int 整除（any 类型过不了这道）
     assert_eq(dirs.size(self) > 0, true)
@@ -94,10 +105,10 @@ main()
 
     // ③ 不存在 ⇒ 0（与 stat 的默认值同口径；要区分"空文件"与"不存在"先 dirs.exists()）
     assert_eq(dirs.size("assert\\不存在的文件_9b2f.leno"), 0)
-    assert_eq(dirs.size("assert\\不存在的文件_9b2f.leno"), dirs.stat("assert\\不存在的文件_9b2f.leno")["size"])
+    assert_eq(dirs.size("assert\\不存在的文件_9b2f.leno"), dirs.stat("assert\\不存在的文件_9b2f.leno").size)
 
     // ④ 目录 ⇒ 与 stat 一致（给的是目录条目自身的大小，不是递归总大小）
-    assert_eq(dirs.size("assert"), dirs.stat("assert")["size"])
+    assert_eq(dirs.size("assert"), dirs.stat("assert").size)
 
     // 测试13: dirs.walk() —— 返回 `Array[DirEntry]`（带**字段类型**的 native struct，v3.2.3）
     //   背景：`walk` 旧形态是 `Array[Array]` 的三元组 `[root, dirs, files]` ⇒ 元素是 any，取值
@@ -132,15 +143,104 @@ main()
     assert_eq(dirs.extname(one.files[0]), ".c")
     assert_eq(one.dirs.len(), 0)
 
-    print("test_dirs passed")
-}
+    // 测试14: **全部 dirs 方法的类型契约**（编译期把关）
+    //   为什么值得单独写一段：native 的类型规格**只在编译期生效**（运行期不校验字段/元素类型）
+    //   ⇒ "spec 漏写 / 写错 / 被改回 any" 这类毛病，运行期断言永远是绿的，只有编译期能挡住；
+    //   而 dirs 的返回形态在 v3.2.3/v3.2.4 连改两次（walk / stat）⇒ 正是该被钉住的地方。
+    //   下面每行都是**不做收窄、不做转换**的赋值 ⇒ spec 一漂，这里就编译失败。
+    //   ⚠ 只能靠"推断 + 逐字段强类型局部变量"钉：native struct 名（`DirEntry` / `DirInfo`）
+    //     **不能当类型标注**（不在符号表里 ⇒ 写 `DirInfo d = ...` 会报"未定义的类型"）。
+    string t_cwd    = dirs.cwd()
+    string t_abs    = dirs.abspath(".")
+    string t_base   = dirs.basename("a\\b.c")
+    string t_dir    = dirs.dirname("a\\b.c")
+    string t_ext    = dirs.extname("a\\b.c")
+    string t_join   = dirs.join("a", "b", "c")
+    string t_sep    = dirs.sep()
+    string t_script = dirs.script_dir()
+    string t_res    = dirs.res_dir()
+    Array[string] t_drives = dirs.list_drives()
+    Array[string] t_ls     = dirs.listdir(".")
+    int  t_size     = dirs.size(self)
 
-// 取 stat 的 size 字段（**故意保留手动收窄** ⇒ 用它当上面 ① 的对照基准）
-func info_size(string path): int {
-    var st = dirs.stat(path)
-    if st is Dict {
-        var s = st.get("size", 0)
-        if s is int { return s }
+    // walk ⇒ `Array[DirEntry]`：三个字段逐个钉
+    var t_walk = dirs.walk("src/module/arrays")
+    string        t_w_root  = t_walk[0].root
+    Array[string] t_w_dirs  = t_walk[0].dirs
+    Array[string] t_w_files = t_walk[0].files
+
+    // stat ⇒ `DirInfo`：五个字段逐个钉
+    var t_stat = dirs.stat(self)
+    bool t_st_exists  = t_stat.exists
+    int  t_st_size    = t_stat.size
+    bool t_st_is_file = t_stat.is_file
+    bool t_st_is_dir  = t_stat.is_dir
+    int  t_st_mtime   = t_stat.mtime
+
+    // 上面这些变量存在的意义就是**编译期**钉类型；这里统一消费一次（也顺便断言口径）
+    assert_eq(t_cwd.len() > 0 and t_abs.len() > 0 and t_base == "b.c" and t_dir == "a", true)
+    assert_eq(t_ext == ".c" and t_join.len() > 0 and t_sep.len() == 1, true)
+    assert_eq(t_script.len() >= 0 and t_res.len() >= 0 and t_drives.len() >= 0, true)
+    assert_eq(t_ls.len() > 0 and t_size > 0, true)
+    assert_eq(t_w_root == "src/module/arrays" and t_w_dirs.len() == 0 and t_w_files.len() > 0, true)
+    assert_eq(t_st_exists and t_st_size > 0 and t_st_is_file and not t_st_is_dir and t_st_mtime >= 0, true)
+
+    // 测试15: 写操作（mkdir / mkdir_p / rename / delete / is_symlink）—— 临时目录里建-改-删往返，跑完自清
+    string tmp = "test_dirs_tmp"
+    // 上一次跑中途挂掉可能留下**非空**的 tmp ⇒ 先自底向上清干净（`rmdir` 只吃空目录）；
+    //   walk 是"先父后子"，所以倒着遍历就是"先深后浅"✓（这段顺带也演示了字段取值的用法）
+    if dirs.exists(tmp) {
+        var stale = dirs.walk(tmp)
+        int si = stale.len() - 1
+        while si >= 0 {
+            var e = stale[si]
+            for e.files to fn { dirs.delete(dirs.join(e.root, fn)) }
+            if e.root != tmp { dirs.rmdir(e.root) }
+            si = si - 1
+        }
+        dirs.rmdir(tmp)
     }
-    return 0
+
+    bool w_mkdir  = dirs.mkdir(tmp)
+    assert_eq(w_mkdir, true)
+    bool w_mkdirp = dirs.mkdir_p(dirs.join(tmp, "a", "b"))
+    assert_eq(w_mkdirp, true)
+    assert_eq(dirs.is_dir(dirs.join(tmp, "a", "b")), true)
+
+    string f1 = dirs.join(tmp, "t1.txt")
+    string f2 = dirs.join(tmp, "t2.txt")
+    files.write(f1, "x")
+    assert_eq(dirs.is_file(f1), true)
+
+    bool w_ren = dirs.rename(f1, f2)
+    assert_eq(w_ren, true)
+    assert_eq(dirs.exists(f1), false)
+    assert_eq(dirs.exists(f2), true)
+
+    bool w_del = dirs.delete(f2)
+    assert_eq(w_del, true)
+    assert_eq(dirs.exists(f2), false)
+
+    // is_symlink：普通文件/目录 ⇒ false（Windows 建符号链接要特权 ⇒ 只测反例）
+    bool w_sym_file = dirs.is_symlink(dirs.join(tmp, "a"))
+    bool w_sym_dir  = dirs.is_symlink(tmp)
+    assert_eq(w_sym_file, false)
+    assert_eq(w_sym_dir, false)
+
+    // listdir 与 walk 的**同一层口径一致**：都只给名字、不含路径（walk 逐层，子目录自己也是一条）
+    var layer  = dirs.listdir(tmp)
+    var walked = dirs.walk(tmp)
+    assert_eq(layer.len(), 1)
+    assert_eq(layer.has("a"), true)
+    assert_eq(walked.len(), 3)                  // tmp、tmp\a、tmp\a\b（b 是空目录，自己也占一条）
+    assert_eq(walked[0].dirs.len(), 1)
+    assert_eq(walked[0].dirs[0], "a")           // 与 listdir 的名字口径一致
+
+    // 清理（自底向上：rmdir 只吃空目录）
+    assert_eq(dirs.rmdir(dirs.join(tmp, "a", "b")), true)
+    assert_eq(dirs.rmdir(dirs.join(tmp, "a")), true)
+    assert_eq(dirs.rmdir(tmp), true)
+    assert_eq(dirs.exists(tmp), false)
+
+    print("test_dirs passed")
 }

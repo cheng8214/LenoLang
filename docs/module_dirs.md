@@ -375,17 +375,20 @@ for es to e {
 
 ### `stat(path)`
 
-获取文件的详细信息。
+获取文件信息，返回结构体 `DirInfo` —— **字段类型编译期已知**（v3.2.4 起）。
 
 **参数**:
 - `path` (string): 文件或目录路径
 
-**返回**: `dict` - 包含以下字段的字典：
-- `exists` (bool): 是否存在
-- `size` (int): 文件大小（字节）
-- `is_file` (bool): 是否是文件
-- `is_dir` (bool): 是否是目录
-- `mtime` (int): 最后修改时间（Unix 时间戳）
+**返回**: `DirInfo{ bool exists, int size, bool is_file, bool is_dir, int mtime }`
+
+| 字段 | 类型 | 含义 |
+| --- | --- | --- |
+| `exists` | `bool` | 是否存在 |
+| `size` | `int` | 文件大小（字节）—— **该条目自身**的大小，不是递归总大小 |
+| `is_file` | `bool` | 是否是文件 |
+| `is_dir` | `bool` | 是否是目录 |
+| `mtime` | `int` | 最后修改时间（Unix 时间戳） |
 
 > ⚠ `mtime` 在 Windows 上恒为 `0`（已知限制，见 `src/module/dirs/dirs.c` 的"简化版"注释）。
 > ⚠ `size` 在 2026-09-26 前是 `(int)` 强转 ⇒ **≥2GB 的文件会读出负数**（实测 2GB+1KB ⇒ `-2147482624`）；
@@ -393,17 +396,20 @@ for es to e {
 
 ```leno
 var info = dirs.stat("build.bat")
-// info = {
-//     size: 2917,
-//     is_file: true,
-//     is_dir: false,
-//     mtime: 1777650164
-// }
+// info = DirInfo{ exists: true, size: 2917, is_file: true, is_dir: false, mtime: 0 }
 
-io.print("大小: " + info.size + " 字节")
-io.print("是文件: " + info.is_file)
+io.print("大小: " + info.size + " 字节")     // info.size 直接是 int ⇒ 能直接参与运算
+io.print("是文件: " + info.is_file)          // 直接是 bool ⇒ 能直接进 if
 io.print("是目录: " + info.is_dir)
 ```
+
+> ⚠ **v3.2.4 起返回结构体、不再是 `dict`**：旧形态的键名与现在的字段名**逐字相同** ⇒ `info.size` /
+> `info.is_file` 这类调用点**不用改**；要改的是 `info["size"]` 下标式与 `if info is Dict { ... }` 收窄
+> —— 编译期就会挡住。
+> 为什么不用 `Dict[string, ...]`：这五个键**类型不齐**（`exists` / `is_file` / `is_dir` 是 `bool`，
+> `size` / `mtime` 是 `int`），同质的 `Dict` 表达不了"这个键是 bool、那个键是 int"。
+> ⚠ native struct 名（`DirInfo` / `DirEntry`）**不能当类型标注**（不在符号表里 ⇒ 写 `DirInfo d = ...`
+> 会报"未定义的类型"）；让编译器推断（`var info = dirs.stat(p)`）再按字段用即可。
 
 ### `size(path)`
 
@@ -419,10 +425,11 @@ var n = dirs.size("build.bat")      // 2917，可直接做 int 运算 ✓
 var total = dirs.size("a.txt") + dirs.size("b.txt")
 ```
 
-**为什么要它**：`dirs.stat()` 返回的是无类型 `dict` ⇒ 取 `size` 要写
-`if st is Dict` 再 `if s is int` 手动收窄；而 `stat` 的另外三个键
-`exists` / `is_file` / `is_dir` **早就各有专用函数**（`dirs.exists` / `dirs.is_file` /
-`dirs.is_dir`）⇒ 只差 `size` 这一格，本函数补上。
+**为什么要它**：它当初是为"`stat` 返回无类型 `dict`、取 `size` 要 `if st is Dict` 再 `if s is int`
+手动收窄"补的类型化入口（`stat` 的另外三个键 `exists` / `is_file` / `is_dir` 早就各有专用函数）。
+v3.2.4 起 `stat` 返回结构体、`stat(p).size` 本身就是 `int` ⇒ 它**不再是唯一入口**，但保留：
+① 只想取大小时不必构造整个 `DirInfo`；② 已有三处 leno_gui 消费方在用
+（文件管理器 / 属性对话框 / 缓存清理工具）。语义与 `stat(p).size` **等价** ✓
 
 **注意**：
 - 不存在的路径返回 `0`（与 `dirs.stat()` 的默认值同口径）⇒ 要区分「空文件」与「不存在」，
