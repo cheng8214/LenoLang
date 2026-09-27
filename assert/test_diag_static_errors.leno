@@ -357,6 +357,40 @@ main() {
 ")
     ce.expect_ok(n3, "脚本 struct 与 native 类型同名要给警告", "与native类型同名")
 
+    // ---- v3.2.7：**静态 any 不允许流进具体类型的 native 形参**（两条通道都要拦）----
+    //   背景：模块方法 / 实例方法这两条 native 通道此前对"实参静态类型是 any"**直接跳过检查**
+    //   （`visit_module.inc` 里的 `arg_type->kind != TYPE_ANY` 豁免），而 native 侧普遍**无校验强转**
+    //   （如 `(ObjString*)val_as_obj(args[0])`）⇒ 实测
+    //       var a = _env("不存在的变量") ; regexs.find_all(a, "[0-9]+")
+    //   直接崩（0xC0000005）。现在与"返回值 / 赋值 / 脚本形参 / 数组元素 / 字典值"五条通道**同一口径**。
+    var a1 = dirs.join(work, "any_to_native_arg.leno")
+    files.write(a1, @"import strings
+main() {
+    var a = _env(""LENO_NO_SUCH_ENV"")
+    print(strings.len(a))
+}
+")
+    ce.expect_error(a1, "any 传给 native 形参要编译期拦下（修前是运行期崩）", "但传入 'any'", 4)
+
+    var a2 = dirs.join(work, "any_to_module_arg.leno")
+    files.write(a2, @"import regexs
+main() {
+    var a = _env(""LENO_NO_SUCH_ENV"")
+    print(regexs.find_all(a, ""[0-9]+"").len())
+}
+")
+    ce.expect_error(a2, "any 传给模块方法形参要编译期拦下", "但传入 'any'", 4)
+
+    // 正向（不得误伤）：显式 `_str()` 转换之后照常编译运行
+    var a3 = dirs.join(work, "any_explicit_cast_ok.leno")
+    files.write(a3, @"import strings
+main() {
+    var a = _env(""LENO_NO_SUCH_ENV"")
+    print(strings.len(_str(a)))
+}
+")
+    ce.expect_ok(a3, "显式 _str() 转换后应通过", "4")     // _str(null) == "null" ⇒ 长度 4 ✓
+
     // ---- 嵌套容器的**类型不变性**检查（2026-09-27 从 examples/dict/类型的嵌套字典.leno 收进来 ——
     //   那份示例目录已删除，而这是它唯一在守的真实保证：外层容器的写入要递归检查内层类型）----
     var nv1 = dirs.join(work, "nested_dict_invariance.leno")

@@ -289,7 +289,10 @@ export func setModalWid(int w) {
 export func getModalWid(): int { return _modalTop() }
 
 // 仅为注册（不启动循环），给 Dialog 等外部 struct 用
-export func registerRun(Ptr[u8] hdl, int wid, Renderer ren, any onEvent, any onRender) {
+// ⚠ 形参原来是 `any onEvent, any onRender` —— 与下面的 `_runEvts: Array[EventHandler]` /
+//   `_runRends: Array[RenderCallback]` 冲突（v3.2.7 起"静态 any 不允许流进具体类型形参"）。
+//   同文件的 `registerOnly(EventHandler, RenderCallback)` 本来就是**正确写法** ⇒ 对齐即可。
+export func registerRun(Ptr[u8] hdl, int wid, Renderer ren, EventHandler onEvent, RenderCallback onRender) {
     _runWids.add(wid)
     _runHnds.add(hdl)
     _runRens.add(ren)

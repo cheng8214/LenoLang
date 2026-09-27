@@ -782,7 +782,17 @@
                         }
                     }
                     
-                    if (expected_type != TYPE_ANY && arg_type && arg_type->kind != TYPE_ANY && arg_type->kind != expected_type) {
+                    // ⚠ v3.2.7：**删掉了 `arg_type->kind != TYPE_ANY` 这层豁免**。
+                    //   老写法是"实参静态类型是 any 就跳过检查" —— 可 any 到运行期可能是任何东西
+                    //   （null / int / ...），而 native 侧普遍**无校验强转**（如
+                    //   `(ObjString*)val_as_obj(args[0])`）⇒ 实测直接崩：
+                    //       var a = _env("不存在的变量")   // 静态 any、运行期 null
+                    //       regexs.find_all(a, "[0-9]+")  ⇒ 0xC0000005
+                    //   语言在"字段赋值"处的口径本来就是**要求显式转换**
+                    //   （"期望类型: int / 实际类型: any / 提示：使用 _int(value) 显式转换"）
+                    //   ⇒ 这里对齐成同一口径：静态 any 传具体类型形参必须 `_str() / _int() / as`。
+                    //   运行期还有 `native_check_module_params()` 兜底（动态路径无法静态判定）。
+                    if (expected_type != TYPE_ANY && arg_type && arg_type->kind != expected_type) {
                         // 允许 int -> float, bigint -> int, bigint -> float, bool -> int/float/bigint 的隐式转换
                         bool type_compatible = false;
                         if ((expected_type == TYPE_FLOAT && arg_type->kind == TYPE_INT) ||
@@ -1741,7 +1751,11 @@
                                 }
                                 
                                 // 类型检查：简单类型比较 kind，复杂类型使用 type_equals 深度比较
-                                if (arg_type && arg_type->kind != TYPE_ANY) {
+                                // ⚠ v3.2.7：**删掉了 `arg_type->kind != TYPE_ANY` 豁免** —— 与模块调用
+                                //   那处同一口径：**静态 any 的值不允许流进具体类型的 native 形参**
+                                //   （any/到运行期可能是 null/int/...，而 native 侧普遍无校验强转 ⇒ 崩）。
+                                //   代价：全仓需要把这类调用点补上显式转换（见实例二十三的清单）。
+                                if (arg_type) {
                                     if (expected_type_for_check) {
                                         // 有完整类型信息，进行深度类型比较（支持嵌套类型）
                                         if (!type_is_compatible(expected_type_for_check, arg_type)) {

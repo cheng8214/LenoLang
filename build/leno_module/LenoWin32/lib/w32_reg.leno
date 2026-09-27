@@ -173,7 +173,7 @@ func _getHKeyPtr(any hKey):Ptr {
         case HKey.USERS          { return HKEY_USERS }
         case HKey.CURRENT_CONFIG { return HKEY_CURRENT_CONFIG }
         default {
-            return ffi.ptr_from_int(hKey)
+            return ffi.ptr_from_int(_int(hKey))
         }
     }
 }

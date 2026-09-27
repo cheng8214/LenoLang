@@ -1274,6 +1274,10 @@ void dirs_init_module(void) {
     native_register_module_method_spec("dirs", "dirname", native_dirs_dirname, 1, -1, -1, &NATIVE_T_STRING, string_params);
     native_register_module_method_spec("dirs", "extname", native_dirs_extname, 1, -1, -1, &NATIVE_T_STRING, string_params);
     native_register_module_method_spec("dirs", "join", native_dirs_join, -1, 0, -1, &NATIVE_T_STRING, string_params);
+    // join 是**同质可变参数**：每个实参都必须是 string（v3.2.7 显式声明）。
+    //   此前 `arity == -1` 会让 param_types 被整份忽略 ⇒ `dirs.join(1, 2)` 编译期**不报错** ✗，
+    //   运行期才在拼接处炸；现在编译期就挡住 ✓（前缀 0 个、尾部 string ⇒ 全部按 string 检查）。
+    native_set_method_vararg_params("dirs", "join", 0, NULL, TYPE_STRING);
     native_register_module_method_spec("dirs", "sep", native_dirs_sep, 0, -1, -1, &NATIVE_T_STRING, no_params);
     native_register_module_method_spec("dirs", "script_dir", native_dirs_script_dir, 0, -1, -1, &NATIVE_T_STRING, no_params);
     // 随包资源目录：未打包时 == script_dir()，打包时 == 资源释放目录（见函数头注释）

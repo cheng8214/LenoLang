@@ -181,7 +181,7 @@ export func sha512_bytes(Array[int] msg):Array[int] {
     be64_append(len_pad, 0)
     be64_append(len_pad, orig_len * 8)
     for len_pad.len() to i {
-        m.add(len_pad[i])
+        m.add(_int(len_pad[i]))
     }
 
     // ===== 处理每个 1024 位（128 字节）块 =====

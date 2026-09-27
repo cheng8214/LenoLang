@@ -35,7 +35,7 @@ export var HKEY_CURRENT_CONFIG = ffi.ptr_from_int(0x80000005)
 
 // 将 UTF-8 字符串转换为 UTF-16 宽字符串指针
 func toWstr(any str):Ptr {
-    return ffi.utf8_to_utf16(str)
+    return ffi.utf8_to_utf16(_str(str))
 }
 
 // ========== 键操作 ==========
@@ -241,7 +241,7 @@ export func writeString(any hKey, any valueName, any value) {
 export func writeDword(any hKey, any valueName, any value) {
     var advapi = ffi.load("advapi32.dll")
     var buffer = ffi.malloc(4)
-    ffi.write_int(buffer, 0, value)
+    ffi.write_int(buffer, 0, _int(value))
     
     var wValueName = if valueName == "" then ffi.nullptr() else toWstr(valueName)
     

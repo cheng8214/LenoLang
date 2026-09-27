@@ -81,8 +81,8 @@ main() {
                         print("  [FAIL] " + entry)
                     }
                     failed = failed + 1
-                    if output != null and strings.len(output) > 0 {
-                        var lines = strings.split(output, "\n")
+                    if output != null and strings.len(_str(output)) > 0 {
+                        var lines = strings.split(_str(output), "\n")
                         int shown = 0
                         for lines to line {
                             if shown >= 3 { break }

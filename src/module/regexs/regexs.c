@@ -433,7 +433,27 @@ static Value regex_find(int argc, Value* args) {
     return val_int(-1);
 }
 
-// 3. 查找所有匹配位置
+// ==================== RegexMatch 的类型规格（find_all 的返回元素，v3.2.7） ====================
+// 为什么不用 Dict（这是全仓**最后一个**返回裸 Dict 的地方）：
+//   三个键**类型不齐** —— `start` / `end` 是 int、`text` 是 string ⇒ 同质的 `Dict[K,V]`
+//   表达不了"这个键 int、那个键 string"；退一步用裸 `Dict` 则让调用点拿到 any
+//   （`m["text"]` 是 any，还得手动收窄）。
+// 改结构体后字段类型**编译期已知**、零收窄 —— 与 `DirEntry`（dirs.walk）/ `DirInfo`（dirs.stat）
+//   同一套做法：**编译期字段表 + 运行期 ObjStructDef 是同一份声明** ⇒ 字段顺序不可能漂。
+// 字段名与旧的字典键**逐字相同**（start / end / text）⇒ 只是取值方式从 `m["x"]` 变成 `m.x`。
+// 顺带：不再每次匹配都 `str_copy` 三个键名（那是 3 次分配 → 0 次）。
+static const NativeTypeSpec S_RX_STRING          = { NTYPE_STRING, NULL, NULL, NULL };
+static const NativeTypeSpec S_RX_INT             = { NTYPE_INT,    NULL, NULL, NULL };
+static const NativeTypeSpec S_REGEXMATCH_SPEC    = { NTYPE_STRUCT, "RegexMatch", NULL, NULL };
+static const NativeTypeSpec S_REGEXMATCH_ARR_SPEC = { NTYPE_ARRAY, NULL, &S_REGEXMATCH_SPEC, NULL };
+
+static const char* REGEXMATCH_FIELD_NAMES[] = { "start", "end", "text" };
+static const NativeTypeSpec* REGEXMATCH_FIELD_TYPES[] = { &S_RX_INT, &S_RX_INT, &S_RX_STRING };
+static const NativeStructSpec REGEXMATCH_STRUCT_SPEC = {
+    "regexs", "RegexMatch", 3, REGEXMATCH_FIELD_NAMES, REGEXMATCH_FIELD_TYPES
+};
+
+// 3. 查找所有匹配位置（返回 `Array[RegexMatch]`，v3.2.7 起）
 static Value regex_find_all(int argc, Value* args) {
     (void)argc;
     ObjString* str = (ObjString*)val_as_obj(args[0]);
@@ -456,6 +476,11 @@ static Value regex_find_all(int argc, Value* args) {
         re_free_all();
         return val_null();
     }
+
+    // ★ result 自己也要 root：循环里每次 `native_struct_new` / `str_copy` 都会 gc_alloc
+    //   ⇒ 它是还没交出去的中间对象（同 dirs.walk 的说明）。
+    Value result_val = val_obj((Object*)result);
+    gc_push_root(&result_val);
     
     const char* pos = str->chars;
     while (*pos) {
@@ -465,25 +490,18 @@ static Value regex_find_all(int argc, Value* args) {
         
         if (!start) break;
         
-        // 创建匹配信息字典
-        ObjDict* match_info = dict_new(4);
-        if (!match_info) break;
-        
-        // 起始位置（0-based）
-        ObjString* key_start = str_copy("start", 5);
-        dict_set(match_info, val_obj((Object*)key_start), val_int((int)(start - str->chars)));
-        
-        // 结束位置（0-based，不包含）
-        ObjString* key_end = str_copy("end", 3);
-        dict_set(match_info, val_obj((Object*)key_end), val_int((int)(end - str->chars)));
-        
-        // 匹配内容
-        int match_len = (int)(end - start);
-        ObjString* matched_str = str_copy(start, match_len);
-        ObjString* key_text = str_copy("text", 4);
-        dict_set(match_info, val_obj((Object*)key_text), val_obj((Object*)matched_str));
-        
-        arr_push_custom(result, val_obj((Object*)match_info));
+        // 创建 `RegexMatch{ start, end, text }`（字段顺序 = REGEXMATCH_STRUCT_SPEC 的声明顺序）
+        ObjStruct* m = native_struct_new("RegexMatch");
+        if (!m) break;
+        Value m_val = val_obj((Object*)m);
+        gc_push_root(&m_val);   // 填字段期间它还没进 result ⇒ 必须自己护住
+
+        native_struct_set(m, "start", val_int((int)(start - str->chars)));   // 0-based
+        native_struct_set(m, "end",   val_int((int)(end - str->chars)));     // 0-based，不含
+        native_struct_set(m, "text",  val_obj((Object*)str_copy(start, (int)(end - start))));
+
+        arr_push_custom(result, m_val);
+        gc_pop_root();   // m_val
         
         if (end == start) {
             pos++; // 避免空匹配无限循环
@@ -492,6 +510,7 @@ static Value regex_find_all(int argc, Value* args) {
         }
     }
     
+    gc_pop_root();   // result_val
     re_free_all();
     return val_obj((Object*)result);
 }
@@ -863,10 +882,17 @@ void regexs_init_module(void) {
     native_register_module_method_spec("regexs", "extract", regex_extract, 2, -1, -1, &NATIVE_T_STRING, str_params);
     native_register_module_method_spec("regexs", "replace", regex_replace, 3, -1, -1, &NATIVE_T_STRING, str3_params);
     native_register_module_method_spec("regexs", "split", regex_split, -1, 2, 3, &NATIVE_T_ARR_STRING, str_params);
+    // split(str, pattern[, limit])：前两位必须是 string（v3.2.7 显式声明可变参数的前缀类型 ——
+    //   此前 `arity == -1` ⇒ param_types 被整份忽略，`regexs.split(1, 2)` 编译期不报错 ✗）
+    native_set_method_vararg_params("regexs", "split", 2, str_params, TYPE_ANY);
     native_register_module_method_spec("regexs", "groups", regex_groups, 2, -1, -1, &NATIVE_T_ARR_STRING, str_params);
 
     // 返回数组的方法
-    native_register_module_method_spec("regexs", "find_all", regex_find_all, 2, -1, -1, &NATIVE_T_ARR_DICT, str_params);
+    // find_all：返回 `Array[RegexMatch]`（**字段类型编译期已知**，v3.2.7）——
+    //   原来是 `Array[Dict]`（裸 Dict）⇒ `m["text"]` 是 any、取值要手动收窄；
+    //   改结构体后 `m.text` 直接是 string、`m.start` 直接是 int ✓
+    native_register_struct_spec(&REGEXMATCH_STRUCT_SPEC);
+    native_register_module_method_spec("regexs", "find_all", regex_find_all, 2, -1, -1, &S_REGEXMATCH_ARR_SPEC, str_params);
     native_register_module_method_spec("regexs", "extract_all", regex_extract_all, 2, -1, -1, &NATIVE_T_ARR_STRING, str_params);
     native_register_module_method_spec("regexs", "replace_all", regex_replace_all, 3, -1, -1, &NATIVE_T_STRING, str3_params);
 

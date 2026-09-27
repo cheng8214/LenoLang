@@ -144,7 +144,16 @@
 //   ⇒ .lenb / entry_*.lenb 必须整体失效重编译。
 // v2.7.1（2026-09-16）：枚举成员求值语义修正 —— 扫描器补 `not`、除零/取模零改为与解析器同结论
 //   ⇒ 修正前编译出的 .lenb / entry_*.lenb 里可能烙着错的常量值，必须整体失效重编译。
-#define LENO_BIN_VERSION    0x00030206  // v3.2.6 - 链接（junction / symlink）口径 + `stat.mtime`：
+#define LENO_BIN_VERSION    0x00030207  // v3.2.7 - `regexs.find_all` 的返回形态由 `Array[Dict]`
+                                        //   （裸 Dict：键 start/end 是 int、text 是 string，
+                                        //   类型不齐 ⇒ 取值只能拿到 any）改为 `Array[RegexMatch]`
+                                        //   结构体（字段类型编译期已知）。**为什么升**：与实例十三
+                                        //   （`dirs.stat` 改 `DirInfo`）**同一判据** —— native 方法的
+                                        //   **返回形态变了** ⇒ 旧 `.lenb` 里 `m["text"]` 那句按字典
+                                        //   取值的语义失效、同源码的取值指令也不同 ⇒ 旧产物必须
+                                        //   整体失效重编译（opcode 集合 / 字节布局都没动，
+                                        //   动的是"求值语义 + 编译期推断"）。
+                                        // v3.2.6 - 链接（junction / symlink）口径 + `stat.mtime`：
                                         //   `walk` **不再递归进链接**（只列，口径同 find）、
                                         //   `delete(链接)` **只摘链接**（原先会透过链接删掉 target
                                         //   里的内容 = 数据丢失）、`stat.mtime` 在 Windows 由恒 0
@@ -201,7 +210,10 @@
 // v13：ObjFunction 增加 is_async（运行期判定"调用即建协程"用）。旧缓存里的函数对象缺这个
 //      字段 ⇒ async 函数的**间接调用**（`var f = w; f()`、当参数传、绑定方法）会退回同步执行、
 //      静默错值，所以必须**作废旧缓存**。
-#define LENO_MODCACHE_VERSION  0x00000017  // v23 - 同 LENO_BIN_VERSION v3.2.6（walk / delete 的
+#define LENO_MODCACHE_VERSION  0x00000018  // v24 - 同 LENO_BIN_VERSION v3.2.7（`regexs.find_all`
+                                           //       改返回 `Array[RegexMatch]`：模块字节码里同样含
+                                           //       "按返回类型推断发射的取值指令"）
+                                           // v23 - 同 LENO_BIN_VERSION v3.2.6（walk / delete 的
                                            //       链接口径 + stat.mtime：模块字节码里同样有那几次
                                            //       模块方法调用）
                                            // v22 - 同 LENO_BIN_VERSION v3.2.5（删除

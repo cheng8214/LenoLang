@@ -379,6 +379,14 @@ void maths_init_module(void) {
     TypeKind min_params[] = {TYPE_FLOAT};
     native_register_module_method_spec("maths", "min", math_min, -1, 1, -1, &NATIVE_T_FLOAT, min_params);
 
+    // ---- 可变参数的参数类型（v3.2.7）----
+    // max/min 是**同质可变参数**：每个实参都该是数字（v3.2.7 显式声明）。
+    //   此前 `arity == -1` 让 param_types 被整份忽略 ⇒ `maths.max("x")` 编译期不报错 ✗。
+    // 尾部声明 FLOAT：本语言的 `int → float` 是**允许**的隐式转换（实测 `maths.max(1,2,3)` ⇒ 3.0 ✓），
+    //   所以既拦住了非数字，又不会误伤纯整数调用。
+    native_set_method_vararg_params("maths", "max", 0, NULL, TYPE_FLOAT);
+    native_set_method_vararg_params("maths", "min", 0, NULL, TYPE_FLOAT);
+
     TypeKind deg_params[] = {TYPE_FLOAT};
     native_register_module_method_spec("maths", "deg", math_deg, 1, -1, -1, &NATIVE_T_FLOAT, deg_params);
 

@@ -174,7 +174,7 @@ main() {
         var name = test_case["name"];
         print($"\n=== {name}测试 (数组大小: {size}) ===");
         // 生成测试数据
-        var original = rands.int_array(0, size);
+        var original = rands.int_array(0, _int(size));
         // 测试1：冒泡排序（只测试小规模）
         if size <= 2000 {
             var arr1 = original.copy();

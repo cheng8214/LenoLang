@@ -27,6 +27,11 @@ typedef struct {
     TypeKind return_type;
     TypeKind return_element_type; // 返回数组时的元素类型（TYPE_UNKNOWN 表示未指定）
     TypeKind param_types[MAX_METHOD_PARAMS];  // 参数类型数组
+    // 上面 param_types 里**有效**的条目数（v3.2.7）：定长方法 = arity；可变参数方法 = 0
+    // （老行为：整份被忽略），除非用 `native_set_method_vararg_params()` 显式声明过（= MAX_METHOD_PARAMS）。
+    // ⚠ 为什么需要它：老的参数类型查询判据是 `param_index < arity`，对 `arity == -1` 恒假
+    //   ⇒ 可变参数方法的 param_types 永远读不到（`dirs.join(1, 2)` 也编译得过去 ✗）。
+    int param_type_count;
     // 完整返回类型规格（可空）：非 NULL 时**优先于** return_type/return_element_type ——
     // 它才能表达 `Array[DirEntry]` / `Dict[string,string]` 这类参数化、带名字的类型
     // （见 leno_types.h 的 NativeTypeSpec 说明）。为 NULL ⇒ 退回上面两个 Kind 的老路径。
@@ -95,6 +100,18 @@ void native_register_module_method_spec(const char* module_name, const char* met
 
 // 获取模块方法的参数类型
 TypeKind native_get_module_method_param_type(const char* module_name, const char* method_name, int param_index);
+
+// 为**可变参数**方法声明参数类型（v3.2.7）：`arity == -1` 的方法以前**整份 param_types 都被忽略**
+//   （注册时被写成全 ANY，查表时又因 `param_index < arity` 恒假而退回 ANY）⇒ 连
+//   `dirs.join(1, 2)` 这种明显错的调用也编译得过去。
+// 语义（**不猜**）：前 `prefix_count` 个实参按 `prefix[i]` 检查，其余实参按 `tail_type` 检查
+//   （`tail_type == TYPE_ANY` = 不检查）。要在**注册之后**调用（与
+//   `native_register_instance_method_return_spec` 同一套路：不改变 238 个调用点）。
+// 例：`native_set_method_vararg_params("dirs", "join", 0, NULL, TYPE_STRING)` ⇒ 全部实参须是 string；
+//     `native_set_method_vararg_params("strings", "find", 2, (TypeKind[]){TYPE_STRING, TYPE_STRING}, TYPE_INT)`
+//     ⇒ 前两个是 string、其余是 int。
+void native_set_method_vararg_params(const char* module_name, const char* method_name,
+                                     int prefix_count, const TypeKind* prefix, TypeKind tail_type);
 
 // 根据模块名和方法名查找模块方法
 ModuleMethodMeta* native_find_module_method(const char* module_name, const char* method_name);

@@ -701,7 +701,7 @@ export func isRobotsAllowed(string robotsText, string userAgent, string url): bo
                 var uas = g["user_agents"]
                 if uas is Array {
                     for uas to gagent {
-                        string gs = strings.to_lower(gagent)
+                        string gs = strings.to_lower(_str(gagent))
                         if gs == "*" {
                             if selected == null {
                                 selected = g

@@ -92,15 +92,30 @@ regexs.find("abc123def", "[0-9]+")        // 3
 - `str` (string): 要查找的字符串
 - `pattern` (string): 正则表达式模式
 
-**返回**: `array` - 匹配信息数组，每个元素是包含 `start`, `end`, `text` 的字典
+**返回**: `Array[RegexMatch]` - 匹配信息数组（**字段类型编译期已知**，v3.2.7 起）
+
+| 字段 | 类型 | 含义 |
+| --- | --- | --- |
+| `start` | `int` | 匹配起始位置（0-based，按**字节**计） |
+| `end` | `int` | 匹配结束位置（0-based，**不含**） |
+| `text` | `string` | 匹配到的子串 |
 
 ```leno
 var matches = regexs.find_all("abc123def456", "[0-9]+")
-// [
-//   {start: 3, end: 6, text: "123"},
-//   {start: 9, end: 12, text: "456"}
-// ]
+// [RegexMatch{start: 3, end: 6, text: "123"}, RegexMatch{start: 9, end: 12, text: "456"}]
+
+for matches to m {
+    io.print(m.text + " @" + m.start)     // 字段类型已知 ⇒ 不做收窄（m.text 是 string、m.start 是 int）
+}
 ```
+
+> ⚠ **v3.2.7 起返回结构体、不再是 `dict`**：字段名与旧字典键**逐字相同** ⇒ `m.text` / `m.start`
+> 这类调用点**不用改**；要改的是 `m["text"]` 下标式与 `if m is Dict` 收窄 —— 编译期就会挡住。
+> 为什么不用 `Dict[string, ...]`：三个键**类型不齐**（`start`/`end` 是 int、`text` 是 string），
+> 同质的 `Dict` 表达不了"这个键 int、那个键 string"（与 `dirs.stat` 改 `DirInfo` 同一判断，见实例十三/二十二）。
+> ⚠ `start` / `end` 是**字节**偏移（不是字符索引）—— 含中文时与 `strings.find` 的字符索引不同口径。
+> ⚠ native struct 名（`RegexMatch`）**不能当类型标注**（不在符号表里）；让编译器推断
+> （`var m = matches[0]`）再按字段用即可。
 
 #### `extract(str, pattern)`
 

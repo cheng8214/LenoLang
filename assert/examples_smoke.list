@@ -35,3 +35,7 @@ examples/多返回值/test_type_check.leno
 #     根因是 BigInt 多 limb 长除法（最小复现 `(9223372036854775807 * 2) % 10000000000` ⇒ 静默返回 null；
 #     修后 = 3709551614）。回归钉在 assert/test_bigint_arith.leno（含**带分配**循环，逼 GC），
 #     见 docs 的实例二十一。
+# ⚠ `examples/regexs`（1 个文件）已于 2026-09-27 删除：它与 `assert/test_regex.leno` **逐字相同**
+#   （138 行、Compare-Object 无差异）⇒ 纯冗余（示例与断言的"两处写法"收敛成一处，同实例二十）。
+#   同日把 `regexs.find_all` 改为返回 `Array[RegexMatch]`、并把它的用例升级成"字段类型契约"断言
+#   （见 docs 实例二十二）。

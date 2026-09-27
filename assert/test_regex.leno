@@ -41,10 +41,17 @@ main() {
 
     var matches = regexs.find_all("abc123def456", "[0-9]+")
     assert_eq(matches.len(), 2)
-    assert_eq(matches[0]["text"], "123")
-    assert_eq(matches[0]["start"], 3)
-    assert_eq(matches[0]["end"], 6)
-    assert_eq(matches[1]["text"], "456")
+    // 类型契约（v3.2.7，编译期把关）：返回 `Array[RegexMatch]`，字段类型编译期已知
+    //   ⇒ 下面三个强类型局部变量**不做任何收窄**（spec 一漂回裸 Dict 就编译失败）。
+    //   理由同 test_dirs：native 规格**只在编译期生效**，运行期不校验字段类型。
+    string m0_text  = matches[0].text
+    int    m0_start = matches[0].start
+    int    m0_end   = matches[0].end
+    assert_eq(m0_text, "123")
+    assert_eq(m0_start, 3)
+    assert_eq(m0_end, 6)
+    assert_eq(matches[1].text, "456")
+    assert(not (matches[0] is Dict))     // 守住"不再是 Dict"（旧的 m["x"] 收窄路径已作废）
 
     // 无匹配
     var no_matches = regexs.find_all("hello", "[0-9]+")

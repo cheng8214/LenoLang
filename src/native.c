@@ -658,10 +658,14 @@ void native_register_module_method_spec(const char* module_name, const char* met
                 for (int i = count; i < MAX_METHOD_PARAMS; i++) {
                     entry->meta.param_types[i] = TYPE_ANY;
                 }
+                entry->meta.param_type_count = count;
             } else {
+                // ⚠ 可变参数（arity == -1）走这里 ⇒ 老行为是**整份忽略** param_types（全 ANY）。
+                //   要声明可变参数的参数类型，注册之后调 `native_set_method_vararg_params()`。
                 for (int i = 0; i < MAX_METHOD_PARAMS; i++) {
                     entry->meta.param_types[i] = TYPE_ANY;
                 }
+                entry->meta.param_type_count = 0;
             }
             return;
         }
@@ -708,10 +712,13 @@ void native_register_module_method_spec(const char* module_name, const char* met
         for (int i = count; i < MAX_METHOD_PARAMS; i++) {
             new_entry->meta.param_types[i] = TYPE_ANY;
         }
+        new_entry->meta.param_type_count = count;
     } else {
+        // 可变参数：见上面分支的说明（要声明就注册后调 native_set_method_vararg_params）
         for (int i = 0; i < MAX_METHOD_PARAMS; i++) {
             new_entry->meta.param_types[i] = TYPE_ANY;
         }
+        new_entry->meta.param_type_count = 0;
     }
 
     // 插入到哈希表
@@ -1077,12 +1084,39 @@ int native_get_module_method_arity(const char* module_name, const char* method_n
 }
 
 // 获取模块方法的参数类型
+// ⚠ v3.2.7：判据由 `param_index < meta->arity` 改为 `param_index < meta->param_type_count`
+//   —— 老的写法对**可变参数**方法（`arity == -1`）恒假 ⇒ 那些方法无论怎么声明参数类型都退回 ANY。
+//   `param_type_count` 由注册时（定长 = arity；可变参数 = 0）与
+//   `native_set_method_vararg_params()`（可变参数显式声明）共同维护。
 TypeKind native_get_module_method_param_type(const char* module_name, const char* method_name, int param_index) {
     ModuleMethodMeta* meta = native_find_module_method(module_name, method_name);
-    if (meta && param_index >= 0 && param_index < meta->arity && param_index < MAX_METHOD_PARAMS) {
+    if (meta && param_index >= 0 && param_index < meta->param_type_count && param_index < MAX_METHOD_PARAMS) {
         return meta->param_types[param_index];
     }
     return TYPE_ANY;
+}
+
+// 为可变参数方法声明参数类型（见 native.h 的说明）。
+// **必须在注册之后调用**（这里做"覆盖式"写入：先把整份 param_types 填成 tail_type，再盖上前缀）。
+void native_set_method_vararg_params(const char* module_name, const char* method_name,
+                                     int prefix_count, const TypeKind* prefix, TypeKind tail_type) {
+    ModuleMethodEntry* entry = moduleMethodTable.entries
+        ? moduleMethodTable.entries[hash_module_method(module_name, method_name) & (moduleMethodTable.capacity - 1)]
+        : NULL;
+    // 顺着链找同名条目（与 native_find_module_method 同一走法，只是这里要 meta 的可写指针）
+    while (entry && !(strcmp(entry->module_name, module_name) == 0 &&
+                      strcmp(entry->method_name, method_name) == 0)) {
+        entry = entry->next;
+    }
+    if (!entry) return;   // 没注册过就静默忽略（与注册表其它部分的风格一致：编译期常量，不该失败）
+
+    for (int i = 0; i < MAX_METHOD_PARAMS; i++) {
+        entry->meta.param_types[i] = tail_type;
+    }
+    for (int i = 0; i < prefix_count && i < MAX_METHOD_PARAMS; i++) {
+        entry->meta.param_types[i] = prefix ? prefix[i] : TYPE_ANY;
+    }
+    entry->meta.param_type_count = MAX_METHOD_PARAMS;
 }
 
 // 获取模块的所有方法名（LSP 使用）

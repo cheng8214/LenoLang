@@ -65,7 +65,7 @@ func tinylang_tokenize(any code) {
 
             var id = code.sub_str(start, i - start);
             // 关键字检查
-            if keywords.has(id){tokens.add({type: "KEYWORD", value: id, line: line})}
+            if keywords.has(_str(id)){tokens.add({type: "KEYWORD", value: id, line: line})}
             else {tokens.add({type: "IDENTIFIER", value: id, line: line})}
 
         }
@@ -122,7 +122,7 @@ func tinylang_parse(any tokens) {
     
     // 辅助函数：检查字符串是否是关键字
     func is_keyword(any s) {
-        return keywords.has(s)
+        return keywords.has(_str(s))
     }
     
     // 辅助函数：获取当前标记

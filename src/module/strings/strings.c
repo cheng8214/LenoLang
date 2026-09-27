@@ -1529,6 +1529,22 @@ void strings_init_module(void) {
     // 19. 新增：16 进制字符串（收编应用层 toHex8/toHex4/toHex2；width 可省略 ⇒ 不补零）
     TypeKind hex_params[] = {TYPE_INT, TYPE_INT};
     native_register_module_method_spec("strings", "hex", str_hex, -1, 1, 2, &NATIVE_T_STRING, hex_params);
+
+    // ---- 可变参数的参数类型（v3.2.7）----
+    // 背景：`arity == -1` 的方法此前**整份 param_types 都被忽略**（注册时被写成全 ANY，
+    //   查表时又因 `param_index < arity` 恒假而退回 ANY）⇒ 连 `strings.find(1, 2)` 都编译得过去 ✗。
+    // 这里只声明**固定前缀**那几位（尾部仍按 ANY —— 可变部分本来就允许任意类型，
+    //   例如 `strings.format("%s %d", s, n)` 的后两个实参）。
+    // ⚠ 必须在注册**之后**调用（本函数末尾即满足）。
+    native_set_method_vararg_params("strings", "format",    1, format_params,    TYPE_ANY);
+    native_set_method_vararg_params("strings", "find",      4, find_params,      TYPE_ANY);
+    native_set_method_vararg_params("strings", "byte",      2, byte_params,      TYPE_ANY);
+    native_set_method_vararg_params("strings", "byte_find", 3, byte_find_params, TYPE_ANY);
+    native_set_method_vararg_params("strings", "pad_start", 3, pad_params,       TYPE_ANY);
+    native_set_method_vararg_params("strings", "pad_end",   3, pad_params,       TYPE_ANY);
+    native_set_method_vararg_params("strings", "hex",       2, hex_params,       TYPE_ANY);
+    // ⚠ `strings.char(...)` 故意**不声明**：它既收 ASCII 码（int）也收字符串（见 test_null_string /
+    //   test_inline_multiret 的用法），声明成任一单类型都会误伤另一族 ⇒ 保持 ANY。
 }
 
 // 初始化全局函数（程序启动时调用）
