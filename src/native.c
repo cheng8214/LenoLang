@@ -420,10 +420,14 @@ void native_register_meta(const char* name, int arity, int min_arity, int max_ar
         for (int i = count; i < MAX_METHOD_PARAMS; i++) {
             meta->param_types[i] = TYPE_ANY;
         }
+        meta->param_type_count = count;
     } else {
+        // ⚠ 可变参数（arity == -1）走这里 ⇒ 与模块方法通道同一口径：**整份忽略** param_types。
+        //   要声明可变参数的参数类型，注册之后调 `native_set_builtin_vararg_params()`。
         for (int i = 0; i < MAX_METHOD_PARAMS; i++) {
             meta->param_types[i] = TYPE_ANY;
         }
+        meta->param_type_count = 0;
     }
 }
 
@@ -491,16 +495,40 @@ TypeKind native_get_return_element_type(const char* name) {
 }
 
 // 获取全局函数的参数类型
+// ⚠ v3.2.8：判据由 `param_index < arity` 改为 `param_index < param_type_count`
+//   —— 与模块方法通道（v3.2.7，实例二十三）同一口径。老写法对 `arity == -1`（如 `input`）
+//   恒假 ⇒ 那些函数的 param_types 永远读不到（声明了也白声明）。
 TypeKind native_get_global_function_param_type(const char* name, int param_index) {
     for (int i = 0; i < functionCount; i++) {
         if (strcmp(functionRegistry[i].name, name) == 0) {
-            if (param_index >= 0 && param_index < functionRegistry[i].arity && param_index < MAX_METHOD_PARAMS) {
+            if (param_index >= 0 && param_index < functionRegistry[i].param_type_count &&
+                param_index < MAX_METHOD_PARAMS) {
                 return functionRegistry[i].param_types[param_index];
             }
             break;
         }
     }
     return TYPE_ANY;
+}
+
+// 为**全局内置函数**声明可变参数的参数类型（见 native.h 的说明）。
+//   与模块方法通道的 `native_set_method_vararg_params()` 逐字一致：
+//   先把整份 param_types 填成 tail_type，再盖上前 prefix_count 个。
+void native_set_builtin_vararg_params(const char* name, int prefix_count,
+                                      const TypeKind* prefix, TypeKind tail_type) {
+    for (int i = 0; i < functionCount; i++) {
+        if (strcmp(functionRegistry[i].name, name) == 0) {
+            for (int j = 0; j < MAX_METHOD_PARAMS; j++) {
+                functionRegistry[i].param_types[j] = tail_type;
+            }
+            for (int j = 0; j < prefix_count && j < MAX_METHOD_PARAMS; j++) {
+                functionRegistry[i].param_types[j] = prefix ? prefix[j] : TYPE_ANY;
+            }
+            functionRegistry[i].param_type_count = MAX_METHOD_PARAMS;
+            return;
+        }
+    }
+    // 没注册过就静默忽略（与注册表其它部分的风格一致：编译期常量，不该失败）
 }
 
 // 重置注册表（编译前调用）

@@ -12,6 +12,12 @@ typedef struct {
     TypeKind return_type;
     TypeKind return_element_type; // 返回数组时的元素类型（TYPE_UNKNOWN 表示未指定）
     TypeKind param_types[MAX_METHOD_PARAMS];  // 参数类型数组
+    // 上面 param_types 里**有效**的条目数（v3.2.8）：定长函数 = arity；可变参数函数 = 0
+    //   （老行为：整份被忽略 —— getter 的判据是 `param_index < arity`，对 `arity == -1` 恒假），
+    //   除非用 `native_set_builtin_vararg_params()` 显式声明过（= MAX_METHOD_PARAMS）。
+    //   ⚠ 与模块方法通道的 `ModuleMethodMeta::param_type_count` 同一口径 —— 模块那边在 v3.2.7
+    //     就补上了（实例二十三），内置这边一直漏着（`input("提示")` 的提示文案因而是 any）。
+    int param_type_count;
     // 完整返回类型规格（v3.2.8，可空）：非 NULL 时**优先于**上面的 Kind 槽 —— 内置函数通道此前
     //   只有 Kind，表达不了 `ExecResult{...}` 这类带名字/带字段的返回类型（`_exec` 的 `[output, code]`
     //   就只能是 `Array[any]`）。语义与 `native_register_module_method_spec` 的 return_spec 对齐。
@@ -57,6 +63,12 @@ void native_register_meta_spec(const char* name, const NativeTypeSpec* return_sp
 
 // 取内置函数的返回规格（没有则 NULL）
 const NativeTypeSpec* native_get_return_spec(const char* name);
+
+// 给**全局内置函数**声明可变参数的参数类型（v3.2.8）：语义与模块方法的
+//   `native_set_method_vararg_params()` 逐字一致（先整份填 tail_type，再盖上前 prefix_count 个）。
+//   ⚠ 必须在 `vm_register_native()` **之后**调用（同名条目不存在时静默忽略 —— 编译期常量，不该失败）。
+//   为什么需要它：`vm_register_native` 的 param_types 实参对 `arity == -1`（如 `input`）是**整份忽略**的。
+void native_set_builtin_vararg_params(const char* name, int prefix_count, const TypeKind* prefix, TypeKind tail_type);
 
 // 根据函数名获取返回类型
 TypeKind native_get_return_type(const char* name);

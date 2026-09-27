@@ -1485,7 +1485,14 @@ void strings_init_module(void) {
     native_register_module_method_spec("strings", "byte", str_byte, -1, 1, 2, &NATIVE_T_INT, byte_params);
 
     // 9. 新增：从ASCII码创建字符串（可变参数）
+    // 参数类型 int（v3.2.8）：每个实参都是**码值**（0-255）—— 此前是 any
+    //   ⇒ 连 `strings.char("x")` 这种都能编过、运行期才炸（实测）。
+    //   ⚠ 可变参数方法的 param_types **必须注册之后用 `native_set_method_vararg_params` 声明**
+    //     （注册时的实参对 `arity == -1` 整份忽略 —— 实例二十三的口径）：前缀 1 个 int，
+    //     其余（超出部分）也按 int。
     native_register_module_method_spec("strings", "char", str_char, -1, 1, -1, &NATIVE_T_STRING, NULL);
+    TypeKind char_params[] = {TYPE_INT};
+    native_set_method_vararg_params("strings", "char", 1, char_params, TYPE_INT);
 
     // 10. 新增：查找子串位置（支持2-4个可变参数）
     TypeKind find_params[] = {TYPE_STRING, TYPE_STRING, TYPE_INT, TYPE_BOOL};

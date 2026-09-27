@@ -402,7 +402,12 @@ void io_init_globals(void) {
     vm_register_native("printf", native_printf, -1, 0, -1, TYPE_NULL, TYPE_UNKNOWN, NULL);
 
     // 注册全局 input 函数（返回 string，0 或 1 个参数）
+    // 参数类型 string（v3.2.8）：唯一那个可选参数是**提示文案** —— 此前是 any（`input(123)` 也能编过）。
+    //   ⚠ `arity == -1`（可变参数）时 vm_register_native 的 param_types 实参是**整份忽略**的
+    //   ⇒ 必须注册之后再声明（`native_set_builtin_vararg_params`，与模块通道同一套做法）。
     vm_register_native("input", native_input, -1, 0, 1, TYPE_STRING, TYPE_UNKNOWN, NULL);
+    TypeKind input_params[] = {TYPE_STRING};
+    native_set_builtin_vararg_params("input", 1, input_params, TYPE_STRING);
 }
 
 // 初始化 io 模块（import io 时调用）
@@ -415,5 +420,10 @@ void io_init_module(void) {
     native_register_module_method_spec("io", "printf", native_printf, -1, 0, -1, &NATIVE_T_NULL, NULL);
 
     // 注册 io.input 方法（模块名，方法名，函数指针，参数数量，返回类型，返回元素类型，参数类型数组）
+    // 参数类型 string（v3.2.8，同全局内置那处）：可选参数是提示文案 ⇒ 别再留成 any。
+    //   ⚠ 可变参数方法的 param_types **由注册后的 `native_set_method_vararg_params` 声明**
+    //     （注册时的实参对它整份忽略 —— 实例二十三的口径）。
     native_register_module_method_spec("io", "input", native_input, -1, 0, 1, &NATIVE_T_STRING, NULL);
+    TypeKind input_params[] = {TYPE_STRING};
+    native_set_method_vararg_params("io", "input", 1, input_params, TYPE_STRING);
 }

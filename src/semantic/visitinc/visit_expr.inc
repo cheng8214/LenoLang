@@ -1484,9 +1484,14 @@
                                      func_name, builtins[i].max_arity, actual_arity);
                             error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                         }
-                        else if (builtins[i].arity >= 0 && actual_arity == builtins[i].arity) {
-                            // 参数数量正确，检查参数类型
+                        else if (actual_arity > 0) {
+                            // 参数数量已在上面的分支校验过（定长 = 相等；可变参数 = 在 min/max 之间）
+                            // ⚠ v3.2.8：条件由 `arity >= 0 && actual_arity == arity` 放宽为 `actual_arity > 0`
+                            //   —— **可变参数**的内置函数此前**整段不做参数类型检查**（`input(123)` 也能编过）。
+                            //   与模块方法通道（v3.2.7，实例二十三）对齐：声明了就查，没声明就跳过。
                             for (int j = 0; j < actual_arity; j++) {
+                                // 有效条目数：定长 = arity；可变参数 = 0（未声明）或 MAX（已显式声明）
+                                if (j >= builtins[i].param_type_count) break;
                                 TypeKind expected_param_type = builtins[i].param_types[j];
                                 // 如果参数类型不是 TYPE_ANY，则进行类型检查
                                 if (expected_param_type != TYPE_ANY) {

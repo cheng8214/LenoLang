@@ -494,5 +494,34 @@ main() {
     //   但它是"cstruct 数组"⇒ `v[0].x = 1.0` 是合法写法。加检查时它误报过，
     //   现由 assert/cstruct_export_b.leno（核心测试 `cstruct.malloc_array()[i].x = xxx`）守着。
 
+    // ---- 可变参数 native 方法的**参数类型**（2026-09-28；实例二十八）----
+    //   两条通道都要用 `*_set_*_vararg_params()` **在注册之后**声明参数类型 ——
+    //   注册时那排 `param_types` 实参对 `arity == -1` 是**整份忽略**的。
+    //   实测踩过：先把 `strings.char` 的注册实参从 NULL 换成 `{TYPE_INT}`，结果
+    //   `strings.char("x")` 依旧编译通过、运行期才抛「ASCII码必须在0-255之间」✗。
+    var vp1 = dirs.join(work, "vararg_param_module.leno")
+    files.write(vp1, @"import strings
+main() {
+    print(strings.char(""x""))
+}
+")
+    ce.expect_error(vp1, "可变参数模块方法的参数类型要拦下", "期望 'int'，但传入 'string'", 3)
+
+    var vp2 = dirs.join(work, "vararg_param_builtin.leno")
+    files.write(vp2, @"main() {
+    input(123)
+}
+")
+    ce.expect_error(vp2, "可变参数**内置**函数的参数类型要拦下", "参数 1 期望 'string'", 2)
+
+    // 正向（不得误伤）：`strings.char` 收多个码值照常（前缀 + 可变部分都是 int）
+    var vp3 = dirs.join(work, "vararg_param_ok.leno")
+    files.write(vp3, @"import strings
+main() {
+    print(strings.char(65, 66, 67))
+}
+")
+    ce.expect_ok(vp3, "多码值 strings.char 照常通过", "ABC")
+
     print("=== test_diag_static_errors ALL passed ===")
 }
