@@ -463,6 +463,20 @@ static ObjBigInt* bigint_copy(const ObjBigInt* src) {
     return bigint_new(src->limbs, src->limb_count, src->is_negative);
 }
 
+// 把"可能是 int、也可能是 BigInt"的 Value 取成 `ObjBigInt*`（长除法内部专用）。
+// ⚠ 为什么必须有它（2026-09-27 修 bug 时补）：`bigint_shl` / `bigint_sub` / `bigint_add`
+//   的结果都会被 `bigint_compact_to_int()` **压缩** —— 一旦数值落进 int48 就返回**普通 int**。
+//   原来的长除法拿 `val_is_bigint()` 当"成功"判据 ⇒ 只要移位/相减的结果小到 int48 内就
+//   `return val_null()` ✗ —— **静默算错**（最小复现：`(9223372036854775807 * 2) % 10000000000`
+//   返回 null 而不是 3709551614）；上层再 `val_as_bigint(null)` 解引用 ⇒ **0xC0000005**
+//   （实测：`rands.ints(1, 10000000000)` 必崩，根因就在这里）。
+// int 分支现造一个 BigInt（**会 gc_alloc** ⇒ 调用方要保证它在 root 表里，或马上用掉）。
+static ObjBigInt* bigint_value_as_bigint(Value v) {
+    if (val_is_bigint(v)) return val_as_bigint(v);
+    if (val_is_int(v)) return bigint_from_int64(val_as_int(v));
+    return NULL;   // null / float / 其它 ⇒ 由调用方按失败处理（不猜）
+}
+
 // 长除法实现：计算 a % b，返回余数
 // 使用可靠的二进制长除法算法
 static Value bigint_mod_internal(ObjBigInt* a, ObjBigInt* b) {
@@ -510,38 +524,46 @@ static Value bigint_mod_internal(ObjBigInt* a, ObjBigInt* b) {
     shift_bits += (a_high_bits - b_high_bits);
     if (shift_bits < 0) shift_bits = 0;
 
-    // 复制余数
-    ObjBigInt* rem = bigint_copy(a);
-    if (!rem) return val_null();
-    
+    // 复制余数：**放进 root 表**（循环里每次 `bigint_shl` / `bigint_sub` 都会 gc_alloc ⇒
+    //   不 root 就可能被回收。`gc_push_root` 存的是**槽位指针** ⇒ 之后只更新 `rem_val`
+    //   这一个槽位即可，root 自动跟随，不必反复 push/pop）
+    Value rem_val = val_obj((Object*)bigint_copy(a));
+    if (!val_is_bigint(rem_val)) return val_null();
+    gc_push_root(&rem_val);
+
     // 从高位到低位逐步减
     for (int s = shift_bits; s >= 0; s--) {
-        // 将 b 左移 s 位
+        // 将 b 左移 s 位（结果可能是 int ⇒ 用助手统一取用，不能拿 val_is_bigint 当成功判据）
         Value shifted = bigint_shl(b, s);
-        if (!val_is_bigint(shifted)) {
+        ObjBigInt* shifted_b = bigint_value_as_bigint(shifted);
+        if (!shifted_b) {
+            gc_pop_root();
             return val_null();
         }
-        ObjBigInt* shifted_b = val_as_bigint(shifted);
-        
+        Value shifted_val = val_obj((Object*)shifted_b);
+        gc_push_root(&shifted_val);   // shifted 是 int 时这里是**新造**的 BigInt ⇒ 必须 root
+
         // 当余数 >= shifted_b 时，减去 shifted_b
-        while (compare_abs(rem, shifted_b) >= 0) {
-            Value new_rem = bigint_sub(rem, shifted_b);
-            if (!val_is_bigint(new_rem)) {
+        while (compare_abs(val_as_bigint(rem_val), shifted_b) >= 0) {
+            Value new_rem = bigint_sub(val_as_bigint(rem_val), shifted_b);
+            ObjBigInt* nr = bigint_value_as_bigint(new_rem);
+            if (!nr) {
+                gc_pop_root();
+                gc_pop_root();
                 return val_null();
             }
-            rem = val_as_bigint(new_rem);
-            // 需要复制因为 bigint_sub 可能返回新对象
-            rem = bigint_copy(rem);
+            rem_val = val_obj((Object*)nr);   // 更新同一槽位 ⇒ root 自动跟随
         }
+        gc_pop_root();   // shifted_val
     }
 
     // 余数的符号与被除数相同（如果余数不为 0）
-    int is_zero = (rem->limb_count == 1 && rem->limbs[0] == 0);
-    int result_negative = a->is_negative && !is_zero;
-    rem->is_negative = result_negative;
+    ObjBigInt* rem = val_as_bigint(rem_val);
+    int is_zero = (rem->limb_count == 0) || (rem->limb_count == 1 && rem->limbs[0] == 0);
+    rem->is_negative = a->is_negative && !is_zero;
 
-    Value result = val_obj((Object*)rem);
-    return result;
+    gc_pop_root();       // rem_val
+    return rem_val;
 }
 
 Value bigint_mod(ObjBigInt* a, ObjBigInt* b) {
@@ -647,37 +669,44 @@ static Value bigint_div_internal(ObjBigInt* a, ObjBigInt* b) {
     shift_bits += (a_high_bits - b_high_bits);
     if (shift_bits < 0) shift_bits = 0;
     
-    // 初始化余数为被除数
-    ObjBigInt* rem = bigint_copy(a);
-    if (!rem) return val_null();
-    
+    // 初始化余数为被除数：**放进 root 表**（理由同 bigint_mod_internal —— 循环里每个
+    //   `bigint_shl` / `bigint_sub` 都会 gc_alloc，不 root 就可能被回收）
+    Value rem_val = val_obj((Object*)bigint_copy(a));
+    if (!val_is_bigint(rem_val)) return val_null();
+    gc_push_root(&rem_val);
+
     // 商初始化为 0
     uint32_t* quotient_limbs = (uint32_t*)calloc(a->limb_count + 1, sizeof(uint32_t));
     if (!quotient_limbs) {
-        free(rem);
+        gc_pop_root();   // ⚠ 原来写的是 `free(rem)` —— rem 是 gc_alloc 出来的对象，**不能 free** ✗
         return val_null();
     }
     int quotient_count = 1;
-    
+
     // 从高位到低位逐步减
     for (int s = shift_bits; s >= 0; s--) {
         Value shifted = bigint_shl(b, s);
-        if (!val_is_bigint(shifted)) {
+        ObjBigInt* shifted_b = bigint_value_as_bigint(shifted);   // 结果可能是 int（见助手说明）
+        if (!shifted_b) {
             free(quotient_limbs);
+            gc_pop_root();
             return val_null();
         }
-        ObjBigInt* shifted_b = val_as_bigint(shifted);
-        
+        Value shifted_val = val_obj((Object*)shifted_b);
+        gc_push_root(&shifted_val);
+
         // 当余数 >= shifted_b 时，减去 shifted_b，商的对应位加 1
-        while (compare_abs(rem, shifted_b) >= 0) {
-            Value new_rem = bigint_sub(rem, shifted_b);
-            if (!val_is_bigint(new_rem)) {
+        while (compare_abs(val_as_bigint(rem_val), shifted_b) >= 0) {
+            Value new_rem = bigint_sub(val_as_bigint(rem_val), shifted_b);
+            ObjBigInt* nr = bigint_value_as_bigint(new_rem);
+            if (!nr) {
                 free(quotient_limbs);
+                gc_pop_root();
+                gc_pop_root();
                 return val_null();
             }
-            rem = val_as_bigint(new_rem);
-            rem = bigint_copy(rem);
-            
+            rem_val = val_obj((Object*)nr);   // 更新同一槽位 ⇒ root 自动跟随
+
             // 商的对应位加 1
             int limb_idx = s / BASE_BITS;
             int bit_idx = s % BASE_BITS;
@@ -686,7 +715,9 @@ static Value bigint_div_internal(ObjBigInt* a, ObjBigInt* b) {
                 quotient_count = limb_idx + 1;
             }
         }
+        gc_pop_root();   // shifted_val
     }
+    gc_pop_root();       // rem_val（后面只算商，不再需要余数）
     
     // 计算商的有效位数
     while (quotient_count > 1 && quotient_limbs[quotient_count - 1] == 0) {

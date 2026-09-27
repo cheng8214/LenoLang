@@ -84,17 +84,13 @@ main()
     float rg = rands.gauss(50, 10)             // 类型契约：返回 float
     assert_eq(rg > -500.0 and rg < 600.0, true)
 
-    // ⚠ **已知 bug（2026-09-27 收编 examples/rands 时发现，未修）**：大范围 `rands.ints` 会**崩**
-    //   —— `rands.ints(1, 10000000000)` ⇒ 0xC0000005（必崩；`1~4294967296` 正常，再大就崩）。
-    //   根因不在 rands 而在 **BigInt 的长除法路径**，最小复现（与 rands 无关）：
-    //       `(9223372036854775807 * 2) % 10000000000`  ⇒ 返回 `null`（应为数字）——**静默算错**
-    //   rands 的大范围分支正好要走这条路（`min + rand_limbs % range`）⇒ 于是崩。
-    //   这里**故意只钉能用的范围**（2^32 上限走的是 int64 快路）；等长除法修好后，
-    //   再把上面那行升级成 `rands.ints(1, 10000000000)` 的断言。
-    assert_eq(rands.ints(1, 4294967296) > 0, true)
-
-    // 说明：原示例 examples/rands/test_bigint_rand.leno 就是崩在这行上（它不在任何门禁里，
-    //   所以长期没人发现）—— 这正是"示例收编进套件"要解决的问题本身。
+    // 大范围 rands.ints：范围 > int32 ⇒ 走 BigInt 分支（`min + rand_limbs % range`）
+    //   ⚠ 这里此前**必崩**（0xC0000005）—— 根因是 BigInt 多 limb 长除法（余数走这条路时
+    //   静默返回 null，再被解引用）。2026-09-27 **已修** ✓ 所以现在可以真断言了：
+    //   详见 assert/test_bigint_arith.leno 的回归块与 docs 实例二十一。
+    assert_eq(rands.ints(1, 4294967296) > 0, true)     // 2^32 上限（int64 快路）
+    var rbig = rands.ints(1, 10000000000)              // 更大范围（BigInt 路）⇒ 修前必崩
+    assert_eq(rbig >= 1 and rbig <= 10000000000, true)
 
     print("test_rands passed")
 }

@@ -177,10 +177,39 @@ static Value rands_ints(int argc, Value* args) {
         // rand_big % range_big
         Value mod_result_val = bigint_mod(val_as_bigint(rand_big_val), val_as_bigint(range_big_val));
         gc_push_root(&mod_result_val);
-        
+
+        // 防御（2026-09-27）：`bigint_mod` 的结果可能是 **null**（运算失败）或**被压缩的 int**
+        //   —— 直接 `val_as_bigint()` 会拿到 NULL，再被 `bigint_add` 解引用 ⇒ **0xC0000005**。
+        //   （内部长除法那个 bug 已修，这条留作"宁可报错也不崩"的兜底。）
+        if (!val_is_bigint(mod_result_val) && !val_is_int(mod_result_val)) {
+            gc_pop_root();   // mod_result_val
+            gc_pop_root();   // rand_big_val
+            gc_pop_root();   // range_big_val
+            gc_pop_root();   // min_big_val
+            native_throw_error("rands.ints 范围过大：大整数取模失败");
+            return val_null();
+        }
+
+        // 统一取成 BigInt（结果被压缩成 int 时现造一个；它**必须 root** —— bigint_add 内部会分配）
+        Value mod_big_val;
+        if (val_is_bigint(mod_result_val)) {
+            mod_big_val = mod_result_val;
+        } else {
+            mod_big_val = val_obj((Object*)bigint_from_int64(val_as_int(mod_result_val)));
+            if (!val_is_bigint(mod_big_val)) {
+                gc_pop_root();   // mod_result_val
+                gc_pop_root();   // rand_big_val
+                gc_pop_root();   // range_big_val
+                gc_pop_root();   // min_big_val
+                return val_null();
+            }
+        }
+        gc_push_root(&mod_big_val);
+
         // min + mod_result
-        Value result = bigint_add(val_as_bigint(min_big_val), val_as_bigint(mod_result_val));
-        
+        Value result = bigint_add(val_as_bigint(min_big_val), val_as_bigint(mod_big_val));
+
+        gc_pop_root(); // mod_big_val
         gc_pop_root(); // mod_result_val
         gc_pop_root(); // rand_big_val
         gc_pop_root(); // range_big_val
