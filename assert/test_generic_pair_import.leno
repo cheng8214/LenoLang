@@ -1,0 +1,50 @@
+// test_generic_pair_import.leno —— 跨模块**双类型参数泛型 struct** 的返回类型（2026-09-28；实例二十九）
+//
+// 修的是什么：模块符号表扫描器解析返回类型字符串时，**只要见到逗号就把整份当 `Dict[K,V]`**
+//   （完全不看标识符是不是 `Dict`）⇒ `export func makePair[K, V](...): Pair[K, V]` 的返回类型
+//   被记成 `Dict[K,V]` ⇒ 调用方拿到 `Dict[struct K, struct V]` ⇒ `p.getKey()` 报
+//   「类型 'Dict[struct K, struct V]' 没有方法 'getKey'」。
+//   实测来源：examples/泛型系统/泛型函数/test_generic_func_multi.leno 与
+//   跨模块泛型/test_generic_import2.leno（两处都是"直接 `new Pair[..]` 好、经泛型函数返回值就差"
+//   —— 因为本地 `new` 的泛型实参由语义侧直接给出，绕过了"类型字符串解析"这条路）。
+//
+// ⚠ 已知边界（未修，见文件末尾注释）：返回值**静态类型里的泛型实参仍是占位符**（`Pair[K, V]`），
+//   所以 `string k = p.getKey()` 这种**强类型写法**还编不过（实际类型 `struct K`）。
+//   本文件只钉"经泛型函数返回值能正常取字段/调用方法"这条已经好的路。
+
+import "generic_pair_mod.leno" as gm
+
+main() {
+    // ① 双类型参数：泛型函数返回泛型 struct ⇒ 能调方法、能取字段
+    var p = gm.makePair[string, int]("x", 10)
+    assert_eq(p.getKey(), "x")
+    assert_eq(p.getVal(), 10)
+    assert_eq(type(p).has("Pair"), true)      // 运行期类型名带 Pair（不再是 Dict[...]）
+
+    var p2 = gm.makePair[int, string](7, "seven")
+    assert_eq(p2.getKey(), 7)
+    assert_eq(p2.getVal(), "seven")
+
+    // ② 对照组：单类型参数（这条路径本来就对 —— 表示法一致，都是 TYPE_STRUCT + generic_args）
+    var b = gm.makeBox[int](42)
+    assert_eq(b.get(), 42)
+
+    // ③ 反向对照：**真的 `Dict[K,V]`** 仍必须是字典（修法只针对"标识符不是 Dict"的情况）
+    var d = {"a": 1, "b": 2}
+    assert_eq(d.len(), 2)
+    assert_eq(d["a"], 1)
+
+    print("test_generic_pair_import passed")
+}
+
+// ⚠ 已知边界（未修）：泛型函数返回值的**静态**类型没代入调用点的类型实参 ——
+//   下面这段**当前编译不过**（实际类型 `struct K`），所以只作说明、不写进上面：
+//
+//     string k = p.getKey()        // error: 期望 string，实际 struct K
+//     int v = p.getVal()           // error: 期望 int，实际 struct V
+//
+//   根因：模块函数符号只存了 `type_param_count`（**数量**），没存**类型形参名** ⇒
+//     调用点无法把 `Pair[K, V]` 里的占位符按名换成 `[string, int]`。
+//     （struct **方法**侧早有 `return_generic_param_names` 这套字段，模块**函数**侧没有。）
+//   要真修得：给 `ModuleFuncSymbol` 加类型形参名 + 随 `.lenosymc` 升版（当前 v29）往返 +
+//     调用点按名代入。眼下可用 `var p = ...`（运行时值是对的）或直接 `new Pair[string, int](...)`。

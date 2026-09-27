@@ -206,7 +206,14 @@ static TypeInfo* parse_type_from_string_inner(const char** p) {
         
         skip_ws(p);
         
-        // 检查是否是 Dict[K, V] (有逗号)
+        // 带逗号的泛型实参：**只有标识符真的是 `Dict` 才是字典**（v3.2.8 修）
+        //   ⚠ 原实现「见到逗号就当 Dict[K,V]」⇒ 把**双类型参数的泛型 struct** 也解析成了字典：
+        //     模块里 `export func makePair[K, V](K k, V v): Pair[K, V]` 的返回类型被记成 `Dict[K,V]`
+        //     ⇒ 调用方（`var p = gm.makePair[string, int]("x", 10)`）拿到
+        //     `Dict[struct K, struct V]` ⇒ `p.getKey()` 报「没有方法 'getKey'」。
+        //     实测来源：examples/泛型系统/泛型函数/test_generic_func_multi.leno 与
+        //     跨模块泛型/test_generic_import2.leno（两处都是"直接 `new Pair[..]` 好、
+        //     经泛型函数返回值就差" ⇒ 类型字符串解析在这条路上被绕过）。
         if (**p == ',') {
             (*p)++; // skip ','
             skip_ws(p);
@@ -218,11 +225,28 @@ static TypeInfo* parse_type_from_string_inner(const char** p) {
             if (**p != ']') { type_free(param1); type_free(param2); return NULL; }
             (*p)++; // skip ']'
             
-            // Dict[K, V]
-            TypeInfo* dict = type_new(TYPE_DICT);
-            dict->key_type = param1;   // 键类型
-            dict->value_type = param2; // 值类型
-            return dict;
+            if (strcmp(ident, "Dict") == 0) {
+                // Dict[K, V]
+                TypeInfo* dict = type_new(TYPE_DICT);
+                dict->key_type = param1;   // 键类型
+                dict->value_type = param2; // 值类型
+                return dict;
+            }
+
+            // 泛型 struct 的**两个**类型实参：Pair[K, V] → TYPE_STRUCT + generic_args[2]
+            //   （与单参数那条同一表示法；`type_to_string` 会渲染成 `Pair[K, V]`）
+            TypeInfo* generic_struct2 = type_new(TYPE_STRUCT);
+            generic_struct2->struct_name = strdup(ident);
+            generic_struct2->generic_args = (TypeInfo**)malloc(sizeof(TypeInfo*) * 2);
+            if (generic_struct2->generic_args) {
+                generic_struct2->generic_args[0] = param1;
+                generic_struct2->generic_args[1] = param2;
+                generic_struct2->generic_count = 2;
+            } else {
+                type_free(param1);
+                type_free(param2);
+            }
+            return generic_struct2;
         }
         
         // Array[T] — 只有单个参数

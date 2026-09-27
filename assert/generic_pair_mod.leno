@@ -1,0 +1,36 @@
+// generic_pair_mod.leno —— test_generic_pair_import.leno 的 fixture 模块
+//
+// 为什么需要它：模块符号表扫描器在解析返回类型字符串时，曾**只要见到逗号就当 Dict[K,V]**
+//   （不看标识符是不是 `Dict`）⇒ `Pair[K, V]` 被记成 `Dict[K,V]` ⇒ 调用方拿到
+//   `Dict[struct K, struct V]` ⇒ `p.getKey()` 报「没有方法 'getKey'」。
+//   见 docs 实例二十九 / sym_table_type_parse.inc 的注释。
+
+export struct Pair[K, V] {
+    K key
+    V val
+
+    func getKey(): K {
+        return self.key
+    }
+
+    func getVal(): V {
+        return self.val
+    }
+}
+
+export func makePair[K, V](K k, V v): Pair[K, V] {
+    return new Pair[K, V](key = k, val = v)
+}
+
+// 单类型参数（同一表示的对照组）：Box[int] / Box[string]
+export struct Box[T] {
+    T value
+
+    func get(): T {
+        return self.value
+    }
+}
+
+export func makeBox[T](T v): Box[T] {
+    return new Box[T](value = v)
+}
