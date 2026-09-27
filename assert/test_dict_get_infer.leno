@@ -45,7 +45,25 @@ main() {
     float missing_promote = opts.get("nokey", 0)
     assert_eq(missing_promote, 0.0)
 
-    // === 无默认值：返回 any ===
+    // === 1 参形态：返回**字典的值类型 V**（v3.2.8 起；此前是 any） ===
+    //   为什么值得钉：`int v = d.get("k")` 这种写法**此前编译不过**（实际类型 any，
+    //   只能 `var v` 再手动收窄）⇒ 现在与 2 参形态同样精确。
+    //   ⚠ 键不存在时运行期返回 null（严格说该是 `V?`）—— 与 2 参形态（返回默认值类型）同一口径。
+    Dict[string, int] dint = {"a": 7}
+    int v1 = dint.get("a")
+    assert_eq(v1, 7)
+    Dict[string, string] dstr = {"a": "x"}
+    string v2 = dstr.get("a")
+    assert_eq(v2, "x")
+    Dict[string, float] dfloat = {"a": 1.5}
+    float v3 = dfloat.get("a")
+    assert_eq(v3, 1.5)
+    Dict[string, bool] dbool = {"a": true}
+    bool v4 = dbool.get("a")
+    assert_eq(v4, true)
+    assert_eq(dint.get("nokey"), null)      // 键不存在 ⇒ 运行期 null（静态仍是 V）
+
+    // 值类型本身是 any（混合字典）⇒ 1 参形态仍只能是 any（没有可推的信息）✓ 合理
     var v = opts.get("x")
     assert_eq(v, 42)
 

@@ -32,5 +32,29 @@ main() {
     Array[int] big_doubled = big.map(func(any x, any i) { return x * 10 })
     assert_eq(big_doubled[0], 30)
 
+    // === Array.reduce 的泛型推断（v3.2.8 起：结果类型 = **回调返回类型**）===
+    //   此前 reduce 落到注册表的 any ⇒ `int s = nums.reduce(...)` **编译不过**
+    //   （只能 `var s = ...` 再手动收窄）。与上面的 map 用例是同一套"类型守卫"手法：
+    //   临时把回调的 (累加器, 元素) 两个参数符号设成 (init 的实参类型, 接收者元素类型)。
+    int sum = nums.reduce(func(int a, int b) { return a + b }, 0)
+    assert_eq(sum, 15)
+
+    int maxv = nums.reduce(func(int a, int b) { return if a > b then a else b }, 0)
+    assert_eq(maxv, 5)
+
+    Array[float] fs = [1.5, 2.5, 3.0]
+    float fsum = fs.reduce(func(float a, float b) { return a + b }, 0.0)
+    assert_eq(fsum, 7.0)
+
+    // ⚠ 已知边界（未修）：回调**形参写成 `any`** 时仍会退化成 any
+    //   （`nums.reduce(func(any a, any b) { return a + b }, 0)` ⇒ any）——
+    //   与 map 的"类型守卫"同一机制：守卫只改写**符号类型**，而函数体表达式的类型
+    //   可能已被更早的遍历缓存（`ast->cached_type`）⇒ 那些未标注形参的写法拿不到结果。
+    //   实用建议：reduce/map 的回调**把形参类型写出来**（本文件上面全部如此）。
+
+    Array[string] words = ["a", "b", "c"]
+    string joined = words.reduce(func(string a, string b) { return a + b }, "")
+    assert_eq(joined, "abc")
+
     print("test_array_map_infer passed")
 }

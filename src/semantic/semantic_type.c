@@ -1685,6 +1685,55 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                                 }
                             }
 
+                            // Array.reduce 泛型推断（v3.2.8）：结果类型 = **回调的返回类型**
+                            //   与 map 同一套"类型守卫"：把回调的两个参数符号临时设成
+                            //   (累加器 = 第 2 个实参 init 的类型, 元素 = 接收者元素类型)，再推函数体返回类型。
+                            //   此前 reduce 落到注册表的 `any` ⇒
+                            //   `int s = arr.reduce(func(int a,int b):int { return a+b }, 0)` **编译不过**
+                            //   （实测：变量声明类型与初始化值类型不匹配，实际类型 any）。
+                            if (obj_type->kind == TYPE_ARRAY && strcmp(method_name, "reduce") == 0 &&
+                                ast->u.call.args.count >= 1 && obj_type->element_type &&
+                                obj_type->element_type->kind != TYPE_ANY) {
+                                Ast* red_cb = ast->u.call.args.items[0];
+                                if (red_cb && red_cb->kind == AST_FUNC_DEF && red_cb->u.func.pcnt >= 1) {
+                                    TypeInfo* red_elem = type_copy(obj_type->element_type);
+                                    TypeInfo* red_acc = (ast->u.call.args.count >= 2)
+                                        ? infer_expr_type(s, ast->u.call.args.items[1]) : NULL;
+                                    TypeInfo* red_origs[8] = {NULL};
+                                    int red_n = red_cb->u.func.pcnt < 8 ? red_cb->u.func.pcnt : 8;
+                                    for (int gi = 0; gi < red_n; gi++) {
+                                        Symbol* psym = scope_resolve(s->current, red_cb->u.func.params[gi]);
+                                        if (psym) {
+                                            red_origs[gi] = psym->type;
+                                            if (gi == 0) {
+                                                psym->type = (red_acc && red_acc->kind != TYPE_ANY)
+                                                    ? type_copy(red_acc) : type_copy(red_elem);
+                                            } else if (gi == 1) {
+                                                psym->type = type_copy(red_elem);
+                                            } else {
+                                                psym->type = type_copy(red_origs[gi]);
+                                            }
+                                        }
+                                    }
+                                    TypeInfo* inferred = infer_return_type_from_body(s, red_cb->u.func.body);
+                                    for (int gi = 0; gi < red_n; gi++) {
+                                        Symbol* psym = scope_resolve(s->current, red_cb->u.func.params[gi]);
+                                        if (psym && red_origs[gi]) {
+                                            type_free(psym->type);
+                                            psym->type = red_origs[gi];
+                                        }
+                                    }
+                                    type_free(red_elem);
+                                    if (red_acc) type_free(red_acc);
+                                    if (inferred && inferred->kind != TYPE_ANY) {
+                                        type_free(obj_type);
+                                        ast->cached_type = type_copy(inferred);
+                                        return inferred;
+                                    }
+                                    if (inferred) type_free(inferred);
+                                }
+                            }
+
                             // Dict.get 默认值类型推断：根据第二个参数（默认值）推断返回类型
                             // opts.get("x", 0) → int, opts.get("x", 0.0) → float,
                             // opts.get("z", true) → bool, opts.get("name", "") → string
@@ -1697,6 +1746,21 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                                     return default_type;
                                 }
                                 if (default_type) type_free(default_type);
+                            }
+
+                            // Dict.get **1 参形态**（v3.2.8）：没有默认值实参可推 ⇒ 用**字典的值类型 V**
+                            //   （`Dict[string,string].get("k")` ⇒ string；此前是 any ⇒
+                            //    `string s = d.get("k")` 编译不过）。
+                            //   ⚠ 诚实性说明：1 参形态在**键不存在**时返回 null ⇒ 严格说该是 `V?`；
+                            //     但本语言的 null 可隐式赋给具体类型，且 2 参形态（返回默认值类型）同样是
+                            //     这个口径 ⇒ 这里与 2 参形态保持一致取 V。
+                            if (obj_type->kind == TYPE_DICT && strcmp(method_name, "get") == 0 &&
+                                ast->u.call.args.count < 2 &&
+                                obj_type->value_type && obj_type->value_type->kind != TYPE_ANY) {
+                                TypeInfo* vt = type_copy(obj_type->value_type);
+                                type_free(obj_type);
+                                ast->cached_type = type_copy(vt);
+                                return vt;
                             }
 
                             type_free(obj_type);
