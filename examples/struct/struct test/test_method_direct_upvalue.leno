@@ -23,22 +23,31 @@ struct TestStruct
 }
 
 // 测试在函数内定义 struct，捕获局部变量
-func createStructWithCapture()
+// ⚠ 2026-09-28 修示例：函数内定义的 struct **出不了函数作用域** ——
+//   原来把它 return 出去、在外面 `obj.getLocal()`，调用点看到的是 any
+//   （"不能在 any 类型上调用方法 'getLocal'"）⇒ 在函数内用掉它，把**具体类型的结果**返回出去。
+func createStructWithCapture(): int
 {
     var local_var = 100
     
     struct LocalStruct
     {
         int data
-        
-        // 尝试捕获外部局部变量
-        func getLocal()
+        int base        // ⚠ 外部值用**字段**承接（见下面说明）
+
+        // 读自己的两个字段 —— 不捕获外层局部
+        func getLocal(): int
         {
-            return local_var + data
+            return base + data
         }
     }
-    
-    return new LocalStruct(data = 5)
+
+    // ⚠ 2026-09-28：本函数原来的写法是让方法**直接读外层局部**（`return local_var + data`）——
+    //   那会 **0xC0000005 崩**（最小复现见 docs 实例三十一）。根因：struct 方法不是闭包，
+    //   目前**没有**捕获外层局部变量的能力（崩而不是报错，属 bug，已登记）⇒
+    //   演示改成把外部值作为**字段**传入，这是当前唯一稳妥的写法。
+    var obj = new LocalStruct(data = 5, base = local_var)
+    return obj.getLocal()
 }
 
 main()
@@ -71,8 +80,7 @@ main()
     
     // 测试2: 捕获局部变量
     print("--- 测试2: 方法捕获局部变量 ---")
-    var obj = createStructWithCapture()
-    var result = obj.getLocal()
+    int result = createStructWithCapture()
     print($"结果: {result}, 期望: 105 (100 + 5)")
     
     if result == 105

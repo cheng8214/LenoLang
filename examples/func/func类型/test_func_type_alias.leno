@@ -52,7 +52,9 @@ alias IntOp = func(int):int
 struct MultiCB {
     IntOp op1
     IntOp op2
-    func apply(int x): int { return op2(op1(x)) }
+    // ⚠ 2026-09-28 修示例：函数型字段要经 `self.` 调用（裸名推成 any，
+    //   详见 test_func_type_var_field.leno 里的说明）
+    func apply(int x): int { return self.op2(self.op1(x)) }
 }
 MultiCB mc = new MultiCB(op1 = triple, op2 = func(int x): int { return x + 1 })
 print("multi compose: " + mc.apply(5))

@@ -623,5 +623,58 @@ main() {
 ")
     ce.expect_error(ti3, "多维数组 copy 不许降维（copy 入口）", "声明类型与初始化值类型不匹配", 3)
 
+    // ---- face 上的越界访问（2026-09-28；实例三十一）----
+    //   来源：`examples/泛型系统/泛型接口与约束/test_face_access2.leno` —— 那是"face 变量能否调用 /
+    //   访问**非 face 定义**的方法与字段？"的**探索草稿**，答案是**不能** ⇒ 收进断言后删除草稿。
+    //   断言里之前**零覆盖**这两条 face 越界诊断。
+    var fa1 = dirs.join(work, "face_call_cross.leno")
+    files.write(fa1, @"face Speaker {
+    func speak(): string
+}
+
+struct Dog impl Speaker {
+    string name
+
+    func speak(): string {
+        return ""woof from "" + self.name
+    }
+
+    func getAge(): int {
+        return 3
+    }
+}
+
+main() {
+    var d = new Dog(name = ""Rex"")
+    Speaker s = d
+    print(s.speak())
+    print(s.getAge())
+}
+")
+    //   ⚠ 同一行会报**两条**（先一条"不能在 any 类型上调用方法 'getAge'"、再一条
+    //     "类型 'face Speaker' 没有方法 'getAge'"）—— 前者是误导性的噪点，已登记为待修
+    ce.expect_error(fa1, "face 变量不能调用非 face 定义的方法", "类型 'face Speaker' 没有方法 'getAge'", 21)
+
+    var fa2 = dirs.join(work, "face_field_cross.leno")
+    files.write(fa2, @"face Speaker {
+    func speak(): string
+}
+
+struct Dog impl Speaker {
+    string name
+
+    func speak(): string {
+        return ""woof from "" + self.name
+    }
+}
+
+main() {
+    var d = new Dog(name = ""Rex"")
+    Speaker s = d
+    print(s.name)
+}
+")
+    ce.expect_error(fa2, "face 变量不能访问非 face 字段（提示用 as 转型）", "没有字段或方法 'name'", 16)
+
     print("=== test_diag_static_errors ALL passed ===")
 }

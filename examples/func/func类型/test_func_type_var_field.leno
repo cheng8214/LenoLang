@@ -14,7 +14,10 @@ struct Calculator {
     func(int, int):int op
 
     func calc(int a, int b): int {
-        return op(a, b)
+        // ⚠ 2026-09-28 修示例：调用**函数型字段**要写 `self.op(...)`。
+        //   裸名 `op(a, b)` 目前推不出返回类型（实测推成 any ⇒ "期望 int，实际 any"），
+        //   这是编译器的一个缺口（已登记），示例先用能用的写法。
+        return self.op(a, b)
     }
 }
 

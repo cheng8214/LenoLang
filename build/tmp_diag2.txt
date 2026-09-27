@@ -1,0 +1,119 @@
+测试\别名alias\test_auto_alias.leno	[未定义变量] 未定义的类型: SizeI（请检查是否已通过 use 语句导入该类型，如 use module.Size
+测试\错误散bug\test_error_col.leno	[未定义函数] 未定义的函数: unknown_func
+测试\对话框dialog\repro_dialog_exact.leno	[语义错误] 找不到模块文件: ../../leno_module/LenoSDL3/lib/SDL3.leno
+测试\对话框dialog\test_dialog_ctor.leno	[语义错误] 找不到模块文件: ../../../leno_module/LenoSDL3/lib/sdl_dialog
+测试\链式chain\repro_chain3_c.leno	[语义错误] 不能在 any 类型上直接访问字段 'Mode'
+测试\数组字典边界\嵌套数组类型问题.leno	[类型不匹配] 类型错误：无法将值赋值给变量 'total'
+测试\杂项\cs minilang.leno	[语义错误] 不能在 any 类型上调用方法 'len'
+测试\执行参数\cs_test.leno	[类型不匹配] any 类型不能参与大小比较，请指定数组元素类型（如 Array[int]）
+测试\执行参数\test_sdl3_utils.leno	[语义错误] 找不到模块文件: ../../../leno_module/LenoSDL3/lib/SDL3.leno
+测试\export array or dict\mod_errors.leno	[类型不匹配] 类型错误：变量 'badInt' 声明类型与初始化值类型不匹配
+测试\export array or dict\test_const_mutate.leno	[语义错误] 不能对 const 变量 'cm.arr' 的元素重新赋值
+测试\export array or dict\test_const_syntax.leno	[语义错误] 不能对 const 变量 'cs.arr' 的元素重新赋值
+测试\export array or dict\test_dict_const.leno	[语义错误] 不能对 const 变量 'cs.d' 的元素重新赋值
+测试\export array or dict\test_dict_const2.leno	[语义错误] 不能对 const 变量 'cs.d' 的元素重新赋值
+测试\repro_global_var\test_all_bugs.leno	[未定义变量] 未知的原生模块 'assert'（可用的原生模块: io, times, arrays, strings
+测试\cs_design.leno	[类型不匹配] 解构槽位 0 ('a') 类型 string 与返回值类型 int 不兼容
+多变量声明\multi_var_array.leno	[语义错误] 类型错误: 参数 1 期望 'int'，但传入 'string'
+多返回值\multi_ret_errors_test.leno	[类型不匹配] 多返回值数量不匹配：期望 2 个，实际 3 个
+泛型系统\边界与错误\test_face_access_err.leno	[语义错误] face 'Speaker' 没有字段或方法 'name'（使用 'as' 转型访问底层 struct）
+泛型系统\边界与错误\test_generic_edge.leno	[类型不匹配] coalesce 第 1 个参数类型不匹配: 期望 int, 实际 null
+泛型系统\边界与错误\test_generic_error_boundary.leno	[类型不匹配] 泛型 struct 'Box' 需要类型参数（如 Box[类型]）
+泛型系统\边界与错误\test_generic_error.leno	[类型不匹配] strict 第 2 个参数类型不匹配: 期望 int, 实际 string
+泛型系统\边界与错误\test_generic_error2.leno	[语义错误] set 第 1 个参数类型不匹配: 期望 int, 实际 string
+泛型系统\边界与错误\test_generic_use_error.leno	[语义错误] use 语句错误：模块 'gm' 中没有类型或函数 'NotExist'
+泛型系统\边界与错误\test_no_type_param.leno	[类型不匹配] 泛型 struct 'Box' 需要类型参数（如 Box[类型]）
+泛型系统\泛型函数\test_generic_func_multi.leno	[语义错误] 类型 'Dict[struct K, struct V]' 没有方法 'getKey'
+泛型系统\泛型接口与约束\test_face_access.leno	[语义错误] face 'Speaker' 没有字段或方法 'name'（使用 'as' 转型访问底层 struct）
+泛型系统\泛型接口与约束\test_face_access2.leno	[语义错误] 不能在 any 类型上调用方法 'getAge'
+泛型系统\泛型接口与约束\test_generic_face_param.leno	[语义错误] compareTo 第 1 个参数类型不匹配: 期望 struct T, 实际 int
+泛型系统\跨模块泛型\test_generic_import2.leno	[语义错误] 类型 'Dict[struct K, struct V]' 没有方法 'getKey'
+性能测试\绑定方法尾调用测试.leno	[语义错误] 不能在 any 类型上调用方法 'len'
+性能测试\尾调用优化 (TCO) 测试.leno	[类型不匹配] any 类型不能参与大小比较，请指定数组元素类型（如 Array[int]）
+验证\error_column_tests\test01_undefined_var.leno	[未定义变量] 未定义的变量: xyz
+验证\error_column_tests\test02_undefined_func.leno	[未定义函数] 未定义的函数: foo
+验证\error_column_tests\test03_param_mismatch.leno	[类型不匹配] add 第 1 个参数类型不匹配: 期望 int, 实际 string
+验证\error_column_tests\test04_array_index.leno	[类型不匹配] 数组索引必须是整数类型，实际为 string
+验证\error_column_tests\test05_struct_field.leno	[语义错误] struct 没有字段 'z'
+验证\error_column_tests\test06_if_no_brace.leno	[语法错误] if 语句体必须用大括号 {} 包裹
+验证\error_column_tests\test07_while_no_brace.leno	[语法错误] while 循环体必须用大括号 {} 包裹
+验证\error_column_tests\test08_for_no_brace.leno	[语法错误] for 循环体必须用大括号 {} 包裹
+验证\error_column_tests\test09_switch_no_brace.leno	[语法错误] switch 语句体必须用大括号 {} 包裹
+验证\error_column_tests\test10_try_no_brace.leno	[语法错误] try 语句体必须用大括号 {} 包裹
+验证\error_column_tests\test11_undef_type.leno	[语义错误] 未定义的类型: UndefinedType（请检查是否已通过 use 语句导入该类型，如 use modu
+验证\error_column_tests\test12_compound_assign.leno	[未定义变量] 未定义的变量: xyz
+验证\error_column_tests\test13_parallel_assign.leno	[未定义变量] 未定义的变量: a
+验证\error_column_tests\test14_face_missing.leno	[语义错误] struct 'Dog' 声明 impl 'Speaker' 但缺少方法 'speak'
+验证\error_column_tests\test15_import_error.leno	[未定义变量] 未知的原生模块 'nonexistent_module_xyz'（可用的原生模块: io, times,
+验证\error_column_tests\test16_dict_key.leno	编译成功: D:\CLeno\Leno\examples\验证\error_column_tests\test16_di
+验证\error_column_tests\test17_duplicate_var.leno	[重复定义] 变量 'x' 重复定义
+验证\error_column_tests\test18_method_call.leno	[语义错误] 类型 'struct Point' 没有方法 'test_nonexist'
+验证\04_学生管理系统_dict_插值版本.leno	[语义错误] 不能在 any 类型上调用方法 'len'
+验证\04_学生管理系统_dict版本.leno	[语义错误] 不能在 any 类型上调用方法 'add'
+验证\Dict_get_error.leno	编译成功: D:\CLeno\Leno\examples\验证\Dict_get_error.leno -> D:\CL
+验证\test_null_arith.leno	[类型不匹配] 变量 'a' 的值确定为 null（声明为 null 之后未重新赋值），不能参与算术运算 —— 请先赋初
+验证\test_null_arith2.leno	[类型不匹配] null 类型不能参与算术运算，请先检查变量是否为 null
+验证\test_null_ref_type.leno	[类型不匹配] 类型错误：变量 'x' 声明类型与初始化值类型不匹配
+验证\test_null_type_check.leno	[类型不匹配] 类型错误：变量 'a' 声明类型与初始化值类型不匹配
+验证\test_nullable_arith.leno	[类型不匹配] 变量 'a' 的值确定为 null（声明为 null 之后未重新赋值），不能参与算术运算 —— 请先赋初
+验证\test_type_null.leno	[类型不匹配] 变量 'a' 的值确定为 null（声明为 null 之后未重新赋值），不能参与算术运算 —— 请先赋初
+中文标识符\test_chinese_complex.leno	[语义错误] struct '点' 需要使用 new 关键字实例化，例如: new 点()
+audio\audio.leno	[未定义变量] 未知的原生模块 'guis'（可用的原生模块: io, times, arrays, strings, 
+clib\test_basic.leno	[类型不匹配] clib 函数 'strlen' 参数 1 类型不能使用 'string'，请使用 'str8' 或 '
+clib\test_clib_mismatch.leno	[类型不匹配] 类型错误：变量 'lib2' 声明类型与初始化值类型不匹配
+clib\test_last_error.leno	编译成功: D:\CLeno\Leno\examples\clib\test_last_error.leno -> D:
+clib\test_min.leno	[类型不匹配] clib 函数 'strlen' 参数 1 类型不能使用 'string'，请使用 'str8' 或 '
+clib\test_str8_error.leno	[类型不匹配] clib 'msvcrt' 函数 'strlen' 参数 1 类型不匹配: 期望 'Ptr', 实际 '
+crypto\rsa.leno	[语义错误] 不能在 any 类型上进行索引访问
+cstruct\test_cstruct_array_slice.leno	[语义错误] 不能在 any 类型上调用方法 'len'
+enum\test_enum_errors.leno	[重复定义] enum 'Color' 重复定义
+enum\test_enum_errors2.leno	[未定义变量] 枚举 'Color' 中没有成员 'blue'
+ffi\test_ffi_final.leno	[语法错误] 期望表达式
+func\匿名func\测试匿名函数 .leno	[语义错误] 类型 'Dict[string, func(any):any]' 没有方法 'double'
+func\匿名func\test_anonymous_func.leno	[语义错误] 类型 'Dict[string, func(any):any]' 没有方法 'double'
+func\func 默认参数\default_param_type_check.leno	[类型不匹配] 类型错误：变量 'n' 声明类型与初始化值类型不匹配
+func\func类型\bug_repro_alias_use.leno	[语法错误] 不支持带模块前缀的类型声明 'm.Helper 变量名'：请先 use m.Helper，然后直接写 'H
+func\func类型\test_func_type_alias.leno	[类型不匹配] 返回类型不匹配：期望 int，实际 any
+func\func类型\test_func_type_var_field.leno	[类型不匹配] 返回类型不匹配：期望 int，实际 any
+func\func error.leno	编译成功: D:\CLeno\Leno\examples\func\func error.leno -> D:\CLen
+func\test_first_class_func.leno	[语义错误] 类型 'Dict[string, func()]' 没有方法 'en'
+func\var 声明 null 后可以赋任何值.leno	[类型不匹配] 类型错误：无法将值赋值给变量 'a'
+import\测试\1.leno	[未定义变量] 未知的原生模块 'guis'（可用的原生模块: io, times, arrays, strings, 
+import\测试\main2.leno	[类型不匹配] any 类型不能参与大小比较，请指定数组元素类型（如 Array[int]）
+import\测试\test2.leno	[类型不匹配] any 类型不能参与大小比较，请指定数组元素类型（如 Array[int]）
+import\boundary_tests\10_exception_cross_module\error_module.leno	编译成功: D:\CLeno\Leno\examples\import\boundary_tests\10_except
+import\boundary_tests\11_closure_cross_module\closure_factory.leno	[类型不匹配] any 类型不能参与大小比较，请指定数组元素类型（如 Array[int]）
+import\boundary_tests\11_closure_cross_module\test_closure.leno	[语义错误] 类型 'Dict[unknown, unknown]' 没有方法 'get_balance'
+import\boundary_tests\15_import_error_handling\partial_success_module.leno	编译成功: D:\CLeno\Leno\examples\import\boundary_tests\15_import
+import\boundary_tests\15_import_error_handling\runtime_error_module.leno	编译成功: D:\CLeno\Leno\examples\import\boundary_tests\15_import
+import\boundary_tests\15_import_error_handling\syntax_error_module.leno	[语法错误] 期望 '{'
+import\boundary_tests\15_import_error_handling\test_import_error_handling.leno	[语义错误] 找不到模块文件: nonexistent_module.leno
+import\boundary_tests\15_import_error_handling\test_nonexistent.leno	[语义错误] 找不到模块文件: nonexistent_module.leno
+import\boundary_tests\15_import_error_handling\test_partial_success.leno	编译成功: D:\CLeno\Leno\examples\import\boundary_tests\15_import
+import\boundary_tests\15_import_error_handling\test_runtime_error.leno	编译成功: D:\CLeno\Leno\examples\import\boundary_tests\15_import
+import\boundary_tests\15_import_error_handling\test_syntax_error.leno	[语法错误] 期望 '{'
+import\clib_cache_bug\test_chain.leno	[语义错误] 找不到模块文件: window.leno
+import\compiler_bug_repro\bug1_error_guidance.leno	[语义错误] 不能在 any 类型 'data' 上直接访问字段 'field'
+import\compiler_bug_repro\bug2_cascade_errors.leno	[类型不匹配] 返回类型不匹配：期望 int，实际 any
+import\compiler_bug_repro\bug3_root_cause_masked.leno	[语义错误] 找不到模块文件: nonexistent_module.leno
+import\compiler_bug_repro\upstream_bad.leno	[类型不匹配] 返回类型不匹配：期望 int，实际 any
+import\win_reg\test_win_reg_v4.leno	[类型不匹配] any 类型不能参与大小比较，请指定数组元素类型（如 Array[int]）
+import\win_reg\win_reg_enum_v4.leno	[类型不匹配] any 类型不能参与大小比较，请指定数组元素类型（如 Array[int]）
+import\win_reg_cs\test_win_reg_v5.leno	[类型不匹配] any 类型不能参与大小比较，请指定数组元素类型（如 Array[int]）
+import\win_reg_cs\win_reg_enum_v5.leno	[类型不匹配] any 类型不能参与大小比较，请指定数组元素类型（如 Array[int]）
+lspcs\import\array\cs_array.leno	[类型不匹配] any 类型不能参与大小比较，请指定数组元素类型（如 Array[int]）
+module_export_struct\test_use_func.leno	[未定义变量] 未定义的变量: p1
+struct\face\test_missing_method.leno	[语义错误] struct 'BadDog' 声明 impl 'Speaker' 但缺少方法 'speak'
+struct\face\test_not_impl.leno	[类型不匹配] make_sound 第 1 个参数类型不匹配: 期望 face Speaker, 实际 struct 
+struct\struct test\struct_redefine_test.leno	[重复定义] struct 'Config' 重复定义
+struct\struct test\test_fail_direct_method_call.leno	[未定义函数] 未定义的函数: Point_test
+struct\struct test\test_fail_scope_resolution.leno	[语法错误] 期望表达式
+struct\struct test\test_method_direct_upvalue.leno	[语义错误] 不能在 any 类型上调用方法 'getLocal'
+struct\struct test\test_nested_struct_def.leno	[语义错误] 不能在 any 类型上调用方法 'getData'
+struct\struct闭包\test_struct_nested_closure.leno	[语义错误] 类型 'Dict[string, any]' 没有方法 'get_val'
+switch\test_switch_face2.leno	[语义错误] struct 'Rect' 的方法 'area' 返回类型与 face 'Shape' 不匹配: 期望 i
+switch\test_switch_is_face.leno	[语义错误] struct 'Rect' 的方法 'area' 返回类型与 face 'Shape' 不匹配: 期望 f
+switch\test_switch_simple2.leno	[语义错误] struct 'Rect' 的方法 'area' 返回类型与 face 'Shape' 不匹配: 期望 i
+sys\test_max_arity.leno	[语义错误] _gc 参数过多: 最多 1 个, 实际 2
+sys\test_min_arity.leno	[语义错误] assert 参数过少: 最少 1 个, 实际 0
+sys\test_min_arity2.leno	[语义错误] assert_eq 参数过少: 最少 2 个, 实际 1
