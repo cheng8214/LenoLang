@@ -421,10 +421,13 @@ main() {
 
     // ---- struct 上的**整数下标**要在编译期拦下（2026-09-28；实例二十六）----
     //   背景：`s.field` 在语义层被转成 `s["field"]`（见 VM 07_collections.inc 的注释），
-    //   所以 struct 的**唯一**合法索引形态是字符串字段名。此前只有"数组索引必须整数"的反向检查，
+    //   所以 struct 在 AST 层只认字符串字段名。此前只有"数组索引必须整数"的反向检查，
     //   struct 侧漏了 ⇒ `r[0]` **编译通过**、运行期才抛「结构体字段名必须是字符串」。
     //   为什么值得单独钉：这正是"类型变更（`Array[any]` → `ExecResult` 这类结构体化）"迁移时
     //   最想在**编译期**看到的东西 —— 缺口在时，错误要等跑起来才暴露。
+    //   ⚠ 文案要点（用户指出的）：**首选写法是 `x.field`**，`x["field"]` 只是它的动态形态
+    //     ⇒ 报错必须先说 `x.field`，否则会让人以为字段访问长成下标的样子。
+    //   ⚠ 只校验含 `x.field` 的那半句（末句带 `x["field"]`，里面有双引号，避免嵌套转义噪音）。
     var si1 = dirs.join(work, "struct_int_index.leno")
     files.write(si1, @"struct R {
     string output
@@ -436,9 +439,12 @@ main() {
     print(r[0])
 }
 ")
-    ce.expect_error(si1, "struct 上用整数下标要编译期拦下", "struct 只能用字符串字段名索引", 8)
+    ce.expect_error(si1, "struct 上用整数下标要编译期拦下", "struct 的字段请用 'x.field'", 8)
 
-    // 赋值形态同样漏检过（`r[1] = 5`）⇒ 同一处检查在 AST_INDEX_ASSIGN 分支也补了
+    // 普通赋值 `r[1] = 5` 同样漏检过。⚠ 它**不是** AST_INDEX_ASSIGN —— parser 里普通赋值是
+    //   `AST_ASSIGN(target=AST_INDEX)`（AST_INDEX_ASSIGN 只用于**复合赋值**与 `.field` 脱糖），
+    //   所以它由上面那条**读**检查拦下 ⇒ 文案当初写"访问"就与语境冲突（实测踩到）。
+    //   两条分支现已统一为**同一句不含语境词的文案**。
     var si2 = dirs.join(work, "struct_int_index_assign.leno")
     files.write(si2, @"struct R {
     string output
@@ -450,9 +456,26 @@ main() {
     r[1] = 5
 }
 ")
-    ce.expect_error(si2, "struct 上整数下标**赋值**也要拦下", "struct 只能用字符串字段名索引", 8)
+    ce.expect_error(si2, "struct 普通赋值的整数下标也要拦下", "struct 的字段请用 'x.field'", 8)
 
-    // 正向（不得误伤）：字符串字段名照常 —— `r[""output""]` 正是语义层 `r.output` 的落地形态
+    // 边界：**复合赋值** `r[1] += 5` 在 **parser** 就被拒（`AST_INDEX_ASSIGN` 分支因此不可达）。
+    //   这里钉的是**那条边界本身** —— 若哪天放开了"下标复合赋值"，这条会先红，
+    //   提醒回去确认 AST_INDEX_ASSIGN 分支上的同款检查还在（它是防御性的，见源码注释）。
+    var si2b = dirs.join(work, "struct_int_index_compound.leno")
+    files.write(si2b, @"struct R {
+    string output
+    int code
+}
+
+main() {
+    var r = new R(output = ""x"", code = 0)
+    r[1] += 5
+}
+")
+    ce.expect_error(si2b, "下标复合赋值在 parser 就被拒（AST_INDEX_ASSIGN 因此不可达）",
+        "复合赋值只支持简单变量", 8)
+
+    // 正向（不得误伤）：**两种合法写法都照常** —— `r.output`（首选）与 `r[""output""]`（动态形态）
     var si3 = dirs.join(work, "struct_str_index_ok.leno")
     files.write(si3, @"struct R {
     string output

@@ -316,14 +316,27 @@
                 }
             }
 
-            // 检查：**struct** 的索引必须是字符串字段名（v3.2.8；与 AST_INDEX 分支同一处，cstruct 豁免）
-            //   赋值形态同样漏检 ⇒ `r[0] = 1` 此前也是"编译通过、运行期才报"。
+            // 检查：**struct** 的索引必须是字符串字段名（v3.2.8；与 AST_INDEX 分支同一句文案，cstruct 豁免）
+            //   ⚠ **本分支目前从源码不可达**（防御性保留）：实测三种写法各走哪条路 ——
+            //     · `print(r[0])`   ⇒ AST_INDEX        ⇒ 上面那条检查拦下
+            //     · `r[1] = 5`      ⇒ AST_ASSIGN(target=AST_INDEX) ⇒ 也被**读**检查拦下
+            //       （普通赋值不是 AST_INDEX_ASSIGN —— 那是 parser_expr.c 给复合赋值/脱糖用的）
+            //     · `r[1] += 5`     ⇒ **parser 直接拒**：「复合赋值只支持简单变量，请用
+            //       arr[i] = arr[i] + val 替代」⇒ 到不了这里
+            //   留着它的理由：`.field = v` 的脱糖形态确实走本分支（字符串索引，不触发报错），
+            //   而**万一哪天放开"下标复合赋值"**，这里就是那条新路径的兜底 —— 不留就等于
+            //   把刚补上的洞重新打开（测试 `test_diag_static_errors` 里有一条钉着该边界）。
             if (obj_type && obj_type->kind == TYPE_STRUCT) {
                 TypeInfo* idx_type = infer_expr_type(s, ast->u.index_assign.index);
                 if (idx_type && idx_type->kind != TYPE_STRING && idx_type->kind != TYPE_ANY) {
                     char msg[BUFFER_MEDIUM];
+                    // ⚠ 与 AST_INDEX 分支**同一句文案**（单一事实来源）：本分支覆盖的是
+                    //   **复合赋值**（`x[1] += v`）与 `.field = v` 的脱糖形态，而**普通赋值**
+                    //   `x[1] = v` 在 parser 里是 `AST_ASSIGN(target=AST_INDEX)` ⇒ 由读分支拦下
+                    //   （实测：早先这里写"字段赋值请用…"时，普通赋值用例报的却是读分支文案）。
+                    //   所以文案不能带"访问/赋值"这类语境词 —— 否则总有一半场合对不上。
                     snprintf(msg, sizeof(msg),
-                        "struct 只能用字符串字段名索引（如 x[\"field\"] = v），实际索引类型是 %s",
+                        "struct 的字段请用 'x.field'（动态形态是 x[\"field\"]），不能用 %s 下标",
                         type_kind_to_string(idx_type->kind));
                     error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                 }
@@ -1855,8 +1868,12 @@
                 TypeInfo* idx_type = infer_expr_type(s, ast->u.index.index);
                 if (idx_type && idx_type->kind != TYPE_STRING && idx_type->kind != TYPE_ANY) {
                     char msg[BUFFER_MEDIUM];
+                    // 文案要点（用户指出的）：**首选写法是 `x.field`**，`x["field"]` 只是它的
+                    //   动态形态（AST 层才长这样）⇒ 先给 `x.field`，否则会让人以为字段访问
+                    //   就长成下标的样子。文案**不带语境词**（见 AST_INDEX_ASSIGN 分支的说明）：
+                    //   这条同时兜住 `print(r[0])` 与 `r[1] = 5`（普通赋值的 LHS 也走读路径）。
                     snprintf(msg, sizeof(msg),
-                        "struct 只能用字符串字段名索引（如 x[\"field\"]），实际索引类型是 %s",
+                        "struct 的字段请用 'x.field'（动态形态是 x[\"field\"]），不能用 %s 下标",
                         type_kind_to_string(idx_type->kind));
                     error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                 }
