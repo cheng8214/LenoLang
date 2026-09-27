@@ -6,16 +6,16 @@
 // ⚠ 版本号登记表：docs/待办_单一事实来源与重复实现收敛.md 第七节
 //   （只覆盖符号表缓存；2026-09-16 撞过车：与上游都用 v23 但格式不同）
 #define LENOSYMC_MAGIC   0x4D59534C  // "LSYM" little-endian
-#define LENOSYMC_VERSION 0x0000001E  // v30: **类型字符串解析**修正 —— 带逗号的泛型实参**不再一律当 Dict**，
-                                     //      只有标识符真的叫 `Dict` 才是字典（其余按泛型 struct 记）。
-                                     //      ⚠ 这次**格式没变**（字段布局一模一样），升版本号是为了**内容失效**：
-                                     //      旧缓存里 `export func makePair[K,V](...): Pair[K,V]` 的返回类型
-                                     //      被烙成了 `Dict[K,V]` ⇒ 不失效的话，调用方仍会拿到
-                                     //      `Dict[struct K, struct V]` 并报「没有方法 'getKey'」。
-                                     //      模块源码 mtime/size 没变也救不了（编译器行为变了、源文件没变）
-                                     //      —— 正是 v26 加 exe 指纹要解决的那类"编译期输入不在源文件里"。
-                                     //      改动的可见性：examples/泛型系统/{泛型函数,跨模块泛型} 两个用例由
-                                     //      "编不过"变"编得过"。
+#define LENOSYMC_VERSION 0x0000001F  // v31: 函数符号新增 **泛型类型形参名**（`type_param_names`）——
+                                     //      格式变了：`type_param_count` 之后多一段
+                                     //      "是否有形参名 + 逐个名字串"。旧缓存按 v30 读到这段会错位
+                                     //      ⇒ 必须整体失效重扫。
+// 历史：v30: **类型字符串解析**修正 —— 带逗号的泛型实参**不再一律当 Dict**（只有标识符真的叫
+//             `Dict` 才是字典，其余按泛型 struct 记）。⚠ 那次**格式没变**，升版本是为了**内容失效**：
+//             旧缓存里 `export func makePair[K,V](...): Pair[K,V]` 的返回类型被烙成了 `Dict[K,V]`
+//             ⇒ 不失效的话调用方仍会拿到 `Dict[struct K, struct V]` 并报「没有方法 'getKey'」。
+//             模块源码 mtime/size 没变也救不了（编译器行为变了、源文件没变）—— 正是 v26 加
+//             exe 指纹要治的那类"编译期输入不在源文件里"。
 // 历史：v29: 函数符号新增 param_types / param_struct_names（⑱ 转正）——**格式变了**：每条函数多两段
 //             （"是否有参数类型 + 逐参字节"、"是否有聚合参数名 + 逐参名字串"）；旧缓存按 v28 读到这段
 //             就错位 ⇒ 必须整体失效重扫。
@@ -244,6 +244,15 @@ sym_cache_write_type_info(f, table->funcs[i].return_type_info);
 sym_cache_write_string(f, table->funcs[i].return_struct_name);
 uint32_t tpc = (uint32_t)table->funcs[i].type_param_count;
 fwrite(&tpc, 4, 1, f);
+// v31: 泛型类型形参**名**（此前只有数量 ⇒ 跨模块调用点无法把返回类型 `Pair[K, V]` 里的
+//      占位符按名换成 [string, int]，`string k = p.getKey()` 会编不过）
+uint8_t has_tpn = (tpc > 0 && table->funcs[i].type_param_names) ? 1 : 0;
+fwrite(&has_tpn, 1, 1, f);
+if (has_tpn) {
+for (uint32_t k = 0; k < tpc; k++) {
+sym_cache_write_string(f, table->funcs[i].type_param_names[k]);
+}
+}
 sym_cache_write_string(f, table->funcs[i].param_text);
 // v11: 序列化参数默认值信息
 uint32_t pc = (uint32_t)table->funcs[i].param_count;
@@ -660,50 +669,58 @@ static int sym_cache_deserialize(const char* cache_path, ModuleSymbolTable* tabl
     table->func_count = 0; table->func_capacity = fc > 0 ? fc : 0;
     table->funcs = fc > 0 ? (ModuleFuncSymbol*)calloc(fc, sizeof(ModuleFuncSymbol)) : NULL;
     for (uint32_t i = 0; i < fc; i++) {
-table->funcs[i].name = sym_cache_read_string(f);
-uint8_t rt; if (fread(&rt, 1, 1, f) != 1) goto fail;
-table->funcs[i].return_type = (TypeKind)rt;
-table->funcs[i].return_type_info = sym_cache_read_type_info(f);
-table->funcs[i].return_struct_name = sym_cache_read_string(f);
-uint32_t tpc; if (fread(&tpc, 4, 1, f) != 1) goto fail;
-table->funcs[i].type_param_count = (int)tpc;
-table->funcs[i].param_text = sym_cache_read_string(f);
-// v11: 反序列化参数默认值信息
-uint32_t pc2; if (fread(&pc2, 4, 1, f) != 1) goto fail;
-table->funcs[i].param_count = (int)pc2;
-uint32_t dc2; if (fread(&dc2, 4, 1, f) != 1) goto fail;
-table->funcs[i].default_count = (int)dc2;
-table->funcs[i].param_default_texts = NULL;
-if (pc2 > 0) {
-table->funcs[i].param_default_texts = (char**)calloc(pc2, sizeof(char*));
-for (uint32_t k = 0; k < pc2; k++) {
-uint8_t has_default; if (fread(&has_default, 1, 1, f) != 1) goto fail;
-if (has_default) {
-table->funcs[i].param_default_texts[k] = sym_cache_read_string(f);
-}
-}
-}
-// ⑱ 转正（v29）：参数类型 + 聚合类型参数名
-uint8_t has_fpt2; if (fread(&has_fpt2, 1, 1, f) != 1) goto fail;
-if (has_fpt2 && pc2 > 0) {
-table->funcs[i].param_types = (TypeKind*)calloc(pc2, sizeof(TypeKind));
-for (uint32_t k = 0; k < pc2; k++) {
-uint8_t pt; if (fread(&pt, 1, 1, f) != 1) goto fail;
-table->funcs[i].param_types[k] = (TypeKind)pt;
-}
-}
-uint8_t has_fpsn2; if (fread(&has_fpsn2, 1, 1, f) != 1) goto fail;
-if (has_fpsn2 && pc2 > 0) {
-table->funcs[i].param_struct_names = (char**)calloc(pc2, sizeof(char*));
-for (uint32_t k = 0; k < pc2; k++) {
-table->funcs[i].param_struct_names[k] = sym_cache_read_string(f);
-}
-}
-// v14: async 标记（C2）
-uint8_t fa2; if (fread(&fa2, 1, 1, f) != 1) goto fail;
-table->funcs[i].is_async = fa2;
-table->func_count++;
+    table->funcs[i].name = sym_cache_read_string(f);
+    uint8_t rt; if (fread(&rt, 1, 1, f) != 1) goto fail;
+    table->funcs[i].return_type = (TypeKind)rt;
+    table->funcs[i].return_type_info = sym_cache_read_type_info(f);
+    table->funcs[i].return_struct_name = sym_cache_read_string(f);
+    uint32_t tpc; if (fread(&tpc, 4, 1, f) != 1) goto fail;
+    table->funcs[i].type_param_count = (int)tpc;
+    // v31: 泛型类型形参名
+    uint8_t has_tpn2; if (fread(&has_tpn2, 1, 1, f) != 1) goto fail;
+    if (has_tpn2 && tpc > 0) {
+    table->funcs[i].type_param_names = (char**)calloc(tpc, sizeof(char*));
+    for (uint32_t k = 0; k < tpc; k++) {
+    table->funcs[i].type_param_names[k] = sym_cache_read_string(f);
     }
+    }
+    table->funcs[i].param_text = sym_cache_read_string(f);
+    // v11: 反序列化参数默认值信息
+    uint32_t pc2; if (fread(&pc2, 4, 1, f) != 1) goto fail;
+    table->funcs[i].param_count = (int)pc2;
+    uint32_t dc2; if (fread(&dc2, 4, 1, f) != 1) goto fail;
+    table->funcs[i].default_count = (int)dc2;
+    table->funcs[i].param_default_texts = NULL;
+    if (pc2 > 0) {
+    table->funcs[i].param_default_texts = (char**)calloc(pc2, sizeof(char*));
+    for (uint32_t k = 0; k < pc2; k++) {
+    uint8_t has_default; if (fread(&has_default, 1, 1, f) != 1) goto fail;
+    if (has_default) {
+    table->funcs[i].param_default_texts[k] = sym_cache_read_string(f);
+    }
+    }
+    }
+    // ⑱ 转正（v29）：参数类型 + 聚合类型参数名
+    uint8_t has_fpt2; if (fread(&has_fpt2, 1, 1, f) != 1) goto fail;
+    if (has_fpt2 && pc2 > 0) {
+    table->funcs[i].param_types = (TypeKind*)calloc(pc2, sizeof(TypeKind));
+    for (uint32_t k = 0; k < pc2; k++) {
+    uint8_t pt; if (fread(&pt, 1, 1, f) != 1) goto fail;
+    table->funcs[i].param_types[k] = (TypeKind)pt;
+    }
+    }
+    uint8_t has_fpsn2; if (fread(&has_fpsn2, 1, 1, f) != 1) goto fail;
+    if (has_fpsn2 && pc2 > 0) {
+    table->funcs[i].param_struct_names = (char**)calloc(pc2, sizeof(char*));
+    for (uint32_t k = 0; k < pc2; k++) {
+    table->funcs[i].param_struct_names[k] = sym_cache_read_string(f);
+    }
+    }
+    // v14: async 标记（C2）
+    uint8_t fa2; if (fread(&fa2, 1, 1, f) != 1) goto fail;
+    table->funcs[i].is_async = fa2;
+    table->func_count++;
+        }
 
     // structs
     uint32_t sc;

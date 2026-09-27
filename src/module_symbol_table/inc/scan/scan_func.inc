@@ -14,14 +14,28 @@
 
                     // 解析泛型参数 [T] 或 [K, V] 或 [T: Face]
                     int func_type_param_count = 0;
+                    // v31：同时记下**形参名**（此前只数个数 ⇒ 跨模块调用点无法按名代入返回类型里的
+                    //   占位符，`gm.makePair[string, int]` 的静态类型会停在 `Pair[K, V]`）。
+                    //   上限 8 与 struct 侧口径一致：超出的槽位留 NULL（消费方逐个判空 ⇒ 降级不误报）。
+                    char* func_type_param_names[8] = {NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL};
                     while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
                     if (*after_func == '[') {
                         after_func++; // skip '['
                         while (*after_func && *after_func != ']') {
                             while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
                             if (*after_func && (isalnum((unsigned char)*after_func) || *after_func == '_')) {
-                                func_type_param_count++;
+                                const char* tp_start = after_func;
                                 while (*after_func && (isalnum((unsigned char)*after_func) || *after_func == '_')) after_func++;
+                                int tp_len = (int)(after_func - tp_start);
+                                if (func_type_param_count < 8 && tp_len > 0 && tp_len < 64) {
+                                    char* tp_name = (char*)malloc(tp_len + 1);
+                                    if (tp_name) {
+                                        memcpy(tp_name, tp_start, tp_len);
+                                        tp_name[tp_len] = '\0';
+                                        func_type_param_names[func_type_param_count] = tp_name;
+                                    }
+                                }
+                                func_type_param_count++;
                             }
                             while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
                             // 跳过约束语法 T: FaceName
@@ -301,6 +315,18 @@
                             ModuleFuncSymbol* added_func = module_symbol_table_find_func(table, func_name);
                             if (added_func) {
                                 added_func->line = func_def_line;
+                                // v31：类型形参**名**入库（所有权从栈上临时数组转给符号表）
+                                if (func_type_param_count > 0) {
+                                    added_func->type_param_count = func_type_param_count;
+                                    added_func->type_param_names =
+                                        (char**)calloc(func_type_param_count, sizeof(char*));
+                                    if (added_func->type_param_names) {
+                                        for (int tpi = 0; tpi < func_type_param_count; tpi++) {
+                                            added_func->type_param_names[tpi] = func_type_param_names[tpi];
+                                            func_type_param_names[tpi] = NULL;   // 所有权转移，下面不再释放
+                                        }
+                                    }
+                                }
                                 // ⑱ 转正：参数类型也入库（此前只有 param_text ⇒ 语义侧只能就地解析文本，
                                 // 那是"参数表 → 类型"的**第三份**实现）。走**唯一实现** `mod_scan_params`
                                 // （`inc/sym_table_params.inc`）—— 基本类型 + clib/face/cstruct/struct
@@ -326,6 +352,11 @@
                             }
                         }
                         if (return_type_info) { type_free(return_type_info); return_type_info = NULL; }
+                        // v31：仍未被符号表接手的类型形参名在此释放（重复定义 / calloc 失败等路径）——
+                        //   上面把接手的那些槽位置成了 NULL（所有权转移），这里按同一数组遍历即可。
+                        for (int i = 0; i < 8; i++) {
+                            free(func_type_param_names[i]);
+                        }
                         // 释放临时的默认值文本（add_func 内部已 strdup）
                         for (int i = 0; i < 32; i++) {
                             free(parsed_default_texts[i]);

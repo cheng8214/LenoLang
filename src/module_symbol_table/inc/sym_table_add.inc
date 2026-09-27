@@ -17,6 +17,9 @@ void module_symbol_table_add_func(ModuleSymbolTable* table, const char* name, Ty
     func->return_type_info = return_type_info ? type_copy(return_type_info) : NULL;
     func->return_struct_name = return_struct_name ? strdup(return_struct_name) : NULL;
     func->type_param_count = type_param_count;
+    // v31：类型形参名由 scan_func.inc 在 add 之后填（同 param_types 的做法）
+    //   —— 这里**必须**显式置空：table->funcs 是 realloc 扩容的，新槽位是垃圾值。
+    func->type_param_names = NULL;
     func->param_text = param_text ? strdup(param_text) : NULL;
     func->param_count = param_count;
     func->default_count = default_count;

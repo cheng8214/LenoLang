@@ -10,6 +10,13 @@ typedef struct {
     TypeInfo* return_type_info; // 完整返回类型信息（支持 Dict[K,V]/Array[T] 等泛型）
     char* return_struct_name;   // 如果返回类型是 struct，存储 struct 名称
     int type_param_count;       // 泛型类型参数数量（如 identity[T] 的 type_param_count=1）
+    // 泛型类型形参**名**（如 ["K","V"]，长度 = type_param_count；v31 补）
+    //   为什么需要：只记数量时，调用点无法把返回类型 `Pair[K, V]` 里的**占位符按名**换成
+    //   调用点的类型实参（`gm.makePair[string, int]` 的静态类型会停在 `Pair[K, V]` ⇒
+    //   `string k = p.getKey()` 编不过，实际类型 `struct K`）。
+    //   struct **方法**侧早有这套（`ModuleStructMethod::return_generic_param_names`），
+    //   模块**函数**侧一直缺 —— 这里是把它补齐。
+    char** type_param_names;
     char* param_text;           // 原始参数文本（如 "Dict opts" 或 "string name, int age"）
     int param_count;            // 参数总数量
     int default_count;          // 有默认值的参数数量

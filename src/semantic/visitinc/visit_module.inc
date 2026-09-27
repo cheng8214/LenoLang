@@ -964,6 +964,28 @@
                             if (func_sym->return_type != TYPE_ANY && func_sym->return_type != TYPE_INFER) {
                                 if (func_sym->return_type_info) {
                                     ast->cached_type = type_copy(func_sym->return_type_info);
+                                    // ★ v31：把**调用点的类型实参按名代入**返回类型里的占位符。
+                                    //   此前模块函数符号只记了类型形参**数量** ⇒ `gm.makePair[string, int]("x", 10)`
+                                    //   的静态类型停在 `Pair[K, V]`（占位符）⇒ `string k = p.getKey()`
+                                    //   报「期望 string，实际 struct K」（实测）。
+                                    //   助手与 struct 方法侧**同一套**（`semantic_substitute_generic_param`，
+                                    //   它同时认 TYPE_GENERIC_PARAM 与 "TYPE_STRUCT 占位形参"）。
+                                    //   形参名 ↔ 调用实参**按位置**对应（声明 `f[K, V]` 的顺序 = 实参顺序）。
+                                    if (func_sym->type_param_count > 0 && func_sym->type_param_names &&
+                                        ast->u.module_call.generic_type_args) {
+                                        int gp_n = func_sym->type_param_count < ast->u.module_call.generic_type_count
+                                                   ? func_sym->type_param_count
+                                                   : ast->u.module_call.generic_type_count;
+                                        for (int gi = 0; gi < gp_n; gi++) {
+                                            if (!func_sym->type_param_names[gi] ||
+                                                !ast->u.module_call.generic_type_args[gi]) continue;
+                                            TypeInfo* sub = semantic_substitute_generic_param(
+                                                ast->cached_type, func_sym->type_param_names[gi],
+                                                ast->u.module_call.generic_type_args[gi]);
+                                            type_free(ast->cached_type);
+                                            ast->cached_type = sub;
+                                        }
+                                    }
                                 } else {
                                     ast->cached_type = type_new(func_sym->return_type);
                                     if (func_sym->return_struct_name) {

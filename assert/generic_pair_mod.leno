@@ -22,6 +22,11 @@ export func makePair[K, V](K k, V v): Pair[K, V] {
     return new Pair[K, V](key = k, val = v)
 }
 
+// 裸类型形参返回（调用点的类型实参必须能代入它）：`identity[int](42)` ⇒ int
+export func identity[T](T v): T {
+    return v
+}
+
 // 单类型参数（同一表示的对照组）：Box[int] / Box[string]
 export struct Box[T] {
     T value

@@ -57,6 +57,13 @@ static void sym_table_clear_symbols(ModuleSymbolTable* table) {
             }
             free(table->funcs[i].param_struct_names);
         }
+        // v31: 泛型类型形参名
+        if (table->funcs[i].type_param_names) {
+            for (int tpi = 0; tpi < table->funcs[i].type_param_count; tpi++) {
+                free(table->funcs[i].type_param_names[tpi]);
+            }
+            free(table->funcs[i].type_param_names);
+        }
         if (table->funcs[i].return_type_info) {
             type_free(table->funcs[i].return_type_info);
         }

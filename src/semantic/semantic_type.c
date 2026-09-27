@@ -395,6 +395,17 @@ TypeInfo* semantic_substitute_generic_param(TypeInfo* type, const char* param_na
     if (result->value_type) {
         result->value_type = semantic_substitute_generic_param(result->value_type, param_name, concrete);
     }
+    // v31：**泛型实参**也要递归 —— 否则"占位符藏在 generic_args 里"的类型替换等于没做：
+    //   `Pair[K, V]` 的 K/V 就在 generic_args[] 里 ⇒ `gm.makePair[string, int]` 的静态类型
+    //   仍停在 `Pair[K, V]`（实测：`string k = p.getKey()` 报"期望 string，实际 struct K"）。
+    if (result->generic_count > 0 && result->generic_args) {
+        for (int gi = 0; gi < result->generic_count; gi++) {
+            TypeInfo* sub = semantic_substitute_generic_param(result->generic_args[gi],
+                                                             param_name, concrete);
+            type_free(result->generic_args[gi]);   // 释放 type_copy 造出来的那份
+            result->generic_args[gi] = sub;
+        }
+    }
     return result;
 }
 
