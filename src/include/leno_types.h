@@ -281,10 +281,19 @@ typedef enum {
     NTYPE_STRING,
     NTYPE_BOOL,
     NTYPE_NULL,
-    NTYPE_ARRAY,        // sub  = 元素类型
-    NTYPE_DICT,         // sub  = 键 K；sub2 = 值 V
+    NTYPE_ARRAY,        // sub  = 元素类型（**sub == NULL = "元素类型未指定"**，与老的
+                        //        `TYPE_ARRAY + TYPE_UNKNOWN` 逐字等价 ⇒ 编译器拿到裸 Array）
+    NTYPE_DICT,         // sub  = 键 K；sub2 = 值 V（两者皆 NULL = 裸 Dict，同老口径）
     NTYPE_STRUCT,       // name = 结构体名（字段表见同名的 NativeStructSpec）
     NTYPE_PTR_GENERIC,  // sub  = 元素类型（Ptr[T]）
+    // ---- 以下为"补齐 237 个调用点"时新增（**追加在末尾**：既有数值不变，避免影响任何
+    //      按数值使用的旧二进制）。它们只用于 native 返回类型的顶层声明。 ----
+    NTYPE_PTR,          // 裸指针 Ptr（无元素类型）
+    NTYPE_FILE,
+    NTYPE_SOCKET,
+    NTYPE_CHANNEL,
+    NTYPE_THREAD,
+    NTYPE_FUTURE,
 } NativeTypeTag;
 
 typedef struct NativeTypeSpec {

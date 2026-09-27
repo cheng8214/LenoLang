@@ -602,14 +602,28 @@ void native_register_all_module_metas(void) {
 // 模块方法支持（哈希表实现 - O(1) 查找）
 // ============================================================================
 
-// 注册模块方法的**实现**（带参数类型；return_spec 可空 = 旧路径）。
+// 前向声明：规格 → TypeKind（定义在本文件后面的「native 类型规格」一节）
+static TypeKind native_spec_kind(const NativeTypeSpec* spec);
+
+// 注册模块方法（**唯一入口**，v3.2.3 起）：返回类型用完整类型规格声明。
 // min_arity/max_arity: 当 arity == -1（可变参数）时，指定最小/最大允许参数个数；其他情况传 -1
 // param_types: 参数类型数组，长度为 arity，如果为 NULL 则所有参数默认为 TYPE_ANY
-// return_element_type: 返回数组时的元素类型，非数组返回类型时传 TYPE_UNKNOWN
-static void module_method_register_impl(const char* module_name, const char* method_name,
+// return_spec: 完整返回类型规格（见 leno_types.h；常用的 19 种已预制为 NATIVE_T_*）。
+//              顶层 Kind / 元素 Kind 由规格**推导**出来一并写进元数据 ⇒ 只认 Kind 的老消费者
+//              （旧的实例方法查询路径、LSP 老渲染等）也拿到大致正确的类型。
+void native_register_module_method_spec(const char* module_name, const char* method_name,
                                         NativeFn function, int arity, int min_arity, int max_arity,
-                                        TypeKind return_type, TypeKind return_element_type,
                                         const NativeTypeSpec* return_spec, TypeKind* param_types) {
+    // 规格 → (顶层 Kind, 数组元素 Kind)：与老的 `(return_type, return_element_type)` 逐字对应
+    TypeKind return_type = TYPE_ANY;
+    TypeKind return_element_type = TYPE_UNKNOWN;
+    if (return_spec) {
+        return_type = native_spec_kind(return_spec);
+        if (return_spec->tag == NTYPE_ARRAY && return_spec->sub) {
+            return_element_type = native_spec_kind(return_spec->sub);
+        }
+    }
+
     if (!moduleMethodTable.entries) {
         module_method_table_init();
     }
@@ -706,52 +720,6 @@ static void module_method_register_impl(const char* module_name, const char* met
     moduleMethodTable.count++;
 }
 
-// 公开入口 ①：老的"只给 Kind"版本（return_spec = NULL ⇒ 行为与改动前逐字一致）
-void native_register_module_method(const char* module_name, const char* method_name,
-                                   NativeFn function, int arity, int min_arity, int max_arity,
-                                   TypeKind return_type, TypeKind return_element_type, TypeKind* param_types) {
-    module_method_register_impl(module_name, method_name, function, arity, min_arity, max_arity,
-                                return_type, return_element_type, NULL, param_types);
-}
-
-// 公开入口 ②：带**完整返回类型规格**的版本（见 leno_types.h 的 NativeTypeSpec）。
-//   顶层 Kind 由规格自动回填 ⇒ 旧的消费者（只认 Kind 的路径 / LSP 老渲染）也不会拿到错的类型。
-void native_register_module_method_spec(const char* module_name, const char* method_name,
-                                        NativeFn function, int arity, int min_arity, int max_arity,
-                                        const NativeTypeSpec* return_spec, TypeKind* param_types) {
-    TypeKind rt = TYPE_ANY;
-    TypeKind et = TYPE_UNKNOWN;
-    if (return_spec) {
-        switch (return_spec->tag) {
-            case NTYPE_INT:     rt = TYPE_INT;    break;
-            case NTYPE_FLOAT:   rt = TYPE_FLOAT;  break;
-            case NTYPE_STRING:  rt = TYPE_STRING; break;
-            case NTYPE_BOOL:    rt = TYPE_BOOL;   break;
-            case NTYPE_NULL:    rt = TYPE_NULL;   break;
-            case NTYPE_ARRAY:   rt = TYPE_ARRAY;  break;
-            case NTYPE_DICT:    rt = TYPE_DICT;   break;
-            case NTYPE_STRUCT:  rt = TYPE_STRUCT; break;
-            case NTYPE_PTR_GENERIC: rt = TYPE_PTR_GENERIC; break;
-            default:            rt = TYPE_ANY;    break;
-        }
-        if (return_spec->tag == NTYPE_ARRAY && return_spec->sub) {
-            switch (return_spec->sub->tag) {
-                case NTYPE_INT:    et = TYPE_INT;    break;
-                case NTYPE_FLOAT:  et = TYPE_FLOAT;  break;
-                case NTYPE_STRING: et = TYPE_STRING; break;
-                case NTYPE_BOOL:   et = TYPE_BOOL;   break;
-                case NTYPE_NULL:   et = TYPE_NULL;   break;
-                case NTYPE_ARRAY:  et = TYPE_ARRAY;  break;
-                case NTYPE_DICT:   et = TYPE_DICT;   break;
-                case NTYPE_STRUCT: et = TYPE_STRUCT; break;
-                default:           et = TYPE_ANY;    break;
-            }
-        }
-    }
-    module_method_register_impl(module_name, method_name, function, arity, min_arity, max_arity,
-                                rt, et, return_spec, param_types);
-}
-
 // 取模块方法的返回类型规格（编译期：语义侧构造返回类型时优先用它）
 const NativeTypeSpec* native_get_module_method_return_spec(const char* module_name, const char* method_name) {
     ModuleMethodMeta* meta = native_find_module_method(module_name, method_name);
@@ -766,6 +734,27 @@ const NativeTypeSpec* native_get_module_method_return_spec(const char* module_na
 //   · 运行期：native_struct_def_for() 按**同一字段顺序**造 ObjStructDef 并注册进 struct_def_table
 // 表满/重名都静默忽略（与 native 注册表其它部分的风格一致：模块声明是编译期常量，不该失败）。
 // ============================================================================
+// ---- 预制规格（覆盖各模块现有的 19 种组合；语义与老的 (Kind, element) 逐字对应）----
+const NativeTypeSpec NATIVE_T_ANY         = { NTYPE_ANY,    NULL, NULL, NULL };
+const NativeTypeSpec NATIVE_T_INT         = { NTYPE_INT,    NULL, NULL, NULL };
+const NativeTypeSpec NATIVE_T_FLOAT       = { NTYPE_FLOAT,  NULL, NULL, NULL };
+const NativeTypeSpec NATIVE_T_STRING      = { NTYPE_STRING, NULL, NULL, NULL };
+const NativeTypeSpec NATIVE_T_BOOL        = { NTYPE_BOOL,   NULL, NULL, NULL };
+const NativeTypeSpec NATIVE_T_NULL        = { NTYPE_NULL,   NULL, NULL, NULL };
+const NativeTypeSpec NATIVE_T_PTR         = { NTYPE_PTR,    NULL, NULL, NULL };
+const NativeTypeSpec NATIVE_T_FILE        = { NTYPE_FILE,   NULL, NULL, NULL };
+const NativeTypeSpec NATIVE_T_SOCKET      = { NTYPE_SOCKET, NULL, NULL, NULL };
+const NativeTypeSpec NATIVE_T_CHANNEL     = { NTYPE_CHANNEL,NULL, NULL, NULL };
+const NativeTypeSpec NATIVE_T_THREAD      = { NTYPE_THREAD, NULL, NULL, NULL };
+const NativeTypeSpec NATIVE_T_FUTURE      = { NTYPE_FUTURE, NULL, NULL, NULL };
+const NativeTypeSpec NATIVE_T_ARR         = { NTYPE_ARRAY,  NULL, NULL, NULL };              // 元素未指定
+const NativeTypeSpec NATIVE_T_ARR_ANY     = { NTYPE_ARRAY,  NULL, &NATIVE_T_ANY,    NULL };
+const NativeTypeSpec NATIVE_T_ARR_INT     = { NTYPE_ARRAY,  NULL, &NATIVE_T_INT,    NULL };
+const NativeTypeSpec NATIVE_T_ARR_STRING  = { NTYPE_ARRAY,  NULL, &NATIVE_T_STRING, NULL };
+const NativeTypeSpec NATIVE_T_ARR_ARR     = { NTYPE_ARRAY,  NULL, &NATIVE_T_ARR,    NULL };
+const NativeTypeSpec NATIVE_T_ARR_DICT    = { NTYPE_ARRAY,  NULL, &NATIVE_T_DICT,   NULL };
+const NativeTypeSpec NATIVE_T_DICT        = { NTYPE_DICT,   NULL, NULL, NULL };              // K/V 未指定
+
 #define NATIVE_STRUCT_SPEC_MAX 64
 // 与 struct_def_table（object_struct.c）同为 THREAD_LOCAL：每个线程初始化 native 模块时
 // 各自登记一遍同一批 static 规格 ⇒ 内容一致、无跨线程共享写（子线程初始化见 object_thread.c）
@@ -804,7 +793,13 @@ static TypeKind native_spec_kind(const NativeTypeSpec* spec) {
         case NTYPE_ARRAY:       return TYPE_ARRAY;
         case NTYPE_DICT:        return TYPE_DICT;
         case NTYPE_STRUCT:      return TYPE_STRUCT;
+        case NTYPE_PTR:         return TYPE_PTR;
         case NTYPE_PTR_GENERIC: return TYPE_PTR_GENERIC;
+        case NTYPE_FILE:        return TYPE_FILE;
+        case NTYPE_SOCKET:      return TYPE_SOCKET;
+        case NTYPE_CHANNEL:     return TYPE_CHANNEL;
+        case NTYPE_THREAD:      return TYPE_THREAD;
+        case NTYPE_FUTURE:      return TYPE_FUTURE;
         default:                return TYPE_ANY;
     }
 }
@@ -847,6 +842,12 @@ void native_type_spec_to_string(const NativeTypeSpec* spec, char* out, int out_s
         case NTYPE_BOOL:   NSPEC_APPEND("bool");   break;
         case NTYPE_NULL:   NSPEC_APPEND("null");   break;
         case NTYPE_ANY:    NSPEC_APPEND("any");    break;
+        case NTYPE_PTR:    NSPEC_APPEND("Ptr");    break;
+        case NTYPE_FILE:   NSPEC_APPEND("File");   break;
+        case NTYPE_SOCKET: NSPEC_APPEND("Socket"); break;
+        case NTYPE_CHANNEL:NSPEC_APPEND("Channel");break;
+        case NTYPE_THREAD: NSPEC_APPEND("Thread"); break;
+        case NTYPE_FUTURE: NSPEC_APPEND("Future"); break;
         case NTYPE_STRUCT:
             // 与 type.c 的 type_to_string 保持**同一风格**（`struct Name`）：同一个类型
             //   在报错信息与 LSP hover 里必须是同一种写法，否则用户会以为是两个东西

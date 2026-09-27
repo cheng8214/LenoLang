@@ -454,54 +454,54 @@ static Value arr_reduce(int argc, Value* args) {
 
 void arrays_init_module(void) {
     TypeKind len_params[] = {TYPE_ARRAY};
-    native_register_module_method("arrays", "len", arr_len, 1, -1, -1, TYPE_INT, TYPE_UNKNOWN, len_params);
+    native_register_module_method_spec("arrays", "len", arr_len, 1, -1, -1, &NATIVE_T_INT, len_params);
 
     TypeKind add_params[] = {TYPE_ARRAY, TYPE_ANY};
-    native_register_module_method("arrays", "add", arr_add, 2, -1, -1, TYPE_INT, TYPE_UNKNOWN, add_params);
+    native_register_module_method_spec("arrays", "add", arr_add, 2, -1, -1, &NATIVE_T_INT, add_params);
 
     TypeKind pop_params[] = {TYPE_ARRAY};
-    native_register_module_method("arrays", "pop", arr_pop, 1, -1, -1, TYPE_ANY, TYPE_UNKNOWN, pop_params);
+    native_register_module_method_spec("arrays", "pop", arr_pop, 1, -1, -1, &NATIVE_T_ANY, pop_params);
 
     TypeKind insert_params[] = {TYPE_ARRAY, TYPE_INT, TYPE_ANY};
-    native_register_module_method("arrays", "insert", arr_insert, 3, -1, -1, TYPE_INT, TYPE_UNKNOWN, insert_params);
+    native_register_module_method_spec("arrays", "insert", arr_insert, 3, -1, -1, &NATIVE_T_INT, insert_params);
 
     TypeKind remove_params[] = {TYPE_ARRAY, TYPE_INT};
-    native_register_module_method("arrays", "remove", arr_remove, 2, -1, -1, TYPE_ANY, TYPE_UNKNOWN, remove_params);
+    native_register_module_method_spec("arrays", "remove", arr_remove, 2, -1, -1, &NATIVE_T_ANY, remove_params);
 
     TypeKind has_params[] = {TYPE_ARRAY, TYPE_ANY};
-    native_register_module_method("arrays", "has", arr_has, 2, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, has_params);
+    native_register_module_method_spec("arrays", "has", arr_has, 2, -1, -1, &NATIVE_T_BOOL, has_params);
 
     TypeKind copy_params[] = {TYPE_ARRAY};
-    native_register_module_method("arrays", "copy", arr_copy, 1, -1, -1, TYPE_ARRAY, TYPE_ANY, copy_params);
+    native_register_module_method_spec("arrays", "copy", arr_copy, 1, -1, -1, &NATIVE_T_ARR_ANY, copy_params);
 
     TypeKind clear_params[] = {TYPE_ARRAY};
-    native_register_module_method("arrays", "clear", arr_clear, 1, -1, -1, TYPE_ARRAY, TYPE_ANY, clear_params);
+    native_register_module_method_spec("arrays", "clear", arr_clear, 1, -1, -1, &NATIVE_T_ARR_ANY, clear_params);
 
     // 新增方法注册
     TypeKind index_of_params[] = {TYPE_ARRAY, TYPE_ANY};
-    native_register_module_method("arrays", "index_of", arr_index_of, 2, -1, -1, TYPE_INT, TYPE_UNKNOWN, index_of_params);
+    native_register_module_method_spec("arrays", "index_of", arr_index_of, 2, -1, -1, &NATIVE_T_INT, index_of_params);
 
     TypeKind last_index_of_params[] = {TYPE_ARRAY, TYPE_ANY};
-    native_register_module_method("arrays", "last_index_of", arr_last_index_of, 2, -1, -1, TYPE_INT, TYPE_UNKNOWN, last_index_of_params);
+    native_register_module_method_spec("arrays", "last_index_of", arr_last_index_of, 2, -1, -1, &NATIVE_T_INT, last_index_of_params);
 
     TypeKind reverse_params[] = {TYPE_ARRAY};
-    native_register_module_method("arrays", "reverse", arr_reverse, 1, -1, -1, TYPE_ARRAY, TYPE_ANY, reverse_params);
+    native_register_module_method_spec("arrays", "reverse", arr_reverse, 1, -1, -1, &NATIVE_T_ARR_ANY, reverse_params);
 
     TypeKind sort_params[] = {TYPE_ARRAY};
-    native_register_module_method("arrays", "sort", arr_sort, 1, -1, -1, TYPE_ARRAY, TYPE_ANY, sort_params);
+    native_register_module_method_spec("arrays", "sort", arr_sort, 1, -1, -1, &NATIVE_T_ARR_ANY, sort_params);
 
     TypeKind join_params[] = {TYPE_ARRAY, TYPE_STRING};
-    native_register_module_method("arrays", "join", arr_join, 2, -1, -1, TYPE_STRING, TYPE_UNKNOWN, join_params);
+    native_register_module_method_spec("arrays", "join", arr_join, 2, -1, -1, &NATIVE_T_STRING, join_params);
 
     // 函数式方法
     TypeKind map_params[] = {TYPE_ARRAY, TYPE_FUNCTION};
-    native_register_module_method("arrays", "map", arr_map, 2, -1, -1, TYPE_ARRAY, TYPE_ANY, map_params);
+    native_register_module_method_spec("arrays", "map", arr_map, 2, -1, -1, &NATIVE_T_ARR_ANY, map_params);
 
     TypeKind filter_params[] = {TYPE_ARRAY, TYPE_FUNCTION};
-    native_register_module_method("arrays", "filter", arr_filter, 2, -1, -1, TYPE_ARRAY, TYPE_ANY, filter_params);
+    native_register_module_method_spec("arrays", "filter", arr_filter, 2, -1, -1, &NATIVE_T_ARR_ANY, filter_params);
 
     TypeKind reduce_params[] = {TYPE_ARRAY, TYPE_FUNCTION, TYPE_ANY};
-    native_register_module_method("arrays", "reduce", arr_reduce, 3, -1, -1, TYPE_ANY, TYPE_UNKNOWN, reduce_params);
+    native_register_module_method_spec("arrays", "reduce", arr_reduce, 3, -1, -1, &NATIVE_T_ANY, reduce_params);
 }
 
 void arrays_init_instance_methods(void) {

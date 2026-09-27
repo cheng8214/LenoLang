@@ -3285,163 +3285,163 @@ Value ffi_clib_call(int argc, Value* args, int ret_type_kind, const int* arg_typ
 void ffi_init_module(void) {
     /* ===== 库操作函数 ===== */
     TypeKind load_params[] = {TYPE_STRING};
-    native_register_module_method("ffi", "load", ffi_load_func, 1, -1, -1, TYPE_PTR, TYPE_UNKNOWN, load_params);
+    native_register_module_method_spec("ffi", "load", ffi_load_func, 1, -1, -1, &NATIVE_T_PTR, load_params);
 
     /* ===== 符号解析 ===== */
     TypeKind dlsym_params[] = {TYPE_PTR, TYPE_STRING};  // lib, name
-    native_register_module_method("ffi", "dlsym", ffi_dlsym_func, 2, -1, -1, TYPE_PTR, TYPE_UNKNOWN, dlsym_params);
+    native_register_module_method_spec("ffi", "dlsym", ffi_dlsym_func, 2, -1, -1, &NATIVE_T_PTR, dlsym_params);
 
     /* ===== 函数调用 ===== */
     TypeKind call_params[] = {TYPE_PTR, TYPE_STRING};
     /* ffi.call 返回 any 类型，但实际值是 int，需要用 _int()、_ptr() 等转换 */
-    native_register_module_method("ffi", "call", ffi_call_func, -1, 2, -1, TYPE_ANY, TYPE_UNKNOWN, call_params);
-    native_register_module_method("ffi", "call_int", ffi_call_int_func, -1, 2, -1, TYPE_INT, TYPE_UNKNOWN, call_params);
-    native_register_module_method("ffi", "call_double", ffi_call_double_func, -1, 2, -1, TYPE_FLOAT, TYPE_UNKNOWN, call_params);
-    native_register_module_method("ffi", "call_void", ffi_call_void_func, -1, 2, -1, TYPE_NULL, TYPE_UNKNOWN, call_params);
-    native_register_module_method("ffi", "call_ptr", ffi_call_ptr_func, -1, 2, -1, TYPE_PTR, TYPE_UNKNOWN, call_params);
-    native_register_module_method("ffi", "call_bool", ffi_call_bool_func, -1, 2, -1, TYPE_BOOL, TYPE_UNKNOWN, call_params);
+    native_register_module_method_spec("ffi", "call", ffi_call_func, -1, 2, -1, &NATIVE_T_ANY, call_params);
+    native_register_module_method_spec("ffi", "call_int", ffi_call_int_func, -1, 2, -1, &NATIVE_T_INT, call_params);
+    native_register_module_method_spec("ffi", "call_double", ffi_call_double_func, -1, 2, -1, &NATIVE_T_FLOAT, call_params);
+    native_register_module_method_spec("ffi", "call_void", ffi_call_void_func, -1, 2, -1, &NATIVE_T_NULL, call_params);
+    native_register_module_method_spec("ffi", "call_ptr", ffi_call_ptr_func, -1, 2, -1, &NATIVE_T_PTR, call_params);
+    native_register_module_method_spec("ffi", "call_bool", ffi_call_bool_func, -1, 2, -1, &NATIVE_T_BOOL, call_params);
 
     /* ===== 错误码 ===== */
-    native_register_module_method("ffi", "last_error", ffi_last_error_func, 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, NULL);
+    native_register_module_method_spec("ffi", "last_error", ffi_last_error_func, 0, -1, -1, &NATIVE_T_INT, NULL);
 
     /* ===== 内存操作函数 ===== */
     TypeKind malloc_params[] = {TYPE_INT};
-    native_register_module_method("ffi", "malloc", ffi_malloc_func, 1, -1, -1, TYPE_PTR, TYPE_UNKNOWN, malloc_params);
+    native_register_module_method_spec("ffi", "malloc", ffi_malloc_func, 1, -1, -1, &NATIVE_T_PTR, malloc_params);
 
     TypeKind new_params[] = {TYPE_STRING, TYPE_ANY};
-    native_register_module_method("ffi", "alloc", ffi_new_func, -1, 1, 2, TYPE_PTR, TYPE_UNKNOWN, new_params);
+    native_register_module_method_spec("ffi", "alloc", ffi_new_func, -1, 1, 2, &NATIVE_T_PTR, new_params);
 
     TypeKind calloc_params[] = {TYPE_INT, TYPE_INT};
-    native_register_module_method("ffi", "calloc", ffi_calloc_func, 2, -1, -1, TYPE_PTR, TYPE_UNKNOWN, calloc_params);
+    native_register_module_method_spec("ffi", "calloc", ffi_calloc_func, 2, -1, -1, &NATIVE_T_PTR, calloc_params);
 
     TypeKind realloc_params[] = {TYPE_PTR, TYPE_INT};
-    native_register_module_method("ffi", "realloc", ffi_realloc_func, 2, -1, -1, TYPE_PTR, TYPE_UNKNOWN, realloc_params);
+    native_register_module_method_spec("ffi", "realloc", ffi_realloc_func, 2, -1, -1, &NATIVE_T_PTR, realloc_params);
 
     TypeKind free_params[] = {TYPE_ANY};
-    native_register_module_method("ffi", "free", ffi_free_func, 1, -1, -1, TYPE_NULL, TYPE_UNKNOWN, free_params);
+    native_register_module_method_spec("ffi", "free", ffi_free_func, 1, -1, -1, &NATIVE_T_NULL, free_params);
 
     TypeKind sizeof_params[] = {TYPE_PTR};
-    native_register_module_method("ffi", "sizeof", ffi_sizeof_func, 1, -1, -1, TYPE_INT, TYPE_UNKNOWN, sizeof_params);
+    native_register_module_method_spec("ffi", "sizeof", ffi_sizeof_func, 1, -1, -1, &NATIVE_T_INT, sizeof_params);
 
     TypeKind assert_size_params[] = {TYPE_PTR, TYPE_INT};
-    native_register_module_method("ffi", "assert_size", ffi_assert_size_func, 2, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, assert_size_params);
+    native_register_module_method_spec("ffi", "assert_size", ffi_assert_size_func, 2, -1, -1, &NATIVE_T_BOOL, assert_size_params);
 
-    native_register_module_method("ffi", "nullptr", ffi_nullptr_func, 0, -1, -1, TYPE_PTR, TYPE_UNKNOWN, NULL);
+    native_register_module_method_spec("ffi", "nullptr", ffi_nullptr_func, 0, -1, -1, &NATIVE_T_PTR, NULL);
 
     TypeKind ptr_from_int_params[] = {TYPE_INT};
-    native_register_module_method("ffi", "ptr_from_int", ffi_ptr_from_int_func, 1, -1, -1, TYPE_PTR, TYPE_UNKNOWN, ptr_from_int_params);
+    native_register_module_method_spec("ffi", "ptr_from_int", ffi_ptr_from_int_func, 1, -1, -1, &NATIVE_T_PTR, ptr_from_int_params);
 
     TypeKind ptr_to_int_params[] = {TYPE_PTR};
-    native_register_module_method("ffi", "ptr_to_int", ffi_ptr_to_int_func, 1, -1, -1, TYPE_INT, TYPE_UNKNOWN, ptr_to_int_params);
+    native_register_module_method_spec("ffi", "ptr_to_int", ffi_ptr_to_int_func, 1, -1, -1, &NATIVE_T_INT, ptr_to_int_params);
 
     TypeKind is_ptr_params[] = {TYPE_ANY};
-    native_register_module_method("ffi", "is_ptr", ffi_is_ptr_func, 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, is_ptr_params);
+    native_register_module_method_spec("ffi", "is_ptr", ffi_is_ptr_func, 1, -1, -1, &NATIVE_T_BOOL, is_ptr_params);
 
     TypeKind offset_params[] = {TYPE_PTR, TYPE_INT};
-    native_register_module_method("ffi", "offset", ffi_offset_func, 2, -1, -1, TYPE_PTR, TYPE_UNKNOWN, offset_params);
+    native_register_module_method_spec("ffi", "offset", ffi_offset_func, 2, -1, -1, &NATIVE_T_PTR, offset_params);
 
     /* ===== 读取函数 ===== */
     TypeKind read_params[] = {TYPE_PTR, TYPE_INT};  // ptr, offset
-    native_register_module_method("ffi", "read_byte",    ffi_read_byte_func,    2, -1, -1, TYPE_INT, TYPE_UNKNOWN, read_params);
-    native_register_module_method("ffi", "read_int8",    ffi_read_int8_func,    2, -1, -1, TYPE_INT, TYPE_UNKNOWN, read_params);
-    native_register_module_method("ffi", "read_int16",   ffi_read_int16_func,   2, -1, -1, TYPE_INT, TYPE_UNKNOWN, read_params);
-    native_register_module_method("ffi", "read_uint16",  ffi_read_uint16_func,  2, -1, -1, TYPE_INT, TYPE_UNKNOWN, read_params);
-    native_register_module_method("ffi", "read_int",     ffi_read_int_func,     2, -1, -1, TYPE_INT, TYPE_UNKNOWN, read_params);
-    native_register_module_method("ffi", "read_uint",    ffi_read_uint_func,    2, -1, -1, TYPE_INT, TYPE_UNKNOWN, read_params);
-    native_register_module_method("ffi", "read_int64",   ffi_read_int64_func,   2, -1, -1, TYPE_INT, TYPE_UNKNOWN, read_params);
-    native_register_module_method("ffi", "read_uint64",  ffi_read_uint64_func,  2, -1, -1, TYPE_INT, TYPE_UNKNOWN, read_params);
-    native_register_module_method("ffi", "read_float",   ffi_read_float_func,   2, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, read_params);
-    native_register_module_method("ffi", "read_double",  ffi_read_double_func,  2, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, read_params);
-    native_register_module_method("ffi", "read_ptr",     ffi_read_ptr_func,     2, -1, -1, TYPE_PTR, TYPE_UNKNOWN, read_params);
-    native_register_module_method("ffi", "read_bool",    ffi_read_bool_func,    2, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, read_params);
-    native_register_module_method("ffi", "read_at",      ffi_read_at_func,      2, -1, -1, TYPE_ANY, TYPE_UNKNOWN, read_params);  // Ptr[T] 按索引读取
-    native_register_module_method("ffi", "read_string",  ffi_read_string_func,  2, -1, -1, TYPE_STRING, TYPE_UNKNOWN, read_params);
+    native_register_module_method_spec("ffi", "read_byte",    ffi_read_byte_func,    2, -1, -1, &NATIVE_T_INT, read_params);
+    native_register_module_method_spec("ffi", "read_int8",    ffi_read_int8_func,    2, -1, -1, &NATIVE_T_INT, read_params);
+    native_register_module_method_spec("ffi", "read_int16",   ffi_read_int16_func,   2, -1, -1, &NATIVE_T_INT, read_params);
+    native_register_module_method_spec("ffi", "read_uint16",  ffi_read_uint16_func,  2, -1, -1, &NATIVE_T_INT, read_params);
+    native_register_module_method_spec("ffi", "read_int",     ffi_read_int_func,     2, -1, -1, &NATIVE_T_INT, read_params);
+    native_register_module_method_spec("ffi", "read_uint",    ffi_read_uint_func,    2, -1, -1, &NATIVE_T_INT, read_params);
+    native_register_module_method_spec("ffi", "read_int64",   ffi_read_int64_func,   2, -1, -1, &NATIVE_T_INT, read_params);
+    native_register_module_method_spec("ffi", "read_uint64",  ffi_read_uint64_func,  2, -1, -1, &NATIVE_T_INT, read_params);
+    native_register_module_method_spec("ffi", "read_float",   ffi_read_float_func,   2, -1, -1, &NATIVE_T_FLOAT, read_params);
+    native_register_module_method_spec("ffi", "read_double",  ffi_read_double_func,  2, -1, -1, &NATIVE_T_FLOAT, read_params);
+    native_register_module_method_spec("ffi", "read_ptr",     ffi_read_ptr_func,     2, -1, -1, &NATIVE_T_PTR, read_params);
+    native_register_module_method_spec("ffi", "read_bool",    ffi_read_bool_func,    2, -1, -1, &NATIVE_T_BOOL, read_params);
+    native_register_module_method_spec("ffi", "read_at",      ffi_read_at_func,      2, -1, -1, &NATIVE_T_ANY, read_params);  // Ptr[T] 按索引读取
+    native_register_module_method_spec("ffi", "read_string",  ffi_read_string_func,  2, -1, -1, &NATIVE_T_STRING, read_params);
 
     TypeKind read_str_n_params[] = {TYPE_PTR, TYPE_INT, TYPE_INT};  // ptr, offset, length
-    native_register_module_method("ffi", "read_string_n", ffi_read_string_n_func, 3, -1, -1, TYPE_STRING, TYPE_UNKNOWN, read_str_n_params);
+    native_register_module_method_spec("ffi", "read_string_n", ffi_read_string_n_func, 3, -1, -1, &NATIVE_T_STRING, read_str_n_params);
 
     /* ===== 写入函数 ===== */
     TypeKind write_byte_params[] = {TYPE_PTR, TYPE_INT, TYPE_INT};  // ptr, offset, value
-    native_register_module_method("ffi", "write_byte",   ffi_write_byte_func,   3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, write_byte_params);
-    native_register_module_method("ffi", "write_int8",   ffi_write_int8_func,   3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, write_byte_params);
-    native_register_module_method("ffi", "write_int16",  ffi_write_int16_func,  3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, write_byte_params);
-    native_register_module_method("ffi", "write_uint16", ffi_write_uint16_func, 3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, write_byte_params);
-    native_register_module_method("ffi", "write_int",    ffi_write_int_func,    3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, write_byte_params);
+    native_register_module_method_spec("ffi", "write_byte",   ffi_write_byte_func,   3, -1, -1, &NATIVE_T_NULL, write_byte_params);
+    native_register_module_method_spec("ffi", "write_int8",   ffi_write_int8_func,   3, -1, -1, &NATIVE_T_NULL, write_byte_params);
+    native_register_module_method_spec("ffi", "write_int16",  ffi_write_int16_func,  3, -1, -1, &NATIVE_T_NULL, write_byte_params);
+    native_register_module_method_spec("ffi", "write_uint16", ffi_write_uint16_func, 3, -1, -1, &NATIVE_T_NULL, write_byte_params);
+    native_register_module_method_spec("ffi", "write_int",    ffi_write_int_func,    3, -1, -1, &NATIVE_T_NULL, write_byte_params);
 
     /* ===== 高速像素拷贝 ===== */
     TypeKind copy4_params[] = {TYPE_PTR, TYPE_INT, TYPE_PTR, TYPE_INT};  // dst, dst_off, src, src_off
-    native_register_module_method("ffi", "copy4",      ffi_copy4_func,       4, -1, -1, TYPE_NULL, TYPE_UNKNOWN, copy4_params);
+    native_register_module_method_spec("ffi", "copy4",      ffi_copy4_func,       4, -1, -1, &NATIVE_T_NULL, copy4_params);
 
-    native_register_module_method("ffi", "write_uint",   ffi_write_uint_func,   3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, write_byte_params);
-    native_register_module_method("ffi", "write_int64",  ffi_write_int64_func,  3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, write_byte_params);
-    native_register_module_method("ffi", "write_uint64", ffi_write_uint64_func, 3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, write_byte_params);
+    native_register_module_method_spec("ffi", "write_uint",   ffi_write_uint_func,   3, -1, -1, &NATIVE_T_NULL, write_byte_params);
+    native_register_module_method_spec("ffi", "write_int64",  ffi_write_int64_func,  3, -1, -1, &NATIVE_T_NULL, write_byte_params);
+    native_register_module_method_spec("ffi", "write_uint64", ffi_write_uint64_func, 3, -1, -1, &NATIVE_T_NULL, write_byte_params);
 
     TypeKind write_float_params[] = {TYPE_PTR, TYPE_INT, TYPE_FLOAT};  // ptr, offset, value
-    native_register_module_method("ffi", "write_float",  ffi_write_float_func,  3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, write_float_params);
-    native_register_module_method("ffi", "write_double", ffi_write_double_func, 3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, write_float_params);
+    native_register_module_method_spec("ffi", "write_float",  ffi_write_float_func,  3, -1, -1, &NATIVE_T_NULL, write_float_params);
+    native_register_module_method_spec("ffi", "write_double", ffi_write_double_func, 3, -1, -1, &NATIVE_T_NULL, write_float_params);
 
     TypeKind write_ptr_params[] = {TYPE_PTR, TYPE_INT, TYPE_PTR};  // ptr, offset, value
-    native_register_module_method("ffi", "write_ptr",    ffi_write_ptr_func,    3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, write_ptr_params);
+    native_register_module_method_spec("ffi", "write_ptr",    ffi_write_ptr_func,    3, -1, -1, &NATIVE_T_NULL, write_ptr_params);
 
     TypeKind write_bool_params[] = {TYPE_PTR, TYPE_INT, TYPE_ANY};  // ptr, offset, value (接受 bool 和 int)
-    native_register_module_method("ffi", "write_bool",   ffi_write_bool_func,   3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, write_bool_params);
+    native_register_module_method_spec("ffi", "write_bool",   ffi_write_bool_func,   3, -1, -1, &NATIVE_T_NULL, write_bool_params);
 
     TypeKind write_str_params[] = {TYPE_PTR, TYPE_INT, TYPE_STRING};  // ptr, offset, string
-    native_register_module_method("ffi", "write_string", ffi_write_string_func, 3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, write_str_params);
+    native_register_module_method_spec("ffi", "write_string", ffi_write_string_func, 3, -1, -1, &NATIVE_T_NULL, write_str_params);
 
     /* write_bytes: 和 write_string 类似但不写 '\0' 终止符 */
-    native_register_module_method("ffi", "write_bytes",  ffi_write_bytes_func,  3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, write_str_params);
+    native_register_module_method_spec("ffi", "write_bytes",  ffi_write_bytes_func,  3, -1, -1, &NATIVE_T_NULL, write_str_params);
 
     /* read_bytes: 批量读取，返回字符串 */
     TypeKind read_bytes_params[] = {TYPE_PTR, TYPE_INT, TYPE_INT};  // ptr, offset, length
-    native_register_module_method("ffi", "read_bytes",   ffi_read_bytes_func,   3, -1, -1, TYPE_STRING, TYPE_UNKNOWN, read_bytes_params);
+    native_register_module_method_spec("ffi", "read_bytes",   ffi_read_bytes_func,   3, -1, -1, &NATIVE_T_STRING, read_bytes_params);
 
     /* ===== 显式字节序读写 ===== */
     TypeKind le_be_write_params[] = {TYPE_PTR, TYPE_INT, TYPE_INT};  // ptr, offset, value
-    native_register_module_method("ffi", "write_le_i16", ffi_write_le_i16_func, 3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, le_be_write_params);
-    native_register_module_method("ffi", "write_be_i16", ffi_write_be_i16_func, 3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, le_be_write_params);
-    native_register_module_method("ffi", "write_le_i32", ffi_write_le_i32_func, 3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, le_be_write_params);
-    native_register_module_method("ffi", "write_be_i32", ffi_write_be_i32_func, 3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, le_be_write_params);
+    native_register_module_method_spec("ffi", "write_le_i16", ffi_write_le_i16_func, 3, -1, -1, &NATIVE_T_NULL, le_be_write_params);
+    native_register_module_method_spec("ffi", "write_be_i16", ffi_write_be_i16_func, 3, -1, -1, &NATIVE_T_NULL, le_be_write_params);
+    native_register_module_method_spec("ffi", "write_le_i32", ffi_write_le_i32_func, 3, -1, -1, &NATIVE_T_NULL, le_be_write_params);
+    native_register_module_method_spec("ffi", "write_be_i32", ffi_write_be_i32_func, 3, -1, -1, &NATIVE_T_NULL, le_be_write_params);
 
     TypeKind le_be_read_params[] = {TYPE_PTR, TYPE_INT};  // ptr, offset
-    native_register_module_method("ffi", "read_le_i16",  ffi_read_le_i16_func,  2, -1, -1, TYPE_INT, TYPE_UNKNOWN, le_be_read_params);
-    native_register_module_method("ffi", "read_be_i16",  ffi_read_be_i16_func,  2, -1, -1, TYPE_INT, TYPE_UNKNOWN, le_be_read_params);
-    native_register_module_method("ffi", "read_le_i32",  ffi_read_le_i32_func,  2, -1, -1, TYPE_INT, TYPE_UNKNOWN, le_be_read_params);
-    native_register_module_method("ffi", "read_be_i32",  ffi_read_be_i32_func,  2, -1, -1, TYPE_INT, TYPE_UNKNOWN, le_be_read_params);
+    native_register_module_method_spec("ffi", "read_le_i16",  ffi_read_le_i16_func,  2, -1, -1, &NATIVE_T_INT, le_be_read_params);
+    native_register_module_method_spec("ffi", "read_be_i16",  ffi_read_be_i16_func,  2, -1, -1, &NATIVE_T_INT, le_be_read_params);
+    native_register_module_method_spec("ffi", "read_le_i32",  ffi_read_le_i32_func,  2, -1, -1, &NATIVE_T_INT, le_be_read_params);
+    native_register_module_method_spec("ffi", "read_be_i32",  ffi_read_be_i32_func,  2, -1, -1, &NATIVE_T_INT, le_be_read_params);
 
     /* ===== Ptr[T] 元素级访问 ===== */
     TypeKind at_params[] = {TYPE_PTR, TYPE_INT, TYPE_ANY};  // ptr, index, value
-    native_register_module_method("ffi", "write_at",     ffi_write_at_func,     3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, at_params);
+    native_register_module_method_spec("ffi", "write_at",     ffi_write_at_func,     3, -1, -1, &NATIVE_T_NULL, at_params);
 
     /* ===== 字符串工具函数 ===== */
     TypeKind string_params[] = {TYPE_STRING};
-    native_register_module_method("ffi", "string_bytes", ffi_string_bytes_func, 1, -1, -1, TYPE_INT, TYPE_UNKNOWN, string_params);
+    native_register_module_method_spec("ffi", "string_bytes", ffi_string_bytes_func, 1, -1, -1, &NATIVE_T_INT, string_params);
 
     TypeKind memcpy_params[] = {TYPE_PTR, TYPE_PTR, TYPE_INT};
-    native_register_module_method("ffi", "memcpy", ffi_memcpy_func, 3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, memcpy_params);
+    native_register_module_method_spec("ffi", "memcpy", ffi_memcpy_func, 3, -1, -1, &NATIVE_T_NULL, memcpy_params);
 
     TypeKind memset_params[] = {TYPE_PTR, TYPE_INT, TYPE_INT};
-    native_register_module_method("ffi", "memset", ffi_memset_func, 3, -1, -1, TYPE_NULL, TYPE_UNKNOWN, memset_params);
+    native_register_module_method_spec("ffi", "memset", ffi_memset_func, 3, -1, -1, &NATIVE_T_NULL, memset_params);
 
 #ifdef _WIN32
     /* ===== 宽字符转换函数 (Windows) ===== */
-    native_register_module_method("ffi", "utf8_to_utf16", ffi_utf8_to_utf16_func, 1, -1, -1, TYPE_PTR, TYPE_UNKNOWN, string_params);
+    native_register_module_method_spec("ffi", "utf8_to_utf16", ffi_utf8_to_utf16_func, 1, -1, -1, &NATIVE_T_PTR, string_params);
     TypeKind ptr_params[] = {TYPE_PTR};
-    native_register_module_method("ffi", "utf16_to_utf8", ffi_utf16_to_utf8_func, 1, -1, -1, TYPE_STRING, TYPE_UNKNOWN, ptr_params);
+    native_register_module_method_spec("ffi", "utf16_to_utf8", ffi_utf16_to_utf8_func, 1, -1, -1, &NATIVE_T_STRING, ptr_params);
 #endif // _WIN32
 
     /* ===== 类型信息函数 ===== */
     TypeKind type_name_params[] = {TYPE_STRING};
-    native_register_module_method("ffi", "sizeof_type", ffi_sizeof_type_func, 1, -1, -1, TYPE_INT, TYPE_UNKNOWN, type_name_params);
-    native_register_module_method("ffi", "alignof",     ffi_alignof_func,     1, -1, -1, TYPE_INT, TYPE_UNKNOWN, type_name_params);
+    native_register_module_method_spec("ffi", "sizeof_type", ffi_sizeof_type_func, 1, -1, -1, &NATIVE_T_INT, type_name_params);
+    native_register_module_method_spec("ffi", "alignof",     ffi_alignof_func,     1, -1, -1, &NATIVE_T_INT, type_name_params);
 
     /* ===== 回调函数 ===== */
     // ffi.callback(func, CfuncName) - 第二个参数必须是 cfunc 类型
     TypeKind callback_params[] = {TYPE_ANY, TYPE_CFUNC};
-    native_register_module_method("ffi", "callback", ffi_callback_compat_func, 2, -1, -1, TYPE_PTR, TYPE_UNKNOWN, callback_params);
+    native_register_module_method_spec("ffi", "callback", ffi_callback_compat_func, 2, -1, -1, &NATIVE_T_PTR, callback_params);
 
     /* ===== 跨线程回调泵送 ===== */
-    native_register_module_method("ffi", "pump_callbacks", ffi_pump_callbacks_func, 0, -1, -1, TYPE_NULL, TYPE_UNKNOWN, NULL);
+    native_register_module_method_spec("ffi", "pump_callbacks", ffi_pump_callbacks_func, 0, -1, -1, &NATIVE_T_NULL, NULL);
 
     /* 初始化跨线程回调编组设施 */
     ffi_callback_marshal_init();

@@ -1432,103 +1432,103 @@ static Value native_format(int argc, Value* args) {
 // ==================== 初始化 ====================
 
 void strings_init_module(void) {
-    // 注册字符串模块方法（模块名，方法名，函数指针，参数数量，返回类型，参数类型数组）
+    // 注册字符串模块方法（模块名，方法名，函数指针，参数数量，返回类型规格，参数类型数组）
     TypeKind len_params[] = {TYPE_STRING};
-    native_register_module_method("strings", "len", str_len, 1, -1, -1, TYPE_INT, TYPE_UNKNOWN, len_params);
-    native_register_module_method("strings", "byte_len", str_byte_len, 1, -1, -1, TYPE_INT, TYPE_UNKNOWN, len_params);
+    native_register_module_method_spec("strings", "len", str_len, 1, -1, -1, &NATIVE_T_INT, len_params);
+    native_register_module_method_spec("strings", "byte_len", str_byte_len, 1, -1, -1, &NATIVE_T_INT, len_params);
 
     // 1. 大小写转换
     TypeKind upper_params[] = {TYPE_STRING};
-    native_register_module_method("strings", "to_upper", str_to_upper, 1, -1, -1, TYPE_STRING, TYPE_UNKNOWN, upper_params);
+    native_register_module_method_spec("strings", "to_upper", str_to_upper, 1, -1, -1, &NATIVE_T_STRING, upper_params);
 
     TypeKind lower_params[] = {TYPE_STRING};
-    native_register_module_method("strings", "to_lower", str_to_lower, 1, -1, -1, TYPE_STRING, TYPE_UNKNOWN, lower_params);
+    native_register_module_method_spec("strings", "to_lower", str_to_lower, 1, -1, -1, &NATIVE_T_STRING, lower_params);
 
     // 2. 修剪空白
     TypeKind trim_params[] = {TYPE_STRING};
-    native_register_module_method("strings", "trim", str_trim, 1, -1, -1, TYPE_STRING, TYPE_UNKNOWN, trim_params);
-    native_register_module_method("strings", "trim_start", str_trim_start, 1, -1, -1, TYPE_STRING, TYPE_UNKNOWN, trim_params);
-    native_register_module_method("strings", "trim_end", str_trim_end, 1, -1, -1, TYPE_STRING, TYPE_UNKNOWN, trim_params);
+    native_register_module_method_spec("strings", "trim", str_trim, 1, -1, -1, &NATIVE_T_STRING, trim_params);
+    native_register_module_method_spec("strings", "trim_start", str_trim_start, 1, -1, -1, &NATIVE_T_STRING, trim_params);
+    native_register_module_method_spec("strings", "trim_end", str_trim_end, 1, -1, -1, &NATIVE_T_STRING, trim_params);
 
     // 3. 包含检查
     TypeKind starts_params[] = {TYPE_STRING, TYPE_STRING};
-    native_register_module_method("strings", "starts_with", str_starts_with, 2, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, starts_params);
+    native_register_module_method_spec("strings", "starts_with", str_starts_with, 2, -1, -1, &NATIVE_T_BOOL, starts_params);
 
     TypeKind ends_params[] = {TYPE_STRING, TYPE_STRING};
-    native_register_module_method("strings", "ends_with", str_ends_with, 2, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, ends_params);
+    native_register_module_method_spec("strings", "ends_with", str_ends_with, 2, -1, -1, &NATIVE_T_BOOL, ends_params);
 
     // 4. 查找替换
     TypeKind replace_params[] = {TYPE_STRING, TYPE_STRING, TYPE_STRING};
-    native_register_module_method("strings", "replace", str_replace, 3, -1, -1, TYPE_STRING, TYPE_UNKNOWN, replace_params);
+    native_register_module_method_spec("strings", "replace", str_replace, 3, -1, -1, &NATIVE_T_STRING, replace_params);
 
     // 5. 子串提取
     TypeKind slice_params[] = {TYPE_STRING, TYPE_INT, TYPE_INT};
-    native_register_module_method("strings", "slice", str_slice, 3, -1, -1, TYPE_STRING, TYPE_UNKNOWN, slice_params);
+    native_register_module_method_spec("strings", "slice", str_slice, 3, -1, -1, &NATIVE_T_STRING, slice_params);
 
     TypeKind substr_params[] = {TYPE_STRING, TYPE_INT, TYPE_INT};
-    native_register_module_method("strings", "sub_str", str_sub_str, 3, -1, -1, TYPE_STRING, TYPE_UNKNOWN, substr_params);
+    native_register_module_method_spec("strings", "sub_str", str_sub_str, 3, -1, -1, &NATIVE_T_STRING, substr_params);
 
     // 5b. 字节级切片
     TypeKind byte_slice_params[] = {TYPE_STRING, TYPE_INT, TYPE_INT};
-    native_register_module_method("strings", "byte_slice", str_byte_slice, 3, -1, -1, TYPE_STRING, TYPE_UNKNOWN, byte_slice_params);
+    native_register_module_method_spec("strings", "byte_slice", str_byte_slice, 3, -1, -1, &NATIVE_T_STRING, byte_slice_params);
 
     // 6. 新增：字符串反转
     TypeKind reverse_params[] = {TYPE_STRING};
-    native_register_module_method("strings", "reverse", str_reverse, 1, -1, -1, TYPE_STRING, TYPE_UNKNOWN, reverse_params);
+    native_register_module_method_spec("strings", "reverse", str_reverse, 1, -1, -1, &NATIVE_T_STRING, reverse_params);
 
     // 7. 新增：重复字符串
     TypeKind rep_params[] = {TYPE_STRING, TYPE_INT};
-    native_register_module_method("strings", "rep", str_rep, 2, -1, -1, TYPE_STRING, TYPE_UNKNOWN, rep_params);
+    native_register_module_method_spec("strings", "rep", str_rep, 2, -1, -1, &NATIVE_T_STRING, rep_params);
 
     // 8. 新增：获取字符的ASCII码值（支持1-2个可变参数）
     TypeKind byte_params[] = {TYPE_STRING, TYPE_INT};
-    native_register_module_method("strings", "byte", str_byte, -1, 1, 2, TYPE_INT, TYPE_UNKNOWN, byte_params);
+    native_register_module_method_spec("strings", "byte", str_byte, -1, 1, 2, &NATIVE_T_INT, byte_params);
 
     // 9. 新增：从ASCII码创建字符串（可变参数）
-    native_register_module_method("strings", "char", str_char, -1, 1, -1, TYPE_STRING, TYPE_UNKNOWN, NULL);
+    native_register_module_method_spec("strings", "char", str_char, -1, 1, -1, &NATIVE_T_STRING, NULL);
 
     // 10. 新增：查找子串位置（支持2-4个可变参数）
     TypeKind find_params[] = {TYPE_STRING, TYPE_STRING, TYPE_INT, TYPE_BOOL};
-    native_register_module_method("strings", "find", str_find, -1, 2, 4, TYPE_INT, TYPE_UNKNOWN, find_params);
+    native_register_module_method_spec("strings", "find", str_find, -1, 2, 4, &NATIVE_T_INT, find_params);
 
     // 10b. 新增：二进制安全的字节序列查找（支持2-3个可变参数）
     TypeKind byte_find_params[] = {TYPE_STRING, TYPE_STRING, TYPE_INT};
-    native_register_module_method("strings", "byte_find", str_byte_find, -1, 2, 3, TYPE_INT, TYPE_UNKNOWN, byte_find_params);
+    native_register_module_method_spec("strings", "byte_find", str_byte_find, -1, 2, 3, &NATIVE_T_INT, byte_find_params);
 
     // 11. 新增：字符串格式化（可变参数）
     TypeKind format_params[] = {TYPE_STRING};
-    native_register_module_method("strings", "format", str_format, -1, 1, -1, TYPE_STRING, TYPE_UNKNOWN, format_params);
+    native_register_module_method_spec("strings", "format", str_format, -1, 1, -1, &NATIVE_T_STRING, format_params);
 
     // 12. 新增：字符串分割
     TypeKind split_params[] = {TYPE_STRING, TYPE_STRING};
-    native_register_module_method("strings", "split", str_split, 2, -1, -1, TYPE_ARRAY, TYPE_STRING, split_params);
+    native_register_module_method_spec("strings", "split", str_split, 2, -1, -1, &NATIVE_T_ARR_STRING, split_params);
 
     // 13. 新增：数组连接
     TypeKind join_params[] = {TYPE_ARRAY, TYPE_STRING};
-    native_register_module_method("strings", "join", str_join, 2, -1, -1, TYPE_STRING, TYPE_UNKNOWN, join_params);
+    native_register_module_method_spec("strings", "join", str_join, 2, -1, -1, &NATIVE_T_STRING, join_params);
 
     // 14. 新增：包含检查
     TypeKind has_params[] = {TYPE_STRING, TYPE_STRING};
-    native_register_module_method("strings", "has", str_has, 2, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, has_params);
+    native_register_module_method_spec("strings", "has", str_has, 2, -1, -1, &NATIVE_T_BOOL, has_params);
 
     // 15. 新增：统计子串出现次数
     TypeKind count_params[] = {TYPE_STRING, TYPE_STRING};
-    native_register_module_method("strings", "count", str_count, 2, -1, -1, TYPE_INT, TYPE_UNKNOWN, count_params);
+    native_register_module_method_spec("strings", "count", str_count, 2, -1, -1, &NATIVE_T_INT, count_params);
 
     // 16. 新增：左侧填充
     TypeKind pad_params[] = {TYPE_STRING, TYPE_INT, TYPE_STRING};
-    native_register_module_method("strings", "pad_start", str_pad_start, -1, 2, 3, TYPE_STRING, TYPE_UNKNOWN, pad_params);
+    native_register_module_method_spec("strings", "pad_start", str_pad_start, -1, 2, 3, &NATIVE_T_STRING, pad_params);
 
     // 17. 新增：右侧填充
-    native_register_module_method("strings", "pad_end", str_pad_end, -1, 2, 3, TYPE_STRING, TYPE_UNKNOWN, pad_params);
+    native_register_module_method_spec("strings", "pad_end", str_pad_end, -1, 2, 3, &NATIVE_T_STRING, pad_params);
 
     // 18. 新增：字节数 → 人类可读大小（收编应用层 4 份复制实现）
     TypeKind fmt_size_params[] = {TYPE_INT};
-    native_register_module_method("strings", "fmt_size", str_fmt_size, 1, -1, -1, TYPE_STRING, TYPE_UNKNOWN, fmt_size_params);
+    native_register_module_method_spec("strings", "fmt_size", str_fmt_size, 1, -1, -1, &NATIVE_T_STRING, fmt_size_params);
 
     // 19. 新增：16 进制字符串（收编应用层 toHex8/toHex4/toHex2；width 可省略 ⇒ 不补零）
     TypeKind hex_params[] = {TYPE_INT, TYPE_INT};
-    native_register_module_method("strings", "hex", str_hex, -1, 1, 2, TYPE_STRING, TYPE_UNKNOWN, hex_params);
+    native_register_module_method_spec("strings", "hex", str_hex, -1, 1, 2, &NATIVE_T_STRING, hex_params);
 }
 
 // 初始化全局函数（程序启动时调用）

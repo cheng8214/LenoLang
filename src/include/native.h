@@ -83,13 +83,15 @@ void native_mark_all_functions(void);
 
 // ========== 模块方法支持 ==========
 
-// 注册模块方法（带参数类型）
+// 注册模块方法（**唯一入口**；v3.2.3 起返回类型用完整规格声明，老的
+// `native_register_module_method(...)` 已删除 —— 它只有一个 TypeKind 槽，表达不了
+// `Array[DirEntry]` / `Dict[string,string]` 这类类型）。
 // min_arity/max_arity: 当 arity == -1（可变参数）时，指定最小/最大允许参数个数；其他情况传 -1
 // param_types: 参数类型数组，长度为 arity，如果为 NULL 则所有参数默认为 TYPE_ANY
-// return_element_type: 返回数组时的元素类型，非数组返回类型时传 TYPE_UNKNOWN
-void native_register_module_method(const char* module_name, const char* method_name,
-                                   NativeFn function, int arity, int min_arity, int max_arity,
-                                   TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
+// return_spec: 见 leno_types.h 的 NativeTypeSpec；常用形状直接用下面的 NATIVE_T_* 预制规格
+void native_register_module_method_spec(const char* module_name, const char* method_name,
+                                        NativeFn function, int arity, int min_arity, int max_arity,
+                                        const NativeTypeSpec* return_spec, TypeKind* param_types);
 
 // 获取模块方法的参数类型
 TypeKind native_get_module_method_param_type(const char* module_name, const char* method_name, int param_index);
@@ -101,19 +103,39 @@ ModuleMethodMeta* native_find_module_method(const char* module_name, const char*
 TypeKind native_get_module_method_return_type(const char* module_name, const char* method_name);
 
 // ========== native 类型规格（完整类型通道，v3.2.3） ==========
+// 预制规格：覆盖各模块现有的 19 种返回类型组合（237 个调用点）⇒ 调用点写
+//   `&NATIVE_T_STRING` / `&NATIVE_T_ARR_STRING` / `&NATIVE_T_DICT` 即可，不必各自写 static。
+// ⚠ 语义与老的 `(return_type, return_element_type)` **逐字对应**：
+//   · `NATIVE_T_ARR`  = `TYPE_ARRAY + TYPE_UNKNOWN`（元素未指定 ⇒ 编译器拿裸 Array）
+//   · `NATIVE_T_ARR_ANY` = `TYPE_ARRAY + TYPE_ANY`（显式 Array[any]）
+//   · `NATIVE_T_DICT` = `TYPE_DICT + TYPE_UNKNOWN`（裸 Dict，K/V 未指定）
+//   需要其它形状（如 `Array[DirEntry]`、`Dict[string,string]`）就在模块里自己写 static 规格。
+extern const NativeTypeSpec NATIVE_T_ANY;
+extern const NativeTypeSpec NATIVE_T_INT;
+extern const NativeTypeSpec NATIVE_T_FLOAT;
+extern const NativeTypeSpec NATIVE_T_STRING;
+extern const NativeTypeSpec NATIVE_T_BOOL;
+extern const NativeTypeSpec NATIVE_T_NULL;
+extern const NativeTypeSpec NATIVE_T_PTR;
+extern const NativeTypeSpec NATIVE_T_FILE;
+extern const NativeTypeSpec NATIVE_T_SOCKET;
+extern const NativeTypeSpec NATIVE_T_CHANNEL;
+extern const NativeTypeSpec NATIVE_T_THREAD;
+extern const NativeTypeSpec NATIVE_T_FUTURE;
+extern const NativeTypeSpec NATIVE_T_ARR;          // 裸 Array（元素未指定）
+extern const NativeTypeSpec NATIVE_T_ARR_ANY;      // Array[any]
+extern const NativeTypeSpec NATIVE_T_ARR_INT;      // Array[int]
+extern const NativeTypeSpec NATIVE_T_ARR_STRING;   // Array[string]
+extern const NativeTypeSpec NATIVE_T_ARR_ARR;      // Array[Array]
+extern const NativeTypeSpec NATIVE_T_ARR_DICT;     // Array[Dict]
+extern const NativeTypeSpec NATIVE_T_DICT;         // 裸 Dict（K/V 未指定）
+
 // 注册一个 native 结构体规格（**编译期字段表 + 运行期 ObjStructDef 同一来源**）。
 // 可在任意 *_init_module() 里反复调用（同名只登记一次）；表满（64）静默忽略。
 void native_register_struct_spec(const NativeStructSpec* spec);
 
 // 按名查 native 结构体规格（编译期字段解析兜底用；未注册 ⇒ NULL）
 const NativeStructSpec* native_find_struct_spec(const char* name);
-
-// 注册"带完整返回类型规格"的模块方法。return_spec 为 NULL 时与
-// native_register_module_method 等价（同时会把顶层 Kind 回填进 return_type /
-// return_element_type ⇒ 旧的消费者即使不认识规格也拿到大致正确的 Kind）。
-void native_register_module_method_spec(const char* module_name, const char* method_name,
-                                        NativeFn function, int arity, int min_arity, int max_arity,
-                                        const NativeTypeSpec* return_spec, TypeKind* param_types);
 
 // 取模块方法的返回类型规格（编译期；未声明规格 ⇒ NULL）
 const NativeTypeSpec* native_get_module_method_return_spec(const char* module_name, const char* method_name);

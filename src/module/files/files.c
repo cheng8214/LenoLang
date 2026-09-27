@@ -571,11 +571,11 @@ void files_init_module(void) {
     TypeKind string_params[] = {TYPE_STRING};
     TypeKind string2_params[] = {TYPE_STRING, TYPE_STRING};
     
-    native_register_module_method("files", "open", native_files_open, 2, -1, -1, TYPE_FILE, TYPE_UNKNOWN, open_params);
-    native_register_module_method("files", "exists", native_files_exists, 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, string_params);
-    native_register_module_method("files", "delete", native_files_delete, 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, string_params);
-    native_register_module_method("files", "read", native_files_read, 1, -1, -1, TYPE_STRING, TYPE_UNKNOWN, string_params);
-    native_register_module_method("files", "write", native_files_write, 2, -1, -1, TYPE_ANY, TYPE_UNKNOWN, string2_params);
+    native_register_module_method_spec("files", "open", native_files_open, 2, -1, -1, &NATIVE_T_FILE, open_params);
+    native_register_module_method_spec("files", "exists", native_files_exists, 1, -1, -1, &NATIVE_T_BOOL, string_params);
+    native_register_module_method_spec("files", "delete", native_files_delete, 1, -1, -1, &NATIVE_T_BOOL, string_params);
+    native_register_module_method_spec("files", "read", native_files_read, 1, -1, -1, &NATIVE_T_STRING, string_params);
+    native_register_module_method_spec("files", "write", native_files_write, 2, -1, -1, &NATIVE_T_ANY, string2_params);
 
     // 调用 files_init_instance_methods 注册文件实例方法
     files_init_instance_methods();

@@ -319,106 +319,106 @@ static Value math_e(int argc, Value* args) {
 void maths_init_module(void) {
     // 基本运算
     TypeKind sqrt_params[] = {TYPE_FLOAT};
-    native_register_module_method("maths", "sqrt", math_sqrt, 1, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, sqrt_params);
+    native_register_module_method_spec("maths", "sqrt", math_sqrt, 1, -1, -1, &NATIVE_T_FLOAT, sqrt_params);
 
     TypeKind abs_params[] = {TYPE_FLOAT};
-    native_register_module_method("maths", "abs", math_abs, 1, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, abs_params);
+    native_register_module_method_spec("maths", "abs", math_abs, 1, -1, -1, &NATIVE_T_FLOAT, abs_params);
 
     TypeKind pow_params[] = {TYPE_FLOAT, TYPE_FLOAT};
-    native_register_module_method("maths", "pow", math_pow, 2, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, pow_params);
+    native_register_module_method_spec("maths", "pow", math_pow, 2, -1, -1, &NATIVE_T_FLOAT, pow_params);
 
     // 取整函数
     TypeKind round_params[] = {TYPE_FLOAT};
-    native_register_module_method("maths", "round", math_round, 1, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, round_params);
+    native_register_module_method_spec("maths", "round", math_round, 1, -1, -1, &NATIVE_T_FLOAT, round_params);
 
     TypeKind ceil_params[] = {TYPE_FLOAT};
-    native_register_module_method("maths", "ceil", math_ceil, 1, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, ceil_params);
+    native_register_module_method_spec("maths", "ceil", math_ceil, 1, -1, -1, &NATIVE_T_FLOAT, ceil_params);
 
     TypeKind floor_params[] = {TYPE_FLOAT};
-    native_register_module_method("maths", "floor", math_floor, 1, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, floor_params);
+    native_register_module_method_spec("maths", "floor", math_floor, 1, -1, -1, &NATIVE_T_FLOAT, floor_params);
 
     TypeKind trunc_params[] = {TYPE_FLOAT};
-    native_register_module_method("maths", "trunc", math_trunc, 1, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, trunc_params);
+    native_register_module_method_spec("maths", "trunc", math_trunc, 1, -1, -1, &NATIVE_T_FLOAT, trunc_params);
 
     // 三角函数
     TypeKind cos_params[] = {TYPE_FLOAT};
-    native_register_module_method("maths", "cos", math_cos, 1, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, cos_params);
+    native_register_module_method_spec("maths", "cos", math_cos, 1, -1, -1, &NATIVE_T_FLOAT, cos_params);
 
     TypeKind sin_params[] = {TYPE_FLOAT};
-    native_register_module_method("maths", "sin", math_sin, 1, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, sin_params);
+    native_register_module_method_spec("maths", "sin", math_sin, 1, -1, -1, &NATIVE_T_FLOAT, sin_params);
 
     TypeKind tan_params[] = {TYPE_FLOAT};
-    native_register_module_method("maths", "tan", math_tan, 1, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, tan_params);
+    native_register_module_method_spec("maths", "tan", math_tan, 1, -1, -1, &NATIVE_T_FLOAT, tan_params);
 
     TypeKind asin_params[] = {TYPE_FLOAT};
-    native_register_module_method("maths", "asin", math_asin, 1, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, asin_params);
+    native_register_module_method_spec("maths", "asin", math_asin, 1, -1, -1, &NATIVE_T_FLOAT, asin_params);
 
     TypeKind acos_params[] = {TYPE_FLOAT};
-    native_register_module_method("maths", "acos", math_acos, 1, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, acos_params);
+    native_register_module_method_spec("maths", "acos", math_acos, 1, -1, -1, &NATIVE_T_FLOAT, acos_params);
 
     TypeKind atan_params[] = {TYPE_FLOAT};
-    native_register_module_method("maths", "atan", math_atan, 1, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, atan_params);
+    native_register_module_method_spec("maths", "atan", math_atan, 1, -1, -1, &NATIVE_T_FLOAT, atan_params);
 
     TypeKind atan2_params[] = {TYPE_FLOAT, TYPE_FLOAT};
-    native_register_module_method("maths", "atan2", math_atan2, 2, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, atan2_params);
+    native_register_module_method_spec("maths", "atan2", math_atan2, 2, -1, -1, &NATIVE_T_FLOAT, atan2_params);
 
     // 对数和指数
     TypeKind log_params[] = {TYPE_FLOAT};
-    native_register_module_method("maths", "log", math_log, 1, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, log_params);
+    native_register_module_method_spec("maths", "log", math_log, 1, -1, -1, &NATIVE_T_FLOAT, log_params);
 
     TypeKind log10_params[] = {TYPE_FLOAT};
-    native_register_module_method("maths", "log10", math_log10, 1, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, log10_params);
+    native_register_module_method_spec("maths", "log10", math_log10, 1, -1, -1, &NATIVE_T_FLOAT, log10_params);
 
     TypeKind exp_params[] = {TYPE_FLOAT};
-    native_register_module_method("maths", "exp", math_exp, 1, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, exp_params);
+    native_register_module_method_spec("maths", "exp", math_exp, 1, -1, -1, &NATIVE_T_FLOAT, exp_params);
 
     // 工具函数
     TypeKind max_params[] = {TYPE_FLOAT};
-    native_register_module_method("maths", "max", math_max, -1, 1, -1, TYPE_FLOAT, TYPE_UNKNOWN, max_params);
+    native_register_module_method_spec("maths", "max", math_max, -1, 1, -1, &NATIVE_T_FLOAT, max_params);
 
     TypeKind min_params[] = {TYPE_FLOAT};
-    native_register_module_method("maths", "min", math_min, -1, 1, -1, TYPE_FLOAT, TYPE_UNKNOWN, min_params);
+    native_register_module_method_spec("maths", "min", math_min, -1, 1, -1, &NATIVE_T_FLOAT, min_params);
 
     TypeKind deg_params[] = {TYPE_FLOAT};
-    native_register_module_method("maths", "deg", math_deg, 1, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, deg_params);
+    native_register_module_method_spec("maths", "deg", math_deg, 1, -1, -1, &NATIVE_T_FLOAT, deg_params);
 
     TypeKind rad_params[] = {TYPE_FLOAT};
-    native_register_module_method("maths", "rad", math_rad, 1, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, rad_params);
+    native_register_module_method_spec("maths", "rad", math_rad, 1, -1, -1, &NATIVE_T_FLOAT, rad_params);
 
     TypeKind sign_params[] = {TYPE_FLOAT};
-    native_register_module_method("maths", "sign", math_sign, 1, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, sign_params);
+    native_register_module_method_spec("maths", "sign", math_sign, 1, -1, -1, &NATIVE_T_FLOAT, sign_params);
 
     // 新增工具函数
     TypeKind fmod_params[] = {TYPE_FLOAT, TYPE_FLOAT};
-    native_register_module_method("maths", "fmod", math_fmod, 2, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, fmod_params);
+    native_register_module_method_spec("maths", "fmod", math_fmod, 2, -1, -1, &NATIVE_T_FLOAT, fmod_params);
 
     TypeKind clamp_params[] = {TYPE_FLOAT, TYPE_FLOAT, TYPE_FLOAT};
-    native_register_module_method("maths", "clamp", math_clamp, 3, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, clamp_params);
+    native_register_module_method_spec("maths", "clamp", math_clamp, 3, -1, -1, &NATIVE_T_FLOAT, clamp_params);
 
     TypeKind lerp_params[] = {TYPE_FLOAT, TYPE_FLOAT, TYPE_FLOAT};
-    native_register_module_method("maths", "lerp", math_lerp, 3, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, lerp_params);
+    native_register_module_method_spec("maths", "lerp", math_lerp, 3, -1, -1, &NATIVE_T_FLOAT, lerp_params);
 
     TypeKind rsqrt_params[] = {TYPE_FLOAT};
-    native_register_module_method("maths", "rsqrt", math_rsqrt, 1, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, rsqrt_params);
+    native_register_module_method_spec("maths", "rsqrt", math_rsqrt, 1, -1, -1, &NATIVE_T_FLOAT, rsqrt_params);
 
     TypeKind hypot_params[] = {TYPE_FLOAT, TYPE_FLOAT};
-    native_register_module_method("maths", "hypot", math_hypot, 2, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, hypot_params);
+    native_register_module_method_spec("maths", "hypot", math_hypot, 2, -1, -1, &NATIVE_T_FLOAT, hypot_params);
 
     TypeKind log2_params[] = {TYPE_FLOAT};
-    native_register_module_method("maths", "log2", math_log2, 1, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, log2_params);
+    native_register_module_method_spec("maths", "log2", math_log2, 1, -1, -1, &NATIVE_T_FLOAT, log2_params);
 
     TypeKind sin_fast_params[] = {TYPE_FLOAT};
-    native_register_module_method("maths", "sin_fast", math_sin_fast, 1, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, sin_fast_params);
+    native_register_module_method_spec("maths", "sin_fast", math_sin_fast, 1, -1, -1, &NATIVE_T_FLOAT, sin_fast_params);
 
     TypeKind cos_fast_params[] = {TYPE_FLOAT};
-    native_register_module_method("maths", "cos_fast", math_cos_fast, 1, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, cos_fast_params);
+    native_register_module_method_spec("maths", "cos_fast", math_cos_fast, 1, -1, -1, &NATIVE_T_FLOAT, cos_fast_params);
 
     // 常量
     TypeKind pi_params[] = {};
-    native_register_module_method("maths", "pi", math_pi, 0, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, pi_params);
+    native_register_module_method_spec("maths", "pi", math_pi, 0, -1, -1, &NATIVE_T_FLOAT, pi_params);
 
     TypeKind e_params[] = {};
-    native_register_module_method("maths", "e", math_e, 0, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, e_params);
+    native_register_module_method_spec("maths", "e", math_e, 0, -1, -1, &NATIVE_T_FLOAT, e_params);
 }
 
 void maths_init_instance_methods(void) {

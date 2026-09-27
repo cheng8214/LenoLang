@@ -192,13 +192,13 @@ void threads_init_instance_methods(void) {
 
 void threads_init_module(void) {
     TypeKind start_params[] = {TYPE_ANY};
-    native_register_module_method("threads", "start", threads_start, -1, 1, -1, TYPE_THREAD, TYPE_UNKNOWN, start_params);
+    native_register_module_method_spec("threads", "start", threads_start, -1, 1, -1, &NATIVE_T_THREAD, start_params);
 
     TypeKind channel_params[] = {TYPE_INT};
-    native_register_module_method("threads", "channel", threads_channel, 1, -1, -1, TYPE_CHANNEL, TYPE_UNKNOWN, channel_params);
+    native_register_module_method_spec("threads", "channel", threads_channel, 1, -1, -1, &NATIVE_T_CHANNEL, channel_params);
 
     TypeKind sleep_params[] = {TYPE_INT};
-    native_register_module_method("threads", "sleep", threads_sleep, 1, -1, -1, TYPE_ANY, TYPE_UNKNOWN, sleep_params);
+    native_register_module_method_spec("threads", "sleep", threads_sleep, 1, -1, -1, &NATIVE_T_ANY, sleep_params);
 
     // 调用 threads_init_instance_methods 注册线程和通道实例方法
     threads_init_instance_methods();

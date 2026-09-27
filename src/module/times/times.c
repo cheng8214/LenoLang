@@ -188,25 +188,25 @@ void times_init_globals(void) {
 
 // 初始化 times 模块（import times 时调用）
 void times_init_module(void) {
-    // 注册 times.ms 方法（模块名，方法名，函数指针，参数数量，返回类型，参数类型数组）
+    // 注册 times.ms 方法（模块名，方法名，函数指针，参数数量，返回类型规格，参数类型数组）
     // 返回类型为 float：毫秒也要带小数（int 会把毫秒截断成 1ms 粒度，白白丢掉精度）
-    native_register_module_method("times", "ms", native_times_ms, 0, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, NULL);
+    native_register_module_method_spec("times", "ms", native_times_ms, 0, -1, -1, &NATIVE_T_FLOAT, NULL);
 
-    // 注册 times.us 方法（模块名，方法名，函数指针，参数数量，返回类型，参数类型数组）
-    native_register_module_method("times", "us", native_times_us, 0, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, NULL);
+    // 注册 times.us 方法（模块名，方法名，函数指针，参数数量，返回类型规格，参数类型数组）
+    native_register_module_method_spec("times", "us", native_times_us, 0, -1, -1, &NATIVE_T_FLOAT, NULL);
 
-    // 注册 times.ns 方法（模块名，方法名，函数指针，参数数量，返回类型，参数类型数组）
-    native_register_module_method("times", "ns", native_times_ns, 0, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, NULL);
+    // 注册 times.ns 方法（模块名，方法名，函数指针，参数数量，返回类型规格，参数类型数组）
+    native_register_module_method_spec("times", "ns", native_times_ns, 0, -1, -1, &NATIVE_T_FLOAT, NULL);
 
     // 新增：获取当前时间戳（秒）
-    native_register_module_method("times", "now", native_times_now, 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, NULL);
+    native_register_module_method_spec("times", "now", native_times_now, 0, -1, -1, &NATIVE_T_INT, NULL);
 
     // 新增：格式化时间戳
     TypeKind format_params[] = {TYPE_INT, TYPE_STRING};
-    native_register_module_method("times", "format", native_times_format, 2, -1, -1, TYPE_STRING, TYPE_UNKNOWN, format_params);
+    native_register_module_method_spec("times", "format", native_times_format, 2, -1, -1, &NATIVE_T_STRING, format_params);
 
     // 新增：获取当前日期时间数组
-    native_register_module_method("times", "datetime", native_times_datetime, 0, -1, -1, TYPE_ARRAY, TYPE_INT, NULL);
+    native_register_module_method_spec("times", "datetime", native_times_datetime, 0, -1, -1, &NATIVE_T_ARR_INT, NULL);
 }
 
 // times 模块不需要单独的 register_meta 函数
