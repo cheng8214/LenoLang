@@ -401,8 +401,9 @@ int nid = tree.add_child(id, node)
             if dirs.is_dir(fp) {
                 folders.add([nm, "", "文件夹", fp, "1"])
             } else {
-                // dirs.size() 是类型化入口（返回就是 int）⇒ 不必再 stat + 手动收窄 ✓（2026-09-26）
-                int szb = dirs.size(fp)
+                // `stat(p).size` 的字段类型编译期已知（就是 int）⇒ 不必再手动收窄 ✓
+                //   （`dirs.size()` 那个单键入口已于 2026-09-27 删除 —— 收敛成一条路）
+                int szb = dirs.stat(fp).size
                 string ext = dirs.extname(nm)
                 string tp = "文件"
                 if ext != "" and ext != "." { tp = "文件 " + ext }

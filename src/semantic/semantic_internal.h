@@ -23,6 +23,16 @@ TypeInfo* infer_field_type(Semantic* s, TypeInfo* obj_type, const char* field_na
 // 嵌套实参的名字会被带进运行期做名字校验，漏修就是"拿 struct 名字比 face 实例"⇒ 误判。
 void resolve_type_names(Semantic* s, TypeInfo* type);
 
+// native struct 兜底判据（v3.2.5）：`DirEntry` / `DirInfo` 这类名字由 native 模块用
+//   `native_register_struct_spec()` 声明（见 leno_types.h），**不在符号表里**（native 模块
+//   没有 sym_table）⇒ 类型名校验会判成"未定义的类型"，于是只能 `var d = dirs.stat(p)`，
+//   不能写 `DirInfo d = dirs.stat(p)` / `Array[DirEntry] w = dirs.walk(p)`。
+// 本函数回答"这个名字是不是已注册的 native struct"（**唯一来源**：`native_find_struct_spec`，
+//   与字段解析、运行期 ObjStructDef 同源）⇒ 是则视作合法 struct 类型（TYPE_STRUCT + 名字）。
+// 调用点（四处"查不到就报未定义"的校验）：变量声明（有/无初始化各一处）、函数参数与返回
+//   （check_undefined_type，泛型实参也走它）、脚本 struct 的字段类型。
+int semantic_native_struct_known(const char* name);
+
 // 把模块符号表里的一条 struct/cstruct 符号，按完整精度搬进当前作用域的符号
 // （字段类型 + 泛型参数）。这是"怎么把模块里的 struct 字段搬进当前作用域"的**唯一实现**：
 // 此前 AST_USE 与 import_type_deps 各写一遍，后者丢嵌套泛型（详见 semantic_type_utils.c）。

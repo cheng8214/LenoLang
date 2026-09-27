@@ -90,25 +90,22 @@ main()
     assert_eq(info_bytes >= 0, true)
     assert_eq(info_ok, true)
 
-    // 测试11: dirs.size() —— 单键入口（语义与 `stat(p).size` 等价）
-    //   它当初是为"stat 返回无类型 Dict"补的类型化入口；stat 改结构体后不再是唯一入口，但保留：
-    //   只想取大小时不必构造整个 DirInfo，且已有三处 leno_gui 消费方在用 ✓
+    // 测试11: `stat(p).size` —— 取大小的**唯一入口**（2026-09-27 收敛：删掉了并行的 dirs.size()）
+    //   原 `dirs.size()` 只是"stat 返回无类型 Dict 时补的类型化入口"；stat 改结构体后它就是
+    //   重复入口 ⇒ 收敛成一条路，避免同一件事两种写法长期共存
     var self = "assert\\test_dirs.leno"          // 用一个**确定存在**的文件
     assert_eq(dirs.exists(self), true)
 
-    // ① 与 stat 的 size 字段一致（同口径）
-    assert_eq(dirs.size(self), dirs.stat(self).size)
+    // ① 类型自证：能直接做 int 整除（any 类型过不了这道）
+    assert_eq(dirs.stat(self).size > 0, true)
+    assert_eq(dirs.stat(self).size / 1024 >= 0, true)
 
-    // ② 类型自证：能直接做 int 整除（any 类型过不了这道）
-    assert_eq(dirs.size(self) > 0, true)
-    assert_eq(dirs.size(self) / 1024 >= 0, true)
+    // ② 不存在 ⇒ 0（与 stat 的默认值同口径；要区分"空文件"与"不存在"先 dirs.exists()）
+    assert_eq(dirs.stat("assert\\不存在的文件_9b2f.leno").size, 0)
 
-    // ③ 不存在 ⇒ 0（与 stat 的默认值同口径；要区分"空文件"与"不存在"先 dirs.exists()）
-    assert_eq(dirs.size("assert\\不存在的文件_9b2f.leno"), 0)
-    assert_eq(dirs.size("assert\\不存在的文件_9b2f.leno"), dirs.stat("assert\\不存在的文件_9b2f.leno").size)
-
-    // ④ 目录 ⇒ 与 stat 一致（给的是目录条目自身的大小，不是递归总大小）
-    assert_eq(dirs.size("assert"), dirs.stat("assert").size)
+    // ③ 目录 ⇒ 给的是**目录条目自身**的大小，不是递归总大小（同 walk 口径）
+    assert_eq(dirs.stat("assert").size >= 0, true)
+    assert_eq(dirs.stat("assert").is_dir, true)
 
     // 测试13: dirs.walk() —— 返回 `Array[DirEntry]`（带**字段类型**的 native struct，v3.2.3）
     //   背景：`walk` 旧形态是 `Array[Array]` 的三元组 `[root, dirs, files]` ⇒ 元素是 any，取值
@@ -148,8 +145,8 @@ main()
     //   ⇒ "spec 漏写 / 写错 / 被改回 any" 这类毛病，运行期断言永远是绿的，只有编译期能挡住；
     //   而 dirs 的返回形态在 v3.2.3/v3.2.4 连改两次（walk / stat）⇒ 正是该被钉住的地方。
     //   下面每行都是**不做收窄、不做转换**的赋值 ⇒ spec 一漂，这里就编译失败。
-    //   ⚠ 只能靠"推断 + 逐字段强类型局部变量"钉：native struct 名（`DirEntry` / `DirInfo`）
-    //     **不能当类型标注**（不在符号表里 ⇒ 写 `DirInfo d = ...` 会报"未定义的类型"）。
+    //   ⚠ v3.2.5 起 native struct 名（`DirEntry` / `DirInfo`）**可以当类型标注**（见测试16）⇒
+    //     下面直接用标注钉，比 `var` + 逐字段更硬：标注与 spec 不一致就编译失败。
     string t_cwd    = dirs.cwd()
     string t_abs    = dirs.abspath(".")
     string t_base   = dirs.basename("a\\b.c")
@@ -161,16 +158,16 @@ main()
     string t_res    = dirs.res_dir()
     Array[string] t_drives = dirs.list_drives()
     Array[string] t_ls     = dirs.listdir(".")
-    int  t_size     = dirs.size(self)
+    int  t_size     = dirs.stat(self).size
 
     // walk ⇒ `Array[DirEntry]`：三个字段逐个钉
-    var t_walk = dirs.walk("src/module/arrays")
+    Array[DirEntry] t_walk = dirs.walk("src/module/arrays")
     string        t_w_root  = t_walk[0].root
     Array[string] t_w_dirs  = t_walk[0].dirs
     Array[string] t_w_files = t_walk[0].files
 
     // stat ⇒ `DirInfo`：五个字段逐个钉
-    var t_stat = dirs.stat(self)
+    DirInfo t_stat = dirs.stat(self)
     bool t_st_exists  = t_stat.exists
     int  t_st_size    = t_stat.size
     bool t_st_is_file = t_stat.is_file
@@ -242,5 +239,48 @@ main()
     assert_eq(dirs.rmdir(tmp), true)
     assert_eq(dirs.exists(tmp), false)
 
+    // 测试16: native struct 名当**类型标注**（v3.2.5）—— 以前只能写 `var`
+    //   背景：`DirEntry` / `DirInfo` 由 native 模块用 NativeStructSpec 声明，**不在符号表里**
+    //   ⇒ 类型名校验会判"未定义的类型"，于是 `DirInfo d = dirs.stat(p)` 编译不过（报错还建议一个
+    //   native 根本不存在的 `use module.DirInfo`）。现在 4 处校验点都加了 native 兜底判据
+    //   （变量声明有/无初始化、函数参数与返回、脚本 struct 的字段类型）。
+    //   本段把这些位置各钉一条；（不存在的名字仍报错，见测试17 的说明）
+    DirInfo ann_info = dirs.stat(self)                  // ① 变量标注（有初始化）
+    assert_eq(ann_info.size > 0, true)
+
+    DirInfo ann_decl                                    // ② 变量标注（无初始化，另一条校验路径）
+    ann_decl = dirs.stat(self)
+    assert_eq(ann_decl.exists, true)
+
+    assert_eq(ann_size(ann_info), ann_info.size)        // ③ 作函数参数（返回类型也标注成 int）
+
+    DirEntry ann_entry = ann_first("src/module/arrays") // ④ 作函数返回类型（内部标注 Array[DirEntry]）
+    assert_eq(ann_entry.root, "src/module/arrays")
+    assert_eq(ann_entry.files.has("arrays.c"), true)
+
+    var ann_holder = new AnnHolder(info=ann_info)       // ⑤ 作脚本 struct 的字段类型
+    assert_eq(ann_holder.info.size, ann_info.size)
+    assert_eq(ann_holder.tag.len() > 0, true)
+
+    var ann_any = dirs.stat(self)
+    assert_eq(ann_any is DirInfo, true)                 // ⑥ `is` 判定也认这个名字
+
     print("test_dirs passed")
+}
+
+// --- 测试16 的辅助（native 类型标注用在参数 / 返回 / 脚本 struct 字段上）---
+//   ⚠ 负例（`NotAThing x = 1` 仍须报"未定义的类型"）不适合放这里：本文件是**能跑通**的用例，
+//     编译失败的用例要去 diag 那一类用例里守 —— 已在会话里手工对照过（见提交信息）。
+func ann_size(DirInfo d): int {
+    return d.size
+}
+
+func ann_first(string p): DirEntry {
+    Array[DirEntry] w = dirs.walk(p)
+    return w[0]
+}
+
+struct AnnHolder {
+    DirInfo info
+    string  tag = "native-type-annotation"
 }

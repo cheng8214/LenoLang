@@ -54,9 +54,10 @@ struct CacheCleaner {
     // 人类可读大小 ⇒ 已收编到标准库 strings.fmt_size()（2026-09-26，原来本地那份是
     //   与文件管理器/PE分析器逐字复制的 4 份之一）⇒ 本地定义删除，调用点直调标准库 ✓
 
-    // 获取文件大小 ⇒ 已收编到标准库 dirs.size()（2026-09-26）：
-    //   `dirs.stat()` 返回无类型 Dict ⇒ 原来要 `if st is Dict` + `if s is int` 手动收窄 ✗；
-    //   `dirs.size()` 返回类型就是 int（编译期已知 ✓），调用点直接用它，本地定义删除 ✓
+    // 获取文件大小 ⇒ 用标准库 `dirs.stat(p).size`（2026-09-27 收敛）：
+    //   `dirs.stat()` 旧形态是无类型 Dict ⇒ 原来要 `if st is Dict` + `if s is int` 手动收窄 ✗；
+    //   后来 stat 返回 `DirInfo`（字段类型编译期已知）⇒ `.size` 直接是 int ✓。
+    //   ⚠ 不要再找 `dirs.size()`：那个单键入口已于 2026-09-27 删除（它就是这里的重复入口）
 
     // 递归计算目录大小
     func calcDirSize(string path): int {
@@ -83,7 +84,7 @@ struct CacheCleaner {
                 if dirs.is_dir(fullpath) {
                     total = total + calcDirSize(fullpath)
                 } else {
-                    total = total + dirs.size(fullpath)
+                    total = total + dirs.stat(fullpath).size
                 }
             } catch e {
                 // 跳过权限不足的条目
@@ -136,7 +137,7 @@ struct CacheCleaner {
                 // 检查是否为 .lenb 文件
                 string ext = dirs.extname(entryName)
                 if ext == ".lenb" {
-                    int sz = dirs.size(fullpath)
+                    int sz = dirs.stat(fullpath).size
                     cacheItems.add({path: fullpath, type: "文件", size: sz})
                 }
             }

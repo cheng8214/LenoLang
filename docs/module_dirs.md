@@ -343,7 +343,7 @@ var drives = dirs.list_drives()   // Windows: ["C:\\", "D:\\"]
 **返回**: `Array[DirEntry]`（类型串按既有的 `type_to_string` 风格渲染为 `Array[struct DirEntry]`）
 
 ```leno
-var es = dirs.walk("src/module")
+Array[DirEntry] es = dirs.walk("src/module")   // 元素类型可以直接标出来（v3.2.5 起）
 for es to e {
     string root = e.root            // 编译期就知道是 string（无需 as / 收窄）
     Array[string] ds = e.dirs       // 子目录名
@@ -395,7 +395,7 @@ for es to e {
 > 现已改为 48 位 `int`，大文件读数正确。
 
 ```leno
-var info = dirs.stat("build.bat")
+DirInfo info = dirs.stat("build.bat")     // 类型可以直接标出来（v3.2.5 起；此前只能 var）
 // info = DirInfo{ exists: true, size: 2917, is_file: true, is_dir: false, mtime: 0 }
 
 io.print("大小: " + info.size + " 字节")     // info.size 直接是 int ⇒ 能直接参与运算
@@ -408,34 +408,15 @@ io.print("是目录: " + info.is_dir)
 > —— 编译期就会挡住。
 > 为什么不用 `Dict[string, ...]`：这五个键**类型不齐**（`exists` / `is_file` / `is_dir` 是 `bool`，
 > `size` / `mtime` 是 `int`），同质的 `Dict` 表达不了"这个键是 bool、那个键是 int"。
-> ⚠ native struct 名（`DirInfo` / `DirEntry`）**不能当类型标注**（不在符号表里 ⇒ 写 `DirInfo d = ...`
-> 会报"未定义的类型"）；让编译器推断（`var info = dirs.stat(p)`）再按字段用即可。
-
-### `size(path)`
-
-取文件字节数 —— **类型化入口**（返回类型就是 `int`，无需手动收窄）。
-
-**参数**:
-- `path` (string): 文件或目录路径
-
-**返回**: `int` - 文件字节数；路径不存在（或参数不是字符串）⇒ `0`
-
-```leno
-var n = dirs.size("build.bat")      // 2917，可直接做 int 运算 ✓
-var total = dirs.size("a.txt") + dirs.size("b.txt")
-```
-
-**为什么要它**：它当初是为"`stat` 返回无类型 `dict`、取 `size` 要 `if st is Dict` 再 `if s is int`
-手动收窄"补的类型化入口（`stat` 的另外三个键 `exists` / `is_file` / `is_dir` 早就各有专用函数）。
-v3.2.4 起 `stat` 返回结构体、`stat(p).size` 本身就是 `int` ⇒ 它**不再是唯一入口**，但保留：
-① 只想取大小时不必构造整个 `DirInfo`；② 已有三处 leno_gui 消费方在用
-（文件管理器 / 属性对话框 / 缓存清理工具）。语义与 `stat(p).size` **等价** ✓
-
-**注意**：
-- 不存在的路径返回 `0`（与 `dirs.stat()` 的默认值同口径）⇒ 要区分「空文件」与「不存在」，
-  先用 `dirs.exists()` 判断。
-- 目录返回的是**目录条目自身**的大小（Windows 报 `0`，POSIX 报 `st_size`），
-  **不是**递归总大小 ⇒ 需要递归总大小请自己用 `dirs.walk()` 累加。
+> ✅ native struct 名（`DirInfo` / `DirEntry`）**可以当类型标注**（v3.2.5 起）：`DirInfo d = dirs.stat(p)`、
+> `Array[DirEntry] w = dirs.walk(p)`、`func f(DirInfo d)`、脚本 struct 的字段类型都能写；`x is DirInfo`
+> 也照旧可用。之前只能 `var d = ...` 让编译器推断 —— 因为它俩**不在符号表里**（native 模块没有
+> `sym_table`），类型名校验会判"未定义的类型"。现在校验处补了 native 兜底判据
+> （来源就是 `native_find_struct_spec`，与字段解析、运行期 `ObjStructDef` 同源）。
+> 📌 **取单个字段**就写 `dirs.stat(p).size` —— 并行的 **`dirs.size()` 已于 2026-09-27 删除**
+> （它当初只是"`stat` 返回无类型 `dict` 时补的类型化入口"；`stat` 定型后它就是第二个入口）。
+> 口径不变：不存在的路径 ⇒ `0`；目录给的是**目录条目自身**的大小（Windows 报 `0`，POSIX 报 `st_size`），
+> **不是**递归总大小 ⇒ 要递归总大小自己用 `dirs.walk()` 累加。
 
 ---
 

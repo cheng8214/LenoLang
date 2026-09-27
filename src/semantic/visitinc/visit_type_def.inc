@@ -49,7 +49,11 @@
                             if (strcmp(field_type->struct_name, ast->u.struct_def.name) != 0) {
                                 // 检查引用的类型是否已定义
                                 Symbol* ref_type = scope_resolve(s->current, field_type->struct_name);
-                                if (!ref_type || !ref_type->type ||
+                                if (!ref_type && semantic_native_struct_known(field_type->struct_name)) {
+                                    // native struct 兜底（v3.2.5）：脚本 struct 的字段可以是
+                                    //   `DirInfo` / `DirEntry`（字段表由 native 规格提供，
+                                    //   与运行期 ObjStructDef 同源）
+                                } else if (!ref_type || !ref_type->type ||
                                     (ref_type->type->kind != TYPE_STRUCT &&
                                      ref_type->type->kind != TYPE_CLIB &&
                                      ref_type->type->kind != TYPE_CSTRUCT &&

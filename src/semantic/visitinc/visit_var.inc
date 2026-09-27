@@ -117,7 +117,11 @@
                         ast->u.var_decl.type->kind = TYPE_FACE;
                     } else {
                         Symbol* struct_def = scope_resolve(s->current, type_name);
-                        if (!struct_def) {
+                        if (!struct_def && semantic_native_struct_known(type_name)) {
+                            // native struct 兜底（v3.2.5）：`DirInfo d = dirs.stat(p)` / `DirEntry e`
+                            //   这类标注合法 —— 名字不在符号表里，但字段表由 native 规格提供
+                            //   （与字段解析、运行期 ObjStructDef 同源）⇒ 保持 TYPE_STRUCT + 名字即可
+                        } else if (!struct_def) {
                             char msg[BUFFER_MEDIUM];
                             if (strcmp(type_name, "double") == 0) {
                                 snprintf(msg, sizeof(msg), "未定义的类型: %s（Leno 中使用 float 代替 double，Leno 的 float 是 64 位双精度浮点数）", type_name);
@@ -157,7 +161,9 @@
                         ast->u.var_decl.type->kind = TYPE_FACE;
                     } else {
                         Symbol* struct_def = scope_resolve(s->current, type_name);
-                        if (!struct_def || !struct_def->type ||
+                        if (!struct_def && semantic_native_struct_known(type_name)) {
+                            // native struct 兜底（同上一处，v3.2.5）
+                        } else if (!struct_def || !struct_def->type ||
                             (struct_def->type->kind != TYPE_STRUCT &&
                              struct_def->type->kind != TYPE_CSTRUCT &&
                              struct_def->type->kind != TYPE_FACE)) {
@@ -312,6 +318,8 @@
                         } else if (struct_def && struct_def->type && struct_def->type->kind == TYPE_CSTRUCT) {
                             // 如果实际是 cstruct，更新类型为 TYPE_CSTRUCT
                             sym->type->kind = TYPE_CSTRUCT;
+                        } else if (!struct_def && semantic_native_struct_known(sym->type->struct_name)) {
+                            // native struct 兜底：**无初始化的声明**（`DirInfo d`）同样合法（v3.2.5）
                         } else if (!struct_def || !struct_def->type ||
                                    (struct_def->type->kind != TYPE_STRUCT &&
                                     struct_def->type->kind != TYPE_CSTRUCT &&

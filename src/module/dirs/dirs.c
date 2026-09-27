@@ -1092,6 +1092,11 @@ static const NativeStructSpec DIRINFO_STRUCT_SPEC = {
 //   · mtime 在 Windows 上恒 0（已知限制，见下方注释）
 // ⚠ 与旧形态（无类型 `Dict`）**逐字段同义**：键名一字未改 ⇒ `st.size` / `st.exists` 这类调用点
 //   不用动；但 `st["size"]` 下标式与 `if st is Dict` 收窄不再适用。
+// 📌 取单个字段就写 `dirs.stat(p).size` —— 2026-09-27 起**删掉了并行的 `dirs.size()`**：
+//   它当初只是"stat 返回无类型 Dict 时补的类型化入口"（P21 收窄收进标准库那一类活），
+//   stat 定型后它就是**第二个入口** ⇒ 收敛掉，避免同一件事两种写法长期共存。
+//   口径本就一致（不存在/参数不对 ⇒ size == 0，同 stat 的默认值）；要区分「空文件」与
+//   「不存在」先 `dirs.exists()` 判 ✓
 static Value native_dirs_stat(int argCount, Value* args) {
     if (argCount < 1) {
         native_throw_error("stat 需要路径参数");
@@ -1163,44 +1168,6 @@ static Value native_dirs_stat(int argCount, Value* args) {
     
     gc_pop_root();
     return info_val;
-}
-
-// dirs.size(path) - 取文件字节数（**类型化**入口，返回值就是 int）
-// 为什么需要它：`dirs.stat()` 返回无类型 Dict ⇒ 消费方每次都要 `if st is Dict` 再
-//   `if s is int` 手动收窄；而 stat 的另外三个键 exists/is_file/is_dir **早就各有专用函数**
-//   （dirs.exists / dirs.is_file / dirs.is_dir）⇒ 只差 size 这一格没补 ✓
-//   （leno_gui 三处消费方——文件管理器 / 属性对话框 / 缓存清理工具——恰好都卡在这个键上）
-//   同 T21 给 jsons 加类型化取值助手是同一类活：把收窄收进标准库 ✓
-// 口径与 `dirs.stat()["size"]` **同**（参数不对或不存在的路径 ⇒ 0，与 stat 的默认值一致）；
-//   要区分「空文件」与「不存在」请先 `dirs.exists()` 判 ✓
-// ⚠ 目录给的是**目录条目自身**的大小（Windows 下 GetFileAttributesExW 报 0，POSIX 报 st_size），
-//   **不是**递归总大小 ⇒ 要递归自己 walk 累加 ✓
-static Value native_dirs_size(int argCount, Value* args) {
-    (void)argCount;
-
-    const char* path = get_string(args[0]);
-    if (!path) { return val_int(0); }   // 与 stat 同口径：参数不对也不抛，给 0
-
-    int64_t size = 0;
-
-#ifdef _WIN32
-    wchar_t* wpath = utf8_to_utf16(path);
-    WIN32_FILE_ATTRIBUTE_DATA attrData;
-    if (wpath && GetFileAttributesExW(wpath, GetFileExInfoStandard, &attrData)) {
-        LARGE_INTEGER sz;
-        sz.LowPart = attrData.nFileSizeLow;
-        sz.HighPart = attrData.nFileSizeHigh;
-        size = (int64_t)sz.QuadPart;
-    }
-    if (wpath) { free(wpath); }
-#else
-    struct stat st;
-    if (stat(path, &st) == 0) {
-        size = (int64_t)st.st_size;
-    }
-#endif
-
-    return val_int(size);
 }
 
 // dirs.list_drives() - 返回盘符列表
@@ -1292,8 +1259,6 @@ void dirs_init_module(void) {
     //   那层手动转换 ✓
     native_register_struct_spec(&DIRINFO_STRUCT_SPEC);
     native_register_module_method_spec("dirs", "stat", native_dirs_stat, 1, -1, -1, &S_DIRINFO_SPEC, string_params);
-    // size：`stat` 改为返回结构体后 `stat(p).size` 本身就是 int ⇒ 这个单键入口**不再是必需**，
-    //   但保留：① 只想取大小时不必构造整个 DirInfo；② 已有三处 leno_gui 消费方在用
-    //   （文件管理器 / 属性对话框 / 缓存清理工具）。语义与 `stat(p).size` 等价 ✓
-    native_register_module_method_spec("dirs", "size", native_dirs_size, 1, -1, -1, &NATIVE_T_INT, string_params);
+    // size：**已删除**（2026-09-27 收敛）—— `stat(p).size` 本身就是 int ⇒ 那个单键入口成了
+    //   重复入口（它当初只是 stat 返回 any 时的补丁）⇒ 调用点统一写 `dirs.stat(p).size` ✓
 }

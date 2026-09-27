@@ -26,7 +26,7 @@ export func show(string path, bool isDir) {
     string dir = dirs.dirname(path)
     var st = dirs.stat(path)
 
-    int szb = dirs.size(path)      // 类型化入口；不必再 st.get("size") + 手动强转 ✓（2026-09-26）
+    int szb = st.size              // DirInfo 字段：类型化取值（`dirs.size()` 已于 2026-09-27 收敛删除）
     string szStr = strings.fmt_size(szb) + " (" + szb + " 字节)"
 
     string ext = dirs.extname(nm)

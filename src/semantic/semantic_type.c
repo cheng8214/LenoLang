@@ -352,6 +352,23 @@ TypeInfo* semantic_substitute_generic_param(TypeInfo* type, const char* param_na
 // out_field_index: 输出字段索引（可为 NULL 表示不需要）
 // 返回推断出的类型（需调用者 type_free），未找到返回 NULL
 // 注意：不设置 ast 字段，不 type_free(obj_type)，均由调用方管理
+// ============================================================================
+// native struct 兜底（v3.2.5）：让 `DirEntry` / `DirInfo` 这类名字能当**类型标注**
+// ----------------------------------------------------------------------------
+// 为什么需要：native 模块用 `native_register_struct_spec()` 声明字段表，但这些名字
+//   **不在符号表里**（native 模块没有 sym_table）⇒ 类型名校验四处都判"未定义的类型"
+//   （实测：`DirInfo d = dirs.stat(p)` 报 `[语义错误] 未定义的类型: DirInfo`，还建议一个
+//   native 根本不存在的 `use module.DirInfo`），只写 `var d = ...` 才躲得过。
+// 判据来源与其它环节**同源**：`native_find_struct_spec()` —— 编译期字段解析
+//   （下面 infer_field_type 的 native 分支）与运行期 `ObjStructDef`（native_struct_def_for）
+//   用的都是这份规格 ⇒ 这里认了它，字段访问与运行期就一定对得上。
+// ⚠ 只判"合法性"，不改 kind：它本来就是普通 struct（face/enum 由 resolve_type_names 纠正）。
+// ============================================================================
+int semantic_native_struct_known(const char* name) {
+    if (!name || !name[0]) return 0;
+    return native_find_struct_spec(name) != NULL;
+}
+
 TypeInfo* infer_field_type(Semantic* s, TypeInfo* obj_type, const char* field_name, int* out_field_index) {
     if (!obj_type || !field_name) return NULL;
     if (out_field_index) *out_field_index = -1;
