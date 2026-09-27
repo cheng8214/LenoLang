@@ -602,13 +602,14 @@ void native_register_all_module_metas(void) {
 // 模块方法支持（哈希表实现 - O(1) 查找）
 // ============================================================================
 
-// 注册模块方法（带参数类型）
+// 注册模块方法的**实现**（带参数类型；return_spec 可空 = 旧路径）。
 // min_arity/max_arity: 当 arity == -1（可变参数）时，指定最小/最大允许参数个数；其他情况传 -1
 // param_types: 参数类型数组，长度为 arity，如果为 NULL 则所有参数默认为 TYPE_ANY
 // return_element_type: 返回数组时的元素类型，非数组返回类型时传 TYPE_UNKNOWN
-void native_register_module_method(const char* module_name, const char* method_name,
-                                   NativeFn function, int arity, int min_arity, int max_arity,
-                                   TypeKind return_type, TypeKind return_element_type, TypeKind* param_types) {
+static void module_method_register_impl(const char* module_name, const char* method_name,
+                                        NativeFn function, int arity, int min_arity, int max_arity,
+                                        TypeKind return_type, TypeKind return_element_type,
+                                        const NativeTypeSpec* return_spec, TypeKind* param_types) {
     if (!moduleMethodTable.entries) {
         module_method_table_init();
     }
@@ -634,6 +635,7 @@ void native_register_module_method(const char* module_name, const char* method_n
             entry->meta.max_arity = max_arity;
             entry->meta.return_type = return_type;
             entry->meta.return_element_type = return_element_type;
+            entry->meta.return_spec = return_spec;   // 可空：NULL = 走老的 Kind 路径
             if (param_types && arity > 0) {
                 int count = arity < MAX_METHOD_PARAMS ? arity : MAX_METHOD_PARAMS;
                 for (int i = 0; i < count; i++) {
@@ -681,6 +683,7 @@ void native_register_module_method(const char* module_name, const char* method_n
     new_entry->meta.max_arity = max_arity;
     new_entry->meta.return_type = return_type;
     new_entry->meta.return_element_type = return_element_type;
+    new_entry->meta.return_spec = return_spec;
 
     // 复制参数类型
     if (param_types && arity > 0) {
@@ -701,6 +704,248 @@ void native_register_module_method(const char* module_name, const char* method_n
     new_entry->next = moduleMethodTable.entries[index];
     moduleMethodTable.entries[index] = new_entry;
     moduleMethodTable.count++;
+}
+
+// 公开入口 ①：老的"只给 Kind"版本（return_spec = NULL ⇒ 行为与改动前逐字一致）
+void native_register_module_method(const char* module_name, const char* method_name,
+                                   NativeFn function, int arity, int min_arity, int max_arity,
+                                   TypeKind return_type, TypeKind return_element_type, TypeKind* param_types) {
+    module_method_register_impl(module_name, method_name, function, arity, min_arity, max_arity,
+                                return_type, return_element_type, NULL, param_types);
+}
+
+// 公开入口 ②：带**完整返回类型规格**的版本（见 leno_types.h 的 NativeTypeSpec）。
+//   顶层 Kind 由规格自动回填 ⇒ 旧的消费者（只认 Kind 的路径 / LSP 老渲染）也不会拿到错的类型。
+void native_register_module_method_spec(const char* module_name, const char* method_name,
+                                        NativeFn function, int arity, int min_arity, int max_arity,
+                                        const NativeTypeSpec* return_spec, TypeKind* param_types) {
+    TypeKind rt = TYPE_ANY;
+    TypeKind et = TYPE_UNKNOWN;
+    if (return_spec) {
+        switch (return_spec->tag) {
+            case NTYPE_INT:     rt = TYPE_INT;    break;
+            case NTYPE_FLOAT:   rt = TYPE_FLOAT;  break;
+            case NTYPE_STRING:  rt = TYPE_STRING; break;
+            case NTYPE_BOOL:    rt = TYPE_BOOL;   break;
+            case NTYPE_NULL:    rt = TYPE_NULL;   break;
+            case NTYPE_ARRAY:   rt = TYPE_ARRAY;  break;
+            case NTYPE_DICT:    rt = TYPE_DICT;   break;
+            case NTYPE_STRUCT:  rt = TYPE_STRUCT; break;
+            case NTYPE_PTR_GENERIC: rt = TYPE_PTR_GENERIC; break;
+            default:            rt = TYPE_ANY;    break;
+        }
+        if (return_spec->tag == NTYPE_ARRAY && return_spec->sub) {
+            switch (return_spec->sub->tag) {
+                case NTYPE_INT:    et = TYPE_INT;    break;
+                case NTYPE_FLOAT:  et = TYPE_FLOAT;  break;
+                case NTYPE_STRING: et = TYPE_STRING; break;
+                case NTYPE_BOOL:   et = TYPE_BOOL;   break;
+                case NTYPE_NULL:   et = TYPE_NULL;   break;
+                case NTYPE_ARRAY:  et = TYPE_ARRAY;  break;
+                case NTYPE_DICT:   et = TYPE_DICT;   break;
+                case NTYPE_STRUCT: et = TYPE_STRUCT; break;
+                default:           et = TYPE_ANY;    break;
+            }
+        }
+    }
+    module_method_register_impl(module_name, method_name, function, arity, min_arity, max_arity,
+                                rt, et, return_spec, param_types);
+}
+
+// 取模块方法的返回类型规格（编译期：语义侧构造返回类型时优先用它）
+const NativeTypeSpec* native_get_module_method_return_spec(const char* module_name, const char* method_name) {
+    ModuleMethodMeta* meta = native_find_module_method(module_name, method_name);
+    return meta ? meta->return_spec : NULL;
+}
+
+// ============================================================================
+// native 类型规格：注册表 + 规格→TypeInfo/字符串 + native 结构体的运行期支持
+// ----------------------------------------------------------------------------
+// 一份 static 规格同时服务两处（**这是"字段布局不漂"的全部保障**）：
+//   · 编译期：native_type_spec_to_info() → TypeInfo（struct 名带进 struct_name）
+//   · 运行期：native_struct_def_for() 按**同一字段顺序**造 ObjStructDef 并注册进 struct_def_table
+// 表满/重名都静默忽略（与 native 注册表其它部分的风格一致：模块声明是编译期常量，不该失败）。
+// ============================================================================
+#define NATIVE_STRUCT_SPEC_MAX 64
+// 与 struct_def_table（object_struct.c）同为 THREAD_LOCAL：每个线程初始化 native 模块时
+// 各自登记一遍同一批 static 规格 ⇒ 内容一致、无跨线程共享写（子线程初始化见 object_thread.c）
+static THREAD_LOCAL const NativeStructSpec* nativeStructSpecs[NATIVE_STRUCT_SPEC_MAX];
+static THREAD_LOCAL int nativeStructSpecCount = 0;
+
+void native_register_struct_spec(const NativeStructSpec* spec) {
+    if (!spec || !spec->name || spec->field_count < 0) return;
+    for (int i = 0; i < nativeStructSpecCount; i++) {
+        if (strcmp(nativeStructSpecs[i]->name, spec->name) == 0) {
+            nativeStructSpecs[i] = spec;   // 同名重注册：后注册者生效（与 struct_def_register 同口径）
+            return;
+        }
+    }
+    if (nativeStructSpecCount >= NATIVE_STRUCT_SPEC_MAX) return;
+    nativeStructSpecs[nativeStructSpecCount++] = spec;
+}
+
+const NativeStructSpec* native_find_struct_spec(const char* name) {
+    if (!name) return NULL;
+    for (int i = 0; i < nativeStructSpecCount; i++) {
+        if (strcmp(nativeStructSpecs[i]->name, name) == 0) return nativeStructSpecs[i];
+    }
+    return NULL;
+}
+
+// 规格 → TypeKind（只取顶层；NTYPE_STRUCT 的**名字**由调用方另行处理）
+static TypeKind native_spec_kind(const NativeTypeSpec* spec) {
+    if (!spec) return TYPE_ANY;
+    switch (spec->tag) {
+        case NTYPE_INT:         return TYPE_INT;
+        case NTYPE_FLOAT:       return TYPE_FLOAT;
+        case NTYPE_STRING:      return TYPE_STRING;
+        case NTYPE_BOOL:        return TYPE_BOOL;
+        case NTYPE_NULL:        return TYPE_NULL;
+        case NTYPE_ARRAY:       return TYPE_ARRAY;
+        case NTYPE_DICT:        return TYPE_DICT;
+        case NTYPE_STRUCT:      return TYPE_STRUCT;
+        case NTYPE_PTR_GENERIC: return TYPE_PTR_GENERIC;
+        default:                return TYPE_ANY;
+    }
+}
+
+// 规格 → TypeInfo（**新分配，调用方 type_free**）
+TypeInfo* native_type_spec_to_info(const NativeTypeSpec* spec) {
+    if (!spec) return NULL;
+    TypeInfo* t = type_new(native_spec_kind(spec));
+    if (!t) return NULL;
+
+    if (spec->tag == NTYPE_STRUCT && spec->name) {
+        t->struct_name = strdup(spec->name);
+    } else if (spec->tag == NTYPE_ARRAY || spec->tag == NTYPE_PTR_GENERIC) {
+        t->element_type = native_type_spec_to_info(spec->sub);
+    } else if (spec->tag == NTYPE_DICT) {
+        t->key_type = native_type_spec_to_info(spec->sub);
+        t->value_type = native_type_spec_to_info(spec->sub2);
+    }
+    return t;
+}
+
+// 规格 → 可读类型串（LSP / 诊断）
+void native_type_spec_to_string(const NativeTypeSpec* spec, char* out, int out_size) {
+    if (!out || out_size <= 0) return;
+    out[0] = '\0';
+    if (!spec) return;
+
+    char* p = out;
+    int remain = out_size;
+    #define NSPEC_APPEND(fmt, ...) \
+        do { \
+            int _n = snprintf(p, (size_t)remain, fmt, ##__VA_ARGS__); \
+            if (_n > 0) { p += (_n < remain ? _n : remain - 1); remain -= (_n < remain ? _n : remain - 1); } \
+        } while (0)
+
+    switch (spec->tag) {
+        case NTYPE_INT:    NSPEC_APPEND("int");    break;
+        case NTYPE_FLOAT:  NSPEC_APPEND("float");  break;
+        case NTYPE_STRING: NSPEC_APPEND("string"); break;
+        case NTYPE_BOOL:   NSPEC_APPEND("bool");   break;
+        case NTYPE_NULL:   NSPEC_APPEND("null");   break;
+        case NTYPE_ANY:    NSPEC_APPEND("any");    break;
+        case NTYPE_STRUCT:
+            // 与 type.c 的 type_to_string 保持**同一风格**（`struct Name`）：同一个类型
+            //   在报错信息与 LSP hover 里必须是同一种写法，否则用户会以为是两个东西
+            NSPEC_APPEND("struct %s", spec->name ? spec->name : "");
+            break;
+        case NTYPE_ARRAY:
+            NSPEC_APPEND("Array[");
+            native_type_spec_to_string(spec->sub, p, remain);
+            p = out + strlen(out); remain = out_size - (int)strlen(out);
+            NSPEC_APPEND("]");
+            break;
+        case NTYPE_DICT:
+            NSPEC_APPEND("Dict[");
+            native_type_spec_to_string(spec->sub, p, remain);
+            p = out + strlen(out); remain = out_size - (int)strlen(out);
+            NSPEC_APPEND(", ");
+            native_type_spec_to_string(spec->sub2, p, remain);
+            p = out + strlen(out); remain = out_size - (int)strlen(out);
+            NSPEC_APPEND("]");
+            break;
+        case NTYPE_PTR_GENERIC:
+            NSPEC_APPEND("Ptr[");
+            native_type_spec_to_string(spec->sub, p, remain);
+            p = out + strlen(out); remain = out_size - (int)strlen(out);
+            NSPEC_APPEND("]");
+            break;
+        default: NSPEC_APPEND("any"); break;
+    }
+    #undef NSPEC_APPEND
+}
+
+// 已存在的同名定义与规格是否**同形**（字段个数 + 每个字段的名字/类型，按序比）
+//   为什么要比：四张类型表全局**只按名字**索引，而字段序号是编译期定死的（OP_GET_FIELD 的
+//   直接操作数就是序号）。native `DirEntry` 与用户自造的 `DirEntry` 撞名又不同形时，
+//   混用会静默读到同序号的**错字段** —— 宁可响亮报错（同 S2 的判定哲学）。
+static int native_def_matches_spec(ObjStructDef* def, const NativeStructSpec* spec) {
+    if (!def || !spec) return 0;
+    if (def->field_count != spec->field_count) return 0;
+    for (int i = 0; i < spec->field_count; i++) {
+        if (!def->fields[i].name || strcmp(def->fields[i].name, spec->field_names[i]) != 0) return 0;
+        if (def->fields[i].type != native_spec_kind(spec->field_types[i])) return 0;
+    }
+    return 1;
+}
+
+// 按名取（必要时创建并注册）native 结构体定义。字段顺序 = spec 的字段顺序 ⇒ 与编译期索引同源。
+ObjStructDef* native_struct_def_for(const char* name) {
+    if (!name) return NULL;
+
+    const NativeStructSpec* spec = native_find_struct_spec(name);
+    ObjStructDef* def = struct_def_find(name);
+    if (def) {
+        // 没有规格 ⇒ 与旧行为一致（直接复用）；有规格但要**同形**才复用
+        if (!spec || native_def_matches_spec(def, spec)) return def;
+        char msg[512];
+        snprintf(msg, sizeof(msg),
+                 "native 结构体 '%s' 与已存在的同名定义形状不一致（字段个数/名字/类型不同）——"
+                 "类型表全局按名字索引、字段序号在编译期定死，混用会静默读到错的字段；请给其中一个改名",
+                 name);
+        native_throw_error(msg);
+        return NULL;   // fail-closed：宁可不给实例，也不按错序号读字段
+    }
+
+    if (!spec) return NULL;
+
+    def = struct_def_new(name, spec->field_count, 0);
+    if (!def) return NULL;
+    for (int i = 0; i < spec->field_count; i++) {
+        const NativeTypeSpec* ft = spec->field_types[i];
+        TypeKind kind = native_spec_kind(ft);
+        const char* field_struct_name = (ft && ft->tag == NTYPE_STRUCT) ? ft->name : NULL;
+        TypeKind elem_kind = TYPE_ANY;
+        if (ft && (ft->tag == NTYPE_ARRAY || ft->tag == NTYPE_PTR_GENERIC) && ft->sub) {
+            elem_kind = native_spec_kind(ft->sub);
+        } else if (ft && ft->tag == NTYPE_DICT) {
+            elem_kind = TYPE_ANY;   // Dict 的 K/V 在运行期字段元数据里没有两个槽（判定另走类型规格）
+        }
+        struct_def_set_field(def, i, spec->field_names[i], kind, field_struct_name,
+                             val_null(), 0, elem_kind, 0);
+    }
+    struct_def_register(def);   // owner = NULL（来源未知）⇒ 与脚本同名类型冲突时按"来源未知"放行
+    return def;
+}
+
+ObjStruct* native_struct_new(const char* name) {
+    ObjStructDef* def = native_struct_def_for(name);
+    if (!def) return NULL;
+    return struct_instance_new(def);
+}
+
+int native_struct_set(ObjStruct* obj, const char* field_name, Value value) {
+    if (!obj || !obj->def || !field_name) return 0;
+    for (int i = 0; i < obj->def->field_count; i++) {
+        if (obj->def->fields[i].name && strcmp(obj->def->fields[i].name, field_name) == 0) {
+            struct_set_field(obj, i, value);   // inline：带 GC 写屏障（leno_value.h）
+            return 1;
+        }
+    }
+    return 0;
 }
 
 // 根据模块名和方法名查找模块方法（O(1)）

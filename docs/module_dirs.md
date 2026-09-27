@@ -359,6 +359,34 @@ for entries to entry {
 
 ---
 
+### `walk_entries(path)` —— 带字段类型的遍历（v3.2.3）
+
+与 `walk` **同一份扫描**（逐条一一对应），但每条目是结构体 `DirEntry{ string root, Array[string] dirs, Array[string] files }`：
+
+**参数**:
+- `path` (string): 目录路径
+
+**返回**: `Array[DirEntry]`（类型串按既有的 `type_to_string` 风格渲染为 `Array[struct DirEntry]`）
+
+```leno
+var es = dirs.walk_entries("src/module")
+for es to e {
+    string root = e.root            // 编译期就知道是 string（无需 as / 收窄）
+    Array[string] fs = e.files      // 元素类型也是 string
+    io.print(root + " → " + _str(fs.len()) + " 个文件")
+    for fs to f { io.print("  " + f) }
+}
+```
+
+**为什么要有它**：`walk` 的元素是 `[root, dirs, files]` 三元组，静态类型是 `Array[Array]` ⇒ 取出来的每个位置都是 `any`，调用点得手写收窄。`walk_entries` 用 native 的**类型规格**（`NativeTypeSpec`，见 `docs/待办_单一事实来源与重复实现收敛.md`）声明返回 `Array[DirEntry]`，编译期与运行期共用同一份字段表 ⇒ 字段名/类型都已知。
+
+**两者怎么选**：已经有 `entry[0]/entry[2]` 这种位置式取值的代码继续用 `walk`（零改动）；新代码、或需要字段名与类型可读性时用 `walk_entries`。两者扫描口径**不许漂**（`test_dirs` 里有一条断言逐条对齐）。
+
+> ⚠ 别把局部变量命名成 `files`：那是 native 模块名，会被优先当模块解析（用 `fs` 之类）。
+> ⚠ `DirEntry` 与脚本自定义的 struct **共享同一个全局名字空间**；若你自己也定义了同名 struct 且形状不同，运行期会**报错**（而不是静默按错序号读字段）。
+
+---
+
 ## 文件信息
 
 ### `stat(path)`

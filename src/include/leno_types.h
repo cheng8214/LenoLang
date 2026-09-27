@@ -250,6 +250,57 @@ struct TypeInfo {
     int interned;
 };
 
+// ============================================================================
+// native 类型规格（NativeTypeSpec / NativeStructSpec）—— native 模块声明类型的**唯一来源**
+// ----------------------------------------------------------------------------
+// 为什么要有：native 方法元数据（ModuleMethodMeta）过去只有"**一个** TypeKind 槽"
+//   （return_type + return_element_type），表达不了 `Array[DirEntry]` / `Dict[string,string]`
+//   这类**参数化或带名字**的类型 ⇒ 编译器只能拿到"无名 struct / 裸容器"，字段和泛型实参全丢。
+//   模块侧写**一份** static 规格，编译期由 native_type_spec_to_info() 转 TypeInfo、
+//   运行期由 native_struct_def_for() 按**同一份规格、同一字段顺序**造 ObjStructDef
+//   ⇒ 编译期字段索引与运行期槽位不可能各自漂（历史上就吃过"两边各写一份"的亏）。
+// 用法（模块的 xxx_init_module 里各写一次即可）：
+//     static const NativeTypeSpec S_STRING   = { NTYPE_STRING, NULL, NULL, NULL };
+//     static const NativeTypeSpec S_STRARR[] = { {NTYPE_ARRAY, NULL, &S_STRING, NULL} };  // 元素
+//     static const char* DIRENTRY_FIELDS[] = {"root", "dirs", "files"};
+//     static const NativeTypeSpec* DIRENTRY_TYPES[] = { &S_STRING, &S_STRARR[0], &S_STRARR[0] };
+//     static const NativeStructSpec DIRENTRY = { "DirEntry", 3, DIRENTRY_FIELDS, DIRENTRY_TYPES };
+//     static const NativeTypeSpec S_DIRENTRY  = { NTYPE_STRUCT, "DirEntry", NULL, NULL };
+//     static const NativeTypeSpec S_DIRENTRY_ARR[] = { {NTYPE_ARRAY, NULL, &S_DIRENTRY, NULL} };
+//     native_register_struct_spec(&DIRENTRY);
+//     native_register_module_method_spec("dirs", "walk_entries", fn, 1, -1, -1, &S_DIRENTRY_ARR[0], params);
+// ⚠ 被引用的 struct 规格**必须也注册**（native_register_struct_spec），否则编译期字段解析
+//   会找不到字段表（运行期同样造不出定义）。
+// ⚠ native struct 与脚本 struct 共用**同一个全局名字空间**（按名字索引）⇒ 取名请避免与
+//   用户类型撞（如 `DirEntry` 这种模块专属名），撞了会按"后注册覆盖"处理。
+// ============================================================================
+typedef enum {
+    NTYPE_ANY = 0,      // 无约束（等价 TypeInfo 的 TYPE_ANY）
+    NTYPE_INT,
+    NTYPE_FLOAT,
+    NTYPE_STRING,
+    NTYPE_BOOL,
+    NTYPE_NULL,
+    NTYPE_ARRAY,        // sub  = 元素类型
+    NTYPE_DICT,         // sub  = 键 K；sub2 = 值 V
+    NTYPE_STRUCT,       // name = 结构体名（字段表见同名的 NativeStructSpec）
+    NTYPE_PTR_GENERIC,  // sub  = 元素类型（Ptr[T]）
+} NativeTypeTag;
+
+typedef struct NativeTypeSpec {
+    NativeTypeTag tag;
+    const char* name;                  // NTYPE_STRUCT 的类型名；其余传 NULL
+    const struct NativeTypeSpec* sub;  // 容器元素 / Dict 的 K / Ptr 的元素
+    const struct NativeTypeSpec* sub2; // Dict 的 V（其余传 NULL）
+} NativeTypeSpec;
+
+typedef struct NativeStructSpec {
+    const char* name;                          // 类型名（Leno 侧写这个）
+    int field_count;
+    const char* const* field_names;            // 与 field_types **同序** ⇒ 下标即字段号
+    const NativeTypeSpec* const* field_types;
+} NativeStructSpec;
+
 // 类型系统 API
 TypeInfo* type_new(TypeKind kind);
 // 获取驻留的数组类型 Array[elem_kind]（每个线程缓存一份，重复调用返回同一实例）

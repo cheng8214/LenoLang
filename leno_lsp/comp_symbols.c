@@ -452,8 +452,15 @@ void comp_provider_add_native_modules(CompletionSet* set, const char* filter) {
                 char full_name[256];
                 snprintf(full_name, sizeof(full_name), "%s.%s", mod_name, metas[i].method_name);
                 
-                // 构建签名 detail
-                const char* ret_str = type_kind_to_string(metas[i].return_type);
+                // 构建签名 detail（返回类型优先用**完整规格**：能显示 Array[DirEntry] 等）
+                char ret_buf[128];
+                const char* ret_str;
+                if (metas[i].return_spec) {
+                    native_type_spec_to_string(metas[i].return_spec, ret_buf, (int)sizeof(ret_buf));
+                    ret_str = ret_buf;
+                } else {
+                    ret_str = type_kind_to_string(metas[i].return_type);
+                }
                 char detail[512];
                 
                 if (metas[i].arity == 0) {

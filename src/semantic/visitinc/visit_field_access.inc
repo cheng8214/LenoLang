@@ -180,6 +180,16 @@
                         // 注意：单层字段访问（如 o.inner）不需要检查 null 默认值
                         // 因为获取 null 本身不会运行时出错
                         // 链式访问（如 o.inner.value）的 null 检查在 AST_INDEX 中处理
+                    } else if (!struct_sym && obj_type->kind == TYPE_STRUCT && obj_type->struct_name &&
+                               native_find_struct_spec(obj_type->struct_name)) {
+                        // native struct（v3.2.3）：字段存在时上面的 infer_field_type 已把索引补上；
+                        // 到这里还 < 0 ⇒ 名字真的不存在，给出比 codegen 兜底更准的报错
+                        if (ast->u.field_access.field_index < 0) {
+                            char msg[BUFFER_MEDIUM];
+                            snprintf(msg, sizeof(msg), "struct '%s' 没有字段 '%s'",
+                                     obj_type->struct_name, field_name);
+                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                        }
                     } else if (!struct_sym && obj_type->kind == TYPE_CSTRUCT && obj_type->struct_name) {
                         // 从全局 cstruct 定义表查找（跨模块导入的 cstruct）
                         ObjCStructDef* cdef = cstruct_def_find(obj_type->struct_name);
@@ -342,6 +352,17 @@
 
                     if (!struct_sym && obj_type->struct_name) {
                         struct_sym = scope_resolve(s->current, obj_type->struct_name);
+                    }
+
+                    // 字段索引兜底（v3.2.3）：一级解析拿不到时，与表达式/赋值路径**共用**
+                    // infer_field_type（它含 native struct 规格分支）⇒ `native值?.field` 也能解析
+                    if (!ast->u.safe_access.is_call && obj_type->kind == TYPE_STRUCT &&
+                        obj_type->struct_name &&
+                        !(struct_sym && struct_sym->struct_field_count > 0)) {
+                        int inferred_idx = -1;
+                        TypeInfo* inferred_field = infer_field_type(s, obj_type, name, &inferred_idx);
+                        if (inferred_field) type_free(inferred_field);
+                        if (inferred_idx >= 0) ast->u.safe_access.field_index = inferred_idx;
                     }
 
                     if (struct_sym && struct_sym->struct_field_count > 0) {

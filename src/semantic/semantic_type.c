@@ -381,6 +381,21 @@ TypeInfo* infer_field_type(Semantic* s, TypeInfo* obj_type, const char* field_na
                 }
             }
 
+            // native 结构体兜底（v3.2.3）：native 模块用 NativeStructSpec 声明字段表
+            //   ⇒ 既不在作用域（不是脚本符号）、也没有符号表（native 模块 sym_table 恒 NULL），
+            //   只能查这份规格。字段顺序与运行期 ObjStructDef **同源**（同一 spec）✓
+            {
+                const NativeStructSpec* nss = native_find_struct_spec(obj_type->struct_name);
+                if (nss) {
+                    for (int fi = 0; fi < nss->field_count; fi++) {
+                        if (strcmp(nss->field_names[fi], field_name) == 0) {
+                            if (out_field_index) *out_field_index = fi;
+                            return native_type_spec_to_info(nss->field_types[fi]);
+                        }
+                    }
+                }
+            }
+
             // 跨模块 struct 查找：当 struct 定义在导入模块中时（如 use SDL3.Font），
             // scope_resolve 可能找不到（或找到的符号没有字段信息），需要从导入模块的符号表查找。
             // 这与 TYPE_CSTRUCT 分支的跨模块查找逻辑一致。
@@ -1808,6 +1823,17 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
 
             if (is_native_module) {
                 const char* method_name = ast->u.module_call.method_name;
+
+                // ① 优先用**完整返回类型规格**（v3.2.3）：它才能表达 `Array[DirEntry]` /
+                //    `Dict[string,string]` 这类参数化、带名字的类型（Kind 槽表达不了，
+                //    见 leno_types.h 的 NativeTypeSpec）。返回的 TypeInfo 归调用方释放 ✓
+                const NativeTypeSpec* ret_spec =
+                    native_get_module_method_return_spec(actual_module, method_name);
+                if (ret_spec) {
+                    TypeInfo* spec_type = native_type_spec_to_info(ret_spec);
+                    if (spec_type) return spec_type;
+                }
+
                 TypeKind return_type = native_get_module_method_return_type(
                     actual_module,
                     method_name);

@@ -138,7 +138,16 @@ static char* build_builtin_signature(const BuiltinFunctionMeta* meta, int active
 static char* build_native_module_signature(const char* module, const char* method,
                                             ModuleMethodMeta* meta, int active_param) {
     int arity = meta->arity;
-    const char* ret_str = type_kind_to_string(meta->return_type);
+    // 返回类型：优先用**完整规格**（v3.2.3）—— 只有它显示得出 `Array[DirEntry]` /
+    // `Dict[string,string]` 这类参数化、带名字的类型（Kind 槽显示不出来）
+    char ret_buf[128];
+    const char* ret_str;
+    if (meta->return_spec) {
+        native_type_spec_to_string(meta->return_spec, ret_buf, (int)sizeof(ret_buf));
+        ret_str = ret_buf;
+    } else {
+        ret_str = type_kind_to_string(meta->return_type);
+    }
 
     // 构建签名标签：module.method(params) -> ret
     char label[512];

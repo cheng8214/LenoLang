@@ -99,6 +99,36 @@ main()
     // ④ 目录 ⇒ 与 stat 一致（给的是目录条目自身的大小，不是递归总大小）
     assert_eq(dirs.size("assert"), dirs.stat("assert")["size"])
 
+    // 测试13: dirs.walk_entries() —— native 模块返回**带字段类型的 struct**（v3.2.3）
+    //   背景：`walk` 返回 `Array[Array]` ⇒ 元素是 any，取值要手写收窄；而 native 元数据过去
+    //   只有"一个 TypeKind 槽"，表达不了 `Array[DirEntry]`。现在用 NativeTypeSpec 声明
+    //   （**编译期字段表 + 运行期 ObjStructDef 同一来源**）⇒ 字段类型编译期已知、零收窄 ✓
+    var wes = dirs.walk_entries("src/module/arrays")
+    assert_eq(wes.len(), 1)
+
+    // ① 字段类型在**编译期**已知：下面三行没有任何 as / 收窄
+    //    （若字段是 any，这三行会直接编译失败 —— 这就是本用例要守住的东西）
+    string wroot = wes[0].root
+    Array[string] wfiles = wes[0].files
+    Array[string] wdirs = wes[0].dirs
+    assert_eq(wroot, "src/module/arrays")
+    assert_eq(wdirs.len(), 0)
+    assert_eq(wfiles.has("arrays.c"), true)     // 元素类型是 string ⇒ 能直接进 Array[string] 的方法
+
+    // ② 与 walk **逐条对应**（同一个 walk_scan_dir）—— 两套 API 的口径不许漂
+    var wraw = dirs.walk("src/module/arrays")
+    assert_eq(wes.len(), wraw.len())
+
+    // ③ 多层递归：每条 root 都必须是真目录（root 是 string ⇒ 能直接传给 dirs.is_dir）
+    var wmulti = dirs.walk_entries("src/module")
+    assert_eq(wmulti.len() > 1, true)
+    int wtotal = 0
+    for wmulti to we {
+        assert_eq(dirs.is_dir(we.root), true)
+        wtotal = wtotal + we.files.len()
+    }
+    assert_eq(wtotal > 0, true)
+
     print("test_dirs passed")
 }
 

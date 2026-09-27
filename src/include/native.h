@@ -27,6 +27,10 @@ typedef struct {
     TypeKind return_type;
     TypeKind return_element_type; // 返回数组时的元素类型（TYPE_UNKNOWN 表示未指定）
     TypeKind param_types[MAX_METHOD_PARAMS];  // 参数类型数组
+    // 完整返回类型规格（可空）：非 NULL 时**优先于** return_type/return_element_type ——
+    // 它才能表达 `Array[DirEntry]` / `Dict[string,string]` 这类参数化、带名字的类型
+    // （见 leno_types.h 的 NativeTypeSpec 说明）。为 NULL ⇒ 退回上面两个 Kind 的老路径。
+    const NativeTypeSpec* return_spec;
     NativeFn function;
 } ModuleMethodMeta;
 
@@ -95,6 +99,44 @@ ModuleMethodMeta* native_find_module_method(const char* module_name, const char*
 
 // 获取模块方法的返回类型
 TypeKind native_get_module_method_return_type(const char* module_name, const char* method_name);
+
+// ========== native 类型规格（完整类型通道，v3.2.3） ==========
+// 注册一个 native 结构体规格（**编译期字段表 + 运行期 ObjStructDef 同一来源**）。
+// 可在任意 *_init_module() 里反复调用（同名只登记一次）；表满（64）静默忽略。
+void native_register_struct_spec(const NativeStructSpec* spec);
+
+// 按名查 native 结构体规格（编译期字段解析兜底用；未注册 ⇒ NULL）
+const NativeStructSpec* native_find_struct_spec(const char* name);
+
+// 注册"带完整返回类型规格"的模块方法。return_spec 为 NULL 时与
+// native_register_module_method 等价（同时会把顶层 Kind 回填进 return_type /
+// return_element_type ⇒ 旧的消费者即使不认识规格也拿到大致正确的 Kind）。
+void native_register_module_method_spec(const char* module_name, const char* method_name,
+                                        NativeFn function, int arity, int min_arity, int max_arity,
+                                        const NativeTypeSpec* return_spec, TypeKind* param_types);
+
+// 取模块方法的返回类型规格（编译期；未声明规格 ⇒ NULL）
+const NativeTypeSpec* native_get_module_method_return_spec(const char* module_name, const char* method_name);
+
+// 规格 → TypeInfo（编译期）。**返回新分配、调用方负责 type_free**（struct 名会带进
+// TypeInfo->struct_name ⇒ 字段访问能顺着 infer_field_type 的 native 分支解析）。
+TypeInfo* native_type_spec_to_info(const NativeTypeSpec* spec);
+
+// 规格 → 可读类型串（LSP / 诊断）。总是以 '\0' 收尾。
+// 风格与 type.c 的 type_to_string **一致**：struct 写成 `struct Name` ⇒ 同一个类型在报错
+// 信息与 LSP hover 里是同一种写法（如 `Array[struct DirEntry]`、`Dict[string, string]`）。
+void native_type_spec_to_string(const NativeTypeSpec* spec, char* out, int out_size);
+
+// ========== native 结构体的运行期支持 ==========
+// 按名取（必要时**创建并注册**）ObjStructDef；无同名规格 ⇒ NULL。
+// 字段顺序取自注册的 spec ⇒ 与编译期的字段索引同源。
+ObjStructDef* native_struct_def_for(const char* name);
+
+// 按 native struct 名创建实例（字段先置 null，随后用 native_struct_set 填）；失败 ⇒ NULL
+ObjStruct* native_struct_new(const char* name);
+
+// 按**字段名**写值（内部查 spec/def 的字段顺序）；返回 1 = 成功，0 = 名字不存在
+int native_struct_set(ObjStruct* obj, const char* field_name, Value value);
 
 // 获取模块方法返回数组时的元素类型（编译时调用）
 TypeKind native_get_module_method_return_element_type(const char* module_name, const char* method_name);

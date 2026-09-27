@@ -4876,7 +4876,16 @@ char* lsp_get_hover_info(const char* content, LspPosition pos, const char* file_
         if (arity >= 0) {
             // 模块方法存在，生成文档
             TypeKind return_type = native_get_module_method_return_type(module, method);
-            const char* return_type_str = type_kind_to_string(return_type);
+            // 返回类型：优先用**完整规格**（v3.2.3）—— 能显示 Array[DirEntry] / Dict[string,string]
+            const NativeTypeSpec* return_spec = native_get_module_method_return_spec(module, method);
+            char return_buf[128];
+            const char* return_type_str;
+            if (return_spec) {
+                native_type_spec_to_string(return_spec, return_buf, (int)sizeof(return_buf));
+                return_type_str = return_buf;
+            } else {
+                return_type_str = type_kind_to_string(return_type);
+            }
             
             // 构建参数列表字符串
             char params_str[256] = {0};
