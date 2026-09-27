@@ -137,7 +137,7 @@ Socket udp = sockets.udp_bind("0.0.0.0", 9999)
 - `sockets_array` (array): 要监听的 socket 对象数组
 - `timeout_ms` (int): 超时时间（毫秒），-1 表示无限等待
 
-**返回**: 数组 - 包含可读的 socket 对象
+**返回**: `Array[Socket]` - 包含可读的 socket 对象（元素类型**跟入参走**，v3.2.6 起）
 
 ```leno
 var ready = sockets.select(clients, 100)
@@ -1228,7 +1228,7 @@ sock.send("")  // 返回 true，但不发送任何 TCP 数据
 | `sockets.connect(host, port)` | string, int | Socket\|null | TCP 连接 |
 | `sockets.listen(host, port)` | string, int | Socket\|null | TCP 监听 |
 | `sockets.udp_bind(host, port)` | string, int | Socket\|null | UDP 绑定 |
-| `sockets.select(socks, timeout_ms)` | array, int | array | 等待多个 socket 可读 |
+| `sockets.select(socks, timeout_ms)` | array, int | Array[Socket] | 等待多个 socket 可读（元素跟入参走） |
 | `sockets.resolve(host)` | string | string\|null | DNS 解析 |
 | `sockets.htons(host_short)` | int | int | 主机序 -> 网络序 (16位) |
 | `sockets.htonl(host_long)` | int | int | 主机序 -> 网络序 (32位) |

@@ -49,5 +49,52 @@ main()
     assert_eq(rf2 >= 0.0, true)
     assert_eq(rf2 < 10.0, true)
 
+    // ---- 类型契约（v3.2.6，编译期把关）----
+    //   `choice(arr)` 返回**元素本身**、`sample(arr,n)` / `shuffle(arr)` 返回**与入参同元素类型**的数组
+    //   —— 靠关系型规格 `NATIVE_T_ARG0_ELEM` / `NATIVE_T_ARR_ARG0_ELEM`（返回类型跟第 0 个实参走）。
+    //   下面全是**不做收窄**的强类型局部变量 ⇒ 规格一漂（改回 any / Array[any]）就编译失败。
+    //   为什么值得钉：native 规格**只在编译期生效**，运行期不校验元素类型 ⇒ 只有编译期能挡住这类回归。
+    var nums = [7, 8, 9]
+    int picked = rands.choice(nums)
+    Array[int] shuffled = rands.shuffle(nums)
+    Array[int] sampled = rands.sample(nums, 2)
+    assert_eq(shuffled.len(), 3)
+    assert_eq(sampled.len(), 2)
+    assert_eq(picked >= 7 and picked <= 9, true)
+    assert_eq(shuffled[0] + shuffled[1] + shuffled[2], 24)   // 元素是 int ⇒ 能直接做运算
+
+    // ---- 从 examples/rands 收编（2026-09-27）：bools / str / seed(可重复) / gauss / BigInt 档 ints ----
+    //   这几个此前在 assert/ 里**零覆盖**（示例是纯 print、无人校验）—— 其中 `seed` 的
+    //   "同种子 ⇒ 同序列"是随机模块最要紧的**可用性保证**，最该钉住。
+    assert_eq(rands.bools(1.0), true)          // 概率 1.0 ⇒ 恒 true
+    assert_eq(rands.bools(0.0), false)         // 概率 0.0 ⇒ 恒 false
+    bool maybe = rands.bools(0.5)              // 类型契约：返回 bool（不是 any）
+    assert_eq(maybe == true or maybe == false, true)
+
+    string rs = rands.str(8, "abc")
+    assert_eq(rs.len(), 8)                     // 长度按请求
+    assert_eq(rs.has("d"), false)              // 字符集限定：不会出现 'd'
+
+    rands.seed(12345)
+    int rq1 = rands.ints(1, 100)
+    rands.seed(12345)
+    int rq2 = rands.ints(1, 100)
+    assert_eq(rq1, rq2)                        // 同种子 ⇒ 同序列（可重现）
+
+    float rg = rands.gauss(50, 10)             // 类型契约：返回 float
+    assert_eq(rg > -500.0 and rg < 600.0, true)
+
+    // ⚠ **已知 bug（2026-09-27 收编 examples/rands 时发现，未修）**：大范围 `rands.ints` 会**崩**
+    //   —— `rands.ints(1, 10000000000)` ⇒ 0xC0000005（必崩；`1~4294967296` 正常，再大就崩）。
+    //   根因不在 rands 而在 **BigInt 的长除法路径**，最小复现（与 rands 无关）：
+    //       `(9223372036854775807 * 2) % 10000000000`  ⇒ 返回 `null`（应为数字）——**静默算错**
+    //   rands 的大范围分支正好要走这条路（`min + rand_limbs % range`）⇒ 于是崩。
+    //   这里**故意只钉能用的范围**（2^32 上限走的是 int64 快路）；等长除法修好后，
+    //   再把上面那行升级成 `rands.ints(1, 10000000000)` 的断言。
+    assert_eq(rands.ints(1, 4294967296) > 0, true)
+
+    // 说明：原示例 examples/rands/test_bigint_rand.leno 就是崩在这行上（它不在任何门禁里，
+    //   所以长期没人发现）—— 这正是"示例收编进套件"要解决的问题本身。
+
     print("test_rands passed")
 }

@@ -1184,6 +1184,8 @@ void sockets_init_module(void) {
     native_register_module_method_spec("sockets", "resolve", sockets_resolve_func, 1, -1, -1, &NATIVE_T_STRING, resolve_params);
 
     // select（模块级静态方法，不属于某个 socket 实例）
+    // 返回**可读的那些 socket**（实现：遍历入参数组、把就绪的 push 进结果数组）⇒ 元素类型跟着入参走
+    //   （关系型规格，v3.2.6）。原来标的是裸 `Array`（元素未指定）⇒ `select(socks)[0]` 是 any、要收窄。
     TypeKind select_params[] = {TYPE_ARRAY, TYPE_INT};
-    native_register_module_method_spec("sockets", "select", sockets_select_func, 2, -1, -1, &NATIVE_T_ARR, select_params);
+    native_register_module_method_spec("sockets", "select", sockets_select_func, 2, -1, -1, &NATIVE_T_ARR_ARG0_ELEM, select_params);
 }

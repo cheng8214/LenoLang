@@ -515,14 +515,19 @@ void rands_init_module(void) {
     TypeKind bools_params[] = {TYPE_FLOAT};
     native_register_module_method_spec("rands", "bools", rands_bools, 1, -1, -1, &NATIVE_T_BOOL, bools_params);
 
+    // choice/sample/shuffle 的返回类型**跟入参的元素类型走**（关系型规格 `NATIVE_T_ARG0_*`，v3.2.6）：
+    //   `choice(arr)` → 元素本身（实现就是 `return arr->elements[index]`）；
+    //   `sample(arr, n)` / `shuffle(arr)` → 与入参**同元素类型**的数组（memcpy 原件再取样/打乱）。
+    //   ⚠ 标 `any` / `Array[any]` 会丢元素类型（`rand.choice(names)` 取出来还要收窄）；
+    //     写死具体类型又会在 `Array[DirEntry]` 这类上误报 ⇒ 只有"关系"能表达对。
     TypeKind choice_params[] = {TYPE_ARRAY};
-    native_register_module_method_spec("rands", "choice", rands_choice, 1, -1, -1, &NATIVE_T_ANY, choice_params);
+    native_register_module_method_spec("rands", "choice", rands_choice, 1, -1, -1, &NATIVE_T_ARG0_ELEM, choice_params);
 
     TypeKind sample_params[] = {TYPE_ARRAY, TYPE_INT};
-    native_register_module_method_spec("rands", "sample", rands_sample, 2, -1, -1, &NATIVE_T_ARR_ANY, sample_params);
+    native_register_module_method_spec("rands", "sample", rands_sample, 2, -1, -1, &NATIVE_T_ARR_ARG0_ELEM, sample_params);
 
     TypeKind shuffle_params[] = {TYPE_ARRAY};
-    native_register_module_method_spec("rands", "shuffle", rands_shuffle, 1, -1, -1, &NATIVE_T_ARR_ANY, shuffle_params);
+    native_register_module_method_spec("rands", "shuffle", rands_shuffle, 1, -1, -1, &NATIVE_T_ARR_ARG0_ELEM, shuffle_params);
 
     TypeKind str_params[] = {TYPE_INT, TYPE_STRING};
     native_register_module_method_spec("rands", "str", rands_str, 2, -1, -1, &NATIVE_T_STRING, str_params);

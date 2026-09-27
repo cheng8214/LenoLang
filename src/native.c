@@ -754,6 +754,15 @@ const NativeTypeSpec NATIVE_T_ARR_STRING  = { NTYPE_ARRAY,  NULL, &NATIVE_T_STRI
 const NativeTypeSpec NATIVE_T_ARR_ARR     = { NTYPE_ARRAY,  NULL, &NATIVE_T_ARR,    NULL };
 const NativeTypeSpec NATIVE_T_ARR_DICT    = { NTYPE_ARRAY,  NULL, &NATIVE_T_DICT,   NULL };
 const NativeTypeSpec NATIVE_T_DICT        = { NTYPE_DICT,   NULL, NULL, NULL };              // K/V 未指定
+// ---- 关系型标签（v3.2.6）：返回类型**跟第 0 个实参走**（实例方法里 receiver 即第 0 个）----
+// 它们不是"一个类型"，而是"一条关系" ⇒ 只有能拿到实参类型的地方（native 方法调用点）才算得出结果；
+// 拿不到（如方法被当值传递）就退化成 any（保守），不会比老路径更差。
+// 为什么上提为预制：arrays / dicts / rands / sockets 四个模块都要用同一份 ⇒ 单一来源，
+// 免得每个模块各自抄一份 `static const NativeTypeSpec`（抄 4 份就有 4 个可能漂的口子）。
+const NativeTypeSpec NATIVE_T_ARG0_ELEM     = { NTYPE_ARG0_ELEM,  NULL, NULL, NULL };        // 第 0 个实参的元素类型
+const NativeTypeSpec NATIVE_T_ARG0_KEY      = { NTYPE_ARG0_KEY,   NULL, NULL, NULL };        // 第 0 个实参的键类型
+const NativeTypeSpec NATIVE_T_ARG0_VALUE    = { NTYPE_ARG0_VALUE, NULL, NULL, NULL };        // 第 0 个实参的值类型
+const NativeTypeSpec NATIVE_T_ARR_ARG0_ELEM = { NTYPE_ARRAY, NULL, &NATIVE_T_ARG0_ELEM, NULL }; // Array[第 0 个实参的元素]
 
 #define NATIVE_STRUCT_SPEC_MAX 64
 // 与 struct_def_table（object_struct.c）同为 THREAD_LOCAL：每个线程初始化 native 模块时

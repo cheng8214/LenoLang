@@ -476,8 +476,12 @@ A: 确保使用 `await` 等待 async 函数，并用 `try-catch` 捕获异常。
 - `test_async_yield.leno` - yield 测试
 - `test_async_all.leno` - all 测试
 - `test_async_timeout.leno` - timeout 测试
-- `examples/sockets/async/test_async_arecv_aaccept.leno` - async socket 测试
-- `examples/sockets/async/test_async_stress.leno` - async socket 压力测试
+- `assert/test_sockets_io.leno` - async socket 测试（`arecv`/`aaccept`；2026-09-27 从
+  `examples/sockets/async/test_async_arecv_aaccept.leno` 收编并补断言 —— 原示例只 print）
+- ✗ 异步压力/并发示例（原 `examples/sockets/async/test_async_stress*.leno`、
+  `examples/sockets/{stress,concurrent}/…`）**已于 2026-09-27 删除**：它们需要固定端口、
+  带多秒 sleep、且是"纯 print 无断言"的压测演示 ⇒ 不适合进门禁（套件要求快、确定、无外部依赖）。
+  收编进套件的是**确定性的 loopback 往返**（见上一条）。
 
 ## 异步网络 IO
 

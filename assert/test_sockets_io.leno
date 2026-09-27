@@ -1,0 +1,129 @@
+// sockets 的**真实网络 I/O**断言（只跑 127.0.0.1；不碰外网、不需外部进程）
+//   2026-09-27 从 examples/sockets 收编（原目录 20 个示例全是"纯 print + 固定端口 +
+//   要么得先起外部服务、要么连外网"，即不在门禁里也没人跑）。
+//
+// 为什么需要这个文件：此前 assert/ 对 sockets 只覆盖**纯计算**（字节序往返 + 空数组 select 早退），
+//   真实 socket 生命周期（listen / connect / accept / recv / send / close / select）**零覆盖**。
+//
+// 设计取舍：① 同步段的服务端放**子线程**里阻塞跑、主线程当客户端 ⇒ 顺序确定、不依赖 asyncs；
+//   ② 端口取高位；③ 连接与"等回包"都**带重试上限**（避免固定 sleep 造成的假失败）；
+//   ④ 每步都断言（原示例只 print，所以坏了也不知道）。
+import sockets
+import threads
+import strings
+import asyncs
+
+// ---------- 同步服务端（在子线程里阻塞跑）----------
+// 协议：recv "PING" → 回 "ECHO:PING"；再 recv 2048 字节 → 回 "LEN:2048"；然后关闭
+func echo_server(any port) {
+    int p = _int(port)
+    var server = sockets.listen("127.0.0.1", p)
+    if server == null { return -1 }
+
+    var client = server.accept()
+    if client == null { server.close(); return -2 }
+
+    string d1 = client.recv(1024)
+    // ⚠ 客户端在 "PING" 之前发过一个**空串**（覆盖 bugfix 场景：空发送不该阻塞后续数据）
+    if d1 != null { client.send("ECHO:" + d1) }
+
+    string d2 = client.recv(4096)
+    if d2 != null { client.send("LEN:" + _str(d2.len())) }
+
+    client.close()
+    server.close()
+    return 0
+}
+
+// ---------- 异步 echo（覆盖 arecv / aaccept）----------
+// 与 examples/sockets/async/test_async_arecv_aaccept.leno 同形，但改成断言
+async func a_echo_server(int port) {
+    var server = sockets.listen("127.0.0.1", port)
+    if server == null { assert_eq(false, true) }        // 起不来就直接失败（别静默跳过）
+    if server != null {
+        var client = await server.aaccept()
+        assert_eq(client != null, true)
+        if client != null {
+            var data = await client.arecv(1024)
+            assert_eq(data, "Hello Async!")
+            if data != null { client.send("Echo: " + data) }
+            client.close()
+        }
+        server.close()
+    }
+}
+
+async func a_client(int port) {
+    await asyncs.sleep(200)                             // 等服务器 listen 就绪
+    var conn = sockets.connect("127.0.0.1", port)
+    assert_eq(conn != null, true)
+    if conn != null {
+        conn.send("Hello Async!")
+        var reply = await conn.arecv(1024)
+        assert_eq(reply, "Echo: Hello Async!")
+        conn.close()
+    }
+}
+
+async func a_run(int port) {
+    a_echo_server(port)
+    a_client(port)
+}
+
+main()
+{
+    // ==================== 同步段 ====================
+    int port = 39517
+    var srv = threads.start(echo_server, port)
+
+    // 连接带重试：服务端子线程 listen 需要一点时间（最多等 5 秒）
+    var c = sockets.connect("127.0.0.1", port)
+    int tries = 0
+    while c == null and tries < 50 {
+        threads.sleep(100)
+        c = sockets.connect("127.0.0.1", port)
+        tries = tries + 1
+    }
+    assert_eq(c != null, true)
+
+    if c != null {
+        // ① 此刻服务端还没回任何数据 ⇒ select 应给空（覆盖 select 的"无可读"路径）
+        var ready0 = sockets.select([c], 0)
+        assert_eq(ready0.len(), 0)
+
+        // ② 空发送：返回 true，且**不影响**后续数据（原 bugfix 示例的独有覆盖点）
+        assert_eq(c.send(""), true)
+        assert_eq(c.send("PING"), true)
+
+        // ③ 等回包可用（用 select 轮询，避免固定 sleep 的假失败）⇒ select 应给"可读的那个 socket"
+        var ready = sockets.select([c], 0)
+        int w = 0
+        while ready.len() == 0 and w < 50 {
+            threads.sleep(100)
+            ready = sockets.select([c], 0)
+            w = w + 1
+        }
+        assert_eq(ready.len(), 1)
+        assert_eq(ready[0] == c, true)                  // 元素类型跟入参走（Array[Socket]）
+
+        string r1 = c.recv(1024)
+        assert_eq(r1, "ECHO:PING")                      // 空发送没插队、没丢包
+
+        // ④ 大一点的消息（2048 字节）完整送达
+        string big = strings.rep("x", 2048)
+        assert_eq(c.send(big), true)
+        string r2 = c.recv(4096)
+        assert_eq(r2, "LEN:2048")
+
+        c.close()
+    }
+
+    assert_eq(srv.join(), 0)                            // 服务端正常收尾（-1/-2 表示起不来/accept 失败）
+
+    // ==================== 异步段（arecv / aaccept）====================
+    int aport = 39518
+    a_run(aport)
+    asyncs.run()                                        // 只能在主线程调用
+
+    print("test_sockets_io passed")
+}

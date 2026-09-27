@@ -15,5 +15,14 @@ main()
     var host_long_back = sockets.ntohl(net_long)
     assert_eq(host_long, host_long_back)
 
+    // ---- 类型契约（v3.2.6，编译期把关）----
+    //   `select(socks, timeout)` 返回**可读的那些 socket**，元素类型**跟入参走**（关系型规格）
+    //   ⇒ `Array[Socket]` 进、`Array[Socket]` 出。这里传**空数组**：实现有早退分支
+    //   （`count == 0` 直接返回入参），所以既不碰网络也不需要真的 socket。
+    //   左边写成 `Array[Socket]` 就是契约本身 —— 规格一漂回裸 `Array`，这行立刻编译失败。
+    Array[Socket] no_socks = []
+    Array[Socket] ready = sockets.select(no_socks, 0)
+    assert_eq(ready.len(), 0)
+
     print("test_sockets passed")
 }

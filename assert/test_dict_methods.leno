@@ -69,5 +69,15 @@ main()
     int gi_default = gi.get("n", 0)
     assert_eq(gi_default, 42)
 
+    // ---- 类型契约（v3.2.6）----
+    //   `set()` / `remove()` / `clear()` 返回 `null`（实现都是 `return val_null()`：只改字典、不产生值）。
+    //   ⚠ 它们**不能**标成"值类型 V" —— 那会骗人（`val_obj(d.set(k,v))` 这种写法本来就不成立）；
+    //     原来标 any 则等于放弃了这条信息（LSP 悬停与 `var x = d.set(...)` 的推断都会显示 any）。
+    Dict[string, int] cd = {"k": 1}
+    assert_eq(cd.set("k2", 2), null)
+    assert_eq(cd.remove("k2"), null)
+    assert_eq(cd.clear(), null)
+    assert_eq(cd.len(), 0)
+
     print("test_dict_methods passed")
 }

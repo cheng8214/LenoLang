@@ -39,5 +39,16 @@ main()
     var message = $"Welcome to {name} v{version}!"
     assert_eq(message, "Welcome to Leno v1.0!")
 
+    // ---- 类型契约（v3.2.6，编译期把关）----
+    //   `s.split(sep)` 返回 `Array[string]`（实现两分支装的都是 str_copy 出来的子串）。
+    //   下面都是**不做收窄**的强类型局部变量 ⇒ 规格一漂回裸 `Array`，这里立刻编译失败。
+    //   为什么值得单独钉：native 规格**只在编译期生效**（运行期不校验元素类型）
+    //   ⇒ "spec 漏写 / 写错 / 被改回 any" 这类毛病，运行期断言永远是绿的。
+    Array[string] split_all = "a,b,c".split(",")
+    string split_first = "a,b,c".split(",")[0]
+    assert_eq(split_all.len(), 3)
+    assert_eq(split_first, "a")
+    assert_eq(split_all[2], "c")          // string 元素 ⇒ 能直接进 Array[string] 的方法
+
     print("test_string_methods passed")
 }

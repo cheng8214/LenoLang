@@ -2,6 +2,34 @@
 
 import files
 import io
+import dirs
+import ffi
+
+// ---- File / Ptr 作为**类型**的用例（2026-09-27 从 examples/files 收编）----
+// 为什么值得钉：`File`（native 句柄）与 `Ptr`（裸指针）能不能当**函数形参**、能不能当
+//   **struct 字段**，是类型系统的一条独有面（native 句柄/指针参与签名与字段解析），
+//   `assert/` 里此前**零覆盖**。原示例还都写死了 `D:\` 之类的绝对路径（会脏盘、留垃圾）
+//   ⇒ 收编时一律改走 `_tmpdir()`。
+func read_file_param(File f): string {
+    string content = f.read()
+    f.close()
+    return content
+}
+
+func write_read_ptr(Ptr p): int {
+    ffi.write_int(p, 0, 100)
+    return ffi.read_int(p, 0)
+}
+
+struct FileWrap {
+    File handle
+    string path
+}
+
+struct PtrWrap {
+    Ptr memory
+    int size = 0
+}
 
 main()
 {
@@ -50,7 +78,55 @@ main()
     var file_size = f.len()
     assert_eq(file_size > 0, true)
 
-    f.close()
+    // ---- 类型契约（v3.2.6，编译期把关）----
+    //   `f.readlines()` 返回 `Array[string]`（实现逐行 str_copy）、`f.writeln()` / `f.close()` 返回 `null`。
+    //   下面做收窄的地方是**故意留的对照**（readlines 的元素不做收窄就能直接当 string 用）
+    //   ⇒ 规格一漂回裸 `Array`，这两行立刻编译失败。
+    Array[string] typed_lines = lines
+    string first_line = lines[0]
+    assert_eq(first_line, "Line 1")
+    assert_eq(typed_lines.len(), 3)
+    assert_eq(f.writeln("contract"), null)     // 追加一行（返回值是 null，不是字节数 —— 与 f.write() 不同）
+    assert_eq(f.close(), null)
+
+    // 模块级 `files.write()` 同样返回 null（只写盘、不产生值）
+    assert_eq(files.write(filename, "rewritten-by-contract"), null)
+    assert_eq(files.read(filename), "rewritten-by-contract")
+
+    // ---- File / Ptr 作形参与 struct 字段（2026-09-27 从 examples/files 收编）----
+    var work = dirs.join(_tmpdir(), "leno_files_param_struct")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ① File 作**函数形参**（形参里读 + 关）
+    var pf = dirs.join(work, "param.txt")
+    files.write(pf, "Hello from File parameter!")
+    assert_eq(read_file_param(files.open(pf, "r")), "Hello from File parameter!")
+
+    // ② Ptr 作**函数形参**
+    Ptr pp = ffi.malloc(16)
+    assert_eq(write_read_ptr(pp), 100)
+    ffi.free(pp)
+
+    // ③ File 作 **struct 字段**（含字段重新赋值）
+    var sf = dirs.join(work, "struct.txt")
+    var fw = new FileWrap(handle = files.open(sf, "w"), path = sf)
+    fw.handle.write("Hello from struct!")
+    fw.handle.close()
+    fw.handle = files.open(fw.path, "r")          // 字段重新赋值
+    assert_eq(fw.handle.read(), "Hello from struct!")
+    fw.handle.close()
+
+    // ④ Ptr 作 **struct 字段**
+    var pw = new PtrWrap(memory = ffi.malloc(16), size = 16)
+    ffi.write_int(pw.memory, 0, 42)
+    ffi.write_int(pw.memory, 4, 99)
+    assert_eq(ffi.read_int(pw.memory, 0), 42)
+    assert_eq(ffi.read_int(pw.memory, 4), 99)
+    ffi.free(pw.memory)
+
+    // 清理
+    dirs.delete(work)
 
     // 清理
     files.delete(filename)

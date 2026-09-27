@@ -74,7 +74,8 @@ void struct_def_import_from_thread(ObjStructDef** defs, int count);
 
 ### 验证
 
-- 最小多线程 struct 测试（`examples/threads/test_thread_struct.leno`）：
+- 最小多线程 struct 测试（**已收编**进 `assert/test_threads.leno`；原 `examples/threads/test_thread_struct.leno`
+  于 2026-09-27 随目录删除 —— 收编时补上了断言 `r1==3 / r2==30`，原先只 print）：
   两个子线程各自 `new Point()`，正常返回结果，无崩溃、无卡死。
 - 结论：修复后普通 struct 在子线程可用，与 cstruct 行为一致。
 
@@ -195,7 +196,8 @@ struct _ParseCtx {
 
 ### 相关测试文件
 
-- `examples/threads/test_thread_struct.leno`：最小多线程 struct 测试（验证问题一已修）
+- `assert/test_threads.leno`：最小多线程 struct 测试（验证问题一已修；2026-09-27 从
+  `examples/threads/test_thread_struct.leno` 收编并补断言，原示例随目录删除）
 - `leno_module/LenoWeb/examples/test_thread_parse.leno`：LenoWeb 多线程 parse 测试
   （验证问题二已修：8 线程并发全部 PASS）
 

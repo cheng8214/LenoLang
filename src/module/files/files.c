@@ -575,7 +575,9 @@ void files_init_module(void) {
     native_register_module_method_spec("files", "exists", native_files_exists, 1, -1, -1, &NATIVE_T_BOOL, string_params);
     native_register_module_method_spec("files", "delete", native_files_delete, 1, -1, -1, &NATIVE_T_BOOL, string_params);
     native_register_module_method_spec("files", "read", native_files_read, 1, -1, -1, &NATIVE_T_STRING, string_params);
-    native_register_module_method_spec("files", "write", native_files_write, 2, -1, -1, &NATIVE_T_ANY, string2_params);
+    // 返回 `null`（v3.2.6）：实现是 `return val_null()`（只写盘、不产生值）—— 原来标 any，
+    //   连"失败时会 throw"这一条都看不出来；标 null 后 `var x = files.write(...)` 才是诚实推断。
+    native_register_module_method_spec("files", "write", native_files_write, 2, -1, -1, &NATIVE_T_NULL, string2_params);
 
     // 调用 files_init_instance_methods 注册文件实例方法
     files_init_instance_methods();
@@ -596,11 +598,16 @@ void files_init_instance_methods(void) {
     file_register_method_with_params("readline", make_native(file_method_readline, 1, "readline"), 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, no_params);
     // f.readlines() - 用户可见 0 个参数，实际 1 个（含 receiver）
     file_register_method_with_params("readlines", make_native(file_method_readlines, 1, "readlines"), 0, -1, -1, TYPE_ARRAY, TYPE_UNKNOWN, no_params);
+    // 返回 `Array[string]`（v3.2.6）：实现逐行 `str_copy` 装进数组 ⇒ 元素是 string，不是 any
+    //   （原来注册成 `TYPE_ARRAY + TYPE_UNKNOWN`（裸 Array）⇒ `f.readlines()[0]` 是 any）。
+    native_register_instance_method_return_spec("File", "readlines", &NATIVE_T_ARR_STRING);
     // f.write(string) - 用户可见 1 个参数，实际 2 个（含 receiver）
     TypeKind write_params[] = {TYPE_STRING};
     file_register_method_with_params("write", make_native(file_method_write, 2, "write"), 1, -1, -1, TYPE_INT, TYPE_UNKNOWN, write_params);
     // f.writeln(string) - 用户可见 1 个参数，实际 2 个（含 receiver）
     file_register_method_with_params("writeln", make_native(file_method_writeln, 2, "writeln"), 1, -1, -1, TYPE_ANY, TYPE_UNKNOWN, write_params);
+    // 返回 `null`（v3.2.6）：实现是 `return val_null()`（注意与 f.write() 不同 —— 那个返回写入字节数 int）
+    native_register_instance_method_return_spec("File", "writeln", &NATIVE_T_NULL);
     // f.seek(pos, whence) - 用户可见 1 或 2 个参数，实际 2 或 3 个（含 receiver）
     TypeKind seek_params[] = {TYPE_INT, TYPE_STRING};
     file_register_method_with_params("seek", make_native(file_method_seek, -1, "seek"), -1, 1, 2, TYPE_INT, TYPE_UNKNOWN, seek_params);
@@ -612,4 +619,6 @@ void files_init_instance_methods(void) {
     file_register_method_with_params("eof", make_native(file_method_eof, 1, "eof"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
     // f.close() - 用户可见 0 个参数，实际 1 个（含 receiver）
     file_register_method_with_params("close", make_native(file_method_close, 1, "close"), 0, -1, -1, TYPE_ANY, TYPE_UNKNOWN, no_params);
+    // 返回 `null`（v3.2.6）：实现是 `return val_null()`
+    native_register_instance_method_return_spec("File", "close", &NATIVE_T_NULL);
 }

@@ -129,6 +129,13 @@ extern const NativeTypeSpec NATIVE_T_ARR_STRING;   // Array[string]
 extern const NativeTypeSpec NATIVE_T_ARR_ARR;      // Array[Array]
 extern const NativeTypeSpec NATIVE_T_ARR_DICT;     // Array[Dict]
 extern const NativeTypeSpec NATIVE_T_DICT;         // 裸 Dict（K/V 未指定）
+// ---- 关系型标签（v3.2.6）：“返回类型跟第 0 个实参走”（实例方法里 receiver 即第 0 个）----
+// ⚠ 这是"关系"而不是"类型"：调用点拿得到实参类型才算得出结果，拿不到就退化成 any（保守）。
+//   arrays / dicts / rands / sockets 共用这几份 ⇒ 单一来源，免得各模块各抄一份可能漂的副本。
+extern const NativeTypeSpec NATIVE_T_ARG0_ELEM;      // 第 0 个实参的元素类型（Array[T] → T）
+extern const NativeTypeSpec NATIVE_T_ARG0_KEY;       // 第 0 个实参的键类型（Dict[K,V] → K）
+extern const NativeTypeSpec NATIVE_T_ARG0_VALUE;     // 第 0 个实参的值类型（Dict[K,V] → V）
+extern const NativeTypeSpec NATIVE_T_ARR_ARG0_ELEM;  // Array[第 0 个实参的元素类型]
 
 // 注册一个 native 结构体规格（**编译期字段表 + 运行期 ObjStructDef 同一来源**）。
 // 可在任意 *_init_module() 里反复调用（同名只登记一次）；表满（64）静默忽略。

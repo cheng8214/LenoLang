@@ -19,3 +19,18 @@ examples/多返回值/test_type_check.leno
 #   · 目录里另有 2 个编译不过的示例（方法调用测试 / 测试 map + 匿名函数）与 8 个 .lenb +
 #     .lenocache + leno_lsp.log 等构建垃圾（见 P7 的登记）。
 #   唯一值得抢救的"嵌套容器类型不变性"已收进 assert/test_diag_static_errors.leno 的两条断言。
+# ⚠ `examples/strings`、`examples/files`、`examples/rands`、`examples/print`、`examples/threads`、
+#   `examples/sockets` 六个目录（68 个文件）已于 2026-09-27 整体删除，**收编**进断言套件：
+#   · 它们的共同毛病与 examples/array 同类：纯 print、零断言、固定端口 / 硬编码 `D:\` 路径 /
+#     依赖外部服务或外网 / 含 benchmark 与死循环 ⇒ 既不在任何门禁里也没人跑；
+#   · 逐个审计后 **A 类 24 个**（行为已被 assert/ 覆盖）直接删；**B 类 14 个**的独有行为先折叠成断言
+#     再删 —— `byte_find`（含 `\0` 的二进制安全搜索）、`trim_start/trim_end`、Unicode 的
+#     `slice/reverse/sub_str`、**模块形态**的 `strings.reverse/rep/byte`、`File`/`Ptr` 作**形参与
+#     struct 字段**、rands 的 `bools/str/seed(可重复)/gauss`、子线程里 `new struct` 与用 dict/array/递归、
+#     线程+async 混用、sockets 的**真实 loopback I/O**（listen/connect/accept/recv/send/select/arecv/aaccept）；
+#   · **C 类**（压测、外网示例、`input()` 交互客户端、`d:\1.zip` 大文件复制、死循环）**不进门禁**：
+#     套件的准则是"快、确定、无外部依赖"，它们与该准则直接冲突 ⇒ 一并删除（覆盖损失已记在
+#     `docs/待办_易用性痛点（TraeSign 移植实录）.md` 的 P7）。
+#   · 收编时还**抓出一个真 bug**：`rands.ints(1, 10000000000)` 必崩（0xC0000005），
+#     根因是 BigInt 长除法（最小复现 `(9223372036854775807 * 2) % 10000000000` ⇒ 静默返回 null）。
+#     见 assert/test_rands.leno 的注释与 docs 的实例二十。

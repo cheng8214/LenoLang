@@ -23,5 +23,14 @@ main()
     var dict = {a: 1, b: 2}
     io.print(dict)
 
+    // ---- 类型契约（v3.2.6）----
+    //   `io.print()` / `io.printf()` 返回 `null`（实现就是 `return val_null()`：只打印、不产生值；
+    //   此前注册成 any，连 io.c 自己那行注释「返回 null/void」都对不上）。
+    //   ⚠ 这条**不是编译阻断型**契约：本语言的 `null` 可隐式赋给 string/int（实测
+    //     `string s = io.print("x")` 依旧合法）⇒ 它的可观测面是**元数据**：
+    //     `var x = io.print(...)` 现在推出 `null`（不是 any），LSP 悬停/签名也才显示得对。
+    assert_eq(io.print("contract"), null)
+    assert_eq(io.printf("%s/%d", "contract", 1), null)
+
     print("test_io passed")
 }

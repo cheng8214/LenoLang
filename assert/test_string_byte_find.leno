@@ -1,0 +1,59 @@
+// 字符串 byte_find 的断言用例（2026-09-27 从 examples/strings/test_byte_find.leno 收编）
+//
+// 为什么值得单独钉：
+//   `byte_find` 是**二进制安全**的搜索（按字节找，不会被 `\0` 截断）；而 `find` 走 `strstr`
+//   （遇 `\0` 截断）。两者语义差别**只在含 `\0` 的数据上体现** —— 全仓此前对 byte_find
+//   **零覆盖**（实例形态与模块形态都没有）。
+// ⚠ 索引口径（最容易记错的地方）：`byte_find` 返回**字节**偏移，`find` 返回**字符**索引
+//   ⇒ 在中文串上两者数值不同（见测试⑥）。
+import strings
+
+main()
+{
+    // ① 基本文本搜索（纯 ASCII 下"字节偏移 == 字符索引"）
+    string s1 = "Hello, World"
+    assert_eq(s1.byte_find("World"), 7)
+    assert_eq(s1.byte_find("o"), 4)              // 第一个 'o'
+    assert_eq(s1.byte_find("Hello"), 0)
+    assert_eq(s1.byte_find("xyz"), -1)
+
+    // ② start 参数：循环搜索能找出所有出现位置
+    string s2 = "ababab"
+    int pos = s2.byte_find("ab")
+    int count = 0
+    while pos >= 0 {
+        count = count + 1
+        pos = s2.byte_find("ab", pos + 1)
+    }
+    assert_eq(count, 3)                          // "ababab" 里 "ab" 出现 3 次
+    assert_eq(s2.byte_find("ab", 1), 2)
+    assert_eq(s2.byte_find("ab", 3), 4)
+
+    // ③ 二进制安全（本用例的核心）：含 `\0` 的数据上 byte_find 给得出答案、find 给不出
+    string bin = strings.char(0x00, 0x01, 0x00, 0x02, 0x00, 0x03)
+    string pat1 = strings.char(0x00, 0x02)
+    assert_eq(bin.byte_find(pat1), 2)            // 字节偏移 2 ✓
+    assert_eq(bin.byte_find(strings.char(0x00, 0x03)), 4)
+    // ⚠ `find` 走 `strstr` ⇒ 双方都在第一个 `\0` 处被当成空串 ⇒ 返回 **0**（"空模式总能匹配"）
+    //   注意：原示例 test_byte_find.leno 那行注释写的是"-1 (strstr 截断)"，**与真实行为不符**
+    //   （它只 print、从没人校验过）。这里按实测值钉住 —— 这正是 `byte_find` 存在的理由：
+    //   `find` 在含 `\0` 的数据上给不出可用答案（既不是命中位置、也不是"未找到"）。
+    assert_eq(bin.find(pat1), 0)
+
+    // ④ 边界情况
+    assert_eq("hello".byte_find(""), 0)              // 空模式 ⇒ 0
+    assert_eq("hello".byte_find("h", 100), -1)       // start 越界 ⇒ -1
+    assert_eq("hello".byte_find("o", -1), 4)         // 负 start = 从末尾数
+    assert_eq("hi".byte_find("hello"), -1)           // 模式比目标串长
+
+    // ⑤ 模块形态（与实例形态同口径，两套注册各自独立）
+    assert_eq(strings.byte_find("Hello, World", "World"), 7)
+    assert_eq(strings.byte_find("Hello, World", "o", 5), 8)
+
+    // ⑥ Unicode：byte_find 给**字节**偏移、find 给**字符**索引
+    string s6 = "你好World"
+    assert_eq(s6.byte_find("World"), 6)              // 2 个中文 = 6 字节
+    assert_eq(s6.find("World"), 2)                   // 2 个字符
+
+    print("test_string_byte_find passed")
+}

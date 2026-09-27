@@ -137,11 +137,12 @@ void dicts_init_instance_methods(void) {
     //   keys() 返回 `Array[K]`、values() 返回 `Array[V]`、get(k[,default]) 返回 `V`
     //   （K/V = 接收者 `Dict[K,V]` 的键/值类型）。此前 keys/values 注册成 `TYPE_ARRAY + TYPE_UNKNOWN`
     //   ⇒ 拿到裸 `Array`、元素是 any；get 注册成 TYPE_ANY。用关系型标签声明后，调用点零收窄 ✓
-    //   ⚠ set()/remove()/clear() **不**在此列：它们实现上返回 `null`（不是"值"），标成 V 会骗人。
-    static const NativeTypeSpec S_ARG0_KEY    = { NTYPE_ARG0_KEY,   NULL, NULL, NULL };
-    static const NativeTypeSpec S_ARG0_VALUE  = { NTYPE_ARG0_VALUE, NULL, NULL, NULL };
-    static const NativeTypeSpec S_ARR_ARG0_K  = { NTYPE_ARRAY, NULL, &S_ARG0_KEY,   NULL };
-    static const NativeTypeSpec S_ARR_ARG0_V  = { NTYPE_ARRAY, NULL, &S_ARG0_VALUE, NULL };
+    //   ⚠ set()/remove()/clear() **不**在此列：它们实现上返回 `null`（不是"值"），标成 V 会骗人
+    //   ⇒ 它们标的是 `null`（见下方各自的 `return_spec`）。
+    //   （两种关系型规格本身已上提为预制 `NATIVE_T_ARG0_KEY` / `NATIVE_T_ARG0_VALUE`，见 native.h；
+    //    `Array[...]` 的包装就地组合 —— 只有本模块要这两条，没必要再预制。）
+    static const NativeTypeSpec S_ARR_ARG0_K  = { NTYPE_ARRAY, NULL, &NATIVE_T_ARG0_KEY,   NULL };
+    static const NativeTypeSpec S_ARR_ARG0_V  = { NTYPE_ARRAY, NULL, &NATIVE_T_ARG0_VALUE, NULL };
     
     TypeKind len_params[] = {};
     dict_register_method_with_params("len", make_native(dict_method_len, 1, "len"), 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, len_params);
@@ -158,12 +159,19 @@ void dicts_init_instance_methods(void) {
 
     TypeKind set_params[] = {TYPE_ANY, TYPE_ANY};
     dict_register_method_with_params("set", make_native(dict_method_set, 3, "set"), 2, -1, -1, TYPE_ANY, TYPE_UNKNOWN, set_params);
+    // set/remove/clear 的实现都是 `return val_null()`（不是"值"）⇒ 把返回类型从 any 收紧为 `null`。
+    //   为什么不标 ARG0_VALUE：那会骗人（`val_obj(d.set(k,v))` 这种写法本来就不成立）。
+    //   风险实测：运行期早就返回 null（`d.set(k,v).set(...)` 之类链式写法从来跑不通）
+    //   ⇒ 只影响编译期推断，不会让任何**本来能跑**的代码变坏。
+    native_register_instance_method_return_spec("Dict", "set", &NATIVE_T_NULL);
 
     TypeKind remove_params[] = {TYPE_ANY};
     dict_register_method_with_params("remove", make_native(dict_method_remove, 2, "remove"), 1, -1, -1, TYPE_ANY, TYPE_UNKNOWN, remove_params);
+    native_register_instance_method_return_spec("Dict", "remove", &NATIVE_T_NULL);
 
     TypeKind clear_params[] = {};
     dict_register_method_with_params("clear", make_native(dict_method_clear, 1, "clear"), 0, -1, -1, TYPE_ANY, TYPE_UNKNOWN, clear_params);
+    native_register_instance_method_return_spec("Dict", "clear", &NATIVE_T_NULL);
 
     TypeKind keys_params[] = {};
     dict_register_method_with_params("keys", make_native(dict_method_keys, 1, "keys"), 0, -1, -1, TYPE_ARRAY, TYPE_UNKNOWN, keys_params);

@@ -1591,6 +1591,10 @@ void strings_init_instance_methods(void) {
     // 12. 新增：字符串分割（实例方法）
     TypeKind split_sep_params[] = {TYPE_STRING};
     string_register_method_with_params("split", make_native(str_split, 2, "split"), 1, -1, -1, TYPE_ARRAY, TYPE_UNKNOWN, split_sep_params);
+    // `s.split(sep)` 返回 `Array[string]`（v3.2.6）：两个分支（按分隔符 / 无分隔符逐字符）
+    //   装的都是 `str_copy` 出来的**子串** ⇒ 元素类型是 string，不是 any ⇒ 取出来不必收窄。
+    //   原来注册成 `TYPE_ARRAY + TYPE_UNKNOWN`（裸 Array）⇒ `s.split(",")[0]` 是 any。
+    native_register_instance_method_return_spec("string", "split", &NATIVE_T_ARR_STRING);
 
     // 14. 新增：包含检查（实例方法）
     TypeKind has_substr_params[] = {TYPE_STRING};

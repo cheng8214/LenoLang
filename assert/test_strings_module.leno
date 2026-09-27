@@ -41,5 +41,26 @@ main()
     assert_eq(len_chinese >= 4, true)
     assert_eq(strings.to_upper(chinese), "你好世界")  // 中文没有大小写
 
+    // 测试7: **模块形态**的 reverse / rep / byte / find
+    //   （2026-09-27 从 examples/strings/测试所有.leno 收编 —— 此前全仓只覆盖了**实例**形态，
+    //    模块形态 `strings.reverse/rep/byte` 零覆盖；两套形态各有独立注册，不能算互相覆盖）
+    assert_eq(strings.reverse("abc"), "cba")
+    assert_eq(strings.reverse("Hello, World!"), "!dlroW ,olleH")
+    assert_eq(strings.reverse(""), "")
+    assert_eq(strings.rep("a", 3), "aaa")
+    assert_eq(strings.rep("ha", 3), "hahaha")
+    assert_eq(strings.rep("abc", 0), "")
+    assert_eq(strings.byte("Hello", 0), 72)      // 'H'
+    assert_eq(strings.byte("Hello", 1), 101)     // 'e'
+    assert_eq(strings.byte("Hello", -1), 111)    // 'o'（负数索引 = 从末尾数）
+    assert_eq(strings.byte("Hello", 10), null)   // 越界 ⇒ null
+
+    var text = "Hello, World! Hello!"
+    assert_eq(strings.find(text, "Hello"), 0)
+    assert_eq(strings.find(text, "World"), 7)
+    assert_eq(strings.find(text, "Hello", 1), 14)   // start 参数：从位置 1 起找
+    assert_eq(strings.find(text, "xyz"), -1)
+    assert_eq(strings.find(text, "", 5), 5)         // 空模式
+
     print("test_strings_module passed")
 }

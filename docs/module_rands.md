@@ -112,15 +112,21 @@ rands.bools(0.0)        // 总是 false
 **参数**:
 - `array` (array): 源数组
 
-**返回**: `any` - 数组中的随机一个元素
+**返回**: `T` - 数组中的随机一个元素（**T = 入参的元素类型**，v3.2.6 起）
 
 ```leno
 var fruits = ["apple", "banana", "orange"]
 rands.choice(fruits)    // "banana"
 
 var nums = [1, 2, 3, 4, 5]
-rands.choice(nums)      // 3
+rands.choice(nums)      // 3（推断类型是 int ⇒ 能直接做运算）
+
+// 元素类型跟着入参走（关系型规格）⇒ 取出来不必收窄
+string pick = rands.choice(fruits)
 ```
+
+> ⚠ v3.2.6 前返回类型是 `any`（`var x = rands.choice(nums)` 推出 any）；
+> 现在按"**返回类型跟第 0 个实参走**"的关系型规格声明 ⇒ 与入参元素类型一致。
 
 ---
 
@@ -172,7 +178,7 @@ rands.int_array(1, 52)      // 洗好的 52 张扑克牌
 - `array` (array): 源数组
 - `count` (int): 采样数量
 
-**返回**: `array` - 采样的元素数组
+**返回**: `Array[T]` - 采样的元素数组（**T = 入参的元素类型**，v3.2.6 起；此前是裸 `Array`，元素 any）
 
 ```leno
 var nums = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
@@ -189,7 +195,7 @@ rands.sample(cards, 5)      // 随机抽 5 张牌
 **参数**:
 - `array` (array): 源数组
 
-**返回**: `array` - 打乱后的新数组
+**返回**: `Array[T]` - 打乱后的新数组（**T = 入参的元素类型**，v3.2.6 起；此前是裸 `Array`，元素 any）
 
 ```leno
 var arr = [1, 2, 3, 4, 5]

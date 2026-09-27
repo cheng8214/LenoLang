@@ -23,6 +23,36 @@ func channel_worker(any ch) {
     }
 }
 
+// ---- 子线程里"建 struct / 用语言特性"的两个 worker（2026-09-27 从 examples/threads 收编）----
+// 为什么要钉：脚本 struct 的**分配**发生在子线程 ⇒ 走的是该线程自己的堆/GC 路径；
+//   "子线程里 new struct 会不会卡死/崩"是这条路径唯一的回归点（原示例只 print、无人校验）。
+struct TPoint {
+    int x = 0
+    int y = 0
+}
+
+func struct_worker(int seed) {
+    TPoint p = new TPoint()
+    p.x = seed
+    p.y = seed * 2
+    return p.x + p.y
+}
+
+func fib_local(int n): int {
+    if n < 2 { return n }
+    return fib_local(n - 1) + fib_local(n - 2)
+}
+
+// 子线程里同时用 dict / array / 递归（原 test_comprehensive 的独有覆盖点，抽一条代表性的）
+func lang_worker(any n) {
+    var d = {"a": 1, "b": 2}
+    var arr = [1, 2, 3]
+    int acc = 0
+    for arr to v { acc = acc + v }
+    if n is int { acc = acc + fib_local(n) }
+    return acc + d.len()
+}
+
 main()
 {
     // 测试1: 创建线程并使用 join
@@ -108,6 +138,27 @@ main()
         var ok4 = ch2.try_send("closed")
         assert_eq(ok4, false)
     }
+
+    // ---- 类型契约（v3.2.6）----
+    //   `threads.sleep()` / `Channel.send()` / `Channel.close()` 返回 `null`（实现都是 val_null）。
+    //   ⚠ `receive()` / `try_receive()` **保持 any 不是偷懒**：语言里没有 `Channel[T]` 标注
+    //     （实测 .leno 源码 0 处）⇒ 通道没有"元素类型"可推，any 是当前设计的正确结果。
+    assert_eq(threads.sleep(0), null)
+    var contract_ch = threads.channel(1)
+    assert_eq(contract_ch.send(1), null)
+    assert_eq(contract_ch.close(), null)
+
+    // ---- 从 examples/threads 收编（2026-09-27）----
+    // ① 两个子线程并行 `new` struct 并用字段（断言返回值，原示例只 print）
+    var sp1 = threads.start(struct_worker, 1)
+    var sp2 = threads.start(struct_worker, 10)
+    assert_eq(sp1.join(), 3)          // 1 + 1*2
+    assert_eq(sp2.join(), 30)         // 10 + 10*2
+
+    // ② 子线程里用 dict / array / 递归：6(=1+2+3) + fib(10)=55 + d.len()=2 ⇒ 63
+    var lw = threads.start(lang_worker, 10)
+    assert_eq(lw.join(), 63)
+    assert_eq(fib_local(10), 55)      // 对照：主线程同函数同结果（隔离性）
 
     print("test_threads passed")
 }

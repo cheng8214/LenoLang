@@ -448,13 +448,20 @@ var unpadded = decrypted.byte_slice(0, decrypted.byte_len() - pad_len)
 
 - `separator` (string): 分隔符
 
-**返回**: `array` - 分割后的字符串数组
+**返回**: `Array[string]` - 分割后的字符串数组（**元素类型编译期已知**，v3.2.6 起）
 
 ```leno
 "a,b,c".split(",")              // ["a", "b", "c"]
 "/usr/local/bin".split("/")    // ["", "usr", "local", "bin"]
 "one two three".split(" ")     // ["one", "two", "three"]
+
+// 元素是 string ⇒ 取出来不必收窄（v3.2.6 起；此前注册成裸 Array，元素是 any）
+string first = "a,b,c".split(",")[0]
+Array[string] parts = "a,b,c".split(",")
 ```
+
+> ⚠ v3.2.6 前这里是**裸 `Array`**（元素 any）⇒ `s.split(",")[0]` 拿到 any、要手写 `as string`。
+> 现在返回规格是 `Array[string]`（实现两个分支装的都是子串）⇒ 调用点零收窄。
 
 **注意**: 如果分隔符为空字符串，则每个字符作为一个元素。
 

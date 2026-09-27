@@ -180,8 +180,13 @@ void threads_init_instance_methods(void) {
 
     // Channel 实例方法
     channel_register_method_with_params("send", make_native(channel_method_send, 2, "send"), 1, -1, -1, TYPE_ANY, TYPE_UNKNOWN, any_params);
+    // send/close 的实现都是 `return val_null()`（只产生副作用）⇒ 返回类型收紧为 `null`（v3.2.6）。
+    //   receive/try_receive 保持 any **不是**偷懒：语言里没有 `Channel[T]` 标注（实测 .leno 源码 0 处）
+    //   ⇒ 通道没有"元素类型"可推，any 是当前设计的正确结果（要精确得先给 Channel 加类型参数）。
+    native_register_instance_method_return_spec("Channel", "send", &NATIVE_T_NULL);
     channel_register_method_with_params("receive", make_native(channel_method_receive, 1, "receive"), 0, -1, -1, TYPE_ANY, TYPE_UNKNOWN, no_params);
     channel_register_method_with_params("close", make_native(channel_method_close, 1, "close"), 0, -1, -1, TYPE_ANY, TYPE_UNKNOWN, no_params);
+    native_register_instance_method_return_spec("Channel", "close", &NATIVE_T_NULL);
     channel_register_method_with_params("try_send", make_native(channel_method_try_send, 2, "try_send"), 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, any_params);
     channel_register_method_with_params("try_receive", make_native(channel_method_try_receive, 1, "try_receive"), 0, -1, -1, TYPE_ANY, TYPE_UNKNOWN, no_params);
     channel_register_method_with_params("is_closed", make_native(channel_method_is_closed, 1, "is_closed"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
@@ -198,7 +203,8 @@ void threads_init_module(void) {
     native_register_module_method_spec("threads", "channel", threads_channel, 1, -1, -1, &NATIVE_T_CHANNEL, channel_params);
 
     TypeKind sleep_params[] = {TYPE_INT};
-    native_register_module_method_spec("threads", "sleep", threads_sleep, 1, -1, -1, &NATIVE_T_ANY, sleep_params);
+    // 返回 `null`（v3.2.6）：实现就是 `return val_null()`（睡完不产生值）⇒ 别再说它是 any。
+    native_register_module_method_spec("threads", "sleep", threads_sleep, 1, -1, -1, &NATIVE_T_NULL, sleep_params);
 
     // 调用 threads_init_instance_methods 注册线程和通道实例方法
     threads_init_instance_methods();
