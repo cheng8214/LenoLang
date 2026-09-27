@@ -104,6 +104,10 @@ const BX_TEX    = 4   // 批处理文字纹理
     float _rrScale = 0.0     // 生成时的渲染缩放；变了整体重建（SSAA 会把它设成 2 ✓）
     // 抗锯齿线段的 1D 剖面纹理（跨线方向 = 三角覆盖率 ✓）—— 与半径无关，全局一张 ✓
     Ptr[u8] _lnTex
+    // 蒙版「透明区」的常量模板（懒建，尺寸按需增长 ✓）：整块 = 白 + alpha=0（0xFFFFFF00 ✓）
+    //   见 _rrMask：透明区必须逐像素等于这个常量（不能是 (0,0,0,0) ✗），
+    //   而逐像素填要 25 万次 ffi 调用（≈10ms ✗）⇒ 按行 memcpy 一次铺好（C 速度 ✓）
+    Ptr[u8] _rrTmpl; int _rrTmplN = 0
 
     // ---- 批处理缓冲：透明自动合并连续同材质 fillRect/drawRect/drawLine ----
     Ptr[f32] _bxFill; int _bxFillN = 0, _bxFillCap = 0
@@ -188,6 +192,7 @@ const BX_TEX    = 4   // 批处理文字纹理
             if _ssaaTex != null { _lib.SDL_DestroyTexture(_ssaaTex); _ssaaTex = null }
             if _pixTex != null { _lib.SDL_DestroyTexture(_pixTex); _pixTex = null }
             _rrClear()   // 释放圆角 AA 蒙版纹理 ✓
+            if _rrTmpl != null { ffi.free(_rrTmpl); _rrTmpl = null; _rrTmplN = 0 }
             if _lnTex != null { _lib.SDL_DestroyTexture(_lnTex); _lnTex = null }
             // 渲染器销毁前：先使字体库中由本渲染器创建的纹理缓存失效。
             // 否则销毁后这些纹理悬空，SDL 复用同一指针再建渲染器时会命中失效纹理 → 字体不显示。
@@ -1089,6 +1094,21 @@ const BX_TEX    = 4   // 批处理文字纹理
         return true
     }
 
+    // 常量模板（懒建、尺寸按需增长 ✓）：把整块缓冲填成「白 + alpha=0」（0xFFFFFF00 ✓）
+    //   用途见 _rrMask：透明区必须是这个常量（双线性混色才不会把 AA 斜坡二次衰减 ✓），
+    //   而逐像素填 25 万次 ffi 调用 ≈10ms ✗ ⇒ 铺常量改由按行 memcpy 完成（C 速度 ✓）
+    func _rrTmplEnsure(int N): bool {
+        if _rrTmpl != null and _rrTmplN >= N { return true }
+        if _rrTmpl != null { ffi.free(_rrTmpl); _rrTmpl = null; _rrTmplN = 0 }
+        Ptr[u8] p = ffi.malloc(N * N * 4)
+        if p == null { return false }
+        int col = (255 << 24) | (255 << 16) | (255 << 8)
+        int total = N * N
+        for 0 : total - 1 to i { ffi.write_int(p, i * 4, col) }
+        _rrTmpl = p; _rrTmplN = N
+        return true
+    }
+
     // ==================== 圆角矩形抗锯齿（预生成覆盖率蒙版纹理） ====================
     // 与前几次失败方案的本质区别（重要 ✓）：
     //   「顶点 1px 羽化」「SSAA」「SDL_HINT_RENDER_LINE_METHOD」都是在**要求 SDL 的光栅器**
@@ -1111,30 +1131,75 @@ const BX_TEX    = 4   // 批处理文字纹理
         int N = 2 * M + 2 + 2 * pad
         PixelBuffer b = new PixelBuffer()
         if not b.init(N, N) { return null }
+        // ★★ 透明区（圆外 + 内孔）必须先铺成「白 + alpha=0」常量，不能是 (0,0,0,0) ✗：
+        //    蒙版用**非预乘 BLEND**（out = rgb·a）；双线性采样时若透明 texel 是黑的，
+        //    边缘就把「白墨水 texel」与「黑透明 texel」混色 ⇒ 覆盖率被**二次衰减** ⇒
+        //    斜坡变暗变硬 ✗（观感回归，实测过：整块缓冲差 17 万字节的那版就是这个问题 ✗）
+        _rrTmplEnsure(N)
+        for 0 : N - 1 to py {
+            ffi.memcpy(ffi.offset(b.pixels, py * b.pitch), _rrTmpl, N * 4)   // C 速度铺常量 ✓
+        }
+        // ── 覆盖率只用**距离平方**分类（不开方 ✓），且**只写墨迹附近的像素** ✓ ──
+        //   动机（微基准实测 build\_mask_bench.leno）：现行实现是 M=249 的环要 164ms，
+        //   其中大头根本不是 SDF，而是「把 25 万像素挨个写一遍」（透明区占 98% ✗）。
+        //   改成「常量免写 + 斜坡才开方 + 四向镜像」后同样一张 7.8ms（21× ✓ 逐字节等价 ✓）
+        //   分类判据（dd² 与四条界比较，全部预计算 ✓）：
+        //     d² ≥ (M+0.5)²         ⇒ 圆外     ⇒ cov = 0 ⇒ 已是常量，跳过不写 ✓
+        //     d² ≤ (M−0.5)²         ⇒ 外沿已满 ⇒ cov = 1
+        //     d² ≤ (M−lw−0.5)²      ⇒ 内孔     ⇒ ci = 0  ⇒ 已是常量，跳过不写 ✓
+        //     d² ≥ (M−lw+0.5)²      ⇒ 内沿已满 ⇒ ci = 1
+        //   四向镜像：N 恒为偶数 ⇒ 镜像列/行的 dx、dy 与本体**严格相等**（无浮点误差 ✓），
+        //   所以「算一格写四格」与逐格算**逐字节一致** ✓（已按 16 组尺寸×lw 扫描验证 ✓）
+        int half = N / 2
         float c = _float(M + 1 + pad)        // 圆心（蒙版坐标 ✓）
         float fM = _float(M)
         float fLw = _float(lw)
-        for 0 : N - 1 to py {
-            for 0 : N - 1 to px {
+        float o2 = (fM + 0.5) * (fM + 0.5)
+        float i2 = (fM - 0.5) * (fM - 0.5)
+        float kFull = (fM - fLw + 0.5) * (fM - fLw + 0.5)   // 内沿已满的界
+        float kHole = (fM - fLw - 0.5) * (fM - fLw - 0.5)   // 内孔的界
+        int pitch = b.pitch
+        for 0 : half - 1 to py {
+            float dy = _float(py) + 0.5 - c
+            if dy < 0.0 { dy = -dy }
+            // 圆角盒 SDF：内缩量恒为 1（半宽 − 半径 = (M+1) − M ✓）
+            float qy = dy - 1.0; if qy < 0.0 { qy = 0.0 }
+            float qy2 = qy * qy
+            int my = N - 1 - py
+            int rowOff = py * pitch
+            int rowOffM = my * pitch
+            for 0 : half - 1 to px {
                 float dx = _float(px) + 0.5 - c
                 if dx < 0.0 { dx = -dx }
-                float dy = _float(py) + 0.5 - c
-                if dy < 0.0 { dy = -dy }
-                // 圆角盒 SDF：内缩量恒为 1（半宽 − 半径 = (M+1) − M ✓）
                 float qx = dx - 1.0; if qx < 0.0 { qx = 0.0 }
-                float qy = dy - 1.0; if qy < 0.0 { qy = 0.0 }
-                float dd = maths.sqrt(qx * qx + qy * qy)
-                float cov = 0.5 - (dd - fM)   // 1px 线性覆盖率斜坡（解析式 AA ✓ 无锯齿 ✓）
-                if cov < 0.0 { cov = 0.0 }
-                if cov > 1.0 { cov = 1.0 }
+                float dd2 = qx * qx + qy2
+                if dd2 >= o2 { continue }
+                bool full = dd2 <= i2
                 if lw > 0 {
-                    // 内孔外侧覆盖率：内半径 = M − lw ✓（两档相乘 ⇒ 内外沿各自平滑 ✓）
-                    float ci = 0.5 + (dd - (fM - fLw))
-                    if ci < 0.0 { ci = 0.0 }
-                    if ci > 1.0 { ci = 1.0 }
-                    cov = cov * ci
+                    if dd2 <= kHole { continue }
+                    if dd2 < kFull { full = false }
                 }
-                b.setPixel(px, py, 255, 255, 255, _int(cov * 255.0 + 0.5))
+                int a = 255
+                if not full {
+                    float dd = maths.sqrt(dd2)
+                    float cov = 0.5 - (dd - fM)   // 1px 线性覆盖率斜坡（解析式 AA ✓ 无锯齿 ✓）
+                    if cov < 0.0 { cov = 0.0 }
+                    if cov > 1.0 { cov = 1.0 }
+                    if lw > 0 {
+                        // 内孔外侧覆盖率：内半径 = M − lw ✓（两档相乘 ⇒ 内外沿各自平滑 ✓）
+                        float ci = 0.5 + (dd - (fM - fLw))
+                        if ci < 0.0 { ci = 0.0 }
+                        if ci > 1.0 { ci = 1.0 }
+                        cov = cov * ci
+                    }
+                    a = _int(cov * 255.0 + 0.5)
+                }
+                int col = (255 << 24) | (255 << 16) | (255 << 8) | a
+                int mx = N - 1 - px
+                ffi.write_int(b.pixels, rowOff + px * 4, col)
+                ffi.write_int(b.pixels, rowOff + mx * 4, col)
+                ffi.write_int(b.pixels, rowOffM + px * 4, col)
+                ffi.write_int(b.pixels, rowOffM + mx * 4, col)
             }
         }
         Ptr[u8] tex = createTexture(core.PIXELFORMAT_RGBA8888, 0, N, N)   // 0 = STATIC ✓
