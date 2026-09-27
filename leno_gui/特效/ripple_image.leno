@@ -30,13 +30,15 @@ const float BAND_WIDTH = 16.0      // 波前影响带宽
 const int MAX_RIP_W = 384         // 处理分辨率上限（宽 > 此值则降级）
 
 // ==================== 波纹结构 ====================
+// ⚠ 标量字段必须写明初值：不写时默认是 null（不是 0）⇒ 参与运算会直接报错 ✗
+//   （每个构造点本来就显式赋全了 ✓；这里只是把「默认语义」补齐，消掉编译警告）
 struct Ripple {
-    float x; float y           // 圆心（处理缓冲坐标）
-    float radius
-    float maxRadius
-    float speed
-    float life
-    float amplitude
+    float x = 0.0; float y = 0.0   // 圆心（处理缓冲坐标）
+    float radius = 0.0             // 当前半径
+    float maxRadius = 0.0          // 上升到多少半径后消亡
+    float speed = 0.0              // 扩散速度（处理缓冲像素/帧）
+    float life = 1.0               // 1 = 新生，0 = 消亡（故默认 1 ✓）
+    float amplitude = 0.0          // 波前位移幅度
 }
 
 // ==================== 全局状态 ====================

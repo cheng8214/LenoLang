@@ -27,13 +27,14 @@ const int EVENT_MOUSE_DOWN = 0x401
 const int SCANCODE_ESCAPE = 41
 
 // ==================== 波纹结构 ====================
+// ⚠ 标量字段必须写明初值：不写时默认是 null（不是 0）⇒ 参与运算会直接报错 ✗
 struct Ripple {
-    float x; float y
-    float radius
-    float maxRadius
-    float speed
-    float life
-    float amplitude
+    float x = 0.0; float y = 0.0
+    float radius = 0.0
+    float maxRadius = 0.0
+    float speed = 0.0
+    float life = 1.0
+    float amplitude = 0.0
 }
 
 // ==================== 全局状态 ====================

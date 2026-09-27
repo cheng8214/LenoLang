@@ -12,13 +12,14 @@ import maths
 import rands
 
 // ==================== 波纹结构 ====================
+// ⚠ 标量字段必须写明初值：不写时默认是 null（不是 0）⇒ 参与运算会直接报错 ✗
 struct Ripple {
-    float x; float y           // 圆心
-    float radius               // 当前半径
-    float maxRadius            // 最大半径
-    float speed                // 扩散速度（像素/帧）
-    float life                 // 生命值 0~1（1=新生，0=消亡）
-    int hue                    // 色相 0~360
+    float x = 0.0; float y = 0.0   // 圆心
+    float radius = 0.0             // 当前半径
+    float maxRadius = 0.0          // 最大半径
+    float speed = 0.0              // 扩散速度（像素/帧）
+    float life = 1.0               // 生命值 0~1（1=新生，0=消亡 ⇒ 默认取新生 ✓）
+    int hue = 0                    // 色相 0~360
 }
 
 // HSV → RGB（返回 [r,g,b] 0~255）
