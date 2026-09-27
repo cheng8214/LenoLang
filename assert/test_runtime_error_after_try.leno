@@ -91,6 +91,45 @@ main() {
     //   运行期错误已带调用栈即时打印（格式 file:line:），退出时不再重复 error_print_all 块。
     ce.expect_error(f3, "finally 体内抛错不得绕回自己（不得挂住）", "finally_throw.leno:9", 0)
 
+    // ④ **崩溃级回归**（2026-09-28；实例三十三）：null 上的数组下标要走**清晰报错**，
+    //    不许崩。修好前：`Array[int] arr = null; arr[0]` 走 OP_INDEX_ARRAY_* 特化指令，
+    //    那条路径"信任 codegen 的静态类型"、直接 `val_as_obj` + `arr->count`
+    //    ⇒ 野指针读 ⇒ **0xC0000005**（连错误文案都没有）。
+    //    ⚠ 判据里**必须带文案**：崩的时候输出是空的 ⇒ `expect_error` 的文本检查就是回归守卫
+    //      （只判 exit!=0 的话，崩溃与报错分不开）。
+    var f4 = dirs.join(work, "null_index_read.leno")
+    files.write(f4, @"main() {
+    Array[int] arr = null
+    var x = arr[0]
+    print(""不该到达"")
+}
+")
+    ce.expect_error(f4, "null 数组的立即数下标要报错（不得 0xC0000005）",
+        "下标访问: 对象是 null 或不是数组", 0)
+
+    // ⑤ 同上，**变量下标**走的是另一条特化指令（OP_INDEX_ARRAY_INT）
+    var f5 = dirs.join(work, "null_index_var.leno")
+    files.write(f5, @"main() {
+    Array[int] arr = null
+    var i = 0
+    var x = arr[i]
+    print(""不该到达"")
+}
+")
+    ce.expect_error(f5, "null 数组的变量下标要报错（不得 0xC0000005）",
+        "下标访问: 对象是 null 或不是数组", 0)
+
+    // ⑥ 写路径的特化指令（OP_INDEX_SET_ARRAY_INT）同样是"信任 codegen"
+    var f6 = dirs.join(work, "null_index_write.leno")
+    files.write(f6, @"main() {
+    Array[int] arr = null
+    arr[0] = 1
+    print(""不该到达"")
+}
+")
+    ce.expect_error(f6, "null 数组的下标赋值要报错（不得 0xC0000005）",
+        "下标访问: 对象是 null 或不是数组", 0)
+
     dirs.delete(work)
     print("test_runtime_error_after_try passed")
 }

@@ -441,8 +441,23 @@
     // 信任 codegen 守卫：R[B] 恒为 OBJ_ARRAY、R[C] 恒为 int48（codegen 只在能确认这两个
     // 条件时才发此指令）。故跳过 obj 判型 / 下标数字判型，直接 bounds-check + 取元素，
     // 比 OP_INDEX 的热路径少 2~3 次判型。仅越界时走错误兜底。
+    //
+    // ⚠⚠ v3.2.8：上面那句"信任 codegen"**有个洞** —— "静态类型是 `Array[T]`"并不保证
+    //   运行期不是 null（`Array[int] arr = null` 是**合法**写法）。实测 `arr[0]` 走这条
+    //   特化路径 ⇒ `val_as_obj(null)` + `arr->count` 野指针读 ⇒ **0xC0000005 崩溃**
+    //   （用例 examples/改进测试/test_null_index.leno 就是为验证这个而存在的）。
+    //   ⇒ 4 条特化指令（INT / FLOAT / IMM / SET_INT）进来先挡一次 null/非数组。
+    //   用宏收敛：4 处各写一遍判断，迟早漏一条，而漏掉的那条就是一个崩溃。
+    #define ARRAY_SPECIALIZED_NULL_GUARD(reg)                                                       \
+        if (unlikely(!val_is_obj(R(reg)) || val_as_obj(R(reg))->type != OBJ_ARRAY)) {               \
+            int gline = GET_CURRENT_LINE();                                                         \
+            if (!throw_runtime_error("下标访问: 对象是 null 或不是数组 —— 请先判空", gline)) { return -1; } \
+            frame = &vm.frames[vm.frame_cnt - 1];                                                   \
+            DISPATCH();                                                                             \
+        }
     LABEL(OP_INDEX_ARRAY_INT): {
         int a = READ_A(), b = READ_B(), c = READ_C();
+        ARRAY_SPECIALIZED_NULL_GUARD(b);
         ObjArray* arr = (ObjArray*)val_as_obj(R(b));
         int i2 = (int)val_as_int(R(c));
         if (likely((uint64_t)i2 < (uint64_t)arr->count)) {
@@ -461,6 +476,7 @@
     // —— 静态类型特化：Array[float] 索引 —— 语义同上
     LABEL(OP_INDEX_ARRAY_FLOAT): {
         int a = READ_A(), b = READ_B(), c = READ_C();
+        ARRAY_SPECIALIZED_NULL_GUARD(b);
         ObjArray* arr = (ObjArray*)val_as_obj(R(b));
         int i2 = (int)val_as_int(R(c));
         if (likely((uint64_t)i2 < (uint64_t)arr->count)) {
@@ -489,6 +505,7 @@
     LABEL(OP_INDEX_ARRAY_IMM): {
         int a = READ_A(), b = READ_B();
         int i2 = (int)READ_C();   // 无符号 0..255
+        ARRAY_SPECIALIZED_NULL_GUARD(b);
         ObjArray* arr = (ObjArray*)val_as_obj(R(b));
         if (likely((uint64_t)i2 < (uint64_t)arr->count)) {
             R(a) = arr->elements[i2];
@@ -653,6 +670,7 @@
     //     口径对齐读路径的 OP_INDEX_ARRAY_INT（也是 (uint64_t) 无符号比较）。
     LABEL(OP_INDEX_SET_ARRAY_INT): {
         int a = READ_A(), b = READ_B(), c = READ_C();
+        ARRAY_SPECIALIZED_NULL_GUARD(b);
         ObjArray* arr = (ObjArray*)val_as_obj(R(b));
         int i2 = (int)val_as_int(R(c));
         if (unlikely((uint64_t)i2 >= (uint64_t)arr->count)) {
@@ -667,4 +685,5 @@
         gc_write_barrier((Object*)arr, R(a));
         DISPATCH();
     }
+    #undef ARRAY_SPECIALIZED_NULL_GUARD
     // OP_SLICE A B C: R[A] = R[B][R[A+1] : R[A+2]]（结束索引**包含**；null 表示省略）
