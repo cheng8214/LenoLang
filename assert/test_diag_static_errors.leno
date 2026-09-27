@@ -591,5 +591,37 @@ main() {
 ")
     ce.expect_ok(ec5, "命名参数无序照常通过", "60/225")
 
+    // ---- 数组元素类型的**不变性**三连（2026-09-28；实例三十）----
+    //   来源：`examples/type类型/` 里三个**故意负例**（文件里自己写着"这里要报错"/"这行会报错"）
+    //   ⇒ 覆盖收进断言后删除，免得"编译不过的示例"永远在那儿误导扫描与新人。
+    //   为什么要单独钉：这三条正是"数组元素类型**不变**"这条规则的三个入口（实例方法 / 模块方法 / copy）。
+    var ti1 = dirs.join(work, "array_add_invariance.leno")
+    files.write(ti1, @"main() {
+    var arr = [1, 2]
+    var s = ""x""
+    arr.add(s)
+}
+")
+    ce.expect_error(ti1, "Array[int].add(string) 要拦下（实例方法入口）", "期望 'int'，但传入 'string'", 4)
+
+    var ti2 = dirs.join(work, "array_module_insert_invariance.leno")
+    files.write(ti2, @"import arrays
+main() {
+    var arr = [1, 2]
+    var s = ""x""
+    arrays.insert(arr, arr.len(), s)
+}
+")
+    ce.expect_error(ti2, "arrays.insert 传错类型要拦下（模块方法入口）", "参数 3 类型错误", 5)
+
+    var ti3 = dirs.join(work, "array_multidim_invariance.leno")
+    files.write(ti3, @"main() {
+    Array[Array[int]] arr1 = [[1, 2], [3, 4]]
+    Array[Array[Array[int]]] a = arr1.copy()
+    print(type(a))
+}
+")
+    ce.expect_error(ti3, "多维数组 copy 不许降维（copy 入口）", "声明类型与初始化值类型不匹配", 3)
+
     print("=== test_diag_static_errors ALL passed ===")
 }

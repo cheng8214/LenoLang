@@ -8,6 +8,19 @@ cstruct TEST_STRUCT {
     u32 field2
 }
 
+// ---- 收窄助手（2026-09-28 修示例）----
+// 背景：`ch.receive()` 的静态类型是 **any**（语言没有 `Channel[T]`，所以没有元素类型可推），
+//   而本语言**不允许在 any 上直接点字段**（"不能在 any 类型 'msg1' 上直接访问字段 'type'"）。
+//   正确姿势：先 `is Dict` 守卫（下标的写法不是收窄的替代品 —— 裸 `as Dict[K,V]` 编译得过但
+//   运行期类型是 `Dict[any, any]`、带参数的守卫恒假），再用下标读。
+//   这里收敛成一个助手，免得三段接收代码各写一遍同样的守卫。
+func msg_field(any m, string key): string {
+    if m is Dict {
+        return _str(m[key])
+    }
+    return ""
+}
+
 // 供 examples/测试/模块/main.leno 调用的模块测试入口
 export func test() {
     print("=== cs2.test(): cstruct 模块方法 ===")
@@ -99,9 +112,9 @@ main() {
     var t1 = threads.start(test_cstruct_in_thread, ch)
     if ch is Channel {
         var msg1 = ch.receive()
-        print("  结果: " + msg1.type + " - " + msg1.msg)
-        if msg1.type == "ok" {
-            print("  field1=" + msg1.f1 + ", field2=" + msg1.f2)
+        print("  结果: " + msg_field(msg1, "type") + " - " + msg_field(msg1, "msg"))
+        if msg_field(msg1, "type") == "ok" {
+            print("  field1=" + msg_field(msg1, "f1") + ", field2=" + msg_field(msg1, "f2"))
         }
     }
     t1.join()
@@ -112,7 +125,7 @@ main() {
     var t2 = threads.start(test_ffi_in_thread, ch)
     if ch is Channel {
         var msg2 = ch.receive()
-        print("  结果: " + msg2.type + " - " + msg2.msg)
+        print("  结果: " + msg_field(msg2, "type") + " - " + msg_field(msg2, "msg"))
     }
     t2.join()
     print("")
@@ -122,9 +135,9 @@ main() {
     var t3 = threads.start(test_cstruct_from_ptr, ch)
     if ch is Channel {
         var msg3 = ch.receive()
-        print("  结果: " + msg3.type + " - " + msg3.msg)
-        if msg3.type == "ok" {
-            print("  field1=" + msg3.f1 + ", field2=" + msg3.f2)
+        print("  结果: " + msg_field(msg3, "type") + " - " + msg_field(msg3, "msg"))
+        if msg_field(msg3, "type") == "ok" {
+            print("  field1=" + msg_field(msg3, "f1") + ", field2=" + msg_field(msg3, "f2"))
         }
     }
     t3.join()

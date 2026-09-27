@@ -6,7 +6,10 @@ export cstruct TT {
     u32 value
 }
 
-export func makeTT(u32 id, u32 value): TT {
+// ⚠ 2026-09-28 修示例：形参不能是 C 布局类型（`u32`）——
+//   报错原文「C 布局类型 'u32' 不能用于函数参数，请使用 Leno 类型（如 int/float/string）」。
+//   字段本身保持 u32 ✓（那是 C 布局的事），只是**函数签名**要用 Leno 类型。
+export func makeTT(int id, int value): TT {
     var t = TT.malloc()
     t.id = id
     t.value = value
