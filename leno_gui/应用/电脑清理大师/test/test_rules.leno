@@ -47,7 +47,7 @@ files.write(base + "\\other.txt", "x")           // 1 字节（整层模式命�
 
 // ==================== 3. 整层清理模式扫描 ====================
 var cat = new rules.CleanCategory(id = "t1", name = "整层", roots = [base])
-var r = rules.scan_worker([base], "", null, 0)
+var r = rules.scan_worker([base], "", null, 0, [])
 int size = _int(r[0])
 int cnt = _int(r[1])
 int skip = _int(r[2])
@@ -56,11 +56,13 @@ eq("整层: 单元数", cnt, 5)
 eq("整层: 大小", size, 41)
 eq("整层: 跳过", skip, 0)
 
-// 单元清单含子目录与文件（结果布局：[size,cnt,skip, 路径,大小, 路径,大小, ...] ⇒ 路径在奇数位）
+// 单元清单含子目录与文件
+// 布局：[size,cnt,skip,kept, 路径,大小, 路径,大小, ...] ⇒ 路径自 SCAN_HDR 起、奇偶相间 ✓
+//   ⚠ 不要写死 3 ✗（2026-09-28 加 kept 字段时就靠 rules.SCAN_HDR 一次改齐 ✓）
 bool hasSub1 = false
 bool hasC = false
-for 3 : r.len() - 1 to i {
-    if i % 2 == 1 {
+for rules.SCAN_HDR : r.len() - 1 to i {
+    if (i - rules.SCAN_HDR) % 2 == 0 {
         if r[i] == d1 { hasSub1 = true }
         if r[i] == base + "\\c.log" { hasC = true }
     }
@@ -70,31 +72,31 @@ check("整层: 单元含文件 c.log", hasC)
 
 // ==================== 4. 前缀过滤模式扫描 ====================
 var cat2 = new rules.CleanCategory(id = "t2", name = "前缀", roots = [base], file_prefix = "thumbcache_")
-var r2 = rules.scan_worker([base], "thumbcache_", null, 0)
+var r2 = rules.scan_worker([base], "thumbcache_", null, 0, [])
 eq("前缀: 单元数", _int(r2[1]), 1)
 eq("前缀: 大小", _int(r2[0]), 10)
-check("前缀: 单元是 thumbcache 文件", r2[3] == base + "\\thumbcache_1.db")
+check("前缀: 单元是 thumbcache 文件", r2[rules.SCAN_HDR] == base + "\\thumbcache_1.db")
 
 // ==================== 5. 删除 + 白名单拦截 ====================
 // 5a. 白名单外路径（伪造一个不在 roots 里的路径）必须被拦截
 var chunkBad = [[_tmpdir() + "\\outside_target.txt", "10"]]
-var rb = rules.delete_worker(chunkBad, [base], null)
+var rb = rules.delete_worker(chunkBad, [base], null, [])
 eq("白名单: 拦截计数", _int(rb[1]), 1)
 check("白名单: 外部文件未动（不存在也不算删掉）", not files.exists(_tmpdir() + "\\outside_target.txt"))
 
-// 5b. 正常删除整层清单（成对取出 路径/大小）
+// 5b. 正常删除整层清单（成对取出 路径/大小；下标从 SCAN_HDR 起 ✓ 别写死 3 ✗）
 Array[Array[string]] chunk = []
-for 3 : r.len() - 1 to i {
-    if i % 2 == 1 { chunk.add([r[i], r[i + 1]]) }
+for rules.SCAN_HDR : r.len() - 1 to i {
+    if (i - rules.SCAN_HDR) % 2 == 0 { chunk.add([r[i], r[i + 1]]) }
 }
-var rd = rules.delete_worker(chunk, [base], null)
+var rd = rules.delete_worker(chunk, [base], null, [])
 eq("删除: cleaned", _int(rd[0]), 5)
 eq("删除: freed", _int(rd[2]), 41)   // 真实单元大小：26+0+4+10+1
 check("删除: base 下已无 sub1", not dirs.exists(d1))
 check("删除: base 下已无 c.log", not files.exists(base + "\\c.log"))
 
 // 5c. 重复删除同一清单 ⇒ 全部计 failed（已不存在）
-var rd2 = rules.delete_worker(chunk, [base], null)
+var rd2 = rules.delete_worker(chunk, [base], null, [])
 eq("重复删除: 全部 failed", _int(rd2[1]), 5)
 
 // ==================== 6. build_categories 基本合法性 ====================
@@ -142,7 +144,7 @@ check("build_categories: 所有登记根均存在", allExist)
 // ==================== 7. 线程通道冒烟（try_send 不炸） ====================
 import threads
 Channel ch = threads.channel(16)
-var r3 = rules.scan_worker([base], "", ch, 0)
+var r3 = rules.scan_worker([base], "", ch, 0, [])
 ch.close()
 check("通道: 扫描正常返回", _int(r3[1]) == 0)   // base 已被 5b 清空 ⇒ 0 单元
 
@@ -152,7 +154,7 @@ files.write(base + "\\p2.txt", "0123456789")
 files.write(base + "\\p3.txt", "0123456789")
 Array[Array[string]] chunk2 = [[base + "\\p1.txt", "10"], [base + "\\p2.txt", "10"], [base + "\\p3.txt", "10"]]
 Channel ch2 = threads.channel(64)
-var rd3 = rules.delete_worker(chunk2, [base], ch2)
+var rd3 = rules.delete_worker(chunk2, [base], ch2, [])
 eq("进度: 消息数 = 单元数", _int(ch2.len()), 3)
 eq("进度: cleaned", _int(rd3[0]), 3)
 eq("进度: freed", _int(rd3[2]), 30)
@@ -160,8 +162,8 @@ ch2.close()
 
 // ==================== 9. top_items（明细清单"取最大 N 项"，纯逻辑 ✓） ====================
 // 为什么能在这里测：top_items 放在 cleaner_rules.leno（不 import SDL3）⇒ 可直接单测 ✓
-// res 布局：[size, cnt, skip, 路径, 大小, 路径, 大小, ...]
-Array[string] fake = ["60", "4", "0",
+// res 布局：[size, cnt, skip, kept, 路径, 大小, 路径, 大小, ...]（自 SCAN_HDR 起成对 ✓）
+Array[string] fake = ["60", "4", "0", "0",
     "c:\\a\\small.tmp", "5",
     "c:\\a\\big.bin", "30",
     "c:\\a\\mid.dat", "20",
@@ -189,8 +191,72 @@ Array[string] emptyRes = ["0", "0", "0"]
 eq("top_items: 空结果 ⇒ 空", rules.top_items(emptyRes, 5).len(), 0)
 
 // 同大小两项：都要收进来（不能因为相等就丢项 ✗）
-Array[string] same = ["20", "2", "0", "p1", "10", "p2", "10"]
+Array[string] same = ["20", "2", "0", "0", "p1", "10", "p2", "10"]
 eq("top_items: 同大小两项都收", rules.top_items(same, 2).len(), 2)
+
+// ==================== 10. 保留清单：归一化与匹配语义（纯函数 ✓） ====================
+import "../cleaner_whitelist.leno" as wl
+use wl.WhitelistRule      // ⚠ 类型位置只吃裸名 ⇒ `Array[wl.WhitelistRule]` 是语法错误 ✗（同 cleaner_master 用 use rules.CleanCategory ✓）
+check("norm: 大小写归一", wl.norm("C:\\Temp\\") == "c:\\temp")
+check("norm: / 与 \\ 等价", wl.norm("C:/Temp") == "c:\\temp")
+check("norm: 根目录归一", wl.norm("C:\\") == "c:")
+check("norm: 空串", wl.norm("") == "")
+
+Array[WhitelistRule] rs = [new wl.WhitelistRule(path = "c:\\temp", folder = true),
+                           new wl.WhitelistRule(path = "c:\\a\\keep.txt", folder = false)]
+check("match: 目录本身被保留", wl.match_in(rs, "C:\\Temp"))
+check("match: 子树被保留", wl.match_in(rs, "c:\\temp\\sub\\x.log"))
+check("match: 大小写不敏感", wl.match_in(rs, "C:\\TEMP\\SUB\\X.LOG"))
+check("match: 单文件被保留", wl.match_in(rs, "c:\\a\\keep.txt"))
+// ★★ 边界：`c:\temp2` **绝不**能被 `c:\temp` 命中
+//    —— 这是白名单最经典的越界 bug ✗（只比裸前缀就会中招）
+check("match: c:\\temp2 不被 c:\\temp 命中", not wl.match_in(rs, "c:\\temp2\\x"))
+check("match: 文件规则不误伤同前缀名", not wl.match_in(rs, "c:\\a\\keep.txt.bak"))
+check("match: 无关路径不命中", not wl.match_in(rs, "c:\\other\\x"))
+check("match: 空目标不命中", not wl.match_in(rs, ""))
+
+// ==================== 11. 保留清单对扫描/删除的**实际效果** ====================
+// ⚠ 这一节会改模块全局状态 ⇒ 必须放在最后，并在收尾前清掉 ✓
+string wbase = _tmpdir() + "\\cleaner_wl_test"
+if dirs.exists(wbase) { dirs.delete(wbase) }
+dirs.mkdir(wbase)
+dirs.mkdir(wbase + "\\keepdir")
+files.write(wbase + "\\keepdir\\a.tmp", "0123456789")   // 10 字节 ⇒ 应被豁免 ✓
+files.write(wbase + "\\drop.tmp", "0123456789")         // 10 字节 ⇒ 应被清 ✓
+
+wl.clear()
+wl.add(wbase + "\\keepdir", true, "测试")
+
+// 编码路径（worker 实际用的就是它 ✓ —— 纯字符串数组，可安全跨线程 ✓）
+Array[string] enc = wl.encode()
+eq("encode: 条数", enc.len(), 1)
+//   匹配实现在 cleaner_rules（**不是** cleaner_whitelist）—— worker 只能用本模块内的一切 ✓
+check("match_encoded: 目录命中", rules.match_encoded(enc, wbase + "\\keepdir\\x.tmp"))
+check("match_encoded: 同前缀兄弟不命中", not rules.match_encoded(enc, wbase + "\\keepdir2\\x.tmp"))
+check("match_encoded: 空规则表不命中", not rules.match_encoded([], wbase + "\\keepdir\\x.tmp"))
+
+var rw = rules.scan_worker([wbase], "", null, 0, wl.encode())
+eq("保留: 只统计未豁免单元", _int(rw[1]), 1)
+eq("保留: 大小只算未豁免", _int(rw[0]), 10)
+eq("保留: kept 计数", _int(rw[3]), 1)
+
+// 删除端**兜底**：把豁免项硬塞进 chunk（模拟"清单是清理中途才加的"）⇒ 也不能删 ✓
+Array[Array[string]] bad = [[wbase + "\\keepdir\\a.tmp", "10"], [wbase + "\\drop.tmp", "10"]]
+var rd = rules.delete_worker(bad, [wbase], null, wl.encode())
+eq("保留: 只删了未豁免项", _int(rd[0]), 1)
+eq("保留: 删除端 kept 计数", _int(rd[3]), 1)
+check("保留: 豁免文件确实还在", dirs.stat(wbase + "\\keepdir\\a.tmp").exists)
+check("保留: 未豁免文件确实没了", not dirs.stat(wbase + "\\drop.tmp").exists)
+
+// 内置保护清单：必须非空（"读不到就零保护"是最危险的退化 ✗）
+var bi = wl.builtin_rules()
+check("内置保护: 至少 5 条", bi.len() >= 5)
+check("内置保护: 含 Windows 系统目录", wl.match_in(bi, _env_or("SystemRoot", "C:\\Windows") + "\\System32\\x.dll"))
+check("内置保护: 不误伤 AppData 缓存", not wl.match_in(bi, _env_or("LOCALAPPDATA", "C:\\x") + "\\Temp\\a.tmp"))
+check("内置保护: 不误伤 ProgramData(WER 住这儿)", not wl.match_in(bi, _env_or("ProgramData", "C:\\ProgramData") + "\\Microsoft\\Windows\\WER\\a.txt"))
+
+wl.clear()      // 收尾：别影响别的测试 ✓
+dirs.delete(wbase)
 
 // ==================== 收尾 ====================
 dirs.delete(base)

@@ -11,6 +11,13 @@ import dirs
 import strings
 import threads
 import files
+// ⚠ **刻意不 import cleaner_whitelist**（2026-09-28 踩坑记录）：
+//   worker 线程里"首次使用一个**尚未初始化**的模块"会直接抛错 ✗
+//   （症状：join() 只得到 `Thread error: unknown error`，连长什么样都不知道，
+//     且**进入函数体之前**就失败 ⇒ try/catch 也抓不到 ✗）
+//   旧代码之所以没事：主线程先调过本模块的 scan_worker ⇒ 本模块已初始化 ✓；
+//   一旦本模块新增对别的模块的依赖，那个依赖会在**线程里**才首次初始化 ⇒ 炸 ✓
+//   ⇒ 结论：**worker 要用的一切（含保留清单匹配）都必须落在本模块内**（纯函数 ✓ 无状态 ✓）
 
 // ==================== 数据结构 ====================
 export struct CleanCategory {
@@ -23,6 +30,11 @@ export struct CleanCategory {
 
 // 每类别清理单元上限（正常垃圾远达不到；超出部分只计数不删）
 const int MAX_UNITS = 20000
+
+// scan_worker 返回的**头部字段数**：`[size, cnt, skip, kept, 然后成对 (路径, 大小)...]`
+//   ⚠ 调用点**别写死 3** —— 2026-09-28 加 `kept`（保留清单计数）时，正是靠这个常量
+//     把 `top_items` 与主界面的 `beginClean` 一次改齐 ✓（否则两处各写一份必然漂 ✗）
+export const int SCAN_HDR = 4
 
 // ==================== 明细清单：取"最大的 N 项"（纯逻辑 ⇒ 可单测 ✓） ====================
 // 为什么放**本文件**而不是 UI 模块：这里不 import SDL3（见文件头）⇒ 这段能被
@@ -39,7 +51,7 @@ export struct DetailItem {
 export func top_items(Array[string] res, int limit): Array[DetailItem] {
     Array[DetailItem] picked = []
     if limit <= 0 { return picked }
-    int j = 3
+    int j = SCAN_HDR     // 成对明细从头部字段之后开始 ✓（不写死 3 ✓）
     while j + 1 < res.len() {
         int sz = _int(res[j + 1])
         if picked.len() < limit {
@@ -285,15 +297,71 @@ export func build_categories(): Array[CleanCategory] {
     return cats
 }
 
+// ==================== 保留清单匹配（**放本模块内** —— 见文件头的踩坑记录 ✓） ====================
+// 与 cleaner_whitelist.norm 同一语义（大小写不敏感 / `\` 与 `/` 等价 / 去尾斜杠 ✓）
+export func norm_path(string p): string {
+    string s = strings.replace(p, "/", "\\")
+    s = strings.to_lower(s)
+    s = strings.trim(s)
+    while s.len() > 2 and strings.ends_with(s, "\\") {
+        s = strings.slice(s, 0, s.len() - 1)
+    }
+    if s.len() == 3 and strings.ends_with(s, "\\") { s = strings.slice(s, 0, 2) }
+    return s
+}
+
+// 用**编码后**的保留清单判定（纯函数 ✓ 无模块状态 ⇒ worker 可安全调用 ✓）
+//   编码格式：`"1|路径"` = 目录规则（含整棵子树）；`"0|路径"` = 单文件规则 ✓
+//   ⚠ folder 规则必须比"前缀 + 分隔符"⇒ `c:\temp2` 不会被 `c:\temp` 命中 ✓
+export func match_encoded(Array[string] enc, string p): bool {
+    int n = enc.len()
+    if n == 0 { return false }
+    string t = norm_path(p)
+    if t == "" { return false }
+    for enc to e {
+        int sep = strings.find(e, "|")
+        if sep < 0 { continue }
+        string tag = strings.slice(e, 0, sep)
+        string rp = strings.slice(e, sep + 1, e.len())
+        if rp == "" { continue }
+        if tag == "1" {
+            if t == rp { return true }
+            if strings.starts_with(t, rp + "\\") { return true }
+        } else {
+            if t == rp { return true }
+        }
+    }
+    return false
+}
+
+// 保留清单判定（**带兜底** —— worker 的设计契约是"全部 try/catch ⇒ 线程永不进 error 态" ✓）
+//   ① 清单为空（绝大多数情况）⇒ 直通返回 false，**不做任何字符串处理**（快 ✓ 且与旧路径逐字等价 ✓）
+//   ② 解析/匹配抛错 ⇒ **保守当作"被保留"**（宁可不删 ✓ —— 白名单的失败方向必须偏安全 ✗ 不能反过来）
+func _wl_kept(Array[string] wlEnc, string p): bool {
+    if wlEnc.len() == 0 { return false }
+    try {
+        return match_encoded(wlEnc, p)
+    } catch e {
+        _plog("  whitelist check failed (" + _str(e.msg) + ") path=" + p)
+        return true
+    }
+}
+
 // ==================== 扫描 worker ====================
-// 扫描一个类别。返回 [sizeStr, cntStr, skipStr, 路径1, 大小1, 路径2, 大小2, ...]
+// 扫描一个类别。返回 [sizeStr, cntStr, skipStr, keptStr, 路径1, 大小1, 路径2, 大小2, ...]
+//   skip = stat 失败/无权限（跳过 ✓）
+//   kept = 命中**保留清单**（有意不收 ⇒ 用户可据此确认清单真的生效了 ✓）
+//   成对明细从下标 `SCAN_HDR` 开始 ✓
 // （单元大小供 delete_worker 免二次 stat 统计释放量 ✓）
 // 参数用纯数组/字符串——**struct 实例不能跨线程传递** ✗ ⇒ 不收 CleanCategory
 // ch 允许 null（单测直调）；进度经 ch.try_send([idx, sizeDelta, cntDelta]) 上报（非阻塞，满了就丢）
-export func scan_worker(Array[string] roots, string file_prefix, any ch, int idx): Array[string] {
+// ⚠ `wlEnc` **必须显式传**（不能给默认值 `= []`：本语言要求默认值是编译期常量 ✗ 实测报错）
+//   它是保留清单的**编码快照**（纯字符串数组 ⇒ 可安全跨线程 ✓，见 cleaner_whitelist.encode ✓）
+export func scan_worker(Array[string] roots, string file_prefix, any ch, int idx, Array[string] wlEnc): Array[string] {
     int totalSize = 0
     int totalCnt = 0
     int skipped = 0
+    int kept = 0                        // ★ 命中保留清单的单元数（有意跳过 ⇒ 与 skip 分开计 ✓）
     Array[string] units = []
     Array[string] unitSizes = []
 
@@ -304,6 +372,7 @@ export func scan_worker(Array[string] roots, string file_prefix, any ch, int idx
                 for e.files to f {
                     if not strings.starts_with(f, file_prefix) { continue }
                     string p = dirs.join(e.root, f)
+                    if _wl_kept(wlEnc, p) { kept = kept + 1; continue }   // ★ 保留清单：扫描期就不收 ✓
                     int sz = 0
                     try {
                         var di = dirs.stat(p)
@@ -326,6 +395,7 @@ export func scan_worker(Array[string] roots, string file_prefix, any ch, int idx
             // ---- 整层清理模式：单元 = 根目录的直接子项（文件/目录），大小递归统计 ----
             for dirs.listdir(root) to child {
                 string p = dirs.join(root, child)
+                if _wl_kept(wlEnc, p) { kept = kept + 1; continue }      // ★ 保留清单：整层模式同样过滤 ✓
                 int sz = 0
                 try {
                     var di = dirs.stat(p)
@@ -349,7 +419,7 @@ export func scan_worker(Array[string] roots, string file_prefix, any ch, int idx
         }
     }
 
-    Array[string] out = [_str(totalSize), _str(totalCnt), _str(skipped)]
+    Array[string] out = [_str(totalSize), _str(totalCnt), _str(skipped), _str(kept)]
     for 0 : units.len() - 1 to i {
         out.add(units[i])
         out.add(unitSizes[i])
@@ -377,12 +447,24 @@ func _plog(string s) {
 // 只删 starts_with(任一根) 的路径；全部 try/catch ⇒ 线程永不进 error 态。
 // 进度：每处理完一项向 ch 发 [attempted增量, cleaned增量, freed增量]（非阻塞，满了就丢）
 // 返回 [cleanedStr, failedStr, freedStr]
-export func delete_worker(Array[Array[string]] chunk, Array[string] roots, any ch): Array[string] {
+export func delete_worker(Array[Array[string]] chunk, Array[string] roots, any ch, Array[string] wlEnc): Array[string] {
     int cleaned = 0
     int failed = 0
     int freed = 0
+    int kept = 0
+    // ★ 整体兜底：worker 的契约是"线程永不进 error 态"✓ ——
+    //   一旦有人在这里丢进未捕获异常，`join()` 只会得到 "Thread error: unknown error" ✗
+    //   （消息丢失、极难定位）。所以这里既兜底、又把**真实消息**写进调试日志 ✓
+    try {
     for chunk to item {
         string p = item[0]
+        // ★ 保留清单**兜底**（纵深防御）：扫描期已经过滤过，但清单可能在**清理途中**才被加进来
+        //   （或某类别根被改宽）⇒ 删除前再判一次 ✓ 计 kept 而不是 failed（语义不同 ✓）
+        if _wl_kept(wlEnc, p) {
+            kept = kept + 1
+            if ch is Channel { ch.try_send([1, 0, 0]) }
+            continue
+        }
         bool allowed = false
         for roots to r {
             if strings.starts_with(p, r) { allowed = true }
@@ -410,5 +492,8 @@ export func delete_worker(Array[Array[string]] chunk, Array[string] roots, any c
             if ch is Channel { ch.try_send([1, 0, 0]) }
         }
     }
-    return [_str(cleaned), _str(failed), _str(freed)]
+    } catch e {
+        _plog("  delete_worker 异常中断: " + _str(e.msg) + " cleaned=" + _str(cleaned) + " failed=" + _str(failed))
+    }
+    return [_str(cleaned), _str(failed), _str(freed), _str(kept)]
 }

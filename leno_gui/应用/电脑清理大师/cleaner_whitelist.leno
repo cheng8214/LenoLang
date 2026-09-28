@@ -1,0 +1,181 @@
+// cleaner_whitelist.leno — 保留清单（白名单）的**状态与持久化** ✓
+//
+// 分层（与 cleaner_rules / cleaner_detail 同一路数 ✓）：
+//   本文件            = 规则**状态**（增删/快照/编码/读写 json）+ 主线程用的便捷判定
+//   cleaner_rules.leno = **路径匹配的纯实现**（norm_path / match_encoded）+ worker
+//   cleaner_detail.leno = "点一行 ⇒ 加进保留清单"的 UI 入口
+//
+// ⚠⚠ 为什么不把匹配实现在这里（2026-09-28 踩坑记录，很值钱）：
+//   worker 线程里**首次使用一个尚未初始化的模块**会直接抛错 ✗ ——
+//   症状是 `join()` 只得到 `Thread error: unknown error`，且发生在**进入函数体之前**
+//   ⇒ try/catch 根本抓不到 ✗（实测：本地同形的线程函数都正常 ✓，
+//      一换成 rules.delete_worker（它新 import 了本模块）就必炸 ✓）
+//   旧代码没事，是因为主线程先调过 rules 的函数、把 rules 初始化了 ✓。
+//   ⇒ 铁律：**worker 要用到的一切都必须落在 cleaner_rules 模块内**（纯函数、无状态 ✓）
+//   本模块从此**只由主线程使用**（应用启动 / 明细弹窗）✓
+//
+// 匹配语义（由 rules.norm_path / rules.match_encoded 实现 ✓）：
+//   * 大小写不敏感（`C:\Temp` == `c:\temp` ✓）、`/` 与 `\` 等价 ✓
+//   * folder = true ⇒ 目录**及其整棵子树** ✓；用"前缀 + 分隔符"判断
+//     ⇒ `C:\temp2` **不会**被 `C:\temp` 误判成子项 ✓（白名单最经典的越界 bug ✗）
+//   * folder = false ⇒ 精确匹配单个文件 ✓
+import strings
+import dirs
+import files
+import jsons
+import "./cleaner_rules.leno" as rules    // 复用纯匹配实现（**不引入环**：rules 不 import 本模块 ✓）
+
+// ==================== 数据模型 ====================
+export struct WhitelistRule {
+    string path = ""        // 归一化后的路径（小写 / `\` 分隔 / 无尾斜杠 ✓）
+    bool folder = false     // true ⇒ 保留整棵子树；false ⇒ 只保留该文件
+    string note = ""        // 备注（"内置保护"/"用户添加"…，纯展示 ✓）
+}
+
+// 当前生效规则（模块级；**仅主线程**访问 ✓ —— worker 一律用编码快照，见 rules ✓）
+Array[WhitelistRule] RULES = []
+
+// 归一化：委托给 rules.norm_path ✓（语义只有一份，不会两边漂 ✗）
+export func norm(string p): string {
+    return rules.norm_path(p)
+}
+
+// 结构化匹配（主线程/测试用 ✓）：内部编码后交给 rules.match_encoded ✓
+export func match_in(Array[WhitelistRule] rs, string target): bool {
+    Array[string] enc = []
+    for rs to r {
+        string tag = "0"
+        if r.folder { tag = "1" }
+        enc.add(tag + "|" + r.path)
+    }
+    return rules.match_encoded(enc, target)
+}
+
+// ==================== 规则增删 ====================
+export func count(): int { return RULES.len() }
+
+// 快照（UI 展示用；返回拷贝 ⇒ 调用方即使改也不影响生效规则 ✓）
+export func snapshot(): Array[WhitelistRule] {
+    Array[WhitelistRule] out = []
+    for RULES to r { out.add(new WhitelistRule(path = r.path, folder = r.folder, note = r.note)) }
+    return out
+}
+
+// 加一条（已存在同 path+folder ⇒ 返回 false，不重复 ✓）
+export func add(string path, bool folder, string note): bool {
+    string n = norm(path)
+    if n == "" { return false }
+    for RULES to r {
+        if r.path == n and r.folder == folder { return false }
+    }
+    RULES.add(new WhitelistRule(path = n, folder = folder, note = note))
+    return true
+}
+
+export func remove_at(int i): bool {
+    if i < 0 or i >= RULES.len() { return false }
+    Array[WhitelistRule] out = []
+    for 0 : RULES.len() - 1 to k {
+        if k != i { out.add(RULES[k]) }
+    }
+    RULES = out
+    return true
+}
+
+export func clear() { RULES = [] }
+
+// 编码成**纯字符串数组** ⇒ 唯一允许跨线程给 worker 的形式 ✓（见文件头铁律 ✓）
+//   `"1|c:\temp"` = 目录规则；`"0|c:\a\x.txt"` = 单文件规则 ✓
+export func encode(): Array[string] {
+    Array[string] out = []
+    for RULES to r {
+        string tag = "0"
+        if r.folder { tag = "1" }
+        out.add(tag + "|" + r.path)
+    }
+    return out
+}
+
+// ==================== 内置保护（不可被"清空"掉 ✓） ====================
+// ⚠ 刻意**不收** `%ProgramData%`：错误报告类别（WER）就住在
+//   `C:\ProgramData\Microsoft\Windows\WER` ⇒ 收进来会把自家类别挡死 ✗
+// ⚠ 也刻意**不收** `%USERPROFILE%\Downloads`：那是用户常想清理的地方 ✓
+func _bi(Array[WhitelistRule] out, string p, string note) {
+    if p == "" { return }
+    out.add(new WhitelistRule(path = norm(p), folder = true, note = note))
+}
+
+export func builtin_rules(): Array[WhitelistRule] {
+    string win = _env_or("SystemRoot", "C:\\Windows")
+    string pf  = _env_or("ProgramFiles", "C:\\Program Files")
+    string pf86 = _env_or("ProgramFiles(x86)", "C:\\Program Files (x86)")
+    string up = _env_or("USERPROFILE", "")
+    Array[WhitelistRule] out = []
+    _bi(out, win, "内置保护：Windows 系统目录")
+    _bi(out, pf, "内置保护：程序目录")
+    _bi(out, pf86, "内置保护：程序目录 (x86)")
+    _bi(out, up + "\\Documents", "内置保护：我的文档")
+    _bi(out, up + "\\Desktop", "内置保护：桌面")
+    _bi(out, up + "\\Pictures", "内置保护：图片")
+    _bi(out, up + "\\Videos", "内置保护：视频")
+    _bi(out, up + "\\Music", "内置保护：音乐")
+    return out
+}
+
+export func reset_builtin() { RULES = builtin_rules() }
+
+// ==================== 持久化（%APPDATA%\TraeCleaner\whitelist.json ✓） ====================
+export func store_path(): string {
+    return _env_or("APPDATA", _tmpdir()) + "\\TraeCleaner\\whitelist.json"
+}
+
+export func load(): bool {
+    string p = store_path()
+    try {
+        if not dirs.stat(p).exists {
+            reset_builtin()      // 首次运行：只有内置保护 ✓
+            return false
+        }
+        var d = jsons.read_file(p)
+        if d is Dict => j {
+            var arr = j.get("rules", null)
+            if arr is Array => a {
+                Array[WhitelistRule] out = []
+                for a to el {
+                    if el is Dict => e {
+                        string rp = _str(e.get("path", ""))
+                        if rp != "" {
+                            bool fd = true          // 缺省按目录（更安全的一侧 ✓）
+                            var fv = e.get("folder", true)
+                            if fv is bool => fb { fd = fb }
+                            out.add(new WhitelistRule(path = norm(rp), folder = fd, note = _str(e.get("note", ""))))
+                        }
+                    }
+                }
+                RULES = out
+                return true
+            }
+        }
+    } catch e {
+        // 文件损坏/无权限 ⇒ 退回**内置保护** ✓
+        //   ⚠ 绝不能"读不到就变成零保护" ✗ —— 那等于静默放弃安全网
+        reset_builtin()
+        return false
+    }
+    reset_builtin()
+    return false
+}
+
+export func save(): bool {
+    try {
+        dirs.mkdir_p(_env_or("APPDATA", _tmpdir()) + "\\TraeCleaner")
+        Array[any] items = []
+        for RULES to r {
+            items.add({path: r.path, folder: r.folder, note: r.note})
+        }
+        jsons.write_file(store_path(), {version: 1, rules: items})
+        return true
+    } catch e {
+        return false
+    }
+}

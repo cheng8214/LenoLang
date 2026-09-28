@@ -34,9 +34,12 @@ for 0 : 49 to i {
 }
 
 // ==================== 扫描（同步）⇒ 切 chunk（同 UI beginClean） ====================
-var r = rules.scan_worker([base], "", null, 0)
+// ⚠ 起始下标必须用 `rules.SCAN_HDR`（成对明细在头部字段之后 ✓）
+//   写死 3 的话，加 `kept` 字段后会从 kept 那一格开始切 ⇒ 成对错位
+//   ⇒ 线程里对"路径"取 _int 直接抛错（实测：Thread error ✗）
+var r = rules.scan_worker([base], "", null, 0, [])
 Array[Array[string]] chunk = []
-int j = 3
+int j = rules.SCAN_HDR
 while j + 1 < r.len() {
     chunk.add([r[j], r[j + 1]])
     j = j + 2
@@ -44,8 +47,16 @@ while j + 1 < r.len() {
 eq("chunk 单元数", chunk.len(), 50)
 
 // ==================== 后台线程清理 + channel 进度 + 轮询（同 UI pollClean） ====================
+// ★ 线程入口必须是**本文件**的具名函数 ✓（与 cleaner_master 的 delete_entry 同形 ✓）
+//   ⚠ 实测（2026-09-28）：把**别的模块**的函数直接当线程入口会失败 ✗ ——
+//     `join()` 只得到 "Thread error: unknown error"（信息全丢、且进不了函数体 ⇒ 连日志都写不出 ✗）
+//     换成同形的本文件包装立刻正常 ✓；应用一直用包装写法所以没事 ✓
+func del_entry(Array[Array[string]] chunk, Array[string] roots, any ch, Array[string] enc): Array[string] {
+    return rules.delete_worker(chunk, roots, ch, enc)
+}
+
 Channel ch = threads.channel(65536)
-var t = threads.start(rules.delete_worker, chunk, [base], ch)
+var t = threads.start(del_entry, chunk, [base], ch, [])   // 第 5 参 = 保留清单编码（见 rules ✓）
 
 int liveAttempted = 0
 int liveCleaned = 0

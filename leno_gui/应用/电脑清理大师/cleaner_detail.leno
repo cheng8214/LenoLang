@@ -1,19 +1,22 @@
 // cleaner_detail.leno — 电脑清理大师：**明细清单**弹窗（从 cleaner_master.leno 拧出来的独立模块 ✓）
 //
 // 分层（与 Trae签到 的 trae_gui.leno / trae_core.leno 同一路数 ✓）：
-//   cleaner_rules.leno   ← **纯逻辑**：类别定义 + 扫描/删除 worker + `top_items`
-//                          （不 import SDL3 ⇒ 能被 test\test_rules.leno 直接单测 ✓）
-//   cleaner_detail.leno  ← **本文件**：只负责"把明细画出来"（SDL3；无业务判断 ✓）
-//   cleaner_master.leno  ← 主界面：状态机 + 把点击接过来（调用本模块 ✓）
+//   cleaner_rules.leno     ← **纯逻辑**：类别定义 + 扫描/删除 worker + `top_items`
+//                            （不 import SDL3 ⇒ 能被 test\test_rules.leno 直接单测 ✓）
+//   cleaner_whitelist.leno ← **纯逻辑**：保留清单（匹配/持久化 ✓，同样不 import SDL3 ✓）
+//   cleaner_detail.leno    ← **本文件**：把明细画出来 + 提供"加入保留清单"的入口（SDL3 ✓）
+//   cleaner_master.leno    ← 主界面：状态机 + 把点击接过来（调用本模块 ✓）
 //
 // 输入约定：`res` = 该类别 scan_worker 的返回
-//           布局 `[size, cnt, skip, 路径, 大小, 路径, 大小, ...]`
+//           布局 `[size, cnt, skip, kept, 路径, 大小, 路径, 大小, ...]`（成对明细从 SCAN_HDR 起 ✓）
 // ⚠ "这类能不能看明细"（如回收站由系统托管）属于**业务策略** ⇒ 留在主界面判断 ✓，
 //    本模块只做"给数据就画" ✓（这样它才可被别处复用/单独改版 ✓）
 import "SDL3" as SDL3
 import "sdl_theme" as theme
+import dirs
 import "./cleaner_rules.leno" as rules
-use SDL3.(Event, Renderer, Table, VBox, Button, Scancode)
+import "./cleaner_whitelist.leno" as wl
+use SDL3.(Event, Renderer, Table, VBox, Button, Label, Scancode)
 
 // 最多列多少项（按大小取前 N ✓；标题里会写明"只列最大的 N 项"以免误读 ✗）
 const int DETAIL_LIMIT = 100
@@ -23,13 +26,14 @@ const int DETAIL_LIMIT = 100
 //   res     = 该类别的扫描结果数组
 // 返回 false ⇒ 数据不足，没什么可展示（调用方可据此写状态栏提示 ✓）
 export func show_detail(string catName, Array[string] res): bool {
-    if res.len() < 3 { return false }
+    if res.len() < rules.SCAN_HDR { return false }
     int totalBytes = _int(res[0])
     int totalCnt = _int(res[1])
+    int keptCnt = _int(res[3])
     var picked = rules.top_items(res, DETAIL_LIMIT)
 
     int dw = 760
-    int dh = 520
+    int dh = 540
     var dlg = SDL3.createDialogWindow({title: "明细清单 — " + catName, w: dw, h: dh})
     var droot = SDL3.createVBox({x: 0, y: 0, w: dw, h: dh, padX: 16, padY: 14, spacing: 8})
     dlg.setRoot(droot)
@@ -37,7 +41,15 @@ export func show_detail(string catName, Array[string] res): bool {
     // 标题写清"共几项 / 多大 / 是否只列了前 N 项"⇒ 不误导成"只有这么多" ✓
     string head = $"{catName}：共 {totalCnt} 项 · {rules.fmt_size(totalBytes)}"
     if picked.len() < totalCnt { head = $"{head}（下面只列最大的 {picked.len()} 项）" }
+    if keptCnt > 0 { head = $"{head} · 保留清单已豁免 {keptCnt} 项" }
     droot.add(SDL3.dialogLabel(head, 14), {grow: 0, shrink: 0, align: 0})
+
+    // ⚠ 按钮要在 `dt.on_cell(...)` **之前**创建：回调闭包里会读它（先声明再引用 ✓）
+    Button keepBtn = SDL3.createButton({w: 150, h: 34, text: "保留此路径", type: "dark"})
+    keepBtn.set_enabled(false)
+    keepBtn.set_tip("把选中的路径加入保留清单：以后扫描不再列出、清理也不会删 ✓")
+    Button closeBtn = SDL3.createButton({w: 110, h: 34, text: "关闭", type: "dark"})
+    Label noteLbl = SDL3.dialogLabel("点一行选中它，再点「保留此路径」即可豁免", 12)
 
     Table dt = SDL3.createTable({
         headers: ["路径", "大小", "占比"],
@@ -52,12 +64,44 @@ export func show_detail(string catName, Array[string] res): bool {
         rows.add([it.path, rules.fmt_size(it.size), pct])
     }
     dt.set_rows(rows)
-    droot.add(dt, {grow: 1, shrink: 1, align: 3})
 
-    Button closeBtn = SDL3.createButton({w: 110, h: 34, text: "关闭", type: "dark"})
+    // 选中行（UI 回调写、按钮读 ⇒ 先声明 ✓）
+    string selPath = ""
+    // 点一行 ⇒ 记下路径并启用"保留此路径"（框架 Table 自带 on_cell 单击回调 ✓）
+    dt.on_cell(func(int row, int col) {
+        if row >= 0 and row < rows.len() {
+            selPath = rows[row][0]
+            keepBtn.set_enabled(true)
+            noteLbl.set_text("已选中：" + selPath)
+            SDL3.markFrameRedraw()
+        }
+    })
+    keepBtn.on_click(func() {
+        if selPath == "" { return }
+        // 目录还是文件：以**文件系统真实类型**为准（比猜后缀可靠 ✓）
+        bool isDir = true
+        try {
+            var di = dirs.stat(selPath)
+            if di.is_file { isDir = false }
+        } catch {
+            isDir = false        // stat 不到 ⇒ 按文件处理（影响面更小 ✓）
+        }
+        if wl.add(selPath, isDir, "用户添加") {
+            wl.save()
+            string kind = "该文件"
+            if isDir { kind = "该目录及其全部内容" }
+            noteLbl.set_text($"已加入保留清单：{kind} 以后不再被扫描/清理 ✓")
+        } else {
+            noteLbl.set_text("这个路径已经在保留清单里了 ✓")
+        }
+        SDL3.markFrameRedraw()
+    })
+    droot.add(dt, {grow: 1, shrink: 1, align: 3})
+    droot.add(noteLbl, {grow: 0, shrink: 0, align: 0})
+    droot.add(SDL3.dialogButtonRow([keepBtn, closeBtn], 16), {grow: 0, shrink: 0, align: 3})
+
     var done = false
     closeBtn.on_click(func() { done = true })
-    droot.add(SDL3.dialogButtonRow([closeBtn], 16), {grow: 0, shrink: 0, align: 3})
     SDL3.runModal(dlg,
         func(Event ev): bool {
             if ev.isQuit() or ev.isWindowClose() { return false }
