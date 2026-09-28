@@ -286,6 +286,17 @@ struct CleanerMaster {
         return _str(v)
     }
 
+    // 给悬停提示**追加一行**：空串不进 ✓
+    //   为什么必须这样（实测截图）：有些类别**没写 hint**（如「缩略图缓存」）⇒ tip 初始是 "" ✗
+    //   此时 `$"{tip}\n本次…"` 等于"空串 + 换行 + 内容" ⇒ 悬停框**第一行是空白** ✗
+    //   （截图上就是 tooltip 顶部多出一条空行，然后才是"本次占比…"）
+    //   加了本函数后：cur 为空则直接返回 line ⇒ **不可能**出现空首行 ✓
+    func _tip_add(string cur, string line): string {
+        if line == "" { return cur }
+        if cur == "" { return line }
+        return $"{cur}\n{line}"
+    }
+
     func _last_clean_path(): string {
         return _env_or("APPDATA", _tmpdir()) + "\\TraeCleaner\\last_clean.json"
     }
@@ -441,13 +452,17 @@ struct CleanerMaster {
                     cntTxt = _str(_int(res[1]))
                 }
             }
-            string tip = c.hint            // 行悬停：类别说明（新增类别都带 ✓）
+            string tip = c.hint            // 行悬停：类别说明（**可能为空** ⇒ 追加一律走 _tip_add ✓）
             // 行悬停再补一行"本次占比"：表格列宽有限（92px 放不下「5.4 GB · 96%」✗）
             //   ⇒ 把占比放到悬停提示里，看构成时不用心算 ✓
+            //   ⚠ 必须用 _tip_add 追加（c.hint 可能是空串 ⇒ 直接拼 `\n` 会冒出空首行 ✗）
             if totalSize > 0 and i < results.len() and c.id != "recyclebin" {
                 int shareB = _int(results[i][0])
                 if shareB > 0 {
-                    tip = $"{tip}\n本次占比 {_int(100.0 * _float(shareB) / _float(totalSize))}%"
+                    int pct = _int(100.0 * _float(shareB) / _float(totalSize))
+                    string share = _str(pct) + "%"
+                    if pct <= 0 { share = "<1%" }   // 2 MB / 5.5 GB 显示「0%」会被误读成"没有" ✗
+                    tip = _tip_add(tip, "本次占比 " + share)
                 }
             }
             int fg = 0
@@ -475,17 +490,18 @@ struct CleanerMaster {
                         }
                         if cc > 0 { fg = theme.getTheme().btnSuccess }      // 清掉了 ⇒ 绿
                         if cf > 0 { fg = #E09A34FF }                        // 有跳过 ⇒ 橙（更需要你看一眼）
-                        tip = $"{tip}\n本次：已清理 {cc} 项 · 跳过 {cf} 项（被占用）\n点本行看明细清单"
+                        tip = _tip_add(tip, $"本次：已清理 {cc} 项 · 跳过 {cf} 项（被占用）")
+                        tip = _tip_add(tip, "点本行看明细清单")
                     } else if _in_int(cleanCheckedIdx, i) {
                         // ★ 勾了但没东西可清 ⇒ 说「无垃圾」。
                         //   原先这里一律落到 else ⇒ 显示「未勾选」✗（实测：错误报告 0 B/0 项、
                         //   复选框明明是勾着的却写"未勾选" ⇒ 因为 cleanCatIdx 只收录真起了删除线程的类别）
                         resTxt = "无垃圾"
-                        tip = $"{tip}\n本次扫描未发现可清理项"
+                        tip = _tip_add(tip, "本次扫描未发现可清理项")
                     } else {
                         resTxt = "未勾选"
                         fg = theme.getTheme().txtDim
-                        tip = $"{tip}\n本次清理未勾选本类"
+                        tip = _tip_add(tip, "本次清理未勾选本类")
                     }
                 }
             }
