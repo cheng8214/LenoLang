@@ -110,6 +110,8 @@ struct CleanerMaster {
     int watchdogAttempted = 0          // 看门狗：上次记录的进度值 / tick
     int watchdogLastTick = 0
     bool autoTest = false              // --autotest：自动扫描到 done 即退出（不清理 ⇒ 不删任何文件）
+    bool shotDone = false              // 已存过"扫描完成态"截图（避免每帧重复存盘 ✓）
+    bool shotReport = false            // 已存过"报告态"截图（想看多段环 + 结果列 ⇒ 报告态才有 ✓）
     bool autoClean = false             // --autoclean：合成垃圾类别走真实清理管线（调试取证）
     bool injected = false
     bool phase2 = false                // phase2 = 真实类别清理取证
@@ -374,6 +376,7 @@ struct CleanerMaster {
         catTable.check_all()
         ring.set_mode("value")
         ring.set_value(1.0)
+        applyScanSegments()      // ★ 构成环（见其注释：替换掉"一整圈绿"那种无信息画法 ✓）
         state = "done"
         mainBtn.set_enabled(true)
         mainBtn.set_text("一键清理")
@@ -388,6 +391,36 @@ struct CleanerMaster {
         }
         refreshDrive()
         SDL3.markFrameRedraw()
+    }
+
+    // ==================== done 态"构成环" ====================
+    // 原来的 done 态是 `set_value(1.0)` ⇒ 画**一整圈绿**，但那个 100% 没有任何含义 ✗
+    //   （截图里看起来"进度满"，其实只是占位）。
+    // 改成：取**最大的 3 个类别**各占一段（12 点起顺时针），余量留轨道色 ✓
+    //   ⇒ 一眼看出"5.5 GB 里大头是谁" ✓；颜色固定（蓝/橙/绿），顺序 = 大小降序 ✓
+    func applyScanSegments() {
+        if totalSize <= 0 { ring.clear_segments(); return }
+        Array[float] ratios = []
+        Array[int] used = []
+        for 0 : 2 to k {
+            int best = -1
+            int bestSz = 0
+            for 0 : cats.len() - 1 to i {
+                if cats[i].id == "recyclebin" { continue }
+                if i >= results.len() { continue }
+                if _in_int(used, i) { continue }
+                int s = _int(results[i][0])
+                if s > bestSz { bestSz = s; best = i }
+            }
+            if best < 0 or bestSz <= 0 { break }
+            used.add(best)
+            ratios.add(_float(bestSz) / _float(totalSize))
+        }
+        // 按段数分别传色（避免在此文件里引入 Color 类型名；与 finishClean 的调用风格一致 ✓）
+        if ratios.len() == 1 { ring.set_segments(ratios, [#3B82F6FF]) }
+        if ratios.len() == 2 { ring.set_segments(ratios, [#3B82F6FF, #E09A34FF]) }
+        if ratios.len() == 3 { ring.set_segments(ratios, [#3B82F6FF, #E09A34FF, #3CC850FF]) }
+        if ratios.len() == 0 { ring.clear_segments() }
     }
 
     func refreshRows() {
@@ -409,6 +442,14 @@ struct CleanerMaster {
                 }
             }
             string tip = c.hint            // 行悬停：类别说明（新增类别都带 ✓）
+            // 行悬停再补一行"本次占比"：表格列宽有限（92px 放不下「5.4 GB · 96%」✗）
+            //   ⇒ 把占比放到悬停提示里，看构成时不用心算 ✓
+            if totalSize > 0 and i < results.len() and c.id != "recyclebin" {
+                int shareB = _int(results[i][0])
+                if shareB > 0 {
+                    tip = $"{tip}\n本次占比 {_int(100.0 * _float(shareB) / _float(totalSize))}%"
+                }
+            }
             int fg = 0
             // 结果列（report / cleaning 状态）：每类清理结果一目了然 ✓
             if state == "report" or state == "cleaning" {
@@ -468,15 +509,20 @@ struct CleanerMaster {
             statusLbl.set_text("请先勾选要清理的项目")
             return
         }
+        // 弹确认框前先汇总：勾选类别的**预计项数 / 预计字节**，以及是否含回收站 ✓
+        //   为什么一律确认：清理**不可撤销** ✗ —— 原先只在"勾了回收站"时才弹框，
+        //   不勾回收站点一下「一键清理」就**直接开删**（实测：无任何提示删掉 5.5 GB ✗）。
+        int n = 0
+        int bytes = 0
         bool needRecycle = false
         for checked to i {
-            if cats[i].id == "recyclebin" { needRecycle = true }
+            if cats[i].id == "recyclebin" { needRecycle = true; continue }
+            if i < results.len() {
+                n = n + _int(results[i][1])
+                bytes = bytes + _int(results[i][0])
+            }
         }
-        if needRecycle {
-            showRecycleConfirm(func() { beginClean(checked) })
-        } else {
-            beginClean(checked)
-        }
+        showCleanConfirm(checked, n, bytes, needRecycle)
     }
 
     func beginClean(Array[int] checked) {
@@ -610,15 +656,23 @@ struct CleanerMaster {
         SDL3.markFrameRedraw()
     }
 
-    // ==================== 回收站清空确认（模态） ====================
-    func showRecycleConfirm(func():void onConfirm) {
-        var dlg = SDL3.createDialogWindow({title: "确认清空回收站", w: 400, h: 170})
-        VBox root = SDL3.createVBox({x: 0, y: 0, w: 400, h: 170, padX: 40, padY: 20, spacing: 10})
+    // ==================== 清理确认（模态；清理不可撤销 ⇒ 一律确认 ✓） ====================
+    // 与旧 showRecycleConfirm 的区别：① 不含回收站时也确认 ✓ ② 明确给出**项数与预计释放量** ✓
+    //   ③ 顺带提示"被占用文件会自动跳过"（避免用户以为失败 ✗）
+    func showCleanConfirm(Array[int] checked, int n, int bytes, bool needRecycle) {
+        int dh = 190
+        if needRecycle { dh = 220 }
+        var dlg = SDL3.createDialogWindow({title: "确认清理", w: 440, h: dh})
+        VBox root = SDL3.createVBox({x: 0, y: 0, w: 440, h: dh, padX: 34, padY: 18, spacing: 8})
         dlg.setRoot(root)
-        root.add(SDL3.dialogLabel("确认清空回收站", 16), {grow: 0, shrink: 0, align: 1})
-        root.add(SDL3.dialogLabel("回收站中的所有内容将被永久清除。", 13), {grow: 0, shrink: 0, align: 1})
+        root.add(SDL3.dialogLabel("确认清理选中项？", 16), {grow: 0, shrink: 0, align: 1})
+        root.add(SDL3.dialogLabel($"将清理 {n} 项，预计释放 {rules.fmt_size(bytes)}", 13), {grow: 0, shrink: 0, align: 1})
+        if needRecycle {
+            root.add(SDL3.dialogLabel("回收站中的内容将被永久清除。", 13), {grow: 0, shrink: 0, align: 1})
+        }
+        root.add(SDL3.dialogLabel("清理不可撤销；正被其他程序占用的文件会自动跳过。", 12), {grow: 0, shrink: 0, align: 1})
         root.add(SDL3.dialogSpacer(), {grow: 1, shrink: 1, align: 0})
-        Button okBtn = SDL3.createButton({w: 110, h: 34, text: "清空", type: "danger"})
+        Button okBtn = SDL3.createButton({w: 130, h: 34, text: "开始清理", type: "danger"})
         Button cancelBtn = SDL3.createButton({w: 100, h: 34, text: "取消", type: "dark"})
         HBox btnRow = SDL3.dialogButtonRow([okBtn, cancelBtn], 16)
         root.add(btnRow, {grow: 0, shrink: 0, align: 3})
@@ -627,7 +681,7 @@ struct CleanerMaster {
         cancelBtn.on_click(func() { done = true })
         okBtn.on_click(func() {
             done = true
-            if onConfirm != null { onConfirm() }
+            beginClean(checked)
         })
         SDL3.runModal(dlg,
             func(Event ev): bool {
@@ -710,15 +764,18 @@ struct CleanerMaster {
         string head = $"{c.name}：共 {total} 项 · {rules.fmt_size(_int(res[0]))}"
         if pick.len() < total { head = $"{head}（下面只列最大的 {pick.len()} 项）" }
         droot.add(SDL3.dialogLabel(head, 14), {grow: 0, shrink: 0, align: 0})
+        int totalBytes = _int(res[0])
         Table dt = SDL3.createTable({
-            headers: ["路径", "大小"],
-            col_widths: [580.0, 120.0],
+            headers: ["路径", "大小", "占比"],
+            col_widths: [530.0, 110.0, 80.0],
             zebra: true, row_h: 26, header_h: 28, font_size: 13,
             col_reorder: false, resizable: false
         })
         Array[Array[string]] drows = []
         for 0 : pick.len() - 1 to k {
-            drows.add([res[pick[k]], rules.fmt_size(pickSize[k])])
+            string pct = "—"
+            if totalBytes > 0 { pct = $"{_int(100.0 * _float(pickSize[k]) / _float(totalBytes))}%" }
+            drows.add([res[pick[k]], rules.fmt_size(pickSize[k]), pct])
         }
         dt.set_rows(drows)
         droot.add(dt, {grow: 1, shrink: 1, align: 3})
@@ -792,6 +849,22 @@ struct CleanerMaster {
             statusLbl.set_text($"导出失败：{_str(e)}")
         }
         SDL3.markFrameRedraw()
+    }
+
+    // ==================== 自证截屏（全屏） ====================
+    // 只给自动化模式用（--autotest / --autoclean）；路径由调用方给 ⇒ done 态与报告态各一张 ✓
+    func captureTo(string path) {
+        try {
+            Dict cap = Win32.captureScreen()
+            if cap.len() > 0 {
+                Ptr surf = SDL3.createSurfaceFromRaw(_int(cap.w), _int(cap.h), _int(cap.fmt), cap.pixels, _int(cap.pitch))
+                SDL3.saveImagePNG(surf, path)
+                SDL3.destroySurface(surf)
+                print("SHOT SAVED " + path)
+            }
+        } catch e {
+            print($"capture failed: {_str(e)}")
+        }
     }
 
     // ==================== 50ms 轮询 ====================
@@ -981,21 +1054,17 @@ struct CleanerMaster {
                     if rbIdx >= 0 { ph1.add(rbIdx) }
                     beginClean(ph1)
                 }
-                if autoTest and (state == "done" and not autoClean) {
-                    // 自证截屏（全屏）：留给调用方检查视觉效果 ✓
-                    try {
-                        Dict cap = Win32.captureScreen()
-                        if cap.len() > 0 {
-                            Ptr surf = SDL3.createSurfaceFromRaw(_int(cap.w), _int(cap.h), _int(cap.fmt), cap.pixels, _int(cap.pitch))
-                            SDL3.saveImagePNG(surf, _tmpdir() + "\\cleaner_master_autotest.png")
-                            SDL3.destroySurface(surf)
-                            print("AUTOTEST SHOT SAVED")
-                        }
-                    } catch e {
-                        print($"AUTOTEST capture failed: {_str(e)}")
-                    }
+                if autoTest and not shotDone and state == "done" and not autoClean {
+                    shotDone = true
+                    captureTo(_tmpdir() + "\\cleaner_master_autotest.png")   // 自证截屏（全屏）✓
                     print("AUTOTEST EXIT")
                     return false
+                }
+                // --autoclean 也会走到报告态 ⇒ 在那儿也截一张：这张才看得到
+                //   **多段构成环 + 结果列（已清/跳过）** ✓（done 态那只是单色环）
+                if autoTest and not shotReport and state == "report" {
+                    shotReport = true
+                    captureTo(_tmpdir() + "\\cleaner_master_report.png")
                 }
                 if autoClean and state == "report" {
                     if not phase2 {
