@@ -134,16 +134,13 @@ typedef enum {
 
     // --- 数组 ---
     OP_NEWARRAY,        // iABC  R[A] = new array(R[A+1..A+C-1]), C = count
-    OP_ARRAY_GET,       // iABC  R[A] = R[B][R[C]]
-    OP_ARRAY_SET,       // iABC  R[B][R[C]] = R[A]
     OP_ARRAY_APPEND,    // iABC  append R[A] to R[B], R[A] = new len（表达式用）
     OP_LEN,             // iABC  R[A] = len(R[B])
 
     // --- 字典 ---
     OP_NEWDICT,         // iABC  R[A] = new dict, C = 初始容量
-    OP_DICT_GET,        // iABC  R[A] = R[B][R[C]]
-    OP_DICT_SET,        // iABC  R[B][R[C]] = R[A]
-    OP_DICT_GET_KEY,    // iABC  R[A] = key(R[B], R[C])  for 迭代
+    OP_DICT_SET,        // iABC  R[B][R[C]] = R[A]（仅超大字典字面量 >255 项的兜底路径发；
+                        //        常规 d[k]=v 走 OP_INDEX_SET，d[k] 读走 OP_INDEX 的字典分支）
 
     // --- 通用索引 ---
     OP_INDEX,           // iABC  R[A] = R[B][R[C]]（数组或字典）
@@ -882,7 +879,7 @@ typedef struct {
 #define IC_STRUCTDEF_CACHE_SIZE 1024  // 必须是 2 的幂（分配点远少于方法调用点）
 
 // ============================================================================
-// 内联缓存：字典读写 (OP_DICT_GET / OP_DICT_SET)
+// 内联缓存：字典读写 (OP_INDEX / OP_INDEX_SET 的字典分支；OP_DICT_SET 仅供超大字面量兜底)
 // 缓存 (dict 指针, key, capacity) → entries 槽位号：`d[k]=v` / `d[k]` 原先都要走
 // dict_get/dict_set 那 5~8 层跨 TU 调用（实测 `d[k]=v` 51.7ns/次），命中后只剩
 // 几次比较 + 一次取/存。
@@ -953,7 +950,7 @@ typedef struct VM {
     InlineModuleCallCacheEntry ic_module_cache[IC_MODULE_CACHE_SIZE]; // 模块方法缓存 (OP_MODULE_CALL)
     InlineMethodCacheEntry ic_method_cache[IC_METHOD_CACHE_SIZE];   // struct 方法缓存 (OP_GET_METHOD)
     InlineStructDefCacheEntry ic_structdef_cache[IC_STRUCTDEF_CACHE_SIZE]; // struct 定义缓存 (OP_STRUCT_INIT)
-    InlineDictCacheEntry ic_dict_cache[IC_DICT_CACHE_SIZE];   // 字典读写缓存 (OP_DICT_GET/SET)
+    InlineDictCacheEntry ic_dict_cache[IC_DICT_CACHE_SIZE];   // 字典读写缓存 (OP_INDEX/OP_INDEX_SET 字典分支)
     int ic_hits;               // 缓存命中次数（统计用）
     int ic_misses;             // 缓存未命中次数（统计用）
     // 协程系统

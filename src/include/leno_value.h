@@ -903,7 +903,7 @@ Value dict_get(ObjDict* dict, Value key);
 int dict_has(ObjDict* dict, Value key);
 void dict_delete(ObjDict* dict, Value key);
 void dict_try_shrink(ObjDict* dict);
-// 供 VM 的字典读写内联缓存用（OP_DICT_GET/OP_DICT_SET）：
+// 供 VM 的字典读写内联缓存用（OP_INDEX/OP_INDEX_SET 的字典分支）：
 // 返回键在**哈希部分**的槽位号；找不到、或该键属于数组部分 ⇒ -1（不缓存）。
 int dict_slot_for(ObjDict* dict, Value key);
 int dict_get_array_size(ObjDict* dict);  // 获取数组部分大小（用于迭代）

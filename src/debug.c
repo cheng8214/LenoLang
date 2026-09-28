@@ -36,9 +36,9 @@ static const char* opCodeNames[] = {
     // --- 调用 / 返回 ---
     "OP_CALL", "OP_CALL_NATIVE", "OP_RETURN", "OP_RETURN_MULTI", "OP_TAIL_CALL",
     // --- 数组 ---
-    "OP_NEWARRAY", "OP_ARRAY_GET", "OP_ARRAY_SET", "OP_ARRAY_APPEND", "OP_LEN",
+    "OP_NEWARRAY", "OP_ARRAY_APPEND", "OP_LEN",
     // --- 字典 ---
-    "OP_NEWDICT", "OP_DICT_GET", "OP_DICT_SET", "OP_DICT_GET_KEY",
+    "OP_NEWDICT", "OP_DICT_SET",
     // --- 通用索引 ---
     "OP_INDEX", "OP_INDEX_ARRAY_INT", "OP_INDEX_ARRAY_FLOAT", "OP_INDEX_SET", "OP_SLICE",
     // --- 迭代 ---

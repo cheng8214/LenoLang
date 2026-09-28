@@ -44,20 +44,6 @@
         R(a) = val_obj((Object*)arr);
         DISPATCH();
     }
-    LABEL(OP_ARRAY_GET): {
-        int a = READ_A(), b = READ_B(), c = READ_C();
-        ObjArray* arr = (ObjArray*)val_as_obj(R(b));
-        int idx = (int)val_as_int(R(c));
-        R(a) = arr->elements[idx];
-        DISPATCH();
-    }
-    LABEL(OP_ARRAY_SET): {
-        int a = READ_A(), b = READ_B(), c = READ_C();
-        ObjArray* arr = (ObjArray*)val_as_obj(R(b));
-        int idx = (int)val_as_int(R(c));
-        arr->elements[idx] = R(a);
-        DISPATCH();
-    }
     LABEL(OP_ARRAY_APPEND): {
         int a = READ_A(), b = READ_B();
         ObjArray* arr = (ObjArray*)val_as_obj(R(b));
@@ -124,23 +110,13 @@
         R(a) = val_obj((Object*)dict);
         DISPATCH();
     }
-    // 字典读写：这两条 opcode 目前 codegen 不发（实测 dump 里 `d[k]` / `d[k]=v` 走的是
-    //   OP_INDEX / OP_INDEX_SET 的字典分支）⇒ 内联缓存接在那边（见 OP_INDEX_SET）。
-    //   这里保持最简实现，不做额外探测。
-    LABEL(OP_DICT_GET): {
-        int a = READ_A(), b = READ_B(), c = READ_C();
-        ObjDict* dict = (ObjDict*)val_as_obj(R(b));
-        R(a) = dict_get(dict, R(c));
-        DISPATCH();
-    }
+    // OP_DICT_SET: 仅 AST_DICT 字面量 >255 项 / 寄存器不够时的兜底路径发（codegen_expr.c）；
+    //   常规 `d[k]=v` 走 OP_INDEX_SET 的字典分支（内联缓存接在那边），`d[k]` 读走 OP_INDEX。
+    //   接收者来自刚 OP_NEWDICT 的全新字典 ⇒ 恒为 OBJ_DICT，信任之，不做额外探测。
     LABEL(OP_DICT_SET): {
         int a = READ_A(), b = READ_B(), c = READ_C();
         ObjDict* dict = (ObjDict*)val_as_obj(R(b));
         dict_set(dict, R(c), R(a));
-        DISPATCH();
-    }
-    LABEL(OP_DICT_GET_KEY): {
-        // TODO: 字典键迭代
         DISPATCH();
     }
 
